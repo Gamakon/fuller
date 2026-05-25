@@ -11,6 +11,7 @@ pub mod calibration;
 pub mod eval;
 pub mod expr;
 pub mod extract;
+pub mod karva;
 pub mod ruleset;
 
 #[cfg(feature = "python")]
