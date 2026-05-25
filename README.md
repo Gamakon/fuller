@@ -3,8 +3,10 @@
 Egglog-based bidirectional AST hub for symbolic expression rewriting.
 Sibling project to `hff/`.
 
-Status: **specification only.** No code yet. See `BRIEF.md` for the
-Phase 1 specification (skateboard: denoise mutation operator end-to-end).
+Status: **Phase 1 skateboard working.** The denoise mutation operator runs
+end-to-end (karva chromosome → egglog → saturate → extract → karva chromosome)
+and is callable from Python. **Consumers: see [`docs/USAGE.md`](docs/USAGE.md).**
+See `BRIEF.md` for the full Phase 1 spec.
 
 ## Install (once built)
 
@@ -37,13 +39,14 @@ production-tested (Herbie).
 
 | Phase | Description | Status |
 |---|---|---|
-| 1.0 | Calibration (boolean algebra in egglog Rust) | not started |
-| 1.1 | karva ↔ egglog terms converter | not started |
-| 1.2 | Pure-algebra rules (5 identity rules) | not started |
-| 1.3 | Real-valued evaluator | not started |
-| 1.4 | Data-aware extraction (R²-guarded) | not started |
-| 1.5 | PyO3 + Python wrapper | not started |
-| 1.6 | Acceptance & report | not started |
-| 2.x | Port SymPy simplification rules | future, separate brief |
+| 1.0 | Calibration (boolean algebra in egglog Rust) | ✅ done |
+| 1.1 | karva ↔ egglog terms converter | ✅ done |
+| 1.2 | Pure-algebra rules (5 identity rules) | ✅ done |
+| 1.3 | Real-valued evaluator | ✅ done |
+| 1.4 | Data-aware extraction (R²-guarded) | ✅ done |
+| 1.5 | PyO3 + Python wrapper | ✅ done |
+| 1.6 | Acceptance & report | in progress |
+| 2.x | Port SymPy simplification rules (power/log, trig) | in progress (feature branches) |
 
-See `BRIEF.md` for full spec.
+Work lands on feature branches (calibration, denoise core, converter); not yet
+merged to `main`. See `BRIEF.md` for the full spec and `docs/USAGE.md` to use it.
