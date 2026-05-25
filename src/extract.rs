@@ -105,6 +105,9 @@ pub fn denoise(
         .map_err(|e| format!("evaluating reference: {e}"))?;
 
     // Walk candidates cheapest-first; accept the first within tolerance.
+    let mut chosen_expr = termdag.to_string(ref_term);
+    let mut chosen_cost = ref_cost;
+    let mut changed = false;
     for (cost, term) in ordered.iter() {
         let preds: Result<Vec<f64>, EvalError> =
             rows.iter().map(|row| eval_row(&termdag, *term, row)).collect();
@@ -113,21 +116,254 @@ pub fn denoise(
             Err(_) => continue, // unevaluable candidate — skip
         };
         if r2_loss(&reference, &preds) <= tolerance {
-            let expr = termdag.to_string(*term);
-            return Ok(Denoised {
-                expr,
-                cost: *cost,
-                changed: *cost < ref_cost,
-            });
+            chosen_expr = termdag.to_string(*term);
+            chosen_cost = *cost;
+            changed = *cost < ref_cost;
+            break;
         }
     }
 
-    // Nothing within tolerance: return the reference (input) unchanged.
-    Ok(Denoised {
-        expr: termdag.to_string(ref_term),
-        cost: ref_cost,
-        changed: false,
-    })
+    // Sound data-aware subtree pruning (the safe replacement for "substitute G
+    // with its constant"): drop additive terms / collapse multiplicative
+    // factors that don't change predictions on the REAL data beyond tolerance.
+    // This removes wallpaper like cos(G)*... or +sin(exp(..)) WITHOUT assuming
+    // anything about variable identities — equivalence is checked on the rows.
+    if let Some(pruned) = prune_on_data(&chosen_expr, rows, &reference, tolerance) {
+        if pruned != chosen_expr {
+            chosen_expr = pruned;
+            // recompute structural cost cheaply as node count (proxy);
+            // smaller string-tree => fewer nodes. Mark changed.
+            chosen_cost = cost_of(&chosen_expr);
+            changed = true;
+        }
+    }
+
+    Ok(Denoised { expr: chosen_expr, cost: chosen_cost, changed })
+}
+
+// ---------------------------------------------------------------------------
+// Data-aware subtree pruning (sound #8 replacement)
+// ---------------------------------------------------------------------------
+
+/// Minimal Math tree for pruning. Mirrors the `Math` constructors we may prune
+/// through (Add/Sub/Mul/Div + leaves); other ops are opaque subtrees we keep
+/// whole.
+#[derive(Debug, Clone)]
+enum PNode {
+    Num(f64),
+    Var(String),
+    App(String, Vec<PNode>),
+}
+
+impl PNode {
+    fn to_math(&self) -> String {
+        match self {
+            PNode::Num(v) => format!("(Num {})", fmt_f64(*v)),
+            PNode::Var(n) => format!("(Var \"{n}\")"),
+            PNode::App(op, ch) => {
+                let parts: Vec<String> = ch.iter().map(PNode::to_math).collect();
+                format!("({op} {})", parts.join(" "))
+            }
+        }
+    }
+
+    fn node_count(&self) -> usize {
+        match self {
+            PNode::Num(_) | PNode::Var(_) => 1,
+            PNode::App(_, ch) => 1 + ch.iter().map(PNode::node_count).sum::<usize>(),
+        }
+    }
+}
+
+fn fmt_f64(v: f64) -> String {
+    if v.fract() == 0.0 && v.is_finite() { format!("{v:.1}") } else { format!("{v}") }
+}
+
+fn cost_of(expr: &str) -> u64 {
+    parse_pnode(expr).map(|n| n.node_count() as u64).unwrap_or(0)
+}
+
+/// Try to shrink `expr` by removing additive terms / multiplicative factors
+/// whose removal keeps predictions within `tolerance` of `reference` on `rows`.
+/// Greedy + repeated to a fixpoint. Returns the smallest fitting form, or None
+/// if it can't be parsed.
+fn prune_on_data(
+    expr: &str,
+    rows: &[Vec<(String, f64)>],
+    reference: &[f64],
+    tolerance: f64,
+) -> Option<String> {
+    let mut tree = parse_pnode(expr)?;
+    loop {
+        let candidates = prune_candidates(&tree);
+        let mut improved = false;
+        for cand in candidates {
+            if fits(&cand, rows, reference, tolerance) && cand.node_count() < tree.node_count() {
+                tree = cand;
+                improved = true;
+                break;
+            }
+        }
+        if !improved {
+            break;
+        }
+    }
+    Some(tree.to_math())
+}
+
+/// Generate one-step prunings: for each Add/Sub drop a side; for each Mul drop
+/// a factor (replace the product with the surviving factor); for Div drop the
+/// divisor (replace with numerator). Recurses so inner subtrees are tried too.
+fn prune_candidates(node: &PNode) -> Vec<PNode> {
+    let mut out = Vec::new();
+    if let PNode::App(op, ch) = node {
+        match (op.as_str(), ch.len()) {
+            ("Add", 2) | ("Sub", 2) => {
+                out.push(ch[0].clone()); // drop the second term
+                if op == "Add" {
+                    out.push(ch[1].clone()); // Add is symmetric for dropping
+                }
+            }
+            ("Mul", 2) => {
+                out.push(ch[0].clone());
+                out.push(ch[1].clone());
+            }
+            ("Div", 2) => {
+                out.push(ch[0].clone()); // drop divisor
+            }
+            _ => {}
+        }
+        // Recurse: rebuild this node with one child replaced by each of its
+        // prunings.
+        for (i, c) in ch.iter().enumerate() {
+            for pc in prune_candidates(c) {
+                let mut new_ch = ch.clone();
+                new_ch[i] = pc;
+                out.push(PNode::App(op.clone(), new_ch));
+            }
+        }
+    }
+    out
+}
+
+/// True if `node` reproduces `reference` within tolerance on the data.
+fn fits(node: &PNode, rows: &[Vec<(String, f64)>], reference: &[f64], tolerance: f64) -> bool {
+    // Evaluate the pruned tree through the egglog evaluator by rendering to a
+    // Math string and parsing into a TermDag.
+    let math = node.to_math();
+    let mut egraph = match build_eval_egraph(&math) {
+        Some(e) => e,
+        None => return false,
+    };
+    let (sort, value) = match egraph.eval_expr(&exprs::var("__p")) {
+        Ok(sv) => sv,
+        Err(_) => return false,
+    };
+    let (termdag, term, _) = match egraph.extract_value(&sort, value) {
+        Ok(t) => t,
+        Err(_) => return false,
+    };
+    let preds: Result<Vec<f64>, EvalError> =
+        rows.iter().map(|row| eval_row(&termdag, term, row)).collect();
+    match preds {
+        Ok(p) => r2_loss(reference, &p) <= tolerance,
+        Err(_) => false,
+    }
+}
+
+/// A bare e-graph (datatype only) holding `__p = math`, for evaluation.
+fn build_eval_egraph(math: &str) -> Option<EGraph> {
+    let mut egraph = EGraph::default();
+    egraph.parse_and_run_program(None, MATH_DATATYPE).ok()?;
+    egraph
+        .parse_and_run_program(None, &format!("(let __p {math})"))
+        .ok()?;
+    Some(egraph)
+}
+
+/// Parse a Math s-expression into a `PNode`.
+fn parse_pnode(s: &str) -> Option<PNode> {
+    let toks = pnode_tokenize(s);
+    let mut pos = 0;
+    let n = pnode_parse(&toks, &mut pos)?;
+    if pos == toks.len() {
+        Some(n)
+    } else {
+        None
+    }
+}
+
+fn pnode_tokenize(s: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut chars = s.chars().peekable();
+    while let Some(&c) = chars.peek() {
+        match c {
+            '(' | ')' => {
+                out.push(c.to_string());
+                chars.next();
+            }
+            '"' => {
+                let mut t = String::from("\"");
+                chars.next();
+                for c2 in chars.by_ref() {
+                    if c2 == '"' {
+                        break;
+                    }
+                    t.push(c2);
+                }
+                t.push('"');
+                out.push(t);
+            }
+            c if c.is_whitespace() => {
+                chars.next();
+            }
+            _ => {
+                let mut t = String::new();
+                while let Some(&c2) = chars.peek() {
+                    if c2 == '(' || c2 == ')' || c2.is_whitespace() {
+                        break;
+                    }
+                    t.push(c2);
+                    chars.next();
+                }
+                out.push(t);
+            }
+        }
+    }
+    out
+}
+
+fn pnode_parse(toks: &[String], pos: &mut usize) -> Option<PNode> {
+    if toks.get(*pos)? != "(" {
+        return None;
+    }
+    *pos += 1;
+    let head = toks.get(*pos)?.clone();
+    *pos += 1;
+    let node = match head.as_str() {
+        "Num" => {
+            let v: f64 = toks.get(*pos)?.parse().ok()?;
+            *pos += 1;
+            PNode::Num(v)
+        }
+        "Var" => {
+            let name = toks.get(*pos)?.trim_matches('"').to_string();
+            *pos += 1;
+            PNode::Var(name)
+        }
+        ctor => {
+            let mut ch = Vec::new();
+            while *pos < toks.len() && toks[*pos] != ")" {
+                ch.push(pnode_parse(toks, pos)?);
+            }
+            PNode::App(ctor.to_string(), ch)
+        }
+    };
+    if toks.get(*pos)? != ")" {
+        return None;
+    }
+    *pos += 1;
+    Some(node)
 }
 
 /// Evaluate a term on one row of `(name, value)` bindings.
@@ -183,6 +419,34 @@ mod tests {
             .iter()
             .map(|(x, y)| vec![(a.to_string(), *x), (b.to_string(), *y)])
             .collect()
+    }
+
+    /// Sound #8 replacement: a multiplicative wallpaper factor that is ~1 on
+    /// the actual data gets dropped — WITHOUT assuming what the variable is.
+    /// Here `g` ~ 1.0 on every row, so `x * g` should prune to `x`.
+    #[test]
+    fn data_aware_prune_drops_near_unit_factor() {
+        // g is ~1.0 across rows; the true signal is x. mul(x, g) -> x.
+        let data: Vec<Vec<(String, f64)>> = [(1.0, 1.0), (2.0, 1.0), (3.0, 1.0), (-4.0, 1.0)]
+            .iter()
+            .map(|(x, g)| vec![("x".to_string(), *x), ("g".to_string(), *g)])
+            .collect();
+        let out = denoise(r#"(Mul (Var "x") (Var "g"))"#, &data, 1e-3, 64).expect("denoise");
+        assert_eq!(out.expr, r#"(Var "x")"#, "near-unit factor g should be pruned");
+        assert!(out.changed);
+    }
+
+    /// And it must NOT prune a factor that actually matters on the data.
+    #[test]
+    fn data_aware_prune_keeps_real_factor() {
+        // g varies and matters; mul(x, g) must NOT drop to x.
+        let data: Vec<Vec<(String, f64)>> = [(1.0, 2.0), (2.0, 5.0), (3.0, 0.3), (-4.0, 9.0)]
+            .iter()
+            .map(|(x, g)| vec![("x".to_string(), *x), ("g".to_string(), *g)])
+            .collect();
+        let out = denoise(r#"(Mul (Var "x") (Var "g"))"#, &data, 1e-3, 64).expect("denoise");
+        assert_eq!(out.expr, r#"(Mul (Var "x") (Var "g"))"#, "real factor must be kept");
+        assert!(!out.changed);
     }
 
     #[test]
