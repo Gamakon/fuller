@@ -88,11 +88,23 @@ fn eval_app(
         ("Neg", 1) => -child(0)?,
         ("Sin", 1) => child(0)?.sin(),
         ("Cos", 1) => child(0)?.cos(),
+        ("Tan", 1) => {
+            // tan = sin/cos; NaN at the asymptote (cos == 0).
+            let a = child(0)?;
+            let c = a.cos();
+            if c == 0.0 { f64::NAN } else { a.sin() / c }
+        }
         ("Exp", 1) => child(0)?.exp(),
         ("Tanh", 1) => child(0)?.tanh(),
         ("Abs", 1) => child(0)?.abs(),
         ("Pow2", 1) => { let a = child(0)?; a * a }
         ("Pow3", 1) => { let a = child(0)?; a * a * a }
+        ("Pow", 2) => {
+            // a^b in the real domain. f64::powf already yields NaN for a
+            // negative base with a non-integer exponent, which is exactly the
+            // real-domain rule (no complex branch).
+            child(0)?.powf(child(1)?)
+        }
         ("Log", 1) => {
             let a = child(0)?;
             if a <= 0.0 { f64::NAN } else { a.ln() }

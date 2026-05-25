@@ -5,3 +5,4 @@
 //! public API or `lib.rs`.
 
 pub mod identities;
+pub mod powers;

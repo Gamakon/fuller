@@ -42,9 +42,35 @@ pub const MATH_DATATYPE: &str = r#"
     (Sqrt Math)
     (Abs Math)
     (Tanh Math)
+    (Tan Math)
     (Pow2 Math)
     (Pow3 Math)
+    (Pow Math Math)
     (Inv Math))
+"#;
+
+/// Domain-guard relations shared across rule modules.
+///
+/// egglog 2.0 cannot guard on a free variable's sign directly, so we carry
+/// domain facts as relations a rule can require via `:when`:
+///   * `(is-positive m)` — `m` is known > 0  (guards log/exp identities)
+///   * `(is-nonzero  m)` — `m` is known != 0  (guards div/inv identities)
+///
+/// Facts are introduced two ways: positive/non-zero numeric literals are
+/// seeded at load, and rules may *propagate* the fact (e.g. `Exp x` is always
+/// positive; a product of positives is positive). Modules add their own
+/// propagation rules; this declares the relations and the literal seeds.
+pub const GUARD_RELATIONS: &str = r#"
+(relation is-positive (Math))
+(relation is-nonzero (Math))
+
+; Exp is positive on all reals -> seeds the log/exp domain.
+(rule ((= e (Exp x))) ((is-positive e) (is-nonzero e)))
+; positivity implies non-zero.
+(rule ((is-positive m)) ((is-nonzero m)))
+; product / quotient of positives is positive.
+(rule ((is-positive a) (is-positive b) (= m (Mul a b))) ((is-positive m)))
+(rule ((is-positive a) (is-positive b) (= m (Div a b))) ((is-positive m)))
 "#;
 
 /// Build a fresh e-graph with the `Math` datatype loaded (no rules yet).

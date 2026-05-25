@@ -8,3 +8,6 @@ build/
 dist/
 .venv/
 .DS_Store
+
+# agent worktrees (transient)
+.claude/worktrees/
