@@ -36,6 +36,31 @@ pub const ALGEBRA_RULESET: &str = r#"
 ; sqrt of square  sqrt(x^2) = |x|   (real domain)
 (rewrite (Sqrt (Pow2 x)) (Abs x) :ruleset algebra)
 
+; ---- Additive / subtractive cancellation (Category 1, sound, no guard) ----
+; x - x = 0
+(rewrite (Sub x x) (Num 0.0) :ruleset algebra)
+; (a + b) - b = a ; (b + a) - b = a
+(rewrite (Sub (Add a b) b) a :ruleset algebra)
+(rewrite (Sub (Add b a) b) a :ruleset algebra)
+; (a - b) + b = a ; b + (a - b) = a
+(rewrite (Add (Sub a b) b) a :ruleset algebra)
+(rewrite (Add b (Sub a b)) a :ruleset algebra)
+
+; ---- Argument-at-zero / unity folds (Category 1, sound) ----
+(rewrite (Sin (Num 0.0)) (Num 0.0) :ruleset algebra)
+(rewrite (Cos (Num 0.0)) (Num 1.0) :ruleset algebra)
+(rewrite (Tan (Num 0.0)) (Num 0.0) :ruleset algebra)
+(rewrite (Tanh (Num 0.0)) (Num 0.0) :ruleset algebra)
+(rewrite (Exp (Num 0.0)) (Num 1.0) :ruleset algebra)
+(rewrite (Log (Num 1.0)) (Num 0.0) :ruleset algebra)
+
+; ---- Cancellation on RAW div only (Category 2, guarded; NEVER protected) ----
+; x / x = 1  (raw Div, x != 0). protected_div(x,x) is 0 at x=0 -> excluded.
+(rewrite (Div x x) (Num 1.0) :when ((is-nonzero x)) :ruleset algebra)
+; (a * b) / b = a  (raw Div, b != 0). Both operand orders of the product.
+(rewrite (Div (Mul a b) b) a :when ((is-nonzero b)) :ruleset algebra)
+(rewrite (Div (Mul b a) b) a :when ((is-nonzero b)) :ruleset algebra)
+
 ; ---- Protected-op rules (the protected variants are otherwise INERT) ----
 ; protected_sqrt(x^2) = sqrt(|x^2|) = |x|  — sound: |x^2| = x^2, sqrt(x^2)=|x|.
 (rewrite (ProtectedSqrt (Pow2 x)) (Abs x) :ruleset algebra)
@@ -51,17 +76,20 @@ pub const ALGEBRA_RULESET: &str = r#"
 #[cfg(test)]
 mod tests {
     use super::ALGEBRA_RULESET;
-    use crate::expr::MATH_DATATYPE;
+    use crate::expr::{GUARD_RELATIONS, MATH_DATATYPE};
     use egglog::prelude::exprs;
     use egglog::EGraph;
 
-    /// Load Math + algebra, insert `input`, saturate, extract the lowest-cost
-    /// form as a string.
+    /// Load Math + guards + algebra, insert `input`, saturate, extract the
+    /// lowest-cost form as a string.
     fn simplify(input: &str) -> Result<String, String> {
         let mut egraph = EGraph::default();
         egraph
             .parse_and_run_program(None, MATH_DATATYPE)
             .map_err(|e| format!("datatype: {e}"))?;
+        egraph
+            .parse_and_run_program(None, GUARD_RELATIONS)
+            .map_err(|e| format!("guards: {e}"))?;
         egraph
             .parse_and_run_program(None, ALGEBRA_RULESET)
             .map_err(|e| format!("ruleset: {e}"))?;
@@ -77,6 +105,25 @@ mod tests {
         let (best, _cost) = egraph
             .extract_value_to_string(&sort, value)
             .map_err(|e| format!("extract: {e}"))?;
+        Ok(best)
+    }
+
+    /// Like `simplify` but asserts extra guard facts (e.g. `(is-nonzero ...)`)
+    /// before saturating — used to test that guarded rules fire when their
+    /// precondition is known.
+    fn simplify_with_facts(input: &str, facts: &str) -> Result<String, String> {
+        let mut egraph = EGraph::default();
+        egraph.parse_and_run_program(None, MATH_DATATYPE).map_err(|e| format!("datatype: {e}"))?;
+        egraph.parse_and_run_program(None, GUARD_RELATIONS).map_err(|e| format!("guards: {e}"))?;
+        egraph.parse_and_run_program(None, ALGEBRA_RULESET).map_err(|e| format!("ruleset: {e}"))?;
+        egraph
+            .parse_and_run_program(
+                None,
+                &format!("(let __r {input})\n{facts}\n(run-schedule (saturate (run algebra)))"),
+            )
+            .map_err(|e| format!("insert/saturate {input:?}: {e}"))?;
+        let (sort, value) = egraph.eval_expr(&exprs::var("__r")).map_err(|e| format!("eval: {e}"))?;
+        let (best, _cost) = egraph.extract_value_to_string(&sort, value).map_err(|e| format!("extract: {e}"))?;
         Ok(best)
     }
 
@@ -117,6 +164,45 @@ mod tests {
         let got = simplify(r#"(Add (Mul (Var "x") (Num 1.0)) (Mul (Num 0.0) (Var "y")))"#)
             .expect("simplify");
         assert_eq!(got, r#"(Var "x")"#);
+    }
+
+    /// Category 1: additive cancellation + zero/unity folds (sound, no guard).
+    #[test]
+    fn cancellation_and_folds() {
+        let cases: &[(&str, &str)] = &[
+            (r#"(Sub (Var "x") (Var "x"))"#, "(Num 0.0)"),
+            (r#"(Sub (Add (Var "a") (Var "b")) (Var "b"))"#, r#"(Var "a")"#),
+            (r#"(Add (Sub (Var "a") (Var "b")) (Var "b"))"#, r#"(Var "a")"#),
+            (r#"(Sin (Num 0.0))"#, "(Num 0.0)"),
+            (r#"(Cos (Num 0.0))"#, "(Num 1.0)"),
+            (r#"(Exp (Num 0.0))"#, "(Num 1.0)"),
+            (r#"(Log (Num 1.0))"#, "(Num 0.0)"),
+            (r#"(Tanh (Num 0.0))"#, "(Num 0.0)"),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(simplify(input).unwrap(), *expected, "{input}");
+        }
+    }
+
+    /// Category 2 soundness: raw Div cancellation fires ONLY when the
+    /// denominator is provably nonzero; a bare variable (no nonzero proof) must
+    /// NOT cancel.
+    #[test]
+    fn raw_div_cancellation_is_guarded() {
+        // Bare x/x: x is not provably nonzero -> must NOT become 1.
+        let bare = simplify(r#"(Div (Var "x") (Var "x"))"#).unwrap();
+        assert_eq!(bare, r#"(Div (Var "x") (Var "x"))"#, "unguarded x/x must not fire");
+    }
+
+    /// When the denominator is asserted nonzero, raw Div cancellation fires.
+    #[test]
+    fn raw_div_cancels_when_nonzero_known() {
+        let got = simplify_with_facts(
+            r#"(Div (Var "x") (Var "x"))"#,
+            r#"(is-nonzero (Var "x"))"#,
+        )
+        .unwrap();
+        assert_eq!(got, "(Num 1.0)", "x/x should cancel once x is known nonzero");
     }
 
     /// The one sound protected rule fires: protected_sqrt(x^2) -> |x|.

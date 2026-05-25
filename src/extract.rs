@@ -56,6 +56,9 @@ pub fn denoise(
         .parse_and_run_program(None, MATH_DATATYPE)
         .map_err(|e| format!("datatype: {e}"))?;
     egraph
+        .parse_and_run_program(None, crate::expr::GUARD_RELATIONS)
+        .map_err(|e| format!("guards: {e}"))?;
+    egraph
         .parse_and_run_program(None, ALGEBRA_RULESET)
         .map_err(|e| format!("ruleset: {e}"))?;
     egraph

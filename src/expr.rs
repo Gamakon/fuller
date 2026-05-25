@@ -70,10 +70,12 @@ pub const MATH_DATATYPE: &str = r#"
 ///   * `(is-positive m)` — `m` is known > 0  (guards log/exp identities)
 ///   * `(is-nonzero  m)` — `m` is known != 0  (guards div/inv identities)
 ///
-/// Facts are introduced two ways: positive/non-zero numeric literals are
-/// seeded at load, and rules may *propagate* the fact (e.g. `Exp x` is always
-/// positive; a product of positives is positive). Modules add their own
-/// propagation rules; this declares the relations and the literal seeds.
+/// Facts are introduced by *propagation* (e.g. `Exp x` is always positive;
+/// a product/quotient of positives is positive; positive implies nonzero) and
+/// by the caller asserting a fact for a specific node (e.g. `(is-nonzero (Var
+/// "x"))` when the engine knows a variable's domain). A bare free variable is
+/// NOT assumed nonzero/positive — guarded rules conservatively do not fire on
+/// it, which is the sound default.
 pub const GUARD_RELATIONS: &str = r#"
 (relation is-positive (Math))
 (relation is-nonzero (Math))
