@@ -53,7 +53,7 @@ pub const MATH_DATATYPE: &str = r#"
     ; no rule rewrites them except where provably sound for the protected form.
     ;   ProtectedSqrt x   = sqrt(abs x)
     ;   ProtectedLog  x   = log(abs x)
-    ;   ProtectedExp  x   = exp(min(x, 700))   (overflow-clamped)
+    ;   ProtectedExp  x   = exp(x), returning +inf on overflow (uncapped)
     ;   ProtectedInv  x   = 1/x if x != 0 else 1
     ;   ProtectedDiv  a b = a/b if b != 0 else 0
     (ProtectedSqrt Math)

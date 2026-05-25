@@ -125,7 +125,16 @@ fn eval_app(
             let a = child(0)?.abs(); // log(|x|); |x|==0 -> -inf, matches engine
             a.ln()
         }
-        ("ProtectedExp", 1) => child(0)?.min(700.0).exp(), // overflow-clamped
+        ("ProtectedExp", 1) => {
+            // Match the engine EXACTLY: uncapped exp, returning +inf on
+            // overflow (and on a non-finite input). f64::exp already yields
+            // +inf above ~709.78, matching Python math.exp's OverflowError ->
+            // inf path. Critically NOT exp(min(x,700)): a large-finite return
+            // (~1e304) propagates through products where the engine's inf would
+            // poison them to inf/NaN — an observable divergence.
+            let a = child(0)?;
+            if a.is_finite() { a.exp() } else { f64::INFINITY }
+        }
         ("ProtectedInv", 1) => {
             let a = child(0)?;
             if a == 0.0 { 1.0 } else { 1.0 / a } // 1/x if x!=0 else 1
@@ -202,6 +211,25 @@ mod tests {
         assert_eq!(eval(r#"(Cos (Var "t"))"#, &e).unwrap(), 1.0);
         assert_eq!(eval(r#"(Sin (Var "t"))"#, &e).unwrap(), 0.0);
         assert_eq!(eval(r#"(Exp (Var "t"))"#, &e).unwrap(), 1.0);
+    }
+
+    #[test]
+    fn protected_ops_match_engine_semantics() {
+        // protected_sqrt(|neg|), protected_log(|neg|)
+        let n = env(&[("x", -4.0)]);
+        assert_eq!(eval(r#"(ProtectedSqrt (Var "x"))"#, &n).unwrap(), 2.0); // sqrt|−4|=2
+        assert_eq!(eval(r#"(ProtectedLog (Var "x"))"#, &n).unwrap(), 4.0_f64.ln()); // log|−4|
+        // protected_inv(0)=1, protected_div(a,0)=0
+        let z = env(&[("x", 0.0)]);
+        assert_eq!(eval(r#"(ProtectedInv (Var "x"))"#, &z).unwrap(), 1.0);
+        assert_eq!(eval(r#"(ProtectedDiv (Num 5.0) (Var "x"))"#, &z).unwrap(), 0.0);
+        // protected_exp: normal below overflow, +inf above (matches engine inf,
+        // NOT a capped large-finite value).
+        let small = env(&[("x", 1.0)]);
+        assert_eq!(eval(r#"(ProtectedExp (Var "x"))"#, &small).unwrap(), 1.0_f64.exp());
+        let big = env(&[("x", 1000.0)]);
+        assert!(eval(r#"(ProtectedExp (Var "x"))"#, &big).unwrap().is_infinite(),
+            "protected_exp(1000) must be +inf, not a capped finite");
     }
 
     #[test]
