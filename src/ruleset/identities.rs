@@ -35,6 +35,14 @@ pub const ALGEBRA_RULESET: &str = r#"
 (rewrite (Abs (Abs x)) (Abs x) :ruleset algebra)
 ; sqrt of square  sqrt(x^2) = |x|   (real domain)
 (rewrite (Sqrt (Pow2 x)) (Abs x) :ruleset algebra)
+
+; ---- Protected-op rules (the protected variants are otherwise INERT) ----
+; protected_sqrt(x^2) = sqrt(|x^2|) = |x|  — sound: |x^2| = x^2, sqrt(x^2)=|x|.
+(rewrite (ProtectedSqrt (Pow2 x)) (Abs x) :ruleset algebra)
+; NOTE: no other protected rule fires. In particular NONE of the div/inv
+; cancellation rules lift onto ProtectedDiv/ProtectedInv — e.g.
+; protected_div(x,x) is 0 at x=0 (not 1), and protected_inv(0)=1 (not undefined),
+; so the raw guarded rules would be unsound on the protected forms.
 "#;
 
 // Note: Rule 1 (constant folding, e.g. cos(0) -> 1) is data/value driven and
@@ -109,5 +117,34 @@ mod tests {
         let got = simplify(r#"(Add (Mul (Var "x") (Num 1.0)) (Mul (Num 0.0) (Var "y")))"#)
             .expect("simplify");
         assert_eq!(got, r#"(Var "x")"#);
+    }
+
+    /// The one sound protected rule fires: protected_sqrt(x^2) -> |x|.
+    #[test]
+    fn protected_sqrt_of_square_collapses() {
+        let got = simplify(r#"(ProtectedSqrt (Pow2 (Var "x")))"#).expect("simplify");
+        assert_eq!(got, r#"(Abs (Var "x"))"#);
+    }
+
+    /// Soundness floor: protected ops are INERT — no rule rewrites them into
+    /// their raw counterparts or applies an unsound cancellation. These must
+    /// come back unchanged (the raw versions WOULD rewrite, which is the bug
+    /// we're preventing).
+    #[test]
+    fn protected_ops_are_inert() {
+        let cases = [
+            // protected_div(x,x) must NOT become 1 (it's 0 at x=0)
+            r#"(ProtectedDiv (Var "x") (Var "x"))"#,
+            // protected_inv(protected_inv x) must NOT collapse to x (inv(0)=1)
+            r#"(ProtectedInv (ProtectedInv (Var "x")))"#,
+            // protected_log(protected_exp x) must NOT collapse to x
+            r#"(ProtectedLog (ProtectedExp (Var "x")))"#,
+            // protected_sqrt(x) alone must NOT become Sqrt or Abs
+            r#"(ProtectedSqrt (Var "x"))"#,
+        ];
+        for input in cases {
+            let got = simplify(input).expect("simplify");
+            assert_eq!(got, input, "protected op was rewritten (unsound!): {input}");
+        }
     }
 }

@@ -66,6 +66,12 @@ fn semantic_to_math(semantic: &str, children: &[String]) -> Result<String, Strin
         ("pow2", 1) => "Pow2",
         ("pow3", 1) => "Pow3",
         ("inv", 1) => "Inv",
+        // protected ops — distinct constructors, never the raw ones
+        ("protected_sqrt", 1) => "ProtectedSqrt",
+        ("protected_log", 1) => "ProtectedLog",
+        ("protected_exp", 1) => "ProtectedExp",
+        ("protected_inv", 1) => "ProtectedInv",
+        ("protected_div", 2) => "ProtectedDiv",
         // diff_sq(a,b) = (a-b)^2, expressed via Pow2(Sub a b).
         ("diff_sq", 2) => {
             return Ok(format!("(Pow2 (Sub {} {}))", children[0], children[1]));
@@ -199,6 +205,11 @@ fn math_ctor_to_semantic(ctor: &str) -> Option<&'static str> {
         "Pow2" => "pow2",
         "Pow3" => "pow3",
         "Inv" => "inv",
+        "ProtectedSqrt" => "protected_sqrt",
+        "ProtectedLog" => "protected_log",
+        "ProtectedExp" => "protected_exp",
+        "ProtectedInv" => "protected_inv",
+        "ProtectedDiv" => "protected_div",
         _ => return None,
     })
 }
@@ -500,3 +511,4 @@ mod tests {
             || head.iter().any(|t| matches!(t, Token::Func(_))));
     }
 }
+

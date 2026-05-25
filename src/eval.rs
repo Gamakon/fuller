@@ -117,6 +117,23 @@ fn eval_app(
             let a = child(0)?;
             if a == 0.0 { f64::NAN } else { 1.0 / a }
         }
+        // Protected ops — match the SR engine's pset semantics EXACTLY. These
+        // are total (never NaN on the engine's domain), distinct from the raw
+        // ops above.
+        ("ProtectedSqrt", 1) => child(0)?.abs().sqrt(), // sqrt(|x|)
+        ("ProtectedLog", 1) => {
+            let a = child(0)?.abs(); // log(|x|); |x|==0 -> -inf, matches engine
+            a.ln()
+        }
+        ("ProtectedExp", 1) => child(0)?.min(700.0).exp(), // overflow-clamped
+        ("ProtectedInv", 1) => {
+            let a = child(0)?;
+            if a == 0.0 { 1.0 } else { 1.0 / a } // 1/x if x!=0 else 1
+        }
+        ("ProtectedDiv", 2) => {
+            let (a, b) = (child(0)?, child(1)?);
+            if b == 0.0 { 0.0 } else { a / b } // a/b if b!=0 else 0
+        }
         _ => return Err(EvalError::BadNode(format!("{op}/{}", args.len()))),
     };
     Ok(val)

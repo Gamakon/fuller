@@ -140,10 +140,25 @@ fn denoise_karva(
         _ => return unchanged(py),
     };
 
-    // Math -> karva.
+    // Math -> karva. A denoise can succeed yet produce a constructor whose
+    // semantic_id has no token in the caller's pset (e.g. result is Abs but the
+    // pset has no abs op). That is NOT "nothing to simplify" — surface it so the
+    // caller knows the result was inexpressible rather than silently dropping a
+    // real simplification. The chromosome is still returned unchanged (safe),
+    // but flagged.
     let (new_head, new_tail) = match terms_to_karva(&denoised.expr, &pset, rng_seed) {
         Ok(ht) => ht,
-        Err(_) => return unchanged(py),
+        Err(why) => {
+            let out = PyDict::new_bound(py);
+            out.set_item("head", tokens_to_py(py, &head_toks)?)?;
+            out.set_item("tail", tokens_to_py(py, &tail_toks)?)?;
+            out.set_item("changed", false)?;
+            out.set_item("expr", py.None())?;
+            // Distinguishing signal: a simpler form existed but the pset can't
+            // name it. The caller may want to add the missing op to its pset.
+            out.set_item("inexpressible", format!("{} ({})", denoised.expr, why))?;
+            return Ok(out.into());
+        }
     };
 
     let out = PyDict::new_bound(py);

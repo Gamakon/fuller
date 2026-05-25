@@ -46,7 +46,21 @@ pub const MATH_DATATYPE: &str = r#"
     (Pow2 Math)
     (Pow3 Math)
     (Pow Math Math)
-    (Inv Math))
+    (Inv Math)
+    ; Protected ops — DISTINCT functions from their raw counterparts. The SR
+    ; engine's pset uses these; mapping them to raw Sqrt/Log/Div/Exp/Inv would
+    ; be UNSOUND (they disagree on negatives / zero). They are inert by default:
+    ; no rule rewrites them except where provably sound for the protected form.
+    ;   ProtectedSqrt x   = sqrt(abs x)
+    ;   ProtectedLog  x   = log(abs x)
+    ;   ProtectedExp  x   = exp(min(x, 700))   (overflow-clamped)
+    ;   ProtectedInv  x   = 1/x if x != 0 else 1
+    ;   ProtectedDiv  a b = a/b if b != 0 else 0
+    (ProtectedSqrt Math)
+    (ProtectedLog Math)
+    (ProtectedExp Math)
+    (ProtectedInv Math)
+    (ProtectedDiv Math Math))
 "#;
 
 /// Domain-guard relations shared across rule modules.
