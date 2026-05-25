@@ -1,0 +1,28 @@
+[package]
+name = "gamakast"
+version = "0.1.0"
+edition = "2021"
+description = "Egglog-based bidirectional AST hub for symbolic expression rewriting"
+license = "MIT"
+
+[lib]
+name = "gamakast"
+# rlib for Rust tests/examples; cdylib for the PyO3 extension module.
+crate-type = ["rlib", "cdylib"]
+
+[dependencies]
+egglog = "=2.0.0"
+
+[dependencies.pyo3]
+version = "0.22"
+features = ["extension-module"]
+optional = true
+
+[features]
+# `python` builds the PyO3 extension module; off by default so plain
+# `cargo build` / `cargo test` / examples never need the Python link env.
+default = []
+python = ["dep:pyo3"]
+
+[[example]]
+name = "00_calibration"
