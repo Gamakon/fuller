@@ -83,7 +83,20 @@ def lattice():
                             f'(Div (Num 1.0) (Mul (Num {ni}) {cv}))', f"1/({n}*{name})", 5))
         for p in POWS:
             out.append(emit(val ** p, f'(Pow {cv} (Num {float(p)}))', f"{name}^{p}", 3))
-        out.append(emit(math.sqrt(val), f"(Sqrt {cv})", f"sqrt({name})", 2))
+        # --- sqrt family (Gaussian normaliser 1/sqrt(2*pi) and friends) ---
+        if val > 0:
+            out.append(emit(math.sqrt(val), f"(Sqrt {cv})", f"sqrt({name})", 2))
+            # 1/sqrt(c)
+            out.append(emit(1.0 / math.sqrt(val),
+                            f"(Div (Num 1.0) (Sqrt {cv}))", f"1/sqrt({name})", 4))
+            for n in INTS:
+                ni = float(n)
+                # sqrt(n*c) and the reciprocal 1/sqrt(n*c) — covers 1/sqrt(2*pi)
+                out.append(emit(math.sqrt(ni * val),
+                                f"(Sqrt (Mul (Num {ni}) {cv}))", f"sqrt({n}*{name})", 4))
+                out.append(emit(1.0 / math.sqrt(ni * val),
+                                f"(Div (Num 1.0) (Sqrt (Mul (Num {ni}) {cv})))",
+                                f"1/sqrt({n}*{name})", 6))
     # pairwise products / ratios of two distinct constants (c1*c2, c1/c2)
     for i, (n1, v1) in enumerate(BASE):
         for n2, v2 in BASE[i + 1:]:
