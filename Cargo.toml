@@ -12,6 +12,7 @@ crate-type = ["rlib", "cdylib"]
 
 [dependencies]
 egglog = "=2.0.0"
+rayon = "1.10"
 
 [dependencies.pyo3]
 version = "0.22"

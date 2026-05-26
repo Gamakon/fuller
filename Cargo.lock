@@ -603,6 +603,7 @@ version = "0.1.0"
 dependencies = [
  "egglog",
  "pyo3",
+ "rayon",
 ]
 
 [[package]]

@@ -19,6 +19,7 @@
 use egglog::extract::{Extractor, TreeAdditiveCostModel};
 use egglog::prelude::exprs;
 use egglog::{EGraph, TermDag};
+use rayon::prelude::*;
 
 use crate::eval::{eval_term, EvalError};
 use crate::expr::MATH_DATATYPE;
@@ -34,6 +35,21 @@ pub struct Denoised {
     /// True if a strictly smaller equivalent form was accepted; false if the
     /// input was returned unchanged (no opportunity, or none within tolerance).
     pub changed: bool,
+}
+
+/// One candidate from `denoise_candidates`: a (potentially) equivalent form
+/// of the input expression, with its structural cost and whether it's the
+/// reference (input) itself. The caller decides which to keep — typically by
+/// scoring each through HFF and picking the lowest-angle one.
+#[derive(Debug, Clone)]
+pub struct DenoiseCandidate {
+    /// Candidate expression as Math s-expression string.
+    pub expr: String,
+    /// egglog structural cost (lower = simpler).
+    pub cost: u64,
+    /// True if this is the original input expression itself (cost-tied at
+    /// the highest-cost variant in the e-class extraction).
+    pub is_original: bool,
 }
 
 /// Denoise `input` (egglog `Math` surface syntax) against training data.
@@ -112,8 +128,11 @@ pub fn denoise(
     ordered.sort_by_key(|(c, _)| *c); // lowest cost first
     let (ref_cost, ref_term) = *ordered.last().expect("non-empty checked above");
 
+    // Parallel: independent per-row evals. TermDag and the constants cache
+    // (snap_karva::constant_values, OnceLock'd) are both Sync/&'static, so
+    // rayon workers share them without contention.
     let reference: Vec<f64> = rows
-        .iter()
+        .par_iter()
         .map(|row| eval_row(&termdag, ref_term, row))
         .collect::<Result<_, _>>()
         .map_err(|e| format!("evaluating reference: {e}"))?;
@@ -124,7 +143,7 @@ pub fn denoise(
     let mut changed = false;
     for (cost, term) in ordered.iter() {
         let preds: Result<Vec<f64>, EvalError> =
-            rows.iter().map(|row| eval_row(&termdag, *term, row)).collect();
+            rows.par_iter().map(|row| eval_row(&termdag, *term, row)).collect();
         let preds = match preds {
             Ok(p) => p,
             Err(_) => continue, // unevaluable candidate — skip
@@ -153,6 +172,114 @@ pub fn denoise(
     }
 
     Ok(Denoised { expr: chosen_expr, cost: chosen_cost, changed })
+}
+
+/// Like `denoise`, but returns ALL candidates instead of picking one by a
+/// hardcoded tolerance. The caller (engine) is expected to score each via
+/// HFF and pick the lowest-angle one — gamakAST's job is to PROPOSE
+/// candidates, the engine's HFF cone DISPOSES.
+///
+/// Candidates include:
+///   1. Every e-class variant (equivalent forms under the algebra+powers
+///      rulesets).
+///   2. Greedy `prune_on_data` shrinkings at multiple R²-loss budgets
+///      (1e-10, 1e-6, 1e-3, 1e-2, 1e-1) — each produces a (potentially)
+///      different pruned form. NOTE: r²-loss here measures drift from the
+///      input's own predictions (not truth). A pruned form that drops
+///      data-negligible atoms (e.g. `eps0+x → x`) has loss ~0 and is
+///      strictly cleaner — the engine will see lower n_nodes and an
+///      improved (or unchanged) HFF vec.
+///
+/// Returns candidates in no particular order; engine should score every one.
+pub fn denoise_candidates(
+    input: &str,
+    rows: &[Vec<(String, f64)>],
+    k_variants: usize,
+) -> Result<Vec<DenoiseCandidate>, String> {
+    let mut egraph = EGraph::default();
+    egraph
+        .parse_and_run_program(None, MATH_DATATYPE)
+        .map_err(|e| format!("datatype: {e}"))?;
+    egraph
+        .parse_and_run_program(None, crate::expr::GUARD_RELATIONS)
+        .map_err(|e| format!("guards: {e}"))?;
+    egraph
+        .parse_and_run_program(None, ALGEBRA_RULESET)
+        .map_err(|e| format!("algebra ruleset: {e}"))?;
+    egraph
+        .parse_and_run_program(None, crate::ruleset::powers::POWERS_RULESET)
+        .map_err(|e| format!("powers ruleset: {e}"))?;
+    egraph
+        .parse_and_run_program(
+            None,
+            &format!(
+                "(let __root {input})\n\
+                 (unstable-combined-ruleset denoise_all algebra powers)\n\
+                 (run-schedule (saturate (run denoise_all)))"
+            ),
+        )
+        .map_err(|e| format!("insert/saturate {input:?}: {e}"))?;
+
+    let (sort, value) = egraph
+        .eval_expr(&exprs::var("__root"))
+        .map_err(|e| format!("eval root: {e}"))?;
+
+    let extractor = Extractor::compute_costs_from_rootsorts(
+        Some(vec![sort.clone()]),
+        &egraph,
+        TreeAdditiveCostModel::default(),
+    );
+    let mut termdag = TermDag::default();
+
+    let variants = extractor.extract_variants(&egraph, &mut termdag, value, k_variants.max(1));
+    if variants.is_empty() {
+        return Err(format!("no variants extracted for {input:?}"));
+    }
+
+    let mut ordered = variants.clone();
+    ordered.sort_by_key(|(c, _)| *c);
+    let (ref_cost, ref_term) = *ordered.last().expect("non-empty checked above");
+    let ref_expr = termdag.to_string(ref_term);
+
+    let reference: Vec<f64> = rows
+        .par_iter()
+        .map(|row| eval_row(&termdag, ref_term, row))
+        .collect::<Result<_, _>>()
+        .map_err(|e| format!("evaluating reference: {e}"))?;
+
+    // 1. Every variant — verify it can eval, include if so.
+    let mut out: Vec<DenoiseCandidate> = Vec::new();
+    let mut seen_exprs: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for (cost, term) in ordered.iter() {
+        let preds: Result<Vec<f64>, EvalError> =
+            rows.par_iter().map(|row| eval_row(&termdag, *term, row)).collect();
+        if preds.is_err() {
+            continue; // unevaluable on data — skip
+        }
+        let expr = termdag.to_string(*term);
+        if !seen_exprs.insert(expr.clone()) {
+            continue;
+        }
+        let is_original = *cost == ref_cost && expr == ref_expr;
+        out.push(DenoiseCandidate { expr, cost: *cost, is_original });
+    }
+
+    // 2. Pruned forms at multiple tolerances. The reference for pruning is
+    // the input's own predictions; a prune that drops a data-negligible
+    // atom has near-zero drift and is strictly cleaner.
+    for &tol in &[1e-10_f64, 1e-6, 1e-3, 1e-2, 1e-1] {
+        if let Some(pruned) = prune_on_data(&ref_expr, rows, &reference, tol) {
+            if seen_exprs.insert(pruned.clone()) {
+                out.push(DenoiseCandidate {
+                    expr: pruned.clone(),
+                    cost: cost_of(&pruned),
+                    is_original: false,
+                });
+            }
+        }
+    }
+
+    Ok(out)
 }
 
 // ---------------------------------------------------------------------------
@@ -278,7 +405,7 @@ fn fits(node: &PNode, rows: &[Vec<(String, f64)>], reference: &[f64], tolerance:
         Err(_) => return false,
     };
     let preds: Result<Vec<f64>, EvalError> =
-        rows.iter().map(|row| eval_row(&termdag, term, row)).collect();
+        rows.par_iter().map(|row| eval_row(&termdag, term, row)).collect();
     match preds {
         Ok(p) => r2_loss(reference, &p) <= tolerance,
         Err(_) => false,
@@ -381,13 +508,25 @@ fn pnode_parse(toks: &[String], pos: &mut usize) -> Option<PNode> {
 }
 
 /// Evaluate a term on one row of `(name, value)` bindings.
+///
+/// Falls back to `snap_karva::constant_values()` for any name not present in
+/// the row — so universal atoms (pi, G, hbar, eps0, kB, ...) that the GA
+/// registers as SymbolTerminals resolve to their numeric values during
+/// data-driven pruning. Without this, every candidate referencing an atom
+/// errors as UnboundVar and prune_on_data can't see that the term is
+/// numerically negligible against the data variables.
 fn eval_row(
     termdag: &TermDag,
     term: egglog::TermId,
     row: &[(String, f64)],
 ) -> Result<f64, EvalError> {
+    let consts = crate::snap_karva::constant_values();
     eval_term(termdag, term, &|name: &str| {
-        row.iter().find(|(n, _)| n == name).map(|(_, v)| *v)
+        // Row values win (a data column named e.g. "pi" would override).
+        row.iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, v)| *v)
+            .or_else(|| consts.get(name).copied())
     })
 }
 

@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
-use crate::extract::denoise as denoise_core;
+use crate::extract::{denoise as denoise_core, denoise_candidates};
 use crate::karva::{
     karva_to_terms, terms_to_karva_sized, FunctionSpec, PsetSpec, Token,
 };
@@ -184,6 +184,95 @@ fn denoise_karva(
     out.set_item("changed", true)?;
     out.set_item("expr", denoised.expr)?;
     Ok(out.into())
+}
+
+/// Like `denoise_karva` but returns ALL candidates (equivalent forms +
+/// pruned variants) — the engine scores them all via HFF and picks the
+/// winner. No internal accept/reject: gamakAST proposes, HFF disposes.
+///
+/// Returns a list of dicts, each shaped exactly like a `denoise_karva`
+/// success result:
+///   {"head": [...], "tail": [...], "expr": Math str, "cost": int,
+///    "is_original": bool, "oversized": bool, "inexpressible": optional str}
+///
+/// Engine usage (sketch):
+///   cands = denoise_karva_candidates(head, tail, vars, fns, rnc, rows,
+///                                      target_head_length=gene.head_length)
+///   # Score each via _compute_raw_metrics + HFF; keep the lowest-angle one.
+#[pyfunction]
+#[pyo3(signature = (head, tail, variables, functions, rnc_values, rows,
+                    k_variants = 64, rng_seed = 0,
+                    target_head_length = None))]
+#[allow(clippy::too_many_arguments)]
+fn denoise_karva_candidates(
+    py: Python<'_>,
+    head: Vec<PyToken>,
+    tail: Vec<PyToken>,
+    variables: Vec<String>,
+    functions: HashMap<String, (String, usize)>,
+    rnc_values: Vec<f64>,
+    rows: Vec<HashMap<String, f64>>,
+    k_variants: usize,
+    rng_seed: u64,
+    target_head_length: Option<usize>,
+) -> PyResult<Vec<Py<PyDict>>> {
+    let pset = build_pset(variables, functions, rnc_values);
+    let head_toks = build_tokens(py, head)?;
+    let tail_toks = build_tokens(py, tail)?;
+
+    // karva -> Math. If it can't be encoded, return just the original.
+    let math = match karva_to_terms(&head_toks, &tail_toks, &pset) {
+        Ok(m) => m,
+        Err(_) => {
+            // Return single "original" candidate so caller has a uniform list.
+            let d = PyDict::new_bound(py);
+            d.set_item("head", tokens_to_py(py, &head_toks)?)?;
+            d.set_item("tail", tokens_to_py(py, &tail_toks)?)?;
+            d.set_item("expr", py.None())?;
+            d.set_item("cost", 0u64)?;
+            d.set_item("is_original", true)?;
+            d.set_item("oversized", false)?;
+            return Ok(vec![d.into()]);
+        }
+    };
+
+    let core_rows: Vec<Vec<(String, f64)>> =
+        rows.into_iter().map(|m| m.into_iter().collect()).collect();
+
+    let candidates =
+        denoise_candidates(&math, &core_rows, k_variants).map_err(pyo3::exceptions::PyValueError::new_err)?;
+
+    let mut out: Vec<Py<PyDict>> = Vec::with_capacity(candidates.len());
+    for c in candidates {
+        let d = PyDict::new_bound(py);
+        match terms_to_karva_sized(&c.expr, &pset, rng_seed, target_head_length) {
+            Ok((new_head, new_tail, oversized)) => {
+                if oversized {
+                    // Skip oversized candidates — caller can't use them.
+                    continue;
+                }
+                d.set_item("head", tokens_to_py(py, &new_head)?)?;
+                d.set_item("tail", tokens_to_py(py, &new_tail)?)?;
+                d.set_item("expr", c.expr)?;
+                d.set_item("cost", c.cost)?;
+                d.set_item("is_original", c.is_original)?;
+                d.set_item("oversized", false)?;
+            }
+            Err(why) => {
+                // Pset can't name this candidate — surface for diagnostics
+                // and skip the karva fields. Caller iterates expecting
+                // candidates with head/tail, so this is effectively dropped.
+                d.set_item("head", py.None())?;
+                d.set_item("tail", py.None())?;
+                d.set_item("expr", c.expr)?;
+                d.set_item("cost", c.cost)?;
+                d.set_item("is_original", c.is_original)?;
+                d.set_item("inexpressible", why)?;
+            }
+        }
+        out.push(d.into());
+    }
+    Ok(out)
 }
 
 /// Render `Vec<Token>` back to a list of (kind, value) tuples for Python.
@@ -454,6 +543,7 @@ fn master_pset() -> Vec<(String, usize)> {
 fn _gamakast(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(denoise, m)?)?;
     m.add_function(wrap_pyfunction!(denoise_karva, m)?)?;
+    m.add_function(wrap_pyfunction!(denoise_karva_candidates, m)?)?;
     m.add_function(wrap_pyfunction!(physics_mutate, m)?)?;
     m.add_function(wrap_pyfunction!(physics_mutate_karva, m)?)?;
     m.add_function(wrap_pyfunction!(master_pset, m)?)?;

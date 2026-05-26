@@ -16,6 +16,7 @@ Example
 from ._gamakast import (
     denoise,
     denoise_karva,
+    denoise_karva_candidates,
     master_pset,
     master_constants,
     master_lattice,
@@ -27,6 +28,7 @@ from ._gamakast import (
 __all__ = [
     "denoise",
     "denoise_karva",
+    "denoise_karva_candidates",
     "master_pset",
     "master_constants",
     "master_lattice",

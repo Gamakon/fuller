@@ -115,21 +115,35 @@ fn unescape(s: &str) -> String {
 /// (Var "pi")))` built from these atoms, not as their own terminal. So this is
 /// the lattice's single-`Var` entries (~16 base constants), not all 1428.
 pub fn master_constants() -> Vec<(String, f64)> {
-    let mut v: Vec<(String, f64)> = constant_values().into_iter().collect();
+    // Clone keys/values to give callers owned data; constant_values() returns
+    // a &'static reference to the cached map.
+    let mut v: Vec<(String, f64)> = constant_values()
+        .iter()
+        .map(|(k, v)| (k.clone(), *v))
+        .collect();
     v.sort_by(|a, b| a.0.cmp(&b.0));
     v
 }
 
 /// Map of constant name -> value, for binding constant `Var`s during eval.
-pub fn constant_values() -> HashMap<String, f64> {
-    // Re-derive from the lattice's single-constant entries where math == (Var "x").
-    let mut m = HashMap::new();
-    for e in lattice() {
-        if let Some(name) = e.math.strip_prefix("(Var \"").and_then(|r| r.strip_suffix("\")")) {
-            m.insert(name.to_string(), e.value);
+///
+/// Cached behind a process-wide `OnceLock` — the lattice is fixed at compile
+/// time, so the map is built once and shared. Critical for performance in
+/// `denoise`/`prune_on_data`, which calls into this on every row × every
+/// candidate; rebuilding the HashMap each time was a 6-7 figure allocation
+/// hot path.
+pub fn constant_values() -> &'static HashMap<String, f64> {
+    use std::sync::OnceLock;
+    static CACHE: OnceLock<HashMap<String, f64>> = OnceLock::new();
+    CACHE.get_or_init(|| {
+        let mut m = HashMap::new();
+        for e in lattice() {
+            if let Some(name) = e.math.strip_prefix("(Var \"").and_then(|r| r.strip_suffix("\")")) {
+                m.insert(name.to_string(), e.value);
+            }
         }
-    }
-    m
+        m
+    })
 }
 
 /// A snapped candidate.
