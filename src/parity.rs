@@ -14,6 +14,7 @@
 use egglog::EGraph;
 
 use crate::expr::{GUARD_RELATIONS, MATH_DATATYPE};
+use crate::ruleset::distribute::DISTRIBUTE_RULESET;
 use crate::ruleset::identities::ALGEBRA_RULESET;
 use crate::ruleset::powers::POWERS_RULESET;
 
@@ -46,7 +47,8 @@ impl ParityReport {
 fn all_rulesets_program() -> String {
     format!(
         "{MATH_DATATYPE}\n{GUARD_RELATIONS}\n{ALGEBRA_RULESET}\n{POWERS_RULESET}\n\
-         (unstable-combined-ruleset all algebra powers)"
+         {DISTRIBUTE_RULESET}\n\
+         (unstable-combined-ruleset all algebra powers distribute)"
     )
 }
 
