@@ -47,6 +47,42 @@ pub enum Token {
     Num(f64),
 }
 
+/// The MASTER semantic-id set: every `(semantic_id, arity)` any rewrite or
+/// physics-prior rule can emit. The SR engine seeds its pset with one token per
+/// entry up front; then `terms_to_karva` can always name any candidate, so no
+/// generated chromosome is ever dropped as inexpressible.
+///
+/// This is the single source of truth, kept in lockstep with `semantic_to_math`
+/// (a test asserts every entry round-trips through it). `diff_sq` is omitted
+/// deliberately — it lowers to `pow2`+`sub`, which are already present, so it is
+/// not a constructor the engine needs a distinct token for.
+pub fn master_pset() -> Vec<(&'static str, usize)> {
+    vec![
+        ("add", 2),
+        ("sub", 2),
+        ("mul", 2),
+        ("div", 2),
+        ("neg", 1),
+        ("sin", 1),
+        ("cos", 1),
+        ("tan", 1),
+        ("log", 1),
+        ("exp", 1),
+        ("sqrt", 1),
+        ("abs", 1),
+        ("tanh", 1),
+        ("pow2", 1),
+        ("pow3", 1),
+        ("pow", 2),
+        ("inv", 1),
+        ("protected_sqrt", 1),
+        ("protected_log", 1),
+        ("protected_exp", 1),
+        ("protected_inv", 1),
+        ("protected_div", 2),
+    ]
+}
+
 /// Map a semantic id + child Math strings into a `Math` s-expression node.
 fn semantic_to_math(semantic: &str, children: &[String]) -> Result<String, String> {
     let ctor = match (semantic, children.len()) {
@@ -65,6 +101,7 @@ fn semantic_to_math(semantic: &str, children: &[String]) -> Result<String, Strin
         ("tanh", 1) => "Tanh",
         ("pow2", 1) => "Pow2",
         ("pow3", 1) => "Pow3",
+        ("pow", 2) => "Pow",
         ("inv", 1) => "Inv",
         // protected ops — distinct constructors, never the raw ones
         ("protected_sqrt", 1) => "ProtectedSqrt",
@@ -394,6 +431,19 @@ pub fn terms_to_karva(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The master pset must stay in lockstep with `semantic_to_math`: every
+    /// advertised (semantic_id, arity) must actually encode to a Math node, or
+    /// the engine could seed a token gamakAST can't render. Dummy children make
+    /// the arity right.
+    #[test]
+    fn master_pset_entries_all_encode() {
+        for (sid, arity) in master_pset() {
+            let kids: Vec<String> = (0..arity).map(|_| "(Num 1.0)".to_string()).collect();
+            let r = semantic_to_math(sid, &kids);
+            assert!(r.is_ok(), "master_pset entry {sid}/{arity} does not encode: {r:?}");
+        }
+    }
 
     fn pset() -> PsetSpec {
         let mut functions = HashMap::new();

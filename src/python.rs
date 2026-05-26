@@ -216,6 +216,90 @@ fn physics_mutate(
         .collect()
 }
 
+/// Physics-prior mutation GENERATOR, karva in / karva out — the interface the
+/// SR engine uses. The engine selects a chromosome (by its own probability) and
+/// passes its karva head/tail; this returns physics-shaped candidate
+/// CHROMOSOMES (not Math strings).
+///
+/// One gene in -> a proliferation of physics-shaped candidate genes out. Pure
+/// generation: NO data, NO evaluation, NO scoring. The caller selects with HFF
+/// and MUST gate `speculative=True` candidates on the extrapolation objective.
+///
+/// Args (head/tail/variables/functions/rnc_values exactly as `denoise_karva`):
+///   head, tail   — lists of ("func"|"var"|"num", value) tuples.
+///   variables    — pset variable names.
+///   functions    — dict token_name -> (semantic_id, arity).
+///   rnc_values   — numeric constants (used when re-padding candidate tails).
+///   paired_groups— coordinate axes, e.g. [["x1","x2"],["y1","y2"]].
+///   n, seed      — max candidates returned (>=1) + reproducible sample.
+///
+/// Returns a list of {"head": [...], "tail": [...], "rule": str,
+/// "speculative": bool}. Candidates whose form cannot be expressed in the
+/// caller's pset (no token for a produced op) are skipped — so you only ever
+/// get back chromosomes you can actually decode. Never raises on a normal gene.
+#[pyfunction]
+#[pyo3(signature = (head, tail, variables, functions, rnc_values, paired_groups,
+                    n = 10, seed = 0))]
+#[allow(clippy::too_many_arguments)]
+fn physics_mutate_karva(
+    py: Python<'_>,
+    head: Vec<PyToken>,
+    tail: Vec<PyToken>,
+    variables: Vec<String>,
+    functions: HashMap<String, (String, usize)>,
+    rnc_values: Vec<f64>,
+    paired_groups: Vec<Vec<String>>,
+    n: usize,
+    seed: u64,
+) -> PyResult<Vec<Py<PyDict>>> {
+    let pset = build_pset(variables, functions, rnc_values);
+    let head_toks = build_tokens(py, head)?;
+    let tail_toks = build_tokens(py, tail)?;
+
+    // karva -> Math. If the input gene can't be encoded, there is nothing to
+    // mutate; return an empty list (no candidates), not an error.
+    let math = match karva_to_terms(&head_toks, &tail_toks, &pset) {
+        Ok(m) => m,
+        Err(_) => return Ok(Vec::new()),
+    };
+
+    let cands = crate::physics::generate(&math, &paired_groups, n, seed)
+        .map_err(pyo3::exceptions::PyValueError::new_err)?;
+
+    // Convert each candidate Math back to a karva chromosome. Skip any that the
+    // caller's pset can't name (same contract as denoise_karva's inexpressible
+    // path — we don't hand back chromosomes they can't decode).
+    let mut out = Vec::new();
+    for c in cands {
+        let (cand_head, cand_tail) = match terms_to_karva(&c.expr, &pset, seed) {
+            Ok(ht) => ht,
+            Err(_) => continue,
+        };
+        let d = PyDict::new_bound(py);
+        d.set_item("head", tokens_to_py(py, &cand_head)?)?;
+        d.set_item("tail", tokens_to_py(py, &cand_tail)?)?;
+        d.set_item("rule", c.rule)?;
+        d.set_item("speculative", c.speculative)?;
+        out.push(d.into());
+    }
+    Ok(out)
+}
+
+/// The MASTER pset: every `(semantic_id, arity)` any gamakAST mutation
+/// (denoise or physics-prior) can emit. The SR engine seeds its pset with one
+/// token per entry UP FRONT, so every returned candidate is always expressible
+/// — no candidate is ever dropped for lack of a token.
+///
+/// Returns a list of `(semantic_id, arity)` tuples. The engine maps each to its
+/// own token name when building the `functions` dict it passes back in.
+#[pyfunction]
+fn master_pset() -> Vec<(String, usize)> {
+    crate::karva::master_pset()
+        .into_iter()
+        .map(|(s, a)| (s.to_string(), a))
+        .collect()
+}
+
 /// The native extension module. `module-name` in pyproject.toml is
 /// `gamakAST._gamakast`, so this initialises `_gamakast`; the Python shim
 /// re-exports from it.
@@ -224,5 +308,7 @@ fn _gamakast(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(denoise, m)?)?;
     m.add_function(wrap_pyfunction!(denoise_karva, m)?)?;
     m.add_function(wrap_pyfunction!(physics_mutate, m)?)?;
+    m.add_function(wrap_pyfunction!(physics_mutate_karva, m)?)?;
+    m.add_function(wrap_pyfunction!(master_pset, m)?)?;
     Ok(())
 }

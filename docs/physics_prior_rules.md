@@ -83,6 +83,48 @@ Legend: **Dir** = directional rewrite shape. **Dial** = trust level.
 | F3 | collapse `Sin(Exp(...))`-style nested-transcendental wallpaper to a constant if ~constant on data | → | DATA | remove deep wallpaper |
 | F4 | drop additive term that's small everywhere on data (sub-tree data-aware) | → | DATA | (covered by denoise prune) |
 
+## Group G — Trigonometric-identity templates (mined from SymPy `simplify/fu.py`)
+
+These are **exact trigonometric identities** re-expressed as one-step structural
+mutations. As emitted by the generator they are reshapes (`Dial = IDENTITY`):
+the implementation flags them `speculative = false`. They are NEW beyond the
+A–F catalogue; their origin is the Fu et al. trig-simplification transforms
+`TRn` in SymPy `sympy/simplify/fu.py` (read for the identity forms only — the
+crate has no SymPy dependency).
+
+| # | Rule | Dir | Dial | SymPy origin | Promotes |
+|---|------|-----|------|--------------|----------|
+| TR11-sin | `Sin(2·x)` → `2·Sin(x)·Cos(x)` | → | IDENTITY | `TR11` | double-angle expand |
+| TR11-cos | `Cos(2·x)` → `Cos(x)² − Sin(x)²` | → | IDENTITY | `TR11` | double-angle expand |
+| TR10-sin | `Sin(a+b)` → `Sin a·Cos b + Cos a·Sin b` | → | IDENTITY | `TR10` | angle-sum expand |
+| TR10-cos | `Cos(a+b)` → `Cos a·Cos b − Sin a·Sin b` | → | IDENTITY | `TR10` | angle-sum expand |
+| TR5 | `Pow2(Sin x)` → `1 − Pow2(Cos x)` and the dual `Pow2(Cos x)` → `1 − Pow2(Sin x)` | ↔ | IDENTITY | `TR5`/`TR6` | Pythagorean rearrange |
+
+Notes on termination of the trig templates:
+
+- **TR5** is implemented as both directions (sin² ↔ cos²). The two form a
+  2-cycle; the generator's BFS `seen` set terminates it (the round-trip
+  reproduces an already-seen form and is dropped). No per-rule guard is needed
+  for the cycle itself.
+- **TR10/TR11** consume the double-angle / angle-sum pattern and emit forms that
+  do not re-match the same pattern at the same site, so they cannot re-fire on
+  their own output.
+
+## Implementation note — global composition bound (termination)
+
+Each composing speculative rule guards against re-firing on its *own* output
+(see the `parent_op` / scalar-operand / divisor-shape guards in `src/physics.rs`).
+But distinct structure-builders (A2, A3, C2, D1, E1, and the Group G trig
+templates) compose **multiplicatively** — one rule's output is another's input —
+and can grow a tree without ever repeating an exact string, which the `seen` set
+alone cannot stop. The generator therefore enforces a **global size bound**: no
+generated candidate may exceed `node_count(input) + COMPOSITION_BUDGET` nodes
+(`COMPOSITION_BUDGET = 12`). The set of `Math` trees under a fixed node count
+over a finite constructor alphabet is finite, so generation provably terminates
+regardless of rule interaction. This is the backstop that makes the whole rule
+set sound w.r.t. termination; the per-rule guards keep the candidate volume
+small and physically pointed.
+
 ---
 
 ## Notes on overlap with denoise
