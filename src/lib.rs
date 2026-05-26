@@ -12,6 +12,7 @@ pub mod eval;
 pub mod expr;
 pub mod extract;
 pub mod karva;
+pub mod parity;
 pub mod physics;
 pub mod ruleset;
 pub mod snap;
