@@ -342,13 +342,25 @@ fn snap_karva(
             }
         }
         let pset_aug = build_pset(vars_aug, functions.clone(), rnc_values.clone());
-        let (cand_head, cand_tail) = match terms_to_karva(&c.expr, &pset_aug, rng_seed) {
-            Ok(ht) => ht,
-            Err(_) => continue, // inexpressible (e.g. uses an op not in pset) — skip
-        };
         let d = PyDict::new_bound(py);
-        d.set_item("head", tokens_to_py(py, &cand_head)?)?;
-        d.set_item("tail", tokens_to_py(py, &cand_tail)?)?;
+        match terms_to_karva(&c.expr, &pset_aug, rng_seed) {
+            Ok((cand_head, cand_tail)) => {
+                d.set_item("head", tokens_to_py(py, &cand_head)?)?;
+                d.set_item("tail", tokens_to_py(py, &cand_tail)?)?;
+                d.set_item("inexpressible", py.None())?;
+            }
+            Err(why) => {
+                // A snap that uses an op the caller's pset lacks (e.g. the
+                // composed 1/(4π) form needs `inv`/`mul`). Do NOT silently drop
+                // it — surface the Math + the reason so the caller knows which
+                // op to add to its pset (or pre-register master_pset). This was
+                // the bug: composed snaps need inv/mul/pow, and a mul-only pset
+                // dropped every one, leaving just the original.
+                d.set_item("head", py.None())?;
+                d.set_item("tail", py.None())?;
+                d.set_item("inexpressible", why)?;
+            }
+        }
         d.set_item("expr", &c.expr)?;
         d.set_item("cost", c.cost)?;
         d.set_item("is_original", c.cost == 0)?;
