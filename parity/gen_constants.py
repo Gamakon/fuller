@@ -97,6 +97,20 @@ def lattice():
                 out.append(emit(1.0 / math.sqrt(ni * val),
                                 f"(Div (Num 1.0) (Sqrt (Mul (Num {ni}) {cv})))",
                                 f"1/sqrt({n}*{name})", 6))
+                # CR_lattice_extensions: the remaining sqrt-composed forms —
+                # sqrt(c/n), sqrt(n/c), 1/(n*sqrt(c)), n/sqrt(c). Cover
+                # 2/sqrt(pi) (erf/diffusion), sqrt(2/pi) (scattering), oscillator
+                # sqrt(g/L)-style, statistical weight factors. Div(1,.) form so
+                # they decode into any pset with div+sqrt.
+                out.append(emit(math.sqrt(val / ni),
+                                f"(Sqrt (Div {cv} (Num {ni})))", f"sqrt({name}/{n})", 4))
+                out.append(emit(math.sqrt(ni / val),
+                                f"(Sqrt (Div (Num {ni}) {cv}))", f"sqrt({n}/{name})", 4))
+                out.append(emit(1.0 / (ni * math.sqrt(val)),
+                                f"(Div (Num 1.0) (Mul (Num {ni}) (Sqrt {cv})))",
+                                f"1/({n}*sqrt({name}))", 5))
+                out.append(emit(ni / math.sqrt(val),
+                                f"(Div (Num {ni}) (Sqrt {cv}))", f"{n}/sqrt({name})", 4))
     # pairwise products / ratios of two distinct constants (c1*c2, c1/c2)
     for i, (n1, v1) in enumerate(BASE):
         for n2, v2 in BASE[i + 1:]:
