@@ -11,3 +11,7 @@ dist/
 
 # agent worktrees (transient)
 .claude/worktrees/
+
+# nucleotable subsumed DB artifacts
+*.duckdb
+nucleotable.db

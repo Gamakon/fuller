@@ -11,6 +11,7 @@ pub mod calibration;
 pub mod eval;
 pub mod expr;
 pub mod extract;
+pub mod geneframe;
 pub mod karva;
 pub mod parity;
 pub mod physics;
