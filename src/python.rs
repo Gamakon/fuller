@@ -388,6 +388,24 @@ fn master_constants() -> Vec<(String, f64)> {
     crate::snap_karva::master_constants()
 }
 
+/// The full constant LATTICE: every `(value, math_sexpr, label)` snap can
+/// recognise — base constants AND their composed forms (pi/2, 1/(4*pi),
+/// 1/sqrt(2*pi), 2/sqrt(pi), ...). Read-once, deterministic, no file path
+/// (the lattice is embedded in the crate). Mirrors master_pset /
+/// master_constants. The engine uses this to drive snap recognition (and to
+/// retire sympy.nsimplify): for a fitted scalar `x`, find the lattice entry
+/// whose `value` matches within tolerance and adopt its `math` form.
+///
+/// `math` is a `Math` s-expression over constant `Var`s + integer `Num`s,
+/// e.g. `(Div (Num 1.0) (Sqrt (Mul (Num 2.0) (Var "pi"))))` for 1/sqrt(2*pi).
+#[pyfunction]
+fn master_lattice() -> Vec<(f64, String, String)> {
+    crate::snap_karva::lattice()
+        .into_iter()
+        .map(|e| (e.value, e.math, e.label))
+        .collect()
+}
+
 #[pyfunction]
 fn master_pset() -> Vec<(String, usize)> {
     crate::karva::master_pset()
@@ -407,6 +425,7 @@ fn _gamakast(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(physics_mutate_karva, m)?)?;
     m.add_function(wrap_pyfunction!(master_pset, m)?)?;
     m.add_function(wrap_pyfunction!(master_constants, m)?)?;
+    m.add_function(wrap_pyfunction!(master_lattice, m)?)?;
     m.add_function(wrap_pyfunction!(snap_karva, m)?)?;
     Ok(())
 }
