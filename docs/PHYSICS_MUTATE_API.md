@@ -1,76 +1,180 @@
-# `physics_mutate` — physics-prior mutation generator (API)
+# `physics_mutate` — physics-prior mutation generator
 
 A **one-to-many generator**. Give it one gene; it returns a proliferation of
 physics-shaped candidate genes — structural mutations that bias the form toward
 what real physical laws look like (squared distances, axis-aligned coordinate
 pairs, inverse-square, stripped wallpaper, …).
 
-**It is NOT denoise.** Denoise tidies (behaviour-preserving). This *changes* what
-the gene computes, on purpose, to seed the GA with forms it would rarely find
-by random mutation. It does **no evaluation, no scoring, no fitness** — it only
-generates. The caller (your GA + HFF) selects.
+**It is NOT denoise.** Denoise tidies (behaviour-preserving identities). This
+*changes* what the gene computes, on purpose, to seed the GA with forms it would
+rarely reach by random mutation. It does **no evaluation, no scoring, no
+fitness** — it only generates. Your GA + HFF select.
 
-## Python
+---
+
+## 1. Install
+
+```bash
+cd /Users/andrewmorgan/Dev/kaito/gamakAST
+maturin develop --release
+python -c "from gamakAST import physics_mutate; print('ok')"
+```
+
+## 2. Signature
 
 ```python
 from gamakAST import physics_mutate
 
-candidates = physics_mutate(
-    expr,            # a Math s-expression string (one gene)
-    paired_groups,   # coordinate axes, e.g. [["x1","x2"], ["y1","y2"], ["z1","z2"]]
-    n=10,            # max candidates to RETURN (>=1). default 10
-    seed=0,          # makes the random sample reproducible
+candidates: list[dict] = physics_mutate(
+    expr,            # str  — one gene, as a Math s-expression (see §4)
+    paired_groups,   # list[list[str]] — coordinate axes (see §5)
+    n=10,            # int  — max candidates to RETURN (>=1). default 10
+    seed=0,          # int  — reproducible random sample
 )
-# -> list of {"expr": str, "rule": str, "speculative": bool}
 ```
 
-### Semantics
+Returns a `list` of dicts, each:
 
-- **All candidates are generated internally** (rules × every matching site ×
-  composition, deduped to a fixpoint, bounded by an internal safety cap). Then,
-  if more than `n` exist, a **uniform random `n`** are returned. The cap only
-  limits what is *returned*, not what is generated.
-- `n` from 1 upward. Ask for 3, get 3 (if ≥3 were generated); ask for 50, get up
-  to 50.
-- `seed` → reproducible sample. Same `(expr, groups, n, seed)` → same list.
-- **No data passed in.** This function never sees your rows. Correct — selection
-  is the engine's job.
+```python
+{
+    "expr": str,          # the mutated gene, a Math s-expression
+    "rule": str,          # which rule produced it: "A1" | "A2" | "E1" | "F" | ...
+    "speculative": bool,  # True = structural leap (see §6)
+}
+```
 
-### The `speculative` flag — you MUST honour it
+## 3. Semantics
 
-| `speculative` | meaning | how to accept |
+- **Full internal generation, then sample.** Internally it generates *all*
+  distinct candidates — every rule, at every matching site, composed (outputs
+  fed back through the rules) and deduplicated to a fixpoint, bounded by an
+  internal safety cap (2000). It then returns up to `n` of them by **uniform
+  random sample**. The cap limits what is *returned*, never what is generated.
+- `n` ≥ 1. Ask for 3 → get 3 (if ≥3 generated). Ask for 50 → up to 50. Ask for
+  1 → exactly 1.
+- `seed` → deterministic. Same `(expr, paired_groups, n, seed)` ⇒ identical
+  list, every run, every machine.
+- The input gene itself is never returned, and all candidates are distinct.
+- **No data crosses this boundary.** It never sees your training rows — correct,
+  because selection is the engine's job, not the generator's.
+
+## 4. The Math s-expression grammar
+
+A gene is an s-expression over the `Math` sort. Leaves and operators:
+
+```
+leaf:   (Num <float>)              numeric literal, e.g. (Num 1.0)
+        (Var "<name>")             variable, e.g. (Var "x1")
+
+binary: (Add a b) (Sub a b) (Mul a b) (Div a b) (Pow a b)
+unary:  (Neg a) (Sin a) (Cos a) (Tan a) (Tanh a) (Log a) (Exp a)
+        (Sqrt a) (Abs a) (Pow2 a) (Pow3 a) (Inv a)
+protected (engine pset semantics):
+        (ProtectedSqrt a) (ProtectedLog a) (ProtectedExp a)
+        (ProtectedInv a) (ProtectedDiv a b)
+```
+
+Example — `m1·m2 / (x2 − y1)`:
+
+```
+(Div (Mul (Var "m1") (Var "m2")) (Sub (Var "x2") (Var "y1")))
+```
+
+If you hold genes as karva chromosomes, use `denoise_karva`'s pset mapping (see
+`USAGE.md`) to get to/from this form; `physics_mutate` works on the Math string.
+
+## 5. `paired_groups` — declaring coordinate axes
+
+The distance-family rules need to know which variables are the *same physical
+quantity on different bodies* (so they can re-pair them onto an axis). Pass one
+list per axis:
+
+```python
+paired_groups = [
+    ["x1", "x2"],   # the x-coordinate of body 1, body 2
+    ["y1", "y2"],   # y-coordinate
+    ["z1", "z2"],   # z-coordinate
+]
+```
+
+Index position matters: `groups[axis][i]` is body *i*'s component on that axis.
+Rule A1 uses this to turn a cross-axis difference `(x2 − y1)` into same-axis
+differences `(x2 − x1)` and `(y2 − y1)`. Pass `[]` to disable the
+distance-family rules (other rules still fire).
+
+## 6. The `speculative` flag — you MUST honour it
+
+| `speculative` | meaning | how to accept it |
 |---|---|---|
-| `False` | a reshape (e.g. re-pairing coordinates onto the same axis) — closer to behaviour-preserving | HFF on the normal objective vector is fine |
-| `True` | a **structural leap** that changes what the gene computes (e.g. squaring a difference, inverse-squaring a factor) | **gate on the EXTRAPOLATION objective**, never holdout alone — holdout is gameable, extrapolation kills physics-looking overfit |
+| `False` | a **reshape** — re-pairs/strips, closer to behaviour-preserving | HFF (TrueNorth) on the normal objective vector is fine |
+| `True` | a **structural leap** — changes what the gene computes (squaring a difference, inverse-squaring a factor) | **gate on the EXTRAPOLATION objective**, never holdout alone |
 
-The generator deliberately does not pre-judge speculative candidates; that's why
-the extrapolation gate on your side is the real safety mechanism.
+Why: holdout is *gameable* — a leap that manufactures structure can fit the
+training manifold yet be wrong. The extrapolation objective (train on one range,
+score on an unseen range) is what separates "looks like the law" from "is the
+law." The generator deliberately does not pre-judge; the extrapolation gate on
+your side is the real safety mechanism.
 
-## How to use in the GA loop
+## 7. Rules currently generated
 
-1. Take a gene (e.g. a strong HOF member that's structurally *near* the law).
-2. `physics_mutate(gene_expr, axes, n=…)` → candidate genes.
-3. Inject them into the population as new individuals.
-4. Let HFF (TrueNorth) + the extrapolation objective select — speculative
-   candidates only survive if they extrapolate, not just fit holdout.
+Full catalogue with soundness dials in `physics_prior_rules.md`. Live now:
 
-This is the mechanism aimed at closing the last SRBench gap: it floods the pool
-with near-physical forms (axis-aligned squared distances, inverse-square laws)
-that random GEP mutation almost never produces, so the search can *find* the law
-rather than only curve-fit near it.
+| Rule | Edit | `speculative` |
+|---|---|---|
+| **A1** | cross-coord → axis-aligned pair: `(x2 − y1)` → `(x2 − x1)`, `(y2 − y1)` | False |
+| **A2** | square a difference: `(a − b)` → `(a − b)²` | True |
+| **E1** | inverse-square a factor: `a·b` → `a / b²`; `a / b` → `a / b²` | True |
+| **F**  | strip an outer wallpaper factor: `f·√g`, `f·sin g`, … → `f` | False |
 
-## Rules currently generated
+More (trig, symmetry, conservation, functional-form templates) are being mined
+from SymPy + physics and added; the API does not change as rules are added —
+new `rule` tags simply start appearing.
 
-See `docs/physics_prior_rules.md` for the full catalogue. Implemented so far:
-- **A1** cross-coord → axis-aligned pair (`x2−y1` → `x2−x1`, `y2−y1`) — reshape.
-- **A2** square a difference (`(a−b)` → `(a−b)²`) — speculative.
-- **E1** inverse-square a factor (`a·b` → `a/b²`; `a/b` → `a/b²`) — speculative.
-- **F** strip an outer wallpaper factor (`f·√g`, `f·sin g`, … → `f`) — reshape.
+## 8. Errors
 
-More rules (trig, symmetry, conservation, functional-form templates) are being
-mined from SymPy + physics and added to the generator.
+- Raises `ValueError` only if `expr` is not a parseable Math s-expression.
+- Never raises on a gene that has no applicable rule — it returns `[]`.
+- `n < 1` is treated as 1.
 
-## Lower-level (Rust)
+## 9. Complete example
 
-`gamakast::physics::generate(gene, paired_groups, n, seed) -> Vec<Candidate>`,
-where `Candidate { expr, rule, speculative }`.
+```python
+from gamakAST import physics_mutate
+
+gene = '(Div (Mul (Var "m1") (Var "m2")) (Sub (Var "x2") (Var "y1")))'
+axes = [["x1", "x2"], ["y1", "y2"], ["z1", "z2"]]
+
+for c in physics_mutate(gene, axes, n=6, seed=0):
+    tag = "SPECULATIVE" if c["speculative"] else "reshape"
+    print(f'[{c["rule"]:>3}] {tag:11} {c["expr"]}')
+
+# Among the candidates: (m1*m2) / (x2 - x1)^2  — the inverse-square-distance
+# (Newton) shape that random GEP mutation almost never reaches.
+```
+
+## 10. Using it in the GA loop
+
+1. Pick a gene — typically a strong HOF member that is structurally *near* the
+   law (right variables, wrong shape).
+2. `cands = physics_mutate(gene_expr, axes, n=…)`.
+3. Inject each `cand["expr"]` into the population as a new individual.
+4. Select with **HFF-TrueNorth** on your objective vector. For
+   `cand["speculative"]` individuals, require the **extrapolation** objective to
+   hold, not just holdout R².
+
+The aim: flood the pool with near-physical forms (axis-aligned squared
+distances, inverse-square laws) the GA rarely produces by chance, so the search
+can *find* the law instead of curve-fitting near it — the last stretch of the
+SRBench gap.
+
+## 11. Rust API
+
+```rust
+gamakast::physics::generate(
+    gene: &str,
+    paired_groups: &[Vec<String>],
+    n: usize,
+    seed: u64,
+) -> Result<Vec<gamakast::physics::Candidate>, String>
+// Candidate { expr: String, rule: String, speculative: bool }
+```
