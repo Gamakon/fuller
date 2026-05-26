@@ -117,18 +117,32 @@ your side is the real safety mechanism.
 
 ## 7. Rules currently generated
 
-Full catalogue with soundness dials in `physics_prior_rules.md`. Live now:
+Full catalogue with soundness dials in `physics_prior_rules.md`. Live now (18):
 
 | Rule | Edit | `speculative` |
 |---|---|---|
 | **A1** | cross-coord → axis-aligned pair: `(x2 − y1)` → `(x2 − x1)`, `(y2 − y1)` | False |
 | **A2** | square a difference: `(a − b)` → `(a − b)²` | True |
-| **E1** | inverse-square a factor: `a·b` → `a / b²`; `a / b` → `a / b²` | True |
+| **A3** | append next axis pair to a sum of squared diffs (build Euclidean r²) | True |
+| **A4** | sum-of-squares divisor → its square root: `f/(Σ²)` → `f/√(Σ²)` (1/r) | True |
+| **C1** | symmetrise a scalar product: `m1·x` → `m1·m2` (partner in scope) | True |
+| **C2** | even-context sign kill: `(a − b)` → `\|a − b\|` | True |
+| **C4** | additive-inverse fold: `a + (−b)` → `a − b` | False |
+| **D1** | reduced-mass / parallel template: `a + b` → `(a·b)/(a+b)` | True |
+| **E1** | inverse-square a factor: `a·b` → `a/b²`; `a/b` → `a/b²` | True |
+| **E2** | exponential-decay envelope: `f` → `f·exp(−x)` | True |
+| **E3** | oscillator envelope: `f` → `f·cos(x)` | True |
+| **E6** | Gaussian envelope: `f` → `f·exp(−x²)` | True |
 | **F**  | strip an outer wallpaper factor: `f·√g`, `f·sin g`, … → `f` | False |
+| **TR11-sin** | `sin(2x)` → `2·sin x·cos x` (double-angle) | False |
+| **TR11-cos** | `cos(2x)` → `cos²x − sin²x` | False |
+| **TR10-sin** | `sin(a+b)` → `sin a·cos b + cos a·sin b` | False |
+| **TR10-cos** | `cos(a+b)` → `cos a·cos b − sin a·sin b` | False |
+| **TR5** | `sin²x` ↔ `1 − cos²x` (Pythagorean rearrange) | False |
 
-More (trig, symmetry, conservation, functional-form templates) are being mined
-from SymPy + physics and added; the API does not change as rules are added —
-new `rule` tags simply start appearing.
+Trig rules (TR*) are exact identities mined from SymPy `simplify/fu.py` —
+reshapes, not leaps. The API does not change as more rules are added; new
+`rule` tags simply start appearing in the output.
 
 ## 8. Errors
 
