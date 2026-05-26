@@ -48,6 +48,7 @@ BASE = [
     ("mu0",   1.256_637_062_12e-6),              # vacuum permeability
     ("NA",    6.022_140_76e23),                  # Avogadro
     ("me",    9.109_383_7015e-31),               # electron mass
+    ("g_earth", 9.806_65),                       # standard gravity (m/s^2)
 ]
 
 INTS = list(range(1, 13))   # 1..12
