@@ -13,7 +13,7 @@ Example
 {'expr': '(Var "x")', 'cost': ..., 'changed': True}
 """
 
-from ._gamakast import denoise, denoise_karva
+from ._gamakast import denoise, denoise_karva, physics_mutate
 
-__all__ = ["denoise", "denoise_karva"]
+__all__ = ["denoise", "denoise_karva", "physics_mutate"]
 __version__ = "0.1.0"

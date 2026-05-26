@@ -180,6 +180,42 @@ fn tokens_to_py(py: Python<'_>, toks: &[Token]) -> PyResult<Vec<(String, PyObjec
         .collect()
 }
 
+/// Physics-prior mutation GENERATOR (NOT denoise — these edits change the
+/// function). One gene in -> a proliferation of physics-shaped candidate genes
+/// out. Pure generation: NO data, NO evaluation, NO scoring — the caller
+/// selects with HFF, and MUST gate `speculative=True` candidates on the
+/// extrapolation objective (not holdout).
+///
+/// * `expr` — a Math s-expression.
+/// * `paired_groups` — coordinate axes, e.g. [["x1","x2"],["y1","y2"]].
+/// * `n` — max candidates to RETURN (>=1, default 10). All are generated
+///   internally; if more than `n` exist, a uniform random `n` are sampled.
+/// * `seed` — makes the random sample reproducible.
+///
+/// Each candidate is `{"expr", "rule", "speculative"}`.
+#[pyfunction]
+#[pyo3(signature = (expr, paired_groups, n = 10, seed = 0))]
+fn physics_mutate(
+    py: Python<'_>,
+    expr: &str,
+    paired_groups: Vec<Vec<String>>,
+    n: usize,
+    seed: u64,
+) -> PyResult<Vec<Py<PyDict>>> {
+    let cands = crate::physics::generate(expr, &paired_groups, n, seed)
+        .map_err(pyo3::exceptions::PyValueError::new_err)?;
+    cands
+        .into_iter()
+        .map(|c| {
+            let d = PyDict::new_bound(py);
+            d.set_item("expr", c.expr)?;
+            d.set_item("rule", c.rule)?;
+            d.set_item("speculative", c.speculative)?;
+            Ok(d.into())
+        })
+        .collect()
+}
+
 /// The native extension module. `module-name` in pyproject.toml is
 /// `gamakAST._gamakast`, so this initialises `_gamakast`; the Python shim
 /// re-exports from it.
@@ -187,5 +223,6 @@ fn tokens_to_py(py: Python<'_>, toks: &[Token]) -> PyResult<Vec<(String, PyObjec
 fn _gamakast(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(denoise, m)?)?;
     m.add_function(wrap_pyfunction!(denoise_karva, m)?)?;
+    m.add_function(wrap_pyfunction!(physics_mutate, m)?)?;
     Ok(())
 }
