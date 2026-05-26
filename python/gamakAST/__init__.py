@@ -19,6 +19,7 @@ from ._gamakast import (
     master_pset,
     physics_mutate,
     physics_mutate_karva,
+    snap_karva,
 )
 
 __all__ = [
@@ -27,5 +28,6 @@ __all__ = [
     "master_pset",
     "physics_mutate",
     "physics_mutate_karva",
+    "snap_karva",
 ]
 __version__ = "0.1.0"

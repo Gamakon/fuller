@@ -17,6 +17,7 @@ pub mod parity;
 pub mod physics;
 pub mod ruleset;
 pub mod snap;
+pub mod snap_karva;
 
 #[cfg(feature = "python")]
 mod python;

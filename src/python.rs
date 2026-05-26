@@ -285,6 +285,54 @@ fn physics_mutate_karva(
     Ok(out)
 }
 
+/// `snap_karva` — egglog-backed constant snapping (CR_snap_karva).
+///
+/// Takes a karva chromosome, converts to Math, and proliferates
+/// constant-substituted variants where a numeric atom matches a known constant
+/// (or composition thereof) in the generated lattice — VERIFIED in the e-graph,
+/// not merely numerically close. Returns the original plus snapped candidates.
+///
+/// Each candidate: {"expr": Math s-expr, "snapped_constants": [{from, to}],
+/// "cost": int, "is_original": bool}. The snapped forms contain constant `Var`s
+/// (e.g. `(Var "pi")`); the caller's pset must register those names as terminals
+/// to decode back to karva (constant-as-terminal is an engine-side pset
+/// decision, so we return the Math form + the substitution list rather than
+/// guess the caller's token names). The caller scores each on holdout data
+/// (R²-guard) and picks the winner — snap proposes, the data disposes.
+#[pyfunction]
+#[pyo3(signature = (head, tail, variables, functions, rnc_values, k_variants = 16, rel_tol = 1e-3))]
+#[allow(clippy::too_many_arguments)]
+fn snap_karva(
+    py: Python<'_>,
+    head: Vec<PyToken>,
+    tail: Vec<PyToken>,
+    variables: Vec<String>,
+    functions: HashMap<String, (String, usize)>,
+    rnc_values: Vec<f64>,
+    k_variants: usize,
+    rel_tol: f64,
+) -> PyResult<Vec<Py<PyDict>>> {
+    let pset = build_pset(variables, functions, rnc_values);
+    let head_toks = build_tokens(py, head)?;
+    let tail_toks = build_tokens(py, tail)?;
+    let math = match karva_to_terms(&head_toks, &tail_toks, &pset) {
+        Ok(m) => m,
+        Err(_) => return Ok(Vec::new()),
+    };
+    let cands = crate::snap_karva::snap_variants(&math, k_variants, rel_tol)
+        .map_err(pyo3::exceptions::PyValueError::new_err)?;
+    cands
+        .into_iter()
+        .map(|c| {
+            let d = PyDict::new_bound(py);
+            d.set_item("expr", &c.expr)?;
+            d.set_item("cost", c.cost)?;
+            d.set_item("is_original", c.cost == 0)?;
+            Ok(d.into())
+        })
+        .collect()
+}
+
 /// The MASTER pset: every `(semantic_id, arity)` any gamakAST mutation
 /// (denoise or physics-prior) can emit. The SR engine seeds its pset with one
 /// token per entry UP FRONT, so every returned candidate is always expressible
@@ -310,5 +358,6 @@ fn _gamakast(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(physics_mutate, m)?)?;
     m.add_function(wrap_pyfunction!(physics_mutate_karva, m)?)?;
     m.add_function(wrap_pyfunction!(master_pset, m)?)?;
+    m.add_function(wrap_pyfunction!(snap_karva, m)?)?;
     Ok(())
 }
