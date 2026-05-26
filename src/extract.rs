@@ -58,13 +58,27 @@ pub fn denoise(
     egraph
         .parse_and_run_program(None, crate::expr::GUARD_RELATIONS)
         .map_err(|e| format!("guards: {e}"))?;
+    // Denoise loads algebra identities + powers. It does NOT load `distribute`:
+    // distribute's coefficient-hoisting/distributivity generates a huge (often
+    // unbounded) equivalent-form e-class, which is fine for the parity scorer
+    // (it inserts two fixed terms and checks e-class equality) but FATAL for
+    // denoise, which calls `extract_variants` over that class and explodes /
+    // hangs. Denoise's job is shrinking via bounded identities, not normal-form
+    // canonicalisation — so it stays on the confluent, bounded subset.
     egraph
         .parse_and_run_program(None, ALGEBRA_RULESET)
-        .map_err(|e| format!("ruleset: {e}"))?;
+        .map_err(|e| format!("algebra ruleset: {e}"))?;
+    egraph
+        .parse_and_run_program(None, crate::ruleset::powers::POWERS_RULESET)
+        .map_err(|e| format!("powers ruleset: {e}"))?;
     egraph
         .parse_and_run_program(
             None,
-            &format!("(let __root {input})\n(run-schedule (saturate (run algebra)))"),
+            &format!(
+                "(let __root {input})\n\
+                 (unstable-combined-ruleset denoise_all algebra powers)\n\
+                 (run-schedule (saturate (run denoise_all)))"
+            ),
         )
         .map_err(|e| format!("insert/saturate {input:?}: {e}"))?;
 
