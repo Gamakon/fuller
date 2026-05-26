@@ -112,6 +112,12 @@ def lattice():
                                 f"1/({n}*sqrt({name}))", 5))
                 out.append(emit(ni / math.sqrt(val),
                                 f"(Div (Num {ni}) (Sqrt {cv}))", f"{n}/sqrt({name})", 4))
+                # (k*pi)/sqrt(c) — pendulum period prefactor T=2π√(L/g) family.
+                # 2π/√g ≈ 2.0064 is the leading constant in Feynman I_34_8-style
+                # oscillator periods. Generic over integer k and base atom c.
+                out.append(emit((ni * math.pi) / math.sqrt(val),
+                                f'(Div (Mul (Num {ni}) (Var "pi")) (Sqrt {cv}))',
+                                f"{n}*pi/sqrt({name})", 5))
     # pairwise products / ratios of two distinct constants (c1*c2, c1/c2)
     for i, (n1, v1) in enumerate(BASE):
         for n2, v2 in BASE[i + 1:]:
