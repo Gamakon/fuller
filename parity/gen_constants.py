@@ -70,13 +70,17 @@ def lattice():
             out.append(emit(val / ni, f'(Div {cv} (Num {ni}))', f"{name}/{n}", 3))
             out.append(emit(val * ni, f'(Mul (Num {ni}) {cv})', f"{n}*{name}", 3))
             out.append(emit(ni / val, f'(Div (Num {ni}) {cv})', f"{n}/{name}", 3))
-        out.append(emit(1.0 / val, f"(Inv {cv})", f"1/{name}", 2))
+        # Reciprocals use Div(1, .) NOT Inv: `div` is in almost every pset
+        # (truediv/protected_div), whereas `inv` is rare — emitting Inv made the
+        # whole 1/(...) family inexpressible for real chromosomes (the snap
+        # silently failed to decode back to karva). Div forms decode everywhere.
+        out.append(emit(1.0 / val, f"(Div (Num 1.0) {cv})", f"1/{name}", 3))
         # 1/(n*c) and n/(m*c) — the (4pi) family the Feynman near-misses need
         # (e.g. 1/(4*pi) = 0.0796). Generic, not hardcoded.
         for n in INTS:
             ni = float(n)
             out.append(emit(1.0 / (ni * val),
-                            f'(Inv (Mul (Num {ni}) {cv}))', f"1/({n}*{name})", 4))
+                            f'(Div (Num 1.0) (Mul (Num {ni}) {cv}))', f"1/({n}*{name})", 5))
         for p in POWS:
             out.append(emit(val ** p, f'(Pow {cv} (Num {float(p)}))', f"{name}^{p}", 3))
         out.append(emit(math.sqrt(val), f"(Sqrt {cv})", f"sqrt({name})", 2))
