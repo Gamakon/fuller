@@ -122,6 +122,30 @@ pub fn constant_values() -> HashMap<String, f64> {
 pub struct SnapCandidate {
     pub expr: String,
     pub cost: u64,
+    /// Names of the lattice constants this candidate introduced (e.g. ["pi"]),
+    /// so the caller can register them as pset terminals and decode the karva.
+    pub constants_used: Vec<String>,
+}
+
+/// Which constant names from the lattice appear as `(Var "name")` in a Math
+/// expr (i.e. names that are in `constant_values`, not free variables).
+fn constants_in(expr: &str) -> Vec<String> {
+    let cv = constant_values();
+    let mut found = Vec::new();
+    let mut i = 0;
+    while let Some(p) = expr[i..].find("(Var \"") {
+        let start = i + p + 6;
+        if let Some(endrel) = expr[start..].find('"') {
+            let name = &expr[start..start + endrel];
+            if cv.contains_key(name) && !found.contains(&name.to_string()) {
+                found.push(name.to_string());
+            }
+            i = start + endrel;
+        } else {
+            break;
+        }
+    }
+    found
 }
 
 
@@ -186,13 +210,14 @@ pub fn snap_variants(input: &str, k: usize, rel_tol: f64) -> Result<Vec<SnapCand
     let mut out: Vec<SnapCandidate> = Vec::new();
     // cost here is a simple proxy: original lowest, each snap adds the const
     // form's node count. The caller re-scores on data anyway.
-    out.push(SnapCandidate { expr: input.to_string(), cost: 0 });
+    out.push(SnapCandidate { expr: input.to_string(), cost: 0, constants_used: vec![] });
 
     // Single-atom snaps.
     for (atom, cmath, _label) in &snaps {
         let replaced = replace_num(input, *atom, cmath);
         if replaced != input {
-            out.push(SnapCandidate { expr: replaced, cost: 1 });
+            let constants_used = constants_in(&replaced);
+            out.push(SnapCandidate { expr: replaced, cost: 1, constants_used });
         }
     }
     // Composed: replace ALL snapped atoms at once (the (1/(4pi))-style win where
@@ -203,7 +228,8 @@ pub fn snap_variants(input: &str, k: usize, rel_tol: f64) -> Result<Vec<SnapCand
             all = replace_num(&all, *atom, cmath);
         }
         if all != input {
-            out.push(SnapCandidate { expr: all, cost: 2 });
+            let constants_used = constants_in(&all);
+            out.push(SnapCandidate { expr: all, cost: 2, constants_used });
         }
     }
 

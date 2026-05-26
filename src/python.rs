@@ -287,20 +287,23 @@ fn physics_mutate_karva(
 
 /// `snap_karva` — egglog-backed constant snapping (CR_snap_karva).
 ///
-/// Takes a karva chromosome, converts to Math, and proliferates
-/// constant-substituted variants where a numeric atom matches a known constant
-/// (or composition thereof) in the generated lattice — VERIFIED in the e-graph,
-/// not merely numerically close. Returns the original plus snapped candidates.
+/// Karva in, **karva out** — same symmetry as denoise_karva / physics_mutate_karva.
+/// Converts the chromosome to Math, proliferates constant-substituted variants
+/// where a numeric atom matches a known constant (or composition) in the
+/// generated lattice — VERIFIED in the e-graph, not merely numerically close —
+/// then converts each back to karva.
 ///
-/// Each candidate: {"expr": Math s-expr, "snapped_constants": [{from, to}],
-/// "cost": int, "is_original": bool}. The snapped forms contain constant `Var`s
-/// (e.g. `(Var "pi")`); the caller's pset must register those names as terminals
-/// to decode back to karva (constant-as-terminal is an engine-side pset
-/// decision, so we return the Math form + the substitution list rather than
-/// guess the caller's token names). The caller scores each on holdout data
-/// (R²-guard) and picks the winner — snap proposes, the data disposes.
+/// Snapped forms introduce constant terminals (`pi`, `G`, …). Rather than make
+/// the caller guess/register those, snap_karva **registers them itself** (as
+/// pset terminals named by the constant) and returns, per candidate, both the
+/// karva AND the mini-pset of constants it used, so the engine merges that and
+/// decodes directly. (Resolves the karva-symmetry pushback.)
+///
+/// Each candidate: {"head", "tail", "expr" (Math, for reference), "cost",
+/// "is_original", "constants": [{"name","value"}]}. The caller scores each on
+/// holdout (R²-guard) and picks the winner — snap proposes, the data disposes.
 #[pyfunction]
-#[pyo3(signature = (head, tail, variables, functions, rnc_values, k_variants = 16, rel_tol = 1e-3))]
+#[pyo3(signature = (head, tail, variables, functions, rnc_values, k_variants = 16, rel_tol = 1e-3, rng_seed = 0))]
 #[allow(clippy::too_many_arguments)]
 fn snap_karva(
     py: Python<'_>,
@@ -311,8 +314,9 @@ fn snap_karva(
     rnc_values: Vec<f64>,
     k_variants: usize,
     rel_tol: f64,
+    rng_seed: u64,
 ) -> PyResult<Vec<Py<PyDict>>> {
-    let pset = build_pset(variables, functions, rnc_values);
+    let pset = build_pset(variables.clone(), functions.clone(), rnc_values.clone());
     let head_toks = build_tokens(py, head)?;
     let tail_toks = build_tokens(py, tail)?;
     let math = match karva_to_terms(&head_toks, &tail_toks, &pset) {
@@ -321,16 +325,38 @@ fn snap_karva(
     };
     let cands = crate::snap_karva::snap_variants(&math, k_variants, rel_tol)
         .map_err(pyo3::exceptions::PyValueError::new_err)?;
-    cands
-        .into_iter()
-        .map(|c| {
-            let d = PyDict::new_bound(py);
-            d.set_item("expr", &c.expr)?;
-            d.set_item("cost", c.cost)?;
-            d.set_item("is_original", c.cost == 0)?;
-            Ok(d.into())
-        })
-        .collect()
+    let cvals = crate::snap_karva::constant_values();
+
+    let mut out = Vec::new();
+    for c in cands {
+        // Build a pset augmented with the constants this candidate uses, as
+        // variables (so terms_to_karva renders them as Var terminals).
+        let mut vars_aug: Vec<String> = variables.clone();
+        let mut consts_list: Vec<(String, f64)> = Vec::new();
+        for name in &c.constants_used {
+            if let Some(&v) = cvals.get(name) {
+                if !vars_aug.contains(name) {
+                    vars_aug.push(name.clone());
+                }
+                consts_list.push((name.clone(), v));
+            }
+        }
+        let pset_aug = build_pset(vars_aug, functions.clone(), rnc_values.clone());
+        let (cand_head, cand_tail) = match terms_to_karva(&c.expr, &pset_aug, rng_seed) {
+            Ok(ht) => ht,
+            Err(_) => continue, // inexpressible (e.g. uses an op not in pset) — skip
+        };
+        let d = PyDict::new_bound(py);
+        d.set_item("head", tokens_to_py(py, &cand_head)?)?;
+        d.set_item("tail", tokens_to_py(py, &cand_tail)?)?;
+        d.set_item("expr", &c.expr)?;
+        d.set_item("cost", c.cost)?;
+        d.set_item("is_original", c.cost == 0)?;
+        let consts_py: Vec<(String, f64)> = consts_list;
+        d.set_item("constants", consts_py)?;
+        out.push(d.into());
+    }
+    Ok(out)
 }
 
 /// The MASTER pset: every `(semantic_id, arity)` any gamakAST mutation
