@@ -10,7 +10,9 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
 use crate::extract::denoise as denoise_core;
-use crate::karva::{karva_to_terms, terms_to_karva, FunctionSpec, PsetSpec, Token};
+use crate::karva::{
+    karva_to_terms, terms_to_karva_sized, FunctionSpec, PsetSpec, Token,
+};
 
 /// Denoise a `Math` expression against training data.
 ///
@@ -98,7 +100,8 @@ fn build_tokens(py: Python<'_>, raw: Vec<PyToken>) -> PyResult<Vec<Token>> {
 /// raises except on malformed pset/token data).
 #[pyfunction]
 #[pyo3(signature = (head, tail, variables, functions, rnc_values, rows,
-                    tolerance = 1e-3, k_variants = 64, rng_seed = 0))]
+                    tolerance = 1e-3, k_variants = 64, rng_seed = 0,
+                    target_head_length = None))]
 #[allow(clippy::too_many_arguments)]
 fn denoise_karva(
     py: Python<'_>,
@@ -111,6 +114,7 @@ fn denoise_karva(
     tolerance: f64,
     k_variants: usize,
     rng_seed: u64,
+    target_head_length: Option<usize>,
 ) -> PyResult<Py<PyDict>> {
     let pset = build_pset(variables, functions, rnc_values);
     let head_toks = build_tokens(py, head)?;
@@ -146,20 +150,33 @@ fn denoise_karva(
     // caller knows the result was inexpressible rather than silently dropping a
     // real simplification. The chromosome is still returned unchanged (safe),
     // but flagged.
-    let (new_head, new_tail) = match terms_to_karva(&denoised.expr, &pset, rng_seed) {
-        Ok(ht) => ht,
-        Err(why) => {
-            let out = PyDict::new_bound(py);
-            out.set_item("head", tokens_to_py(py, &head_toks)?)?;
-            out.set_item("tail", tokens_to_py(py, &tail_toks)?)?;
-            out.set_item("changed", false)?;
-            out.set_item("expr", py.None())?;
-            // Distinguishing signal: a simpler form existed but the pset can't
-            // name it. The caller may want to add the missing op to its pset.
-            out.set_item("inexpressible", format!("{} ({})", denoised.expr, why))?;
-            return Ok(out.into());
-        }
-    };
+    let (new_head, new_tail, oversized) =
+        match terms_to_karva_sized(&denoised.expr, &pset, rng_seed, target_head_length) {
+            Ok(ht) => ht,
+            Err(why) => {
+                let out = PyDict::new_bound(py);
+                out.set_item("head", tokens_to_py(py, &head_toks)?)?;
+                out.set_item("tail", tokens_to_py(py, &tail_toks)?)?;
+                out.set_item("changed", false)?;
+                out.set_item("expr", py.None())?;
+                // Distinguishing signal: a simpler form existed but the pset can't
+                // name it. The caller may want to add the missing op to its pset.
+                out.set_item("inexpressible", format!("{} ({})", denoised.expr, why))?;
+                return Ok(out.into());
+            }
+        };
+
+    // The denoised form's natural head exceeds the chromosome's head_length.
+    // Truncating would change the term, so refuse: return unchanged + flagged.
+    if oversized {
+        let out = PyDict::new_bound(py);
+        out.set_item("head", tokens_to_py(py, &head_toks)?)?;
+        out.set_item("tail", tokens_to_py(py, &tail_toks)?)?;
+        out.set_item("changed", false)?;
+        out.set_item("expr", py.None())?;
+        out.set_item("oversized", true)?;
+        return Ok(out.into());
+    }
 
     let out = PyDict::new_bound(py);
     out.set_item("head", tokens_to_py(py, &new_head)?)?;
@@ -239,7 +256,7 @@ fn physics_mutate(
 /// get back chromosomes you can actually decode. Never raises on a normal gene.
 #[pyfunction]
 #[pyo3(signature = (head, tail, variables, functions, rnc_values, paired_groups,
-                    n = 10, seed = 0))]
+                    n = 10, seed = 0, target_head_length = None))]
 #[allow(clippy::too_many_arguments)]
 fn physics_mutate_karva(
     py: Python<'_>,
@@ -251,6 +268,7 @@ fn physics_mutate_karva(
     paired_groups: Vec<Vec<String>>,
     n: usize,
     seed: u64,
+    target_head_length: Option<usize>,
 ) -> PyResult<Vec<Py<PyDict>>> {
     let pset = build_pset(variables, functions, rnc_values);
     let head_toks = build_tokens(py, head)?;
@@ -271,10 +289,18 @@ fn physics_mutate_karva(
     // path — we don't hand back chromosomes they can't decode).
     let mut out = Vec::new();
     for c in cands {
-        let (cand_head, cand_tail) = match terms_to_karva(&c.expr, &pset, seed) {
-            Ok(ht) => ht,
-            Err(_) => continue,
-        };
+        let (cand_head, cand_tail, oversized) =
+            match terms_to_karva_sized(&c.expr, &pset, seed, target_head_length) {
+                Ok(ht) => ht,
+                Err(_) => continue,
+            };
+        // A candidate whose natural head exceeds the chromosome's head_length
+        // can't be grafted back without breaking GEP's uniform-head rule, and
+        // truncation would change the form — so drop it (same skip contract as
+        // an inexpressible candidate above).
+        if oversized {
+            continue;
+        }
         let d = PyDict::new_bound(py);
         d.set_item("head", tokens_to_py(py, &cand_head)?)?;
         d.set_item("tail", tokens_to_py(py, &cand_tail)?)?;
@@ -303,7 +329,7 @@ fn physics_mutate_karva(
 /// "is_original", "constants": [{"name","value"}]}. The caller scores each on
 /// holdout (R²-guard) and picks the winner — snap proposes, the data disposes.
 #[pyfunction]
-#[pyo3(signature = (head, tail, variables, functions, rnc_values, k_variants = 16, rel_tol = 1e-3, rng_seed = 0))]
+#[pyo3(signature = (head, tail, variables, functions, rnc_values, k_variants = 16, rel_tol = 1e-3, rng_seed = 0, target_head_length = None))]
 #[allow(clippy::too_many_arguments)]
 fn snap_karva(
     py: Python<'_>,
@@ -315,6 +341,7 @@ fn snap_karva(
     k_variants: usize,
     rel_tol: f64,
     rng_seed: u64,
+    target_head_length: Option<usize>,
 ) -> PyResult<Vec<Py<PyDict>>> {
     let pset = build_pset(variables.clone(), functions.clone(), rnc_values.clone());
     let head_toks = build_tokens(py, head)?;
@@ -343,11 +370,17 @@ fn snap_karva(
         }
         let pset_aug = build_pset(vars_aug, functions.clone(), rnc_values.clone());
         let d = PyDict::new_bound(py);
-        match terms_to_karva(&c.expr, &pset_aug, rng_seed) {
-            Ok((cand_head, cand_tail)) => {
+        d.set_item("oversized", false)?;
+        match terms_to_karva_sized(&c.expr, &pset_aug, rng_seed, target_head_length) {
+            Ok((cand_head, cand_tail, oversized)) => {
                 d.set_item("head", tokens_to_py(py, &cand_head)?)?;
                 d.set_item("tail", tokens_to_py(py, &cand_tail)?)?;
                 d.set_item("inexpressible", py.None())?;
+                // Natural head longer than the chromosome's head_length —
+                // grafting it back would break GEP's uniform-head rule, and
+                // truncation would change the snapped form. Flag so the caller
+                // drops it (per CR_karva_target_head_length).
+                d.set_item("oversized", oversized)?;
             }
             Err(why) => {
                 // A snap that uses an op the caller's pset lacks (e.g. the

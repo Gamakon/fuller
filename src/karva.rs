@@ -380,6 +380,33 @@ pub fn terms_to_karva(
     pset: &PsetSpec,
     rng_seed: u64,
 ) -> Result<(Vec<Token>, Vec<Token>), String> {
+    terms_to_karva_sized(term, pset, rng_seed, None).map(|(h, t, _)| (h, t))
+}
+
+/// Like [`terms_to_karva`] but accepts an optional `target_head_length`.
+///
+/// GEP requires a uniform `head_length` across all genes in a chromosome, so a
+/// rewritten term whose natural head is shorter than the chromosome's configured
+/// head breaks geppy's mating ops when grafted back. When `target_head_length`
+/// is set:
+///
+/// * shorter natural head → extend it to the target with terminal filler. Those
+///   extra head slots sit beyond the live k-expression's BFS frontier, so the
+///   level-order decoder never visits them — the decoded tree (hence the
+///   semantics) is unchanged. This is the same syntactic position geppy fills
+///   with random tokens at random-init time.
+/// * longer natural head → return `oversized = true`; the caller must drop the
+///   candidate. We never truncate, because that would change the term.
+/// * exact / `None` → unchanged behaviour.
+///
+/// The tail length always follows the GEP rule for the FINAL head length.
+/// Returns `(head, tail, oversized)`.
+pub fn terms_to_karva_sized(
+    term: &str,
+    pset: &PsetSpec,
+    rng_seed: u64,
+    target_head_length: Option<usize>,
+) -> Result<(Vec<Token>, Vec<Token>, bool), String> {
     let root = parse_math(term)?;
 
     // BFS the tree; emit a Token per node in level order. Functions become
@@ -407,10 +434,7 @@ pub fn terms_to_karva(
         }
     }
 
-    // GEP tail rule. The tail must be terminals only, length
-    // head_len*(max_arity-1)+1. Re-pad deterministically from the seed over the
-    // terminal pool (variables + rnc values).
-    let tail_len = head.len() * (max_arity.saturating_sub(1)) + 1;
+    // The terminal pool for both head-extension filler and tail padding.
     let mut pool: Vec<Token> = pset.variables.iter().cloned().map(Token::Var).collect();
     pool.extend(pset.rnc_values.iter().copied().map(Token::Num));
     if pool.is_empty() {
@@ -423,9 +447,27 @@ pub fn terms_to_karva(
         state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
         (state >> 33) as usize
     };
+
+    // Honour a requested head length. Extending appends terminals beyond the
+    // live tree (BFS-unreachable, so semantics-preserving). Oversized natural
+    // heads can't be shrunk without changing the term, so they're refused.
+    let mut oversized = false;
+    if let Some(target) = target_head_length {
+        if head.len() > target {
+            oversized = true;
+        } else {
+            while head.len() < target {
+                head.push(pool[next() % pool.len()].clone());
+            }
+        }
+    }
+
+    // GEP tail rule for the FINAL head length: tail is terminals only, length
+    // head_len*(max_arity-1)+1, padded deterministically from the same stream.
+    let tail_len = head.len() * (max_arity.saturating_sub(1)) + 1;
     let tail: Vec<Token> = (0..tail_len).map(|_| pool[next() % pool.len()].clone()).collect();
 
-    Ok((head, tail))
+    Ok((head, tail, oversized))
 }
 
 #[cfg(test)]
@@ -550,6 +592,43 @@ mod tests {
         let a = terms_to_karva(math, &pset(), 99).unwrap();
         let b = terms_to_karva(math, &pset(), 99).unwrap();
         assert_eq!(a, b, "same seed must give identical output");
+    }
+
+    #[test]
+    fn target_head_length_extends_short_head_preserving_semantics() {
+        // (Sqrt (Var "x")) has a 2-token natural head; pad to 8 and the decoded
+        // Math must be unchanged — the filler slots are BFS-unreachable.
+        let math = r#"(Sqrt (Var "x"))"#;
+        let (head, tail, oversized) =
+            terms_to_karva_sized(math, &pset(), 3, Some(8)).unwrap();
+        assert!(!oversized);
+        assert_eq!(head.len(), 8, "head extended to target");
+        // Filler slots must be terminals (never functions).
+        assert!(head[2..].iter().all(|t| !matches!(t, Token::Func(_))));
+        // GEP tail rule for the FINAL head length: max arity is 1 here
+        // (Sqrt is unary), so tail_len = head_len*(1-1)+1 = 1.
+        assert_eq!(tail.len(), 1);
+        let decoded = karva_to_terms(&head, &tail, &pset()).unwrap();
+        assert_eq!(decoded, math, "extension changed the expression");
+    }
+
+    #[test]
+    fn target_head_length_refuses_oversized() {
+        // A 3-token head asked to fit length 1 can't shrink without changing the
+        // term — must be flagged oversized, never truncated.
+        let math = r#"(Add (Mul (Var "x") (Var "y")) (Var "x"))"#;
+        let (_h, _t, oversized) =
+            terms_to_karva_sized(math, &pset(), 7, Some(1)).unwrap();
+        assert!(oversized, "oversized head must be flagged");
+    }
+
+    #[test]
+    fn target_head_length_none_is_unchanged() {
+        let math = r#"(Mul (Var "x") (Var "y"))"#;
+        let (h0, t0) = terms_to_karva(math, &pset(), 5).unwrap();
+        let (h1, t1, oversized) = terms_to_karva_sized(math, &pset(), 5, None).unwrap();
+        assert!(!oversized);
+        assert_eq!((h0, t0), (h1, t1), "None target must match the plain path");
     }
 
     #[test]
