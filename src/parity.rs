@@ -17,6 +17,7 @@ use crate::expr::{GUARD_RELATIONS, MATH_DATATYPE};
 use crate::ruleset::distribute::DISTRIBUTE_RULESET;
 use crate::ruleset::identities::ALGEBRA_RULESET;
 use crate::ruleset::powers::POWERS_RULESET;
+use crate::ruleset::trig::TRIG_RULESET;
 
 /// One corpus pair.
 #[derive(Debug, Clone)]
@@ -42,26 +43,49 @@ impl ParityReport {
     }
 }
 
-/// All rulesets combined, run together to a bounded fixpoint. As more modules
-/// land (trig, etc.) they are added here.
-fn all_rulesets_program() -> String {
+/// Which ruleset family to score a corpus with. distribute (algebra/powers/
+/// rational) and trig each terminate ALONE but compose into e-graph explosion
+/// when run together (distribute's distribution + trig's expand rules grow the
+/// graph without repeating). They are different problem domains, so we select
+/// the family per corpus rather than forcing them into one saturation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Family {
+    /// algebra + powers + distribute (powsimp / radsimp / ratsimp / simplify).
+    Algebra,
+    /// algebra + powers + trig (trigsimp).
+    Trig,
+}
+
+fn program_for(family: Family) -> String {
+    let (rules, names) = match family {
+        Family::Algebra => (
+            format!("{ALGEBRA_RULESET}\n{POWERS_RULESET}\n{DISTRIBUTE_RULESET}"),
+            "algebra powers distribute",
+        ),
+        Family::Trig => (
+            format!("{ALGEBRA_RULESET}\n{POWERS_RULESET}\n{TRIG_RULESET}"),
+            "algebra powers trig",
+        ),
+    };
     format!(
-        "{MATH_DATATYPE}\n{GUARD_RELATIONS}\n{ALGEBRA_RULESET}\n{POWERS_RULESET}\n\
-         {DISTRIBUTE_RULESET}\n\
-         (unstable-combined-ruleset all algebra powers distribute)"
+        "{MATH_DATATYPE}\n{GUARD_RELATIONS}\n{rules}\n\
+         (unstable-combined-ruleset all {names})"
     )
 }
 
-/// Does saturating our rules put `input` and `target` in the same e-class?
-pub fn proves_equal(input: &str, target: &str) -> Result<bool, String> {
+/// Bounded iteration count. Each family is confluent-enough to saturate within
+/// this; the bound also caps cost if a future rule misbehaves.
+const SAT_ITERS: u32 = 40;
+
+/// Does running the `family` rules put `input` and `target` in the same e-class?
+pub fn proves_equal_with(input: &str, target: &str, family: Family) -> Result<bool, String> {
     let mut egraph = EGraph::default();
     egraph
-        .parse_and_run_program(None, &all_rulesets_program())
+        .parse_and_run_program(None, &program_for(family))
         .map_err(|e| format!("load rulesets: {e}"))?;
-    // Insert both terms, saturate (bounded), then check e-class equality.
     let prog = format!(
         "(let __in {input})\n(let __tgt {target})\n\
-         (run-schedule (repeat 40 (run all)))\n\
+         (run-schedule (repeat {SAT_ITERS} (run all)))\n\
          (check (= __in __tgt))"
     );
     match egraph.parse_and_run_program(None, &prog) {
@@ -78,12 +102,18 @@ pub fn proves_equal(input: &str, target: &str) -> Result<bool, String> {
     }
 }
 
-/// Score a whole corpus of pairs.
-pub fn score(pairs: &[Pair]) -> ParityReport {
+/// Convenience: score with the Algebra family (the default for everything
+/// except the trig corpus).
+pub fn proves_equal(input: &str, target: &str) -> Result<bool, String> {
+    proves_equal_with(input, target, Family::Algebra)
+}
+
+/// Score a whole corpus of pairs with a chosen ruleset family.
+pub fn score_with(pairs: &[Pair], family: Family) -> ParityReport {
     let mut matched_inputs = Vec::new();
     let mut unmatched_inputs = Vec::new();
     for p in pairs {
-        match proves_equal(&p.input, &p.target) {
+        match proves_equal_with(&p.input, &p.target, family) {
             Ok(true) => matched_inputs.push(p.input.clone()),
             _ => unmatched_inputs.push(p.input.clone()),
         }
@@ -94,6 +124,11 @@ pub fn score(pairs: &[Pair]) -> ParityReport {
         matched_inputs,
         unmatched_inputs,
     }
+}
+
+/// Score with the Algebra family (back-compat for existing callers/tests).
+pub fn score(pairs: &[Pair]) -> ParityReport {
+    score_with(pairs, Family::Algebra)
 }
 
 #[cfg(test)]

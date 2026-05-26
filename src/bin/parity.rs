@@ -7,7 +7,7 @@
 
 use std::fs;
 
-use gamakast::parity::{score, Pair};
+use gamakast::parity::{score_with, Family, Pair};
 
 /// Minimal extraction of the two string fields from a JSONL line, without a
 /// JSON dependency: find "input":"..." and "target":"..." with escape handling.
@@ -61,10 +61,14 @@ fn main() -> Result<(), String> {
     println!("{}", "-".repeat(50));
     for path in &args {
         let pairs = load(path)?;
-        let rep = score(&pairs);
+        let name = path.rsplit('/').next().unwrap_or(path).trim_end_matches(".jsonl");
+        // The trig corpus needs the trig family; everything else uses algebra.
+        // (distribute and trig explode the e-graph if run together, so they are
+        // scored with the family appropriate to the corpus.)
+        let family = if name.contains("trig") { Family::Trig } else { Family::Algebra };
+        let rep = score_with(&pairs, family);
         g_total += rep.total;
         g_matched += rep.matched;
-        let name = path.rsplit('/').next().unwrap_or(path).trim_end_matches(".jsonl");
         println!("{:<24} {:>7} {:>7} {:>7.1}%", name, rep.matched, rep.total, rep.pct());
     }
     println!("{}", "-".repeat(50));
