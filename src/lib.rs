@@ -14,6 +14,7 @@ pub mod extract;
 pub mod karva;
 pub mod physics;
 pub mod ruleset;
+pub mod snap;
 
 #[cfg(feature = "python")]
 mod python;
