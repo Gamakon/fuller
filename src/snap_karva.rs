@@ -105,6 +105,21 @@ fn unescape(s: &str) -> String {
     s.replace("\\\"", "\"").replace("\\\\", "\\")
 }
 
+/// The canonical constant ATOMS — the names a chromosome can read back as a
+/// SINGLE named terminal. The engine pre-registers all of these once per fit
+/// (symmetry with `master_pset`), giving determinism across calls: snap_karva
+/// only ever introduces names from this closed set as atoms.
+///
+/// Composed forms (e.g. `1/(4π)`) are NOT here by design — per the engine
+/// owners' distinction, they appear in candidates as `(Inv (Mul (Num 4.0)
+/// (Var "pi")))` built from these atoms, not as their own terminal. So this is
+/// the lattice's single-`Var` entries (~16 base constants), not all 1428.
+pub fn master_constants() -> Vec<(String, f64)> {
+    let mut v: Vec<(String, f64)> = constant_values().into_iter().collect();
+    v.sort_by(|a, b| a.0.cmp(&b.0));
+    v
+}
+
 /// Map of constant name -> value, for binding constant `Var`s during eval.
 pub fn constant_values() -> HashMap<String, f64> {
     // Re-derive from the lattice's single-constant entries where math == (Var "x").

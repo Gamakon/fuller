@@ -366,6 +366,16 @@ fn snap_karva(
 ///
 /// Returns a list of `(semantic_id, arity)` tuples. The engine maps each to its
 /// own token name when building the `functions` dict it passes back in.
+/// The canonical constant ATOMS the engine pre-registers as pset terminals
+/// once per fit (symmetry with `master_pset`; determinism across snap_karva
+/// calls). Returns [(name, value)] — e.g. [("G", 6.674e-11), ("pi", 3.14159…)].
+/// Composed forms (1/(4π), 2π) are NOT here — they appear in snap candidates as
+/// expressions built from these atoms, not as their own terminals.
+#[pyfunction]
+fn master_constants() -> Vec<(String, f64)> {
+    crate::snap_karva::master_constants()
+}
+
 #[pyfunction]
 fn master_pset() -> Vec<(String, usize)> {
     crate::karva::master_pset()
@@ -384,6 +394,7 @@ fn _gamakast(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(physics_mutate, m)?)?;
     m.add_function(wrap_pyfunction!(physics_mutate_karva, m)?)?;
     m.add_function(wrap_pyfunction!(master_pset, m)?)?;
+    m.add_function(wrap_pyfunction!(master_constants, m)?)?;
     m.add_function(wrap_pyfunction!(snap_karva, m)?)?;
     Ok(())
 }
