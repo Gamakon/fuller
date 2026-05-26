@@ -2,70 +2,58 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Current state
-
-**Specification only — no code yet.** The repo contains `BRIEF.md` (full Phase 1 spec), `README.md`, and `.gitignore`. `BRIEF.md` is the source of truth for everything below; read it before writing any code. The directory tree, API signatures, rule definitions, phase ordering, and acceptance criteria in `BRIEF.md` are the contract — follow them rather than re-deriving them.
-
 ## What this is
 
-A Rust crate exposed via PyO3 that uses [egglog](https://github.com/egraphs-good/egglog) as a substrate for symbolic expression rewriting. Phase 1 ships exactly one feature: a `denoise` mutation operator that takes a GEP karva chromosome, projects it into an e-graph, rewrites away noise, and projects it back as a smaller equivalent karva chromosome.
+gamakAST is a Rust crate (PyO3-exposed) using **egglog 2.0** as a substrate for symbolic expression rewriting. It replaces sympy for the sibling SR engine in `/Users/andrewmorgan/Dev/kaito/hff/`: deterministic, real-domain, bounded. `hff/` is a **separate project** — only commit there with the user's sign-off, on its own branch.
 
-The consumer is the sibling project `/Users/andrewmorgan/Dev/kaito/hff/`. The two are **siblings, not parent/child** — never modify `hff/`. `PsetSpec` (pure data, no `geppy` import) is the only boundary between them.
+The original Phase-1 spec is **delivered and superseded** — see `stale/BRIEF.md` for history only. Current state is `src/` + `docs/`.
 
-## Build & test (once code exists)
+## Build & test
 
-```
-pip install -e .          # builds Rust ext via maturin + installs python/gamakAST shim
-cargo test                # Rust unit/integration tests (tests/*.rs)
-cargo test test_roundtrip # single Rust test target
-python -m pytest tests/test_pyo3.py   # Python-side smoke
-```
-
-`pip install -e .` must leave a working `from gamakAST import denoise, karva_to_terms, terms_to_karva` in the target env. Requires a Rust toolchain (`rustup install stable`), maturin backend, PyO3 0.22+, Rust edition 2021. Target platform: macOS arm64, Python 3.12.
-
-## The skateboard (Phase 1 dataflow)
-
-```
-karva chromosome → egglog terms → saturate(denoise rules)
-                                        ↓
-                          extract_smallest_with_data_parity
-                                        ↓
-                          egglog term → karva chromosome
+```bash
+cargo test                       # Rust tests (plain build, no PyO3 link needed)
+cargo clippy --all-targets       # MUST be clean
+maturin develop --release        # build + install the Python extension (gamakAST)
+cargo run --example 00_calibration
+cargo run --release --bin parity -- parity/corpus/*.jsonl   # SymPy-parity score
 ```
 
-Rules 1–5 are pure algebra and fire inside saturation (`src/ruleset/identities.rs`). Rule 6 ("drop data-irrelevant terms") is **not** a saturation rule — it is a post-saturation extraction loop (`src/extract.rs` + `src/eval.rs`): extract the smallest K candidates by structural cost, evaluate each on training data, return the smallest whose R² loss < `tolerance`. egglog cost functions are purely structural; all data-awareness lives in the extraction harness.
+**Hard rule from the user: zero warnings, none hidden.** Never silence with `_`-prefix or `#[allow(...)]` — fix the root cause. `RUSTFLAGS="-D warnings" cargo test` passing + clippy 100% clean is required before any commit.
 
-## GEP karva invariants the converter must enforce
+## Architecture (what's actually built)
 
-- A gene = `head` (length `h`, functions or terminals) + `tail` (length `t = h * (max_arity - 1) + 1`, **terminals only — never functions**, a hard GEP invariant).
-- The "live" region is found by walking the head left-to-right (BFS), consuming child slots as functions appear. Tokens past the live region are neutral and carried along but don't decode.
-- After denoise emits a shorter head, the tail is re-padded with random terminals to satisfy the `t = h*(max_arity-1)+1` rule. Padding uses `random.Random(rng_seed)` over `pset.variables + rnc_values`, and must be deterministic given `(new_head, rng_seed, pset)`.
-- `denoise` **never raises** on un-encodable expressions — it returns the original tokens unchanged.
-- `semantic_id` (not the geppy function name) is what gamakAST rewrites on. Same operator can have different geppy names across psets; the consumer maps name → `semantic_id` when building `PsetSpec`.
+- `src/expr.rs` — `Math` datatype (real-domain ops incl. `Protected*`) + `GUARD_RELATIONS` (is-positive/is-nonzero for guarded rewrites).
+- `src/eval.rs` — real-domain evaluator over egglog `Term`s. `sqrt(neg)/log(≤0)/div0 → NaN`; protected ops match the engine's exact semantics (e.g. `ProtectedExp` = uncapped exp, +inf on overflow).
+- `src/karva.rs` — karva (GEP chromosome) ↔ `Math` converter, keyed on `semantic_id` (NOT geppy name). Holds `master_pset()`.
+- `src/ruleset/` — egglog rulesets: `identities` (algebra), `powers`, `distribute`, `rational`, `trig`.
+- `src/extract.rs` — `denoise()`: saturate (algebra+powers only, bounded) → `extract_variants` → score on data → smallest within R² tolerance, else unchanged. The live mutation operator. Never raises.
+- `src/physics.rs` — `generate()`: pure one-to-many physics-prior mutation GENERATOR (NO eval/score). Tags candidates `speculative` (caller must extrapolation-gate those).
+- `src/snap.rs` — constant snapping (π/e/√2/G… within tol → symbol annotation; Math stays pure-numeric).
+- `src/geneframe.rs` — the **nucleotable data model, owned here**: master `SymbolTable`, typed many-hot arity, kingdom = a query. The direction the symbol/pset layer migrates toward.
+- `src/parity.rs` + `src/bin/parity.rs` — SymPy-parity scorer, **per-family** (`Family::Algebra|Rational|Trig`).
+- `src/python.rs` — PyO3: `denoise`, `denoise_karva`, `physics_mutate`, `physics_mutate_karva`, `master_pset`.
+- `parity/` — `gen_corpus.py` (offline sympy→Math corpus), `label_corpus.py` (offline family-labeler for the classifier), `corpus/*.jsonl`.
+- `nucleotable/` — subsumed design source of truth (referenced by `geneframe.rs`). `stale/` — delivered briefs, history only.
 
-## Hard constraints (from BRIEF.md — do not violate)
+## Non-obvious things that will bite you
 
-- **No sympy. Anywhere** — not in src, tests, examples, or docs. This crate exists specifically to replace sympy. Compute expected test values by hand or in pure Rust/numpy. (`numpy` is allowed in examples for evaluation only.)
-- **No `geppy` dependency** — `PsetSpec` is the boundary.
-- **No bare commutativity/associativity rewrite rules** — egglog handles these via e-class merging; encoding them as rewrites causes blowup. This is the most common beginner mistake.
-- **RHS pattern variables must all appear on the LHS**, or saturation diverges.
-- **Conditional rewrites need explicit guards** (e.g. `x/x → 1` needs `when (!= x 0)`).
-- **Saturation budget per call: 1s wall clock, 10,000 e-graph nodes**, hard cap. A rule that exceeds it is rejected and logged.
-- **Determinism**: same input + same `rng_seed` ⇒ bit-identical output. Tests assert this.
-- Pin the egglog crate version; record actual versions in `reports/environment.md`.
+- **Rule families are NON-CONFLUENT.** distribute + trig (or + rational) co-saturated explode the e-graph (verified: pegs CPU, killed runs). The scorer keeps them in separate `Family`s; `denoise` uses only the bounded algebra+powers subset. Do NOT merge all rulesets into one saturation. **Always kill-guard a saturation/parity run** so a divergent rule can't peg the machine: `( cmd & PID=$!; for i in $(seq 1 N); do kill -0 $PID 2>/dev/null||break; sleep 1; done; kill -9 $PID 2>/dev/null )`.
+- **distribute must NOT go in `denoise`** — it's a normal-form canonicaliser; `extract_variants` over its unbounded equivalent-class hangs. Scorer-only.
+- **egglog does NOT constant-fold f64 literals** unless a rule does it (distribute/rational add the folds).
+- **`Protected*` are distinct functions** from raw ops (real-domain raw vs the engine's guarded semantics). Never map a protected geppy name to a raw semantic_id — unsound on negatives/zero.
+- **The old "no bare commutativity" advice is nuanced** — egglog's own tests ship bare comm/assoc rewrites; they're fine *bounded*, fatal at unbounded fixpoint with other expand rules. Measured finding: commutativity is NOT the parity wall here (≈2/600 pairs); the gaps are structural.
+- **Determinism**: same input + rng_seed = identical output (tests assert). HashMap iteration order bit us once — sort when choosing among equal-keyed entries.
 
-## If the egglog Rust API has drifted from BRIEF.md
+## Parity status (the SymPy-replacement metric)
 
-Document the real API in `reports/environment.md`, adapt the implementation but keep the public Python signatures unchanged. If a critical feature is missing (e.g. extraction by external cost function), **STOP and report — do not invent a workaround.** Same for calibration (Phase 1.0) failure.
+Against frozen SymPy corpora (`parity/corpus/*.jsonl`, generated offline; sympy NEVER in the scoring loop): overall ~33.6% — powsimp 84.9%, trigsimp 47%, radsimp/ratsimp ~15%, simplify 13%. radsimp/ratsimp low % is partly a measurement artifact: sympy rationalises to *larger* canonical forms, not the simpler expression SR wants.
 
-## Workflow
+## In flight
 
-- **Do not push.** Leave commits local for the user to review.
-- One commit per phase (1.0, 1.1, …), conventional-commits style. Finish a phase and commit before starting the next — do not interleave phases.
-- Proceed silently through the work; the deliverable is `reports/phase1_report.md` plus artefacts, not prose progress updates.
-- `git status` should be clean when Phase 1 ships.
-- Phase 2 (porting SymPy simplification rules into egglog) is a separate later brief. Keep the `src/ruleset/mod.rs` registry extensible so new rule modules can be added without touching `src/lib.rs` or the public API.
+- **Simplify-corpus instrumentation** merged in `hff/` (env-gated `GAMAK_SIMPLIFY_CORPUS`) — captures real before→after sympy edits on the SRBench sweep. `parity/label_corpus.py` labels them by family → train a **kingdom classifier** (the learned router that picks which rule family to load, dodging the non-confluence problem). Waiting on the near-miss re-sweep to emit the corpus.
 
-## Patterns to read in `hff/` (read-only — do not import)
+## Workflow & memory
 
-`BRIEF.md` lists files in `hff/notebooks/` worth reading for the GEP decomposition and karva-serialisation algorithms (`_gene_decompose.py`, `_sympy_to_karva.py`) and as counter-examples (`hff_sr_engine.py`'s `_extract_best`). Read for patterns; build clean.
+- **Do not push.** Local commits, branch off main, conventional-commit messages.
+- The user is impatient — tight status lines, fix-don't-explain, no essays.
+- Persistent design context lives in `~/.claude/projects/-Users-andrewmorgan-Dev-kaito-gamakAST/memory/` — read `MEMORY.md` then `00-design-overview.md`. Key ones: `ownership-contract`, `working-posture-frontier-rnd`, `just-fix-it`, `worktree-agent-cleanup`, `two-part-simplify-and-classifier`.

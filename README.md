@@ -6,7 +6,7 @@ Sibling project to `hff/`.
 Status: **Phase 1 skateboard working.** The denoise mutation operator runs
 end-to-end (karva chromosome → egglog → saturate → extract → karva chromosome)
 and is callable from Python. **Consumers: see [`docs/USAGE.md`](docs/USAGE.md).**
-See `BRIEF.md` for the full Phase 1 spec.
+See `stale/BRIEF.md` for the original Phase 1 spec (delivered).
 
 ## Install (once built)
 
@@ -49,4 +49,4 @@ production-tested (Herbie).
 | 2.x | Port SymPy simplification rules (power/log, trig) | in progress (feature branches) |
 
 Work lands on feature branches (calibration, denoise core, converter); not yet
-merged to `main`. See `BRIEF.md` for the full spec and `docs/USAGE.md` to use it.
+merged to `main`. See `docs/USAGE.md` to use it; `stale/BRIEF.md` for the original spec.
