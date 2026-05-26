@@ -65,7 +65,13 @@ fn main() -> Result<(), String> {
         // The trig corpus needs the trig family; everything else uses algebra.
         // (distribute and trig explode the e-graph if run together, so they are
         // scored with the family appropriate to the corpus.)
-        let family = if name.contains("trig") { Family::Trig } else { Family::Algebra };
+        let family = if name.contains("trig") {
+            Family::Trig
+        } else if name.contains("ratsimp") || name.contains("radsimp") {
+            Family::Rational
+        } else {
+            Family::Algebra
+        };
         let rep = score_with(&pairs, family);
         g_total += rep.total;
         g_matched += rep.matched;

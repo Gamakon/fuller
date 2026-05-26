@@ -17,6 +17,7 @@ use crate::expr::{GUARD_RELATIONS, MATH_DATATYPE};
 use crate::ruleset::distribute::DISTRIBUTE_RULESET;
 use crate::ruleset::identities::ALGEBRA_RULESET;
 use crate::ruleset::powers::POWERS_RULESET;
+use crate::ruleset::rational::RATIONAL_RULESET;
 use crate::ruleset::trig::TRIG_RULESET;
 
 /// One corpus pair.
@@ -50,8 +51,13 @@ impl ParityReport {
 /// the family per corpus rather than forcing them into one saturation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Family {
-    /// algebra + powers + distribute (powsimp / radsimp / ratsimp / simplify).
+    /// algebra + powers + distribute (powsimp / simplify).
     Algebra,
+    /// algebra + powers + rational (ratsimp / radsimp). distribute and rational
+    /// are both algebra-domain but their distributivity + square-expansion
+    /// ping-pong and explode the e-graph together, so they are separate
+    /// families — scored on the corpora each one serves.
+    Rational,
     /// algebra + powers + trig (trigsimp).
     Trig,
 }
@@ -61,6 +67,10 @@ fn program_for(family: Family) -> String {
         Family::Algebra => (
             format!("{ALGEBRA_RULESET}\n{POWERS_RULESET}\n{DISTRIBUTE_RULESET}"),
             "algebra powers distribute",
+        ),
+        Family::Rational => (
+            format!("{ALGEBRA_RULESET}\n{POWERS_RULESET}\n{DISTRIBUTE_RULESET}\n{RATIONAL_RULESET}"),
+            "algebra powers distribute rational",
         ),
         Family::Trig => (
             format!("{ALGEBRA_RULESET}\n{POWERS_RULESET}\n{TRIG_RULESET}"),
@@ -73,9 +83,20 @@ fn program_for(family: Family) -> String {
     )
 }
 
-/// Bounded iteration count. Each family is confluent-enough to saturate within
-/// this; the bound also caps cost if a future rule misbehaves.
-const SAT_ITERS: u32 = 40;
+/// Bounded iteration count per family. Algebra/Trig are confluent-enough to
+/// reach fixpoint within 40. The Rational family deliberately combines
+/// distribute + rational, which DO NOT reach a fixpoint together (distributivity
+/// x square-expansion keep generating terms); a low bound truncates that growth
+/// — pairs whose equality needs more iterations report "not proven", the honest
+/// outcome — while still deriving the many that settle in a few rounds. 6 is the
+/// empirical sweet spot: high enough to expand+fold the corpus's squared sums,
+/// low enough that the e-graph stays small and fast.
+fn sat_iters(family: Family) -> u32 {
+    match family {
+        Family::Rational => 6,
+        _ => 40,
+    }
+}
 
 /// Does running the `family` rules put `input` and `target` in the same e-class?
 pub fn proves_equal_with(input: &str, target: &str, family: Family) -> Result<bool, String> {
@@ -83,9 +104,10 @@ pub fn proves_equal_with(input: &str, target: &str, family: Family) -> Result<bo
     egraph
         .parse_and_run_program(None, &program_for(family))
         .map_err(|e| format!("load rulesets: {e}"))?;
+    let iters = sat_iters(family);
     let prog = format!(
         "(let __in {input})\n(let __tgt {target})\n\
-         (run-schedule (repeat {SAT_ITERS} (run all)))\n\
+         (run-schedule (repeat {iters} (run all)))\n\
          (check (= __in __tgt))"
     );
     match egraph.parse_and_run_program(None, &prog) {

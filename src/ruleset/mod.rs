@@ -7,4 +7,5 @@
 pub mod distribute;
 pub mod identities;
 pub mod powers;
+pub mod rational;
 pub mod trig;
