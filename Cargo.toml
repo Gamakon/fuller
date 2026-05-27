@@ -11,8 +11,16 @@ name = "gamakast"
 crate-type = ["rlib", "cdylib"]
 
 [dependencies]
-egglog = "=2.0.0"
+# Vendored egglog: our fork replaces the scalar Bellman-Ford extractor with the
+# HFF angular multi-objective extractor (see vendor-egglog/src/extract.rs).
+egglog = { path = "vendor-egglog" }
 rayon = "1.10"
+# HFF math (TrueNorth angle + CDF correction) for the angular extraction cost
+# model. default-features=false drops HFF's PyO3 layer — we use only the pure
+# math in hff_core::core_functions / ::higd.
+hff = { path = "../hff", default-features = false }
+# Used to hand an objective vector to hff_core's TrueNorth (matches hff's 0.15).
+ndarray = "0.15"
 
 [dependencies.pyo3]
 version = "0.22"

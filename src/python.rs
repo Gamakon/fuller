@@ -9,7 +9,10 @@ use std::collections::HashMap;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
-use crate::extract::{denoise as denoise_core, denoise_candidates};
+use crate::extract::{
+    denoise as denoise_core, denoise_candidates, eclass_extract_hff as eclass_extract_hff_core,
+    eclass_variants as eclass_variants_core, EclassFamily,
+};
 use crate::karva::{
     karva_to_terms, terms_to_karva_sized, FunctionSpec, PsetSpec, Token,
 };
@@ -536,6 +539,86 @@ fn master_pset() -> Vec<(String, usize)> {
         .collect()
 }
 
+/// Enumerate the equivalence class of a karva chromosome under a FULL rule
+/// family (algebra+powers+distribute, or algebra+powers+trig) — the wide
+/// saturation the tournament figure needs, NOT the bounded denoise subset.
+///
+/// `family` is "algebra" or "trig" (distribute and trig explode co-saturated, so
+/// one is chosen). `iters` bounds the run schedule so a divergent rule can't peg
+/// the machine. Returns `[(cost, Math s-expression)]` for each distinct variant,
+/// for the caller to score with the pattern-metric library + HFF.
+#[pyfunction]
+#[pyo3(signature = (head, tail, variables, functions, rnc_values, family = "algebra", k = 64, iters = 12))]
+#[allow(clippy::too_many_arguments)]
+fn eclass_variants(
+    py: Python<'_>,
+    head: Vec<PyToken>,
+    tail: Vec<PyToken>,
+    variables: Vec<String>,
+    functions: HashMap<String, (String, usize)>,
+    rnc_values: Vec<f64>,
+    family: &str,
+    k: usize,
+    iters: u32,
+) -> PyResult<Vec<(u64, String)>> {
+    let pset = build_pset(variables, functions, rnc_values);
+    let head_toks = build_tokens(py, head)?;
+    let tail_toks = build_tokens(py, tail)?;
+    let math = karva_to_terms(&head_toks, &tail_toks, &pset)
+        .map_err(pyo3::exceptions::PyValueError::new_err)?;
+    let fam = match family {
+        "trig" => EclassFamily::Trig,
+        "algebra" => EclassFamily::Algebra,
+        "wide" => EclassFamily::Wide,
+        other => {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "family must be \"algebra\", \"trig\", or \"wide\", got {other:?}"
+            )))
+        }
+    };
+    eclass_variants_core(&math, fam, k, iters).map_err(pyo3::exceptions::PyValueError::new_err)
+}
+
+/// Enumerate the equivalence class and RANK it by the CDF-corrected
+/// hyperspherical-fitness angle (the `/pattern/{measure}` tournament) instead of
+/// egglog's scalar tree cost — the opt-in HFF extractor. The per-e-class winner
+/// is chosen by the angular measure-vector ordering as the extraction walk
+/// proceeds (see `crate::score`).
+///
+/// Same karva-in interface as `eclass_variants`. Returns
+/// `[(angle_percentile, Math s-expression)]`, best (lowest percentile) first.
+#[pyfunction]
+#[pyo3(signature = (head, tail, variables, functions, rnc_values, family = "algebra", k = 64, iters = 12))]
+#[allow(clippy::too_many_arguments)]
+fn eclass_extract_hff(
+    py: Python<'_>,
+    head: Vec<PyToken>,
+    tail: Vec<PyToken>,
+    variables: Vec<String>,
+    functions: HashMap<String, (String, usize)>,
+    rnc_values: Vec<f64>,
+    family: &str,
+    k: usize,
+    iters: u32,
+) -> PyResult<Vec<(f64, String)>> {
+    let pset = build_pset(variables, functions, rnc_values);
+    let head_toks = build_tokens(py, head)?;
+    let tail_toks = build_tokens(py, tail)?;
+    let math = karva_to_terms(&head_toks, &tail_toks, &pset)
+        .map_err(pyo3::exceptions::PyValueError::new_err)?;
+    let fam = match family {
+        "trig" => EclassFamily::Trig,
+        "algebra" => EclassFamily::Algebra,
+        "wide" => EclassFamily::Wide,
+        other => {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "family must be \"algebra\", \"trig\", or \"wide\", got {other:?}"
+            )))
+        }
+    };
+    eclass_extract_hff_core(&math, fam, k, iters).map_err(pyo3::exceptions::PyValueError::new_err)
+}
+
 /// The native extension module. `module-name` in pyproject.toml is
 /// `gamakAST._gamakast`, so this initialises `_gamakast`; the Python shim
 /// re-exports from it.
@@ -549,6 +632,8 @@ fn _gamakast(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(master_pset, m)?)?;
     m.add_function(wrap_pyfunction!(master_constants, m)?)?;
     m.add_function(wrap_pyfunction!(master_lattice, m)?)?;
+    m.add_function(wrap_pyfunction!(eclass_variants, m)?)?;
+    m.add_function(wrap_pyfunction!(eclass_extract_hff, m)?)?;
     m.add_function(wrap_pyfunction!(snap_karva, m)?)?;
     Ok(())
 }

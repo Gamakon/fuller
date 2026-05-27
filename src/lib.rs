@@ -16,6 +16,7 @@ pub mod karva;
 pub mod parity;
 pub mod physics;
 pub mod ruleset;
+pub mod score;
 pub mod snap;
 pub mod snap_karva;
 

@@ -9,3 +9,4 @@ pub mod identities;
 pub mod powers;
 pub mod rational;
 pub mod trig;
+pub mod wide;

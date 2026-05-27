@@ -89,6 +89,30 @@ pub const DISTRIBUTE_RULESET: &str = r#"
 (rewrite (Mul (Inv p)  (Mul (Num a) q)) (Mul (Num a) (Mul (Inv p)  q)) :ruleset distribute)
 (rewrite (Mul (Sqrt p) (Mul (Num a) q)) (Mul (Num a) (Mul (Sqrt p) q)) :ruleset distribute)
 (rewrite (Mul (Abs p)  (Mul (Num a) q)) (Mul (Num a) (Mul (Abs p)  q)) :ruleset distribute)
+
+; ---- constant RECOMBINATION: fold a fitted scalar through the structure so a
+; constant split between the LSM coefficient and the gene's own atoms can merge
+; into ONE recognisable number (then snap it). Without these, a*(... Num k ...)
+; leaves a and k unmerged and snap sees neither whole. Each is a real-domain
+; identity, strictly shrinking or constant-folding, so bounded saturation
+; terminates. (Need surfaced by the inject-`a*gene+b`-then-snap experiment;
+; recorded in papers/HFF_Heterogeneous_Tournaments.tex.)
+
+; Pow2 of a square root / known forms — expand so a coefficient can reach inside:
+;   (Pow2 (Sqrt p)) = p   (real, p>=0 domain of Sqrt)
+(rewrite (Pow2 (Sqrt p)) p :ruleset distribute)
+;   (Sqrt (Pow2 p)) stays opaque (= |p|, not p) — do NOT add, unsound on sign.
+
+; Push a coefficient INTO a Sub/Add whose operand is numeric, so it folds:
+;   a*(p - Num k) = a*p - Num(a*k)   ;  a*(Num k - p) = Num(a*k) - a*p
+(rewrite (Mul (Num a) (Sub p (Num k))) (Sub (Mul (Num a) p) (Num (* a k))) :ruleset distribute)
+(rewrite (Mul (Num a) (Sub (Num k) p)) (Sub (Num (* a k)) (Mul (Num a) p)) :ruleset distribute)
+(rewrite (Mul (Num a) (Add p (Num k))) (Add (Mul (Num a) p) (Num (* a k))) :ruleset distribute)
+
+; Pow of pure numerics fold via f64 multiply (egglog has * on f64, not sqrt —
+; so Sqrt(Num k) is left for the eval/snap layer, which has real sqrt).
+(rewrite (Pow2 (Num k)) (Num (* k k)) :ruleset distribute)
+(rewrite (Pow3 (Num k)) (Num (* k (* k k))) :ruleset distribute)
 "#;
 
 #[cfg(test)]
