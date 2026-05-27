@@ -67,6 +67,13 @@ pub enum EclassFamily {
     /// the e-class so the extraction tournament has many equal members to rank.
     /// Combinatorial — callers MUST use a small bounded `iters` + kill-guard.
     Wide,
+    /// algebra + powers + trig + trig_fu + wide. The STRUCTURAL family: trig_fu's
+    /// bidirectional product<->sum / angle-addition / tan<->sin·cos rewrites put
+    /// forms of DIFFERENT op count and transcendental profile in one e-class — so
+    /// the HFF angular pick can genuinely differ from the scalar (size) pick.
+    /// Strongly combinatorial (trig_fu is non-terminating unbounded) — small
+    /// bounded `iters` + kill-guard, NEVER co-saturated with distribute.
+    Structural,
 }
 
 /// Enumerate up to `k` lowest-cost members of `input`'s equivalence class under
@@ -124,110 +131,32 @@ pub fn eclass_extract_hff(
 
     // The HFF tournament scorer: render the candidate whole term and score it by
     // the CDF-corrected hyperspherical-fitness angle over its /pattern/{measure}
-    // vector. NON-monotone by design — a bigger term may score better — which is
-    // exactly what the vendored `hff_extract` (replacing scalar Bellman-Ford)
-    // permits and the stock extractor could not.
+    // vector (the rule library in `crate::score`). NON-monotone by design — a
+    // bigger term may score better — which the vendored `hff_extract` (replacing
+    // scalar Bellman-Ford) permits and the stock extractor could not.
     let score = |td: &TermDag, t: egglog::TermId| -> f64 {
-        let expr = td.to_string(t);
-        measure_expr(&expr).angle_percentile()
+        crate::score::score_expr(&td.to_string(t))
     };
 
     let ranked = hff_extract(&egraph, &mut termdag, value, sort, &score, k.max(1));
-    Ok(ranked
+    let mut out: Vec<(f64, String)> = ranked
         .into_iter()
         .map(|(s, t)| (s, termdag.to_string(t)))
-        .collect())
-}
+        .collect();
 
-/// Walk a Math s-expression and total its structural measures into a
-/// [`MeasureVector`] — the whole-term scorer used to report the per-form angle.
-fn measure_expr(expr: &str) -> crate::score::MeasureVector {
-    use crate::score::MeasureVector;
-    use egglog::extract::Cost; // for MeasureVector::combine
-    let toks = tokenize_sexpr(expr);
-    let mut pos = 0usize;
-    // Returns (vector, this-subtree-contains-a-transcendental).
-    fn walk(toks: &[String], pos: &mut usize) -> (MeasureVector, bool) {
-        // Expect '('
-        *pos += 1; // consume '('
-        let head = toks[*pos].clone();
-        *pos += 1;
-        let mut m = MeasureVector { nodes: 1, ..MeasureVector::ZERO };
-        let transc_here = matches!(
-            head.as_str(),
-            "Sin" | "Cos" | "Tan" | "Exp" | "Log" | "Tanh" | "ProtectedExp" | "ProtectedLog"
-        );
-        if transc_here {
-            m.transc = 1;
-        }
-        let mut child_transc = false;
-        match head.as_str() {
-            "Num" => {
-                m.nums = 1;
-                *pos += 1; // value
-                *pos += 1; // ')'
-            }
-            "Var" => {
-                m.vars = 1;
-                *pos += 1; // name
-                *pos += 1; // ')'
-            }
-            _ => {
-                while toks[*pos] != ")" {
-                    let (cm, ct) = walk(toks, pos);
-                    child_transc |= ct;
-                    m = m.combine(&cm);
-                }
-                *pos += 1; // ')'
-            }
-        }
-        if transc_here && child_transc {
-            m.transc_nest = m.transc_nest.saturating_add(1);
-            m.self_nest = m.self_nest.saturating_add(1);
-        }
-        (m, transc_here || child_transc)
+    // SEED the input form itself. The enumerator walks the e-graph from the root
+    // e-class and, for a richly-expanded class, can fill its bound with expanded
+    // members before reaching the compact e-node — so the original (often the
+    // cleanest) form can be missing from `ranked`. The input is a member of its
+    // own e-class by construction, so scoring it and merging guarantees the
+    // tournament always considers it. (Found on lean_I_8_14: the gene IS
+    // `Pow2(Sub ..)` but the enumerator only surfaced its multiplied-out forms.)
+    let in_score = crate::score::score_expr(input);
+    if !out.iter().any(|(_, e)| e == input) {
+        out.push((in_score, input.to_string()));
     }
-    walk(&toks, &mut pos).0
-}
-
-/// Minimal s-expression tokeniser: parens, quoted strings, and bare atoms.
-fn tokenize_sexpr(s: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut chars = s.chars().peekable();
-    while let Some(&c) = chars.peek() {
-        match c {
-            '(' | ')' => {
-                out.push(c.to_string());
-                chars.next();
-            }
-            '"' => {
-                chars.next();
-                let mut buf = String::from("\"");
-                for d in chars.by_ref() {
-                    buf.push(d);
-                    if d == '"' {
-                        break;
-                    }
-                }
-                out.push(buf);
-            }
-            c if c.is_whitespace() => {
-                chars.next();
-            }
-            _ => {
-                let mut buf = String::new();
-                while let Some(&d) = chars.peek() {
-                    if d == '(' || d == ')' || d.is_whitespace() {
-                        break;
-                    }
-                    buf.push(d);
-                    chars.next();
-                }
-                out.push(buf);
-            }
-        }
-    }
-    out
+    out.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+    Ok(out)
 }
 
 /// Saturate `input` under a rule `family` (bounded by `iters`) and return the
@@ -241,20 +170,50 @@ fn saturate_family(
     use crate::ruleset::distribute::DISTRIBUTE_RULESET;
     use crate::ruleset::powers::POWERS_RULESET;
     use crate::ruleset::trig::TRIG_RULESET;
+    use crate::ruleset::trig_fu::TRIG_FU_RULESET;
     use crate::ruleset::wide::WIDE_RULESET;
 
-    let (rules, names) = match family {
+    // `rules` = the ruleset definitions to load. `schedule` = the run-schedule
+    // body. For families with expanders, we run a TWO-PHASE schedule: first
+    // saturate the CONTRACTING rules (algebra/powers/trig shrink toward compact
+    // forms) so the compact member is fully reached and is the cheap default,
+    // THEN a bounded `repeat` of the EXPANDERS (trig_fu/wide/distribute) for
+    // extra structural variety. Doing it the other way round (one combined
+    // bounded run) lets expansions dominate the e-graph before contraction
+    // completes, so the compact form never surfaces in extraction.
+    let (rules, schedule) = match family {
         EclassFamily::Algebra => (
             format!("{ALGEBRA_RULESET}\n{POWERS_RULESET}\n{DISTRIBUTE_RULESET}"),
-            "algebra powers distribute",
+            format!(
+                "(unstable-combined-ruleset contract algebra powers)\n\
+                 (unstable-combined-ruleset expand distribute)\n\
+                 (run-schedule (saturate (run contract)) (repeat {iters} (run expand)))"
+            ),
         ),
         EclassFamily::Trig => (
             format!("{ALGEBRA_RULESET}\n{POWERS_RULESET}\n{TRIG_RULESET}"),
-            "algebra powers trig",
+            format!(
+                "(unstable-combined-ruleset all algebra powers trig)\n\
+                 (run-schedule (repeat {iters} (run all)))"
+            ),
         ),
         EclassFamily::Wide => (
             format!("{ALGEBRA_RULESET}\n{POWERS_RULESET}\n{DISTRIBUTE_RULESET}\n{WIDE_RULESET}"),
-            "algebra powers distribute wide",
+            format!(
+                "(unstable-combined-ruleset contract algebra powers)\n\
+                 (unstable-combined-ruleset expand distribute wide)\n\
+                 (run-schedule (saturate (run contract)) (repeat {iters} (run expand)))"
+            ),
+        ),
+        EclassFamily::Structural => (
+            format!(
+                "{ALGEBRA_RULESET}\n{POWERS_RULESET}\n{TRIG_RULESET}\n{TRIG_FU_RULESET}\n{WIDE_RULESET}"
+            ),
+            format!(
+                "(unstable-combined-ruleset contract algebra powers trig)\n\
+                 (unstable-combined-ruleset expand trig_fu wide)\n\
+                 (run-schedule (saturate (run contract)) (repeat {iters} (run expand)))"
+            ),
         ),
     };
 
@@ -271,11 +230,7 @@ fn saturate_family(
     egraph
         .parse_and_run_program(
             None,
-            &format!(
-                "(let __root {input})\n\
-                 (unstable-combined-ruleset eclass_all {names})\n\
-                 (run-schedule (repeat {iters} (run eclass_all)))"
-            ),
+            &format!("(let __root {input})\n{schedule}"),
         )
         .map_err(|e| format!("insert/saturate {input:?}: {e}"))?;
 
@@ -794,7 +749,7 @@ fn r2_loss(reference: &[f64], preds: &[f64]) -> f64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{denoise, eclass_extract_hff, measure_expr, EclassFamily};
+    use super::{denoise, eclass_extract_hff, EclassFamily};
 
     fn rows(var: &str, vals: &[f64]) -> Vec<Vec<(String, f64)>> {
         vals.iter().map(|v| vec![(var.to_string(), *v)]).collect()
@@ -812,32 +767,22 @@ mod tests {
     /// Here `g` ~ 1.0 on every row, so `x * g` should prune to `x`.
     #[test]
     fn hff_extract_ranks_class_by_angle() {
-        // (x*1 + 0) has an equal, cleaner form (x). The HFF extractor must
-        // return forms ranked by ascending angle percentile (cleaner first),
-        // and percentiles must be in [0,1].
+        // (x*1 + 0) has an equal, cleaner form (x). The HFF extractor returns
+        // forms ranked ascending by the log-percentile score (more negative =
+        // rarer/better), cleanest first.
         let input = r#"(Add (Mul (Var "x") (Num 1.0)) (Num 0.0))"#;
         let out = eclass_extract_hff(input, EclassFamily::Algebra, 32, 12).expect("hff extract");
         assert!(!out.is_empty());
-        // Sorted ascending.
+        // Sorted ascending (best first).
         for w in out.windows(2) {
-            assert!(w[0].0 <= w[1].0, "not sorted by percentile: {out:?}");
+            assert!(w[0].0 <= w[1].0, "not sorted by score: {out:?}");
         }
+        // Scores are raw TrueNorth angles: finite and >= 0.
         for (p, _) in &out {
-            assert!((0.0..=1.0).contains(p), "percentile {p} out of range");
+            assert!(p.is_finite() && *p >= 0.0, "angle {p} not >= 0");
         }
         // The cleanest form reachable here is the bare variable.
         assert_eq!(out[0].1, r#"(Var "x")"#, "cleanest form should win the angle");
-    }
-
-    #[test]
-    fn measure_expr_counts_self_nesting() {
-        // sin(sin(x)) is the junk signature: one transcendental nesting event.
-        let m = measure_expr(r#"(Sin (Sin (Var "x")))"#);
-        assert_eq!(m.transc, 2);
-        assert!(m.transc_nest >= 1, "expected nesting tally, got {m:?}");
-        // A flat sin(x) has no nesting.
-        let flat = measure_expr(r#"(Sin (Var "x"))"#);
-        assert_eq!(flat.transc_nest, 0);
     }
 
     #[test]

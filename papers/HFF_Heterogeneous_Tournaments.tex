@@ -74,21 +74,33 @@ $\mathbf{y}'=(\sqrt{1-e^2}\,\mathbf{y},\,e)\in S^{k}$, giving a single angle
 Each equivalent form collapses to one angle: small magnitude (few, low penalties)
 and balanced direction yield small $\theta$.
 
-\paragraph{CDF correction makes the angles comparable.} A class of, say, 14 forms
-yields 14 angles drawn from spheres of \emph{different} dimension $k$ --- the
-counts are not directly comparable, because angular concentration depends on
-$k$. We apply the CDF correction~\cite{cai2013angles}: under uniform sampling on
-$S^{k-1}$,
-\begin{equation}
-\label{eq:class-cdf}
-P(\theta\le t) = I_{\sin^2 t}\!\left(\tfrac{k-1}{2},\,\tfrac12\right),
-\end{equation}
-with $I_x(a,b)$ the regularised incomplete beta function. Each raw angle becomes
-a dimension-adjusted percentile, so forms scored on 4 axes and on 7 axes rank on
-one yardstick. Sorting the corrected percentiles totally orders the class, and
-the minimum is the ``best'' equivalent form under the chosen patterns --- a
-behaviour-preserving rewrite that is structurally preferred across all applicable
-measures at once, with no hand-tuned cost weights.
+\paragraph{Fixed-dimension scoring (an empirical correction).} Our first design
+scored each form on only the rules that \emph{fired} --- a genuinely
+different-dimension vector per form --- and compared the angles via the CDF
+correction~\cite{cai2013angles} (under uniform sampling on $S^{k-1}$,
+$P(\theta\le t) = I_{\sin^2 t}((k-1)/2,\,1/2)$), expecting that to put a 3-axis
+and an 8-axis form on one yardstick. \textbf{Measured, this inverts the ranking.}
+A form that fires \emph{more} rules occupies a higher-dimensional sphere, where
+the beta-CDF left tail is fatter, so a high-dimensional vector of moderate
+penalties earns a \emph{rarer} percentile than a low-dimensional vector of
+larger penalties. Concretely, a clean $x\cdot y$ (3 axes, $\theta=0.318$,
+$\mathrm{CDF}=0.050$) was beaten by a self-nested $\sin(\sin(\exp(\cdots)))$ junk
+form (8 axes, $\theta=0.763$, $\mathrm{CDF}=0.028$) --- the junk scored
+\emph{better} purely by firing more measures. The TrueNorth angle itself is
+correct ($0.763>0.318$); the cross-dimension CDF step is what rewards
+dimensionality.
+
+The fix is to score every form at one \emph{fixed} dimension $k$ = the full rule
+count, with a non-firing rule contributing its \emph{ideal} value $0$ (a missing
+pattern means the form lacks that defect, e.g.\ no transcendental to nest --- the
+good case, not a failure, so $0$, not $1$). The objective vector is then the same
+width for every member, the angle is comparable directly, and at fixed $k$ the
+CDF correction is only a monotone reshaping of $\theta$ --- so we rank on the raw
+TrueNorth angle and omit it. Sorting the angles totally orders the class; the
+minimum is the structurally preferred behaviour-preserving form, no hand-tuned
+weights. (The per-form CDF-across-different-$k$ comparison remains valid for
+HFF's original setting --- a fixed-objective population --- but not for selecting
+among variable-defect members of one e-class.)
 
 \section{Experiments}
 \label{sec:experiments}

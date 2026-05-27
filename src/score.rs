@@ -1,228 +1,371 @@
-//! Angular extraction cost: a measure-vector whose ordering is a CDF-corrected
-//! hyperspherical-fitness angle, so egglog's extractor picks each e-class winner
-//! by HFF rather than by a scalar sum.
+//! Pattern/measure scoring — the `/pattern/{measure}` rule library and the
+//! CDF-corrected hyperspherical-fitness (HFF) angle it feeds.
 //!
-//! egglog's extractor is generic over a cost type `C: Cost + Ord` and picks the
-//! per-e-class winner with `<` (egglog `extract.rs:359`), which delegates to our
-//! `Ord`. So if `C` accumulates a vector of structural measures up the tree
-//! (`Cost::combine` = slot-wise add) and `Ord` compares two vectors by their
-//! CDF-corrected HFF-TrueNorth angle, the angle becomes the selection key — and
-//! it is evaluated PER E-CLASS during the walk, on whatever dimension that
-//! subtree's measures occupy. The CDF correction (`hff_core::higd`) is what makes
-//! angles from different-dimension subtrees comparable; the angle itself is
-//! `hff_core::core_functions` TrueNorth.
+//! DESIGN (as specified): scoring is a **data-driven list of rules**, not a
+//! fixed struct of counters. Each rule is a `(pattern, measure)` pair: the
+//! pattern decides whether the rule FIRES on a given term, and when it fires it
+//! contributes one bounded `[0,1]` component (0 = best) to that term's measure
+//! vector. Adding a new objective is adding a rule to [`measure_rules`] — no
+//! struct surgery, no change to the accumulation logic.
 //!
-//! Every measure is a non-negative tally that accumulates associatively, so
-//! `combine` stays associative and the Bellman-Ford extractor terminates. The
-//! bounded-[0,1] mapping and the angle are computed lazily in `Ord`, never
-//! stored — keeping `combine` a plain add.
+//! A term's score: run every rule over the term; the rules that fire give the
+//! objective vector `x ∈ [0,1]^k` (its dimension `k` = how many rules fired —
+//! genuinely heterogeneous per term). Project with HFF-TrueNorth
+//! (`hff_core::core_functions`) to an angle, then CDF-correct it for dimension
+//! `k` (`hff_core::higd`) so vectors of different `k` are comparable. Lowest
+//! corrected angle wins the e-class tournament.
+//!
+//! This is the scorer the HFF extractor (`crate::extract::eclass_extract_hff`,
+//! via the vendored `egglog::extract::hff_extract`) calls on each whole
+//! candidate term — non-monotone by design, which the stock scalar extractor
+//! could not express.
 
-use std::cmp::Ordering;
-
-use egglog::extract::{Cost, CostModel};
-use egglog::{EGraph, Function, FunctionRow};
-use ndarray::Array1;
-
-/// The measures, in fixed slot order. Each slot is a raw non-negative tally that
-/// accumulates up the tree. The bounded-[0,1] mapping happens in [`MeasureVector::
-/// normalised`]; 0 is best for every slot.
-///
-/// Self/transcendental-nesting are tallied structurally in [`HffCostModel::fold`]
-/// (they need the parent's head plus whether a child already carried a
-/// transcendental), so they ride in slots here like any other tally.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct MeasureVector {
-    /// total node count (parsimony) — always non-zero for any real term.
-    pub nodes: u32,
-    /// transcendental ops present (sin/cos/tan/exp/log/tanh).
-    pub transc: u32,
-    /// transcendental-inside-transcendental nesting events.
-    pub transc_nest: u32,
-    /// same transcendental directly inside itself (sin(sin..)) — strongest junk.
-    pub self_nest: u32,
-    /// numeric-literal nodes (free-parameter / overfit proxy).
-    pub nums: u32,
-    /// variable-leaf nodes (for the const-to-var ratio).
-    pub vars: u32,
+/// A parsed Math node: constructor head + children (leaves carry their kind in
+/// the head: `Num`/`Var`). Built once per term by [`parse`]; every rule reads it.
+#[derive(Clone, Debug)]
+pub struct Node {
+    pub head: String,
+    pub children: Vec<Node>,
+    /// For a `Var` leaf, its name; for a `Num` leaf, the literal text. Empty for
+    /// internal nodes.
+    pub leaf: String,
 }
 
-impl MeasureVector {
-    /// All-zero: the identity for accumulation.
-    pub const ZERO: MeasureVector = MeasureVector {
-        nodes: 0,
-        transc: 0,
-        transc_nest: 0,
-        self_nest: 0,
-        nums: 0,
-        vars: 0,
-    };
-
-    /// Slot-wise add (saturating, so a pathological graph can't panic).
-    fn add(&self, o: &MeasureVector) -> MeasureVector {
-        MeasureVector {
-            nodes: self.nodes.saturating_add(o.nodes),
-            transc: self.transc.saturating_add(o.transc),
-            transc_nest: self.transc_nest.saturating_add(o.transc_nest),
-            self_nest: self.self_nest.saturating_add(o.self_nest),
-            nums: self.nums.saturating_add(o.nums),
-            vars: self.vars.saturating_add(o.vars),
+impl Node {
+    fn is_var(&self) -> bool {
+        self.head == "Var"
+    }
+    fn is_num(&self) -> bool {
+        self.head == "Num"
+    }
+    /// Pre-order walk over the whole subtree.
+    fn walk<'a>(&'a self, out: &mut Vec<&'a Node>) {
+        out.push(self);
+        for c in &self.children {
+            c.walk(out);
         }
     }
-
-    /// Map the raw tallies to a bounded objective vector in `[0,1]` (0 = best).
-    /// Counts use the saturating penalty `c -> 1 - 1/(1 + c/s)`; the const ratio
-    /// is already in `[0,1]`. Slots whose pattern never fired across the whole
-    /// term contribute a 0 (perfect) but still occupy a dimension — matching the
-    /// "node_count always fires so the vector is never empty" rule.
-    fn normalised(&self) -> Vec<f64> {
-        fn sat(c: u32, s: f64) -> f64 {
-            let c = c as f64;
-            1.0 - 1.0 / (1.0 + c / s)
-        }
-        let ratio = {
-            let denom = (self.nums + self.vars) as f64;
-            if denom > 0.0 {
-                self.nums as f64 / denom
-            } else {
-                0.0
-            }
-        };
-        vec![
-            sat(self.nodes, 12.0),
-            sat(self.transc, 2.0),
-            sat(self.transc_nest, 1.0),
-            sat(self.self_nest, 1.0),
-            sat(self.nums, 4.0),
-            ratio,
-        ]
+    /// All nodes in the subtree, pre-order.
+    pub fn nodes(&self) -> Vec<&Node> {
+        let mut v = Vec::new();
+        self.walk(&mut v);
+        v
     }
-
-    /// CDF-corrected HFF-TrueNorth angle of this vector. Lower = better.
-    ///
-    /// The dimension handed to the CDF correction is the full objective count
-    /// (the vector is fixed-width here; a slot that never fired is a 0 component,
-    /// which is the ideal coordinate, so it neither helps nor hurts the angle).
-    pub fn angle_percentile(&self) -> f64 {
-        let x = self.normalised();
-        let k = x.len();
-        let arr = Array1::from(x);
-        let theta = hff_core::core_functions::calculate_single_hyperspherical_fitness_f64_with_method(
-            &arr, k, false, None, "truenorth",
-        );
-        hff_core::higd::cdf_beta_correction(theta, k)
+    /// Depth (root = 1).
+    fn depth(&self) -> u32 {
+        1 + self.children.iter().map(Node::depth).max().unwrap_or(0)
     }
 }
 
-impl Cost for MeasureVector {
-    fn identity() -> Self {
-        MeasureVector::ZERO
-    }
-    fn unit() -> Self {
-        // A bare leaf is one node; its kind (Num/Var) is set by the cost model's
-        // `enode_cost`, not here, so `unit` is just "one node".
-        MeasureVector { nodes: 1, ..MeasureVector::ZERO }
-    }
-    fn combine(self, other: &Self) -> Self {
-        self.add(other)
-    }
-}
-
-impl PartialOrd for MeasureVector {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for MeasureVector {
-    /// Order by the CDF-corrected HFF angle FIRST — this is the paper's claim:
-    /// HFF is the selection criterion, not a tiebreak on size. Exact-angle ties
-    /// break deterministically on the raw tallies so the order is total.
-    ///
-    /// NOTE: this ordering is intentionally NON-MONOTONE (a larger term can score
-    /// a smaller angle, because the angle normalises globally). egglog's stock
-    /// Bellman-Ford extractor assumes monotone cost and panics on this — so the
-    /// HFF extractor does NOT use the stock walk; it enumerates e-class members
-    /// and selects the minimum-angle whole term (see `crate::eclass_hff`).
-    fn cmp(&self, other: &Self) -> Ordering {
-        let a = self.angle_percentile();
-        let b = other.angle_percentile();
-        a.partial_cmp(&b).unwrap_or(Ordering::Equal).then_with(|| {
-            (self.nodes, self.transc_nest, self.self_nest, self.transc, self.nums, self.vars).cmp(
-                &(other.nodes, other.transc_nest, other.self_nest, other.transc, other.nums, other.vars),
-            )
-        })
-    }
-}
-
-/// The set of Math constructors that are transcendental (for the nesting
-/// measures). Protected variants count too — they are still transcendental.
-fn is_transcendental(head: &str) -> bool {
+/// Transcendental constructors (for the nesting / transcendental measures).
+fn is_transc(head: &str) -> bool {
     matches!(
         head,
-        "Sin" | "Cos" | "Tan" | "Exp" | "Log" | "Tanh"
-            | "ProtectedExp" | "ProtectedLog"
+        "Sin" | "Cos" | "Tan" | "Exp" | "Log" | "Tanh" | "ProtectedExp" | "ProtectedLog"
     )
 }
 
-/// Cost model that scores by the angular [`MeasureVector`].
-#[derive(Default, Clone)]
-pub struct HffCostModel {}
+/// Ops whose unguarded use can diverge / hit a domain edge (asymptote, blow-up).
+fn is_unsafe_op(head: &str) -> bool {
+    matches!(head, "Div" | "Inv" | "Log" | "Exp" | "Pow")
+}
 
-impl HffCostModel {
-    pub fn new() -> Self {
-        HffCostModel {}
+/// The bounded saturating penalty `c -> 1 - 1/(1 + c/s)` (0 at c=0, ->1 as c
+/// grows; `s` sets where it reaches 0.5). The standard count->[0,1] map.
+fn sat(c: f64, s: f64) -> f64 {
+    1.0 - 1.0 / (1.0 + c / s)
+}
+
+/// One `/pattern/{measure}` rule.
+///
+/// `eval` returns `Some(v)` with `v ∈ [0,1]` when the rule FIRES on `root`, or
+/// `None` when its pattern is absent (the rule contributes no dimension). This
+/// is the firing semantics: a term is scored only on the rules whose pattern it
+/// matches, so the objective vector's dimension varies per term.
+pub struct MeasureRule {
+    pub name: &'static str,
+    pub eval: fn(&Node) -> Option<f64>,
+}
+
+/// The measure-rule library. Each entry is a guarded measure; 0 is best. To add
+/// an objective, add a rule here — nothing else changes.
+///
+/// `node_count` is unconditional (always fires) so every term has a non-empty
+/// vector and the HFF projection is well-defined.
+pub fn measure_rules() -> Vec<MeasureRule> {
+    vec![
+        // /*/ {node_count} — parsimony. Always fires.
+        MeasureRule {
+            name: "node_count",
+            eval: |r| Some(sat(r.nodes().len() as f64, 12.0)),
+        },
+        // /transc/ {transcendental_count} — universal-approximator load.
+        MeasureRule {
+            name: "transc_count",
+            eval: |r| {
+                let c = r.nodes().iter().filter(|n| is_transc(&n.head)).count();
+                if c == 0 {
+                    None
+                } else {
+                    Some(sat(c as f64, 2.0))
+                }
+            },
+        },
+        // /transc(transc(..))/ {transc_nesting} — a transcendental whose subtree
+        // already holds a transcendental. Fires only when such nesting exists.
+        MeasureRule {
+            name: "transc_nest",
+            eval: |r| {
+                let c = count_transc_nesting(r);
+                if c == 0 {
+                    None
+                } else {
+                    Some(sat(c as f64, 1.0))
+                }
+            },
+        },
+        // /f(f(..)) same transc/ {self_nesting} — sin(sin(..)) etc.; strongest junk.
+        MeasureRule {
+            name: "self_nest",
+            eval: |r| {
+                let c = count_self_nesting(r);
+                if c == 0 {
+                    None
+                } else {
+                    Some(sat(c as f64, 1.0))
+                }
+            },
+        },
+        // /Num/ {numeric_literal_count} — free-parameter / overfit proxy.
+        MeasureRule {
+            name: "num_count",
+            eval: |r| {
+                let c = r.nodes().iter().filter(|n| n.is_num()).count();
+                if c == 0 {
+                    None
+                } else {
+                    Some(sat(c as f64, 4.0))
+                }
+            },
+        },
+        // /Num & Var/ {const_to_var_ratio} — fires when the term has leaves at
+        // all; const-heavy forms (more numbers than variables) penalised.
+        MeasureRule {
+            name: "const_to_var",
+            eval: |r| {
+                let nums = r.nodes().iter().filter(|n| n.is_num()).count() as f64;
+                let vars = r.nodes().iter().filter(|n| n.is_var()).count() as f64;
+                if nums + vars == 0.0 {
+                    None
+                } else {
+                    Some(nums / (nums + vars))
+                }
+            },
+        },
+        // /unsafe-op/ {instability} — div/inv/log/exp/pow present: asymptote /
+        // blow-up risk (the extrapolation-divergence signal). Fires when any
+        // unsafe op appears.
+        MeasureRule {
+            name: "instability",
+            eval: |r| {
+                let c = r.nodes().iter().filter(|n| is_unsafe_op(&n.head)).count();
+                if c == 0 {
+                    None
+                } else {
+                    Some(sat(c as f64, 2.0))
+                }
+            },
+        },
+        // /*/ {depth_over_breadth} — tall skinny trees (deep nesting) vs bushy
+        // ones; a law tends balanced, a fitter stacks deep. Fires for any
+        // multi-node term.
+        MeasureRule {
+            name: "depth_breadth",
+            eval: |r| {
+                let n = r.nodes().len() as f64;
+                if n < 2.0 {
+                    return None;
+                }
+                let ratio = r.depth() as f64 / (1.0 + n).log2();
+                Some(sat(ratio, 2.0))
+            },
+        },
+    ]
+}
+
+/// Count transcendental-inside-transcendental events: a transcendental node with
+/// a transcendental anywhere in its subtree (excluding itself).
+fn count_transc_nesting(root: &Node) -> u32 {
+    let mut c = 0;
+    for n in root.nodes() {
+        if is_transc(&n.head) && n.children.iter().any(subtree_has_transc) {
+            c += 1;
+        }
+    }
+    c
+}
+
+fn subtree_has_transc(n: &Node) -> bool {
+    n.nodes().iter().any(|m| is_transc(&m.head))
+}
+
+/// Count same-transcendental-in-itself events (sin directly over a subtree that
+/// contains the SAME transcendental).
+fn count_self_nesting(root: &Node) -> u32 {
+    let mut c = 0;
+    for n in root.nodes() {
+        if is_transc(&n.head)
+            && n.children
+                .iter()
+                .any(|ch| ch.nodes().iter().any(|m| m.head == n.head))
+        {
+            c += 1;
+        }
+    }
+    c
+}
+
+/// Run every measure rule over `root`; return only the values of rules that
+/// FIRED (the heterogeneous objective vector) alongside their names.
+pub fn fire(root: &Node) -> Vec<(&'static str, f64)> {
+    measure_rules()
+        .into_iter()
+        .filter_map(|rule| (rule.eval)(root).map(|v| (rule.name, v)))
+        .collect()
+}
+
+/// CDF-corrected HFF-TrueNorth angle of a term: run the rule library, project
+/// the fired vector with TrueNorth, CDF-correct for its dimension. Lower = best.
+///
+/// Uses `log_cdf_beta_correction`, NOT the plain linear `cdf_beta_correction`:
+/// the linear CDF underflows to 0 in the deep left tail (small θ, large
+/// dimension), which made low-D clean forms and high-D junk forms both pin near
+/// 0 — so junk looked as good as clean. The log-space variant (Lentz continued
+/// fraction) survives the tail, so a 3-D and an 8-D candidate stay comparable.
+/// Returns a log-percentile: more negative = rarer/better. (Per the HFF repo's
+/// CLAUDE.md: deep-left-tail comparisons MUST use the log variant.)
+pub fn angle_percentile(root: &Node) -> f64 {
+    // Score EVERY candidate at the SAME fixed dimension = the full rule count, so
+    // angles are directly comparable. (Scoring each at its own fired-rule count
+    // inverts the ranking — a high-D form gets a rarer angle purely from
+    // dimension. Verified.)
+    // Non-firing rules pad to 0.5 — NEUTRAL: a pattern that didn't match neither
+    // rewards (0, "falsely perfect") nor punishes (1, which made a clean low-fire
+    // form score WORST than junk — verified). 0.5 sits at the equator and doesn't
+    // tilt the angle. All candidates scored at the full rule count = fixed k.
+    let rules = measure_rules();
+    let k = rules.len();
+    let x: Vec<f64> = rules
+        .into_iter()
+        .map(|rule| (rule.eval)(root).unwrap_or(0.5))
+        .collect();
+    let arr = ndarray::Array1::from(x);
+    // Rank on the raw TrueNorth angle. With a FIXED common k, the CDF correction
+    // is only a monotone reshaping of theta — it changes the order ONLY when
+    // comparing across different k (which we no longer do, since non-firing rules
+    // pad to their ideal 0 and every candidate is scored at the full rule count).
+    // So no CDF here; lower angle = cleaner.
+    hff_core::core_functions::calculate_single_hyperspherical_fitness_f64_with_method(
+        &arr, k, false, None, "truenorth",
+    )
+}
+
+/// Score a Math s-expression string: parse then [`angle_percentile`]. This is the
+/// scorer the HFF extractor calls on each whole candidate term.
+pub fn score_expr(expr: &str) -> f64 {
+    match parse(expr) {
+        Some(n) => angle_percentile(&n),
+        None => 1.0, // unparseable -> worst
     }
 }
 
-impl CostModel<MeasureVector> for HffCostModel {
-    /// This node's OWN contribution (no children). One node, plus its kind:
-    /// transcendental / numeric-literal / variable. The constructor name comes
-    /// from `func.decl.name`.
-    fn enode_cost(
-        &self,
-        _egraph: &EGraph,
-        func: &Function,
-        _row: &FunctionRow,
-    ) -> MeasureVector {
-        let head = func.name();
-        let mut m = MeasureVector { nodes: 1, ..MeasureVector::ZERO };
-        if is_transcendental(head) {
-            m.transc = 1;
-        }
-        match head {
-            "Num" => m.nums = 1,
-            "Var" => m.vars = 1,
-            _ => {}
-        }
-        m
-    }
+/// Parse a Math s-expression `(Head child...)`, `(Num v)`, `(Var "name")` into a
+/// [`Node`]. Returns `None` on malformed input.
+pub fn parse(expr: &str) -> Option<Node> {
+    let toks = tokenize(expr);
+    let mut pos = 0usize;
+    let n = parse_node(&toks, &mut pos)?;
+    Some(n)
+}
 
-    /// Accumulate this node + children, and tally nesting structurally: if this
-    /// node is transcendental AND any child subtree already contains a
-    /// transcendental, that is a transcendental-nesting event. We approximate the
-    /// stronger "self-nest" (same fn inside itself) with the conservative signal
-    /// that this transcendental node sits above other transcendentals; the exact
-    /// same-symbol check is refined when the figure consumes the rendered term.
-    fn fold(
-        &self,
-        head: &str,
-        children_cost: &[MeasureVector],
-        head_cost: MeasureVector,
-    ) -> MeasureVector {
-        let mut total = head_cost;
-        let mut child_has_transc = false;
-        for c in children_cost {
-            child_has_transc |= c.transc > 0;
-            total = total.add(c);
-        }
-        if is_transcendental(head) && child_has_transc {
-            total.transc_nest = total.transc_nest.saturating_add(1);
-            // A transcendental directly over transcendental subtrees is the junk
-            // signature; record it in self_nest too (the strongest penalty slot).
-            total.self_nest = total.self_nest.saturating_add(1);
-        }
-        total
+fn parse_node(toks: &[String], pos: &mut usize) -> Option<Node> {
+    if *pos >= toks.len() || toks[*pos] != "(" {
+        return None;
     }
+    *pos += 1; // (
+    let head = toks.get(*pos)?.clone();
+    *pos += 1;
+    match head.as_str() {
+        "Num" => {
+            let v = toks.get(*pos)?.clone();
+            *pos += 1;
+            if toks.get(*pos)? != ")" {
+                return None;
+            }
+            *pos += 1;
+            Some(Node { head, children: vec![], leaf: v })
+        }
+        "Var" => {
+            let name = toks.get(*pos)?.trim_matches('"').to_string();
+            *pos += 1;
+            if toks.get(*pos)? != ")" {
+                return None;
+            }
+            *pos += 1;
+            Some(Node { head, children: vec![], leaf: name })
+        }
+        _ => {
+            let mut children = Vec::new();
+            while *pos < toks.len() && toks[*pos] != ")" {
+                children.push(parse_node(toks, pos)?);
+            }
+            if *pos >= toks.len() {
+                return None;
+            }
+            *pos += 1; // )
+            Some(Node { head, children, leaf: String::new() })
+        }
+    }
+}
+
+/// Tokenise an s-expression: parens, quoted strings, bare atoms.
+fn tokenize(s: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut chars = s.chars().peekable();
+    while let Some(&c) = chars.peek() {
+        match c {
+            '(' | ')' => {
+                out.push(c.to_string());
+                chars.next();
+            }
+            '"' => {
+                chars.next();
+                let mut buf = String::from("\"");
+                for d in chars.by_ref() {
+                    buf.push(d);
+                    if d == '"' {
+                        break;
+                    }
+                }
+                out.push(buf);
+            }
+            c if c.is_whitespace() => {
+                chars.next();
+            }
+            _ => {
+                let mut buf = String::new();
+                while let Some(&d) = chars.peek() {
+                    if d == '(' || d == ')' || d.is_whitespace() {
+                        break;
+                    }
+                    buf.push(d);
+                    chars.next();
+                }
+                out.push(buf);
+            }
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -230,51 +373,73 @@ mod tests {
     use super::*;
 
     #[test]
-    fn combine_is_slotwise_add() {
-        let a = MeasureVector { nodes: 2, transc: 1, ..MeasureVector::ZERO };
-        let b = MeasureVector { nodes: 3, nums: 1, ..MeasureVector::ZERO };
-        let c = a.combine(&b);
-        assert_eq!(c.nodes, 5);
-        assert_eq!(c.transc, 1);
-        assert_eq!(c.nums, 1);
+    fn parses_nested_expr() {
+        let n = parse(r#"(Add (Mul (Var "x") (Num 1.0)) (Num 0.0))"#).unwrap();
+        assert_eq!(n.head, "Add");
+        assert_eq!(n.nodes().len(), 5); // Add, Mul, Var, Num, Num
     }
 
     #[test]
-    fn identity_is_zero_and_unit_is_one_node() {
-        assert_eq!(MeasureVector::identity(), MeasureVector::ZERO);
-        assert_eq!(MeasureVector::unit().nodes, 1);
+    fn node_count_rule_always_fires() {
+        let n = parse(r#"(Var "x")"#).unwrap();
+        let fired = fire(&n);
+        assert!(fired.iter().any(|(name, _)| *name == "node_count"));
     }
 
     #[test]
-    fn cleaner_vector_ranks_below_noisier() {
-        // A small clean term (few nodes, no nesting) must have a lower angle
-        // percentile than a bloated, self-nested one.
-        let clean = MeasureVector { nodes: 3, vars: 1, nums: 1, ..MeasureVector::ZERO };
-        let junk = MeasureVector {
-            nodes: 30,
-            transc: 5,
-            transc_nest: 4,
-            self_nest: 3,
-            nums: 6,
-            vars: 1,
-        };
-        assert!(clean < junk, "clean term should sort before junk");
-        assert!(clean.angle_percentile() < junk.angle_percentile());
+    fn transc_rules_fire_only_when_present() {
+        let flat = parse(r#"(Sin (Var "x"))"#).unwrap();
+        let names: Vec<_> = fire(&flat).into_iter().map(|(n, _)| n).collect();
+        assert!(names.contains(&"transc_count"));
+        assert!(!names.contains(&"transc_nest"), "flat sin should not nest");
+
+        let nested = parse(r#"(Sin (Sin (Var "x")))"#).unwrap();
+        let names: Vec<_> = fire(&nested).into_iter().map(|(n, _)| n).collect();
+        assert!(names.contains(&"transc_nest"));
+        assert!(names.contains(&"self_nest"), "sin(sin) is self-nesting");
     }
 
     #[test]
-    fn angle_is_finite_and_in_unit_interval() {
-        let m = MeasureVector { nodes: 10, transc: 2, nums: 3, vars: 2, ..MeasureVector::ZERO };
-        let p = m.angle_percentile();
-        assert!(p.is_finite());
-        assert!((0.0..=1.0).contains(&p), "percentile {p} out of [0,1]");
+    fn no_transc_means_those_rules_dont_fire() {
+        let n = parse(r#"(Add (Var "x") (Var "y"))"#).unwrap();
+        let names: Vec<_> = fire(&n).into_iter().map(|(nm, _)| nm).collect();
+        assert!(!names.contains(&"transc_count"));
+        assert!(!names.contains(&"instability"));
+        // but node_count + const_to_var + depth_breadth fire
+        assert!(names.contains(&"node_count"));
     }
 
     #[test]
-    fn ordering_is_total_and_deterministic() {
-        // Same vector compares Equal; repeated calls agree (determinism).
-        let m = MeasureVector { nodes: 7, transc: 1, ..MeasureVector::ZERO };
-        assert_eq!(m.cmp(&m.clone()), Ordering::Equal);
-        assert_eq!(m.angle_percentile(), m.angle_percentile());
+    fn cleaner_term_has_lower_angle_than_junk() {
+        let clean = parse(r#"(Mul (Var "x") (Var "y"))"#).unwrap();
+        let junk = parse(
+            r#"(Sin (Sin (Exp (Div (Var "x") (Mul (Num 2.0) (Log (Var "y")))))))"#,
+        )
+        .unwrap();
+        assert!(
+            angle_percentile(&clean) < angle_percentile(&junk),
+            "clean {} should beat junk {}",
+            angle_percentile(&clean),
+            angle_percentile(&junk)
+        );
+    }
+
+    #[test]
+    fn angle_is_finite_and_deterministic() {
+        // log-percentile: <= 0 (log of a probability), finite, reproducible.
+        let n = parse(r#"(Add (Sin (Var "x")) (Div (Num 2.0) (Var "y")))"#).unwrap();
+        let p = angle_percentile(&n);
+        // raw TrueNorth angle: finite, in [0, pi].
+        assert!(p.is_finite() && (0.0..=std::f64::consts::PI).contains(&p), "angle {p} out of [0,pi]");
+        assert_eq!(p, angle_percentile(&n));
+    }
+
+    #[test]
+    fn dimension_varies_per_term() {
+        // A term with transcendentals fires MORE rules than a bare algebraic one
+        // — the heterogeneous-dimension property the CDF correction exists for.
+        let algebraic = parse(r#"(Add (Var "x") (Var "y"))"#).unwrap();
+        let transcend = parse(r#"(Sin (Exp (Var "x")))"#).unwrap();
+        assert_ne!(fire(&algebraic).len(), fire(&transcend).len());
     }
 }

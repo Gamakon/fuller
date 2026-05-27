@@ -570,6 +570,7 @@ fn eclass_variants(
         "trig" => EclassFamily::Trig,
         "algebra" => EclassFamily::Algebra,
         "wide" => EclassFamily::Wide,
+        "structural" => EclassFamily::Structural,
         other => {
             return Err(pyo3::exceptions::PyValueError::new_err(format!(
                 "family must be \"algebra\", \"trig\", or \"wide\", got {other:?}"
@@ -610,6 +611,7 @@ fn eclass_extract_hff(
         "trig" => EclassFamily::Trig,
         "algebra" => EclassFamily::Algebra,
         "wide" => EclassFamily::Wide,
+        "structural" => EclassFamily::Structural,
         other => {
             return Err(pyo3::exceptions::PyValueError::new_err(format!(
                 "family must be \"algebra\", \"trig\", or \"wide\", got {other:?}"
