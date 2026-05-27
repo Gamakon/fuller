@@ -239,6 +239,7 @@ fn math_ctor_to_semantic(ctor: &str) -> Option<&'static str> {
         "Sqrt" => "sqrt",
         "Abs" => "abs",
         "Tanh" => "tanh",
+        "Pow" => "pow",
         "Pow2" => "pow2",
         "Pow3" => "pow3",
         "Inv" => "inv",

@@ -7,7 +7,7 @@
 
 use std::fs;
 
-use gamakast::parity::{score_with, Family, Pair};
+use gamakast::parity::{proves_equal_with, score_with, Family, Pair};
 
 /// Minimal extraction of the two string fields from a JSONL line, without a
 /// JSON dependency: find "input":"..." and "target":"..." with escape handling.
@@ -51,10 +51,41 @@ fn load(path: &str) -> Result<Vec<Pair>, String> {
     Ok(pairs)
 }
 
+fn family_for(name: &str) -> Family {
+    // distribute and trig explode the e-graph if run together, so the family is
+    // selected to match each corpus.
+    if name.contains("trig") {
+        Family::Trig
+    } else if name.contains("ratsimp") || name.contains("radsimp") {
+        Family::Rational
+    } else {
+        Family::Algebra
+    }
+}
+
 fn main() -> Result<(), String> {
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    let mut args: Vec<String> = std::env::args().skip(1).collect();
+    // `--dump-misses`: print every unmatched (input -> target) pair instead of
+    // scoring. Feeds the rule-mining agents real failure cases, not guesses.
+    let dump_misses = args.first().map(|s| s == "--dump-misses").unwrap_or(false);
+    if dump_misses {
+        args.remove(0);
+    }
     if args.is_empty() {
-        return Err("usage: parity <corpus.jsonl> [more.jsonl ...]".into());
+        return Err("usage: parity [--dump-misses] <corpus.jsonl> [more.jsonl ...]".into());
+    }
+    if dump_misses {
+        for path in &args {
+            let pairs = load(path)?;
+            let name = path.rsplit('/').next().unwrap_or(path).trim_end_matches(".jsonl");
+            let family = family_for(name);
+            for p in &pairs {
+                if !proves_equal_with(&p.input, &p.target, family).unwrap_or(false) {
+                    println!("{name}\tIN  {}\n{name}\tTGT {}\n", p.input, p.target);
+                }
+            }
+        }
+        return Ok(());
     }
     let (mut g_total, mut g_matched) = (0usize, 0usize);
     println!("{:<24} {:>7} {:>7} {:>8}", "module", "matched", "total", "parity");
@@ -62,17 +93,7 @@ fn main() -> Result<(), String> {
     for path in &args {
         let pairs = load(path)?;
         let name = path.rsplit('/').next().unwrap_or(path).trim_end_matches(".jsonl");
-        // The trig corpus needs the trig family; everything else uses algebra.
-        // (distribute and trig explode the e-graph if run together, so they are
-        // scored with the family appropriate to the corpus.)
-        let family = if name.contains("trig") {
-            Family::Trig
-        } else if name.contains("ratsimp") || name.contains("radsimp") {
-            Family::Rational
-        } else {
-            Family::Algebra
-        };
-        let rep = score_with(&pairs, family);
+        let rep = score_with(&pairs, family_for(name));
         g_total += rep.total;
         g_matched += rep.matched;
         println!("{:<24} {:>7} {:>7} {:>7.1}%", name, rep.matched, rep.total, rep.pct());

@@ -1,0 +1,39 @@
+
+#[cfg(test)]
+mod triple_mul_diag {
+    use crate::expr::{GUARD_RELATIONS, MATH_DATATYPE};
+    use crate::ruleset::distribute::DISTRIBUTE_RULESET;
+    use crate::ruleset::identities::ALGEBRA_RULESET;
+    use crate::ruleset::powers::POWERS_RULESET;
+    use egglog::EGraph;
+
+    fn check_iters(a: &str, b: &str, iters: u32) -> bool {
+        let rulesets = format!("{MATH_DATATYPE}\n{GUARD_RELATIONS}\n{ALGEBRA_RULESET}\n{POWERS_RULESET}\n{DISTRIBUTE_RULESET}\n(unstable-combined-ruleset all algebra powers distribute)");
+        let mut e = EGraph::default();
+        e.parse_and_run_program(None, &rulesets).unwrap();
+        let prog = format!(
+            "(let __a {a})\n(let __b {b})\n(run-schedule (repeat {iters} (run all)))\n(check (= __a __b))"
+        );
+        e.parse_and_run_program(None, &prog).is_ok()
+    }
+
+    #[test]
+    fn triple_mul_iter_count() {
+        let a = r#"(Mul (Mul (Mul (Num 3.0) (Pow3 (Var "y"))) (Inv (Var "z"))) (Add (Num 4.5) (Inv (Var "z"))))"#;
+        let b = r#"(Mul (Mul (Pow3 (Var "y")) (Inv (Var "z"))) (Add (Num 13.5) (Mul (Num 3.0) (Inv (Var "z")))))"#;
+        for iters in [10, 20, 30, 40, 60, 80, 100] {
+            let result = check_iters(a, b, iters);
+            eprintln!("triple_mul iters={}: {}", iters, result);
+        }
+    }
+
+    #[test]  
+    fn pair21_pow_7_8_iter_count() {
+        let a = r#"(Mul (Mul (Mul (Num -2.0) (Pow (Var "y") (Num 8.0))) (Pow (Var "z") (Num 7.0))) (Add (Num -1.0) (Var "y")))"#;
+        let b = r#"(Mul (Mul (Pow (Var "y") (Num 8.0)) (Pow (Var "z") (Num 7.0))) (Add (Num 2.0) (Mul (Num -2.0) (Var "y"))))"#;
+        for iters in [10, 20, 40, 60, 80, 100] {
+            let result = check_iters(a, b, iters);
+            eprintln!("pair21 iters={}: {}", iters, result);
+        }
+    }
+}
