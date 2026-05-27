@@ -91,16 +91,42 @@ correct ($0.763>0.318$); the cross-dimension CDF step is what rewards
 dimensionality.
 
 The fix is to score every form at one \emph{fixed} dimension $k$ = the full rule
-count, with a non-firing rule contributing its \emph{ideal} value $0$ (a missing
-pattern means the form lacks that defect, e.g.\ no transcendental to nest --- the
-good case, not a failure, so $0$, not $1$). The objective vector is then the same
-width for every member, the angle is comparable directly, and at fixed $k$ the
-CDF correction is only a monotone reshaping of $\theta$ --- so we rank on the raw
-TrueNorth angle and omit it. Sorting the angles totally orders the class; the
-minimum is the structurally preferred behaviour-preserving form, no hand-tuned
-weights. (The per-form CDF-across-different-$k$ comparison remains valid for
-HFF's original setting --- a fixed-objective population --- but not for selecting
-among variable-defect members of one e-class.)
+count. A non-firing rule contributes a \emph{neutral} value $0.5$ (we tested
+$0$, $0.5$, $1$: padding $1$ inverts the order --- a clean low-firing form like
+$x\!\cdot\!y$ then scores \emph{worst}, $\theta=1.21$, because its six unfired
+axes read as maximal defects; padding $0$ or $0.5$ both rank clean first, and
+$0.5$ is the principled neutral --- a pattern that did not match is neither a
+perfect $0$ nor a failure $1$, it simply did not vote). The objective vector is
+then the same width for every member, the angle is comparable directly, and at
+fixed $k$ the CDF correction is only a monotone reshaping of $\theta$ --- so we
+rank on the raw TrueNorth angle and omit it. Sorting the angles totally orders
+the class; the minimum is the structurally preferred behaviour-preserving form,
+no hand-tuned weights. (The per-form CDF-across-different-$k$ comparison remains
+valid for HFF's original setting --- a fixed-objective population --- but not for
+selecting among variable-defect members of one e-class.)
+
+\paragraph{Enumeration must seed the input.} A second pitfall is independent of
+scoring. The extractor enumerates an e-class's members under a bound; for a
+richly-expanded class the bound fills with expanded forms before the recursive
+walk reaches the compact e-node. We observed a gene whose own form was
+$(y_2-\varepsilon_0-y_1)^2$ be ranked behind 2000 multiplied-out variants ---
+the compact form was generated (the scalar extractor found it) but never
+enumerated for scoring. The fix is to \emph{seed} the candidate list with the
+input form itself: it is a member of its own class by construction, so scoring it
+explicitly guarantees the tournament can never do worse than the form it started
+with. With the seed, HFF correctly returns the compact square.
+
+\paragraph{A near-exact snap is not a discovery.} Recovering a readable law
+chains structural contraction (above) with snapping the regression's fitted
+coefficient $a$ to a lattice constant. The residual of that snap is a
+\emph{necessary} but not sufficient signal. We measured a gene for the
+Euclidean-distance law $\sqrt{(x_2-x_1)^2+(y_2-y_1)^2}$ whose fitted $a=1.7320508$
+matched $\sqrt3$ to $1.5\times10^{-11}$ --- near machine precision --- yet $\sqrt3$
+appears nowhere in the truth: the gene had fit the wrong subset of the data, and
+$a$ landed on $\sqrt3$ by coincidence. A tiny residual alone therefore cannot
+certify a constant; only re-checking that the snapped law reproduces the held-out
+data can. The recovery tool consequently emits a labelled \emph{candidate} and
+defers the verdict to the data, never reporting a coincidence as a find.
 
 \section{Experiments}
 \label{sec:experiments}
