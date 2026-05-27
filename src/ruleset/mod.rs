@@ -8,6 +8,7 @@ pub mod distribute;
 pub mod identities;
 pub mod powers;
 pub mod rational;
+pub mod sympy_mined;
 pub mod trig;
 pub mod trig_fu;
 pub mod wide;
