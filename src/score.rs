@@ -190,6 +190,51 @@ pub fn measure_rules() -> Vec<MeasureRule> {
                 Some(sat(ratio, 2.0))
             },
         },
+        // /op/ {op_diversity} — 1 - unique_ops/total_ops. A law reuses a few
+        // operators heavily (+, *, /); a fitter sprays many distinct ops. Fires
+        // when the term has any operator (internal) node. Already in [0,1].
+        MeasureRule {
+            name: "op_diversity",
+            eval: |r| {
+                let ops: Vec<&str> = r
+                    .nodes()
+                    .iter()
+                    .filter(|n| !n.is_var() && !n.is_num())
+                    .map(|n| n.head.as_str())
+                    .collect();
+                if ops.is_empty() {
+                    return None;
+                }
+                let total = ops.len() as f64;
+                let mut uniq: Vec<&str> = ops.clone();
+                uniq.sort_unstable();
+                uniq.dedup();
+                // High distinct/total = sprayed ops = bad. 0 = one op reused.
+                Some(uniq.len() as f64 / total)
+            },
+        },
+        // /Var/ {var_reuse} — 1 - distinct_vars/var_leaf_count. A law references
+        // each variable a few times; reuse is normal. Fires when the term has
+        // variable leaves. (NOTE: the brainstorm's "free_var_ratio" wanted
+        // vars_used / vars_in_corpus, which needs the pset's full variable list —
+        // not visible to a per-term scorer. This is the computable structural
+        // cousin: low distinct-per-leaf = healthy reuse. A corpus-aware
+        // free_var rule can be added once the scorer is given the var count.)
+        MeasureRule {
+            name: "var_reuse",
+            eval: |r| {
+                let leaves: Vec<&str> =
+                    r.nodes().iter().filter(|n| n.is_var()).map(|n| n.leaf.as_str()).collect();
+                if leaves.is_empty() {
+                    return None;
+                }
+                let total = leaves.len() as f64;
+                let mut uniq: Vec<&str> = leaves.clone();
+                uniq.sort_unstable();
+                uniq.dedup();
+                Some(uniq.len() as f64 / total)
+            },
+        },
     ]
 }
 
@@ -441,5 +486,36 @@ mod tests {
         let algebraic = parse(r#"(Add (Var "x") (Var "y"))"#).unwrap();
         let transcend = parse(r#"(Sin (Exp (Var "x")))"#).unwrap();
         assert_ne!(fire(&algebraic).len(), fire(&transcend).len());
+    }
+
+    #[test]
+    fn op_diversity_and_var_reuse_fire() {
+        let names = |e: &str| -> Vec<&'static str> {
+            fire(&parse(e).unwrap()).into_iter().map(|(n, _)| n).collect()
+        };
+        // op_diversity fires when there are operators; var_reuse when var leaves.
+        let n = names(r#"(Add (Mul (Var "x") (Var "x")) (Var "y"))"#);
+        assert!(n.contains(&"op_diversity"));
+        assert!(n.contains(&"var_reuse"));
+
+        // var_reuse: x,x,y -> 2 distinct / 3 leaves = 0.667; all-distinct = 1.0.
+        let reuse = fire(&parse(r#"(Add (Var "x") (Var "x"))"#).unwrap())
+            .into_iter()
+            .find(|(nm, _)| *nm == "var_reuse")
+            .unwrap()
+            .1;
+        assert!((reuse - 0.5).abs() < 1e-9, "x,x -> 1 distinct/2 = 0.5, got {reuse}");
+
+        // op_diversity: Add over two Muls -> {Add,Mul} 2 distinct / 3 ops = 0.667.
+        let div = fire(&parse(r#"(Add (Mul (Var "x") (Var "y")) (Mul (Var "x") (Var "y")))"#).unwrap())
+            .into_iter()
+            .find(|(nm, _)| *nm == "op_diversity")
+            .unwrap()
+            .1;
+        assert!((div - 2.0 / 3.0).abs() < 1e-9, "expected 2/3, got {div}");
+
+        // A bare leaf fires neither op_diversity (no ops) nor changes nothing odd.
+        let leaf = names(r#"(Var "x")"#);
+        assert!(!leaf.contains(&"op_diversity"), "no operators -> op_diversity off");
     }
 }
