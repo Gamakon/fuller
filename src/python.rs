@@ -589,7 +589,7 @@ fn eclass_variants(
 /// Same karva-in interface as `eclass_variants`. Returns
 /// `[(angle_percentile, Math s-expression)]`, best (lowest percentile) first.
 #[pyfunction]
-#[pyo3(signature = (head, tail, variables, functions, rnc_values, family = "algebra", k = 64, iters = 12))]
+#[pyo3(signature = (head, tail, variables, functions, rnc_values, family = "algebra", k = 64, iters = 12, exclude_measures = vec![]))]
 #[allow(clippy::too_many_arguments)]
 fn eclass_extract_hff(
     py: Python<'_>,
@@ -601,6 +601,7 @@ fn eclass_extract_hff(
     family: &str,
     k: usize,
     iters: u32,
+    exclude_measures: Vec<String>,
 ) -> PyResult<Vec<(f64, String)>> {
     let pset = build_pset(variables, functions, rnc_values);
     let head_toks = build_tokens(py, head)?;
@@ -614,11 +615,14 @@ fn eclass_extract_hff(
         "structural" => EclassFamily::Structural,
         other => {
             return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                "family must be \"algebra\", \"trig\", or \"wide\", got {other:?}"
+                "family must be \"algebra\", \"trig\", \"wide\", or \"structural\", got {other:?}"
             )))
         }
     };
-    eclass_extract_hff_core(&math, fam, k, iters).map_err(pyo3::exceptions::PyValueError::new_err)
+    // exclude_measures (default []) down-selects the /pattern/{measure} library —
+    // drop the named rules to test which measures matter. [] runs all of them.
+    eclass_extract_hff_core(&math, fam, k, iters, &exclude_measures)
+        .map_err(pyo3::exceptions::PyValueError::new_err)
 }
 
 /// The native extension module. `module-name` in pyproject.toml is

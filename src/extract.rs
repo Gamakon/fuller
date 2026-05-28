@@ -123,6 +123,7 @@ pub fn eclass_extract_hff(
     family: EclassFamily,
     k: usize,
     iters: u32,
+    exclude_measures: &[String],
 ) -> Result<Vec<(f64, String)>, String> {
     use egglog::extract::hff_extract;
 
@@ -130,12 +131,14 @@ pub fn eclass_extract_hff(
     let mut termdag = TermDag::default();
 
     // The HFF tournament scorer: render the candidate whole term and score it by
-    // the CDF-corrected hyperspherical-fitness angle over its /pattern/{measure}
-    // vector (the rule library in `crate::score`). NON-monotone by design — a
-    // bigger term may score better — which the vendored `hff_extract` (replacing
-    // scalar Bellman-Ford) permits and the stock extractor could not.
+    // the hyperspherical-fitness angle over its /pattern/{measure} vector (the
+    // rule library in `crate::score`), with any measures in `exclude_measures`
+    // turned off. NON-monotone by design — a bigger term may score better — which
+    // the vendored `hff_extract` (replacing scalar Bellman-Ford) permits and the
+    // stock extractor could not.
+    let excl: Vec<&str> = exclude_measures.iter().map(String::as_str).collect();
     let score = |td: &TermDag, t: egglog::TermId| -> f64 {
-        crate::score::score_expr(&td.to_string(t))
+        crate::score::score_expr_excluding(&td.to_string(t), &excl)
     };
 
     let ranked = hff_extract(&egraph, &mut termdag, value, sort, &score, k.max(1));
@@ -151,7 +154,7 @@ pub fn eclass_extract_hff(
     // own e-class by construction, so scoring it and merging guarantees the
     // tournament always considers it. (Found on lean_I_8_14: the gene IS
     // `Pow2(Sub ..)` but the enumerator only surfaced its multiplied-out forms.)
-    let in_score = crate::score::score_expr(input);
+    let in_score = crate::score::score_expr_excluding(input, &excl);
     if !out.iter().any(|(_, e)| e == input) {
         out.push((in_score, input.to_string()));
     }
@@ -771,7 +774,7 @@ mod tests {
         // forms ranked ascending by the log-percentile score (more negative =
         // rarer/better), cleanest first.
         let input = r#"(Add (Mul (Var "x") (Num 1.0)) (Num 0.0))"#;
-        let out = eclass_extract_hff(input, EclassFamily::Algebra, 32, 12).expect("hff extract");
+        let out = eclass_extract_hff(input, EclassFamily::Algebra, 32, 12, &[]).expect("hff extract");
         assert!(!out.is_empty());
         // Sorted ascending (best first).
         for w in out.windows(2) {

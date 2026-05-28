@@ -290,26 +290,33 @@ pub fn fire(root: &Node) -> Vec<(&'static str, f64)> {
 /// Returns a log-percentile: more negative = rarer/better. (Per the HFF repo's
 /// CLAUDE.md: deep-left-tail comparisons MUST use the log variant.)
 pub fn angle_percentile(root: &Node) -> f64 {
-    // Score EVERY candidate at the SAME fixed dimension = the full rule count, so
-    // angles are directly comparable. (Scoring each at its own fired-rule count
-    // inverts the ranking — a high-D form gets a rarer angle purely from
-    // dimension. Verified.)
-    // Non-firing rules pad to 0.5 — NEUTRAL: a pattern that didn't match neither
-    // rewards (0, "falsely perfect") nor punishes (1, which made a clean low-fire
-    // form score WORST than junk — verified). 0.5 sits at the equator and doesn't
-    // tilt the angle. All candidates scored at the full rule count = fixed k.
-    let rules = measure_rules();
-    let k = rules.len();
+    angle_percentile_excluding(root, &[])
+}
+
+/// As [`angle_percentile`] but DOWN-SELECTS the measure library: any rule whose
+/// name is in `exclude` is dropped, so you can test which measures matter by
+/// turning the unwanted ones off. Default (`&[]`) runs all measures.
+///
+/// `k` is the count of the RETAINED rules, so every candidate in a given run is
+/// still scored at the same fixed dimension (comparison stays valid); different
+/// runs with different exclusions simply use a different fixed `k`.
+pub fn angle_percentile_excluding(root: &Node, exclude: &[&str]) -> f64 {
+    // Score EVERY candidate at the SAME fixed dimension = the retained rule count,
+    // so angles are directly comparable. Non-firing rules pad to 0.5 (NEUTRAL: a
+    // pattern that didn't match neither rewards (0) nor punishes (1) — 0.5 sits at
+    // the equator and doesn't tilt the angle. Verified: pad=1 inverts the order).
+    let rules: Vec<MeasureRule> = measure_rules()
+        .into_iter()
+        .filter(|r| !exclude.contains(&r.name))
+        .collect();
+    let k = rules.len().max(1);
     let x: Vec<f64> = rules
         .into_iter()
         .map(|rule| (rule.eval)(root).unwrap_or(0.5))
         .collect();
     let arr = ndarray::Array1::from(x);
-    // Rank on the raw TrueNorth angle. With a FIXED common k, the CDF correction
-    // is only a monotone reshaping of theta — it changes the order ONLY when
-    // comparing across different k (which we no longer do, since non-firing rules
-    // pad to their ideal 0 and every candidate is scored at the full rule count).
-    // So no CDF here; lower angle = cleaner.
+    // Raw TrueNorth angle: at fixed k the CDF correction is only a monotone
+    // reshape, so it is omitted (lower angle = cleaner).
     hff_core::core_functions::calculate_single_hyperspherical_fitness_f64_with_method(
         &arr, k, false, None, "truenorth",
     )
@@ -318,8 +325,14 @@ pub fn angle_percentile(root: &Node) -> f64 {
 /// Score a Math s-expression string: parse then [`angle_percentile`]. This is the
 /// scorer the HFF extractor calls on each whole candidate term.
 pub fn score_expr(expr: &str) -> f64 {
+    score_expr_excluding(expr, &[])
+}
+
+/// As [`score_expr`] but with a measure down-select (see
+/// [`angle_percentile_excluding`]). Default (`&[]`) runs all measures.
+pub fn score_expr_excluding(expr: &str, exclude: &[&str]) -> f64 {
     match parse(expr) {
-        Some(n) => angle_percentile(&n),
+        Some(n) => angle_percentile_excluding(&n, exclude),
         None => 1.0, // unparseable -> worst
     }
 }
