@@ -30,3 +30,7 @@ name = "00_calibration"
 [[example]]
 name = "bf_bloat_study"
 path = "examples/bf_bloat/main.rs"
+
+[[example]]
+name = "bf_study"
+path = "examples/bf_study/main.rs"
