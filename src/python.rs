@@ -414,6 +414,48 @@ fn master_pset() -> Vec<(String, usize)> {
         .collect()
 }
 
+// ---------------------------------------------------------------------------
+// Brainfuck simplifier bindings
+// ---------------------------------------------------------------------------
+
+/// Simplify a Brainfuck source string using equality saturation.
+///
+/// Returns a dict: `{"source": str, "op_count": int, "changed": bool}`.
+/// - `source`: the simplified BF source string (same as input if no rule fires).
+/// - `op_count`: number of BF ops (`+-<>.,[]`) in the simplified source.
+/// - `changed`: True if the simplified form is strictly shorter than the input.
+///
+/// Never raises on normal input — returns the input unchanged on any internal
+/// error. Raises ValueError only on truly malformed input (syntax error after
+/// removing comments).
+#[pyfunction]
+fn bf_simplify(py: Python<'_>, source: &str) -> PyResult<Py<pyo3::types::PyDict>> {
+    let result = crate::bf::extract::bf_simplify(source)
+        .map_err(pyo3::exceptions::PyValueError::new_err)?;
+    let out = pyo3::types::PyDict::new_bound(py);
+    out.set_item("source", result.source)?;
+    out.set_item("op_count", result.op_count)?;
+    out.set_item("changed", result.changed)?;
+    Ok(out.into())
+}
+
+/// Convert a BF source string to its egglog Prog s-expression.
+///
+/// Non-BF characters are ignored (they are comments). Returns an error on
+/// unmatched brackets.
+#[pyfunction]
+fn bf_parse(source: &str) -> PyResult<String> {
+    crate::bf::parse::parse_bf(source)
+        .map_err(pyo3::exceptions::PyValueError::new_err)
+}
+
+/// Convert an egglog Prog s-expression back to BF source text.
+#[pyfunction]
+fn bf_unparse(sexpr: &str) -> PyResult<String> {
+    crate::bf::parse::unparse_bf(sexpr)
+        .map_err(pyo3::exceptions::PyValueError::new_err)
+}
+
 /// The native extension module. `module-name` in pyproject.toml is
 /// `gamakAST._gamakast`, so this initialises `_gamakast`; the Python shim
 /// re-exports from it.
@@ -427,5 +469,9 @@ fn _gamakast(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(master_constants, m)?)?;
     m.add_function(wrap_pyfunction!(master_lattice, m)?)?;
     m.add_function(wrap_pyfunction!(snap_karva, m)?)?;
+    // Brainfuck simplifier
+    m.add_function(wrap_pyfunction!(bf_simplify, m)?)?;
+    m.add_function(wrap_pyfunction!(bf_parse, m)?)?;
+    m.add_function(wrap_pyfunction!(bf_unparse, m)?)?;
     Ok(())
 }
