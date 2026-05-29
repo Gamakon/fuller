@@ -26,3 +26,7 @@ python = ["dep:pyo3"]
 
 [[example]]
 name = "00_calibration"
+
+[[example]]
+name = "bf_bloat_study"
+path = "examples/bf_bloat/main.rs"
