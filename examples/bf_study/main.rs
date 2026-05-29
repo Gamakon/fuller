@@ -1,15 +1,15 @@
-// Brainfuck GP bloat study — extended publishable edition.
+// Brainfuck GP bloat study — extended publishable edition (v2: lambda sweep + full Baldwinian battery).
 //
 // CONTRIBUTION FRAMING:
 //   "Equality saturation as a GP mutation operator with provable semantic preservation."
 //   BF is the demonstration language; the technique generalises to any GP target with
-//   decidable equivalence (SQL, regex, sorting networks, compiler passes).
+//   decidable equivalence (SQL, regex, sorting networks, compiler IR passes).
 //   The soundness guarantee is the headline: 100% match rate across interpreter checks —
 //   something floating-point symbolic regression cannot claim.
 //
 // Three arms: NONE (no bloat control), PARSIMONY (length penalty on fitness),
 //             EGGLOG (Lamarckian simplification via equality saturation).
-// Baldwinian probe on the "increment" task only.
+// Baldwinian probe on ALL TASKS (v2 fix: was increment-only).
 //
 // Task battery — deliberately mixed by structural character:
 //   increment  — `,+.`                  arithmetic no loop (3 ops, run-length bloat)
@@ -32,7 +32,8 @@
 // This is also a reportable finding about the method's scope.
 //
 // 30 seeds × 3 main arms × 4 tasks.
-// Baldwinian probe: increment task only, 30 seeds.
+// Lambda sweep: PARSIMONY arm across LAMBDA_GRID values × 4 tasks × 30 seeds.
+// Baldwinian probe: ALL TASKS, 30 seeds each (v2 extension).
 //
 // Mechanism probes:
 //   - Unique genotype count vs unique canonical form count per generation
@@ -58,10 +59,23 @@ const MAX_PROG_LEN: usize = 36;
 const MUTATION_RATE: f64 = 0.35;
 const TOURNAMENT_K: usize = 3; // ~7% of pop
 
-/// Parsimony penalty coefficient.
-/// Tuned so penalty ~= 0.5 raw-fitness points at median length (~16 ops):
-/// lambda * 16 ops ≈ 0.5 => lambda ≈ 0.03.
-const PARSIMONY_LAMBDA: f64 = 0.03;
+/// Default parsimony penalty coefficient used in the main comparison arm.
+/// This is NOT the value used during the lambda sweep (which sweeps LAMBDA_GRID).
+/// After the sweep, the best-per-task lambda is identified; the final EGGLOG-vs-PARSIMONY
+/// comparison uses that per-task best.
+const PARSIMONY_LAMBDA_DEFAULT: f64 = 0.03;
+
+/// Lambda sweep grid.
+/// Fitness scale: raw × 10 → 0..100. Penalty = lambda × 10 × op_count.
+/// At median init length ~18 ops:
+///   0.0   → 0.0 pts  (= NONE baseline, sanity check)
+///   0.001 → 0.18 pts (~0.2% of max score, barely perceptible)
+///   0.003 → 0.54 pts (light touch)
+///   0.01  → 1.8  pts (moderate, ~2% of max)
+///   0.02  → 3.6  pts
+///   0.03  → 5.4  pts (original — crushed to 3.7 ops)
+///   0.05  → 9.0  pts (aggressive — ~9% of max score per 18 ops)
+const LAMBDA_GRID: &[f64] = &[0.0, 0.001, 0.003, 0.01, 0.02, 0.03, 0.05];
 
 /// Maximum BF ops before skipping egglog simplification.
 /// Programs longer than this have negligible run-length redundancy AND
@@ -303,15 +317,15 @@ struct RunResult {
 }
 
 // ---------------------------------------------------------------------------
-// One GP run
+// One GP run — parameterised lambda (use 0.0 for NONE / EGGLOG / BALDWINIAN)
 // ---------------------------------------------------------------------------
-fn gp_run(seed: u64, arm: Arm, task: &Task, collect_mechanism_data: bool) -> RunResult {
+fn gp_run(seed: u64, arm: Arm, task: &Task, lambda: f64, collect_mechanism_data: bool) -> RunResult {
     let mut rng = seed;
 
     // Scaled fitness for selection (parsimony arm multiplies raw × 10, then subtracts penalty).
     let scaled_fitness = |raw: usize, prog: &str| -> usize {
         if arm == Arm::Parsimony {
-            let penalty = (PARSIMONY_LAMBDA * Task::op_count(prog) as f64 * 10.0) as usize;
+            let penalty = (lambda * Task::op_count(prog) as f64 * 10.0) as usize;
             (raw * 10).saturating_sub(penalty)
         } else {
             raw * 10
@@ -569,20 +583,24 @@ fn main() {
     let mut mechanism_gen_data: Vec<Vec<Vec<GenData>>> =
         (0..n_main_arms).map(|_| (0..GENS).map(|_| Vec::new()).collect()).collect();
 
-    println!("=== Main study: {} tasks × {} arms × {} seeds ===", n_tasks, n_main_arms, SEEDS);
-    println!("=== (Mechanism data collected for task: increment) ===\n");
+    // =========================================================================
+    // PHASE 1: Main study (NONE, PARSIMONY@default, EGGLOG)
+    // =========================================================================
+    println!("=== Phase 1: Main study: {} tasks × {} arms × {} seeds ===", n_tasks, n_main_arms, SEEDS);
+    println!("=== (λ={PARSIMONY_LAMBDA_DEFAULT} for PARSIMONY; mechanism data for task: increment) ===\n");
 
     for (ti, task) in tasks.iter().enumerate() {
         println!("--- Task: {} ---", task.name);
         let collect_mech = ti == increment_idx;
 
         for (ai, &arm) in main_arms.iter().enumerate() {
+            let lambda = if arm == Arm::Parsimony { PARSIMONY_LAMBDA_DEFAULT } else { 0.0 };
             for seed in 0..SEEDS {
                 let run_seed = (seed as u64) * 1_000_003
                     + (ai as u64) * 999_983
                     + (ti as u64) * 100_003
                     + 1;
-                let r = gp_run(run_seed, arm, task, collect_mech);
+                let r = gp_run(run_seed, arm, task, lambda, collect_mech);
 
                 solve_counts[ti][ai][seed] = r.solve_count;
                 let mean_len = r.lengths.iter().sum::<usize>() as f64 / r.lengths.len() as f64;
@@ -613,7 +631,8 @@ fn main() {
 
                 writeln!(
                     ledger,
-                    "{{\"task\":\"{}\",\"arm\":\"{}\",\"seed\":{},\"solve_count\":{},\
+                    "{{\"phase\":\"main\",\"task\":\"{}\",\"arm\":\"{}\",\"lambda\":{lambda:.4},\
+                    \"seed\":{},\"solve_count\":{},\
                     \"pop\":{POP},\"mean_len\":{:.2},\"best_fitness\":{},\"max_fitness\":{},\
                     \"solve_gen\":{},\"solved_canon_distinct\":{},\"solved_canon_gt_frac\":{:.4}}}",
                     task.name, arm.name(), seed, r.solve_count, mean_len,
@@ -634,58 +653,185 @@ fn main() {
         println!();
     }
 
-    // Baldwinian probe on increment task only
-    println!("=== Baldwinian probe: task=increment, {} seeds ===", SEEDS);
-    let mut bald_solve_counts  = vec![0usize; SEEDS];
-    let mut bald_final_means   = vec![0.0f64; SEEDS];
-    let mut bald_conv_gens: Vec<Option<usize>> = vec![None; SEEDS];
-    let mut bald_canon_distinct = vec![0usize; SEEDS];
-    let mut bald_canon_gt_frac  = vec![0.0f64; SEEDS];
+    // =========================================================================
+    // PHASE 2: Lambda sweep — PARSIMONY arm across LAMBDA_GRID × all tasks × 30 seeds
+    // =========================================================================
+    println!("=== Phase 2: Lambda sweep — {} lambdas × {} tasks × {} seeds ===\n",
+        LAMBDA_GRID.len(), n_tasks, SEEDS);
 
-    let gt_canonical_inc = bf_simplify(tasks[increment_idx].ground_truth)
-        .ok().map(|s| s.source)
-        .unwrap_or_else(|| tasks[increment_idx].ground_truth.to_string());
+    // sweep_solve[li][ti][seed]
+    let mut sweep_solve: Vec<Vec<Vec<usize>>> =
+        vec![vec![vec![0usize; SEEDS]; n_tasks]; LAMBDA_GRID.len()];
+    // sweep_len[li][ti][seed]
+    let mut sweep_len: Vec<Vec<Vec<f64>>> =
+        vec![vec![vec![0.0f64; SEEDS]; n_tasks]; LAMBDA_GRID.len()];
 
-    for seed in 0..SEEDS {
-        let run_seed = (seed as u64) * 1_000_003 + 4 * 999_983 + 1;
-        let r = gp_run(run_seed, Arm::Baldwinian, &tasks[increment_idx], false);
+    for (li, &lam) in LAMBDA_GRID.iter().enumerate() {
+        for (ti, task) in tasks.iter().enumerate() {
+            for seed in 0..SEEDS {
+                // Seed formula: offset by lambda index (li+10) to keep distinct from main runs
+                let run_seed = (seed as u64) * 1_000_003
+                    + ((li as u64) + 10) * 999_983
+                    + (ti as u64) * 100_003
+                    + 1;
+                let r = gp_run(run_seed, Arm::Parsimony, task, lam, false);
+                sweep_solve[li][ti][seed] = r.solve_count;
+                let mean_len = r.lengths.iter().sum::<usize>() as f64 / r.lengths.len() as f64;
+                sweep_len[li][ti][seed] = mean_len;
 
-        bald_solve_counts[seed] = r.solve_count;
-        let mean_len = r.lengths.iter().sum::<usize>() as f64 / r.lengths.len() as f64;
-        bald_final_means[seed] = mean_len;
-        bald_conv_gens[seed] = r.solve_gen;
+                writeln!(
+                    ledger,
+                    "{{\"phase\":\"lambda_sweep\",\"task\":\"{}\",\"arm\":\"PARSIMONY\",\
+                    \"lambda\":{lam:.4},\"seed\":{},\"solve_count\":{},\
+                    \"pop\":{POP},\"mean_len\":{:.2}}}",
+                    task.name, seed, r.solve_count, mean_len,
+                ).expect("write ledger");
+            }
 
-        let n_solved = r.solved_canonical_forms.len();
-        let distinct: HashSet<&str> = r.solved_canonical_forms.iter().map(String::as_str).collect();
-        bald_canon_distinct[seed] = distinct.len();
-        let gt_match = r.solved_canonical_forms.iter().filter(|f| *f == &gt_canonical_inc).count();
-        bald_canon_gt_frac[seed] = if n_solved > 0 { gt_match as f64 / n_solved as f64 } else { 0.0 };
-
-        writeln!(
-            ledger,
-            "{{\"task\":\"increment\",\"arm\":\"BALDWINIAN\",\"seed\":{seed},\
-            \"solve_count\":{},\"pop\":{POP},\"mean_len\":{:.2},\
-            \"best_fitness\":{},\"max_fitness\":{},\"solve_gen\":{},\
-            \"solved_canon_distinct\":{},\"solved_canon_gt_frac\":{:.4}}}",
-            r.solve_count, mean_len, r.best_fitness, tasks[increment_idx].max_fitness(),
-            r.solve_gen.map(|g| g.to_string()).unwrap_or_else(|| "null".to_string()),
-            bald_canon_distinct[seed], bald_canon_gt_frac[seed],
-        ).expect("write ledger");
+            let rates: Vec<f64> = sweep_solve[li][ti].iter().map(|&c| c as f64 / POP as f64).collect();
+            let lens: Vec<f64>  = sweep_len[li][ti].clone();
+            println!("  lambda={lam:.3}  task={}  solve={:.3}±{:.3}  len={:.1}±{:.1}",
+                task.name, mean_f64(&rates), std_f64(&rates), mean_f64(&lens), std_f64(&lens));
+        }
+        println!();
     }
-    let bald_solve_rates: Vec<f64> = bald_solve_counts.iter()
-        .map(|&c| c as f64 / POP as f64).collect();
-    println!(
-        "  BALDWINIAN solve_rate mean={:.3} std={:.3}\n",
-        mean_f64(&bald_solve_rates), std_f64(&bald_solve_rates)
-    );
 
-    // -------------------------------------------------------------------------
+    // =========================================================================
+    // PHASE 3: Full-battery Baldwinian (all tasks, 30 seeds)
+    // =========================================================================
+    println!("=== Phase 3: Baldwinian battery — {} tasks × {} seeds ===\n", n_tasks, SEEDS);
+
+    // bald_solve[ti][seed], bald_len[ti][seed]
+    let mut bald_solve: Vec<Vec<usize>> = vec![vec![0usize; SEEDS]; n_tasks];
+    let mut bald_len:   Vec<Vec<f64>>   = vec![vec![0.0f64; SEEDS]; n_tasks];
+    let mut bald_conv_gens: Vec<Vec<Option<usize>>> = vec![vec![None; SEEDS]; n_tasks];
+    let mut bald_canon_distinct: Vec<Vec<usize>> = vec![vec![0usize; SEEDS]; n_tasks];
+    let mut bald_canon_gt_frac:  Vec<Vec<f64>>   = vec![vec![0.0f64; SEEDS]; n_tasks];
+
+    for (ti, task) in tasks.iter().enumerate() {
+        let gt_canonical = bf_simplify(task.ground_truth)
+            .ok().map(|s| s.source)
+            .unwrap_or_else(|| task.ground_truth.to_string());
+
+        for seed in 0..SEEDS {
+            // Seed formula: offset by 50 task-arm slots to separate from main + sweep
+            let run_seed = (seed as u64) * 1_000_003
+                + (ti as u64 + 50) * 999_983
+                + 1;
+            let r = gp_run(run_seed, Arm::Baldwinian, task, 0.0, false);
+
+            bald_solve[ti][seed] = r.solve_count;
+            let mean_len = r.lengths.iter().sum::<usize>() as f64 / r.lengths.len() as f64;
+            bald_len[ti][seed] = mean_len;
+            bald_conv_gens[ti][seed] = r.solve_gen;
+
+            let n_solved = r.solved_canonical_forms.len();
+            let distinct: HashSet<&str> = r.solved_canonical_forms.iter().map(String::as_str).collect();
+            bald_canon_distinct[ti][seed] = distinct.len();
+            let gt_match = r.solved_canonical_forms.iter().filter(|f| *f == &gt_canonical).count();
+            bald_canon_gt_frac[ti][seed] = if n_solved > 0 { gt_match as f64 / n_solved as f64 } else { 0.0 };
+
+            writeln!(
+                ledger,
+                "{{\"phase\":\"baldwinian_battery\",\"task\":\"{}\",\"arm\":\"BALDWINIAN\",\
+                \"lambda\":0.0000,\"seed\":{},\"solve_count\":{},\
+                \"pop\":{POP},\"mean_len\":{:.2},\"best_fitness\":{},\"max_fitness\":{},\
+                \"solve_gen\":{},\"solved_canon_distinct\":{},\"solved_canon_gt_frac\":{:.4}}}",
+                task.name, seed, r.solve_count, mean_len, r.best_fitness, task.max_fitness(),
+                r.solve_gen.map(|g| g.to_string()).unwrap_or_else(|| "null".to_string()),
+                bald_canon_distinct[ti][seed], bald_canon_gt_frac[ti][seed],
+            ).expect("write ledger");
+        }
+
+        let rates: Vec<f64> = bald_solve[ti].iter().map(|&c| c as f64 / POP as f64).collect();
+        println!("  task={}  BALDWINIAN solve_rate mean={:.3} std={:.3}",
+            task.name, mean_f64(&rates), std_f64(&rates));
+    }
+    println!();
+
+    // =========================================================================
+    // PHASE 4: Identify best lambda per task; re-run EGGLOG vs PARSIMONY@best_lambda
+    // =========================================================================
+    // Best lambda = lambda with highest mean solve rate across 30 seeds.
+    // Ties broken by smallest lambda (prefer less aggressive penalty).
+    let mut best_lambda_idx: Vec<usize> = vec![0usize; n_tasks];
+    let mut best_lambda_rate: Vec<f64>  = vec![0.0f64; n_tasks];
+
+    for (ti, _task) in tasks.iter().enumerate() {
+        for (li, _lam) in LAMBDA_GRID.iter().enumerate() {
+            let rates: Vec<f64> = sweep_solve[li][ti].iter().map(|&c| c as f64 / POP as f64).collect();
+            let mean = mean_f64(&rates);
+            // Strictly greater: tie → keep lower lambda (smaller li already won)
+            if mean > best_lambda_rate[ti] {
+                best_lambda_rate[ti] = mean;
+                best_lambda_idx[ti]  = li;
+            }
+        }
+    }
+
+    // Re-run EGGLOG vs PARSIMONY@best_lambda for each task (30 seeds).
+    // We have EGGLOG data from Phase 1.  We need PARSIMONY@best_lambda.
+    // If best_lambda == PARSIMONY_LAMBDA_DEFAULT, reuse Phase 1 data — but we use different
+    // seeds in the sweep (li+10 offset).  For fair pairing we RE-RUN with the main-phase seeds.
+    println!("=== Phase 4: Re-run EGGLOG vs PARSIMONY@best_lambda (fair comparison) ===");
+    for (ti, task) in tasks.iter().enumerate() {
+        let best_li = best_lambda_idx[ti];
+        let best_lam = LAMBDA_GRID[best_li];
+        println!("  task={}  best_lambda={best_lam:.3}  solve_rate={:.3}",
+            task.name, best_lambda_rate[ti]);
+    }
+    println!();
+
+    // best_par_solve[ti][seed] — PARSIMONY at best lambda, main-phase seeds
+    let mut best_par_solve: Vec<Vec<usize>> = vec![vec![0usize; SEEDS]; n_tasks];
+    let mut best_par_len:   Vec<Vec<f64>>   = vec![vec![0.0f64; SEEDS]; n_tasks];
+
+    for (ti, task) in tasks.iter().enumerate() {
+        let best_lam = LAMBDA_GRID[best_lambda_idx[ti]];
+        for seed in 0..SEEDS {
+            // Use same seed formula as Phase 1 parsimony runs so seeds are comparable
+            let run_seed = (seed as u64) * 1_000_003
+                + (parsimony_idx as u64) * 999_983
+                + (ti as u64) * 100_003
+                + 1;
+            // If best_lam == default, this is exactly the Phase 1 run — reuse stored data.
+            let r = if (best_lam - PARSIMONY_LAMBDA_DEFAULT).abs() < 1e-9 {
+                // Reuse: the already-stored counts are identical; fabricate a thin RunResult
+                // just for convenience of the re-run path.  We write 0 to ledger (dup guard).
+                let dummy = RunResult {
+                    lengths: vec![],
+                    solve_count: solve_counts[ti][parsimony_idx][seed],
+                    best_fitness: 0,
+                    solve_gen: None,
+                    gen_data: vec![],
+                    solved_canonical_forms: vec![],
+                };
+                best_par_len[ti][seed] = final_means[ti][parsimony_idx][seed];
+                dummy
+            } else {
+                let r = gp_run(run_seed, Arm::Parsimony, task, best_lam, false);
+                let mean_len = r.lengths.iter().sum::<usize>() as f64 / r.lengths.len() as f64;
+                best_par_len[ti][seed] = mean_len;
+                writeln!(
+                    ledger,
+                    "{{\"phase\":\"best_lambda_rerun\",\"task\":\"{}\",\"arm\":\"PARSIMONY\",\
+                    \"lambda\":{best_lam:.4},\"seed\":{},\"solve_count\":{},\
+                    \"pop\":{POP},\"mean_len\":{:.2}}}",
+                    task.name, seed, r.solve_count, mean_len,
+                ).expect("write ledger");
+                r
+            };
+            best_par_solve[ti][seed] = r.solve_count;
+        }
+    }
+
+    // =========================================================================
     // Write RESULTS.md
-    // -------------------------------------------------------------------------
+    // =========================================================================
     let results_path = out_dir.join("RESULTS.md");
     let mut rmd = std::fs::File::create(&results_path).expect("create RESULTS.md");
 
-    writeln!(rmd, "# BF Bloat Study — Extended Results\n").unwrap();
+    writeln!(rmd, "# BF Bloat Study — Results v2 (lambda sweep + full Baldwinian battery)\n").unwrap();
 
     writeln!(rmd, "## Soundness (the real headline)\n").unwrap();
     writeln!(rmd, "**100% match rate** — 500 random BF programs, 4 test inputs each = 2000 interpreter comparisons, 0 output mismatches.").unwrap();
@@ -695,7 +841,8 @@ fn main() {
 
     writeln!(rmd, "## Setup\n").unwrap();
     writeln!(rmd, "- Population: {POP}, generations: {GENS}, seeds: {SEEDS}").unwrap();
-    writeln!(rmd, "- Parsimony λ = {PARSIMONY_LAMBDA} (fitness_scaled = raw × 10 − λ × 10 × op_count)").unwrap();
+    writeln!(rmd, "- Lambda grid (parsimony sweep): {:?}", LAMBDA_GRID).unwrap();
+    writeln!(rmd, "- Default PARSIMONY λ (Phase 1 main arm): {PARSIMONY_LAMBDA_DEFAULT}").unwrap();
     writeln!(rmd, "- Tournament K = {TOURNAMENT_K} (~7% of population)").unwrap();
     writeln!(rmd, "- Max program length: {MAX_PROG_LEN}").unwrap();
     writeln!(rmd, "- Mutation rate: {MUTATION_RATE}\n").unwrap();
@@ -713,23 +860,22 @@ fn main() {
             task.max_fitness(), ttype).unwrap();
     }
     writeln!(rmd).unwrap();
-    writeln!(rmd, "The `add_two` task requires correct multi-cell layout and a loop with semantic content — it cannot be solved by run-length compression alone. This is the critical test of whether egglog's advantage generalises beyond the run-length regime.\n").unwrap();
 
     writeln!(rmd, "### Excluded Tasks\n").unwrap();
     writeln!(rmd, "| Task | Ground Truth | Reason for Exclusion |").unwrap();
     writeln!(rmd, "|------|-------------|---------------------|").unwrap();
-    writeln!(rmd, "| double | `,[->++<]>.` (10 ops) | GP achieves 0% solve rate at POP=60, GENS=80 on all 3 arms. Loop-discovery requires all of [, >, +, <, -, ] in correct sequence — too rare at this budget. Excluded per pre-registration rule: unsolvable task contributes no signal. |").unwrap();
-    writeln!(rmd, "| double (egglog overhead note) | — | Egglog saturation cost on loop-containing programs is O(n·L) where L=loop depth. At >20 ops with nested loops, per-call cost exceeds ~100ms. The EGGLOG arm applies a MAX_SIMPLIFY_OPS={MAX_SIMPLIFY_OPS} guard to keep runtime tractable; this is itself a reportable finding about the method's scope. |").unwrap();
+    writeln!(rmd, "| double | `,[->++<]>.` (10 ops) | GP achieves 0% solve rate at POP=60, GENS=80 on all 3 arms. |").unwrap();
+    writeln!(rmd, "| double (egglog overhead) | — | Egglog saturation cost prohibitive at >20 ops with nested loops. MAX_SIMPLIFY_OPS={MAX_SIMPLIFY_OPS} guard applied. |").unwrap();
     writeln!(rmd).unwrap();
 
-    writeln!(rmd, "## Per-Task Results (30 seeds)\n").unwrap();
-    writeln!(rmd, "Solve rate = fraction of final-population individuals that pass all test inputs.").unwrap();
-    writeln!(rmd, "Statistics are per-seed solve rate across 30 seeds.\n").unwrap();
+    // Phase 1 results table
+    writeln!(rmd, "## Phase 1: Main Study (NONE / PARSIMONY@λ={PARSIMONY_LAMBDA_DEFAULT} / EGGLOG)\n").unwrap();
+    writeln!(rmd, "Solve rate = fraction of final-population individuals that pass all test inputs.\n").unwrap();
 
     for (ti, task) in tasks.iter().enumerate() {
         writeln!(rmd, "### Task: {}\n", task.name).unwrap();
-        writeln!(rmd, "| Arm | Solve Rate Mean±Std | Solve Rate Median(IQR) | Mean Length Mean±Std | Conv Gen Median | Canon GT Frac Mean |").unwrap();
-        writeln!(rmd, "|-----|--------------------|-----------------------|---------------------|----------------|-------------------|").unwrap();
+        writeln!(rmd, "| Arm | Solve Rate Mean±Std | Solve Rate Median(IQR) | Mean Length Mean±Std | Conv Gen Median |").unwrap();
+        writeln!(rmd, "|-----|--------------------|-----------------------|---------------------|----------------|").unwrap();
 
         for (ai, arm) in main_arms.iter().enumerate() {
             let solve_rates: Vec<f64> = solve_counts[ti][ai].iter()
@@ -744,19 +890,13 @@ fn main() {
             let cg_med = if cg_copy.is_empty() { "N/A".to_string() }
                          else { format!("{:.0}", median_f64(&mut cg_copy)) };
 
-            let gt_frac: Vec<f64> = solved_canon_gt_frac[ti][ai].iter()
-                .filter(|&&f| f > 0.0 || solve_counts[ti][ai].iter().any(|&c| c > 0))
-                .copied().collect();
-            let gt_frac_mean = mean_f64(&solved_canon_gt_frac[ti][ai]);
-
-            writeln!(rmd, "| {} | {:.3}±{:.3} | {:.3}({:.3}) | {:.1}±{:.1} | {} | {:.3} |",
+            writeln!(rmd, "| {} | {:.3}±{:.3} | {:.3}({:.3}) | {:.1}±{:.1} | {} |",
                 arm.name(),
                 mean_f64(&solve_rates), std_f64(&solve_rates),
                 sr_med, sr_iqr,
                 mean_f64(&final_means[ti][ai]), std_f64(&final_means[ti][ai]),
-                cg_med, gt_frac_mean,
+                cg_med,
             ).unwrap();
-            let _ = gt_frac;
         }
         writeln!(rmd).unwrap();
 
@@ -778,32 +918,93 @@ fn main() {
         writeln!(rmd).unwrap();
     }
 
-    // Baldwinian vs Lamarckian
-    writeln!(rmd, "## Baldwinian vs Lamarckian (task: increment, 30 seeds)\n").unwrap();
-    let sr_egglog_inc: Vec<f64> = solve_counts[increment_idx][egglog_idx].iter()
-        .map(|&c| c as f64 / POP as f64).collect();
-    let (w_be, p_be, md_be) = wilcoxon_signed_rank(&bald_solve_rates, &sr_egglog_inc);
-    let mut bald_sr_copy = bald_solve_rates.clone();
-    let bald_sr_med = median_f64(&mut bald_sr_copy);
-    let bald_sr_iqr = iqr_f64(&mut bald_sr_copy);
-    let mut egg_sr_copy = sr_egglog_inc.clone();
-    let egg_sr_med = median_f64(&mut egg_sr_copy);
-    let egg_sr_iqr = iqr_f64(&mut egg_sr_copy);
+    // Lambda sweep table
+    writeln!(rmd, "## Phase 2: Lambda Sweep — PARSIMONY arm across λ grid\n").unwrap();
+    writeln!(rmd, "Each cell: mean solve rate ± std over 30 seeds. Mean length (ops) in parentheses.\n").unwrap();
 
-    writeln!(rmd, "| Arm | Solve Rate Mean±Std | Solve Rate Median(IQR) | Canon GT Frac Mean |").unwrap();
-    writeln!(rmd, "|-----|--------------------|-----------------------|-------------------|").unwrap();
-    writeln!(rmd, "| EGGLOG (Lamarckian) | {:.3}±{:.3} | {:.3}({:.3}) | {:.3} |",
-        mean_f64(&sr_egglog_inc), std_f64(&sr_egglog_inc), egg_sr_med, egg_sr_iqr,
-        mean_f64(&solved_canon_gt_frac[increment_idx][egglog_idx])).unwrap();
-    writeln!(rmd, "| BALDWINIAN          | {:.3}±{:.3} | {:.3}({:.3}) | {:.3} |",
-        mean_f64(&bald_solve_rates), std_f64(&bald_solve_rates), bald_sr_med, bald_sr_iqr,
-        mean_f64(&bald_canon_gt_frac)).unwrap();
-    writeln!(rmd, "\nWilcoxon BALDWINIAN vs EGGLOG: W={w_be:.1} p={p_be:.4} Δ={md_be:+.3} ({})\n",
-        if p_be < 0.05 { "significant" } else { "not significant" }).unwrap();
+    // Header
+    let mut hdr = "| λ |".to_string();
+    for task in &tasks { hdr.push_str(&format!(" {} solve±std (len) |", task.name)); }
+    writeln!(rmd, "{hdr}").unwrap();
+    let mut sep = "|---|".to_string();
+    for _ in &tasks { sep.push_str("---|"); }
+    writeln!(rmd, "{sep}").unwrap();
+
+    for (li, &lam) in LAMBDA_GRID.iter().enumerate() {
+        let mut row = format!("| {lam:.3} |");
+        for (ti, _task) in tasks.iter().enumerate() {
+            let rates: Vec<f64> = sweep_solve[li][ti].iter().map(|&c| c as f64 / POP as f64).collect();
+            let lens:  Vec<f64> = sweep_len[li][ti].clone();
+            row.push_str(&format!(" {:.3}±{:.3} ({:.1}) |",
+                mean_f64(&rates), std_f64(&rates), mean_f64(&lens)));
+        }
+        writeln!(rmd, "{row}").unwrap();
+    }
+    writeln!(rmd).unwrap();
+
+    // Best lambda per task
+    writeln!(rmd, "### Best Lambda Per Task\n").unwrap();
+    writeln!(rmd, "Best = highest mean solve rate; ties broken by smallest λ (prefer lighter penalty).\n").unwrap();
+    writeln!(rmd, "| Task | Best λ | PARSIMONY@best solve rate | Justification |").unwrap();
+    writeln!(rmd, "|------|--------|--------------------------|--------------|").unwrap();
+    for (ti, task) in tasks.iter().enumerate() {
+        let best_lam = LAMBDA_GRID[best_lambda_idx[ti]];
+        let best_li  = best_lambda_idx[ti];
+        let rates: Vec<f64> = sweep_solve[best_li][ti].iter().map(|&c| c as f64 / POP as f64).collect();
+        let lens: Vec<f64>  = sweep_len[best_li][ti].clone();
+        writeln!(rmd, "| {} | {best_lam:.3} | {:.3}±{:.3} (mean len {:.1}) | see sweep table |",
+            task.name, mean_f64(&rates), std_f64(&rates), mean_f64(&lens)).unwrap();
+    }
+    writeln!(rmd).unwrap();
+
+    // Phase 4: EGGLOG vs PARSIMONY@best_lambda
+    writeln!(rmd, "## Phase 4: Fair Comparison — EGGLOG vs PARSIMONY@best-λ\n").unwrap();
+    writeln!(rmd, "Using the best per-task λ identified from the sweep.  EGGLOG seeds are from Phase 1.\n").unwrap();
+    for (ti, task) in tasks.iter().enumerate() {
+        let best_lam = LAMBDA_GRID[best_lambda_idx[ti]];
+        let sr_egglog: Vec<f64> = solve_counts[ti][egglog_idx].iter()
+            .map(|&c| c as f64 / POP as f64).collect();
+        let sr_best_par: Vec<f64> = best_par_solve[ti].iter()
+            .map(|&c| c as f64 / POP as f64).collect();
+
+        let (w, p, md) = wilcoxon_signed_rank(&sr_egglog, &sr_best_par);
+        let mut eg_copy = sr_egglog.clone();
+        let mut bp_copy = sr_best_par.clone();
+        writeln!(rmd, "### Task: {} (PARSIMONY@λ={best_lam:.3})\n", task.name).unwrap();
+        writeln!(rmd, "| Arm | Solve Rate Mean±Std | Median(IQR) |").unwrap();
+        writeln!(rmd, "|-----|--------------------|-----------  |").unwrap();
+        writeln!(rmd, "| EGGLOG (Lamarckian)   | {:.3}±{:.3} | {:.3}({:.3}) |",
+            mean_f64(&sr_egglog), std_f64(&sr_egglog),
+            median_f64(&mut eg_copy), iqr_f64(&mut eg_copy)).unwrap();
+        writeln!(rmd, "| PARSIMONY@λ={best_lam:.3} | {:.3}±{:.3} | {:.3}({:.3}) |",
+            mean_f64(&sr_best_par), std_f64(&sr_best_par),
+            median_f64(&mut bp_copy), iqr_f64(&mut bp_copy)).unwrap();
+        writeln!(rmd, "\nWilcoxon EGGLOG vs PARSIMONY@best-λ: W={w:.1} p={p:.4} Δ={md:+.3} ({})\n",
+            if p < 0.05 { "significant" } else { "not significant" }).unwrap();
+    }
+
+    // Phase 3: Full Baldwinian battery
+    writeln!(rmd, "## Phase 3: Baldwinian vs Lamarckian — Full Battery\n").unwrap();
+    writeln!(rmd, "Baldwinian: simplified phenotype used for fitness evaluation only; original genotype stored.\n").unwrap();
+    writeln!(rmd, "| Task | EGGLOG (Lamarckian) Mean±Std | BALDWINIAN Mean±Std | W | p | Δ | Significant? |").unwrap();
+    writeln!(rmd, "|------|------------------------------|---------------------|---|---|---|-------------|").unwrap();
+    for (ti, task) in tasks.iter().enumerate() {
+        let sr_egg: Vec<f64> = solve_counts[ti][egglog_idx].iter()
+            .map(|&c| c as f64 / POP as f64).collect();
+        let sr_bald: Vec<f64> = bald_solve[ti].iter()
+            .map(|&c| c as f64 / POP as f64).collect();
+        let (w, p, md) = wilcoxon_signed_rank(&sr_bald, &sr_egg);
+        writeln!(rmd, "| {} | {:.3}±{:.3} | {:.3}±{:.3} | {w:.1} | {p:.4} | {md:+.3} | {} |",
+            task.name,
+            mean_f64(&sr_egg), std_f64(&sr_egg),
+            mean_f64(&sr_bald), std_f64(&sr_bald),
+            if p < 0.05 { "YES" } else { "NO" }).unwrap();
+    }
+    writeln!(rmd).unwrap();
 
     writeln!(rmd, "## Reproduce\n").unwrap();
     writeln!(rmd, "```bash").unwrap();
-    writeln!(rmd, "git checkout feat/bf-simplifier-bloat-study-v2").unwrap();
+    writeln!(rmd, "git checkout feat/bf-simplifier-bloat-study").unwrap();
     writeln!(rmd, "# Verify soundness (100% expected):").unwrap();
     writeln!(rmd, "RUSTFLAGS=\"-D warnings\" cargo test --no-default-features").unwrap();
     writeln!(rmd, "# Run full study (writes results.jsonl, RESULTS.md, MECHANISM.md):").unwrap();
@@ -812,14 +1013,15 @@ fn main() {
 
     println!("Results written to {}", results_path.display());
 
-    // -------------------------------------------------------------------------
+    // =========================================================================
     // Write MECHANISM.md
-    // -------------------------------------------------------------------------
+    // =========================================================================
     let mech_path = out_dir.join("MECHANISM.md");
     let mut mmd = std::fs::File::create(&mech_path).expect("create MECHANISM.md");
 
-    writeln!(mmd, "# Mechanism Investigation\n").unwrap();
-    writeln!(mmd, "All measurements on the `increment` task (30 seeds), except where noted.\n").unwrap();
+    writeln!(mmd, "# Mechanism Investigation (v2)\n").unwrap();
+    writeln!(mmd, "H1–H3 measurements on the `increment` task (30 seeds).\n").unwrap();
+    writeln!(mmd, "H4 (Baldwinian vs Lamarckian) now covers ALL tasks.\n").unwrap();
 
     // H1: De-duplication
     writeln!(mmd, "## H1: Population De-duplication\n").unwrap();
@@ -859,8 +1061,8 @@ fn main() {
         writeln!(mmd, "| {} | {}/{} | {} | {} |", arm.name(), n_solved, SEEDS, med, mn).unwrap();
     }
     {
-        let bald_n_solved = bald_conv_gens.iter().filter(|g| g.is_some()).count();
-        let bald_solved_vals: Vec<f64> = bald_conv_gens.iter().filter_map(|g| g.map(|x| x as f64)).collect();
+        let bald_n_solved = bald_conv_gens[increment_idx].iter().filter(|g| g.is_some()).count();
+        let bald_solved_vals: Vec<f64> = bald_conv_gens[increment_idx].iter().filter_map(|g| g.map(|x| x as f64)).collect();
         let mut bsc = bald_solved_vals.clone();
         let bmed = if bsc.is_empty() { "N/A".to_string() } else { format!("{:.0}", median_f64(&mut bsc)) };
         let bmn  = if bald_solved_vals.is_empty() { "N/A".to_string() } else { format!("{:.1}", mean_f64(&bald_solved_vals)) };
@@ -886,8 +1088,7 @@ fn main() {
     writeln!(mmd).unwrap();
 
     // H4: Canonical convergence
-    writeln!(mmd, "## H4: Canonical Convergence of Solved Individuals\n").unwrap();
-    writeln!(mmd, "Among the solved individuals in each arm's final population, do EGGLOG-arm solutions converge to the egglog-canonical form more often?\n").unwrap();
+    writeln!(mmd, "## H4a: Canonical Convergence of Solved Individuals\n").unwrap();
     writeln!(mmd, "\"Canon GT frac\" = fraction of solved individuals whose egglog-canonical form equals the ground-truth canonical program.\n").unwrap();
     writeln!(mmd, "| Task | Arm | Canon GT Frac Mean | Distinct Canonical Forms Mean |").unwrap();
     writeln!(mmd, "|------|-----|--------------------|------------------------------|").unwrap();
@@ -901,22 +1102,42 @@ fn main() {
     }
     writeln!(mmd).unwrap();
 
-    writeln!(mmd, "## Structural-Bloat Generalization (add_two task)\n").unwrap();
-    writeln!(mmd, "The `add_two` task (`{}`len={}) requires correct multi-cell coordination.",
-        tasks.iter().find(|t| t.name == "add_two").unwrap().ground_truth,
-        Task::op_count(tasks.iter().find(|t| t.name == "add_two").unwrap().ground_truth)).unwrap();
-    writeln!(mmd, "The egglog simplifier's rules target run-length redundancy (`+-`, `><`, `[-]`), NOT structural cell-layout decisions.").unwrap();
-    writeln!(mmd, "If EGGLOG does NOT significantly beat PARSIMONY on add_two (per Wilcoxon p > 0.05), that is a clean, honest finding:").unwrap();
-    writeln!(mmd, "the mechanism is run-length canonicalization, and parsimony pressure is sufficient for structural-bloat tasks.\n").unwrap();
+    // H4b: Baldwinian vs Lamarckian — full battery
+    writeln!(mmd, "## H4b: Baldwinian vs Lamarckian — Full Task Battery\n").unwrap();
+    writeln!(mmd, "Primary mechanism test: does fitness-evaluation smoothing explain the EGGLOG gain,\n").unwrap();
+    writeln!(mmd, "or is it genotype cleanup?  Baldwinian stores original genotype but evaluates fitness\n").unwrap();
+    writeln!(mmd, "on the simplified phenotype.  If Baldwinian ≥ Lamarckian, fitness smoothing dominates.\n").unwrap();
+    writeln!(mmd, "| Task | EGGLOG (Lamarckian) | BALDWINIAN | W | p | Δ (Bald-Lam) | Verdict |").unwrap();
+    writeln!(mmd, "|------|---------------------|------------|---|---|--------------|---------|").unwrap();
+    for (ti, task) in tasks.iter().enumerate() {
+        let sr_egg: Vec<f64> = solve_counts[ti][egglog_idx].iter()
+            .map(|&c| c as f64 / POP as f64).collect();
+        let sr_bald: Vec<f64> = bald_solve[ti].iter()
+            .map(|&c| c as f64 / POP as f64).collect();
+        let (w, p, md) = wilcoxon_signed_rank(&sr_bald, &sr_egg);
+        let verdict = if p < 0.05 && md > 0.0 { "Fitness smoothing" }
+                      else if p < 0.05 && md < 0.0 { "Genotype cleanup" }
+                      else { "No significant difference" };
+        writeln!(mmd, "| {} | {:.3}±{:.3} | {:.3}±{:.3} | {w:.1} | {p:.4} | {md:+.3} | {verdict} |",
+            task.name,
+            mean_f64(&sr_egg), std_f64(&sr_egg),
+            mean_f64(&sr_bald), std_f64(&sr_bald)).unwrap();
+    }
+    writeln!(mmd).unwrap();
 
-    writeln!(mmd, "## Verdict Template\n").unwrap();
-    writeln!(mmd, "Fill in after reading RESULTS.md:\n").unwrap();
-    writeln!(mmd, "- **De-duplication (H1)**: EGGLOG canonical count [higher/lower/similar] vs NONE canonical count → [supports/does not support] de-duplication hypothesis.").unwrap();
-    writeln!(mmd, "- **Convergence speed (H2)**: EGGLOG median conv gen [lower/higher/similar] vs NONE and PARSIMONY → [supports/does not support] early-convergence hypothesis.").unwrap();
-    writeln!(mmd, "- **Length pressure (H3)**: PARSIMONY length trajectory [lower/similar/higher] vs EGGLOG → parsimony [is/is not] purely length-driven.").unwrap();
-    writeln!(mmd, "- **Canonical convergence (H4)**: EGGLOG solved individuals converge to canonical form [more/less/same] than NONE/PARSIMONY → egglog [does/does not] privilege the shortest-known solution.").unwrap();
-    writeln!(mmd, "- **Structural generalization**: On add_two, EGGLOG vs PARSIMONY p=[value] → the egglog advantage [generalizes beyond / is limited to] run-length redundancy.").unwrap();
-    writeln!(mmd, "- **Lamarckian vs Baldwinian**: BALDWINIAN vs EGGLOG p=[value] → the gain is primarily [genotype cleanup / fitness-evaluation smoothing].").unwrap();
+    writeln!(mmd, "## Structural-Bloat Generalization (add_two task)\n").unwrap();
+    writeln!(mmd, "The `add_two` task (`,>,[<+>-]<.` len=11) requires correct multi-cell coordination.").unwrap();
+    writeln!(mmd, "Egglog rules target run-length redundancy (`+-`, `><`, `[-]`), NOT structural cell-layout decisions.").unwrap();
+    writeln!(mmd, "If EGGLOG does NOT significantly beat PARSIMONY on add_two: the mechanism is run-length canonicalization.\n").unwrap();
+
+    writeln!(mmd, "## Verdict\n").unwrap();
+    writeln!(mmd, "Fill in from the measured tables above:\n").unwrap();
+    writeln!(mmd, "- **De-duplication (H1)**: See H1 table.").unwrap();
+    writeln!(mmd, "- **Convergence speed (H2)**: See H2 table.").unwrap();
+    writeln!(mmd, "- **Length pressure (H3)**: See H3 table.").unwrap();
+    writeln!(mmd, "- **Canonical convergence (H4a)**: See H4a table.").unwrap();
+    writeln!(mmd, "- **Baldwinian vs Lamarckian (H4b)**: See H4b table — now measured across ALL tasks.").unwrap();
+    writeln!(mmd, "- **Fair EGGLOG vs PARSIMONY (Phase 4)**: See RESULTS.md Phase 4 for the headline comparison at the best tuned λ.").unwrap();
 
     println!("Mechanism data written to {}", mech_path.display());
     println!("\nAll output in: {}", out_dir.display());
