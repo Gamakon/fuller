@@ -19,6 +19,7 @@ use crate::ruleset::identities::ALGEBRA_RULESET;
 use crate::ruleset::powers::POWERS_RULESET;
 use crate::ruleset::rational::RATIONAL_RULESET;
 use crate::ruleset::trig::TRIG_RULESET;
+use crate::ruleset::wide::WIDE_RULESET;
 
 /// One corpus pair.
 #[derive(Debug, Clone)]
@@ -60,6 +61,14 @@ pub enum Family {
     Rational,
     /// algebra + powers + trig (trigsimp).
     Trig,
+    /// algebra + powers + WIDE (commutativity, associativity, both-direction
+    /// distributivity, sign structure). This is the family for the EQUALITY
+    /// ORACLE (`proves_equal`), not the parity scorer: it proves reordered /
+    /// re-associated / distributed forms equal — the equalities the collapse-
+    /// only families miss (e.g. `x+y == y+x`). The wide rules reorder a fixed
+    /// operand multiset, so the reachable set is finite but COMBINATORIALLY
+    /// LARGE for long chains — hence a low, bounded iter cap (never `saturate`).
+    Wide,
 }
 
 fn program_for(family: Family) -> String {
@@ -75,6 +84,10 @@ fn program_for(family: Family) -> String {
         Family::Trig => (
             format!("{ALGEBRA_RULESET}\n{POWERS_RULESET}\n{TRIG_RULESET}"),
             "algebra powers trig",
+        ),
+        Family::Wide => (
+            format!("{ALGEBRA_RULESET}\n{POWERS_RULESET}\n{WIDE_RULESET}"),
+            "algebra powers wide",
         ),
     };
     format!(
@@ -94,19 +107,42 @@ fn program_for(family: Family) -> String {
 fn sat_iters(family: Family) -> u32 {
     match family {
         Family::Rational => 6,
+        // Wide's comm/assoc/distribute reorder a fixed operand multiset, so the
+        // reachable set is finite but combinatorially large for long chains. A
+        // low cap keeps the e-graph small; equalities needing deeper reordering
+        // report "not proven" (the honest, sound outcome) rather than hang.
+        Family::Wide => 8,
         _ => 40,
     }
 }
 
 /// Does running the `family` rules put `input` and `target` in the same e-class?
 pub fn proves_equal_with(input: &str, target: &str, family: Family) -> Result<bool, String> {
+    proves_equal_assuming(input, target, family, &[])
+}
+
+/// Like `proves_equal_with`, but first asserts `(is-nonzero (Var "v"))` for each
+/// `v` in `nonzero_vars`. This unlocks the guarded cancellation rules (e.g.
+/// `Div x x -> 1`) needed to prove SCALE-constant equivalence (`disc/truth = k`).
+/// Sound for the scale-recovery question: a scale factor is only defined where
+/// the denominator is nonzero, so assuming it costs no soundness there.
+pub fn proves_equal_assuming(
+    input: &str,
+    target: &str,
+    family: Family,
+    nonzero_vars: &[String],
+) -> Result<bool, String> {
     let mut egraph = EGraph::default();
     egraph
         .parse_and_run_program(None, &program_for(family))
         .map_err(|e| format!("load rulesets: {e}"))?;
     let iters = sat_iters(family);
+    let asserts: String = nonzero_vars
+        .iter()
+        .map(|v| format!("(is-nonzero (Var \"{v}\"))\n"))
+        .collect();
     let prog = format!(
-        "(let __in {input})\n(let __tgt {target})\n\
+        "(let __in {input})\n(let __tgt {target})\n{asserts}\
          (run-schedule (repeat {iters} (run all)))\n\
          (check (= __in __tgt))"
     );
@@ -167,6 +203,23 @@ mod tests {
     fn does_not_prove_a_false_equality() {
         // x and y are not equal; rules must not "prove" it.
         assert!(!proves_equal(r#"(Var "x")"#, r#"(Var "y")"#).unwrap());
+    }
+
+    #[test]
+    fn scale_const_needs_nonzero_assumption() {
+        // (2x)/x = 2 requires cancelling x/x, which is guarded behind
+        // is-nonzero. Without the assumption it must NOT prove (sound);
+        // with x assumed nonzero it must prove.
+        let lhs = r#"(Div (Mul (Num 2.0) (Var "x")) (Var "x"))"#;
+        let two = r#"(Num 2.0)"#;
+        assert!(
+            !proves_equal_with(lhs, two, Family::Wide).unwrap(),
+            "must not cancel x/x without a nonzero assumption"
+        );
+        assert!(
+            proves_equal_assuming(lhs, two, Family::Wide, &["x".to_string()]).unwrap(),
+            "must cancel x/x once x is assumed nonzero"
+        );
     }
 
     #[test]

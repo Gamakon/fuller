@@ -16,6 +16,7 @@ use crate::extract::{
 use crate::karva::{
     karva_to_terms, terms_to_karva_sized, FunctionSpec, PsetSpec, Token,
 };
+use crate::parity::{proves_equal_assuming, Family};
 
 /// Denoise a `Math` expression against training data.
 ///
@@ -531,6 +532,49 @@ fn master_lattice() -> Vec<(f64, String, String)> {
         .collect()
 }
 
+/// Prove two `Math` s-expressions equal by equality saturation: insert both,
+/// run the `family` rules to a bounded fixpoint, and check whether they land in
+/// the same e-class. This is the SOUND equivalence oracle — a `true` is a real
+/// proof under the ruleset, a `false` means "not proven equal" (NOT "proven
+/// unequal"). Bounded iteration count per family, so it cannot hang the way
+/// `sympy.simplify` does on junk transcendental towers.
+///
+/// Args:
+///   input, target: egglog `Math` surface-syntax strings (e.g.
+///       `(Mul (Var "x") (Num 1.0))` and `(Var "x")`).
+///   family: "algebra" (default), "rational", "trig", or "wide" — which ruleset
+///       to run. "wide" adds commutativity/associativity/distributivity, so it
+///       proves reordered/re-associated forms equal (e.g. `x+y == y+x`) that the
+///       collapse-only families miss; it is iteration-capped for boundedness.
+///   nonzero_vars: variable names to assume `!= 0`, unlocking guarded
+///       cancellation (`x/x -> 1`) for SCALE-constant equivalence. Sound for the
+///       scale question (a ratio is only defined where the denominator is
+///       nonzero). Default empty.
+///
+/// Returns bool. Raises ValueError on malformed egglog input.
+#[pyfunction]
+#[pyo3(signature = (input, target, family = "algebra", nonzero_vars = vec![]))]
+fn proves_equal(
+    input: &str,
+    target: &str,
+    family: &str,
+    nonzero_vars: Vec<String>,
+) -> PyResult<bool> {
+    let fam = match family {
+        "algebra" => Family::Algebra,
+        "rational" => Family::Rational,
+        "trig" => Family::Trig,
+        "wide" => Family::Wide,
+        other => {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "family must be \"algebra\", \"rational\", \"trig\", or \"wide\", got {other:?}"
+            )))
+        }
+    };
+    proves_equal_assuming(input, target, fam, &nonzero_vars)
+        .map_err(pyo3::exceptions::PyValueError::new_err)
+}
+
 #[pyfunction]
 fn master_pset() -> Vec<(String, usize)> {
     crate::karva::master_pset()
@@ -635,6 +679,7 @@ fn _gamakast(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(denoise_karva_candidates, m)?)?;
     m.add_function(wrap_pyfunction!(physics_mutate, m)?)?;
     m.add_function(wrap_pyfunction!(physics_mutate_karva, m)?)?;
+    m.add_function(wrap_pyfunction!(proves_equal, m)?)?;
     m.add_function(wrap_pyfunction!(master_pset, m)?)?;
     m.add_function(wrap_pyfunction!(master_constants, m)?)?;
     m.add_function(wrap_pyfunction!(master_lattice, m)?)?;

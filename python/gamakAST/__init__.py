@@ -24,6 +24,7 @@ from ._gamakast import (
     master_lattice,
     physics_mutate,
     physics_mutate_karva,
+    proves_equal,
     snap_karva,
 )
 
@@ -38,6 +39,7 @@ __all__ = [
     "master_lattice",
     "physics_mutate",
     "physics_mutate_karva",
+    "proves_equal",
     "snap_karva",
 ]
 __version__ = "0.1.0"
