@@ -27,6 +27,7 @@ from ._gamakast import (
     proves_equal,
     snap_karva,
 )
+from .sympy_bridge import to_math, equals
 
 __all__ = [
     "denoise",
@@ -41,5 +42,7 @@ __all__ = [
     "physics_mutate_karva",
     "proves_equal",
     "snap_karva",
+    "to_math",
+    "equals",
 ]
 __version__ = "0.1.0"
