@@ -51,17 +51,17 @@ use std::io::Write;
 // ---------------------------------------------------------------------------
 // GP hyper-parameters
 // ---------------------------------------------------------------------------
-const POP: usize = 60;
-const GENS: usize = 80;
+const POP: usize = 40;
+const GENS: usize = 50;
 const SEEDS: usize = 30;
-const MAX_PROG_LEN: usize = 40; // slightly longer to allow structural solutions
+const MAX_PROG_LEN: usize = 36;
 const MUTATION_RATE: f64 = 0.35;
-const TOURNAMENT_K: usize = 4; // ~7% of pop
+const TOURNAMENT_K: usize = 3; // ~7% of pop
 
 /// Parsimony penalty coefficient.
-/// Tuned so penalty ~= 0.5 raw-fitness points at median length:
-/// lambda * 20 ops ≈ 0.5 => lambda ≈ 0.025.
-const PARSIMONY_LAMBDA: f64 = 0.025;
+/// Tuned so penalty ~= 0.5 raw-fitness points at median length (~16 ops):
+/// lambda * 16 ops ≈ 0.5 => lambda ≈ 0.03.
+const PARSIMONY_LAMBDA: f64 = 0.03;
 
 /// Maximum BF ops before skipping egglog simplification.
 /// Programs longer than this have negligible run-length redundancy AND
@@ -334,14 +334,25 @@ fn gp_run(seed: u64, arm: Arm, task: &Task, collect_mechanism_data: bool) -> Run
 
     let mut gen_data_vec: Vec<GenData> = Vec::new();
 
+    // Mechanism sampling: only compute costly canonical-form counts at sample generations
+    // to avoid O(GENS × POP) egglog calls during the probe run.
+    let sample_gens_set: HashSet<usize> = [0, GENS/4, GENS/2, 3*GENS/4, GENS-1]
+        .iter().copied().collect();
+
     for gen in 0..GENS {
         if collect_mechanism_data {
             let unique_count = pop.iter().map(|(p, _)| p.as_str()).collect::<HashSet<_>>().len();
-            let unique_canonical = pop.iter()
-                .map(|(p, _)| {
-                    bf_simplify(p).ok().map(|s| s.source).unwrap_or_else(|| p.clone())
-                })
-                .collect::<HashSet<_>>().len();
+            // Only pay the egglog cost at sample generations
+            let unique_canonical = if sample_gens_set.contains(&gen) {
+                pop.iter()
+                    .filter(|(p, _)| Task::op_count(p) <= MAX_SIMPLIFY_OPS)
+                    .map(|(p, _)| {
+                        bf_simplify(p).ok().map(|s| s.source).unwrap_or_else(|| p.clone())
+                    })
+                    .collect::<HashSet<_>>().len()
+            } else {
+                unique_count // approximate: same as unique source if not sampling
+            };
             let mean_len = pop.iter().map(|(p, _)| Task::op_count(p) as f64).sum::<f64>() / POP as f64;
             gen_data_vec.push(GenData { unique_count, unique_canonical, mean_len });
         }
