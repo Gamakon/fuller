@@ -12,6 +12,10 @@ crate-type = ["rlib", "cdylib"]
 
 [dependencies]
 egglog = "=2.0.0"
+# HFF math (TrueNorth angle) for multi-objective BF fitness.
+# default-features=false drops PyO3 — we only use the pure Rust core.
+hff = { path = "/Users/andrewmorgan/Dev/kaito/hff", default-features = false }
+ndarray = "0.15"
 
 [dependencies.pyo3]
 version = "0.22"
@@ -34,3 +38,7 @@ path = "examples/bf_bloat/main.rs"
 [[example]]
 name = "bf_study"
 path = "examples/bf_study/main.rs"
+
+[[example]]
+name = "bf_hff_study"
+path = "examples/bf_hff_study/main.rs"
