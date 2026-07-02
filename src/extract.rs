@@ -176,6 +176,134 @@ pub fn eclass_extract_hff(
     Ok(out)
 }
 
+/// INSTRUMENTED e-class tournament: rank the equivalence class by TrueNorth
+/// over `[form measures | measured behaviour on train rows | on val rows]`.
+///
+/// Every member of a sound class computes the same ideal function, but the
+/// f64 behaviour of algebraically-equal forms differs MEASURABLY: rounding
+/// divergence (catastrophic cancellation), introduced/removed domain failures
+/// (NaN/inf) on the actual data distribution. Each candidate is therefore run
+/// on the training rows AND on held-out validation rows and compared against
+/// the input's own predictions — so the selected rewrite is the form whose
+/// measured behaviour is cleanest and STAYS clean off the profiling set (the
+/// rewrite choice cannot overfit the rows it was profiled on).
+///
+/// Two components are appended per row set, each in [0,1] with 0 best:
+/// * `domain_mismatch` — fraction of rows where candidate and input disagree
+///   about being finite (introduced OR removed NaN/inf: a behaviour change).
+/// * `disagreement` — log-relative-error of candidate vs input over rows
+///   where both are finite (1e-16, pure f64 rounding, maps to ~0; an O(1)
+///   divergence maps to 1). This is the measured numerical-stability column.
+///
+/// Candidates that fail to evaluate rank last (INFINITY). Returns
+/// `(angle, expr)` ascending — best first — with the input seeded like
+/// [`eclass_extract_hff`]. NOTE: TrueNorth trades components against each
+/// other; if "any behaviour change loses" must be a hard rule, filter on the
+/// mismatch columns before adopting rather than relying on the angle.
+pub fn eclass_extract_hff_instrumented(
+    input: &str,
+    family: EclassFamily,
+    k: usize,
+    iters: u32,
+    exclude_measures: &[String],
+    rows_train: &[Vec<(String, f64)>],
+    rows_val: &[Vec<(String, f64)>],
+) -> Result<Vec<(f64, String)>, String> {
+    use egglog::extract::hff_extract;
+
+    // The input's own behaviour on both row sets — the measurement reference.
+    let ref_tr = eval_expr_rows(input, rows_train)?;
+    let ref_va = eval_expr_rows(input, rows_val)?;
+
+    let (egraph, sort, value) = saturate_family(input, family, iters)?;
+    let mut termdag = TermDag::default();
+    let excl: Vec<&str> = exclude_measures.iter().map(String::as_str).collect();
+
+    let score = |td: &TermDag, t: egglog::TermId| -> f64 {
+        let expr = td.to_string(t);
+        let Some(node) = crate::score::parse(&expr) else {
+            return f64::INFINITY; // unrenderable/unparseable — rank last
+        };
+        let mut x = crate::score::measure_vector_excluding(&node, &excl);
+        // Instrumented behaviour columns, measured per row set.
+        let preds_tr: Result<Vec<f64>, EvalError> =
+            rows_train.iter().map(|row| eval_row(td, t, row)).collect();
+        let preds_va: Result<Vec<f64>, EvalError> =
+            rows_val.iter().map(|row| eval_row(td, t, row)).collect();
+        let (Ok(preds_tr), Ok(preds_va)) = (preds_tr, preds_va) else {
+            return f64::INFINITY; // unevaluable on the data — rank last
+        };
+        let (dm_tr, dis_tr) = instrumented_components(&preds_tr, &ref_tr);
+        let (dm_va, dis_va) = instrumented_components(&preds_va, &ref_va);
+        x.extend([dm_tr, dis_tr, dm_va, dis_va]);
+        crate::score::truenorth_angle(&x)
+    };
+
+    let ranked = hff_extract(&egraph, &mut termdag, value, sort, &score, k.max(1));
+    let mut out: Vec<(f64, String)> = ranked
+        .into_iter()
+        .map(|(s, t)| (s, termdag.to_string(t)))
+        .collect();
+
+    // SEED the input as written (see eclass_extract_hff). Its instrumented
+    // components are zero by definition — it agrees with itself — so its
+    // angle is the form vector's alone, extended with zeros.
+    if !out.iter().any(|(_, e)| e == input) {
+        let in_score = match crate::score::parse(input) {
+            Some(node) => {
+                let mut x = crate::score::measure_vector_excluding(&node, &excl);
+                x.extend([0.0, 0.0, 0.0, 0.0]);
+                crate::score::truenorth_angle(&x)
+            }
+            None => f64::INFINITY,
+        };
+        out.push((in_score, input.to_string()));
+    }
+    out.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+    Ok(out)
+}
+
+/// The two measured behaviour components of a candidate against the input's
+/// reference predictions — `(domain_mismatch, disagreement)`, each [0,1],
+/// 0 best. Both-non-finite rows count as agreement (same out-of-domain
+/// behaviour); the disagreement statistic is a log-relative-error over the
+/// rows where both sides are finite, mapped so that pure f64 rounding noise
+/// (~1e-16 relative) scores ~0 and an O(1) divergence scores 1.
+fn instrumented_components(cand: &[f64], reference: &[f64]) -> (f64, f64) {
+    debug_assert_eq!(cand.len(), reference.len());
+    if reference.is_empty() {
+        return (0.0, 0.0);
+    }
+    let n = reference.len() as f64;
+    let mut mismatch = 0usize;
+    let mut rel_sum = 0.0;
+    let mut common = 0usize;
+    for (c, r) in cand.iter().zip(reference.iter()) {
+        match (c.is_finite(), r.is_finite()) {
+            (true, true) => {
+                common += 1;
+                rel_sum += (c - r).abs() / r.abs().max(1e-300);
+            }
+            (false, false) => {} // agree out-of-domain
+            _ => mismatch += 1,
+        }
+    }
+    let dm = mismatch as f64 / n;
+    let dis = if common == 0 {
+        0.0
+    } else {
+        let mean_rel = rel_sum / common as f64;
+        if mean_rel <= 0.0 {
+            0.0
+        } else {
+            // log-relative-error map (the FP-accuracy convention: bits of
+            // error): 1e-16 -> 0, 1e-8 -> 0.5, >= 1 -> 1.
+            ((mean_rel.log10() + 16.0) / 16.0).clamp(0.0, 1.0)
+        }
+    };
+    (dm, dis)
+}
+
 /// Saturate `input` under a rule `family` (bounded by `iters`) and return the
 /// e-graph with the root's sort and value — the shared scaffold for the two
 /// e-class extractors (scalar and HFF-angular).
@@ -1148,6 +1276,51 @@ mod tests {
         let out = denoise(&input, &data, 1e-6, 32).expect("denoise");
         assert_eq!(out.expr, r#"(Mul (Var "pi") (Pow2 (Var "r")))"#, "expected clean pi*r^2");
         assert!(out.changed);
+    }
+
+    /// The instrumented components: measured behaviour deltas in [0,1].
+    #[test]
+    fn instrumented_components_measure_behaviour() {
+        use super::instrumented_components;
+        // Identical predictions (incl. matching NaN): perfect agreement.
+        let r = [1.0, 2.0, f64::NAN];
+        assert_eq!(instrumented_components(&[1.0, 2.0, f64::NAN], &r), (0.0, 0.0));
+        // Candidate finite where reference is NaN: domain mismatch on 1/3 rows.
+        let (dm, _) = instrumented_components(&[1.0, 2.0, 3.0], &r);
+        assert!((dm - 1.0 / 3.0).abs() < 1e-12, "dm={dm}");
+        // Pure rounding-level divergence maps to ~0; O(1) divergence to 1.
+        let (_, dis_small) =
+            instrumented_components(&[1.0 + 1e-16, 2.0, f64::NAN], &r);
+        assert!(dis_small < 0.05, "rounding noise should score ~0, got {dis_small}");
+        let (_, dis_big) = instrumented_components(&[2.0, 4.0, f64::NAN], &r);
+        assert!(dis_big > 0.9, "O(1) divergence should score ~1, got {dis_big}");
+    }
+
+    /// Instrumented tournament end-to-end: for a class whose members all agree
+    /// on the data, the behaviour columns are uniform and the FORM measures
+    /// decide — same winner as the data-free tournament — and the ranking is
+    /// well-formed on distinct train/val row sets.
+    #[test]
+    fn instrumented_tournament_ranks_and_picks_clean_form() {
+        use super::eclass_extract_hff_instrumented;
+        let input = r#"(Add (Mul (Var "x") (Num 1.0)) (Num 0.0))"#;
+        let tr = rows("x", &[1.0, 2.0, 3.0, -4.0]);
+        let va = rows("x", &[10.0, -20.0, 0.5]);
+        let out = eclass_extract_hff_instrumented(
+            input,
+            EclassFamily::Algebra,
+            32,
+            12,
+            &[],
+            &tr,
+            &va,
+        )
+        .expect("instrumented tournament");
+        assert!(!out.is_empty());
+        for w in out.windows(2) {
+            assert!(w[0].0 <= w[1].0, "not sorted ascending: {out:?}");
+        }
+        assert_eq!(out[0].1, r#"(Var "x")"#, "cleanest agreeing form should win");
     }
 
     /// Caller-asserted positivity sheds the Abs wrapper — the keplers3 shape

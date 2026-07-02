@@ -129,6 +129,27 @@ low-probability mutation operators and let the population carry both forms.
 Both are behaviour-preserving, so the same structure competes in the
 population in both representations and HFF ranks them in one objective space.
 
+## Instrumented tournament: `eclass_extract_hff_instrumented`
+
+The e-class members all compute the same ideal function — but their f64
+behaviour differs measurably (catastrophic cancellation, introduced/removed
+NaN on your data). This variant RUNS every equivalent form on `rows_train`
+and held-out `rows_val` and ranks by TrueNorth over
+`[form measures | domain_mismatch, disagreement (train) | same (val)]`:
+
+```python
+ranked = eclass_extract_hff_instrumented(head, tail, variables, functions,
+                                         rnc_values, rows_train, rows_val,
+                                         family="algebra", k=64, iters=12)
+best_angle, best_expr = ranked[0]
+```
+
+The val columns stop the rewrite choice from overfitting the profiling rows.
+The winner is the smallest form that is numerically cleanest on your data —
+and stays clean off it. Note the angle TRADES objectives; if a behaviour
+change must never win (exact-recovery runs), hard-gate the adopted result
+through `denoise`'s R² check as well.
+
 ## Lower-level API: `denoise` (Math strings)
 
 If you already have an egglog `Math` s-expression (not a chromosome), call

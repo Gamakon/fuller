@@ -11,8 +11,9 @@ use pyo3::types::PyDict;
 
 use crate::extract::{
     denoise_assuming as denoise_core, denoise_candidates_assuming as denoise_candidates_core,
-    eclass_extract_hff as eclass_extract_hff_core, eclass_variants as eclass_variants_core,
-    EclassFamily,
+    eclass_extract_hff as eclass_extract_hff_core,
+    eclass_extract_hff_instrumented as eclass_extract_hff_instrumented_core,
+    eclass_variants as eclass_variants_core, EclassFamily,
 };
 use crate::karva::{
     karva_to_terms, terms_to_karva_sized, FunctionSpec, PsetSpec, Token,
@@ -772,6 +773,75 @@ fn eclass_extract_hff(
         .map_err(pyo3::exceptions::PyValueError::new_err)
 }
 
+/// INSTRUMENTED e-class tournament — `eclass_extract_hff` plus measured
+/// behaviour columns. Each equivalent form is RUN on `rows_train` and on
+/// `rows_val` (held out) and compared against the input's own predictions;
+/// the TrueNorth vector is `[form measures | domain_mismatch, disagreement
+/// (train) | domain_mismatch, disagreement (val)]`, all [0,1], 0 best.
+///
+/// Algebraically-equal forms differ measurably in f64: rounding divergence
+/// (catastrophic cancellation), introduced/removed NaN/inf on the data
+/// distribution. The val columns stop the rewrite CHOICE from overfitting the
+/// profiling rows: the winner is the form whose measured behaviour is
+/// cleanest and stays clean off the profiled set. Candidates that fail to
+/// evaluate rank last.
+///
+/// Same karva-in interface as `eclass_extract_hff`, with `rows_train` /
+/// `rows_val` as lists of {var: value} dicts. Returns [(angle, Math s-expr)],
+/// best first. If a behaviour change must NEVER win regardless of form
+/// (exact-recovery pipelines), hard-filter the adopted result with `denoise`'s
+/// R^2 gate — the angle trades objectives; it does not enforce vetoes.
+#[pyfunction]
+#[pyo3(signature = (head, tail, variables, functions, rnc_values, rows_train, rows_val,
+                    family = "algebra", k = 64, iters = 12, exclude_measures = vec![]))]
+fn eclass_extract_hff_instrumented(
+    py: Python<'_>,
+    head: Vec<PyToken>,
+    tail: Vec<PyToken>,
+    variables: Vec<String>,
+    functions: HashMap<String, (String, usize)>,
+    rnc_values: Vec<f64>,
+    rows_train: Vec<HashMap<String, f64>>,
+    rows_val: Vec<HashMap<String, f64>>,
+    family: &str,
+    k: usize,
+    iters: u32,
+    exclude_measures: Vec<String>,
+) -> PyResult<Vec<(f64, String)>> {
+    let pset = build_pset(variables, functions, rnc_values);
+    let head_toks = build_tokens(py, head)?;
+    let tail_toks = build_tokens(py, tail)?;
+    let math = karva_to_terms(&head_toks, &tail_toks, &pset)
+        .map_err(pyo3::exceptions::PyValueError::new_err)?;
+    let fam = match family {
+        "trig" => EclassFamily::Trig,
+        "algebra" => EclassFamily::Algebra,
+        "wide" => EclassFamily::Wide,
+        "structural" => EclassFamily::Structural,
+        other => {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "family must be \"algebra\", \"trig\", \"wide\", or \"structural\", got {other:?}"
+            )))
+        }
+    };
+    let core_tr: Vec<Vec<(String, f64)>> =
+        rows_train.into_iter().map(|m| m.into_iter().collect()).collect();
+    let core_va: Vec<Vec<(String, f64)>> =
+        rows_val.into_iter().map(|m| m.into_iter().collect()).collect();
+    run_core(py, || {
+        eclass_extract_hff_instrumented_core(
+            &math,
+            fam,
+            k,
+            iters,
+            &exclude_measures,
+            &core_tr,
+            &core_va,
+        )
+    })
+    .map_err(pyo3::exceptions::PyValueError::new_err)
+}
+
 /// The native extension module. `module-name` in pyproject.toml is
 /// `gamakAST._gamakast`, so this initialises `_gamakast`; the Python shim
 /// re-exports from it.
@@ -790,5 +860,6 @@ fn _gamakast(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(eclass_extract_hff, m)?)?;
     m.add_function(wrap_pyfunction!(snap_karva, m)?)?;
     m.add_function(wrap_pyfunction!(concretize_karva, m)?)?;
+    m.add_function(wrap_pyfunction!(eclass_extract_hff_instrumented, m)?)?;
     Ok(())
 }

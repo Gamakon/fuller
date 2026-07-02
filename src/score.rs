@@ -302,22 +302,31 @@ pub fn angle_percentile(root: &Node) -> f64 {
 /// still scored at the same fixed dimension (comparison stays valid); different
 /// runs with different exclusions simply use a different fixed `k`.
 pub fn angle_percentile_excluding(root: &Node, exclude: &[&str]) -> f64 {
-    // Score EVERY candidate at the SAME fixed dimension = the retained rule count,
-    // so angles are directly comparable. Non-firing rules pad to 0.5 (NEUTRAL: a
-    // pattern that didn't match neither rewards (0) nor punishes (1) — 0.5 sits at
-    // the equator and doesn't tilt the angle. Verified: pad=1 inverts the order).
-    let rules: Vec<MeasureRule> = measure_rules()
+    truenorth_angle(&measure_vector_excluding(root, exclude))
+}
+
+/// The fixed-dimension measure VECTOR for a term: every retained rule
+/// contributes one component; non-firing rules pad to 0.5 (NEUTRAL: a pattern
+/// that didn't match neither rewards (0) nor punishes (1) — 0.5 sits at the
+/// equator and doesn't tilt the angle. Verified: pad=1 inverts the order).
+/// Exposed so callers can CONCATENATE further measured components (e.g. the
+/// instrumented train/val behaviour columns in `crate::extract`) before
+/// projecting.
+pub fn measure_vector_excluding(root: &Node, exclude: &[&str]) -> Vec<f64> {
+    measure_rules()
         .into_iter()
         .filter(|r| !exclude.contains(&r.name))
-        .collect();
-    let k = rules.len().max(1);
-    let x: Vec<f64> = rules
-        .into_iter()
         .map(|rule| (rule.eval)(root).unwrap_or(0.5))
-        .collect();
-    let arr = ndarray::Array1::from(x);
-    // Raw TrueNorth angle: at fixed k the CDF correction is only a monotone
-    // reshape, so it is omitted (lower angle = cleaner).
+        .collect()
+}
+
+/// Raw TrueNorth angle of a measure vector (components in [0,1], 0 best).
+/// At fixed dimension the CDF correction is only a monotone reshape, so it is
+/// omitted (lower angle = cleaner). The single projection point for every
+/// tournament in the crate — form-only or form+instrumented alike.
+pub fn truenorth_angle(x: &[f64]) -> f64 {
+    let k = x.len().max(1);
+    let arr = ndarray::Array1::from(x.to_vec());
     hff_core::core_functions::calculate_single_hyperspherical_fitness_f64_with_method(
         &arr, k, false, None, "truenorth",
     )
