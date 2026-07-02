@@ -135,6 +135,67 @@ def lattice():
             out.append(emit(v1 / (4.0 * math.pi * v2),
                             f'(Div (Var "{n1}") (Mul (Num 4.0) (Mul (Var "pi") (Var "{n2}"))))',
                             f"{n1}/(4*pi*{n2})", 5))
+
+    # === Richer proliferation (pi^2 composites, rational-multiple ratios,
+    # three-way products/ratios). These reach forms the pairwise families miss —
+    # notably Kepler's 4*pi^2/(G*M)-style prefactor and n*pi^2/c oscillators.
+    PI = math.pi
+    PI2 = PI * PI
+    pv = '(Var "pi")'
+    pi2_expr = f'(Mul {pv} {pv})'                      # pi^2 as pi*pi (decodes anywhere)
+
+    # n * pi^2  and  pi^2 / n  (small integer scalings of pi^2)
+    for n in INTS:
+        ni = float(n)
+        out.append(emit(ni * PI2, f'(Mul (Num {ni}) {pi2_expr})', f"{n}*pi^2", 4))
+        out.append(emit(PI2 / ni, f'(Div {pi2_expr} (Num {ni}))', f"pi^2/{n}", 4))
+
+    # (n*pi^2)/c  and  pi^2/(n*c)  — the Kepler / oscillator prefactor family:
+    # T = sqrt(4*pi^2/(G*M) * a^3)  ->  4*pi^2/G is exactly (n*pi^2)/c with n=4.
+    for name, val in BASE:
+        if val == 0 or name == "pi":
+            continue
+        cv = f'(Var "{name}")'
+        for n in INTS:
+            ni = float(n)
+            out.append(emit((ni * PI2) / val,
+                            f'(Div (Mul (Num {ni}) {pi2_expr}) {cv})',
+                            f"{n}*pi^2/{name}", 6))
+            out.append(emit(PI2 / (ni * val),
+                            f'(Div {pi2_expr} (Mul (Num {ni}) {cv}))',
+                            f"pi^2/({n}*{name})", 6))
+
+    # rational-multiple ratios (n*c1)/(m*c2): the earlier family only had bare
+    # c1/c2. Keep the integer grid small (1..4) to bound the blow-up.
+    SMALL = [1, 2, 3, 4]
+    for i, (n1, v1) in enumerate(BASE):
+        for n2, v2 in BASE:
+            if n1 == n2 or v2 == 0:
+                continue
+            cv1, cv2 = f'(Var "{n1}")', f'(Var "{n2}")'
+            for a in SMALL:
+                for b in SMALL:
+                    if a == 1 and b == 1:
+                        continue  # bare c1/c2 already emitted above
+                    out.append(emit((a * v1) / (b * v2),
+                                    f'(Div (Mul (Num {float(a)}) {cv1}) '
+                                    f'(Mul (Num {float(b)}) {cv2}))',
+                                    f"({a}*{n1})/({b}*{n2})", 5))
+
+    # three-way products c1*c2*c3 and ratios c1/(c2*c3) over distinct constants
+    for i, (n1, v1) in enumerate(BASE):
+        for j in range(i + 1, len(BASE)):
+            n2, v2 = BASE[j]
+            for k in range(j + 1, len(BASE)):
+                n3, v3 = BASE[k]
+                cv1, cv2, cv3 = f'(Var "{n1}")', f'(Var "{n2}")', f'(Var "{n3}")'
+                out.append(emit(v1 * v2 * v3,
+                                f'(Mul {cv1} (Mul {cv2} {cv3}))',
+                                f"{n1}*{n2}*{n3}", 5))
+                if v2 != 0 and v3 != 0:
+                    out.append(emit(v1 / (v2 * v3),
+                                    f'(Div {cv1} (Mul {cv2} {cv3}))',
+                                    f"{n1}/({n2}*{n3})", 5))
     return out
 
 
