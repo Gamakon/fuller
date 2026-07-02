@@ -566,6 +566,34 @@ fn snap_karva(
     Ok(out)
 }
 
+/// The representation DOWN-FLIP: replace every named-constant terminal
+/// (`pi`, `G`, `sqrt2`, ... — Var tokens whose name is in
+/// `master_constants()`) with its numeric literal, in head and tail. Inverse
+/// of `snap_karva` (the up-flip); the pair lets the same structure compete in
+/// the population in constants-form and numeric-form, with selection deciding
+/// which representation recovers the law. Behaviour-preserving,
+/// deterministic, never raises on token data.
+///
+/// Returns {"head": [...], "tail": [...], "changed": bool,
+///          "replaced": [names]} — `changed=False` (empty `replaced`) means
+/// the chromosome was already fully numeric; skip the no-op mutant.
+#[pyfunction]
+fn concretize_karva(
+    py: Python<'_>,
+    head: Vec<PyToken>,
+    tail: Vec<PyToken>,
+) -> PyResult<Py<PyDict>> {
+    let head_toks = build_tokens(py, head)?;
+    let tail_toks = build_tokens(py, tail)?;
+    let (new_head, new_tail, replaced) = crate::snap_karva::concretize(&head_toks, &tail_toks);
+    let out = PyDict::new_bound(py);
+    out.set_item("head", tokens_to_py(py, &new_head)?)?;
+    out.set_item("tail", tokens_to_py(py, &new_tail)?)?;
+    out.set_item("changed", !replaced.is_empty())?;
+    out.set_item("replaced", replaced)?;
+    Ok(out.into())
+}
+
 /// The canonical constant ATOMS the engine pre-registers as pset terminals
 /// once per fit (symmetry with `master_pset`; determinism across snap_karva
 /// calls). Returns [(name, value)] — e.g. [("G", 6.674e-11), ("pi", 3.14159…)].
@@ -761,5 +789,6 @@ fn _gamakast(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(eclass_variants, m)?)?;
     m.add_function(wrap_pyfunction!(eclass_extract_hff, m)?)?;
     m.add_function(wrap_pyfunction!(snap_karva, m)?)?;
+    m.add_function(wrap_pyfunction!(concretize_karva, m)?)?;
     Ok(())
 }

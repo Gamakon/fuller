@@ -26,6 +26,7 @@ from ._gamakast import (
     physics_mutate_karva,
     proves_equal,
     snap_karva,
+    concretize_karva,
 )
 from .sympy_bridge import to_math, from_math, equals
 
@@ -42,6 +43,7 @@ __all__ = [
     "physics_mutate_karva",
     "proves_equal",
     "snap_karva",
+    "concretize_karva",
     "to_math",
     "from_math",
     "equals",

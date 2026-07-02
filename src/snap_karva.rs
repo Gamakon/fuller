@@ -146,6 +146,52 @@ pub fn constant_values() -> &'static HashMap<String, f64> {
     })
 }
 
+/// The DOWN-FLIP: replace every named-constant terminal (`pi`, `G`, `sqrt2`,
+/// ... — any `Token::Var` whose name is in [`constant_values`]) with its
+/// numeric literal value, in both head and tail. The inverse of the
+/// `snap_variants` up-flip; together they form the representation-flip
+/// mutation pair: the same structure can compete in the population in
+/// constants-form and numeric-form, and selection decides which recovers the
+/// law. Behaviour-preserving by construction (eval binds those names to
+/// exactly these values) and trivially deterministic.
+///
+/// Returns `(head, tail, replaced)` where `replaced` lists the distinct
+/// constant names substituted (empty = the chromosome was already fully
+/// numeric; callers can skip the no-op mutant).
+pub fn concretize(
+    head: &[crate::karva::Token],
+    tail: &[crate::karva::Token],
+) -> (Vec<crate::karva::Token>, Vec<crate::karva::Token>, Vec<String>) {
+    use crate::karva::Token;
+    fn map_toks(
+        toks: &[Token],
+        cv: &HashMap<String, f64>,
+        replaced: &mut Vec<String>,
+    ) -> Vec<Token> {
+        toks.iter()
+            .map(|t| match t {
+                Token::Var(name) => {
+                    if let Some(&v) = cv.get(name) {
+                        if !replaced.contains(name) {
+                            replaced.push(name.clone());
+                        }
+                        Token::Num(v)
+                    } else {
+                        t.clone()
+                    }
+                }
+                other => other.clone(),
+            })
+            .collect()
+    }
+    let cv = constant_values();
+    let mut replaced: Vec<String> = Vec::new();
+    let new_head = map_toks(head, cv, &mut replaced);
+    let new_tail = map_toks(tail, cv, &mut replaced);
+    replaced.sort();
+    (new_head, new_tail, replaced)
+}
+
 /// A snapped candidate.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SnapCandidate {
@@ -372,6 +418,27 @@ mod tests {
         );
         // original is always present
         assert!(v.iter().any(|c| c.expr.contains("0.0796")));
+    }
+
+    #[test]
+    fn concretize_replaces_constants_and_only_constants() {
+        use crate::karva::Token;
+        let head = vec![
+            Token::Func("mul".into()),
+            Token::Var("pi".into()),      // registered constant -> Num
+            Token::Var("r".into()),       // ordinary variable -> untouched
+        ];
+        let tail = vec![Token::Var("sqrt2".into()), Token::Num(1.0)];
+        let (h, t, replaced) = concretize(&head, &tail);
+        assert_eq!(replaced, vec!["pi".to_string(), "sqrt2".to_string()]);
+        assert!(matches!(&h[1], Token::Num(v) if (*v - std::f64::consts::PI).abs() < 1e-12));
+        assert_eq!(h[2], Token::Var("r".into()), "free variable must survive");
+        assert!(matches!(&t[0], Token::Num(v) if (*v - std::f64::consts::SQRT_2).abs() < 1e-12));
+        assert_eq!(t[1], Token::Num(1.0));
+        // Deterministic + idempotent: a second pass replaces nothing.
+        let (h2, t2, r2) = concretize(&h, &t);
+        assert!(r2.is_empty(), "already-numeric chromosome is a no-op");
+        assert_eq!((h2, t2), (h, t));
     }
 
     #[test]

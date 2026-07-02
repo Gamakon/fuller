@@ -114,6 +114,21 @@ e-class enumerators (`eclass_variants`, `eclass_extract_hff`, `proves_equal`
 families) — they are normal-form/expansion families, deliberately kept out of
 the denoise saturation (non-confluent, e-graph blow-up).
 
+## Representation flip: `snap_karva` / `concretize_karva`
+
+The constants question ("evolve with symbolic constants, or numeric + snap
+later?") is answered by SELECTION, not configuration: wire both as
+low-probability mutation operators and let the population carry both forms.
+
+- `snap_karva(head, tail, ...)` — UP-flip: numeric atoms that match the
+  lattice become constant terminals (e-graph verified).
+- `concretize_karva(head, tail)` — DOWN-flip: constant terminals become their
+  numeric literals. Returns `{"head", "tail", "changed", "replaced"}`;
+  `changed=False` means already fully numeric (skip the no-op mutant).
+
+Both are behaviour-preserving, so the same structure competes in the
+population in both representations and HFF ranks them in one objective space.
+
 ## Lower-level API: `denoise` (Math strings)
 
 If you already have an egglog `Math` s-expression (not a chromosome), call
