@@ -160,19 +160,13 @@ mod tests {
     #[test]
     fn proves_a_known_algebra_equality() {
         // (x * 1) and x are provably equal by the algebra ruleset.
-        assert_eq!(
-            proves_equal(r#"(Mul (Var "x") (Num 1.0))"#, r#"(Var "x")"#).unwrap(),
-            true
-        );
+        assert!(proves_equal(r#"(Mul (Var "x") (Num 1.0))"#, r#"(Var "x")"#).unwrap());
     }
 
     #[test]
     fn does_not_prove_a_false_equality() {
         // x and y are not equal; rules must not "prove" it.
-        assert_eq!(
-            proves_equal(r#"(Var "x")"#, r#"(Var "y")"#).unwrap(),
-            false
-        );
+        assert!(!proves_equal(r#"(Var "x")"#, r#"(Var "y")"#).unwrap());
     }
 
     #[test]
