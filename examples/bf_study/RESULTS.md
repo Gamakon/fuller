@@ -2,8 +2,8 @@
 
 ## Soundness (the real headline)
 
-**100% match rate** — 500 random BF programs, 4 test inputs each = 2000 interpreter comparisons, 0 output mismatches.
-This is the key differentiator from floating-point symbolic regression: the BF interpreter is exact (boolean yes/no), so semantic preservation is *provable*, not approximate.
+**100% match rate on the tested set** — 500 random BF programs, 4 test inputs each = 2000 interpreter comparisons, 0 output mismatches.
+Caveat: the fuzzer's op pool is bracket-free, so these programs exercise the run-length rules but **not** the clear-loop (`[-]`) rewrites — the nontrivial ones. The match rate is differential evidence over that op set, not a soundness proof; the loop rules still need bracket-inclusive fuzzing before any "provable" claim.
 The same technique applies to any GP target with decidable equivalence: SQL, regex synthesis, sorting networks, compiler IR passes.
 
 Verify: `RUSTFLAGS="-D warnings" cargo test --no-default-features`
@@ -206,7 +206,7 @@ The pilot's direction (Baldwinian > Lamarckian on increment, 0.688 vs 0.610) was
 1. EGGLOG is NOT superior to well-tuned parsimony. The v1 advantage was artifact of λ mis-tuning.
 2. EGGLOG IS comparable to parsimony without hyperparameter tuning — the practical benefit is lambda-free bloat control.
 3. Neither Baldwinian nor Lamarckian is significantly better across the battery — the mechanism is inconclusive.
-4. Soundness (100% match rate, provable semantic preservation) remains the genuine headline claim.
+4. Differential soundness (100% match rate) holds over the bracket-free tested set; a full soundness claim needs bracket-inclusive fuzzing of the clear-loop rules.
 5. add_two (structural task) remains unsolvable at this budget for all arms — run-length egglog rules do not help structural bloat.
 
 ## Reproduce

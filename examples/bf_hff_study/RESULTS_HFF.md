@@ -50,6 +50,12 @@ HFF_VAL: HFF_VAL DEFEATS memoriser: ground truth has strictly lower HFF angle (P
 
 Metrics per arm, mean±std over 30 seeds.
 
+> **Caveat:** these are NOT paired. The seed encodes the arm index, so arms
+> share no common randomness — the Wilcoxon tests are run unpaired-in-effect,
+> and the EGGLOG arm receives extra fitness evaluations per generation without
+> budget equalization. Treat the significance results as indicative only until
+> re-run with shared per-seed randomness and equalized eval budget.
+
 - **train_solve_rate**: fraction of final population with train_acc=1.0
 - **oracle_solve_rate**: fraction with train AND val AND extrap accuracy = 1.0
 - **mean_val_acc**: mean validation accuracy in final population
@@ -64,7 +70,7 @@ Metrics per arm, mean±std over 30 seeds.
 | HFF_VAL | 0.730±0.338 | 0.730±0.338 | 0.730±0.338 | -0.000±0.001 |
 | HFF_EXTRAP | 0.628±0.384 | 0.628±0.384 | 0.638±0.369 | -0.010±0.026 |
 
-#### Wilcoxon signed-rank tests (30 paired seeds, two-sided)
+#### Wilcoxon signed-rank tests (30 seeds per arm, two-sided) — see caveat
 
 | Comparison | W | p | Median Δ | p<0.05? |
 |------------|---|---|---------|--------|
@@ -83,7 +89,7 @@ Metrics per arm, mean±std over 30 seeds.
 | HFF_VAL | 0.872±0.098 | 0.872±0.098 | 0.872±0.098 | 0.000±0.000 |
 | HFF_EXTRAP | 0.846±0.171 | 0.846±0.171 | 0.846±0.171 | 0.000±0.000 |
 
-#### Wilcoxon signed-rank tests (30 paired seeds, two-sided)
+#### Wilcoxon signed-rank tests (30 seeds per arm, two-sided) — see caveat
 
 | Comparison | W | p | Median Δ | p<0.05? |
 |------------|---|---|---------|--------|
@@ -102,7 +108,7 @@ Metrics per arm, mean±std over 30 seeds.
 | HFF_VAL | 0.111±0.289 | 0.111±0.289 | 0.111±0.289 | 0.000±0.000 |
 | HFF_EXTRAP | 0.109±0.288 | 0.109±0.288 | 0.109±0.288 | 0.000±0.000 |
 
-#### Wilcoxon signed-rank tests (30 paired seeds, two-sided)
+#### Wilcoxon signed-rank tests (30 seeds per arm, two-sided) — see caveat
 
 | Comparison | W | p | Median Δ | p<0.05? |
 |------------|---|---|---------|--------|
@@ -121,7 +127,7 @@ Metrics per arm, mean±std over 30 seeds.
 | HFF_VAL | 0.000±0.000 | 0.000±0.000 | 0.000±0.000 | 0.085±0.024 |
 | HFF_EXTRAP | 0.000±0.000 | 0.000±0.000 | 0.005±0.028 | 0.073±0.049 |
 
-#### Wilcoxon signed-rank tests (30 paired seeds, two-sided)
+#### Wilcoxon signed-rank tests (30 seeds per arm, two-sided) — see caveat
 
 | Comparison | W | p | Median Δ | p<0.05? |
 |------------|---|---|---------|--------|

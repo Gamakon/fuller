@@ -55,9 +55,10 @@ needed to solve the I/O task from scratch).
 
 ## Soundness
 
-The egglog BF ruleset was verified 100% sound:
+The egglog BF ruleset matched on 100% of the tested (bracket-free) set:
 - 500 random programs, 4 test inputs each = 2000 interpreter comparisons.
 - 0 output mismatches between original and simplified program.
+- Caveat: the fuzzer emits no brackets, so the clear-loop rules are untested; this is differential evidence, not a soundness proof.
 
 Rules shipped:
 - `Inc;Dec` cancel, `Dec;Inc` cancel, `Right;Left` cancel, `Left;Right` cancel
