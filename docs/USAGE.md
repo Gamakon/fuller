@@ -99,7 +99,12 @@ Let the GA explore; let denoise tidy.
 the algebra identities (mul/add/sub identity, mul-by-zero, double-negation,
 `sqrt(x^2)->|x|`, additive cancellation, guarded div-cancellation) plus the
 power/log rules — and a data-guarded pruner that drops subtrees whose removal
-doesn't change predictions on your rows. distribute / rational / trig /
+doesn't change predictions on your rows. On top of that, an evaluator-backed
+**constant-subtree fold** replaces variable-free subtrees with their literal
+value (`log(|sqrt2|) -> 0.3466` — egglog has no ln/sqrt primitives, the
+evaluator does), and a data-gated **additive-constant strip** drops paired
+fitted offsets in one move (`pi*(r^2 + c) - pi*c -> pi*r^2`), which the
+one-step pruner cannot reach. distribute / rational / trig /
 trig_fu / wide rulesets exist but are used only by the parity scorer and the
 e-class enumerators (`eclass_variants`, `eclass_extract_hff`, `proves_equal`
 families) — they are normal-form/expansion families, deliberately kept out of

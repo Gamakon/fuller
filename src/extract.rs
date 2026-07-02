@@ -382,6 +382,36 @@ pub fn denoise(
         }
     }
 
+    // CONSTANT-SUBTREE FOLD + ADDITIVE STRIP, data-gated. The e-graph cannot
+    // fold transcendental constants (no ln/sqrt f64 primitives), so remainders
+    // like `pi*(r^2 + log|sqrt2|) - 1.0888` survive every saturation; the
+    // evaluator folds them to literals, and the strip candidate drops ALL
+    // additive constants at once — the paired-cancellation move the greedy
+    // pruner below cannot reach (either term alone breaks the fit). Both
+    // candidates go through the same strict-shrink + R^2 gate as everything
+    // else; the fold is an f64-exact identity, the strip is justified only by
+    // the data.
+    let fold_base = fold_constant_subtrees(&chosen_expr).unwrap_or_else(|| chosen_expr.clone());
+    let mut fold_cands: Vec<String> = Vec::new();
+    if let Some(stripped) = strip_additive_constants(&fold_base) {
+        fold_cands.push(stripped); // smallest first
+    }
+    fold_cands.push(fold_base);
+    for cand in fold_cands {
+        let nodes = cost_of(&cand);
+        if nodes == 0 || nodes >= chosen_cost || cand == chosen_expr {
+            continue;
+        }
+        if let Ok(preds) = eval_expr_rows(&cand, rows) {
+            if r2_loss(&reference, &preds) <= tolerance {
+                chosen_expr = cand;
+                chosen_cost = nodes;
+                changed = true;
+                break;
+            }
+        }
+    }
+
     // Sound data-aware subtree pruning (the safe replacement for "substitute G
     // with its constant"): drop additive terms / collapse multiplicative
     // factors that don't change predictions on the REAL data beyond tolerance.
@@ -541,7 +571,115 @@ pub fn denoise_candidates(
         }
     }
 
+    // 3. Constant-subtree fold + additive strip (see `denoise`): the e-graph
+    // can't fold transcendental constants; the evaluator can. The strip is
+    // NOT an identity — the caller's scoring (HFF + R^2 on data) disposes.
+    if let Some(folded) = fold_constant_subtrees(input) {
+        let stripped = strip_additive_constants(&folded);
+        for cand in [stripped, Some(folded)].into_iter().flatten() {
+            if cost_of(&cand) == 0 {
+                continue; // unparseable render
+            }
+            if !rows.is_empty() && eval_expr_rows(&cand, rows).is_err() {
+                continue; // unevaluable on data — same filter as the variants
+            }
+            if seen_exprs.insert(cand.clone()) {
+                out.push(DenoiseCandidate {
+                    expr: cand.clone(),
+                    cost: cost_of(&cand),
+                    is_original: false,
+                });
+            }
+        }
+    }
+
     Ok(out)
+}
+
+// ---------------------------------------------------------------------------
+// Constant-subtree folding (evaluator-backed; the e-graph can't do this)
+// ---------------------------------------------------------------------------
+
+/// Evaluate a variable-free Math subtree to its literal value: one empty row,
+/// so every `Var` resolves through the registered-constant fallback in
+/// `eval_row` (pi, sqrt2, G, ...). Exactly the evaluator's semantics — the
+/// single source of truth for what an op computes.
+fn eval_const_subtree(math: &str) -> Option<f64> {
+    eval_expr_rows(math, &[Vec::new()]).ok().and_then(|v| v.first().copied())
+}
+
+/// Replace every MAXIMAL variable-free subtree with the literal the evaluator
+/// computes for it: `Log(Abs(Var "sqrt2"))` -> `(Num 0.3465735902799726)`.
+///
+/// Why this exists: egglog has f64 primitives for `+ - * neg` only — no
+/// `ln`/`sqrt`/trig — so a transcendental constant subtree can NEVER fold in
+/// the e-graph, in any rule family. The evaluator has the real functions.
+/// This is the piece that lets `pi*(r^2 + log|sqrt2|) - 1.0888` reduce: fold
+/// the transcendental remainders to literals, then let the data-gated strip /
+/// prune drop what cancels.
+///
+/// Soundness: replacing a variable-free subtree by its own evaluated value is
+/// an f64-exact identity under the crate's evaluator. Subtrees that evaluate
+/// non-finite (out-of-domain constants) are left symbolic. Bare leaves are
+/// never touched — a lone `(Var "pi")` stays a symbol (readability + snap).
+/// Caveat: a DATA COLUMN named like a registered constant would shadow it at
+/// eval time; callers gate the folded form on the data (R^2), which rejects
+/// the fold in that pathological case.
+fn fold_constant_subtrees(expr: &str) -> Option<String> {
+    fn is_const(n: &PNode) -> bool {
+        match n {
+            PNode::Num(_) => true,
+            PNode::Var(name) => crate::snap_karva::constant_values().contains_key(name),
+            PNode::App(_, ch) => ch.iter().all(is_const),
+        }
+    }
+    fn go(n: &PNode) -> PNode {
+        if let PNode::App(op, ch) = n {
+            // An App is >= 2 nodes, so folding it always shrinks.
+            if is_const(n) {
+                if let Some(v) = eval_const_subtree(&n.to_math()) {
+                    if v.is_finite() {
+                        return PNode::Num(v);
+                    }
+                }
+                // Out-of-domain / unevaluable constant: keep it symbolic.
+            }
+            return PNode::App(op.clone(), ch.iter().map(go).collect());
+        }
+        n.clone()
+    }
+    let tree = parse_pnode(expr)?;
+    Some(go(&tree).to_math())
+}
+
+/// One aggressive candidate: the tree with EVERY additive numeric constant
+/// removed — each `Add` operand that is a bare `Num`, and each `Sub`
+/// subtrahend that is a bare `Num`. NOT an identity: it is only ever offered
+/// through the data gate (or to a caller who scores on data).
+///
+/// Why all-at-once: fitted linker offsets cancel in PAIRS across the tree
+/// (`pi*(r^2 + c) - pi*c`), and the greedy one-step pruner cannot cross that
+/// valley — dropping either term alone breaks the fit, dropping both is
+/// exact. Run after [`fold_constant_subtrees`], which turns the constant
+/// remainders into the bare `Num`s this looks for.
+fn strip_additive_constants(expr: &str) -> Option<String> {
+    fn go(n: &PNode) -> PNode {
+        match n {
+            PNode::App(op, ch) if op == "Add" && ch.len() == 2 => match (&ch[0], &ch[1]) {
+                (PNode::Num(_), other) | (other, PNode::Num(_)) => go(other),
+                _ => PNode::App(op.clone(), vec![go(&ch[0]), go(&ch[1])]),
+            },
+            PNode::App(op, ch)
+                if op == "Sub" && ch.len() == 2 && matches!(ch[1], PNode::Num(_)) =>
+            {
+                go(&ch[0])
+            }
+            PNode::App(op, ch) => PNode::App(op.clone(), ch.iter().map(go).collect()),
+            leaf => leaf.clone(),
+        }
+    }
+    let tree = parse_pnode(expr)?;
+    Some(go(&tree).to_math())
 }
 
 // ---------------------------------------------------------------------------
@@ -938,6 +1076,53 @@ mod tests {
         let out = denoise(r#"(Sqrt (Pow2 (Var "x")))"#, &data, 1e-3, 64).expect("denoise");
         assert_eq!(out.expr, r#"(Abs (Var "x"))"#);
         assert!(out.changed);
+    }
+
+    /// The evaluator folds a transcendental constant subtree the e-graph
+    /// never can (egglog has no ln primitive): log(|sqrt2|) becomes a literal.
+    #[test]
+    fn folds_transcendental_constant_subtree() {
+        let data = rows("x", &[1.0, 2.0, 3.0, -4.0]);
+        let input = r#"(Add (Var "x") (Log (Abs (Var "sqrt2"))))"#;
+        let out = denoise(input, &data, 1e-3, 16).expect("denoise");
+        assert!(out.changed, "constant Log subtree should fold: {}", out.expr);
+        assert!(!out.expr.contains("Log"), "no symbolic Log should survive: {}", out.expr);
+    }
+
+    /// The smoke-test remainder, end-to-end: pi*(r^2 + log|sqrt2|) - pi*ln(sqrt2)
+    /// == pi*r^2 exactly. Dropping either constant alone breaks the fit (the
+    /// greedy pruner's valley); fold + strip crosses it in one gated move.
+    #[test]
+    fn folds_and_strips_cancelling_linker_offset() {
+        let off = std::f64::consts::PI * std::f64::consts::SQRT_2.ln();
+        let input = format!(
+            r#"(Sub (Mul (Var "pi") (Add (Pow2 (Var "r")) (Log (Abs (Var "sqrt2"))))) (Num {off}))"#
+        );
+        let data = rows("r", &[0.5, 1.0, 2.0, 3.0, -1.5]);
+        let out = denoise(&input, &data, 1e-6, 32).expect("denoise");
+        assert_eq!(out.expr, r#"(Mul (Var "pi") (Pow2 (Var "r")))"#, "expected clean pi*r^2");
+        assert!(out.changed);
+    }
+
+    /// The strip is data-gated: an additive constant that MATTERS must stay.
+    #[test]
+    fn does_not_strip_a_constant_that_matters() {
+        let data = rows("x", &[1.0, 2.0, 3.0, -4.0]);
+        let out =
+            denoise(r#"(Add (Var "x") (Num 10.0))"#, &data, 1e-6, 16).expect("denoise");
+        assert_eq!(out.expr, r#"(Add (Var "x") (Num 10.0))"#);
+        assert!(!out.changed);
+    }
+
+    /// Bare constant symbols are never folded to literals: a lone (Var "pi")
+    /// stays symbolic (readability + snap round-trip).
+    #[test]
+    fn bare_constant_symbol_stays_symbolic() {
+        let data = rows("r", &[1.0, 2.0, 3.0]);
+        let input = r#"(Mul (Var "pi") (Pow2 (Var "r")))"#;
+        let out = denoise(input, &data, 1e-6, 16).expect("denoise");
+        assert_eq!(out.expr, input, "pi must stay a symbol, not become 3.14159...");
+        assert!(!out.changed);
     }
 
     #[test]
