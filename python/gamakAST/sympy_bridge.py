@@ -33,6 +33,14 @@ def to_math(expr):
     """sympy expression -> gamakAST `Math` s-expression string, or None if it
     contains an op the `Math` sort does not model."""
     import sympy as sp
+    # sympy singletons FIRST: pi/E are NumberSymbol, which is NOT a Number
+    # subclass — `is_Number` is False and their `func` is not in the table, so
+    # without this they silently convert to None. The Math sort models them as
+    # named constant Vars; snap/eval bind the values via the constant lattice.
+    if expr is sp.pi:
+        return '(Var "pi")'
+    if expr is sp.E:
+        return '(Var "e")'
     if expr.is_Number:
         return f"(Num {float(expr)})"
     if expr.is_Symbol:
@@ -72,6 +80,113 @@ def to_math(expr):
     if any(p is None for p in parts):
         return None
     return f"({ctor} {' '.join(parts)})"
+
+
+def _tokenize_math(s):
+    out, i, n = [], 0, len(s)
+    while i < n:
+        c = s[i]
+        if c in "()":
+            out.append(c)
+            i += 1
+        elif c == '"':
+            j = s.index('"', i + 1)
+            out.append(s[i : j + 1])
+            i = j + 1
+        elif c.isspace():
+            i += 1
+        else:
+            j = i
+            while j < n and s[j] not in '()"' and not s[j].isspace():
+                j += 1
+            out.append(s[i:j])
+            i = j
+    return out
+
+
+def from_math(s):
+    """gamakAST `Math` s-expression string -> sympy expression, or None if the
+    string is malformed. Inverse of `to_math`; the ONLY sympy-side decoder of
+    the `Math` grammar — consumers must not re-implement this table.
+
+    Named constants round-trip: `(Var "pi")`/`(Var "e")` -> sympy.pi/sympy.E;
+    every other Var becomes `Symbol(name)`.
+
+    Protected ops are rendered at their generic (non-singular) point:
+    ProtectedSqrt/ProtectedLog go through Abs (their actual definition),
+    ProtectedExp -> exp, ProtectedInv -> 1/x, ProtectedDiv -> a/b. The
+    singular-point special cases (protected_inv(0)=1, protected_div(x,0)=0)
+    have no sympy analogue — do not use this rendering to reason about
+    behaviour AT the singularity.
+    """
+    import sympy as sp
+
+    toks = _tokenize_math(s)
+    pos = [0]
+
+    def parse():
+        if pos[0] >= len(toks) or toks[pos[0]] != "(":
+            return None
+        pos[0] += 1
+        if pos[0] >= len(toks):
+            return None
+        head = toks[pos[0]]
+        pos[0] += 1
+        if head == "Num":
+            if pos[0] >= len(toks):
+                return None
+            try:
+                node = sp.Float(toks[pos[0]])
+            except (ValueError, TypeError):
+                return None
+            pos[0] += 1
+        elif head == "Var":
+            if pos[0] >= len(toks):
+                return None
+            name = toks[pos[0]].strip('"')
+            pos[0] += 1
+            node = {"pi": sp.pi, "e": sp.E}.get(name) or sp.Symbol(name)
+        else:
+            kids = []
+            while pos[0] < len(toks) and toks[pos[0]] != ")":
+                k = parse()
+                if k is None:
+                    return None
+                kids.append(k)
+            build = {
+                ("Add", 2): lambda a, b: a + b,
+                ("Sub", 2): lambda a, b: a - b,
+                ("Mul", 2): lambda a, b: a * b,
+                ("Div", 2): lambda a, b: a / b,
+                ("Pow", 2): lambda a, b: a**b,
+                ("ProtectedDiv", 2): lambda a, b: a / b,
+                ("Neg", 1): lambda a: -a,
+                ("Sin", 1): sp.sin,
+                ("Cos", 1): sp.cos,
+                ("Tan", 1): sp.tan,
+                ("Tanh", 1): sp.tanh,
+                ("Log", 1): sp.log,
+                ("Exp", 1): sp.exp,
+                ("Sqrt", 1): sp.sqrt,
+                ("Abs", 1): sp.Abs,
+                ("Pow2", 1): lambda a: a**2,
+                ("Pow3", 1): lambda a: a**3,
+                ("Inv", 1): lambda a: 1 / a,
+                ("ProtectedSqrt", 1): lambda a: sp.sqrt(sp.Abs(a)),
+                ("ProtectedLog", 1): lambda a: sp.log(sp.Abs(a)),
+                ("ProtectedExp", 1): sp.exp,
+                ("ProtectedInv", 1): lambda a: 1 / a,
+            }.get((head, len(kids)))
+            if build is None:
+                return None
+            node = build(*kids)
+        if pos[0] >= len(toks) or toks[pos[0]] != ")":
+            return None
+        pos[0] += 1
+        return node
+
+    node = parse()
+    return node if node is not None and pos[0] == len(toks) else None
 
 
 def equals(a, b) -> bool:
