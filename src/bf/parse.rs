@@ -9,12 +9,14 @@
 //! `parse_bf(source)` converts raw BF source to an egglog-ready s-expression
 //! string. `unparse_bf(sexpr)` goes the other direction.
 
-/// A minimal s-expression tree, used for unparsing.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SExpr {
-    Atom(String),
-    List(Vec<SExpr>),
-}
+/// Max bracket-NESTING depth accepted by the parser. This bounds the only
+/// recursion left in this module: `parse_prog_str` recurses once per `[`,
+/// never per op (the sequence walk is a loop, and the unparser is fully
+/// iterative), so a cap on genuine loop nesting is both sufficient for stack
+/// safety (256 × small frame ≪ the 2MB default test/rayon stacks, same
+/// arithmetic as `crate::MAX_EXPR_DEPTH`) and semantically harmless — no real
+/// program nests 256 loops. Straight-line program LENGTH is unlimited.
+const MAX_LOOP_DEPTH: usize = 256;
 
 // ---------------------------------------------------------------------------
 // BF source -> Prog s-expression string (direct string building)
@@ -23,18 +25,30 @@ pub enum SExpr {
 /// Convert a BF source string to a Prog s-expression string.
 ///
 /// Non-BF characters are silently ignored (they're comments in standard BF).
-/// Returns an error on unmatched brackets.
+/// Returns an error on unmatched brackets or loop nesting deeper than
+/// [`MAX_LOOP_DEPTH`].
 pub fn parse_bf(source: &str) -> Result<String, String> {
     let chars: Vec<char> = source.chars().filter(|c| "+-<>.,[]".contains(*c)).collect();
     let mut pos = 0;
-    parse_prog_str(&chars, &mut pos, false)
+    parse_prog_str(&chars, &mut pos, false, 0)
 }
 
-/// Inner recursive parser: returns the s-expression string for the ops from
-/// `pos` onward. Stops at `]` if `in_loop` is true (caller consumes `]`).
-fn parse_prog_str(chars: &[char], pos: &mut usize, in_loop: bool) -> Result<String, String> {
-    // Collect ops in order as string tags, then fold right.
-    // Each tag is either a simple op name or a "Loop:<body>" sentinel.
+/// Inner parser: returns the s-expression string for the ops from `pos`
+/// onward. Stops at `]` if `in_loop` is true (caller consumes `]`).
+///
+/// Recursion is per BRACKET only (depth-capped); the op sequence itself is
+/// walked iteratively, so program length cannot overflow the stack.
+fn parse_prog_str(
+    chars: &[char],
+    pos: &mut usize,
+    in_loop: bool,
+    depth: usize,
+) -> Result<String, String> {
+    if depth > MAX_LOOP_DEPTH {
+        return Err(format!("loop nesting deeper than MAX_LOOP_DEPTH ({MAX_LOOP_DEPTH})"));
+    }
+    // Collect ops in order as string tags. Each tag is either a simple op name
+    // or a "Loop:<body>" sentinel.
     let mut ops: Vec<String> = Vec::new();
 
     while *pos < chars.len() {
@@ -47,7 +61,7 @@ fn parse_prog_str(chars: &[char], pos: &mut usize, in_loop: bool) -> Result<Stri
             }
             '[' => {
                 *pos += 1; // consume '['
-                let body = parse_prog_str(chars, pos, true)?;
+                let body = parse_prog_str(chars, pos, true, depth + 1)?;
                 if *pos >= chars.len() || chars[*pos] != ']' {
                     return Err("unmatched '['".to_string());
                 }
@@ -64,15 +78,24 @@ fn parse_prog_str(chars: &[char], pos: &mut usize, in_loop: bool) -> Result<Stri
         }
     }
 
-    // Build right-leaning s-expression: (Inc (Dec (Nil))) etc.
-    let mut result = "(Nil)".to_string();
-    for tag in ops.into_iter().rev() {
+    // Build the right-leaning s-expression `(Inc (Dec (Nil)))` in ONE forward
+    // pass: emit each constructor's opening, then `(Nil)`, then all the
+    // closers. (The previous reverse fold re-copied the accumulated string
+    // once per op — quadratic on long straight-line programs.)
+    let mut result = String::new();
+    for tag in &ops {
         if let Some(body) = tag.strip_prefix("Loop:") {
-            result = format!("(Loop {body} {result})");
+            result.push_str("(Loop ");
+            result.push_str(body);
+            result.push(' ');
         } else {
-            result = format!("({tag} {result})");
+            result.push('(');
+            result.push_str(tag);
+            result.push(' ');
         }
     }
+    result.push_str("(Nil)");
+    result.push_str(&")".repeat(ops.len()));
     Ok(result)
 }
 
@@ -81,22 +104,109 @@ fn parse_prog_str(chars: &[char], pos: &mut usize, in_loop: bool) -> Result<Stri
 // ---------------------------------------------------------------------------
 
 /// Convert a Prog s-expression string back to BF source text.
+///
+/// FULLY ITERATIVE by design. A Prog is a cons-list, so its s-expression
+/// nesting depth equals its op count: a recursive walk — or even building an
+/// intermediate tree, whose recursive `Drop` walks the same spine — overflows
+/// the native stack at a few tens of thousands of ops, an uncatchable abort
+/// that breaks `bf_simplify`'s never-raises contract. This single pass over
+/// the token stream drives an explicit heap work-stack instead: memory is
+/// O(ops), the native stack stays flat, and there is no intermediate tree at
+/// all.
 pub fn unparse_bf(sexpr: &str) -> Result<String, String> {
-    let expr = parse_sexpr(sexpr)?;
-    let mut out = String::new();
-    node_to_source(&expr, &mut out)?;
-    Ok(out)
-}
+    /// Work items, pushed in reverse execution order (LIFO).
+    enum Task {
+        /// Parse one Prog node at the current position.
+        Node,
+        /// Consume a closing `)`.
+        RParen,
+        /// Emit the `]` that closes a Loop body.
+        CloseLoop,
+    }
 
-/// Parse an egglog s-expression string into a `SExpr` tree.
-pub fn parse_sexpr(s: &str) -> Result<SExpr, String> {
-    let toks = tokenize(s);
-    let mut pos = 0;
-    let expr = parse_sexpr_toks(&toks, &mut pos)?;
+    let toks = tokenize(sexpr);
+    let mut out = String::new();
+    let mut pos = 0usize;
+    let mut stack = vec![Task::Node];
+
+    while let Some(task) = stack.pop() {
+        match task {
+            Task::CloseLoop => out.push(']'),
+            Task::RParen => {
+                if toks.get(pos).map(String::as_str) != Some(")") {
+                    return Err(format!(
+                        "expected ')' at token {pos}, got {:?}",
+                        toks.get(pos)
+                    ));
+                }
+                pos += 1;
+            }
+            Task::Node => {
+                match toks.get(pos).map(String::as_str) {
+                    Some("(") => {}
+                    // A bare `Nil` atom is a valid (empty) Prog.
+                    Some("Nil") => {
+                        pos += 1;
+                        continue;
+                    }
+                    other => {
+                        return Err(format!("expected '(' at token {pos}, got {other:?}"))
+                    }
+                }
+                pos += 1; // consume '('
+                let head = toks
+                    .get(pos)
+                    .cloned()
+                    .ok_or_else(|| "missing constructor after '('".to_string())?;
+                pos += 1;
+                match head.as_str() {
+                    "Nil" => stack.push(Task::RParen),
+                    "Inc" | "Dec" | "Left" | "Right" | "Out" | "In" | "Clear" => {
+                        out.push_str(match head.as_str() {
+                            "Inc" => "+",
+                            "Dec" => "-",
+                            "Left" => "<",
+                            "Right" => ">",
+                            "Out" => ".",
+                            "In" => ",",
+                            _ => "[-]", // Clear
+                        });
+                        // Execution order: rest, then this constructor's ')'.
+                        stack.push(Task::RParen);
+                        stack.push(Task::Node);
+                    }
+                    "AddN" | "MoveN" => {
+                        let n: i64 = toks
+                            .get(pos)
+                            .ok_or_else(|| format!("{head} missing count arg"))?
+                            .parse()
+                            .map_err(|e| format!("{head} arg: {e}"))?;
+                        pos += 1;
+                        let (pos_c, neg_c) = if head == "AddN" { ('+', '-') } else { ('>', '<') };
+                        let c = if n >= 0 { pos_c } else { neg_c };
+                        for _ in 0..n.unsigned_abs() {
+                            out.push(c);
+                        }
+                        stack.push(Task::RParen);
+                        stack.push(Task::Node);
+                    }
+                    "Loop" => {
+                        out.push('[');
+                        // Execution order: body, ']', rest, this ')'.
+                        stack.push(Task::RParen);
+                        stack.push(Task::Node); // rest
+                        stack.push(Task::CloseLoop);
+                        stack.push(Task::Node); // body
+                    }
+                    other => return Err(format!("unknown Prog constructor: {other:?}")),
+                }
+            }
+        }
+    }
     if pos != toks.len() {
         return Err(format!("extra tokens after s-expression: {:?}", &toks[pos..]));
     }
-    Ok(expr)
+    Ok(out)
 }
 
 fn tokenize(s: &str) -> Vec<String> {
@@ -121,104 +231,6 @@ fn tokenize(s: &str) -> Vec<String> {
         }
     }
     out
-}
-
-fn parse_sexpr_toks(toks: &[String], pos: &mut usize) -> Result<SExpr, String> {
-    match toks.get(*pos).map(String::as_str) {
-        None => Err("unexpected end of s-expression".to_string()),
-        Some("(") => {
-            *pos += 1;
-            let mut parts = Vec::new();
-            while toks.get(*pos).map(String::as_str) != Some(")") {
-                if *pos >= toks.len() {
-                    return Err("unclosed '('".to_string());
-                }
-                parts.push(parse_sexpr_toks(toks, pos)?);
-            }
-            *pos += 1; // consume ')'
-            Ok(SExpr::List(parts))
-        }
-        Some(")") => Err("unexpected ')'".to_string()),
-        Some(tok) => {
-            let t = tok.to_string();
-            *pos += 1;
-            Ok(SExpr::Atom(t))
-        }
-    }
-}
-
-/// Convert a parsed Prog `SExpr` node to BF source text.
-fn node_to_source(expr: &SExpr, out: &mut String) -> Result<(), String> {
-    match expr {
-        SExpr::Atom(a) => match a.as_str() {
-            "Nil" => Ok(()),
-            other => Err(format!("unexpected atom in Prog: {other:?}")),
-        },
-        SExpr::List(parts) => {
-            if parts.is_empty() {
-                return Err("empty list in Prog s-expression".to_string());
-            }
-            let head = match &parts[0] {
-                SExpr::Atom(a) => a.as_str(),
-                _ => return Err("list head must be an atom".to_string()),
-            };
-            match head {
-                "Nil" => Ok(()),
-                // Single-op constructors: (Inc rest)
-                "Inc"   => { expect_args("Inc",   parts, 1)?; out.push('+'); node_to_source(&parts[1], out) }
-                "Dec"   => { expect_args("Dec",   parts, 1)?; out.push('-'); node_to_source(&parts[1], out) }
-                "Left"  => { expect_args("Left",  parts, 1)?; out.push('<'); node_to_source(&parts[1], out) }
-                "Right" => { expect_args("Right", parts, 1)?; out.push('>'); node_to_source(&parts[1], out) }
-                "Out"   => { expect_args("Out",   parts, 1)?; out.push('.'); node_to_source(&parts[1], out) }
-                "In"    => { expect_args("In",    parts, 1)?; out.push(','); node_to_source(&parts[1], out) }
-                "Clear" => {
-                    expect_args("Clear", parts, 1)?;
-                    out.push_str("[-]");
-                    node_to_source(&parts[1], out)
-                }
-                "Loop" => {
-                    // (Loop body rest)
-                    expect_args("Loop", parts, 2)?;
-                    out.push('[');
-                    node_to_source(&parts[1], out)?;
-                    out.push(']');
-                    node_to_source(&parts[2], out)
-                }
-                "AddN" => {
-                    // (AddN n rest)
-                    expect_args("AddN", parts, 2)?;
-                    let n = atom_i64(&parts[1], "AddN")?;
-                    if n > 0       { for _ in 0..n    { out.push('+'); } }
-                    else if n < 0  { for _ in 0..(-n) { out.push('-'); } }
-                    node_to_source(&parts[2], out)
-                }
-                "MoveN" => {
-                    // (MoveN n rest)
-                    expect_args("MoveN", parts, 2)?;
-                    let n = atom_i64(&parts[1], "MoveN")?;
-                    if n > 0       { for _ in 0..n    { out.push('>'); } }
-                    else if n < 0  { for _ in 0..(-n) { out.push('<'); } }
-                    node_to_source(&parts[2], out)
-                }
-                other => Err(format!("unknown Prog constructor: {other:?}")),
-            }
-        }
-    }
-}
-
-fn expect_args(name: &str, parts: &[SExpr], n: usize) -> Result<(), String> {
-    if parts.len() != n + 1 {
-        Err(format!("{name} expects {n} arg(s), got {}", parts.len() - 1))
-    } else {
-        Ok(())
-    }
-}
-
-fn atom_i64(expr: &SExpr, ctx: &str) -> Result<i64, String> {
-    match expr {
-        SExpr::Atom(a) => a.parse::<i64>().map_err(|e| format!("{ctx} arg: {e}")),
-        _ => Err(format!("{ctx}: first arg must be an integer atom")),
-    }
 }
 
 /// Convert a Prog s-expression to BF source (public entry point).
@@ -304,5 +316,47 @@ mod tests {
         let sexpr = parse_bf(source).expect("parse");
         let back = unparse_bf(&sexpr).expect("unparse");
         assert_eq!(back, source);
+    }
+
+    /// A cons-list's depth is its LENGTH: a 50k-op straight-line program must
+    /// round-trip without touching the native stack (this test is the
+    /// regression guard for the recursive walkers this module used to have —
+    /// they aborted with a stack overflow here, which no never-raises
+    /// contract can catch).
+    #[test]
+    fn bf_long_straight_line_roundtrips() {
+        let source: String = "+".repeat(50_000);
+        let sexpr = parse_bf(&source).expect("parse 50k ops");
+        let back = unparse_bf(&sexpr).expect("unparse 50k ops");
+        assert_eq!(back, source);
+    }
+
+    /// Loop NESTING is the only recursion left, and it is depth-capped: absurd
+    /// nesting must surface as Err, never a stack overflow.
+    #[test]
+    fn bf_deep_nesting_errs_instead_of_overflowing() {
+        let n = MAX_LOOP_DEPTH + 10;
+        let source = format!("{}{}", "[".repeat(n), "]".repeat(n));
+        assert!(parse_bf(&source).is_err(), "deep nesting must Err");
+        // Realistic nesting well under the cap still works.
+        let ok = format!("{}+{}", "[".repeat(64), "]".repeat(64));
+        let sexpr = parse_bf(&ok).expect("parse 64-deep");
+        assert_eq!(unparse_bf(&sexpr).expect("unparse 64-deep"), ok);
+    }
+
+    /// Long body INSIDE a loop (cons-depth again, one bracket level).
+    #[test]
+    fn bf_long_loop_body_roundtrips() {
+        let source = format!("[{}]", "+".repeat(20_000));
+        let sexpr = parse_bf(&source).expect("parse");
+        assert_eq!(unparse_bf(&sexpr).expect("unparse"), source);
+    }
+
+    #[test]
+    fn bf_unparse_malformed_errs() {
+        assert!(unparse_bf("(Bogus (Nil))").is_err());
+        assert!(unparse_bf("(Inc (Nil)").is_err(), "missing ')'");
+        assert!(unparse_bf("(Inc (Nil)) extra").is_err(), "trailing tokens");
+        assert!(unparse_bf("(AddN x (Nil))").is_err(), "non-integer count");
     }
 }

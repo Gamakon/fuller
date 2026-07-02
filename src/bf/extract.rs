@@ -32,6 +32,23 @@ pub struct Simplified {
     pub changed: bool,
 }
 
+#[cfg(test)]
+mod size_gate_tests {
+    use super::bf_simplify;
+
+    /// The never-raises contract must hold for arbitrarily long programs:
+    /// beyond the size gate, bf_simplify returns unchanged instead of handing
+    /// a 50k-deep cons nesting to egglog's recursive parser (stack abort).
+    #[test]
+    fn bf_simplify_huge_program_returns_unchanged() {
+        let source: String = "+".repeat(50_000);
+        let r = bf_simplify(&source).expect("must not error");
+        assert_eq!(r.source, source);
+        assert!(!r.changed);
+        assert_eq!(r.op_count, 50_000);
+    }
+}
+
 /// Simplify a BF source string using equality saturation.
 ///
 /// Returns the simplified source + metadata. Never errors on normal input —
@@ -40,10 +57,22 @@ pub struct Simplified {
 pub fn bf_simplify(source: &str) -> Result<Simplified, String> {
     let input_ops = op_count_source(source);
 
+    // 0. Size gate. The Prog s-expression nests once per op, and egglog's own
+    // program parser walks that nesting RECURSIVELY — our parse/unparse are
+    // iterative, but handing a 50k-op program to egglog would still overflow
+    // the stack inside parse_and_run_program. Cap sized like
+    // crate::MAX_EXPR_DEPTH (well under the 2MB default test/rayon stacks);
+    // larger programs return unchanged, keeping the never-raises contract
+    // honest for arbitrary input.
+    const MAX_SIMPLIFY_OPS: usize = 1024;
+    if input_ops > MAX_SIMPLIFY_OPS {
+        return Ok(Simplified { source: source.to_string(), op_count: input_ops, changed: false });
+    }
+
     // 1. Parse to Prog s-expression.
     let prog_sexpr = match parse_bf(source) {
         Ok(s) => s,
-        Err(_e) => {
+        Err(_) => {
             return Ok(Simplified {
                 source: source.to_string(),
                 op_count: input_ops,
