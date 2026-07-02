@@ -283,6 +283,38 @@ pub fn denoise(
     tolerance: f64,
     k_variants: usize,
 ) -> Result<Denoised, String> {
+    denoise_assuming(input, rows, tolerance, k_variants, &[], &[])
+}
+
+/// Render caller-supplied domain facts as egglog asserts. A variable the
+/// engine KNOWS is positive (from its var_ranges) unlocks the guarded
+/// rewrites: Abs-shed, div-cancellation, Pow2(Sqrt), ... Never assumed —
+/// only asserted by the caller, which is what keeps the guards sound.
+fn guard_asserts(positive_vars: &[String], nonzero_vars: &[String]) -> String {
+    let mut s = String::new();
+    for v in positive_vars {
+        s.push_str(&format!("(is-positive (Var \"{v}\"))\n"));
+    }
+    for v in nonzero_vars {
+        s.push_str(&format!("(is-nonzero (Var \"{v}\"))\n"));
+    }
+    s
+}
+
+/// Like [`denoise`], but first asserts `is-positive` / `is-nonzero` facts for
+/// the named variables (mirrors `parity::proves_equal_assuming`). This is how
+/// the SR engine's domain knowledge (var_ranges) reaches the guarded rules —
+/// e.g. `positive_vars=["a"]` lets `Abs(a^(3/2))` shed its Abs, the wrapper
+/// that most often fails SRBench's exact symbolic-solution check on an
+/// otherwise-recovered law.
+pub fn denoise_assuming(
+    input: &str,
+    rows: &[Vec<(String, f64)>],
+    tolerance: f64,
+    k_variants: usize,
+    positive_vars: &[String],
+    nonzero_vars: &[String],
+) -> Result<Denoised, String> {
     // No data, no acceptance evidence. The e-class variants are equal under
     // the rewrite theory, but the theory is sound over the reals, not
     // pointwise over f64/NaN — the R^2 gate on rows is what protects against
@@ -313,11 +345,12 @@ pub fn denoise(
     egraph
         .parse_and_run_program(None, crate::ruleset::powers::POWERS_RULESET)
         .map_err(|e| format!("powers ruleset: {e}"))?;
+    let asserts = guard_asserts(positive_vars, nonzero_vars);
     egraph
         .parse_and_run_program(
             None,
             &format!(
-                "(let __root {input})\n\
+                "(let __root {input})\n{asserts}\
                  (unstable-combined-ruleset denoise_all guards algebra powers)\n\
                  (run-schedule (repeat {DENOISE_ITERS} (run denoise_all)))"
             ),
@@ -473,6 +506,18 @@ pub fn denoise_candidates(
     rows: &[Vec<(String, f64)>],
     k_variants: usize,
 ) -> Result<Vec<DenoiseCandidate>, String> {
+    denoise_candidates_assuming(input, rows, k_variants, &[], &[])
+}
+
+/// Like [`denoise_candidates`], with caller-asserted domain facts — see
+/// [`denoise_assuming`].
+pub fn denoise_candidates_assuming(
+    input: &str,
+    rows: &[Vec<(String, f64)>],
+    k_variants: usize,
+    positive_vars: &[String],
+    nonzero_vars: &[String],
+) -> Result<Vec<DenoiseCandidate>, String> {
     let mut egraph = EGraph::default();
     egraph
         .parse_and_run_program(None, MATH_DATATYPE)
@@ -486,11 +531,12 @@ pub fn denoise_candidates(
     egraph
         .parse_and_run_program(None, crate::ruleset::powers::POWERS_RULESET)
         .map_err(|e| format!("powers ruleset: {e}"))?;
+    let asserts = guard_asserts(positive_vars, nonzero_vars);
     egraph
         .parse_and_run_program(
             None,
             &format!(
-                "(let __root {input})\n\
+                "(let __root {input})\n{asserts}\
                  (unstable-combined-ruleset denoise_all guards algebra powers)\n\
                  (run-schedule (repeat {DENOISE_ITERS} (run denoise_all)))"
             ),
@@ -1102,6 +1148,26 @@ mod tests {
         let out = denoise(&input, &data, 1e-6, 32).expect("denoise");
         assert_eq!(out.expr, r#"(Mul (Var "pi") (Pow2 (Var "r")))"#, "expected clean pi*r^2");
         assert!(out.changed);
+    }
+
+    /// Caller-asserted positivity sheds the Abs wrapper — the keplers3 shape
+    /// Abs(a^(3/2)) with a > 0 from var_ranges. Without the assertion the
+    /// wrapper must survive (soundness: rewrites never guess domains).
+    #[test]
+    fn positive_vars_sheds_abs_of_pow() {
+        use super::denoise_assuming;
+        let input = r#"(Mul (Num 2.0) (Abs (Pow (Var "a") (Num 1.5))))"#;
+        let data = rows("a", &[0.5, 1.0, 2.0, 4.0]);
+        // With the fact: is-positive(a) propagates to Pow(a, 1.5), Abs sheds.
+        let shed = denoise_assuming(input, &data, 1e-6, 32, &["a".to_string()], &[])
+            .expect("denoise_assuming");
+        assert_eq!(shed.expr, r#"(Mul (Num 2.0) (Pow (Var "a") (Num 1.5)))"#);
+        assert!(shed.changed);
+        // Without the fact: unchanged, even though the data happens to be
+        // positive — domain knowledge must be asserted, never inferred.
+        let kept = denoise(input, &data, 1e-6, 32).expect("denoise");
+        assert_eq!(kept.expr, input);
+        assert!(!kept.changed);
     }
 
     /// The strip is data-gated: an additive constant that MATTERS must stay.

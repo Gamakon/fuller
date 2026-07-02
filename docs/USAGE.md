@@ -58,6 +58,10 @@ out = denoise_karva(head, tail, variables, functions, rnc_values, rows,
 - Tail obeys the GEP rule (terminals only, `len = head_len*(n_max-1)+1` with
   `n_max` = your pset's max FUNCTION arity), re-padded deterministically from
   `rng_seed`.
+- `positive_vars=[...]` / `nonzero_vars=[...]` (optional): variable names YOU
+  know are `> 0` / `!= 0` (e.g. from your var_ranges). This unlocks the
+  guarded rewrites — Abs-shedding (`Abs(a**1.5) -> a**1.5`), div-cancellation
+  — which never fire on unproven domains. Assert only what you actually know.
 
 ### The `semantic_id` contract (important)
 gamakAST rewrites on what an operator **computes**, not its geppy name. You map

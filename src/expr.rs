@@ -100,6 +100,16 @@ pub const GUARD_RELATIONS: &str = r#"
 ; constant denominators).
 (rule ((= e (Num n)) (> n 0.0)) ((is-positive e)) :ruleset guards)
 (rule ((= e (Num n)) (< n 0.0)) ((is-nonzero e)) :ruleset guards)
+; positivity flows through the power/root/reciprocal ops (b > 0 => b^p > 0 for
+; any real p; x != 0 => x^2 > 0; |x| > 0 iff x != 0). These are what let a
+; caller-asserted `is-positive a` reach Abs(Pow a p) and shed the Abs — the
+; SRBench exact-recovery killer.
+(rule ((is-positive b) (= e (Pow b p))) ((is-positive e)) :ruleset guards)
+(rule ((is-nonzero x) (= e (Pow2 x))) ((is-positive e)) :ruleset guards)
+(rule ((is-positive x) (= e (Pow3 x))) ((is-positive e)) :ruleset guards)
+(rule ((is-positive x) (= e (Sqrt x))) ((is-positive e)) :ruleset guards)
+(rule ((is-positive x) (= e (Inv x))) ((is-positive e)) :ruleset guards)
+(rule ((is-nonzero x) (= e (Abs x))) ((is-positive e)) :ruleset guards)
 "#;
 
 /// Build a fresh e-graph with the `Math` datatype loaded (no rules yet).

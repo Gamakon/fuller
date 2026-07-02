@@ -10,8 +10,9 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
 use crate::extract::{
-    denoise as denoise_core, denoise_candidates, eclass_extract_hff as eclass_extract_hff_core,
-    eclass_variants as eclass_variants_core, EclassFamily,
+    denoise_assuming as denoise_core, denoise_candidates_assuming as denoise_candidates_core,
+    eclass_extract_hff as eclass_extract_hff_core, eclass_variants as eclass_variants_core,
+    EclassFamily,
 };
 use crate::karva::{
     karva_to_terms, terms_to_karva_sized, FunctionSpec, PsetSpec, Token,
@@ -57,6 +58,10 @@ fn run_core<T: Send>(
 ///   rows: list of dicts mapping variable name -> value (one per data row).
 ///   tolerance: max relative R^2 loss vs the input's behaviour (default 1e-3).
 ///   k_variants: how many smallest equivalent forms to consider (default 64).
+///   positive_vars: variable names the CALLER knows are > 0 (e.g. from its
+///       var_ranges) — unlocks guarded rewrites (Abs-shed, div-cancellation,
+///       Pow2(Sqrt)). Sound: never assumed, only asserted by you.
+///   nonzero_vars: variable names known != 0 (unlocks div/inv cancellation).
 ///
 /// Returns a dict: {"expr": str, "cost": int, "changed": bool}. The chosen
 /// (possibly smaller) equivalent expression, its structural cost, and whether
@@ -65,13 +70,16 @@ fn run_core<T: Send>(
 /// internal engine failure (Rust panics are caught and surfaced as ValueError,
 /// never as a BaseException-derived PanicException).
 #[pyfunction]
-#[pyo3(signature = (expr, rows, tolerance = 1e-3, k_variants = 64))]
+#[pyo3(signature = (expr, rows, tolerance = 1e-3, k_variants = 64,
+                    positive_vars = vec![], nonzero_vars = vec![]))]
 fn denoise(
     py: Python<'_>,
     expr: &str,
     rows: Vec<std::collections::HashMap<String, f64>>,
     tolerance: f64,
     k_variants: usize,
+    positive_vars: Vec<String>,
+    nonzero_vars: Vec<String>,
 ) -> PyResult<Py<PyDict>> {
     // Convert the Python rows (list of name->value dicts) into the core's
     // row format (Vec of (name, value) pairs).
@@ -80,8 +88,10 @@ fn denoise(
         .map(|m| m.into_iter().collect())
         .collect();
 
-    let result = run_core(py, || denoise_core(expr, &core_rows, tolerance, k_variants))
-        .map_err(pyo3::exceptions::PyValueError::new_err)?;
+    let result = run_core(py, || {
+        denoise_core(expr, &core_rows, tolerance, k_variants, &positive_vars, &nonzero_vars)
+    })
+    .map_err(pyo3::exceptions::PyValueError::new_err)?;
 
     let out = PyDict::new_bound(py);
     out.set_item("expr", result.expr)?;
@@ -138,7 +148,8 @@ fn build_tokens(py: Python<'_>, raw: Vec<PyToken>) -> PyResult<Vec<Token>> {
 #[pyfunction]
 #[pyo3(signature = (head, tail, variables, functions, rnc_values, rows,
                     tolerance = 1e-3, k_variants = 64, rng_seed = 0,
-                    target_head_length = None))]
+                    target_head_length = None,
+                    positive_vars = vec![], nonzero_vars = vec![]))]
 fn denoise_karva(
     py: Python<'_>,
     head: Vec<PyToken>,
@@ -151,6 +162,8 @@ fn denoise_karva(
     k_variants: usize,
     rng_seed: u64,
     target_head_length: Option<usize>,
+    positive_vars: Vec<String>,
+    nonzero_vars: Vec<String>,
 ) -> PyResult<Py<PyDict>> {
     let pset = build_pset(variables, functions, rnc_values);
     let head_toks = build_tokens(py, head)?;
@@ -175,7 +188,9 @@ fn denoise_karva(
     let core_rows: Vec<Vec<(String, f64)>> =
         rows.into_iter().map(|m| m.into_iter().collect()).collect();
 
-    let denoised = match run_core(py, || denoise_core(&math, &core_rows, tolerance, k_variants)) {
+    let denoised = match run_core(py, || {
+        denoise_core(&math, &core_rows, tolerance, k_variants, &positive_vars, &nonzero_vars)
+    }) {
         Ok(d) if d.changed => d,
         _ => return unchanged(py),
     };
@@ -238,7 +253,8 @@ fn denoise_karva(
 #[pyfunction]
 #[pyo3(signature = (head, tail, variables, functions, rnc_values, rows,
                     k_variants = 64, rng_seed = 0,
-                    target_head_length = None))]
+                    target_head_length = None,
+                    positive_vars = vec![], nonzero_vars = vec![]))]
 fn denoise_karva_candidates(
     py: Python<'_>,
     head: Vec<PyToken>,
@@ -250,6 +266,8 @@ fn denoise_karva_candidates(
     k_variants: usize,
     rng_seed: u64,
     target_head_length: Option<usize>,
+    positive_vars: Vec<String>,
+    nonzero_vars: Vec<String>,
 ) -> PyResult<Vec<Py<PyDict>>> {
     let pset = build_pset(variables, functions, rnc_values);
     let head_toks = build_tokens(py, head)?;
@@ -278,7 +296,9 @@ fn denoise_karva_candidates(
     // as the un-encodable-karva path above (and as `denoise_karva`, which
     // returns unchanged). Raising here made this the ONE karva entry point
     // that could throw on an engine-internal failure.
-    let candidates = match run_core(py, || denoise_candidates(&math, &core_rows, k_variants)) {
+    let candidates = match run_core(py, || {
+        denoise_candidates_core(&math, &core_rows, k_variants, &positive_vars, &nonzero_vars)
+    }) {
         Ok(c) => c,
         Err(_) => {
             let d = PyDict::new_bound(py);
