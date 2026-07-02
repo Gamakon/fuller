@@ -37,6 +37,11 @@ pub struct ParityReport {
     pub matched_inputs: Vec<String>,
     /// Inputs that did NOT reach parity (rules can't derive the simplification).
     pub unmatched_inputs: Vec<String>,
+    /// `(input, error)` pairs where scoring FAILED (parse error, egglog
+    /// failure, ...). Kept separate from `unmatched_inputs`: an infrastructure
+    /// failure is not a parity miss, and folding it in silently would hide
+    /// real breakage in the corpus or the rules.
+    pub errored_inputs: Vec<(String, String)>,
 }
 
 impl ParityReport {
@@ -72,22 +77,26 @@ pub enum Family {
 }
 
 fn program_for(family: Family) -> String {
+    // Every family includes `guards`: the propagation rules (Exp positivity,
+    // positive => nonzero, literal signs, ...) live in a named ruleset, and a
+    // schedule that omits it derives no facts — the guarded rules would
+    // silently never fire.
     let (rules, names) = match family {
         Family::Algebra => (
             format!("{ALGEBRA_RULESET}\n{POWERS_RULESET}\n{DISTRIBUTE_RULESET}"),
-            "algebra powers distribute",
+            "guards algebra powers distribute",
         ),
         Family::Rational => (
             format!("{ALGEBRA_RULESET}\n{POWERS_RULESET}\n{DISTRIBUTE_RULESET}\n{RATIONAL_RULESET}"),
-            "algebra powers distribute rational",
+            "guards algebra powers distribute rational",
         ),
         Family::Trig => (
             format!("{ALGEBRA_RULESET}\n{POWERS_RULESET}\n{TRIG_RULESET}"),
-            "algebra powers trig",
+            "guards algebra powers trig",
         ),
         Family::Wide => (
             format!("{ALGEBRA_RULESET}\n{POWERS_RULESET}\n{WIDE_RULESET}"),
-            "algebra powers wide",
+            "guards algebra powers wide",
         ),
     };
     format!(
@@ -147,16 +156,12 @@ pub fn proves_equal_assuming(
          (check (= __in __tgt))"
     );
     match egraph.parse_and_run_program(None, &prog) {
-        Ok(_) => Ok(true),                 // (check ...) passed => same e-class
-        Err(e) => {
-            let msg = e.to_string();
-            // A failed `check` is the normal "not proven equal" outcome.
-            if msg.contains("Check failed") || msg.contains("check") {
-                Ok(false)
-            } else {
-                Err(format!("scoring {input:?}: {msg}"))
-            }
-        }
+        Ok(_) => Ok(true), // (check ...) passed => same e-class
+        // A failed `check` is the normal "not proven equal" outcome. Match the
+        // error VARIANT — substring-sniffing the message would swallow any
+        // genuine egglog failure that happens to mention "check".
+        Err(egglog::Error::CheckError(..)) => Ok(false),
+        Err(e) => Err(format!("scoring {input:?}: {e}")),
     }
 }
 
@@ -170,10 +175,12 @@ pub fn proves_equal(input: &str, target: &str) -> Result<bool, String> {
 pub fn score_with(pairs: &[Pair], family: Family) -> ParityReport {
     let mut matched_inputs = Vec::new();
     let mut unmatched_inputs = Vec::new();
+    let mut errored_inputs = Vec::new();
     for p in pairs {
         match proves_equal_with(&p.input, &p.target, family) {
             Ok(true) => matched_inputs.push(p.input.clone()),
-            _ => unmatched_inputs.push(p.input.clone()),
+            Ok(false) => unmatched_inputs.push(p.input.clone()),
+            Err(e) => errored_inputs.push((p.input.clone(), e)),
         }
     }
     ParityReport {
@@ -181,6 +188,7 @@ pub fn score_with(pairs: &[Pair], family: Family) -> ParityReport {
         matched: matched_inputs.len(),
         matched_inputs,
         unmatched_inputs,
+        errored_inputs,
     }
 }
 

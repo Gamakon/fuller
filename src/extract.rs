@@ -25,15 +25,27 @@ use crate::eval::{eval_term, EvalError};
 use crate::expr::MATH_DATATYPE;
 use crate::ruleset::identities::ALGEBRA_RULESET;
 
+/// Iteration bound for the CONTRACTING phases that previously ran unbounded
+/// `(saturate ..)`. The contracting sets (algebra/powers, plus trig for the
+/// Structural family) reach fixpoint well within this on real genes; the bound
+/// exists so a future divergent rule truncates instead of hanging the
+/// never-raise API. Matches the parity scorer's per-family bound.
+const CONTRACT_ITERS: u32 = 40;
+
+/// Iteration bound for the denoise saturation (algebra + powers only). Same
+/// rationale: bounded `repeat`, never unbounded `saturate`, in a hot GA loop.
+const DENOISE_ITERS: u32 = 40;
+
 /// Outcome of a denoise call.
 #[derive(Debug, Clone)]
 pub struct Denoised {
     /// The chosen expression as an s-expression string.
     pub expr: String,
-    /// egglog structural cost of the chosen expression.
+    /// Structural cost (node count) of the chosen expression.
     pub cost: u64,
     /// True if a strictly smaller equivalent form was accepted; false if the
     /// input was returned unchanged (no opportunity, or none within tolerance).
+    /// When false, `expr` is the input string verbatim.
     pub changed: bool,
 }
 
@@ -45,10 +57,11 @@ pub struct Denoised {
 pub struct DenoiseCandidate {
     /// Candidate expression as Math s-expression string.
     pub expr: String,
-    /// egglog structural cost (lower = simpler).
+    /// Structural cost as NODE COUNT (lower = simpler) — one unit for every
+    /// candidate (extracted variants, the seeded input, pruned forms alike),
+    /// so callers may sort on it directly.
     pub cost: u64,
-    /// True if this is the original input expression itself (cost-tied at
-    /// the highest-cost variant in the e-class extraction).
+    /// True if this is the original input expression itself, as written.
     pub is_original: bool,
 }
 
@@ -115,9 +128,10 @@ pub fn eclass_variants(
 /// [`MeasureVector`] ordering, evaluated as the walk proceeds — so a cleaner form
 /// (fewer nodes, no transcendental self-nesting, …) wins each class.
 ///
-/// Returns `(angle_percentile, expr)` per distinct extracted form. The percentile
-/// is the term's own CDF-corrected angle (0 = best), recomputed from the rendered
-/// term's structure so it is independent of the internal accumulation order.
+/// Returns `(angle, expr)` per distinct extracted form. The angle is the term's
+/// own raw TrueNorth angle (0 = best; fixed measure dimension, see
+/// [`crate::score`]), recomputed from the rendered term's structure so it is
+/// independent of the internal accumulation order.
 pub fn eclass_extract_hff(
     input: &str,
     family: EclassFamily,
@@ -184,28 +198,39 @@ fn saturate_family(
     // extra structural variety. Doing it the other way round (one combined
     // bounded run) lets expansions dominate the e-graph before contraction
     // completes, so the compact form never surfaces in extraction.
+    // Every combined ruleset includes `guards` (fact propagation lives in a
+    // named ruleset; a schedule that omits it derives no facts and the guarded
+    // rules silently never fire).
+    //
+    // The contract phase is `repeat CONTRACT_ITERS`, NOT unbounded `saturate`:
+    // for Structural the contract set includes trig, which carries expansion
+    // rules (its own header mandates bounded runs), and even for algebra/powers
+    // an unbounded saturate means one future divergent rule hangs the
+    // never-raise API with no cap. 40 matches the parity scorer's bound; the
+    // contracting sets reach fixpoint well within it, after which iterations
+    // are cheap no-ops (seminaive).
     let (rules, schedule) = match family {
         EclassFamily::Algebra => (
             format!("{ALGEBRA_RULESET}\n{POWERS_RULESET}\n{DISTRIBUTE_RULESET}"),
             format!(
-                "(unstable-combined-ruleset contract algebra powers)\n\
-                 (unstable-combined-ruleset expand distribute)\n\
-                 (run-schedule (saturate (run contract)) (repeat {iters} (run expand)))"
+                "(unstable-combined-ruleset contract guards algebra powers)\n\
+                 (unstable-combined-ruleset expand guards distribute)\n\
+                 (run-schedule (repeat {CONTRACT_ITERS} (run contract)) (repeat {iters} (run expand)))"
             ),
         ),
         EclassFamily::Trig => (
             format!("{ALGEBRA_RULESET}\n{POWERS_RULESET}\n{TRIG_RULESET}"),
             format!(
-                "(unstable-combined-ruleset all algebra powers trig)\n\
+                "(unstable-combined-ruleset all guards algebra powers trig)\n\
                  (run-schedule (repeat {iters} (run all)))"
             ),
         ),
         EclassFamily::Wide => (
             format!("{ALGEBRA_RULESET}\n{POWERS_RULESET}\n{DISTRIBUTE_RULESET}\n{WIDE_RULESET}"),
             format!(
-                "(unstable-combined-ruleset contract algebra powers)\n\
-                 (unstable-combined-ruleset expand distribute wide)\n\
-                 (run-schedule (saturate (run contract)) (repeat {iters} (run expand)))"
+                "(unstable-combined-ruleset contract guards algebra powers)\n\
+                 (unstable-combined-ruleset expand guards distribute wide)\n\
+                 (run-schedule (repeat {CONTRACT_ITERS} (run contract)) (repeat {iters} (run expand)))"
             ),
         ),
         EclassFamily::Structural => (
@@ -213,9 +238,9 @@ fn saturate_family(
                 "{ALGEBRA_RULESET}\n{POWERS_RULESET}\n{TRIG_RULESET}\n{TRIG_FU_RULESET}\n{WIDE_RULESET}"
             ),
             format!(
-                "(unstable-combined-ruleset contract algebra powers trig)\n\
-                 (unstable-combined-ruleset expand trig_fu wide)\n\
-                 (run-schedule (saturate (run contract)) (repeat {iters} (run expand)))"
+                "(unstable-combined-ruleset contract guards algebra powers trig)\n\
+                 (unstable-combined-ruleset expand guards trig_fu wide)\n\
+                 (run-schedule (repeat {CONTRACT_ITERS} (run contract)) (repeat {iters} (run expand)))"
             ),
         ),
     };
@@ -258,6 +283,16 @@ pub fn denoise(
     tolerance: f64,
     k_variants: usize,
 ) -> Result<Denoised, String> {
+    // No data, no acceptance evidence. The e-class variants are equal under
+    // the rewrite theory, but the theory is sound over the reals, not
+    // pointwise over f64/NaN — the R^2 gate on rows is what protects against
+    // a variant that folds to something out-of-domain. Without rows that gate
+    // is vacuous (and the greedy pruner, whose edits are NOT equivalences,
+    // would happily shred the expression to a single leaf). Return unchanged.
+    if rows.is_empty() {
+        return Ok(Denoised { expr: input.to_string(), cost: cost_of(input), changed: false });
+    }
+
     let mut egraph = EGraph::default();
     egraph
         .parse_and_run_program(None, MATH_DATATYPE)
@@ -283,8 +318,8 @@ pub fn denoise(
             None,
             &format!(
                 "(let __root {input})\n\
-                 (unstable-combined-ruleset denoise_all algebra powers)\n\
-                 (run-schedule (saturate (run denoise_all)))"
+                 (unstable-combined-ruleset denoise_all guards algebra powers)\n\
+                 (run-schedule (repeat {DENOISE_ITERS} (run denoise_all)))"
             ),
         )
         .map_err(|e| format!("insert/saturate {input:?}: {e}"))?;
@@ -293,9 +328,7 @@ pub fn denoise(
         .eval_expr(&exprs::var("__root"))
         .map_err(|e| format!("eval root: {e}"))?;
 
-    // Reference predictions: the input expression's value on each row, computed
-    // from the *best* (lowest-cost) extraction of the root e-class — which is
-    // semantically the input itself, just canonicalised.
+    // Enumerate the k lowest-cost members of the root e-class as candidates.
     let extractor = Extractor::compute_costs_from_rootsorts(
         Some(vec![sort.clone()]),
         &egraph,
@@ -308,31 +341,33 @@ pub fn denoise(
         return Err(format!("no variants extracted for {input:?}"));
     }
 
-    // All variants share the root e-class, so they are semantically equal by
-    // construction — any one defines the reference behaviour. We pick the
-    // highest-cost variant as the reference (it is closest to the input as
-    // written and least likely to be a degenerate fold), and require accepted
-    // candidates to reproduce it on the data. The R^2 check is therefore a
-    // guard against candidates that fold to something out-of-domain (NaN) on
-    // these rows, not a re-derivation of equivalence.
-    let mut ordered = variants.clone();
+    // The reference behaviour is the INPUT's own predictions, evaluated from
+    // the input as written. The enumerator is NOT guaranteed to surface the
+    // input among the k extracted variants (for a richly-expanded class it can
+    // fill its bound with expanded members first — the same failure
+    // `eclass_extract_hff` seeds against), so deriving the reference from any
+    // extracted variant would measure candidates against a never-validated
+    // cousin, and "unchanged" could silently return a different form.
+    let reference = eval_expr_rows(input, rows)?;
+    let input_nodes = cost_of(input);
+
+    // Walk candidates cheapest-first; accept the first STRICT shrink within
+    // tolerance. Non-shrinking forms are never accepted, so `changed == false`
+    // always returns the input verbatim (never a same-size reformat).
+    let mut ordered = variants;
     ordered.sort_by_key(|(c, _)| *c); // lowest cost first
-    let (ref_cost, ref_term) = *ordered.last().expect("non-empty checked above");
-
-    // Parallel: independent per-row evals. TermDag and the constants cache
-    // (snap_karva::constant_values, OnceLock'd) are both Sync/&'static, so
-    // rayon workers share them without contention.
-    let reference: Vec<f64> = rows
-        .par_iter()
-        .map(|row| eval_row(&termdag, ref_term, row))
-        .collect::<Result<_, _>>()
-        .map_err(|e| format!("evaluating reference: {e}"))?;
-
-    // Walk candidates cheapest-first; accept the first within tolerance.
-    let mut chosen_expr = termdag.to_string(ref_term);
-    let mut chosen_cost = ref_cost;
+    let mut chosen_expr = input.to_string();
+    let mut chosen_cost = input_nodes;
     let mut changed = false;
-    for (cost, term) in ordered.iter() {
+    for (_, term) in ordered.iter() {
+        let expr = termdag.to_string(*term);
+        let nodes = cost_of(&expr);
+        if nodes == 0 || nodes >= input_nodes {
+            continue; // unparseable render, or not a strict shrink
+        }
+        // Parallel: independent per-row evals. TermDag and the constants cache
+        // (snap_karva::constant_values, OnceLock'd) are both Sync/&'static, so
+        // rayon workers share them without contention.
         let preds: Result<Vec<f64>, EvalError> =
             rows.par_iter().map(|row| eval_row(&termdag, *term, row)).collect();
         let preds = match preds {
@@ -340,9 +375,9 @@ pub fn denoise(
             Err(_) => continue, // unevaluable candidate — skip
         };
         if r2_loss(&reference, &preds) <= tolerance {
-            chosen_expr = termdag.to_string(*term);
-            chosen_cost = *cost;
-            changed = *cost < ref_cost;
+            chosen_expr = expr;
+            chosen_cost = nodes;
+            changed = true;
             break;
         }
     }
@@ -353,16 +388,37 @@ pub fn denoise(
     // This removes wallpaper like cos(G)*... or +sin(exp(..)) WITHOUT assuming
     // anything about variable identities — equivalence is checked on the rows.
     if let Some(pruned) = prune_on_data(&chosen_expr, rows, &reference, tolerance) {
-        if pruned != chosen_expr {
+        // Accept only a strict node-count shrink: string inequality alone can
+        // be a pure reformat (e.g. float rendering), which must not flip
+        // `changed`.
+        let pruned_nodes = cost_of(&pruned);
+        if pruned_nodes > 0 && pruned_nodes < cost_of(&chosen_expr) {
             chosen_expr = pruned;
-            // recompute structural cost cheaply as node count (proxy);
-            // smaller string-tree => fewer nodes. Mark changed.
-            chosen_cost = cost_of(&chosen_expr);
+            chosen_cost = pruned_nodes;
             changed = true;
         }
     }
 
     Ok(Denoised { expr: chosen_expr, cost: chosen_cost, changed })
+}
+
+/// Evaluate a Math s-expression string on every row: parse it into a bare
+/// e-graph (datatype only, no rules), extract the term, and eval per row.
+/// This is how the denoise entry points obtain the input's OWN reference
+/// predictions, independent of what the variant enumerator surfaces.
+fn eval_expr_rows(math: &str, rows: &[Vec<(String, f64)>]) -> Result<Vec<f64>, String> {
+    let mut egraph =
+        build_eval_egraph(math).ok_or_else(|| format!("could not parse {math:?}"))?;
+    let (sort, value) = egraph
+        .eval_expr(&exprs::var("__p"))
+        .map_err(|e| format!("eval root: {e}"))?;
+    let (termdag, term, _cost) = egraph
+        .extract_value(&sort, value)
+        .map_err(|e| format!("extract input: {e}"))?;
+    rows.par_iter()
+        .map(|row| eval_row(&termdag, term, row))
+        .collect::<Result<_, _>>()
+        .map_err(|e| format!("evaluating reference: {e}"))
 }
 
 /// Like `denoise`, but returns ALL candidates instead of picking one by a
@@ -405,8 +461,8 @@ pub fn denoise_candidates(
             None,
             &format!(
                 "(let __root {input})\n\
-                 (unstable-combined-ruleset denoise_all algebra powers)\n\
-                 (run-schedule (saturate (run denoise_all)))"
+                 (unstable-combined-ruleset denoise_all guards algebra powers)\n\
+                 (run-schedule (repeat {DENOISE_ITERS} (run denoise_all)))"
             ),
         )
         .map_err(|e| format!("insert/saturate {input:?}: {e}"))?;
@@ -427,21 +483,20 @@ pub fn denoise_candidates(
         return Err(format!("no variants extracted for {input:?}"));
     }
 
-    let mut ordered = variants.clone();
+    // Reference behaviour = the INPUT's own predictions (see `denoise` for why
+    // an extracted variant must not play this role).
+    let reference = eval_expr_rows(input, rows)?;
+
+    let mut ordered = variants;
     ordered.sort_by_key(|(c, _)| *c);
-    let (ref_cost, ref_term) = *ordered.last().expect("non-empty checked above");
-    let ref_expr = termdag.to_string(ref_term);
 
-    let reference: Vec<f64> = rows
-        .par_iter()
-        .map(|row| eval_row(&termdag, ref_term, row))
-        .collect::<Result<_, _>>()
-        .map_err(|e| format!("evaluating reference: {e}"))?;
-
-    // 1. Every variant — verify it can eval, include if so.
+    // 1. Every variant — verify it can eval, include if so. `cost` is
+    // recomputed as a node count so every candidate (variant, seeded input,
+    // pruned form) carries the SAME cost unit — egglog's DefaultCost counts
+    // literal children too, which would make the units incomparable.
     let mut out: Vec<DenoiseCandidate> = Vec::new();
     let mut seen_exprs: std::collections::HashSet<String> = std::collections::HashSet::new();
-    for (cost, term) in ordered.iter() {
+    for (_, term) in ordered.iter() {
         let preds: Result<Vec<f64>, EvalError> =
             rows.par_iter().map(|row| eval_row(&termdag, *term, row)).collect();
         if preds.is_err() {
@@ -451,21 +506,37 @@ pub fn denoise_candidates(
         if !seen_exprs.insert(expr.clone()) {
             continue;
         }
-        let is_original = *cost == ref_cost && expr == ref_expr;
-        out.push(DenoiseCandidate { expr, cost: *cost, is_original });
+        let is_original = expr == input;
+        let cost = cost_of(&expr);
+        out.push(DenoiseCandidate { expr, cost, is_original });
+    }
+
+    // SEED the input as written: the enumerator may not surface it (see
+    // `eclass_extract_hff`), and the caller's tournament must always be able
+    // to keep the original.
+    if seen_exprs.insert(input.to_string()) {
+        out.push(DenoiseCandidate {
+            expr: input.to_string(),
+            cost: cost_of(input),
+            is_original: true,
+        });
     }
 
     // 2. Pruned forms at multiple tolerances. The reference for pruning is
     // the input's own predictions; a prune that drops a data-negligible
-    // atom has near-zero drift and is strictly cleaner.
-    for &tol in &[1e-10_f64, 1e-6, 1e-3, 1e-2, 1e-1] {
-        if let Some(pruned) = prune_on_data(&ref_expr, rows, &reference, tol) {
-            if seen_exprs.insert(pruned.clone()) {
-                out.push(DenoiseCandidate {
-                    expr: pruned.clone(),
-                    cost: cost_of(&pruned),
-                    is_original: false,
-                });
+    // atom has near-zero drift and is strictly cleaner. Skipped when there
+    // are no rows: prune edits are NOT equivalences, and without data there
+    // is no evidence to justify them.
+    if !rows.is_empty() {
+        for &tol in &[1e-10_f64, 1e-6, 1e-3, 1e-2, 1e-1] {
+            if let Some(pruned) = prune_on_data(input, rows, &reference, tol) {
+                if seen_exprs.insert(pruned.clone()) {
+                    out.push(DenoiseCandidate {
+                        expr: pruned.clone(),
+                        cost: cost_of(&pruned),
+                        is_original: false,
+                    });
+                }
             }
         }
     }
@@ -518,13 +589,19 @@ fn cost_of(expr: &str) -> u64 {
 /// Try to shrink `expr` by removing additive terms / multiplicative factors
 /// whose removal keeps predictions within `tolerance` of `reference` on `rows`.
 /// Greedy + repeated to a fixpoint. Returns the smallest fitting form, or None
-/// if it can't be parsed.
+/// if it can't be parsed (or there is no data to justify any prune).
 fn prune_on_data(
     expr: &str,
     rows: &[Vec<(String, f64)>],
     reference: &[f64],
     tolerance: f64,
 ) -> Option<String> {
+    // Prune edits are NOT equivalences — they are justified ONLY by the data.
+    // With no rows every candidate "fits" vacuously and the greedy loop would
+    // shred the expression to a single leaf. Refuse instead.
+    if rows.is_empty() || reference.is_empty() {
+        return None;
+    }
     let mut tree = parse_pnode(expr)?;
     loop {
         let candidates = prune_candidates(&tree);
@@ -617,7 +694,7 @@ fn build_eval_egraph(math: &str) -> Option<EGraph> {
 fn parse_pnode(s: &str) -> Option<PNode> {
     let toks = pnode_tokenize(s);
     let mut pos = 0;
-    let n = pnode_parse(&toks, &mut pos)?;
+    let n = pnode_parse(&toks, &mut pos, 0)?;
     if pos == toks.len() {
         Some(n)
     } else {
@@ -665,7 +742,11 @@ fn pnode_tokenize(s: &str) -> Vec<String> {
     out
 }
 
-fn pnode_parse(toks: &[String], pos: &mut usize) -> Option<PNode> {
+fn pnode_parse(toks: &[String], pos: &mut usize, depth: usize) -> Option<PNode> {
+    // Depth cap: fail the parse instead of overflowing the stack.
+    if depth > crate::MAX_EXPR_DEPTH {
+        return None;
+    }
     if toks.get(*pos)? != "(" {
         return None;
     }
@@ -686,7 +767,7 @@ fn pnode_parse(toks: &[String], pos: &mut usize) -> Option<PNode> {
         ctor => {
             let mut ch = Vec::new();
             while *pos < toks.len() && toks[*pos] != ")" {
-                ch.push(pnode_parse(toks, pos)?);
+                ch.push(pnode_parse(toks, pos, depth + 1)?);
             }
             PNode::App(ctor.to_string(), ch)
         }
@@ -722,24 +803,46 @@ fn eval_row(
 }
 
 /// Relative R^2 loss of `preds` against `reference`: `1 - R^2`, clamped to
-/// `[0, inf)`. A perfect reproduction gives 0. Rows where either side is NaN
-/// are treated as a full miss (loss contribution via large residual), so an
-/// out-of-domain candidate cannot masquerade as a fit.
+/// `[0, inf)`. A perfect reproduction gives 0.
+///
+/// Non-finite policy, per row:
+/// * both sides agree out-of-domain (NaN == NaN, +inf == +inf, -inf == -inf):
+///   the candidate reproduces the reference's behaviour there — the row is
+///   excluded from the finite loss but does NOT disqualify. This is what lets
+///   denoise still shrink `x*1 + 0` when some OTHER subterm is NaN on a row:
+///   the old blanket rule (any non-finite reference row => INF for every
+///   candidate including the reference itself) silently disabled denoise on
+///   any gene touching log/sqrt of a sign-varying column.
+/// * mismatched (one finite, one not; or differently-signed infinities / NaN
+///   vs inf): disqualifying — the candidate changes observable behaviour.
+///
+/// The loss statistics (mean, ss_tot) are computed over the finite-agreeing
+/// rows only.
 fn r2_loss(reference: &[f64], preds: &[f64]) -> f64 {
     debug_assert_eq!(reference.len(), preds.len());
-    if reference.is_empty() {
+    let mut finite: Vec<(f64, f64)> = Vec::with_capacity(reference.len());
+    for (r, p) in reference.iter().zip(preds.iter()) {
+        if r.is_finite() && p.is_finite() {
+            finite.push((*r, *p));
+        } else {
+            // Both out-of-domain in the same way is agreement; anything else
+            // is a behavioural change and disqualifies the candidate.
+            let agree = (r.is_nan() && p.is_nan()) || r == p;
+            if !agree {
+                return f64::INFINITY;
+            }
+        }
+    }
+    if finite.is_empty() {
+        // Every row agrees (possibly all out-of-domain the same way).
         return 0.0;
     }
-    let n = reference.len() as f64;
-    let mean = reference.iter().copied().filter(|v| v.is_finite()).sum::<f64>() / n;
+    let n = finite.len() as f64;
+    let mean = finite.iter().map(|(r, _)| *r).sum::<f64>() / n;
 
     let mut ss_res = 0.0;
     let mut ss_tot = 0.0;
-    for (r, p) in reference.iter().zip(preds.iter()) {
-        if !r.is_finite() || !p.is_finite() {
-            // Disqualifying: a non-finite mismatch makes this candidate unfit.
-            return f64::INFINITY;
-        }
+    for (r, p) in &finite {
         ss_res += (r - p).powi(2);
         ss_tot += (r - mean).powi(2);
     }
@@ -771,8 +874,8 @@ mod tests {
     #[test]
     fn hff_extract_ranks_class_by_angle() {
         // (x*1 + 0) has an equal, cleaner form (x). The HFF extractor returns
-        // forms ranked ascending by the log-percentile score (more negative =
-        // rarer/better), cleanest first.
+        // forms ranked ascending by the raw TrueNorth angle (lower = cleaner),
+        // cleanest first.
         let input = r#"(Add (Mul (Var "x") (Num 1.0)) (Num 0.0))"#;
         let out = eclass_extract_hff(input, EclassFamily::Algebra, 32, 12, &[]).expect("hff extract");
         assert!(!out.is_empty());

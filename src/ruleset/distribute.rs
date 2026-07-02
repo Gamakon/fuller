@@ -57,12 +57,16 @@ pub const DISTRIBUTE_RULESET: &str = r#"
 (rewrite (Neg (Num a))         (Num (neg a)) :ruleset distribute)
 
 ; ---- distributivity: a*(b+c) = a*b + a*c ----
-; Only ONE operand order is written: egglog's e-class merging makes
-; `(Mul x (Add ..))` and `(Mul (Add ..) x)` the same e-class, so this single
-; rule fires regardless of which side the sum sits on. Writing both directions
-; is redundant and an extra divergence amplifier.
+; BOTH operand orders are written explicitly. egglog has NO built-in operand
+; commutativity — `(Mul x (Add ..))` and `(Mul (Add ..) x)` are different
+; e-nodes unless a rule merges them (that absence is exactly why the atom-gated
+; hoist rules below exist). With only one order, a sum sitting on the left was
+; simply inert. Each direction strictly replaces one Mul-over-Add with two
+; smaller products, so the termination measure is unchanged.
 (rewrite (Mul a (Add b c)) (Add (Mul a b) (Mul a c)) :ruleset distribute)
 (rewrite (Mul a (Sub b c)) (Sub (Mul a b) (Mul a c)) :ruleset distribute)
+(rewrite (Mul (Add b c) a) (Add (Mul b a) (Mul c a)) :ruleset distribute)
+(rewrite (Mul (Sub b c) a) (Sub (Mul b a) (Mul c a)) :ruleset distribute)
 
 ; ---- coefficient hoist: drive products to  (Num c) * <symbolic> ----
 ; left-hoist: (c*p)*q = c*(p*q)
@@ -98,9 +102,13 @@ pub const DISTRIBUTE_RULESET: &str = r#"
 ; terminates. (Need surfaced by the inject-`a*gene+b`-then-snap experiment;
 ; recorded in papers/HFF_Heterogeneous_Tournaments.tex.)
 
-; Pow2 of a square root / known forms — expand so a coefficient can reach inside:
-;   (Pow2 (Sqrt p)) = p   (real, p>=0 domain of Sqrt)
-(rewrite (Pow2 (Sqrt p)) p :ruleset distribute)
+; Pow2 of a square root — expand so a coefficient can reach inside:
+;   (Pow2 (Sqrt p)) = p   ONLY for p > 0 (guarded). Unguarded this is UNSOUND
+;   under the crate's own NaN semantics: for p < 0 the LHS evaluates
+;   Pow2(NaN) = NaN while the RHS is the finite value p — the same sign trap
+;   for which the mirror rule below is refused. `is-positive` (p > 0) is a
+;   sound subset of the exact p >= 0 domain.
+(rewrite (Pow2 (Sqrt p)) p :when ((is-positive p)) :ruleset distribute)
 ;   (Sqrt (Pow2 p)) stays opaque (= |p|, not p) — do NOT add, unsound on sign.
 
 ; Push a coefficient INTO a Sub/Add whose operand is numeric, so it folds:
@@ -132,14 +140,20 @@ mod tests {
         e
     }
 
-    /// Saturate and ask whether `a` and `b` end up in the same e-class.
-    fn proves_equal(a: &str, b: &str) -> bool {
+    /// Saturate (distribute + guards) and ask whether `a` and `b` end up in
+    /// the same e-class, optionally after asserting guard `facts`.
+    fn proves_equal_facts(a: &str, b: &str, facts: &str) -> bool {
         let mut e = egraph();
         let prog = format!(
-            "(let __a {a})\n(let __b {b})\n\
-             (run-schedule (repeat {SAT_ITERS} (run distribute)))\n(check (= __a __b))"
+            "(let __a {a})\n(let __b {b})\n{facts}\n\
+             (run-schedule (repeat {SAT_ITERS} (run guards) (run distribute)))\n\
+             (check (= __a __b))"
         );
         e.parse_and_run_program(None, &prog).is_ok()
+    }
+
+    fn proves_equal(a: &str, b: &str) -> bool {
+        proves_equal_facts(a, b, "")
     }
 
     #[test]
@@ -169,6 +183,46 @@ mod tests {
         assert!(!proves_equal(r#"(Mul (Num 2.0) (Var "x"))"#, r#"(Mul (Num 3.0) (Var "x"))"#));
         // distinct expressions must not collapse
         assert!(!proves_equal(r#"(Add (Var "x") (Var "y"))"#, r#"(Mul (Var "x") (Var "y"))"#));
+    }
+
+    /// A sum on the LEFT of a product must distribute too — egglog has no
+    /// built-in operand commutativity, so this needs its own rule.
+    #[test]
+    fn distributes_sum_on_left() {
+        assert!(proves_equal(
+            r#"(Mul (Add (Var "b") (Var "c")) (Var "a"))"#,
+            r#"(Add (Mul (Var "b") (Var "a")) (Mul (Var "c") (Var "a")))"#,
+        ));
+        assert!(proves_equal(
+            r#"(Mul (Sub (Var "b") (Var "c")) (Var "a"))"#,
+            r#"(Sub (Mul (Var "b") (Var "a")) (Mul (Var "c") (Var "a")))"#,
+        ));
+    }
+
+    /// (Pow2 (Sqrt p)) = p is GUARDED on p > 0: for negative p the LHS is
+    /// NaN (sqrt of a negative) while the RHS is finite — merging them
+    /// unguarded would let extraction swap a NaN-valued form for a finite one.
+    #[test]
+    fn pow2_sqrt_requires_positivity() {
+        // No positivity fact: must NOT prove.
+        assert!(
+            !proves_equal(r#"(Pow2 (Sqrt (Var "p")))"#, r#"(Var "p")"#),
+            "Pow2(Sqrt p) must stay opaque without a positivity proof"
+        );
+        // With p asserted positive: must prove.
+        assert!(
+            proves_equal_facts(
+                r#"(Pow2 (Sqrt (Var "p")))"#,
+                r#"(Var "p")"#,
+                r#"(is-positive (Var "p"))"#
+            ),
+            "Pow2(Sqrt p) should collapse once p is known positive"
+        );
+        // Derived positivity (Exp is always > 0) must also unlock it.
+        assert!(
+            proves_equal(r#"(Pow2 (Sqrt (Exp (Var "x"))))"#, r#"(Exp (Var "x"))"#),
+            "derived Exp-positivity should unlock the guarded rule"
+        );
     }
 
     /// The pair that the unrestricted (cycling) front/right-hoist rules blew up

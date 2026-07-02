@@ -96,7 +96,7 @@ mod tests {
         egraph
             .parse_and_run_program(
                 None,
-                &format!("(let __r {input})\n(run-schedule (saturate (run algebra)))"),
+                &format!("(let __r {input})\n(run-schedule (saturate (run guards) (run algebra)))"),
             )
             .map_err(|e| format!("insert/saturate {input:?}: {e}"))?;
         let (sort, value) = egraph
@@ -119,7 +119,9 @@ mod tests {
         egraph
             .parse_and_run_program(
                 None,
-                &format!("(let __r {input})\n{facts}\n(run-schedule (saturate (run algebra)))"),
+                &format!(
+                    "(let __r {input})\n{facts}\n(run-schedule (saturate (run guards) (run algebra)))"
+                ),
             )
             .map_err(|e| format!("insert/saturate {input:?}: {e}"))?;
         let (sort, value) = egraph.eval_expr(&exprs::var("__r")).map_err(|e| format!("eval: {e}"))?;
@@ -203,6 +205,28 @@ mod tests {
         )
         .unwrap();
         assert_eq!(got, "(Num 1.0)", "x/x should cancel once x is known nonzero");
+    }
+
+    /// Guard PROPAGATION must derive facts on its own — not only accept
+    /// caller-asserted ones. `Exp x` is positive hence nonzero, so
+    /// Exp(x)/Exp(x) cancels with NO assertion. This is the regression test
+    /// for the wiring: the guards ruleset must actually run in the schedule
+    /// (untagged rules land in egglog's default ruleset, which named runs
+    /// never execute — the propagation was silently dead).
+    #[test]
+    fn guard_propagation_derives_exp_nonzero() {
+        let got = simplify(r#"(Div (Exp (Var "x")) (Exp (Var "x")))"#).unwrap();
+        assert_eq!(got, "(Num 1.0)", "exp(x)/exp(x) must cancel via derived positivity");
+    }
+
+    /// Literal-sign propagation: a nonzero numeric literal is provably
+    /// nonzero, so constant/constant cancels with no assertion.
+    #[test]
+    fn guard_propagation_derives_literal_nonzero() {
+        let got = simplify(r#"(Div (Num 2.0) (Num 2.0))"#).unwrap();
+        assert_eq!(got, "(Num 1.0)");
+        let neg = simplify(r#"(Div (Num -3.0) (Num -3.0))"#).unwrap();
+        assert_eq!(neg, "(Num 1.0)");
     }
 
     /// The one sound protected rule fires: protected_sqrt(x^2) -> |x|.

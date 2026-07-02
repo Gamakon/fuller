@@ -8,12 +8,12 @@
 //! vector. Adding a new objective is adding a rule to [`measure_rules`] — no
 //! struct surgery, no change to the accumulation logic.
 //!
-//! A term's score: run every rule over the term; the rules that fire give the
-//! objective vector `x ∈ [0,1]^k` (its dimension `k` = how many rules fired —
-//! genuinely heterogeneous per term). Project with HFF-TrueNorth
-//! (`hff_core::core_functions`) to an angle, then CDF-correct it for dimension
-//! `k` (`hff_core::higd`) so vectors of different `k` are comparable. Lowest
-//! corrected angle wins the e-class tournament.
+//! A term's score: run every retained rule over the term; rules whose pattern
+//! is absent pad the objective vector with the neutral 0.5, so `x ∈ [0,1]^k`
+//! has the SAME fixed dimension `k` for every candidate. Project with
+//! HFF-TrueNorth (`hff_core::core_functions`) to a raw angle — at fixed `k`
+//! the CDF dimension-correction is a monotone reshape, so it is omitted.
+//! Lowest angle wins the e-class tournament.
 //!
 //! This is the scorer the HFF extractor (`crate::extract::eclass_extract_hff`,
 //! via the vendored `egglog::extract::hff_extract`) calls on each whole
@@ -66,8 +66,10 @@ fn is_transc(head: &str) -> bool {
 }
 
 /// Ops whose unguarded use can diverge / hit a domain edge (asymptote, blow-up).
+/// Tan has poles at odd multiples of pi/2 (the evaluator returns NaN there),
+/// so it belongs here alongside Div/Inv/Log.
 fn is_unsafe_op(head: &str) -> bool {
-    matches!(head, "Div" | "Inv" | "Log" | "Exp" | "Pow")
+    matches!(head, "Div" | "Inv" | "Log" | "Exp" | "Pow" | "Tan")
 }
 
 /// The bounded saturating penalty `c -> 1 - 1/(1 + c/s)` (0 at c=0, ->1 as c
@@ -279,16 +281,15 @@ pub fn fire(root: &Node) -> Vec<(&'static str, f64)> {
         .collect()
 }
 
-/// CDF-corrected HFF-TrueNorth angle of a term: run the rule library, project
-/// the fired vector with TrueNorth, CDF-correct for its dimension. Lower = best.
+/// HFF-TrueNorth angle of a term: run the rule library over the term and
+/// project the resulting measure vector with TrueNorth. Lower = best.
 ///
-/// Uses `log_cdf_beta_correction`, NOT the plain linear `cdf_beta_correction`:
-/// the linear CDF underflows to 0 in the deep left tail (small θ, large
-/// dimension), which made low-D clean forms and high-D junk forms both pin near
-/// 0 — so junk looked as good as clean. The log-space variant (Lentz continued
-/// fraction) survives the tail, so a 3-D and an 8-D candidate stay comparable.
-/// Returns a log-percentile: more negative = rarer/better. (Per the HFF repo's
-/// CLAUDE.md: deep-left-tail comparisons MUST use the log variant.)
+/// Every candidate is scored at the SAME fixed dimension (the retained rule
+/// count, non-firing rules padded to the neutral 0.5), so the raw angle is
+/// directly comparable across candidates and the CDF dimension-correction is
+/// only a monotone reshape — it is deliberately OMITTED. (The earlier
+/// varying-dimension design needed the log-CDF correction; that history lives
+/// in git, not in this signature.) Returns the raw angle in `[0, pi]`.
 pub fn angle_percentile(root: &Node) -> f64 {
     angle_percentile_excluding(root, &[])
 }
@@ -333,7 +334,11 @@ pub fn score_expr(expr: &str) -> f64 {
 pub fn score_expr_excluding(expr: &str, exclude: &[&str]) -> f64 {
     match parse(expr) {
         Some(n) => angle_percentile_excluding(&n, exclude),
-        None => 1.0, // unparseable -> worst
+        // Unparseable must rank BELOW every real candidate. Scores are raw
+        // TrueNorth angles in [0, pi] (lower = better), so a junk-but-parseable
+        // term can legitimately score above 1.0 — the old `1.0` here could rank
+        // garbage ABOVE real candidates. Infinity sorts last unconditionally.
+        None => f64::INFINITY,
     }
 }
 
@@ -347,6 +352,15 @@ pub fn parse(expr: &str) -> Option<Node> {
 }
 
 fn parse_node(toks: &[String], pos: &mut usize) -> Option<Node> {
+    parse_node_depth(toks, pos, 0)
+}
+
+fn parse_node_depth(toks: &[String], pos: &mut usize, depth: usize) -> Option<Node> {
+    // Depth cap: fail the parse instead of overflowing the stack (Node::walk /
+    // depth() recurse over whatever this builds, on rayon-sized stacks).
+    if depth > crate::MAX_EXPR_DEPTH {
+        return None;
+    }
     if *pos >= toks.len() || toks[*pos] != "(" {
         return None;
     }
@@ -375,7 +389,7 @@ fn parse_node(toks: &[String], pos: &mut usize) -> Option<Node> {
         _ => {
             let mut children = Vec::new();
             while *pos < toks.len() && toks[*pos] != ")" {
-                children.push(parse_node(toks, pos)?);
+                children.push(parse_node_depth(toks, pos, depth + 1)?);
             }
             if *pos >= toks.len() {
                 return None;
@@ -484,7 +498,6 @@ mod tests {
 
     #[test]
     fn angle_is_finite_and_deterministic() {
-        // log-percentile: <= 0 (log of a probability), finite, reproducible.
         let n = parse(r#"(Add (Sin (Var "x")) (Div (Num 2.0) (Var "y")))"#).unwrap();
         let p = angle_percentile(&n);
         // raw TrueNorth angle: finite, in [0, pi].
@@ -494,8 +507,9 @@ mod tests {
 
     #[test]
     fn dimension_varies_per_term() {
-        // A term with transcendentals fires MORE rules than a bare algebraic one
-        // — the heterogeneous-dimension property the CDF correction exists for.
+        // A term with transcendentals FIRES more rules than a bare algebraic
+        // one. (Scoring pads non-firing rules to the neutral 0.5 so the final
+        // vector is fixed-dimension; the firing count itself still varies.)
         let algebraic = parse(r#"(Add (Var "x") (Var "y"))"#).unwrap();
         let transcend = parse(r#"(Sin (Exp (Var "x")))"#).unwrap();
         assert_ne!(fire(&algebraic).len(), fire(&transcend).len());

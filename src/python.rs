@@ -18,6 +18,37 @@ use crate::karva::{
 };
 use crate::parity::{proves_equal_assuming, Family};
 
+/// Run a pure-Rust core computation with the GIL RELEASED and panics converted
+/// to a normal `Err`.
+///
+/// * GIL: every core call here (egglog saturation, extraction, per-row eval)
+///   can run for seconds; holding the GIL through it stalls every other
+///   Python thread and signal handling. Only plain owned data crosses the
+///   boundary, so releasing is safe.
+/// * Panics: PyO3 converts a Rust panic into `pyo3_runtime.PanicException`,
+///   which subclasses `BaseException` — it sails past the engine's
+///   `except Exception` guards and can kill the run. egglog is not panic-free
+///   on pathological programs, so catch the unwind and surface it as an
+///   ordinary error string; each entry point then takes its normal error path
+///   (return-unchanged or ValueError).
+fn run_core<T: Send>(
+    py: Python<'_>,
+    f: impl FnOnce() -> Result<T, String> + Send,
+) -> Result<T, String> {
+    py.allow_threads(|| {
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).unwrap_or_else(|p| {
+            let msg = if let Some(s) = p.downcast_ref::<&str>() {
+                (*s).to_string()
+            } else if let Some(s) = p.downcast_ref::<String>() {
+                s.clone()
+            } else {
+                "unknown panic payload".to_string()
+            };
+            Err(format!("internal panic (caught): {msg}"))
+        })
+    })
+}
+
 /// Denoise a `Math` expression against training data.
 ///
 /// Args:
@@ -30,7 +61,9 @@ use crate::parity::{proves_equal_assuming, Family};
 /// Returns a dict: {"expr": str, "cost": int, "changed": bool}. The chosen
 /// (possibly smaller) equivalent expression, its structural cost, and whether
 /// it shrank. Never raises on a normal un-simplifiable input — it returns the
-/// input unchanged. Raises ValueError only on malformed egglog input.
+/// input unchanged. Raises ValueError only on malformed egglog input or an
+/// internal engine failure (Rust panics are caught and surfaced as ValueError,
+/// never as a BaseException-derived PanicException).
 #[pyfunction]
 #[pyo3(signature = (expr, rows, tolerance = 1e-3, k_variants = 64))]
 fn denoise(
@@ -47,7 +80,7 @@ fn denoise(
         .map(|m| m.into_iter().collect())
         .collect();
 
-    let result = denoise_core(expr, &core_rows, tolerance, k_variants)
+    let result = run_core(py, || denoise_core(expr, &core_rows, tolerance, k_variants))
         .map_err(pyo3::exceptions::PyValueError::new_err)?;
 
     let out = PyDict::new_bound(py);
@@ -106,7 +139,6 @@ fn build_tokens(py: Python<'_>, raw: Vec<PyToken>) -> PyResult<Vec<Token>> {
 #[pyo3(signature = (head, tail, variables, functions, rnc_values, rows,
                     tolerance = 1e-3, k_variants = 64, rng_seed = 0,
                     target_head_length = None))]
-#[allow(clippy::too_many_arguments)]
 fn denoise_karva(
     py: Python<'_>,
     head: Vec<PyToken>,
@@ -143,7 +175,7 @@ fn denoise_karva(
     let core_rows: Vec<Vec<(String, f64)>> =
         rows.into_iter().map(|m| m.into_iter().collect()).collect();
 
-    let denoised = match denoise_core(&math, &core_rows, tolerance, k_variants) {
+    let denoised = match run_core(py, || denoise_core(&math, &core_rows, tolerance, k_variants)) {
         Ok(d) if d.changed => d,
         _ => return unchanged(py),
     };
@@ -207,7 +239,6 @@ fn denoise_karva(
 #[pyo3(signature = (head, tail, variables, functions, rnc_values, rows,
                     k_variants = 64, rng_seed = 0,
                     target_head_length = None))]
-#[allow(clippy::too_many_arguments)]
 fn denoise_karva_candidates(
     py: Python<'_>,
     head: Vec<PyToken>,
@@ -243,8 +274,23 @@ fn denoise_karva_candidates(
     let core_rows: Vec<Vec<(String, f64)>> =
         rows.into_iter().map(|m| m.into_iter().collect()).collect();
 
-    let candidates =
-        denoise_candidates(&math, &core_rows, k_variants).map_err(pyo3::exceptions::PyValueError::new_err)?;
+    // On any core failure, return just the original candidate — same contract
+    // as the un-encodable-karva path above (and as `denoise_karva`, which
+    // returns unchanged). Raising here made this the ONE karva entry point
+    // that could throw on an engine-internal failure.
+    let candidates = match run_core(py, || denoise_candidates(&math, &core_rows, k_variants)) {
+        Ok(c) => c,
+        Err(_) => {
+            let d = PyDict::new_bound(py);
+            d.set_item("head", tokens_to_py(py, &head_toks)?)?;
+            d.set_item("tail", tokens_to_py(py, &tail_toks)?)?;
+            d.set_item("expr", py.None())?;
+            d.set_item("cost", 0u64)?;
+            d.set_item("is_original", true)?;
+            d.set_item("oversized", false)?;
+            return Ok(vec![d.into()]);
+        }
+    };
 
     let mut out: Vec<Py<PyDict>> = Vec::with_capacity(candidates.len());
     for c in candidates {
@@ -264,13 +310,15 @@ fn denoise_karva_candidates(
             }
             Err(why) => {
                 // Pset can't name this candidate — surface for diagnostics
-                // and skip the karva fields. Caller iterates expecting
-                // candidates with head/tail, so this is effectively dropped.
+                // and skip the karva fields (head/tail are None; callers must
+                // check "inexpressible" — or head is None — before grafting).
+                // Keys mirror the Ok branch so every dict has the same shape.
                 d.set_item("head", py.None())?;
                 d.set_item("tail", py.None())?;
                 d.set_item("expr", c.expr)?;
                 d.set_item("cost", c.cost)?;
                 d.set_item("is_original", c.is_original)?;
+                d.set_item("oversized", false)?;
                 d.set_item("inexpressible", why)?;
             }
         }
@@ -312,7 +360,7 @@ fn physics_mutate(
     n: usize,
     seed: u64,
 ) -> PyResult<Vec<Py<PyDict>>> {
-    let cands = crate::physics::generate(expr, &paired_groups, n, seed)
+    let cands = run_core(py, || crate::physics::generate(expr, &paired_groups, n, seed))
         .map_err(pyo3::exceptions::PyValueError::new_err)?;
     cands
         .into_iter()
@@ -350,7 +398,6 @@ fn physics_mutate(
 #[pyfunction]
 #[pyo3(signature = (head, tail, variables, functions, rnc_values, paired_groups,
                     n = 10, seed = 0, target_head_length = None))]
-#[allow(clippy::too_many_arguments)]
 fn physics_mutate_karva(
     py: Python<'_>,
     head: Vec<PyToken>,
@@ -374,8 +421,11 @@ fn physics_mutate_karva(
         Err(_) => return Ok(Vec::new()),
     };
 
-    let cands = crate::physics::generate(&math, &paired_groups, n, seed)
-        .map_err(pyo3::exceptions::PyValueError::new_err)?;
+    let cands = match run_core(py, || crate::physics::generate(&math, &paired_groups, n, seed)) {
+        Ok(c) => c,
+        // "Never raises on a normal gene": a core failure yields no candidates.
+        Err(_) => return Ok(Vec::new()),
+    };
 
     // Convert each candidate Math back to a karva chromosome. Skip any that the
     // caller's pset can't name (same contract as denoise_karva's inexpressible
@@ -423,7 +473,6 @@ fn physics_mutate_karva(
 /// holdout (R²-guard) and picks the winner — snap proposes, the data disposes.
 #[pyfunction]
 #[pyo3(signature = (head, tail, variables, functions, rnc_values, k_variants = 16, rel_tol = 1e-3, rng_seed = 0, target_head_length = None))]
-#[allow(clippy::too_many_arguments)]
 fn snap_karva(
     py: Python<'_>,
     head: Vec<PyToken>,
@@ -443,7 +492,7 @@ fn snap_karva(
         Ok(m) => m,
         Err(_) => return Ok(Vec::new()),
     };
-    let cands = crate::snap_karva::snap_variants(&math, k_variants, rel_tol)
+    let cands = run_core(py, || crate::snap_karva::snap_variants(&math, k_variants, rel_tol))
         .map_err(pyo3::exceptions::PyValueError::new_err)?;
     let cvals = crate::snap_karva::constant_values();
 
@@ -497,13 +546,6 @@ fn snap_karva(
     Ok(out)
 }
 
-/// The MASTER pset: every `(semantic_id, arity)` any gamakAST mutation
-/// (denoise or physics-prior) can emit. The SR engine seeds its pset with one
-/// token per entry UP FRONT, so every returned candidate is always expressible
-/// — no candidate is ever dropped for lack of a token.
-///
-/// Returns a list of `(semantic_id, arity)` tuples. The engine maps each to its
-/// own token name when building the `functions` dict it passes back in.
 /// The canonical constant ATOMS the engine pre-registers as pset terminals
 /// once per fit (symmetry with `master_pset`; determinism across snap_karva
 /// calls). Returns [(name, value)] — e.g. [("G", 6.674e-11), ("pi", 3.14159…)].
@@ -539,6 +581,12 @@ fn master_lattice() -> Vec<(f64, String, String)> {
 /// unequal"). Bounded iteration count per family, so it cannot hang the way
 /// `sympy.simplify` does on junk transcendental towers.
 ///
+/// Semantics note: "equal" means equal as REAL-domain identities (the rules'
+/// theory), not pointwise-identical under f64/NaN evaluation. E.g. `x - x` and
+/// `0` are proven equal, yet at a row where `x` is NaN the first evaluates NaN
+/// and the second 0. Where pointwise behaviour on data matters, that is
+/// `denoise`'s R²-gate job, not this oracle's.
+///
 /// Args:
 ///   input, target: egglog `Math` surface-syntax strings (e.g.
 ///       `(Mul (Var "x") (Num 1.0))` and `(Var "x")`).
@@ -555,6 +603,7 @@ fn master_lattice() -> Vec<(f64, String, String)> {
 #[pyfunction]
 #[pyo3(signature = (input, target, family = "algebra", nonzero_vars = vec![]))]
 fn proves_equal(
+    py: Python<'_>,
     input: &str,
     target: &str,
     family: &str,
@@ -571,10 +620,17 @@ fn proves_equal(
             )))
         }
     };
-    proves_equal_assuming(input, target, fam, &nonzero_vars)
+    run_core(py, || proves_equal_assuming(input, target, fam, &nonzero_vars))
         .map_err(pyo3::exceptions::PyValueError::new_err)
 }
 
+/// The MASTER pset: every `(semantic_id, arity)` any gamakAST mutation
+/// (denoise or physics-prior) can emit. The SR engine seeds its pset with one
+/// token per entry UP FRONT, so every returned candidate is always expressible
+/// — no candidate is ever dropped for lack of a token.
+///
+/// Returns a list of `(semantic_id, arity)` tuples. The engine maps each to its
+/// own token name when building the `functions` dict it passes back in.
 #[pyfunction]
 fn master_pset() -> Vec<(String, usize)> {
     crate::karva::master_pset()
@@ -593,7 +649,6 @@ fn master_pset() -> Vec<(String, usize)> {
 /// for the caller to score with the pattern-metric library + HFF.
 #[pyfunction]
 #[pyo3(signature = (head, tail, variables, functions, rnc_values, family = "algebra", k = 64, iters = 12))]
-#[allow(clippy::too_many_arguments)]
 fn eclass_variants(
     py: Python<'_>,
     head: Vec<PyToken>,
@@ -617,11 +672,12 @@ fn eclass_variants(
         "structural" => EclassFamily::Structural,
         other => {
             return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                "family must be \"algebra\", \"trig\", or \"wide\", got {other:?}"
+                "family must be \"algebra\", \"trig\", \"wide\", or \"structural\", got {other:?}"
             )))
         }
     };
-    eclass_variants_core(&math, fam, k, iters).map_err(pyo3::exceptions::PyValueError::new_err)
+    run_core(py, || eclass_variants_core(&math, fam, k, iters))
+        .map_err(pyo3::exceptions::PyValueError::new_err)
 }
 
 /// Enumerate the equivalence class and RANK it by the CDF-corrected
@@ -634,7 +690,6 @@ fn eclass_variants(
 /// `[(angle_percentile, Math s-expression)]`, best (lowest percentile) first.
 #[pyfunction]
 #[pyo3(signature = (head, tail, variables, functions, rnc_values, family = "algebra", k = 64, iters = 12, exclude_measures = vec![]))]
-#[allow(clippy::too_many_arguments)]
 fn eclass_extract_hff(
     py: Python<'_>,
     head: Vec<PyToken>,
@@ -665,7 +720,7 @@ fn eclass_extract_hff(
     };
     // exclude_measures (default []) down-selects the /pattern/{measure} library —
     // drop the named rules to test which measures matter. [] runs all of them.
-    eclass_extract_hff_core(&math, fam, k, iters, &exclude_measures)
+    run_core(py, || eclass_extract_hff_core(&math, fam, k, iters, &exclude_measures))
         .map_err(pyo3::exceptions::PyValueError::new_err)
 }
 

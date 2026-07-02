@@ -27,7 +27,10 @@ variables  = ["x", "y"]                       # variable names
 functions  = {                                # token_name -> (semantic_id, arity)
     "add": ("add", 2),
     "mul": ("mul", 2),
-    "protected_sqrt": ("sqrt", 1),            # geppy name -> semantic id
+    "sqrt": ("sqrt", 1),                      # RAW sqrt: sqrt(neg) = NaN
+    "protected_sqrt": ("protected_sqrt", 1),  # geppy protected op -> the
+                                              # protected_* semantic id, NEVER
+                                              # the raw one (see below)
 }
 rnc_values = [1.0, 0.0]                        # numeric constants the tail may use
 
@@ -41,8 +44,10 @@ rows = [{"x":1.0,"y":5.0}, {"x":2.0,"y":-3.0}, {"x":3.0,"y":0.5}]  # training da
 out = denoise_karva(head, tail, variables, functions, rnc_values, rows,
                     tolerance=1e-3, k_variants=64, rng_seed=0)
 
-# out == {"head": [("var","x")], "tail": [("var","x")],
+# out == {"head": [("var","x")], "tail": [<2 terminal tokens>],
 #         "changed": True, "expr": '(Var "x")'}
+# (tail re-padded to head_len*(n_max-1)+1 = 2 terminals here — n_max is the
+#  pset's max function arity, 2 — deterministic in rng_seed)
 ```
 
 ### Returns
@@ -50,14 +55,24 @@ out = denoise_karva(head, tail, variables, functions, rnc_values, rows,
 - `changed=True`  → `head`/`tail` is a **smaller equivalent** chromosome; inject it.
 - `changed=False` → nothing to simplify; `head`/`tail` are your originals.
 - Never raises on normal input. Un-encodable chromosome → returned unchanged.
-- Tail obeys the GEP rule (terminals only, `len = head_len*(max_arity-1)+1`),
-  re-padded deterministically from `rng_seed`.
+- Tail obeys the GEP rule (terminals only, `len = head_len*(n_max-1)+1` with
+  `n_max` = your pset's max FUNCTION arity), re-padded deterministically from
+  `rng_seed`.
 
 ### The `semantic_id` contract (important)
 gamakAST rewrites on what an operator **computes**, not its geppy name. You map
-your pset names → semantic ids in the `functions` dict. Valid semantic ids:
-`add sub mul div neg sin cos tan log exp sqrt abs tanh pow2 pow3 inv diff_sq`.
-So `protected_sqrt`, `math.sqrt`, etc. all map to `"sqrt"`.
+your pset names → semantic ids in the `functions` dict. Valid semantic ids
+(= `master_pset()`, which returns the authoritative list):
+`add sub mul div neg sin cos tan log exp sqrt abs tanh pow2 pow3 pow inv
+protected_sqrt protected_log protected_exp protected_inv protected_div`
+(plus `diff_sq`, accepted on decode and lowered to `pow2`+`sub`).
+
+**Protected ops are DISTINCT semantic ids — never map them to the raw op.**
+`protected_sqrt(x) = sqrt(|x|)` and raw `sqrt(neg) = NaN` disagree on every
+negative input; mapping `protected_sqrt -> "sqrt"` makes the rewrite engine
+simplify your gene under the wrong semantics (unsound on negatives/zero).
+The same holds for `protected_log/exp/inv/div`. Map `math.sqrt`-style RAW ops
+to `"sqrt"`, and each `protected_*` op to its own `protected_*` id.
 
 ## When to call it in a geppy/DEAP loop
 
@@ -80,11 +95,15 @@ Let the GA explore; let denoise tidy.
 
 ## Current ruleset scope (honest)
 
-Today the shipped rules are the **5 algebra identities** (mul/add/sub identity,
-mul-by-zero, double-negation, `sqrt(x^2)->|x|`). So it removes *that* class of
-noise (`x*1`, `+0`, `-(-x)`, etc.). It does **not yet** strip trig or power
-wallpaper like `sin(exp(...))` — those rulesets exist on feature branches but
-are not merged into this build yet. Power/log and trig rules are coming.
+`denoise`/`denoise_karva` saturate the bounded **algebra + powers** subset:
+the algebra identities (mul/add/sub identity, mul-by-zero, double-negation,
+`sqrt(x^2)->|x|`, additive cancellation, guarded div-cancellation) plus the
+power/log rules — and a data-guarded pruner that drops subtrees whose removal
+doesn't change predictions on your rows. distribute / rational / trig /
+trig_fu / wide rulesets exist but are used only by the parity scorer and the
+e-class enumerators (`eclass_variants`, `eclass_extract_hff`, `proves_equal`
+families) — they are normal-form/expansion families, deliberately kept out of
+the denoise saturation (non-confluent, e-graph blow-up).
 
 ## Lower-level API: `denoise` (Math strings)
 

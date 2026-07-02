@@ -224,7 +224,15 @@ fn numeric_atoms(expr: &str) -> Vec<f64> {
 /// it). String substitution on confirmed snaps is deterministic and bounded.
 pub fn snap_variants(input: &str, k: usize, rel_tol: f64) -> Result<Vec<SnapCandidate>, String> {
     let entries = lattice();
-    let atoms = numeric_atoms(input);
+    // De-duplicate repeated values (first-seen order kept): the same fitted
+    // constant appearing at two sites is one snap decision, and duplicate
+    // entries would otherwise propose identical candidates.
+    let mut atoms: Vec<f64> = Vec::new();
+    for a in numeric_atoms(input) {
+        if !atoms.iter().any(|x| x.to_bits() == a.to_bits()) {
+            atoms.push(a);
+        }
+    }
 
     // Find, per atom, the simplest lattice form whose e-class the rewrite engine
     // confirms equal to (Num atom). (entries are simplest-first by construction
@@ -262,7 +270,10 @@ pub fn snap_variants(input: &str, k: usize, rel_tol: f64) -> Result<Vec<SnapCand
         }
     }
 
-    out.dedup_by(|a, b| a.expr == b.expr);
+    // Stable de-duplication (dedup_by only removes ADJACENT duplicates; the
+    // composed candidate can collide with a non-adjacent single snap).
+    let mut seen = std::collections::HashSet::new();
+    out.retain(|c| seen.insert(c.expr.clone()));
     out.truncate(k.max(1));
     Ok(out)
 }
@@ -301,24 +312,27 @@ fn confirms_equal(atom: f64, const_math: &str) -> Result<bool, String> {
     egraph.parse_and_run_program(None, &snap_rule).map_err(|e| format!("snap rule: {e}"))?;
     let prog = format!(
         "(let __a (Num {}))\n(let __c {})\n\
-         (unstable-combined-ruleset snap_all algebra snap)\n\
+         (unstable-combined-ruleset snap_all guards algebra snap)\n\
          (run-schedule (repeat 8 (run snap_all)))\n\
          (check (= __a __c))",
         fmt_f64(atom), const_math
     );
     match egraph.parse_and_run_program(None, &prog) {
         Ok(_) => Ok(true),
-        Err(e) => {
-            let m = e.to_string();
-            if m.contains("Check") || m.contains("check") { Ok(false) } else { Err(m) }
-        }
+        // A failed (check ..) is the expected "not equal" answer — match the
+        // error VARIANT, not a substring of the message, so a genuine egglog
+        // failure that merely mentions "check" is never swallowed as false.
+        Err(egglog::Error::CheckError(..)) => Ok(false),
+        Err(e) => Err(e.to_string()),
     }
 }
 
-/// Replace the first `(Num atom)` literal with `replacement` (a Math s-expr).
+/// Replace every `(Num atom)` literal with `replacement` (a Math s-expr).
+/// All occurrences: the same fitted value at two sites is the same constant,
+/// and replacing only the first would leave the second site never proposed.
 fn replace_num(expr: &str, atom: f64, replacement: &str) -> String {
     let needle = format!("(Num {})", fmt_f64(atom));
-    expr.replacen(&needle, replacement, 1)
+    expr.replace(&needle, replacement)
 }
 
 #[cfg(test)]

@@ -133,7 +133,15 @@ fn leaf_to_math(tok: &Token, pset: &PsetSpec) -> Result<String, String> {
                 Err(format!("variable {name:?} not in pset"))
             }
         }
-        Token::Num(v) => Ok(format!("(Num {})", fmt_f64(*v))),
+        Token::Num(v) => {
+            if !v.is_finite() {
+                // egglog's parser has no literal for NaN/inf; rendering one
+                // would silently produce an unparseable program downstream.
+                Err(format!("non-finite numeric constant {v} is not expressible"))
+            } else {
+                Ok(format!("(Num {})", fmt_f64(*v)))
+            }
+        }
         Token::Func(name) => Err(format!("function {name:?} used as a leaf")),
     }
 }
@@ -165,6 +173,15 @@ pub fn karva_to_terms(head: &[Token], tail: &[Token], pset: &PsetSpec) -> Result
     let mut children_of: Vec<Vec<usize>> = vec![Vec::new(); stream.len()];
     let mut next_slot = 1usize;
     for (i, tok) in head.iter().enumerate() {
+        // A token at or beyond `next_slot` was never assigned as any live
+        // node's child: it sits in the neutral (dead) region, which the GEP
+        // decode rule ignores. Since `next_slot` only grows from live function
+        // tokens, everything from here on is dead — stop, and never validate
+        // or consume slots for dead tokens (an unmapped token in the neutral
+        // region must not fail an otherwise valid chromosome).
+        if i > 0 && i >= next_slot {
+            break;
+        }
         if let Token::Func(name) = tok {
             let spec = pset
                 .functions
@@ -182,13 +199,21 @@ pub fn karva_to_terms(head: &[Token], tail: &[Token], pset: &PsetSpec) -> Result
         }
     }
 
-    // Recursively render from the root (stream index 0).
+    // Recursively render from the root (stream index 0). Depth-capped: a
+    // deeper-than-sane gene must surface as an Err, not a stack overflow.
     fn render(
         idx: usize,
         stream: &[&Token],
         children_of: &[Vec<usize>],
         pset: &PsetSpec,
+        depth: usize,
     ) -> Result<String, String> {
+        if depth > crate::MAX_EXPR_DEPTH {
+            return Err(format!(
+                "expression deeper than MAX_EXPR_DEPTH ({})",
+                crate::MAX_EXPR_DEPTH
+            ));
+        }
         match stream[idx] {
             Token::Func(name) => {
                 let spec = pset
@@ -197,7 +222,7 @@ pub fn karva_to_terms(head: &[Token], tail: &[Token], pset: &PsetSpec) -> Result
                     .ok_or_else(|| format!("function token {name:?} not in pset"))?;
                 let kids: Result<Vec<String>, String> = children_of[idx]
                     .iter()
-                    .map(|&c| render(c, stream, children_of, pset))
+                    .map(|&c| render(c, stream, children_of, pset, depth + 1))
                     .collect();
                 semantic_to_math(&spec.semantic_id, &kids?)
             }
@@ -205,7 +230,7 @@ pub fn karva_to_terms(head: &[Token], tail: &[Token], pset: &PsetSpec) -> Result
         }
     }
 
-    render(0, &stream, &children_of, pset)
+    render(0, &stream, &children_of, pset, 0)
 }
 
 // ---------------------------------------------------------------------------
@@ -257,7 +282,7 @@ fn math_ctor_to_semantic(ctor: &str) -> Option<&'static str> {
 fn parse_math(s: &str) -> Result<MathNode, String> {
     let toks = tokenize(s);
     let mut pos = 0;
-    let node = parse_node(&toks, &mut pos)?;
+    let node = parse_node(&toks, &mut pos, 0)?;
     if pos != toks.len() {
         return Err(format!("trailing tokens after parse in {s:?}"));
     }
@@ -305,7 +330,15 @@ fn tokenize(s: &str) -> Vec<String> {
     out
 }
 
-fn parse_node(toks: &[String], pos: &mut usize) -> Result<MathNode, String> {
+fn parse_node(toks: &[String], pos: &mut usize, depth: usize) -> Result<MathNode, String> {
+    if depth > crate::MAX_EXPR_DEPTH {
+        // Depth-capped so a pathologically nested s-expression is an Err, not
+        // a stack overflow (which would abort the whole process).
+        return Err(format!(
+            "expression deeper than MAX_EXPR_DEPTH ({})",
+            crate::MAX_EXPR_DEPTH
+        ));
+    }
     if *pos >= toks.len() {
         return Err("unexpected end of input".to_string());
     }
@@ -338,7 +371,7 @@ fn parse_node(toks: &[String], pos: &mut usize) -> Result<MathNode, String> {
         ctor => {
             let mut children = Vec::new();
             while *pos < toks.len() && toks[*pos] != ")" {
-                children.push(parse_node(toks, pos)?);
+                children.push(parse_node(toks, pos, depth + 1)?);
             }
             MathNode::App(ctor.to_string(), children)
         }
@@ -374,8 +407,8 @@ fn func_token_for_semantic(semantic: &str, pset: &PsetSpec) -> Result<String, St
 ///
 /// BFS the parsed tree to produce the head (level-order: functions then the
 /// terminals they reference), then re-pad the tail with random terminals to the
-/// GEP rule `tail_len = head_len * (max_arity - 1) + 1`, deterministically from
-/// `rng_seed`.
+/// GEP rule `tail_len = head_len * (n_max - 1) + 1` (n_max = the pset's max
+/// function arity), deterministically from `rng_seed`.
 pub fn terms_to_karva(
     term: &str,
     pset: &PsetSpec,
@@ -413,13 +446,28 @@ pub fn terms_to_karva_sized(
     // BFS the tree; emit a Token per node in level order. Functions become
     // Func tokens (by semantic id -> pset name); leaves become Var/Num tokens.
     let mut head: Vec<Token> = Vec::new();
-    let mut max_arity = 1usize;
     let mut queue: std::collections::VecDeque<&MathNode> = std::collections::VecDeque::new();
     queue.push_back(&root);
     while let Some(node) = queue.pop_front() {
         match node {
-            MathNode::Num(v) => head.push(Token::Num(*v)),
-            MathNode::Var(name) => head.push(Token::Var(name.clone())),
+            MathNode::Num(v) => {
+                if !v.is_finite() {
+                    // A NaN/inf constant round-trips to an unparseable (Num ..)
+                    // literal, so the chromosome would be undecodable. Refuse
+                    // here, symmetrically with `leaf_to_math` on the decode side.
+                    return Err(format!("non-finite numeric constant {v} is not expressible"));
+                }
+                head.push(Token::Num(*v));
+            }
+            MathNode::Var(name) => {
+                // Validate on encode, symmetrically with `leaf_to_math` on the
+                // decode side: emitting a Var outside the pset would produce a
+                // chromosome the engine can never decode again.
+                if !pset.variables.iter().any(|v| v == name) {
+                    return Err(format!("variable {name:?} not in pset"));
+                }
+                head.push(Token::Var(name.clone()));
+            }
             MathNode::App(ctor, children) => {
                 // diff_sq round-trips as its expansion Pow2(Sub ..); just use
                 // the constructor's own semantic id.
@@ -427,7 +475,6 @@ pub fn terms_to_karva_sized(
                     .ok_or_else(|| format!("non-karva constructor {ctor:?}"))?;
                 let name = func_token_for_semantic(semantic, pset)?;
                 head.push(Token::Func(name));
-                max_arity = max_arity.max(children.len());
                 for c in children {
                     queue.push_back(c);
                 }
@@ -464,8 +511,20 @@ pub fn terms_to_karva_sized(
     }
 
     // GEP tail rule for the FINAL head length: tail is terminals only, length
-    // head_len*(max_arity-1)+1, padded deterministically from the same stream.
-    let tail_len = head.len() * (max_arity.saturating_sub(1)) + 1;
+    // head_len*(n_max-1)+1, padded deterministically from the same stream.
+    // n_max is the PSET's max function arity (geppy's rule) — NOT the max arity
+    // appearing in this particular expression. A pure-unary term with an
+    // expression-derived n_max of 1 would get a 1-token tail; a later head
+    // point-mutation to a binary op (which the pset permits) would then run off
+    // the end of the stream, and uniform-length mating would break.
+    let pset_max_arity = pset
+        .functions
+        .values()
+        .map(|f| f.arity)
+        .max()
+        .unwrap_or(1)
+        .max(1);
+    let tail_len = head.len() * (pset_max_arity - 1) + 1;
     let tail: Vec<Token> = (0..tail_len).map(|_| pool[next() % pool.len()].clone()).collect();
 
     Ok((head, tail, oversized))
@@ -494,9 +553,12 @@ mod tests {
         functions.insert("mul".to_string(), FunctionSpec { semantic_id: "mul".into(), arity: 2 });
         functions.insert("sqrt".to_string(), FunctionSpec { semantic_id: "sqrt".into(), arity: 1 });
         functions.insert("abs".to_string(), FunctionSpec { semantic_id: "abs".into(), arity: 1 });
-        // a pset whose geppy name differs from the semantic id:
+        // a pset whose geppy name differs from the semantic id. NOTE: the
+        // token is a RAW-sqrt alias ("my_sqrt"), deliberately NOT
+        // "protected_sqrt" — mapping a protected geppy op to a raw semantic id
+        // is the unsound conflation the crate forbids (see USAGE.md).
         functions.insert(
-            "protected_sqrt".to_string(),
+            "my_sqrt".to_string(),
             FunctionSpec { semantic_id: "sqrt".into(), arity: 1 },
         );
         PsetSpec {
@@ -533,8 +595,9 @@ mod tests {
 
     #[test]
     fn semantic_id_not_geppy_name() {
-        // protected_sqrt maps to the `sqrt` semantic id -> Sqrt constructor.
-        let head = vec![Token::Func("protected_sqrt".into()), Token::Var("x".into())];
+        // "my_sqrt" (a raw-sqrt alias) maps to the `sqrt` semantic id -> Sqrt
+        // constructor: the converter keys on what the op COMPUTES, not its name.
+        let head = vec![Token::Func("my_sqrt".into()), Token::Var("x".into())];
         let tail = vec![Token::Var("x".into())];
         let out = karva_to_terms(&head, &tail, &pset()).unwrap();
         assert_eq!(out, r#"(Sqrt (Var "x"))"#);
@@ -606,9 +669,11 @@ mod tests {
         assert_eq!(head.len(), 8, "head extended to target");
         // Filler slots must be terminals (never functions).
         assert!(head[2..].iter().all(|t| !matches!(t, Token::Func(_))));
-        // GEP tail rule for the FINAL head length: max arity is 1 here
-        // (Sqrt is unary), so tail_len = head_len*(1-1)+1 = 1.
-        assert_eq!(tail.len(), 1);
+        // GEP tail rule for the FINAL head length: n_max is the PSET's max
+        // function arity (2 — add/mul are binary), NOT this expression's max
+        // arity, so tail_len = 8*(2-1)+1 = 9. A 1-token tail would break as
+        // soon as a head point-mutation introduced a binary op.
+        assert_eq!(tail.len(), 9);
         let decoded = karva_to_terms(&head, &tail, &pset()).unwrap();
         assert_eq!(decoded, math, "extension changed the expression");
     }
@@ -630,6 +695,63 @@ mod tests {
         let (h1, t1, oversized) = terms_to_karva_sized(math, &pset(), 5, None).unwrap();
         assert!(!oversized);
         assert_eq!((h0, t0), (h1, t1), "None target must match the plain path");
+    }
+
+    #[test]
+    fn deep_gene_errs_instead_of_overflowing() {
+        // A unary chain deeper than MAX_EXPR_DEPTH must surface as a plain Err
+        // (the caller returns the gene unchanged), not a stack-overflow abort.
+        let n = crate::MAX_EXPR_DEPTH + 10;
+        let mut head = vec![Token::Func("sqrt".into()); n];
+        head.push(Token::Var("x".into()));
+        let tail = vec![Token::Var("x".into())];
+        let r = karva_to_terms(&head, &tail, &pset());
+        assert!(r.is_err(), "deep chain must Err, got {r:?}");
+    }
+
+    #[test]
+    fn deep_sexpr_parse_errs_instead_of_overflowing() {
+        let n = crate::MAX_EXPR_DEPTH + 10;
+        let mut s = String::new();
+        for _ in 0..n {
+            s.push_str("(Sqrt ");
+        }
+        s.push_str(r#"(Var "x")"#);
+        for _ in 0..n {
+            s.push(')');
+        }
+        assert!(terms_to_karva(&s, &pset(), 1).is_err(), "deep parse must Err");
+    }
+
+    #[test]
+    fn dead_head_tokens_are_ignored() {
+        // Live tree = mul(x,y); the trailing function token is in the neutral
+        // (dead) region. Even though it's not in the pset, the decode must
+        // succeed — the GEP rule never visits dead tokens.
+        let head = vec![
+            Token::Func("mul".into()),
+            Token::Var("x".into()),
+            Token::Var("y".into()),
+            Token::Func("not_in_pset".into()),
+        ];
+        let tail = vec![Token::Var("x".into())];
+        let out = karva_to_terms(&head, &tail, &pset()).unwrap();
+        assert_eq!(out, r#"(Mul (Var "x") (Var "y"))"#);
+    }
+
+    #[test]
+    fn unknown_var_in_term_errs_on_encode() {
+        // Encoding a Var outside the pset would produce an undecodable
+        // chromosome — must Err, symmetric with the decode-side check.
+        assert!(terms_to_karva(r#"(Var "zzz")"#, &pset(), 1).is_err());
+    }
+
+    #[test]
+    fn nonfinite_num_leaf_errs() {
+        let head =
+            vec![Token::Func("mul".into()), Token::Var("x".into()), Token::Num(f64::INFINITY)];
+        let tail = vec![Token::Var("x".into())];
+        assert!(karva_to_terms(&head, &tail, &pset()).is_err());
     }
 
     #[test]

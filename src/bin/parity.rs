@@ -22,9 +22,23 @@ fn field(line: &str, key: &str) -> Option<String> {
     while i < bytes.len() {
         let c = bytes[i] as char;
         if c == '\\' && i + 1 < bytes.len() {
-            // unescape \" and \\
+            // JSON escapes. The corpora only ever contain \" and \\ today, but
+            // decode the standard single-char escapes correctly rather than
+            // silently turning \n into a literal 'n'. Unknown escapes are kept
+            // verbatim (backslash + char) so nothing is corrupted.
             let nxt = bytes[i + 1] as char;
-            out.push(nxt);
+            match nxt {
+                '"' => out.push('"'),
+                '\\' => out.push('\\'),
+                '/' => out.push('/'),
+                'n' => out.push('\n'),
+                't' => out.push('\t'),
+                'r' => out.push('\r'),
+                other => {
+                    out.push('\\');
+                    out.push(other);
+                }
+            }
             i += 2;
             continue;
         }
@@ -97,6 +111,14 @@ fn main() -> Result<(), String> {
         g_total += rep.total;
         g_matched += rep.matched;
         println!("{:<24} {:>7} {:>7} {:>7.1}%", name, rep.matched, rep.total, rep.pct());
+        // Scoring ERRORS are infrastructure failures, not parity misses —
+        // surface them instead of letting them hide inside the unmatched count.
+        if !rep.errored_inputs.is_empty() {
+            eprintln!("  WARNING {name}: {} pair(s) errored (not scored):", rep.errored_inputs.len());
+            for (input, err) in rep.errored_inputs.iter().take(5) {
+                eprintln!("    {input}: {err}");
+            }
+        }
     }
     println!("{}", "-".repeat(50));
     let pct = if g_total == 0 { 0.0 } else { 100.0 * g_matched as f64 / g_total as f64 };
