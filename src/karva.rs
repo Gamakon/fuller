@@ -1,7 +1,7 @@
 //! Phase 1.1: karva (GEP K-expression) <-> `Math` term converter.
 //!
 //! This is the boundary the SR engine crosses: it speaks karva chromosomes
-//! (flat head+tail token lists), gamakAST speaks `Math` s-expressions. The
+//! (flat head+tail token lists), fuller speaks `Math` s-expressions. The
 //! converter is keyed on `semantic_id` (what an operator *computes*), never a
 //! pset-specific geppy name — the consumer maps its names to semantic ids when
 //! it builds the `PsetSpec`. Ported (clean, no geppy/sympy) from the GEP decode
@@ -536,7 +536,7 @@ mod tests {
 
     /// The master pset must stay in lockstep with `semantic_to_math`: every
     /// advertised (semantic_id, arity) must actually encode to a Math node, or
-    /// the engine could seed a token gamakAST can't render. Dummy children make
+    /// the engine could seed a token fuller can't render. Dummy children make
     /// the arity right.
     #[test]
     fn master_pset_entries_all_encode() {

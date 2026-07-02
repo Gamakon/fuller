@@ -1,4 +1,4 @@
-//! Parity runner: score gamakAST against SymPy corpora.
+//! Parity runner: score fuller against SymPy corpora.
 //!
 //!   cargo run --release --bin parity -- parity/corpus/powsimp.jsonl ...
 //!
@@ -7,7 +7,7 @@
 
 use std::fs;
 
-use gamakast::parity::{proves_equal_with, score_with, Family, Pair};
+use fuller::parity::{proves_equal_with, score_with, Family, Pair};
 
 /// Minimal extraction of the two string fields from a JSONL line, without a
 /// JSON dependency: find "input":"..." and "target":"..." with escape handling.

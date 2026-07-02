@@ -1,4 +1,4 @@
-# gamakAST — egglog-based bidirectional AST hub
+# fuller — egglog-based bidirectional AST hub
 
 ## Mission
 
@@ -48,7 +48,7 @@ in `hff/notebooks/` for the patterns and the lessons:
   at `/tmp/equivalent_forms.jsonl` (if present) contains real worked
   examples of chromosome → simplified expression transitions.
 
-**Do not import any of this into gamakAST.** Read for patterns and
+**Do not import any of this into fuller.** Read for patterns and
 counter-examples, then build clean.
 
 ## Out of scope
@@ -134,7 +134,7 @@ R² to within tolerance.
 
 ```python
 # In Python, after `pip install -e .` of this crate:
-from gamakAST import denoise, karva_to_terms, terms_to_karva
+from fuller import denoise, karva_to_terms, terms_to_karva
 
 def denoise(
     head: list[Any],          # list of geppy Function/Terminal tokens
@@ -168,7 +168,7 @@ class FunctionSpec:
 ```
 
 The `semantic_id` is critical: the same operator can have different
-geppy names across psets (`protected_sqrt` vs `math.sqrt`). gamakAST
+geppy names across psets (`protected_sqrt` vs `math.sqrt`). fuller
 sees only the semantic ID; the consumer is responsible for the name
 mapping when constructing `PsetSpec`.
 
@@ -197,16 +197,16 @@ The crate uses **maturin** as the build backend so `hff/` (and any other
 consumer) can install via:
 
 ```
-pip install -e /Users/andrewmorgan/Dev/kaito/gamakAST
+pip install -e /Users/andrewmorgan/Dev/kaito/fuller
 ```
 
 That command must (a) build the Rust extension via maturin, (b) install
-the `python/gamakAST/` shim package, and (c) leave a working
-`from gamakAST import denoise, karva_to_terms, terms_to_karva` import
+the `python/fuller/` shim package, and (c) leave a working
+`from fuller import denoise, karva_to_terms, terms_to_karva` import
 in the target Python environment.
 
 ```
-gamakAST/
+fuller/
 ├── Cargo.toml
 ├── pyproject.toml            ← maturin backend, PyO3 deps
 ├── BRIEF.md                  ← this file
@@ -223,7 +223,7 @@ gamakAST/
 │   └── eval.rs               ← lambdify-equivalent: evaluate egglog term
 │                              on numpy data (real-domain only, no complex)
 ├── python/
-│   └── gamakAST/
+│   └── fuller/
 │       ├── __init__.py       ← re-exports the public Rust functions
 │       └── _typing.py        ← Python-side dataclass mirrors of PsetSpec
 ├── examples/
@@ -306,8 +306,8 @@ Pure structural; no rules involved.
 ### Phase 1.5 — Public API + Python wrapping
 
 1. PyO3-export `denoise`, `karva_to_terms`, `terms_to_karva`.
-2. `python/gamakAST/__init__.py` re-exports.
-3. `python/gamakAST/_typing.py` defines the Python-side `PsetSpec`
+2. `python/fuller/__init__.py` re-exports.
+3. `python/fuller/_typing.py` defines the Python-side `PsetSpec`
    dataclass — pure dataclass, no geppy import.
 4. `examples/02_denoise_demo.py`: build a known noisy chromosome,
    call `denoise(...)`, print before / after side-by-side.
@@ -355,7 +355,7 @@ assumptions:
 ## Reporting template (`reports/phase1_report.md`)
 
 ```
-# gamakAST Phase 1 acceptance report
+# fuller Phase 1 acceptance report
 
 ## Environment
 - Rust:     <version>
@@ -407,7 +407,7 @@ assumptions:
 
 ## Git workflow
 
-- Initialise as a fresh git repo (`git init`) in `/Users/andrewmorgan/Dev/kaito/gamakAST/`.
+- Initialise as a fresh git repo (`git init`) in `/Users/andrewmorgan/Dev/kaito/fuller/`.
 - Commit as you go, one commit per phase (1.0, 1.1, etc.), descriptive
   messages following conventional-commits style.
 - Do NOT push.
@@ -430,7 +430,7 @@ required during the work — proceed silently and report at the end.
 
 After Phase 1 ships, Phase 2 will port mathematical identities from
 SymPy's simplification modules (`powsimp.py`, `radsimp.py`,
-`trigsimp.py`, `ratsimp.py`) into the gamakAST ruleset. The user
+`trigsimp.py`, `ratsimp.py`) into the fuller ruleset. The user
 has a separate brief for that work. The Phase 1 architecture must
 not block it — specifically, the ruleset registry in
 `src/ruleset/mod.rs` should support adding new modules without

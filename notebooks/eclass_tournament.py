@@ -29,7 +29,7 @@ for _p in (os.path.abspath(_SRB), _HFF):
         sys.path.insert(0, _p)
 
 from _denoise_op import _token_tuple, SEMANTIC_ID_MAP  # noqa: E402
-from gamakAST import eclass_extract_hff, master_pset  # noqa: E402
+from fuller import eclass_extract_hff, master_pset  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 IMG = os.path.join(HERE, "images")
@@ -237,7 +237,7 @@ def plot(name, pts):
 
 if __name__ == "__main__":
     pkl = sys.argv[1] if len(sys.argv) > 1 else \
-        "/Users/andrewmorgan/Dev/kaito/gamakAST/hof_pickles/hff_hof_lean_I_9_18.pkl"
+        "/Users/andrewmorgan/Dev/kaito/fuller/hof_pickles/hff_hof_lean_I_9_18.pkl"
     name, pts = run(pkl)
     if pts:
         plot(name, pts)

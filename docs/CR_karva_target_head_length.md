@@ -1,6 +1,6 @@
 # CR: snap_karva / denoise_karva / physics_mutate_karva — accept `target_head_length`
 
-> **STATUS: LANDED** (gamakAST commit `9d38596`). All three `*_karva` functions
+> **STATUS: LANDED** (fuller commit `9d38596`). All three `*_karva` functions
 > accept the optional `target_head_length`. Behaviour: shorter natural head →
 > extended with BFS-unreachable terminal filler (semantics-preserved); longer →
 > flagged `oversized` (never truncated); `None` → unchanged. `snap_karva` returns
@@ -44,7 +44,7 @@ Add an optional parameter to each `*_karva` function:
 target_head_length: Option<usize>
 ```
 
-When set, gamakAST should:
+When set, fuller should:
 
 1. Compute the natural head tokens from the rewritten term (current
    behaviour).

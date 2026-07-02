@@ -15,15 +15,15 @@ fitness** — it only generates. Your GA + HFF select.
 ## 1. Install
 
 ```bash
-cd /Users/andrewmorgan/Dev/kaito/gamakAST
+cd /Users/andrewmorgan/Dev/kaito/fuller
 maturin develop --release
-python -c "from gamakAST import physics_mutate; print('ok')"
+python -c "from fuller import physics_mutate; print('ok')"
 ```
 
 ## 2. Signature
 
 ```python
-from gamakAST import physics_mutate
+from fuller import physics_mutate
 
 candidates: list[dict] = physics_mutate(
     expr,            # str  — one gene, as a Math s-expression (see §4)
@@ -153,7 +153,7 @@ reshapes, not leaps. The API does not change as more rules are added; new
 ## 9. Complete example
 
 ```python
-from gamakAST import physics_mutate
+from fuller import physics_mutate
 
 gene = '(Div (Mul (Var "m1") (Var "m2")) (Sub (Var "x2") (Var "y1")))'
 axes = [["x1", "x2"], ["y1", "y2"], ["z1", "z2"]]
@@ -184,11 +184,11 @@ SRBench gap.
 ## 11. Rust API
 
 ```rust
-gamakast::physics::generate(
+fuller::physics::generate(
     gene: &str,
     paired_groups: &[Vec<String>],
     n: usize,
     seed: u64,
-) -> Result<Vec<gamakast::physics::Candidate>, String>
+) -> Result<Vec<fuller::physics::Candidate>, String>
 // Candidate { expr: String, rule: String, speculative: bool }
 ```

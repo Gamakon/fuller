@@ -1,5 +1,5 @@
-//! Parity scorer — measures how much of SymPy's simplification gamakAST
-//! reproduces, using ONLY gamakAST's own tools (no sympy in the loop).
+//! Parity scorer — measures how much of SymPy's simplification fuller
+//! reproduces, using ONLY fuller's own tools (no sympy in the loop).
 //!
 //! A corpus pair `(input, target)` was produced offline by SymPy
 //! (parity/gen_corpus.py): `target = sympy.<module>(input)`. We load both into

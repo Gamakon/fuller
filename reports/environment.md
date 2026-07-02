@@ -1,4 +1,4 @@
-# gamakAST environment & egglog 2.0 API notes
+# fuller environment & egglog 2.0 API notes
 
 Recorded during Phase 1.0 calibration (2026-05-25).
 

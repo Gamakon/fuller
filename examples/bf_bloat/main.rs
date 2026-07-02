@@ -23,8 +23,8 @@
 //  examples/<name>/main.rs. The build rule in Cargo.toml names this binary
 //  "bf_bloat_study".)
 
-use gamakast::bf::eval::run_bf;
-use gamakast::bf::extract::bf_simplify;
+use fuller::bf::eval::run_bf;
+use fuller::bf::extract::bf_simplify;
 
 use std::io::Write;
 
@@ -70,7 +70,7 @@ fn fitness(source: &str) -> usize {
     for &b in TEST_INPUTS {
         let expected = b.wrapping_add(1);
         match run_bf(source, &[b]) {
-            gamakast::bf::eval::TapeResult::Ok { output } if output == vec![expected] => {
+            fuller::bf::eval::TapeResult::Ok { output } if output == vec![expected] => {
                 score += 1;
             }
             _ => {}

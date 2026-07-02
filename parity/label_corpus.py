@@ -13,7 +13,7 @@ Output: parity/corpus/labeled_simplify.jsonl, each line adds:
         - features: cheap structural features of `before` (the classifier X).
 
 This runs OFFLINE and IS allowed to use sympy (it is analysis of sympy's own
-output, not part of the gamakAST crate). The crate never imports sympy.
+output, not part of the fuller crate). The crate never imports sympy.
 
 Usage: python parity/label_corpus.py [in.jsonl] [out.jsonl]
 """

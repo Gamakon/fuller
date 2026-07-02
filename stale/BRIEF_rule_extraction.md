@@ -10,7 +10,7 @@
 ## Role
 
 You grow a small, **provably sound** egglog ruleset for symbolic rewriting,
-inside the existing Rust `gamakast` crate. You transcribe known mathematical
+inside the existing Rust `fuller` crate. You transcribe known mathematical
 identities; you do not invent. A rule ships only if it (a) is numerically
 sound on sampled real points, (b) improves the HFF-TrueNorth fitness of the
 ruleset against the corpus, and (c) is **reviewed and approved by the
@@ -36,7 +36,7 @@ This project exists to *leave SymPy behind*. Therefore:
 
 ## Target & reuse
 
-- Build inside the Rust `gamakast` crate. Reuse, do not reimplement:
+- Build inside the Rust `fuller` crate. Reuse, do not reimplement:
   - the Phase 1.0 calibration substrate (`src/calibration.rs`) — proves the
     egglog 2.0 loop works; do **not** re-run a Python calibration.
   - the karva↔terms converter and real-domain evaluator from Phase 1.2–1.4.

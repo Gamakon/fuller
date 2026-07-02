@@ -1,4 +1,4 @@
-# gamakAST — usage for the SR engine team
+# fuller — usage for the SR engine team
 
 The denoise mutation operator: takes a GEP chromosome, rewrites away algebraic
 noise via egglog, returns a smaller **equivalent** chromosome. Deterministic,
@@ -7,9 +7,9 @@ real-domain, **no sympy**. This is the BRIEF.md Phase 1 skateboard, shipping.
 ## Install
 
 ```bash
-cd /Users/andrewmorgan/Dev/kaito/gamakAST
+cd /Users/andrewmorgan/Dev/kaito/fuller
 maturin develop --release        # builds the Rust ext + installs into the active env
-python -c "from gamakAST import denoise_karva; print('ok')"
+python -c "from fuller import denoise_karva; print('ok')"
 ```
 
 Requires a Rust toolchain + maturin. Re-run `maturin develop --release` after
@@ -20,7 +20,7 @@ pulling new commits.
 Pass a chromosome directly (no string conversion):
 
 ```python
-from gamakAST import denoise_karva
+from fuller import denoise_karva
 
 # Describe your pset ONCE (pure data — no geppy objects cross the boundary):
 variables  = ["x", "y"]                       # variable names
@@ -64,7 +64,7 @@ out = denoise_karva(head, tail, variables, functions, rnc_values, rows,
   — which never fire on unproven domains. Assert only what you actually know.
 
 ### The `semantic_id` contract (important)
-gamakAST rewrites on what an operator **computes**, not its geppy name. You map
+fuller rewrites on what an operator **computes**, not its geppy name. You map
 your pset names → semantic ids in the `functions` dict. Valid semantic ids
 (= `master_pset()`, which returns the authoritative list):
 `add sub mul div neg sin cos tan log exp sqrt abs tanh pow2 pow3 pow inv

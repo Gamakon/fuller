@@ -43,8 +43,8 @@
 // Run:
 //   cargo run --release --example bf_study --no-default-features
 
-use gamakast::bf::eval::run_bf;
-use gamakast::bf::extract::bf_simplify;
+use fuller::bf::eval::run_bf;
+use fuller::bf::extract::bf_simplify;
 
 use std::collections::HashSet;
 use std::io::Write;
@@ -116,7 +116,7 @@ impl Task {
     fn fitness_exact(&self, source: &str) -> usize {
         let mut score = 0;
         for (inp, exp) in self.inputs.iter().zip(self.expected.iter()) {
-            if let gamakast::bf::eval::TapeResult::Ok { output } = run_bf(source, inp) {
+            if let fuller::bf::eval::TapeResult::Ok { output } = run_bf(source, inp) {
                 if &output == exp {
                     score += 1;
                 }

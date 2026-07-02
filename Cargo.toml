@@ -1,12 +1,12 @@
 [package]
-name = "gamakast"
+name = "fuller"
 version = "0.1.0"
 edition = "2021"
 description = "Egglog-based bidirectional AST hub for symbolic expression rewriting"
-license = "MIT"
+license = "GPL-3.0-or-later"
 
 [lib]
-name = "gamakast"
+name = "fuller"
 # rlib for Rust tests/examples; cdylib for the PyO3 extension module.
 crate-type = ["rlib", "cdylib"]
 

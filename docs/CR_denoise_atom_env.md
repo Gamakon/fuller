@@ -81,7 +81,7 @@ After CR lands:
    tolerance 1e-3 with a denoised expression that drops `eps0`, `kB`,
    `G`, `hbar*pi`, leaving `(y1-y2)^2 + (x1-x2)^2` (or close — `G`
    inside `_diff_sq(G, x1-x2)` would prune to `(x1-x2)^2`).
-2. Add a unit test in `gamakAST/src/extract.rs` covering one Add tree
+2. Add a unit test in `fuller/src/extract.rs` covering one Add tree
    with a tiny constant atom.
 
 ## Tolerance semantics

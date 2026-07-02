@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-gamakAST is a Rust crate (PyO3-exposed) using **egglog 2.0** as a substrate for symbolic expression rewriting. It replaces sympy for the sibling SR engine in `/Users/andrewmorgan/Dev/kaito/hff/`: deterministic, real-domain, bounded. `hff/` is a **separate project** — only commit there with the user's sign-off, on its own branch.
+fuller is a Rust crate (PyO3-exposed) using **egglog 2.0** as a substrate for symbolic expression rewriting. It replaces sympy for the sibling SR engine in `/Users/andrewmorgan/Dev/kaito/hff/`: deterministic, real-domain, bounded. `hff/` is a **separate project** — only commit there with the user's sign-off, on its own branch.
 
 The original Phase-1 spec is **delivered and superseded** — see `stale/BRIEF.md` for history only. Current state is `src/` + `docs/`.
 
@@ -13,7 +13,7 @@ The original Phase-1 spec is **delivered and superseded** — see `stale/BRIEF.m
 ```bash
 cargo test                       # Rust tests (plain build, no PyO3 link needed)
 cargo clippy --all-targets       # MUST be clean
-maturin develop --release        # build + install the Python extension (gamakAST)
+maturin develop --release        # build + install the Python extension (fuller)
 cargo run --example 00_calibration
 cargo run --release --bin parity -- parity/corpus/*.jsonl   # SymPy-parity score
 ```
@@ -56,4 +56,4 @@ Against frozen SymPy corpora (`parity/corpus/*.jsonl`, generated offline; sympy 
 
 - **Do not push.** Local commits, branch off main, conventional-commit messages.
 - The user is impatient — tight status lines, fix-don't-explain, no essays.
-- Persistent design context lives in `~/.claude/projects/-Users-andrewmorgan-Dev-kaito-gamakAST/memory/` — read `MEMORY.md` then `00-design-overview.md`. Key ones: `ownership-contract`, `working-posture-frontier-rnd`, `just-fix-it`, `worktree-agent-cleanup`, `two-part-simplify-and-classifier`.
+- Persistent design context lives in `~/.claude/projects/-Users-andrewmorgan-Dev-kaito-fuller/memory/` — read `MEMORY.md` then `00-design-overview.md`. Key ones: `ownership-contract`, `working-posture-frontier-rnd`, `just-fix-it`, `worktree-agent-cleanup`, `two-part-simplify-and-classifier`.

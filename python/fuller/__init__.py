@@ -1,4 +1,4 @@
-"""gamakAST — egglog-based symbolic rewriting for the SR engine.
+"""fuller — egglog-based symbolic rewriting for the SR engine.
 
 Phase 1.5 surface: the `denoise` mutation operator. Takes an expression in
 egglog `Math` surface syntax plus training-data rows, and returns a (possibly
@@ -7,13 +7,13 @@ data — deterministic, real-domain, no sympy.
 
 Example
 -------
->>> from gamakAST import denoise
+>>> from fuller import denoise
 >>> rows = [{"x": 1.0, "y": 5.0}, {"x": 2.0, "y": -3.0}]
 >>> denoise('(Add (Mul (Var "x") (Num 1.0)) (Mul (Num 0.0) (Var "y")))', rows)
 {'expr': '(Var "x")', 'cost': ..., 'changed': True}
 """
 
-from ._gamakast import (
+from ._fuller import (
     denoise,
     denoise_karva,
     denoise_karva_candidates,

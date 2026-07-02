@@ -2,7 +2,7 @@
 //! `cargo build`/`test`. Exposes the denoise mutation operator to the Python
 //! SR engine so it can be used as a GA mutation step.
 //!
-//! Built via `maturin develop`; importable as `from gamakAST import denoise`.
+//! Built via `maturin develop`; importable as `from fuller import denoise`.
 
 use std::collections::HashMap;
 
@@ -240,7 +240,7 @@ fn denoise_karva(
 
 /// Like `denoise_karva` but returns ALL candidates (equivalent forms +
 /// pruned variants) — the engine scores them all via HFF and picks the
-/// winner. No internal accept/reject: gamakAST proposes, HFF disposes.
+/// winner. No internal accept/reject: fuller proposes, HFF disposes.
 ///
 /// Returns a list of dicts, each shaped exactly like a `denoise_karva`
 /// success result:
@@ -673,7 +673,7 @@ fn proves_equal(
         .map_err(pyo3::exceptions::PyValueError::new_err)
 }
 
-/// The MASTER pset: every `(semantic_id, arity)` any gamakAST mutation
+/// The MASTER pset: every `(semantic_id, arity)` any fuller mutation
 /// (denoise or physics-prior) can emit. The SR engine seeds its pset with one
 /// token per entry UP FRONT, so every returned candidate is always expressible
 /// — no candidate is ever dropped for lack of a token.
@@ -885,10 +885,10 @@ fn eclass_extract_hff_instrumented(
 }
 
 /// The native extension module. `module-name` in pyproject.toml is
-/// `gamakAST._gamakast`, so this initialises `_gamakast`; the Python shim
+/// `fuller._fuller`, so this initialises `_fuller`; the Python shim
 /// re-exports from it.
 #[pymodule]
-fn _gamakast(m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn _fuller(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(denoise, m)?)?;
     m.add_function(wrap_pyfunction!(denoise_karva, m)?)?;
     m.add_function(wrap_pyfunction!(denoise_karva_candidates, m)?)?;

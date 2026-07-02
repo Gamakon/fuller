@@ -1,11 +1,11 @@
 # CR: instrument `visit_subtree` to emit a before→after simplification corpus
 
 **To:** HFF engine owners
-**From:** gamakAST
+**From:** fuller
 **Why:** capture every real sympy simplification the SRBench sweep performs, as a
 labeled `(before, after)` corpus — to (a) train a kingdom classifier that routes
 expressions to the right egglog rule family from first inspection, and (b) grow
-the gamakAST parity corpus with *real* (not synthetic) expressions, frequency-
+the fuller parity corpus with *real* (not synthetic) expressions, frequency-
 weighted by what the GA actually produces.
 
 **Scope:** one file, `notebooks/_sympy_to_karva.py`, function `visit_subtree`
@@ -116,7 +116,7 @@ Then inside `visit_subtree`, wrap the existing returns. Concretely:
 
 ---
 
-## What gamakAST does with it
+## What fuller does with it
 
 1. Ingest the JSONL as a corpus (geneframe karva collection, kingdom-keyed).
 2. Offline-label each `before` by which sympy sub-simplifier reproduces `after`.

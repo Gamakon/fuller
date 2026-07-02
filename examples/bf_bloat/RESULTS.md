@@ -75,7 +75,7 @@ general loop equivalence (undecidable).
 ## Reproduce
 
 ```bash
-cd /path/to/gamakAST
+cd /path/to/fuller
 git checkout feat/bf-simplifier-bloat-study
 
 # Run tests (verifies soundness at 100%):

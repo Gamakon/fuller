@@ -7,7 +7,7 @@ numeric value, and freeze the whole table. Snap then = numeric lookup -> the
 SIMPLEST symbolic form for that value.
 
 This runs OFFLINE. It may use sympy/mpmath for high-precision values — it is NOT
-in the gamakAST runtime path; it emits a static JSON table the Rust crate loads.
+in the fuller runtime path; it emits a static JSON table the Rust crate loads.
 
 Output: parity/constants_lattice.json — a list of
   {"value": <f64>, "math": "<Math s-expr over constant Vars + Num ints>",

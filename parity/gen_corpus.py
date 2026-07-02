@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Parity corpus generator — runs SymPy ONCE, offline, to produce ground-truth
-(input, target) pairs as gamakAST `Math` s-expressions.
+(input, target) pairs as fuller `Math` s-expressions.
 
 SymPy is used here and ONLY here: to generate targets. It never appears in the
-scorer (parity/score.py), which uses gamakAST's own tools. This keeps the
+scorer (parity/score.py), which uses fuller's own tools. This keeps the
 parity claim honest — SymPy sets the homework; we grade it ourselves.
 
 Output: parity/corpus/<module>.jsonl, each line {"input": <math>, "target": <math>}.
@@ -24,7 +24,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 CORPUS = os.path.join(HERE, "corpus")
 
 # Variables available to generated expressions (real-valued, matching the
-# real-domain evaluator gamakAST uses).
+# real-domain evaluator fuller uses).
 X, Y, Z = sp.symbols("x y z", real=True)
 VARS = [X, Y, Z]
 NUM_LEAVES = [sp.Integer(-2), sp.Integer(-1), sp.Integer(2), sp.Integer(3), sp.Rational(1, 2)]
@@ -65,7 +65,7 @@ def gen_expr(depth, cfg):
 
 
 def to_math(expr):
-    """sympy expression -> gamakAST Math s-expression, or None if unconvertible."""
+    """sympy expression -> fuller Math s-expression, or None if unconvertible."""
     if expr.is_Number:
         return f"(Num {float(expr)})"
     if expr.is_Symbol:

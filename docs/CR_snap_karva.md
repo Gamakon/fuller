@@ -1,6 +1,6 @@
 # CR: `snap_karva` — egglog-backed constant-snap as a karva-in/karva-out operator
 
-**To:** gamakAST team
+**To:** fuller team
 **From:** HFF engine owners
 **Why:** replace our linear, single-pass post-evolution snap (`_snap_with_timeout` in `notebooks/hff_sr_engine.py`) with an egglog-backed proliferator that composes constant substitutions with algebraic rewrites in one e-graph saturation. Same architectural pattern as `denoise_karva` and `physics_mutate_karva` — karva in, karva out, pset passed alongside.
 
@@ -8,7 +8,7 @@
 
 ---
 
-## What gamakAST already gives us
+## What fuller already gives us
 
 | Capability | Already on main | Used by |
 |---|---|---|
@@ -26,7 +26,7 @@ This CR builds on all of those — it doesn't add new substrate, it adds a new r
 ## Signature
 
 ```python
-from gamakAST import snap_karva
+from fuller import snap_karva
 
 result = snap_karva(
     head, tail,            # karva chromosome — list of (kind, value) tuples
@@ -63,7 +63,7 @@ Same idea as our current `KNOWN_CONSTANTS`, but extended so each entry carries:
 
 - `name`: a human-readable label (`"pi"`, `"G"`, `"hbar"`)
 - `value`: the numeric value (`3.14159265358979`, `6.6743e-11`)
-- `sympy_form`: how it should appear in the rewritten expression (`"Pi"`, `"G"`, `"Hbar"`) — as a gamakAST constructor name OR a Var name we register in the egglog datatype
+- `sympy_form`: how it should appear in the rewritten expression (`"Pi"`, `"G"`, `"Hbar"`) — as a fuller constructor name OR a Var name we register in the egglog datatype
 
 ```python
 constants_library = [
@@ -75,7 +75,7 @@ constants_library = [
 ]
 ```
 
-For HFF's purpose the caller hands you the full library each call — you don't keep state. Lets us tune the library per-problem family (Feynman vs wild) without recompiling gamakAST.
+For HFF's purpose the caller hands you the full library each call — you don't keep state. Lets us tune the library per-problem family (Feynman vs wild) without recompiling fuller.
 
 ---
 

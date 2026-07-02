@@ -1,4 +1,4 @@
-# gamakAST
+# fuller
 
 Egglog-based bidirectional AST hub for symbolic expression rewriting.
 Sibling project to `hff/`.

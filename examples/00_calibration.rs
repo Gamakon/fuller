@@ -19,7 +19,7 @@ fn main() -> Result<(), String> {
     ];
 
     for case in cases {
-        let out = gamakast::calibration::simplify(case)?;
+        let out = fuller::calibration::simplify(case)?;
         println!("{case}\n  => {out}\n");
     }
 

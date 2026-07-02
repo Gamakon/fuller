@@ -1,4 +1,4 @@
-//! The nucleotable data model, adopted into gamakAST and owned here.
+//! The nucleotable data model, adopted into fuller and owned here.
 //!
 //! Subsumed from `/Users/andrewmorgan/Dev/minkymorgan/nucleotable` (schema +
 //! kingdom defs in `nucleotable/`). The design: one MASTER symbol table whose
@@ -53,7 +53,7 @@ impl Arity {
 }
 
 /// One row of the master symbol table. `symbol > 0` = function; `symbol < 0`
-/// = terminal (the nucleotable convention). `semantic_id` is what gamakAST
+/// = terminal (the nucleotable convention). `semantic_id` is what fuller
 /// rewrites on (the `Math` op); `alias` is the target-language name.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Symbol {
@@ -61,7 +61,7 @@ pub struct Symbol {
     pub symbol: i64,
     pub symbol_name: String,
     pub alias: String,
-    /// What this op COMPUTES — one of the `Math` semantic ids. The key gamakAST
+    /// What this op COMPUTES — one of the `Math` semantic ids. The key fuller
     /// rewrites on (a kingdom may give the same semantic id several aliases).
     pub semantic_id: String,
     pub arity: Arity,
@@ -114,7 +114,7 @@ impl SymbolTable {
     }
 }
 
-/// Build the master symbol table with the kingdoms gamakAST ships.
+/// Build the master symbol table with the kingdoms fuller ships.
 ///
 /// The "Symbolic Regression" kingdom is the full `Math` op set (what the live
 /// engine uses) — the typed-arity, kingdom-keyed replacement for the old flat

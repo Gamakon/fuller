@@ -27,7 +27,7 @@
 // Run:
 //   cargo run --release --example bf_hff_study --no-default-features
 
-use gamakast::bf::eval::run_bf;
+use fuller::bf::eval::run_bf;
 use ndarray::Array1;
 
 use std::io::Write;
@@ -125,7 +125,7 @@ impl Task {
         let correct = inputs.iter().zip(expected.iter())
             .filter(|(inp, exp)| {
                 matches!(run_bf(source, inp),
-                    gamakast::bf::eval::TapeResult::Ok { output } if &output == *exp)
+                    fuller::bf::eval::TapeResult::Ok { output } if &output == *exp)
             })
             .count();
         correct as f64 / inputs.len() as f64
@@ -988,7 +988,7 @@ mod tests {
             if train_set.contains(&vi[0]) { return false; }
             let expected = vec![vi[0].wrapping_add(1)];
             match run_bf(&memoriser, vi) {
-                gamakast::bf::eval::TapeResult::Ok { output } => output != expected,
+                fuller::bf::eval::TapeResult::Ok { output } => output != expected,
                 _ => true,
             }
         });

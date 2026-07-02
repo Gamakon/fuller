@@ -1,6 +1,6 @@
 # CR: extend the snap lattice — missing composed forms
 
-**To:** gamakAST team
+**To:** fuller team
 **From:** HFF engine owners
 **Why:** auditing our near-miss problems, the most common unsnappable shapes
 all involve `1/sqrt(...)` or `1/(n·sqrt(...))` patterns. The current lattice
@@ -71,7 +71,7 @@ We have no strong preference — your call which keeps perf within the 1s /
 ## Deprecation context (why this matters now)
 
 We are deprecating sympy.nsimplify throughout the engine and moving to
-gamakAST snap exclusively. The two remaining nsimplify call sites
+fuller snap exclusively. The two remaining nsimplify call sites
 (`_clean_const` in `_extract_best` for LSM coefficients; `snap_constants`
 in `hff_geppy_helpers.py` for the in-compress snap) will both be replaced
 with `snap_karva`. For that to be a clean replacement, snap_karva needs

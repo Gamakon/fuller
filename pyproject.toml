@@ -3,16 +3,16 @@ requires = ["maturin>=1.5,<2.0"]
 build-backend = "maturin"
 
 [project]
-name = "gamakAST"
+name = "fuller"
 version = "0.1.0"
 description = "Egglog-based bidirectional AST hub for symbolic expression rewriting"
 requires-python = ">=3.9"
 authors = [{ name = "Andrew Morgan", email = "andrew@gamakon.ai" }]
-license = { text = "MIT" }
+license = { text = "GPL-3.0-or-later" }
 
 [tool.maturin]
 # Build the cdylib with the `python` feature so PyO3 is compiled in.
 features = ["python"]
-# The Python shim package lives under python/gamakAST/.
+# The Python shim package lives under python/fuller/.
 python-source = "python"
-module-name = "gamakAST._gamakast"
+module-name = "fuller._fuller"

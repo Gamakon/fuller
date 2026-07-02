@@ -1,11 +1,11 @@
-//! gamakAST — an egglog-based bidirectional AST hub for symbolic expression
+//! fuller — an egglog-based bidirectional AST hub for symbolic expression
 //! rewriting.
 //!
-//! gamakAST drives egglog 2.0 (Rust -> egglog -> saturate -> extract -> Rust)
+//! fuller drives egglog 2.0 (Rust -> egglog -> saturate -> extract -> Rust)
 //! over a real-domain `Math` datatype (`expr`), with algebra/power rulesets
 //! (`ruleset`), a real-domain evaluator (`eval`), and the data-aware `denoise`
 //! mutation operator (`extract`). The `python` feature exposes `denoise` to
-//! the Python SR engine via PyO3 (`from gamakAST import denoise`).
+//! the Python SR engine via PyO3 (`from fuller import denoise`).
 
 /// Hard depth cap for expression trees crossing the crate boundary.
 ///

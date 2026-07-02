@@ -1,6 +1,6 @@
-"""sympy <-> gamakAST `Math` s-expression bridge.
+"""sympy <-> fuller `Math` s-expression bridge.
 
-The ONLY place sympy meets gamakAST surface syntax. Converts a sympy
+The ONLY place sympy meets fuller surface syntax. Converts a sympy
 expression into the egglog `Math` s-expression that `proves_equal`,
 `denoise`, etc. accept. Real-domain ops only; returns None for anything the
 `Math` sort doesn't model (the caller treats None as "unconvertible").
@@ -30,7 +30,7 @@ def _table():
 
 
 def to_math(expr):
-    """sympy expression -> gamakAST `Math` s-expression string, or None if it
+    """sympy expression -> fuller `Math` s-expression string, or None if it
     contains an op the `Math` sort does not model."""
     import sympy as sp
     # sympy singletons FIRST: pi/E are NumberSymbol, which is NOT a Number
@@ -105,7 +105,7 @@ def _tokenize_math(s):
 
 
 def from_math(s):
-    """gamakAST `Math` s-expression string -> sympy expression, or None if the
+    """fuller `Math` s-expression string -> sympy expression, or None if the
     string is malformed. Inverse of `to_math`; the ONLY sympy-side decoder of
     the `Math` grammar — consumers must not re-implement this table.
 

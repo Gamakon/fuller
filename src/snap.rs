@@ -8,7 +8,7 @@
 //!      (pi, e, sqrt2, 1/2, G, c, ...) is corrected to that constant's exact
 //!      value, and recorded in a `{value -> symbol}` annotation map so the
 //!      caller can render the symbol. The `Math` expression stays pure-numeric
-//!      — gamakAST does not add a symbol node; rendering is the caller's job.
+//!      — fuller does not add a symbol node; rendering is the caller's job.
 //!
 //!   2. (Obvious algebraic rearrangement is handled by the existing denoise
 //!      algebra ruleset — `x*1->x`, `sqrt(x^2)->|x|`, fold — not duplicated

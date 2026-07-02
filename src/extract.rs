@@ -614,7 +614,7 @@ fn eval_expr_rows(math: &str, rows: &[Vec<(String, f64)>]) -> Result<Vec<f64>, S
 
 /// Like `denoise`, but returns ALL candidates instead of picking one by a
 /// hardcoded tolerance. The caller (engine) is expected to score each via
-/// HFF and pick the lowest-angle one — gamakAST's job is to PROPOSE
+/// HFF and pick the lowest-angle one — fuller's job is to PROPOSE
 /// candidates, the engine's HFF cone DISPOSES.
 ///
 /// Candidates include:
