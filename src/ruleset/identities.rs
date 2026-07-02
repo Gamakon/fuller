@@ -54,6 +54,14 @@ pub const ALGEBRA_RULESET: &str = r#"
 (rewrite (Exp (Num 0.0)) (Num 1.0) :ruleset algebra)
 (rewrite (Log (Num 1.0)) (Num 0.0) :ruleset algebra)
 
+; ---- Abs under a proven-positive argument (Category 2, guarded) ----
+; |x| = x for x > 0. The guard is caller-supplied domain knowledge (e.g. the
+; SR engine's var_ranges) or derived (Exp positivity, positive^p, ...). This
+; is the rule that turns Abs(a^(3/2)) into a^(3/2) once `a` is known positive
+; — Abs wrappers from protected-sqrt chains are the most common reason an
+; R^2=1.0 discovery fails SRBench's exact symbolic-solution check.
+(rewrite (Abs x) x :when ((is-positive x)) :ruleset algebra)
+
 ; ---- Cancellation on RAW div only (Category 2, guarded; NEVER protected) ----
 ; x / x = 1  (raw Div, x != 0). protected_div(x,x) is 0 at x=0 -> excluded.
 (rewrite (Div x x) (Num 1.0) :when ((is-nonzero x)) :ruleset algebra)
@@ -96,7 +104,7 @@ mod tests {
         egraph
             .parse_and_run_program(
                 None,
-                &format!("(let __r {input})\n(run-schedule (saturate (run algebra)))"),
+                &format!("(let __r {input})\n(run-schedule (saturate (run guards) (run algebra)))"),
             )
             .map_err(|e| format!("insert/saturate {input:?}: {e}"))?;
         let (sort, value) = egraph
@@ -119,7 +127,9 @@ mod tests {
         egraph
             .parse_and_run_program(
                 None,
-                &format!("(let __r {input})\n{facts}\n(run-schedule (saturate (run algebra)))"),
+                &format!(
+                    "(let __r {input})\n{facts}\n(run-schedule (saturate (run guards) (run algebra)))"
+                ),
             )
             .map_err(|e| format!("insert/saturate {input:?}: {e}"))?;
         let (sort, value) = egraph.eval_expr(&exprs::var("__r")).map_err(|e| format!("eval: {e}"))?;
@@ -203,6 +213,57 @@ mod tests {
         )
         .unwrap();
         assert_eq!(got, "(Num 1.0)", "x/x should cancel once x is known nonzero");
+    }
+
+    /// Guarded Abs-shed: |x| = x fires ONLY with a positivity proof.
+    #[test]
+    fn abs_sheds_only_under_positivity() {
+        // Bare |a|: no proof -> unchanged.
+        let bare = simplify(r#"(Abs (Var "a"))"#).unwrap();
+        assert_eq!(bare, r#"(Abs (Var "a"))"#, "unguarded Abs must not shed");
+        // Asserted positive -> sheds.
+        let shed = simplify_with_facts(r#"(Abs (Var "a"))"#, r#"(is-positive (Var "a"))"#).unwrap();
+        assert_eq!(shed, r#"(Var "a")"#);
+        // Derived positivity (Exp > 0 always) -> sheds with no assertion.
+        let exp = simplify(r#"(Abs (Exp (Var "x")))"#).unwrap();
+        assert_eq!(exp, r#"(Exp (Var "x"))"#);
+    }
+
+    /// Positivity propagates through Pow: is-positive(a) => is-positive(a^p),
+    /// so Abs(Pow a p) sheds — the keplers3 Abs(a^(3/2)) shape.
+    #[test]
+    fn abs_of_pow_sheds_when_base_positive() {
+        let got = simplify_with_facts(
+            r#"(Abs (Pow (Var "a") (Num 1.5)))"#,
+            r#"(is-positive (Var "a"))"#,
+        )
+        .unwrap();
+        assert_eq!(got, r#"(Pow (Var "a") (Num 1.5))"#);
+        // And WITHOUT the fact it must stay wrapped.
+        let bare = simplify(r#"(Abs (Pow (Var "a") (Num 1.5)))"#).unwrap();
+        assert_eq!(bare, r#"(Abs (Pow (Var "a") (Num 1.5)))"#);
+    }
+
+    /// Guard PROPAGATION must derive facts on its own — not only accept
+    /// caller-asserted ones. `Exp x` is positive hence nonzero, so
+    /// Exp(x)/Exp(x) cancels with NO assertion. This is the regression test
+    /// for the wiring: the guards ruleset must actually run in the schedule
+    /// (untagged rules land in egglog's default ruleset, which named runs
+    /// never execute — the propagation was silently dead).
+    #[test]
+    fn guard_propagation_derives_exp_nonzero() {
+        let got = simplify(r#"(Div (Exp (Var "x")) (Exp (Var "x")))"#).unwrap();
+        assert_eq!(got, "(Num 1.0)", "exp(x)/exp(x) must cancel via derived positivity");
+    }
+
+    /// Literal-sign propagation: a nonzero numeric literal is provably
+    /// nonzero, so constant/constant cancels with no assertion.
+    #[test]
+    fn guard_propagation_derives_literal_nonzero() {
+        let got = simplify(r#"(Div (Num 2.0) (Num 2.0))"#).unwrap();
+        assert_eq!(got, "(Num 1.0)");
+        let neg = simplify(r#"(Div (Num -3.0) (Num -3.0))"#).unwrap();
+        assert_eq!(neg, "(Num 1.0)");
     }
 
     /// The one sound protected rule fires: protected_sqrt(x^2) -> |x|.

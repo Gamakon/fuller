@@ -1,0 +1,222 @@
+%%
+%% HFF for Heterogeneous Objectives and Tournaments
+%% Working draft — building from the appendix forward.
+%%
+\documentclass[sigconf]{acmart}
+
+\usepackage{amsmath}
+\usepackage{booktabs}
+\usepackage{float}
+\usepackage{algorithm}
+\usepackage{algorithmic}
+\usepackage{geometry}
+
+\begin{document}
+
+\title{Hyperspherical Fitness Functions for Heterogeneous Objectives and Tournaments}
+
+\author{Andrew James Morgan}
+\email{andrew@gamakon.ai}
+\affiliation{%
+  \institution{Gamakon Ltd.}
+  \city{London}
+  \country{United Kingdom}
+}
+\renewcommand{\shortauthors}{Morgan}
+
+\maketitle
+
+%% ============================================================================
+%% BODY SECTIONS — stubbed, written last.
+%% ============================================================================
+\section{Introduction}
+\label{sec:intro}
+% TODO
+
+\section{Method}
+\label{sec:method}
+
+\paragraph{Equivalence classes as tournaments.} An equality-saturation engine
+(here egglog) takes an expression and a rule set and grows an e-graph until no
+new equalities appear, producing an equivalence class: a set of forms that all
+denote the same function. Equivalence holds in the \emph{goal} domain, so no
+member is preferred on behaviour. Selecting one member --- \emph{extraction} ---
+is therefore a tournament over goal-equivalent candidates, decided entirely on
+properties of \emph{form}. Conventional extraction minimises a single scalar
+cost; we instead score each member on a vector of form measures and rank by
+hyperspherical fitness.
+
+\paragraph{Pattern-dependent measures.} We introduce a library of guarded
+measures written in an \texttt{awk}-like form
+$\langle\textit{pattern}\rangle\ \{\textit{measure}\}$: a measure is collected
+for a candidate only if its AST contains the pattern (Appendix~%
+\ref{app:metrics}). Each measure is a cheap, deterministic, data-free tree walk,
+defined to emit a value in $[0,1]$ with $0$ best. Because patterns fire
+selectively, two members of the same class may report \emph{different} numbers
+of measures, of different kinds --- a candidate with no trigonometric nodes
+never reports the trig measures. The objective set is thus emergent from each
+form's structure, not fixed across the class. We always include at least one
+universally-firing measure --- node count (parsimony) --- so that every
+candidate has a non-empty, non-zero measure vector and the projection below is
+well-defined.
+
+\paragraph{Per-class angles via the augmented projection.} For a candidate with
+measure vector $\mathbf{x}\in[0,1]^k$ (its own $k$, set by which patterns fired),
+we reuse the HFF-TrueNorth augmentation~\cite{morgan2026hff,stolfi1991}: the
+direction $\mathbf{y}=\mathbf{x}/\|\mathbf{x}\|$ is undefined at the ideal
+$\mathbf{x}=\mathbf{0}$, so we adjoin an energy score
+$e=\max(0,\,1-\|\mathbf{x}\|^2/k)$ and form
+$\mathbf{y}'=(\sqrt{1-e^2}\,\mathbf{y},\,e)\in S^{k}$, giving a single angle
+\begin{equation}
+\label{eq:class-angle}
+\theta = \arccos(e), \qquad \theta=0 \ \text{iff all measures are } 0.
+\end{equation}
+Each equivalent form collapses to one angle: small magnitude (few, low penalties)
+and balanced direction yield small $\theta$.
+
+\paragraph{Fixed-dimension scoring (an empirical correction).} Our first design
+scored each form on only the rules that \emph{fired} --- a genuinely
+different-dimension vector per form --- and compared the angles via the CDF
+correction~\cite{cai2013angles} (under uniform sampling on $S^{k-1}$,
+$P(\theta\le t) = I_{\sin^2 t}((k-1)/2,\,1/2)$), expecting that to put a 3-axis
+and an 8-axis form on one yardstick. \textbf{Measured, this inverts the ranking.}
+A form that fires \emph{more} rules occupies a higher-dimensional sphere, where
+the beta-CDF left tail is fatter, so a high-dimensional vector of moderate
+penalties earns a \emph{rarer} percentile than a low-dimensional vector of
+larger penalties. Concretely, a clean $x\cdot y$ (3 axes, $\theta=0.318$,
+$\mathrm{CDF}=0.050$) was beaten by a self-nested $\sin(\sin(\exp(\cdots)))$ junk
+form (8 axes, $\theta=0.763$, $\mathrm{CDF}=0.028$) --- the junk scored
+\emph{better} purely by firing more measures. The TrueNorth angle itself is
+correct ($0.763>0.318$); the cross-dimension CDF step is what rewards
+dimensionality.
+
+The fix is to score every form at one \emph{fixed} dimension $k$ = the full rule
+count. A non-firing rule contributes a \emph{neutral} value $0.5$ (we tested
+$0$, $0.5$, $1$: padding $1$ inverts the order --- a clean low-firing form like
+$x\!\cdot\!y$ then scores \emph{worst}, $\theta=1.21$, because its six unfired
+axes read as maximal defects; padding $0$ or $0.5$ both rank clean first, and
+$0.5$ is the principled neutral --- a pattern that did not match is neither a
+perfect $0$ nor a failure $1$, it simply did not vote). The objective vector is
+then the same width for every member, the angle is comparable directly, and at
+fixed $k$ the CDF correction is only a monotone reshaping of $\theta$ --- so we
+rank on the raw TrueNorth angle and omit it. Sorting the angles totally orders
+the class; the minimum is the structurally preferred behaviour-preserving form,
+no hand-tuned weights. (The per-form CDF-across-different-$k$ comparison remains
+valid for HFF's original setting --- a fixed-objective population --- but not for
+selecting among variable-defect members of one e-class.)
+
+\paragraph{Enumeration must seed the input.} A second pitfall is independent of
+scoring. The extractor enumerates an e-class's members under a bound; for a
+richly-expanded class the bound fills with expanded forms before the recursive
+walk reaches the compact e-node. We observed a gene whose own form was
+$(y_2-\varepsilon_0-y_1)^2$ be ranked behind 2000 multiplied-out variants ---
+the compact form was generated (the scalar extractor found it) but never
+enumerated for scoring. The fix is to \emph{seed} the candidate list with the
+input form itself: it is a member of its own class by construction, so scoring it
+explicitly guarantees the tournament can never do worse than the form it started
+with. With the seed, HFF correctly returns the compact square.
+
+\paragraph{A near-exact snap is not a discovery.} Recovering a readable law
+chains structural contraction (above) with snapping the regression's fitted
+coefficient $a$ to a lattice constant. The residual of that snap is a
+\emph{necessary} but not sufficient signal. We measured a gene for the
+Euclidean-distance law $\sqrt{(x_2-x_1)^2+(y_2-y_1)^2}$ whose fitted $a=1.7320508$
+matched $\sqrt3$ to $1.5\times10^{-11}$ --- near machine precision --- yet $\sqrt3$
+appears nowhere in the truth: the gene had fit the wrong subset of the data, and
+$a$ landed on $\sqrt3$ by coincidence. A tiny residual alone therefore cannot
+certify a constant; only re-checking that the snapped law reproduces the held-out
+data can. The recovery tool consequently emits a labelled \emph{candidate} and
+defers the verdict to the data, never reporting a coincidence as a find.
+
+\section{Experiments}
+\label{sec:experiments}
+% TODO: (1) GA tournaments (GECCO result). (2) e-graph extraction as a
+% tournament over goal-equivalent forms, scored by the pattern-dependent
+% metric library of Appendix~\ref{app:metrics}.
+
+\section{Discussion}
+\label{sec:discussion}
+% TODO
+
+\section{Conclusion}
+\label{sec:conclusion}
+% TODO
+
+%% ============================================================================
+%% APPENDIX — written first.
+%% ============================================================================
+\appendix
+
+\section{Pattern-Dependent Metric Library}
+\label{app:metrics}
+
+The extraction tournament operates over a saturated equivalence class: every
+member denotes the same function (equivalence holds in the \emph{goal} domain),
+so no member is preferred on behaviour. Selection instead ranks members on
+properties of \emph{form}. Each property is a cheap, deterministic, data-free
+walk of the candidate's abstract syntax tree, and each is oriented so that
+\textbf{0 is best} (lower is preferred), matching the minimisation target of
+HFF-TrueNorth.
+
+A metric is written in a guarded, \texttt{awk}-like form
+\(\langle\textit{pattern}\rangle\ \{\textit{measure}\}\): the measure is
+collected only for candidates whose AST contains the pattern. A candidate that
+contains no trigonometric nodes simply does not report the trig metrics. This is
+the source of \emph{heterogeneity}: two members of the same class may be scored
+on different numbers of axes, of different kinds and units. The metrics are made
+cross-comparable by the CDF-corrected angular distance of
+Section~\ref{sec:method}, which converts a raw angle in a candidate's own
+objective dimensionality into a dimension-adjusted percentile rank.
+
+The library is open: any guarded measure that returns a non-negative scalar may
+be added, and HFF assembles whichever subset applies per candidate. Table~%
+\ref{tab:metrics} lists the initial set used in the extraction experiments.
+
+Every measure is \textbf{defined to emit a value in $[0,1]$} (0 best), so a
+candidate's measures form a clean vector with no per-batch rescaling: the vector
+is L2-normalised, the angle to the pole is taken, and only the resulting angles
+are CDF-corrected (each in its own dimensionality) to become cross-comparable.
+The \emph{Normalisation} column gives the bounded form for each measure. Raw
+unbounded counts use the saturating map $c \mapsto 1 - 1/(1+c/s)$ (0 at $c=0$,
+$\to 1$ as $c$ grows, scale $s$ per measure); ratios and indicators are already
+in $[0,1]$ by construction.
+
+\begin{table*}[t]
+\small
+\centering
+\caption{Initial pattern-dependent metric library. Each row is a guarded
+measure $\langle\textit{pattern}\rangle\ \{\textit{measure}\}$ computed by one
+AST walk; 0 is best, and the \emph{Normalisation} column maps it into $[0,1]$ at
+source so the per-candidate measure vector needs no later rescaling. Self-nesting
+of transcendentals is the strongest ``curve-fitter, not a law'' signal observed
+in symbolic-regression near-misses.}
+\label{tab:metrics}
+\begin{tabular}{@{}llp{3.6cm}l@{}}
+\toprule
+\textbf{Pattern} & \textbf{Measure} & \textbf{Rationale} & \textbf{Normalisation $\to[0,1]$} \\
+\midrule
+\texttt{trig(trig(\ldots))} & \texttt{self\_nested\_trig\_count} & $\sin(\sin x)$: no physical law self-nests trig & $1-1/(1+c)$ \\
+\texttt{f(f(\ldots))}, $f$ transc. & \texttt{self\_nested\_transc\_count} & $\exp(\exp)$, $\log(\log)$ — fitter signature & $1-1/(1+c)$ \\
+\texttt{transc(transc(\ldots))} & \texttt{transc\_nesting\_depth} & any nonlinear-in-nonlinear depth & $1-1/(1+d)$ \\
+\texttt{.*} & \texttt{max\_tree\_depth} & longest root-to-leaf path & $1-1/(1+d/s)$ \\
+\texttt{.*} & \texttt{node\_count} & total nodes (parsimony) & $1-1/(1+n/s)$ \\
+\texttt{Div(\_,0)|Log($\le$0)|Sqrt(neg)} & \texttt{domain\_violation\_count} & poles / domain breaches & $\mathbf{1}[c>0]$ \\
+\texttt{Div(\_, var-expr)} & \texttt{variable\_denominator\_count} & asymptote / blow-up risk & $1-1/(1+c)$ \\
+\texttt{Num} & \texttt{distinct\_constant\_count} & free parameters (overfit proxy) & $1-1/(1+c/s)$ \\
+\texttt{transc op} & \texttt{transcendental\_count} & universal-approximator load & $1-1/(1+c/s)$ \\
+\texttt{Pow(\_, non-int)} & \texttt{fractional\_power\_count} & radical noise & $1-1/(1+c)$ \\
+\texttt{Neg|Sub} & \texttt{sign\_op\_count} & cancellation-prone structure & $1-1/(1+c/s)$ \\
+\texttt{identical subtree} & \texttt{repeated\_subexpr\_count} & CSE-able $\Rightarrow$ bloated & $1-1/(1+c)$ \\
+\texttt{.*} & \texttt{operator\_type\_diversity} & number of distinct op kinds & $k/k_{\max}$ \\
+\texttt{Mul(Num,Mul(Num,\_))} & \texttt{unfolded\_constant\_count} & should have constant-folded & $1-1/(1+c)$ \\
+\texttt{top-level Add chain} & \texttt{additive\_term\_count} & number of summands & $1-1/(1+c/s)$ \\
+\texttt{.*} & \texttt{max\_arity\_used} & structural width & $a/a_{\max}$ \\
+\texttt{Var} & \texttt{variable\_reuse\_count} & repeated-variable load & $1-1/(1+c/s)$ \\
+\texttt{Pow(\_, large)} & \texttt{max\_exponent\_magnitude} & high-degree stiffness & $1-1/(1+|e|/s)$ \\
+\texttt{.*} & \texttt{tree\_imbalance} & leaf-depth variance (ad-hoc shape) & $\tanh(\mathrm{var})$ \\
+\texttt{.*} & \texttt{constant\_to\_variable\_ratio} & constant-heavy $\Rightarrow$ fitter & $n_c/(n_c{+}n_v)$ \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+\end{document}

@@ -71,22 +71,45 @@ pub const MATH_DATATYPE: &str = r#"
 ///   * `(is-nonzero  m)` — `m` is known != 0  (guards div/inv identities)
 ///
 /// Facts are introduced by *propagation* (e.g. `Exp x` is always positive;
-/// a product/quotient of positives is positive; positive implies nonzero) and
-/// by the caller asserting a fact for a specific node (e.g. `(is-nonzero (Var
-/// "x"))` when the engine knows a variable's domain). A bare free variable is
-/// NOT assumed nonzero/positive — guarded rules conservatively do not fire on
-/// it, which is the sound default.
+/// a product/quotient of positives is positive; positive implies nonzero;
+/// a nonzero numeric literal is nonzero) and by the caller asserting a fact
+/// for a specific node (e.g. `(is-nonzero (Var "x"))` when the engine knows a
+/// variable's domain). A bare free variable is NOT assumed nonzero/positive —
+/// guarded rules conservatively do not fire on it, which is the sound default.
+///
+/// The propagation rules live in the named `guards` ruleset. IMPORTANT: egglog
+/// only runs NAMED rulesets that a schedule mentions — a rule without a
+/// `:ruleset` tag lands in the default ruleset, which `(run algebra)` etc.
+/// never execute. Every schedule in this crate therefore includes `guards` in
+/// its combined ruleset (or runs it alongside); a schedule that forgets it
+/// gets no derived facts and the guarded rules silently never fire.
 pub const GUARD_RELATIONS: &str = r#"
 (relation is-positive (Math))
 (relation is-nonzero (Math))
+(ruleset guards)
 
 ; Exp is positive on all reals -> seeds the log/exp domain.
-(rule ((= e (Exp x))) ((is-positive e) (is-nonzero e)))
+(rule ((= e (Exp x))) ((is-positive e) (is-nonzero e)) :ruleset guards)
 ; positivity implies non-zero.
-(rule ((is-positive m)) ((is-nonzero m)))
+(rule ((is-positive m)) ((is-nonzero m)) :ruleset guards)
 ; product / quotient of positives is positive.
-(rule ((is-positive a) (is-positive b) (= m (Mul a b))) ((is-positive m)))
-(rule ((is-positive a) (is-positive b) (= m (Div a b))) ((is-positive m)))
+(rule ((is-positive a) (is-positive b) (= m (Mul a b))) ((is-positive m)) :ruleset guards)
+(rule ((is-positive a) (is-positive b) (= m (Div a b))) ((is-positive m)) :ruleset guards)
+; numeric literals carry their own sign: a positive literal is positive, a
+; negative one is at least nonzero (both unlock the guarded cancellations for
+; constant denominators).
+(rule ((= e (Num n)) (> n 0.0)) ((is-positive e)) :ruleset guards)
+(rule ((= e (Num n)) (< n 0.0)) ((is-nonzero e)) :ruleset guards)
+; positivity flows through the power/root/reciprocal ops (b > 0 => b^p > 0 for
+; any real p; x != 0 => x^2 > 0; |x| > 0 iff x != 0). These are what let a
+; caller-asserted `is-positive a` reach Abs(Pow a p) and shed the Abs — the
+; SRBench exact-recovery killer.
+(rule ((is-positive b) (= e (Pow b p))) ((is-positive e)) :ruleset guards)
+(rule ((is-nonzero x) (= e (Pow2 x))) ((is-positive e)) :ruleset guards)
+(rule ((is-positive x) (= e (Pow3 x))) ((is-positive e)) :ruleset guards)
+(rule ((is-positive x) (= e (Sqrt x))) ((is-positive e)) :ruleset guards)
+(rule ((is-positive x) (= e (Inv x))) ((is-positive e)) :ruleset guards)
+(rule ((is-nonzero x) (= e (Abs x))) ((is-positive e)) :ruleset guards)
 "#;
 
 /// Build a fresh e-graph with the `Math` datatype loaded (no rules yet).

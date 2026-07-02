@@ -678,7 +678,6 @@ fn next_axis_pair(term: &Node, groups: &[Vec<String>]) -> Option<(String, String
     let g = groups.get(next)?;
     let p = g.get(ia)?.clone();
     let q = g.get(ib)?.clone();
-    let _ = gb;
     Some((p, q))
 }
 
@@ -801,7 +800,7 @@ fn replace_at_path(root: &Node, path: &[usize], repl: &Node) -> Node {
 fn parse(s: &str) -> Option<Node> {
     let toks = tok(s);
     let mut pos = 0;
-    let n = pparse(&toks, &mut pos)?;
+    let n = pparse(&toks, &mut pos, 0)?;
     if pos == toks.len() { Some(n) } else { None }
 }
 
@@ -833,17 +832,30 @@ fn tok(s: &str) -> Vec<String> {
     out
 }
 
-fn pparse(toks: &[String], pos: &mut usize) -> Option<Node> {
+fn pparse(toks: &[String], pos: &mut usize, depth: usize) -> Option<Node> {
+    // Depth cap: a pathologically nested gene must fail the parse (the caller
+    // returns an Err), not overflow the stack — every later walk over the tree
+    // (sites/replace/to_math/drop) inherits this bound.
+    if depth > crate::MAX_EXPR_DEPTH {
+        return None;
+    }
     if toks.get(*pos)? != "(" { return None; }
     *pos += 1;
     let head = toks.get(*pos)?.clone();
     *pos += 1;
     let node = match head.as_str() {
-        "Num" => { let v: f64 = toks.get(*pos)?.parse().ok()?; *pos += 1; Node::Num(v) }
+        "Num" => {
+            let v: f64 = toks.get(*pos)?.parse().ok()?;
+            // "inf"/"NaN" parse as f64 but render to (Num ..) literals egglog
+            // cannot read — refuse them so no candidate is unparseable.
+            if !v.is_finite() { return None; }
+            *pos += 1;
+            Node::Num(v)
+        }
         "Var" => { let n = toks.get(*pos)?.trim_matches('"').to_string(); *pos += 1; Node::Var(n) }
         ctor => {
             let mut ch = Vec::new();
-            while *pos < toks.len() && toks[*pos] != ")" { ch.push(pparse(toks, pos)?); }
+            while *pos < toks.len() && toks[*pos] != ")" { ch.push(pparse(toks, pos, depth + 1)?); }
             Node::App(ctor.to_string(), ch)
         }
     };

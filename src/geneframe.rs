@@ -183,6 +183,30 @@ mod tests {
         assert_eq!(sr.len(), 22, "SR kingdom should have the 22 Math ops");
     }
 
+    /// LOCKSTEP with `karva::master_pset()`: the SR kingdom and the flat
+    /// master pset are two renderings of the same op set. Without this test,
+    /// adding an op to karva.rs silently drifts geneframe (each table was a
+    /// hand-copy). When geneframe becomes the owner, master_pset() should be
+    /// DERIVED from the kingdom query and this test becomes tautological.
+    #[test]
+    fn sr_kingdom_locksteps_with_master_pset() {
+        let mut from_kingdom: Vec<(String, usize)> = master_table()
+            .kingdom("Symbolic Regression")
+            .iter()
+            .map(|s| (s.semantic_id.clone(), s.arity.total_in() as usize))
+            .collect();
+        let mut from_pset: Vec<(String, usize)> = crate::karva::master_pset()
+            .into_iter()
+            .map(|(s, a)| (s.to_string(), a))
+            .collect();
+        from_kingdom.sort();
+        from_pset.sort();
+        assert_eq!(
+            from_kingdom, from_pset,
+            "geneframe SR kingdom and karva::master_pset() have drifted apart"
+        );
+    }
+
     #[test]
     fn max_arity_is_two_for_sr() {
         // binary ops (add/mul/div/pow/...) give max total input arity 2.

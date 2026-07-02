@@ -1,0 +1,8 @@
+# The PyO3 entry points in src/python.rs mirror the Python-facing keyword
+# signatures 1:1 (head, tail, variables, functions, rnc_values, rows, ...).
+# Bundling them into a struct would break the Python API, so the argument
+# count is a property of the interface, not a code smell. Raising the
+# project-wide threshold here (visibly, in one place) replaces the six
+# per-function #[allow(clippy::too_many_arguments)] suppressions that the
+# zero-warnings policy forbids. Widest signature: denoise_karva (11 incl. py).
+too-many-arguments-threshold = 12

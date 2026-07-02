@@ -18,6 +18,10 @@ pub enum EvalError {
     UnboundVar(String),
     /// A constructor / arity we don't recognise as a `Math` op.
     BadNode(String),
+    /// The term nests deeper than [`crate::MAX_EXPR_DEPTH`] — refused before
+    /// the recursive walk can overflow the stack (rayon workers have small
+    /// stacks, and an overflow is an uncatchable abort).
+    TooDeep,
 }
 
 impl std::fmt::Display for EvalError {
@@ -25,6 +29,9 @@ impl std::fmt::Display for EvalError {
         match self {
             EvalError::UnboundVar(n) => write!(f, "unbound variable {n:?}"),
             EvalError::BadNode(n) => write!(f, "unevaluable node {n:?}"),
+            EvalError::TooDeep => {
+                write!(f, "term deeper than MAX_EXPR_DEPTH ({})", crate::MAX_EXPR_DEPTH)
+            }
         }
     }
 }
@@ -40,10 +47,13 @@ pub type Env<'a> = dyn Fn(&str) -> Option<f64> + 'a;
 /// real value (which may be NaN for out-of-domain operations) or an error for
 /// structural problems (unbound var, unknown node).
 pub fn eval_term(termdag: &TermDag, root: TermId, env: &Env) -> Result<f64, EvalError> {
-    eval_inner(termdag, root, env)
+    eval_inner(termdag, root, env, 0)
 }
 
-fn eval_inner(termdag: &TermDag, id: TermId, env: &Env) -> Result<f64, EvalError> {
+fn eval_inner(termdag: &TermDag, id: TermId, env: &Env, depth: usize) -> Result<f64, EvalError> {
+    if depth > crate::MAX_EXPR_DEPTH {
+        return Err(EvalError::TooDeep);
+    }
     match termdag.get(id) {
         Term::Lit(lit) => match lit {
             egglog::ast::Literal::Float(of) => Ok(of.into_inner()),
@@ -51,7 +61,7 @@ fn eval_inner(termdag: &TermDag, id: TermId, env: &Env) -> Result<f64, EvalError
             other => Err(EvalError::BadNode(format!("{other:?}"))),
         },
         Term::Var(name) => env(name).ok_or_else(|| EvalError::UnboundVar(name.clone())),
-        Term::App(op, args) => eval_app(termdag, op, args, env),
+        Term::App(op, args) => eval_app(termdag, op, args, env, depth),
     }
 }
 
@@ -60,9 +70,12 @@ fn eval_app(
     op: &str,
     args: &[TermId],
     env: &Env,
+    depth: usize,
 ) -> Result<f64, EvalError> {
     // Helper to evaluate the nth child.
-    let child = |i: usize| -> Result<f64, EvalError> { eval_inner(termdag, args[i], env) };
+    let child = |i: usize| -> Result<f64, EvalError> {
+        eval_inner(termdag, args[i], env, depth + 1)
+    };
 
     let val = match (op, args.len()) {
         // Leaves wrapped as constructors.
@@ -102,8 +115,17 @@ fn eval_app(
         ("Pow", 2) => {
             // a^b in the real domain. f64::powf already yields NaN for a
             // negative base with a non-integer exponent, which is exactly the
-            // real-domain rule (no complex branch).
-            child(0)?.powf(child(1)?)
+            // real-domain rule (no complex branch). But 0^negative is a
+            // division by zero (powf would give +inf), and the crate's
+            // div0 contract is NaN — keep Pow consistent with Div/Inv, or a
+            // rewrite like Pow(x,-1) <-> Inv(x) would put a +inf-valued and a
+            // NaN-valued member in the same e-class.
+            let (a, b) = (child(0)?, child(1)?);
+            if a == 0.0 && b < 0.0 {
+                f64::NAN
+            } else {
+                a.powf(b)
+            }
         }
         ("Log", 1) => {
             let a = child(0)?;
@@ -126,14 +148,14 @@ fn eval_app(
             a.ln()
         }
         ("ProtectedExp", 1) => {
-            // Match the engine EXACTLY: uncapped exp, returning +inf on
-            // overflow (and on a non-finite input). f64::exp already yields
-            // +inf above ~709.78, matching Python math.exp's OverflowError ->
-            // inf path. Critically NOT exp(min(x,700)): a large-finite return
-            // (~1e304) propagates through products where the engine's inf would
-            // poison them to inf/NaN — an observable divergence.
-            let a = child(0)?;
-            if a.is_finite() { a.exp() } else { f64::INFINITY }
+            // Match the engine EXACTLY: Python math.exp semantics with the
+            // engine's OverflowError -> +inf guard. f64::exp already does all
+            // of it: +inf above ~709.78 (the overflow path), exp(-inf) = 0.0,
+            // exp(NaN) = NaN. Critically NOT exp(min(x,700)) (a large-finite
+            // return diverges observably from the engine's inf), and NOT
+            // "any non-finite -> +inf" (that maps -inf to +inf — a sign error
+            // that poisons downstream products).
+            child(0)?.exp()
         }
         ("ProtectedInv", 1) => {
             let a = child(0)?;
@@ -230,6 +252,36 @@ mod tests {
         let big = env(&[("x", 1000.0)]);
         assert!(eval(r#"(ProtectedExp (Var "x"))"#, &big).unwrap().is_infinite(),
             "protected_exp(1000) must be +inf, not a capped finite");
+    }
+
+    #[test]
+    fn pow_zero_to_negative_is_nan_like_div0() {
+        // 0^-1 is a division by zero; the crate contract is NaN, and rational
+        // rules rewrite Pow(x,-1) <-> Inv(x), so the two must agree at x=0.
+        let z = env(&[("x", 0.0)]);
+        assert!(
+            eval(r#"(Pow (Var "x") (Num -1.0))"#, &z).unwrap().is_nan(),
+            "0^-1 must be NaN, matching Inv(0)"
+        );
+        assert!(eval(r#"(Pow (Var "x") (Num -2.0))"#, &z).unwrap().is_nan());
+    }
+
+    #[test]
+    fn protected_exp_of_neg_inf_is_zero_and_nan_propagates() {
+        // exp(-inf) = 0 in the engine (math.exp(-inf) == 0.0), NOT +inf.
+        // Build -inf as Neg(Exp(1000)).
+        let e = env(&[("x", 1000.0)]);
+        assert_eq!(
+            eval(r#"(ProtectedExp (Neg (Exp (Var "x"))))"#, &e).unwrap(),
+            0.0,
+            "protected_exp(-inf) must be 0"
+        );
+        // exp(NaN) = NaN in the engine (math.exp(nan) is nan). Sqrt(-4) = NaN.
+        let n = env(&[("x", -4.0)]);
+        assert!(
+            eval(r#"(ProtectedExp (Sqrt (Var "x")))"#, &n).unwrap().is_nan(),
+            "protected_exp(NaN) must propagate NaN"
+        );
     }
 
     #[test]

@@ -15,3 +15,5 @@ dist/
 # nucleotable subsumed DB artifacts
 *.duckdb
 nucleotable.db
+vendor-egglog/target/
+hof_pickles/

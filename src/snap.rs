@@ -57,9 +57,15 @@ pub struct Snapped {
 /// A `Num c` snaps to `(symbol, value)` iff `|c - value| <= rel_tol * |value|`
 /// (and, for value 0, `|c| <= rel_tol`). The closest qualifying constant wins.
 /// Signs are handled: `-3.1416` snaps to `-pi` (recorded as the negated value).
+///
+/// Tolerance note for callers: at the suggested `rel_tol = 1e-3` the capture
+/// window around pi is ±0.0031 — e.g. a fitted `3.14` DOES snap to pi
+/// (rel err ~5.1e-4). If your fitted coefficients legitimately live near
+/// famous constants, tighten `rel_tol` accordingly.
 pub fn snap(expr: &str, library: &[(&str, f64)], rel_tol: f64) -> Result<Snapped, String> {
     let mut tree = parse(expr).ok_or_else(|| format!("could not parse {expr:?}"))?;
     let mut snapped: Vec<(String, String)> = Vec::new();
+    // Tree depth is bounded by the parse's depth cap, so this walk is safe.
     snap_node(&mut tree, library, rel_tol, &mut snapped);
     // De-duplicate the symbol map (same value may snap at several sites).
     snapped.sort();
@@ -146,7 +152,7 @@ fn fmt_f64(v: f64) -> String {
 fn parse(s: &str) -> Option<Node> {
     let toks = tok(s);
     let mut pos = 0;
-    let n = pparse(&toks, &mut pos)?;
+    let n = pparse(&toks, &mut pos, 0)?;
     if pos == toks.len() { Some(n) } else { None }
 }
 
@@ -178,17 +184,29 @@ fn tok(s: &str) -> Vec<String> {
     out
 }
 
-fn pparse(toks: &[String], pos: &mut usize) -> Option<Node> {
+fn pparse(toks: &[String], pos: &mut usize, depth: usize) -> Option<Node> {
+    // Depth cap: a pathologically nested input must fail the parse (the caller
+    // returns an Err), not overflow the stack.
+    if depth > crate::MAX_EXPR_DEPTH {
+        return None;
+    }
     if toks.get(*pos)? != "(" { return None; }
     *pos += 1;
     let head = toks.get(*pos)?.clone();
     *pos += 1;
     let node = match head.as_str() {
-        "Num" => { let v: f64 = toks.get(*pos)?.parse().ok()?; *pos += 1; Node::Num(v) }
+        "Num" => {
+            let v: f64 = toks.get(*pos)?.parse().ok()?;
+            // "inf"/"NaN" parse as f64 but render back to literals egglog
+            // cannot read — refuse them.
+            if !v.is_finite() { return None; }
+            *pos += 1;
+            Node::Num(v)
+        }
         "Var" => { let n = toks.get(*pos)?.trim_matches('"').to_string(); *pos += 1; Node::Var(n) }
         ctor => {
             let mut ch = Vec::new();
-            while *pos < toks.len() && toks[*pos] != ")" { ch.push(pparse(toks, pos)?); }
+            while *pos < toks.len() && toks[*pos] != ")" { ch.push(pparse(toks, pos, depth + 1)?); }
             Node::App(ctor.to_string(), ch)
         }
     };

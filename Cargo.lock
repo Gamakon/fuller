@@ -348,8 +348,6 @@ checksum = "d0881ea181b1df73ff77ffaaf9c7544ecc11e82fba9b5f27b262a3c73a332555"
 [[package]]
 name = "egglog"
 version = "2.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3b2e053dcef2cd92b0dee0acfad08d83a98c1c1e55b4c55b8eefa2c0e3f4d055"
 dependencies = [
  "chrono",
  "clap",
@@ -620,6 +618,7 @@ dependencies = [
  "hff",
  "ndarray",
  "pyo3",
+ "rayon",
 ]
 
 [[package]]

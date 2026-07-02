@@ -9,8 +9,47 @@ use std::collections::HashMap;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
-use crate::extract::denoise as denoise_core;
-use crate::karva::{karva_to_terms, terms_to_karva, FunctionSpec, PsetSpec, Token};
+use crate::extract::{
+    denoise_assuming as denoise_core, denoise_candidates_assuming as denoise_candidates_core,
+    eclass_extract_hff as eclass_extract_hff_core,
+    eclass_extract_hff_instrumented as eclass_extract_hff_instrumented_core,
+    eclass_variants as eclass_variants_core, EclassFamily,
+};
+use crate::karva::{
+    karva_to_terms, terms_to_karva_sized, FunctionSpec, PsetSpec, Token,
+};
+use crate::parity::{proves_equal_assuming, Family};
+
+/// Run a pure-Rust core computation with the GIL RELEASED and panics converted
+/// to a normal `Err`.
+///
+/// * GIL: every core call here (egglog saturation, extraction, per-row eval)
+///   can run for seconds; holding the GIL through it stalls every other
+///   Python thread and signal handling. Only plain owned data crosses the
+///   boundary, so releasing is safe.
+/// * Panics: PyO3 converts a Rust panic into `pyo3_runtime.PanicException`,
+///   which subclasses `BaseException` — it sails past the engine's
+///   `except Exception` guards and can kill the run. egglog is not panic-free
+///   on pathological programs, so catch the unwind and surface it as an
+///   ordinary error string; each entry point then takes its normal error path
+///   (return-unchanged or ValueError).
+fn run_core<T: Send>(
+    py: Python<'_>,
+    f: impl FnOnce() -> Result<T, String> + Send,
+) -> Result<T, String> {
+    py.allow_threads(|| {
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).unwrap_or_else(|p| {
+            let msg = if let Some(s) = p.downcast_ref::<&str>() {
+                (*s).to_string()
+            } else if let Some(s) = p.downcast_ref::<String>() {
+                s.clone()
+            } else {
+                "unknown panic payload".to_string()
+            };
+            Err(format!("internal panic (caught): {msg}"))
+        })
+    })
+}
 
 /// Denoise a `Math` expression against training data.
 ///
@@ -20,19 +59,28 @@ use crate::karva::{karva_to_terms, terms_to_karva, FunctionSpec, PsetSpec, Token
 ///   rows: list of dicts mapping variable name -> value (one per data row).
 ///   tolerance: max relative R^2 loss vs the input's behaviour (default 1e-3).
 ///   k_variants: how many smallest equivalent forms to consider (default 64).
+///   positive_vars: variable names the CALLER knows are > 0 (e.g. from its
+///       var_ranges) — unlocks guarded rewrites (Abs-shed, div-cancellation,
+///       Pow2(Sqrt)). Sound: never assumed, only asserted by you.
+///   nonzero_vars: variable names known != 0 (unlocks div/inv cancellation).
 ///
 /// Returns a dict: {"expr": str, "cost": int, "changed": bool}. The chosen
 /// (possibly smaller) equivalent expression, its structural cost, and whether
 /// it shrank. Never raises on a normal un-simplifiable input — it returns the
-/// input unchanged. Raises ValueError only on malformed egglog input.
+/// input unchanged. Raises ValueError only on malformed egglog input or an
+/// internal engine failure (Rust panics are caught and surfaced as ValueError,
+/// never as a BaseException-derived PanicException).
 #[pyfunction]
-#[pyo3(signature = (expr, rows, tolerance = 1e-3, k_variants = 64))]
+#[pyo3(signature = (expr, rows, tolerance = 1e-3, k_variants = 64,
+                    positive_vars = vec![], nonzero_vars = vec![]))]
 fn denoise(
     py: Python<'_>,
     expr: &str,
     rows: Vec<std::collections::HashMap<String, f64>>,
     tolerance: f64,
     k_variants: usize,
+    positive_vars: Vec<String>,
+    nonzero_vars: Vec<String>,
 ) -> PyResult<Py<PyDict>> {
     // Convert the Python rows (list of name->value dicts) into the core's
     // row format (Vec of (name, value) pairs).
@@ -41,8 +89,10 @@ fn denoise(
         .map(|m| m.into_iter().collect())
         .collect();
 
-    let result = denoise_core(expr, &core_rows, tolerance, k_variants)
-        .map_err(pyo3::exceptions::PyValueError::new_err)?;
+    let result = run_core(py, || {
+        denoise_core(expr, &core_rows, tolerance, k_variants, &positive_vars, &nonzero_vars)
+    })
+    .map_err(pyo3::exceptions::PyValueError::new_err)?;
 
     let out = PyDict::new_bound(py);
     out.set_item("expr", result.expr)?;
@@ -98,8 +148,9 @@ fn build_tokens(py: Python<'_>, raw: Vec<PyToken>) -> PyResult<Vec<Token>> {
 /// raises except on malformed pset/token data).
 #[pyfunction]
 #[pyo3(signature = (head, tail, variables, functions, rnc_values, rows,
-                    tolerance = 1e-3, k_variants = 64, rng_seed = 0))]
-#[allow(clippy::too_many_arguments)]
+                    tolerance = 1e-3, k_variants = 64, rng_seed = 0,
+                    target_head_length = None,
+                    positive_vars = vec![], nonzero_vars = vec![]))]
 fn denoise_karva(
     py: Python<'_>,
     head: Vec<PyToken>,
@@ -111,6 +162,9 @@ fn denoise_karva(
     tolerance: f64,
     k_variants: usize,
     rng_seed: u64,
+    target_head_length: Option<usize>,
+    positive_vars: Vec<String>,
+    nonzero_vars: Vec<String>,
 ) -> PyResult<Py<PyDict>> {
     let pset = build_pset(variables, functions, rnc_values);
     let head_toks = build_tokens(py, head)?;
@@ -135,7 +189,9 @@ fn denoise_karva(
     let core_rows: Vec<Vec<(String, f64)>> =
         rows.into_iter().map(|m| m.into_iter().collect()).collect();
 
-    let denoised = match denoise_core(&math, &core_rows, tolerance, k_variants) {
+    let denoised = match run_core(py, || {
+        denoise_core(&math, &core_rows, tolerance, k_variants, &positive_vars, &nonzero_vars)
+    }) {
         Ok(d) if d.changed => d,
         _ => return unchanged(py),
     };
@@ -146,20 +202,33 @@ fn denoise_karva(
     // caller knows the result was inexpressible rather than silently dropping a
     // real simplification. The chromosome is still returned unchanged (safe),
     // but flagged.
-    let (new_head, new_tail) = match terms_to_karva(&denoised.expr, &pset, rng_seed) {
-        Ok(ht) => ht,
-        Err(why) => {
-            let out = PyDict::new_bound(py);
-            out.set_item("head", tokens_to_py(py, &head_toks)?)?;
-            out.set_item("tail", tokens_to_py(py, &tail_toks)?)?;
-            out.set_item("changed", false)?;
-            out.set_item("expr", py.None())?;
-            // Distinguishing signal: a simpler form existed but the pset can't
-            // name it. The caller may want to add the missing op to its pset.
-            out.set_item("inexpressible", format!("{} ({})", denoised.expr, why))?;
-            return Ok(out.into());
-        }
-    };
+    let (new_head, new_tail, oversized) =
+        match terms_to_karva_sized(&denoised.expr, &pset, rng_seed, target_head_length) {
+            Ok(ht) => ht,
+            Err(why) => {
+                let out = PyDict::new_bound(py);
+                out.set_item("head", tokens_to_py(py, &head_toks)?)?;
+                out.set_item("tail", tokens_to_py(py, &tail_toks)?)?;
+                out.set_item("changed", false)?;
+                out.set_item("expr", py.None())?;
+                // Distinguishing signal: a simpler form existed but the pset can't
+                // name it. The caller may want to add the missing op to its pset.
+                out.set_item("inexpressible", format!("{} ({})", denoised.expr, why))?;
+                return Ok(out.into());
+            }
+        };
+
+    // The denoised form's natural head exceeds the chromosome's head_length.
+    // Truncating would change the term, so refuse: return unchanged + flagged.
+    if oversized {
+        let out = PyDict::new_bound(py);
+        out.set_item("head", tokens_to_py(py, &head_toks)?)?;
+        out.set_item("tail", tokens_to_py(py, &tail_toks)?)?;
+        out.set_item("changed", false)?;
+        out.set_item("expr", py.None())?;
+        out.set_item("oversized", true)?;
+        return Ok(out.into());
+    }
 
     let out = PyDict::new_bound(py);
     out.set_item("head", tokens_to_py(py, &new_head)?)?;
@@ -167,6 +236,116 @@ fn denoise_karva(
     out.set_item("changed", true)?;
     out.set_item("expr", denoised.expr)?;
     Ok(out.into())
+}
+
+/// Like `denoise_karva` but returns ALL candidates (equivalent forms +
+/// pruned variants) — the engine scores them all via HFF and picks the
+/// winner. No internal accept/reject: gamakAST proposes, HFF disposes.
+///
+/// Returns a list of dicts, each shaped exactly like a `denoise_karva`
+/// success result:
+///   {"head": [...], "tail": [...], "expr": Math str, "cost": int,
+///    "is_original": bool, "oversized": bool, "inexpressible": optional str}
+///
+/// Engine usage (sketch):
+///   cands = denoise_karva_candidates(head, tail, vars, fns, rnc, rows,
+///                                      target_head_length=gene.head_length)
+///   # Score each via _compute_raw_metrics + HFF; keep the lowest-angle one.
+#[pyfunction]
+#[pyo3(signature = (head, tail, variables, functions, rnc_values, rows,
+                    k_variants = 64, rng_seed = 0,
+                    target_head_length = None,
+                    positive_vars = vec![], nonzero_vars = vec![]))]
+fn denoise_karva_candidates(
+    py: Python<'_>,
+    head: Vec<PyToken>,
+    tail: Vec<PyToken>,
+    variables: Vec<String>,
+    functions: HashMap<String, (String, usize)>,
+    rnc_values: Vec<f64>,
+    rows: Vec<HashMap<String, f64>>,
+    k_variants: usize,
+    rng_seed: u64,
+    target_head_length: Option<usize>,
+    positive_vars: Vec<String>,
+    nonzero_vars: Vec<String>,
+) -> PyResult<Vec<Py<PyDict>>> {
+    let pset = build_pset(variables, functions, rnc_values);
+    let head_toks = build_tokens(py, head)?;
+    let tail_toks = build_tokens(py, tail)?;
+
+    // karva -> Math. If it can't be encoded, return just the original.
+    let math = match karva_to_terms(&head_toks, &tail_toks, &pset) {
+        Ok(m) => m,
+        Err(_) => {
+            // Return single "original" candidate so caller has a uniform list.
+            let d = PyDict::new_bound(py);
+            d.set_item("head", tokens_to_py(py, &head_toks)?)?;
+            d.set_item("tail", tokens_to_py(py, &tail_toks)?)?;
+            d.set_item("expr", py.None())?;
+            d.set_item("cost", 0u64)?;
+            d.set_item("is_original", true)?;
+            d.set_item("oversized", false)?;
+            return Ok(vec![d.into()]);
+        }
+    };
+
+    let core_rows: Vec<Vec<(String, f64)>> =
+        rows.into_iter().map(|m| m.into_iter().collect()).collect();
+
+    // On any core failure, return just the original candidate — same contract
+    // as the un-encodable-karva path above (and as `denoise_karva`, which
+    // returns unchanged). Raising here made this the ONE karva entry point
+    // that could throw on an engine-internal failure.
+    let candidates = match run_core(py, || {
+        denoise_candidates_core(&math, &core_rows, k_variants, &positive_vars, &nonzero_vars)
+    }) {
+        Ok(c) => c,
+        Err(_) => {
+            let d = PyDict::new_bound(py);
+            d.set_item("head", tokens_to_py(py, &head_toks)?)?;
+            d.set_item("tail", tokens_to_py(py, &tail_toks)?)?;
+            d.set_item("expr", py.None())?;
+            d.set_item("cost", 0u64)?;
+            d.set_item("is_original", true)?;
+            d.set_item("oversized", false)?;
+            return Ok(vec![d.into()]);
+        }
+    };
+
+    let mut out: Vec<Py<PyDict>> = Vec::with_capacity(candidates.len());
+    for c in candidates {
+        let d = PyDict::new_bound(py);
+        match terms_to_karva_sized(&c.expr, &pset, rng_seed, target_head_length) {
+            Ok((new_head, new_tail, oversized)) => {
+                if oversized {
+                    // Skip oversized candidates — caller can't use them.
+                    continue;
+                }
+                d.set_item("head", tokens_to_py(py, &new_head)?)?;
+                d.set_item("tail", tokens_to_py(py, &new_tail)?)?;
+                d.set_item("expr", c.expr)?;
+                d.set_item("cost", c.cost)?;
+                d.set_item("is_original", c.is_original)?;
+                d.set_item("oversized", false)?;
+            }
+            Err(why) => {
+                // Pset can't name this candidate — surface for diagnostics
+                // and skip the karva fields (head/tail are None; callers must
+                // check "inexpressible" — or head is None — before grafting).
+                // Keys mirror the Ok branch so every dict has the same shape.
+                d.set_item("head", py.None())?;
+                d.set_item("tail", py.None())?;
+                d.set_item("expr", c.expr)?;
+                d.set_item("cost", c.cost)?;
+                d.set_item("is_original", c.is_original)?;
+                d.set_item("oversized", false)?;
+                d.set_item("inexpressible", why)?;
+            }
+        }
+        out.push(d.into());
+    }
+    Ok(out)
 }
 
 /// Render `Vec<Token>` back to a list of (kind, value) tuples for Python.
@@ -202,7 +381,7 @@ fn physics_mutate(
     n: usize,
     seed: u64,
 ) -> PyResult<Vec<Py<PyDict>>> {
-    let cands = crate::physics::generate(expr, &paired_groups, n, seed)
+    let cands = run_core(py, || crate::physics::generate(expr, &paired_groups, n, seed))
         .map_err(pyo3::exceptions::PyValueError::new_err)?;
     cands
         .into_iter()
@@ -239,8 +418,7 @@ fn physics_mutate(
 /// get back chromosomes you can actually decode. Never raises on a normal gene.
 #[pyfunction]
 #[pyo3(signature = (head, tail, variables, functions, rnc_values, paired_groups,
-                    n = 10, seed = 0))]
-#[allow(clippy::too_many_arguments)]
+                    n = 10, seed = 0, target_head_length = None))]
 fn physics_mutate_karva(
     py: Python<'_>,
     head: Vec<PyToken>,
@@ -251,6 +429,7 @@ fn physics_mutate_karva(
     paired_groups: Vec<Vec<String>>,
     n: usize,
     seed: u64,
+    target_head_length: Option<usize>,
 ) -> PyResult<Vec<Py<PyDict>>> {
     let pset = build_pset(variables, functions, rnc_values);
     let head_toks = build_tokens(py, head)?;
@@ -263,18 +442,29 @@ fn physics_mutate_karva(
         Err(_) => return Ok(Vec::new()),
     };
 
-    let cands = crate::physics::generate(&math, &paired_groups, n, seed)
-        .map_err(pyo3::exceptions::PyValueError::new_err)?;
+    let cands = match run_core(py, || crate::physics::generate(&math, &paired_groups, n, seed)) {
+        Ok(c) => c,
+        // "Never raises on a normal gene": a core failure yields no candidates.
+        Err(_) => return Ok(Vec::new()),
+    };
 
     // Convert each candidate Math back to a karva chromosome. Skip any that the
     // caller's pset can't name (same contract as denoise_karva's inexpressible
     // path — we don't hand back chromosomes they can't decode).
     let mut out = Vec::new();
     for c in cands {
-        let (cand_head, cand_tail) = match terms_to_karva(&c.expr, &pset, seed) {
-            Ok(ht) => ht,
-            Err(_) => continue,
-        };
+        let (cand_head, cand_tail, oversized) =
+            match terms_to_karva_sized(&c.expr, &pset, seed, target_head_length) {
+                Ok(ht) => ht,
+                Err(_) => continue,
+            };
+        // A candidate whose natural head exceeds the chromosome's head_length
+        // can't be grafted back without breaking GEP's uniform-head rule, and
+        // truncation would change the form — so drop it (same skip contract as
+        // an inexpressible candidate above).
+        if oversized {
+            continue;
+        }
         let d = PyDict::new_bound(py);
         d.set_item("head", tokens_to_py(py, &cand_head)?)?;
         d.set_item("tail", tokens_to_py(py, &cand_tail)?)?;
@@ -303,8 +493,7 @@ fn physics_mutate_karva(
 /// "is_original", "constants": [{"name","value"}]}. The caller scores each on
 /// holdout (R²-guard) and picks the winner — snap proposes, the data disposes.
 #[pyfunction]
-#[pyo3(signature = (head, tail, variables, functions, rnc_values, k_variants = 16, rel_tol = 1e-3, rng_seed = 0))]
-#[allow(clippy::too_many_arguments)]
+#[pyo3(signature = (head, tail, variables, functions, rnc_values, k_variants = 16, rel_tol = 1e-3, rng_seed = 0, target_head_length = None))]
 fn snap_karva(
     py: Python<'_>,
     head: Vec<PyToken>,
@@ -315,6 +504,7 @@ fn snap_karva(
     k_variants: usize,
     rel_tol: f64,
     rng_seed: u64,
+    target_head_length: Option<usize>,
 ) -> PyResult<Vec<Py<PyDict>>> {
     let pset = build_pset(variables.clone(), functions.clone(), rnc_values.clone());
     let head_toks = build_tokens(py, head)?;
@@ -323,7 +513,7 @@ fn snap_karva(
         Ok(m) => m,
         Err(_) => return Ok(Vec::new()),
     };
-    let cands = crate::snap_karva::snap_variants(&math, k_variants, rel_tol)
+    let cands = run_core(py, || crate::snap_karva::snap_variants(&math, k_variants, rel_tol))
         .map_err(pyo3::exceptions::PyValueError::new_err)?;
     let cvals = crate::snap_karva::constant_values();
 
@@ -343,11 +533,17 @@ fn snap_karva(
         }
         let pset_aug = build_pset(vars_aug, functions.clone(), rnc_values.clone());
         let d = PyDict::new_bound(py);
-        match terms_to_karva(&c.expr, &pset_aug, rng_seed) {
-            Ok((cand_head, cand_tail)) => {
+        d.set_item("oversized", false)?;
+        match terms_to_karva_sized(&c.expr, &pset_aug, rng_seed, target_head_length) {
+            Ok((cand_head, cand_tail, oversized)) => {
                 d.set_item("head", tokens_to_py(py, &cand_head)?)?;
                 d.set_item("tail", tokens_to_py(py, &cand_tail)?)?;
                 d.set_item("inexpressible", py.None())?;
+                // Natural head longer than the chromosome's head_length —
+                // grafting it back would break GEP's uniform-head rule, and
+                // truncation would change the snapped form. Flag so the caller
+                // drops it (per CR_karva_target_head_length).
+                d.set_item("oversized", oversized)?;
             }
             Err(why) => {
                 // A snap that uses an op the caller's pset lacks (e.g. the
@@ -371,13 +567,34 @@ fn snap_karva(
     Ok(out)
 }
 
-/// The MASTER pset: every `(semantic_id, arity)` any gamakAST mutation
-/// (denoise or physics-prior) can emit. The SR engine seeds its pset with one
-/// token per entry UP FRONT, so every returned candidate is always expressible
-/// — no candidate is ever dropped for lack of a token.
+/// The representation DOWN-FLIP: replace every named-constant terminal
+/// (`pi`, `G`, `sqrt2`, ... — Var tokens whose name is in
+/// `master_constants()`) with its numeric literal, in head and tail. Inverse
+/// of `snap_karva` (the up-flip); the pair lets the same structure compete in
+/// the population in constants-form and numeric-form, with selection deciding
+/// which representation recovers the law. Behaviour-preserving,
+/// deterministic, never raises on token data.
 ///
-/// Returns a list of `(semantic_id, arity)` tuples. The engine maps each to its
-/// own token name when building the `functions` dict it passes back in.
+/// Returns {"head": [...], "tail": [...], "changed": bool,
+///          "replaced": [names]} — `changed=False` (empty `replaced`) means
+/// the chromosome was already fully numeric; skip the no-op mutant.
+#[pyfunction]
+fn concretize_karva(
+    py: Python<'_>,
+    head: Vec<PyToken>,
+    tail: Vec<PyToken>,
+) -> PyResult<Py<PyDict>> {
+    let head_toks = build_tokens(py, head)?;
+    let tail_toks = build_tokens(py, tail)?;
+    let (new_head, new_tail, replaced) = crate::snap_karva::concretize(&head_toks, &tail_toks);
+    let out = PyDict::new_bound(py);
+    out.set_item("head", tokens_to_py(py, &new_head)?)?;
+    out.set_item("tail", tokens_to_py(py, &new_tail)?)?;
+    out.set_item("changed", !replaced.is_empty())?;
+    out.set_item("replaced", replaced)?;
+    Ok(out.into())
+}
+
 /// The canonical constant ATOMS the engine pre-registers as pset terminals
 /// once per fit (symmetry with `master_pset`; determinism across snap_karva
 /// calls). Returns [(name, value)] — e.g. [("G", 6.674e-11), ("pi", 3.14159…)].
@@ -406,6 +623,63 @@ fn master_lattice() -> Vec<(f64, String, String)> {
         .collect()
 }
 
+/// Prove two `Math` s-expressions equal by equality saturation: insert both,
+/// run the `family` rules to a bounded fixpoint, and check whether they land in
+/// the same e-class. This is the SOUND equivalence oracle — a `true` is a real
+/// proof under the ruleset, a `false` means "not proven equal" (NOT "proven
+/// unequal"). Bounded iteration count per family, so it cannot hang the way
+/// `sympy.simplify` does on junk transcendental towers.
+///
+/// Semantics note: "equal" means equal as REAL-domain identities (the rules'
+/// theory), not pointwise-identical under f64/NaN evaluation. E.g. `x - x` and
+/// `0` are proven equal, yet at a row where `x` is NaN the first evaluates NaN
+/// and the second 0. Where pointwise behaviour on data matters, that is
+/// `denoise`'s R²-gate job, not this oracle's.
+///
+/// Args:
+///   input, target: egglog `Math` surface-syntax strings (e.g.
+///       `(Mul (Var "x") (Num 1.0))` and `(Var "x")`).
+///   family: "algebra" (default), "rational", "trig", or "wide" — which ruleset
+///       to run. "wide" adds commutativity/associativity/distributivity, so it
+///       proves reordered/re-associated forms equal (e.g. `x+y == y+x`) that the
+///       collapse-only families miss; it is iteration-capped for boundedness.
+///   nonzero_vars: variable names to assume `!= 0`, unlocking guarded
+///       cancellation (`x/x -> 1`) for SCALE-constant equivalence. Sound for the
+///       scale question (a ratio is only defined where the denominator is
+///       nonzero). Default empty.
+///
+/// Returns bool. Raises ValueError on malformed egglog input.
+#[pyfunction]
+#[pyo3(signature = (input, target, family = "algebra", nonzero_vars = vec![]))]
+fn proves_equal(
+    py: Python<'_>,
+    input: &str,
+    target: &str,
+    family: &str,
+    nonzero_vars: Vec<String>,
+) -> PyResult<bool> {
+    let fam = match family {
+        "algebra" => Family::Algebra,
+        "rational" => Family::Rational,
+        "trig" => Family::Trig,
+        "wide" => Family::Wide,
+        other => {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "family must be \"algebra\", \"rational\", \"trig\", or \"wide\", got {other:?}"
+            )))
+        }
+    };
+    run_core(py, || proves_equal_assuming(input, target, fam, &nonzero_vars))
+        .map_err(pyo3::exceptions::PyValueError::new_err)
+}
+
+/// The MASTER pset: every `(semantic_id, arity)` any gamakAST mutation
+/// (denoise or physics-prior) can emit. The SR engine seeds its pset with one
+/// token per entry UP FRONT, so every returned candidate is always expressible
+/// — no candidate is ever dropped for lack of a token.
+///
+/// Returns a list of `(semantic_id, arity)` tuples. The engine maps each to its
+/// own token name when building the `functions` dict it passes back in.
 #[pyfunction]
 fn master_pset() -> Vec<(String, usize)> {
     crate::karva::master_pset()
@@ -456,6 +730,160 @@ fn bf_unparse(sexpr: &str) -> PyResult<String> {
         .map_err(pyo3::exceptions::PyValueError::new_err)
 }
 
+/// Enumerate the equivalence class of a karva chromosome under a FULL rule
+/// family (algebra+powers+distribute, or algebra+powers+trig) — the wide
+/// saturation the tournament figure needs, NOT the bounded denoise subset.
+///
+/// `family` is "algebra" or "trig" (distribute and trig explode co-saturated, so
+/// one is chosen). `iters` bounds the run schedule so a divergent rule can't peg
+/// the machine. Returns `[(cost, Math s-expression)]` for each distinct variant,
+/// for the caller to score with the pattern-metric library + HFF.
+#[pyfunction]
+#[pyo3(signature = (head, tail, variables, functions, rnc_values, family = "algebra", k = 64, iters = 12))]
+fn eclass_variants(
+    py: Python<'_>,
+    head: Vec<PyToken>,
+    tail: Vec<PyToken>,
+    variables: Vec<String>,
+    functions: HashMap<String, (String, usize)>,
+    rnc_values: Vec<f64>,
+    family: &str,
+    k: usize,
+    iters: u32,
+) -> PyResult<Vec<(u64, String)>> {
+    let pset = build_pset(variables, functions, rnc_values);
+    let head_toks = build_tokens(py, head)?;
+    let tail_toks = build_tokens(py, tail)?;
+    let math = karva_to_terms(&head_toks, &tail_toks, &pset)
+        .map_err(pyo3::exceptions::PyValueError::new_err)?;
+    let fam = match family {
+        "trig" => EclassFamily::Trig,
+        "algebra" => EclassFamily::Algebra,
+        "wide" => EclassFamily::Wide,
+        "structural" => EclassFamily::Structural,
+        other => {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "family must be \"algebra\", \"trig\", \"wide\", or \"structural\", got {other:?}"
+            )))
+        }
+    };
+    run_core(py, || eclass_variants_core(&math, fam, k, iters))
+        .map_err(pyo3::exceptions::PyValueError::new_err)
+}
+
+/// Enumerate the equivalence class and RANK it by the CDF-corrected
+/// hyperspherical-fitness angle (the `/pattern/{measure}` tournament) instead of
+/// egglog's scalar tree cost — the opt-in HFF extractor. The per-e-class winner
+/// is chosen by the angular measure-vector ordering as the extraction walk
+/// proceeds (see `crate::score`).
+///
+/// Same karva-in interface as `eclass_variants`. Returns
+/// `[(angle_percentile, Math s-expression)]`, best (lowest percentile) first.
+#[pyfunction]
+#[pyo3(signature = (head, tail, variables, functions, rnc_values, family = "algebra", k = 64, iters = 12, exclude_measures = vec![]))]
+fn eclass_extract_hff(
+    py: Python<'_>,
+    head: Vec<PyToken>,
+    tail: Vec<PyToken>,
+    variables: Vec<String>,
+    functions: HashMap<String, (String, usize)>,
+    rnc_values: Vec<f64>,
+    family: &str,
+    k: usize,
+    iters: u32,
+    exclude_measures: Vec<String>,
+) -> PyResult<Vec<(f64, String)>> {
+    let pset = build_pset(variables, functions, rnc_values);
+    let head_toks = build_tokens(py, head)?;
+    let tail_toks = build_tokens(py, tail)?;
+    let math = karva_to_terms(&head_toks, &tail_toks, &pset)
+        .map_err(pyo3::exceptions::PyValueError::new_err)?;
+    let fam = match family {
+        "trig" => EclassFamily::Trig,
+        "algebra" => EclassFamily::Algebra,
+        "wide" => EclassFamily::Wide,
+        "structural" => EclassFamily::Structural,
+        other => {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "family must be \"algebra\", \"trig\", \"wide\", or \"structural\", got {other:?}"
+            )))
+        }
+    };
+    // exclude_measures (default []) down-selects the /pattern/{measure} library —
+    // drop the named rules to test which measures matter. [] runs all of them.
+    run_core(py, || eclass_extract_hff_core(&math, fam, k, iters, &exclude_measures))
+        .map_err(pyo3::exceptions::PyValueError::new_err)
+}
+
+/// INSTRUMENTED e-class tournament — `eclass_extract_hff` plus measured
+/// behaviour columns. Each equivalent form is RUN on `rows_train` and on
+/// `rows_val` (held out) and compared against the input's own predictions;
+/// the TrueNorth vector is `[form measures | domain_mismatch, disagreement
+/// (train) | domain_mismatch, disagreement (val)]`, all [0,1], 0 best.
+///
+/// Algebraically-equal forms differ measurably in f64: rounding divergence
+/// (catastrophic cancellation), introduced/removed NaN/inf on the data
+/// distribution. The val columns stop the rewrite CHOICE from overfitting the
+/// profiling rows: the winner is the form whose measured behaviour is
+/// cleanest and stays clean off the profiled set. Candidates that fail to
+/// evaluate rank last.
+///
+/// Same karva-in interface as `eclass_extract_hff`, with `rows_train` /
+/// `rows_val` as lists of {var: value} dicts. Returns [(angle, Math s-expr)],
+/// best first. If a behaviour change must NEVER win regardless of form
+/// (exact-recovery pipelines), hard-filter the adopted result with `denoise`'s
+/// R^2 gate — the angle trades objectives; it does not enforce vetoes.
+#[pyfunction]
+#[pyo3(signature = (head, tail, variables, functions, rnc_values, rows_train, rows_val,
+                    family = "algebra", k = 64, iters = 12, exclude_measures = vec![]))]
+fn eclass_extract_hff_instrumented(
+    py: Python<'_>,
+    head: Vec<PyToken>,
+    tail: Vec<PyToken>,
+    variables: Vec<String>,
+    functions: HashMap<String, (String, usize)>,
+    rnc_values: Vec<f64>,
+    rows_train: Vec<HashMap<String, f64>>,
+    rows_val: Vec<HashMap<String, f64>>,
+    family: &str,
+    k: usize,
+    iters: u32,
+    exclude_measures: Vec<String>,
+) -> PyResult<Vec<(f64, String)>> {
+    let pset = build_pset(variables, functions, rnc_values);
+    let head_toks = build_tokens(py, head)?;
+    let tail_toks = build_tokens(py, tail)?;
+    let math = karva_to_terms(&head_toks, &tail_toks, &pset)
+        .map_err(pyo3::exceptions::PyValueError::new_err)?;
+    let fam = match family {
+        "trig" => EclassFamily::Trig,
+        "algebra" => EclassFamily::Algebra,
+        "wide" => EclassFamily::Wide,
+        "structural" => EclassFamily::Structural,
+        other => {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "family must be \"algebra\", \"trig\", \"wide\", or \"structural\", got {other:?}"
+            )))
+        }
+    };
+    let core_tr: Vec<Vec<(String, f64)>> =
+        rows_train.into_iter().map(|m| m.into_iter().collect()).collect();
+    let core_va: Vec<Vec<(String, f64)>> =
+        rows_val.into_iter().map(|m| m.into_iter().collect()).collect();
+    run_core(py, || {
+        eclass_extract_hff_instrumented_core(
+            &math,
+            fam,
+            k,
+            iters,
+            &exclude_measures,
+            &core_tr,
+            &core_va,
+        )
+    })
+    .map_err(pyo3::exceptions::PyValueError::new_err)
+}
+
 /// The native extension module. `module-name` in pyproject.toml is
 /// `gamakAST._gamakast`, so this initialises `_gamakast`; the Python shim
 /// re-exports from it.
@@ -463,12 +891,18 @@ fn bf_unparse(sexpr: &str) -> PyResult<String> {
 fn _gamakast(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(denoise, m)?)?;
     m.add_function(wrap_pyfunction!(denoise_karva, m)?)?;
+    m.add_function(wrap_pyfunction!(denoise_karva_candidates, m)?)?;
     m.add_function(wrap_pyfunction!(physics_mutate, m)?)?;
     m.add_function(wrap_pyfunction!(physics_mutate_karva, m)?)?;
+    m.add_function(wrap_pyfunction!(proves_equal, m)?)?;
     m.add_function(wrap_pyfunction!(master_pset, m)?)?;
     m.add_function(wrap_pyfunction!(master_constants, m)?)?;
     m.add_function(wrap_pyfunction!(master_lattice, m)?)?;
+    m.add_function(wrap_pyfunction!(eclass_variants, m)?)?;
+    m.add_function(wrap_pyfunction!(eclass_extract_hff, m)?)?;
     m.add_function(wrap_pyfunction!(snap_karva, m)?)?;
+    m.add_function(wrap_pyfunction!(concretize_karva, m)?)?;
+    m.add_function(wrap_pyfunction!(eclass_extract_hff_instrumented, m)?)?;
     // Brainfuck simplifier
     m.add_function(wrap_pyfunction!(bf_simplify, m)?)?;
     m.add_function(wrap_pyfunction!(bf_parse, m)?)?;
