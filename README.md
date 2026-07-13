@@ -10,9 +10,10 @@ data-gated or exact equivalence check so a rewrite can never silently change
 behaviour.
 
 It is a Rust crate exposed to Python via [PyO3](https://github.com/PyO3/pyo3).
-It was built to replace SymPy on the hot path of a symbolic-regression engine,
-where SymPy's complex-domain assumptions, native signal handling, and
-exponential simplification paths made expression cleanup unreliable. egglog is
+It was built to replace SymPy on the hot path of a symbolic-regression engine
+(the [HFF](https://github.com/Gamakon/HFF) equation-recovery work), where
+SymPy's complex-domain assumptions, native signal handling, and exponential
+simplification paths made expression cleanup unreliable. egglog is
 the right substrate: deterministic, bounded, declarative, and fast (the same
 engine family behind [Herbie](https://herbie.uwplse.org/)).
 
@@ -171,6 +172,29 @@ and the Brainfuck simplifier all ship. The ruleset is deliberately small and
 grows conservatively — a rule lands only once it is either provably sound or
 data-gated. See [`docs/USAGE.md`](docs/USAGE.md) for the consumer guide and
 `docs/` for per-feature notes.
+
+## Citation
+
+fuller is the rewrite substrate of the [HFF](https://github.com/Gamakon/HFF)
+symbolic-regression engine. If you use it in published research, please cite
+the GECCO 2026 poster:
+
+```bibtex
+@inproceedings{morgan2026hff,
+  author    = {Andrew James Morgan},
+  title     = {Hyperspherical Fitness Functions for Many-Objective Optimization},
+  booktitle = {Proceedings of the Genetic and Evolutionary Computation
+               Conference Companion (GECCO Companion '26)},
+  series    = {GECCO Companion '26},
+  year      = {2026},
+  month     = jul,
+  location  = {San Jose, Costa Rica},
+  publisher = {ACM},
+  address   = {New York, NY, USA},
+  isbn      = {979-8-4007-2488-6/2026/07},
+  doi       = {10.1145/3795101.3805445}
+}
+```
 
 ## License
 
