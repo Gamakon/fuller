@@ -55,21 +55,25 @@ measured on data, and returns to the population as heritable DNA:
 
 ```mermaid
 flowchart TD
-    G["Karva gene<br/>(GEP population)"] -->|"expressed via ORF"| A["AST<br/>(Math · Brainfuck · …)"]
+    G["Karva gene<br/>(GEP population)"] -->|"expressed via ORF"| X["EXPRESS codec<br/>pset name → semantic id"]
+    X --> A["AST<br/>(Math · Brainfuck · …)"]
     A -->|"saturate bounded ruleset"| E[("e-graph<br/>equivalence classes")]
     E -->|"extract k candidates"| C["Candidate forms<br/>(provably equivalent)"]
     C -->|"compile + run on data"| M["Per-candidate metrics<br/>train · val · size"]
     M -->|"HFF TrueNorth angle"| T{{"tournament"}}
     T -->|winner| W["Winning form"]
-    W -->|"R² guard:<br/>behaviour unchanged?"| R["Rebuild karva<br/>(ORF pads fixed geometry)"]
+    W -->|"R² guard:<br/>behaviour unchanged?"| Y["COMPRESS codec<br/>semantic id → pset name"]
+    Y --> R["Rebuild karva<br/>(ORF pads fixed geometry)"]
     R -->|"heritable DNA →<br/>selection & crossover"| G
 
     classDef gep fill:#e8f0fe,stroke:#4a6fa5,color:#1a2b4a
     classDef egraph fill:#efe8fe,stroke:#7a5fa5,color:#2b1a4a
     classDef data fill:#e8fef0,stroke:#4aa56f,color:#1a4a2b
+    classDef codec fill:#fef3e0,stroke:#c08a3e,color:#4a331a
     class G,R gep
     class A,E,C egraph
     class M,T,W data
+    class X,Y codec
 ```
 
 **Blue** is the GEP world (geppy genes), **purple** the e-graph world (every
@@ -102,6 +106,40 @@ input→output function, the equivalence guard at step 7 is **exact**, not
 R²-on-data — a boolean, not a statistic. `bf_simplify` is that path today, and
 any target with decidable equivalence (SQL, regex, compiler IR) slots into the
 identical ring.
+
+### The symbol-table contract (the two codecs)
+
+The orange nodes are where soundness is won or lost. fuller does not hardcode
+a symbol table — the host declares one, and the two codecs enforce it in both
+directions:
+
+**EXPRESS** (gene → AST): the host hands every karva call a mapping from its
+own token names to fuller's semantic ids,
+
+```python
+functions = {                     # token_name -> (semantic_id, arity)
+    "protected_div_zero": ("protected_div", 2),
+    "_pset_square":       ("pow2", 1),
+    "_raw_div":           ("div", 2),
+    ...
+}
+```
+
+so the e-graph reasons about *semantics* (`div`, `pow2`), never the host's
+spelling of them. Distinct semantics stay distinct: a protected division and a
+raw division map to different ids, so no rule can silently substitute one for
+the other.
+
+**COMPRESS** (winning form → gene): every candidate fuller emits is rendered
+using **only** token names from that same dict, so decode-back into the host's
+pset is guaranteed to resolve — no phantom tokens, no `KeyError` at rebuild.
+Anything the host's symbol table cannot express is reported in the
+`inexpressible` field of the result rather than approximated: the contract is
+*refuse, don't mangle*. The host's decode tables can be a superset of what its
+GA samples (decode-only registration), which is how raw operators stay
+available to rewrites without polluting random gene generation.
+
+See [`docs/USAGE.md`](docs/USAGE.md) for the full contract.
 
 ## What it does
 
