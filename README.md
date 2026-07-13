@@ -199,3 +199,8 @@ the GECCO 2026 poster:
 ## License
 
 MIT. See [`LICENSE`](LICENSE).
+
+---
+
+Built by [Gamakon](https://gamakon.ai). Support, integration help, and
+collaboration enquiries are welcome — reach out via [gamakon.ai](https://gamakon.ai).
