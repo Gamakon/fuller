@@ -16,6 +16,37 @@ exponential simplification paths made expression cleanup unreliable. egglog is
 the right substrate: deterministic, bounded, declarative, and fast (the same
 engine family behind [Herbie](https://herbie.uwplse.org/)).
 
+## The vision
+
+**Machine-discovered knowledge should come out in its simplest honest form.**
+Nature's laws are short. The expressions evolution engines discover are not —
+they arrive bloated with smuggled constants (`√(NA/r⁴)` hiding a physical
+constant in a coefficient), dead structure, and noise terms that fit the sample
+rather than the law. Most of the distance between "fits the data" and "*is* the
+law" is exactly this bloat. fuller exists to close that distance — Buckminster
+Fuller's ephemeralization, *doing more with less*, applied to equations.
+
+**Representation should be evolvable.** A constant can live in a genome two
+ways: as a symbol (`pi`, `G`, `k_e`) or as a number (`3.14159…`, `6.674e-11`).
+The `snap` ⇄ `concretize` pair makes that choice *reversible mutation*, so a
+population carries both representations and selection — not the engineer —
+decides which survives. When the symbolic form wins, the discovered law
+IS the textbook form, recovered rather than post-hoc pattern-matched.
+
+**Rewriting belongs inside the evolutionary loop, not after it.** Classical GP
+treats simplification as post-processing, because unsound rewrites inside the
+loop would corrupt the population. fuller's rewrites are proved equivalent (or
+data-gated to preserve behaviour), which changes the rules: denoise, snap, and
+physics-prior restructuring can act as *genetic operators*, and a
+simplification, once found, becomes heritable DNA that crossover propagates.
+Sound Lamarckism — acquired traits inherited because they are proven safe.
+
+**Any grammar with a cost model and an equivalence check can be minimised.**
+Symbolic regression checks equivalence against data; Brainfuck checks it
+exactly, output-by-output. The engine does not care which — that is the point,
+and why both targets ship. SQL, regex, sorting networks, compiler IR: the same
+machinery applies wherever "smaller, provably the same" is worth having.
+
 ## What it does
 
 - **Denoise** — shrink an expression to an equivalent smaller one, gated by an
