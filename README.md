@@ -48,6 +48,53 @@ exactly, output-by-output. The engine does not care which — that is the point,
 and why both targets ship. SQL, regex, sorting networks, compiler IR: the same
 machinery applies wherever "smaller, provably the same" is worth having.
 
+## How it works — the round trip
+
+A karva gene leaves the GEP population, is provably rewritten in an e-graph,
+measured on data, and returns to the population as heritable DNA:
+
+```mermaid
+flowchart TD
+    G["Karva gene<br/>(GEP population)"] -->|"expressed via ORF"| A["Math AST"]
+    A -->|"saturate bounded ruleset"| E[("e-graph<br/>equivalence classes")]
+    E -->|"extract k candidates"| C["Candidate forms<br/>(provably equivalent)"]
+    C -->|"compile + run on data"| M["Per-candidate metrics<br/>train · val · size"]
+    M -->|"HFF TrueNorth angle"| T{{"tournament"}}
+    T -->|winner| W["Winning form"]
+    W -->|"R² guard:<br/>behaviour unchanged?"| R["Rebuild karva<br/>(ORF pads fixed geometry)"]
+    R -->|"heritable DNA →<br/>selection & crossover"| G
+
+    classDef gep fill:#e8f0fe,stroke:#4a6fa5,color:#1a2b4a
+    classDef egraph fill:#efe8fe,stroke:#7a5fa5,color:#2b1a4a
+    classDef data fill:#e8fef0,stroke:#4aa56f,color:#1a4a2b
+    class G,R gep
+    class A,E,C egraph
+    class M,T,W data
+```
+
+**Blue** is the GEP world (geppy genes), **purple** the e-graph world (every
+rewrite provably equivalent), **green** the data world (candidates measured,
+never assumed). Step by step:
+
+| # | Stage | Operation | What happens / why it works |
+|---|---|---|---|
+| 1 | **Karva gene** (fixed head+tail token string) | expressed via the ORF | GEP decoding reads tokens until the expression tree closes — the open reading frame. Everything past the ORF is non-coding and silent. |
+| 2 | Math AST | saturate bounded ruleset | The expressed tree is lifted into an egglog e-graph and a capped rewrite schedule runs — deterministic, never runs away. |
+| 3 | E-graph (equivalence classes) | extract k candidates | The e-graph holds every equivalent form compactly in shared classes; only k variants are materialised. Each is **provably** equivalent by construction. |
+| 4 | Candidate forms | compile + run on data | Each candidate is compiled and measured on train/val rows — behaviour is measured, never assumed. |
+| 5 | Per-candidate metrics (train · val · size) | HFF TrueNorth angle | Each candidate's metric vector becomes one angular fitness score — the same scoring geometry as the host GA. |
+| 6 | Scores | tournament | Candidates compete; the instrumented e-class tournament picks the winner on measured behaviour, not cost heuristics alone. |
+| 7 | Winning form | R² guard | The trust gate: the winner is kept only if behaviour on the data is unchanged (within tolerance). A rewrite can never silently change what the gene computes. |
+| 8 | Rebuilt karva tokens | re-encode into the fixed head/tail geometry | **This step only works in karva, because of the ORF.** A simplified form is usually *shorter* than the gene it replaces — in tree-GP that is a differently-shaped genome and breaks the operators. In karva the shorter coding region simply ends earlier; the fixed-length head and tail are padded with terminals *past the ORF*, non-coding by definition, so the padding provably cannot change the expressed tree. The rebuilt gene is a structural drop-in of identical length. |
+| 9 | **Karva gene** (back in the population) | selection & crossover | The simplification is now heritable DNA — crossover propagates it, selection judges it. Rewriting lives *inside* the loop, not as post-processing. |
+
+The open reading frame does double duty: it lets **any** equivalent form —
+shorter, restructured, constant-snapped — re-enter a fixed-geometry genome
+legally, and it makes the padding provably harmless (non-coding by
+definition, not by hope). Without it, step 8 would need variable-length
+genomes and "rewriting as a genetic operator" would collapse back into
+post-processing.
+
 ## What it does
 
 - **Denoise** — shrink an expression to an equivalent smaller one, gated by an
