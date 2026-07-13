@@ -10,10 +10,10 @@ data-gated or exact equivalence check so a rewrite can never silently change
 behaviour.
 
 It is a Rust crate exposed to Python via [PyO3](https://github.com/PyO3/pyo3).
-It was built to replace SymPy on the hot path of a symbolic-regression engine
-(the [HFF](https://github.com/Gamakon/HFF) equation-recovery work), where
-SymPy's complex-domain assumptions, native signal handling, and exponential
-simplification paths made expression cleanup unreliable. egglog is
+It was written to replace SymPy in the inner loop of a symbolic-regression
+engine (the [HFF](https://github.com/Gamakon/HFF) equation-recovery work),
+where SymPy's complex-domain assumptions, native signal handling, and
+exponential simplification paths made expression cleanup unreliable. egglog is
 the right substrate: deterministic, bounded, declarative, and fast (the same
 engine family behind [Herbie](https://herbie.uwplse.org/)).
 
@@ -46,10 +46,10 @@ mechanism made sound by proof of equivalence.
 
 **Any grammar with a cost model and an equivalence check can be minimised.**
 Symbolic regression checks equivalence against data; Brainfuck checks it
-exactly, output-by-output. The engine is agnostic to the choice, and both
-targets ship to demonstrate it. The same machinery applies to SQL, regex,
-sorting networks, or compiler IR — any setting where a smaller, provably
-equivalent program is useful.
+exactly, output-by-output. The engine is agnostic to the choice, and the two
+included targets demonstrate one of each. The same machinery applies to SQL,
+regex, sorting networks, or compiler IR — any setting where a smaller,
+provably equivalent program is useful.
 
 ## How it works — the round trip
 
@@ -153,8 +153,8 @@ See [`docs/USAGE.md`](docs/USAGE.md) for the full contract.
 - **Prove equivalence** — `equals` / `proves_equal` decide whether two
   expressions are the same via equality saturation, not sampling.
 - **SymPy bridge** — `to_math` / `from_math` convert SymPy ⇄ the internal `Math`
-  form losslessly (real-domain ops), so you can drop `fuller` into a SymPy
-  pipeline.
+  form losslessly (real-domain ops), so `fuller` can be used within an existing
+  SymPy pipeline.
 - **Brainfuck simplifier** — the same machinery applied to a second, exact
   target (`bf_simplify`), where equivalence is decidable output-by-output.
 
@@ -199,17 +199,17 @@ see [`docs/USAGE.md`](docs/USAGE.md).
 
 fuller is not tied to one language. The core is *target-agnostic*: give it a
 grammar, a cost model, and a way to check equivalence, and it will minimise
-programs in that grammar. Two targets ship, chosen because they check
+programs in that grammar. Two targets are included, chosen because they check
 equivalence in the two fundamentally different ways available:
 
 **Symbolic regression (equivalence checked against data).** Evolved GEP
 expressions are noisy and bloated — `x·1 + 0·y`, `√(NA/r⁴)·…` where a physical
 constant is absorbed into a coefficient, `Abs(a^1.5)` where the domain is
 positive. fuller folds these to the reduced form (`x`, `1/r²·√NA`, `a^1.5`) and
-keeps the rewrite **only if R² does not drop on your data**. This is the hot
-path it was built for: replacing SymPy inside a symbolic-regression engine's
-extraction step, cheaply and deterministically, so the discovered expression is
-reported in its simplest equivalent form. The `snap_karva` / `concretize_karva`
+keeps the rewrite **only if R² does not drop on your data**. This is the job
+it was written for: replacing SymPy in the extraction step of a
+symbolic-regression engine, cheaply and deterministically, so the discovered
+expression is reported in its simplest equivalent form. The `snap_karva` / `concretize_karva`
 pair goes further — letting a population evolve *whether a constant is symbolic
 or numeric*, so selection recovers the reference form of a law in a single run.
 
@@ -260,12 +260,13 @@ output. Equivalence is *proved* by saturation, not sampled.
 
 ## Status
 
-Core is working and used in production by a symbolic-regression engine: denoise,
-the snap/concretize flip pair, the physics-prior mutations, the SymPy bridge,
-and the Brainfuck simplifier all ship. The ruleset is deliberately small and
-grows conservatively — a rule lands only once it is either provably sound or
-data-gated. See [`docs/USAGE.md`](docs/USAGE.md) for the consumer guide and
-`docs/` for per-feature notes.
+The core is complete and in regular use inside the
+[HFF](https://github.com/Gamakon/HFF) symbolic-regression engine. Denoising,
+the snap/concretize pair, the physics-prior mutations, the SymPy bridge and
+the Brainfuck simplifier are all implemented and tested. The rewrite ruleset
+is deliberately small and grows slowly: a rule is added only when it is either
+provably sound or guarded by the data check. The consumer guide is
+[`docs/USAGE.md`](docs/USAGE.md), with per-feature notes elsewhere in `docs/`.
 
 ## Citation
 
