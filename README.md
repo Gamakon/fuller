@@ -55,7 +55,7 @@ measured on data, and returns to the population as heritable DNA:
 
 ```mermaid
 flowchart TD
-    G["Karva gene<br/>(GEP population)"] -->|"expressed via ORF"| A["Math AST"]
+    G["Karva gene<br/>(GEP population)"] -->|"expressed via ORF"| A["AST<br/>(Math · Brainfuck · …)"]
     A -->|"saturate bounded ruleset"| E[("e-graph<br/>equivalence classes")]
     E -->|"extract k candidates"| C["Candidate forms<br/>(provably equivalent)"]
     C -->|"compile + run on data"| M["Per-candidate metrics<br/>train · val · size"]
@@ -94,6 +94,14 @@ legally, and it makes the padding provably harmless (non-coding by
 definition, not by hope). Without it, step 8 would need variable-length
 genomes and "rewriting as a genetic operator" would collapse back into
 post-processing.
+
+The same ring runs for **Brainfuck**, not just math. The middle of the loop
+(steps 2–7) is target-agnostic — swap the grammar and the cost model, and one
+thing upgrades: because a Brainfuck program's behaviour is a decidable
+input→output function, the equivalence guard at step 7 is **exact**, not
+R²-on-data — a boolean, not a statistic. `bf_simplify` is that path today, and
+any target with decidable equivalence (SQL, regex, compiler IR) slots into the
+identical ring.
 
 ## What it does
 
