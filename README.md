@@ -143,4 +143,4 @@ data-gated. See [`docs/USAGE.md`](docs/USAGE.md) for the consumer guide and
 
 ## License
 
-GPL-3.0-or-later. See [`LICENSE`](LICENSE).
+MIT. See [`LICENSE`](LICENSE).

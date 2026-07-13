@@ -3,7 +3,7 @@ name = "fuller"
 version = "0.1.0"
 edition = "2021"
 description = "Egglog-based bidirectional AST hub for symbolic expression rewriting"
-license = "GPL-3.0-or-later"
+license = "MIT"
 
 [lib]
 name = "fuller"

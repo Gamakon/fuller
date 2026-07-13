@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Egglog-based bidirectional AST hub for symbolic expression rewriting"
 requires-python = ">=3.9"
 authors = [{ name = "Andrew Morgan", email = "andrew@gamakon.ai" }]
-license = { text = "GPL-3.0-or-later" }
+license = { text = "MIT" }
 
 [tool.maturin]
 # Build the cdylib with the `python` feature so PyO3 is compiled in.
