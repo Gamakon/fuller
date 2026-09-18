@@ -887,8 +887,109 @@ fn eclass_extract_hff_instrumented(
 /// The native extension module. `module-name` in pyproject.toml is
 /// `fuller._fuller`, so this initialises `_fuller`; the Python shim
 /// re-exports from it.
+/// Evaluate many karva genes over one dataset in a single GPU dispatch.
+///
+/// The engine-facing entry point for the GPU path. Each gene is decoded to
+/// Math, converted to device nodes and evaluated against `rows`, which is
+/// uploaded once. Returns one score dict per gene, in the order given.
+///
+/// This is f32 on device. That is adequate for RANKING candidates and is NOT
+/// adequate for an exact-recovery gate — a recovered Lorentz form passed at
+/// 1.6e-13 relative error, which f32 cannot represent. Shortlist here, then
+/// re-score finalists through the f64 path.
+///
+/// Raises if the crate was built without `--features gpu`, rather than
+/// silently falling back: a caller asking for the GPU path should be told it
+/// is absent, not handed CPU numbers it did not ask for.
+#[pyfunction]
+#[pyo3(signature = (genes, variables, functions, rnc_values, rows, targets))]
+#[allow(unused_variables)]
+fn gpu_score_karva(
+    py: Python<'_>,
+    genes: Vec<(Vec<PyToken>, Vec<PyToken>)>,
+    variables: Vec<String>,
+    functions: HashMap<String, (String, usize)>,
+    rnc_values: Vec<f64>,
+    rows: Vec<Vec<f64>>,
+    targets: Vec<f64>,
+) -> PyResult<Vec<HashMap<String, f64>>> {
+    #[cfg(not(feature = "gpu"))]
+    {
+        Err(pyo3::exceptions::PyRuntimeError::new_err(
+            "fuller was built without the `gpu` feature; rebuild with \
+             `maturin develop --release --features gpu`",
+        ))
+    }
+    #[cfg(feature = "gpu")]
+    {
+        use crate::gpu_eval::{karva_to_nodes, score_predictions, ExprBatch, GpuEvaluator};
+
+        if rows.len() != targets.len() {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "rows ({}) and targets ({}) differ in length",
+                rows.len(),
+                targets.len()
+            )));
+        }
+        let pset = build_pset(variables.clone(), functions, rnc_values);
+
+        // Flatten row-major, f32 for the device.
+        let flat: Vec<f32> = rows
+            .iter()
+            .flat_map(|r| r.iter().map(|v| *v as f32))
+            .collect();
+        let ev = GpuEvaluator::new(&flat, variables.len())
+            .map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
+
+        // One batch for the whole population.
+        let mut batch = ExprBatch::new();
+        let n_genes = genes.len();
+        let mut ok: Vec<bool> = Vec::with_capacity(n_genes);
+        // Consume by value: Py<PyAny> is not Clone, so the tokens cannot be
+        // borrowed out and copied.
+        for (h, t) in genes {
+            let head = build_tokens(py, h)?;
+            let tail = build_tokens(py, t)?;
+            match karva_to_nodes(&head, &tail, &pset, &variables) {
+                Ok(nodes) if nodes.len() <= crate::gpu_eval::MAX_NODES => {
+                    batch.push(&nodes);
+                    ok.push(true);
+                }
+                // Undecodable or too long: keep the slot so indices line up,
+                // and mark it so the caller sees a miss rather than a wrong
+                // number silently attributed to this gene.
+                _ => {
+                    batch.push(&[]);
+                    ok.push(false);
+                }
+            }
+        }
+
+        let preds = ev
+            .eval(&batch)
+            .map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
+        let tgt: Vec<f32> = targets.iter().map(|v| *v as f32).collect();
+        let scores = score_predictions(&preds, &tgt, n_genes);
+
+        Ok(scores
+            .into_iter()
+            .zip(ok)
+            .map(|(s, decoded)| {
+                let mut m = HashMap::new();
+                m.insert("mse".to_string(), s.mse);
+                m.insert("mae".to_string(), s.mae);
+                m.insert("max_err".to_string(), s.max_err);
+                m.insert("n_nonfinite".to_string(), s.n_nonfinite as f64);
+                m.insert("decoded".to_string(), if decoded { 1.0 } else { 0.0 });
+                m
+            })
+            .collect())
+    }
+}
+
 #[pymodule]
 fn _fuller(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_function(wrap_pyfunction!(gpu_score_karva, m)?)?;
     m.add_function(wrap_pyfunction!(denoise, m)?)?;
     m.add_function(wrap_pyfunction!(denoise_karva, m)?)?;
     m.add_function(wrap_pyfunction!(denoise_karva_candidates, m)?)?;

@@ -368,6 +368,24 @@ pub fn math_to_nodes(expr: &str, vars: &[String]) -> Result<Vec<GpuNode>, String
     flatten(&tree, vars)
 }
 
+/// Karva tokens straight to GPU nodes.
+///
+/// This is the engine-facing entry point: the engine holds chromosomes as
+/// karva, not as Math s-expressions. Composes the existing
+/// [`crate::karva::karva_to_terms`] decoder with [`math_to_nodes`], so the
+/// karva semantics (head/tail split, level-order child consumption, arity
+/// bounding) stay defined in exactly one place rather than being reimplemented
+/// here and drifting.
+pub fn karva_to_nodes(
+    head: &[crate::karva::Token],
+    tail: &[crate::karva::Token],
+    pset: &crate::karva::PsetSpec,
+    vars: &[String],
+) -> Result<Vec<GpuNode>, String> {
+    let math = crate::karva::karva_to_terms(head, tail, pset)?;
+    math_to_nodes(&math, vars)
+}
+
 #[derive(Debug, Clone)]
 enum Tree {
     Num(f64),
@@ -716,6 +734,55 @@ mod device {
 
 #[cfg(feature = "gpu")]
 pub use device::GpuEvaluator;
+
+/// Per-expression error terms, reduced on the host from the device's
+/// predictions. These are the columns an HFF objective vector is built from.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ExprScore {
+    pub mse: f64,
+    pub mae: f64,
+    pub max_err: f64,
+    /// Rows that produced NaN or inf. A non-zero count means the expression is
+    /// not total on this data, which a caller usually wants to rank last
+    /// rather than average away.
+    pub n_nonfinite: usize,
+}
+
+/// Reduce raw device predictions into per-expression scores.
+///
+/// Separated from the dispatch so it is testable without a GPU, and so the
+/// same reduction applies whether predictions came from the device or the CPU
+/// evaluator.
+///
+/// `preds` is expression-major: `preds[e * n_rows + r]`.
+pub fn score_predictions(preds: &[f32], targets: &[f32], n_expr: usize) -> Vec<ExprScore> {
+    let n_rows = targets.len();
+    let mut out = Vec::with_capacity(n_expr);
+    for e in 0..n_expr {
+        let (mut se, mut ae, mut mx, mut bad) = (0.0f64, 0.0f64, 0.0f64, 0usize);
+        for r in 0..n_rows {
+            let p = preds[e * n_rows + r];
+            if !p.is_finite() {
+                bad += 1;
+                continue;
+            }
+            let d = (p - targets[r]) as f64;
+            se += d * d;
+            ae += d.abs();
+            mx = mx.max(d.abs());
+        }
+        let good = (n_rows - bad).max(1) as f64;
+        out.push(ExprScore {
+            mse: se / good,
+            mae: ae / good,
+            max_err: mx,
+            n_nonfinite: bad,
+        });
+    }
+    out
+}
+
+
 
 #[cfg(test)]
 mod tests {
