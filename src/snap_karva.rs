@@ -38,7 +38,60 @@ pub struct ConstEntry {
 /// Parse the embedded lattice. Hand-rolled (no serde dep): the file is a flat
 /// JSON array of objects with string/number fields we control the shape of.
 pub fn lattice() -> Vec<ConstEntry> {
-    parse_lattice(LATTICE_JSON)
+    let mut out = parse_lattice(LATTICE_JSON);
+    out.extend(small_integer_entries());
+    out
+}
+
+/// Small integers and simple rationals.
+///
+/// The JSON lattice is a PHYSICS table — constants and their composites — so it
+/// contained no plain integers at all. A fitted coefficient of 1 therefore
+/// matched nothing (observed in a recovery run as
+/// `0.999999999999999*sqrt(...)` reaching the reported equation), and the
+/// nearest forms for the ones that did appear were absurd: 2.0 only as
+/// `sqrt2^2`, 0.5 only as `h/(4*pi*hbar)`. Without these entries a snap can
+/// actively mangle an exact rational into a physics coincidence.
+///
+/// Kept deliberately small. These are the values an LSM fit lands on when the
+/// structure is right and the coefficient is trivial; a long tail of integers
+/// would give the tolerance more chances to match something by accident.
+fn small_integer_entries() -> Vec<ConstEntry> {
+    let mut v = Vec::new();
+    for n in 1..=12i64 {
+        v.push(ConstEntry {
+            value: n as f64,
+            math: format!("(Num {:.1})", n as f64),
+            label: n.to_string(),
+        });
+        v.push(ConstEntry {
+            value: -(n as f64),
+            math: format!("(Num {:.1})", -(n as f64)),
+            label: format!("-{n}"),
+        });
+    }
+    // Reciprocals: the other side of a division an LSM fit can produce.
+    for d in [2i64, 3, 4, 5, 6, 8, 10, 12] {
+        v.push(ConstEntry {
+            value: 1.0 / d as f64,
+            math: format!("(Div (Num 1.0) (Num {:.1}))", d as f64),
+            label: format!("1/{d}"),
+        });
+        v.push(ConstEntry {
+            value: -1.0 / d as f64,
+            math: format!("(Div (Num -1.0) (Num {:.1}))", d as f64),
+            label: format!("-1/{d}"),
+        });
+    }
+    // The few non-unit rationals that actually turn up in physics forms.
+    for (n, d) in [(2i64, 3i64), (3, 2), (3, 4), (5, 2), (2, 5)] {
+        v.push(ConstEntry {
+            value: n as f64 / d as f64,
+            math: format!("(Div (Num {:.1}) (Num {:.1}))", n as f64, d as f64),
+            label: format!("{n}/{d}"),
+        });
+    }
+    v
 }
 
 fn parse_lattice(s: &str) -> Vec<ConstEntry> {
@@ -447,5 +500,56 @@ mod tests {
         // a bare numeric with no near constant just returns itself.
         let v = snap_variants(r#"(Add (Var "x") (Num 0.5))"#, 8, 1e-9).unwrap();
         assert!(v.iter().any(|c| c.expr.contains("0.5")));
+    }
+}
+
+#[cfg(test)]
+mod integer_lattice_tests {
+    use super::*;
+
+    fn nearest(target: f64) -> Option<ConstEntry> {
+        lattice()
+            .into_iter()
+            .filter(|e| (e.value - target).abs() <= 1e-9 * target.abs().max(1.0))
+            .min_by(|a, b| {
+                (a.value - target).abs()
+                    .partial_cmp(&(b.value - target).abs())
+                    .unwrap()
+            })
+    }
+
+    #[test]
+    fn one_is_in_the_lattice() {
+        // The gap that let 0.999999999999999*sqrt(...) reach a reported result.
+        let e = nearest(0.999_999_999_999_999).expect("no entry near 1.0");
+        assert_eq!(e.label, "1");
+    }
+
+    #[test]
+    fn small_integers_and_reciprocals_are_present() {
+        for (target, label) in [(2.0, "2"), (-3.0, "-3"), (0.5, "1/2"), (1.5, "3/2")] {
+            let e = nearest(target)
+                .unwrap_or_else(|| panic!("no entry near {target}"));
+            assert_eq!(e.label, label, "wrong entry for {target}");
+        }
+    }
+
+    #[test]
+    fn integer_math_forms_round_trip_as_math() {
+        // Each added entry's `math` must parse as a Math s-expression, or snap
+        // emits something the karva decoder cannot read back.
+        for e in small_integer_entries() {
+            assert!(e.math.starts_with('('), "not an s-expr: {}", e.math);
+            assert!(e.math.ends_with(')'), "not an s-expr: {}", e.math);
+        }
+    }
+
+    #[test]
+    fn physics_constants_still_win_where_they_should() {
+        // Adding integers must not shadow a real constant.
+        let pi = lattice().into_iter().find(|e| e.label == "pi");
+        assert!(pi.is_some(), "pi missing from lattice");
+        assert!(nearest(3.0).is_some_and(|e| e.label == "3"),
+                "3.0 should snap to the integer, not a pi composite");
     }
 }
