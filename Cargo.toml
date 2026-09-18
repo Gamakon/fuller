@@ -21,6 +21,11 @@ rayon = "1.10"
 # model AND the BF study fitness. default-features=false drops HFF's PyO3
 # layer — we use only the pure math in hff_core::core_functions / ::higd.
 hff = { path = "../hff", default-features = false }
+# GPU batch evaluator (feature = "gpu"). Versions match the hff crate so a
+# workspace build shares one wgpu.
+wgpu = { version = "0.20", optional = true }
+pollster = { version = "0.3", optional = true }
+bytemuck = { version = "1.14", features = ["derive"], optional = true }
 # Used to hand an objective vector to hff_core's TrueNorth (matches hff's 0.15).
 ndarray = "0.15"
 
@@ -34,6 +39,9 @@ optional = true
 # `cargo build` / `cargo test` / examples never need the Python link env.
 default = []
 python = ["dep:pyo3"]
+# `gpu` adds the wgpu batch evaluator. Off by default: a plain build must never
+# need a GPU adapter, and the CPU evaluator stays the correctness reference.
+gpu = ["dep:wgpu", "dep:pollster", "dep:bytemuck"]
 
 [[example]]
 name = "00_calibration"

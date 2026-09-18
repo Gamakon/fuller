@@ -32,6 +32,10 @@ pub mod eval;
 pub mod expr;
 pub mod extract;
 pub mod geneframe;
+// GPU batch evaluator. The module (opcodes, batch layout, WGSL source) always
+// compiles so its tests run on any machine; only the wgpu device code is
+// behind `feature = "gpu"`.
+pub mod gpu_eval;
 pub mod karva;
 pub mod parity;
 pub mod physics;
