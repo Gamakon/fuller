@@ -557,6 +557,11 @@ pub fn denoise_assuming(
     if let Some(stripped) = strip_additive_constants(&fold_base) {
         fold_cands.push(stripped); // smallest first
     }
+    // Additive-term subsets. strip_additive_constants only removes bare
+    // numeric literals, so a term like `- 1.66*V` survives it. These
+    // candidates drop whole top-level terms and are gated on the data exactly
+    // like everything else — smallest offered first.
+    fold_cands.extend(additive_subset_candidates(&fold_base));
     fold_cands.push(fold_base);
     for cand in fold_cands {
         let nodes = cost_of(&cand);
@@ -854,6 +859,106 @@ fn strip_additive_constants(expr: &str) -> Option<String> {
     }
     let tree = parse_pnode(expr)?;
     Some(go(&tree).to_math())
+}
+
+/// Split a top-level additive chain into its signed terms.
+///
+/// `a - b + c` parses as `Add(Sub(a,b),c)`, so a flat left-to-right walk over
+/// Add/Sub yields `[(+,a), (-,b), (+,c)]`. Only the TOP level is split —
+/// nested Add/Sub inside a Mul or a function argument stays whole, because
+/// those are not independent terms.
+fn split_additive_terms(n: &PNode) -> Vec<(bool, PNode)> {
+    fn go(n: &PNode, positive: bool, out: &mut Vec<(bool, PNode)>) {
+        match n {
+            PNode::App(op, ch) if op == "Add" && ch.len() == 2 => {
+                go(&ch[0], positive, out);
+                go(&ch[1], positive, out);
+            }
+            PNode::App(op, ch) if op == "Sub" && ch.len() == 2 => {
+                go(&ch[0], positive, out);
+                go(&ch[1], !positive, out);   // the subtrahend flips sign
+            }
+            other => out.push((positive, other.clone())),
+        }
+    }
+    let mut out = Vec::new();
+    go(n, true, &mut out);
+    out
+}
+
+/// Rebuild an expression from a signed-term subset, preserving each term's
+/// sign. A leading negative term becomes `Sub(0, t)` so the string stays a
+/// well-formed Math expression.
+fn rebuild_from_terms(terms: &[(bool, PNode)]) -> Option<PNode> {
+    let mut it = terms.iter();
+    let (first_pos, first) = it.next()?;
+    let mut acc = if *first_pos {
+        first.clone()
+    } else {
+        PNode::App("Sub".into(), vec![PNode::Num(0.0), first.clone()])
+    };
+    for (pos, t) in it {
+        acc = PNode::App(
+            if *pos { "Add".into() } else { "Sub".into() },
+            vec![acc, t.clone()],
+        );
+    }
+    Some(acc)
+}
+
+/// Candidate expressions built by dropping top-level additive terms.
+///
+/// Motivating case: a search that scores only on fit returns
+/// `8.314*T*n/V - 1.66*V + 0.913` when the truth is `8.314*T*n/V`. The extra
+/// terms are *neutral bloat* — they barely move R^2, so a fit-only objective
+/// cannot see them, and (unlike overfitting bloat) validation pairing cannot
+/// either. `strip_additive_constants` only removes bare numeric literals, so
+/// `- 1.66*V` survives it.
+///
+/// Every subset of the top-level terms is offered, smallest first, and the
+/// caller's existing strict-shrink + R^2 gate decides. Nothing is dropped on
+/// structural grounds alone: a term is removed only when the data says the fit
+/// does not depend on it.
+///
+/// Bounded: with more than `MAX_SPLIT_TERMS` terms the powerset is too large,
+/// so only the single-term-drop candidates are offered (linear, not
+/// exponential).
+fn additive_subset_candidates(expr: &str) -> Vec<String> {
+    const MAX_SPLIT_TERMS: usize = 8;
+    let Some(tree) = parse_pnode(expr) else {
+        return Vec::new();
+    };
+    let terms = split_additive_terms(&tree);
+    let n = terms.len();
+    if n < 2 {
+        return Vec::new();
+    }
+    let mut cands: Vec<(usize, String)> = Vec::new();
+    if n <= MAX_SPLIT_TERMS {
+        // Every non-empty proper subset, so paired cancellations are reachable
+        // (dropping either of two terms alone can break the fit while dropping
+        // both is fine).
+        for mask in 1u32..(1u32 << n) - 1 {
+            let subset: Vec<(bool, PNode)> = (0..n)
+                .filter(|i| mask & (1 << i) != 0)
+                .map(|i| terms[i].clone())
+                .collect();
+            if let Some(node) = rebuild_from_terms(&subset) {
+                cands.push((subset.len(), node.to_math()));
+            }
+        }
+    } else {
+        for drop in 0..n {
+            let subset: Vec<(bool, PNode)> =
+                (0..n).filter(|i| *i != drop).map(|i| terms[i].clone()).collect();
+            if let Some(node) = rebuild_from_terms(&subset) {
+                cands.push((subset.len(), node.to_math()));
+            }
+        }
+    }
+    // Fewest terms first: the caller takes the first that passes the R^2 gate.
+    cands.sort_by_key(|(k, s)| (*k, s.len()));
+    cands.into_iter().map(|(_, s)| s).collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -1371,5 +1476,47 @@ mod tests {
         let out = denoise(r#"(Add (Var "x") (Var "y"))"#, &data, 1e-3, 64).expect("denoise");
         assert!(!out.changed, "no opportunity -> unchanged");
         assert_eq!(out.expr, r#"(Add (Var "x") (Var "y"))"#);
+    }
+}
+
+#[cfg(test)]
+mod additive_subset_tests {
+    use super::*;
+
+    #[test]
+    fn splits_a_signed_chain() {
+        let t = parse_pnode("(Add (Sub (Var \"a\") (Var \"b\")) (Var \"c\"))").unwrap();
+        let terms = split_additive_terms(&t);
+        assert_eq!(terms.len(), 3);
+        assert!(terms[0].0);    // +a
+        assert!(!terms[1].0);   // -b
+        assert!(terms[2].0);    // +c
+    }
+
+    #[test]
+    fn does_not_split_inside_a_product() {
+        // Mul(Add(a,b), c) has ONE top-level term, not two.
+        let e = "(Mul (Add (Var \"a\") (Var \"b\")) (Var \"c\"))";
+        let t = parse_pnode(e).unwrap();
+        assert_eq!(split_additive_terms(&t).len(), 1);
+        assert!(additive_subset_candidates(e).is_empty());
+    }
+
+    #[test]
+    fn offers_the_single_term_before_the_pair() {
+        // The ideal_gas shape: main term + two bloat terms.
+        let e = "(Add (Sub (Var \"main\") (Var \"bloat1\")) (Num 0.913))";
+        let c = additive_subset_candidates(e);
+        assert!(!c.is_empty());
+        // Smallest first: a 1-term candidate must precede any 2-term one.
+        let first_is_single = !c[0].contains("Add") && !c[0].contains("Sub");
+        assert!(first_is_single, "expected a 1-term candidate first, got {}", c[0]);
+        // The bare main term must be reachable.
+        assert!(c.iter().any(|x| x == "(Var \"main\")"), "candidates: {c:?}");
+    }
+
+    #[test]
+    fn a_single_term_expression_yields_nothing() {
+        assert!(additive_subset_candidates("(Var \"x\")").is_empty());
     }
 }

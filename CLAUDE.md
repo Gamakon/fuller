@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-fuller is a Rust crate (PyO3-exposed) using **egglog 2.0** as a substrate for symbolic expression rewriting. It replaces sympy for the sibling SR engine in `/Users/andrewmorgan/Dev/kaito/hff/`: deterministic, real-domain, bounded. `hff/` is a **separate project** — only commit there with the user's sign-off, on its own branch.
+fuller is a Rust crate (PyO3-exposed) using **egglog 2.0** as a substrate for symbolic expression rewriting. It replaces sympy for the sibling SR engine in `/Users/andrewmorgan/Dev/gamakon/hff/`: deterministic, real-domain, bounded.
 
 The original Phase-1 spec is **delivered and superseded** — see `stale/BRIEF.md` for history only. Current state is `src/` + `docs/`.
 
