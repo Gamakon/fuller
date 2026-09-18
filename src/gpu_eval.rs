@@ -251,15 +251,16 @@ fn eval_main(@builtin(global_invocation_id) gid: vec3<u32>) {
             case 17u: { let a = scratch[nd.arg0]; v = a * a * a; }
             case 18u: { v = 1.0 / scratch[nd.arg0]; }
             // Protected ops: distinct functions, not guarded raw ops.
-            case 19u: {                                            // ProtectedDiv
+            // ProtectedDiv: a/b if b != 0 ELSE 0.0 (NOT 1.0 — see eval.rs)
+            case 19u: {
                 let d = scratch[nd.arg1];
-                if (d == 0.0) { v = 1.0; } else { v = scratch[nd.arg0] / d; }
+                if (d == 0.0) { v = 0.0; } else { v = scratch[nd.arg0] / d; }
             }
-            case 20u: { v = sqrt(abs(scratch[nd.arg0])); }         // ProtectedSqrt
-            case 21u: {                                            // ProtectedLog
-                let a = abs(scratch[nd.arg0]);
-                if (a == 0.0) { v = 0.0; } else { v = log(a); }
-            }
+            case 20u: { v = sqrt(abs(scratch[nd.arg0])); }         // ProtectedSqrt: sqrt(|x|)
+            // ProtectedLog: ln(|x|) UNGUARDED — |x| == 0 gives -inf, which is
+            // the engine's behaviour. Substituting 0.0 here would be a silent
+            // divergence that only shows up on data containing a zero.
+            case 21u: { v = log(abs(scratch[nd.arg0])); }
             case 22u: { v = exp(scratch[nd.arg0]); }               // ProtectedExp: uncapped
             case 23u: {                                            // ProtectedInv
                 let a = scratch[nd.arg0];
@@ -677,5 +678,154 @@ mod device_tests {
             let g = got[k * 100];
             assert!((g - want).abs() <= 1e-4 * want.abs().max(1.0), "expr {k}: {g} vs {want}");
         }
+    }
+}
+
+#[cfg(all(test, feature = "gpu"))]
+mod protected_parity_tests {
+    use super::*;
+
+    /// The CPU contract, transcribed from `crate::eval`. Spelled out rather
+    /// than invoked so the test pins the SEMANTICS: if someone changes eval.rs,
+    /// this fails and forces a deliberate decision, instead of both
+    /// implementations drifting together and the parity test still passing.
+    fn cpu(op: Op, a: f64, b: f64) -> f64 {
+        match op {
+            Op::ProtectedDiv => if b == 0.0 { 0.0 } else { a / b },
+            Op::ProtectedInv => if a == 0.0 { 1.0 } else { 1.0 / a },
+            Op::ProtectedSqrt => a.abs().sqrt(),
+            Op::ProtectedLog => a.abs().ln(),
+            Op::ProtectedExp => a.exp(),
+            Op::Div => a / b,
+            Op::Sqrt => a.sqrt(),
+            other => panic!("no CPU reference for {other:?}"),
+        }
+    }
+
+    /// Run a one-arg op on the GPU over `xs`, one row per value.
+    fn gpu_unary(op: Op, xs: &[f32]) -> Option<Vec<f32>> {
+        let ev = GpuEvaluator::new(xs, 1).ok()?;
+        let mut b = ExprBatch::new();
+        b.push(&[
+            GpuNode { op: op as u32, arg0: 1, arg1: 0, konst: 0.0 },
+            GpuNode { op: Op::Var as u32, arg0: 0, arg1: 0, konst: 0.0 },
+        ]);
+        ev.eval(&b).ok()
+    }
+
+    /// Run a two-arg op with `a` fixed and `b` varying by row.
+    fn gpu_binary(op: Op, a: f32, bs: &[f32]) -> Option<Vec<f32>> {
+        let ev = GpuEvaluator::new(bs, 1).ok()?;
+        let mut batch = ExprBatch::new();
+        batch.push(&[
+            GpuNode { op: op as u32, arg0: 1, arg1: 2, konst: 0.0 },
+            GpuNode { op: Op::Num as u32, arg0: 0, arg1: 0, konst: a },
+            GpuNode { op: Op::Var as u32, arg0: 0, arg1: 0, konst: 0.0 },
+        ]);
+        ev.eval(&batch).ok()
+    }
+
+    fn agree(got: f32, want: f64, ctx: &str) {
+        let w = want as f32;
+        if w.is_nan() {
+            assert!(got.is_nan(), "{ctx}: cpu NaN, gpu {got}");
+        } else if w.is_infinite() {
+            assert!(
+                got.is_infinite() && got.signum() == w.signum(),
+                "{ctx}: cpu {w}, gpu {got}"
+            );
+        } else {
+            assert!(
+                (got - w).abs() <= 1e-4 * w.abs().max(1.0),
+                "{ctx}: cpu {w}, gpu {got}"
+            );
+        }
+    }
+
+    /// ProtectedDiv(a, 0) is 0.0, NOT 1.0 — an earlier draft of the shader had
+    /// it as 1.0, which is a silent wrong answer on any row with a zero
+    /// denominator. This is the test that would have caught it.
+    #[test]
+    fn protected_div_by_zero_is_zero() {
+        let bs: [f32; 5] = [0.0, 2.0, -4.0, 1e-30, -0.0];
+        let Some(got) = gpu_binary(Op::ProtectedDiv, 5.0, &bs) else { return };
+        for (i, &b) in bs.iter().enumerate() {
+            let want = cpu(Op::ProtectedDiv, 5.0, b as f64);
+            agree(got[i], want, &format!("ProtectedDiv(5, {b})"));
+        }
+        assert_eq!(got[0], 0.0, "5/0 must be 0.0");
+        assert_eq!(got[4], 0.0, "5/-0.0 must be 0.0");
+    }
+
+    /// ProtectedLog(0) is -inf (ln|0|), not 0.0. Also an earlier shader bug.
+    #[test]
+    fn protected_log_of_zero_is_neg_inf() {
+        let xs: [f32; 5] = [0.0, 1.0, -4.0, std::f32::consts::E, -1.0];
+        let Some(got) = gpu_unary(Op::ProtectedLog, &xs) else { return };
+        for (i, &x) in xs.iter().enumerate() {
+            let want = cpu(Op::ProtectedLog, x as f64, 0.0);
+            agree(got[i], want, &format!("ProtectedLog({x})"));
+        }
+        assert!(got[0].is_infinite() && got[0] < 0.0, "log|0| must be -inf");
+    }
+
+    #[test]
+    fn protected_inv_of_zero_is_one() {
+        let xs: [f32; 4] = [0.0, 2.0, -0.5, -0.0];
+        let Some(got) = gpu_unary(Op::ProtectedInv, &xs) else { return };
+        for (i, &x) in xs.iter().enumerate() {
+            let want = cpu(Op::ProtectedInv, x as f64, 0.0);
+            agree(got[i], want, &format!("ProtectedInv({x})"));
+        }
+        assert_eq!(got[0], 1.0, "1/0 must be 1.0 for ProtectedInv");
+    }
+
+    #[test]
+    fn protected_sqrt_takes_abs_not_nan() {
+        let xs: [f32; 4] = [-4.0, 4.0, 0.0, -1e-8];
+        let Some(got) = gpu_unary(Op::ProtectedSqrt, &xs) else { return };
+        for (i, &x) in xs.iter().enumerate() {
+            let want = cpu(Op::ProtectedSqrt, x as f64, 0.0);
+            agree(got[i], want, &format!("ProtectedSqrt({x})"));
+        }
+        assert_eq!(got[0], 2.0, "sqrt|-4| must be 2, not NaN");
+    }
+
+    /// ProtectedExp is UNCAPPED: +inf on overflow, and exp(-inf) = 0. Not
+    /// exp(min(x, 700)), which would return a large finite value where the
+    /// engine returns inf.
+    #[test]
+    fn protected_exp_is_uncapped() {
+        // f32 overflows around 88, well before f64's ~709, so compare against
+        // the CPU only where f32 can represent the answer; check the overflow
+        // behaviour separately.
+        let xs: [f32; 3] = [1.0, 0.0, -50.0];
+        let Some(got) = gpu_unary(Op::ProtectedExp, &xs) else { return };
+        for (i, &x) in xs.iter().enumerate() {
+            let want = cpu(Op::ProtectedExp, x as f64, 0.0);
+            agree(got[i], want, &format!("ProtectedExp({x})"));
+        }
+        // Overflow must go to +inf, not to a large finite value.
+        let Some(big) = gpu_unary(Op::ProtectedExp, &[1000.0f32]) else { return };
+        assert!(
+            big[0].is_infinite() && big[0] > 0.0,
+            "ProtectedExp(1000) must be +inf, got {}",
+            big[0]
+        );
+    }
+
+    /// Raw ops must NOT behave like their protected namesakes: raw div by zero
+    /// is inf/NaN, raw sqrt of a negative is NaN. Mapping a protected op to a
+    /// raw one (or vice versa) is unsound on exactly these inputs.
+    #[test]
+    fn raw_ops_stay_raw() {
+        let Some(div) = gpu_binary(Op::Div, 5.0, &[0.0f32]) else { return };
+        assert!(
+            div[0].is_infinite() || div[0].is_nan(),
+            "raw 5/0 must not be the protected 0.0, got {}",
+            div[0]
+        );
+        let Some(sq) = gpu_unary(Op::Sqrt, &[-4.0f32]) else { return };
+        assert!(sq[0].is_nan(), "raw sqrt(-4) must be NaN, got {}", sq[0]);
     }
 }
