@@ -384,14 +384,6 @@ fn parse_node(toks: &[String], pos: &mut usize, depth: usize) -> Result<MathNode
     Ok(node)
 }
 
-/// Map a Math node to the karva token that *names* it in this pset. For a
-/// function node we need the pset's token name whose semantic id matches; we
-/// pick the first such token. For Pow2(Sub a b) we do NOT attempt to recover a
-/// `diff_sq` token (it round-trips as pow2+sub, which is equivalent).
-fn func_token_for_semantic(semantic: &str, pset: &PsetSpec) -> Result<String, String> {
-    func_token_for_semantic_arity(semantic, pset, None)
-}
-
 /// Pick the pset token for a semantic id, optionally constrained to an arity.
 ///
 /// BUG FIX: the arity-free version silently returned ANY token sharing the
