@@ -644,6 +644,17 @@ mod device {
             if batch.is_empty() {
                 return Ok(Vec::new());
             }
+            // wgpu rejects a zero-sized binding, so a batch in which EVERY
+            // expression failed to convert would panic inside create_bind_group
+            // rather than returning. That is reachable in a real run: a
+            // generation whose genes all carry unresolved RNC placeholders
+            // produces exactly this. Return NaNs for the whole batch instead,
+            // which is the same signal an individually-undecodable expression
+            // gives.
+            if batch.nodes.is_empty() {
+                let total = batch.len() * self.n_rows as usize;
+                return Ok(vec![f32::NAN; total]);
+            }
             let n_expr = batch.len() as u32;
             let total = (n_expr as u64) * (self.n_rows as u64);
 
@@ -1264,5 +1275,38 @@ mod opcode_source_of_truth_tests {
                 "opcode {name} does not exist in eval.rs"
             );
         }
+    }
+}
+
+#[cfg(all(test, feature = "gpu"))]
+mod undecodable_batch_tests {
+    use super::*;
+
+    /// A batch where every expression failed to convert must not panic.
+    ///
+    /// wgpu refuses a zero-sized binding, so an all-empty batch used to abort
+    /// inside create_bind_group. That is reachable in a real run: a generation
+    /// whose genes all carry unresolved RNC placeholders converts to nothing.
+    #[test]
+    fn all_undecodable_batch_returns_nan_not_a_panic() {
+        let rows: Vec<f32> = vec![1.0, 2.0, 3.0, 4.0];
+        let Ok(ev) = GpuEvaluator::new(&rows, 2) else { return };
+        let mut b = ExprBatch::new();
+        b.push(&[]);
+        b.push(&[]);
+        let got = ev.eval(&b).expect("must not panic");
+        assert_eq!(got.len(), 4, "2 expressions x 2 rows");
+        assert!(got.iter().all(|v| v.is_nan()), "all slots must be NaN");
+    }
+
+    /// An unresolved RNC placeholder is not a variable — it is an index into
+    /// the gene's Dc array, and the CALLER must resolve it before conversion.
+    /// Converting it as a variable would read whatever column happened to be
+    /// named "?" or, worse, silently pick column 0.
+    #[test]
+    fn rnc_placeholder_is_rejected_not_guessed() {
+        let vars: Vec<String> = vec!["a".to_string(), "b".to_string()];
+        let r = math_to_nodes(r#"(Var "?")"#, &vars);
+        assert!(r.is_err(), "unresolved '?' must fail, got {r:?}");
     }
 }
