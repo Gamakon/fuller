@@ -90,7 +90,6 @@ pub enum Op {
     ProtectedLog = 21,
     ProtectedExp = 22,
     ProtectedInv = 23,
-    DiffSq = 24,
 }
 
 impl Op {
@@ -121,7 +120,6 @@ impl Op {
             "ProtectedLog" => Op::ProtectedLog,
             "ProtectedExp" => Op::ProtectedExp,
             "ProtectedInv" => Op::ProtectedInv,
-            "DiffSq" => Op::DiffSq,
             _ => return None,
         })
     }
@@ -202,6 +200,7 @@ struct Meta {
 @group(0) @binding(5) var<uniform>             cfg:     Meta;
 
 const MAX_NODES: u32 = 64u;
+fn nan() -> f32 { return bitcast<f32>(0x7fc00000u); }
 
 @compute @workgroup_size(64, 1, 1)
 fn eval_main(@builtin(global_invocation_id) gid: vec3<u32>) {
@@ -236,20 +235,44 @@ fn eval_main(@builtin(global_invocation_id) gid: vec3<u32>) {
             case 2u: { v = scratch[nd.arg0] + scratch[nd.arg1]; }
             case 3u: { v = scratch[nd.arg0] - scratch[nd.arg1]; }
             case 4u: { v = scratch[nd.arg0] * scratch[nd.arg1]; }
-            case 5u: { v = scratch[nd.arg0] / scratch[nd.arg1]; }
+            // Raw ops carry the crate's div0 contract: division by zero is
+            // NaN, NOT IEEE infinity. Bare `/` gives inf, which diverges from
+            // eval.rs and would put a +inf member and a NaN member in the same
+            // e-class (Pow(x,-1) and Inv(x) are equivalent under the rules).
+            case 5u: {                                             // Div
+                let d = scratch[nd.arg1];
+                if (d == 0.0) { v = nan(); } else { v = scratch[nd.arg0] / d; }
+            }
             case 6u: { v = -scratch[nd.arg0]; }
             case 7u: { v = abs(scratch[nd.arg0]); }
-            case 8u: { v = sqrt(scratch[nd.arg0]); }
-            case 9u: { v = log(scratch[nd.arg0]); }
+            case 8u: {                                             // Sqrt
+                let a = scratch[nd.arg0];
+                if (a < 0.0) { v = nan(); } else { v = sqrt(a); }
+            }
+            case 9u: {                                             // Log
+                let a = scratch[nd.arg0];
+                if (a <= 0.0) { v = nan(); } else { v = log(a); }
+            }
             case 10u: { v = exp(scratch[nd.arg0]); }
             case 11u: { v = sin(scratch[nd.arg0]); }
             case 12u: { v = cos(scratch[nd.arg0]); }
-            case 13u: { v = tan(scratch[nd.arg0]); }
+            case 13u: {                                            // Tan
+                let a = scratch[nd.arg0];
+                let c = cos(a);
+                if (c == 0.0) { v = nan(); } else { v = sin(a) / c; }
+            }
             case 14u: { v = tanh(scratch[nd.arg0]); }
-            case 15u: { v = pow(scratch[nd.arg0], scratch[nd.arg1]); }
+            case 15u: {                                            // Pow
+                let a = scratch[nd.arg0];
+                let b = scratch[nd.arg1];
+                if (a == 0.0 && b < 0.0) { v = nan(); } else { v = pow(a, b); }
+            }
             case 16u: { let a = scratch[nd.arg0]; v = a * a; }
             case 17u: { let a = scratch[nd.arg0]; v = a * a * a; }
-            case 18u: { v = 1.0 / scratch[nd.arg0]; }
+            case 18u: {                                            // Inv
+                let a = scratch[nd.arg0];
+                if (a == 0.0) { v = nan(); } else { v = 1.0 / a; }
+            }
             // Protected ops: distinct functions, not guarded raw ops.
             // ProtectedDiv: a/b if b != 0 ELSE 0.0 (NOT 1.0 — see eval.rs)
             case 19u: {
@@ -265,10 +288,6 @@ fn eval_main(@builtin(global_invocation_id) gid: vec3<u32>) {
             case 23u: {                                            // ProtectedInv
                 let a = scratch[nd.arg0];
                 if (a == 0.0) { v = 1.0; } else { v = 1.0 / a; }
-            }
-            case 24u: {                                            // DiffSq
-                let d = scratch[nd.arg0] - scratch[nd.arg1];
-                v = d * d;
             }
             default: { v = bitcast<f32>(0x7fc00000u); }
         }
@@ -324,6 +343,168 @@ impl ExprBatch {
             .map(|(i, _)| i)
             .collect()
     }
+}
+
+/// Parse a `Math` s-expression into level-order [`GpuNode`]s.
+///
+/// This is the piece that makes the kernel usable: without it the evaluator
+/// can only be driven by hand-built node arrays, which tests nothing about
+/// real chromosomes.
+///
+/// Emits BREADTH-FIRST, because the kernel's backward scan relies on every
+/// child sitting at a higher index than its parent. A depth-first emit would
+/// break that invariant and silently compute nonsense.
+///
+/// `vars` maps a variable name to its column in the resident data buffer. A
+/// name not in `vars` is an error rather than a default, because silently
+/// reading column 0 would produce a plausible wrong answer.
+pub fn math_to_nodes(expr: &str, vars: &[String]) -> Result<Vec<GpuNode>, String> {
+    let toks = tokenize(expr);
+    let mut pos = 0usize;
+    let tree = parse(&toks, &mut pos)?;
+    if pos != toks.len() {
+        return Err(format!("trailing tokens at {pos} in {expr:?}"));
+    }
+    flatten(&tree, vars)
+}
+
+#[derive(Debug, Clone)]
+enum Tree {
+    Num(f64),
+    Var(String),
+    App(String, Vec<Tree>),
+}
+
+fn tokenize(s: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut in_str = false;
+    for c in s.chars() {
+        match c {
+            '"' => {
+                in_str = !in_str;
+                cur.push(c);
+                if !in_str {
+                    out.push(std::mem::take(&mut cur));
+                }
+            }
+            _ if in_str => cur.push(c),
+            '(' | ')' => {
+                if !cur.is_empty() {
+                    out.push(std::mem::take(&mut cur));
+                }
+                out.push(c.to_string());
+            }
+            c if c.is_whitespace() => {
+                if !cur.is_empty() {
+                    out.push(std::mem::take(&mut cur));
+                }
+            }
+            _ => cur.push(c),
+        }
+    }
+    if !cur.is_empty() {
+        out.push(cur);
+    }
+    out
+}
+
+fn parse(toks: &[String], pos: &mut usize) -> Result<Tree, String> {
+    let t = toks.get(*pos).ok_or("unexpected end of input")?;
+    if t != "(" {
+        return Err(format!("expected '(' at {pos}, found {t:?}"));
+    }
+    *pos += 1;
+    let head = toks.get(*pos).ok_or("missing constructor")?.clone();
+    *pos += 1;
+
+    let node = match head.as_str() {
+        "Num" => {
+            let v = toks.get(*pos).ok_or("Num missing value")?;
+            *pos += 1;
+            Tree::Num(v.parse::<f64>().map_err(|e| format!("bad Num {v:?}: {e}"))?)
+        }
+        "Var" => {
+            let v = toks.get(*pos).ok_or("Var missing name")?;
+            *pos += 1;
+            Tree::Var(v.trim_matches('"').to_string())
+        }
+        _ => {
+            let op = Op::from_math(&head)
+                .ok_or_else(|| format!("unknown Math constructor {head:?}"))?;
+            let mut kids = Vec::new();
+            for _ in 0..op.arity() {
+                kids.push(parse(toks, pos)?);
+            }
+            Tree::App(head.clone(), kids)
+        }
+    };
+
+    match toks.get(*pos) {
+        Some(t) if t == ")" => {
+            *pos += 1;
+            Ok(node)
+        }
+        other => Err(format!("expected ')' closing {head}, found {other:?}")),
+    }
+}
+
+/// Breadth-first flatten with child indices resolved.
+fn flatten(root: &Tree, vars: &[String]) -> Result<Vec<GpuNode>, String> {
+    let mut out: Vec<GpuNode> = Vec::new();
+    // (tree, index of the slot already reserved in `out`)
+    let mut queue: std::collections::VecDeque<(&Tree, usize)> =
+        std::collections::VecDeque::new();
+
+    out.push(GpuNode { op: 0, arg0: 0, arg1: 0, konst: 0.0 });
+    queue.push_back((root, 0));
+
+    while let Some((tree, slot)) = queue.pop_front() {
+        match tree {
+            Tree::Num(v) => {
+                out[slot] = GpuNode {
+                    op: Op::Num as u32,
+                    arg0: 0,
+                    arg1: 0,
+                    konst: *v as f32,
+                };
+            }
+            Tree::Var(name) => {
+                let col = vars
+                    .iter()
+                    .position(|v| v == name)
+                    .ok_or_else(|| format!("variable {name:?} not in {vars:?}"))?;
+                out[slot] = GpuNode {
+                    op: Op::Var as u32,
+                    arg0: col as u32,
+                    arg1: 0,
+                    konst: 0.0,
+                };
+            }
+            Tree::App(head, kids) => {
+                let op = Op::from_math(head)
+                    .ok_or_else(|| format!("unknown constructor {head:?}"))?;
+                // Reserve the children's slots now so their indices are known.
+                let first = out.len();
+                for _ in kids {
+                    out.push(GpuNode { op: 0, arg0: 0, arg1: 0, konst: 0.0 });
+                }
+                out[slot] = GpuNode {
+                    op: op as u32,
+                    arg0: first as u32,
+                    arg1: if kids.len() > 1 { first as u32 + 1 } else { 0 },
+                    konst: 0.0,
+                };
+                for (i, k) in kids.iter().enumerate() {
+                    queue.push_back((k, first + i));
+                }
+            }
+        }
+        if out.len() > MAX_NODES {
+            return Err(format!("expression exceeds MAX_NODES ({MAX_NODES})"));
+        }
+    }
+    Ok(out)
 }
 
 #[cfg(feature = "gpu")]
@@ -547,7 +728,7 @@ mod tests {
         for name in [
             "Add", "Sub", "Mul", "Div", "Neg", "Abs", "Sqrt", "Log", "Exp", "Sin", "Cos",
             "Tan", "Tanh", "Pow", "Pow2", "Pow3", "Inv", "Num", "Var", "ProtectedDiv",
-            "ProtectedSqrt", "ProtectedLog", "ProtectedExp", "ProtectedInv", "DiffSq",
+            "ProtectedSqrt", "ProtectedLog", "ProtectedExp", "ProtectedInv",
         ] {
             assert!(Op::from_math(name).is_some(), "no opcode for {name}");
         }
@@ -562,7 +743,6 @@ mod tests {
         assert_eq!(Op::ProtectedExp.arity(), 1);
         assert_eq!(Op::Add.arity(), 2);
         assert_eq!(Op::Pow.arity(), 2);
-        assert_eq!(Op::DiffSq.arity(), 2);
     }
 
     #[test]
@@ -591,7 +771,7 @@ mod tests {
     fn wgsl_switch_covers_every_opcode() {
         // A missing `case Nu:` is a silent NaN on device, so check the shader
         // source mentions each discriminant.
-        for op in 0u32..=24 {
+        for op in 0u32..=23 {
             assert!(
                 EVAL_WGSL.contains(&format!("case {op}u:")),
                 "WGSL has no case for opcode {op}"
@@ -827,5 +1007,195 @@ mod protected_parity_tests {
         );
         let Some(sq) = gpu_unary(Op::Sqrt, &[-4.0f32]) else { return };
         assert!(sq[0].is_nan(), "raw sqrt(-4) must be NaN, got {}", sq[0]);
+    }
+}
+
+#[cfg(all(test, feature = "gpu"))]
+mod real_expression_tests {
+    use super::*;
+
+    /// CPU reference: evaluate a Math s-expr at one row, in f64, via the
+    /// crate's own evaluator. This is the path the engine trusts.
+    fn cpu_eval(expr: &str, vars: &[String], row: &[f32]) -> Option<f64> {
+        use crate::eval::eval_term;
+        use crate::expr::MATH_DATATYPE;
+        use egglog::prelude::exprs;
+        use egglog::EGraph;
+        let mut eg = EGraph::default();
+        eg.parse_and_run_program(None, MATH_DATATYPE).ok()?;
+        eg.parse_and_run_program(None, &format!("(let __g {expr})")).ok()?;
+        let (sort, value) = eg.eval_expr(&exprs::var("__g")).ok()?;
+        let (termdag, term, _) = eg.extract_value(&sort, value).ok()?;
+        eval_term(&termdag, term, &|name: &str| {
+            vars.iter().position(|v| v == name).map(|i| row[i] as f64)
+        })
+        .ok()
+    }
+
+    /// The integration test: REAL Math expressions, parsed by the converter,
+    /// evaluated on the GPU, compared against the CPU f64 evaluator row by
+    /// row. Nothing here is a hand-built node array.
+    #[test]
+    fn gpu_matches_cpu_on_real_math_expressions() {
+        let vars: Vec<String> = ["a", "b", "c"].iter().map(|s| s.to_string()).collect();
+        // 8 rows x 3 vars, deliberately including a zero and a negative so the
+        // protected ops are actually exercised on real data.
+        let rows: Vec<f32> = vec![
+            1.0, 2.0, 3.0, 2.0, 4.0, 0.5, 0.5, -1.0, 2.0, 3.0, 0.0, 1.5, -2.0, 1.0,
+            4.0, 0.25, 8.0, -0.5, 5.0, 0.1, 2.5, 1.0, 1.0, 1.0,
+        ];
+
+        let exprs = [
+            r#"(Mul (Var "a") (Var "b"))"#,
+            r#"(Add (Mul (Var "a") (Var "b")) (Var "c"))"#,
+            r#"(Div (Var "a") (Var "b"))"#,
+            r#"(Sub (Pow2 (Var "a")) (Var "c"))"#,
+            r#"(ProtectedDiv (Var "a") (Var "c"))"#,
+            r#"(ProtectedSqrt (Var "b"))"#,
+            r#"(ProtectedLog (Var "a"))"#,
+            r#"(ProtectedInv (Var "c"))"#,
+            r#"(Neg (Add (Var "a") (Var "b")))"#,
+            r#"(Abs (Sub (Var "a") (Var "b")))"#,
+            r#"(Mul (Num 3.5) (Var "a"))"#,
+            r#"(Sin (Var "a"))"#,
+            r#"(Tanh (Var "b"))"#,
+            r#"(Pow3 (Var "c"))"#,
+            r#"(Div (Mul (Num 2.0) (Var "a")) (Add (Var "b") (Num 1.0)))"#,
+        ];
+
+        let ev = match GpuEvaluator::new(&rows, 3) {
+            Ok(e) => e,
+            Err(e) => {
+                eprintln!("no GPU adapter ({e}); skipping");
+                return;
+            }
+        };
+
+        // ONE batch, ONE dispatch, every expression.
+        let mut batch = ExprBatch::new();
+        for e in &exprs {
+            let nodes = math_to_nodes(e, &vars).unwrap_or_else(|err| panic!("{e}: {err}"));
+            batch.push(&nodes);
+        }
+        let got = ev.eval(&batch).expect("gpu eval");
+        assert_eq!(got.len(), exprs.len() * 8);
+
+        let mut checked = 0;
+        for (ei, e) in exprs.iter().enumerate() {
+            for r in 0..8usize {
+                let row = &rows[r * 3..r * 3 + 3];
+                let want = cpu_eval(e, &vars, row)
+                    .unwrap_or_else(|| panic!("cpu eval failed for {e}"));
+                let g = got[ei * 8 + r];
+                let w = want as f32;
+                if w.is_nan() {
+                    assert!(g.is_nan(), "{e} row {r}: cpu NaN, gpu {g}");
+                } else if w.is_infinite() {
+                    assert!(
+                        g.is_infinite() && g.signum() == w.signum(),
+                        "{e} row {r}: cpu {w}, gpu {g}"
+                    );
+                } else {
+                    // f32 device vs f64 host: compare at f32 tolerance.
+                    assert!(
+                        (g - w).abs() <= 1e-4 * w.abs().max(1.0),
+                        "{e} row {r}: cpu {w}, gpu {g}"
+                    );
+                }
+                checked += 1;
+            }
+        }
+        assert_eq!(checked, exprs.len() * 8);
+        eprintln!("{checked} (expression, row) pairs matched CPU f64");
+    }
+
+    #[test]
+    fn converter_emits_breadth_first_so_children_follow_parents() {
+        // The kernel's backward scan REQUIRES child index > parent index.
+        let vars: Vec<String> = ["a", "b"].iter().map(|s| s.to_string()).collect();
+        let nodes = math_to_nodes(
+            r#"(Add (Mul (Var "a") (Var "b")) (Sub (Var "a") (Var "b")))"#,
+            &vars,
+        )
+        .expect("convert");
+        for (i, n) in nodes.iter().enumerate() {
+            let op_is_leaf = n.op == Op::Var as u32 || n.op == Op::Num as u32;
+            if op_is_leaf {
+                continue;
+            }
+            assert!(n.arg0 as usize > i, "node {i}: child arg0={} not after it", n.arg0);
+            let arity = match n.op {
+                x if x == Op::Add as u32 || x == Op::Sub as u32 || x == Op::Mul as u32 => 2,
+                _ => 1,
+            };
+            if arity == 2 {
+                assert!(n.arg1 as usize > i, "node {i}: child arg1={} not after it", n.arg1);
+            }
+        }
+    }
+
+    #[test]
+    fn unknown_variable_is_an_error_not_column_zero() {
+        let vars: Vec<String> = vec!["a".to_string()];
+        let r = math_to_nodes(r#"(Var "zzz")"#, &vars);
+        assert!(r.is_err(), "unknown variable must fail loudly, got {r:?}");
+    }
+
+    #[test]
+    fn unknown_constructor_is_an_error() {
+        let vars: Vec<String> = vec!["a".to_string()];
+        assert!(math_to_nodes(r#"(Bogus (Var "a"))"#, &vars).is_err());
+    }
+}
+
+#[cfg(test)]
+mod opcode_source_of_truth_tests {
+    use super::*;
+
+    /// Every opcode must name a constructor the CPU evaluator actually
+    /// implements. An earlier version of this table carried `DiffSq`, which
+    /// does not exist in Math at all — it was invented from a karva token
+    /// name, and nothing caught it until a real expression was evaluated.
+    ///
+    /// Reading eval.rs at test time keeps the two in step: add an op there and
+    /// forget it here (or invent one here) and this fails.
+    #[test]
+    fn every_opcode_exists_in_the_cpu_evaluator() {
+        let eval_src = include_str!("eval.rs");
+        for name in [
+            "Var", "Num", "Add", "Sub", "Mul", "Div", "Neg", "Abs", "Sqrt", "Log",
+            "Exp", "Sin", "Cos", "Tan", "Tanh", "Pow", "Pow2", "Pow3", "Inv",
+            "ProtectedDiv", "ProtectedSqrt", "ProtectedLog", "ProtectedExp",
+            "ProtectedInv",
+        ] {
+            assert!(
+                Op::from_math(name).is_some(),
+                "{name} is in eval.rs but has no opcode"
+            );
+            // Var/Num are leaves handled by the parser, not by a match arm.
+            if name != "Var" && name != "Num" {
+                assert!(
+                    eval_src.contains(&format!("(\"{name}\"")),
+                    "opcode {name} has no match arm in eval.rs — is it invented?"
+                );
+            }
+        }
+    }
+
+    /// The reverse direction: nothing in the opcode table may be absent from
+    /// eval.rs.
+    #[test]
+    fn no_opcode_is_invented() {
+        let eval_src = include_str!("eval.rs");
+        for name in [
+            "Add", "Sub", "Mul", "Div", "Neg", "Abs", "Sqrt", "Log", "Exp", "Sin",
+            "Cos", "Tan", "Tanh", "Pow", "Pow2", "Pow3", "Inv", "ProtectedDiv",
+            "ProtectedSqrt", "ProtectedLog", "ProtectedExp", "ProtectedInv",
+        ] {
+            assert!(
+                eval_src.contains(&format!("(\"{name}\"")),
+                "opcode {name} does not exist in eval.rs"
+            );
+        }
     }
 }
