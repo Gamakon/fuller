@@ -22,7 +22,8 @@ import matplotlib.pyplot as plt
 from scipy.special import betainc
 
 # --- engine modules on path (to unpickle Individuals) ----------------------
-_HFF = "/Users/andrewmorgan/Dev/kaito/hff/notebooks"
+_REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_HFF = os.path.join(_REPO, "..", "hff", "notebooks")
 _SRB = os.path.join(_HFF, "..", "srbench_submission", "algorithms", "hff-sr")
 for _p in (os.path.abspath(_SRB), _HFF):
     if _p not in sys.path:
@@ -237,7 +238,7 @@ def plot(name, pts):
 
 if __name__ == "__main__":
     pkl = sys.argv[1] if len(sys.argv) > 1 else \
-        "/Users/andrewmorgan/Dev/kaito/fuller/hof_pickles/hff_hof_lean_I_9_18.pkl"
+        os.path.join(_REPO, "hof_pickles", "hff_hof_lean_I_9_18.pkl")
     name, pts = run(pkl)
     if pts:
         plot(name, pts)

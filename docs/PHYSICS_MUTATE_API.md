@@ -15,7 +15,7 @@ fitness** — it only generates. Your GA + HFF select.
 ## 1. Install
 
 ```bash
-cd /Users/andrewmorgan/Dev/kaito/fuller
+cd /Users/andrewmorgan/Dev/gamakon/fuller
 maturin develop --release
 python -c "from fuller import physics_mutate; print('ok')"
 ```

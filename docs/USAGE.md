@@ -7,7 +7,7 @@ real-domain, **no sympy**. This is the BRIEF.md Phase 1 skateboard, shipping.
 ## Install
 
 ```bash
-cd /Users/andrewmorgan/Dev/kaito/fuller
+cd /Users/andrewmorgan/Dev/gamakon/fuller
 maturin develop --release        # builds the Rust ext + installs into the active env
 python -c "from fuller import denoise_karva; print('ok')"
 ```
