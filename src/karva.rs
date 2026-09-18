@@ -389,6 +389,34 @@ fn parse_node(toks: &[String], pos: &mut usize, depth: usize) -> Result<MathNode
 /// pick the first such token. For Pow2(Sub a b) we do NOT attempt to recover a
 /// `diff_sq` token (it round-trips as pow2+sub, which is equivalent).
 fn func_token_for_semantic(semantic: &str, pset: &PsetSpec) -> Result<String, String> {
+    func_token_for_semantic_arity(semantic, pset, None)
+}
+
+/// Pick the pset token for a semantic id, optionally constrained to an arity.
+///
+/// BUG FIX: the arity-free version silently returned ANY token sharing the
+/// semantic id, including one whose arity differs from the tree node being
+/// emitted. A karva head encodes arity only implicitly — the decoder consumes
+/// `arity` children for each function token — so emitting a token of the wrong
+/// arity re-parents the whole remaining stream and the chromosome decodes to a
+/// DIFFERENT function.
+///
+/// The live case: `diff_sq` is binary in the pset, but an e-graph holds it in
+/// its expanded form `Pow2(Sub(a, b))`, where `Pow2` is unary. BFS emitted a
+/// unary node while queueing the original node's two children, so the decoded
+/// tree dropped an operand and re-attached the rest. Measured on I_10_7
+/// seed 11 with an independent decoder: 30 of 40 rewrites that `denoise_karva`
+/// reported as `changed` computed a different function, e.g.
+///   in  square(add(exp(m_0), c)) = 13.4672
+///   out square(exp(c))           = 20.4913
+/// All of them were then caught by `_safety_recheck` in the Python bridge and
+/// discarded, so the operator burned ~95% of its budget producing garbage
+/// rather than corrupting the population.
+fn func_token_for_semantic_arity(
+    semantic: &str,
+    pset: &PsetSpec,
+    arity: Option<usize>,
+) -> Result<String, String> {
     // Deterministic: HashMap iteration order is randomised per run, so when
     // several pset tokens share a semantic id (e.g. `sqrt` and
     // `protected_sqrt`) we must choose by a stable key — the lexicographically
@@ -397,10 +425,16 @@ fn func_token_for_semantic(semantic: &str, pset: &PsetSpec) -> Result<String, St
     pset.functions
         .iter()
         .filter(|(_, spec)| spec.semantic_id == semantic)
+        .filter(|(_, spec)| arity.is_none_or(|a| spec.arity == a))
         .map(|(name, _)| name)
         .min()
         .cloned()
-        .ok_or_else(|| format!("no pset token for semantic id {semantic:?}"))
+        .ok_or_else(|| match arity {
+            Some(a) => format!(
+                "no pset token for semantic id {semantic:?} with arity {a}"
+            ),
+            None => format!("no pset token for semantic id {semantic:?}"),
+        })
 }
 
 /// Convert a `Math` s-expression string back to a karva (head, tail) pair.
@@ -469,11 +503,16 @@ pub fn terms_to_karva_sized(
                 head.push(Token::Var(name.clone()));
             }
             MathNode::App(ctor, children) => {
-                // diff_sq round-trips as its expansion Pow2(Sub ..); just use
-                // the constructor's own semantic id.
+                // The emitted token's arity MUST equal this node's child count:
+                // a karva head carries arity only implicitly, so a mismatch
+                // re-parents the rest of the stream (see
+                // func_token_for_semantic_arity). diff_sq in particular
+                // round-trips as its expansion Pow2(Sub ..), where the pset's
+                // diff_sq is binary and Pow2 is unary.
                 let semantic = math_ctor_to_semantic(ctor)
                     .ok_or_else(|| format!("non-karva constructor {ctor:?}"))?;
-                let name = func_token_for_semantic(semantic, pset)?;
+                let name = func_token_for_semantic_arity(
+                    semantic, pset, Some(children.len()))?;
                 head.push(Token::Func(name));
                 for c in children {
                     queue.push_back(c);
