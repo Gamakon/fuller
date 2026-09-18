@@ -1,0 +1,547 @@
+%%
+%% Fuller: Sound Expression Minimisation Inside an Evolutionary Loop
+%% System paper — SKETCH. Proposals now, experiments named as TODO.
+%%
+%% Status markers are used deliberately throughout:
+%%   [implemented]        — present in src/ and tested
+%%   [proposed]           — design intent, not built
+%%   [to be confirmed]    — observed but unresolved
+%%
+\documentclass[sigconf]{acmart}
+
+\usepackage{amsmath}
+\usepackage{booktabs}
+\usepackage{float}
+\usepackage{algorithm}
+\usepackage{algorithmic}
+\usepackage{geometry}
+
+\begin{document}
+
+\title{Fuller: Sound Expression Minimisation Inside an Evolutionary Loop}
+
+\author{Andrew James Morgan}
+\email{andrew@gamakon.ai}
+\affiliation{%
+  \institution{Gamakon Ltd.}
+  \city{London}
+  \country{United Kingdom}
+}
+\renewcommand{\shortauthors}{Morgan}
+
+\begin{abstract}
+\texttt{fuller} is an e-graph engine that makes symbolic expressions smaller,
+provably without changing what they compute. It is named for Buckminster
+Fuller's \emph{ephemeralization} --- doing more with less --- applied to
+equations. It was built to replace SymPy in the inner loop of a
+symbolic-regression engine, where SymPy's complex-domain assumptions, native
+signal handling and exponential simplification paths made expression cleanup
+unreliable. The engine's distinguishing claim is a clean seam: a bounded
+equality-saturation pass decides what is \emph{smaller}, and the training data
+decides what is \emph{still correct}. That seam is what licenses simplification
+as a genetic \emph{operator} rather than post-processing --- a Lamarckian
+mechanism made sound by proof of equivalence. This paper is a system sketch. The
+engine is implemented and in use --- datatype and guard relations, family-split
+rulesets, the data-gated \texttt{denoise} operator, karva re-encoding, the
+\texttt{snap}/\texttt{concretize} pair, physics-prior generation, a forked
+multi-objective extractor, and a second target (Brainfuck) where equivalence is
+decided exactly rather than statistically. What is \emph{not} established is
+whether in-loop Lamarckian rewriting improves symbolic regression: the effect
+observed is surprising and its sign is unknown. We state plainly what is built,
+what is not, and which experiments would settle it.
+\end{abstract}
+
+\maketitle
+
+%% ============================================================================
+\section{Introduction}
+\label{sec:intro}
+
+Physical laws are compact. Expressions produced by evolutionary search are not.
+They arrive with constants absorbed into coefficients --- a fitted $0.0796$
+concealing $1/(4\pi)$ --- with redundant structure such as $x\cdot 1 + 0\cdot y$,
+with $\mathrm{Abs}(a^{1.5})$ where the domain is already positive, and with noise
+terms that fit the sample rather than the underlying relationship. Much of the
+gap between an expression that \emph{fits the data} and the \emph{law itself} is
+this excess structure. Removing it is not cosmetic: a reported law is only
+recognisable as a law once the excess is gone.
+
+The obvious tool is a computer-algebra system, and in the host engine that meant
+SymPy. Three properties make it a poor fit for a hot inner loop, where the
+simplifier runs on every offspring of every generation. \emph{Domain mismatch}:
+SymPy reasons over the complex domain by default, so simplifying a real-valued
+gene legitimately produces $\mathrm{re}()$, $\mathrm{im}()$ and $\sinh()$ terms
+the host must detect and reject --- a filtering dance rather than a result.
+\emph{Unbounded cost}: \texttt{simplify()} has no iteration budget, and evolved
+genes are adversarial by construction --- deep, redundant, full of near-cancelling
+subtrees --- so its rewrite paths can blow up, with no principled way to ask for
+\emph{a bounded amount} of simplification. \emph{Process hazard}: SymPy's native
+components install their own signal handlers, so a long simplification in a
+worker is not reliably interruptible, and a crash takes the run rather than the
+call.
+
+An e-graph is a better substrate. Equality saturation represents \emph{all}
+equivalent forms at once, applies a rule schedule that can be explicitly capped,
+extracts by an explicit cost model, and is deterministic: the same input always
+yields the same output. Equivalence is \emph{proved} by saturation, not sampled.
+\texttt{fuller} is a Rust crate over \texttt{egglog}~\cite{egglog}, exposed to
+Python via PyO3, in the same engine family as Herbie~\cite{herbie}.
+
+%% ============================================================================
+\section{Design}
+\label{sec:design}
+
+\paragraph{A real-domain datatype [implemented].} The shared substrate is a
+\texttt{Math} datatype declared in \texttt{egglog} surface syntax
+(\texttt{src/expr.rs:29--63}). It carries \texttt{Num}, \texttt{Var}, the
+arithmetic and transcendental operators, and the fixed powers \texttt{Pow2},
+\texttt{Pow3}, \texttt{Inv}. The complex domain is deliberately excluded --- that
+exclusion \emph{is} the design, and it is why the $\mathrm{re}()/\mathrm{im}()$
+rejection problem of Section~\ref{sec:intro} has no analogue here.
+
+\paragraph{Protected operators are distinct functions [implemented].} A
+symbolic-regression primitive set uses guarded operators: protected division
+returns $0$ on a zero denominator, protected $\log$ takes $\log|x|$. These are
+declared as \emph{separate constructors}, not aliased to their raw counterparts
+(\texttt{src/expr.rs:49--62}), because mapping \texttt{protected\_div} onto
+\texttt{Div} would be unsound --- the two disagree exactly where it matters, at
+zero and on negatives. Being distinct functions, no rewrite can substitute one
+for the other: they are inert by default, and a rule fires on a protected form
+only where it is provably sound for that form.
+
+\paragraph{Domain facts as relations [implemented].} Many useful identities are
+conditional: $\log(e^x)\to x$ needs a positive argument, and cancelling a
+denominator needs it nonzero. \texttt{egglog} 2.0 cannot guard on the sign of a
+free variable, so \texttt{fuller} carries domain knowledge as relations,
+\texttt{(is-positive m)} and \texttt{(is-nonzero m)}, which a rule requires via
+\texttt{:when} (\texttt{src/expr.rs:66--113}). Facts enter by propagation ---
+$\mathrm{Exp}\,x$ is positive on all reals; a product or quotient of positives is
+positive; positive implies nonzero --- or by the caller asserting a fact for a
+specific node when the engine knows a variable's domain. A bare free variable is
+\emph{not} assumed nonzero, so guarded rules conservatively do not fire on it.
+That is the sound default: a missing fact costs a simplification, never
+correctness. (One sharp edge: \texttt{egglog} runs only named rulesets a schedule
+mentions, so a schedule omitting \texttt{guards} silently derives no facts.)
+
+\paragraph{Rulesets split by family, because they are non-confluent
+[implemented, measured].} The rule library (\texttt{src/ruleset/}) is partitioned
+into \texttt{identities} (algebra), \texttt{powers}, \texttt{distribute},
+\texttt{rational}, \texttt{trig}, \texttt{trig\_fu}, \texttt{sympy\_mined} and
+\texttt{wide}. The partition is not tidiness. Distribution and the trigonometric
+expansions each terminate \emph{alone} but explode the e-graph when co-saturated,
+since both grow the graph without repeating; distribute and rational ping-pong the
+same way (\texttt{src/parity.rs:53--68}). This was measured, not anticipated ---
+runs pegged the CPU and had to be killed. The engine therefore selects one family
+per task, and every schedule is a bounded \texttt{repeat}, never an unbounded
+\texttt{saturate} (\texttt{src/extract.rs:31--37}).
+
+\paragraph{The seam [implemented].} The core operator is \texttt{denoise}
+(\texttt{src/extract.rs:8--17}):
+
+\begin{enumerate}\itemsep2pt
+\item saturate the algebra ruleset on the input term, bounded;
+\item \texttt{extract\_variants($K$)} --- the $K$ lowest-structural-cost
+      equivalent forms;
+\item evaluate each candidate on the training rows;
+\item return the smallest-cost candidate whose $R^2$ against the original is
+      within \texttt{tolerance}; if none qualify, return the input
+      \emph{unchanged}.
+\end{enumerate}
+
+The structural cost model decides \emph{``smallest''}; the data decides
+\emph{``still correct''}. The two concerns stay cleanly separated, and that seam
+is the paper's central design claim. It keeps the e-graph deterministic and
+data-free, which is what makes it bounded and reproducible, while data-awareness
+lives entirely outside it as an acceptance test. Two further guards make the
+operator safe to call blindly: non-shrinking forms are never accepted
+(\texttt{src/extract.rs:516}), so a rewrite cannot trade size for anything, and
+the $R^2$ loss gate (\texttt{src/extract.rs:538}) rejects a cost-preferred
+candidate whose behaviour moved. The API never raises: a pathological input
+returns the input. A hard depth cap (\texttt{MAX\_EXPR\_DEPTH} $=256$,
+\texttt{src/lib.rs:27}) bounds every recursive walk so an oversized gene surfaces
+as an ordinary error rather than a stack overflow, which no catch could recover.
+
+%% ============================================================================
+\section{Extraction as a Tournament}
+\label{sec:extraction}
+
+Equality saturation yields an equivalence class: forms that all denote the same
+function. Equivalence holds in the \emph{goal} domain, so no member is preferred
+on behaviour, and selecting one --- extraction --- is a tournament decided
+entirely on properties of \emph{form}. The companion
+paper~\cite{morgan2026tournaments} is the full treatment; this section states only
+what \texttt{fuller} implements.
+
+Stock e-graph extraction requires an \emph{additive, monotone} cost model, because
+it is bottom-up dynamic programming: a term must cost no less than its subterms so
+the walk never reconsiders a settled class, which forces every criterion into one
+additive number. \texttt{fuller} vendors a forked extractor,
+\texttt{hff\_extract} (\texttt{vendor-egglog/src/extract.rs:636--662}), which
+instead enumerates each class's members under a bound and selects the one
+minimising a caller-supplied \texttt{score(\&TermDag, TermId) -> f64} evaluated on
+the \emph{whole} candidate term. No monotonicity is assumed, so a larger term may
+legitimately score better --- impossible in the stock extractor. The e-graph
+licenses this: every candidate is already provably equivalent, so the ranking may
+be arbitrary without risking correctness.
+
+\paragraph{The scorer, as implemented.} Form measures are a data-driven library
+of \emph{(pattern, measure)} rules: the pattern decides whether the rule fires,
+and a firing rule contributes one bounded component in $[0,1]$ with $0$ best, so
+adding an objective is adding a rule (\texttt{src/score.rs:4--16}). The
+projection is HFF-TrueNorth, and one detail is load-bearing: \textbf{the north
+pole is always zeros} --- the origin of objective space, lifted to the augmented
+sphere as $(0,\dots,0,1)$, which is pure minimisation. The ``balanced'' pole
+$(1/\sqrt{m},\dots,1/\sqrt{m})$ is banned: it rewards equal trade-offs rather
+than minimisation, and does not work in practice (the HFF crate states this at
+\texttt{core\_functions.rs:105--109}). Every candidate is scored at one
+\emph{fixed} dimension $k$, the full rule count, with a non-firing rule padded to
+the neutral $0.5$; at fixed $k$ the incomplete-beta CDF correction is only a
+monotone reshape, so it is omitted and the raw angle ranked
+(\texttt{src/score.rs:284--331}). Cross-dimensionality CDF correction remains
+valid in HFF's original fixed-objective population setting, but \emph{not} for
+ranking variable-defect members of one e-class, where it inverts the order by
+rewarding a form for firing more measures; the companion paper reports that
+correction in full.
+
+\paragraph{Two extraction paths coexist [implemented].} This should not be
+overstated. The live \texttt{denoise} operator imports the \emph{stock}
+scalar-cost extractor (\texttt{src/extract.rs:19}); what makes it safe is the
+data gate, not the scorer. The HFF tournament is a separate path, exposed as
+\texttt{eclass\_extract\_hff\_instrumented}, currently used for final-answer
+tidying and for the tournament figures. Both being present makes the comparison
+in Section~\ref{sec:experiments} cheap to run.
+
+%% ============================================================================
+\section{Simplification as a Genetic Operator}
+\label{sec:operator}
+
+This is the contribution.
+
+Classical GP treats simplification as post-processing, and for a good reason:
+an unsound rewrite inside the loop corrupts the population, and the corruption is
+heritable. \texttt{fuller}'s rewrites are either exact algebraic identities or
+data-gated, which removes that constraint. Simplification can then act as a
+genetic \emph{operator}, and a simplification once found is propagated by
+crossover and judged by selection --- a Lamarckian mechanism made sound by proof
+of equivalence.
+
+\paragraph{The structural obstacle.} A simplified gene is usually \emph{shorter}
+than the gene it replaces. In tree-GP that is a differently-shaped genome, which
+breaks the genetic operators and uniform-length mating. Re-injection would
+require variable-length genomes, and simplification would revert to
+post-processing.
+
+\paragraph{The ORF argument [implemented].} Gene expression
+programming~\cite{ferreira2001} resolves this. A karva chromosome is a
+fixed-length head followed by a fixed-length tail, with
+\begin{equation}
+\label{eq:tail}
+\ell_{\text{tail}} = \ell_{\text{head}}\,(n_{\max}-1) + 1 ,
+\end{equation}
+where $n_{\max}$ is the maximum function arity. Decoding walks the head
+left-to-right in level order; each function token consumes its arity from the
+next available slots in the head--tail stream, and the walk stops when the
+expression tree closes. That prefix is the \emph{open reading frame} (ORF).
+Everything past it is non-coding \emph{by definition}: the level-order decoder
+never visits it, so its contents cannot affect the expressed tree.
+
+Re-encoding exploits exactly this
+(\texttt{src/karva.rs:406--437, 500--528}). A rewritten term is BFS-walked into a
+\emph{natural head} containing every node of the tree, leaves included --- so the
+natural head length equals the rewritten term's node count. If that is shorter
+than the chromosome's configured $\ell_{\text{head}}$, it is extended to the
+target with terminal filler. Those extra slots sit beyond the live
+k-expression's BFS frontier, so the decoded tree, and hence the semantics, is
+unchanged; it is the same syntactic position GEP fills with random tokens at
+initialisation. The tail is then re-padded to Eq.~\ref{eq:tail} for the
+\emph{final} head length. One subtlety is worth recording: $n_{\max}$ is the
+\emph{primitive set's} maximum arity, not the maximum arity appearing in this
+expression (\texttt{src/karva.rs:514--521}). A pure-unary term would otherwise get
+a one-token tail, and a later point mutation to a binary operator --- which the
+primitive set permits --- would run off the end of the stream.
+
+Two routes implement the resize. \texttt{fuller} can do it itself, via the
+optional \texttt{target\_head\_length} (\texttt{src/python.rs:250--253}), where an
+over-long natural head is refused as \texttt{oversized} and never truncated. The
+host engine instead resizes in the caller, immediately after
+\texttt{denoise\_karva} returns
+(\texttt{../hff/notebooks/\_gene\_utils.py:26--52}), and that code states the
+invariant and its reason directly:
+
+\begin{quote}\small
+CRITICAL: the new gene MUST keep the ORIGINAL gene's fixed \texttt{head\_length}
+\ldots{} a simplified karva often comes back shorter than the head it replaces. If
+we sized the gene to \texttt{len(new\_head)} it would shrink below the fixed length
+its siblings share, violating the GEP invariant and later crashing geppy's
+length-dependent operators. Pad (or truncate) head and tail back to the declared
+lengths so the rebuilt gene is a structural drop-in replacement of the same length.
+\ldots{} Per GEP, the coding region (ORF) ends where the expression tree closes;
+any head positions past the ORF are non-coding and ignored on expression, so
+terminal padding is inert and cannot change the expressed tree.
+\end{quote}
+
+The re-injected chromosome is therefore a genuine same-length structural drop-in:
+identical length, legal geometry, unchanged expressed tree. This step is sound
+\emph{because} of the ORF, and would not be available in tree-GP.
+
+\paragraph{The truncation branch [implemented, reachable, caught].} One caveat
+deserves precision rather than hand-waving. The caller pads a short head but
+\emph{truncates} a long one (\texttt{new\_head[:head\_length]}), and since the
+live call omits \texttt{target\_head\_length}, \texttt{fuller} returns the
+\emph{natural} head, whose length is the rewritten term's node count. So the
+branch is reachable in principle: strict shrinkage does \emph{not} by itself
+guarantee a fit, because a parent's ORF may extend into the tail, and an original
+expressed tree can therefore exceed $\ell_{\text{head}}$ while a strictly smaller
+rewrite still does. Truncation \emph{past} the ORF is inert, exactly like padding.
+Truncation \emph{into} the ORF would change the expressed tree, and is the one
+place in this design where semantics could move silently.
+
+It does not escape. The rewritten term's nodes occupy the head's leading positions
+by construction, so a cut at $\ell_{\text{head}}$ reaches coding material only
+when node count exceeds $\ell_{\text{head}}$ --- and in that case the truncated
+gene computes a different function, which the operator's own gate detects: it
+recompiles the candidate through geppy's compiled callable, compares predictions
+on a 64-row sample at relative tolerance $10^{-4}$, and on disagreement reverts to
+the original individual and increments \texttt{rejected\_safety}
+(\texttt{../hff/notebooks/\_denoise\_op.py:136--157, 238--243}). The failure mode
+is a rejected mutation, not a corrupted population. The honest statement is that
+in this configuration correctness rests on the caller's data gate rather than on
+the representation alone; passing \texttt{target\_head\_length} would move the
+guarantee back into the representation, refusing an over-long candidate outright.
+Logging \texttt{rejected\_safety} against node count would settle whether the
+branch is ever taken in practice.
+
+\paragraph{Representation as an evolvable trait [implemented].} A constant can
+appear in a genome two ways: as a symbol (\texttt{pi}, \texttt{G},
+\texttt{k\_e}) or as a number ($3.14159\ldots$, $6.674\mathrm{e}{-}11$). The
+\texttt{snap} $\rightleftharpoons$ \texttt{concretize} pair makes that choice a
+reversible mutation (\texttt{src/snap\_karva.rs:149--193}). The up-flip proposes
+lattice-constant substitutions, each \emph{verified in the e-graph} --- the
+numeric literal and the symbolic form must land in the same e-class after
+saturation --- rather than trusted on numeric closeness
+(\texttt{src/snap\_karva.rs:265--271}); the down-flip replaces named constants by
+their values and is behaviour-preserving by construction. A population therefore
+carries both representations and selection decides which survives. When the
+symbolic form wins, the discovered expression \emph{matches} the reference form
+directly, instead of being recovered by post-hoc pattern matching.
+
+\paragraph{Three operators, three soundness levels --- stated plainly.} It would
+be easy to present \texttt{denoise}, \texttt{snap} and the physics-prior
+mutations as uniformly ``sound by proof''. They are not, and the distinction
+matters for anyone reading a result.
+\emph{\texttt{denoise}} is exact identities plus a strict-shrink requirement plus
+the $R^2$ gate.
+\emph{\texttt{snap}} is \emph{not} an identity: lattice snaps hold only within a
+significant-figure tolerance, which is why that ruleset is never loaded into
+\texttt{denoise} or the parity scorer, where it would let the engine ``prove''
+approximate equalities (\texttt{src/snap\_karva.rs:11--14}). It is e-graph-verified
+within tolerance and then data-gated by the caller.
+\emph{Physics-prior mutation} is a pure generator with no equivalence claim at
+all; candidates it marks \texttt{speculative} \emph{change what the gene computes}
+and must be gated on extrapolation rather than holdout
+(\texttt{src/physics.rs:1--12, 27--30}). Only the first is behaviour-preserving in the
+strong sense.
+
+\paragraph{An honest observation [to be confirmed].} Editing genes led the
+population in ways I found \emph{surprising} --- not necessarily wrong, but
+unexpected. Convergence behaviour changed in character, not merely in rate. I do
+not claim the mechanism is understood, and I do not claim the net effect is
+positive: whether Lamarckian rewriting helps or hurts an SR run is
+\textbf{unresolved}, and Section~\ref{sec:experiments} proposes the instrumentation
+to settle it rather than an argument that it works.
+
+\paragraph{Leading hypothesis: simplification is also a mutation source [to be
+confirmed].} One mechanism is specific enough to test, and it follows from the
+padding rather than from any defect in it. The filler terminals are chosen
+\emph{at random} --- \texttt{rng.choice(terminals)} for both head and tail
+(\texttt{../hff/notebooks/\_gene\_utils.py:46--52}), reseeded per simplification
+event --- so every accepted edit injects \emph{fresh random non-coding material}
+into the chromosome. That material is inert on expression, and cannot change what
+the gene computes now. But it is new raw genetic material sitting in the
+non-coding region, and crossover and transposition can later move it \emph{into}
+a coding region, where it becomes expressed.
+
+If this is the dominant effect, then \texttt{denoise} is not only a simplifier: it
+is silently also a mutation operator, supplying variation at a rate proportional
+to how often it fires and to how much it shrinks (a bigger reduction pads more
+positions). That would explain a population moving in surprising-but-not-wrong
+ways --- the expressed semantics of every individual edit are provably unchanged,
+while the population's latent variation is being continuously refreshed. It also
+predicts an interaction with the \texttt{pb\_each\_gene} gate, since the injection
+rate scales with how many genes are visited per individual. This is a hypothesis,
+not a finding; E3 proposes the instrumentation to test it directly.
+
+%% ============================================================================
+\section{Proposed Experiments}
+\label{sec:experiments}
+
+This section is a named sketch. No numbers are claimed except where a run exists
+in the repository and is cited as such.
+
+\paragraph{E1. \texttt{fuller} versus SymPy in the SR loop [proposed].} The host
+engine calls \texttt{fuller} through geppy/DEAP mutation operators
+(\texttt{../hff/notebooks/\_denoise\_op.py}) with the configuration in
+\texttt{hff\_sr\_engine.py}: per-individual denoise probability $0.20$, a
+64-row safety re-check at tolerance $10^{-4}$, physics-prior mutation at $0.20$
+with 8 candidates per gene, snap applied to offspring and the down-flip at
+$0.05$. The operator re-evaluates a changed chromosome through geppy's own
+compiled callable before swapping, and logs a \texttt{rejected\_safety} count
+when predictions disagree. The experiment holds the GA fixed and swaps only the
+simplifier, reporting wall-clock per generation, crash and timeout rate, final
+expression size, and recovery rate of known laws on a Feynman-style benchmark.
+Note that the host engine now registers raw operators \emph{decode-only} so that
+\texttt{fuller}-emitted chromosomes stay compilable without entering random gene
+generation; a SymPy arm must match that primitive set to be comparable.
+
+\paragraph{E2. Rewriting as a genetic operator, on versus off [partially done,
+for a different target].} Does Lamarckian simplification help? Report convergence
+rate, final fitness, and population diversity, watching specifically for
+diversity collapse --- the expected failure mode, since simplification is a
+contraction toward canonical forms. Two confounds must be controlled, both from
+Section~\ref{sec:operator}: the \texttt{pb\_each\_gene} gate sets how many genes
+per individual are visited, and each accepted edit reseeds that gene's non-coding
+padding, so an ``on'' arm differs from ``off'' in injected variation as well as in
+simplification. Sweeping \texttt{pb\_each\_gene}, and running the fixed-terminal
+padding variant of E3 as a third arm, separates the two effects.
+A run of exactly this shape exists for Brainfuck rather than SR
+(\texttt{examples/bf\_bloat/RESULTS.md}): population 30, 34 generations, 10 seeds,
+300 individuals per arm, the simplified offspring replacing the original when
+strictly shorter and not less fit. Solve rate was $41.0\%$ off versus $70.0\%$ on,
+with mean length $10.9 \to 10.2$ and median $11 \to 9$. The caveats in that
+document belong with the number: the task is a 3-operator ground truth, the
+simplifier cannot invent the I/O operators needed to solve it, two of ten seeds
+showed no benefit, and the soundness evidence is differential --- 2000 interpreter
+comparisons with zero mismatches, but the fuzzer emits no brackets, so the
+clear-loop rules are untested. It is encouraging evidence for the mechanism on an
+exact target, and it is \emph{not} evidence for SR, where the gate is statistical.
+
+\paragraph{E3. Lineage tracing of edited genes [proposed] --- the surprise.}
+Instrument every operator application with: parent and child chromosome, which
+operator fired, cost before and after, the $R^2$ loss, whether the safety re-check
+rejected the swap, the rewritten term's node count against $\ell_{\text{head}}$
+(to detect the truncation branch of Section~\ref{sec:operator}), and the edit's
+generation. Then plot, per generation, the share of the population descended from
+an edited gene; expressed-tree depth and node count distributions for edited
+versus unedited lineages; and survival curves of edited genes against their
+unedited siblings.
+
+The decisive measurement for the mutation-source hypothesis is narrower: tag every
+\emph{padded position} at the moment it is written, and count how often a tagged
+position later enters an ORF --- via crossover, transposition, or a head mutation
+that lengthens the coding region --- and what happens to the fitness of the
+individual when it does. Report the per-generation count of padded positions
+injected (which scales with edit frequency, shrinkage magnitude and
+\texttt{pb\_each\_gene}) alongside inert-region diversity, measured as distinct
+tail content across the population. The clean A/B is to replace
+\texttt{rng.choice(terminals)} with a \emph{fixed} neutral terminal: if the
+surprising behaviour is driven by injected variation it should attenuate, and if it
+persists the mechanism lies elsewhere. That single-line change makes the hypothesis
+falsifiable.
+
+\paragraph{E4. Does carrying both representations help? [proposed]} Compare three
+arms: numeric only; \texttt{snap} applied post-hoc to the final answer; and the
+full \texttt{snap}/\texttt{concretize} pair active as mutations during the run.
+Measure exact recovery of reference forms, not merely fit. The companion
+paper~\cite{morgan2026tournaments} records the relevant trap --- a fitted
+coefficient matched $\sqrt3$ to $1.5\times10^{-11}$ while $\sqrt3$ appeared
+nowhere in the truth --- so a snap must be scored by whether the snapped law
+reproduces held-out data, never by residual alone.
+
+\paragraph{E5. Ruleset confluence [proposed, to justify a measured decision].}
+The family split (Section~\ref{sec:design}) rests on observed blow-up. Quantify
+it: for each family combination, saturate a fixed corpus under a fixed iteration
+budget and record e-node count against iteration, plus time to the budget. This
+converts a kill-guarded operational rule into a table. Context for the same
+section: measured SymPy-parity across frozen corpora is roughly $33.6\%$ overall
+(\texttt{powsimp} $84.9\%$, \texttt{trigsimp} $47\%$, \texttt{radsimp}/%
+\texttt{ratsimp} $\approx15\%$, \texttt{simplify} $13\%$), as recorded in the
+repository's \texttt{CLAUDE.md}; that file predates roughly the last twenty
+commits, so the figures are to be re-measured. It is a deliberate
+scope statement, and partly a measurement artifact --- SymPy rationalises to
+\emph{larger} canonical forms than SR wants --- but \texttt{fuller} is a
+replacement for SymPy \emph{in this loop}, not a general CAS, and the paper should
+say so.
+
+\paragraph{E6. HFF extraction versus stock scalar extraction [proposed].} Both
+paths exist (Section~\ref{sec:extraction}), so hold the saturation budget and
+candidate count fixed and compare selected-form quality: node count, transcendental
+nesting, held-out error, and agreement with the reference form. The companion
+paper's enumeration pitfall must be respected --- seed the candidate list with the
+input form, or the tournament can rank a compact form behind thousands of
+expanded variants.
+
+\paragraph{E7. Ablation of the data gate [proposed].} How often does the $R^2$
+tolerance reject a candidate the cost model preferred? Log every
+\texttt{denoise} call with the cost-ranked winner and the accepted form. A near-zero
+rejection rate would mean the gate is decoration and the identities suffice; a
+high rate would mean the cost model alone is unsafe and would quantify the seam's
+value directly. This is the cheapest experiment here and the most diagnostic.
+
+%% ============================================================================
+\section{Related Work}
+\label{sec:related}
+
+Equality saturation and the e-graph as a rewriting substrate are due to
+\texttt{egg}~\cite{egg} and its successor \texttt{egglog}~\cite{egglog}, which
+adds Datalog-style rules and the named rulesets this work depends on.
+Herbie~\cite{herbie} is the closest system in spirit --- same engine family, and
+likewise selects among provably-equivalent forms by an explicit cost model ---
+but its target is floating-point accuracy, and it is a standalone tool rather
+than an operator inside a population. Gene expression programming and the karva
+representation are due to Ferreira~\cite{ferreira2001}; the fixed head/tail
+geometry and the ORF are properties of that representation, and
+Section~\ref{sec:operator} argues GEP is the natural host for in-loop rewriting
+for exactly that reason. SymPy~\cite{sympy} is the baseline. Simplification in GP
+is conventionally post-processing, or an explicitly approximate ``numerical
+simplification'' step; the contribution here is that proof of equivalence, or a
+data gate, lets it move inside the loop. The hyperspherical projection and the
+extraction tournament are developed in the companion
+papers~\cite{morgan2026hff,morgan2026tournaments}.
+
+%% ============================================================================
+\begin{thebibliography}{9}
+
+\bibitem{egg}
+Max Willsey, Chandrakana Nandi, Yisu Remy Wang, Oliver Flatt, Zachary Tatlock,
+and Pavel Panchekha.
+\newblock egg: Fast and Extensible Equality Saturation.
+\newblock \emph{Proc. ACM Program. Lang.} (POPL), 2021.
+
+\bibitem{egglog}
+Yihong Zhang, Yisu Remy Wang, Oliver Flatt, David Cao, Philip Zucker, Eli
+Rosenthal, Zachary Tatlock, and Max Willsey.
+\newblock Better Together: Unifying Datalog and Equality Saturation.
+\newblock \emph{Proc. ACM Program. Lang.} (PLDI), 2023.
+
+\bibitem{herbie}
+Pavel Panchekha, Alex Sanchez-Stern, James R. Wilcox, and Zachary Tatlock.
+\newblock Automatically Improving Accuracy for Floating Point Expressions.
+\newblock \emph{PLDI}, 2015.
+
+\bibitem{ferreira2001}
+C\^{a}ndida Ferreira.
+\newblock Gene Expression Programming: A New Adaptive Algorithm for Solving
+Problems.
+\newblock \emph{Complex Systems}, 13(2), 2001.
+
+\bibitem{sympy}
+Aaron Meurer et al.
+\newblock SymPy: Symbolic Computing in Python.
+\newblock \emph{PeerJ Computer Science}, 2017.
+
+\bibitem{morgan2026hff}
+Andrew James Morgan.
+\newblock Hyperspherical Fitness Functions for Many-Objective Optimization.
+\newblock \emph{Proceedings of the Genetic and Evolutionary Computation
+Conference Companion (GECCO Companion '26)}, ACM, 2026.
+\newblock doi: 10.1145/3795101.3805445.
+
+\bibitem{morgan2026tournaments}
+Andrew James Morgan.
+\newblock Hyperspherical Fitness Functions for Heterogeneous Objectives and
+Tournaments.
+\newblock Working draft, Gamakon Ltd., 2026. Companion paper.
+
+\end{thebibliography}
+
+\end{document}
