@@ -132,9 +132,28 @@ pub struct ScoreSpec {
 /// engine's `apply_linear_scaling`; change both or neither.
 pub const CONSTANT_REL_TOL: f64 = 2e-6;
 
+/// Rows of the behavioural signature (see [`SCORE_WIDTH`]).
+pub const SIGNATURE_ROWS: usize = 16;
+
+/// Metrics per candidate, before the signature.
+pub const METRIC_WIDTH: usize = 9;
+
 /// Values per candidate: `[a, b, mse_train, mse_val, max_err_val, mse_extrap,
-/// mae_train, mae_val, mae_extrap]`.
-pub const SCORE_WIDTH: usize = 9;
+/// mae_train, mae_val, mae_extrap]` followed by a SIGNATURE of
+/// [`SIGNATURE_ROWS`] values — the model's scaled prediction `a*f(x)+b` at
+/// fixed, evenly spaced TRAIN rows, in target units.
+///
+/// The signature is what makes "the same model" decidable. Comparing
+/// chromosomes as text calls three orderings of four genes under a
+/// commutative linker three individuals (a 30-entry hall of fame on the UCI
+/// power plant data was ONE function), and comparing genomes calls two
+/// identical expressed trees different when only their dormant regions
+/// differ. Two candidates whose signatures agree to tolerance compute the same
+/// function on this data, however either is written; two that fit equally
+/// well but are different functions do not agree. A hash was not used: f32
+/// noise straddling a rounding boundary would split identical models, where a
+/// tolerance comparison cannot.
+pub const SCORE_WIDTH: usize = METRIC_WIDTH + SIGNATURE_ROWS;
 
 /// Score every (chromosome, wrapper) candidate.
 ///
@@ -282,7 +301,15 @@ fn score_one(
 
     let ((mse_t, mae_t), (mse_v, mae_v), (mse_e, mae_e)) =
         (errs(t0, t1), errs(v0, v1), errs(e0, e1));
-    let s = [a, b, mse_t, mse_v, max_err, mse_e, mae_t, mae_v, mae_e];
+    let mut s = [0.0_f64; SCORE_WIDTH];
+    s[..METRIC_WIDTH].copy_from_slice(&[a, b, mse_t, mse_v, max_err, mse_e, mae_t, mae_v, mae_e]);
+    // Evenly spaced train rows, first to last; with fewer rows than slots the
+    // last row repeats, which is harmless for a comparison.
+    let last = splits.n_train - 1;
+    for (k, slot) in s[METRIC_WIDTH..].iter_mut().enumerate() {
+        let row = if SIGNATURE_ROWS > 1 { k * last / (SIGNATURE_ROWS - 1) } else { 0 };
+        *slot = a * wrapped[row] + b;
+    }
     s.iter().all(|v| v.is_finite()).then_some(s)
 }
 
@@ -372,7 +399,10 @@ mod tests {
             (s[0] - 3.0).abs() < 1e-12 && (s[1] - 2.0).abs() < 1e-12,
             "{s:?}"
         );
-        assert!(s[2..].iter().all(|v| v.abs() < 1e-20), "{s:?}");
+        assert!(s[2..METRIC_WIDTH].iter().all(|v| v.abs() < 1e-20), "{s:?}");
+        // and the signature is the model itself, 3x + 2, at the probe rows
+        assert_eq!(&s[METRIC_WIDTH..METRIC_WIDTH + 2], &[5.0, 5.0]);
+        assert_eq!(s[SCORE_WIDTH - 1], 14.0);
     }
 
     /// The wrapper dimension: y = sqrt(x) is exact under SqrtAbs and not
@@ -523,6 +553,7 @@ mod tests {
         let out = score_chromosomes(&x, &[true], &[vec![0]], &y, &spec).unwrap();
         assert!(out.iter().all(|v| v.is_finite()), "{out:?}");
         assert_eq!((out[5], out[8]), (0.0, 0.0));
+        assert_eq!(out.len(), SCORE_WIDTH);
     }
 
     /// Rounded linkers use numpy's rule: half to EVEN. 0.5 -> 0, 1.5 -> 2,
@@ -563,6 +594,41 @@ mod tests {
         assert_eq!(c[2].to_bits(), d[2].to_bits(), "train MSE moved");
         assert_eq!(c[6].to_bits(), d[6].to_bits(), "train MAE moved");
         assert!(d[3] > 1.0 && c[3] < 1e-20, "val MSE must reflect the val rows: {c:?} {d:?}");
+    }
+
+    /// "The same model" is decided by behaviour, not by how it is written.
+    /// Genes [x, 2x] under ADD, the same genes in the OTHER ORDER, and a
+    /// different decomposition [1.5x, 1.5x] are all the function 3x and must
+    /// carry the same signature; [x, x] (2x) fits a y = 3x target exactly as
+    /// well after linear scaling — identical MSE — and the signature must STILL
+    /// agree, because a*f+b is the same function; while a genuinely different
+    /// function (x^2) must not.
+    #[test]
+    fn signature_identifies_the_function_not_the_writing() {
+        let x: Vec<f32> = (1..=24).map(|v| v as f32 * 0.5).collect();
+        let sp = Splits { n_train: 16, n_val: 5, n_extrap: 3 };
+        let y: Vec<f64> = x.iter().map(|v| 3.0 * f64::from(*v) + 1.0).collect();
+        let mut preds = x.clone(); // 0: x
+        preds.extend(x.iter().map(|v| 2.0 * v)); // 1: 2x
+        preds.extend(x.iter().map(|v| 1.5 * v)); // 2: 1.5x
+        preds.extend(x.iter().map(|v| v * v)); // 3: x^2
+        let spec = ScoreSpec {
+            linkers: vec![Linker::ADD],
+            wrappers: vec![Wrapper::Identity],
+            splits: sp,
+            linear_scaling: true,
+        };
+        let chroms = vec![vec![0, 1], vec![1, 0], vec![2, 2], vec![0, 0], vec![3, 0]];
+        let out = score_chromosomes(&preds, &[true; 4], &chroms, &y, &spec).unwrap();
+        let sig = |c: usize| &out[c * SCORE_WIDTH + METRIC_WIDTH..(c + 1) * SCORE_WIDTH];
+        let same = |a: usize, b: usize| {
+            sig(a).iter().zip(sig(b)).all(|(p, q)| (p - q).abs() <= 1e-9 * p.abs().max(1.0))
+        };
+        assert!(same(0, 1), "gene order changed the signature");
+        assert!(same(0, 2), "a different decomposition of 3x changed the signature");
+        assert!(same(0, 3), "2x rescaled by LSM is the same model as 3x");
+        assert!(!same(0, 4), "x^2 + x is a different function and must differ");
+        assert_eq!(sig(0).len(), SIGNATURE_ROWS);
     }
 
     #[test]

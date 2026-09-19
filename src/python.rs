@@ -1387,9 +1387,11 @@ impl GpuSession {
     /// with the GIL released.
     ///
     /// Returns `(scores, gene_decoded)`. `scores` is flat,
-    /// `len(chromosomes) * len(linkers) * len(wrappers) * 9`, chromosome-major,
-    /// then linker, then wrapper: `[a, b, mse_train, mse_val, max_err_val,
-    /// mse_extrap, mae_train, mae_val, mae_extrap]`. `n_extrap` may be 0. A rejected
+    /// `len(chromosomes) * len(linkers) * len(wrappers) * score_width`,
+    /// chromosome-major, then linker, then wrapper: `[a, b, mse_train, mse_val,
+    /// max_err_val, mse_extrap, mae_train, mae_val, mae_extrap]` then the
+    /// behavioural signature (see `chrom_score::SCORE_WIDTH`). `n_extrap` may
+    /// be 0. A rejected
     /// candidate is all-NaN — see `chrom_score` for the rejection rules, which
     /// mirror the engine's. `gene_decoded[i]` is false for a gene the device
     /// could not take (undecodable, or over MAX_NODES); the caller must route
@@ -1469,6 +1471,20 @@ impl GpuSession {
             })
             .map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
         Ok((scores, ok))
+    }
+
+    /// Values per candidate in `score_chromosomes`' flat result: the metrics
+    /// followed by the behavioural signature. Read it, do not hard-code it.
+    #[getter]
+    fn score_width(&self) -> usize {
+        crate::chrom_score::SCORE_WIDTH
+    }
+
+    /// How many leading values of each candidate are metrics; the rest is the
+    /// signature (scaled predictions at fixed train rows, in target units).
+    #[getter]
+    fn metric_width(&self) -> usize {
+        crate::chrom_score::METRIC_WIDTH
     }
 
     /// Rows held on the device.
