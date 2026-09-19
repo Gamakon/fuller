@@ -987,9 +987,180 @@ fn gpu_score_karva(
     }
 }
 
+/// A GPU evaluator holding the dataset RESIDENT on the device.
+///
+/// `gpu_predict_karva` builds a fresh evaluator per call, which means
+/// request_adapter, create_shader_module and a full re-upload of the dataset
+/// on every dispatch — the opposite of "uploaded once", and most of the
+/// measured per-dispatch cost. Constructing this once per (dataset, variable
+/// order) and reusing it across generations is what makes residency real.
+///
+/// Held by the caller for the life of a fit. Dropping it releases the device.
+#[cfg(feature = "gpu")]
+#[pyclass]
+pub struct GpuSession {
+    inner: crate::gpu_eval::GpuEvaluator,
+    variables: Vec<String>,
+    pset: crate::karva::PsetSpec,
+    n_rows: usize,
+}
+
+#[cfg(feature = "gpu")]
+#[pymethods]
+impl GpuSession {
+    /// Upload `rows` once. Every later `predict` reuses this device and buffer.
+    #[new]
+    #[pyo3(signature = (variables, functions, rnc_values, rows))]
+    fn new(
+        variables: Vec<String>,
+        functions: HashMap<String, (String, usize)>,
+        rnc_values: Vec<f64>,
+        rows: Vec<Vec<f64>>,
+    ) -> PyResult<Self> {
+        let n_rows = rows.len();
+        let flat: Vec<f32> = rows
+            .iter()
+            .flat_map(|r| r.iter().map(|v| *v as f32))
+            .collect();
+        let inner = crate::gpu_eval::GpuEvaluator::new(&flat, variables.len())
+            .map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
+        let pset = build_pset(variables.clone(), functions, rnc_values);
+        Ok(Self { inner, variables, pset, n_rows })
+    }
+
+    /// Evaluate genes against the resident dataset. One dispatch, no upload.
+    fn predict(
+        &self,
+        py: Python<'_>,
+        genes: Vec<(Vec<PyToken>, Vec<PyToken>)>,
+    ) -> PyResult<Vec<Option<Vec<f64>>>> {
+        use crate::gpu_eval::{karva_to_nodes, ExprBatch, MAX_NODES};
+        let mut batch = ExprBatch::new();
+        let mut ok: Vec<bool> = Vec::with_capacity(genes.len());
+        for (h, t) in genes {
+            let head = build_tokens(py, h)?;
+            let tail = build_tokens(py, t)?;
+            match karva_to_nodes(&head, &tail, &self.pset, &self.variables) {
+                Ok(nodes) if nodes.len() <= MAX_NODES => {
+                    batch.push(&nodes);
+                    ok.push(true);
+                }
+                _ => {
+                    batch.push(&[]);
+                    ok.push(false);
+                }
+            }
+        }
+        let preds = self
+            .inner
+            .eval(&batch)
+            .map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
+        let n = self.n_rows;
+        Ok(ok
+            .into_iter()
+            .enumerate()
+            .map(|(i, decoded)| {
+                if !decoded {
+                    return None;
+                }
+                Some(preds[i * n..(i + 1) * n].iter().map(|v| *v as f64).collect())
+            })
+            .collect())
+    }
+
+    /// Rows held on the device.
+    #[getter]
+    fn n_rows(&self) -> usize {
+        self.n_rows
+    }
+}
+
+/// Evaluate many karva genes and return their RAW PREDICTIONS.
+///
+/// The engine needs predictions, not reduced error terms: it applies a linker
+/// across a chromosome's genes and then fits linear scaling, both of which
+/// need the per-row values. `gpu_score_karva` reduces on device and cannot
+/// serve that.
+///
+/// Returns one list of `n_rows` floats per gene, in the order given. A gene
+/// that could not be converted comes back as `None` so the caller can fall
+/// back for that individual rather than silently scoring a wrong number.
+#[pyfunction]
+#[pyo3(signature = (genes, variables, functions, rnc_values, rows))]
+#[allow(unused_variables)]
+fn gpu_predict_karva(
+    py: Python<'_>,
+    genes: Vec<(Vec<PyToken>, Vec<PyToken>)>,
+    variables: Vec<String>,
+    functions: HashMap<String, (String, usize)>,
+    rnc_values: Vec<f64>,
+    rows: Vec<Vec<f64>>,
+) -> PyResult<Vec<Option<Vec<f64>>>> {
+    #[cfg(not(feature = "gpu"))]
+    {
+        Err(pyo3::exceptions::PyRuntimeError::new_err(
+            "fuller was built without the `gpu` feature; rebuild with \
+             `maturin develop --release --features python,gpu`",
+        ))
+    }
+    #[cfg(feature = "gpu")]
+    {
+        use crate::gpu_eval::{karva_to_nodes, ExprBatch, GpuEvaluator, MAX_NODES};
+
+        let pset = build_pset(variables.clone(), functions, rnc_values);
+        let n_rows = rows.len();
+        let flat: Vec<f32> = rows
+            .iter()
+            .flat_map(|r| r.iter().map(|v| *v as f32))
+            .collect();
+        let ev = GpuEvaluator::new(&flat, variables.len())
+            .map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
+
+        let mut batch = ExprBatch::new();
+        let mut ok: Vec<bool> = Vec::new();
+        for (h, t) in genes {
+            let head = build_tokens(py, h)?;
+            let tail = build_tokens(py, t)?;
+            match karva_to_nodes(&head, &tail, &pset, &variables) {
+                Ok(nodes) if nodes.len() <= MAX_NODES => {
+                    batch.push(&nodes);
+                    ok.push(true);
+                }
+                _ => {
+                    batch.push(&[]);
+                    ok.push(false);
+                }
+            }
+        }
+
+        let preds = ev
+            .eval(&batch)
+            .map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
+
+        Ok(ok
+            .into_iter()
+            .enumerate()
+            .map(|(i, decoded)| {
+                if !decoded {
+                    return None;
+                }
+                Some(
+                    preds[i * n_rows..(i + 1) * n_rows]
+                        .iter()
+                        .map(|v| *v as f64)
+                        .collect(),
+                )
+            })
+            .collect())
+    }
+}
+
 #[pymodule]
 fn _fuller(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(gpu_score_karva, m)?)?;
+    m.add_function(wrap_pyfunction!(gpu_predict_karva, m)?)?;
+    #[cfg(feature = "gpu")]
+    m.add_class::<GpuSession>()?;
     m.add_function(wrap_pyfunction!(denoise, m)?)?;
     m.add_function(wrap_pyfunction!(denoise_karva, m)?)?;
     m.add_function(wrap_pyfunction!(denoise_karva_candidates, m)?)?;
