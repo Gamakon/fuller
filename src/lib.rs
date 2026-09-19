@@ -28,6 +28,7 @@ pub const MAX_EXPR_DEPTH: usize = 256;
 
 pub mod bf;
 pub mod calibration;
+pub mod chrom_score;
 pub mod eval;
 pub mod expr;
 pub mod extract;

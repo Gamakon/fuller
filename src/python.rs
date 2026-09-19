@@ -348,6 +348,149 @@ fn denoise_karva_candidates(
     Ok(out)
 }
 
+/// One gene's e-class expansion, as plain owned data (crosses the GIL
+/// boundary without touching Python).
+struct GeneExpansion {
+    /// (head, tail, cost, is_original) per usable candidate.
+    candidates: Vec<(Vec<Token>, Vec<Token>, u64, bool)>,
+    /// Why the gene produced no expansion at all, if it did not.
+    error: Option<String>,
+    /// Candidates fuller found but this pset cannot name.
+    n_inexpressible: usize,
+    /// Candidates that do not fit `target_head_length`.
+    n_oversized: usize,
+}
+
+/// E-class fan-out for a WHOLE POPULATION's genes in one call: the producer
+/// half of the population x genes x e-class variants x wrappers join.
+///
+/// `denoise_karva_candidates` expands one gene per call, under the GIL, and
+/// converts the row dicts on every call. At population scale that is
+/// thousands of calls per generation. This takes every gene at once, converts
+/// the rows once, releases the GIL, and saturates the genes in parallel
+/// (rayon) — each in its own e-graph, so there is no shared state.
+///
+/// `genes` is a list of `(head, tail, rnc_values)`; `rnc_values` is per gene
+/// because a GeneDc's constants are its own, and a candidate is only
+/// expressible if its literals exist in THAT gene's array.
+///
+/// Returns one dict per gene, in order:
+///   {"candidates": [{"head", "tail", "cost", "is_original"}, ...],
+///    "error": str | None, "n_inexpressible": int, "n_oversized": int}
+///
+/// Unlike the single-gene entry point this does NOT disguise a failed
+/// saturation as "just the original": `error` carries the reason, so the
+/// caller can count and report failures instead of never learning of them.
+#[pyfunction]
+#[pyo3(signature = (genes, variables, functions, rows, k_variants = 8,
+                    rng_seed = 0, target_head_length = None,
+                    positive_vars = vec![], nonzero_vars = vec![]))]
+fn denoise_karva_candidates_batch(
+    py: Python<'_>,
+    genes: Vec<(Vec<PyToken>, Vec<PyToken>, Vec<f64>)>,
+    variables: Vec<String>,
+    functions: HashMap<String, (String, usize)>,
+    rows: Vec<HashMap<String, f64>>,
+    k_variants: usize,
+    rng_seed: u64,
+    target_head_length: Option<usize>,
+    positive_vars: Vec<String>,
+    nonzero_vars: Vec<String>,
+) -> PyResult<Vec<Py<PyDict>>> {
+    use rayon::prelude::*;
+
+    // Everything that needs the GIL happens here, once.
+    let mut owned: Vec<(Vec<Token>, Vec<Token>, PsetSpec)> = Vec::with_capacity(genes.len());
+    for (h, t, rnc) in genes {
+        let head = build_tokens(py, h)?;
+        let tail = build_tokens(py, t)?;
+        owned.push((
+            head,
+            tail,
+            build_pset(variables.clone(), functions.clone(), rnc),
+        ));
+    }
+    let core_rows: Vec<Vec<(String, f64)>> =
+        rows.into_iter().map(|m| m.into_iter().collect()).collect();
+
+    let expand = |i: usize, head: &[Token], tail: &[Token], pset: &PsetSpec| -> GeneExpansion {
+        let fail = |why: String| GeneExpansion {
+            candidates: Vec::new(),
+            error: Some(why),
+            n_inexpressible: 0,
+            n_oversized: 0,
+        };
+        let math = match karva_to_terms(head, tail, pset) {
+            Ok(m) => m,
+            Err(e) => return fail(format!("decode: {e}")),
+        };
+        let cands = match denoise_candidates_core(
+            &math,
+            &core_rows,
+            k_variants,
+            &positive_vars,
+            &nonzero_vars,
+        ) {
+            Ok(c) => c,
+            Err(e) => return fail(format!("saturate: {e}")),
+        };
+        let mut out = GeneExpansion {
+            candidates: Vec::with_capacity(cands.len()),
+            error: None,
+            n_inexpressible: 0,
+            n_oversized: 0,
+        };
+        for c in cands {
+            match terms_to_karva_sized(&c.expr, pset, rng_seed + i as u64, target_head_length) {
+                Ok((_, _, true)) => out.n_oversized += 1,
+                Ok((h, t, false)) => out.candidates.push((h, t, c.cost, c.is_original)),
+                Err(_) => out.n_inexpressible += 1,
+            }
+        }
+        out
+    };
+
+    let expansions: Vec<GeneExpansion> = py.allow_threads(|| {
+        owned
+            .par_iter()
+            .enumerate()
+            .map(|(i, (head, tail, pset))| {
+                // egglog is not panic-free on pathological programs; one bad
+                // gene must not take the generation down, and must be REPORTED.
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    expand(i, head, tail, pset)
+                }))
+                .unwrap_or_else(|_| GeneExpansion {
+                    candidates: Vec::new(),
+                    error: Some("panic in saturation (caught)".to_string()),
+                    n_inexpressible: 0,
+                    n_oversized: 0,
+                })
+            })
+            .collect()
+    });
+
+    let mut out: Vec<Py<PyDict>> = Vec::with_capacity(expansions.len());
+    for e in expansions {
+        let d = PyDict::new_bound(py);
+        let mut cands: Vec<Py<PyDict>> = Vec::with_capacity(e.candidates.len());
+        for (h, t, cost, is_original) in &e.candidates {
+            let c = PyDict::new_bound(py);
+            c.set_item("head", tokens_to_py(py, h)?)?;
+            c.set_item("tail", tokens_to_py(py, t)?)?;
+            c.set_item("cost", *cost)?;
+            c.set_item("is_original", *is_original)?;
+            cands.push(c.into());
+        }
+        d.set_item("candidates", cands)?;
+        d.set_item("error", e.error)?;
+        d.set_item("n_inexpressible", e.n_inexpressible)?;
+        d.set_item("n_oversized", e.n_oversized)?;
+        out.push(d.into());
+    }
+    Ok(out)
+}
+
 /// Render `Vec<Token>` back to a list of (kind, value) tuples for Python.
 fn tokens_to_py(py: Python<'_>, toks: &[Token]) -> PyResult<Vec<(String, PyObject)>> {
     toks.iter()
@@ -1068,6 +1211,98 @@ impl GpuSession {
             .collect())
     }
 
+    /// THE JOIN: population x genes x e-class variants x wrappers, one
+    /// dispatch.
+    ///
+    /// `genes` is every UNIQUE gene in play — the population's own plus every
+    /// e-class variant — and is evaluated over every resident row in a single
+    /// dispatch. The session's rows are train, validation and extrapolation
+    /// concatenated (`n_train`/`n_val`/`n_extrap`), so that one dispatch
+    /// answers all three splits. `chromosomes` are lists of indices into
+    /// `genes`; each is linked, put through every wrapper, linearly scaled on
+    /// the train rows and reduced to its metrics on the host, in parallel,
+    /// with the GIL released.
+    ///
+    /// Returns `(scores, gene_decoded)`. `scores` is flat,
+    /// `len(chromosomes) * len(wrappers) * 6`, chromosome-major then wrapper:
+    /// `[a, b, mse_train, mse_val, max_err_val, mse_extrap]`. A rejected
+    /// candidate is all-NaN — see `chrom_score` for the rejection rules, which
+    /// mirror the engine's. `gene_decoded[i]` is false for a gene the device
+    /// could not take (undecodable, or over MAX_NODES); the caller must route
+    /// individuals that depend on one to its reference evaluator and say so.
+    ///
+    /// Predictions are f32 (Metal has no f64). That ranks candidates; the
+    /// exact-recovery gate must re-check finalists in f64.
+    #[pyo3(signature = (genes, chromosomes, linker, wrappers, n_train, n_val,
+                        n_extrap, y, linear_scaling = true))]
+    fn score_chromosomes(
+        &self,
+        py: Python<'_>,
+        genes: Vec<(Vec<PyToken>, Vec<PyToken>)>,
+        chromosomes: Vec<Vec<usize>>,
+        linker: &str,
+        wrappers: Vec<String>,
+        n_train: usize,
+        n_val: usize,
+        n_extrap: usize,
+        y: Vec<f64>,
+        linear_scaling: bool,
+    ) -> PyResult<(Vec<f64>, Vec<bool>)> {
+        use crate::chrom_score::{score_chromosomes, Linker, ScoreSpec, Splits, Wrapper};
+        use crate::gpu_eval::{karva_to_nodes, ExprBatch, MAX_NODES};
+        let value_err = pyo3::exceptions::PyValueError::new_err::<String>;
+
+        let splits = Splits {
+            n_train,
+            n_val,
+            n_extrap,
+        };
+        if splits.total() != self.n_rows {
+            return Err(value_err(format!(
+                "splits total {} but the session holds {} rows",
+                splits.total(),
+                self.n_rows
+            )));
+        }
+        let spec = ScoreSpec {
+            linker: Linker::parse(linker).map_err(value_err)?,
+            wrappers: wrappers
+                .iter()
+                .map(|w| Wrapper::parse(w))
+                .collect::<Result<_, _>>()
+                .map_err(value_err)?,
+            splits,
+            linear_scaling,
+        };
+
+        let mut batch = ExprBatch::new();
+        let mut ok: Vec<bool> = Vec::with_capacity(genes.len());
+        for (h, t) in genes {
+            let head = build_tokens(py, h)?;
+            let tail = build_tokens(py, t)?;
+            match karva_to_nodes(&head, &tail, &self.pset, &self.variables) {
+                Ok(nodes) if !nodes.is_empty() && nodes.len() <= MAX_NODES => {
+                    batch.push(&nodes);
+                    ok.push(true);
+                }
+                // Keep the slot so indices line up; the flag tells the caller.
+                _ => {
+                    batch.push(&[]);
+                    ok.push(false);
+                }
+            }
+        }
+
+        let inner = &self.inner;
+        let scores = py
+            .allow_threads(|| -> Result<Vec<f64>, String> {
+                let preds = inner.eval(&batch)?;
+                score_chromosomes(&preds, &ok, &chromosomes, &y, &spec)
+            })
+            .map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
+        Ok((scores, ok))
+    }
+
     /// Rows held on the device.
     #[getter]
     fn n_rows(&self) -> usize {
@@ -1170,6 +1405,7 @@ fn _fuller(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(master_pset, m)?)?;
     m.add_function(wrap_pyfunction!(master_constants, m)?)?;
     m.add_function(wrap_pyfunction!(master_lattice, m)?)?;
+    m.add_function(wrap_pyfunction!(denoise_karva_candidates_batch, m)?)?;
     m.add_function(wrap_pyfunction!(eclass_variants, m)?)?;
     m.add_function(wrap_pyfunction!(eclass_extract_hff, m)?)?;
     m.add_function(wrap_pyfunction!(snap_karva, m)?)?;

@@ -56,6 +56,9 @@
 /// being silently truncated.
 pub const MAX_NODES: usize = 64;
 
+/// wgpu's per-dimension workgroup cap (`max_compute_workgroups_per_dimension`).
+pub const MAX_GROUPS_PER_DIM: u32 = 65535;
+
 /// Opcodes. These MUST match `crate::eval` semantics exactly — in particular
 /// the `Protected*` variants, which are not "raw op plus a guard" but distinct
 /// functions with the engine's own behaviour on negatives, zero and overflow.
@@ -187,7 +190,10 @@ struct Meta {
     n_expr: u32,
     n_rows: u32,
     n_vars: u32,
-    _pad: u32,
+    // Invocations per dispatch ROW (groups_x * 64). One dimension caps at
+    // 65535 workgroups = 4.19M invocations, and the population x e-class
+    // cross-product is far past that, so the dispatch is 2-D.
+    stride: u32,
 };
 
 @group(0) @binding(0) var<storage, read>       nodes:   array<Node>;
@@ -204,7 +210,7 @@ fn nan() -> f32 { return bitcast<f32>(0x7fc00000u); }
 
 @compute @workgroup_size(64, 1, 1)
 fn eval_main(@builtin(global_invocation_id) gid: vec3<u32>) {
-    let idx = gid.x;
+    let idx = gid.y * cfg.stride + gid.x;
     let total = cfg.n_expr * cfg.n_rows;
     if (idx >= total) { return; }
 
@@ -564,7 +570,18 @@ mod device {
                 .await
                 .ok_or("no GPU adapter")?;
             let (device, queue) = adapter
-                .request_device(&wgpu::DeviceDescriptor::default(), None)
+                .request_device(
+                    &wgpu::DeviceDescriptor {
+                        label: Some("fuller-eval-device"),
+                        required_features: wgpu::Features::empty(),
+                        // The adapter's real limits, not wgpu's portable
+                        // defaults: the default 128 MiB storage binding is
+                        // smaller than one generation's prediction buffer
+                        // once e-class variants are in the batch.
+                        required_limits: adapter.limits(),
+                    },
+                    None,
+                )
                 .await
                 .map_err(|e| format!("request_device: {e}"))?;
 
@@ -680,7 +697,19 @@ mod device {
                 usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
                 mapped_at_creation: false,
             });
-            let meta = [n_expr, self.n_rows, self.n_vars, 0u32];
+            if total > u32::MAX as u64 {
+                return Err(format!(
+                    "batch of {n_expr} expressions x {} rows = {total} \
+                     invocations overflows the kernel's u32 index",
+                    self.n_rows
+                ));
+            }
+            // 2-D dispatch: a single dimension caps at 65535 workgroups
+            // (4.19M invocations); the e-class cross-product exceeds it.
+            let groups = total.div_ceil(64) as u32;
+            let groups_x = groups.min(MAX_GROUPS_PER_DIM);
+            let groups_y = groups.div_ceil(groups_x);
+            let meta = [n_expr, self.n_rows, self.n_vars, groups_x * 64];
             let meta_buf = self
                 .device
                 .create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -712,8 +741,7 @@ mod device {
                 });
                 pass.set_pipeline(&self.pipeline);
                 pass.set_bind_group(0, &bind, &[]);
-                let groups = total.div_ceil(64) as u32;
-                pass.dispatch_workgroups(groups, 1, 1);
+                pass.dispatch_workgroups(groups_x, groups_y, 1);
             }
             enc.copy_buffer_to_buffer(&out_buf, 0, &read_buf, 0, total * 4);
             self.queue.submit(Some(enc.finish()));
@@ -1332,5 +1360,52 @@ mod undecodable_batch_tests {
         let vars: Vec<String> = vec!["a".to_string(), "b".to_string()];
         let r = math_to_nodes(r#"(Var "?")"#, &vars);
         assert!(r.is_err(), "unresolved '?' must fail, got {r:?}");
+    }
+
+    /// A batch past one dispatch dimension (65535 groups x 64 = 4.19M
+    /// invocations) must still evaluate EVERY expression. With a 1-D dispatch
+    /// wgpu rejects the call outright; with a wrong stride the tail of the
+    /// batch reads another expression's slot. 6000 x 1000 = 6M invocations,
+    /// and expression i is `x + i`, so any misindexing shows as a wrong sum.
+    #[cfg(feature = "gpu")]
+    #[test]
+    fn batch_larger_than_one_dispatch_dimension() {
+        let n_rows = 1000usize;
+        let n_expr = 6000usize;
+        let xs: Vec<f32> = (0..n_rows).map(|r| r as f32).collect();
+        let Ok(ev) = GpuEvaluator::new(&xs, 1) else {
+            return;
+        };
+        let mut b = ExprBatch::new();
+        for i in 0..n_expr {
+            b.push(&[
+                GpuNode {
+                    op: Op::Add as u32,
+                    arg0: 1,
+                    arg1: 2,
+                    konst: 0.0,
+                },
+                GpuNode {
+                    op: Op::Var as u32,
+                    arg0: 0,
+                    arg1: 0,
+                    konst: 0.0,
+                },
+                GpuNode {
+                    op: Op::Num as u32,
+                    arg0: 0,
+                    arg1: 0,
+                    konst: i as f32,
+                },
+            ]);
+        }
+        let out = ev.eval(&b).expect("eval");
+        assert_eq!(out.len(), n_expr * n_rows);
+        for &i in &[0usize, 1, 4193, 4194, 4195, n_expr - 1] {
+            for &r in &[0usize, 1, n_rows - 1] {
+                let got = out[i * n_rows + r];
+                assert_eq!(got, (r + i) as f32, "expr {i} row {r}");
+            }
+        }
     }
 }
