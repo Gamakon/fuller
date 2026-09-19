@@ -609,6 +609,149 @@ fn eval_expr_rows(math: &str, rows: &[Vec<(String, f64)>]) -> Result<Vec<f64>, S
     eval_rows(&termdag, term, rows).map_err(|e| format!("evaluating reference: {e}"))
 }
 
+/// Result of [`smallest_form`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct SmallestForm {
+    pub expr: String,
+    /// Node count of `expr`.
+    pub cost: u64,
+    /// Node count of the input.
+    pub input_cost: u64,
+    /// Full rounds run (each round = one pass per rule family).
+    pub rounds: usize,
+}
+
+/// Rounds after which [`smallest_form`] stops even if still shrinking.
+pub const SMALLEST_FORM_MAX_ROUNDS: usize = 6;
+
+thread_local! {
+    /// algebra + powers + rational, parsed once per thread. Rational is a
+    /// SEPARATE family from the live denoise rules because co-saturating it
+    /// with distribute explodes the e-graph; here it runs alone, bounded.
+    static RATIONAL_BASE: std::cell::OnceCell<Result<EGraph, String>> =
+        const { std::cell::OnceCell::new() };
+}
+
+fn rational_base_egraph() -> Result<EGraph, String> {
+    RATIONAL_BASE.with(|cell| {
+        cell.get_or_init(|| {
+            let mut egraph = EGraph::default();
+            for (what, prog) in [
+                ("datatype", MATH_DATATYPE),
+                ("guards", crate::expr::GUARD_RELATIONS),
+                ("algebra", ALGEBRA_RULESET),
+                ("powers", crate::ruleset::powers::POWERS_RULESET),
+                ("rational", crate::ruleset::rational::RATIONAL_RULESET),
+                (
+                    "combined",
+                    "(unstable-combined-ruleset rational_all guards algebra powers rational)",
+                ),
+            ] {
+                egraph.parse_and_run_program(None, prog).map_err(|e| format!("{what}: {e}"))?;
+            }
+            Ok(egraph)
+        })
+        .clone()
+    })
+}
+
+/// One bounded pass: saturate `input` under one rule family and return the
+/// cheapest term in its e-class. No data, no evaluation.
+fn cheapest_in_family(
+    mut egraph: EGraph,
+    ruleset: &str,
+    iters: u32,
+    input: &str,
+    asserts: &str,
+) -> Result<String, String> {
+    egraph
+        .parse_and_run_program(
+            None,
+            &format!(
+                "(let __root {input})\n{asserts}\
+                 (run-schedule (repeat {iters} (run {ruleset})))"
+            ),
+        )
+        .map_err(|e| format!("saturate {input:?} under {ruleset}: {e}"))?;
+    let (sort, value) =
+        egraph.eval_expr(&exprs::var("__root")).map_err(|e| format!("eval root: {e}"))?;
+    let (termdag, term, _cost) =
+        egraph.extract_value(&sort, value).map_err(|e| format!("extract: {e}"))?;
+    Ok(termdag.to_string(term))
+}
+
+/// The SMALLEST equivalent form of `input`, found without any data.
+///
+/// This is the replacement for `sympy.simplify` at the end of a fit. Every
+/// rewrite used is an EQUIVALENCE (conditional ones fire only on the
+/// `positive_vars` / `nonzero_vars` the caller asserts), so every term in the
+/// e-class computes the same function and choosing among them by node count is
+/// a purely structural decision: nothing is evaluated and nothing is scored.
+/// Smaller is better, and that is the whole criterion.
+///
+/// It is bounded where `simplify` is not. `simplify` tries factoring,
+/// cancellation and trig rewriting (futrig) with no limit; a fit on the UCI
+/// power plant data spent 2h40m in it against a 30-minute budget. Here each
+/// pass is a fixed number of saturation steps, and passes alternate rule
+/// families — algebra+powers, then rational — each in its OWN e-graph,
+/// because those families explode when saturated together. A pass's result is
+/// taken only if it is strictly smaller, so the size never grows and the loop
+/// ends at the first round that shrinks nothing (or at
+/// [`SMALLEST_FORM_MAX_ROUNDS`]).
+///
+/// `inputs` names the data columns. It matters only for constant folding: a
+/// column called `c` is a variable, not the speed of light.
+///
+/// `denoise` cannot serve this purpose: with no rows it returns its input
+/// untouched.
+pub fn smallest_form(
+    input: &str,
+    inputs: &[String],
+    positive_vars: &[String],
+    nonzero_vars: &[String],
+) -> Result<SmallestForm, String> {
+    let input_cost = cost_of(input);
+    if input_cost == 0 {
+        return Err(format!("could not parse {input:?}"));
+    }
+    let asserts = guard_asserts(positive_vars, nonzero_vars);
+    let (mut best, mut best_cost, mut rounds) = (input.to_string(), input_cost, 0);
+    // egglog does not fold f64 literals, and a gene is full of constant
+    // subtrees — exp(1/exp(sin(phi))) + sqrt2 is the number 2.859. Folding one
+    // needs the evaluator but NO data: a constant subtree has no variables.
+    // `inputs` keeps a data column that shares a constant's name out of it.
+    let fold = |best: &mut String, best_cost: &mut u64| {
+        if let Some(f) = fold_constant_subtrees_excluding(best, inputs) {
+            let c = cost_of(&f);
+            if c > 0 && c < *best_cost {
+                *best = f;
+                *best_cost = c;
+            }
+        }
+    };
+    while rounds < SMALLEST_FORM_MAX_ROUNDS {
+        rounds += 1;
+        let before = best_cost;
+        fold(&mut best, &mut best_cost);
+        for pass in 0..2 {
+            let cand = if pass == 0 {
+                cheapest_in_family(denoise_base_egraph()?, "denoise_all", DENOISE_ITERS, &best, &asserts)?
+            } else {
+                cheapest_in_family(rational_base_egraph()?, "rational_all", 6, &best, &asserts)?
+            };
+            let c = cost_of(&cand);
+            if c > 0 && c < best_cost {
+                best = cand;
+                best_cost = c;
+            }
+        }
+        if best_cost == before {
+            break;
+        }
+    }
+    Ok(SmallestForm { expr: best, cost: best_cost, input_cost, rounds })
+}
+
 thread_local! {
     /// Datatype + guards + algebra + powers, parsed ONCE per thread. Parsing
     /// the four rule programs was ~1.6 ms of every call — more than the
@@ -822,17 +965,28 @@ fn eval_const_subtree(math: &str) -> Option<f64> {
 /// eval time; callers gate the folded form on the data (R^2), which rejects
 /// the fold in that pathological case.
 fn fold_constant_subtrees(expr: &str) -> Option<String> {
-    fn is_const(n: &PNode) -> bool {
+    fold_constant_subtrees_excluding(expr, &[])
+}
+
+/// [`fold_constant_subtrees`], but a name in `inputs` is a DATA COLUMN and is
+/// never read as a constant, whatever it is called. The un-gated callers need
+/// this: `fold_constant_subtrees` leaves the c-the-input / c-the-speed-of-light
+/// collision to a data check downstream, and `smallest_form` has no data.
+fn fold_constant_subtrees_excluding(expr: &str, inputs: &[String]) -> Option<String> {
+    fn is_const(n: &PNode, inputs: &[String]) -> bool {
         match n {
             PNode::Num(_) => true,
-            PNode::Var(name) => crate::snap_karva::constant_values().contains_key(name),
-            PNode::App(_, ch) => ch.iter().all(is_const),
+            PNode::Var(name) => {
+                !inputs.contains(name)
+                    && crate::snap_karva::constant_values().contains_key(name)
+            }
+            PNode::App(_, ch) => ch.iter().all(|c| is_const(c, inputs)),
         }
     }
-    fn go(n: &PNode) -> PNode {
+    fn go(n: &PNode, inputs: &[String]) -> PNode {
         if let PNode::App(op, ch) = n {
             // An App is >= 2 nodes, so folding it always shrinks.
-            if is_const(n) {
+            if is_const(n, inputs) {
                 if let Some(v) = eval_const_subtree(&n.to_math()) {
                     if v.is_finite() {
                         return PNode::Num(v);
@@ -840,12 +994,12 @@ fn fold_constant_subtrees(expr: &str) -> Option<String> {
                 }
                 // Out-of-domain / unevaluable constant: keep it symbolic.
             }
-            return PNode::App(op.clone(), ch.iter().map(go).collect());
+            return PNode::App(op.clone(), ch.iter().map(|c| go(c, inputs)).collect());
         }
         n.clone()
     }
     let tree = parse_pnode(expr)?;
-    Some(go(&tree).to_math())
+    Some(go(&tree, inputs).to_math())
 }
 
 /// One aggressive candidate: the tree with EVERY additive numeric constant
@@ -1514,6 +1668,80 @@ mod tests {
 
 #[cfg(test)]
 mod additive_subset_tests {
+
+    fn sf(m: &str, pos: &[&str]) -> SmallestForm {
+        let v: Vec<String> = pos.iter().map(|s| s.to_string()).collect();
+        let inputs = vec!["x".to_string(), "y".to_string(), "c".to_string()];
+        smallest_form(m, &inputs, &v, &v).expect("smallest_form")
+    }
+
+    /// No rows, no evaluation: the simplifier still simplifies. `denoise` with
+    /// no rows returns its input untouched, which is why it could not replace
+    /// sympy.simplify at the end of a fit.
+    #[test]
+    fn smallest_form_needs_no_data() {
+        let x = r#"(Var "x")"#;
+        let y = r#"(Var "y")"#;
+        assert_eq!(sf(&format!("(Add (Mul {x} (Num 1.0)) (Mul (Num 0.0) {y}))"), &[]).expr, x);
+        assert_eq!(sf(&format!("(Add (Sub {x} {x}) {y})"), &[]).expr, y);
+        assert_eq!(sf(&format!("(Sub (Add {x} {y}) {y})"), &[]).expr, x);
+    }
+
+    /// The cases the single algebra+powers pass could not reach: they need the
+    /// RATIONAL family (a separate pass, its own e-graph) or the guarded
+    /// sqrt rule. All three are conditional and need the caller's assertion.
+    #[test]
+    fn smallest_form_reaches_other_families_over_several_passes() {
+        let x = r#"(Var "x")"#;
+        assert_eq!(sf(&format!("(Inv (Inv {x}))"), &["x"]).expr, x);
+        assert_eq!(sf(&format!("(Pow2 (Sqrt {x}))"), &["x"]).expr, x);
+        assert_eq!(sf(&format!("(Mul {x} (Inv {x}))"), &["x"]).cost, 1, "x * 1/x is 1");
+        // nested: needs a rational step THEN an algebra step
+        let nested = format!("(Add (Inv (Inv {x})) (Mul (Num 0.0) {x}))");
+        let r = sf(&nested, &["x"]);
+        assert_eq!(r.expr, x, "took {} rounds", r.rounds);
+    }
+
+    /// Soundness: WITHOUT the assertion a conditional rewrite must not fire.
+    /// 1/(1/x) is not x at x = 0, and sqrt(x)^2 is not x for x < 0.
+    #[test]
+    fn smallest_form_does_not_assume_what_it_was_not_told() {
+        let x = r#"(Var "x")"#;
+        for m in [format!("(Inv (Inv {x}))"), format!("(Pow2 (Sqrt {x}))")] {
+            let r = sf(&m, &[]);
+            assert_eq!(r.expr, m, "fired without is-positive / is-nonzero");
+            assert_eq!(r.cost, r.input_cost);
+        }
+    }
+
+    /// Constant subtrees are folded with NO data — they have no variables —
+    /// and a data column that shares a constant's name is never folded.
+    /// exp(1/exp(sin(phi))) + sqrt2 is a number; (Var "c") as an INPUT is not.
+    #[test]
+    fn smallest_form_folds_constants_but_never_an_input() {
+        let x = r#"(Var "x")"#;
+        let k = r#"(Add (Exp (Inv (Exp (Sin (Var "phi"))))) (Var "sqrt2"))"#;
+        let r = sf(&format!("(Sub {x} {k})"), &[]);
+        assert_eq!(r.cost, 3, "{}", r.expr);
+        assert!(r.expr.starts_with(r#"(Sub (Var "x") (Num 2.859"#), "{}", r.expr);
+        // c is in `inputs` here: (Mul c c) must stay symbolic.
+        let c = r#"(Mul (Var "c") (Var "c"))"#;
+        assert_eq!(sf(c, &[]).expr, c);
+        // and with c NOT an input, the same tree IS a constant
+        let none: Vec<String> = Vec::new();
+        assert_eq!(smallest_form(c, &none, &none, &none).unwrap().cost, 1);
+    }
+
+    /// The size never grows, and the loop ends.
+    #[test]
+    fn smallest_form_never_grows_and_terminates() {
+        let x = r#"(Var "x")"#;
+        let m = format!("(Mul (Add {x} (Num 2.0)) (Sub {x} (Num 3.0)))");
+        let r = sf(&m, &["x"]);
+        assert!(r.cost <= r.input_cost && r.rounds <= SMALLEST_FORM_MAX_ROUNDS);
+        assert!(smallest_form("(not math", &[], &[], &[]).is_err());
+    }
+
     use super::*;
 
     #[test]

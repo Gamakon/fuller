@@ -49,6 +49,12 @@ pub const POWERS_RULESET: &str = r#"
 (rewrite (Log (Pow x n)) (Mul n (Log x)) :when ((is-positive x)) :ruleset powers)
 ; exp(a) * exp(b) = exp(a+b)  — sound for all reals
 (rewrite (Mul (Exp a) (Exp b)) (Exp (Add a b)) :ruleset powers)
+
+; sqrt(p)^2 = p, GUARDED on p > 0. Unguarded it is unsound in the real domain
+; (for p < 0 the left side is NaN and the right side is p). The same rule
+; lives in `distribute`, but distribute cannot be co-saturated with the live
+; rules, so the simplifier never saw it.
+(rewrite (Pow2 (Sqrt p)) p :when ((is-positive p)) :ruleset powers)
 "#;
 
 #[cfg(test)]

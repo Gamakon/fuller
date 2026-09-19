@@ -101,6 +101,40 @@ fn denoise(
     Ok(out.into())
 }
 
+/// The SMALLEST equivalent form of a `Math` expression — no data, no
+/// evaluation, bounded. The replacement for `sympy.simplify` at the end of a
+/// fit: every rewrite is an equivalence, so among the forms found the one with
+/// the fewest nodes is simply the better way to write the same function.
+///
+/// `inputs` (REQUIRED) names the data columns, so a column called `c` is never
+/// folded as the constant c. `positive_vars` / `nonzero_vars` are what the
+/// CALLER knows about the domain
+/// (from the data's ranges); conditional rewrites — 1/(1/x) = x, sqrt(x)^2 = x,
+/// |x| = x — fire only on those. Nothing is assumed.
+///
+/// Returns {"expr", "cost", "input_cost", "rounds", "changed"}.
+#[pyfunction]
+#[pyo3(signature = (expr, inputs, positive_vars = vec![], nonzero_vars = vec![]))]
+fn smallest_form(
+    py: Python<'_>,
+    expr: &str,
+    inputs: Vec<String>,
+    positive_vars: Vec<String>,
+    nonzero_vars: Vec<String>,
+) -> PyResult<Py<PyDict>> {
+    let r = run_core(py, || {
+        crate::extract::smallest_form(expr, &inputs, &positive_vars, &nonzero_vars)
+    })
+    .map_err(pyo3::exceptions::PyValueError::new_err)?;
+    let out = PyDict::new_bound(py);
+    out.set_item("changed", r.cost < r.input_cost)?;
+    out.set_item("expr", r.expr)?;
+    out.set_item("cost", r.cost)?;
+    out.set_item("input_cost", r.input_cost)?;
+    out.set_item("rounds", r.rounds)?;
+    Ok(out.into())
+}
+
 /// A karva token from Python, as a `(kind, value)` tuple:
 ///   ("func", "<token_name>") | ("var", "<name>") | ("num", <float>).
 type PyToken = (String, PyObject);
@@ -1581,6 +1615,7 @@ fn _fuller(m: &Bound<'_, PyModule>) -> PyResult<()> {
     #[cfg(feature = "gpu")]
     m.add_class::<GpuSession>()?;
     m.add_function(wrap_pyfunction!(denoise, m)?)?;
+    m.add_function(wrap_pyfunction!(smallest_form, m)?)?;
     m.add_function(wrap_pyfunction!(denoise_karva, m)?)?;
     m.add_function(wrap_pyfunction!(denoise_karva_candidates, m)?)?;
     m.add_function(wrap_pyfunction!(physics_mutate, m)?)?;

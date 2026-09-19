@@ -15,6 +15,7 @@ Example
 
 from ._fuller import (
     denoise,
+    smallest_form,
     denoise_karva,
     denoise_karva_candidates,
     eclass_variants,
@@ -36,6 +37,7 @@ from .sympy_bridge import to_math, from_math, equals
 
 __all__ = [
     "denoise",
+    "smallest_form",
     "denoise_karva",
     "denoise_karva_candidates",
     "eclass_variants",

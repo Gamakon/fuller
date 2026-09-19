@@ -114,6 +114,11 @@ pub const RATIONAL_RULESET: &str = r#"
 ; ---- Inv canonicalisation ----
 ; 1/(1/x) = x   (guarded: x != 0, so that 1/x is itself defined)
 (rewrite (Inv (Inv x)) x :when ((is-nonzero x)) :ruleset rational)
+; x * (1/x) = 1 for x != 0, either way round. `(Div x x) -> 1` was already
+; here; the Inv spelling of the same fact was not, and a GEP gene reaches it
+; as readily (mul(x, inv(x)) is two tokens).
+(rewrite (Mul x (Inv x)) (Num 1.0) :when ((is-nonzero x)) :ruleset rational)
+(rewrite (Mul (Inv x) x) (Num 1.0) :when ((is-nonzero x)) :ruleset rational)
 ; (1/a)*(1/b) = 1/(a*b)  — sound for all reals (both sides NaN where undefined)
 (rewrite (Mul (Inv a) (Inv b)) (Inv (Mul a b)) :ruleset rational)
 "#;
