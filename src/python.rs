@@ -361,6 +361,8 @@ struct GeneExpansion {
     /// Why the gene produced no expansion at all, if it did not.
     error: Option<String>,
     /// Candidates fuller found but this pset cannot name.
+    /// Why candidates were inexpressible, by reason — a bare count cannot be acted on.
+    inexpressible_why: HashMap<String, usize>,
     n_inexpressible: usize,
     /// Candidates that do not fit `target_head_length`.
     n_oversized: usize,
@@ -424,6 +426,7 @@ fn denoise_karva_candidates_batch(
             orig_cost: None,
             error: Some(why),
             n_inexpressible: 0,
+            inexpressible_why: HashMap::new(),
             n_oversized: 0,
         };
         let math = match karva_to_terms(head, tail, pset) {
@@ -445,13 +448,17 @@ fn denoise_karva_candidates_batch(
             orig_cost: cands.iter().find(|c| c.is_original).map(|c| c.cost),
             error: None,
             n_inexpressible: 0,
+            inexpressible_why: HashMap::new(),
             n_oversized: 0,
         };
         for c in cands {
             match terms_to_karva_sized(&c.expr, pset, rng_seed + i as u64, target_head_length) {
                 Ok((_, _, true)) => out.n_oversized += 1,
                 Ok((h, t, false)) => out.candidates.push((h, t, c.cost, c.is_original)),
-                Err(_) => out.n_inexpressible += 1,
+                Err(why) => {
+                    out.n_inexpressible += 1;
+                    *out.inexpressible_why.entry(why).or_insert(0) += 1;
+                }
             }
         }
         out
@@ -472,6 +479,7 @@ fn denoise_karva_candidates_batch(
                     orig_cost: None,
                     error: Some("panic in saturation (caught)".to_string()),
                     n_inexpressible: 0,
+            inexpressible_why: HashMap::new(),
                     n_oversized: 0,
                 })
             })
@@ -494,6 +502,7 @@ fn denoise_karva_candidates_batch(
         d.set_item("orig_cost", e.orig_cost)?;
         d.set_item("error", e.error)?;
         d.set_item("n_inexpressible", e.n_inexpressible)?;
+        d.set_item("inexpressible_why", e.inexpressible_why)?;
         d.set_item("n_oversized", e.n_oversized)?;
         out.push(d.into());
     }
@@ -724,6 +733,8 @@ struct SnapExpansion {
     /// (head, tail, cost, constants used) per expressible, non-original form.
     candidates: Vec<(Vec<Token>, Vec<Token>, u64, Vec<(String, f64)>)>,
     error: Option<String>,
+    /// Why candidates were inexpressible, by reason — a bare count cannot be acted on.
+    inexpressible_why: HashMap<String, usize>,
     n_inexpressible: usize,
     n_oversized: usize,
 }
@@ -770,6 +781,7 @@ fn snap_karva_batch(
             candidates: Vec::new(),
             error: None,
             n_inexpressible: 0,
+            inexpressible_why: HashMap::new(),
             n_oversized: 0,
         };
         if !head.iter().chain(tail).any(|t| matches!(t, Token::Num(_))) {
@@ -808,7 +820,10 @@ fn snap_karva_batch(
             {
                 Ok((_, _, true)) => out.n_oversized += 1,
                 Ok((h, t, false)) => out.candidates.push((h, t, c.cost, consts)),
-                Err(_) => out.n_inexpressible += 1,
+                Err(why) => {
+                    out.n_inexpressible += 1;
+                    *out.inexpressible_why.entry(why).or_insert(0) += 1;
+                }
             }
         }
         out
@@ -824,6 +839,7 @@ fn snap_karva_batch(
                         candidates: Vec::new(),
                         error: Some("panic in snap (caught)".to_string()),
                         n_inexpressible: 0,
+            inexpressible_why: HashMap::new(),
                         n_oversized: 0,
                     })
             })
@@ -845,6 +861,7 @@ fn snap_karva_batch(
         d.set_item("candidates", cands)?;
         d.set_item("error", e.error)?;
         d.set_item("n_inexpressible", e.n_inexpressible)?;
+        d.set_item("inexpressible_why", e.inexpressible_why)?;
         d.set_item("n_oversized", e.n_oversized)?;
         out.push(d.into());
     }
