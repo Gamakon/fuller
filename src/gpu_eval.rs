@@ -211,6 +211,12 @@ fn pos_inf() -> f32 { return bitcast<f32>(0x7f800000u); }
 // NaN fails every comparison, so this is false for NaN and for +-inf.
 fn is_finite(x: f32) -> bool { return abs(x) <= 3.4028235e38; }
 fn is_inf(x: f32) -> bool { return abs(x) > 3.4028235e38; }
+// f32 cannot carry the PHASE of an angle this large: at 1e7 adjacent floats are
+// 1.0 apart, a sixth of a period. Metal's sin/cos are accurate to 1e-8 up to
+// 3e6 (measured) and return exactly 0.0 from 1e7 on — a wrong number that
+// looks valid. Beyond this the expression is refused, not answered.
+const TRIG_MAX_ARG: f32 = 1.0e7;
+fn trig_ok(x: f32) -> bool { return abs(x) < TRIG_MAX_ARG; }
 
 @compute @workgroup_size(64, 1, 1)
 fn eval_main(@builtin(global_invocation_id) gid: vec3<u32>) {
@@ -275,18 +281,18 @@ fn eval_main(@builtin(global_invocation_id) gid: vec3<u32>) {
             // poisons the expression (see `poison`).
             case 11u: {
                 let a = scratch[nd.arg0];
-                if (is_finite(a)) { v = sin(a); } else { v = nan(); poison = poison || is_inf(a); }
+                if (trig_ok(a)) { v = sin(a); } else { v = nan(); poison = poison || !(a != a); }
             }
             case 12u: {
                 let a = scratch[nd.arg0];
-                if (is_finite(a)) { v = cos(a); } else { v = nan(); poison = poison || is_inf(a); }
+                if (trig_ok(a)) { v = cos(a); } else { v = nan(); poison = poison || !(a != a); }
             }
             case 13u: {                                            // Tan
                 let a = scratch[nd.arg0];
-                if (is_finite(a)) {
+                if (trig_ok(a)) {
                     let c = cos(a);
                     if (c == 0.0) { v = nan(); } else { v = sin(a) / c; }
-                } else { v = nan(); poison = poison || is_inf(a); }
+                } else { v = nan(); poison = poison || !(a != a); }
             }
             case 14u: { v = tanh(scratch[nd.arg0]); }
             case 15u: {                                            // Pow
@@ -1227,6 +1233,34 @@ mod protected_parity_tests {
             assert!(got[e * 2].is_nan(), "row x=1000: trig(inf) must poison, got {}", got[e * 2]);
             assert!(got[e * 2 + 1].is_finite(), "row x=1: finite input must evaluate");
         }
+    }
+
+    /// Metal's sin/cos return exactly 0.0 from |x| = 1e7 — where f32 has lost
+    /// the phase — and are accurate below 3e6. A silent 0.0 is a wrong number
+    /// that looks valid (on the power plant data, cos(AP**3) with AP ~ 1010
+    /// came back as the constant 0 while the CPU scored a real function), so
+    /// beyond 1e7 the expression is REFUSED: NaN, poisoned, not swallowed.
+    #[test]
+    fn trig_beyond_f32_phase_resolution_is_refused() {
+        let xs: [f32; 4] = [1000.5, 3.0e6, 1.0e7, 1.0e9];
+        let Ok(ev) = GpuEvaluator::new(&xs, 1) else { return };
+        let mut b = ExprBatch::new();
+        for trig in [Op::Sin, Op::Cos] {
+            b.push(&[
+                GpuNode { op: Op::ProtectedSqrt as u32, arg0: 1, arg1: 0, konst: 0.0 },
+                GpuNode { op: trig as u32, arg0: 2, arg1: 0, konst: 0.0 },
+                GpuNode { op: Op::Var as u32, arg0: 0, arg1: 0, konst: 0.0 },
+            ]);
+        }
+        let got = ev.eval(&b).expect("eval");
+        for e in 0..2 {
+            let r = &got[e * 4..e * 4 + 4];
+            assert!(r[0].is_finite() && r[1].is_finite(), "in range must evaluate: {r:?}");
+            assert!(r[2].is_nan() && r[3].is_nan(), "beyond 1e7 must be refused: {r:?}");
+        }
+        // and it IS accurate where it answers
+        let want = (1000.5f32 as f64).sin().abs().sqrt() as f32;
+        assert!((got[0] - want).abs() < 1e-5, "{} vs {want}", got[0]);
     }
 
     /// Raw ops must NOT behave like their protected namesakes: raw div by zero

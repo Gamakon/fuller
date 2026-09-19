@@ -27,7 +27,7 @@ use rayon::prelude::*;
 
 /// How a chromosome's genes combine.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Linker {
+pub enum Combine {
     /// `sum(genes) / n` — geppy `avgval`.
     Avg,
     /// `sum(genes)`.
@@ -36,16 +36,31 @@ pub enum Linker {
     Mul,
 }
 
+/// A linker: a combination, optionally ROUNDED to the nearest integer — the
+/// engine's `round_avg` / `round_mul` / `round_add`, used for ordinal targets.
+/// Rounding is numpy's: half to EVEN, not half away from zero.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Linker {
+    pub combine: Combine,
+    pub round: bool,
+}
+
 impl Linker {
+    pub const AVG: Linker = Linker { combine: Combine::Avg, round: false };
+    pub const ADD: Linker = Linker { combine: Combine::Add, round: false };
+    pub const MUL: Linker = Linker { combine: Combine::Mul, round: false };
+
     pub fn parse(name: &str) -> Result<Self, String> {
-        match name {
-            "avgval" | "_round_avg_eng" => Ok(Self::Avg),
-            "addval" | "_round_add_eng" => Ok(Self::Add),
-            "mulval" | "_round_mul_eng" => Ok(Self::Mul),
-            other => Err(format!(
-                "unknown linker {other:?} (want avgval/addval/mulval)"
-            )),
-        }
+        let (combine, round) = match name {
+            "avgval" => (Combine::Avg, false),
+            "addval" => (Combine::Add, false),
+            "mulval" => (Combine::Mul, false),
+            "round_avg" | "_round_avg_eng" => (Combine::Avg, true),
+            "round_add" | "_round_add_eng" => (Combine::Add, true),
+            "round_mul" | "_round_mul_eng" => (Combine::Mul, true),
+            other => return Err(format!("unknown linker {other:?}")),
+        };
+        Ok(Self { combine, round })
     }
 }
 
@@ -104,7 +119,9 @@ impl Splits {
 /// How candidates are built from gene predictions.
 #[derive(Debug, Clone)]
 pub struct ScoreSpec {
-    pub linker: Linker,
+    /// Every linker to try; the engine searches linker x wrapper per
+    /// individual, and all of them share the ONE set of gene predictions.
+    pub linkers: Vec<Linker>,
     pub wrappers: Vec<Wrapper>,
     pub splits: Splits,
     /// Fit `a*f(x)+b` on the train rows; otherwise a=1, b=0.
@@ -115,8 +132,9 @@ pub struct ScoreSpec {
 /// engine's `apply_linear_scaling`; change both or neither.
 pub const CONSTANT_REL_TOL: f64 = 2e-6;
 
-/// Values per candidate: `[a, b, mse_train, mse_val, max_err_val, mse_extrap]`.
-pub const SCORE_WIDTH: usize = 6;
+/// Values per candidate: `[a, b, mse_train, mse_val, max_err_val, mse_extrap,
+/// mae_train, mae_val, mae_extrap]`.
+pub const SCORE_WIDTH: usize = 9;
 
 /// Score every (chromosome, wrapper) candidate.
 ///
@@ -137,15 +155,19 @@ pub fn score_chromosomes(
     spec: &ScoreSpec,
 ) -> Result<Vec<f64>, String> {
     let ScoreSpec {
-        linker,
+        linkers,
         wrappers,
         splits,
         linear_scaling,
     } = spec;
-    let (linker, splits, linear_scaling) = (*linker, *splits, *linear_scaling);
+    let (splits, linear_scaling) = (*splits, *linear_scaling);
     let n_rows = splits.total();
-    if splits.n_train == 0 || splits.n_val == 0 || splits.n_extrap == 0 {
-        return Err(format!("every split needs rows, got {splits:?}"));
+    // n_extrap may be 0: wild data has no truth-driven out-of-domain slice.
+    if splits.n_train == 0 || splits.n_val == 0 {
+        return Err(format!("train and validation need rows, got {splits:?}"));
+    }
+    if linkers.is_empty() || wrappers.is_empty() {
+        return Err("need at least one linker and one wrapper".to_string());
     }
     if y.len() != n_rows {
         return Err(format!("y has {} values, splits total {n_rows}", y.len()));
@@ -168,7 +190,7 @@ pub fn score_chromosomes(
         }
     }
 
-    let per = wrappers.len() * SCORE_WIDTH;
+    let per = linkers.len() * wrappers.len() * SCORE_WIDTH;
     let mut out = vec![f64::NAN; chromosomes.len() * per];
     out.par_chunks_mut(per.max(1))
         .zip(chromosomes.par_iter())
@@ -176,12 +198,15 @@ pub fn score_chromosomes(
             if genes.iter().any(|&g| !gene_ok[g]) {
                 return;
             }
-            let Some(linked) = link(preds, genes, linker, n_rows) else {
-                return;
-            };
-            for (w, wrapper) in wrappers.iter().enumerate() {
-                if let Some(s) = score_one(&linked, *wrapper, splits, y, linear_scaling) {
-                    slot[w * SCORE_WIDTH..(w + 1) * SCORE_WIDTH].copy_from_slice(&s);
+            for (l, linker) in linkers.iter().enumerate() {
+                let Some(linked) = link(preds, genes, *linker, n_rows) else {
+                    continue;
+                };
+                for (w, wrapper) in wrappers.iter().enumerate() {
+                    if let Some(s) = score_one(&linked, *wrapper, splits, y, linear_scaling) {
+                        let at = (l * wrappers.len() + w) * SCORE_WIDTH;
+                        slot[at..at + SCORE_WIDTH].copy_from_slice(&s);
+                    }
                 }
             }
         });
@@ -190,22 +215,25 @@ pub fn score_chromosomes(
 
 /// Linked output per row, or None if any row is non-finite.
 fn link(preds: &[f32], genes: &[usize], linker: Linker, n_rows: usize) -> Option<Vec<f64>> {
-    let mut acc: Vec<f64> = match linker {
-        Linker::Mul => vec![1.0; n_rows],
-        Linker::Avg | Linker::Add => vec![0.0; n_rows],
+    let mut acc: Vec<f64> = match linker.combine {
+        Combine::Mul => vec![1.0; n_rows],
+        Combine::Avg | Combine::Add => vec![0.0; n_rows],
     };
     for &g in genes {
         let p = &preds[g * n_rows..(g + 1) * n_rows];
-        match linker {
-            Linker::Mul => acc.iter_mut().zip(p).for_each(|(a, v)| *a *= f64::from(*v)),
-            Linker::Avg | Linker::Add => {
+        match linker.combine {
+            Combine::Mul => acc.iter_mut().zip(p).for_each(|(a, v)| *a *= f64::from(*v)),
+            Combine::Avg | Combine::Add => {
                 acc.iter_mut().zip(p).for_each(|(a, v)| *a += f64::from(*v));
             }
         }
     }
-    if linker == Linker::Avg {
+    if linker.combine == Combine::Avg {
         let n = genes.len() as f64;
         acc.iter_mut().for_each(|a| *a /= n);
+    }
+    if linker.round {
+        acc.iter_mut().for_each(|a| *a = a.round_ties_even());
     }
     acc.iter().all(|v| v.is_finite()).then_some(acc)
 }
@@ -231,17 +259,20 @@ fn score_one(
         (1.0, 0.0)
     };
 
-    let mse = |lo: usize, hi: usize| -> f64 {
+    // (mean squared, mean absolute) residual over a row range; (0, 0) for an
+    // empty range — the absent extrapolation split of wild data.
+    let errs = |lo: usize, hi: usize| -> (f64, f64) {
+        if hi == lo {
+            return (0.0, 0.0);
+        }
         let n = (hi - lo) as f64;
-        wrapped[lo..hi]
-            .iter()
-            .zip(&y[lo..hi])
-            .map(|(x, t)| {
-                let d = t - (a * x + b);
-                d * d
-            })
-            .sum::<f64>()
-            / n
+        let (mut sq, mut ab) = (0.0_f64, 0.0_f64);
+        for (x, t) in wrapped[lo..hi].iter().zip(&y[lo..hi]) {
+            let d = t - (a * x + b);
+            sq += d * d;
+            ab += d.abs();
+        }
+        (sq / n, ab / n)
     };
     let max_err = wrapped[v0..v1]
         .iter()
@@ -249,7 +280,9 @@ fn score_one(
         .map(|(x, t)| (t - (a * x + b)).abs())
         .fold(0.0_f64, f64::max);
 
-    let s = [a, b, mse(t0, t1), mse(v0, v1), max_err, mse(e0, e1)];
+    let ((mse_t, mae_t), (mse_v, mae_v), (mse_e, mae_e)) =
+        (errs(t0, t1), errs(v0, v1), errs(e0, e1));
+    let s = [a, b, mse_t, mse_v, max_err, mse_e, mae_t, mae_v, mae_e];
     s.iter().all(|v| v.is_finite()).then_some(s)
 }
 
@@ -305,7 +338,7 @@ mod tests {
         scale: bool,
     ) -> Result<Vec<f64>, String> {
         let spec = ScoreSpec {
-            linker,
+            linkers: vec![linker],
             wrappers: ws.to_vec(),
             splits: SPLITS,
             linear_scaling: scale,
@@ -328,7 +361,7 @@ mod tests {
             &x,
             &[true],
             &[vec![0]],
-            Linker::Avg,
+            Linker::AVG,
             &[Wrapper::Identity],
             &y,
             true,
@@ -349,7 +382,7 @@ mod tests {
         let x = xs();
         let y: Vec<f64> = x.iter().map(|v| f64::from(*v).sqrt()).collect();
         let ws = [Wrapper::Identity, Wrapper::LogAbs, Wrapper::SqrtAbs];
-        let out = run(&x, &[true], &[vec![0]], Linker::Avg, &ws, &y, true).unwrap();
+        let out = run(&x, &[true], &[vec![0]], Linker::AVG, &ws, &y, true).unwrap();
         assert!(cand(&out, 0, 2, 3)[2] < 1e-20, "sqrt wrapper must be exact");
         assert!(cand(&out, 0, 0, 3)[2] > 1e-6, "identity must not be");
     }
@@ -361,9 +394,9 @@ mod tests {
         let mut preds = x.clone();
         preds.extend(x.iter().map(|v| 2.0 * v));
         for (linker, f) in [
-            (Linker::Avg, (|v: f64| 1.5 * v) as fn(f64) -> f64),
-            (Linker::Add, |v| 3.0 * v),
-            (Linker::Mul, |v| 2.0 * v * v),
+            (Linker::AVG, (|v: f64| 1.5 * v) as fn(f64) -> f64),
+            (Linker::ADD, |v| 3.0 * v),
+            (Linker::MUL, |v| 2.0 * v * v),
         ] {
             let y: Vec<f64> = x.iter().map(|v| f(f64::from(*v))).collect();
             let out = run(
@@ -393,7 +426,7 @@ mod tests {
             &preds,
             &[true; 3],
             &[vec![0, 1], vec![2, 1]],
-            Linker::Add,
+            Linker::ADD,
             &[Wrapper::Identity],
             &y,
             false,
@@ -411,16 +444,16 @@ mod tests {
         let y: Vec<f64> = x.iter().map(|v| f64::from(*v)).collect();
         let ws = [Wrapper::Identity];
 
-        let out = run(&x, &[false], &[vec![0]], Linker::Avg, &ws, &y, true).unwrap();
+        let out = run(&x, &[false], &[vec![0]], Linker::AVG, &ws, &y, true).unwrap();
         assert!(out.iter().all(|v| v.is_nan()), "undecoded gene");
 
         let mut bad = x.clone();
         bad[8] = f32::INFINITY; // an extrapolation row
-        let out = run(&bad, &[true], &[vec![0]], Linker::Avg, &ws, &y, true).unwrap();
+        let out = run(&bad, &[true], &[vec![0]], Linker::AVG, &ws, &y, true).unwrap();
         assert!(out.iter().all(|v| v.is_nan()), "non-finite row");
 
         let flat = vec![5.0_f32; 9];
-        let out = run(&flat, &[true], &[vec![0]], Linker::Avg, &ws, &y, true).unwrap();
+        let out = run(&flat, &[true], &[vec![0]], Linker::AVG, &ws, &y, true).unwrap();
         assert!(out.iter().all(|v| v.is_nan()), "constant train vector");
     }
 
@@ -434,7 +467,7 @@ mod tests {
         x[0] = 3.0e38;
         let y: Vec<f64> = x.iter().map(|v| f64::from(*v)).collect();
         let ws = [Wrapper::Identity, Wrapper::Square];
-        let out = run(&x, &[true], &[vec![0]], Linker::Avg, &ws, &y, false).unwrap();
+        let out = run(&x, &[true], &[vec![0]], Linker::AVG, &ws, &y, false).unwrap();
         assert_eq!(cand(&out, 0, 0, 2)[2], 0.0, "identity is exact");
         assert!(
             cand(&out, 0, 1, 2)[2] > 1e100,
@@ -448,9 +481,59 @@ mod tests {
     fn f32_rounding_noise_is_a_constant() {
         let noisy: Vec<f32> = (0..9).map(|i| 1.0 + (i % 3) as f32 * f32::EPSILON).collect();
         let y: Vec<f64> = xs().iter().map(|v| f64::from(*v)).collect();
-        let out = run(&noisy, &[true], &[vec![0]], Linker::Avg, &[Wrapper::Identity], &y, true)
+        let out = run(&noisy, &[true], &[vec![0]], Linker::AVG, &[Wrapper::Identity], &y, true)
             .unwrap();
         assert!(out.iter().all(|v| v.is_nan()), "rounding noise was fitted: {out:?}");
+    }
+
+    /// The engine searches linker x wrapper per individual. All linkers come
+    /// from ONE set of gene predictions, laid out chromosome, linker, wrapper.
+    #[test]
+    fn several_linkers_share_one_set_of_predictions() {
+        let x = xs();
+        let mut preds = x.clone();
+        preds.extend(x.iter().map(|v| 2.0 * v)); // genes: x, 2x
+        let y: Vec<f64> = x.iter().map(|v| 2.0 * f64::from(*v) * f64::from(*v)).collect();
+        let spec = ScoreSpec {
+            linkers: vec![Linker::ADD, Linker::MUL],
+            wrappers: vec![Wrapper::Identity, Wrapper::SqrtAbs],
+            splits: SPLITS,
+            linear_scaling: false,
+        };
+        let out = score_chromosomes(&preds, &[true, true], &[vec![0, 1]], &y, &spec).unwrap();
+        assert_eq!(out.len(), 2 * 2 * SCORE_WIDTH);
+        let at = |l: usize, w: usize| &out[(l * 2 + w) * SCORE_WIDTH..][..SCORE_WIDTH];
+        assert_eq!(at(1, 0)[2], 0.0, "mul x identity is 2x^2 exactly");
+        assert!(at(0, 0)[2] > 1.0, "add x identity is 3x, not 2x^2");
+        assert_eq!(at(1, 0)[6], 0.0, "and its MAE is 0 too");
+    }
+
+    /// Wild data has no extrapolation split; its metrics are 0.0, not NaN,
+    /// and the candidate is still scored.
+    #[test]
+    fn extrapolation_split_is_optional() {
+        let x: Vec<f32> = xs()[..7].to_vec();
+        let y: Vec<f64> = x.iter().map(|v| f64::from(*v)).collect();
+        let spec = ScoreSpec {
+            linkers: vec![Linker::AVG],
+            wrappers: vec![Wrapper::Identity],
+            splits: Splits { n_train: 4, n_val: 3, n_extrap: 0 },
+            linear_scaling: true,
+        };
+        let out = score_chromosomes(&x, &[true], &[vec![0]], &y, &spec).unwrap();
+        assert!(out.iter().all(|v| v.is_finite()), "{out:?}");
+        assert_eq!((out[5], out[8]), (0.0, 0.0));
+    }
+
+    /// Rounded linkers use numpy's rule: half to EVEN. 0.5 -> 0, 1.5 -> 2,
+    /// 2.5 -> 2. Half-away-from-zero would give 1, 2, 3.
+    #[test]
+    fn rounded_linker_rounds_half_to_even() {
+        let preds: Vec<f32> = vec![0.5, 1.5, 2.5, 3.5, 0.5, 1.5, 2.5, 3.5, 0.5];
+        let y: Vec<f64> = vec![0.0, 2.0, 2.0, 4.0, 0.0, 2.0, 2.0, 4.0, 0.0];
+        let lk = Linker::parse("round_avg").unwrap();
+        let out = run(&preds, &[true], &[vec![0]], lk, &[Wrapper::Identity], &y, false).unwrap();
+        assert_eq!(cand(&out, 0, 0, 1)[2], 0.0, "{out:?}");
     }
 
     #[test]
@@ -458,9 +541,9 @@ mod tests {
         let x = xs();
         let y = vec![0.0; 9];
         let ws = [Wrapper::Identity];
-        let bad_idx = run(&x, &[true], &[vec![1]], Linker::Avg, &ws, &y, true);
+        let bad_idx = run(&x, &[true], &[vec![1]], Linker::AVG, &ws, &y, true);
         assert!(bad_idx.is_err());
-        let bad_y = run(&x, &[true], &[vec![0]], Linker::Avg, &ws, &y[..8], true);
+        let bad_y = run(&x, &[true], &[vec![0]], Linker::AVG, &ws, &y[..8], true);
         assert!(bad_y.is_err());
         assert!(Linker::parse("nope").is_err());
         assert!(Wrapper::parse("nope").is_err());

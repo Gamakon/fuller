@@ -1387,8 +1387,9 @@ impl GpuSession {
     /// with the GIL released.
     ///
     /// Returns `(scores, gene_decoded)`. `scores` is flat,
-    /// `len(chromosomes) * len(wrappers) * 6`, chromosome-major then wrapper:
-    /// `[a, b, mse_train, mse_val, max_err_val, mse_extrap]`. A rejected
+    /// `len(chromosomes) * len(linkers) * len(wrappers) * 9`, chromosome-major,
+    /// then linker, then wrapper: `[a, b, mse_train, mse_val, max_err_val,
+    /// mse_extrap, mae_train, mae_val, mae_extrap]`. `n_extrap` may be 0. A rejected
     /// candidate is all-NaN — see `chrom_score` for the rejection rules, which
     /// mirror the engine's. `gene_decoded[i]` is false for a gene the device
     /// could not take (undecodable, or over MAX_NODES); the caller must route
@@ -1396,14 +1397,14 @@ impl GpuSession {
     ///
     /// Predictions are f32 (Metal has no f64). That ranks candidates; the
     /// exact-recovery gate must re-check finalists in f64.
-    #[pyo3(signature = (genes, chromosomes, linker, wrappers, n_train, n_val,
+    #[pyo3(signature = (genes, chromosomes, linkers, wrappers, n_train, n_val,
                         n_extrap, y, linear_scaling = true))]
     fn score_chromosomes(
         &self,
         py: Python<'_>,
         genes: Vec<(Vec<PyToken>, Vec<PyToken>)>,
         chromosomes: Vec<Vec<usize>>,
-        linker: &str,
+        linkers: Vec<String>,
         wrappers: Vec<String>,
         n_train: usize,
         n_val: usize,
@@ -1428,7 +1429,11 @@ impl GpuSession {
             )));
         }
         let spec = ScoreSpec {
-            linker: Linker::parse(linker).map_err(value_err)?,
+            linkers: linkers
+                .iter()
+                .map(|l| Linker::parse(l))
+                .collect::<Result<_, _>>()
+                .map_err(value_err)?,
             wrappers: wrappers
                 .iter()
                 .map(|w| Wrapper::parse(w))
