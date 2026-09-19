@@ -536,6 +536,35 @@ mod tests {
         assert_eq!(cand(&out, 0, 0, 1)[2], 0.0, "{out:?}");
     }
 
+    /// TRAIN creates the regression; VALIDATION is only scored with it. The
+    /// rows share one dispatch because evaluating f(x) is independent per row
+    /// — but (a, b) must come from the train slice alone. Proof: corrupt every
+    /// validation (and extrapolation) prediction AND target, and (a, b) and
+    /// the train error must not move by a single bit, while the validation
+    /// error must.
+    #[test]
+    fn validation_rows_never_influence_the_regression() {
+        let x = xs(); // 4 train, 3 val, 2 extrap
+        let y: Vec<f64> = x.iter().map(|v| 3.0 * f64::from(*v) + 2.0).collect();
+        let ws = [Wrapper::Identity];
+        let clean = run(&x, &[true], &[vec![0]], Linker::AVG, &ws, &y, true).unwrap();
+
+        let mut x_bad = x.clone();
+        let mut y_bad = y.clone();
+        for i in 4..9 {
+            x_bad[i] = x[i] * -7.5 + 100.0;
+            y_bad[i] = y[i] * 11.0 - 40.0;
+        }
+        let dirty = run(&x_bad, &[true], &[vec![0]], Linker::AVG, &ws, &y_bad, true).unwrap();
+
+        let (c, d) = (cand(&clean, 0, 0, 1), cand(&dirty, 0, 0, 1));
+        assert_eq!(c[0].to_bits(), d[0].to_bits(), "a moved: val leaked into the fit");
+        assert_eq!(c[1].to_bits(), d[1].to_bits(), "b moved: val leaked into the fit");
+        assert_eq!(c[2].to_bits(), d[2].to_bits(), "train MSE moved");
+        assert_eq!(c[6].to_bits(), d[6].to_bits(), "train MAE moved");
+        assert!(d[3] > 1.0 && c[3] < 1e-20, "val MSE must reflect the val rows: {c:?} {d:?}");
+    }
+
     #[test]
     fn malformed_input_is_an_error_not_a_guess() {
         let x = xs();
