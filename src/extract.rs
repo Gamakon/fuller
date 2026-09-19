@@ -473,13 +473,16 @@ pub fn denoise_assuming(
     egraph
         .parse_and_run_program(None, crate::ruleset::powers::POWERS_RULESET)
         .map_err(|e| format!("powers ruleset: {e}"))?;
+    egraph
+        .parse_and_run_program(None, crate::ruleset::sign::SIGN_RULESET)
+        .map_err(|e| format!("sign ruleset: {e}"))?;
     let asserts = guard_asserts(positive_vars, nonzero_vars);
     egraph
         .parse_and_run_program(
             None,
             &format!(
                 "(let __root {input})\n{asserts}\
-                 (unstable-combined-ruleset denoise_all guards algebra powers)\n\
+                 (unstable-combined-ruleset denoise_all guards algebra powers sign)\n\
                  (run-schedule (repeat {DENOISE_ITERS} (run denoise_all)))"
             ),
         )
@@ -642,9 +645,10 @@ fn rational_base_egraph() -> Result<EGraph, String> {
                 ("algebra", ALGEBRA_RULESET),
                 ("powers", crate::ruleset::powers::POWERS_RULESET),
                 ("rational", crate::ruleset::rational::RATIONAL_RULESET),
+                ("sign", crate::ruleset::sign::SIGN_RULESET),
                 (
                     "combined",
-                    "(unstable-combined-ruleset rational_all guards algebra powers rational)",
+                    "(unstable-combined-ruleset rational_all guards algebra powers rational sign)",
                 ),
             ] {
                 egraph.parse_and_run_program(None, prog).map_err(|e| format!("{what}: {e}"))?;
@@ -779,9 +783,12 @@ fn denoise_base_egraph() -> Result<EGraph, String> {
                 .parse_and_run_program(None, crate::ruleset::powers::POWERS_RULESET)
                 .map_err(|e| format!("powers ruleset: {e}"))?;
             egraph
+                .parse_and_run_program(None, crate::ruleset::sign::SIGN_RULESET)
+                .map_err(|e| format!("sign ruleset: {e}"))?;
+            egraph
                 .parse_and_run_program(
                     None,
-                    "(unstable-combined-ruleset denoise_all guards algebra powers)",
+                    "(unstable-combined-ruleset denoise_all guards algebra powers sign)",
                 )
                 .map_err(|e| format!("combined ruleset: {e}"))?;
             Ok(egraph)
