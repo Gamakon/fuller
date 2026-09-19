@@ -530,7 +530,7 @@ pub fn denoise_assuming(
         // (snap_karva::constant_values, OnceLock'd) are both Sync/&'static, so
         // rayon workers share them without contention.
         let preds: Result<Vec<f64>, EvalError> =
-            rows.par_iter().map(|row| eval_row(&termdag, *term, row)).collect();
+            eval_rows(&termdag, *term, rows);
         let preds = match preds {
             Ok(p) => p,
             Err(_) => continue, // unevaluable candidate — skip
@@ -603,18 +603,48 @@ pub fn denoise_assuming(
 /// This is how the denoise entry points obtain the input's OWN reference
 /// predictions, independent of what the variant enumerator surfaces.
 fn eval_expr_rows(math: &str, rows: &[Vec<(String, f64)>]) -> Result<Vec<f64>, String> {
-    let mut egraph =
-        build_eval_egraph(math).ok_or_else(|| format!("could not parse {math:?}"))?;
-    let (sort, value) = egraph
-        .eval_expr(&exprs::var("__p"))
-        .map_err(|e| format!("eval root: {e}"))?;
-    let (termdag, term, _cost) = egraph
-        .extract_value(&sort, value)
-        .map_err(|e| format!("extract input: {e}"))?;
-    rows.par_iter()
-        .map(|row| eval_row(&termdag, term, row))
-        .collect::<Result<_, _>>()
-        .map_err(|e| format!("evaluating reference: {e}"))
+    let node = parse_pnode(math).ok_or_else(|| format!("could not parse {math:?}"))?;
+    let mut termdag = TermDag::default();
+    let term = pnode_to_term(&node, &mut termdag);
+    eval_rows(&termdag, term, rows).map_err(|e| format!("evaluating reference: {e}"))
+}
+
+thread_local! {
+    /// Datatype + guards + algebra + powers, parsed ONCE per thread. Parsing
+    /// the four rule programs was ~1.6 ms of every call — more than the
+    /// saturation itself on the 1-10 node trees a GEP population is made of.
+    static DENOISE_BASE: std::cell::OnceCell<Result<EGraph, String>> =
+        const { std::cell::OnceCell::new() };
+}
+
+/// A fresh e-graph with the denoise rules loaded: a clone of the thread's
+/// parsed base, never the base itself, so no state leaks between genes.
+fn denoise_base_egraph() -> Result<EGraph, String> {
+    DENOISE_BASE.with(|cell| {
+        cell.get_or_init(|| {
+            let mut egraph = EGraph::default();
+            egraph
+                .parse_and_run_program(None, MATH_DATATYPE)
+                .map_err(|e| format!("datatype: {e}"))?;
+            egraph
+                .parse_and_run_program(None, crate::expr::GUARD_RELATIONS)
+                .map_err(|e| format!("guards: {e}"))?;
+            egraph
+                .parse_and_run_program(None, ALGEBRA_RULESET)
+                .map_err(|e| format!("algebra ruleset: {e}"))?;
+            egraph
+                .parse_and_run_program(None, crate::ruleset::powers::POWERS_RULESET)
+                .map_err(|e| format!("powers ruleset: {e}"))?;
+            egraph
+                .parse_and_run_program(
+                    None,
+                    "(unstable-combined-ruleset denoise_all guards algebra powers)",
+                )
+                .map_err(|e| format!("combined ruleset: {e}"))?;
+            Ok(egraph)
+        })
+        .clone()
+    })
 }
 
 /// Like `denoise`, but returns ALL candidates instead of picking one by a
@@ -651,26 +681,13 @@ pub fn denoise_candidates_assuming(
     positive_vars: &[String],
     nonzero_vars: &[String],
 ) -> Result<Vec<DenoiseCandidate>, String> {
-    let mut egraph = EGraph::default();
-    egraph
-        .parse_and_run_program(None, MATH_DATATYPE)
-        .map_err(|e| format!("datatype: {e}"))?;
-    egraph
-        .parse_and_run_program(None, crate::expr::GUARD_RELATIONS)
-        .map_err(|e| format!("guards: {e}"))?;
-    egraph
-        .parse_and_run_program(None, ALGEBRA_RULESET)
-        .map_err(|e| format!("algebra ruleset: {e}"))?;
-    egraph
-        .parse_and_run_program(None, crate::ruleset::powers::POWERS_RULESET)
-        .map_err(|e| format!("powers ruleset: {e}"))?;
+    let mut egraph = denoise_base_egraph()?;
     let asserts = guard_asserts(positive_vars, nonzero_vars);
     egraph
         .parse_and_run_program(
             None,
             &format!(
                 "(let __root {input})\n{asserts}\
-                 (unstable-combined-ruleset denoise_all guards algebra powers)\n\
                  (run-schedule (repeat {DENOISE_ITERS} (run denoise_all)))"
             ),
         )
@@ -707,7 +724,7 @@ pub fn denoise_candidates_assuming(
     let mut seen_exprs: std::collections::HashSet<String> = std::collections::HashSet::new();
     for (_, term) in ordered.iter() {
         let preds: Result<Vec<f64>, EvalError> =
-            rows.par_iter().map(|row| eval_row(&termdag, *term, row)).collect();
+            eval_rows(&termdag, *term, rows);
         if preds.is_err() {
             continue; // unevaluable on data — skip
         }
@@ -1074,37 +1091,53 @@ fn prune_candidates(node: &PNode) -> Vec<PNode> {
 
 /// True if `node` reproduces `reference` within tolerance on the data.
 fn fits(node: &PNode, rows: &[Vec<(String, f64)>], reference: &[f64], tolerance: f64) -> bool {
-    // Evaluate the pruned tree through the egglog evaluator by rendering to a
-    // Math string and parsing into a TermDag.
-    let math = node.to_math();
-    let mut egraph = match build_eval_egraph(&math) {
-        Some(e) => e,
-        None => return false,
-    };
-    let (sort, value) = match egraph.eval_expr(&exprs::var("__p")) {
-        Ok(sv) => sv,
-        Err(_) => return false,
-    };
-    let (termdag, term, _) = match egraph.extract_value(&sort, value) {
-        Ok(t) => t,
-        Err(_) => return false,
-    };
-    let preds: Result<Vec<f64>, EvalError> =
-        rows.par_iter().map(|row| eval_row(&termdag, term, row)).collect();
-    match preds {
+    // Straight into a TermDag. This used to render the tree to a Math string
+    // and parse it through a fresh egglog e-graph — one e-graph PER pruned
+    // candidate, per tolerance, per gene — purely to get a term to evaluate.
+    let mut termdag = TermDag::default();
+    let term = pnode_to_term(node, &mut termdag);
+    match eval_rows(&termdag, term, rows) {
         Ok(p) => r2_loss(reference, &p) <= tolerance,
         Err(_) => false,
     }
 }
 
-/// A bare e-graph (datatype only) holding `__p = math`, for evaluation.
-fn build_eval_egraph(math: &str) -> Option<EGraph> {
-    let mut egraph = EGraph::default();
-    egraph.parse_and_run_program(None, MATH_DATATYPE).ok()?;
-    egraph
-        .parse_and_run_program(None, &format!("(let __p {math})"))
-        .ok()?;
-    Some(egraph)
+/// Build the evaluator's term for a parsed tree: `(Num v)`, `(Var "name")`,
+/// `(Op child..)` — the same shape egglog extraction yields.
+fn pnode_to_term(node: &PNode, termdag: &mut TermDag) -> egglog::TermId {
+    match node {
+        PNode::Num(v) => {
+            let lit = termdag.lit(egglog::ast::Literal::Float((*v).into()));
+            termdag.app("Num".to_string(), vec![lit])
+        }
+        PNode::Var(name) => {
+            let lit = termdag.lit(egglog::ast::Literal::String(name.clone()));
+            termdag.app("Var".to_string(), vec![lit])
+        }
+        PNode::App(op, children) => {
+            let ids: Vec<egglog::TermId> =
+                children.iter().map(|c| pnode_to_term(c, termdag)).collect();
+            termdag.app(op.clone(), ids)
+        }
+    }
+}
+
+/// Rows below this are evaluated on the calling thread. The callers already
+/// run one gene per rayon worker; a nested parallel loop over a 64-row sample
+/// costs more in scheduling than the arithmetic it spreads (measured: 14
+/// threads gave 2.5x on a population batch).
+const PAR_ROWS_MIN: usize = 4096;
+
+fn eval_rows(
+    termdag: &TermDag,
+    term: egglog::TermId,
+    rows: &[Vec<(String, f64)>],
+) -> Result<Vec<f64>, EvalError> {
+    if rows.len() < PAR_ROWS_MIN {
+        rows.iter().map(|row| eval_row(termdag, term, row)).collect()
+    } else {
+        rows.par_iter().map(|row| eval_row(termdag, term, row)).collect()
+    }
 }
 
 /// Parse a Math s-expression into a `PNode`.
