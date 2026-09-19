@@ -353,6 +353,11 @@ fn denoise_karva_candidates(
 struct GeneExpansion {
     /// (head, tail, cost, is_original) per usable candidate.
     candidates: Vec<(Vec<Token>, Vec<Token>, u64, bool)>,
+    /// Node count of the gene as given — the baseline a variant's cost is
+    /// compared against. Reported separately because the original itself may
+    /// not survive re-encoding (oversized / inexpressible) and would otherwise
+    /// take its cost with it.
+    orig_cost: Option<u64>,
     /// Why the gene produced no expansion at all, if it did not.
     error: Option<String>,
     /// Candidates fuller found but this pset cannot name.
@@ -376,7 +381,7 @@ struct GeneExpansion {
 ///
 /// Returns one dict per gene, in order:
 ///   {"candidates": [{"head", "tail", "cost", "is_original"}, ...],
-///    "error": str | None, "n_inexpressible": int, "n_oversized": int}
+///    "orig_cost": int | None, "error": str | None, "n_inexpressible": int, "n_oversized": int}
 ///
 /// Unlike the single-gene entry point this does NOT disguise a failed
 /// saturation as "just the original": `error` carries the reason, so the
@@ -416,6 +421,7 @@ fn denoise_karva_candidates_batch(
     let expand = |i: usize, head: &[Token], tail: &[Token], pset: &PsetSpec| -> GeneExpansion {
         let fail = |why: String| GeneExpansion {
             candidates: Vec::new(),
+            orig_cost: None,
             error: Some(why),
             n_inexpressible: 0,
             n_oversized: 0,
@@ -436,6 +442,7 @@ fn denoise_karva_candidates_batch(
         };
         let mut out = GeneExpansion {
             candidates: Vec::with_capacity(cands.len()),
+            orig_cost: cands.iter().find(|c| c.is_original).map(|c| c.cost),
             error: None,
             n_inexpressible: 0,
             n_oversized: 0,
@@ -462,6 +469,7 @@ fn denoise_karva_candidates_batch(
                 }))
                 .unwrap_or_else(|_| GeneExpansion {
                     candidates: Vec::new(),
+                    orig_cost: None,
                     error: Some("panic in saturation (caught)".to_string()),
                     n_inexpressible: 0,
                     n_oversized: 0,
@@ -483,6 +491,7 @@ fn denoise_karva_candidates_batch(
             cands.push(c.into());
         }
         d.set_item("candidates", cands)?;
+        d.set_item("orig_cost", e.orig_cost)?;
         d.set_item("error", e.error)?;
         d.set_item("n_inexpressible", e.n_inexpressible)?;
         d.set_item("n_oversized", e.n_oversized)?;
@@ -705,6 +714,138 @@ fn snap_karva(
         d.set_item("is_original", c.cost == 0)?;
         let consts_py: Vec<(String, f64)> = consts_list;
         d.set_item("constants", consts_py)?;
+        out.push(d.into());
+    }
+    Ok(out)
+}
+
+/// One gene's snap proposals, as owned data.
+struct SnapExpansion {
+    /// (head, tail, cost, constants used) per expressible, non-original form.
+    candidates: Vec<(Vec<Token>, Vec<Token>, u64, Vec<(String, f64)>)>,
+    error: Option<String>,
+    n_inexpressible: usize,
+    n_oversized: usize,
+}
+
+/// `snap_karva` for a WHOLE POPULATION's genes in one call.
+///
+/// `snap_karva` is one gene per call, serial, under the GIL: profiled at
+/// 6.2 ms x 6699 calls = 41 s of a 3-generation run, against 0.15 s of GPU
+/// work. This takes every gene at once, releases the GIL and snaps them in
+/// parallel. A gene with no numeric literal has nothing to snap and costs
+/// nothing.
+///
+/// `genes` are `(head, tail)` with RNC placeholders ALREADY RESOLVED to
+/// `("num", v)` — an unresolved "?" is not a number and hides the very
+/// constants snapping exists for.
+///
+/// Returns one dict per gene: {"candidates": [{"head", "tail", "cost",
+/// "constants": [(name, value)]}], "error", "n_inexpressible", "n_oversized"}.
+/// The original is not among the candidates.
+#[pyfunction]
+#[pyo3(signature = (genes, variables, functions, k_variants = 16, rel_tol = 1e-3,
+                    rng_seed = 0, target_head_length = None))]
+fn snap_karva_batch(
+    py: Python<'_>,
+    genes: Vec<(Vec<PyToken>, Vec<PyToken>)>,
+    variables: Vec<String>,
+    functions: HashMap<String, (String, usize)>,
+    k_variants: usize,
+    rel_tol: f64,
+    rng_seed: u64,
+    target_head_length: Option<usize>,
+) -> PyResult<Vec<Py<PyDict>>> {
+    use rayon::prelude::*;
+
+    let mut owned: Vec<(Vec<Token>, Vec<Token>)> = Vec::with_capacity(genes.len());
+    for (h, t) in genes {
+        owned.push((build_tokens(py, h)?, build_tokens(py, t)?));
+    }
+    let pset = build_pset(variables.clone(), functions.clone(), Vec::new());
+    let cvals = crate::snap_karva::constant_values();
+
+    let expand = |i: usize, head: &[Token], tail: &[Token]| -> SnapExpansion {
+        let mut out = SnapExpansion {
+            candidates: Vec::new(),
+            error: None,
+            n_inexpressible: 0,
+            n_oversized: 0,
+        };
+        if !head.iter().chain(tail).any(|t| matches!(t, Token::Num(_))) {
+            return out;
+        }
+        let math = match karva_to_terms(head, tail, &pset) {
+            Ok(m) => m,
+            Err(e) => {
+                out.error = Some(format!("decode: {e}"));
+                return out;
+            }
+        };
+        let cands = match crate::snap_karva::snap_variants(&math, k_variants, rel_tol) {
+            Ok(c) => c,
+            Err(e) => {
+                out.error = Some(format!("snap: {e}"));
+                return out;
+            }
+        };
+        for c in cands {
+            if c.cost == 0 {
+                continue; // the original
+            }
+            let mut vars_aug = variables.clone();
+            let mut consts: Vec<(String, f64)> = Vec::new();
+            for name in &c.constants_used {
+                if let Some(&v) = cvals.get(name) {
+                    if !vars_aug.contains(name) {
+                        vars_aug.push(name.clone());
+                    }
+                    consts.push((name.clone(), v));
+                }
+            }
+            let pset_aug = build_pset(vars_aug, functions.clone(), Vec::new());
+            match terms_to_karva_sized(&c.expr, &pset_aug, rng_seed + i as u64, target_head_length)
+            {
+                Ok((_, _, true)) => out.n_oversized += 1,
+                Ok((h, t, false)) => out.candidates.push((h, t, c.cost, consts)),
+                Err(_) => out.n_inexpressible += 1,
+            }
+        }
+        out
+    };
+
+    let expansions: Vec<SnapExpansion> = py.allow_threads(|| {
+        owned
+            .par_iter()
+            .enumerate()
+            .map(|(i, (head, tail))| {
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| expand(i, head, tail)))
+                    .unwrap_or_else(|_| SnapExpansion {
+                        candidates: Vec::new(),
+                        error: Some("panic in snap (caught)".to_string()),
+                        n_inexpressible: 0,
+                        n_oversized: 0,
+                    })
+            })
+            .collect()
+    });
+
+    let mut out: Vec<Py<PyDict>> = Vec::with_capacity(expansions.len());
+    for e in expansions {
+        let d = PyDict::new_bound(py);
+        let mut cands: Vec<Py<PyDict>> = Vec::with_capacity(e.candidates.len());
+        for (h, t, cost, consts) in &e.candidates {
+            let c = PyDict::new_bound(py);
+            c.set_item("head", tokens_to_py(py, h)?)?;
+            c.set_item("tail", tokens_to_py(py, t)?)?;
+            c.set_item("cost", *cost)?;
+            c.set_item("constants", consts.clone())?;
+            cands.push(c.into());
+        }
+        d.set_item("candidates", cands)?;
+        d.set_item("error", e.error)?;
+        d.set_item("n_inexpressible", e.n_inexpressible)?;
+        d.set_item("n_oversized", e.n_oversized)?;
         out.push(d.into());
     }
     Ok(out)
@@ -1409,6 +1550,7 @@ fn _fuller(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(eclass_variants, m)?)?;
     m.add_function(wrap_pyfunction!(eclass_extract_hff, m)?)?;
     m.add_function(wrap_pyfunction!(snap_karva, m)?)?;
+    m.add_function(wrap_pyfunction!(snap_karva_batch, m)?)?;
     m.add_function(wrap_pyfunction!(concretize_karva, m)?)?;
     m.add_function(wrap_pyfunction!(eclass_extract_hff_instrumented, m)?)?;
     // Brainfuck simplifier
