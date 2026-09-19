@@ -142,28 +142,41 @@ fn eval_app(
         // Protected ops — match the SR engine's pset semantics EXACTLY. These
         // are total (never NaN on the engine's domain), distinct from the raw
         // ops above.
-        ("ProtectedSqrt", 1) => child(0)?.abs().sqrt(), // sqrt(|x|)
-        ("ProtectedLog", 1) => {
-            let a = child(0)?.abs(); // log(|x|); |x|==0 -> -inf, matches engine
-            a.ln()
+        // The Protected* ops ARE the engine's primitives, transcribed from
+        // hff_sr_engine.py / the recovery notebook line for line — including
+        // what each does with a NON-FINITE input, which is where an earlier
+        // version of this file differed from the code it claimed to match:
+        // it had sqrt(inf)=inf (engine: 0.0), log(0)=-inf (engine: +inf) and
+        // exp(-inf)=0.0 (engine: +inf). Each of those turns a candidate the
+        // engine rejects into one fuller scores, or the reverse.
+        //
+        //   protected_sqrt(x) = sqrt(|x|) if isfinite(x) else 0.0
+        ("ProtectedSqrt", 1) => {
+            let a = child(0)?;
+            if a.is_finite() { a.abs().sqrt() } else { 0.0 }
         }
+        //   protected_log(x)  = +inf if not isfinite(x) or x == 0 else ln(|x|)
+        ("ProtectedLog", 1) => {
+            let a = child(0)?;
+            if !a.is_finite() || a == 0.0 { f64::INFINITY } else { a.abs().ln() }
+        }
+        //   protected_exp(x)  = +inf if not isfinite(x) else exp(x), and
+        //   +inf on overflow (f64::exp already returns +inf there). NOT
+        //   exp(min(x, 700)): a large-finite return diverges from the engine.
         ("ProtectedExp", 1) => {
-            // Match the engine EXACTLY: Python math.exp semantics with the
-            // engine's OverflowError -> +inf guard. f64::exp already does all
-            // of it: +inf above ~709.78 (the overflow path), exp(-inf) = 0.0,
-            // exp(NaN) = NaN. Critically NOT exp(min(x,700)) (a large-finite
-            // return diverges observably from the engine's inf), and NOT
-            // "any non-finite -> +inf" (that maps -inf to +inf — a sign error
-            // that poisons downstream products).
-            child(0)?.exp()
+            let a = child(0)?;
+            if a.is_finite() { a.exp() } else { f64::INFINITY }
         }
         ("ProtectedInv", 1) => {
             let a = child(0)?;
             if a == 0.0 { 1.0 } else { 1.0 / a } // 1/x if x!=0 else 1
         }
+        //   protected_div_zero(a, b) = 0 if |b| < 1e-6 else a / b
+        // The threshold is part of the function: with b = -1e-7 the engine
+        // returns 0 and a `b == 0` guard returns a / -1e-7.
         ("ProtectedDiv", 2) => {
             let (a, b) = (child(0)?, child(1)?);
-            if b == 0.0 { 0.0 } else { a / b } // a/b if b!=0 else 0
+            if b.abs() < 1e-6 { 0.0 } else { a / b }
         }
         _ => return Err(EvalError::BadNode(format!("{op}/{}", args.len()))),
     };
@@ -267,21 +280,35 @@ mod tests {
     }
 
     #[test]
-    fn protected_exp_of_neg_inf_is_zero_and_nan_propagates() {
-        // exp(-inf) = 0 in the engine (math.exp(-inf) == 0.0), NOT +inf.
-        // Build -inf as Neg(Exp(1000)).
-        let e = env(&[("x", 1000.0)]);
-        assert_eq!(
-            eval(r#"(ProtectedExp (Neg (Exp (Var "x"))))"#, &e).unwrap(),
-            0.0,
-            "protected_exp(-inf) must be 0"
-        );
-        // exp(NaN) = NaN in the engine (math.exp(nan) is nan). Sqrt(-4) = NaN.
+    fn protected_ops_on_non_finite_input_match_the_engine() {
+        // Transcribed from hff_sr_engine.py: protected_exp and protected_log
+        // return +inf for ANY non-finite input, protected_sqrt returns 0.0.
+        // In particular protected_exp(-inf) is +inf, not IEEE's 0.0 — an
+        // earlier version of this test asserted 0.0 against a reading of the
+        // engine that its code does not support.
+        let e = env(&[("x", 1000.0)]); // Exp(x) = +inf, Neg(Exp(x)) = -inf
+        for arg in [r#"(Exp (Var "x"))"#, r#"(Neg (Exp (Var "x")))"#] {
+            assert_eq!(eval(&format!("(ProtectedExp {arg})"), &e).unwrap(), f64::INFINITY);
+            assert_eq!(eval(&format!("(ProtectedLog {arg})"), &e).unwrap(), f64::INFINITY);
+            assert_eq!(eval(&format!("(ProtectedSqrt {arg})"), &e).unwrap(), 0.0);
+        }
+        // NaN is non-finite too: Sqrt(-4) = NaN.
         let n = env(&[("x", -4.0)]);
-        assert!(
-            eval(r#"(ProtectedExp (Sqrt (Var "x")))"#, &n).unwrap().is_nan(),
-            "protected_exp(NaN) must propagate NaN"
-        );
+        assert_eq!(eval(r#"(ProtectedExp (Sqrt (Var "x")))"#, &n).unwrap(), f64::INFINITY);
+        assert_eq!(eval(r#"(ProtectedSqrt (Sqrt (Var "x")))"#, &n).unwrap(), 0.0);
+        // protected_log(0) is +inf, not ln|0| = -inf.
+        let z = env(&[("x", 0.0)]);
+        assert_eq!(eval(r#"(ProtectedLog (Var "x"))"#, &z).unwrap(), f64::INFINITY);
+    }
+
+    #[test]
+    fn protected_div_threshold_is_part_of_the_function() {
+        // protected_div_zero: 0 if |b| < 1e-6 else a / b.
+        for (b, want) in [(0.0, 0.0), (-1e-7, 0.0), (9e-7, 0.0), (2e-6, 2.5e6), (2.0, 2.5)] {
+            let e = env(&[("b", b)]);
+            let got = eval(r#"(ProtectedDiv (Num 5.0) (Var "b"))"#, &e).unwrap();
+            assert!((got - want).abs() <= 1e-9 * want.abs().max(1.0), "5/{b}: {got} vs {want}");
+        }
     }
 
     #[test]

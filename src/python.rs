@@ -879,15 +879,20 @@ fn snap_karva_batch(
 /// Returns {"head": [...], "tail": [...], "changed": bool,
 ///          "replaced": [names]} — `changed=False` (empty `replaced`) means
 /// the chromosome was already fully numeric; skip the no-op mutant.
+///
+/// `variables` are the problem's INPUT names and are never rewritten, whatever
+/// they are called (an input named `c` is not the speed of light). Required.
 #[pyfunction]
 fn concretize_karva(
     py: Python<'_>,
     head: Vec<PyToken>,
     tail: Vec<PyToken>,
+    variables: Vec<String>,
 ) -> PyResult<Py<PyDict>> {
     let head_toks = build_tokens(py, head)?;
     let tail_toks = build_tokens(py, tail)?;
-    let (new_head, new_tail, replaced) = crate::snap_karva::concretize(&head_toks, &tail_toks);
+    let (new_head, new_tail, replaced) =
+        crate::snap_karva::concretize(&head_toks, &tail_toks, &variables);
     let out = PyDict::new_bound(py);
     out.set_item("head", tokens_to_py(py, &new_head)?)?;
     out.set_item("tail", tokens_to_py(py, &new_tail)?)?;

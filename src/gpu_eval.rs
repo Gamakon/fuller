@@ -207,6 +207,10 @@ struct Meta {
 
 const MAX_NODES: u32 = 64u;
 fn nan() -> f32 { return bitcast<f32>(0x7fc00000u); }
+fn pos_inf() -> f32 { return bitcast<f32>(0x7f800000u); }
+// NaN fails every comparison, so this is false for NaN and for +-inf.
+fn is_finite(x: f32) -> bool { return abs(x) <= 3.4028235e38; }
+fn is_inf(x: f32) -> bool { return abs(x) > 3.4028235e38; }
 
 @compute @workgroup_size(64, 1, 1)
 fn eval_main(@builtin(global_invocation_id) gid: vec3<u32>) {
@@ -225,6 +229,11 @@ fn eval_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
 
     var scratch: array<f32, 64>;
+    // Set when the ENGINE would raise rather than return: Python's math.sin /
+    // math.cos raise ValueError on +-inf, and the engine rejects the whole
+    // individual. A NaN is not enough to say that — ProtectedSqrt maps
+    // non-finite to 0.0 and would swallow it — so it is carried separately.
+    var poison: bool = false;
 
     // Backward scan. Karva is level-order, so every child index is greater
     // than its parent's — one reverse pass resolves the whole tree with no
@@ -260,12 +269,24 @@ fn eval_main(@builtin(global_invocation_id) gid: vec3<u32>) {
                 if (a <= 0.0) { v = nan(); } else { v = log(a); }
             }
             case 10u: { v = exp(scratch[nd.arg0]); }
-            case 11u: { v = sin(scratch[nd.arg0]); }
-            case 12u: { v = cos(scratch[nd.arg0]); }
+            // WGSL leaves trig of a non-finite input UNDEFINED, and Metal
+            // returns a finite number for cos(inf): an individual the engine
+            // rejects was being scored. Non-finite in -> NaN out, and +-inf
+            // poisons the expression (see `poison`).
+            case 11u: {
+                let a = scratch[nd.arg0];
+                if (is_finite(a)) { v = sin(a); } else { v = nan(); poison = poison || is_inf(a); }
+            }
+            case 12u: {
+                let a = scratch[nd.arg0];
+                if (is_finite(a)) { v = cos(a); } else { v = nan(); poison = poison || is_inf(a); }
+            }
             case 13u: {                                            // Tan
                 let a = scratch[nd.arg0];
-                let c = cos(a);
-                if (c == 0.0) { v = nan(); } else { v = sin(a) / c; }
+                if (is_finite(a)) {
+                    let c = cos(a);
+                    if (c == 0.0) { v = nan(); } else { v = sin(a) / c; }
+                } else { v = nan(); poison = poison || is_inf(a); }
             }
             case 14u: { v = tanh(scratch[nd.arg0]); }
             case 15u: {                                            // Pow
@@ -279,18 +300,28 @@ fn eval_main(@builtin(global_invocation_id) gid: vec3<u32>) {
                 let a = scratch[nd.arg0];
                 if (a == 0.0) { v = nan(); } else { v = 1.0 / a; }
             }
-            // Protected ops: distinct functions, not guarded raw ops.
-            // ProtectedDiv: a/b if b != 0 ELSE 0.0 (NOT 1.0 — see eval.rs)
+            // Protected ops: distinct functions, not guarded raw ops. Each
+            // mirrors the ENGINE's primitive exactly, including what it does
+            // with a non-finite input — see eval.rs for the definitions.
+            // ProtectedDiv: 0.0 when |b| < 1e-6 (protected_div_zero), not
+            // only when b == 0: b = sin(omega * -2.3e-8) = -1e-7 gave 0 on the
+            // engine and c / -1e-7 here.
             case 19u: {
                 let d = scratch[nd.arg1];
-                if (d == 0.0) { v = 0.0; } else { v = scratch[nd.arg0] / d; }
+                if (abs(d) < 1e-6) { v = 0.0; } else { v = scratch[nd.arg0] / d; }
             }
-            case 20u: { v = sqrt(abs(scratch[nd.arg0])); }         // ProtectedSqrt: sqrt(|x|)
-            // ProtectedLog: ln(|x|) UNGUARDED — |x| == 0 gives -inf, which is
-            // the engine's behaviour. Substituting 0.0 here would be a silent
-            // divergence that only shows up on data containing a zero.
-            case 21u: { v = log(abs(scratch[nd.arg0])); }
-            case 22u: { v = exp(scratch[nd.arg0]); }               // ProtectedExp: uncapped
+            case 20u: {                                            // ProtectedSqrt
+                let a = scratch[nd.arg0];
+                if (is_finite(a)) { v = sqrt(abs(a)); } else { v = 0.0; }
+            }
+            case 21u: {                                            // ProtectedLog
+                let a = scratch[nd.arg0];
+                if (!is_finite(a) || a == 0.0) { v = pos_inf(); } else { v = log(abs(a)); }
+            }
+            case 22u: {                                            // ProtectedExp
+                let a = scratch[nd.arg0];
+                if (is_finite(a)) { v = exp(a); } else { v = pos_inf(); }
+            }
             case 23u: {                                            // ProtectedInv
                 let a = scratch[nd.arg0];
                 if (a == 0.0) { v = 1.0; } else { v = 1.0 / a; }
@@ -300,7 +331,7 @@ fn eval_main(@builtin(global_invocation_id) gid: vec3<u32>) {
         scratch[k] = v;
     }
 
-    out[idx] = scratch[0];
+    if (poison) { out[idx] = nan(); } else { out[idx] = scratch[0]; }
 }
 "#;
 
@@ -1001,11 +1032,18 @@ mod protected_parity_tests {
     /// implementations drifting together and the parity test still passing.
     fn cpu(op: Op, a: f64, b: f64) -> f64 {
         match op {
-            Op::ProtectedDiv => if b == 0.0 { 0.0 } else { a / b },
+            // The ENGINE's primitives, from hff_sr_engine.py:
+            //   protected_div_zero: 0 if |b| < 1e-6 else a/b
+            //   protected_sqrt:     sqrt(|x|) if isfinite(x) else 0.0
+            //   protected_log:      +inf if not isfinite(x) or x == 0 else ln|x|
+            //   protected_exp:      +inf if not isfinite(x) else exp(x)
+            Op::ProtectedDiv => if b.abs() < 1e-6 { 0.0 } else { a / b },
             Op::ProtectedInv => if a == 0.0 { 1.0 } else { 1.0 / a },
-            Op::ProtectedSqrt => a.abs().sqrt(),
-            Op::ProtectedLog => a.abs().ln(),
-            Op::ProtectedExp => a.exp(),
+            Op::ProtectedSqrt => if a.is_finite() { a.abs().sqrt() } else { 0.0 },
+            Op::ProtectedLog => {
+                if !a.is_finite() || a == 0.0 { f64::INFINITY } else { a.abs().ln() }
+            }
+            Op::ProtectedExp => if a.is_finite() { a.exp() } else { f64::INFINITY },
             Op::Div => a / b,
             Op::Sqrt => a.sqrt(),
             other => panic!("no CPU reference for {other:?}"),
@@ -1052,12 +1090,13 @@ mod protected_parity_tests {
         }
     }
 
-    /// ProtectedDiv(a, 0) is 0.0, NOT 1.0 — an earlier draft of the shader had
-    /// it as 1.0, which is a silent wrong answer on any row with a zero
-    /// denominator. This is the test that would have caught it.
+    /// ProtectedDiv(a, b) is 0.0 whenever |b| < 1e-6 — the engine's
+    /// protected_div_zero — NOT only at b == 0, and NOT 1.0. With a `b == 0`
+    /// guard, b = -1e-7 (a real value: sin(omega * -2.3e-8)) gave c / -1e-7
+    /// here and 0 on the engine, and the two scored different functions.
     #[test]
     fn protected_div_by_zero_is_zero() {
-        let bs: [f32; 5] = [0.0, 2.0, -4.0, 1e-30, -0.0];
+        let bs: [f32; 8] = [0.0, 2.0, -4.0, 1e-30, -0.0, -1e-7, 9e-7, 2e-6];
         let Some(got) = gpu_binary(Op::ProtectedDiv, 5.0, &bs) else { return };
         for (i, &b) in bs.iter().enumerate() {
             let want = cpu(Op::ProtectedDiv, 5.0, b as f64);
@@ -1065,18 +1104,23 @@ mod protected_parity_tests {
         }
         assert_eq!(got[0], 0.0, "5/0 must be 0.0");
         assert_eq!(got[4], 0.0, "5/-0.0 must be 0.0");
+        assert_eq!(got[5], 0.0, "5/-1e-7 is under the threshold: 0.0");
+        assert_eq!(got[6], 0.0, "5/9e-7 is under the threshold: 0.0");
+        assert!(got[7] > 1e6, "5/2e-6 is over the threshold: a real quotient");
     }
 
-    /// ProtectedLog(0) is -inf (ln|0|), not 0.0. Also an earlier shader bug.
+    /// ProtectedLog(0) is +inf — the engine returns float("inf") at zero, not
+    /// ln|0| = -inf. The sign matters: protected_exp(-inf) would be read as a
+    /// finite 0 downstream, where the engine has +inf and rejects.
     #[test]
-    fn protected_log_of_zero_is_neg_inf() {
+    fn protected_log_of_zero_is_pos_inf() {
         let xs: [f32; 5] = [0.0, 1.0, -4.0, std::f32::consts::E, -1.0];
         let Some(got) = gpu_unary(Op::ProtectedLog, &xs) else { return };
         for (i, &x) in xs.iter().enumerate() {
             let want = cpu(Op::ProtectedLog, x as f64, 0.0);
             agree(got[i], want, &format!("ProtectedLog({x})"));
         }
-        assert!(got[0].is_infinite() && got[0] < 0.0, "log|0| must be -inf");
+        assert!(got[0].is_infinite() && got[0] > 0.0, "protected_log(0) must be +inf");
     }
 
     #[test]
@@ -1122,6 +1166,67 @@ mod protected_parity_tests {
             "ProtectedExp(1000) must be +inf, got {}",
             big[0]
         );
+    }
+
+    /// What each protected op does with a NON-FINITE input, which is where the
+    /// device and the engine disagreed: sqrt -> 0.0, log -> +inf, exp -> +inf
+    /// (including exp(-inf), which IEEE makes 0). Inputs are built on the
+    /// device — exp(1000) = +inf, -exp(1000) = -inf — because a non-finite
+    /// value cannot be uploaded as data and compared.
+    #[test]
+    fn protected_ops_on_non_finite_input_match_the_engine() {
+        let Ok(ev) = GpuEvaluator::new(&[1000.0f32], 1) else { return };
+        let inf = |neg: bool| -> Vec<GpuNode> {
+            // [op, (Neg,) Exp, Var]
+            let mut v = vec![GpuNode { op: 0, arg0: 0, arg1: 0, konst: 0.0 }];
+            if neg {
+                v.push(GpuNode { op: Op::Neg as u32, arg0: 2, arg1: 0, konst: 0.0 });
+                v.push(GpuNode { op: Op::Exp as u32, arg0: 3, arg1: 0, konst: 0.0 });
+            } else {
+                v.push(GpuNode { op: Op::Exp as u32, arg0: 2, arg1: 0, konst: 0.0 });
+            }
+            v.push(GpuNode { op: Op::Var as u32, arg0: 0, arg1: 0, konst: 0.0 });
+            v
+        };
+        let mut b = ExprBatch::new();
+        for op in [Op::ProtectedSqrt, Op::ProtectedLog, Op::ProtectedExp] {
+            for neg in [false, true] {
+                let mut nodes = inf(neg);
+                nodes[0] = GpuNode { op: op as u32, arg0: 1, arg1: 0, konst: 0.0 };
+                b.push(&nodes);
+            }
+        }
+        let got = ev.eval(&b).expect("eval");
+        assert_eq!(&got[0..2], &[0.0, 0.0], "protected_sqrt(+-inf) = 0.0");
+        for (i, name) in [(2, "log(+inf)"), (3, "log(-inf)"), (4, "exp(+inf)"), (5, "exp(-inf)")] {
+            assert!(got[i].is_infinite() && got[i] > 0.0, "protected_{name} must be +inf, got {}", got[i]);
+        }
+    }
+
+    /// The engine RAISES on sin/cos of +-inf (Python math.sin -> ValueError)
+    /// and rejects the individual. A NaN alone cannot say that, because
+    /// ProtectedSqrt maps non-finite to 0.0 and would swallow it: the
+    /// expression is poisoned and comes back NaN whatever wraps the trig.
+    /// Metal returns a FINITE value for cos(inf), so without this an
+    /// individual the engine rejects was scored.
+    #[test]
+    fn trig_of_infinity_poisons_the_expression() {
+        let Ok(ev) = GpuEvaluator::new(&[1000.0f32, 1.0f32], 1) else { return };
+        let mut b = ExprBatch::new();
+        for trig in [Op::Sin, Op::Cos] {
+            // ProtectedSqrt(trig(Exp(x)))
+            b.push(&[
+                GpuNode { op: Op::ProtectedSqrt as u32, arg0: 1, arg1: 0, konst: 0.0 },
+                GpuNode { op: trig as u32, arg0: 2, arg1: 0, konst: 0.0 },
+                GpuNode { op: Op::Exp as u32, arg0: 3, arg1: 0, konst: 0.0 },
+                GpuNode { op: Op::Var as u32, arg0: 0, arg1: 0, konst: 0.0 },
+            ]);
+        }
+        let got = ev.eval(&b).expect("eval");
+        for e in 0..2 {
+            assert!(got[e * 2].is_nan(), "row x=1000: trig(inf) must poison, got {}", got[e * 2]);
+            assert!(got[e * 2 + 1].is_finite(), "row x=1: finite input must evaluate");
+        }
     }
 
     /// Raw ops must NOT behave like their protected namesakes: raw div by zero

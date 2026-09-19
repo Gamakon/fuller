@@ -219,21 +219,31 @@ pub fn constant_values() -> &'static HashMap<String, f64> {
 /// law. Behaviour-preserving by construction (eval binds those names to
 /// exactly these values) and trivially deterministic.
 ///
+/// `inputs` — the problem's INPUT variable names — are never touched. A name
+/// says nothing about whether a token is a constant: Feynman I.29.4 is
+/// k = omega/c with c an input, the lattice holds c = 299792458, and this
+/// function rewrote the input into the speed of light, which is not
+/// behaviour-preserving at all. Required, not defaulted, so a caller cannot
+/// forget it.
+///
 /// Returns `(head, tail, replaced)` where `replaced` lists the distinct
 /// constant names substituted (empty = the chromosome was already fully
 /// numeric; callers can skip the no-op mutant).
 pub fn concretize(
     head: &[crate::karva::Token],
     tail: &[crate::karva::Token],
+    inputs: &[String],
 ) -> (Vec<crate::karva::Token>, Vec<crate::karva::Token>, Vec<String>) {
     use crate::karva::Token;
     fn map_toks(
         toks: &[Token],
         cv: &HashMap<String, f64>,
+        inputs: &[String],
         replaced: &mut Vec<String>,
     ) -> Vec<Token> {
         toks.iter()
             .map(|t| match t {
+                Token::Var(name) if inputs.contains(name) => t.clone(),
                 Token::Var(name) => {
                     if let Some(&v) = cv.get(name) {
                         if !replaced.contains(name) {
@@ -250,8 +260,8 @@ pub fn concretize(
     }
     let cv = constant_values();
     let mut replaced: Vec<String> = Vec::new();
-    let new_head = map_toks(head, cv, &mut replaced);
-    let new_tail = map_toks(tail, cv, &mut replaced);
+    let new_head = map_toks(head, cv, inputs, &mut replaced);
+    let new_tail = map_toks(tail, cv, inputs, &mut replaced);
     replaced.sort();
     (new_head, new_tail, replaced)
 }
@@ -511,6 +521,30 @@ mod tests {
         assert!(v.iter().any(|c| c.expr.contains("0.0796")));
     }
 
+    /// An INPUT that shares a name with a lattice constant is an input.
+    /// Feynman I.29.4: k = omega/c. `c` is a column of the data; the lattice
+    /// has c = 299792458. Rewriting it is not a representation flip, it is a
+    /// different function — and it made the join stall 400 generations at
+    /// R² 0.03 on a problem solved in 7 s without it.
+    #[test]
+    fn concretize_never_rewrites_an_input_variable() {
+        use crate::karva::Token;
+        assert!(constant_values().contains_key("c"), "the collision this guards");
+        let head = vec![
+            Token::Func("protected_div".into()),
+            Token::Var("omega".into()),
+            Token::Var("c".into()),
+        ];
+        let inputs = vec!["omega".to_string(), "c".to_string()];
+        let (h, _, replaced) = concretize(&head, &[Token::Var("pi".into())], &inputs);
+        assert_eq!(h[2], Token::Var("c".into()), "input c must stay a variable");
+        assert_eq!(replaced, vec!["pi".to_string()], "a real constant still flips");
+        // Without the input list the same token IS rewritten — which is why
+        // the list is a required argument and not an optional one.
+        let (h, _, _) = concretize(&head, &[], &[]);
+        assert!(matches!(h[2], Token::Num(_)));
+    }
+
     #[test]
     fn concretize_replaces_constants_and_only_constants() {
         use crate::karva::Token;
@@ -520,14 +554,14 @@ mod tests {
             Token::Var("r".into()),       // ordinary variable -> untouched
         ];
         let tail = vec![Token::Var("sqrt2".into()), Token::Num(1.0)];
-        let (h, t, replaced) = concretize(&head, &tail);
+        let (h, t, replaced) = concretize(&head, &tail, &[]);
         assert_eq!(replaced, vec!["pi".to_string(), "sqrt2".to_string()]);
         assert!(matches!(&h[1], Token::Num(v) if (*v - std::f64::consts::PI).abs() < 1e-12));
         assert_eq!(h[2], Token::Var("r".into()), "free variable must survive");
         assert!(matches!(&t[0], Token::Num(v) if (*v - std::f64::consts::SQRT_2).abs() < 1e-12));
         assert_eq!(t[1], Token::Num(1.0));
         // Deterministic + idempotent: a second pass replaces nothing.
-        let (h2, t2, r2) = concretize(&h, &t);
+        let (h2, t2, r2) = concretize(&h, &t, &[]);
         assert!(r2.is_empty(), "already-numeric chromosome is a no-op");
         assert_eq!((h2, t2), (h, t));
     }

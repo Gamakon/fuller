@@ -111,6 +111,10 @@ pub struct ScoreSpec {
     pub linear_scaling: bool,
 }
 
+/// Relative spread below which a train vector is constant. Mirrored by the
+/// engine's `apply_linear_scaling`; change both or neither.
+pub const CONSTANT_REL_TOL: f64 = 2e-6;
+
 /// Values per candidate: `[a, b, mse_train, mse_val, max_err_val, mse_extrap]`.
 pub const SCORE_WIDTH: usize = 6;
 
@@ -255,7 +259,15 @@ fn score_one(
 fn least_squares(x: &[f64], y: &[f64]) -> Option<(f64, f64)> {
     let n = x.len() as f64;
     let mx = x.iter().sum::<f64>() / n;
-    if x.iter().all(|v| (v - mx).abs() <= 1e-8) {
+    // Constant, to the resolution the predictions HAVE. They come from an f32
+    // device: x/x is exactly 1 in IEEE but Metal returns 1 +- a few ulp, so
+    // an absolute 1e-8 test called protected_div(omega, omega) "not constant"
+    // and the fit then amplified rounding noise into a score (the engine, in
+    // f64, rejects it). 2e-6 relative is ~30 ulp of f32. It also rejects a
+    // signal riding on an offset 1e6 times larger, which no f32 fit can
+    // resolve; the engine's f64 path applies the same rule so both agree.
+    let tol = 1e-8 + CONSTANT_REL_TOL * mx.abs();
+    if x.iter().all(|v| (v - mx).abs() <= tol) {
         return None;
     }
     let my = y.iter().sum::<f64>() / n;
@@ -428,6 +440,17 @@ mod tests {
             cand(&out, 0, 1, 2)[2] > 1e100,
             "square is scored, and scored badly"
         );
+    }
+
+    /// x/x on the device is 1 +- a few f32 ulp, not exactly 1. That is a
+    /// constant and must be rejected like one, not fitted.
+    #[test]
+    fn f32_rounding_noise_is_a_constant() {
+        let noisy: Vec<f32> = (0..9).map(|i| 1.0 + (i % 3) as f32 * f32::EPSILON).collect();
+        let y: Vec<f64> = xs().iter().map(|v| f64::from(*v)).collect();
+        let out = run(&noisy, &[true], &[vec![0]], Linker::Avg, &[Wrapper::Identity], &y, true)
+            .unwrap();
+        assert!(out.iter().all(|v| v.is_nan()), "rounding noise was fitted: {out:?}");
     }
 
     #[test]
