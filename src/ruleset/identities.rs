@@ -17,6 +17,18 @@ pub const ALGEBRA_RULESET: &str = r#"
 ; ---- Rule 2: multiplicative identity  (x * 1) = x , (1 * x) = x ----
 (rewrite (Mul x (Num 1.0)) x :ruleset algebra)
 (rewrite (Mul (Num 1.0) x) x :ruleset algebra)
+; x / 1 = x, and -1 * x = -x. Both EXACT in IEEE arithmetic (NaN and inf
+; included), so neither needs a guard. Without them a gene's `x/1` and
+; `-(-1*x)` survive simplification and render as a stray `1.0*x` — the visible
+; gap between smallest_form and sympy on real power-plant genes. The protected
+; divide qualifies too: protected_div_zero(x, b) is x/b whenever |b| >= 1e-6,
+; and |1| is.
+(rewrite (Div x (Num 1.0)) x :ruleset algebra)
+(rewrite (ProtectedDiv x (Num 1.0)) x :ruleset algebra)
+(rewrite (Mul (Num -1.0) x) (Neg x) :ruleset algebra)
+(rewrite (Mul x (Num -1.0)) (Neg x) :ruleset algebra)
+(rewrite (Div x (Num -1.0)) (Neg x) :ruleset algebra)
+(rewrite (ProtectedDiv x (Num -1.0)) (Neg x) :ruleset algebra)
 
 ; ---- Rule 3: additive identity  (x + 0) = x , (0 + x) = x ----
 (rewrite (Add x (Num 0.0)) x :ruleset algebra)
@@ -144,6 +156,11 @@ mod tests {
             // mul identity, both orders
             (r#"(Mul (Var "x") (Num 1.0))"#, r#"(Var "x")"#),
             (r#"(Mul (Num 1.0) (Var "x"))"#, r#"(Var "x")"#),
+            (r#"(Div (Var "x") (Num 1.0))"#, r#"(Var "x")"#),
+            (r#"(ProtectedDiv (Var "x") (Num 1.0))"#, r#"(Var "x")"#),
+            (r#"(Neg (Mul (Num -1.0) (Var "x")))"#, r#"(Var "x")"#),
+            (r#"(Mul (Num -1.0) (Mul (Num -1.0) (Var "x")))"#, r#"(Var "x")"#),
+            (r#"(Div (Var "x") (Num -1.0))"#, r#"(Neg (Var "x"))"#),
             // add / sub identity
             (r#"(Add (Var "x") (Num 0.0))"#, r#"(Var "x")"#),
             (r#"(Add (Num 0.0) (Var "x"))"#, r#"(Var "x")"#),
