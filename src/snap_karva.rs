@@ -38,9 +38,20 @@ pub struct ConstEntry {
 /// Parse the embedded lattice. Hand-rolled (no serde dep): the file is a flat
 /// JSON array of objects with string/number fields we control the shape of.
 pub fn lattice() -> Vec<ConstEntry> {
-    let mut out = parse_lattice(LATTICE_JSON);
-    out.extend(small_integer_entries());
-    out
+    lattice_static().to_vec()
+}
+
+/// The lattice, parsed ONCE. `lattice()` re-parsed ~1400 JSON entries on
+/// every call, and `snap_variants` calls it per gene: 0.7 ms of a 0.7 ms
+/// snap. Internal callers borrow this; `lattice()` still returns an owned
+/// copy for the public API.
+fn lattice_static() -> &'static [ConstEntry] {
+    static LATTICE: std::sync::OnceLock<Vec<ConstEntry>> = std::sync::OnceLock::new();
+    LATTICE.get_or_init(|| {
+        let mut out = parse_lattice(LATTICE_JSON);
+        out.extend(small_integer_entries());
+        out
+    })
 }
 
 /// Small integers and simple rationals.
@@ -322,7 +333,7 @@ fn numeric_atoms(expr: &str) -> Vec<f64> {
 /// structurally cheaper than the raw decimal, so cost-based extraction hides
 /// it). String substitution on confirmed snaps is deterministic and bounded.
 pub fn snap_variants(input: &str, k: usize, rel_tol: f64) -> Result<Vec<SnapCandidate>, String> {
-    let entries = lattice();
+    let entries = lattice_static();
     // De-duplicate repeated values (first-seen order kept): the same fitted
     // constant appearing at two sites is one snap decision, and duplicate
     // entries would otherwise propose identical candidates.
@@ -338,7 +349,7 @@ pub fn snap_variants(input: &str, k: usize, rel_tol: f64) -> Result<Vec<SnapCand
     // of the lattice dedup, but we re-rank by ops to be safe.)
     let mut snaps: Vec<(f64, String, String)> = Vec::new(); // (atom, const_math, label)
     for &atom in &atoms {
-        if let Some(e) = best_snap_for(atom, &entries, rel_tol)? {
+        if let Some(e) = best_snap_cached(atom, entries, rel_tol)? {
             snaps.push((atom, e.math, e.label));
         }
     }
@@ -375,6 +386,33 @@ pub fn snap_variants(input: &str, k: usize, rel_tol: f64) -> Result<Vec<SnapCand
     out.retain(|c| seen.insert(c.expr.clone()));
     out.truncate(k.max(1));
     Ok(out)
+}
+
+/// `best_snap_for`, memoised on (atom, rel_tol).
+///
+/// The decision depends on nothing else — the lattice is fixed — and a GEP
+/// population repeats the same handful of constants thousands of times: every
+/// gene draws from a small RNC array. Each miss builds and saturates an
+/// e-graph (~1 ms); measured on a population batch that was most of the snap
+/// cost. Errors are not cached, so a transient failure is retried.
+fn best_snap_cached(
+    atom: f64,
+    entries: &[ConstEntry],
+    rel_tol: f64,
+) -> Result<Option<ConstEntry>, String> {
+    type Cache = std::sync::Mutex<std::collections::HashMap<(u64, u64), Option<ConstEntry>>>;
+    static CACHE: std::sync::OnceLock<Cache> = std::sync::OnceLock::new();
+    let cache = CACHE.get_or_init(Default::default);
+    let key = (atom.to_bits(), rel_tol.to_bits());
+    if let Some(hit) = cache.lock().map_err(|e| format!("snap cache: {e}"))?.get(&key) {
+        return Ok(hit.clone());
+    }
+    let found = best_snap_for(atom, entries, rel_tol)?;
+    cache
+        .lock()
+        .map_err(|e| format!("snap cache: {e}"))?
+        .insert(key, found.clone());
+    Ok(found)
 }
 
 /// The simplest lattice entry whose const form egglog confirms equals (Num atom)
