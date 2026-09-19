@@ -729,6 +729,21 @@ mod device {
                 .map_err(|e| format!("map_async: {e}"))?;
             let out = bytemuck::cast_slice::<u8, f32>(&slice.get_mapped_range()).to_vec();
             read_buf.unmap();
+
+            // Release every per-dispatch buffer explicitly. Dropping the Rust
+            // handle does NOT free the GPU allocation promptly — wgpu defers
+            // it — so a long fit accumulates them and Metal reports
+            // "Context leak detected, CoreAnalytics returned false" once per
+            // dispatch. Measured 4 per generation row before this.
+            //
+            // The resident data buffer is NOT destroyed: it belongs to the
+            // session and is the whole point of keeping one.
+            nodes_buf.destroy();
+            offs_buf.destroy();
+            lens_buf.destroy();
+            meta_buf.destroy();
+            out_buf.destroy();
+            read_buf.destroy();
             Ok(out)
         }
 
