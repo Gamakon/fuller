@@ -744,6 +744,15 @@ mod device {
             meta_buf.destroy();
             out_buf.destroy();
             read_buf.destroy();
+
+            // Drain wgpu's deferred-release queue. submit() hands wgpu a
+            // command buffer and staging allocations that it holds until the
+            // device is polled; the poll inside map_async above WAITS for the
+            // copy but does not run the maintain pass that actually frees
+            // them. Without this the process grows ~23KB per dispatch —
+            // measured 108MB -> 177MB over 300 dispatches, still climbing —
+            // and Metal reports "Context leak detected" once per dispatch.
+            self.device.poll(wgpu::Maintain::Poll);
             Ok(out)
         }
 
