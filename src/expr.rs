@@ -110,6 +110,14 @@ pub const GUARD_RELATIONS: &str = r#"
 (rule ((is-positive x) (= e (Sqrt x))) ((is-positive e)) :ruleset guards)
 (rule ((is-positive x) (= e (Inv x))) ((is-positive e)) :ruleset guards)
 (rule ((is-nonzero x) (= e (Abs x))) ((is-positive e)) :ruleset guards)
+; ProtectedExp is exp(x) or +inf: positive on the same terms as Exp above.
+(rule ((= e (ProtectedExp x))) ((is-positive e) (is-nonzero e)) :ruleset guards)
+; non-zero flows through product, quotient, reciprocal and negation. Without
+; these a fact dies one level up and the guarded reciprocal rules never chain.
+(rule ((is-nonzero a) (is-nonzero b) (= m (Mul a b))) ((is-nonzero m)) :ruleset guards)
+(rule ((is-nonzero a) (is-nonzero b) (= m (Div a b))) ((is-nonzero m)) :ruleset guards)
+(rule ((is-nonzero x) (= m (Inv x))) ((is-nonzero m)) :ruleset guards)
+(rule ((is-nonzero x) (= m (Neg x))) ((is-nonzero m)) :ruleset guards)
 
 ; ---- is-nonneg: the value is never in [-inf, 0). NaN is allowed — Abs is the
 ; identity on NaN too, so it is never a counterexample. Unlike is-positive this

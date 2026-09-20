@@ -121,6 +121,28 @@ pub const RATIONAL_RULESET: &str = r#"
 (rewrite (Mul (Inv x) x) (Num 1.0) :when ((is-nonzero x)) :ruleset rational)
 ; (1/a)*(1/b) = 1/(a*b)  — sound for all reals (both sides NaN where undefined)
 (rewrite (Mul (Inv a) (Inv b)) (Inv (Mul a b)) :ruleset rational)
+
+; ---- Mined from the hall of fame (docs/rule_proposals/rational.md) ----
+; 1/x = Inv x. RAW Div only: both are NaN at x = 0. NOT ProtectedDiv:
+; protected_div(1, x) is 0 for |x| < 1e-6 while ProtectedInv(0) is 1.
+(rewrite (Div (Num 1.0) x) (Inv x) :ruleset rational)
+(rewrite (Div (Num -1.0) x) (Neg (Inv x)) :ruleset rational)
+; a * (1/b) = a/b, the rule this module's doc promised. RAW Inv only:
+; a * ProtectedInv(0) is a, ProtectedDiv(a, 0) is 0.
+(rewrite (Mul a (Inv b)) (Div a b) :ruleset rational)
+(rewrite (Mul (Inv b) a) (Div a b) :ruleset rational)
+; (1/a)/b = 1/(a*b): a = 0 or b = 0 is NaN on both sides. Raw only.
+(rewrite (Div (Inv a) b) (Inv (Mul a b)) :ruleset rational)
+; Two literals separated by a non-constant. fold_constant_subtrees only sees
+; CLOSED subtrees, and distribute (which has one of these) is not loaded by
+; smallest_form.
+(rewrite (Mul (Mul p (Num a)) (Num b)) (Mul p (Num (* a b))) :ruleset rational)
+(rewrite (Mul (Num a) (Mul (Num b) p)) (Mul (Num (* a b)) p) :ruleset rational)
+(rewrite (Add (Num a) (Add (Num b) q)) (Add (Num (+ a b)) q) :ruleset rational)
+(rewrite (Add (Add q (Num a)) (Num b)) (Add q (Num (+ a b))) :ruleset rational)
+; ProtectedInv x IS 1/x whenever x != 0. Same size; it lets every raw Inv rule
+; reach the protected spelling. Unguarded it is wrong at exactly x = 0 (1 vs NaN).
+(rewrite (ProtectedInv x) (Inv x) :when ((is-nonzero x)) :ruleset rational)
 "#;
 
 #[cfg(test)]
@@ -142,7 +164,7 @@ mod tests {
         e.parse_and_run_program(None, RATIONAL_RULESET).unwrap();
         e.parse_and_run_program(
             None,
-            "(unstable-combined-ruleset both distribute rational)",
+            "(unstable-combined-ruleset both guards distribute rational)",
         )
         .unwrap();
         e
@@ -227,5 +249,52 @@ mod tests {
             r#"(Pow2 (Add (Add (Num 4.0) (Pow (Var "x") (Num -2.0))) (Pow2 (Var "x"))))"#,
             r#"(Var "x")"#,
         );
+    }
+
+    #[test]
+    fn reciprocal_spellings_merge_raw_only() {
+        assert!(proves_equal(r#"(Div (Num 1.0) (Var "x"))"#, r#"(Inv (Var "x"))"#));
+        assert!(proves_equal(
+            r#"(Mul (Var "a") (Inv (Var "b")))"#,
+            r#"(Div (Var "a") (Var "b"))"#
+        ));
+        assert!(proves_equal(
+            r#"(Div (Inv (Var "a")) (Var "b"))"#,
+            r#"(Inv (Mul (Var "a") (Var "b")))"#
+        ));
+        // The protected spellings differ at and near zero: none may merge.
+        assert!(!proves_equal(r#"(ProtectedDiv (Num 1.0) (Var "x"))"#, r#"(Inv (Var "x"))"#));
+        assert!(!proves_equal(
+            r#"(Mul (Var "a") (ProtectedInv (Var "b")))"#,
+            r#"(Div (Var "a") (Var "b"))"#
+        ));
+        assert!(!proves_equal(
+            r#"(ProtectedDiv (Inv (Var "a")) (Var "b"))"#,
+            r#"(Inv (Mul (Var "a") (Var "b")))"#
+        ));
+        assert_sound(r#"(Div (Inv (Var "a")) (Var "b"))"#, &[("a", 1.3), ("b", -0.7)]);
+    }
+
+    #[test]
+    fn split_literals_fold() {
+        assert!(proves_equal(
+            r#"(Mul (Mul (Var "g") (Num 0.5)) (Num 4.0))"#,
+            r#"(Mul (Var "g") (Num 2.0))"#
+        ));
+        assert!(proves_equal(
+            r#"(Add (Num 1.0) (Add (Num 1.0) (Var "x")))"#,
+            r#"(Add (Num 2.0) (Var "x"))"#
+        ));
+    }
+
+    /// ProtectedInv becomes Inv only under a nonzero proof. ProtectedExp
+    /// supplies one structurally; a bare variable does not.
+    #[test]
+    fn protected_inv_lifts_only_when_nonzero() {
+        assert!(proves_equal(
+            r#"(Mul (Var "a") (ProtectedInv (ProtectedExp (Var "t"))))"#,
+            r#"(Div (Var "a") (ProtectedExp (Var "t")))"#
+        ));
+        assert!(!proves_equal(r#"(ProtectedInv (Var "x"))"#, r#"(Inv (Var "x"))"#));
     }
 }
