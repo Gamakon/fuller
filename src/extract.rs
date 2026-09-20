@@ -1215,7 +1215,8 @@ pub(crate) fn prune_on_data(
     Some(tree.to_math())
 }
 
-/// Generate one-step prunings: for each Add/Sub drop a side; for each Mul drop
+/// Generate one-step prunings: for each Add/Sub drop a side (a Sub's first
+/// side leaves the negated second); for each Mul drop
 /// a factor (replace the product with the surviving factor); for Div drop the
 /// divisor (replace with numerator). Recurses so inner subtrees are tried too.
 fn prune_candidates(node: &PNode) -> Vec<PNode> {
@@ -1226,6 +1227,11 @@ fn prune_candidates(node: &PNode) -> Vec<PNode> {
                 out.push(ch[0].clone()); // drop the second term
                 if op == "Add" {
                     out.push(ch[1].clone()); // Add is symmetric for dropping
+                } else {
+                    // Sub with its FIRST term dropped is the negated second:
+                    // `dead - x` prunes to `-x`. Without this a negligible term
+                    // survived whenever a rewrite had moved it to the left.
+                    out.push(PNode::App("Neg".to_string(), vec![ch[1].clone()]));
                 }
             }
             ("Mul", 2) => {
@@ -1466,7 +1472,7 @@ fn r2_loss(reference: &[f64], preds: &[f64]) -> f64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{denoise, eclass_extract_hff, EclassFamily};
+    use super::{denoise, eclass_extract_hff, eval_expr_rows, prune_on_data, EclassFamily};
 
     fn rows(var: &str, vals: &[f64]) -> Vec<Vec<(String, f64)>> {
         vals.iter().map(|v| vec![(var.to_string(), *v)]).collect()
@@ -1525,6 +1531,27 @@ mod tests {
         let out = denoise(r#"(Mul (Var "x") (Var "g"))"#, &data, 1e-3, 64).expect("denoise");
         assert_eq!(out.expr, r#"(Mul (Var "x") (Var "g"))"#, "real factor must be kept");
         assert!(!out.changed);
+    }
+
+    /// The shape that cost feynman_II_11_20 its SRBench solve: a negligible
+    /// term on the LEFT of a subtraction. `1/(x^2 * 1e6) - y` is `-y` on the data.
+    #[test]
+    fn data_aware_prune_drops_the_first_term_of_a_sub() {
+        let data = rows2("x", "y", &[(1.0, 5.0), (2.0, 3.0), (3.0, 0.5), (4.0, 2.0)]);
+        let expr = r#"(Sub (Inv (Mul (Pow2 (Var "x")) (Num 1000000000000.0))) (Var "y"))"#;
+        let reference = eval_expr_rows(expr, &data).expect("eval");
+        let out = prune_on_data(expr, &data, &reference, 1e-10).expect("prune");
+        assert_eq!(out, r#"(Neg (Var "y"))"#);
+    }
+
+    /// And a first term that matters stays.
+    #[test]
+    fn data_aware_prune_keeps_a_real_first_term_of_a_sub() {
+        let data = rows2("x", "y", &[(1.0, 5.0), (2.0, 3.0), (3.0, 0.5), (4.0, 2.0)]);
+        let expr = r#"(Sub (Var "x") (Var "y"))"#;
+        let reference = eval_expr_rows(expr, &data).expect("eval");
+        let out = prune_on_data(expr, &data, &reference, 1e-10).expect("prune");
+        assert_eq!(out, expr);
     }
 
     #[test]

@@ -210,8 +210,11 @@ fn lint_forms(
         let tidy = outcome.best.to_math();
         if let Ok(reference) = crate::extract::eval_expr_rows(&tidy, &core_rows) {
             for tol in [1e-10_f64, 1e-6, 1e-3, 1e-2, 1e-1] {
+                // A prune leaves debris a rule can clear (`x*(-y)`, a bare
+                // `Neg`), so the pruned tree goes through the linter again.
                 let pruned = crate::extract::prune_on_data(&tidy, &core_rows, &reference, tol)
-                    .and_then(|p| Tree::parse(&p).ok());
+                    .and_then(|p| Tree::parse(&p).ok())
+                    .map(|p| run(&p, &rules, &tables.guards, &cfg).best);
                 if let Some(pt) = pruned {
                     if offered.iter().all(|(f, _)| *f != pt) {
                         offered.push((pt, "prune"));
