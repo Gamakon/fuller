@@ -110,6 +110,33 @@ pub const GUARD_RELATIONS: &str = r#"
 (rule ((is-positive x) (= e (Sqrt x))) ((is-positive e)) :ruleset guards)
 (rule ((is-positive x) (= e (Inv x))) ((is-positive e)) :ruleset guards)
 (rule ((is-nonzero x) (= e (Abs x))) ((is-positive e)) :ruleset guards)
+
+; ---- is-nonneg: the value is never in [-inf, 0). NaN is allowed — Abs is the
+; identity on NaN too, so it is never a counterexample. Unlike is-positive this
+; has no underflow caveat (Exp underflowing to 0.0 is still >= 0), and it needs
+; no caller fact: Pow2 / Abs / Sqrt / Exp seed it structurally. Mined from the
+; hall of fame: 41 stored expressions carry an Abs over such an argument, 16 of
+; them through shapes no fixed list of Abs(X) rewrites reaches.
+(relation is-nonneg (Math))
+; seeds: >= 0 (or NaN) on every input
+(rule ((= e (Pow2 x)))          ((is-nonneg e)) :ruleset guards)
+(rule ((= e (Abs x)))           ((is-nonneg e)) :ruleset guards)
+(rule ((= e (Sqrt x)))          ((is-nonneg e)) :ruleset guards)
+(rule ((= e (ProtectedSqrt x))) ((is-nonneg e)) :ruleset guards)
+(rule ((= e (Exp x)))           ((is-nonneg e)) :ruleset guards)
+(rule ((= e (ProtectedExp x)))  ((is-nonneg e)) :ruleset guards)
+(rule ((= e (Num n)) (>= n 0.0)) ((is-nonneg e)) :ruleset guards)
+(rule ((is-positive m))         ((is-nonneg m)) :ruleset guards)
+; propagation: sign-preserving ops over nonneg operands
+(rule ((is-nonneg a) (is-nonneg b) (= m (Mul a b)))          ((is-nonneg m)) :ruleset guards)
+(rule ((is-nonneg a) (is-nonneg b) (= m (Add a b)))          ((is-nonneg m)) :ruleset guards)
+(rule ((is-nonneg a) (is-nonneg b) (= m (Div a b)))          ((is-nonneg m)) :ruleset guards)
+(rule ((is-nonneg a) (is-nonneg b) (= m (ProtectedDiv a b))) ((is-nonneg m)) :ruleset guards)
+(rule ((is-nonneg x) (= e (Pow3 x)))         ((is-nonneg e)) :ruleset guards)
+(rule ((is-nonneg x) (= e (Inv x)))          ((is-nonneg e)) :ruleset guards)
+(rule ((is-nonneg x) (= e (ProtectedInv x))) ((is-nonneg e)) :ruleset guards)
+(rule ((is-nonneg x) (= e (Tanh x)))         ((is-nonneg e)) :ruleset guards)
+(rule ((is-nonneg b) (= e (Pow b p)))        ((is-nonneg e)) :ruleset guards)
 "#;
 
 /// Build a fresh e-graph with the `Math` datatype loaded (no rules yet).

@@ -21,8 +21,10 @@ numbers are 0-based line indices into `gaps.jsonl`. Node counts are Math `node_c
    below pay off in the live engine (where var ranges give facts), not on a re-run of
    this script as written.
 
-Rows my family genuinely explains, soundly and unguarded: **16, 28** (−1 node each),
-plus an unguarded partial on **21** (−2), **26, 31** (−1). Guarded: **1, 17, 18, 19, 21, 26**. Unsound
+Rows my family shrinks soundly with NO caller fact: **0, 6, 16, 19, 28** (−1 each), **21** (−2),
+**26, 31** (−1). Guarded and reachable from a var-range fact: **4, 8, 25** (oz2 / oz1 nonzero),
+**17** (col_2), **21, 26** only if P's factors oz1, oz5 are nonzero. Guarded but DEAD — the
+guard target bottoms out in a `Sub` of variables nothing can prove nonzero: **1, 18**. Unsound
 (sympy is wrong under protected semantics): **4, 8, 23, 24, 25, 31, and 17's PDiv step** — see the end.
 
 Soundness vocabulary used below:
@@ -154,8 +156,15 @@ dies one level up and the rule above never chains:
 (rule ((= m (ProtectedExp x)))                        ((is-positive m)) :ruleset guards)
 ```
 
+- Reachability (guard target classified: a Var = needs a caller fact; Exp/ProtectedExp/literal
+  = derived; anything over Sub/Add/Sin/Cos/Tanh = dead): Inv/ProtectedInv nests 8 genes fact
+  (weighted 211: 40, 92, 102, 351, 418, 549, 765, 796), 10 dead (240); `Mul a (ProtectedInv b)`
+  5 fact (122), 1 derived (gene 517, 30), 6 dead (156). The raw counts below overstate by about half.
+- **Gap row 0 (count 30) falls to the `ProtectedExp` guard alone**: `Pow3 (Abs (ProtectedExp ..))`
+  sheds the Abs through the existing `(Abs x) -> x :when is-positive`, −1, no caller fact.
+  Exact: ProtectedExp is >= 0 on every branch including +inf.
 - Evidence: `Inv (ProtectedInv x)` 8 genes (weighted 240: 40, 92, 299, 351, 418, 504, 549,
-  765) incl. gap row 1 (15 → 13); `ProtectedInv (Inv x)` 3 genes (61); `ProtectedInv
+  765) (gap row 1, 15 → 13, is among them but DEAD); `ProtectedInv (Inv x)` 3 genes (61); `ProtectedInv
   (ProtectedInv x)` 7 genes (150); `Mul a (ProtectedInv b)` 12 genes (308). Gap row 19:
   `Mul (Sub ..) (ProtectedInv (ProtectedExp theta))` → `Div (Sub ..) (ProtectedExp theta)`,
   13 → 12, and this one needs NO caller fact (the ProtectedExp guard supplies it).
@@ -185,10 +194,43 @@ dies one level up and the rule above never chains:
 (rewrite (Inv (Div a b)) (Div b a) :when ((is-nonzero b)) :ruleset rational)
 ```
 
-- Evidence: raw/raw in 8 genes (weighted 180: 180, 293, 458, 501, 506, 605, 628, 651) and
-  gap row 18; −1 node each when the fact is available. Not for `ProtectedDiv` inside
+- Evidence: raw/raw in 8 genes (180, 293, 458, 501, 506, 605, 628, 651) but only 2 are
+  reachable (180 derived, 458 via a Var fact; weighted 60); the other 6 and gap row 18 are
+  dead. Low value — keep or drop. Not for `ProtectedDiv` inside
   (`Inv(PDiv(a, tiny)) = Inv(0) = NaN` vs `tiny/a`) — and no guard we have fixes that.
 - Termination: −1 node.
+
+## R9. `(1/a)/b` is `1/(a*b)` (raw only, UNGUARDED)
+
+```lisp
+; (1/a)/b = 1/(a*b). Exact: a = 0 or b = 0 is NaN on both sides (Mul with a zero is 0,
+; Inv 0 is NaN). Companion of the existing (Mul (Inv a) (Inv b)) -> (Inv (Mul a b)).
+; NOT ProtectedDiv (Inv a) b: in the |b| < 1e-6 band that is 0, not 1/(ab).
+(rewrite (Div (Inv a) b) (Inv (Mul a b)) :ruleset rational)
+```
+
+- Evidence: gap row 6 (count 30) `Div (Inv pc12) a65`; genes 116, 458. Equal size on its
+  own (4 → 4); the shrink comes from R2 firing next: `Mul (Inv m) E -> Div E m`, row 6 −1.
+- Termination: directed (Inv moves outward, never back); with R2 the class also gets
+  `Div (Inv a) b` from `Mul (Inv a) (Inv b)` — this rule sends it to the same
+  `Inv (Mul a b)` the existing rule produces, so the class closes.
+- Partner `(Div a (Inv b)) -> (Mul a b) :when ((is-nonzero b))` is widening (b = 0: NaN vs 0);
+  all 4 raw instances (416, 417, 450, 574) have dead guard targets. Not proposed.
+- Test:
+```rust
+    #[test]
+    fn div_of_inv_merges_raw_only() {
+        assert!(proves_equal(
+            r#"(Div (Inv (Var "a")) (Var "b"))"#,
+            r#"(Inv (Mul (Var "a") (Var "b")))"#,
+        ));
+        assert!(!proves_equal(
+            r#"(ProtectedDiv (Inv (Var "a")) (Var "b"))"#,
+            r#"(Inv (Mul (Var "a") (Var "b")))"#,
+        ));
+        assert_sound(r#"(Div (Inv (Var "a")) (Var "b"))"#, &[("a", 1.3), ("b", -0.7)]);
+    }
+```
 
 ## R8. Like terms — low value, one gene
 
@@ -221,6 +263,20 @@ dies one level up and the rule above never chains:
 | `Inv (Inv x) -> x`, `Inv (Div a b) -> Div b a`, `Div a (Div b c) -> Div (Mul a c) b` unguarded | 17, 18, 21, 26, 28 | widening: LHS NaN at x / b / c = 0, RHS finite. Kept guarded, matching `identities.rs` |
 | `ProtectedInv (Neg x) -> Neg (ProtectedInv x)` | — | x = 0: 1 vs −1 |
 | `Mul (ProtectedDiv 1 b) c -> ProtectedDiv c b` | 3 | sound for finite c (both 0 in the band) but `0 * inf = NaN` vs 0 when c overflows; left to rules-sign with that caveat, since row 3 is mostly a sign flip |
+
+Notes for other families: row 10 is not pure artifact — `Pow2 (Pow2 (Inv Bills))` is 4 nodes
+against `Pow Bills (Num -4.0)` at 3, and `rational.rs:108` only rewrites the expanding
+direction. Row 15 `Pow2 (Abs x) -> Pow2 x` is exact, −1, count 30, in no ruleset. Row 20's
+`Abs (Neg (Abs T))` survives because `sympy_mined` is in neither `smallest_form` family.
+Row 3 needs the equal-size enabler `(Mul (ProtectedDiv (Num c) x) y) -> (ProtectedDiv (Mul (Num c) y) x)`
+before the sign rules can land its −1.
+
+Enabler, listed only (agreed with rules-powers): `(Pow2 (Inv x)) -> (Inv (Pow2 x))`,
+`(Pow3 (Inv x)) -> (Inv (Pow3 x))` — raw Inv, exact (NaN at 0 both sides), equal size, 5 raw
+genes (164, 171, 180, 287, 341). Moves Inv outward so R2 and powers.md P1 can fire. The
+row-10 reverse (`Pow2 (Pow2 (Inv x)) -> Pow x -4`) is NOT proposed: 2 genes, ulp-level only,
+and it fights powers.rs:20-21 (see powers.md R9).
+Cross-references: `Mul x x -> Pow2 x` is powers.md P5; `Pow2 (Abs x) -> Pow2 x` is powers.md P3.
 
 Handed off: `Mul x x -> Pow2 x` (6 genes + rows 22/23) to rules-powers; Neg-through-Mul/Sub
 flips (rows 2, 3, 4, 16 remainder) to rules-sign.

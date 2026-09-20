@@ -468,6 +468,19 @@ It inherits the shipped `Exp`-positivity caveat (underflow to 0.0, and `+inf/+in
 left in fuller's output. P1's `is-nonneg` already covers every
 `Abs(ProtectedExp)` instance bit-exactly, so this is not needed. Not proposed.
 
+**R9. `Pow2(Pow2(Inv x))` / `Inv(Pow2(Pow2 x))` -> `Pow x (Num -4.0)`** (raised
+by rules-rational for gap row 10; 4 nodes -> 3). `rational.rs:108` states the
+equality but only ever fires from the `Pow` side, so a gene that arrives as
+nested squares never gets the 3-node spelling. Whole-dataset evidence: 2 genes
+(`Pow2(Pow2(Inv Bills))` w30, `Inv(Pow3(Pow3 ..))` w30) — and row 10's measured
+gap is the sign flip, not this. `powf(x,-4)` vs `((1/x)^2)^2` agree at 0 (NaN
+both, by eval's `0^neg` rule), at +-inf (0 both) and on overflow, but differ by
+a few ulp on finite x — not bit-exact. It also trades dedicated constructors
+for a general `Pow` with a literal, which the crate otherwise normalises AWAY
+from (`powers.rs:20-21`). One node on two genes; not proposed. If wanted, it
+belongs in `rational` as the reverse of lines 102-112, needing rational's
+`Pow2 (Inv x) -> Inv (Pow2 x)` enabler first.
+
 ## Suggested landing order
 
 P5, P2, P3 (pure one-line rewrites, bit-exact) -> P1 (guard relation; biggest

@@ -27,6 +27,31 @@ Row numbers below are 1-based line numbers in those files. Nothing was run
 > threshold branch, live branch exact. No ledger instance found in my scan; it
 > only fires after a B2 float-out, so it is optional.
 
+> **Addendum B4 (enabler for gap row 4, suggested by rules-rational — their
+> "row 3", 0-based).** Row 4 is `Mul (ProtectedDiv (Num -1.0) (Sub P Q)) Bills`;
+> the `-1` is locked in a numerator where no sign rule reaches it.
+> ```egglog
+> ; B4  a literal numerator's cofactor moves into the numerator (size-neutral)
+> (rewrite (Mul (ProtectedDiv (Num c) x) y) (ProtectedDiv (Mul (Num c) y) x) :ruleset sign)
+> (rewrite (Mul y (ProtectedDiv (Num c) x)) (ProtectedDiv (Mul (Num c) y) x) :ruleset sign)
+> ```
+> Chain on row 4: B4 -> `ProtectedDiv (Mul -1 Bills) D` -> algebra `Mul -1 y ->
+> Neg y` (-1 node) -> B2 `Neg (ProtectedDiv Bills D)` -> the
+> `Neg (ProtectedDiv c (Sub a b))` flip above (-1 node) =
+> `ProtectedDiv Bills (Sub Q P)`. With B1+A8 on the inner `Pow2 (Sub (Neg ..) ..)`
+> row 4 goes **24 -> 21** and matches sympy's form (`Bills/(sqrt(Bills) - ...)`).
+> Soundness: real identity `(c/x)*y = (c*y)/x`; same `|x| < 1e-6` branch on both
+> sides. NOT bit-exact (one rounding differs, <= 1 ulp — the same standard as the
+> crate's log/exp rules and the 1e-9 `assert_sound` tolerance), and in the zero
+> band the left side is `0*y` = NaN for non-finite `y` while the right is 0 — the
+> same caveat the shipped `Mul x 0 -> 0` already carries. For `c = -1` the live
+> branch IS exact apart from that. If the lead wants bit-exactness only, restrict
+> B4 to `(Num -1.0)`; row 4 needs nothing more. Termination: size-neutral, one
+> direction only, no rule moves a factor back out of a ProtectedDiv numerator.
+> Test case to add to `float_outs_reach_an_absorber`:
+> `(Mul (ProtectedDiv (Num -1.0) (Sub (Var "p") (Var "q"))) (Var "b"))` ->
+> `(ProtectedDiv (Var "b") (Sub (Var "q") (Var "p")))`.
+
 ## 0. Read this first — two different size metrics
 
 - `smallest_form` accepts a candidate only when `cost_of` (Math node count) is

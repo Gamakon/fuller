@@ -73,6 +73,17 @@ pub const ALGEBRA_RULESET: &str = r#"
 ; — Abs wrappers from protected-sqrt chains are the most common reason an
 ; R^2=1.0 discovery fails SRBench's exact symbolic-solution check.
 (rewrite (Abs x) x :when ((is-positive x)) :ruleset algebra)
+; |x| = x for x >= 0 (or NaN). Bit-exact; see `is-nonneg` in GUARD_RELATIONS.
+(rewrite (Abs x) x :when ((is-nonneg x)) :ruleset algebra)
+
+; x * x = x^2 — the evaluator computes Pow2 as a*a, so this is the same
+; arithmetic with one node fewer.
+(rewrite (Mul x x) (Pow2 x) :ruleset algebra)
+
+; protected_div_zero(a, b) = 0 whenever |b| < 1e-6, whatever a is. A literal
+; divisor that small makes the whole quotient the constant 0.
+(rule ((= e (ProtectedDiv x (Num k))) (< k 0.000001) (> k -0.000001))
+      ((union e (Num 0.0))) :ruleset algebra)
 
 ; ---- Cancellation on RAW div only (Category 2, guarded; NEVER protected) ----
 ; x / x = 1  (raw Div, x != 0). protected_div(x,x) is 0 at x=0 -> excluded.
@@ -310,5 +321,60 @@ mod tests {
             let got = simplify(input).expect("simplify");
             assert_eq!(got, input, "protected op was rewritten (unsound!): {input}");
         }
+    }
+
+    /// |x| sheds on a structurally non-negative argument with NO caller fact —
+    /// including through sign-preserving ops, which no fixed Abs(X) list reaches.
+    #[test]
+    fn abs_sheds_on_derived_nonneg() {
+        let cases: &[(&str, &str)] = &[
+            (r#"(Abs (Pow2 (Var "x")))"#, r#"(Pow2 (Var "x"))"#),
+            (r#"(Abs (ProtectedExp (Var "x")))"#, r#"(ProtectedExp (Var "x"))"#),
+            (r#"(Abs (ProtectedSqrt (Var "x")))"#, r#"(ProtectedSqrt (Var "x"))"#),
+            // gap row 0
+            (
+                r#"(Pow3 (Abs (ProtectedExp (Sqrt (ProtectedExp (Var "oz5"))))))"#,
+                r#"(Pow3 (ProtectedExp (Sqrt (ProtectedExp (Var "oz5")))))"#,
+            ),
+            // indirect: nonneg flows through ProtectedInv, Pow3, Mul
+            (
+                r#"(Abs (ProtectedInv (ProtectedInv (Pow2 (Var "x")))))"#,
+                r#"(ProtectedInv (ProtectedInv (Pow2 (Var "x"))))"#,
+            ),
+            (r#"(Abs (Pow3 (Abs (Var "x"))))"#, r#"(Pow3 (Abs (Var "x")))"#),
+            (
+                r#"(Abs (Mul (ProtectedSqrt (Var "a")) (Abs (Sin (Var "b")))))"#,
+                r#"(Mul (ProtectedSqrt (Var "a")) (Abs (Sin (Var "b"))))"#,
+            ),
+            // Sqrt(x^4) = x^2, via the shipped Sqrt(Pow2 y) -> Abs y
+            (r#"(Sqrt (Pow2 (Pow2 (Var "x"))))"#, r#"(Pow2 (Var "x"))"#),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(simplify(input).unwrap(), *expected, "{input}");
+        }
+        // Must NOT shed where the sign is unknown.
+        for input in [
+            r#"(Abs (Pow3 (Var "x")))"#,
+            r#"(Abs (Sub (Pow2 (Var "x")) (Var "y")))"#,
+            r#"(Abs (ProtectedLog (Var "x")))"#,
+            r#"(Abs (Tanh (Var "x")))"#,
+        ] {
+            assert_eq!(simplify(input).unwrap(), input, "unsound shed: {input}");
+        }
+    }
+
+    #[test]
+    fn square_and_tiny_divisor() {
+        assert_eq!(
+            simplify(r#"(Mul (Sin (Var "x")) (Sin (Var "x")))"#).unwrap(),
+            r#"(Pow2 (Sin (Var "x")))"#
+        );
+        assert_eq!(
+            simplify(r#"(ProtectedDiv (Var "x") (Num 0.0000001))"#).unwrap(),
+            "(Num 0.0)"
+        );
+        // At the threshold the divide is a real divide and must stay.
+        let kept = r#"(ProtectedDiv (Var "x") (Num 0.000001))"#;
+        assert_eq!(simplify(kept).unwrap(), kept);
     }
 }

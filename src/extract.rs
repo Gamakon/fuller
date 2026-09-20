@@ -1731,9 +1731,10 @@ mod additive_subset_tests {
         let r = sf(&format!("(Sub {x} {k})"), &[]);
         assert_eq!(r.cost, 3, "{}", r.expr);
         assert!(r.expr.starts_with(r#"(Sub (Var "x") (Num 2.859"#), "{}", r.expr);
-        // c is in `inputs` here: (Mul c c) must stay symbolic.
+        // c is in `inputs` here: (Mul c c) must stay symbolic — it shrinks to
+        // c^2, never to a number.
         let c = r#"(Mul (Var "c") (Var "c"))"#;
-        assert_eq!(sf(c, &[]).expr, c);
+        assert_eq!(sf(c, &[]).expr, r#"(Pow2 (Var "c"))"#);
         // and with c NOT an input, the same tree IS a constant
         let none: Vec<String> = Vec::new();
         assert_eq!(smallest_form(c, &none, &none, &none).unwrap().cost, 1);
