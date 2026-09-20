@@ -265,3 +265,55 @@ Measured so far (2026-09-20, our data, our oracle, 17 evolved-only problems x 3
 seeds): no simplifier arm is distinguishable from none on exact recoveries
 (22-25 of 51); a size axis in HFF at a fixed [0,1] scale halves recoveries
 (12-13 of 51). We use ~3% of SRBench's 1-hour fit window.
+
+---
+
+## State at 2026-09-20 ~16:00 (handoff)
+
+**Done in the work order.** a.1 kernel-shaped CPU engine (`src/lint/flat.rs`), a.2 rule rows
+(`pack.rs`), a.3 the WGSL linter kernel (`kernel.wgsl`, `device.rs`): GPU == CPU on 113,444 live
+expressions at bit/rounding/finite, 0.002 ms/expr. a.4 end-of-run forms chosen the join's way
+(generate, execute, HFF ranks) in the recovery notebook, with three model strings
+(`model_no_sympy`, `model_lint_then_sympy`, `model_sympy`). Rules added today: `sign`, `is-nonneg`,
+reciprocals, `c*(x/c)`, radicals merge, `exp(ln|x|)`, `collect` (52 rules read out of sympy's
+source, judged by `examples/judge_rules.rs`); 8-ulp literal snap (rounding level) and the 1e-4
+snap CANDIDATE (judged on data). Exactness is a LABEL (bit/rounding/finite/prune/snap), not a
+gate: candidates are executed and HFF picks.
+
+**Measured.** sympy completion adds nothing under SRBench's scorer once positivity facts are
+passed (126-problem sweep: 29/29/31, all 4 disagreements traced). Parsimony as an HFF axis at a
+fixed [0,1] scale HALVES recoveries (12-13 vs 22-25 of 51): leave `HFF_PARSIMONY=0` until Andrew
+chooses the scale. Time: geppy operators 41%, f64 re-fit of leaders 23%, un-itemised Python in
+evaluate ~26%, GPU + fuller 7%.
+
+**SRBench, their code, their data** (`hff/notebooks/_srbench_production.py`; clone in
+`_ledgers/srbench_repo`, data in `_ledgers/pmlb_repo`, published results in
+`_ledgers/srbench_peers/ground-truth_results.feather`). Fair entry: columns renamed, name-blind,
+math constants only. Noise 0, seed 23654, 18 s search cap: **11 of 131 = 8.4%** symbolic solutions
+(published: AIFeynman 54.1, GP-GOMEA 27.1, Operon 16.0, EPLEX 12.0). Noisy blocks NOT yet run.
+
+**OPEN BUGS — fix before re-running the 18-second challenge (Andrew's instruction):**
+1. `hff_sr_engine.py::_extract_best` ~L2628-2645 and ~L2700: the COMPRESSED gene is rebuilt as a
+   plain `Gene` (`_Gene.from_genome`), so geppy's `GeneDc.kexpression` RNC resolution never runs
+   and the reported expression contains the symbol `?`. Every candidate is then unscorable and the
+   engine reports `0` (12 of 131 fits). Fix: rebuild as `GeneDc` keeping dc/rnc_array
+   (`_gene_utils.build_variant_gene`), or fall back to the original gene when `?` survives.
+2. Symbolic map disagrees with the numeric primitives on constants: `_pset_inv(0)` is 1.0
+   numerically but `1/x` -> `zoo` symbolically; `protected_log(0)` is +inf numerically, `zoo`
+   symbolically. Mirror the numeric definitions in `sym_map` (~L2473-2483).
+3. `_holdout_vec` swallows every exception and returns None silently — report the reason.
+4. The reported scale is not snapped when `snap_lsm_into_gene=False`: `0.9999999999999997*x_0/x_1`
+   must come out as `x_0/x_1` (apply the 8-ulp literal snap in the wrapper's `model()`).
+5. `re(x_0)` leaks into models: symbols reach sympy without `real=True`.
+6. Under SRBench's 75,000 training rows a fit manages 1-3 generations in 18 s. The instrumented
+   tidy builds a Python dict PER ROW for train and val (~L2617-2622); the engine is row-bound
+   throughout. Subsample rows inside the wrapper (our choice of how to use the data).
+7. `procs=14` per engine x 12 workers: check what the pool does under the GPU join.
+8. Recovery notebook: pass data-derived positive / nonzero facts to the linter (join and final
+   forms); the installed extension predates today's rules — `maturin develop --release
+   --features python,gpu` when no run is reading it.
+
+**Andrew's standing instructions from today.** Announce every job before launching it (what, why,
+how long, the `tail -f`); long jobs under `nohup`; report per output, not at the end; SRBench
+numbers only from SRBench's own code — never present our oracle beside them; lead with the
+number, not the caveats.
