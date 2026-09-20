@@ -55,6 +55,26 @@ pub const POWERS_RULESET: &str = r#"
 ; lives in `distribute`, but distribute cannot be co-saturated with the live
 ; rules, so the simplifier never saw it.
 (rewrite (Pow2 (Sqrt p)) p :when ((is-positive p)) :ruleset powers)
+
+; ---- radicals merge: sqrt(a)*sqrt(b) = sqrt(a*b), sqrt(a)/sqrt(b) = sqrt(a/b) ----
+; SRBench's checker would not accept sqrt(gamma)*sqrt(pr)/sqrt(rho) for
+; sqrt(gamma*pr/rho) (Feynman I.47.23): its sympy keeps the roots apart, because
+; over the complex numbers they ARE different. Merged, the model has the
+; truth's shape, and it is a node shorter.
+;   raw Sqrt: both operands must be >= 0 — two negatives give NaN on the left
+;   and a number on the right; the divisor must be > 0.
+;   ProtectedSqrt is sqrt|x|: sqrt|a| * sqrt|b| = sqrt|a*b| for EVERY real a, b,
+;   so the product needs no guard at all. The quotient by a raw Div is NaN on
+;   both sides at b = 0.
+; NOT written: ProtectedDiv (ProtectedSqrt a) (ProtectedSqrt b). The left side
+; is 0 only for |b| < 1e-12, the merged form for all |b| < 1e-6; between the
+; two they are different finite numbers.
+(rewrite (Mul (Sqrt a) (Sqrt b)) (Sqrt (Mul a b))
+    :when ((is-nonneg a) (is-nonneg b)) :ruleset powers)
+(rewrite (Div (Sqrt a) (Sqrt b)) (Sqrt (Div a b))
+    :when ((is-nonneg a) (is-positive b)) :ruleset powers)
+(rewrite (Mul (ProtectedSqrt a) (ProtectedSqrt b)) (ProtectedSqrt (Mul a b)) :ruleset powers)
+(rewrite (Div (ProtectedSqrt a) (ProtectedSqrt b)) (ProtectedSqrt (Div a b)) :ruleset powers)
 "#;
 
 #[cfg(test)]

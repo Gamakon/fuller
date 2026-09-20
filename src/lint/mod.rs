@@ -217,6 +217,23 @@ mod tests {
         assert!(engine::snap_candidate(&Tree::parse("(Num 3.0)").unwrap(), engine::SNAP_CANDIDATE_TOL).is_none());
     }
 
+    /// Feynman I.47.23: three separate roots become the truth's one root.
+    #[test]
+    fn separate_roots_merge_into_one() {
+        let tables = Tables::standard().unwrap();
+        let inputs: Vec<String> = ["gamma", "pr", "rho"].iter().map(|s| s.to_string()).collect();
+        let e = r#"(Div (Mul (ProtectedSqrt (Var "gamma")) (ProtectedSqrt (Var "pr"))) (ProtectedSqrt (Var "rho")))"#;
+        let out = lint(&tables, e, &inputs, &Options::default()).unwrap();
+        assert_eq!(
+            out.best.to_math(),
+            r#"(ProtectedSqrt (Div (Mul (Var "gamma") (Var "pr")) (Var "rho")))"#
+        );
+        // The protected divide of two protected roots must NOT merge: between
+        // |b| = 1e-12 and 1e-6 the two sides are different finite numbers.
+        let p = r#"(ProtectedDiv (ProtectedSqrt (Var "gamma")) (ProtectedSqrt (Var "rho")))"#;
+        assert_eq!(lint(&tables, p, &inputs, &Options::default()).unwrap().best.to_math(), p);
+    }
+
     #[test]
     fn is_deterministic() {
         let e = r#"(Sub (Neg (Mul (Var "a") (Num -1.0))) (Neg (Abs (Pow2 (Var "b")))))"#;

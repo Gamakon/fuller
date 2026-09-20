@@ -43,6 +43,11 @@ const LITERALS: [f64; 13] =
 
 const AGREE_REL_TOL: f64 = 1e-9;
 
+/// A bound magnitude at or past this can overflow f64 in a product or a square
+/// that the other side of a rule never forms. A rule whose sides disagree ONLY
+/// with such a value in play is finite-level, not unsound.
+const OVERFLOW_RANGE: f64 = 1e100;
+
 pub fn classify(d: &Draft, id: usize) -> Result<Rule, String> {
     if matches!(d.lhs, Pat::Mv(_)) {
         return Err("pattern is a bare metavariable".to_string());
@@ -344,7 +349,12 @@ fn check_exactness(d: &Draft, nums: &[Vec<f64>]) -> Result<Exactness, String> {
             for part in &parts {
                 all_finite &= part.eval(&row)?.is_finite();
             }
-            if all_finite {
+            // The TEMPLATE can overflow where the pattern did not:
+            // sqrt|a| * sqrt|b| is 1e200 at a = b = -1e200, but a*b is inf and
+            // ProtectedSqrt(inf) is 0. True of the reals, false of f64 past
+            // ~1e154 — the rule equivalent of a range-only guard row.
+            let overflow_range = values.iter().any(|v| v.is_finite() && v.abs() >= OVERFLOW_RANGE);
+            if all_finite && !overflow_range {
                 return Err(format!(
                     "unsound where every subterm is finite: at {values:?} literals {n:?} the pattern is {a:e}, the template {b:e}"
                 ));
