@@ -34,9 +34,9 @@ pub struct Ann {
 
 /// K1: one bottom-up pass. A node's facts come from its symbol (seeds), its
 /// children's facts (propagation), and implications between facts.
-pub fn annotate(t: &Tree, guards: &[GuardRule], caller: &CallerFacts) -> Ann {
+pub fn annotate(t: &Tree, guards: &[GuardRule], caller: &CallerFacts, strict: bool) -> Ann {
     let kids: Vec<Ann> = match t {
-        Tree::App(_, ks) => ks.iter().map(|k| annotate(k, guards, caller)).collect(),
+        Tree::App(_, ks) => ks.iter().map(|k| annotate(k, guards, caller, strict)).collect(),
         _ => Vec::new(),
     };
     let mut facts = Facts::NONE;
@@ -57,7 +57,10 @@ pub fn annotate(t: &Tree, guards: &[GuardRule], caller: &CallerFacts) -> Ann {
     // repeat until nothing is added. Facts only grow; at most 3 bits.
     loop {
         let before = facts;
-        for g in guards {
+        // `strict`: only rows that hold everywhere. A `range_only` row (`Exp x`
+        // is positive — except where it underflows to 0) is used only alongside
+        // the finite-exact rules.
+        for g in guards.iter().filter(|g| !(strict && g.range_only)) {
             let shape_ok = match g.op {
                 None => true,
                 Some(want) => {
@@ -284,6 +287,9 @@ pub struct Config<'a> {
     pub max_steps: usize,
     /// Admit class F (finite-exact) rules.
     pub finite_exact: bool,
+    /// Admit rules whose template COMPUTES a literal. The v1 device kernel
+    /// cannot: a literal made on the device would need classifying in f32.
+    pub computed_literals: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -304,6 +310,7 @@ pub fn run(input: &Tree, rules: &[&Rule], guards: &[GuardRule], cfg: &Config) ->
         .iter()
         .copied()
         .filter(|r| cfg.finite_exact || !r.finite_only)
+        .filter(|r| cfg.computed_literals || !r.computes_literal())
         .collect();
     let index = RuleIndex::new(&admitted);
     let start = fold(input.clone(), cfg.inputs);
@@ -317,7 +324,7 @@ pub fn run(input: &Tree, rules: &[&Rule], guards: &[GuardRule], cfg: &Config) ->
     while rounds < cfg.max_steps && !frontier.is_empty() {
         let mut next: Vec<(Measure, String, Tree)> = Vec::new();
         for t in &frontier {
-            let ann = annotate(t, guards, cfg.caller);
+            let ann = annotate(t, guards, cfg.caller, !cfg.finite_exact);
             let mut found = steps(t, &index, &ann, cfg.mode);
             if cfg.search == Search::Greedy {
                 // First hit in (class A before B, position, rule id) order.

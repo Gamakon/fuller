@@ -228,6 +228,10 @@ pub struct GuardRule {
     /// Facts the node must already carry (implication).
     pub self_req: Facts,
     pub gives: Facts,
+    /// The row holds on ordinary values but not at the edge of the float range:
+    /// `Exp x` is positive, except that `Exp(-1000)` IS zero. Facts derived
+    /// through such a row are used only when finite-exact rules are admitted.
+    pub range_only: bool,
 }
 
 /// A form the reader understood and deliberately did not admit.

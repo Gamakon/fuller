@@ -318,6 +318,7 @@ fn guard_rule(premises: &[Sexp], actions: &[Sexp]) -> Result<Lowered, Fail> {
         num_preds,
         self_req,
         gives,
+        range_only: false,
     }))
 }
 

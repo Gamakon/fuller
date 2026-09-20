@@ -8,11 +8,12 @@
 
 use super::node::{Compiled, Tree};
 use super::reader::Draft;
-use super::tables::{Facts, NumExpr, Order, Pat, Rule, Tmpl};
+use super::tables::{Facts, GuardRule, NumExpr, Order, Pat, Rule, Tmpl};
 use crate::gpu_eval::Op;
 
 /// Values a metavariable's subtree may take. Finite first, then non-finite.
-const PROBES: [f64; 11] = [
+const PROBES: [f64; 12] = [
+    -1e200,
     -2.3,
     -1.0,
     0.0,
@@ -200,11 +201,68 @@ fn check_measure(d: &Draft, order: Order, nums: &[Vec<f64>]) -> Result<(), Strin
     Ok(())
 }
 
+/// Does `v` carry the facts `need`? A fact is a claim about a real value, so
+/// NaN satisfies every fact vacuously: what a rule does to a NaN is judged by
+/// the exactness check, not excused by a guard.
 fn satisfies(v: f64, need: Facts) -> bool {
-    (!need.contains(Facts::POSITIVE) || v > 0.0)
-        && (!need.contains(Facts::NONZERO) || (v != 0.0 && !v.is_nan()))
-        // "never in [-inf, 0)": NaN is allowed, by the fact's own definition.
-        && (!need.contains(Facts::NONNEG) || v >= 0.0 || v.is_nan())
+    v.is_nan()
+        || ((!need.contains(Facts::POSITIVE) || v > 0.0)
+            && (!need.contains(Facts::NONZERO) || v != 0.0)
+            && (!need.contains(Facts::NONNEG) || v >= 0.0))
+}
+
+/// Magnitudes at which f64 itself gives out (overflow to inf, underflow to 0).
+fn is_extreme(v: f64) -> bool {
+    !v.is_finite() || v.abs() >= 1e150
+}
+
+/// Check one guard row by evaluation: with children carrying the facts it
+/// requires, does the node carry the facts it grants?
+///
+/// `Ok(false)`: always. `Ok(true)`: on ordinary values, but not at the edge of
+/// the float range (`Exp(-1e200)` is 0, `Inv(inf)` is 0) — a `range_only` row.
+/// `Err`: it fails on ordinary values, and the row is refused.
+pub fn classify_guard(g: &GuardRule) -> Result<bool, String> {
+    let Some(op) = g.op else {
+        // A pure implication between facts: check it on the values directly.
+        let mut range_only = false;
+        for v in PROBES {
+            if satisfies(v, g.self_req) && !satisfies(v, g.gives) {
+                if !is_extreme(v) {
+                    return Err(format!("implication fails at {v:e}"));
+                }
+                range_only = true;
+            }
+        }
+        return Ok(range_only);
+    };
+    if op == Op::Num {
+        for v in LITERALS {
+            if g.num_preds.iter().all(|(cmp, k)| cmp.holds(v, *k)) && !satisfies(v, g.gives) {
+                return Err(format!("literal seed fails at {v:e}"));
+            }
+        }
+        return Ok(false);
+    }
+    let names: Vec<String> = (0..g.child_req.len()).map(|i| format!("__c{i}")).collect();
+    let node = Compiled::new(&Tree::App(op, names.iter().map(|n| Tree::Var(n.clone())).collect()));
+    let mut range_only = false;
+    for values in assignments(&PROBES, names.len()) {
+        if !values.iter().zip(&g.child_req).all(|(v, need)| satisfies(*v, *need)) {
+            continue;
+        }
+        let row: Vec<(String, f64)> = names.iter().cloned().zip(values.iter().copied()).collect();
+        let out = node.eval(&row)?;
+        if satisfies(out, g.gives) {
+            continue;
+        }
+        if values.iter().any(|v| is_extreme(*v)) {
+            range_only = true;
+        } else {
+            return Err(format!("fails on ordinary values: at {values:?} the node is {out:e}"));
+        }
+    }
+    Ok(range_only)
 }
 
 /// Agreement at the precision the inputs allow. `scale` is the largest

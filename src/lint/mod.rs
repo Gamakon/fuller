@@ -36,7 +36,21 @@ impl Tables {
     /// error; a form that cannot be a row is listed in `refused`.
     pub fn load(sources: &[(&str, &str)]) -> Result<Tables, String> {
         let read = reader::read(sources)?;
-        let mut tables = Tables { rules: Vec::new(), guards: read.guards, refused: read.refused };
+        let mut tables = Tables { rules: Vec::new(), guards: Vec::new(), refused: read.refused };
+        for mut g in read.guards {
+            match classify::classify_guard(&g) {
+                Ok(range_only) => {
+                    g.range_only = range_only;
+                    g.id = tables.guards.len();
+                    tables.guards.push(g);
+                }
+                Err(reason) => tables.refused.push(Refused {
+                    ruleset: "guards".to_string(),
+                    text: g.text.clone(),
+                    reason,
+                }),
+            }
+        }
         for d in &read.drafts {
             match classify::classify(d, tables.rules.len()) {
                 Ok(rule) => tables.rules.push(rule),
@@ -66,6 +80,7 @@ pub struct Options {
     pub search: Search,
     pub max_steps: usize,
     pub finite_exact: bool,
+    pub computed_literals: bool,
 }
 
 impl Default for Options {
@@ -77,6 +92,7 @@ impl Default for Options {
             search: Search::Beam(8),
             max_steps: 64,
             finite_exact: true,
+            computed_literals: true,
         }
     }
 }
@@ -102,6 +118,7 @@ pub fn lint(tables: &Tables, math: &str, inputs: &[String], opts: &Options) -> R
         search: opts.search,
         max_steps: opts.max_steps,
         finite_exact: opts.finite_exact,
+        computed_literals: opts.computed_literals,
     };
     Ok(engine::run(&tree, &rules, &tables.guards, &cfg))
 }
@@ -134,7 +151,11 @@ mod tests {
         for (set, (a, b, f)) in &by_set {
             report.push_str(&format!("{set}: A={a} B={b} finite_only={f}\n"));
         }
-        report.push_str(&format!("guards={}\n", tables.guards.len()));
+        report.push_str(&format!(
+            "guards={} range_only={}\n",
+            tables.guards.len(),
+            tables.guards.iter().filter(|g| g.range_only).count()
+        ));
         for r in &tables.refused {
             report.push_str(&format!("REFUSED [{}] {} -- {}\n", r.ruleset, r.text, r.reason));
         }
