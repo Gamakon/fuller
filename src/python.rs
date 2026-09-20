@@ -498,6 +498,32 @@ fn denoise_karva_candidates_batch(
         out
     };
 
+    // Corpus capture for the linter's gate (docs/PLAN_fuller_gpu.md, Phase 2):
+    // with FULLER_DUMP_MATH=<path> every expression this call is asked to
+    // expand is appended as `math<TAB>v1,v2,..`. Off unless the variable is
+    // set; a write failure is reported, not swallowed.
+    if let Ok(path) = std::env::var("FULLER_DUMP_MATH") {
+        use std::io::Write;
+        // Third column: the functions this problem's primitive set has, as
+        // `semantic_id/arity`, sorted — what a tidy form may be written back in.
+        let mut have: Vec<String> =
+            functions.values().map(|(id, arity)| format!("{id}/{arity}")).collect();
+        have.sort();
+        have.dedup();
+        let mut lines = String::new();
+        for (head, tail, pset) in &owned {
+            if let Ok(math) = karva_to_terms(head, tail, pset) {
+                lines.push_str(&format!("{math}\t{}\t{}\n", variables.join(","), have.join(",")));
+            }
+        }
+        std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .and_then(|mut f| f.write_all(lines.as_bytes()))
+            .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("FULLER_DUMP_MATH {path}: {e}")))?;
+    }
+
     let expansions: Vec<GeneExpansion> = py.allow_threads(|| {
         owned
             .par_iter()

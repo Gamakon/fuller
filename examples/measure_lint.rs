@@ -5,16 +5,23 @@
 //! search and rule subset, soundness on probe rows, variety, steps per
 //! expression, device eligibility, f32/f64 agreement, per-rule hits and time.
 //!
-//!   cargo run --release --example measure_lint -- exprs.tsv counts.txt egglog.tsv
+//!   cargo run --release --example measure_lint -- exprs.tsv counts.txt egglog.tsv [psets.txt head_length]
+//!
+//! With `psets.txt` (one line per expression: `semantic_id/arity,..`, the
+//! functions that problem's primitive set has) and a head length, it also
+//! reports the write-back status of every expression under the spec's §6a
+//! contract, for the form the DEVICE would produce (greedy, device subset,
+//! f32) replayed in f64 on the host.
 //!
 //! `exprs.tsv`: `math<TAB>v1,v2,..` per line. `counts.txt`: one weight per
 //! line. `egglog.tsv`: `input_cost<TAB>cost<TAB>seconds` per line, as written
 //! by `measure_smallest_form`.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::time::Instant;
 
 use fuller::gpu_eval::MAX_NODES;
+use fuller::karva::{karva_to_terms, terms_to_karva_sized, FunctionSpec, PsetSpec};
 use fuller::lint::engine::{run, CallerFacts, Config, LitMode, Search};
 use fuller::lint::node::{Compiled, Tree};
 use fuller::lint::tables::Tables;
@@ -55,9 +62,14 @@ fn agree(a: f64, b: f64, scale: f64) -> bool {
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let [exprs, counts, egglog] = args.as_slice() else {
-        panic!("usage: measure_lint exprs.tsv counts.txt egglog.tsv");
+    let (exprs, counts, egglog) = match args.as_slice() {
+        [e, c, g] | [e, c, g, _, _] => (e, c, g),
+        _ => panic!("usage: measure_lint exprs.tsv counts.txt egglog.tsv [psets.txt head_length]"),
     };
+    let write_back: Option<(Vec<String>, usize)> = args.get(3).map(|p| {
+        let psets = std::fs::read_to_string(p).expect("read psets").lines().map(str::to_string).collect();
+        (psets, args[4].parse().expect("head_length"))
+    });
     let exprs = std::fs::read_to_string(exprs).expect("read exprs");
     let counts: Vec<u64> = std::fs::read_to_string(counts)
         .expect("read counts")
@@ -114,6 +126,7 @@ fn main() {
     let mut shown = 0usize;
     let mut f32_disagrees = 0usize;
     let mut leaks: Vec<(u64, String, String)> = Vec::new();
+    let mut status: BTreeMap<&'static str, (usize, u64)> = BTreeMap::new();
 
     for (i, line) in lines.iter().enumerate() {
         let (math, vars) = line.split_once('\t').expect("math<TAB>vars");
@@ -163,6 +176,38 @@ fn main() {
         }
         if bests[3] != bests[4] {
             f32_disagrees += 1;
+        }
+
+        if let Some((psets, head_length)) = &write_back {
+            let functions: HashMap<String, FunctionSpec> = psets[i]
+                .split(',')
+                .filter_map(|f| f.split_once('/'))
+                .map(|(id, arity)| {
+                    let spec = FunctionSpec { semantic_id: id.to_string(), arity: arity.parse().expect("arity") };
+                    (id.to_string(), spec)
+                })
+                .collect();
+            let pset = PsetSpec { variables: inputs.clone(), functions, rnc_values: Vec::new() };
+            let tidy = bests[3].to_math();
+            let s = if tree.node_count() > MAX_NODES {
+                "node_oversize"
+            } else if bests[3] != bests[4] {
+                "f64_replay_mismatch"
+            } else if bests[3] == tree {
+                "unchanged"
+            } else {
+                match terms_to_karva_sized(&tidy, &pset, 0, Some(*head_length)) {
+                    Err(_) => "encode_error (function not in the primitive set)",
+                    Ok((_, _, true)) => "head_oversize",
+                    Ok((h, t, false)) => match karva_to_terms(&h, &t, &pset).ok().and_then(|m| Tree::parse(&m).ok()) {
+                        Some(back) if back == bests[3] => "graftable",
+                        _ => "encode_error (round trip changed the expression)",
+                    },
+                }
+            };
+            let e = status.entry(s).or_insert((0, 0));
+            e.0 += 1;
+            e.1 += counts[i];
         }
 
         // Soundness against the INPUT on probe rows: the full rule set (arm 0)
@@ -225,6 +270,12 @@ fn main() {
     println!("  exact-only rules : input finite {}, input non-finite {}", finite_divergent[1], nonfinite_changed[1]);
     for e in &examples {
         println!("  DIVERGES {e}");
+    }
+    if write_back.is_some() {
+        println!("write-back status of the device form (greedy, device subset, f32; replayed in f64):");
+        for (name, (n_expr, weight)) in &status {
+            println!("  {name:<58} {n_expr:>8} expressions {weight:>9} weighted");
+        }
     }
     println!("greedy steps per expression: {steps_hist:?}");
     println!("rule hits (beam8, weighted), top 25:");
