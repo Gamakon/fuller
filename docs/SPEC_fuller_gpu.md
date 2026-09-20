@@ -85,6 +85,36 @@ What the kingdom join does **not** do: it does not make rules confluent.
 Non-confluence is two usable rules undoing each other (distribute + trig), not
 a membership problem. Termination comes from §5.
 
+## 2a. Interface (DESIGNED)
+
+```
+lint(
+    symbols,            -- semantic_id, arity/signature, eval_op          (the kingdom)
+    rules,              -- pattern, template, guard, rule_class, family
+    rule_symbols,       -- rule_id -> semantic_id, both sides of the rule
+    guard_seeds,        -- semantic_id -> fact
+    guard_propagation,  -- semantic_id + child facts -> fact
+    expressions,        -- the batch of K-expressions (level-order arrays)
+    inputs,             -- which names are data columns (never folded)
+    caller_facts,       -- positive / nonzero variables
+    rows = none,        -- optional data; enables class D (prune, snap)
+    mode = fix | generate,
+    rounds = 6, beam = 8, tolerance
+) -> per expression: [ (K-expression, node_count, loss if rows) ... ]
+```
+
+- **Once per kingdom:** the five tables. The usable-rule anti-join (§2) and
+  the rule-class check (§5) run at load; the result stays resident on the
+  device, as the dataset does today (`GpuEvaluator`, BUILT).
+- **Per call:** `expressions`, `caller_facts`.
+- `rows` is the resident buffer the evaluator already holds.
+- `inputs` is **required**, never defaulted. An input named `c` was read as
+  the speed of light three separate times before this was made an argument
+  everywhere (`_resolve_rnc`, `concretize`, `fold_constant_subtrees`).
+- **The function body contains no arithmetic.** What `ProtectedDiv` means
+  lives in `symbols.eval_op` (used by K5) and in the rules written against it.
+  Different tables, different linter; no code change.
+
 ## 3. Layout (BUILT for evaluation)
 
 Level-order node arrays, as `gpu_eval::ExprBatch`: `nodes[]`, `offsets[]`,
