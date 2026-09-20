@@ -247,6 +247,22 @@ mod tests {
         assert_eq!(lint(&tables, e, &inputs, &told).unwrap().best.to_math(), r#"(Var "mom")"#);
     }
 
+    /// Feynman III.13.18 at seed 15795: every column positive, the only sign in
+    /// the term is a literal's. |(1/x3)/(-19)| is (1/x3)/19 — and without the
+    /// fact that x3 is positive the Abs must stay.
+    #[test]
+    fn abs_over_a_negative_literal_needs_a_caller_fact() {
+        let tables = Tables::standard().unwrap();
+        let inputs = vec!["x3".to_string()];
+        let e = r#"(Abs (ProtectedDiv (Inv (Var "x3")) (Num -19.0)))"#;
+        assert!(lint(&tables, e, &inputs, &Options::default()).unwrap().best.to_math().contains("Abs"));
+        let told = Options { positive_vars: inputs.clone(), ..Options::default() };
+        assert_eq!(
+            lint(&tables, e, &inputs, &told).unwrap().best.to_math(),
+            r#"(ProtectedDiv (Inv (Var "x3")) (Num 19.0))"#
+        );
+    }
+
     #[test]
     fn is_deterministic() {
         let e = r#"(Sub (Neg (Mul (Var "a") (Num -1.0))) (Neg (Abs (Pow2 (Var "b")))))"#;

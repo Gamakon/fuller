@@ -109,6 +109,10 @@ pub const GUARD_RELATIONS: &str = r#"
 (rule ((is-positive x) (= e (Pow3 x))) ((is-positive e)) :ruleset guards)
 (rule ((is-positive x) (= e (Sqrt x))) ((is-positive e)) :ruleset guards)
 (rule ((is-positive x) (= e (Inv x))) ((is-positive e)) :ruleset guards)
+; The protected forms agree with the raw ones wherever the divisor is non-zero,
+; and a positive divisor is.
+(rule ((is-positive x) (= e (ProtectedInv x))) ((is-positive e)) :ruleset guards)
+(rule ((is-positive a) (is-positive b) (= m (ProtectedDiv a b))) ((is-positive m)) :ruleset guards)
 (rule ((is-nonzero x) (= e (Abs x))) ((is-positive e)) :ruleset guards)
 ; ProtectedExp is exp(x) or +inf: positive on the same terms as Exp above.
 (rule ((= e (ProtectedExp x))) ((is-positive e) (is-nonzero e)) :ruleset guards)

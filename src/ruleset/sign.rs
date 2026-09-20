@@ -84,6 +84,26 @@ pub const SIGN_RULESET: &str = r#"
 (rewrite (Tanh (Neg x)) (Neg (Tanh x)) :ruleset sign)
 (rewrite (Pow3 (Neg x)) (Neg (Pow3 x)) :ruleset sign)
 (rewrite (Inv (Neg x)) (Neg (Inv x)) :ruleset sign)
+; ===== D. ABS OVER A SIGN-DEFINITE TERM — each removes the Abs =====
+; |(-a)| = |a|
+(rewrite (Abs (Neg a)) (Abs a) :ruleset sign)
+; a > 0, c < 0:  |a/c| = a/(-c),  |a*c| = a*(-c),  |c/a| = (-c)/a.
+; Feynman III.13.18 came back as 238.76*|(1/x3)/(-19)|*..: every column there
+; is positive, the only sign in the term is the literal's, and SRBench's
+; checker cannot see through the Abs.
+(rule ((= e (Abs (ProtectedDiv a (Num c)))) (is-positive a) (< c 0.0))
+      ((union e (ProtectedDiv a (Num (neg c))))) :ruleset sign)
+(rule ((= e (Abs (Div a (Num c)))) (is-positive a) (< c 0.0))
+      ((union e (Div a (Num (neg c))))) :ruleset sign)
+(rule ((= e (Abs (ProtectedDiv (Num c) a))) (is-positive a) (< c 0.0))
+      ((union e (ProtectedDiv (Num (neg c)) a))) :ruleset sign)
+(rule ((= e (Abs (Div (Num c) a))) (is-positive a) (< c 0.0))
+      ((union e (Div (Num (neg c)) a))) :ruleset sign)
+(rule ((= e (Abs (Mul a (Num c)))) (is-positive a) (< c 0.0))
+      ((union e (Mul a (Num (neg c))))) :ruleset sign)
+(rule ((= e (Abs (Mul (Num c) a))) (is-positive a) (< c 0.0))
+      ((union e (Mul (Num (neg c)) a))) :ruleset sign)
+
 "#;
 
 #[cfg(test)]
