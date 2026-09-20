@@ -385,8 +385,11 @@ fn denoise_karva_candidates(
 /// One gene's e-class expansion, as plain owned data (crosses the GIL
 /// boundary without touching Python).
 struct GeneExpansion {
-    /// (head, tail, cost, is_original) per usable candidate.
-    candidates: Vec<(Vec<Token>, Vec<Token>, u64, bool)>,
+    /// (head, tail, cost, is_original, level) per usable candidate. `level`
+    /// says how the form was obtained: `egglog`, or for the linter `bit`,
+    /// `rounding`, `finite` (the weakest rule on its chain) or `prune` (a
+    /// data-justified edit: NOT an equivalence).
+    candidates: Vec<(Vec<Token>, Vec<Token>, u64, bool, &'static str)>,
     /// Node count of the gene as given — the baseline a variant's cost is
     /// compared against. Reported separately because the original itself may
     /// not survive re-encoding (oversized / inexpressible) and would otherwise
@@ -488,7 +491,7 @@ fn denoise_karva_candidates_batch(
         for c in cands {
             match terms_to_karva_sized(&c.expr, pset, rng_seed + i as u64, target_head_length) {
                 Ok((_, _, true)) => out.n_oversized += 1,
-                Ok((h, t, false)) => out.candidates.push((h, t, c.cost, c.is_original)),
+                Ok((h, t, false)) => out.candidates.push((h, t, c.cost, c.is_original, "egglog")),
                 Err(why) => {
                     out.n_inexpressible += 1;
                     *out.inexpressible_why.entry(why).or_insert(0) += 1;
@@ -556,12 +559,13 @@ fn expansions_to_py(py: Python<'_>, expansions: Vec<GeneExpansion>) -> PyResult<
     for e in expansions {
         let d = PyDict::new_bound(py);
         let mut cands: Vec<Py<PyDict>> = Vec::with_capacity(e.candidates.len());
-        for (h, t, cost, is_original) in &e.candidates {
+        for (h, t, cost, is_original, level) in &e.candidates {
             let c = PyDict::new_bound(py);
             c.set_item("head", tokens_to_py(py, h)?)?;
             c.set_item("tail", tokens_to_py(py, t)?)?;
             c.set_item("cost", *cost)?;
             c.set_item("is_original", *is_original)?;
+            c.set_item("level", *level)?;
             cands.push(c.into());
         }
         d.set_item("candidates", cands)?;
@@ -590,7 +594,7 @@ fn expansions_to_py(py: Python<'_>, expansions: Vec<GeneExpansion>) -> PyResult<
 #[pyfunction]
 #[pyo3(signature = (genes, variables, functions, k_variants = 8, rng_seed = 0,
                     target_head_length = None, positive_vars = vec![],
-                    nonzero_vars = vec![], exactness = "bit"))]
+                    nonzero_vars = vec![], exactness = "bit", rows = vec![]))]
 fn lint_karva_candidates_batch(
     py: Python<'_>,
     genes: Vec<(Vec<PyToken>, Vec<PyToken>, Vec<f64>)>,
@@ -602,6 +606,7 @@ fn lint_karva_candidates_batch(
     positive_vars: Vec<String>,
     nonzero_vars: Vec<String>,
     exactness: &str,
+    rows: Vec<HashMap<String, f64>>,
 ) -> PyResult<Vec<Py<PyDict>>> {
     use crate::lint::engine::{run, CallerFacts, Config, LitMode, Search};
     use crate::lint::node::Tree;
@@ -636,6 +641,8 @@ fn lint_karva_candidates_batch(
         functions.values().map(|(id, _)| id.as_str()).collect();
     let rules = tables.usable_ids(&have);
     let caller = CallerFacts { positive: positive_vars, nonzero: nonzero_vars };
+    let core_rows: Vec<Vec<(String, f64)>> =
+        rows.into_iter().map(|m| m.into_iter().collect()).collect();
 
     let expand = |i: usize, head: &[Token], tail: &[Token], pset: &PsetSpec| -> GeneExpansion {
         let mut out = GeneExpansion {
@@ -666,12 +673,42 @@ fn lint_karva_candidates_batch(
         let outcome = run(&tree, &rules, &tables.guards, &cfg);
         // The gene as given is not a candidate: the caller already holds it,
         // and re-encoding it would only count its own tokens as inexpressible.
-        for form in outcome.forms.iter().filter(|f| **f != tree).take(k_variants.max(1)) {
-            let is_original = false;
-            let cost = form.node_count() as u64;
-            match terms_to_karva_sized(&form.to_math(), pset, rng_seed + i as u64, target_head_length) {
+        let mut offered: Vec<(String, u64, &'static str)> = outcome
+            .forms
+            .iter()
+            .zip(&outcome.levels)
+            .filter(|(f, _)| **f != tree)
+            .take(k_variants.max(1))
+            .map(|(f, level)| {
+                let label = match level {
+                    Exactness::Bit => "bit",
+                    Exactness::Rounding => "rounding",
+                    Exactness::Finite => "finite",
+                };
+                (f.to_math(), f.node_count() as u64, label)
+            })
+            .collect();
+        // With rows: the data-justified prunes of the tidiest form, at the
+        // tolerances the egglog path uses. NOT equivalences — the caller's
+        // scoring on data decides whether any of them is a better gene.
+        if !core_rows.is_empty() {
+            let tidy = outcome.best.to_math();
+            if let Ok(reference) = crate::extract::eval_expr_rows(&tidy, &core_rows) {
+                for tol in [1e-10_f64, 1e-6, 1e-3, 1e-2, 1e-1] {
+                    let Some(pruned) = crate::extract::prune_on_data(&tidy, &core_rows, &reference, tol) else {
+                        continue;
+                    };
+                    let Ok(pt) = Tree::parse(&pruned) else { continue };
+                    if pt != tree && offered.iter().all(|(m, _, _)| *m != pruned) {
+                        offered.push((pruned, pt.node_count() as u64, "prune"));
+                    }
+                }
+            }
+        }
+        for (math, cost, label) in offered {
+            match terms_to_karva_sized(&math, pset, rng_seed + i as u64, target_head_length) {
                 Ok((_, _, true)) => out.n_oversized += 1,
-                Ok((h, t, false)) => out.candidates.push((h, t, cost, is_original)),
+                Ok((h, t, false)) => out.candidates.push((h, t, cost, false, label)),
                 Err(why) => {
                     out.n_inexpressible += 1;
                     *out.inexpressible_why.entry(why).or_insert(0) += 1;

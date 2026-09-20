@@ -1185,7 +1185,7 @@ fn cost_of(expr: &str) -> u64 {
 /// whose removal keeps predictions within `tolerance` of `reference` on `rows`.
 /// Greedy + repeated to a fixpoint. Returns the smallest fitting form, or None
 /// if it can't be parsed (or there is no data to justify any prune).
-fn prune_on_data(
+pub(crate) fn prune_on_data(
     expr: &str,
     rows: &[Vec<(String, f64)>],
     reference: &[f64],

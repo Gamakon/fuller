@@ -3,7 +3,7 @@
 //! Spec §4 (K1–K4) and §6, on the CPU. This is the reference the device kernel
 //! is checked against.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use super::node::{Measure, Tree};
 use super::tables::{Exactness, Facts, GuardRule, Order, Pat, Rule, Tmpl};
@@ -216,21 +216,36 @@ impl<'a> RuleIndex<'a> {
 pub struct Step {
     pub rule: usize,
     pub order: Order,
+    /// The rule's own level — or `Finite` when the rule fired only thanks to a
+    /// range-only guard fact (`Exp x` is positive, except where it is 0).
+    pub exactness: Exactness,
     pub tree: Tree,
 }
 
 /// Every single-step rewrite of `t`, in (level-order position, rule id) order.
-pub fn steps(t: &Tree, index: &RuleIndex, ann: &Ann, mode: LitMode) -> Vec<Step> {
+///
+/// `strict` holds the facts that are true everywhere; `loose`, when given,
+/// also those true only within the float range. A hit that needs `loose` is
+/// labelled `Finite`.
+pub fn steps(t: &Tree, index: &RuleIndex, strict: &Ann, loose: Option<&Ann>, mode: LitMode) -> Vec<Step> {
     let mut out = Vec::new();
     for path in t.positions() {
-        let (Some(sub), Some(sub_ann)) = (t.at(&path), ann_at(ann, &path)) else {
+        let (Some(sub), Some(strict_at)) = (t.at(&path), ann_at(strict, &path)) else {
             continue;
         };
         for rule in index.at(sub) {
-            if let Some(replacement) = apply_at(rule, sub, sub_ann, mode) {
+            let hit = match apply_at(rule, sub, strict_at, mode) {
+                Some(r) => Some((r, rule.exactness)),
+                None => loose
+                    .and_then(|l| ann_at(l, &path))
+                    .and_then(|loose_at| apply_at(rule, sub, loose_at, mode))
+                    .map(|r| (r, Exactness::Finite)),
+            };
+            if let Some((replacement, exactness)) = hit {
                 out.push(Step {
                     rule: rule.id,
                     order: rule.order,
+                    exactness,
                     tree: t.replaced(&path, replacement),
                 });
             }
@@ -299,6 +314,9 @@ pub struct Outcome {
     pub best: Tree,
     /// Every distinct form met, smallest first, the input included.
     pub forms: Vec<Tree>,
+    /// For each form, the weakest exactness on the chain that reached it:
+    /// how far it can be trusted to compute what the input computes.
+    pub levels: Vec<Exactness>,
     /// Rewrites along the chain to `best` (greedy) or rounds run (beam).
     pub steps: usize,
     /// How often each rule fired, by rule id.
@@ -316,17 +334,19 @@ pub fn run(input: &Tree, rules: &[&Rule], guards: &[GuardRule], cfg: &Config) ->
     let index = RuleIndex::new(&admitted);
     let start = fold(input.clone(), cfg.inputs);
     let mut hits: BTreeMap<usize, usize> = BTreeMap::new();
-    let mut seen: BTreeSet<String> = BTreeSet::new();
-    seen.insert(start.to_math());
+    // form -> the best (lowest) level it has been reached at.
+    let mut seen: BTreeMap<String, Exactness> = BTreeMap::new();
+    seen.insert(start.to_math(), Exactness::Bit);
     let mut forms: Vec<Tree> = vec![start.clone()];
-    let mut frontier: Vec<Tree> = vec![start];
+    let mut frontier: Vec<(Tree, Exactness)> = vec![(start, Exactness::Bit)];
     let mut rounds = 0usize;
 
     while rounds < cfg.max_steps && !frontier.is_empty() {
-        let mut next: Vec<(Measure, String, Tree)> = Vec::new();
-        for t in &frontier {
-            let ann = annotate(t, guards, cfg.caller, cfg.admit != Exactness::Finite);
-            let mut found = steps(t, &index, &ann, cfg.mode);
+        let mut next: Vec<(Measure, String, Tree, Exactness)> = Vec::new();
+        for (t, level) in &frontier {
+            let strict = annotate(t, guards, cfg.caller, true);
+            let loose = (cfg.admit == Exactness::Finite).then(|| annotate(t, guards, cfg.caller, false));
+            let mut found = steps(t, &index, &strict, loose.as_ref(), cfg.mode);
             if cfg.search == Search::Greedy {
                 // First hit in (class A before B, position, rule id) order.
                 // `steps` is already in (position, rule id) order and the sort
@@ -335,11 +355,16 @@ pub fn run(input: &Tree, rules: &[&Rule], guards: &[GuardRule], cfg: &Config) ->
                 found.truncate(1);
             }
             for s in found {
+                let reached = (*level).max(s.exactness);
                 let tree = fold(s.tree, cfg.inputs);
                 let key = tree.to_math();
-                if seen.insert(key.clone()) {
-                    *hits.entry(s.rule).or_insert(0) += 1;
-                    next.push((tree.measure(), key, tree));
+                match seen.get_mut(&key) {
+                    Some(known) => *known = (*known).min(reached),
+                    None => {
+                        seen.insert(key.clone(), reached);
+                        *hits.entry(s.rule).or_insert(0) += 1;
+                        next.push((tree.measure(), key, tree, reached));
+                    }
                 }
             }
         }
@@ -351,11 +376,12 @@ pub fn run(input: &Tree, rules: &[&Rule], guards: &[GuardRule], cfg: &Config) ->
         if let Search::Beam(width) = cfg.search {
             next.truncate(width.max(1));
         }
-        frontier = next.iter().map(|(_, _, t)| t.clone()).collect();
-        forms.extend(next.into_iter().map(|(_, _, t)| t));
+        frontier = next.iter().map(|(_, _, t, l)| (t.clone(), *l)).collect();
+        forms.extend(next.into_iter().map(|(_, _, t, _)| t));
     }
 
     forms.sort_by_cached_key(|t| (t.measure(), t.to_math()));
+    let levels = forms.iter().map(|t| seen.get(&t.to_math()).copied().unwrap_or(Exactness::Finite)).collect();
     let best = forms.first().cloned().unwrap_or_else(|| input.clone());
-    Outcome { best, forms, steps: rounds, hits }
+    Outcome { best, forms, levels, steps: rounds, hits }
 }
