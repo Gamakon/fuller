@@ -56,6 +56,13 @@ pub const POWERS_RULESET: &str = r#"
 ; rules, so the simplifier never saw it.
 (rewrite (Pow2 (Sqrt p)) p :when ((is-positive p)) :ruleset powers)
 
+; exp(ln|x|) = |x| where x != 0. ProtectedLog is ln|x| (and +inf at 0, where
+; the left side is +inf and |x| is 0 — hence the guard). With a caller fact
+; that x is positive the Abs then sheds too: on Feynman III.7.38 the model
+; carried exp(log(Abs(mom))) and SRBench's checker could not see it was `mom`.
+(rewrite (ProtectedExp (ProtectedLog x)) (Abs x) :when ((is-nonzero x)) :ruleset powers)
+(rewrite (Exp (ProtectedLog x)) (Abs x) :when ((is-nonzero x)) :ruleset powers)
+
 ; ---- radicals merge: sqrt(a)*sqrt(b) = sqrt(a*b), sqrt(a)/sqrt(b) = sqrt(a/b) ----
 ; SRBench's checker would not accept sqrt(gamma)*sqrt(pr)/sqrt(rho) for
 ; sqrt(gamma*pr/rho) (Feynman I.47.23): its sympy keeps the roots apart, because

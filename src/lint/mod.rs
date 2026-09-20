@@ -234,6 +234,18 @@ mod tests {
         assert_eq!(lint(&tables, p, &inputs, &Options::default()).unwrap().best.to_math(), p);
     }
 
+    /// Feynman III.7.38: with the data saying `mom` is positive,
+    /// exp(ln|mom|) is `mom`. Without that fact it must stay.
+    #[test]
+    fn exp_of_protected_log_needs_a_caller_fact() {
+        let tables = Tables::standard().unwrap();
+        let inputs = vec!["mom".to_string()];
+        let e = r#"(ProtectedExp (ProtectedLog (Var "mom")))"#;
+        assert_eq!(lint(&tables, e, &inputs, &Options::default()).unwrap().best.to_math(), e);
+        let told = Options { positive_vars: inputs.clone(), ..Options::default() };
+        assert_eq!(lint(&tables, e, &inputs, &told).unwrap().best.to_math(), r#"(Var "mom")"#);
+    }
+
     #[test]
     fn is_deterministic() {
         let e = r#"(Sub (Neg (Mul (Var "a") (Num -1.0))) (Neg (Abs (Pow2 (Var "b")))))"#;
