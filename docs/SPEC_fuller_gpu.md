@@ -113,6 +113,49 @@ What the kingdom join does **not** do: it does not make rules confluent.
 Non-confluence is two usable rules undoing each other (distribute + trig), not
 a membership problem. Termination comes from §5.
 
+## 2b. General by design, Symbolic Regression by build
+
+The design carries the whole nucleotable schema. The build and its tests cover
+one kingdom: **Symbolic Regression**. REGEX is the intended second kingdom,
+later; nothing below may be written in a way that has to be undone for it.
+
+General from the first commit — these cost nothing extra now and are expensive
+to retrofit:
+
+| Piece | How it stays general |
+|---|---|
+| table formats | `symbols` is the full schema: every `in_*` / `out_*` column is read, not just `in_F` / `out_F`. New type columns (NLP, Botji) are more columns, not new code. |
+| keys | rules and guards key on `semantic_id`; expressions carry `(kingdom, symbol)`; the join between them is data. |
+| rule rows | every pattern position and template carries a type signature, even though in SR every one is `F -> F`. The load-time type check runs on SR rules too, where it trivially passes. |
+| kingdom filter | usable rules are derived by the anti-join, even with one kingdom loaded. |
+| node layout | a node stores `symbol` and its resolved arity; the arity comes from the typed columns via one function, which for SR returns `in_F`. |
+| K1–K4 | no float assumptions: matching, splicing, re-layout and the ordering measure work on symbol ids and arities only. |
+| literals | a literal node carries a type tag and a payload slot. SR uses the float payload; a string payload is an index into a side table, reserved, not built. |
+
+Symbolic Regression only, for now — each is a named seam, not a hidden assumption:
+
+| Piece | SR-only today | What REGEX would need |
+|---|---|---|
+| K5 evaluate | float kernel, protected-op contract, f32 | its own evaluator; strings are not a WGSL type, so likely host-side |
+| K6 / class D rules | 1−R² against the source's predictions | a loss over string outputs (match agreement on example rows) |
+| K7 signature | 16 float rows | 16 example strings -> hash of outputs |
+| K4 fold | evaluates a closed float subtree | a closed string subtree through its evaluator |
+| guard facts | `is-positive`, `is-nonzero`, `is-nonneg` | its own facts (`is-anchored`, `never-empty`, ...) — rows in the same two tables |
+| rule content | `identities`, `powers`, `sign`, `rational` | its own rows; `concat` rules would already be shared with SQL |
+| arity resolution | single type, so arity = `in_F` | per-instance, top-down from the root's output type (§8) |
+| ordering measure | `(node_count, Neg depth)` | `node_count` is general; the secondary measure is per rule family |
+
+So a second kingdom is: rows in five tables, one evaluator, one loss, one
+signature. If adding REGEX needs a change to K1–K3 or to the table formats,
+this section was wrong and should be corrected first.
+
+**Tests.** The build is tested on SR only (the 847-expression dataset, §9).
+One structural test guards generality without a second evaluator: load the
+REGEX and SQL seed rows from nucleotable alongside SR and assert that the
+kingdom filter hands SR exactly the SR-usable rules, that a `concat` rule is
+offered to REGEX and SQL and never to SR, and that a rule with a mistyped
+template is refused at load.
+
 ## 2a. Interface (DESIGNED)
 
 ```
