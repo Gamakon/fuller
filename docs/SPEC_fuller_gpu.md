@@ -1,6 +1,79 @@
 # SPEC: fuller on the GPU — a graph linter for K-expressions
 
-Version 2 · 2026-09-20 · supersedes v1 (commit `85059b8`)
+Version 3 · 2026-09-20 · supersedes v2. Build plan: `PLAN_fuller_gpu.md`.
+
+## 0. Context
+
+#### The objective
+
+**Beat the SRBench benchmarks with our symbolic regression approach**: recover
+the exact equation on every ground-truth problem (Feynman, Strogatz), match or
+beat the best black-box scores (Operon: test R² 0.934 in ≈ 615 s), and do it
+faster than anyone else.
+
+#### The approach
+
+- **HFF-SR**: gene expression programming (K-expressions, multi-gene
+  chromosomes, islands) selected by HFF, the hyperspherical fitness function,
+  which finds solutions with almost no overfit and no parsimony pressure.
+- **The join**: islands × population × genes × variants × linkers × wrappers
+  scored in one GPU dispatch (BUILT). Train rows fit the regression; validation
+  rows are only scored.
+- **fuller replaces sympy.** Every SR system leans on a computer-algebra step
+  to simplify what evolution produces. Ours was sympy: slow, unbounded (one
+  `simplify` call hung a run for 2 h 20 m), complex-domain, and ignorant of the
+  engine's protected operators. fuller is our egglog-based tool for discovering
+  simplified forms of expressions: deterministic, real-domain, bounded, and
+  exact about what `ProtectedDiv` and friends actually compute.
+
+#### The unique feature
+
+**fuller's simplified forms go back into the evolution.** A simplified form is
+converted back into a K-expression and so into a gene. Simplification is not a
+report-time clean-up, as it is everywhere else in the field; it is a variation
+operator that works on *meaning* where GEP's own operators work on *tokens*.
+An individual can be replaced by an equivalent, smaller, differently-shaped
+gene with identical fitness — which changes what crossover, transposition and
+mutation can reach next — and the whole population is kept tidy as it evolves.
+No other SRBench entrant feeds its algebra system back into the search.
+
+#### Where we are (MEASURED)
+
+- Registry: 72 / 126 exact. The 54 misses are search misses (49 below R² 0.99),
+  not simplification misses. Honest caveat: of 66 Feynman recoveries audited,
+  12 were evolved, 31 came from the name-blind `power_law` rule and 23 from
+  name-gated templates.
+- Power plant (black-box): test MSE 18.96, R² 0.9338 at population 1000.
+- fuller today: egglog on the CPU, ≈ 1 ms per expression, ≈ 4% of a join run;
+  GPU scoring ≈ 1%; Python ≈ 94%. It reaches only the individuals an ORF cache
+  lets through, goes out through Python, and loses forms the primitive set
+  cannot express on the way back (2,619 in one 450-generation run).
+- A rule-mining survey of 847 real hall-of-fame expressions added 60+ rules:
+  weighted nodes after simplification 154,554 → 150,926, none larger.
+
+#### Why this plan
+
+To make the unique feature count, it has to be applied to **every individual,
+every generation**, at no cost — and the engine is heading onto the GPU, where
+a CPU egglog step would become the stall. egglog cannot move to the GPU. A GPU
+fuller is therefore a new, table-driven rewriter — a graph linter — working
+directly on level-order K-expressions: rule × expression × position, bounded
+rounds, no e-graph. The target is the spec's §6a: the linter as a **stage of
+evaluation** on the device — each individual evaluated in its tidy form, with
+write-back to the gene by policy. Because it rewrites K-expressions in place,
+the round trip through Python and the re-encoding loss both disappear.
+
+#### What success looks like
+
+1. The linter reproduces most of egglog's reductions on real expressions
+   (the Phase 2 gate), soundly.
+2. It runs inside the GPU evaluation pass at negligible cost.
+3. An A/B — linter on vs off, evolved-only problems, several seeds — shows it
+   helps the evolution: more exact recoveries, or fewer generations to exact.
+   That last number is the one that matters for SRBench, and it has not yet
+   been demonstrated for the egglog version either.
+
+---
 
 Status tags: **BUILT** (running, tested) · **MEASURED** (number from a real
 run) · **DESIGNED** (specified here, not implemented).
@@ -11,6 +84,15 @@ in `CR_fuller_wgpu_port.md`: at the 64 rows the join sends, fuller's data
 scoring is not worth a kernel (MEASURED: 0.16 s per 847 expressions), and
 egglog cannot be moved. A GPU fuller **is** the rewriter below — a new build,
 not a port.
+
+Changes in v3 (design review + an outside review by codex, log in
+`logs/codex_plan_review.log`): the class-B measure in §5 was wrong and is
+replaced; a finite-exact class F is added because some production rules are
+not NaN/inf-exact; §4 K3 is a copy with index remapping in an
+evaluator-private layout, with canonical BFS required for anything that leaves
+the evaluator; §6 no longer dedups by signature within a source; literals
+computed on the device are excluded from the v1 device rule subset; write-back
+carries a status contract (§6a).
 
 Changes from v1: §1 says what the thing *is* (v1 only said how it works); the
 rule classes in §5 now separate meaning-preserving fixes from data-justified
@@ -217,8 +299,25 @@ A lint pass is exactly K1–K3: rule × node, bounded rounds, no global reasonin
   (`= 1.0`, `|k| < 1e-6`); required fact bits from K1. Same-subtree equality
   (`Mul x x`) is a compare of two node ranges.
 - **K3** emits one output per hit. Two hits on one expression produce two
-  variants, never a merged rewrite. Re-layout is a BFS renumbering — the same
-  arity prefix sum as §3.
+  variants, never a merged rewrite. Rules are RHS-linear (checked at load) and
+  classes A/B/F never grow, so apply is a **three-block copy with index
+  remapping** into a fixed 64-node slot — prefix unchanged, template skeleton
+  at the hit position, the surviving nodes after it — followed by a liveness
+  scan that compacts away dropped subtrees (a dead `Sin(inf)` would otherwise
+  set K5's poison flag). No count pass, no prefix sum.
+  **Two layouts.** That output is *evaluator-private*: K5 follows stored child
+  indices and needs only child index > parent index. It is **not** a
+  K-expression — Karva takes a function's children from the next stream slots,
+  so `[Add, Neg, Mul, c, b, a]` evaluates correctly and decodes as something
+  else. Anything that leaves the evaluator (token key, dedup, reporting,
+  write-back) is first re-laid-out in canonical BFS, on the host.
+- **Literals.** The kernel never compares floats. The host classifies each
+  literal in f64 into an integer class id plus predicate bits (a constant
+  1.0000001 is 1.0 in f32; `x*1 -> x` must not fire on it). A literal
+  *computed* on the device would need its class in f32 for the next round, so
+  the v1 device rule subset excludes every rule with a computed literal and
+  any literal-matching rule one could feed. The CPU engine has
+  `LitMode::{F64, F32}` so device parity can be tested exactly.
 - **K4 invariant: an input variable is never folded**, whatever its name (`c`
   is a column before it is the speed of light). Inputs are an explicit
   argument. Tests to carry over:
@@ -238,15 +337,34 @@ Every rule declares a `rule_class`, checked when the table is loaded.
 Meaning-preserving (exact under the symbol definitions, NaN and ±inf included):
 
 ```
-measure(expr) = (node_count, sum of depths of Neg nodes, ...)   lexicographic
+measure(expr) = (node_count, #Pow, #Div, #ProtectedInv, M_neg)   lexicographic
+M_neg = sum over Neg nodes of the number of NON-Neg proper ancestors
 ```
 
 - **A — shrinker**: strictly reduces `node_count`.
-- **B — enabler**: keeps `node_count`, strictly reduces the secondary measure
-  (the `sign` float-outs that move a `Neg` rootward so a class-A rule can
-  delete it; BUILT in egglog form).
-- anything expanding, bidirectional or commutative is **not admitted**. Those
-  families (distribute, trig expansion) stay in egglog on the CPU.
+- **B — enabler**: keeps `node_count`, strictly reduces a later component:
+  the 12 `sign` float-outs via `M_neg`; `Pow x -2/-3/4/6` and `Log(Pow x n)`
+  via `#Pow`; `Div -1 x` and `Div (Inv a) b` via `#Div`;
+  `ProtectedInv x -> Inv x` via `#ProtectedInv`.
+- anything expanding, bidirectional or commutative is **not admitted**
+  (`Pow x -4`, `Pow x 8`, `Log(Mul a b)`, the binomial squares). Those
+  families stay in egglog on the CPU.
+
+v2 of this spec used "sum of depths of Neg nodes". That is wrong: it is
+*increased* by 7 of the 12 float-outs — `Sub (Neg a) b -> Neg (Add a b)` lifts
+the Neg one level and pushes all of `b` down one. `M_neg` loses exactly one
+for each float-out and is unaffected by what sits inside `b`. The op counts
+rank before it because `Pow x -2 -> Inv (Pow2 x)` adds a non-Neg ancestor.
+The measure is a table (`measures(rank, kind, semantic_id)`), not code. The
+claim is checked mechanically at load: each rule is instantiated with nested
+Negs in every metavariable position and the decrease asserted.
+
+- **F — finite-exact**: exact wherever every subterm is finite, but not under
+  NaN/±inf. `Mul x 0 -> 0` is the example: `inf * 0` is NaN, the rewrite says
+  0. These rules are in production in egglog today. Class F is assigned by a
+  per-rule differential test on non-finite probes, never by hand; F rules sit
+  behind a named switch (on by default, matching today's behaviour), and every
+  coverage figure is reported both with and without them.
 
 "Shrink-only" would be wrong: fuller's own `sign` ruleset needs class B. The
 measure is what gives termination without an e-graph.
@@ -266,7 +384,9 @@ intermediate forms rather than only the smallest.
 frontier = input batch
 repeat up to R rounds (R = 6, as SMALLEST_FORM_MAX_ROUNDS):
     K1 facts -> K2 match -> K3 apply -> K4 fold
-    dedup by exact tokens, then by K7 signature
+    dedup by canonical token key
+    (K7 signature within one source is an ASSERTION, not a key: A/B variants
+     behave identically by construction, so it would collapse the beam)
     keep a beam of B per source expression (B = 8, as ECLASS_K)
         fix mode:      smallest measure first
         generate mode: smallest first, but structurally distinct forms preferred
@@ -301,6 +421,12 @@ population -> K1 facts -> K2 match -> K3 apply -> K4 fold -> K5 evaluate -> scor
   `GRAFT_MODE = improve`). The stage therefore emits two things per individual:
   the tidy form (evaluation, reporting, "same model") and, under the graft
   policy, a written-back gene. Baldwinian by default, Lamarckian by switch.
+
+- **Every result carries one status**, counted and shown in the join summary:
+  `grafted`, `phenotype_only`, `head_oversize`, `node_oversize` (> 64 on the
+  device), `f64_replay_mismatch` (the CPU f64 re-derivation disagrees with the
+  device's f32 form), `encode_error`. Nothing is dropped or substituted
+  silently. A form used for reporting or write-back is always the CPU f64 one.
 
 ## 7. What is lost against egglog
 
