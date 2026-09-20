@@ -10,6 +10,7 @@
 //! Adding it to an existing family without the router would re-open the
 //! non-confluence trap the family split exists to avoid.
 
+pub mod collect;
 pub mod distribute;
 pub mod identities;
 pub mod powers;
