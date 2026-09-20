@@ -85,3 +85,6 @@ takes variants already scored, so e-class variants + graft can enter the
 engine's join without a Python round trip.
 
 Needs mains: every build, `cargo test --features gpu`, all gates above.
+
+
+Superseded for the rewriter by `SPEC_fuller_gpu.md`. The measurements above stand.
