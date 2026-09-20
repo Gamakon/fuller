@@ -82,6 +82,14 @@ pub const POWERS_RULESET: &str = r#"
     :when ((is-nonneg a) (is-positive b)) :ruleset powers)
 (rewrite (Mul (ProtectedSqrt a) (ProtectedSqrt b)) (ProtectedSqrt (Mul a b)) :ruleset powers)
 (rewrite (Div (ProtectedSqrt a) (ProtectedSqrt b)) (ProtectedSqrt (Div a b)) :ruleset powers)
+; Squares collect: a^2 * b^2 = (a*b)^2, a^2 / b^2 = (a/b)^2 (protected too:
+; b^2 is zero exactly when b is, and both sides are then 0). One node fewer,
+; and it is what lets sqrt(x0^2/(x1^2*(x2+1)^2)) — Feynman II.10.9, fitted to
+; R2 = 1 and scored unsolved — reach sqrt((..)^2) = |..|.
+(rewrite (Mul (Pow2 a) (Pow2 b)) (Pow2 (Mul a b)) :ruleset powers)
+(rewrite (Div (Pow2 a) (Pow2 b)) (Pow2 (Div a b)) :ruleset powers)
+(rewrite (ProtectedDiv (Pow2 a) (Pow2 b)) (Pow2 (ProtectedDiv a b)) :ruleset powers)
+
 "#;
 
 #[cfg(test)]

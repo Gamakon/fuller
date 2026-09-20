@@ -263,6 +263,20 @@ mod tests {
         );
     }
 
+    /// Feynman II.10.9, fitted to R2 = 1 as sqrt|x0^2/(x1^2*(x2+1)^2)| and
+    /// scored unsolved. With every column positive it is x0/(x1*(x2+1)).
+    #[test]
+    fn a_root_of_collected_squares_sheds_root_and_abs() {
+        let tables = Tables::standard().unwrap();
+        let inputs: Vec<String> = ["x0", "x1", "x2"].iter().map(|s| s.to_string()).collect();
+        let e = r#"(ProtectedSqrt (Abs (Div (Pow2 (Var "x0")) (Mul (Pow2 (Var "x1")) (Pow2 (Add (Var "x2") (Num 1.0)))))))"#;
+        let told = Options { positive_vars: inputs.clone(), ..Options::default() };
+        assert_eq!(
+            lint(&tables, e, &inputs, &told).unwrap().best.to_math(),
+            r#"(Div (Var "x0") (Mul (Var "x1") (Add (Var "x2") (Num 1.0))))"#
+        );
+    }
+
     #[test]
     fn is_deterministic() {
         let e = r#"(Sub (Neg (Mul (Var "a") (Num -1.0))) (Neg (Abs (Pow2 (Var "b")))))"#;
