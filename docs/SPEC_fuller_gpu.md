@@ -1,55 +1,95 @@
-# SPEC: fuller on the GPU — a K-expression rewriter driven by tables
+# SPEC: fuller on the GPU — a graph linter for K-expressions
+
+Version 2 · 2026-09-20 · supersedes v1 (commit `85059b8`)
 
 Status tags: **BUILT** (running, tested) · **MEASURED** (number from a real
 run) · **DESIGNED** (specified here, not implemented).
 
 Scope: fuller only. nucleotable appears as the *shape of the inputs* (symbol
-table, typed signatures), nothing more. Measurements that motivate this are in
-`CR_fuller_wgpu_port.md`: at the 64 rows the join sends, fuller's data scoring
-is not worth a kernel (MEASURED: 0.16 s per 847 expressions). egglog cannot be
-moved. So a GPU fuller **is** the rewriter below; it is a new build, not a port.
+table, typed signatures), nothing more. The measurements that motivate this are
+in `CR_fuller_wgpu_port.md`: at the 64 rows the join sends, fuller's data
+scoring is not worth a kernel (MEASURED: 0.16 s per 847 expressions), and
+egglog cannot be moved. A GPU fuller **is** the rewriter below — a new build,
+not a port.
+
+Changes from v1: §1 says what the thing *is* (v1 only said how it works); the
+rule classes in §5 now separate meaning-preserving fixes from data-justified
+ones; §7 is corrected — the engine never used equality proofs, so that loss
+costs it nothing; §9 adds the lint survey as the way rules are found.
 
 ---
 
 ## 1. What it is
 
-A rewriter that takes a batch of K-expressions and returns, for each, a small
-set of equivalent smaller K-expressions. It knows nothing about arithmetic.
-It knows three tables and one layout.
+**A graph rewriting tool: a linter, with autofix, for K-expressions.**
+
+| Linter | fuller |
+|---|---|
+| a rule: "this shape, fix it like this" | `Sub a (Neg b) -> Add a b` |
+| autofix must not change behaviour | every rule carries a soundness argument against the symbol's definition; `ProtectedDiv(x,x) -> 1` was refused because it breaks at x = 0 |
+| rules are written against a language definition | rules reference symbols by `semantic_id` (§2) |
+| rule sets are chosen per project | usable rules are derived from the kingdom (§2) |
+| flow / type facts ("never null here") | guard facts (`is-nonneg`, `is-nonzero`) (§4, K1) |
+| survey a codebase, write rules for what fires | the hall-of-fame census (§9) |
+
+It works on **meaning**, where GEP's own operators work on **tokens**. It has
+two modes and one extension:
+
+1. **Fix mode** — one input, one output: the smallest equivalent writing.
+   `smallest_form` (BUILT, egglog). Used for reporting, for exactness against
+   the truth, and with the behavioural signature for "the same model".
+2. **Generate mode** — one input, *k* outputs: different writings of the same
+   function. The e-class expansion (BUILT, egglog). This is not mutation in the
+   GEP sense — the phenotype does not change. It is a *constructed* neutral
+   variation: the graft changes nothing about an individual's fitness and
+   everything about what crossover, transposition and point mutation can do to
+   it next. GEP gets this by luck through its neutral regions; here it is done
+   by algebra.
+3. **Data-justified fixes** — prune, additive strip, snap. These *do* change
+   the function, by an amount the rows cannot see (`1.00000000451 -> 1`, a term
+   whose removal moves nothing). They are not equivalences; without rows they
+   are refused (BUILT: `prune_on_data` returns None on no data). A profile-
+   guided optimiser, not a linter.
+
+A linter returns one fix because its consumer is a person. This returns a
+neighbourhood because its consumer is an evolutionary search.
 
 ## 2. Tables (DESIGNED)
 
 ```
 symbols(semantic_id PK, kind, arity | signature, eval_op)
-rules(rule_id PK, pattern, template, guard, ordering_class, family)
+rules(rule_id PK, pattern, template, guard, rule_class, family)
 rule_symbols(rule_id FK, semantic_id FK)         -- every id on EITHER side
 guard_seeds(semantic_id FK, fact)                -- Pow2 -> nonneg
 guard_propagation(semantic_id FK, child_facts, fact)   -- Mul: nonneg,nonneg -> nonneg
 ```
 
-- A rule is a theorem about specific symbols. `rule_symbols` lists every
-  symbol the pattern **and the template** mention (`Div 1 x -> Inv x`
-  depends on `Inv` too).
-- **Usable rules are derived, not chosen.** For a kingdom `K` (a query over
-  `symbols`): a rule is usable iff none of its `rule_symbols` rows points
-  outside `K`. Relational division, written as an anti-join.
+- **A rule is a theorem about specific symbols.** `x / 1 -> x` holds for
+  `ProtectedDiv` only because that symbol is defined as "0 when |b| < 1e-6,
+  else a/b". So a rule has a dependency on the symbol table, and
+  `rule_symbols` records it: every symbol the pattern **and the template**
+  mention (`Div 1 x -> Inv x` depends on `Inv` too).
+- **That dependency is a join.** For a kingdom `K` (a query over `symbols`), a
+  rule is usable iff none of its `rule_symbols` rows points outside `K` —
+  relational division, written as an anti-join. The ruleset is *derived* from
+  the kingdom the way the kingdom is derived from the master table.
 - **Identity is meaning.** Keys are `semantic_id`, never names (BUILT in
-  `karva.rs`). `Div` and `ProtectedDiv` are different ids. **A changed
-  definition is a new `semantic_id`** — moving ProtectedDiv's 1e-6 threshold
-  under the same id would silently falsify every rule that references it.
+  `karva.rs`). `Div` and `ProtectedDiv` are different ids, so a rule for one
+  cannot fire on the other. **A changed definition is a new `semantic_id`** —
+  moving ProtectedDiv's threshold under the same id would silently falsify
+  every rule that references it.
 - Guards are rows too: a seed is a fact about a symbol; propagation is a fact
   about a symbol given its children's facts.
 
-What the kingdom join does **not** do: it does not make rule families
-confluent. Non-confluence is two usable rules undoing each other
-(distribute + trig), not a membership problem. Termination comes from §5.
+What the kingdom join does **not** do: it does not make rules confluent.
+Non-confluence is two usable rules undoing each other (distribute + trig), not
+a membership problem. Termination comes from §5.
 
 ## 3. Layout (BUILT for evaluation)
 
 Level-order node arrays, as `gpu_eval::ExprBatch`: `nodes[]`, `offsets[]`,
-`lengths[]`; children located by a prefix sum over arities. Every child sits
-at a higher index than its parent, so one backward scan visits children before
-parents.
+`lengths[]`; children located by a prefix sum over arities. Every child sits at
+a higher index than its parent, so one backward scan visits children first.
 
 Constraint: a rewritten form must decode into its gene's head length or it is
 dropped and counted (`n_oversized`, BUILT in `denoise_karva_candidates_batch`).
@@ -66,43 +106,58 @@ dropped and counted (`n_oversized`, BUILT in `denoise_karva_candidates_batch`).
 | K6 | reduce | expression → 1−R² against its source's predictions | DESIGNED |
 | K7 | signature | expression → 16-row behavioural signature | **BUILT** on host (`chrom_score`) |
 
+A lint pass is exactly K1–K3: rule × node, bounded rounds, no global reasoning.
+
 - **K1** reuses K5's backward scan: a node's facts are a function of its symbol
   (seed rows) and its children's facts (propagation rows). Caller facts
   (`positive_vars`, `nonzero_vars`) are seed bits on variable nodes.
-- **K2** patterns are bounded depth (≤ 3): symbol id at the position, symbol
-  ids / wildcards / same-subtree constraints below, literal predicates
-  (`= 1.0`, `|k| < 1e-6`), required fact bits from K1. Same-subtree equality
+- **K2** patterns are bounded depth (≤ 3): symbol id at the position; symbol
+  ids, wildcards and same-subtree constraints below; literal predicates
+  (`= 1.0`, `|k| < 1e-6`); required fact bits from K1. Same-subtree equality
   (`Mul x x`) is a compare of two node ranges.
 - **K3** emits one output per hit. Two hits on one expression produce two
   variants, never a merged rewrite. Re-layout is a BFS renumbering — the same
   arity prefix sum as §3.
-- **K4 invariant: an input variable is never folded**, whatever its name
-  (`c` is a column before it is the speed of light). Inputs are an explicit
-  argument. Existing tests to carry over:
+- **K4 invariant: an input variable is never folded**, whatever its name (`c`
+  is a column before it is the speed of light). Inputs are an explicit
+  argument. Tests to carry over:
   `smallest_form_folds_constants_but_never_an_input`,
   `concretize_never_rewrites_an_input_variable`.
 - **K5** semantics are the engine's (protected ops, poison flag, trig cut-off
   at 1e7) — the evaluator's contract, not the rewriter's.
 - **K6** compares against the *input expression's own* predictions, never an
-  extracted variant's (the existing `denoise` rule). f32 on device; the chosen
-  form is re-checked in f64 on the host before it is returned.
+  extracted variant's. f32 on device; a chosen form is re-checked in f64 on the
+  host before it is returned. K6 is what licenses class-D rules (§5) and
+  nothing else needs it.
 
-## 5. Termination without an e-graph (DESIGNED)
+## 5. Rule classes and termination (DESIGNED)
 
-"Shrink-only" is not enough — fuller's own `sign` ruleset (BUILT) has
-size-neutral rules that move a `Neg` rootward so an absorber can delete it.
-Each rule therefore carries an `ordering_class` under one well-founded measure:
+Every rule declares a `rule_class`, checked when the table is loaded.
+
+Meaning-preserving (exact under the symbol definitions, NaN and ±inf included):
 
 ```
 measure(expr) = (node_count, sum of depths of Neg nodes, ...)   lexicographic
 ```
 
-- class A: strictly reduces `node_count`.
-- class B: keeps `node_count`, strictly reduces the secondary measure.
-- anything else (expanding, bidirectional, commutativity) is **not admitted**.
+- **A — shrinker**: strictly reduces `node_count`.
+- **B — enabler**: keeps `node_count`, strictly reduces the secondary measure
+  (the `sign` float-outs that move a `Neg` rootward so a class-A rule can
+  delete it; BUILT in egglog form).
+- anything expanding, bidirectional or commutative is **not admitted**. Those
+  families (distribute, trig expansion) stay in egglog on the CPU.
 
-Checked when the rule table is loaded, per rule, not at run time. Expanding
-families — distribute, trig expansion — stay in egglog on the CPU.
+"Shrink-only" would be wrong: fuller's own `sign` ruleset needs class B. The
+measure is what gives termination without an e-graph.
+
+Meaning-changing:
+
+- **D — data-justified**: not an equivalence. Admitted only when rows are
+  supplied, and only if K6's loss is within the caller's tolerance. Never fires
+  in fix mode without data.
+
+Fix mode uses A + B (+ D with rows). Generate mode uses A + B and keeps the
+intermediate forms rather than only the smallest.
 
 ## 6. Algorithm (DESIGNED)
 
@@ -110,47 +165,66 @@ families — distribute, trig expansion — stay in egglog on the CPU.
 frontier = input batch
 repeat up to R rounds (R = 6, as SMALLEST_FORM_MAX_ROUNDS):
     K1 facts -> K2 match -> K3 apply -> K4 fold
-    dedup by K7 signature (+ exact token equality)
-    keep a beam of B per source expression, smallest measure first (B = 8, as ECLASS_K)
+    dedup by exact tokens, then by K7 signature
+    keep a beam of B per source expression (B = 8, as ECLASS_K)
+        fix mode:      smallest measure first
+        generate mode: smallest first, but structurally distinct forms preferred
     stop when no expression produced a hit
 return per source: the beam, each with node_count and (if rows given) K6 loss
 ```
 
-Host picks: smallest within tolerance, else the input unchanged. Deterministic:
-ties broken by token order, never by arrival order.
+Host picks. Deterministic: ties broken by token order, never by arrival order.
 
 ## 7. What is lost against egglog
 
 - **Sharing.** An e-graph stores every equivalent form once; a beam stores B.
+  This costs generate mode variety.
 - **Grow-then-shrink.** A rewrite that must expand before it collapses
-  (`(a+b)^2 - a^2 - 2ab`) is unreachable by construction.
-- **Equality.** egglog proves two forms equal; this only ever produces forms.
-  The parity scorer stays on egglog.
-
-This is a real loss, not a footnote. The gate below measures it.
+  (`(a+b)^2 - a^2 - 2ab`) is unreachable by construction. This costs fix mode
+  reductions. The gate in §9 measures how many.
+- **Equality proofs.** egglog can decide whether two *given* forms are equal;
+  this only ever produces forms. **The engine never uses that.** When it needs
+  "are these the same" it asks the behavioural signature (K7). Only the parity
+  scorer proves equality, offline, and it stays on egglog. So this loss costs
+  the engine nothing.
 
 ## 8. Multityped K-expressions (DESIGNED; depends on nucleotable)
 
 - Arity is per *instance*: with many-hot signatures the prefix sum needs the
-  arity this occurrence uses, resolved top-down from the root's required
-  output type. One extra pass, parallel per expression.
+  arity this occurrence uses, resolved top-down from the root's required output
+  type. One extra pass, parallel per expression.
 - Patterns match `(semantic_id, signature)`. A template's output type must
   equal the replaced subtree's — checked at table load.
 - The rewriter works on the expressed tree and never touches the tail. Writing
-  a result back into a fixed-length typed gene is nucleotable's open
-  typed-tail problem; this spec does not solve it. Class-A rules ease it (a
-  smaller tree fits the head it came from); class-B rules do not change size.
+  a result back into a fixed-length typed gene is nucleotable's open typed-tail
+  problem; this spec does not solve it. Class-A rules ease it (a smaller tree
+  fits the head it came from); class-B rules do not change size.
+- Nothing in §2–§6 is specific to floats. A different symbol table and rule
+  table make it a linter for boolean, string or mixed-type K-expressions. What
+  does not transfer is each domain's evaluator contract (K5) and guard facts.
 
-## 9. Gate before any kernel is written
+## 9. How rules are found, and the gate before any kernel
+
+**Lint survey (BUILT, run once).** Collect every hall-of-fame dump into one
+dataset (204 dumps, 847 unique expressions), count subtree shapes weighted by
+occurrence, and write rules for the shapes that survive the current linter.
+MEASURED: four agents over that dataset produced the `sign`, `is-nonneg` and
+reciprocal rules; weighted nodes after `smallest_form` went 154,554 → 150,926 (input
+161,408; 846 expressions), 155 smaller, none larger. The survey also showed what *not* to
+write: no Pythagorean or double-angle shape occurs in 847 expressions, and
+every rejected rule has its breaking input recorded in `docs/rule_proposals/`.
+Repeat the survey whenever a sweep adds material.
+
+**Gate.**
 
 1. Build the rule table and the §6 loop **on the CPU**, from the rules already
    in `identities`, `powers`, `sign`, `rational` that pass §5.
-2. Run it over the 847 hall-of-fame expressions with the existing harness
-   (`examples/measure_smallest_form.rs`).
-3. Report: **coverage** = share of egglog's reductions reproduced (weighted
-   nodes; egglog today: 161,552 → ~151,000 MEASURED); **soundness** = K7
-   signature agreement with the input on every output; **time** per expression.
-4. Kernels K1–K4, K6 are built only if coverage justifies them. The CPU
+2. Run it over the 847 expressions with `examples/measure_smallest_form.rs`.
+3. Report **coverage** (share of egglog's weighted-node reduction reproduced),
+   **soundness** (K7 signature agreement with the input on every output),
+   **variety** in generate mode (distinct forms per input against egglog's
+   `extract_variants`), and **time** per expression.
+4. Kernels K1–K4 and K6 are built only if coverage justifies them. The CPU
    prototype stays as the reference the kernels are checked against.
 
 ## 10. Built today
@@ -161,4 +235,6 @@ This is a real loss, not a footnote. The gate below measures it.
 | Behavioural signature, train-only least squares | `src/chrom_score.rs` |
 | `semantic_id` symbol table, many-hot arity model | `src/karva.rs`, `src/geneframe.rs` |
 | Rules + guards as egglog text (the source for the rule table) | `src/ruleset/`, `src/expr.rs` |
-| Hall-of-fame dataset + measurement harness | `hff/notebooks/_hof_dataset.py`, `examples/` |
+| Fix mode and generate mode on egglog | `src/extract.rs` (`smallest_form`, `denoise_candidates_assuming`) |
+| Data-justified fixes | `src/extract.rs` (`prune_on_data`), `src/snap_karva.rs` |
+| Lint survey: dataset, proposals, measurement harness | `hff/notebooks/_hof_dataset.py`, `docs/rule_proposals/`, `examples/` |
