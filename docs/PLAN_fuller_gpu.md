@@ -237,3 +237,31 @@ REGEX or any second kingdom; multityped arity resolution (spec §8); class D / K
 ## Estimate
 
 Phase 1: 3–4 days (class F test, full reader grammar) · Phase 2: 1 day (two corpora) · **gate** · Phase 3: 5–6 days (lighter than first estimated — no variable-size output) · Phase 4: 2 days.
+
+
+---
+
+## Work order (set by Andrew, 2026-09-20) — do these IN ORDER
+
+a. **Finish fuller on the GPU.** It runs as part of gene simplification in the
+   join, AND replaces sympy at the end — or pre-simplifies and hands the
+   pre-done work to a capped sympy. HFF is the guide: it picks among candidates.
+   1. kernel-shaped flat engine on the CPU (level-order arrays, three-block
+      splice, liveness compaction, greedy rounds), checked against the tree
+      engine on the 113,444-expression live corpus;
+   2. rule-row compiler (fixed-width rows, integer literal classes);
+   3. the WGSL kernel + device wrapper, parity-tested against (1);
+   4. end-of-run: linter pre-shrink, then capped sympy (`shrink_then_simplify`).
+b. **Every problem is a `fit`.** Our code is called through the sklearn
+   estimator interface SRBench's `evaluate_model.py` uses; adjust our interface
+   to what they need.
+c. **Smoke test:** 13 problems end to end over the sklearn interface.
+d. **Then bigger jobs, REPORTING PER OUTPUT as they land** — never only at the end.
+e. **Measure with THEIR measures** (SRBench's official `assess_symbolic_model`
+   + `collate_groundtruth_results`) **and with our own oracle**, side by side,
+   so we understand what our methods get right and wrong.
+
+Measured so far (2026-09-20, our data, our oracle, 17 evolved-only problems x 3
+seeds): no simplifier arm is distinguishable from none on exact recoveries
+(22-25 of 51); a size axis in HFF at a fixed [0,1] scale halves recoveries
+(12-13 of 51). We use ~3% of SRBench's 1-hour fit window.
