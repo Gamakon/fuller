@@ -140,6 +140,28 @@ pub const RATIONAL_RULESET: &str = r#"
 (rewrite (Mul (Num a) (Mul (Num b) p)) (Mul (Num (* a b)) p) :ruleset rational)
 (rewrite (Add (Num a) (Add (Num b) q)) (Add (Num (+ a b)) q) :ruleset rational)
 (rewrite (Add (Add q (Num a)) (Num b)) (Add q (Num (+ a b))) :ruleset rational)
+; c * (x / c) = x for a non-zero literal c, in every order the engine writes it.
+; This is what the avgval linker and the least-squares scale make between
+; them: the linker divides the gene sum by 3, the fit multiplies it by 3, and
+; the reported model carried a stray `3.0*(.../3.0)`. Exact over the reals; the
+; two sides can differ in the last place. The protected divide is x/c only for
+; |c| >= 1e-6 — below that it is 0 and the identity is false.
+(rule ((= e (Mul (Num c) (Div x (Num c)))) (> c 0.0)) ((union e x)) :ruleset rational)
+(rule ((= e (Mul (Num c) (Div x (Num c)))) (< c 0.0)) ((union e x)) :ruleset rational)
+(rule ((= e (Mul (Div x (Num c)) (Num c))) (> c 0.0)) ((union e x)) :ruleset rational)
+(rule ((= e (Mul (Div x (Num c)) (Num c))) (< c 0.0)) ((union e x)) :ruleset rational)
+(rule ((= e (Div (Mul (Num c) x) (Num c))) (> c 0.0)) ((union e x)) :ruleset rational)
+(rule ((= e (Div (Mul (Num c) x) (Num c))) (< c 0.0)) ((union e x)) :ruleset rational)
+(rule ((= e (Div (Mul x (Num c)) (Num c))) (> c 0.0)) ((union e x)) :ruleset rational)
+(rule ((= e (Div (Mul x (Num c)) (Num c))) (< c 0.0)) ((union e x)) :ruleset rational)
+(rule ((= e (Mul (Num c) (ProtectedDiv x (Num c)))) (> c 0.000001)) ((union e x)) :ruleset rational)
+(rule ((= e (Mul (Num c) (ProtectedDiv x (Num c)))) (< c -0.000001)) ((union e x)) :ruleset rational)
+(rule ((= e (Mul (ProtectedDiv x (Num c)) (Num c))) (> c 0.000001)) ((union e x)) :ruleset rational)
+(rule ((= e (Mul (ProtectedDiv x (Num c)) (Num c))) (< c -0.000001)) ((union e x)) :ruleset rational)
+(rule ((= e (ProtectedDiv (Mul (Num c) x) (Num c))) (> c 0.000001)) ((union e x)) :ruleset rational)
+(rule ((= e (ProtectedDiv (Mul (Num c) x) (Num c))) (< c -0.000001)) ((union e x)) :ruleset rational)
+(rule ((= e (ProtectedDiv (Mul x (Num c)) (Num c))) (> c 0.000001)) ((union e x)) :ruleset rational)
+(rule ((= e (ProtectedDiv (Mul x (Num c)) (Num c))) (< c -0.000001)) ((union e x)) :ruleset rational)
 ; ProtectedInv x IS 1/x whenever x != 0. Same size; it lets every raw Inv rule
 ; reach the protected spelling. Unguarded it is wrong at exactly x = 0 (1 vs NaN).
 (rewrite (ProtectedInv x) (Inv x) :when ((is-nonzero x)) :ruleset rational)
@@ -296,5 +318,25 @@ mod tests {
             r#"(Div (Var "a") (ProtectedExp (Var "t")))"#
         ));
         assert!(!proves_equal(r#"(ProtectedInv (Var "x"))"#, r#"(Inv (Var "x"))"#));
+    }
+
+    /// c * (x / c) = x, for the raw and the protected divide — and NOT for a
+    /// protected divide by a literal in the |c| < 1e-6 band, where it is 0.
+    #[test]
+    fn scale_and_unscale_by_the_same_literal_cancels() {
+        let x = r#"(Add (Var "a") (Sin (Var "b")))"#;
+        for shape in [
+            format!("(Mul (Num 3.0) (Div {x} (Num 3.0)))"),
+            format!("(Mul (Div {x} (Num -2.5)) (Num -2.5))"),
+            format!("(Div (Mul (Num 3.0) {x}) (Num 3.0))"),
+            format!("(ProtectedDiv (Mul {x} (Num 3.0)) (Num 3.0))"),
+            format!("(Mul (Num 3.0) (ProtectedDiv {x} (Num 3.0)))"),
+        ] {
+            assert!(proves_equal(&shape, x), "{shape}");
+        }
+        // Different literals do not cancel; nor does a protected divide by a
+        // literal inside its zero band.
+        assert!(!proves_equal(&format!("(Mul (Num 3.0) (Div {x} (Num 2.0)))"), x));
+        assert!(!proves_equal(&format!("(Mul (Num 0.0000001) (ProtectedDiv {x} (Num 0.0000001)))"), x));
     }
 }

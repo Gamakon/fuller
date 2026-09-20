@@ -12,7 +12,7 @@ use super::tables::{Exactness, Facts, GuardRule, NumExpr, Order, Pat, Rule, Tmpl
 use crate::gpu_eval::Op;
 
 /// Values a metavariable's subtree may take. Finite first, then non-finite.
-const PROBES: [f64; 15] = [
+const PROBES: [f64; 20] = [
     -1e200,
     -std::f64::consts::E,
     -2.3,
@@ -20,9 +20,16 @@ const PROBES: [f64; 15] = [
     0.0,
     1e-7,
     0.1,
+    0.123456789,
     0.7,
+    // Values that do NOT survive divide-then-multiply by 3, 0.1, -9: without
+    // them `(x / c) * c -> x` measured as bit-exact, which it is not.
+    0.9,
     1.0,
+    1.7,
     3.0,
+    4.35,
+    7.1,
     1234.5678,
     1e200,
     f64::INFINITY,

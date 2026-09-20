@@ -296,8 +296,12 @@ mod tests {
         assert!(!packed.rules.is_empty());
         for (id, why) in &packed.excluded {
             assert!(!why.is_empty(), "rule {id} excluded without a reason");
-            // Today the only reason is a computed literal.
-            assert!(tables.rules[*id].computes_literal(), "rule {id}: {why}");
+            // Today's reasons: the template computes a literal, or the pattern
+            // names one bound literal twice (`c * (x / c)`).
+            assert!(
+                tables.rules[*id].computes_literal() || why.contains("appears twice"),
+                "rule {id}: {why}"
+            );
         }
     }
 
