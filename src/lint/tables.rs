@@ -134,6 +134,23 @@ pub enum Order {
     B,
 }
 
+/// How faithfully a rewrite preserves the evaluator's result. Ordered: a
+/// caller admits everything up to a level.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Exactness {
+    /// Bit-identical results (NaN for NaN) on every probe. The only level at
+    /// which a tidy form can never change an individual's value.
+    Bit,
+    /// Exact over the reals; the two sides can differ in the last place
+    /// (`a*(b*x)` vs `(a*b)*x`). Harmless in a well-conditioned expression;
+    /// under `sin(exp(..))` a last-place change is a different number.
+    Rounding,
+    /// Exact only where every subterm is finite (`Mul x 0 -> 0` is wrong at
+    /// `x = inf`). The protected operators turn NaN and inf back into finite
+    /// numbers, so this does reach the output on real data.
+    Finite,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Rule {
     /// Source order across all loaded texts. Stable, so ties break the same
@@ -150,9 +167,7 @@ pub struct Rule {
     pub n_mv: u8,
     pub n_num: u8,
     pub order: Order,
-    /// Exact only where every bound subterm is finite (class F): `Mul x 0 -> 0`
-    /// is wrong at `x = inf`.
-    pub finite_only: bool,
+    pub exactness: Exactness,
 }
 
 impl Rule {
@@ -254,6 +269,17 @@ impl Tables {
     /// Relational division, written as an anti-join (spec §2).
     pub fn usable<'a>(&'a self, kingdom: &[&Symbol]) -> Vec<&'a Rule> {
         let have: BTreeSet<&str> = kingdom.iter().map(|s| s.semantic_id.as_str()).collect();
+        self.rules
+            .iter()
+            .filter(|r| r.semantic_ids().iter().all(|id| have.contains(id)))
+            .collect()
+    }
+
+    /// The same anti-join, against a set of `semantic_id`s — a problem's own
+    /// primitive set is a kingdom too. A rule whose template needs `neg` is not
+    /// offered to a problem that has no `neg`, so no tidy form is produced that
+    /// cannot be written back.
+    pub fn usable_ids<'a>(&'a self, have: &BTreeSet<&str>) -> Vec<&'a Rule> {
         self.rules
             .iter()
             .filter(|r| r.semantic_ids().iter().all(|id| have.contains(id)))

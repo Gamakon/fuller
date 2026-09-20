@@ -546,6 +546,12 @@ fn denoise_karva_candidates_batch(
             .collect()
     });
 
+    expansions_to_py(py, expansions)
+}
+
+/// One result dict per expansion, in order (shape documented on
+/// `denoise_karva_candidates_batch`).
+fn expansions_to_py(py: Python<'_>, expansions: Vec<GeneExpansion>) -> PyResult<Vec<Py<PyDict>>> {
     let mut out: Vec<Py<PyDict>> = Vec::with_capacity(expansions.len());
     for e in expansions {
         let d = PyDict::new_bound(py);
@@ -567,6 +573,122 @@ fn denoise_karva_candidates_batch(
         out.push(d.into());
     }
     Ok(out)
+}
+
+/// The linter's counterpart of [`denoise_karva_candidates_batch`]: same
+/// arguments where they apply, same result shape, so a caller can switch
+/// between egglog and the linter and compare like with like.
+///
+/// Differences, all deliberate:
+///   * no `rows`: the linter's forms are meaning-preserving and need no data;
+///   * the usable rules are derived from THIS problem's primitive set, so no
+///     form is produced that the set cannot express;
+///   * `exactness = "bit"` by default: only rules whose two sides evaluate
+///     bit-identically, and guard facts that hold everywhere, are used, so a
+///     tidy form never changes an individual's value. `"rounding"` adds rules
+///     exact over the reals; `"finite"` adds those exact only on finite values.
+#[pyfunction]
+#[pyo3(signature = (genes, variables, functions, k_variants = 8, rng_seed = 0,
+                    target_head_length = None, positive_vars = vec![],
+                    nonzero_vars = vec![], exactness = "bit"))]
+fn lint_karva_candidates_batch(
+    py: Python<'_>,
+    genes: Vec<(Vec<PyToken>, Vec<PyToken>, Vec<f64>)>,
+    variables: Vec<String>,
+    functions: HashMap<String, (String, usize)>,
+    k_variants: usize,
+    rng_seed: u64,
+    target_head_length: Option<usize>,
+    positive_vars: Vec<String>,
+    nonzero_vars: Vec<String>,
+    exactness: &str,
+) -> PyResult<Vec<Py<PyDict>>> {
+    use crate::lint::engine::{run, CallerFacts, Config, LitMode, Search};
+    use crate::lint::node::Tree;
+    use crate::lint::tables::Exactness;
+    use rayon::prelude::*;
+
+    let admit = match exactness {
+        "bit" => Exactness::Bit,
+        "rounding" => Exactness::Rounding,
+        "finite" => Exactness::Finite,
+        other => {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "exactness must be bit, rounding or finite, not {other:?}"
+            )))
+        }
+    };
+
+    static TABLES: std::sync::OnceLock<Result<crate::lint::tables::Tables, String>> =
+        std::sync::OnceLock::new();
+    let tables = TABLES
+        .get_or_init(crate::lint::tables::Tables::standard)
+        .as_ref()
+        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("lint tables: {e}")))?;
+
+    let mut owned: Vec<(Vec<Token>, Vec<Token>, PsetSpec)> = Vec::with_capacity(genes.len());
+    for (h, t, rnc) in genes {
+        let head = build_tokens(py, h)?;
+        let tail = build_tokens(py, t)?;
+        owned.push((head, tail, build_pset(variables.clone(), functions.clone(), rnc)));
+    }
+    let have: std::collections::BTreeSet<&str> =
+        functions.values().map(|(id, _)| id.as_str()).collect();
+    let rules = tables.usable_ids(&have);
+    let caller = CallerFacts { positive: positive_vars, nonzero: nonzero_vars };
+
+    let expand = |i: usize, head: &[Token], tail: &[Token], pset: &PsetSpec| -> GeneExpansion {
+        let mut out = GeneExpansion {
+            candidates: Vec::new(),
+            orig_cost: None,
+            error: None,
+            n_inexpressible: 0,
+            inexpressible_why: HashMap::new(),
+            n_oversized: 0,
+        };
+        let tree = match karva_to_terms(head, tail, pset).and_then(|m| Tree::parse(&m)) {
+            Ok(t) => t,
+            Err(e) => {
+                out.error = Some(format!("decode: {e}"));
+                return out;
+            }
+        };
+        out.orig_cost = Some(tree.node_count() as u64);
+        let cfg = Config {
+            inputs: &variables,
+            caller: &caller,
+            mode: LitMode::F64,
+            search: Search::Beam(k_variants.max(1)),
+            max_steps: 64,
+            admit,
+            computed_literals: true,
+        };
+        let outcome = run(&tree, &rules, &tables.guards, &cfg);
+        // The gene as given is not a candidate: the caller already holds it,
+        // and re-encoding it would only count its own tokens as inexpressible.
+        for form in outcome.forms.iter().filter(|f| **f != tree).take(k_variants.max(1)) {
+            let is_original = false;
+            let cost = form.node_count() as u64;
+            match terms_to_karva_sized(&form.to_math(), pset, rng_seed + i as u64, target_head_length) {
+                Ok((_, _, true)) => out.n_oversized += 1,
+                Ok((h, t, false)) => out.candidates.push((h, t, cost, is_original)),
+                Err(why) => {
+                    out.n_inexpressible += 1;
+                    *out.inexpressible_why.entry(why).or_insert(0) += 1;
+                }
+            }
+        }
+        out
+    };
+
+    let expansions: Vec<GeneExpansion> = py.allow_threads(|| {
+        owned
+            .par_iter()
+            .enumerate()
+            .map(|(i, (head, tail, pset))| expand(i, head, tail, pset))
+            .collect()
+    });
+    expansions_to_py(py, expansions)
 }
 
 /// Render `Vec<Token>` back to a list of (kind, value) tuples for Python.
@@ -1651,6 +1773,7 @@ fn _fuller(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(master_constants, m)?)?;
     m.add_function(wrap_pyfunction!(master_lattice, m)?)?;
     m.add_function(wrap_pyfunction!(denoise_karva_candidates_batch, m)?)?;
+    m.add_function(wrap_pyfunction!(lint_karva_candidates_batch, m)?)?;
     m.add_function(wrap_pyfunction!(eclass_variants, m)?)?;
     m.add_function(wrap_pyfunction!(eclass_extract_hff, m)?)?;
     m.add_function(wrap_pyfunction!(snap_karva, m)?)?;

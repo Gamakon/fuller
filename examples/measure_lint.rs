@@ -24,7 +24,7 @@ use fuller::gpu_eval::MAX_NODES;
 use fuller::karva::{karva_to_terms, terms_to_karva_sized, FunctionSpec, PsetSpec};
 use fuller::lint::engine::{run, CallerFacts, Config, LitMode, Search};
 use fuller::lint::node::{Compiled, Tree};
-use fuller::lint::tables::Tables;
+use fuller::lint::tables::{Exactness, Tables};
 
 /// Probe values for input columns: zero, negatives, the protected-divide band,
 /// ordinary and large magnitudes.
@@ -36,7 +36,7 @@ struct Arm {
     name: &'static str,
     search: Search,
     mode: LitMode,
-    finite_exact: bool,
+    admit: Exactness,
     computed_literals: bool,
 }
 
@@ -101,11 +101,12 @@ fn main() {
     );
 
     let arms = [
-        Arm { name: "beam8", search: Search::Beam(8), mode: LitMode::F64, finite_exact: true, computed_literals: true },
-        Arm { name: "greedy", search: Search::Greedy, mode: LitMode::F64, finite_exact: true, computed_literals: true },
-        Arm { name: "beam8 exact-only (no class F)", search: Search::Beam(8), mode: LitMode::F64, finite_exact: false, computed_literals: true },
-        Arm { name: "greedy device-subset (no computed literals)", search: Search::Greedy, mode: LitMode::F64, finite_exact: true, computed_literals: false },
-        Arm { name: "greedy device-subset f32", search: Search::Greedy, mode: LitMode::F32, finite_exact: true, computed_literals: false },
+        Arm { name: "beam8", search: Search::Beam(8), mode: LitMode::F64, admit: Exactness::Finite, computed_literals: true },
+        Arm { name: "greedy", search: Search::Greedy, mode: LitMode::F64, admit: Exactness::Finite, computed_literals: true },
+        Arm { name: "beam8 bit-exact only", search: Search::Beam(8), mode: LitMode::F64, admit: Exactness::Bit, computed_literals: true },
+        Arm { name: "greedy device-subset (no computed literals)", search: Search::Greedy, mode: LitMode::F64, admit: Exactness::Finite, computed_literals: false },
+        Arm { name: "beam8 bit+rounding", search: Search::Beam(8), mode: LitMode::F64, admit: Exactness::Rounding, computed_literals: true },
+        Arm { name: "greedy device-subset f32", search: Search::Greedy, mode: LitMode::F32, admit: Exactness::Finite, computed_literals: false },
     ];
 
     let caller = CallerFacts::default();
@@ -120,8 +121,8 @@ fn main() {
     let mut forms_total = 0usize;
     let mut steps_hist: BTreeMap<usize, usize> = BTreeMap::new();
     let mut hits: BTreeMap<usize, u64> = BTreeMap::new();
-    let mut finite_divergent = [0usize; 2];
-    let mut nonfinite_changed = [0usize; 2];
+    let mut finite_divergent = [0usize; 3];
+    let mut nonfinite_changed = [0usize; 3];
     let mut examples: Vec<String> = Vec::new();
     let mut shown = 0usize;
     let mut f32_disagrees = 0usize;
@@ -150,7 +151,7 @@ fn main() {
                 mode: arm.mode,
                 search: arm.search,
                 max_steps: 64,
-                finite_exact: arm.finite_exact,
+                admit: arm.admit,
                 computed_literals: arm.computed_literals,
             };
             let t = Instant::now();
@@ -174,7 +175,7 @@ fn main() {
             }
             bests.push(out.best);
         }
-        if bests[3] != bests[4] {
+        if bests[3] != bests[5] {
             f32_disagrees += 1;
         }
 
@@ -191,7 +192,7 @@ fn main() {
             let tidy = bests[3].to_math();
             let s = if tree.node_count() > MAX_NODES {
                 "node_oversize"
-            } else if bests[3] != bests[4] {
+            } else if bests[3] != bests[5] {
                 "f64_replay_mismatch"
             } else if bests[3] == tree {
                 "unchanged"
@@ -214,7 +215,7 @@ fn main() {
         // and the exact-only set (arm 2), which must never diverge.
         let rows = probe_rows(&inputs);
         let before = Compiled::new(&tree);
-        for (arm, slot) in [(0usize, 0usize), (2, 1)] {
+        for (arm, slot) in [(0usize, 0usize), (2, 1), (4, 2)] {
             let after = Compiled::new(&bests[arm]);
             for row in &rows {
                 let (Ok(x), Ok(y)) = (before.eval(row), after.eval(row)) else {
@@ -226,7 +227,7 @@ fn main() {
                 }
                 if x.is_finite() {
                     finite_divergent[slot] += 1;
-                    if slot == 1 || shown < 6 {
+                    if (slot == 1 && examples.len() < 40) || (slot == 0 && shown < 6) {
                         shown += usize::from(slot == 0);
                         examples.push(format!(
                             "[{}] {x:e} vs {y:e}\n     in  {math}\n     got {}",
@@ -259,15 +260,17 @@ fn main() {
         );
     }
     println!();
-    println!("coverage of egglog's reduction: beam8 {:.1}%  greedy {:.1}%  device-subset greedy {:.1}%",
-        100.0 * (w_in - w_arm[0]) as f64 / (w_in - w_egg) as f64,
-        100.0 * (w_in - w_arm[1]) as f64 / (w_in - w_egg) as f64,
-        100.0 * (w_in - w_arm[3]) as f64 / (w_in - w_egg) as f64);
+    let share = |a: usize| 100.0 * (w_in - w_arm[a]) as f64 / (w_in - w_egg) as f64;
+    println!(
+        "coverage of egglog's reduction: beam8 {:.1}%  greedy {:.1}%  device-subset greedy {:.1}%  bit-exact {:.1}%  bit+rounding {:.1}%",
+        share(0), share(1), share(3), share(2), share(4)
+    );
     println!("variety: {:.2} distinct forms per expression (beam8, capped at 8)", forms_total as f64 / n as f64);
     println!("f32 vs f64 device-subset greedy results differ on {f32_disagrees} expressions");
     println!("soundness vs input on {N_PROBE_ROWS} probe rows (expressions whose value changes):");
     println!("  all rules        : input finite {}, input non-finite {}", finite_divergent[0], nonfinite_changed[0]);
-    println!("  exact-only rules : input finite {}, input non-finite {}", finite_divergent[1], nonfinite_changed[1]);
+    println!("  bit-exact only   : input finite {}, input non-finite {}", finite_divergent[1], nonfinite_changed[1]);
+    println!("  bit + rounding   : input finite {}, input non-finite {}", finite_divergent[2], nonfinite_changed[2]);
     for e in &examples {
         println!("  DIVERGES {e}");
     }

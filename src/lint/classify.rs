@@ -8,19 +8,22 @@
 
 use super::node::{Compiled, Tree};
 use super::reader::Draft;
-use super::tables::{Facts, GuardRule, NumExpr, Order, Pat, Rule, Tmpl};
+use super::tables::{Exactness, Facts, GuardRule, NumExpr, Order, Pat, Rule, Tmpl};
 use crate::gpu_eval::Op;
 
 /// Values a metavariable's subtree may take. Finite first, then non-finite.
-const PROBES: [f64; 12] = [
+const PROBES: [f64; 15] = [
     -1e200,
+    -std::f64::consts::E,
     -2.3,
     -1.0,
     0.0,
     1e-7,
+    0.1,
     0.7,
     1.0,
     3.0,
+    1234.5678,
     1e200,
     f64::INFINITY,
     f64::NEG_INFINITY,
@@ -28,7 +31,8 @@ const PROBES: [f64; 12] = [
 ];
 
 /// Values a bound literal may take (always finite: a gene's constant is).
-const LITERALS: [f64; 10] = [-3.0, -2.0, -1.0, -0.5, 0.0, 5e-7, 0.5, 1.0, 2.0, 3.0];
+const LITERALS: [f64; 13] =
+    [-9.0, -3.0, -2.7182736588201304, -2.0, -1.0, -0.5, 0.0, 5e-7, 0.1, 0.5, 1.0, 2.0, 3.0];
 
 const AGREE_REL_TOL: f64 = 1e-9;
 
@@ -56,7 +60,7 @@ pub fn classify(d: &Draft, id: usize) -> Result<Rule, String> {
 
     let nums = literal_bindings(d)?;
     check_measure(d, order, &nums)?;
-    let finite_only = check_exactness(d, &nums)?;
+    let exactness = check_exactness(d, &nums)?;
 
     Ok(Rule {
         id,
@@ -69,7 +73,7 @@ pub fn classify(d: &Draft, id: usize) -> Result<Rule, String> {
         n_mv: d.n_mv,
         n_num: d.n_num,
         order,
-        finite_only,
+        exactness,
     })
 }
 
@@ -211,9 +215,12 @@ fn satisfies(v: f64, need: Facts) -> bool {
             && (!need.contains(Facts::NONNEG) || v >= 0.0))
 }
 
-/// Magnitudes at which f64 itself gives out (overflow to inf, underflow to 0).
+/// Magnitudes far enough from 1 that f64 itself can give out on the way
+/// (overflow to inf, underflow to 0: `(1e-7)^1234` IS zero). A guard row that
+/// fails only with such a value in play is true of the reals and false of the
+/// floats — `range_only`. One that fails on ordinary values is simply wrong.
 fn is_extreme(v: f64) -> bool {
-    !v.is_finite() || v.abs() >= 1e150
+    !(v == 0.0 || (1e-3..=1e3).contains(&v.abs()))
 }
 
 /// Check one guard row by evaluation: with children carrying the facts it
@@ -285,12 +292,13 @@ fn subtrees(t: &Tree, out: &mut Vec<Tree>) {
     }
 }
 
-/// Evaluate both sides with every metavariable bound to a probe value.
-/// Returns `Ok(false)` if they agree everywhere, `Ok(true)` if they agree
-/// wherever every subterm of the pattern — bound values, intermediates and
-/// the result — is finite (class F), and `Err`, with the counterexample, if
-/// they disagree where everything is finite.
-fn check_exactness(d: &Draft, nums: &[Vec<f64>]) -> Result<bool, String> {
+/// Evaluate both sides with every metavariable bound to a probe value, and
+/// return the strongest level the rule earns: `Bit` if the results are
+/// identical everywhere, `Rounding` if they agree to the precision the inputs
+/// allow, `Finite` if they agree wherever every subterm of the pattern — bound
+/// values, intermediates and the result — is finite. `Err`, with the
+/// counterexample, if they disagree where everything is finite.
+fn check_exactness(d: &Draft, nums: &[Vec<f64>]) -> Result<Exactness, String> {
     let names: Vec<String> = (0..d.n_mv).map(|i| format!("__m{i}")).collect();
     let math: Vec<Tree> = names.iter().map(|n| Tree::Var(n.clone())).collect();
     let need = |mv: usize| {
@@ -299,7 +307,7 @@ fn check_exactness(d: &Draft, nums: &[Vec<f64>]) -> Result<bool, String> {
             .filter(|(m, _)| *m as usize == mv)
             .fold(Facts::NONE, |acc, (_, f)| acc.union(*f))
     };
-    let mut finite_only = false;
+    let mut level = Exactness::Bit;
     for n in nums {
         let lhs_tree = build_pat(&d.lhs, &math, n);
         let mut parts = Vec::new();
@@ -318,7 +326,11 @@ fn check_exactness(d: &Draft, nums: &[Vec<f64>]) -> Result<bool, String> {
                 .iter()
                 .filter(|v| v.is_finite())
                 .fold(literal_scale, |m, v| m.max(v.abs()));
+            if (a.is_nan() && b.is_nan()) || a == b {
+                continue;
+            }
             if agree(a, b, scale) {
+                level = level.max(Exactness::Rounding);
                 continue;
             }
             let mut all_finite = true;
@@ -330,8 +342,8 @@ fn check_exactness(d: &Draft, nums: &[Vec<f64>]) -> Result<bool, String> {
                     "unsound where every subterm is finite: at {values:?} literals {n:?} the pattern is {a:e}, the template {b:e}"
                 ));
             }
-            finite_only = true;
+            level = Exactness::Finite;
         }
     }
-    Ok(finite_only)
+    Ok(level)
 }

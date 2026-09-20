@@ -6,7 +6,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::node::{Measure, Tree};
-use super::tables::{Facts, GuardRule, Order, Pat, Rule, Tmpl};
+use super::tables::{Exactness, Facts, GuardRule, Order, Pat, Rule, Tmpl};
 use crate::gpu_eval::Op;
 
 /// How literals are compared and computed. `F32` reproduces what the device
@@ -285,8 +285,9 @@ pub struct Config<'a> {
     /// Upper bound on rewrites along any one chain. The measure guarantees
     /// termination; this bounds the work.
     pub max_steps: usize,
-    /// Admit class F (finite-exact) rules.
-    pub finite_exact: bool,
+    /// The weakest exactness admitted. `Bit` for anything written back into a
+    /// gene or used for fitness.
+    pub admit: Exactness,
     /// Admit rules whose template COMPUTES a literal. The v1 device kernel
     /// cannot: a literal made on the device would need classifying in f32.
     pub computed_literals: bool,
@@ -309,7 +310,7 @@ pub fn run(input: &Tree, rules: &[&Rule], guards: &[GuardRule], cfg: &Config) ->
     let admitted: Vec<&Rule> = rules
         .iter()
         .copied()
-        .filter(|r| cfg.finite_exact || !r.finite_only)
+        .filter(|r| r.exactness <= cfg.admit)
         .filter(|r| cfg.computed_literals || !r.computes_literal())
         .collect();
     let index = RuleIndex::new(&admitted);
@@ -324,7 +325,7 @@ pub fn run(input: &Tree, rules: &[&Rule], guards: &[GuardRule], cfg: &Config) ->
     while rounds < cfg.max_steps && !frontier.is_empty() {
         let mut next: Vec<(Measure, String, Tree)> = Vec::new();
         for t in &frontier {
-            let ann = annotate(t, guards, cfg.caller, !cfg.finite_exact);
+            let ann = annotate(t, guards, cfg.caller, cfg.admit != Exactness::Finite);
             let mut found = steps(t, &index, &ann, cfg.mode);
             if cfg.search == Search::Greedy {
                 // First hit in (class A before B, position, rule id) order.

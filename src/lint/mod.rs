@@ -17,7 +17,7 @@ pub mod tables;
 
 use engine::{CallerFacts, Config, LitMode, Outcome, Search};
 use node::Tree;
-use tables::{Refused, Tables};
+use tables::{Exactness, Refused, Tables};
 
 /// The rule texts the linter is derived from, in load order. Rule ids follow
 /// this order, so it is part of the linter's determinism.
@@ -79,7 +79,7 @@ pub struct Options {
     pub mode: LitMode,
     pub search: Search,
     pub max_steps: usize,
-    pub finite_exact: bool,
+    pub admit: Exactness,
     pub computed_literals: bool,
 }
 
@@ -91,7 +91,7 @@ impl Default for Options {
             mode: LitMode::F64,
             search: Search::Beam(8),
             max_steps: 64,
-            finite_exact: true,
+            admit: Exactness::Finite,
             computed_literals: true,
         }
     }
@@ -117,7 +117,7 @@ pub fn lint(tables: &Tables, math: &str, inputs: &[String], opts: &Options) -> R
         mode: opts.mode,
         search: opts.search,
         max_steps: opts.max_steps,
-        finite_exact: opts.finite_exact,
+        admit: opts.admit,
         computed_literals: opts.computed_literals,
     };
     Ok(engine::run(&tree, &rules, &tables.guards, &cfg))
@@ -138,18 +138,15 @@ mod tests {
     #[test]
     fn census() {
         let tables = Tables::standard().expect("tables load");
-        let mut by_set: std::collections::BTreeMap<&str, (usize, usize, usize)> = Default::default();
+        let mut by_set: std::collections::BTreeMap<&str, [usize; 5]> = Default::default();
         for r in &tables.rules {
             let e = by_set.entry(r.ruleset.as_str()).or_default();
-            match r.order {
-                tables::Order::A => e.0 += 1,
-                tables::Order::B => e.1 += 1,
-            }
-            e.2 += usize::from(r.finite_only);
+            e[usize::from(r.order == tables::Order::B)] += 1;
+            e[2 + r.exactness as usize] += 1;
         }
         let mut report = String::new();
-        for (set, (a, b, f)) in &by_set {
-            report.push_str(&format!("{set}: A={a} B={b} finite_only={f}\n"));
+        for (set, [a, b, bit, rounding, finite]) in &by_set {
+            report.push_str(&format!("{set}: A={a} B={b} | bit={bit} rounding={rounding} finite={finite}\n"));
         }
         report.push_str(&format!(
             "guards={} range_only={}\n",
