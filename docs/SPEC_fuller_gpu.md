@@ -54,15 +54,43 @@ two modes and one extension:
 A linter returns one fix because its consumer is a person. This returns a
 neighbourhood because its consumer is an evolutionary search.
 
-## 2. Tables (DESIGNED)
+## 2. Tables (DESIGNED; `symbols` is the nucleotable schema)
+
+The symbol table is **nucleotable's `symbols` table, column for column**
+(`nucleotable/db/schema.py`), so the linter is general to any kingdom that
+schema can describe — not to the float algebra fuller happens to serve today.
+fuller already holds it in this shape (`src/geneframe.rs`: `Symbol`, `Arity`,
+`SymbolTable`, `master_table()`, BUILT).
 
 ```
-symbols(semantic_id PK, kind, arity | signature, eval_op)
+symbols(                          -- nucleotable schema, unchanged
+    kingdom, symbol,              -- key; symbol > 0 function, < 0 terminal
+    symbol_name, alias,
+    in_S, in_I, in_F, in_B, in_A, in_L,        -- typed many-hot input arity
+    out_S, out_I, out_F, out_B, out_A, out_L,  -- typed output arity
+    semantic_id                   -- fuller's one addition: the MEANING
+)
 rules(rule_id PK, pattern, template, guard, rule_class, family)
 rule_symbols(rule_id FK, semantic_id FK)         -- every id on EITHER side
 guard_seeds(semantic_id FK, fact)                -- Pow2 -> nonneg
 guard_propagation(semantic_id FK, child_facts, fact)   -- Mul: nonneg,nonneg -> nonneg
 ```
+
+- **Why `semantic_id` and not `(kingdom, symbol)`.** `(kingdom, symbol)` says
+  where a symbol sits in a geneframe; `semantic_id` says what it computes. The
+  same meaning appears in many kingdoms under different integers and aliases.
+  Rules and guards key on `semantic_id`, so one rule serves every kingdom that
+  contains that meaning, and a kingdom is still just a query over `symbols`.
+  This is the one column the linter asks nucleotable to carry.
+- **Arity is read from the typed columns**, never stored separately: a
+  single-type symbol's arity is its one non-zero `in_*`; a many-hot symbol has
+  several, resolved per instance (§8). Pattern positions and templates carry
+  the same `in_*`/`out_*` signature, so a rule is type-checked against the
+  symbol rows when the tables load.
+- The evaluator's opcode (`eval_op` in §2a) is not a schema column: it is
+  the evaluator's own map from `semantic_id` to a kernel case (`Op::from_math`,
+  BUILT). A `semantic_id` with no kernel case can be linted but not scored, so
+  class D rules are unavailable for it.
 
 - **A rule is a theorem about specific symbols.** `x / 1 -> x` holds for
   `ProtectedDiv` only because that symbol is defined as "0 when |b| < 1e-6,
@@ -89,7 +117,7 @@ a membership problem. Termination comes from §5.
 
 ```
 lint(
-    symbols,            -- semantic_id, arity/signature, eval_op          (the kingdom)
+    symbols,            -- nucleotable schema + semantic_id (§2)          (the kingdom)
     rules,              -- pattern, template, guard, rule_class, family
     rule_symbols,       -- rule_id -> semantic_id, both sides of the rule
     guard_seeds,        -- semantic_id -> fact
@@ -112,7 +140,7 @@ lint(
   the speed of light three separate times before this was made an argument
   everywhere (`_resolve_rnc`, `concretize`, `fold_constant_subtrees`).
 - **The function body contains no arithmetic.** What `ProtectedDiv` means
-  lives in `symbols.eval_op` (used by K5) and in the rules written against it.
+  lives in the evaluator's `semantic_id` -> kernel-case map (K5) and in the rules written against it.
   Different tables, different linter; no code change.
 
 ## 3. Layout (BUILT for evaluation)
