@@ -77,6 +77,45 @@ impl Tree {
         self.to_pnode().to_math()
     }
 
+    /// Infix text a standard parser reads (SRBench parses submissions with
+    /// sympy's `parse_expr`), with NO algebra system involved in producing it.
+    /// Protected operators are written as the engine's own symbolic map writes
+    /// them: `ProtectedSqrt x` is `sqrt(Abs(x))`, `ProtectedLog x` is
+    /// `log(Abs(x))`, `ProtectedExp` is `exp`, `ProtectedDiv a b` is `a/b`,
+    /// `ProtectedInv x` is `1/x`. Every operand is parenthesised, so the text
+    /// means exactly what the tree means whatever the reader's precedence.
+    pub fn to_infix(&self) -> String {
+        let one = |k: &[Tree]| k[0].to_infix();
+        let two = |k: &[Tree]| (k[0].to_infix(), k[1].to_infix());
+        match self {
+            Tree::Num(v) if *v < 0.0 => format!("({v:?})"),
+            Tree::Num(v) => format!("{v:?}"),
+            Tree::Var(name) => name.clone(),
+            Tree::App(op, k) => match op {
+                Op::Add => { let (a, b) = two(k); format!("({a} + {b})") }
+                Op::Sub => { let (a, b) = two(k); format!("({a} - {b})") }
+                Op::Mul => { let (a, b) = two(k); format!("({a}*{b})") }
+                Op::Div | Op::ProtectedDiv => { let (a, b) = two(k); format!("({a}/{b})") }
+                Op::Pow => { let (a, b) = two(k); format!("({a}**{b})") }
+                Op::Neg => format!("(-{})", one(k)),
+                Op::Abs => format!("Abs({})", one(k)),
+                Op::Sqrt => format!("sqrt({})", one(k)),
+                Op::Log => format!("log({})", one(k)),
+                Op::Exp | Op::ProtectedExp => format!("exp({})", one(k)),
+                Op::Sin => format!("sin({})", one(k)),
+                Op::Cos => format!("cos({})", one(k)),
+                Op::Tan => format!("tan({})", one(k)),
+                Op::Tanh => format!("tanh({})", one(k)),
+                Op::Pow2 => format!("({}**2)", one(k)),
+                Op::Pow3 => format!("({}**3)", one(k)),
+                Op::Inv | Op::ProtectedInv => format!("(1/{})", one(k)),
+                Op::ProtectedSqrt => format!("sqrt(Abs({}))", one(k)),
+                Op::ProtectedLog => format!("log(Abs({}))", one(k)),
+                Op::Var | Op::Num => unreachable!("leaves are not applications"),
+            },
+        }
+    }
+
     pub fn node_count(&self) -> usize {
         match self {
             Tree::Num(_) | Tree::Var(_) => 1,
@@ -230,6 +269,13 @@ mod tests {
         assert_eq!(before.measure().nodes, after.measure().nodes);
         assert_eq!(after.measure().m_neg + 1, before.measure().m_neg);
         assert!(after.measure() < before.measure());
+    }
+
+    #[test]
+    fn infix_text_needs_no_algebra_system() {
+        let e = t(r#"(Sub (ProtectedDiv (Var "a") (Pow2 (Var "b"))) (Mul (Num -2.5) (ProtectedSqrt (Neg (Var "c")))))"#);
+        assert_eq!(e.to_infix(), "((a/(b**2)) - ((-2.5)*sqrt(Abs((-c)))))");
+        assert_eq!(t("(Num 3.0)").to_infix(), "3.0");
     }
 
     #[test]

@@ -135,6 +135,134 @@ fn smallest_form(
     Ok(out.into())
 }
 
+/// The linter's candidate forms for one `Math` expression: the input's tidy
+/// forms at every admitted level and, with `rows`, the data-justified prunes of
+/// the tidiest. Nothing here is chosen: the caller EXECUTES each form on data
+/// and lets HFF rank them.
+///
+/// Returns a list of {"math", "infix", "nodes", "level"}, the input first
+/// (level "input"). `level` is bit / rounding / finite / prune.
+#[pyfunction]
+#[pyo3(signature = (expr, inputs, exactness = "finite", k = 8, rows = vec![],
+                    positive_vars = vec![], nonzero_vars = vec![]))]
+fn lint_forms(
+    py: Python<'_>,
+    expr: &str,
+    inputs: Vec<String>,
+    exactness: &str,
+    k: usize,
+    rows: Vec<HashMap<String, f64>>,
+    positive_vars: Vec<String>,
+    nonzero_vars: Vec<String>,
+) -> PyResult<Vec<Py<PyDict>>> {
+    use crate::lint::engine::{run, CallerFacts, Config, LitMode, Search};
+    use crate::lint::node::Tree;
+    use crate::lint::tables::{Exactness, Tables};
+
+    let admit = match exactness {
+        "bit" => Exactness::Bit,
+        "rounding" => Exactness::Rounding,
+        "finite" => Exactness::Finite,
+        other => {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "exactness must be bit, rounding or finite, not {other:?}"
+            )))
+        }
+    };
+    static TABLES: std::sync::OnceLock<Result<Tables, String>> = std::sync::OnceLock::new();
+    let tables = TABLES
+        .get_or_init(Tables::standard)
+        .as_ref()
+        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("lint tables: {e}")))?;
+    let tree = Tree::parse(expr).map_err(pyo3::exceptions::PyValueError::new_err)?;
+    let symbols = crate::geneframe::master_table();
+    let kingdom = symbols.kingdom("Symbolic Regression");
+    let rules = tables.usable(&kingdom);
+    let caller = CallerFacts { positive: positive_vars, nonzero: nonzero_vars };
+    let cfg = Config {
+        inputs: &inputs,
+        caller: &caller,
+        mode: LitMode::F64,
+        search: Search::Beam(k.max(1)),
+        max_steps: 64,
+        admit,
+        computed_literals: true,
+        fold_in_rounds: true,
+    };
+    let outcome = run(&tree, &rules, &tables.guards, &cfg);
+    let mut offered: Vec<(Tree, &'static str)> = vec![(tree.clone(), "input")];
+    for (form, level) in outcome.forms.iter().zip(&outcome.levels).filter(|(f, _)| **f != tree).take(k.max(1)) {
+        let label = match level {
+            Exactness::Bit => "bit",
+            Exactness::Rounding => "rounding",
+            Exactness::Finite => "finite",
+        };
+        offered.push((form.clone(), label));
+    }
+    let core_rows: Vec<Vec<(String, f64)>> = rows.into_iter().map(|m| m.into_iter().collect()).collect();
+    if !core_rows.is_empty() {
+        let tidy = outcome.best.to_math();
+        if let Ok(reference) = crate::extract::eval_expr_rows(&tidy, &core_rows) {
+            for tol in [1e-10_f64, 1e-6, 1e-3, 1e-2, 1e-1] {
+                let pruned = crate::extract::prune_on_data(&tidy, &core_rows, &reference, tol)
+                    .and_then(|p| Tree::parse(&p).ok());
+                if let Some(pt) = pruned {
+                    if offered.iter().all(|(f, _)| *f != pt) {
+                        offered.push((pt, "prune"));
+                    }
+                }
+            }
+        }
+    }
+    offered
+        .into_iter()
+        .map(|(form, level)| {
+            let d = PyDict::new_bound(py);
+            d.set_item("math", form.to_math())?;
+            d.set_item("infix", form.to_infix())?;
+            d.set_item("nodes", form.node_count())?;
+            d.set_item("level", level)?;
+            Ok(d.into())
+        })
+        .collect()
+}
+
+/// Execute a `Math` expression on data, with the crate evaluator — the same
+/// semantics the engine and the device use. `columns` maps a name to its
+/// values; every column must be the same length.
+#[pyfunction]
+fn eval_math(expr: &str, columns: HashMap<String, Vec<f64>>) -> PyResult<Vec<f64>> {
+    use crate::lint::node::{Compiled, Tree};
+    let tree = Tree::parse(expr).map_err(pyo3::exceptions::PyValueError::new_err)?;
+    let n = columns.values().map(Vec::len).max().unwrap_or(0);
+    if columns.values().any(|c| c.len() != n) {
+        return Err(pyo3::exceptions::PyValueError::new_err("columns differ in length"));
+    }
+    let compiled = Compiled::new(&tree);
+    let names: Vec<&String> = columns.keys().collect();
+    (0..n)
+        .map(|i| {
+            let row: Vec<(String, f64)> = names.iter().map(|k| ((*k).clone(), columns[*k][i])).collect();
+            compiled.eval(&row).map_err(pyo3::exceptions::PyValueError::new_err)
+        })
+        .collect()
+}
+
+/// Decode a karva gene to its `Math` expression.
+#[pyfunction]
+fn karva_to_math(
+    py: Python<'_>,
+    head: Vec<PyToken>,
+    tail: Vec<PyToken>,
+    variables: Vec<String>,
+    functions: HashMap<String, (String, usize)>,
+    rnc_values: Vec<f64>,
+) -> PyResult<String> {
+    let (head, tail) = (build_tokens(py, head)?, build_tokens(py, tail)?);
+    let pset = build_pset(variables, functions, rnc_values);
+    karva_to_terms(&head, &tail, &pset).map_err(pyo3::exceptions::PyValueError::new_err)
+}
+
 /// A karva token from Python, as a `(kind, value)` tuple:
 ///   ("func", "<token_name>") | ("var", "<name>") | ("num", <float>).
 type PyToken = (String, PyObject);
@@ -669,6 +797,7 @@ fn lint_karva_candidates_batch(
             max_steps: 64,
             admit,
             computed_literals: true,
+            fold_in_rounds: true,
         };
         let outcome = run(&tree, &rules, &tables.guards, &cfg);
         // The gene as given is not a candidate: the caller already holds it,
@@ -1801,6 +1930,9 @@ fn _fuller(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<GpuSession>()?;
     m.add_function(wrap_pyfunction!(denoise, m)?)?;
     m.add_function(wrap_pyfunction!(smallest_form, m)?)?;
+    m.add_function(wrap_pyfunction!(lint_forms, m)?)?;
+    m.add_function(wrap_pyfunction!(eval_math, m)?)?;
+    m.add_function(wrap_pyfunction!(karva_to_math, m)?)?;
     m.add_function(wrap_pyfunction!(denoise_karva, m)?)?;
     m.add_function(wrap_pyfunction!(denoise_karva_candidates, m)?)?;
     m.add_function(wrap_pyfunction!(physics_mutate, m)?)?;
