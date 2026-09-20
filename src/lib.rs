@@ -38,6 +38,7 @@ pub mod geneframe;
 // behind `feature = "gpu"`.
 pub mod gpu_eval;
 pub mod karva;
+pub mod lint;
 pub mod parity;
 pub mod physics;
 pub mod ruleset;

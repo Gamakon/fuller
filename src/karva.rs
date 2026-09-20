@@ -249,7 +249,7 @@ enum MathNode {
 /// Reverse of `semantic_to_math`: Math constructor name -> semantic id. Returns
 /// None for constructors with no single-token karva representation (none such
 /// in the current set).
-fn math_ctor_to_semantic(ctor: &str) -> Option<&'static str> {
+pub(crate) fn math_ctor_to_semantic(ctor: &str) -> Option<&'static str> {
     Some(match ctor {
         "Add" => "add",
         "Sub" => "sub",

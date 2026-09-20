@@ -605,7 +605,7 @@ pub fn denoise_assuming(
 /// e-graph (datatype only, no rules), extract the term, and eval per row.
 /// This is how the denoise entry points obtain the input's OWN reference
 /// predictions, independent of what the variant enumerator surfaces.
-fn eval_expr_rows(math: &str, rows: &[Vec<(String, f64)>]) -> Result<Vec<f64>, String> {
+pub(crate) fn eval_expr_rows(math: &str, rows: &[Vec<(String, f64)>]) -> Result<Vec<f64>, String> {
     let node = parse_pnode(math).ok_or_else(|| format!("could not parse {math:?}"))?;
     let mut termdag = TermDag::default();
     let term = pnode_to_term(&node, &mut termdag);
@@ -979,7 +979,7 @@ fn fold_constant_subtrees(expr: &str) -> Option<String> {
 /// never read as a constant, whatever it is called. The un-gated callers need
 /// this: `fold_constant_subtrees` leaves the c-the-input / c-the-speed-of-light
 /// collision to a data check downstream, and `smallest_form` has no data.
-fn fold_constant_subtrees_excluding(expr: &str, inputs: &[String]) -> Option<String> {
+pub(crate) fn fold_constant_subtrees_excluding(expr: &str, inputs: &[String]) -> Option<String> {
     fn is_const(n: &PNode, inputs: &[String]) -> bool {
         match n {
             PNode::Num(_) => true,
@@ -1147,14 +1147,14 @@ fn additive_subset_candidates(expr: &str) -> Vec<String> {
 /// through (Add/Sub/Mul/Div + leaves); other ops are opaque subtrees we keep
 /// whole.
 #[derive(Debug, Clone)]
-enum PNode {
+pub(crate) enum PNode {
     Num(f64),
     Var(String),
     App(String, Vec<PNode>),
 }
 
 impl PNode {
-    fn to_math(&self) -> String {
+    pub(crate) fn to_math(&self) -> String {
         match self {
             PNode::Num(v) => format!("(Num {})", fmt_f64(*v)),
             PNode::Var(n) => format!("(Var \"{n}\")"),
@@ -1265,7 +1265,7 @@ fn fits(node: &PNode, rows: &[Vec<(String, f64)>], reference: &[f64], tolerance:
 
 /// Build the evaluator's term for a parsed tree: `(Num v)`, `(Var "name")`,
 /// `(Op child..)` — the same shape egglog extraction yields.
-fn pnode_to_term(node: &PNode, termdag: &mut TermDag) -> egglog::TermId {
+pub(crate) fn pnode_to_term(node: &PNode, termdag: &mut TermDag) -> egglog::TermId {
     match node {
         PNode::Num(v) => {
             let lit = termdag.lit(egglog::ast::Literal::Float((*v).into()));
@@ -1302,7 +1302,7 @@ fn eval_rows(
 }
 
 /// Parse a Math s-expression into a `PNode`.
-fn parse_pnode(s: &str) -> Option<PNode> {
+pub(crate) fn parse_pnode(s: &str) -> Option<PNode> {
     let toks = pnode_tokenize(s);
     let mut pos = 0;
     let n = pnode_parse(&toks, &mut pos, 0)?;
