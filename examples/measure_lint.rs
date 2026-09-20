@@ -153,6 +153,7 @@ fn main() {
                 max_steps: 64,
                 admit: arm.admit,
                 computed_literals: arm.computed_literals,
+                fold_in_rounds: true,
             };
             let t = Instant::now();
             let out = run(&tree, &rules, &tables.guards, &cfg);
