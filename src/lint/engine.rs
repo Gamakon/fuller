@@ -304,18 +304,19 @@ pub fn fold(t: Tree, inputs: &[String]) -> Tree {
 
 /// How far a literal may sit from an integer or half-integer and still be
 /// taken for it, in units in the last place.
-pub const SNAP_ULPS: f64 = 8.0;
+pub const SNAP_ULPS: f64 = 1000.0;
 
 /// Literal snap: a literal within `SNAP_ULPS` units in the last place of an
 /// integer or a half-integer IS that number.
 ///
 /// `-7.000000000000002` is not a constant the search found; it is `-7` plus the
 /// rounding of a least-squares fit, and next to a folded `3.0 + 4.0` it is what
-/// keeps the two from cancelling. Eight ulps is the scale of rounding
-/// accumulated over a short computation and about seven orders of magnitude
-/// tighter than any tolerance that could confuse two real constants.
+/// keeps the two from cancelling. A thousand ulps is about 2e-13 relative —
+/// the thirteenth significant figure: room for the rounding a long fit and a
+/// chain of folds accumulate, and still some nine orders of magnitude tighter
+/// than the snap CANDIDATE (`SNAP_CANDIDATE_TOL`), which the data must judge.
 ///
-/// The value moves (by at most 8 ulp), so a snapped form is ROUNDING-exact,
+/// The value moves (by at most `SNAP_ULPS` ulp), so a snapped form is ROUNDING-exact,
 /// never bit-exact. Returns `None` when nothing moved. A literal near ZERO is
 /// left alone: an ulp test has no scale there, and whether such a term matters
 /// is for the data to say (the prune candidates).
