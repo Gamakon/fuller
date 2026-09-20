@@ -84,6 +84,21 @@ impl Flat {
         Flat { nodes, vars }
     }
 
+    /// Like [`Flat::from_tree`], but every `Var` indexes the GLOBAL column list
+    /// `vars` — what the device needs, where a batch shares one data buffer. A
+    /// name that is not a column is an error, never a default column.
+    pub fn from_tree_in(tree: &Tree, vars: &[String]) -> Result<Flat, String> {
+        let mut f = Flat::from_tree(tree);
+        let local = std::mem::take(&mut f.vars);
+        for n in f.nodes.iter_mut().filter(|n| n.op == Op::Var as u32) {
+            let name = &local[n.arg0 as usize];
+            let at = vars.iter().position(|v| v == name).ok_or_else(|| format!("{name} is not a column"))?;
+            n.arg0 = at as u32;
+        }
+        f.vars = vars.to_vec();
+        Ok(f)
+    }
+
     pub fn to_tree(&self) -> Tree {
         fn go(f: &Flat, i: usize) -> Tree {
             let n = &f.nodes[i];

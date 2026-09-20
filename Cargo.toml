@@ -57,3 +57,7 @@ path = "examples/bf_study/main.rs"
 [[example]]
 name = "bf_hff_study"
 path = "examples/bf_hff_study/main.rs"
+
+[[example]]
+name = "parity_device"
+required-features = ["gpu"]

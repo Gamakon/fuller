@@ -9,6 +9,7 @@
 //! reason. `Tables::standard()` is that load.
 
 pub mod classify;
+pub mod device;
 pub mod engine;
 pub mod flat;
 pub mod node;

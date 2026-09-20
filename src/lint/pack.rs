@@ -9,7 +9,7 @@
 //! The binary heap assumes arity <= 2 (`HEAP_ARITY`). That is a Symbolic
 //! Regression seam, named here; the CPU `Pat` has no such limit.
 
-use super::tables::{Cmp, Exactness, NumExpr, Order, Pat, Rule, Tmpl};
+use super::tables::{Cmp, Exactness, GuardRule, NumExpr, Order, Pat, Rule, Tmpl};
 use crate::gpu_eval::Op;
 
 pub const HEAP_ARITY: usize = 2;
@@ -106,8 +106,8 @@ fn intern_pred(list: &mut Vec<(Cmp, f64)>, cmp: Cmp, k: f64) -> Result<u32, Stri
             list.len() - 1
         }
     };
-    if i >= 32 {
-        return Err("more than 32 distinct literal predicates".to_string());
+    if i >= 24 {
+        return Err("more than 24 distinct literal predicates: the kernel's predicate word is 24 bits".to_string());
     }
     Ok(i as u32)
 }
@@ -218,6 +218,57 @@ fn place_tmpl(t: &Tmpl, slot: usize, codes: &mut LiteralCodes, heap: &mut [Slot;
         Tmpl::Num(_) => return Err("template computes a literal".to_string()),
     }
     Ok(())
+}
+
+pub const GUARD_STRIDE: usize = 8;
+pub const RULE_STRIDE: usize = 6 + 2 * HEAP_SLOTS * 4;
+const NO_OP: u32 = u32::MAX;
+
+impl PackedRule {
+    /// The row as the kernel reads it: 6 header words, then the pattern heap,
+    /// then the template heap, 4 words a slot.
+    pub fn words(&self) -> Vec<u32> {
+        let mut w = vec![self.rule_id, self.root_kind, self.root_op, self.n_mv, self.order, self.exactness];
+        for s in self.pat.iter().chain(self.tmpl.iter()) {
+            w.extend_from_slice(&[s.kind, s.id, s.req, s.lit]);
+        }
+        w
+    }
+
+    /// The opcode bucket a rule is filed under: its pattern's root.
+    pub fn bucket(&self) -> u32 {
+        if self.root_kind == KIND_NUM {
+            Op::Num as u32
+        } else {
+            self.root_op
+        }
+    }
+}
+
+/// Guard rows for the kernel: `[op | NONE, child0 facts, child1 facts, self
+/// facts, gives, range_only, literal predicate bits, 0]`. Literal-seed
+/// predicates are interned into `codes`, so this must run BEFORE any node's
+/// predicate word is computed.
+pub fn pack_guards(guards: &[GuardRule], codes: &mut LiteralCodes) -> Result<Vec<u32>, String> {
+    let mut out = Vec::with_capacity(guards.len() * GUARD_STRIDE);
+    for g in guards {
+        let mut pred_bits = 0u32;
+        for (cmp, k) in &g.num_preds {
+            pred_bits |= 1 << intern_pred(&mut codes.preds, *cmp, *k)?;
+        }
+        let req = |i: usize| g.child_req.get(i).map_or(0, |f| u32::from(f.0));
+        out.extend_from_slice(&[
+            g.op.map_or(NO_OP, |o| o as u32),
+            req(0),
+            req(1),
+            u32::from(g.self_req.0),
+            u32::from(g.gives.0),
+            u32::from(g.range_only),
+            pred_bits,
+            0,
+        ]);
+    }
+    Ok(out)
 }
 
 /// The arity the kernel uses for an opcode. `Var` and `Num` are leaves.
