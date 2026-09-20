@@ -212,6 +212,9 @@ impl<'a> RuleIndex<'a> {
     }
 }
 
+/// The `rule` of a step that is the literal snap, not a table row.
+pub const SNAP_STEP: usize = usize::MAX;
+
 /// One rewrite: the rule that fired and the whole new tree.
 pub struct Step {
     pub rule: usize,
@@ -265,6 +268,44 @@ pub fn fold(t: Tree, inputs: &[String]) -> Tree {
     crate::extract::fold_constant_subtrees_excluding(&t.to_math(), inputs)
         .and_then(|s| Tree::parse(&s).ok())
         .unwrap_or(t)
+}
+
+/// How far a literal may sit from an integer or half-integer and still be
+/// taken for it, in units in the last place.
+pub const SNAP_ULPS: f64 = 8.0;
+
+/// Literal snap: a literal within `SNAP_ULPS` units in the last place of an
+/// integer or a half-integer IS that number.
+///
+/// `-7.000000000000002` is not a constant the search found; it is `-7` plus the
+/// rounding of a least-squares fit, and next to a folded `3.0 + 4.0` it is what
+/// keeps the two from cancelling. Eight ulps is the scale of rounding
+/// accumulated over a short computation and about seven orders of magnitude
+/// tighter than any tolerance that could confuse two real constants.
+///
+/// The value moves (by at most 8 ulp), so a snapped form is ROUNDING-exact,
+/// never bit-exact. Returns `None` when nothing moved. A literal near ZERO is
+/// left alone: an ulp test has no scale there, and whether such a term matters
+/// is for the data to say (the prune candidates).
+pub fn snap_literals(t: &Tree) -> Option<Tree> {
+    fn go(t: &Tree, moved: &mut bool) -> Tree {
+        match t {
+            Tree::Num(v) if v.is_finite() => {
+                let r = (2.0 * v).round() / 2.0;
+                if r != 0.0 && r != *v && (v - r).abs() <= SNAP_ULPS * f64::EPSILON * v.abs().max(1.0) {
+                    *moved = true;
+                    Tree::Num(r)
+                } else {
+                    t.clone()
+                }
+            }
+            Tree::App(op, kids) => Tree::App(*op, kids.iter().map(|k| go(k, moved)).collect()),
+            _ => t.clone(),
+        }
+    }
+    let mut moved = false;
+    let out = go(t, &mut moved);
+    moved.then_some(out)
 }
 
 fn has_closed_app(t: &Tree, inputs: &[String]) -> bool {
@@ -358,6 +399,16 @@ pub fn run(input: &Tree, rules: &[&Rule], guards: &[GuardRule], cfg: &Config) ->
                 found.sort_by_key(|s| s.order == Order::B);
                 found.truncate(1);
             }
+            // The literal snap is a step like any other, at rounding level. It
+            // is tried first: a snapped -7 is what lets `3 + 4 - 7` fold away.
+            if cfg.admit >= Exactness::Rounding {
+                if let Some(tree) = snap_literals(t) {
+                    found.insert(0, Step { rule: SNAP_STEP, order: Order::A, exactness: Exactness::Rounding, tree });
+                    if cfg.search == Search::Greedy {
+                        found.truncate(1);
+                    }
+                }
+            }
             for s in found {
                 let reached = (*level).max(s.exactness);
                 let tree = if cfg.fold_in_rounds { fold(s.tree, cfg.inputs) } else { s.tree };
@@ -366,7 +417,9 @@ pub fn run(input: &Tree, rules: &[&Rule], guards: &[GuardRule], cfg: &Config) ->
                     Some(known) => *known = (*known).min(reached),
                     None => {
                         seen.insert(key.clone(), reached);
-                        *hits.entry(s.rule).or_insert(0) += 1;
+                        if s.rule != SNAP_STEP {
+                            *hits.entry(s.rule).or_insert(0) += 1;
+                        }
                         next.push((tree.measure(), key, tree, reached));
                     }
                 }

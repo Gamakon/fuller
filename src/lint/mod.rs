@@ -186,6 +186,25 @@ mod tests {
         assert!(matches!(folded.best, Tree::Num(_)), "{}", folded.best.to_math());
     }
 
+    /// The least-squares intercept arrives as -7.000000000000002; snapped to
+    /// -7 it cancels against the folded 3 + 4, and the model is what it is.
+    #[test]
+    fn a_literal_a_few_ulps_from_an_integer_is_that_integer() {
+        let tables = Tables::standard().unwrap();
+        let inputs = vec!["q".to_string()];
+        let e = r#"(Add (Add (Add (Num 3.0) (Var "q")) (Num 4.0)) (Num -7.000000000000002))"#;
+        let all = lint(&tables, e, &inputs, &Options::default()).unwrap();
+        let snapped = all.forms.iter().zip(&all.levels).find(|(f, _)| f.to_math().contains("(Num -7.0)"));
+        assert_eq!(snapped.map(|(_, l)| *l), Some(Exactness::Rounding), "the snapped form is rounding-exact");
+        // Never at bit level: the value moved.
+        let bit = lint(&tables, e, &inputs, &Options { admit: Exactness::Bit, ..Options::default() }).unwrap();
+        assert!(bit.forms.iter().all(|f| !f.to_math().contains("(Num -7.0)")));
+        // A real constant is not an integer: 7.0000001 stays.
+        assert!(engine::snap_literals(&Tree::parse("(Num 7.0000001)").unwrap()).is_none());
+        assert!(engine::snap_literals(&Tree::parse("(Num 0.0000000000000004)").unwrap()).is_none());
+        assert_eq!(engine::snap_literals(&Tree::parse("(Num 2.4999999999999996)").unwrap()).unwrap().to_math(), "(Num 2.5)");
+    }
+
     #[test]
     fn is_deterministic() {
         let e = r#"(Sub (Neg (Mul (Var "a") (Num -1.0))) (Neg (Abs (Pow2 (Var "b")))))"#;
