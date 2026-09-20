@@ -205,6 +205,18 @@ mod tests {
         assert_eq!(engine::snap_literals(&Tree::parse("(Num 2.4999999999999996)").unwrap()).unwrap().to_math(), "(Num 2.5)");
     }
 
+    /// An evolved constant within 1e-4 of a whole number is OFFERED as that
+    /// number — a candidate for the data to judge, not an equivalence.
+    #[test]
+    fn an_evolved_constant_near_a_whole_number_is_a_candidate() {
+        let t = Tree::parse(r#"(Add (Mul (Num 2.99996) (Var "x")) (Num 0.00003))"#).unwrap();
+        let snapped = engine::snap_candidate(&t, engine::SNAP_CANDIDATE_TOL).unwrap();
+        assert_eq!(snapped.to_math(), r#"(Add (Mul (Num 3.0) (Var "x")) (Num 0.0))"#);
+        // Outside the tolerance nothing is offered.
+        assert!(engine::snap_candidate(&Tree::parse("(Num 2.9998)").unwrap(), engine::SNAP_CANDIDATE_TOL).is_none());
+        assert!(engine::snap_candidate(&Tree::parse("(Num 3.0)").unwrap(), engine::SNAP_CANDIDATE_TOL).is_none());
+    }
+
     #[test]
     fn is_deterministic() {
         let e = r#"(Sub (Neg (Mul (Var "a") (Num -1.0))) (Neg (Abs (Pow2 (Var "b")))))"#;

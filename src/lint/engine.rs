@@ -257,6 +257,38 @@ pub fn steps(t: &Tree, index: &RuleIndex, strict: &Ann, loose: Option<&Ann>, mod
     out
 }
 
+/// How close an EVOLVED constant must be to a whole number to be offered as
+/// that number: `|raw - round(raw)| < SNAP_CANDIDATE_TOL`. SRBench's own scorer
+/// rounds floats to 3 decimals and zeroes anything under 1e-4 before comparing,
+/// so this is the tolerance at which the move is invisible to their ruler.
+pub const SNAP_CANDIDATE_TOL: f64 = 1e-4;
+
+/// The snapped CANDIDATE: every literal within `tol` of an integer (zero
+/// included) becomes that integer. Unlike [`snap_literals`] this moves the
+/// value — 2.99996 -> 3 is a different model — so it is never accepted as an
+/// equivalence: the caller executes it on the data and HFF ranks it with the
+/// rest. Returns `None` when no literal qualifies.
+pub fn snap_candidate(t: &Tree, tol: f64) -> Option<Tree> {
+    fn go(t: &Tree, tol: f64, moved: &mut bool) -> Tree {
+        match t {
+            Tree::Num(v) if v.is_finite() => {
+                let r = v.round();
+                if r != *v && (v - r).abs() < tol {
+                    *moved = true;
+                    Tree::Num(r)
+                } else {
+                    t.clone()
+                }
+            }
+            Tree::App(op, kids) => Tree::App(*op, kids.iter().map(|k| go(k, tol, moved)).collect()),
+            _ => t.clone(),
+        }
+    }
+    let mut moved = false;
+    let out = go(t, tol, &mut moved);
+    moved.then_some(out)
+}
+
 /// K4: fold closed subtrees to literals. An input variable is never folded,
 /// whatever its name; only finite values fold. Delegates to the one
 /// implementation in `extract`, so the linter cannot drift from

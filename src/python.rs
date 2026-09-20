@@ -141,7 +141,7 @@ fn smallest_form(
 /// and lets HFF rank them.
 ///
 /// Returns a list of {"math", "infix", "nodes", "level"}, the input first
-/// (level "input"). `level` is bit / rounding / finite / prune.
+/// (level "input"). `level` is bit / rounding / finite / prune / snap.
 #[pyfunction]
 #[pyo3(signature = (expr, inputs, exactness = "finite", k = 8, rows = vec![],
                     positive_vars = vec![], nonzero_vars = vec![]))]
@@ -198,6 +198,12 @@ fn lint_forms(
             Exactness::Finite => "finite",
         };
         offered.push((form.clone(), label));
+    }
+    if let Some(snapped) = crate::lint::engine::snap_candidate(&tree, crate::lint::engine::SNAP_CANDIDATE_TOL) {
+        let tidy = run(&snapped, &rules, &tables.guards, &cfg).best;
+        if offered.iter().all(|(f, _)| *f != tidy) {
+            offered.push((tidy, "snap"));
+        }
     }
     let core_rows: Vec<Vec<(String, f64)>> = rows.into_iter().map(|m| m.into_iter().collect()).collect();
     if !core_rows.is_empty() {
@@ -817,6 +823,17 @@ fn lint_karva_candidates_batch(
                 (f.to_math(), f.node_count() as u64, label)
             })
             .collect();
+        // The snap candidate: evolved constants within 1e-4 of a whole number,
+        // moved there, and the result linted again (a constant that lands on
+        // an integer is often what lets the rest cancel). It CHANGES the model,
+        // so it is only ever a candidate for the caller's scoring.
+        if let Some(snapped) = crate::lint::engine::snap_candidate(&tree, crate::lint::engine::SNAP_CANDIDATE_TOL) {
+            let tidy = run(&snapped, &rules, &tables.guards, &cfg).best;
+            let math = tidy.to_math();
+            if tidy != tree && offered.iter().all(|(m, _, _)| *m != math) {
+                offered.push((math, tidy.node_count() as u64, "snap"));
+            }
+        }
         // With rows: the data-justified prunes of the tidiest form, at the
         // tolerances the egglog path uses. NOT equivalences — the caller's
         // scoring on data decides whether any of them is a better gene.
