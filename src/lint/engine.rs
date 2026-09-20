@@ -306,6 +306,10 @@ pub struct Config<'a> {
     /// Admit rules whose template COMPUTES a literal. The v1 device kernel
     /// cannot: a literal made on the device would need classifying in f32.
     pub computed_literals: bool,
+    /// Fold closed subtrees after every rewrite. The device does not (libm and
+    /// Metal differ bitwise on `sin`, `exp`), so parity runs switch it off; the
+    /// fold at ingestion always happens.
+    pub fold_in_rounds: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -356,7 +360,7 @@ pub fn run(input: &Tree, rules: &[&Rule], guards: &[GuardRule], cfg: &Config) ->
             }
             for s in found {
                 let reached = (*level).max(s.exactness);
-                let tree = fold(s.tree, cfg.inputs);
+                let tree = if cfg.fold_in_rounds { fold(s.tree, cfg.inputs) } else { s.tree };
                 let key = tree.to_math();
                 match seen.get_mut(&key) {
                     Some(known) => *known = (*known).min(reached),

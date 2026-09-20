@@ -10,7 +10,9 @@
 
 pub mod classify;
 pub mod engine;
+pub mod flat;
 pub mod node;
+pub mod pack;
 pub mod reader;
 pub mod sexp;
 pub mod tables;
@@ -119,6 +121,7 @@ pub fn lint(tables: &Tables, math: &str, inputs: &[String], opts: &Options) -> R
         max_steps: opts.max_steps,
         admit: opts.admit,
         computed_literals: opts.computed_literals,
+        fold_in_rounds: true,
     };
     Ok(engine::run(&tree, &rules, &tables.guards, &cfg))
 }
