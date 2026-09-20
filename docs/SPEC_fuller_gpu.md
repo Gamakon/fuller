@@ -175,6 +175,32 @@ return per source: the beam, each with node_count and (if rows given) K6 loss
 
 Host picks. Deterministic: ties broken by token order, never by arrival order.
 
+## 6a. Where it sits in the engine (DESIGNED)
+
+On the device the linter is not a side step; it is a stage of evaluation:
+
+```
+population -> K1 facts -> K2 match -> K3 apply -> K4 fold -> K5 evaluate -> scores
+```
+
+- **Every individual, every generation.** Today the expansion runs on the
+  subset an ORF cache lets through, returns through Python, and is re-encoded
+  into geppy tokens — where forms the primitive set cannot express are thrown
+  away (MEASURED: 2,619 in one 450-generation run).
+- **Meaning-preserving variants are not scored separately.** Class A and B
+  rewrites have identical behaviour, so identical error terms. Evaluate once
+  per individual, on its tidy form — the smallest, so also the cheapest
+  (MEASURED in the same run: 46,849 nodes removed by grafts; on the device that
+  is kernel work never done). Only class D variants (prune, snap) change the
+  function and need their own fitness.
+- **Tidy the phenotype always; the genotype by policy.** Evaluating the tidy
+  form is free and safe. Writing it back over the gene is a separate decision:
+  the untidy regions are the neutral material crossover and transposition draw
+  on, and grafting on ties was MEASURED to collapse diversity about 5x (hence
+  `GRAFT_MODE = improve`). The stage therefore emits two things per individual:
+  the tidy form (evaluation, reporting, "same model") and, under the graft
+  policy, a written-back gene. Baldwinian by default, Lamarckian by switch.
+
 ## 7. What is lost against egglog
 
 - **Sharing.** An e-graph stores every equivalent form once; a beam stores B.
