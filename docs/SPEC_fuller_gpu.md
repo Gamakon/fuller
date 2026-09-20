@@ -231,12 +231,9 @@ So a second kingdom is: rows in five tables, one evaluator, one loss, one
 signature. If adding REGEX needs a change to K1–K3 or to the table formats,
 this section was wrong and should be corrected first.
 
-**Tests.** The build is tested on SR only (the 847-expression dataset, §9).
-One structural test guards generality without a second evaluator: load the
-REGEX and SQL seed rows from nucleotable alongside SR and assert that the
-kingdom filter hands SR exactly the SR-usable rules, that a `concat` rule is
-offered to REGEX and SQL and never to SR, and that a rule with a mistyped
-template is refused at load.
+**Tests.** The build is tested on Symbolic Regression only (§9). No REGEX
+rules, fixtures, evaluator or tests are part of this build; a generality test
+over a second kingdom's rows is the first task of whoever adds that kingdom.
 
 ## 2a. Interface (DESIGNED)
 
