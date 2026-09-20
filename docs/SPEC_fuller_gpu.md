@@ -87,7 +87,7 @@ guard_propagation(semantic_id FK, child_facts, fact)   -- Mul: nonneg,nonneg -> 
   several, resolved per instance (§8). Pattern positions and templates carry
   the same `in_*`/`out_*` signature, so a rule is type-checked against the
   symbol rows when the tables load.
-- The evaluator's opcode (`eval_op` in §2a) is not a schema column: it is
+- The evaluator's opcode is not a schema column: it is
   the evaluator's own map from `semantic_id` to a kernel case (`Op::from_math`,
   BUILT). A `semantic_id` with no kernel case can be linted but not scored, so
   class D rules are unavailable for it.
