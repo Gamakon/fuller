@@ -27,6 +27,9 @@ use crate::gpu_eval::{ExprBatch, GpuEvaluator, GpuNode, Op, MAX_NODES};
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Symbol {
     Function(Op),
+    /// A COMPOUND function: one symbol of arity 2 that a gene can pick as it picks
+    /// any other, expanded into ordinary nodes when the gene is decoded.
+    Compound(Compound),
     /// A data column.
     Input(u32),
     /// A fixed numeric terminal.
@@ -34,6 +37,49 @@ pub enum Symbol {
     /// The "?" placeholder: the n-th one in a gene's expression reads
     /// `rnc[dc[n]]` — geppy's Dc domain.
     Rnc,
+}
+
+/// COMPOUND FUNCTIONS (Andrew's idea): "construct a function called sum, and then
+/// another with a sum under a 1/root, and set up the arity to fill these functions
+/// properly ... then it is a matter of the genes to find when to use it." Each is
+/// a shape the search measurably never builds from single operators — a sum under
+/// a root (1 of 18 such laws solved), the 1/sqrt(1 - v^2/c^2) family (0 of 9), a
+/// sum in a denominator (4 of 19) — offered as ONE symbol. A compound is a MACRO:
+/// `decode_gene` expands it into nodes that already exist, protected like every
+/// sampled operator, so the evaluator, fuller's Math, the linter and the printers
+/// see nothing new, and the data guided rewrites turn the protected forms plain
+/// where the data allows. They thin the search like any added function, so they
+/// are a switch (`Config::compounds`) meant for the race's SECOND pass.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Compound {
+    /// sqrt|a + b|
+    SqrtSum,
+    /// sqrt|a - b|
+    SqrtDiff,
+    /// 1 / sqrt|a + b|
+    InvSqrtSum,
+    /// 1 / sqrt|a - b|   (the Lorentz factor is `InvSqrtDiff(1, (v/c)^2)`)
+    InvSqrtDiff,
+    /// 1 / (a + b)
+    InvSum,
+    /// 1 / (a - b)
+    InvDiff,
+}
+
+impl Compound {
+    pub const ALL: [Compound; 6] = [Compound::SqrtSum, Compound::SqrtDiff, Compound::InvSqrtSum, Compound::InvSqrtDiff, Compound::InvSum, Compound::InvDiff];
+
+    /// The operators applied to `(a, b)`, innermost first.
+    fn expansion(self) -> &'static [Op] {
+        match self {
+            Compound::SqrtSum => &[Op::Add, Op::ProtectedSqrt],
+            Compound::SqrtDiff => &[Op::Sub, Op::ProtectedSqrt],
+            Compound::InvSqrtSum => &[Op::Add, Op::ProtectedSqrt, Op::ProtectedInv],
+            Compound::InvSqrtDiff => &[Op::Sub, Op::ProtectedSqrt, Op::ProtectedInv],
+            Compound::InvSum => &[Op::Add, Op::ProtectedInv],
+            Compound::InvDiff => &[Op::Sub, Op::ProtectedInv],
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -58,9 +104,18 @@ impl SymbolTable {
         SymbolTable { symbols, withheld }
     }
 
+    /// The wide set plus the compound functions. They are appended AFTER every
+    /// existing symbol, so no id of the wide set moves.
+    pub fn with_compounds(mut self) -> SymbolTable {
+        self.symbols.extend(Compound::ALL.map(Symbol::Compound));
+        self.withheld.resize(self.symbols.len(), false);
+        self
+    }
+
     pub fn arity(&self, id: u32) -> u32 {
         match self.symbols[id as usize] {
             Symbol::Function(op) => op.arity() as u32,
+            Symbol::Compound(_) => 2,
             _ => 0,
         }
     }
@@ -93,23 +148,67 @@ pub fn decode_gene(gene: &[u32], rnc: &[f32], layout: Layout, table: &SymbolTabl
     if need > 0 {
         return None;
     }
-    let mut nodes = Vec::with_capacity(n);
-    let (mut child, mut n_rnc) = (1u32, 0usize);
-    for &id in &gene[..n] {
-        let node = match table.symbols[id as usize] {
-            Symbol::Function(op) => {
+    // 1. The gene's own tree, by gene position: position i's children are the next
+    //    unclaimed positions (Karva), and the n-th "?" IN GENE ORDER reads dc[n].
+    let (mut child, mut n_rnc) = (1usize, 0usize);
+    let mut kids: Vec<(usize, usize)> = Vec::with_capacity(n);
+    let mut konst = vec![0.0f32; n];
+    for (i, &id) in gene[..n].iter().enumerate() {
+        let a = table.arity(id) as usize;
+        kids.push((if a >= 1 { child } else { 0 }, if a == 2 { child + 1 } else { 0 }));
+        child += a;
+        if table.symbols[id as usize] == Symbol::Rnc {
+            let k = *gene.get(ht + n_rnc)? as usize;
+            n_rnc += 1;
+            konst[i] = *rnc.get(k)?;
+        }
+    }
+    // 2. Level order over the EXPANDED tree. A queue entry is a gene position, or an
+    //    inner operator of a compound still to be written above a gene position. For
+    //    a gene with no compound this is the gene's own order, node for node.
+    enum Todo {
+        Gene(usize),
+        /// the compound at this gene position, with this many of its operators
+        /// still to write (the outermost is written first)
+        Inner(usize, usize),
+    }
+    let mut nodes: Vec<GpuNode> = Vec::with_capacity(n + 8);
+    let mut queue = std::collections::VecDeque::from([Todo::Gene(0)]);
+    let mut next = 1u32;
+    while let Some(todo) = queue.pop_front() {
+        let (pos, left) = match todo {
+            Todo::Gene(pos) => (pos, None),
+            Todo::Inner(pos, left) => (pos, Some(left)),
+        };
+        let node = match (table.symbols[gene[pos] as usize], left) {
+            (Symbol::Compound(c), left) => {
+                let ops = c.expansion();
+                let left = left.unwrap_or(ops.len());
+                let op = ops[left - 1];
+                if left == 1 {
+                    // the innermost operator takes the compound's two arguments
+                    queue.push_back(Todo::Gene(kids[pos].0));
+                    queue.push_back(Todo::Gene(kids[pos].1));
+                    next += 2;
+                    GpuNode { op: op as u32, arg0: next - 2, arg1: next - 1, konst: 0.0 }
+                } else {
+                    queue.push_back(Todo::Inner(pos, left - 1));
+                    next += 1;
+                    GpuNode { op: op as u32, arg0: next - 1, arg1: 0, konst: 0.0 }
+                }
+            }
+            (Symbol::Function(op), _) => {
                 let a = op.arity() as u32;
-                let node = GpuNode { op: op as u32, arg0: child, arg1: if a == 2 { child + 1 } else { 0 }, konst: 0.0 };
-                child += a;
-                node
+                queue.push_back(Todo::Gene(kids[pos].0));
+                if a == 2 {
+                    queue.push_back(Todo::Gene(kids[pos].1));
+                }
+                next += a;
+                GpuNode { op: op as u32, arg0: next - a, arg1: if a == 2 { next - 1 } else { 0 }, konst: 0.0 }
             }
-            Symbol::Input(col) => GpuNode { op: Op::Var as u32, arg0: col, arg1: 0, konst: 0.0 },
-            Symbol::Constant(v) => GpuNode { op: Op::Num as u32, arg0: 0, arg1: 0, konst: v },
-            Symbol::Rnc => {
-                let k = *gene.get(ht + n_rnc)? as usize;
-                n_rnc += 1;
-                GpuNode { op: Op::Num as u32, arg0: 0, arg1: 0, konst: *rnc.get(k)? }
-            }
+            (Symbol::Input(col), _) => GpuNode { op: Op::Var as u32, arg0: col, arg1: 0, konst: 0.0 },
+            (Symbol::Constant(v), _) => GpuNode { op: Op::Num as u32, arg0: 0, arg1: 0, konst: v },
+            (Symbol::Rnc, _) => GpuNode { op: Op::Num as u32, arg0: 0, arg1: 0, konst: konst[pos] },
         };
         nodes.push(node);
     }
@@ -211,6 +310,9 @@ pub struct Config {
     /// banned as a fitness (it scores a uniformly mediocre point as perfect); here
     /// it only chooses who breeds. Off by default.
     pub balanced_tournaments: bool,
+    /// The COMPOUND functions join the symbol table — see [`Compound`]. For the
+    /// race's second pass; off by default.
+    pub compounds: bool,
     pub max_generations: u32,
     pub max_seconds: f64,
     /// Stop when validation (and edge, when there is one) 1 - R² is this small.
@@ -254,6 +356,7 @@ impl Config {
             vhead_every: 0,
             hof_path: None,
             balanced_tournaments: false,
+            compounds: false,
             // Kept after a two-seed A/B (7012: 46 -> 47, 7013: 44 -> 45, no losses).
             max_generations: 1500,
             max_seconds: 30.0,
@@ -722,7 +825,8 @@ pub struct Engine {
 
 impl Engine {
     pub fn new(config: Config, data: Data) -> Result<Engine, String> {
-        let table = SymbolTable::wide(data.names.len() as u32);
+        let wide = SymbolTable::wide(data.names.len() as u32);
+        let table = if config.compounds { wide.with_compounds() } else { wide };
         let pop = config.pop_intake + config.pop_champion;
         let layout = Layout::for_arity(pop, config.n_genes, config.head, table.max_arity(), config.n_rnc);
         let tourn = |n: u32| ((config.tournament_fraction * f64::from(n)).round() as u32).max(2);
@@ -1340,6 +1444,129 @@ mod tests {
         let direct = hff_core::core_functions::calculate_single_hyperspherical_fitness_f64_with_method(&ndarray::Array1::from(even.to_vec()), 3, false, None, "balanced");
         assert_eq!(hff_balanced(&even, &max, &lin), direct);
         assert_eq!(hff_balanced(&[f64::NAN, 0.1, 0.1], &max, &lin), std::f64::consts::PI);
+    }
+
+    /// `decode_gene` as it was before compounds: the gene's own order IS level order.
+    fn decode_gene_in_gene_order(gene: &[u32], rnc: &[f32], layout: Layout, table: &SymbolTable) -> Option<Vec<GpuNode>> {
+        let ht = (layout.head + layout.tail) as usize;
+        let (mut need, mut n) = (1i64, 0usize);
+        while need > 0 && n < ht {
+            need += i64::from(table.arity(gene[n])) - 1;
+            n += 1;
+        }
+        if need > 0 {
+            return None;
+        }
+        let (mut child, mut n_rnc) = (1u32, 0usize);
+        let mut nodes = Vec::new();
+        for &id in &gene[..n] {
+            nodes.push(match table.symbols[id as usize] {
+                Symbol::Function(op) => {
+                    let a = op.arity() as u32;
+                    child += a;
+                    GpuNode { op: op as u32, arg0: child - a, arg1: if a == 2 { child - 1 } else { 0 }, konst: 0.0 }
+                }
+                Symbol::Input(col) => GpuNode { op: Op::Var as u32, arg0: col, arg1: 0, konst: 0.0 },
+                Symbol::Constant(v) => GpuNode { op: Op::Num as u32, arg0: 0, arg1: 0, konst: v },
+                Symbol::Rnc => {
+                    let k = *gene.get(ht + n_rnc)? as usize;
+                    n_rnc += 1;
+                    GpuNode { op: Op::Num as u32, arg0: 0, arg1: 0, konst: *rnc.get(k)? }
+                }
+                Symbol::Compound(_) => return None,
+            });
+        }
+        Some(nodes)
+    }
+
+    #[test]
+    fn a_gene_without_a_compound_decodes_exactly_as_it_always_did() {
+        let table = SymbolTable::wide(3);
+        let layout = Layout::for_arity(300, 3, 34, table.max_arity(), 10);
+        let pop = crate::evolve::init(layout, &table.codes(), &crate::evolve::InitParams { seed: 9, generation: 0, rnc_lo: -5, rnc_hi: 5, n_wrappers: 3, vhead: 0 }).unwrap();
+        let (width, nr) = (layout.gene_width() as usize, layout.n_rnc as usize);
+        let mut decoded = 0;
+        for (g, gene) in pop.genome.chunks(width).enumerate() {
+            let rnc = &pop.rnc[g * nr..(g + 1) * nr];
+            let (now, before) = (decode_gene(gene, rnc, layout, &table), decode_gene_in_gene_order(gene, rnc, layout, &table));
+            assert_eq!(now.is_some(), before.is_some(), "gene {g}");
+            if let (Some(now), Some(before)) = (now, before) {
+                assert_eq!(now.len(), before.len(), "gene {g}");
+                assert!(now.iter().zip(&before).all(|(a, b)| (a.op, a.arg0, a.arg1, a.konst.to_bits()) == (b.op, b.arg0, b.arg1, b.konst.to_bits())), "gene {g}");
+                decoded += 1;
+            }
+        }
+        assert!(decoded > 800, "{decoded}");
+    }
+
+    #[test]
+    fn a_compound_expands_into_ordinary_nodes_and_computes_what_it_says() {
+        let table = SymbolTable::wide(3).with_compounds();
+        let id = |wanted: Symbol| table.symbols.iter().position(|s| *s == wanted).unwrap() as u32;
+        // no id of the wide set moved, and the compounds are functions of two arguments
+        assert!(SymbolTable::wide(3).symbols.iter().zip(&table.symbols).all(|(a, b)| a == b));
+        assert!(Compound::ALL.iter().all(|&c| table.arity(id(Symbol::Compound(c))) == 2));
+        let layout = Layout::for_arity(1, 1, 8, table.max_arity(), 4);
+        let (ht, width) = ((layout.head + layout.tail) as usize, layout.gene_width() as usize);
+        // m c^2 / sqrt(1 - v^2/c^2) with x_0 = m, x_1 = v, x_2 = c, as ONE gene:
+        //   Mul( Mul(x_0, Pow2 x_2),  InvSqrtDiff( ?=1 , Pow2(ProtectedDiv(x_1, x_2)) ) )
+        // level order: Mul | Mul InvSqrtDiff | x_0 Pow2 ? Pow2 | x_2 PDiv | x_1 x_2
+        let mut gene = vec![id(Symbol::Input(0)); width];
+        let karva = [
+            Symbol::Function(Op::Mul), Symbol::Function(Op::Mul), Symbol::Compound(Compound::InvSqrtDiff), Symbol::Input(0), Symbol::Function(Op::Pow2),
+            Symbol::Rnc, Symbol::Function(Op::Pow2), Symbol::Input(2), Symbol::Function(Op::ProtectedDiv), Symbol::Input(1), Symbol::Input(2),
+        ];
+        for (slot, symbol) in karva.iter().enumerate() {
+            gene[slot] = id(*symbol);
+        }
+        gene[ht] = 2;                                   // the first "?" reads rnc[2]
+        let nodes = decode_gene(&gene, &[9.0, 9.0, 1.0, 9.0], layout, &table).expect("closes");
+        assert_eq!(nodes.len(), 11 + 2, "the compound wrote three operators for one symbol");
+        assert!(nodes.iter().enumerate().all(|(i, n)| n.op == Op::Var as u32 || n.op == Op::Num as u32 || (n.arg0 as usize > i && (n.arg1 == 0 || n.arg1 as usize > i))), "child index > parent index");
+        let names: Vec<String> = (0..3).map(|i| format!("x_{i}")).collect();
+        let math = nodes_to_math(&nodes, 0, &names);
+        assert_eq!(math, r#"(Mul (Mul (Var "x_0") (Pow2 (Var "x_2"))) (ProtectedInv (ProtectedSqrt (Sub (Num 1.0) (Pow2 (ProtectedDiv (Var "x_1") (Var "x_2")))))))"#);
+        // and on data it IS the law: m = 2, v = 3, c = 5  ->  2 * 25 / sqrt(1 - 9/25) = 62.5
+        let row = vec![vec![("x_0".to_string(), 2.0), ("x_1".to_string(), 3.0), ("x_2".to_string(), 5.0)]];
+        assert!((evaluate_math(&math, &row).unwrap()[0] - 62.5).abs() < 1e-9);
+        assert_eq!(t_depth(&nodes), 1, "one root on the deepest path, as the law has");
+        // every compound, against its definition
+        for c in Compound::ALL {
+            let mut g = vec![id(Symbol::Input(0)); width];
+            g[0] = id(Symbol::Compound(c));
+            g[1] = id(Symbol::Input(0));
+            g[2] = id(Symbol::Input(1));
+            let m = nodes_to_math(&decode_gene(&g, &[0.0; 4], layout, &table).unwrap(), 0, &names);
+            let (a, b) = (7.0f64, 3.0f64);
+            let got = evaluate_math(&m, &[vec![("x_0".to_string(), a), ("x_1".to_string(), b)]]).unwrap()[0];
+            let want = match c {
+                Compound::SqrtSum => (a + b).sqrt(),
+                Compound::SqrtDiff => (a - b).sqrt(),
+                Compound::InvSqrtSum => 1.0 / (a + b).sqrt(),
+                Compound::InvSqrtDiff => 1.0 / (a - b).sqrt(),
+                Compound::InvSum => 1.0 / (a + b),
+                Compound::InvDiff => 1.0 / (a - b),
+            };
+            assert!((got - want).abs() < 1e-12, "{c:?}: {got} vs {want} from {m}");
+        }
+    }
+
+    #[test]
+    fn a_population_with_compounds_keeps_the_rules_and_decodes() {
+        let table = SymbolTable::wide(4).with_compounds();
+        let layout = Layout::for_arity(400, 3, 34, table.max_arity(), 10);
+        let pop = crate::evolve::init(layout, &table.codes(), &crate::evolve::InitParams { seed: 3, generation: 0, rnc_lo: -5, rnc_hi: 5, n_wrappers: 3, vhead: 0 }).unwrap();
+        pop.check(&table.codes()).unwrap();
+        let (width, nr) = (layout.gene_width() as usize, layout.n_rnc as usize);
+        let (mut closed, mut with_compound) = (0, 0);
+        for (g, gene) in pop.genome.chunks(width).enumerate() {
+            if let Some(nodes) = decode_gene(gene, &pop.rnc[g * nr..(g + 1) * nr], layout, &table) {
+                closed += 1;
+                assert!(nodes.iter().enumerate().all(|(i, n)| n.op == Op::Var as u32 || n.op == Op::Num as u32 || (n.arg0 as usize > i && (n.arg1 == 0 || n.arg1 as usize > i))));
+                with_compound += usize::from(gene.iter().take(34).any(|&id| matches!(table.symbols[id as usize], Symbol::Compound(_))));
+            }
+        }
+        assert!(closed > 1000 && with_compound > 300, "{closed} closed, {with_compound} with a compound");
     }
 
     #[test]

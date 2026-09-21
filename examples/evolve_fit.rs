@@ -139,6 +139,9 @@ fn main() {
     config.hof_path = std::env::var("EVOLVE_HOF_FILE").ok().filter(|p| !p.is_empty());
     //   EVOLVE_PROGRESS_EVERY           a progress line on stderr every N generations (0 = none)
     config.progress_every = std::env::var("EVOLVE_PROGRESS_EVERY").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
+    //   EVOLVE_COMPOUNDS=1              the compound functions (sqrt|a+-b|, 1/sqrt|a+-b|, 1/(a+-b)) join
+    //                                   the symbol table — for the race's second pass
+    config.compounds = std::env::var("EVOLVE_COMPOUNDS").is_ok_and(|v| v == "1");
     //   EVOLVE_GENES                    genes per chromosome (the engine's default is 3)
     if let Some(genes) = std::env::var("EVOLVE_GENES").ok().and_then(|v| v.parse::<u32>().ok()) {
         config.n_genes = genes;
