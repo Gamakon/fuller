@@ -182,6 +182,10 @@ pub struct Config {
     /// then train + block three (hff's `METRIC_NAMES_TRAIN_ONLY`). Validation
     /// still decides the stop bar and is still reported.
     pub hff_without_validation: bool,
+    /// The TOWER objective: [`tower_penalty`] of the chromosome's [`t_depth`] joins
+    /// HFF, so a tournament prefers the individual that is not a tower of nested
+    /// functions when the errors cannot tell them apart.
+    pub tower: bool,
     /// Harvest and regrow: a model that reaches the stop bar is put in a parking
     /// lot, it and its structural relatives are removed from the population, and
     /// the search goes on to grow another — up to this many (0 = stop at the
@@ -214,6 +218,7 @@ impl Config {
             smogd: false,
             log_scale_blocks: false,
             hff_without_validation: false,
+            tower: false,
             // Kept after a two-seed A/B (7012: 46 -> 47, 7013: 44 -> 45, no losses).
             harvests: 4,
             max_generations: 1500,
@@ -233,6 +238,8 @@ pub struct Scored {
     pub b: f64,
     /// 1 - R² on train, validation, edge.
     pub one_minus_r2: [f64; 3],
+    /// The chromosome's tower height: [`t_depth`], the largest over its genes.
+    pub t_depth: u32,
 }
 
 #[derive(Clone, Debug)]
@@ -263,6 +270,49 @@ pub struct FitResult {
 const LINKERS: [Linker; 3] = [Linker::AVG, Linker::MUL, Linker::ADD];
 const WRAPPERS: [Wrapper; 3] = [Wrapper::Identity, Wrapper::LogAbs, Wrapper::SqrtAbs];
 const LINKER_NAMES: [&str; 3] = ["avgval", "mulval", "addval"];
+
+/// TRANSCENDENTAL NESTING DEPTH of a decoded gene: the most transcendental
+/// functions met on any path from the root to a leaf — exp, log, sin, cos, tan,
+/// tanh, Abs, sqrt (and their protected forms), and a `Pow` whose exponent is not
+/// a whole number. `+ - * /`, negation, `1/x` and whole powers do not count, so a
+/// long FLAT law scores 0: this is not parsimony. Measured on 1,230 labelled fits
+/// (`docs/BRAINSTORM_tower_detector.md`): every one of SRBench's 133 true laws is
+/// at most 2; three quarters of the accurate-but-wrong models are 3 or more.
+///
+/// One forward scan: a gene's nodes are in level order, so a node's depth is
+/// known before its children are reached.
+pub fn t_depth(nodes: &[GpuNode]) -> u32 {
+    let counts = |i: usize| -> u32 {
+        let n = &nodes[i];
+        let whole = |c: usize| nodes.get(c).is_some_and(|e| e.op == Op::Num as u32 && e.konst.fract() == 0.0);
+        let t = [Op::Abs, Op::Sqrt, Op::Log, Op::Exp, Op::Sin, Op::Cos, Op::Tan, Op::Tanh, Op::ProtectedSqrt, Op::ProtectedLog, Op::ProtectedExp];
+        u32::from(t.iter().any(|&o| o as u32 == n.op) || (n.op == Op::Pow as u32 && !whole(n.arg1 as usize)))
+    };
+    if nodes.is_empty() {
+        return 0;
+    }
+    let binary = [Op::Add, Op::Sub, Op::Mul, Op::Div, Op::Pow, Op::ProtectedDiv];
+    let leaf = [Op::Var, Op::Num];
+    let mut depth = vec![0u32; nodes.len()];
+    depth[0] = counts(0);
+    for i in 0..nodes.len() {
+        let n = &nodes[i];
+        if leaf.iter().any(|&o| o as u32 == n.op) {
+            continue;
+        }
+        let kids = if binary.iter().any(|&o| o as u32 == n.op) { vec![n.arg0, n.arg1] } else { vec![n.arg0] };
+        for k in kids.into_iter().map(|k| k as usize).filter(|&k| k < nodes.len()) {
+            depth[k] = depth[i] + counts(k);
+        }
+    }
+    depth.into_iter().max().unwrap_or(0)
+}
+
+/// The tower objective on [0, 1]: nothing up to a depth of 2 (no true law is
+/// deeper), then a quarter per level, 1 from a depth of 6.
+pub fn tower_penalty(t_depth: u32) -> f64 {
+    (f64::from(t_depth.saturating_sub(2)) / 4.0).min(1.0)
+}
 
 /// Which of the nine objectives `[mse x3, 1-R2 x3, mae x3]` (blocks train,
 /// validation, third) feed HFF, and which of those are log-scaled.
@@ -512,6 +562,7 @@ impl Engine {
         let mut index: HashMap<Vec<u32>, usize> = HashMap::new();
         let mut batch = ExprBatch::new();
         let mut gene_ok: Vec<bool> = Vec::new();
+        let mut gene_tower: Vec<u32> = Vec::new();
         let mut chromosomes: Vec<Vec<usize>> = Vec::with_capacity(rows.len());
         let mut oversized = 0u64;
         for &r in &rows {
@@ -536,6 +587,7 @@ impl Engine {
                         oversized += u64::from(nodes.is_some());
                     }
                     gene_ok.push(fits);
+                    gene_tower.push(nodes.as_deref().map_or(0, t_depth));
                 }
                 genes.push(at);
             }
@@ -572,6 +624,7 @@ impl Engine {
         let columns = hff_columns(n_ex, self.config.hff_without_validation, self.config.log_scale_blocks);
         for (i, &r) in rows.iter().enumerate() {
             let mut best: Option<Scored> = None;
+            let tower = chromosomes[i].iter().map(|&g| gene_tower[g]).max().unwrap_or(0);
             for c in 0..per {
                 let s = &scores[(i * per + c) * WIDTH..(i * per + c + 1) * WIDTH];
                 if !s[0].is_finite() {
@@ -586,9 +639,14 @@ impl Engine {
                     maxes.push(1.0);
                     logs.push(false);
                 }
+                if self.config.tower {
+                    used.push(tower_penalty(tower));    // on [0, 1] by construction
+                    maxes.push(1.0);
+                    logs.push(false);
+                }
                 let fitness = hff_truenorth(&used, &maxes, &logs);
                 if best.is_none_or(|b| fitness < b.fitness) {
-                    best = Some(Scored { fitness, linker: c / WRAPPERS.len(), wrapper: c % WRAPPERS.len(), a: s[0], b: s[1], one_minus_r2: omr2 });
+                    best = Some(Scored { fitness, linker: c / WRAPPERS.len(), wrapper: c % WRAPPERS.len(), a: s[0], b: s[1], one_minus_r2: omr2, t_depth: tower });
                 }
             }
             self.scored[r] = best;
@@ -684,11 +742,13 @@ impl Engine {
         let (width, nr, g_n) = (l.gene_width() as usize, l.n_rnc as usize, l.n_genes as usize);
         let mut batch = ExprBatch::new();
         let mut gene_ok = Vec::with_capacity(g_n);
+        let mut tower = 0u32;
         for g in 0..g_n {
             let tokens = &gen.pop.genome[(row * g_n + g) * width..(row * g_n + g + 1) * width];
             let consts = &gen.pop.rnc[(row * g_n + g) * nr..(row * g_n + g + 1) * nr];
             match decode_gene(tokens, consts, l, &self.table).filter(|n| n.len() <= MAX_NODES) {
                 Some(nodes) => {
+                    tower = tower.max(t_depth(&nodes));
                     batch.push(&nodes);
                     gene_ok.push(true);
                 }
@@ -712,10 +772,16 @@ impl Engine {
             let (o, omr2) = self.caps.objectives(s, n_ex);
             let columns = hff_columns(n_ex, self.config.hff_without_validation, self.config.log_scale_blocks);
             let (used, maxes): (Vec<f64>, Vec<f64>) = columns.iter().map(|&(k, _)| (o[k], col_max[k])).unzip();
-            let logs: Vec<bool> = columns.iter().map(|&(_, log)| log).collect();
+            let (mut used, mut maxes) = (used, maxes);
+            let mut logs: Vec<bool> = columns.iter().map(|&(_, log)| log).collect();
+            if self.config.tower {
+                used.push(tower_penalty(tower));
+                maxes.push(1.0);
+                logs.push(false);
+            }
             let fitness = hff_truenorth(&used, &maxes, &logs);
             if best.is_none_or(|b| fitness < b.fitness) {
-                best = Some(Scored { fitness, linker: c / WRAPPERS.len(), wrapper: c % WRAPPERS.len(), a: s[0], b: s[1], one_minus_r2: omr2 });
+                best = Some(Scored { fitness, linker: c / WRAPPERS.len(), wrapper: c % WRAPPERS.len(), a: s[0], b: s[1], one_minus_r2: omr2, t_depth: tower });
             }
         }
         Ok(best)
@@ -931,6 +997,59 @@ mod tests {
         let before = evaluate_math(r#"(Div (Var "x_2") (Abs (Sub (Var "x_0") (Num 50.0))))"#, &rows()).unwrap();
         let after = evaluate_math(&negative, &rows()).unwrap();
         assert!(before.iter().zip(&after).all(|(a, b)| (a - b).abs() <= 1e-15 * a.abs()));
+    }
+
+    /// A gene's nodes from a `Math` string, laid out parents-before-children as
+    /// `decode_gene` lays them out.
+    fn nodes_of(math: &str) -> Vec<GpuNode> {
+        use crate::lint::node::Tree;
+        fn op_of(t: &Tree) -> (Op, Vec<&Tree>, f32, u32) {
+            match t {
+                Tree::Num(v) => (Op::Num, vec![], *v as f32, 0),
+                Tree::Var(name) => (Op::Var, vec![], 0.0, name.trim_start_matches("x_").parse().unwrap_or(0)),
+                Tree::App(op, kids) => (Op::from_math(&format!("{op:?}")).expect("an evaluator op"), kids.iter().collect(), 0.0, 0),
+            }
+        }
+        let tree = Tree::parse(math).expect("parses");
+        let mut queue = std::collections::VecDeque::from([&tree]);
+        let mut out: Vec<GpuNode> = Vec::new();
+        let mut next = 1u32;
+        while let Some(t) = queue.pop_front() {
+            let (op, kids, konst, var) = op_of(t);
+            let (arg0, arg1) = match kids.len() {
+                0 => (var, 0),
+                1 => (next, 0),
+                _ => (next, next + 1),
+            };
+            next += kids.len() as u32;
+            out.push(GpuNode { op: op as u32, arg0, arg1, konst });
+            queue.extend(kids);
+        }
+        out
+    }
+
+    #[test]
+    fn t_depth_counts_nested_transcendentals_and_nothing_else() {
+        // m c^2 / sqrt(1 - v^2/c^2): one transcendental on the deepest path.
+        let law = r#"(Div (Mul (Var "x_0") (Pow2 (Var "x_2"))) (Sqrt (Sub (Num 1.0) (Div (Pow2 (Var "x_1")) (Pow2 (Var "x_2"))))))"#;
+        assert_eq!(t_depth(&nodes_of(law)), 1);
+        // A long flat law: no transcendental at all.
+        let flat = r#"(Div (Mul (Mul (Var "x_0") (Var "x_1")) (Mul (Var "x_2") (Pow3 (Var "x_3")))) (Add (Var "x_0") (Inv (Neg (Var "x_1")))))"#;
+        assert_eq!(t_depth(&nodes_of(flat)), 0);
+        // exp(tanh(log|cos(sqrt x)|)): five, the protected log counting once.
+        let tower = r#"(Exp (Tanh (ProtectedLog (Cos (Sqrt (Var "x_0"))))))"#;
+        assert_eq!(t_depth(&nodes_of(tower)), 5);
+        // The deepest PATH counts, not the total: sin x + cos x is 1.
+        assert_eq!(t_depth(&nodes_of(r#"(Add (Sin (Var "x_0")) (Cos (Var "x_0")))"#)), 1);
+        // A whole power is not transcendental; a fractional one is.
+        assert_eq!(t_depth(&nodes_of(r#"(Pow (Var "x_0") (Num 4.0))"#)), 0);
+        assert_eq!(t_depth(&nodes_of(r#"(Pow (Var "x_0") (Num 1.5))"#)), 1);
+        assert_eq!(t_depth(&[]), 0);
+    }
+
+    #[test]
+    fn the_tower_penalty_never_touches_a_depth_a_true_law_has() {
+        assert_eq!([0, 1, 2, 3, 4, 5, 6, 9].map(tower_penalty), [0.0, 0.0, 0.0, 0.25, 0.5, 0.75, 1.0, 1.0]);
     }
 
     #[test]

@@ -110,6 +110,8 @@ fn main() {
     config.log_scale_blocks = std::env::var("EVOLVE_HFF_LOG").is_ok_and(|v| v == "1");
     //   EVOLVE_HFF_NO_VAL=1             validation is left out of HFF: train + block three
     config.hff_without_validation = std::env::var("EVOLVE_HFF_NO_VAL").is_ok_and(|v| v == "1");
+    //   EVOLVE_TOWER=1                  the tower objective (t_depth) joins HFF
+    config.tower = std::env::var("EVOLVE_TOWER").is_ok_and(|v| v == "1");
     if let Some(population) = args.get(4).and_then(|a| a.parse::<u32>().ok()) {
         config.pop_intake = population / 4 * 3;
         config.pop_champion = population - config.pop_intake;
@@ -218,6 +220,7 @@ fn main() {
         })
         .collect();
     println!("MSE\t{}\t{}\t{}", mse[0], mse[1], mse[2]);
+    println!("TOWER\t{}\t{}", out.best.t_depth, if config.tower { "in HFF" } else { "reported only" });
     println!("MODEL_INFIX\t{}", tidy.to_infix_faithful());
     println!("RAW_MATH\t{}", out.math);
     // A harness that made the split itself may hand over its test rows: the
