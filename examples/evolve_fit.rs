@@ -119,6 +119,8 @@ fn main() {
         config.pop_intake = population / 4 * 3;
         config.pop_champion = population - config.pop_intake;
     }
+    //   EVOLVE_PROGRESS_EVERY           a progress line on stderr every N generations (0 = none)
+    config.progress_every = std::env::var("EVOLVE_PROGRESS_EVERY").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
     //   EVOLVE_PUMP_EVERY               the pump's beat in generations (the engine's default is 4)
     if let Some(beat) = std::env::var("EVOLVE_PUMP_EVERY").ok().and_then(|v| v.parse::<u32>().ok()) {
         config.pump_every = beat;

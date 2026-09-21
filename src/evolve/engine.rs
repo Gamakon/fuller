@@ -187,6 +187,9 @@ pub struct Config {
     /// HFF, so a tournament prefers the individual that is not a tower of nested
     /// functions when the errors cannot tell them apart.
     pub tower: bool,
+    /// Report the best individual on stderr every this many generations (0 = never):
+    /// a long fit is watched as it runs, not read when it ends.
+    pub progress_every: u32,
     /// Harvest and regrow: a model that reaches the stop bar is put in a parking
     /// lot, it and its structural relatives are removed from the population, and
     /// the search goes on to grow another — up to this many (0 = stop at the
@@ -222,6 +225,7 @@ impl Config {
             log_scale: [false; 3],
             hff_without_validation: false,
             tower: false,
+            progress_every: 0,
             // Kept after a two-seed A/B (7012: 46 -> 47, 7013: 44 -> 45, no losses).
             harvests: 4,
             max_generations: 1500,
@@ -947,6 +951,15 @@ impl Engine {
             }
             timing.pump += t.elapsed().as_secs_f64();
             self.dev.write_fitness(&gen.fitness)?;
+            if c.progress_every > 0 && generation % c.progress_every == 0 {
+                if let Some((_, b)) = self.best(&gen) {
+                    let third = if self.data.splits.n_extrap > 0 { format!("{:.2e}", b.one_minus_r2[2]) } else { "-".to_string() };
+                    eprintln!(
+                        "   gen {generation:>6} | {:>6.0} s | hff {:.6} | 1-R2 train {:.2e} val {:.2e} block3 {third} | t_depth {} | parked {}",
+                        started.elapsed().as_secs_f64(), b.fitness, b.one_minus_r2[0], b.one_minus_r2[1], b.t_depth, archive.len()
+                    );
+                }
+            }
         }
         let harvested = archive.len();
         // The parking lot decides, when there is one: every model in it met the
