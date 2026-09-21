@@ -182,6 +182,10 @@ pub struct Config {
     /// then train + block three (hff's `METRIC_NAMES_TRAIN_ONLY`). Validation
     /// still decides the stop bar and is still reported.
     pub hff_without_validation: bool,
+    /// The TRAIN block enters HFF on the log scale too. With validation and the
+    /// third block out of HFF, train is all the error there is: linear, a fake at
+    /// 1 - R² = 6e-6 and the law at 1e-14 are the same zero to a tournament.
+    pub log_scale_train: bool,
     /// The TOWER objective: [`tower_penalty`] of the chromosome's [`t_depth`] joins
     /// HFF, so a tournament prefers the individual that is not a tower of nested
     /// functions when the errors cannot tell them apart.
@@ -218,6 +222,7 @@ impl Config {
             smogd: false,
             log_scale_blocks: false,
             hff_without_validation: false,
+            log_scale_train: false,
             tower: false,
             // Kept after a two-seed A/B (7012: 46 -> 47, 7013: 44 -> 45, no losses).
             harvests: 4,
@@ -316,13 +321,13 @@ pub fn tower_penalty(t_depth: u32) -> f64 {
 
 /// Which of the nine objectives `[mse x3, 1-R2 x3, mae x3]` (blocks train,
 /// validation, third) feed HFF, and which of those are log-scaled.
-fn hff_columns(n_extrap: usize, without_validation: bool, log_scale_blocks: bool) -> Vec<(usize, bool)> {
+fn hff_columns(n_extrap: usize, without_validation: bool, log_scale_blocks: bool, log_scale_train: bool) -> Vec<(usize, bool)> {
     let mut columns = Vec::new();
     for metric in 0..3 {
         for block in 0..3 {
             let absent = (block == 2 && n_extrap == 0) || (block == 1 && without_validation);
             if !absent {
-                columns.push((3 * metric + block, block > 0 && log_scale_blocks));
+                columns.push((3 * metric + block, if block == 0 { log_scale_train } else { log_scale_blocks }));
             }
         }
     }
@@ -621,7 +626,7 @@ impl Engine {
             self.col_max = Some(max);
         }
         let col_max = self.col_max.unwrap_or([1.0; 9]);
-        let columns = hff_columns(n_ex, self.config.hff_without_validation, self.config.log_scale_blocks);
+        let columns = hff_columns(n_ex, self.config.hff_without_validation, self.config.log_scale_blocks, self.config.log_scale_train);
         for (i, &r) in rows.iter().enumerate() {
             let mut best: Option<Scored> = None;
             let tower = chromosomes[i].iter().map(|&g| gene_tower[g]).max().unwrap_or(0);
@@ -770,7 +775,7 @@ impl Engine {
                 continue;
             }
             let (o, omr2) = self.caps.objectives(s, n_ex);
-            let columns = hff_columns(n_ex, self.config.hff_without_validation, self.config.log_scale_blocks);
+            let columns = hff_columns(n_ex, self.config.hff_without_validation, self.config.log_scale_blocks, self.config.log_scale_train);
             let (used, maxes): (Vec<f64>, Vec<f64>) = columns.iter().map(|&(k, _)| (o[k], col_max[k])).unzip();
             let (mut used, mut maxes) = (used, maxes);
             let mut logs: Vec<bool> = columns.iter().map(|&(_, log)| log).collect();
@@ -1055,12 +1060,14 @@ mod tests {
     #[test]
     fn the_hff_columns_are_the_blocks_asked_for() {
         let k = |c: Vec<(usize, bool)>| c.into_iter().map(|(i, _)| i).collect::<Vec<_>>();
-        assert_eq!(k(hff_columns(0, false, false)), vec![0, 1, 3, 4, 6, 7]);          // train + validation (as before)
-        assert_eq!(k(hff_columns(50, false, false)), vec![0, 1, 2, 3, 4, 5, 6, 7, 8]); // all nine (as before)
-        assert_eq!(k(hff_columns(50, true, false)), vec![0, 2, 3, 5, 6, 8]);           // train + block three
-        assert_eq!(k(hff_columns(0, true, false)), vec![0, 3, 6]);                     // train alone
-        // The log scale is for blocks two and three, never train.
-        assert_eq!(hff_columns(50, true, true), vec![(0, false), (2, true), (3, false), (5, true), (6, false), (8, true)]);
+        assert_eq!(k(hff_columns(0, false, false, false)), vec![0, 1, 3, 4, 6, 7]);          // train + validation (as before)
+        assert_eq!(k(hff_columns(50, false, false, false)), vec![0, 1, 2, 3, 4, 5, 6, 7, 8]); // all nine (as before)
+        assert_eq!(k(hff_columns(50, true, false, false)), vec![0, 2, 3, 5, 6, 8]);           // train + block three
+        assert_eq!(k(hff_columns(0, true, false, false)), vec![0, 3, 6]);                     // train alone
+        // The blocks' log scale is for blocks two and three, not train ...
+        assert_eq!(hff_columns(50, true, true, false), vec![(0, false), (2, true), (3, false), (5, true), (6, false), (8, true)]);
+        // ... unless train is asked for: alone in HFF, it is all the error there is.
+        assert_eq!(hff_columns(0, true, false, true), vec![(0, true), (3, true), (6, true)]);
     }
 
     #[test]

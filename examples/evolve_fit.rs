@@ -110,6 +110,8 @@ fn main() {
     config.log_scale_blocks = std::env::var("EVOLVE_HFF_LOG").is_ok_and(|v| v == "1");
     //   EVOLVE_HFF_NO_VAL=1             validation is left out of HFF: train + block three
     config.hff_without_validation = std::env::var("EVOLVE_HFF_NO_VAL").is_ok_and(|v| v == "1");
+    //   EVOLVE_HFF_LOG_TRAIN=1          the train block enters HFF on the log scale too
+    config.log_scale_train = std::env::var("EVOLVE_HFF_LOG_TRAIN").is_ok_and(|v| v == "1");
     //   EVOLVE_TOWER=1                  the tower objective (t_depth) joins HFF
     config.tower = std::env::var("EVOLVE_TOWER").is_ok_and(|v| v == "1");
     if let Some(population) = args.get(4).and_then(|a| a.parse::<u32>().ok()) {
