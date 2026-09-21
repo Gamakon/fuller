@@ -19,6 +19,7 @@ use std::time::Instant;
 use super::device::EvolveDevice;
 use super::score::{GpuScorer, CANDIDATES, WIDTH};
 use super::vary::{GenParams, Generation, Island, Rates};
+use super::write_back::{gene_form, model_form, write_back, SnapCounts, WriteBack};
 use super::{InitParams, Layout, Population, SymbolCodes};
 use crate::chrom_score::{score_chromosomes, Linker, ScoreSpec, Splits, Wrapper, METRIC_WIDTH, SCORE_WIDTH};
 use crate::gpu_eval::{ExprBatch, GpuEvaluator, GpuNode, Op, MAX_NODES};
@@ -37,6 +38,9 @@ pub enum Symbol {
     /// The "?" placeholder: the n-th one in a gene's expression reads
     /// `rnc[dc[n]]` — geppy's Dc domain.
     Rnc,
+    /// A NAMED CONSTANT of the lattice (pi, e, sqrt2, hbar ...): `named[k]` of the
+    /// table. Withheld — never drawn; it enters a gene only by snap's write-back.
+    Named(u32),
 }
 
 /// COMPOUND FUNCTIONS (Andrew's idea): "construct a function called sum, and then
@@ -70,7 +74,7 @@ impl Compound {
     pub const ALL: [Compound; 6] = [Compound::SqrtSum, Compound::SqrtDiff, Compound::InvSqrtSum, Compound::InvSqrtDiff, Compound::InvSum, Compound::InvDiff];
 
     /// The operators applied to `(a, b)`, innermost first.
-    fn expansion(self) -> &'static [Op] {
+    pub fn expansion(self) -> &'static [Op] {
         match self {
             Compound::SqrtSum => &[Op::Add, Op::ProtectedSqrt],
             Compound::SqrtDiff => &[Op::Sub, Op::ProtectedSqrt],
@@ -87,6 +91,10 @@ pub struct SymbolTable {
     pub symbols: Vec<Symbol>,
     /// Terminals that may be carried but never drawn (named constants).
     pub withheld: Vec<bool>,
+    /// The lattice's named constants, by NAME INDEX (`SnapTable::names`' order):
+    /// the name, and its f64 value from `snap_karva::constant_values`. The index,
+    /// never the name, identifies one: a data column may itself be called `c`.
+    pub named: Vec<(String, f64)>,
 }
 
 impl SymbolTable {
@@ -101,7 +109,7 @@ impl SymbolTable {
         symbols.extend((0..n_inputs).map(Symbol::Input));
         symbols.push(Symbol::Rnc);
         let withheld = vec![false; symbols.len()];
-        SymbolTable { symbols, withheld }
+        SymbolTable { symbols, withheld, named: Vec::new() }
     }
 
     /// The wide set plus the compound functions. They are appended AFTER every
@@ -110,6 +118,38 @@ impl SymbolTable {
         self.symbols.extend(Compound::ALL.map(Symbol::Compound));
         self.withheld.resize(self.symbols.len(), false);
         self
+    }
+
+    /// The lattice's named constants join the table as WITHHELD terminals, in the
+    /// lattice's own order (`names` is `SnapTable::names`, taken at run time). They
+    /// are appended AFTER every existing symbol — the wide set, then the compounds
+    /// when they are on, then these — so no id moves. A name the crate has no value
+    /// for is an error.
+    pub fn with_named(mut self, names: &[String]) -> Result<SymbolTable, String> {
+        let known = crate::snap_karva::constant_values();
+        for (k, name) in names.iter().enumerate() {
+            let value = *known.get(name).ok_or_else(|| format!("{name}: the lattice names it, constant_values does not"))?;
+            self.symbols.push(Symbol::Named(k as u32));
+            self.named.push((name.clone(), value));
+        }
+        self.withheld.resize(self.symbols.len(), true);
+        Ok(self)
+    }
+
+    /// The id of named constant `k`, if the table carries it.
+    pub fn named_id(&self, k: u32) -> Option<u32> {
+        self.symbols.iter().position(|s| *s == Symbol::Named(k)).map(|i| i as u32)
+    }
+
+    /// The id of function `op`, if the table carries it.
+    pub fn function_id(&self, op: Op) -> Option<u32> {
+        self.symbols.iter().position(|s| *s == Symbol::Function(op)).map(|i| i as u32)
+    }
+
+    /// The f64 values of the named constants, by name index: what
+    /// [`nodes_to_math_named`] prints.
+    pub fn named_values(&self) -> Vec<f64> {
+        self.named.iter().map(|(_, v)| *v).collect()
     }
 
     pub fn arity(&self, id: u32) -> u32 {
@@ -209,6 +249,10 @@ pub fn decode_gene(gene: &[u32], rnc: &[f32], layout: Layout, table: &SymbolTabl
             (Symbol::Input(col), _) => GpuNode { op: Op::Var as u32, arg0: col, arg1: 0, konst: 0.0 },
             (Symbol::Constant(v), _) => GpuNode { op: Op::Num as u32, arg0: 0, arg1: 0, konst: v },
             (Symbol::Rnc, _) => GpuNode { op: Op::Num as u32, arg0: 0, arg1: 0, konst: konst[pos] },
+            // Stage 2's convention: the f32 value the evaluator reads, and the name's
+            // index + 1 in `arg0` (no reader of a `Num` looks there), so a decoded
+            // gene that carries pi is known to carry it.
+            (Symbol::Named(k), _) => GpuNode { op: Op::Num as u32, arg0: k + 1, arg1: 0, konst: table.named.get(k as usize)?.1 as f32 },
         };
         nodes.push(node);
     }
@@ -217,17 +261,27 @@ pub fn decode_gene(gene: &[u32], rnc: &[f32], layout: Layout, table: &SymbolTabl
 
 /// The nodes as a fuller `Math` expression, inputs named `names[col]`.
 pub fn nodes_to_math(nodes: &[GpuNode], at: usize, names: &[String]) -> String {
+    nodes_to_math_named(nodes, at, names, &[])
+}
+
+/// [`nodes_to_math`] for genes that may carry named constants: a `Num` whose
+/// `arg0` is 1 + a name index is written as that constant's f64 VALUE, `named[k]`
+/// (`SymbolTable::named_values`) — `(Num 3.141592653589793)`, never the f32 the
+/// device reads and never `(Var "pi")`: `evaluate_math` binds names from the data
+/// columns, and a column may itself be called `c` or `h`.
+pub fn nodes_to_math_named(nodes: &[GpuNode], at: usize, names: &[String], named: &[f64]) -> String {
     let node = nodes[at];
     if node.op == Op::Var as u32 {
         return format!("(Var \"{}\")", names[node.arg0 as usize]);
     }
     if node.op == Op::Num as u32 {
-        return format!("(Num {:?})", f64::from(node.konst));
+        let value = (node.arg0 as usize).checked_sub(1).and_then(|k| named.get(k)).copied().unwrap_or(f64::from(node.konst));
+        return format!("(Num {value:?})");
     }
     let op = OPS.iter().find(|op| **op as u32 == node.op).copied().unwrap_or(Op::Add);
-    let first = nodes_to_math(nodes, node.arg0 as usize, names);
+    let first = nodes_to_math_named(nodes, node.arg0 as usize, names, named);
     if op.arity() == 2 {
-        format!("({op:?} {first} {})", nodes_to_math(nodes, node.arg1 as usize, names))
+        format!("({op:?} {first} {})", nodes_to_math_named(nodes, node.arg1 as usize, names, named))
     } else {
         format!("({op:?} {first})")
     }
@@ -342,6 +396,18 @@ pub struct Config {
     /// objectives (train + t_depth); p depends on how many objectives HFF has.
     /// `f64::INFINITY` switches this half off.
     pub stop_log10_p: f64,
+    /// SNAP WINNERS' beat (`hff_sr_engine.py::_apply_snap_to_winners`): every this
+    /// many generations the chosen rows' genes go through snap — match, graft, the
+    /// guard on the TRAIN rows judging the whole MODEL — and every kept form is
+    /// WRITTEN BACK into its gene (`write_back.rs`). 0 = off, the default.
+    pub snap_every: u32,
+    /// How many rows of each island, by fitness, are snap winners; 0 = every
+    /// evaluated row (the notebook's `snap_winners_top_k = 0`).
+    pub snap_top_k: u32,
+    /// `_snap_op.py`'s `rel_tol`: how near a lattice entry a folded constant must be.
+    pub snap_rel_tol: f64,
+    /// `_snap_op.py`'s `r2_drop_tol`: how much of the model's train R² a snap may cost.
+    pub snap_r2_drop: f64,
 }
 
 impl Config {
@@ -381,6 +447,10 @@ impl Config {
             max_seconds: 30.0,
             stop_one_minus_r2: 1e-10,
             stop_log10_p: -19.0,
+            snap_every: 0,
+            snap_top_k: 0,
+            snap_rel_tol: 1e-3,
+            snap_r2_drop: crate::lint::snap_guard::R2_DROP_TOL,
         }
     }
 }
@@ -427,6 +497,7 @@ pub struct Timing {
     pub hff: f64,
     pub pump: f64,
     pub cross: f64,
+    pub snap: f64,
 }
 
 pub struct FitResult {
@@ -439,6 +510,8 @@ pub struct FitResult {
     pub best: Scored,
     pub math: String,
     pub timing: Timing,
+    /// What snap did (all zero when `Config::snap_every` is 0).
+    pub snap: SnapCounts,
 }
 
 const LINKERS: [Linker; 3] = [Linker::AVG, Linker::MUL, Linker::ADD];
@@ -845,12 +918,30 @@ pub struct Engine {
     caps: Caps,
     col_max: Option<[f64; 9]>,
     scored: Vec<Option<Scored>>,
+    /// Snap's resident parts; None when `Config::snap_every` is 0.
+    snap: Option<SnapState>,
+}
+
+/// What the snap step keeps between beats: the lattice, the linter's literal
+/// codes (`encode` reads them), the guard's f64 rows, and the counts.
+struct SnapState {
+    table: crate::lint::snap_table::SnapTable,
+    kernel_tables: crate::lint::device::KernelTables,
+    guard_data: crate::lint::snap_guard::GuardData,
+    counts: SnapCounts,
 }
 
 impl Engine {
     pub fn new(config: Config, data: Data) -> Result<Engine, String> {
         let wide = SymbolTable::wide(data.names.len() as u32);
         let table = if config.compounds { wide.with_compounds() } else { wide };
+        // The named constants join the table only when snap can write one: with the
+        // switch off the symbol table is the one it always was.
+        let lattice = if config.snap_every > 0 { Some(crate::lint::snap_table::SnapTable::standard()?) } else { None };
+        let table = match &lattice {
+            Some(lattice) => table.with_named(&lattice.names)?,
+            None => table,
+        };
         if config.n_pairs == 0 {
             return Err("n_pairs: a population is at least one pair of islands".into());
         }
@@ -876,7 +967,18 @@ impl Engine {
         let evaluator = GpuEvaluator::new(&data.x, data.names.len())?;
         let scorer = GpuScorer::new(&evaluator, &data.y, data.splits)?;
         let caps = Caps::of(&data.y, data.splits);
-        Ok(Engine { scored: vec![None; pop as usize], config, table, layout, islands, dev, evaluator, scorer, data, caps, col_max: None })
+        let snap = match lattice {
+            Some(table) => {
+                let tables = crate::lint::tables::Tables::standard()?;
+                let packed = crate::lint::pack::pack(&tables.rules.iter().collect::<Vec<_>>());
+                let kernel_tables = crate::lint::device::KernelTables::new(&packed.rules, packed.codes, &tables.guards)?;
+                let x: Vec<f64> = data.x.iter().map(|v| f64::from(*v)).collect();
+                let guard_data = crate::lint::snap_guard::GuardData::train(data.names.clone(), x, data.y.clone(), data.splits)?;
+                Some(SnapState { table, kernel_tables, guard_data, counts: SnapCounts::default() })
+            }
+            None => None,
+        };
+        Ok(Engine { scored: vec![None; pop as usize], config, table, layout, islands, dev, evaluator, scorer, data, caps, col_max: None, snap })
     }
 
     /// Score every unevaluated row of `gen`; returns (unique genes, oversized).
@@ -1175,6 +1277,132 @@ impl Engine {
         Ok(best)
     }
 
+    /// SNAP WINNERS (`hff_sr_engine.py::_apply_snap_to_winners`, per gene as
+    /// `_snap_op.py::snap_individual`): the best `snap_top_k` evaluated rows of
+    /// every island (0 = all of them). Each gene with a folded constant that is
+    /// not a whole number is ONE expression for the snap pipeline — the row's whole
+    /// model `a * WRAPPER(LINKER(genes)) + b` with its fitted a and b, that gene's
+    /// constants offered and every other literal withheld — so the guard judges
+    /// the MODEL on the train rows. Match, graft and guard run on the evaluator's
+    /// device; what is written back comes from `Guarded::decisions`, the host's
+    /// f64 word, never from the device's verdicts. A row whose genome changed is
+    /// left unevaluated. Returns how many rows changed; nothing raises into
+    /// evolution — a gene that cannot take its form is unchanged and COUNTED.
+    fn snap_winners(&mut self, gen: &mut Generation, generation: u32) -> Result<u64, String> {
+        use crate::lint::snap_graft::{variant_sites, SnapGraft};
+        use crate::lint::snap_guard::{SnapGuard, Verdict};
+        use crate::lint::snap_table::SnapKernel;
+        let started = Instant::now();
+        let Some(state) = self.snap.as_ref() else { return Ok(0) };
+        let l = self.layout;
+        let (width, nr, g_n) = (l.gene_width() as usize, l.n_rnc as usize, l.n_genes as usize);
+        let codes = self.table.codes();
+        let mut counts = SnapCounts { beats: 1, ..SnapCounts::default() };
+        let mut winners: Vec<u32> = Vec::new();
+        for island in &self.islands {
+            let ranked = Self::by_fitness(*island, &gen.fitness);
+            let take = if self.config.snap_top_k == 0 { ranked.len() } else { self.config.snap_top_k as usize };
+            winners.extend(ranked.into_iter().take(take));
+        }
+        // One expression per (row, gene) with something to offer.
+        let mut exprs = Vec::new();
+        let mut offered: Vec<Vec<bool>> = Vec::new();
+        let mut sites: Vec<Vec<Option<usize>>> = Vec::new();
+        let mut owner: Vec<(usize, usize)> = Vec::new();
+        for &r in &winners {
+            let r = r as usize;
+            counts.rows += 1;
+            let gene = |g: usize| (&gen.pop.genome[(r * g_n + g) * width..(r * g_n + g + 1) * width], &gen.pop.rnc[(r * g_n + g) * nr..(r * g_n + g + 1) * nr]);
+            let decodes = |g: usize| decode_gene(gene(g).0, gene(g).1, l, &self.table).is_some_and(|n| n.len() <= MAX_NODES);
+            let forms: Option<Vec<_>> = (0..g_n).map(|g| gene_form(gene(g).0, gene(g).1, l, &self.table, &codes, true).filter(|_| decodes(g))).collect();
+            let (Some(s), Some(forms)) = (self.scored[r], forms) else {
+                counts.rows_unscored += 1;
+                continue;
+            };
+            for g in 0..g_n {
+                counts.genes_examined += 1;
+                if forms[g].offered() == 0 {
+                    continue;
+                }
+                counts.genes_with_literal += 1;
+                let genes: Vec<_> = forms.iter().enumerate().map(|(k, f)| if k == g { f.clone() } else { f.withheld() }).collect();
+                let (flat, at) = model_form(&genes, LINKER_NAMES[s.linker], WRAPPERS[s.wrapper], s.a, s.b).flatten(&self.data.names);
+                if flat.nodes.len() > MAX_NODES {
+                    counts.model_oversize += 1;
+                    continue;
+                }
+                counts.literals_offered += at.iter().flatten().count() as u64;
+                offered.push(at.iter().map(Option::is_some).collect());
+                exprs.push(flat);
+                sites.push(at);
+                owner.push((r, g));
+            }
+        }
+        let mut changed: Vec<usize> = Vec::new();
+        if !exprs.is_empty() {
+            let guarded = {
+                let kernel = SnapKernel::on_device(self.evaluator.device(), self.evaluator.queue(), state.table.clone())?;
+                let graft = SnapGraft::new(&kernel)?;
+                let mut guard = SnapGuard::new(&self.evaluator, &kernel, &graft, state.guard_data.clone())?;
+                guard.r2_drop_tol = self.config.snap_r2_drop;
+                let (guarded, blocks) =
+                    guard.run_resident_offered(&exprs, Some(&offered), &state.kernel_tables, self.config.snap_rel_tol, crate::gpu_eval::MAX_GROUPS_PER_DIM)?;
+                // The write-back below is the host's: the device's blocks are not read.
+                if let Some(blocks) = blocks {
+                    blocks.destroy();
+                    self.evaluator.device().poll(wgpu::Maintain::Poll);
+                }
+                guarded
+            };
+            counts.band_overflows = guarded.band_overflows as u64;
+            counts.device_kept = guarded.device_kept as u64;
+            counts.refused_f64 = (guarded.refused_literal + guarded.refused_r2) as u64;
+            let vhead = super::virtual_head(self.vhead_at(generation), l)?;
+            for (e, expr) in exprs.iter().enumerate() {
+                let hits = &guarded.hits[e];
+                for hit in hits.iter().flatten() {
+                    counts.literals_matched += 1;
+                    counts.matched_by_family[state.table.family(hit.entry) as usize] += 1;
+                }
+                let decision = &guarded.decisions[e];
+                let Some(slot) = decision.slot.filter(|_| decision.status == Verdict::Kept) else { continue };
+                let grafts: Vec<_> = variant_sites(expr, hits, slot)
+                    .into_iter()
+                    .map(|i| Ok((sites[e][i].ok_or("the guard kept a variant that grafts a literal snap did not offer")?, hits[i].ok_or("a grafted site with no hit")?)))
+                    .collect::<Result<_, String>>()?;
+                let (r, g) = owner[e];
+                let tokens = &mut gen.pop.genome[(r * g_n + g) * width..(r * g_n + g + 1) * width];
+                let consts = &mut gen.pop.rnc[(r * g_n + g) * nr..(r * g_n + g + 1) * nr];
+                let status = write_back(tokens, consts, l, vhead, &self.table, &grafts, &state.table);
+                counts.count(status);
+                if status == WriteBack::Grafted && !changed.contains(&r) {
+                    changed.push(r);
+                }
+            }
+        }
+        for &r in &changed {
+            gen.fitness[r] = f32::NAN;
+            self.scored[r] = None;
+        }
+        counts.rows_changed = changed.len() as u64;
+        counts.seconds = started.elapsed().as_secs_f64();
+        if let Some(state) = self.snap.as_mut() {
+            state.counts.add(&counts);
+        }
+        Ok(changed.len() as u64)
+    }
+
+    /// The population as the device holds it: after a fit, the last generation
+    /// with every write-back in it.
+    pub fn population(&self) -> Result<Population, String> {
+        self.dev.read()
+    }
+
+    /// The snap counts of this engine's fits so far.
+    pub fn snap_counts(&self) -> SnapCounts {
+        self.snap.as_ref().map_or_else(SnapCounts::default, |s| s.counts.clone())
+    }
+
     /// The virtual head at `generation` — see `Config::vhead_every`. 0 = the whole
     /// head (what `InitParams` / `GenParams` take for "the ordinary gene").
     pub fn vhead_at(&self, generation: u32) -> u32 {
@@ -1253,7 +1481,7 @@ impl Engine {
             .map(|g| {
                 let tokens = &gen.pop.genome[(row * g_n + g) * width..(row * g_n + g + 1) * width];
                 let consts = &gen.pop.rnc[(row * g_n + g) * nr..(row * g_n + g + 1) * nr];
-                decode_gene(tokens, consts, l, &self.table).map_or("(Num 0.0)".to_string(), |n| nodes_to_math(&n, 0, &self.data.names))
+                decode_gene(tokens, consts, l, &self.table).map_or("(Num 0.0)".to_string(), |n| nodes_to_math_named(&n, 0, &self.data.names, &self.table.named_values()))
             })
             .collect();
         let mut body = genes[0].clone();
@@ -1274,7 +1502,7 @@ impl Engine {
     pub fn fit(&mut self) -> Result<FitResult, String> {
         let c = self.config.clone();
         let started = Instant::now();
-        let mut timing = Timing { vary: 0.0, read: 0.0, decode: 0.0, evaluate: 0.0, score: 0.0, hff: 0.0, pump: 0.0, cross: 0.0 };
+        let mut timing = Timing { vary: 0.0, read: 0.0, decode: 0.0, evaluate: 0.0, score: 0.0, hff: 0.0, pump: 0.0, cross: 0.0, snap: 0.0 };
         let rates = Rates::with_cleanse(self.layout, c.cleanse);
         self.dev.init(&InitParams { seed: c.seed, generation: 0, rnc_lo: c.rnc_lo, rnc_hi: c.rnc_hi, n_wrappers: WRAPPERS.len() as u32, vhead: self.vhead_at(0) })?;
         let mut gen = self.dev.read_generation()?;
@@ -1341,6 +1569,20 @@ impl Engine {
                     }
                 }
             }
+            // SNAP WINNERS, on its beat: the rows just scored, before the pump moves
+            // them and before they breed. A row whose gene was written back is scored
+            // again, as the pump's fresh rows are.
+            if c.snap_every > 0 && generation % c.snap_every == 0 {
+                let t = Instant::now();
+                if self.snap_winners(&mut gen, generation)? > 0 {
+                    let (u, o) = self.evaluate(&mut gen, &mut timing)?;
+                    unique += u;
+                    oversized += o;
+                    self.remember(&mut hof, &gen, generation);
+                    self.dev.write_population(&gen.pop)?;
+                }
+                timing.snap += t.elapsed().as_secs_f64();
+            }
             // THE PUMP, on its beat: the islands are where the diversity comes from.
             let t = Instant::now();
             let crossed = c.cross_every > 0 && generation % c.cross_every == 0;
@@ -1400,6 +1642,7 @@ impl Engine {
             math: self.math_of(&gen, row, &best),
             best,
             timing,
+            snap: self.snap.as_ref().map_or_else(SnapCounts::default, |s| s.counts.clone()),
         })
     }
 }
@@ -1596,7 +1839,7 @@ mod tests {
                     n_rnc += 1;
                     GpuNode { op: Op::Num as u32, arg0: 0, arg1: 0, konst: *rnc.get(k)? }
                 }
-                Symbol::Compound(_) => return None,
+                Symbol::Compound(_) | Symbol::Named(_) => return None,
             });
         }
         Some(nodes)

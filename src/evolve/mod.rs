@@ -17,6 +17,8 @@ pub mod smogd;
 pub mod smote;
 pub mod umap2d;
 pub mod vary;
+#[cfg(feature = "gpu")]
+pub mod write_back;
 
 /// mix64.wgsl (the generator, copied verbatim from the qdrant workspace) in
 /// front of the kernels that draw from it.

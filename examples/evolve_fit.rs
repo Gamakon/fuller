@@ -195,6 +195,15 @@ fn main() {
     if let Some(n) = env("EVOLVE_K_MIGRANTS").and_then(|v| v.parse().ok()) {
         config.k_migrants = n;
     }
+    //   EVOLVE_SNAP_EVERY               SNAP WINNERS' beat in generations (0 = off, the default):
+    //                                   kept snapped forms are written back into the genes
+    //   EVOLVE_SNAP_TOP_K               rows per island, by fitness, that are snap winners (0 = all)
+    if let Some(n) = env("EVOLVE_SNAP_EVERY").and_then(|v| v.parse().ok()) {
+        config.snap_every = n;
+    }
+    if let Some(n) = env("EVOLVE_SNAP_TOP_K").and_then(|v| v.parse().ok()) {
+        config.snap_top_k = n;
+    }
     let restarts: u32 = env("EVOLVE_RESTARTS").and_then(|v| v.parse().ok()).unwrap_or(1).max(1);
     config.cleanse = args.get(6).and_then(|a| a.parse().ok()).unwrap_or(0.0);
     // RESTARTS: the same seconds as one search, spent as several independent
@@ -235,6 +244,11 @@ fn main() {
         "seconds: variation {:.2} | read-back {:.2} | decode {:.2} | evaluate {:.2} | link+scale+metrics {:.2} | HFF {:.2} | pump {:.2} | cross {:.2}",
         t.vary, t.read, t.decode, t.evaluate, t.score, t.hff, t.pump, t.cross
     );
+    if config.snap_every > 0 {
+        println!("seconds: snap {:.2} ({:.3} per beat in the snap step itself)", t.snap, out.snap.seconds / out.snap.beats.max(1) as f64);
+        println!("{}", out.snap.line());
+        println!("{}", out.snap.detail());
+    }
     println!("genes evaluated {} (unique per generation), over the 64-node limit {}", out.unique_genes, out.oversized_genes);
     println!("1 - R²: train {:.3e}, validation {:.3e}", out.best.one_minus_r2[0], out.best.one_minus_r2[1]);
 
