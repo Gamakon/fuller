@@ -212,7 +212,9 @@ impl Config {
             tournament_fraction: 0.07,
             elites: 2,
             n_genes: 3,
-            head: 48,
+            // 34: the longest of SRBench's true laws needs a head of 29 written whole in
+            // ONE gene (median 8, 90% within 17); 48 only left room for towers.
+            head: 34,
             n_rnc: 10,
             rnc_lo: -100,
             rnc_hi: 100,
@@ -313,10 +315,11 @@ pub fn t_depth(nodes: &[GpuNode]) -> u32 {
     depth.into_iter().max().unwrap_or(0)
 }
 
-/// The tower objective on [0, 1]: nothing up to a depth of 2 (no true law is
-/// deeper), then a quarter per level, 1 from a depth of 6.
+/// The tower objective on [0, 1]: SMOOTH, a sixth per level from 0 — depth 0 is 0,
+/// 1 is 1/6, 2 is 2/6 ... 6 and deeper is 1. No step and no free zone: at equal
+/// error the shallower individual always wins the tournament.
 pub fn tower_penalty(t_depth: u32) -> f64 {
-    (f64::from(t_depth.saturating_sub(2)) / 4.0).min(1.0)
+    (f64::from(t_depth) / 6.0).min(1.0)
 }
 
 /// Which of the nine objectives `[mse x3, 1-R2 x3, mae x3]` (blocks train,
@@ -1053,8 +1056,12 @@ mod tests {
     }
 
     #[test]
-    fn the_tower_penalty_never_touches_a_depth_a_true_law_has() {
-        assert_eq!([0, 1, 2, 3, 4, 5, 6, 9].map(tower_penalty), [0.0, 0.0, 0.0, 0.25, 0.5, 0.75, 1.0, 1.0]);
+    fn the_tower_penalty_is_smooth_a_sixth_per_level() {
+        let got = [0, 1, 2, 3, 4, 5, 6, 9].map(tower_penalty);
+        let want = [0.0, 1.0 / 6.0, 2.0 / 6.0, 0.5, 4.0 / 6.0, 5.0 / 6.0, 1.0, 1.0];
+        assert!(got.iter().zip(want).all(|(g, w)| (g - w).abs() < 1e-15), "{got:?}");
+        // Every level costs the same: no step.
+        assert!((1..=6).all(|t| (tower_penalty(t) - tower_penalty(t - 1) - 1.0 / 6.0).abs() < 1e-15));
     }
 
     #[test]

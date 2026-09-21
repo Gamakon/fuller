@@ -118,6 +118,10 @@ fn main() {
         config.pop_intake = population / 4 * 3;
         config.pop_champion = population - config.pop_intake;
     }
+    //   EVOLVE_HEAD                     a gene's head length (the engine's default is 34)
+    if let Some(head) = std::env::var("EVOLVE_HEAD").ok().and_then(|v| v.parse::<u32>().ok()) {
+        config.head = head;
+    }
     //   EVOLVE_POP_CHAMPION             the champion island's size; the `population`
     //                                   argument is then the INTAKE island's size
     //                                   (1500 + 1500 rather than the 3:1 split, which
