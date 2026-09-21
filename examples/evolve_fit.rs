@@ -106,6 +106,8 @@ fn main() {
 
     let mut config = Config::srbench(seed);
     config.smogd = smogd_on || smote_on;
+    //   EVOLVE_HFF_LOG=1                blocks two and three enter HFF on the log scale
+    config.log_scale_blocks = std::env::var("EVOLVE_HFF_LOG").is_ok_and(|v| v == "1");
     if let Some(population) = args.get(4).and_then(|a| a.parse::<u32>().ok()) {
         config.pop_intake = population / 4 * 3;
         config.pop_champion = population - config.pop_intake;

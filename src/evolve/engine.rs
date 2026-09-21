@@ -174,6 +174,9 @@ pub struct Config {
     /// errors rank individuals in the tournaments (three HFF objectives); it never
     /// decides that a fit is exact — the stop bar stays on the real validation rows.
     pub smogd: bool,
+    /// Blocks two and three (validation; SMOGD / SMOTE / edge) enter HFF on the
+    /// log scale — see `hff_truenorth`. The train block stays linear.
+    pub log_scale_blocks: bool,
     /// Harvest and regrow: a model that reaches the stop bar is put in a parking
     /// lot, it and its structural relatives are removed from the population, and
     /// the search goes on to grow another — up to this many (0 = stop at the
@@ -204,6 +207,7 @@ impl Config {
             cleanse: 0.0,
             redundancy: false,
             smogd: false,
+            log_scale_blocks: false,
             // Kept after a two-seed A/B (7012: 46 -> 47, 7013: 44 -> 45, no losses).
             harvests: 4,
             max_generations: 1500,
@@ -254,18 +258,30 @@ const LINKERS: [Linker; 3] = [Linker::AVG, Linker::MUL, Linker::ADD];
 const WRAPPERS: [Wrapper; 3] = [Wrapper::Identity, Wrapper::LogAbs, Wrapper::SqrtAbs];
 const LINKER_NAMES: [&str; 3] = ["avgval", "mulval", "addval"];
 
+/// The scaled error that HFF's log scale calls zero.
+const HFF_LOG_FLOOR: f64 = 1e-12;
+
 /// HFF, TrueNorth: objectives scaled into [0, 1] by frozen ranges, the angle
 /// from the all-zero pole — `acos(1 - min(sum(x^2) / m, 1))` (hff_core
 /// `true_north_cos_theta`: with the pole at (0, .., 0, 1) the cosine is the
 /// energy score alone).
-fn hff_truenorth(objectives: &[f64], col_max: &[f64]) -> f64 {
+///
+/// An objective marked `log_scaled` is first stretched, `1 + log10(x) / 12`
+/// (so 1e-12 and below is 0, 1 stays 1): every factor of ten in the error counts
+/// the same. Squared as it stands, an error of 5e-3 weighs 3e-5 and one of 2e-4
+/// weighs 4e-8 — both nothing, and a tournament cannot tell a fake at 1e-3 from a
+/// law at 1e-12. On the log scale they sit at 0.75 and 0.
+fn hff_truenorth(objectives: &[f64], col_max: &[f64], log_scaled: &[bool]) -> f64 {
     let m = objectives.len() as f64;
     let mut energy = 0.0;
-    for (v, max) in objectives.iter().zip(col_max) {
+    for ((v, max), log) in objectives.iter().zip(col_max).zip(log_scaled) {
         if !v.is_finite() {
             return std::f64::consts::PI;
         }
-        let x = if *max > 0.0 { (v / max).min(1.0) } else { 0.0 };
+        let mut x = if *max > 0.0 { (v / max).min(1.0) } else { 0.0 };
+        if *log {
+            x = if x <= HFF_LOG_FLOOR { 0.0 } else { 1.0 + x.log10() / -HFF_LOG_FLOOR.log10() };
+        }
         energy += x * x;
     }
     let cos_theta = (1.0 - (energy / m).min(1.0)).clamp(-1.0, 1.0);
@@ -532,11 +548,14 @@ impl Engine {
                 } else {
                     col_max.to_vec()
                 };
+                let l = self.config.log_scale_blocks;
+                let mut logs: Vec<bool> = if n_ex == 0 { vec![false, l, false, l, false, l] } else { vec![false, l, l, false, l, l, false, l, l] };
                 if self.config.redundancy {
                     used.push(s[9].clamp(0.0, 1.0));    // already on [0, 1]: its range is its scale
                     maxes.push(1.0);
+                    logs.push(false);
                 }
-                let fitness = hff_truenorth(&used, &maxes);
+                let fitness = hff_truenorth(&used, &maxes, &logs);
                 if best.is_none_or(|b| fitness < b.fitness) {
                     best = Some(Scored { fitness, linker: c / WRAPPERS.len(), wrapper: c % WRAPPERS.len(), a: s[0], b: s[1], one_minus_r2: omr2 });
                 }
@@ -660,10 +679,11 @@ impl Engine {
                 continue;
             }
             let (o, omr2) = self.caps.objectives(s, n_ex);
+            let l = self.config.log_scale_blocks;
             let fitness = if n_ex == 0 {
-                hff_truenorth(&[o[0], o[1], o[3], o[4], o[6], o[7]], &[col_max[0], col_max[1], col_max[3], col_max[4], col_max[6], col_max[7]])
+                hff_truenorth(&[o[0], o[1], o[3], o[4], o[6], o[7]], &[col_max[0], col_max[1], col_max[3], col_max[4], col_max[6], col_max[7]], &[false, l, false, l, false, l])
             } else {
-                hff_truenorth(&o, &col_max)
+                hff_truenorth(&o, &col_max, &[false, l, l, false, l, l, false, l, l])
             };
             if best.is_none_or(|b| fitness < b.fitness) {
                 best = Some(Scored { fitness, linker: c / WRAPPERS.len(), wrapper: c % WRAPPERS.len(), a: s[0], b: s[1], one_minus_r2: omr2 });
@@ -862,6 +882,23 @@ impl Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_log_scale_separates_small_errors_the_square_cannot() {
+        let max = [1.0, 1.0];
+        let (law, fake, poor) = ([1e-14, 1e-14], [2e-4, 5e-3], [2e-2, 0.3]);
+        let linear = |o: &[f64; 2]| hff_truenorth(o, &max, &[false, false]);
+        let log = |o: &[f64; 2]| hff_truenorth(o, &max, &[false, true]);
+        // Both keep the order law < fake < poor ...
+        assert!(linear(&law) <= linear(&fake) && linear(&fake) < linear(&poor));
+        assert!(log(&law) < log(&fake) && log(&fake) < log(&poor));
+        // ... but only the log scale puts the fake a long way from the law.
+        assert!(linear(&fake) - linear(&law) < 0.01);
+        assert!(log(&fake) - log(&law) > 0.5);
+        // The floor and the ceiling: 1e-12 and below is 0, 1 is 1.
+        assert_eq!(log(&[0.0, 1e-13]), 0.0);
+        assert_eq!(log(&[0.0, 1.0]), linear(&[0.0, 1.0]));
+    }
 
     fn rows() -> Vec<Vec<(String, f64)>> {
         (0..200)
