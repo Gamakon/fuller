@@ -557,18 +557,33 @@ pub fn resolve_protected(math: &str, rows: &[Vec<(String, f64)>]) -> Result<Stri
             // never leaves [-1, 1] the clamp does nothing and it IS the raw function
             // (feynman I.26.2, asin(n sin t), is reported as the law and not as a
             // Piecewise over a Min and a Max).
-            // An inverse of its own function is the argument, where the data keeps the
-            // argument in the principal range: acos(cos e) = e on [0, pi], asin(sin e)
-            // = e on [-pi/2, pi/2] (strogatz barmag2 hid its law behind acos(cos x)).
+            // An inverse of its own function is LINEAR in the argument on whichever
+            // branch the data keeps the argument in: on [k pi, (k+1) pi], acos(cos e)
+            // is e - k pi (k even) or (k+1) pi - e (k odd); on [k pi - pi/2, k pi +
+            // pi/2], asin(sin e) is (-1)^k (e - k pi). (strogatz barmag2 hid its law
+            // behind acos(cos x) with x in [pi, 2 pi] on every row: 2 pi - x.)
             Op::ProtectedAsin | Op::ProtectedAcos | Op::Asin | Op::Acos
                 if matches!((op, &kids[0]), (Op::ProtectedAsin | Op::Asin, Tree::App(Op::Sin, _)) | (Op::ProtectedAcos | Op::Acos, Tree::App(Op::Cos, _))) =>
             {
                 use std::f64::consts::{FRAC_PI_2, PI};
                 let Tree::App(_, inner) = &kids[0] else { return Tree::App(*op, kids) };
                 let e = values(&inner[0]);
-                let (lo, hi) = if matches!(op, Op::ProtectedAsin | Op::Asin) { (-FRAC_PI_2, FRAC_PI_2) } else { (0.0, PI) };
-                if !e.is_empty() && e.iter().all(|v| v.is_finite() && *v >= lo && *v <= hi) {
-                    return inner[0].clone();
+                let asin = matches!(op, Op::ProtectedAsin | Op::Asin);
+                if let Some(first) = e.first().filter(|v| v.is_finite()) {
+                    // the branch the first row is on; every row must be on it
+                    let k = if asin { (first / PI).round() } else { (first / PI).floor() };
+                    let (lo, hi) = if asin { (k * PI - FRAC_PI_2, k * PI + FRAC_PI_2) } else { (k * PI, (k + 1.0) * PI) };
+                    if k.abs() <= 1e6 && e.iter().all(|v| v.is_finite() && *v >= lo && *v <= hi) {
+                        let arg = inner[0].clone();
+                        let odd = k.rem_euclid(2.0) == 1.0;
+                        return match (asin, odd, k == 0.0) {
+                            (_, _, true) => arg,
+                            (true, false, _) => Tree::App(Op::Sub, vec![arg, Tree::Num(k * PI)]),
+                            (true, true, _) => Tree::App(Op::Sub, vec![Tree::Num(k * PI), arg]),
+                            (false, false, _) => Tree::App(Op::Sub, vec![arg, Tree::Num(k * PI)]),
+                            (false, true, _) => Tree::App(Op::Sub, vec![Tree::Num((k + 1.0) * PI), arg]),
+                        };
+                    }
                 }
                 if matches!(op, Op::ProtectedAsin | Op::ProtectedAcos) {
                     // sin and cos never leave [-1, 1]: the clamp cannot fire.
@@ -1479,7 +1494,19 @@ mod tests {
         assert_eq!(resolve_protected(&format!("(ProtectedAcos (Cos {inside}))"), &rows()).unwrap(), inside);
         assert_eq!(resolve_protected(r#"(ProtectedAsin (Sin (Mul (Num 0.2) (Var "x_2"))))"#, &rows()).unwrap(), r#"(Mul (Num 0.2) (Var "x_2"))"#);
         let outside = r#"(ProtectedAcos (Cos (Var "x_2")))"#;
-        assert_eq!(resolve_protected(outside, &rows()).unwrap(), r#"(Acos (Cos (Var "x_2")))"#, "not e, but the clamp cannot fire");
+        assert_eq!(resolve_protected(outside, &rows()).unwrap(), r#"(Acos (Cos (Var "x_2")))"#, "x_2 straddles pi: not linear, but the clamp cannot fire");
+        // Any branch: x_2 + 2 runs 3.5..5.49, inside [pi, 2 pi] -> acos(cos e) = 2 pi - e
+        // (strogatz barmag2); x_2 + 3.5 runs 5.0..6.99, inside [2 pi - pi/2, 2 pi + pi/2]
+        // -> asin(sin e) = e - 2 pi. The predictions do not move.
+        for (expr, wanted) in [
+            (r#"(ProtectedAcos (Cos (Add (Var "x_2") (Num 2.0))))"#, format!(r#"(Sub (Num {:?}) (Add (Var "x_2") (Num 2.0)))"#, 2.0 * std::f64::consts::PI)),
+            (r#"(ProtectedAsin (Sin (Add (Var "x_2") (Num 3.5))))"#, format!(r#"(Sub (Add (Var "x_2") (Num 3.5)) (Num {:?}))"#, 2.0 * std::f64::consts::PI)),
+        ] {
+            let resolved = resolve_protected(expr, &rows()).unwrap();
+            assert_eq!(resolved, wanted);
+            let (a, b) = (evaluate_math(expr, &rows()).unwrap(), evaluate_math(&resolved, &rows()).unwrap());
+            assert!(a.iter().zip(&b).all(|(p, q)| (p - q).abs() < 1e-12), "{expr}");
+        }
     }
 
     /// A term that matters stays.
