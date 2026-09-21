@@ -28,11 +28,16 @@ pub struct Params {
     pub too_close: f64,
     pub k_neighbors: usize,
     pub max_attempts: u32,
+    /// Multiplies the neighbours' weighted VARIANCE before a feature or the target
+    /// is drawn. 1.0 is ManifoldGridSampler's; 2 or 3 widens the draws past the
+    /// neighbours' own range, so the block keeps some of the peaks the weighted
+    /// mean flattens.
+    pub noise_multiplier: f64,
 }
 
 impl Params {
     pub fn defaults() -> Params {
-        Params { min_points_per_cell: 10, max_depth: 8, synth_multiplier: 2.0, too_close: 0.3, k_neighbors: 5, max_attempts: 50 }
+        Params { min_points_per_cell: 10, max_depth: 8, synth_multiplier: 2.0, too_close: 0.3, k_neighbors: 5, max_attempts: 50, noise_multiplier: 1.0 }
     }
 }
 
@@ -134,7 +139,7 @@ pub fn rows(x: &[f64], y: &[f64], width: usize, embedding: &[[f64; 2]], seed: u3
                     let variance: f64 = near.iter().map(|&(i, w)| w * (value(cell[i]) - mean).powi(2)).sum();
                     let r = normal(draw(seed, 0, cell_at as u32, noise_at, STREAM_SMOGD_NOISE), draw(seed, 0, cell_at as u32, noise_at + 1, STREAM_SMOGD_NOISE));
                     noise_at += 2;
-                    r * variance.sqrt() + mean
+                    r * (variance * p.noise_multiplier).sqrt() + mean
                 };
                 for c in 0..width {
                     out_x.push(sample(&|r| x[r * width + c]));
@@ -193,6 +198,23 @@ mod tests {
         // A linear target over a lattice: the noisy rows still follow the plane.
         let worst = sx.chunks(2).zip(&sy).map(|(p, t)| (3.0 * p[0] - p[1] - t).abs()).fold(0.0, f64::max);
         assert!(worst < 8.0, "a synthetic target is {worst} from the plane");
+    }
+
+    #[test]
+    fn the_noise_multiplier_widens_the_draws_and_moves_nothing_else() {
+        let points = lattice(12, 1.0);
+        let x: Vec<f64> = points.iter().flat_map(|p| [p[0], p[1]]).collect();
+        let y: Vec<f64> = points.iter().map(|p| 3.0 * p[0] - p[1]).collect();
+        let plain = rows(&x, &y, 2, &points, 7012, &Params::defaults());
+        let wide = rows(&x, &y, 2, &points, 7012, &Params { noise_multiplier: 3.0, ..Params::defaults() });
+        // Same placements, same normal draws: each row's offset from the plane's
+        // value at its own (noisy) inputs is not comparable, but the target's
+        // spread about the plain run's is — every draw is scaled by sqrt(3).
+        assert_eq!(plain.1.len(), wide.1.len());
+        let spread = |t: &[f64]| { let m = t.iter().sum::<f64>() / t.len() as f64; t.iter().map(|v| (v - m).powi(2)).sum::<f64>() / t.len() as f64 };
+        let range = |t: &[f64]| (t.iter().copied().fold(f64::INFINITY, f64::min), t.iter().copied().fold(f64::NEG_INFINITY, f64::max));
+        let ((lo, hi), (plo, phi)) = (range(&wide.1), range(&plain.1));
+        assert!(spread(&wide.1) > spread(&plain.1) && (lo < plo || hi > phi));
     }
 
     #[test]

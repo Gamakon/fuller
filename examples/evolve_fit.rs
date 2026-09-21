@@ -78,8 +78,11 @@ fn main() {
         let real: Vec<f64> = used.iter().flat_map(|&r| inputs(&rows[r])).collect();
         let real_y: Vec<f64> = used.iter().map(|&r| rows[r][target]).collect();
         let embedding = embed_2d(&real, names.len(), u64::from(seed)).expect("the 2D embedding");
-        let (synth_x, synth_y) = smogd::rows(&real, &real_y, names.len(), &embedding, seed, &smogd::Params::defaults());
-        println!("SMOGD\t{}\trows from {} real rows in {:.1} s", synth_y.len(), used.len(), started.elapsed().as_secs_f64());
+        // EVOLVE_SMOGD_NOISE: the multiplier on the neighbours' variance (1 = the original).
+        let noise_multiplier = std::env::var("EVOLVE_SMOGD_NOISE").ok().and_then(|v| v.parse().ok()).unwrap_or(1.0);
+        let params = smogd::Params { noise_multiplier, ..smogd::Params::defaults() };
+        let (synth_x, synth_y) = smogd::rows(&real, &real_y, names.len(), &embedding, seed, &params);
+        println!("SMOGD\t{}\trows from {} real rows in {:.1} s, noise x{noise_multiplier}", synth_y.len(), used.len(), started.elapsed().as_secs_f64());
         x.extend(synth_x.iter().map(|v| *v as f32));
         splits.n_extrap += synth_y.len();
         y.extend(synth_y);
