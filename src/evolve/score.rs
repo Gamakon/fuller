@@ -10,13 +10,17 @@ use std::borrow::Cow;
 
 use wgpu::util::DeviceExt;
 
-use crate::chrom_score::Splits;
+use crate::chrom_score::{gene_linker_combinations, GeneLinker, Splits};
 use crate::gpu_eval::{ExprBatch, GpuEvaluator};
 
 pub const SCORE_WGSL: &str = include_str!("score.wgsl");
 /// Candidates per chromosome: 3 linkers (avg, mul, add) x 3 wrappers
-/// (identity, log_abs, sqrt_abs), in that order.
+/// (identity, log_abs, sqrt_abs), in that order. With the gene-subset choice it
+/// is `combinations x 3` — see [`GpuScorer::eval_and_score_with`].
 pub const CANDIDATES: usize = 9;
+/// The kernel's linkers (avg, mul, add) and wrappers (identity, log_abs, sqrt_abs).
+pub const LINKERS: usize = 3;
+pub const WRAPPERS: usize = 3;
 /// `[a, b, mse_train, mse_val, max_err_val, mse_extrap, mae_train, mae_val, mae_extrap,
 /// redundancy]`. The first [`METRICS`] are chrom_score's; `redundancy` is the
 /// kernel's leave-one-gene-out score in [0, 1] (0 = every varying gene matters).
@@ -61,7 +65,7 @@ impl GpuScorer {
         });
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("fuller-score-layout"),
-            entries: &(0..6)
+            entries: &(0..7)
                 .map(|i| wgpu::BindGroupLayoutEntry {
                     binding: i,
                     visibility: wgpu::ShaderStages::COMPUTE,
@@ -110,12 +114,40 @@ impl GpuScorer {
         gene_ok: &[bool],
         chromosomes: &[Vec<usize>],
     ) -> Result<Vec<f32>, String> {
+        let Some(first) = chromosomes.first() else { return Ok(Vec::new()) };
+        if first.is_empty() {
+            return Err("every chromosome needs the same, non-zero, number of genes".to_string());
+        }
+        let combinations = gene_linker_combinations(first.len(), LINKERS, false)?;
+        self.eval_and_score_with(evaluator, batch, gene_ok, chromosomes, &combinations)
+    }
+
+    /// [`GpuScorer::eval_and_score`] under the given GENE-LINKER COMBINATIONS
+    /// (`chrom_score::gene_linker_combinations`): `combinations x 3` candidates a
+    /// chromosome — chromosome-major, then combination, then wrapper. A gene that
+    /// failed to evaluate rejects only the combinations that use it, and
+    /// `redundancy` is over a combination's used genes.
+    pub fn eval_and_score_with(
+        &self,
+        evaluator: &GpuEvaluator,
+        batch: &ExprBatch,
+        gene_ok: &[bool],
+        chromosomes: &[Vec<usize>],
+        combinations: &[GeneLinker],
+    ) -> Result<Vec<f32>, String> {
         if chromosomes.is_empty() {
             return Ok(Vec::new());
         }
         let genes_per = chromosomes[0].len();
         if genes_per == 0 || chromosomes.iter().any(|c| c.len() != genes_per) {
             return Err("every chromosome needs the same, non-zero, number of genes".to_string());
+        }
+        if combinations.is_empty() || combinations.iter().any(|c| c.genes == 0 || c.genes >= 1 << genes_per.min(8) || c.linker >= LINKERS) {
+            return Err(format!("the combinations do not fit chromosomes of {genes_per} genes (at most 8) and {LINKERS} linkers"));
+        }
+        let threads = chromosomes.len() * combinations.len();
+        if threads.div_ceil(64) > 65_535 {
+            return Err(format!("{} chromosomes x {} combinations is more than one dispatch holds", chromosomes.len(), combinations.len()));
         }
         if gene_ok.len() != batch.len() || chromosomes.iter().flatten().any(|&g| g >= batch.len()) {
             return Err("gene_ok and the chromosomes must index the batch".to_string());
@@ -131,7 +163,8 @@ impl GpuScorer {
         };
         let ok: Vec<u32> = gene_ok.iter().map(|&b| u32::from(b)).collect();
         let flat: Vec<u32> = chromosomes.iter().flatten().map(|&g| g as u32).collect();
-        let (ok_buf, chrom_buf) = (storage(&ok, "gene_ok"), storage(&flat, "chromosomes"));
+        let packed: Vec<u32> = combinations.iter().map(|c| c.genes | (c.linker as u32) << 8).collect();
+        let (ok_buf, chrom_buf, comb_buf) = (storage(&ok, "gene_ok"), storage(&flat, "chromosomes"), storage(&packed, "combinations"));
         let meta = Meta {
             n_chromosomes: chromosomes.len() as u32,
             genes_per: genes_per as u32,
@@ -147,7 +180,7 @@ impl GpuScorer {
             contents: bytemuck::bytes_of(&meta),
             usage: wgpu::BufferUsages::UNIFORM,
         });
-        let size = (chromosomes.len() * CANDIDATES * WIDTH * 4) as u64;
+        let size = (threads * WRAPPERS * WIDTH * 4) as u64;
         let scores_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("scores"),
             size,
@@ -160,7 +193,7 @@ impl GpuScorer {
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
-        let buffers = [&meta_buf, &preds, &ok_buf, &chrom_buf, &self.y_buf, &scores_buf];
+        let buffers = [&meta_buf, &preds, &ok_buf, &chrom_buf, &self.y_buf, &scores_buf, &comb_buf];
         let entries: Vec<wgpu::BindGroupEntry> = buffers
             .iter()
             .enumerate()
@@ -172,7 +205,7 @@ impl GpuScorer {
             let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor { label: None, timestamp_writes: None });
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &bind, &[]);
-            pass.dispatch_workgroups((chromosomes.len() as u32 * 3).div_ceil(64), 1, 1);
+            pass.dispatch_workgroups((threads as u32).div_ceil(64), 1, 1);
         }
         enc.copy_buffer_to_buffer(&scores_buf, 0, &staging, 0, size);
         queue.submit(Some(enc.finish()));
@@ -187,7 +220,7 @@ impl GpuScorer {
             .map_err(|e| format!("map_async: {e}"))?;
         let out = bytemuck::cast_slice::<u8, f32>(&slice.get_mapped_range()).to_vec();
         staging.unmap();
-        for b in [&preds, &ok_buf, &chrom_buf, &meta_buf, &scores_buf, &staging] {
+        for b in [&preds, &ok_buf, &chrom_buf, &comb_buf, &meta_buf, &scores_buf, &staging] {
             b.destroy();
         }
         device.poll(wgpu::Maintain::Poll);
@@ -367,7 +400,10 @@ fn score_thread_f32(preds: &[f32], genes: &[usize], linker: usize, y: &[f32], sp
         }
     }
 
-    // Leave one gene out — see the kernel.
+    // Leave one gene out — see the kernel; a single gene is the whole model.
+    if genes.len() == 1 {
+        return out;
+    }
     let mut syy = (0.0f32, 0.0f32);
     for row in (0..nt).step_by(LOO_STRIDE) {
         let dy = y[row] - y_mean;
@@ -391,10 +427,15 @@ fn score_thread_f32(preds: &[f32], genes: &[usize], linker: usize, y: &[f32], sp
         }
         let without = |row: usize| linked_f32(preds, n_rows, genes, linker, row, Some((g, gmean)));
         let mut m1 = [(0.0f32, 0.0f32); 3];
+        let first = without(0);
+        let (mut lo1, mut hi1): ([f32; 3], [f32; 3]) = (std::array::from_fn(|w| wrapped_f32(first, w)), std::array::from_fn(|w| wrapped_f32(first, w)));
         for row in (0..nt).step_by(LOO_STRIDE) {
             let v = without(row);
             for (w, m) in m1.iter_mut().enumerate() {
-                *m = add(*m, wrapped_f32(v, w));
+                let x = wrapped_f32(v, w);
+                *m = add(*m, x);
+                lo1[w] = lo1[w].min(x);
+                hi1[w] = hi1[w].max(x);
             }
         }
         let (mut xx, mut xy) = ([(0.0f32, 0.0f32); 3], [(0.0f32, 0.0f32); 3]);
@@ -414,7 +455,9 @@ fn score_thread_f32(preds: &[f32], genes: &[usize], linker: usize, y: &[f32], sp
             let full = 1.0 - div_f32(out[w * WIDTH + 2] * nt as f32, (yy * LOO_STRIDE as f32).max(1e-30));
             let (sxx_w, sxy_w) = (xx[w].0 + xx[w].1, xy[w].0 + xy[w].1);
             let mut r2_without = 0.0f32;
-            if sxx_w > 0.0 && yy > 0.0 && sxx_w.is_finite() && sxy_w.is_finite() {
+            let mean1 = div_f32(m1[w].0 + m1[w].1, n_read);
+            let varying = (hi1[w] - lo1[w]) > 2.0 * (1e-8 + CONSTANT_REL_TOL * mean1.abs());
+            if varying && sxx_w > 0.0 && yy > 0.0 && sxx_w.is_finite() && sxy_w.is_finite() {
                 r2_without = div_f32(sxy_w * sxy_w, sxx_w * yy).clamp(0.0, 1.0);
             }
             loss[w].push(if full > 1e-6 { (1.0 - div_f32(r2_without, full)).clamp(0.0, 1.0) } else { 1.0 });
@@ -439,15 +482,34 @@ fn score_thread_f32(preds: &[f32], genes: &[usize], linker: usize, y: &[f32], sp
 /// leaves when it reassociates the compensation away, for the test that tells
 /// which of the two the device computes.
 pub fn score_f32(preds: &[f32], gene_ok: &[bool], chromosomes: &[Vec<usize>], y: &[f64], splits: Splits, compensated: bool) -> Vec<f32> {
+    let all = chromosomes.first().map_or(1, |genes| (1u32 << genes.len()) - 1);
+    let combinations: Vec<GeneLinker> = (0..LINKERS).map(|linker| GeneLinker { genes: all, linker }).collect();
+    score_f32_with(preds, gene_ok, chromosomes, y, splits, &combinations, compensated)
+}
+
+/// [`score_f32`] under the given gene-linker combinations: the twin of
+/// [`GpuScorer::eval_and_score_with`], same layout. A combination is scored as
+/// the chromosome of its used genes alone, as `chrom_score::score_gene_subsets`
+/// defines it.
+pub fn score_f32_with(
+    preds: &[f32],
+    gene_ok: &[bool],
+    chromosomes: &[Vec<usize>],
+    y: &[f64],
+    splits: Splits,
+    combinations: &[GeneLinker],
+    compensated: bool,
+) -> Vec<f32> {
     let y32: Vec<f32> = y.iter().map(|v| *v as f32).collect();
     let y_mean = y_mean_train_f32(y, splits);
-    let mut out = Vec::with_capacity(chromosomes.len() * CANDIDATES * WIDTH);
+    let mut out = Vec::with_capacity(chromosomes.len() * combinations.len() * WRAPPERS * WIDTH);
     for genes in chromosomes {
-        for linker in 0..3 {
-            if genes.iter().any(|&g| !gene_ok[g]) {
+        for combination in combinations {
+            let used: Vec<usize> = combination.positions().map(|g| genes[g]).collect();
+            if used.iter().any(|&g| !gene_ok[g]) {
                 out.extend([f32::NAN; 3 * WIDTH]);
             } else {
-                out.extend(score_thread_f32(preds, genes, linker, &y32, splits, y_mean, compensated));
+                out.extend(score_thread_f32(preds, &used, combination.linker, &y32, splits, y_mean, compensated));
             }
         }
     }
@@ -563,9 +625,17 @@ mod tests {
         let device = scorer.eval_and_score(&evaluator, &batch, &gene_ok, &chromosomes).expect("score");
         let preds = evaluator.eval(&batch).expect("eval");
         let twin = score_f32(&preds, &gene_ok, &chromosomes, &truth, splits, true);
+        let (exact, through_log, rejected) = assert_device_is_twin(&device, &twin);
+        assert!(exact >= 900 && through_log >= 450 && rejected >= 300, "bit for bit {exact}, through the log {through_log}, rejected {rejected}");
+    }
+
+    /// The parity rule of `device_scores_equal_the_f32_twin`, candidate for
+    /// candidate (the wrapper is the candidate's index mod 3). Returns how many
+    /// were compared bit for bit, how many through the log, how many both rejected.
+    fn assert_device_is_twin(device: &[f32], twin: &[f32]) -> (usize, usize, usize) {
         assert_eq!(device.len(), twin.len());
         let (mut exact, mut through_log, mut rejected) = (0, 0, 0);
-        for c in 0..chromosomes.len() * CANDIDATES {
+        for c in 0..device.len() / WIDTH {
             let (d, t) = (&device[c * WIDTH..(c + 1) * WIDTH], &twin[c * WIDTH..(c + 1) * WIDTH]);
             assert_eq!(d[0].is_finite(), t[0].is_finite(), "candidate {c}: accepted on one side only ({d:?} vs {t:?})");
             if !d[0].is_finite() {
@@ -575,7 +645,7 @@ mod tests {
             if c % 3 != 1 {
                 exact += 1;
                 let bits = |s: &[f32]| s.iter().map(|v| v.to_bits()).collect::<Vec<u32>>();
-                assert_eq!(bits(d), bits(t), "candidate {c} (chromosome {:?}): device {d:?} against twin {t:?}", chromosomes[c / CANDIDATES]);
+                assert_eq!(bits(d), bits(t), "candidate {c}: device {d:?} against twin {t:?}");
                 continue;
             }
             through_log += 1;
@@ -589,7 +659,69 @@ mod tests {
                 assert!((dv - tv).abs() <= bound, "candidate {c} value {k}: device {dv} against twin {tv}");
             }
         }
-        assert!(exact >= 900 && through_log >= 450 && rejected >= 300, "bit for bit {exact}, through the log {through_log}, rejected {rejected}");
+        (exact, through_log, rejected)
+    }
+
+    /// THE GENE-SUBSET CHOICE ON THE DEVICE, over the mixed bag's 300 chromosomes:
+    ///  * the 45 candidates are the CPU twin's (the same parity rule as above) and
+    ///    chrom_score's f64 ones (the same candidates accepted; errors within 2e-3);
+    ///  * SWITCH OFF IS THE ENGINE AS IT WAS: the 9 candidates of all three genes
+    ///    are, bit for bit and candidate for candidate, what `eval_and_score`
+    ///    returns — which is what it returned before combinations existed;
+    ///  * a gene that failed rejects only the subsets that hold it;
+    ///  * redundancy is over the USED genes: a varying gene alone is the whole model.
+    #[test]
+    fn the_gene_subset_choice_on_the_device() {
+        let Bag { rows, truth, splits, batch, gene_ok, chromosomes } = mixed_bag();
+        let evaluator = GpuEvaluator::new(&rows, 2).expect("evaluator");
+        let scorer = GpuScorer::new(&evaluator, &truth, splits).expect("scorer");
+        let combinations = gene_linker_combinations(3, LINKERS, true).expect("combinations");
+        let per = combinations.len() * WRAPPERS;
+        assert_eq!(per, 45);
+        let device = scorer.eval_and_score_with(&evaluator, &batch, &gene_ok, &chromosomes, &combinations).expect("score");
+        assert_eq!(device.len(), chromosomes.len() * per * WIDTH);
+        let preds = evaluator.eval(&batch).expect("eval");
+        let twin = score_f32_with(&preds, &gene_ok, &chromosomes, &truth, splits, &combinations, true);
+        let (exact, through_log, rejected) = assert_device_is_twin(&device, &twin);
+        assert!(exact >= 5_000 && through_log >= 2_500 && rejected >= 1_000, "bit for bit {exact}, through the log {through_log}, rejected {rejected}");
+
+        let spec = ScoreSpec {
+            linkers: vec![Linker::AVG, Linker::MUL, Linker::ADD],
+            wrappers: vec![Wrapper::Identity, Wrapper::LogAbs, Wrapper::SqrtAbs],
+            splits,
+            linear_scaling: true,
+        };
+        let reference = crate::chrom_score::score_gene_subsets(&preds, &gene_ok, &chromosomes, &truth, &spec, &combinations).expect("reference");
+        let y_size = truth.iter().fold(0.0f64, |m, v| m.max(v.abs()));
+        for c in 0..chromosomes.len() * per {
+            let (want, got) = (&reference[c * SCORE_WIDTH..c * SCORE_WIDTH + METRICS], &device[c * WIDTH..(c + 1) * WIDTH]);
+            assert_eq!(want[0].is_finite(), got[0].is_finite(), "candidate {c}: accepted on one side only");
+            for k in (2..METRICS).filter(|_| want[0].is_finite()) {
+                let floor = if matches!(k, 2 | 3 | 5) { (1e-4 * y_size).powi(2) } else { 1e-4 * y_size };
+                assert!((want[k] - f64::from(got[k])).abs() < 2e-3 * want[k].abs() + floor, "candidate {c} value {k}: f64 {} against device {}", want[k], got[k]);
+            }
+        }
+
+        let off = scorer.eval_and_score(&evaluator, &batch, &gene_ok, &chromosomes).expect("score");
+        let whole = combinations.iter().position(|c| c.genes == 0b111).expect("all three genes");
+        for (i, genes) in chromosomes.iter().enumerate() {
+            let bits = |s: &[f32]| s.iter().map(|v| v.to_bits()).collect::<Vec<u32>>();
+            let on = &device[(i * per + whole * WRAPPERS) * WIDTH..(i * per + whole * WRAPPERS + CANDIDATES) * WIDTH];
+            assert_eq!(bits(on), bits(&off[i * CANDIDATES * WIDTH..(i + 1) * CANDIDATES * WIDTH]), "chromosome {i}");
+            for (k, combination) in combinations.iter().enumerate() {
+                let failed = combination.positions().any(|g| !gene_ok[genes[g]]);
+                let scored = device[(i * per + k * WRAPPERS) * WIDTH..(i * per + (k + 1) * WRAPPERS) * WIDTH].iter().any(|v| v.is_finite());
+                assert!(!(failed && scored), "chromosome {i} {combination:?}: scored with a gene that failed");
+                // gene 0 of the bag (x*y) alone, identity: a varying gene that is the whole model
+                if combination.genes.count_ones() == 1 && genes[combination.positions().next().unwrap_or(0)] == 0 {
+                    assert_eq!(device[(i * per + k * WRAPPERS) * WIDTH + 9], 0.0, "chromosome {i} {combination:?}");
+                }
+            }
+        }
+        // A chromosome with a failed gene still has its other subsets scored.
+        let poisoned = chromosomes.iter().position(|g| !gene_ok[g[0]] && gene_ok[g[1]] && g[1] != 4 && g[1] != 5).expect("such a chromosome");
+        assert!(device[(poisoned * per + WRAPPERS) * WIDTH].is_finite(), "gene 1 alone of chromosome {poisoned}");
+        assert!(gene_linker_combinations(4, LINKERS, true).is_err(), "four genes with subsets on is an error");
     }
 
     /// THE F32 FLOOR ON 1 - R²: what the device can resolve for a TRUE law on real

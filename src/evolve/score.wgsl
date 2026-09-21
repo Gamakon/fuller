@@ -5,9 +5,16 @@
 // same procedure in f32 with compensated sums, used to RANK. Whatever is
 // reported or stops a fit is re-scored in f64 on the host.
 //
-// One thread per (chromosome, linker); its three wrappers share the row loop.
-// A thread writes only its own 3 x 9 output slots. Reductions are fixed-order
-// sums (row order), so a result does not depend on scheduling.
+// One thread per (chromosome, GENE-LINKER COMBINATION); its three wrappers share
+// the row loop. A combination is which of the chromosome's genes are USED (a
+// bitmask) and the linker over them — `chrom_score::gene_linker_combinations`:
+// all the genes under each linker, or, with the gene-subset choice on, every
+// non-empty subset. Combinations share no arithmetic (each has its own linked
+// value, mean and scale), so one thread each keeps every thread as short as it
+// was and the device as busy as it can be; a thread per chromosome looping over
+// 15 combinations would be 5 times as long for nothing shared.
+// A thread writes only its own 3 x WIDTH output slots. Reductions are
+// fixed-order sums (row order), so a result does not depend on scheduling.
 
 struct Meta {
     n_chromosomes: u32,
@@ -27,8 +34,10 @@ struct Meta {
 @group(0) @binding(3) var<storage, read> chromosomes: array<u32>; // genes_per gene indices each
 @group(0) @binding(4) var<storage, read> y: array<f32>;
 @group(0) @binding(5) var<storage, read_write> scores: array<f32>;
+// Per combination: the used genes' bitmask (low 8 bits) | linker << 8.
+@group(0) @binding(6) var<storage, read> combinations: array<u32>;
 
-const N_LINKERS: u32 = 3u;   // avg, mul, add — chrom_score's order in the engine
+// Linkers: 0 avg, 1 mul, 2 add — chrom_score's order in the engine.
 const N_WRAPPERS: u32 = 3u;  // identity, log_abs, sqrt_abs
 const WIDTH: u32 = 10u;      // a, b, mse_t, mse_v, max_err_v, mse_e, mae_t, mae_v, mae_e, redundancy
 const LOO_STRIDE: u32 = 4u;  // leave-one-gene-out reads every 4th train row
@@ -39,9 +48,12 @@ fn finite(v: f32) -> bool {
     return (bitcast<u32>(v) & 0x7F800000u) != 0x7F800000u;
 }
 
-fn linked(c: u32, linker: u32, row: u32) -> f32 {
+fn linked(c: u32, genes: u32, linker: u32, row: u32) -> f32 {
     var acc = select(0.0, 1.0, linker == 1u);
     for (var g = 0u; g < sp.genes_per; g = g + 1u) {
+        if (((genes >> g) & 1u) == 0u) {
+            continue;
+        }
         let v = preds[chromosomes[c * sp.genes_per + g] * sp.n_rows + row];
         if (linker == 1u) {
             acc = keep(acc * v);
@@ -50,16 +62,19 @@ fn linked(c: u32, linker: u32, row: u32) -> f32 {
         }
     }
     if (linker == 0u) {
-        acc = div(acc, f32(sp.genes_per));
+        acc = div(acc, f32(countOneBits(genes)));
     }
     return acc;
 }
 
 // The linked value with gene `skip` replaced by `held` (its mean): what the
 // model computes when that gene is switched off.
-fn linked_without(c: u32, linker: u32, row: u32, skip: u32, held: f32) -> f32 {
+fn linked_without(c: u32, genes: u32, linker: u32, row: u32, skip: u32, held: f32) -> f32 {
     var acc = select(0.0, 1.0, linker == 1u);
     for (var g = 0u; g < sp.genes_per; g = g + 1u) {
+        if (((genes >> g) & 1u) == 0u) {
+            continue;
+        }
         var v = preds[chromosomes[c * sp.genes_per + g] * sp.n_rows + row];
         if (g == skip) {
             v = held;
@@ -71,7 +86,7 @@ fn linked_without(c: u32, linker: u32, row: u32, skip: u32, held: f32) -> f32 {
         }
     }
     if (linker == 0u) {
-        acc = div(acc, f32(sp.genes_per));
+        acc = div(acc, f32(countOneBits(genes)));
     }
     return acc;
 }
@@ -165,18 +180,22 @@ fn total(s: vec2<f32>) -> f32 {
 @compute @workgroup_size(64)
 fn score_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let t = gid.x;
-    if (t >= sp.n_chromosomes * N_LINKERS) {
+    let n_combinations = arrayLength(&combinations);
+    if (t >= sp.n_chromosomes * n_combinations) {
         return;
     }
-    let c = t / N_LINKERS;
-    let linker = t % N_LINKERS;
+    let c = t / n_combinations;
+    let combination = combinations[t % n_combinations];
+    let genes = combination & 0xFFu;
+    let linker = combination >> 8u;
     let out = t * N_WRAPPERS * WIDTH;
     let nan = bitcast<f32>(NAN_BITS);
     for (var i = 0u; i < N_WRAPPERS * WIDTH; i = i + 1u) {
         scores[out + i] = nan;
     }
+    // A gene that failed to evaluate rejects only the combinations that use it.
     for (var g = 0u; g < sp.genes_per; g = g + 1u) {
-        if (gene_ok[chromosomes[c * sp.genes_per + g]] == 0u) {
+        if (((genes >> g) & 1u) == 1u && gene_ok[chromosomes[c * sp.genes_per + g]] == 0u) {
             return;
         }
     }
@@ -191,7 +210,7 @@ fn score_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     var x0: array<f32, 3>;
     var lo: array<f32, 3>;
     var hi: array<f32, 3>;
-    let v0 = linked(c, linker, 0u);
+    let v0 = linked(c, genes, linker, 0u);
     for (var w = 0u; w < N_WRAPPERS; w = w + 1u) {
         sum[w] = vec2<f32>(0.0, 0.0);
         ok[w] = true;
@@ -201,7 +220,7 @@ fn score_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
     // A non-finite value ANYWHERE rejects the candidate, as chrom_score does.
     for (var row = 0u; row < sp.n_rows; row = row + 1u) {
-        let v = linked(c, linker, row);
+        let v = linked(c, genes, linker, row);
         for (var w = 0u; w < N_WRAPPERS; w = w + 1u) {
             let x = wrapped(v, w);
             if (!finite(v) || !finite(x)) {
@@ -226,7 +245,7 @@ fn score_main(@builtin(global_invocation_id) gid: vec3<u32>) {
         sxy[w] = vec2<f32>(0.0, 0.0);
     }
     for (var row = 0u; row < nt; row = row + 1u) {
-        let v = linked(c, linker, row);
+        let v = linked(c, genes, linker, row);
         let dy = keep(y[row] - sp.y_mean_train);
         for (var w = 0u; w < N_WRAPPERS; w = w + 1u) {
             if (ok[w]) {
@@ -267,7 +286,7 @@ fn score_main(@builtin(global_invocation_id) gid: vec3<u32>) {
         worst[w] = 0.0;
     }
     for (var row = 0u; row < sp.n_rows; row = row + 1u) {
-        let v = linked(c, linker, row);
+        let v = linked(c, genes, linker, row);
         var split = 2u;
         if (row < nt) {
             split = 0u;
@@ -312,13 +331,20 @@ fn score_main(@builtin(global_invocation_id) gid: vec3<u32>) {
         }
     }
 
-    // LEAVE ONE GENE OUT. Switch each VARYING gene off (hold it at its mean),
+    // LEAVE ONE GENE OUT, over the combination's USED genes (an unused gene is
+    // not in the model: there is nothing to leave out). A SINGLE used gene is the
+    // whole model: switched off, what is left is a constant, and its "R² without"
+    // would be rounding noise divided by rounding noise — it is 0 by definition,
+    // and the slot already holds 0. Otherwise: switch each VARYING gene off (hold it at its mean),
     // refit the scale, and see how much of the fit goes: for a law every gene
     // that does anything is load-bearing; refined noise carries genes whose
     // removal costs nothing. redundancy = 1 - median over the varying genes of
     // (1 - R2_without / R2_full), in [0, 1]; 0 = every varying gene matters.
     // With an intercept R2 = sxy^2 / (sxx * syy), so no residual pass is needed.
     // Reads every LOO_STRIDE-th train row.
+    if (countOneBits(genes) == 1u) {
+        return;
+    }
     var syy = vec2<f32>(0.0, 0.0);
     for (var row = 0u; row < nt; row = row + LOO_STRIDE) {
         let dy = keep(y[row] - sp.y_mean_train);
@@ -331,6 +357,9 @@ fn score_main(@builtin(global_invocation_id) gid: vec3<u32>) {
         n_loss[w] = 0u;
     }
     for (var g = 0u; g < min(sp.genes_per, 8u); g = g + 1u) {
+        if (((genes >> g) & 1u) == 0u) {
+            continue;
+        }
         let gene = chromosomes[c * sp.genes_per + g];
         let g0 = preds[gene * sp.n_rows];
         var gsum = vec2<f32>(0.0, 0.0);
@@ -348,14 +377,27 @@ fn score_main(@builtin(global_invocation_id) gid: vec3<u32>) {
         if ((ghi - gmin) <= 2.0 * (1e-8 + CONSTANT_REL_TOL * abs(gmean))) {
             continue;               // a constant gene: nothing to switch off
         }
+        // The mean of what is left, and its range: left CONSTANT (the other used
+        // genes are constants, or there is one other and it is this gene's
+        // partner in a product with a constant), the model without this gene is
+        // the constant model, R² 0 — decided by the range, as the fit decides it,
+        // never by a ratio of rounding noise to rounding noise.
         var m1: array<vec2<f32>, 3>;
+        var lo1: array<f32, 3>;
+        var hi1: array<f32, 3>;
+        let first = linked_without(c, genes, linker, 0u, g, gmean);
         for (var w = 0u; w < N_WRAPPERS; w = w + 1u) {
             m1[w] = vec2<f32>(0.0, 0.0);
+            lo1[w] = wrapped(first, w);
+            hi1[w] = lo1[w];
         }
         for (var row = 0u; row < nt; row = row + LOO_STRIDE) {
-            let v = linked_without(c, linker, row, g, gmean);
+            let v = linked_without(c, genes, linker, row, g, gmean);
             for (var w = 0u; w < N_WRAPPERS; w = w + 1u) {
-                m1[w] = add(m1[w], wrapped(v, w));
+                let x = wrapped(v, w);
+                m1[w] = add(m1[w], x);
+                lo1[w] = min(lo1[w], x);
+                hi1[w] = max(hi1[w], x);
             }
         }
         var xx: array<vec2<f32>, 3>;
@@ -365,7 +407,7 @@ fn score_main(@builtin(global_invocation_id) gid: vec3<u32>) {
             xy[w] = vec2<f32>(0.0, 0.0);
         }
         for (var row = 0u; row < nt; row = row + LOO_STRIDE) {
-            let v = linked_without(c, linker, row, g, gmean);
+            let v = linked_without(c, genes, linker, row, g, gmean);
             let dy = keep(y[row] - sp.y_mean_train);
             for (var w = 0u; w < N_WRAPPERS; w = w + 1u) {
                 let dx = keep(wrapped(v, w) - div(total(m1[w]), n_read));
@@ -382,7 +424,9 @@ fn score_main(@builtin(global_invocation_id) gid: vec3<u32>) {
             let sxx_w = total(xx[w]);
             let sxy_w = total(xy[w]);
             var without = 0.0;
-            if (sxx_w > 0.0 && yy > 0.0 && finite(sxx_w) && finite(sxy_w)) {
+            let mean1 = div(total(m1[w]), n_read);
+            let varies = (hi1[w] - lo1[w]) > 2.0 * (1e-8 + CONSTANT_REL_TOL * abs(mean1));
+            if (varies && sxx_w > 0.0 && yy > 0.0 && finite(sxx_w) && finite(sxy_w)) {
                 without = clamp(div(keep(sxy_w * sxy_w), keep(sxx_w * yy)), 0.0, 1.0);
             }
             var l = 1.0;

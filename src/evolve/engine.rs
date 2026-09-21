@@ -17,10 +17,10 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 use super::device::EvolveDevice;
-use super::score::{GpuScorer, CANDIDATES, WIDTH};
+use super::score::{GpuScorer, WIDTH};
 use super::vary::{GenParams, Generation, Island, Rates};
 use super::{InitParams, Layout, Population, SymbolCodes};
-use crate::chrom_score::{score_chromosomes, Linker, ScoreSpec, Splits, Wrapper, METRIC_WIDTH, SCORE_WIDTH};
+use crate::chrom_score::{gene_linker_combinations, score_gene_subsets, GeneLinker, Linker, ScoreSpec, Splits, Wrapper, METRIC_WIDTH, SCORE_WIDTH};
 use crate::gpu_eval::{ExprBatch, GpuEvaluator, GpuNode, Op, MAX_NODES};
 
 /// What a token id means to the evaluator.
@@ -342,6 +342,14 @@ pub struct Config {
     /// objectives (train + t_depth); p depends on how many objectives HFF has.
     /// `f64::INFINITY` switches this half off.
     pub stop_log10_p: f64,
+    /// THE DYNAMIC GENE-SUBSET CHOICE (Andrew: "make the linker dynamic and it
+    /// could decide on the number of genes"): a chromosome is scored under every
+    /// NON-EMPTY SUBSET of its genes — each single gene by itself, each pair and
+    /// the whole under each linker, 15 gene-linker combinations for 3 genes — and
+    /// keeps the best, as it already keeps the best linker and wrapper. A law that
+    /// is one nested structure no longer needs the other genes to evolve into
+    /// exact do-nothing values. At most 3 genes; off = all the genes, always.
+    pub gene_subsets: bool,
 }
 
 impl Config {
@@ -381,6 +389,7 @@ impl Config {
             max_seconds: 30.0,
             stop_one_minus_r2: 1e-10,
             stop_log10_p: -19.0,
+            gene_subsets: false,
         }
     }
 }
@@ -400,6 +409,9 @@ pub struct Scored {
     /// What the TOURNAMENTS rank on: `fitness` (TrueNorth), or the balanced-pole
     /// angle when `Config::balanced_tournaments` is on.
     pub selection: f64,
+    /// Which genes the model USES: bit g is the chromosome's g-th gene. All of
+    /// them unless `Config::gene_subsets` chose fewer; a single gene has no linker.
+    pub genes: u32,
 }
 
 /// THE HALL OF FAME: the best individual a fit has ever held (lowest HFF), when it
@@ -924,15 +936,16 @@ impl Engine {
         // Evaluate and score in one trip: the predictions stay on the device and
         // only the candidates' metrics come back (f32 — they RANK; see `confirm`).
         let t = Instant::now();
+        let combinations = self.combinations()?;
         let scores: Vec<f64> = if rows.is_empty() {
             Vec::new()
         } else {
-            self.scorer.eval_and_score(&self.evaluator, &batch, &gene_ok, &chromosomes)?.into_iter().map(f64::from).collect()
+            self.scorer.eval_and_score_with(&self.evaluator, &batch, &gene_ok, &chromosomes, &combinations)?.into_iter().map(f64::from).collect()
         };
         timing.evaluate += t.elapsed().as_secs_f64();
 
         let t = Instant::now();
-        let per = CANDIDATES;
+        let per = combinations.len() * WRAPPERS.len();
         let n_ex = self.data.splits.n_extrap;
         if self.col_max.is_none() {
             // Frozen at the first evaluation, as the engine freezes them at
@@ -950,12 +963,14 @@ impl Engine {
         let columns = hff_columns(n_ex, self.config.hff_without_validation, self.config.log_scale);
         for (i, &r) in rows.iter().enumerate() {
             let mut best: Option<Scored> = None;
-            let tower = chromosomes[i].iter().map(|&g| gene_tower[g]).max().unwrap_or(0);
             for c in 0..per {
                 let s = &scores[(i * per + c) * WIDTH..(i * per + c + 1) * WIDTH];
                 if !s[0].is_finite() {
                     continue;
                 }
+                // The tower is over the candidate's USED genes: an unused gene's costs nothing.
+                let combination = combinations[c / WRAPPERS.len()];
+                let tower = combination.positions().map(|g| gene_tower[chromosomes[i][g]]).max().unwrap_or(0);
                 let (o, omr2) = self.caps.objectives(s, n_ex);
                 let mut used: Vec<f64> = columns.iter().map(|&(k, _)| o[k]).collect();
                 let mut maxes: Vec<f64> = columns.iter().map(|&(k, _)| col_max[k]).collect();
@@ -975,7 +990,7 @@ impl Engine {
                     // TrueNorth chooses the candidate and judges it; the balanced pole,
                     // when it is on, only decides who breeds.
                     let selection = if self.config.balanced_tournaments { hff_balanced(&used, &maxes, &logs) } else { fitness };
-                    best = Some(Scored { fitness, linker: c / WRAPPERS.len(), wrapper: c % WRAPPERS.len(), a: s[0], b: s[1], one_minus_r2: omr2, t_depth: tower, selection });
+                    best = Some(Scored { fitness, linker: combination.linker, wrapper: c % WRAPPERS.len(), a: s[0], b: s[1], one_minus_r2: omr2, t_depth: tower, selection, genes: combination.genes });
                 }
             }
             self.scored[r] = best;
@@ -983,6 +998,13 @@ impl Engine {
         }
         timing.hff += t.elapsed().as_secs_f64();
         Ok((gene_ok.len() as u64, oversized))
+    }
+
+    /// THE CANDIDATES' gene-linker combinations (`chrom_score::gene_linker_combinations`):
+    /// all the genes under each linker, or every non-empty subset when
+    /// `Config::gene_subsets` is on — an error for more than 3 genes then.
+    fn combinations(&self) -> Result<Vec<GeneLinker>, String> {
+        gene_linker_combinations(self.layout.n_genes as usize, LINKERS.len(), self.config.gene_subsets)
     }
 
     /// The pairs of the population: (intake island, champion island).
@@ -1130,33 +1152,38 @@ impl Engine {
         let (width, nr, g_n) = (l.gene_width() as usize, l.n_rnc as usize, l.n_genes as usize);
         let mut batch = ExprBatch::new();
         let mut gene_ok = Vec::with_capacity(g_n);
-        let mut tower = 0u32;
+        let mut gene_tower = Vec::with_capacity(g_n);
         for g in 0..g_n {
             let tokens = &gen.pop.genome[(row * g_n + g) * width..(row * g_n + g + 1) * width];
             let consts = &gen.pop.rnc[(row * g_n + g) * nr..(row * g_n + g + 1) * nr];
             match decode_gene(tokens, consts, l, &self.table).filter(|n| n.len() <= MAX_NODES) {
                 Some(nodes) => {
-                    tower = tower.max(t_depth(&nodes));
+                    gene_tower.push(t_depth(&nodes));
                     batch.push(&nodes);
                     gene_ok.push(true);
                 }
                 None => {
                     batch.push(&[GpuNode { op: Op::Num as u32, arg0: 0, arg1: 0, konst: 0.0 }]);
                     gene_ok.push(false);
+                    gene_tower.push(0);
                 }
             }
         }
         let preds = self.evaluator.eval(&batch)?;
         let spec = ScoreSpec { linkers: LINKERS.to_vec(), wrappers: WRAPPERS.to_vec(), splits: self.data.splits, linear_scaling: true };
-        let scores = score_chromosomes(&preds, &gene_ok, &[(0..g_n).collect()], &self.data.y, &spec)?;
+        // The same candidates as `evaluate`, in the same order, in f64.
+        let combinations = self.combinations()?;
+        let scores = score_gene_subsets(&preds, &gene_ok, &[(0..g_n).collect()], &self.data.y, &spec, &combinations)?;
         let n_ex = self.data.splits.n_extrap;
         let col_max = self.col_max.unwrap_or([1.0; 9]);
         let mut best: Option<Scored> = None;
-        for c in 0..CANDIDATES {
+        for c in 0..combinations.len() * WRAPPERS.len() {
             let s = &scores[c * SCORE_WIDTH..c * SCORE_WIDTH + METRIC_WIDTH];
             if !s[0].is_finite() {
                 continue;
             }
+            let combination = combinations[c / WRAPPERS.len()];
+            let tower = combination.positions().map(|g| gene_tower[g]).max().unwrap_or(0);
             let (o, omr2) = self.caps.objectives(s, n_ex);
             let columns = hff_columns(n_ex, self.config.hff_without_validation, self.config.log_scale);
             let (used, maxes): (Vec<f64>, Vec<f64>) = columns.iter().map(|&(k, _)| (o[k], col_max[k])).unzip();
@@ -1169,7 +1196,7 @@ impl Engine {
             }
             let fitness = hff_truenorth(&used, &maxes, &logs);
             if best.is_none_or(|b| fitness < b.fitness) {
-                best = Some(Scored { fitness, linker: c / WRAPPERS.len(), wrapper: c % WRAPPERS.len(), a: s[0], b: s[1], one_minus_r2: omr2, t_depth: tower, selection: fitness });
+                best = Some(Scored { fitness, linker: combination.linker, wrapper: c % WRAPPERS.len(), a: s[0], b: s[1], one_minus_r2: omr2, t_depth: tower, selection: fitness, genes: combination.genes });
             }
         }
         Ok(best)
@@ -1245,11 +1272,14 @@ impl Engine {
             .min_by(|a, b| a.1.fitness.total_cmp(&b.1.fitness).then(a.0.cmp(&b.0)))
     }
 
-    /// `a * WRAPPER(LINKER(genes)) + b` as a fuller `Math` expression.
+    /// `a * WRAPPER(LINKER(genes)) + b` as a fuller `Math` expression — over the
+    /// genes the model USES (`Scored::genes`): a single gene stands alone, with no
+    /// linker; avg divides by the number of used genes, as `chrom_score` does.
     pub fn math_of(&self, gen: &Generation, row: usize, s: &Scored) -> String {
         let l = self.layout;
         let (width, nr, g_n) = (l.gene_width() as usize, l.n_rnc as usize, l.n_genes as usize);
         let genes: Vec<String> = (0..g_n)
+            .filter(|g| s.genes >> g & 1 == 1)
             .map(|g| {
                 let tokens = &gen.pop.genome[(row * g_n + g) * width..(row * g_n + g + 1) * width];
                 let consts = &gen.pop.rnc[(row * g_n + g) * nr..(row * g_n + g + 1) * nr];
@@ -1260,8 +1290,8 @@ impl Engine {
         for g in &genes[1..] {
             body = if LINKER_NAMES[s.linker] == "mulval" { format!("(Mul {body} {g})") } else { format!("(Add {body} {g})") };
         }
-        if LINKER_NAMES[s.linker] == "avgval" && g_n > 1 {
-            body = format!("(Div {body} (Num {:?}))", g_n as f64);
+        if LINKER_NAMES[s.linker] == "avgval" && genes.len() > 1 {
+            body = format!("(Div {body} (Num {:?}))", genes.len() as f64);
         }
         body = match WRAPPERS[s.wrapper] {
             Wrapper::LogAbs => format!("(Log (Abs {body}))"),
@@ -1883,6 +1913,117 @@ mod tests {
     // -----------------------------------------------------------------------
     // The islands: pairs, the pump, the cross step.
     // -----------------------------------------------------------------------
+
+    /// A gene written by hand: `symbols` in the head, the tail filled with input 0
+    /// and the Dc domain with zeros.
+    fn hand_gene(symbols: &[Symbol], layout: Layout, table: &SymbolTable) -> Vec<u32> {
+        let id = |wanted: Symbol| table.symbols.iter().position(|s| *s == wanted).expect("a symbol of the table") as u32;
+        let mut gene = vec![id(Symbol::Input(0)); (layout.head + layout.tail) as usize];
+        for (slot, symbol) in gene.iter_mut().zip(symbols) {
+            *slot = id(*symbol);
+        }
+        gene.extend(std::iter::repeat_n(0, layout.tail as usize));
+        gene
+    }
+
+    /// Row 0 of a drawn generation overwritten with hand-written genes, and its
+    /// fitness cleared so `evaluate` scores it.
+    fn plant(engine: &Engine, genes: &[Vec<Symbol>]) -> Generation {
+        let mut gen = drawn_generation(engine, 3);
+        let width = engine.layout.gene_width() as usize;
+        for (g, symbols) in genes.iter().enumerate() {
+            gen.pop.genome[g * width..(g + 1) * width].copy_from_slice(&hand_gene(symbols, engine.layout, &engine.table));
+        }
+        gen.fitness[0] = f32::NAN;
+        gen
+    }
+
+    fn fresh_timing() -> Timing {
+        Timing { vary: 0.0, read: 0.0, decode: 0.0, evaluate: 0.0, score: 0.0, hff: 0.0, pump: 0.0, cross: 0.0 }
+    }
+
+    /// THE DYNAMIC GENE-SUBSET CHOICE. Gene 1 alone IS the law y = x0 * x1; gene 0
+    /// is junk (cos x1) and gene 2 a tower (sin sin sin exp x0, t_depth 4). With
+    /// the switch on `evaluate` picks {1}: 1 - R² ~ 0, `genes == 0b010`, the tower
+    /// in gene 2 costs nothing, `math_of` prints one gene and no linker, and
+    /// `confirm` (f64) agrees on every count. With the switch off the same row
+    /// must use all three genes and cannot be exact.
+    #[test]
+    fn a_chromosome_whose_one_gene_is_the_law_uses_that_gene_alone() {
+        let data = {
+            let (mut x, mut y) = (Vec::new(), Vec::new());
+            for i in 0..60u32 {
+                let row = [1.0 + f64::from(i % 7) * 0.5, 2.0 + f64::from(i % 5) * 0.25, 1.5 + f64::from(i % 11) * 0.2];
+                x.extend(row.iter().map(|v| *v as f32));
+                y.push(row[0] * row[1]);
+            }
+            Data { names: names(), x, y, splits: Splits { n_train: 40, n_val: 20, n_extrap: 0 } }
+        };
+        let (mul, sin, cos, exp) = (Symbol::Function(Op::Mul), Symbol::Function(Op::Sin), Symbol::Function(Op::Cos), Symbol::Function(Op::ProtectedExp));
+        let (x0, x1) = (Symbol::Input(0), Symbol::Input(1));
+        let genes = vec![vec![cos, x1], vec![mul, x0, x1], vec![sin, sin, sin, exp, x0]];
+        for (on, want_genes) in [(true, 0b010u32), (false, 0b111u32)] {
+            let config = Config { gene_subsets: on, tower: true, ..toy_config(30, 10) };
+            let mut engine = Engine::new(config, Data { names: data.names.clone(), x: data.x.clone(), y: data.y.clone(), splits: data.splits }).expect("engine");
+            let mut gen = plant(&engine, &genes);
+            engine.evaluate(&mut gen, &mut fresh_timing()).expect("evaluate");
+            let ranked = engine.scored[0].expect("row 0 scored");
+            let confirmed = engine.confirm(&gen, 0).expect("confirm").expect("row 0 confirmed");
+            assert_eq!((ranked.genes, confirmed.genes), (want_genes, want_genes), "switch {on}: {ranked:?} / {confirmed:?}");
+            let math = engine.math_of(&gen, 0, &confirmed);
+            if on {
+                assert!(ranked.one_minus_r2[1] < 1e-6 && confirmed.one_minus_r2[1] < 1e-12, "{ranked:?} / {confirmed:?}");
+                assert_eq!((ranked.t_depth, confirmed.t_depth), (0, 0), "the tower in gene 2 is not used");
+                assert_eq!(ranked.wrapper, 0);
+                assert!(!math.contains("Cos") && !math.contains("Sin") && !math.contains("Exp"), "{math}");
+                assert!(math.contains(r#"(Mul (Var "x_0") (Var "x_1"))"#) && !math.contains("(Div "), "{math}");
+                assert_eq!(math.matches("(Add ").count(), 1, "only the offset's Add: {math}");
+            } else {
+                assert!(ranked.one_minus_r2[1] > 1e-4 && confirmed.one_minus_r2[1] > 1e-4, "{ranked:?} / {confirmed:?}");
+                assert_eq!((ranked.t_depth, confirmed.t_depth), (4, 4));
+                assert!(math.contains("Cos") && math.contains("Sin"), "{math}");
+            }
+            // The fitness of row 0 is what the tournaments will rank on.
+            assert!((f64::from(gen.fitness[0]) - ranked.selection).abs() < 1e-6);
+        }
+    }
+
+    /// A law that needs the SUM of two genes, y = x0 * x1 + x2, with a junk third:
+    /// the pair {0, 1} wins. Under linear scaling avg and add of the same genes are
+    /// the same model, so either linker may be reported — never mul, never the
+    /// junk gene; `math_of` prints the two genes and, under avg, their divisor 2.
+    #[test]
+    fn a_law_that_is_a_sum_of_two_genes_picks_the_pair() {
+        let (mul, sin) = (Symbol::Function(Op::Mul), Symbol::Function(Op::Sin));
+        let (x0, x1, x2) = (Symbol::Input(0), Symbol::Input(1), Symbol::Input(2));
+        let genes = vec![vec![mul, x0, x1], vec![x2], vec![sin, x0]];
+        let config = Config { gene_subsets: true, ..toy_config(30, 10) };
+        let mut engine = Engine::new(config, toy_data()).expect("engine");
+        let mut gen = plant(&engine, &genes);
+        engine.evaluate(&mut gen, &mut fresh_timing()).expect("evaluate");
+        let ranked = engine.scored[0].expect("row 0 scored");
+        let confirmed = engine.confirm(&gen, 0).expect("confirm").expect("row 0 confirmed");
+        assert_eq!((ranked.genes, confirmed.genes), (0b011, 0b011), "{ranked:?} / {confirmed:?}");
+        assert!(confirmed.one_minus_r2[1] < 1e-12 && ranked.one_minus_r2[1] < 1e-6, "{ranked:?} / {confirmed:?}");
+        assert!(matches!(LINKER_NAMES[confirmed.linker], "avgval" | "addval"), "{confirmed:?}");
+        let math = engine.math_of(&gen, 0, &confirmed);
+        assert!(math.contains(r#"(Add (Mul (Var "x_0") (Var "x_1")) (Var "x_2"))"#) && !math.contains("Sin"), "{math}");
+        assert_eq!(math.contains("(Div "), LINKER_NAMES[confirmed.linker] == "avgval", "{math}");
+        if math.contains("(Div ") {
+            assert!(math.contains("(Num 2.0)"), "avg divides by the USED genes: {math}");
+        }
+    }
+
+    /// Four genes with the subset choice on is an error, not a fallback.
+    #[test]
+    fn four_genes_with_the_subset_choice_on_is_an_error() {
+        let config = Config { gene_subsets: true, n_genes: 4, ..toy_config(30, 10) };
+        let mut engine = Engine::new(config, toy_data()).expect("engine");
+        let mut gen = drawn_generation(&engine, 3);
+        gen.fitness[0] = f32::NAN;
+        let err = engine.evaluate(&mut gen, &mut fresh_timing()).expect_err("an error");
+        assert!(err.contains("at most 3 genes"), "{err}");
+    }
 
     /// y = x_0 * x_1 + x_2 on a small grid: train, then validation.
     fn toy_data() -> Data {

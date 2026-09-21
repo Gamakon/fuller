@@ -146,6 +146,10 @@ fn main() {
     if let Some(genes) = std::env::var("EVOLVE_GENES").ok().and_then(|v| v.parse::<u32>().ok()) {
         config.n_genes = genes;
     }
+    //   EVOLVE_GENE_SUBSETS=1           THE DYNAMIC GENE-SUBSET CHOICE: a chromosome is scored
+    //                                   under every non-empty subset of its genes and keeps the
+    //                                   best (at most 3 genes)
+    config.gene_subsets = std::env::var("EVOLVE_GENE_SUBSETS").is_ok_and(|v| v == "1");
     //   EVOLVE_PUMP_EVERY               the pump's beat in generations (the engine's default is 4)
     if let Some(beat) = std::env::var("EVOLVE_PUMP_EVERY").ok().and_then(|v| v.parse::<u32>().ok()) {
         config.pump_every = beat;
