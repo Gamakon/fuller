@@ -16,6 +16,7 @@ pub mod node;
 pub mod pack;
 pub mod reader;
 pub mod sexp;
+pub mod snap_table;
 pub mod tables;
 
 use engine::{CallerFacts, Config, LitMode, Outcome, Search};
