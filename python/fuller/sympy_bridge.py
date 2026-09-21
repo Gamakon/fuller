@@ -104,10 +104,17 @@ def _tokenize_math(s):
     return out
 
 
-def from_math(s):
+def from_math(s, overrides=None):
     """fuller `Math` s-expression string -> sympy expression, or None if the
     string is malformed. Inverse of `to_math`; the ONLY sympy-side decoder of
     the `Math` grammar — consumers must not re-implement this table.
+
+    `overrides` maps (constructor, arity) to a builder and takes precedence over
+    the table below. A caller that REPORTS or PREDICTS with the result must pass
+    builders for the protected operators that agree with their numeric
+    definitions on its data (hff: hgh.symbolic_protected_div / _sqrt): the
+    generic renderings below divide by a tiny divisor and take the root of an
+    overflow, which the operators do not.
 
     Named constants round-trip: `(Var "pi")`/`(Var "e")` -> sympy.pi/sympy.E;
     every other Var becomes `Symbol(name)`.
@@ -177,6 +184,8 @@ def from_math(s):
                 ("ProtectedExp", 1): sp.exp,
                 ("ProtectedInv", 1): lambda a: 1 / a,
             }.get((head, len(kids)))
+            if overrides and (head, len(kids)) in overrides:
+                build = overrides[(head, len(kids))]
             if build is None:
                 return None
             node = build(*kids)
