@@ -173,6 +173,7 @@ pub fn score_chromosomes(
     y: &[f64],
     spec: &ScoreSpec,
 ) -> Result<Vec<f64>, String> {
+    check_input(preds, gene_ok, chromosomes, y, spec)?;
     let ScoreSpec {
         linkers,
         wrappers,
@@ -181,11 +182,45 @@ pub fn score_chromosomes(
     } = spec;
     let (splits, linear_scaling) = (*splits, *linear_scaling);
     let n_rows = splits.total();
+
+    let per = linkers.len() * wrappers.len() * SCORE_WIDTH;
+    let mut out = vec![f64::NAN; chromosomes.len() * per];
+    out.par_chunks_mut(per.max(1))
+        .zip(chromosomes.par_iter())
+        .for_each(|(slot, genes)| {
+            if genes.iter().any(|&g| !gene_ok[g]) {
+                return;
+            }
+            for (l, linker) in linkers.iter().enumerate() {
+                let Some(linked) = link(preds, genes, *linker, n_rows) else {
+                    continue;
+                };
+                for (w, wrapper) in wrappers.iter().enumerate() {
+                    if let Some(s) = score_one(&linked, *wrapper, splits, y, linear_scaling) {
+                        let at = (l * wrappers.len() + w) * SCORE_WIDTH;
+                        slot[at..at + SCORE_WIDTH].copy_from_slice(&s);
+                    }
+                }
+            }
+        });
+    Ok(out)
+}
+
+/// What every entry point asks of its input.
+fn check_input(
+    preds: &[f32],
+    gene_ok: &[bool],
+    chromosomes: &[Vec<usize>],
+    y: &[f64],
+    spec: &ScoreSpec,
+) -> Result<(), String> {
+    let splits = spec.splits;
+    let n_rows = splits.total();
     // n_extrap may be 0: wild data has no truth-driven out-of-domain slice.
     if splits.n_train == 0 || splits.n_val == 0 {
         return Err(format!("train and validation need rows, got {splits:?}"));
     }
-    if linkers.is_empty() || wrappers.is_empty() {
+    if spec.linkers.is_empty() || spec.wrappers.is_empty() {
         return Err("need at least one linker and one wrapper".to_string());
     }
     if y.len() != n_rows {
@@ -208,22 +243,100 @@ pub fn score_chromosomes(
             ));
         }
     }
+    Ok(())
+}
 
-    let per = linkers.len() * wrappers.len() * SCORE_WIDTH;
+/// A GENE-LINKER COMBINATION: which of a chromosome's genes are USED — bit `g`
+/// of `genes` is the chromosome's g-th gene — and the linker over them (an index
+/// into `ScoreSpec::linkers`). The unused genes are not part of the model.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GeneLinker {
+    pub genes: u32,
+    pub linker: usize,
+}
+
+impl GeneLinker {
+    /// The used genes' positions in the chromosome, ascending.
+    pub fn positions(self) -> impl Iterator<Item = usize> {
+        (0..u32::BITS as usize).filter(move |g| self.genes >> g & 1 == 1)
+    }
+}
+
+/// The most genes a chromosome may have when every subset is scored: 3 genes are
+/// 15 combinations, 4 would be 37 and 5, 83 — a cost nobody has measured.
+pub const MAX_SUBSET_GENES: usize = 3;
+
+/// THE DYNAMIC GENE-SUBSET CHOICE's candidates. With `gene_subsets` off: all the
+/// genes under each linker, in linker order — the engine as it always was. On:
+/// every NON-EMPTY SUBSET of the genes, so a chromosome decides for itself
+/// whether it is a 1-, 2- or 3-gene model — fewest genes first, then by the
+/// subset's bits ({0}, {1}, {2}, {0,1}, {0,2}, {1,2}, {0,1,2}), a subset of two
+/// or more under each linker. A SINGLE gene has no linker: it is the gene itself
+/// (every combine of one value is that value), scored once and recorded under
+/// linker 0. 1 gene -> 1 combination, 2 -> 5, 3 -> 15; more than
+/// [`MAX_SUBSET_GENES`] is an error. Choosing the first of equally good
+/// candidates then prefers the model with fewer genes.
+pub fn gene_linker_combinations(n_genes: usize, n_linkers: usize, gene_subsets: bool) -> Result<Vec<GeneLinker>, String> {
+    if n_genes == 0 || n_genes > u32::BITS as usize - 1 || n_linkers == 0 {
+        return Err(format!("combinations of {n_genes} genes under {n_linkers} linkers"));
+    }
+    let all = (1u32 << n_genes) - 1;
+    if !gene_subsets {
+        return Ok((0..n_linkers).map(|linker| GeneLinker { genes: all, linker }).collect());
+    }
+    if n_genes > MAX_SUBSET_GENES {
+        return Err(format!("gene subsets are scored for at most {MAX_SUBSET_GENES} genes, this chromosome has {n_genes}"));
+    }
+    let mut subsets: Vec<u32> = (1..=all).collect();
+    subsets.sort_by_key(|m| (m.count_ones(), *m));
+    Ok(subsets
+        .into_iter()
+        .flat_map(|genes| (0..if genes.count_ones() == 1 { 1 } else { n_linkers }).map(move |linker| GeneLinker { genes, linker }))
+        .collect())
+}
+
+/// [`score_chromosomes`] over GENE-LINKER COMBINATIONS: every chromosome is scored
+/// under each of `combinations` (see [`gene_linker_combinations`]) and each of
+/// `spec.wrappers`. A combination's model is `score_chromosomes`' model of the
+/// chromosome made of its USED genes alone — so the avg linker divides by the
+/// number of used genes, and a gene that failed to evaluate rejects only the
+/// combinations that use it.
+///
+/// Returns `chromosomes.len() * combinations.len() * spec.wrappers.len() *
+/// SCORE_WIDTH` values: chromosome-major, then combination, then wrapper.
+pub fn score_gene_subsets(
+    preds: &[f32],
+    gene_ok: &[bool],
+    chromosomes: &[Vec<usize>],
+    y: &[f64],
+    spec: &ScoreSpec,
+    combinations: &[GeneLinker],
+) -> Result<Vec<f64>, String> {
+    check_input(preds, gene_ok, chromosomes, y, spec)?;
+    let fewest = chromosomes.iter().map(Vec::len).min().unwrap_or(0);
+    for c in combinations {
+        if c.genes == 0 || c.linker >= spec.linkers.len() || c.positions().any(|g| g >= fewest) {
+            return Err(format!("{c:?} does not fit chromosomes of {fewest} genes and {} linkers", spec.linkers.len()));
+        }
+    }
+    let n_rows = spec.splits.total();
+    let n_w = spec.wrappers.len();
+    let per = combinations.len() * n_w * SCORE_WIDTH;
     let mut out = vec![f64::NAN; chromosomes.len() * per];
     out.par_chunks_mut(per.max(1))
         .zip(chromosomes.par_iter())
         .for_each(|(slot, genes)| {
-            if genes.iter().any(|&g| !gene_ok[g]) {
-                return;
-            }
-            for (l, linker) in linkers.iter().enumerate() {
-                let Some(linked) = link(preds, genes, *linker, n_rows) else {
+            for (k, combination) in combinations.iter().enumerate() {
+                let used: Vec<usize> = combination.positions().map(|g| genes[g]).collect();
+                if used.iter().any(|&g| !gene_ok[g]) {
+                    continue;
+                }
+                let Some(linked) = link(preds, &used, spec.linkers[combination.linker], n_rows) else {
                     continue;
                 };
-                for (w, wrapper) in wrappers.iter().enumerate() {
-                    if let Some(s) = score_one(&linked, *wrapper, splits, y, linear_scaling) {
-                        let at = (l * wrappers.len() + w) * SCORE_WIDTH;
+                for (w, wrapper) in spec.wrappers.iter().enumerate() {
+                    if let Some(s) = score_one(&linked, *wrapper, spec.splits, y, spec.linear_scaling) {
+                        let at = (k * n_w + w) * SCORE_WIDTH;
                         slot[at..at + SCORE_WIDTH].copy_from_slice(&s);
                     }
                 }
@@ -629,6 +742,87 @@ mod tests {
         assert!(same(0, 3), "2x rescaled by LSM is the same model as 3x");
         assert!(!same(0, 4), "x^2 + x is a different function and must differ");
         assert_eq!(sig(0).len(), SIGNATURE_ROWS);
+    }
+
+    /// 1 gene -> 1 combination, 2 -> 5, 3 -> 15, fewest genes first; a single gene
+    /// once, not once per linker; 4 genes is an error, not a fallback. Off: all
+    /// the genes under each linker, whatever their number.
+    #[test]
+    fn the_gene_linker_combinations_are_every_non_empty_subset() {
+        let on = |n: usize| gene_linker_combinations(n, 3, true).unwrap();
+        let pairs = |v: &[GeneLinker]| v.iter().map(|c| (c.genes, c.linker)).collect::<Vec<_>>();
+        assert_eq!(pairs(&on(1)), vec![(0b1, 0)]);
+        assert_eq!(pairs(&on(2)), vec![(0b01, 0), (0b10, 0), (0b11, 0), (0b11, 1), (0b11, 2)]);
+        assert_eq!(
+            pairs(&on(3)),
+            vec![
+                (0b001, 0), (0b010, 0), (0b100, 0),
+                (0b011, 0), (0b011, 1), (0b011, 2),
+                (0b101, 0), (0b101, 1), (0b101, 2),
+                (0b110, 0), (0b110, 1), (0b110, 2),
+                (0b111, 0), (0b111, 1), (0b111, 2),
+            ]
+        );
+        assert!(gene_linker_combinations(4, 3, true).is_err());
+        assert!(gene_linker_combinations(0, 3, true).is_err());
+        for n in 1..=5 {
+            let off = gene_linker_combinations(n, 3, false).unwrap();
+            assert_eq!(pairs(&off), (0..3).map(|l| ((1u32 << n) - 1, l)).collect::<Vec<_>>());
+        }
+        assert_eq!(on(3)[4].positions().collect::<Vec<_>>(), vec![0, 1]);
+    }
+
+    /// A combination is `score_chromosomes` of its used genes alone, bit for bit:
+    /// the avg linker divides by the number of USED genes, a single gene is the
+    /// gene itself, and a gene that failed poisons only the subsets holding it.
+    /// With the switch off the two entry points return the same values.
+    #[test]
+    fn a_gene_subset_scores_as_the_chromosome_of_its_used_genes() {
+        let x: Vec<f32> = (1..=24).map(|v| v as f32 * 0.5).collect();
+        let splits = Splits { n_train: 16, n_val: 5, n_extrap: 3 };
+        let y: Vec<f64> = x.iter().map(|v| 2.0 * (f64::from(*v) * f64::from(*v) + f64::from(*v)) + 1.0).collect();
+        let mut preds = x.clone(); // 0: x
+        preds.extend(x.iter().map(|v| v * v)); // 1: x^2
+        preds.extend(x.iter().map(|v| (v * 3.0).sin())); // 2: junk
+        preds.extend(x.iter().map(|v| 1.0 / v)); // 3: not decoded
+        let ok = [true, true, true, false];
+        let spec = ScoreSpec {
+            linkers: vec![Linker::AVG, Linker::MUL, Linker::ADD],
+            wrappers: vec![Wrapper::Identity, Wrapper::SqrtAbs],
+            splits,
+            linear_scaling: true,
+        };
+        let same = |a: &[f64], b: &[f64]| a.iter().zip(b).all(|(p, q)| p.to_bits() == q.to_bits());
+        let chromosomes = vec![vec![0, 1, 2], vec![3, 1, 0]];
+        let combinations = gene_linker_combinations(3, 3, true).unwrap();
+        let out = score_gene_subsets(&preds, &ok, &chromosomes, &y, &spec, &combinations).unwrap();
+        let per = 2 * SCORE_WIDTH;
+        assert_eq!(out.len(), 2 * 15 * per);
+        for (c, genes) in chromosomes.iter().enumerate() {
+            for (k, combination) in combinations.iter().enumerate() {
+                let used: Vec<usize> = combination.positions().map(|g| genes[g]).collect();
+                let alone = score_chromosomes(&preds, &ok, &[used], &y, &spec).unwrap();
+                let want = &alone[combination.linker * per..(combination.linker + 1) * per];
+                assert!(same(&out[(c * 15 + k) * per..(c * 15 + k + 1) * per], want), "chromosome {c}, {combination:?}");
+            }
+        }
+        // 2 (x^2 + x) + 1 is genes {0, 1} under add (and under avg, which the scale makes
+        // the same model): exact there, and nowhere it must use the junk gene alone.
+        let mse = |c: usize, k: usize| out[(c * 15 + k) * per + 2];
+        assert!(mse(0, 5) < 1e-20 && mse(0, 3) < 1e-20, "{} {}", mse(0, 5), mse(0, 3));
+        assert!(mse(0, 2) > 1.0);
+        // Chromosome 1's gene 0 failed: every subset holding it is rejected, the
+        // others are scored.
+        for (k, combination) in combinations.iter().enumerate() {
+            assert_eq!(mse(1, k).is_nan(), combination.genes & 1 == 1, "{combination:?}");
+        }
+        let off = gene_linker_combinations(3, 3, false).unwrap();
+        let whole = score_gene_subsets(&preds, &ok, &chromosomes, &y, &spec, &off).unwrap();
+        let reference = score_chromosomes(&preds, &ok, &chromosomes, &y, &spec).unwrap();
+        assert_eq!(whole.len(), reference.len());
+        assert!(same(&whole, &reference));
+        // A combination that names a gene the chromosome does not have is an error.
+        assert!(score_gene_subsets(&preds, &ok, &[vec![0, 1]], &y, &spec, &combinations).is_err());
     }
 
     #[test]

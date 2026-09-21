@@ -5,9 +5,16 @@
 // same procedure in f32 with compensated sums, used to RANK. Whatever is
 // reported or stops a fit is re-scored in f64 on the host.
 //
-// One thread per (chromosome, linker); its three wrappers share the row loop.
-// A thread writes only its own 3 x 9 output slots. Reductions are fixed-order
-// sums (row order), so a result does not depend on scheduling.
+// One thread per (chromosome, GENE-LINKER COMBINATION); its three wrappers share
+// the row loop. A combination is which of the chromosome's genes are USED (a
+// bitmask) and the linker over them — `chrom_score::gene_linker_combinations`:
+// all the genes under each linker, or, with the gene-subset choice on, every
+// non-empty subset. Combinations share no arithmetic (each has its own linked
+// value, mean and scale), so one thread each keeps every thread as short as it
+// was and the device as busy as it can be; a thread per chromosome looping over
+// 15 combinations would be 5 times as long for nothing shared.
+// A thread writes only its own 3 x WIDTH output slots. Reductions are
+// fixed-order sums (row order), so a result does not depend on scheduling.
 
 struct Meta {
     n_chromosomes: u32,
@@ -17,7 +24,8 @@ struct Meta {
     n_val: u32,
     n_extrap: u32,
     y_mean_train: f32,
-    pad0: u32,
+    // 0, which the compiler cannot know: see `keep`.
+    zero: u32,
 }
 
 @group(0) @binding(0) var<uniform> sp: Meta;
@@ -26,8 +34,10 @@ struct Meta {
 @group(0) @binding(3) var<storage, read> chromosomes: array<u32>; // genes_per gene indices each
 @group(0) @binding(4) var<storage, read> y: array<f32>;
 @group(0) @binding(5) var<storage, read_write> scores: array<f32>;
+// Per combination: the used genes' bitmask (low 24 bits) | linker << 24.
+@group(0) @binding(6) var<storage, read> combinations: array<u32>;
 
-const N_LINKERS: u32 = 3u;   // avg, mul, add — chrom_score's order in the engine
+// Linkers: 0 avg, 1 mul, 2 add — chrom_score's order in the engine.
 const N_WRAPPERS: u32 = 3u;  // identity, log_abs, sqrt_abs
 const WIDTH: u32 = 10u;      // a, b, mse_t, mse_v, max_err_v, mse_e, mae_t, mae_v, mae_e, redundancy
 const LOO_STRIDE: u32 = 4u;  // leave-one-gene-out reads every 4th train row
@@ -38,41 +48,65 @@ fn finite(v: f32) -> bool {
     return (bitcast<u32>(v) & 0x7F800000u) != 0x7F800000u;
 }
 
-fn linked(c: u32, linker: u32, row: u32) -> f32 {
+fn linked(c: u32, genes: u32, linker: u32, row: u32) -> f32 {
     var acc = select(0.0, 1.0, linker == 1u);
     for (var g = 0u; g < sp.genes_per; g = g + 1u) {
+        if (((genes >> g) & 1u) == 0u) {
+            continue;
+        }
         let v = preds[chromosomes[c * sp.genes_per + g] * sp.n_rows + row];
         if (linker == 1u) {
-            acc = acc * v;
+            acc = keep(acc * v);
         } else {
-            acc = acc + v;
+            acc = keep(acc + v);
         }
     }
     if (linker == 0u) {
-        acc = acc / f32(sp.genes_per);
+        acc = div(acc, f32(countOneBits(genes)));
     }
     return acc;
 }
 
 // The linked value with gene `skip` replaced by `held` (its mean): what the
 // model computes when that gene is switched off.
-fn linked_without(c: u32, linker: u32, row: u32, skip: u32, held: f32) -> f32 {
+fn linked_without(c: u32, genes: u32, linker: u32, row: u32, skip: u32, held: f32) -> f32 {
     var acc = select(0.0, 1.0, linker == 1u);
     for (var g = 0u; g < sp.genes_per; g = g + 1u) {
+        if (((genes >> g) & 1u) == 0u) {
+            continue;
+        }
         var v = preds[chromosomes[c * sp.genes_per + g] * sp.n_rows + row];
         if (g == skip) {
             v = held;
         }
         if (linker == 1u) {
-            acc = acc * v;
+            acc = keep(acc * v);
         } else {
-            acc = acc + v;
+            acc = keep(acc + v);
         }
     }
     if (linker == 0u) {
-        acc = acc / f32(sp.genes_per);
+        acc = div(acc, f32(countOneBits(genes)));
     }
     return acc;
+}
+
+// sqrt(x), CORRECTLY ROUNDED, the way `div` is: the device's root s is a first
+// guess, x - s*s is formed exactly and s corrected by residual / 2s.
+fn root(x: f32) -> f32 {
+    let s = keep(sqrt(x));
+    if (s == 0.0 || !finite(s)) {
+        return s;
+    }
+    let p = keep(s * s);
+    let sh = high(s);
+    let sl = keep(s - sh);
+    let e = keep(keep(sl * sl) - keep(keep(keep(p - keep(sh * sh)) - keep(sl * sh)) - keep(sh * sl)));
+    let r = keep(keep(x - p) - e);
+    if (!finite(r)) {
+        return s;
+    }
+    return keep(s + keep(r / keep(2.0 * s)));
 }
 
 fn wrapped(v: f32, w: u32) -> f32 {
@@ -80,38 +114,88 @@ fn wrapped(v: f32, w: u32) -> f32 {
         return log(abs(v) + 1e-12);
     }
     if (w == 2u) {
-        return sqrt(abs(v));
+        return root(abs(v));
     }
     return v;
 }
 
+// A float as the compiler must take it: through an integer XOR with a zero
+// that arrives in the uniform block, so nothing can be reassociated across it
+// and a product cannot be fused into the sum it feeds (snap_guard.wgsl's rule).
+fn keep(v: f32) -> f32 {
+    return bitcast<f32>(bitcast<u32>(v) ^ sp.zero);
+}
+
 // Neumaier's compensated addition: (sum, compensation) += v.
+//
+// The compensation is ALGEBRAICALLY zero — (s - (s + v)) + v — and a compiler
+// that treats floats as reals reassociates it away. Written plainly, this
+// device's scale for y = 2x over 40,000 rows was 1.9999967 and 1 - R² 1e-9,
+// where the sums as written give 2 and 0 (measured against the CPU twin,
+// `score.rs::score_f32`). Every intermediate is therefore `keep`-ed.
 fn add(s: vec2<f32>, v: f32) -> vec2<f32> {
-    let t = s.x + v;
+    let t = keep(s.x + v);
     var c = s.y;
     if (abs(s.x) >= abs(v)) {
-        c = c + ((s.x - t) + v);
+        c = keep(c + keep(keep(s.x - t) + v));
     } else {
-        c = c + ((v - t) + s.x);
+        c = keep(c + keep(keep(v - t) + s.x));
     }
     return vec2<f32>(t, c);
+}
+
+// The high part of `v` for Dekker's exact product (Veltkamp's split).
+fn high(v: f32) -> f32 {
+    let c = keep(4097.0 * v);
+    return keep(c - keep(c - v));
+}
+
+// x / y, CORRECTLY ROUNDED. This device's division is not: its quotients sat a
+// last place from the host's (measured — 1 ulp in a, in an MSE), and a scale
+// that is a last place off moves every residual. So the device's quotient q is
+// only a first guess: the residual x - q*y is formed EXACTLY (Dekker's product,
+// every step `keep`-ed) and q corrected by residual / y, where a last place of
+// that small quotient no longer reaches the result. The CPU twin runs the same
+// steps.
+fn div(x: f32, y: f32) -> f32 {
+    let q = keep(x / y);
+    let p = keep(q * y);
+    let qh = high(q);
+    let ql = keep(q - qh);
+    let yh = high(y);
+    let yl = keep(y - yh);
+    let e = keep(keep(ql * yl) - keep(keep(keep(p - keep(qh * yh)) - keep(ql * yh)) - keep(qh * yl)));
+    let r = keep(keep(x - p) - e);
+    if (!finite(r) || !finite(q)) {
+        return q;
+    }
+    return keep(q + keep(r / y));
+}
+
+// The total of a compensated sum.
+fn total(s: vec2<f32>) -> f32 {
+    return keep(s.x + s.y);
 }
 
 @compute @workgroup_size(64)
 fn score_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let t = gid.x;
-    if (t >= sp.n_chromosomes * N_LINKERS) {
+    let n_combinations = arrayLength(&combinations);
+    if (t >= sp.n_chromosomes * n_combinations) {
         return;
     }
-    let c = t / N_LINKERS;
-    let linker = t % N_LINKERS;
+    let c = t / n_combinations;
+    let combination = combinations[t % n_combinations];
+    let genes = combination & 0x00FFFFFFu;
+    let linker = combination >> 24u;
     let out = t * N_WRAPPERS * WIDTH;
     let nan = bitcast<f32>(NAN_BITS);
     for (var i = 0u; i < N_WRAPPERS * WIDTH; i = i + 1u) {
         scores[out + i] = nan;
     }
+    // A gene that failed to evaluate rejects only the combinations that use it.
     for (var g = 0u; g < sp.genes_per; g = g + 1u) {
-        if (gene_ok[chromosomes[c * sp.genes_per + g]] == 0u) {
+        if (((genes >> g) & 1u) == 1u && gene_ok[chromosomes[c * sp.genes_per + g]] == 0u) {
             return;
         }
     }
@@ -126,7 +210,7 @@ fn score_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     var x0: array<f32, 3>;
     var lo: array<f32, 3>;
     var hi: array<f32, 3>;
-    let v0 = linked(c, linker, 0u);
+    let v0 = linked(c, genes, linker, 0u);
     for (var w = 0u; w < N_WRAPPERS; w = w + 1u) {
         sum[w] = vec2<f32>(0.0, 0.0);
         ok[w] = true;
@@ -136,13 +220,13 @@ fn score_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
     // A non-finite value ANYWHERE rejects the candidate, as chrom_score does.
     for (var row = 0u; row < sp.n_rows; row = row + 1u) {
-        let v = linked(c, linker, row);
+        let v = linked(c, genes, linker, row);
         for (var w = 0u; w < N_WRAPPERS; w = w + 1u) {
             let x = wrapped(v, w);
             if (!finite(v) || !finite(x)) {
                 ok[w] = false;
             } else if (row < nt) {
-                sum[w] = add(sum[w], x - x0[w]);
+                sum[w] = add(sum[w], keep(x - x0[w]));
                 lo[w] = min(lo[w], x);
                 hi[w] = max(hi[w], x);
             }
@@ -150,7 +234,7 @@ fn score_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
     var mx: array<f32, 3>;
     for (var w = 0u; w < N_WRAPPERS; w = w + 1u) {
-        mx[w] = x0[w] + (sum[w].x + sum[w].y) / f32(nt);
+        mx[w] = keep(x0[w] + div(total(sum[w]), f32(nt)));
     }
 
     // Pass 2, train rows: centred sums for the least-squares scale.
@@ -161,28 +245,30 @@ fn score_main(@builtin(global_invocation_id) gid: vec3<u32>) {
         sxy[w] = vec2<f32>(0.0, 0.0);
     }
     for (var row = 0u; row < nt; row = row + 1u) {
-        let v = linked(c, linker, row);
-        let dy = y[row] - sp.y_mean_train;
+        let v = linked(c, genes, linker, row);
+        let dy = keep(y[row] - sp.y_mean_train);
         for (var w = 0u; w < N_WRAPPERS; w = w + 1u) {
             if (ok[w]) {
-                let dx = wrapped(v, w) - mx[w];
-                sxx[w] = add(sxx[w], dx * dx);
-                sxy[w] = add(sxy[w], dx * dy);
+                // A product that feeds a sum is `keep`-ed first: fused into a
+                // multiply-add it is rounded once, and the CPU twin rounds twice.
+                let dx = keep(wrapped(v, w) - mx[w]);
+                sxx[w] = add(sxx[w], keep(dx * dx));
+                sxy[w] = add(sxy[w], keep(dx * dy));
             }
         }
     }
     var a: array<f32, 3>;
     var b: array<f32, 3>;
     for (var w = 0u; w < N_WRAPPERS; w = w + 1u) {
-        let xx = sxx[w].x + sxx[w].y;
+        let xx = total(sxx[w]);
         // Constant to the resolution the predictions have (chrom_score's rule).
         // every value within tol of the mean  <=>  the range within 2 tol.
         if (!ok[w] || (hi[w] - lo[w]) <= 2.0 * (1e-8 + CONSTANT_REL_TOL * abs(mx[w])) || xx <= 0.0) {
             ok[w] = false;
             continue;
         }
-        a[w] = (sxy[w].x + sxy[w].y) / xx;
-        b[w] = sp.y_mean_train - a[w] * mx[w];
+        a[w] = div(total(sxy[w]), xx);
+        b[w] = keep(sp.y_mean_train - keep(a[w] * mx[w]));
         if (!finite(a[w]) || !finite(b[w])) {
             ok[w] = false;
         }
@@ -200,7 +286,7 @@ fn score_main(@builtin(global_invocation_id) gid: vec3<u32>) {
         worst[w] = 0.0;
     }
     for (var row = 0u; row < sp.n_rows; row = row + 1u) {
-        let v = linked(c, linker, row);
+        let v = linked(c, genes, linker, row);
         var split = 2u;
         if (row < nt) {
             split = 0u;
@@ -209,8 +295,8 @@ fn score_main(@builtin(global_invocation_id) gid: vec3<u32>) {
         }
         for (var w = 0u; w < N_WRAPPERS; w = w + 1u) {
             if (ok[w]) {
-                let d = y[row] - (a[w] * wrapped(v, w) + b[w]);
-                sq[w * 3u + split] = add(sq[w * 3u + split], d * d);
+                let d = keep(y[row] - keep(keep(a[w] * wrapped(v, w)) + b[w]));
+                sq[w * 3u + split] = add(sq[w * 3u + split], keep(d * d));
                 ab[w * 3u + split] = add(ab[w * 3u + split], abs(d));
                 if (split == 1u) {
                     worst[w] = max(worst[w], abs(d));
@@ -226,13 +312,13 @@ fn score_main(@builtin(global_invocation_id) gid: vec3<u32>) {
         let n = array<f32, 3>(f32(nt), f32(sp.n_val), f32(max(sp.n_extrap, 1u)));
         scores[o] = a[w];
         scores[o + 1u] = b[w];
-        scores[o + 2u] = (sq[w * 3u].x + sq[w * 3u].y) / n[0];
-        scores[o + 3u] = (sq[w * 3u + 1u].x + sq[w * 3u + 1u].y) / n[1];
+        scores[o + 2u] = div(total(sq[w * 3u]), n[0]);
+        scores[o + 3u] = div(total(sq[w * 3u + 1u]), n[1]);
         scores[o + 4u] = worst[w];
-        scores[o + 5u] = (sq[w * 3u + 2u].x + sq[w * 3u + 2u].y) / n[2];
-        scores[o + 6u] = (ab[w * 3u].x + ab[w * 3u].y) / n[0];
-        scores[o + 7u] = (ab[w * 3u + 1u].x + ab[w * 3u + 1u].y) / n[1];
-        scores[o + 8u] = (ab[w * 3u + 2u].x + ab[w * 3u + 2u].y) / n[2];
+        scores[o + 5u] = div(total(sq[w * 3u + 2u]), n[2]);
+        scores[o + 6u] = div(total(ab[w * 3u]), n[0]);
+        scores[o + 7u] = div(total(ab[w * 3u + 1u]), n[1]);
+        scores[o + 8u] = div(total(ab[w * 3u + 2u]), n[2]);
         scores[o + 9u] = 0.0;
         for (var i = 0u; i < WIDTH; i = i + 1u) {
             if (!finite(scores[o + i])) {
@@ -245,25 +331,35 @@ fn score_main(@builtin(global_invocation_id) gid: vec3<u32>) {
         }
     }
 
-    // LEAVE ONE GENE OUT. Switch each VARYING gene off (hold it at its mean),
+    // LEAVE ONE GENE OUT, over the combination's USED genes (an unused gene is
+    // not in the model: there is nothing to leave out). A SINGLE used gene is the
+    // whole model: switched off, what is left is a constant, and its "R² without"
+    // would be rounding noise divided by rounding noise — it is 0 by definition,
+    // and the slot already holds 0. Otherwise: switch each VARYING gene off (hold it at its mean),
     // refit the scale, and see how much of the fit goes: for a law every gene
     // that does anything is load-bearing; refined noise carries genes whose
     // removal costs nothing. redundancy = 1 - median over the varying genes of
     // (1 - R2_without / R2_full), in [0, 1]; 0 = every varying gene matters.
     // With an intercept R2 = sxy^2 / (sxx * syy), so no residual pass is needed.
     // Reads every LOO_STRIDE-th train row.
+    if (countOneBits(genes) == 1u) {
+        return;
+    }
     var syy = vec2<f32>(0.0, 0.0);
     for (var row = 0u; row < nt; row = row + LOO_STRIDE) {
-        let dy = y[row] - sp.y_mean_train;
-        syy = add(syy, dy * dy);
+        let dy = keep(y[row] - sp.y_mean_train);
+        syy = add(syy, keep(dy * dy));
     }
-    let yy = syy.x + syy.y;
+    let yy = total(syy);
     var loss: array<f32, 24>;       // [wrapper * 8 + varying gene]
     var n_loss: array<u32, 3>;
     for (var w = 0u; w < N_WRAPPERS; w = w + 1u) {
         n_loss[w] = 0u;
     }
     for (var g = 0u; g < min(sp.genes_per, 8u); g = g + 1u) {
+        if (((genes >> g) & 1u) == 0u) {
+            continue;
+        }
         let gene = chromosomes[c * sp.genes_per + g];
         let g0 = preds[gene * sp.n_rows];
         var gsum = vec2<f32>(0.0, 0.0);
@@ -272,23 +368,36 @@ fn score_main(@builtin(global_invocation_id) gid: vec3<u32>) {
         var n_read = 0.0;
         for (var row = 0u; row < nt; row = row + LOO_STRIDE) {
             let v = preds[gene * sp.n_rows + row];
-            gsum = add(gsum, v - g0);
+            gsum = add(gsum, keep(v - g0));
             gmin = min(gmin, v);
             ghi = max(ghi, v);
             n_read = n_read + 1.0;
         }
-        let gmean = g0 + (gsum.x + gsum.y) / n_read;
+        let gmean = keep(g0 + div(total(gsum), n_read));
         if ((ghi - gmin) <= 2.0 * (1e-8 + CONSTANT_REL_TOL * abs(gmean))) {
             continue;               // a constant gene: nothing to switch off
         }
+        // The mean of what is left, and its range: left CONSTANT (the other used
+        // genes are constants, or there is one other and it is this gene's
+        // partner in a product with a constant), the model without this gene is
+        // the constant model, R² 0 — decided by the range, as the fit decides it,
+        // never by a ratio of rounding noise to rounding noise.
         var m1: array<vec2<f32>, 3>;
+        var lo1: array<f32, 3>;
+        var hi1: array<f32, 3>;
+        let first = linked_without(c, genes, linker, 0u, g, gmean);
         for (var w = 0u; w < N_WRAPPERS; w = w + 1u) {
             m1[w] = vec2<f32>(0.0, 0.0);
+            lo1[w] = wrapped(first, w);
+            hi1[w] = lo1[w];
         }
         for (var row = 0u; row < nt; row = row + LOO_STRIDE) {
-            let v = linked_without(c, linker, row, g, gmean);
+            let v = linked_without(c, genes, linker, row, g, gmean);
             for (var w = 0u; w < N_WRAPPERS; w = w + 1u) {
-                m1[w] = add(m1[w], wrapped(v, w));
+                let x = wrapped(v, w);
+                m1[w] = add(m1[w], x);
+                lo1[w] = min(lo1[w], x);
+                hi1[w] = max(hi1[w], x);
             }
         }
         var xx: array<vec2<f32>, 3>;
@@ -298,12 +407,12 @@ fn score_main(@builtin(global_invocation_id) gid: vec3<u32>) {
             xy[w] = vec2<f32>(0.0, 0.0);
         }
         for (var row = 0u; row < nt; row = row + LOO_STRIDE) {
-            let v = linked_without(c, linker, row, g, gmean);
-            let dy = y[row] - sp.y_mean_train;
+            let v = linked_without(c, genes, linker, row, g, gmean);
+            let dy = keep(y[row] - sp.y_mean_train);
             for (var w = 0u; w < N_WRAPPERS; w = w + 1u) {
-                let dx = wrapped(v, w) - (m1[w].x + m1[w].y) / n_read;
-                xx[w] = add(xx[w], dx * dx);
-                xy[w] = add(xy[w], dx * dy);
+                let dx = keep(wrapped(v, w) - div(total(m1[w]), n_read));
+                xx[w] = add(xx[w], keep(dx * dx));
+                xy[w] = add(xy[w], keep(dx * dy));
             }
         }
         for (var w = 0u; w < N_WRAPPERS; w = w + 1u) {
@@ -311,16 +420,18 @@ fn score_main(@builtin(global_invocation_id) gid: vec3<u32>) {
                 continue;
             }
             let o = out + w * WIDTH;
-            let full = 1.0 - scores[o + 2u] * f32(nt) / max(yy * f32(LOO_STRIDE), 1e-30);
-            let sxx_w = xx[w].x + xx[w].y;
-            let sxy_w = xy[w].x + xy[w].y;
+            let full = keep(1.0 - div(keep(scores[o + 2u] * f32(nt)), max(keep(yy * f32(LOO_STRIDE)), 1e-30)));
+            let sxx_w = total(xx[w]);
+            let sxy_w = total(xy[w]);
             var without = 0.0;
-            if (sxx_w > 0.0 && yy > 0.0 && finite(sxx_w) && finite(sxy_w)) {
-                without = clamp(sxy_w * sxy_w / (sxx_w * yy), 0.0, 1.0);
+            let mean1 = div(total(m1[w]), n_read);
+            let varies = (hi1[w] - lo1[w]) > 2.0 * (1e-8 + CONSTANT_REL_TOL * abs(mean1));
+            if (varies && sxx_w > 0.0 && yy > 0.0 && finite(sxx_w) && finite(sxy_w)) {
+                without = clamp(div(keep(sxy_w * sxy_w), keep(sxx_w * yy)), 0.0, 1.0);
             }
             var l = 1.0;
             if (full > 1e-6) {
-                l = clamp(1.0 - without / full, 0.0, 1.0);
+                l = clamp(keep(1.0 - div(without, full)), 0.0, 1.0);
             }
             loss[w * 8u + n_loss[w]] = l;
             n_loss[w] = n_loss[w] + 1u;
@@ -345,7 +456,7 @@ fn score_main(@builtin(global_invocation_id) gid: vec3<u32>) {
             }
             loss[w * 8u + j] = v;
         }
-        let median = 0.5 * (loss[w * 8u + (n - 1u) / 2u] + loss[w * 8u + n / 2u]);
-        scores[out + w * WIDTH + 9u] = 1.0 - median;
+        let median = keep(0.5 * keep(loss[w * 8u + (n - 1u) / 2u] + loss[w * 8u + n / 2u]));
+        scores[out + w * WIDTH + 9u] = keep(1.0 - median);
     }
 }
