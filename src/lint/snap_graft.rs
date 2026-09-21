@@ -650,7 +650,7 @@ mod gpu {
 pub use gpu::{GraftWords, SnapGraft};
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::evolve::{below, coin, draw};
     use crate::lint::flat::is_canonical;
@@ -942,7 +942,8 @@ mod tests {
         }
     }
 
-    fn corpus(t: &SnapTable, n: u32) -> Vec<Flat> {
+    /// Shared with the guard's tests.
+    pub(crate) fn corpus(t: &SnapTable, n: u32) -> Vec<Flat> {
         let tame: Vec<f64> = t.values.iter().copied().filter(|v| (0.01..100.0).contains(v)).collect();
         (0..n).map(|row| flat(&grow(&tame, row, &mut 0, 5))).collect()
     }
