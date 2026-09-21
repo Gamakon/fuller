@@ -222,6 +222,12 @@ fn main() {
     println!("MSE\t{}\t{}\t{}", mse[0], mse[1], mse[2]);
     println!("TOWER\t{}\t{}", out.best.t_depth, if config.tower { "in HFF" } else { "reported only" });
     println!("MODEL_INFIX\t{}", tidy.to_infix_faithful());
+    // The same model with every protected operator written as the ordinary one —
+    // the FUNCTION, without the execution guard. It is what goes to SRBench, which
+    // only compares it symbolically with the law and never executes it (accuracy
+    // comes from predict(), the chromosome). MODEL_INFIX stays the faithful form:
+    // the harness executes THAT one to prove the report computes the chromosome.
+    println!("MODEL_PLAIN\t{}", tidy.to_infix());
     println!("RAW_MATH\t{}", out.math);
     // A harness that made the split itself may hand over its test rows: the
     // RAW chromosome's R² on them (f64, fuller's evaluator), so the harness can
