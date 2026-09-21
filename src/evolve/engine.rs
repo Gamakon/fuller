@@ -49,6 +49,7 @@ impl SymbolTable {
         let functions = [
             Op::Add, Op::Sub, Op::Mul, Op::ProtectedDiv, Op::Sin, Op::Cos, Op::Tanh, Op::ProtectedSqrt,
             Op::ProtectedLog, Op::ProtectedExp, Op::Neg, Op::Abs, Op::Pow2, Op::Pow3, Op::ProtectedInv,
+            Op::Tan, Op::ProtectedAsin, Op::ProtectedAcos,
         ];
         let mut symbols: Vec<Symbol> = functions.iter().map(|&op| Symbol::Function(op)).collect();
         symbols.extend((0..n_inputs).map(Symbol::Input));
@@ -133,10 +134,11 @@ pub fn nodes_to_math(nodes: &[GpuNode], at: usize, names: &[String]) -> String {
     }
 }
 
-const OPS: [Op; 22] = [
+const OPS: [Op; 26] = [
     Op::Add, Op::Sub, Op::Mul, Op::Div, Op::Neg, Op::Abs, Op::Sqrt, Op::Log, Op::Exp, Op::Sin, Op::Cos,
     Op::Tan, Op::Tanh, Op::Pow, Op::Pow2, Op::Pow3, Op::Inv, Op::ProtectedDiv, Op::ProtectedSqrt,
-    Op::ProtectedLog, Op::ProtectedExp, Op::ProtectedInv,
+    Op::ProtectedLog, Op::ProtectedExp, Op::ProtectedInv, Op::Asin, Op::Acos, Op::ProtectedAsin,
+    Op::ProtectedAcos,
 ];
 
 /// The data of one fit: rows are train, then validation, then edge
@@ -304,7 +306,7 @@ pub fn hff_p_value(theta: f64, m: usize) -> (f64, f64) {
 
 /// TRANSCENDENTAL NESTING DEPTH of a decoded gene: the most transcendental
 /// functions met on any path from the root to a leaf — exp, log, sin, cos, tan,
-/// tanh, Abs, sqrt (and their protected forms), and a `Pow` whose exponent is not
+/// tanh, asin, acos, Abs, sqrt (and their protected forms), and a `Pow` whose exponent is not
 /// a whole number. `+ - * /`, negation, `1/x` and whole powers do not count, so a
 /// long FLAT law scores 0: this is not parsimony. Measured on 1,230 labelled fits
 /// (`docs/BRAINSTORM_tower_detector.md`): every one of SRBench's 133 true laws is
@@ -316,7 +318,10 @@ pub fn t_depth(nodes: &[GpuNode]) -> u32 {
     let counts = |i: usize| -> u32 {
         let n = &nodes[i];
         let whole = |c: usize| nodes.get(c).is_some_and(|e| e.op == Op::Num as u32 && e.konst.fract() == 0.0);
-        let t = [Op::Abs, Op::Sqrt, Op::Log, Op::Exp, Op::Sin, Op::Cos, Op::Tan, Op::Tanh, Op::ProtectedSqrt, Op::ProtectedLog, Op::ProtectedExp];
+        let t = [
+            Op::Abs, Op::Sqrt, Op::Log, Op::Exp, Op::Sin, Op::Cos, Op::Tan, Op::Tanh, Op::ProtectedSqrt, Op::ProtectedLog,
+            Op::ProtectedExp, Op::Asin, Op::Acos, Op::ProtectedAsin, Op::ProtectedAcos,
+        ];
         u32::from(t.iter().any(|&o| o as u32 == n.op) || (n.op == Op::Pow as u32 && !whole(n.arg1 as usize)))
     };
     if nodes.is_empty() {
@@ -447,7 +452,9 @@ impl Caps {
 /// `Abs e` where `e` keeps one sign on every row becomes `e` or `Neg e`, and
 /// every protected operator the DATA never triggers becomes the raw one:
 /// `ProtectedDiv a b` with |b| >= 1e-6 on every row is `Div a b`, with |b| < 1e-6
-/// on every row it is 0; `ProtectedInv x` with x never 0 is `Inv x`. One that is
+/// on every row it is 0; `ProtectedInv x` with x never 0 is `Inv x`;
+/// `ProtectedAsin x` / `ProtectedAcos x` with x in [-1, 1] on every row are
+/// `Asin x` / `Acos x`. One that is
 /// triggered on SOME rows stays protected, and `Tree::to_infix_faithful` writes
 /// it out as the Piecewise it is. Decided on `rows`, the rows the model was
 /// selected on — the engine's counterpart of hff's `symbolic_protected_div`.
@@ -481,6 +488,17 @@ pub fn resolve_protected(math: &str, rows: &[Vec<(String, f64)>]) -> Result<Stri
                 if !a.is_empty() && a.iter().all(|v| v.is_finite()) {
                     // ... and the Abs goes too where the argument keeps one sign.
                     return Tree::App(Op::Sqrt, vec![go(&Tree::App(Op::Abs, kids), rows)]);
+                }
+            }
+            // asin / acos of the argument clamped to [-1, 1]: where the argument
+            // never leaves [-1, 1] the clamp does nothing and it IS the raw function
+            // (feynman I.26.2, asin(n sin t), is reported as the law and not as a
+            // Piecewise over a Min and a Max).
+            Op::ProtectedAsin | Op::ProtectedAcos => {
+                let a = values(&kids[0]);
+                if !a.is_empty() && a.iter().all(|v| v.is_finite() && v.abs() <= 1.0) {
+                    let raw = if *op == Op::ProtectedAsin { Op::Asin } else { Op::Acos };
+                    return Tree::App(raw, kids);
                 }
             }
             // |e| where e keeps ONE SIGN on every row is e, or -e. Left as Abs, an
@@ -1060,6 +1078,55 @@ mod tests {
         assert_eq!(t_depth(&nodes_of(r#"(Pow (Var "x_0") (Num 4.0))"#)), 0);
         assert_eq!(t_depth(&nodes_of(r#"(Pow (Var "x_0") (Num 1.5))"#)), 1);
         assert_eq!(t_depth(&[]), 0);
+        // feynman I.26.2, asin(n sin t): two, as the engine samples it and as
+        // it is reported. tan and the inverse-trig ops each count once.
+        assert_eq!(t_depth(&nodes_of(r#"(ProtectedAsin (Mul (Var "x_0") (Sin (Var "x_1"))))"#)), 2);
+        assert_eq!(t_depth(&nodes_of(r#"(Asin (Mul (Var "x_0") (Sin (Var "x_1"))))"#)), 2);
+        for op in ["Tan", "Asin", "Acos", "ProtectedAsin", "ProtectedAcos"] {
+            assert_eq!(t_depth(&nodes_of(&format!(r#"(Mul (Var "x_0") ({op} (Var "x_1")))"#))), 1, "{op}");
+        }
+        // strogatz shearflow1, cos(x) cot(y) = cos(x) / tan(y): one.
+        assert_eq!(t_depth(&nodes_of(r#"(ProtectedDiv (Cos (Var "x_0")) (Tan (Var "x_1")))"#)), 1);
+    }
+
+    /// The wide table samples tan and the protected inverse-trig functions, a
+    /// population drawn from it keeps the structural rules, and a gene that
+    /// holds one decodes to the Math constructor of the same name.
+    #[test]
+    fn the_wide_table_samples_tan_and_protected_inverse_trig() {
+        let table = SymbolTable::wide(3);
+        let codes = table.codes();
+        codes.validate().unwrap();
+        let new = [Op::Tan, Op::ProtectedAsin, Op::ProtectedAcos];
+        let ids: Vec<u32> = new
+            .iter()
+            .map(|&op| table.symbols.iter().position(|s| *s == Symbol::Function(op)).unwrap_or_else(|| panic!("{op:?} is not in the wide table")) as u32)
+            .collect();
+        assert!(ids.iter().all(|id| codes.sample_functions.contains(id) && codes.arity[*id as usize] == 1));
+        // The raw inverse-trig ops are NaN outside [-1, 1]: never sampled.
+        assert!(!table.symbols.contains(&Symbol::Function(Op::Asin)) && !table.symbols.contains(&Symbol::Function(Op::Acos)));
+
+        let layout = Layout::for_arity(400, 2, 12, table.max_arity(), 5);
+        let p = crate::evolve::InitParams { seed: 11, generation: 0, rnc_lo: -10, rnc_hi: 10, n_wrappers: 3, vhead: 0 };
+        let pop = crate::evolve::init(layout, &codes, &p).unwrap();
+        pop.check(&codes).unwrap();
+        assert_eq!(pop, crate::evolve::init(layout, &codes, &p).unwrap(), "same seed, same population");
+
+        let names = names();
+        let (width, n_rnc) = (layout.gene_width() as usize, layout.n_rnc as usize);
+        let mut met = [false; 3];
+        for (g, gene) in pop.genome.chunks(width).enumerate() {
+            let Some(nodes) = decode_gene(gene, &pop.rnc[g * n_rnc..(g + 1) * n_rnc], layout, &table) else { continue };
+            let math = nodes_to_math(&nodes, 0, &names);
+            for (k, op) in new.iter().enumerate() {
+                if nodes.iter().any(|n| n.op == *op as u32) {
+                    assert!(math.contains(&format!("({op:?} ")), "{op:?} is in the nodes but not in {math}");
+                    crate::lint::node::Tree::parse(&math).unwrap_or_else(|e| panic!("{math}: {e}"));
+                    met[k] = true;
+                }
+            }
+        }
+        assert_eq!(met, [true; 3], "a population of 800 genes never expressed one of {new:?}");
     }
 
     #[test]
@@ -1177,6 +1244,31 @@ mod tests {
         assert_eq!(resolved, r#"(Sqrt (Abs (Sub (Var "x_0") (Var "x_1"))))"#);
         let overflow = resolve_protected(r#"(ProtectedSqrt (Exp (Mul (Num 400.0) (Var "x_0"))))"#, &rows()).unwrap();
         assert!(overflow.contains("ProtectedSqrt"), "{overflow}");
+    }
+
+    /// rows(): x_0 / 10 stays in [0.1, 0.5], so the clamp never acts and the
+    /// protected form is the raw function; x_0 - 3 leaves [-1, 1] on some rows.
+    #[test]
+    fn an_inverse_trig_whose_argument_stays_in_the_domain_is_the_raw_function() {
+        for (protected, raw, plain) in [("ProtectedAsin", "Asin", "asin"), ("ProtectedAcos", "Acos", "acos")] {
+            let inside = format!(r#"({protected} (Mul (Num 0.1) (Mul (Var "x_0") (Sin (Var "x_1")))))"#);
+            let resolved = resolve_protected(&inside, &rows()).unwrap();
+            assert_eq!(resolved, format!(r#"({raw} (Mul (Num 0.1) (Mul (Var "x_0") (Sin (Var "x_1")))))"#));
+            assert_eq!(evaluate_math(&inside, &rows()).unwrap(), evaluate_math(&resolved, &rows()).unwrap());
+            let text = crate::lint::node::Tree::parse(&resolved).unwrap().to_infix_faithful();
+            assert_eq!(text, format!("{plain}((0.1*(x_0*sin(x_1))))"));
+
+            // x_0 - 3 runs from -2 to 1.98: clamped on some rows, so it stays
+            // protected and is spelled out.
+            let outside = format!(r#"({protected} (Sub (Var "x_0") (Num 3.0)))"#);
+            assert_eq!(resolve_protected(&outside, &rows()).unwrap(), outside);
+            let text = crate::lint::node::Tree::parse(&outside).unwrap().to_infix_faithful();
+            assert!(text.starts_with(&format!("Piecewise(({plain}(Min(1, Max(-1, (x_0 - 3.0))))")), "{text}");
+
+            // An overflowing argument is not finite: stays protected.
+            let overflow = format!(r#"({protected} (Exp (Mul (Num 400.0) (Var "x_0"))))"#);
+            assert_eq!(resolve_protected(&overflow, &rows()).unwrap(), overflow);
+        }
     }
 
     /// A term that matters stays.
