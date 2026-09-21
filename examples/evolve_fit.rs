@@ -126,6 +126,10 @@ fn main() {
     if let Some(start) = std::env::var("EVOLVE_VHEAD_START").ok().and_then(|v| v.parse().ok()) {
         config.vhead_start = start;
     }
+    //   EVOLVE_BALANCED_TOURNAMENTS=1   the tournaments rank on hff's BALANCED pole (for
+    //                                   diversity); the hall of fame, the stop bar and the
+    //                                   report stay on TrueNorth
+    config.balanced_tournaments = std::env::var("EVOLVE_BALANCED_TOURNAMENTS").is_ok_and(|v| v == "1");
     //   EVOLVE_HOF_FILE                 the hall of fame's best is appended here at every report
     config.hof_path = std::env::var("EVOLVE_HOF_FILE").ok().filter(|p| !p.is_empty());
     //   EVOLVE_PROGRESS_EVERY           a progress line on stderr every N generations (0 = none)

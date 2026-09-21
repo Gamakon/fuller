@@ -203,6 +203,14 @@ pub struct Config {
     /// fit has EVER held is appended to it — generation found, scores, and the
     /// model as plain infix. None = no file (the hall of fame is still kept).
     pub hof_path: Option<String>,
+    /// BALANCED-POLE TOURNAMENTS, for diversity. Selection (the tournaments, and
+    /// with them the pump's promotions) ranks on hff's BALANCED pole — the angle
+    /// from (1/sqrt m, ..) — which rewards even trade-offs and so keeps individuals
+    /// alive that TrueNorth would drop. Everything that JUDGES a model stays on
+    /// TrueNorth: the hall of fame, the stop bar, the report. The balanced pole is
+    /// banned as a fitness (it scores a uniformly mediocre point as perfect); here
+    /// it only chooses who breeds. Off by default.
+    pub balanced_tournaments: bool,
     pub max_generations: u32,
     pub max_seconds: f64,
     /// Stop when validation (and edge, when there is one) 1 - R² is this small.
@@ -236,6 +244,7 @@ impl Config {
             vhead_start: 12,
             vhead_every: 0,
             hof_path: None,
+            balanced_tournaments: false,
             // Kept after a two-seed A/B (7012: 46 -> 47, 7013: 44 -> 45, no losses).
             max_generations: 1500,
             max_seconds: 30.0,
@@ -256,6 +265,9 @@ pub struct Scored {
     pub one_minus_r2: [f64; 3],
     /// The chromosome's tower height: [`t_depth`], the largest over its genes.
     pub t_depth: u32,
+    /// What the TOURNAMENTS rank on: `fitness` (TrueNorth), or the balanced-pole
+    /// angle when `Config::balanced_tournaments` is on.
+    pub selection: f64,
 }
 
 /// THE HALL OF FAME: the best individual a fit has ever held (lowest HFF), when it
@@ -265,6 +277,12 @@ pub struct HallOfFame {
     pub generation: u32,
     pub best: Scored,
     pub math: String,
+    /// The winner itself — its genes, constants and wrapper — so it can be
+    /// confirmed in f64 and reported even after it has left the population
+    /// (under balanced tournaments the TrueNorth best is not an elite).
+    pub genome: Vec<u32>,
+    pub rnc: Vec<f32>,
+    pub wrapper_id: u32,
 }
 
 #[derive(Clone, Debug)]
@@ -372,6 +390,32 @@ fn hff_columns(n_extrap: usize, without_validation: bool, log_scale: [bool; 3]) 
 /// lower is fitter; the R² are the best individual's).
 const REPORT_HEADER: &str = "    gen    secs  head      min_hff      avg_hff    mse_train       r2_train     r2_val_bl2     r2_val_bk3  t_depth   log10_p";
 
+/// The objectives as HFF sees them: each on [0, 1] by its frozen range, the
+/// log-scaled ones stretched. None when one is not finite.
+fn hff_scaled(objectives: &[f64], col_max: &[f64], log_scaled: &[bool]) -> Option<Vec<f64>> {
+    let mut scaled = Vec::with_capacity(objectives.len());
+    for ((v, max), log) in objectives.iter().zip(col_max).zip(log_scaled) {
+        if !v.is_finite() {
+            return None;
+        }
+        let mut x = if *max > 0.0 { (v / max).min(1.0) } else { 0.0 };
+        if *log {
+            x = if x <= HFF_LOG_FLOOR { 0.0 } else { 1.0 + x.log10() / -HFF_LOG_FLOOR.log10() };
+        }
+        scaled.push(x);
+    }
+    Some(scaled)
+}
+
+/// The same objectives seen from hff's BALANCED pole (its own function, not a
+/// copy): the angle from (1/sqrt m, .., 1/sqrt m). For choosing who breeds ONLY —
+/// see `Config::balanced_tournaments`.
+fn hff_balanced(objectives: &[f64], col_max: &[f64], log_scaled: &[bool]) -> f64 {
+    let Some(scaled) = hff_scaled(objectives, col_max, log_scaled) else { return std::f64::consts::PI };
+    let m = scaled.len();
+    hff_core::core_functions::calculate_single_hyperspherical_fitness_f64_with_method(&ndarray::Array1::from(scaled), m, false, None, "balanced")
+}
+
 /// The scaled error that HFF's log scale calls zero.
 const HFF_LOG_FLOOR: f64 = 1e-12;
 
@@ -387,17 +431,8 @@ const HFF_LOG_FLOOR: f64 = 1e-12;
 /// law at 1e-12. On the log scale they sit at 0.75 and 0.
 fn hff_truenorth(objectives: &[f64], col_max: &[f64], log_scaled: &[bool]) -> f64 {
     let m = objectives.len() as f64;
-    let mut energy = 0.0;
-    for ((v, max), log) in objectives.iter().zip(col_max).zip(log_scaled) {
-        if !v.is_finite() {
-            return std::f64::consts::PI;
-        }
-        let mut x = if *max > 0.0 { (v / max).min(1.0) } else { 0.0 };
-        if *log {
-            x = if x <= HFF_LOG_FLOOR { 0.0 } else { 1.0 + x.log10() / -HFF_LOG_FLOOR.log10() };
-        }
-        energy += x * x;
-    }
+    let Some(scaled) = hff_scaled(objectives, col_max, log_scaled) else { return std::f64::consts::PI };
+    let energy: f64 = scaled.iter().map(|x| x * x).sum();
     let cos_theta = (1.0 - (energy / m).min(1.0)).clamp(-1.0, 1.0);
     if cos_theta > 1.0 - f64::EPSILON {
         0.0
@@ -702,11 +737,14 @@ impl Engine {
                 }
                 let fitness = hff_truenorth(&used, &maxes, &logs);
                 if best.is_none_or(|b| fitness < b.fitness) {
-                    best = Some(Scored { fitness, linker: c / WRAPPERS.len(), wrapper: c % WRAPPERS.len(), a: s[0], b: s[1], one_minus_r2: omr2, t_depth: tower });
+                    // TrueNorth chooses the candidate and judges it; the balanced pole,
+                    // when it is on, only decides who breeds.
+                    let selection = if self.config.balanced_tournaments { hff_balanced(&used, &maxes, &logs) } else { fitness };
+                    best = Some(Scored { fitness, linker: c / WRAPPERS.len(), wrapper: c % WRAPPERS.len(), a: s[0], b: s[1], one_minus_r2: omr2, t_depth: tower, selection });
                 }
             }
             self.scored[r] = best;
-            gen.fitness[r] = best.map_or(std::f32::consts::PI, |b| b.fitness as f32);
+            gen.fitness[r] = best.map_or(std::f32::consts::PI, |b| b.selection as f32);
         }
         timing.hff += t.elapsed().as_secs_f64();
         Ok((gene_ok.len() as u64, oversized))
@@ -822,7 +860,7 @@ impl Engine {
             }
             let fitness = hff_truenorth(&used, &maxes, &logs);
             if best.is_none_or(|b| fitness < b.fitness) {
-                best = Some(Scored { fitness, linker: c / WRAPPERS.len(), wrapper: c % WRAPPERS.len(), a: s[0], b: s[1], one_minus_r2: omr2, t_depth: tower });
+                best = Some(Scored { fitness, linker: c / WRAPPERS.len(), wrapper: c % WRAPPERS.len(), a: s[0], b: s[1], one_minus_r2: omr2, t_depth: tower, selection: fitness });
             }
         }
         Ok(best)
@@ -836,6 +874,25 @@ impl Engine {
             return 0;
         }
         (c.vhead_start + generation / c.vhead_every).clamp(2, self.layout.head)
+    }
+
+    /// THE HALL OF FAME's entry rule: the best individual by TrueNorth, if it beats
+    /// the one held.
+    fn remember(&self, hof: &mut Option<HallOfFame>, gen: &Generation, generation: u32) {
+        let Some((row, b)) = self.best(gen) else { return };
+        if hof.as_ref().is_some_and(|h| h.best.fitness <= b.fitness) {
+            return;
+        }
+        let l = self.layout;
+        let (row_w, rnc_w) = ((l.n_genes * l.gene_width()) as usize, (l.n_genes * l.n_rnc) as usize);
+        *hof = Some(HallOfFame {
+            generation,
+            best: b,
+            math: self.math_of(gen, row, &b),
+            genome: gen.pop.genome[row * row_w..(row + 1) * row_w].to_vec(),
+            rnc: gen.pop.rnc[row * rnc_w..(row + 1) * rnc_w].to_vec(),
+            wrapper_id: gen.pop.wrapper_id[row],
+        });
     }
 
     /// One row of the logbook, and the hall of fame's best appended to its file.
@@ -918,6 +975,7 @@ impl Engine {
         self.dev.write_fitness(&gen.fitness)?;
         let (mut generation, mut stopped_by) = (0u32, "n_gen");
         let mut hof: Option<HallOfFame> = None;
+        self.remember(&mut hof, &gen, 0);
         if c.progress_every > 0 {
             eprintln!("{REPORT_HEADER}");
         }
@@ -957,11 +1015,7 @@ impl Engine {
             individuals += u64::from(self.layout.pop);
             // THE HALL OF FAME, before anything can end the fit: the winner of the
             // generation that meets the bar belongs in it too.
-            if let Some((row, b)) = self.best(&gen) {
-                if hof.as_ref().is_none_or(|h| b.fitness < h.best.fitness) {
-                    hof = Some(HallOfFame { generation, best: b, math: self.math_of(&gen, row, &b) });
-                }
-            }
+            self.remember(&mut hof, &gen, generation);
             // The device's f32 metrics cannot resolve 1e-10; they can say "this
             // one is worth confirming". The f64 re-score decides.
             if let Some((row, ranked)) = self.best(&gen) {
@@ -995,7 +1049,19 @@ impl Engine {
         if c.progress_every > 0 && (stopped_by != "n_gen" || generation % c.progress_every != 0) {
             self.report(generation, started.elapsed().as_secs_f64(), &gen, hof.as_ref())?;
         }
-        let (row, ranked) = self.best(&gen).ok_or("no individual could be scored")?;
+        let (mut row, mut ranked) = self.best(&gen).ok_or("no individual could be scored")?;
+        // Under balanced tournaments the TrueNorth best is not an elite and may have
+        // left the population: the HALL OF FAME's winner goes back into a row, to be
+        // confirmed in f64 and reported like any other.
+        if let Some(h) = hof.as_ref().filter(|h| c.balanced_tournaments && h.best.fitness < ranked.fitness) {
+            let l = self.layout;
+            let (row_w, rnc_w) = ((l.n_genes * l.gene_width()) as usize, (l.n_genes * l.n_rnc) as usize);
+            gen.pop.genome[row * row_w..(row + 1) * row_w].copy_from_slice(&h.genome);
+            gen.pop.rnc[row * rnc_w..(row + 1) * rnc_w].copy_from_slice(&h.rnc);
+            gen.pop.wrapper_id[row] = h.wrapper_id;
+            ranked = h.best;
+            row = row.min(l.pop as usize - 1);
+        }
         let best = self.confirm(&gen, row)?.unwrap_or(ranked);
         Ok(FitResult {
             generations: generation,
@@ -1161,6 +1227,19 @@ mod tests {
         assert_eq!(hff_columns(0, true, [true, false, false]), vec![(0, true), (3, true), (6, true)]);
         // Each block is its own choice: validation log, the third block linear.
         assert_eq!(hff_columns(50, false, [false, true, false])[..3], [(0, false), (1, true), (2, false)]);
+    }
+
+    #[test]
+    fn the_balanced_pole_is_hffs_own_and_ranks_differently_from_truenorth() {
+        let (max, lin) = ([1.0, 1.0, 1.0], [false, false, false]);
+        // An even, mediocre trade-off against a lopsided but better one.
+        let (even, lopsided) = ([0.3, 0.3, 0.3], [0.01, 0.01, 0.4]);
+        assert!(hff_truenorth(&lopsided, &max, &lin) < hff_truenorth(&even, &max, &lin), "TrueNorth prefers the smaller errors");
+        assert!(hff_balanced(&even, &max, &lin) < hff_balanced(&lopsided, &max, &lin), "the balanced pole prefers the even trade-off");
+        // It IS hff's function on the same scaled objectives.
+        let direct = hff_core::core_functions::calculate_single_hyperspherical_fitness_f64_with_method(&ndarray::Array1::from(even.to_vec()), 3, false, None, "balanced");
+        assert_eq!(hff_balanced(&even, &max, &lin), direct);
+        assert_eq!(hff_balanced(&[f64::NAN, 0.1, 0.1], &max, &lin), std::f64::consts::PI);
     }
 
     #[test]
