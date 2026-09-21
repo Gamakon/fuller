@@ -113,7 +113,10 @@ impl Tree {
             Tree::App(op @ (Op::ProtectedAsin | Op::ProtectedAcos), k) => {
                 let a = k[0].to_infix_faithful();
                 let f = if *op == Op::ProtectedAsin { "asin" } else { "acos" };
-                format!("Piecewise(({f}(Min(1, Max(-1, {a}))), Abs({a}) < 1.7976931348623157e308), (0, True))")
+                // The clamp as a Piecewise, not Min/Max: numpy cannot execute sympy's
+                // Min(1, Max(-1, array)) (it builds a ragged array and raises), and
+                // the faithful form exists to be executed.
+                format!("Piecewise(({f}(Piecewise((-1, {a} < -1), (1, {a} > 1), ({a}, True))), Abs({a}) < 1.7976931348623157e308), (0, True))")
             }
             Tree::App(op, k) => {
                 // every other operator: the plain rendering, over faithful operands
@@ -335,7 +338,7 @@ mod tests {
             if ctor.starts_with("Protected") {
                 assert_eq!(
                     faithful,
-                    format!("Piecewise(({plain}(Min(1, Max(-1, (n*sin(t))))), Abs((n*sin(t))) < 1.7976931348623157e308), (0, True))")
+                    format!("Piecewise(({plain}(Piecewise((-1, (n*sin(t)) < -1), (1, (n*sin(t)) > 1), ((n*sin(t)), True))), Abs((n*sin(t))) < 1.7976931348623157e308), (0, True))")
                 );
             } else {
                 assert_eq!(faithful, e.to_infix(), "a raw op is already what it computes");
@@ -345,7 +348,7 @@ mod tests {
         // An operand's protected op is spelled out under a plain parent.
         assert_eq!(
             t(r#"(Sin (ProtectedAsin (Var "x")))"#).to_infix_faithful(),
-            "sin(Piecewise((asin(Min(1, Max(-1, x))), Abs(x) < 1.7976931348623157e308), (0, True)))"
+            "sin(Piecewise((asin(Piecewise((-1, x < -1), (1, x > 1), (x, True))), Abs(x) < 1.7976931348623157e308), (0, True)))"
         );
     }
 

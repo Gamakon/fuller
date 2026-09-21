@@ -531,9 +531,21 @@ pub fn resolve_protected(math: &str, rows: &[Vec<(String, f64)>]) -> Result<Stri
             // Piecewise over a Min and a Max).
             Op::ProtectedAsin | Op::ProtectedAcos => {
                 let a = values(&kids[0]);
+                let asin = *op == Op::ProtectedAsin;
                 if !a.is_empty() && a.iter().all(|v| v.is_finite() && v.abs() <= 1.0) {
-                    let raw = if *op == Op::ProtectedAsin { Op::Asin } else { Op::Acos };
-                    return Tree::App(raw, kids);
+                    return Tree::App(if asin { Op::Asin } else { Op::Acos }, kids);
+                }
+                // The clamp fires on EVERY row: the node is a constant — asin(1), or
+                // asin(-1) — and must be written as one, as an always-zero protected
+                // division is. Left as arcsin(x) it hides an exact law behind a dead
+                // term (feynman III.12.43 came out as 0.159*h*n + 0.159*arcsin(n) - 0.25
+                // with n > 1 on every row: 0.159 * pi/2 = 0.25, the law exactly).
+                use std::f64::consts::{FRAC_PI_2, PI};
+                if !a.is_empty() && a.iter().all(|v| v.is_finite() && *v >= 1.0) {
+                    return Tree::Num(if asin { FRAC_PI_2 } else { 0.0 });
+                }
+                if !a.is_empty() && a.iter().all(|v| v.is_finite() && *v <= -1.0) {
+                    return Tree::Num(if asin { -FRAC_PI_2 } else { PI });
                 }
             }
             // |e| where e keeps ONE SIGN on every row is e, or -e. Left as Abs, an
@@ -1342,12 +1354,41 @@ mod tests {
             let outside = format!(r#"({protected} (Sub (Var "x_0") (Num 3.0)))"#);
             assert_eq!(resolve_protected(&outside, &rows()).unwrap(), outside);
             let text = crate::lint::node::Tree::parse(&outside).unwrap().to_infix_faithful();
-            assert!(text.starts_with(&format!("Piecewise(({plain}(Min(1, Max(-1, (x_0 - 3.0))))")), "{text}");
+            assert!(text.starts_with(&format!("Piecewise(({plain}(Piecewise((-1, (x_0 - 3.0) < -1), (1, (x_0 - 3.0) > 1)")), "{text}");
 
             // An overflowing argument is not finite: stays protected.
             let overflow = format!(r#"({protected} (Exp (Mul (Num 400.0) (Var "x_0"))))"#);
             assert_eq!(resolve_protected(&overflow, &rows()).unwrap(), overflow);
         }
+    }
+
+    /// rows(): x_0 runs from 1 to 5, so x_0 >= 1 and -x_0 <= -1 on EVERY row — the
+    /// clamp always fires and the node is a constant, to be written as one.
+    #[test]
+    fn an_inverse_trig_whose_clamp_always_fires_is_its_constant() {
+        use std::f64::consts::{FRAC_PI_2, PI};
+        let above = r#"(Var "x_0")"#;
+        let below = r#"(Neg (Var "x_0"))"#;
+        for (expr, value) in [
+            (format!("(ProtectedAsin {above})"), FRAC_PI_2),
+            (format!("(ProtectedAsin {below})"), -FRAC_PI_2),
+            (format!("(ProtectedAcos {above})"), 0.0),
+            (format!("(ProtectedAcos {below})"), PI),
+        ] {
+            let resolved = resolve_protected(&expr, &rows()).unwrap();
+            assert_eq!(resolved, format!("(Num {value:?})"), "{expr}");
+            assert!(evaluate_math(&expr, &rows()).unwrap().iter().all(|v| (v - value).abs() < 1e-15), "{expr}");
+        }
+        // feynman III.12.43 as the engine found it: the law, plus a dead protected
+        // arcsin that is pi/2 on every row, plus the constant that cancels it.
+        let found = r#"(Add (Add (Mul (Num 0.1591549428374411) (Mul (Var "x_0") (Var "x_1"))) (Mul (Num 0.1591549428374411) (ProtectedAsin (Var "x_0")))) (Num -0.2499999951846772))"#;
+        let resolved = resolve_protected(found, &rows()).unwrap();
+        assert!(!resolved.contains("Asin"), "{resolved}");
+        let before = evaluate_math(found, &rows()).unwrap();
+        let after = evaluate_math(&resolved, &rows()).unwrap();
+        assert!(before.iter().zip(&after).all(|(a, b)| (a - b).abs() < 1e-12), "the resolved form predicts something else");
+        let tidy = final_form(&resolved, &names(), &rows()).unwrap();
+        assert!(!tidy.contains("Asin") && tidy.contains("x_0") && tidy.contains("x_1"), "{tidy}");
     }
 
     /// A term that matters stays.
