@@ -164,6 +164,12 @@ pub struct Config {
     pub pump_every: u32,
     /// The cleansing mutation's rate per row (0 = off).
     pub cleanse: f64,
+    /// Redundancy as an HFF objective: the scoring kernel's leave-one-gene-out
+    /// score in [0, 1] (0 = every varying gene carries part of the fit; towards 1
+    /// = genes whose removal costs nothing). Measured on finished models, a law's
+    /// parts each cost a quarter to a half of the fit and a refined-noise model's
+    /// typical part 0.3%. Off by default until an A/B keeps it.
+    pub redundancy: bool,
     /// Harvest and regrow: a model that reaches the stop bar is put in a parking
     /// lot, it and its structural relatives are removed from the population, and
     /// the search goes on to grow another — up to this many (0 = stop at the
@@ -192,6 +198,7 @@ impl Config {
             rnc_hi: 100,
             pump_every: 4,
             cleanse: 0.0,
+            redundancy: false,
             // Kept after a two-seed A/B (7012: 46 -> 47, 7013: 44 -> 45, no losses).
             harvests: 4,
             max_generations: 1500,
@@ -514,13 +521,17 @@ impl Engine {
                     continue;
                 }
                 let (o, omr2) = self.caps.objectives(s, n_ex);
-                let used: &[f64] = if n_ex == 0 { &[o[0], o[1], o[3], o[4], o[6], o[7]] } else { &o };
-                let maxes: Vec<f64> = if n_ex == 0 {
+                let mut used: Vec<f64> = if n_ex == 0 { vec![o[0], o[1], o[3], o[4], o[6], o[7]] } else { o.to_vec() };
+                let mut maxes: Vec<f64> = if n_ex == 0 {
                     vec![col_max[0], col_max[1], col_max[3], col_max[4], col_max[6], col_max[7]]
                 } else {
                     col_max.to_vec()
                 };
-                let fitness = hff_truenorth(used, &maxes);
+                if self.config.redundancy {
+                    used.push(s[9].clamp(0.0, 1.0));    // already on [0, 1]: its range is its scale
+                    maxes.push(1.0);
+                }
+                let fitness = hff_truenorth(&used, &maxes);
                 if best.is_none_or(|b| fitness < b.fitness) {
                     best = Some(Scored { fitness, linker: c / WRAPPERS.len(), wrapper: c % WRAPPERS.len(), a: s[0], b: s[1], one_minus_r2: omr2 });
                 }

@@ -17,8 +17,11 @@ pub const SCORE_WGSL: &str = include_str!("score.wgsl");
 /// Candidates per chromosome: 3 linkers (avg, mul, add) x 3 wrappers
 /// (identity, log_abs, sqrt_abs), in that order.
 pub const CANDIDATES: usize = 9;
-/// `[a, b, mse_train, mse_val, max_err_val, mse_extrap, mae_train, mae_val, mae_extrap]`.
-pub const WIDTH: usize = 9;
+/// `[a, b, mse_train, mse_val, max_err_val, mse_extrap, mae_train, mae_val, mae_extrap,
+/// redundancy]`. The first [`METRICS`] are chrom_score's; `redundancy` is the
+/// kernel's leave-one-gene-out score in [0, 1] (0 = every varying gene matters).
+pub const WIDTH: usize = 10;
+pub const METRICS: usize = 9;
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -213,13 +216,14 @@ mod tests {
             r#"(Num 2.0)"#,
             r#"(ProtectedLog (Sub (Var "x") (Var "x")))"#,
             r#"(Pow3 (Var "y"))"#,
+            r#"(Sin (Mul (Num 50.0) (Var "x")))"#,
         ];
         let mut batch = ExprBatch::new();
         for e in exprs {
             batch.push(&math_to_nodes(e, &names).unwrap());
         }
-        let gene_ok = vec![true, true, true, true, true, false];
-        let chromosomes: Vec<Vec<usize>> = vec![vec![0, 3, 3], vec![0, 1, 2], vec![1, 1, 1], vec![3, 3, 3], vec![4, 0, 1], vec![5, 0, 1], vec![2, 0, 3]];
+        let gene_ok = vec![true, true, true, true, true, false, true];
+        let chromosomes: Vec<Vec<usize>> = vec![vec![0, 3, 3], vec![0, 1, 2], vec![1, 1, 1], vec![3, 3, 3], vec![4, 0, 1], vec![5, 0, 1], vec![2, 0, 3], vec![6, 0, 3]];
         let splits = Splits { n_train: 400, n_val: 120, n_extrap: 80 };
         let evaluator = GpuEvaluator::new(&rows, 2).expect("evaluator");
         let scorer = GpuScorer::new(&evaluator, &truth, splits).expect("scorer");
@@ -235,7 +239,7 @@ mod tests {
         let reference = score_chromosomes(&preds, &gene_ok, &chromosomes, &truth, &spec).expect("reference");
         let (mut compared, mut rejected) = (0, 0);
         for c in 0..chromosomes.len() * CANDIDATES {
-            let want = &reference[c * SCORE_WIDTH..c * SCORE_WIDTH + WIDTH];
+            let want = &reference[c * SCORE_WIDTH..c * SCORE_WIDTH + METRICS];
             let got = &on_device[c * WIDTH..(c + 1) * WIDTH];
             assert_eq!(want[0].is_finite(), got[0].is_finite(), "candidate {c}: accepted on one side only ({want:?} vs {got:?})");
             if !want[0].is_finite() {
@@ -246,7 +250,7 @@ mod tests {
             // f32 resolves a residual to about 1e-4 of the target's size: below
             // that floor both sides are "zero" and only the floor is compared.
             let y_size = truth.iter().fold(0.0f64, |m, v| m.max(v.abs()));
-            for k in 0..WIDTH {
+            for k in 0..METRICS {
                 let (w, g) = (want[k], f64::from(got[k]));
                 let floor = match k {
                     0 | 1 => 1e-3,
@@ -260,6 +264,13 @@ mod tests {
             }
         }
         assert!(compared >= 20 && rejected >= 9, "compared {compared}, rejected {rejected}");
+        // REDUNDANCY. Chromosome 0 = (x*y, 2, 2) under mul: one varying gene and it
+        // is the whole model -> 0. Chromosome 7 = (sin 50x, x*y, 2) under ADD: x*y
+        // carries the fit and the fast sine nothing -> the median of (about 1,
+        // about 0) puts it near one half.
+        let redundancy = |chromosome: usize, candidate: usize| f64::from(on_device[(chromosome * CANDIDATES + candidate) * WIDTH + 9]);
+        assert!(redundancy(0, 3) < 0.01, "{}", redundancy(0, 3));
+        assert!((0.4..0.6).contains(&redundancy(7, 6)), "{}", redundancy(7, 6));
         // Chromosome 0 is (x*y, 2, 2): under the mul linker it is 4xy, which the
         // scale turns into the target exactly. Candidate 3 = linker mul, identity.
         let exact = &on_device[3 * WIDTH..4 * WIDTH];

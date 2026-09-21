@@ -79,6 +79,13 @@ fn main() {
         config.rnc_lo = lo;
         config.rnc_hi = hi;
     }
+    //   EVOLVE_REDUNDANCY=1             leave-one-gene-out redundancy as an HFF objective
+    //   EVOLVE_MAX_GENERATIONS          stop by GENERATIONS (give a long time cap): a
+    //                                   comparison that does not depend on how busy the device is
+    config.redundancy = env("EVOLVE_REDUNDANCY").is_some_and(|v| v == "1");
+    if let Some(g) = env("EVOLVE_MAX_GENERATIONS").and_then(|v| v.parse().ok()) {
+        config.max_generations = g;
+    }
     let restarts: u32 = env("EVOLVE_RESTARTS").and_then(|v| v.parse().ok()).unwrap_or(1).max(1);
     config.cleanse = args.get(6).and_then(|a| a.parse().ok()).unwrap_or(0.0);
     if let Some(h) = args.get(8).and_then(|a| a.parse().ok()) {

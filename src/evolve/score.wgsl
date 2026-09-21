@@ -29,7 +29,8 @@ struct Meta {
 
 const N_LINKERS: u32 = 3u;   // avg, mul, add — chrom_score's order in the engine
 const N_WRAPPERS: u32 = 3u;  // identity, log_abs, sqrt_abs
-const WIDTH: u32 = 9u;       // a, b, mse_t, mse_v, max_err_v, mse_e, mae_t, mae_v, mae_e
+const WIDTH: u32 = 10u;      // a, b, mse_t, mse_v, max_err_v, mse_e, mae_t, mae_v, mae_e, redundancy
+const LOO_STRIDE: u32 = 4u;  // leave-one-gene-out reads every 4th train row
 const NAN_BITS: u32 = 0x7FC00000u;
 const CONSTANT_REL_TOL: f32 = 2e-6;
 
@@ -41,6 +42,27 @@ fn linked(c: u32, linker: u32, row: u32) -> f32 {
     var acc = select(0.0, 1.0, linker == 1u);
     for (var g = 0u; g < sp.genes_per; g = g + 1u) {
         let v = preds[chromosomes[c * sp.genes_per + g] * sp.n_rows + row];
+        if (linker == 1u) {
+            acc = acc * v;
+        } else {
+            acc = acc + v;
+        }
+    }
+    if (linker == 0u) {
+        acc = acc / f32(sp.genes_per);
+    }
+    return acc;
+}
+
+// The linked value with gene `skip` replaced by `held` (its mean): what the
+// model computes when that gene is switched off.
+fn linked_without(c: u32, linker: u32, row: u32, skip: u32, held: f32) -> f32 {
+    var acc = select(0.0, 1.0, linker == 1u);
+    for (var g = 0u; g < sp.genes_per; g = g + 1u) {
+        var v = preds[chromosomes[c * sp.genes_per + g] * sp.n_rows + row];
+        if (g == skip) {
+            v = held;
+        }
         if (linker == 1u) {
             acc = acc * v;
         } else {
@@ -211,13 +233,119 @@ fn score_main(@builtin(global_invocation_id) gid: vec3<u32>) {
         scores[o + 6u] = (ab[w * 3u].x + ab[w * 3u].y) / n[0];
         scores[o + 7u] = (ab[w * 3u + 1u].x + ab[w * 3u + 1u].y) / n[1];
         scores[o + 8u] = (ab[w * 3u + 2u].x + ab[w * 3u + 2u].y) / n[2];
+        scores[o + 9u] = 0.0;
         for (var i = 0u; i < WIDTH; i = i + 1u) {
             if (!finite(scores[o + i])) {
                 for (var k = 0u; k < WIDTH; k = k + 1u) {
                     scores[o + k] = nan;
                 }
+                ok[w] = false;
                 break;
             }
         }
+    }
+
+    // LEAVE ONE GENE OUT. Switch each VARYING gene off (hold it at its mean),
+    // refit the scale, and see how much of the fit goes: for a law every gene
+    // that does anything is load-bearing; refined noise carries genes whose
+    // removal costs nothing. redundancy = 1 - median over the varying genes of
+    // (1 - R2_without / R2_full), in [0, 1]; 0 = every varying gene matters.
+    // With an intercept R2 = sxy^2 / (sxx * syy), so no residual pass is needed.
+    // Reads every LOO_STRIDE-th train row.
+    var syy = vec2<f32>(0.0, 0.0);
+    for (var row = 0u; row < nt; row = row + LOO_STRIDE) {
+        let dy = y[row] - sp.y_mean_train;
+        syy = add(syy, dy * dy);
+    }
+    let yy = syy.x + syy.y;
+    var loss: array<f32, 24>;       // [wrapper * 8 + varying gene]
+    var n_loss: array<u32, 3>;
+    for (var w = 0u; w < N_WRAPPERS; w = w + 1u) {
+        n_loss[w] = 0u;
+    }
+    for (var g = 0u; g < min(sp.genes_per, 8u); g = g + 1u) {
+        let gene = chromosomes[c * sp.genes_per + g];
+        let g0 = preds[gene * sp.n_rows];
+        var gsum = vec2<f32>(0.0, 0.0);
+        var gmin = g0;
+        var ghi = g0;
+        var n_read = 0.0;
+        for (var row = 0u; row < nt; row = row + LOO_STRIDE) {
+            let v = preds[gene * sp.n_rows + row];
+            gsum = add(gsum, v - g0);
+            gmin = min(gmin, v);
+            ghi = max(ghi, v);
+            n_read = n_read + 1.0;
+        }
+        let gmean = g0 + (gsum.x + gsum.y) / n_read;
+        if ((ghi - gmin) <= 2.0 * (1e-8 + CONSTANT_REL_TOL * abs(gmean))) {
+            continue;               // a constant gene: nothing to switch off
+        }
+        var m1: array<vec2<f32>, 3>;
+        for (var w = 0u; w < N_WRAPPERS; w = w + 1u) {
+            m1[w] = vec2<f32>(0.0, 0.0);
+        }
+        for (var row = 0u; row < nt; row = row + LOO_STRIDE) {
+            let v = linked_without(c, linker, row, g, gmean);
+            for (var w = 0u; w < N_WRAPPERS; w = w + 1u) {
+                m1[w] = add(m1[w], wrapped(v, w));
+            }
+        }
+        var xx: array<vec2<f32>, 3>;
+        var xy: array<vec2<f32>, 3>;
+        for (var w = 0u; w < N_WRAPPERS; w = w + 1u) {
+            xx[w] = vec2<f32>(0.0, 0.0);
+            xy[w] = vec2<f32>(0.0, 0.0);
+        }
+        for (var row = 0u; row < nt; row = row + LOO_STRIDE) {
+            let v = linked_without(c, linker, row, g, gmean);
+            let dy = y[row] - sp.y_mean_train;
+            for (var w = 0u; w < N_WRAPPERS; w = w + 1u) {
+                let dx = wrapped(v, w) - (m1[w].x + m1[w].y) / n_read;
+                xx[w] = add(xx[w], dx * dx);
+                xy[w] = add(xy[w], dx * dy);
+            }
+        }
+        for (var w = 0u; w < N_WRAPPERS; w = w + 1u) {
+            if (!ok[w]) {
+                continue;
+            }
+            let o = out + w * WIDTH;
+            let full = 1.0 - scores[o + 2u] * f32(nt) / max(yy * f32(LOO_STRIDE), 1e-30);
+            let sxx_w = xx[w].x + xx[w].y;
+            let sxy_w = xy[w].x + xy[w].y;
+            var without = 0.0;
+            if (sxx_w > 0.0 && yy > 0.0 && finite(sxx_w) && finite(sxy_w)) {
+                without = clamp(sxy_w * sxy_w / (sxx_w * yy), 0.0, 1.0);
+            }
+            var l = 1.0;
+            if (full > 1e-6) {
+                l = clamp(1.0 - without / full, 0.0, 1.0);
+            }
+            loss[w * 8u + n_loss[w]] = l;
+            n_loss[w] = n_loss[w] + 1u;
+        }
+    }
+    for (var w = 0u; w < N_WRAPPERS; w = w + 1u) {
+        if (!ok[w] || n_loss[w] == 0u) {
+            continue;
+        }
+        // median of at most 8 values: insertion sort, then the middle (mean of
+        // the two middles for an even count)
+        let n = n_loss[w];
+        for (var i = 1u; i < n; i = i + 1u) {
+            let v = loss[w * 8u + i];
+            var j = i;
+            loop {
+                if (j == 0u || loss[w * 8u + j - 1u] <= v) {
+                    break;
+                }
+                loss[w * 8u + j] = loss[w * 8u + j - 1u];
+                j = j - 1u;
+            }
+            loss[w * 8u + j] = v;
+        }
+        let median = 0.5 * (loss[w * 8u + (n - 1u) / 2u] + loss[w * 8u + n / 2u]);
+        scores[out + w * WIDTH + 9u] = 1.0 - median;
     }
 }
