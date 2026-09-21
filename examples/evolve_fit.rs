@@ -1,6 +1,6 @@
 //! A whole symbolic-regression fit in Rust, no Python:
 //!
-//!   cargo run --release --features gpu --example evolve_fit -- data.tsv [seed] [seconds] [max_rows] [population] [all]
+//!   cargo run --release --features gpu --example evolve_fit -- data.tsv [seed] [seconds] [max_rows] [population] [all|split] [cleanse_rate]
 //!
 //! `data.tsv`: tab-separated, a header, the target in the column named
 //! `target` (a PMLB dataset, gunzipped). SRBench's 75/25 split is mimicked with
@@ -60,6 +60,7 @@ fn main() {
         config.pop_intake = population / 4 * 3;
         config.pop_champion = population - config.pop_intake;
     }
+    config.cleanse = args.get(6).and_then(|a| a.parse().ok()).unwrap_or(0.0);
     let mut engine = Engine::new(config, Data { names: names.clone(), x, y, splits }).expect("engine");
     let out = engine.fit().expect("fit");
 

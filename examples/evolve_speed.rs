@@ -27,6 +27,7 @@ fn main() {
         arity: [vec![2; 8], vec![1; 4], vec![0; 8]].concat(),
         sample_functions: (0..12).collect(),
         sample_terminals: (12..20).collect(),
+        rnc_id: Some(19),
     };
     let layout = Layout::for_arity(pop, 3, 48, 2, 10);
     let rates = Rates::engine_defaults(layout);

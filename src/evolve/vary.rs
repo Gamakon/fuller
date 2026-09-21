@@ -33,6 +33,7 @@ pub const STREAM_RNC_VALUE: u32 = 21;
 pub const STREAM_CX_1P: u32 = 22;
 pub const STREAM_CX_2P: u32 = 23;
 pub const STREAM_CX_GENE: u32 = 24;
+pub const STREAM_CLEANSE: u32 = 25;
 
 /// Slots of `STREAM_OPERATOR`: does this operator act on this row (pair)?
 pub const OP_INVERT: u32 = 0;
@@ -44,9 +45,15 @@ pub const OP_TRANSPOSE_DC: u32 = 5;
 pub const OP_CX_1P: u32 = 6;
 pub const OP_CX_2P: u32 = 7;
 pub const OP_CX_GENE: u32 = 8;
+pub const OP_CLEANSE: u32 = 9;
 
 /// The longest segment a transposition moves; bounds the kernel's scratch array.
 pub const MAX_SEGMENT: u32 = 512;
+
+/// The cleansing mutation works on genes whose head + tail fit its scratch
+/// arrays; a longer gene is left alone by it.
+pub const MAX_CLEANSE: u32 = 128;
+const LEAF: u32 = 0xFFFF_FFFE;
 
 /// Rows `lo .. hi` evolve together.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -73,6 +80,11 @@ pub struct Rates {
     pub cx_one_point: u32,
     pub cx_two_point: u32,
     pub cx_gene: u32,
+    /// The cleansing mutation, a row: a function node of one gene's expression
+    /// is replaced by one of its own children (`f(u) -> u`, `op(a, b) -> a`), or
+    /// — with probability `cleanse_collapse` — its whole subtree by a constant.
+    pub cleanse: u32,
+    pub cleanse_collapse: u32,
 }
 
 pub fn threshold(p: f64) -> u32 {
@@ -103,8 +115,97 @@ impl Rates {
             cx_one_point: threshold(0.3),
             cx_two_point: threshold(0.2),
             cx_gene: threshold(0.1),
+            cleanse: 0,
+            cleanse_collapse: threshold(0.25),
         }
     }
+
+    /// The engine's schedule plus the cleansing mutation at `p` a row.
+    pub fn with_cleanse(layout: Layout, p: f64) -> Rates {
+        Rates { cleanse: threshold(p), ..Rates::engine_defaults(layout) }
+    }
+}
+
+/// The cleansing mutation on ONE gene (`tokens` = its head, tail and Dc).
+///
+/// GEP's own operators keep a gene's length and let its EXPRESSED tree drift
+/// larger; this is the pressure the other way, and it costs fitness nothing:
+/// selection keeps a cleansed gene that fits as well and drops one that lost
+/// something real. It is not a token edit — removing a node moves everything
+/// under it in level order — so the expression is decoded, edited as a tree and
+/// written back in level order, the Dc domain rebuilt so each surviving "?"
+/// still reads ITS constant. Left unchanged when the expression does not close,
+/// has no function, the result would put a function outside the head, or would
+/// need more Dc slots than there are. `pick`, `kind`, `which`, `value` are the
+/// draws (a function node; collapse or promote; which child; the new "?"'s Dc).
+pub fn cleanse_gene(tokens: &mut [u32], layout: Layout, codes: &SymbolCodes, pick: u64, collapse: bool, which: u64, value: u64) -> bool {
+    let (h, ht) = (layout.head as usize, (layout.head + layout.tail) as usize);
+    if ht > MAX_CLEANSE as usize {
+        return false;
+    }
+    let arity = |id: u32| codes.arity[id as usize] as usize;
+    let (mut need, mut n) = (1i64, 0usize);
+    while need > 0 && n < ht {
+        need += arity(tokens[n]) as i64 - 1;
+        n += 1;
+    }
+    if need > 0 {
+        return false;
+    }
+    let mut child = [0usize; MAX_CLEANSE as usize];
+    let mut ordinal = [usize::MAX; MAX_CLEANSE as usize];
+    let (mut ptr, mut n_rnc, mut n_fn) = (1usize, 0usize, 0u32);
+    for i in 0..n {
+        child[i] = ptr;
+        ptr += arity(tokens[i]);
+        if Some(tokens[i]) == codes.rnc_id {
+            ordinal[i] = n_rnc;
+            n_rnc += 1;
+        }
+        n_fn += u32::from(arity(tokens[i]) > 0);
+    }
+    if n_fn == 0 {
+        return false;
+    }
+    let nth = below(pick, n_fn) as usize;
+    let p = (0..n).filter(|&i| arity(tokens[i]) > 0).nth(nth).unwrap_or(0);
+    let collapse = collapse && codes.rnc_id.is_some();
+    let q = if collapse { LEAF as usize } else { child[p] + below(which, arity(tokens[p]) as u32) as usize };
+
+    let mut queue = [0usize; MAX_CLEANSE as usize];
+    let mut new_tok = [0u32; MAX_CLEANSE as usize];
+    let mut new_dc = [0u32; MAX_CLEANSE as usize];
+    queue[0] = if p == 0 { q } else { 0 };
+    let (mut head, mut tail, mut m, mut k) = (0usize, 1usize, 0usize, 0usize);
+    while head < tail {
+        let i = queue[head];
+        head += 1;
+        if i == LEAF as usize {
+            new_tok[m] = codes.rnc_id.unwrap_or(0);
+            new_dc[k] = below(value, layout.n_rnc);
+            k += 1;
+            m += 1;
+            continue;
+        }
+        new_tok[m] = tokens[i];
+        if ordinal[i] != usize::MAX {
+            // A "?" the old Dc domain had no slot for read nothing; keep that.
+            new_dc[k] = if ordinal[i] < layout.tail as usize { tokens[ht + ordinal[i]] } else { 0 };
+            k += 1;
+        }
+        m += 1;
+        for j in 0..arity(tokens[i]) {
+            let c = child[i] + j;
+            queue[tail] = if c == p { q } else { c };
+            tail += 1;
+        }
+    }
+    if (0..m).any(|x| arity(new_tok[x]) > 0 && x >= h) || k > layout.tail as usize {
+        return false;
+    }
+    tokens[..m].copy_from_slice(&new_tok[..m]);
+    tokens[ht..ht + k].copy_from_slice(&new_dc[..k]);
+    true
 }
 
 pub fn chance(h: u64, thr: u32) -> bool {
@@ -346,6 +447,20 @@ pub fn mutate(
                     consts[k as usize] = (p.rnc_lo + below(d(k, STREAM_RNC_VALUE), span) as i32) as f32;
                 }
             }
+            // 10. cleanse: shrink one gene's expression
+            if acts(OP_CLEANSE, rates.cleanse) {
+                let g = below(d(0, STREAM_CLEANSE), g_n);
+                let row = &mut next.pop.genome[ru * row_w..(ru + 1) * row_w];
+                cleanse_gene(
+                    &mut row[(g * width) as usize..((g + 1) * width) as usize],
+                    l,
+                    codes,
+                    d(1, STREAM_CLEANSE),
+                    chance(d(2, STREAM_CLEANSE), rates.cleanse_collapse),
+                    d(3, STREAM_CLEANSE),
+                    d(4, STREAM_CLEANSE),
+                );
+            }
         }
     }
     next
@@ -431,6 +546,7 @@ pub(crate) mod tests {
     use super::super::tests::{codes, params};
     use super::super::init;
     use super::*;
+    use crate::evolve::SymbolCodes;
 
     pub(crate) fn islands() -> Vec<Island> {
         vec![
@@ -506,6 +622,115 @@ pub(crate) mod tests {
         let a = vary(&now, &isl, &codes, &rates, &gen_params(6, 9)).unwrap();
         assert_eq!(a.pop, vary(&now, &isl, &codes, &rates, &gen_params(6, 9)).unwrap().pop);
         assert_ne!(a.pop.genome, vary(&now, &isl, &codes, &rates, &gen_params(6, 10)).unwrap().pop.genome);
+    }
+
+    /// A gene's expression as a nested string with every "?" resolved to its Dc
+    /// entry — and, when `swap` is given, with the subtree at old node `swap.0`
+    /// replaced by `swap.1` (an old node, or None for a new constant whose Dc
+    /// entry is `swap.2`). An independent recursive reading of level order.
+    fn show(tokens: &[u32], layout: Layout, codes: &SymbolCodes, swap: Option<(usize, Option<usize>, u32)>) -> Option<String> {
+        let ht = (layout.head + layout.tail) as usize;
+        let arity = |id: u32| codes.arity[id as usize] as usize;
+        let (mut need, mut n) = (1i64, 0usize);
+        while need > 0 && n < ht {
+            need += arity(tokens[n]) as i64 - 1;
+            n += 1;
+        }
+        if need > 0 {
+            return None;
+        }
+        let mut child = vec![0usize; n];
+        let mut ordinal = vec![usize::MAX; n];
+        let (mut ptr, mut k) = (1usize, 0usize);
+        for i in 0..n {
+            child[i] = ptr;
+            ptr += arity(tokens[i]);
+            if Some(tokens[i]) == codes.rnc_id {
+                ordinal[i] = k;
+                k += 1;
+            }
+        }
+        fn go(i: usize, t: &[u32], child: &[usize], ordinal: &[usize], ht: usize, arity: &dyn Fn(u32) -> usize,
+              swap: Option<(usize, Option<usize>, u32)>) -> String {
+            if let Some((p, q, dc)) = swap {
+                if i == p {
+                    return match q {
+                        Some(q) => go(q, t, child, ordinal, ht, arity, None),
+                        None => format!("?{dc}"),
+                    };
+                }
+            }
+            if ordinal[i] != usize::MAX {
+                return format!("?{}", t[ht + ordinal[i]]);
+            }
+            let kids: Vec<String> = (0..arity(t[i])).map(|j| go(child[i] + j, t, child, ordinal, ht, arity, swap)).collect();
+            if kids.is_empty() { format!("{}", t[i]) } else { format!("{}({})", t[i], kids.join(",")) }
+        }
+        Some(go(0, tokens, &child, &ordinal, ht, &arity, swap))
+    }
+
+    #[test]
+    fn cleanse_unwraps_a_function_layer() {
+        let (codes, layout) = (codes(), Layout::for_arity(1, 1, 4, 2, 10));
+        let mut gene = vec![3, 3, 4, 5, 4, 4, 4, 4, 4, 0, 0, 0, 0, 0]; // f(f(x4))
+        assert!(cleanse_gene(&mut gene, layout, &codes, 0, false, 0, 0));
+        assert_eq!(show(&gene, layout, &codes, None).unwrap(), "3(4)");
+    }
+
+    #[test]
+    fn cleanse_keeps_each_surviving_constant_on_its_own_value() {
+        let (codes, layout) = (codes(), Layout::for_arity(1, 1, 4, 2, 10));
+        // +(?7, *(?8, ?9)) — head 4, tail 5, then the Dc domain 7, 8, 9.
+        let gene = vec![0, 6, 1, 6, 6, 4, 4, 4, 4, 7, 8, 9, 0, 0];
+        let mut promoted = gene.clone();
+        assert!(cleanse_gene(&mut promoted, layout, &codes, 0, false, u64::MAX, 0)); // root -> its second child
+        assert_eq!(show(&promoted, layout, &codes, None).unwrap(), "1(?8,?9)");
+        let mut collapsed = gene.clone();
+        assert!(cleanse_gene(&mut collapsed, layout, &codes, u64::MAX, true, 0, 0)); // the `*` subtree -> a constant
+        assert_eq!(show(&collapsed, layout, &codes, None).unwrap(), "0(?7,?0)");
+        let mut dropped = gene;
+        assert!(cleanse_gene(&mut dropped, layout, &codes, 0, true, 0, u64::MAX)); // the root -> the whole gene a constant
+        assert_eq!(show(&dropped, layout, &codes, None).unwrap(), "?9");
+    }
+
+    /// On thousands of random genes: a cleanse that applies gives exactly the
+    /// old tree with the chosen subtree replaced (read back by an independent
+    /// decoder), strictly smaller, still a valid gene; one that does not apply
+    /// changes nothing.
+    #[test]
+    fn cleanse_is_the_tree_edit_it_claims_to_be_on_random_genes() {
+        let codes = codes();
+        let layout = Layout::for_arity(3000, 1, 12, 2, 10);
+        let pop = init(layout, &codes, &params(21)).unwrap();
+        let width = layout.gene_width() as usize;
+        let ht = (layout.head + layout.tail) as usize;
+        let arity = |id: u32| codes.arity[id as usize] as usize;
+        let (mut applied, mut refused) = (0, 0);
+        for (r, original) in pop.genome.chunks(width).enumerate() {
+            let d = |slot| draw(21, 1, r as u32, slot, 77);
+            let (pick, collapse, which, value) = (d(0), coin(d(1)), d(2), d(3));
+            let mut gene = original.to_vec();
+            let before = show(original, layout, &codes, None);
+            if !cleanse_gene(&mut gene, layout, &codes, pick, collapse, which, value) {
+                assert_eq!(gene, original, "row {r}: a refused cleanse changed the gene");
+                refused += 1;
+                continue;
+            }
+            applied += 1;
+            // the node the draws name, found the way the operator documents it
+            let n = { let (mut need, mut n) = (1i64, 0usize); while need > 0 { need += arity(original[n]) as i64 - 1; n += 1; } n };
+            let functions: Vec<usize> = (0..n).filter(|&i| arity(original[i]) > 0).collect();
+            let p = functions[below(pick, functions.len() as u32) as usize];
+            let first_child = 1 + (0..p).map(|i| arity(original[i])).sum::<usize>();
+            let q = if collapse { None } else { Some(first_child + below(which, arity(original[p]) as u32) as usize) };
+            let expected = show(original, layout, &codes, Some((p, q, below(value, layout.n_rnc))));
+            assert_eq!(show(&gene, layout, &codes, None), expected, "row {r}: {before:?}");
+            assert!(gene[layout.head as usize..ht].iter().all(|&id| arity(id) == 0), "row {r}: a function in the tail");
+            assert!(gene[ht..].iter().all(|&k| k < layout.n_rnc), "row {r}: a Dc index out of range");
+        }
+        // About half of all random genes are a bare terminal (a head slot is a
+        // terminal with probability 1/2): nothing to cleanse, so they are refused.
+        assert!(applied > 1000 && refused > 0, "applied {applied}, refused {refused}");
     }
 
     #[test]

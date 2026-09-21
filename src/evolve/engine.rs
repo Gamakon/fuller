@@ -70,6 +70,7 @@ impl SymbolTable {
             arity: ids.clone().map(|i| self.arity(i)).collect(),
             sample_functions: ids.clone().filter(|&i| self.arity(i) > 0).collect(),
             sample_terminals: ids.filter(|&i| self.arity(i) == 0 && !self.withheld[i as usize]).collect(),
+            rnc_id: self.symbols.iter().position(|s| *s == Symbol::Rnc).map(|i| i as u32),
         }
     }
 
@@ -161,6 +162,8 @@ pub struct Config {
     pub rnc_lo: i32,
     pub rnc_hi: i32,
     pub pump_every: u32,
+    /// The cleansing mutation's rate per row (0 = off).
+    pub cleanse: f64,
     pub max_generations: u32,
     pub max_seconds: f64,
     /// Stop when validation (and edge, when there is one) 1 - R² is this small.
@@ -182,6 +185,7 @@ impl Config {
             rnc_lo: -100,
             rnc_hi: 100,
             pump_every: 4,
+            cleanse: 0.0,
             max_generations: 1500,
             max_seconds: 30.0,
             stop_one_minus_r2: 1e-10,
@@ -571,7 +575,7 @@ impl Engine {
         let c = self.config.clone();
         let started = Instant::now();
         let mut timing = Timing { vary: 0.0, read: 0.0, decode: 0.0, evaluate: 0.0, score: 0.0, hff: 0.0, pump: 0.0 };
-        let rates = Rates::engine_defaults(self.layout);
+        let rates = Rates::with_cleanse(self.layout, c.cleanse);
         self.dev.init(&InitParams { seed: c.seed, generation: 0, rnc_lo: c.rnc_lo, rnc_hi: c.rnc_hi, n_wrappers: WRAPPERS.len() as u32 })?;
         let mut gen = self.dev.read_generation()?;
         gen.fitness.fill(f32::NAN);

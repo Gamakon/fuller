@@ -36,6 +36,10 @@ struct Gen {
     cx_one_point: u32,
     cx_two_point: u32,
     cx_gene: u32,
+    cleanse: u32,
+    cleanse_collapse: u32,
+    rnc_id: u32,       // the "?" token, or NONE
+    pad0: u32,
 }
 
 struct Island {
@@ -80,6 +84,7 @@ const STREAM_RNC_VALUE: u32 = 21u;
 const STREAM_CX_1P: u32 = 22u;
 const STREAM_CX_2P: u32 = 23u;
 const STREAM_CX_GENE: u32 = 24u;
+const STREAM_CLEANSE: u32 = 25u;
 
 const OP_INVERT: u32 = 0u;
 const OP_IS: u32 = 1u;
@@ -90,6 +95,7 @@ const OP_TRANSPOSE_DC: u32 = 5u;
 const OP_CX_1P: u32 = 6u;
 const OP_CX_2P: u32 = 7u;
 const OP_CX_GENE: u32 = 8u;
+const OP_CLEANSE: u32 = 9u;
 
 const NONE: u32 = 0xFFFFFFFFu;
 const F32_MAX: f32 = 3.4028234e38;
@@ -219,6 +225,119 @@ fn reverse(lo: u32, hi: u32) {
 
 var<private> segment: array<u32, 512>;
 var<private> before: array<u32, 512>;
+
+// ---- the cleansing mutation (vary.rs :: cleanse_gene, statement for statement) ----
+const MAX_CLEANSE: u32 = 128u;
+const LEAF: u32 = 0xFFFFFFFEu;
+var<private> cl_child: array<u32, 128>;
+var<private> cl_ordinal: array<u32, 128>;
+var<private> cl_queue: array<u32, 128>;
+var<private> cl_tok: array<u32, 128>;
+var<private> cl_dc: array<u32, 128>;
+
+// `gene`: the index in `genome` of this gene's first token. The draws are the
+// row's, slots 1..4 of STREAM_CLEANSE.
+fn cleanse_gene(row: u32, gene: u32) {
+    let h = gp.head;
+    let ht = gp.head + gp.tail;
+    if (ht > MAX_CLEANSE) {
+        return;
+    }
+    var need: i32 = 1;
+    var n = 0u;
+    loop {
+        if (need <= 0 || n >= ht) {
+            break;
+        }
+        need = need + i32(arity[genome[gene + n]]) - 1;
+        n = n + 1u;
+    }
+    if (need > 0) {
+        return;
+    }
+    var next_child = 1u;
+    var n_rnc = 0u;
+    var n_fn = 0u;
+    for (var i = 0u; i < n; i = i + 1u) {
+        let tok = genome[gene + i];
+        cl_child[i] = next_child;
+        next_child = next_child + arity[tok];
+        cl_ordinal[i] = NONE;
+        if (gp.rnc_id != NONE && tok == gp.rnc_id) {
+            cl_ordinal[i] = n_rnc;
+            n_rnc = n_rnc + 1u;
+        }
+        if (arity[tok] > 0u) {
+            n_fn = n_fn + 1u;
+        }
+    }
+    if (n_fn == 0u) {
+        return;
+    }
+    let nth = below(row, 1u, STREAM_CLEANSE, n_fn);
+    var p = 0u;
+    var seen = 0u;
+    for (var i = 0u; i < n; i = i + 1u) {
+        if (arity[genome[gene + i]] > 0u) {
+            if (seen == nth) {
+                p = i;
+            }
+            seen = seen + 1u;
+        }
+    }
+    let collapse = gp.rnc_id != NONE && chance(row, 2u, STREAM_CLEANSE, gp.cleanse_collapse);
+    var q = LEAF;
+    if (!collapse) {
+        q = cl_child[p] + below(row, 3u, STREAM_CLEANSE, arity[genome[gene + p]]);
+    }
+    let value = below(row, 4u, STREAM_CLEANSE, gp.n_rnc);
+
+    cl_queue[0] = select(0u, q, p == 0u);
+    var head = 0u;
+    var tail = 1u;
+    var m = 0u;
+    var k = 0u;
+    loop {
+        if (head >= tail) {
+            break;
+        }
+        let i = cl_queue[head];
+        head = head + 1u;
+        if (i == LEAF) {
+            cl_tok[m] = gp.rnc_id;
+            cl_dc[k] = value;
+            k = k + 1u;
+            m = m + 1u;
+            continue;
+        }
+        let tok = genome[gene + i];
+        cl_tok[m] = tok;
+        if (cl_ordinal[i] != NONE) {
+            cl_dc[k] = select(0u, genome[gene + ht + cl_ordinal[i]], cl_ordinal[i] < gp.tail);
+            k = k + 1u;
+        }
+        m = m + 1u;
+        for (var j = 0u; j < arity[tok]; j = j + 1u) {
+            let c = cl_child[i] + j;
+            cl_queue[tail] = select(c, q, c == p);
+            tail = tail + 1u;
+        }
+    }
+    if (k > gp.tail) {
+        return;
+    }
+    for (var x = h; x < m; x = x + 1u) {
+        if (arity[cl_tok[x]] > 0u) {
+            return;
+        }
+    }
+    for (var x = 0u; x < m; x = x + 1u) {
+        genome[gene + x] = cl_tok[x];
+    }
+    for (var x = 0u; x < k; x = x + 1u) {
+        genome[gene + ht + x] = cl_dc[x];
+    }
+}
 
 @compute @workgroup_size(64)
 fn mutate_main(@builtin(global_invocation_id) gid: vec3<u32>) {
@@ -386,6 +505,11 @@ fn mutate_main(@builtin(global_invocation_id) gid: vec3<u32>) {
         if (chance(row, k, STREAM_RNC_HIT, gp.rnc_point)) {
             rnc[rbase + k] = f32(gp.rnc_lo + i32(below(row, k, STREAM_RNC_VALUE, gp.rnc_span)));
         }
+    }
+    // 10. cleanse: shrink one gene's expression
+    if (chance(row, OP_CLEANSE, STREAM_OPERATOR, gp.cleanse)) {
+        let g = below(row, 0u, STREAM_CLEANSE, gp.n_genes);
+        cleanse_gene(row, base + g * width);
     }
 }
 

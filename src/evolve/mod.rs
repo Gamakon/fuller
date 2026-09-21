@@ -60,6 +60,11 @@ pub struct SymbolCodes {
     pub arity: Vec<u32>,
     pub sample_functions: Vec<u32>,
     pub sample_terminals: Vec<u32>,
+    /// The id of "?", the random-constant placeholder, if the set has one: the
+    /// n-th "?" of a gene's expression reads `rnc[dc[n]]`. The cleansing
+    /// mutation needs it to keep each surviving "?" on its own constant, and to
+    /// collapse a subtree into a constant.
+    pub rnc_id: Option<u32>,
 }
 
 impl SymbolCodes {
@@ -231,6 +236,7 @@ pub(crate) mod tests {
             arity: vec![2, 2, 2, 1, 0, 0, 0, 0],
             sample_functions: vec![0, 1, 2, 3],
             sample_terminals: vec![4, 5, 6],
+            rnc_id: Some(6),
         }
     }
 

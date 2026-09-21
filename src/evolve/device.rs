@@ -50,7 +50,9 @@ struct GenUniform {
     generation: u32,
     rnc_lo: i32,
     rnc_span: u32,
-    rates: [u32; 12],
+    rates: [u32; 14],
+    rnc_id: u32,
+    pad0: u32,
 }
 
 /// One generation's worth of resident buffers.
@@ -78,6 +80,7 @@ pub struct EvolveDevice {
     layout: Layout,
     n_functions: u32,
     n_terminals: u32,
+    rnc_id: u32,
 }
 
 fn bind_layout(device: &wgpu::Device, label: &str, n: u32, read_only: impl Fn(u32) -> bool) -> wgpu::BindGroupLayout {
@@ -189,6 +192,7 @@ impl EvolveDevice {
             current: 0,
             n_functions: codes.sample_functions.len() as u32,
             n_terminals: codes.sample_terminals.len() as u32,
+            rnc_id: codes.rnc_id.unwrap_or(u32::MAX),
             device,
             queue,
             init_pipeline,
@@ -333,7 +337,11 @@ impl EvolveDevice {
                 rates.cx_one_point,
                 rates.cx_two_point,
                 rates.cx_gene,
+                rates.cleanse,
+                rates.cleanse_collapse,
             ],
+            rnc_id: self.rnc_id,
+            pad0: 0,
         });
         let flat: Vec<u32> = islands.iter().flat_map(|i| [i.lo, i.hi, i.elites, i.tournsize]).collect();
         let islands_buf = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -478,7 +486,8 @@ mod tests {
     fn twenty_generations_of_variation_match_the_cpu_reference_bit_for_bit() {
         let (codes, isl) = (codes(), islands());
         let mut cpu = start(11);
-        let rates = Rates::engine_defaults(cpu.pop.layout);
+        // every operator on, the cleansing mutation at a rate that exercises it
+        let rates = Rates::with_cleanse(cpu.pop.layout, 0.5);
         let mut dev = EvolveDevice::new(cpu.pop.layout, &codes).expect("device");
         dev.init(&params(11)).expect("init");
         dev.write_fitness(&cpu.fitness).expect("fitness");
