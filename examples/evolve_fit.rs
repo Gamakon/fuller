@@ -1,6 +1,6 @@
 //! A whole symbolic-regression fit in Rust, no Python:
 //!
-//!   cargo run --release --features gpu --example evolve_fit -- data.tsv [seed] [seconds] [max_rows] [population] [all|split] [cleanse_rate] [test.tsv] [harvests]
+//!   cargo run --release --features gpu --example evolve_fit -- data.tsv [seed] [seconds] [max_rows] [population] [all|split] [cleanse_rate] [test.tsv]
 //!
 //! `data.tsv`: tab-separated, a header, the target in the column named
 //! `target` (a PMLB dataset, gunzipped). SRBench's 75/25 split is mimicked with
@@ -156,9 +156,6 @@ fn main() {
     }
     let restarts: u32 = env("EVOLVE_RESTARTS").and_then(|v| v.parse().ok()).unwrap_or(1).max(1);
     config.cleanse = args.get(6).and_then(|a| a.parse().ok()).unwrap_or(0.0);
-    if let Some(h) = args.get(8).and_then(|a| a.parse().ok()) {
-        config.harvests = h;
-    }
     // RESTARTS: the same seconds as one search, spent as several independent
     // ones (seeds derived from the fit's seed). The first that meets the stop bar
     // ends the fit; otherwise the one with the best validation error is reported.
@@ -211,7 +208,7 @@ fn main() {
     let tidied = final_form(&resolved, &names, &fit_rows).unwrap_or(resolved);
     let tidy = Tree::parse(&tidied).expect("the final form parses");
     println!("model: {}", tidy.to_infix_faithful());
-    println!("GENERATIONS\t{}\t{}\t{:.3e}\t{}", out.generations, out.stopped_by, out.best.one_minus_r2[1], out.harvested);
+    println!("GENERATIONS\t{}\t{}\t{:.3e}", out.generations, out.stopped_by, out.best.one_minus_r2[1]);
     // What evolution selected on: the model's HFF fitness (the tournaments rank on
     // it; smaller is better), and 1-R² on each block — train, validation, and the
     // third block (SMOGD or edge rows; "-" when there is none).
