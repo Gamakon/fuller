@@ -12,7 +12,7 @@
 //! model and its R² on the unseen 25%.
 
 use fuller::chrom_score::Splits;
-use fuller::evolve::engine::{evaluate_math, final_form, Config, Data, Engine};
+use fuller::evolve::engine::{evaluate_math, final_form, resolve_protected, Config, Data, Engine};
 use fuller::evolve::{below, draw};
 use fuller::lint::node::Tree;
 
@@ -80,11 +80,13 @@ fn main() {
     // fuller's final form, the data as judge: the fit rows (train + validation)
     // decide which inputs are positive and which prunes change nothing.
     let fit_rows: Vec<Vec<(String, f64)>> = used.iter().map(|&r| names.iter().cloned().zip(inputs(&rows[r])).collect()).collect();
-    let tidied = final_form(&out.math, &names, &fit_rows).unwrap_or_else(|_| out.math.clone());
+    // First say what the protected operators actually do on this data; then tidy.
+    let resolved = resolve_protected(&out.math, &fit_rows).unwrap_or_else(|_| out.math.clone());
+    let tidied = final_form(&resolved, &names, &fit_rows).unwrap_or(resolved);
     let tidy = Tree::parse(&tidied).expect("the final form parses");
-    println!("model: {}", tidy.to_infix());
+    println!("model: {}", tidy.to_infix_faithful());
     println!("GENERATIONS\t{}\t{}\t{:.3e}\t{}", out.generations, out.stopped_by, out.best.one_minus_r2[1], out.harvested);
-    println!("MODEL_INFIX\t{}", tidy.to_infix());
+    println!("MODEL_INFIX\t{}", tidy.to_infix_faithful());
     println!("RAW_MATH\t{}", out.math);
     // A harness that made the split itself may hand over its test rows: the
     // RAW chromosome's R² on them (f64, fuller's evaluator), so the harness can

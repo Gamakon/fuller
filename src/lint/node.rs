@@ -84,6 +84,38 @@ impl Tree {
     /// `log(Abs(x))`, `ProtectedExp` is `exp`, `ProtectedDiv a b` is `a/b`,
     /// `ProtectedInv x` is `1/x`. Every operand is parenthesised, so the text
     /// means exactly what the tree means whatever the reader's precedence.
+    /// [`Tree::to_infix`], except that a protected operator is written as what it
+    /// COMPUTES, a Piecewise sympy can read: `ProtectedDiv a b` is 0 where
+    /// |b| < 1e-6, `ProtectedInv x` is 1 at x = 0, `ProtectedSqrt x` is 0 where x
+    /// is not finite. `to_infix` writes them as a/b, 1/x, sqrt(Abs(x)) — a
+    /// different function wherever those cases occur on the data (the Rust
+    /// engine's Feynman I.50.26: chromosome R² 0.94, its a/b rendering 0.47).
+    /// A caller that reports a model first turns every protected operator its
+    /// DATA never triggers into the raw one (`evolve::engine::resolve_protected`),
+    /// so what is left here is only what truly needs saying.
+    pub fn to_infix_faithful(&self) -> String {
+        match self {
+            Tree::App(Op::ProtectedDiv, k) => {
+                let (a, b) = (k[0].to_infix_faithful(), k[1].to_infix_faithful());
+                format!("Piecewise((0, Abs({b}) < 1e-6), (({a}/{b}), True))")
+            }
+            Tree::App(Op::ProtectedInv, k) => {
+                let a = k[0].to_infix_faithful();
+                format!("Piecewise((1, Eq({a}, 0)), ((1/{a}), True))")
+            }
+            Tree::App(Op::ProtectedSqrt, k) => {
+                let a = k[0].to_infix_faithful();
+                format!("Piecewise((sqrt(Abs({a})), Abs({a}) < 1.7976931348623157e308), (0, True))")
+            }
+            Tree::App(op, k) => {
+                // every other operator: the plain rendering, over faithful operands
+                let plain = Tree::App(*op, k.iter().enumerate().map(|(i, _)| Tree::Var(format!("\u{1}{i}\u{2}"))).collect()).to_infix();
+                k.iter().enumerate().fold(plain, |text, (i, kid)| text.replace(&format!("\u{1}{i}\u{2}"), &kid.to_infix_faithful()))
+            }
+            leaf => leaf.to_infix(),
+        }
+    }
+
     pub fn to_infix(&self) -> String {
         let one = |k: &[Tree]| k[0].to_infix();
         let two = |k: &[Tree]| (k[0].to_infix(), k[1].to_infix());

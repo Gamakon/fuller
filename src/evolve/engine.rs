@@ -306,6 +306,41 @@ impl Caps {
     }
 }
 
+/// Every protected operator the DATA never triggers becomes the raw one:
+/// `ProtectedDiv a b` with |b| >= 1e-6 on every row is `Div a b`, with |b| < 1e-6
+/// on every row it is 0; `ProtectedInv x` with x never 0 is `Inv x`. One that is
+/// triggered on SOME rows stays protected, and `Tree::to_infix_faithful` writes
+/// it out as the Piecewise it is. Decided on `rows`, the rows the model was
+/// selected on — the engine's counterpart of hff's `symbolic_protected_div`.
+pub fn resolve_protected(math: &str, rows: &[Vec<(String, f64)>]) -> Result<String, String> {
+    use crate::lint::node::Tree;
+    fn go(t: &Tree, rows: &[Vec<(String, f64)>]) -> Tree {
+        let Tree::App(op, kids) = t else { return t.clone() };
+        let kids: Vec<Tree> = kids.iter().map(|k| go(k, rows)).collect();
+        let values = |k: &Tree| evaluate_math(&k.to_math(), rows).unwrap_or_default();
+        match op {
+            Op::ProtectedDiv => {
+                let b = values(&kids[1]);
+                if !b.is_empty() && b.iter().all(|v| v.is_finite() && v.abs() >= 1e-6) {
+                    return Tree::App(Op::Div, kids);
+                }
+                if !b.is_empty() && b.iter().all(|v| v.abs() < 1e-6) {
+                    return Tree::Num(0.0);
+                }
+            }
+            Op::ProtectedInv => {
+                let a = values(&kids[0]);
+                if !a.is_empty() && a.iter().all(|v| v.is_finite() && *v != 0.0) {
+                    return Tree::App(Op::Inv, kids);
+                }
+            }
+            _ => {}
+        }
+        Tree::App(*op, kids)
+    }
+    Ok(go(&Tree::parse(math)?, rows).to_math())
+}
+
 /// How closely a tidied form must predict what the model predicts: mean squared
 /// difference over the rows, relative to the model's variance.
 pub const FINAL_FORM_AGREE: f64 = 1e-10;
@@ -841,6 +876,27 @@ mod tests {
         let model = r#"(Add (Mul (Num 2.0) (ProtectedSqrt (Abs (Div (Pow2 (Var "x_0")) (Pow2 (Var "x_1")))))) (Num 0.5))"#;
         let tidy = final_form(model, &names(), &rows()).unwrap();
         assert!(!tidy.contains("Abs") && !tidy.contains("Sqrt"), "{tidy}");
+    }
+
+    /// Feynman I.50.26 as the Rust engine found it: a divisor exp(-x*y)^3 that is
+    /// below 1e-6 on every row. The protected divide is 0 there, not x / 1e-33.
+    #[test]
+    fn a_divisor_the_data_always_finds_tiny_is_zero() {
+        let model = r#"(Add (Var "x_0") (ProtectedDiv (Var "x_1") (Pow3 (Exp (Neg (Mul (Num 30.0) (Var "x_1")))))))"#;
+        let resolved = resolve_protected(model, &rows()).unwrap();
+        assert_eq!(resolved, r#"(Add (Var "x_0") (Num 0.0))"#);
+        assert_eq!(evaluate_math(model, &rows()).unwrap(), evaluate_math(&resolved, &rows()).unwrap());
+    }
+
+    #[test]
+    fn a_divisor_the_data_never_finds_tiny_is_a_plain_division_and_a_mixed_one_is_spelled_out() {
+        let never = resolve_protected(r#"(ProtectedDiv (Var "x_0") (Var "x_1"))"#, &rows()).unwrap();
+        assert_eq!(never, r#"(Div (Var "x_0") (Var "x_1"))"#);
+        // x_2 - 1.5 is exactly 0 on the first row only
+        let mixed = resolve_protected(r#"(ProtectedDiv (Var "x_0") (Sub (Var "x_2") (Num 1.5)))"#, &rows()).unwrap();
+        assert!(mixed.contains("ProtectedDiv"));
+        let text = crate::lint::node::Tree::parse(&mixed).unwrap().to_infix_faithful();
+        assert!(text.starts_with("Piecewise((0, Abs((x_2 - 1.5)) < 1e-6)"), "{text}");
     }
 
     /// A term that matters stays.
