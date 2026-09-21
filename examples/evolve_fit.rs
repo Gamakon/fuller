@@ -167,6 +167,22 @@ fn main() {
     // third block (SMOGD or edge rows; "-" when there is none).
     let third = if splits.n_extrap > 0 { format!("{:.3e}", out.best.one_minus_r2[2]) } else { "-".to_string() };
     println!("HFF\t{:.6}\t{:.3e}\t{:.3e}\t{third}", out.best.fitness, out.best.one_minus_r2[0], out.best.one_minus_r2[1]);
+    // The same three blocks as MSE: 1-R² is MSE over the block's variance of y, so
+    // MSE = (1-R²) x var(y) on that block — the engine's own definition (Caps).
+    let blocks = [(0, splits.n_train), (splits.n_train, splits.n_train + splits.n_val), (splits.n_train + splits.n_val, y.len())];
+    let mse: Vec<String> = blocks
+        .iter()
+        .zip(out.best.one_minus_r2)
+        .map(|(&(lo, hi), omr2)| {
+            if hi <= lo {
+                return "-".to_string();
+            }
+            let mean = y[lo..hi].iter().sum::<f64>() / (hi - lo) as f64;
+            let var = y[lo..hi].iter().map(|v| (v - mean).powi(2)).sum::<f64>() / (hi - lo) as f64;
+            format!("{:.3e}", omr2 * var)
+        })
+        .collect();
+    println!("MSE\t{}\t{}\t{}", mse[0], mse[1], mse[2]);
     println!("MODEL_INFIX\t{}", tidy.to_infix_faithful());
     println!("RAW_MATH\t{}", out.math);
     // A harness that made the split itself may hand over its test rows: the
