@@ -170,6 +170,10 @@ pub struct Config {
     /// parts each cost a quarter to a half of the fit and a refined-noise model's
     /// typical part 0.3%. Off by default until an A/B keeps it.
     pub redundancy: bool,
+    /// The third block of rows is SMOGD's: synthetic and noisy on purpose. Its
+    /// errors rank individuals in the tournaments (three HFF objectives); it never
+    /// decides that a fit is exact — the stop bar stays on the real validation rows.
+    pub smogd: bool,
     /// Harvest and regrow: a model that reaches the stop bar is put in a parking
     /// lot, it and its structural relatives are removed from the population, and
     /// the search goes on to grow another — up to this many (0 = stop at the
@@ -199,6 +203,7 @@ impl Config {
             pump_every: 4,
             cleanse: 0.0,
             redundancy: false,
+            smogd: false,
             // Kept after a two-seed A/B (7012: 46 -> 47, 7013: 44 -> 45, no losses).
             harvests: 4,
             max_generations: 1500,
@@ -783,7 +788,7 @@ impl Engine {
             if let Some((row, ranked)) = self.best(&gen) {
                 if ranked.one_minus_r2[1] <= 1e-5 {
                     if let Some(s) = self.confirm(&gen, row)? {
-                        let edge_ok = self.data.splits.n_extrap == 0 || s.one_minus_r2[2] <= c.stop_one_minus_r2;
+                        let edge_ok = c.smogd || self.data.splits.n_extrap == 0 || s.one_minus_r2[2] <= c.stop_one_minus_r2;
                         if s.one_minus_r2[1] <= c.stop_one_minus_r2 && edge_ok {
                             if c.harvests == 0 {
                                 stopped_by = "early_stop";
