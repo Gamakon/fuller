@@ -484,6 +484,73 @@ mod gpu {
             &self.info_buf
         }
 
+        /// The device the resident blocks live on: a kernel that binds them
+        /// (the graft) has to be built on it.
+        pub fn device(&self) -> &wgpu::Device {
+            &self.device
+        }
+
+        pub fn queue(&self) -> &wgpu::Queue {
+            &self.queue
+        }
+
+        /// Record the match of `n_lit` literals (f32 bits in `lits_buf`) into
+        /// `hits_buf` (2 words per literal) on `enc`, so a later pass of the
+        /// same command buffer reads the hits with no host round trip.
+        /// `max_groups` is the most workgroups one dispatch row may hold. The
+        /// uniform buffer returned is the caller's to destroy after the submit.
+        pub fn match_pass(
+            &self,
+            enc: &mut wgpu::CommandEncoder,
+            lits_buf: &wgpu::Buffer,
+            hits_buf: &wgpu::Buffer,
+            n_lit: u32,
+            rel_tol: f64,
+            max_groups: u32,
+        ) -> wgpu::Buffer {
+            assert!((0.0..=0.5).contains(&rel_tol), "rel_tol {rel_tol}: outside 0 ..= 0.5");
+            assert!(n_lit > 0 && (1..=MAX_GROUPS_PER_DIM).contains(&max_groups));
+            let groups = n_lit.div_ceil(64);
+            let groups_x = groups.min(max_groups);
+            let groups_y = groups.div_ceil(groups_x);
+            let cfg = [
+                n_lit,
+                self.table.len() as u32,
+                groups_x * 64,
+                self.table.search_steps(),
+                (rel_tol as f32).to_bits(),
+                0,
+                0,
+                0,
+            ];
+            let cfg_buf = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("snap-cfg"),
+                contents: bytemuck::cast_slice(&cfg),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
+            let buffers = [lits_buf, &self.values_buf, &self.info_buf, hits_buf, &cfg_buf];
+            let entries: Vec<wgpu::BindGroupEntry> = buffers
+                .iter()
+                .enumerate()
+                .map(|(i, b)| wgpu::BindGroupEntry { binding: i as u32, resource: b.as_entire_binding() })
+                .collect();
+            let bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: None,
+                layout: &self.layout,
+                entries: &entries,
+            });
+            {
+                let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: None,
+                    timestamp_writes: None,
+                });
+                pass.set_pipeline(&self.pipeline);
+                pass.set_bind_group(0, &bind, &[]);
+                pass.dispatch_workgroups(groups_x, groups_y, 1);
+            }
+            cfg_buf
+        }
+
         /// Match every literal in one dispatch.
         pub fn run(&self, literals: &[f32], rel_tol: f64) -> Result<Vec<Option<Hit>>, String> {
             assert!((0.0..=0.5).contains(&rel_tol), "rel_tol {rel_tol}: outside 0 ..= 0.5");
@@ -511,47 +578,10 @@ mod gpu {
                 mapped_at_creation: false,
             });
 
-            let groups = n_lit.div_ceil(64);
-            let groups_x = groups.min(MAX_GROUPS_PER_DIM);
-            let groups_y = groups.div_ceil(groups_x);
-            let cfg = [
-                n_lit,
-                self.table.len() as u32,
-                groups_x * 64,
-                self.table.search_steps(),
-                (rel_tol as f32).to_bits(),
-                0,
-                0,
-                0,
-            ];
-            let cfg_buf = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("snap-cfg"),
-                contents: bytemuck::cast_slice(&cfg),
-                usage: wgpu::BufferUsages::UNIFORM,
-            });
-            let buffers = [&lits_buf, &self.values_buf, &self.info_buf, &hits_buf, &cfg_buf];
-            let entries: Vec<wgpu::BindGroupEntry> = buffers
-                .iter()
-                .enumerate()
-                .map(|(i, b)| wgpu::BindGroupEntry { binding: i as u32, resource: b.as_entire_binding() })
-                .collect();
-            let bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: None,
-                layout: &self.layout,
-                entries: &entries,
-            });
             let mut enc = self
                 .device
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
-            {
-                let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                    label: None,
-                    timestamp_writes: None,
-                });
-                pass.set_pipeline(&self.pipeline);
-                pass.set_bind_group(0, &bind, &[]);
-                pass.dispatch_workgroups(groups_x, groups_y, 1);
-            }
+            let cfg_buf = self.match_pass(&mut enc, &lits_buf, &hits_buf, n_lit, rel_tol, MAX_GROUPS_PER_DIM);
             enc.copy_buffer_to_buffer(&hits_buf, 0, &read_buf, 0, out_bytes);
             self.queue.submit(Some(enc.finish()));
 
