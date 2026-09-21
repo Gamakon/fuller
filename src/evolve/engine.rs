@@ -171,7 +171,12 @@ pub struct Config {
     pub n_pairs: u32,
     /// THE CROSS STEP's beat: every this many generations each intake island takes
     /// in the best of the OTHER pairs' champion islands (0 = never). The SRBench
-    /// entry runs it at 5, just off the pump's 4.
+    /// entry's beat is 5, just off the pump's 4 — on ONE pair (it never sets
+    /// `wrapper_islands`), where the step is a keep-the-fifth refill. The notebook
+    /// also holds the step back until `gen > 30` and runs it every generation once
+    /// `gen > n_gen - 10`. Neither is here: the warm-up was sized for a Python fit
+    /// of a few hundred generations, and a fit stopped by time has no `n_gen` to
+    /// count down to. The beat is the whole rule.
     pub cross_every: u32,
     /// How many of its best each champion island sends in a cross step.
     pub k_migrants: u32,
