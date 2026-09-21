@@ -18,7 +18,7 @@
 //! WHICH ENTRY. A literal `c` is within tolerance of a constant `t` iff
 //! `|c - t| / |t| <= rel_tol` (against `t == 0`, iff `|c| <= rel_tol`) —
 //! `snap.rs::best_match`'s band. The band around a literal can hold several
-//! forms (up to 5 at 1e-3, 9 at 5e-3), and the nearest is often an
+//! forms (up to 6 at 1e-3, 9 at 5e-3), and the nearest is often an
 //! obscure coincidence: 3.14 is nearer `(2*e)/(3*gamma)` than `pi`. The choice
 //! among them is multi-objective — nearness, shortness, fit to the literal's
 //! context — and this project's mechanism for that is HFF with the TrueNorth
@@ -73,7 +73,7 @@ pub const FLAG_NEGATED: u32 = 1;
 
 /// Entries scanned each side of the insertion point. Measured on the standard
 /// table (`the_band_never_reaches_past_its_bound`): the widest band any literal
-/// can have is 5 entries at 1e-3 and 9 at 5e-3, both sides together.
+/// can have is 6 entries at 1e-3 and 9 at 5e-3, both sides together.
 pub const BAND: usize = 16;
 /// Second word of a device hit whose band reached past `BAND`: no entry.
 pub const BAND_OVERFLOW: u32 = 2;
@@ -998,10 +998,10 @@ mod tests {
     ];
 
     /// Snapshots of the standard table's families.
-    const CENSUS: [usize; FAMILIES] = [472, 214, 273, 25, 5200, 219];
-    const THROUGH_H_OVER_HBAR: usize = 10;
+    const CENSUS: [usize; FAMILIES] = [634, 214, 276, 25, 5200, 219];
+    const THROUGH_H_OVER_HBAR: usize = 3;
     /// The widest band at 1e-3 and at 5e-3.
-    const WIDEST: (usize, usize) = (5, 9);
+    const WIDEST: (usize, usize) = (6, 9);
 
     fn printed(text: &str) -> f64 {
         text.parse().expect("a number")
@@ -1101,7 +1101,7 @@ mod tests {
             t.search_steps()
         );
         // A snapshot: a change to the lattice has to show up here.
-        assert_eq!(t.entries_in, 7051);
+        assert_eq!(t.entries_in, 7225);
         assert_eq!(t.dropped.non_finite, 0);
         assert_eq!(t.dropped.oversize, Vec::<(String, usize)>::new());
         assert_eq!(t.dropped.out_of_f32_range.len(), 605);
@@ -1109,9 +1109,9 @@ mod tests {
         // each folded onto its positive twin.
         assert_eq!(t.dropped.exact_duplicates.len(), 37);
         assert!(t.dropped.exact_duplicates.iter().all(|l| l.starts_with('-')), "{:?}", t.dropped.exact_duplicates);
-        assert_eq!(t.dropped.f32_collisions.len(), 6);
-        assert_eq!(t.len(), 6403);
-        assert_eq!(t.sizes[..8], [0, 29, 17, 990, 695, 1177, 511, 2984]);
+        assert_eq!(t.dropped.f32_collisions.len(), 15);
+        assert_eq!(t.len(), 6568);
+        assert_eq!(t.sizes[..8], [0, 29, 17, 990, 695, 1233, 538, 3066]);
         assert!(t.info.chunks_exact(INFO_STRIDE).all(|w| w[2] == 0), "no negated entry survives in the standard table");
         assert_eq!(t.max_template_nodes(), 7);
         // Family census, in `Family`'s order: pi, e, root, rational, physical, other.
@@ -1174,8 +1174,8 @@ mod tests {
         assert_eq!(label_of("0.31831"), Some("1/pi"));
         assert_eq!(label_of("1.35914"), Some("e/2"));
         assert_eq!(value_of(0.0796), Some(1.0 / (4.0 * PI)));
-        // 1/(2 pi): the lattice writes it `hbar/h` (3 nodes; its own `1/(2*pi)`
-        // would be 5), and it is classed by what it is — family pi.
+        // 1/(2 pi): the table keeps `hbar/h` (3 nodes; the lattice's plain `1/(2*pi)`
+        // is 5 and has the same f32 value), classed by what it is — family pi.
         let half_turn = t.nearest(0.159155, TOL, LitMode::F64).expect("1/(2 pi)");
         assert!((t.signed_value(half_turn) * 2.0 * PI - 1.0).abs() <= 1e-9);
         assert_eq!(t.family(half_turn.entry), Family::Pi);
@@ -1207,8 +1207,11 @@ mod tests {
         assert_eq!(family_of_label("h"), Family::Physical);
         // h / hbar = 2 pi: a ratio of the two is a pi form, whatever its label.
         assert_eq!(family_of_label("hbar/h"), Family::Pi);
-        assert_eq!(family_of_label("(3*hbar)/(2*h)"), Family::Pi);
         let tree = |m: &str| Tree::parse(m).unwrap();
+        // `(3*hbar)/(2*h)` is in the lattice and no longer in the table: the
+        // plain `3/(4*pi)` has the same f32 value in 5 nodes to its 7.
+        assert_eq!(family_of(&tree(r#"(Div (Mul (Num 3.0) (Var "hbar")) (Mul (Num 2.0) (Var "h")))"#)), (Family::Pi, true));
+        assert_eq!(family_of_label("3/(4*pi)"), Family::Pi);
         assert_eq!(family_of(&tree(r#"(Div (Var "h") (Mul (Num 4.0) (Mul (Var "pi") (Var "hbar"))))"#)), (Family::Rational, true));
         assert_eq!(family_of(&tree(r#"(Div (Mul (Var "e") (Var "hbar")) (Var "h"))"#)), (Family::Pi, true));
         assert_eq!(family_of(&tree(r#"(Mul (Var "h") (Var "hbar"))"#)), (Family::Physical, false));
