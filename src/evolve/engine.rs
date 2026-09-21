@@ -164,6 +164,12 @@ pub struct Config {
     pub pump_every: u32,
     /// The cleansing mutation's rate per row (0 = off).
     pub cleanse: f64,
+    /// Harvest and regrow: a model that reaches the stop bar is put in a parking
+    /// lot, it and its structural relatives are removed from the population, and
+    /// the search goes on to grow another — up to this many (0 = stop at the
+    /// first, as before). The one reported is the SMALLEST after fuller's final
+    /// form; two harvests with the same final form end the fit.
+    pub harvests: u32,
     pub max_generations: u32,
     pub max_seconds: f64,
     /// Stop when validation (and edge, when there is one) 1 - R² is this small.
@@ -186,6 +192,7 @@ impl Config {
             rnc_hi: 100,
             pump_every: 4,
             cleanse: 0.0,
+            harvests: 0,
             max_generations: 1500,
             max_seconds: 30.0,
             stop_one_minus_r2: 1e-10,
@@ -223,6 +230,8 @@ pub struct FitResult {
     pub unique_genes: u64,
     pub oversized_genes: u64,
     pub stopped_by: &'static str,
+    /// Models parked by harvest-and-regrow (0 when it is off).
+    pub harvested: usize,
     pub best: Scored,
     pub math: String,
     pub timing: Timing,
@@ -586,6 +595,53 @@ impl Engine {
         Ok(best)
     }
 
+    /// The fit rows (train + validation) as named values, for fuller's final form.
+    fn fit_rows(&self) -> Vec<Vec<(String, f64)>> {
+        let d = self.data.names.len();
+        let n = self.data.splits.n_train + self.data.splits.n_val;
+        (0..n).map(|r| self.data.names.iter().cloned().zip(self.data.x[r * d..(r + 1) * d].iter().map(|v| f64::from(*v))).collect()).collect()
+    }
+
+    /// What a gene COMPUTES, as a key: its expressed nodes with constants resolved.
+    fn gene_key(&self, gen: &Generation, row: usize, g: usize) -> Option<Vec<u32>> {
+        let l = self.layout;
+        let (width, nr, g_n) = (l.gene_width() as usize, l.n_rnc as usize, l.n_genes as usize);
+        let tokens = &gen.pop.genome[(row * g_n + g) * width..(row * g_n + g + 1) * width];
+        let consts = &gen.pop.rnc[(row * g_n + g) * nr..(row * g_n + g + 1) * nr];
+        decode_gene(tokens, consts, l, &self.table).map(|n| n.iter().flat_map(|x| [x.op, x.arg0, x.arg1, x.konst.to_bits()]).collect())
+    }
+
+    /// Remove the harvested row and its structural relatives; fresh random rows
+    /// take their places (keyed by generation and harvest, so reproducible).
+    fn purge(&mut self, gen: &mut Generation, harvested: usize, generation: u32, harvest: u32) {
+        let l = self.layout;
+        let g_n = l.n_genes as usize;
+        let row_w = g_n * l.gene_width() as usize;
+        let rnc_w = g_n * l.n_rnc as usize;
+        let keys: Vec<Option<Vec<u32>>> = (0..g_n).map(|g| self.gene_key(gen, harvested, g)).collect();
+        let big: Vec<&Vec<u32>> = keys.iter().flatten().filter(|k| k.len() >= 5 * 4).collect();
+        let Ok(fresh) = super::init(l, &self.table.codes(), &InitParams {
+            seed: self.config.seed,
+            generation: generation.wrapping_add(1_000_000 * (harvest + 1)),
+            rnc_lo: self.config.rnc_lo,
+            rnc_hi: self.config.rnc_hi,
+            n_wrappers: WRAPPERS.len() as u32,
+        }) else {
+            return;
+        };
+        for r in 0..l.pop as usize {
+            let mine: Vec<Option<Vec<u32>>> = (0..g_n).map(|g| self.gene_key(gen, r, g)).collect();
+            let relative = mine == keys || mine.iter().flatten().any(|k| big.contains(&k));
+            if relative {
+                gen.pop.genome[r * row_w..(r + 1) * row_w].copy_from_slice(&fresh.genome[r * row_w..(r + 1) * row_w]);
+                gen.pop.rnc[r * rnc_w..(r + 1) * rnc_w].copy_from_slice(&fresh.rnc[r * rnc_w..(r + 1) * rnc_w]);
+                gen.pop.wrapper_id[r] = fresh.wrapper_id[r];
+                gen.fitness[r] = f32::NAN;
+                self.scored[r] = None;
+            }
+        }
+    }
+
     fn best(&self, gen: &Generation) -> Option<(usize, Scored)> {
         (0..self.layout.pop as usize)
             .filter_map(|r| self.scored[r].map(|s| (r, s)))
@@ -631,6 +687,7 @@ impl Engine {
         let mut individuals = u64::from(self.layout.pop);
         self.dev.write_fitness(&gen.fitness)?;
         let (mut generation, mut stopped_by) = (0u32, "n_gen");
+        let mut archive: Vec<(usize, String, String, Scored)> = Vec::new();
         while generation < c.max_generations {
             if started.elapsed().as_secs_f64() > c.max_seconds {
                 stopped_by = "time";
@@ -680,12 +737,53 @@ impl Engine {
                     if let Some(s) = self.confirm(&gen, row)? {
                         let edge_ok = self.data.splits.n_extrap == 0 || s.one_minus_r2[2] <= c.stop_one_minus_r2;
                         if s.one_minus_r2[1] <= c.stop_one_minus_r2 && edge_ok {
-                            stopped_by = "early_stop";
-                            break;
+                            if c.harvests == 0 {
+                                stopped_by = "early_stop";
+                                break;
+                            }
+                            // HARVEST. Park it; if an earlier harvest reduced
+                            // to the same final form, two independent growths
+                            // agree and the fit is over.
+                            let raw = self.math_of(&gen, row, &s);
+                            let tidy = final_form(&raw, &self.data.names, &self.fit_rows()).unwrap_or_else(|_| raw.clone());
+                            let nodes = crate::lint::node::Tree::parse(&tidy).map_or(usize::MAX, |t| t.node_count());
+                            let agreed = archive.iter().any(|a: &(usize, String, String, Scored)| a.1 == tidy);
+                            archive.push((nodes, tidy, raw, s));
+                            if agreed || archive.len() as u32 >= c.harvests {
+                                stopped_by = if agreed { "converged" } else { "harvested" };
+                                break;
+                            }
+                            // REGROW. Its structural relatives go: every row that
+                            // is the same genome, or carries one of its genes of
+                            // five nodes or more (the junk lives in the big genes;
+                            // a bare terminal is a building block everyone shares).
+                            self.purge(&mut gen, row, generation, archive.len() as u32);
+                            let (u, o) = self.evaluate(&mut gen, &mut timing)?;
+                            unique += u;
+                            oversized += o;
+                            self.dev.write_population(&gen.pop)?;
+                            self.dev.write_fitness(&gen.fitness)?;
                         }
                     }
                 }
             }
+        }
+        let harvested = archive.len();
+        // The parking lot decides, when there is one: every model in it met the
+        // bar, so PARSIMONY picks — the fewest nodes after fuller's final form.
+        if let Some((_, _, raw, s)) = archive.into_iter().min_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1))) {
+            return Ok(FitResult {
+                generations: generation,
+                seconds: started.elapsed().as_secs_f64(),
+                individuals,
+                unique_genes: unique,
+                oversized_genes: oversized,
+                stopped_by,
+                harvested,
+                math: raw,
+                best: s,
+                timing,
+            });
         }
         let (row, ranked) = self.best(&gen).ok_or("no individual could be scored")?;
         let best = self.confirm(&gen, row)?.unwrap_or(ranked);
@@ -696,6 +794,7 @@ impl Engine {
             unique_genes: unique,
             oversized_genes: oversized,
             stopped_by,
+            harvested,
             math: self.math_of(&gen, row, &best),
             best,
             timing,

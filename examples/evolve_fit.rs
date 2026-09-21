@@ -1,6 +1,6 @@
 //! A whole symbolic-regression fit in Rust, no Python:
 //!
-//!   cargo run --release --features gpu --example evolve_fit -- data.tsv [seed] [seconds] [max_rows] [population] [all|split] [cleanse_rate] [test.tsv]
+//!   cargo run --release --features gpu --example evolve_fit -- data.tsv [seed] [seconds] [max_rows] [population] [all|split] [cleanse_rate] [test.tsv] [harvests]
 //!
 //! `data.tsv`: tab-separated, a header, the target in the column named
 //! `target` (a PMLB dataset, gunzipped). SRBench's 75/25 split is mimicked with
@@ -59,6 +59,7 @@ fn main() {
         config.pop_champion = population - config.pop_intake;
     }
     config.cleanse = args.get(6).and_then(|a| a.parse().ok()).unwrap_or(0.0);
+    config.harvests = args.get(8).and_then(|a| a.parse().ok()).unwrap_or(0);
     let mut engine = Engine::new(config, Data { names: names.clone(), x, y, splits }).expect("engine");
     let out = engine.fit().expect("fit");
 
@@ -82,8 +83,9 @@ fn main() {
     let tidied = final_form(&out.math, &names, &fit_rows).unwrap_or_else(|_| out.math.clone());
     let tidy = Tree::parse(&tidied).expect("the final form parses");
     println!("model: {}", tidy.to_infix());
-    println!("GENERATIONS\t{}\t{}\t{:.3e}", out.generations, out.stopped_by, out.best.one_minus_r2[1]);
+    println!("GENERATIONS\t{}\t{}\t{:.3e}\t{}", out.generations, out.stopped_by, out.best.one_minus_r2[1], out.harvested);
     println!("MODEL_INFIX\t{}", tidy.to_infix());
+    println!("RAW_MATH\t{}", out.math);
     // A harness that made the split itself may hand over its test rows: the
     // RAW chromosome's R² on them (f64, fuller's evaluator), so the harness can
     // check that the string it reports computes the same thing.

@@ -90,6 +90,13 @@ pub const POWERS_RULESET: &str = r#"
 (rewrite (Div (Pow2 a) (Pow2 b)) (Pow2 (Div a b)) :ruleset powers)
 (rewrite (ProtectedDiv (Pow2 a) (Pow2 b)) (Pow2 (ProtectedDiv a b)) :ruleset powers)
 
+; The square of a root: (sqrt|x|)^2 = |x|, and (sqrt x)^2 = x where x >= 0.
+; Feynman I.47.23 was found in one generation as
+; 0.081*sqrt|3.87*(sqrt|x0|)^2*x1*39/x2| and scored unsolved: sympy splits the
+; |x0| out of the radical, and SRBench cannot put a split radical back together.
+(rewrite (Pow2 (ProtectedSqrt x)) (Abs x) :ruleset powers)
+(rewrite (Pow2 (Sqrt x)) x :when ((is-nonneg x)) :ruleset powers)
+
 "#;
 
 #[cfg(test)]

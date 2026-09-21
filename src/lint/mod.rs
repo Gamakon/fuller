@@ -354,6 +354,19 @@ mod tests {
         );
     }
 
+    /// Feynman I.47.23 as the Rust engine found it (generation 1): the square of
+    /// a root inside the radical. One radical must come out, not two.
+    #[test]
+    fn the_square_of_a_root_is_the_absolute_value() {
+        let tables = Tables::standard().unwrap();
+        let inputs = vec!["x0".to_string()];
+        let e = r#"(Sqrt (Abs (Mul (Pow2 (ProtectedSqrt (Var "x0"))) (Num 39.0))))"#;
+        let told = Options { positive_vars: inputs.clone(), ..Options::default() };
+        let tidy = lint(&tables, e, &inputs, &told).unwrap().best.to_math();
+        assert!(!tidy.contains("ProtectedSqrt") && !tidy.contains("Pow2") && !tidy.contains("Abs"), "{tidy}");
+        assert!(lint(&tables, e, &inputs, &Options::default()).unwrap().best.to_math().contains("Abs"));
+    }
+
     #[test]
     fn is_deterministic() {
         let e = r#"(Sub (Neg (Mul (Var "a") (Num -1.0))) (Neg (Abs (Pow2 (Var "b")))))"#;
