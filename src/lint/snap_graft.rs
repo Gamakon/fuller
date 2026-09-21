@@ -54,7 +54,7 @@ pub const LIT_EXACT: u32 = NONE;
 pub const NOT_A_LITERAL: u32 = 0x7fc0_0000;
 /// The work area: a full slot, the largest template, and the `Neg` over it.
 const WORK: usize = 80;
-const _: () = assert!(SLOT + TEMPLATE_MAX + 1 <= WORK);
+const _: () = assert!(SLOT + TEMPLATE_MAX < WORK);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Status {
@@ -266,9 +266,11 @@ pub fn name_values(table: &SnapTable) -> Result<Vec<f32>, String> {
 pub fn slot_literals(enc: &Encoded) -> Vec<u32> {
     let mut lits = vec![NOT_A_LITERAL; enc.lengths.len() * SLOT];
     for (e, len) in enc.lengths.iter().enumerate() {
-        for i in e * SLOT..e * SLOT + *len as usize {
-            if enc.nodes[i * 4] == Op::Num as u32 {
-                lits[i] = enc.nodes[i * 4 + 3];
+        let at = e * SLOT;
+        let nodes = enc.nodes[at * 4..].chunks_exact(4);
+        for (lit, node) in lits[at..at + *len as usize].iter_mut().zip(nodes) {
+            if node[0] == Op::Num as u32 {
+                *lit = node[3];
             }
         }
     }
@@ -692,7 +694,9 @@ mod tests {
     fn a_negative_literal_grafts_the_form_under_a_neg() {
         let t = table();
         let (f, s) = snapped(r#"(Add (Var "x") (Num -3.1416))"#, &t);
-        assert_eq!(s.hits[2], t.nearest(3.1416, TOL, LitMode::F64).map(|h| Hit { negative: true, ..h }));
+        // pi as a gene prints it (text: a number typed as 3.1416 is rounded on purpose).
+        let rounded: f64 = "3.1416".parse().expect("a number");
+        assert_eq!(s.hits[2], t.nearest(rounded, TOL, LitMode::F64).map(|h| Hit { negative: true, ..h }));
         assert_eq!(math_of(&s.variants[0]), r#"(Add (Var "x") (Neg (Var "pi")))"#);
         assert!(close(&values(&s.variants[0].form.as_ref().unwrap().to_tree()), &values(&f.to_tree()), TOL));
         // At the root too.
