@@ -119,6 +119,10 @@ fn main() {
         config.pop_intake = population / 4 * 3;
         config.pop_champion = population - config.pop_intake;
     }
+    //   EVOLVE_PUMP_EVERY               the pump's beat in generations (the engine's default is 4)
+    if let Some(beat) = std::env::var("EVOLVE_PUMP_EVERY").ok().and_then(|v| v.parse::<u32>().ok()) {
+        config.pump_every = beat;
+    }
     //   EVOLVE_HEAD                     a gene's head length (the engine's default is 34)
     if let Some(head) = std::env::var("EVOLVE_HEAD").ok().and_then(|v| v.parse::<u32>().ok()) {
         config.head = head;
