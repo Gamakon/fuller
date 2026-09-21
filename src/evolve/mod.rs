@@ -9,10 +9,13 @@
 
 #[cfg(feature = "gpu")]
 pub mod device;
+pub mod vary;
 
 /// mix64.wgsl (the generator, copied verbatim from the qdrant workspace) in
 /// front of the kernels that draw from it.
 pub const EVOLVE_WGSL: &str = concat!(include_str!("mix64.wgsl"), include_str!("evolve.wgsl"));
+/// The generator in front of the selection and variation kernels (step 2).
+pub const VARY_WGSL: &str = concat!(include_str!("mix64.wgsl"), include_str!("vary.wgsl"));
 
 /// The shape of a population. A gene is `head + tail + Dc`, geppy's own layout,
 /// and the Dc domain is as long as the tail.
@@ -215,7 +218,7 @@ impl Population {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     /// ids 0..4 functions (arity 2,2,2,1), 4..8 terminals; 7 is withheld.
