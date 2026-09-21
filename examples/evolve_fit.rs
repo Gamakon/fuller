@@ -1,6 +1,6 @@
 //! A whole symbolic-regression fit in Rust, no Python:
 //!
-//!   cargo run --release --features gpu --example evolve_fit -- data.tsv [seed] [seconds] [max_rows] [population] [all|split] [cleanse_rate]
+//!   cargo run --release --features gpu --example evolve_fit -- data.tsv [seed] [seconds] [max_rows] [population] [all|split] [cleanse_rate] [test.tsv]
 //!
 //! `data.tsv`: tab-separated, a header, the target in the column named
 //! `target` (a PMLB dataset, gunzipped). SRBench's 75/25 split is mimicked with
@@ -12,11 +12,9 @@
 //! model and its R² on the unseen 25%.
 
 use fuller::chrom_score::Splits;
-use fuller::evolve::engine::{evaluate_math, Config, Data, Engine};
+use fuller::evolve::engine::{evaluate_math, final_form, Config, Data, Engine};
 use fuller::evolve::{below, draw};
 use fuller::lint::node::Tree;
-use fuller::lint::{lint, Options};
-use fuller::lint::tables::Tables;
 
 fn shuffled(n: usize, seed: u32, stream: u32) -> Vec<usize> {
     let mut order: Vec<usize> = (0..n).collect();
@@ -78,11 +76,30 @@ fn main() {
     println!("genes evaluated {} (unique per generation), over the 64-node limit {}", out.unique_genes, out.oversized_genes);
     println!("1 - R²: train {:.3e}, validation {:.3e}", out.best.one_minus_r2[0], out.best.one_minus_r2[1]);
 
-    let tables = Tables::standard().expect("fuller's rule tables");
-    let tidy = lint(&tables, &out.math, &names, &Options::default()).map(|o| o.best).unwrap_or_else(|_| Tree::parse(&out.math).expect("math"));
+    // fuller's final form, the data as judge: the fit rows (train + validation)
+    // decide which inputs are positive and which prunes change nothing.
+    let fit_rows: Vec<Vec<(String, f64)>> = used.iter().map(|&r| names.iter().cloned().zip(inputs(&rows[r])).collect()).collect();
+    let tidied = final_form(&out.math, &names, &fit_rows).unwrap_or_else(|_| out.math.clone());
+    let tidy = Tree::parse(&tidied).expect("the final form parses");
     println!("model: {}", tidy.to_infix());
     println!("GENERATIONS\t{}\t{}\t{:.3e}", out.generations, out.stopped_by, out.best.one_minus_r2[1]);
     println!("MODEL_INFIX\t{}", tidy.to_infix());
+    // A harness that made the split itself may hand over its test rows: the
+    // RAW chromosome's R² on them (f64, fuller's evaluator), so the harness can
+    // check that the string it reports computes the same thing.
+    if let Some(test_path) = args.get(7) {
+        let text = std::fs::read_to_string(test_path).expect("read the test file");
+        let held: Vec<Vec<f64>> = text.lines().skip(1).filter(|l| !l.trim().is_empty())
+            .map(|l| l.split('\t').map(|v| v.trim().parse::<f64>().expect("a number")).collect()).collect();
+        let cols: Vec<Vec<(String, f64)>> = held.iter().map(|r| names.iter().cloned().zip(inputs(r)).collect()).collect();
+        if let Ok(pred) = evaluate_math(&out.math, &cols) {
+            let truth: Vec<f64> = held.iter().map(|r| r[target]).collect();
+            let mean = truth.iter().sum::<f64>() / truth.len() as f64;
+            let ss_res: f64 = pred.iter().zip(&truth).map(|(p, t)| (p - t).powi(2)).sum();
+            let ss_tot: f64 = truth.iter().map(|t| (t - mean).powi(2)).sum();
+            println!("CHROMOSOME_TEST_R2\t{:e}", 1.0 - ss_res / ss_tot);
+        }
+    }
     if test_rows.is_empty() {
         return;
     }

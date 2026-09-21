@@ -297,6 +297,54 @@ impl Caps {
     }
 }
 
+/// How closely a tidied form must predict what the model predicts: mean squared
+/// difference over the rows, relative to the model's variance.
+pub const FINAL_FORM_AGREE: f64 = 1e-10;
+
+/// fuller tidies the reported model, the data as judge: the linter is told which
+/// inputs are positive / non-zero on every row and given rows to judge prunes
+/// on; every candidate form is executed on ALL of `rows`, and the smallest one
+/// that predicts what `math` predicts to [`FINAL_FORM_AGREE`] is the final form.
+/// A snap that moves a constant by 1e-4 does not pass that bar — it is the
+/// reporting harness's decision, judged on its own terms, not this function's.
+/// Returns `math` itself when nothing smaller agrees.
+pub fn final_form(math: &str, names: &[String], rows: &[Vec<(String, f64)>]) -> Result<String, String> {
+    use crate::lint::tables::{Exactness, Tables};
+    static TABLES: std::sync::OnceLock<Result<Tables, String>> = std::sync::OnceLock::new();
+    let tables = TABLES.get_or_init(Tables::standard).as_ref().map_err(|e| format!("lint tables: {e}"))?;
+    let reference = evaluate_math(math, rows)?;
+    let n = reference.len() as f64;
+    let mean = reference.iter().sum::<f64>() / n;
+    let var = reference.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / n;
+    // NaN counts as "not usable" on both tests.
+    if var.is_nan() || var <= 0.0 || reference.iter().any(|v| !v.is_finite()) {
+        return Ok(math.to_string());
+    }
+    let all = |test: &dyn Fn(f64) -> bool| -> Vec<String> {
+        names.iter().filter(|name| rows.iter().all(|r| r.iter().any(|(k, v)| k == *name && test(*v)))).cloned().collect()
+    };
+    let facts = crate::lint::DataFacts {
+        rows: &rows[..rows.len().min(256)],
+        positive_vars: all(&|v| v > 0.0),
+        nonzero_vars: all(&|v| v != 0.0),
+    };
+    let candidates = crate::lint::forms(tables, math, names, Exactness::Finite, 8, facts)?;
+    let mut best: Option<(usize, String, String)> = None;
+    for (tree, _) in candidates {
+        let form = tree.to_math();
+        let Ok(pred) = evaluate_math(&form, rows) else { continue };
+        let drift = pred.iter().zip(&reference).map(|(p, r)| (p - r).powi(2)).sum::<f64>() / n / var;
+        if drift.is_nan() || drift > FINAL_FORM_AGREE {
+            continue;
+        }
+        let key = (tree.node_count(), tree.to_infix(), form);
+        if best.as_ref().is_none_or(|b| (key.0, &key.1) < (b.0, &b.1)) {
+            best = Some(key);
+        }
+    }
+    Ok(best.map_or(math.to_string(), |b| b.2))
+}
+
 /// A `Math` expression on rows of named values, in f64, by fuller's own
 /// evaluator: how a model is scored on data the search never saw.
 pub fn evaluate_math(math: &str, rows: &[Vec<(String, f64)>]) -> Result<Vec<f64>, String> {
@@ -652,5 +700,55 @@ impl Engine {
             best,
             timing,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rows() -> Vec<Vec<(String, f64)>> {
+        (0..200)
+            .map(|i| {
+                let t = f64::from(i);
+                vec![("x_0".to_string(), 1.0 + t * 0.02), ("x_1".to_string(), 2.0 + (t * 0.37).sin().abs()), ("x_2".to_string(), 1.5 + t * 0.01)]
+            })
+            .collect()
+    }
+
+    fn names() -> Vec<String> {
+        vec!["x_0".to_string(), "x_1".to_string(), "x_2".to_string()]
+    }
+
+    /// Feynman I.12.4 as the engine found it: the law times a huge constant, plus
+    /// a term eleven orders of magnitude smaller. The final form drops the dead
+    /// term — and keeps predicting what the model predicts.
+    #[test]
+    fn the_final_form_prunes_a_term_the_data_cannot_see() {
+        let model = r#"(Mul (Num -6.9e-11) (Div (Mul (Var "x_0") (Sub (Var "x_1") (Div (Num 1153767966.0) (Pow2 (Var "x_2"))))) (Var "x_1")))"#;
+        let tidy = final_form(model, &names(), &rows()).unwrap();
+        let (before, after) = (crate::lint::node::Tree::parse(model).unwrap(), crate::lint::node::Tree::parse(&tidy).unwrap());
+        assert!(after.node_count() < before.node_count(), "{tidy}");
+        let (want, got) = (evaluate_math(model, &rows()).unwrap(), evaluate_math(&tidy, &rows()).unwrap());
+        let mean = want.iter().sum::<f64>() / want.len() as f64;
+        let var = want.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / want.len() as f64;
+        let drift = want.iter().zip(&got).map(|(w, g)| (w - g).powi(2)).sum::<f64>() / want.len() as f64 / var;
+        assert!(drift <= FINAL_FORM_AGREE, "drift {drift}");
+    }
+
+    /// Every column positive on the data: |x| is x, and sqrt((a/b)^2) is a/b.
+    #[test]
+    fn the_final_form_uses_what_the_data_says_about_signs() {
+        let model = r#"(Add (Mul (Num 2.0) (ProtectedSqrt (Abs (Div (Pow2 (Var "x_0")) (Pow2 (Var "x_1")))))) (Num 0.5))"#;
+        let tidy = final_form(model, &names(), &rows()).unwrap();
+        assert!(!tidy.contains("Abs") && !tidy.contains("Sqrt"), "{tidy}");
+    }
+
+    /// A term that matters stays.
+    #[test]
+    fn the_final_form_keeps_a_term_the_data_can_see() {
+        let model = r#"(Add (Mul (Var "x_0") (Var "x_1")) (Sin (Var "x_2")))"#;
+        let tidy = final_form(model, &names(), &rows()).unwrap();
+        assert!(tidy.contains("Sin") && tidy.contains("x_0") && tidy.contains("x_1"), "{tidy}");
     }
 }

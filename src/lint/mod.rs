@@ -128,6 +128,83 @@ pub fn lint(tables: &Tables, math: &str, inputs: &[String], opts: &Options) -> R
     Ok(engine::run(&tree, &rules, &tables.guards, &cfg))
 }
 
+/// What the caller's data says: rows to judge a prune on (none = no prune
+/// candidates), and the inputs that are positive / non-zero on every row.
+#[derive(Default)]
+pub struct DataFacts<'a> {
+    pub rows: &'a [Vec<(String, f64)>],
+    pub positive_vars: Vec<String>,
+    pub nonzero_vars: Vec<String>,
+}
+
+/// Candidate forms of `expr`, the input first: the linter's forms at `admit`
+/// (up to `k`), the snap candidate (every literal within
+/// [`engine::SNAP_CANDIDATE_TOL`] of a whole or half number taken for it), and
+/// — when `rows` are given — data-judged prunes at five tolerances, each pruned
+/// tree linted again. Labels: input / bit / rounding / finite / snap / prune.
+/// A form is a CANDIDATE: only the linter's own are meaning-preserving; the
+/// caller judges the rest on its data.
+pub fn forms(
+    tables: &Tables,
+    expr: &str,
+    inputs: &[String],
+    admit: Exactness,
+    k: usize,
+    data: DataFacts<'_>,
+) -> Result<Vec<(Tree, &'static str)>, String> {
+    use engine::run;
+    let DataFacts { rows, positive_vars, nonzero_vars } = data;
+    let tree = Tree::parse(expr)?;
+    let symbols = crate::geneframe::master_table();
+    let kingdom = symbols.kingdom("Symbolic Regression");
+    let rules = tables.usable(&kingdom);
+    let caller = CallerFacts { positive: positive_vars, nonzero: nonzero_vars };
+    let cfg = Config {
+        inputs,
+        caller: &caller,
+        mode: LitMode::F64,
+        search: Search::Beam(k.max(1)),
+        max_steps: 64,
+        admit,
+        computed_literals: true,
+        fold_in_rounds: true,
+    };
+    let outcome = run(&tree, &rules, &tables.guards, &cfg);
+    let mut offered: Vec<(Tree, &'static str)> = vec![(tree.clone(), "input")];
+    for (form, level) in outcome.forms.iter().zip(&outcome.levels).filter(|(f, _)| **f != tree).take(k.max(1)) {
+        let label = match level {
+            Exactness::Bit => "bit",
+            Exactness::Rounding => "rounding",
+            Exactness::Finite => "finite",
+        };
+        offered.push((form.clone(), label));
+    }
+    if let Some(snapped) = engine::snap_candidate(&tree, engine::SNAP_CANDIDATE_TOL) {
+        let tidy = run(&snapped, &rules, &tables.guards, &cfg).best;
+        if offered.iter().all(|(f, _)| *f != tidy) {
+            offered.push((tidy, "snap"));
+        }
+    }
+    if !rows.is_empty() {
+        let tidy = outcome.best.to_math();
+        if let Ok(reference) = crate::extract::eval_expr_rows(&tidy, rows) {
+            for tol in [1e-10_f64, 1e-6, 1e-3, 1e-2, 1e-1] {
+                // A prune leaves debris a rule can clear (`x*(-y)`, a bare
+                // `Neg`), so the pruned tree goes through the linter again.
+                let pruned = crate::extract::prune_on_data(&tidy, rows, &reference, tol)
+                    .and_then(|p| Tree::parse(&p).ok())
+                    .map(|p| run(&p, &rules, &tables.guards, &cfg).best);
+                if let Some(pt) = pruned {
+                    if offered.iter().all(|(f, _)| *f != pt) {
+                        offered.push((pt, "prune"));
+                    }
+                }
+            }
+        }
+    }
+    Ok(offered)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

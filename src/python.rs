@@ -155,8 +155,6 @@ fn lint_forms(
     positive_vars: Vec<String>,
     nonzero_vars: Vec<String>,
 ) -> PyResult<Vec<Py<PyDict>>> {
-    use crate::lint::engine::{run, CallerFacts, Config, LitMode, Search};
-    use crate::lint::node::Tree;
     use crate::lint::tables::{Exactness, Tables};
 
     let admit = match exactness {
@@ -174,55 +172,10 @@ fn lint_forms(
         .get_or_init(Tables::standard)
         .as_ref()
         .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("lint tables: {e}")))?;
-    let tree = Tree::parse(expr).map_err(pyo3::exceptions::PyValueError::new_err)?;
-    let symbols = crate::geneframe::master_table();
-    let kingdom = symbols.kingdom("Symbolic Regression");
-    let rules = tables.usable(&kingdom);
-    let caller = CallerFacts { positive: positive_vars, nonzero: nonzero_vars };
-    let cfg = Config {
-        inputs: &inputs,
-        caller: &caller,
-        mode: LitMode::F64,
-        search: Search::Beam(k.max(1)),
-        max_steps: 64,
-        admit,
-        computed_literals: true,
-        fold_in_rounds: true,
-    };
-    let outcome = run(&tree, &rules, &tables.guards, &cfg);
-    let mut offered: Vec<(Tree, &'static str)> = vec![(tree.clone(), "input")];
-    for (form, level) in outcome.forms.iter().zip(&outcome.levels).filter(|(f, _)| **f != tree).take(k.max(1)) {
-        let label = match level {
-            Exactness::Bit => "bit",
-            Exactness::Rounding => "rounding",
-            Exactness::Finite => "finite",
-        };
-        offered.push((form.clone(), label));
-    }
-    if let Some(snapped) = crate::lint::engine::snap_candidate(&tree, crate::lint::engine::SNAP_CANDIDATE_TOL) {
-        let tidy = run(&snapped, &rules, &tables.guards, &cfg).best;
-        if offered.iter().all(|(f, _)| *f != tidy) {
-            offered.push((tidy, "snap"));
-        }
-    }
     let core_rows: Vec<Vec<(String, f64)>> = rows.into_iter().map(|m| m.into_iter().collect()).collect();
-    if !core_rows.is_empty() {
-        let tidy = outcome.best.to_math();
-        if let Ok(reference) = crate::extract::eval_expr_rows(&tidy, &core_rows) {
-            for tol in [1e-10_f64, 1e-6, 1e-3, 1e-2, 1e-1] {
-                // A prune leaves debris a rule can clear (`x*(-y)`, a bare
-                // `Neg`), so the pruned tree goes through the linter again.
-                let pruned = crate::extract::prune_on_data(&tidy, &core_rows, &reference, tol)
-                    .and_then(|p| Tree::parse(&p).ok())
-                    .map(|p| run(&p, &rules, &tables.guards, &cfg).best);
-                if let Some(pt) = pruned {
-                    if offered.iter().all(|(f, _)| *f != pt) {
-                        offered.push((pt, "prune"));
-                    }
-                }
-            }
-        }
-    }
+    let facts = crate::lint::DataFacts { rows: &core_rows, positive_vars, nonzero_vars };
+    let offered = crate::lint::forms(tables, expr, &inputs, admit, k, facts)
+        .map_err(pyo3::exceptions::PyValueError::new_err)?;
     offered
         .into_iter()
         .map(|(form, level)| {
