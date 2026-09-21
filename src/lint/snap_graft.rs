@@ -32,6 +32,11 @@
 //! its `konst` is its value, exactly (the table refuses a template literal
 //! that f32 cannot hold).
 //!
+//! A literal is matched IN ITS CONTEXT ([`contexts`]: cyclic, algebraic or
+//! exponential, from its ancestors), one code per node slot beside the literal
+//! ([`slot_contexts`]), so one value at two sites may take two forms; it is
+//! still one atom.
+//!
 //! The device proposes in f32. [`confirmed`] is the host's f64 word on a
 //! variant; stage 3 calls it on a variant that passed the guard, before
 //! anything is reported or written into a gene. It is never a filter here.
@@ -39,7 +44,8 @@
 use super::device::{Encoded, SLOT};
 use super::engine::LitMode;
 use super::flat::{splice, Flat, LNode};
-use super::snap_table::{Hit, SnapTable, INFO_STRIDE, NONE, TEMPLATE_MAX};
+use super::pack::arity;
+use super::snap_table::{Context, Hit, SnapTable, INFO_STRIDE, NONE, TEMPLATE_MAX};
 use crate::gpu_eval::Op;
 
 pub const SNAP_GRAFT_WGSL: &str = concat!(include_str!("splice.wgsl"), include_str!("snap_graft.wgsl"));
@@ -96,11 +102,49 @@ pub struct Snapped {
     pub variants: Vec<Variant>,
 }
 
-/// Stage 1 over one expression: a hit or `None` per node.
+/// A node's context from its parent's: the NEAREST enclosing Sin / Cos / Tan
+/// or Exp / ProtectedExp / Log / ProtectedLog decides — `sin(exp(3.14 x))` is
+/// exponential, `exp(sin(3.14 x))` cyclic — and every other operator (the
+/// inverse trig functions and tanh among them) passes its own context down.
+fn below(op: u32, own: Context) -> Context {
+    const CYCLIC: [Op; 3] = [Op::Sin, Op::Cos, Op::Tan];
+    const EXPONENTIAL: [Op; 4] = [Op::Exp, Op::ProtectedExp, Op::Log, Op::ProtectedLog];
+    if CYCLIC.iter().any(|o| *o as u32 == op) {
+        Context::Cyclic
+    } else if EXPONENTIAL.iter().any(|o| *o as u32 == op) {
+        Context::Exponential
+    } else {
+        own
+    }
+}
+
+/// One forward pass over `(op, arg0, arg1)` nodes: a child's index is greater
+/// than its parent's, so a node's context is settled before it is reached.
+fn contexts_of(nodes: impl ExactSizeIterator<Item = (u32, u32, u32)>) -> Vec<Context> {
+    let mut out = vec![Context::Algebraic; nodes.len()];
+    for (i, (op, arg0, arg1)) in nodes.enumerate() {
+        let passed = below(op, out[i]);
+        for child in [arg0, arg1].iter().take(arity(op)) {
+            if let Some(slot) = out.get_mut(*child as usize).filter(|_| *child as usize > i) {
+                *slot = passed;
+            }
+        }
+    }
+    out
+}
+
+/// The context of every node of an expression (the root is algebraic).
+pub fn contexts(expr: &Flat) -> Vec<Context> {
+    contexts_of(expr.nodes.iter().map(|n| (n.op, n.arg0, n.arg1)))
+}
+
+/// Stage 1 over one expression: a hit or `None` per node, each literal matched
+/// in its context.
 pub fn match_literals(expr: &Flat, table: &SnapTable, rel_tol: f64, mode: LitMode) -> Vec<Option<Hit>> {
     expr.nodes
         .iter()
-        .map(|n| if n.op == Op::Num as u32 { table.nearest(n.lit, rel_tol, mode) } else { None })
+        .zip(contexts(expr))
+        .map(|(n, context)| if n.op == Op::Num as u32 { table.nearest_in(n.lit, context, rel_tol, mode) } else { None })
         .collect()
 }
 
@@ -135,11 +179,13 @@ pub fn variant_sites(expr: &Flat, hits: &[Option<Hit>], v: usize) -> Vec<usize> 
 }
 
 /// The host's f64 word on variant `v`: every literal it replaced snaps, in
-/// f64, to exactly the entry and sign the graft used. Stage 3 asks this of a
-/// variant that passed the R² guard, before it is reported or written back.
+/// f64 and in its context, to exactly the entry and sign the graft used. Stage
+/// 3 asks this of a variant that passed the R² guard, before it is reported or
+/// written back.
 pub fn confirmed(expr: &Flat, hits: &[Option<Hit>], v: usize, table: &SnapTable, rel_tol: f64) -> bool {
+    let context = contexts(expr);
     variant_sites(expr, hits, v).iter().all(|i| match hits[*i] {
-        Some(hit) => table.confirm_f64(expr.nodes[*i].lit, hit, rel_tol),
+        Some(hit) => table.confirm_f64_in(expr.nodes[*i].lit, context[*i], hit, rel_tol),
         None => false,
     })
 }
@@ -275,6 +321,20 @@ pub fn slot_literals(enc: &Encoded) -> Vec<u32> {
         }
     }
     lits
+}
+
+/// The context code the match kernel reads, one per node slot, beside
+/// `slot_literals` (algebraic where there is no node).
+pub fn slot_contexts(enc: &Encoded) -> Vec<u32> {
+    let mut out = vec![Context::Algebraic as u32; enc.lengths.len() * SLOT];
+    for (e, len) in enc.lengths.iter().enumerate() {
+        let at = e * SLOT;
+        let nodes = enc.nodes[at * 4..(at + *len as usize) * 4].chunks_exact(4).map(|w| (w[0], w[1], w[2]));
+        for (slot, context) in out[at..].iter_mut().zip(contexts_of(nodes)) {
+            *slot = context as u32;
+        }
+    }
+    out
 }
 
 /// The words the device writes for a variant: the CPU reference in the device's
@@ -529,6 +589,7 @@ mod gpu {
             let nodes_buf = storage("graft-nodes-in", &enc.nodes);
             let len_buf = storage("graft-len-in", &enc.lengths);
             let lits_buf = storage("graft-literals", &slot_literals(&enc));
+            let contexts_buf = storage("graft-contexts", &slot_contexts(&enc));
             let hit_bytes = u64::from(n_lit) * 8;
             let out_bytes = (exprs.len() * VARIANTS * SLOT * 16) as u64;
             let vinfo_bytes = (exprs.len() * VARIANTS * VINFO_STRIDE * 4) as u64;
@@ -545,7 +606,7 @@ mod gpu {
             let vinfo_read = make("graft-vinfo-read", vinfo_bytes, read_usage);
 
             let mut cmd = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
-            let match_cfg = kernel.match_pass(&mut cmd, &lits_buf, &hits_buf, n_lit, rel_tol, max_groups);
+            let match_cfg = kernel.match_pass(&mut cmd, [&lits_buf, &contexts_buf, &hits_buf], n_lit, rel_tol, max_groups);
             let graft_cfg =
                 self.graft_pass(kernel, &mut cmd, [&nodes_buf, &len_buf, &hits_buf, &nodes_out, &vinfo_out], n_expr, max_groups);
             cmd.copy_buffer_to_buffer(&hits_buf, 0, &hits_read, 0, hit_bytes);
@@ -574,8 +635,8 @@ mod gpu {
             // Release per-dispatch buffers explicitly and drain wgpu's deferred
             // queue — see gpu_eval::GpuEvaluator::eval for what happens otherwise.
             for b in [
-                &nodes_buf, &len_buf, &lits_buf, &hits_buf, &nodes_out, &vinfo_out, &hits_read, &nodes_read,
-                &vinfo_read, &match_cfg, &graft_cfg,
+                &nodes_buf, &len_buf, &lits_buf, &contexts_buf, &hits_buf, &nodes_out, &vinfo_out, &hits_read,
+                &nodes_read, &vinfo_read, &match_cfg, &graft_cfg,
             ] {
                 b.destroy();
             }
@@ -690,6 +751,57 @@ mod tests {
         assert_layout(std::slice::from_ref(&s));
     }
 
+    /// The one literal of `math`: its context, and the label it snaps to.
+    fn the_literal(math: &str, t: &SnapTable) -> (Context, Option<String>) {
+        let (f, s) = snapped(math, t);
+        let at = f.nodes.iter().position(|n| n.op == Op::Num as u32).expect("a literal");
+        (contexts(&f)[at], s.hits[at].map(|h| t.labels[h.entry as usize].clone()))
+    }
+
+    #[test]
+    fn a_literal_is_matched_in_its_context() {
+        let t = table();
+        let some = |l: &str| Some(l.to_string());
+        assert_eq!(the_literal(r#"(Sin (Mul (Num 3.14159) (Var "x")))"#, &t), (Context::Cyclic, some("pi")));
+        assert_eq!(the_literal(r#"(Sin (Add (Var "x") (Num 1.5708)))"#, &t), (Context::Cyclic, some("pi/2")));
+        assert_eq!(the_literal(r#"(Cos (Mul (Mul (Num 6.2832) (Var "x")) (Var "y")))"#, &t), (Context::Cyclic, some("2*pi")));
+        // Algebraic: no rational is within 1e-3 of 3.14159, and pi is one node.
+        let polynomial = the_literal(r#"(Add (Mul (Num 3.14159) (Pow2 (Var "x"))) (Var "x"))"#, &t);
+        assert_eq!(polynomial, (Context::Algebraic, some("pi")));
+        // The NEAREST enclosing of the two kinds decides; other operators pass
+        // their own context down.
+        assert_eq!(the_literal(r#"(Exp (Sin (Mul (Num 3.14159) (Var "x"))))"#, &t).0, Context::Cyclic);
+        assert_eq!(the_literal(r#"(Sin (Exp (Mul (Num 3.14159) (Var "x"))))"#, &t).0, Context::Exponential);
+        assert_eq!(the_literal(r#"(ProtectedLog (Tanh (Div (Var "x") (Num 3.14159))))"#, &t).0, Context::Exponential);
+        assert_eq!(the_literal(r#"(Tanh (Asin (Mul (Num 3.14159) (Var "x"))))"#, &t).0, Context::Algebraic);
+        assert_eq!(the_literal("(Num 3.14159)", &t).0, Context::Algebraic);
+
+        // A literal between 2/3 and pi/(e*sqrt3), nearer the pi form: the pi
+        // form inside a sine, the rational in a polynomial, and under an
+        // exponential — every family at home — whatever nearness and size say.
+        let v = 2.0 / 3.0 * (1.0 + 0.63e-3);
+        let inside = |op: &str| the_literal(&format!(r#"({op} (Mul (Num {v}) (Var "x")))"#), &t).1;
+        assert_eq!(inside("Sin"), some("pi/(e*sqrt3)"));
+        assert_eq!(inside("Neg"), some("2/3"));
+        let energy = |label: &str| {
+            let entry = t.labels.iter().position(|l| l == label).unwrap() as u32;
+            let x3 = t.objectives(v, entry, Context::Exponential, TOL);
+            assert_eq!(x3[2], 0.0, "{label}: at home under an exponential");
+            x3[0] * x3[0] + x3[1] * x3[1]
+        };
+        let under_exp = inside("Exp").expect("a form");
+        eprintln!("{v} under exp -> {under_exp}: energy 2/3 {:.4}, pi/(e*sqrt3) {:.4}", energy("2/3"), energy("pi/(e*sqrt3)"));
+        assert_eq!(under_exp, if energy("2/3") < energy("pi/(e*sqrt3)") { "2/3" } else { "pi/(e*sqrt3)" });
+        // One value at two sites in two contexts is one atom, and each site
+        // takes its own context's form.
+        let (f, s) = snapped(&format!(r#"(Add (Mul (Num {v}) (Var "x")) (Sin (Num {v})))"#), &t);
+        assert_eq!(atoms(&f, &s.hits).len(), 1);
+        let labels: Vec<&str> = s.hits.iter().flatten().map(|h| t.labels[h.entry as usize].as_str()).collect();
+        assert_eq!(labels, ["2/3", "pi/(e*sqrt3)"], "level order: the product's literal, then the sine's");
+        assert_eq!((s.variants[0].status, s.variants[0].sites), (Status::Grafted, 2));
+        assert!(confirmed(&f, &s.hits, 0, &t, TOL));
+    }
+
     #[test]
     fn a_negative_literal_grafts_the_form_under_a_neg() {
         let t = table();
@@ -737,6 +849,18 @@ mod tests {
         assert_layout(std::slice::from_ref(&s));
     }
 
+    /// A 7-node entry between 1 and 10 that its own value snaps to (no shorter
+    /// form in its band takes the literal from it).
+    fn seven_nodes(t: &SnapTable) -> usize {
+        (0..t.len())
+            .find(|i| {
+                t.info[i * INFO_STRIDE + 1] == 7
+                    && (1.0..10.0).contains(&t.values[*i])
+                    && t.nearest(t.values[*i], TOL, LitMode::F64).map(|h| h.entry as usize) == Some(*i)
+            })
+            .expect("a 7-node entry that wins its own band")
+    }
+
     /// `Neg` over a chain of `adds` Adds ending in the literal: 2 * adds + 2 nodes.
     fn chain(adds: usize, literal: f64) -> String {
         let mut s = format!("(Num {literal})");
@@ -750,7 +874,7 @@ mod tests {
     fn a_graft_past_the_slot_is_skipped_and_counted() {
         let t = table();
         // A 7-node template: 58 - 1 + 7 = 64 fits, 60 - 1 + 7 = 66 does not.
-        let seven = (0..t.len()).find(|i| t.info[i * INFO_STRIDE + 1] == 7 && (1.0..10.0).contains(&t.values[*i])).unwrap();
+        let seven = seven_nodes(&t);
         let literal = t.values[seven];
         let (f, s) = snapped(&chain(28, literal), &t);
         assert_eq!(f.nodes.len(), 58);
@@ -850,8 +974,8 @@ mod tests {
         let t = table();
         let exprs = corpus(&t, 200);
         let lattice = crate::snap_karva::lattice();
-        let (mut agree, mut differ_entry, mut differ_extra) = (0usize, [0usize; 3], 0usize);
-        let mut examples: [Vec<String>; 3] = Default::default();
+        let (mut agree, mut differ_entry, mut differ_extra) = (0usize, [0usize; 5], 0usize);
+        let mut examples: [Vec<String>; 5] = Default::default();
         for f in &exprs {
             let math = f.to_tree().to_math();
             let hits = match_literals(f, &t, TOL, LitMode::F64);
@@ -882,26 +1006,34 @@ mod tests {
                 if let Some(i) = other_entry {
                     let lit = f.nodes[*i].lit;
                     let hit = hits[*i].unwrap();
-                    // snap_variants takes the SHORTEST form within tolerance
-                    // that its e-graph confirms; the table takes the NEAREST.
-                    // And it tries an entry as itself only: a negative literal
-                    // snaps only where the lattice lists the negative form.
-                    let mut within: Vec<&crate::snap_karva::ConstEntry> =
-                        lattice.iter().filter(|e| ((lit - e.value) / e.value).abs() < TOL).collect();
-                    within.sort_by_key(|e| e.math.len());
-                    let cause = match (proposed(&Tree::Num(lit).to_math()).len() > 1, within.is_empty()) {
-                        (true, _) => 0,
-                        (false, true) => 1,
-                        (false, false) => 2,
+                    // snap_variants takes the SHORTEST `math` text within
+                    // tolerance that its e-graph confirms, whatever the
+                    // context; the table takes the smallest HFF angle over
+                    // (nearness, size, fit to the context). And it tries an
+                    // entry as itself only: a negative literal snaps only where
+                    // the lattice lists the negative form.
+                    let theirs = proposed(&Tree::Num(lit).to_math());
+                    let their_entry = theirs.get(1).and_then(|c| lattice.iter().find(|e| close(&[e.value; 4], c, 1e-12)));
+                    let their_family = their_entry
+                        .and_then(|e| t.values.iter().position(|x| *x == e.value.abs()))
+                        .map(|at| t.family(at as u32));
+                    let within = lattice.iter().any(|e| ((lit - e.value) / e.value).abs() < TOL);
+                    let cause = match (their_entry, their_family, within) {
+                        (Some(_), Some(crate::lint::snap_table::Family::Physical), _) => 0,
+                        (Some(_), Some(_), _) => 1,
+                        (Some(_), None, _) => 2,
+                        (None, _, false) => 3,
+                        (None, _, true) => 4,
                     };
                     differ_entry[cause] += 1;
-                    assert!(cause != 1 || lit < 0.0, "{lit}: the lattice has nothing within tolerance, the table has");
+                    assert!(cause != 3 || lit < 0.0, "{lit}: the lattice has nothing within tolerance, the table has");
                     if examples[cause].len() < 3 {
                         examples[cause].push(format!(
-                            "{lit}: table -> {} ({}), shortest within tolerance -> {}",
+                            "{lit} in {:?}: table -> {} ({}), snap_variants -> {}",
+                            contexts(f)[*i],
                             t.labels[hit.entry as usize],
                             t.signed_value(hit),
-                            within.first().map(|e| format!("{} ({})", e.label, e.value)).unwrap_or("none".to_string())
+                            their_entry.map(|e| format!("{} ({})", e.label, e.value)).unwrap_or("none".to_string())
                         ));
                     }
                 } else if v == VARIANTS - 1 && extra.is_some() {
@@ -912,13 +1044,15 @@ mod tests {
             }
         }
         eprintln!(
-            "snap graft vs snap_variants, 200 expressions: {agree} variants agree; {} differ because snap_variants \
-             proposes ANOTHER entry for one of the literals (shortest confirmed form, not nearest); {} because the \
-             literal is negative and the lattice lists no negative form within tolerance (snap_variants never negates \
-             an entry); {} because snap_variants proposes nothing although the lattice has a form within tolerance \
-             (its e-graph check refused); {differ_extra} all-atom variants differ because snap_variants snapped a \
-             literal the table did not",
-            differ_entry[0], differ_entry[1], differ_entry[2]
+            "snap graft vs snap_variants, 200 expressions: {agree} variants agree; for one of the literals \
+             snap_variants proposes ANOTHER entry — {} a PHYSICAL form (the affinity table puts those last), {} a \
+             non-physical form (shortest text against smallest angle: size, nearness and context trade off), {} a \
+             form the device table does not hold (out of f32 range, or folded onto a twin); {} differ because the \
+             literal is negative and the lattice lists no negative form within tolerance (snap_variants never \
+             negates an entry); {} because snap_variants proposes nothing although the lattice has a form within \
+             tolerance (its e-graph check refused); {differ_extra} all-atom variants differ because snap_variants \
+             snapped a literal the table did not",
+            differ_entry[0], differ_entry[1], differ_entry[2], differ_entry[3], differ_entry[4]
         );
         for e in examples.iter().flatten() {
             eprintln!("  {e}");
@@ -1012,7 +1146,7 @@ mod tests {
 
             // The 200, then the hand cases: a negative hit, a repeated atom,
             // five atoms, the oversize pair, a refused expression.
-            let seven = (0..t.len()).find(|i| t.info[i * INFO_STRIDE + 1] == 7 && (1.0..10.0).contains(&t.values[*i])).unwrap();
+            let seven = seven_nodes(&t);
             let mut exprs = corpus(&t, 200);
             exprs.extend(
                 [
