@@ -192,7 +192,8 @@ impl Config {
             rnc_hi: 100,
             pump_every: 4,
             cleanse: 0.0,
-            harvests: 0,
+            // Kept after a two-seed A/B (7012: 46 -> 47, 7013: 44 -> 45, no losses).
+            harvests: 4,
             max_generations: 1500,
             max_seconds: 30.0,
             stop_one_minus_r2: 1e-10,
@@ -332,6 +333,15 @@ pub fn resolve_protected(math: &str, rows: &[Vec<(String, f64)>]) -> Result<Stri
                 let a = values(&kids[0]);
                 if !a.is_empty() && a.iter().all(|v| v.is_finite() && *v != 0.0) {
                     return Tree::App(Op::Inv, kids);
+                }
+            }
+            // sqrt|x| unless x is not finite (then 0): on data where the argument
+            // is always finite it IS sqrt(Abs(x)), and must be written so — left
+            // protected it prints as a Piecewise no scorer can match to a law.
+            Op::ProtectedSqrt => {
+                let a = values(&kids[0]);
+                if !a.is_empty() && a.iter().all(|v| v.is_finite()) {
+                    return Tree::App(Op::Sqrt, vec![Tree::App(Op::Abs, kids)]);
                 }
             }
             _ => {}
@@ -897,6 +907,14 @@ mod tests {
         assert!(mixed.contains("ProtectedDiv"));
         let text = crate::lint::node::Tree::parse(&mixed).unwrap().to_infix_faithful();
         assert!(text.starts_with("Piecewise((0, Abs((x_2 - 1.5)) < 1e-6)"), "{text}");
+    }
+
+    #[test]
+    fn a_root_whose_argument_is_always_finite_is_a_plain_root() {
+        let resolved = resolve_protected(r#"(ProtectedSqrt (Sub (Var "x_0") (Var "x_1")))"#, &rows()).unwrap();
+        assert_eq!(resolved, r#"(Sqrt (Abs (Sub (Var "x_0") (Var "x_1"))))"#);
+        let overflow = resolve_protected(r#"(ProtectedSqrt (Exp (Mul (Num 400.0) (Var "x_0"))))"#, &rows()).unwrap();
+        assert!(overflow.contains("ProtectedSqrt"), "{overflow}");
     }
 
     /// A term that matters stays.

@@ -67,7 +67,9 @@ fn main() {
     }
     let restarts: u32 = env("EVOLVE_RESTARTS").and_then(|v| v.parse().ok()).unwrap_or(1).max(1);
     config.cleanse = args.get(6).and_then(|a| a.parse().ok()).unwrap_or(0.0);
-    config.harvests = args.get(8).and_then(|a| a.parse().ok()).unwrap_or(0);
+    if let Some(h) = args.get(8).and_then(|a| a.parse().ok()) {
+        config.harvests = h;
+    }
     // RESTARTS: the same seconds as one search, spent as several independent
     // ones (seeds derived from the fit's seed). The first that meets the stop bar
     // ends the fit; otherwise the one with the best validation error is reported.
