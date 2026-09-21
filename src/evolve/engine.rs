@@ -627,7 +627,13 @@ impl Caps {
 /// `ProtectedDiv a b` with |b| >= 1e-6 on every row is `Div a b`, with |b| < 1e-6
 /// on every row it is 0; `ProtectedInv x` with x never 0 is `Inv x`;
 /// `ProtectedAsin x` / `ProtectedAcos x` with x in [-1, 1] on every row are
-/// `Asin x` / `Acos x`. One that is
+/// `Asin x` / `Acos x`; `ProtectedLog x` with x never 0 is `Log (Abs x)`;
+/// `ProtectedExp x` that never overflows is `Exp x`. And three forms a symbolic
+/// scorer does not see through: `Log` of a product with an `Exp u` factor, the
+/// rest of it c > 0 on every row, is `u + log c`; `Log a -/+ Log b` with a, b > 0
+/// on every row is `Log (Div a b)` / `Log (Mul a b)`, a negation going inside
+/// as `Log (Div b a)`; `Sin` / `Cos` of `e + k*pi/2`, the constant exact to
+/// 1e-9, is the function a quarter turn on. One that is
 /// triggered on SOME rows stays protected, and `Tree::to_infix_faithful` writes
 /// it out as the Piecewise it is. Decided on `rows`, the rows the model was
 /// selected on — the engine's counterpart of hff's `symbolic_protected_div`.
@@ -651,6 +657,92 @@ pub fn resolve_protected(math: &str, rows: &[Vec<(String, f64)>]) -> Result<Stri
         let (lo, hi) = v.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), x| (lo.min(*x), hi.max(*x)));
         let steady = !v.is_empty() && v.iter().all(|x| x.is_finite()) && hi - lo <= 1e-12 * lo.abs().max(hi.abs()).max(1.0);
         steady.then(|| Tree::Num((lo + hi) / 2.0))
+    }
+    /// `t` on every row, when it is finite on every row and passes `test` there.
+    fn on_every_row(t: &Tree, rows: &[Vec<(String, f64)>], test: impl Fn(f64) -> bool) -> bool {
+        evaluate_math(&t.to_math(), rows).is_ok_and(|v| !v.is_empty() && v.iter().all(|x| x.is_finite() && test(*x)))
+    }
+    /// The factors of a product / quotient, the `Exp u` factors apart: `u` goes to
+    /// `above` or `below` the line, every other factor to `num` or `den`.
+    fn factors<'t>(t: &'t Tree, inverted: bool, above: &mut Vec<&'t Tree>, below: &mut Vec<&'t Tree>, num: &mut Vec<&'t Tree>, den: &mut Vec<&'t Tree>) {
+        match t {
+            Tree::App(Op::Mul, k) => k.iter().for_each(|f| factors(f, inverted, above, below, num, den)),
+            Tree::App(Op::Div, k) => {
+                factors(&k[0], inverted, above, below, num, den);
+                factors(&k[1], !inverted, above, below, num, den);
+            }
+            Tree::App(Op::Inv, k) => factors(&k[0], !inverted, above, below, num, den),
+            Tree::App(Op::Exp, k) => (if inverted { below } else { above }).push(&k[0]),
+            _ => (if inverted { den } else { num }).push(t),
+        }
+    }
+    fn product(of: &[&Tree]) -> Option<Tree> {
+        of.iter().map(|f| (*f).clone()).reduce(|a, b| Tree::App(Op::Mul, vec![a, b]))
+    }
+    /// log(c * exp u) = u + log c for real u and c > 0: `Log arg` where `Exp u` is
+    /// a FACTOR of `arg` and the rest of it, c, is positive on every row. sympy
+    /// will not cancel log(exp u) without knowing u is real (feynman II.10.9 was
+    /// the law behind 0.2*log(exp(5 u)/5) + 0.3218.., and scored as wrong).
+    fn log_of_exp_factor(arg: &Tree, rows: &[Vec<(String, f64)>]) -> Option<Tree> {
+        let (mut above, mut below, mut num, mut den) = (vec![], vec![], vec![], vec![]);
+        factors(arg, false, &mut above, &mut below, &mut num, &mut den);
+        if above.is_empty() && below.is_empty() {
+            return None;
+        }
+        // exp never overflows and never underflows to 0 on the data: the log is finite.
+        if !on_every_row(&Tree::App(Op::Log, vec![arg.clone()]), rows, |_| true) {
+            return None;
+        }
+        let rest = match (product(&num), product(&den)) {
+            (None, None) => None,
+            (Some(n), None) => Some((n, true)),
+            (None, Some(d)) => Some((d, false)),
+            (Some(n), Some(d)) => Some((Tree::App(Op::Div, vec![n, d]), true)),
+        };
+        let mut sum: Option<Tree> = None;
+        for u in above {
+            sum = Some(sum.map_or_else(|| u.clone(), |s| Tree::App(Op::Add, vec![s, u.clone()])));
+        }
+        for u in below {
+            sum = Some(sum.map_or_else(|| Tree::App(Op::Neg, vec![u.clone()]), |s| Tree::App(Op::Sub, vec![s, u.clone()])));
+        }
+        let sum = sum?;
+        let Some((c, added)) = rest else { return Some(sum) };
+        // A numeric constant is a plain fact; anything else the data must say.
+        let log_c = match &c {
+            Tree::Num(v) if *v > 0.0 => Tree::Num(v.ln()),
+            _ if on_every_row(&c, rows, |v| v > 0.0) => Tree::App(Op::Log, vec![c]),
+            _ => return None,
+        };
+        Some(Tree::App(if added { Op::Add } else { Op::Sub }, vec![sum, log_c]))
+    }
+    /// `t` with a `Log (Div a b)` factor turned over to `Log (Div b a)` — which
+    /// negates `t`: log(b/a) = -log(a/b) where the quotient is positive on the data.
+    fn turned_over(t: &Tree, rows: &[Vec<(String, f64)>]) -> Option<Tree> {
+        match t {
+            Tree::App(Op::Log, k) => match &k[0] {
+                Tree::App(Op::Div, q) if on_every_row(&k[0], rows, |v| v > 0.0) => Some(Tree::App(Op::Log, vec![Tree::App(Op::Div, vec![q[1].clone(), q[0].clone()])])),
+                _ => None,
+            },
+            Tree::App(Op::Mul, k) => (0..k.len()).find_map(|i| {
+                let mut kids = k.clone();
+                kids[i] = turned_over(&k[i], rows)?;
+                Some(Tree::App(Op::Mul, kids))
+            }),
+            _ => None,
+        }
+    }
+    /// `t` with a `Neg` factor taken off — which negates `t`.
+    fn without_neg(t: &Tree) -> Option<Tree> {
+        match t {
+            Tree::App(Op::Neg, k) => Some(k[0].clone()),
+            Tree::App(Op::Mul, k) => (0..k.len()).find_map(|i| {
+                let mut kids = k.clone();
+                kids[i] = without_neg(&k[i])?;
+                Some(Tree::App(Op::Mul, kids))
+            }),
+            _ => None,
+        }
     }
     fn go(t: &Tree, rows: &[Vec<(String, f64)>]) -> Tree {
         let rewritten = specific(t, rows);
@@ -752,6 +844,85 @@ pub fn resolve_protected(math: &str, rows: &[Vec<(String, f64)>]) -> Result<Stri
                 }
                 if !a.is_empty() && a.iter().all(|v| v.is_finite() && *v <= 0.0) {
                     return Tree::App(Op::Neg, kids);
+                }
+            }
+            // log|x| unless x is 0 or not finite (then +inf): where the data never
+            // finds that, it IS log(Abs(x)) — and the Abs goes where x keeps one sign.
+            Op::ProtectedLog => {
+                if on_every_row(&kids[0], rows, |v| v != 0.0) {
+                    return go(&Tree::App(Op::Log, vec![Tree::App(Op::Abs, kids)]), rows);
+                }
+            }
+            // exp unless the argument is not finite: where the data never overflows
+            // it, it IS exp.
+            Op::ProtectedExp => {
+                if on_every_row(&Tree::App(Op::ProtectedExp, kids.clone()), rows, |_| true) {
+                    return Tree::App(Op::Exp, kids);
+                }
+            }
+            Op::Log => {
+                if let Some(sum) = log_of_exp_factor(&kids[0], rows) {
+                    return go(&sum, rows);
+                }
+            }
+            // log a - log b = log(a/b), log a + log b = log(a*b), where the data says
+            // a > 0 and b > 0 on every row. sympy will not merge logs without knowing
+            // that (feynman I.44.4 was the law, written -(log V1 - log V2), and scored
+            // as wrong).
+            Op::Sub | Op::Add => {
+                let positive = |k: &Tree| match k {
+                    Tree::App(Op::Log, a) if on_every_row(&a[0], rows, |v| v > 0.0) => Some(a[0].clone()),
+                    _ => None,
+                };
+                if let (Some(a), Some(b)) = (positive(&kids[0]), positive(&kids[1])) {
+                    let merged = Tree::App(if *op == Op::Sub { Op::Div } else { Op::Mul }, vec![a, b]);
+                    return go(&Tree::App(Op::Log, vec![merged]), rows);
+                }
+            }
+            // ... and the sign is put INSIDE the log: -log(a/b) is log(b/a), so the
+            // reported form carries no leading negation.
+            Op::Neg => {
+                if let Some(turned) = turned_over(&kids[0], rows) {
+                    return turned;
+                }
+            }
+            Op::Mul if kids.len() == 2 => {
+                for (i, j) in [(0, 1), (1, 0)] {
+                    if let (Some(plain), Some(turned)) = (without_neg(&kids[i]), turned_over(&kids[j], rows)) {
+                        let mut both = [plain, turned];
+                        if i == 1 {
+                            both.swap(0, 1);
+                        }
+                        return Tree::App(Op::Mul, both.to_vec());
+                    }
+                }
+            }
+            // A PHASE SHIFT by a quarter turn: sin(e + pi/2) is cos e, cos(e + pi/2)
+            // is -sin e, and so on round the circle — where the constant IS k*pi/2 to
+            // machine precision (the engine produces exactly f64 pi/2: a clamped
+            // protected arcsin resolved to its constant). Rounded to 3 decimals by a
+            // scorer, sin(y + 1.571) is not cos(y) (strogatz glider2).
+            Op::Sin | Op::Cos => {
+                use std::f64::consts::FRAC_PI_2;
+                let shift = match &kids[0] {
+                    Tree::App(Op::Add, s) => match (&s[0], &s[1]) {
+                        (e, Tree::Num(c)) | (Tree::Num(c), e) => Some((e, *c)),
+                        _ => None,
+                    },
+                    Tree::App(Op::Sub, s) => match (&s[0], &s[1]) {
+                        (e, Tree::Num(c)) => Some((e, -*c)),
+                        _ => None,
+                    },
+                    _ => None,
+                };
+                if let Some((e, c)) = shift {
+                    let k = (c / FRAC_PI_2).round();
+                    if k != 0.0 && k.abs() <= 1e6 && (c - k * FRAC_PI_2).abs() <= 1e-9 {
+                        // sin, cos, -sin, -cos: a quarter turn on from each is the next.
+                        let quarter = (k.rem_euclid(4.0) as usize + usize::from(*op == Op::Cos)) % 4;
+                        let turned = Tree::App(if quarter.is_multiple_of(2) { Op::Sin } else { Op::Cos }, vec![e.clone()]);
+                        return if quarter < 2 { turned } else { Tree::App(Op::Neg, vec![turned]) };
+                    }
                 }
             }
             _ => {}
@@ -1870,6 +2041,129 @@ mod tests {
             let (a, b) = (evaluate_math(expr, &rows()).unwrap(), evaluate_math(&resolved, &rows()).unwrap());
             assert!(a.iter().zip(&b).all(|(p, q)| (p - q).abs() < 1e-12), "{expr}");
         }
+    }
+
+    /// rows() and two more positive columns, x_3 and x_4; rows() itself is not changed.
+    fn rows5() -> Vec<Vec<(String, f64)>> {
+        rows()
+            .into_iter()
+            .enumerate()
+            .map(|(i, mut row)| {
+                let t = i as f64;
+                row.push(("x_3".to_string(), 0.5 + t * 0.03));
+                row.push(("x_4".to_string(), 4.0 + (t * 0.11).cos()));
+                row
+            })
+            .collect()
+    }
+
+    fn names5() -> Vec<String> {
+        (0..5).map(|i| format!("x_{i}")).collect()
+    }
+
+    /// Mean squared difference of the two models over `rows`, relative to the
+    /// first one's variance: the measure FINAL_FORM_AGREE is a bound on.
+    fn drift(model: &str, other: &str, rows: &[Vec<(String, f64)>]) -> f64 {
+        let (want, got) = (evaluate_math(model, rows).unwrap(), evaluate_math(other, rows).unwrap());
+        let n = want.len() as f64;
+        let mean = want.iter().sum::<f64>() / n;
+        let var = want.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / n;
+        want.iter().zip(&got).map(|(w, g)| (w - g).powi(2)).sum::<f64>() / n / var
+    }
+
+    /// feynman II.10.9 as the engine found it (seed 7013): the law inside
+    /// 0.2*log(exp(5 u)/5) + 0.3218.. — log(exp(5 u)/5) is 5 u - log 5 and the
+    /// constants cancel. The final form has no log and no exp left.
+    #[test]
+    fn a_log_of_an_exp_factor_is_its_exponent_plus_the_log_of_the_rest() {
+        let u = r#"(Div (Mul (Div (Num 5.0) (Add (Num 1.0) (Var "x_2"))) (Var "x_0")) (Var "x_1"))"#;
+        for (log, exp) in [("ProtectedLog", "ProtectedExp"), ("Log", "Exp")] {
+            let found = format!("(Add (Mul (Num 0.200000001133779) ({log} (Div ({exp} {u}) (Num 5.0)))) (Num 0.32188757398128187))");
+            let resolved = resolve_protected(&found, &rows()).unwrap();
+            assert_eq!(resolved, format!("(Add (Mul (Num 0.200000001133779) (Sub {u} (Num {:?}))) (Num 0.32188757398128187))", 5.0_f64.ln()));
+            let tidy = final_form(&resolved, &names(), &rows()).unwrap();
+            assert!(!tidy.contains("Log") && !tidy.contains("Exp"), "{tidy}");
+            assert!(drift(&found, &tidy, &rows()) <= FINAL_FORM_AGREE, "{tidy}");
+        }
+        // c * exp u, exp u alone, c / exp u, and c a positive column of the data.
+        for (expr, wanted) in [
+            (r#"(Log (Mul (Num 3.0) (Exp (Var "x_0"))))"#, format!(r#"(Add (Var "x_0") (Num {:?}))"#, 3.0_f64.ln())),
+            (r#"(Log (Exp (Var "x_0")))"#, r#"(Var "x_0")"#.to_string()),
+            (r#"(Log (Div (Var "x_1") (Exp (Var "x_0"))))"#, r#"(Add (Neg (Var "x_0")) (Log (Var "x_1")))"#.to_string()),
+        ] {
+            let resolved = resolve_protected(expr, &rows()).unwrap();
+            assert_eq!(resolved, wanted);
+            assert!(drift(expr, &resolved, &rows()) <= FINAL_FORM_AGREE, "{expr}");
+        }
+        // x_0 - 3.01 changes sign on the data: the factor is not positive, and the
+        // form stands — raw (its log is not a number on half the rows) and protected
+        // (log|.|: the Abs stays, and the exp stays inside it).
+        let mixed = r#"(Log (Mul (Exp (Var "x_1")) (Sub (Var "x_0") (Num 3.01))))"#;
+        assert_eq!(resolve_protected(mixed, &rows()).unwrap(), mixed);
+        let guarded = resolve_protected(r#"(ProtectedLog (Mul (Exp (Var "x_1")) (Sub (Var "x_0") (Num 3.01))))"#, &rows()).unwrap();
+        assert_eq!(guarded, r#"(Log (Abs (Mul (Exp (Var "x_1")) (Sub (Var "x_0") (Num 3.01)))))"#);
+        // exp(400 x_0) overflows on the data: the protected exp stays.
+        let overflow = r#"(Log (ProtectedExp (Mul (Num 400.0) (Var "x_0"))))"#;
+        assert_eq!(resolve_protected(overflow, &rows()).unwrap(), overflow);
+    }
+
+    /// feynman I.44.4 as the engine found it (seed 7013): -(x_1 x_0 x_2 (log|x_3| -
+    /// log|x_4|)), every column positive. One log of a quotient, and no negation.
+    #[test]
+    fn a_difference_of_logs_is_one_log_of_a_quotient_with_the_sign_inside() {
+        for (x3, x4) in [(r#"(ProtectedLog (Var "x_3"))"#, r#"(ProtectedLog (Var "x_4"))"#), (r#"(Log (Abs (Var "x_3")))"#, r#"(Log (Abs (Var "x_4")))"#)] {
+            let found = format!(r#"(Neg (Mul (Var "x_1") (Mul (Var "x_0") (Mul (Var "x_2") (Sub {x3} {x4})))))"#);
+            let resolved = resolve_protected(&found, &rows5()).unwrap();
+            assert_eq!(resolved, r#"(Mul (Var "x_1") (Mul (Var "x_0") (Mul (Var "x_2") (Log (Div (Var "x_4") (Var "x_3"))))))"#);
+            let tidy = final_form(&resolved, &names5(), &rows5()).unwrap();
+            assert_eq!(tidy.matches("Log").count(), 1, "{tidy}");
+            assert!(tidy.contains(r#"(Log (Div (Var "x_4") (Var "x_3")))"#) && !tidy.contains("Neg") && !tidy.contains("Num"), "{tidy}");
+            assert!(drift(&found, &tidy, &rows5()) <= FINAL_FORM_AGREE, "{tidy}");
+        }
+        // A sum of logs is the log of the product; a Neg factor goes into the log.
+        assert_eq!(resolve_protected(r#"(Add (Log (Var "x_3")) (Log (Var "x_4")))"#, &rows5()).unwrap(), r#"(Log (Mul (Var "x_3") (Var "x_4")))"#);
+        let factor = resolve_protected(r#"(Mul (Mul (Neg (Var "x_0")) (Var "x_1")) (Sub (Log (Var "x_3")) (Log (Var "x_4"))))"#, &rows5()).unwrap();
+        assert_eq!(factor, r#"(Mul (Mul (Var "x_0") (Var "x_1")) (Log (Div (Var "x_4") (Var "x_3"))))"#);
+        // x_0 - 3.01 is not positive on every row: the raw logs are not merged, and
+        // the protected one is merged only as the log|.| it is.
+        let mixed = r#"(Sub (Log (Sub (Var "x_0") (Num 3.01))) (Log (Var "x_4")))"#;
+        assert_eq!(resolve_protected(mixed, &rows5()).unwrap(), mixed);
+        let guarded = resolve_protected(r#"(Sub (ProtectedLog (Sub (Var "x_0") (Num 3.01))) (Log (Var "x_4")))"#, &rows5()).unwrap();
+        assert_eq!(guarded, r#"(Log (Div (Abs (Sub (Var "x_0") (Num 3.01))) (Var "x_4")))"#);
+    }
+
+    /// strogatz glider2 as the engine found it (seed 7013): x - sin(y + pi/2)/x,
+    /// the pi/2 exactly f64's. It is x - cos(y)/x, and is written so.
+    #[test]
+    fn a_phase_shift_by_a_quarter_turn_is_the_other_function() {
+        use std::f64::consts::{FRAC_PI_2, PI};
+        let found = r#"(Add (Sub (Var "x_0") (Div (Sin (Add (Num 1.5707963267948966) (Var "x_1"))) (Var "x_0"))) (Num -1.2788959224963037e-7))"#;
+        let resolved = resolve_protected(found, &rows()).unwrap();
+        let wanted = r#"(Add (Sub (Var "x_0") (Div (Cos (Var "x_1")) (Var "x_0"))) (Num -1.2788959224963037e-7))"#;
+        assert_eq!(resolved, crate::lint::node::Tree::parse(wanted).unwrap().to_math());
+        let tidy = final_form(&resolved, &names(), &rows()).unwrap();
+        assert!(tidy.contains(r#"(Cos (Var "x_1"))"#) && !tidy.contains("Sin") && !tidy.contains("1.57"), "{tidy}");
+        assert!(drift(found, &tidy, &rows()) <= FINAL_FORM_AGREE, "{tidy}");
+        // Round the circle, the constant on either side or subtracted.
+        let e = r#"(Var "x_1")"#;
+        for (expr, wanted) in [
+            (format!("(Sin (Add {e} (Num {FRAC_PI_2:?})))"), format!("(Cos {e})")),
+            (format!("(Sin (Sub {e} (Num {FRAC_PI_2:?})))"), format!("(Neg (Cos {e}))")),
+            (format!("(Cos (Add (Num {FRAC_PI_2:?}) {e}))"), format!("(Neg (Sin {e}))")),
+            (format!("(Cos (Sub {e} (Num {FRAC_PI_2:?})))"), format!("(Sin {e})")),
+            (format!("(Sin (Add {e} (Num {PI:?})))"), format!("(Neg (Sin {e}))")),
+            (format!("(Cos (Add {e} (Num {PI:?})))"), format!("(Neg (Cos {e}))")),
+            (format!("(Sin (Add {e} (Num {:?})))", 5.0 * FRAC_PI_2), format!("(Cos {e})")),
+            (format!("(Cos (Sub {e} (Num {:?})))", 4.0 * FRAC_PI_2), format!("(Cos {e})")),
+        ] {
+            let resolved = resolve_protected(&expr, &rows()).unwrap();
+            assert_eq!(resolved, wanted, "{expr}");
+            let (a, b) = (evaluate_math(&expr, &rows()).unwrap(), evaluate_math(&resolved, &rows()).unwrap());
+            assert!(a.iter().zip(&b).all(|(p, q)| (p - q).abs() < 1e-12), "{expr}");
+        }
+        // 1e-6 from pi/2 is not pi/2: the form stands.
+        let near = format!("(Sin (Add {e} (Num {:?})))", FRAC_PI_2 + 1e-6);
+        assert_eq!(resolve_protected(&near, &rows()).unwrap(), near);
     }
 
     /// A term that matters stays.
