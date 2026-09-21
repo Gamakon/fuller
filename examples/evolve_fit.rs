@@ -247,6 +247,10 @@ fn main() {
     // First say what the protected operators actually do on this data; then tidy.
     let resolved = resolve_protected(&out.math, &fit_rows).unwrap_or_else(|_| out.math.clone());
     let tidied = final_form(&resolved, &names, &fit_rows).unwrap_or(resolved);
+    // ... and the data guided rewrites once more: fuller's linter can WRITE a shape
+    // they cover (it turns Add (Neg (Log b)) (Log a) into Sub (Log a) (Log b)), and a
+    // form that only appears after the tidy must not slip past them.
+    let tidied = resolve_protected(&tidied, &fit_rows).unwrap_or(tidied);
     let tidy = Tree::parse(&tidied).expect("the final form parses");
     println!("model: {}", tidy.to_infix_faithful());
     println!("GENERATIONS\t{}\t{}\t{:.3e}", out.generations, out.stopped_by, out.best.one_minus_r2[1]);

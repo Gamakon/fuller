@@ -736,6 +736,9 @@ pub fn resolve_protected(math: &str, rows: &[Vec<(String, f64)>]) -> Result<Stri
     fn without_neg(t: &Tree) -> Option<Tree> {
         match t {
             Tree::App(Op::Neg, k) => Some(k[0].clone()),
+            // a negative numeric factor carries the sign as well as a Neg does (the
+            // fitted scale a of a * f(x) + b is where I.44.4's minus sign lived)
+            Tree::Num(c) if *c < 0.0 => Some(Tree::Num(-c)),
             Tree::App(Op::Mul, k) => (0..k.len()).find_map(|i| {
                 let mut kids = k.clone();
                 kids[i] = without_neg(&k[i])?;
@@ -870,13 +873,28 @@ pub fn resolve_protected(math: &str, rows: &[Vec<(String, f64)>]) -> Result<Stri
             // that (feynman I.44.4 was the law, written -(log V1 - log V2), and scored
             // as wrong).
             Op::Sub | Op::Add => {
-                let positive = |k: &Tree| match k {
-                    Tree::App(Op::Log, a) if on_every_row(&a[0], rows, |v| v > 0.0) => Some(a[0].clone()),
+                // A log term and its sign: `Log a` is (a, +), `Neg (Log a)` is (a, -).
+                // The chromosome writes the difference whichever way it grew — feynman
+                // I.44.4 came as Add (Neg (Log V2)) (Log V1), not as a Sub.
+                let term = |k: &Tree| match k {
+                    Tree::App(Op::Log, a) if on_every_row(&a[0], rows, |v| v > 0.0) => Some((a[0].clone(), true)),
+                    Tree::App(Op::Neg, n) => match &n[0] {
+                        Tree::App(Op::Log, a) if on_every_row(&a[0], rows, |v| v > 0.0) => Some((a[0].clone(), false)),
+                        _ => None,
+                    },
                     _ => None,
                 };
-                if let (Some(a), Some(b)) = (positive(&kids[0]), positive(&kids[1])) {
-                    let merged = Tree::App(if *op == Op::Sub { Op::Div } else { Op::Mul }, vec![a, b]);
-                    return go(&Tree::App(Op::Log, vec![merged]), rows);
+                if let (Some((a, plus_a)), Some((b, plus_b))) = (term(&kids[0]), term(&kids[1])) {
+                    // the second term's sign as it enters the sum
+                    let plus_b = if *op == Op::Sub { !plus_b } else { plus_b };
+                    let log = |arg: Tree| Tree::App(Op::Log, vec![arg]);
+                    let merged = match (plus_a, plus_b) {
+                        (true, true) => log(Tree::App(Op::Mul, vec![a, b])),
+                        (true, false) => log(Tree::App(Op::Div, vec![a, b])),
+                        (false, true) => log(Tree::App(Op::Div, vec![b, a])),
+                        (false, false) => Tree::App(Op::Neg, vec![log(Tree::App(Op::Mul, vec![a, b]))]),
+                    };
+                    return go(&merged, rows);
                 }
             }
             // ... and the sign is put INSIDE the log: -log(a/b) is log(b/a), so the
@@ -2164,6 +2182,28 @@ mod tests {
         // 1e-6 from pi/2 is not pi/2: the form stands.
         let near = format!("(Sin (Add {e} (Num {:?})))", FRAC_PI_2 + 1e-6);
         assert_eq!(resolve_protected(&near, &rows()).unwrap(), near);
+    }
+
+    /// feynman I.44.4 EXACTLY as the chromosome wrote it (RAW_MATH of the seed-7013
+    /// one-gene fit): the difference of logs is an Add with a Neg inside, and the
+    /// minus sign of the law lives in the fitted scale. It must come out as ONE log
+    /// of a quotient with no negation in front — the form SRBench's scorer accepts.
+    #[test]
+    fn a_difference_of_logs_is_merged_however_the_chromosome_wrote_it() {
+        let found = r#"(Add (Mul (Num -1.0000000480226603) (Mul (Var "x_1") (Mul (Var "x_0") (Mul (Var "x_2") (Add (Neg (ProtectedLog (Var "x_4"))) (ProtectedLog (Var "x_3"))))))) (Num 1.1673999131267543e-7))"#;
+        let resolved = resolve_protected(found, &rows5()).unwrap();
+        assert_eq!(resolved.matches("(Log ").count(), 1, "{resolved}");
+        assert!(resolved.contains(r#"(Log (Div (Var "x_4") (Var "x_3")))"#), "{resolved}");
+        assert!(!resolved.contains("Neg") && !resolved.contains("(Num -1."), "a negation is still in front: {resolved}");
+        assert!(drift(found, &resolved, &rows5()) <= FINAL_FORM_AGREE, "the predictions moved");
+        // every signed pairing
+        for (expr, wanted) in [
+            (r#"(Add (Log (Var "x_3")) (Neg (Log (Var "x_4"))))"#, r#"(Log (Div (Var "x_3") (Var "x_4")))"#),
+            (r#"(Sub (Neg (Log (Var "x_3"))) (Neg (Log (Var "x_4"))))"#, r#"(Log (Div (Var "x_4") (Var "x_3")))"#),
+            (r#"(Sub (Log (Var "x_3")) (Neg (Log (Var "x_4"))))"#, r#"(Log (Mul (Var "x_3") (Var "x_4")))"#),
+        ] {
+            assert_eq!(resolve_protected(expr, &rows5()).unwrap(), wanted, "{expr}");
+        }
     }
 
     /// A term that matters stays.
