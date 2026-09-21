@@ -274,7 +274,7 @@ fn match_at(
 
 /// K3 + relayout. Append the template's nodes after the existing ones, point
 /// the hit's parent at the new subtree, then renumber breadth-first from the
-/// root. Orphans are simply never reached.
+/// root ([`splice`]). Orphans are simply never reached.
 fn apply(f: &Flat, rule: &PackedRule, pos: u32, bind: &[u32; MAX_METAVARS], codes: &LiteralCodes) -> Flat {
     let mut nodes = f.nodes.clone();
     // Where each template slot lives: a fresh index, or the bound subtree.
@@ -304,17 +304,25 @@ fn apply(f: &Flat, rule: &PackedRule, pos: u32, bind: &[u32; MAX_METAVARS], code
                 LNode { op: Op::Num as u32, arg0: 0, arg1: 0, lit: codes.pool[s.id as usize] };
         }
     }
+    Flat { nodes: splice(nodes, f.nodes.len(), pos, home[0]), vars: f.vars.clone() }
+}
+
+/// The relayout every splice shares (a rule's template here, a constant's form
+/// in `snap_graft.rs`). `nodes` is the expression's `live` nodes followed by
+/// the appended subtree rooted at `new_root`: point whatever pointed at `pos`
+/// at it, then renumber breadth-first from the root.
+pub(super) fn splice(mut nodes: Vec<LNode>, live: usize, pos: u32, new_root: u32) -> Vec<LNode> {
     let mut root = 0u32;
     if pos == 0 {
-        root = home[0];
+        root = new_root;
     } else {
-        for n in nodes.iter_mut().take(f.nodes.len()) {
+        for n in nodes.iter_mut().take(live) {
             let a = arity(n.op);
             if a >= 1 && n.arg0 == pos {
-                n.arg0 = home[0];
+                n.arg0 = new_root;
             }
             if a >= 2 && n.arg1 == pos {
-                n.arg1 = home[0];
+                n.arg1 = new_root;
             }
         }
     }
@@ -322,7 +330,7 @@ fn apply(f: &Flat, rule: &PackedRule, pos: u32, bind: &[u32; MAX_METAVARS], code
     // Breadth-first renumbering. `queue[i]` is the old index of the node that
     // lands at new index `i`.
     let mut queue: Vec<u32> = vec![root];
-    let mut out: Vec<LNode> = Vec::with_capacity(f.nodes.len());
+    let mut out: Vec<LNode> = Vec::with_capacity(nodes.len());
     let mut next = 0usize;
     while next < queue.len() {
         let old = nodes[queue[next] as usize];
@@ -342,7 +350,7 @@ fn apply(f: &Flat, rule: &PackedRule, pos: u32, bind: &[u32; MAX_METAVARS], code
             lit: old.lit,
         });
     }
-    Flat { nodes: out, vars: f.vars.clone() }
+    out
 }
 
 pub struct GreedyOutcome {
@@ -406,6 +414,24 @@ pub fn run_greedy(
     GreedyOutcome { form, steps, level }
 }
 
+/// Level order as Karva reads it: walking the array front to back, each
+/// function's children are the next unclaimed slots.
+#[cfg(test)]
+pub(super) fn is_canonical(f: &Flat) -> bool {
+    let mut next_free = 1u32;
+    for n in &f.nodes {
+        let a = arity(n.op) as u32;
+        if a >= 1 && n.arg0 != next_free {
+            return false;
+        }
+        if a >= 2 && n.arg1 != next_free + 1 {
+            return false;
+        }
+        next_free += a;
+    }
+    next_free as usize == f.nodes.len()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -415,23 +441,6 @@ mod tests {
 
     fn tree(s: &str) -> Tree {
         Tree::parse(s).unwrap()
-    }
-
-    /// Level order as Karva reads it: walking the array front to back, each
-    /// function's children are the next unclaimed slots.
-    fn is_canonical(f: &Flat) -> bool {
-        let mut next_free = 1u32;
-        for n in &f.nodes {
-            let a = arity(n.op) as u32;
-            if a >= 1 && n.arg0 != next_free {
-                return false;
-            }
-            if a >= 2 && n.arg1 != next_free + 1 {
-                return false;
-            }
-            next_free += a;
-        }
-        next_free as usize == f.nodes.len()
     }
 
     #[test]

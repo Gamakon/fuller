@@ -21,7 +21,9 @@ pub const SLOT: usize = crate::gpu_eval::MAX_NODES;
 /// 113,444 live expressions was 11.
 pub const DEFAULT_ROUNDS: u32 = 16;
 
-pub const LINT_WGSL: &str = include_str!("kernel.wgsl");
+/// `splice.wgsl` is the node, the work area and the relayout, shared with
+/// `snap_graft.wgsl`.
+pub const LINT_WGSL: &str = concat!(include_str!("splice.wgsl"), include_str!("kernel.wgsl"));
 
 /// Everything the kernel reads that does not change between dispatches.
 #[derive(Debug, Clone)]
