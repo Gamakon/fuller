@@ -325,11 +325,13 @@ pub fn t_depth(nodes: &[GpuNode]) -> u32 {
     depth.into_iter().max().unwrap_or(0)
 }
 
-/// The tower objective on [0, 1]: SMOOTH, a sixth per level from 0 — depth 0 is 0,
-/// 1 is 1/6, 2 is 2/6 ... 6 and deeper is 1. No step and no free zone: at equal
-/// error the shallower individual always wins the tournament.
+/// The tower objective on [0, 1]: a FREE ZONE up to a depth of 2, then a quarter
+/// per level, 1 from a depth of 6. The free zone is room to explore: a law may
+/// need its sqrt or its log (every SRBench true law is at most 2 deep), and
+/// charged from depth 0 the search settles for a flat polynomial instead — it
+/// rebuilt m c^2 + m v^2 / 2 for m c^2 / sqrt(1 - v^2/c^2) and never tried a root.
 pub fn tower_penalty(t_depth: u32) -> f64 {
-    (f64::from(t_depth) / 6.0).min(1.0)
+    (f64::from(t_depth.saturating_sub(2)) / 4.0).min(1.0)
 }
 
 /// Which of the nine objectives `[mse x3, 1-R2 x3, mae x3]` (blocks train,
@@ -1018,12 +1020,8 @@ mod tests {
     }
 
     #[test]
-    fn the_tower_penalty_is_smooth_a_sixth_per_level() {
-        let got = [0, 1, 2, 3, 4, 5, 6, 9].map(tower_penalty);
-        let want = [0.0, 1.0 / 6.0, 2.0 / 6.0, 0.5, 4.0 / 6.0, 5.0 / 6.0, 1.0, 1.0];
-        assert!(got.iter().zip(want).all(|(g, w)| (g - w).abs() < 1e-15), "{got:?}");
-        // Every level costs the same: no step.
-        assert!((1..=6).all(|t| (tower_penalty(t) - tower_penalty(t - 1) - 1.0 / 6.0).abs() < 1e-15));
+    fn the_tower_penalty_leaves_a_free_zone_up_to_depth_two() {
+        assert_eq!([0, 1, 2, 3, 4, 5, 6, 9].map(tower_penalty), [0.0, 0.0, 0.0, 0.25, 0.5, 0.75, 1.0, 1.0]);
     }
 
     #[test]
