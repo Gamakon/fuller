@@ -172,6 +172,22 @@ fn main() {
     if let Some(g) = env("EVOLVE_MAX_GENERATIONS").and_then(|v| v.parse().ok()) {
         config.max_generations = g;
     }
+    //   EVOLVE_PAIRS                    pairs of islands (intake + champion); the island
+    //                                   sizes are ONE pair's, so the population is this
+    //                                   many times as large (default 1)
+    //   EVOLVE_CROSS_EVERY              THE CROSS STEP's beat: every this many generations
+    //                                   each intake island takes in the best of the other
+    //                                   pairs' champion islands (default 0 = never)
+    //   EVOLVE_K_MIGRANTS               how many each champion island sends (default 3)
+    if let Some(n) = env("EVOLVE_PAIRS").and_then(|v| v.parse().ok()) {
+        config.n_pairs = n;
+    }
+    if let Some(n) = env("EVOLVE_CROSS_EVERY").and_then(|v| v.parse().ok()) {
+        config.cross_every = n;
+    }
+    if let Some(n) = env("EVOLVE_K_MIGRANTS").and_then(|v| v.parse().ok()) {
+        config.k_migrants = n;
+    }
     let restarts: u32 = env("EVOLVE_RESTARTS").and_then(|v| v.parse().ok()).unwrap_or(1).max(1);
     config.cleanse = args.get(6).and_then(|a| a.parse().ok()).unwrap_or(0.0);
     // RESTARTS: the same seconds as one search, spent as several independent
@@ -204,13 +220,13 @@ fn main() {
     let t = &out.timing;
     println!("dataset {path}\nrows: train {n_train}, validation {}, unseen test {}", splits.n_val, test_rows.len());
     println!(
-        "population {}+{} | {} generations in {:.1} s = {:.1} ms per generation | {} individuals = {:.0} per second | stopped by {}",
-        engine.islands[0].hi, engine.islands[1].hi - engine.islands[1].lo, out.generations, out.seconds,
+        "population {} x ({}+{}) = {} | {} generations in {:.1} s = {:.1} ms per generation | {} individuals = {:.0} per second | stopped by {}",
+        engine.pairs().len(), engine.islands[0].hi, engine.islands[1].hi - engine.islands[1].lo, engine.layout.pop, out.generations, out.seconds,
         1e3 * out.seconds / f64::from(out.generations.max(1)), out.individuals, out.individuals as f64 / out.seconds, out.stopped_by
     );
     println!(
-        "seconds: variation {:.2} | read-back {:.2} | decode {:.2} | evaluate {:.2} | link+scale+metrics {:.2} | HFF {:.2} | pump {:.2}",
-        t.vary, t.read, t.decode, t.evaluate, t.score, t.hff, t.pump
+        "seconds: variation {:.2} | read-back {:.2} | decode {:.2} | evaluate {:.2} | link+scale+metrics {:.2} | HFF {:.2} | pump {:.2} | cross {:.2}",
+        t.vary, t.read, t.decode, t.evaluate, t.score, t.hff, t.pump, t.cross
     );
     println!("genes evaluated {} (unique per generation), over the 64-node limit {}", out.unique_genes, out.oversized_genes);
     println!("1 - R²: train {:.3e}, validation {:.3e}", out.best.one_minus_r2[0], out.best.one_minus_r2[1]);
