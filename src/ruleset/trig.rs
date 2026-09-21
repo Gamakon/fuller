@@ -85,6 +85,18 @@ pub const TRIG_RULESET: &str = r#"
 (rewrite (Mul (Tan x) (Cos x)) (Sin x) :ruleset trig)
 
 ; =====================================================================
+; Inverse trig, the composition that IS the identity: sin(asin x) = x and
+; cos(acos x) = x on [-1, 1], which is exactly where Asin / Acos are
+; defined (outside it the left side is NaN, as with cos*tan at a pole).
+; Strictly shrinking. The reverse compositions are NOT written:
+; asin(sin x) = x only on the principal branch [-pi/2, pi/2], and
+; acos(cos x) = x only on [0, pi]. Nor are the protected forms:
+; sin(ProtectedAsin x) is clamp(x, -1, 1), not x.
+; =====================================================================
+(rewrite (Sin (Asin x)) x :ruleset trig)
+(rewrite (Cos (Acos x)) x :ruleset trig)
+
+; =====================================================================
 ; Product-to-sum / double-angle:  cos x * sin x = (1/2) sin(2x).
 ; sympy's fu TR8 writes sin*cos as half-angle-doubled sin. Sound for all
 ; reals. Canonical direction: contract product -> single sin(2x).
@@ -267,6 +279,41 @@ mod tests {
             r#"(Sin (Var "x"))"#,
             &[("x", 0.7)],
         );
+    }
+
+    #[test]
+    fn sin_of_asin_and_cos_of_acos_are_the_argument() {
+        for (input, target) in [
+            (r#"(Sin (Asin (Var "x")))"#, r#"(Var "x")"#),
+            (r#"(Cos (Acos (Var "x")))"#, r#"(Var "x")"#),
+            // under another operator, and over a compound argument
+            (
+                r#"(Mul (Var "n") (Sin (Asin (Div (Var "x") (Var "n")))))"#,
+                r#"(Mul (Var "n") (Div (Var "x") (Var "n")))"#,
+            ),
+        ] {
+            assert!(proves_equal(input, target), "{input} was not rewritten to {target}");
+            // the whole domain, its two ends included, and a point outside it
+            // (where the left side is NaN and nothing is claimed)
+            for x in [-1.0, -0.73, 0.0, 0.5, 1.0, 1.7] {
+                assert_sound(input, target, &[("x", x), ("n", 1.3)]);
+            }
+        }
+    }
+
+    /// The compositions the other way round hold only on the principal branch,
+    /// and the protected forms clamp: none of them is the argument.
+    #[test]
+    fn asin_of_sin_is_not_the_argument() {
+        for input in [
+            r#"(Asin (Sin (Var "x")))"#,
+            r#"(Acos (Cos (Var "x")))"#,
+            r#"(Sin (ProtectedAsin (Var "x")))"#,
+            r#"(Cos (ProtectedAcos (Var "x")))"#,
+            r#"(Sin (Acos (Var "x")))"#,
+        ] {
+            assert!(!proves_equal(input, r#"(Var "x")"#), "{input} must not become x");
+        }
     }
 
     #[test]
