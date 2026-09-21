@@ -690,6 +690,102 @@ mod device {
             self.n_rows
         }
 
+        /// The device and queue, for a kernel that consumes this evaluator's
+        /// predictions where they are (`evolve::score`).
+        pub fn device(&self) -> &wgpu::Device {
+            &self.device
+        }
+
+        pub fn queue(&self) -> &wgpu::Queue {
+            &self.queue
+        }
+
+        /// Evaluate `batch` and LEAVE the predictions on the device: a buffer of
+        /// `batch.len() * n_rows` f32, expression-major, usable as a storage
+        /// binding and as a copy source. The caller destroys it. `eval` is this
+        /// plus a read-back; an oversized expression is NaN in both.
+        pub fn eval_resident(&self, batch: &ExprBatch) -> Result<wgpu::Buffer, String> {
+            if batch.is_empty() {
+                return Err("eval_resident: an empty batch has no predictions".to_string());
+            }
+            let n_expr = batch.len() as u32;
+            let total = (n_expr as u64) * (self.n_rows as u64);
+            if total > u32::MAX as u64 {
+                return Err(format!(
+                    "batch of {n_expr} expressions x {} rows = {total} \
+                     invocations overflows the kernel's u32 index",
+                    self.n_rows
+                ));
+            }
+            let usage = wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC;
+            if batch.nodes.is_empty() {
+                // Every expression failed to convert: the same all-NaN answer
+                // `eval` gives, without a zero-sized binding.
+                let nan = vec![f32::NAN; total as usize];
+                return Ok(self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("out"),
+                    contents: bytemuck::cast_slice(&nan),
+                    usage,
+                }));
+            }
+            let node_bytes: Vec<u32> = batch
+                .nodes
+                .iter()
+                .flat_map(|n| [n.op, n.arg0, n.arg1, n.konst.to_bits()])
+                .collect();
+            let nodes_buf = self.storage(&node_bytes, "nodes");
+            let offs_buf = self.storage(&batch.offsets, "offsets");
+            let lens_buf = self.storage(&batch.lengths, "lengths");
+            let out_buf = self.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("out"),
+                size: total * 4,
+                usage,
+                mapped_at_creation: false,
+            });
+            let groups = total.div_ceil(64) as u32;
+            let groups_x = groups.min(MAX_GROUPS_PER_DIM);
+            let groups_y = groups.div_ceil(groups_x);
+            let meta = [n_expr, self.n_rows, self.n_vars, groups_x * 64];
+            let meta_buf = self
+                .device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("meta"),
+                    contents: bytemuck::cast_slice(&meta),
+                    usage: wgpu::BufferUsages::UNIFORM,
+                });
+            let bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: None,
+                layout: &self.layout,
+                entries: &[
+                    wgpu::BindGroupEntry { binding: 0, resource: nodes_buf.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 1, resource: offs_buf.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 2, resource: lens_buf.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 3, resource: self.data_buf.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 4, resource: out_buf.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 5, resource: meta_buf.as_entire_binding() },
+                ],
+            });
+            let mut enc = self
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+            {
+                let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: None,
+                    timestamp_writes: None,
+                });
+                pass.set_pipeline(&self.pipeline);
+                pass.set_bind_group(0, &bind, &[]);
+                pass.dispatch_workgroups(groups_x, groups_y, 1);
+            }
+            self.queue.submit(Some(enc.finish()));
+            // Released once the submitted work that uses them has finished.
+            nodes_buf.destroy();
+            offs_buf.destroy();
+            lens_buf.destroy();
+            meta_buf.destroy();
+            Ok(out_buf)
+        }
+
         /// Evaluate every expression in `batch` over every resident row.
         ///
         /// Returns `n_expr * n_rows` values, expression-major. Oversized

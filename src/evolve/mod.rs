@@ -11,6 +11,8 @@
 pub mod device;
 #[cfg(feature = "gpu")]
 pub mod engine;
+#[cfg(feature = "gpu")]
+pub mod score;
 pub mod vary;
 
 /// mix64.wgsl (the generator, copied verbatim from the qdrant workspace) in

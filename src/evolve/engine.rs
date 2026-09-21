@@ -17,6 +17,7 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 use super::device::EvolveDevice;
+use super::score::{GpuScorer, CANDIDATES, WIDTH};
 use super::vary::{GenParams, Generation, Island, Rates};
 use super::{InitParams, Layout, SymbolCodes};
 use crate::chrom_score::{score_chromosomes, Linker, ScoreSpec, Splits, Wrapper, METRIC_WIDTH, SCORE_WIDTH};
@@ -305,6 +306,7 @@ pub struct Engine {
     pub islands: Vec<Island>,
     dev: EvolveDevice,
     evaluator: GpuEvaluator,
+    scorer: GpuScorer,
     data: Data,
     caps: Caps,
     col_max: Option<[f64; 9]>,
@@ -327,8 +329,9 @@ impl Engine {
         }
         let dev = EvolveDevice::new(layout, &table.codes())?;
         let evaluator = GpuEvaluator::new(&data.x, data.names.len())?;
+        let scorer = GpuScorer::new(&evaluator, &data.y, data.splits)?;
         let caps = Caps::of(&data.y, data.splits);
-        Ok(Engine { scored: vec![None; pop as usize], config, table, layout, islands, dev, evaluator, data, caps, col_max: None })
+        Ok(Engine { scored: vec![None; pop as usize], config, table, layout, islands, dev, evaluator, scorer, data, caps, col_max: None })
     }
 
     /// Score every unevaluated row of `gen`; returns (unique genes, oversized).
@@ -371,24 +374,25 @@ impl Engine {
         }
         timing.decode += t.elapsed().as_secs_f64();
 
+        // Evaluate and score in one trip: the predictions stay on the device and
+        // only the candidates' metrics come back (f32 — they RANK; see `confirm`).
         let t = Instant::now();
-        let preds = self.evaluator.eval(&batch)?;
+        let scores: Vec<f64> = if rows.is_empty() {
+            Vec::new()
+        } else {
+            self.scorer.eval_and_score(&self.evaluator, &batch, &gene_ok, &chromosomes)?.into_iter().map(f64::from).collect()
+        };
         timing.evaluate += t.elapsed().as_secs_f64();
 
         let t = Instant::now();
-        let spec = ScoreSpec { linkers: LINKERS.to_vec(), wrappers: WRAPPERS.to_vec(), splits: self.data.splits, linear_scaling: true };
-        let scores = score_chromosomes(&preds, &gene_ok, &chromosomes, &self.data.y, &spec)?;
-        timing.score += t.elapsed().as_secs_f64();
-
-        let t = Instant::now();
-        let per = LINKERS.len() * WRAPPERS.len();
+        let per = CANDIDATES;
         let n_ex = self.data.splits.n_extrap;
         if self.col_max.is_none() {
             // Frozen at the first evaluation, as the engine freezes them at
             // generation 0: the largest capped value of each objective.
             let mut max = [0.0f64; 9];
-            for c in scores.chunks(SCORE_WIDTH).filter(|c| c[0].is_finite()) {
-                let (o, _) = self.caps.objectives(&c[..METRIC_WIDTH], n_ex);
+            for c in scores.chunks(WIDTH).filter(|c| c[0].is_finite()) {
+                let (o, _) = self.caps.objectives(c, n_ex);
                 for k in 0..9 {
                     max[k] = max[k].max(o[k]);
                 }
@@ -399,11 +403,11 @@ impl Engine {
         for (i, &r) in rows.iter().enumerate() {
             let mut best: Option<Scored> = None;
             for c in 0..per {
-                let s = &scores[(i * per + c) * SCORE_WIDTH..(i * per + c + 1) * SCORE_WIDTH];
+                let s = &scores[(i * per + c) * WIDTH..(i * per + c + 1) * WIDTH];
                 if !s[0].is_finite() {
                     continue;
                 }
-                let (o, omr2) = self.caps.objectives(&s[..METRIC_WIDTH], n_ex);
+                let (o, omr2) = self.caps.objectives(s, n_ex);
                 let used: &[f64] = if n_ex == 0 { &[o[0], o[1], o[3], o[4], o[6], o[7]] } else { &o };
                 let maxes: Vec<f64> = if n_ex == 0 {
                     vec![col_max[0], col_max[1], col_max[3], col_max[4], col_max[6], col_max[7]]
@@ -482,6 +486,52 @@ impl Engine {
                 self.scored[r] = None;
             }
         }
+    }
+
+    /// The row's best candidate re-scored in f64 by `chrom_score`, the
+    /// definition: what may stop a fit or be reported. The device's f32 metrics
+    /// only rank.
+    fn confirm(&self, gen: &Generation, row: usize) -> Result<Option<Scored>, String> {
+        let l = self.layout;
+        let (width, nr, g_n) = (l.gene_width() as usize, l.n_rnc as usize, l.n_genes as usize);
+        let mut batch = ExprBatch::new();
+        let mut gene_ok = Vec::with_capacity(g_n);
+        for g in 0..g_n {
+            let tokens = &gen.pop.genome[(row * g_n + g) * width..(row * g_n + g + 1) * width];
+            let consts = &gen.pop.rnc[(row * g_n + g) * nr..(row * g_n + g + 1) * nr];
+            match decode_gene(tokens, consts, l, &self.table).filter(|n| n.len() <= MAX_NODES) {
+                Some(nodes) => {
+                    batch.push(&nodes);
+                    gene_ok.push(true);
+                }
+                None => {
+                    batch.push(&[GpuNode { op: Op::Num as u32, arg0: 0, arg1: 0, konst: 0.0 }]);
+                    gene_ok.push(false);
+                }
+            }
+        }
+        let preds = self.evaluator.eval(&batch)?;
+        let spec = ScoreSpec { linkers: LINKERS.to_vec(), wrappers: WRAPPERS.to_vec(), splits: self.data.splits, linear_scaling: true };
+        let scores = score_chromosomes(&preds, &gene_ok, &[(0..g_n).collect()], &self.data.y, &spec)?;
+        let n_ex = self.data.splits.n_extrap;
+        let col_max = self.col_max.unwrap_or([1.0; 9]);
+        let mut best: Option<Scored> = None;
+        for c in 0..CANDIDATES {
+            let s = &scores[c * SCORE_WIDTH..c * SCORE_WIDTH + METRIC_WIDTH];
+            if !s[0].is_finite() {
+                continue;
+            }
+            let (o, omr2) = self.caps.objectives(s, n_ex);
+            let fitness = if n_ex == 0 {
+                hff_truenorth(&[o[0], o[1], o[3], o[4], o[6], o[7]], &[col_max[0], col_max[1], col_max[3], col_max[4], col_max[6], col_max[7]])
+            } else {
+                hff_truenorth(&o, &col_max)
+            };
+            if best.is_none_or(|b| fitness < b.fitness) {
+                best = Some(Scored { fitness, linker: c / WRAPPERS.len(), wrapper: c % WRAPPERS.len(), a: s[0], b: s[1], one_minus_r2: omr2 });
+            }
+        }
+        Ok(best)
     }
 
     fn best(&self, gen: &Generation) -> Option<(usize, Scored)> {
@@ -571,15 +621,22 @@ impl Engine {
             }
             timing.pump += t.elapsed().as_secs_f64();
             self.dev.write_fitness(&gen.fitness)?;
-            if let Some((_, s)) = self.best(&gen) {
-                let edge_ok = self.data.splits.n_extrap == 0 || s.one_minus_r2[2] <= c.stop_one_minus_r2;
-                if s.one_minus_r2[1] <= c.stop_one_minus_r2 && edge_ok {
-                    stopped_by = "early_stop";
-                    break;
+            // The device's f32 metrics cannot resolve 1e-10; they can say "this
+            // one is worth confirming". The f64 re-score decides.
+            if let Some((row, ranked)) = self.best(&gen) {
+                if ranked.one_minus_r2[1] <= 1e-5 {
+                    if let Some(s) = self.confirm(&gen, row)? {
+                        let edge_ok = self.data.splits.n_extrap == 0 || s.one_minus_r2[2] <= c.stop_one_minus_r2;
+                        if s.one_minus_r2[1] <= c.stop_one_minus_r2 && edge_ok {
+                            stopped_by = "early_stop";
+                            break;
+                        }
+                    }
                 }
             }
         }
-        let (row, best) = self.best(&gen).ok_or("no individual could be scored")?;
+        let (row, ranked) = self.best(&gen).ok_or("no individual could be scored")?;
+        let best = self.confirm(&gen, row)?.unwrap_or(ranked);
         Ok(FitResult {
             generations: generation,
             seconds: started.elapsed().as_secs_f64(),
