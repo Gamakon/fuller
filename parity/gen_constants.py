@@ -18,12 +18,36 @@ per key (that simplest-form choice is what makes snap output physics-shaped).
 Constants are represented as `(Var "<name>")` in the Math s-expr so they compose
 with the algebra rules in the e-graph and evaluate via the evaluator's env
 (which binds the constant names to these values).
+
+PI-MONOMIALS (2026-09-21). The rule, problem-agnostic, over sets this file
+already uses — no value is listed by hand:
+
+    q * pi^k        q = a/b,  a in SMALL = {1,2,3,4},  b in INTS = {1..12},
+                    gcd(a, b) = 1,  k in PI_POWERS = {-3, -2, -1, 1, 2, 3}
+    sqrt(q * pi^s)  the same q,  s in {-1, 1}          (k = -1/2, 1/2)
+
+spelt with Div/Mul only, pi^2 as pi*pi and pi^3 as (Pow pi 3) like the rest of
+the file, `ops` = the template's true node count. A (q, k) the older families
+already emit (n*pi, pi/n, n/pi, 1/(n*pi), n*pi^2, pi^2/n, sqrt(n*pi), ...) comes
+out with the identical label and math and is emitted once. k = 0 is NOT here:
+plain rationals are `snap_karva::small_integer_entries`, kept small on purpose.
+
+PURE FORMS ARE NOT HIDDEN BY DIMENSIONAL ONES. h = 2*pi*hbar, so hbar/h IS
+1/(2*pi), and at 3 ops it used to take the key from the 5-op `1/(2*pi)`: the
+only spelling of 1/(2*pi) in the table planted `hbar` and `h` in a gene. The
+dedup is now two steps. (1) The older families (`lattice()`) keep the simplest
+form per sig-fig key among themselves, exactly as before: every entry the table
+ever had is still there under its label, never displaced by a later family.
+(2) Per key, the simplest PURE form (PURE names only) of all families, the
+pi-monomials included, is ADDED when the key is free or its holder names a
+dimensional constant. A key held by a pure form keeps that form alone.
 """
 from __future__ import annotations
 
 import json
 import math
 import os
+import re
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(HERE, "constants_lattice.json")
@@ -53,6 +77,54 @@ BASE = [
 
 INTS = list(range(1, 13))   # 1..12
 POWS = [2, 3, 4, 5, 6, 7, 8, 9]
+SMALL = [1, 2, 3, 4]        # the integer grid of the rational-multiple families
+# The names that carry no dimension; every other base constant is dimensional.
+PURE = ("pi", "e", "sqrt2", "sqrt3", "phi", "gamma")
+PI_POWERS = [-3, -2, -1, 1, 2, 3]
+_VAR = re.compile(r'\(Var "([^"]+)"\)')
+
+
+def is_dimensional(math_expr):
+    """True iff the form names a constant outside PURE."""
+    return any(name not in PURE for name in _VAR.findall(math_expr))
+
+
+def node_count(math_expr):
+    """Nodes of a Math s-expr: one per operator application, Var and Num."""
+    return math_expr.count("(")
+
+
+def pi_monomials():
+    """q * pi^k and sqrt(q * pi^s) — the rule in the module docstring.
+    Yields (value, math, label): ascending k, then a, then b; then the roots."""
+    pv = '(Var "pi")'
+    power = {1: (pv, "pi"), 2: (f"(Mul {pv} {pv})", "pi^2"), 3: (f"(Pow {pv} (Num 3.0))", "pi^3")}
+
+    def monomial(a, b, k):
+        expr, name = power[abs(k)]
+        value = math.pi ** abs(k)
+        if k > 0:
+            top, top_label = (expr, name) if a == 1 else (f"(Mul (Num {float(a)}) {expr})", f"{a}*{name}")
+            if b == 1:
+                return a * value, top, top_label
+            return a * value / b, f"(Div {top} (Num {float(b)}))", f"{top_label}/{b}"
+        if b == 1:
+            return a / value, f"(Div (Num {float(a)}) {expr})", f"{a}/{name}"
+        return a / (b * value), f"(Div (Num {float(a)}) (Mul (Num {float(b)}) {expr}))", f"{a}/({b}*{name})"
+
+    for k in PI_POWERS:
+        for a in SMALL:
+            for b in INTS:
+                if math.gcd(a, b) != 1 or (a == 1 and b == 1 and k > 0):
+                    continue  # bare pi^k is the base / POWS family's
+                yield monomial(a, b, k)
+    for s in (-1, 1):
+        for a in SMALL:
+            for b in INTS:
+                if math.gcd(a, b) != 1 or (a == 1 and b == 1 and s > 0):
+                    continue  # sqrt(pi) is the sqrt family's
+                value, expr, label = monomial(a, b, s)
+                yield math.sqrt(value), f"(Sqrt {expr})", f"sqrt({label})"
 
 
 def emit(value, math_expr, label, ops):
@@ -166,8 +238,7 @@ def lattice():
                             f"pi^2/({n}*{name})", 6))
 
     # rational-multiple ratios (n*c1)/(m*c2): the earlier family only had bare
-    # c1/c2. Keep the integer grid small (1..4) to bound the blow-up.
-    SMALL = [1, 2, 3, 4]
+    # c1/c2. Keep the integer grid small (SMALL, 1..4) to bound the blow-up.
     for i, (n1, v1) in enumerate(BASE):
         for n2, v2 in BASE:
             if n1 == n2 or v2 == 0:
@@ -196,6 +267,22 @@ def lattice():
                     out.append(emit(v1 / (v2 * v3),
                                     f'(Div {cv1} (Mul {cv2} {cv3}))',
                                     f"{n1}/({n2}*{n3})", 5))
+
+    return out
+
+
+def later_families(older):
+    """The families added after the table was first frozen: the pi-monomials
+    q*pi^k and sqrt(q*pi^s). A form an older family already emitted has the
+    same label AND the same math: it is not emitted twice."""
+    emitted = {r["label"]: r["math"] for r in older}
+    out = []
+    for value, expr, label in pi_monomials():
+        if label in emitted:
+            assert emitted[label] == expr, f"{label}: {emitted[label]} respelt as {expr}"
+            continue
+        emitted[label] = expr
+        out.append(emit(value, expr, label, node_count(expr)))
     return out
 
 
@@ -211,20 +298,33 @@ def sig_key(v, sig=4):
 
 
 def main():
-    rows = lattice()
-    # dedup by sig key, keep the simplest (fewest ops, then shortest label)
-    best = {}
-    for r in rows:
-        if not math.isfinite(r["value"]):
-            continue
-        k = sig_key(r["value"])
-        cur = best.get(k)
-        if cur is None or (r["ops"], len(r["label"])) < (cur["ops"], len(cur["label"])):
-            best[k] = r
-    table = sorted(best.values(), key=lambda r: r["value"])
+    def simplest(rows):
+        """Per sig key, the simplest row (fewest ops, then shortest label)."""
+        best = {}
+        for r in rows:
+            if not math.isfinite(r["value"]):
+                continue
+            k = sig_key(r["value"])
+            cur = best.get(k)
+            if cur is None or (r["ops"], len(r["label"])) < (cur["ops"], len(cur["label"])):
+                best[k] = r
+        return best
+
+    older = lattice()
+    rows = older + later_families(older)
+    # The older families dedup among themselves exactly as they always have, so
+    # no entry the table ever had is displaced or renamed by a later family.
+    best = simplest(older)
+    # Then, per key, the simplest PURE form of all families is added when the
+    # key is free, or when its holder names a dimensional constant.
+    best_pure = simplest(r for r in rows if not is_dimensional(r["math"]))
+    added = [r for k, r in best_pure.items() if k not in best or is_dimensional(best[k]["math"])]
+    table = sorted(list(best.values()) + added, key=lambda r: (r["value"], r["label"], r["math"]))
+    assert len({r["label"] for r in table}) == len(table), "a label twice"
     with open(OUT, "w") as f:
         json.dump(table, f)
-    print(f"generated {len(rows)} combinations -> {len(table)} distinct (4 sig-fig) -> {OUT}")
+    print(f"generated {len(rows)} combinations -> {len(best)} distinct (4 sig-fig) of the older families "
+          f"+ {len(added)} pure forms (key free, or held by a dimensional form) = {len(table)} -> {OUT}")
     # show a few physics-relevant ones
     for label in ("1/pi", "pi/2", "1/G", "G/(4*pi*eps0)"):
         hit = [r for r in table if r["label"] == label]

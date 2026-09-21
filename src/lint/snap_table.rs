@@ -18,7 +18,7 @@
 //! WHICH ENTRY. A literal `c` is within tolerance of a constant `t` iff
 //! `|c - t| / |t| <= rel_tol` (against `t == 0`, iff `|c| <= rel_tol`) —
 //! `snap.rs::best_match`'s band. The band around a literal can hold several
-//! forms (up to 5 at 1e-3, 9 at 5e-3), and the nearest is often an
+//! forms (up to 6 at 1e-3, 9 at 5e-3), and the nearest is often an
 //! obscure coincidence: 3.14 is nearer `(2*e)/(3*gamma)` than `pi`. The choice
 //! among them is multi-objective — nearness, shortness, fit to the literal's
 //! context — and this project's mechanism for that is HFF with the TrueNorth
@@ -73,7 +73,7 @@ pub const FLAG_NEGATED: u32 = 1;
 
 /// Entries scanned each side of the insertion point. Measured on the standard
 /// table (`the_band_never_reaches_past_its_bound`): the widest band any literal
-/// can have is 5 entries at 1e-3 and 9 at 5e-3, both sides together.
+/// can have is 6 entries at 1e-3 and 9 at 5e-3, both sides together.
 pub const BAND: usize = 16;
 /// Second word of a device hit whose band reached past `BAND`: no entry.
 pub const BAND_OVERFLOW: u32 = 2;
@@ -412,8 +412,9 @@ impl SnapTable {
     }
 
     /// Order: ascending |value|, ties by label, then by math. Of entries that
-    /// share an f32 value the one with the fewest template nodes is kept; on a
-    /// tie a positive entry before a negative one, then by label, then math.
+    /// share an f32 value a plain form is kept before one written through
+    /// h / hbar = 2 pi, then the one with the fewest template nodes; on a tie
+    /// a positive entry before a negative one, then by label, then math.
     pub fn build(entries: &[ConstEntry]) -> Result<SnapTable, String> {
         let mut dropped = Dropped::default();
         let mut cands: Vec<Candidate> = Vec::new();
@@ -456,9 +457,12 @@ impl SnapTable {
             }
             // A negative entry and its positive twin meet here too.
             let exact = last.magnitude == c.magnitude;
-            // Fewest nodes; then a positive entry before a negative one; then
-            // the sort order (label, math), which `last` already leads.
-            let loser = if (c.nodes, c.entry.value < 0.0) < (last.nodes, last.entry.value < 0.0) {
+            // A plain form before one written through h / hbar (the same
+            // number, with two physical names in it); then fewest nodes; then
+            // a positive entry before a negative one; then the sort order
+            // (label, math), which `last` already leads.
+            let rank = |x: &Candidate| (family_of(&x.tree).1, x.nodes, x.entry.value < 0.0);
+            let loser = if rank(&c) < rank(last) {
                 std::mem::replace(last, c)
             } else {
                 c
@@ -998,10 +1002,10 @@ mod tests {
     ];
 
     /// Snapshots of the standard table's families.
-    const CENSUS: [usize; FAMILIES] = [472, 214, 273, 25, 5200, 219];
-    const THROUGH_H_OVER_HBAR: usize = 10;
+    const CENSUS: [usize; FAMILIES] = [634, 214, 276, 25, 5200, 219];
+    const THROUGH_H_OVER_HBAR: usize = 1;
     /// The widest band at 1e-3 and at 5e-3.
-    const WIDEST: (usize, usize) = (5, 9);
+    const WIDEST: (usize, usize) = (6, 9);
 
     fn printed(text: &str) -> f64 {
         text.parse().expect("a number")
@@ -1101,7 +1105,7 @@ mod tests {
             t.search_steps()
         );
         // A snapshot: a change to the lattice has to show up here.
-        assert_eq!(t.entries_in, 7051);
+        assert_eq!(t.entries_in, 7225);
         assert_eq!(t.dropped.non_finite, 0);
         assert_eq!(t.dropped.oversize, Vec::<(String, usize)>::new());
         assert_eq!(t.dropped.out_of_f32_range.len(), 605);
@@ -1109,9 +1113,9 @@ mod tests {
         // each folded onto its positive twin.
         assert_eq!(t.dropped.exact_duplicates.len(), 37);
         assert!(t.dropped.exact_duplicates.iter().all(|l| l.starts_with('-')), "{:?}", t.dropped.exact_duplicates);
-        assert_eq!(t.dropped.f32_collisions.len(), 6);
-        assert_eq!(t.len(), 6403);
-        assert_eq!(t.sizes[..8], [0, 29, 17, 990, 695, 1177, 511, 2984]);
+        assert_eq!(t.dropped.f32_collisions.len(), 15);
+        assert_eq!(t.len(), 6568);
+        assert_eq!(t.sizes[..8], [0, 29, 17, 989, 695, 1234, 538, 3066]);
         assert!(t.info.chunks_exact(INFO_STRIDE).all(|w| w[2] == 0), "no negated entry survives in the standard table");
         assert_eq!(t.max_template_nodes(), 7);
         // Family census, in `Family`'s order: pi, e, root, rational, physical, other.
@@ -1174,9 +1178,12 @@ mod tests {
         assert_eq!(label_of("0.31831"), Some("1/pi"));
         assert_eq!(label_of("1.35914"), Some("e/2"));
         assert_eq!(value_of(0.0796), Some(1.0 / (4.0 * PI)));
-        // 1/(2 pi): the lattice writes it `hbar/h` (3 nodes; its own `1/(2*pi)`
-        // would be 5), and it is classed by what it is — family pi.
+        // 1/(2 pi): the plain form, not the lattice's 3-node `hbar/h` of the
+        // same f32 value — a write-back must not plant h and hbar in a gene.
         let half_turn = t.nearest(0.159155, TOL, LitMode::F64).expect("1/(2 pi)");
+        assert_eq!(t.labels[half_turn.entry as usize], "1/(2*pi)");
+        assert_eq!(label_of("0.012665"), Some("1/(8*pi^2)"));
+        assert!(t.dropped.f32_collisions.iter().any(|l| l == "hbar/h"));
         assert!((t.signed_value(half_turn) * 2.0 * PI - 1.0).abs() <= 1e-9);
         assert_eq!(t.family(half_turn.entry), Family::Pi);
         let shortest = band(&t, 0.159155, TOL)
@@ -1206,9 +1213,13 @@ mod tests {
         assert_eq!(family_of_label("c"), Family::Physical);
         assert_eq!(family_of_label("h"), Family::Physical);
         // h / hbar = 2 pi: a ratio of the two is a pi form, whatever its label.
-        assert_eq!(family_of_label("hbar/h"), Family::Pi);
-        assert_eq!(family_of_label("(3*hbar)/(2*h)"), Family::Pi);
         let tree = |m: &str| Tree::parse(m).unwrap();
+        assert_eq!(family_of(&tree(r#"(Div (Var "hbar") (Var "h"))"#)), (Family::Pi, true));
+        assert_eq!(family_of_label("1/(2*pi)"), Family::Pi);
+        // `(3*hbar)/(2*h)` is in the lattice and no longer in the table: the
+        // plain `3/(4*pi)` has the same f32 value in 5 nodes to its 7.
+        assert_eq!(family_of(&tree(r#"(Div (Mul (Num 3.0) (Var "hbar")) (Mul (Num 2.0) (Var "h")))"#)), (Family::Pi, true));
+        assert_eq!(family_of_label("3/(4*pi)"), Family::Pi);
         assert_eq!(family_of(&tree(r#"(Div (Var "h") (Mul (Num 4.0) (Mul (Var "pi") (Var "hbar"))))"#)), (Family::Rational, true));
         assert_eq!(family_of(&tree(r#"(Div (Mul (Var "e") (Var "hbar")) (Var "h"))"#)), (Family::Pi, true));
         assert_eq!(family_of(&tree(r#"(Mul (Var "h") (Var "hbar"))"#)), (Family::Physical, false));
@@ -1394,6 +1405,20 @@ mod tests {
         // negative form, so a NEGATIVE literal takes it as it is.
         assert_eq!(t.nearest(-5.0, TOL, LitMode::F64), Some(Hit { entry: 1, negative: false }));
         assert_eq!(t.nearest(5.0, TOL, LitMode::F64), Some(Hit { entry: 1, negative: true }));
+        // A form written through h / hbar loses to a plain one of the same
+        // f32 value, shorter or not; any other physical form is judged by
+        // its nodes as before.
+        let turn = 1.0 / (2.0 * PI);
+        let t = SnapTable::build(&[
+            entry(turn * (1.0 - 1e-10), r#"(Div (Var "hbar") (Var "h"))"#, "hbar/h"),
+            entry(turn, r#"(Div (Num 1.0) (Mul (Num 2.0) (Var "pi")))"#, "1/(2*pi)"),
+            entry(7.0 * (1.0 - 1e-10), r#"(Div (Var "fourteen") (Var "two"))"#, "fourteen/two"),
+            entry(7.0, r#"(Div (Num 14.0) (Mul (Num 2.0) (Var "one")))"#, "14/(2*one)"),
+        ])
+        .unwrap();
+        assert_eq!(t.labels, ["1/(2*pi)", "fourteen/two"]);
+        assert_eq!(t.dropped.f32_collisions, labels(&["hbar/h", "14/(2*one)"]));
+        assert_eq!(t.through_h_over_hbar, Vec::<String>::new());
         // Sixteen nodes is one too many.
         let mut big = r#"(Var "x")"#.to_string();
         for _ in 0..15 {
