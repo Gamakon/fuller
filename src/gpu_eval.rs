@@ -1709,10 +1709,11 @@ mod opcode_source_of_truth_tests {
                 Op::from_math(name).is_some(),
                 "{name} is in eval.rs but has no opcode"
             );
-            // Var/Num are leaves handled by the parser, not by a match arm.
+            // Var/Num are leaves handled by the parser, not by a match arm of
+            // `apply_op`, which dispatches on the opcode itself.
             if name != "Var" && name != "Num" {
                 assert!(
-                    eval_src.contains(&format!("(\"{name}\"")),
+                    eval_src.contains(&format!("(Op::{name}, ")),
                     "opcode {name} has no match arm in eval.rs — is it invented?"
                 );
             }
@@ -1731,7 +1732,7 @@ mod opcode_source_of_truth_tests {
             "ProtectedAsin", "ProtectedAcos",
         ] {
             assert!(
-                eval_src.contains(&format!("(\"{name}\"")),
+                eval_src.contains(&format!("(Op::{name}, ")),
                 "opcode {name} does not exist in eval.rs"
             );
         }

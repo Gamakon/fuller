@@ -9,6 +9,7 @@
 //! decides. There is no complex domain here, which is the entire reason this
 //! crate exists instead of sympy.
 
+use crate::gpu_eval::Op;
 use egglog::{Term, TermDag, TermId};
 
 /// Error from evaluating a `Math` term.
@@ -89,30 +90,52 @@ fn eval_app(
                 other => return Err(EvalError::BadNode(format!("Var child {other:?}"))),
             }
         }
+        _ => {
+            let args: Vec<f64> = (0..args.len()).map(child).collect::<Result<_, _>>()?;
+            return apply(op, &args).ok_or_else(|| EvalError::BadNode(format!("{op}/{}", args.len())));
+        }
+    };
+    Ok(val)
+}
+
+/// THE ARITHMETIC of one `Math` operator on evaluated arguments — the one
+/// place its real-domain and protected semantics live. `eval_term` walks a
+/// term into it; a caller with a flat node array (the snap guard's f64 word)
+/// applies it node by node with the same result. `None`: not a `Math` op of
+/// that arity.
+pub fn apply(op: &str, args: &[f64]) -> Option<f64> {
+    apply_op(Op::from_math(op)?, args)
+}
+
+/// [`apply`] by opcode: the same arithmetic, dispatched without a string.
+pub fn apply_op(op: Op, args: &[f64]) -> Option<f64> {
+    let a = || args[0];
+    let b = || args[1];
+    Some(match (op, args.len()) {
         // Binary ops.
-        ("Add", 2) => child(0)? + child(1)?,
-        ("Sub", 2) => child(0)? - child(1)?,
-        ("Mul", 2) => child(0)? * child(1)?,
-        ("Div", 2) => {
-            let (a, b) = (child(0)?, child(1)?);
+        (Op::Add, 2) => a() + b(),
+        (Op::Sub, 2) => a() - b(),
+        (Op::Mul, 2) => a() * b(),
+        (Op::Div, 2) => {
+            let (a, b) = (a(), b());
             if b == 0.0 { f64::NAN } else { a / b }
         }
         // Unary ops.
-        ("Neg", 1) => -child(0)?,
-        ("Sin", 1) => child(0)?.sin(),
-        ("Cos", 1) => child(0)?.cos(),
-        ("Tan", 1) => {
+        (Op::Neg, 1) => -a(),
+        (Op::Sin, 1) => a().sin(),
+        (Op::Cos, 1) => a().cos(),
+        (Op::Tan, 1) => {
             // tan = sin/cos; NaN at the asymptote (cos == 0).
-            let a = child(0)?;
+            let a = a();
             let c = a.cos();
             if c == 0.0 { f64::NAN } else { a.sin() / c }
         }
-        ("Exp", 1) => child(0)?.exp(),
-        ("Tanh", 1) => child(0)?.tanh(),
-        ("Abs", 1) => child(0)?.abs(),
-        ("Pow2", 1) => { let a = child(0)?; a * a }
-        ("Pow3", 1) => { let a = child(0)?; a * a * a }
-        ("Pow", 2) => {
+        (Op::Exp, 1) => a().exp(),
+        (Op::Tanh, 1) => a().tanh(),
+        (Op::Abs, 1) => a().abs(),
+        (Op::Pow2, 1) => { let a = a(); a * a }
+        (Op::Pow3, 1) => { let a = a(); a * a * a }
+        (Op::Pow, 2) => {
             // a^b in the real domain. f64::powf already yields NaN for a
             // negative base with a non-integer exponent, which is exactly the
             // real-domain rule (no complex branch). But 0^negative is a
@@ -120,33 +143,33 @@ fn eval_app(
             // div0 contract is NaN — keep Pow consistent with Div/Inv, or a
             // rewrite like Pow(x,-1) <-> Inv(x) would put a +inf-valued and a
             // NaN-valued member in the same e-class.
-            let (a, b) = (child(0)?, child(1)?);
+            let (a, b) = (a(), b());
             if a == 0.0 && b < 0.0 {
                 f64::NAN
             } else {
                 a.powf(b)
             }
         }
-        ("Log", 1) => {
-            let a = child(0)?;
+        (Op::Log, 1) => {
+            let a = a();
             if a <= 0.0 { f64::NAN } else { a.ln() }
         }
-        ("Sqrt", 1) => {
-            let a = child(0)?;
+        (Op::Sqrt, 1) => {
+            let a = a();
             if a < 0.0 { f64::NAN } else { a.sqrt() }
         }
-        ("Inv", 1) => {
-            let a = child(0)?;
+        (Op::Inv, 1) => {
+            let a = a();
             if a == 0.0 { f64::NAN } else { 1.0 / a }
         }
         // Inverse trig in the real domain: NaN outside [-1, 1] (NaN in -> NaN
         // out, since NaN fails the comparison).
-        ("Asin", 1) => {
-            let a = child(0)?;
+        (Op::Asin, 1) => {
+            let a = a();
             if a.abs() <= 1.0 { a.asin() } else { f64::NAN }
         }
-        ("Acos", 1) => {
-            let a = child(0)?;
+        (Op::Acos, 1) => {
+            let a = a();
             if a.abs() <= 1.0 { a.acos() } else { f64::NAN }
         }
         // Protected ops — match the SR engine's pset semantics EXACTLY. These
@@ -161,48 +184,47 @@ fn eval_app(
         // engine rejects into one fuller scores, or the reverse.
         //
         //   protected_sqrt(x) = sqrt(|x|) if isfinite(x) else 0.0
-        ("ProtectedSqrt", 1) => {
-            let a = child(0)?;
+        (Op::ProtectedSqrt, 1) => {
+            let a = a();
             if a.is_finite() { a.abs().sqrt() } else { 0.0 }
         }
         //   protected_log(x)  = +inf if not isfinite(x) or x == 0 else ln(|x|)
-        ("ProtectedLog", 1) => {
-            let a = child(0)?;
+        (Op::ProtectedLog, 1) => {
+            let a = a();
             if !a.is_finite() || a == 0.0 { f64::INFINITY } else { a.abs().ln() }
         }
         //   protected_exp(x)  = +inf if not isfinite(x) else exp(x), and
         //   +inf on overflow (f64::exp already returns +inf there). NOT
         //   exp(min(x, 700)): a large-finite return diverges from the engine.
-        ("ProtectedExp", 1) => {
-            let a = child(0)?;
+        (Op::ProtectedExp, 1) => {
+            let a = a();
             if a.is_finite() { a.exp() } else { f64::INFINITY }
         }
-        ("ProtectedInv", 1) => {
-            let a = child(0)?;
+        (Op::ProtectedInv, 1) => {
+            let a = a();
             if a == 0.0 { 1.0 } else { 1.0 / a } // 1/x if x!=0 else 1
         }
         //   protected_div_zero(a, b) = 0 if |b| < 1e-6 else a / b
         // The threshold is part of the function: with b = -1e-7 the engine
         // returns 0 and a `b == 0` guard returns a / -1e-7.
-        ("ProtectedDiv", 2) => {
-            let (a, b) = (child(0)?, child(1)?);
+        (Op::ProtectedDiv, 2) => {
+            let (a, b) = (a(), b());
             if b.abs() < 1e-6 { 0.0 } else { a / b }
         }
         // These two have no counterpart in hff_sr_engine.py: they are defined
         // here, on protected_sqrt's convention for a non-finite input (0.0).
         //   protected_asin(x) = asin(clamp(x, -1, 1)) if isfinite(x) else 0.0
-        ("ProtectedAsin", 1) => {
-            let a = child(0)?;
+        (Op::ProtectedAsin, 1) => {
+            let a = a();
             if a.is_finite() { a.clamp(-1.0, 1.0).asin() } else { 0.0 }
         }
         //   protected_acos(x) = acos(clamp(x, -1, 1)) if isfinite(x) else 0.0
-        ("ProtectedAcos", 1) => {
-            let a = child(0)?;
+        (Op::ProtectedAcos, 1) => {
+            let a = a();
             if a.is_finite() { a.clamp(-1.0, 1.0).acos() } else { 0.0 }
         }
-        _ => return Err(EvalError::BadNode(format!("{op}/{}", args.len()))),
-    };
-    Ok(val)
+        _ => return None,
+    })
 }
 
 #[cfg(test)]

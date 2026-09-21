@@ -53,7 +53,6 @@ pub const MAX_SEGMENT: u32 = 512;
 /// The cleansing mutation works on genes whose head + tail fit its scratch
 /// arrays; a longer gene is left alone by it.
 pub const MAX_CLEANSE: u32 = 128;
-const LEAF: u32 = 0xFFFF_FFFE;
 
 /// Rows `lo .. hi` evolve together.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -146,73 +145,144 @@ pub fn cleanse_gene(tokens: &mut [u32], layout: Layout, codes: &SymbolCodes, pic
 /// virtual head. `draws` = (pick, collapse, which, value).
 pub fn cleanse_gene_within(tokens: &mut [u32], layout: Layout, vhead: u32, codes: &SymbolCodes, draws: (u64, bool, u64, u64)) -> bool {
     let (pick, collapse, which, value) = draws;
-    let (h, ht) = (vhead as usize, (layout.head + layout.tail) as usize);
-    if ht > MAX_CLEANSE as usize {
-        return false;
-    }
+    let Some(tree) = GeneTree::of(tokens, layout, codes) else { return false };
     let arity = |id: u32| codes.arity[id as usize] as usize;
-    let (mut need, mut n) = (1i64, 0usize);
-    while need > 0 && n < ht {
-        need += arity(tokens[n]) as i64 - 1;
-        n += 1;
-    }
-    if need > 0 {
-        return false;
-    }
-    let mut child = [0usize; MAX_CLEANSE as usize];
-    let mut ordinal = [usize::MAX; MAX_CLEANSE as usize];
-    let (mut ptr, mut n_rnc, mut n_fn) = (1usize, 0usize, 0u32);
-    for i in 0..n {
-        child[i] = ptr;
-        ptr += arity(tokens[i]);
-        if Some(tokens[i]) == codes.rnc_id {
-            ordinal[i] = n_rnc;
-            n_rnc += 1;
-        }
-        n_fn += u32::from(arity(tokens[i]) > 0);
-    }
+    let n_fn = (0..tree.n).filter(|&i| arity(tokens[i]) > 0).count() as u32;
     if n_fn == 0 {
         return false;
     }
     let nth = below(pick, n_fn) as usize;
-    let p = (0..n).filter(|&i| arity(tokens[i]) > 0).nth(nth).unwrap_or(0);
+    let p = (0..tree.n).filter(|&i| arity(tokens[i]) > 0).nth(nth).unwrap_or(0);
     let collapse = collapse && codes.rnc_id.is_some();
-    let q = if collapse { LEAF as usize } else { child[p] + below(which, arity(tokens[p]) as u32) as usize };
+    // Collapsed, the subtree becomes ONE new "?" reading a drawn constant.
+    let leaf = [Graft { token: codes.rnc_id.unwrap_or(0), kids: [0, 0], dc: below(value, layout.n_rnc) }];
+    let q = if collapse { GRAFT } else { tree.child[p] + below(which, arity(tokens[p]) as u32) as usize };
+    relevel(tokens, layout, vhead, codes, &tree, &[(p, q)], &leaf).is_ok()
+}
 
+/// A gene's expressed tree by gene position (Karva): position `i`'s children are
+/// `child[i] ..`, and a "?" is the `ordinal[i]`-th of the gene (`usize::MAX`:
+/// not a "?"). Fixed scratch, as the kernel has it.
+pub struct GeneTree {
+    /// Expressed positions.
+    pub n: usize,
+    pub child: [usize; MAX_CLEANSE as usize],
+    pub ordinal: [usize; MAX_CLEANSE as usize],
+}
+
+impl GeneTree {
+    /// `None`: the gene is longer than the scratch, or its expression does not
+    /// close within head + tail.
+    pub fn of(tokens: &[u32], layout: Layout, codes: &SymbolCodes) -> Option<GeneTree> {
+        let ht = (layout.head + layout.tail) as usize;
+        if ht > MAX_CLEANSE as usize {
+            return None;
+        }
+        let arity = |id: u32| codes.arity[id as usize] as usize;
+        let (mut need, mut n) = (1i64, 0usize);
+        while need > 0 && n < ht {
+            need += arity(tokens[n]) as i64 - 1;
+            n += 1;
+        }
+        if need > 0 {
+            return None;
+        }
+        let mut tree = GeneTree { n, child: [0; MAX_CLEANSE as usize], ordinal: [usize::MAX; MAX_CLEANSE as usize] };
+        let (mut at, mut n_rnc) = (1usize, 0usize);
+        for (i, &token) in tokens.iter().enumerate().take(n) {
+            tree.child[i] = at;
+            at += arity(token);
+            if Some(token) == codes.rnc_id {
+                tree.ordinal[i] = n_rnc;
+                n_rnc += 1;
+            }
+        }
+        Some(tree)
+    }
+}
+
+/// A node [`relevel`] writes that the gene did not hold: its token, its children
+/// (tree entries, as many as the token's arity) and, for a "?", the Dc index it
+/// reads.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Graft {
+    pub token: u32,
+    pub kids: [usize; 2],
+    pub dc: u32,
+}
+
+/// A tree entry at or above this is `grafts[entry - GRAFT]`; below it, a gene
+/// position.
+pub const GRAFT: usize = 1 << 16;
+
+/// Why [`relevel`] left a gene as it was.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Unfit {
+    /// A function would sit at or past the (virtual) head.
+    HeadOversize,
+    /// The expression would not close within head + tail.
+    NotClosed,
+    /// More "?" than the Dc domain has slots.
+    DcOversize,
+}
+
+/// THE RE-SERIALISER the cleanse and snap's write-back share: the gene's tree,
+/// with each position `from` of `swaps` replaced by the entry `to` (a gene
+/// position, or a [`Graft`]), written back in level order from the root, the Dc
+/// domain rebuilt so each surviving "?" still reads ITS constant. On `Err` the
+/// gene is exactly as it was.
+pub fn relevel(
+    tokens: &mut [u32],
+    layout: Layout,
+    vhead: u32,
+    codes: &SymbolCodes,
+    tree: &GeneTree,
+    swaps: &[(usize, usize)],
+    grafts: &[Graft],
+) -> Result<(), Unfit> {
+    let (h, ht) = (vhead as usize, (layout.head + layout.tail) as usize);
+    let arity = |id: u32| codes.arity[id as usize] as usize;
+    let swapped = |c: usize| swaps.iter().find(|(from, _)| *from == c).map_or(c, |(_, to)| *to);
     let mut queue = [0usize; MAX_CLEANSE as usize];
     let mut new_tok = [0u32; MAX_CLEANSE as usize];
     let mut new_dc = [0u32; MAX_CLEANSE as usize];
-    queue[0] = if p == 0 { q } else { 0 };
+    queue[0] = swapped(0);
     let (mut head, mut tail, mut m, mut k) = (0usize, 1usize, 0usize, 0usize);
     while head < tail {
         let i = queue[head];
         head += 1;
-        if i == LEAF as usize {
-            new_tok[m] = codes.rnc_id.unwrap_or(0);
-            new_dc[k] = below(value, layout.n_rnc);
-            k += 1;
-            m += 1;
-            continue;
-        }
-        new_tok[m] = tokens[i];
-        if ordinal[i] != usize::MAX {
+        let (token, dc, kids) = if i >= GRAFT {
+            let g = grafts[i - GRAFT];
+            (g.token, g.dc, g.kids)
+        } else {
             // A "?" the old Dc domain had no slot for read nothing; keep that.
-            new_dc[k] = if ordinal[i] < layout.tail as usize { tokens[ht + ordinal[i]] } else { 0 };
+            let o = tree.ordinal[i];
+            let dc = if o < layout.tail as usize { tokens[ht + o] } else { 0 };
+            (tokens[i], dc, [swapped(tree.child[i]), swapped(tree.child[i] + 1)])
+        };
+        if m >= ht || tail + arity(token) > MAX_CLEANSE as usize {
+            return Err(Unfit::NotClosed);
+        }
+        new_tok[m] = token;
+        m += 1;
+        if Some(token) == codes.rnc_id {
+            new_dc[k] = dc;
             k += 1;
         }
-        m += 1;
-        for j in 0..arity(tokens[i]) {
-            let c = child[i] + j;
-            queue[tail] = if c == p { q } else { c };
+        for kid in kids.iter().take(arity(token)) {
+            queue[tail] = *kid;
             tail += 1;
         }
     }
-    if (0..m).any(|x| arity(new_tok[x]) > 0 && x >= h) || k > layout.tail as usize {
-        return false;
+    if (0..m).any(|x| arity(new_tok[x]) > 0 && x >= h) {
+        return Err(Unfit::HeadOversize);
+    }
+    if k > layout.tail as usize {
+        return Err(Unfit::DcOversize);
     }
     tokens[..m].copy_from_slice(&new_tok[..m]);
     tokens[ht..ht + k].copy_from_slice(&new_dc[..k]);
-    true
+    Ok(())
 }
 
 pub fn chance(h: u64, thr: u32) -> bool {
