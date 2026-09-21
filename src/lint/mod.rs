@@ -16,6 +16,7 @@ pub mod node;
 pub mod pack;
 pub mod reader;
 pub mod sexp;
+pub mod snap_graft;
 pub mod snap_table;
 pub mod tables;
 
