@@ -162,6 +162,11 @@ fn main() {
     let tidy = Tree::parse(&tidied).expect("the final form parses");
     println!("model: {}", tidy.to_infix_faithful());
     println!("GENERATIONS\t{}\t{}\t{:.3e}\t{}", out.generations, out.stopped_by, out.best.one_minus_r2[1], out.harvested);
+    // What evolution selected on: the model's HFF fitness (the tournaments rank on
+    // it; smaller is better), and 1-R² on each block — train, validation, and the
+    // third block (SMOGD or edge rows; "-" when there is none).
+    let third = if splits.n_extrap > 0 { format!("{:.3e}", out.best.one_minus_r2[2]) } else { "-".to_string() };
+    println!("HFF\t{:.6}\t{:.3e}\t{:.3e}\t{third}", out.best.fitness, out.best.one_minus_r2[0], out.best.one_minus_r2[1]);
     println!("MODEL_INFIX\t{}", tidy.to_infix_faithful());
     println!("RAW_MATH\t{}", out.math);
     // A harness that made the split itself may hand over its test rows: the
