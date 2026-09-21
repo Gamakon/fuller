@@ -107,6 +107,16 @@ fn main() {
         config.pop_intake = population / 4 * 3;
         config.pop_champion = population - config.pop_intake;
     }
+    //   EVOLVE_POP_CHAMPION             the champion island's size; the `population`
+    //                                   argument is then the INTAKE island's size
+    //                                   (1500 + 1500 rather than the 3:1 split, which
+    //                                   dates from when a generation was slow)
+    if let Some(champion) = std::env::var("EVOLVE_POP_CHAMPION").ok().and_then(|v| v.parse::<u32>().ok()) {
+        if let Some(intake) = args.get(4).and_then(|a| a.parse::<u32>().ok()) {
+            config.pop_intake = intake;
+        }
+        config.pop_champion = champion;
+    }
     // Experiment knobs come by environment so the positional arguments stay put:
     //   EVOLVE_RNC_LO / EVOLVE_RNC_HI   the range a gene's random constants are drawn from
     //   EVOLVE_RESTARTS                 split the time into this many independent searches
