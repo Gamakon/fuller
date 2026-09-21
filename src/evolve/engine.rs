@@ -484,6 +484,11 @@ impl Caps {
     }
 }
 
+/// DATA GUIDED REWRITES (Andrew's name for them): rewrites fuller's final form may
+/// make because the DATA says they hold on every row — never identities in
+/// general, always exact on the rows the model was selected on, and checked: the
+/// rewritten model must predict what the original predicts.
+///
 /// `Abs e` where `e` keeps one sign on every row becomes `e` or `Neg e`, and
 /// every protected operator the DATA never triggers becomes the raw one:
 /// `ProtectedDiv a b` with |b| >= 1e-6 on every row is `Div a b`, with |b| < 1e-6
@@ -495,7 +500,30 @@ impl Caps {
 /// selected on — the engine's counterpart of hff's `symbolic_protected_div`.
 pub fn resolve_protected(math: &str, rows: &[Vec<(String, f64)>]) -> Result<String, String> {
     use crate::lint::node::Tree;
+    fn has_input(t: &Tree) -> bool {
+        match t {
+            Tree::Var(_) => true,
+            Tree::Num(_) => false,
+            Tree::App(_, kids) => kids.iter().any(has_input),
+        }
+    }
+    /// A subtree that takes ONE value on every row is that constant: a dead term,
+    /// however it is built — a clamp that always fires, |asin| of an argument that
+    /// is beyond +-1 with either sign (strogatz glider2), x/x.
+    fn constant_on_data(t: &Tree, rows: &[Vec<(String, f64)>]) -> Option<Tree> {
+        if !matches!(t, Tree::App(..)) || !has_input(t) {
+            return None;
+        }
+        let v = evaluate_math(&t.to_math(), rows).ok()?;
+        let (lo, hi) = v.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), x| (lo.min(*x), hi.max(*x)));
+        let steady = !v.is_empty() && v.iter().all(|x| x.is_finite()) && hi - lo <= 1e-12 * lo.abs().max(hi.abs()).max(1.0);
+        steady.then(|| Tree::Num((lo + hi) / 2.0))
+    }
     fn go(t: &Tree, rows: &[Vec<(String, f64)>]) -> Tree {
+        let rewritten = specific(t, rows);
+        constant_on_data(&rewritten, rows).unwrap_or(rewritten)
+    }
+    fn specific(t: &Tree, rows: &[Vec<(String, f64)>]) -> Tree {
         let Tree::App(op, kids) = t else { return t.clone() };
         let kids: Vec<Tree> = kids.iter().map(|k| go(k, rows)).collect();
         let values = |k: &Tree| evaluate_math(&k.to_math(), rows).unwrap_or_default();
@@ -529,6 +557,24 @@ pub fn resolve_protected(math: &str, rows: &[Vec<(String, f64)>]) -> Result<Stri
             // never leaves [-1, 1] the clamp does nothing and it IS the raw function
             // (feynman I.26.2, asin(n sin t), is reported as the law and not as a
             // Piecewise over a Min and a Max).
+            // An inverse of its own function is the argument, where the data keeps the
+            // argument in the principal range: acos(cos e) = e on [0, pi], asin(sin e)
+            // = e on [-pi/2, pi/2] (strogatz barmag2 hid its law behind acos(cos x)).
+            Op::ProtectedAsin | Op::ProtectedAcos | Op::Asin | Op::Acos
+                if matches!((op, &kids[0]), (Op::ProtectedAsin | Op::Asin, Tree::App(Op::Sin, _)) | (Op::ProtectedAcos | Op::Acos, Tree::App(Op::Cos, _))) =>
+            {
+                use std::f64::consts::{FRAC_PI_2, PI};
+                let Tree::App(_, inner) = &kids[0] else { return Tree::App(*op, kids) };
+                let e = values(&inner[0]);
+                let (lo, hi) = if matches!(op, Op::ProtectedAsin | Op::Asin) { (-FRAC_PI_2, FRAC_PI_2) } else { (0.0, PI) };
+                if !e.is_empty() && e.iter().all(|v| v.is_finite() && *v >= lo && *v <= hi) {
+                    return inner[0].clone();
+                }
+                if matches!(op, Op::ProtectedAsin | Op::ProtectedAcos) {
+                    // sin and cos never leave [-1, 1]: the clamp cannot fire.
+                    return Tree::App(if *op == Op::ProtectedAsin { Op::Asin } else { Op::Acos }, kids);
+                }
+            }
             Op::ProtectedAsin | Op::ProtectedAcos => {
                 let a = values(&kids[0]);
                 let asin = *op == Op::ProtectedAsin;
@@ -564,7 +610,21 @@ pub fn resolve_protected(math: &str, rows: &[Vec<(String, f64)>]) -> Result<Stri
         }
         Tree::App(*op, kids)
     }
-    Ok(go(&Tree::parse(math)?, rows).to_math())
+    let rewritten = go(&Tree::parse(math)?, rows).to_math();
+    // CHECKED: a data guided rewrite may not move the model's predictions. Where
+    // the original is finite on every row, the rewritten form must agree with it
+    // to FINAL_FORM_AGREE; if it does not, the original stands.
+    let (before, after) = (evaluate_math(math, rows)?, evaluate_math(&rewritten, rows)?);
+    if before.iter().all(|v| v.is_finite()) && !before.is_empty() {
+        let n = before.len() as f64;
+        let mean = before.iter().sum::<f64>() / n;
+        let var = before.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / n;
+        let drift = before.iter().zip(&after).map(|(a, b)| (a - b).powi(2)).sum::<f64>() / n;
+        if drift.is_nan() || drift > FINAL_FORM_AGREE * var.max(f64::MIN_POSITIVE) {
+            return Ok(math.to_string());
+        }
+    }
+    Ok(rewritten)
 }
 
 /// How closely a tidied form must predict what the model predicts: mean squared
@@ -1356,9 +1416,13 @@ mod tests {
             let text = crate::lint::node::Tree::parse(&outside).unwrap().to_infix_faithful();
             assert!(text.starts_with(&format!("Piecewise(({plain}(Piecewise((-1, (x_0 - 3.0) < -1), (1, (x_0 - 3.0) > 1)")), "{text}");
 
-            // An overflowing argument is not finite: stays protected.
+            // exp(400 x_0) is huge-but-finite on the first rows (clamped to 1) and
+            // +inf on the rest (answered with 0). acos gives 0 BOTH ways — one value
+            // on every row, so the data guided rewrite writes it; asin gives pi/2
+            // and then 0 — two values, so it stays protected.
             let overflow = format!(r#"({protected} (Exp (Mul (Num 400.0) (Var "x_0"))))"#);
-            assert_eq!(resolve_protected(&overflow, &rows()).unwrap(), overflow);
+            let expected = if protected == "ProtectedAcos" { "(Num 0.0)".to_string() } else { overflow.clone() };
+            assert_eq!(resolve_protected(&overflow, &rows()).unwrap(), expected);
         }
     }
 
@@ -1389,6 +1453,33 @@ mod tests {
         assert!(before.iter().zip(&after).all(|(a, b)| (a - b).abs() < 1e-12), "the resolved form predicts something else");
         let tidy = final_form(&resolved, &names(), &rows()).unwrap();
         assert!(!tidy.contains("Asin") && tidy.contains("x_0") && tidy.contains("x_1"), "{tidy}");
+    }
+
+    /// Data guided rewrites: a subtree with ONE value on every row is that constant
+    /// (strogatz glider2's shape), and acos(cos e) = e where the data keeps e in
+    /// [0, pi] (strogatz barmag2's). What the data does not support is left alone.
+    #[test]
+    fn data_guided_rewrites_fold_dead_terms_and_principal_range_inverses() {
+        // 1000*(x_0 - 3.01) is beyond +-1 with BOTH signs over rows(): the clamped
+        // asin is +-pi/2, its absolute value pi/2 on every row.
+        let dead = r#"(Add (Var "x_1") (Sqrt (Abs (ProtectedAsin (Mul (Num 1000.0) (Sub (Var "x_0") (Num 3.01)))))))"#;
+        let resolved = resolve_protected(dead, &rows()).unwrap();
+        assert!(!resolved.contains("Asin") && resolved.contains("x_1"), "{resolved}");
+        let (a, b) = (evaluate_math(dead, &rows()).unwrap(), evaluate_math(&resolved, &rows()).unwrap());
+        assert!(a.iter().zip(&b).all(|(p, q)| (p - q).abs() < 1e-12));
+        // x/x is 1.
+        assert_eq!(resolve_protected(r#"(Div (Var "x_0") (Var "x_0"))"#, &rows()).unwrap(), "(Num 1.0)");
+        // A live term is not touched.
+        let live = r#"(Add (Var "x_1") (Sin (Var "x_0")))"#;
+        assert_eq!(resolve_protected(live, &rows()).unwrap(), live);
+
+        // 0.5*x_2 stays in [0.75, 1.75], inside [0, pi] and inside [-pi/2, pi/2]... of
+        // which only the first holds for the whole of x_2 itself (it reaches 3.49 > pi).
+        let inside = r#"(Mul (Num 0.5) (Var "x_2"))"#;
+        assert_eq!(resolve_protected(&format!("(ProtectedAcos (Cos {inside}))"), &rows()).unwrap(), inside);
+        assert_eq!(resolve_protected(r#"(ProtectedAsin (Sin (Mul (Num 0.2) (Var "x_2"))))"#, &rows()).unwrap(), r#"(Mul (Num 0.2) (Var "x_2"))"#);
+        let outside = r#"(ProtectedAcos (Cos (Var "x_2")))"#;
+        assert_eq!(resolve_protected(outside, &rows()).unwrap(), r#"(Acos (Cos (Var "x_2")))"#, "not e, but the clamp cannot fire");
     }
 
     /// A term that matters stays.
