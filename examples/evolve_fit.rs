@@ -53,15 +53,47 @@ fn main() {
     let y: Vec<f64> = used.iter().map(|&r| rows[r][target]).collect();
 
     let mut config = Config::srbench(seed);
-    config.max_seconds = seconds;
     if let Some(population) = args.get(4).and_then(|a| a.parse::<u32>().ok()) {
         config.pop_intake = population / 4 * 3;
         config.pop_champion = population - config.pop_intake;
     }
+    // Experiment knobs come by environment so the positional arguments stay put:
+    //   EVOLVE_RNC_LO / EVOLVE_RNC_HI   the range a gene's random constants are drawn from
+    //   EVOLVE_RESTARTS                 split the time into this many independent searches
+    let env = |k: &str| std::env::var(k).ok();
+    if let (Some(lo), Some(hi)) = (env("EVOLVE_RNC_LO").and_then(|v| v.parse().ok()), env("EVOLVE_RNC_HI").and_then(|v| v.parse().ok())) {
+        config.rnc_lo = lo;
+        config.rnc_hi = hi;
+    }
+    let restarts: u32 = env("EVOLVE_RESTARTS").and_then(|v| v.parse().ok()).unwrap_or(1).max(1);
     config.cleanse = args.get(6).and_then(|a| a.parse().ok()).unwrap_or(0.0);
     config.harvests = args.get(8).and_then(|a| a.parse().ok()).unwrap_or(0);
-    let mut engine = Engine::new(config, Data { names: names.clone(), x, y, splits }).expect("engine");
-    let out = engine.fit().expect("fit");
+    // RESTARTS: the same seconds as one search, spent as several independent
+    // ones (seeds derived from the fit's seed). The first that meets the stop bar
+    // ends the fit; otherwise the one with the best validation error is reported.
+    // Whether a problem is solved in 6 s depends heavily on the draw; this buys
+    // more draws for the same time.
+    config.max_seconds = seconds / f64::from(restarts);
+    let mut kept: Option<(Engine, fuller::evolve::engine::FitResult)> = None;
+    let (mut generations, mut individuals) = (0u32, 0u64);
+    for k in 0..restarts {
+        let mut c = config.clone();
+        c.seed = seed.wrapping_add(k.wrapping_mul(1_000_003));
+        let mut engine = Engine::new(c, Data { names: names.clone(), x: x.clone(), y: y.clone(), splits }).expect("engine");
+        let out = engine.fit().expect("fit");
+        generations += out.generations;
+        individuals += out.individuals;
+        let done = out.stopped_by != "time" && out.stopped_by != "n_gen";
+        if kept.as_ref().is_none_or(|(_, best)| out.best.one_minus_r2[1] < best.best.one_minus_r2[1]) {
+            kept = Some((engine, out));
+        }
+        if done {
+            break;
+        }
+    }
+    let (engine, mut out) = kept.expect("at least one search ran");
+    out.generations = generations;
+    out.individuals = individuals;
 
     let t = &out.timing;
     println!("dataset {path}\nrows: train {n_train}, validation {}, unseen test {}", splits.n_val, test_rows.len());
