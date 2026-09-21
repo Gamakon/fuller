@@ -33,8 +33,9 @@
 use std::ops::Range;
 
 use super::device::SLOT;
-use super::flat::Flat;
-use super::node::Compiled;
+use super::flat::{op_of, Flat};
+use super::pack::arity;
+use crate::gpu_eval::Op;
 use super::snap_graft::{Snapped, Status, Variant, VARIANTS};
 use crate::chrom_score::Splits;
 
@@ -125,47 +126,53 @@ impl GuardData {
     /// value for is an error.
     pub fn envs(&self, names: &[String]) -> Result<Envs, String> {
         let known = crate::snap_karva::constant_values();
-        let constants: Vec<(String, f64)> = names
-            .iter()
-            .enumerate()
-            .map(|(k, name)| known.get(name).map(|v| (constant_key(k), *v)).ok_or_else(|| format!("{name}: no value for it")))
-            .collect::<Result<_, _>>()?;
+        let constants: Vec<f64> = names.iter().map(|name| known.get(name).copied().ok_or_else(|| format!("{name}: no value for it"))).collect::<Result<_, _>>()?;
         let n = self.cols.len();
-        let rows = self
-            .rows
-            .clone()
-            .map(|r| (0..n).map(|c| (column_key(c), self.x[r * n + c])).chain(constants.iter().cloned()).collect())
-            .collect();
-        Ok(Envs { rows, n_cols: n, n_names: names.len() })
+        let values = self.rows.clone().flat_map(|r| self.x[r * n..(r + 1) * n].iter().copied().chain(constants.iter().copied())).collect();
+        Ok(Envs { values, n_cols: n, n_names: names.len() })
     }
 }
 
-/// `GuardData::envs`: built once, read by every f64 evaluation.
+/// `GuardData::envs`: built once, read by every f64 evaluation — the guarded
+/// rows' columns, then the table's constants, as one value per `Var` index.
 #[derive(Debug, Clone)]
 pub struct Envs {
-    rows: Vec<Vec<(String, f64)>>,
+    /// Row-major, `n_cols + n_names` wide.
+    values: Vec<f64>,
     n_cols: usize,
     n_names: usize,
 }
 
-fn column_key(c: usize) -> String {
-    format!("column {c}")
-}
-
-fn constant_key(k: usize) -> String {
-    format!("constant {k}")
-}
-
-/// A form's predictions on the guarded rows, in f64, by the crate's evaluator.
-/// Its `vars` are the columns, or the columns and then the table's names.
+/// A form's predictions on the guarded rows, in f64, by the crate evaluator's
+/// own arithmetic (`eval::apply`, operator by operator; a node's children are
+/// after it, so one backward pass per row). Its `vars` are the columns, or the
+/// columns and then the table's names.
 pub fn predict(form: &Flat, envs: &Envs) -> Result<Vec<f64>, String> {
     let (n, names) = (envs.n_cols, envs.n_names);
     if form.vars.len() != n && form.vars.len() != n + names {
         return Err(format!("a form over {} names, the data has {n} columns and the table {names} constants", form.vars.len()));
     }
-    let keyed = Flat { nodes: form.nodes.clone(), vars: (0..n).map(column_key).chain((0..names).map(constant_key)).collect() };
-    let compiled = Compiled::new(&keyed.to_tree());
-    envs.rows.iter().map(|row| compiled.eval(row)).collect()
+    let width = n + names;
+    let ops: Vec<(Op, usize)> = form.nodes.iter().map(|node| (op_of(node.op), arity(node.op))).collect();
+    if let Some(node) = form.nodes.iter().find(|node| node.op == Op::Var as u32 && node.arg0 as usize >= width) {
+        return Err(format!("a form reads name {}, the data has {width}", node.arg0));
+    }
+    let mut value = vec![0.0f64; form.nodes.len()];
+    envs.values
+        .chunks_exact(width)
+        .map(|row| {
+            for i in (0..form.nodes.len()).rev() {
+                let node = &form.nodes[i];
+                value[i] = match ops[i].1 {
+                    0 if node.op == Op::Num as u32 => node.lit,
+                    0 => row[node.arg0 as usize],
+                    1 => crate::eval::apply_op(ops[i].0, &[value[node.arg0 as usize]]).ok_or_else(|| format!("{:?} is not a Math operator", ops[i].0))?,
+                    _ => crate::eval::apply_op(ops[i].0, &[value[node.arg0 as usize], value[node.arg1 as usize]]).ok_or_else(|| format!("{:?} is not a Math operator", ops[i].0))?,
+                };
+            }
+            Ok(value[0])
+        })
+        .collect()
 }
 
 /// R² over the guarded rows, or `None` when a prediction is not finite.
@@ -354,7 +361,7 @@ pub enum Refusal {
 #[cfg(feature = "gpu")]
 mod gpu {
     use super::*;
-    use crate::gpu_eval::{GpuEvaluator, Op};
+    use crate::gpu_eval::GpuEvaluator;
     use crate::lint::device::{encode, KernelTables};
     use crate::lint::snap_graft::{slot_contexts, slot_literals, SnapGraft, VINFO_STRIDE};
     use crate::lint::snap_table::{found_of, Found, Hit, SnapKernel, NONE};
@@ -553,7 +560,31 @@ mod gpu {
             rel_tol: f64,
             max_groups: u32,
         ) -> Result<(Guarded, Option<GuardBlocks>), String> {
+            self.run_resident_offered(exprs, None, tables, rel_tol, max_groups)
+        }
+
+        /// [`SnapGuard::run_resident`] with only SOME literals OFFERED to the
+        /// match: `offered[e][i]` false withholds node `i` of expression `e`
+        /// (the match kernel is handed `NOT_A_LITERAL` for it, so it has no hit
+        /// and is no atom — on the device and, as every later step reads the
+        /// device's hits, on the host). The evolution engine guards a whole
+        /// MODEL and offers one gene's folded constants: the fitted scale and
+        /// offset, the linker's divisor and the other genes are not snap's to
+        /// touch. `None` offers every literal.
+        pub fn run_resident_offered(
+            &self,
+            exprs: &[Flat],
+            offered: Option<&[Vec<bool>]>,
+            tables: &KernelTables,
+            rel_tol: f64,
+            max_groups: u32,
+        ) -> Result<(Guarded, Option<GuardBlocks>), String> {
             check_columns(exprs, &self.data.cols)?;
+            if let Some(offered) = offered {
+                if offered.len() != exprs.len() || offered.iter().zip(exprs).any(|(o, f)| o.len() != f.nodes.len()) {
+                    return Err("offered: one flag per node of every expression".to_string());
+                }
+            }
             if let Some(f) = exprs.iter().find(|f| f.nodes.iter().any(|n| n.op == Op::Num as u32 && n.arg0 != 0)) {
                 return Err(format!("a literal's arg0 must be 0 (it names a constant on the device): {:?}", f.nodes));
             }
@@ -597,7 +628,13 @@ mod gpu {
             let read_usage = wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ;
             let nodes_in = storage("guard-nodes-in", &enc.nodes);
             let len_in = storage("guard-len-in", &enc.lengths);
-            let lits_buf = storage("guard-literals", &slot_literals(&enc));
+            let mut lits = slot_literals(&enc);
+            for (e, flags) in offered.unwrap_or(&[]).iter().enumerate().filter(|(e, _)| enc.lengths[*e] > 0) {
+                for (lit, _) in lits[e * SLOT..].iter_mut().zip(flags).filter(|(_, offered)| !**offered) {
+                    *lit = crate::lint::snap_graft::NOT_A_LITERAL;
+                }
+            }
+            let lits_buf = storage("guard-literals", &lits);
             let contexts_buf = storage("guard-contexts", &slot_contexts(&enc));
             let org_offsets = storage("guard-offsets-originals", &(0..n_expr).map(|e| e * SLOT as u32).collect::<Vec<_>>());
             let var_offsets = storage("guard-offsets-variants", &(0..n_var).map(|t| t * SLOT as u32).collect::<Vec<_>>());

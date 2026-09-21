@@ -113,7 +113,7 @@ impl Flat {
     }
 }
 
-fn op_of(code: u32) -> Op {
+pub fn op_of(code: u32) -> Op {
     [
         Op::Var, Op::Num, Op::Add, Op::Sub, Op::Mul, Op::Div, Op::Neg, Op::Abs, Op::Sqrt, Op::Log,
         Op::Exp, Op::Sin, Op::Cos, Op::Tan, Op::Tanh, Op::Pow, Op::Pow2, Op::Pow3, Op::Inv,
