@@ -14,6 +14,7 @@ pub mod engine;
 #[cfg(feature = "gpu")]
 pub mod score;
 pub mod smogd;
+pub mod smote;
 pub mod umap2d;
 pub mod vary;
 

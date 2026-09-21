@@ -14,7 +14,7 @@
 use fuller::chrom_score::Splits;
 use fuller::evolve::engine::{evaluate_math, final_form, resolve_protected, Config, Data, Engine};
 use fuller::evolve::umap2d::embed_2d;
-use fuller::evolve::{below, draw, smogd};
+use fuller::evolve::{below, draw, smogd, smote};
 use fuller::lint::node::Tree;
 
 fn shuffled(n: usize, seed: u32, stream: u32) -> Vec<usize> {
@@ -84,9 +84,25 @@ fn main() {
         splits.n_extrap += synth_y.len();
         y.extend(synth_y);
     }
+    // SMOTE (EVOLVE_SMOTE=1): rows on the segment between a real row and one of
+    // its 5 nearest — no noise. They join SMOGD's in the third block, as many of
+    // them as SMOGD placed (the block's error is row-weighted, so this is 50/50);
+    // alone, one for every 20 real rows.
+    let smote_on = std::env::var("EVOLVE_SMOTE").is_ok_and(|v| v == "1");
+    if smote_on {
+        let started = std::time::Instant::now();
+        let real: Vec<f64> = used.iter().flat_map(|&r| inputs(&rows[r])).collect();
+        let real_y: Vec<f64> = used.iter().map(|&r| rows[r][target]).collect();
+        let count = if splits.n_extrap > 0 { splits.n_extrap } else { used.len() / 20 };
+        let (synth_x, synth_y) = smote::rows(&real, &real_y, names.len(), count, seed);
+        println!("SMOTE\t{}\trows from {} real rows in {:.1} s", synth_y.len(), used.len(), started.elapsed().as_secs_f64());
+        x.extend(synth_x.iter().map(|v| *v as f32));
+        splits.n_extrap += synth_y.len();
+        y.extend(synth_y);
+    }
 
     let mut config = Config::srbench(seed);
-    config.smogd = smogd_on;
+    config.smogd = smogd_on || smote_on;
     if let Some(population) = args.get(4).and_then(|a| a.parse::<u32>().ok()) {
         config.pop_intake = population / 4 * 3;
         config.pop_champion = population - config.pop_intake;

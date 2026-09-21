@@ -73,7 +73,7 @@ fn split(points: &[[f64; 2]], rows: &[usize], min_points: usize, max_depth: u32,
 }
 
 /// A uniform f64 in [0, 1) from one draw.
-fn unit(h: u64) -> f64 {
+pub(crate) fn unit(h: u64) -> f64 {
     (h >> 11) as f64 / (1u64 << 53) as f64
 }
 
