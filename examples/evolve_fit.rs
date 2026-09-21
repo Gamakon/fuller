@@ -1,11 +1,14 @@
 //! A whole symbolic-regression fit in Rust, no Python:
 //!
-//!   cargo run --release --features gpu --example evolve_fit -- data.tsv [seed] [seconds] [max_rows]
+//!   cargo run --release --features gpu --example evolve_fit -- data.tsv [seed] [seconds] [max_rows] [population] [all]
 //!
 //! `data.tsv`: tab-separated, a header, the target in the column named
 //! `target` (a PMLB dataset, gunzipped). SRBench's 75/25 split is mimicked with
 //! our own shuffle; from the 75%, `max_rows` random rows are split 80/20 into
-//! train and validation. Prints what the search did, where the time went, the
+//! train and validation. `population` is split 3:1 into the intake and champion
+//! islands (default 800). A sixth argument `all` means the file is ALREADY the
+//! training part (a harness made the split): every row is used, none held back.
+//! Prints what the search did, where the time went, the
 //! model and its R² on the unseen 25%.
 
 use fuller::chrom_score::Splits;
@@ -42,7 +45,8 @@ fn main() {
     let inputs = |r: &Vec<f64>| -> Vec<f64> { r.iter().enumerate().filter(|(i, _)| *i != target).map(|(_, v)| *v).collect() };
 
     let order = shuffled(rows.len(), seed, 200);
-    let n_fit = rows.len() * 3 / 4;
+    let use_all = args.get(5).is_some_and(|a| a == "all");
+    let n_fit = if use_all { rows.len() } else { rows.len() * 3 / 4 };
     let (fit_rows, test_rows) = order.split_at(n_fit);
     let used: Vec<usize> = shuffled(fit_rows.len(), seed, 201).into_iter().take(max_rows).map(|i| fit_rows[i]).collect();
     let n_train = used.len() * 4 / 5;
@@ -52,6 +56,10 @@ fn main() {
 
     let mut config = Config::srbench(seed);
     config.max_seconds = seconds;
+    if let Some(population) = args.get(4).and_then(|a| a.parse::<u32>().ok()) {
+        config.pop_intake = population / 4 * 3;
+        config.pop_champion = population - config.pop_intake;
+    }
     let mut engine = Engine::new(config, Data { names: names.clone(), x, y, splits }).expect("engine");
     let out = engine.fit().expect("fit");
 
@@ -72,6 +80,11 @@ fn main() {
     let tables = Tables::standard().expect("fuller's rule tables");
     let tidy = lint(&tables, &out.math, &names, &Options::default()).map(|o| o.best).unwrap_or_else(|_| Tree::parse(&out.math).expect("math"));
     println!("model: {}", tidy.to_infix());
+    println!("GENERATIONS\t{}\t{}\t{:.3e}", out.generations, out.stopped_by, out.best.one_minus_r2[1]);
+    println!("MODEL_INFIX\t{}", tidy.to_infix());
+    if test_rows.is_empty() {
+        return;
+    }
 
     // R² on the 25% the search never saw, by fuller's own f64 evaluator.
     let columns: Vec<Vec<(String, f64)>> = test_rows.iter().map(|&r| names.iter().cloned().zip(inputs(&rows[r])).collect()).collect();
