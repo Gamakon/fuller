@@ -546,7 +546,7 @@ impl Engine {
     /// The pump: the intake's best two replace the champion island's worst two;
     /// the intake keeps its best fifth (one of each distinct row) and the rest is
     /// refilled with new random individuals.
-    fn pump(&mut self, gen: &mut Generation, generation: u32) {
+    fn pump(&mut self, gen: &mut Generation, generation: u32, vacate: Option<&[bool]>) {
         let l = self.layout;
         let row_w = (l.n_genes * l.gene_width()) as usize;
         let rnc_w = (l.n_genes * l.n_rnc) as usize;
@@ -563,10 +563,23 @@ impl Engine {
             gen.fitness[to] = gen.fitness[from];
             scored[to] = scored[from];
         };
-        let best_intake = by_fitness(intake.lo..intake.hi, &gen.fitness);
+        // A HARVEST is a pump event. The rows to vacate (the parked model's
+        // structural relatives, on either island) lose their fitness first, so
+        // the pump's own sort puts them last: the champion island's vacated rows
+        // are the first the promotion overwrites, and no vacated row is kept.
+        let vacated = |r: u32| vacate.is_some_and(|v| v[r as usize]);
+        for r in 0..l.pop {
+            if vacated(r) {
+                gen.fitness[r as usize] = f32::NAN;
+                self.scored[r as usize] = None;
+            }
+        }
+        let best_intake: Vec<u32> = by_fitness(intake.lo..intake.hi, &gen.fitness).into_iter().filter(|&r| !gen.fitness[r as usize].is_nan()).collect();
         let worst_champion: Vec<u32> = by_fitness(champion.lo..champion.hi, &gen.fitness).into_iter().rev().take(2).collect();
+        let mut promoted: Vec<u32> = Vec::new();
         for (&from, &to) in best_intake.iter().zip(&worst_champion) {
             copy_row(gen, &mut self.scored, from as usize, to as usize);
+            promoted.push(to);
         }
         let keep = ((f64::from(intake.hi - intake.lo) * 0.20).round() as usize).max(1);
         let mut seen: Vec<&[u32]> = Vec::new();
@@ -595,7 +608,10 @@ impl Engine {
             seed: self.config.seed, generation, rnc_lo: self.config.rnc_lo, rnc_hi: self.config.rnc_hi, n_wrappers: WRAPPERS.len() as u32,
         });
         if let Ok(fresh) = fresh {
-            for r in first as usize..intake.hi as usize {
+            // The intake's refill, and every vacated champion row the promotion
+            // did not take.
+            let refill = (first..intake.hi).chain((champion.lo..champion.hi).filter(|&r| vacated(r) && !promoted.contains(&r)));
+            for r in refill.map(|r| r as usize) {
                 gen.pop.genome[r * row_w..(r + 1) * row_w].copy_from_slice(&fresh.genome[r * row_w..(r + 1) * row_w]);
                 gen.pop.rnc[r * rnc_w..(r + 1) * rnc_w].copy_from_slice(&fresh.rnc[r * rnc_w..(r + 1) * rnc_w]);
                 gen.pop.wrapper_id[r] = fresh.wrapper_id[r];
@@ -668,35 +684,20 @@ impl Engine {
         decode_gene(tokens, consts, l, &self.table).map(|n| n.iter().flat_map(|x| [x.op, x.arg0, x.arg1, x.konst.to_bits()]).collect())
     }
 
-    /// Remove the harvested row and its structural relatives; fresh random rows
-    /// take their places (keyed by generation and harvest, so reproducible).
-    fn purge(&mut self, gen: &mut Generation, harvested: usize, generation: u32, harvest: u32) {
-        let l = self.layout;
-        let g_n = l.n_genes as usize;
-        let row_w = g_n * l.gene_width() as usize;
-        let rnc_w = g_n * l.n_rnc as usize;
+    /// The harvested row's structural relatives: every row that is the same
+    /// genome, or carries one of its genes of five nodes or more (the junk lives
+    /// in the big genes; a bare terminal is a building block everyone shares).
+    /// The pump vacates them.
+    fn relatives(&self, gen: &Generation, harvested: usize) -> Vec<bool> {
+        let g_n = self.layout.n_genes as usize;
         let keys: Vec<Option<Vec<u32>>> = (0..g_n).map(|g| self.gene_key(gen, harvested, g)).collect();
         let big: Vec<&Vec<u32>> = keys.iter().flatten().filter(|k| k.len() >= 5 * 4).collect();
-        let Ok(fresh) = super::init(l, &self.table.codes(), &InitParams {
-            seed: self.config.seed,
-            generation: generation.wrapping_add(1_000_000 * (harvest + 1)),
-            rnc_lo: self.config.rnc_lo,
-            rnc_hi: self.config.rnc_hi,
-            n_wrappers: WRAPPERS.len() as u32,
-        }) else {
-            return;
-        };
-        for r in 0..l.pop as usize {
-            let mine: Vec<Option<Vec<u32>>> = (0..g_n).map(|g| self.gene_key(gen, r, g)).collect();
-            let relative = mine == keys || mine.iter().flatten().any(|k| big.contains(&k));
-            if relative {
-                gen.pop.genome[r * row_w..(r + 1) * row_w].copy_from_slice(&fresh.genome[r * row_w..(r + 1) * row_w]);
-                gen.pop.rnc[r * rnc_w..(r + 1) * rnc_w].copy_from_slice(&fresh.rnc[r * rnc_w..(r + 1) * rnc_w]);
-                gen.pop.wrapper_id[r] = fresh.wrapper_id[r];
-                gen.fitness[r] = f32::NAN;
-                self.scored[r] = None;
-            }
-        }
+        (0..self.layout.pop as usize)
+            .map(|r| {
+                let mine: Vec<Option<Vec<u32>>> = (0..g_n).map(|g| self.gene_key(gen, r, g)).collect();
+                mine == keys || mine.iter().flatten().any(|k| big.contains(&k))
+            })
+            .collect()
     }
 
     fn best(&self, gen: &Generation) -> Option<(usize, Scored)> {
@@ -776,19 +777,9 @@ impl Engine {
             unique += u;
             oversized += o;
             individuals += u64::from(self.layout.pop);
-            let t = Instant::now();
-            let pumped = c.pump_every > 0 && generation % c.pump_every == 0;
-            if pumped {
-                self.pump(&mut gen, generation);
-                let (u, o) = self.evaluate(&mut gen, &mut timing)?;
-                unique += u;
-                oversized += o;
-                self.dev.write_population(&gen.pop)?;
-            }
-            timing.pump += t.elapsed().as_secs_f64();
-            self.dev.write_fitness(&gen.fitness)?;
             // The device's f32 metrics cannot resolve 1e-10; they can say "this
             // one is worth confirming". The f64 re-score decides.
+            let mut harvest_row: Option<usize> = None;
             if let Some((row, ranked)) = self.best(&gen) {
                 if ranked.one_minus_r2[1] <= 1e-5 {
                     if let Some(s) = self.confirm(&gen, row)? {
@@ -810,20 +801,24 @@ impl Engine {
                                 stopped_by = if agreed { "converged" } else { "harvested" };
                                 break;
                             }
-                            // REGROW. Its structural relatives go: every row that
-                            // is the same genome, or carries one of its genes of
-                            // five nodes or more (the junk lives in the big genes;
-                            // a bare terminal is a building block everyone shares).
-                            self.purge(&mut gen, row, generation, archive.len() as u32);
-                            let (u, o) = self.evaluate(&mut gen, &mut timing)?;
-                            unique += u;
-                            oversized += o;
-                            self.dev.write_population(&gen.pop)?;
-                            self.dev.write_fitness(&gen.fitness)?;
+                            harvest_row = Some(row);
                         }
                     }
                 }
             }
+            // THE PUMP, on its beat — and at once on a harvest, where it also
+            // vacates the parked model's relatives: REGROW is the pump's refill.
+            let t = Instant::now();
+            if harvest_row.is_some() || (c.pump_every > 0 && generation % c.pump_every == 0) {
+                let vacate = harvest_row.map(|row| self.relatives(&gen, row));
+                self.pump(&mut gen, generation, vacate.as_deref());
+                let (u, o) = self.evaluate(&mut gen, &mut timing)?;
+                unique += u;
+                oversized += o;
+                self.dev.write_population(&gen.pop)?;
+            }
+            timing.pump += t.elapsed().as_secs_f64();
+            self.dev.write_fitness(&gen.fitness)?;
         }
         let harvested = archive.len();
         // The parking lot decides, when there is one: every model in it met the
