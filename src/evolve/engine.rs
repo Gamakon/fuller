@@ -335,7 +335,8 @@ impl Caps {
     }
 }
 
-/// Every protected operator the DATA never triggers becomes the raw one:
+/// `Abs e` where `e` keeps one sign on every row becomes `e` or `Neg e`, and
+/// every protected operator the DATA never triggers becomes the raw one:
 /// `ProtectedDiv a b` with |b| >= 1e-6 on every row is `Div a b`, with |b| < 1e-6
 /// on every row it is 0; `ProtectedInv x` with x never 0 is `Inv x`. One that is
 /// triggered on SOME rows stays protected, and `Tree::to_infix_faithful` writes
@@ -369,7 +370,20 @@ pub fn resolve_protected(math: &str, rows: &[Vec<(String, f64)>]) -> Result<Stri
             Op::ProtectedSqrt => {
                 let a = values(&kids[0]);
                 if !a.is_empty() && a.iter().all(|v| v.is_finite()) {
-                    return Tree::App(Op::Sqrt, vec![Tree::App(Op::Abs, kids)]);
+                    // ... and the Abs goes too where the argument keeps one sign.
+                    return Tree::App(Op::Sqrt, vec![go(&Tree::App(Op::Abs, kids), rows)]);
+                }
+            }
+            // |e| where e keeps ONE SIGN on every row is e, or -e. Left as Abs, an
+            // exact law is reported in a form no scorer matches to it (feynman
+            // II.11.27: 3*n*eps*Ef / Abs(n - 3/alpha), the law but for the Abs).
+            Op::Abs => {
+                let a = values(&kids[0]);
+                if !a.is_empty() && a.iter().all(|v| v.is_finite() && *v >= 0.0) {
+                    return kids[0].clone();
+                }
+                if !a.is_empty() && a.iter().all(|v| v.is_finite() && *v <= 0.0) {
+                    return Tree::App(Op::Neg, kids);
                 }
             }
             _ => {}
@@ -696,7 +710,11 @@ impl Engine {
     /// for fuller's final form: a tidied model must hold on the edge rows too.
     fn fit_rows(&self) -> Vec<Vec<(String, f64)>> {
         let d = self.data.names.len();
-        let n = self.data.splits.total();
+        // A synthetic third block (SMOGD / SMOTE) is no judge of a form: its noisy
+        // inputs can leave the real range, and one negative made-up value would
+        // unmake "this input is positive". Real rows only.
+        let s = self.data.splits;
+        let n = if self.config.smogd { s.n_train + s.n_val } else { s.total() };
         (0..n).map(|r| self.data.names.iter().cloned().zip(self.data.x[r * d..(r + 1) * d].iter().map(|v| f64::from(*v))).collect()).collect()
     }
 
@@ -882,6 +900,23 @@ impl Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_abs_whose_argument_keeps_one_sign_is_resolved_on_the_data() {
+        // rows(): x_0 in 1..5, x_1 in 2..3, x_2 in 1.5..3.5.
+        let positive = resolve_protected(r#"(Abs (Add (Var "x_0") (Var "x_1")))"#, &rows()).unwrap();
+        assert_eq!(positive, r#"(Add (Var "x_0") (Var "x_1"))"#);
+        // II.11.27's shape: the argument is negative on every row, so |e| = -e.
+        let negative = resolve_protected(r#"(Div (Var "x_2") (Abs (Sub (Var "x_0") (Num 50.0))))"#, &rows()).unwrap();
+        assert_eq!(negative, r#"(Div (Var "x_2") (Neg (Sub (Var "x_0") (Num 50.0))))"#);
+        // One that changes sign on the data stays an Abs.
+        let mixed = r#"(Abs (Sub (Var "x_0") (Num 3.0)))"#;
+        assert_eq!(resolve_protected(mixed, &rows()).unwrap(), mixed);
+        // And the predictions do not move.
+        let before = evaluate_math(r#"(Div (Var "x_2") (Abs (Sub (Var "x_0") (Num 50.0))))"#, &rows()).unwrap();
+        let after = evaluate_math(&negative, &rows()).unwrap();
+        assert!(before.iter().zip(&after).all(|(a, b)| (a - b).abs() <= 1e-15 * a.abs()));
+    }
 
     #[test]
     fn the_log_scale_separates_small_errors_the_square_cannot() {

@@ -185,8 +185,10 @@ fn main() {
 
     // fuller's final form, the data as judge: the fit rows (train + validation)
     // decide which inputs are positive and which prunes change nothing.
+    // A SYNTHETIC third block (SMOGD / SMOTE) is no judge: real rows only.
+    let judged = if config.smogd { splits.n_train + splits.n_val } else { splits.total() };
     let fit_rows: Vec<Vec<(String, f64)>> =
-        x.chunks(names.len()).map(|r| names.iter().cloned().zip(r.iter().map(|v| f64::from(*v))).collect()).collect();
+        x.chunks(names.len()).take(judged).map(|r| names.iter().cloned().zip(r.iter().map(|v| f64::from(*v))).collect()).collect();
     // First say what the protected operators actually do on this data; then tidy.
     let resolved = resolve_protected(&out.math, &fit_rows).unwrap_or_else(|_| out.math.clone());
     let tidied = final_form(&resolved, &names, &fit_rows).unwrap_or(resolved);
