@@ -231,6 +231,10 @@ fn main() {
         .collect();
     println!("MSE\t{}\t{}\t{}", mse[0], mse[1], mse[2]);
     println!("TOWER\t{}\t{}", out.best.t_depth, if config.tower { "in HFF" } else { "reported only" });
+    // The HFF angle as a p-value (hff's beta-CDF): how likely a random point on the
+    // m-objective sphere is to sit this near the pole.
+    let (p_value, log10_p) = fuller::evolve::engine::hff_p_value(out.best.fitness, engine.hff_dimensions());
+    println!("PVALUE\t{p_value:.3e}\t{log10_p:.2}\t{}", engine.hff_dimensions());
     println!("MODEL_INFIX\t{}", tidy.to_infix_faithful());
     // The same model with every protected operator written as the ordinary one —
     // the FUNCTION, without the execution guard. It is what goes to SRBench, which

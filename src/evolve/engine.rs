@@ -269,6 +269,16 @@ const LINKERS: [Linker; 3] = [Linker::AVG, Linker::MUL, Linker::ADD];
 const WRAPPERS: [Wrapper; 3] = [Wrapper::Identity, Wrapper::LogAbs, Wrapper::SqrtAbs];
 const LINKER_NAMES: [&str; 3] = ["avgval", "mulval", "addval"];
 
+/// An HFF angle as a P-VALUE: the probability that a point drawn uniformly on the
+/// `m`-objective hypersphere lies within `theta` of the pole — hff's own
+/// `higd::cdf_beta_correction`, `I_{sin² θ}((m-1)/2, 1/2)`. Returned as
+/// `(p, log10 p)`; the log comes from hff's log-space routine, so it stays
+/// finite in the deep left tail where `p` itself underflows to 0.
+pub fn hff_p_value(theta: f64, m: usize) -> (f64, f64) {
+    let p = hff_core::higd::cdf_beta_correction(theta, m);
+    (p, hff_core::higd::log_cdf_beta_correction(theta, m) / std::f64::consts::LN_10)
+}
+
 /// TRANSCENDENTAL NESTING DEPTH of a decoded gene: the most transcendental
 /// functions met on any path from the root to a leaf — exp, log, sin, cos, tan,
 /// tanh, Abs, sqrt (and their protected forms), and a `Pow` whose exponent is not
@@ -770,6 +780,13 @@ impl Engine {
         Ok(best)
     }
 
+    /// How many objectives HFF has in this fit: the dimension of its sphere.
+    pub fn hff_dimensions(&self) -> usize {
+        hff_columns(self.data.splits.n_extrap, self.config.hff_without_validation, self.config.log_scale).len()
+            + usize::from(self.config.redundancy)
+            + usize::from(self.config.tower)
+    }
+
     fn best(&self, gen: &Generation) -> Option<(usize, Scored)> {
         (0..self.layout.pop as usize)
             .filter_map(|r| self.scored[r].map(|s| (r, s)))
@@ -873,8 +890,9 @@ impl Engine {
             if c.progress_every > 0 && generation % c.progress_every == 0 {
                 if let Some((_, b)) = self.best(&gen) {
                     let third = if self.data.splits.n_extrap > 0 { format!("{:.2e}", b.one_minus_r2[2]) } else { "-".to_string() };
+                    let (p, log10_p) = hff_p_value(b.fitness, self.hff_dimensions());
                     eprintln!(
-                        "   gen {generation:>6} | {:>6.0} s | hff {:.6} | 1-R2 train {:.2e} val {:.2e} block3 {third} | t_depth {}",
+                        "   gen {generation:>6} | {:>6.0} s | hff {:.6} | p {p:.2e} | log10 p {log10_p:>8.2} | 1-R2 train {:.2e} val {:.2e} block3 {third} | t_depth {}",
                         started.elapsed().as_secs_f64(), b.fitness, b.one_minus_r2[0], b.one_minus_r2[1], b.t_depth
                     );
                 }
@@ -963,6 +981,20 @@ mod tests {
         assert_eq!(t_depth(&nodes_of(r#"(Pow (Var "x_0") (Num 4.0))"#)), 0);
         assert_eq!(t_depth(&nodes_of(r#"(Pow (Var "x_0") (Num 1.5))"#)), 1);
         assert_eq!(t_depth(&[]), 0);
+    }
+
+    #[test]
+    fn the_p_value_is_hffs_own_and_shrinks_with_the_angle_and_the_dimension() {
+        let (p, log10_p) = hff_p_value(0.379637, 10);
+        assert!((p - hff_core::higd::cdf_beta_correction(0.379637, 10)).abs() == 0.0);
+        assert!((log10_p - p.log10()).abs() < 1e-9, "{log10_p} vs {}", p.log10());
+        // Nearer the pole is rarer; so is the same angle on a bigger sphere.
+        assert!(hff_p_value(0.1, 10).0 < hff_p_value(0.3, 10).0);
+        assert!(hff_p_value(0.3, 10).0 < hff_p_value(0.3, 4).0);
+        // The deep tail: p underflows, its log does not.
+        let (tiny, log_tiny) = hff_p_value(1e-40, 10);
+        assert!(tiny == 0.0 || tiny < 1e-300);
+        assert!(log_tiny.is_finite() && log_tiny < -300.0, "{log_tiny}");
     }
 
     #[test]
