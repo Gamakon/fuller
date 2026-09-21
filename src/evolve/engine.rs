@@ -177,6 +177,11 @@ pub struct Config {
     /// Blocks two and three (validation; SMOGD / SMOTE / edge) enter HFF on the
     /// log scale — see `hff_truenorth`. The train block stays linear.
     pub log_scale_blocks: bool,
+    /// Block two (validation) is left OUT of HFF: a random cut of the same rows as
+    /// train, its errors mirror train's and only dilute the third block's. HFF is
+    /// then train + block three (hff's `METRIC_NAMES_TRAIN_ONLY`). Validation
+    /// still decides the stop bar and is still reported.
+    pub hff_without_validation: bool,
     /// Harvest and regrow: a model that reaches the stop bar is put in a parking
     /// lot, it and its structural relatives are removed from the population, and
     /// the search goes on to grow another — up to this many (0 = stop at the
@@ -208,6 +213,7 @@ impl Config {
             redundancy: false,
             smogd: false,
             log_scale_blocks: false,
+            hff_without_validation: false,
             // Kept after a two-seed A/B (7012: 46 -> 47, 7013: 44 -> 45, no losses).
             harvests: 4,
             max_generations: 1500,
@@ -257,6 +263,21 @@ pub struct FitResult {
 const LINKERS: [Linker; 3] = [Linker::AVG, Linker::MUL, Linker::ADD];
 const WRAPPERS: [Wrapper; 3] = [Wrapper::Identity, Wrapper::LogAbs, Wrapper::SqrtAbs];
 const LINKER_NAMES: [&str; 3] = ["avgval", "mulval", "addval"];
+
+/// Which of the nine objectives `[mse x3, 1-R2 x3, mae x3]` (blocks train,
+/// validation, third) feed HFF, and which of those are log-scaled.
+fn hff_columns(n_extrap: usize, without_validation: bool, log_scale_blocks: bool) -> Vec<(usize, bool)> {
+    let mut columns = Vec::new();
+    for metric in 0..3 {
+        for block in 0..3 {
+            let absent = (block == 2 && n_extrap == 0) || (block == 1 && without_validation);
+            if !absent {
+                columns.push((3 * metric + block, block > 0 && log_scale_blocks));
+            }
+        }
+    }
+    columns
+}
 
 /// The scaled error that HFF's log scale calls zero.
 const HFF_LOG_FLOOR: f64 = 1e-12;
@@ -548,6 +569,7 @@ impl Engine {
             self.col_max = Some(max);
         }
         let col_max = self.col_max.unwrap_or([1.0; 9]);
+        let columns = hff_columns(n_ex, self.config.hff_without_validation, self.config.log_scale_blocks);
         for (i, &r) in rows.iter().enumerate() {
             let mut best: Option<Scored> = None;
             for c in 0..per {
@@ -556,14 +578,9 @@ impl Engine {
                     continue;
                 }
                 let (o, omr2) = self.caps.objectives(s, n_ex);
-                let mut used: Vec<f64> = if n_ex == 0 { vec![o[0], o[1], o[3], o[4], o[6], o[7]] } else { o.to_vec() };
-                let mut maxes: Vec<f64> = if n_ex == 0 {
-                    vec![col_max[0], col_max[1], col_max[3], col_max[4], col_max[6], col_max[7]]
-                } else {
-                    col_max.to_vec()
-                };
-                let l = self.config.log_scale_blocks;
-                let mut logs: Vec<bool> = if n_ex == 0 { vec![false, l, false, l, false, l] } else { vec![false, l, l, false, l, l, false, l, l] };
+                let mut used: Vec<f64> = columns.iter().map(|&(k, _)| o[k]).collect();
+                let mut maxes: Vec<f64> = columns.iter().map(|&(k, _)| col_max[k]).collect();
+                let mut logs: Vec<bool> = columns.iter().map(|&(_, log)| log).collect();
                 if self.config.redundancy {
                     used.push(s[9].clamp(0.0, 1.0));    // already on [0, 1]: its range is its scale
                     maxes.push(1.0);
@@ -693,12 +710,10 @@ impl Engine {
                 continue;
             }
             let (o, omr2) = self.caps.objectives(s, n_ex);
-            let l = self.config.log_scale_blocks;
-            let fitness = if n_ex == 0 {
-                hff_truenorth(&[o[0], o[1], o[3], o[4], o[6], o[7]], &[col_max[0], col_max[1], col_max[3], col_max[4], col_max[6], col_max[7]], &[false, l, false, l, false, l])
-            } else {
-                hff_truenorth(&o, &col_max, &[false, l, l, false, l, l, false, l, l])
-            };
+            let columns = hff_columns(n_ex, self.config.hff_without_validation, self.config.log_scale_blocks);
+            let (used, maxes): (Vec<f64>, Vec<f64>) = columns.iter().map(|&(k, _)| (o[k], col_max[k])).unzip();
+            let logs: Vec<bool> = columns.iter().map(|&(_, log)| log).collect();
+            let fitness = hff_truenorth(&used, &maxes, &logs);
             if best.is_none_or(|b| fitness < b.fitness) {
                 best = Some(Scored { fitness, linker: c / WRAPPERS.len(), wrapper: c % WRAPPERS.len(), a: s[0], b: s[1], one_minus_r2: omr2 });
             }
@@ -916,6 +931,17 @@ mod tests {
         let before = evaluate_math(r#"(Div (Var "x_2") (Abs (Sub (Var "x_0") (Num 50.0))))"#, &rows()).unwrap();
         let after = evaluate_math(&negative, &rows()).unwrap();
         assert!(before.iter().zip(&after).all(|(a, b)| (a - b).abs() <= 1e-15 * a.abs()));
+    }
+
+    #[test]
+    fn the_hff_columns_are_the_blocks_asked_for() {
+        let k = |c: Vec<(usize, bool)>| c.into_iter().map(|(i, _)| i).collect::<Vec<_>>();
+        assert_eq!(k(hff_columns(0, false, false)), vec![0, 1, 3, 4, 6, 7]);          // train + validation (as before)
+        assert_eq!(k(hff_columns(50, false, false)), vec![0, 1, 2, 3, 4, 5, 6, 7, 8]); // all nine (as before)
+        assert_eq!(k(hff_columns(50, true, false)), vec![0, 2, 3, 5, 6, 8]);           // train + block three
+        assert_eq!(k(hff_columns(0, true, false)), vec![0, 3, 6]);                     // train alone
+        // The log scale is for blocks two and three, never train.
+        assert_eq!(hff_columns(50, true, true), vec![(0, false), (2, true), (3, false), (5, true), (6, false), (8, true)]);
     }
 
     #[test]
