@@ -49,8 +49,22 @@ fn main() {
     let used: Vec<usize> = shuffled(fit_rows.len(), seed, 201).into_iter().take(max_rows).map(|i| fit_rows[i]).collect();
     let n_train = used.len() * 4 / 5;
     let splits = Splits { n_train, n_val: used.len() - n_train, n_extrap: 0 };
-    let x: Vec<f32> = used.iter().flat_map(|&r| inputs(&rows[r])).map(|v| v as f32).collect();
-    let y: Vec<f64> = used.iter().map(|&r| rows[r][target]).collect();
+    let mut x: Vec<f32> = used.iter().flat_map(|&r| inputs(&rows[r])).map(|v| v as f32).collect();
+    let mut y: Vec<f64> = used.iter().map(|&r| rows[r][target]).collect();
+    // EDGE VALIDATION (EVOLVE_EDGE=file.tsv, same columns): rows the harness held
+    // out as the most isolated of what it was given. They are never fitted on;
+    // their errors are separate HFF objectives and the stop bar must hold on
+    // them too. A law holds at the edges; an interior fit does not.
+    let mut splits = splits;
+    if let Some(edge_path) = std::env::var("EVOLVE_EDGE").ok().filter(|p| !p.is_empty()) {
+        let text = std::fs::read_to_string(&edge_path).expect("read the edge file");
+        for line in text.lines().skip(1).filter(|l| !l.trim().is_empty()) {
+            let row: Vec<f64> = line.split('\t').map(|v| v.trim().parse::<f64>().expect("a number")).collect();
+            x.extend(inputs(&row).into_iter().map(|v| v as f32));
+            y.push(row[target]);
+            splits.n_extrap += 1;
+        }
+    }
 
     let mut config = Config::srbench(seed);
     if let Some(population) = args.get(4).and_then(|a| a.parse::<u32>().ok()) {
@@ -113,7 +127,8 @@ fn main() {
 
     // fuller's final form, the data as judge: the fit rows (train + validation)
     // decide which inputs are positive and which prunes change nothing.
-    let fit_rows: Vec<Vec<(String, f64)>> = used.iter().map(|&r| names.iter().cloned().zip(inputs(&rows[r])).collect()).collect();
+    let fit_rows: Vec<Vec<(String, f64)>> =
+        x.chunks(names.len()).map(|r| names.iter().cloned().zip(r.iter().map(|v| f64::from(*v))).collect()).collect();
     // First say what the protected operators actually do on this data; then tidy.
     let resolved = resolve_protected(&out.math, &fit_rows).unwrap_or_else(|_| out.math.clone());
     let tidied = final_form(&resolved, &names, &fit_rows).unwrap_or(resolved);

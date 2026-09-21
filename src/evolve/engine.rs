@@ -640,10 +640,11 @@ impl Engine {
         Ok(best)
     }
 
-    /// The fit rows (train + validation) as named values, for fuller's final form.
+    /// Every row the fit was given (train, validation and edge) as named values,
+    /// for fuller's final form: a tidied model must hold on the edge rows too.
     fn fit_rows(&self) -> Vec<Vec<(String, f64)>> {
         let d = self.data.names.len();
-        let n = self.data.splits.n_train + self.data.splits.n_val;
+        let n = self.data.splits.total();
         (0..n).map(|r| self.data.names.iter().cloned().zip(self.data.x[r * d..(r + 1) * d].iter().map(|v| f64::from(*v))).collect()).collect()
     }
 
