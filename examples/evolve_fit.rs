@@ -276,6 +276,9 @@ fn main() {
     // m-objective sphere is to sit this near the pole.
     let (p_value, log10_p) = fuller::evolve::engine::hff_p_value(out.best.fitness, engine.hff_dimensions());
     println!("PVALUE\t{p_value:.3e}\t{log10_p:.2}\t{}", engine.hff_dimensions());
+    // Unique genes evaluated, how many of them were dropped as over the 64-node
+    // limit, and the individuals they stood for.
+    println!("GENES\t{}\t{}\t{}", out.unique_genes, out.oversized_genes, out.individuals);
     println!("MODEL_INFIX\t{}", tidy.to_infix_faithful());
     // The same model with every protected operator written as the ordinary one —
     // the FUNCTION, without the execution guard. It is what goes to SRBench, which
