@@ -65,3 +65,7 @@ required-features = ["gpu"]
 [[example]]
 name = "evolve_speed"
 required-features = ["gpu"]
+
+[[example]]
+name = "evolve_fit"
+required-features = ["gpu"]

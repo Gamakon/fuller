@@ -285,6 +285,19 @@ impl EvolveDevice {
         Ok(())
     }
 
+    /// Replace the current population's genome, constants and wrapper ids (the
+    /// pump rearranges rows on the host until it is a kernel).
+    pub fn write_population(&self, pop: &Population) -> Result<(), String> {
+        if pop.layout != self.layout {
+            return Err("write_population: a population of another shape".into());
+        }
+        let now = &self.sets[self.current];
+        self.queue.write_buffer(&now.genome, 0, bytemuck::cast_slice(&pop.genome));
+        self.queue.write_buffer(&now.rnc, 0, bytemuck::cast_slice(&pop.rnc));
+        self.queue.write_buffer(&now.wrapper, 0, bytemuck::cast_slice(&pop.wrapper_id));
+        Ok(())
+    }
+
     /// One generation's variation phase on the device: the two tournaments, clone +
     /// mutate, recombine — four dispatches in one submission, nothing read back. The
     /// next population becomes the current one.
