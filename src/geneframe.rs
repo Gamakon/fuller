@@ -149,6 +149,10 @@ pub fn master_table() -> SymbolTable {
         ("protected_exp", "protected_exp", 1),
         ("protected_inv", "protected_inv", 1),
         ("protected_div", "protected_div", 2),
+        ("asin", "asin", 1),
+        ("acos", "acos", 1),
+        ("protected_asin", "protected_asin", 1),
+        ("protected_acos", "protected_acos", 1),
     ];
     for (i, (sem, alias, n)) in sr.iter().enumerate() {
         t.push(Symbol {
@@ -176,11 +180,12 @@ mod tests {
         for needed in [
             "add", "sub", "mul", "div", "neg", "sin", "cos", "tan", "log", "exp",
             "sqrt", "abs", "tanh", "pow2", "pow3", "pow", "inv", "protected_sqrt",
-            "protected_log", "protected_exp", "protected_inv", "protected_div",
+            "protected_log", "protected_exp", "protected_inv", "protected_div", "asin", "acos",
+            "protected_asin", "protected_acos",
         ] {
             assert!(sems.contains(&needed), "SR kingdom missing semantic id {needed}");
         }
-        assert_eq!(sr.len(), 22, "SR kingdom should have the 22 Math ops");
+        assert_eq!(sr.len(), 26, "SR kingdom should have the 26 Math ops");
     }
 
     /// LOCKSTEP with `karva::master_pset()`: the SR kingdom and the flat

@@ -80,6 +80,10 @@ pub fn master_pset() -> Vec<(&'static str, usize)> {
         ("protected_exp", 1),
         ("protected_inv", 1),
         ("protected_div", 2),
+        ("asin", 1),
+        ("acos", 1),
+        ("protected_asin", 1),
+        ("protected_acos", 1),
     ]
 }
 
@@ -103,12 +107,16 @@ fn semantic_to_math(semantic: &str, children: &[String]) -> Result<String, Strin
         ("pow3", 1) => "Pow3",
         ("pow", 2) => "Pow",
         ("inv", 1) => "Inv",
+        ("asin", 1) => "Asin",
+        ("acos", 1) => "Acos",
         // protected ops — distinct constructors, never the raw ones
         ("protected_sqrt", 1) => "ProtectedSqrt",
         ("protected_log", 1) => "ProtectedLog",
         ("protected_exp", 1) => "ProtectedExp",
         ("protected_inv", 1) => "ProtectedInv",
         ("protected_div", 2) => "ProtectedDiv",
+        ("protected_asin", 1) => "ProtectedAsin",
+        ("protected_acos", 1) => "ProtectedAcos",
         // diff_sq(a,b) = (a-b)^2, expressed via Pow2(Sub a b).
         ("diff_sq", 2) => {
             return Ok(format!("(Pow2 (Sub {} {}))", children[0], children[1]));
@@ -268,11 +276,15 @@ pub(crate) fn math_ctor_to_semantic(ctor: &str) -> Option<&'static str> {
         "Pow2" => "pow2",
         "Pow3" => "pow3",
         "Inv" => "inv",
+        "Asin" => "asin",
+        "Acos" => "acos",
         "ProtectedSqrt" => "protected_sqrt",
         "ProtectedLog" => "protected_log",
         "ProtectedExp" => "protected_exp",
         "ProtectedInv" => "protected_inv",
         "ProtectedDiv" => "protected_div",
+        "ProtectedAsin" => "protected_asin",
+        "ProtectedAcos" => "protected_acos",
         _ => return None,
     })
 }
@@ -668,6 +680,34 @@ mod tests {
         // Re-decoding the regenerated chromosome must give the same Math.
         let math2 = karva_to_terms(&head2, &tail2, &pset()).unwrap();
         assert_eq!(math, math2, "round-trip changed the expression");
+    }
+
+    /// tan and the inverse-trig symbols, raw and protected, each decode to
+    /// their OWN constructor and come back from Math as the same token — a
+    /// protected name never lands on the raw semantic id, or the reverse.
+    #[test]
+    fn tan_and_inverse_trig_round_trip_by_semantic_id() {
+        let functions: HashMap<String, FunctionSpec> = master_pset()
+            .into_iter()
+            .map(|(sid, arity)| (sid.to_string(), FunctionSpec { semantic_id: sid.into(), arity }))
+            .collect();
+        let pset = PsetSpec { variables: vec!["x".into(), "y".into()], functions, rnc_values: vec![] };
+        for (name, ctor) in [
+            ("tan", "Tan"),
+            ("asin", "Asin"),
+            ("acos", "Acos"),
+            ("protected_asin", "ProtectedAsin"),
+            ("protected_acos", "ProtectedAcos"),
+        ] {
+            // head: [name, mul, x]  tail: [y, x, ...]  ->  name(mul(x, y))
+            let head = vec![Token::Func(name.into()), Token::Func("mul".into()), Token::Var("x".into())];
+            let tail = vec![Token::Var("y".into()), Token::Var("x".into()), Token::Var("x".into()), Token::Var("x".into())];
+            let math = karva_to_terms(&head, &tail, &pset).unwrap();
+            assert_eq!(math, format!(r#"({ctor} (Mul (Var "x") (Var "y")))"#));
+            let (head2, tail2) = terms_to_karva(&math, &pset, 42).unwrap();
+            assert_eq!(head2[0], Token::Func(name.into()), "{name} came back as another token");
+            assert_eq!(karva_to_terms(&head2, &tail2, &pset).unwrap(), math);
+        }
     }
 
     #[test]

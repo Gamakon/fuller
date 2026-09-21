@@ -46,7 +46,7 @@ impl KernelTables {
         }
         let mut sorted: Vec<&PackedRule> = rules.iter().collect();
         sorted.sort_by_key(|r| (r.bucket(), r.rule_id));
-        let n_ops = 24usize;
+        let n_ops = 28usize;
         let mut bucket = vec![0u32; n_ops + 1];
         for r in &sorted {
             bucket[r.bucket() as usize + 1] += 1;
@@ -395,7 +395,7 @@ mod tests {
         let n_rules = (kt.rule_words.len() / RULE_STRIDE) as u32;
         assert_eq!(*kt.bucket.last().unwrap(), n_rules);
         // Every rule sits in the bucket of its own root opcode.
-        for op in 0..24usize {
+        for op in 0..28usize {
             for r in kt.bucket[op]..kt.bucket[op + 1] {
                 let h = r as usize * RULE_STRIDE;
                 let (root_kind, root_op) = (kt.rule_words[h + 1], kt.rule_words[h + 2]);
@@ -436,7 +436,7 @@ mod tests {
             .split(',')
             .map(|t| t.trim().trim_end_matches('u').parse().unwrap())
             .collect();
-        for code in 0..24u32 {
+        for code in 0..28u32 {
             let want = crate::lint::pack::arity(code);
             let got = if code <= 1 { 0 } else if unary.contains(&code) { 1 } else { 2 };
             assert_eq!(got, want, "opcode {code}");

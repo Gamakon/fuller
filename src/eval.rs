@@ -139,6 +139,16 @@ fn eval_app(
             let a = child(0)?;
             if a == 0.0 { f64::NAN } else { 1.0 / a }
         }
+        // Inverse trig in the real domain: NaN outside [-1, 1] (NaN in -> NaN
+        // out, since NaN fails the comparison).
+        ("Asin", 1) => {
+            let a = child(0)?;
+            if a.abs() <= 1.0 { a.asin() } else { f64::NAN }
+        }
+        ("Acos", 1) => {
+            let a = child(0)?;
+            if a.abs() <= 1.0 { a.acos() } else { f64::NAN }
+        }
         // Protected ops — match the SR engine's pset semantics EXACTLY. These
         // are total (never NaN on the engine's domain), distinct from the raw
         // ops above.
@@ -177,6 +187,18 @@ fn eval_app(
         ("ProtectedDiv", 2) => {
             let (a, b) = (child(0)?, child(1)?);
             if b.abs() < 1e-6 { 0.0 } else { a / b }
+        }
+        // These two have no counterpart in hff_sr_engine.py: they are defined
+        // here, on protected_sqrt's convention for a non-finite input (0.0).
+        //   protected_asin(x) = asin(clamp(x, -1, 1)) if isfinite(x) else 0.0
+        ("ProtectedAsin", 1) => {
+            let a = child(0)?;
+            if a.is_finite() { a.clamp(-1.0, 1.0).asin() } else { 0.0 }
+        }
+        //   protected_acos(x) = acos(clamp(x, -1, 1)) if isfinite(x) else 0.0
+        ("ProtectedAcos", 1) => {
+            let a = child(0)?;
+            if a.is_finite() { a.clamp(-1.0, 1.0).acos() } else { 0.0 }
         }
         _ => return Err(EvalError::BadNode(format!("{op}/{}", args.len()))),
     };
@@ -265,6 +287,39 @@ mod tests {
         let big = env(&[("x", 1000.0)]);
         assert!(eval(r#"(ProtectedExp (Var "x"))"#, &big).unwrap().is_infinite(),
             "protected_exp(1000) must be +inf, not a capped finite");
+    }
+
+    #[test]
+    fn inverse_trig_is_real_domain_and_the_protected_forms_clamp() {
+        use std::f64::consts::{FRAC_PI_2, FRAC_PI_3, FRAC_PI_6, PI};
+        let at = |expr: &str, x: f64| eval(expr, &env(&[("x", x)])).unwrap();
+        let (asin, acos) = (r#"(Asin (Var "x"))"#, r#"(Acos (Var "x"))"#);
+        let (pasin, pacos) = (r#"(ProtectedAsin (Var "x"))"#, r#"(ProtectedAcos (Var "x"))"#);
+        for (x, s, c) in [(-1.0, -FRAC_PI_2, PI), (0.0, 0.0, FRAC_PI_2), (0.5, FRAC_PI_6, FRAC_PI_3), (1.0, FRAC_PI_2, 0.0)] {
+            assert!((at(asin, x) - s).abs() < 1e-15, "asin({x}) = {}", at(asin, x));
+            assert!((at(acos, x) - c).abs() < 1e-15, "acos({x}) = {}", at(acos, x));
+            // Inside [-1, 1] the protected form IS the raw one.
+            assert_eq!(at(pasin, x), at(asin, x));
+            assert_eq!(at(pacos, x), at(acos, x));
+        }
+        // Outside the domain: raw is NaN, protected clamps to the nearer end.
+        for x in [-3.0, -1.0000001, 1.0000001, 2.0] {
+            assert!(at(asin, x).is_nan(), "asin({x}) is NaN");
+            assert!(at(acos, x).is_nan(), "acos({x}) is NaN");
+        }
+        assert_eq!(at(pasin, 2.0), FRAC_PI_2);
+        assert_eq!(at(pasin, -3.0), -FRAC_PI_2);
+        assert_eq!(at(pacos, 2.0), 0.0);
+        assert_eq!(at(pacos, -3.0), PI);
+        // A non-finite argument is 0.0, protected_sqrt's convention — for
+        // +inf, -inf and NaN alike (so ProtectedAcos(-inf) is 0, not pi).
+        let e = env(&[("x", 1000.0)]); // Exp(x) = +inf
+        for arg in [r#"(Exp (Var "x"))"#, r#"(Neg (Exp (Var "x")))"#, r#"(Sqrt (Neg (Var "x")))"#] {
+            assert_eq!(eval(&format!("(ProtectedAsin {arg})"), &e).unwrap(), 0.0, "{arg}");
+            assert_eq!(eval(&format!("(ProtectedAcos {arg})"), &e).unwrap(), 0.0, "{arg}");
+            assert!(eval(&format!("(Asin {arg})"), &e).unwrap().is_nan(), "{arg}");
+            assert!(eval(&format!("(Acos {arg})"), &e).unwrap().is_nan(), "{arg}");
+        }
     }
 
     #[test]

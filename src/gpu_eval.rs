@@ -93,6 +93,10 @@ pub enum Op {
     ProtectedLog = 21,
     ProtectedExp = 22,
     ProtectedInv = 23,
+    Asin = 24,
+    Acos = 25,
+    ProtectedAsin = 26,
+    ProtectedAcos = 27,
 }
 
 impl Op {
@@ -123,6 +127,10 @@ impl Op {
             "ProtectedLog" => Op::ProtectedLog,
             "ProtectedExp" => Op::ProtectedExp,
             "ProtectedInv" => Op::ProtectedInv,
+            "Asin" => Op::Asin,
+            "Acos" => Op::Acos,
+            "ProtectedAsin" => Op::ProtectedAsin,
+            "ProtectedAcos" => Op::ProtectedAcos,
             _ => return None,
         })
     }
@@ -145,7 +153,11 @@ impl Op {
             | Op::ProtectedSqrt
             | Op::ProtectedLog
             | Op::ProtectedExp
-            | Op::ProtectedInv => 1,
+            | Op::ProtectedInv
+            | Op::Asin
+            | Op::Acos
+            | Op::ProtectedAsin
+            | Op::ProtectedAcos => 1,
             _ => 2,
         }
     }
@@ -331,6 +343,27 @@ fn eval_main(@builtin(global_invocation_id) gid: vec3<u32>) {
             case 23u: {                                            // ProtectedInv
                 let a = scratch[nd.arg0];
                 if (a == 0.0) { v = 1.0; } else { v = 1.0 / a; }
+            }
+            // Inverse trig. WGSL leaves asin/acos outside [-1, 1] UNDEFINED, so
+            // they are never called there: the raw ops are NaN outside the
+            // domain (a NaN input fails the comparison, so NaN in -> NaN out),
+            // the protected ones clamp, and are 0.0 on a non-finite input like
+            // ProtectedSqrt.
+            case 24u: {                                            // Asin
+                let a = scratch[nd.arg0];
+                if (abs(a) <= 1.0) { v = asin(a); } else { v = nan(); }
+            }
+            case 25u: {                                            // Acos
+                let a = scratch[nd.arg0];
+                if (abs(a) <= 1.0) { v = acos(a); } else { v = nan(); }
+            }
+            case 26u: {                                            // ProtectedAsin
+                let a = scratch[nd.arg0];
+                if (is_finite(a)) { v = asin(clamp(a, -1.0, 1.0)); } else { v = 0.0; }
+            }
+            case 27u: {                                            // ProtectedAcos
+                let a = scratch[nd.arg0];
+                if (is_finite(a)) { v = acos(clamp(a, -1.0, 1.0)); } else { v = 0.0; }
             }
             default: { v = bitcast<f32>(0x7fc00000u); }
         }
@@ -991,7 +1024,8 @@ mod tests {
         for name in [
             "Add", "Sub", "Mul", "Div", "Neg", "Abs", "Sqrt", "Log", "Exp", "Sin", "Cos",
             "Tan", "Tanh", "Pow", "Pow2", "Pow3", "Inv", "Num", "Var", "ProtectedDiv",
-            "ProtectedSqrt", "ProtectedLog", "ProtectedExp", "ProtectedInv",
+            "ProtectedSqrt", "ProtectedLog", "ProtectedExp", "ProtectedInv", "Asin", "Acos",
+            "ProtectedAsin", "ProtectedAcos",
         ] {
             assert!(Op::from_math(name).is_some(), "no opcode for {name}");
         }
@@ -1004,6 +1038,10 @@ mod tests {
         assert_eq!(Op::Neg.arity(), 1);
         assert_eq!(Op::Sqrt.arity(), 1);
         assert_eq!(Op::ProtectedExp.arity(), 1);
+        assert_eq!(Op::Asin.arity(), 1);
+        assert_eq!(Op::Acos.arity(), 1);
+        assert_eq!(Op::ProtectedAsin.arity(), 1);
+        assert_eq!(Op::ProtectedAcos.arity(), 1);
         assert_eq!(Op::Add.arity(), 2);
         assert_eq!(Op::Pow.arity(), 2);
     }
@@ -1146,6 +1184,15 @@ mod protected_parity_tests {
                 if !a.is_finite() || a == 0.0 { f64::INFINITY } else { a.abs().ln() }
             }
             Op::ProtectedExp => if a.is_finite() { a.exp() } else { f64::INFINITY },
+            // fuller's own (no engine counterpart), on protected_sqrt's
+            // non-finite convention:
+            //   protected_asin:     asin(clamp(x, -1, 1)) if isfinite(x) else 0.0
+            //   protected_acos:     acos(clamp(x, -1, 1)) if isfinite(x) else 0.0
+            Op::ProtectedAsin => if a.is_finite() { a.clamp(-1.0, 1.0).asin() } else { 0.0 },
+            Op::ProtectedAcos => if a.is_finite() { a.clamp(-1.0, 1.0).acos() } else { 0.0 },
+            // raw, real-domain: NaN outside [-1, 1]
+            Op::Asin => if a.abs() <= 1.0 { a.asin() } else { f64::NAN },
+            Op::Acos => if a.abs() <= 1.0 { a.acos() } else { f64::NAN },
             Op::Div => a / b,
             Op::Sqrt => a.sqrt(),
             other => panic!("no CPU reference for {other:?}"),
@@ -1303,6 +1350,50 @@ mod protected_parity_tests {
         for (i, name) in [(2, "log(+inf)"), (3, "log(-inf)"), (4, "exp(+inf)"), (5, "exp(-inf)")] {
             assert!(got[i].is_infinite() && got[i] > 0.0, "protected_{name} must be +inf, got {}", got[i]);
         }
+    }
+
+    /// Asin / Acos are NaN outside [-1, 1]; the protected forms clamp there and
+    /// are the raw function inside. One column spanning [-2, 2], the domain's
+    /// two ends included.
+    #[test]
+    fn inverse_trig_matches_the_cpu_inside_and_outside_the_domain() {
+        let xs: Vec<f32> = (0..=40).map(|i| -2.0 + 0.1 * i as f32).chain([-1.0, 1.0, 0.5, -0.0]).collect();
+        for op in [Op::Asin, Op::Acos, Op::ProtectedAsin, Op::ProtectedAcos] {
+            let Some(got) = gpu_unary(op, &xs) else { return };
+            for (i, &x) in xs.iter().enumerate() {
+                agree(got[i], cpu(op, x as f64, 0.0), &format!("{op:?}({x})"));
+            }
+        }
+        let Some(clamped) = gpu_unary(Op::ProtectedAcos, &[-3.0, 2.0]) else { return };
+        agree(clamped[0], std::f64::consts::PI, "ProtectedAcos(-3)");
+        assert_eq!(clamped[1], 0.0, "ProtectedAcos(2) = acos(1) = 0");
+    }
+
+    /// A non-finite argument: 0.0 from the protected forms (ProtectedSqrt's
+    /// convention, +inf and -inf alike), NaN from the raw ones. Built on the
+    /// device, as above.
+    #[test]
+    fn inverse_trig_on_non_finite_input() {
+        let Ok(ev) = GpuEvaluator::new(&[1000.0f32], 1) else { return };
+        let mut b = ExprBatch::new();
+        let ops = [Op::ProtectedAsin, Op::ProtectedAcos, Op::Asin, Op::Acos];
+        for op in ops {
+            // op(Exp(x)) = op(+inf), op(Neg(Exp(x))) = op(-inf)
+            b.push(&[
+                GpuNode { op: op as u32, arg0: 1, arg1: 0, konst: 0.0 },
+                GpuNode { op: Op::Exp as u32, arg0: 2, arg1: 0, konst: 0.0 },
+                GpuNode { op: Op::Var as u32, arg0: 0, arg1: 0, konst: 0.0 },
+            ]);
+            b.push(&[
+                GpuNode { op: op as u32, arg0: 1, arg1: 0, konst: 0.0 },
+                GpuNode { op: Op::Neg as u32, arg0: 2, arg1: 0, konst: 0.0 },
+                GpuNode { op: Op::Exp as u32, arg0: 3, arg1: 0, konst: 0.0 },
+                GpuNode { op: Op::Var as u32, arg0: 0, arg1: 0, konst: 0.0 },
+            ]);
+        }
+        let got = ev.eval(&b).expect("eval");
+        assert_eq!(&got[0..4], &[0.0, 0.0, 0.0, 0.0], "protected asin/acos of +-inf = 0.0");
+        assert!(got[4..8].iter().all(|v| v.is_nan()), "raw asin/acos of +-inf is NaN, got {:?}", &got[4..8]);
     }
 
     /// The engine RAISES on sin/cos of +-inf (Python math.sin -> ValueError)
@@ -1474,6 +1565,61 @@ mod real_expression_tests {
         eprintln!("{checked} (expression, row) pairs matched CPU f64");
     }
 
+    /// tan and the inverse-trig ops, raw and protected, as REAL Math expressions
+    /// through the converter, one batch, over a column spanning [-2, 2] — the
+    /// shapes of the laws that need them (feynman I.26.2 is asin(n sin t)).
+    #[test]
+    fn gpu_matches_cpu_on_tan_and_inverse_trig() {
+        let vars: Vec<String> = ["a", "b"].iter().map(|s| s.to_string()).collect();
+        let n_rows = 41usize;
+        let rows: Vec<f32> = (0..n_rows).flat_map(|i| [-2.0 + 0.1 * i as f32, 0.3 + 0.02 * i as f32]).collect();
+        let exprs = [
+            r#"(Asin (Var "a"))"#,
+            r#"(Acos (Var "a"))"#,
+            r#"(ProtectedAsin (Var "a"))"#,
+            r#"(ProtectedAcos (Var "a"))"#,
+            r#"(Tan (Var "a"))"#,
+            r#"(ProtectedAsin (Mul (Var "b") (Sin (Var "a"))))"#,
+            r#"(Asin (Mul (Var "b") (Sin (Var "a"))))"#,
+            r#"(ProtectedAcos (Div (Var "a") (Add (Var "b") (Num 1.0))))"#,
+            r#"(Mul (Cos (Var "a")) (Inv (Tan (Var "b"))))"#,
+            r#"(Sin (Asin (Var "a")))"#,
+            r#"(Cos (Acos (Var "a")))"#,
+        ];
+        let ev = match GpuEvaluator::new(&rows, 2) {
+            Ok(e) => e,
+            Err(e) => {
+                eprintln!("no GPU adapter ({e}); skipping");
+                return;
+            }
+        };
+        let mut batch = ExprBatch::new();
+        for e in &exprs {
+            let nodes = math_to_nodes(e, &vars).unwrap_or_else(|err| panic!("{e}: {err}"));
+            batch.push(&nodes);
+        }
+        let got = ev.eval(&batch).expect("gpu eval");
+        assert_eq!(got.len(), exprs.len() * n_rows);
+        let (mut finite, mut nan) = (0, 0);
+        for (ei, e) in exprs.iter().enumerate() {
+            for r in 0..n_rows {
+                let row = &rows[r * 2..r * 2 + 2];
+                let want = cpu_eval(e, &vars, row).unwrap_or_else(|| panic!("cpu eval failed for {e}"));
+                let (g, w) = (got[ei * n_rows + r], want as f32);
+                if w.is_nan() {
+                    assert!(g.is_nan(), "{e} row {r} ({row:?}): cpu NaN, gpu {g}");
+                    nan += 1;
+                } else {
+                    // f32 device vs f64 host: compare at f32 tolerance.
+                    assert!((g - w).abs() <= 1e-4 * w.abs().max(1.0), "{e} row {r} ({row:?}): cpu {w}, gpu {g}");
+                    finite += 1;
+                }
+            }
+        }
+        // Both sides of the domain edge were really met.
+        assert!(finite > 0 && nan > 0, "{finite} finite, {nan} NaN");
+    }
+
     #[test]
     fn converter_emits_breadth_first_so_children_follow_parents() {
         // The kernel's backward scan REQUIRES child index > parent index.
@@ -1531,7 +1677,7 @@ mod opcode_source_of_truth_tests {
             "Var", "Num", "Add", "Sub", "Mul", "Div", "Neg", "Abs", "Sqrt", "Log",
             "Exp", "Sin", "Cos", "Tan", "Tanh", "Pow", "Pow2", "Pow3", "Inv",
             "ProtectedDiv", "ProtectedSqrt", "ProtectedLog", "ProtectedExp",
-            "ProtectedInv",
+            "ProtectedInv", "Asin", "Acos", "ProtectedAsin", "ProtectedAcos",
         ] {
             assert!(
                 Op::from_math(name).is_some(),
@@ -1555,7 +1701,8 @@ mod opcode_source_of_truth_tests {
         for name in [
             "Add", "Sub", "Mul", "Div", "Neg", "Abs", "Sqrt", "Log", "Exp", "Sin",
             "Cos", "Tan", "Tanh", "Pow", "Pow2", "Pow3", "Inv", "ProtectedDiv",
-            "ProtectedSqrt", "ProtectedLog", "ProtectedExp", "ProtectedInv",
+            "ProtectedSqrt", "ProtectedLog", "ProtectedExp", "ProtectedInv", "Asin", "Acos",
+            "ProtectedAsin", "ProtectedAcos",
         ] {
             assert!(
                 eval_src.contains(&format!("(\"{name}\"")),

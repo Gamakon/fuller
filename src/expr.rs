@@ -16,6 +16,7 @@
 //!   (Add a b) (Sub a b) (Mul a b) (Div a b)
 //!   (Neg a)
 //!   (Sin a) (Cos a) (Log a) (Exp a) (Sqrt a) (Abs a) (Tanh a)
+//!   (Tan a) (Asin a) (Acos a)
 //!   (Pow2 a) (Pow3 a) (Inv a)
 //!
 //! These cover the BRIEF.md semantic_id set
@@ -43,6 +44,9 @@ pub const MATH_DATATYPE: &str = r#"
     (Abs Math)
     (Tanh Math)
     (Tan Math)
+    ; Inverse trig, real domain: NaN outside [-1, 1] (like Sqrt of a negative).
+    (Asin Math)
+    (Acos Math)
     (Pow2 Math)
     (Pow3 Math)
     (Pow Math Math)
@@ -56,11 +60,15 @@ pub const MATH_DATATYPE: &str = r#"
     ;   ProtectedExp  x   = exp(x), returning +inf on overflow (uncapped)
     ;   ProtectedInv  x   = 1/x if x != 0 else 1
     ;   ProtectedDiv  a b = a/b if b != 0 else 0
+    ;   ProtectedAsin x   = asin(clamp(x, -1, 1)), 0 where x is not finite
+    ;   ProtectedAcos x   = acos(clamp(x, -1, 1)), 0 where x is not finite
     (ProtectedSqrt Math)
     (ProtectedLog Math)
     (ProtectedExp Math)
     (ProtectedInv Math)
-    (ProtectedDiv Math Math))
+    (ProtectedDiv Math Math)
+    (ProtectedAsin Math)
+    (ProtectedAcos Math))
 "#;
 
 /// Domain-guard relations shared across rule modules.

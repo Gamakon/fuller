@@ -43,7 +43,7 @@ const KIND_NUM: u32 = 3u;
 
 const OP_VAR: u32 = 0u;
 const OP_NUM: u32 = 1u;
-const N_OPS: u32 = 24u;
+const N_OPS: u32 = 28u;
 
 @group(0) @binding(0) var<storage, read>       nodes_in:  array<Node>;
 @group(0) @binding(1) var<storage, read>       aux_in:    array<u32>;
@@ -65,7 +65,7 @@ const N_OPS: u32 = 24u;
 fn arity(op: u32) -> u32 {
     switch (op) {
         case 0u, 1u: { return 0u; }
-        case 6u, 7u, 8u, 9u, 10u, 11u, 12u, 13u, 14u, 16u, 17u, 18u, 20u, 21u, 22u, 23u: { return 1u; }
+        case 6u, 7u, 8u, 9u, 10u, 11u, 12u, 13u, 14u, 16u, 17u, 18u, 20u, 21u, 22u, 23u, 24u, 25u, 26u, 27u: { return 1u; }
         default: { return 2u; }
     }
 }

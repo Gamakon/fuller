@@ -82,12 +82,15 @@ impl Tree {
     /// Protected operators are written as the engine's own symbolic map writes
     /// them: `ProtectedSqrt x` is `sqrt(Abs(x))`, `ProtectedLog x` is
     /// `log(Abs(x))`, `ProtectedExp` is `exp`, `ProtectedDiv a b` is `a/b`,
-    /// `ProtectedInv x` is `1/x`. Every operand is parenthesised, so the text
+    /// `ProtectedInv x` is `1/x`, `ProtectedAsin x` / `ProtectedAcos x` are
+    /// `asin(x)` / `acos(x)`. Every operand is parenthesised, so the text
     /// means exactly what the tree means whatever the reader's precedence.
     /// [`Tree::to_infix`], except that a protected operator is written as what it
     /// COMPUTES, a Piecewise sympy can read: `ProtectedDiv a b` is 0 where
     /// |b| < 1e-6, `ProtectedInv x` is 1 at x = 0, `ProtectedSqrt x` is 0 where x
-    /// is not finite. `to_infix` writes them as a/b, 1/x, sqrt(Abs(x)) — a
+    /// is not finite, `ProtectedAsin x` / `ProtectedAcos x` clamp x to [-1, 1]
+    /// (and are 0 where x is not finite). `to_infix` writes them as a/b, 1/x,
+    /// sqrt(Abs(x)), asin(x), acos(x) — a
     /// different function wherever those cases occur on the data (the Rust
     /// engine's Feynman I.50.26: chromosome R² 0.94, its a/b rendering 0.47).
     /// A caller that reports a model first turns every protected operator its
@@ -106,6 +109,11 @@ impl Tree {
             Tree::App(Op::ProtectedSqrt, k) => {
                 let a = k[0].to_infix_faithful();
                 format!("Piecewise((sqrt(Abs({a})), Abs({a}) < 1.7976931348623157e308), (0, True))")
+            }
+            Tree::App(op @ (Op::ProtectedAsin | Op::ProtectedAcos), k) => {
+                let a = k[0].to_infix_faithful();
+                let f = if *op == Op::ProtectedAsin { "asin" } else { "acos" };
+                format!("Piecewise(({f}(Min(1, Max(-1, {a}))), Abs({a}) < 1.7976931348623157e308), (0, True))")
             }
             Tree::App(op, k) => {
                 // every other operator: the plain rendering, over faithful operands
@@ -143,6 +151,8 @@ impl Tree {
                 Op::Inv | Op::ProtectedInv => format!("(1/{})", one(k)),
                 Op::ProtectedSqrt => format!("sqrt(Abs({}))", one(k)),
                 Op::ProtectedLog => format!("log(Abs({}))", one(k)),
+                Op::Asin | Op::ProtectedAsin => format!("asin({})", one(k)),
+                Op::Acos | Op::ProtectedAcos => format!("acos({})", one(k)),
                 Op::Var | Op::Num => unreachable!("leaves are not applications"),
             },
         }
@@ -308,6 +318,45 @@ mod tests {
         let e = t(r#"(Sub (ProtectedDiv (Var "a") (Pow2 (Var "b"))) (Mul (Num -2.5) (ProtectedSqrt (Neg (Var "c")))))"#);
         assert_eq!(e.to_infix(), "((a/(b**2)) - ((-2.5)*sqrt(Abs((-c)))))");
         assert_eq!(t("(Num 3.0)").to_infix(), "3.0");
+    }
+
+    /// The inverse-trig ops: text round trip, the plain rendering (protected
+    /// forms print as the plain function), and the faithful one, which writes
+    /// the clamp and the non-finite case the protected forms really compute.
+    #[test]
+    fn inverse_trig_round_trips_and_prints() {
+        for (ctor, plain) in [("Asin", "asin"), ("Acos", "acos"), ("ProtectedAsin", "asin"), ("ProtectedAcos", "acos")] {
+            let s = format!(r#"({ctor} (Mul (Var "n") (Sin (Var "t"))))"#);
+            let e = t(&s);
+            assert_eq!(e.to_math(), s);
+            assert_eq!(e.node_count(), 5);
+            assert_eq!(e.to_infix(), format!("{plain}((n*sin(t)))"));
+            let faithful = e.to_infix_faithful();
+            if ctor.starts_with("Protected") {
+                assert_eq!(
+                    faithful,
+                    format!("Piecewise(({plain}(Min(1, Max(-1, (n*sin(t))))), Abs((n*sin(t))) < 1.7976931348623157e308), (0, True))")
+                );
+            } else {
+                assert_eq!(faithful, e.to_infix(), "a raw op is already what it computes");
+            }
+        }
+        assert_eq!(t(r#"(Tan (Var "y"))"#).to_infix(), "tan(y)");
+        // An operand's protected op is spelled out under a plain parent.
+        assert_eq!(
+            t(r#"(Sin (ProtectedAsin (Var "x")))"#).to_infix_faithful(),
+            "sin(Piecewise((asin(Min(1, Max(-1, x))), Abs(x) < 1.7976931348623157e308), (0, True)))"
+        );
+    }
+
+    /// On a row, the tree evaluates by the crate evaluator: clamp and NaN.
+    #[test]
+    fn inverse_trig_evaluates_like_the_crate_evaluator() {
+        let at = |s: &str, x: f64| t(s).eval(&[("x".to_string(), x)]).unwrap();
+        assert!(at(r#"(Asin (Var "x"))"#, 2.0).is_nan());
+        assert_eq!(at(r#"(ProtectedAsin (Var "x"))"#, 2.0), std::f64::consts::FRAC_PI_2);
+        assert_eq!(at(r#"(ProtectedAcos (Var "x"))"#, -3.0), std::f64::consts::PI);
+        assert_eq!(at(r#"(Acos (Var "x"))"#, 1.0), 0.0);
     }
 
     #[test]

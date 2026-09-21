@@ -11,10 +11,10 @@ use crate::gpu_eval::Op;
 
 /// `Math` constructor names, indexed by `Op` discriminant. Locked to
 /// `Op::from_math` by a test, so the two cannot drift.
-const OP_NAMES: [&str; 24] = [
+const OP_NAMES: [&str; 28] = [
     "Var", "Num", "Add", "Sub", "Mul", "Div", "Neg", "Abs", "Sqrt", "Log", "Exp", "Sin", "Cos",
     "Tan", "Tanh", "Pow", "Pow2", "Pow3", "Inv", "ProtectedDiv", "ProtectedSqrt", "ProtectedLog",
-    "ProtectedExp", "ProtectedInv",
+    "ProtectedExp", "ProtectedInv", "Asin", "Acos", "ProtectedAsin", "ProtectedAcos",
 ];
 
 /// The `Math` constructor name of an opcode.
