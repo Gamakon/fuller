@@ -18,7 +18,9 @@ struct Params {
     n_wrappers: u32,
     first_row: u32,
     n_rows: u32,
-    pad0: u32,
+    // The virtual head, already resolved by the host (never 0 here): only the first
+    // `vhead` head positions may hold a function.
+    vhead: u32,
     pad1: u32,
 }
 
@@ -73,7 +75,7 @@ fn init_main(@builtin(global_invocation_id) gid: vec3<u32>) {
         let base = (row * params.n_genes + g) * width;
         for (var p = 0u; p < width; p = p + 1u) {
             let slot = g * width + p;
-            if (p < params.head) {
+            if (p < params.vhead) {
                 // geppy: a head slot is a function or a terminal, equal odds.
                 if (coin(row, slot, STREAM_KIND)) {
                     genome[base + p] = sample_functions[below(row, slot, STREAM_SYMBOL, params.n_functions)];

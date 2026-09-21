@@ -32,14 +32,14 @@ fn main() {
     let layout = Layout::for_arity(pop, 3, 48, 2, 10);
     let rates = Rates::engine_defaults(layout);
     let mut dev = EvolveDevice::new(layout, &codes).expect("device");
-    dev.init(&InitParams { seed: 1, generation: 0, rnc_lo: -100, rnc_hi: 100, n_wrappers: 3 }).expect("init");
+    dev.init(&InitParams { seed: 1, generation: 0, rnc_lo: -100, rnc_hi: 100, n_wrappers: 3, vhead: 0 }).expect("init");
     let fitness: Vec<f32> = (0..pop).map(|r| ((r * 2_654_435_761u32.wrapping_mul(r + 1)) % 100_000) as f32).collect();
     dev.write_fitness(&fitness).expect("fitness");
     dev.finish();
 
     let t = Instant::now();
     for generation in 1..=generations {
-        dev.vary(&islands, &rates, &GenParams { seed: 1, generation, rnc_lo: -100, rnc_hi: 100 }).expect("vary");
+        dev.vary(&islands, &rates, &GenParams { seed: 1, generation, rnc_lo: -100, rnc_hi: 100, vhead: 0 }).expect("vary");
         dev.write_fitness(&fitness).expect("fitness");
     }
     dev.finish();

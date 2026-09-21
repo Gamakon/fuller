@@ -119,6 +119,13 @@ fn main() {
         config.pop_intake = population / 4 * 3;
         config.pop_champion = population - config.pop_intake;
     }
+    //   EVOLVE_VHEAD_EVERY / _START     the GROWING HEAD: the virtual head starts at START
+    //                                   (12) and gains a position every EVERY generations
+    //                                   (0 = off: the whole head from the start)
+    config.vhead_every = std::env::var("EVOLVE_VHEAD_EVERY").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
+    if let Some(start) = std::env::var("EVOLVE_VHEAD_START").ok().and_then(|v| v.parse().ok()) {
+        config.vhead_start = start;
+    }
     //   EVOLVE_PROGRESS_EVERY           a progress line on stderr every N generations (0 = none)
     config.progress_every = std::env::var("EVOLVE_PROGRESS_EVERY").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
     //   EVOLVE_PUMP_EVERY               the pump's beat in generations (the engine's default is 4)

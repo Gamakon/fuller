@@ -97,6 +97,23 @@ pub struct InitParams {
     pub rnc_lo: i32,
     pub rnc_hi: i32,
     pub n_wrappers: u32,
+    /// The VIRTUAL HEAD: only the first `vhead` positions of a head may hold a
+    /// function; the rest of the head holds terminals, as the tail does. 0 = the
+    /// whole head, the ordinary GEP gene. See [`virtual_head`].
+    pub vhead: u32,
+}
+
+/// The head length the operators work with: `vhead`, or the whole head when it is
+/// 0. The genome keeps its physical width whatever this is — a gene with a short
+/// virtual head is an ordinary gene whose later head positions happen to hold
+/// terminals, so it decodes as it always did, and RAISING the virtual head changes
+/// no expression: it only opens the next position to a function.
+pub fn virtual_head(vhead: u32, layout: Layout) -> Result<u32, String> {
+    match vhead {
+        0 => Ok(layout.head),
+        v if (2..=layout.head).contains(&v) => Ok(v),
+        v => Err(format!("virtual head {v} is not in 2..={}", layout.head)),
+    }
 }
 
 /// A population on the host: what `device::EvolveDevice::read` returns and what
@@ -174,6 +191,7 @@ pub fn init(layout: Layout, codes: &SymbolCodes, p: &InitParams) -> Result<Popul
     let mut genome = vec![0u32; layout.genome_len()];
     let mut rnc = vec![0f32; layout.rnc_len()];
     let mut wrapper_id = vec![0u32; layout.pop as usize];
+    let vhead = virtual_head(p.vhead, layout)?;
     let d = |row, slot, stream| draw(p.seed, p.generation, row, slot, stream);
     for row in 0..layout.pop {
         for g in 0..layout.n_genes {
@@ -181,7 +199,7 @@ pub fn init(layout: Layout, codes: &SymbolCodes, p: &InitParams) -> Result<Popul
             for pos in 0..width {
                 let slot = g * width + pos;
                 let terminal = codes.sample_terminals[below(d(row, slot, STREAM_SYMBOL), nt) as usize];
-                genome[base + pos as usize] = if pos < layout.head {
+                genome[base + pos as usize] = if pos < vhead {
                     if coin(d(row, slot, STREAM_KIND)) {
                         codes.sample_functions[below(d(row, slot, STREAM_SYMBOL), nf) as usize]
                     } else {
@@ -244,7 +262,7 @@ pub(crate) mod tests {
     }
 
     pub(crate) fn params(seed: u32) -> InitParams {
-        InitParams { seed, generation: 0, rnc_lo: -100, rnc_hi: 100, n_wrappers: 3 }
+        InitParams { seed, generation: 0, rnc_lo: -100, rnc_hi: 100, n_wrappers: 3, vhead: 0 }
     }
 
     #[test]

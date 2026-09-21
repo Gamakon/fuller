@@ -139,7 +139,14 @@ impl Rates {
 /// need more Dc slots than there are. `pick`, `kind`, `which`, `value` are the
 /// draws (a function node; collapse or promote; which child; the new "?"'s Dc).
 pub fn cleanse_gene(tokens: &mut [u32], layout: Layout, codes: &SymbolCodes, pick: u64, collapse: bool, which: u64, value: u64) -> bool {
-    let (h, ht) = (layout.head as usize, (layout.head + layout.tail) as usize);
+    cleanse_gene_within(tokens, layout, layout.head, codes, (pick, collapse, which, value))
+}
+
+/// [`cleanse_gene`] with the head its functions must stay inside given: the
+/// virtual head. `draws` = (pick, collapse, which, value).
+pub fn cleanse_gene_within(tokens: &mut [u32], layout: Layout, vhead: u32, codes: &SymbolCodes, draws: (u64, bool, u64, u64)) -> bool {
+    let (pick, collapse, which, value) = draws;
+    let (h, ht) = (vhead as usize, (layout.head + layout.tail) as usize);
     if ht > MAX_CLEANSE as usize {
         return false;
     }
@@ -218,6 +225,11 @@ pub struct GenParams {
     pub generation: u32,
     pub rnc_lo: i32,
     pub rnc_hi: i32,
+    /// The virtual head (0 = the whole head): see [`super::virtual_head`]. Point
+    /// mutation writes a function only below it; inversion, IS and RIS work inside
+    /// it; the cleanse keeps functions inside it. Crossover needs no rule: both
+    /// parents already keep theirs.
+    pub vhead: u32,
 }
 
 /// A population with its fitness (NaN = not evaluated; lower is fitter).
@@ -318,6 +330,9 @@ pub fn mutate(
     let l = now.pop.layout;
     let (h, t) = (l.head, l.tail);
     let (ht, width, g_n, nr) = (h + t, l.gene_width(), l.n_genes, l.n_rnc);
+    // Every head operator works inside the VIRTUAL head; a wrong one is a bug in
+    // the caller (`device::vary` and `init` refuse it), not a case to run with.
+    let vh = super::virtual_head(p.vhead, l).expect("the virtual head");
     let row_w = (g_n * width) as usize;
     let rnc_w = (g_n * nr) as usize;
     let (nf, nt) = (codes.sample_functions.len() as u32, codes.sample_terminals.len() as u32);
@@ -347,7 +362,7 @@ pub fn mutate(
                     if !chance(d(slot, STREAM_MUT_HIT), rates.mut_point) {
                         continue;
                     }
-                    row[at(g, pos)] = if pos < h && coin(d(slot, STREAM_MUT_KIND)) {
+                    row[at(g, pos)] = if pos < vh && coin(d(slot, STREAM_MUT_KIND)) {
                         codes.sample_functions[below(d(slot, STREAM_MUT_SYMBOL), nf) as usize]
                     } else {
                         codes.sample_terminals[below(d(slot, STREAM_MUT_SYMBOL), nt) as usize]
@@ -357,8 +372,8 @@ pub fn mutate(
             // 2. inversion, inside one head
             if acts(OP_INVERT, rates.invert) {
                 let g = below(d(0, STREAM_INVERT), g_n);
-                let len = 2 + below(d(1, STREAM_INVERT), h - 1);
-                let start = below(d(2, STREAM_INVERT), h - len + 1);
+                let len = 2 + below(d(1, STREAM_INVERT), vh - 1);
+                let start = below(d(2, STREAM_INVERT), vh - len + 1);
                 row[at(g, start)..at(g, start + len)].reverse();
             }
             // 3. IS transposition: a segment from anywhere in head+tail, into a
@@ -366,12 +381,12 @@ pub fn mutate(
             if acts(OP_IS, rates.is_transpose) {
                 let donor = below(d(0, STREAM_IS), g_n);
                 let donee = below(d(1, STREAM_IS), g_n);
-                let len = 1 + below(d(2, STREAM_IS), h - 1);
+                let len = 1 + below(d(2, STREAM_IS), vh - 1);
                 let start = below(d(3, STREAM_IS), ht - len + 1);
-                let ins = 1 + below(d(4, STREAM_IS), h - len);
+                let ins = 1 + below(d(4, STREAM_IS), vh - len);
                 let seg: Vec<u32> = row[at(donor, start)..at(donor, start + len)].to_vec();
-                let head: Vec<u32> = row[at(donee, 0)..at(donee, h)].to_vec();
-                for pos in ins + len..h {
+                let head: Vec<u32> = row[at(donee, 0)..at(donee, vh)].to_vec();
+                for pos in ins + len..vh {
                     row[at(donee, pos)] = head[(pos - len) as usize];
                 }
                 row[at(donee, ins)..at(donee, ins + len)].copy_from_slice(&seg);
@@ -381,16 +396,16 @@ pub fn mutate(
                 for trial in 0..2 * g_n + 1 {
                     let donor = below(d(trial * 4, STREAM_RIS), g_n);
                     let donee = below(d(trial * 4 + 1, STREAM_RIS), g_n);
-                    let n_fn = (0..h).filter(|&pos| codes.arity[row[at(donor, pos)] as usize] > 0).count() as u32;
+                    let n_fn = (0..vh).filter(|&pos| codes.arity[row[at(donor, pos)] as usize] > 0).count() as u32;
                     if n_fn == 0 {
                         continue;
                     }
                     let pick = below(d(trial * 4 + 2, STREAM_RIS), n_fn);
-                    let start = (0..h).filter(|&pos| codes.arity[row[at(donor, pos)] as usize] > 0).nth(pick as usize).unwrap_or(0);
-                    let len = 2 + below(d(trial * 4 + 3, STREAM_RIS), h.min(ht - start) - 1);
+                    let start = (0..vh).filter(|&pos| codes.arity[row[at(donor, pos)] as usize] > 0).nth(pick as usize).unwrap_or(0);
+                    let len = 2 + below(d(trial * 4 + 3, STREAM_RIS), vh.min(ht - start) - 1);
                     let seg: Vec<u32> = row[at(donor, start)..at(donor, start + len)].to_vec();
-                    let head: Vec<u32> = row[at(donee, 0)..at(donee, h)].to_vec();
-                    for pos in len..h {
+                    let head: Vec<u32> = row[at(donee, 0)..at(donee, vh)].to_vec();
+                    for pos in len..vh {
                         row[at(donee, pos)] = head[(pos - len) as usize];
                     }
                     row[at(donee, 0)..at(donee, len)].copy_from_slice(&seg);
@@ -451,14 +466,12 @@ pub fn mutate(
             if acts(OP_CLEANSE, rates.cleanse) {
                 let g = below(d(0, STREAM_CLEANSE), g_n);
                 let row = &mut next.pop.genome[ru * row_w..(ru + 1) * row_w];
-                cleanse_gene(
+                cleanse_gene_within(
                     &mut row[(g * width) as usize..((g + 1) * width) as usize],
                     l,
+                    vh,
                     codes,
-                    d(1, STREAM_CLEANSE),
-                    chance(d(2, STREAM_CLEANSE), rates.cleanse_collapse),
-                    d(3, STREAM_CLEANSE),
-                    d(4, STREAM_CLEANSE),
+                    (d(1, STREAM_CLEANSE), chance(d(2, STREAM_CLEANSE), rates.cleanse_collapse), d(3, STREAM_CLEANSE), d(4, STREAM_CLEANSE)),
                 );
             }
         }
@@ -563,7 +576,7 @@ pub(crate) mod tests {
     }
 
     fn gen_params(seed: u32, generation: u32) -> GenParams {
-        GenParams { seed, generation, rnc_lo: -100, rnc_hi: 100 }
+        GenParams { seed, generation, rnc_lo: -100, rnc_hi: 100, vhead: 0 }
     }
 
     #[test]
@@ -578,6 +591,46 @@ pub(crate) mod tests {
                 *f = below(draw(3, generation, r as u32, 1, 99), 1_000_000) as f32;
             }
         }
+    }
+
+    /// The deepest position of any gene that holds a function, plus one: the head
+    /// the population is actually using.
+    fn head_in_use(g: &Generation, codes: &SymbolCodes) -> usize {
+        let l = g.pop.layout;
+        let (h, width) = (l.head as usize, l.gene_width() as usize);
+        g.pop.genome.chunks(width).map(|gene| (0..h).rev().find(|&p| codes.arity[gene[p] as usize] > 0).map_or(0, |p| p + 1)).max().unwrap_or(0)
+    }
+
+    #[test]
+    fn no_function_ever_sits_past_the_virtual_head_and_raising_it_changes_no_gene() {
+        let (codes, isl) = (codes(), islands());
+        let layout = Layout::for_arity(800, 3, 48, 2, 10);
+        // every operator on, the cleanse included
+        let rates = Rates::with_cleanse(layout, 0.5);
+        let born = crate::evolve::InitParams { seed: 5, generation: 0, rnc_lo: -100, rnc_hi: 100, n_wrappers: 3, vhead: 8 };
+        let pop = init(layout, &codes, &born).unwrap();
+        let mut now = Generation { pop, fitness: (0..800).map(|r| below(draw(5, 0, r, 0, 99), 1_000_000) as f32).collect() };
+        assert!(head_in_use(&now, &codes) <= 8, "born with a function past the virtual head");
+        for generation in 1..=200u32 {
+            // the head grows by one position every 50 generations: 8, 9, 10, 11, 12
+            let vhead = 8 + generation / 50;
+            let before = now.clone();
+            now = vary(&now, &isl, &codes, &rates, &GenParams { seed: 5, generation, rnc_lo: -100, rnc_hi: 100, vhead }).unwrap();
+            now.pop.check(&codes).unwrap();
+            assert!(head_in_use(&now, &codes) <= vhead as usize, "generation {generation}: a function past virtual head {vhead}");
+            // the elites are the old genes, untouched by the step to a longer head
+            let row_w = (layout.n_genes * layout.gene_width()) as usize;
+            let best = (0..600).min_by(|&a, &b| before.fitness[a].total_cmp(&before.fitness[b]).then(a.cmp(&b))).unwrap();
+            assert_eq!(now.pop.genome[..row_w], before.pop.genome[best * row_w..(best + 1) * row_w], "generation {generation}");
+            for (r, f) in now.fitness.iter_mut().enumerate() {
+                *f = below(draw(5, generation, r as u32, 1, 99), 1_000_000) as f32;
+            }
+        }
+        // the room is used once it is there
+        assert!(head_in_use(&now, &codes) > 8, "the population never grew into the longer head");
+        // and a virtual head outside 2..=head is refused, not run with
+        assert!(crate::evolve::virtual_head(1, layout).is_err() && crate::evolve::virtual_head(49, layout).is_err());
+        assert_eq!(crate::evolve::virtual_head(0, layout), Ok(48));
     }
 
     #[test]

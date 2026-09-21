@@ -39,7 +39,8 @@ struct Gen {
     cleanse: u32,
     cleanse_collapse: u32,
     rnc_id: u32,       // the "?" token, or NONE
-    pad0: u32,
+    // The virtual head, already resolved by the host (never 0 here).
+    vhead: u32,
 }
 
 struct Island {
@@ -238,7 +239,7 @@ var<private> cl_dc: array<u32, 128>;
 // `gene`: the index in `genome` of this gene's first token. The draws are the
 // row's, slots 1..4 of STREAM_CLEANSE.
 fn cleanse_gene(row: u32, gene: u32) {
-    let h = gp.head;
+    let h = gp.vhead;
     let ht = gp.head + gp.tail;
     if (ht > MAX_CLEANSE) {
         return;
@@ -347,6 +348,7 @@ fn mutate_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
     let isl = island_of(row);
     let h = gp.head;
+    let vh = gp.vhead;
     let t = gp.tail;
     let ht = h + t;
     let width = h + 2u * t;
@@ -375,7 +377,7 @@ fn mutate_main(@builtin(global_invocation_id) gid: vec3<u32>) {
             if (!chance(row, slot, STREAM_MUT_HIT, gp.mut_point)) {
                 continue;
             }
-            if (pos < h && coin(row, slot, STREAM_MUT_KIND)) {
+            if (pos < vh && coin(row, slot, STREAM_MUT_KIND)) {
                 genome[at(base, g, pos)] = sample_functions[below(row, slot, STREAM_MUT_SYMBOL, gp.n_functions)];
             } else {
                 genome[at(base, g, pos)] = sample_terminals[below(row, slot, STREAM_MUT_SYMBOL, gp.n_terminals)];
@@ -385,24 +387,24 @@ fn mutate_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     // 2. inversion, inside one head
     if (chance(row, OP_INVERT, STREAM_OPERATOR, gp.invert)) {
         let g = below(row, 0u, STREAM_INVERT, gp.n_genes);
-        let len = 2u + below(row, 1u, STREAM_INVERT, h - 1u);
-        let start = below(row, 2u, STREAM_INVERT, h - len + 1u);
+        let len = 2u + below(row, 1u, STREAM_INVERT, vh - 1u);
+        let start = below(row, 2u, STREAM_INVERT, vh - len + 1u);
         reverse(at(base, g, start), at(base, g, start + len));
     }
     // 3. IS transposition
     if (chance(row, OP_IS, STREAM_OPERATOR, gp.is_transpose)) {
         let donor = below(row, 0u, STREAM_IS, gp.n_genes);
         let donee = below(row, 1u, STREAM_IS, gp.n_genes);
-        let len = 1u + below(row, 2u, STREAM_IS, h - 1u);
+        let len = 1u + below(row, 2u, STREAM_IS, vh - 1u);
         let start = below(row, 3u, STREAM_IS, ht - len + 1u);
-        let ins = 1u + below(row, 4u, STREAM_IS, h - len);
+        let ins = 1u + below(row, 4u, STREAM_IS, vh - len);
         for (var i = 0u; i < len; i = i + 1u) {
             segment[i] = genome[at(base, donor, start + i)];
         }
-        for (var i = 0u; i < h; i = i + 1u) {
+        for (var i = 0u; i < vh; i = i + 1u) {
             before[i] = genome[at(base, donee, i)];
         }
-        for (var pos = ins + len; pos < h; pos = pos + 1u) {
+        for (var pos = ins + len; pos < vh; pos = pos + 1u) {
             genome[at(base, donee, pos)] = before[pos - len];
         }
         for (var i = 0u; i < len; i = i + 1u) {
@@ -415,7 +417,7 @@ fn mutate_main(@builtin(global_invocation_id) gid: vec3<u32>) {
             let donor = below(row, trial * 4u, STREAM_RIS, gp.n_genes);
             let donee = below(row, trial * 4u + 1u, STREAM_RIS, gp.n_genes);
             var n_fn = 0u;
-            for (var pos = 0u; pos < h; pos = pos + 1u) {
+            for (var pos = 0u; pos < vh; pos = pos + 1u) {
                 if (arity[genome[at(base, donor, pos)]] > 0u) {
                     n_fn = n_fn + 1u;
                 }
@@ -426,7 +428,7 @@ fn mutate_main(@builtin(global_invocation_id) gid: vec3<u32>) {
             let pick = below(row, trial * 4u + 2u, STREAM_RIS, n_fn);
             var start = 0u;
             var seen = 0u;
-            for (var pos = 0u; pos < h; pos = pos + 1u) {
+            for (var pos = 0u; pos < vh; pos = pos + 1u) {
                 if (arity[genome[at(base, donor, pos)]] > 0u) {
                     if (seen == pick) {
                         start = pos;
@@ -434,14 +436,14 @@ fn mutate_main(@builtin(global_invocation_id) gid: vec3<u32>) {
                     seen = seen + 1u;
                 }
             }
-            let len = 2u + below(row, trial * 4u + 3u, STREAM_RIS, min(h, ht - start) - 1u);
+            let len = 2u + below(row, trial * 4u + 3u, STREAM_RIS, min(vh, ht - start) - 1u);
             for (var i = 0u; i < len; i = i + 1u) {
                 segment[i] = genome[at(base, donor, start + i)];
             }
-            for (var i = 0u; i < h; i = i + 1u) {
+            for (var i = 0u; i < vh; i = i + 1u) {
                 before[i] = genome[at(base, donee, i)];
             }
-            for (var pos = len; pos < h; pos = pos + 1u) {
+            for (var pos = len; pos < vh; pos = pos + 1u) {
                 genome[at(base, donee, pos)] = before[pos - len];
             }
             for (var i = 0u; i < len; i = i + 1u) {

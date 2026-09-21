@@ -190,6 +190,13 @@ pub struct Config {
     /// Report the best individual on stderr every this many generations (0 = never):
     /// a long fit is watched as it runs, not read when it ends.
     pub progress_every: u32,
+    /// THE GROWING HEAD. The population starts with a virtual head of `vhead_start`
+    /// and gains one position every `vhead_every` generations, up to the physical
+    /// head: short expressions are searched first, and a gene that is already good
+    /// keeps evolving as the room grows — raising the virtual head changes no
+    /// expression. `vhead_every` = 0: off, the whole head from the start.
+    pub vhead_start: u32,
+    pub vhead_every: u32,
     pub max_generations: u32,
     pub max_seconds: f64,
     /// Stop when validation (and edge, when there is one) 1 - R² is this small.
@@ -220,6 +227,8 @@ impl Config {
             hff_without_validation: false,
             tower: false,
             progress_every: 0,
+            vhead_start: 12,
+            vhead_every: 0,
             // Kept after a two-seed A/B (7012: 46 -> 47, 7013: 44 -> 45, no losses).
             max_generations: 1500,
             max_seconds: 30.0,
@@ -715,6 +724,7 @@ impl Engine {
         let first = intake.lo + keepers.len() as u32;
         let fresh = super::init(l, &self.table.codes(), &InitParams {
             seed: self.config.seed, generation, rnc_lo: self.config.rnc_lo, rnc_hi: self.config.rnc_hi, n_wrappers: WRAPPERS.len() as u32,
+            vhead: self.vhead_at(generation),     // the pump's fresh rows are born at today's virtual head
         });
         if let Ok(fresh) = fresh {
             for r in first as usize..intake.hi as usize {
@@ -780,6 +790,16 @@ impl Engine {
         Ok(best)
     }
 
+    /// The virtual head at `generation` — see `Config::vhead_every`. 0 = the whole
+    /// head (what `InitParams` / `GenParams` take for "the ordinary gene").
+    pub fn vhead_at(&self, generation: u32) -> u32 {
+        let c = &self.config;
+        if c.vhead_every == 0 {
+            return 0;
+        }
+        (c.vhead_start + generation / c.vhead_every).clamp(2, self.layout.head)
+    }
+
     /// How many objectives HFF has in this fit: the dimension of its sphere.
     pub fn hff_dimensions(&self) -> usize {
         hff_columns(self.data.splits.n_extrap, self.config.hff_without_validation, self.config.log_scale).len()
@@ -825,7 +845,7 @@ impl Engine {
         let started = Instant::now();
         let mut timing = Timing { vary: 0.0, read: 0.0, decode: 0.0, evaluate: 0.0, score: 0.0, hff: 0.0, pump: 0.0 };
         let rates = Rates::with_cleanse(self.layout, c.cleanse);
-        self.dev.init(&InitParams { seed: c.seed, generation: 0, rnc_lo: c.rnc_lo, rnc_hi: c.rnc_hi, n_wrappers: WRAPPERS.len() as u32 })?;
+        self.dev.init(&InitParams { seed: c.seed, generation: 0, rnc_lo: c.rnc_lo, rnc_hi: c.rnc_hi, n_wrappers: WRAPPERS.len() as u32, vhead: self.vhead_at(0) })?;
         let mut gen = self.dev.read_generation()?;
         gen.fitness.fill(f32::NAN);
         let (mut unique, mut oversized) = self.evaluate(&mut gen, &mut timing)?;
@@ -839,7 +859,7 @@ impl Engine {
             }
             generation += 1;
             let t = Instant::now();
-            self.dev.vary(&self.islands, &rates, &GenParams { seed: c.seed, generation, rnc_lo: c.rnc_lo, rnc_hi: c.rnc_hi })?;
+            self.dev.vary(&self.islands, &rates, &GenParams { seed: c.seed, generation, rnc_lo: c.rnc_lo, rnc_hi: c.rnc_hi, vhead: self.vhead_at(generation) })?;
             // Only elites arrive evaluated: the kernel puts the j-th fittest row
             // of an island (ties to the lower row) in the island's j-th row.
             let mut carried: Vec<(usize, Option<Scored>)> = Vec::new();
@@ -892,8 +912,8 @@ impl Engine {
                     let third = if self.data.splits.n_extrap > 0 { format!("{:.2e}", b.one_minus_r2[2]) } else { "-".to_string() };
                     let (p, log10_p) = hff_p_value(b.fitness, self.hff_dimensions());
                     eprintln!(
-                        "   gen {generation:>6} | {:>6.0} s | hff {:.6} | p {p:.2e} | log10 p {log10_p:>8.2} | 1-R2 train {:.2e} val {:.2e} block3 {third} | t_depth {}",
-                        started.elapsed().as_secs_f64(), b.fitness, b.one_minus_r2[0], b.one_minus_r2[1], b.t_depth
+                        "   gen {generation:>6} | {:>6.0} s | head {:>2} | hff {:.6} | p {p:.2e} | log10 p {log10_p:>8.2} | 1-R2 train {:.2e} val {:.2e} block3 {third} | t_depth {}",
+                        started.elapsed().as_secs_f64(), match self.vhead_at(generation) { 0 => self.layout.head, v => v }, b.fitness, b.one_minus_r2[0], b.one_minus_r2[1], b.t_depth
                     );
                 }
             }

@@ -30,7 +30,7 @@ struct InitUniform {
     n_wrappers: u32,
     first_row: u32,
     n_rows: u32,
-    pad0: u32,
+    vhead: u32,
     pad1: u32,
 }
 
@@ -52,7 +52,7 @@ struct GenUniform {
     rnc_span: u32,
     rates: [u32; 14],
     rnc_id: u32,
-    pad0: u32,
+    vhead: u32,
 }
 
 /// One generation's worth of resident buffers.
@@ -253,7 +253,7 @@ impl EvolveDevice {
             n_wrappers: p.n_wrappers,
             first_row,
             n_rows,
-            pad0: 0,
+            vhead: super::virtual_head(p.vhead, l)?,
             pad1: 0,
         });
         let now = &self.sets[self.current];
@@ -341,7 +341,7 @@ impl EvolveDevice {
                 rates.cleanse_collapse,
             ],
             rnc_id: self.rnc_id,
-            pad0: 0,
+            vhead: super::virtual_head(p.vhead, self.layout)?,
         });
         let flat: Vec<u32> = islands.iter().flat_map(|i| [i.lo, i.hi, i.elites, i.tournsize]).collect();
         let islands_buf = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -479,6 +479,38 @@ mod tests {
         assert_eq!(after.genome, reference.genome);
     }
 
+    /// The same, under a VIRTUAL HEAD that grows as the run goes (8, then 12): the
+    /// init kernel and every head operator on the device agree with the CPU
+    /// reference bit for bit, and no function is ever written past it.
+    #[test]
+    fn a_growing_virtual_head_matches_the_cpu_reference_bit_for_bit() {
+        let (codes, isl) = (codes(), islands());
+        let layout = Layout::for_arity(800, 3, 48, 2, 10);
+        let born = crate::evolve::InitParams { seed: 13, generation: 0, rnc_lo: -100, rnc_hi: 100, n_wrappers: 3, vhead: 8 };
+        let pop = crate::evolve::init(layout, &codes, &born).unwrap();
+        let mut cpu = crate::evolve::vary::Generation { pop, fitness: (0..800).map(|r| below(draw(13, 0, r, 0, 99), 1_000_000) as f32).collect() };
+        let rates = Rates::with_cleanse(layout, 0.5);
+        let mut dev = EvolveDevice::new(layout, &codes).expect("device");
+        dev.init(&born).expect("init");
+        assert_eq!(dev.read_generation().expect("read").pop, cpu.pop, "the init kernel under a virtual head");
+        dev.write_fitness(&cpu.fitness).expect("fitness");
+        for generation in 1..=20u32 {
+            let vhead = if generation <= 10 { 8 } else { 12 };
+            let p = GenParams { seed: 13, generation, rnc_lo: -100, rnc_hi: 100, vhead };
+            cpu = vary(&cpu, &isl, &codes, &rates, &p).unwrap();
+            dev.vary(&isl, &rates, &p).expect("vary");
+            let on_device = dev.read_generation().expect("read");
+            assert_eq!(on_device.pop, cpu.pop, "generation {generation}");
+            let width = layout.gene_width() as usize;
+            let past = on_device.pop.genome.chunks(width).any(|g| g[vhead as usize..48].iter().any(|&id| codes.arity[id as usize] > 0));
+            assert!(!past, "generation {generation}: a function past virtual head {vhead}");
+            let scored: Vec<f32> = (0..800).map(|r| below(draw(13, generation, r, 1, 99), 1_000_000) as f32).collect();
+            cpu.fitness.copy_from_slice(&scored);
+            dev.write_fitness(&scored).expect("fitness");
+        }
+        assert!(dev.vary(&isl, &rates, &GenParams { seed: 13, generation: 21, rnc_lo: -100, rnc_hi: 100, vhead: 49 }).is_err());
+    }
+
     /// Twenty generations of select + mutate + crossover on the device, each
     /// compared with the CPU reference: genome, constants, wrapper and fitness
     /// (by bits — an unevaluated row is NaN) identical every generation.
@@ -492,7 +524,7 @@ mod tests {
         dev.init(&params(11)).expect("init");
         dev.write_fitness(&cpu.fitness).expect("fitness");
         for generation in 1..=20u32 {
-            let p = GenParams { seed: 11, generation, rnc_lo: -100, rnc_hi: 100 };
+            let p = GenParams { seed: 11, generation, rnc_lo: -100, rnc_hi: 100, vhead: 0 };
             cpu = vary(&cpu, &isl, &codes, &rates, &p).unwrap();
             dev.vary(&isl, &rates, &p).expect("vary");
             let on_device = dev.read_generation().expect("read");
