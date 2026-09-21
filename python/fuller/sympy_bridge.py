@@ -24,6 +24,7 @@ def _table():
             sp.Add: ("Add", 2), sp.Mul: ("Mul", 2),
             sp.sin: ("Sin", 1), sp.cos: ("Cos", 1), sp.tan: ("Tan", 1),
             sp.exp: ("Exp", 1), sp.log: ("Log", 1), sp.tanh: ("Tanh", 1),
+            sp.asin: ("Asin", 1), sp.acos: ("Acos", 1),
             sp.Abs: ("Abs", 1),
         }
     return _SYMPY_TO_MATH
@@ -121,7 +122,9 @@ def from_math(s, overrides=None):
 
     Protected ops are rendered at their generic (non-singular) point:
     ProtectedSqrt/ProtectedLog go through Abs (their actual definition),
-    ProtectedExp -> exp, ProtectedInv -> 1/x, ProtectedDiv -> a/b. The
+    ProtectedExp -> exp, ProtectedInv -> 1/x, ProtectedDiv -> a/b,
+    ProtectedAsin/ProtectedAcos -> asin/acos (what they are on [-1, 1]; the
+    clamp outside it is not rendered). The
     singular-point special cases (protected_inv(0)=1, protected_div(x,0)=0)
     have no sympy analogue — do not use this rendering to reason about
     behaviour AT the singularity.
@@ -172,6 +175,8 @@ def from_math(s, overrides=None):
                 ("Cos", 1): sp.cos,
                 ("Tan", 1): sp.tan,
                 ("Tanh", 1): sp.tanh,
+                ("Asin", 1): sp.asin,
+                ("Acos", 1): sp.acos,
                 ("Log", 1): sp.log,
                 ("Exp", 1): sp.exp,
                 ("Sqrt", 1): sp.sqrt,
@@ -183,6 +188,8 @@ def from_math(s, overrides=None):
                 ("ProtectedLog", 1): lambda a: sp.log(sp.Abs(a)),
                 ("ProtectedExp", 1): sp.exp,
                 ("ProtectedInv", 1): lambda a: 1 / a,
+                ("ProtectedAsin", 1): sp.asin,
+                ("ProtectedAcos", 1): sp.acos,
             }.get((head, len(kids)))
             if overrides and (head, len(kids)) in overrides:
                 build = overrides[(head, len(kids))]

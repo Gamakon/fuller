@@ -62,6 +62,7 @@ fn is_transc(head: &str) -> bool {
     matches!(
         head,
         "Sin" | "Cos" | "Tan" | "Exp" | "Log" | "Tanh" | "ProtectedExp" | "ProtectedLog"
+            | "Asin" | "Acos" | "ProtectedAsin" | "ProtectedAcos"
     )
 }
 
