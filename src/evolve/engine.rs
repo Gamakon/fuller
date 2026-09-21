@@ -19,7 +19,7 @@ use std::time::Instant;
 use super::device::EvolveDevice;
 use super::score::{GpuScorer, CANDIDATES, WIDTH};
 use super::vary::{GenParams, Generation, Island, Rates};
-use super::{InitParams, Layout, SymbolCodes};
+use super::{InitParams, Layout, Population, SymbolCodes};
 use crate::chrom_score::{score_chromosomes, Linker, ScoreSpec, Splits, Wrapper, METRIC_WIDTH, SCORE_WIDTH};
 use crate::gpu_eval::{ExprBatch, GpuEvaluator, GpuNode, Op, MAX_NODES};
 
@@ -263,6 +263,22 @@ pub struct Config {
     pub rnc_lo: i32,
     pub rnc_hi: i32,
     pub pump_every: u32,
+    /// PAIRS of islands: each pair is an intake island and its champion island, and
+    /// THE PUMP works inside a pair. `pop_intake` and `pop_champion` are the sizes of
+    /// ONE pair's islands (as each deme has its own size in the notebook), so the
+    /// population is `n_pairs * (pop_intake + pop_champion)`. 1 = the single pair.
+    pub n_pairs: u32,
+    /// THE CROSS STEP's beat: every this many generations each intake island takes
+    /// in the best of the OTHER pairs' champion islands (0 = never). The SRBench
+    /// entry's beat is 5, just off the pump's 4 — on ONE pair (it never sets
+    /// `wrapper_islands`), where the step is a keep-the-fifth refill. The notebook
+    /// also holds the step back until `gen > 30` and runs it every generation once
+    /// `gen > n_gen - 10`. Neither is here: the warm-up was sized for a Python fit
+    /// of a few hundred generations, and a fit stopped by time has no `n_gen` to
+    /// count down to. The beat is the whole rule.
+    pub cross_every: u32,
+    /// How many of its best each champion island sends in a cross step.
+    pub k_migrants: u32,
     /// The cleansing mutation's rate per row (0 = off).
     pub cleanse: f64,
     /// Redundancy as an HFF objective: the scoring kernel's leave-one-gene-out
@@ -345,6 +361,9 @@ impl Config {
             rnc_lo: -100,
             rnc_hi: 100,
             pump_every: 4,
+            n_pairs: 1,
+            cross_every: 0,
+            k_migrants: 3,
             cleanse: 0.0,
             redundancy: false,
             smogd: false,
@@ -407,6 +426,7 @@ pub struct Timing {
     pub score: f64,
     pub hff: f64,
     pub pump: f64,
+    pub cross: f64,
 }
 
 pub struct FitResult {
@@ -809,6 +829,10 @@ pub fn evaluate_math(math: &str, rows: &[Vec<(String, f64)>]) -> Result<Vec<f64>
     crate::extract::eval_expr_rows(math, rows)
 }
 
+/// Set in the generation that keys THE CROSS STEP's fresh rows; no fit runs this
+/// many generations, so the key is never a pump's.
+const CROSS_KEY: u32 = 1 << 31;
+
 pub struct Engine {
     pub config: Config,
     pub table: SymbolTable,
@@ -827,13 +851,23 @@ impl Engine {
     pub fn new(config: Config, data: Data) -> Result<Engine, String> {
         let wide = SymbolTable::wide(data.names.len() as u32);
         let table = if config.compounds { wide.with_compounds() } else { wide };
-        let pop = config.pop_intake + config.pop_champion;
+        if config.n_pairs == 0 {
+            return Err("n_pairs: a population is at least one pair of islands".into());
+        }
+        let pair = config.pop_intake + config.pop_champion;
+        let pop = config.n_pairs * pair;
         let layout = Layout::for_arity(pop, config.n_genes, config.head, table.max_arity(), config.n_rnc);
         let tourn = |n: u32| ((config.tournament_fraction * f64::from(n)).round() as u32).max(2);
-        let islands = vec![
-            Island { lo: 0, hi: config.pop_intake, elites: config.elites, tournsize: tourn(config.pop_intake) },
-            Island { lo: config.pop_intake, hi: pop, elites: config.elites, tournsize: tourn(config.pop_champion) },
-        ];
+        // Pair p is islands 2p (intake) and 2p + 1 (champion), one pair after another.
+        let islands: Vec<Island> = (0..config.n_pairs)
+            .flat_map(|p| {
+                let lo = p * pair;
+                [
+                    Island { lo, hi: lo + config.pop_intake, elites: config.elites, tournsize: tourn(config.pop_intake) },
+                    Island { lo: lo + config.pop_intake, hi: lo + pair, elites: config.elites, tournsize: tourn(config.pop_champion) },
+                ]
+            })
+            .collect();
         super::vary::validate(layout, &islands)?;
         if data.y.len() != data.splits.total() || data.x.len() != data.y.len() * data.names.len() {
             return Err("data: x, y and the splits do not agree".into());
@@ -951,67 +985,141 @@ impl Engine {
         Ok((gene_ok.len() as u64, oversized))
     }
 
-    /// The pump: the intake's best two replace the champion island's worst two;
-    /// the intake keeps its best fifth (one of each distinct row) and the rest is
-    /// refilled with new random individuals.
-    fn pump(&mut self, gen: &mut Generation, generation: u32) {
-        let l = self.layout;
-        let row_w = (l.n_genes * l.gene_width()) as usize;
-        let rnc_w = (l.n_genes * l.n_rnc) as usize;
-        let (intake, champion) = (self.islands[0], self.islands[1]);
-        let by_fitness = |rows: std::ops::Range<u32>, fitness: &[f32]| {
-            let mut v: Vec<u32> = rows.collect();
-            v.sort_by(|&a, &b| fitness[a as usize].total_cmp(&fitness[b as usize]).then(a.cmp(&b)));
-            v
-        };
-        let copy_row = |gen: &mut Generation, scored: &mut Vec<Option<Scored>>, from: usize, to: usize| {
-            gen.pop.genome.copy_within(from * row_w..(from + 1) * row_w, to * row_w);
-            gen.pop.rnc.copy_within(from * rnc_w..(from + 1) * rnc_w, to * rnc_w);
-            gen.pop.wrapper_id[to] = gen.pop.wrapper_id[from];
-            gen.fitness[to] = gen.fitness[from];
-            scored[to] = scored[from];
-        };
-        let best_intake: Vec<u32> = by_fitness(intake.lo..intake.hi, &gen.fitness).into_iter().filter(|&r| !gen.fitness[r as usize].is_nan()).collect();
-        let worst_champion: Vec<u32> = by_fitness(champion.lo..champion.hi, &gen.fitness).into_iter().rev().take(2).collect();
-        for (&from, &to) in best_intake.iter().zip(&worst_champion) {
-            copy_row(gen, &mut self.scored, from as usize, to as usize);
-        }
+    /// The pairs of the population: (intake island, champion island).
+    pub fn pairs(&self) -> Vec<(Island, Island)> {
+        self.islands.chunks_exact(2).map(|p| (p[0], p[1])).collect()
+    }
+
+    /// An island's evaluated rows, fittest first (ties to the lower row).
+    fn by_fitness(island: Island, fitness: &[f32]) -> Vec<u32> {
+        let mut v: Vec<u32> = (island.lo..island.hi).filter(|&r| !fitness[r as usize].is_nan()).collect();
+        v.sort_by(|&a, &b| fitness[a as usize].total_cmp(&fitness[b as usize]).then(a.cmp(&b)));
+        v
+    }
+
+    /// The rows an intake island keeps when it is refilled: its best fifth, one of
+    /// each distinct genome, fittest first.
+    fn keepers(&self, intake: Island, gen: &Generation) -> Vec<u32> {
+        let row_w = (self.layout.n_genes * self.layout.gene_width()) as usize;
         let keep = ((f64::from(intake.hi - intake.lo) * 0.20).round() as usize).max(1);
         let mut seen: Vec<&[u32]> = Vec::new();
         let mut keepers: Vec<u32> = Vec::new();
-        for &r in &best_intake {
+        for r in Self::by_fitness(intake, &gen.fitness) {
             let row = &gen.pop.genome[r as usize * row_w..(r as usize + 1) * row_w];
             if keepers.len() < keep && !seen.contains(&row) {
                 seen.push(row);
                 keepers.push(r);
             }
         }
-        let snapshot = gen.clone();
+        keepers
+    }
+
+    /// Rewrite an intake island: `keepers` (rows of `before`, with their scores)
+    /// first, then `arrivals` (rows of `before`, to be evaluated again), then rows
+    /// of `fresh` — new random individuals, unevaluated. Arrivals the island has no
+    /// room for are left out.
+    fn refill(&mut self, gen: &mut Generation, intake: Island, before: &Generation, keepers: &[u32], arrivals: &[u32], fresh: &Population) {
+        let l = self.layout;
+        let row_w = (l.n_genes * l.gene_width()) as usize;
+        let rnc_w = (l.n_genes * l.n_rnc) as usize;
         let scored_before = self.scored.clone();
-        for (slot, &from) in keepers.iter().enumerate() {
-            let (to, from) = (intake.lo as usize + slot, from as usize);
-            gen.pop.genome[to * row_w..(to + 1) * row_w].copy_from_slice(&snapshot.pop.genome[from * row_w..(from + 1) * row_w]);
-            gen.pop.rnc[to * rnc_w..(to + 1) * rnc_w].copy_from_slice(&snapshot.pop.rnc[from * rnc_w..(from + 1) * rnc_w]);
-            gen.pop.wrapper_id[to] = snapshot.pop.wrapper_id[from];
-            gen.fitness[to] = snapshot.fitness[from];
-            self.scored[to] = scored_before[from];
+        let room = (intake.hi - intake.lo) as usize;
+        let sources = keepers.iter().map(|&r| (r, true)).chain(arrivals.iter().map(|&r| (r, false))).take(room);
+        let mut to = intake.lo as usize;
+        for (from, evaluated) in sources {
+            let from = from as usize;
+            gen.pop.genome[to * row_w..(to + 1) * row_w].copy_from_slice(&before.pop.genome[from * row_w..(from + 1) * row_w]);
+            gen.pop.rnc[to * rnc_w..(to + 1) * rnc_w].copy_from_slice(&before.pop.rnc[from * rnc_w..(from + 1) * rnc_w]);
+            gen.pop.wrapper_id[to] = before.pop.wrapper_id[from];
+            gen.fitness[to] = if evaluated { before.fitness[from] } else { f32::NAN };
+            self.scored[to] = if evaluated { scored_before[from] } else { None };
+            to += 1;
         }
-        // Fresh rows: the CPU reference of the init kernel, keyed by this
-        // generation, so a refill is reproducible.
-        let first = intake.lo + keepers.len() as u32;
-        let fresh = super::init(l, &self.table.codes(), &InitParams {
-            seed: self.config.seed, generation, rnc_lo: self.config.rnc_lo, rnc_hi: self.config.rnc_hi, n_wrappers: WRAPPERS.len() as u32,
-            vhead: self.vhead_at(generation),     // the pump's fresh rows are born at today's virtual head
-        });
-        if let Ok(fresh) = fresh {
-            for r in first as usize..intake.hi as usize {
-                gen.pop.genome[r * row_w..(r + 1) * row_w].copy_from_slice(&fresh.genome[r * row_w..(r + 1) * row_w]);
-                gen.pop.rnc[r * rnc_w..(r + 1) * rnc_w].copy_from_slice(&fresh.rnc[r * rnc_w..(r + 1) * rnc_w]);
-                gen.pop.wrapper_id[r] = fresh.wrapper_id[r];
-                gen.fitness[r] = f32::NAN;
-                self.scored[r] = None;
-            }
+        for r in to..intake.hi as usize {
+            gen.pop.genome[r * row_w..(r + 1) * row_w].copy_from_slice(&fresh.genome[r * row_w..(r + 1) * row_w]);
+            gen.pop.rnc[r * rnc_w..(r + 1) * rnc_w].copy_from_slice(&fresh.rnc[r * rnc_w..(r + 1) * rnc_w]);
+            gen.pop.wrapper_id[r] = fresh.wrapper_id[r];
+            gen.fitness[r] = f32::NAN;
+            self.scored[r] = None;
         }
+    }
+
+    /// New random individuals for a refill: the CPU reference of the init kernel,
+    /// keyed by `key`, so a refill is reproducible. A row of it is taken whole, at
+    /// its own place, so every island of every pair draws different individuals.
+    fn fresh(&self, key: u32, generation: u32) -> Result<Population, String> {
+        super::init(self.layout, &self.table.codes(), &InitParams {
+            seed: self.config.seed, generation: key, rnc_lo: self.config.rnc_lo, rnc_hi: self.config.rnc_hi, n_wrappers: WRAPPERS.len() as u32,
+            vhead: self.vhead_at(generation),     // fresh rows are born at today's virtual head
+        })
+    }
+
+    /// The pump, in every pair: the intake's best two replace its champion
+    /// island's worst two; the intake keeps its best fifth (one of each distinct
+    /// row) and the rest is refilled with new random individuals.
+    fn pump(&mut self, gen: &mut Generation, generation: u32) -> Result<(), String> {
+        // Fresh rows are keyed by this generation.
+        let fresh = self.fresh(generation, generation)?;
+        for (intake, champion) in self.pairs() {
+            self.pump_pair(gen, intake, champion, &fresh);
+        }
+        Ok(())
+    }
+
+    /// The pump inside one pair.
+    fn pump_pair(&mut self, gen: &mut Generation, intake: Island, champion: Island, fresh: &Population) {
+        let l = self.layout;
+        let row_w = (l.n_genes * l.gene_width()) as usize;
+        let rnc_w = (l.n_genes * l.n_rnc) as usize;
+        let best_intake = Self::by_fitness(intake, &gen.fitness);
+        // The champion island's worst first; an unevaluated row is the worst of all.
+        let mut worst_champion: Vec<u32> = (champion.lo..champion.hi).collect();
+        worst_champion.sort_by(|&a, &b| gen.fitness[b as usize].total_cmp(&gen.fitness[a as usize]).then(b.cmp(&a)));
+        for (&from, &to) in best_intake.iter().zip(worst_champion.iter().take(2)) {
+            let (from, to) = (from as usize, to as usize);
+            gen.pop.genome.copy_within(from * row_w..(from + 1) * row_w, to * row_w);
+            gen.pop.rnc.copy_within(from * rnc_w..(from + 1) * rnc_w, to * rnc_w);
+            gen.pop.wrapper_id[to] = gen.pop.wrapper_id[from];
+            gen.fitness[to] = gen.fitness[from];
+            self.scored[to] = self.scored[from];
+        }
+        let keepers = self.keepers(intake, gen);
+        let before = gen.clone();
+        self.refill(gen, intake, &before, &keepers, &[], fresh);
+    }
+
+    /// THE CROSS STEP, between pairs (the notebook's `_migrate_pump_cross`). First
+    /// every champion island names its best `k_migrants` — from the population as
+    /// it stands, before any intake is rewritten. Then every intake island keeps
+    /// its best fifth (one of each distinct row) and the rest is filled FIRST with
+    /// the migrants of the OTHER pairs — never its own pair's — in pair order, then
+    /// champion rank, and THEN with new random individuals. Arrivals are clones
+    /// and are evaluated again; champion islands are not touched.
+    ///
+    /// Stated rules: a champion island smaller than `k_migrants` sends all it has;
+    /// an intake with no room for every arrival takes the first that fit (the
+    /// notebook's `cross_pool[:n_to_fill]`). With one pair there are no other
+    /// champions and the step is a keep-the-fifth refill, as it is in the notebook.
+    ///
+    /// The notebook re-pins arrivals to the receiving pair's WRAPPER class. There
+    /// is nothing here for that to act on: this engine scores every chromosome
+    /// under all wrappers and keeps its best, so no pair has a wrapper class.
+    ///
+    /// Fresh rows are keyed by the generation with [`CROSS_KEY`] set: when the pump
+    /// and the cross step share a beat, the cross step's new individuals are not
+    /// the ones the pump has just drawn for the same rows.
+    fn cross(&mut self, gen: &mut Generation, generation: u32) -> Result<(), String> {
+        let fresh = self.fresh(generation | CROSS_KEY, generation)?;
+        let pairs = self.pairs();
+        let migrants: Vec<Vec<u32>> =
+            pairs.iter().map(|&(_, champion)| Self::by_fitness(champion, &gen.fitness).into_iter().take(self.config.k_migrants as usize).collect()).collect();
+        let before = gen.clone();
+        for (p, &(intake, _)) in pairs.iter().enumerate() {
+            let keepers = self.keepers(intake, &before);
+            let arrivals: Vec<u32> = migrants.iter().enumerate().filter(|(q, _)| *q != p).flat_map(|(_, m)| m.iter().copied()).collect();
+            self.refill(gen, intake, &before, &keepers, &arrivals, &fresh);
+        }
+        Ok(())
     }
 
     /// The row's best candidate re-scored in f64 by `chrom_score`, the
@@ -1166,7 +1274,7 @@ impl Engine {
     pub fn fit(&mut self) -> Result<FitResult, String> {
         let c = self.config.clone();
         let started = Instant::now();
-        let mut timing = Timing { vary: 0.0, read: 0.0, decode: 0.0, evaluate: 0.0, score: 0.0, hff: 0.0, pump: 0.0 };
+        let mut timing = Timing { vary: 0.0, read: 0.0, decode: 0.0, evaluate: 0.0, score: 0.0, hff: 0.0, pump: 0.0, cross: 0.0 };
         let rates = Rates::with_cleanse(self.layout, c.cleanse);
         self.dev.init(&InitParams { seed: c.seed, generation: 0, rnc_lo: c.rnc_lo, rnc_hi: c.rnc_hi, n_wrappers: WRAPPERS.len() as u32, vhead: self.vhead_at(0) })?;
         let mut gen = self.dev.read_generation()?;
@@ -1235,14 +1343,29 @@ impl Engine {
             }
             // THE PUMP, on its beat: the islands are where the diversity comes from.
             let t = Instant::now();
+            let crossed = c.cross_every > 0 && generation % c.cross_every == 0;
             if c.pump_every > 0 && generation % c.pump_every == 0 {
-                self.pump(&mut gen, generation);
+                self.pump(&mut gen, generation)?;
+                let (u, o) = self.evaluate(&mut gen, &mut timing)?;
+                unique += u;
+                oversized += o;
+                if !crossed {
+                    self.dev.write_population(&gen.pop)?;
+                }
+            }
+            timing.pump += t.elapsed().as_secs_f64();
+            // THE CROSS STEP, on its own beat, and AFTER the pump when they share one
+            // (the notebook's order): it ranks the intake islands the pump has just
+            // refilled and evaluated. The population goes back to the device once.
+            let t = Instant::now();
+            if crossed {
+                self.cross(&mut gen, generation)?;
                 let (u, o) = self.evaluate(&mut gen, &mut timing)?;
                 unique += u;
                 oversized += o;
                 self.dev.write_population(&gen.pop)?;
             }
-            timing.pump += t.elapsed().as_secs_f64();
+            timing.cross += t.elapsed().as_secs_f64();
             self.dev.write_fitness(&gen.fitness)?;
             if c.progress_every > 0 && generation % c.progress_every == 0 {
                 self.report(generation, started.elapsed().as_secs_f64(), &gen, hof.as_ref())?;
@@ -1755,5 +1878,307 @@ mod tests {
         let model = r#"(Add (Mul (Var "x_0") (Var "x_1")) (Sin (Var "x_2")))"#;
         let tidy = final_form(model, &names(), &rows()).unwrap();
         assert!(tidy.contains("Sin") && tidy.contains("x_0") && tidy.contains("x_1"), "{tidy}");
+    }
+
+    // -----------------------------------------------------------------------
+    // The islands: pairs, the pump, the cross step.
+    // -----------------------------------------------------------------------
+
+    /// y = x_0 * x_1 + x_2 on a small grid: train, then validation.
+    fn toy_data() -> Data {
+        let (mut x, mut y) = (Vec::new(), Vec::new());
+        for i in 0..60u32 {
+            let row = [1.0 + f64::from(i % 7) * 0.5, 2.0 + f64::from(i % 5) * 0.25, 1.5 + f64::from(i % 11) * 0.2];
+            x.extend(row.iter().map(|v| *v as f32));
+            y.push(row[0] * row[1] + row[2]);
+        }
+        Data { names: names(), x, y, splits: Splits { n_train: 40, n_val: 20, n_extrap: 0 } }
+    }
+
+    fn toy_config(pop_intake: u32, pop_champion: u32) -> Config {
+        Config { pop_intake, pop_champion, head: 8, ..Config::srbench(7013) }
+    }
+
+    /// A generation with every row evaluated: a seeded population and a fitness
+    /// drawn per row (distinct streams of the engine's own generator).
+    fn drawn_generation(engine: &Engine, seed: u32) -> Generation {
+        let p = InitParams { seed, generation: 0, rnc_lo: -100, rnc_hi: 100, n_wrappers: WRAPPERS.len() as u32, vhead: 0 };
+        let pop = crate::evolve::init(engine.layout, &engine.table.codes(), &p).expect("init");
+        let fitness = (0..engine.layout.pop).map(|r| crate::evolve::below(crate::evolve::draw(seed, 0, r, 0, 99), 1_000_000) as f32 * 1e-6).collect();
+        Generation { pop, fitness }
+    }
+
+    /// FNV-1a over everything a host step can change.
+    fn digest(gen: &Generation) -> u64 {
+        let words = gen.pop.genome.iter().copied()
+            .chain(gen.pop.rnc.iter().map(|v| v.to_bits()))
+            .chain(gen.pop.wrapper_id.iter().copied())
+            .chain(gen.fitness.iter().map(|v| v.to_bits()));
+        words.fold(0xcbf2_9ce4_8422_2325u64, |h, w| (h ^ u64::from(w)).wrapping_mul(0x0000_0100_0000_01b3))
+    }
+
+    /// One pair and no cross step is the engine as it was: the same two islands,
+    /// and the pump's effect on a fixed generation, beat after beat, is the digest
+    /// recorded from the single-pair engine at commit 5ed2b79 (before pairs existed).
+    #[test]
+    fn one_pair_without_a_cross_step_is_the_engine_as_it_was() {
+        let engine = Engine::new(Config::srbench(1), toy_data()).expect("engine");
+        assert_eq!(engine.islands, vec![
+            Island { lo: 0, hi: 600, elites: 2, tournsize: 42 },
+            Island { lo: 600, hi: 800, elites: 2, tournsize: 14 },
+        ]);
+        let mut engine = Engine::new(toy_config(60, 20), toy_data()).expect("engine");
+        let mut gen = drawn_generation(&engine, 11);
+        let mut seen = Vec::new();
+        for generation in [4u32, 8, 12] {
+            engine.pump(&mut gen, generation).expect("the pump");
+            seen.push(digest(&gen));
+            // what `evaluate` would do to the fresh rows, without a device in the way
+            for (r, f) in gen.fitness.iter_mut().enumerate() {
+                if f.is_nan() {
+                    *f = crate::evolve::below(crate::evolve::draw(11, generation, r as u32, 0, 99), 1_000_000) as f32 * 1e-6;
+                }
+            }
+        }
+        assert_eq!(seen, vec![290130392017734542, 18034047553287649106, 11794650284444892442], "the pump on one pair");
+    }
+
+    /// A row whole: its genes and its constants.
+    fn row_of(gen: &Generation, r: u32) -> (Vec<u32>, Vec<u32>) {
+        let l = gen.pop.layout;
+        let (row_w, rnc_w, r) = ((l.n_genes * l.gene_width()) as usize, (l.n_genes * l.n_rnc) as usize, r as usize);
+        (gen.pop.genome[r * row_w..(r + 1) * row_w].to_vec(), gen.pop.rnc[r * rnc_w..(r + 1) * rnc_w].iter().map(|v| v.to_bits()).collect())
+    }
+
+    /// Three pairs of a 20-row intake island and a 10-row champion island, every
+    /// row evaluated, with a fitness that is known: inside an island it FALLS as the
+    /// row rises, so an island's best row is its last.
+    fn three_pairs() -> (Engine, Generation) {
+        let engine = Engine::new(Config { n_pairs: 3, ..toy_config(20, 10) }, toy_data()).expect("engine");
+        let mut gen = drawn_generation(&engine, 23);
+        for isl in &engine.islands {
+            for r in isl.lo..isl.hi {
+                gen.fitness[r as usize] = 0.5 + (isl.hi - r) as f32 * 0.01 + isl.lo as f32 * 0.0001;
+            }
+        }
+        (engine, gen)
+    }
+
+    #[test]
+    fn pairs_tile_the_population_and_every_island_keeps_its_own_tournament() {
+        let engine = Engine::new(Config { n_pairs: 3, ..Config::srbench(1) }, toy_data()).expect("engine");
+        assert_eq!(engine.layout.pop, 2400, "the sizes are one pair's: 3 x (600 + 200)");
+        assert_eq!(engine.islands.len(), 6);
+        let mut next = 0;
+        for (p, (intake, champion)) in engine.pairs().into_iter().enumerate() {
+            assert_eq!((intake.lo, intake.hi, champion.lo, champion.hi), (next, next + 600, next + 600, next + 800), "pair {p}");
+            assert_eq!((intake.tournsize, champion.tournsize), (42, 14), "pair {p}: 7% of each island");
+            assert_eq!((intake.elites, champion.elites), (2, 2), "pair {p}");
+            next = champion.hi;
+        }
+        assert_eq!(next, engine.layout.pop, "no gap, no overlap, nothing left over");
+        crate::evolve::vary::validate(engine.layout, &engine.islands).expect("the variation kernels accept the layout");
+        assert!(Engine::new(Config { n_pairs: 0, ..Config::srbench(1) }, toy_data()).is_err(), "no pairs is no population");
+    }
+
+    #[test]
+    fn the_pump_works_inside_each_pair_and_nowhere_else() {
+        let (mut engine, mut gen) = three_pairs();
+        let before = gen.clone();
+        engine.pump(&mut gen, 4).expect("the pump");
+        let fresh = engine.fresh(4, 4).expect("fresh");
+        for (p, (intake, champion)) in engine.pairs().into_iter().enumerate() {
+            // The intake's best two are its last two rows; the champion island's worst
+            // two are its first two, the worst of all first.
+            let promoted = [(intake.hi - 1, champion.lo), (intake.hi - 2, champion.lo + 1)];
+            for (from, to) in promoted {
+                assert_eq!(row_of(&gen, to), row_of(&before, from), "pair {p}: row {from} is promoted to row {to}");
+                assert_eq!(gen.fitness[to as usize], before.fitness[from as usize], "pair {p}: a promoted row keeps its fitness");
+            }
+            for r in champion.lo + 2..champion.hi {
+                assert_eq!(row_of(&gen, r), row_of(&before, r), "pair {p}: the rest of the champion island is untouched");
+                assert_eq!(gen.fitness[r as usize], before.fitness[r as usize]);
+            }
+            // Nobody else's intake reaches this champion island.
+            for (q, (other, _)) in engine.pairs().into_iter().enumerate() {
+                if q != p {
+                    for to in [champion.lo, champion.lo + 1] {
+                        assert!((other.lo..other.hi).all(|r| row_of(&before, r) != row_of(&gen, to)), "pair {p}: row {to} came from pair {q}");
+                    }
+                }
+            }
+            // The best fifth (4 of 20) stays, fittest first; the rest is fresh and unevaluated.
+            for slot in 0..4 {
+                assert_eq!(row_of(&gen, intake.lo + slot), row_of(&before, intake.hi - 1 - slot), "pair {p}: keeper {slot}");
+                assert!(!gen.fitness[(intake.lo + slot) as usize].is_nan());
+            }
+            for r in intake.lo + 4..intake.hi {
+                let width = (engine.layout.n_genes * engine.layout.gene_width()) as usize;
+                assert_eq!(row_of(&gen, r).0, fresh.genome[r as usize * width..(r as usize + 1) * width], "pair {p}: row {r} is a new individual");
+                assert!(gen.fitness[r as usize].is_nan() && engine.scored[r as usize].is_none(), "pair {p}: row {r} is unevaluated");
+            }
+        }
+        // Every pair draws its own new individuals.
+        let pairs = engine.pairs();
+        assert_ne!(row_of(&gen, pairs[0].0.lo + 4), row_of(&gen, pairs[1].0.lo + 4));
+    }
+
+    #[test]
+    fn the_cross_step_sends_each_intake_the_other_pairs_champions() {
+        let (mut engine, mut gen) = three_pairs();
+        // Intake 0's two best rows are the same individual: only one of it is kept.
+        let pairs = engine.pairs();
+        let (twin_from, twin_to) = ((pairs[0].0.hi - 1) as usize, (pairs[0].0.hi - 2) as usize);
+        let (row_w, rnc_w) = ((engine.layout.n_genes * engine.layout.gene_width()) as usize, (engine.layout.n_genes * engine.layout.n_rnc) as usize);
+        gen.pop.genome.copy_within(twin_from * row_w..(twin_from + 1) * row_w, twin_to * row_w);
+        gen.pop.rnc.copy_within(twin_from * rnc_w..(twin_from + 1) * rnc_w, twin_to * rnc_w);
+        let before = gen.clone();
+        engine.cross(&mut gen, 5).expect("the cross step");
+        let fresh = engine.fresh(5 | CROSS_KEY, 5).expect("fresh");
+        for (p, &(intake, champion)) in pairs.iter().enumerate() {
+            // Its best fifth, distinct, fittest first, with the fitness it had.
+            let kept: Vec<u32> = if p == 0 { vec![intake.hi - 1, intake.hi - 3, intake.hi - 4, intake.hi - 5] } else { (1..=4).map(|k| intake.hi - k).collect() };
+            for (slot, &from) in kept.iter().enumerate() {
+                let to = intake.lo + slot as u32;
+                assert_eq!(row_of(&gen, to), row_of(&before, from), "pair {p}: keeper {slot}");
+                assert_eq!(gen.fitness[to as usize], before.fitness[from as usize], "pair {p}: a keeper keeps its fitness");
+            }
+            // Then the OTHER pairs' three best champions: pair order, then rank.
+            let arrivals: Vec<u32> = pairs.iter().enumerate().filter(|(q, _)| *q != p).flat_map(|(_, &(_, c))| (1..=3).map(move |k| c.hi - k)).collect();
+            assert_eq!(arrivals.len(), 6);
+            for (slot, &from) in arrivals.iter().enumerate() {
+                let to = intake.lo + 4 + slot as u32;
+                assert_eq!(row_of(&gen, to), row_of(&before, from), "pair {p}: arrival {slot} is champion row {from}");
+                assert!(gen.fitness[to as usize].is_nan() && engine.scored[to as usize].is_none(), "pair {p}: an arrival is evaluated again");
+            }
+            // Never its own pair's champions.
+            for r in intake.lo..intake.hi {
+                assert!((champion.lo..champion.hi).all(|c| row_of(&before, c) != row_of(&gen, r)), "pair {p}: row {r} is one of its own champions");
+            }
+            // The rest: new individuals, unevaluated.
+            for r in intake.lo + 10..intake.hi {
+                assert_eq!(row_of(&gen, r).0, fresh.genome[r as usize * row_w..(r as usize + 1) * row_w], "pair {p}: row {r} is a new individual");
+                assert!(gen.fitness[r as usize].is_nan() && engine.scored[r as usize].is_none());
+            }
+            // Champion islands are not touched.
+            for r in champion.lo..champion.hi {
+                assert_eq!(row_of(&gen, r), row_of(&before, r), "pair {p}: champion row {r}");
+                assert_eq!(gen.fitness[r as usize], before.fitness[r as usize]);
+            }
+        }
+        // Deterministic: the same step on the same generation, again.
+        let (mut again_engine, _) = three_pairs();
+        let mut again = before.clone();
+        again_engine.cross(&mut again, 5).expect("the cross step");
+        assert_eq!(digest(&again), digest(&gen));
+        assert_eq!(again.pop, gen.pop);
+    }
+
+    /// `k_migrants` beyond a champion island: it sends all it has. An intake with
+    /// no room for every arrival: the first that fit (pair order, then rank).
+    #[test]
+    fn the_cross_step_truncates_what_does_not_fit() {
+        let mut engine = Engine::new(Config { n_pairs: 3, k_migrants: 10, ..toy_config(6, 4) }, toy_data()).expect("engine");
+        let mut gen = drawn_generation(&engine, 29);
+        for isl in &engine.islands {
+            for r in isl.lo..isl.hi {
+                gen.fitness[r as usize] = 0.5 + (isl.hi - r) as f32 * 0.01;
+            }
+        }
+        let before = gen.clone();
+        engine.cross(&mut gen, 5).expect("the cross step");
+        let pairs = engine.pairs();
+        // Intake 0 (6 rows) keeps 1 (a fifth of 6, rounded) and has room for 5 of the
+        // 8 arrivals: pair 1's four champions, best first, then pair 2's best.
+        let intake = pairs[0].0;
+        assert_eq!(row_of(&gen, intake.lo), row_of(&before, intake.hi - 1));
+        let arrivals = [pairs[1].1.hi - 1, pairs[1].1.hi - 2, pairs[1].1.hi - 3, pairs[1].1.hi - 4, pairs[2].1.hi - 1];
+        for (slot, &from) in arrivals.iter().enumerate() {
+            let to = intake.lo + 1 + slot as u32;
+            assert_eq!(row_of(&gen, to), row_of(&before, from), "arrival {slot}");
+            assert!(gen.fitness[to as usize].is_nan());
+        }
+        assert_eq!(intake.lo + 1 + arrivals.len() as u32, intake.hi, "the island is full: no fresh row");
+    }
+
+    /// With one pair there are no other champions: the cross step is the
+    /// keep-the-fifth refill. And on a beat it shares with the pump, its new
+    /// individuals are not the ones the pump drew for the same rows.
+    #[test]
+    fn the_cross_step_draws_its_own_new_individuals() {
+        let mut engine = Engine::new(toy_config(60, 20), toy_data()).expect("engine");
+        let mut pumped = drawn_generation(&engine, 31);
+        let mut crossed = pumped.clone();
+        let before = pumped.clone();
+        engine.pump(&mut pumped, 20).expect("the pump");
+        engine.cross(&mut crossed, 20).expect("the cross step");
+        let (intake, champion) = engine.pairs()[0];
+        for r in champion.lo..champion.hi {
+            assert_eq!(row_of(&crossed, r), row_of(&before, r), "the cross step promotes nobody");
+        }
+        for r in intake.lo..intake.lo + 12 {
+            assert_eq!(row_of(&crossed, r), row_of(&pumped, r), "the same best fifth");
+        }
+        for r in intake.lo + 12..intake.hi {
+            assert_ne!(row_of(&crossed, r), row_of(&pumped, r), "row {r}: the pump's new individual, drawn again");
+            assert!(crossed.fitness[r as usize].is_nan());
+        }
+    }
+
+    /// Three pairs, the pump every 4 and the cross step every 5, end to end on the
+    /// device. With the stop bar out of reach the fit runs 22 generations — five
+    /// pumps, four cross steps, and generation 20 where they share a beat — holds
+    /// y = x_0 * x_1 + x_2 at the end, and its hall of fame's file and the returned
+    /// model tell the same story; the same fit again is the same fit. With the stop
+    /// bar in place it stops on the law.
+    #[test]
+    fn three_pairs_with_the_cross_step_find_a_simple_law() {
+        let dir = std::env::temp_dir().join(format!("fuller_pairs_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("a directory for the hall of fame");
+        let path = dir.join("hof.tsv");
+        let config = Config {
+            n_pairs: 3,
+            cross_every: 5,
+            progress_every: 22,
+            hof_path: Some(path.to_string_lossy().into_owned()),
+            max_generations: 22,
+            max_seconds: 3600.0,
+            stop_one_minus_r2: -1.0,
+            ..toy_config(200, 100)
+        };
+        let fit = |config: &Config| {
+            let mut engine = Engine::new(config.clone(), toy_data()).expect("engine");
+            assert_eq!(engine.layout.pop, 900);
+            engine.fit().expect("fit")
+        };
+        let out = fit(&config);
+        assert_eq!((out.stopped_by, out.generations), ("n_gen", 22));
+        assert_eq!(out.individuals, 900 * 23);
+        assert!(out.timing.pump > 0.0 && out.timing.cross > 0.0, "both steps ran: {:?}", out.timing);
+        assert!(out.best.one_minus_r2[0] <= 1e-10 && out.best.one_minus_r2[1] <= 1e-10, "{:?}: {}", out.best.one_minus_r2, out.math);
+        // The model computes the law on rows the fit never saw.
+        let held: Vec<Vec<(String, f64)>> = (0..20).map(|i| names().into_iter().zip([0.3 + f64::from(i), 7.0 - 0.2 * f64::from(i), 4.5]).collect()).collect();
+        let predicted = evaluate_math(&out.math, &held).expect("the model evaluates");
+        for (row, got) in held.iter().zip(&predicted) {
+            let want = row[0].1 * row[1].1 + row[2].1;
+            assert!((got - want).abs() <= 1e-6 * want.abs().max(1.0), "{got} is not {want}: {}", out.math);
+        }
+        // The hall of fame's last line is the generation the fit ended on, and its
+        // best is the returned model's (the file holds the f32 ranking scores).
+        let text = std::fs::read_to_string(&path).expect("the hall of fame file");
+        let last: Vec<&str> = text.lines().last().expect("a line").split('\t').collect();
+        assert_eq!(last[0].parse::<u32>().expect("reported_at_gen"), out.generations);
+        assert!(last[1].parse::<u32>().expect("found_at_gen") <= out.generations);
+        let (hff, r2_val): (f64, f64) = (last[2].parse().expect("hff"), last[6].parse().expect("r2_val_bl2"));
+        assert!(1.0 - r2_val <= 1e-5, "the hall of fame's best is not the law: {last:?}");
+        assert!((hff - out.best.fitness).abs() <= 1e-3, "hall of fame {hff} against the confirmed {}", out.best.fitness);
+        // Deterministic, pump and cross step included.
+        let again = fit(&config);
+        assert_eq!((again.math, again.unique_genes), (out.math, out.unique_genes));
+        // And with the stop bar in place the fit ends on the law.
+        let stopped = fit(&Config { stop_one_minus_r2: 1e-10, max_generations: 400, ..config });
+        assert_eq!(stopped.stopped_by, "early_stop", "after {} generations: {}", stopped.generations, stopped.math);
+        std::fs::remove_file(&path).expect("remove the hall of fame file");
+        std::fs::remove_dir(&dir).expect("remove its directory");
     }
 }
