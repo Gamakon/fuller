@@ -197,6 +197,10 @@ pub struct Config {
     /// expression. `vhead_every` = 0: off, the whole head from the start.
     pub vhead_start: u32,
     pub vhead_every: u32,
+    /// THE HALL OF FAME's file: at every progress report the best individual the
+    /// fit has EVER held is appended to it — generation found, scores, and the
+    /// model as plain infix. None = no file (the hall of fame is still kept).
+    pub hof_path: Option<String>,
     pub max_generations: u32,
     pub max_seconds: f64,
     /// Stop when validation (and edge, when there is one) 1 - R² is this small.
@@ -229,6 +233,7 @@ impl Config {
             progress_every: 0,
             vhead_start: 12,
             vhead_every: 0,
+            hof_path: None,
             // Kept after a two-seed A/B (7012: 46 -> 47, 7013: 44 -> 45, no losses).
             max_generations: 1500,
             max_seconds: 30.0,
@@ -249,6 +254,15 @@ pub struct Scored {
     pub one_minus_r2: [f64; 3],
     /// The chromosome's tower height: [`t_depth`], the largest over its genes.
     pub t_depth: u32,
+}
+
+/// THE HALL OF FAME: the best individual a fit has ever held (lowest HFF), when it
+/// appeared, and what it computes. The scores are the device's f32 ranking scores.
+#[derive(Clone, Debug)]
+pub struct HallOfFame {
+    pub generation: u32,
+    pub best: Scored,
+    pub math: String,
 }
 
 #[derive(Clone, Debug)]
@@ -348,6 +362,10 @@ fn hff_columns(n_extrap: usize, without_validation: bool, log_scale: [bool; 3]) 
     }
     columns
 }
+
+/// The logbook's header: one row per report under it (min and avg are HFF fitness,
+/// lower is fitter; the R² are the best individual's).
+const REPORT_HEADER: &str = "    gen    secs  head      min_hff      avg_hff    mse_train       r2_train     r2_val_bl2     r2_val_bk3  t_depth   log10_p";
 
 /// The scaled error that HFF's log scale calls zero.
 const HFF_LOG_FLOOR: f64 = 1e-12;
@@ -802,6 +820,33 @@ impl Engine {
         (c.vhead_start + generation / c.vhead_every).clamp(2, self.layout.head)
     }
 
+    /// One row of the logbook, and the hall of fame's best appended to its file.
+    fn report(&self, generation: u32, seconds: f64, gen: &Generation, hof: Option<&HallOfFame>) -> Result<(), String> {
+        let fitness: Vec<f64> = gen.fitness.iter().filter(|f| !f.is_nan()).map(|f| f64::from(*f)).collect();
+        let avg = fitness.iter().sum::<f64>() / fitness.len().max(1) as f64;
+        let Some((_, b)) = self.best(gen) else { return Ok(()) };
+        let third = |s: &Scored| if self.data.splits.n_extrap > 0 { format!("{:.10}", 1.0 - s.one_minus_r2[2]) } else { "-".to_string() };
+        let (_, log10_p) = hff_p_value(b.fitness, self.hff_dimensions());
+        let head = match self.vhead_at(generation) { 0 => self.layout.head, v => v };
+        eprintln!(
+            "{generation:>7}{seconds:>8.0}{head:>6}{:>13.6e}{avg:>13.6e}{:>13.4e}{:>15.10}{:>15.10}{:>15}{:>9}{log10_p:>10.2}",
+            b.fitness, b.one_minus_r2[0] * self.caps.var[0], 1.0 - b.one_minus_r2[0], 1.0 - b.one_minus_r2[1], third(&b), b.t_depth
+        );
+        if let (Some(path), Some(h)) = (&self.config.hof_path, hof) {
+            use std::io::Write;
+            let model = crate::lint::node::Tree::parse(&h.math).map_or_else(|_| h.math.clone(), |t| t.to_infix());
+            let (_, hof_log10_p) = hff_p_value(h.best.fitness, self.hff_dimensions());
+            let mut file = std::fs::OpenOptions::new().append(true).open(path).map_err(|e| format!("hall of fame file {path}: {e}"))?;
+            writeln!(
+                file,
+                "{generation}\t{}\t{:.6e}\t{hof_log10_p:.2}\t{:.4e}\t{:.10}\t{:.10}\t{}\t{}\t{model}",
+                h.generation, h.best.fitness, h.best.one_minus_r2[0] * self.caps.var[0], 1.0 - h.best.one_minus_r2[0], 1.0 - h.best.one_minus_r2[1], third(&h.best), h.best.t_depth
+            )
+            .map_err(|e| format!("hall of fame file {path}: {e}"))?;
+        }
+        Ok(())
+    }
+
     /// How many objectives HFF has in this fit: the dimension of its sphere.
     pub fn hff_dimensions(&self) -> usize {
         hff_columns(self.data.splits.n_extrap, self.config.hff_without_validation, self.config.log_scale).len()
@@ -854,6 +899,13 @@ impl Engine {
         let mut individuals = u64::from(self.layout.pop);
         self.dev.write_fitness(&gen.fitness)?;
         let (mut generation, mut stopped_by) = (0u32, "n_gen");
+        let mut hof: Option<HallOfFame> = None;
+        if c.progress_every > 0 {
+            eprintln!("{REPORT_HEADER}");
+        }
+        if let Some(path) = &c.hof_path {
+            std::fs::write(path, "reported_at_gen\tfound_at_gen\thff\tlog10_p\tmse_train\tr2_train\tr2_val_bl2\tr2_val_bk3\tt_depth\tmodel\n").map_err(|e| format!("hall of fame file {path}: {e}"))?;
+        }
         while generation < c.max_generations {
             if started.elapsed().as_secs_f64() > c.max_seconds {
                 stopped_by = "time";
@@ -885,6 +937,13 @@ impl Engine {
             unique += u;
             oversized += o;
             individuals += u64::from(self.layout.pop);
+            // THE HALL OF FAME, before anything can end the fit: the winner of the
+            // generation that meets the bar belongs in it too.
+            if let Some((row, b)) = self.best(&gen) {
+                if hof.as_ref().is_none_or(|h| b.fitness < h.best.fitness) {
+                    hof = Some(HallOfFame { generation, best: b, math: self.math_of(&gen, row, &b) });
+                }
+            }
             // The device's f32 metrics cannot resolve 1e-10; they can say "this
             // one is worth confirming". The f64 re-score decides.
             if let Some((row, ranked)) = self.best(&gen) {
@@ -910,15 +969,13 @@ impl Engine {
             timing.pump += t.elapsed().as_secs_f64();
             self.dev.write_fitness(&gen.fitness)?;
             if c.progress_every > 0 && generation % c.progress_every == 0 {
-                if let Some((_, b)) = self.best(&gen) {
-                    let third = if self.data.splits.n_extrap > 0 { format!("{:.2e}", b.one_minus_r2[2]) } else { "-".to_string() };
-                    let (p, log10_p) = hff_p_value(b.fitness, self.hff_dimensions());
-                    eprintln!(
-                        "   gen {generation:>6} | {:>6.0} s | head {:>2} | hff {:.6} | p {p:.2e} | log10 p {log10_p:>8.2} | 1-R2 train {:.2e} val {:.2e} block3 {third} | t_depth {}",
-                        started.elapsed().as_secs_f64(), match self.vhead_at(generation) { 0 => self.layout.head, v => v }, b.fitness, b.one_minus_r2[0], b.one_minus_r2[1], b.t_depth
-                    );
-                }
+                self.report(generation, started.elapsed().as_secs_f64(), &gen, hof.as_ref())?;
             }
+        }
+        // The last row of the logbook: however the fit ended, its final state is
+        // reported and the hall of fame's best is in the file.
+        if c.progress_every > 0 && (stopped_by != "n_gen" || generation % c.progress_every != 0) {
+            self.report(generation, started.elapsed().as_secs_f64(), &gen, hof.as_ref())?;
         }
         let (row, ranked) = self.best(&gen).ok_or("no individual could be scored")?;
         let best = self.confirm(&gen, row)?.unwrap_or(ranked);

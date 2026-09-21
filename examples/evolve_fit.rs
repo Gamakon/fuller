@@ -126,6 +126,8 @@ fn main() {
     if let Some(start) = std::env::var("EVOLVE_VHEAD_START").ok().and_then(|v| v.parse().ok()) {
         config.vhead_start = start;
     }
+    //   EVOLVE_HOF_FILE                 the hall of fame's best is appended here at every report
+    config.hof_path = std::env::var("EVOLVE_HOF_FILE").ok().filter(|p| !p.is_empty());
     //   EVOLVE_PROGRESS_EVERY           a progress line on stderr every N generations (0 = none)
     config.progress_every = std::env::var("EVOLVE_PROGRESS_EVERY").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
     //   EVOLVE_PUMP_EVERY               the pump's beat in generations (the engine's default is 4)
