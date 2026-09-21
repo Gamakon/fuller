@@ -68,7 +68,8 @@ fuller rewrites on what an operator **computes**, not its geppy name. You map
 your pset names → semantic ids in the `functions` dict. Valid semantic ids
 (= `master_pset()`, which returns the authoritative list):
 `add sub mul div neg sin cos tan log exp sqrt abs tanh pow2 pow3 pow inv
-protected_sqrt protected_log protected_exp protected_inv protected_div`
+protected_sqrt protected_log protected_exp protected_inv protected_div
+asin acos protected_asin protected_acos`
 (plus `diff_sq`, accepted on decode and lowered to `pow2`+`sub`).
 
 **Protected ops are DISTINCT semantic ids — never map them to the raw op.**

@@ -69,9 +69,11 @@ leaf:   (Num <float>)              numeric literal, e.g. (Num 1.0)
 binary: (Add a b) (Sub a b) (Mul a b) (Div a b) (Pow a b)
 unary:  (Neg a) (Sin a) (Cos a) (Tan a) (Tanh a) (Log a) (Exp a)
         (Sqrt a) (Abs a) (Pow2 a) (Pow3 a) (Inv a)
+        (Asin a) (Acos a)
 protected (engine pset semantics):
         (ProtectedSqrt a) (ProtectedLog a) (ProtectedExp a)
         (ProtectedInv a) (ProtectedDiv a b)
+        (ProtectedAsin a) (ProtectedAcos a)
 ```
 
 Example — `m1·m2 / (x2 − y1)`:
