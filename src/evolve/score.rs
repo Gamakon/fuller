@@ -142,8 +142,11 @@ impl GpuScorer {
         if genes_per == 0 || chromosomes.iter().any(|c| c.len() != genes_per) {
             return Err("every chromosome needs the same, non-zero, number of genes".to_string());
         }
-        if combinations.is_empty() || combinations.iter().any(|c| c.genes == 0 || c.genes >= 1 << genes_per.min(8) || c.linker >= LINKERS) {
-            return Err(format!("the combinations do not fit chromosomes of {genes_per} genes (at most 8) and {LINKERS} linkers"));
+        if genes_per > 24 {
+            return Err(format!("{genes_per} genes: the kernel packs a chromosome's used genes into 24 bits"));
+        }
+        if combinations.is_empty() || combinations.iter().any(|c| c.genes == 0 || c.genes >= 1 << genes_per || c.linker >= LINKERS) {
+            return Err(format!("the combinations do not fit chromosomes of {genes_per} genes and {LINKERS} linkers"));
         }
         let threads = chromosomes.len() * combinations.len();
         if threads.div_ceil(64) > 65_535 {
@@ -163,7 +166,7 @@ impl GpuScorer {
         };
         let ok: Vec<u32> = gene_ok.iter().map(|&b| u32::from(b)).collect();
         let flat: Vec<u32> = chromosomes.iter().flatten().map(|&g| g as u32).collect();
-        let packed: Vec<u32> = combinations.iter().map(|c| c.genes | (c.linker as u32) << 8).collect();
+        let packed: Vec<u32> = combinations.iter().map(|c| c.genes | (c.linker as u32) << 24).collect();
         let (ok_buf, chrom_buf, comb_buf) = (storage(&ok, "gene_ok"), storage(&flat, "chromosomes"), storage(&packed, "combinations"));
         let meta = Meta {
             n_chromosomes: chromosomes.len() as u32,

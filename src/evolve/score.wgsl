@@ -34,7 +34,7 @@ struct Meta {
 @group(0) @binding(3) var<storage, read> chromosomes: array<u32>; // genes_per gene indices each
 @group(0) @binding(4) var<storage, read> y: array<f32>;
 @group(0) @binding(5) var<storage, read_write> scores: array<f32>;
-// Per combination: the used genes' bitmask (low 8 bits) | linker << 8.
+// Per combination: the used genes' bitmask (low 24 bits) | linker << 24.
 @group(0) @binding(6) var<storage, read> combinations: array<u32>;
 
 // Linkers: 0 avg, 1 mul, 2 add — chrom_score's order in the engine.
@@ -186,8 +186,8 @@ fn score_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
     let c = t / n_combinations;
     let combination = combinations[t % n_combinations];
-    let genes = combination & 0xFFu;
-    let linker = combination >> 8u;
+    let genes = combination & 0x00FFFFFFu;
+    let linker = combination >> 24u;
     let out = t * N_WRAPPERS * WIDTH;
     let nan = bitcast<f32>(NAN_BITS);
     for (var i = 0u; i < N_WRAPPERS * WIDTH; i = i + 1u) {
