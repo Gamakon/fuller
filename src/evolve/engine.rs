@@ -215,6 +215,15 @@ pub struct Config {
     pub max_seconds: f64,
     /// Stop when validation (and edge, when there is one) 1 - R² is this small.
     pub stop_one_minus_r2: f64,
+    /// THE STOP BAR's second half: the confirmed model's HFF angle as a p-value must
+    /// be at most this (log10). -19: on development seed 7013 every real law that
+    /// met the 1 - R² bar sat at -19.4 or below (most at -21 to -22) and the one fake
+    /// that slipped under it (strogatz bacres2, validation 1 - R² 1.0e-11) sat at
+    /// -17.55 — the clearest signal we have. A law a little above the bar is not
+    /// lost: the fit simply keeps evolving and reports its best. Measured with 4
+    /// objectives (train + t_depth); p depends on how many objectives HFF has.
+    /// `f64::INFINITY` switches this half off.
+    pub stop_log10_p: f64,
 }
 
 impl Config {
@@ -249,6 +258,7 @@ impl Config {
             max_generations: 1500,
             max_seconds: 30.0,
             stop_one_minus_r2: 1e-10,
+            stop_log10_p: -19.0,
         }
     }
 }
@@ -1109,7 +1119,10 @@ impl Engine {
                 if ranked.one_minus_r2[1] <= 1e-5 {
                     if let Some(s) = self.confirm(&gen, row)? {
                         let edge_ok = c.smogd || self.data.splits.n_extrap == 0 || s.one_minus_r2[2] <= c.stop_one_minus_r2;
-                        if s.one_minus_r2[1] <= c.stop_one_minus_r2 && edge_ok {
+                        // `confirm` scores TrueNorth over the error blocks and t_depth
+                        // (not redundancy): that is the sphere its angle lives on.
+                        let (_, log10_p) = hff_p_value(s.fitness, self.hff_dimensions() - usize::from(c.redundancy));
+                        if s.one_minus_r2[1] <= c.stop_one_minus_r2 && edge_ok && log10_p <= c.stop_log10_p {
                             stopped_by = "early_stop";
                             break;
                         }

@@ -126,6 +126,11 @@ fn main() {
     if let Some(start) = std::env::var("EVOLVE_VHEAD_START").ok().and_then(|v| v.parse().ok()) {
         config.vhead_start = start;
     }
+    //   EVOLVE_STOP_LOG10_P             the stop bar's p-value half (the engine's default is -19;
+    //                                   "inf" switches it off)
+    if let Some(bar) = std::env::var("EVOLVE_STOP_LOG10_P").ok().and_then(|v| v.parse::<f64>().ok()) {
+        config.stop_log10_p = bar;
+    }
     //   EVOLVE_BALANCED_TOURNAMENTS=1   the tournaments rank on hff's BALANCED pole (for
     //                                   diversity); the hall of fame, the stop bar and the
     //                                   report stay on TrueNorth
