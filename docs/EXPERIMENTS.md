@@ -235,37 +235,48 @@ leave-one-out in the linter; the noisy tracks; the 10-seed official evaluation
 ## 15 laws sit past the stop bar and score as misses (2026-09-22)
 
 Scan of every saved fit in `hff/notebooks/sr_logs/`: laws where our own stop bar
-(log10 p <= -19) is met but SRBench scores unsolved. Not search misses.
+(log10 p <= -19) is met but SRBench scores unsolved.
 
-| law | log10 p | what the engine produced | class |
+**CORRECTION (same day).** This scan counted FITS across all 49 races, not
+distinct laws, and most of those fits predate the current engine. Two
+consequences, both measured:
+
+1. **Only 4 of the 15 are laws we have never solved** (II_6_15b, I_34_14,
+   test_5, II_13_23). The other 11 are already inside the 78. The union ceiling
+   from this line of work is **82, not 92**. The 11 still matter: the official
+   run scores each seed alone, so per-race consistency is the score.
+2. **The arcsin-clamp class is already fixed.** Replaying the current race
+   (`precfix_30s_s13`) through the reporting path with `_refit_rules.py`:
+   I_18_12, I_14_4, III_12_43, I_30_5, I_44_4 and s_glider2 all PASS. The
+   arcsin debris quoted below came from older races, before the
+   resolve-to-constant rule landed. There is no new rule to write here.
+
+**II_6_15b is a defect in the benchmark, not in us.** SRBench's stored
+`true_model` is already rounded to `0.239*p_d*sin(theta)*cos(theta)/(eps*r**3)`.
+Its scorer simplifies to the double angle (halving the constant to 0.1194) and
+then `round_floats` cuts to 3 decimals: the truth becomes `0.12`, our exact
+`3/(4*pi)` becomes `0.119`. Verified by running the real scorer on four forms --
+our fit, full-precision, symbolic `3/(4*pi)`, and the double-angle form -- all
+four FAIL with the identical residual `0.00101*p_d*sin(2*theta)/(eps*r**3)`.
+No form we can submit passes. Not reachable by any rewrite.
+
+Earlier note, that our constant was "0.42% off", was an arithmetic error of
+mine: ours is 0.23873241211714158 against 3/(4*pi) = 0.238732414637843, a
+relative error of **1.1e-8**. The OLS is sound.
+
+### What is actually left
+
+| law | log10 p | cause | reachable |
 |---|---|---|---|
-| I_26_2 | -21.71 | `asin(n*sin(theta2))` | NAME — `asin` vs numpy `arcsin` |
-| I_44_4 | -21.43 | `T*kb*n*(-log(V1)+log(V2))` | IDENTICAL (diff 0) |
-| II_10_9 | -21.52 | `0.2*log(exp(5*s)) + 1.2e-4` | IDENTICAL (diff 0) |
-| s_lv2 | -21.33 | `-0.999*y*(x+y-2)` | IDENTICAL (diff 0), 0.999 scale |
-| test_5 | -21.73 | `6.28*sqrt(d**3/(G*(m1+m2)))` | IDENTICAL (ratio 1) — `_merge_radicals` |
-| II_6_15b | -21.36 | `0.12*p_d*sin(2*theta)/(eps*r**3)` | IDENTICAL (ratio 1) — sympy applied the DOUBLE ANGLE to our exact form |
-| I_34_14 | -21.87 | `omega_0*sqrt((c+v)/(c-v))` | IDENTICAL on c>v (refine -> 1); sympy will not assume it |
-| II_13_23 | -20.21 | `-7.14e+8*rho_c_0/sqrt(1-v**2/c**2)` | STRUCTURE right, scale wrong — f32/f64 write-back |
-| I_18_12 | -22.13 | `0.637*F*r*arcsin(r)*sin(theta)` | CLAMPED arcsin rides along (R2 nan) |
-| I_14_4 | -22.05 | `0.785*k*x**2/arcsin(x)` | same |
-| III_12_43 | -21.84 | `0.159*h*n + 0.159*arcsin(n) - 0.25` | same |
-| III_17_37 | -21.32 | `... + arccos(beta**3)` | same |
-| I_30_5 | -20.97 | `arccos(sqrt(l)) + arcsin(l) + arcsin(l/(d*n)) - 1.57` | same |
-| s_glider2 | -20.54 | `x + sqrt(Abs(arcsin(x*y))) - 1.25 - cos(y)/x` | same |
-| s_bacres2 | -19.94 | `10 - 2.63*y*tanh(log(x+1/(2*x)))*tanh(tanh(x))/x` | fits to 1-R2 4.5e-10, different function |
+| test_5 | -21.73 | `_merge_radicals` emits `sqrt(1/X)` for `1/sqrt(X)` | yes, a bug fix |
+| II_13_23 | -20.21 | f32/f64 write-back leaves a 7.14e+8 scale on right structure | yes, a bug fix |
+| I_34_14 | -21.87 | `sqrt((c+v)/(c-v))` never cancels without `c>v` | scorer policy, test on solved laws |
+| II_6_15b | -21.36 | the benchmark's own rounded ground truth | NO |
 
-Three named causes, each fixable without changing the search:
+### The rule bench
 
-1. **A clamped inverse-trig term that is constant on every row** still prints.
-   `arcsin(r)` where r >= 1 on all rows is the clamp constant 1.57; it rides in
-   as a factor or an additive term and destroys the match. 6 of the 15. The
-   resolve-to-constant rule exists for ProtectedAsin/Acos — it is not firing on
-   these shapes (factor position, and inside sqrt(Abs(.))).
-2. **Sympy rewrites our already-exact form away from the target**: the double
-   angle on II_6_15b, and refusing c>v on I_34_14. Our fuller-direct submission
-   should win these; the double submission is picking the sympy-tidied one.
-3. **Known bugs**: `_merge_radicals` (test_5), f32/f64 write-back (II_13_23).
-
-Ceiling if all three are closed: 78 + up to 14 = 92 of 133 (69%), with no
-change to evolution. The arcsin class alone is 6.
+`hff/notebooks/_refit_rules.py` replays saved chromosomes through the reporting
+rewrites and scores them. No engine, no search. 10 laws in 159 s with both arms,
+about half that with `--tidy-only`. A rule change is measured against every law
+it could touch in minutes, and `--baseline` names what GAINED and what LOST, so
+a rewrite that wins one law and breaks another cannot hide.
