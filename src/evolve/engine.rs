@@ -718,7 +718,9 @@ impl Caps {
 /// rest of it c > 0 on every row, is `u + log c`; `Log a -/+ Log b` with a, b > 0
 /// on every row is `Log (Div a b)` / `Log (Mul a b)`, a negation going inside
 /// as `Log (Div b a)`; `Sin` / `Cos` of `e + k*pi/2`, the constant exact to
-/// 1e-9, is the function a quarter turn on. One that is
+/// 1e-9, is the function a quarter turn on; `Tan` of an arcsin of a `u` the data
+/// keeps inside |u| < 1 is `u / sqrt(1 - u^2)`; and a factor standing on both
+/// sides of a product's line, never 0 on the data, cancels. One that is
 /// triggered on SOME rows stays protected, and `Tree::to_infix_faithful` writes
 /// it out as the Piecewise it is. Decided on `rows`, the rows the model was
 /// selected on — the engine's counterpart of hff's `symbolic_protected_div`.
@@ -763,6 +765,56 @@ pub fn resolve_protected(math: &str, rows: &[Vec<(String, f64)>]) -> Result<Stri
     }
     fn product(of: &[&Tree]) -> Option<Tree> {
         of.iter().map(|f| (*f).clone()).reduce(|a, b| Tree::App(Op::Mul, vec![a, b]))
+    }
+    /// The factors of a product / quotient, `Exp` kept as an ordinary factor:
+    /// what is above the line and what is below it. The counterpart of `factors`
+    /// for cancelling, where an exponent must NOT be hoisted out of the product.
+    fn over_and_under<'t>(t: &'t Tree, inverted: bool, num: &mut Vec<&'t Tree>, den: &mut Vec<&'t Tree>) {
+        match t {
+            Tree::App(Op::Mul, k) => k.iter().for_each(|f| over_and_under(f, inverted, num, den)),
+            Tree::App(Op::Div, k) => {
+                over_and_under(&k[0], inverted, num, den);
+                over_and_under(&k[1], !inverted, num, den);
+            }
+            Tree::App(Op::Inv, k) => over_and_under(&k[0], !inverted, num, den),
+            _ => (if inverted { den } else { num }).push(t),
+        }
+    }
+    /// A FACTOR ON BOTH SIDES OF THE LINE cancels — where the data says it is
+    /// finite and never 0, since a/a is not 1 at 0. The general form of the x/x
+    /// `constant_on_data` already folds: feynman II.13.23's tan(asin(v/c))/v
+    /// becomes (v/c)/sqrt(1 - v^2/c^2)/v, and the law is only there once the v
+    /// and the c cancel. `None` when nothing cancels, so a product that is
+    /// already in its lowest terms is left exactly as it was written.
+    fn cancelled(t: &Tree, rows: &[Vec<(String, f64)>]) -> Option<Tree> {
+        let (mut num, mut den) = (vec![], vec![]);
+        over_and_under(t, false, &mut num, &mut den);
+        let mut cut = false;
+        let mut i = 0;
+        while i < num.len() {
+            // A literal is cancelled by the folds, not here; and 0 never cancels.
+            let live = !matches!(num[i], Tree::Num(_)) && on_every_row(num[i], rows, |v| v != 0.0);
+            match den.iter().position(|d| *d == num[i]).filter(|_| live) {
+                Some(j) => {
+                    den.remove(j);
+                    num.remove(i);
+                    cut = true;
+                }
+                None => i += 1,
+            }
+        }
+        if !cut {
+            return None;
+        }
+        // The literals lead the rebuilt product, so a scale and a folded constant
+        // end up adjacent and the rational folds can gather them.
+        num.sort_by_key(|f| usize::from(!matches!(f, Tree::Num(_))));
+        Some(match (product(&num), product(&den)) {
+            (None, None) => Tree::Num(1.0),
+            (Some(n), None) => n,
+            (None, Some(d)) => Tree::App(Op::Inv, vec![d]),
+            (Some(n), Some(d)) => Tree::App(Op::Div, vec![n, d]),
+        })
     }
     /// log(c * exp u) = u + log c for real u and c > 0: `Log arg` where `Exp u` is
     /// a FACTOR of `arg` and the rest of it, c, is positive on every row. sympy
@@ -998,6 +1050,30 @@ pub fn resolve_protected(math: &str, rows: &[Vec<(String, f64)>]) -> Result<Stri
                         }
                         return Tree::App(Op::Mul, both.to_vec());
                     }
+                }
+                if let Some(lowest) = cancelled(&Tree::App(*op, kids.clone()), rows) {
+                    return lowest;
+                }
+            }
+            Op::Div | Op::Inv => {
+                if let Some(lowest) = cancelled(&Tree::App(*op, kids.clone()), rows) {
+                    return lowest;
+                }
+            }
+            // tan(asin u) = u / sqrt(1 - u^2), for |u| < 1 — the shape the
+            // sqrt(1 - v^2/c^2) family is found in. The data supplies the condition:
+            // where |u| < 1 on every row the arcsin is on its principal branch, its
+            // cosine is the positive root, and the quotient is an identity. At
+            // |u| = 1 both sides are infinite and the equality says nothing, so the
+            // bound is STRICT. A protected arcsin whose clamp fires on some row is
+            // left alone — its argument is not u there (feynman II.13.23 was reported
+            // as tan(asin(v/c))/v, which no scorer matches to the law's root).
+            Op::Tan if matches!(&kids[0], Tree::App(Op::ProtectedAsin | Op::Asin, _)) => {
+                let Tree::App(_, inner) = &kids[0] else { return Tree::App(*op, kids) };
+                let u = &inner[0];
+                if on_every_row(u, rows, |v| v.abs() < 1.0) {
+                    let root = Tree::App(Op::Sqrt, vec![Tree::App(Op::Sub, vec![Tree::Num(1.0), Tree::App(Op::Pow2, vec![u.clone()])])]);
+                    return Tree::App(Op::Div, vec![u.clone(), root]);
                 }
             }
             // A PHASE SHIFT by a quarter turn: sin(e + pi/2) is cos e, cos(e + pi/2)
@@ -2334,6 +2410,20 @@ mod tests {
         }
     }
 
+    /// A RELATIVISTIC block: x_0 a density, x_1 a speed and x_2 a speed of light
+    /// with x_1 / x_2 in [0.05, 0.95] on every row — the beta the sqrt(1 - v^2/c^2)
+    /// family lives on, strictly inside the arcsin's domain. rows() straddles
+    /// |x_1/x_2| = 1 and is left as it is.
+    fn rows_beta() -> Vec<Vec<(String, f64)>> {
+        (0..200)
+            .map(|i| {
+                let t = f64::from(i);
+                let c = 2.0 + t * 0.01;
+                vec![("x_0".to_string(), 1.0 + t * 0.02), ("x_1".to_string(), c * (0.05 + t * 0.0045)), ("x_2".to_string(), c)]
+            })
+            .collect()
+    }
+
     /// rows() and two more positive columns, x_3 and x_4; rows() itself is not changed.
     fn rows5() -> Vec<Vec<(String, f64)>> {
         rows()
@@ -2455,6 +2545,45 @@ mod tests {
         // 1e-6 from pi/2 is not pi/2: the form stands.
         let near = format!("(Sin (Add {e} (Num {:?})))", FRAC_PI_2 + 1e-6);
         assert_eq!(resolve_protected(&near, &rows()).unwrap(), near);
+    }
+
+    /// feynman II.13.23's shape: tan(asin(v/c)) is the sqrt(1 - v^2/c^2) family's
+    /// signature, and rewriting it cancels the /x_1 and leaves the law's root.
+    #[test]
+    fn a_tangent_of_an_arcsine_is_the_quotient_by_the_root_where_the_data_stays_in_the_domain() {
+        let u = r#"(ProtectedDiv (Var "x_1") (Var "x_2"))"#;
+        // Both spellings of the arcsin, on a beta strictly inside the domain.
+        for asin in ["ProtectedAsin", "Asin"] {
+            let expr = format!("(Tan ({asin} {u}))");
+            let resolved = resolve_protected(&expr, &rows_beta()).unwrap();
+            assert_eq!(
+                resolved,
+                r#"(Div (Div (Var "x_1") (Var "x_2")) (Sqrt (Sub (Num 1.0) (Pow2 (Div (Var "x_1") (Var "x_2"))))))"#,
+                "{expr}"
+            );
+            assert!(drift(&expr, &resolved, &rows_beta()) <= FINAL_FORM_AGREE, "{expr}");
+        }
+
+        // THE CHROMOSOME, verbatim as the engine found it (seed 7014, pass2_s13).
+        // The tan(asin ..) goes, the /x_1 cancels against it, and the law's root is
+        // what is left — under the spurious scale the fit carries.
+        let found = r#"(Mul (Num -4.371138630895453e-8) (Mul (Mul (Var "x_0") (ProtectedDiv (Num 1.633123935319537e16) (ProtectedInv (Var "x_2")))) (ProtectedDiv (Tan (ProtectedAsin (ProtectedDiv (Var "x_1") (Var "x_2")))) (Var "x_1"))))"#;
+        let resolved = resolve_protected(found, &rows_beta()).unwrap();
+        assert!(!resolved.contains("Tan") && !resolved.contains("Asin"), "{resolved}");
+        assert!(drift(found, &resolved, &rows_beta()) <= FINAL_FORM_AGREE, "the predictions moved: {resolved}");
+        let tidy = final_form(&resolved, &names(), &rows_beta()).unwrap();
+        let tidy = resolve_protected(&tidy, &rows_beta()).unwrap();
+        // no tan, no asin, and x_1 appears ONCE — only inside the root.
+        assert!(!tidy.contains("Tan") && !tidy.contains("Asin"), "{tidy}");
+        assert_eq!(tidy.matches(r#"(Var "x_1")"#).count(), 1, "the /x_1 did not cancel: {tidy}");
+        assert!(tidy.contains("Sqrt"), "{tidy}");
+        assert!(drift(found, &tidy, &rows_beta()) <= FINAL_FORM_AGREE, "{tidy}");
+
+        // NEGATIVE: rows() runs x_1/x_2 from 0.61 to 1.95, so the arcsin is clamped
+        // on some rows and the identity does not hold there. The form stands.
+        let clamped = format!("(Tan (ProtectedAsin {u}))");
+        let stood = resolve_protected(&clamped, &rows()).unwrap();
+        assert!(stood.contains("Tan") && stood.contains("Asin"), "{stood}");
     }
 
     /// feynman I.44.4 EXACTLY as the chromosome wrote it (RAW_MATH of the seed-7013
