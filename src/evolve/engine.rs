@@ -17,6 +17,7 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 use super::device::EvolveDevice;
+use super::genealogy::{Genealogy, GenealogyLog, Origin, PopulationAges, RowMark};
 use super::score::{GpuScorer, WIDTH};
 use super::vary::{GenParams, Generation, Island, Rates};
 use super::write_back::{gene_form, model_form, write_back, SnapCounts, WriteBack};
@@ -416,6 +417,16 @@ pub struct Config {
     pub snap_rel_tol: f64,
     /// `_snap_op.py`'s `r2_drop_tol`: how much of the model's train R² a snap may cost.
     pub snap_r2_drop: f64,
+    /// THE GENEALOGY LOG's file — ALPS's measurement half. None (the default) is
+    /// OFF and the engine is what it was, bit for bit: nothing is tracked, no
+    /// buffer is read back and no file is written. With a path, every individual
+    /// of the fit carries an IDENTITY, an AGE and a LINEAGE
+    /// ([`super::genealogy`]) and the file takes a header and then, appended: the
+    /// best individual of every generation, every ARRIVAL (a row whose origin is
+    /// not ordinary variation — a promotion, a keeper, a migrant, a snap
+    /// write-back), one line per batch of fresh random individuals, and when the
+    /// fit ends the winner's whole chain back to its founder.
+    pub genealogy_path: Option<String>,
 }
 
 impl Config {
@@ -460,6 +471,7 @@ impl Config {
             snap_top_k: 0,
             snap_rel_tol: 1e-3,
             snap_r2_drop: crate::lint::snap_guard::R2_DROP_TOL,
+            genealogy_path: None,
         }
     }
 }
@@ -497,6 +509,9 @@ pub struct HallOfFame {
     pub genome: Vec<u32>,
     pub rnc: Vec<f32>,
     pub wrapper_id: u32,
+    /// WHO IT WAS: its identity, age and line at the generation it was remembered.
+    /// None when the genealogy is off.
+    pub mark: Option<RowMark>,
 }
 
 #[derive(Clone, Debug)]
@@ -510,6 +525,9 @@ pub struct Timing {
     pub pump: f64,
     pub cross: f64,
     pub snap: f64,
+    /// What the genealogy costs: the parent read-back and the log's writes. 0.0
+    /// when `Config::genealogy_path` is None.
+    pub genealogy: f64,
 }
 
 pub struct FitResult {
@@ -524,6 +542,16 @@ pub struct FitResult {
     pub timing: Timing,
     /// What snap did (all zero when `Config::snap_every` is 0).
     pub snap: SnapCounts,
+    /// THE WINNER'S LINEAGE: its identity, how old it was in generations, and the
+    /// generation and mechanism its line began at. None when the genealogy is off.
+    pub lineage: Option<RowMark>,
+    /// THE FINAL POPULATION's ages, and how many lines its best rows descend
+    /// from — the diversity number. None when the genealogy is off.
+    pub population_ages: Option<PopulationAges>,
+    /// How many ids the fit minted, and how many lines and bytes the log took.
+    pub genealogy_minted: u64,
+    pub genealogy_lines: u64,
+    pub genealogy_bytes: u64,
 }
 
 const LINKERS: [Linker; 3] = [Linker::AVG, Linker::MUL, Linker::ADD];
@@ -607,6 +635,9 @@ fn hff_columns(n_extrap: usize, without_validation: bool, log_scale: [bool; 3]) 
 /// The logbook's header: one row per report under it (min and avg are HFF fitness,
 /// lower is fitter; the R² are the best individual's).
 const REPORT_HEADER: &str = "    gen    secs  head      min_hff      avg_hff    mse_train       r2_train     r2_val_bl2     r2_val_bk3  t_depth   log10_p";
+/// What the logbook row and the hall of fame's file gain when the genealogy is on:
+/// the best individual's AGE, and the generation and mechanism its line began at.
+const LINEAGE_HEADER: &str = "      age  found_gen   found_origin";
 
 /// The objectives as HFF sees them: each on [0, 1] by its frozen range, the
 /// log-scaled ones stretched. None when one is not finite.
@@ -1253,6 +1284,32 @@ pub struct Engine {
     scored: Vec<Option<Scored>>,
     /// Snap's resident parts; None when `Config::snap_every` is 0.
     snap: Option<SnapState>,
+    /// IDENTITY, AGE and LINEAGE; None when `Config::genealogy_path` is None, and
+    /// then nothing in the fit loop touches it and the engine is what it was.
+    lineage: Option<LineageState>,
+}
+
+/// What the genealogy keeps for the length of a fit: the identities of the
+/// population, and the file they are written to.
+struct LineageState {
+    tracker: Genealogy,
+    log: GenealogyLog,
+}
+
+/// What a refill tells the genealogy: the marks as they stood BEFORE the step
+/// (its rows move over one another, so the sources must be read first), the
+/// generation, and the three words for this step's kinds of row — the pump's or
+/// the cross step's. `before` is None when the genealogy is off, and then every
+/// call through here does nothing.
+struct Marks {
+    before: Option<Vec<RowMark>>,
+    generation: u32,
+    /// A row of the intake's best fifth, kept through the step.
+    keep: Origin,
+    /// A row copied in from elsewhere: a promotion, or a migrant.
+    arrive: Origin,
+    /// A new random individual.
+    fresh: Origin,
 }
 
 /// What the snap step keeps between beats: the lattice, the linter's literal
@@ -1311,7 +1368,7 @@ impl Engine {
             }
             None => None,
         };
-        Ok(Engine { scored: vec![None; pop as usize], config, table, layout, islands, dev, evaluator, scorer, data, caps, col_max: None, snap })
+        Ok(Engine { scored: vec![None; pop as usize], config, table, layout, islands, dev, evaluator, scorer, data, caps, col_max: None, snap, lineage: None })
     }
 
     /// Score every unevaluated row of `gen`; returns (unique genes, oversized).
@@ -1463,7 +1520,7 @@ impl Engine {
     /// first, then `arrivals` (rows of `before`, to be evaluated again), then rows
     /// of `fresh` — new random individuals, unevaluated. Arrivals the island has no
     /// room for are left out.
-    fn refill(&mut self, gen: &mut Generation, intake: Island, before: &Generation, keepers: &[u32], arrivals: &[u32], fresh: &Population) {
+    fn refill(&mut self, gen: &mut Generation, intake: Island, before: &Generation, keepers: &[u32], arrivals: &[u32], fresh: &Population, marks: &Marks) -> Result<(), String> {
         let l = self.layout;
         let row_w = (l.n_genes * l.gene_width()) as usize;
         let rnc_w = (l.n_genes * l.n_rnc) as usize;
@@ -1478,8 +1535,12 @@ impl Engine {
             gen.pop.wrapper_id[to] = before.pop.wrapper_id[from];
             gen.fitness[to] = if evaluated { before.fitness[from] } else { f32::NAN };
             self.scored[to] = if evaluated { scored_before[from] } else { None };
+            // A keeper is the same individual in another row of its own island; an
+            // arrival is a CLONE of a champion row that stays where it is.
+            self.track_move(marks, from, to, if evaluated { marks.keep } else { marks.arrive })?;
             to += 1;
         }
+        let fresh_from = to;
         for r in to..intake.hi as usize {
             gen.pop.genome[r * row_w..(r + 1) * row_w].copy_from_slice(&fresh.genome[r * row_w..(r + 1) * row_w]);
             gen.pop.rnc[r * rnc_w..(r + 1) * rnc_w].copy_from_slice(&fresh.rnc[r * rnc_w..(r + 1) * rnc_w]);
@@ -1487,6 +1548,58 @@ impl Engine {
             gen.fitness[r] = f32::NAN;
             self.scored[r] = None;
         }
+        self.track_fresh(fresh_from, intake.hi as usize, marks.fresh, marks.generation)
+    }
+
+    /// What a refill needs from the genealogy: the marks as they stood BEFORE the
+    /// step (rows move over one another), the generation, and which origin each
+    /// kind of row takes — the pump's words or the cross step's.
+    /// THE BEST INDIVIDUAL of a generation, one line in the log — who it is, how
+    /// old and what it descends from. Nothing when the genealogy is off.
+    fn log_best(&mut self, generation: u32, gen: &Generation, timing: &mut Timing) -> Result<(), String> {
+        // Off costs nothing at all: not the clock, not the search for the best row.
+        if self.lineage.is_none() {
+            return Ok(());
+        }
+        let t = Instant::now();
+        let row = self.best(gen).map(|(r, _)| r);
+        if let (Some(l), Some(row)) = (self.lineage.as_mut(), row) {
+            let record = l.tracker.record(generation, row);
+            l.log.record("best", &record)?;
+        }
+        timing.genealogy += t.elapsed().as_secs_f64();
+        Ok(())
+    }
+
+    /// The marks as they stand, with the words a step uses for its kinds of row.
+    fn marks(&self, generation: u32, keep: Origin, arrive: Origin, fresh: Origin) -> Marks {
+        Marks { before: self.lineage.as_ref().map(|l| l.tracker.snapshot()), generation, keep, arrive, fresh }
+    }
+
+    /// One row of a refill: the same individual moved (a keeper), or a clone of a
+    /// row that stays where it is (a promotion, a migrant). Either way it is an
+    /// ARRIVAL in the log — a row this generation did not breed.
+    fn track_move(&mut self, marks: &Marks, from: usize, to: usize, origin: Origin) -> Result<(), String> {
+        let (Some(l), Some(before)) = (self.lineage.as_mut(), marks.before.as_ref()) else { return Ok(()) };
+        l.tracker.moved(before, from, to, origin, marks.generation);
+        // A keeper mints no id — it is the same individual in another row — so the
+        // log is told the EVENT, not how that individual was originally born.
+        let record = l.tracker.record_as(marks.generation, to, origin);
+        l.log.record("arrival", &record)
+    }
+
+    /// A run of fresh random individuals: one batch line in the log, not one per row.
+    fn track_fresh(&mut self, from: usize, to: usize, origin: Origin, generation: u32) -> Result<(), String> {
+        let Some(l) = self.lineage.as_mut() else { return Ok(()) };
+        if from >= to {
+            return Ok(());
+        }
+        let id_lo = l.tracker.minted();
+        for r in from..to {
+            l.tracker.fresh(r, origin, generation);
+        }
+        let id_hi = l.tracker.minted() - 1;
+        l.log.batch(generation, from as u32, to as u32 - 1, id_lo, id_hi, origin)
     }
 
     /// New random individuals for a refill: the CPU reference of the init kernel,
@@ -1506,13 +1619,13 @@ impl Engine {
         // Fresh rows are keyed by this generation.
         let fresh = self.fresh(generation, generation)?;
         for (intake, champion) in self.pairs() {
-            self.pump_pair(gen, intake, champion, &fresh);
+            self.pump_pair(gen, intake, champion, &fresh, generation)?;
         }
         Ok(())
     }
 
     /// The pump inside one pair.
-    fn pump_pair(&mut self, gen: &mut Generation, intake: Island, champion: Island, fresh: &Population) {
+    fn pump_pair(&mut self, gen: &mut Generation, intake: Island, champion: Island, fresh: &Population, generation: u32) -> Result<(), String> {
         let l = self.layout;
         let row_w = (l.n_genes * l.gene_width()) as usize;
         let rnc_w = (l.n_genes * l.n_rnc) as usize;
@@ -1527,10 +1640,18 @@ impl Engine {
             gen.pop.wrapper_id[to] = gen.pop.wrapper_id[from];
             gen.fitness[to] = gen.fitness[from];
             self.scored[to] = self.scored[from];
+            // THE PROMOTION: the intake row is copied over a champion row and stays
+            // where it is, so the copy is a new individual of the same line.
+            if let Some(l) = self.lineage.as_mut() {
+                l.tracker.promote(from, to, generation);
+                let record = l.tracker.record(generation, to);
+                l.log.record("arrival", &record)?;
+            }
         }
         let keepers = self.keepers(intake, gen);
         let before = gen.clone();
-        self.refill(gen, intake, &before, &keepers, &[], fresh);
+        let marks = self.marks(generation, Origin::PumpKeep, Origin::PumpPromote, Origin::PumpRefill);
+        self.refill(gen, intake, &before, &keepers, &[], fresh, &marks)
     }
 
     /// THE CROSS STEP, between pairs (the notebook's `_migrate_pump_cross`). First
@@ -1559,10 +1680,11 @@ impl Engine {
         let migrants: Vec<Vec<u32>> =
             pairs.iter().map(|&(_, champion)| Self::by_fitness(champion, &gen.fitness).into_iter().take(self.config.k_migrants as usize).collect()).collect();
         let before = gen.clone();
+        let marks = self.marks(generation, Origin::CrossKeep, Origin::CrossArrival, Origin::CrossFresh);
         for (p, &(intake, _)) in pairs.iter().enumerate() {
             let keepers = self.keepers(intake, &before);
             let arrivals: Vec<u32> = migrants.iter().enumerate().filter(|(q, _)| *q != p).flat_map(|(_, m)| m.iter().copied()).collect();
-            self.refill(gen, intake, &before, &keepers, &arrivals, &fresh);
+            self.refill(gen, intake, &before, &keepers, &arrivals, &fresh, &marks)?;
         }
         Ok(())
     }
@@ -1731,6 +1853,13 @@ impl Engine {
         for &r in &changed {
             gen.fitness[r] = f32::NAN;
             self.scored[r] = None;
+            // The guard keeps only a form that computes the same model within its
+            // R² tolerance, so the write-back REPAIRS the individual: it keeps its
+            // id, its age and its line, and the log records that it happened.
+            if let Some(l) = self.lineage.as_mut() {
+                let record = l.tracker.snap(r, generation);
+                l.log.record("arrival", &record)?;
+            }
         }
         counts.rows_changed = changed.len() as u64;
         counts.seconds = started.elapsed().as_secs_f64();
@@ -1777,6 +1906,7 @@ impl Engine {
             genome: gen.pop.genome[row * row_w..(row + 1) * row_w].to_vec(),
             rnc: gen.pop.rnc[row * rnc_w..(row + 1) * rnc_w].to_vec(),
             wrapper_id: gen.pop.wrapper_id[row],
+            mark: self.lineage.as_ref().map(|l| l.tracker.row(row)),
         });
     }
 
@@ -1784,12 +1914,20 @@ impl Engine {
     fn report(&self, generation: u32, seconds: f64, gen: &Generation, hof: Option<&HallOfFame>) -> Result<(), String> {
         let fitness: Vec<f64> = gen.fitness.iter().filter(|f| !f.is_nan()).map(|f| f64::from(*f)).collect();
         let avg = fitness.iter().sum::<f64>() / fitness.len().max(1) as f64;
-        let Some((_, b)) = self.best(gen) else { return Ok(()) };
+        let Some((best_row, b)) = self.best(gen) else { return Ok(()) };
         let third = |s: &Scored| if self.data.splits.n_extrap > 0 { format!("{:.10}", 1.0 - s.one_minus_r2[2]) } else { "-".to_string() };
         let (_, log10_p) = hff_p_value(b.fitness, self.hff_dimensions());
         let head = match self.vhead_at(generation) { 0 => self.layout.head, v => v };
+        // The lineage columns come after everything that was already reported, so a
+        // harness that reads the old ones by position still finds them.
+        let lineage = match self.lineage.as_ref().map(|l| l.tracker.row(best_row)) {
+            // The origin is a word, so it is left-aligned under its heading; the
+            // two numbers are right-aligned like every other column.
+            Some(m) => format!("{:>9}{:>11}   {:<12}", m.age, m.founder_generation, m.founder_origin),
+            None => String::new(),
+        };
         eprintln!(
-            "{generation:>7}{seconds:>8.0}{head:>6}{:>13.6e}{avg:>13.6e}{:>13.4e}{:>15.10}{:>15.10}{:>15}{:>9}{log10_p:>10.2}",
+            "{generation:>7}{seconds:>8.0}{head:>6}{:>13.6e}{avg:>13.6e}{:>13.4e}{:>15.10}{:>15.10}{:>15}{:>9}{log10_p:>10.2}{lineage}",
             b.fitness, b.one_minus_r2[0] * self.caps.var[0], 1.0 - b.one_minus_r2[0], 1.0 - b.one_minus_r2[1], third(&b), b.t_depth
         );
         if let (Some(path), Some(h)) = (&self.config.hof_path, hof) {
@@ -1797,9 +1935,15 @@ impl Engine {
             let model = crate::lint::node::Tree::parse(&h.math).map_or_else(|_| h.math.clone(), |t| t.to_infix());
             let (_, hof_log10_p) = hff_p_value(h.best.fitness, self.hff_dimensions());
             let mut file = std::fs::OpenOptions::new().append(true).open(path).map_err(|e| format!("hall of fame file {path}: {e}"))?;
+            // The hall of fame's own winner: its age and line as it was when the
+            // fit remembered it, after the model, so the old columns do not move.
+            let lineage = match h.mark {
+                Some(m) => format!("\t{}\t{}\t{}", m.age, m.founder_generation, m.founder_origin),
+                None => String::new(),
+            };
             writeln!(
                 file,
-                "{generation}\t{}\t{:.6e}\t{hof_log10_p:.2}\t{:.4e}\t{:.10}\t{:.10}\t{}\t{}\t{model}",
+                "{generation}\t{}\t{:.6e}\t{hof_log10_p:.2}\t{:.4e}\t{:.10}\t{:.10}\t{}\t{}\t{model}{lineage}",
                 h.generation, h.best.fitness, h.best.one_minus_r2[0] * self.caps.var[0], 1.0 - h.best.one_minus_r2[0], 1.0 - h.best.one_minus_r2[1], third(&h.best), h.best.t_depth
             )
             .map_err(|e| format!("hall of fame file {path}: {e}"))?;
@@ -1853,7 +1997,7 @@ impl Engine {
     pub fn fit(&mut self) -> Result<FitResult, String> {
         let c = self.config.clone();
         let started = Instant::now();
-        let mut timing = Timing { vary: 0.0, read: 0.0, decode: 0.0, evaluate: 0.0, score: 0.0, hff: 0.0, pump: 0.0, cross: 0.0, snap: 0.0 };
+        let mut timing = Timing { vary: 0.0, read: 0.0, decode: 0.0, evaluate: 0.0, score: 0.0, hff: 0.0, pump: 0.0, cross: 0.0, snap: 0.0, genealogy: 0.0 };
         let rates = Rates::with_cleanse(self.layout, c.cleanse);
         self.dev.init(&InitParams { seed: c.seed, generation: 0, rnc_lo: c.rnc_lo, rnc_hi: c.rnc_hi, n_wrappers: WRAPPERS.len() as u32, vhead: self.vhead_at(0) })?;
         let mut gen = self.dev.read_generation()?;
@@ -1862,13 +2006,32 @@ impl Engine {
         let mut individuals = u64::from(self.layout.pop);
         self.dev.write_fitness(&gen.fitness)?;
         let (mut generation, mut stopped_by) = (0u32, "n_gen");
+        // THE GENEALOGY, when it is on: the initial draw is the population's
+        // founders, one line each, all age 0. A fit starts its own count, as the
+        // hall of fame's file starts its own.
+        self.lineage = match &c.genealogy_path {
+            Some(path) => {
+                let t = Instant::now();
+                let mut log = GenealogyLog::create(path)?;
+                let tracker = Genealogy::init(self.layout.pop);
+                log.batch(0, 0, self.layout.pop - 1, 0, u64::from(self.layout.pop) - 1, Origin::Init)?;
+                timing.genealogy += t.elapsed().as_secs_f64();
+                Some(LineageState { tracker, log })
+            }
+            None => None,
+        };
         let mut hof: Option<HallOfFame> = None;
         self.remember(&mut hof, &gen, 0);
+        self.log_best(0, &gen, &mut timing)?;
         if c.progress_every > 0 {
-            eprintln!("{REPORT_HEADER}");
+            eprintln!("{REPORT_HEADER}{}", if c.genealogy_path.is_some() { LINEAGE_HEADER } else { "" });
         }
         if let Some(path) = &c.hof_path {
-            std::fs::write(path, "reported_at_gen\tfound_at_gen\thff\tlog10_p\tmse_train\tr2_train\tr2_val_bl2\tr2_val_bk3\tt_depth\tmodel\n").map_err(|e| format!("hall of fame file {path}: {e}"))?;
+            std::fs::write(path, if c.genealogy_path.is_some() {
+                "reported_at_gen\tfound_at_gen\thff\tlog10_p\tmse_train\tr2_train\tr2_val_bl2\tr2_val_bk3\tt_depth\tmodel\tage\tfounder_gen\tfounder_origin\n"
+            } else {
+                "reported_at_gen\tfound_at_gen\thff\tlog10_p\tmse_train\tr2_train\tr2_val_bl2\tr2_val_bk3\tt_depth\tmodel\n"
+            }).map_err(|e| format!("hall of fame file {path}: {e}"))?;
         }
         while generation < c.max_generations {
             if started.elapsed().as_secs_f64() > c.max_seconds {
@@ -1890,6 +2053,18 @@ impl Engine {
                 }
             }
             timing.vary += t.elapsed().as_secs_f64();
+            // THE LINEAGE EDGE, from the kernel that computed it: for every row of
+            // the generation just made, the row of the one before it was cloned
+            // from. Read back only when the genealogy is on.
+            if self.lineage.is_some() {
+                let t = Instant::now();
+                let parent = self.dev.read_parent()?;
+                let islands = self.islands.clone();
+                if let Some(l) = self.lineage.as_mut() {
+                    l.tracker.advance(&parent, &islands, generation);
+                }
+                timing.genealogy += t.elapsed().as_secs_f64();
+            }
             let t = Instant::now();
             gen = self.dev.read_generation()?;
             timing.read += t.elapsed().as_secs_f64();
@@ -1904,6 +2079,7 @@ impl Engine {
             // THE HALL OF FAME, before anything can end the fit: the winner of the
             // generation that meets the bar belongs in it too.
             self.remember(&mut hof, &gen, generation);
+            self.log_best(generation, &gen, &mut timing)?;
             // The device's f32 metrics cannot resolve 1e-10; they can say "this
             // one is worth confirming". The f64 re-score decides.
             if let Some((row, ranked)) = self.best(&gen) {
@@ -1973,6 +2149,10 @@ impl Engine {
         // Under balanced tournaments the TrueNorth best is not an elite and may have
         // left the population: the HALL OF FAME's winner goes back into a row, to be
         // confirmed in f64 and reported like any other.
+        // Whether the row reported is the hall of fame's winner written over a row
+        // of the population, or the population's own best. The genealogy needs to
+        // know: the row it was written over belongs to somebody else.
+        let mut hof_restored = false;
         if let Some(h) = hof.as_ref().filter(|h| c.balanced_tournaments && h.best.fitness < ranked.fitness) {
             let l = self.layout;
             let (row_w, rnc_w) = ((l.n_genes * l.gene_width()) as usize, (l.n_genes * l.n_rnc) as usize);
@@ -1981,9 +2161,48 @@ impl Engine {
             gen.pop.wrapper_id[row] = h.wrapper_id;
             ranked = h.best;
             row = row.min(l.pop as usize - 1);
+            hof_restored = true;
         }
         let best = self.confirm(&gen, row)?.unwrap_or(ranked);
+        // THE WINNER'S LINEAGE: its mark, and its whole chain back to its founder
+        // appended to the log. When the hall of fame's winner was put back into a
+        // row (balanced tournaments), the lineage reported is the one it had when
+        // it was remembered — the row it was written over is somebody else.
+        let mut winner = None;
+        let mut population_ages = None;
+        let (mut minted, mut lines, mut bytes) = (0u64, 0u64, 0u64);
+        if self.lineage.is_some() {
+            let t = Instant::now();
+            // THE FINAL POPULATION: its ages, and how many lines its best rows come
+            // from. Ranked fittest first over the rows that were scored.
+            let mut ranked: Vec<usize> = (0..self.layout.pop as usize).filter(|&r| self.scored[r].is_some() && !gen.fitness[r].is_nan()).collect();
+            ranked.sort_by(|&a, &b| self.scored[a].map_or(f64::MAX, |s| s.fitness).total_cmp(&self.scored[b].map_or(f64::MAX, |s| s.fitness)).then(a.cmp(&b)));
+            population_ages = self.lineage.as_ref().and_then(|l| l.tracker.population_ages(&ranked));
+            if let (Some(l), Some(ages)) = (self.lineage.as_mut(), population_ages) {
+                let line = l.tracker.population_record(generation, &ages);
+                l.log.line(&line)?;
+            }
+            // The hall of fame's mark is the winner's as it stood when it was
+            // remembered; only use it when that winner was actually put back.
+            winner = match hof.as_ref().filter(|_| hof_restored).and_then(|h| h.mark) {
+                Some(mark) => Some(mark),
+                None => self.lineage.as_ref().map(|l| l.tracker.row(row)),
+            };
+            if let Some(l) = self.lineage.as_mut() {
+                if let Some(mark) = winner {
+                    let chain = l.tracker.walk(mark.id);
+                    l.log.lineage_of_winner(&chain)?;
+                }
+                (minted, lines, bytes) = (l.tracker.minted(), l.log.lines, l.log.bytes);
+            }
+            timing.genealogy += t.elapsed().as_secs_f64();
+        }
         Ok(FitResult {
+            lineage: winner,
+            population_ages,
+            genealogy_minted: minted,
+            genealogy_lines: lines,
+            genealogy_bytes: bytes,
             generations: generation,
             seconds: started.elapsed().as_secs_f64(),
             individuals,
@@ -2784,7 +3003,7 @@ mod tests {
     }
 
     fn fresh_timing() -> Timing {
-        Timing { vary: 0.0, read: 0.0, decode: 0.0, evaluate: 0.0, score: 0.0, hff: 0.0, pump: 0.0, cross: 0.0, snap: 0.0 }
+        Timing { vary: 0.0, read: 0.0, decode: 0.0, evaluate: 0.0, score: 0.0, hff: 0.0, pump: 0.0, cross: 0.0, snap: 0.0, genealogy: 0.0 }
     }
 
     /// THE DYNAMIC GENE-SUBSET CHOICE. Gene 1 alone IS the law y = x0 * x1; gene 0
@@ -3165,6 +3384,260 @@ mod tests {
         let stopped = fit(&Config { stop_one_minus_r2: 1e-10, max_generations: 400, ..config });
         assert_eq!(stopped.stopped_by, "early_stop", "after {} generations: {}", stopped.generations, stopped.math);
         std::fs::remove_file(&path).expect("remove the hall of fame file");
+        std::fs::remove_dir(&dir).expect("remove its directory");
+    }
+
+    // -----------------------------------------------------------------------
+    // THE GENEALOGY: identity, age and lineage — ALPS's measurement half.
+    // -----------------------------------------------------------------------
+
+    /// A scratch path of this test's own.
+    fn scratch(name: &str) -> (std::path::PathBuf, String) {
+        let dir = std::env::temp_dir().join(format!("fuller-genealogy-{name}"));
+        std::fs::create_dir_all(&dir).expect("a scratch directory");
+        let path = dir.join("genealogy.tsv");
+        (dir, path.to_string_lossy().into_owned())
+    }
+
+    /// A config that exercises every arrival mechanism in a few generations: the
+    /// pump on its beat, the cross step on its own, over three pairs.
+    fn tracked_config(genealogy_path: Option<String>) -> Config {
+        Config {
+            n_pairs: 3,
+            pump_every: 3,
+            cross_every: 5,
+            max_generations: 12,
+            max_seconds: 120.0,
+            stop_one_minus_r2: 0.0,
+            stop_log10_p: f64::NEG_INFINITY,
+            genealogy_path,
+            ..toy_config(30, 10)
+        }
+    }
+
+    /// THE OFF-BY-DEFAULT PROOF: with `genealogy_path = None` the engine is what it
+    /// was, bit for bit. The same fit with the log ON must leave the population
+    /// identical — same genome, constants, wrappers and fitness bits at the end,
+    /// and the same model — so nothing the tracking does can reach the search.
+    #[test]
+    fn the_genealogy_changes_no_bit_of_the_population() {
+        let (dir, path) = scratch("bit-identical");
+        let run = |config: Config| {
+            let mut engine = Engine::new(config, toy_data()).expect("engine");
+            let out = engine.fit().expect("fit");
+            let pop = engine.population().expect("the population");
+            let words = pop.genome.iter().copied()
+                .chain(pop.rnc.iter().map(|v| v.to_bits()))
+                .chain(pop.wrapper_id.iter().copied());
+            let digest = words.fold(0xcbf2_9ce4_8422_2325u64, |h, w| (h ^ u64::from(w)).wrapping_mul(0x0000_0100_0000_01b3));
+            (digest, out)
+        };
+        let (off, out_off) = run(tracked_config(None));
+        let (on, out_on) = run(tracked_config(Some(path.clone())));
+        assert_eq!(off, on, "the genealogy moved a bit of the population");
+        assert_eq!(out_off.math, out_on.math, "the genealogy changed the model");
+        assert_eq!(out_off.generations, out_on.generations);
+        assert_eq!(out_off.unique_genes, out_on.unique_genes);
+        assert_eq!(out_off.best.fitness.to_bits(), out_on.best.fitness.to_bits());
+        assert!(out_off.lineage.is_none(), "off means nothing is tracked");
+        assert!(out_on.lineage.is_some(), "on means the winner has a lineage");
+        assert_eq!(out_off.timing.genealogy, 0.0, "off costs nothing");
+        std::fs::remove_file(&path).expect("remove the log");
+        std::fs::remove_dir(&dir).expect("remove its directory");
+    }
+
+    /// The log's rows, parsed back: (kind, generation, row, id, parent, other, age,
+    /// founder, founder_gen, founder_origin, origin).
+    fn log_rows(path: &str) -> Vec<Vec<String>> {
+        let text = std::fs::read_to_string(path).expect("the genealogy log");
+        let mut lines = text.lines();
+        assert_eq!(
+            lines.next().expect("a header"),
+            super::super::genealogy::GENEALOGY_HEADER.trim_end(),
+            "the log's header"
+        );
+        lines.filter(|l| !l.trim().is_empty()).map(|l| l.split('\t').map(str::to_string).collect()).collect()
+    }
+
+    /// TWO RUNS OF THE SAME SEED give identical ids, ages and origins: the ids come
+    /// from a counter advanced in a fixed row order inside deterministic loops, so
+    /// they are as reproducible as the population itself.
+    #[test]
+    fn the_same_seed_is_the_same_genealogy() {
+        let (dir, path) = scratch("deterministic");
+        let second = path.replace("genealogy.tsv", "again.tsv");
+        let run = |p: &str| {
+            let mut engine = Engine::new(tracked_config(Some(p.to_string())), toy_data()).expect("engine");
+            let out = engine.fit().expect("fit");
+            (log_rows(p), out.lineage.expect("a lineage"), out.genealogy_minted)
+        };
+        let (a, mark_a, minted_a) = run(&path);
+        let (b, mark_b, minted_b) = run(&second);
+        assert_eq!(a, b, "the same seed wrote a different genealogy");
+        assert_eq!(mark_a, mark_b, "the winner's identity is not reproducible");
+        assert_eq!(minted_a, minted_b);
+        assert!(!a.is_empty(), "the log is empty");
+        std::fs::remove_file(&path).expect("remove");
+        std::fs::remove_file(&second).expect("remove");
+        std::fs::remove_dir(&dir).expect("remove its directory");
+    }
+
+    /// THE ORIGINS the log must name, on a real fit: the initial draw as a batch at
+    /// generation 0, the pump's promotions and its refills on the pump's beat, and
+    /// the cross step's arrivals on its own. Every line's founder origin is an
+    /// ARRIVAL — a line never begins at `vary`.
+    #[test]
+    fn the_log_names_every_mechanism_that_put_a_row_into_the_population() {
+        let (dir, path) = scratch("origins");
+        let mut engine = Engine::new(tracked_config(Some(path.clone())), toy_data()).expect("engine");
+        let out = engine.fit().expect("fit");
+        let rows = log_rows(&path);
+        let origin_of = |r: &Vec<String>| r[10].clone();
+        let kinds: Vec<String> = rows.iter().map(|r| r[0].clone()).collect();
+        assert!(kinds.iter().any(|k| k == "best"), "the best of a generation is logged");
+        assert!(kinds.iter().any(|k| k == "batch"), "fresh individuals are logged as batches");
+        assert!(kinds.iter().any(|k| k == "arrival"), "arrivals are logged");
+        assert!(kinds.iter().any(|k| k == "lineage_of_winner"), "the winner's chain is appended");
+        // generation 0 is the initial draw, one batch line over the whole population
+        let init: Vec<&Vec<String>> = rows.iter().filter(|r| r[0] == "batch" && r[1] == "0").collect();
+        assert_eq!(init.len(), 1, "the initial draw is ONE line");
+        assert_eq!(origin_of(init[0]), "init");
+        assert_eq!(init[0][3], "0");
+        assert_eq!(init[0][4], (engine.layout.pop - 1).to_string(), "the batch covers every row");
+        let origins: Vec<String> = rows.iter().filter(|r| r[0] != "lineage_of_winner").map(origin_of).collect();
+        for want in ["pump_promote", "pump_refill", "pump_keep", "cross_arrival", "cross_fresh", "cross_keep"] {
+            assert!(origins.iter().any(|o| o == want), "the log never says {want}: {:?}", {
+                let mut u = origins.clone();
+                u.sort();
+                u.dedup();
+                u
+            });
+        }
+        // a pump beat's promotions and refills carry that generation
+        let promotions: Vec<&Vec<String>> = rows.iter().filter(|r| origin_of(r) == "pump_promote").collect();
+        assert!(!promotions.is_empty());
+        for p in &promotions {
+            assert_eq!(p[1].parse::<u32>().expect("a generation") % 3, 0, "a promotion off the pump's beat: {p:?}");
+            assert_eq!(p[0], "arrival");
+        }
+        for r in rows.iter().filter(|r| origin_of(r) == "pump_refill" || origin_of(r) == "cross_fresh") {
+            assert_eq!(r[6], "0", "a fresh individual is age 0: {r:?}");
+            assert_eq!(r[3], r[7], "a fresh individual founds its own line: {r:?}");
+        }
+        // NO line begins at ordinary variation. The `population` summary is not a
+        // record — its columns are its own key-value pairs — so it is left out.
+        for r in rows.iter().filter(|r| r[0] != "population") {
+            let founder_origin = &r[9];
+            assert!(
+                ["init", "pump_refill", "cross_fresh", "beam_append"].contains(&founder_origin.as_str()),
+                "a line begins at {founder_origin}, which is not an arrival: {r:?}"
+            );
+        }
+        // the winner's chain ends at a founder, and it is the one the mark carries
+        let chain: Vec<&Vec<String>> = rows.iter().filter(|r| r[0] == "lineage_of_winner").collect();
+        assert!(!chain.is_empty());
+        let mark = out.lineage.expect("a lineage");
+        assert_eq!(chain[0][3], mark.id.to_string(), "the chain starts at the winner");
+        let last = chain.last().expect("a founder");
+        assert_eq!(last[4], "-1", "the founder has no parent");
+        assert_eq!(last[3], mark.founder.to_string(), "the walk reaches the carried founder");
+        assert_eq!(last[1], mark.founder_generation.to_string());
+        assert_eq!(last[10], mark.founder_origin.to_string());
+        // each step of the chain links to the next
+        for pair in chain.windows(2) {
+            assert_eq!(pair[0][4], pair[1][3], "the chain is not linked: {:?} -> {:?}", pair[0], pair[1]);
+        }
+        std::fs::remove_file(&path).expect("remove");
+        std::fs::remove_dir(&dir).expect("remove its directory");
+    }
+
+    /// THE AGE RULES on a real fit: every id of the last generation is distinct, a
+    /// pump beat leaves age-0 material, no row is older than the fit, and every
+    /// row's carried founder is the one its walk reaches.
+    #[test]
+    fn the_age_rules_hold_over_a_real_fit() {
+        let (dir, path) = scratch("ages");
+        let mut engine = Engine::new(tracked_config(Some(path.clone())), toy_data()).expect("engine");
+        engine.fit().expect("fit");
+        let l = engine.lineage.as_ref().expect("the genealogy");
+        // every row of the last generation holds a different id
+        let mut ids: Vec<u64> = l.tracker.marks().iter().map(|m| m.id).collect();
+        let n = ids.len();
+        assert_eq!(n, engine.layout.pop as usize);
+        ids.sort_unstable();
+        ids.dedup();
+        assert_eq!(ids.len(), n, "two rows of the last generation share an id");
+        // no age exceeds the fit's generations, and the refills put age-0 material in
+        let (min, _, max, _) = l.tracker.ages(0..n).expect("ages");
+        assert_eq!(min, 0, "a pump beat near the end leaves age-0 rows");
+        assert!(max <= 12, "a row is older than the fit: {max}");
+        // every row's carried founder is reachable by the walk, and is a founder
+        for r in 0..n {
+            let mark = l.tracker.row(r);
+            let chain = l.tracker.walk(mark.id);
+            let (founder_id, founder) = *chain.last().expect("a founder");
+            assert_eq!(founder_id, mark.founder, "row {r}: the carried founder is not the walk's");
+            assert_eq!(founder.parent, u64::MAX);
+            assert!(founder.origin.is_arrival(), "row {r} descends from {}", founder.origin);
+            assert_eq!(founder.generation, mark.founder_generation);
+        }
+        std::fs::remove_file(&path).expect("remove");
+        std::fs::remove_dir(&dir).expect("remove its directory");
+    }
+
+    /// SNAP's write-back keeps the individual: the row's id and age do not change,
+    /// and the event is logged as `snap_writeback`.
+    #[test]
+    fn a_snap_write_back_is_the_same_individual_in_the_log() {
+        let (dir, path) = scratch("snap");
+        let config = Config { snap_every: 2, snap_top_k: 4, ..tracked_config(Some(path.clone())) };
+        let mut engine = Engine::new(config, toy_data()).expect("engine");
+        engine.fit().expect("fit");
+        let rows = log_rows(&path);
+        let snapped: Vec<&Vec<String>> = rows.iter().filter(|r| r[10] == "snap_writeback").collect();
+        // Snap may find nothing to graft on this toy law; when it does, the rule holds.
+        for r in &snapped {
+            assert_eq!(r[0], "arrival");
+            assert_eq!(r[3], r[4], "a repaired row is its own parent: it is the same individual");
+            assert_eq!(r[5], "-1", "a repair has no second ancestor");
+        }
+        assert!(engine.snap_counts().beats > 0, "the snap beat ran");
+        std::fs::remove_file(&path).expect("remove");
+        std::fs::remove_dir(&dir).expect("remove its directory");
+    }
+
+    /// THE FINAL POPULATION's ages and diversity: reported on the fit, written into
+    /// the log as its own line, and consistent with the tracker's own rows.
+    #[test]
+    fn a_fit_reports_the_final_populations_ages_and_how_many_lines_its_best_rows_come_from() {
+        let (dir, path) = scratch("population-ages");
+        let mut engine = Engine::new(tracked_config(Some(path.clone())), toy_data()).expect("engine");
+        let out = engine.fit().expect("fit");
+        let ages = out.population_ages.expect("the final population's ages");
+        let pop = engine.layout.pop as usize;
+        // the whole population's ages bracket the best ten's
+        assert!(ages.all.0 <= ages.best_10.0 && ages.best_10.2 <= ages.all.2, "{ages:?}");
+        assert!(ages.all.0 <= ages.all.1 && ages.all.1 <= ages.all.2, "{ages:?}");
+        assert!(ages.all.2 <= out.generations, "a row older than the fit: {ages:?}");
+        assert!(ages.founders_best_50 >= 1 && ages.founders_best_50 <= 50);
+        assert!(ages.founders_all >= ages.founders_best_50, "{ages:?}");
+        assert!(ages.founders_all <= pop);
+        // the tracker agrees
+        let l = engine.lineage.as_ref().expect("the genealogy");
+        assert_eq!(l.tracker.ages(0..pop).expect("ages"), ages.all);
+        assert_eq!(l.tracker.distinct_founders(0..pop), ages.founders_all);
+        // and the log carries it, so the study file stands on its own
+        let text = std::fs::read_to_string(&path).expect("the log");
+        let line = text.lines().find(|l| l.starts_with("population\t")).expect("a population line");
+        let f: Vec<&str> = line.split('\t').collect();
+        assert_eq!(f[2], "all");
+        assert_eq!(f[3].parse::<u32>().expect("min"), ages.all.0);
+        assert_eq!(f[5].parse::<u32>().expect("max"), ages.all.2);
+        assert_eq!(f[7], "best10");
+        assert_eq!(f[12], "founders_best50");
+        assert_eq!(f[13].parse::<usize>().expect("founders"), ages.founders_best_50);
+        assert_eq!(f[15].parse::<usize>().expect("founders_all"), ages.founders_all);
+        std::fs::remove_file(&path).expect("remove");
         std::fs::remove_dir(&dir).expect("remove its directory");
     }
 }

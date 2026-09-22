@@ -11,6 +11,7 @@
 pub mod device;
 #[cfg(feature = "gpu")]
 pub mod engine;
+pub mod genealogy;
 #[cfg(feature = "gpu")]
 pub mod score;
 pub mod smogd;
