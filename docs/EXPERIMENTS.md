@@ -450,11 +450,16 @@ the test rows:
 
 | | laws |
 |---|---|
-| finite on every test row | 117 — and every solve is here |
-| NOT finite on every row | **16 — none solved, ever** |
+| finite on every test row | 94 — and ALL 66 solves are here |
+| NOT finite on every row | **38 — none solved, ever** |
 
-Four are finite on **0%** of rows: II_10_9, I_11_19, s_lv1, s_lv2. Also
-II_35_18 at 6.9%, III_19_51 at 39%, II_11_28 at 41%, I_10_7 at 43%.
+**CORRECTED.** A first scan reported 16, from a script that skipped a law on a
+timeout and then re-read a different stage's fit for it. Re-run with one record
+per law (the best fit, as the tables count it) and a 25 s read: 132 laws
+checked, 1 timed out, and the split is 94 / 38 with every solve on the finite
+side. Four are finite on 0% of rows: I_15_10, s_glider1, s_lv1, III_9_52.
+s_lv2 is NOT in this class — it is finite everywhere, and its failure is the
+rounding collapse recorded above.
 
 **The cause is the protected/plain split.** The engine scores the FAITHFUL form,
 where `ProtectedLog` returns a guard value on a negative argument. What we submit
