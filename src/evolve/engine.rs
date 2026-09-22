@@ -1855,10 +1855,10 @@ impl Engine {
     ///   through a candidate shape whose free parameters `a`, `b` are FITTED by
     ///   least squares in the same step, exactly as the engine's own
     ///   `a * WRAPPER(LINKER(genes)) + b` is a mutation applied at the end. Scored
-    ///   by [`Engine::confirm_with`] — f64, confirm grade, one pass for all seven.
-    ///   A wrap that is not total on the data (a pole on some row) is refused by
-    ///   `score_one`'s finite check and COUNTED, never scored on the rows where it
-    ///   happens to work.
+    ///   by [`Engine::confirm_with`] — f64, confirm grade, one pass per wrap so a
+    ///   beat can say which were refused. A wrap that is not total on the data (a
+    ///   pole on some row) is refused by `score_one`'s finite check and COUNTED,
+    ///   never scored on the rows where it happens to work.
     ///
     /// THE ORIGINAL IS NEVER LOST. A winner is APPENDED into the pair's float zone
     /// (`Config::float_zone`) when there is one — the intake floats above its base
@@ -1924,8 +1924,11 @@ impl Engine {
         }
 
         // 2. THE FUNCTIONAL NEIGHBOURHOOD: the original's own genes, through each
-        //    wrap, `a` and `b` fitted. One `confirm_with` pass covers all seven, so
-        //    a beat costs one extra evaluator trip whatever the width.
+        //    wrap, `a` and `b` fitted. Each wrap is scored on its OWN
+        //    `confirm_with` pass — a shared pass would keep only the best candidate
+        //    and a beat could not then say which wraps were refused as not total on
+        //    the data, which is the number that says whether a wrap earns its place.
+        //    Eight evaluator trips a beat, whatever the width.
         if self.config.beam_wraps {
             counts.wrap_candidates = BEAM_WRAPS.len() as u64;
             counts.mutants += BEAM_WRAPS.len() as u64;
