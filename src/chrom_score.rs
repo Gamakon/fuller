@@ -93,9 +93,10 @@ pub enum Wrapper {
     /// `1/(1 - x)` — the same family without the root, and the geometric series'.
     Recip1m,
     /// `x/(exp(x) - 1)` — feynman III.4.33's whole shape in one wrap. At `x = 0`
-    /// the limit is 1 and that is what it returns (the quotient is 0/0 there);
-    /// `exp` is not clamped, so a large `x` gives +inf and the candidate is
-    /// refused rather than quietly flattened.
+    /// the limit is 1 and that is what it returns (the quotient is 0/0 there).
+    /// `exp` is NOT clamped: at a large positive `x` the denominator overflows and
+    /// the quotient is 0, which is the function's own limit, and at a large
+    /// negative one it is `x / -1 = -x`. Both are the shape, not a clamp.
     XOverExpm1,
     /// `1/x` — the plain reciprocal. Needs `x != 0`.
     Recip,
@@ -158,8 +159,9 @@ impl Wrapper {
             }
             Self::Recip1m => 1.0 / (1.0 - x),
             // The removable singularity at 0: the quotient is 0/0 there and the
-            // limit is 1. Everywhere else the plain quotient, `exp` unclamped so an
-            // overflow refuses the candidate instead of flattening it.
+            // limit is 1. Everywhere else the plain quotient, `exp` unclamped —
+            // `exp_m1` overflows to +inf at a large x and the quotient is then 0,
+            // which is what the function does there.
             Self::XOverExpm1 => {
                 if x == 0.0 {
                     1.0
@@ -936,9 +938,10 @@ mod tests {
         // and it stays continuous through the singularity, which a plain
         // x/(exp(x)-1) written with exp() - 1 does not at this size.
         assert!((Wrapper::XOverExpm1.apply(1e-9) - 1.0).abs() < 1e-8);
-        // exp unclamped: a large argument overflows to +inf and refuses the
-        // candidate rather than flattening it to exp(50).
-        assert!(!Wrapper::XOverExpm1.apply(1e4).is_finite() || Wrapper::XOverExpm1.apply(1e4) == 0.0);
+        // exp unclamped, so a large x gives the function's own limits: 0 as
+        // x -> +inf (the denominator overflows), and -x as x -> -inf.
+        assert_eq!(Wrapper::XOverExpm1.apply(1e4), 0.0);
+        assert!(near(Wrapper::XOverExpm1.apply(-1e4), 1e4));
         // 1/x, and its pole.
         assert!(near(Wrapper::Recip.apply(4.0), 0.25));
         assert!(!Wrapper::Recip.apply(0.0).is_finite());

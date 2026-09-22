@@ -376,14 +376,19 @@ pub fn neighbourhood(genome: &[u32], rnc: &[f32], layout: Layout, codes: &Symbol
     }
     let arity = |id: u32| codes.arity[id as usize] as usize;
     let mut out: Vec<Mutant> = Vec::new();
-    let mut seen: Vec<(Vec<u32>, Vec<u32>)> = vec![(genome.to_vec(), rnc.iter().map(|v| v.to_bits()).collect())];
+    // Membership only — a SET, not a list: a beat makes thousands of mutants of a
+    // row that is hundreds of tokens wide, and a linear scan of what has been made
+    // is quadratic in the width and was costing a measurable part of a beat. The
+    // ORDER mutants come out in is `out`'s and is unchanged, so this stays
+    // deterministic.
+    let mut seen: std::collections::HashSet<(Vec<u32>, Vec<u32>)> =
+        std::collections::HashSet::from([(genome.to_vec(), rnc.iter().map(|v| v.to_bits()).collect())]);
     // Keep a mutant unless it is the original or one already made.
-    let keep = |genome: Vec<u32>, rnc: Vec<f32>, kind: BeamKind, out: &mut Vec<Mutant>, seen: &mut Vec<(Vec<u32>, Vec<u32>)>| {
+    let keep = |genome: Vec<u32>, rnc: Vec<f32>, kind: BeamKind, out: &mut Vec<Mutant>, seen: &mut std::collections::HashSet<(Vec<u32>, Vec<u32>)>| {
         let key = (genome.clone(), rnc.iter().map(|v| v.to_bits()).collect::<Vec<u32>>());
-        if seen.contains(&key) {
+        if !seen.insert(key) {
             return;
         }
-        seen.push(key);
         out.push(Mutant { genome, rnc, kind });
     };
 

@@ -638,11 +638,17 @@ pub struct BeamCounts {
     /// pole on some row), or because least squares found the wrapped value
     /// constant. A refusal is not a failure: it is the guard working.
     pub wrap_refused: [u64; BEAM_WRAPS.len()],
-    /// A wrap that won and was GRAFTED into the winner's gene, and one that won but
-    /// could not be (the relevel would put a function outside the head, or the
-    /// expression would not close): counted, never silent.
+    /// A wrap that won and whose graft the gene could TAKE (the relevel succeeded),
+    /// and one that won but whose graft it could not (a function outside the head,
+    /// or the expression would not close): counted, never silent.
     pub wrap_grafted: u64,
     pub wrap_graft_refused: u64,
+    /// Of the grafts the gene took, how many still beat the original once RE-SCORED
+    /// as a chromosome. This is the number that matters: a wrap is scored on the
+    /// linked value of every used gene, and its graft computes the wrapped HOST gene
+    /// alone, so for a model that really uses several genes the two are different
+    /// functions and the graft can lose what the wrap won.
+    pub wrap_graft_kept: u64,
     /// Survivors APPENDED to a float zone, and how many of those were still in the
     /// population at the next pump beat — the number that says whether the float
     /// zone earns its keep.
@@ -669,6 +675,7 @@ impl BeamCounts {
         }
         self.wrap_grafted += other.wrap_grafted;
         self.wrap_graft_refused += other.wrap_graft_refused;
+        self.wrap_graft_kept += other.wrap_graft_kept;
         self.appended += other.appended;
         self.survived_a_pump += other.survived_a_pump;
         self.seconds += other.seconds;
@@ -697,8 +704,8 @@ impl BeamCounts {
             .map(|(k, w)| format!("{}={}/{}", w.name(), self.wrap_better[k], self.wrap_refused[k]))
             .collect();
         format!(
-            "BEAM_WRAPS\t{}\tgrafted {}\trefused {}\tbetter/refused per wrap: {}",
-            self.wrap_candidates, self.wrap_grafted, self.wrap_graft_refused, per.join(" ")
+            "BEAM_WRAPS\t{}\tgrafted {}\tkept {}\tgraft refused {}\tbetter/refused per wrap: {}",
+            self.wrap_candidates, self.wrap_grafted, self.wrap_graft_kept, self.wrap_graft_refused, per.join(" ")
         )
     }
 
@@ -1865,12 +1872,15 @@ impl Engine {
     /// there was one, so the next pump beat can say whether that survivor was still
     /// in the population when the cut came. Nothing here can end a fit — the fit
     /// loop confirms in f64 and applies the stop bar, as it does for every row.
-    fn beam(&mut self, gen: &mut Generation, generation: u32, timing: &mut Timing) -> Result<(BeamCounts, Option<Vec<u32>>), String> {
+    fn beam(&mut self, gen: &mut Generation, generation: u32) -> Result<(BeamCounts, Option<Vec<u32>>), String> {
         let started = Instant::now();
         let mut counts = BeamCounts { beats: 1, ..BeamCounts::default() };
         let l = self.layout;
         let (row_w, rnc_w) = ((l.n_genes * l.gene_width()) as usize, (l.n_genes * l.n_rnc) as usize);
-        let m = self.hff_dimensions();
+        // The sphere the beat's angles live on. The redundancy column is a device
+        // score that `confirm` does not compute, so it is subtracted here exactly as
+        // the fit loop subtracts it before applying the stop bar.
+        let m = self.hff_dimensions() - usize::from(self.config.redundancy);
         let Some((row, original)) = self.best(gen) else { return Ok((counts, None)) };
         let (_, before_p) = hff_p_value(original.fitness, m);
         counts.best_log10_p_before = before_p;
@@ -1900,7 +1910,7 @@ impl Engine {
         // what the device scored it at. `winner` holds the genome that will go back.
         let mut winner: Option<(Vec<u32>, Vec<f32>, u32, Scored)> = None;
         for chunk in mutants.chunks(l.pop as usize) {
-            let scored = self.score_mutants(chunk, gen, row, timing)?;
+            let scored = self.score_mutants(chunk, gen, row)?;
             for (mutant, s) in chunk.iter().zip(&scored) {
                 let Some(s) = s else { continue };
                 if s.fitness >= original.fitness {
@@ -1919,44 +1929,53 @@ impl Engine {
         if self.config.beam_wraps {
             counts.wrap_candidates = BEAM_WRAPS.len() as u64;
             counts.mutants += BEAM_WRAPS.len() as u64;
-            let t = Instant::now();
-            let wrapped = self.confirm_with(gen, row, &BEAM_WRAPS)?;
-            timing.beam += t.elapsed().as_secs_f64();
-            // `confirm_with` keeps only the BEST candidate, so a beat learns which
-            // ONE wrap won; the others are counted as tried. To say which wrap was
-            // refused as not total on the data, each is scored on its own.
+            // THE ORIGINAL IN f64, so a wrap is compared against the same grade it
+            // is scored at. The device's f32 score only RANKS; comparing an f64
+            // wrap against it would count a wrap better on rounding alone.
+            let baseline = self.confirm(gen, row)?.map_or(original.fitness, |s| s.fitness);
+            // Each wrap on its own: which one won, and which was refused as not
+            // total on the data. A refusal is the guard working, not a failure.
+            let mut wrapped: Option<Scored> = None;
             for (k, &wrap) in BEAM_WRAPS.iter().enumerate() {
-                let t = Instant::now();
-                let one = self.confirm_with(gen, row, std::slice::from_ref(&wrap))?;
-                timing.beam += t.elapsed().as_secs_f64();
-                match one {
-                    // The engine's own scale for the original is TrueNorth over the
-                    // same objectives, so the two angles are comparable directly.
-                    Some(s) if s.fitness < original.fitness => counts.wrap_better[k] += 1,
-                    Some(_) => {}
+                match self.confirm_with(gen, row, std::slice::from_ref(&wrap))? {
+                    Some(s) => {
+                        if s.fitness < baseline {
+                            counts.wrap_better[k] += 1;
+                        }
+                        // `Scored::wrapper` indexes the list that was passed — here a
+                        // list of one — so the winner is remembered with ITS wrap.
+                        if wrapped.is_none_or(|w| s.fitness < w.fitness) {
+                            wrapped = Some(Scored { wrapper: k, ..s });
+                        }
+                    }
                     None => counts.wrap_refused[k] += 1,
                 }
             }
             // A wrap that won has to be GRAFTED into the winner's gene to survive
-            // the beat: the row's own genes with the wrap written around gene 0.
-            if let Some(s) = wrapped.filter(|s| s.fitness < original.fitness && winner.as_ref().is_none_or(|(_, _, _, w)| s.fitness < w.fitness)) {
+            // the beat: the row's own genes with the wrap written around the host.
+            if let Some(s) = wrapped.filter(|s| s.fitness < baseline) {
                 counts.better += 1;
                 match self.graft_wrap(&genome, &rnc, BEAM_WRAPS[s.wrapper], s.genes, generation) {
                     Some((genome, rnc)) => {
                         counts.wrap_grafted += 1;
                         // The graft is a DIFFERENT chromosome from the one scored: the
-                        // wrap is now inside the gene, where the engine's own three
-                        // wrappers apply on top. It is re-scored like any other mutant.
+                        // wrap is now inside the host gene, where the engine's own three
+                        // wrappers apply on top. It is re-scored like any other mutant,
+                        // and a graft that has lost what the wrap won is simply dropped.
                         let mutant = super::vary::Mutant { genome, rnc, kind: super::vary::BeamKind::Promote };
-                        if let Some(Some(re)) = self.score_mutants(std::slice::from_ref(&mutant), gen, row, timing)?.first() {
-                            if re.fitness < original.fitness && winner.as_ref().is_none_or(|(_, _, _, w)| re.fitness < w.fitness) {
-                                winner = Some((mutant.genome, mutant.rnc, gen.pop.wrapper_id[row], *re));
+                        if let Some(Some(re)) = self.score_mutants(std::slice::from_ref(&mutant), gen, row)?.first() {
+                            if re.fitness < original.fitness {
+                                counts.wrap_graft_kept += 1;
+                                if winner.as_ref().is_none_or(|(_, _, _, w)| re.fitness < w.fitness) {
+                                    winner = Some((mutant.genome, mutant.rnc, gen.pop.wrapper_id[row], *re));
+                                }
                             }
                         }
                     }
-                    // The relevel would put a function outside the head, or the
-                    // expression would not close: counted, never silent, and the
-                    // beat simply keeps whatever tree mutant it has.
+                    // The relevel would put a function outside the head, the
+                    // expression would not close, or the wrap has no spelling as
+                    // gene symbols (`x/(exp(x)-1)` needs its argument twice):
+                    // counted, never silent, and the beat keeps its tree mutant.
                     None => counts.wrap_graft_refused += 1,
                 }
             }
@@ -2030,8 +2049,7 @@ impl Engine {
     ///
     /// `chunk` must be at most `layout.pop` long. The returned vector is one entry
     /// per mutant, `None` for one the device could not score.
-    fn score_mutants(&mut self, chunk: &[super::vary::Mutant], gen: &Generation, row: usize, timing: &mut Timing) -> Result<Vec<Option<Scored>>, String> {
-        let started = Instant::now();
+    fn score_mutants(&mut self, chunk: &[super::vary::Mutant], gen: &Generation, row: usize) -> Result<Vec<Option<Scored>>, String> {
         let l = self.layout;
         let (row_w, rnc_w) = ((l.n_genes * l.gene_width()) as usize, (l.n_genes * l.n_rnc) as usize);
         if chunk.len() > l.pop as usize {
@@ -2059,20 +2077,28 @@ impl Engine {
         let outcome = self.evaluate(&mut scratch, &mut beat);
         let scored = std::mem::replace(&mut self.scored, live);
         outcome?;
-        timing.beam += started.elapsed().as_secs_f64();
         Ok(scored[..chunk.len()].to_vec())
     }
 
     /// A FUNCTIONAL WRAP grafted into a chromosome's gene, so a wrap that won can
     /// live in a row and keep evolving instead of being a number in a report.
     ///
-    /// The wrap goes around the USED genes' model. It is written into gene 0 —
-    /// `relevel` with the wrap's nodes as [`super::vary::Graft`]s whose deepest kid
-    /// is the gene's own root — and every OTHER used gene is collapsed to a
-    /// constant 1, so the linker the scorer then picks cannot change what the model
-    /// computes: `mul` gives the wrapped gene, and `avg` or `add` shift it by a
-    /// constant that the fitted `a`, `b` absorb. The engine's own three wrappers
-    /// still apply on top, as they do to any chromosome.
+    /// The wrap is written into the model's FIRST USED gene — `relevel` with the
+    /// wrap's nodes as [`super::vary::Graft`]s whose deepest kid is that gene's own
+    /// root — and every OTHER used gene is collapsed to a constant 1, so the linker
+    /// the scorer then picks cannot change what the model computes: `mul` gives the
+    /// wrapped gene, and `avg` or `add` shift it by a constant that the fitted `a`,
+    /// `b` absorb. The engine's own three wrappers still apply on top, as they do to
+    /// any chromosome.
+    ///
+    /// A REAL LIMIT, worth stating: the wrap was SCORED on the linked value of all
+    /// the used genes, `W(L(g0, g1, g2))`, and the graft computes `W(g0)` with the
+    /// others set to 1. For a model that genuinely uses several genes those are
+    /// different functions, and the graft is re-scored precisely because of it — a
+    /// wrap that wins on the linked value and loses as a graft is dropped, which is
+    /// the honest outcome. The graft IS the function that was scored when the model
+    /// uses one gene, which is what `Config::gene_subsets` allows a chromosome to
+    /// choose.
     ///
     /// `None` when the gene cannot take the form — the relevel would put a function
     /// outside the virtual head, or the expression would not close. The caller
@@ -2092,14 +2118,20 @@ impl Engine {
         // The wrap as ops, outermost first; each takes the one below it, and `Unit`
         // is the constant 1 the shapes need.
         let ops: Vec<WrapNode> = wrap_nodes(wrap)?;
+        // The model's FIRST used gene is the one that takes the wrap; a gene the
+        // model does not use would wrap junk and collapse the model to a constant.
+        let host = genes.trailing_zeros() as usize;
+        if host >= l.n_genes as usize {
+            return None;
+        }
         let mut genome = genome.to_vec();
         let mut constants = rnc.to_vec();
         // A Dc slot for the constant 1: the LAST of the gene's constants, set to 1,
         // and the grafted "?"s all read it. `relevel` rebuilds the Dc domain so each
         // surviving "?" keeps its own value, and a new one takes the index given.
         let unit_slot = l.n_rnc - 1;
-        constants[unit_slot as usize] = 1.0;
-        let gene = &mut genome[..width];
+        constants[host * nr + unit_slot as usize] = 1.0;
+        let gene = &mut genome[host * width..(host + 1) * width];
         let tree = GeneTree::of(gene, l, &codes)?;
         // THE GRAFT CHAIN, built back to front. `below` is the tree entry the next
         // node out sits on: it starts as gene position 0 — the gene's own root,
@@ -2129,9 +2161,9 @@ impl Engine {
         // that is what replaces the gene's root.
         relevel(gene, l, vhead, &codes, &tree, &[(0, below)], &grafts).ok()?;
         // Every OTHER used gene becomes the constant 1, so no linker can change the
-        // model: the wrapped gene 0 is what the chromosome computes.
-        for g in 1..l.n_genes as usize {
-            if genes >> g & 1 == 0 {
+        // model: the wrapped host gene is what the chromosome computes.
+        for g in 0..l.n_genes as usize {
+            if g == host || genes >> g & 1 == 0 {
                 continue;
             }
             let other = &mut genome[g * width..(g + 1) * width];
@@ -2276,10 +2308,12 @@ impl Engine {
         let (mut generation, mut stopped_by) = (0u32, "n_gen");
         let mut hof: Option<HallOfFame> = None;
         let mut beam = BeamCounts::default();
-        // THE FLOAT ZONE's roll call: what the beam appended, as (row, genome), so
-        // the next pump beat can count how many were still there when its cut came
-        // — the number that says whether the zone earns its keep.
-        let mut floated: Vec<Vec<u32>> = Vec::new();
+        // THE FLOAT ZONE's roll call. `just_floated` is what the beam has appended
+        // since the last pump — untested, because the pump that would cut it has not
+        // come. `floated` is the batch before that: it has lived through a round of
+        // breeding and one cut, so counting it after the NEXT cut is the number that
+        // says whether the zone earns its keep.
+        let (mut floated, mut just_floated): (Vec<Vec<u32>>, Vec<Vec<u32>>) = (Vec::new(), Vec::new());
         self.remember(&mut hof, &gen, 0);
         if c.progress_every > 0 {
             eprintln!("{REPORT_HEADER}");
@@ -2326,7 +2360,11 @@ impl Engine {
             // mutation that reaches the bar can end the fit now rather than next
             // time round. The original keeps its own row throughout.
             if c.beam_every > 0 && generation % c.beam_every == 0 {
-                let (beat, appended) = self.beam(&mut gen, generation, &mut timing)?;
+                let (beat, appended) = self.beam(&mut gen, generation)?;
+                // The WHOLE beat is the beam's cost — the neighbourhood, the
+                // scoring, the wraps and the graft — in one number, not split
+                // across decode and evaluate.
+                timing.beam += beat.seconds;
                 beam.add(&beat);
                 if let Some(genome) = appended {
                     let (u, o) = self.evaluate(&mut gen, &mut timing)?;
@@ -2334,9 +2372,9 @@ impl Engine {
                     oversized += o;
                     self.remember(&mut hof, &gen, generation);
                     self.dev.write_population(&gen.pop)?;
-                    // What the beam put in the population, so the next pump beat can
-                    // say how many were still alive when its cut came.
-                    floated.push(genome);
+                    // What the beam put in the population, so a later pump beat can
+                    // say whether it survived a round of breeding and a cut.
+                    just_floated.push(genome);
                 }
             }
             // The device's f32 metrics cannot resolve 1e-10; they can say "this
@@ -2375,12 +2413,15 @@ impl Engine {
             if c.pump_every > 0 && generation % c.pump_every == 0 {
                 // THE CUT is the pump's own, unchanged: it keeps the intake's best
                 // fifth de-duplicated and refills the rest, and a float row that has
-                // not earned its place is refilled with it. Count, before the cut,
-                // how many of the beam's appended rows the population still holds —
-                // wherever selection has carried them.
-                beam.survived_a_pump += self.still_alive(&gen, &floated);
-                floated.clear();
+                // not earned its place is refilled with it.
                 self.pump(&mut gen, generation)?;
+                // How many survivors from BEFORE the last pump the population still
+                // holds, after this cut: they have had a round of breeding and a cut
+                // to prove themselves, which is the question the float zone asks. A
+                // survivor appended since the last pump has not yet been tested, so
+                // it only joins the roll call now.
+                beam.survived_a_pump += self.still_alive(&gen, &floated);
+                floated = std::mem::take(&mut just_floated);
                 let (u, o) = self.evaluate(&mut gen, &mut timing)?;
                 unique += u;
                 oversized += o;
@@ -3553,8 +3594,7 @@ mod tests {
         // Every row's score as it stands BEFORE the beat: `score_mutants` scores
         // its mutants in a scratch generation and must put these back untouched.
         let scored_before: Vec<Option<f64>> = engine.scored.iter().map(|s| s.map(|s| s.fitness)).collect();
-        let mut timing = fresh_timing();
-        let (beat, appended) = engine.beam(&mut gen, 1, &mut timing).expect("a beam beat");
+        let (beat, appended) = engine.beam(&mut gen, 1).expect("a beam beat");
         assert_eq!(beat.beats, 1);
         assert!(beat.mutants > 100, "only {} mutants", beat.mutants);
         assert!(beat.better > 0, "no mutant of the near miss beat it: {beat:?}");
@@ -3613,7 +3653,7 @@ mod tests {
         let (row, original) = engine.best(&gen).expect("the law is scored");
         assert!(original.one_minus_r2[1] < 1e-6, "the planted law is not exact: {original:?}");
         let before = gen.clone();
-        let (beat, appended) = engine.beam(&mut gen, 1, &mut fresh_timing()).expect("a beam beat");
+        let (beat, appended) = engine.beam(&mut gen, 1).expect("a beam beat");
         assert!(beat.mutants > 50, "the beam did not look: {beat:?}");
         assert_eq!(beat.better, 0, "something beat the law itself: {beat:?}");
         assert_eq!((beat.appended, appended), (0, None));
@@ -3655,11 +3695,16 @@ mod tests {
         assert!(wrapped.one_minus_r2[1] < 1e-12, "the wrap did not recover the law: {wrapped:?}");
         assert!(wrapped.fitness < before.fitness);
         // And the beat finds it, counts which wrap won, and keeps it.
-        let (beat, appended) = engine.beam(&mut gen, 1, &mut fresh_timing()).expect("a beam beat");
+        let (beat, appended) = engine.beam(&mut gen, 1).expect("a beam beat");
         assert_eq!(beat.wrap_candidates, BEAM_WRAPS.len() as u64);
         let recip1 = BEAM_WRAPS.iter().position(|w| *w == Wrapper::Recip1).expect("Recip1 is a beam wrap");
         assert_eq!(beat.wrap_better[recip1], 1, "1/(x-1) was not counted as better: {beat:?}");
         assert_eq!(beat.wrap_grafted, 1, "the winning wrap was not grafted into the gene: {beat:?}");
+        // And the graft KEPT what the wrap won once re-scored as a chromosome —
+        // which it can, because this model uses ONE gene, so the graft computes the
+        // same function the wrap was scored on.
+        assert_eq!(beat.wrap_graft_kept, 1, "the graft lost what the wrap won: {beat:?}");
+        assert_eq!(beat.wrap_graft_refused, 0);
         let genome = appended.expect("the wrapped survivor was appended");
         // The GRAFTED chromosome computes the law: the wrap is in the gene now.
         let landed = (0..engine.layout.pop as usize).find(|&r| gen.fitness[r].is_nan()).expect("the survivor's row");
@@ -3698,7 +3743,7 @@ mod tests {
         let mut engine = Engine::new(config, data).expect("engine");
         let mut gen = plant(&engine, &genes);
         engine.evaluate(&mut gen, &mut fresh_timing()).expect("evaluate");
-        let (beat, _) = engine.beam(&mut gen, 1, &mut fresh_timing()).expect("a beam beat");
+        let (beat, _) = engine.beam(&mut gen, 1).expect("a beam beat");
         let at = |w: Wrapper| BEAM_WRAPS.iter().position(|x| *x == w).expect("a beam wrap");
         // 1/sqrt(1 - x) has no real value past x = 1: refused whole.
         assert_eq!(beat.wrap_refused[at(Wrapper::RecipSqrt1m)], 1, "the partial wrap was scored anyway: {beat:?}");
@@ -3742,7 +3787,7 @@ mod tests {
         // THE CUT is the pump's, unchanged: after a beat and a pump beat the
         // intake is back to its base composition — its best fifth de-duplicated and
         // the rest refilled — so the appended rows cannot accumulate.
-        let (_, appended) = engine.beam(&mut gen, 1, &mut fresh_timing()).expect("a beam beat");
+        let (_, appended) = engine.beam(&mut gen, 1).expect("a beam beat");
         engine.evaluate(&mut gen, &mut fresh_timing()).expect("evaluate the survivor");
         let keepers_before = engine.keepers(zone, &gen).len();
         engine.pump(&mut gen, 4).expect("the pump");
@@ -3753,6 +3798,96 @@ mod tests {
         // and the zone's rows were inside the island the pump worked on all along:
         // nothing special-cases them.
         assert!(appended.is_none_or(|g| g.len() == (engine.layout.n_genes * engine.layout.gene_width()) as usize));
+    }
+
+    /// THE WRAP GOES INTO THE MODEL'S FIRST USED GENE, not gene 0 blindly: a model
+    /// that uses gene 1 alone must come back with the wrap around GENE 1, because
+    /// wrapping gene 0 would wrap what the model does not compute and collapse the
+    /// law to a constant.
+    #[test]
+    fn a_wrap_is_grafted_into_the_gene_the_model_actually_uses() {
+        let data = {
+            let (mut x, mut y) = (Vec::new(), Vec::new());
+            for i in 0..60u32 {
+                let u = 0.4 + f64::from(i % 19) * 0.1;
+                let row = [u, 1.0 + f64::from(i % 5) * 0.25, 1.5];
+                x.extend(row.iter().map(|v| *v as f32));
+                y.push(1.0 / (u.exp() - 1.0));
+            }
+            Data { names: names(), x, y, splits: Splits { n_train: 40, n_val: 20, n_extrap: 0 } }
+        };
+        // GENE 1 is exp(x_0); gene 0 is junk the subset choice will drop.
+        let genes = vec![
+            vec![Symbol::Function(Op::Sin), Symbol::Input(2)],
+            vec![Symbol::Function(Op::ProtectedExp), Symbol::Input(0)],
+            vec![Symbol::Input(2)],
+        ];
+        let config = Config { gene_subsets: true, beam_every: 1, beam_width: 200, ..toy_config(30, 10) };
+        let mut engine = Engine::new(config, data).expect("engine");
+        let mut gen = plant(&engine, &genes);
+        engine.evaluate(&mut gen, &mut fresh_timing()).expect("evaluate");
+        let (row, _) = engine.best(&gen).expect("scored");
+        let used = engine.confirm(&gen, row).expect("confirm").expect("scored").genes;
+        // The model does not use gene 0 — whatever else it uses, gene 1 is its
+        // FIRST, and gene 1 is where the wrap must go.
+        assert_eq!(used & 1, 0, "the model uses the junk gene 0: {used:#b}");
+        assert_eq!(used.trailing_zeros(), 1, "gene 1 is not the model's first used gene: {used:#b}");
+        // The graft goes into gene 1: gene 0 is untouched, and the row computes the
+        // law.
+        let (genome, rnc) = engine.graft_wrap(
+            &gen.pop.genome[row * (engine.layout.n_genes * engine.layout.gene_width()) as usize..][..(engine.layout.n_genes * engine.layout.gene_width()) as usize],
+            &gen.pop.rnc[row * (engine.layout.n_genes * engine.layout.n_rnc) as usize..][..(engine.layout.n_genes * engine.layout.n_rnc) as usize],
+            Wrapper::Recip1,
+            used,
+            1,
+        ).expect("the graft");
+        let width = engine.layout.gene_width() as usize;
+        let before = &gen.pop.genome[row * (engine.layout.n_genes as usize * width)..][..engine.layout.n_genes as usize * width];
+        assert_eq!(genome[..width], before[..width], "gene 0 was wrapped instead of gene 1");
+        assert_ne!(genome[width..2 * width], before[width..2 * width], "gene 1 did not take the wrap");
+        // And the wrapped chromosome computes the law.
+        let mutant = super::super::vary::Mutant { genome, rnc, kind: super::super::vary::BeamKind::Promote };
+        let scored = engine.score_mutants(std::slice::from_ref(&mutant), &gen, row).expect("score")[0].expect("scored");
+        assert!(scored.one_minus_r2[1] < 1e-6, "the graft does not compute the law: {scored:?}");
+    }
+
+    /// THE FLOAT ZONE'S ROLL CALL is a real question, not a tautology: a survivor is
+    /// counted as having survived only after it has lived through a round of
+    /// BREEDING and a pump's cut — never in the same beat it was appended, where it
+    /// is alive by construction.
+    #[test]
+    fn a_survivor_is_only_counted_after_breeding_and_a_cut() {
+        // The beam and the pump share a beat of 5, as the races run them. A
+        // survivor appended at generation 5 is counted at generation 10, not 5.
+        let config = Config {
+            beam_every: 5,
+            pump_every: 5,
+            beam_width: 200,
+            float_zone: 10,
+            max_generations: 4,
+            max_seconds: 3600.0,
+            stop_one_minus_r2: -1.0,
+            ..toy_config(60, 20)
+        };
+        let fit = |gens: u32| {
+            let mut c = config.clone();
+            c.max_generations = gens;
+            Engine::new(c, toy_data()).expect("engine").fit().expect("fit").beam
+        };
+        // Four generations: no beat at all.
+        assert_eq!(fit(4).beats, 0);
+        // Nine: one beat (generation 5) and one cut (generation 5, after it). The
+        // survivor has NOT yet lived through a cut that could drop it, so it is not
+        // counted — the number would otherwise always equal `appended`.
+        let short = fit(9);
+        assert_eq!(short.beats, 1);
+        assert_eq!(short.survived_a_pump, 0, "a survivor was counted in the beat it was appended: {short:?}");
+        // Ten: the second pump comes, and now the first beat's survivor has had five
+        // generations of breeding and a cut. It is counted if and only if it is
+        // still in the population.
+        let long = fit(10);
+        assert_eq!(long.beats, 2);
+        assert!(long.survived_a_pump <= long.appended, "more survived than were ever appended: {long:?}");
     }
 
     /// A FIT WITH THE BEAM ON runs, counts what it did, and still ends on the law:
