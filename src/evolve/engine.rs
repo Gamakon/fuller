@@ -884,6 +884,45 @@ pub fn resolve_protected(math: &str, rows: &[Vec<(String, f64)>]) -> Result<Stri
             _ => None,
         }
     }
+    /// `sqrt((a + b)/(a - b))` = `(1 + b/a) / sqrt(1 - (b/a)^2)`, where the data
+    /// says a > 0 and a > |b| on every row — so both a + b and a - b are positive
+    /// and the two sides are the same positive number. The RIGHT-HAND side is the
+    /// bigger form: it is the canonical one for the sqrt(1 - v^2/c^2) family, which
+    /// SRBench writes in the ratio b/a (feynman I.34.14's law is
+    /// omega_0 (1 + v/c)/sqrt(1 - v^2/c^2), found as omega_0 sqrt((c+v)/(c-v)) and
+    /// scored as wrong — sympy will not reconcile the two without positivity).
+    /// `None` unless the quotient is a FACTOR of the radicand with that shape.
+    fn doppler(radicand: &Tree, rows: &[Vec<(String, f64)>]) -> Option<(Tree, Vec<Tree>)> {
+        let (mut num, mut den) = (vec![], vec![]);
+        over_and_under(radicand, false, &mut num, &mut den);
+        for i in 0..num.len() {
+            let Tree::App(Op::Add, s) = num[i] else { continue };
+            for j in 0..den.len() {
+                let Tree::App(Op::Sub, d) = den[j] else { continue };
+                // a - b below, a + b above, written either way round.
+                let (a, b) = (&d[0], &d[1]);
+                if !((s[0] == *a && s[1] == *b) || (s[1] == *a && s[0] == *b)) {
+                    continue;
+                }
+                if !on_every_row(a, rows, |v| v > 0.0) || !on_every_row(den[j], rows, |v| v > 0.0) || !on_every_row(num[i], rows, |v| v > 0.0) {
+                    continue;
+                }
+                let beta = Tree::App(Op::Div, vec![b.clone(), a.clone()]);
+                let over = Tree::App(Op::Add, vec![Tree::Num(1.0), beta.clone()]);
+                let under = Tree::App(Op::Sqrt, vec![Tree::App(Op::Sub, vec![Tree::Num(1.0), Tree::App(Op::Pow2, vec![beta])])]);
+                // What else was in the radicand keeps ONE root of its own — over the
+                // line, never as sqrt(1/x): a scorer reading the string with no
+                // positivity does not take that for 1/sqrt(x).
+                let others: Vec<&Tree> = num.iter().enumerate().filter(|(k, _)| *k != i).map(|(_, f)| *f).collect();
+                let unders: Vec<&Tree> = den.iter().enumerate().filter(|(k, _)| *k != j).map(|(_, f)| *f).collect();
+                if !unders.is_empty() {
+                    return None;
+                }
+                return Some((Tree::App(Op::Div, vec![over, under]), others.into_iter().cloned().collect()));
+            }
+        }
+        None
+    }
     fn go(t: &Tree, rows: &[Vec<(String, f64)>]) -> Tree {
         let rewritten = specific(t, rows);
         constant_on_data(&rewritten, rows).unwrap_or(rewritten)
@@ -916,6 +955,20 @@ pub fn resolve_protected(math: &str, rows: &[Vec<(String, f64)>]) -> Result<Stri
                 if !a.is_empty() && a.iter().all(|v| v.is_finite()) {
                     // ... and the Abs goes too where the argument keeps one sign.
                     return Tree::App(Op::Sqrt, vec![go(&Tree::App(Op::Abs, kids), rows)]);
+                }
+            }
+            // sqrt(e^2) = |e| for every real e — and the Abs then sheds the sign the
+            // data settles. Written out as sqrt(x^2) an exact law is reported in a
+            // form no scorer matches to it.
+            Op::Sqrt if matches!(&kids[0], Tree::App(Op::Pow2, _)) => {
+                let Tree::App(_, square) = &kids[0] else { return Tree::App(*op, kids) };
+                return go(&Tree::App(Op::Abs, vec![square[0].clone()]), rows);
+            }
+            // ... and the root of a (a+b)/(a-b) quotient is the family's own form.
+            Op::Sqrt => {
+                if let Some((family, rest)) = doppler(&kids[0], rows) {
+                    let whole = rest.into_iter().fold(family, |acc, f| Tree::App(Op::Mul, vec![go(&Tree::App(Op::Sqrt, vec![f]), rows), acc]));
+                    return whole;
                 }
             }
             // asin / acos of the argument clamped to [-1, 1]: where the argument
@@ -2424,6 +2477,19 @@ mod tests {
             .collect()
     }
 
+    /// feynman I.34.14's columns: x_0 the speed of light, x_1 a speed below it,
+    /// x_2 a frequency — so x_0 > |x_1| > 0 and both x_0 +- x_1 are positive on
+    /// every row. rows() has x_0 - x_1 changing sign and is left as it is.
+    fn rows_doppler() -> Vec<Vec<(String, f64)>> {
+        (0..200)
+            .map(|i| {
+                let t = f64::from(i);
+                let c = 4.0 + t * 0.01;
+                vec![("x_0".to_string(), c), ("x_1".to_string(), c * (0.05 + t * 0.0045)), ("x_2".to_string(), 1.0 + t * 0.02)]
+            })
+            .collect()
+    }
+
     /// rows() and two more positive columns, x_3 and x_4; rows() itself is not changed.
     fn rows5() -> Vec<Vec<(String, f64)>> {
         rows()
@@ -2584,6 +2650,34 @@ mod tests {
         let clamped = format!("(Tan (ProtectedAsin {u}))");
         let stood = resolve_protected(&clamped, &rows()).unwrap();
         assert!(stood.contains("Tan") && stood.contains("Asin"), "{stood}");
+    }
+
+    /// feynman I.34.14 as the engine found it (seed 7014, pass2_s13), rebuilt from
+    /// the fit's `fuller_model` `sqrt(((x_1 + x_0)/(x_0 - x_1))*(x_2**2))`: the root
+    /// of the quotient is the law written in the ratio v/c, the form SRBench takes.
+    #[test]
+    fn a_root_of_a_sum_over_a_difference_is_the_family_written_in_the_ratio() {
+        let found = r#"(Sqrt (Mul (Div (Add (Var "x_1") (Var "x_0")) (Sub (Var "x_0") (Var "x_1"))) (Pow2 (Var "x_2"))))"#;
+        let resolved = resolve_protected(found, &rows_doppler()).unwrap();
+        // x_2 comes out of the root as itself (positive on the data), and what is
+        // left is (1 + v/c)/sqrt(1 - (v/c)^2).
+        let beta = r#"(Div (Var "x_1") (Var "x_0"))"#;
+        assert_eq!(
+            resolved,
+            format!(r#"(Mul (Var "x_2") (Div (Add (Num 1.0) {beta}) (Sqrt (Sub (Num 1.0) (Pow2 {beta})))))"#),
+            "{resolved}"
+        );
+        assert!(drift(found, &resolved, &rows_doppler()) <= FINAL_FORM_AGREE, "the predictions moved");
+        // The reported string is the law's own shape, with no root left in a
+        // denominator's argument and no (c+v)/(c-v) quotient.
+        let text = crate::lint::node::Tree::parse(&resolved).unwrap().to_infix();
+        assert_eq!(text, "(x_2*((1.0 + (x_1/x_0))/sqrt((1.0 - ((x_1/x_0)**2)))))", "{text}");
+
+        // NEGATIVE: over rows() the difference x_0 - x_1 changes sign, so a + b and
+        // a - b are not both positive and the two forms are not the same number.
+        let stood = resolve_protected(found, &rows()).unwrap();
+        assert!(stood.contains(r#"(Sub (Var "x_0") (Var "x_1"))"#), "{stood}");
+        assert!(!stood.contains("(Num 1.0)"), "the rewrite fired where the data does not support it: {stood}");
     }
 
     /// feynman I.44.4 EXACTLY as the chromosome wrote it (RAW_MATH of the seed-7013
