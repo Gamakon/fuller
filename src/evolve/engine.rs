@@ -1343,6 +1343,22 @@ pub fn resolve_protected(math: &str, rows: &[Vec<(String, f64)>]) -> Result<Stri
                 let Tree::App(_, square) = &kids[0] else { return Tree::App(*op, kids) };
                 return go(&Tree::App(Op::Abs, vec![square[0].clone()]), rows);
             }
+            // sqrt(e^2 / c) = |e| / sqrt(c) for a positive literal c. The engine
+            // reaches a law this way and the root hides it: feynman III.17.37 was
+            // found as -1.41421*sqrt((144 - u)^2 / 2) + 144, where 1.41421/sqrt(2)
+            // is 1 to nine digits, so the model IS 144 - |144 - u| and, with
+            // u < 144 on every row, u — the law exactly. Splitting the literal out
+            // of the radicand lets the fitted scale cancel it; left inside, no
+            // scorer matches the form to the law.
+            Op::Sqrt
+                if matches!(&kids[0], Tree::App(Op::Div, d)
+                    if matches!(d[0], Tree::App(Op::Pow2, _)) && matches!(d[1], Tree::Num(c) if c > 0.0)) =>
+            {
+                let Tree::App(_, d) = &kids[0] else { return Tree::App(*op, kids) };
+                let (Tree::App(_, square), Tree::Num(c)) = (&d[0], &d[1]) else { return Tree::App(*op, kids) };
+                let numerator = go(&Tree::App(Op::Abs, vec![square[0].clone()]), rows);
+                return Tree::App(Op::Div, vec![numerator, Tree::Num(c.sqrt())]);
+            }
             // ... and the root of a (a+b)/(a-b) quotient is the family's own form.
             Op::Sqrt => {
                 if let Some((family, rest)) = doppler(&kids[0], rows) {
