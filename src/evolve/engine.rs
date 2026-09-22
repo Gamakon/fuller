@@ -597,6 +597,14 @@ fn wrap_nodes(wrap: Wrapper) -> Option<Vec<WrapNode>> {
         // the HOST on its left and the chain `exp(host) - 1` on its right, so the
         // host is written into the gene twice. `ProtectedDiv` is a sampled function
         // of the wide set, so this is the gene's own vocabulary throughout.
+        //
+        // ONE POINT WHERE THE TWO DIFFER, stated rather than hidden: at exactly
+        // x = 0 the quotient is 0/0, `Wrapper::apply` returns the limit 1, and the
+        // gene's `ProtectedDiv` returns what its own guard gives. Every other row is
+        // the same function at two precisions. A wrap is judged on the data it was
+        // scored on, so a dataset that holds an exact zero there is a row where the
+        // graft and the wrap disagree — the graft is re-scored, which is where that
+        // shows up.
         Wrapper::XOverExpm1 => vec![HostFirst(Op::ProtectedDiv), BinarySelfFirst(Op::Sub), Unary(Op::ProtectedExp)],
         // 1/sqrt(1 - x)
         Wrapper::RecipSqrt1m => vec![Unary(Op::ProtectedInv), Unary(Op::ProtectedSqrt), BinaryUnitFirst(Op::Sub)],
@@ -698,10 +706,11 @@ pub struct BeamCounts {
     pub wrap_grafted: u64,
     pub wrap_graft_refused: u64,
     /// Of the grafts the gene took, how many still beat the original once RE-SCORED
-    /// as a chromosome. This is the number that matters: a wrap is scored on the
-    /// linked value of every used gene, and its graft computes the wrapped HOST gene
-    /// alone, so for a model that really uses several genes the two are different
-    /// functions and the graft can lose what the wrap won.
+    /// as a chromosome on the device. The wrap and its graft are now the same
+    /// function by construction, so this should track `wrap_grafted` closely; where
+    /// it does not, the difference is the device's f32 against the wrap's f64, and
+    /// the TOWER penalty — a grafted `Sqrt` or `Exp` is a real node of the gene, so
+    /// a wrapped model is judged a little taller than the wrap's own score was.
     pub wrap_graft_kept: u64,
     /// Survivors APPENDED to a float zone, and how many of those were still in the
     /// population at the next pump beat — the number that says whether the float
@@ -1960,15 +1969,32 @@ impl Engine {
     /// of them, at the same f64 grade. `Scored::wrapper` indexes the list that was
     /// passed, so a caller with its own list must read it back with that list.
     fn confirm_with(&self, gen: &Generation, row: usize, wrappers: &[Wrapper]) -> Result<Option<Scored>, String> {
-        self.confirm_over(gen, row, wrappers, &self.combinations()?)
+        self.confirm_over(gen, row, wrappers, &self.combinations()?, None)
     }
 
-    /// [`Engine::confirm_with`] over a GIVEN list of gene-linker combinations
-    /// instead of the engine's own. `confirm_with` passes [`Engine::combinations`]
-    /// and is the definition; THE BEAM passes a SINGLE-GENE combination so that a
-    /// wrap is scored on exactly the function its graft will compute — see
-    /// [`Engine::beam`] on why score and graft must agree by construction.
-    fn confirm_over(&self, gen: &Generation, row: usize, wrappers: &[Wrapper], combinations: &[GeneLinker]) -> Result<Option<Scored>, String> {
+    /// [`Engine::confirm_with`] over a GIVEN list of gene-linker combinations, and
+    /// with an optional INNER WRAP applied to one gene before the linker sees it.
+    /// `confirm_with` passes [`Engine::combinations`] and no inner wrap, and is the
+    /// definition.
+    ///
+    /// THE INNER WRAP is what [`Engine::beam`] scores its functional mutations with,
+    /// and it is inside the linker on purpose. The aimed laws are mostly
+    /// `prefactor(variables) * W(u)` — `m_0/sqrt(1 - (v/c)^2)`, `kb*T * u/(exp(u)-1)`,
+    /// `omega_0/(1 - v/c)` — so a wrap scored as `a * W(g_host) + b` with a SCALAR
+    /// `a` cannot express them however good the genes are: the prefactor has nowhere
+    /// to live. Scored as `a * L(W(g_host), g_other, ...) + b` it does — the other
+    /// genes carry the prefactor and the linker multiplies or adds them.
+    ///
+    /// Only combinations that USE the host are scored: one that does not would
+    /// report a number for a wrap it never applied.
+    fn confirm_over(
+        &self,
+        gen: &Generation,
+        row: usize,
+        wrappers: &[Wrapper],
+        combinations: &[GeneLinker],
+        inner: Option<(usize, Wrapper)>,
+    ) -> Result<Option<Scored>, String> {
         let l = self.layout;
         let (width, nr, g_n) = (l.gene_width() as usize, l.n_rnc as usize, l.n_genes as usize);
         let mut batch = ExprBatch::new();
@@ -1990,7 +2016,18 @@ impl Engine {
                 }
             }
         }
-        let preds = self.evaluator.eval(&batch)?;
+        let mut preds = self.evaluator.eval(&batch)?;
+        // THE INNER WRAP, applied to the host gene's predictions before the linker
+        // combines them — the wrap lives INSIDE the model, where the graft puts it.
+        // A pole is NaN, so every combination that uses the host is then rejected by
+        // `score_one`'s finite check and the caller counts a refusal, exactly as a
+        // wrap outside the linker was refused.
+        if let Some((host, wrap)) = inner {
+            let rows = self.data.splits.total();
+            for v in preds[host * rows..(host + 1) * rows].iter_mut() {
+                *v = wrap.apply(f64::from(*v)) as f32;
+            }
+        }
         let spec = ScoreSpec { linkers: LINKERS.to_vec(), wrappers: wrappers.to_vec(), splits: self.data.splits, linear_scaling: true };
         // The same candidates as `evaluate`, in the same order, in f64.
         let scores = score_gene_subsets(&preds, &gene_ok, &[(0..g_n).collect()], &self.data.y, &spec, combinations)?;
@@ -2246,22 +2283,26 @@ impl Engine {
         // 2. THE FUNCTIONAL NEIGHBOURHOOD: each of the model's genes, on its own,
         //    through each wrap, `a` and `b` fitted.
         //
-        //    SCORED ON THE HOST GENE ALONE, and that is the fix to a bug that hid
-        //    every negative result this beam has ever reported. A wrap used to be
-        //    scored on the model's whole LINKED value, `W(L(g0, g1, g2))`, and then
-        //    grafted as `W(g0)` with the other genes set to 1 — different functions
-        //    whenever the model uses more than one gene, which is almost always. The
-        //    wrap could win the score and then not be what landed. Scoring the wrap
-        //    on one gene makes the two agree BY CONSTRUCTION: `confirm_over` is given
-        //    a single-gene combination, `graft_wrap` is given that same gene as its
-        //    host, and every other gene is collapsed to 1, so the graft computes the
-        //    function that was scored. It is also Andrew's rule read literally — with
-        //    the wrap "the gene need only supply the monomial `u`".
+        //    THE WRAP GOES INSIDE THE LINKER, on ONE gene, and that is the fix to a
+        //    bug that hid every negative result this beam has ever reported. A wrap
+        //    used to be scored on the model's whole LINKED value, `W(L(g0,g1,g2))`,
+        //    and then grafted as `W(g0)` with the other genes set to 1 — different
+        //    functions whenever the model uses more than one gene, which is almost
+        //    always. The wrap could win the score and then not be what landed.
         //
-        //    WHAT IT COSTS: a wrap over the true linked value of several genes is
-        //    never tried. That shape is not lost to the search — it is simply not
-        //    something this beam can both score and graft, and a number it cannot
-        //    graft is a number in a report.
+        //    Scored as `a * L(W(g_host), g_other, ...) + b` and grafted the same way,
+        //    the two agree BY CONSTRUCTION: `confirm_over` applies the wrap to the
+        //    host gene's predictions before the linker sees them, `graft_wrap` writes
+        //    that same wrap into that same gene and leaves the others alone.
+        //
+        //    AND THE OTHER GENES MUST STAND, because the laws these wraps are aimed
+        //    at are `prefactor(variables) * W(u)` — `m_0/sqrt(1 - (v/c)^2)`,
+        //    `kb*T * u/(exp(u)-1)`, `omega_0/(1 - v/c)`. Wrapping the host gene alone
+        //    leaves only a SCALAR `a` outside the wrap, so no chromosome could
+        //    express those however good its genes were: the prefactor has nowhere to
+        //    live. Inside the linker it does. Andrew's rule still reads straight —
+        //    with the wrap the host gene need only supply the monomial `u`, and a
+        //    sibling gene supplies the prefactor.
         //
         //    Each (gene, wrap) is scored on its OWN `confirm_over` pass — a shared
         //    pass would keep only the best candidate and a beat could not then say
@@ -2288,12 +2329,19 @@ impl Engine {
             // Each wrap on each host gene: which won, and which was refused as not
             // total on the data. A refusal is the guard working, not a failure.
             let mut wrapped: Option<(usize, usize, Scored)> = None;
+            // THE COMBINATIONS THAT USE THE HOST. A combination that does not would
+            // report a number for a wrap it never applied.
+            let all = self.combinations()?;
             for &host in &hosts {
-                // The host gene alone, under linker 0 — a single gene has no linker,
-                // it is the gene itself, so this is exactly `W(g_host)`.
-                let alone = [GeneLinker { genes: 1 << host, linker: 0 }];
+                let using: Vec<GeneLinker> = all.iter().copied().filter(|c| c.genes >> host & 1 == 1).collect();
+                if using.is_empty() {
+                    continue;
+                }
                 for (k, &wrap) in BEAM_WRAPS.iter().enumerate() {
-                    match self.confirm_over(gen, row, std::slice::from_ref(&wrap), &alone)? {
+                    // IDENTITY on top: the wrap is INSIDE the linker, where the graft
+                    // puts it, so the engine's own outer wrappers are not what is
+                    // being asked about here.
+                    match self.confirm_over(gen, row, &[Wrapper::Identity], &using, Some((host, wrap)))? {
                         Some(s) => {
                             if s.fitness < baseline {
                                 counts.wrap_better[k] += 1;
@@ -2441,18 +2489,14 @@ impl Engine {
     ///
     /// The wrap is written into the gene `host` — `relevel` with the wrap's nodes as
     /// [`super::vary::Graft`]s whose deepest kid is that gene's own root — and EVERY
-    /// OTHER gene of the chromosome is collapsed to a constant 1, so the linker the
-    /// scorer then picks cannot change what the model computes: `mul` gives the
-    /// wrapped gene, and `avg` or `add` shift it by a constant that the fitted `a`,
-    /// `b` absorb. The engine's own three wrappers still apply on top, as they do to
-    /// any chromosome.
+    /// OTHER GENE STANDS. The chromosome then computes `L(W(g_host), g_other, ...)`:
+    /// the wrap is INSIDE the linker, so the other genes carry whatever prefactor the
+    /// law has. The engine's own three wrappers still apply on top, as they do to any
+    /// chromosome.
     ///
-    /// EVERY other gene, not just the USED ones, and that is the fix to a real bug:
-    /// collapsing only the used genes left an unused gene standing, and the re-scored
-    /// chromosome — which is scored over every combination again — could then pick a
-    /// combination that reads it, computing `L(W(g_host), g_other)` instead of the
-    /// `W(g_host)` that was scored. A wrap and its graft must be the SAME function.
-    /// [`Engine::beam`] scores the wrap on the host gene alone for the same reason.
+    /// That is what [`Engine::beam`] scores, by applying the same wrap to the same
+    /// gene's predictions before the linker sees them ([`Engine::confirm_over`]'s
+    /// inner wrap), so score and graft are the SAME FUNCTION by construction.
     ///
     /// `None` when the gene cannot take the form — the relevel would put a function
     /// outside the virtual head, or the expression would not close. A wrap written
@@ -2527,18 +2571,13 @@ impl Engine {
         // `ops` is outermost-first, so the LAST entry built is the outermost node:
         // that is what replaces the gene's root.
         relevel(gene, l, vhead, &codes, &tree, &[(0, below)], &grafts).ok()?;
-        // Every OTHER gene becomes the constant 1, so no linker and no gene-subset
-        // choice can change the model: the wrapped host gene is what the chromosome
-        // computes, whichever combination the scorer picks.
-        for g in 0..l.n_genes as usize {
-            if g == host {
-                continue;
-            }
-            let other = &mut genome[g * width..(g + 1) * width];
-            other[0] = rnc_id;
-            other[(l.head + l.tail) as usize] = unit_slot;
-            constants[g * nr + unit_slot as usize] = 1.0;
-        }
+        // EVERY OTHER GENE STANDS, untouched. The wrap goes INSIDE the linker, not
+        // around the whole model, so the chromosome computes
+        // `L(W(g_host), g_other, ...)` — which is what the beam scored, and which is
+        // the shape the aimed laws have: `prefactor(variables) * W(u)`. Collapsing
+        // the other genes to 1 (as this did) left the wrap with only a scalar `a`
+        // outside it, and no chromosome could then express `m_0/sqrt(1 - (v/c)^2)`
+        // however good its genes were.
         Some((genome, constants))
     }
 
@@ -4391,8 +4430,11 @@ mod tests {
         assert_eq!(off.beam, BeamCounts::default(), "the beam counted something with the beam off");
         assert_eq!(off.timing.beam, 0.0);
         // Setting the beam's OTHER knobs, with the beat still 0, changes nothing:
-        // the switch is the beat, and only the beat.
-        let (idle, _, _) = fit(&Config { beam_width: 50_000, beam_wraps: false, ..base.clone() });
+        // the switch is the beat, and only the beat. The tree half's knob is one of
+        // them — it is OFF by default and turning it on with no beat is still a fit
+        // that never takes one.
+        assert!(!base.beam_tree, "the tree half is on by default");
+        let (idle, _, _) = fit(&Config { beam_width: 50_000, beam_wraps: false, beam_tree: true, ..base.clone() });
         assert_eq!((idle.math.clone(), idle.unique_genes, idle.individuals, idle.generations), (off.math.clone(), off.unique_genes, off.individuals, off.generations));
         assert_eq!(idle.best.fitness, off.best.fitness);
         // And the same config twice is the same fit, as it always was.
@@ -4658,6 +4700,125 @@ mod tests {
         assert!(math.contains("ProtectedDiv") && math.contains("ProtectedExp"), "{math}");
     }
 
+    /// THE BEAM'S WIDTH FOLLOWS THE RULE. With `beam_every > 0` a beat is the
+    /// EDGE-CASE WRAPS ALONE by default: the tree neighbourhood closed no gap on six
+    /// near misses, so a default beat does not spend the width on it. The tree half
+    /// is not gone — `Config::beam_tree` turns it on and it works exactly as it did.
+    #[test]
+    fn a_default_beat_is_the_wraps_alone_and_the_tree_half_is_a_knob() {
+        let (mul, x0, x1) = (Symbol::Function(Op::Mul), Symbol::Input(0), Symbol::Input(1));
+        let data = || {
+            let (mut x, mut y) = (Vec::new(), Vec::new());
+            for i in 0..60u32 {
+                let row = [1.0 + f64::from(i % 7) * 0.5, 2.0 + f64::from(i % 5) * 0.25, 1.5 + f64::from(i % 11) * 0.2];
+                x.extend(row.iter().map(|v| *v as f32));
+                y.push(row[0] * row[1] * row[2].sqrt());
+            }
+            Data { names: names(), x, y, splits: Splits { n_train: 40, n_val: 20, n_extrap: 0 } }
+        };
+        let genes = vec![vec![mul, mul, x1, x0, Symbol::Function(Op::ProtectedSqrt), Symbol::Input(2)], vec![x0], vec![x0]];
+        let beat = |beam_tree: bool| {
+            let config = Config { gene_subsets: true, beam_every: 1, beam_tree, beam_width: 400, ..toy_config(30, 10) };
+            let mut engine = Engine::new(config, data()).expect("engine");
+            let mut gen = plant(&engine, &genes);
+            engine.evaluate(&mut gen, &mut fresh_timing()).expect("evaluate");
+            engine.beam(&mut gen, 1).expect("a beam beat").0
+        };
+        // OFF, the default: not one tree mutant, and the mutants are the wraps.
+        let wraps_only = beat(false);
+        assert_eq!(wraps_only.tree_mutants, 0, "the tree half ran with beam_tree off: {wraps_only:?}");
+        assert_eq!(wraps_only.mutants, wraps_only.wrap_candidates, "{wraps_only:?}");
+        assert_eq!(wraps_only.wrap_candidates, (BEAM_WRAPS.len() * 3) as u64, "every wrap on every gene: {wraps_only:?}");
+        // ON: the neighbourhood is enumerated and it is much the larger half.
+        let with_tree = beat(true);
+        assert!(with_tree.tree_mutants > 100, "the tree half did not run with beam_tree on: {with_tree:?}");
+        assert_eq!(with_tree.mutants, with_tree.tree_mutants + with_tree.wrap_candidates);
+        // and the wraps are unchanged by it: the two halves do not interfere.
+        assert_eq!(with_tree.wrap_candidates, wraps_only.wrap_candidates);
+        assert_eq!(with_tree.wrap_refused, wraps_only.wrap_refused);
+    }
+
+    /// THE SET IS THE EDGE CASES, and every one of them can be written into a gene.
+    /// The rule (Andrew: "subset the beam to edge cases like this") says a wrap earns
+    /// its place by being a shape the gene does NOT build; `Exp`, `Square` and
+    /// `Recip` are `ProtectedExp`, `Pow2` and `ProtectedInv`, all SAMPLED functions
+    /// of the gene's own table, so ordinary variation reaches them by writing one
+    /// symbol and they are not in the set.
+    #[test]
+    fn the_beam_wraps_are_the_edge_cases_and_every_one_has_a_spelling() {
+        assert_eq!(BEAM_WRAPS, [Wrapper::Recip1, Wrapper::XOverExpm1, Wrapper::RecipSqrt1m, Wrapper::Recip1m]);
+        // Every member is graftable: a wrap that could only ever be a number in a
+        // report does not belong in the set.
+        for w in BEAM_WRAPS {
+            assert!(wrap_nodes(w).is_some(), "{w:?} is in the set and has no spelling as gene symbols");
+        }
+        // The three that were dropped are ONE SAMPLED SYMBOL each — that is the
+        // measurable reason they went, not taste.
+        let table = SymbolTable::wide(3);
+        let codes = table.codes();
+        for (w, op) in [(Wrapper::Exp, Op::ProtectedExp), (Wrapper::Square, Op::Pow2), (Wrapper::Recip, Op::ProtectedInv)] {
+            assert!(!BEAM_WRAPS.contains(&w), "{w:?} is a general shape and is still in the set");
+            let id = table.function_id(op).expect("the wide table has it");
+            assert!(codes.sample_functions.contains(&id), "{op:?} is not sampled, so {w:?} may be an edge case after all");
+            // They keep their spelling: the table is not the set.
+            assert!(wrap_nodes(w).is_some(), "{w:?} lost its spelling when it left the set");
+        }
+    }
+
+    /// THE PREFACTOR CASE, and the reason the wrap goes INSIDE the linker. The law
+    /// is feynman III.4.33's real shape, `kb*T * u/(exp(u) - 1)`: a wrap on one gene
+    /// TIMES a prefactor the other genes carry. Four of the five laws these wraps are
+    /// aimed at are that shape — `m_0/sqrt(1 - (v/c)^2)`, `m*c^2/sqrt(...)`,
+    /// `omega_0/(1 - v/c)` — and a wrap scored as `a * W(g_host) + b`, with only a
+    /// SCALAR outside it, cannot express any of them however good the genes are.
+    ///
+    /// Here gene 0 holds `u`, gene 1 holds the prefactor and the linker multiplies.
+    /// The beat must score the wrap, graft it, and the GRAFTED ROW must compute the
+    /// law.
+    #[test]
+    fn a_wrap_inside_the_linker_reaches_a_law_with_a_prefactor() {
+        let data = {
+            let (mut x, mut y) = (Vec::new(), Vec::new());
+            for i in 0..60u32 {
+                let u = 0.4 + f64::from(i % 19) * 0.1;
+                let pre = 1.0 + f64::from(i % 7) * 0.5;
+                let row = [u, pre, 1.5];
+                x.extend(row.iter().map(|v| *v as f32));
+                // The prefactor TIMES the wrap: the shape the aimed laws have.
+                y.push(pre * (u / u.exp_m1()));
+            }
+            Data { names: names(), x, y, splits: Splits { n_train: 40, n_val: 20, n_extrap: 0 } }
+        };
+        // Gene 0 is the monomial u, gene 1 is the prefactor, gene 2 is 1.
+        let genes = vec![vec![Symbol::Input(0)], vec![Symbol::Input(1)], vec![Symbol::Input(1)]];
+        // gene_subsets ON so the model may take the PAIR {0,1} under mulval.
+        let config = Config { gene_subsets: true, beam_every: 1, ..toy_config(30, 10) };
+        let mut engine = Engine::new(config, data).expect("engine");
+        let mut gen = plant(&engine, &genes);
+        engine.evaluate(&mut gen, &mut fresh_timing()).expect("evaluate");
+        let (row, _) = engine.best(&gen).expect("scored");
+        let before = engine.confirm(&gen, row).expect("confirm").expect("scored");
+        assert!(before.one_minus_r2[1] > 1e-4, "the unwrapped genes already fit the law: {before:?}");
+
+        let (beat, appended) = engine.beam(&mut gen, 1).expect("a beam beat");
+        let k = BEAM_WRAPS.iter().position(|w| *w == Wrapper::XOverExpm1).expect("a beam wrap");
+        assert!(beat.wrap_better[k] >= 1, "the wrap did not beat the original: {beat:?}");
+        assert_eq!(beat.wrap_grafted, 1, "the wrap did not graft: {beat:?}");
+        assert_eq!(beat.wrap_graft_kept, 1, "the graft lost what the wrap won: {beat:?}");
+        let genome = appended.expect("the wrapped survivor was appended");
+
+        // THE GRAFTED ROW COMPUTES THE LAW — prefactor and all.
+        let landed = (0..engine.layout.pop as usize).find(|&r| gen.fitness[r].is_nan()).expect("the survivor's row");
+        engine.evaluate(&mut gen, &mut fresh_timing()).expect("evaluate the survivor");
+        let after = engine.confirm(&gen, landed).expect("confirm").expect("scored");
+        assert!(after.one_minus_r2[1] < 1e-8, "the graft does not compute the prefactor law: {after:?}");
+        // and the OTHER genes still stand: the prefactor is still in the chromosome,
+        // which is exactly what collapsing them to 1 destroyed.
+        let width = engine.layout.gene_width() as usize;
+        let before_row = &gen.pop.genome[row * (engine.layout.n_genes as usize * width)..][..engine.layout.n_genes as usize * width];
+        assert_eq!(genome[width..2 * width], before_row[width..2 * width], "the prefactor gene was collapsed");
+    }
+
     /// SCORE EQUALS GRAFT, for every wrap of the set, on a chromosome whose three
     /// genes are genuinely DIFFERENT and with `gene_subsets` OFF — the case the old
     /// code got wrong. A wrap used to be scored on the whole linked value
@@ -4702,24 +4863,27 @@ mod tests {
         // For EVERY wrap of the set, on EVERY gene: what the beam scores on the host
         // gene alone is what the grafted chromosome computes.
         let mut checked = 0;
+        let all = engine.combinations().expect("combinations");
         for host in 0..engine.layout.n_genes as usize {
-            let alone = [GeneLinker { genes: 1 << host, linker: 0 }];
+            let using: Vec<GeneLinker> = all.iter().copied().filter(|c| c.genes >> host & 1 == 1).collect();
             for &wrap in BEAM_WRAPS.iter() {
-                let Some(scored) = engine.confirm_over(&gen, row, std::slice::from_ref(&wrap), &alone).expect("confirm") else {
+                // The beam's score: the wrap INSIDE the linker, on the host gene.
+                let Some(scored) = engine.confirm_over(&gen, row, &[Wrapper::Identity], &using, Some((host, wrap))).expect("confirm") else {
                     continue;
                 };
                 let Some((grafted, consts)) = engine.graft_wrap(&genome, &rnc, wrap, host, 1) else { continue };
                 // The grafted chromosome put into a spare row and confirmed in f64,
-                // the same grade the wrap was scored at. IDENTITY on top: the wrap is
-                // in the gene now, so the question is whether the GENE computes what
-                // the wrap computed, not what the engine's own wrappers make of it
-                // afterwards (they may do better — Identity is among them).
+                // the same grade the wrap was scored at. IDENTITY on top and the same
+                // combinations: the wrap is in the gene now, so the question is
+                // whether the GENE computes what the wrap computed, not what the
+                // engine's own outer wrappers make of it afterwards (they may do
+                // better — Identity is among them).
                 let mut scratch = gen.clone();
                 let to = if row == 0 { 1 } else { 0 };
                 scratch.pop.genome[to * row_w..(to + 1) * row_w].copy_from_slice(&grafted);
                 scratch.pop.rnc[to * rnc_w..(to + 1) * rnc_w].copy_from_slice(&consts);
                 let re = engine
-                    .confirm_over(&scratch, to, &[Wrapper::Identity], &engine.combinations().expect("combinations"))
+                    .confirm_over(&scratch, to, &[Wrapper::Identity], &using, None)
                     .expect("confirm the graft")
                     .expect("the graft is scored");
                 // THE EQUALITY: the value the beam SCORED and the value the GRAFTED
@@ -4871,13 +5035,11 @@ mod tests {
         ).expect("the graft");
         let width = engine.layout.gene_width() as usize;
         let before = &gen.pop.genome[row * (engine.layout.n_genes as usize * width)..][..engine.layout.n_genes as usize * width];
-        // GENE 1 took the wrap, and every OTHER gene is now the constant 1 — gene 0
-        // included, whether or not the model used it, so that no combination the
-        // scorer then picks can read something the wrap was not scored on.
+        // GENE 1 took the wrap, and every OTHER gene STANDS: the wrap goes inside
+        // the linker, so a sibling gene may carry a prefactor.
         assert_ne!(genome[width..2 * width], before[width..2 * width], "gene 1 did not take the wrap");
-        let rnc_id = engine.table.codes().rnc_id.expect("the table has a ?");
-        assert_eq!(genome[0], rnc_id, "gene 0 was not collapsed to the unit: {:?}", &genome[..width]);
-        assert_eq!(genome[2 * width], rnc_id, "gene 2 was not collapsed to the unit");
+        assert_eq!(genome[..width], before[..width], "gene 0 was changed");
+        assert_eq!(genome[2 * width..3 * width], before[2 * width..3 * width], "gene 2 was changed");
         // And the wrapped chromosome computes the law.
         let mutant = super::super::vary::Mutant { genome, rnc, kind: super::super::vary::BeamKind::Promote };
         let scored = engine.score_mutants(std::slice::from_ref(&mutant), &gen, row).expect("score")[0].expect("scored");
