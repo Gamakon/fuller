@@ -1789,7 +1789,9 @@ impl Engine {
         // The lineage columns come after everything that was already reported, so a
         // harness that reads the old ones by position still finds them.
         let lineage = match self.lineage.as_ref().map(|l| l.tracker.row(best_row)) {
-            Some(m) => format!("{:>9}{:>11}{:>15}", m.age, m.founder_generation, m.founder_origin),
+            // The origin is a word, so it is left-aligned under its heading; the
+            // two numbers are right-aligned like every other column.
+            Some(m) => format!("{:>9}{:>11}   {:<12}", m.age, m.founder_generation, m.founder_origin),
             None => String::new(),
         };
         eprintln!(

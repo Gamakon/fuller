@@ -566,7 +566,7 @@ pub fn mate_of(island: Island, row: u32) -> Option<u32> {
         return None;
     }
     let k = row - first;
-    Some(if k % 2 == 0 { row + 1 } else { row - 1 }).filter(|&m| m < island.hi)
+    Some(if k.is_multiple_of(2) { row + 1 } else { row - 1 }).filter(|&m| m < island.hi)
 }
 
 #[cfg(test)]
