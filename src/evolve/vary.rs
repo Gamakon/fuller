@@ -289,6 +289,205 @@ pub fn chance(h: u64, thr: u32) -> bool {
     thr == u32::MAX || ((h >> 32) as u32) < thr
 }
 
+// ---------------------------------------------------------------------------
+// THE BEAM'S NEIGHBOURHOOD. One individual, many mutations of it — the operators
+// above, aimed at ONE row instead of a whole generation. Nothing here scores
+// anything: it proposes, and the caller (`engine::Engine::beam`) judges with HFF
+// on the data, exactly as `physics::generate` proposes and its caller judges.
+// ---------------------------------------------------------------------------
+
+/// What the neighbourhood is drawn against: the row it mutates, the head its
+/// functions must stay inside, and the constants a drawn one may take.
+#[derive(Clone, Copy, Debug)]
+pub struct BeamParams {
+    pub seed: u32,
+    /// The generation the beat is on: with `seed` and the mutant's index it keys
+    /// every draw, so a beat's whole neighbourhood is reproducible.
+    pub generation: u32,
+    pub rnc_lo: i32,
+    pub rnc_hi: i32,
+    pub vhead: u32,
+    /// Which of the chromosome's genes the model USES (bit g): a mutation of a
+    /// gene the model does not use changes nothing it is scored on, so the
+    /// neighbourhood never spends a mutant there. `Scored::genes`.
+    pub genes: u32,
+}
+
+/// A mutant of one individual: its genome row, its constants, and how it was
+/// made — so a beat can report which operator found the winner.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Mutant {
+    pub genome: Vec<u32>,
+    pub rnc: Vec<f32>,
+    pub kind: BeamKind,
+}
+
+/// The operator that made a mutant. The cleanse is first because it is the one
+/// that removes a spurious factor — "one subtree away" — and the near misses in
+/// the solution ledger are one subtree from their law.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BeamKind {
+    /// `cleanse_gene_within` promoting a child over its parent: `f(u) -> u`,
+    /// `op(a, b) -> a`. The spurious factor removed.
+    Promote,
+    /// `cleanse_gene_within` collapsing a whole subtree to one drawn constant.
+    Collapse,
+    /// One symbol of one gene replaced, as `mutate`'s step 1 does it.
+    Point,
+    /// One Dc slot pointed at another of the gene's constants.
+    Dc,
+    /// One of the gene's constants redrawn.
+    Rnc,
+}
+
+/// THE NEIGHBOURHOOD of one individual: up to `width` mutants of it, all
+/// distinct from the original and from each other, every one a valid gene.
+///
+/// The mix, and why. The CLEANSE space is enumerated WHOLE and first — every
+/// function node of every used gene, promoted to each of its children and
+/// collapsed to a constant. It is small (a few hundred at head 34) and it is the
+/// operator the evidence asks for: feynman_test_4's report is the law with one
+/// spurious `sqrt(x_3 - 0.909)` factor, and promoting that factor's parent over
+/// its other child deletes exactly that. Enumerated rather than drawn because a
+/// few hundred is cheaper to enumerate than to hit by sampling, and because the
+/// beat then cannot miss the one node that matters.
+///
+/// What is left of `width` is filled with DRAWN mutations, cycling point, Dc and
+/// constant in that order: point mutation because a law is often one symbol from
+/// an imitation (`x_2` where the gene has `x_3`), and the two Dc operators
+/// because a near miss whose structure is right may need one constant moved. The
+/// transpositions, the inversions and the crossovers are NOT here: they rearrange
+/// large blocks, which is a different search from "one node away", and crossover
+/// needs a second parent the beam does not have.
+///
+/// Draws are keyed by `(seed, generation, mutant index)` through the engine's own
+/// counter-based `draw`, so the same beat gives the same neighbourhood. A
+/// mutation that changes nothing (a cleanse that does not apply, a point mutation
+/// that writes the symbol already there) is dropped, not counted.
+pub fn neighbourhood(genome: &[u32], rnc: &[f32], layout: Layout, codes: &SymbolCodes, p: &BeamParams, width: u32) -> Result<Vec<Mutant>, String> {
+    let vhead = super::virtual_head(p.vhead, layout)?;
+    let (width_g, ht, g_n, nr) = (layout.gene_width() as usize, (layout.head + layout.tail) as usize, layout.n_genes as usize, layout.n_rnc as usize);
+    if genome.len() != g_n * width_g || rnc.len() != g_n * nr {
+        return Err(format!("the row is {} tokens and {} constants, the layout wants {} and {}", genome.len(), rnc.len(), g_n * width_g, g_n * nr));
+    }
+    let used: Vec<usize> = (0..g_n).filter(|g| p.genes >> g & 1 == 1).collect();
+    if used.is_empty() {
+        return Err("the neighbourhood needs at least one used gene".into());
+    }
+    let arity = |id: u32| codes.arity[id as usize] as usize;
+    let mut out: Vec<Mutant> = Vec::new();
+    let mut seen: Vec<(Vec<u32>, Vec<u32>)> = vec![(genome.to_vec(), rnc.iter().map(|v| v.to_bits()).collect())];
+    // Keep a mutant unless it is the original or one already made.
+    let keep = |genome: Vec<u32>, rnc: Vec<f32>, kind: BeamKind, out: &mut Vec<Mutant>, seen: &mut Vec<(Vec<u32>, Vec<u32>)>| {
+        let key = (genome.clone(), rnc.iter().map(|v| v.to_bits()).collect::<Vec<u32>>());
+        if seen.contains(&key) {
+            return;
+        }
+        seen.push(key);
+        out.push(Mutant { genome, rnc, kind });
+    };
+
+    // 1. THE CLEANSE NEIGHBOURHOOD, enumerated whole: every function node of every
+    //    used gene, promoted over each child and collapsed to a constant. The
+    //    draws `cleanse_gene_within` takes are built so it picks exactly the node
+    //    and the child this entry names — `below(h, n)` maps the top bits, so
+    //    `(nth << 1 | 1) * (u64::MAX / n)` lands inside bucket `nth`.
+    let bucket = |nth: usize, n: usize| -> u64 {
+        if n <= 1 {
+            0
+        } else {
+            (u64::MAX / n as u64).saturating_mul(nth as u64) + u64::MAX / (2 * n as u64)
+        }
+    };
+    for &g in &used {
+        let tokens = &genome[g * width_g..(g + 1) * width_g];
+        let Some(tree) = GeneTree::of(tokens, layout, codes) else { continue };
+        let functions: Vec<usize> = (0..tree.n).filter(|&i| arity(tokens[i]) > 0).collect();
+        for (nth, &node) in functions.iter().enumerate() {
+            let pick = bucket(nth, functions.len());
+            for child in 0..arity(tokens[node]) {
+                let mut mutant = genome.to_vec();
+                let gene = &mut mutant[g * width_g..(g + 1) * width_g];
+                if cleanse_gene_within(gene, layout, vhead, codes, (pick, false, bucket(child, arity(tokens[node])), 0)) {
+                    keep(mutant, rnc.to_vec(), BeamKind::Promote, &mut out, &mut seen);
+                }
+            }
+            // The collapse puts ONE new "?" on each of the gene's constants in
+            // turn: the same subtree removed, standing for a different value.
+            if codes.rnc_id.is_some() {
+                for slot in 0..nr {
+                    let mut mutant = genome.to_vec();
+                    let gene = &mut mutant[g * width_g..(g + 1) * width_g];
+                    if cleanse_gene_within(gene, layout, vhead, codes, (pick, true, 0, bucket(slot, nr))) {
+                        keep(mutant, rnc.to_vec(), BeamKind::Collapse, &mut out, &mut seen);
+                    }
+                }
+            }
+        }
+    }
+    out.truncate(width as usize);
+
+    // 2. The drawn mutations, filling what is left: point, Dc, constant, in turn.
+    //    Every one is a single edit of a single slot of a single used gene.
+    let (nf, nt) = (codes.sample_functions.len() as u32, codes.sample_terminals.len() as u32);
+    let span = (p.rnc_hi - p.rnc_lo + 1) as u32;
+    // A bounded number of tries: a neighbourhood whose every drawn edit is a
+    // no-op must end, not spin. Four tries per wanted mutant is generous and is
+    // the whole rule — nothing here retries silently for ever.
+    let mut index = 0u32;
+    let tries = u64::from(width).saturating_mul(4);
+    while (out.len() as u32) < width && u64::from(index) < tries {
+        let d = |slot, stream| draw(p.seed, p.generation, index, slot, stream);
+        let g = used[below(d(0, STREAM_BEAM), used.len() as u32) as usize];
+        match index % 3 {
+            0 => {
+                // A point mutation of one head-or-tail slot, by `mutate`'s rule: a
+                // function only below the virtual head, a terminal anywhere.
+                let pos = below(d(1, STREAM_MUT_HIT), ht as u32);
+                let token = if pos < vhead && coin(d(2, STREAM_MUT_KIND)) {
+                    codes.sample_functions[below(d(3, STREAM_MUT_SYMBOL), nf) as usize]
+                } else {
+                    codes.sample_terminals[below(d(3, STREAM_MUT_SYMBOL), nt) as usize]
+                };
+                let at = g * width_g + pos as usize;
+                if genome[at] != token {
+                    let mut mutant = genome.to_vec();
+                    mutant[at] = token;
+                    keep(mutant, rnc.to_vec(), BeamKind::Point, &mut out, &mut seen);
+                }
+            }
+            1 => {
+                // One Dc slot pointed at another of the gene's constants.
+                let pos = ht + below(d(1, STREAM_DC_HIT), layout.tail) as usize;
+                let value = below(d(2, STREAM_DC_VALUE), layout.n_rnc);
+                let at = g * width_g + pos;
+                if genome[at] != value {
+                    let mut mutant = genome.to_vec();
+                    mutant[at] = value;
+                    keep(mutant, rnc.to_vec(), BeamKind::Dc, &mut out, &mut seen);
+                }
+            }
+            _ => {
+                // One of the gene's constants redrawn, from the same range the
+                // population was born in.
+                let k = g * nr + below(d(1, STREAM_RNC_HIT), layout.n_rnc) as usize;
+                let value = (p.rnc_lo + below(d(2, STREAM_RNC_VALUE), span) as i32) as f32;
+                if rnc[k] != value {
+                    let mut constants = rnc.to_vec();
+                    constants[k] = value;
+                    keep(genome.to_vec(), constants, BeamKind::Rnc, &mut out, &mut seen);
+                }
+            }
+        }
+        index += 1;
+    }
+    out.truncate(width as usize);
+    Ok(out)
+}
+
+/// The beam's own stream: which used gene a drawn mutation edits.
+pub const STREAM_BEAM: u32 = 26;
+
 #[derive(Clone, Copy, Debug)]
 pub struct GenParams {
     pub seed: u32,
@@ -854,6 +1053,122 @@ pub(crate) mod tests {
         // About half of all random genes are a bare terminal (a head slot is a
         // terminal with probability 1/2): nothing to cleanse, so they are refused.
         assert!(applied > 1000 && refused > 0, "applied {applied}, refused {refused}");
+    }
+
+    // -----------------------------------------------------------------------
+    // THE BEAM'S NEIGHBOURHOOD.
+    // -----------------------------------------------------------------------
+
+    fn beam_params(seed: u32, genes: u32) -> BeamParams {
+        BeamParams { seed, generation: 17, rnc_lo: -5, rnc_hi: 5, vhead: 0, genes }
+    }
+
+    /// One row of a drawn population: its genome and its constants.
+    fn one_row(layout: Layout, seed: u32) -> (Vec<u32>, Vec<f32>) {
+        let pop = init(layout, &codes(), &params(seed)).unwrap();
+        let (row_w, rnc_w) = ((layout.n_genes * layout.gene_width()) as usize, (layout.n_genes * layout.n_rnc) as usize);
+        (pop.genome[..row_w].to_vec(), pop.rnc[..rnc_w].to_vec())
+    }
+
+    /// A neighbourhood is `width` mutants, every one DIFFERENT from the original
+    /// and from every other, every one a valid gene, and the same seed gives the
+    /// same set.
+    #[test]
+    fn the_neighbourhood_is_distinct_valid_and_reproducible() {
+        let (codes, layout) = (codes(), Layout::for_arity(64, 3, 12, 2, 10));
+        let (genome, rnc) = one_row(layout, 31);
+        let p = beam_params(31, 0b111);
+        let out = neighbourhood(&genome, &rnc, layout, &codes, &p, 400).unwrap();
+        assert!(out.len() > 50, "only {} mutants", out.len());
+        // distinct from the original, and from each other
+        for m in &out {
+            assert!(m.genome != genome || m.rnc != rnc, "a mutant is the original");
+        }
+        let mut keys: Vec<(Vec<u32>, Vec<u32>)> = out.iter().map(|m| (m.genome.clone(), m.rnc.iter().map(|v| v.to_bits()).collect())).collect();
+        let before = keys.len();
+        keys.sort();
+        keys.dedup();
+        assert_eq!(keys.len(), before, "the neighbourhood repeated a mutant");
+        // every one passes the structural rules, as a population row must
+        for m in &out {
+            let pop = Population { layout: Layout { pop: 1, ..layout }, genome: m.genome.clone(), rnc: m.rnc.clone(), wrapper_id: vec![0] };
+            pop.check(&codes).expect("a mutant broke the gene rules");
+        }
+        // reproducible from the seed, and another beat is another neighbourhood
+        assert_eq!(out, neighbourhood(&genome, &rnc, layout, &codes, &p, 400).unwrap());
+        let other = neighbourhood(&genome, &rnc, layout, &codes, &BeamParams { generation: 18, ..p }, 400).unwrap();
+        assert_ne!(out, other, "two beats gave the same neighbourhood");
+    }
+
+    /// The CLEANSE NEIGHBOURHOOD is enumerated WHOLE: for a gene with a known
+    /// tree, every function node promoted over each child is there, by name. The
+    /// gene is `*( *(x4, x5), f(x6) )` — promoting the root's first child deletes
+    /// the `f(x6)` factor, which is the "remove the spurious factor" move.
+    #[test]
+    fn every_promotion_of_every_function_node_is_in_the_neighbourhood() {
+        let (codes, layout) = (codes(), Layout::for_arity(1, 1, 8, 2, 10));
+        // ids: 0,1,2 arity 2; 3 arity 1; 4,5 plain terminals (6 is "?"). The gene
+        // is `*( *(x4, x5), f(x4) )` in Karva: 0 1 3 4 5 4, the trailing `3(4)` the
+        // SPURIOUS factor the promotion of the root's first child deletes.
+        let mut genome = vec![4u32; (layout.head + layout.tail) as usize];
+        genome[..6].copy_from_slice(&[0, 1, 3, 4, 5, 4]);
+        genome.extend(std::iter::repeat_n(0u32, layout.tail as usize));
+        let rnc = vec![1.0f32; layout.n_rnc as usize];
+        let p = beam_params(5, 0b1);
+        let out = neighbourhood(&genome, &rnc, layout, &codes, &p, 5000).unwrap();
+        let shown: Vec<String> = out.iter().filter(|m| m.kind == BeamKind::Promote).filter_map(|m| show(&m.genome, layout, &codes, None)).collect();
+        assert_eq!(show(&genome, layout, &codes, None).unwrap(), "0(1(4,5),3(4))", "the gene under test");
+        // the root over each child: the spurious 3(4) factor deleted, or the other
+        for want in ["1(4,5)", "3(4)"] {
+            assert!(shown.iter().any(|s| s == want), "promotion to {want} is missing from {shown:?}");
+        }
+        // the inner `1` over each of its children, and the unary `3` over its own
+        for want in ["0(4,3(4))", "0(5,3(4))", "0(1(4,5),4)"] {
+            assert!(shown.iter().any(|s| s == want), "promotion giving {want} is missing from {shown:?}");
+        }
+        // and the collapses are there too: a subtree replaced by one "?"
+        assert!(out.iter().any(|m| m.kind == BeamKind::Collapse), "no collapse in the neighbourhood");
+    }
+
+    /// A mutation is only ever offered on a gene the model USES: with one gene in
+    /// `genes`, no other gene's tokens or constants ever move.
+    #[test]
+    fn the_neighbourhood_leaves_the_unused_genes_alone() {
+        let (codes, layout) = (codes(), Layout::for_arity(64, 3, 12, 2, 10));
+        let (genome, rnc) = one_row(layout, 41);
+        let (width, nr) = (layout.gene_width() as usize, layout.n_rnc as usize);
+        let out = neighbourhood(&genome, &rnc, layout, &codes, &beam_params(41, 0b010), 300).unwrap();
+        assert!(!out.is_empty());
+        for m in &out {
+            for g in [0usize, 2] {
+                assert_eq!(m.genome[g * width..(g + 1) * width], genome[g * width..(g + 1) * width], "gene {g} moved");
+                assert_eq!(m.rnc[g * nr..(g + 1) * nr], rnc[g * nr..(g + 1) * nr], "gene {g}'s constants moved");
+            }
+        }
+    }
+
+    /// A row that does not fit the layout, and a chromosome with no used gene,
+    /// are errors — not a guess and not an empty neighbourhood that looks like
+    /// "nothing to try".
+    #[test]
+    fn a_neighbourhood_of_nothing_is_an_error() {
+        let (codes, layout) = (codes(), Layout::for_arity(64, 3, 12, 2, 10));
+        let (genome, rnc) = one_row(layout, 51);
+        assert!(neighbourhood(&genome[..10], &rnc, layout, &codes, &beam_params(51, 0b111), 10).is_err());
+        assert!(neighbourhood(&genome, &rnc, layout, &codes, &beam_params(51, 0), 10).is_err());
+        // a virtual head outside 2..=head is refused by the same rule as everywhere
+        assert!(neighbourhood(&genome, &rnc, layout, &codes, &BeamParams { vhead: 99, ..beam_params(51, 0b111) }, 10).is_err());
+    }
+
+    /// The width is a CAP, honoured exactly: asking for few gives few.
+    #[test]
+    fn the_neighbourhood_honours_its_width() {
+        let (codes, layout) = (codes(), Layout::for_arity(64, 3, 12, 2, 10));
+        let (genome, rnc) = one_row(layout, 61);
+        for width in [1u32, 7, 33] {
+            let out = neighbourhood(&genome, &rnc, layout, &codes, &beam_params(61, 0b111), width).unwrap();
+            assert_eq!(out.len(), width as usize, "width {width}");
+        }
     }
 
     #[test]
