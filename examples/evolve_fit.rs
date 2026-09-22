@@ -315,6 +315,13 @@ fn main() {
         println!("LINEAGE\t{}\t{}\t{}\t{}", m.age, m.founder_generation, m.founder_origin, m.id);
         println!("GENEALOGY\t{}\t{}\t{}\t{:.2}", out.genealogy_minted, out.genealogy_lines, out.genealogy_bytes, out.timing.genealogy);
     }
+    // THE FINAL POPULATION's ages (min, median, max, mean) over every row and over
+    // the best ten, and how many distinct lines the best fifty descend from — the
+    // diversity number a decision about age layers would rest on.
+    if let Some(a) = out.population_ages {
+        println!("AGES\t{}\t{}\t{}\t{:.2}\t{}\t{}\t{}\t{:.2}", a.all.0, a.all.1, a.all.2, a.all.3, a.best_10.0, a.best_10.1, a.best_10.2, a.best_10.3);
+        println!("FOUNDERS\t{}\t{}", a.founders_best_50, a.founders_all);
+    }
     println!("MODEL_INFIX\t{}", tidy.to_infix_faithful());
     // The same model with every protected operator written as the ordinary one —
     // the FUNCTION, without the execution guard. It is what goes to SRBench, which

@@ -17,7 +17,7 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 use super::device::EvolveDevice;
-use super::genealogy::{Genealogy, GenealogyLog, Origin, RowMark};
+use super::genealogy::{Genealogy, GenealogyLog, Origin, PopulationAges, RowMark};
 use super::score::{GpuScorer, WIDTH};
 use super::vary::{GenParams, Generation, Island, Rates};
 use super::write_back::{gene_form, model_form, write_back, SnapCounts, WriteBack};
@@ -545,6 +545,9 @@ pub struct FitResult {
     /// THE WINNER'S LINEAGE: its identity, how old it was in generations, and the
     /// generation and mechanism its line began at. None when the genealogy is off.
     pub lineage: Option<RowMark>,
+    /// THE FINAL POPULATION's ages, and how many lines its best rows descend
+    /// from — the diversity number. None when the genealogy is off.
+    pub population_ages: Option<PopulationAges>,
     /// How many ids the fit minted, and how many lines and bytes the log took.
     pub genealogy_minted: u64,
     pub genealogy_lines: u64,
@@ -2012,6 +2015,10 @@ impl Engine {
         // Under balanced tournaments the TrueNorth best is not an elite and may have
         // left the population: the HALL OF FAME's winner goes back into a row, to be
         // confirmed in f64 and reported like any other.
+        // Whether the row reported is the hall of fame's winner written over a row
+        // of the population, or the population's own best. The genealogy needs to
+        // know: the row it was written over belongs to somebody else.
+        let mut hof_restored = false;
         if let Some(h) = hof.as_ref().filter(|h| c.balanced_tournaments && h.best.fitness < ranked.fitness) {
             let l = self.layout;
             let (row_w, rnc_w) = ((l.n_genes * l.gene_width()) as usize, (l.n_genes * l.n_rnc) as usize);
@@ -2020,6 +2027,7 @@ impl Engine {
             gen.pop.wrapper_id[row] = h.wrapper_id;
             ranked = h.best;
             row = row.min(l.pop as usize - 1);
+            hof_restored = true;
         }
         let best = self.confirm(&gen, row)?.unwrap_or(ranked);
         // THE WINNER'S LINEAGE: its mark, and its whole chain back to its founder
@@ -2027,10 +2035,22 @@ impl Engine {
         // row (balanced tournaments), the lineage reported is the one it had when
         // it was remembered — the row it was written over is somebody else.
         let mut winner = None;
+        let mut population_ages = None;
         let (mut minted, mut lines, mut bytes) = (0u64, 0u64, 0u64);
         if self.lineage.is_some() {
             let t = Instant::now();
-            winner = match hof.as_ref().filter(|h| c.balanced_tournaments && h.best.fitness <= ranked.fitness).and_then(|h| h.mark) {
+            // THE FINAL POPULATION: its ages, and how many lines its best rows come
+            // from. Ranked fittest first over the rows that were scored.
+            let mut ranked: Vec<usize> = (0..self.layout.pop as usize).filter(|&r| self.scored[r].is_some() && !gen.fitness[r].is_nan()).collect();
+            ranked.sort_by(|&a, &b| self.scored[a].map_or(f64::MAX, |s| s.fitness).total_cmp(&self.scored[b].map_or(f64::MAX, |s| s.fitness)).then(a.cmp(&b)));
+            population_ages = self.lineage.as_ref().and_then(|l| l.tracker.population_ages(&ranked));
+            if let (Some(l), Some(ages)) = (self.lineage.as_mut(), population_ages) {
+                let line = l.tracker.population_record(generation, &ages);
+                l.log.line(&line)?;
+            }
+            // The hall of fame's mark is the winner's as it stood when it was
+            // remembered; only use it when that winner was actually put back.
+            winner = match hof.as_ref().filter(|_| hof_restored).and_then(|h| h.mark) {
                 Some(mark) => Some(mark),
                 None => self.lineage.as_ref().map(|l| l.tracker.row(row)),
             };
@@ -2045,6 +2065,7 @@ impl Engine {
         }
         Ok(FitResult {
             lineage: winner,
+            population_ages,
             genealogy_minted: minted,
             genealogy_lines: lines,
             genealogy_bytes: bytes,
@@ -3233,8 +3254,9 @@ mod tests {
             assert_eq!(r[6], "0", "a fresh individual is age 0: {r:?}");
             assert_eq!(r[3], r[7], "a fresh individual founds its own line: {r:?}");
         }
-        // NO line begins at ordinary variation
-        for r in &rows {
+        // NO line begins at ordinary variation. The `population` summary is not a
+        // record — its columns are its own key-value pairs — so it is left out.
+        for r in rows.iter().filter(|r| r[0] != "population") {
             let founder_origin = &r[9];
             assert!(
                 ["init", "pump_refill", "cross_fresh", "beam_append"].contains(&founder_origin.as_str()),
@@ -3310,6 +3332,41 @@ mod tests {
             assert_eq!(r[5], "-1", "a repair has no second ancestor");
         }
         assert!(engine.snap_counts().beats > 0, "the snap beat ran");
+        std::fs::remove_file(&path).expect("remove");
+        std::fs::remove_dir(&dir).expect("remove its directory");
+    }
+
+    /// THE FINAL POPULATION's ages and diversity: reported on the fit, written into
+    /// the log as its own line, and consistent with the tracker's own rows.
+    #[test]
+    fn a_fit_reports_the_final_populations_ages_and_how_many_lines_its_best_rows_come_from() {
+        let (dir, path) = scratch("population-ages");
+        let mut engine = Engine::new(tracked_config(Some(path.clone())), toy_data()).expect("engine");
+        let out = engine.fit().expect("fit");
+        let ages = out.population_ages.expect("the final population's ages");
+        let pop = engine.layout.pop as usize;
+        // the whole population's ages bracket the best ten's
+        assert!(ages.all.0 <= ages.best_10.0 && ages.best_10.2 <= ages.all.2, "{ages:?}");
+        assert!(ages.all.0 <= ages.all.1 && ages.all.1 <= ages.all.2, "{ages:?}");
+        assert!(ages.all.2 <= out.generations, "a row older than the fit: {ages:?}");
+        assert!(ages.founders_best_50 >= 1 && ages.founders_best_50 <= 50);
+        assert!(ages.founders_all >= ages.founders_best_50, "{ages:?}");
+        assert!(ages.founders_all <= pop);
+        // the tracker agrees
+        let l = engine.lineage.as_ref().expect("the genealogy");
+        assert_eq!(l.tracker.ages(0..pop).expect("ages"), ages.all);
+        assert_eq!(l.tracker.distinct_founders(0..pop), ages.founders_all);
+        // and the log carries it, so the study file stands on its own
+        let text = std::fs::read_to_string(&path).expect("the log");
+        let line = text.lines().find(|l| l.starts_with("population\t")).expect("a population line");
+        let f: Vec<&str> = line.split('\t').collect();
+        assert_eq!(f[2], "all");
+        assert_eq!(f[3].parse::<u32>().expect("min"), ages.all.0);
+        assert_eq!(f[5].parse::<u32>().expect("max"), ages.all.2);
+        assert_eq!(f[7], "best10");
+        assert_eq!(f[12], "founders_best50");
+        assert_eq!(f[13].parse::<usize>().expect("founders"), ages.founders_best_50);
+        assert_eq!(f[15].parse::<usize>().expect("founders_all"), ages.founders_all);
         std::fs::remove_file(&path).expect("remove");
         std::fs::remove_dir(&dir).expect("remove its directory");
     }

@@ -32,6 +32,10 @@ pub enum Origin {
     /// Ordinary variation: cloned from a parent by the tournaments and mutated.
     Vary,
     /// An elite, copied unchanged into its island's first rows by the same kernel.
+    /// It MINTS NO ID — it is the same individual, one generation older — so no
+    /// edge is ever written with this origin and the log never prints it. An
+    /// individual's elite tenure is read instead as the row's age minus the age
+    /// its own edge was minted at: the generations it survived without changing.
     Elite,
     /// THE PUMP: an intake island's best, copied over a champion island's worst.
     PumpPromote,
@@ -148,6 +152,22 @@ pub struct Record {
     pub founder_generation: u32,
     pub founder_origin: Origin,
     pub origin: Origin,
+}
+
+/// WHAT THE POPULATION LOOKS LIKE when a fit ends: the ages it holds, and how
+/// many distinct lines its best rows descend from. The diversity number ALPS
+/// bears on is `founders_best_50` — a population converged on one founder has
+/// nothing left for a fresh draw to beat.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PopulationAges {
+    /// (min, median, max, mean) over every row.
+    pub all: (u32, u32, u32, f64),
+    /// The same over the best ten rows by fitness.
+    pub best_10: (u32, u32, u32, f64),
+    /// How many distinct founders the best fifty rows descend from.
+    pub founders_best_50: usize,
+    /// How many distinct founders the whole population descends from.
+    pub founders_all: usize,
 }
 
 /// The identities of a population, and the edges of everything minted so far.
@@ -404,6 +424,30 @@ impl Genealogy {
         v.dedup();
         v.len()
     }
+
+    /// THE FINAL POPULATION's ages and diversity, given its rows ranked fittest
+    /// first. `ranked` need not cover every row (an unevaluated one has no rank);
+    /// the whole-population figures still read every row.
+    pub fn population_ages(&self, ranked: &[usize]) -> Option<PopulationAges> {
+        let all = self.ages(0..self.rows.len())?;
+        let best_10 = self.ages(ranked.iter().take(10).copied())?;
+        Some(PopulationAges {
+            all,
+            best_10,
+            founders_best_50: self.distinct_founders(ranked.iter().take(50).copied()),
+            founders_all: self.distinct_founders(0..self.rows.len()),
+        })
+    }
+
+    /// The ages of the best rows and how many lines they come from, as the log's
+    /// one `population` line: it makes the study file answer the diversity
+    /// question without the engine still being in memory.
+    pub fn population_record(&self, generation: u32, ages: &PopulationAges) -> String {
+        format!(
+            "population\t{generation}\tall\t{}\t{}\t{}\t{:.2}\tbest10\t{}\t{}\t{}\t{:.2}\tfounders_best50\t{}\tfounders_all\t{}\n",
+            ages.all.0, ages.all.1, ages.all.2, ages.all.3, ages.best_10.0, ages.best_10.1, ages.best_10.2, ages.best_10.3, ages.founders_best_50, ages.founders_all
+        )
+    }
 }
 
 /// THE GENEALOGY LOG: a header, then one tab-separated row per record, appended —
@@ -446,6 +490,12 @@ impl GenealogyLog {
         self.lines += 1;
         self.bytes += line.len() as u64;
         Ok(())
+    }
+
+    /// A line of the log that is not a record: the `population` summary, whose
+    /// columns are its own key-value pairs rather than the record header's.
+    pub fn line(&mut self, line: &str) -> Result<(), String> {
+        self.write(line)
     }
 
     /// One record.
