@@ -207,6 +207,99 @@ million ids, 26–47 MB on these fits), so the winner's whole chain can be walke
 chain after the fit ends from the log alone: only the winner's chain is written
 out, and only arrivals and the per-generation best are recorded, not every edge.
 
+## The beam subset to edge-case wraps (2026-09-22)
+
+Andrew's standing rule: "this is exactly the same function as wrapping the
+symbolic solution in a linear regression ... the final mutation is functional",
+and "subset the beam to edge cases like this [x/(exp(x)-1)]". So a mutation is a
+FUNCTIONAL WRAP applied to what the search already has, its free parameters
+solved by least squares rather than searched; and the beam is subset to the
+shapes the gene provably never builds.
+
+`BEAM_WRAPS` goes from seven to four. `Exp`, `Square` and `Recip` are dropped:
+`ProtectedExp`, `Pow2` and `ProtectedInv` are all SAMPLED functions of the gene's
+own table, so ordinary variation reaches those shapes by writing one symbol. What
+is left is aimed at named laws — `1/(x-1)` at III.4.32, `x/(exp(x)-1)` at
+III.4.33, `1/sqrt(1-x)` at the Lorentz family (I.10.7, II.13.23, I.48.2, I.15.10,
+II.13.34, I.34.14, **0 of 9 solved in every race on record**), `1/(1-x)` at
+I.34.1's `omega_0/(1 - v/c)`. The beam's TREE half is now off by default
+(`Config::beam_tree`): a default beat is the wraps alone.
+
+**Two blockers, both real, both measured.**
+
+*The backreference.* `wrap_nodes` had `Unary`, `BinaryUnitFirst` and
+`BinarySelfFirst` — every node takes the value below it ONCE — so a wrap was a
+CHAIN and `x/(exp(x)-1)`, whose argument appears twice, had no spelling at all.
+It was scored on every beat and could never land. Andrew: "in sed we have
+`s/\(blah\)/andrewsays\1\1\1/g` so can we not do something at all?"
+`WrapNode::HostFirst(op)` is `op(host, below)` — the left child is the gene's own
+root, so the template may name the wrapped value as often as the shape needs.
+Karva cannot share a subtree, so the host is written out again and the gene grows
+by the host subtree's size. **That cost never bit: over 28 fits and ~25 million
+genes evaluated, 0 exceeded the 64-node limit and 1 graft in 9 was refused.**
+
+*Score is not graft.* A wrap was SCORED on `W(L(g0,g1,g2))` and GRAFTED as
+`W(g0)` with the other genes set to 1 — different functions whenever the model
+uses more than one gene. Run against commit e55b94c on a three-gene model,
+`1/(x-1)` scored 1-R² **0.0759** and its graft computed **1.0100**: a wrap that
+looked like it explained 92% of the variance landed as worse than the mean.
+
+The first fix — score the wrap on the HOST GENE ALONE — makes score and graft
+agree, and **cannot express four of the five aimed laws**. I.10.7 is
+`m_0/sqrt(1-(v/c)^2)`, I.48.2 `m*c^2/sqrt(...)`, I.34.1 `omega_0/(1-v/c)`,
+III.4.33 `kb*T * u/(exp(u)-1)` — all `prefactor(variables) * W(u)`. With only a
+SCALAR outside the wrap the prefactor has nowhere to live. Measured, 24 fits, two
+seeds: **8,300 wrap candidates, 0 better, 0 grafted, 0 kept.** A clean negative,
+and not a search failure — a shape the scoring could not represent.
+
+The wrap now goes INSIDE the linker, on one gene: scored as
+`a * L(W(g_host), g_other, ...) + b` and grafted the same way, the other genes
+untouched. Score and graft still agree by construction.
+
+**The measurement.** Six laws x beam off/on x seeds 7013 and 7014, 30 s each,
+race settings (`EVOLVE_TOWER=1 EVOLVE_HFF_NO_VAL=1 EVOLVE_RNC_LO=-5
+EVOLVE_RNC_HI=5 EVOLVE_PUMP_EVERY=5`, population 1500+1500, head 34). Shared GPU,
+so timings are under contention.
+
+| law | seed | off log10 p | on log10 p | grafted/kept | on stopped by |
+|---|---|---|---|---|---|
+| III.4.32 | 7013 | -9.57 | **-11.17** | 1 / 1 | time |
+| III.4.32 | 7014 | -10.36 | -10.53 | 2 / 0 | time |
+| III.4.33 | 7013 | -5.91 | -6.55 | 0 / 0 | time |
+| III.4.33 | 7014 | -7.26 | -7.37 | 0 / 0 | time |
+| I.10.7 | 7013 | -9.11 | **-21.08** | 1 / 1 | **early_stop, gen 7** |
+| I.10.7 | 7014 | -7.75 | -7.47 | 0 / 0 | time |
+| I.48.2 | 7013 | -8.30 | -11.00 | 0 / 0 | time |
+| I.48.2 | 7014 | -10.45 | -9.94 | 5 / 0 | time |
+| II.11.3 | 7013 | -3.30 | -3.14 | 0 / 0 | time |
+| II.11.3 | 7014 | -5.87 | -4.67 | 0 / 0 | time |
+| I.12.5 (control) | 7013 | -22.42 | -22.42 | 0 / 0 | early_stop |
+| I.12.5 (control) | 7014 | -22.35 | -22.35 | 0 / 0 | early_stop |
+
+**feynman_I_10_7 is solved at generation 7, log10 p -21.08, test R² 1.000000**,
+by one `1/sqrt(1-x)` wrap grafted and kept. The model is
+`x_0/(sqrt(1 - v/c) * sqrt(1 + v/c))` — algebraically exactly
+`m_0/sqrt(1-(v/c)^2)`. That law is in the family the near-miss study records as 0
+of 9 solved in every run ever. The control does not regress (identical both arms).
+
+**The honest caveat, and it is large.** I.10.7 solved on seed 7013 and NOT on
+7014 (-7.47, no graft). Run-to-run spread within an arm reaches 2.57 decades on
+II.11.3 and 2.15 on I.48.2, so a one-seed 1.6-decade move on III.4.32 is inside
+the noise. **One solve at one seed is a single event, not a rate.** What is
+outside the noise is structural, not statistical: the wrap now GRAFTS (9 grafts
+against 0 under the previous design), and the shape it grafts is one the search
+does not otherwise build.
+
+Two of the aimed laws are probably out of reach regardless: III.4.32 and III.4.33
+both have `h/(2*pi)` INSIDE the exponential, and with the wide table, no snap and
+whole-number constants -5..5 there is no way to write pi in a gene. The near-miss
+study's own rule puts "a non-whole-number constant inside the structure" at
+verdict "no". Those two rows measure whether the beam hurts, not whether it
+helps.
+
+Logs: `logs/beam_host_gene_alone.log` (the negative), and
+`logs/beam_inside_linker_measurement.log` (this table).
+
 ## Summary
 
 1. **Best valid single-seed score: 47 of 133 = 35.3%** (Rust engine, harvest-and-
