@@ -2967,7 +2967,17 @@ impl Engine {
                         // `confirm` scores TrueNorth over the error blocks and t_depth
                         // (not redundancy): that is the sphere its angle lives on.
                         let (_, log10_p) = hff_p_value(s.fitness, self.hff_dimensions() - usize::from(c.redundancy));
-                        if s.one_minus_r2[1] <= c.stop_one_minus_r2 && edge_ok && log10_p <= c.stop_log10_p {
+                        // THE TRAIN SIDE COUNTS TOO. Validation alone can pass on a
+                        // lucky split: strogatz bacres2 stopped with val 1-R2
+                        // 9.46e-11 while TRAIN was 1.03e-9 — validation ten times
+                        // better than the rows the model was fitted on, which is
+                        // noise, not a fit, and the function was not the law.
+                        // Measured over the cascade's 117 early stops: all 113 real
+                        // wins have train 1-R2 <= 1e-10 (median 9.8e-15), and
+                        // bacres2 is the only fit that does not. Requiring both
+                        // costs no true win on record.
+                        let train_ok = s.one_minus_r2[0] <= c.stop_one_minus_r2;
+                        if s.one_minus_r2[1] <= c.stop_one_minus_r2 && train_ok && edge_ok && log10_p <= c.stop_log10_p {
                             stopped_by = "early_stop";
                             break;
                         }
