@@ -218,8 +218,19 @@ impl Genealogy {
         &self.rows
     }
 
-    /// The record of the individual now in row `r`, for the log.
+    /// The record of the individual now in row `r`, for the log: its `origin` is
+    /// the mechanism that MINTED it — how the individual came to exist.
     pub fn record(&self, generation: u32, r: usize) -> Record {
+        let origin = self.edges[self.rows[r].id as usize].origin;
+        self.record_as(generation, r, origin)
+    }
+
+    /// The same, but naming the EVENT being logged rather than the minting. A
+    /// keeper and a snap write-back are not new individuals — no id is minted for
+    /// them, so their edge still says how they were born — and the log would
+    /// otherwise be unable to say that the pump kept this row or that snap
+    /// rewrote it. The identity, age and line reported are the row's own.
+    pub fn record_as(&self, generation: u32, r: usize, origin: Origin) -> Record {
         let mark = self.rows[r];
         let edge = self.edges[mark.id as usize];
         Record {
@@ -232,7 +243,7 @@ impl Genealogy {
             founder: mark.founder,
             founder_generation: mark.founder_generation,
             founder_origin: mark.founder_origin,
-            origin: edge.origin,
+            origin,
         }
     }
 

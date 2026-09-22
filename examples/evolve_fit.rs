@@ -208,6 +208,13 @@ fn main() {
     if let Some(n) = env("EVOLVE_SNAP_TOP_K").and_then(|v| v.parse().ok()) {
         config.snap_top_k = n;
     }
+    //   EVOLVE_GENEALOGY_FILE           THE GENEALOGY LOG: every individual of the fit gets an
+    //                                   IDENTITY, an AGE (generations since its genotype entered
+    //                                   the population) and a LINEAGE, and this file takes the
+    //                                   best of every generation, every arrival (pump, cross,
+    //                                   snap) and the winner's chain back to its founder. Unset
+    //                                   = off, and the engine is what it was, bit for bit.
+    config.genealogy_path = env("EVOLVE_GENEALOGY_FILE").filter(|p| !p.is_empty());
     let restarts: u32 = env("EVOLVE_RESTARTS").and_then(|v| v.parse().ok()).unwrap_or(1).max(1);
     config.cleanse = args.get(6).and_then(|a| a.parse().ok()).unwrap_or(0.0);
     // RESTARTS: the same seconds as one search, spent as several independent
@@ -301,6 +308,13 @@ fn main() {
     // Unique genes evaluated, how many of them were dropped as over the 64-node
     // limit, and the individuals they stood for.
     println!("GENES\t{}\t{}\t{}", out.unique_genes, out.oversized_genes, out.individuals);
+    // THE WINNER'S LINEAGE: how old it was in generations, the generation its line
+    // began at, the mechanism that put its founder into the population, and its id.
+    // Only when EVOLVE_GENEALOGY_FILE is set.
+    if let Some(m) = out.lineage {
+        println!("LINEAGE\t{}\t{}\t{}\t{}", m.age, m.founder_generation, m.founder_origin, m.id);
+        println!("GENEALOGY\t{}\t{}\t{}\t{:.2}", out.genealogy_minted, out.genealogy_lines, out.genealogy_bytes, out.timing.genealogy);
+    }
     println!("MODEL_INFIX\t{}", tidy.to_infix_faithful());
     // The same model with every protected operator written as the ordinary one —
     // the FUNCTION, without the execution guard. It is what goes to SRBench, which

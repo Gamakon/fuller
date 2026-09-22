@@ -403,6 +403,14 @@ impl EvolveDevice {
         })
     }
 
+    /// THE LINEAGE EDGE the selection kernel just wrote: for every row of the
+    /// generation `vary` produced, the row of the one before it that row was
+    /// cloned from. `select_main` computes it every generation whatever else is
+    /// on; this is the only thing that reads it back.
+    pub fn read_parent(&self) -> Result<Vec<u32>, String> {
+        self.read_buffer::<u32>(&self.parent_buf, self.layout.pop as usize)
+    }
+
     /// The current population with its fitness.
     pub fn read_generation(&self) -> Result<Generation, String> {
         let fitness = self.read_buffer::<f32>(&self.sets[self.current].fitness, self.layout.pop as usize)?;
