@@ -231,3 +231,41 @@ Open: confirm RNC −5..5 on a second seed; AB4 edge validation in Rust; the cro
 step between islands (in the notebook, not yet in the Rust engine); part-level
 leave-one-out in the linter; the noisy tracks; the 10-seed official evaluation
 (only Andrew triggers it).
+
+## 15 laws sit past the stop bar and score as misses (2026-09-22)
+
+Scan of every saved fit in `hff/notebooks/sr_logs/`: laws where our own stop bar
+(log10 p <= -19) is met but SRBench scores unsolved. Not search misses.
+
+| law | log10 p | what the engine produced | class |
+|---|---|---|---|
+| I_26_2 | -21.71 | `asin(n*sin(theta2))` | NAME — `asin` vs numpy `arcsin` |
+| I_44_4 | -21.43 | `T*kb*n*(-log(V1)+log(V2))` | IDENTICAL (diff 0) |
+| II_10_9 | -21.52 | `0.2*log(exp(5*s)) + 1.2e-4` | IDENTICAL (diff 0) |
+| s_lv2 | -21.33 | `-0.999*y*(x+y-2)` | IDENTICAL (diff 0), 0.999 scale |
+| test_5 | -21.73 | `6.28*sqrt(d**3/(G*(m1+m2)))` | IDENTICAL (ratio 1) — `_merge_radicals` |
+| II_6_15b | -21.36 | `0.12*p_d*sin(2*theta)/(eps*r**3)` | IDENTICAL (ratio 1) — sympy applied the DOUBLE ANGLE to our exact form |
+| I_34_14 | -21.87 | `omega_0*sqrt((c+v)/(c-v))` | IDENTICAL on c>v (refine -> 1); sympy will not assume it |
+| II_13_23 | -20.21 | `-7.14e+8*rho_c_0/sqrt(1-v**2/c**2)` | STRUCTURE right, scale wrong — f32/f64 write-back |
+| I_18_12 | -22.13 | `0.637*F*r*arcsin(r)*sin(theta)` | CLAMPED arcsin rides along (R2 nan) |
+| I_14_4 | -22.05 | `0.785*k*x**2/arcsin(x)` | same |
+| III_12_43 | -21.84 | `0.159*h*n + 0.159*arcsin(n) - 0.25` | same |
+| III_17_37 | -21.32 | `... + arccos(beta**3)` | same |
+| I_30_5 | -20.97 | `arccos(sqrt(l)) + arcsin(l) + arcsin(l/(d*n)) - 1.57` | same |
+| s_glider2 | -20.54 | `x + sqrt(Abs(arcsin(x*y))) - 1.25 - cos(y)/x` | same |
+| s_bacres2 | -19.94 | `10 - 2.63*y*tanh(log(x+1/(2*x)))*tanh(tanh(x))/x` | fits to 1-R2 4.5e-10, different function |
+
+Three named causes, each fixable without changing the search:
+
+1. **A clamped inverse-trig term that is constant on every row** still prints.
+   `arcsin(r)` where r >= 1 on all rows is the clamp constant 1.57; it rides in
+   as a factor or an additive term and destroys the match. 6 of the 15. The
+   resolve-to-constant rule exists for ProtectedAsin/Acos — it is not firing on
+   these shapes (factor position, and inside sqrt(Abs(.))).
+2. **Sympy rewrites our already-exact form away from the target**: the double
+   angle on II_6_15b, and refusing c>v on I_34_14. Our fuller-direct submission
+   should win these; the double submission is picking the sympy-tidied one.
+3. **Known bugs**: `_merge_radicals` (test_5), f32/f64 write-back (II_13_23).
+
+Ceiling if all three are closed: 78 + up to 14 = 92 of 133 (69%), with no
+change to evolution. The arcsin class alone is 6.
