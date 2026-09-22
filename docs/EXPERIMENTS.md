@@ -130,6 +130,67 @@ establishes what the engine can reach.
 - Snap needs RNC -100..100 to bite; every recent race used -5..5.
 - 9 laws of the 1/sqrt(1-v^2/c^2) family have never been solved in any run.
 
+## Age and lineage: what the genealogy log measured (2026-09-22)
+
+Every individual of a fit now carries an IDENTITY, an AGE (generations since its
+genotype entered the population — Hornby's ALPS rule: an offspring is its
+parent's age plus one, a fresh random individual is 0) and a LINEAGE back to the
+founder its line began at. `EVOLVE_GENEALOGY_FILE` writes the study file; with it
+unset the engine is bit-identical to before and costs nothing. This is the
+measurement only — nothing about selection changed, and no age layers were added.
+
+Six fits, seed 7013, population 1500 + 1500 = 3000, head 34, 30 s, the race's
+settings (`EVOLVE_TOWER=1 EVOLVE_HFF_NO_VAL=1 EVOLVE_RNC_LO=-5 EVOLVE_RNC_HI=5
+EVOLVE_PUMP_EVERY=5`). One seed, on a GPU shared with running races, so the
+timings are under contention.
+
+| law | gens | winner age | founder gen / origin | ages, all rows (min/med/max) | best 10 | founders best 50 | founders, all |
+|---|---|---|---|---|---|---|---|
+| I_12_5 (solved gen 1) | 1 | 1 | 0 init | 1 / 1 / 1 | 1 / 1 / 1 | 25 | 60 |
+| I_14_3 (solved gen 1) | 1 | 1 | 0 init | 1 / 1 / 1 | 1 / 1 / 1 | 20 | 40 |
+| II_38_14 (solved by search) | 204 | 204 | 0 init | 204 / 204 / 204 | 204 | **1** | **1** |
+| I_39_11 (not solved) | 335 | 335 | 0 init | 0 / 335 / 335 | 335 | **1** | 1201 |
+| I_48_2 (not solved) | 360 | 360 | 0 init | 0 / 360 / 360 | 360 | **1** | 1201 |
+| III_4_32 (not solved) | 332 | 332 | 0 init | 332 / 332 / 332 | 332 | **1** | 1 |
+
+**Every winner's founder was drawn in the initial population.** Not one fit was
+won by a line the pump introduced later — consistent with `STUDY_near_misses.md`'s
+finding that 54% of solves are already in the initial population.
+
+**The population converges onto ONE line and the pump never breaks it.** Across
+the four long fits the pump drew **294,000 fresh individuals** (40–72 refills of
+~1,200 rows each). Of the 73,990 rows that were later kept as the intake's best
+fifth or promoted into a champion island, the founder origin was `init` for
+**every single one** — zero `pump_refill`. A fresh draw's descendants never once
+reached the top fifth of the island they were drawn into. That is the number that
+bears on ALPS: the pump is already supplying young material, and selection
+discards all of it before it can compete, because it meets converged old
+material in the same tournament.
+
+Where the age spread is 0 to max, the 0s are the rows the last pump beat had just
+refilled — dead on arrival by the next beat. Where min = max (II_38_14,
+III_4_32) the fit ended between beats.
+
+Winners are also not long-lived elites: minting age equals row age on three of
+four long fits (the winning variation happened in the final generations), and the
+one exception sat unchanged for 27 generations.
+
+**Cost.** 0.86–1.15 s of a 30 s fit (2.9–3.8%) in `timing.genealogy`, plus the
+pump hooks, which land in `timing.pump`. Per fit: 20,500–22,500 lines,
+1.25–1.40 MB. 96% of the lines are `pump_keep` — the intake's best fifth
+re-logged at every beat — so a batch line for keepers would cut the file
+twenty-fold if the volume ever matters. Generations per second with and against
+the log differ by less than the contention on a shared GPU (I_48_2: 83.6 ms/gen
+on, 71.4 off; III_4_32: 90.6 on, 94.1 off — one slower, one faster).
+
+**What the design can and cannot answer.** Each row carries its founder forward,
+so "how old is the winner and where did its line come from" is always answerable.
+The full edge table is kept for the fit (one 40-byte record per minted id: 0.66–1.17
+million ids, 26–47 MB on these fits), so the winner's whole chain can be walked
+— it is 202–317 steps here. What it cannot do is reconstruct an arbitrary row's
+chain after the fit ends from the log alone: only the winner's chain is written
+out, and only arrivals and the per-generation best are recorded, not every edge.
+
 ## Summary
 
 1. **Best valid single-seed score: 47 of 133 = 35.3%** (Rust engine, harvest-and-
