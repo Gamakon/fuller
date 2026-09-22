@@ -148,6 +148,19 @@ pub const RATIONAL_RULESET: &str = r#"
 (rewrite (Mul (Num a) (Mul (Mul p (Num b)) q)) (Mul (Num (* a b)) (Mul p q)) :ruleset rational)
 (rewrite (Mul (Num a) (Mul q (Mul (Num b) p))) (Mul (Num (* a b)) (Mul q p)) :ruleset rational)
 (rewrite (Mul (Num a) (Mul q (Mul p (Num b)))) (Mul (Num (* a b)) (Mul q p)) :ruleset rational)
+; ... and with a DIVISION between them, which is the shape a cancelled quotient
+; leaves: the fitted scale a multiplies a gene whose own literal b has ended up
+; over the line of a Div. feynman II.13.23 came out as
+; -4.37e-8 * ((1.63e16 * x_0) / sqrt(1 - (x_1/x_2)^2)) — the two literals a
+; product apart with a division between them, never brought together. Both
+; operands are literal-anchored and the form is a node smaller, so it cannot
+; chain: the result has ONE literal where the input had two.
+(rewrite (Mul (Num a) (Div (Mul (Num b) p) q)) (Div (Mul (Num (* a b)) p) q) :ruleset rational)
+(rewrite (Mul (Num a) (Div (Mul p (Num b)) q)) (Div (Mul (Num (* a b)) p) q) :ruleset rational)
+; NOT written: the same with the gene's literal UNDER the line, a * (p/(b*q)).
+; It needs b != 0 to divide by, and the linter's classifier takes no `!=` guard
+; (it is not a fact relation) — that gather belongs in a data guided rewrite,
+; where the rows say whether b is ever 0.
 (rewrite (Add (Num a) (Add (Num b) q)) (Add (Num (+ a b)) q) :ruleset rational)
 (rewrite (Add (Add q (Num a)) (Num b)) (Add q (Num (+ a b))) :ruleset rational)
 ; c * (x / c) = x for a non-zero literal c, in every order the engine writes it.
@@ -249,6 +262,27 @@ mod tests {
                 "the cancelling pair was not gathered: {order}"
             );
         }
+    }
+
+    /// ... and with a DIVISION between the two literals: feynman II.13.23's
+    /// cancelled quotient left -4.37e-8 * ((1.63e16 * x_0) / sqrt(..)), the scale
+    /// and the gene's own literal never brought together.
+    #[test]
+    fn a_scale_gathers_a_literal_across_a_division() {
+        for order in [
+            r#"(Mul (Num 0.25) (Div (Mul (Num 4.0) (Var "x")) (Var "y")))"#,
+            r#"(Mul (Num 0.25) (Div (Mul (Var "x") (Num 4.0)) (Var "y")))"#,
+        ] {
+            assert!(
+                proves_equal(order, r#"(Div (Mul (Num 1.0) (Var "x")) (Var "y"))"#),
+                "the pair was not gathered across the division: {order}"
+            );
+            assert_sound(order, &[("x", 3.0), ("y", 2.5)]);
+        }
+        // A literal UNDER the line is not gathered: it would need b != 0, which the
+        // linter's classifier takes no guard for.
+        let under = r#"(Mul (Num 0.25) (Div (Var "x") (Mul (Num 4.0) (Var "y"))))"#;
+        assert!(!proves_equal(under, r#"(Div (Mul (Num 0.0625) (Var "x")) (Var "y"))"#), "{under}");
     }
 
     #[test]

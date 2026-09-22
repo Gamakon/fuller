@@ -719,8 +719,11 @@ impl Caps {
 /// on every row is `Log (Div a b)` / `Log (Mul a b)`, a negation going inside
 /// as `Log (Div b a)`; `Sin` / `Cos` of `e + k*pi/2`, the constant exact to
 /// 1e-9, is the function a quarter turn on; `Tan` of an arcsin of a `u` the data
-/// keeps inside |u| < 1 is `u / sqrt(1 - u^2)`; and a factor standing on both
-/// sides of a product's line, never 0 on the data, cancels. One that is
+/// keeps inside |u| < 1 is `u / sqrt(1 - u^2)`; `Sqrt` of a square is the
+/// absolute value, and of an `(a+b)/(a-b)` quotient the data keeps positive is
+/// the family written in the ratio, `(1 + b/a)/sqrt(1 - (b/a)^2)`; and a factor
+/// standing on both sides of a product's line, never 0 on the data, cancels.
+/// One that is
 /// triggered on SOME rows stays protected, and `Tree::to_infix_faithful` writes
 /// it out as the Piecewise it is. Decided on `rows`, the rows the model was
 /// selected on — the engine's counterpart of hff's `symbolic_protected_div`.
@@ -2652,6 +2655,38 @@ mod tests {
         assert!(stood.contains("Tan") && stood.contains("Asin"), "{stood}");
     }
 
+    /// A factor on both sides of the line cancels — but only where the data says it
+    /// is never 0, and a product already in its lowest terms is left exactly as it
+    /// was written.
+    #[test]
+    fn a_factor_on_both_sides_of_the_line_cancels_where_the_data_says_it_is_never_zero() {
+        let live = r#"(Div (Mul (Var "x_0") (Var "x_1")) (Var "x_1"))"#;
+        assert_eq!(resolve_protected(live, &rows()).unwrap(), r#"(Var "x_0")"#);
+        // Through an Inv — the divisor written the other way — with the literal put
+        // first in the rebuilt product, where the rational folds can reach it.
+        let through = r#"(Mul (Mul (Var "x_0") (Var "x_1")) (Inv (Mul (Num 3.0) (Var "x_1"))))"#;
+        assert_eq!(resolve_protected(through, &rows()).unwrap(), r#"(Div (Var "x_0") (Num 3.0))"#);
+
+        // NEGATIVE: x_2 - 1.5 is exactly 0 on the first row, so it does not cancel.
+        let zero = r#"(Div (Mul (Var "x_0") (Sub (Var "x_2") (Num 1.5))) (Sub (Var "x_2") (Num 1.5)))"#;
+        assert_eq!(resolve_protected(zero, &rows()).unwrap(), zero);
+        // NEGATIVE: nothing to cancel — the product is written back as it was.
+        let lowest = r#"(Mul (Var "x_0") (Var "x_1"))"#;
+        assert_eq!(resolve_protected(lowest, &rows()).unwrap(), lowest);
+    }
+
+    /// sqrt(e^2) is |e| for every real e, and the Abs then sheds the sign the data
+    /// settles — or stays where the data does not settle it.
+    #[test]
+    fn a_root_of_a_square_is_the_absolute_value() {
+        let positive = r#"(Sqrt (Pow2 (Add (Var "x_0") (Var "x_1"))))"#;
+        assert_eq!(resolve_protected(positive, &rows()).unwrap(), r#"(Add (Var "x_0") (Var "x_1"))"#);
+        // NEGATIVE for the Abs: x_0 - 3 changes sign over rows(), so the Abs stays.
+        let mixed = r#"(Sqrt (Pow2 (Sub (Var "x_0") (Num 3.0))))"#;
+        assert_eq!(resolve_protected(mixed, &rows()).unwrap(), r#"(Abs (Sub (Var "x_0") (Num 3.0)))"#);
+        assert!(drift(mixed, &resolve_protected(mixed, &rows()).unwrap(), &rows()) <= FINAL_FORM_AGREE);
+    }
+
     /// feynman I.34.14 as the engine found it (seed 7014, pass2_s13), rebuilt from
     /// the fit's `fuller_model` `sqrt(((x_1 + x_0)/(x_0 - x_1))*(x_2**2))`: the root
     /// of the quotient is the law written in the ratio v/c, the form SRBench takes.
@@ -2672,6 +2707,16 @@ mod tests {
         // denominator's argument and no (c+v)/(c-v) quotient.
         let text = crate::lint::node::Tree::parse(&resolved).unwrap().to_infix();
         assert_eq!(text, "(x_2*((1.0 + (x_1/x_0))/sqrt((1.0 - ((x_1/x_0)**2)))))", "{text}");
+
+        // The PROTECTED spelling a chromosome carries: the ProtectedSqrt arm builds
+        // the raw root itself, so the rewrite only reaches it on the second pass —
+        // the one the engine runs after the final form. It must land the same way.
+        let protected = r#"(ProtectedSqrt (Mul (ProtectedDiv (Add (Var "x_1") (Var "x_0")) (Sub (Var "x_0") (Var "x_1"))) (Pow2 (Var "x_2"))))"#;
+        let once = resolve_protected(protected, &rows_doppler()).unwrap();
+        let tidy = final_form(&once, &names(), &rows_doppler()).unwrap();
+        let twice = resolve_protected(&tidy, &rows_doppler()).unwrap();
+        assert_eq!(crate::lint::node::Tree::parse(&twice).unwrap().to_infix(), text, "{twice}");
+        assert!(drift(protected, &twice, &rows_doppler()) <= FINAL_FORM_AGREE, "{twice}");
 
         // NEGATIVE: over rows() the difference x_0 - x_1 changes sign, so a + b and
         // a - b are not both positive and the two forms are not the same number.
