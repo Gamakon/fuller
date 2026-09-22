@@ -679,8 +679,13 @@ impl BeamCounts {
         self.appended += other.appended;
         self.survived_a_pump += other.survived_a_pump;
         self.seconds += other.seconds;
-        // The beat that gained the most is the one worth reporting.
-        if self.beats == other.beats || other.best_log10_p_after < self.best_log10_p_after {
+        // THE BEAT THAT GAINED THE MOST is the one worth reporting — the largest
+        // DROP, not the lowest angle. Keeping the lowest `after` reported the last
+        // beat of every fit instead: the population improves as it evolves, so the
+        // final beat always held the smallest angle whether or not it gained
+        // anything, and the pair printed `before == after` on every run.
+        let gain = |b: f64, a: f64| if b.is_finite() && a.is_finite() { b - a } else { 0.0 };
+        if self.beats == other.beats || gain(other.best_log10_p_before, other.best_log10_p_after) > gain(self.best_log10_p_before, self.best_log10_p_after) {
             self.best_log10_p_before = other.best_log10_p_before;
             self.best_log10_p_after = other.best_log10_p_after;
         }
@@ -3553,6 +3558,34 @@ mod tests {
         // And the same config twice is the same fit, as it always was.
         let (again, _, _) = fit(&base);
         assert_eq!((again.math, again.unique_genes, again.individuals), (off.math, off.unique_genes, off.individuals));
+    }
+
+    /// THE BEAT THE FIT REPORTS is the one that GAINED the most, not the one that
+    /// ended lowest. A fit's population improves as it evolves, so the last beat
+    /// holds the smallest angle whether or not it gained anything — reporting that
+    /// one printed `before == after` on every run and hid every real gain.
+    #[test]
+    fn a_fit_reports_the_beat_that_gained_the_most() {
+        let beat = |before: f64, after: f64| BeamCounts { beats: 1, best_log10_p_before: before, best_log10_p_after: after, ..BeamCounts::default() };
+        // Three beats: the first gains a decade, the second nothing, the third
+        // ends LOWEST but gains only a tenth. The first is the one to report.
+        let mut fit = BeamCounts::default();
+        fit.add(&beat(-5.0, -6.0));
+        fit.add(&beat(-6.0, -6.0));
+        fit.add(&beat(-7.0, -7.1));
+        assert_eq!(fit.beats, 3);
+        assert_eq!((fit.best_log10_p_before, fit.best_log10_p_after), (-5.0, -6.0), "the deepest beat was reported instead of the best gain");
+        // A fit whose every beat gained nothing reports a pair that is equal —
+        // truthfully, because nothing was gained.
+        let mut flat = BeamCounts::default();
+        flat.add(&beat(-4.0, -4.0));
+        flat.add(&beat(-4.5, -4.5));
+        assert_eq!((flat.best_log10_p_before, flat.best_log10_p_after), (-4.0, -4.0));
+        // and the plain counters are sums, beat by beat.
+        let mut summed = BeamCounts::default();
+        summed.add(&BeamCounts { beats: 1, mutants: 100, better: 3, appended: 1, ..BeamCounts::default() });
+        summed.add(&BeamCounts { beats: 1, mutants: 150, better: 0, survived_a_pump: 1, ..BeamCounts::default() });
+        assert_eq!((summed.beats, summed.mutants, summed.better, summed.appended, summed.survived_a_pump), (2, 250, 3, 1, 1));
     }
 
     /// THE HEADLINE TEST, and the one that says whether this works. A chromosome
