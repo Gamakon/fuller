@@ -222,6 +222,9 @@ fn main() {
     //   EVOLVE_BEAM_WIDTH               how many mutants a beat generates (default 2000)
     //   EVOLVE_BEAM_WRAPS=0             switch the FUNCTIONAL mutations off (the wraps whose
     //                                   a, b are fitted by least squares); tree mutations only
+    //   EVOLVE_BEAM_TREE=1              switch the TREE mutations ON (the cleanse neighbourhood
+    //                                   and the drawn edits). Off by default: a beat is the
+    //                                   edge-case wraps alone
     //   EVOLVE_FLOAT_ZONE               THE FLOAT ZONE: extra intake rows a beam survivor is
     //                                   APPENDED into, so the intake floats above its base
     //                                   size until the pump's own cut (0 = off)
@@ -233,6 +236,9 @@ fn main() {
     }
     if let Some(v) = env("EVOLVE_BEAM_WRAPS") {
         config.beam_wraps = v == "1";
+    }
+    if let Some(v) = env("EVOLVE_BEAM_TREE") {
+        config.beam_tree = v == "1";
     }
     if let Some(n) = env("EVOLVE_FLOAT_ZONE").and_then(|v| v.parse().ok()) {
         config.float_zone = n;

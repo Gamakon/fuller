@@ -1,0 +1,509 @@
+=== the wrap inside the linker: measurement started 2026-09-22 13:41:43 ===
+settings: TOWER=1 HFF_NO_VAL=1 RNC=-5..5 PUMP_EVERY=5 POP=1500+1500 head=34 30s
+arms: beam off vs beam on (every 5, edge-case wraps only, float zone 10)
+
+=== feynman_III_4_32  seed 7013  beam off  13:41:43 ===
+dataset /private/tmp/claude-501/-Users-andrewmorgan-Dev-gamakon-fuller/b3c1f1fe-1035-445f-ada0-9f05e732d5e6/scratchpad/beam_subset/feynman_III_4_32.tsv
+rows: train 4000, validation 1000, unseen test 25000
+population 1 x (1500+1500) = 3000 | 347 generations in 30.0 s = 86.5 ms per generation | 1044000 individuals = 34763 per second | stopped by time
+seconds: variation 0.17 | read-back 3.72 | decode 4.11 | evaluate 14.33 | link+scale+metrics 0.00 | HFF 5.47 | pump 2.99 | cross 0.00
+genes evaluated 1168439 (unique per generation), over the 64-node limit 0
+1 - R²: train 1.927e-6, validation 2.278e-6
+model: (((-91320489.08784167)*((Piecewise((0, Abs(((-0.002896476897082179) + (x_1*x_0))) < 1e-6), ((0.9999092042625951/((-0.002896476897082179) + (x_1*x_0))), True))*Piecewise((0, Abs(tan(Piecewise((asin(Piecewise((-1, x_3 < -1), (1, x_3 > 1), (x_3, True))), Abs(x_3) < 1.7976931348623157e308), (0, True)))) < 1e-6), ((Piecewise((asin(Piecewise((-1, x_3 < -1), (1, x_3 > 1), (x_3, True))), Abs(x_3) < 1.7976931348623157e308), (0, True))/tan(Piecewise((asin(Piecewise((-1, x_3 < -1), (1, x_3 > 1), (x_3, True))), Abs(x_3) < 1.7976931348623157e308), (0, True)))), True)))*(x_2*x_3))) + (-0.4707689469291889))
+GENERATIONS	347	time	2.278e-6
+HFF	0.000856	1.927e-6	2.278e-6	-
+MSE	1.499e-4	1.581e-4	-
+TOWER	2	in HFF
+PVALUE	2.664e-10	-9.57	4
+GENES	1168439	0	1044000
+MODEL_INFIX	(((-91320489.08784167)*((Piecewise((0, Abs(((-0.002896476897082179) + (x_1*x_0))) < 1e-6), ((0.9999092042625951/((-0.002896476897082179) + (x_1*x_0))), True))*Piecewise((0, Abs(tan(Piecewise((asin(Piecewise((-1, x_3 < -1), (1, x_3 > 1), (x_3, True))), Abs(x_3) < 1.7976931348623157e308), (0, True)))) < 1e-6), ((Piecewise((asin(Piecewise((-1, x_3 < -1), (1, x_3 > 1), (x_3, True))), Abs(x_3) < 1.7976931348623157e308), (0, True))/tan(Piecewise((asin(Piecewise((-1, x_3 < -1), (1, x_3 > 1), (x_3, True))), Abs(x_3) < 1.7976931348623157e308), (0, True)))), True)))*(x_2*x_3))) + (-0.4707689469291889))
+MODEL_PLAIN	(((-91320489.08784167)*(((0.9999092042625951/((-0.002896476897082179) + (x_1*x_0)))*(asin(x_3)/tan(asin(x_3))))*(x_2*x_3))) + (-0.4707689469291889))
+RAW_MATH	(Add (Mul (Num -91320489.08784167) (Mul (Mul (ProtectedDiv (Tanh (Num 5.0)) (Sub (Pow3 (Tan (Num 3.0))) (Neg (Mul (Var "x_1") (Var "x_0"))))) (ProtectedDiv (ProtectedAsin (Var "x_3")) (Sub (Tan (ProtectedAsin (Var "x_3"))) (Pow3 (Mul (ProtectedDiv (Sub (ProtectedAsin (Sub (ProtectedLog (Var "x_3")) (Pow2 (Var "x_2")))) (Num 4.0)) (Sub (Sin (Var "x_2")) (Var "x_2"))) (Sub (Var "x_3") (Add (Var "x_1") (Var "x_0")))))))) (Mul (Var "x_2") (Var "x_3")))) (Num -0.4707689469291889))
+R² on the unseen test rows: -1.008764
+
+=== feynman_III_4_32  seed 7013  beam on  13:42:16 ===
+dataset /private/tmp/claude-501/-Users-andrewmorgan-Dev-gamakon-fuller/b3c1f1fe-1035-445f-ada0-9f05e732d5e6/scratchpad/beam_subset/feynman_III_4_32.tsv
+rows: train 4000, validation 1000, unseen test 25000
+population 1 x (1510+1500) = 3010 | 339 generations in 30.0 s = 88.5 ms per generation | 1023400 individuals = 34098 per second | stopped by time
+seconds: variation 0.15 | read-back 3.02 | decode 3.25 | evaluate 13.65 | link+scale+metrics 0.00 | HFF 5.40 | pump 3.03 | cross 0.00
+seconds: beam 2.35 (0.035 per beat)
+BEAM	67	804	1	-9.15	-9.18	2.35
+BEAM_WRAPS	804	grafted 1	kept 1	graft refused 0	better/refused per wrap: recip_1=0/0 x_over_expm1=1/0 recip_sqrt_1m=0/59 recip_1m=0/0
+BEAM_FLOAT	1	0
+genes evaluated 865651 (unique per generation), over the 64-node limit 0
+1 - R²: train 1.471e-7, validation 1.788e-7
+model: (((-75.39298640172295)*(((0.9999986002099696/x_0)/x_1)/((sin(((1/(4.0/(1/((x_3/(x_1*log(x_0)))*x_2))))**2)) - 4.0)/(1/(3.0/(x_3*x_2)))))) + (-0.4971504424117885))
+GENERATIONS	339	time	1.788e-7
+HFF	0.000252	1.471e-7	1.788e-7	-
+MSE	1.144e-5	1.241e-5	-
+TOWER	2	in HFF
+PVALUE	6.789e-12	-11.17	4
+GENES	865651	0	1023400
+MODEL_INFIX	(((-75.39298640172295)*(((0.9999986002099696/x_0)/x_1)/((sin(((1/(4.0/(1/((x_3/(x_1*log(x_0)))*x_2))))**2)) - 4.0)/(1/(3.0/(x_3*x_2)))))) + (-0.4971504424117885))
+MODEL_PLAIN	(((-75.39298640172295)*(((0.9999986002099696/x_0)/x_1)/((sin(((1/(4.0/(1/((x_3/(x_1*log(x_0)))*x_2))))**2)) - 4.0)/(1/(3.0/(x_3*x_2)))))) + (-0.4971504424117885))
+RAW_MATH	(Add (Mul (Num -75.39298640172295) (Mul (Mul (ProtectedInv (ProtectedInv (Neg (ProtectedDiv (Tanh (ProtectedInv (Sin (Num 3.0)))) (Var "x_0"))))) (ProtectedInv (Var "x_1"))) (ProtectedInv (ProtectedDiv (Neg (Sub (Sin (Pow2 (ProtectedInv (Mul (Num 4.0) (ProtectedInv (ProtectedInv (Mul (ProtectedDiv (Abs (Var "x_3")) (Mul (Var "x_1") (ProtectedLog (Var "x_0")))) (Var "x_2")))))))) (Num 4.0))) (Abs (ProtectedInv (Mul (Num 3.0) (ProtectedInv (Neg (Mul (Var "x_3") (Var "x_2"))))))))))) (Num -0.4971504424117885))
+R² on the unseen test rows: 1.000000
+
+=== feynman_III_4_33  seed 7013  beam off  13:42:49 ===
+dataset /private/tmp/claude-501/-Users-andrewmorgan-Dev-gamakon-fuller/b3c1f1fe-1035-445f-ada0-9f05e732d5e6/scratchpad/beam_subset/feynman_III_4_33.tsv
+rows: train 4000, validation 1000, unseen test 25000
+population 1 x (1500+1500) = 3000 | 388 generations in 30.0 s = 77.3 ms per generation | 1167000 individuals = 38889 per second | stopped by time
+seconds: variation 0.19 | read-back 3.87 | decode 3.35 | evaluate 15.84 | link+scale+metrics 0.00 | HFF 5.65 | pump 4.02 | cross 0.00
+genes evaluated 890898 (unique per generation), over the 64-node limit 0
+1 - R²: train 6.497e-4, validation 6.473e-4
+model: ((0.17316840272738435*(((x_3 + (1/((x_2**2) + ((-2.0) + (x_1*sqrt(sqrt((x_0**3))))))))*(x_2/tanh((x_3 + (tanh(((1/x_3)**2)) + (log(x_1)**3))))))*(5.0 - tanh(((log(x_0) + sqrt(x_1)) + (-4.0)))))) + (-0.962288438052143))
+GENERATIONS	388	time	6.473e-4
+HFF	0.014260	6.497e-4	6.473e-4	-
+MSE	1.687e-2	1.650e-2	-
+TOWER	2	in HFF
+PVALUE	1.231e-6	-5.91	4
+GENES	890898	0	1167000
+MODEL_INFIX	((0.17316840272738435*(((x_3 + (1/((x_2**2) + ((-2.0) + (x_1*sqrt(sqrt((x_0**3))))))))*(x_2/tanh((x_3 + (tanh(((1/x_3)**2)) + (log(x_1)**3))))))*(5.0 - tanh(((log(x_0) + sqrt(x_1)) + (-4.0)))))) + (-0.962288438052143))
+MODEL_PLAIN	((0.17316840272738435*(((x_3 + (1/((x_2**2) + ((-2.0) + (x_1*sqrt(sqrt((x_0**3))))))))*(x_2/tanh((x_3 + (tanh(((1/x_3)**2)) + (log(x_1)**3))))))*(5.0 - tanh(((log(x_0) + sqrt(x_1)) + (-4.0)))))) + (-0.962288438052143))
+RAW_MATH	(Add (Mul (Num 0.17316840272738435) (Mul (Mul (Add (Var "x_3") (ProtectedInv (Add (Pow2 (Var "x_2")) (Add (Num -2.0) (Mul (Var "x_1") (ProtectedSqrt (ProtectedSqrt (Pow3 (Var "x_0"))))))))) (ProtectedDiv (Var "x_2") (Tanh (Add (Var "x_3") (Add (Tanh (Pow2 (ProtectedInv (Var "x_3")))) (Pow3 (ProtectedLog (Var "x_1")))))))) (Sub (Num 5.0) (Tanh (Add (Add (ProtectedLog (Var "x_0")) (ProtectedSqrt (Var "x_1"))) (Neg (Num 4.0))))))) (Num -0.962288438052143))
+R² on the unseen test rows: 0.999372
+
+=== feynman_III_4_33  seed 7013  beam on  13:43:21 ===
+dataset /private/tmp/claude-501/-Users-andrewmorgan-Dev-gamakon-fuller/b3c1f1fe-1035-445f-ada0-9f05e732d5e6/scratchpad/beam_subset/feynman_III_4_33.tsv
+rows: train 4000, validation 1000, unseen test 25000
+population 1 x (1510+1500) = 3010 | 404 generations in 30.1 s = 74.4 ms per generation | 1219050 individuals = 40532 per second | stopped by time
+seconds: variation 0.18 | read-back 3.71 | decode 3.18 | evaluate 14.15 | link+scale+metrics 0.00 | HFF 5.63 | pump 3.28 | cross 0.00
+seconds: beam 2.29 (0.029 per beat)
+BEAM	80	960	0	-4.52	-4.52	2.29
+BEAM_WRAPS	960	grafted 0	kept 0	graft refused 0	better/refused per wrap: recip_1=0/1 x_over_expm1=0/0 recip_sqrt_1m=0/179 recip_1m=0/1
+BEAM_FLOAT	0	0
+genes evaluated 901657 (unique per generation), over the 64-node limit 0
+1 - R²: train 1.765e-4, validation 1.923e-4
+model: ((1.3460927940923024*(((x_3/4.022587764416222)*(x_2 - (1/((x_3/(x_1 - (25.0 - x_0)))*5.0))))*(3.0 - (1/exp((3.875784585037477 - cos(((x_1 + x_0) + 4.0)))))))) + (-4.434613246798298))
+GENERATIONS	404	time	1.923e-4
+HFF	0.008741	1.765e-4	1.923e-4	-
+MSE	4.583e-3	4.901e-3	-
+TOWER	2	in HFF
+PVALUE	2.834e-7	-6.55	4
+GENES	901657	0	1219050
+MODEL_INFIX	((1.3460927940923024*(((x_3/4.022587764416222)*(x_2 - (1/((x_3/(x_1 - (25.0 - x_0)))*5.0))))*(3.0 - (1/exp((3.875784585037477 - cos(((x_1 + x_0) + 4.0)))))))) + (-4.434613246798298))
+MODEL_PLAIN	((1.3460927940923024*(((x_3/4.022587764416222)*(x_2 - (1/((x_3/(x_1 - (25.0 - x_0)))*5.0))))*(3.0 - (1/exp((3.875784585037477 - cos(((x_1 + x_0) + 4.0)))))))) + (-4.434613246798298))
+RAW_MATH	(Add (Mul (Num 1.3460927940923024) (Mul (Mul (ProtectedDiv (Var "x_3") (Sub (Num 5.0) (Tanh (ProtectedSqrt (Num -5.0))))) (Sub (Var "x_2") (ProtectedInv (Mul (Mul (Var "x_3") (ProtectedInv (Sub (Abs (Var "x_1")) (Sub (Pow2 (Num 5.0)) (Var "x_0"))))) (Num 5.0))))) (Sub (Num 3.0) (ProtectedInv (ProtectedExp (Add (Pow3 (ProtectedAsin (Var "x_1"))) (Neg (Cos (Add (Add (Var "x_1") (Var "x_0")) (Num 4.0)))))))))) (Num -4.434613246798298))
+R² on the unseen test rows: 0.999821
+
+=== feynman_I_10_7  seed 7013  beam off  13:43:53 ===
+dataset /private/tmp/claude-501/-Users-andrewmorgan-Dev-gamakon-fuller/b3c1f1fe-1035-445f-ada0-9f05e732d5e6/scratchpad/beam_subset/feynman_I_10_7.tsv
+rows: train 4000, validation 1000, unseen test 25000
+population 1 x (1500+1500) = 3000 | 368 generations in 30.1 s = 81.8 ms per generation | 1107000 individuals = 36789 per second | stopped by time
+seconds: variation 0.16 | read-back 3.12 | decode 3.19 | evaluate 17.07 | link+scale+metrics 0.00 | HFF 4.70 | pump 3.72 | cross 0.00
+genes evaluated 906185 (unique per generation), over the 64-node limit 0
+1 - R²: train 4.803e-6, validation 3.383e-6
+model: (((-0.30340438706709244)*(((x_0/tanh((x_2/(tanh(((1/(4.0/x_1)) - x_2))*x_1))))*(4.0 - tanh(sqrt((-((x_2*(-3.0))/x_1))))))*(2.0 - tanh(acos((x_1/x_2)))))) + 0.00012525353620107538)
+GENERATIONS	368	time	3.383e-6
+HFF	0.001221	4.803e-6	3.383e-6	-
+MSE	6.894e-6	4.904e-6	-
+TOWER	2	in HFF
+PVALUE	7.723e-10	-9.11	4
+GENES	906185	0	1107000
+MODEL_INFIX	(((-0.30340438706709244)*(((x_0/tanh((x_2/(tanh(((1/(4.0/x_1)) - x_2))*x_1))))*(4.0 - tanh(sqrt((-((x_2*(-3.0))/x_1))))))*(2.0 - tanh(acos((x_1/x_2)))))) + 0.00012525353620107538)
+MODEL_PLAIN	(((-0.30340438706709244)*(((x_0/tanh((x_2/(tanh(((1/(4.0/x_1)) - x_2))*x_1))))*(4.0 - tanh(sqrt((-((x_2*(-3.0))/x_1))))))*(2.0 - tanh(acos((x_1/x_2)))))) + 0.00012525353620107538)
+RAW_MATH	(Add (Mul (Num -0.30340438706709244) (Mul (Mul (ProtectedDiv (Var "x_0") (Tanh (ProtectedDiv (ProtectedInv (ProtectedInv (Var "x_2"))) (Mul (Tanh (Sub (ProtectedInv (ProtectedDiv (Num 4.0) (Var "x_1"))) (Var "x_2"))) (Var "x_1"))))) (Sub (Num 4.0) (Tanh (ProtectedSqrt (Mul (ProtectedDiv (Mul (Var "x_2") (Num -3.0)) (Var "x_1")) (ProtectedDiv (Var "x_2") (Var "x_2"))))))) (Sub (Num 2.0) (Tanh (ProtectedAcos (ProtectedDiv (Var "x_1") (Var "x_2"))))))) (Num 0.00012525353620107538))
+R² on the unseen test rows: 0.999995
+
+=== feynman_I_10_7  seed 7013  beam on  13:44:26 ===
+dataset /private/tmp/claude-501/-Users-andrewmorgan-Dev-gamakon-fuller/b3c1f1fe-1035-445f-ada0-9f05e732d5e6/scratchpad/beam_subset/feynman_I_10_7.tsv
+rows: train 4000, validation 1000, unseen test 25000
+population 1 x (1510+1500) = 3010 | 7 generations in 0.6 s = 85.6 ms per generation | 24080 individuals = 40197 per second | stopped by early_stop
+seconds: variation 0.00 | read-back 0.09 | decode 0.04 | evaluate 0.27 | link+scale+metrics 0.00 | HFF 0.10 | pump 0.04 | cross 0.00
+seconds: beam 0.06 (0.061 per beat)
+BEAM	1	12	1	-5.14	-5.27	0.06
+BEAM_WRAPS	12	grafted 1	kept 1	graft refused 0	better/refused per wrap: recip_1=0/0 x_over_expm1=0/0 recip_sqrt_1m=1/2 recip_1m=0/0
+BEAM_FLOAT	1	0
+genes evaluated 7458 (unique per generation), over the 64-node limit 0
+1 - R²: train 3.981e-14, validation 3.500e-14
+model: ((x_0/sqrt((1.0 - (x_1/x_2))))/sqrt(((x_1/x_2) - (-1.0))))
+GENERATIONS	7	early_stop	3.500e-14
+HFF	0.000000	3.981e-14	3.500e-14	-
+MSE	5.714e-14	5.073e-14	-
+TOWER	1	in HFF
+PVALUE	8.224e-22	-21.08	4
+GENES	7458	0	24080
+MODEL_INFIX	((x_0/sqrt((1.0 - (x_1/x_2))))/sqrt(((x_1/x_2) - (-1.0))))
+MODEL_PLAIN	((x_0/sqrt((1.0 - (x_1/x_2))))/sqrt(((x_1/x_2) - (-1.0))))
+RAW_MATH	(Add (Mul (Num 0.9999999835879152) (Mul (Mul (ProtectedInv (ProtectedSqrt (Sub (Num 1.0) (ProtectedDiv (Var "x_1") (Var "x_2"))))) (Var "x_0")) (ProtectedInv (ProtectedSqrt (Sub (Num -1.0) (ProtectedDiv (Var "x_1") (Var "x_2"))))))) (Num 1.2750390077087559e-8))
+R² on the unseen test rows: 1.000000
+
+=== feynman_I_48_2  seed 7013  beam off  13:44:28 ===
+dataset /private/tmp/claude-501/-Users-andrewmorgan-Dev-gamakon-fuller/b3c1f1fe-1035-445f-ada0-9f05e732d5e6/scratchpad/beam_subset/feynman_I_48_2.tsv
+rows: train 4000, validation 1000, unseen test 25000
+population 1 x (1500+1500) = 3000 | 375 generations in 30.1 s = 80.4 ms per generation | 1128000 individuals = 37414 per second | stopped by time
+seconds: variation 0.15 | read-back 3.49 | decode 3.10 | evaluate 17.37 | link+scale+metrics 0.00 | HFF 5.19 | pump 3.94 | cross 0.00
+genes evaluated 830449 (unique per generation), over the 64-node limit 0
+1 - R²: train 1.547e-5, validation 1.480e-5
+model: (((-0.9765948481064106)/(1/((((1/((x_1 - (x_2/tanh(((1/(x_0**3)) + x_0))))**2)) + x_0)*(sin(exp(((1/x_2)**2))) + x_2))/(1/(sqrt(exp((-((1/((x_1 - 2.0) + ((x_1**3)*4.0))) + x_1)))) - x_2))))) + (-1.5164926108720067))
+GENERATIONS	375	time	1.480e-5
+HFF	0.002283	1.547e-5	1.480e-5	-
+MSE	1.564e-1	1.505e-1	-
+TOWER	2	in HFF
+PVALUE	5.049e-9	-8.30	4
+GENES	830449	0	1128000
+MODEL_INFIX	(((-0.9765948481064106)/(1/((((1/((x_1 - (x_2/tanh(((1/(x_0**3)) + x_0))))**2)) + x_0)*(sin(exp(((1/x_2)**2))) + x_2))/(1/(sqrt(exp((-((1/((x_1 - 2.0) + ((x_1**3)*4.0))) + x_1)))) - x_2))))) + (-1.5164926108720067))
+MODEL_PLAIN	(((-0.9765948481064106)/(1/((((1/((x_1 - (x_2/tanh(((1/(x_0**3)) + x_0))))**2)) + x_0)*(sin(exp(((1/x_2)**2))) + x_2))/(1/(sqrt(exp((-((1/((x_1 - 2.0) + ((x_1**3)*4.0))) + x_1)))) - x_2))))) + (-1.5164926108720067))
+RAW_MATH	(Add (Mul (Num -0.9765948481064106) (Mul (Mul (Neg (ProtectedInv (ProtectedInv (Add (Sin (ProtectedDiv (ProtectedExp (Pow2 (ProtectedInv (Var "x_2")))) (Num 1.0))) (Var "x_2"))))) (Neg (ProtectedInv (ProtectedInv (Add (ProtectedInv (Pow2 (Add (Neg (ProtectedDiv (Var "x_2") (Tanh (Add (ProtectedInv (Pow3 (Var "x_0"))) (Abs (Var "x_0")))))) (Var "x_1")))) (Var "x_0")))))) (ProtectedInv (ProtectedInv (ProtectedInv (ProtectedInv (Sub (ProtectedSqrt (ProtectedExp (Neg (Add (ProtectedInv (Add (Sub (Var "x_1") (Num 2.0)) (Mul (Pow3 (Var "x_1")) (Num 4.0)))) (Var "x_1"))))) (Var "x_2")))))))) (Num -1.5164926108720067))
+R² on the unseen test rows: 0.999984
+
+=== feynman_I_48_2  seed 7013  beam on  13:45:02 ===
+dataset /private/tmp/claude-501/-Users-andrewmorgan-Dev-gamakon-fuller/b3c1f1fe-1035-445f-ada0-9f05e732d5e6/scratchpad/beam_subset/feynman_I_48_2.tsv
+rows: train 4000, validation 1000, unseen test 25000
+population 1 x (1510+1500) = 3010 | 358 generations in 30.1 s = 83.9 ms per generation | 1080590 individuals = 35957 per second | stopped by time
+seconds: variation 0.16 | read-back 3.24 | decode 3.34 | evaluate 13.86 | link+scale+metrics 0.00 | HFF 5.10 | pump 3.01 | cross 0.00
+seconds: beam 2.21 (0.031 per beat)
+BEAM	71	852	0	-6.18	-6.18	2.21
+BEAM_WRAPS	852	grafted 0	kept 0	graft refused 0	better/refused per wrap: recip_1=0/0 x_over_expm1=0/0 recip_sqrt_1m=0/174 recip_1m=0/0
+BEAM_FLOAT	0	0
+genes evaluated 924348 (unique per generation), over the 64-node limit 0
+1 - R²: train 6.887e-7, validation 7.061e-7
+model: (((-0.9961557673766435)*(((x_0/(1/(tanh(((-4.0) + ((-64.0)/(((log(((2.0/x_1)/(x_1/(x_0 + x_0)))) + x_2) - x_1)**2))))**3)))*(x_2 - tan(tan((x_1/(-12.0))))))*(x_2 + sin(tanh((x_1/((x_2/x_1)**2))))))) + (-0.029004341220769447))
+GENERATIONS	358	time	7.061e-7
+HFF	0.000287	6.887e-7	7.061e-7	-
+MSE	6.964e-3	7.179e-3	-
+TOWER	2	in HFF
+PVALUE	1.001e-11	-11.00	4
+GENES	924348	0	1080590
+MODEL_INFIX	(((-0.9961557673766435)*(((x_0/(1/(tanh(((-4.0) + ((-64.0)/(((log(((2.0/x_1)/(x_1/(x_0 + x_0)))) + x_2) - x_1)**2))))**3)))*(x_2 - tan(tan((x_1/(-12.0))))))*(x_2 + sin(tanh((x_1/((x_2/x_1)**2))))))) + (-0.029004341220769447))
+MODEL_PLAIN	(((-0.9961557673766435)*(((x_0/(1/(tanh(((-4.0) + ((-64.0)/(((log(((2.0/x_1)/(x_1/(x_0 + x_0)))) + x_2) - x_1)**2))))**3)))*(x_2 - tan(tan((x_1/(-12.0))))))*(x_2 + sin(tanh((x_1/((x_2/x_1)**2))))))) + (-0.029004341220769447))
+RAW_MATH	(Add (Mul (Num -0.9961557673766435) (Mul (Mul (ProtectedDiv (Var "x_0") (ProtectedInv (Pow3 (Tanh (Add (Num -4.0) (ProtectedDiv (Pow3 (Num -4.0)) (Pow2 (Sub (Add (ProtectedLog (ProtectedDiv (ProtectedDiv (Num 2.0) (Var "x_1")) (ProtectedDiv (Var "x_1") (Add (Var "x_0") (Var "x_0"))))) (Var "x_2")) (Var "x_1"))))))))) (Add (Var "x_2") (Tan (Tan (ProtectedDiv (Neg (Var "x_1")) (Mul (Num -3.0) (Num 4.0))))))) (Add (Var "x_2") (Sin (Tanh (ProtectedDiv (Var "x_1") (Pow2 (ProtectedDiv (Var "x_2") (Var "x_1"))))))))) (Num -0.029004341220769447))
+R² on the unseen test rows: 0.999999
+
+=== feynman_II_11_3  seed 7013  beam off  13:45:34 ===
+dataset /private/tmp/claude-501/-Users-andrewmorgan-Dev-gamakon-fuller/b3c1f1fe-1035-445f-ada0-9f05e732d5e6/scratchpad/beam_subset/feynman_II_11_3.tsv
+rows: train 4000, validation 1000, unseen test 25000
+population 1 x (1500+1500) = 3000 | 402 generations in 30.0 s = 74.7 ms per generation | 1209000 individuals = 40255 per second | stopped by time
+seconds: variation 0.24 | read-back 3.52 | decode 3.27 | evaluate 16.65 | link+scale+metrics 0.00 | HFF 5.39 | pump 4.07 | cross 0.00
+genes evaluated 851869 (unique per generation), over the 64-node limit 0
+1 - R²: train 3.287e-2, validation 5.329e-2
+model: (((-0.25591227216050433)*log(Abs((((x_2 - (exp((sin(x_3)/exp((1/((x_2*(x_3*(x_2*((x_2/(x_0 + 1.0))/x_1))))**2))))) + x_1)) + (((tanh(x_4)**3) - (x_4 + x_0)) + x_3)) + 3.0)))) + 0.48378086786268926)
+GENERATIONS	402	time	5.329e-2
+HFF	0.105874	3.287e-2	5.329e-2	-
+MSE	5.180e-4	8.037e-4	-
+TOWER	2	in HFF
+PVALUE	5.025e-4	-3.30	4
+GENES	851869	0	1209000
+MODEL_INFIX	(((-0.25591227216050433)*log(Abs((((x_2 - (exp((sin(x_3)/exp((1/((x_2*(x_3*(x_2*((x_2/(x_0 + 1.0))/x_1))))**2))))) + x_1)) + (((tanh(x_4)**3) - (x_4 + x_0)) + x_3)) + 3.0)))) + 0.48378086786268926)
+MODEL_PLAIN	(((-0.25591227216050433)*log(Abs((((x_2 - (exp((sin(x_3)/exp((1/((x_2*(x_3*(x_2*((x_2/(x_0 + 1.0))/x_1))))**2))))) + x_1)) + (((tanh(x_4)**3) - (x_4 + x_0)) + x_3)) + 3.0)))) + 0.48378086786268926)
+RAW_MATH	(Add (Mul (Num -0.25591227216050433) (Log (Abs (Add (Add (Add (Neg (Sub (ProtectedExp (ProtectedDiv (Sin (Var "x_3")) (ProtectedExp (ProtectedInv (Pow2 (Mul (Var "x_2") (Mul (Var "x_3") (Mul (Var "x_2") (ProtectedDiv (ProtectedDiv (Var "x_2") (Add (Var "x_0") (ProtectedInv (Num 0.0)))) (Var "x_1")))))))))) (Neg (Var "x_1")))) (Var "x_2")) (Add (Neg (Add (Pow3 (Tanh (Neg (Var "x_4")))) (Add (Var "x_4") (Var "x_0")))) (Var "x_3"))) (Num 3.0))))) (Num 0.48378086786268926))
+R² on the unseen test rows: 0.949300
+
+=== feynman_II_11_3  seed 7013  beam on  13:46:08 ===
+dataset /private/tmp/claude-501/-Users-andrewmorgan-Dev-gamakon-fuller/b3c1f1fe-1035-445f-ada0-9f05e732d5e6/scratchpad/beam_subset/feynman_II_11_3.tsv
+rows: train 4000, validation 1000, unseen test 25000
+population 1 x (1510+1500) = 3010 | 409 generations in 30.1 s = 73.6 ms per generation | 1234100 individuals = 40999 per second | stopped by time
+seconds: variation 0.17 | read-back 3.65 | decode 3.07 | evaluate 14.30 | link+scale+metrics 0.00 | HFF 5.85 | pump 3.35 | cross 0.00
+seconds: beam 2.19 (0.027 per beat)
+BEAM	81	972	0	-2.57	-2.57	2.19
+BEAM_WRAPS	972	grafted 0	kept 0	graft refused 0	better/refused per wrap: recip_1=0/0 x_over_expm1=0/0 recip_sqrt_1m=0/162 recip_1m=0/0
+BEAM_FLOAT	0	0
+genes evaluated 853537 (unique per generation), over the 64-node limit 0
+1 - R²: train 3.942e-2, validation 4.734e-2
+model: (((-0.24181916248708776)*log(Abs((((x_2 + (x_3 - (sqrt((-(tanh(((-4.0) + x_1))**3))) + x_1))) + sin((sqrt((x_4 + (1/(x_3 - x_4)))) + x_0)))/3.0)))) + 0.14604493379677755)
+GENERATIONS	409	time	4.734e-2
+HFF	0.119377	3.942e-2	4.734e-2	-
+MSE	6.211e-4	7.139e-4	-
+TOWER	2	in HFF
+PVALUE	7.200e-4	-3.14	4
+GENES	853537	0	1234100
+MODEL_INFIX	(((-0.24181916248708776)*log(Abs((((x_2 + (x_3 - (sqrt((-(tanh(((-4.0) + x_1))**3))) + x_1))) + sin((sqrt((x_4 + (1/(x_3 - x_4)))) + x_0)))/3.0)))) + 0.14604493379677755)
+MODEL_PLAIN	(((-0.24181916248708776)*log(Abs((((x_2 + (x_3 - (sqrt((-(tanh(((-4.0) + x_1))**3))) + x_1))) + sin((sqrt((x_4 + (1/(x_3 - x_4)))) + x_0)))/3.0)))) + 0.14604493379677755)
+RAW_MATH	(Add (Mul (Num -0.24181916248708776) (Log (Abs (Div (Add (Add (Var "x_2") (Add (Neg (Sub (ProtectedSqrt (Pow3 (Tanh (Add (Num -4.0) (Var "x_1"))))) (Neg (Var "x_1")))) (Var "x_3"))) (Sin (Add (Neg (Add (Neg (Add (ProtectedSqrt (Add (Var "x_4") (ProtectedInv (Add (Var "x_3") (Neg (Var "x_4")))))) (Var "x_0"))) (Num -4.0))) (Num -4.0)))) (Num 3.0))))) (Num 0.14604493379677755))
+R² on the unseen test rows: 0.950932
+
+=== feynman_I_12_5  seed 7013  beam off  13:46:41 ===
+dataset /private/tmp/claude-501/-Users-andrewmorgan-Dev-gamakon-fuller/b3c1f1fe-1035-445f-ada0-9f05e732d5e6/scratchpad/beam_subset/feynman_I_12_5.tsv
+rows: train 4000, validation 1000, unseen test 25000
+population 1 x (1500+1500) = 3000 | 1 generations in 0.2 s = 181.8 ms per generation | 6000 individuals = 32997 per second | stopped by early_stop
+seconds: variation 0.00 | read-back 0.04 | decode 0.01 | evaluate 0.09 | link+scale+metrics 0.00 | HFF 0.02 | pump 0.00 | cross 0.00
+genes evaluated 3157 (unique per generation), over the 64-node limit 0
+1 - R²: train 5.812e-15, validation 5.884e-15
+model: (x_0*x_1)
+GENERATIONS	1	early_stop	5.884e-15
+HFF	0.000000	5.812e-15	5.884e-15	-
+MSE	1.519e-13	1.429e-13	-
+TOWER	0	in HFF
+PVALUE	3.792e-23	-22.42	4
+GENES	3157	0	6000
+MODEL_INFIX	(x_0*x_1)
+MODEL_PLAIN	(x_0*x_1)
+RAW_MATH	(Add (Mul (Num -1.0000000016989894) (Mul (Mul (Var "x_0") (Neg (Num 1.0))) (Var "x_1"))) (Num -1.3664632092513784e-8))
+R² on the unseen test rows: 1.000000
+
+=== feynman_I_12_5  seed 7013  beam on  13:46:43 ===
+dataset /private/tmp/claude-501/-Users-andrewmorgan-Dev-gamakon-fuller/b3c1f1fe-1035-445f-ada0-9f05e732d5e6/scratchpad/beam_subset/feynman_I_12_5.tsv
+rows: train 4000, validation 1000, unseen test 25000
+population 1 x (1510+1500) = 3010 | 1 generations in 0.2 s = 187.8 ms per generation | 6020 individuals = 32059 per second | stopped by early_stop
+seconds: variation 0.00 | read-back 0.04 | decode 0.01 | evaluate 0.09 | link+scale+metrics 0.00 | HFF 0.02 | pump 0.00 | cross 0.00
+seconds: beam 0.00 (0.000 per beat)
+BEAM	0	0	0	0.00	0.00	0.00
+BEAM_WRAPS	0	grafted 0	kept 0	graft refused 0	better/refused per wrap: recip_1=0/0 x_over_expm1=0/0 recip_sqrt_1m=0/0 recip_1m=0/0
+BEAM_FLOAT	0	0
+genes evaluated 3130 (unique per generation), over the 64-node limit 0
+1 - R²: train 5.812e-15, validation 5.884e-15
+model: (x_0*x_1)
+GENERATIONS	1	early_stop	5.884e-15
+HFF	0.000000	5.812e-15	5.884e-15	-
+MSE	1.519e-13	1.429e-13	-
+TOWER	0	in HFF
+PVALUE	3.792e-23	-22.42	4
+GENES	3130	0	6020
+MODEL_INFIX	(x_0*x_1)
+MODEL_PLAIN	(x_0*x_1)
+RAW_MATH	(Add (Mul (Num -1.0000000016989894) (Mul (Mul (Var "x_0") (Neg (Num 1.0))) (Var "x_1"))) (Num -1.3664632092513784e-8))
+R² on the unseen test rows: 1.000000
+
+=== feynman_III_4_32  seed 7014  beam off  13:46:45 ===
+dataset /private/tmp/claude-501/-Users-andrewmorgan-Dev-gamakon-fuller/b3c1f1fe-1035-445f-ada0-9f05e732d5e6/scratchpad/beam_subset/feynman_III_4_32.tsv
+rows: train 4000, validation 1000, unseen test 25000
+population 1 x (1500+1500) = 3000 | 357 generations in 30.0 s = 84.2 ms per generation | 1074000 individuals = 35748 per second | stopped by time
+seconds: variation 0.15 | read-back 2.90 | decode 3.11 | evaluate 16.99 | link+scale+metrics 0.00 | HFF 4.95 | pump 3.56 | cross 0.00
+genes evaluated 891899 (unique per generation), over the 64-node limit 0
+1 - R²: train 6.397e-7, validation 5.789e-7
+model: (((-7.098559217834377)*(((x_2/(x_0 - (exp(((-5.0) - log((x_1/(x_1 + (x_2 + x_1))))))**2)))*((0.36787944117144233*(x_3/(-0.4161468365471424)))/x_1))*(x_2/(x_2 - (exp((0.1353352832366127 - (((x_2*(x_3 + sin(x_1)))/x_1) + (x_1/x_0))))**2))))) + (-0.4788292678393695))
+GENERATIONS	357	time	5.789e-7
+HFF	0.000469	6.397e-7	5.789e-7	-
+MSE	5.428e-5	5.578e-5	-
+TOWER	2	in HFF
+PVALUE	4.367e-11	-10.36	4
+GENES	891899	0	1074000
+MODEL_INFIX	(((-7.098559217834377)*(((x_2/(x_0 - (exp(((-5.0) - log((x_1/(x_1 + (x_2 + x_1))))))**2)))*((0.36787944117144233*(x_3/(-0.4161468365471424)))/x_1))*(x_2/(x_2 - (exp((0.1353352832366127 - (((x_2*(x_3 + sin(x_1)))/x_1) + (x_1/x_0))))**2))))) + (-0.4788292678393695))
+MODEL_PLAIN	(((-7.098559217834377)*(((x_2/(x_0 - (exp(((-5.0) - log((x_1/(x_1 + (x_2 + x_1))))))**2)))*((0.36787944117144233*(x_3/(-0.4161468365471424)))/x_1))*(x_2/(x_2 - (exp((0.1353352832366127 - (((x_2*(x_3 + sin(x_1)))/x_1) + (x_1/x_0))))**2))))) + (-0.4788292678393695))
+RAW_MATH	(Add (Mul (Num -7.098559217834377) (Mul (Mul (ProtectedDiv (Var "x_2") (Sub (Var "x_0") (Pow2 (ProtectedExp (Sub (Pow3 (Num -1.0)) (Add (Num 4.0) (ProtectedLog (Mul (ProtectedInv (Add (Var "x_1") (Add (Var "x_2") (Var "x_1")))) (Var "x_1"))))))))) (ProtectedDiv (Mul (ProtectedExp (Num -1.0)) (ProtectedDiv (Var "x_3") (Cos (Num -2.0)))) (Var "x_1"))) (ProtectedDiv (Var "x_2") (Sub (Var "x_2") (Pow2 (ProtectedExp (Sub (ProtectedExp (Num -2.0)) (Add (ProtectedDiv (Mul (Var "x_2") (Add (Var "x_3") (Sin (Var "x_1")))) (Var "x_1")) (Mul (Var "x_1") (ProtectedInv (Var "x_0"))))))))))) (Num -0.4788292678393695))
+R² on the unseen test rows: 0.999999
+
+=== feynman_III_4_32  seed 7014  beam on  13:47:19 ===
+dataset /private/tmp/claude-501/-Users-andrewmorgan-Dev-gamakon-fuller/b3c1f1fe-1035-445f-ada0-9f05e732d5e6/scratchpad/beam_subset/feynman_III_4_32.tsv
+rows: train 4000, validation 1000, unseen test 25000
+population 1 x (1510+1500) = 3010 | 360 generations in 30.1 s = 83.7 ms per generation | 1086610 individuals = 36046 per second | stopped by time
+seconds: variation 0.15 | read-back 3.12 | decode 3.85 | evaluate 13.92 | link+scale+metrics 0.00 | HFF 4.59 | pump 2.95 | cross 0.00
+seconds: beam 2.30 (0.032 per beat)
+BEAM	72	864	2	-9.14	-9.14	2.30
+BEAM_WRAPS	864	grafted 2	kept 0	graft refused 0	better/refused per wrap: recip_1=1/0 x_over_expm1=2/0 recip_sqrt_1m=0/61 recip_1m=1/0
+BEAM_FLOAT	0	0
+genes evaluated 1001401 (unique per generation), over the 64-node limit 0
+1 - R²: train 7.400e-7, validation 6.958e-7
+model: (((-3.118611614259679)*((((tanh(((1/((((((1.5707963267948966 + exp(x_1))/0.2) + x_0)*x_0)/(x_3*x_2)) - tanh((1/(((x_0 + x_0)**2)/4.0))))) - (-4.0)))**3)*x_2)*(((x_3/0.7165313105737893)/0.6931471805599453)/x_0))*((tanh(((-3.0) - (1/(((2.0*(x_1 + (x_1/(x_1 + 4.0))))/(x_3*x_2))*x_0))))**3)/x_1))) + (-0.4304036752737268))
+GENERATIONS	360	time	6.958e-7
+HFF	0.000411	7.400e-7	6.958e-7	-
+MSE	6.280e-5	6.704e-5	-
+TOWER	2	in HFF
+PVALUE	2.938e-11	-10.53	4
+GENES	1001401	0	1086610
+MODEL_INFIX	(((-3.118611614259679)*((((tanh(((1/((((((1.5707963267948966 + exp(x_1))/0.2) + x_0)*x_0)/(x_3*x_2)) - tanh((1/(((x_0 + x_0)**2)/4.0))))) - (-4.0)))**3)*x_2)*(((x_3/0.7165313105737893)/0.6931471805599453)/x_0))*((tanh(((-3.0) - (1/(((2.0*(x_1 + (x_1/(x_1 + 4.0))))/(x_3*x_2))*x_0))))**3)/x_1))) + (-0.4304036752737268))
+MODEL_PLAIN	(((-3.118611614259679)*((((tanh(((1/((((((1.5707963267948966 + exp(x_1))/0.2) + x_0)*x_0)/(x_3*x_2)) - tanh((1/(((x_0 + x_0)**2)/4.0))))) - (-4.0)))**3)*x_2)*(((x_3/0.7165313105737893)/0.6931471805599453)/x_0))*((tanh(((-3.0) - (1/(((2.0*(x_1 + (x_1/(x_1 + 4.0))))/(x_3*x_2))*x_0))))**3)/x_1))) + (-0.4304036752737268))
+RAW_MATH	(Add (Mul (Num -3.118611614259679) (Mul (Mul (Mul (Pow3 (Tanh (Sub (ProtectedInv (Add (ProtectedDiv (Mul (Add (ProtectedDiv (Add (ProtectedAsin (Var "x_1")) (ProtectedExp (Var "x_1"))) (ProtectedInv (Num 5.0))) (Var "x_0")) (Var "x_0")) (Mul (Var "x_3") (Var "x_2"))) (Tanh (ProtectedInv (Neg (ProtectedDiv (Pow2 (Add (Var "x_0") (Var "x_0"))) (Num 4.0))))))) (Num -4.0)))) (Var "x_2")) (ProtectedDiv (ProtectedDiv (ProtectedDiv (Var "x_3") (ProtectedExp (ProtectedInv (Num -3.0)))) (ProtectedLog (Num 2.0))) (Var "x_0"))) (ProtectedDiv (Pow3 (Tanh (Sub (Num -3.0) (ProtectedInv (Mul (ProtectedDiv (Mul (Abs (Num 2.0)) (Add (Var "x_1") (ProtectedDiv (Var "x_1") (Add (Var "x_1") (Neg (Num -4.0)))))) (Mul (Abs (Var "x_3")) (Var "x_2"))) (Var "x_0")))))) (Var "x_1")))) (Num -0.4304036752737268))
+R² on the unseen test rows: 0.999999
+
+=== feynman_III_4_33  seed 7014  beam off  13:47:55 ===
+dataset /private/tmp/claude-501/-Users-andrewmorgan-Dev-gamakon-fuller/b3c1f1fe-1035-445f-ada0-9f05e732d5e6/scratchpad/beam_subset/feynman_III_4_33.tsv
+rows: train 4000, validation 1000, unseen test 25000
+population 1 x (1500+1500) = 3000 | 387 generations in 30.0 s = 77.6 ms per generation | 1164000 individuals = 38759 per second | stopped by time
+seconds: variation 0.17 | read-back 3.84 | decode 4.01 | evaluate 14.89 | link+scale+metrics 0.00 | HFF 5.90 | pump 3.85 | cross 0.00
+genes evaluated 1077942 (unique per generation), over the 64-node limit 0
+1 - R²: train 7.237e-5, validation 7.662e-5
+model: ((0.9975748176518335*log((((exp((x_2*((x_3**2)/x_3))) + log(sqrt(x_0)))/(x_0 + Piecewise((asin(Piecewise((-1, (0.3333333333333333 - (1/(x_1*tanh(((1/x_1) - x_0))))) < -1), (1, (0.3333333333333333 - (1/(x_1*tanh(((1/x_1) - x_0))))) > 1), ((0.3333333333333333 - (1/(x_1*tanh(((1/x_1) - x_0))))), True))), Abs((0.3333333333333333 - (1/(x_1*tanh(((1/x_1) - x_0)))))) < 1.7976931348623157e308), (0, True))))/(x_1 + sqrt(Abs(((-0.2) + (1/(x_1*sqrt(((-(x_0**2))/((-5.0) + (x_3/4.0))))))))))))) + 1.8011146075871833)
+GENERATIONS	387	time	7.662e-5
+HFF	0.005054	7.237e-5	7.662e-5	-
+MSE	1.872e-3	1.875e-3	-
+TOWER	2	in HFF
+PVALUE	5.479e-8	-7.26	4
+GENES	1077942	0	1164000
+MODEL_INFIX	((0.9975748176518335*log((((exp((x_2*((x_3**2)/x_3))) + log(sqrt(x_0)))/(x_0 + Piecewise((asin(Piecewise((-1, (0.3333333333333333 - (1/(x_1*tanh(((1/x_1) - x_0))))) < -1), (1, (0.3333333333333333 - (1/(x_1*tanh(((1/x_1) - x_0))))) > 1), ((0.3333333333333333 - (1/(x_1*tanh(((1/x_1) - x_0))))), True))), Abs((0.3333333333333333 - (1/(x_1*tanh(((1/x_1) - x_0)))))) < 1.7976931348623157e308), (0, True))))/(x_1 + sqrt(Abs(((-0.2) + (1/(x_1*sqrt(((-(x_0**2))/((-5.0) + (x_3/4.0))))))))))))) + 1.8011146075871833)
+MODEL_PLAIN	((0.9975748176518335*log((((exp((x_2*((x_3**2)/x_3))) + log(sqrt(x_0)))/(x_0 + asin((0.3333333333333333 - (1/(x_1*tanh(((1/x_1) - x_0))))))))/(x_1 + sqrt(Abs(((-0.2) + (1/(x_1*sqrt(((-(x_0**2))/((-5.0) + (x_3/4.0))))))))))))) + 1.8011146075871833)
+RAW_MATH	(Add (Mul (Num 0.9975748176518335) (Log (Abs (Mul (Mul (Add (ProtectedExp (Mul (Var "x_2") (ProtectedDiv (Pow2 (Var "x_3")) (Var "x_3")))) (ProtectedLog (ProtectedSqrt (Var "x_0")))) (ProtectedInv (Add (Var "x_0") (ProtectedAsin (Sub (ProtectedInv (Num 3.0)) (ProtectedInv (Mul (Var "x_1") (Tanh (Add (Neg (Var "x_0")) (ProtectedInv (Var "x_1"))))))))))) (ProtectedInv (Add (Var "x_1") (ProtectedSqrt (Add (ProtectedInv (Num -5.0)) (ProtectedInv (Mul (Var "x_1") (ProtectedSqrt (Mul (Neg (Pow2 (Var "x_0"))) (ProtectedInv (Add (Num -5.0) (ProtectedDiv (Var "x_3") (Num 4.0)))))))))))))))) (Num 1.8011146075871833))
+R² on the unseen test rows: 0.999930
+
+=== feynman_III_4_33  seed 7014  beam on  13:48:28 ===
+dataset /private/tmp/claude-501/-Users-andrewmorgan-Dev-gamakon-fuller/b3c1f1fe-1035-445f-ada0-9f05e732d5e6/scratchpad/beam_subset/feynman_III_4_33.tsv
+rows: train 4000, validation 1000, unseen test 25000
+population 1 x (1510+1500) = 3010 | 361 generations in 30.1 s = 83.3 ms per generation | 1089620 individuals = 36255 per second | stopped by time
+seconds: variation 0.15 | read-back 3.87 | decode 3.17 | evaluate 13.50 | link+scale+metrics 0.00 | HFF 5.76 | pump 3.07 | cross 0.00
+seconds: beam 2.70 (0.037 per beat)
+BEAM	72	864	0	-6.10	-6.10	2.70
+BEAM_WRAPS	864	grafted 0	kept 0	graft refused 0	better/refused per wrap: recip_1=0/0 x_over_expm1=0/0 recip_sqrt_1m=0/144 recip_1m=0/0
+BEAM_FLOAT	0	0
+genes evaluated 934809 (unique per generation), over the 64-node limit 0
+1 - R²: train 6.199e-5, validation 6.310e-5
+model: (((-0.8442723870231333)*(((((x_3*(-3.5403670913678558))*x_2) + ((((-4.0) + x_1)/((-0.3465735902799727) - x_0)) + x_0)) + (x_1 + tanh((((sin(x_0) + x_1)**2)/x_0))))/3.0)) + 1.376034753069721)
+GENERATIONS	361	time	6.310e-5
+HFF	0.004641	6.199e-5	6.310e-5	-
+MSE	1.604e-3	1.544e-3	-
+TOWER	2	in HFF
+PVALUE	4.242e-8	-7.37	4
+GENES	934809	0	1089620
+MODEL_INFIX	(((-0.8442723870231333)*(((((x_3*(-3.5403670913678558))*x_2) + ((((-4.0) + x_1)/((-0.3465735902799727) - x_0)) + x_0)) + (x_1 + tanh((((sin(x_0) + x_1)**2)/x_0))))/3.0)) + 1.376034753069721)
+MODEL_PLAIN	(((-0.8442723870231333)*(((((x_3*(-3.5403670913678558))*x_2) + ((((-4.0) + x_1)/((-0.3465735902799727) - x_0)) + x_0)) + (x_1 + tanh((((sin(x_0) + x_1)**2)/x_0))))/3.0)) + 1.376034753069721)
+RAW_MATH	(Add (Mul (Num -0.8442723870231333) (Div (Add (Add (Mul (Mul (Mul (Var "x_3") (Pow2 (Sin (ProtectedInv (Pow2 (ProtectedDiv (Var "x_0") (Var "x_0"))))))) (Num -5.0)) (Var "x_2")) (Add (Mul (ProtectedInv (ProtectedLog (ProtectedDiv (ProtectedExp (Neg (Var "x_0"))) (ProtectedSqrt (Num 2.0))))) (Add (Num -4.0) (Var "x_1"))) (Var "x_0"))) (Add (Abs (Var "x_1")) (Tanh (ProtectedDiv (Pow2 (Add (Sin (Var "x_0")) (Var "x_1"))) (Var "x_0"))))) (Num 3.0))) (Num 1.376034753069721))
+R² on the unseen test rows: 0.999935
+
+=== feynman_I_10_7  seed 7014  beam off  13:49:02 ===
+dataset /private/tmp/claude-501/-Users-andrewmorgan-Dev-gamakon-fuller/b3c1f1fe-1035-445f-ada0-9f05e732d5e6/scratchpad/beam_subset/feynman_I_10_7.tsv
+rows: train 4000, validation 1000, unseen test 25000
+population 1 x (1500+1500) = 3000 | 356 generations in 30.1 s = 84.6 ms per generation | 1071000 individuals = 35560 per second | stopped by time
+seconds: variation 0.19 | read-back 3.30 | decode 3.01 | evaluate 17.58 | link+scale+metrics 0.00 | HFF 5.09 | pump 4.01 | cross 0.00
+genes evaluated 877719 (unique per generation), over the 64-node limit 0
+1 - R²: train 1.151e-4, validation 1.221e-4
+model: (((-126.05170745659659)*log((-(((((x_1/(x_2 + sin(x_0)))**3) + (-129.0)) + tan((x_1/x_2))) + (x_0 - exp((1/(x_0 + ((0.7615941559557649*x_2)/x_1))))))))) + 613.6290225823078)
+GENERATIONS	356	time	1.221e-4
+HFF	0.003469	1.151e-4	1.221e-4	-
+MSE	1.675e-4	1.862e-4	-
+TOWER	2	in HFF
+PVALUE	1.772e-8	-7.75	4
+GENES	877719	0	1071000
+MODEL_INFIX	(((-126.05170745659659)*log((-(((((x_1/(x_2 + sin(x_0)))**3) + (-129.0)) + tan((x_1/x_2))) + (x_0 - exp((1/(x_0 + ((0.7615941559557649*x_2)/x_1))))))))) + 613.6290225823078)
+MODEL_PLAIN	(((-126.05170745659659)*log((-(((((x_1/(x_2 + sin(x_0)))**3) + (-129.0)) + tan((x_1/x_2))) + (x_0 - exp((1/(x_0 + ((0.7615941559557649*x_2)/x_1))))))))) + 613.6290225823078)
+RAW_MATH	(Add (Mul (Num -126.05170745659659) (Log (Abs (Add (Add (Add (Pow3 (Num -5.0)) (Mul (Add (Pow3 (Mul (Var "x_1") (Abs (ProtectedInv (Add (Var "x_2") (Sin (Var "x_0"))))))) (Num -4.0)) (Num 1.0))) (Tan (ProtectedDiv (Var "x_1") (Var "x_2")))) (Sub (Var "x_0") (ProtectedExp (ProtectedInv (Add (Abs (Var "x_0")) (ProtectedDiv (Mul (Tanh (Neg (Num -1.0))) (Var "x_2")) (Var "x_1")))))))))) (Num 613.6290225823078))
+R² on the unseen test rows: 0.999892
+
+=== feynman_I_10_7  seed 7014  beam on  13:49:34 ===
+dataset /private/tmp/claude-501/-Users-andrewmorgan-Dev-gamakon-fuller/b3c1f1fe-1035-445f-ada0-9f05e732d5e6/scratchpad/beam_subset/feynman_I_10_7.tsv
+rows: train 4000, validation 1000, unseen test 25000
+population 1 x (1510+1500) = 3010 | 412 generations in 30.0 s = 72.9 ms per generation | 1243130 individuals = 41391 per second | stopped by time
+seconds: variation 0.20 | read-back 3.63 | decode 3.19 | evaluate 14.19 | link+scale+metrics 0.00 | HFF 5.66 | pump 3.32 | cross 0.00
+seconds: beam 2.27 (0.028 per beat)
+BEAM	82	984	0	-6.61	-6.61	2.27
+BEAM_WRAPS	984	grafted 0	kept 0	graft refused 0	better/refused per wrap: recip_1=0/1 x_over_expm1=0/0 recip_sqrt_1m=0/169 recip_1m=0/1
+BEAM_FLOAT	0	0
+genes evaluated 933989 (unique per generation), over the 64-node limit 0
+1 - R²: train 1.036e-4, validation 1.207e-4
+model: ((0.40993908321670586*sqrt((-((exp(((x_1/x_2)**2))*(tanh(x_0) - (4.0/(tanh((tanh(x_2)**2))**2))))*((1/((1/x_0)**2)) + x_0))))) + (-0.45766528655527017))
+GENERATIONS	412	time	1.207e-4
+HFF	0.004302	1.036e-4	1.207e-4	-
+MSE	1.508e-4	1.841e-4	-
+TOWER	2	in HFF
+PVALUE	3.379e-8	-7.47	4
+GENES	933989	0	1243130
+MODEL_INFIX	((0.40993908321670586*sqrt((-((exp(((x_1/x_2)**2))*(tanh(x_0) - (4.0/(tanh((tanh(x_2)**2))**2))))*((1/((1/x_0)**2)) + x_0))))) + (-0.45766528655527017))
+MODEL_PLAIN	((0.40993908321670586*sqrt((-((exp(((x_1/x_2)**2))*(tanh(x_0) - (4.0/(tanh((tanh(x_2)**2))**2))))*((1/((1/x_0)**2)) + x_0))))) + (-0.45766528655527017))
+RAW_MATH	(Add (Mul (Num 0.40993908321670586) (Sqrt (Abs (Mul (Mul (ProtectedExp (ProtectedDiv (Abs (Pow2 (Var "x_1"))) (Pow2 (Var "x_2")))) (Sub (Tanh (Var "x_0")) (Mul (Num 4.0) (ProtectedInv (Pow2 (Tanh (Pow2 (Tanh (Var "x_2"))))))))) (Add (ProtectedInv (Pow2 (ProtectedLog (ProtectedExp (ProtectedInv (Var "x_0")))))) (Var "x_0")))))) (Num -0.45766528655527017))
+R² on the unseen test rows: 0.999909
+
+=== feynman_I_48_2  seed 7014  beam off  13:50:07 ===
+dataset /private/tmp/claude-501/-Users-andrewmorgan-Dev-gamakon-fuller/b3c1f1fe-1035-445f-ada0-9f05e732d5e6/scratchpad/beam_subset/feynman_I_48_2.tsv
+rows: train 4000, validation 1000, unseen test 25000
+population 1 x (1500+1500) = 3000 | 368 generations in 30.1 s = 81.8 ms per generation | 1107000 individuals = 36778 per second | stopped by time
+seconds: variation 0.14 | read-back 3.10 | decode 2.75 | evaluate 17.51 | link+scale+metrics 0.00 | HFF 4.90 | pump 3.74 | cross 0.00
+genes evaluated 826359 (unique per generation), over the 64-node limit 0
+1 - R²: train 6.152e-7, validation 5.986e-7
+model: ((1.5002983695063394*(((((x_1**2) + (x_2**2))*x_0) + (((x_0*(((x_2 + x_1) - (x_1 + (x_1/(((sqrt(((x_1*x_2) - (sin(x_2)/(1/(x_1**2)))))**3) + (x_1**3)) - (x_2**3)))))**2)) + (-5.0)) + sqrt(x_1)))/3.0)) + 1.8874535629188642)
+GENERATIONS	368	time	5.986e-7
+HFF	0.000436	6.152e-7	5.986e-7	-
+MSE	6.184e-3	6.234e-3	-
+TOWER	2	in HFF
+PVALUE	3.509e-11	-10.45	4
+GENES	826359	0	1107000
+MODEL_INFIX	((1.5002983695063394*(((((x_1**2) + (x_2**2))*x_0) + (((x_0*(((x_2 + x_1) - (x_1 + (x_1/(((sqrt(((x_1*x_2) - (sin(x_2)/(1/(x_1**2)))))**3) + (x_1**3)) - (x_2**3)))))**2)) + (-5.0)) + sqrt(x_1)))/3.0)) + 1.8874535629188642)
+MODEL_PLAIN	((1.5002983695063394*(((((x_1**2) + (x_2**2))*x_0) + (((x_0*(((x_2 + x_1) - (x_1 + (x_1/(((sqrt(((x_1*x_2) - (sin(x_2)/(1/(x_1**2)))))**3) + (x_1**3)) - (x_2**3)))))**2)) + (-5.0)) + sqrt(x_1)))/3.0)) + 1.8874535629188642)
+RAW_MATH	(Add (Mul (Num 1.5002983695063394) (Div (Add (Add (Mul (Pow2 (Var "x_1")) (Var "x_0")) (Mul (Pow2 (Var "x_2")) (Var "x_0"))) (Add (Add (Mul (Var "x_0") (Pow2 (Sub (Add (Var "x_2") (Var "x_1")) (Add (Var "x_1") (ProtectedDiv (Var "x_1") (Sub (Add (Pow3 (ProtectedSqrt (Sub (ProtectedDiv (Sin (Var "x_2")) (ProtectedInv (Pow2 (Var "x_1")))) (Mul (Var "x_1") (Var "x_2"))))) (Pow3 (Var "x_1"))) (Pow3 (Var "x_2")))))))) (Num -5.0)) (ProtectedSqrt (Var "x_1")))) (Num 3.0))) (Num 1.8874535629188642))
+R² on the unseen test rows: 0.999999
+
+=== feynman_I_48_2  seed 7014  beam on  13:50:41 ===
+dataset /private/tmp/claude-501/-Users-andrewmorgan-Dev-gamakon-fuller/b3c1f1fe-1035-445f-ada0-9f05e732d5e6/scratchpad/beam_subset/feynman_I_48_2.tsv
+rows: train 4000, validation 1000, unseen test 25000
+population 1 x (1510+1500) = 3010 | 351 generations in 30.1 s = 85.6 ms per generation | 1059520 individuals = 35250 per second | stopped by time
+seconds: variation 0.13 | read-back 2.95 | decode 2.68 | evaluate 16.58 | link+scale+metrics 0.00 | HFF 4.46 | pump 3.51 | cross 0.00
+seconds: beam 2.02 (0.029 per beat)
+BEAM	70	840	6	-7.29	-7.29	2.02
+BEAM_WRAPS	840	grafted 5	kept 0	graft refused 1	better/refused per wrap: recip_1=0/0 x_over_expm1=6/0 recip_sqrt_1m=0/128 recip_1m=0/0
+BEAM_FLOAT	0	0
+genes evaluated 846062 (unique per generation), over the 64-node limit 0
+1 - R²: train 1.334e-6, validation 1.456e-6
+model: (((-0.2868629051458331)*((((-3.0)/tanh((4.0/((1/((x_2/x_1) + tanh((x_1 - x_2)))) + 3.0))))*((x_0/tanh((x_2/x_1)))*x_2))*(x_2 - (tanh((1/x_2))/x_0)))) + 0.9865928095228753)
+GENERATIONS	351	time	1.456e-6
+HFF	0.000647	1.334e-6	1.456e-6	-
+MSE	1.341e-2	1.516e-2	-
+TOWER	2	in HFF
+PVALUE	1.151e-10	-9.94	4
+GENES	846062	0	1059520
+MODEL_INFIX	(((-0.2868629051458331)*((((-3.0)/tanh((4.0/((1/((x_2/x_1) + tanh((x_1 - x_2)))) + 3.0))))*((x_0/tanh((x_2/x_1)))*x_2))*(x_2 - (tanh((1/x_2))/x_0)))) + 0.9865928095228753)
+MODEL_PLAIN	(((-0.2868629051458331)*((((-3.0)/tanh((4.0/((1/((x_2/x_1) + tanh((x_1 - x_2)))) + 3.0))))*((x_0/tanh((x_2/x_1)))*x_2))*(x_2 - (tanh((1/x_2))/x_0)))) + 0.9865928095228753)
+RAW_MATH	(Add (Mul (Num 0.2868629051458331) (Mul (Mul (Mul (ProtectedInv (Tanh (ProtectedDiv (Num 4.0) (Add (ProtectedInv (Add (ProtectedDiv (Var "x_2") (Var "x_1")) (Tanh (Sub (Var "x_1") (Var "x_2"))))) (Num 3.0))))) (Num -3.0)) (Mul (ProtectedDiv (Var "x_0") (Tanh (Neg (Neg (ProtectedDiv (Var "x_2") (Var "x_1")))))) (Var "x_2"))) (Sub (ProtectedDiv (Tanh (ProtectedInv (Var "x_2"))) (Var "x_0")) (Var "x_2")))) (Num 0.9865928095228753))
+R² on the unseen test rows: 0.999999
+
+=== feynman_II_11_3  seed 7014  beam off  13:51:13 ===
+dataset /private/tmp/claude-501/-Users-andrewmorgan-Dev-gamakon-fuller/b3c1f1fe-1035-445f-ada0-9f05e732d5e6/scratchpad/beam_subset/feynman_II_11_3.tsv
+rows: train 4000, validation 1000, unseen test 25000
+population 1 x (1500+1500) = 3000 | 359 generations in 30.0 s = 83.6 ms per generation | 1080000 individuals = 35967 per second | stopped by time
+seconds: variation 0.15 | read-back 3.26 | decode 3.08 | evaluate 17.74 | link+scale+metrics 0.00 | HFF 4.97 | pump 3.78 | cross 0.00
+genes evaluated 932494 (unique per generation), over the 64-node limit 0
+1 - R²: train 8.145e-4, validation 7.835e-4
+model: (((-0.3959340254894345)*(((((x_0/(1/x_3)) + (x_0*((log((5.0*x_4)) - sqrt(x_3))*x_4)))*3.0)*((tanh((2.0 + ((-5.0)/sin(x_4))))/x_3)**3))*(x_1/x_2))) + (-0.001024808911935432))
+GENERATIONS	359	time	7.835e-4
+HFF	0.014751	8.145e-4	7.835e-4	-
+MSE	1.215e-5	1.204e-5	-
+TOWER	2	in HFF
+PVALUE	1.362e-6	-5.87	4
+GENES	932494	0	1080000
+MODEL_INFIX	(((-0.3959340254894345)*(((((x_0/(1/x_3)) + (x_0*((log((5.0*x_4)) - sqrt(x_3))*x_4)))*3.0)*((tanh((2.0 + ((-5.0)/sin(x_4))))/x_3)**3))*(x_1/x_2))) + (-0.001024808911935432))
+MODEL_PLAIN	(((-0.3959340254894345)*(((((x_0/(1/x_3)) + (x_0*((log((5.0*x_4)) - sqrt(x_3))*x_4)))*3.0)*((tanh((2.0 + ((-5.0)/sin(x_4))))/x_3)**3))*(x_1/x_2))) + (-0.001024808911935432))
+RAW_MATH	(Add (Mul (Num 0.3959340254894345) (Mul (Mul (Mul (Sub (Sub (Var "x_1") (Add (ProtectedDiv (Var "x_0") (ProtectedInv (Var "x_3"))) (Mul (Var "x_0") (Mul (Sub (ProtectedLog (Mul (Num -5.0) (Var "x_4"))) (ProtectedSqrt (Var "x_3"))) (Var "x_4"))))) (Var "x_1")) (Num 3.0)) (Pow3 (ProtectedDiv (Tanh (Sub (Num -3.0) (Add (Num -5.0) (Neg (ProtectedDiv (Num -5.0) (Sin (Var "x_4"))))))) (Var "x_3")))) (ProtectedDiv (Var "x_1") (Var "x_2")))) (Num -0.001024808911935432))
+R² on the unseen test rows: 0.998986
+
+=== feynman_II_11_3  seed 7014  beam on  13:51:46 ===
+dataset /private/tmp/claude-501/-Users-andrewmorgan-Dev-gamakon-fuller/b3c1f1fe-1035-445f-ada0-9f05e732d5e6/scratchpad/beam_subset/feynman_II_11_3.tsv
+rows: train 4000, validation 1000, unseen test 25000
+population 1 x (1510+1500) = 3010 | 349 generations in 30.1 s = 86.2 ms per generation | 1053500 individuals = 35006 per second | stopped by time
+seconds: variation 0.13 | read-back 3.14 | decode 2.62 | evaluate 17.04 | link+scale+metrics 0.00 | HFF 4.63 | pump 3.46 | cross 0.00
+seconds: beam 1.82 (0.026 per beat)
+BEAM	69	828	0	-3.75	-3.75	1.82
+BEAM_WRAPS	828	grafted 0	kept 0	graft refused 0	better/refused per wrap: recip_1=0/0 x_over_expm1=0/0 recip_sqrt_1m=0/94 recip_1m=0/0
+BEAM_FLOAT	0	0
+genes evaluated 865636 (unique per generation), over the 64-node limit 0
+1 - R²: train 3.600e-3, validation 3.344e-3
+model: (((-0.8676418043950384)*(((0.6389612763136348 - (acos((tanh((3.0 - x_4))**2)) + x_0))*(tan(sin((1/x_3)))*asin((1/(x_3 - (tanh(((x_3/x_0) + x_4))**3))))))/(x_2/x_1))) + (-0.00027409827590332836))
+GENERATIONS	349	time	3.344e-3
+HFF	0.037021	3.600e-3	3.344e-3	-
+MSE	5.371e-5	5.137e-5	-
+TOWER	2	in HFF
+PVALUE	2.153e-5	-4.67	4
+GENES	865636	0	1053500
+MODEL_INFIX	(((-0.8676418043950384)*(((0.6389612763136348 - (acos((tanh((3.0 - x_4))**2)) + x_0))*(tan(sin((1/x_3)))*asin((1/(x_3 - (tanh(((x_3/x_0) + x_4))**3))))))/(x_2/x_1))) + (-0.00027409827590332836))
+MODEL_PLAIN	(((-0.8676418043950384)*(((0.6389612763136348 - (acos((tanh((3.0 - x_4))**2)) + x_0))*(tan(sin((1/x_3)))*asin((1/(x_3 - (tanh(((x_3/x_0) + x_4))**3))))))/(x_2/x_1))) + (-0.00027409827590332836))
+RAW_MATH	(Add (Mul (Num -0.8676418043950384) (Mul (Mul (Add (Sin (ProtectedLog (Num -2.0))) (Sub (Neg (ProtectedAcos (Pow2 (Tanh (Sub (Num 3.0) (Var "x_4")))))) (Var "x_0"))) (Mul (Tan (Sin (ProtectedInv (Var "x_3")))) (ProtectedAsin (ProtectedInv (Add (Pow3 (Tanh (Sub (ProtectedDiv (Num 1.0) (Neg (ProtectedInv (ProtectedDiv (Var "x_3") (Var "x_0"))))) (Var "x_4")))) (Var "x_3")))))) (ProtectedInv (ProtectedDiv (Var "x_2") (Var "x_1"))))) (Num -0.00027409827590332836))
+R² on the unseen test rows: 0.995875
+
+=== feynman_I_12_5  seed 7014  beam off  13:52:20 ===
+dataset /private/tmp/claude-501/-Users-andrewmorgan-Dev-gamakon-fuller/b3c1f1fe-1035-445f-ada0-9f05e732d5e6/scratchpad/beam_subset/feynman_I_12_5.tsv
+rows: train 4000, validation 1000, unseen test 25000
+population 1 x (1500+1500) = 3000 | 1 generations in 0.2 s = 186.3 ms per generation | 6000 individuals = 32210 per second | stopped by early_stop
+seconds: variation 0.00 | read-back 0.04 | decode 0.01 | evaluate 0.09 | link+scale+metrics 0.00 | HFF 0.02 | pump 0.00 | cross 0.00
+genes evaluated 3099 (unique per generation), over the 64-node limit 0
+1 - R²: train 6.148e-15, validation 6.355e-15
+model: (x_0*x_1)
+GENERATIONS	1	early_stop	6.355e-15
+HFF	0.000000	6.148e-15	6.355e-15	-
+MSE	1.536e-13	1.631e-13	-
+TOWER	0	in HFF
+PVALUE	4.441e-23	-22.35	4
+GENES	3099	0	6000
+MODEL_INFIX	(x_0*x_1)
+MODEL_PLAIN	(x_0*x_1)
+RAW_MATH	(Add (Mul (Num 0.25000000000107364) (Mul (Mul (Num 4.0) (Var "x_0")) (Var "x_1"))) (Num -2.320138747791134e-9))
+R² on the unseen test rows: 1.000000
+
+=== feynman_I_12_5  seed 7014  beam on  13:52:22 ===
+dataset /private/tmp/claude-501/-Users-andrewmorgan-Dev-gamakon-fuller/b3c1f1fe-1035-445f-ada0-9f05e732d5e6/scratchpad/beam_subset/feynman_I_12_5.tsv
+rows: train 4000, validation 1000, unseen test 25000
+population 1 x (1510+1500) = 3010 | 1 generations in 0.2 s = 193.7 ms per generation | 6020 individuals = 31080 per second | stopped by early_stop
+seconds: variation 0.00 | read-back 0.04 | decode 0.01 | evaluate 0.10 | link+scale+metrics 0.00 | HFF 0.02 | pump 0.00 | cross 0.00
+seconds: beam 0.00 (0.000 per beat)
+BEAM	0	0	0	0.00	0.00	0.00
+BEAM_WRAPS	0	grafted 0	kept 0	graft refused 0	better/refused per wrap: recip_1=0/0 x_over_expm1=0/0 recip_sqrt_1m=0/0 recip_1m=0/0
+BEAM_FLOAT	0	0
+genes evaluated 3089 (unique per generation), over the 64-node limit 0
+1 - R²: train 6.148e-15, validation 6.355e-15
+model: (x_0*x_1)
+GENERATIONS	1	early_stop	6.355e-15
+HFF	0.000000	6.148e-15	6.355e-15	-
+MSE	1.536e-13	1.631e-13	-
+TOWER	0	in HFF
+PVALUE	4.441e-23	-22.35	4
+GENES	3089	0	6020
+MODEL_INFIX	(x_0*x_1)
+MODEL_PLAIN	(x_0*x_1)
+RAW_MATH	(Add (Mul (Num 0.25000000000107364) (Mul (Mul (Num 4.0) (Var "x_0")) (Var "x_1"))) (Num -2.320138747791134e-9))
+R² on the unseen test rows: 1.000000
+
+=== measurement finished 2026-09-22 13:52:24 ===
