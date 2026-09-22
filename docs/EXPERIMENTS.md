@@ -67,6 +67,69 @@ Not yet run: AB4 (baseline v3 vs edge validation in Rust, seeds 7012 and 7013).
 | Leave-one-part-out, solved laws | median loss 0.49, no dead parts |
 | Leave-one-part-out, fakes with R² ≥ 0.999 | median loss 0.003, 70% have dead parts |
 
+## 2026-09-21/22: the engine's capabilities, and the two-pass race
+
+Everything below is the Rust engine at 6 seconds per problem unless stated, on
+development seeds, scored by SRBench's own scorer, with both submissions (fuller's
+own string and the sympy-tidied one) recorded.
+
+### The races
+
+| Race | Seed | Setup | Solved of 133 |
+|---|---|---|---|
+| balanced-pole tournaments | 7014 | balanced pole for selection | 26 |
+| TrueNorth, 3 genes x head 34 | 7013 | the baseline setup | **60** |
+| TrueNorth, 1 gene x head 48 | 7013 | one long gene | **60** |
+| ... either of the two | 7013 | | **68 (51.1%)** |
+| first pass | 7014 | 6 s, everything default | 52 |
+| second pass | 7014 | the 80 that did not meet the stop bar: compounds, 3 island pairs + the cross step, 60 s | +15 |
+| **both passes** | 7014 | | **67 (50.4%)** |
+| precision-fixed | 7013 | identical to the 60, on the fixed scorer | 56 |
+
+**Distinct laws solved at least once by the Rust engine: 77 of 133 (57.9%).**
+A union over configurations and seeds, not a single-configuration figure — but it
+establishes what the engine can reach.
+
+### What was built, and what it is worth
+
+| Change | Evidence |
+|---|---|
+| **The balanced pole is wrong for selection** | 26 vs 53 on the same seed, everything else equal. TrueNorth won 30 laws the balanced pole missed. Confirmed Andrew's reading. |
+| **The stop bar gained a p-value half** (log10 p <= -19 as well as 1-R2 <= 1e-10) | Every real law that met the old bar sat at -19.4 or below; the one fake that slipped under it sat at -17.55. On seed 7014, 53 fits met the new bar and 52 were exact. |
+| **The two-pass race** (Andrew's design: pick off the easy laws, then spend the resources on the rest) | The stop bar — never SRBench's verdict — decides what is set aside. 52 of 53 set aside were exact; the second pass found 15 more in the remaining 80, five of them first-ever solves. |
+| **The compensated sums were dead on this device** | The Metal compiler removed the Neumaier `add`; the device matched neither the compensated nor the plain-sum CPU twin. Fixed, plus a 1-ulp correction to the device's `/` and `sqrt`. The f32 floor on a true law fell from 1.2e-10 to 1.1e-14 — against a stop bar of 1e-10. |
+| **Compound functions** (sqrt/1/sqrt/1/(a+-b) as single symbols, expanded at decode) | For the shapes the search never builds: a sum under a root was 1 of 18 solved, the 1/sqrt(1-v^2/c^2) family 0 of 9. Used in the second pass. |
+| **Island pairs and the cross step** (Andrew's `_migrate_pump_cross`, ported) | Used in the second pass. One pair with no cross step is bit-identical to before. |
+| **The dynamic gene-subset choice** | Every non-empty subset of the genes is a scoring candidate, so a chromosome decides whether it is a 1-, 2- or 3-gene model. On I_26_2: off, 328 generations and unsolved; on, early stop at generation 14 using one gene. Costs 2.7x per generation. |
+| **Snap on the GPU, all four stages** | The lattice as a resident table; the choice of form is an HFF TrueNorth decision over nearness, size and fit-to-context; the R2 guard judges the whole model; the kept form is written back into the Karva gene. Measured: at RNC -100..100 about 5% of genes hold a non-whole constant and a third of those match; at -5..5 the matches are dominated by rationals that change nothing. |
+| **Data guided rewrites** (Andrew's name) | Rewrites the final form may make because the DATA says they hold on every row, each checked against the model's own predictions. They recovered laws the engine had FOUND and the scorer had rejected: II.11.27, III.12.43, I.18.12, I.14.4, I.30.5, III.17.37, glider2, barmag2, II.10.9, I.44.4. |
+| **A literal a product apart from the fitted scale** | strogatz lv2 was found as 0.037037 * ((27 * (2-y-x)) * y) — the law, scored wrong because SRBench rounds 0.037*27 to 0.999. Four orderings added to the rational ruleset. |
+
+### What the evidence says
+
+1. **A law is found early or not at all.** 54% of solves are in the initial
+   population, 69% by generation 5. Nine hard laws given 1,000-10,000 generations:
+   the error fell 0.3-3.4 decades and not one verdict changed — the imitation is
+   refined, not replaced.
+2. **Diversity, not effort, is what flips a law.** Every law that went from unsolved
+   to solved did so under a different draw: another seed, another pole, another
+   population, restarts. Two seeds at identical settings differ by ~8 laws.
+3. **Effort still pays when it is spent on the right problems.** The second pass
+   turned 60 s each on 80 hard problems into 15 solves, five of them firsts.
+4. **Reporting has been worth as much as search.** Ten laws the engine had already
+   found were being scored wrong because of the form they were written in.
+5. **The two setups reach different laws.** 3 genes and 1 long gene each solve 60,
+   together 68: one long gene gets the single nested structures (arcsin, the
+   Gaussian), three genes get the sums of separate terms.
+
+### Open
+
+- The precision fix changed the search (different arithmetic, different tournament
+  winners), so 60 vs 56 on one seed cannot separate a real effect from the draw.
+  A second seed is running.
+- Snap needs RNC -100..100 to bite; every recent race used -5..5.
+- 9 laws of the 1/sqrt(1-v^2/c^2) family have never been solved in any run.
+
 ## Summary
 
 1. **Best valid single-seed score: 47 of 133 = 35.3%** (Rust engine, harvest-and-
