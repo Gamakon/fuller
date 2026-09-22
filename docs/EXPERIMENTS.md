@@ -442,3 +442,38 @@ carry `symbolic_fraction_is_constant: True` while `simplified_symbolic_model` is
 `0` or `nan` — the fraction test degenerates when the denominator vanishes. The
 race's strict filter already rejects these, and it is right to: none of the three
 is the law. Counting the loose flag would have reported 69 instead of 66.
+
+## A reported string that is not finite on every row never wins (2026-09-22)
+
+Scanning all 133 laws of the cascade, evaluating the REPORTED (plain) model on
+the test rows:
+
+| | laws |
+|---|---|
+| finite on every test row | 117 — and every solve is here |
+| NOT finite on every row | **16 — none solved, ever** |
+
+Four are finite on **0%** of rows: II_10_9, I_11_19, s_lv1, s_lv2. Also
+II_35_18 at 6.9%, III_19_51 at 39%, II_11_28 at 41%, I_10_7 at 43%.
+
+**The cause is the protected/plain split.** The engine scores the FAITHFUL form,
+where `ProtectedLog` returns a guard value on a negative argument. What we submit
+is the PLAIN form, where the same expression is raw `log` and gives NaN on those
+rows. The two agree on the rows the guard never fires and diverge everywhere
+else. `II_11_28` scores 1-R2 8e-6 on the faithful form while the string we hand
+the benchmark is undefined on 59% of the data.
+
+It is a perfect predictor with no exceptions in 133 laws, and it is knowable
+before submitting: evaluate the reported string on the rows we already hold.
+
+**This is a fourth failure class**, and it overlaps the "too long" class rather
+than replacing it — a bloated form is also the kind that reaches a protection.
+
+### The masking measurement that found it
+
+Trying Andrew's mask idea (mask subtrees, shorten to what is left, re-fit a and
+b, score) on the bloated near misses: the scheme runs — diagonal first, then all
+pairs, then random once the combinations explode (k=3 is 19,600 on a 50-subtree
+model, past a 6,000 budget) — but on I_10_7 and I_48_2 it could not produce a
+baseline at all, because the full reported model is not finite on the train
+rows. That is what exposed the class above.
