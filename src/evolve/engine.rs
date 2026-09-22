@@ -1293,6 +1293,24 @@ pub fn resolve_protected(math: &str, rows: &[Vec<(String, f64)>]) -> Result<Stri
         let kids: Vec<Tree> = kids.iter().map(|k| go(k, rows)).collect();
         let values = |k: &Tree| evaluate_math(&k.to_math(), rows).unwrap_or_default();
         match op {
+            // THE SMALL ANGLE, data guided, and LAST among the trig rules so the
+            // specific ones above keep first refusal. tan(u), sin(u), tanh(u)
+            // and asin(u) are all u to within f64's own noise once |u| is small
+            // enough on EVERY row. The engine reaches a law this way and the
+            // spelling then dies at the scorer: strogatz_lv2 was found as
+            // -4096*y*tan(tan(0.000244*(x+y-2))), which IS -y*(x+y-2) — until
+            // SRBench rounds 0.000244 to zero and the model becomes 0.
+            //
+            // |u| < 1e-5 keeps the cubic term (u^3/3 for tan) under 3.4e-16
+            // relative, below the f64 epsilon the rest of the pipeline works at.
+            // It fires only where the rows say it holds, and `final_form` checks
+            // the result against the predictions regardless.
+            Op::Tan | Op::Sin | Op::Tanh | Op::Asin
+                if values(&kids[0]).iter().all(|v| v.is_finite() && v.abs() < 1e-5)
+                    && !values(&kids[0]).is_empty() =>
+            {
+                return kids[0].clone();
+            }
             Op::ProtectedDiv => {
                 let b = values(&kids[1]);
                 if !b.is_empty() && b.iter().all(|v| v.is_finite() && v.abs() >= 1e-6) {
