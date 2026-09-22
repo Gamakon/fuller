@@ -1672,6 +1672,18 @@ fn drop_dead_subtrees(tree: &crate::lint::node::Tree, rows: &[Vec<(String, f64)>
 }
 
 pub fn final_form(math: &str, names: &[String], rows: &[Vec<(String, f64)>]) -> Result<String, String> {
+    final_form_within(math, names, rows, None)
+}
+
+/// [`final_form`] told HOW WELL THE MODEL FITS, so the leave-one-out reduction
+/// can size its tolerance against the model's own error instead of an absolute
+/// constant. `one_minus_r2` is the model's 1-R2 on the rows it was fitted to.
+pub fn final_form_within(
+    math: &str,
+    names: &[String],
+    rows: &[Vec<(String, f64)>],
+    one_minus_r2: Option<f64>,
+) -> Result<String, String> {
     use crate::lint::tables::{Exactness, Tables};
     static TABLES: std::sync::OnceLock<Result<Tables, String>> = std::sync::OnceLock::new();
     let tables = TABLES.get_or_init(Tables::standard).as_ref().map_err(|e| format!("lint tables: {e}"))?;
@@ -1705,10 +1717,19 @@ pub fn final_form(math: &str, names: &[String], rows: &[Vec<(String, f64)>]) -> 
     // predicts what the model predicts, so the pair costs one extra scoring pass
     // and can never lose — a candidate whose reduction drifts is simply not
     // among the pair that scores.
+    // The drop's tolerance is the MODEL'S OWN ERROR, not an absolute constant.
+    // Holding a drop to 1e-10 while the model is only fitted to 1e-7 makes every
+    // term worth 1e-8 untouchable — significant against the bound, invisible in
+    // the fit. Feynman test_12 kept all 320 of its characters that way. A term
+    // that moves the prediction by less than a tenth of what the model is
+    // ALREADY wrong by is not carrying the law. `one_minus_r2` is what the
+    // caller measured against the target; with none given the rewriter's own
+    // bound stands and nothing changes.
+    let drop_agree = one_minus_r2.map_or(FINAL_FORM_AGREE, |e| (e / 10.0).max(FINAL_FORM_AGREE));
     let with_reductions: Vec<crate::lint::node::Tree> = candidates
         .into_iter()
         .flat_map(|(tree, _)| {
-            let reduced = drop_dead_subtrees(&tree, rows, FINAL_FORM_AGREE);
+            let reduced = drop_dead_subtrees(&tree, rows, drop_agree);
             if reduced == tree { vec![tree] } else { vec![reduced, tree] }
         })
         .collect();

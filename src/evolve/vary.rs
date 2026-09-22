@@ -350,6 +350,18 @@ pub enum BeamKind {
     Dc,
     /// One of the gene's constants redrawn.
     Rnc,
+    /// SEVERAL function nodes collapsed AT ONCE — the combination mask.
+    ///
+    /// Andrew: "we could have a 'diagonal' mask that removes just one term at a
+    /// time, then we can have all combinations of 2, 3, 4 ... or we can have
+    /// pure random where the combinations are too high."
+    ///
+    /// The single-node masks above are the diagonal, and they are enumerated
+    /// whole. They cannot reach a nest of twenty calls where no ONE call is
+    /// removable but all twenty together are — which is the shape the bloated
+    /// near misses actually have (feynman I_10_7 is a 23-character law wearing
+    /// 20 function calls). This draws k nodes at once, k > 1.
+    Mask,
 }
 
 /// THE NEIGHBOURHOOD of one individual: up to `width` mutants of it, all
@@ -500,6 +512,65 @@ pub fn neighbourhood(genome: &[u32], rnc: &[f32], layout: Layout, codes: &Symbol
         }
         index += 1;
     }
+
+    // 4. THE COMBINATION MASKS. The neighbourhood above is the DIAGONAL — every
+    //    single function node, promoted and collapsed, enumerated whole. It
+    //    cannot reach a nest where no ONE node is removable but several together
+    //    are, and that is the shape of the bloated near misses: feynman I_10_7
+    //    is a 23-character law wearing 20 function calls, and dropping any one
+    //    of them loses the fit.
+    //
+    //    So: k nodes collapsed at once, k from 2 up. Pairs are enumerated while
+    //    they fit the width; past that the draw is random, which is Andrew's
+    //    rule — "all combinations of 2, 3, 4 ... or pure random where the
+    //    combinations are too high". Every mask is one gene's tokens rewritten
+    //    by `cleanse_gene_within` k times over, so what comes out is an ordinary
+    //    gene and the device scores it with everything else.
+    for &g in &used {
+        if out.len() >= width as usize {
+            break;
+        }
+        let tokens = &genome[g * width_g..(g + 1) * width_g];
+        let Some(tree) = GeneTree::of(tokens, layout, codes) else { continue };
+        let n_fn = (0..tree.n).filter(|&i| arity(tokens[i]) > 0).count();
+        if n_fn < 2 {
+            continue;
+        }
+        // Every pair, while they fit; then k drawn from 2..=n_fn/2 at random.
+        let pairs = n_fn * (n_fn - 1) / 2;
+        let room = width as usize - out.len();
+        let mut made = 0usize;
+        let mut attempt = 0u32;
+        while made < room && attempt < (room as u32).saturating_mul(4) {
+            let d = |slot: u32, stream: u32| draw(p.seed, p.generation, g as u32, slot, stream);
+            let k = if pairs <= room && (attempt as usize) < pairs {
+                2
+            } else {
+                2 + below(d(attempt * 8, STREAM_BEAM), (n_fn / 2).max(2) as u32) as usize
+            };
+            let mut mutant = genome.to_vec();
+            let mut ok = true;
+            for step in 0..k {
+                let gene = &mut mutant[g * width_g..(g + 1) * width_g];
+                // Each step re-reads the gene, so the pick is over what is LEFT:
+                // collapsing a node removes its whole subtree and the nodes that
+                // were inside it are no longer there to pick.
+                let pick = d(attempt * 8 + step as u32 + 1, STREAM_BEAM);
+                if !cleanse_gene_within(gene, layout, vhead, codes, (pick, true, 0, d(attempt * 8 + step as u32 + 5, STREAM_RNC_VALUE))) {
+                    ok = false;
+                    break;
+                }
+            }
+            attempt += 1;
+            if !ok {
+                continue;
+            }
+            let before = out.len();
+            keep(mutant, rnc.to_vec(), BeamKind::Mask, &mut out, &mut seen);
+            made += out.len() - before;
+        }
+    }
+
     out.truncate(width as usize);
     Ok(out)
 }
@@ -1118,6 +1189,45 @@ pub(crate) mod tests {
         assert_eq!(out, neighbourhood(&genome, &rnc, layout, &codes, &p, 400).unwrap());
         let other = neighbourhood(&genome, &rnc, layout, &codes, &BeamParams { generation: 18, ..p }, 400).unwrap();
         assert_ne!(out, other, "two beats gave the same neighbourhood");
+    }
+
+    /// THE COMBINATION MASK reaches what the diagonal cannot: a gene whose
+    /// function nodes are all still there after any SINGLE collapse has more
+    /// than one gone after a mask.
+    #[test]
+    fn a_mask_collapses_several_nodes_where_one_at_a_time_cannot() {
+        let (codes, layout) = (codes(), Layout::for_arity(1, 1, 8, 2, 10));
+        // `*( *(x4, x5), f(x4) )` — three function nodes to choose among.
+        let mut genome = vec![4u32; (layout.head + layout.tail) as usize];
+        genome[..6].copy_from_slice(&[0, 1, 3, 4, 5, 4]);
+        genome.extend(std::iter::repeat_n(0u32, layout.tail as usize));
+        let rnc = vec![1.0f32; layout.n_rnc as usize];
+        let out = neighbourhood(&genome, &rnc, layout, &codes, &beam_params(5, 0b1), 5000).unwrap();
+        let masks: Vec<&Mutant> = out.iter().filter(|m| m.kind == BeamKind::Mask).collect();
+        assert!(!masks.is_empty(), "the beam made no combination masks");
+        let functions = |g: &[u32]| {
+            GeneTree::of(&g[..(layout.head + layout.tail) as usize], layout, &codes)
+                .map_or(0, |t| (0..t.n).filter(|&i| codes.arity[g[i] as usize] > 0).count())
+        };
+        let before = functions(&genome);
+        // A single collapse takes ONE function node with its subtree; a mask of
+        // k >= 2 takes more, so at least one mask is strictly smaller than
+        // anything the diagonal can produce.
+        let smallest_single = out
+            .iter()
+            .filter(|m| matches!(m.kind, BeamKind::Promote | BeamKind::Collapse))
+            .map(|m| functions(&m.genome))
+            .min()
+            .unwrap_or(before);
+        let smallest_mask = masks.iter().map(|m| functions(&m.genome)).min().unwrap_or(before);
+        assert!(
+            smallest_mask <= smallest_single,
+            "masks ({smallest_mask} functions) reached no further than the diagonal ({smallest_single})"
+        );
+        // and every mask is a GENE the device can decode
+        for m in &masks {
+            assert!(GeneTree::of(&m.genome[..(layout.head + layout.tail) as usize], layout, &codes).is_some());
+        }
     }
 
     /// The CLEANSE NEIGHBOURHOOD is enumerated WHOLE: for a gene with a known
