@@ -395,8 +395,10 @@ pub fn neighbourhood(genome: &[u32], rnc: &[f32], layout: Layout, codes: &Symbol
     // 1. THE CLEANSE NEIGHBOURHOOD, enumerated whole: every function node of every
     //    used gene, promoted over each child and collapsed to a constant. The
     //    draws `cleanse_gene_within` takes are built so it picks exactly the node
-    //    and the child this entry names — `below(h, n)` maps the top bits, so
-    //    `(nth << 1 | 1) * (u64::MAX / n)` lands inside bucket `nth`.
+    //    and the child this entry names: `below(h, n)` cuts the range into n equal
+    //    buckets, so the MIDPOINT of bucket `nth` is a draw that lands on `nth`.
+    //    `every_promotion_of_every_function_node_is_in_the_neighbourhood` holds
+    //    this — it names each promotion of a hand-built tree and finds it.
     let bucket = |nth: usize, n: usize| -> u64 {
         if n <= 1 {
             0
