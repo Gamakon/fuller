@@ -161,6 +161,34 @@ impl Tree {
         }
     }
 
+    /// Would this form still MEAN anything after SRBench rounds it?
+    ///
+    /// `srbench/postprocessing/symbolic_utils.py::round_floats` rounds every
+    /// float to 3 decimals and sends anything under 1e-4 to zero, BEFORE
+    /// comparing our model with the law. A form can be numerically perfect and
+    /// lose all its structure there: `-4096*y*tan(tan(0.000244*(x+y-2)))` is
+    /// `-y*(x+y-2)` to eleven decimals, and rounding sends 0.000244 to 0, so
+    /// what SRBench compares is `0`.
+    ///
+    /// The exact test needs the rounded tree evaluated; this is the cheap
+    /// necessary condition that catches the whole class: a literal that ROUNDS
+    /// TO ZERO while it is not zero has, by being there at all, been carrying
+    /// something the rounded form cannot carry. Reported forms are small, so a
+    /// walk costs nothing.
+    pub fn dies_on_rounding(&self) -> bool {
+        // SRBench sends |a| < 1e-4 to zero and ROUNDS everything else to three
+        // decimals — and a literal such as 0.000244 is above the first
+        // threshold yet still zero after the second. Both routes to zero count.
+        fn vanishes(v: f64) -> bool {
+            v != 0.0 && (v.abs() < 1e-4 || (v * 1000.0).round() == 0.0)
+        }
+        match self {
+            Tree::Num(v) => vanishes(*v),
+            Tree::Var(_) => false,
+            Tree::App(_, kids) => kids.iter().any(Tree::dies_on_rounding),
+        }
+    }
+
     pub fn node_count(&self) -> usize {
         match self {
             Tree::Num(_) | Tree::Var(_) => 1,

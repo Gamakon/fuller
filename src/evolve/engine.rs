@@ -1571,7 +1571,14 @@ pub fn final_form(math: &str, names: &[String], rows: &[Vec<(String, f64)>]) -> 
         nonzero_vars: all(&|v| v != 0.0),
     };
     let candidates = crate::lint::forms(tables, math, names, Exactness::Finite, 8, facts)?;
-    let mut best: Option<(usize, String, String)> = None;
+    // A form that does not survive the benchmark's own rounding is worth less
+    // than one that does, whatever its size: rounding a literal under 1e-4 to
+    // zero deletes whatever that literal was carrying, and the compared model
+    // means nothing. So the sort is (survives, size, spelling) — a surviving
+    // form beats a smaller dying one, and among equals the smallest still wins.
+    // The incoming `math` is itself a candidate, so a fit whose only forms all
+    // die reports what it always did.
+    let mut best: Option<(bool, usize, String, String)> = None;
     for (tree, _) in candidates {
         let form = tree.to_math();
         let Ok(pred) = evaluate_math(&form, rows) else { continue };
@@ -1579,12 +1586,12 @@ pub fn final_form(math: &str, names: &[String], rows: &[Vec<(String, f64)>]) -> 
         if drift.is_nan() || drift > FINAL_FORM_AGREE {
             continue;
         }
-        let key = (tree.node_count(), tree.to_infix(), form);
-        if best.as_ref().is_none_or(|b| (key.0, &key.1) < (b.0, &b.1)) {
+        let key = (tree.dies_on_rounding(), tree.node_count(), tree.to_infix(), form);
+        if best.as_ref().is_none_or(|b| (key.0, key.1, &key.2) < (b.0, b.1, &b.2)) {
             best = Some(key);
         }
     }
-    Ok(best.map_or(math.to_string(), |b| b.2))
+    Ok(best.map_or(math.to_string(), |b| b.3))
 }
 
 /// A `Math` expression on rows of named values, in f64, by fuller's own
@@ -3397,6 +3404,45 @@ mod tests {
         let var = want.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / want.len() as f64;
         let drift = want.iter().zip(&got).map(|(w, g)| (w - g).powi(2)).sum::<f64>() / want.len() as f64 / var;
         assert!(drift <= FINAL_FORM_AGREE, "drift {drift}");
+    }
+
+    /// THE ROUNDING GATE. `Tree::dies_on_rounding` is the cheap necessary
+    /// condition: a literal under 1e-4 that is not zero goes to zero under
+    /// SRBench's `round_floats`, and whatever it was carrying goes with it.
+    #[test]
+    fn a_literal_that_rounds_to_zero_is_a_form_that_dies() {
+        use crate::lint::node::Tree;
+        let dies = |m: &str| Tree::parse(m).expect("parse").dies_on_rounding();
+        // strogatz_lv2 as the engine reported it: -4096*y*tan(tan(0.000244*u)).
+        // tan(tan(eu)) is eu to eleven decimals and 4096 * 0.000244 = 1, so the
+        // model is the law — until 0.000244 rounds to 0 and it becomes nothing.
+        assert!(dies(r#"(Mul (Num -4095.9987) (Mul (Var "x_1") (Tan (Tan (Mul (Num 0.000244140625) (Var "x_0"))))))"#));
+        // The same law spelled without the vanishing literal survives.
+        assert!(!dies(r#"(Mul (Num -1.0) (Mul (Var "x_1") (Var "x_0")))"#));
+        // A literal that is EXACTLY zero is not a casualty of rounding: it is
+        // already what rounding would make it.
+        assert!(!dies(r#"(Add (Num 0.0) (Var "x_0"))"#));
+        // 1e-4 itself rounds to 0.0 at three decimals, so it dies; 1e-3 does not.
+        assert!(dies(r#"(Mul (Num 0.00009) (Var "x_0"))"#));
+        assert!(!dies(r#"(Mul (Num 0.001) (Var "x_0"))"#));
+    }
+
+    /// And the gate is wired into the choice: given two forms that agree on the
+    /// data, the one that survives the benchmark's rounding is reported even
+    /// when it is the larger of the two.
+    #[test]
+    fn the_final_form_prefers_a_surviving_spelling_over_a_smaller_dying_one() {
+        use crate::lint::node::Tree;
+        // 0.00005 * (x_0 * 20000.0) is x_0, written so that the literal dies.
+        let model = r#"(Mul (Num 0.00005) (Mul (Var "x_0") (Num 20000.0)))"#;
+        let tidy = final_form(model, &names(), &rows()).unwrap();
+        let after = Tree::parse(&tidy).expect("the reported form parses");
+        assert!(!after.dies_on_rounding(), "reported a form that rounding kills: {tidy}");
+        // and it still computes what the model computes
+        let (want, got) = (evaluate_math(model, &rows()).unwrap(), evaluate_math(&tidy, &rows()).unwrap());
+        for (w, g) in want.iter().zip(&got) {
+            assert!((w - g).abs() <= 1e-9 * w.abs().max(1.0), "{tidy}: {w} vs {g}");
+        }
     }
 
     /// Every column positive on the data: |x| is x, and sqrt((a/b)^2) is a/b.
