@@ -215,6 +215,28 @@ fn main() {
     //                                   snap) and the winner's chain back to its founder. Unset
     //                                   = off, and the engine is what it was, bit for bit.
     config.genealogy_path = env("EVOLVE_GENEALOGY_FILE").filter(|p| !p.is_empty());
+    //   EVOLVE_BEAM_EVERY               THE BEAM's beat in generations (0 = off, the default):
+    //                                   on a beat, thousands of rule-based MUTATIONS of the
+    //                                   best individual are generated and scored on the data,
+    //                                   and one that beats it is kept alongside it
+    //   EVOLVE_BEAM_WIDTH               how many mutants a beat generates (default 2000)
+    //   EVOLVE_BEAM_WRAPS=0             switch the FUNCTIONAL mutations off (the wraps whose
+    //                                   a, b are fitted by least squares); tree mutations only
+    //   EVOLVE_FLOAT_ZONE               THE FLOAT ZONE: extra intake rows a beam survivor is
+    //                                   APPENDED into, so the intake floats above its base
+    //                                   size until the pump's own cut (0 = off)
+    if let Some(n) = env("EVOLVE_BEAM_EVERY").and_then(|v| v.parse().ok()) {
+        config.beam_every = n;
+    }
+    if let Some(n) = env("EVOLVE_BEAM_WIDTH").and_then(|v| v.parse().ok()) {
+        config.beam_width = n;
+    }
+    if let Some(v) = env("EVOLVE_BEAM_WRAPS") {
+        config.beam_wraps = v == "1";
+    }
+    if let Some(n) = env("EVOLVE_FLOAT_ZONE").and_then(|v| v.parse().ok()) {
+        config.float_zone = n;
+    }
     let restarts: u32 = env("EVOLVE_RESTARTS").and_then(|v| v.parse().ok()).unwrap_or(1).max(1);
     config.cleanse = args.get(6).and_then(|a| a.parse().ok()).unwrap_or(0.0);
     // RESTARTS: the same seconds as one search, spent as several independent
@@ -259,6 +281,15 @@ fn main() {
         println!("seconds: snap {:.2} ({:.3} per beat in the snap step itself)", t.snap, out.snap.seconds / out.snap.beats.max(1) as f64);
         println!("{}", out.snap.line());
         println!("{}", out.snap.detail());
+    }
+    // THE BEAM: beats, mutants, how many beat their original, the best log10 p
+    // before and after, and the seconds it cost — plus which wraps earned their
+    // place and what the float zone held.
+    if config.beam_every > 0 {
+        println!("seconds: beam {:.2} ({:.3} per beat)", t.beam, out.beam.seconds / out.beam.beats.max(1) as f64);
+        println!("{}", out.beam.line());
+        println!("{}", out.beam.wrap_detail());
+        println!("{}", out.beam.float_line());
     }
     println!("genes evaluated {} (unique per generation), over the 64-node limit {}", out.unique_genes, out.oversized_genes);
     println!("1 - R²: train {:.3e}, validation {:.3e}", out.best.one_minus_r2[0], out.best.one_minus_r2[1]);

@@ -76,6 +76,30 @@ pub enum Wrapper {
     Exp,
     /// `x * x` — `_w_square`.
     Square,
+    /// THE BEAM'S FUNCTIONAL WRAPS. These are NOT sampled by the engine's
+    /// `WRAPPERS`: they exist so [`super::evolve::engine::Engine::beam`] can ask
+    /// "what if this individual's value went through this shape?" and let least
+    /// squares fit the `a`, `b` around it. Every one is PARTIAL — off its domain
+    /// it returns NaN, which `score_one` already refuses, so a candidate that is
+    /// not total on the data is simply not a candidate. None of them clamps its
+    /// way out of trouble: a clamp would make a wrong model look finite.
+    ///
+    /// `1/(x - 1)` — Bose-Einstein's shape (feynman III.4.32 is `1/(exp(u) - 1)`,
+    /// so with this wrap the gene need only build `exp(u)`).
+    Recip1,
+    /// `1/sqrt(1 - x)` — the Lorentz family's shape, `inner/sqrt(1 - (v/c)^2)`:
+    /// the gene need only build `(v/c)^2`. Needs `x < 1`.
+    RecipSqrt1m,
+    /// `1/(1 - x)` — the same family without the root, and the geometric series'.
+    Recip1m,
+    /// `x/(exp(x) - 1)` — feynman III.4.33's whole shape in one wrap. At `x = 0`
+    /// the limit is 1 and that is what it returns (the quotient is 0/0 there).
+    /// `exp` is NOT clamped: at a large positive `x` the denominator overflows and
+    /// the quotient is 0, which is the function's own limit, and at a large
+    /// negative one it is `x / -1 = -x`. Both are the shape, not a clamp.
+    XOverExpm1,
+    /// `1/x` — the plain reciprocal. Needs `x != 0`.
+    Recip,
 }
 
 impl Wrapper {
@@ -86,17 +110,66 @@ impl Wrapper {
             "sqrt_abs" => Ok(Self::SqrtAbs),
             "exp" => Ok(Self::Exp),
             "square" => Ok(Self::Square),
+            "recip_1" => Ok(Self::Recip1),
+            "recip_sqrt_1m" => Ok(Self::RecipSqrt1m),
+            "recip_1m" => Ok(Self::Recip1m),
+            "x_over_expm1" => Ok(Self::XOverExpm1),
+            "recip" => Ok(Self::Recip),
             other => Err(format!("unknown wrapper {other:?}")),
         }
     }
 
-    fn apply(self, x: f64) -> f64 {
+    /// The wrap's name, as [`Wrapper::parse`] reads it back.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Identity => "identity",
+            Self::LogAbs => "log_abs",
+            Self::SqrtAbs => "sqrt_abs",
+            Self::Exp => "exp",
+            Self::Square => "square",
+            Self::Recip1 => "recip_1",
+            Self::RecipSqrt1m => "recip_sqrt_1m",
+            Self::Recip1m => "recip_1m",
+            Self::XOverExpm1 => "x_over_expm1",
+            Self::Recip => "recip",
+        }
+    }
+
+    /// The wrap applied to one linked value. `pub` so the beam can measure a wrap
+    /// on the host before it commits to grafting it.
+    ///
+    /// A pole is NaN, never a clamp or a large finite number: the caller refuses a
+    /// candidate that is not finite on every row, so a wrap that does not hold on
+    /// this data is dropped whole instead of scoring on the rows where it happens
+    /// to work.
+    pub fn apply(self, x: f64) -> f64 {
         match self {
             Self::Identity => x,
             Self::LogAbs => (x.abs() + 1e-12).ln(),
             Self::SqrtAbs => x.abs().sqrt(),
             Self::Exp => x.clamp(-50.0, 50.0).exp(),
             Self::Square => x * x,
+            Self::Recip1 => 1.0 / (x - 1.0),
+            Self::RecipSqrt1m => {
+                if x < 1.0 {
+                    1.0 / (1.0 - x).sqrt()
+                } else {
+                    f64::NAN
+                }
+            }
+            Self::Recip1m => 1.0 / (1.0 - x),
+            // The removable singularity at 0: the quotient is 0/0 there and the
+            // limit is 1. Everywhere else the plain quotient, `exp` unclamped —
+            // `exp_m1` overflows to +inf at a large x and the quotient is then 0,
+            // which is what the function does there.
+            Self::XOverExpm1 => {
+                if x == 0.0 {
+                    1.0
+                } else {
+                    x / x.exp_m1()
+                }
+            }
+            Self::Recip => 1.0 / x,
         }
     }
 }
@@ -836,5 +909,62 @@ mod tests {
         assert!(bad_y.is_err());
         assert!(Linker::parse("nope").is_err());
         assert!(Wrapper::parse("nope").is_err());
+    }
+
+    /// THE BEAM'S FUNCTIONAL WRAPS, one at a time: each computes the shape it is
+    /// named for, and each is NaN or infinite exactly on its pole — which is what
+    /// makes `score_one` refuse a candidate the wrap does not hold on.
+    #[test]
+    fn the_functional_wraps_are_their_shapes_and_are_not_finite_on_their_poles() {
+        let near = |a: f64, b: f64| (a - b).abs() <= 1e-12 * b.abs().max(1.0);
+        // 1/(x - 1), the Bose-Einstein shape. III.4.32 is 1/(exp(u) - 1): the wrap
+        // around exp(u) IS the law.
+        assert!(near(Wrapper::Recip1.apply(3.0), 0.5));
+        let u: f64 = 0.7;
+        assert!(near(Wrapper::Recip1.apply(u.exp()), 1.0 / (u.exp() - 1.0)));
+        assert!(!Wrapper::Recip1.apply(1.0).is_finite());
+        // 1/sqrt(1 - x), the Lorentz family: the wrap around (v/c)^2.
+        let (v, c) = (0.6_f64, 1.0_f64);
+        assert!(near(Wrapper::RecipSqrt1m.apply((v / c).powi(2)), 1.0 / (1.0 - (v / c).powi(2)).sqrt()));
+        assert!(near(Wrapper::RecipSqrt1m.apply(0.0), 1.0));
+        // At and past 1 there is no real value: NaN, so the candidate is refused.
+        assert!(Wrapper::RecipSqrt1m.apply(1.0).is_nan() && Wrapper::RecipSqrt1m.apply(2.0).is_nan());
+        // 1/(1 - x), and its pole.
+        assert!(near(Wrapper::Recip1m.apply(0.75), 4.0));
+        assert!(!Wrapper::Recip1m.apply(1.0).is_finite());
+        // x/(exp(x) - 1): the REMOVABLE singularity at 0 is its limit, 1.
+        assert!(near(Wrapper::XOverExpm1.apply(0.0), 1.0));
+        assert!(near(Wrapper::XOverExpm1.apply(2.0), 2.0 / (2.0_f64.exp() - 1.0)));
+        // and it stays continuous through the singularity, which a plain
+        // x/(exp(x)-1) written with exp() - 1 does not at this size.
+        assert!((Wrapper::XOverExpm1.apply(1e-9) - 1.0).abs() < 1e-8);
+        // exp unclamped, so a large x gives the function's own limits: 0 as
+        // x -> +inf (the denominator overflows), and -x as x -> -inf.
+        assert_eq!(Wrapper::XOverExpm1.apply(1e4), 0.0);
+        assert!(near(Wrapper::XOverExpm1.apply(-1e4), 1e4));
+        // 1/x, and its pole.
+        assert!(near(Wrapper::Recip.apply(4.0), 0.25));
+        assert!(!Wrapper::Recip.apply(0.0).is_finite());
+        // Every wrap round-trips through its name.
+        for w in [Wrapper::Identity, Wrapper::LogAbs, Wrapper::SqrtAbs, Wrapper::Exp, Wrapper::Square,
+                  Wrapper::Recip1, Wrapper::RecipSqrt1m, Wrapper::Recip1m, Wrapper::XOverExpm1, Wrapper::Recip] {
+            assert_eq!(Wrapper::parse(w.name()), Ok(w), "{}", w.name());
+        }
+    }
+
+    /// A candidate the wrap is not TOTAL on is refused, not scored on the rows
+    /// where it happens to work: `score_one` returns None and the caller sees NaN.
+    #[test]
+    fn a_wrap_that_does_not_hold_on_every_row_is_not_a_candidate() {
+        // linked values that cross 1: 1/sqrt(1 - x) has no real value on half of them.
+        let preds: Vec<f32> = vec![0.1, 0.5, 0.9, 1.5, 2.0, 0.2, 0.3, 0.4, 0.6];
+        let y = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0];
+        let splits = Splits { n_train: 5, n_val: 4, n_extrap: 0 };
+        let spec = |w: Wrapper| ScoreSpec { linkers: vec![Linker::AVG], wrappers: vec![w], splits, linear_scaling: true };
+        let out = score_chromosomes(&preds, &[true], &[vec![0]], &y, &spec(Wrapper::RecipSqrt1m)).unwrap();
+        assert!(out[..METRIC_WIDTH].iter().all(|v| v.is_nan()), "the partial wrap was scored anyway: {out:?}");
+        // The same rows under a wrap that IS total on them give a real candidate.
+        let ok = score_chromosomes(&preds, &[true], &[vec![0]], &y, &spec(Wrapper::Square)).unwrap();
+        assert!(ok[..METRIC_WIDTH].iter().all(|v| v.is_finite()), "{ok:?}");
     }
 }
