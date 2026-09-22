@@ -1584,6 +1584,93 @@ pub const FINAL_FORM_AGREE: f64 = 1e-10;
 /// A snap that moves a constant by 1e-4 does not pass that bar — it is the
 /// reporting harness's decision, judged on its own terms, not this function's.
 /// Returns `math` itself when nothing smaller agrees.
+/// LEAVE ONE OUT, then keep it out. Andrew: "if the R2 does not change when this
+/// item is missing, then leave it out permanently ... it's a mechanism for
+/// identifying functional reductions."
+///
+/// Each subtree is held at its MEAN on the data — the same thing the scoring
+/// kernel's leave-one-gene-out does, one level finer, because a gene here is one
+/// tree carrying twenty function calls and dropping whole genes cannot see
+/// inside it. A drop is KEPT when the model still predicts what it predicted:
+/// the caller's `a * model + b` is refitted by the scorer afterwards, so a term
+/// that only shifts or scales the output costs nothing and goes.
+///
+/// Greedy and repeated: every surviving subtree is tried, the cheapest drop is
+/// taken, and the pass runs again on what is left. That finds a whole wrapper no
+/// single drop would — a nest of twenty calls where no ONE call is removable but
+/// all twenty together are.
+///
+/// It never runs in the search. It is a REPORTING reduction: the model the
+/// engine chose still computes what it computed, and only its spelling shrinks.
+fn drop_dead_subtrees(tree: &crate::lint::node::Tree, rows: &[Vec<(String, f64)>], agree: f64) -> crate::lint::node::Tree {
+    use crate::lint::node::Tree;
+    /// Every subtree that could be held at a constant: an application, never a
+    /// leaf (a variable IS the model's input) and never the root (that is the
+    /// model itself).
+    fn positions(t: &Tree, at_root: bool, out: &mut Vec<Tree>) {
+        if let Tree::App(_, kids) = t {
+            if !at_root {
+                out.push(t.clone());
+            }
+            for k in kids {
+                positions(k, false, out);
+            }
+        }
+    }
+    fn replace(t: &Tree, what: &Tree, with: &Tree) -> Tree {
+        if t == what {
+            return with.clone();
+        }
+        match t {
+            Tree::App(op, kids) => Tree::App(*op, kids.iter().map(|k| replace(k, what, with)).collect()),
+            other => other.clone(),
+        }
+    }
+    let spread = |v: &[f64]| -> Option<(f64, f64)> {
+        if v.is_empty() || v.iter().any(|x| !x.is_finite()) {
+            return None;
+        }
+        let mean = v.iter().sum::<f64>() / v.len() as f64;
+        Some((mean, v.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / v.len() as f64))
+    };
+    let Ok(reference) = evaluate_math(&tree.to_math(), rows) else { return tree.clone() };
+    let Some((_, var)) = spread(&reference) else { return tree.clone() };
+    if var <= 0.0 {
+        return tree.clone();
+    }
+    let mut current = tree.clone();
+    // Each round takes at most one subtree, so the tree strictly shrinks and the
+    // loop is bounded by its size.
+    for _ in 0..tree.node_count() {
+        let mut here = Vec::new();
+        positions(&current, true, &mut here);
+        let mut best: Option<(usize, Tree)> = None;
+        for sub in here {
+            let Ok(values) = evaluate_math(&sub.to_math(), rows) else { continue };
+            let Some((mean, _)) = spread(&values) else { continue };
+            let candidate = replace(&current, &sub, &Tree::Num(mean));
+            let Ok(pred) = evaluate_math(&candidate.to_math(), rows) else { continue };
+            if pred.len() != reference.len() || pred.iter().any(|v| !v.is_finite()) {
+                continue;
+            }
+            let drift = pred.iter().zip(&reference).map(|(p, r)| (p - r).powi(2)).sum::<f64>() / reference.len() as f64;
+            if drift > agree * var {
+                continue;
+            }
+            // The biggest saving wins the round; ties go to the smaller result.
+            let size = candidate.node_count();
+            if best.as_ref().is_none_or(|(b, _)| size < *b) {
+                best = Some((size, candidate));
+            }
+        }
+        match best {
+            Some((_, next)) => current = next,
+            None => break,
+        }
+    }
+    current
+}
+
 pub fn final_form(math: &str, names: &[String], rows: &[Vec<(String, f64)>]) -> Result<String, String> {
     use crate::lint::tables::{Exactness, Tables};
     static TABLES: std::sync::OnceLock<Result<Tables, String>> = std::sync::OnceLock::new();
@@ -1613,7 +1700,19 @@ pub fn final_form(math: &str, names: &[String], rows: &[Vec<(String, f64)>]) -> 
     // The incoming `math` is itself a candidate, so a fit whose only forms all
     // die reports what it always did.
     let mut best: Option<(bool, usize, String, String)> = None;
-    for (tree, _) in candidates {
+    // Every candidate is offered TWICE: as the rewriter produced it, and with its
+    // dead subtrees dropped. The reduction can only shrink a form that already
+    // predicts what the model predicts, so the pair costs one extra scoring pass
+    // and can never lose — a candidate whose reduction drifts is simply not
+    // among the pair that scores.
+    let with_reductions: Vec<crate::lint::node::Tree> = candidates
+        .into_iter()
+        .flat_map(|(tree, _)| {
+            let reduced = drop_dead_subtrees(&tree, rows, FINAL_FORM_AGREE);
+            if reduced == tree { vec![tree] } else { vec![reduced, tree] }
+        })
+        .collect();
+    for tree in with_reductions {
         let form = tree.to_math();
         let Ok(pred) = evaluate_math(&form, rows) else { continue };
         let drift = pred.iter().zip(&reference).map(|(p, r)| (p - r).powi(2)).sum::<f64>() / n / var;
@@ -3487,6 +3586,36 @@ mod tests {
         for (w, g) in want.iter().zip(&got) {
             assert!((w - g).abs() <= 1e-9 * w.abs().max(1.0), "{tidy}: {w} vs {g}");
         }
+    }
+
+    /// LEAVE ONE OUT, KEPT OUT. A model wearing a term the data cannot see
+    /// reports without it — and the reduction is greedy, so a whole nest goes
+    /// even where no single node of it could.
+    #[test]
+    fn a_subtree_the_data_cannot_see_is_dropped_and_stays_dropped() {
+        use crate::lint::node::Tree;
+        // x_0 * x_1 plus a term eleven orders of magnitude smaller: the law is
+        // the product, and the tail is noise the fit cannot resolve.
+        let model = r#"(Add (Mul (Var "x_0") (Var "x_1")) (Mul (Num 1e-12) (Sin (Var "x_2"))))"#;
+        let tree = Tree::parse(model).expect("parse");
+        let reduced = drop_dead_subtrees(&tree, &rows(), FINAL_FORM_AGREE);
+        assert!(reduced.node_count() < tree.node_count(), "nothing dropped: {}", reduced.to_infix());
+        // and what is left predicts what the model predicted
+        let (want, got) = (evaluate_math(model, &rows()).unwrap(), evaluate_math(&reduced.to_math(), &rows()).unwrap());
+        let mean = want.iter().sum::<f64>() / want.len() as f64;
+        let var = want.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / want.len() as f64;
+        let drift = want.iter().zip(&got).map(|(w, g)| (w - g).powi(2)).sum::<f64>() / want.len() as f64 / var;
+        assert!(drift <= FINAL_FORM_AGREE, "drift {drift}: {}", reduced.to_infix());
+    }
+
+    /// A term the data CAN see is kept: the reduction may not change what the
+    /// model computes, whatever it costs in size.
+    #[test]
+    fn a_subtree_that_carries_the_fit_is_never_dropped() {
+        use crate::lint::node::Tree;
+        let model = r#"(Add (Mul (Var "x_0") (Var "x_1")) (Var "x_2"))"#;
+        let tree = Tree::parse(model).expect("parse");
+        assert_eq!(drop_dead_subtrees(&tree, &rows(), FINAL_FORM_AGREE), tree);
     }
 
     /// Every column positive on the data: |x| is x, and sqrt((a/b)^2) is a/b.
