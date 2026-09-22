@@ -167,9 +167,25 @@ bears on ALPS: the pump is already supplying young material, and selection
 discards all of it before it can compete, because it meets converged old
 material in the same tournament.
 
-Where the age spread is 0 to max, the 0s are the rows the last pump beat had just
-refilled — dead on arrival by the next beat. Where min = max (II_38_14,
-III_4_32) the fit ended between beats.
+**A fresh line is gone within two generations.** `founders, all` is 1201 on
+exactly the two fits that ended ON a pump beat (335 = 67x5, 360 = 72x5): the
+1,200 rows just drawn, plus ONE line for the other 1,800. On the two that ended
+off the beat — II_38_14 at generation 204 (4 past the beat at 200) and III_4_32
+at 332 (2 past 330) — it is 1. Every one of 1,200 fresh lines is extinct across
+all 3,000 rows within two generations of arriving.
+
+The mechanism is the tournament fraction against the keeper fraction, and it is
+arithmetic, not luck. A refilled intake holds 300 keepers (its best fifth, by
+construction fitter than anything just drawn) among 1,500 rows, and the
+tournament size is 7% of 1,500 = 105. The chance that one 105-draw tournament
+contains no keeper at all is (1200/1500)^105 = 6.7e-11, and `select` is
+two-stage, so it is tighter still. Young material is not outcompeted; it is
+never sampled without a converged elder in the same draw.
+
+The `I_39_11` age line reads `0 / 335 / 335` with mean 201.00 — exactly
+1800 x 335 / 3000. Every one of the 300 keepers and all 1,500 champion rows is
+age 335 and descends from the same generation-0 founder; the remaining 1,200 are
+the refill at age 0.
 
 Winners are also not long-lived elites: minting age equals row age on three of
 four long fits (the winning variation happened in the final generations), and the

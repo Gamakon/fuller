@@ -464,7 +464,13 @@ impl Genealogy {
 ///     `id` and `parent` columns are the first and last id of the batch — the
 ///     individuals are still each identifiable, at a hundredth of the bytes;
 ///   * when a fit ends, the winner's whole chain back to its founder
-///     (`kind` = `lineage_of_winner`), newest first.
+///     (`kind` = `lineage_of_winner`), newest first, and one `population` line
+///     with the final population's ages and how many lines its best rows come
+///     from.
+///
+/// A READER MUST FILTER ON `kind`. Every kind but `population` follows the
+/// header's eleven columns; the `population` summary carries its own key-value
+/// fields instead, because it describes a population and not an individual.
 pub struct GenealogyLog {
     file: std::fs::File,
     pub lines: u64,
