@@ -236,7 +236,9 @@ It was scored on every beat and could never land. Andrew: "in sed we have
 root, so the template may name the wrapped value as often as the shape needs.
 Karva cannot share a subtree, so the host is written out again and the gene grows
 by the host subtree's size. **That cost never bit: over 28 fits and ~25 million
-genes evaluated, 0 exceeded the 64-node limit and 1 graft in 9 was refused.**
+genes evaluated, 0 exceeded the 64-node limit, and of 10 graft attempts 9
+succeeded and 1 was refused.** (The largest grafted gene was not measured; those
+two counts are what the logs carry.)
 
 *Score is not graft.* A wrap was SCORED on `W(L(g0,g1,g2))` and GRAFTED as
 `W(g0)` with the other genes set to 1 — different functions whenever the model
@@ -276,11 +278,15 @@ so timings are under contention.
 | I.12.5 (control) | 7013 | -22.42 | -22.42 | 0 / 0 | early_stop |
 | I.12.5 (control) | 7014 | -22.35 | -22.35 | 0 / 0 | early_stop |
 
-**feynman_I_10_7 is solved at generation 7, log10 p -21.08, test R² 1.000000**,
-by one `1/sqrt(1-x)` wrap grafted and kept. The model is
+**feynman_I_10_7 is FOUND at generation 7, log10 p -21.08, test R² 1.000000**, by
+one `1/sqrt(1-x)` wrap grafted and kept. The model is
 `x_0/(sqrt(1 - v/c) * sqrt(1 + v/c))` — algebraically exactly
-`m_0/sqrt(1-(v/c)^2)`. That law is in the family the near-miss study records as 0
-of 9 solved in every run ever. The control does not regress (identical both arms).
+`m_0/sqrt(1-(v/c)^2)`. FOUND, not SOLVED, in the near-miss study's own sense: it
+met the engine's 1e-10 stop bar and the form is the law by eye, but SRBench's
+sympy scorer was NOT run on it, and `sqrt(1-v/c)*sqrt(1+v/c)` is exactly the kind
+of form sympy may decline to collapse without domain assumptions. `_refit_rules.py`
+can settle it without a race. That law is in the family the study records as 0 of
+9 solved in every run ever. The control does not regress (identical both arms).
 
 **The honest caveat, and it is large.** I.10.7 solved on seed 7013 and NOT on
 7014 (-7.47, no graft). Run-to-run spread within an arm reaches 2.57 decades on
@@ -289,6 +295,18 @@ the noise. **One solve at one seed is a single event, not a rate.** What is
 outside the noise is structural, not statistical: the wrap now GRAFTS (9 grafts
 against 0 under the previous design), and the shape it grafts is one the search
 does not otherwise build.
+
+**9 GRAFTED, 2 KEPT — and the gap is the next fix.** Score equals graft on R², by
+construction and under test. It does NOT hold on HFF FITNESS, and the measurement
+shows where: `confirm_over` computes the candidate's tower from the UNWRAPPED
+host gene's `t_depth`, while the graft carries a real `ProtectedExp` or
+`ProtectedSqrt` node, so under `EVOLVE_TOWER=1` the re-score pays a tower penalty
+the wrap's own score never did; and the wrap is compared against an f64 baseline
+while the graft must beat the device's f32. I.48.2 seed 7014 is the evidence:
+`x_over_expm1=6/0, grafted 5, kept 0` — six winning wraps, five grafted, none
+kept, every one adding an `Exp` under the tower. That is the leading HYPOTHESIS,
+not a diagnosis — it was not isolated. The fix is to score a wrap with the
+GRAFTED gene's depth rather than the host's. Not done here.
 
 Two of the aimed laws are probably out of reach regardless: III.4.32 and III.4.33
 both have `h/(2*pi)` INSIDE the exponential, and with the wide table, no snap and
