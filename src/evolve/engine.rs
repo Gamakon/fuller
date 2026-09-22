@@ -416,6 +416,33 @@ pub struct Config {
     pub snap_rel_tol: f64,
     /// `_snap_op.py`'s `r2_drop_tol`: how much of the model's train R² a snap may cost.
     pub snap_r2_drop: f64,
+    /// THE BEAM's beat (Andrew: "a genetic beam search in the neighbourhood"):
+    /// every this many generations the best individual is taken as it stands and
+    /// thousands of MUTATIONS of it are generated and scored on the data. 0 = off,
+    /// the default. A beam mutation is NOT an equivalent rewrite — that is the
+    /// point: HFF on the data decides whether a non-equivalent neighbour is better,
+    /// and the original is never lost. See [`Engine::beam`].
+    pub beam_every: u32,
+    /// How many mutants a beat generates. The cleanse neighbourhood (every function
+    /// node promoted or collapsed, over the used genes) is enumerated whole first
+    /// and is only a few hundred; the rest is filled with drawn point, Dc and
+    /// constant mutations.
+    pub beam_width: u32,
+    /// THE FUNCTIONAL MUTATIONS (Andrew: "this is exactly the same function as
+    /// wrapping the symbolic solution in a linear regression ... the final mutation
+    /// is functional"): the beam also scores the best individual's linked value
+    /// through [`BEAM_WRAPS`], each with its `a`, `b` fitted by least squares in the
+    /// same step. Off leaves the beam to tree mutations alone.
+    pub beam_wraps: bool,
+    /// THE FLOAT ZONE (Andrew: "move copy to the intake island as an append, so the
+    /// population there floats a little, then each 4 gen we cut the ones that dont
+    /// survive"): extra rows given to EVERY intake island beyond `pop_intake`, so a
+    /// beam survivor is APPENDED rather than displacing a row and gets generations
+    /// to prove itself. The rows are ordinary intake rows — they breed, they are
+    /// selected, and the PUMP's own cut refills the ones that have not earned their
+    /// place, so the intake cannot grow for ever. 0 = off, the default; the
+    /// population is then exactly what it always was.
+    pub float_zone: u32,
 }
 
 impl Config {
@@ -460,9 +487,85 @@ impl Config {
             snap_top_k: 0,
             snap_rel_tol: 1e-3,
             snap_r2_drop: crate::lint::snap_guard::R2_DROP_TOL,
+            beam_every: 0,
+            beam_width: 2000,
+            beam_wraps: true,
+            float_zone: 0,
         }
     }
 }
+
+/// THE BEAM'S FUNCTIONAL WRAPS, in the order a beat tries them. Identity is not
+/// here: it is the original. The first three are the shapes the solution ledger
+/// points at — `1/(exp(u) - 1)` (feynman III.4.32), `u/(exp(u) - 1)` (III.4.33)
+/// and the `1/sqrt(1 - (v/c)^2)` family that is 0 of 9 solved in every race we
+/// have run — and the last four are the two wrappers `chrom_score` has always
+/// implemented but the engine never sampled, plus the two plain reciprocals.
+///
+/// The engine's own [`WRAPPERS`] is NOT changed by this: a chromosome in a row is
+/// still scored under Identity, LogAbs and SqrtAbs. These are the beam's alone.
+pub const BEAM_WRAPS: [Wrapper; 7] = [
+    Wrapper::Recip1,
+    Wrapper::XOverExpm1,
+    Wrapper::RecipSqrt1m,
+    Wrapper::Recip1m,
+    Wrapper::Recip,
+    Wrapper::Exp,
+    Wrapper::Square,
+];
+
+/// One node of a wrap written as GENE SYMBOLS — what [`Engine::graft_wrap`] puts
+/// around a gene so a wrap that won can live in a row. The value being wrapped is
+/// always the node BELOW; `Unit` is the constant 1 the shapes need, and where it
+/// sits decides the sign (`1 - x` is not `x - 1`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WrapNode {
+    /// `op(below)`.
+    Unary(Op),
+    /// `op(1, below)` — the unit first: `1 - x`, `1 / x`.
+    BinaryUnitFirst(Op),
+    /// `op(below, 1)` — the unit second: `x - 1`.
+    BinarySelfFirst(Op),
+}
+
+/// A wrap as gene symbols, OUTERMOST first, or `None` for one that has no exact
+/// spelling in the symbol table.
+///
+/// Every shape here is written with the PROTECTED division the engine's genes use
+/// (`ProtectedDiv`, `ProtectedSqrt`), because that is what a gene may hold: the
+/// wrap was judged on data where it was total, and the protected form is what
+/// keeps the chromosome total everywhere else. `Exp` is `ProtectedExp`, the
+/// engine's uncapped exp, for the same reason.
+///
+/// `Wrapper::Identity`, `LogAbs` and `SqrtAbs` are NOT here: they are the engine's
+/// own wrappers, applied to every chromosome already, and a beam that grafted them
+/// would be writing a wrapper the scorer is about to apply again.
+fn wrap_nodes(wrap: Wrapper) -> Option<Vec<WrapNode>> {
+    use WrapNode::{BinarySelfFirst, BinaryUnitFirst, Unary};
+    Some(match wrap {
+        // 1/(x - 1)
+        Wrapper::Recip1 => vec![Unary(Op::ProtectedInv), BinarySelfFirst(Op::Sub)],
+        // x/(exp(x) - 1) needs its argument TWICE, which a graft chain — one node
+        // sitting on the one below — cannot write. Left out, and said so rather
+        // than approximated: the wrap is still SCORED, it simply cannot be grafted,
+        // and the beat counts that as a refused graft.
+        Wrapper::XOverExpm1 => return None,
+        // 1/sqrt(1 - x)
+        Wrapper::RecipSqrt1m => vec![Unary(Op::ProtectedInv), Unary(Op::ProtectedSqrt), BinaryUnitFirst(Op::Sub)],
+        // 1/(1 - x)
+        Wrapper::Recip1m => vec![Unary(Op::ProtectedInv), BinaryUnitFirst(Op::Sub)],
+        // 1/x
+        Wrapper::Recip => vec![Unary(Op::ProtectedInv)],
+        Wrapper::Exp => vec![Unary(Op::ProtectedExp)],
+        Wrapper::Square => vec![Unary(Op::Pow2)],
+        // The engine's own wrappers: the scorer applies them, the gene does not.
+        Wrapper::Identity | Wrapper::LogAbs | Wrapper::SqrtAbs => return None,
+    })
+}
+
+/// Set in the generation that keys THE BEAM's draws, so a beat's neighbourhood is
+/// never the same draw as a pump's or a cross step's for the same generation.
+const BEAM_KEY: u32 = 1 << 30;
 
 /// The best candidate of an individual.
 #[derive(Clone, Copy, Debug)]
@@ -510,6 +613,99 @@ pub struct Timing {
     pub pump: f64,
     pub cross: f64,
     pub snap: f64,
+    pub beam: f64,
+}
+
+/// WHAT THE BEAM DID, over a whole fit. Every count is a fact about the search,
+/// not a verdict: `better` is how often a mutation of the best individual scored
+/// a smaller HFF angle than the individual it came from, which is the rate that
+/// says whether the neighbourhood is worth looking in at all.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct BeamCounts {
+    /// Beats run.
+    pub beats: u64,
+    /// Mutants generated, over every beat.
+    pub mutants: u64,
+    /// Mutants whose HFF angle beat the original's.
+    pub better: u64,
+    /// Of `mutants`, how many were TREE mutations and how many FUNCTIONAL wraps.
+    pub tree_mutants: u64,
+    pub wrap_candidates: u64,
+    /// Per wrap of [`BEAM_WRAPS`], how often it produced a better HFF than the
+    /// original — which wraps earn their place.
+    pub wrap_better: [u64; BEAM_WRAPS.len()],
+    /// Per wrap, how often it was REFUSED because it was not total on the data (a
+    /// pole on some row), or because least squares found the wrapped value
+    /// constant. A refusal is not a failure: it is the guard working.
+    pub wrap_refused: [u64; BEAM_WRAPS.len()],
+    /// A wrap that won and was GRAFTED into the winner's gene, and one that won but
+    /// could not be (the relevel would put a function outside the head, or the
+    /// expression would not close): counted, never silent.
+    pub wrap_grafted: u64,
+    pub wrap_graft_refused: u64,
+    /// Survivors APPENDED to a float zone, and how many of those were still in the
+    /// population at the next pump beat — the number that says whether the float
+    /// zone earns its keep.
+    pub appended: u64,
+    pub survived_a_pump: u64,
+    /// The best log10 p the beam has held, before and after its best beat.
+    pub best_log10_p_before: f64,
+    pub best_log10_p_after: f64,
+    pub seconds: f64,
+}
+
+impl BeamCounts {
+    /// Add one beat's counts to a fit's running total. The log10 p pair keeps the
+    /// BEST beat's, not the last.
+    pub fn add(&mut self, other: &BeamCounts) {
+        self.beats += other.beats;
+        self.mutants += other.mutants;
+        self.better += other.better;
+        self.tree_mutants += other.tree_mutants;
+        self.wrap_candidates += other.wrap_candidates;
+        for k in 0..BEAM_WRAPS.len() {
+            self.wrap_better[k] += other.wrap_better[k];
+            self.wrap_refused[k] += other.wrap_refused[k];
+        }
+        self.wrap_grafted += other.wrap_grafted;
+        self.wrap_graft_refused += other.wrap_graft_refused;
+        self.appended += other.appended;
+        self.survived_a_pump += other.survived_a_pump;
+        self.seconds += other.seconds;
+        // The beat that gained the most is the one worth reporting.
+        if self.beats == other.beats || other.best_log10_p_after < self.best_log10_p_after {
+            self.best_log10_p_before = other.best_log10_p_before;
+            self.best_log10_p_after = other.best_log10_p_after;
+        }
+    }
+
+    /// The tab-keyed BEAM line: beats, mutants, better, the log10 p before and
+    /// after, and the seconds.
+    pub fn line(&self) -> String {
+        format!(
+            "BEAM\t{}\t{}\t{}\t{:.2}\t{:.2}\t{:.2}",
+            self.beats, self.mutants, self.better, self.best_log10_p_before, self.best_log10_p_after, self.seconds
+        )
+    }
+
+    /// The wraps, one per line-item: how often each beat the original and how often
+    /// it was refused as not total on the data.
+    pub fn wrap_detail(&self) -> String {
+        let per: Vec<String> = BEAM_WRAPS
+            .iter()
+            .enumerate()
+            .map(|(k, w)| format!("{}={}/{}", w.name(), self.wrap_better[k], self.wrap_refused[k]))
+            .collect();
+        format!(
+            "BEAM_WRAPS\t{}\tgrafted {}\trefused {}\tbetter/refused per wrap: {}",
+            self.wrap_candidates, self.wrap_grafted, self.wrap_graft_refused, per.join(" ")
+        )
+    }
+
+    /// The float zone: appended and how many were alive at the next pump.
+    pub fn float_line(&self) -> String {
+        format!("BEAM_FLOAT\t{}\t{}", self.appended, self.survived_a_pump)
+    }
 }
 
 pub struct FitResult {
@@ -524,6 +720,8 @@ pub struct FitResult {
     pub timing: Timing,
     /// What snap did (all zero when `Config::snap_every` is 0).
     pub snap: SnapCounts,
+    /// What THE BEAM did (all zero when `Config::beam_every` is 0).
+    pub beam: BeamCounts,
 }
 
 const LINKERS: [Linker; 3] = [Linker::AVG, Linker::MUL, Linker::ADD];
@@ -1146,7 +1344,16 @@ impl Engine {
         if config.n_pairs == 0 {
             return Err("n_pairs: a population is at least one pair of islands".into());
         }
-        let pair = config.pop_intake + config.pop_champion;
+        // THE FLOAT ZONE: the intake island is `pop_intake + float_zone` rows wide,
+        // so a beam survivor is APPENDED into room the island already has rather
+        // than displacing a row. The zone is rounded UP to an even number of rows
+        // so `size - elites` keeps the parity `vary::validate` requires — the
+        // island's base size already satisfies it, and adding an even number keeps
+        // it. The device's buffers are sized from this layout once, at `new`: the
+        // island never actually grows during a fit, it starts with the room.
+        let float_zone = config.float_zone + config.float_zone % 2;
+        let intake = config.pop_intake + float_zone;
+        let pair = intake + config.pop_champion;
         let pop = config.n_pairs * pair;
         let layout = Layout::for_arity(pop, config.n_genes, config.head, table.max_arity(), config.n_rnc);
         let tourn = |n: u32| ((config.tournament_fraction * f64::from(n)).round() as u32).max(2);
@@ -1155,8 +1362,11 @@ impl Engine {
             .flat_map(|p| {
                 let lo = p * pair;
                 [
-                    Island { lo, hi: lo + config.pop_intake, elites: config.elites, tournsize: tourn(config.pop_intake) },
-                    Island { lo: lo + config.pop_intake, hi: lo + pair, elites: config.elites, tournsize: tourn(config.pop_champion) },
+                    // The float rows are part of the intake island: they breed and
+                    // are selected like any other row, and the tournament is sized
+                    // from the island the engine actually has.
+                    Island { lo, hi: lo + intake, elites: config.elites, tournsize: tourn(intake) },
+                    Island { lo: lo + intake, hi: lo + pair, elites: config.elites, tournsize: tourn(config.pop_champion) },
                 ]
             })
             .collect();
@@ -1439,6 +1649,15 @@ impl Engine {
     /// definition: what may stop a fit or be reported. The device's f32 metrics
     /// only rank.
     fn confirm(&self, gen: &Generation, row: usize) -> Result<Option<Scored>, String> {
+        self.confirm_with(gen, row, &WRAPPERS)
+    }
+
+    /// [`Engine::confirm`] under a GIVEN list of wrappers. `confirm` passes the
+    /// engine's own [`WRAPPERS`] and is the definition; the beam passes its
+    /// functional wraps to ask what the same individual would score wrapped in one
+    /// of them, at the same f64 grade. `Scored::wrapper` indexes the list that was
+    /// passed, so a caller with its own list must read it back with that list.
+    fn confirm_with(&self, gen: &Generation, row: usize, wrappers: &[Wrapper]) -> Result<Option<Scored>, String> {
         let l = self.layout;
         let (width, nr, g_n) = (l.gene_width() as usize, l.n_rnc as usize, l.n_genes as usize);
         let mut batch = ExprBatch::new();
@@ -1461,19 +1680,19 @@ impl Engine {
             }
         }
         let preds = self.evaluator.eval(&batch)?;
-        let spec = ScoreSpec { linkers: LINKERS.to_vec(), wrappers: WRAPPERS.to_vec(), splits: self.data.splits, linear_scaling: true };
+        let spec = ScoreSpec { linkers: LINKERS.to_vec(), wrappers: wrappers.to_vec(), splits: self.data.splits, linear_scaling: true };
         // The same candidates as `evaluate`, in the same order, in f64.
         let combinations = self.combinations()?;
         let scores = score_gene_subsets(&preds, &gene_ok, &[(0..g_n).collect()], &self.data.y, &spec, &combinations)?;
         let n_ex = self.data.splits.n_extrap;
         let col_max = self.col_max.unwrap_or([1.0; 9]);
         let mut best: Option<Scored> = None;
-        for c in 0..combinations.len() * WRAPPERS.len() {
+        for c in 0..combinations.len() * wrappers.len() {
             let s = &scores[c * SCORE_WIDTH..c * SCORE_WIDTH + METRIC_WIDTH];
             if !s[0].is_finite() {
                 continue;
             }
-            let combination = combinations[c / WRAPPERS.len()];
+            let combination = combinations[c / wrappers.len()];
             let tower = combination.positions().map(|g| gene_tower[g]).max().unwrap_or(0);
             let (o, omr2) = self.caps.objectives(s, n_ex);
             let columns = hff_columns(n_ex, self.config.hff_without_validation, self.config.log_scale);
@@ -1487,7 +1706,7 @@ impl Engine {
             }
             let fitness = hff_truenorth(&used, &maxes, &logs);
             if best.is_none_or(|b| fitness < b.fitness) {
-                best = Some(Scored { fitness, linker: combination.linker, wrapper: c % WRAPPERS.len(), a: s[0], b: s[1], one_minus_r2: omr2, t_depth: tower, selection: fitness, genes: combination.genes });
+                best = Some(Scored { fitness, linker: combination.linker, wrapper: c % wrappers.len(), a: s[0], b: s[1], one_minus_r2: omr2, t_depth: tower, selection: fitness, genes: combination.genes });
             }
         }
         Ok(best)
@@ -1608,6 +1827,331 @@ impl Engine {
         Ok(changed.len() as u64)
     }
 
+    /// THE BEAM — Andrew's "genetic beam search in the neighbourhood": at the
+    /// point the engine holds a near miss, thousands of RULE-BASED MUTATIONS of
+    /// that one individual are generated, scored on the data with HFF, and the ones
+    /// that score better are kept alongside it.
+    ///
+    /// A beam mutation is NOT an equivalent rewrite, and that is the point: this is
+    /// how new functions are explored. HFF on the data is the only judge of whether
+    /// a neighbour is beneficial. It is not the data-guided rewrites (which must
+    /// preserve predictions) and it is not snap (propose-and-guard on equivalence).
+    ///
+    /// Two neighbourhoods, both of the SAME individual:
+    ///
+    /// * TREE MUTATIONS — [`super::vary::neighbourhood`]: the cleanse space
+    ///   enumerated whole (every function node promoted or collapsed) plus drawn
+    ///   point, Dc and constant edits. They are scored on the device through the
+    ///   engine's own [`Engine::evaluate`], in a scratch generation, so there is one
+    ///   evaluator and one scorer, not a second one.
+    /// * FUNCTIONAL MUTATIONS — [`BEAM_WRAPS`]: the individual's linked value put
+    ///   through a candidate shape whose free parameters `a`, `b` are FITTED by
+    ///   least squares in the same step, exactly as the engine's own
+    ///   `a * WRAPPER(LINKER(genes)) + b` is a mutation applied at the end. Scored
+    ///   by [`Engine::confirm_with`] — f64, confirm grade, one pass for all seven.
+    ///   A wrap that is not total on the data (a pole on some row) is refused by
+    ///   `score_one`'s finite check and COUNTED, never scored on the rows where it
+    ///   happens to work.
+    ///
+    /// THE ORIGINAL IS NEVER LOST. A winner is APPENDED into the pair's float zone
+    /// (`Config::float_zone`) when there is one — the intake floats above its base
+    /// size, the candidate breeds and proves itself, and the pump's own cut brings
+    /// the island back down on its next beat. With no float zone the winner
+    /// replaces the WORST evaluated row of the pair's intake island, which is a row
+    /// the pump was about to refill anyway. Either way the original keeps its own
+    /// row and the hall of fame keeps whatever is best.
+    ///
+    /// Returns the beat's counts and the GENOME of the survivor it appended, if
+    /// there was one, so the next pump beat can say whether that survivor was still
+    /// in the population when the cut came. Nothing here can end a fit — the fit
+    /// loop confirms in f64 and applies the stop bar, as it does for every row.
+    fn beam(&mut self, gen: &mut Generation, generation: u32, timing: &mut Timing) -> Result<(BeamCounts, Option<Vec<u32>>), String> {
+        let started = Instant::now();
+        let mut counts = BeamCounts { beats: 1, ..BeamCounts::default() };
+        let l = self.layout;
+        let (row_w, rnc_w) = ((l.n_genes * l.gene_width()) as usize, (l.n_genes * l.n_rnc) as usize);
+        let m = self.hff_dimensions();
+        let Some((row, original)) = self.best(gen) else { return Ok((counts, None)) };
+        let (_, before_p) = hff_p_value(original.fitness, m);
+        counts.best_log10_p_before = before_p;
+        counts.best_log10_p_after = before_p;
+        let genome = gen.pop.genome[row * row_w..(row + 1) * row_w].to_vec();
+        let rnc = gen.pop.rnc[row * rnc_w..(row + 1) * rnc_w].to_vec();
+
+        // 1. THE TREE NEIGHBOURHOOD, scored through the engine's own path.
+        let mutants = super::vary::neighbourhood(
+            &genome,
+            &rnc,
+            l,
+            &self.table.codes(),
+            &super::vary::BeamParams {
+                seed: self.config.seed,
+                generation: generation | BEAM_KEY,
+                rnc_lo: self.config.rnc_lo,
+                rnc_hi: self.config.rnc_hi,
+                vhead: self.vhead_at(generation),
+                genes: original.genes,
+            },
+            self.config.beam_width,
+        )?;
+        counts.tree_mutants = mutants.len() as u64;
+        counts.mutants = mutants.len() as u64;
+        // The best mutant of the beat so far: its row in the scratch generation and
+        // what the device scored it at. `winner` holds the genome that will go back.
+        let mut winner: Option<(Vec<u32>, Vec<f32>, u32, Scored)> = None;
+        for chunk in mutants.chunks(l.pop as usize) {
+            let scored = self.score_mutants(chunk, gen, row, timing)?;
+            for (mutant, s) in chunk.iter().zip(&scored) {
+                let Some(s) = s else { continue };
+                if s.fitness >= original.fitness {
+                    continue;
+                }
+                counts.better += 1;
+                if winner.as_ref().is_none_or(|(_, _, _, w)| s.fitness < w.fitness) {
+                    winner = Some((mutant.genome.clone(), mutant.rnc.clone(), gen.pop.wrapper_id[row], *s));
+                }
+            }
+        }
+
+        // 2. THE FUNCTIONAL NEIGHBOURHOOD: the original's own genes, through each
+        //    wrap, `a` and `b` fitted. One `confirm_with` pass covers all seven, so
+        //    a beat costs one extra evaluator trip whatever the width.
+        if self.config.beam_wraps {
+            counts.wrap_candidates = BEAM_WRAPS.len() as u64;
+            counts.mutants += BEAM_WRAPS.len() as u64;
+            let t = Instant::now();
+            let wrapped = self.confirm_with(gen, row, &BEAM_WRAPS)?;
+            timing.beam += t.elapsed().as_secs_f64();
+            // `confirm_with` keeps only the BEST candidate, so a beat learns which
+            // ONE wrap won; the others are counted as tried. To say which wrap was
+            // refused as not total on the data, each is scored on its own.
+            for (k, &wrap) in BEAM_WRAPS.iter().enumerate() {
+                let t = Instant::now();
+                let one = self.confirm_with(gen, row, std::slice::from_ref(&wrap))?;
+                timing.beam += t.elapsed().as_secs_f64();
+                match one {
+                    // The engine's own scale for the original is TrueNorth over the
+                    // same objectives, so the two angles are comparable directly.
+                    Some(s) if s.fitness < original.fitness => counts.wrap_better[k] += 1,
+                    Some(_) => {}
+                    None => counts.wrap_refused[k] += 1,
+                }
+            }
+            // A wrap that won has to be GRAFTED into the winner's gene to survive
+            // the beat: the row's own genes with the wrap written around gene 0.
+            if let Some(s) = wrapped.filter(|s| s.fitness < original.fitness && winner.as_ref().is_none_or(|(_, _, _, w)| s.fitness < w.fitness)) {
+                counts.better += 1;
+                match self.graft_wrap(&genome, &rnc, BEAM_WRAPS[s.wrapper], s.genes, generation) {
+                    Some((genome, rnc)) => {
+                        counts.wrap_grafted += 1;
+                        // The graft is a DIFFERENT chromosome from the one scored: the
+                        // wrap is now inside the gene, where the engine's own three
+                        // wrappers apply on top. It is re-scored like any other mutant.
+                        let mutant = super::vary::Mutant { genome, rnc, kind: super::vary::BeamKind::Promote };
+                        if let Some(Some(re)) = self.score_mutants(std::slice::from_ref(&mutant), gen, row, timing)?.first() {
+                            if re.fitness < original.fitness && winner.as_ref().is_none_or(|(_, _, _, w)| re.fitness < w.fitness) {
+                                winner = Some((mutant.genome, mutant.rnc, gen.pop.wrapper_id[row], *re));
+                            }
+                        }
+                    }
+                    // The relevel would put a function outside the head, or the
+                    // expression would not close: counted, never silent, and the
+                    // beat simply keeps whatever tree mutant it has.
+                    None => counts.wrap_graft_refused += 1,
+                }
+            }
+        }
+
+        // 3. THE SURVIVOR GOES BACK, alongside the original.
+        let mut appended = None;
+        if let Some((genome, rnc, wrapper_id, s)) = winner {
+            let (_, after_p) = hff_p_value(s.fitness, m);
+            counts.best_log10_p_after = after_p;
+            let to = self.beam_landing(gen, row);
+            gen.pop.genome[to * row_w..(to + 1) * row_w].copy_from_slice(&genome);
+            gen.pop.rnc[to * rnc_w..(to + 1) * rnc_w].copy_from_slice(&rnc);
+            gen.pop.wrapper_id[to] = wrapper_id;
+            // Never assumed good: it is evaluated on the engine's own path, as the
+            // pump's fresh rows are, before anything ranks or remembers it.
+            gen.fitness[to] = f32::NAN;
+            self.scored[to] = None;
+            counts.appended += 1;
+            appended = Some(genome);
+        }
+        counts.seconds = started.elapsed().as_secs_f64();
+        Ok((counts, appended))
+    }
+
+    /// Where a beam survivor LANDS in the pair that holds `row`.
+    ///
+    /// With a FLOAT ZONE (Andrew: "move copy to the intake island as an append, so
+    /// the population there floats a little"): the first float row of that pair's
+    /// intake that is not already a survivor of this fit — tracked by the row being
+    /// unevaluated or the weakest of the zone by fitness once the zone is full, so
+    /// an append never costs a row that is proving itself well. Without one: the
+    /// WORST evaluated row of the intake island, which the pump was about to refill
+    /// anyway. Either way the original's own row is untouched.
+    fn beam_landing(&self, gen: &Generation, row: usize) -> usize {
+        let zone = self.config.float_zone + self.config.float_zone % 2;
+        let pair = self.pairs().into_iter().find(|(intake, champion)| (intake.lo..champion.hi).contains(&(row as u32)));
+        let Some((intake, _)) = pair else { return row };
+        if zone > 0 {
+            // The zone is the TOP of the intake island: the rows beyond its base.
+            let first = intake.hi - zone;
+            let free = (first..intake.hi).find(|&r| gen.fitness[r as usize].is_nan() && r as usize != row);
+            if let Some(r) = free {
+                return r as usize;
+            }
+            // Full: the weakest of the zone gives way. `total_cmp` on a NaN-free
+            // range, ties to the higher row so the oldest survivor keeps its place.
+            let weakest = (first..intake.hi)
+                .filter(|&r| r as usize != row)
+                .max_by(|&a, &b| gen.fitness[a as usize].total_cmp(&gen.fitness[b as usize]).then(a.cmp(&b)));
+            if let Some(r) = weakest {
+                return r as usize;
+            }
+        }
+        // No zone: the intake's worst evaluated row, an unevaluated one first.
+        let key = |r: u32| { let f = gen.fitness[r as usize]; if f.is_nan() { f32::MAX } else { f } };
+        (intake.lo..intake.hi)
+            .filter(|&r| r as usize != row)
+            .max_by(|&a, &b| key(a).total_cmp(&key(b)).then(a.cmp(&b)))
+            .map_or(row, |r| r as usize)
+    }
+
+    /// Score a batch of beam mutants through THE ENGINE'S OWN evaluation path —
+    /// `Engine::evaluate` — in a scratch generation whose rows are the mutants.
+    /// There are no spare rows in a population (`evaluate` scores every unevaluated
+    /// row of a `Generation` sized `layout.pop`), so the scratch is a generation of
+    /// the same layout: the device's dedup by gene signature then collapses the
+    /// mutants that share two genes with the original for free, which is most of
+    /// them. `self.scored` is set aside and restored, so the live population's
+    /// scores are exactly as they were.
+    ///
+    /// `chunk` must be at most `layout.pop` long. The returned vector is one entry
+    /// per mutant, `None` for one the device could not score.
+    fn score_mutants(&mut self, chunk: &[super::vary::Mutant], gen: &Generation, row: usize, timing: &mut Timing) -> Result<Vec<Option<Scored>>, String> {
+        let started = Instant::now();
+        let l = self.layout;
+        let (row_w, rnc_w) = ((l.n_genes * l.gene_width()) as usize, (l.n_genes * l.n_rnc) as usize);
+        if chunk.len() > l.pop as usize {
+            return Err(format!("the beam scores at most {} mutants a batch, given {}", l.pop, chunk.len()));
+        }
+        // A scratch generation: the mutants, and the original repeated in the rows
+        // beyond them so every row decodes to something the device can evaluate.
+        let mut scratch = gen.clone();
+        for r in 0..l.pop as usize {
+            let source = chunk.get(r);
+            let (genome, rnc) = match source {
+                Some(m) => (&m.genome[..], &m.rnc[..]),
+                None => (&gen.pop.genome[row * row_w..(row + 1) * row_w], &gen.pop.rnc[row * rnc_w..(row + 1) * rnc_w]),
+            };
+            scratch.pop.genome[r * row_w..(r + 1) * row_w].copy_from_slice(genome);
+            scratch.pop.rnc[r * rnc_w..(r + 1) * rnc_w].copy_from_slice(rnc);
+            scratch.pop.wrapper_id[r] = gen.pop.wrapper_id[row];
+        }
+        scratch.fitness.fill(f32::NAN);
+        // The live scores are set aside whole and put back whole: a beat must leave
+        // the population exactly as it found it.
+        let live = std::mem::replace(&mut self.scored, vec![None; l.pop as usize]);
+        // The beat's own cost is the beam's, not decode's or evaluate's.
+        let mut beat = Timing { vary: 0.0, read: 0.0, decode: 0.0, evaluate: 0.0, score: 0.0, hff: 0.0, pump: 0.0, cross: 0.0, snap: 0.0, beam: 0.0 };
+        let outcome = self.evaluate(&mut scratch, &mut beat);
+        let scored = std::mem::replace(&mut self.scored, live);
+        outcome?;
+        timing.beam += started.elapsed().as_secs_f64();
+        Ok(scored[..chunk.len()].to_vec())
+    }
+
+    /// A FUNCTIONAL WRAP grafted into a chromosome's gene, so a wrap that won can
+    /// live in a row and keep evolving instead of being a number in a report.
+    ///
+    /// The wrap goes around the USED genes' model. It is written into gene 0 —
+    /// `relevel` with the wrap's nodes as [`super::vary::Graft`]s whose deepest kid
+    /// is the gene's own root — and every OTHER used gene is collapsed to a
+    /// constant 1, so the linker the scorer then picks cannot change what the model
+    /// computes: `mul` gives the wrapped gene, and `avg` or `add` shift it by a
+    /// constant that the fitted `a`, `b` absorb. The engine's own three wrappers
+    /// still apply on top, as they do to any chromosome.
+    ///
+    /// `None` when the gene cannot take the form — the relevel would put a function
+    /// outside the virtual head, or the expression would not close. The caller
+    /// counts that; nothing is written.
+    ///
+    /// NOTE: a grafted `Sqrt` or `Exp` is a real node of the gene, so `t_depth`
+    /// counts it where the engine's WRAPPER did not. A wrapped model is therefore
+    /// judged a little taller than the same model under a wrapper — correctly: the
+    /// tower is in the expression now.
+    fn graft_wrap(&self, genome: &[u32], rnc: &[f32], wrap: Wrapper, genes: u32, generation: u32) -> Option<(Vec<u32>, Vec<f32>)> {
+        use super::vary::{relevel, GeneTree, Graft, GRAFT};
+        let l = self.layout;
+        let (width, nr) = (l.gene_width() as usize, l.n_rnc as usize);
+        let codes = self.table.codes();
+        let vhead = super::virtual_head(self.vhead_at(generation), l).ok()?;
+        let rnc_id = codes.rnc_id?;
+        // The wrap as ops, outermost first; each takes the one below it, and `Unit`
+        // is the constant 1 the shapes need.
+        let ops: Vec<WrapNode> = wrap_nodes(wrap)?;
+        let mut genome = genome.to_vec();
+        let mut constants = rnc.to_vec();
+        // A Dc slot for the constant 1: the LAST of the gene's constants, set to 1,
+        // and the grafted "?"s all read it. `relevel` rebuilds the Dc domain so each
+        // surviving "?" keeps its own value, and a new one takes the index given.
+        let unit_slot = l.n_rnc - 1;
+        constants[unit_slot as usize] = 1.0;
+        let gene = &mut genome[..width];
+        let tree = GeneTree::of(gene, l, &codes)?;
+        // THE GRAFT CHAIN, built back to front. `below` is the tree entry the next
+        // node out sits on: it starts as gene position 0 — the gene's own root,
+        // which a graft's kid names directly, so there is no swap loop — and each
+        // node becomes the new `below`. A `?` reading the unit slot is pushed as its
+        // own entry wherever a shape needs the constant 1.
+        let mut grafts: Vec<Graft> = Vec::new();
+        let push = |g: Graft, grafts: &mut Vec<Graft>| -> usize {
+            grafts.push(g);
+            GRAFT + grafts.len() - 1
+        };
+        let mut below = 0usize;
+        for node in ops.iter().rev() {
+            below = match node {
+                WrapNode::Unary(op) => push(Graft { token: self.table.function_id(*op)?, kids: [below, 0], dc: 0 }, &mut grafts),
+                WrapNode::BinaryUnitFirst(op) => {
+                    let unit = push(Graft { token: rnc_id, kids: [0, 0], dc: unit_slot }, &mut grafts);
+                    push(Graft { token: self.table.function_id(*op)?, kids: [unit, below], dc: 0 }, &mut grafts)
+                }
+                WrapNode::BinarySelfFirst(op) => {
+                    let unit = push(Graft { token: rnc_id, kids: [0, 0], dc: unit_slot }, &mut grafts);
+                    push(Graft { token: self.table.function_id(*op)?, kids: [below, unit], dc: 0 }, &mut grafts)
+                }
+            };
+        }
+        // `ops` is outermost-first, so the LAST entry built is the outermost node:
+        // that is what replaces the gene's root.
+        relevel(gene, l, vhead, &codes, &tree, &[(0, below)], &grafts).ok()?;
+        // Every OTHER used gene becomes the constant 1, so no linker can change the
+        // model: the wrapped gene 0 is what the chromosome computes.
+        for g in 1..l.n_genes as usize {
+            if genes >> g & 1 == 0 {
+                continue;
+            }
+            let other = &mut genome[g * width..(g + 1) * width];
+            other[0] = rnc_id;
+            other[(l.head + l.tail) as usize] = unit_slot;
+            constants[g * nr + unit_slot as usize] = 1.0;
+        }
+        Some((genome, constants))
+    }
+
+    /// How many of the genomes the beam appended the population still holds,
+    /// anywhere: a survivor that selection has copied into other rows is alive, and
+    /// one the pump is about to refill is not. Counted by GENOME, not by row,
+    /// because a survivor that bred has moved.
+    fn still_alive(&self, gen: &Generation, floated: &[Vec<u32>]) -> u64 {
+        let row_w = (self.layout.n_genes * self.layout.gene_width()) as usize;
+        let rows: Vec<&[u32]> = gen.pop.genome.chunks(row_w).collect();
+        floated.iter().filter(|genome| rows.contains(&genome.as_slice())).count() as u64
+    }
+
     /// The population as the device holds it: after a fit, the last generation
     /// with every write-back in it.
     pub fn population(&self) -> Result<Population, String> {
@@ -1721,7 +2265,7 @@ impl Engine {
     pub fn fit(&mut self) -> Result<FitResult, String> {
         let c = self.config.clone();
         let started = Instant::now();
-        let mut timing = Timing { vary: 0.0, read: 0.0, decode: 0.0, evaluate: 0.0, score: 0.0, hff: 0.0, pump: 0.0, cross: 0.0, snap: 0.0 };
+        let mut timing = Timing { vary: 0.0, read: 0.0, decode: 0.0, evaluate: 0.0, score: 0.0, hff: 0.0, pump: 0.0, cross: 0.0, snap: 0.0, beam: 0.0 };
         let rates = Rates::with_cleanse(self.layout, c.cleanse);
         self.dev.init(&InitParams { seed: c.seed, generation: 0, rnc_lo: c.rnc_lo, rnc_hi: c.rnc_hi, n_wrappers: WRAPPERS.len() as u32, vhead: self.vhead_at(0) })?;
         let mut gen = self.dev.read_generation()?;
@@ -1731,6 +2275,11 @@ impl Engine {
         self.dev.write_fitness(&gen.fitness)?;
         let (mut generation, mut stopped_by) = (0u32, "n_gen");
         let mut hof: Option<HallOfFame> = None;
+        let mut beam = BeamCounts::default();
+        // THE FLOAT ZONE's roll call: what the beam appended, as (row, genome), so
+        // the next pump beat can count how many were still there when its cut came
+        // — the number that says whether the zone earns its keep.
+        let mut floated: Vec<Vec<u32>> = Vec::new();
         self.remember(&mut hof, &gen, 0);
         if c.progress_every > 0 {
             eprintln!("{REPORT_HEADER}");
@@ -1772,6 +2321,24 @@ impl Engine {
             // THE HALL OF FAME, before anything can end the fit: the winner of the
             // generation that meets the bar belongs in it too.
             self.remember(&mut hof, &gen, generation);
+            // THE BEAM, on its beat and BEFORE the stop bar: a survivor is scored,
+            // remembered and confirmed in the SAME generation it was found, so a
+            // mutation that reaches the bar can end the fit now rather than next
+            // time round. The original keeps its own row throughout.
+            if c.beam_every > 0 && generation % c.beam_every == 0 {
+                let (beat, appended) = self.beam(&mut gen, generation, &mut timing)?;
+                beam.add(&beat);
+                if let Some(genome) = appended {
+                    let (u, o) = self.evaluate(&mut gen, &mut timing)?;
+                    unique += u;
+                    oversized += o;
+                    self.remember(&mut hof, &gen, generation);
+                    self.dev.write_population(&gen.pop)?;
+                    // What the beam put in the population, so the next pump beat can
+                    // say how many were still alive when its cut came.
+                    floated.push(genome);
+                }
+            }
             // The device's f32 metrics cannot resolve 1e-10; they can say "this
             // one is worth confirming". The f64 re-score decides.
             if let Some((row, ranked)) = self.best(&gen) {
@@ -1806,6 +2373,13 @@ impl Engine {
             let t = Instant::now();
             let crossed = c.cross_every > 0 && generation % c.cross_every == 0;
             if c.pump_every > 0 && generation % c.pump_every == 0 {
+                // THE CUT is the pump's own, unchanged: it keeps the intake's best
+                // fifth de-duplicated and refills the rest, and a float row that has
+                // not earned its place is refilled with it. Count, before the cut,
+                // how many of the beam's appended rows the population still holds —
+                // wherever selection has carried them.
+                beam.survived_a_pump += self.still_alive(&gen, &floated);
+                floated.clear();
                 self.pump(&mut gen, generation)?;
                 let (u, o) = self.evaluate(&mut gen, &mut timing)?;
                 unique += u;
@@ -1862,6 +2436,7 @@ impl Engine {
             best,
             timing,
             snap: self.snap.as_ref().map_or_else(SnapCounts::default, |s| s.counts.clone()),
+            beam,
         })
     }
 }
@@ -2516,7 +3091,7 @@ mod tests {
     }
 
     fn fresh_timing() -> Timing {
-        Timing { vary: 0.0, read: 0.0, decode: 0.0, evaluate: 0.0, score: 0.0, hff: 0.0, pump: 0.0, cross: 0.0, snap: 0.0 }
+        Timing { vary: 0.0, read: 0.0, decode: 0.0, evaluate: 0.0, score: 0.0, hff: 0.0, pump: 0.0, cross: 0.0, snap: 0.0, beam: 0.0 }
     }
 
     /// THE DYNAMIC GENE-SUBSET CHOICE. Gene 1 alone IS the law y = x0 * x1; gene 0
@@ -2898,5 +3473,316 @@ mod tests {
         assert_eq!(stopped.stopped_by, "early_stop", "after {} generations: {}", stopped.generations, stopped.math);
         std::fs::remove_file(&path).expect("remove the hall of fame file");
         std::fs::remove_dir(&dir).expect("remove its directory");
+    }
+
+    // -----------------------------------------------------------------------
+    // THE BEAM: the targeted mutation beam, and the float zone it lands in.
+    // -----------------------------------------------------------------------
+
+    /// OFF BY DEFAULT, and off means nothing changed: with `beam_every = 0` and
+    /// `float_zone = 0` the whole fit — the model, the genes evaluated, the
+    /// individuals, the islands — is what it was before the beam existed, and the
+    /// counts are all zero.
+    #[test]
+    fn with_the_beam_off_the_engine_is_the_engine_it_was() {
+        let base = Config { max_generations: 12, max_seconds: 3600.0, stop_one_minus_r2: -1.0, ..toy_config(60, 20) };
+        assert_eq!((base.beam_every, base.float_zone), (0, 0), "the beam and the float zone are off by default");
+        let fit = |config: &Config| {
+            let mut engine = Engine::new(config.clone(), toy_data()).expect("engine");
+            let islands = engine.islands.clone();
+            (engine.fit().expect("fit"), islands, engine.layout)
+        };
+        let (off, islands, layout) = fit(&base);
+        // The population and the islands are exactly the ones the config names.
+        assert_eq!(layout.pop, 80);
+        assert_eq!(islands, vec![
+            Island { lo: 0, hi: 60, elites: 2, tournsize: 4 },
+            Island { lo: 60, hi: 80, elites: 2, tournsize: 2 },
+        ]);
+        assert_eq!(off.beam, BeamCounts::default(), "the beam counted something with the beam off");
+        assert_eq!(off.timing.beam, 0.0);
+        // Setting the beam's OTHER knobs, with the beat still 0, changes nothing:
+        // the switch is the beat, and only the beat.
+        let (idle, _, _) = fit(&Config { beam_width: 50_000, beam_wraps: false, ..base.clone() });
+        assert_eq!((idle.math.clone(), idle.unique_genes, idle.individuals, idle.generations), (off.math.clone(), off.unique_genes, off.individuals, off.generations));
+        assert_eq!(idle.best.fitness, off.best.fitness);
+        // And the same config twice is the same fit, as it always was.
+        let (again, _, _) = fit(&base);
+        assert_eq!((again.math, again.unique_genes, again.individuals), (off.math, off.unique_genes, off.individuals));
+    }
+
+    /// THE HEADLINE TEST, and the one that says whether this works. A chromosome
+    /// that is a NEAR MISS one subtree from the law: gene 0 is `x_0 * x_1 * f(x_2)`
+    /// where the law is `x_0 * x_1` — the spurious factor feynman_test_4 carries.
+    /// The beam must find the collapse of that factor and report a better HFF.
+    ///
+    /// The improvement is asserted, not the exact mutant: there is more than one
+    /// edit that removes the factor (promote the `*` over its first child, collapse
+    /// the `f(x_2)` subtree to a constant), and any of them is the right answer.
+    #[test]
+    fn the_beam_finds_the_law_one_subtree_under_a_near_miss() {
+        // y = x_0 * x_1 exactly; the chromosome computes x_0 * x_1 * sqrt(x_2).
+        let data = {
+            let (mut x, mut y) = (Vec::new(), Vec::new());
+            for i in 0..60u32 {
+                let row = [1.0 + f64::from(i % 7) * 0.5, 2.0 + f64::from(i % 5) * 0.25, 1.5 + f64::from(i % 11) * 0.2];
+                x.extend(row.iter().map(|v| *v as f32));
+                y.push(row[0] * row[1]);
+            }
+            Data { names: names(), x, y, splits: Splits { n_train: 40, n_val: 20, n_extrap: 0 } }
+        };
+        let (mul, sqrt) = (Symbol::Function(Op::Mul), Symbol::Function(Op::ProtectedSqrt));
+        let (x0, x1, x2) = (Symbol::Input(0), Symbol::Input(1), Symbol::Input(2));
+        // Karva `* * x_0 sqrt x_1 x_2` is `(x_0 * sqrt(x_2)) * x_1` — the law with
+        // ONE spurious factor in it, exactly the near miss the ledger describes.
+        let near_miss = vec![mul, mul, x1, x0, sqrt, x2];
+        // The other two genes are the constant input x_0; the subset choice will
+        // take gene 0 alone once it is the law.
+        let genes = vec![near_miss, vec![x0], vec![x0]];
+        let config = Config { gene_subsets: true, beam_every: 1, beam_width: 600, ..toy_config(30, 10) };
+        let mut engine = Engine::new(config, data).expect("engine");
+        let mut gen = plant(&engine, &genes);
+        engine.evaluate(&mut gen, &mut fresh_timing()).expect("evaluate");
+        let (row, original) = engine.best(&gen).expect("the near miss is scored");
+        let confirmed_before = engine.confirm(&gen, row).expect("confirm").expect("scored");
+        // It really IS a near miss: close, and not the law.
+        assert!(confirmed_before.one_minus_r2[1] > 1e-6, "the planted chromosome is already exact: {confirmed_before:?}");
+        let before_math = engine.math_of(&gen, row, &confirmed_before);
+        assert!(before_math.contains("Sqrt"), "the spurious factor is not in the near miss: {before_math}");
+
+        // Every row's score as it stands BEFORE the beat: `score_mutants` scores
+        // its mutants in a scratch generation and must put these back untouched.
+        let scored_before: Vec<Option<f64>> = engine.scored.iter().map(|s| s.map(|s| s.fitness)).collect();
+        let mut timing = fresh_timing();
+        let (beat, appended) = engine.beam(&mut gen, 1, &mut timing).expect("a beam beat");
+        assert_eq!(beat.beats, 1);
+        assert!(beat.mutants > 100, "only {} mutants", beat.mutants);
+        assert!(beat.better > 0, "no mutant of the near miss beat it: {beat:?}");
+        let genome = appended.expect("a survivor was appended");
+        assert_eq!(beat.appended, 1);
+        // The survivor is UNEVALUATED where it landed — never assumed good.
+        let landed = (0..engine.layout.pop as usize).find(|&r| gen.fitness[r].is_nan()).expect("the survivor's row");
+        assert!(engine.scored[landed].is_none());
+        // THE ORIGINAL IS NEVER LOST: its row is untouched, genome and score.
+        assert_ne!(landed, row, "the survivor took the original's row");
+        let row_w = (engine.layout.n_genes * engine.layout.gene_width()) as usize;
+        assert_eq!(engine.scored[row].map(|s| s.fitness), Some(original.fitness), "the original's score moved");
+        // Every other row's score is EXACTLY as it was: `score_mutants` scored a
+        // whole scratch generation of mutants and put the live scores back. This is
+        // the check the off-by-default test cannot make — a missed restore would
+        // leave the population scored by the beam's mutants.
+        let scored_after: Vec<Option<f64>> = engine.scored.iter().map(|s| s.map(|s| s.fitness)).collect();
+        for r in (0..engine.layout.pop as usize).filter(|&r| r != landed) {
+            assert_eq!(scored_after[r], scored_before[r], "row {r}'s score was not restored after the beat");
+        }
+        // and the landing row is the one the beat cleared, nothing else.
+        assert_eq!(scored_after[landed], None);
+
+        // And the survivor IS better, confirmed in f64 like anything that may be
+        // reported — not just better on the device's f32 ranking scores.
+        engine.evaluate(&mut gen, &mut fresh_timing()).expect("evaluate the survivor");
+        let after = engine.confirm(&gen, landed).expect("confirm").expect("the survivor is scored");
+        assert!(after.fitness < confirmed_before.fitness, "the survivor {:?} did not beat the original {:?}", after, confirmed_before);
+        assert!(beat.best_log10_p_after < beat.best_log10_p_before, "{beat:?}");
+        // The spurious factor is gone and what is left computes the law.
+        assert!(after.one_minus_r2[1] < confirmed_before.one_minus_r2[1], "{after:?} against {confirmed_before:?}");
+        assert_eq!(gen.pop.genome[landed * row_w..(landed + 1) * row_w], genome[..], "the reported genome is not the one in the row");
+    }
+
+    /// AN INDIVIDUAL THAT IS ALREADY THE LAW: the beam finds nothing better and the
+    /// original stands. No regression, and no survivor appended over a row that was
+    /// doing its job.
+    #[test]
+    fn the_beam_leaves_a_law_alone() {
+        let (mul, x0, x1) = (Symbol::Function(Op::Mul), Symbol::Input(0), Symbol::Input(1));
+        let data = {
+            let (mut x, mut y) = (Vec::new(), Vec::new());
+            for i in 0..60u32 {
+                let row = [1.0 + f64::from(i % 7) * 0.5, 2.0 + f64::from(i % 5) * 0.25, 1.5 + f64::from(i % 11) * 0.2];
+                x.extend(row.iter().map(|v| *v as f32));
+                y.push(row[0] * row[1]);
+            }
+            Data { names: names(), x, y, splits: Splits { n_train: 40, n_val: 20, n_extrap: 0 } }
+        };
+        // Gene 0 IS the law, exactly.
+        let genes = vec![vec![mul, x0, x1], vec![x0], vec![x0]];
+        let config = Config { gene_subsets: true, beam_every: 1, beam_width: 400, ..toy_config(30, 10) };
+        let mut engine = Engine::new(config, data).expect("engine");
+        let mut gen = plant(&engine, &genes);
+        engine.evaluate(&mut gen, &mut fresh_timing()).expect("evaluate");
+        let (row, original) = engine.best(&gen).expect("the law is scored");
+        assert!(original.one_minus_r2[1] < 1e-6, "the planted law is not exact: {original:?}");
+        let before = gen.clone();
+        let (beat, appended) = engine.beam(&mut gen, 1, &mut fresh_timing()).expect("a beam beat");
+        assert!(beat.mutants > 50, "the beam did not look: {beat:?}");
+        assert_eq!(beat.better, 0, "something beat the law itself: {beat:?}");
+        assert_eq!((beat.appended, appended), (0, None));
+        // Nothing moved at all: the population is bit for bit what it was.
+        assert_eq!(gen.pop, before.pop, "the beam wrote to a population it found nothing in");
+        assert_eq!(gen.fitness, before.fitness);
+        assert_eq!(engine.scored[row].map(|s| s.fitness), Some(original.fitness));
+    }
+
+    /// THE FUNCTIONAL MUTATIONS. The law is `1/(exp(u) - 1)` — feynman III.4.32's
+    /// shape — and the chromosome computes only the inner `exp(u)`. No tree
+    /// mutation of a monomial reaches the law; the WRAP `1/(x - 1)` is the law, and
+    /// its `a`, `b` are fitted by least squares in the same step.
+    #[test]
+    fn a_functional_wrap_reaches_a_law_no_tree_mutation_can() {
+        let data = {
+            let (mut x, mut y) = (Vec::new(), Vec::new());
+            for i in 0..60u32 {
+                // u in 0.4 .. 2.2, so exp(u) - 1 is never near 0 and the wrap is total.
+                let u = 0.4 + f64::from(i % 19) * 0.1;
+                let row = [u, 1.0 + f64::from(i % 5) * 0.25, 1.5];
+                x.extend(row.iter().map(|v| *v as f32));
+                y.push(1.0 / (u.exp() - 1.0));
+            }
+            Data { names: names(), x, y, splits: Splits { n_train: 40, n_val: 20, n_extrap: 0 } }
+        };
+        // Gene 0 is exp(x_0): the INNER part, which is all the gene has to build.
+        let genes = vec![vec![Symbol::Function(Op::ProtectedExp), Symbol::Input(0)], vec![Symbol::Input(0)], vec![Symbol::Input(0)]];
+        let config = Config { gene_subsets: true, beam_every: 1, beam_width: 300, ..toy_config(30, 10) };
+        let mut engine = Engine::new(config, data).expect("engine");
+        let mut gen = plant(&engine, &genes);
+        engine.evaluate(&mut gen, &mut fresh_timing()).expect("evaluate");
+        let (row, _) = engine.best(&gen).expect("scored");
+        let before = engine.confirm(&gen, row).expect("confirm").expect("scored");
+        assert!(before.one_minus_r2[1] > 1e-4, "exp(u) alone already fits 1/(exp(u)-1): {before:?}");
+        // The wrap, scored the way the beam scores it: f64, confirm grade.
+        let wrapped = engine.confirm_with(&gen, row, &BEAM_WRAPS).expect("confirm the wraps").expect("a wrap scored");
+        assert_eq!(BEAM_WRAPS[wrapped.wrapper], Wrapper::Recip1, "the winning wrap is not 1/(x - 1): {wrapped:?}");
+        assert!(wrapped.one_minus_r2[1] < 1e-12, "the wrap did not recover the law: {wrapped:?}");
+        assert!(wrapped.fitness < before.fitness);
+        // And the beat finds it, counts which wrap won, and keeps it.
+        let (beat, appended) = engine.beam(&mut gen, 1, &mut fresh_timing()).expect("a beam beat");
+        assert_eq!(beat.wrap_candidates, BEAM_WRAPS.len() as u64);
+        let recip1 = BEAM_WRAPS.iter().position(|w| *w == Wrapper::Recip1).expect("Recip1 is a beam wrap");
+        assert_eq!(beat.wrap_better[recip1], 1, "1/(x-1) was not counted as better: {beat:?}");
+        assert_eq!(beat.wrap_grafted, 1, "the winning wrap was not grafted into the gene: {beat:?}");
+        let genome = appended.expect("the wrapped survivor was appended");
+        // The GRAFTED chromosome computes the law: the wrap is in the gene now.
+        let landed = (0..engine.layout.pop as usize).find(|&r| gen.fitness[r].is_nan()).expect("the survivor's row");
+        engine.evaluate(&mut gen, &mut fresh_timing()).expect("evaluate the survivor");
+        let after = engine.confirm(&gen, landed).expect("confirm").expect("scored");
+        assert!(after.one_minus_r2[1] < 1e-10, "the grafted wrap does not compute the law: {after:?}");
+        assert!(after.fitness < before.fitness);
+        let row_w = (engine.layout.n_genes * engine.layout.gene_width()) as usize;
+        assert_eq!(gen.pop.genome[landed * row_w..(landed + 1) * row_w], genome[..]);
+        // `x/(exp(x)-1)` needs its argument twice, which a graft chain cannot write:
+        // it is SCORED but never grafted, and that is stated, not silent.
+        assert!(wrap_nodes(Wrapper::XOverExpm1).is_none());
+        // The engine's own three wrappers are not the beam's to graft either.
+        for w in [Wrapper::Identity, Wrapper::LogAbs, Wrapper::SqrtAbs] {
+            assert!(wrap_nodes(w).is_none(), "{w:?}");
+        }
+    }
+
+    /// A WRAP THAT IS NOT TOTAL on the data is refused and COUNTED, not scored on
+    /// the rows where it happens to work. The linked value crosses 1, so
+    /// `1/sqrt(1 - x)` has no real value on some rows and `1/(x - 1)` has a pole.
+    #[test]
+    fn a_wrap_with_a_pole_on_the_data_is_refused_and_counted() {
+        let data = {
+            let (mut x, mut y) = (Vec::new(), Vec::new());
+            for i in 0..60u32 {
+                // x_0 spans 0.5 .. 3.0, so a gene that is x_0 crosses 1 exactly.
+                let v = 0.5 + f64::from(i % 26) * 0.1;
+                x.extend([v as f32, 1.0, 1.0]);
+                y.push(v * 3.0 + 1.0);
+            }
+            Data { names: names(), x, y, splits: Splits { n_train: 40, n_val: 20, n_extrap: 0 } }
+        };
+        let genes = vec![vec![Symbol::Input(0)], vec![Symbol::Input(0)], vec![Symbol::Input(0)]];
+        let config = Config { gene_subsets: true, beam_every: 1, beam_width: 120, ..toy_config(30, 10) };
+        let mut engine = Engine::new(config, data).expect("engine");
+        let mut gen = plant(&engine, &genes);
+        engine.evaluate(&mut gen, &mut fresh_timing()).expect("evaluate");
+        let (beat, _) = engine.beam(&mut gen, 1, &mut fresh_timing()).expect("a beam beat");
+        let at = |w: Wrapper| BEAM_WRAPS.iter().position(|x| *x == w).expect("a beam wrap");
+        // 1/sqrt(1 - x) has no real value past x = 1: refused whole.
+        assert_eq!(beat.wrap_refused[at(Wrapper::RecipSqrt1m)], 1, "the partial wrap was scored anyway: {beat:?}");
+        // And it never counted as better — a refused wrap is not a candidate.
+        assert_eq!(beat.wrap_better[at(Wrapper::RecipSqrt1m)], 0);
+        // A wrap that IS total on these rows was scored: the guard is selective,
+        // not a blanket refusal.
+        assert_eq!(beat.wrap_refused[at(Wrapper::Square)], 0, "a total wrap was refused: {beat:?}");
+    }
+
+    /// THE FLOAT ZONE. With a zone the islands still TILE the population, every row
+    /// keeps the gene rules, a beam survivor is APPENDED into the zone rather than
+    /// over a working row, and the pump's own cut brings the intake back — so it
+    /// cannot grow for ever.
+    #[test]
+    fn the_float_zone_tiles_holds_an_append_and_is_cut_by_the_pump() {
+        // An ODD zone is rounded up, so `size - elites` stays even and
+        // `vary::validate` passes — the rule the islands have always kept.
+        let config = Config { float_zone: 7, n_pairs: 2, beam_every: 1, ..toy_config(30, 10) };
+        let engine = Engine::new(config.clone(), toy_data()).expect("engine");
+        assert_eq!(engine.layout.pop, 2 * (30 + 8 + 10), "the zone is rounded up to 8 rows an intake");
+        super::super::vary::validate(engine.layout, &engine.islands).expect("the islands still tile");
+        assert_eq!(engine.islands[0], Island { lo: 0, hi: 38, elites: 2, tournsize: 3 });
+        assert_eq!(engine.islands[1], Island { lo: 38, hi: 48, elites: 2, tournsize: 2 });
+
+        // A population with float rows is an ordinary population: the zone's rows
+        // are drawn like any other and pass the structural rules.
+        let mut engine = Engine::new(config, toy_data()).expect("engine");
+        let mut gen = drawn_generation(&engine, 13);
+        gen.pop.check(&engine.table.codes()).expect("the float rows break no rule");
+        // Score it, then take a beat: the survivor lands in the ZONE — a row beyond
+        // the intake's base size — not over a row that is working.
+        gen.fitness.fill(f32::NAN);
+        engine.evaluate(&mut gen, &mut fresh_timing()).expect("evaluate");
+        let (row, _) = engine.best(&gen).expect("scored");
+        let landing = engine.beam_landing(&gen, row);
+        let zone = engine.islands[0];
+        assert!((zone.hi - 8..zone.hi).contains(&(landing as u32)) || landing >= engine.islands[2].lo as usize,
+                "the landing {landing} is not in a float zone");
+
+        // THE CUT is the pump's, unchanged: after a beat and a pump beat the
+        // intake is back to its base composition — its best fifth de-duplicated and
+        // the rest refilled — so the appended rows cannot accumulate.
+        let (_, appended) = engine.beam(&mut gen, 1, &mut fresh_timing()).expect("a beam beat");
+        engine.evaluate(&mut gen, &mut fresh_timing()).expect("evaluate the survivor");
+        let keepers_before = engine.keepers(zone, &gen).len();
+        engine.pump(&mut gen, 4).expect("the pump");
+        // The pump refilled everything past its keepers, the float rows included:
+        // they are unevaluated, exactly as the pump's fresh rows are.
+        let refilled = (zone.lo..zone.hi).filter(|&r| gen.fitness[r as usize].is_nan()).count();
+        assert_eq!(refilled, (zone.hi - zone.lo) as usize - keepers_before, "the pump did not cut the float zone");
+        // and the zone's rows were inside the island the pump worked on all along:
+        // nothing special-cases them.
+        assert!(appended.is_none_or(|g| g.len() == (engine.layout.n_genes * engine.layout.gene_width()) as usize));
+    }
+
+    /// A FIT WITH THE BEAM ON runs, counts what it did, and still ends on the law:
+    /// the beam is a search aid, not a way past the stop bar, and it is
+    /// deterministic like everything else here.
+    #[test]
+    fn a_fit_with_the_beam_on_counts_its_beats_and_stays_deterministic() {
+        let config = Config {
+            beam_every: 3,
+            beam_width: 250,
+            float_zone: 4,
+            max_generations: 9,
+            max_seconds: 3600.0,
+            stop_one_minus_r2: -1.0,
+            ..toy_config(60, 20)
+        };
+        let fit = |config: &Config| Engine::new(config.clone(), toy_data()).expect("engine").fit().expect("fit");
+        let out = fit(&config);
+        assert_eq!(out.generations, 9);
+        assert_eq!(out.beam.beats, 3, "three beats in nine generations at a beat of 3: {:?}", out.beam);
+        assert!(out.beam.mutants > 300, "{:?}", out.beam);
+        assert!(out.timing.beam > 0.0, "the beam's cost was not timed: {:?}", out.timing);
+        // The beam's cost is the BEAM's, not decode's or evaluate's.
+        assert!(out.beam.seconds > 0.0);
+        // Deterministic: the same seed and settings are the same fit.
+        let again = fit(&config);
+        assert_eq!((again.math, again.unique_genes, again.beam.better), (out.math, out.unique_genes, out.beam.better));
+        // And with the stop bar in place the fit still ends on the law.
+        let stopped = fit(&Config { stop_one_minus_r2: 1e-10, max_generations: 400, ..config });
+        assert_eq!(stopped.stopped_by, "early_stop", "after {} generations: {}", stopped.generations, stopped.math);
+        assert!(stopped.best.one_minus_r2[1] <= 1e-10, "{:?}", stopped.best);
     }
 }
