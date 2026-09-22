@@ -138,6 +138,16 @@ pub const RATIONAL_RULESET: &str = r#"
 ; smallest_form.
 (rewrite (Mul (Mul p (Num a)) (Num b)) (Mul p (Num (* a b))) :ruleset rational)
 (rewrite (Mul (Num a) (Mul (Num b) p)) (Mul (Num (* a b)) p) :ruleset rational)
+; ... and with the inner literal one product deeper, which is the shape the
+; engine writes: the fitted scale a multiplies a GENE, and the gene grew its own
+; literal inside a product of its own — strogatz lv2 was found as
+; 0.037037037 * ((27 * (2 - y - x)) * y), the law with 1/27 and 27 never brought
+; together, and SRBench (which rounds a constant to three decimals) read
+; 0.037 * 27 = 0.999 and scored the law wrong.
+(rewrite (Mul (Num a) (Mul (Mul (Num b) p) q)) (Mul (Num (* a b)) (Mul p q)) :ruleset rational)
+(rewrite (Mul (Num a) (Mul (Mul p (Num b)) q)) (Mul (Num (* a b)) (Mul p q)) :ruleset rational)
+(rewrite (Mul (Num a) (Mul q (Mul (Num b) p))) (Mul (Num (* a b)) (Mul q p)) :ruleset rational)
+(rewrite (Mul (Num a) (Mul q (Mul p (Num b)))) (Mul (Num (* a b)) (Mul q p)) :ruleset rational)
 (rewrite (Add (Num a) (Add (Num b) q)) (Add (Num (+ a b)) q) :ruleset rational)
 (rewrite (Add (Add q (Num a)) (Num b)) (Add q (Num (+ a b))) :ruleset rational)
 ; c * (x / c) = x for a non-zero literal c, in every order the engine writes it.
@@ -219,6 +229,26 @@ mod tests {
         let (td1, t1, _) = e2.extract_value(&s1, v1).unwrap();
         let b = eval_term(&td1, t1, &lookup).unwrap();
         assert!((a - b).abs() <= 1e-9 * (a.abs() + 1.0), "unsound: {input} -> {a} vs {b}");
+    }
+
+    /// Two literals a product apart, with the inner one nested one deeper: the
+    /// shape the engine writes when its fitted scale meets a literal the gene
+    /// grew. strogatz lv2 was found as 0.037037037 * ((27 * (2 - y - x)) * y) —
+    /// the law, scored wrong because SRBench rounds 0.037 * 27 to 0.999.
+    #[test]
+    fn a_scale_gathers_a_literal_nested_one_product_deeper() {
+        for order in [
+            r#"(Mul (Num 0.25) (Mul (Mul (Num 4.0) (Var "x")) (Var "y")))"#,
+            r#"(Mul (Num 0.25) (Mul (Mul (Var "x") (Num 4.0)) (Var "y")))"#,
+            r#"(Mul (Num 0.25) (Mul (Var "y") (Mul (Num 4.0) (Var "x"))))"#,
+            r#"(Mul (Num 0.25) (Mul (Var "y") (Mul (Var "x") (Num 4.0))))"#,
+        ] {
+            assert!(
+                proves_equal(order, r#"(Mul (Num 1.0) (Mul (Var "x") (Var "y")))"#)
+                    || proves_equal(order, r#"(Mul (Num 1.0) (Mul (Var "y") (Var "x")))"#),
+                "the cancelling pair was not gathered: {order}"
+            );
+        }
     }
 
     #[test]
