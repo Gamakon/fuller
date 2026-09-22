@@ -305,6 +305,66 @@ pub struct Data {
     pub splits: Splits,
 }
 
+/// ONE SWIM LANE'S RULES — the variation schedule an island pair breeds under.
+///
+/// A lane is a named departure from the engine's own schedule, not a fresh set
+/// of fourteen numbers: `Lane::general()` IS [`Rates::with_cleanse`], and every
+/// other lane is written as what it changes and why. That keeps a lane readable
+/// as a hypothesis ("explore harder, recombine less") and keeps the engine's
+/// defaults the single source of what a rate normally is.
+///
+/// What can live here is what the device indexes BY ROW. `head`, `n_genes` and
+/// `n_rnc` cannot: [`Layout`] fixes one gene width for the whole buffer.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Lane {
+    /// For the logbook, the fit JSON and the solution ledger: which lane found it.
+    pub name: String,
+    /// Multiplies every point-mutation rate (head/tail tokens, Dc, constants).
+    /// Above 1 explores further from the parent; below 1 holds still and lets
+    /// selection work.
+    pub explore: f64,
+    /// Multiplies the three crossover rates. Below 1 isolates lines within the
+    /// lane; above 1 mixes them harder.
+    pub recombine: f64,
+    /// The cleansing mutation's rate per row, or None to take the engine's.
+    pub cleanse: Option<f64>,
+}
+
+impl Lane {
+    /// The engine's own schedule, under a name. The control lane.
+    pub fn general() -> Lane {
+        Lane { name: "general".into(), explore: 1.0, recombine: 1.0, cleanse: None }
+    }
+
+    /// This lane's rates: the engine's schedule with `explore` and `recombine`
+    /// applied. A rate is a threshold on a 32-bit draw, so scaling it scales the
+    /// probability, and it saturates at always rather than wrapping.
+    pub fn rates(&self, layout: Layout, cleanse: f64) -> Rates {
+        let base = Rates::with_cleanse(layout, self.cleanse.unwrap_or(cleanse));
+        let scale = |r: u32, by: f64| -> u32 {
+            if r == u32::MAX {
+                return r;      // "always" stays always
+            }
+            (f64::from(r) * by).round().clamp(0.0, f64::from(u32::MAX)) as u32
+        };
+        Rates {
+            mut_point: scale(base.mut_point, self.explore),
+            dc_point: scale(base.dc_point, self.explore),
+            rnc_point: scale(base.rnc_point, self.explore),
+            invert: scale(base.invert, self.explore),
+            is_transpose: scale(base.is_transpose, self.explore),
+            ris_transpose: scale(base.ris_transpose, self.explore),
+            gene_transpose: scale(base.gene_transpose, self.explore),
+            invert_dc: scale(base.invert_dc, self.explore),
+            transpose_dc: scale(base.transpose_dc, self.explore),
+            cx_one_point: scale(base.cx_one_point, self.recombine),
+            cx_two_point: scale(base.cx_two_point, self.recombine),
+            cx_gene: scale(base.cx_gene, self.recombine),
+            ..base
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Config {
     pub seed: u32,
@@ -336,6 +396,17 @@ pub struct Config {
     pub k_migrants: u32,
     /// The cleansing mutation's rate per row (0 = off).
     pub cleanse: f64,
+    /// THE SWIM LANES: one rule set per island pair, or None for the engine's
+    /// single rule set everywhere.
+    ///
+    /// Andrew: "we move from global to local rules ... then we could have
+    /// different swim lanes ... and then we have three different rule sets
+    /// running in parallel". Lane p governs pair p, so `n_pairs` lanes are
+    /// `n_pairs` searches sharing one dispatch and one drumbeat; with
+    /// `cross_every = 0` they never mix. A table of the same length as
+    /// `n_pairs` is required when it is given at all — a short table is an
+    /// error, never a silent fallback to the default rules.
+    pub lanes: Option<Vec<Lane>>,
     /// Redundancy as an HFF objective: the scoring kernel's leave-one-gene-out
     /// score in [0, 1] (0 = every varying gene carries part of the fit; towards 1
     /// = genes whose removal costs nothing). Measured on finished models, a law's
@@ -486,6 +557,7 @@ impl Config {
             cross_every: 0,
             k_migrants: 3,
             cleanse: 0.0,
+            lanes: None,
             redundancy: false,
             smogd: false,
             log_scale: [false; 3],
@@ -1603,18 +1675,33 @@ impl Engine {
         let pop = config.n_pairs * pair;
         let layout = Layout::for_arity(pop, config.n_genes, config.head, table.max_arity(), config.n_rnc);
         let tourn = |n: u32| ((config.tournament_fraction * f64::from(n)).round() as u32).max(2);
+        // THE LANE'S RULES. Pair p breeds under `lanes[p]` when a lane table is
+        // given, and under the one engine-wide rule set when it is not — so a
+        // config without lanes is the engine it was.
+        let lane_rates = |p: u32| -> Result<Rates, String> {
+            match config.lanes.as_deref() {
+                None => Ok(Rates::with_cleanse(layout, config.cleanse)),
+                Some(lanes) => lanes
+                    .get(p as usize)
+                    .map(|l: &Lane| l.rates(layout, config.cleanse))
+                    .ok_or_else(|| format!("lanes: {} pairs but only {} lane rule sets", config.n_pairs, lanes.len())),
+            }
+        };
         // Pair p is islands 2p (intake) and 2p + 1 (champion), one pair after another.
         let islands: Vec<Island> = (0..config.n_pairs)
-            .flat_map(|p| {
-                let lo = p * pair;
-                [
+            .map(|p| {
+                let (lo, rates) = (p * pair, lane_rates(p)?);
+                Ok([
                     // The float rows are part of the intake island: they breed and
                     // are selected like any other row, and the tournament is sized
                     // from the island the engine actually has.
-                    Island { lo, hi: lo + intake, elites: config.elites, tournsize: tourn(intake) },
-                    Island { lo: lo + intake, hi: lo + pair, elites: config.elites, tournsize: tourn(config.pop_champion) },
-                ]
+                    Island { lo, hi: lo + intake, elites: config.elites, tournsize: tourn(intake), rates },
+                    Island { lo: lo + intake, hi: lo + pair, elites: config.elites, tournsize: tourn(config.pop_champion), rates },
+                ])
             })
+            .collect::<Result<Vec<_>, String>>()?
+            .into_iter()
+            .flatten()
             .collect();
         super::vary::validate(layout, &islands)?;
         if data.y.len() != data.splits.total() || data.x.len() != data.y.len() * data.names.len() {
@@ -2720,7 +2807,6 @@ impl Engine {
         let c = self.config.clone();
         let started = Instant::now();
         let mut timing = Timing { vary: 0.0, read: 0.0, decode: 0.0, evaluate: 0.0, score: 0.0, hff: 0.0, pump: 0.0, cross: 0.0, snap: 0.0, genealogy: 0.0, beam: 0.0 };
-        let rates = Rates::with_cleanse(self.layout, c.cleanse);
         self.dev.init(&InitParams { seed: c.seed, generation: 0, rnc_lo: c.rnc_lo, rnc_hi: c.rnc_hi, n_wrappers: WRAPPERS.len() as u32, vhead: self.vhead_at(0) })?;
         let mut gen = self.dev.read_generation()?;
         gen.fitness.fill(f32::NAN);
@@ -2769,7 +2855,7 @@ impl Engine {
             }
             generation += 1;
             let t = Instant::now();
-            self.dev.vary(&self.islands, &rates, &GenParams { seed: c.seed, generation, rnc_lo: c.rnc_lo, rnc_hi: c.rnc_hi, vhead: self.vhead_at(generation) })?;
+            self.dev.vary(&self.islands, &GenParams { seed: c.seed, generation, rnc_lo: c.rnc_lo, rnc_hi: c.rnc_hi, vhead: self.vhead_at(generation) })?;
             // Only elites arrive evaluated: the kernel puts the j-th fittest row
             // of an island (ties to the lower row) in the island's j-th row.
             let mut carried: Vec<(usize, Option<Scored>)> = Vec::new();
@@ -3891,8 +3977,8 @@ mod tests {
     fn one_pair_without_a_cross_step_is_the_engine_as_it_was() {
         let engine = Engine::new(Config::srbench(1), toy_data()).expect("engine");
         assert_eq!(engine.islands, vec![
-            Island { lo: 0, hi: 600, elites: 2, tournsize: 42 },
-            Island { lo: 600, hi: 800, elites: 2, tournsize: 14 },
+            Island { lo: 0, hi: 600, elites: 2, tournsize: 42, rates: Rates::engine_defaults(Layout::for_arity(800, 3, 48, 2, 10)) },
+            Island { lo: 600, hi: 800, elites: 2, tournsize: 14, rates: Rates::engine_defaults(Layout::for_arity(800, 3, 48, 2, 10)) },
         ]);
         let mut engine = Engine::new(toy_config(60, 20), toy_data()).expect("engine");
         let mut gen = drawn_generation(&engine, 11);
@@ -4407,6 +4493,60 @@ mod tests {
     // THE BEAM: the targeted mutation beam, and the float zone it lands in.
     // -----------------------------------------------------------------------
 
+    /// THE SWIM LANES, and the guarantee that comes first: a lane table holding
+    /// the engine's OWN schedule in every lane is the engine it was, BYTE FOR
+    /// BYTE. The engine is deterministic on a seed, so this is an exact test, not
+    /// a comparison of scores.
+    #[test]
+    fn lanes_of_the_engines_own_rules_are_the_engine_it_was() {
+        let base = Config { max_generations: 10, max_seconds: 3600.0, stop_one_minus_r2: -1.0, n_pairs: 3, ..toy_config(60, 20) };
+        assert!(base.lanes.is_none(), "there is no lane table by default");
+        let fit = |config: &Config| {
+            let mut engine = Engine::new(config.clone(), toy_data()).expect("engine");
+            let result = engine.fit().expect("fit");
+            (result.math, result.unique_genes, result.individuals, engine.islands.clone())
+        };
+        let (math, genes, rows, islands) = fit(&base);
+        // Three lanes, each the general rule set: the same rates the engine uses.
+        let laned = Config { lanes: Some(vec![Lane::general(), Lane::general(), Lane::general()]), ..base.clone() };
+        let (lane_math, lane_genes, lane_rows, lane_islands) = fit(&laned);
+        assert_eq!(math, lane_math, "a lane of the engine's own rules changed the model");
+        assert_eq!((genes, rows), (lane_genes, lane_rows), "a lane of the engine's own rules changed the search");
+        assert_eq!(islands, lane_islands, "the islands differ");
+    }
+
+    /// A lane's rules reach the rows it owns and no others: two lanes with
+    /// different schedules give two islands with different rates, and the
+    /// engine's own schedule is what a `general` lane carries.
+    #[test]
+    fn a_lane_gives_its_own_pair_its_own_rates() {
+        let explorer = Lane { name: "explorer".into(), explore: 3.0, recombine: 0.0, cleanse: None };
+        let config = Config { n_pairs: 2, lanes: Some(vec![Lane::general(), explorer.clone()]), ..toy_config(60, 20) };
+        let engine = Engine::new(config, toy_data()).expect("engine");
+        // Pair p is islands 2p and 2p + 1, and BOTH islands of a pair breed under
+        // the pair's lane — the intake and its champion are one swim lane.
+        let (g_intake, g_champ) = (engine.islands[0].rates, engine.islands[1].rates);
+        let (x_intake, x_champ) = (engine.islands[2].rates, engine.islands[3].rates);
+        assert_eq!(g_intake, g_champ, "a pair's two islands are one lane");
+        assert_eq!(x_intake, x_champ, "a pair's two islands are one lane");
+        assert_eq!(g_intake, Rates::with_cleanse(engine.layout, 0.0), "the general lane is the engine's own schedule");
+        assert_eq!(x_intake.mut_point, 3 * g_intake.mut_point, "explore 3.0 did not treble point mutation");
+        assert_eq!(x_intake.cx_one_point, 0, "recombine 0.0 did not silence crossover");
+        assert_ne!(g_intake, x_intake, "two lanes, one schedule");
+    }
+
+    /// A lane table that does not cover every pair is an ERROR, never a silent
+    /// fallback to the default rules for the pairs it missed.
+    #[test]
+    fn a_lane_table_shorter_than_the_pairs_is_refused() {
+        let short = Config { n_pairs: 3, lanes: Some(vec![Lane::general(), Lane::general()]), ..toy_config(60, 20) };
+        let err = match Engine::new(short, toy_data()) {
+            Err(e) => e,
+            Ok(_) => panic!("a short lane table must be refused"),
+        };
+        assert!(err.contains("lanes"), "the error does not name the lane table: {err}");
+    }
+
     /// OFF BY DEFAULT, and off means nothing changed: with `beam_every = 0` and
     /// `float_zone = 0` the whole fit — the model, the genes evaluated, the
     /// individuals, the islands — is what it was before the beam existed, and the
@@ -4423,9 +4563,10 @@ mod tests {
         let (off, islands, layout) = fit(&base);
         // The population and the islands are exactly the ones the config names.
         assert_eq!(layout.pop, 80);
+        let engine_rates = Rates::with_cleanse(layout, base.cleanse);
         assert_eq!(islands, vec![
-            Island { lo: 0, hi: 60, elites: 2, tournsize: 4 },
-            Island { lo: 60, hi: 80, elites: 2, tournsize: 2 },
+            Island { lo: 0, hi: 60, elites: 2, tournsize: 4, rates: engine_rates },
+            Island { lo: 60, hi: 80, elites: 2, tournsize: 2, rates: engine_rates },
         ]);
         assert_eq!(off.beam, BeamCounts::default(), "the beam counted something with the beam off");
         assert_eq!(off.timing.beam, 0.0);
@@ -4958,8 +5099,10 @@ mod tests {
         let engine = Engine::new(config.clone(), toy_data()).expect("engine");
         assert_eq!(engine.layout.pop, 2 * (30 + 8 + 10), "the zone is rounded up to 8 rows an intake");
         super::super::vary::validate(engine.layout, &engine.islands).expect("the islands still tile");
-        assert_eq!(engine.islands[0], Island { lo: 0, hi: 38, elites: 2, tournsize: 3 });
-        assert_eq!(engine.islands[1], Island { lo: 38, hi: 48, elites: 2, tournsize: 2 });
+        // The GEOMETRY is what this test is about; the rates are the lanes' business.
+        let bounds = |i: &Island| (i.lo, i.hi, i.elites, i.tournsize);
+        assert_eq!(bounds(&engine.islands[0]), (0, 38, 2, 3));
+        assert_eq!(bounds(&engine.islands[1]), (38, 48, 2, 2));
 
         // A population with float rows is an ordinary population: the zone's rows
         // are drawn like any other and pass the structural rules.

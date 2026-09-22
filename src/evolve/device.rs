@@ -9,7 +9,7 @@ use std::borrow::Cow;
 
 use wgpu::util::DeviceExt;
 
-use super::vary::{validate, GenParams, Generation, Island, Rates};
+use super::vary::{validate, GenParams, Generation, Island};
 use super::{InitParams, Layout, Population, SymbolCodes, EVOLVE_WGSL, VARY_WGSL};
 
 /// The uniform block of `evolve.wgsl`, field for field.
@@ -50,7 +50,7 @@ struct GenUniform {
     generation: u32,
     rnc_lo: i32,
     rnc_span: u32,
-    rates: [u32; 14],
+    // The fourteen rates moved into the island table — they are per-lane now.
     rnc_id: u32,
     vhead: u32,
 }
@@ -305,7 +305,7 @@ impl EvolveDevice {
     /// One generation's variation phase on the device: the two tournaments, clone +
     /// mutate, recombine — four dispatches in one submission, nothing read back. The
     /// next population becomes the current one.
-    pub fn vary(&mut self, islands: &[Island], rates: &Rates, p: &GenParams) -> Result<(), String> {
+    pub fn vary(&mut self, islands: &[Island], p: &GenParams) -> Result<(), String> {
         validate(self.layout, islands)?;
         if p.rnc_hi < p.rnc_lo {
             return Err("vary: need rnc_lo <= rnc_hi".into());
@@ -324,26 +324,24 @@ impl EvolveDevice {
             generation: p.generation,
             rnc_lo: p.rnc_lo,
             rnc_span: (p.rnc_hi - p.rnc_lo + 1) as u32,
-            rates: [
-                rates.mut_point,
-                rates.invert,
-                rates.is_transpose,
-                rates.ris_transpose,
-                rates.gene_transpose,
-                rates.dc_point,
-                rates.invert_dc,
-                rates.transpose_dc,
-                rates.rnc_point,
-                rates.cx_one_point,
-                rates.cx_two_point,
-                rates.cx_gene,
-                rates.cleanse,
-                rates.cleanse_collapse,
-            ],
             rnc_id: self.rnc_id,
             vhead: super::virtual_head(p.vhead, self.layout)?,
         });
-        let flat: Vec<u32> = islands.iter().flat_map(|i| [i.lo, i.hi, i.elites, i.tournsize]).collect();
+        // The island table, and each island's own fourteen rates after it — the
+        // swim lane's rules, uploaded with the table the dispatch already sends.
+        // The order matches `struct Island` in vary.wgsl exactly.
+        let flat: Vec<u32> = islands
+            .iter()
+            .flat_map(|i| {
+                let r = i.rates;
+                [
+                    i.lo, i.hi, i.elites, i.tournsize,
+                    r.mut_point, r.invert, r.is_transpose, r.ris_transpose, r.gene_transpose,
+                    r.dc_point, r.invert_dc, r.transpose_dc, r.rnc_point,
+                    r.cx_one_point, r.cx_two_point, r.cx_gene, r.cleanse, r.cleanse_collapse,
+                ]
+            })
+            .collect();
         let islands_buf = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("islands"),
             contents: bytemuck::cast_slice(&flat),
@@ -449,7 +447,7 @@ impl EvolveDevice {
 mod tests {
     use super::super::tests::{codes, params};
     use super::super::vary::tests::{islands, start};
-    use super::super::vary::{vary, GenParams, Rates};
+    use super::super::vary::{vary, GenParams, Island, Rates};
     use super::super::{below, draw, init, Layout};
     use super::EvolveDevice;
 
@@ -492,12 +490,15 @@ mod tests {
     /// reference bit for bit, and no function is ever written past it.
     #[test]
     fn a_growing_virtual_head_matches_the_cpu_reference_bit_for_bit() {
-        let (codes, isl) = (codes(), islands());
+        let codes = codes();
         let layout = Layout::for_arity(800, 3, 48, 2, 10);
         let born = crate::evolve::InitParams { seed: 13, generation: 0, rnc_lo: -100, rnc_hi: 100, n_wrappers: 3, vhead: 8 };
         let pop = crate::evolve::init(layout, &codes, &born).unwrap();
         let mut cpu = crate::evolve::vary::Generation { pop, fitness: (0..800).map(|r| below(draw(13, 0, r, 0, 99), 1_000_000) as f32).collect() };
+        // every operator on, the cleanse included — carried by the ISLANDS, which
+        // is what both the CPU reference and the device read.
         let rates = Rates::with_cleanse(layout, 0.5);
+        let isl: Vec<Island> = islands().into_iter().map(|i| Island { rates, ..i }).collect();
         let mut dev = EvolveDevice::new(layout, &codes).expect("device");
         dev.init(&born).expect("init");
         assert_eq!(dev.read_generation().expect("read").pop, cpu.pop, "the init kernel under a virtual head");
@@ -505,8 +506,8 @@ mod tests {
         for generation in 1..=20u32 {
             let vhead = if generation <= 10 { 8 } else { 12 };
             let p = GenParams { seed: 13, generation, rnc_lo: -100, rnc_hi: 100, vhead };
-            cpu = vary(&cpu, &isl, &codes, &rates, &p).unwrap();
-            dev.vary(&isl, &rates, &p).expect("vary");
+            cpu = vary(&cpu, &isl, &codes, &p).unwrap();
+            dev.vary(&isl, &p).expect("vary");
             let on_device = dev.read_generation().expect("read");
             assert_eq!(on_device.pop, cpu.pop, "generation {generation}");
             let width = layout.gene_width() as usize;
@@ -516,7 +517,7 @@ mod tests {
             cpu.fitness.copy_from_slice(&scored);
             dev.write_fitness(&scored).expect("fitness");
         }
-        assert!(dev.vary(&isl, &rates, &GenParams { seed: 13, generation: 21, rnc_lo: -100, rnc_hi: 100, vhead: 49 }).is_err());
+        assert!(dev.vary(&isl, &GenParams { seed: 13, generation: 21, rnc_lo: -100, rnc_hi: 100, vhead: 49 }).is_err());
     }
 
     /// Twenty generations of select + mutate + crossover on the device, each
@@ -526,15 +527,17 @@ mod tests {
     fn twenty_generations_of_variation_match_the_cpu_reference_bit_for_bit() {
         let (codes, isl) = (codes(), islands());
         let mut cpu = start(11);
-        // every operator on, the cleansing mutation at a rate that exercises it
+        // every operator on, the cleansing mutation at a rate that exercises it —
+        // carried by the ISLANDS now, which is what both sides read.
         let rates = Rates::with_cleanse(cpu.pop.layout, 0.5);
+        let isl: Vec<Island> = isl.into_iter().map(|i| Island { rates, ..i }).collect();
         let mut dev = EvolveDevice::new(cpu.pop.layout, &codes).expect("device");
         dev.init(&params(11)).expect("init");
         dev.write_fitness(&cpu.fitness).expect("fitness");
         for generation in 1..=20u32 {
             let p = GenParams { seed: 11, generation, rnc_lo: -100, rnc_hi: 100, vhead: 0 };
-            cpu = vary(&cpu, &isl, &codes, &rates, &p).unwrap();
-            dev.vary(&isl, &rates, &p).expect("vary");
+            cpu = vary(&cpu, &isl, &codes, &p).unwrap();
+            dev.vary(&isl, &p).expect("vary");
             let on_device = dev.read_generation().expect("read");
             assert_eq!(on_device.pop, cpu.pop, "generation {generation}");
             let bits = |f: &[f32]| f.iter().map(|v| v.to_bits()).collect::<Vec<u32>>();

@@ -608,10 +608,11 @@ mod tests {
         let pop = init(layout, &codes, &InitParams { seed: 5, generation: 0, rnc_lo: -100, rnc_hi: 100, n_wrappers: 3, vhead: 0 }).unwrap();
         let mut now = Generation { fitness: vec![0.0; 400], pop };
         never(&now, "init");
-        let islands = [Island { lo: 0, hi: 300, elites: 2, tournsize: 20 }, Island { lo: 300, hi: 400, elites: 2, tournsize: 7 }];
+        // every operator on, the cleanse included — on the islands that breed.
         let rates = Rates::with_cleanse(layout, 0.5);
+        let islands = [Island { lo: 0, hi: 300, elites: 2, tournsize: 20, rates }, Island { lo: 300, hi: 400, elites: 2, tournsize: 7, rates }];
         for generation in 1..=200 {
-            now = vary(&now, &islands, &codes, &rates, &GenParams { seed: 5, generation, rnc_lo: -100, rnc_hi: 100, vhead: 0 }).unwrap();
+            now = vary(&now, &islands, &codes, &GenParams { seed: 5, generation, rnc_lo: -100, rnc_hi: 100, vhead: 0 }).unwrap();
             now.pop.check(&codes).unwrap();
             never(&now, "vary");
             for (r, f) in now.fitness.iter_mut().enumerate() {

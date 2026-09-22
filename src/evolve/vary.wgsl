@@ -24,6 +24,23 @@ struct Gen {
     generation: u32,
     rnc_lo: i32,
     rnc_span: u32,
+    // The fourteen variation rates used to live here, one set for the whole
+    // population. They are per-island now — see `Island` — so that two lanes can
+    // breed under different rules in one dispatch.
+    rnc_id: u32,       // the "?" token, or NONE
+    // The virtual head, already resolved by the host (never 0 here).
+    vhead: u32,
+}
+
+// THE LANE'S OWN RULES. An island carries the fourteen variation rates it
+// breeds under, so two islands in one population evolve differently — the swim
+// lanes. They are read here exactly as `gp.<rate>` was read before; a run that
+// gives every island the same row is the engine it was, byte for byte.
+struct Island {
+    lo: u32,
+    hi: u32,
+    elites: u32,
+    tournsize: u32,
     mut_point: u32,
     invert: u32,
     is_transpose: u32,
@@ -38,16 +55,6 @@ struct Gen {
     cx_gene: u32,
     cleanse: u32,
     cleanse_collapse: u32,
-    rnc_id: u32,       // the "?" token, or NONE
-    // The virtual head, already resolved by the host (never 0 here).
-    vhead: u32,
-}
-
-struct Island {
-    lo: u32,
-    hi: u32,
-    elites: u32,
-    tournsize: u32,
 }
 
 @group(0) @binding(0) var<uniform> gp: Gen;
@@ -238,7 +245,8 @@ var<private> cl_dc: array<u32, 128>;
 
 // `gene`: the index in `genome` of this gene's first token. The draws are the
 // row's, slots 1..4 of STREAM_CLEANSE.
-fn cleanse_gene(row: u32, gene: u32) {
+// `collapse_thr` is the row's OWN island rate: a helper cannot see `isl`.
+fn cleanse_gene(row: u32, gene: u32, collapse_thr: u32) {
     let h = gp.vhead;
     let ht = gp.head + gp.tail;
     if (ht > MAX_CLEANSE) {
@@ -286,7 +294,7 @@ fn cleanse_gene(row: u32, gene: u32) {
             seen = seen + 1u;
         }
     }
-    let collapse = gp.rnc_id != NONE && chance(row, 2u, STREAM_CLEANSE, gp.cleanse_collapse);
+    let collapse = gp.rnc_id != NONE && chance(row, 2u, STREAM_CLEANSE, collapse_thr);
     var q = LEAF;
     if (!collapse) {
         q = cl_child[p] + below(row, 3u, STREAM_CLEANSE, arity[genome[gene + p]]);
@@ -374,7 +382,7 @@ fn mutate_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     for (var g = 0u; g < gp.n_genes; g = g + 1u) {
         for (var pos = 0u; pos < ht; pos = pos + 1u) {
             let slot = g * width + pos;
-            if (!chance(row, slot, STREAM_MUT_HIT, gp.mut_point)) {
+            if (!chance(row, slot, STREAM_MUT_HIT, isl.mut_point)) {
                 continue;
             }
             if (pos < vh && coin(row, slot, STREAM_MUT_KIND)) {
@@ -385,14 +393,14 @@ fn mutate_main(@builtin(global_invocation_id) gid: vec3<u32>) {
         }
     }
     // 2. inversion, inside one head
-    if (chance(row, OP_INVERT, STREAM_OPERATOR, gp.invert)) {
+    if (chance(row, OP_INVERT, STREAM_OPERATOR, isl.invert)) {
         let g = below(row, 0u, STREAM_INVERT, gp.n_genes);
         let len = 2u + below(row, 1u, STREAM_INVERT, vh - 1u);
         let start = below(row, 2u, STREAM_INVERT, vh - len + 1u);
         reverse(at(base, g, start), at(base, g, start + len));
     }
     // 3. IS transposition
-    if (chance(row, OP_IS, STREAM_OPERATOR, gp.is_transpose)) {
+    if (chance(row, OP_IS, STREAM_OPERATOR, isl.is_transpose)) {
         let donor = below(row, 0u, STREAM_IS, gp.n_genes);
         let donee = below(row, 1u, STREAM_IS, gp.n_genes);
         let len = 1u + below(row, 2u, STREAM_IS, vh - 1u);
@@ -412,7 +420,7 @@ fn mutate_main(@builtin(global_invocation_id) gid: vec3<u32>) {
         }
     }
     // 4. RIS transposition
-    if (chance(row, OP_RIS, STREAM_OPERATOR, gp.ris_transpose)) {
+    if (chance(row, OP_RIS, STREAM_OPERATOR, isl.ris_transpose)) {
         for (var trial = 0u; trial < 2u * gp.n_genes + 1u; trial = trial + 1u) {
             let donor = below(row, trial * 4u, STREAM_RIS, gp.n_genes);
             let donee = below(row, trial * 4u + 1u, STREAM_RIS, gp.n_genes);
@@ -453,7 +461,7 @@ fn mutate_main(@builtin(global_invocation_id) gid: vec3<u32>) {
         }
     }
     // 5. gene transposition — the constants go with the gene
-    if (gp.n_genes > 1u && chance(row, OP_GENE_T, STREAM_OPERATOR, gp.gene_transpose)) {
+    if (gp.n_genes > 1u && chance(row, OP_GENE_T, STREAM_OPERATOR, isl.gene_transpose)) {
         let source = 1u + below(row, 0u, STREAM_GENE_T, gp.n_genes - 1u);
         for (var pos = 0u; pos < width; pos = pos + 1u) {
             let held = genome[at(base, 0u, pos)];
@@ -470,20 +478,20 @@ fn mutate_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     for (var g = 0u; g < gp.n_genes; g = g + 1u) {
         for (var pos = ht; pos < width; pos = pos + 1u) {
             let slot = g * width + pos;
-            if (chance(row, slot, STREAM_DC_HIT, gp.dc_point)) {
+            if (chance(row, slot, STREAM_DC_HIT, isl.dc_point)) {
                 genome[at(base, g, pos)] = below(row, slot, STREAM_DC_VALUE, gp.n_rnc);
             }
         }
     }
     // 7. Dc inversion: geppy chooses len elements and reverses len - 1
-    if (t >= 2u && chance(row, OP_INVERT_DC, STREAM_OPERATOR, gp.invert_dc)) {
+    if (t >= 2u && chance(row, OP_INVERT_DC, STREAM_OPERATOR, isl.invert_dc)) {
         let g = below(row, 0u, STREAM_INVERT_DC, gp.n_genes);
         let len = 2u + below(row, 1u, STREAM_INVERT_DC, t - 1u);
         let start = ht + below(row, 2u, STREAM_INVERT_DC, t - len + 1u);
         reverse(at(base, g, start), at(base, g, start + len - 1u));
     }
     // 8. Dc transposition
-    if (chance(row, OP_TRANSPOSE_DC, STREAM_OPERATOR, gp.transpose_dc)) {
+    if (chance(row, OP_TRANSPOSE_DC, STREAM_OPERATOR, isl.transpose_dc)) {
         let donor = below(row, 0u, STREAM_TRANSPOSE_DC, gp.n_genes);
         let donee = below(row, 1u, STREAM_TRANSPOSE_DC, gp.n_genes);
         let len = 1u + below(row, 2u, STREAM_TRANSPOSE_DC, t);
@@ -504,14 +512,14 @@ fn mutate_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
     // 9. the constants themselves
     for (var k = 0u; k < rnc_w; k = k + 1u) {
-        if (chance(row, k, STREAM_RNC_HIT, gp.rnc_point)) {
+        if (chance(row, k, STREAM_RNC_HIT, isl.rnc_point)) {
             rnc[rbase + k] = f32(gp.rnc_lo + i32(below(row, k, STREAM_RNC_VALUE, gp.rnc_span)));
         }
     }
     // 10. cleanse: shrink one gene's expression
-    if (chance(row, OP_CLEANSE, STREAM_OPERATOR, gp.cleanse)) {
+    if (chance(row, OP_CLEANSE, STREAM_OPERATOR, isl.cleanse)) {
         let g = below(row, 0u, STREAM_CLEANSE, gp.n_genes);
-        cleanse_gene(row, base + g * width);
+        cleanse_gene(row, base + g * width, isl.cleanse_collapse);
     }
 }
 
@@ -553,7 +561,7 @@ fn crossover_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let a = b - 1u;
     let width = gp.head + 2u * gp.tail;
     let row_w = gp.n_genes * width;
-    if (chance(b, OP_CX_1P, STREAM_OPERATOR, gp.cx_one_point)) {
+    if (chance(b, OP_CX_1P, STREAM_OPERATOR, isl.cx_one_point)) {
         let g = below(b, 0u, STREAM_CX_1P, gp.n_genes);
         let point = below(b, 1u, STREAM_CX_1P, width);
         for (var whole = 0u; whole < g; whole = whole + 1u) {
@@ -562,7 +570,7 @@ fn crossover_main(@builtin(global_invocation_id) gid: vec3<u32>) {
         }
         swap_tokens(a, b, g, 0u, point + 1u);
     }
-    if (chance(b, OP_CX_2P, STREAM_OPERATOR, gp.cx_two_point)) {
+    if (chance(b, OP_CX_2P, STREAM_OPERATOR, isl.cx_two_point)) {
         let x = below(b, 0u, STREAM_CX_2P, gp.n_genes);
         let y = below(b, 1u, STREAM_CX_2P, gp.n_genes);
         let g1 = min(x, y);
@@ -580,7 +588,7 @@ fn crossover_main(@builtin(global_invocation_id) gid: vec3<u32>) {
             swap_tokens(a, b, g2, 0u, p2 + 1u);
         }
     }
-    if (chance(b, OP_CX_GENE, STREAM_OPERATOR, gp.cx_gene)) {
+    if (chance(b, OP_CX_GENE, STREAM_OPERATOR, isl.cx_gene)) {
         let ga = below(b, 0u, STREAM_CX_GENE, gp.n_genes);
         let gb = below(b, 1u, STREAM_CX_GENE, gp.n_genes);
         for (var pos = 0u; pos < width; pos = pos + 1u) {

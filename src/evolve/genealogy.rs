@@ -580,7 +580,10 @@ mod tests {
     use super::*;
 
     fn islands() -> Vec<Island> {
-        vec![Island { lo: 0, hi: 20, elites: 2, tournsize: 3 }, Island { lo: 20, hi: 30, elites: 2, tournsize: 3 }]
+        {
+            let rates = crate::evolve::vary::Rates::engine_defaults(crate::evolve::Layout::for_arity(30, 1, 6, 2, 2));
+            vec![Island { lo: 0, hi: 20, elites: 2, tournsize: 3, rates }, Island { lo: 20, hi: 30, elites: 2, tournsize: 3, rates }]
+        }
     }
 
     #[test]

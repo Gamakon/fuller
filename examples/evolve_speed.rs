@@ -18,9 +18,11 @@ fn main() {
     let pop = args.first().copied().unwrap_or(800);
     let generations = args.get(1).copied().unwrap_or(1000);
     let intake = pop / 4 * 3;
+    let layout = Layout::for_arity(pop, 3, 48, 2, 10);
+    let rates = Rates::engine_defaults(layout);
     let islands = [
-        Island { lo: 0, hi: intake, elites: 2, tournsize: (intake * 7 / 100).max(2) },
-        Island { lo: intake, hi: pop, elites: 2, tournsize: ((pop - intake) * 7 / 100).max(2) },
+        Island { lo: 0, hi: intake, elites: 2, tournsize: (intake * 7 / 100).max(2), rates },
+        Island { lo: intake, hi: pop, elites: 2, tournsize: ((pop - intake) * 7 / 100).max(2), rates },
     ];
     // 12 functions (8 binary, 4 unary) and 8 terminals: the size of a real primitive set.
     let codes = SymbolCodes {
@@ -29,8 +31,6 @@ fn main() {
         sample_terminals: (12..20).collect(),
         rnc_id: Some(19),
     };
-    let layout = Layout::for_arity(pop, 3, 48, 2, 10);
-    let rates = Rates::engine_defaults(layout);
     let mut dev = EvolveDevice::new(layout, &codes).expect("device");
     dev.init(&InitParams { seed: 1, generation: 0, rnc_lo: -100, rnc_hi: 100, n_wrappers: 3, vhead: 0 }).expect("init");
     let fitness: Vec<f32> = (0..pop).map(|r| ((r * 2_654_435_761u32.wrapping_mul(r + 1)) % 100_000) as f32).collect();
@@ -39,7 +39,7 @@ fn main() {
 
     let t = Instant::now();
     for generation in 1..=generations {
-        dev.vary(&islands, &rates, &GenParams { seed: 1, generation, rnc_lo: -100, rnc_hi: 100, vhead: 0 }).expect("vary");
+        dev.vary(&islands, &GenParams { seed: 1, generation, rnc_lo: -100, rnc_hi: 100, vhead: 0 }).expect("vary");
         dev.write_fitness(&fitness).expect("fitness");
     }
     dev.finish();

@@ -54,13 +54,25 @@ pub const MAX_SEGMENT: u32 = 512;
 /// arrays; a longer gene is left alone by it.
 pub const MAX_CLEANSE: u32 = 128;
 
-/// Rows `lo .. hi` evolve together.
+/// Rows `lo .. hi` evolve together, UNDER THEIR OWN RULES.
+///
+/// THE SWIM LANE (Andrew: "we move from global to local rules ... and then we
+/// have three different rule sets running in parallel"). `rates` was one set for
+/// the whole population; carrying it here lets one island breed under a
+/// different rule set from its neighbour in the same dispatch. The device reads
+/// it out of the island table it already uploads every generation, so a lane
+/// costs rows, never a second drumbeat.
+///
+/// Per-island because it is indexed by row. `head`, `n_genes` and `n_rnc` are
+/// NOT and cannot be: [`Layout`] is one gene width for the whole buffer, and
+/// crossover between two rows of different widths has no meaning.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Island {
     pub lo: u32,
     pub hi: u32,
     pub elites: u32,
     pub tournsize: u32,
+    pub rates: Rates,
 }
 
 /// Probabilities as thresholds on the high word of a draw: an event happens
@@ -600,7 +612,6 @@ pub fn mutate(
     parent: &[u32],
     islands: &[Island],
     codes: &SymbolCodes,
-    rates: &Rates,
     p: &GenParams,
 ) -> Generation {
     let l = now.pop.layout;
@@ -635,7 +646,7 @@ pub fn mutate(
             for g in 0..g_n {
                 for pos in 0..ht {
                     let slot = g * width + pos;
-                    if !chance(d(slot, STREAM_MUT_HIT), rates.mut_point) {
+                    if !chance(d(slot, STREAM_MUT_HIT), isl.rates.mut_point) {
                         continue;
                     }
                     row[at(g, pos)] = if pos < vh && coin(d(slot, STREAM_MUT_KIND)) {
@@ -646,7 +657,7 @@ pub fn mutate(
                 }
             }
             // 2. inversion, inside one head
-            if acts(OP_INVERT, rates.invert) {
+            if acts(OP_INVERT, isl.rates.invert) {
                 let g = below(d(0, STREAM_INVERT), g_n);
                 let len = 2 + below(d(1, STREAM_INVERT), vh - 1);
                 let start = below(d(2, STREAM_INVERT), vh - len + 1);
@@ -654,7 +665,7 @@ pub fn mutate(
             }
             // 3. IS transposition: a segment from anywhere in head+tail, into a
             //    head, never at the root
-            if acts(OP_IS, rates.is_transpose) {
+            if acts(OP_IS, isl.rates.is_transpose) {
                 let donor = below(d(0, STREAM_IS), g_n);
                 let donee = below(d(1, STREAM_IS), g_n);
                 let len = 1 + below(d(2, STREAM_IS), vh - 1);
@@ -668,7 +679,7 @@ pub fn mutate(
                 row[at(donee, ins)..at(donee, ins + len)].copy_from_slice(&seg);
             }
             // 4. RIS transposition: a segment that starts at a function, to the root
-            if acts(OP_RIS, rates.ris_transpose) {
+            if acts(OP_RIS, isl.rates.ris_transpose) {
                 for trial in 0..2 * g_n + 1 {
                     let donor = below(d(trial * 4, STREAM_RIS), g_n);
                     let donee = below(d(trial * 4 + 1, STREAM_RIS), g_n);
@@ -690,7 +701,7 @@ pub fn mutate(
             }
             // 5. gene transposition: gene 0 changes places with another — its
             //    constants go with it
-            if g_n > 1 && acts(OP_GENE_T, rates.gene_transpose) {
+            if g_n > 1 && acts(OP_GENE_T, isl.rates.gene_transpose) {
                 let source = 1 + below(d(0, STREAM_GENE_T), g_n - 1);
                 for pos in 0..width {
                     row.swap(at(0, pos), at(source, pos));
@@ -705,20 +716,20 @@ pub fn mutate(
             for g in 0..g_n {
                 for pos in ht..width {
                     let slot = g * width + pos;
-                    if chance(d(slot, STREAM_DC_HIT), rates.dc_point) {
+                    if chance(d(slot, STREAM_DC_HIT), isl.rates.dc_point) {
                         row[at(g, pos)] = below(d(slot, STREAM_DC_VALUE), nr);
                     }
                 }
             }
             // 7. Dc inversion. geppy chooses `len` elements and reverses len-1.
-            if t >= 2 && acts(OP_INVERT_DC, rates.invert_dc) {
+            if t >= 2 && acts(OP_INVERT_DC, isl.rates.invert_dc) {
                 let g = below(d(0, STREAM_INVERT_DC), g_n);
                 let len = 2 + below(d(1, STREAM_INVERT_DC), t - 1);
                 let start = ht + below(d(2, STREAM_INVERT_DC), t - len + 1);
                 row[at(g, start)..at(g, start + len - 1)].reverse();
             }
             // 8. Dc transposition
-            if acts(OP_TRANSPOSE_DC, rates.transpose_dc) {
+            if acts(OP_TRANSPOSE_DC, isl.rates.transpose_dc) {
                 let donor = below(d(0, STREAM_TRANSPOSE_DC), g_n);
                 let donee = below(d(1, STREAM_TRANSPOSE_DC), g_n);
                 let len = 1 + below(d(2, STREAM_TRANSPOSE_DC), t);
@@ -734,12 +745,12 @@ pub fn mutate(
             // 9. the constants themselves
             let consts = &mut next.pop.rnc[ru * rnc_w..(ru + 1) * rnc_w];
             for k in 0..g_n * nr {
-                if chance(d(k, STREAM_RNC_HIT), rates.rnc_point) {
+                if chance(d(k, STREAM_RNC_HIT), isl.rates.rnc_point) {
                     consts[k as usize] = (p.rnc_lo + below(d(k, STREAM_RNC_VALUE), span) as i32) as f32;
                 }
             }
             // 10. cleanse: shrink one gene's expression
-            if acts(OP_CLEANSE, rates.cleanse) {
+            if acts(OP_CLEANSE, isl.rates.cleanse) {
                 let g = below(d(0, STREAM_CLEANSE), g_n);
                 let row = &mut next.pop.genome[ru * row_w..(ru + 1) * row_w];
                 cleanse_gene_within(
@@ -747,7 +758,7 @@ pub fn mutate(
                     l,
                     vh,
                     codes,
-                    (d(1, STREAM_CLEANSE), chance(d(2, STREAM_CLEANSE), rates.cleanse_collapse), d(3, STREAM_CLEANSE), d(4, STREAM_CLEANSE)),
+                    (d(1, STREAM_CLEANSE), chance(d(2, STREAM_CLEANSE), isl.rates.cleanse_collapse), d(3, STREAM_CLEANSE), d(4, STREAM_CLEANSE)),
                 );
             }
         }
@@ -757,7 +768,7 @@ pub fn mutate(
 
 /// The three crossovers, over consecutive offspring pairs, in place. A pair's
 /// draws are keyed by its second row.
-pub fn crossover(next: &mut Generation, islands: &[Island], rates: &Rates, p: &GenParams) {
+pub fn crossover(next: &mut Generation, islands: &[Island], p: &GenParams) {
     let l = next.pop.layout;
     let (width, g_n, nr) = (l.gene_width(), l.n_genes, l.n_rnc);
     let row_w = (g_n * width) as usize;
@@ -779,7 +790,7 @@ pub fn crossover(next: &mut Generation, islands: &[Island], rates: &Rates, p: &G
                     rnc.swap(au * rnc_w + (ga * nr + k) as usize, bu * rnc_w + (gb * nr + k) as usize);
                 }
             };
-            if chance(d(OP_CX_1P, STREAM_OPERATOR), rates.cx_one_point) {
+            if chance(d(OP_CX_1P, STREAM_OPERATOR), isl.rates.cx_one_point) {
                 let g = below(d(0, STREAM_CX_1P), g_n);
                 let point = below(d(1, STREAM_CX_1P), width);
                 for whole in 0..g {
@@ -788,7 +799,7 @@ pub fn crossover(next: &mut Generation, islands: &[Island], rates: &Rates, p: &G
                 }
                 swap_tokens(&mut next.pop.genome, g, 0, point + 1);
             }
-            if chance(d(OP_CX_2P, STREAM_OPERATOR), rates.cx_two_point) {
+            if chance(d(OP_CX_2P, STREAM_OPERATOR), isl.rates.cx_two_point) {
                 let (x, y) = (below(d(0, STREAM_CX_2P), g_n), below(d(1, STREAM_CX_2P), g_n));
                 let (g1, g2) = (x.min(y), x.max(y));
                 let (p1, p2) = (below(d(2, STREAM_CX_2P), width), below(d(3, STREAM_CX_2P), width));
@@ -803,7 +814,7 @@ pub fn crossover(next: &mut Generation, islands: &[Island], rates: &Rates, p: &G
                     swap_tokens(&mut next.pop.genome, g2, 0, p2 + 1);
                 }
             }
-            if chance(d(OP_CX_GENE, STREAM_OPERATOR), rates.cx_gene) {
+            if chance(d(OP_CX_GENE, STREAM_OPERATOR), isl.rates.cx_gene) {
                 let (ga, gb) = (below(d(0, STREAM_CX_GENE), g_n), below(d(1, STREAM_CX_GENE), g_n));
                 for pos in 0..width {
                     next.pop.genome.swap(au * row_w + (ga * width + pos) as usize, bu * row_w + (gb * width + pos) as usize);
@@ -820,13 +831,12 @@ pub fn vary(
     now: &Generation,
     islands: &[Island],
     codes: &SymbolCodes,
-    rates: &Rates,
     p: &GenParams,
 ) -> Result<Generation, String> {
     validate(now.pop.layout, islands)?;
     let parent = select(&now.fitness, islands, p);
-    let mut next = mutate(now, &parent, islands, codes, rates, p);
-    crossover(&mut next, islands, rates, p);
+    let mut next = mutate(now, &parent, islands, codes, p);
+    crossover(&mut next, islands, p);
     Ok(next)
 }
 
@@ -837,10 +847,15 @@ pub(crate) mod tests {
     use super::*;
     use crate::evolve::SymbolCodes;
 
+    /// The engine's own schedule, for an island in a test that is not about rates.
+    pub(crate) fn test_rates() -> Rates {
+        Rates::engine_defaults(Layout::for_arity(800, 3, 48, 2, 10))
+    }
+
     pub(crate) fn islands() -> Vec<Island> {
         vec![
-            Island { lo: 0, hi: 600, elites: 2, tournsize: 42 },
-            Island { lo: 600, hi: 800, elites: 2, tournsize: 14 },
+            Island { lo: 0, hi: 600, elites: 2, tournsize: 42, rates: test_rates() },
+            Island { lo: 600, hi: 800, elites: 2, tournsize: 14, rates: test_rates() },
         ]
     }
 
@@ -857,11 +872,10 @@ pub(crate) mod tests {
 
     #[test]
     fn the_rules_hold_through_200_generations() {
-        let (codes, isl) = (codes(), islands());
-        let rates = Rates::engine_defaults(Layout::for_arity(800, 3, 48, 2, 10));
+        let (codes, isl) = (codes(), islands());   // the engine's own schedule
         let mut now = start(3);
         for generation in 1..=200 {
-            now = vary(&now, &isl, &codes, &rates, &gen_params(3, generation)).unwrap();
+            now = vary(&now, &isl, &codes, &gen_params(3, generation)).unwrap();
             now.pop.check(&codes).unwrap();
             for (r, f) in now.fitness.iter_mut().enumerate() {
                 *f = below(draw(3, generation, r as u32, 1, 99), 1_000_000) as f32;
@@ -879,10 +893,11 @@ pub(crate) mod tests {
 
     #[test]
     fn no_function_ever_sits_past_the_virtual_head_and_raising_it_changes_no_gene() {
-        let (codes, isl) = (codes(), islands());
+        let codes = codes();
         let layout = Layout::for_arity(800, 3, 48, 2, 10);
-        // every operator on, the cleanse included
+        // every operator on, the cleanse included — on the islands that breed.
         let rates = Rates::with_cleanse(layout, 0.5);
+        let isl: Vec<Island> = islands().into_iter().map(|i| Island { rates, ..i }).collect();
         let born = crate::evolve::InitParams { seed: 5, generation: 0, rnc_lo: -100, rnc_hi: 100, n_wrappers: 3, vhead: 8 };
         let pop = init(layout, &codes, &born).unwrap();
         let mut now = Generation { pop, fitness: (0..800).map(|r| below(draw(5, 0, r, 0, 99), 1_000_000) as f32).collect() };
@@ -891,7 +906,7 @@ pub(crate) mod tests {
             // the head grows by one position every 50 generations: 8, 9, 10, 11, 12
             let vhead = 8 + generation / 50;
             let before = now.clone();
-            now = vary(&now, &isl, &codes, &rates, &GenParams { seed: 5, generation, rnc_lo: -100, rnc_hi: 100, vhead }).unwrap();
+            now = vary(&now, &isl, &codes, &GenParams { seed: 5, generation, rnc_lo: -100, rnc_hi: 100, vhead }).unwrap();
             now.pop.check(&codes).unwrap();
             assert!(head_in_use(&now, &codes) <= vhead as usize, "generation {generation}: a function past virtual head {vhead}");
             // the elites are the old genes, untouched by the step to a longer head
@@ -913,8 +928,7 @@ pub(crate) mod tests {
     fn elites_pass_unchanged_with_their_fitness_and_offspring_are_unevaluated() {
         let (codes, isl) = (codes(), islands());
         let now = start(4);
-        let rates = Rates::engine_defaults(now.pop.layout);
-        let next = vary(&now, &isl, &codes, &rates, &gen_params(4, 1)).unwrap();
+        let next = vary(&now, &isl, &codes, &gen_params(4, 1)).unwrap();
         let w = (now.pop.layout.n_genes * now.pop.layout.gene_width()) as usize;
         for island in &isl {
             let mut order: Vec<u32> = (island.lo..island.hi).collect();
@@ -947,10 +961,9 @@ pub(crate) mod tests {
     fn the_same_seed_is_the_same_generation() {
         let (codes, isl) = (codes(), islands());
         let now = start(6);
-        let rates = Rates::engine_defaults(now.pop.layout);
-        let a = vary(&now, &isl, &codes, &rates, &gen_params(6, 9)).unwrap();
-        assert_eq!(a.pop, vary(&now, &isl, &codes, &rates, &gen_params(6, 9)).unwrap().pop);
-        assert_ne!(a.pop.genome, vary(&now, &isl, &codes, &rates, &gen_params(6, 10)).unwrap().pop.genome);
+        let a = vary(&now, &isl, &codes, &gen_params(6, 9)).unwrap();
+        assert_eq!(a.pop, vary(&now, &isl, &codes, &gen_params(6, 9)).unwrap().pop);
+        assert_ne!(a.pop.genome, vary(&now, &isl, &codes, &gen_params(6, 10)).unwrap().pop.genome);
     }
 
     /// A gene's expression as a nested string with every "?" resolved to its Dc
@@ -1181,8 +1194,8 @@ pub(crate) mod tests {
     #[test]
     fn islands_that_do_not_tile_the_population_are_refused() {
         let layout = Layout::for_arity(800, 3, 48, 2, 10);
-        assert!(validate(layout, &[Island { lo: 0, hi: 700, elites: 2, tournsize: 7 }]).is_err());
-        assert!(validate(layout, &[Island { lo: 0, hi: 800, elites: 1, tournsize: 7 }]).is_err()); // odd offspring
+        assert!(validate(layout, &[Island { lo: 0, hi: 700, elites: 2, tournsize: 7, rates: test_rates() }]).is_err());
+        assert!(validate(layout, &[Island { lo: 0, hi: 800, elites: 1, tournsize: 7, rates: test_rates() }]).is_err()); // odd offspring
         assert!(validate(layout, &islands()).is_ok());
     }
 }
