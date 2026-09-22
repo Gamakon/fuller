@@ -391,3 +391,54 @@ rewrites and scores them. No engine, no search. 10 laws in 159 s with both arms,
 about half that with `--tidy-only`. A rule change is measured against every law
 it could touch in minutes, and `--baseline` names what GAINED and what LOST, so
 a rewrite that wins one law and breaks another cannot hide.
+
+## The 67 missed wins of the cascade, by cause (2026-09-22, seed 7014)
+
+The first full cascade scored 66 of 133 against the old two-pass 64. Every
+unsolved law was then classified by WHY, not by how close it came.
+
+| class | laws | what happened |
+|---|---|---|
+| A. FALSE STOP | 3 | met OUR stop bar with the wrong function; the search quit |
+| B. NO MODEL SCORED | 16 | SRBench's scorer returned None — our string is too long to simplify |
+| C. HIT THE GENERATION CAP | 11 | 7 of them Strogatz; the cap, not the search, ended it |
+| D. RAN OUT OF TIME | 53 | genuine search misses |
+
+(classes overlap: a law can be capped AND unscored.)
+
+**B is the biggest recoverable class and it is ours to fix.** Measured over all
+342 fits: a fit whose `simplified_symbolic_model` is None has a median model of
+**323 characters**; one that scored has **122**. The scorer is not refusing our
+answer, it is failing to parse it in the time it allows. A numerically excellent
+model that is 300 characters long scores ZERO.
+
+**A is the most damaging per law**, because a false stop ends the search. All
+three passed `log10 p <= -19` AND `val 1-R2 <= 1e-10` with a function that is not
+the law — `s_lv2` reported `-4096*y*tan(tan(0.000244*(x+y-2)))`, which is
+`-y*(x+y-2)` to eleven decimals because `tan(tan(eu)) ~ eu` and
+`4096 * 0.000244 = 1`. SRBench rounds every float to 3 decimals, so `0.000244`
+becomes `0`, the whole term collapses, and the submitted model is `0`.
+
+### THE PRESCORE
+
+The scorer's damage is knowable BEFORE we submit, and cheaply:
+
+1. **round** every float to 3 decimals (< 1e-4 to 0), exactly as
+   `srbench/postprocessing/symbolic_utils.py::round_floats` does;
+2. if the result `is_number`, the form has lost all structure and can never
+   match a law, whatever its R2.
+
+A single `xreplace` over the float atoms does this in **0.2 ms**, against 9.9 ms
+for SRBench's per-float `subs` loop — same answer, 50x faster, cheap enough to
+run inside every fit.
+
+This is not reading the benchmark's verdict. It is a published, deterministic
+transform applied to OUR OWN string, the same class of check as the existing
+REPORT FAULT guard that asserts the reported string computes what the chromosome
+computes.
+
+**Three false positives found on the way.** `II_11_27`, `test_11` and `s_lv2` all
+carry `symbolic_fraction_is_constant: True` while `simplified_symbolic_model` is
+`0` or `nan` — the fraction test degenerates when the denominator vanishes. The
+race's strict filter already rejects these, and it is right to: none of the three
+is the law. Counting the loose flag would have reported 69 instead of 66.
