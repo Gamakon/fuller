@@ -582,7 +582,7 @@ mod tests {
     fn islands() -> Vec<Island> {
         {
             let rates = crate::evolve::vary::Rates::engine_defaults(crate::evolve::Layout::for_arity(30, 1, 6, 2, 2));
-            vec![Island { lo: 0, hi: 20, elites: 2, tournsize: 3, rates }, Island { lo: 20, hi: 30, elites: 2, tournsize: 3, rates }]
+            vec![Island { lo: 0, hi: 20, elites: 2, tournsize: 3, arrivals: 0, rates }, Island { lo: 20, hi: 30, elites: 2, tournsize: 3, arrivals: 0, rates }]
         }
     }
 

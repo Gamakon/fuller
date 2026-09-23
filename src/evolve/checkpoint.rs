@@ -67,6 +67,17 @@ pub struct Checkpoint {
     /// VIRTUAL ALPS: the cohort label of every row. Empty when cohorts are off.
     pub cohorts: Vec<u32>,
 
+    /// THE ARRIVAL BAND of each island, in island order: how many rows above
+    /// the elites the last pump beat filled with promotions.
+    ///
+    /// This is state the pump writes and the NEXT generation's variation reads,
+    /// so a fit resumed between the two would breed that band as ordinary rows
+    /// and diverge from a run that was never stopped. Empty in a checkpoint
+    /// written before the band existed, which reads as no arrivals — the
+    /// behaviour those checkpoints were taken under.
+    #[serde(default)]
+    pub arrivals: Vec<u32>,
+
     /// HFF's frozen per-column maxima. Recomputing these on resume would rescale
     /// every objective and change what the search prefers.
     pub col_max: Option<[f64; 9]>,
@@ -227,6 +238,7 @@ mod tests {
             wrapper_id: vec![0; 8],
             fitness: vec![0.25; 8],
             cohorts: vec![0; 8],
+            arrivals: vec![0, 0],
             col_max: Some([1.0; 9]),
             hof: None,
             unique_genes: 10,

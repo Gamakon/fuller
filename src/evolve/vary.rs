@@ -72,6 +72,29 @@ pub struct Island {
     pub hi: u32,
     pub elites: u32,
     pub tournsize: u32,
+    /// HOW MANY ROWS ABOVE THE ELITES ARE NEW ARRIVALS — rows the pump has just
+    /// promoted into this island. Zero on an intake island, and zero on a
+    /// champion island in the generations between pump beats.
+    ///
+    /// THE ARRIVALS ARE NOT RANKED (Andrew: "we do not rank new entrants, we
+    /// just select them as pairs randomly"). An arrival is, by construction,
+    /// less converged than the elders it lands among, so it loses every
+    /// tournament it is drawn into and its genes never reach a crossover — the
+    /// promotion channel delivers a line into the island and selection throws
+    /// it away before it can breed once.
+    ///
+    /// So an arrival's row takes the arrival as its parent OUTRIGHT, and the
+    /// row beside it takes a champion DRAWN AT RANDOM — not a tournament
+    /// winner. THE POINT IS DIVERSITY (Andrew). A tournament returns the
+    /// converged elder, which is the very thing the arrival is meant to
+    /// dilute; breeding the newcomer with the island's champion would pull its
+    /// children straight back towards the basin everything is already in. A
+    /// uniform draw spreads the crossings over the whole island instead.
+    ///
+    /// The crossover pass pairs adjacent rows, so the two are spliced together
+    /// by construction: a new arrival crossed with a random champion, every
+    /// beat, without the arrival having to win anything first.
+    pub arrivals: u32,
     pub rates: Rates,
 }
 
@@ -929,8 +952,8 @@ pub(crate) mod tests {
 
     pub(crate) fn islands() -> Vec<Island> {
         vec![
-            Island { lo: 0, hi: 600, elites: 2, tournsize: 42, rates: test_rates() },
-            Island { lo: 600, hi: 800, elites: 2, tournsize: 14, rates: test_rates() },
+            Island { lo: 0, hi: 600, elites: 2, tournsize: 42, arrivals: 0, rates: test_rates() },
+            Island { lo: 600, hi: 800, elites: 2, tournsize: 14, arrivals: 0, rates: test_rates() },
         ]
     }
 
@@ -1308,8 +1331,8 @@ pub(crate) mod tests {
     #[test]
     fn islands_that_do_not_tile_the_population_are_refused() {
         let layout = Layout::for_arity(800, 3, 48, 2, 10);
-        assert!(validate(layout, &[Island { lo: 0, hi: 700, elites: 2, tournsize: 7, rates: test_rates() }]).is_err());
-        assert!(validate(layout, &[Island { lo: 0, hi: 800, elites: 1, tournsize: 7, rates: test_rates() }]).is_err()); // odd offspring
+        assert!(validate(layout, &[Island { lo: 0, hi: 700, elites: 2, tournsize: 7, arrivals: 0, rates: test_rates() }]).is_err());
+        assert!(validate(layout, &[Island { lo: 0, hi: 800, elites: 1, tournsize: 7, arrivals: 0, rates: test_rates() }]).is_err()); // odd offspring
         assert!(validate(layout, &islands()).is_ok());
     }
 }

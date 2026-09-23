@@ -43,6 +43,9 @@ struct Island {
     hi: u32,
     elites: u32,
     tournsize: u32,
+    // How many rows above the elites are rows the pump has just promoted. They
+    // are NOT ranked: see `Island::arrivals` in vary.rs.
+    arrivals: u32,
     mut_point: u32,
     invert: u32,
     is_transpose: u32,
@@ -101,6 +104,9 @@ const STREAM_CX_1P: u32 = 22u;
 const STREAM_CX_2P: u32 = 23u;
 const STREAM_CX_GENE: u32 = 24u;
 const STREAM_CLEANSE: u32 = 25u;
+// The champion an arrival breeds with: a UNIFORM draw over the island, not a
+// tournament. See `Island::arrivals`.
+const STREAM_ARRIVAL_MATE: u32 = 26u;
 
 const OP_INVERT: u32 = 0u;
 const OP_IS: u32 = 1u;
@@ -296,6 +302,31 @@ fn select_main(@builtin(global_invocation_id) gid: vec3<u32>) {
         parent[row] = best;
         return;
     }
+    // THE ARRIVAL BAND, and it is not a tournament at all.
+    //
+    // The pump lands its promotions contiguously just above the elites. Those
+    // rows and the rows beside them are paired by the crossover pass (which
+    // takes `a = b - 1`), so laying them out in couples makes every arrival
+    // breed with a champion by construction:
+    //
+    //   arrival, random champion, arrival, random champion, ...
+    //
+    // The arrival keeps ITSELF as its parent -- it is not ranked, because a
+    // freshly promoted line loses every tournament it is drawn into and its
+    // genes would never reach a crossover. Its partner is drawn UNIFORMLY over
+    // the island rather than won, because the point is DIVERSITY: a tournament
+    // returns the converged elder, and breeding the newcomer with it drags the
+    // children back into the basin the island is already stuck in.
+    let band = isl.lo + isl.elites;
+    if (isl.arrivals > 0u && row >= band && row < band + isl.arrivals * 2u) {
+        if (((row - band) & 1u) == 0u) {
+            parent[row] = row;        // the arrival itself, unranked
+        } else {
+            parent[row] = isl.lo + below(row, 0u, STREAM_ARRIVAL_MATE, n);
+        }
+        return;
+    }
+
     var w = NONE;
     for (var t = 0u; t < isl.tournsize; t = t + 1u) {
         let c = stage1[isl.lo + below(row, t, STREAM_SELECT_2, n)];
@@ -659,7 +690,14 @@ fn crossover_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let a = b - 1u;
     let width = gp.head + 2u * gp.tail;
     let row_w = gp.n_genes * width;
-    if (chance(b, OP_CX_1P, STREAM_OPERATOR, isl.cx_one_point)) {
+    // AN ARRIVAL PAIR ALWAYS CROSSES. The ordinary rates are 0.3 / 0.2 / 0.1 a
+    // pair, so left to chance an arrival would breed with its champion only
+    // about half the time and otherwise pass into the next generation as a
+    // copy of itself -- which is the starvation this band exists to end. The
+    // pump promoted this line on purpose; the splice is the whole point of
+    // promoting it.
+    let arrival_pair = isl.arrivals > 0u && b < first + isl.arrivals * 2u;
+    if (arrival_pair || chance(b, OP_CX_1P, STREAM_OPERATOR, isl.cx_one_point)) {
         let g = below(b, 0u, STREAM_CX_1P, gp.n_genes);
         let point = below(b, 1u, STREAM_CX_1P, width);
         for (var whole = 0u; whole < g; whole = whole + 1u) {

@@ -357,7 +357,7 @@ impl EvolveDevice {
             .flat_map(|i| {
                 let r = i.rates;
                 [
-                    i.lo, i.hi, i.elites, i.tournsize,
+                    i.lo, i.hi, i.elites, i.tournsize, i.arrivals,
                     r.mut_point, r.invert, r.is_transpose, r.ris_transpose, r.gene_transpose,
                     r.dc_point, r.invert_dc, r.transpose_dc, r.rnc_point,
                     r.cx_one_point, r.cx_two_point, r.cx_gene, r.cleanse, r.cleanse_collapse,

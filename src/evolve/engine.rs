@@ -2346,8 +2346,8 @@ impl Engine {
                     // The float rows are part of the intake island: they breed and
                     // are selected like any other row, and the tournament is sized
                     // from the island the engine actually has.
-                    Island { lo, hi: lo + intake, elites: config.elites, tournsize: tourn(intake), rates },
-                    Island { lo: lo + intake, hi: lo + pair, elites: config.elites, tournsize: tourn(config.pop_champion), rates },
+                    Island { lo, hi: lo + intake, elites: config.elites, tournsize: tourn(intake), arrivals: 0, rates },
+                    Island { lo: lo + intake, hi: lo + pair, elites: config.elites, tournsize: tourn(config.pop_champion), arrivals: 0, rates },
                 ])
             })
             .collect::<Result<Vec<_>, String>>()?
@@ -2758,6 +2758,14 @@ impl Engine {
             // reporting cache holds is about to be wrong.
             self.cohorts_stale = true;
         }
+        // THE ARRIVAL BAND IS THIS BEAT'S ONLY. It tells the variation kernel
+        // which rows to breed unranked against a random champion, and those rows
+        // stop being arrivals the moment they have bred once -- left set, the
+        // band would keep handing the same rows a free pass generation after
+        // generation and they would never face the island at all.
+        for island in &mut self.islands {
+            island.arrivals = 0;
+        }
         for (intake, champion) in self.pairs() {
             self.pump_pair(gen, intake, champion, &fresh, generation)?;
         }
@@ -2842,8 +2850,6 @@ impl Engine {
         let rnc_w = (l.n_genes * l.n_rnc) as usize;
         let best_intake = self.promotion_slate(intake, gen);
         // The champion island's worst first; an unevaluated row is the worst of all.
-        let mut worst_champion: Vec<u32> = (champion.lo..champion.hi).collect();
-        worst_champion.sort_by(|&a, &b| gen.fitness[b as usize].total_cmp(&gen.fitness[a as usize]).then(b.cmp(&a)));
         // PROMOTION IS A TURNOVER RATE, not a count. "Promote 2" was written when
         // a champion island was 200 rows, where 2 IS one percent of it — the rate
         // was always the intent and the absolute number was the size it was
@@ -2859,7 +2865,25 @@ impl Engine {
         // champion. At least one, or a small island promotes nobody and the pump
         // stops meaning anything.
         let promote = ((f64::from(champion.hi - champion.lo) * self.config.promote_fraction).round() as usize).max(1);
-        for (&from, &to) in best_intake.iter().zip(worst_champion.iter().take(promote)) {
+        // WHERE THE ARRIVALS LAND, and it is not where the worst rows are.
+        //
+        // An arrival used to be written over whichever champion rows ranked
+        // worst, which scatters them through the island. Selection then threw
+        // every one of them away: a freshly promoted line is less converged
+        // than the elders around it, so it loses every tournament it is drawn
+        // into and its genes never reach a crossover. The pump delivered a line
+        // into the island and the next generation deleted it.
+        //
+        // They now land CONTIGUOUSLY just above the elites, one row apart, so
+        // that `select_main` can give each its own row outright and put a
+        // randomly drawn champion beside it, and the crossover pass -- which
+        // pairs `b` with `b - 1` -- splices the two by construction. The rows
+        // they displace are still the island's worst, taken in rank order.
+        let band = (champion.lo + self.config.elites) as usize;
+        let room = (champion.hi as usize).saturating_sub(band) / 2;
+        let promote = promote.min(room);
+        let landing: Vec<u32> = (0..promote).map(|k| (band + k * 2) as u32).collect();
+        for (&from, &to) in best_intake.iter().zip(landing.iter()) {
             let (from, to) = (from as usize, to as usize);
             gen.pop.genome.copy_within(from * row_w..(from + 1) * row_w, to * row_w);
             gen.pop.rnc.copy_within(from * rnc_w..(from + 1) * rnc_w, to * rnc_w);
@@ -2885,6 +2909,13 @@ impl Engine {
                 let record = l.tracker.record(generation, to);
                 l.log.record("arrival", &record)?;
             }
+        }
+        // What the variation kernel needs to know: how many couples sit in the
+        // band. `pairs()` hands out islands by value, so it goes back to the
+        // table the dispatch actually reads.
+        let promoted = best_intake.len().min(landing.len());
+        if let Some(slot) = self.islands.iter_mut().find(|i| i.lo == champion.lo && i.hi == champion.hi) {
+            slot.arrivals = promoted as u32;
         }
         let keepers = self.keepers(intake, gen);
         let before = gen.clone();
@@ -3708,6 +3739,8 @@ impl Engine {
             wrapper_id: gen.pop.wrapper_id.clone(),
             fitness: gen.fitness.clone(),
             cohorts: self.cohorts.clone(),
+            // The arrival band the last pump beat left for the next variation.
+            arrivals: self.islands.iter().map(|i| i.arrivals).collect(),
             col_max: self.col_max,
             hof: hof.map(|h| checkpoint::SavedHof {
                 generation: h.generation,
@@ -4258,6 +4291,14 @@ impl Engine {
             if !cp.cohorts.is_empty() {
                 self.cohorts = cp.cohorts.clone();
                 self.dev.write_cohorts(&self.cohorts)?;
+            }
+            // THE ARRIVAL BAND the pump left for the generation this resume is
+            // about to run. Without it a fit stopped between a pump beat and
+            // the variation that breeds its arrivals would treat that band as
+            // ordinary rows, and the resumed run would diverge from one that
+            // was never stopped.
+            for (island, &n) in self.islands.iter_mut().zip(&cp.arrivals) {
+                island.arrivals = n;
             }
             self.dev.write_population(&gen.pop)?;
             self.dev.write_fitness(&gen.fitness)?;
@@ -6256,8 +6297,8 @@ mod tests {
     fn one_pair_without_a_cross_step_is_the_engine_as_it_was() {
         let engine = Engine::new(Config::srbench(1), toy_data()).expect("engine");
         assert_eq!(engine.islands, vec![
-            Island { lo: 0, hi: 600, elites: 2, tournsize: 42, rates: Rates::engine_defaults(Layout::for_arity(800, 3, 48, 2, 10)) },
-            Island { lo: 600, hi: 800, elites: 2, tournsize: 14, rates: Rates::engine_defaults(Layout::for_arity(800, 3, 48, 2, 10)) },
+            Island { lo: 0, hi: 600, elites: 2, tournsize: 42, arrivals: 0, rates: Rates::engine_defaults(Layout::for_arity(800, 3, 48, 2, 10)) },
+            Island { lo: 600, hi: 800, elites: 2, tournsize: 14, arrivals: 0, rates: Rates::engine_defaults(Layout::for_arity(800, 3, 48, 2, 10)) },
         ]);
         // ALPS OFF, DELIBERATELY: this is the fixed point for "the engine as it
         // WAS", so it is pinned against the selection the digests were taken
@@ -6278,13 +6319,18 @@ mod tests {
                 }
             }
         }
-        // The digests changed once, when promotion became a SHARE of the champion
-        // island rather than the absolute 2 it was written as. At this toy size
-        // (20 champion rows) one percent rounds to one promotion where two were
-        // made before, so the pump moves a different row and everything downstream
-        // of it differs. The mechanism is what `the_pump_works_inside_each_pair`
-        // asserts; these are the fixed point that says it did not drift again.
-        assert_eq!(seen, vec![4537763176598439864, 12250385662605533526, 14892954882145952876], "the pump on one pair");
+        // The digests have changed twice, both times because the pump's contract
+        // changed and not because anything drifted:
+        //
+        // 1. promotion became a SHARE of the champion island rather than the
+        //    absolute 2 it was written as;
+        // 2. arrivals began landing in a BAND just above the elites, one row
+        //    apart, instead of over the island's worst rows -- so that each can
+        //    be bred, unranked, against a randomly drawn champion.
+        //
+        // The mechanism is what `the_pump_works_inside_each_pair` asserts; these
+        // are the fixed point that says it did not drift again.
+        assert_eq!(seen, vec![8226963365713355349, 11310604957322890462, 18074587981265389935], "the pump on one pair");
     }
 
     /// A row whole: its genes and its constants.
@@ -6335,15 +6381,27 @@ mod tests {
             // HOW MANY are promoted is a share of the champion island, so the test
             // asks the rate rather than a count that was true at one size.
             let n = ((f64::from(champion.hi - champion.lo) * engine.config.promote_fraction).round() as u32).max(1);
-            // The intake's best are its last rows; the champion island's worst are
-            // its first, the worst of all first.
+            // THE ARRIVALS LAND IN A BAND, one row apart, just above the
+            // elites -- not on the island's worst rows, which scattered them
+            // and let selection delete every one before it could breed. Every
+            // OTHER row of the band is left as it was: that is the champion
+            // the arrival beside it will be crossed with.
+            let band = champion.lo + engine.config.elites;
             for k in 0..n {
-                let (from, to) = (intake.hi - 1 - k, champion.lo + k);
+                let (from, to) = (intake.hi - 1 - k, band + k * 2);
                 assert_eq!(row_of(&gen, to), row_of(&before, from), "pair {p}: row {from} is promoted to row {to}");
                 assert_eq!(gen.fitness[to as usize], before.fitness[from as usize], "pair {p}: a promoted row keeps its fitness");
             }
-            for r in champion.lo + n..champion.hi {
-                assert_eq!(row_of(&gen, r), row_of(&before, r), "pair {p}: the rest of the champion island is untouched");
+            // And the island tells the variation kernel how many couples the
+            // band holds, so `select_main` can breed them unranked.
+            let champion_now = engine.islands.iter().find(|i| i.lo == champion.lo).expect("the champion island");
+            assert_eq!(champion_now.arrivals, n, "pair {p}: the island does not carry its arrival count");
+            for r in champion.lo..champion.hi {
+                let is_arrival = r >= band && r < band + n * 2 && (r - band) % 2 == 0;
+                if is_arrival {
+                    continue;
+                }
+                assert_eq!(row_of(&gen, r), row_of(&before, r), "pair {p}: row {r} is not an arrival and was changed");
                 assert_eq!(gen.fitness[r as usize], before.fitness[r as usize]);
             }
             // Nobody else's intake reaches this champion island.
@@ -6864,8 +6922,8 @@ mod tests {
         assert_eq!(layout.pop, 80);
         let engine_rates = Rates::with_cleanse(layout, base.cleanse);
         assert_eq!(islands, vec![
-            Island { lo: 0, hi: 60, elites: 2, tournsize: 4, rates: engine_rates },
-            Island { lo: 60, hi: 80, elites: 2, tournsize: 2, rates: engine_rates },
+            Island { lo: 0, hi: 60, elites: 2, tournsize: 4, arrivals: 0, rates: engine_rates },
+            Island { lo: 60, hi: 80, elites: 2, tournsize: 2, arrivals: 0, rates: engine_rates },
         ]);
         assert_eq!(off.beam, BeamCounts::default(), "the beam counted something with the beam off");
         assert_eq!(off.timing.beam, 0.0);
