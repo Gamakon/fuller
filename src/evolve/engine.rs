@@ -2418,6 +2418,15 @@ impl Engine {
         for (intake, champion) in self.pairs() {
             self.pump_pair(gen, intake, champion, &fresh, generation)?;
         }
+        // AND BACK TO THE DEVICE. The pump moved rows between islands and stamped
+        // the refills, all on the host; without this the kernel keeps the labels
+        // it had and the next tournament bands on where rows USED to be. The
+        // population itself is written by the caller, which is why this was
+        // missed: the genes arrived in the champion island and their labels did
+        // not, so it read as one cohort however many lines were promoted.
+        if !self.cohorts.is_empty() {
+            self.dev.write_cohorts(&self.cohorts)?;
+        }
         Ok(())
     }
 
@@ -2514,6 +2523,18 @@ impl Engine {
             gen.pop.wrapper_id[to] = gen.pop.wrapper_id[from];
             gen.fitness[to] = gen.fitness[from];
             self.scored[to] = self.scored[from];
+            // AND ITS COHORT. A promotion copies the genes, the constants, the
+            // wrapper and the fitness — without this it left the LABEL behind,
+            // so a promoted row arrived in the champion island wearing whatever
+            // label the row it overwrote had, which was the founding cohort's.
+            // The champion island then read as 2,000 rows of c0 however many
+            // young lines were promoted into it, and the open knockout had
+            // nobody to fight: measured at generation 874, the intake held
+            // c1040, c1060, c1080, c1100 and c1120 while the champion island
+            // reported one cohort.
+            if !self.cohorts.is_empty() {
+                self.cohorts[to] = self.cohorts[from];
+            }
             // THE PROMOTION: the intake row is copied over a champion row and stays
             // where it is, so the copy is a new individual of the same line.
             if let Some(l) = self.lineage.as_mut() {
@@ -3868,9 +3889,6 @@ impl Engine {
                     oversized += o;
                     self.remember(&mut hof, &gen, generation);
                     self.dev.write_population(&gen.pop)?;
-                if !self.cohorts.is_empty() {
-                    self.dev.write_cohorts(&self.cohorts)?;
-                }
                     if !self.cohorts.is_empty() {
                         self.dev.write_cohorts(&self.cohorts)?;
                     }
@@ -3916,9 +3934,6 @@ impl Engine {
                     oversized += o;
                     self.remember(&mut hof, &gen, generation);
                     self.dev.write_population(&gen.pop)?;
-                if !self.cohorts.is_empty() {
-                    self.dev.write_cohorts(&self.cohorts)?;
-                }
                     if !self.cohorts.is_empty() {
                         self.dev.write_cohorts(&self.cohorts)?;
                     }
@@ -3951,9 +3966,6 @@ impl Engine {
                 oversized += o;
                 if !crossed {
                     self.dev.write_population(&gen.pop)?;
-                if !self.cohorts.is_empty() {
-                    self.dev.write_cohorts(&self.cohorts)?;
-                }
                     if !self.cohorts.is_empty() {
                         self.dev.write_cohorts(&self.cohorts)?;
                     }
@@ -4512,6 +4524,44 @@ mod tests {
         let alive = Tree::parse(r#"(Mul (Var "x_0") (Add (Var "x_1") (Num 1.0)))"#).expect("parse");
         let none = near_constant_subtrees(&alive, &rows(), NEAR_CONSTANT_RANGE);
         assert!(none.is_empty(), "a varying subtree was called flat: {:?}", none.iter().map(|(t, _)| t.to_infix()).collect::<Vec<_>>());
+    }
+
+    /// A PROMOTION CARRIES ITS COHORT WITH IT.
+    ///
+    /// The pump copies the genes, the constants, the wrapper and the fitness.
+    /// Without the LABEL a promoted row arrives in the champion island wearing
+    /// whatever label the row it overwrote had — the founding cohort's — so the
+    /// island read as one cohort however many young lines were promoted into it,
+    /// and the open knockout had nobody to fight. Measured at generation 874 of
+    /// a live fit: the intake held c1040, c1060, c1080, c1100 and c1120 while
+    /// the champion island reported 2,000 rows of c0.
+    #[test]
+    fn a_promoted_row_takes_its_cohort_into_the_champion_island() {
+        let config = Config { cohort_merge: 400, pump_every: 4, ..toy_config(60, 20) };
+        let mut engine = Engine::new(config, toy_data()).expect("engine");
+        let mut gen = drawn_generation(&engine, 21);
+        let (intake, champion) = (engine.islands[0], engine.islands[1]);
+        // The champion island is all one old cohort; the intake is young ones.
+        engine.cohorts = vec![0u32; engine.layout.pop as usize];
+        for row in intake.lo..intake.hi {
+            engine.cohorts[row as usize] = 100 + (row % 3) * 20;
+        }
+        // The pump re-reads the labels from the device at the top of its beat, so
+        // the test's labels have to be THERE, not only on the host.
+        engine.dev.write_cohorts(&engine.cohorts).expect("seed the labels");
+        engine.pump(&mut gen, 4).expect("the pump");
+        // The device is what the tournaments read, so that is what is checked.
+        let live = engine.dev.read_cohorts().expect("read the labels back");
+        let in_champion: std::collections::BTreeSet<u32> =
+            (champion.lo..champion.hi).map(|r| live[r as usize]).collect();
+        assert!(
+            in_champion.len() > 1,
+            "the champion island holds one cohort after a promotion: {in_champion:?}"
+        );
+        assert!(
+            in_champion.iter().any(|&c| c >= 100),
+            "no young cohort reached the champion island: {in_champion:?}"
+        );
     }
 
     /// THE CHAMPION ISLAND IS AN OPEN KNOCKOUT, THE INTAKE IS NOT.
