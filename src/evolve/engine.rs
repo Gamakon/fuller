@@ -6392,11 +6392,25 @@ mod tests {
             (0, 0),
             "a typed refusal is NOT an oversized gene and must not be counted as one"
         );
-        // The row is not scored on that gene: its fitness is either NaN (no gene
-        // of the chromosome survived) or comes from the row's OTHER genes.
-        assert!(
-            !gen.fitness[0].is_finite() || on.config.n_genes > 1,
-            "a refused gene must not be scored"
+        // AND THE REFUSED GENE IS STILL IN THE POPULATION, unscored.
+        //
+        // This is the mechanism that explains every TSR measurement's depth
+        // histogram, and it is worth an assertion rather than a paragraph: the
+        // row is a CHROMOSOME of `n_genes`, so one refused gene does not kill
+        // it. The row scores on its other genes and the illegal one rides
+        // along -- never scored, never removed, still there to be counted.
+        //
+        // So a typed run's histogram showing genes past the ceiling is NOT a
+        // leak in the check. Those entries ARE the refused genes. The spec's
+        // "the row scores PI and dies in the next tournament" holds only when
+        // every gene of the row is illegal.
+        assert!(on.config.n_genes > 1, "the riding-along mechanism needs a multi-gene chromosome");
+        let still_there = decode_gene(&gen.pop.genome[0..width], &gen.pop.rnc[0..nr], l, &on.table)
+            .expect("the refused gene is untouched, and still decodes");
+        assert_eq!(
+            t_depth(&still_there),
+            3,
+            "a refusal must not rewrite the gene -- it is left in place, unscored"
         );
     }
 
