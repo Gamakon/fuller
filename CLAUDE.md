@@ -35,6 +35,20 @@ cargo run --release --bin parity -- parity/corpus/*.jsonl   # SymPy-parity score
 - `parity/` — `gen_corpus.py` (offline sympy→Math corpus), `label_corpus.py` (offline family-labeler for the classifier), `corpus/*.jsonl`.
 - `nucleotable/` — subsumed design source of truth (referenced by `geneframe.rs`). `stale/` — delivered briefs, history only.
 
+## Running a fit — READ THE SKILL FIRST
+
+`.claude/skills/running-fits/SKILL.md` before launching `evolve_fit` or changing
+any search parameter. It holds the configurations that have actually recovered
+laws, and the traps that have each cost an afternoon. Three that keep recurring:
+
+- **`stop_log10_p = -19` is calibrated for FOUR HFF objectives.** Runs have 6 or
+  9. At 9 it is unreachable; at 6 it saturates to `-inf`. `1 - R²` is doing all
+  the work either way. Check `Engine::hff_dimensions()` before trusting p.
+- **`min_hff 0.000000` / `log10 p -inf` is not success** — it is the f32 angle
+  saturating. Read `mse_train` on the same line.
+- **Never edit a script while it is running.** zsh re-reads incrementally; one
+  edit ran a fit twice and truncated the telemetry of a run that scored R² 1.0.
+
 ## Non-obvious things that will bite you
 
 - **Rule families are NON-CONFLUENT.** distribute + trig (or + rational) co-saturated explode the e-graph (verified: pegs CPU, killed runs). The scorer keeps them in separate `Family`s; `denoise` uses only the bounded algebra+powers subset. Do NOT merge all rulesets into one saturation. **Always kill-guard a saturation/parity run** so a divergent rule can't peg the machine: `( cmd & PID=$!; for i in $(seq 1 N); do kill -0 $PID 2>/dev/null||break; sleep 1; done; kill -9 $PID 2>/dev/null )`.
