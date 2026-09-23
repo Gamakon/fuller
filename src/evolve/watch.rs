@@ -109,6 +109,71 @@ pub enum Liveness {
     Stale,
 }
 
+/// THE SEARCH'S VERDICT, in the three states the engine can actually be in.
+///
+/// It is read off `stopped_by` — the engine's own word for why the fit ended —
+/// and NOT off the numbers on the last snapshot. The engine's stop bar has two
+/// halves (`stop_log10_p` AND `stop_one_minus_r2`) and it checks them against
+/// the CONFIRMED f64 rescore, which is not the f32 ranking score a snapshot
+/// carries; a viewer re-deciding from the snapshot would disagree with the fit
+/// about its own answer. So the engine decides and this reports.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Verdict {
+    /// The fit has not ended. It is still looking — including when the stream
+    /// has gone quiet, which is a fact about the TELEMETRY and not about the
+    /// search, and which the liveness badge says separately.
+    Searching,
+    /// `stopped_by == "early_stop"`: the fit met BOTH halves of its stop bar.
+    LawFound,
+    /// The fit ended on `time` or `n_gen` — it ran out of budget or generations
+    /// with the bar unmet. A run that stops for any reason that is not
+    /// `early_stop` did not clear the bar, so anything unrecognised lands here
+    /// too: the honest reading of an unknown ending is that nothing was proved.
+    LawUnfound,
+}
+
+impl Verdict {
+    /// The banner's words, in the CAPITALS they are drawn in.
+    pub fn label(self) -> &'static str {
+        match self {
+            Verdict::Searching => "SEARCHING",
+            Verdict::LawFound => "LAW FOUND",
+            Verdict::LawUnfound => "LAW UNFOUND",
+        }
+    }
+
+    /// The line beside the banner: what the verdict rests on, so the word is
+    /// never read as more than it is. LAW FOUND is the engine's `early_stop` and
+    /// nothing else, and SEARCHING is not a prediction about what comes next.
+    pub fn because(self) -> &'static str {
+        match self {
+            Verdict::Searching => "the fit has not ended · no verdict yet",
+            Verdict::LawFound => "early_stop · the fit met BOTH halves of its stop bar",
+            Verdict::LawUnfound => "the fit ended with the bar unmet",
+        }
+    }
+}
+
+/// WHERE THE p-VALUE SITS AGAINST THE STOP BAR's p HALF.
+///
+/// Lower is better — it is a log10 p-value — so CLEARED is `p <= bar`. This is
+/// ONE HALF of the bar: the other is `stop_one_minus_r2`, and a cleared p on its
+/// own is not a law. The screen colours the number and names the half.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PBar {
+    /// `p <= bar`: this half is met.
+    Cleared,
+    /// `p > bar`: the p-value is still above it.
+    NotCleared,
+    /// THE STREAM CARRIES NO BAR — written before the field existed, or by a run
+    /// with this half switched off. The viewer draws the number in ordinary ink
+    /// and says so: it must not supply a threshold the engine did not send, or a
+    /// run that moved its own bar would be coloured against somebody else's.
+    NoBar,
+    /// No p-value on the frame at all, so there is nothing to place.
+    NoP,
+}
+
 /// How the cohort table is ordered. `s` cycles it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Sort {
@@ -338,12 +403,18 @@ impl WatchState {
                 self.record_history(&s);
                 self.previous = self.snapshot.take();
                 self.snapshot = Some(s);
-                // Nothing is selected yet: start on the best cohort. After that
-                // the selection is the operator's and is never moved by a new
-                // snapshot, however the table reorders.
-                if self.selected.is_none() {
-                    self.selected = self.rows().first().map(|r| r.id);
-                }
+                // THE SELECTION IS NOT LATCHED HERE. It used to be: the first
+                // snapshot to arrive set it to that snapshot's best cohort and
+                // nothing ever revisited it, so a viewer replaying a long stream
+                // pinned itself to whatever led at generation 20 and still
+                // claimed it at 12,480 — by which time the cohort was thousands
+                // of generations dead and the detail pane read "c0 · not in the
+                // current table" over a table that held one live cohort.
+                //
+                // `selected` now means ONLY "the operator chose this", and stays
+                // None until `move_selection` is called. The default follows the
+                // table (`selected_row`), which is what an untouched pane should
+                // show.
             }
             Record::Event(e) => {
                 // A DISCOVERY GOES TO ITS OWN PANEL, not into the four-line
@@ -429,6 +500,45 @@ impl WatchState {
         match self.last_record {
             Some(t) if self.following && t.elapsed() > STALE_AFTER => Liveness::Stale,
             _ => Liveness::Live,
+        }
+    }
+
+    /// THE VERDICT, off the engine's own `stopped_by` and nothing else.
+    ///
+    /// It is built on `liveness()` rather than beside it: a run that has not
+    /// finished is SEARCHING whether its telemetry is arriving or has gone
+    /// quiet, because staleness is a fact about the stream and the verdict is a
+    /// fact about the fit. The badge keeps saying STALE, so the two readings sit
+    /// side by side and neither erases the other.
+    pub fn verdict(&self) -> Verdict {
+        match self.liveness() {
+            Liveness::Live | Liveness::Stale => Verdict::Searching,
+            // A `run_end` with no word on it is not an early stop, and an
+            // unrecognised word is not one either: only the engine's own
+            // `early_stop` clears the bar.
+            Liveness::Finished => match self.end.as_ref().map(|e| e.stopped_by.as_str()) {
+                Some("early_stop") => Verdict::LawFound,
+                _ => Verdict::LawUnfound,
+            },
+        }
+    }
+
+    /// The stop bar's p half, as the RUN published it. None when the stream did
+    /// not carry one — the viewer never substitutes the engine's default, which
+    /// moves, and which a run can override.
+    pub fn stop_log10_p(&self) -> Option<f64> {
+        self.start.as_ref().and_then(|s| s.stop_log10_p)
+    }
+
+    /// The frame's log10 p-value placed against that bar. LOWER IS BETTER, so
+    /// `p <= bar` is [`PBar::Cleared`] — and it is only the p HALF: the fit also
+    /// wants `1 - R²` under `stop_one_minus_r2` before it calls a model a law.
+    pub fn p_vs_bar(&self) -> PBar {
+        let Some(p) = self.snapshot.as_ref().and_then(|s| s.global.log10_p) else { return PBar::NoP };
+        match self.stop_log10_p() {
+            Some(bar) if p <= bar => PBar::Cleared,
+            Some(_) => PBar::NotCleared,
+            None => PBar::NoBar,
         }
     }
 
@@ -551,23 +661,57 @@ impl WatchState {
         }
     }
 
-    /// The selected cohort's row, if it is still in the table. When it is not —
-    /// it went extinct, or the filter excludes it — the SELECTION IS NOT MOVED:
-    /// this returns None and the detail pane says why. Snapping to row 0 would be
-    /// auto-scrolling away from the selection, which the brief forbids.
+    /// THE ROW THE DETAIL PANE SHOWS. Always a row that is ON THE TABLE: the
+    /// operator's choice while that choice is still there, and the top row the
+    /// moment it is not.
+    ///
+    /// REORDERING KEEPS; DISAPPEARING RESETS. That is the whole rule, and the
+    /// two halves of it are not the same thing:
+    ///
+    /// - A cohort that is still alive but has moved under the sort keeps the
+    ///   selection. This is the brief's "keep the selected cohort by ID when
+    ///   rows reorder" and "never auto-scroll away from a selected row", and it
+    ///   is why the selection is an ID rather than an index.
+    /// - A cohort that has LEFT THE TABLE does not. The viewer used to hold it
+    ///   and print "not in the current table · the selection is kept", which
+    ///   left a dead cohort pinned to the pane indefinitely while the table
+    ///   beside it showed live ones.
+    ///
+    /// The second case is not a rare edge. Cohorts are born and die constantly —
+    /// this engine mints one per pump beat, and a real run has seen 165 of them
+    /// — so a selection made at generation 500 is almost certainly dead by
+    /// 12,000. Holding it is where the pane would spend most of its life.
     pub fn selected_row(&self) -> Option<CohortView> {
-        let id = self.selected?;
-        self.rows().into_iter().find(|r| r.id == id)
+        let rows = self.rows();
+        // The chosen row if it is still here; otherwise the top of what IS here.
+        // `None` only when the table itself is empty.
+        match self.selected.and_then(|id| rows.iter().position(|r| r.id == id)) {
+            Some(at) => rows.into_iter().nth(at),
+            None => rows.into_iter().next(),
+        }
+    }
+
+    /// THE ID THE DETAIL PANE IS ABOUT. Always a cohort that is on the table, or
+    /// None when the table is empty — the pane never names one that is not there.
+    pub fn detail_id(&self) -> Option<u32> {
+        self.selected_row().map(|r| r.id)
     }
 
     /// Move the selection one row down (`j`) or up (`k`). Operates on the CURRENT
     /// order, and lands on an ID — so the next reorder keeps it.
+    ///
+    /// IT STEPS OFF THE ROW THE PANE IS SHOWING, which is not always the row
+    /// `selected` names: with nothing chosen, and after a chosen cohort has died
+    /// and the pane has fallen back to the top, the shown row is the table's
+    /// first. Starting from "no position" and landing on index 0 would make that
+    /// first keypress appear to do nothing, having re-selected the row the
+    /// operator was already looking at.
     pub fn move_selection(&mut self, down: bool) {
         let rows = self.rows();
         if rows.is_empty() {
             return;
         }
-        let at = self.selected.and_then(|id| rows.iter().position(|r| r.id == id));
+        let at = self.detail_id().and_then(|id| rows.iter().position(|r| r.id == id));
         let next = match (at, down) {
             (None, _) => 0,
             (Some(i), true) => (i + 1).min(rows.len() - 1),
@@ -983,6 +1127,173 @@ mod tests {
         assert!(spark_of(&[None, None]).is_empty(), "nothing to draw is nothing drawn");
     }
 
+    /// AN UNTOUCHED DETAIL PANE FOLLOWS THE TABLE. It used to latch: the first
+    /// snapshot to arrive set the selection to its own best cohort and nothing
+    /// revisited it, so a viewer watching a long fit named a cohort that had
+    /// died thousands of generations earlier and called it "not in the current
+    /// table" over a table full of live ones.
+    #[test]
+    fn an_unchosen_detail_pane_follows_the_table_instead_of_latching() {
+        let mut state = replayed();
+        // Nothing has been chosen, so nothing is held.
+        assert_eq!(state.selected, None, "a snapshot chose a cohort on the operator's behalf");
+        // And the pane shows the table's leader, whatever the table is now.
+        let first = state.rows().first().expect("a table").id;
+        assert_eq!(state.detail_id(), Some(first));
+        assert_eq!(state.selected_row().map(|r| r.id), Some(first));
+
+        // THE BUG, reproduced: feed snapshots in which the early leader dies and
+        // a far later cohort holds every row — the shape of the live 10k run,
+        // where the champion island held one cohort in the 11000s.
+        let mut s = state.snapshot.as_ref().expect("a frame").clone();
+        let late = 11_715;
+        s.global_cohorts.retain(|c| c.id == late);
+        if s.global_cohorts.is_empty() {
+            let mut only = state.snapshot.as_ref().expect("a frame").global_cohorts[0].clone();
+            only.id = late;
+            only.birth_generation = late;
+            only.rows = state.start.as_ref().expect("a run_start").population;
+            s.global_cohorts = vec![only];
+        }
+        for _ in 0..(EXTINCT_LINGER + 2) {
+            s.header.generation += 20;
+            s.header.seq += 1;
+            state.apply_record(Record::Snapshot(s.clone()));
+        }
+        let rows = state.rows();
+        assert_eq!(rows.len(), 1, "the table should hold the one live cohort: {rows:?}");
+        assert_eq!(rows[0].id, late);
+        // The pane now names THAT cohort, not the one that led at the start.
+        assert_eq!(state.detail_id(), Some(late), "the pane latched onto a dead cohort");
+        assert_eq!(state.selected_row().map(|r| r.id), Some(late));
+        assert_eq!(state.selected, None, "following the table is not choosing");
+    }
+
+    /// REORDERING KEEPS, DISAPPEARING RESETS — the two halves of the rule, and
+    /// the reason they are not the same thing.
+    ///
+    /// A live cohort that has merely moved under the sort keeps the selection:
+    /// that is the brief's "keep the selected cohort by ID when rows reorder"
+    /// and "never auto-scroll away from a selected row". A cohort that has left
+    /// the table entirely is not a reorder, and holding it pins a dead cohort to
+    /// the pane.
+    #[test]
+    fn reordering_keeps_the_selection_and_dying_resets_it() {
+        let mut state = replayed();
+        let rows = state.rows();
+        let target = rows.last().expect("a last row").id;
+        assert_ne!(target, rows[0].id, "pick a row that is not the default");
+        state.selected = Some(target);
+        // REORDERING KEEPS. Every sort still shows the chosen cohort.
+        for sort in [Sort::Gain, Sort::Rows, Sort::Best] {
+            state.sort = sort;
+            assert_eq!(state.selected_row().map(|r| r.id), Some(target), "{sort:?} moved a chosen row");
+            assert_eq!(state.detail_id(), Some(target));
+        }
+        // DYING RESETS. Feed snapshots holding only the first cohort until the
+        // chosen one's row has gone for good, and the pane moves to the top of
+        // what is left rather than describing what is not there.
+        let survivor = state.rows().first().expect("a table").id;
+        let mut s = state.snapshot.as_ref().expect("a frame").clone();
+        s.global_cohorts.retain(|c| c.id == survivor);
+        for _ in 0..(EXTINCT_LINGER + 2) {
+            s.header.generation += 10;
+            s.header.seq += 1;
+            state.apply_record(Record::Snapshot(s.clone()));
+        }
+        let rows = state.rows();
+        assert!(!rows.iter().any(|r| r.id == target), "the chosen cohort is still on the table");
+        assert_eq!(state.selected_row().map(|r| r.id), Some(survivor), "a dead cohort stayed pinned to the pane");
+        assert_eq!(state.detail_id(), Some(survivor), "the pane named a cohort that is not there");
+        // THE PANE NEVER NAMES A COHORT THAT IS NOT ON THE TABLE — the whole
+        // point, stated as the invariant it is.
+        let on_table: Vec<u32> = state.rows().iter().map(|r| r.id).collect();
+        assert!(on_table.contains(&state.detail_id().expect("a row")), "the pane left the table: {on_table:?}");
+    }
+
+    /// `j` ON AN UNTOUCHED PANE STARTS FROM THE ROW IT IS SHOWING, so the first
+    /// keypress steps off the default rather than jumping to the top.
+    #[test]
+    fn the_first_keypress_steps_off_the_row_the_pane_was_showing() {
+        let mut state = replayed();
+        let rows = state.rows();
+        assert!(rows.len() >= 2, "need two rows to step between");
+        assert_eq!(state.detail_id(), Some(rows[0].id));
+        state.move_selection(true);
+        assert_eq!(state.selected, Some(rows[1].id), "j did not step off the shown row");
+    }
+
+    /// THE VERDICT IS THE ENGINE'S `stopped_by` AND NOTHING ELSE. `early_stop`
+    /// is the only ending that found a law; `time` and `n_gen` are the two
+    /// others the engine emits, and both mean it ran out with the bar unmet.
+    #[test]
+    fn the_verdict_is_the_engines_own_word_for_why_it_stopped() {
+        let mut state = replayed();
+        // The fixture ends on `time`: it ran out of budget.
+        assert_eq!(state.end.as_ref().expect("a run_end").stopped_by, "time");
+        assert_eq!(state.verdict(), Verdict::LawUnfound);
+        for word in ["time", "n_gen"] {
+            state.end.as_mut().expect("a run_end").stopped_by = word.to_string();
+            assert_eq!(state.verdict(), Verdict::LawUnfound, "{word} is not a law");
+        }
+        // And the one ending that IS a law.
+        state.end.as_mut().expect("a run_end").stopped_by = "early_stop".to_string();
+        assert_eq!(state.verdict(), Verdict::LawFound);
+        // A word the engine does not emit is NOT read as a law: the honest
+        // reading of an unknown ending is that nothing was proved.
+        state.end.as_mut().expect("a run_end").stopped_by = "who knows".to_string();
+        assert_eq!(state.verdict(), Verdict::LawUnfound);
+        // The words themselves are the CAPITALS the banner draws.
+        for v in [Verdict::Searching, Verdict::LawFound, Verdict::LawUnfound] {
+            assert_eq!(v.label(), v.label().to_uppercase(), "{v:?} is not in capitals");
+            assert!(!v.because().is_empty(), "{v:?} says nothing about what it rests on");
+        }
+    }
+
+    /// A STALE RUN IS STILL SEARCHING, and the liveness says STALE beside it.
+    /// The verdict is about the FIT and staleness is about the STREAM: collapsing
+    /// them would tell an operator a run had failed when the truth is that the
+    /// telemetry stopped arriving.
+    #[test]
+    fn a_stale_run_is_searching_and_stays_visibly_stale() {
+        let (records, _) = parse_stream(FIXTURE);
+        let mut live = WatchState::new(true);
+        for r in records.into_iter().filter(|r| !matches!(r, Record::RunEnd(_))) {
+            live.apply(Parsed::Ok(Box::new(r)));
+        }
+        assert_eq!((live.liveness(), live.verdict()), (Liveness::Live, Verdict::Searching));
+        live.last_record = Some(std::time::Instant::now() - STALE_AFTER - std::time::Duration::from_secs(1));
+        assert_eq!(live.liveness(), Liveness::Stale, "the stale state was erased");
+        assert_eq!(live.verdict(), Verdict::Searching, "a quiet stream is not a failed fit");
+    }
+
+    /// THE p-VALUE IS PLACED AGAINST THE BAR THE STREAM CARRIED, and against no
+    /// other. Lower is better, so `p <= bar` has cleared it; a stream with no bar
+    /// is `NoBar` and NEVER silently judged against the engine's default, which
+    /// moves and which a run can override.
+    #[test]
+    fn the_p_value_is_judged_only_against_the_bar_the_stream_sent() {
+        let mut state = replayed();
+        // The fixture predates the field, so it carries no bar at all.
+        assert_eq!(state.stop_log10_p(), None);
+        assert_eq!(state.p_vs_bar(), PBar::NoBar, "a viewer invented a threshold");
+        let start = state.start.as_mut().expect("a run_start");
+        start.stop_log10_p = Some(-19.0);
+        // p is well above the bar on this recording.
+        let p = state.snapshot.as_ref().expect("a frame").global.log10_p.expect("a p-value");
+        assert!(p > -19.0, "the fixture's p {p} is already under the bar");
+        assert_eq!(state.p_vs_bar(), PBar::NotCleared);
+        // Under it, and exactly ON it: the bar is inclusive, as the engine's own
+        // `log10_p <= c.stop_log10_p` is.
+        for (value, expect) in [(-21.4, PBar::Cleared), (-19.0, PBar::Cleared), (-18.9, PBar::NotCleared)] {
+            state.snapshot.as_mut().expect("a frame").global.log10_p = Some(value);
+            assert_eq!(state.p_vs_bar(), expect, "p {value} against bar -19.0");
+        }
+        // No p at all is its own answer, not a failure to clear.
+        state.snapshot.as_mut().expect("a frame").global.log10_p = None;
+        assert_eq!(state.p_vs_bar(), PBar::NoP);
+    }
+
     /// A FINISHED run and a STALE one are different states. A replay is never
     /// stale: a recording is as fresh as it will ever be.
     #[test]
@@ -1040,20 +1351,34 @@ mod tests {
         assert_eq!(state.liveness(), Liveness::Live, "a new run is not finished");
     }
 
-    /// The selection is not moved when the cohort it names leaves the table: the
-    /// row is gone, the selection is not.
+    /// A SELECTION THAT LEAVES THE TABLE FALLS BACK TO THE TOP ROW. It used to
+    /// be held, and the pane printed "not in the current table · the selection
+    /// is kept" — which left a cohort that died thousands of generations ago
+    /// pinned to the pane while the table beside it showed live ones.
+    ///
+    /// Cohorts are born and die constantly here: one per pump beat, 165 over a
+    /// real run. A selection made at generation 500 is almost certainly dead by
+    /// 12,000, so holding it is not a rare edge case — it is where the pane
+    /// would spend most of its life.
     #[test]
-    fn a_selection_that_leaves_the_table_is_not_reassigned() {
+    fn a_selection_that_leaves_the_table_falls_back_to_the_top_row() {
         let mut state = replayed();
+        let top = state.rows().first().expect("a table").id;
+        // A cohort that is not in the table at all: the pane shows the top row.
         state.selected = Some(999_999);
-        assert!(state.selected_row().is_none(), "there is no such cohort");
-        assert_eq!(state.selected, Some(999_999), "the viewer reassigned the selection");
-        // And the filter excluding it does not move it either.
-        state.selected = state.rows().first().map(|r| r.id);
-        let kept = state.selected;
+        assert_eq!(state.selected_row().map(|r| r.id), Some(top), "the pane held a cohort that is not there");
+        assert_eq!(state.detail_id(), Some(top), "the pane named a cohort that is not there");
+        // THE FILTER IS THE SAME CASE, and deliberately so: a pane describing a
+        // cohort no row on the screen matches is the same wrong thing however
+        // the row left. The filter is also the one that undoes itself — clear it
+        // and the pick, which is still held, is shown again.
+        state.selected = Some(top);
         state.filter = "999999".to_string();
-        assert!(state.rows().is_empty());
-        assert_eq!(state.selected, kept);
+        assert!(state.rows().is_empty(), "the filter should exclude everything");
+        assert!(state.selected_row().is_none(), "an empty table has no row to fall back to");
+        assert_eq!(state.detail_id(), None);
+        state.filter.clear();
+        assert_eq!(state.selected_row().map(|r| r.id), Some(top), "clearing the filter lost the pick");
     }
 
     /// AN EXTINCT ROW LINGERS A FEW BEATS AND THEN GOES. Watching a cohort die
