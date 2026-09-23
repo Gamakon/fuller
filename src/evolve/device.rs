@@ -51,6 +51,7 @@ struct GenUniform {
     rnc_lo: i32,
     rnc_span: u32,
     // The fourteen rates moved into the island table — they are per-lane now.
+    cohort_merge: u32,
     rnc_id: u32,
     vhead: u32,
 }
@@ -75,6 +76,9 @@ pub struct EvolveDevice {
     arity_buf: wgpu::Buffer,
     parent_buf: wgpu::Buffer,
     stage1_buf: wgpu::Buffer,
+    /// VIRTUAL ALPS: one cohort label a row, ping-ponged with the generations
+    /// so a child inherits its parent's.
+    cohort_buf: [wgpu::Buffer; 2],
     sets: [Set; 2],
     current: usize,
     layout: Layout,
@@ -152,7 +156,7 @@ impl EvolveDevice {
             })
         };
         let init_layout = bind_layout(&device, "fuller-evolve-init", 6, |i| i < 3);
-        let vary_layout = bind_layout(&device, "fuller-evolve-vary", 15, |i| i < 9);
+        let vary_layout = bind_layout(&device, "fuller-evolve-vary", 17, |i| i < 9 || i == 15);
         let init_pipeline = pipeline(EVOLVE_WGSL, "fuller-evolve", &init_layout, "init_main");
         let vary_pipelines = [
             pipeline(VARY_WGSL, "fuller-vary", &vary_layout, "first_main"),
@@ -188,6 +192,7 @@ impl EvolveDevice {
             arity_buf: table(&codes.arity, "arity"),
             parent_buf: resident(layout.pop as usize, "parent"),
             stage1_buf: resident(layout.pop as usize, "stage1"),
+            cohort_buf: [resident(layout.pop as usize, "cohort a"), resident(layout.pop as usize, "cohort b")],
             sets: [set(), set()],
             current: 0,
             n_functions: codes.sample_functions.len() as u32,
@@ -281,6 +286,22 @@ impl EvolveDevice {
 
     /// Upload the current population's fitness (until scoring runs on the
     /// device too, this is how fitness arrives).
+    /// VIRTUAL ALPS: the cohort label of every row. The pump stamps the rows it
+    /// draws with the beat they arrived on and sends the labels here; the kernel
+    /// carries them down the generations, a child taking its parent's.
+    pub fn write_cohorts(&self, cohorts: &[u32]) -> Result<(), String> {
+        if cohorts.len() != self.layout.pop as usize {
+            return Err(format!("cohorts: {} labels for {} rows", cohorts.len(), self.layout.pop));
+        }
+        self.queue.write_buffer(&self.cohort_buf[self.current], 0, bytemuck::cast_slice(cohorts));
+        Ok(())
+    }
+
+    /// The cohort labels as they now stand on the device.
+    pub fn read_cohorts(&self) -> Result<Vec<u32>, String> {
+        self.read_buffer::<u32>(&self.cohort_buf[self.current], self.layout.pop as usize)
+    }
+
     pub fn write_fitness(&self, fitness: &[f32]) -> Result<(), String> {
         if fitness.len() != self.layout.pop as usize {
             return Err(format!("{} fitness values for a population of {}", fitness.len(), self.layout.pop));
@@ -324,6 +345,7 @@ impl EvolveDevice {
             generation: p.generation,
             rnc_lo: p.rnc_lo,
             rnc_span: (p.rnc_hi - p.rnc_lo + 1) as u32,
+            cohort_merge: p.cohort_merge,
             rnc_id: self.rnc_id,
             vhead: super::virtual_head(p.vhead, self.layout)?,
         });
@@ -366,6 +388,8 @@ impl EvolveDevice {
                 &next.fitness,
                 &next.wrapper,
                 &self.stage1_buf,
+                &self.cohort_buf[self.current],
+                &self.cohort_buf[1 - self.current],
             ],
         );
         let mut enc = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
@@ -505,7 +529,7 @@ mod tests {
         dev.write_fitness(&cpu.fitness).expect("fitness");
         for generation in 1..=20u32 {
             let vhead = if generation <= 10 { 8 } else { 12 };
-            let p = GenParams { seed: 13, generation, rnc_lo: -100, rnc_hi: 100, vhead };
+            let p = GenParams { seed: 13, generation, rnc_lo: -100, rnc_hi: 100, cohort_merge: 0, vhead };
             cpu = vary(&cpu, &isl, &codes, &p).unwrap();
             dev.vary(&isl, &p).expect("vary");
             let on_device = dev.read_generation().expect("read");
@@ -517,7 +541,7 @@ mod tests {
             cpu.fitness.copy_from_slice(&scored);
             dev.write_fitness(&scored).expect("fitness");
         }
-        assert!(dev.vary(&isl, &GenParams { seed: 13, generation: 21, rnc_lo: -100, rnc_hi: 100, vhead: 49 }).is_err());
+        assert!(dev.vary(&isl, &GenParams { seed: 13, generation: 21, rnc_lo: -100, rnc_hi: 100, cohort_merge: 0, vhead: 49 }).is_err());
     }
 
     /// Twenty generations of select + mutate + crossover on the device, each
@@ -535,7 +559,7 @@ mod tests {
         dev.init(&params(11)).expect("init");
         dev.write_fitness(&cpu.fitness).expect("fitness");
         for generation in 1..=20u32 {
-            let p = GenParams { seed: 11, generation, rnc_lo: -100, rnc_hi: 100, vhead: 0 };
+            let p = GenParams { seed: 11, generation, rnc_lo: -100, rnc_hi: 100, cohort_merge: 0, vhead: 0 };
             cpu = vary(&cpu, &isl, &codes, &p).unwrap();
             dev.vary(&isl, &p).expect("vary");
             let on_device = dev.read_generation().expect("read");

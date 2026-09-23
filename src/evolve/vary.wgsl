@@ -27,6 +27,8 @@ struct Gen {
     // The fourteen variation rates used to live here, one set for the whole
     // population. They are per-island now — see `Island` — so that two lanes can
     // breed under different rules in one dispatch.
+    // VIRTUAL ALPS: cohorts at or past this label are one band (0 = cohorts off).
+    cohort_merge: u32,
     rnc_id: u32,       // the "?" token, or NONE
     // The virtual head, already resolved by the host (never 0 here).
     vhead: u32,
@@ -72,6 +74,12 @@ struct Island {
 @group(0) @binding(12) var<storage, read_write> fitness: array<f32>;
 @group(0) @binding(13) var<storage, read_write> wrapper_id: array<u32>;
 @group(0) @binding(14) var<storage, read_write> stage1: array<u32>;
+// VIRTUAL ALPS: the cohort each row belongs to. A row drawn by the pump is
+// stamped with the beat it arrived on; a child inherits its parent's stamp. It
+// is a LINEAGE cohort, not an age: a fresh mutation of an elder is still an
+// elder, which is what keeps young material from meeting one in a tournament.
+@group(0) @binding(15) var<storage, read> cohort_now: array<u32>;
+@group(0) @binding(16) var<storage, read_write> cohort: array<u32>;
 
 const STREAM_SELECT_1: u32 = 6u;
 const STREAM_SELECT_2: u32 = 7u;
@@ -130,6 +138,30 @@ fn chance(row: u32, slot: u32, stream: u32, thr: u32) -> bool {
     return thr == NONE || hash(row, slot, stream).y < thr;
 }
 
+// COUPLES FROM THE SAME CENTURY (Andrew). A tournament run by a row of cohort
+// `mine` prefers a candidate of the SAME cohort over any other, however fit the
+// other is — so a young line is never beaten by a converged elder that merely
+// happened to be drawn. Measured on the engine as it was: a 105-row tournament
+// had a 6.7e-11 chance of holding no elder, so young material was never
+// sampled without one, and 294,000 pump-drawn individuals left no survivors.
+//
+// Rather than reject and redraw (a loop on the device), the cohort is the FIRST
+// sort key and fitness the second: a mismatched candidate simply loses. When a
+// tournament holds no match at all the best of the draw still wins, so a cohort
+// that has died out costs nothing.
+//
+// `gp.cohort_merge` is the age at which cohorts stop being separate: past it
+// every elder is one band, which is Hornby's unbounded top layer. 0 = off, and
+// then this is the engine as it was.
+fn same_cohort(a: u32, b: u32) -> bool {
+    if (gp.cohort_merge == 0u) {
+        return true;
+    }
+    let ca = min(cohort_now[a], gp.cohort_merge);
+    let cb = min(cohort_now[b], gp.cohort_merge);
+    return ca == cb;
+}
+
 // Fitness as a sort key: lower is fitter, an unevaluated row (NaN) is last. The
 // NaN test is on the bits: a float comparison may be optimised away.
 fn key(row: u32) -> f32 {
@@ -138,6 +170,16 @@ fn key(row: u32) -> f32 {
         return F32_MAX;
     }
     return min(f, F32_MAX);
+}
+
+// Is `c` a better mate for `me` than `w`? Same cohort first, then fitness.
+fn better_mate(me: u32, c: u32, w: u32) -> bool {
+    let mc = same_cohort(me, c);
+    let mw = same_cohort(me, w);
+    if (mc != mw) {
+        return mc;
+    }
+    return key(c) < key(w);
 }
 
 fn island_of(row: u32) -> Island {
@@ -163,7 +205,7 @@ fn first_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     var w = NONE;
     for (var i = 0u; i < isl.tournsize; i = i + 1u) {
         let c = isl.lo + below(row, i, STREAM_SELECT_1, n);
-        if (w == NONE || key(c) < key(w)) {
+        if (w == NONE || better_mate(row, c, w)) {
             w = c;
         }
     }
@@ -204,7 +246,7 @@ fn select_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     var w = NONE;
     for (var t = 0u; t < isl.tournsize; t = t + 1u) {
         let c = stage1[isl.lo + below(row, t, STREAM_SELECT_2, n)];
-        if (w == NONE || key(c) < key(w)) {
+        if (w == NONE || better_mate(row, c, w)) {
             w = c;
         }
     }
@@ -372,6 +414,9 @@ fn mutate_main(@builtin(global_invocation_id) gid: vec3<u32>) {
         rnc[rbase + i] = rnc_now[src * rnc_w + i];
     }
     wrapper_id[row] = wrapper_now[src];
+    // A child IS of its parent's cohort: the label follows the line, not the
+    // age, so a fresh mutation of an elder is still an elder.
+    cohort[row] = cohort_now[src];
     if (row < isl.lo + isl.elites) {
         fitness[row] = fitness_now[src];
         return;

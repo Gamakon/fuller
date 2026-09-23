@@ -12,7 +12,7 @@
 //! model and its R² on the unseen 25%.
 
 use fuller::chrom_score::Splits;
-use fuller::evolve::engine::{evaluate_math, final_form, resolve_protected, Config, Data, Engine};
+use fuller::evolve::engine::{evaluate_math, final_form_within, resolve_protected, Config, Data, Engine, Lane};
 use fuller::evolve::umap2d::embed_2d;
 use fuller::evolve::{below, draw, smogd, smote};
 use fuller::lint::node::Tree;
@@ -151,6 +151,17 @@ fn main() {
     //                                   best (at most 3 genes)
     config.gene_subsets = std::env::var("EVOLVE_GENE_SUBSETS").is_ok_and(|v| v == "1");
     //   EVOLVE_PUMP_EVERY               the pump's beat in generations (the engine's default is 4)
+    //   EVOLVE_COHORT_MERGE             VIRTUAL ALPS — "couples from the same century".
+    //                                   Each row carries the pump beat its line arrived
+    //                                   on, inherited by every descendant, and a
+    //                                   tournament prefers a candidate of the SAME
+    //                                   cohort however fit the others are. Cohorts at or
+    //                                   past this label are ONE band, so the elders
+    //                                   co-mingle and only the young are kept apart.
+    //                                   0 = off, and selection is what it always was.
+    if let Some(m) = std::env::var("EVOLVE_COHORT_MERGE").ok().and_then(|v| v.parse::<u32>().ok()) {
+        config.cohort_merge = m;
+    }
     if let Some(beat) = std::env::var("EVOLVE_PUMP_EVERY").ok().and_then(|v| v.parse::<u32>().ok()) {
         config.pump_every = beat;
     }
@@ -198,6 +209,33 @@ fn main() {
     }
     if let Some(n) = env("EVOLVE_K_MIGRANTS").and_then(|v| v.parse().ok()) {
         config.k_migrants = n;
+    }
+    //   EVOLVE_LANES                    THE SWIM LANES: one rule set per island pair, as
+    //                                   `name:explore:recombine[:cleanse]` separated by
+    //                                   commas — "general:1:1,explorer:3:0.5". There must
+    //                                   be exactly EVOLVE_PAIRS of them. `explore` scales
+    //                                   the point-mutation and transposition rates,
+    //                                   `recombine` the three crossovers, and the lane's
+    //                                   name is reported as having found the law.
+    if let Some(spec) = env("EVOLVE_LANES") {
+        let mut lanes = Vec::new();
+        for one in spec.split(',').filter(|s| !s.trim().is_empty()) {
+            let f: Vec<&str> = one.split(':').collect();
+            let num = |i: usize, what: &str| -> f64 {
+                f.get(i)
+                    .unwrap_or_else(|| panic!("EVOLVE_LANES: lane {one:?} has no {what}; it is name:explore:recombine[:cleanse]"))
+                    .parse()
+                    .unwrap_or_else(|e| panic!("EVOLVE_LANES: lane {one:?} {what}: {e}"))
+            };
+            lanes.push(Lane {
+                name: (*f.first().expect("a lane needs a name")).to_string(),
+                explore: num(1, "explore"),
+                recombine: num(2, "recombine"),
+                cleanse: f.get(3).map(|v| v.parse().expect("EVOLVE_LANES: cleanse")),
+            });
+        }
+        eprintln!("LANES {}", lanes.iter().map(|l| format!("{} x{}/{}", l.name, l.explore, l.recombine)).collect::<Vec<_>>().join(" | "));
+        config.lanes = Some(lanes);
     }
     //   EVOLVE_SNAP_EVERY               SNAP WINNERS' beat in generations (0 = off, the default):
     //                                   kept snapped forms are written back into the genes
@@ -308,7 +346,9 @@ fn main() {
         x.chunks(names.len()).take(judged).map(|r| names.iter().cloned().zip(r.iter().map(|v| f64::from(*v))).collect()).collect();
     // First say what the protected operators actually do on this data; then tidy.
     let resolved = resolve_protected(&out.math, &fit_rows).unwrap_or_else(|_| out.math.clone());
-    let tidied = final_form(&resolved, &names, &fit_rows).unwrap_or(resolved);
+    // The reduction sizes its tolerance against how well the model actually fits:
+    // a term worth less than a tenth of the model's own error is not the law.
+    let tidied = final_form_within(&resolved, &names, &fit_rows, Some(out.best.one_minus_r2[0])).unwrap_or(resolved);
     // ... and the data guided rewrites once more: fuller's linter can WRITE a shape
     // they cover (it turns Add (Neg (Log b)) (Log a) into Sub (Log a) (Log b)), and a
     // form that only appears after the tidy must not slip past them.

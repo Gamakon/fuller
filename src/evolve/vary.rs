@@ -584,6 +584,10 @@ pub struct GenParams {
     pub generation: u32,
     pub rnc_lo: i32,
     pub rnc_hi: i32,
+    /// VIRTUAL ALPS: cohorts at or past this label are ONE band, so the elders
+    /// co-mingle freely and only the young are kept apart. 0 = cohorts off, and
+    /// then selection is what it always was.
+    pub cohort_merge: u32,
     /// The virtual head (0 = the whole head): see [`super::virtual_head`]. Point
     /// mutation writes a function only below it; inversion, IS and RIS work inside
     /// it; the cleanse keeps functions inside it. Crossover needs no rule: both
@@ -938,7 +942,7 @@ pub(crate) mod tests {
     }
 
     fn gen_params(seed: u32, generation: u32) -> GenParams {
-        GenParams { seed, generation, rnc_lo: -100, rnc_hi: 100, vhead: 0 }
+        GenParams { seed, generation, rnc_lo: -100, rnc_hi: 100, cohort_merge: 0, vhead: 0 }
     }
 
     #[test]
@@ -977,7 +981,7 @@ pub(crate) mod tests {
             // the head grows by one position every 50 generations: 8, 9, 10, 11, 12
             let vhead = 8 + generation / 50;
             let before = now.clone();
-            now = vary(&now, &isl, &codes, &GenParams { seed: 5, generation, rnc_lo: -100, rnc_hi: 100, vhead }).unwrap();
+            now = vary(&now, &isl, &codes, &GenParams { seed: 5, generation, rnc_lo: -100, rnc_hi: 100, cohort_merge: 0, vhead }).unwrap();
             now.pop.check(&codes).unwrap();
             assert!(head_in_use(&now, &codes) <= vhead as usize, "generation {generation}: a function past virtual head {vhead}");
             // the elites are the old genes, untouched by the step to a longer head

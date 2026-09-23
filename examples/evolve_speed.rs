@@ -39,7 +39,7 @@ fn main() {
 
     let t = Instant::now();
     for generation in 1..=generations {
-        dev.vary(&islands, &GenParams { seed: 1, generation, rnc_lo: -100, rnc_hi: 100, vhead: 0 }).expect("vary");
+        dev.vary(&islands, &GenParams { seed: 1, generation, rnc_lo: -100, rnc_hi: 100, cohort_merge: 0, vhead: 0 }).expect("vary");
         dev.write_fitness(&fitness).expect("fitness");
     }
     dev.finish();

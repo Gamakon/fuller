@@ -396,6 +396,21 @@ pub struct Config {
     pub k_migrants: u32,
     /// The cleansing mutation's rate per row (0 = off).
     pub cleanse: f64,
+    /// VIRTUAL ALPS — "couples from the same century" (Andrew).
+    ///
+    /// Each row carries a COHORT label: the pump beat its line arrived on,
+    /// inherited by every descendant. A tournament prefers a candidate of the
+    /// same cohort over any other, however fit the other is, so a young line is
+    /// never beaten by a converged elder that merely happened to be drawn.
+    ///
+    /// Cohorts at or past this label are ONE band — Hornby's unbounded top
+    /// layer — so the elders co-mingle freely and only the young are kept
+    /// apart. 0 = off, and then selection is what it always was.
+    ///
+    /// The measurement this answers: a 105-row tournament had a 6.7e-11 chance
+    /// of holding no converged elder, so young material was never sampled
+    /// without one, and 294,000 pump-drawn individuals left no survivors.
+    pub cohort_merge: u32,
     /// THE SWIM LANES: one rule set per island pair, or None for the engine's
     /// single rule set everywhere.
     ///
@@ -557,6 +572,7 @@ impl Config {
             cross_every: 0,
             k_migrants: 3,
             cleanse: 0.0,
+            cohort_merge: 0,
             lanes: None,
             redundancy: false,
             smogd: false,
@@ -1775,6 +1791,9 @@ pub struct Engine {
     /// IDENTITY, AGE and LINEAGE; None when `Config::genealogy_path` is None, and
     /// then nothing in the fit loop touches it and the engine is what it was.
     lineage: Option<LineageState>,
+    /// VIRTUAL ALPS: the cohort label of every row, mirrored here because the
+    /// pump writes its refills on the host. Empty when `cohort_merge` is 0.
+    cohorts: Vec<u32>,
 }
 
 /// What the genealogy keeps for the length of a fit: the identities of the
@@ -1864,6 +1883,7 @@ impl Engine {
             .into_iter()
             .flatten()
             .collect();
+        let cohorts = if config.cohort_merge > 0 { vec![0u32; pop as usize] } else { Vec::new() };
         super::vary::validate(layout, &islands)?;
         if data.y.len() != data.splits.total() || data.x.len() != data.y.len() * data.names.len() {
             return Err("data: x, y and the splits do not agree".into());
@@ -1883,7 +1903,7 @@ impl Engine {
             }
             None => None,
         };
-        Ok(Engine { scored: vec![None; pop as usize], config, table, layout, islands, dev, evaluator, scorer, data, caps, col_max: None, snap, lineage: None })
+        Ok(Engine { scored: vec![None; pop as usize], cohorts, config, table, layout, islands, dev, evaluator, scorer, data, caps, col_max: None, snap, lineage: None })
     }
 
     /// Score every unevaluated row of `gen`; returns (unique genes, oversized).
@@ -2040,6 +2060,7 @@ impl Engine {
         let row_w = (l.n_genes * l.gene_width()) as usize;
         let rnc_w = (l.n_genes * l.n_rnc) as usize;
         let scored_before = self.scored.clone();
+        let before_cohorts = self.cohorts.clone();
         let room = (intake.hi - intake.lo) as usize;
         let sources = keepers.iter().map(|&r| (r, true)).chain(arrivals.iter().map(|&r| (r, false))).take(room);
         let mut to = intake.lo as usize;
@@ -2048,6 +2069,11 @@ impl Engine {
             gen.pop.genome[to * row_w..(to + 1) * row_w].copy_from_slice(&before.pop.genome[from * row_w..(from + 1) * row_w]);
             gen.pop.rnc[to * rnc_w..(to + 1) * rnc_w].copy_from_slice(&before.pop.rnc[from * rnc_w..(from + 1) * rnc_w]);
             gen.pop.wrapper_id[to] = before.pop.wrapper_id[from];
+            // VIRTUAL ALPS: a row that MOVES keeps its cohort — a keeper is as
+            // old as it was, and a promoted champion older still.
+            if !self.cohorts.is_empty() {
+                self.cohorts[to] = before_cohorts[from];
+            }
             gen.fitness[to] = if evaluated { before.fitness[from] } else { f32::NAN };
             self.scored[to] = if evaluated { scored_before[from] } else { None };
             // A keeper is the same individual in another row of its own island; an
@@ -2062,6 +2088,13 @@ impl Engine {
             gen.pop.wrapper_id[r] = fresh.wrapper_id[r];
             gen.fitness[r] = f32::NAN;
             self.scored[r] = None;
+            // VIRTUAL ALPS: a line drawn NOW is of this beat's cohort, and every
+            // descendant of it carries the same label. The generation is the
+            // label, so "couples from the same century" is a comparison of two
+            // integers in the tournament.
+            if !self.cohorts.is_empty() {
+                self.cohorts[r] = marks.generation;
+            }
         }
         self.track_fresh(fresh_from, intake.hi as usize, marks.fresh, marks.generation)
     }
@@ -2133,6 +2166,12 @@ impl Engine {
     fn pump(&mut self, gen: &mut Generation, generation: u32) -> Result<(), String> {
         // Fresh rows are keyed by this generation.
         let fresh = self.fresh(generation, generation)?;
+        // VIRTUAL ALPS: the labels the kernel has been carrying come back before
+        // the pump moves rows, so a keeper or a promoted row keeps ITS cohort and
+        // only the newly drawn rows are stamped with this beat.
+        if !self.cohorts.is_empty() {
+            self.cohorts = self.dev.read_cohorts()?;
+        }
         for (intake, champion) in self.pairs() {
             self.pump_pair(gen, intake, champion, &fresh, generation)?;
         }
@@ -3016,7 +3055,7 @@ impl Engine {
             }
             generation += 1;
             let t = Instant::now();
-            self.dev.vary(&self.islands, &GenParams { seed: c.seed, generation, rnc_lo: c.rnc_lo, rnc_hi: c.rnc_hi, vhead: self.vhead_at(generation) })?;
+            self.dev.vary(&self.islands, &GenParams { seed: c.seed, generation, rnc_lo: c.rnc_lo, rnc_hi: c.rnc_hi, cohort_merge: c.cohort_merge, vhead: self.vhead_at(generation) })?;
             // Only elites arrive evaluated: the kernel puts the j-th fittest row
             // of an island (ties to the lower row) in the island's j-th row.
             let mut carried: Vec<(usize, Option<Scored>)> = Vec::new();
@@ -3073,6 +3112,12 @@ impl Engine {
                     oversized += o;
                     self.remember(&mut hof, &gen, generation);
                     self.dev.write_population(&gen.pop)?;
+                if !self.cohorts.is_empty() {
+                    self.dev.write_cohorts(&self.cohorts)?;
+                }
+                    if !self.cohorts.is_empty() {
+                        self.dev.write_cohorts(&self.cohorts)?;
+                    }
                     // What the beam put in the population, so a later pump beat can
                     // say whether it survived a round of breeding and a cut.
                     just_floated.push(genome);
@@ -3115,6 +3160,12 @@ impl Engine {
                     oversized += o;
                     self.remember(&mut hof, &gen, generation);
                     self.dev.write_population(&gen.pop)?;
+                if !self.cohorts.is_empty() {
+                    self.dev.write_cohorts(&self.cohorts)?;
+                }
+                    if !self.cohorts.is_empty() {
+                        self.dev.write_cohorts(&self.cohorts)?;
+                    }
                 }
                 timing.snap += t.elapsed().as_secs_f64();
             }
@@ -3138,6 +3189,12 @@ impl Engine {
                 oversized += o;
                 if !crossed {
                     self.dev.write_population(&gen.pop)?;
+                if !self.cohorts.is_empty() {
+                    self.dev.write_cohorts(&self.cohorts)?;
+                }
+                    if !self.cohorts.is_empty() {
+                        self.dev.write_cohorts(&self.cohorts)?;
+                    }
                 }
             }
             timing.pump += t.elapsed().as_secs_f64();
@@ -3151,6 +3208,9 @@ impl Engine {
                 unique += u;
                 oversized += o;
                 self.dev.write_population(&gen.pop)?;
+                if !self.cohorts.is_empty() {
+                    self.dev.write_cohorts(&self.cohorts)?;
+                }
             }
             timing.cross += t.elapsed().as_secs_f64();
             self.dev.write_fitness(&gen.fitness)?;
