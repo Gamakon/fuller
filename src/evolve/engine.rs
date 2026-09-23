@@ -1683,6 +1683,74 @@ pub const FINAL_FORM_AGREE: f64 = 1e-10;
 ///
 /// It never runs in the search. It is a REPORTING reduction: the model the
 /// engine chose still computes what it computed, and only its spelling shrinks.
+/// A SUBTREE THAT BARELY MOVES IS A CONSTANT WEARING A COSTUME.
+///
+/// `resolve_protected::constant_on_data` already folds a subtree that takes ONE
+/// value on every row, to 1e-12 — an identity, so it may fold before the model
+/// is ever scored. This is the other end: a subtree whose value varies by less
+/// than `flat` RELATIVE across the rows is not an identity and can only be
+/// folded where the result is checked, which is here.
+///
+/// Measured on strogatz_bacres1, a fit that stopped at 1-R2 7.8e-11 and was not
+/// the law: of its 30 subtrees, SIX varied by under 0.24%, and the largest was
+/// fourteen nodes of `tanh(exp(cos(log(...))))` whose whole range was
+/// [0.9976, 1.0000]. It was not encoding anything — it was the number 1, wearing
+/// thirteen operators. Folding the near-constants took the model from 32 nodes
+/// to 14 and left `-0.9997*x + 19.996 - 1.9995*y/x + 3.875*y/x^3 ...`, where the
+/// law is `-x*y/(0.5x^2 + 1) - x + 20`: the `-x` and the `+20` recovered exactly,
+/// and the rest the first terms of that quotient's series.
+/// `what` replaced by `with`, everywhere it appears.
+fn replace_subtree(t: &crate::lint::node::Tree, what: &crate::lint::node::Tree, with: &crate::lint::node::Tree) -> crate::lint::node::Tree {
+    use crate::lint::node::Tree;
+    if t == what {
+        return with.clone();
+    }
+    match t {
+        Tree::App(op, kids) => Tree::App(*op, kids.iter().map(|k| replace_subtree(k, what, with)).collect()),
+        other => other.clone(),
+    }
+}
+
+/// How flat a subtree must be before it is a constant in disguise: its whole
+/// range across the rows, relative to its own value. Measured on the fit that
+/// motivated this — its fourteen-node transcendental blob spanned 0.024%, and
+/// six of its thirty subtrees were under 0.24%.
+const NEAR_CONSTANT_RANGE: f64 = 0.01;
+
+fn near_constant_subtrees(tree: &crate::lint::node::Tree, rows: &[Vec<(String, f64)>], flat: f64) -> Vec<(crate::lint::node::Tree, f64)> {
+    use crate::lint::node::Tree;
+    fn walk(t: &Tree, at_root: bool, out: &mut Vec<Tree>) {
+        if let Tree::App(_, kids) = t {
+            if !at_root {
+                out.push(t.clone());
+            }
+            for k in kids {
+                walk(k, false, out);
+            }
+        }
+    }
+    let mut here = Vec::new();
+    walk(tree, true, &mut here);
+    let mut flat_ones = Vec::new();
+    for sub in here {
+        let Ok(v) = evaluate_math(&sub.to_math(), rows) else { continue };
+        if v.is_empty() || v.iter().any(|x| !x.is_finite()) {
+            continue;
+        }
+        let (lo, hi) = v.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), x| (lo.min(*x), hi.max(*x)));
+        let mean = v.iter().sum::<f64>() / v.len() as f64;
+        // Relative to the value itself, so a subtree sitting at 1e6 and one
+        // sitting at 1e-6 are judged the same way.
+        if hi - lo <= flat * mean.abs().max(1e-300) {
+            flat_ones.push((sub, mean));
+        }
+    }
+    // Biggest first: folding the largest flat subtree removes the most, and the
+    // ones inside it go with it.
+    flat_ones.sort_by(|a, b| b.0.node_count().cmp(&a.0.node_count()));
+    flat_ones
+}
+
 fn drop_dead_subtrees(tree: &crate::lint::node::Tree, rows: &[Vec<(String, f64)>], agree: f64) -> crate::lint::node::Tree {
     use crate::lint::node::Tree;
     /// Every subtree that could be held at a constant: an application, never a
@@ -1807,6 +1875,47 @@ pub fn final_form_within(
     // caller measured against the target; with none given the rewriter's own
     // bound stands and nothing changes.
     let drop_agree = one_minus_r2.map_or(FINAL_FORM_AGREE, |e| (e / 10.0).max(FINAL_FORM_AGREE));
+    // AND THE NEAR-CONSTANTS, judged on a different question.
+    //
+    // `drop_agree` asks "does this change the predictions by less than the model
+    // is already wrong by", and for a model fitted to 1e-11 that allows almost
+    // nothing: the better a fit, the less it may be simplified, which is
+    // backwards. A model that fits to 1e-11 and is not the law has nothing to
+    // protect at the eleventh decimal.
+    //
+    // So a near-constant fold is allowed a WHOLE ORDER of the model's error
+    // rather than a tenth of it. It still has to keep the fit — the candidate is
+    // scored against the reference like every other, below — but it is not held
+    // to a precision that only an overfit has.
+    let flat_agree = one_minus_r2.map_or(FINAL_FORM_AGREE, |e| (e * 10.0).max(FINAL_FORM_AGREE));
+    let folded: Vec<crate::lint::node::Tree> = {
+        let mut out = Vec::new();
+        let mut current = crate::lint::node::Tree::parse(math).ok();
+        // Repeated, because folding the biggest flat subtree exposes the next.
+        for _ in 0..8 {
+            let Some(t) = current.clone() else { break };
+            let mut moved = false;
+            for (sub, value) in near_constant_subtrees(&t, rows, NEAR_CONSTANT_RANGE) {
+                let candidate = replace_subtree(&t, &sub, &crate::lint::node::Tree::Num(value));
+                let Ok(pred) = evaluate_math(&candidate.to_math(), rows) else { continue };
+                if pred.len() != reference.len() || pred.iter().any(|v| !v.is_finite()) {
+                    continue;
+                }
+                let drift = pred.iter().zip(&reference).map(|(p, r)| (p - r).powi(2)).sum::<f64>() / n;
+                if drift > flat_agree * var {
+                    continue;
+                }
+                out.push(candidate.clone());
+                current = Some(candidate);
+                moved = true;
+                break;
+            }
+            if !moved {
+                break;
+            }
+        }
+        out
+    };
     let with_reductions: Vec<crate::lint::node::Tree> = candidates
         .into_iter()
         .flat_map(|(tree, _)| {
@@ -1814,7 +1923,7 @@ pub fn final_form_within(
             if reduced == tree { vec![tree] } else { vec![reduced, tree] }
         })
         .collect();
-    for tree in with_reductions {
+    for tree in with_reductions.into_iter().chain(folded) {
         let form = tree.to_math();
         let Ok(pred) = evaluate_math(&form, rows) else { continue };
         let drift = pred.iter().zip(&reference).map(|(p, r)| (p - r).powi(2)).sum::<f64>() / n / var;
@@ -4362,6 +4471,84 @@ mod tests {
         let model = r#"(Add (Mul (Var "x_0") (Var "x_1")) (Var "x_2"))"#;
         let tree = Tree::parse(model).expect("parse");
         assert_eq!(drop_dead_subtrees(&tree, &rows(), FINAL_FORM_AGREE), tree);
+    }
+
+    /// A SUBTREE THAT BARELY MOVES IS A CONSTANT WEARING A COSTUME.
+    ///
+    /// From the strogatz_bacres1 fit that stopped at 1-R2 7.8e-11 without being
+    /// the law: fourteen nodes of `tanh(exp(cos(log(...))))` whose entire range
+    /// across the data was [0.9976, 1.0000]. It was the number 1 in a costume,
+    /// and it hid the structure underneath — folding it and the other flat
+    /// subtrees took the model from 32 nodes to 14 and revealed `-x` and `+20`
+    /// exactly, with the law's quotient as the first terms of its series.
+    #[test]
+    fn a_subtree_that_barely_moves_is_folded_to_its_value() {
+        use crate::lint::node::Tree;
+        // `Tanh(Add(x_0, 40))` is 1.0 to eleven decimals for any x_0 the toy rows
+        // hold: tanh saturates, so the subtree is a constant in disguise.
+        let model = r#"(Mul (Var "x_0") (Tanh (Add (Var "x_0") (Num 40.0))))"#;
+        let tree = Tree::parse(model).expect("parse");
+        let flat = near_constant_subtrees(&tree, &rows(), NEAR_CONSTANT_RANGE);
+        assert!(!flat.is_empty(), "the saturated tanh was not seen as flat");
+        let (sub, value) = &flat[0];
+        assert!((value - 1.0).abs() < 1e-6, "the flat subtree's value is {value}, not 1");
+        assert!(matches!(sub, Tree::App(Op::Tanh, _)), "the wrong subtree was picked: {}", sub.to_infix());
+        // Folded, the model is just x_0 — and it still predicts what it predicted.
+        let folded = replace_subtree(&tree, sub, &Tree::Num(*value));
+        assert!(folded.node_count() < tree.node_count(), "nothing was saved");
+        let (want, got) = (evaluate_math(model, &rows()).unwrap(), evaluate_math(&folded.to_math(), &rows()).unwrap());
+        for (w, g) in want.iter().zip(&got) {
+            assert!((w - g).abs() <= 1e-6 * w.abs().max(1.0), "the fold moved the prediction: {w} vs {g}");
+        }
+        // A subtree that genuinely varies is NOT folded.
+        let alive = Tree::parse(r#"(Mul (Var "x_0") (Add (Var "x_1") (Num 1.0)))"#).expect("parse");
+        let none = near_constant_subtrees(&alive, &rows(), NEAR_CONSTANT_RANGE);
+        assert!(none.is_empty(), "a varying subtree was called flat: {:?}", none.iter().map(|(t, _)| t.to_infix()).collect::<Vec<_>>());
+    }
+
+    /// THE CHAMPION ISLAND IS AN OPEN KNOCKOUT, THE INTAKE IS NOT.
+    ///
+    /// The cohort rule keeps a young line from meeting a converged elder before
+    /// it has developed, and the intake is where that development happens. The
+    /// champion island is where a line that has earned promotion proves itself
+    /// against everything else there — banding it fragments the one place whose
+    /// purpose is competition.
+    ///
+    /// A promotion is a COPY, so a line that goes up keeps its protected place in
+    /// the intake while its copy takes its chances in the open. That is asserted
+    /// here too, because the whole arrangement depends on it.
+    #[test]
+    fn the_champion_island_is_an_open_fight_and_the_promotion_is_a_copy() {
+        let config = Config { cohort_merge: 400, pump_every: 4, ..toy_config(60, 20) };
+        let mut engine = Engine::new(config, toy_data()).expect("engine");
+        let mut gen = drawn_generation(&engine, 9);
+        let (intake, champion) = (engine.islands[0], engine.islands[1]);
+        // Two cohorts, split across both islands.
+        engine.cohorts = vec![0u32; engine.layout.pop as usize];
+        engine.live_cohorts = vec![0u32; engine.layout.pop as usize];
+        for row in 0..engine.layout.pop {
+            let label = if row % 2 == 0 { 0 } else { 100 };
+            engine.cohorts[row as usize] = label;
+            engine.live_cohorts[row as usize] = label;
+        }
+        let before = gen.clone();
+        let source = engine.promotion_slate(intake, &gen);
+        let best = *source.first().expect("somebody to promote");
+        engine.pump(&mut gen, 4).expect("the pump");
+
+        let row_of = |g: &Generation, r: u32| {
+            let w = (engine.layout.n_genes * engine.layout.gene_width()) as usize;
+            g.pop.genome[r as usize * w..(r as usize + 1) * w].to_vec()
+        };
+        // THE COPY: the promoted line ARRIVES in the champion island.
+        let landed = (champion.lo..champion.hi).any(|r| row_of(&gen, r) == row_of(&before, best));
+        assert!(landed, "the promoted line did not arrive in the champion island");
+        // ... and it is still in the intake, because a promotion copies rather
+        // than moves. It is not necessarily in the ROW it came from: the pump
+        // promotes and then refills the intake from its keepers, which compacts
+        // them to the front. The line surviving is what matters, not its address.
+        let still_here = (intake.lo..intake.hi).any(|r| row_of(&gen, r) == row_of(&before, best));
+        assert!(still_here, "the promoted line left the intake: a promotion must copy, not move");
     }
 
     /// THE PUMP PROMOTES FROM EVERY LIVING COHORT, IN EQUAL SHARE.

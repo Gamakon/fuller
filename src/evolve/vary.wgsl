@@ -195,14 +195,42 @@ fn key(row: u32) -> f32 {
     return min(f, F32_MAX);
 }
 
-// Is `c` a better mate for `me` than `w`? Same cohort first, then fitness.
-fn better_mate(me: u32, c: u32, w: u32) -> bool {
-    let mc = same_cohort(me, c);
-    let mw = same_cohort(me, w);
-    if (mc != mw) {
-        return mc;
+// Is `c` a better mate for `me` than `w`? Same cohort first, then fitness — but
+// ONLY on an intake island.
+//
+// THE CHAMPION ISLAND IS AN OPEN KNOCKOUT (Andrew: 'the champion island the no
+// restriction open knockout island'). The cohort rule exists to keep a young
+// line from meeting a converged elder before it has developed, and the intake is
+// where that development happens. The champion island is the opposite: it is
+// where a line that has already earned promotion proves it against everything
+// else there, so banding it fragments the one place whose whole purpose is
+// competition. Measured on strogatz_bacres1: cohort 0 held the best score for
+// 1,558 generations, on both islands, because it never met a challenger on
+// either.
+//
+// A promotion is a COPY, so a line that goes up stays in the intake too — it
+// keeps its protected place while its copy takes its chances in the open.
+fn better_mate(me: u32, c: u32, w: u32, open_fight: bool) -> bool {
+    if (!open_fight) {
+        let mc = same_cohort(me, c);
+        let mw = same_cohort(me, w);
+        if (mc != mw) {
+            return mc;
+        }
     }
     return key(c) < key(w);
+}
+
+// Pair p is islands 2p (intake) and 2p + 1 (champion), one pair after another —
+// so an ODD island index is a champion island, and that is where the cohort rule
+// is lifted.
+fn is_champion(row: u32) -> bool {
+    for (var i = 0u; i < gp.n_islands; i = i + 1u) {
+        if (row < islands[i].hi) {
+            return (i & 1u) == 1u;
+        }
+    }
+    return (gp.n_islands - 1u & 1u) == 1u;
 }
 
 fn island_of(row: u32) -> Island {
@@ -224,11 +252,12 @@ fn first_main(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
     let isl = island_of(row);
+    let open_fight = is_champion(row);
     let n = isl.hi - isl.lo;
     var w = NONE;
     for (var i = 0u; i < isl.tournsize; i = i + 1u) {
         let c = isl.lo + below(row, i, STREAM_SELECT_1, n);
-        if (w == NONE || better_mate(row, c, w)) {
+        if (w == NONE || better_mate(row, c, w, open_fight)) {
             w = c;
         }
     }
@@ -242,6 +271,7 @@ fn select_main(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
     let isl = island_of(row);
+    let open_fight = is_champion(row);
     let n = isl.hi - isl.lo;
     if (row < isl.lo + isl.elites) {
         // The j-th fittest row of the island, ties to the lower row.
@@ -269,7 +299,7 @@ fn select_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     var w = NONE;
     for (var t = 0u; t < isl.tournsize; t = t + 1u) {
         let c = stage1[isl.lo + below(row, t, STREAM_SELECT_2, n)];
-        if (w == NONE || better_mate(row, c, w)) {
+        if (w == NONE || better_mate(row, c, w, open_fight)) {
             w = c;
         }
     }
