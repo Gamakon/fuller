@@ -479,9 +479,19 @@ pub struct Config {
     /// best of 19,600, and with no cohort rule to stop it the winner reproduces
     /// into every row — the open knockout closes itself.
     ///
-    /// Both can be true: the lock may be where the answer came from, or it may
-    /// be what the fit overcame. Only an A/B on the same seed settles it, and
-    /// until one has run this stays ON, because that is what won.
+    /// THE "FOR" ARGUMENT WAS WRONG, and the audit found out why. The claim was
+    /// that the open knockout is what recovered the law twice, so it should
+    /// stay on until an A/B says otherwise. It is not: at `05ef7e9`, the commit
+    /// the 75-of-133 run was made from, `open_fight` did not exist in
+    /// `vary.wgsl` at all and `better_mate` was called unconditionally at both
+    /// tournament sites. The runs that won had the cohort rule live on the
+    /// CHAMPION island too. Defaulting this ON made HEAD a different mechanism
+    /// from the one the paper reports, so a rebuild-and-rerun would not
+    /// reproduce it.
+    ///
+    /// It is OFF. The measured lock -- cohort 160 holding 96.9% of the champion
+    /// island on a six percent edge -- is still a real finding, and it argues
+    /// for the cohort rule being there rather than against it.
     pub champion_open_fight: bool,
     /// THE CHAMPION ISLAND'S ELITES, when they should differ from the intake's.
     /// `None` shares `elites`. Elites are copied unmutated and skip crossover,
@@ -829,8 +839,18 @@ impl Config {
             // 1,878 tournament rows were re-swamped within a beat, and the
             // champion island sat at 97% one cohort for 19,000 generations.
             arrival_children: 4,
-            // ON, because it is what recovered the law twice — see the field.
-            champion_open_fight: true,
+            // OFF: VIRTUAL ALPS RUNS ON BOTH ISLANDS.
+            //
+            // This was `true`, and that was wrong twice over. Andrew asked for
+            // the opposite -- "we should continue to use the virtual alps in
+            // the promoted island" -- and the audit establishes that the run
+            // which scored 75 of 133 had no `open_fight` in the kernel at all:
+            // `better_mate` was called unconditionally at both tournament
+            // sites, so the cohort rule was live on the champion island too.
+            // A default of `true` therefore contradicted both the instruction
+            // and the configuration that produced the result, and `vary.wgsl`
+            // said so in a comment directly above the code that ignored it.
+            champion_open_fight: false,
             champion_elites: None,
             champion_cohort_merge: None,
             elites: 2,
