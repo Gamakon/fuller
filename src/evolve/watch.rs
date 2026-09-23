@@ -661,44 +661,50 @@ impl WatchState {
         }
     }
 
-    /// THE ROW THE DETAIL PANE SHOWS: the operator's choice, or — when they have
-    /// not made one — the table's FIRST ROW, whatever the table is showing now.
+    /// THE ROW THE DETAIL PANE SHOWS. Always a row that is ON THE TABLE: the
+    /// operator's choice while that choice is still there, and the top row the
+    /// moment it is not.
     ///
-    /// The two halves are deliberately different, and the difference is the
-    /// whole of this function.
+    /// REORDERING KEEPS; DISAPPEARING RESETS. That is the whole rule, and the
+    /// two halves of it are not the same thing:
     ///
-    /// A CHOICE IS KEPT. Once `j`/`k` has picked a cohort it is held BY ID
-    /// through every reorder, and when its row leaves the table this returns
-    /// None so the pane can say so. Snapping to row 0 there would be
-    /// auto-scrolling away from the selection, which the brief forbids.
+    /// - A cohort that is still alive but has moved under the sort keeps the
+    ///   selection. This is the brief's "keep the selected cohort by ID when
+    ///   rows reorder" and "never auto-scroll away from a selected row", and it
+    ///   is why the selection is an ID rather than an index.
+    /// - A cohort that has LEFT THE TABLE does not. The viewer used to hold it
+    ///   and print "not in the current table · the selection is kept", which
+    ///   left a dead cohort pinned to the pane indefinitely while the table
+    ///   beside it showed live ones.
     ///
-    /// A DEFAULT FOLLOWS. With nothing chosen there is no selection to keep, and
-    /// pinning one would be the viewer choosing on the operator's behalf and
-    /// then defending that choice forever — which is exactly what it used to do,
-    /// latching the best cohort of the first snapshot it saw and still naming it
-    /// thousands of generations after it died.
+    /// The second case is not a rare edge. Cohorts are born and die constantly —
+    /// this engine mints one per pump beat, and a real run has seen 165 of them
+    /// — so a selection made at generation 500 is almost certainly dead by
+    /// 12,000. Holding it is where the pane would spend most of its life.
     pub fn selected_row(&self) -> Option<CohortView> {
         let rows = self.rows();
-        match self.selected {
-            Some(id) => rows.into_iter().find(|r| r.id == id),
+        // The chosen row if it is still here; otherwise the top of what IS here.
+        // `None` only when the table itself is empty.
+        match self.selected.and_then(|id| rows.iter().position(|r| r.id == id)) {
+            Some(at) => rows.into_iter().nth(at),
             None => rows.into_iter().next(),
         }
     }
 
-    /// THE ID THE DETAIL PANE IS ABOUT, chosen or defaulted. The pane needs this
-    /// to name a cohort that has left the table, where `selected_row` has
-    /// nothing to give it.
+    /// THE ID THE DETAIL PANE IS ABOUT. Always a cohort that is on the table, or
+    /// None when the table is empty — the pane never names one that is not there.
     pub fn detail_id(&self) -> Option<u32> {
-        self.selected.or_else(|| self.rows().first().map(|r| r.id))
+        self.selected_row().map(|r| r.id)
     }
 
     /// Move the selection one row down (`j`) or up (`k`). Operates on the CURRENT
     /// order, and lands on an ID — so the next reorder keeps it.
     ///
-    /// IT STEPS OFF THE ROW THE PANE IS SHOWING. With nothing chosen the pane
-    /// follows the table's first row, so the first `j` must move to the SECOND
-    /// row: starting from "no position" and landing on index 0 would make the
-    /// first keypress appear to do nothing, having selected the row the
+    /// IT STEPS OFF THE ROW THE PANE IS SHOWING, which is not always the row
+    /// `selected` names: with nothing chosen, and after a chosen cohort has died
+    /// and the pane has fallen back to the top, the shown row is the table's
+    /// first. Starting from "no position" and landing on index 0 would make that
+    /// first keypress appear to do nothing, having re-selected the row the
     /// operator was already looking at.
     pub fn move_selection(&mut self, down: bool) {
         let rows = self.rows();
@@ -1163,33 +1169,46 @@ mod tests {
         assert_eq!(state.selected, None, "following the table is not choosing");
     }
 
-    /// A CHOICE IS STILL KEPT. The fix must not cost the brief's rule: once
-    /// `j`/`k` has picked a cohort it is held by ID through every reorder, and
-    /// when its row leaves the table the selection is explained, never
-    /// reassigned.
+    /// REORDERING KEEPS, DISAPPEARING RESETS — the two halves of the rule, and
+    /// the reason they are not the same thing.
+    ///
+    /// A live cohort that has merely moved under the sort keeps the selection:
+    /// that is the brief's "keep the selected cohort by ID when rows reorder"
+    /// and "never auto-scroll away from a selected row". A cohort that has left
+    /// the table entirely is not a reorder, and holding it pins a dead cohort to
+    /// the pane.
     #[test]
-    fn a_chosen_cohort_is_still_kept_through_reorders_and_extinction() {
+    fn reordering_keeps_the_selection_and_dying_resets_it() {
         let mut state = replayed();
         let rows = state.rows();
         let target = rows.last().expect("a last row").id;
         assert_ne!(target, rows[0].id, "pick a row that is not the default");
         state.selected = Some(target);
+        // REORDERING KEEPS. Every sort still shows the chosen cohort.
         for sort in [Sort::Gain, Sort::Rows, Sort::Best] {
             state.sort = sort;
             assert_eq!(state.selected_row().map(|r| r.id), Some(target), "{sort:?} moved a chosen row");
+            assert_eq!(state.detail_id(), Some(target));
         }
-        // Its row leaves the table: the CHOICE is kept and the pane has nothing
-        // to draw, which is the state the "not in the current table" message is
-        // for — and it is reachable only here, never on first paint.
-        state.filter = "999999".to_string();
-        assert!(state.rows().is_empty());
-        assert_eq!(state.selected, Some(target), "the viewer reassigned a chosen cohort");
-        assert!(state.selected_row().is_none());
-        // With NOTHING chosen, the same empty table simply has no row to show —
-        // and no cohort to name either.
-        state.selected = None;
-        assert_eq!(state.detail_id(), None);
-        assert!(state.selected_row().is_none());
+        // DYING RESETS. Feed snapshots holding only the first cohort until the
+        // chosen one's row has gone for good, and the pane moves to the top of
+        // what is left rather than describing what is not there.
+        let survivor = state.rows().first().expect("a table").id;
+        let mut s = state.snapshot.as_ref().expect("a frame").clone();
+        s.global_cohorts.retain(|c| c.id == survivor);
+        for _ in 0..(EXTINCT_LINGER + 2) {
+            s.header.generation += 10;
+            s.header.seq += 1;
+            state.apply_record(Record::Snapshot(s.clone()));
+        }
+        let rows = state.rows();
+        assert!(!rows.iter().any(|r| r.id == target), "the chosen cohort is still on the table");
+        assert_eq!(state.selected_row().map(|r| r.id), Some(survivor), "a dead cohort stayed pinned to the pane");
+        assert_eq!(state.detail_id(), Some(survivor), "the pane named a cohort that is not there");
+        // THE PANE NEVER NAMES A COHORT THAT IS NOT ON THE TABLE — the whole
+        // point, stated as the invariant it is.
+        let on_table: Vec<u32> = state.rows().iter().map(|r| r.id).collect();
+        assert!(on_table.contains(&state.detail_id().expect("a row")), "the pane left the table: {on_table:?}");
     }
 
     /// `j` ON AN UNTOUCHED PANE STARTS FROM THE ROW IT IS SHOWING, so the first
@@ -1332,20 +1351,34 @@ mod tests {
         assert_eq!(state.liveness(), Liveness::Live, "a new run is not finished");
     }
 
-    /// The selection is not moved when the cohort it names leaves the table: the
-    /// row is gone, the selection is not.
+    /// A SELECTION THAT LEAVES THE TABLE FALLS BACK TO THE TOP ROW. It used to
+    /// be held, and the pane printed "not in the current table · the selection
+    /// is kept" — which left a cohort that died thousands of generations ago
+    /// pinned to the pane while the table beside it showed live ones.
+    ///
+    /// Cohorts are born and die constantly here: one per pump beat, 165 over a
+    /// real run. A selection made at generation 500 is almost certainly dead by
+    /// 12,000, so holding it is not a rare edge case — it is where the pane
+    /// would spend most of its life.
     #[test]
-    fn a_selection_that_leaves_the_table_is_not_reassigned() {
+    fn a_selection_that_leaves_the_table_falls_back_to_the_top_row() {
         let mut state = replayed();
+        let top = state.rows().first().expect("a table").id;
+        // A cohort that is not in the table at all: the pane shows the top row.
         state.selected = Some(999_999);
-        assert!(state.selected_row().is_none(), "there is no such cohort");
-        assert_eq!(state.selected, Some(999_999), "the viewer reassigned the selection");
-        // And the filter excluding it does not move it either.
-        state.selected = state.rows().first().map(|r| r.id);
-        let kept = state.selected;
+        assert_eq!(state.selected_row().map(|r| r.id), Some(top), "the pane held a cohort that is not there");
+        assert_eq!(state.detail_id(), Some(top), "the pane named a cohort that is not there");
+        // THE FILTER IS THE SAME CASE, and deliberately so: a pane describing a
+        // cohort no row on the screen matches is the same wrong thing however
+        // the row left. The filter is also the one that undoes itself — clear it
+        // and the pick, which is still held, is shown again.
+        state.selected = Some(top);
         state.filter = "999999".to_string();
-        assert!(state.rows().is_empty());
-        assert_eq!(state.selected, kept);
+        assert!(state.rows().is_empty(), "the filter should exclude everything");
+        assert!(state.selected_row().is_none(), "an empty table has no row to fall back to");
+        assert_eq!(state.detail_id(), None);
+        state.filter.clear();
+        assert_eq!(state.selected_row().map(|r| r.id), Some(top), "clearing the filter lost the pick");
     }
 
     /// AN EXTINCT ROW LINGERS A FEW BEATS AND THEN GOES. Watching a cohort die

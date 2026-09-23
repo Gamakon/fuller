@@ -1106,30 +1106,11 @@ fn gene_line(f: &mut Frame, theme: Theme, state: &WatchState, area: Rect) {
 
 fn detail(f: &mut Frame, theme: Theme, state: &WatchState, area: Rect) {
     let block = Block::default().borders(Borders::ALL).title(" COHORT DETAIL ");
-    // The cohort this pane is about: the operator's pick, or the table's first
-    // row when they have not made one. An empty table has neither.
-    let Some(id) = state.detail_id() else {
+    // The pane always shows a cohort that is ON the table: the operator's pick
+    // while it is there, the top row once it is not. An empty table has neither.
+    let Some(r) = state.selected_row() else {
         f.render_widget(
             Paragraph::new(Span::styled("no cohorts in the table", Style::default().fg(theme.dim()))).block(block),
-            area,
-        );
-        return;
-    };
-    let Some(r) = state.selected_row() else {
-        // A CHOSEN cohort whose row has gone. Only reachable once `j`/`k` has
-        // picked one: an untouched pane follows the table and cannot land here,
-        // which is what used to make this message the first thing on screen.
-        // The selection is KEPT — the viewer does not reassign it, it explains
-        // it.
-        f.render_widget(
-            Paragraph::new(vec![
-                Line::from(Span::styled(format!("c{id}"), Style::default().add_modifier(Modifier::BOLD))),
-                Line::from(Span::styled("not in the current table", Style::default().fg(theme.warn()))),
-                Line::from(Span::styled("(extinct, or excluded by the filter)", Style::default().fg(theme.dim()))),
-                Line::from(Span::styled("the selection is kept — j/k to move it", Style::default().fg(theme.dim()))),
-            ])
-            .block(block)
-            .wrap(Wrap { trim: true }),
             area,
         );
         return;
@@ -1156,6 +1137,17 @@ fn detail(f: &mut Frame, theme: Theme, state: &WatchState, area: Rect) {
         Line::from(format!("train 1-R²  {}", or_dash(g.and_then(|g| g.r2_train).map(|r| 1.0 - r), 3))),
         Line::from(format!("val   1-R²  {}", or_dash(g.and_then(|g| g.r2_val).map(|r| 1.0 - r), 3))),
     ];
+    // A PICK THAT WAS DROPPED SAYS SO. The pane has fallen back to the top row
+    // because the cohort the operator chose has left the table, and a screen
+    // that swapped one cohort for another without a word would read as the
+    // detail pane showing the wrong thing.
+    if let Some(chosen) = state.selected.filter(|id| *id != r.id) {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            format!("c{chosen} has left the table — showing the top row"),
+            Style::default().fg(theme.warn()),
+        )));
+    }
     // A cohort label is inherited lineage MEMBERSHIP, not a count of independent
     // lines. The brief is emphatic about this and the screen says it where the
     // row count is, because that is where it would otherwise be misread.
@@ -1412,9 +1404,17 @@ fn dump(state: &WatchState) -> String {
     out.push_str(&format!(
         "\n  COHORT DETAIL  {}\n",
         match (state.detail_id(), state.selected_row()) {
-            (Some(id), Some(r)) => format!("c{id}  born {}  rows {}  best {}", r.birth_generation, r.rows, or_dash(r.best_hff, 6)),
-            (Some(id), None) => format!("c{id}  not in the current table (kept — j/k to move it)"),
-            (None, _) => "no cohorts in the table".to_string(),
+            (Some(id), Some(r)) => format!(
+                "c{id}  born {}  rows {}  best {}{}",
+                r.birth_generation,
+                r.rows,
+                or_dash(r.best_hff, 6),
+                match state.selected.filter(|s| *s != id) {
+                    Some(chosen) => format!("  (c{chosen} has left the table)"),
+                    None => String::new(),
+                }
+            ),
+            _ => "no cohorts in the table".to_string(),
         }
     ));
     out.push_str(&format!(
@@ -1706,14 +1706,20 @@ mod tests {
             !screen.contains("not in the current table"),
             "an untouched pane claimed its cohort had gone\n{screen}"
         );
-        // A CHOSEN cohort that has gone still gets the message — the case it
-        // was written for, and now the only case that reaches it.
+        // A CHOSEN COHORT THAT HAS GONE RESETS TO THE TOP ROW, and the pane
+        // says the pick was dropped rather than swapping one cohort for another
+        // without a word. It never draws a cohort that is not on the table.
         let mut chosen = state;
         chosen.selected = Some(999_999);
         let screen = painted(&chosen, Theme::default(), 140, 40);
-        assert!(screen.contains("not in the current table"), "a kept selection lost its explanation\n{screen}");
-        assert!(screen.contains("c999999"), "{screen}");
+        assert!(
+            !screen.contains("not in the current table"),
+            "a dead cohort is still pinned to the pane\n{screen}"
+        );
+        assert!(screen.contains(&format!("c{first}")), "the pane did not fall back to the top row\n{screen}");
+        assert!(screen.contains("has left the table"), "the dropped pick was swapped silently\n{screen}");
     }
+
 
     /// THE NEW PANELS DRAW, at both layouts and in both themes, and the layout
     /// still holds: nothing is cut off, nothing panics, and the discoveries and
