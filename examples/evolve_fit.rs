@@ -284,6 +284,9 @@ fn main() {
                     islands: engine.islands.iter().map(|i| IslandSpan { lo: i.lo, hi: i.hi }).collect(),
                     live_cohorts: card::live_cohorts(config.cohort_merge, config.pump_every),
                 },
+                // A run writes its card BEFORE it starts, so it has nothing to
+                // say yet. Findings are appended when it ends.
+                notes: Vec::new(),
             };
             // WHERE IT GOES: `EVOLVE_CARD_OUT` when it is given, otherwise
             // `card.json` beside the telemetry stream — the run's own output

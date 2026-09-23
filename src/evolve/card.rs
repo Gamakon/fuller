@@ -76,6 +76,31 @@ pub struct Card {
     pub config: Config,
     /// What the engine worked out from the config and the data together.
     pub derived: Derived,
+    /// WHAT THIS RUN TAUGHT US, appended after it ends.
+    ///
+    /// A card with no note is a configuration nobody can learn from. The
+    /// settings say what was tried; only a note says what happened and whether
+    /// it was worth trying — "65,264 generations at 800+400, train 1-R2 stuck
+    /// at 2.6e-6, did not recover the law" is the sentence that stops the next
+    /// run repeating it.
+    ///
+    /// A list, because a card outlives one reading: a run can be re-judged when
+    /// a later finding explains it.
+    #[serde(default)]
+    pub notes: Vec<Note>,
+}
+
+/// One finding about the run this card describes.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq)]
+pub struct Note {
+    pub written_utc: String,
+    /// What was being tested, in a sentence.
+    pub testing: String,
+    /// What happened, in the numbers that matter.
+    pub outcome: String,
+    /// Did the fit recover the law? `None` when the run was killed or the
+    /// question does not apply.
+    pub recovered: Option<bool>,
 }
 
 /// The code the binary was built from.
@@ -541,6 +566,7 @@ mod tests {
                 islands: vec![IslandSpan { lo: 0, hi: 12_345 }, IslandSpan { lo: 12_345, hi: 19_134 }],
                 live_cohorts: 100,
             },
+            notes: Vec::new(),
         }
     }
 
