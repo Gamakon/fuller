@@ -2936,6 +2936,41 @@ impl Engine {
     }
 
     /// One row of the logbook, and the hall of fame's best appended to its file.
+    /// THE COHORT TABLE, under the progress row: who is alive, how many rows each
+    /// cohort holds, and the best HFF inside it — ranked by that best, so the
+    /// centuries that are winning sit at the top and the ones dying out fall off.
+    ///
+    /// It is the readable half of what the genealogy log records: virtual ALPS
+    /// only pays if young cohorts ever climb this table, and watching it climb
+    /// (or not) says so a beat at a time rather than at the end of the fit.
+    ///
+    /// Nothing prints when cohorts are off.
+    fn report_cohorts(&self, gen: &Generation) -> Result<(), String> {
+        if self.cohorts.is_empty() {
+            return Ok(());
+        }
+        let live = self.dev.read_cohorts().unwrap_or_else(|_| self.cohorts.clone());
+        let mut by: std::collections::BTreeMap<u32, (usize, f64)> = std::collections::BTreeMap::new();
+        for (row, &c) in live.iter().enumerate() {
+            let f = gen.fitness.get(row).copied().unwrap_or(f32::NAN);
+            let e = by.entry(c).or_insert((0, f64::INFINITY));
+            e.0 += 1;
+            if !f.is_nan() {
+                e.1 = e.1.min(f64::from(f));
+            }
+        }
+        // Best first: a cohort's worth is the best individual in it, and the row
+        // count says whether that is one lucky draw or a line that has spread.
+        let mut ranked: Vec<(u32, usize, f64)> = by.into_iter().map(|(c, (n, best))| (c, n, best)).collect();
+        ranked.sort_by(|a, b| a.2.total_cmp(&b.2).then(a.0.cmp(&b.0)));
+        let total = ranked.len();
+        eprintln!("  cohorts {total} alive | {}",
+            ranked.iter().take(6)
+                .map(|(c, n, best)| if best.is_finite() { format!("c{c}:{n}@{best:.3e}") } else { format!("c{c}:{n}@-") })
+                .collect::<Vec<_>>().join("  "));
+        Ok(())
+    }
+
     fn report(&self, generation: u32, seconds: f64, gen: &Generation, hof: Option<&HallOfFame>) -> Result<(), String> {
         let fitness: Vec<f64> = gen.fitness.iter().filter(|f| !f.is_nan()).map(|f| f64::from(*f)).collect();
         let avg = fitness.iter().sum::<f64>() / fitness.len().max(1) as f64;
@@ -2955,6 +2990,7 @@ impl Engine {
             "{generation:>7}{seconds:>8.0}{head:>6}{:>13.6e}{avg:>13.6e}{:>13.4e}{:>15.10}{:>15.10}{:>15}{:>9}{log10_p:>10.2}{lineage}",
             b.fitness, b.one_minus_r2[0] * self.caps.var[0], 1.0 - b.one_minus_r2[0], 1.0 - b.one_minus_r2[1], third(&b), b.t_depth
         );
+        self.report_cohorts(gen)?;
         if let (Some(path), Some(h)) = (&self.config.hof_path, hof) {
             use std::io::Write;
             let model = crate::lint::node::Tree::parse(&h.math).map_or_else(|_| h.math.clone(), |t| t.to_infix());
