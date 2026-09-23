@@ -103,6 +103,13 @@ fn main() {
                 break Err(e);
             }
         }
+        // A KEYBOARD THAT IS NOT THERE IS NOT A REASON TO STOP WATCHING. With
+        // stdin redirected — a viewer in a pane, under `script`, or on a headless
+        // box — crossterm cannot start an input reader and every poll errors.
+        // Ending the session on that would mean the screen that needs watching
+        // most (an unattended run) is the one that cannot be watched, so the
+        // errors are counted and the viewer goes on repainting. It is then a
+        // display, and the process is ended from outside.
         match event::poll(TICK) {
             Ok(true) => match event::read() {
                 Ok(Event::Key(key)) if key.kind == KeyEventKind::Press => {
@@ -114,10 +121,15 @@ fn main() {
                     }
                 }
                 Ok(_) => {}
-                Err(e) => break Err(e),
+                Err(_) => ui.input_errors += 1,
             },
             Ok(false) => {}
-            Err(e) => break Err(e),
+            Err(_) => {
+                ui.input_errors += 1;
+                // Without a working poll the loop has no timer of its own, and
+                // it would spin a core at the speed of the file system.
+                std::thread::sleep(TICK);
+            }
         }
     };
     ratatui::restore();
@@ -146,6 +158,10 @@ struct Ui {
     model_scroll: u16,
     model_wrap: bool,
     copied: Option<String>,
+    /// Polls that could not read the keyboard — stdin redirected, no tty. The
+    /// viewer keeps repainting as a display and SAYS SO, because a screen that
+    /// silently ignores every key looks broken rather than read-only.
+    input_errors: u64,
 }
 
 /// One keypress. Returns true to quit — which quits the VIEWER. The fit is a
@@ -261,7 +277,10 @@ fn draw(f: &mut Frame, state: &WatchState, ui: &Ui) {
             .constraints([
                 Constraint::Length(2),
                 Constraint::Length(3),
-                Constraint::Length(5), // ONE island, the selected one
+                // ONE island, the selected one: two borders, the best/avg line
+                // and ALL THREE pulse meters. A card that silently drops the
+                // third meter is a screen that hides a measurement.
+                Constraint::Length(6),
                 Constraint::Min(5),
                 Constraint::Length(1), // one-line events
                 Constraint::Length(1),
@@ -294,7 +313,7 @@ fn draw(f: &mut Frame, state: &WatchState, ui: &Ui) {
         }
         one_line_events(f, state, rows[4]);
     }
-    footer(f, state, rows[5]);
+    footer(f, state, ui, rows[5]);
     if ui.model_open {
         model_overlay(f, state, ui, area);
     }
@@ -311,7 +330,13 @@ fn compact(f: &mut Frame, state: &WatchState, area: Rect) {
         Line::from(format!("{}x{} — the full screen needs {}x{}", area.width, area.height, WIDE.0, WIDE.1)),
         Line::from(""),
         Line::from(format!("gen {generation}  best HFF {}", or_dash(s.and_then(|s| s.global.best_hff), 4))),
-        Line::from(format!("{}  {}", badge_text(state), or_dash(s.map(|s| s.header.elapsed_ms as f64 / 1000.0), 0))),
+        // Seconds as seconds. `or_dash` is scientific notation, which is right
+        // for an HFF angle and absurd for a clock ("3e1 seconds").
+        Line::from(format!(
+            "{}  {}",
+            badge_text(state),
+            s.map_or_else(|| "—".to_string(), |s| format!("{:.0}s", s.header.elapsed_ms as f64 / 1000.0))
+        )),
     ];
     lines.push(Line::from(Span::styled("q to quit", Style::default().fg(Color::DarkGray))));
     f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: true }), area);
@@ -391,17 +416,38 @@ fn header(f: &mut Frame, state: &WatchState, area: Rect) {
 fn global_strip(f: &mut Frame, state: &WatchState, area: Rect) {
     let s = state.snapshot.as_ref();
     let g = s.map(|s| &s.global);
+    // Three columns need about 40 each to say anything. Below that the error
+    // column folds into the best one rather than both being cut off mid-word:
+    // half a heading is worse than a tighter line.
+    let roomy = area.width >= 118;
     let columns = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(34), Constraint::Percentage(33), Constraint::Percentage(33)])
+        .constraints(if roomy {
+            vec![Constraint::Percentage(34), Constraint::Percentage(33), Constraint::Percentage(33)]
+        } else {
+            vec![Constraint::Min(30), Constraint::Length(26)]
+        })
         .split(area);
     let gain = state.global_gain();
+    let (train, val) = (
+        or_dash(g.and_then(|g| g.r2_train).map(|r| 1.0 - r), 2),
+        or_dash(g.and_then(|g| g.r2_val).map(|r| 1.0 - r), 2),
+    );
     let best = Paragraph::new(vec![
-        Line::from(Span::styled("GLOBAL BEST HFF ↓ (lower is better)", Style::default().fg(Color::DarkGray))),
+        Line::from(Span::styled(
+            if roomy { "GLOBAL BEST HFF ↓ (lower is better)" } else { "GLOBAL BEST HFF ↓ (lower wins)" },
+            Style::default().fg(Color::DarkGray),
+        )),
         Line::from(vec![
             Span::styled(or_dash(g.and_then(|g| g.best_hff), 6), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
             Span::raw("  "),
             Span::styled(gain_text(gain), Style::default().fg(gain_colour(gain))),
+            // Narrow: the errors come here rather than into a column too thin to
+            // hold their headings.
+            Span::styled(
+                if roomy { String::new() } else { format!("   1-R² train {train} val {val}") },
+                Style::default().fg(Color::DarkGray),
+            ),
         ]),
         // BEST-EVER, separately: a current best is not a record, and the brief
         // asks for the two not to be confused.
@@ -411,25 +457,23 @@ fn global_strip(f: &mut Frame, state: &WatchState, area: Rect) {
         )),
     ]);
     f.render_widget(best, columns[0]);
-    let quality = Paragraph::new(vec![
-        Line::from(Span::styled("ERROR", Style::default().fg(Color::DarkGray))),
-        Line::from(format!(
-            "train 1-R² {}   val 1-R² {}",
-            or_dash(g.and_then(|g| g.r2_train).map(|r| 1.0 - r), 2),
-            or_dash(g.and_then(|g| g.r2_val).map(|r| 1.0 - r), 2)
-        )),
-        Line::from(Span::styled(
-            format!(
-                "mse {}  log10 p {}  depth {}  head {}",
-                or_dash(g.and_then(|g| g.mse_train), 2),
-                g.and_then(|g| g.log10_p).map_or_else(|| "—".to_string(), |p| format!("{p:.2}")),
-                g.map_or(0, |g| g.t_depth),
-                g.map_or(0, |g| g.vhead)
-            ),
-            Style::default().fg(Color::DarkGray),
-        )),
-    ]);
-    f.render_widget(quality, columns[1]);
+    if roomy {
+        let quality = Paragraph::new(vec![
+            Line::from(Span::styled("ERROR", Style::default().fg(Color::DarkGray))),
+            Line::from(format!("train 1-R² {train}   val 1-R² {val}")),
+            Line::from(Span::styled(
+                format!(
+                    "mse {}  log10 p {}  depth {}  head {}",
+                    or_dash(g.and_then(|g| g.mse_train), 2),
+                    g.and_then(|g| g.log10_p).map_or_else(|| "—".to_string(), |p| format!("{p:.2}")),
+                    g.map_or(0, |g| g.t_depth),
+                    g.map_or(0, |g| g.vhead)
+                ),
+                Style::default().fg(Color::DarkGray),
+            )),
+        ]);
+        f.render_widget(quality, columns[1]);
+    }
     // THE BUDGET BAR is a bar of TIME, which is the only thing on this screen
     // that is genuinely a fraction of a known total. HFF is never drawn as a
     // percentage: it has no ceiling to be a percentage of.
@@ -438,7 +482,9 @@ fn global_strip(f: &mut Frame, state: &WatchState, area: Rect) {
     let bar = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Length(1), Constraint::Length(1), Constraint::Length(1)])
-        .split(columns[2]);
+        // The budget is always the LAST column, whether the strip has three or
+        // (narrow, with the errors folded into the first) two.
+        .split(columns[columns.len() - 1]);
     f.render_widget(Paragraph::new(Span::styled("BUDGET", Style::default().fg(Color::DarkGray))), bar[0]);
     // A THIN TRACK with the number beside it, not a block bar with the label
     // buried in it: at 40 columns a filled `Gauge` reads as a wall of blocks
@@ -734,7 +780,7 @@ fn one_line_events(f: &mut Frame, state: &WatchState, area: Rect) {
     f.render_widget(Paragraph::new(Span::styled(last, Style::default().fg(Color::DarkGray))), area);
 }
 
-fn footer(f: &mut Frame, state: &WatchState, area: Rect) {
+fn footer(f: &mut Frame, state: &WatchState, ui: &Ui, area: Rect) {
     if state.filtering {
         f.render_widget(
             Paragraph::new(Line::from(vec![
@@ -742,6 +788,16 @@ fn footer(f: &mut Frame, state: &WatchState, area: Rect) {
                 Span::raw(state.filter.clone()),
                 Span::styled("▏  Enter to keep · Esc to clear", Style::default().fg(Color::DarkGray)),
             ])),
+            area,
+        );
+        return;
+    }
+    if ui.input_errors > 0 {
+        f.render_widget(
+            Paragraph::new(Span::styled(
+                "no keyboard (stdin is not a terminal) · repainting as a display · end this process to stop watching",
+                Style::default().fg(Color::Yellow),
+            )),
             area,
         );
         return;
