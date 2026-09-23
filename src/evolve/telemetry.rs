@@ -331,10 +331,28 @@ pub enum EventKind {
     Snap,
     /// THE ROUNDING GENERATOR FOLDED A NEAR-CONSTANT SUBTREE: a subtree whose
     /// whole range across the rows was under a percent of its own value, replaced
-    /// by that value. These arrive AFTER `run_end` — the fold runs in the final
-    /// form, once the fit is over — which is the honest place for them and not a
-    /// gap in the stream.
+    /// by that value.
+    ///
+    /// A fold arrives from TWO places and they are the same finding. The pump's
+    /// fold operator sends one the moment it writes a folded gene back into the
+    /// population, mid-fit, with the `row` it landed in; the final form sends the
+    /// ones it made on the reported model, after `run_end`. Both say "this
+    /// subtree was secretly a constant".
     Fold,
+    /// THE LEAVE-ONE-OUT DROPPED A SUBTREE THE DATA CANNOT SEE: a subtree held at
+    /// its mean on the rows without the model's predictions moving, so it was
+    /// carrying nothing and was removed permanently.
+    ///
+    /// The COMPLEMENT of a fold and not a repeat of it. A fold says the subtree
+    /// had one value — it was a constant in a costume, and the constant is kept.
+    /// A reduction says the subtree had no effect on the OUTPUT at all, whatever
+    /// it computed, so nothing of it is kept. A panel that showed one and not the
+    /// other would be showing half the tidy.
+    ///
+    /// These arrive after `run_end` only: the reduction runs over the egglog
+    /// candidate forms in the final form, which is the caller's step once the fit
+    /// has returned, and there is no honest earlier moment for them.
+    Reduce,
     /// Something the engine wants an operator to see that is not one of the above.
     Note,
 }

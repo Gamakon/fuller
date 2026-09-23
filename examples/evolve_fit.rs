@@ -433,12 +433,20 @@ fn main() {
     // AND WHAT THE ROUNDING GENERATOR FOUND on the way: the folds go onto the
     // telemetry stream (after `run_end` — this is where the fold happens) so the
     // viewer's discoveries panel can show them beside snap's substitutions.
-    let (tidied, folds) = final_form_reporting(&resolved, &names, &fit_rows, Some(out.best.one_minus_r2[0]))
-        .unwrap_or_else(|_| (resolved.clone(), Vec::new()));
+    // AND THE LEAVE-ONE-OUT's drops beside them: the two are complements, and a
+    // panel shown one without the other is shown half the tidy. The summary goes
+    // out even when the final form FAILED — a viewer must be able to tell "it ran
+    // and found nothing" from "it never ran", and both are a zero.
+    let tidy_out = final_form_reporting(&resolved, &names, &fit_rows, Some(out.best.one_minus_r2[0]))
+        .unwrap_or_else(|_| fuller::evolve::engine::Tidied { form: resolved.clone(), ..Default::default() });
+    let (tidied, folds, drops) = (tidy_out.form, tidy_out.folds, tidy_out.drops);
     for f in &folds {
         println!("FOLD\t{}\t{:.9}\t{}", f.nodes, f.value, f.infix);
     }
-    engine.report_folds(out.generations, &folds);
+    for r in &drops {
+        println!("REDUCE\t{}\t{:.9}\t{}", r.nodes, r.held, r.infix);
+    }
+    engine.report_tidy(out.generations, &folds, &drops);
     // ... and the data guided rewrites once more: fuller's linter can WRITE a shape
     // they cover (it turns Add (Neg (Log b)) (Log a) into Sub (Log a) (Log b)), and a
     // form that only appears after the tidy must not slip past them.

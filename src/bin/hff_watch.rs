@@ -1027,13 +1027,24 @@ fn discoveries(f: &mut Frame, theme: Theme, state: &WatchState, area: Rect) {
     if area.height < DISCOVERIES_MIN {
         return;
     }
-    let (snaps, folds) = state.discoveries.iter().fold((0, 0), |(s, d), x| match x.kind {
-        Find::Snap => (s + 1, d),
-        Find::Fold => (s, d + 1),
-    });
-    let plural = |n: usize, one: &str, many: &str| if n == 1 { one.to_string() } else { many.to_string() };
+    // THE TRUE TOTALS, not the ring's length. The list below is capped and
+    // collapses repeats, so counting IT reported the cap: a finished stream
+    // holding 597 snaps said "128 literals snapped", which is the size of the
+    // ring. `state.found` counts every event as it arrives.
+    let (snaps, folds, reduces) =
+        (state.found[Find::Snap as usize], state.found[Find::Fold as usize], state.found[Find::Reduce as usize]);
+    let plural = |n: u64, one: &str, many: &str| if n == 1 { one.to_string() } else { many.to_string() };
+    // AND THE REDUCTION'S COUNT IS A DASH UNTIL THE FINAL FORM HAS RUN. It only
+    // happens once the fit returns, so before that a zero would mean "not yet"
+    // while reading as "none" — and a fit killed mid-run never runs it at all.
+    // The codebase's own rule: a metric that is not emitted shows `—` and a reason.
+    let dropped = if state.tidy_reported {
+        format!("{reduces} {} dropped", plural(reduces, "subtree", "subtrees"))
+    } else {
+        "— dropped (the final form has not run)".to_string()
+    };
     let block = Block::default().borders(Borders::ALL).title(format!(
-        " DISCOVERIES · {snaps} {} snapped into genes · {folds} {} folded ",
+        " DISCOVERIES · {snaps} {} snapped into genes · {folds} {} folded · {dropped} ",
         plural(snaps, "literal", "literals"),
         plural(folds, "subtree", "subtrees")
     ));
@@ -1046,7 +1057,7 @@ fn discoveries(f: &mut Frame, theme: Theme, state: &WatchState, area: Rect) {
             Paragraph::new(vec![
                 Line::from(Span::styled("nothing yet", Style::default().fg(theme.dim()))),
                 Line::from(Span::styled(
-                    "snaps arrive through the run · folds once, after it ends",
+                    "snaps and folds arrive through the run · drops once, after it ends",
                     Style::default().fg(theme.dim()),
                 )),
             ])
@@ -1066,9 +1077,18 @@ fn discoveries(f: &mut Frame, theme: Theme, state: &WatchState, area: Rect) {
             // population. A fold is the warn colour: it removed structure from
             // the reported model, which is a different kind of news. Both are
             // legible on either terminal.
+            // A snap is the accent — it went INTO the population. A FOLD IS RED
+            // (Andrew: "in a red colour if possible"): it is the operator taking
+            // a blob of dead operators out of a gene, and it should read as the
+            // loudest thing on the panel. `theme.bad()` is the red that is already
+            // proved legible on both terminals by the both-themes render tests; a
+            // second red would be a colour nothing else uses. A reduction keeps
+            // the warn colour: it is the quieter half, and it must not be mistaken
+            // for a fold at a glance.
             let (tag, colour) = match d.kind {
                 Find::Snap => ("snap", theme.accent()),
-                Find::Fold => ("fold", theme.warn()),
+                Find::Fold => ("fold", theme.bad()),
+                Find::Reduce => ("drop", theme.warn()),
             };
             let size = d.nodes.map_or_else(String::new, |n| format!("{n} nodes "));
             let body = format!("{size}{} → {}{}", d.what, d.became, d.times());
@@ -1385,14 +1405,21 @@ fn dump(state: &WatchState) -> String {
     // THE SAME TWO PANELS THE SCREEN DRAWS, so a dump and a terminal never
     // disagree about what the fit found — and so the panels can be checked
     // without a tty.
-    out.push_str("\n  DISCOVERIES\n");
+    // The same heading the screen draws, TRUE TOTALS and all: a dump is how the
+    // panel is checked without a tty, so it must not report a different number.
+    use fuller::evolve::watch::Find;
+    let (snaps, folds, reduces) =
+        (state.found[Find::Snap as usize], state.found[Find::Fold as usize], state.found[Find::Reduce as usize]);
+    let dropped = if state.tidy_reported { format!("{reduces} dropped") } else { "— dropped (the final form has not run)".to_string() };
+    out.push_str(&format!("\n  DISCOVERIES · {snaps} snapped · {folds} folded · {dropped}\n"));
     if state.discoveries.is_empty() {
-        out.push_str("  (none yet · snaps arrive through the run, folds once after it ends)\n");
+        out.push_str("  (none yet · snaps and folds arrive through the run, drops once after it ends)\n");
     }
     for d in state.discoveries.iter().rev().take(12) {
         let tag = match d.kind {
-            fuller::evolve::watch::Find::Snap => "snap",
-            fuller::evolve::watch::Find::Fold => "fold",
+            Find::Snap => "snap",
+            Find::Fold => "fold",
+            Find::Reduce => "drop",
         };
         let size = d.nodes.map_or_else(String::new, |n| format!("{n} nodes "));
         out.push_str(&format!("  gen {:>6}  {tag}  {size}{} -> {}{}\n", d.generation, d.what, d.became, d.times()));

@@ -607,6 +607,20 @@ pub struct Config {
     pub snap_rel_tol: f64,
     /// `_snap_op.py`'s `r2_drop_tol`: how much of the model's train R² a snap may cost.
     pub snap_r2_drop: f64,
+    /// THE FOLD OPERATOR'S beat — Andrew: "this is meant to be found and fixed as
+    /// part of evolution!". Every this many generations the winners of every
+    /// island have their near-constant subtrees collapsed to the constants they
+    /// are, and the clean gene is written back into its own row. 0 = off.
+    ///
+    /// On the pump's beat by default: a blob that is really the number 1 costs the
+    /// search head space every generation it survives, and one measured fit carried
+    /// a 26-position blob for 60,000 of them. See [`Engine::fold_winners`].
+    pub fold_every: u32,
+    /// How many rows of each island, by fitness, the fold examines; 0 = every
+    /// evaluated row. The shape `snap_top_k` has, and for the same reason: the beat
+    /// pays per row it walks, so this is what keeps its cost off the population's
+    /// size.
+    pub fold_top_k: u32,
     /// THE GENEALOGY LOG's file — ALPS's measurement half. None (the default) is
     /// OFF and the engine is what it was, bit for bit: nothing is tracked, no
     /// buffer is read back and no file is written. With a path, every individual
@@ -756,6 +770,13 @@ impl Config {
             snap_top_k: 50,
             snap_rel_tol: 1e-3,
             snap_r2_drop: crate::lint::snap_guard::R2_DROP_TOL,
+            // THE FOLD ON, on the pump's beat and over the same top 50 rows of
+            // every island snap takes. Measured at 1.7 ms a row on a 26-node model
+            // over 240 train rows, which is ~170 ms of a ~1,080 ms beat at one
+            // pair — the search buys back head space a blob was holding, and one
+            // measured fit held 26 positions of it for 60,000 generations.
+            fold_every: pump_every,
+            fold_top_k: 50,
             genealogy_path: None,
             // THE BEAM ON, on the pump's beat. It takes the best individual as
             // it stands and scores thousands of mutations of it against the data
@@ -933,6 +954,9 @@ pub struct Timing {
     pub pump: f64,
     pub cross: f64,
     pub snap: f64,
+    /// What the fold operator costs: the host walk over the winners' subtrees and
+    /// the re-score of the rows it repaired. 0.0 when `Config::fold_every` is 0.
+    pub fold: f64,
     /// What the genealogy costs: the parent read-back and the log's writes. 0.0
     /// when `Config::genealogy_path` is None.
     pub genealogy: f64,
@@ -1990,7 +2014,18 @@ fn near_constant_subtrees(tree: &crate::lint::node::Tree, rows: &[Vec<(String, f
     flat_ones
 }
 
-fn drop_dead_subtrees(tree: &crate::lint::node::Tree, rows: &[Vec<(String, f64)>], agree: f64) -> crate::lint::node::Tree {
+/// LEAVE ONE OUT, AND SAY WHAT WENT — the same way the fold reports what it
+/// folded.
+///
+/// The reduction had the subtree and its mean in hand at the moment it kept a
+/// drop and told nobody: the tree came back smaller and WHICH nest of twenty
+/// calls the data could not see — the interesting half — existed only inside the
+/// loop. A `Drop` is that subtree, recorded where it is taken.
+fn drop_dead_subtrees_reporting(
+    tree: &crate::lint::node::Tree,
+    rows: &[Vec<(String, f64)>],
+    agree: f64,
+) -> (crate::lint::node::Tree, Vec<Drop>) {
     use crate::lint::node::Tree;
     /// Every subtree that could be held at a constant: an application, never a
     /// leaf (a variable IS the model's input) and never the root (that is the
@@ -2021,18 +2056,21 @@ fn drop_dead_subtrees(tree: &crate::lint::node::Tree, rows: &[Vec<(String, f64)>
         let mean = v.iter().sum::<f64>() / v.len() as f64;
         Some((mean, v.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / v.len() as f64))
     };
-    let Ok(reference) = evaluate_math(&tree.to_math(), rows) else { return tree.clone() };
-    let Some((_, var)) = spread(&reference) else { return tree.clone() };
+    let Ok(reference) = evaluate_math(&tree.to_math(), rows) else { return (tree.clone(), Vec::new()) };
+    let Some((_, var)) = spread(&reference) else { return (tree.clone(), Vec::new()) };
     if var <= 0.0 {
-        return tree.clone();
+        return (tree.clone(), Vec::new());
     }
     let mut current = tree.clone();
+    let mut taken: Vec<Drop> = Vec::new();
     // Each round takes at most one subtree, so the tree strictly shrinks and the
     // loop is bounded by its size.
     for _ in 0..tree.node_count() {
         let mut here = Vec::new();
         positions(&current, true, &mut here);
-        let mut best: Option<(usize, Tree)> = None;
+        // The round's winner, and WHICH subtree won it — the drop is the finding,
+        // so it is carried out of the loop rather than inferred from the size.
+        let mut best: Option<(usize, Tree, Tree, f64)> = None;
         for sub in here {
             let Ok(values) = evaluate_math(&sub.to_math(), rows) else { continue };
             let Some((mean, _)) = spread(&values) else { continue };
@@ -2047,16 +2085,19 @@ fn drop_dead_subtrees(tree: &crate::lint::node::Tree, rows: &[Vec<(String, f64)>
             }
             // The biggest saving wins the round; ties go to the smaller result.
             let size = candidate.node_count();
-            if best.as_ref().is_none_or(|(b, _)| size < *b) {
-                best = Some((size, candidate));
+            if best.as_ref().is_none_or(|(b, _, _, _)| size < *b) {
+                best = Some((size, candidate, sub, mean));
             }
         }
         match best {
-            Some((_, next)) => current = next,
+            Some((_, next, sub, held)) => {
+                taken.push(Drop { infix: truncated(&sub.to_infix(), FOLD_INFIX_MAX), held, nodes: sub.node_count() });
+                current = next;
+            }
             None => break,
         }
     }
-    current
+    (current, taken)
 }
 
 /// ONE NEAR-CONSTANT FOLD THAT WAS KEPT — what the rounding generator found.
@@ -2080,10 +2121,90 @@ pub struct Fold {
     pub nodes: usize,
 }
 
+/// ONE SUBTREE THE DATA COULD NOT SEE — what the leave-one-out dropped.
+///
+/// The COMPLEMENT of a [`Fold`] and the reason both are reported. A fold says the
+/// subtree was a constant wearing operators, and the constant it was survives in
+/// the model. A drop says the subtree made no difference to the model's
+/// predictions AT ALL: held at its mean, the model still predicted what it
+/// predicted, so nothing of it is kept and `held` is only what it happened to sit
+/// at while it was proved irrelevant.
+///
+/// Reported for the WINNING form alone. The reduction runs over every candidate
+/// the rewriter produced, and the drops of a form that did not become the answer
+/// are drops from an expression nobody will ever see.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Drop {
+    /// The subtree as infix, truncated for display.
+    pub infix: String,
+    /// The mean it was held at while the model was shown not to need it. NOT a
+    /// value the reported model carries: the drop removed the subtree, and this
+    /// is the number that proved it could go.
+    pub held: f64,
+    /// How many nodes went.
+    pub nodes: usize,
+}
+
 /// How much of a folded subtree's infix is kept. Long enough to see the shape of
 /// the blob — `tanh(exp(cos(log(...` — and short enough for one screen line
 /// beside its value.
 pub const FOLD_INFIX_MAX: usize = 96;
+
+/// The smallest blob the pump's fold will collapse, in GENE POSITIONS.
+///
+/// A fold trades a subtree for one "?" and one constant slot, so collapsing a
+/// two-position subtree buys a single position and spends a slot — no trade at
+/// all. The prize is the other end: a 26-position blob in a gene whose head is
+/// 34, measured on a 60,000-generation bacres1 fit. Four keeps the cheap wins
+/// (`tan(-32*(1/-7))`, five positions) and refuses the ones that are not worth a
+/// constant.
+pub const FOLD_MIN_NODES: usize = 4;
+
+/// HOW MANY GENE POSITIONS the subtree at `pos` spans — its size, which is what a
+/// fold would save.
+///
+/// Karva's level order gives no span directly: a position's children are
+/// elsewhere in the gene, so the subtree is counted by walking it.
+fn subtree_positions(tree: &super::vary::GeneTree, tokens: &[u32], codes: &SymbolCodes, pos: usize) -> usize {
+    let arity = codes.arity[tokens[pos] as usize] as usize;
+    (0..arity).map(|k| subtree_positions(tree, tokens, codes, tree.child[pos] + k)).sum::<usize>() + 1
+}
+
+/// WHICH DECODED NODE a gene position is, so the subtree there can be written as
+/// `Math`.
+///
+/// [`decode_gene`] walks the gene in the same level order [`super::vary::GeneTree`]
+/// numbers it in, so the n-th expressed position is the n-th node — EXCEPT that a
+/// compound symbol expands to several nodes, which shifts everything after it.
+/// The walk below repeats decode's own queue to keep the two in step rather than
+/// assuming they line up.
+fn node_of_position(tree: &super::vary::GeneTree, tokens: &[u32], table: &SymbolTable, pos: usize) -> Option<usize> {
+    let mut at = 0usize;
+    let mut queue = std::collections::VecDeque::from([0usize]);
+    while let Some(p) = queue.pop_front() {
+        if p == pos {
+            return Some(at);
+        }
+        // A compound writes its own operators ABOVE the gene's node, so the node
+        // index advances by the whole expansion and not by one.
+        at += match table.symbols[tokens[p] as usize] {
+            Symbol::Compound(c) => c.expansion().len(),
+            _ => 1,
+        };
+        let arity = table.arity(tokens[p]) as usize;
+        for k in 0..arity {
+            queue.push_back(tree.child[p] + k);
+        }
+    }
+    None
+}
+
+/// THE WORD THAT SAYS THE FINAL FORM HAS RUN, on the note the engine sends after
+/// it. A viewer reads it to tell "nothing was found" from "nothing has happened
+/// yet", which are the same zero and different facts — a fit killed before it
+/// returns never computes a final form at all, and its panel must say so rather
+/// than report a count it does not have.
+pub const TIDY_REPORTED: &str = "final form reported";
 
 /// `text`, cut to `max` CHARACTERS with an ellipsis. Characters, not bytes: an
 /// infix form can hold a multi-byte name, and slicing by byte would panic on it.
@@ -2107,21 +2228,42 @@ pub fn final_form_within(
     rows: &[Vec<(String, f64)>],
     one_minus_r2: Option<f64>,
 ) -> Result<String, String> {
-    final_form_reporting(math, names, rows, one_minus_r2).map(|(form, _)| form)
+    final_form_reporting(math, names, rows, one_minus_r2).map(|t| t.form)
+}
+
+/// WHAT THE FINAL FORM DID: the form itself, and both halves of the tidy.
+///
+/// The two findings are complements and a caller that got one without the other
+/// would be told half of what happened to the model — so they travel together
+/// and the panel draws them apart.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Tidied {
+    /// The reported form.
+    pub form: String,
+    /// Subtrees that were secretly constants, and the constants they were.
+    pub folds: Vec<Fold>,
+    /// Subtrees the data could not see, dropped — of the WINNING form only.
+    pub drops: Vec<Drop>,
 }
 
 /// [`final_form_within`] AND WHAT THE ROUNDING GENERATOR FOUND on the way.
 ///
-/// The folds are a by-product of a pass that already happens: the generator has
-/// the subtree and its value in hand at the moment it keeps one, and this is the
-/// only place that knowledge exists. It is separate from `final_form_within` so
-/// the ten callers that want a string keep taking a string.
+/// The folds and the drops are a by-product of passes that already happen: each
+/// generator has the subtree and its value in hand at the moment it keeps one,
+/// and this is the only place that knowledge exists. It is separate from
+/// `final_form_within` so the ten callers that want a string keep taking a string.
+///
+/// THE DROPS ARE THE WINNER'S ALONE. The reduction runs on every candidate the
+/// rewriter produced — a dozen forms, most of which lose — and reporting all of
+/// their drops would be reporting reductions of expressions that never became the
+/// answer. Each candidate's drops ride with it and only the chosen form's are
+/// returned.
 pub fn final_form_reporting(
     math: &str,
     names: &[String],
     rows: &[Vec<(String, f64)>],
     one_minus_r2: Option<f64>,
-) -> Result<(String, Vec<Fold>), String> {
+) -> Result<Tidied, String> {
     use crate::lint::tables::{Exactness, Tables};
     static TABLES: std::sync::OnceLock<Result<Tables, String>> = std::sync::OnceLock::new();
     let tables = TABLES.get_or_init(Tables::standard).as_ref().map_err(|e| format!("lint tables: {e}"))?;
@@ -2131,7 +2273,7 @@ pub fn final_form_reporting(
     let var = reference.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / n;
     // NaN counts as "not usable" on both tests.
     if var.is_nan() || var <= 0.0 || reference.iter().any(|v| !v.is_finite()) {
-        return Ok((math.to_string(), Vec::new()));
+        return Ok(Tidied { form: math.to_string(), ..Tidied::default() });
     }
     let all = |test: &dyn Fn(f64) -> bool| -> Vec<String> {
         names.iter().filter(|name| rows.iter().all(|r| r.iter().any(|(k, v)| k == *name && test(*v)))).cloned().collect()
@@ -2149,7 +2291,7 @@ pub fn final_form_reporting(
     // form beats a smaller dying one, and among equals the smallest still wins.
     // The incoming `math` is itself a candidate, so a fit whose only forms all
     // die reports what it always did.
-    let mut best: Option<(bool, usize, String, String)> = None;
+    let mut best: Option<(bool, usize, String, String, Vec<Drop>)> = None;
     // Every candidate is offered TWICE: as the rewriter produced it, and with its
     // dead subtrees dropped. The reduction can only shrink a form that already
     // predicts what the model predicts, so the pair costs one extra scoring pass
@@ -2217,26 +2359,31 @@ pub fn final_form_reporting(
         }
         out
     };
-    let with_reductions: Vec<crate::lint::node::Tree> = candidates
+    // Each candidate travels with the drops that made it, so the winner can say
+    // what its own reduction removed and a loser's drops go nowhere.
+    let with_reductions: Vec<(crate::lint::node::Tree, Vec<Drop>)> = candidates
         .into_iter()
         .flat_map(|(tree, _)| {
-            let reduced = drop_dead_subtrees(&tree, rows, drop_agree);
-            if reduced == tree { vec![tree] } else { vec![reduced, tree] }
+            let (reduced, taken) = drop_dead_subtrees_reporting(&tree, rows, drop_agree);
+            if reduced == tree { vec![(tree, Vec::new())] } else { vec![(reduced, taken), (tree, Vec::new())] }
         })
         .collect();
-    for tree in with_reductions.into_iter().chain(folded) {
+    for (tree, drops) in with_reductions.into_iter().chain(folded.into_iter().map(|t| (t, Vec::new()))) {
         let form = tree.to_math();
         let Ok(pred) = evaluate_math(&form, rows) else { continue };
         let drift = pred.iter().zip(&reference).map(|(p, r)| (p - r).powi(2)).sum::<f64>() / n / var;
         if drift.is_nan() || drift > FINAL_FORM_AGREE {
             continue;
         }
-        let key = (tree.dies_on_rounding(), tree.node_count(), tree.to_infix(), form);
+        let key = (tree.dies_on_rounding(), tree.node_count(), tree.to_infix(), form, drops);
         if best.as_ref().is_none_or(|b| (key.0, key.1, &key.2) < (b.0, b.1, &b.2)) {
             best = Some(key);
         }
     }
-    Ok((best.map_or(math.to_string(), |b| b.3), found))
+    Ok(match best {
+        Some((_, _, _, form, drops)) => Tidied { form, folds: found, drops },
+        None => Tidied { form: math.to_string(), folds: found, drops: Vec::new() },
+    })
 }
 
 /// A `Math` expression on rows of named values, in f64, by fuller's own
@@ -2267,6 +2414,9 @@ pub struct Engine {
     scored: Vec<Option<Scored>>,
     /// Snap's resident parts; None when `Config::snap_every` is 0.
     snap: Option<SnapState>,
+    /// The fold operator's resident parts; None when `Config::fold_every` is 0,
+    /// and then nothing in the fit loop touches it.
+    fold: Option<FoldState>,
     /// IDENTITY, AGE and LINEAGE; None when `Config::genealogy_path` is None, and
     /// then nothing in the fit loop touches it and the engine is what it was.
     lineage: Option<LineageState>,
@@ -2354,6 +2504,96 @@ struct SnapState {
     kernel_tables: crate::lint::device::KernelTables,
     guard_data: crate::lint::snap_guard::GuardData,
     counts: SnapCounts,
+}
+
+/// THE FOLD OPERATOR'S resident parts: the rows a subtree is judged flat on, and
+/// what the fits so far have found. None when `Config::fold_every` is 0, and then
+/// nothing in the fit loop touches it.
+struct FoldState {
+    /// The TRAIN rows as the host evaluator takes them, built once.
+    rows: Vec<Vec<(String, f64)>>,
+    counts: FoldCounts,
+}
+
+/// ONE BLOB FOLDED INTO A GENE — what the operator did, not how many times it did
+/// something.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FoldRecord {
+    pub generation: u32,
+    pub row: usize,
+    pub gene: usize,
+    /// What the blob was worth: the value every row agreed on.
+    pub value: f64,
+    /// How many gene positions it spanned — the head space the fold gave back.
+    pub nodes: usize,
+    /// The blob as infix, truncated: `tanh(exp(cos(log(...` is the finding.
+    pub infix: String,
+}
+
+/// WHAT THE FOLD OPERATOR DID, over a fit.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct FoldCounts {
+    pub beats: u64,
+    /// Rows examined, and rows whose genome actually changed.
+    pub rows: u64,
+    pub rows_changed: u64,
+    pub genes_examined: u64,
+    /// Subtrees the operator evaluated on the rows — the beat's real cost.
+    pub subtrees_evaluated: u64,
+    /// Subtrees that were flat enough to fold.
+    pub flat_found: u64,
+    /// Folds written into a gene, and the positions they gave back.
+    pub folded: u64,
+    pub nodes_saved: u64,
+    /// A subtree that did not compute on the rows: a broken expression, not a
+    /// daring one. The only validity gate the operator has.
+    pub not_finite: u64,
+    /// A blob whose value no f32 can carry — counted, never written.
+    pub value_unrepresentable: u64,
+    /// A collapse the gene could not take. A fold SHRINKS a tree, so this should
+    /// stay at zero; where it does not, the number says so instead of hiding it.
+    pub relevel_refused: u64,
+    pub seconds: f64,
+}
+
+impl FoldCounts {
+    pub fn add(&mut self, beat: &FoldCounts) {
+        for (to, from) in [
+            (&mut self.beats, beat.beats),
+            (&mut self.rows, beat.rows),
+            (&mut self.rows_changed, beat.rows_changed),
+            (&mut self.genes_examined, beat.genes_examined),
+            (&mut self.subtrees_evaluated, beat.subtrees_evaluated),
+            (&mut self.flat_found, beat.flat_found),
+            (&mut self.folded, beat.folded),
+            (&mut self.nodes_saved, beat.nodes_saved),
+            (&mut self.not_finite, beat.not_finite),
+            (&mut self.value_unrepresentable, beat.value_unrepresentable),
+            (&mut self.relevel_refused, beat.relevel_refused),
+        ] {
+            *to += from;
+        }
+        self.seconds += beat.seconds;
+    }
+
+    /// One line for the log, the shape `SnapCounts::line` has.
+    pub fn line(&self) -> String {
+        format!(
+            "FOLD\tbeats={}\trows={}\trows_changed={}\tgenes={}\tsubtrees={}\tflat={}\tfolded={}\tnodes_saved={}\tsecs={:.3}\tnot_finite={}/unrepresentable={}/relevel_refused={}",
+            self.beats,
+            self.rows,
+            self.rows_changed,
+            self.genes_examined,
+            self.subtrees_evaluated,
+            self.flat_found,
+            self.folded,
+            self.nodes_saved,
+            self.seconds,
+            self.not_finite,
+            self.value_unrepresentable,
+            self.relevel_refused,
+        )
+    }
 }
 
 impl Engine {
@@ -2460,6 +2700,18 @@ impl Engine {
             }
             None => None,
         };
+        // THE FOLD's rows, built once: the TRAIN block as the host evaluator takes
+        // it. A subtree is judged flat on the data the model is fitted to, so this
+        // is the same block the guard and the final form use.
+        let fold = (config.fold_every > 0).then(|| {
+            let n = data.names.len();
+            let rows: Vec<Vec<(String, f64)>> = data.x
+                .chunks(n)
+                .take(data.splits.n_train)
+                .map(|r| data.names.iter().cloned().zip(r.iter().map(|v| f64::from(*v))).collect())
+                .collect();
+            FoldState { rows, counts: FoldCounts::default() }
+        });
         // THE TELEMETRY rides on the progress report's beat, so a path with the
         // report off would open a file and write one line into it for ever. Say
         // so here rather than leaving an operator watching an empty stream.
@@ -2469,7 +2721,7 @@ impl Engine {
         // HFF ON THE DEVICE, unless the host walk was asked for. Built once: the
         // pipeline is compiled here, not per generation.
         let hff = if config.hff_on_host { None } else { Some(super::hff_gpu::GpuHff::new(&evaluator)?) };
-        Ok(Engine { scored: vec![None; pop as usize], live_cohorts: Vec::new(), cohorts_stale: true, cohorts, resume, slots, config, table, layout, islands, dev, evaluator, scorer, hff, data, caps, col_max: None, snap, lineage: None, telemetry: None })
+        Ok(Engine { scored: vec![None; pop as usize], live_cohorts: Vec::new(), cohorts_stale: true, cohorts, resume, slots, config, table, layout, islands, dev, evaluator, scorer, hff, data, caps, col_max: None, snap, fold, lineage: None, telemetry: None })
     }
 
     /// Score every unevaluated row of `gen`; returns (unique genes, oversized).
@@ -3285,6 +3537,218 @@ impl Engine {
         Ok(changed.len() as u64)
     }
 
+    /// THE FOLD AS A MUTATION OPERATOR, on the pump's beat — Andrew: "this is
+    /// meant to be found and fixed as part of evolution!"
+    ///
+    /// A near-constant subtree is a blob of operators holding one number, and until
+    /// now the engine only ever noticed one AFTER the fit returned. Measured on a
+    /// 60,000-generation strogatz_bacres1 fit: a TWENTY-SIX node subtree whose
+    /// value was 0.999844 on every row — twenty-six operators wearing the number 1
+    /// — carried for the whole run, in a gene whose head is 34. The search paid for
+    /// that head space sixty thousand times and learned nothing from it. Folded at
+    /// a pump beat the gene gets twenty-five positions back, and the search spends
+    /// them on something that varies.
+    ///
+    /// WHERE: the best `fold_top_k` rows of EVERY island, intake and champion
+    /// alike — Andrew: "included as a mutation in all islands". It is a mutation
+    /// like any other and not a privilege of the promotion channel, so it follows
+    /// [`Engine::snap_winners`], the engine's existing per-beat operator over the
+    /// whole population, row for row. The winners are where the long blobs are and
+    /// a top-k keeps the beat's cost off the population's size.
+    ///
+    /// THE CLEAN GENE GOES BACK INTO ITS OWN ROW, as snap's write-back does: this
+    /// is a repair of the individual, not a new candidate beside it. The row is
+    /// left unevaluated so the next generation scores what it now is.
+    ///
+    /// WHAT: per gene, every expressed position whose subtree varies by less than
+    /// [`NEAR_CONSTANT_RANGE`] relative across the train rows, biggest first. The
+    /// biggest flat one is collapsed to a "?" reading its own mean, which is
+    /// `cleanse_gene`'s collapse chosen BY MEASUREMENT instead of by dice — the same
+    /// relevel, the same Dc rebuild, so a fold can only make a gene smaller and the
+    /// refusals that bite a graft (`head_oversize`, `not_closed`) cannot fire.
+    ///
+    /// NO GATE ON THE SUBSTITUTION. The generator does not get to judge what it
+    /// generated: a folded gene goes into the population unevaluated and the
+    /// tournament decides, exactly as the beam's rule reads ("HFF on the data is the
+    /// only judge"). The only refusals are validity — a subtree that does not
+    /// compute, and a mean the Dc domain cannot hold.
+    ///
+    /// Returns how many rows were changed, and what the beat found.
+    fn fold_winners(&mut self, gen: &mut Generation, generation: u32) -> Result<(u64, FoldCounts), String> {
+        let started = Instant::now();
+        let mut counts = FoldCounts { beats: 1, ..FoldCounts::default() };
+        if self.fold.is_none() {
+            return Ok((0, counts));
+        }
+        let l = self.layout;
+        let (width, nr, g_n) = (l.gene_width() as usize, l.n_rnc as usize, l.n_genes as usize);
+        let codes = self.table.codes();
+        let Ok(vhead) = super::virtual_head(self.vhead_at(generation), l) else { return Ok((0, counts)) };
+        let Some(rnc_id) = codes.rnc_id else { return Ok((0, counts)) };
+        let named = self.table.named_values();
+        // The TRAIN rows, built once when the fold was switched on: a subtree is
+        // judged flat on the data the model is fitted to, and rebuilding this per
+        // beat would cost more than the fold does. Moved out of `self` for the
+        // pass and put back at the end, so the walk borrows nothing that the
+        // write-back needs mutably and nothing is copied per beat.
+        let rows = match self.fold.as_mut() {
+            Some(s) if !s.rows.is_empty() => std::mem::take(&mut s.rows),
+            _ => return Ok((0, counts)),
+        };
+        // EVERY ISLAND's best rows, exactly as snap picks them: the fold is a
+        // mutation of the population and not a privilege of one island.
+        let mut winners: Vec<u32> = Vec::new();
+        for island in &self.islands {
+            let ranked = Self::by_fitness(*island, &gen.fitness);
+            let take = if self.config.fold_top_k == 0 { ranked.len() } else { self.config.fold_top_k as usize };
+            winners.extend(ranked.into_iter().take(take));
+        }
+        let mut changed: Vec<usize> = Vec::new();
+        let mut records: Vec<FoldRecord> = Vec::new();
+        for r in winners {
+            let r = r as usize;
+            counts.rows += 1;
+            let row_w = g_n * width;
+            let mut genome = gen.pop.genome[r * row_w..(r + 1) * row_w].to_vec();
+            let mut consts = gen.pop.rnc[r * g_n * nr..(r + 1) * g_n * nr].to_vec();
+            let mut folded_here = false;
+            for g in 0..g_n {
+                let rnc = consts[g * nr..(g + 1) * nr].to_vec();
+                let tokens = &mut genome[g * width..(g + 1) * width];
+                let rnc = &rnc[..];
+                let Some(tree) = super::vary::GeneTree::of(tokens, l, &codes) else { continue };
+                // The gene as nodes, so a subtree at any position has a Math form.
+                let Some(nodes) = decode_gene(tokens, rnc, l, &self.table) else { continue };
+                if nodes.len() > MAX_NODES {
+                    continue;
+                }
+                counts.genes_examined += 1;
+                // Every expressed FUNCTION position, biggest subtree first: folding
+                // the largest flat blob removes the most and takes the ones inside
+                // it with it. The root is fair game — a whole gene that is a
+                // constant is the most extreme case of this, not an exception.
+                let arity = |id: u32| codes.arity[id as usize] as usize;
+                let mut sized: Vec<(usize, usize)> =
+                    (0..tree.n).filter(|&i| arity(tokens[i]) > 0).map(|i| (i, subtree_positions(&tree, tokens, &codes, i))).collect();
+                sized.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+                // The position, its mean, its size and its Math form — the form is
+                // carried out because the blob's own text IS the finding.
+                let mut chosen: Option<(usize, f64, usize, String)> = None;
+                for (pos, size) in sized {
+                    // Only a blob worth the trade: collapsing a two-node subtree
+                    // buys one position and costs a constant slot.
+                    if size < FOLD_MIN_NODES {
+                        continue;
+                    }
+                    // The node index of this gene position, so the subtree can be
+                    // written as Math. A compound expands to several nodes and the
+                    // position's own node is the outermost of them.
+                    let Some(at) = node_of_position(&tree, tokens, &self.table, pos) else { continue };
+                    let math = nodes_to_math_named(&nodes, at, &self.data.names, &named);
+                    counts.subtrees_evaluated += 1;
+                    let Ok(v) = evaluate_math(&math, &rows) else { continue };
+                    if v.is_empty() || v.iter().any(|x| !x.is_finite()) {
+                        counts.not_finite += 1;
+                        continue;
+                    }
+                    let (lo, hi) = v.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), x| (lo.min(*x), hi.max(*x)));
+                    let mean = v.iter().sum::<f64>() / v.len() as f64;
+                    if hi - lo > NEAR_CONSTANT_RANGE * mean.abs().max(1e-300) {
+                        continue;
+                    }
+                    chosen = Some((pos, mean, size, math));
+                    break;
+                }
+                let Some((pos, mean, size, math)) = chosen else { continue };
+                counts.flat_found += 1;
+                // The mean must survive the f32 the device reads, and must sit
+                // inside the Dc domain's own range. A blob holding 1e300 is a real
+                // finding and an unrepresentable constant; it is counted, not
+                // written.
+                let value = mean as f32;
+                if !value.is_finite() || f64::from(value) == 0.0 && mean != 0.0 {
+                    counts.value_unrepresentable += 1;
+                    continue;
+                }
+                // The collapse: gene position `pos` becomes ONE "?" reading the last
+                // constant slot, set to the blob's value. `relevel` rebuilds the Dc
+                // domain, so the slots the removed subtree's own "?"s held are freed
+                // by the same pass that takes them away.
+                let slot = l.n_rnc - 1;
+                let leaf = [super::vary::Graft { token: rnc_id, kids: [0, 0], dc: slot }];
+                let before = consts[g * nr + slot as usize];
+                consts[g * nr + slot as usize] = value;
+                match super::vary::relevel(tokens, l, vhead, &codes, &tree, &[(pos, super::vary::GRAFT)], &leaf) {
+                    Ok(()) => {
+                        counts.folded += 1;
+                        counts.nodes_saved += size as u64 - 1;
+                        folded_here = true;
+                        let infix = crate::lint::node::Tree::parse(&math).map_or_else(|_| math.clone(), |t| t.to_infix());
+                        records.push(FoldRecord { generation, row: r, gene: g, value: mean, nodes: size, infix: truncated(&infix, FOLD_INFIX_MAX) });
+                    }
+                    Err(_) => {
+                        // relevel leaves the gene exactly as it was, so the constant
+                        // it was going to read goes back too.
+                        consts[g * nr + slot as usize] = before;
+                        counts.relevel_refused += 1;
+                    }
+                }
+            }
+            // THE CLEAN GENE GOES BACK INTO ITS OWN ROW. The fold is a repair of
+            // this individual — it keeps its id, its age and its line — so the row
+            // is written in place and left unevaluated, exactly as snap's
+            // write-back leaves a row it grafted into.
+            if folded_here {
+                gen.pop.genome[r * row_w..(r + 1) * row_w].copy_from_slice(&genome);
+                gen.pop.rnc[r * g_n * nr..(r + 1) * g_n * nr].copy_from_slice(&consts);
+                changed.push(r);
+            }
+        }
+        for &r in &changed {
+            gen.fitness[r] = f32::NAN;
+            self.scored[r] = None;
+            if let Some(lin) = self.lineage.as_mut() {
+                let record = lin.tracker.snap(r, generation);
+                lin.log.record("arrival", &record)?;
+            }
+        }
+        counts.rows_changed = changed.len() as u64;
+        counts.seconds = started.elapsed().as_secs_f64();
+        // ONTO THE DISCOVERIES STREAM, mid-fit and with the row it landed in. This
+        // is the honest early report the final form could never give: the fold is
+        // pure host arithmetic over a gene, no rewriter and no saturation, so it
+        // happens DURING the search and says so when it does.
+        self.report_folds_live(&records);
+        if let Some(state) = self.fold.as_mut() {
+            state.rows = rows;
+            state.counts.add(&counts);
+        }
+        Ok((changed.len() as u64, counts))
+    }
+
+    /// The beat's folds onto the telemetry stream, as they are made.
+    ///
+    /// Nothing here may end a fit: a write that fails costs a line of telemetry
+    /// and is reported once, exactly as the rest of the engine's reporting does it.
+    fn report_folds_live(&mut self, records: &[FoldRecord]) {
+        let Some(state) = self.telemetry.as_mut() else { return };
+        for f in records {
+            let message = format!("fold: {} nodes [{}] -> {:.9} into row {} gene {}", f.nodes, f.infix, f.value, f.row, f.gene);
+            let d = telemetry::Discovery {
+                before: None,
+                after: telemetry::finite(f.value),
+                detail: Some(f.infix.clone()),
+                nodes: u32::try_from(f.nodes).ok(),
+                row: u32::try_from(f.row).ok(),
+            };
+            if let Err(e) = state.writer.discovery(f.generation, telemetry::EventKind::Fold, message, d) {
+                eprintln!("TELEMETRY\tthe fold record was lost: {e}");
+                self.telemetry = None;
+                return;
+            }
+        }
+    }
+
     /// THE BEAM — Andrew's "genetic beam search in the neighbourhood": at the
     /// point the engine holds a near miss, thousands of RULE-BASED MUTATIONS of
     /// that one individual are generated, scored on the data with HFF, and the ones
@@ -3581,7 +4045,7 @@ impl Engine {
         // the population exactly as it found it.
         let live = std::mem::replace(&mut self.scored, vec![None; l.pop as usize]);
         // The beat's own cost is the beam's, not decode's or evaluate's.
-        let mut beat = Timing { vary: 0.0, read: 0.0, decode: 0.0, evaluate: 0.0, score: 0.0, hff: 0.0, pump: 0.0, cross: 0.0, snap: 0.0, genealogy: 0.0, beam: 0.0 };
+        let mut beat = Timing { vary: 0.0, read: 0.0, decode: 0.0, evaluate: 0.0, score: 0.0, hff: 0.0, pump: 0.0, cross: 0.0, snap: 0.0, fold: 0.0, genealogy: 0.0, beam: 0.0 };
         let outcome = self.evaluate(&mut scratch, &mut beat);
         let scored = std::mem::replace(&mut self.scored, live);
         outcome?;
@@ -3706,6 +4170,11 @@ impl Engine {
         self.snap.as_ref().map_or_else(SnapCounts::default, |s| s.counts.clone())
     }
 
+    /// The fold operator's counts of this engine's fits so far.
+    pub fn fold_counts(&self) -> FoldCounts {
+        self.fold.as_ref().map_or_else(FoldCounts::default, |s| s.counts.clone())
+    }
+
     /// WHAT THE ROUNDING GENERATOR FOUND, onto the stream — AFTER `run_end`.
     ///
     /// The fold runs in the final form, which is the caller's step and happens
@@ -3718,7 +4187,33 @@ impl Engine {
     /// already computed, so a write that fails costs a line of telemetry and is
     /// reported once, exactly as `report_telemetry` does it.
     pub fn report_folds(&mut self, generation: u32, folds: &[Fold]) {
+        self.report_tidy(generation, folds, &[]);
+    }
+
+    /// BOTH HALVES OF THE TIDY, onto the stream — AFTER `run_end`.
+    ///
+    /// The fold and the leave-one-out are complements: one says a subtree was a
+    /// constant in a costume, the other that a subtree made no difference at all.
+    /// A viewer told about one and not the other is being shown half of what
+    /// happened to the reported model, so both go, under their own kinds.
+    ///
+    /// AND IT ALWAYS SENDS THE SUMMARY, even when both lists are empty. Until
+    /// this note arrives nothing in the stream distinguishes "the final form ran
+    /// and found nothing" from "the final form has not run yet" — and a fit that
+    /// is killed before it returns never runs it at all, which is why a long run
+    /// showed a fold count of zero for its whole life. A panel that cannot tell
+    /// those apart must print a dash, and this note is what lets it stop.
+    pub fn report_tidy(&mut self, generation: u32, folds: &[Fold], drops: &[Drop]) {
         let Some(state) = self.telemetry.as_mut() else { return };
+        let mut send = |kind, message, d| -> bool {
+            match state.writer.discovery(generation, kind, message, d) {
+                Ok(()) => true,
+                Err(e) => {
+                    eprintln!("TELEMETRY\tthe tidy record was lost: {e}");
+                    false
+                }
+            }
+        };
         for f in folds {
             let message = format!("fold: {} nodes [{}] -> {:.9}", f.nodes, f.infix, f.value);
             let d = telemetry::Discovery {
@@ -3728,11 +4223,31 @@ impl Engine {
                 nodes: u32::try_from(f.nodes).ok(),
                 row: None,
             };
-            if let Err(e) = state.writer.discovery(generation, telemetry::EventKind::Fold, message, d) {
-                eprintln!("TELEMETRY\tthe fold record was lost: {e}");
+            if !send(telemetry::EventKind::Fold, message, d) {
                 self.telemetry = None;
                 return;
             }
+        }
+        for r in drops {
+            let message = format!("reduce: {} nodes [{}] the data cannot see, held at {:.9}", r.nodes, r.infix, r.held);
+            let d = telemetry::Discovery {
+                before: None,
+                after: telemetry::finite(r.held),
+                detail: Some(r.infix.clone()),
+                nodes: u32::try_from(r.nodes).ok(),
+                row: None,
+            };
+            if !send(telemetry::EventKind::Reduce, message, d) {
+                self.telemetry = None;
+                return;
+            }
+        }
+        // THE SUMMARY, unconditionally: the line that says the final form has been
+        // computed, so a zero can be read as a zero and not as a not-yet.
+        let message = format!("{TIDY_REPORTED}: {} folded, {} dropped", folds.len(), drops.len());
+        if let Err(e) = state.writer.event(generation, telemetry::EventKind::Note, message, None, None) {
+            eprintln!("TELEMETRY\tthe tidy summary was lost: {e}");
+            self.telemetry = None;
         }
     }
 
@@ -4248,7 +4763,7 @@ impl Engine {
     pub fn fit(&mut self) -> Result<FitResult, String> {
         let c = self.config.clone();
         let started = Instant::now();
-        let mut timing = Timing { vary: 0.0, read: 0.0, decode: 0.0, evaluate: 0.0, score: 0.0, hff: 0.0, pump: 0.0, cross: 0.0, snap: 0.0, genealogy: 0.0, beam: 0.0 };
+        let mut timing = Timing { vary: 0.0, read: 0.0, decode: 0.0, evaluate: 0.0, score: 0.0, hff: 0.0, pump: 0.0, cross: 0.0, snap: 0.0, fold: 0.0, genealogy: 0.0, beam: 0.0 };
         self.dev.init(&InitParams { seed: c.seed, generation: 0, rnc_lo: c.rnc_lo, rnc_hi: c.rnc_hi, n_wrappers: WRAPPERS.len() as u32, vhead: self.vhead_at(0) })?;
         let mut gen = self.dev.read_generation()?;
         gen.fitness.fill(f32::NAN);
@@ -4575,6 +5090,21 @@ impl Engine {
                     }
                 }
                 timing.snap += t.elapsed().as_secs_f64();
+            }
+            // THE FOLD, on its beat and for the same reason snap runs here: the
+            // rows have just been scored, so the winners are the winners, and a
+            // gene repaired now breeds repaired. A blob that is really one number
+            // costs the search head space every generation it survives.
+            if c.fold_every > 0 && generation % c.fold_every == 0 {
+                let t = Instant::now();
+                if self.fold_winners(&mut gen, generation)?.0 > 0 {
+                    let (u, o) = self.evaluate(&mut gen, &mut timing)?;
+                    unique += u;
+                    oversized += o;
+                    self.remember(&mut hof, &gen, generation);
+                    self.dev.write_population(&gen.pop)?;
+                }
+                timing.fold += t.elapsed().as_secs_f64();
             }
             // THE PUMP, on its beat: the islands are where the diversity comes from.
             let t = Instant::now();
@@ -5144,8 +5674,14 @@ mod tests {
         // the product, and the tail is noise the fit cannot resolve.
         let model = r#"(Add (Mul (Var "x_0") (Var "x_1")) (Mul (Num 1e-12) (Sin (Var "x_2"))))"#;
         let tree = Tree::parse(model).expect("parse");
-        let reduced = drop_dead_subtrees(&tree, &rows(), FINAL_FORM_AGREE);
+        let (reduced, drops) = drop_dead_subtrees_reporting(&tree, &rows(), FINAL_FORM_AGREE);
         assert!(reduced.node_count() < tree.node_count(), "nothing dropped: {}", reduced.to_infix());
+        // AND IT SAYS WHAT WENT. A tree that came back smaller is a count; the
+        // subtree the data could not see is the finding.
+        assert!(!drops.is_empty(), "the reduction dropped a subtree and reported nothing");
+        assert!(drops.iter().all(|d| d.nodes > 0 && !d.infix.is_empty()), "{drops:?}");
+        let saved: usize = drops.iter().map(|d| d.nodes).sum();
+        assert!(saved >= tree.node_count() - reduced.node_count(), "the drops account for less than the tree lost: {drops:?}");
         // and what is left predicts what the model predicted
         let (want, got) = (evaluate_math(model, &rows()).unwrap(), evaluate_math(&reduced.to_math(), &rows()).unwrap());
         let mean = want.iter().sum::<f64>() / want.len() as f64;
@@ -5161,7 +5697,10 @@ mod tests {
         use crate::lint::node::Tree;
         let model = r#"(Add (Mul (Var "x_0") (Var "x_1")) (Var "x_2"))"#;
         let tree = Tree::parse(model).expect("parse");
-        assert_eq!(drop_dead_subtrees(&tree, &rows(), FINAL_FORM_AGREE), tree);
+        let (reduced, drops) = drop_dead_subtrees_reporting(&tree, &rows(), FINAL_FORM_AGREE);
+        assert_eq!(reduced, tree);
+        // Nothing dropped is nothing reported: a drop record must mean a drop.
+        assert!(drops.is_empty(), "{drops:?}");
     }
 
     /// A SUBTREE THAT BARELY MOVES IS A CONSTANT WEARING A COSTUME.
@@ -5197,13 +5736,144 @@ mod tests {
         assert!(none.is_empty(), "a varying subtree was called flat: {:?}", none.iter().map(|(t, _)| t.to_infix()).collect::<Vec<_>>());
     }
 
+    /// THE FOLD AS A MUTATION, DURING THE SEARCH — the whole point of the
+    /// operator. A gene carrying a blob that is really one number gets that blob
+    /// replaced by the number, mid-fit, and the head space comes back.
+    ///
+    /// The blob is `Tanh(Add(x_0, 40))`: tanh saturates, so on any rows the toy
+    /// data holds it is 1.0 to eleven decimals — four positions wearing a 1. The
+    /// gene is `Mul(x_0, Tanh(Add(x_0, 40)))` and what must come back is
+    /// `Mul(x_0, ?)` with `?` reading 1.
+    #[test]
+    fn the_fold_operator_collapses_a_blob_in_a_live_gene() {
+        let config = Config { fold_every: 1, fold_top_k: 0, head: 8, ..toy_config(20, 20) };
+        let mut engine = Engine::new(config, toy_data()).expect("an engine");
+        let l = engine.layout;
+        let (width, nr) = (l.gene_width() as usize, l.n_rnc as usize);
+        let codes = engine.table.codes();
+        let mut gen = drawn_generation(&engine, 11);
+        // Gene 0 of row 0, written by hand in Karva order:
+        //   Mul(x_0, Tanh(Add(x_0, Num 40)))
+        let mul = engine.table.function_id(Op::Mul).expect("Mul");
+        let tanh = engine.table.function_id(Op::Tanh).expect("Tanh");
+        let add = engine.table.function_id(Op::Add).expect("Add");
+        let x0 = engine.table.symbols.iter().position(|s| *s == Symbol::Input(0)).expect("x_0") as u32;
+        let rnc_id = codes.rnc_id.expect("the table has a ?");
+        // Level order: Mul, x_0, Tanh, Add, x_0, ?
+        let plan = [mul, x0, tanh, add, x0, rnc_id];
+        let gene = &mut gen.pop.genome[0..width];
+        for (i, &t) in plan.iter().enumerate() {
+            gene[i] = t;
+        }
+        // Every tail position a terminal, so the expression closes.
+        for i in plan.len()..(l.head + l.tail) as usize {
+            gene[i] = x0;
+        }
+        // The gene's one "?" reads Dc slot 0, and slot 0 holds 40.
+        gene[(l.head + l.tail) as usize] = 0;
+        gen.pop.rnc[0] = 40.0;
+        let before = decode_gene(&gen.pop.genome[0..width], &gen.pop.rnc[0..nr], l, &engine.table).expect("the planted gene decodes");
+        assert!(before.len() >= 6, "the planted gene is {} nodes", before.len());
+        // A score this row already carries, so "left unevaluated" is a change and
+        // not the state it started in.
+        engine.scored[0] = Some(Scored {
+            fitness: 0.5, linker: 0, wrapper: 0, a: 1.0, b: 0.0, one_minus_r2: [0.1; 3], t_depth: 1, selection: 0.5, genes: 1,
+        });
+        let (changed, counts) = engine.fold_winners(&mut gen, 4).expect("the fold beat runs");
+        assert!(changed > 0, "nothing was folded: {counts:?}");
+        assert!(counts.folded > 0 && counts.nodes_saved > 0, "{counts:?}");
+        // THE GENE IS SMALLER and the blob is one constant reading 1.
+        let after = decode_gene(&gen.pop.genome[0..width], &gen.pop.rnc[0..nr], l, &engine.table).expect("the folded gene decodes");
+        assert!(after.len() < before.len(), "the fold did not shrink the gene: {} -> {}", before.len(), after.len());
+        let math = nodes_to_math_named(&after, 0, &names(), &engine.table.named_values());
+        let holds_one = (0..nr).any(|k| (f64::from(gen.pop.rnc[k]) - 1.0).abs() < 1e-6);
+        assert!(holds_one, "no constant slot holds the blob's value: {:?}\n{math}", &gen.pop.rnc[0..nr]);
+        // AND THE ROW IS LEFT UNEVALUATED, so the next generation scores what it
+        // now is — the tournament judges the fold, the fold does not judge itself.
+        assert!(gen.fitness[0].is_nan(), "a repaired row kept its old score");
+        assert!(engine.scored[0].is_none(), "a repaired row kept its old Scored");
+        // Nothing the gene could not take: a fold shrinks a tree, so the refusals
+        // that bite a graft must not fire.
+        assert_eq!(counts.relevel_refused, 0, "a shrinking collapse was refused: {counts:?}");
+    }
+
+    /// A GENE WITH NOTHING FLAT IN IT IS LEFT ALONE. The operator may only fire on
+    /// a subtree the data says is a constant.
+    #[test]
+    fn the_fold_operator_leaves_a_gene_that_varies() {
+        let config = Config { fold_every: 1, fold_top_k: 0, head: 8, ..toy_config(20, 20) };
+        let mut engine = Engine::new(config, toy_data()).expect("an engine");
+        let l = engine.layout;
+        let width = l.gene_width() as usize;
+        let codes = engine.table.codes();
+        let mut gen = drawn_generation(&engine, 12);
+        // Mul(x_0, Add(x_1, x_2)) — every subtree of it moves with the data.
+        let mul = engine.table.function_id(Op::Mul).expect("Mul");
+        let add = engine.table.function_id(Op::Add).expect("Add");
+        let id = |c: u32| engine.table.symbols.iter().position(|s| *s == Symbol::Input(c)).expect("a column") as u32;
+        let plan = [mul, id(0), add, id(1), id(2)];
+        for r in 0..l.pop as usize {
+            for g in 0..l.n_genes as usize {
+                let gene = &mut gen.pop.genome[(r * l.n_genes as usize + g) * width..(r * l.n_genes as usize + g + 1) * width];
+                for (i, &t) in plan.iter().enumerate() {
+                    gene[i] = t;
+                }
+                for i in plan.len()..(l.head + l.tail) as usize {
+                    gene[i] = id(0);
+                }
+            }
+        }
+        let _ = codes;
+        let genome_before = gen.pop.genome.clone();
+        let (changed, counts) = engine.fold_winners(&mut gen, 4).expect("the fold beat runs");
+        assert_eq!(changed, 0, "a varying gene was folded: {counts:?}");
+        assert_eq!(gen.pop.genome, genome_before, "the genome moved with nothing to fold");
+        assert_eq!(counts.folded, 0, "{counts:?}");
+        assert!(counts.genes_examined > 0, "the beat examined nothing: {counts:?}");
+    }
+
+    /// WHAT ONE ROW'S FOLD COSTS, measured rather than guessed — the number that
+    /// decides whether the fold can ride the pump beat.
+    #[test]
+    fn measure_the_fold_cost_per_row() {
+        use crate::lint::node::Tree;
+        // A model the size the engine actually reports: the bacres1 fit's shape,
+        // a nest of transcendentals over three variables.
+        let blob = r#"(Tanh (Exp (Cos (Log (Mul (Var "x_1") (Add (Num 1.0) (Sin (Div (Var "x_0") (Add (Var "x_2") (Num 3.0))))))))))"#;
+        let model = format!(
+            r#"(Add (Mul (Num -0.9997) (Var "x_0")) (Add (Num 19.996) (Mul {blob} (Div (Mul (Num -1.9995) (Var "x_1")) (Var "x_0")))))"#
+        );
+        let model = model.as_str();
+        let tree = Tree::parse(model).expect("parse");
+        let r = rows();
+        let n = 20;
+        let t0 = std::time::Instant::now();
+        for _ in 0..n {
+            let _ = near_constant_subtrees(&tree, &r, NEAR_CONSTANT_RANGE);
+        }
+        let per_row = t0.elapsed().as_secs_f64() / f64::from(n);
+        let t1 = std::time::Instant::now();
+        for _ in 0..n {
+            let _ = evaluate_math(model, &r);
+        }
+        let per_eval = t1.elapsed().as_secs_f64() / f64::from(n);
+        eprintln!(
+            "FOLDCOST\tnodes={}\trows={}\tnear_constant_subtrees={:.3}ms\tone_evaluate_math={:.3}ms",
+            tree.node_count(),
+            r.len(),
+            per_row * 1e3,
+            per_eval * 1e3
+        );
+    }
+
     /// AND THE FOLD SAYS WHAT IT FOLDED. A count of folds is a number; "eleven
     /// nodes of tanh(...) were the number 1" is the finding, and it is only
     /// knowable where the generator keeps one.
     #[test]
     fn the_final_form_reports_the_subtrees_it_folded() {
         let model = r#"(Mul (Var "x_0") (Tanh (Add (Var "x_0") (Num 40.0))))"#;
-        let (tidy, folds) = final_form_reporting(model, &names(), &rows(), Some(1e-9)).expect("a final form");
+        let t = final_form_reporting(model, &names(), &rows(), Some(1e-9)).expect("a final form");
+        let (tidy, folds) = (t.form, t.folds);
         assert!(!folds.is_empty(), "the saturated tanh was folded but not reported");
         let f = &folds[0];
         assert!((f.value - 1.0).abs() < 1e-6, "the fold's value is {}, not 1", f.value);
@@ -5216,7 +5886,7 @@ mod tests {
         // A model with nothing flat in it reports no folds — an empty list, never
         // a fold of the model itself (the root is not a subtree).
         let alive = r#"(Add (Mul (Var "x_0") (Var "x_1")) (Var "x_2"))"#;
-        let (_, none) = final_form_reporting(alive, &names(), &rows(), Some(1e-9)).expect("a final form");
+        let none = final_form_reporting(alive, &names(), &rows(), Some(1e-9)).expect("a final form").folds;
         assert!(none.is_empty(), "a model with no flat subtree reported folds: {none:?}");
     }
 
@@ -5236,13 +5906,13 @@ mod tests {
         let model = r#"(Mul (Var "x_0") (Tanh (Add (Var "x_0") (Num 40.0))))"#;
         // An absurdly tight claim about the fit: the old gate scaled its
         // tolerance off this, so at 1e-12 it allowed essentially no movement.
-        let (_, found) = final_form_reporting(model, &names(), &rows(), Some(1e-12)).expect("a final form");
+        let found = final_form_reporting(model, &names(), &rows(), Some(1e-12)).expect("a final form").folds;
         assert!(!found.is_empty(), "a tight fit suppressed the fold generator");
         assert!(found[0].infix.contains("tanh"), "{}", found[0].infix);
         // The same model with no claim at all, and with a loose one: the fold is
         // found either way, because the generator no longer asks the question.
         for claim in [None, Some(1e-3), Some(1.0)] {
-            let (_, f) = final_form_reporting(model, &names(), &rows(), claim).expect("a final form");
+            let f = final_form_reporting(model, &names(), &rows(), claim).expect("a final form").folds;
             assert!(!f.is_empty(), "the fold generator was gated by one_minus_r2 = {claim:?}");
         }
 
@@ -5251,7 +5921,7 @@ mod tests {
         // expression is not a daring candidate — that is a validity gate, not a
         // tolerance. Nothing it produces reaches the pool.
         let broken = r#"(ProtectedLog (Tanh (Sub (Num -40.0) (Var "x_0"))))"#;
-        let (form, _) = final_form_reporting(broken, &names(), &rows(), Some(1e-3)).expect("a final form");
+        let form = final_form_reporting(broken, &names(), &rows(), Some(1e-3)).expect("a final form").form;
         let values = evaluate_math(&form, &rows()).expect("the reported form evaluates");
         assert!(values.iter().all(|v| v.is_finite()), "a fold that does not compute was reported: {form}");
     }
@@ -5268,7 +5938,7 @@ mod tests {
             r#"(Mul (Var "x_0") (Tanh (Add (Var "x_0") (Num 40.0))))"#,
             r#"(Add (Mul (Var "x_0") (Var "x_1")) (Var "x_2"))"#,
         ] {
-            let (form, _) = final_form_reporting(model, &names(), &rows(), Some(1e-12)).expect("a final form");
+            let form = final_form_reporting(model, &names(), &rows(), Some(1e-12)).expect("a final form").form;
             let (want, got) = (evaluate_math(model, &rows()).unwrap(), evaluate_math(&form, &rows()).unwrap());
             let n = want.len() as f64;
             let mean = want.iter().sum::<f64>() / n;
@@ -6073,7 +6743,7 @@ mod tests {
     }
 
     fn fresh_timing() -> Timing {
-        Timing { vary: 0.0, read: 0.0, decode: 0.0, evaluate: 0.0, score: 0.0, hff: 0.0, pump: 0.0, cross: 0.0, snap: 0.0, genealogy: 0.0, beam: 0.0 }
+        Timing { vary: 0.0, read: 0.0, decode: 0.0, evaluate: 0.0, score: 0.0, hff: 0.0, pump: 0.0, cross: 0.0, snap: 0.0, fold: 0.0, genealogy: 0.0, beam: 0.0 }
     }
 
     /// THE DYNAMIC GENE-SUBSET CHOICE. Gene 1 alone IS the law y = x0 * x1; gene 0
@@ -6213,7 +6883,7 @@ mod tests {
                 gen.fitness.iter_mut().for_each(|f| *f = f32::NAN);
                 let mut timing = Timing {
                     vary: 0.0, read: 0.0, decode: 0.0, evaluate: 0.0, score: 0.0,
-                    hff: 0.0, pump: 0.0, cross: 0.0, snap: 0.0, genealogy: 0.0, beam: 0.0,
+                    hff: 0.0, pump: 0.0, cross: 0.0, snap: 0.0, fold: 0.0, genealogy: 0.0, beam: 0.0,
                 };
                 engine.evaluate(&mut gen, &mut timing).expect("evaluate");
                 (engine.scored.clone(), gen.fitness.clone())
@@ -6299,7 +6969,7 @@ mod tests {
             gen.fitness.iter_mut().for_each(|f| *f = f32::NAN);
             let mut timing = Timing {
                 vary: 0.0, read: 0.0, decode: 0.0, evaluate: 0.0, score: 0.0,
-                hff: 0.0, pump: 0.0, cross: 0.0, snap: 0.0, genealogy: 0.0, beam: 0.0,
+                hff: 0.0, pump: 0.0, cross: 0.0, snap: 0.0, fold: 0.0, genealogy: 0.0, beam: 0.0,
             };
             engine.evaluate(&mut gen, &mut timing).expect("evaluate");
             let n_ex = engine.data.splits.n_extrap;
