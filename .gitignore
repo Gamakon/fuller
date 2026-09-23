@@ -17,3 +17,4 @@ dist/
 nucleotable.db
 vendor-egglog/target/
 hof_pickles/
+logs/latest.jsonl
