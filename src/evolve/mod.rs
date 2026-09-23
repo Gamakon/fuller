@@ -13,6 +13,8 @@ pub mod device;
 pub mod engine;
 pub mod genealogy;
 #[cfg(feature = "gpu")]
+pub mod hff_gpu;
+#[cfg(feature = "gpu")]
 pub mod score;
 pub mod smogd;
 pub mod smote;
@@ -26,6 +28,10 @@ pub mod write_back;
 pub const EVOLVE_WGSL: &str = concat!(include_str!("mix64.wgsl"), include_str!("evolve.wgsl"));
 /// The generator in front of the selection and variation kernels (step 2).
 pub const VARY_WGSL: &str = concat!(include_str!("mix64.wgsl"), include_str!("vary.wgsl"));
+/// HFF on the device: the angle from TrueNorth for every candidate of every row,
+/// and the winner. It was a host loop over rows x 45 candidates, which cost 238 s
+/// of a 450 s fit at population 200,000 against 1.49 s of GPU work.
+pub const HFF_WGSL: &str = include_str!("hff.wgsl");
 
 /// The shape of a population. A gene is `head + tail + Dc`, geppy's own layout,
 /// and the Dc domain is as long as the tail.

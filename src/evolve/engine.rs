@@ -1021,6 +1021,19 @@ const HFF_LOG_FLOOR: f64 = 1e-12;
 /// the same. Squared as it stands, an error of 5e-3 weighs 3e-5 and one of 2e-4
 /// weighs 4e-8 — both nothing, and a tournament cannot tell a fake at 1e-3 from a
 /// law at 1e-12. On the log scale they sit at 0.75 and 0.
+/// [`hff_truenorth`] for the device kernel's parity test: the GPU only ranks, but
+/// a ranking that disagrees with this one picks a different individual.
+#[cfg(test)]
+pub fn hff_truenorth_for_test(objectives: &[f64], col_max: &[f64], log_scaled: &[bool]) -> f64 {
+    hff_truenorth(objectives, col_max, log_scaled)
+}
+
+/// [`hff_scaled`] for the same parity test.
+#[cfg(test)]
+pub fn hff_scaled_for_test(objectives: &[f64], col_max: &[f64], log_scaled: &[bool]) -> Option<Vec<f64>> {
+    hff_scaled(objectives, col_max, log_scaled)
+}
+
 fn hff_truenorth(objectives: &[f64], col_max: &[f64], log_scaled: &[bool]) -> f64 {
     let m = objectives.len() as f64;
     let Some(scaled) = hff_scaled(objectives, col_max, log_scaled) else { return std::f64::consts::PI };
