@@ -148,6 +148,11 @@ fn main() {
     //                                   diversity); the hall of fame, the stop bar and the
     //                                   report stay on TrueNorth
     config.balanced_tournaments = std::env::var("EVOLVE_BALANCED_TOURNAMENTS").is_ok_and(|v| v == "1");
+    //   EVOLVE_HFF_ON_HOST=1            the HFF candidate walk runs on the HOST, the way it did
+    //                                   before the kernel existed. For a parity check or a
+    //                                   bisect, not for a benchmark: measured at 238 s of a
+    //                                   450 s fit at population 200,000.
+    config.hff_on_host = std::env::var("EVOLVE_HFF_ON_HOST").is_ok_and(|v| v == "1");
     //   EVOLVE_HOF_FILE                 the hall of fame's best is appended here at every report
     config.hof_path = std::env::var("EVOLVE_HOF_FILE").ok().filter(|p| !p.is_empty());
     //   EVOLVE_PROGRESS_EVERY           a progress line on stderr every N generations (0 = none)

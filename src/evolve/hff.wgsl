@@ -25,6 +25,7 @@ struct HffParams {
     tower: u32,             // 1 = the tower objective joins the vector
     redundancy: u32,        // 1 = the leave-one-gene-out column joins it
     balanced: u32,          // 1 = the selection angle is the balanced pole's
+    n_extrap: u32,          // 0 = there is no extrapolation split, and its 1-R2 stays 0
 }
 
 @group(0) @binding(0) var<uniform> hp: HffParams;
@@ -212,12 +213,22 @@ fn hff_main(@builtin(global_invocation_id) gid: vec3<u32>) {
             win = key;
             win_truenorth = fitness;
             win_at = c;
+            // `Caps::objectives` writes 1-R2 for a block ONLY when that block
+            // exists: with no extrapolation rows it `continue`s past block 2 and
+            // leaves its 1-R2 at zero, never at the infinity a zero variance
+            // would otherwise give. The kernel wrote 1e30 there and the stop bar
+            // reads this array, so a fit with no extrapolation split saw an
+            // enormous third error where the host saw none.
             let v0 = caps[0];
             let v1 = caps[1];
             let v2 = caps[2];
             win_r0 = select(1.0e30, scores[base + 2u] / v0, v0 > 0.0);
             win_r1 = select(1.0e30, scores[base + 3u] / v1, v1 > 0.0);
-            win_r2 = select(1.0e30, scores[base + 5u] / v2, v2 > 0.0);
+            if (hp.n_extrap == 0u) {
+                win_r2 = 0.0;
+            } else {
+                win_r2 = select(1.0e30, scores[base + 5u] / v2, v2 > 0.0);
+            }
         }
     }
     best_fitness[row] = win_truenorth;

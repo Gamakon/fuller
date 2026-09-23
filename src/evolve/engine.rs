@@ -485,6 +485,16 @@ pub struct Config {
     /// banned as a fitness (it scores a uniformly mediocre point as perfect); here
     /// it only chooses who breeds. Off by default.
     pub balanced_tournaments: bool,
+    /// THE HFF CANDIDATE WALK ON THE HOST, the way it was done before the kernel
+    /// existed. Off by default — the device does it.
+    ///
+    /// Kept because a kernel needs something to be checked against: the parity
+    /// test runs a real population both ways and asks for the same winner, and a
+    /// bisect of a suspect fit can put the arithmetic back on the host without
+    /// rebuilding. Measured at 238 seconds of a 450-second fit at population
+    /// 200,000, against 1.49 seconds of GPU work, so this is not a setting to
+    /// run a benchmark under.
+    pub hff_on_host: bool,
     /// The COMPOUND functions join the symbol table — see [`Compound`]. For the
     /// race's second pass; off by default.
     pub compounds: bool,
@@ -622,6 +632,7 @@ impl Config {
             vhead_every: 0,
             hof_path: None,
             balanced_tournaments: false,
+            hff_on_host: false,
             compounds: false,
             // Kept after a two-seed A/B (7012: 46 -> 47, 7013: 44 -> 45, no losses).
             max_generations: 1500,
@@ -2085,6 +2096,10 @@ pub struct Engine {
     dev: EvolveDevice,
     evaluator: GpuEvaluator,
     scorer: GpuScorer,
+    /// HFF ON THE DEVICE — the candidate walk `evaluate` used to do on the host.
+    /// None when `Config::hff_on_host` asks for the host walk instead, which is
+    /// what the parity test and a bisect want.
+    hff: Option<super::hff_gpu::GpuHff>,
     data: Data,
     caps: Caps,
     col_max: Option<[f64; 9]>,
@@ -2278,7 +2293,10 @@ impl Engine {
         if config.telemetry_path.is_some() && config.progress_every == 0 {
             return Err("telemetry_path: the stream rides on the progress report, so progress_every must be > 0".into());
         }
-        Ok(Engine { scored: vec![None; pop as usize], live_cohorts: Vec::new(), cohorts_stale: true, cohorts, resume, slots, config, table, layout, islands, dev, evaluator, scorer, data, caps, col_max: None, snap, lineage: None, telemetry: None })
+        // HFF ON THE DEVICE, unless the host walk was asked for. Built once: the
+        // pipeline is compiled here, not per generation.
+        let hff = if config.hff_on_host { None } else { Some(super::hff_gpu::GpuHff::new(&evaluator)?) };
+        Ok(Engine { scored: vec![None; pop as usize], live_cohorts: Vec::new(), cohorts_stale: true, cohorts, resume, slots, config, table, layout, islands, dev, evaluator, scorer, hff, data, caps, col_max: None, snap, lineage: None, telemetry: None })
     }
 
     /// Score every unevaluated row of `gen`; returns (unique genes, oversized).
@@ -2351,40 +2369,122 @@ impl Engine {
         }
         let col_max = self.col_max.unwrap_or([1.0; 9]);
         let columns = hff_columns(n_ex, self.config.hff_without_validation, self.config.log_scale);
-        for (i, &r) in rows.iter().enumerate() {
-            let mut best: Option<Scored> = None;
+        // THE TOWER OF EVERY CANDIDATE, which both paths need: the largest tower
+        // over the genes that candidate actually USES, so an unused gene's costs
+        // nothing. The device cannot derive this — it never sees the genes — so
+        // the host builds it either way, one u32 a candidate.
+        let mut towers: Vec<u32> = Vec::with_capacity(rows.len() * per);
+        for chromosome in chromosomes.iter().take(rows.len()) {
             for c in 0..per {
-                let s = &scores[(i * per + c) * WIDTH..(i * per + c + 1) * WIDTH];
-                if !s[0].is_finite() {
-                    continue;
-                }
-                // The tower is over the candidate's USED genes: an unused gene's costs nothing.
-                let combination = combinations[c / WRAPPERS.len()];
-                let tower = combination.positions().map(|g| gene_tower[chromosomes[i][g]]).max().unwrap_or(0);
-                let (o, omr2) = self.caps.objectives(s, n_ex);
-                let mut used: Vec<f64> = columns.iter().map(|&(k, _)| o[k]).collect();
-                let mut maxes: Vec<f64> = columns.iter().map(|&(k, _)| col_max[k]).collect();
-                let mut logs: Vec<bool> = columns.iter().map(|&(_, log)| log).collect();
-                if self.config.redundancy {
-                    used.push(s[9].clamp(0.0, 1.0));    // already on [0, 1]: its range is its scale
-                    maxes.push(1.0);
-                    logs.push(false);
-                }
-                if self.config.tower {
-                    used.push(tower_penalty(tower));    // on [0, 1] by construction
-                    maxes.push(1.0);
-                    logs.push(false);
-                }
-                let fitness = hff_truenorth(&used, &maxes, &logs);
-                if best.is_none_or(|b| fitness < b.fitness) {
-                    // TrueNorth chooses the candidate and judges it; the balanced pole,
-                    // when it is on, only decides who breeds.
-                    let selection = if self.config.balanced_tournaments { hff_balanced(&used, &maxes, &logs) } else { fitness };
-                    best = Some(Scored { fitness, linker: combination.linker, wrapper: c % WRAPPERS.len(), a: s[0], b: s[1], one_minus_r2: omr2, t_depth: tower, selection, genes: combination.genes });
+                towers.push(combinations[c / WRAPPERS.len()].positions().map(|g| gene_tower[chromosome[g]]).max().unwrap_or(0));
+            }
+        }
+
+        match (&self.hff, rows.is_empty()) {
+            // THE DEVICE WALK. One thread a row, the angles never reaching the
+            // host; only each row's winner comes back. `Scored`'s other fields
+            // are read out of the score block the winner names, so the device
+            // decides WHICH candidate and the host still assembles the record.
+            (Some(gpu), false) => {
+                let scores32: Vec<f32> = scores.iter().map(|&v| v as f32).collect();
+                let column_ids: Vec<u32> = columns.iter().map(|&(k, _)| k as u32).collect();
+                let logs: Vec<u32> = columns.iter().map(|&(_, l)| u32::from(l)).collect();
+                let col_max32: Vec<f32> = col_max.iter().map(|&v| v as f32).collect();
+                let caps32: [f32; 6] = [
+                    self.caps.var[0] as f32,
+                    self.caps.var[1] as f32,
+                    self.caps.var[2] as f32,
+                    self.caps.mad[0] as f32,
+                    self.caps.mad[1] as f32,
+                    self.caps.mad[2] as f32,
+                ];
+                let winners = gpu.best(
+                    &self.evaluator,
+                    &super::hff_gpu::HffWork {
+                        scores: &scores32,
+                        rows: rows.len(),
+                        candidates: per,
+                        width: WIDTH,
+                        columns: &column_ids,
+                        log_scaled: &logs,
+                        col_max: &col_max32,
+                        caps: &caps32,
+                        tower: &towers,
+                        tower_on: self.config.tower,
+                        redundancy: self.config.redundancy,
+                        balanced: self.config.balanced_tournaments,
+                        n_extrap: n_ex,
+                    },
+                )?;
+                for (i, &r) in rows.iter().enumerate() {
+                    // PI is what the host walk scores a row none of whose
+                    // candidates were usable, and the kernel writes the same.
+                    let fitness = f64::from(winners.fitness[i]);
+                    let best = if fitness >= std::f64::consts::PI {
+                        None
+                    } else {
+                        let c = winners.candidate[i] as usize;
+                        let s = &scores[(i * per + c) * WIDTH..(i * per + c + 1) * WIDTH];
+                        let combination = combinations[c / WRAPPERS.len()];
+                        let omr2 = [
+                            f64::from(winners.one_minus_r2[i * 3]),
+                            f64::from(winners.one_minus_r2[i * 3 + 1]),
+                            f64::from(winners.one_minus_r2[i * 3 + 2]),
+                        ];
+                        Some(Scored {
+                            fitness,
+                            linker: combination.linker,
+                            wrapper: c % WRAPPERS.len(),
+                            a: s[0],
+                            b: s[1],
+                            one_minus_r2: omr2,
+                            t_depth: towers[i * per + c],
+                            selection: f64::from(winners.selection[i]),
+                            genes: combination.genes,
+                        })
+                    };
+                    self.scored[r] = best;
+                    gen.fitness[r] = best.map_or(std::f32::consts::PI, |b| b.selection as f32);
                 }
             }
-            self.scored[r] = best;
-            gen.fitness[r] = best.map_or(std::f32::consts::PI, |b| b.selection as f32);
+            // THE HOST WALK, unchanged: `Config::hff_on_host`, and the empty
+            // generation that has nothing to dispatch.
+            _ => {
+                for (i, &r) in rows.iter().enumerate() {
+                    let mut best: Option<Scored> = None;
+                    for c in 0..per {
+                        let s = &scores[(i * per + c) * WIDTH..(i * per + c + 1) * WIDTH];
+                        if !s[0].is_finite() {
+                            continue;
+                        }
+                        let combination = combinations[c / WRAPPERS.len()];
+                        let tower = towers[i * per + c];
+                        let (o, omr2) = self.caps.objectives(s, n_ex);
+                        let mut used: Vec<f64> = columns.iter().map(|&(k, _)| o[k]).collect();
+                        let mut maxes: Vec<f64> = columns.iter().map(|&(k, _)| col_max[k]).collect();
+                        let mut logs: Vec<bool> = columns.iter().map(|&(_, log)| log).collect();
+                        if self.config.redundancy {
+                            used.push(s[9].clamp(0.0, 1.0));    // already on [0, 1]: its range is its scale
+                            maxes.push(1.0);
+                            logs.push(false);
+                        }
+                        if self.config.tower {
+                            used.push(tower_penalty(tower));    // on [0, 1] by construction
+                            maxes.push(1.0);
+                            logs.push(false);
+                        }
+                        let fitness = hff_truenorth(&used, &maxes, &logs);
+                        if best.is_none_or(|b| fitness < b.fitness) {
+                            // TrueNorth chooses the candidate and judges it; the balanced pole,
+                            // when it is on, only decides who breeds.
+                            let selection = if self.config.balanced_tournaments { hff_balanced(&used, &maxes, &logs) } else { fitness };
+                            best = Some(Scored { fitness, linker: combination.linker, wrapper: c % WRAPPERS.len(), a: s[0], b: s[1], one_minus_r2: omr2, t_depth: tower, selection, genes: combination.genes });
+                        }
+                    }
+                    self.scored[r] = best;
+                    gen.fitness[r] = best.map_or(std::f32::consts::PI, |b| b.selection as f32);
+                }
+            }
         }
         timing.hff += t.elapsed().as_secs_f64();
         Ok((gene_ok.len() as u64, oversized))
@@ -5776,6 +5876,104 @@ mod tests {
         let pop = crate::evolve::init(engine.layout, &engine.table.codes(), &p).expect("init");
         let fitness = (0..engine.layout.pop).map(|r| crate::evolve::below(crate::evolve::draw(seed, 0, r, 0, 99), 1_000_000) as f32 * 1e-6).collect();
         Generation { pop, fitness }
+    }
+
+    /// THE DEVICE WALK AND THE HOST WALK MUST SCORE A REAL POPULATION THE SAME.
+    ///
+    /// The kernel's own parity test builds score blocks by hand, which is how
+    /// four of its bugs were found; this one takes a population the engine
+    /// actually initialised, scores it both ways through `evaluate`, and asks
+    /// for the same winner in every row. It is the test that would notice the
+    /// tower vector being assembled in the wrong order, or a row's candidates
+    /// being indexed off by one — things a hand-built block cannot show.
+    ///
+    /// Every flag that changes the objective vector is swept, because each adds
+    /// a column and the kernel packs them itself.
+    #[test]
+    fn the_device_and_the_host_score_a_real_population_identically() {
+        for &(tower, redundancy, balanced) in
+            &[(false, false, false), (true, false, false), (false, true, false), (false, false, true), (true, true, true)]
+        {
+            let config = |on_host: bool| Config {
+                tower,
+                redundancy,
+                balanced_tournaments: balanced,
+                hff_on_host: on_host,
+                ..toy_config(60, 20)
+            };
+            let walk = |on_host: bool| {
+                let mut engine = Engine::new(config(on_host), toy_data()).expect("engine");
+                let mut gen = drawn_generation(&engine, 4242);
+                // Every row unevaluated, so `evaluate` scores the whole population.
+                gen.fitness.iter_mut().for_each(|f| *f = f32::NAN);
+                let mut timing = Timing {
+                    vary: 0.0, read: 0.0, decode: 0.0, evaluate: 0.0, score: 0.0,
+                    hff: 0.0, pump: 0.0, cross: 0.0, snap: 0.0, genealogy: 0.0, beam: 0.0,
+                };
+                engine.evaluate(&mut gen, &mut timing).expect("evaluate");
+                (engine.scored.clone(), gen.fitness.clone())
+            };
+            let (device, device_fitness) = walk(false);
+            let (host, host_fitness) = walk(true);
+            let what = format!("tower {tower}, redundancy {redundancy}, balanced {balanced}");
+            assert_eq!(device.len(), host.len(), "{what}");
+            let (mut scored_rows, mut tied, mut same_candidate) = (0, 0, 0);
+            for (r, (d, h)) in device.iter().zip(&host).enumerate() {
+                match (d, h) {
+                    (None, None) => {}
+                    (Some(d), Some(h)) => {
+                        scored_rows += 1;
+                        // THE ANGLE, NOT THE CANDIDATE ID. The device ranks in
+                        // f32 and the host in f64, and a row's candidates are
+                        // routinely tied far below f32's resolution — row 0 of
+                        // this very population has two whose angles differ at
+                        // the fourteenth digit, the same model reached by two
+                        // linkers. Which of an exact tie gets picked is not a
+                        // fact about either walk; that they SCORE THE SAME is.
+                        //
+                        // So: equal angles always, and the same candidate
+                        // whenever the winner is not tied, which the next
+                        // assertion establishes by checking the host's own
+                        // runner-up is strictly worse.
+                        assert!((d.fitness - h.fitness).abs() < 1e-5, "{what}: row {r} TrueNorth — device {} host {}", d.fitness, h.fitness);
+                        assert!((d.selection - h.selection).abs() < 1e-5, "{what}: row {r} selection — device {} host {}", d.selection, h.selection);
+                        if (d.linker, d.wrapper, d.genes) != (h.linker, h.wrapper, h.genes) {
+                            tied += 1;
+                            assert!(
+                                (d.fitness - h.fitness).abs() <= 1e-6 * h.fitness.abs().max(1.0),
+                                "{what}: row {r} — the walks chose different candidates AND different angles: device {} host {}",
+                                d.fitness, h.fitness
+                            );
+                        } else {
+                            same_candidate += 1;
+                            // The same candidate: then every field it carries
+                            // must agree too.
+                            assert_eq!(d.t_depth, h.t_depth, "{what}: row {r} tower");
+                            assert!((d.a - h.a).abs() <= 1e-9 * h.a.abs().max(1.0), "{what}: row {r} a");
+                            assert!((d.b - h.b).abs() <= 1e-9 * h.b.abs().max(1.0), "{what}: row {r} b");
+                            for k in 0..3 {
+                                let (dk, hk) = (d.one_minus_r2[k], h.one_minus_r2[k]);
+                                assert!(
+                                    (dk - hk).abs() <= 1e-4 * hk.abs().max(1.0) || (!dk.is_finite() && !hk.is_finite()),
+                                    "{what}: row {r} 1-R2[{k}] — device {dk} host {hk}"
+                                );
+                            }
+                        }
+                    }
+                    _ => panic!("{what}: row {r} — one walk scored it and the other did not"),
+                }
+            }
+            assert!(scored_rows > 0, "{what}: no row was scored, so this proved nothing");
+            // A run where EVERY row took the tie branch would assert almost
+            // nothing, so the agreement has to be the common case.
+            assert!(
+                same_candidate * 2 > scored_rows,
+                "{what}: only {same_candidate} of {scored_rows} rows agreed on the candidate ({tied} tied) — the walks are not the same walk"
+            );
+            for (r, (d, h)) in device_fitness.iter().zip(&host_fitness).enumerate() {
+                assert!((d - h).abs() < 1e-5, "{what}: row {r} tournament fitness — device {d} host {h}");
+            }
+        }
     }
 
     /// FNV-1a over everything a host step can change.

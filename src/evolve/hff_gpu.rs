@@ -35,6 +35,12 @@ struct HffParams {
     tower: u32,
     redundancy: u32,
     balanced: u32,
+    n_extrap: u32,
+    /// WGSL rounds a uniform struct up to a 16-byte multiple. Nine u32 is 36
+    /// bytes, so three more are uploaded whatever this says; naming them keeps
+    /// what Rust writes and what the shader reads the same size by
+    /// construction, rather than by luck.
+    padding: [u32; 3],
 }
 
 /// The winner of each row: its TrueNorth angle, which candidate it was, the
@@ -51,6 +57,33 @@ pub struct HffWinners {
     pub selection: Vec<f32>,
     pub candidate: Vec<u32>,
     pub one_minus_r2: Vec<f32>,
+}
+
+/// ONE BEAT OF THE CANDIDATE WALK: the scoring kernel's output, and everything
+/// needed to turn it into an angle. A struct rather than thirteen arguments,
+/// because the four `bool`s at the end of a positional list are exactly the
+/// kind of thing that gets transposed silently.
+pub struct HffWork<'a> {
+    /// `rows * candidates` blocks of `width` f32, as the scorer wrote them.
+    pub scores: &'a [f32],
+    pub rows: usize,
+    pub candidates: usize,
+    pub width: usize,
+    /// Which of the nine objective columns HFF is over, and whether each is
+    /// log scaled. The two are the same length.
+    pub columns: &'a [u32],
+    pub log_scaled: &'a [u32],
+    pub col_max: &'a [f32],
+    /// `var[3]` then `mad[3]`: the constant model's error on each split.
+    pub caps: &'a [f32; 6],
+    /// The tower depth of every candidate, `rows * candidates` of them.
+    pub tower: &'a [u32],
+    pub tower_on: bool,
+    pub redundancy: bool,
+    pub balanced: bool,
+    /// How many extrapolation rows there are. Zero means that block does not
+    /// exist and its 1-R2 stays zero, which is what `Caps::objectives` does.
+    pub n_extrap: usize,
 }
 
 pub struct GpuHff {
@@ -101,25 +134,17 @@ impl GpuHff {
 
     /// The best candidate of every row. `scores` is the scoring kernel's output,
     /// `rows * candidates` rows of `width` f32.
-    #[allow(clippy::too_many_arguments)]
-    pub fn best(
-        &self,
-        evaluator: &GpuEvaluator,
-        scores: &[f32],
-        rows: usize,
-        candidates: usize,
-        width: usize,
-        columns: &[u32],
-        log_scaled: &[u32],
-        col_max: &[f32],
-        caps: &[f32; 6],
-        tower: &[u32],
-        flags: (bool, bool, bool),
-    ) -> Result<HffWinners, String> {
+    pub fn best(&self, evaluator: &GpuEvaluator, work: &HffWork) -> Result<HffWinners, String> {
+        let HffWork { scores, rows, candidates, width, columns, log_scaled, col_max, caps, tower, tower_on, redundancy, balanced, n_extrap } = *work;
         if scores.len() != rows * candidates * width {
             return Err(format!("scores: {} values for {rows} x {candidates} x {width}", scores.len()));
         }
-        let (tower_on, redundancy, balanced) = flags;
+        if tower.len() != rows * candidates {
+            return Err(format!("tower: {} values for {rows} x {candidates}", tower.len()));
+        }
+        if columns.len() != log_scaled.len() {
+            return Err(format!("columns: {} ids against {} log flags", columns.len(), log_scaled.len()));
+        }
         let device = evaluator.device();
         let queue = evaluator.queue();
         let params = HffParams {
@@ -131,6 +156,8 @@ impl GpuHff {
             tower: u32::from(tower_on),
             redundancy: u32::from(redundancy),
             balanced: u32::from(balanced),
+            n_extrap: n_extrap as u32,
+            padding: [0; 3],
         };
         let uniform = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("hff params"),
@@ -303,16 +330,21 @@ mod tests {
                     let winners = gpu
                         .best(
                             &evaluator,
-                            &scores,
-                            rows,
-                            per,
-                            WIDTH,
-                            &column_ids,
-                            &logs,
-                            &col_max_f32,
-                            &caps,
-                            &tower,
-                            (tower_on, redundancy, balanced),
+                            &super::HffWork {
+                                scores: &scores,
+                                rows,
+                                candidates: per,
+                                width: WIDTH,
+                                columns: &column_ids,
+                                log_scaled: &logs,
+                                col_max: &col_max_f32,
+                                caps: &caps,
+                                tower: &tower,
+                                tower_on,
+                                redundancy,
+                                balanced,
+                                n_extrap,
+                            },
                         )
                         .expect("dispatch");
                     let what = format!("n_extrap {n_extrap}, log {log_scale:?}, tower {tower_on}, redundancy {redundancy}, balanced {balanced}");
