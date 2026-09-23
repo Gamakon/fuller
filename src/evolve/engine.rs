@@ -1820,6 +1820,41 @@ fn drop_dead_subtrees(tree: &crate::lint::node::Tree, rows: &[Vec<(String, f64)>
     current
 }
 
+/// ONE NEAR-CONSTANT FOLD THAT WAS KEPT — what the rounding generator found.
+///
+/// The counts and the final string say a model got smaller; they never say WHAT
+/// was folded away, and that is the interesting half. The fit that motivated the
+/// generator folded fourteen nodes of `tanh(exp(cos(log(...))))` spanning
+/// [0.9976, 1.0000] to the number 1 — the finding is not "the model shrank", it
+/// is "thirteen operators were wearing a 1".
+///
+/// Only a fold that PASSED the drift check is recorded: a flat subtree the
+/// candidate scoring then refused is not a discovery, it is a rejected guess.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Fold {
+    /// The subtree as infix, truncated for display — a fourteen-node blob is the
+    /// point, but its full text is not a screen line.
+    pub infix: String,
+    /// The value it was folded to.
+    pub value: f64,
+    /// How many nodes went, which is the size of the finding.
+    pub nodes: usize,
+}
+
+/// How much of a folded subtree's infix is kept. Long enough to see the shape of
+/// the blob — `tanh(exp(cos(log(...` — and short enough for one screen line
+/// beside its value.
+pub const FOLD_INFIX_MAX: usize = 96;
+
+/// `text`, cut to `max` CHARACTERS with an ellipsis. Characters, not bytes: an
+/// infix form can hold a multi-byte name, and slicing by byte would panic on it.
+fn truncated(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        return text.to_string();
+    }
+    text.chars().take(max.saturating_sub(1)).collect::<String>() + "…"
+}
+
 pub fn final_form(math: &str, names: &[String], rows: &[Vec<(String, f64)>]) -> Result<String, String> {
     final_form_within(math, names, rows, None)
 }
@@ -1833,6 +1868,21 @@ pub fn final_form_within(
     rows: &[Vec<(String, f64)>],
     one_minus_r2: Option<f64>,
 ) -> Result<String, String> {
+    final_form_reporting(math, names, rows, one_minus_r2).map(|(form, _)| form)
+}
+
+/// [`final_form_within`] AND WHAT THE ROUNDING GENERATOR FOUND on the way.
+///
+/// The folds are a by-product of a pass that already happens: the generator has
+/// the subtree and its value in hand at the moment it keeps one, and this is the
+/// only place that knowledge exists. It is separate from `final_form_within` so
+/// the ten callers that want a string keep taking a string.
+pub fn final_form_reporting(
+    math: &str,
+    names: &[String],
+    rows: &[Vec<(String, f64)>],
+    one_minus_r2: Option<f64>,
+) -> Result<(String, Vec<Fold>), String> {
     use crate::lint::tables::{Exactness, Tables};
     static TABLES: std::sync::OnceLock<Result<Tables, String>> = std::sync::OnceLock::new();
     let tables = TABLES.get_or_init(Tables::standard).as_ref().map_err(|e| format!("lint tables: {e}"))?;
@@ -1842,7 +1892,7 @@ pub fn final_form_within(
     let var = reference.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / n;
     // NaN counts as "not usable" on both tests.
     if var.is_nan() || var <= 0.0 || reference.iter().any(|v| !v.is_finite()) {
-        return Ok(math.to_string());
+        return Ok((math.to_string(), Vec::new()));
     }
     let all = |test: &dyn Fn(f64) -> bool| -> Vec<String> {
         names.iter().filter(|name| rows.iter().all(|r| r.iter().any(|(k, v)| k == *name && test(*v)))).cloned().collect()
@@ -1888,6 +1938,9 @@ pub fn final_form_within(
     // scored against the reference like every other, below — but it is not held
     // to a precision that only an overfit has.
     let flat_agree = one_minus_r2.map_or(FINAL_FORM_AGREE, |e| (e * 10.0).max(FINAL_FORM_AGREE));
+    // The folds THEMSELVES, beside the candidates they produced: what was folded
+    // and to what, recorded where the generator keeps one and nowhere else.
+    let mut found: Vec<Fold> = Vec::new();
     let folded: Vec<crate::lint::node::Tree> = {
         let mut out = Vec::new();
         let mut current = crate::lint::node::Tree::parse(math).ok();
@@ -1905,6 +1958,7 @@ pub fn final_form_within(
                 if drift > flat_agree * var {
                     continue;
                 }
+                found.push(Fold { infix: truncated(&sub.to_infix(), FOLD_INFIX_MAX), value, nodes: sub.node_count() });
                 out.push(candidate.clone());
                 current = Some(candidate);
                 moved = true;
@@ -1935,7 +1989,7 @@ pub fn final_form_within(
             best = Some(key);
         }
     }
-    Ok(best.map_or(math.to_string(), |b| b.3))
+    Ok((best.map_or(math.to_string(), |b| b.3), found))
 }
 
 /// A `Math` expression on rows of named values, in f64, by fuller's own
@@ -2011,6 +2065,12 @@ struct TelemetryState {
     /// say `—` for fresh-line survival honestly in a window with no pump in it,
     /// rather than calling healthy inactivity zero.
     pumps_since: u32,
+    /// How many of snap's substitutions have been written as events. The ring
+    /// they come from holds only the last [`super::write_back::SNAP_RING`], so a
+    /// beat that grafted more than that drops the oldest before this ever sees
+    /// them; the counter is what stops the ones that ARE there being written
+    /// twice, and the gap is reported rather than hidden.
+    snaps_written: u64,
 }
 
 /// What the genealogy keeps for the length of a fit: the identities of the
@@ -2776,15 +2836,37 @@ impl Engine {
                 }
                 let decision = &guarded.decisions[e];
                 let Some(slot) = decision.slot.filter(|_| decision.status == Verdict::Kept) else { continue };
-                let grafts: Vec<_> = variant_sites(expr, hits, slot)
+                // The literal each site carried BEFORE, read from the flat
+                // expression where it still stands — the gene position the graft
+                // is keyed on is a position, not a value.
+                let at = variant_sites(expr, hits, slot);
+                let before: Vec<f64> = at.iter().map(|i| expr.nodes[*i].lit).collect();
+                let grafts: Vec<_> = at
                     .into_iter()
                     .map(|i| Ok((sites[e][i].ok_or("the guard kept a variant that grafts a literal snap did not offer")?, hits[i].ok_or("a grafted site with no hit")?)))
-                    .collect::<Result<_, String>>()?;
+                    .collect::<Result<Vec<_>, String>>()?;
                 let (r, g) = owner[e];
                 let tokens = &mut gen.pop.genome[(r * g_n + g) * width..(r * g_n + g + 1) * width];
                 let consts = &mut gen.pop.rnc[(r * g_n + g) * nr..(r * g_n + g + 1) * nr];
                 let status = write_back(tokens, consts, l, vhead, &self.table, &grafts, &state.table);
                 counts.count(status);
+                // WHAT IT DID, not only that it did something. Only on `Grafted`:
+                // the gene really carries the named constant now, and the parse
+                // and the two prints below ride on that rarest branch alone.
+                if status == WriteBack::Grafted {
+                    for ((_, hit), before) in grafts.iter().zip(&before) {
+                        let form = crate::lint::node::Tree::parse(&state.table.maths[hit.entry as usize])
+                            .map_or_else(|_| state.table.maths[hit.entry as usize].clone(), |t| t.to_infix());
+                        counts.remember(super::write_back::SnapRecord {
+                            generation,
+                            row: r,
+                            gene: g,
+                            before: *before,
+                            after: if hit.negative { format!("-({form})") } else { form },
+                            after_value: state.table.signed_value(*hit),
+                        });
+                    }
+                }
                 if status == WriteBack::Grafted && !changed.contains(&r) {
                     changed.push(r);
                 }
@@ -3230,6 +3312,36 @@ impl Engine {
         self.snap.as_ref().map_or_else(SnapCounts::default, |s| s.counts.clone())
     }
 
+    /// WHAT THE ROUNDING GENERATOR FOUND, onto the stream — AFTER `run_end`.
+    ///
+    /// The fold runs in the final form, which is the caller's step and happens
+    /// once the fit has returned, so these events genuinely come after the line
+    /// that says the run is over. That is not a gap: the discovery was made then.
+    /// A viewer reads them as it reads any other event, and the stream stays
+    /// ordered because the generation given is the fit's last.
+    ///
+    /// Nothing here may end anything: the fit is already finished and its result
+    /// already computed, so a write that fails costs a line of telemetry and is
+    /// reported once, exactly as `report_telemetry` does it.
+    pub fn report_folds(&mut self, generation: u32, folds: &[Fold]) {
+        let Some(state) = self.telemetry.as_mut() else { return };
+        for f in folds {
+            let message = format!("fold: {} nodes [{}] -> {:.9}", f.nodes, f.infix, f.value);
+            let d = telemetry::Discovery {
+                before: None,
+                after: telemetry::finite(f.value),
+                detail: Some(f.infix.clone()),
+                nodes: u32::try_from(f.nodes).ok(),
+                row: None,
+            };
+            if let Err(e) = state.writer.discovery(generation, telemetry::EventKind::Fold, message, d) {
+                eprintln!("TELEMETRY\tthe fold record was lost: {e}");
+                self.telemetry = None;
+                return;
+            }
+        }
+    }
+
     /// The virtual head at `generation` — see `Config::vhead_every`. 0 = the whole
     /// head (what `InitParams` / `GenParams` take for "the ordinary gene").
     pub fn vhead_at(&self, generation: u32) -> u32 {
@@ -3516,6 +3628,20 @@ impl Engine {
             None => Vec::new(),
         };
         let improved = self.telemetry.as_ref().is_some_and(|s| best.fitness < s.best_seen);
+        // THE SUBSTITUTIONS SNAP HAS MADE since the last beat. They are read from
+        // the ring snap already fills, so nothing is scanned or formatted twice,
+        // and the ones the ring dropped between beats are counted rather than
+        // pretended away.
+        let snaps: (Vec<super::write_back::SnapRecord>, u64, u64) = match (self.snap.as_ref(), self.telemetry.as_ref()) {
+            (Some(snap), Some(t)) => {
+                let total = snap.counts.substitutions;
+                let fresh = total.saturating_sub(t.snaps_written);
+                let held = snap.counts.recent.len() as u64;
+                let take = fresh.min(held) as usize;
+                (snap.counts.recent.iter().rev().take(take).rev().cloned().collect(), total, fresh.saturating_sub(held))
+            }
+            _ => (Vec::new(), 0, 0),
+        };
         let model = hof.filter(|h| self.telemetry.as_ref().is_some_and(|s| s.model_written != Some(h.best.fitness)));
         // The model's two forms are a parse and two prints of an expression that
         // is already in hand — no egglog, no data, no rescoring. The SIMPLIFIED
@@ -3551,6 +3677,32 @@ impl Engine {
                     Some(best.fitness),
                 )?;
             }
+            // The discoveries go out BEFORE the snapshot, as the births and
+            // deaths above do: an operator reads what changed over the frame it
+            // changed in.
+            if snaps.2 > 0 {
+                state.writer.event(
+                    generation,
+                    telemetry::EventKind::Note,
+                    format!("{} more snap substitutions than the log holds: their detail was dropped", snaps.2),
+                    None,
+                    None,
+                )?;
+            }
+            for s in &snaps.0 {
+                state.writer.discovery(
+                    s.generation,
+                    telemetry::EventKind::Snap,
+                    format!("snap: {:.9} -> {} (row {}, gene {})", s.before, s.after, s.row, s.gene),
+                    telemetry::Discovery {
+                        before: telemetry::finite(s.before),
+                        after: telemetry::finite(s.after_value),
+                        detail: Some(s.after.clone()),
+                        nodes: None,
+                        row: u32::try_from(s.row).ok(),
+                    },
+                )?;
+            }
             if let Some(m) = model {
                 let fitness = m.hff;
                 state.writer.model(generation, m)?;
@@ -3567,6 +3719,7 @@ impl Engine {
             state.best_seen = state.best_seen.min(best.fitness);
             state.cohorts_seen = now;
             state.pumps_since = 0;
+            state.snaps_written = snaps.1;
         }
     }
 
@@ -3742,6 +3895,7 @@ impl Engine {
                     cohorts_seen: std::collections::BTreeSet::new(),
                     model_written: None,
                     pumps_since: 0,
+                    snaps_written: 0,
                 })
             }
             None => None,
@@ -4524,6 +4678,43 @@ mod tests {
         let alive = Tree::parse(r#"(Mul (Var "x_0") (Add (Var "x_1") (Num 1.0)))"#).expect("parse");
         let none = near_constant_subtrees(&alive, &rows(), NEAR_CONSTANT_RANGE);
         assert!(none.is_empty(), "a varying subtree was called flat: {:?}", none.iter().map(|(t, _)| t.to_infix()).collect::<Vec<_>>());
+    }
+
+    /// AND THE FOLD SAYS WHAT IT FOLDED. A count of folds is a number; "eleven
+    /// nodes of tanh(...) were the number 1" is the finding, and it is only
+    /// knowable where the generator keeps one.
+    #[test]
+    fn the_final_form_reports_the_subtrees_it_folded() {
+        let model = r#"(Mul (Var "x_0") (Tanh (Add (Var "x_0") (Num 40.0))))"#;
+        let (tidy, folds) = final_form_reporting(model, &names(), &rows(), Some(1e-9)).expect("a final form");
+        assert!(!folds.is_empty(), "the saturated tanh was folded but not reported");
+        let f = &folds[0];
+        assert!((f.value - 1.0).abs() < 1e-6, "the fold's value is {}, not 1", f.value);
+        assert!(f.nodes >= 3, "a fold of {} nodes is not the tanh subtree", f.nodes);
+        assert!(f.infix.contains("tanh"), "the reported subtree is not the one folded: {}", f.infix);
+        // The string half is the SAME answer the plain entry point gives: the
+        // reporting version is the one function, not a second implementation.
+        assert_eq!(tidy, final_form_within(model, &names(), &rows(), Some(1e-9)).expect("a final form"));
+
+        // A model with nothing flat in it reports no folds — an empty list, never
+        // a fold of the model itself (the root is not a subtree).
+        let alive = r#"(Add (Mul (Var "x_0") (Var "x_1")) (Var "x_2"))"#;
+        let (_, none) = final_form_reporting(alive, &names(), &rows(), Some(1e-9)).expect("a final form");
+        assert!(none.is_empty(), "a model with no flat subtree reported folds: {none:?}");
+    }
+
+    /// A DISPLAY TRUNCATION COUNTS CHARACTERS, not bytes: an infix form can hold
+    /// a multi-byte name, and slicing one by byte is a panic in a reporting path.
+    #[test]
+    fn a_long_folded_subtree_is_cut_to_characters_and_never_panics() {
+        assert_eq!(truncated("short", FOLD_INFIX_MAX), "short");
+        let long = "é".repeat(FOLD_INFIX_MAX * 2);
+        let cut = truncated(&long, FOLD_INFIX_MAX);
+        assert_eq!(cut.chars().count(), FOLD_INFIX_MAX, "the cut is in characters");
+        assert!(cut.ends_with('…'), "a cut form must say it was cut: {cut}");
+        // Exactly at the bound is not cut at all.
+        let exact = "x".repeat(FOLD_INFIX_MAX);
+        assert_eq!(truncated(&exact, FOLD_INFIX_MAX), exact);
     }
 
     /// A PROMOTION CARRIES ITS COHORT WITH IT.
