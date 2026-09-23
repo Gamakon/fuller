@@ -373,6 +373,52 @@ pub struct Config {
     pub pop_intake: u32,
     pub pop_champion: u32,
     pub tournament_fraction: f64,
+    /// THE CHAMPION ISLAND'S OWN TOURNAMENT, when it should differ from the
+    /// intake's. `None` uses `tournament_fraction` for both, which is what the
+    /// engine always did.
+    ///
+    /// The two islands want opposite things and a single number cannot serve
+    /// both. The intake is a nursery and wants pressure; the champion island is
+    /// an open knockout with the cohort rule lifted, and there pressure becomes
+    /// a lock. Measured on strogatz_bacres1 at 2,000 + 2,000: cohort 160 held
+    /// 96.9% of the champion island from generation 160 to 22,380, pinned
+    /// within three rows the whole way -- and it was only SIX PERCENT better
+    /// than its nearest challenger. A two-stage tournament at 7% of 2,000 draws
+    /// 140 rows twice, so it is effectively best of 19,600, and a 6% edge wins
+    /// that every single time. The incumbent was not dominant; the selection
+    /// was.
+    pub champion_tournament_fraction: Option<f64>,
+    /// HOW MANY CHILDREN A NEW ARRIVAL GETS, each crossed with its own randomly
+    /// drawn champion (Andrew: "we pick some random champs and we breed some
+    /// children"). 0 turns the arrival band off and a promotion takes its
+    /// chances in the tournament, which is what it did before the band existed.
+    ///
+    /// The band costs rows: `arrivals * (children + 1)` of the champion island
+    /// go to arrival couples on a pump beat, and those rows do not hold
+    /// tournament winners that generation. At 3% of 2,000 that is 60 arrivals,
+    /// so 1 child spends 120 rows and 4 children spend 300.
+    pub arrival_children: u32,
+    /// THE CHAMPION ISLAND IGNORES COHORTS in its tournaments — the open
+    /// knockout, where a promoted line ranks on fitness alone against
+    /// everything already there.
+    ///
+    /// THE EVIDENCE CUTS BOTH WAYS, so this is a knob and not a decision.
+    ///
+    /// FOR: strogatz_bacres1 has been recovered twice, both times with the open
+    /// knockout on. It is the only configuration with a recovered law behind
+    /// it, and that outranks any amount of reasoning about the mechanism.
+    ///
+    /// AGAINST: measured at 2,000 + 2,000 over 33,840 generations, cohort 160
+    /// held 96.9% of the champion island from generation 160 onwards, pinned
+    /// within three rows, while being only six percent better than its nearest
+    /// challenger. A two-stage tournament at 7% of the island is effectively
+    /// best of 19,600, and with no cohort rule to stop it the winner reproduces
+    /// into every row — the open knockout closes itself.
+    ///
+    /// Both can be true: the lock may be where the answer came from, or it may
+    /// be what the fit overcame. Only an A/B on the same seed settles it, and
+    /// until one has run this stays ON, because that is what won.
+    pub champion_open_fight: bool,
     pub elites: u32,
     pub n_genes: u32,
     pub head: u32,
@@ -648,6 +694,16 @@ impl Config {
             pop_intake: 600,
             pop_champion: 200,
             tournament_fraction: 0.07,
+            // The champion island keeps the same pressure until a measurement
+            // says otherwise; `EVOLVE_CHAMPION_TOURNAMENT` is how to try less.
+            champion_tournament_fraction: None,
+            // FOUR CHILDREN an arrival (Andrew). One was what the band shipped
+            // with and it could not hold ground: 60 arrivals in 120 rows against
+            // 1,878 tournament rows were re-swamped within a beat, and the
+            // champion island sat at 97% one cohort for 19,000 generations.
+            arrival_children: 4,
+            // ON, because it is what recovered the law twice — see the field.
+            champion_open_fight: true,
             elites: 2,
             n_genes: 3,
             // 34: the longest of SRBench's true laws needs a head of 29 written whole in
@@ -2327,6 +2383,10 @@ impl Engine {
         let pop = config.n_pairs * pair;
         let layout = Layout::for_arity(pop, config.n_genes, config.head, table.max_arity(), config.n_rnc);
         let tourn = |n: u32| ((config.tournament_fraction * f64::from(n)).round() as u32).max(2);
+        // The champion island may run its own, looser, tournament: see
+        // `Config::champion_tournament_fraction`.
+        let champion_share = config.champion_tournament_fraction.unwrap_or(config.tournament_fraction);
+        let champion_tourn = |n: u32| ((champion_share * f64::from(n)).round() as u32).max(2);
         // THE LANE'S RULES. Pair p breeds under `lanes[p]` when a lane table is
         // given, and under the one engine-wide rule set when it is not — so a
         // config without lanes is the engine it was.
@@ -2347,8 +2407,16 @@ impl Engine {
                     // The float rows are part of the intake island: they breed and
                     // are selected like any other row, and the tournament is sized
                     // from the island the engine actually has.
-                    Island { lo, hi: lo + intake, elites: config.elites, tournsize: tourn(intake), arrivals: 0, rates },
-                    Island { lo: lo + intake, hi: lo + pair, elites: config.elites, tournsize: tourn(config.pop_champion), arrivals: 0, rates },
+                    Island { lo, hi: lo + intake, elites: config.elites, tournsize: tourn(intake), arrivals: 0, arrival_children: 0, open_fight: false, rates },
+                    Island {
+                        lo: lo + intake,
+                        hi: lo + pair,
+                        elites: config.elites,
+                        tournsize: champion_tourn(config.pop_champion),
+                        arrivals: 0,
+                        arrival_children: config.arrival_children, open_fight: false,
+                        rates,
+                    },
                 ])
             })
             .collect::<Result<Vec<_>, String>>()?
@@ -2880,10 +2948,14 @@ impl Engine {
         // randomly drawn champion beside it, and the crossover pass -- which
         // pairs `b` with `b - 1` -- splices the two by construction. The rows
         // they displace are still the island's worst, taken in rank order.
+        // Each arrival owns `children + 1` rows: itself, then one drawn champion
+        // a child. With no children there is no band and the promotion takes its
+        // chances in the tournament, which is what it did before the band.
+        let stride = (self.config.arrival_children + 1) as usize;
         let band = (champion.lo + self.config.elites) as usize;
-        let room = (champion.hi as usize).saturating_sub(band) / 2;
+        let room = if self.config.arrival_children == 0 { 0 } else { (champion.hi as usize).saturating_sub(band) / stride };
         let promote = promote.min(room);
-        let landing: Vec<u32> = (0..promote).map(|k| (band + k * 2) as u32).collect();
+        let landing: Vec<u32> = (0..promote).map(|k| (band + k * stride) as u32).collect();
         for (&from, &to) in best_intake.iter().zip(landing.iter()) {
             let (from, to) = (from as usize, to as usize);
             gen.pop.genome.copy_within(from * row_w..(from + 1) * row_w, to * row_w);
@@ -6307,8 +6379,8 @@ mod tests {
     fn one_pair_without_a_cross_step_is_the_engine_as_it_was() {
         let engine = Engine::new(Config::srbench(1), toy_data()).expect("engine");
         assert_eq!(engine.islands, vec![
-            Island { lo: 0, hi: 600, elites: 2, tournsize: 42, arrivals: 0, rates: Rates::engine_defaults(Layout::for_arity(800, 3, 48, 2, 10)) },
-            Island { lo: 600, hi: 800, elites: 2, tournsize: 14, arrivals: 0, rates: Rates::engine_defaults(Layout::for_arity(800, 3, 48, 2, 10)) },
+            Island { lo: 0, hi: 600, elites: 2, tournsize: 42, arrivals: 0, arrival_children: 0, open_fight: false, rates: Rates::engine_defaults(Layout::for_arity(800, 3, 48, 2, 10)) },
+            Island { lo: 600, hi: 800, elites: 2, tournsize: 14, arrivals: 0, arrival_children: Config::srbench(1).arrival_children, open_fight: false, rates: Rates::engine_defaults(Layout::for_arity(800, 3, 48, 2, 10)) },
         ]);
         // ALPS OFF, DELIBERATELY: this is the fixed point for "the engine as it
         // WAS", so it is pinned against the selection the digests were taken
@@ -6932,8 +7004,10 @@ mod tests {
         assert_eq!(layout.pop, 80);
         let engine_rates = Rates::with_cleanse(layout, base.cleanse);
         assert_eq!(islands, vec![
-            Island { lo: 0, hi: 60, elites: 2, tournsize: 4, arrivals: 0, rates: engine_rates },
-            Island { lo: 60, hi: 80, elites: 2, tournsize: 2, arrivals: 0, rates: engine_rates },
+            Island { lo: 0, hi: 60, elites: 2, tournsize: 4, arrivals: 0, arrival_children: 0, open_fight: false, rates: engine_rates },
+            // The champion island carries the arrival band's width; the intake
+            // has no band, so it carries 0.
+            Island { lo: 60, hi: 80, elites: 2, tournsize: 2, arrivals: 0, arrival_children: Config::srbench(1).arrival_children, open_fight: false, rates: engine_rates },
         ]);
         assert_eq!(off.beam, BeamCounts::default(), "the beam counted something with the beam off");
         assert_eq!(off.timing.beam, 0.0);

@@ -46,6 +46,11 @@ struct Island {
     // How many rows above the elites are rows the pump has just promoted. They
     // are NOT ranked: see `Island::arrivals` in vary.rs.
     arrivals: u32,
+    // How many children each arrival gets; the band is arrivals * (children + 1).
+    arrival_children: u32,
+    // 1 = tournaments on this island IGNORE cohorts and rank on fitness alone.
+    // See `better_mate`: the champion island ran this way and closed itself.
+    open_fight: u32,
     mut_point: u32,
     invert: u32,
     is_transpose: u32,
@@ -204,18 +209,28 @@ fn key(row: u32) -> f32 {
 // Is `c` a better mate for `me` than `w`? Same cohort first, then fitness — but
 // ONLY on an intake island.
 //
-// THE CHAMPION ISLAND IS AN OPEN KNOCKOUT (Andrew: 'the champion island the no
-// restriction open knockout island'). The cohort rule exists to keep a young
-// line from meeting a converged elder before it has developed, and the intake is
-// where that development happens. The champion island is the opposite: it is
-// where a line that has already earned promotion proves it against everything
-// else there, so banding it fragments the one place whose whole purpose is
-// competition. Measured on strogatz_bacres1: cohort 0 held the best score for
-// 1,558 generations, on both islands, because it never met a challenger on
-// either.
+// THE CHAMPION ISLAND WAS AN OPEN KNOCKOUT and is not any more, because the
+// open knockout closed itself.
+//
+// The argument for lifting the cohort rule here was that the champion island is
+// where a promoted line proves itself against everything else, so banding it
+// fragments the one place whose whole purpose is competition. That is a good
+// argument and it was wrong. Measured on strogatz_bacres1 at 2,000 + 2,000:
+// with the rule lifted, cohort 160 held 96.9% of the champion island from
+// generation 160 to 33,840, pinned within three rows the whole way — while
+// being only SIX PERCENT better than its nearest challenger. A two-stage
+// tournament at 7% of the island draws 140 rows twice, so it is effectively
+// best of 19,600, and a 6% edge wins that every time. Without the cohort rule
+// there is nothing to stop the winner reproducing into every row, and the open
+// knockout becomes a closed one — the same failure the lift was meant to cure,
+// in a worse form.
+//
+// So VIRTUAL ALPS RUNS ON BOTH ISLANDS (Andrew: "we should continue to use the
+// virtual alps in the promoted island"), and `open_fight` is what a caller asks
+// for when it wants the old behaviour back.
 //
 // A promotion is a COPY, so a line that goes up stays in the intake too — it
-// keeps its protected place while its copy takes its chances in the open.
+// keeps its protected place while its copy takes its chances above.
 fn better_mate(me: u32, c: u32, w: u32, open_fight: bool) -> bool {
     if (!open_fight) {
         let mc = same_cohort(me, c);
@@ -225,18 +240,6 @@ fn better_mate(me: u32, c: u32, w: u32, open_fight: bool) -> bool {
         }
     }
     return key(c) < key(w);
-}
-
-// Pair p is islands 2p (intake) and 2p + 1 (champion), one pair after another —
-// so an ODD island index is a champion island, and that is where the cohort rule
-// is lifted.
-fn is_champion(row: u32) -> bool {
-    for (var i = 0u; i < gp.n_islands; i = i + 1u) {
-        if (row < islands[i].hi) {
-            return (i & 1u) == 1u;
-        }
-    }
-    return (gp.n_islands - 1u & 1u) == 1u;
 }
 
 fn island_of(row: u32) -> Island {
@@ -258,7 +261,7 @@ fn first_main(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
     let isl = island_of(row);
-    let open_fight = is_champion(row);
+    let open_fight = isl.open_fight == 1u;
     let n = isl.hi - isl.lo;
     var w = NONE;
     for (var i = 0u; i < isl.tournsize; i = i + 1u) {
@@ -277,7 +280,7 @@ fn select_main(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
     let isl = island_of(row);
-    let open_fight = is_champion(row);
+    let open_fight = isl.open_fight == 1u;
     let n = isl.hi - isl.lo;
     if (row < isl.lo + isl.elites) {
         // The j-th fittest row of the island, ties to the lower row.
@@ -317,12 +320,20 @@ fn select_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     // the island rather than won, because the point is DIVERSITY: a tournament
     // returns the converged elder, and breeding the newcomer with it drags the
     // children back into the basin the island is already stuck in.
+    // Each arrival owns a GROUP of `children + 1` rows: the arrival itself in
+    // the first, then one drawn champion per child. The crossover pass pairs
+    // `b` with `b - 1`, so every child row is spliced with the row before it --
+    // and because the arrival sits first, child 1 crosses the arrival directly
+    // while later children cross what the pass has already made of the group.
+    let stride = isl.arrival_children + 1u;
     let band = isl.lo + isl.elites;
-    if (isl.arrivals > 0u && row >= band && row < band + isl.arrivals * 2u) {
-        if (((row - band) & 1u) == 0u) {
+    if (isl.arrivals > 0u && isl.arrival_children > 0u && row >= band && row < band + isl.arrivals * stride) {
+        if ((row - band) % stride == 0u) {
             parent[row] = row;        // the arrival itself, unranked
         } else {
-            parent[row] = isl.lo + below(row, 0u, STREAM_ARRIVAL_MATE, n);
+            // A DIFFERENT champion per child: the slot within the group keys
+            // the draw, so four children are four draws and not one repeated.
+            parent[row] = isl.lo + below(row, (row - band) % stride, STREAM_ARRIVAL_MATE, n);
         }
         return;
     }
@@ -696,7 +707,7 @@ fn crossover_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     // copy of itself -- which is the starvation this band exists to end. The
     // pump promoted this line on purpose; the splice is the whole point of
     // promoting it.
-    let arrival_pair = isl.arrivals > 0u && b < first + isl.arrivals * 2u;
+    let arrival_pair = isl.arrivals > 0u && isl.arrival_children > 0u && b < first + isl.arrivals * (isl.arrival_children + 1u);
     if (arrival_pair || chance(b, OP_CX_1P, STREAM_OPERATOR, isl.cx_one_point)) {
         let g = below(b, 0u, STREAM_CX_1P, gp.n_genes);
         let point = below(b, 1u, STREAM_CX_1P, width);

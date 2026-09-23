@@ -667,7 +667,7 @@ mod tests {
         never(&now, "init");
         // every operator on, the cleanse included — on the islands that breed.
         let rates = Rates::with_cleanse(layout, 0.5);
-        let islands = [Island { lo: 0, hi: 300, elites: 2, tournsize: 20, arrivals: 0, rates }, Island { lo: 300, hi: 400, elites: 2, tournsize: 7, arrivals: 0, rates }];
+        let islands = [Island { lo: 0, hi: 300, elites: 2, tournsize: 20, arrivals: 0, arrival_children: 0, open_fight: false, rates }, Island { lo: 300, hi: 400, elites: 2, tournsize: 7, arrivals: 0, arrival_children: 0, open_fight: false, rates }];
         for generation in 1..=200 {
             now = vary(&now, &islands, &codes, &GenParams { seed: 5, generation, rnc_lo: -100, rnc_hi: 100, cohort_merge: 0, vhead: 0 }).unwrap();
             now.pop.check(&codes).unwrap();

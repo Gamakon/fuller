@@ -153,6 +153,28 @@ fn main() {
     //                                   bisect, not for a benchmark: measured at 238 s of a
     //                                   450 s fit at population 200,000.
     config.hff_on_host = std::env::var("EVOLVE_HFF_ON_HOST").is_ok_and(|v| v == "1");
+    //   EVOLVE_CHAMPION_TOURNAMENT      the CHAMPION island's tournament, as a fraction of it
+    //                                   (unset = the same as the intake's). The champion island
+    //                                   is an open knockout, and there pressure becomes a lock:
+    //                                   measured on bacres1 at 2,000 + 2,000, cohort 160 held
+    //                                   96.9% of it for 19,000 generations while being only 6%
+    //                                   better than its nearest challenger.
+    if let Some(f) = std::env::var("EVOLVE_CHAMPION_TOURNAMENT").ok().and_then(|v| v.parse::<f64>().ok()) {
+        config.champion_tournament_fraction = Some(f);
+    }
+    //   EVOLVE_ARRIVAL_CHILDREN         how many children a promoted line gets, each crossed
+    //                                   with its own randomly drawn champion (0 = no band, the
+    //                                   promotion takes its chances in the tournament)
+    if let Some(n) = std::env::var("EVOLVE_ARRIVAL_CHILDREN").ok().and_then(|v| v.parse::<u32>().ok()) {
+        config.arrival_children = n;
+    }
+    //   EVOLVE_CHAMPION_ALPS=1          VIRTUAL ALPS on the CHAMPION island too, so a promoted
+    //                                   line meets its own generation there rather than the
+    //                                   incumbent. Off = the open knockout, which is what
+    //                                   recovered strogatz_bacres1 twice and is still default.
+    if std::env::var("EVOLVE_CHAMPION_ALPS").is_ok_and(|v| v == "1") {
+        config.champion_open_fight = false;
+    }
     //   EVOLVE_HOF_FILE                 the hall of fame's best is appended here at every report
     config.hof_path = std::env::var("EVOLVE_HOF_FILE").ok().filter(|p| !p.is_empty());
     //   EVOLVE_PROGRESS_EVERY           a progress line on stderr every N generations (0 = none)

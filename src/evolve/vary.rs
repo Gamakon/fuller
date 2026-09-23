@@ -95,6 +95,19 @@ pub struct Island {
     /// by construction: a new arrival crossed with a random champion, every
     /// beat, without the arrival having to win anything first.
     pub arrivals: u32,
+    /// How many children each arrival gets, each crossed with its OWN randomly
+    /// drawn champion. The band is `arrivals * (children + 1)` rows: one row
+    /// holding the arrival itself, then `children` rows each holding a drawn
+    /// champion that the crossover pass splices the arrival into.
+    pub arrival_children: u32,
+    /// Tournaments on this island IGNORE cohorts and rank on fitness alone.
+    ///
+    /// The champion island ran this way and closed itself: with nothing to stop
+    /// the tournament's winner reproducing into every row, cohort 160 held
+    /// 96.9% of it for 33,000 generations on a six percent edge. VIRTUAL ALPS
+    /// now runs on both islands by default and this is how to ask for the old
+    /// behaviour back.
+    pub open_fight: bool,
     pub rates: Rates,
 }
 
@@ -952,8 +965,8 @@ pub(crate) mod tests {
 
     pub(crate) fn islands() -> Vec<Island> {
         vec![
-            Island { lo: 0, hi: 600, elites: 2, tournsize: 42, arrivals: 0, rates: test_rates() },
-            Island { lo: 600, hi: 800, elites: 2, tournsize: 14, arrivals: 0, rates: test_rates() },
+            Island { lo: 0, hi: 600, elites: 2, tournsize: 42, arrivals: 0, arrival_children: 0, open_fight: false, rates: test_rates() },
+            Island { lo: 600, hi: 800, elites: 2, tournsize: 14, arrivals: 0, arrival_children: 0, open_fight: false, rates: test_rates() },
         ]
     }
 
@@ -1331,8 +1344,8 @@ pub(crate) mod tests {
     #[test]
     fn islands_that_do_not_tile_the_population_are_refused() {
         let layout = Layout::for_arity(800, 3, 48, 2, 10);
-        assert!(validate(layout, &[Island { lo: 0, hi: 700, elites: 2, tournsize: 7, arrivals: 0, rates: test_rates() }]).is_err());
-        assert!(validate(layout, &[Island { lo: 0, hi: 800, elites: 1, tournsize: 7, arrivals: 0, rates: test_rates() }]).is_err()); // odd offspring
+        assert!(validate(layout, &[Island { lo: 0, hi: 700, elites: 2, tournsize: 7, arrivals: 0, arrival_children: 0, open_fight: false, rates: test_rates() }]).is_err());
+        assert!(validate(layout, &[Island { lo: 0, hi: 800, elites: 1, tournsize: 7, arrivals: 0, arrival_children: 0, open_fight: false, rates: test_rates() }]).is_err()); // odd offspring
         assert!(validate(layout, &islands()).is_ok());
     }
 }
