@@ -77,9 +77,14 @@ echo "block 3    SMOGD + SMOTE"
 echo "checkpoint $EVOLVE_CHECKPOINT_DIR every ${EVOLVE_CHECKPOINT_EVERY}s"
 echo "telemetry  $EVOLVE_TELEMETRY_FILE"
 # NOT a hardcoded list of the engine's settings -- one said "pump 33" while the
-# binary ran 20, which is the kind of line that gets believed. The run_start
-# record in the telemetry stream is what the engine actually used; read that.
-echo "engine     defaults from the binary -- see run_start in the telemetry stream"
+# binary ran 20, which is the kind of line that gets believed. THE RUN CARD is
+# what the engine actually used: the whole Config, the dataset and its splits,
+# the synthetic third block, the git commit of the binary and how many HFF
+# objectives it ended up with. The BINARY writes it, after every override, so it
+# cannot say one thing while the fit does another.
+export EVOLVE_CARD_OUT=$OUT/card.json
+echo "card       $EVOLVE_CARD_OUT (and $ROOT/logs/cards/$TAG.json)"
+echo "engine     see the card -- it is the whole configuration, not a summary"
 echo
 # THE MONITOR COMMAND, printed BEFORE the fit starts and not after. Every run
 # writes its own stream, so the path changes every time and a path given after
@@ -92,6 +97,15 @@ echo
 
 cd $ROOT
 ./target/release/examples/evolve_fit "$DATA"
+# THE CARD LIBRARY. The card beside the run is the run's own record; this copy
+# is the one that can be COMPARED -- `diff logs/cards/a.json logs/cards/b.json`
+# is the question that could not be asked the day four runs were spent not
+# knowing the configuration had drifted from the one that found 75 of 133 laws.
+# The binary writes the card at the START of the fit, so this copy exists even
+# when the run was killed.
+mkdir -p $ROOT/logs/cards
+cp $OUT/card.json $ROOT/logs/cards/$TAG.json 2>/dev/null &&
+  echo "CARD       $ROOT/logs/cards/$TAG.json  (diff it against another: diff logs/cards/A.json logs/cards/B.json)"
 echo "RUN DONE"
 }
 

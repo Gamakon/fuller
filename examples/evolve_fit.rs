@@ -10,9 +10,21 @@
 //! training part (a harness made the split): every row is used, none held back.
 //! Prints what the search did, where the time went, the
 //! model and its R² on the unseen 25%.
+//!
+//! THE RUN CARD ([`fuller::evolve::card`]). Every run WRITES one: the whole
+//! `Config`, the dataset and its splits, the synthetic third block, the git
+//! commit of this binary and what the engine derived — above all how many HFF
+//! objectives it ended up with. It goes to `EVOLVE_CARD_OUT`, or to `card.json`
+//! beside the telemetry stream when there is one.
+//!
+//! `EVOLVE_CARD=path/to/card.json` runs FROM a card. The environment still wins
+//! over it, so a card is a starting point to vary from, and the card that run
+//! writes records what ACTUALLY ran. Precedence, highest first: environment,
+//! positional argument, card, built-in default. An absent card changes nothing.
 
 use fuller::chrom_score::Splits;
-use fuller::evolve::engine::{evaluate_math, final_form_reporting, resolve_protected, Config, Data, Engine, Lane};
+use fuller::evolve::card::{self, Card, Code, DataCard, Derived, IslandSpan, Run, Synthetic};
+use fuller::evolve::engine::{evaluate_math, final_form_reporting, resolve_protected, Config, Data, Engine};
 use fuller::evolve::umap2d::embed_2d;
 use fuller::evolve::{below, draw, smogd, smote};
 use fuller::lint::node::Tree;
@@ -27,7 +39,18 @@ fn shuffled(n: usize, seed: u32, stream: u32) -> Vec<usize> {
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let path = args.first().expect("usage: evolve_fit data.tsv [seed] [seconds] [max_rows]");
+    // THE RUN CARD IS READ FIRST, before a single default is taken, because it
+    // is what every default falls back to. Absent (the ordinary case) it is
+    // None and nothing below sees any difference. A card that is NAMED and
+    // cannot be read is a stopped run, never a silent fall-through to the
+    // built-in defaults: "use card 26" must not quietly become "use no card".
+    let card: Option<Card> = std::env::var("EVOLVE_CARD").ok().filter(|p| !p.is_empty()).map(|p| {
+        let c = Card::load(&p).unwrap_or_else(|e| panic!("{e}"));
+        eprintln!("CARD\tfrom {p}\tid {}\tcommit {}{}", c.card_id, c.code.git_commit, if c.code.git_dirty { " (dirty)" } else { "" });
+        c
+    });
+    let path = args.first().cloned().or_else(|| card.as_ref().map(|c| c.data.path.clone()));
+    let path = &path.expect("usage: evolve_fit data.tsv [seed] [seconds] [max_rows] (or EVOLVE_CARD=card.json)");
     // POSITIONAL, and easy to get wrong: arg 1 is the SEED and arg 2 is the
     // seconds. Passing a big number meaning "no time cap" in slot 1 sets the
     // seed and leaves the cap at its 30 s default, which silently truncated
@@ -36,14 +59,17 @@ fn main() {
         .ok()
         .and_then(|v| v.parse().ok())
         .or_else(|| args.get(1).and_then(|a| a.parse().ok()))
+        .or_else(|| card.as_ref().map(|c| c.run.seed))
         .unwrap_or(7001);
     let seconds: f64 = std::env::var("EVOLVE_SECONDS")
         .ok()
         .and_then(|v| v.parse().ok())
         .or_else(|| args.get(2).and_then(|a| a.parse().ok()))
+        .or_else(|| card.as_ref().map(|c| c.run.budget_seconds))
         .unwrap_or(30.0);
     eprintln!("BUDGET\tseed {seed}\t{seconds:.0} s");
-    let max_rows: usize = args.get(3).and_then(|a| a.parse().ok()).unwrap_or(5000);
+    let max_rows: usize =
+        args.get(3).and_then(|a| a.parse().ok()).or_else(|| card.as_ref().map(|c| c.data.max_rows)).unwrap_or(5000);
 
     let text = std::fs::read_to_string(path).expect("read the data file");
     let mut lines = text.lines();
@@ -57,7 +83,7 @@ fn main() {
     let inputs = |r: &Vec<f64>| -> Vec<f64> { r.iter().enumerate().filter(|(i, _)| *i != target).map(|(_, v)| *v).collect() };
 
     let order = shuffled(rows.len(), seed, 200);
-    let use_all = args.get(5).is_some_and(|a| a == "all");
+    let use_all = args.get(5).map_or_else(|| card.as_ref().is_some_and(|c| c.data.use_all), |a| a == "all");
     let n_fit = if use_all { rows.len() } else { rows.len() * 3 / 4 };
     let (fit_rows, test_rows) = order.split_at(n_fit);
     let used: Vec<usize> = shuffled(fit_rows.len(), seed, 201).into_iter().take(max_rows).map(|i| fit_rows[i]).collect();
@@ -70,7 +96,8 @@ fn main() {
     // their errors are separate HFF objectives and the stop bar must hold on
     // them too. A law holds at the edges; an interior fit does not.
     let mut splits = splits;
-    if let Some(edge_path) = std::env::var("EVOLVE_EDGE").ok().filter(|p| !p.is_empty()) {
+    let edge = std::env::var("EVOLVE_EDGE").ok().filter(|p| !p.is_empty()).or_else(|| card.as_ref().and_then(|c| c.data.edge_path.clone()));
+    if let Some(edge_path) = edge.clone() {
         let text = std::fs::read_to_string(&edge_path).expect("read the edge file");
         for line in text.lines().skip(1).filter(|l| !l.trim().is_empty()) {
             let row: Vec<f64> = line.split('\t').map(|v| v.trim().parse::<f64>().expect("a number")).collect();
@@ -85,14 +112,20 @@ fn main() {
     // adaptive grid, and in every cell new rows drawn from their nearest real
     // rows. Noisy on purpose: they rank individuals in the tournaments (three HFF
     // objectives) and never decide that a fit is exact.
-    let smogd_on = std::env::var("EVOLVE_SMOGD").is_ok_and(|v| v == "1");
+    let smogd_on = std::env::var("EVOLVE_SMOGD").map_or_else(|_| card.as_ref().is_some_and(|c| c.synthetic.smogd), |v| v == "1");
+    // EVOLVE_SMOGD_NOISE: the multiplier on the neighbours' variance (1 = the
+    // original). Read here rather than inside the branch so the card records it
+    // whether or not SMOGD ran.
+    let noise_multiplier: f64 = std::env::var("EVOLVE_SMOGD_NOISE")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .or_else(|| card.as_ref().map(|c| c.synthetic.smogd_noise))
+        .unwrap_or(1.0);
     if smogd_on {
         let started = std::time::Instant::now();
         let real: Vec<f64> = used.iter().flat_map(|&r| inputs(&rows[r])).collect();
         let real_y: Vec<f64> = used.iter().map(|&r| rows[r][target]).collect();
         let embedding = embed_2d(&real, names.len(), u64::from(seed)).expect("the 2D embedding");
-        // EVOLVE_SMOGD_NOISE: the multiplier on the neighbours' variance (1 = the original).
-        let noise_multiplier = std::env::var("EVOLVE_SMOGD_NOISE").ok().and_then(|v| v.parse().ok()).unwrap_or(1.0);
         let params = smogd::Params { noise_multiplier, ..smogd::Params::defaults() };
         let (synth_x, synth_y) = smogd::rows(&real, &real_y, names.len(), &embedding, seed, &params);
         println!("SMOGD\t{}\trows from {} real rows in {:.1} s, noise x{noise_multiplier}", synth_y.len(), used.len(), started.elapsed().as_secs_f64());
@@ -104,7 +137,7 @@ fn main() {
     // its 5 nearest — no noise. They join SMOGD's in the third block, as many of
     // them as SMOGD placed (the block's error is row-weighted, so this is 50/50);
     // alone, one for every 20 real rows.
-    let smote_on = std::env::var("EVOLVE_SMOTE").is_ok_and(|v| v == "1");
+    let smote_on = std::env::var("EVOLVE_SMOTE").map_or_else(|_| card.as_ref().is_some_and(|c| c.synthetic.smote), |v| v == "1");
     if smote_on {
         let started = std::time::Instant::now();
         let real: Vec<f64> = used.iter().flat_map(|&r| inputs(&rows[r])).collect();
@@ -117,267 +150,85 @@ fn main() {
         y.extend(synth_y);
     }
 
-    let mut config = Config::srbench(seed);
+    // THE CONFIG: the card's when there is one, the engine's defaults when there
+    // is not, and then THE ENVIRONMENT OVERRIDES on top of either — so a card is
+    // a starting point to vary from and never a cage. Every knob that was read
+    // here by name now lives in `card::apply_env`, which is a pure function of
+    // an injected lookup: that is what lets a test assert "the environment wins"
+    // and "an empty environment changes nothing" without racing on process env.
+    //
+    // A card's `seed` is NOT taken here. `Config::seed` is per-RESTART (derived
+    // below from the fit's seed), and the fit's seed has already been resolved
+    // from the environment, the positional argument and the card in that order.
+    let mut config = match card.as_ref() {
+        Some(c) => Config { seed, ..c.config.clone() },
+        None => Config::srbench(seed),
+    };
+    // A THIRD BLOCK IS IN HFF WHEN ONE WAS GENERATED. Not a card field of its
+    // own: `synthetic.smogd` / `.smote` say what MADE it, and this says what the
+    // engine does with it, which is decided by whether the rows exist.
     config.smogd = smogd_on || smote_on;
-    //   EVOLVE_HFF_LOG_TRAIN / _VAL / _BLOCK3 = 1   that block enters HFF on the log scale
-    //   EVOLVE_HFF_LOG=1                            validation and the third block both
-    let on = |k: &str| std::env::var(k).is_ok_and(|v| v == "1");
-    let both = on("EVOLVE_HFF_LOG");
-    config.log_scale = [on("EVOLVE_HFF_LOG_TRAIN"), both || on("EVOLVE_HFF_LOG_VAL"), both || on("EVOLVE_HFF_LOG_BLOCK3")];
-    //   EVOLVE_HFF_NO_VAL=1             validation is left out of HFF: train + block three
-    config.hff_without_validation = std::env::var("EVOLVE_HFF_NO_VAL").is_ok_and(|v| v == "1");
-    //   EVOLVE_TOWER=1                  the tower objective (t_depth) joins HFF
-    config.tower = std::env::var("EVOLVE_TOWER").is_ok_and(|v| v == "1");
+    // THE POSITIONAL `population`, arg 4: one number split 3:1. It goes on
+    // BEFORE `apply_env` so the named EVOLVE_POP_INTAKE / _CHAMPION still win,
+    // which is the order the block this replaces had.
     if let Some(population) = args.get(4).and_then(|a| a.parse::<u32>().ok()) {
         config.pop_intake = population / 4 * 3;
         config.pop_champion = population - config.pop_intake;
     }
-    //   EVOLVE_VHEAD_EVERY / _START     the GROWING HEAD: the virtual head starts at START
-    //                                   (12) and gains a position every EVERY generations
-    //                                   (0 = off: the whole head from the start)
-    config.vhead_every = std::env::var("EVOLVE_VHEAD_EVERY").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
-    if let Some(start) = std::env::var("EVOLVE_VHEAD_START").ok().and_then(|v| v.parse().ok()) {
-        config.vhead_start = start;
+    // EVOLVE_POP_CHAMPION re-reads arg 4 as the INTAKE's size, so
+    // `... 1500 ... EVOLVE_POP_CHAMPION=1500` means 1500 + 1500 rather than the
+    // 3:1 split. Kept, and kept here with the other positional handling.
+    if std::env::var("EVOLVE_POP_CHAMPION").is_ok() {
+        if let Some(intake) = args.get(4).and_then(|a| a.parse::<u32>().ok()) {
+            config.pop_intake = intake;
+        }
     }
-    //   EVOLVE_STOP_LOG10_P             the stop bar's p-value half (the engine's default is -19;
-    //                                   "inf" switches it off)
-    if let Some(bar) = std::env::var("EVOLVE_STOP_LOG10_P").ok().and_then(|v| v.parse::<f64>().ok()) {
-        config.stop_log10_p = bar;
-    }
-    //   EVOLVE_BALANCED_TOURNAMENTS=1   the tournaments rank on hff's BALANCED pole (for
-    //                                   diversity); the hall of fame, the stop bar and the
-    //                                   report stay on TrueNorth
-    config.balanced_tournaments = std::env::var("EVOLVE_BALANCED_TOURNAMENTS").is_ok_and(|v| v == "1");
-    //   EVOLVE_HFF_ON_HOST=1            the HFF candidate walk runs on the HOST, the way it did
-    //                                   before the kernel existed. For a parity check or a
-    //                                   bisect, not for a benchmark: measured at 238 s of a
-    //                                   450 s fit at population 200,000.
-    config.hff_on_host = std::env::var("EVOLVE_HFF_ON_HOST").is_ok_and(|v| v == "1");
-    //   EVOLVE_CHAMPION_TOURNAMENT      the CHAMPION island's tournament, as a fraction of it
-    //                                   (unset = the same as the intake's). The champion island
-    //                                   is an open knockout, and there pressure becomes a lock:
-    //                                   measured on bacres1 at 2,000 + 2,000, cohort 160 held
-    //                                   96.9% of it for 19,000 generations while being only 6%
-    //                                   better than its nearest challenger.
-    if let Some(f) = std::env::var("EVOLVE_CHAMPION_TOURNAMENT").ok().and_then(|v| v.parse::<f64>().ok()) {
-        config.champion_tournament_fraction = Some(f);
-    }
-    //   EVOLVE_ARRIVAL_CHILDREN         how many children a promoted line gets, each crossed
-    //                                   with its own randomly drawn champion (0 = no band, the
-    //                                   promotion takes its chances in the tournament)
-    if let Some(n) = std::env::var("EVOLVE_ARRIVAL_CHILDREN").ok().and_then(|v| v.parse::<u32>().ok()) {
-        config.arrival_children = n;
-    }
-    //   EVOLVE_CHAMPION_ALPS=1          VIRTUAL ALPS on the CHAMPION island too, so a promoted
-    //                                   line meets its own generation there rather than the
-    //                                   incumbent. Off = the open knockout, which is what
-    //                                   recovered strogatz_bacres1 twice and is still default.
-    if std::env::var("EVOLVE_CHAMPION_ALPS").is_ok_and(|v| v == "1") {
-        config.champion_open_fight = false;
-    }
-    //   EVOLVE_CHAMPION_ELITES          the champion island's elites (unset = the intake's).
-    //                                   Elites are copied unmutated and skip crossover, so on a
-    //                                   converged island they are the incumbent's safest rows.
-    if let Some(n) = std::env::var("EVOLVE_CHAMPION_ELITES").ok().and_then(|v| v.parse::<u32>().ok()) {
-        config.champion_elites = Some(n);
-    }
-    //   EVOLVE_CHAMPION_COHORT_MERGE    VIRTUAL ALPS' merge age on the champion island alone
-    //                                   (unset = the intake's, 0 = cohorts off there). Only bites
-    //                                   when EVOLVE_CHAMPION_ALPS=1, since an open knockout
-    //                                   ignores cohorts whatever their age.
-    if let Some(n) = std::env::var("EVOLVE_CHAMPION_COHORT_MERGE").ok().and_then(|v| v.parse::<u32>().ok()) {
-        config.champion_cohort_merge = Some(n);
-    }
+    card::apply_env(&mut config, &|k| std::env::var(k).ok());
+    eprintln!("POPULATION\t{} intake + {} champion", config.pop_intake, config.pop_champion);
+    // THE OUTPUT PATHS, which are never carded (see `Config`'s own note: a
+    // replay carrying them truncates the original run's telemetry stream and
+    // resumes its checkpoint). Where a run writes is the caller's to say, every
+    // time.
     //   EVOLVE_HOF_FILE                 the hall of fame's best is appended here at every report
+    //   EVOLVE_CHECKPOINT_DIR           five rotating slots, so a fit killed at any moment
+    //                                   resumes from the beat before it
+    //   EVOLVE_CHECKPOINT_EVERY         how often, in SECONDS (default 60 when a directory is
+    //                                   given; 0 = only at the end)
+    //   EVOLVE_GENEALOGY_FILE           THE GENEALOGY LOG: every individual gets an identity, an
+    //                                   age and a lineage, and this file takes the best of every
+    //                                   generation, every arrival, and the winner's whole chain
+    //   EVOLVE_TELEMETRY_FILE           THE TELEMETRY STREAM, a versioned JSONL record per
+    //                                   progress beat, which `hff-watch --follow` repaints from
+    //   EVOLVE_TELEMETRY_RUN_ID         what the stream calls this run
     config.hof_path = std::env::var("EVOLVE_HOF_FILE").ok().filter(|p| !p.is_empty());
-    //   EVOLVE_PROGRESS_EVERY           a progress line on stderr every N generations (0 = none)
-    config.progress_every = std::env::var("EVOLVE_PROGRESS_EVERY").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
-    //   EVOLVE_COMPOUNDS=1              the compound functions (sqrt|a+-b|, 1/sqrt|a+-b|, 1/(a+-b)) join
-    //                                   the symbol table — for the race's second pass
-    config.compounds = std::env::var("EVOLVE_COMPOUNDS").is_ok_and(|v| v == "1");
-    //   EVOLVE_GENES                    genes per chromosome (the engine's default is 3)
-    if let Some(genes) = std::env::var("EVOLVE_GENES").ok().and_then(|v| v.parse::<u32>().ok()) {
-        config.n_genes = genes;
-    }
-    //   EVOLVE_GENE_SUBSETS=1           THE DYNAMIC GENE-SUBSET CHOICE: a chromosome is scored
-    //                                   under every non-empty subset of its genes and keeps the
-    //                                   best (at most 3 genes)
-    config.gene_subsets = std::env::var("EVOLVE_GENE_SUBSETS").is_ok_and(|v| v == "1");
-    //   EVOLVE_PUMP_EVERY               the pump's beat in generations (the engine's default is 4)
-    //   EVOLVE_COHORT_MERGE             VIRTUAL ALPS — "couples from the same century".
-    //                                   Each row carries the pump beat its line arrived
-    //                                   on, inherited by every descendant, and a
-    //                                   tournament prefers a candidate of the SAME
-    //                                   cohort however fit the others are. Cohorts at or
-    //                                   past this label are ONE band, so the elders
-    //                                   co-mingle and only the young are kept apart.
-    //                                   0 = off, and selection is what it always was.
-    //   EVOLVE_CHECKPOINT_DIR           five rotating slots, so a fit killed at any
-    //                                   moment resumes from the beat before it. The
-    //                                   benchmark is 1,330 fits over a month on a
-    //                                   laptop with other work: a run that cannot be
-    //                                   stopped and started is a run that cannot be
-    //                                   finished, and one whose result depends on
-    //                                   WHEN it was stopped is not reproducible.
-    //   EVOLVE_CHECKPOINT_EVERY         how often, in SECONDS (default 60 when a
-    //                                   directory is given; 0 = only at the end).
     config.checkpoint_dir = std::env::var("EVOLVE_CHECKPOINT_DIR").ok().filter(|p| !p.is_empty());
     if config.checkpoint_dir.is_some() {
         config.checkpoint_every_seconds =
             std::env::var("EVOLVE_CHECKPOINT_EVERY").ok().and_then(|v| v.parse().ok()).unwrap_or(60.0);
     }
-    if let Some(m) = std::env::var("EVOLVE_COHORT_MERGE").ok().and_then(|v| v.parse::<u32>().ok()) {
-        config.cohort_merge = m;
-    }
-    if let Some(beat) = std::env::var("EVOLVE_PUMP_EVERY").ok().and_then(|v| v.parse::<u32>().ok()) {
-        config.pump_every = beat;
-    }
-    //   EVOLVE_HEAD                     a gene's head length (the engine's default is 34)
-    if let Some(head) = std::env::var("EVOLVE_HEAD").ok().and_then(|v| v.parse::<u32>().ok()) {
-        config.head = head;
-    }
-    //   EVOLVE_POP_CHAMPION             the champion island's size; the `population`
-    //                                   argument is then the INTAKE island's size
-    //                                   (1500 + 1500 rather than the 3:1 split, which
-    //                                   dates from when a generation was slow)
-    //   EVOLVE_POP_INTAKE               the intake island's size, by name. The intake
-    //                                   used to come ONLY from positional argument 4,
-    //                                   so a caller setting EVOLVE_POP_INTAKE got the
-    //                                   default 600 and no complaint — a 200,000-row
-    //                                   run reported itself as 600 + 100,000.
-    if let Some(intake) = std::env::var("EVOLVE_POP_INTAKE").ok().and_then(|v| v.parse::<u32>().ok()) {
-        config.pop_intake = intake;
-    }
-    if let Some(champion) = std::env::var("EVOLVE_POP_CHAMPION").ok().and_then(|v| v.parse::<u32>().ok()) {
-        if let Some(intake) = args.get(4).and_then(|a| a.parse::<u32>().ok()) {
-            config.pop_intake = intake;
-        }
-        config.pop_champion = champion;
-    }
-    eprintln!("POPULATION\t{} intake + {} champion", config.pop_intake, config.pop_champion);
-    // Experiment knobs come by environment so the positional arguments stay put:
-    //   EVOLVE_RNC_LO / EVOLVE_RNC_HI   the range a gene's random constants are drawn from
-    //   EVOLVE_RESTARTS                 split the time into this many independent searches
-    let env = |k: &str| std::env::var(k).ok();
-    if let (Some(lo), Some(hi)) = (env("EVOLVE_RNC_LO").and_then(|v| v.parse().ok()), env("EVOLVE_RNC_HI").and_then(|v| v.parse().ok())) {
-        config.rnc_lo = lo;
-        config.rnc_hi = hi;
-    }
-    //   EVOLVE_REDUNDANCY=1             leave-one-gene-out redundancy as an HFF objective
-    //   EVOLVE_MAX_GENERATIONS          stop by GENERATIONS (give a long time cap): a
-    //                                   comparison that does not depend on how busy the device is
-    config.redundancy = env("EVOLVE_REDUNDANCY").is_some_and(|v| v == "1");
-    if let Some(g) = env("EVOLVE_MAX_GENERATIONS").and_then(|v| v.parse().ok()) {
-        config.max_generations = g;
-    }
-    //   EVOLVE_PAIRS                    pairs of islands (intake + champion); the island
-    //                                   sizes are ONE pair's, so the population is this
-    //                                   many times as large (default 1)
-    //   EVOLVE_CROSS_EVERY              THE CROSS STEP's beat: every this many generations
-    //                                   each intake island takes in the best of the other
-    //                                   pairs' champion islands (default 0 = never)
-    //   EVOLVE_K_MIGRANTS               how many each champion island sends (default 3)
-    if let Some(n) = env("EVOLVE_PAIRS").and_then(|v| v.parse().ok()) {
-        config.n_pairs = n;
-    }
-    if let Some(n) = env("EVOLVE_CROSS_EVERY").and_then(|v| v.parse().ok()) {
-        config.cross_every = n;
-    }
-    if let Some(n) = env("EVOLVE_K_MIGRANTS").and_then(|v| v.parse().ok()) {
-        config.k_migrants = n;
-    }
-    //   EVOLVE_LANES                    THE SWIM LANES: one rule set per island pair, as
-    //                                   `name:explore:recombine[:cleanse]` separated by
-    //                                   commas — "general:1:1,explorer:3:0.5". There must
-    //                                   be exactly EVOLVE_PAIRS of them. `explore` scales
-    //                                   the point-mutation and transposition rates,
-    //                                   `recombine` the three crossovers, and the lane's
-    //                                   name is reported as having found the law.
-    if let Some(spec) = env("EVOLVE_LANES") {
-        let mut lanes = Vec::new();
-        for one in spec.split(',').filter(|s| !s.trim().is_empty()) {
-            let f: Vec<&str> = one.split(':').collect();
-            let num = |i: usize, what: &str| -> f64 {
-                f.get(i)
-                    .unwrap_or_else(|| panic!("EVOLVE_LANES: lane {one:?} has no {what}; it is name:explore:recombine[:cleanse]"))
-                    .parse()
-                    .unwrap_or_else(|e| panic!("EVOLVE_LANES: lane {one:?} {what}: {e}"))
-            };
-            lanes.push(Lane {
-                name: (*f.first().expect("a lane needs a name")).to_string(),
-                explore: num(1, "explore"),
-                recombine: num(2, "recombine"),
-                cleanse: f.get(3).map(|v| v.parse().expect("EVOLVE_LANES: cleanse")),
-            });
-        }
-        eprintln!("LANES {}", lanes.iter().map(|l| format!("{} x{}/{}", l.name, l.explore, l.recombine)).collect::<Vec<_>>().join(" | "));
-        config.lanes = Some(lanes);
-    }
-    //   EVOLVE_SNAP_EVERY               SNAP WINNERS' beat in generations (0 = off, the default):
-    //                                   kept snapped forms are written back into the genes
-    //   EVOLVE_SNAP_TOP_K               rows per island, by fitness, that are snap winners (0 = all)
-    if let Some(n) = env("EVOLVE_SNAP_EVERY").and_then(|v| v.parse().ok()) {
-        config.snap_every = n;
-    }
-    if let Some(n) = env("EVOLVE_SNAP_TOP_K").and_then(|v| v.parse().ok()) {
-        config.snap_top_k = n;
-    }
-    //   EVOLVE_GENEALOGY_FILE           THE GENEALOGY LOG: every individual of the fit gets an
-    //                                   IDENTITY, an AGE (generations since its genotype entered
-    //                                   the population) and a LINEAGE, and this file takes the
-    //                                   best of every generation, every arrival (pump, cross,
-    //                                   snap) and the winner's chain back to its founder. Unset
-    //                                   = off, and the engine is what it was, bit for bit.
-    config.genealogy_path = env("EVOLVE_GENEALOGY_FILE").filter(|p| !p.is_empty());
-    //   EVOLVE_TELEMETRY_FILE           THE TELEMETRY STREAM: a versioned JSONL record per
-    //                                   progress beat — the global state, every island's rows
-    //                                   and best HFF, and every cohort's split by island —
-    //                                   which `hff-watch --follow` repaints from. The prose
-    //                                   log is unchanged; this is a SECOND stream, and it is
-    //                                   the production API (never parse the prose log).
-    //                                   Unset = off, and the engine is what it was, bit for
-    //                                   bit. It rides on EVOLVE_PROGRESS_EVERY, so that is
-    //                                   defaulted to 10 here when a stream is asked for and
-    //                                   no beat was given — a caller who asks to watch a fit
-    //                                   should not get an empty file because of a second knob.
-    //   EVOLVE_TELEMETRY_RUN_ID         what the stream calls this run (default
-    //                                   `<dataset>-seed<seed>`)
-    config.telemetry_path = env("EVOLVE_TELEMETRY_FILE").filter(|p| !p.is_empty());
-    config.telemetry_run_id = env("EVOLVE_TELEMETRY_RUN_ID").filter(|p| !p.is_empty());
+    config.genealogy_path = std::env::var("EVOLVE_GENEALOGY_FILE").ok().filter(|p| !p.is_empty());
+    config.telemetry_path = std::env::var("EVOLVE_TELEMETRY_FILE").ok().filter(|p| !p.is_empty());
+    config.telemetry_run_id = std::env::var("EVOLVE_TELEMETRY_RUN_ID").ok().filter(|p| !p.is_empty());
     config.telemetry_dataset = std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().into_owned());
+    // The stream rides on the progress report, so a caller who asks to watch a
+    // fit should not get an empty file because of a second knob.
     if config.telemetry_path.is_some() && config.progress_every == 0 {
         config.progress_every = 10;
     }
-    //   EVOLVE_BEAM_EVERY               THE BEAM's beat in generations (0 = off, the default):
-    //                                   on a beat, thousands of rule-based MUTATIONS of the
-    //                                   best individual are generated and scored on the data,
-    //                                   and one that beats it is kept alongside it
-    //   EVOLVE_BEAM_WIDTH               how many mutants a beat generates (default 2000)
-    //   EVOLVE_BEAM_WRAPS=0             switch the FUNCTIONAL mutations off (the wraps whose
-    //                                   a, b are fitted by least squares); tree mutations only
-    //   EVOLVE_BEAM_TREE=1              switch the TREE mutations ON (the cleanse neighbourhood
-    //                                   and the drawn edits). Off by default: a beat is the
-    //                                   edge-case wraps alone
-    //   EVOLVE_FLOAT_ZONE               THE FLOAT ZONE: extra intake rows a beam survivor is
-    //                                   APPENDED into, so the intake floats above its base
-    //                                   size until the pump's own cut (0 = off)
-    if let Some(n) = env("EVOLVE_BEAM_EVERY").and_then(|v| v.parse().ok()) {
-        config.beam_every = n;
+    if let Some(lanes) = &config.lanes {
+        eprintln!("LANES {}", lanes.iter().map(|l| format!("{} x{}/{}", l.name, l.explore, l.recombine)).collect::<Vec<_>>().join(" | "));
     }
-    if let Some(n) = env("EVOLVE_BEAM_WIDTH").and_then(|v| v.parse().ok()) {
-        config.beam_width = n;
+    //   EVOLVE_RESTARTS                 split the time into this many independent searches
+    let restarts: u32 = std::env::var("EVOLVE_RESTARTS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .or_else(|| card.as_ref().map(|c| c.run.restarts))
+        .unwrap_or(1)
+        .max(1);
+    // THE CLEANSING MUTATION's rate, positional argument 6 over the card's.
+    if let Some(rate) = args.get(6).and_then(|a| a.parse().ok()) {
+        config.cleanse = rate;
     }
-    if let Some(v) = env("EVOLVE_BEAM_WRAPS") {
-        config.beam_wraps = v == "1";
-    }
-    if let Some(v) = env("EVOLVE_BEAM_TREE") {
-        config.beam_tree = v == "1";
-    }
-    if let Some(n) = env("EVOLVE_FLOAT_ZONE").and_then(|v| v.parse().ok()) {
-        config.float_zone = n;
-    }
-    let restarts: u32 = env("EVOLVE_RESTARTS").and_then(|v| v.parse().ok()).unwrap_or(1).max(1);
-    config.cleanse = args.get(6).and_then(|a| a.parse().ok()).unwrap_or(0.0);
     // RESTARTS: the same seconds as one search, spent as several independent
     // ones (seeds derived from the fit's seed). The first that meets the stop bar
     // ends the fit; otherwise the one with the best validation error is reported.
@@ -390,6 +241,69 @@ fn main() {
         let mut c = config.clone();
         c.seed = seed.wrapping_add(k.wrapping_mul(1_000_003));
         let mut engine = Engine::new(c, Data { names: names.clone(), x: x.clone(), y: y.clone(), splits }).expect("engine");
+        // THE RUN CARD, written at the START of the fit — before `fit()`, so a
+        // run killed at any moment has already said how it was configured. It
+        // goes out from the FIRST restart, whose engine is the one the card's
+        // settings describe; the later restarts differ only in their derived
+        // seed, which the card names as `run.seed`.
+        //
+        // Written HERE and not earlier because this is where the DERIVED facts
+        // exist: `hff_dimensions()`, the island spans and the real population
+        // are the engine's own numbers, and taking them from it is what keeps
+        // the card from drifting into a parallel calculation of its own.
+        if k == 0 {
+            let written = Card {
+                card_version: card::CARD_VERSION,
+                // THE CARD'S NAME, in the order that makes "use card 26" work: the
+                // run's telemetry id when it has one (which is the log directory's
+                // tag), then the card this run came FROM, then dataset-and-seed.
+                card_id: config
+                    .telemetry_run_id
+                    .clone()
+                    .or_else(|| card.as_ref().map(|c| c.card_id.clone()))
+                    .unwrap_or_else(|| format!("{}-seed{seed}", config.telemetry_dataset.clone().unwrap_or_else(|| "run".into()))),
+                written_utc: fuller::evolve::telemetry::now_utc(),
+                code: Code::of_this_binary(),
+                data: DataCard {
+                    path: path.clone(),
+                    max_rows,
+                    use_all,
+                    edge_path: edge.clone(),
+                    test_path: args.get(7).cloned(),
+                    n_train: splits.n_train,
+                    n_val: splits.n_val,
+                    n_third: splits.n_extrap,
+                    n_test: test_rows.len(),
+                },
+                synthetic: Synthetic { smogd: smogd_on, smote: smote_on, smogd_noise: noise_multiplier },
+                run: Run { seed, budget_seconds: seconds, restarts },
+                config: config.clone(),
+                derived: Derived {
+                    hff_objectives: engine.hff_dimensions(),
+                    population: engine.layout.pop,
+                    islands: engine.islands.iter().map(|i| IslandSpan { lo: i.lo, hi: i.hi }).collect(),
+                    live_cohorts: card::live_cohorts(config.cohort_merge, config.pump_every),
+                },
+            };
+            // WHERE IT GOES: `EVOLVE_CARD_OUT` when it is given, otherwise
+            // `card.json` beside the telemetry stream — the run's own output
+            // directory, which is where its other outputs already are. A run
+            // with neither writes no file rather than dropping one into
+            // whatever directory it was launched from, and says so.
+            let out_path = std::env::var("EVOLVE_CARD_OUT").ok().filter(|p| !p.is_empty()).or_else(|| {
+                config.telemetry_path.as_ref().and_then(|t| std::path::Path::new(t).parent().map(|d| d.join("card.json").to_string_lossy().into_owned()))
+            });
+            match out_path {
+                // A card that cannot be written must not kill a fit that is
+                // otherwise ready to run: the fit is the expensive thing and the
+                // card is a record of it.
+                Some(p) => match written.write(&p) {
+                    Ok(()) => eprintln!("CARD\twritten {p}\tid {}\t{} HFF objectives", written.card_id, written.derived.hff_objectives),
+                    Err(e) => eprintln!("CARD\tNOT WRITTEN: {e}"),
+                },
+                None => eprintln!("CARD\tnot written (no EVOLVE_CARD_OUT and no telemetry file to sit beside)"),
+            }
+        }
         let out = engine.fit().expect("fit");
         generations += out.generations;
         individuals += out.individuals;

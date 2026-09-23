@@ -317,7 +317,7 @@ pub struct Data {
 ///
 /// What can live here is what the device indexes BY ROW. `head`, `n_genes` and
 /// `n_rnc` cannot: [`Layout`] fixes one gene width for the whole buffer.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Lane {
     /// For the logbook, the fit JSON and the solution ledger: which lane found it.
     pub name: String,
@@ -367,7 +367,71 @@ impl Lane {
     }
 }
 
-#[derive(Clone, Debug)]
+/// AN `f64` THAT MAY BE INFINITE, over JSON — a number when it is finite, and
+/// the word `"inf"` or `"-inf"` when it is not.
+///
+/// serde_json has no spelling for a non-finite float: it SERIALIZES one as
+/// `null` and then refuses to deserialize `null` into an `f64`, so a field that
+/// uses an infinity as a real setting is write-only without this. The words are
+/// the ones the environment already uses — `EVOLVE_STOP_LOG10_P=inf` parses
+/// through Rust's own `f64::from_str`, which accepts exactly these spellings.
+///
+/// NaN has no setting that means it, so it is refused on the way out rather than
+/// given a word: a NaN bar would compare false against everything and silently
+/// switch a stop bar off, and a card must not be the thing that hides that.
+pub mod finite_or_word {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    /// A number, or one of the infinity words.
+    #[derive(Serialize, Deserialize)]
+    #[serde(untagged)]
+    enum Wire {
+        Number(f64),
+        Word(String),
+    }
+
+    /// # Errors
+    /// When the value is NaN, which is not a setting.
+    pub fn serialize<S: Serializer>(v: &f64, s: S) -> Result<S::Ok, S::Error> {
+        if v.is_nan() {
+            return Err(serde::ser::Error::custom("a NaN bar is not a setting and has no card spelling"));
+        }
+        if v.is_finite() {
+            return Wire::Number(*v).serialize(s);
+        }
+        Wire::Word(if *v > 0.0 { "inf".to_string() } else { "-inf".to_string() }).serialize(s)
+    }
+
+    /// # Errors
+    /// When the word is neither `inf` nor `-inf` (with the spellings Rust's own
+    /// float parser takes), or the number is NaN.
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<f64, D::Error> {
+        let v = match Wire::deserialize(d)? {
+            Wire::Number(n) => n,
+            Wire::Word(w) => w.parse::<f64>().map_err(|_| serde::de::Error::custom(format!("{w:?} is not a number or an infinity")))?,
+        };
+        if v.is_nan() {
+            return Err(serde::de::Error::custom("a NaN bar is not a setting"));
+        }
+        Ok(v)
+    }
+}
+
+/// THE RUN'S SETTINGS, and — since it derives `Serialize` — the body of a RUN
+/// CARD (see [`super::card`]). Deriving is the point: a card that listed these
+/// fields by hand in a parallel struct would drift from the engine the first
+/// time a knob was added, which is the failure the card exists to end.
+///
+/// SIX FIELDS ARE `serde(skip)`, and it is a safety rule rather than taste: they
+/// are the run's OUTPUT PATHS (`hof_path`, `checkpoint_dir`, `genealogy_path`,
+/// `telemetry_path`, `telemetry_run_id`, `telemetry_dataset`). A card replayed
+/// with them in would `File::create` the ORIGINAL run's telemetry stream — the
+/// truncation `logs/bacres1_test.sh` records in its own header comments — and
+/// would silently RESUME the original run from its checkpoint directory instead
+/// of starting the fresh fit that was asked for. Where a run writes is the
+/// caller's to say, every time. `checkpoint_every_seconds` stays: it is a number,
+/// not a destination.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Config {
     pub seed: u32,
     pub pop_intake: u32,
@@ -468,6 +532,10 @@ pub struct Config {
     pub promote_fraction: f64,
     /// THE CHECKPOINT's directory: five rotating slots, so a fit killed at any
     /// moment resumes from the beat before. None = off.
+    ///
+    /// NOT CARDED: a replay carrying this would RESUME the original fit rather
+    /// than run the one that was asked for.
+    #[serde(skip)]
     pub checkpoint_dir: Option<String>,
     /// How often a checkpoint is written, in SECONDS — the unit the benchmark
     /// budgets a fit in, and the one that stays predictable when a generation's
@@ -561,6 +629,9 @@ pub struct Config {
     /// THE HALL OF FAME's file: at every progress report the best individual the
     /// fit has EVER held is appended to it — generation found, scores, and the
     /// model as plain infix. None = no file (the hall of fame is still kept).
+    ///
+    /// NOT CARDED: an output path, which a replay would append to.
+    #[serde(skip)]
     pub hof_path: Option<String>,
     /// BALANCED-POLE TOURNAMENTS, for diversity. Selection (the tournaments, and
     /// with them the pump's promotions) ranks on hff's BALANCED pole — the angle
@@ -595,6 +666,13 @@ pub struct Config {
     /// lost: the fit simply keeps evolving and reports its best. Measured with 4
     /// objectives (train + t_depth); p depends on how many objectives HFF has.
     /// `f64::INFINITY` switches this half off.
+    ///
+    /// CARDED THROUGH [`finite_or_word`], because the infinities are documented
+    /// SETTINGS here (`EVOLVE_STOP_LOG10_P=inf` switches the bar off, and the
+    /// tests use `-inf` to make it unmeetable) while serde_json writes a
+    /// non-finite float as `null` and then REFUSES to read `null` back into an
+    /// `f64`. Without this a card from a run with the p bar off would not load.
+    #[serde(with = "finite_or_word")]
     pub stop_log10_p: f64,
     /// THE DYNAMIC GENE-SUBSET CHOICE (Andrew: "make the linker dynamic and it
     /// could decide on the number of genes"): a chromosome is scored under every
@@ -625,6 +703,9 @@ pub struct Config {
     /// not ordinary variation — a promotion, a keeper, a migrant, a snap
     /// write-back), one line per batch of fresh random individuals, and when the
     /// fit ends the winner's whole chain back to its founder.
+    ///
+    /// NOT CARDED: an output path.
+    #[serde(skip)]
     pub genealogy_path: Option<String>,
     /// THE BEAM's beat (Andrew: "a genetic beam search in the neighbourhood"):
     /// every this many generations the best individual is taken as it stands and
@@ -662,13 +743,25 @@ pub struct Config {
     ///
     /// It rides on `progress_every`, so a run with the progress report off writes
     /// nothing; `Engine::new` says so rather than leaving an empty file.
+    ///
+    /// NOT CARDED, and this is the sharpest case of the rule: a replay would
+    /// `File::create` the ORIGINAL run's stream and truncate it.
+    #[serde(skip)]
     pub telemetry_path: Option<String>,
     /// What the stream calls this run. The viewer shows it, and a reader uses it
     /// to notice that the file it is tailing belongs to a different fit now.
     /// None: `<dataset>-seed<seed>`, as the brief's example record has it.
+    ///
+    /// NOT CARDED: a replay is a DIFFERENT run and must not answer to the
+    /// original's name — that is exactly how a viewer fails to notice a rotation.
+    #[serde(skip)]
     pub telemetry_run_id: Option<String>,
     /// The dataset's name for the telemetry header — the engine is handed columns
     /// and never sees a file name.
+    ///
+    /// NOT CARDED: derived from the data path the replay is given, and the card
+    /// records that path in its own `data` section.
+    #[serde(skip)]
     pub telemetry_dataset: Option<String>,
     /// THE FLOAT ZONE (Andrew: "move copy to the intake island as an append, so the
     /// population there floats a little, then each 4 gen we cut the ones that dont
