@@ -100,6 +100,29 @@ across the whole untyped record, at generation counts those races never
 reached.** Whether the untyped engine at 1,000 generations would also find
 them is not measured here, and the instruction for this work was not to run it.
 
+## The sweep, seed 7014, 180 s a fit
+
+| problem | gens | ms/gen | train 1-R² | val 1-R² | log10 p | refused, % of gene-slots | genes past the ceiling |
+|---|---|---|---|---|---|---|---|
+| **I.15.10** | 1,001 | 111.5 | **1.158e-13** | 1.056e-13 | −33.54 | 2.93% | 0.9% |
+| **I.26.2** | **169** | 107.3 | **1.598e-14** | 1.716e-14 | −35.68 | 5.30% | 7.0% |
+| I.48.2 | 1,377 | 130.7 | 5.076e-07 | 5.468e-07 | −17.46 | 2.52% | 4.3% |
+| I.15.3t | 1,159 | 155.3 | 3.753e-04 | 3.714e-04 | −10.53 | 4.21% | 3.4% |
+| II.11.27 | 1,740 | 103.8 | 1.996e-05 | 1.640e-05 | −13.68 | 4.39% | 7.2% |
+| II.24.17 | 1,369 | 131.5 | 5.015e-06 | 4.065e-06 | −14.70 | 4.64% | 8.2% |
+| III.4.32 | 2,060 | 87.7 | 8.784e-07 | 8.083e-07 | −16.46 | 1.77% | 2.4% |
+
+Bold rows met the stop bar AND were confirmed by reading the form against the
+true law. **2 of 7.**
+
+**The T2 ceiling is reached in every single fit** — 7 of 7 populations carry
+genes at depth 2. It is nowhere a formality, and nowhere unreached.
+
+Refusals sit between **1.77% and 5.30% of gene-slots per generation**, well
+under the spec's predicted 23% of sub-expressions — though those are different
+quantities (see "Reading the refusal number") and the spec's figure was
+explicitly biased toward the fold operator's targets.
+
 ## Results
 
 ### feynman_I_15_10 — relativistic momentum, `m₀v/sqrt(1 − v²/c²)`, depth 1
