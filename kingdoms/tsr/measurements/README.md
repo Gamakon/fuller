@@ -12,6 +12,21 @@ across them.
 Untyped numbers quoted below are **prior results from the record**
 (`docs/EXPERIMENTS.md`, `logs/cards/`), cited for context and never re-run.
 
+## The headline
+
+**On strogatz_bacres1 — the problem the untyped engine has failed on all week —
+TSR fails too.** Same settings, same seed, no recovery, and it costs about 10%
+of the pace. That is a null on the outcome, and it is the first thing to say.
+
+What DID change there is the population's shape: genes past depth 2 fell from
+178 to 78, and the reported model is depth-2 legal where the prior untyped
+run's was `cos(sqrt(acos(1/x_1)) + 59)`, a depth-3 tower.
+
+**On two Feynman problems TSR recovered the law in its true form** —
+`I.15.10` and `I.26.2`, both of which are unsolved across every untyped race on
+the record. The budgets are not matched, so see the prior-results table before
+reading that as a win.
+
 ## What was live when these ran
 
 Everything the spec asks for:
@@ -46,6 +61,38 @@ questions**. Both are reported because quoting either alone misleads:
 row with one refused gene scores on its other two, so the illegal gene survives
 unscored and keeps mutating. That is why a TSR population's depth histogram
 still shows entries past the ceiling: **those entries are the refused genes.**
+
+## What the untyped engine did on these problems — PRIOR RESULTS, cited
+
+From the race ledgers under `hff/notebooks/sr_logs/*/race_ledger.json`
+(`logs/tsr/prior.py` reads them). **Not re-run for this work.**
+
+| problem | prior untyped races | solved |
+|---|---|---|
+| feynman_I_15_10 | 7 | **0** |
+| feynman_I_26_2 | 7 | **0** |
+| feynman_I_48_2 | 7 | 0 |
+| feynman_I_15_3t | 7 | 0 |
+| feynman_II_11_27 | 7 | 0 |
+| feynman_II_24_17 | 6 | 0 |
+| feynman_III_4_32 | 7 | 0 |
+| strogatz_bacres1 | 6 | 0 |
+
+**Read this carefully, because it is easy to overclaim.** The two laws TSR
+recovered had never been solved in any untyped race on the record. But those
+races are not a matched control:
+
+| | prior untyped | TSR here |
+|---|---|---|
+| I.15.10 | 22–81 generations, 31–129 s, best test R² 0.9996 | **1,001 generations**, recovered |
+| I.26.2 | 28–115 generations, 30–124 s, best test R² 0.9987 | **169 generations**, recovered |
+
+Seconds are comparable; **generations are not** — the prior races ran older,
+slower configurations, so they saw a tenth to a fortieth of the beats. The
+honest statement is therefore: **TSR recovered two laws that are unsolved
+across the whole untyped record, at generation counts those races never
+reached.** Whether the untyped engine at 1,000 generations would also find
+them is not measured here, and the instruction for this work was not to run it.
 
 ## Results
 
@@ -86,10 +133,10 @@ symbol for symbol. Not a model that scores well with the wrong shape.
 
 ### feynman_I_26_2 — Snell's law, `arcsin(n·sin θ₂)`, **DEPTH 2**
 
-**The case the T2 rung exists for, and the direct test of the spec's central
-choice.** This law is a transcendental applied to something containing another
-transcendental. **At a ceiling of T1 it has no legal signature and could not be
-found at all.**
+**The case the T2 rung exists for.** This law is a transcendental applied to
+something containing another transcendental. At a ceiling of T1 it would have
+no legal signature — though that is a property of the type system, true before
+any run, and not something this fit measures.
 
 **LAW RECOVERED IN ITS TRUE FORM**, seed 7014, at generation **169**, in 18
 seconds:
@@ -114,9 +161,14 @@ Ground truth from `pmlb_repo/datasets/feynman_I_26_2/metadata.yaml` is
 | refused on type | 32,262 = **5.30% of gene-slots/generation** |
 | depth histogram | 0:185 1:2352 **2:810** 3:173 4:47 5:23 6:6 7:4 |
 
-810 genes sit at the ceiling, the recovered law is itself depth 2, and the fit
-took 169 generations. **The ceiling was reached, used, and correct.** This is
-the measurement that says two and not one.
+810 genes sit at the ceiling and the recovered law is itself depth 2.
+
+**What this measures, stated precisely:** T2 is *sufficient* for a depth-2 law,
+and the population *used* depth 2 rather than leaving the rung unreached. It
+does **not** measure that a ceiling of 1 would fail — that follows from the
+type system without a run. It does not measure that 2 beats 3. And it does not
+measure TSR against untyped on this law; see the prior-results table above for
+what is and is not comparable.
 
 ### feynman_I_15_3t — `x/sqrt(1 − v²/c²)`-family, 180 s, seed 7014
 
@@ -131,7 +183,7 @@ spends its budget right up to the limit and would go further if allowed.
 ### strogatz_bacres1, depth 0 — 420 s, seed 7014
 
 Law not recovered, which is what 800+400 has always done on this problem
-(prior result, `docs/EXPERIMENTS.md`: 65,264 generations at 800+400 reached
+(prior result, `.claude/skills/running-fits/SKILL.md`: 65,264 generations at 800+400 reached
 train 1-R² 2.6e-6 and did not recover it).
 
 | | TSR (ceiling 2) | prior untyped, same seed and settings |
@@ -147,10 +199,33 @@ train 1-R² 2.6e-6 and did not recover it).
 The untyped column is from a run made before the instruction to drop the
 control; it is reported here because it exists, not because it was needed.
 
+## The cost the spec did not anticipate: dead weight, not dead rows
+
+The spec expects a refused gene to kill its row — "the row scores `PI` and dies
+in the next tournament". **At `n_genes = 3` with `gene_subsets` on it kills
+nothing.** The row scores on its surviving genes, so there is no selection
+pressure against carrying an illegal one.
+
+The magnitude, from these runs: on feynman_I_26_2, 7.0% of the final
+population's genes are past the ceiling — about 253 genes, spread over up to
+~250 of the 1,200 rows. **Roughly a fifth of the population is carrying an
+unscored illegal gene that nothing removes.** That is a design consequence of
+combining the spec's "let it land" preference with multi-gene chromosomes, and
+it is the clearest thing here that the spec did not foresee.
+
+If it is worth fixing, the cheap version is to have the refusal count against
+the row's fitness rather than be silently skipped — but that changes selection
+and would need its own measurement.
+
 ## What the ceiling costs
 
-On these runs the typing costs roughly **10% of the pace** (29.6 vs 26.9
-ms/generation on bacres1) and **~3% of gene-slots per generation** to refusals.
+The pace figure comes from **bacres1 only** — 29.6 vs 26.9 ms/generation, about
+**10%** — because that is the one problem here with an untyped run at matched
+settings to compare against. The Feynman fits have **no untyped pace
+comparison** and none should be inferred; their ms/generation is dominated by
+75,000 rows against bacres1's 300.
+
+Refusals run **2.5–5.3% of gene-slots per generation** across the fits.
 Against the spec's estimate of "one `u32` per symbol, one comparison per draw",
 the per-draw cost is as predicted; the refusal cost is the part the spec could
 not predict, because it is a property of the search and not of the true-model
