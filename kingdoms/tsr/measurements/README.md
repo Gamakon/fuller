@@ -57,8 +57,16 @@ still shows entries past the ceiling: **those entries are the refused genes.**
 ((x_0*x_1)/sqrt((1.0 - ((x_1/x_2)**2))))
 ```
 
-which is exactly `m₀·v / sqrt(1 − (v/c)²)`. Not a model that scores well with
-the wrong shape — the right shape.
+**Verified against SRBench's own ground truth**, not merely against the score.
+`pmlb_repo/datasets/feynman_I_15_10/metadata.yaml` gives
+
+```
+p = m_0*v/sqrt(1-v**2/c**2)
+```
+
+and the dataset's columns are `m_0, v, c`, so `x_0 = m₀`, `x_1 = v`,
+`x_2 = c` and the recovered model is `m₀·v / sqrt(1 − (v/c)²)` — the law,
+symbol for symbol. Not a model that scores well with the wrong shape.
 
 | | |
 |---|---|
