@@ -1441,6 +1441,22 @@ pub fn resolve_protected(math: &str, rows: &[Vec<(String, f64)>]) -> Result<Stri
             // |e| where e keeps ONE SIGN on every row is e, or -e. Left as Abs, an
             // exact law is reported in a form no scorer matches to it (feynman
             // II.11.27: 3*n*eps*Ef / Abs(n - 3/alpha), the law but for the Abs).
+            // pi/2 - acos(u) IS asin(u), exactly, for every u the data can hold.
+            // The engine reaches a law this way and the scorer refuses it: feynman
+            // I_26_2 is arcsin(n*sin(theta2)) and was reported as
+            // 1.57 - arccos(n*sin(theta2)), which sympy will not cancel against
+            // the law. Verified to f64: max |pi/2 - acos(u) - asin(u)| = 4.4e-16.
+            Op::Sub
+                if matches!(&kids[0], Tree::Num(c) if (c - std::f64::consts::FRAC_PI_2).abs() < 1e-2)
+                    && matches!(&kids[1], Tree::App(Op::Acos | Op::ProtectedAcos, _)) =>
+            {
+                let Tree::App(_, inner) = &kids[1] else { return Tree::App(*op, kids) };
+                // Only where the argument is in range on every row: outside it the
+                // protected acos clamps and the identity is not the same function.
+                if on_every_row(&inner[0], rows, |v| v.abs() <= 1.0) {
+                    return Tree::App(Op::Asin, vec![inner[0].clone()]);
+                }
+            }
             Op::Abs => {
                 let a = values(&kids[0]);
                 if !a.is_empty() && a.iter().all(|v| v.is_finite() && *v >= 0.0) {
