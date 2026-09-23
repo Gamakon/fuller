@@ -1027,16 +1027,31 @@ fn discoveries(f: &mut Frame, theme: Theme, state: &WatchState, area: Rect) {
     if area.height < DISCOVERIES_MIN {
         return;
     }
-    let (snaps, folds) = state.discoveries.iter().fold((0, 0), |(s, d), x| match x.kind {
-        Find::Snap => (s + 1, d),
-        Find::Fold => (s, d + 1),
-    });
-    let plural = |n: usize, one: &str, many: &str| if n == 1 { one.to_string() } else { many.to_string() };
-    let block = Block::default().borders(Borders::ALL).title(format!(
-        " DISCOVERIES · {snaps} {} snapped into genes · {folds} {} folded ",
+    // THE TRUE TOTALS, not the ring's length. The list below is capped and
+    // collapses repeats, so counting IT reported the cap: a finished stream
+    // holding 597 snaps said "128 literals snapped", which is the size of the
+    // ring. `state.found` counts every event as it arrives.
+    let (snaps, folds, reduces) =
+        (state.found[Find::Snap as usize], state.found[Find::Fold as usize], state.found[Find::Reduce as usize]);
+    let plural = |n: u64, one: &str, many: &str| if n == 1 { one.to_string() } else { many.to_string() };
+    // AND THE REDUCTION'S COUNT IS A DASH UNTIL THE FINAL FORM HAS RUN. It only
+    // happens once the fit returns, so before that a zero would mean "not yet"
+    // while reading as "none" — and a fit killed mid-run never runs it at all.
+    // The codebase's own rule: a metric that is not emitted shows `—` and a reason.
+    let dropped = if state.tidy_reported { format!("{reduces} dropped") } else { "— dropped (final form pending)".to_string() };
+    // THE HEADING MUST FIT THE BORDER IT SITS IN. Three counts and their nouns
+    // spelled out is ~95 characters, and ratatui silently truncates a title that
+    // overruns — at 80 columns the fold count simply vanished, which is the one
+    // number this panel was rebuilt to show. The long form is drawn where there
+    // is room for it and the short one where there is not.
+    let long = format!(
+        " DISCOVERIES · {snaps} {} snapped into genes · {folds} {} folded · {dropped} ",
         plural(snaps, "literal", "literals"),
         plural(folds, "subtree", "subtrees")
-    ));
+    );
+    let short = format!(" DISCOVERIES · {snaps} snapped · {folds} folded · {dropped} ");
+    let title = if long.chars().count() <= area.width.saturating_sub(2) as usize { long } else { short };
+    let block = Block::default().borders(Borders::ALL).title(title);
     let inner = block.inner(area);
     if state.discoveries.is_empty() {
         // Nothing found is NOT nothing to say: snap and the fold are both
@@ -1046,7 +1061,7 @@ fn discoveries(f: &mut Frame, theme: Theme, state: &WatchState, area: Rect) {
             Paragraph::new(vec![
                 Line::from(Span::styled("nothing yet", Style::default().fg(theme.dim()))),
                 Line::from(Span::styled(
-                    "snaps arrive through the run · folds once, after it ends",
+                    "snaps and folds arrive through the run · drops once, after it ends",
                     Style::default().fg(theme.dim()),
                 )),
             ])
@@ -1066,9 +1081,18 @@ fn discoveries(f: &mut Frame, theme: Theme, state: &WatchState, area: Rect) {
             // population. A fold is the warn colour: it removed structure from
             // the reported model, which is a different kind of news. Both are
             // legible on either terminal.
+            // A snap is the accent — it went INTO the population. A FOLD IS RED
+            // (Andrew: "in a red colour if possible"): it is the operator taking
+            // a blob of dead operators out of a gene, and it should read as the
+            // loudest thing on the panel. `theme.bad()` is the red that is already
+            // proved legible on both terminals by the both-themes render tests; a
+            // second red would be a colour nothing else uses. A reduction keeps
+            // the warn colour: it is the quieter half, and it must not be mistaken
+            // for a fold at a glance.
             let (tag, colour) = match d.kind {
                 Find::Snap => ("snap", theme.accent()),
-                Find::Fold => ("fold", theme.warn()),
+                Find::Fold => ("fold", theme.bad()),
+                Find::Reduce => ("drop", theme.warn()),
             };
             let size = d.nodes.map_or_else(String::new, |n| format!("{n} nodes "));
             let body = format!("{size}{} → {}{}", d.what, d.became, d.times());
@@ -1385,14 +1409,21 @@ fn dump(state: &WatchState) -> String {
     // THE SAME TWO PANELS THE SCREEN DRAWS, so a dump and a terminal never
     // disagree about what the fit found — and so the panels can be checked
     // without a tty.
-    out.push_str("\n  DISCOVERIES\n");
+    // The same heading the screen draws, TRUE TOTALS and all: a dump is how the
+    // panel is checked without a tty, so it must not report a different number.
+    use fuller::evolve::watch::Find;
+    let (snaps, folds, reduces) =
+        (state.found[Find::Snap as usize], state.found[Find::Fold as usize], state.found[Find::Reduce as usize]);
+    let dropped = if state.tidy_reported { format!("{reduces} dropped") } else { "— dropped (the final form has not run)".to_string() };
+    out.push_str(&format!("\n  DISCOVERIES · {snaps} snapped · {folds} folded · {dropped}\n"));
     if state.discoveries.is_empty() {
-        out.push_str("  (none yet · snaps arrive through the run, folds once after it ends)\n");
+        out.push_str("  (none yet · snaps and folds arrive through the run, drops once after it ends)\n");
     }
     for d in state.discoveries.iter().rev().take(12) {
         let tag = match d.kind {
-            fuller::evolve::watch::Find::Snap => "snap",
-            fuller::evolve::watch::Find::Fold => "fold",
+            Find::Snap => "snap",
+            Find::Fold => "fold",
+            Find::Reduce => "drop",
         };
         let size = d.nodes.map_or_else(String::new, |n| format!("{n} nodes "));
         out.push_str(&format!("  gen {:>6}  {tag}  {size}{} -> {}{}\n", d.generation, d.what, d.became, d.times()));
@@ -1440,6 +1471,26 @@ mod tests {
     /// drawn from it would be a panel drawn from a stream with none of what it
     /// shows — which proves nothing.
     const DISCOVERIES: &str = include_str!("../../tests/fixtures/telemetry_v1_discoveries.jsonl");
+
+    /// A REAL RECORDING OF THE FOLD OPERATOR: a 400-generation bacres1 fit (seed
+    /// 7014) trimmed to the records that matter here — folds that arrived DURING
+    /// the search carrying the row they landed in, the leave-one-out's drops after
+    /// `run_end`, and the note that says the final form has run.
+    ///
+    /// `DISCOVERIES` predates all three: its one fold has `row: null` because the
+    /// fold could only happen after the fit returned, which is the bug this
+    /// fixture exists to show is gone.
+    const FOLD_OPERATOR: &str = include_str!("../../tests/fixtures/telemetry_v1_fold_operator.jsonl");
+
+    fn state_with_fold_operator() -> WatchState {
+        let (records, bad) = parse_stream(FOLD_OPERATOR);
+        assert_eq!(bad, 0, "the recording is clean");
+        let mut state = WatchState::new(false);
+        for r in records {
+            state.apply_record(r);
+        }
+        state
+    }
 
     fn state_with_discoveries() -> WatchState {
         let (records, bad) = parse_stream(DISCOVERIES);
@@ -1746,6 +1797,133 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// ALL THREE KINDS DRAW, at every size and in both themes — and a fold is
+    /// visibly a fold, a drop visibly a drop.
+    ///
+    /// The fold is RED (`theme.bad()`) because it is the operator taking a blob of
+    /// dead operators out of a live gene, which is the loudest news the panel
+    /// carries; the drop keeps the warn colour so the two are never read as one
+    /// finding. Both reds are the ones the verdict banner already uses, so they
+    /// are the ones these sizes and themes have always proved legible.
+    #[test]
+    fn the_fold_and_the_drop_draw_apart_at_every_size_and_in_both_themes() {
+        let state = state_with_fold_operator();
+        assert!(state.discoveries.iter().any(|d| d.kind == Find::Fold), "the recording has no fold");
+        assert!(state.discoveries.iter().any(|d| d.kind == Find::Reduce), "the recording has no reduction");
+        for theme in [Theme { light: false }, Theme { light: true }] {
+            for (w, h) in [(120, 35), (160, 50), (80, 24)] {
+                let screen = painted(&state, theme, w, h);
+                assert!(screen.contains("DISCOVERIES"), "{w}x{h} light={}: no panel\n{screen}", theme.light);
+                assert!(screen.contains("fold"), "{w}x{h}: the fold is not on screen\n{screen}");
+                assert!(screen.contains("drop"), "{w}x{h}: the drop is not on screen\n{screen}");
+                // A reduction says the subtree WENT. Its `value` is the mean it
+                // was held at to prove it could go, not something the model now
+                // carries, so it must never be drawn as an arrow's target.
+                assert!(screen.contains("dropped"), "{w}x{h}: a drop did not say it was dropped\n{screen}");
+                // AND THE HEADING'S NUMBERS SURVIVE THE WIDTH. A title that
+                // overruns its border is truncated silently, and at 80 columns the
+                // fold count — the one number this panel was rebuilt to show —
+                // simply vanished off the end of the long spelling.
+                // Either spelling, but the NUMBER must be there: the heading is
+                // drawn long where it fits and short where it does not.
+                let folds = state.found[Find::Fold as usize];
+                assert!(
+                    screen.contains(&format!("{folds} folded")) || screen.contains(&format!("{folds} subtrees folded")),
+                    "{w}x{h}: the fold count was truncated away\n{screen}"
+                );
+                for line in screen.lines() {
+                    assert_eq!(line.chars().count(), w as usize, "{w}x{h}: a row is not the terminal's width");
+                }
+            }
+        }
+        // AND THE TWO REDS ARE DIFFERENT COLOURS, in both themes: a panel that
+        // drew a fold and a drop identically would be showing one finding twice.
+        for theme in [Theme { light: false }, Theme { light: true }] {
+            assert_ne!(theme.bad(), theme.warn(), "light={}: the fold and the drop share a colour", theme.light);
+            assert_ne!(theme.bad(), theme.accent(), "light={}: the fold and the snap share a colour", theme.light);
+        }
+    }
+
+    /// THE HEADING COUNTS WHAT THE STREAM SENT, not what the ring kept.
+    ///
+    /// `discoveries` is capped at `DISCOVERIES` and collapses repeats, so counting
+    /// IT reported the cap: the finished bacres1 recording holds 597 snap events
+    /// and the panel said "128 literals snapped", which is the size of the ring
+    /// and not a measurement of anything.
+    #[test]
+    fn the_heading_reports_the_true_totals_and_not_the_rings_cap() {
+        let mut state = state_with_fold_operator();
+        let sent = state.found;
+        // More snaps than the ring can hold, each distinct so none collapses.
+        let base = state.discoveries.last().cloned().expect("a discovery");
+        for g in 0..(fuller::evolve::watch::DISCOVERIES as u32 + 40) {
+            state.apply_record(Record::Event(fuller::evolve::telemetry::Event {
+                header: fuller::evolve::telemetry::Header {
+                    schema_version: fuller::evolve::telemetry::SCHEMA_VERSION,
+                    run_id: "r".into(),
+                    seq: 9000 + u64::from(g),
+                    timestamp_utc: fuller::evolve::telemetry::now_utc(),
+                    elapsed_ms: 0,
+                    generation: 500 + g,
+                },
+                kind: fuller::evolve::telemetry::EventKind::Snap,
+                message: format!("snap {g}"),
+                cohort: None,
+                value: Some(f64::from(g)),
+                before: Some(f64::from(g) + 0.5),
+                detail: Some(format!("pi/{g}")),
+                nodes: None,
+                row: Some(g),
+            }));
+        }
+        let _ = base;
+        let added = u64::from(fuller::evolve::watch::DISCOVERIES as u32 + 40);
+        assert_eq!(state.found[Find::Snap as usize], sent[Find::Snap as usize] + added, "the total did not follow the stream");
+        assert_eq!(state.discoveries.len(), fuller::evolve::watch::DISCOVERIES, "the ring did not stay bounded");
+        // The heading says the TOTAL, which is larger than the ring.
+        let screen = painted(&state, Theme::default(), 160, 50);
+        let total = state.found[Find::Snap as usize];
+        assert!(total > fuller::evolve::watch::DISCOVERIES as u64, "the test did not overflow the ring");
+        assert!(screen.contains(&format!("{total} literals snapped")), "the heading reported the cap, not the total\n{screen}");
+    }
+
+    /// A ZERO THE VIEWER DOES NOT HAVE IS A DASH. The reduction only runs once the
+    /// fit returns, so before the engine says it has run, a count of zero would
+    /// read as "none found" when it means "not computed yet" — and a fit killed
+    /// mid-run never computes it at all, which is why a 60,000-generation stream
+    /// showed nothing there for its whole life.
+    #[test]
+    fn the_drop_count_is_a_dash_until_the_final_form_has_run() {
+        // The finished recording that predates the summary note: it genuinely
+        // does not know, and must say so.
+        let old = state_with_discoveries();
+        assert!(!old.tidy_reported, "the old recording carries a summary it should not");
+        let screen = painted(&old, Theme::default(), 160, 50);
+        assert!(screen.contains("— dropped"), "a count it does not have was printed as a number\n{screen}");
+        assert!(screen.contains("final form pending"), "the dash gave no reason\n{screen}");
+        // And the recording that DOES carry the note prints the number, even
+        // though the number is small.
+        let new = state_with_fold_operator();
+        assert!(new.tidy_reported, "the note was not seen");
+        let screen = painted(&new, Theme::default(), 160, 50);
+        assert!(!screen.contains("— dropped"), "a known count was printed as a dash\n{screen}");
+        let reduces = new.found[Find::Reduce as usize];
+        assert!(screen.contains(&format!("{reduces} dropped")), "the known count is not on screen\n{screen}");
+    }
+
+    /// THE FOLD ARRIVES DURING THE SEARCH, which is the whole point of the
+    /// operator: its events carry the row they landed in and a generation before
+    /// the fit ended, where the old fold could only ever be stamped with the last
+    /// generation of the run.
+    #[test]
+    fn the_folds_in_the_recording_happened_mid_fit() {
+        let state = state_with_fold_operator();
+        let end = state.end.as_ref().expect("a run_end").generations;
+        let folds: Vec<_> = state.discoveries.iter().filter(|d| d.kind == Find::Fold).collect();
+        assert!(!folds.is_empty(), "no folds in the recording");
+        assert!(folds.iter().any(|d| d.generation < end), "every fold was stamped at the end of the run: {folds:?}");
     }
 
     /// AND IT DEGRADES RATHER THAN BREAKING. Below 70x20 the compact warning is

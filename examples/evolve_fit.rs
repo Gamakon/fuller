@@ -24,7 +24,7 @@
 
 use fuller::chrom_score::Splits;
 use fuller::evolve::card::{self, Card, Code, DataCard, Derived, IslandSpan, Run, Synthetic};
-use fuller::evolve::engine::{evaluate_math, final_form_reporting, resolve_protected, Config, Data, Engine};
+use fuller::evolve::engine::{evaluate_math, final_form_reporting, resolve_protected, Config, Data, Engine, Lane};
 use fuller::evolve::umap2d::embed_2d;
 use fuller::evolve::{below, draw, smogd, smote};
 use fuller::lint::node::Tree;
@@ -206,9 +206,135 @@ fn main() {
         config.checkpoint_every_seconds =
             std::env::var("EVOLVE_CHECKPOINT_EVERY").ok().and_then(|v| v.parse().ok()).unwrap_or(60.0);
     }
-    config.genealogy_path = std::env::var("EVOLVE_GENEALOGY_FILE").ok().filter(|p| !p.is_empty());
-    config.telemetry_path = std::env::var("EVOLVE_TELEMETRY_FILE").ok().filter(|p| !p.is_empty());
-    config.telemetry_run_id = std::env::var("EVOLVE_TELEMETRY_RUN_ID").ok().filter(|p| !p.is_empty());
+    if let Some(m) = std::env::var("EVOLVE_COHORT_MERGE").ok().and_then(|v| v.parse::<u32>().ok()) {
+        config.cohort_merge = m;
+    }
+    if let Some(beat) = std::env::var("EVOLVE_PUMP_EVERY").ok().and_then(|v| v.parse::<u32>().ok()) {
+        config.pump_every = beat;
+    }
+    //   EVOLVE_HEAD                     a gene's head length (the engine's default is 34)
+    if let Some(head) = std::env::var("EVOLVE_HEAD").ok().and_then(|v| v.parse::<u32>().ok()) {
+        config.head = head;
+    }
+    //   EVOLVE_POP_CHAMPION             the champion island's size; the `population`
+    //                                   argument is then the INTAKE island's size
+    //                                   (1500 + 1500 rather than the 3:1 split, which
+    //                                   dates from when a generation was slow)
+    //   EVOLVE_POP_INTAKE               the intake island's size, by name. The intake
+    //                                   used to come ONLY from positional argument 4,
+    //                                   so a caller setting EVOLVE_POP_INTAKE got the
+    //                                   default 600 and no complaint — a 200,000-row
+    //                                   run reported itself as 600 + 100,000.
+    if let Some(intake) = std::env::var("EVOLVE_POP_INTAKE").ok().and_then(|v| v.parse::<u32>().ok()) {
+        config.pop_intake = intake;
+    }
+    if let Some(champion) = std::env::var("EVOLVE_POP_CHAMPION").ok().and_then(|v| v.parse::<u32>().ok()) {
+        if let Some(intake) = args.get(4).and_then(|a| a.parse::<u32>().ok()) {
+            config.pop_intake = intake;
+        }
+        config.pop_champion = champion;
+    }
+    eprintln!("POPULATION\t{} intake + {} champion", config.pop_intake, config.pop_champion);
+    // Experiment knobs come by environment so the positional arguments stay put:
+    //   EVOLVE_RNC_LO / EVOLVE_RNC_HI   the range a gene's random constants are drawn from
+    //   EVOLVE_RESTARTS                 split the time into this many independent searches
+    let env = |k: &str| std::env::var(k).ok();
+    if let (Some(lo), Some(hi)) = (env("EVOLVE_RNC_LO").and_then(|v| v.parse().ok()), env("EVOLVE_RNC_HI").and_then(|v| v.parse().ok())) {
+        config.rnc_lo = lo;
+        config.rnc_hi = hi;
+    }
+    //   EVOLVE_REDUNDANCY=1             leave-one-gene-out redundancy as an HFF objective
+    //   EVOLVE_MAX_GENERATIONS          stop by GENERATIONS (give a long time cap): a
+    //                                   comparison that does not depend on how busy the device is
+    config.redundancy = env("EVOLVE_REDUNDANCY").is_some_and(|v| v == "1");
+    if let Some(g) = env("EVOLVE_MAX_GENERATIONS").and_then(|v| v.parse().ok()) {
+        config.max_generations = g;
+    }
+    //   EVOLVE_PAIRS                    pairs of islands (intake + champion); the island
+    //                                   sizes are ONE pair's, so the population is this
+    //                                   many times as large (default 1)
+    //   EVOLVE_CROSS_EVERY              THE CROSS STEP's beat: every this many generations
+    //                                   each intake island takes in the best of the other
+    //                                   pairs' champion islands (default 0 = never)
+    //   EVOLVE_K_MIGRANTS               how many each champion island sends (default 3)
+    if let Some(n) = env("EVOLVE_PAIRS").and_then(|v| v.parse().ok()) {
+        config.n_pairs = n;
+    }
+    if let Some(n) = env("EVOLVE_CROSS_EVERY").and_then(|v| v.parse().ok()) {
+        config.cross_every = n;
+    }
+    if let Some(n) = env("EVOLVE_K_MIGRANTS").and_then(|v| v.parse().ok()) {
+        config.k_migrants = n;
+    }
+    //   EVOLVE_LANES                    THE SWIM LANES: one rule set per island pair, as
+    //                                   `name:explore:recombine[:cleanse]` separated by
+    //                                   commas — "general:1:1,explorer:3:0.5". There must
+    //                                   be exactly EVOLVE_PAIRS of them. `explore` scales
+    //                                   the point-mutation and transposition rates,
+    //                                   `recombine` the three crossovers, and the lane's
+    //                                   name is reported as having found the law.
+    if let Some(spec) = env("EVOLVE_LANES") {
+        let mut lanes = Vec::new();
+        for one in spec.split(',').filter(|s| !s.trim().is_empty()) {
+            let f: Vec<&str> = one.split(':').collect();
+            let num = |i: usize, what: &str| -> f64 {
+                f.get(i)
+                    .unwrap_or_else(|| panic!("EVOLVE_LANES: lane {one:?} has no {what}; it is name:explore:recombine[:cleanse]"))
+                    .parse()
+                    .unwrap_or_else(|e| panic!("EVOLVE_LANES: lane {one:?} {what}: {e}"))
+            };
+            lanes.push(Lane {
+                name: (*f.first().expect("a lane needs a name")).to_string(),
+                explore: num(1, "explore"),
+                recombine: num(2, "recombine"),
+                cleanse: f.get(3).map(|v| v.parse().expect("EVOLVE_LANES: cleanse")),
+            });
+        }
+        eprintln!("LANES {}", lanes.iter().map(|l| format!("{} x{}/{}", l.name, l.explore, l.recombine)).collect::<Vec<_>>().join(" | "));
+        config.lanes = Some(lanes);
+    }
+    //   EVOLVE_SNAP_EVERY               SNAP WINNERS' beat in generations (0 = off, the default):
+    //                                   kept snapped forms are written back into the genes
+    //   EVOLVE_SNAP_TOP_K               rows per island, by fitness, that are snap winners (0 = all)
+    if let Some(n) = env("EVOLVE_SNAP_EVERY").and_then(|v| v.parse().ok()) {
+        config.snap_every = n;
+    }
+    if let Some(n) = env("EVOLVE_SNAP_TOP_K").and_then(|v| v.parse().ok()) {
+        config.snap_top_k = n;
+    }
+    //   EVOLVE_FOLD_EVERY               THE FOLD OPERATOR's beat in generations (0 = off): the
+    //                                   winners of every island have their near-constant subtrees
+    //                                   collapsed to the constants they are, and the clean gene is
+    //                                   written back into its own row
+    //   EVOLVE_FOLD_TOP_K               rows per island, by fitness, the fold examines (0 = all)
+    if let Some(n) = env("EVOLVE_FOLD_EVERY").and_then(|v| v.parse().ok()) {
+        config.fold_every = n;
+    }
+    if let Some(n) = env("EVOLVE_FOLD_TOP_K").and_then(|v| v.parse().ok()) {
+        config.fold_top_k = n;
+    }
+    //   EVOLVE_GENEALOGY_FILE           THE GENEALOGY LOG: every individual of the fit gets an
+    //                                   IDENTITY, an AGE (generations since its genotype entered
+    //                                   the population) and a LINEAGE, and this file takes the
+    //                                   best of every generation, every arrival (pump, cross,
+    //                                   snap) and the winner's chain back to its founder. Unset
+    //                                   = off, and the engine is what it was, bit for bit.
+    config.genealogy_path = env("EVOLVE_GENEALOGY_FILE").filter(|p| !p.is_empty());
+    //   EVOLVE_TELEMETRY_FILE           THE TELEMETRY STREAM: a versioned JSONL record per
+    //                                   progress beat — the global state, every island's rows
+    //                                   and best HFF, and every cohort's split by island —
+    //                                   which `hff-watch --follow` repaints from. The prose
+    //                                   log is unchanged; this is a SECOND stream, and it is
+    //                                   the production API (never parse the prose log).
+    //                                   Unset = off, and the engine is what it was, bit for
+    //                                   bit. It rides on EVOLVE_PROGRESS_EVERY, so that is
+    //                                   defaulted to 10 here when a stream is asked for and
+    //                                   no beat was given — a caller who asks to watch a fit
+    //                                   should not get an empty file because of a second knob.
+    //   EVOLVE_TELEMETRY_RUN_ID         what the stream calls this run (default
+    //                                   `<dataset>-seed<seed>`)
+    config.telemetry_path = env("EVOLVE_TELEMETRY_FILE").filter(|p| !p.is_empty());
+    config.telemetry_run_id = env("EVOLVE_TELEMETRY_RUN_ID").filter(|p| !p.is_empty());
     config.telemetry_dataset = std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().into_owned());
     // The stream rides on the progress report, so a caller who asks to watch a
     // fit should not get an empty file because of a second knob.
@@ -355,6 +481,13 @@ fn main() {
         println!("{}", out.snap.line());
         println!("{}", out.snap.detail());
     }
+    // THE FOLD OPERATOR: what it cost the search, per beat, and what it bought —
+    // the head positions it gave back to genes that were spending them on blobs
+    // holding one number.
+    if config.fold_every > 0 {
+        println!("seconds: fold {:.2} ({:.3} per beat in the fold step itself)", t.fold, out.fold.seconds / out.fold.beats.max(1) as f64);
+        println!("{}", out.fold.line());
+    }
     // THE BEAM: beats, mutants, how many beat their original, the best log10 p
     // before and after, and the seconds it cost — plus which wraps earned their
     // place and what the float zone held.
@@ -380,12 +513,20 @@ fn main() {
     // AND WHAT THE ROUNDING GENERATOR FOUND on the way: the folds go onto the
     // telemetry stream (after `run_end` — this is where the fold happens) so the
     // viewer's discoveries panel can show them beside snap's substitutions.
-    let (tidied, folds) = final_form_reporting(&resolved, &names, &fit_rows, Some(out.best.one_minus_r2[0]))
-        .unwrap_or_else(|_| (resolved.clone(), Vec::new()));
+    // AND THE LEAVE-ONE-OUT's drops beside them: the two are complements, and a
+    // panel shown one without the other is shown half the tidy. The summary goes
+    // out even when the final form FAILED — a viewer must be able to tell "it ran
+    // and found nothing" from "it never ran", and both are a zero.
+    let tidy_out = final_form_reporting(&resolved, &names, &fit_rows, Some(out.best.one_minus_r2[0]))
+        .unwrap_or_else(|_| fuller::evolve::engine::Tidied { form: resolved.clone(), ..Default::default() });
+    let (tidied, folds, drops) = (tidy_out.form, tidy_out.folds, tidy_out.drops);
     for f in &folds {
         println!("FOLD\t{}\t{:.9}\t{}", f.nodes, f.value, f.infix);
     }
-    engine.report_folds(out.generations, &folds);
+    for r in &drops {
+        println!("REDUCE\t{}\t{:.9}\t{}", r.nodes, r.held, r.infix);
+    }
+    engine.report_tidy(out.generations, &folds, &drops);
     // ... and the data guided rewrites once more: fuller's linter can WRITE a shape
     // they cover (it turns Add (Neg (Log b)) (Log a) into Sub (Log a) (Log b)), and a
     // form that only appears after the tidy must not slip past them.

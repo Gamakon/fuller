@@ -1,0 +1,6 @@
+off run1  population 1 x (2000+2000) = 4000 | 664 generations in 20.0 s = 30.2 ms per generation | 2660000 individuals = 132852 per second | stopped by time
+on run1  population 1 x (2000+2000) = 4000 | 671 generations in 20.0 s = 29.8 ms per generation | 2688000 individuals = 134266 per second | stopped by time
+off run2  population 1 x (2000+2000) = 4000 | 669 generations in 20.0 s = 29.9 ms per generation | 2680000 individuals = 133972 per second | stopped by time
+on run2  population 1 x (2000+2000) = 4000 | 655 generations in 20.0 s = 30.6 ms per generation | 2624000 individuals = 131115 per second | stopped by time
+off run3  population 1 x (2000+2000) = 4000 | 656 generations in 20.0 s = 30.5 ms per generation | 2628000 individuals = 131238 per second | stopped by time
+on run3  population 1 x (2000+2000) = 4000 | 657 generations in 20.0 s = 30.5 ms per generation | 2632000 individuals = 131421 per second | stopped by time

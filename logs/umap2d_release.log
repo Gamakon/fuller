@@ -1,0 +1,19 @@
+   Compiling hff v0.1.0 (/Users/andrewmorgan/Dev/gamakon/hff)
+   Compiling fuller v0.1.0 (/Users/andrewmorgan/Dev/gamakon/fuller)
+    Finished `release` profile [optimized] target(s) in 5.93s
+     Running unittests src/lib.rs (target/release/deps/fuller-cfcb002ff333950c)
+
+running 7 tests
+test evolve::umap2d::tests::bad_input_is_an_error ... ok
+test evolve::umap2d::tests::curved_sheet_keeps_its_neighbourhoods ... sheet: mean 10-NN overlap 0.780
+ok
+test evolve::umap2d::tests::few_rows_and_duplicate_rows_embed ... ok
+test evolve::umap2d::tests::five_thousand_by_six_completes ... embed_2d 5000 x 6: 2.05 s
+ok
+test evolve::umap2d::tests::knn_on_a_line_by_hand ... ok
+test evolve::umap2d::tests::same_seed_is_bit_identical_and_another_seed_differs ... ok
+test evolve::umap2d::tests::separated_blobs_stay_separated ... blobs: nearest 2D neighbour in own blob for 100.0% of points
+ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 283 filtered out; finished in 2.55s
+

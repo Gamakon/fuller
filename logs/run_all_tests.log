@@ -1,0 +1,68 @@
+
+######## 1 build python extension (python,gpu)  09:41:05
+    Finished `release` profile [optimized] target(s) in 3.37s
+🛠 Installed fuller-0.1.0
+secs=7
+
+######## 2 cargo test --features gpu  09:41:12
+test result: ok. 241 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.66s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+secs=20
+
+######## 3 fuller timings on 847 stored expressions  09:41:32
+smallest_form: errors 0 secs 3.35
+Traceback (most recent call last):
+  File "<stdin>", line 6, in <module>
+  File "<stdin>", line 6, in <genexpr>
+KeyError: 'fuller_nodes'
+expressions ok=847 err=0 rows=64 k=8
+candidates returned      1469
+rewrite+extract (no rows)     1.012 s
+with rows                     1.170 s
+data share                    0.157 s  (13.5% of with-rows)
+per expression                1.381 ms
+expressions ok=847 err=0 rows=8192 k=8
+candidates returned      1474
+rewrite+extract (no rows)     1.096 s
+with rows                     8.738 s
+data share                    7.643 s  (87.5% of with-rows)
+per expression               10.317 ms
+
+######## 4 the 13-problem sweep (GPU join)  09:41:54
+wall=19s
+usage: sr_report.py [-h] [--dir DIR] [--watch] [--interval INTERVAL]
+                    [--misses] [--compare A B]
+sr_report.py: error: unrecognized arguments: sr_logs/t13rules
+0
+
+######## 5 parity, all corpora  09:42:13
+module                   matched   total   parity
+--------------------------------------------------
+powsimp                      146     172    84.9%
+--------------------------------------------------
+OVERALL                      146     172    84.9%
+powsimp secs=3
+module                   matched   total   parity
+--------------------------------------------------
+radsimp                       35     200    17.5%
+--------------------------------------------------
+OVERALL                       35     200    17.5%
+radsimp secs=1
+module                   matched   total   parity
+--------------------------------------------------
+ratsimp                       28     200    14.0%
+--------------------------------------------------
+OVERALL                       28     200    14.0%
+ratsimp secs=1
+module                   matched   total   parity
+--------------------------------------------------
+trigsimp                      94     200    47.0%
+--------------------------------------------------
+OVERALL                       94     200    47.0%
+trigsimp secs=2
+module                   matched   total   parity
+--------------------------------------------------
+simplify secs=1229
+
+######## ALL DONE  10:02:49

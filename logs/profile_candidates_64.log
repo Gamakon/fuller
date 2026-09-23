@@ -1,0 +1,6 @@
+expressions ok=847 err=0 rows=64 k=8
+candidates returned      1312
+rewrite+extract (no rows)     0.564 s
+with rows                     0.710 s
+data share                    0.147 s  (20.6% of with-rows)
+per expression                0.839 ms

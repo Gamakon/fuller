@@ -54,14 +54,25 @@ pub const DISCOVERIES: usize = 128;
 /// that mixed them silently would be a list of unrelated numbers.
 ///
 /// A SNAP is a substitution INTO the population: a literal the search fitted
-/// numerically is now `pi` and breeds as that token. A FOLD is a reduction of
-/// the FINAL model: a subtree whose whole range was under a percent of its own
-/// value, replaced by that value. Snaps arrive through the run; folds arrive
-/// once, after `run_end`, because that is when the final form is computed.
+/// numerically is now `pi` and breeds as that token.
+///
+/// A FOLD is a blob that was secretly a constant — a subtree whose whole range
+/// across the rows was under a percent of its own value, replaced by that value.
+/// It arrives from two places and is the same finding either way: the pump's fold
+/// operator sends one the moment it writes a folded gene back into the
+/// population, mid-fit, and the final form sends the ones it made on the reported
+/// model, after `run_end`.
+///
+/// A REDUCE is the complement: a subtree the data cannot see AT ALL, held at its
+/// mean without the model's predictions moving, so it was carrying nothing and
+/// nothing of it is kept. A fold keeps the constant the blob was; a reduction
+/// keeps nothing. They are different findings and a list that merged them would
+/// be a list of unrelated numbers. Reductions arrive after `run_end` only.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Find {
     Snap,
     Fold,
+    Reduce,
 }
 
 /// One line of the discoveries panel: what changed, and what it became.
@@ -297,6 +308,21 @@ pub struct WatchState {
     /// within a beat. They are the same records; they have their own panel
     /// because they have their own shape.
     pub discoveries: Vec<Discovery>,
+    /// HOW MANY OF EACH KIND THE STREAM ACTUALLY SENT — snaps, folds, reductions.
+    ///
+    /// NOT the ring's length. `discoveries` is capped at [`DISCOVERIES`] and
+    /// collapses repeats, so counting it reports the CAP once a fit has run for a
+    /// while: a finished bacres1 stream holding 597 snap events showed "128
+    /// literals snapped", which is the size of the ring and not a measurement.
+    /// These are incremented on every event as it arrives, before the ring is
+    /// touched, so the heading says what happened and the list shows what fits.
+    pub found: [u64; 3],
+    /// WHETHER THE FINAL FORM HAS RUN. The fold and the reduction of the REPORTED
+    /// model happen after `fit()` returns, so until the engine says it has done
+    /// them a zero means "not yet" and not "none" — and a fit killed before it
+    /// returns never does them at all, which is why a long run showed a fold count
+    /// of zero for its whole life. False makes the heading print a dash.
+    pub tidy_reported: bool,
     /// The most recent `model` record, for the `m` viewer.
     pub model: Option<super::telemetry::Model>,
     /// THE WINNING GENE as one readable line, `f(x, y) = ...`, computed WHEN THE
@@ -353,6 +379,8 @@ impl WatchState {
             history: BTreeMap::new(),
             events: Vec::new(),
             discoveries: Vec::new(),
+            found: [0; 3],
+            tidy_reported: false,
             model: None,
             gene_line: None,
             selected: None,
@@ -420,8 +448,13 @@ impl WatchState {
                 // A DISCOVERY GOES TO ITS OWN PANEL, not into the four-line
                 // events pane it would flood. Everything else is an event.
                 match e.kind {
-                    EventKind::Snap | EventKind::Fold => {
+                    EventKind::Snap | EventKind::Fold | EventKind::Reduce => {
                         let d = discovery_of(&e);
+                        // COUNTED BEFORE THE RING, because the ring is bounded and
+                        // collapses repeats: what the stream sent and what the
+                        // panel can show are different numbers, and the heading
+                        // wants the first one.
+                        self.found[d.kind as usize] += 1;
                         // THE SAME FINDING IN A ROW IS ONE LINE with a count.
                         // Selection copies a winning gene across many rows, so
                         // one substitution is written once per row it landed in;
@@ -437,6 +470,13 @@ impl WatchState {
                         }
                     }
                     _ => {
+                        // THE ENGINE'S OWN WORD that the final form has been
+                        // computed. Until it arrives a zero fold count is a
+                        // not-yet, and the heading must say so rather than print
+                        // a number it does not have.
+                        if e.kind == EventKind::Note && e.message.starts_with(crate::evolve::engine::TIDY_REPORTED) {
+                            self.tidy_reported = true;
+                        }
                         self.events.push((e.header.generation, e.message));
                         // Bounded: a long fit's events must not grow the viewer
                         // without limit, and only the recent ones are on screen.
@@ -843,16 +883,26 @@ impl Discovery {
 /// its detail is shown as what it said — the `message` — rather than as a row of
 /// dashes, because the message is always written and is always a sentence.
 fn discovery_of(e: &super::telemetry::Event) -> Discovery {
-    let kind = if e.kind == EventKind::Fold { Find::Fold } else { Find::Snap };
-    // A snap's `what` is the literal it started from; a fold's is the subtree.
+    let kind = match e.kind {
+        EventKind::Fold => Find::Fold,
+        EventKind::Reduce => Find::Reduce,
+        _ => Find::Snap,
+    };
+    // A snap's `what` is the literal it started from; a fold's and a reduction's
+    // is the subtree that went.
     let what = match kind {
         Find::Snap => e.before.map(|v| format!("{v:.9}")).unwrap_or_else(|| e.message.clone()),
-        Find::Fold => e.detail.clone().unwrap_or_else(|| e.message.clone()),
+        Find::Fold | Find::Reduce => e.detail.clone().unwrap_or_else(|| e.message.clone()),
     };
-    // And `became` is the other end: a snap's named form, a fold's value.
+    // And `became` is the other end: a snap's named form, a fold's value, and for
+    // a reduction the word for what a dropped subtree becomes, which is nothing.
+    // Its `value` is the mean it was HELD at to prove it could go, not something
+    // the model now carries, so printing that number as an arrow's target would
+    // say the opposite of what happened.
     let became = match kind {
         Find::Snap => e.detail.clone().unwrap_or_else(|| or_dash(e.value, 6)),
         Find::Fold => or_dash(e.value, 6),
+        Find::Reduce => "dropped".to_string(),
     };
     Discovery { kind, generation: e.header.generation, before: e.before, what, became, nodes: e.nodes, count: 1 }
 }

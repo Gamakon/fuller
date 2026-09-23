@@ -1,0 +1,31 @@
+######## ab2_off-off-p0_s5  12:48:22
+wall=198s  sr_logs/ab2_off-off-p0_s5  warn/err lines: 0
+######## ab2_off-off-p1_s5  12:51:40
+wall=195s  sr_logs/ab2_off-off-p1_s5  warn/err lines: 0
+######## ab2_lint-hff-p1_s5  12:54:55
+wall=203s  sr_logs/ab2_lint-hff-p1_s5  warn/err lines: 0
+######## ab2_lint-improve-p0_s5  12:58:18
+wall=269s  sr_logs/ab2_lint-improve-p0_s5  warn/err lines: 0
+######## ab2_egglog-improve-p0_s5  13:02:47
+wall=278s  sr_logs/ab2_egglog-improve-p0_s5  warn/err lines: 0
+######## ab2_off-off-p0_s11  13:07:25
+wall=203s  sr_logs/ab2_off-off-p0_s11  warn/err lines: 0
+######## ab2_off-off-p1_s11  13:10:48
+wall=197s  sr_logs/ab2_off-off-p1_s11  warn/err lines: 0
+######## ab2_lint-hff-p1_s11  13:14:05
+wall=226s  sr_logs/ab2_lint-hff-p1_s11  warn/err lines: 0
+######## ab2_lint-improve-p0_s11  12:17:51
+wall=326s  sr_logs/ab2_lint-improve-p0_s11  warn/err lines: 0
+######## ab2_egglog-improve-p0_s11  12:23:17
+wall=177s  sr_logs/ab2_egglog-improve-p0_s11  warn/err lines: 0
+######## ab2_off-off-p0_s23  12:26:14
+wall=145s  sr_logs/ab2_off-off-p0_s23  warn/err lines: 0
+######## ab2_off-off-p1_s23  12:28:39
+wall=137s  sr_logs/ab2_off-off-p1_s23  warn/err lines: 0
+######## ab2_lint-hff-p1_s23  12:30:56
+wall=163s  sr_logs/ab2_lint-hff-p1_s23  warn/err lines: 0
+######## ab2_lint-improve-p0_s23  12:33:39
+wall=236s  sr_logs/ab2_lint-improve-p0_s23  warn/err lines: 0
+######## ab2_egglog-improve-p0_s23  12:37:35
+wall=247s  sr_logs/ab2_egglog-improve-p0_s23  warn/err lines: 0
+######## ALL DONE

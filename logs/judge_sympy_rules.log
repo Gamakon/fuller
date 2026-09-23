@@ -1,0 +1,76 @@
+
+=== docs/rule_proposals/sympy_trig.md
+    forms 33 | admitted 32 {"A/Bit": 1, "A/Finite": 1, "A/Rounding": 30} | refused 0 | unreadable 0 | already present 0
+
+=== docs/rule_proposals/sympy_powers.md
+    forms 63 | admitted 56 {"A/Bit": 5, "A/Finite": 32, "A/Rounding": 18, "B/Finite": 1} | refused 5 | unreadable 0 | already present 1
+    REFUSED    (rewrite (Sqrt (Inv x)) (Inv (Sqrt x)) :ruleset sympy_powers)
+      does not reduce the measure: (Sqrt (Inv (Var "s"))) Measure { nodes: 3, pow: 0, div: 0, protected_inv: 0, m_neg: 0 } -> (Inv (Sqrt (Var "s"))) Measure { nodes: 3, pow: 0, div: 0, protected_inv: 0, m_n
+    REFUSED    (rewrite (Log (Inv x)) (Neg (Log x)) :ruleset sympy_powers)
+      does not reduce the measure: (Log (Inv (Var "s"))) Measure { nodes: 3, pow: 0, div: 0, protected_inv: 0, m_neg: 0 } -> (Neg (Log (Var "s"))) Measure { nodes: 3, pow: 0, div: 0, protected_inv: 0, m_neg
+    REFUSED    (rewrite (Pow3 (Abs x)) (Abs (Pow3 x)) :ruleset sympy_powers)
+      does not reduce the measure: (Pow3 (Abs (Var "s"))) Measure { nodes: 3, pow: 0, div: 0, protected_inv: 0, m_neg: 0 } -> (Abs (Pow3 (Var "s"))) Measure { nodes: 3, pow: 0, div: 0, protected_inv: 0, m_n
+    REFUSED    (rewrite (Inv (Abs x)) (Abs (Inv x)) :ruleset sympy_powers)
+      does not reduce the measure: (Inv (Abs (Var "s"))) Measure { nodes: 3, pow: 0, div: 0, protected_inv: 0, m_neg: 0 } -> (Abs (Inv (Var "s"))) Measure { nodes: 3, pow: 0, div: 0, protected_inv: 0, m_neg
+    REFUSED    (rewrite (ProtectedInv (Abs x)) (Abs (ProtectedInv x)) :ruleset sympy_powers)
+      does not reduce the measure: (ProtectedInv (Abs (Var "s"))) Measure { nodes: 3, pow: 0, div: 0, protected_inv: 1, m_neg: 0 } -> (Abs (ProtectedInv (Var "s"))) Measure { nodes: 3, pow: 0, div: 0, prote
+
+=== docs/rule_proposals/sympy_rational.md
+    forms 86 | admitted 85 {"A/Bit": 10, "A/Finite": 46, "A/Rounding": 29} | refused 0 | unreadable 0 | already present 0
+
+=== corpus: 113444 expressions, 1193692 nodes
+    crate's rules      -> 1054223 nodes (removes 139469)
+    + admitted candidates -> 1043366 nodes (removes 150326; 10857 more)
+    candidates that fired: 52 of 173
+        739  A/Rounding  (rewrite (Add (Sub q (Num b)) (Num a)) (Add q (Num (+ a (neg b)))) :ruleset sympy_rational)
+        366  A/Rounding  (rewrite (Mul (ProtectedDiv (Num b) q) (Num a)) (ProtectedDiv (Num (* a b)) q) :ruleset sympy_rational)
+        364  A/Finite  (rewrite (Sub a (Add a b)) (Neg b) :ruleset sympy_rational)
+        362  A/Finite  (rewrite (Sub a (Sub a b)) b :ruleset sympy_rational)
+        280  A/Rounding  (rewrite (Add (Num a) (Sub (Num b) q)) (Sub (Num (+ a b)) q) :ruleset sympy_rational)
+        228  A/Finite  (rewrite (Sub (Sub a b) a) (Neg b) :ruleset sympy_rational)
+        219  A/Rounding  (rewrite (Add (Num a) (Sub q (Num b))) (Add q (Num (+ a (neg b)))) :ruleset sympy_rational)
+        210  A/Finite  (rewrite (Sub (Mul (Num a) x) x) (Mul (Num (+ a -1.0)) x) :ruleset sympy_rational)
+        191  A/Rounding  (rewrite (Add (Num a) (Add q (Num b))) (Add q (Num (+ a b))) :ruleset sympy_rational)
+        180  A/Rounding  (rewrite (Mul (Mul (Num b) p) (Num a)) (Mul (Num (* a b)) p) :ruleset sympy_rational)
+        150  A/Rounding  (rewrite (Sub (Num a) (Add (Num b) q)) (Sub (Num (+ a (neg b))) q) :ruleset sympy_rational)
+        147  A/Rounding  (rewrite (Sub (Num a) (Add q (Num b))) (Sub (Num (+ a (neg b))) q) :ruleset sympy_rational)
+        146  A/Rounding  (rewrite (Mul (Num a) (ProtectedDiv (Num b) q)) (ProtectedDiv (Num (* a b)) q) :ruleset sympy_rational)
+        145  A/Finite  (rewrite (Sub a (Add b a)) (Neg b) :ruleset sympy_rational)
+        145  A/Rounding  (rewrite (Sub (Num a) (Sub q (Num b))) (Sub (Num (+ a b)) q) :ruleset sympy_rational)
+        142  A/Rounding  (rewrite (Sub (Add q (Num b)) (Num a)) (Add q (Num (+ b (neg a)))) :ruleset sympy_rational)
+        132  A/Rounding  (rewrite (Sub (Num a) (Sub (Num b) q)) (Add (Num (+ a (neg b))) q) :ruleset sympy_rational)
+        125  A/Rounding  (rewrite (Mul (Num a) (Mul p (Num b))) (Mul (Num (* a b)) p) :ruleset sympy_rational)
+        115  A/Rounding  (rewrite (Add (Add (Num b) q) (Num a)) (Add (Num (+ a b)) q) :ruleset sympy_rational)
+        114  A/Rounding  (rewrite (Sub (Sub q (Num b)) (Num a)) (Sub q (Num (+ a b))) :ruleset sympy_rational)
+         94  A/Rounding  (rewrite (Sub (Sub (Num b) q) (Num a)) (Sub (Num (+ b (neg a))) q) :ruleset sympy_rational)
+         92  A/Rounding  (rewrite (Sub (Add (Num b) q) (Num a)) (Add (Num (+ b (neg a))) q) :ruleset sympy_rational)
+         89  A/Rounding  (rewrite (Add (Sub (Num b) q) (Num a)) (Sub (Num (+ a b)) q) :ruleset sympy_rational)
+         71  A/Bit  (rewrite (Neg (Mul x (Num a))) (Mul x (Num (neg a))) :ruleset sympy_rational)
+         61  A/Bit  (rewrite (Mul (Num a) (Neg x)) (Mul (Num (neg a)) x) :ruleset sympy_rational)
+         60  A/Bit  (rewrite (ProtectedDiv (Neg x) (Num a)) (ProtectedDiv x (Num (neg a))) :ruleset sympy_rational)
+         54  A/Finite  (rewrite (Add (Mul x (Num a)) x) (Mul x (Num (+ a 1.0))) :ruleset sympy_rational)
+         48  A/Finite  (rewrite (Add (Mul (Num a) x) x) (Mul (Num (+ a 1.0)) x) :ruleset sympy_rational)
+         40  A/Bit  (rewrite (Mul (Neg x) (Num a)) (Mul (Num (neg a)) x) :ruleset sympy_rational)
+         35  A/Bit  (rewrite (Neg (ProtectedDiv (Num a) x)) (ProtectedDiv (Num (neg a)) x) :ruleset sympy_rational)
+         28  A/Bit  (rewrite (Neg (ProtectedDiv x (Num a))) (ProtectedDiv x (Num (neg a))) :ruleset sympy_rational)
+         27  A/Finite  (rewrite (Sub x (Mul (Num a) x)) (Mul (Num (+ 1.0 (neg a))) x) :ruleset sympy_rational)
+         19  A/Finite  (rewrite (Add x (Mul (Num a) x)) (Mul (Num (+ a 1.0)) x) :ruleset sympy_rational)
+         19  A/Bit  (rewrite (Mul x (Pow2 x)) (Pow3 x) :ruleset sympy_powers)
+         19  A/Rounding  (rewrite (Add (Mul (Sin a) (Cos b)) (Mul (Cos a) (Sin b))) (Sin (Add a b)) :ruleset sympy_trig)
+         16  A/Bit  (rewrite (Neg (Mul (Num a) x)) (Mul (Num (neg a)) x) :ruleset sympy_rational)
+         15  A/Finite  (rewrite (Sub (Mul a b) (Mul c a)) (Mul a (Sub b c)) :ruleset sympy_rational)
+         14  A/Finite  (rewrite (Add (Mul b a) (Mul a c)) (Mul a (Add b c)) :ruleset sympy_rational)
+         14  A/Rounding  (rewrite (Add (ProtectedDiv a c) (ProtectedDiv b c)) (ProtectedDiv (Add a b) c) :ruleset sympy_rational)
+         13  A/Finite  (rewrite (Add (Mul a b) (Mul c a)) (Mul a (Add b c)) :ruleset sympy_rational)
+         12  A/Rounding  (rewrite (Sub (Mul (Cos a) (Cos b)) (Mul (Sin a) (Sin b))) (Cos (Add a b)) :ruleset sympy_trig)
+         11  A/Rounding  (rewrite (Sub (ProtectedDiv a c) (ProtectedDiv b c)) (ProtectedDiv (Sub a b) c) :ruleset sympy_rational)
+         10  A/Bit  (rewrite (Mul (Pow2 x) x) (Pow3 x) :ruleset sympy_powers)
+          9  A/Finite  (rewrite (Add (Mul a b) (Mul a c)) (Mul a (Add b c)) :ruleset sympy_rational)
+          6  A/Finite  (rewrite (Sub (Mul a b) (Mul a c)) (Mul a (Sub b c)) :ruleset sympy_rational)
+          6  A/Finite  (rewrite (Add (Mul b a) (Mul c a)) (Mul (Add b c) a) :ruleset sympy_rational)
+          5  A/Finite  (rewrite (Sub (Mul b a) (Mul c a)) (Mul (Sub b c) a) :ruleset sympy_rational)
+          4  A/Finite  (rewrite (Add (Mul x (Num a)) (Mul (Num b) x)) (Mul (Num (+ a b)) x) :ruleset sympy_rational)
+          4  A/Rounding  (rewrite (Sub (Pow2 (Cos x)) (Pow2 (Sin x))) (Cos (Mul (Num 2.0) x)) :ruleset sympy_trig)
+          3  A/Finite  (rewrite (Sub (Mul b a) (Mul a c)) (Mul a (Sub b c)) :ruleset sympy_rational)
+          2  A/Finite  (rewrite (Sub (Mul (Num a) x) (Mul (Num b) x)) (Mul (Num (+ a (neg b))) x) :ruleset sympy_rational)
+          1  A/Rounding  (rewrite (Mul x (Pow3 x)) (Pow2 (Pow2 x)) :ruleset sympy_powers)

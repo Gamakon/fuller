@@ -1,0 +1,66 @@
+tables: 182 rules usable of 182 admitted, 34 guard rows, 13 refused; loaded in 0.095 s
+expressions 113444 (parse errors 0); over 64 nodes: 0
+weighted nodes  input 1193896   egglog smallest_form 1054941  (removes 138955)
+
+arm                                              weighted   removes  <egglog  >egglog   ms/expr
+beam8                                             1043466    150430     4505        0     0.033
+greedy                                            1043486    150410     4496        2     0.030
+beam8 bit-exact only                              1086853    107043       86     5288     0.017
+greedy device-subset (no computed literals)       1050978    142918     1429      513     0.025
+beam8 bit+rounding                                1079388    114508     2861     4744     0.021
+greedy device-subset f32                          1050964    142932     1436      513     0.025
+
+coverage of egglog's reduction: beam8 108.3%  greedy 108.2%  device-subset greedy 102.9%  bit-exact 77.0%  bit+rounding 82.4%
+variety: 1.24 distinct forms per expression (beam8, capped at 8)
+f32 vs f64 device-subset greedy results differ on 7 expressions
+soundness vs input on 24 probe rows (expressions whose value changes):
+  all rules        : input finite 281, input non-finite 362
+  bit-exact only   : input finite 0, input non-finite 0
+  bit + rounding   : input finite 11, input non-finite 0
+  DIVERGES [beam8] -4.680039106138621e0 vs 4.00377555369734e0
+     in  (Add (Mul (Sin (ProtectedExp (Mul (Mul (Num 2.0) (Var "epsilon")) (Sub (Var "q") (Sub (Var "q") (ProtectedExp (Var "Volt"))))))) (Num -5.0)) (ProtectedExp (Num -9.0)))
+     got (Add (Mul (Sin (ProtectedExp (Mul (Mul (Num 2.0) (Var "epsilon")) (ProtectedExp (Var "Volt"))))) (Num -5.0)) (Num 0.00012340980408667956))
+  DIVERGES [beam8] -1.3138922225693594e1 vs -1.3029794502917532e1
+     in  (Add (Num -5.0) (Add (Sin (ProtectedDiv (Add (Var "q") (Var "q")) (Mul (Add (Sub (Var "q") (Add (Var "q") (Var "d"))) (Sub (Var "d") (ProtectedDiv (Sin (Var "epsilon")) (Add (Add (ProtectedSqrt (Cos (Num 2.0))) (Sub (Var "d") (Var "epsilon"))) (Var "q"))))) (Var "epsilon")))) (Num -9.0)))
+     got (Sub (Num -14.0) (Sin (ProtectedDiv (Add (Var "q") (Var "q")) (Mul (ProtectedDiv (Sin (Var "epsilon")) (Add (Add (Num 0.6450944400218795) (Sub (Var "d") (Var "epsilon"))) (Var "q"))) (Var "epsilon")))))
+  DIVERGES [beam8] 2.8256241842103473e13 vs 2.825624175940842e13
+     in  (Add (Num -5.0) (ProtectedExp (Mul (Num -9.0) (ProtectedDiv (ProtectedDiv (Var "q") (Var "q")) (Mul (Sin (Sub (Var "q") (Add (Var "q") (Var "y")))) (ProtectedLog (Sub (Var "d") (ProtectedDiv (Sin (Num 2.0)) (Add (Add (ProtectedSqrt (Cos (Num -9.0))) (Sub (Var "d") (Var "epsilon"))) (Var "q"))))))))))
+     got (Add (Num -5.0) (ProtectedExp (Mul (Num 9.0) (ProtectedDiv (ProtectedDiv (Var "q") (Var "q")) (Mul (Sin (Var "y")) (ProtectedLog (Sub (Var "d") (ProtectedDiv (Num 0.9092974268256817) (Add (Add (Num 0.9545314357760445) (Sub (Var "d") (Var "epsilon"))) (Var "q"))))))))))
+  DIVERGES [beam8] -4.517547563082633e0 vs -4.516508443981889e0
+     in  (Add (Num -5.0) (ProtectedExp (Sin (Add (ProtectedDiv (Mul (Sub (Add (Var "y") (Sin (Add (Sub (Var "epsilon") (Num 2.0)) (Cos (Sub (Var "d") (Var "d")))))) (Var "d")) (Var "Volt")) (Var "q")) (ProtectedDiv (Var "q") (Add (Sub (ProtectedDiv (Add (Var "y") (ProtectedSqrt (Var "d"))) (Num -9.0)) (Var "q")) (Var "q")))))))
+     got (Add (Num -5.0) (ProtectedExp (Sin (Add (ProtectedDiv (Mul (Sub (Add (Var "y") (Sin (Add (Var "epsilon") (Num -1.0)))) (Var "d")) (Var "Volt")) (Var "q")) (ProtectedDiv (Var "q") (ProtectedDiv (Add (Var "y") (ProtectedSqrt (Var "d"))) (Num -9.0)))))))
+  DIVERGES [beam8] -3.297018139250005e0 vs -3.297018157626548e0
+     in  (Add (Num -5.0) (ProtectedExp (Sin (ProtectedExp (ProtectedDiv (ProtectedDiv (Var "q") (Var "q")) (Mul (Add (ProtectedExp (Var "q")) (Sub (Add (ProtectedDiv (Var "y") (Sin (Add (Num -9.0) (Add (Var "q") (ProtectedSqrt (Sub (Cos (Var "epsilon")) (Var "d"))))))) (Var "q")) (Var "q"))) (Var "epsilon")))))))
+     got (Add (Num -5.0) (ProtectedExp (Sin (ProtectedExp (ProtectedDiv (ProtectedDiv (Var "q") (Var "q")) (Mul (Add (ProtectedExp (Var "q")) (ProtectedDiv (Var "y") (Sin (Add (Num -9.0) (Add (Var "q") (ProtectedSqrt (Sub (Cos (Var "epsilon")) (Var "d")))))))) (Var "epsilon")))))))
+  DIVERGES [beam8] 4.974470195730712e0 vs 3.019439318951963e0
+     in  (Add (Num -5.0) (Sub (Sin (ProtectedDiv (ProtectedDiv (Var "q") (Var "q")) (Mul (Add (Sub (Var "q") (Add (Var "q") (Var "d"))) (Sub (Var "d") (ProtectedDiv (Sin (Var "epsilon")) (Add (Add (ProtectedSqrt (Cos (Num 2.0))) (Sub (Var "d") (Var "epsilon"))) (Var "q"))))) (Var "epsilon")))) (Num -9.0)))
+     got (Sub (Num 4.0) (Sin (ProtectedDiv (ProtectedDiv (Var "q") (Var "q")) (Mul (ProtectedDiv (Sin (Var "epsilon")) (Add (Add (Num 0.6450944400218795) (Sub (Var "d") (Var "epsilon"))) (Var "q"))) (Var "epsilon")))))
+greedy steps per expression: {0: 97110, 1: 11340, 2: 3194, 3: 1052, 4: 541, 5: 146, 6: 43, 7: 9, 8: 8, 9: 1}
+rule hits (beam8, weighted), top 25:
+      2728  (rewrite (Mul x x) (Pow2 x) :ruleset algebra)
+      2538  (rewrite (Sub x x) (Num 0.0) :ruleset algebra)
+      1556  (rewrite (Mul x (Num 0.0)) (Num 0.0) :ruleset algebra)
+      1269  (rewrite (ProtectedDiv x (Num 1.0)) x :ruleset algebra)
+      1192  (rule ((= e (ProtectedDiv x (Num k))) (< k 0.000001) (> k -0.000001)) ((union e (Num 0.0))) :ruleset algebra)
+      1141  (rewrite (Mul (Num 0.0) x) (Num 0.0) :ruleset algebra)
+      1122  (rewrite (Sub x (Num 0.0)) x :ruleset algebra)
+       868  (rewrite (Mul (Num 1.0) x) x :ruleset algebra)
+       838  (rewrite (Sub (Num 0.0) x) (Neg x) :ruleset sign)
+       834  (rewrite (Add (Num 0.0) x) x :ruleset algebra)
+       739  (rewrite (Add (Sub q (Num b)) (Num a)) (Add q (Num (+ a (neg b)))) :ruleset collect)
+       651  (rewrite (Mul x (Num 1.0)) x :ruleset algebra)
+       612  (rewrite (Add x (Num 0.0)) x :ruleset algebra)
+       562  (rewrite (Sub a (Neg b)) (Add a b) :ruleset sign)
+       505  (rewrite (Mul a (Neg b)) (Neg (Mul a b)) :ruleset sign)
+       455  (rewrite (ProtectedDiv x (Num -1.0)) (Neg x) :ruleset algebra)
+       431  (rewrite (Mul x (Num -1.0)) (Neg x) :ruleset algebra)
+       378  (rewrite (ProtectedDiv (Neg a) b) (Neg (ProtectedDiv a b)) :ruleset sign)
+       375  (rewrite (Mul (Num -1.0) x) (Neg x) :ruleset algebra)
+       366  (rewrite (Mul (ProtectedDiv (Num b) q) (Num a)) (ProtectedDiv (Num (* a b)) q) :ruleset collect)
+       364  (rewrite (Sub a (Add a b)) (Neg b) :ruleset collect)
+       362  (rewrite (Sub a (Sub a b)) b :ruleset collect)
+       337  (rewrite (Sub (Neg a) b) (Neg (Add a b)) :ruleset sign)
+       322  (rewrite (Mul (Neg a) b) (Neg (Mul a b)) :ruleset sign)
+       317  (rewrite (Sin (Neg x)) (Neg (Sin x)) :ruleset sign)
+rules that never fired: 72
+largest leaks against egglog (weighted extra nodes), top 12:

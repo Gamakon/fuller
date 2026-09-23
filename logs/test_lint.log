@@ -1,0 +1,49 @@
+   Compiling fuller v0.1.0 (/Users/andrewmorgan/Dev/gamakon/fuller)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.97s
+     Running unittests src/lib.rs (target/debug/deps/fuller-04baa8d923b20f4c)
+
+running 35 tests
+test lint::node::tests::negative_zero_is_a_different_tree ... ok
+test lint::node::tests::infix_text_needs_no_algebra_system ... ok
+test lint::node::tests::m_neg_drops_where_sum_of_depths_rises ... ok
+test lint::device::tests::wgsl_constants_match_the_host ... ok
+test lint::flat::tests::a_tree_survives_the_round_trip_through_level_order ... ok
+test lint::node::tests::round_trips_through_math_text ... ok
+test lint::device::tests::wgsl_arity_matches_the_opcodes ... ok
+test lint::node::tests::positions_are_level_order ... ok
+test lint::reader::tests::computed_literals_nest ... ok
+test lint::reader::tests::an_unknown_form_is_a_load_error_not_a_skip ... ok
+test lint::reader::tests::derived_structural_relations_are_refused_with_a_reason ... ok
+test lint::reader::tests::guard_propagation_and_implication_and_literal_seed ... ok
+test lint::reader::tests::nonlinear_pattern_repeats_the_index ... ok
+test lint::reader::tests::guard_seed_with_two_conclusions ... ok
+test lint::reader::tests::plain_rewrite ... ok
+test lint::reader::tests::union_rule_with_two_predicates ... ok
+test lint::reader::tests::when_facts_attach_to_metavariables ... ok
+test lint::sexp::tests::reads_forms_comments_and_strings ... ok
+test lint::sexp::tests::unbalanced_input_is_an_error ... ok
+test lint::tables::tests::op_names_lockstep_with_from_math ... ok
+test lint::tests::an_evolved_constant_near_a_whole_number_is_a_candidate ... ok
+test lint::sexp::tests::every_shipped_ruleset_parses ... ok
+test lint::flat::tests::a_rewrite_leaves_a_canonical_k_expression ... ok
+test lint::pack::tests::every_admitted_rule_is_packed_or_excluded_with_a_reason ... ok
+test lint::pack::tests::a_nonlinear_pattern_repeats_the_metavariable_index ... ok
+test lint::flat::tests::agrees_with_the_tree_engine ... ok
+test lint::device::tests::rule_words_and_buckets_line_up ... ok
+test lint::flat::tests::dropped_subtrees_do_not_survive ... ok
+test lint::pack::tests::literal_classes_and_predicates_are_integers_for_the_kernel ... ok
+test lint::tests::census ... ok
+test lint::device::tests::encode_then_decode_is_the_identity_in_f64 ... ok
+test lint::tests::a_literal_a_few_ulps_from_an_integer_is_that_integer ... ok
+test lint::tests::never_folds_an_input ... ok
+test lint::tests::is_deterministic ... ok
+test lint::tests::shrinks_the_shapes_the_rules_were_mined_for ... ok
+
+test result: ok. 35 passed; 0 failed; 0 ignored; 0 measured; 223 filtered out; finished in 0.76s
+
+     Running unittests src/bin/parity.rs (target/debug/deps/parity-3d1370d90cdfe0fa)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

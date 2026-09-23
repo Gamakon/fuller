@@ -1,0 +1,77 @@
+   Compiling fuller v0.1.0 (/Users/andrewmorgan/Dev/gamakon/fuller/.claude/worktrees/agent-ad429133994c0dd3b)
+    Finished `release` profile [optimized] target(s) in 10.97s
+     Running `target/release/examples/evolve_fit /private/tmp/claude-501/-Users-andrewmorgan-Dev-gamakon-fuller/b3c1f1fe-1035-445f-ada0-9f05e732d5e6/scratchpad/bacres1.tsv`
+BUDGET	seed 7014	600 s
+SMOGD	316	rows from 300 real rows in 0.1 s, noise x1
+SMOTE	316	rows from 300 real rows in 0.0 s
+POPULATION	600 intake + 600 champion
+    gen    secs  head      min_hff      avg_hff    mse_train       r2_train     r2_val_bl2     r2_val_bk3  t_depth   log10_p
+     20       1    34  4.595051e-2  6.873231e-1    8.2654e-3   0.9986712788   0.9982099687   0.9873827770        3    -11.27
+  cohorts 2 alive | c0:720@4.595e-2  c20:480@1.165e-1
+     40       1    34  3.506638e-2  6.078020e-1    1.7502e-3   0.9997186410   0.9997876128   0.9871916529        0    -12.20
+  cohorts 3 alive | c0:640@3.507e-2  c40:480@6.327e-2  c20:80@7.831e-2
+     60       1    34  3.241977e-2  7.907364e-1    1.2061e-3   0.9998061190   0.9998668345   0.9872495336        4    -12.48
+  cohorts 4 alive | c0:605@3.242e-2  c40:86@5.982e-2  c20:29@6.033e-2  c60:480@1.203e-1
+     80       2    34  3.216501e-2  9.307465e-1    1.1712e-3   0.9998117220   0.9998662663   0.9872827083        4    -12.50
+  cohorts 5 alive | c0:589@3.217e-2  c20:17@5.974e-2  c40:34@5.974e-2  c60:80@6.248e-2  c80:480@1.184e-1
+    100       3    34  3.241793e-2  7.555319e-1    1.2036e-3   0.9998065137   0.9998674453   0.9872489572        4    -12.48
+  cohorts 6 alive | c0:585@3.242e-2  c80:122@4.749e-2  c40:5@4.753e-2  c20:4@5.950e-2  c60:4@5.950e-2  c100:480@1.254e-1
+    120       3    34  3.234797e-2  6.709562e-1    1.2020e-3   0.9998067658   0.9998704465   0.9872848997        4    -12.48
+  cohorts 5 alive | c0:584@3.235e-2  c80:59@4.402e-2  c100:76@7.735e-2  c120:480@1.083e-1  c40:1@3.142e0
+    140       4    34  3.153612e-2  6.935434e-1    1.1561e-3   0.9998141522   0.9999073684   0.9873422543        6    -12.57
+  cohorts 5 alive | c0:584@3.154e-2  c120:114@3.205e-2  c80:15@3.206e-2  c100:7@3.206e-2  c140:480@1.207e-1
+    160       5    34  3.136362e-2  6.508823e-1    1.1220e-3   0.9998196396   0.9999055382   0.9873362621        6    -12.59
+  cohorts 6 alive | c0:583@3.136e-2  c80:7@3.179e-2  c120:10@3.179e-2  c140:119@8.396e-2  c160:480@1.330e-1  c100:1@8.975e-1
+    180       5    34  3.117488e-2  6.567991e-1    1.1378e-3   0.9998170884   0.9999277249   0.9872499863        6    -12.61
+  cohorts 7 alive | c0:580@3.117e-2  c80:2@3.179e-2  c120:2@3.179e-2  c160:126@4.871e-2  c140:9@7.862e-2  c180:480@1.369e-1
+    200       6    34  3.111937e-2  6.398974e-1    1.1453e-3   0.9998158809   0.9999296360   0.9872496873        6    -12.62
+  cohorts 7 alive | c0:581@3.112e-2  c80:2@3.179e-2  c120:2@3.179e-2  c160:37@4.871e-2  c180:97@6.257e-2  c200:480@1.200e-1
+    220       6    34  3.090986e-2  6.269642e-1    1.0076e-3   0.9998380206   0.9999388656   0.9872600762        6    -12.64
+  cohorts 8 alive | c0:581@3.091e-2  c80:2@3.179e-2  c120:2@3.179e-2  c160:18@4.871e-2  c180:43@4.871e-2  c200:73@9.674e-2
+    240       7    34  3.055293e-2  6.822435e-1    9.9253e-4   0.9998404441   0.9999881873   0.9868929032        3    -12.68
+  cohorts 9 alive | c160:6@3.055e-2  c200:6@3.055e-2  c0:581@3.091e-2  c220:119@7.964e-2  c180:5@8.312e-2  c240:480@1.057e-1
+    260       8    34  3.011864e-2  7.341277e-1    4.8317e-4   0.9999223270   0.9999946507   0.9869315280        3    -12.73
+  cohorts 6 alive | c0:580@3.012e-2  c160:3@3.055e-2  c200:3@3.055e-2  c220:37@5.635e-2  c240:97@5.865e-2  c260:480@1.189e-1
+    280       8    34  2.997380e-2  7.505337e-1    3.7841e-4   0.9999391678   0.9999966792   0.9869320849        3    -12.75
+  cohorts 7 alive | c0:574@2.997e-2  c160:2@3.055e-2  c200:3@3.055e-2  c240:69@5.865e-2  c260:70@7.202e-2  c280:480@1.198e-1
+    300       9    34  2.997380e-2  7.486635e-1    3.7841e-4   0.9999391678   0.9999966792   0.9869320849        3    -12.75
+  cohorts 8 alive | c0:574@2.997e-2  c160:2@3.055e-2  c200:3@3.055e-2  c240:30@5.865e-2  c260:30@5.865e-2  c280:79@8.671e-2
+    320       9    34  2.997380e-2  7.574444e-1    3.7841e-4   0.9999391678   0.9999966792   0.9869320849        3    -12.75
+  cohorts 8 alive | c0:577@2.997e-2  c160:2@3.055e-2  c200:2@3.055e-2  c300:126@3.537e-2  c280:9@8.671e-2  c320:480@1.216e-1
+    340      10    34  2.997380e-2  7.619200e-1    3.7841e-4   0.9999391678   0.9999966792   0.9869320849        3    -12.75
+  cohorts 5 alive | c0:580@2.997e-2  c320:129@3.025e-2  c300:10@3.536e-2  c340:480@1.327e-1  c280:1@5.940e-1
+    360      10    34  2.997380e-2  7.396143e-1    3.7841e-4   0.9999391678   0.9999966792   0.9869320849        3    -12.75
+  cohorts 5 alive | c0:578@2.997e-2  c320:48@3.025e-2  c340:92@6.922e-2  c360:480@1.247e-1  c300:2@1.305e0
+    380      11    34  2.994594e-2  7.299326e-1    8.5730e-4   0.9998621844   0.9999816781   0.9879396260        2    -12.75
+  cohorts 5 alive | c360:101@2.995e-2  c0:579@2.997e-2  c340:39@3.025e-2  c380:480@1.203e-1  c320:1@1.544e0
+    400      11    34  2.997380e-2  7.444507e-1    3.7841e-4   0.9999391678   0.9999966792   0.9869320849        3    -12.75
+  cohorts 4 alive | c0:577@2.997e-2  c360:43@3.025e-2  c380:100@4.822e-2  c400:480@1.226e-1
+dataset /private/tmp/claude-501/-Users-andrewmorgan-Dev-gamakon-fuller/b3c1f1fe-1035-445f-ada0-9f05e732d5e6/scratchpad/bacres1.tsv
+rows: train 240, validation 60, unseen test 100
+population 1 x (600+600) = 1200 | 400 generations in 11.3 s = 28.2 ms per generation | 481200 individuals = 42721 per second | stopped by n_gen
+seconds: variation 0.05 | read-back 3.70 | decode 0.61 | evaluate 3.46 | link+scale+metrics 0.00 | HFF 1.27 | pump 0.24 | cross 0.00
+seconds: snap 0.22 (0.008 per beat in the snap step itself)
+SNAP	20	6000	213	212	0	207	head_oversize=0/no_rnc_slot=0/unmappable_op=5/not_closed=0/unchanged=0/model_oversize=0
+SNAP_DETAIL	rows=2000	rows_skipped=0	genes_examined=6000	genes_with_nonwhole_literal=1370	literals_offered=1371	literals_matched=213	by_family=Pi=3/E=2/Root=1/Rational=145/Physical=60/Other=2	band_overflows=0	kept_by_device=212	refused_by_f64=0	written_back=207	rows_changed=207	seconds_per_beat=0.0078
+seconds: fold 1.22 (0.052 per beat in the fold step itself)
+FOLD	beats=20	rows=2000	rows_changed=902	genes=6000	subtrees=15184	flat=934	folded=934	nodes_saved=7474	secs=1.048	not_finite=0/unrepresentable=0/relevel_refused=0
+seconds: beam 0.51 (0.026 per beat)
+BEAM	20	240	0	-11.27	-11.27	0.51
+BEAM_WRAPS	240	grafted 0	kept 0	graft refused 0	better/refused per wrap: recip_1=0/0 x_over_expm1=0/0 recip_sqrt_1m=0/44 recip_1m=0/0
+BEAM_FLOAT	0	0
+genes evaluated 383808 (unique per generation), over the 64-node limit 0
+1 - R²: train 6.082e-5, validation 3.334e-6
+FOLD	31	2508.727016490	(415.5186267025038*log((-((((x_1/x_0) + (79.0 + (((-10.0)**3)/log((-(1/cos(8.0))))))) + acos(si…
+REDUCE	10	-439.785492448	(79.0 + (((-10.0)**3)/log((-(1/cos(8.0))))))
+REDUCE	2	4.174387270	log(65.0)
+model: ((415.5186267025038*log((-((((x_1/x_0) + (-439.785492447645)) + acos(sin((4.174387269895624/x_0)))) + ((x_1/x_0) + x_0))))) + (-2508.2982782506388))
+GENERATIONS	400	n_gen	3.334e-6
+HFF	0.029977	6.082e-5	3.334e-6	1.307e-2
+MSE	3.783e-4	1.090e-5	5.444e-2
+TOWER	3	reported only
+PVALUE	1.781e-13	-12.75	9
+GENES	383808	0	481200
+MODEL_INFIX	((415.5186267025038*log((-((((x_1/x_0) + (-439.785492447645)) + acos(sin((4.174387269895624/x_0)))) + ((x_1/x_0) + x_0))))) + (-2508.2982782506388))
+MODEL_PLAIN	((415.5186267025038*log((-((((x_1/x_0) + (-439.785492447645)) + acos(sin((4.174387269895624/x_0)))) + ((x_1/x_0) + x_0))))) + (-2508.2982782506388))
+RAW_MATH	(Add (Mul (Num 415.5186267025038) (Log (Abs (Add (Add (Add (ProtectedDiv (Var "x_1") (Var "x_0")) (Add (Num 79.0) (ProtectedDiv (Pow3 (Num -10.0)) (ProtectedLog (ProtectedInv (Cos (Num 8.0))))))) (ProtectedAcos (Sin (ProtectedDiv (ProtectedLog (Num 65.0)) (Var "x_0"))))) (Add (ProtectedDiv (Var "x_1") (Var "x_0")) (Abs (Var "x_0"))))))) (Num -2508.2982782506388))
+R² on the unseen test rows: 0.999981

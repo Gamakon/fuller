@@ -1,0 +1,33 @@
+######## 13-problem set, HFF_FULLER=lint  12:25:09
+wall=18s
+sr_logs/t13_lint
+  13/13 exact (100%)   13/13 numerical
+  exact, by how it was won: rule:power_law 6, rule:coulomb_form 2, rule:harmonic 1, rule:euclidean_distance 1, rule:lorentz_factor 1, rule:kinetic_energy 1, rule:pairwise_xy_product 1
+warning/error lines: 0
+######## 13-problem set, HFF_FULLER=egglog  12:25:27
+wall=20s
+sr_logs/t13_egglog
+  13/13 exact (100%)   13/13 numerical
+  exact, by how it was won: rule:power_law 6, rule:coulomb_form 2, rule:harmonic 1, rule:euclidean_distance 1, rule:lorentz_factor 1, rule:kinetic_energy 1, rule:pairwise_xy_product 1
+warning/error lines: 0
+######## II_38_14 evolved-only, HFF_FULLER=lint  12:25:47
+wall=122s
+[join] 450 dispatches, 134,430 genes, 403,464 candidates scored in 4.40s GPU+host; e-graph 46,656 trees -> 72,013 variants + 0 snaps in 2.34s; 99 grafts (0 snap), 335 nodes removed; cpu-path individuals 0, f64-rejected 0, snaps refused for naming an input 0
+[join]   inexpressible:   1173  no pset token for semantic id "pow" with arity 2
+[join]   unbuildable:      1  constant
+warning/error lines: 0
+######## II_38_14 evolved-only, HFF_FULLER=egglog  12:27:49
+wall=143s
+[join] 450 dispatches, 131,611 genes, 680,085 candidates scored in 4.96s GPU+host; e-graph 23,900 trees -> 164,209 variants + 0 snaps in 11.69s; 12,827 grafts (0 snap), 48,184 nodes removed; cpu-path individuals 0, f64-rejected 0, snaps refused for naming an input 0
+[join]   inexpressible:   2303  no pset token for semantic id "pow" with arity 2
+[join]   inexpressible:   1007  no pset token for semantic id "neg" with arity 1
+[join]   inexpressible:    899  no pset token for semantic id "pow2" with arity 1
+[join]   inexpressible:    242  no pset token for semantic id "div" with arity 2
+[join]   inexpressible:     24  no pset token for semantic id "abs" with arity 1
+warning/error lines: 0
+######## II_38_14 evolved-only, HFF_FULLER=off  12:30:12
+wall=108s
+[join] 450 dispatches, 78,658 genes, 187,410 candidates scored in 3.92s GPU+host; e-graph 46,656 trees -> 0 variants + 0 snaps in 0.69s; 0 grafts (0 snap), 0 nodes removed; cpu-path individuals 0, f64-rejected 0, snaps refused for naming an input 0
+[join]   inexpressible:   1172  no pset token for semantic id "pow" with arity 2
+warning/error lines: 0
+######## ALL DONE
