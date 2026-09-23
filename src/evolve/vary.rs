@@ -108,6 +108,10 @@ pub struct Island {
     /// now runs on both islands by default and this is how to ask for the old
     /// behaviour back.
     pub open_fight: bool,
+    /// VIRTUAL ALPS on THIS island: the age at which cohorts merge into one
+    /// elder band, 0 = off. Per-island, so an intake can protect its young
+    /// while a champion island runs a different rule, or none.
+    pub cohort_merge: u32,
     pub rates: Rates,
 }
 
@@ -965,8 +969,8 @@ pub(crate) mod tests {
 
     pub(crate) fn islands() -> Vec<Island> {
         vec![
-            Island { lo: 0, hi: 600, elites: 2, tournsize: 42, arrivals: 0, arrival_children: 0, open_fight: false, rates: test_rates() },
-            Island { lo: 600, hi: 800, elites: 2, tournsize: 14, arrivals: 0, arrival_children: 0, open_fight: false, rates: test_rates() },
+            Island { lo: 0, hi: 600, elites: 2, tournsize: 42, arrivals: 0, arrival_children: 0, open_fight: false, cohort_merge: 0, rates: test_rates() },
+            Island { lo: 600, hi: 800, elites: 2, tournsize: 14, arrivals: 0, arrival_children: 0, open_fight: false, cohort_merge: 0, rates: test_rates() },
         ]
     }
 
@@ -1344,8 +1348,8 @@ pub(crate) mod tests {
     #[test]
     fn islands_that_do_not_tile_the_population_are_refused() {
         let layout = Layout::for_arity(800, 3, 48, 2, 10);
-        assert!(validate(layout, &[Island { lo: 0, hi: 700, elites: 2, tournsize: 7, arrivals: 0, arrival_children: 0, open_fight: false, rates: test_rates() }]).is_err());
-        assert!(validate(layout, &[Island { lo: 0, hi: 800, elites: 1, tournsize: 7, arrivals: 0, arrival_children: 0, open_fight: false, rates: test_rates() }]).is_err()); // odd offspring
+        assert!(validate(layout, &[Island { lo: 0, hi: 700, elites: 2, tournsize: 7, arrivals: 0, arrival_children: 0, open_fight: false, cohort_merge: 0, rates: test_rates() }]).is_err());
+        assert!(validate(layout, &[Island { lo: 0, hi: 800, elites: 1, tournsize: 7, arrivals: 0, arrival_children: 0, open_fight: false, cohort_merge: 0, rates: test_rates() }]).is_err()); // odd offspring
         assert!(validate(layout, &islands()).is_ok());
     }
 }

@@ -419,6 +419,15 @@ pub struct Config {
     /// be what the fit overcame. Only an A/B on the same seed settles it, and
     /// until one has run this stays ON, because that is what won.
     pub champion_open_fight: bool,
+    /// THE CHAMPION ISLAND'S ELITES, when they should differ from the intake's.
+    /// `None` shares `elites`. Elites are copied unmutated and skip crossover,
+    /// so on a converged island they are the incumbent's most protected rows.
+    pub champion_elites: Option<u32>,
+    /// VIRTUAL ALPS ON THE CHAMPION ISLAND, as its own age. `None` shares
+    /// `cohort_merge`; 0 turns cohorts off there while leaving the intake's
+    /// alone. Only has an effect when `champion_open_fight` is false, because
+    /// an open knockout ignores cohorts whatever their age.
+    pub champion_cohort_merge: Option<u32>,
     pub elites: u32,
     pub n_genes: u32,
     pub head: u32,
@@ -704,6 +713,8 @@ impl Config {
             arrival_children: 4,
             // ON, because it is what recovered the law twice — see the field.
             champion_open_fight: true,
+            champion_elites: None,
+            champion_cohort_merge: None,
             elites: 2,
             n_genes: 3,
             // 34: the longest of SRBench's true laws needs a head of 29 written whole in
@@ -2407,14 +2418,26 @@ impl Engine {
                     // The float rows are part of the intake island: they breed and
                     // are selected like any other row, and the tournament is sized
                     // from the island the engine actually has.
-                    Island { lo, hi: lo + intake, elites: config.elites, tournsize: tourn(intake), arrivals: 0, arrival_children: 0, open_fight: false, rates },
+                    Island {
+                        lo,
+                        hi: lo + intake,
+                        elites: config.elites,
+                        tournsize: tourn(intake),
+                        arrivals: 0,
+                        arrival_children: 0,
+                        open_fight: false,
+                        cohort_merge: config.cohort_merge,
+                        rates,
+                    },
                     Island {
                         lo: lo + intake,
                         hi: lo + pair,
-                        elites: config.elites,
+                        elites: config.champion_elites.unwrap_or(config.elites),
                         tournsize: champion_tourn(config.pop_champion),
                         arrivals: 0,
-                        arrival_children: config.arrival_children, open_fight: false,
+                        arrival_children: config.arrival_children,
+                        open_fight: config.champion_open_fight,
+                        cohort_merge: config.champion_cohort_merge.unwrap_or(config.cohort_merge),
                         rates,
                     },
                 ])
@@ -6379,8 +6402,8 @@ mod tests {
     fn one_pair_without_a_cross_step_is_the_engine_as_it_was() {
         let engine = Engine::new(Config::srbench(1), toy_data()).expect("engine");
         assert_eq!(engine.islands, vec![
-            Island { lo: 0, hi: 600, elites: 2, tournsize: 42, arrivals: 0, arrival_children: 0, open_fight: false, rates: Rates::engine_defaults(Layout::for_arity(800, 3, 48, 2, 10)) },
-            Island { lo: 600, hi: 800, elites: 2, tournsize: 14, arrivals: 0, arrival_children: Config::srbench(1).arrival_children, open_fight: false, rates: Rates::engine_defaults(Layout::for_arity(800, 3, 48, 2, 10)) },
+            Island { lo: 0, hi: 600, elites: 2, tournsize: 42, arrivals: 0, arrival_children: 0, open_fight: false, cohort_merge: Config::srbench(1).cohort_merge, rates: Rates::engine_defaults(Layout::for_arity(800, 3, 48, 2, 10)) },
+            Island { lo: 600, hi: 800, elites: 2, tournsize: 14, arrivals: 0, arrival_children: Config::srbench(1).arrival_children, open_fight: Config::srbench(1).champion_open_fight, cohort_merge: Config::srbench(1).cohort_merge, rates: Rates::engine_defaults(Layout::for_arity(800, 3, 48, 2, 10)) },
         ]);
         // ALPS OFF, DELIBERATELY: this is the fixed point for "the engine as it
         // WAS", so it is pinned against the selection the digests were taken
@@ -7004,10 +7027,10 @@ mod tests {
         assert_eq!(layout.pop, 80);
         let engine_rates = Rates::with_cleanse(layout, base.cleanse);
         assert_eq!(islands, vec![
-            Island { lo: 0, hi: 60, elites: 2, tournsize: 4, arrivals: 0, arrival_children: 0, open_fight: false, rates: engine_rates },
+            Island { lo: 0, hi: 60, elites: 2, tournsize: 4, arrivals: 0, arrival_children: 0, open_fight: false, cohort_merge: base.cohort_merge, rates: engine_rates },
             // The champion island carries the arrival band's width; the intake
             // has no band, so it carries 0.
-            Island { lo: 60, hi: 80, elites: 2, tournsize: 2, arrivals: 0, arrival_children: Config::srbench(1).arrival_children, open_fight: false, rates: engine_rates },
+            Island { lo: 60, hi: 80, elites: 2, tournsize: 2, arrivals: 0, arrival_children: Config::srbench(1).arrival_children, open_fight: Config::srbench(1).champion_open_fight, cohort_merge: base.cohort_merge, rates: engine_rates },
         ]);
         assert_eq!(off.beam, BeamCounts::default(), "the beam counted something with the beam off");
         assert_eq!(off.timing.beam, 0.0);

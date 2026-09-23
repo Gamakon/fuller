@@ -51,6 +51,10 @@ struct Island {
     // 1 = tournaments on this island IGNORE cohorts and rank on fitness alone.
     // See `better_mate`: the champion island ran this way and closed itself.
     open_fight: u32,
+    // VIRTUAL ALPS on THIS island: the age at which cohorts merge into one
+    // elder band. Per-island, so an intake can protect its young while a
+    // champion island runs a different rule -- or none.
+    cohort_merge: u32,
     mut_point: u32,
     invert: u32,
     is_transpose: u32,
@@ -170,7 +174,7 @@ fn chance(row: u32, slot: u32, stream: u32, thr: u32) -> bool {
 // arrived and is fixed for ever, so banding on the label alone kept the OLDEST
 // cohorts apart permanently and merged the youngest — the opposite of the
 // design, and it meant the most refined lines never mingled at all.
-fn band_of(row: u32) -> u32 {
+fn band_of(row: u32, merge: u32) -> u32 {
     let label = cohort_now[row];
     // A label cannot be in the future, but a resumed or re-labelled row could
     // read as one; treat it as newborn rather than as older than the run.
@@ -178,7 +182,7 @@ fn band_of(row: u32) -> u32 {
     if (gp.generation > label) {
         age = gp.generation - label;
     }
-    if (age >= gp.cohort_merge) {
+    if (age >= merge) {
         return ELDERS;
     }
     return label;
@@ -189,11 +193,11 @@ fn band_of(row: u32) -> u32 {
 // long before.
 const ELDERS: u32 = 0xFFFFFFFFu;
 
-fn same_cohort(a: u32, b: u32) -> bool {
-    if (gp.cohort_merge == 0u) {
+fn same_cohort(a: u32, b: u32, merge: u32) -> bool {
+    if (merge == 0u) {
         return true;
     }
-    return band_of(a) == band_of(b);
+    return band_of(a, merge) == band_of(b, merge);
 }
 
 // Fitness as a sort key: lower is fitter, an unevaluated row (NaN) is last. The
@@ -231,10 +235,10 @@ fn key(row: u32) -> f32 {
 //
 // A promotion is a COPY, so a line that goes up stays in the intake too — it
 // keeps its protected place while its copy takes its chances above.
-fn better_mate(me: u32, c: u32, w: u32, open_fight: bool) -> bool {
+fn better_mate(me: u32, c: u32, w: u32, open_fight: bool, merge: u32) -> bool {
     if (!open_fight) {
-        let mc = same_cohort(me, c);
-        let mw = same_cohort(me, w);
+        let mc = same_cohort(me, c, merge);
+        let mw = same_cohort(me, w, merge);
         if (mc != mw) {
             return mc;
         }
@@ -266,7 +270,7 @@ fn first_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     var w = NONE;
     for (var i = 0u; i < isl.tournsize; i = i + 1u) {
         let c = isl.lo + below(row, i, STREAM_SELECT_1, n);
-        if (w == NONE || better_mate(row, c, w, open_fight)) {
+        if (w == NONE || better_mate(row, c, w, open_fight, isl.cohort_merge)) {
             w = c;
         }
     }
@@ -341,7 +345,7 @@ fn select_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     var w = NONE;
     for (var t = 0u; t < isl.tournsize; t = t + 1u) {
         let c = stage1[isl.lo + below(row, t, STREAM_SELECT_2, n)];
-        if (w == NONE || better_mate(row, c, w, open_fight)) {
+        if (w == NONE || better_mate(row, c, w, open_fight, isl.cohort_merge)) {
             w = c;
         }
     }

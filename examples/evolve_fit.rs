@@ -175,6 +175,19 @@ fn main() {
     if std::env::var("EVOLVE_CHAMPION_ALPS").is_ok_and(|v| v == "1") {
         config.champion_open_fight = false;
     }
+    //   EVOLVE_CHAMPION_ELITES          the champion island's elites (unset = the intake's).
+    //                                   Elites are copied unmutated and skip crossover, so on a
+    //                                   converged island they are the incumbent's safest rows.
+    if let Some(n) = std::env::var("EVOLVE_CHAMPION_ELITES").ok().and_then(|v| v.parse::<u32>().ok()) {
+        config.champion_elites = Some(n);
+    }
+    //   EVOLVE_CHAMPION_COHORT_MERGE    VIRTUAL ALPS' merge age on the champion island alone
+    //                                   (unset = the intake's, 0 = cohorts off there). Only bites
+    //                                   when EVOLVE_CHAMPION_ALPS=1, since an open knockout
+    //                                   ignores cohorts whatever their age.
+    if let Some(n) = std::env::var("EVOLVE_CHAMPION_COHORT_MERGE").ok().and_then(|v| v.parse::<u32>().ok()) {
+        config.champion_cohort_merge = Some(n);
+    }
     //   EVOLVE_HOF_FILE                 the hall of fame's best is appended here at every report
     config.hof_path = std::env::var("EVOLVE_HOF_FILE").ok().filter(|p| !p.is_empty());
     //   EVOLVE_PROGRESS_EVERY           a progress line on stderr every N generations (0 = none)

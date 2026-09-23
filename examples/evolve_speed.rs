@@ -21,8 +21,8 @@ fn main() {
     let layout = Layout::for_arity(pop, 3, 48, 2, 10);
     let rates = Rates::engine_defaults(layout);
     let islands = [
-        Island { lo: 0, hi: intake, elites: 2, tournsize: (intake * 7 / 100).max(2), arrivals: 0, arrival_children: 0, open_fight: false, rates },
-        Island { lo: intake, hi: pop, elites: 2, tournsize: ((pop - intake) * 7 / 100).max(2), arrivals: 0, arrival_children: 0, open_fight: false, rates },
+        Island { lo: 0, hi: intake, elites: 2, tournsize: (intake * 7 / 100).max(2), arrivals: 0, arrival_children: 0, open_fight: false, cohort_merge: 0, rates },
+        Island { lo: intake, hi: pop, elites: 2, tournsize: ((pop - intake) * 7 / 100).max(2), arrivals: 0, arrival_children: 0, open_fight: false, cohort_merge: 0, rates },
     ];
     // 12 functions (8 binary, 4 unary) and 8 terminals: the size of a real primitive set.
     let codes = SymbolCodes {
