@@ -498,21 +498,16 @@ fn main() {
         println!("{}", out.beam.float_line());
     }
     println!("genes evaluated {} (unique per generation), over the 64-node limit {}", out.unique_genes, out.oversized_genes);
-    // TYPED TRANSCENDENTAL DEPTH's two measurements, and only when it is on so
-    // an untyped run's output is what it always was.
-    if config.typed_depth.is_some() {
-        println!(
-            "TYPED\tceiling={}\trefused={}\tdepths={}",
-            config.typed_depth.unwrap_or(0),
-            out.typed_refused,
-            out.depth_histogram.iter().enumerate().map(|(d, n)| format!("{d}:{n}")).collect::<Vec<_>>().join(" ")
-        );
-    } else {
-        println!(
-            "TYPED\tceiling=off\trefused=0\tdepths={}",
-            out.depth_histogram.iter().enumerate().map(|(d, n)| format!("{d}:{n}")).collect::<Vec<_>>().join(" ")
-        );
-    }
+    // TYPED TRANSCENDENTAL DEPTH's two measurements. Printed on BOTH arms: the
+    // depth histogram of an untyped run is the control the typed one is read
+    // against, so a line that only appeared with the knob on would leave the
+    // A/B with nothing to compare.
+    println!(
+        "TYPED\tceiling={}\trefused={}\tdepths={}",
+        config.typed_depth.map_or_else(|| "off".to_string(), |c| c.to_string()),
+        out.typed_refused,
+        out.depth_histogram.iter().enumerate().map(|(d, n)| format!("{d}:{n}")).collect::<Vec<_>>().join(" ")
+    );
     println!("1 - R²: train {:.3e}, validation {:.3e}", out.best.one_minus_r2[0], out.best.one_minus_r2[1]);
 
     // fuller's final form, the data as judge: the fit rows (train + validation)
