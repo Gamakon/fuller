@@ -28,6 +28,18 @@ pollster = { version = "0.3", optional = true }
 bytemuck = { version = "1.14", features = ["derive"], optional = true }
 # Used to hand an objective vector to hff_core's TrueNorth (matches hff's 0.15).
 ndarray = "0.15"
+# THE TELEMETRY STREAM and its viewer (`hff-watch`). Plain dependencies, NOT
+# behind `gpu`: the viewer reads a recorded file and must build — and be linted —
+# on a machine with no adapter, and `cargo test` must cover the schema.
+#
+# Crossterm is NOT named here. ratatui's default features already carry it and
+# re-export it as `ratatui::crossterm`; the bin reads its events through that
+# path, so the backend ratatui drives and the events the bin matches on are one
+# type by construction. A second, independently-versioned `crossterm = "..."`
+# line is how that becomes two types that will not talk to each other.
+ratatui = "0.30.2"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
 
 [dependencies.pyo3]
 version = "0.22"
@@ -42,6 +54,13 @@ python = ["dep:pyo3"]
 # `gpu` adds the wgpu batch evaluator. Off by default: a plain build must never
 # need a GPU adapter, and the CPU evaluator stays the correctness reference.
 gpu = ["dep:wgpu", "dep:pollster", "dep:bytemuck"]
+
+# The viewer's binary is named with a HYPHEN, as a command is; the file keeps
+# the underscore Rust needs. It is NOT behind `gpu`: watching a recorded stream
+# must work on a machine that could not run the fit that made it.
+[[bin]]
+name = "hff-watch"
+path = "src/bin/hff_watch.rs"
 
 [[example]]
 name = "00_calibration"

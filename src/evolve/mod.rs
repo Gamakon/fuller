@@ -18,8 +18,14 @@ pub mod hff_gpu;
 pub mod score;
 pub mod smogd;
 pub mod smote;
+// NOT behind `gpu`: the telemetry schema is what `hff-watch` reads, and the
+// viewer must build and be linted on a machine with no adapter.
+pub mod telemetry;
 pub mod umap2d;
 pub mod vary;
+// `hff-watch`'s state machine: what is on the screen, with no terminal in it, so
+// the replay and the live follow share one machine and a test can reach it.
+pub mod watch;
 #[cfg(feature = "gpu")]
 pub mod write_back;
 

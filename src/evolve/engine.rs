@@ -19,6 +19,7 @@ use std::time::Instant;
 use super::device::EvolveDevice;
 use super::genealogy::{Genealogy, GenealogyLog, Origin, PopulationAges, RowMark};
 use super::score::{GpuScorer, WIDTH};
+use super::telemetry;
 use super::vary::{GenParams, Generation, Island, Rates};
 use super::write_back::{gene_form, model_form, write_back, SnapCounts, WriteBack};
 use super::{InitParams, Layout, Population, SymbolCodes};
@@ -540,6 +541,23 @@ pub struct Config {
     /// unless this is turned on. The tree half is not gone: it is a knob, and its
     /// tests turn it on.
     pub beam_tree: bool,
+    /// THE TELEMETRY STREAM's file — what `hff-watch` repaints from. None (the
+    /// default) is OFF and the engine is what it was, bit for bit: no clock is
+    /// read, no reduction is run and no file is opened. With a path, the progress
+    /// report ALSO writes a versioned JSONL record ([`super::telemetry`]) — the
+    /// global state, every island's rows and best, and every cohort's split by
+    /// island — built from the scans the report has already made.
+    ///
+    /// It rides on `progress_every`, so a run with the progress report off writes
+    /// nothing; `Engine::new` says so rather than leaving an empty file.
+    pub telemetry_path: Option<String>,
+    /// What the stream calls this run. The viewer shows it, and a reader uses it
+    /// to notice that the file it is tailing belongs to a different fit now.
+    /// None: `<dataset>-seed<seed>`, as the brief's example record has it.
+    pub telemetry_run_id: Option<String>,
+    /// The dataset's name for the telemetry header — the engine is handed columns
+    /// and never sees a file name.
+    pub telemetry_dataset: Option<String>,
     /// THE FLOAT ZONE (Andrew: "move copy to the intake island as an append, so the
     /// population there floats a little, then each 4 gen we cut the ones that dont
     /// survive"): extra rows given to EVERY intake island beyond `pop_intake`, so a
@@ -600,6 +618,9 @@ impl Config {
             beam_width: 2000,
             beam_wraps: true,
             beam_tree: false,
+            telemetry_path: None,
+            telemetry_run_id: None,
+            telemetry_dataset: None,
             float_zone: 0,
         }
     }
@@ -1823,6 +1844,35 @@ pub struct Engine {
     /// VIRTUAL ALPS: the cohort label of every row, mirrored here because the
     /// pump writes its refills on the host. Empty when `cohort_merge` is 0.
     cohorts: Vec<u32>,
+    /// THE TELEMETRY STREAM's writer and the little it has to remember between
+    /// beats; None when `Config::telemetry_path` is None, and then nothing in the
+    /// fit loop touches it and the engine is what it was.
+    telemetry: Option<TelemetryState>,
+}
+
+/// What the telemetry keeps for the length of a fit.
+///
+/// The three remembered fields are all there to make EVENTS possible without a
+/// second scan: an event is a DIFFERENCE between this beat and the last, so the
+/// last beat's answers have to be somewhere. They are a handful of bytes and a
+/// small map, not a copy of anything.
+struct TelemetryState {
+    writer: crate::evolve::telemetry::Writer,
+    /// The best HFF the stream has reported, so a fall is a `new_best` event and
+    /// a flat beat is silent.
+    best_seen: f64,
+    /// The cohort labels the last snapshot held: what appears in this one is
+    /// `cohort_born`, what has gone is `cohort_extinct`. Empty when cohorts are
+    /// off, and then neither event can fire.
+    cohorts_seen: std::collections::BTreeSet<u32>,
+    /// The fitness of the model last written as a `model` record. A model is
+    /// hundreds of characters and changes far more rarely than the numbers do,
+    /// so it is written only when the hall of fame's winner actually changed.
+    model_written: Option<f64>,
+    /// Pumps run since the last snapshot — the denominator that lets the viewer
+    /// say `—` for fresh-line survival honestly in a window with no pump in it,
+    /// rather than calling healthy inactivity zero.
+    pumps_since: u32,
 }
 
 /// What the genealogy keeps for the length of a fit: the identities of the
@@ -1932,7 +1982,13 @@ impl Engine {
             }
             None => None,
         };
-        Ok(Engine { scored: vec![None; pop as usize], cohorts, config, table, layout, islands, dev, evaluator, scorer, data, caps, col_max: None, snap, lineage: None })
+        // THE TELEMETRY rides on the progress report's beat, so a path with the
+        // report off would open a file and write one line into it for ever. Say
+        // so here rather than leaving an operator watching an empty stream.
+        if config.telemetry_path.is_some() && config.progress_every == 0 {
+            return Err("telemetry_path: the stream rides on the progress report, so progress_every must be > 0".into());
+        }
+        Ok(Engine { scored: vec![None; pop as usize], cohorts, config, table, layout, islands, dev, evaluator, scorer, data, caps, col_max: None, snap, lineage: None, telemetry: None })
     }
 
     /// Score every unevaluated row of `gen`; returns (unique genes, oversized).
@@ -2958,9 +3014,14 @@ impl Engine {
     /// (or not) says so a beat at a time rather than at the end of the fit.
     ///
     /// Nothing prints when cohorts are off.
-    fn report_cohorts(&self, gen: &Generation) -> Result<(), String> {
+    ///
+    /// The labels it read back are RETURNED, not dropped: the telemetry snapshot
+    /// needs exactly this vector, and `read_cohorts` is a device read-back. Doing
+    /// it twice per beat would be the telemetry paying for its own frame out of
+    /// the fit's budget, which is the one thing it must never do.
+    fn report_cohorts(&self, gen: &Generation) -> Result<Option<Vec<u32>>, String> {
         if self.cohorts.is_empty() {
-            return Ok(());
+            return Ok(None);
         }
         let live = self.dev.read_cohorts().unwrap_or_else(|_| self.cohorts.clone());
         let mut by: std::collections::BTreeMap<u32, (usize, f64)> = std::collections::BTreeMap::new();
@@ -2981,14 +3042,227 @@ impl Engine {
             ranked.iter().take(6)
                 .map(|(c, n, best)| if best.is_finite() { format!("c{c}:{n}@{best:.3e}") } else { format!("c{c}:{n}@-") })
                 .collect::<Vec<_>>().join("  "));
-        Ok(())
+        Ok(Some(live))
     }
 
-    fn report(&self, generation: u32, seconds: f64, gen: &Generation, hof: Option<&HallOfFame>) -> Result<(), String> {
+    /// THE SNAPSHOT: the state of the search as the telemetry stream carries it,
+    /// built from what the report has already read and nothing else.
+    ///
+    /// The per-island reductions the brief asks for are here, and they are the
+    /// reason this function exists at all: the brief's example record has the
+    /// island bests as `null` because the prose log cannot recover them, and says
+    /// "the engine must fill them from per-island reductions". It can. An island
+    /// is a contiguous row range (`lo..hi`), so its best is a minimum over a
+    /// SLICE of the fitness vector that the generation already holds, and its
+    /// cohort split is one pass over the same slice of the labels
+    /// `report_cohorts` just read. Nothing is read back for this, and the whole
+    /// thing is O(population) once per beat.
+    ///
+    /// `live` is None when cohorts are off, and then both cohort tables are empty
+    /// — the viewer says "cohorts off" rather than inventing a c0 that is really
+    /// just "every row".
+    fn telemetry_snapshot(&self, generation: u32, gen: &Generation, best: &Scored, best_ever: Option<f64>, live: Option<&[u32]>, pumps_since: u32) -> telemetry::SnapshotBody {
+        use telemetry::{finite, CohortRow, Global, IslandKind, IslandRow};
+        // One pass for the global numbers, so the mean and the NaN count cost one
+        // walk of the vector rather than three.
+        let (mut sum, mut scored_rows, mut nan_rows, mut best_hff) = (0.0f64, 0u32, 0u32, f64::INFINITY);
+        for f in &gen.fitness {
+            if f.is_nan() {
+                nan_rows += 1;
+            } else {
+                sum += f64::from(*f);
+                scored_rows += 1;
+                best_hff = best_hff.min(f64::from(*f));
+            }
+        }
+        // A cohort's row belongs to exactly one island, so the global table is
+        // accumulated as the islands are walked: one pass over the labels, not
+        // one per island plus one more for the totals.
+        let mut global_cohorts: std::collections::BTreeMap<u32, (u32, f64, u32)> = std::collections::BTreeMap::new();
+        let islands: Vec<IslandRow> = self
+            .islands
+            .iter()
+            .enumerate()
+            .map(|(i, isl)| {
+                let (lo, hi) = (isl.lo as usize, (isl.hi as usize).min(gen.fitness.len()));
+                let (mut isum, mut in_scored, mut inan, mut ibest) = (0.0f64, 0u32, 0u32, f64::INFINITY);
+                let mut cohorts: std::collections::BTreeMap<u32, (u32, f64, u32)> = std::collections::BTreeMap::new();
+                for row in lo..hi {
+                    let f = gen.fitness[row];
+                    let ok = !f.is_nan();
+                    if ok {
+                        isum += f64::from(f);
+                        in_scored += 1;
+                        ibest = ibest.min(f64::from(f));
+                    } else {
+                        inan += 1;
+                    }
+                    if let Some(c) = live.and_then(|l| l.get(row).copied()) {
+                        for table in [&mut cohorts, &mut global_cohorts] {
+                            let e = table.entry(c).or_insert((0, f64::INFINITY, 0));
+                            e.0 += 1;
+                            if ok {
+                                e.1 = e.1.min(f64::from(f));
+                            } else {
+                                e.2 += 1;
+                            }
+                        }
+                    }
+                }
+                let row_of = |(&id, &(rows, best, nan)): (&u32, &(u32, f64, u32))| CohortRow {
+                    id,
+                    // A cohort's label IS the pump beat its line arrived on —
+                    // that is how `vary` assigns it — so the birth generation is
+                    // the label. Carried as its own field so a reader that does
+                    // not know the engine's convention is not required to.
+                    birth_generation: id,
+                    rows,
+                    best_hff: finite(best),
+                    nan_rows: nan,
+                };
+                IslandRow {
+                    id: format!("{}-{}", if i % 2 == 0 { "intake" } else { "champion" }, i / 2),
+                    kind: Some(if i % 2 == 0 { IslandKind::Intake } else { IslandKind::Champion }),
+                    pair: i as u32 / 2,
+                    rows: isl.hi - isl.lo,
+                    best_hff: finite(ibest),
+                    avg_hff: (in_scored > 0).then(|| isum / f64::from(in_scored)),
+                    // ALWAYS Some from the engine: it counted them. `None` on
+                    // the wire means a producer did not emit the number, and a
+                    // viewer must be able to tell that from a genuine zero.
+                    nan_rows: Some(inan),
+                    cohorts: cohorts.iter().map(row_of).collect(),
+                }
+            })
+            .collect();
+        let third = (self.data.splits.n_extrap > 0).then(|| 1.0 - best.one_minus_r2[2]);
+        let (_, log10_p) = hff_p_value(best.fitness, self.hff_dimensions());
+        telemetry::SnapshotBody {
+            global: Global {
+                // The report's own best, in f64: the number the fit is judged on.
+                // The island minima are the device's f32s, which is why the
+                // invariant check compares them with a tolerance.
+                best_hff: finite(best.fitness),
+                best_ever_hff: best_ever.and_then(finite),
+                avg_hff: (scored_rows > 0).then(|| sum / f64::from(scored_rows)),
+                mse_train: finite(best.one_minus_r2[0] * self.caps.var[0]),
+                r2_train: finite(1.0 - best.one_minus_r2[0]),
+                r2_val: finite(1.0 - best.one_minus_r2[1]),
+                r2_third: third.and_then(finite),
+                log10_p: finite(log10_p),
+                t_depth: best.t_depth,
+                vhead: match self.vhead_at(generation) {
+                    0 => self.layout.head,
+                    v => v,
+                },
+                nan_rows,
+            },
+            islands,
+            global_cohorts: global_cohorts
+                .into_iter()
+                .map(|(id, (rows, best, nan))| CohortRow { id, birth_generation: id, rows, best_hff: finite(best), nan_rows: nan })
+                .collect(),
+            pumps_since,
+        }
+    }
+
+    /// The telemetry's half of a report: a snapshot, the events that are the
+    /// difference between it and the last one, and a `model` record when the hall
+    /// of fame's winner has actually changed.
+    ///
+    /// Every write is fallible and NONE of them may end a fit. A full disk is a
+    /// reason to stop watching a search, never a reason to stop the search: an
+    /// error here is written once to stderr and the stream goes quiet. That is
+    /// the brief's "the fit continues normally when the TUI ... is killed",
+    /// applied to the writer's own end of the pipe.
+    fn report_telemetry(&mut self, generation: u32, gen: &Generation, best: &Scored, hof: Option<&HallOfFame>, live: Option<&[u32]>, force: bool) {
+        let Some(state) = self.telemetry.as_ref() else { return };
+        if !state.writer.snapshot_due(force) {
+            return;
+        }
+        let best_ever = hof.map(|h| h.best.fitness);
+        let body = self.telemetry_snapshot(generation, gen, best, best_ever, live, self.telemetry.as_ref().map_or(0, |s| s.pumps_since));
+        let budget_ms = (self.config.max_seconds * 1e3) as u64;
+        // The events are a set difference against the last beat, so they are
+        // computed here where both beats are in hand, and BEFORE the snapshot is
+        // written — an operator reads "c100 appeared" above the table it appears
+        // in, which is the order the mockup shows them in.
+        let now: std::collections::BTreeSet<u32> = body.global_cohorts.iter().map(|c| c.id).collect();
+        let born_died: Vec<(bool, u32)> = match self.telemetry.as_ref() {
+            Some(s) => {
+                let born = now.difference(&s.cohorts_seen).map(|&c| (true, c));
+                let died = s.cohorts_seen.difference(&now).map(|&c| (false, c));
+                born.chain(died).collect()
+            }
+            None => Vec::new(),
+        };
+        let improved = self.telemetry.as_ref().is_some_and(|s| best.fitness < s.best_seen);
+        let model = hof.filter(|h| self.telemetry.as_ref().is_some_and(|s| s.model_written != Some(h.best.fitness)));
+        // The model's two forms are a parse and two prints of an expression that
+        // is already in hand — no egglog, no data, no rescoring. The SIMPLIFIED
+        // form the viewer offers a tab for is the fit's OWN final form, which
+        // costs a saturation and belongs at the end of a fit, not on a beat.
+        let model = model.map(|h| {
+            let tree = crate::lint::node::Tree::parse(&h.math).ok();
+            telemetry::ModelFields {
+                hff: h.best.fitness,
+                found_generation: h.generation,
+                infix_protected: tree.as_ref().map_or_else(|| h.math.clone(), crate::lint::node::Tree::to_infix_faithful),
+                infix_plain: tree.as_ref().map_or_else(|| h.math.clone(), crate::lint::node::Tree::to_infix),
+                raw_math: h.math.clone(),
+                t_depth: h.best.t_depth,
+            }
+        });
+        let Some(state) = self.telemetry.as_mut() else { return };
+        let write = || -> Result<(), String> {
+            for (born, c) in born_died {
+                let (kind, message) = if born {
+                    (telemetry::EventKind::CohortBorn, format!("cohort c{c} appeared"))
+                } else {
+                    (telemetry::EventKind::CohortExtinct, format!("cohort c{c} has no rows left"))
+                };
+                state.writer.event(generation, kind, message, Some(c), None)?;
+            }
+            if improved {
+                state.writer.event(
+                    generation,
+                    telemetry::EventKind::NewBest,
+                    format!("global best HFF {:.4e}", best.fitness),
+                    None,
+                    Some(best.fitness),
+                )?;
+            }
+            if let Some(m) = model {
+                let fitness = m.hff;
+                state.writer.model(generation, m)?;
+                state.model_written = Some(fitness);
+            }
+            state.writer.snapshot(generation, budget_ms, body)
+        };
+        if let Err(e) = write() {
+            eprintln!("TELEMETRY\tthe stream stopped: {e}");
+            self.telemetry = None;
+            return;
+        }
+        if let Some(state) = self.telemetry.as_mut() {
+            state.best_seen = state.best_seen.min(best.fitness);
+            state.cohorts_seen = now;
+            state.pumps_since = 0;
+        }
+    }
+
+    /// `force` is the fit's LAST report, whatever ended it: the telemetry's ≥1 s
+    /// throttle is skipped for it, so a recording always ends on a frame that is
+    /// the fit's actual final state rather than one up to a second old.
+    fn report(&mut self, generation: u32, seconds: f64, gen: &Generation, hof: Option<&HallOfFame>, force: bool) -> Result<(), String> {
         let fitness: Vec<f64> = gen.fitness.iter().filter(|f| !f.is_nan()).map(|f| f64::from(*f)).collect();
         let avg = fitness.iter().sum::<f64>() / fitness.len().max(1) as f64;
         let Some((best_row, b)) = self.best(gen) else { return Ok(()) };
-        let third = |s: &Scored| if self.data.splits.n_extrap > 0 { format!("{:.10}", 1.0 - s.one_minus_r2[2]) } else { "-".to_string() };
+        // The third block's presence is copied out rather than read through
+        // `self`: the closure would otherwise hold a borrow of the engine across
+        // the telemetry's write, which needs it mutably.
+        let has_third = self.data.splits.n_extrap > 0;
+        let third = |s: &Scored| if has_third { format!("{:.10}", 1.0 - s.one_minus_r2[2]) } else { "-".to_string() };
         let (_, log10_p) = hff_p_value(b.fitness, self.hff_dimensions());
         let head = match self.vhead_at(generation) { 0 => self.layout.head, v => v };
         // The lineage columns come after everything that was already reported, so a
@@ -3003,7 +3277,10 @@ impl Engine {
             "{generation:>7}{seconds:>8.0}{head:>6}{:>13.6e}{avg:>13.6e}{:>13.4e}{:>15.10}{:>15.10}{:>15}{:>9}{log10_p:>10.2}{lineage}",
             b.fitness, b.one_minus_r2[0] * self.caps.var[0], 1.0 - b.one_minus_r2[0], 1.0 - b.one_minus_r2[1], third(&b), b.t_depth
         );
-        self.report_cohorts(gen)?;
+        // The cohort labels the human line was printed from, handed straight to
+        // the telemetry: one device read-back serves both.
+        let live = self.report_cohorts(gen)?;
+        self.report_telemetry(generation, gen, &b, hof, live.as_deref(), force);
         if let (Some(path), Some(h)) = (&self.config.hof_path, hof) {
             use std::io::Write;
             let model = crate::lint::node::Tree::parse(&h.math).map_or_else(|_| h.math.clone(), |t| t.to_infix());
@@ -3090,6 +3367,60 @@ impl Engine {
                 log.batch(0, 0, self.layout.pop - 1, 0, u64::from(self.layout.pop) - 1, Origin::Init)?;
                 timing.genealogy += t.elapsed().as_secs_f64();
                 Some(LineageState { tracker, log })
+            }
+            None => None,
+        };
+        // THE TELEMETRY STREAM, when it is on: the run_start goes out before the
+        // first generation, so a viewer attaching immediately has the run's fixed
+        // furniture — dataset, seed, population, budget — without waiting for a
+        // snapshot that is a whole beat away.
+        self.telemetry = match &c.telemetry_path {
+            Some(path) => {
+                let dataset = c.telemetry_dataset.clone().unwrap_or_else(|| "dataset".to_string());
+                let run_id = c.telemetry_run_id.clone().unwrap_or_else(|| format!("{dataset}-seed{}", c.seed));
+                let writer = telemetry::Writer::create(path, run_id, telemetry::RunStartFields {
+                    dataset,
+                    seed: c.seed,
+                    // The WHOLE population, float zone and every pair included:
+                    // it is the number the invariant checks sum to, and
+                    // `pop_intake + pop_champion` is not it.
+                    population: self.layout.pop,
+                    n_pairs: c.n_pairs,
+                    pop_intake: c.pop_intake,
+                    pop_champion: c.pop_champion,
+                    float_zone: c.float_zone,
+                    n_train: self.data.splits.n_train,
+                    n_val: self.data.splits.n_val,
+                    n_extrap: self.data.splits.n_extrap,
+                    budget_ms: (c.max_seconds * 1e3) as u64,
+                    max_generations: c.max_generations,
+                    cohort_merge: c.cohort_merge,
+                    pump_every: c.pump_every,
+                    progress_every: c.progress_every,
+                })?;
+                let mut writer = writer;
+                // THE MERGE RULE, stated once and up front. The brief asks for a
+                // `cohort_merge` event "explaining how displayed IDs aggregate",
+                // because a merge changes the classification the table is drawn
+                // under and a table that silently re-labels is a lie. The rule
+                // is fixed from generation 0 here — cohorts at or past the label
+                // are ONE band — so it is announced once rather than re-sent.
+                if c.cohort_merge > 0 {
+                    writer.event(
+                        0,
+                        telemetry::EventKind::CohortMerge,
+                        format!("cohorts at or past c{} are one band: their rows aggregate and a gain on them is a gain on the band", c.cohort_merge),
+                        None,
+                        Some(f64::from(c.cohort_merge)),
+                    )?;
+                }
+                Some(TelemetryState {
+                    writer,
+                    best_seen: f64::INFINITY,
+                    cohorts_seen: std::collections::BTreeSet::new(),
+                    model_written: None,
+                    pumps_since: 0,
+                })
             }
             None => None,
         };
@@ -3242,6 +3573,12 @@ impl Engine {
                 // fifth de-duplicated and refills the rest, and a float row that has
                 // not earned its place is refilled with it.
                 self.pump(&mut gen, generation)?;
+                // The telemetry's pump count, so a snapshot can say whether there
+                // WAS a pump in the window its fresh-line survival would be
+                // measured over — a window with none shows `—`, not a zero.
+                if let Some(t) = self.telemetry.as_mut() {
+                    t.pumps_since += 1;
+                }
                 // How many survivors from BEFORE the last pump the population still
                 // holds, after this cut: they have had a round of breeding and a cut
                 // to prove themselves, which is the question the float zone asks. A
@@ -3280,13 +3617,14 @@ impl Engine {
             timing.cross += t.elapsed().as_secs_f64();
             self.dev.write_fitness(&gen.fitness)?;
             if c.progress_every > 0 && generation % c.progress_every == 0 {
-                self.report(generation, started.elapsed().as_secs_f64(), &gen, hof.as_ref())?;
+                self.report(generation, started.elapsed().as_secs_f64(), &gen, hof.as_ref(), false)?;
             }
         }
         // The last row of the logbook: however the fit ended, its final state is
-        // reported and the hall of fame's best is in the file.
+        // reported and the hall of fame's best is in the file. `force`: the
+        // telemetry's throttle never costs a recording its final frame.
         if c.progress_every > 0 && (stopped_by != "n_gen" || generation % c.progress_every != 0) {
-            self.report(generation, started.elapsed().as_secs_f64(), &gen, hof.as_ref())?;
+            self.report(generation, started.elapsed().as_secs_f64(), &gen, hof.as_ref(), true)?;
         }
         let (mut row, mut ranked) = self.best(&gen).ok_or("no individual could be scored")?;
         // Under balanced tournaments the TrueNorth best is not an elite and may have
@@ -3340,6 +3678,19 @@ impl Engine {
             }
             timing.genealogy += t.elapsed().as_secs_f64();
         }
+        // THE LAST LINE of the stream, and the one that must never be silently
+        // dropped: a viewer that has seen it says FINISHED, and one that has
+        // merely stopped receiving says STALE. A write that fails here costs the
+        // fit nothing — the result is already computed.
+        if let Some(state) = self.telemetry.as_mut() {
+            if stopped_by == "early_stop" {
+                let _ = state.writer.event(generation, telemetry::EventKind::EarlyStop, "the stop bar was met".to_string(), None, Some(best.fitness));
+            }
+            if let Err(e) = state.writer.run_end(generation, stopped_by, generation, individuals, telemetry::finite(best.fitness), started.elapsed().as_secs_f64()) {
+                eprintln!("TELEMETRY\tthe stream's last line was lost: {e}");
+            }
+        }
+        self.telemetry = None;
         Ok(FitResult {
             lineage: winner,
             population_ages,
@@ -5623,5 +5974,131 @@ mod tests {
         let stopped = fit(&Config { stop_one_minus_r2: 1e-10, max_generations: 400, ..config });
         assert_eq!(stopped.stopped_by, "early_stop", "after {} generations: {}", stopped.generations, stopped.math);
         assert!(stopped.best.one_minus_r2[1] <= 1e-10, "{:?}", stopped.best);
+    }
+
+    // -----------------------------------------------------------------------
+    // THE TELEMETRY STREAM — the machine-readable half, and `hff-watch`'s API.
+    // -----------------------------------------------------------------------
+
+    /// A scratch stream of this test's own.
+    fn telemetry_scratch(name: &str) -> (std::path::PathBuf, String) {
+        let dir = std::env::temp_dir().join(format!("fuller-telemetry-{name}"));
+        std::fs::create_dir_all(&dir).expect("a scratch directory");
+        let path = dir.join("stream.jsonl");
+        (dir, path.to_string_lossy().into_owned())
+    }
+
+    /// A config with several pairs and cohorts on, so the per-island reductions
+    /// and the per-island cohort split both have something to say.
+    fn streamed_config(telemetry_path: Option<String>) -> Config {
+        Config {
+            n_pairs: 3,
+            pump_every: 3,
+            cohort_merge: 1000,
+            progress_every: 2,
+            max_generations: 10,
+            max_seconds: 3600.0,
+            stop_one_minus_r2: -1.0,
+            stop_log10_p: f64::NEG_INFINITY,
+            telemetry_path,
+            telemetry_dataset: Some("toy".to_string()),
+            ..toy_config(30, 10)
+        }
+    }
+
+    /// THE OFF-BY-DEFAULT PROOF, as the genealogy has one: with
+    /// `telemetry_path = None` the engine is what it was, bit for bit, and with
+    /// the stream ON the fit is STILL bit for bit the same — the telemetry only
+    /// ever reads what the report has already read, so it cannot reach the search
+    /// at all, in either direction.
+    #[test]
+    fn the_telemetry_changes_no_bit_of_the_population() {
+        let (dir, path) = telemetry_scratch("bit-identical");
+        let run = |config: Config| {
+            let mut engine = Engine::new(config, toy_data()).expect("engine");
+            let out = engine.fit().expect("fit");
+            let pop = engine.population().expect("the population");
+            let words = pop.genome.iter().copied()
+                .chain(pop.rnc.iter().map(|v| v.to_bits()))
+                .chain(pop.wrapper_id.iter().copied());
+            let digest = words.fold(0xcbf2_9ce4_8422_2325u64, |h, w| (h ^ u64::from(w)).wrapping_mul(0x0000_0100_0000_01b3));
+            (digest, out)
+        };
+        let (off, out_off) = run(streamed_config(None));
+        let (on, out_on) = run(streamed_config(Some(path.clone())));
+        assert_eq!(off, on, "the telemetry moved a bit of the population");
+        assert_eq!(out_off.math, out_on.math, "the telemetry changed the model");
+        assert_eq!(out_off.generations, out_on.generations);
+        assert_eq!(out_off.unique_genes, out_on.unique_genes);
+        assert_eq!(out_off.best.fitness.to_bits(), out_on.best.fitness.to_bits());
+        // Off wrote no file at all: not an empty one, none.
+        std::fs::remove_file(&path).expect("on wrote a stream");
+        std::fs::remove_dir(&dir).expect("remove its directory");
+    }
+
+    /// A path with the progress report off is a stream nothing would ever be
+    /// written to. The engine says so at `new` rather than leaving an operator
+    /// watching a file with one line in it.
+    #[test]
+    fn a_stream_without_a_progress_beat_is_refused() {
+        let config = Config { progress_every: 0, ..streamed_config(Some("/dev/null".to_string())) };
+        let error = Engine::new(config, toy_data()).err().expect("refused");
+        assert!(error.contains("progress_every"), "{error}");
+    }
+
+    /// THE BRIEF'S INVARIANTS on a stream the engine actually wrote, over three
+    /// pairs with cohorts on: island rows sum to the population, cohort rows sum
+    /// to the population, each cohort's island counts sum to its global count,
+    /// and the global best is the minimum island best. The per-island values the
+    /// brief shows as `null` are NOT null: the engine has them.
+    #[test]
+    fn the_stream_the_engine_writes_holds_every_invariant() {
+        use crate::evolve::telemetry::{check_snapshot, parse_stream, Record};
+        let (dir, path) = telemetry_scratch("invariants");
+        let mut engine = Engine::new(streamed_config(Some(path.clone())), toy_data()).expect("engine");
+        let out = engine.fit().expect("fit");
+        let text = std::fs::read_to_string(&path).expect("the stream");
+        let (records, bad) = parse_stream(&text);
+        assert_eq!(bad, 0, "the engine wrote a line that is not a record");
+        let start = records.iter().find_map(|r| match r {
+            Record::RunStart(s) => Some(s.clone()),
+            _ => None,
+        }).expect("a run_start opens the stream");
+        assert_eq!(start.population, engine.layout.pop);
+        assert_eq!(start.n_pairs, 3);
+        let mut snapshots = 0;
+        for r in &records {
+            if let Record::Snapshot(s) = r {
+                let problems = check_snapshot(s, start.population, start.cohort_merge > 0);
+                assert!(problems.is_empty(), "generation {}: {problems:?}", s.header.generation);
+                // Six islands, three pairs, and EVERY one of them has its own
+                // best — the brief's nulls, filled.
+                assert_eq!(s.islands.len(), 6, "three pairs are six islands");
+                assert!(s.islands.iter().all(|i| i.best_hff.is_some()), "an island has no best: {:?}", s.islands);
+                assert!(s.islands.iter().any(|i| !i.cohorts.is_empty()), "no island has a cohort split");
+                snapshots += 1;
+            }
+        }
+        assert!(snapshots >= 1, "the fit wrote no snapshot");
+        // The stream's last line is a run_end, and it agrees with the fit.
+        let end = records.last().expect("a last record");
+        match end {
+            Record::RunEnd(e) => {
+                assert_eq!(e.generations, out.generations);
+                assert_eq!(e.stopped_by, out.stopped_by);
+                assert_eq!(e.individuals, out.individuals);
+            }
+            other => panic!("the stream does not end with run_end: {other:?}"),
+        }
+        // The full expression rides on its own rare record, never on a snapshot,
+        // and a snapshot points at one by seq.
+        let model = records.iter().find_map(|r| match r {
+            Record::Model(m) => Some(m.clone()),
+            _ => None,
+        }).expect("a model record");
+        assert!(!model.infix_protected.is_empty() && !model.raw_math.is_empty());
+        assert!(records.iter().any(|r| matches!(r, Record::Snapshot(s) if s.model_ref == Some(model.header.seq))));
+        std::fs::remove_file(&path).expect("remove the stream");
+        std::fs::remove_dir(&dir).expect("remove its directory");
     }
 }

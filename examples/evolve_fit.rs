@@ -275,6 +275,25 @@ fn main() {
     //                                   snap) and the winner's chain back to its founder. Unset
     //                                   = off, and the engine is what it was, bit for bit.
     config.genealogy_path = env("EVOLVE_GENEALOGY_FILE").filter(|p| !p.is_empty());
+    //   EVOLVE_TELEMETRY_FILE           THE TELEMETRY STREAM: a versioned JSONL record per
+    //                                   progress beat — the global state, every island's rows
+    //                                   and best HFF, and every cohort's split by island —
+    //                                   which `hff-watch --follow` repaints from. The prose
+    //                                   log is unchanged; this is a SECOND stream, and it is
+    //                                   the production API (never parse the prose log).
+    //                                   Unset = off, and the engine is what it was, bit for
+    //                                   bit. It rides on EVOLVE_PROGRESS_EVERY, so that is
+    //                                   defaulted to 10 here when a stream is asked for and
+    //                                   no beat was given — a caller who asks to watch a fit
+    //                                   should not get an empty file because of a second knob.
+    //   EVOLVE_TELEMETRY_RUN_ID         what the stream calls this run (default
+    //                                   `<dataset>-seed<seed>`)
+    config.telemetry_path = env("EVOLVE_TELEMETRY_FILE").filter(|p| !p.is_empty());
+    config.telemetry_run_id = env("EVOLVE_TELEMETRY_RUN_ID").filter(|p| !p.is_empty());
+    config.telemetry_dataset = std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().into_owned());
+    if config.telemetry_path.is_some() && config.progress_every == 0 {
+        config.progress_every = 10;
+    }
     //   EVOLVE_BEAM_EVERY               THE BEAM's beat in generations (0 = off, the default):
     //                                   on a beat, thousands of rule-based MUTATIONS of the
     //                                   best individual are generated and scored on the data,
