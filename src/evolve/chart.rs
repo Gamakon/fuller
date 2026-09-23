@@ -221,7 +221,7 @@ pub fn series(tag: &str, stream: &str, card: Option<&str>, thinning: Thinning) -
                 (Some(p), _) if p.is_finite() => PointKind::Measured,
                 // p is null and the angle is EXACTLY zero: the f32 angle
                 // collapsed onto the pole. p underflowed to 0, log10 p is -inf.
-                (None, Some(hff)) if hff == 0.0 => PointKind::Saturated,
+                (None, Some(0.0)) => PointKind::Saturated,
                 _ => PointKind::Unmeasured,
             };
             all.push(Point {
@@ -446,7 +446,7 @@ pub fn figure(series: &[Series], x: XAxis, caption: &str, label: &str) -> String
             tex_escape(&s.tag)
         ));
     }
-    for (_, v) in &bars_p {
+    for v in bars_p.values() {
         out.push_str(&format!(
             "\\draw[dashed, gray!70] ({{rel axis cs:0,0}}|-{{axis cs:1,{v}}}) -- ({{rel axis cs:1,0}}|-{{axis cs:1,{v}}})\n  node[pos=0.13, above, font=\\scriptsize, gray!70] {{stop bar $\\log_{{10}} p \\le {v:.0}$}};\n"
         ));
@@ -479,7 +479,7 @@ pub fn figure(series: &[Series], x: XAxis, caption: &str, label: &str) -> String
     if series.iter().any(|s| s.points.iter().any(|p| p.one_minus_r2_third.is_some())) {
         out.push_str("\\addlegendimage{densely dotted, thick, gray!60!black}\n\\addlegendentry{(dotted, same colour) that run's third block}\n");
     }
-    for (_, v) in &bars_r2 {
+    for v in bars_r2.values() {
         out.push_str(&format!(
             "\\draw[dashed, gray!70] ({{rel axis cs:0,0}}|-{{axis cs:1,{v:e}}}) -- ({{rel axis cs:1,0}}|-{{axis cs:1,{v:e}}})\n  node[pos=0.06, above, font=\\scriptsize, gray!70] {{stop bar $1-R^2 \\le {v:e}$}};\n"
         ));
@@ -678,19 +678,20 @@ mod tests {
     #[test]
     fn a_tag_reaches_the_legend_escaped() {
         let s = series("bacres1_75long", SATURATED, None, Thinning::default()).expect("a series");
-        let figure = figure(&[s], XAxis::Generation, "100% of it", "fig:conv");
-        assert!(figure.contains("bacres1\\_75long"), "an underscore went to TeX raw");
-        assert!(!figure.contains("{bacres1_75long}"), "an unescaped tag reached a legend entry");
-        assert!(figure.contains("100\\%"), "a caption's percent sign went raw");
-        // A CAPTION'S MATHS IS THE AUTHOR'S. Escaping the `_` of a subscript
-        // turned `\log_{10} p` into the literal `log_10p` on the first compile
-        // of this figure, which is a caption that says something else.
-        let maths = figure(&[series("t", SATURATED, None, Thinning::default()).expect("a series")], XAxis::Generation, "$\\log_{10} p$ at 100% of it", "fig:x");
-        assert!(maths.contains("$\\log_{10} p$"), "a subscript in the caption's maths was escaped away");
-        assert!(maths.contains("100\\%"), "a percent sign outside maths must still be escaped");
+        let drawn = figure(std::slice::from_ref(&s), XAxis::Generation, "100% of it", "fig:conv");
+        assert!(drawn.contains("bacres1\\_75long"), "an underscore went to TeX raw");
+        assert!(!drawn.contains("{bacres1_75long}"), "an unescaped tag reached a legend entry");
+        assert!(drawn.contains("100\\%"), "a caption's percent sign went raw");
         // The data file it points at is the tag's own, unescaped — a filename is
         // not TeX.
-        assert!(figure.contains("{bacres1_75long.dat}"), "the table reference was escaped and will not be found");
+        assert!(drawn.contains("{bacres1_75long.dat}"), "the table reference was escaped and will not be found");
+
+        // A CAPTION'S MATHS IS THE AUTHOR'S. Escaping the `_` of a subscript
+        // turned `\log_{10} p` into the literal `log_10p` on the first compile
+        // of this figure — a caption that says something else than it was given.
+        let maths = figure(&[s], XAxis::Generation, "$\\log_{10} p$ at 100% of it", "fig:x");
+        assert!(maths.contains("$\\log_{10} p$"), "a subscript in the caption's maths was escaped away");
+        assert!(maths.contains("100\\%"), "a percent sign outside maths must still be escaped");
     }
 
     /// BOTH HALVES OF THE BAR, OR IT IS NOT A LAW. A p under the bar with an
