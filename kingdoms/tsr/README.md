@@ -110,9 +110,25 @@ big).
 
 ## Status
 
-Built and tested; the A/B is running. The settings are the ones that recovered
-75 of 133 — 800 intake + 400 champion, pump every 100, `cohort_merge` 10,000,
-gene subsets on, no SMOGD/SMOTE — over three development seeds, with time
-binding so a difference in ms/generation shows up as generations.
+**Built, tested and measured.** Full results and their caveats in
+`measurements/`; every fit's own findings are in its run card's `notes`.
 
-Results land in `measurements/` with their run cards.
+There is **no control arm**, on Andrew's instruction — "We don't need an A test
+… Just do TSR." The budget went on breadth instead: eight datasets over two
+development seeds, at the settings that recovered 75 of 133.
+
+The headline, in one line each:
+
+* **On `strogatz_bacres1` TSR fails exactly as untyped does.** No recovery,
+  same settings. A null on the outcome.
+* **`feynman_I_26_2` — `arcsin(n sin θ₂)`, the depth-2 law — is recovered in
+  its true form on BOTH seeds**, generation 169 and generation 2, and is
+  unsolved in all 7 prior untyped races on the record.
+* **The T2 ceiling is reached in every fit**, and from initialisation, so it is
+  nowhere a formality.
+* **The pace cost is not established.** The machine was shared and a third
+  bacres1 run came out *faster* than untyped; no timing claim survives that.
+
+The one thing the spec did not foresee: at `n_genes = 3` with `gene_subsets`
+on, a refused gene does **not** kill its row. It rides along unscored, so
+typing accumulates dead weight rather than removing shapes from the population.
