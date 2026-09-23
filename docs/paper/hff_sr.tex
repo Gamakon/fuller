@@ -484,6 +484,19 @@ to; it would enter the pool as a candidate and be held to the same fitness as
 every other row. That is guidance through equivalence rather than steering by
 hand.
 
+Since the run we have built one operator in that shape, and report it here
+because its result so far is not a good one. A constant-folding edit --- a
+subtree that flattens its input to a constant is collapsed to that constant ---
+lands the cleaned gene in its island's worst row, unevaluated, leaving the
+original untouched for the tournament to choose between them. Across three seeds
+at 400 generations it is one win and two losses, so it is off by default and we
+claim nothing from it. It also exposes a tension the argument above does not
+resolve: the proposal inherits its parent's cohort rather than a fresh one, so
+it fights in its parent's band and does \emph{not} get the protected young band
+that this section argues a proposal needs. Which of those two a proposal should
+wear is the open question, and it is not the same question as the missing row
+below.
+
 That is exactly the material Section~\ref{sec:alps} shows a converged population
 destroys. A proposal is, at the moment it is made, a row whose structure is
 untried. Dropped into a monoculture it would be drawn into a 105-candidate
