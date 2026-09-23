@@ -16,6 +16,31 @@ Code claims are checked against **both** `05ef7e9` and HEAD, because a reviewer
 greps HEAD but fairness asks what was true when the run happened. Where the two
 differ the verdict is **STALE**, and both states are given.
 
+## Working down
+
+Each finding carries a **Fixed at** line when it has been addressed, naming the
+commit. Line numbers in this file are stamped at `8b43455` and are NOT updated
+when the code moves; re-grep before trusting one.
+
+| commit | what it closed |
+|---|---|
+| `c9db74c` | findings 1, 2, 3, 4 — the four critical/high FALSE ones |
+| `09f25e6` | findings 5, 6, 7, 9, 14; gaps G3, G5, G6 |
+| `85625f3` | gap G2 |
+| `416691a` | a conflation introduced by `c9db74c` itself (see finding 4) |
+
+Still open: 8 (already disclosed in-paper, needs an experiment), 10-13
+(UNVERIFIABLE-HERE — need a cited log or a measurement run), G1 (code half fixed
+at `5919f31`), G4, G7, G8.
+
+**Re-check on merge.** Finding 2's fix carries an evidence caveat — "the run
+emitted no card recording the derived objective count, and the card format that
+does postdates it." A run card for the 75 run was being worked on elsewhere in
+the same session. **If one has landed, that caveat is stale and the sentence
+should be replaced by the card's `hff_objectives` figure**, which settles the
+count from an artefact instead of from a reconstruction. This is the first thing
+to check when these commits meet the rest of the branch.
+
 ## Verdicts
 
 | | meaning |
@@ -34,32 +59,37 @@ Severity answers one question: **would a reviewer who greps the repo find it?**
 
 ## Summary table
 
-| # | § | claim | verdict | severity |
-|---|---|---|---|---|
-| 1 | §10 | "The p-value depends on how many objectives HFF carries" | **FALSE** | **critical** |
-| 2 | §3.2 | "The engine computes nine objectives" | **FALSE** | **critical** |
-| 3 | §3.4 | "algebraic simplification is … a variation operator inside the search" | **FALSE** | **critical** |
-| 4 | §3.5 | "A fit stops when validation 1−R² ≤ 1e-10" | **FALSE** | **high** |
-| 5 | §4.3 | the `better_mate` listing | **STALE** | **high** |
-| 6 | §4.3 | "`cohort_merge` is the label past which cohorts stop being separate" | **STALE** | **high** |
-| 7 | §4.1 | Table 1's six fits, configuration undisclosed | **OVERCLAIMED** | **high** |
-| 8 | §4.5 | the interaction of cohorts and editing | **UNMEASURED** | **high** (already stated in-paper) |
-| 9 | §3.1 | the model is `a·L(g₀,g₁,g₂)+b` | **OVERCLAIMED** | medium |
-| 10 | §8.2 | "a beam mutant beat its original 0.05% of the time" | **UNVERIFIABLE-HERE** | medium |
-| 11 | §8.4 | "9.06 s of a 15.6 s fit … 58%" | **UNVERIFIABLE-HERE** | medium |
-| 12 | §8.3 | "30,180 candidates a beat" | **UNVERIFIABLE-HERE** | medium |
-| 13 | §3.4 | the parity figures (33.6% / 84.9% / 47% / 15% / 13%) | **UNVERIFIABLE-HERE** | medium |
-| 14 | §4.3 | "Setting it to 0 turns cohorts off entirely" | **TRUE-BUT-FRAGILE** | medium |
-| 15 | §3.3 | the pump: best two over worst two, keep the best fifth | **TRUE** | — |
-| 16 | §4.2 | the arithmetic, (1200/1500)^105 = 6.7e-11 | **TRUE** | — |
-| G1 | — | the champion island's cohort rule is now a knob, defaulting **off** | **GAP** | **high** |
-| G2 | — | `fold_winners` — an edit that lands beside the original | **GAP** | medium |
-| G3 | — | wrappers (`Identity`, `LogAbs`, `SqrtAbs`) | **GAP** | medium |
-| G4 | — | `arrival_children = 4`, `promote_fraction`, `elites` | **GAP** | medium |
-| G5 | — | the balanced-pole result (26 vs 53 on one seed) | **GAP** | medium |
-| G6 | — | SMOGD/SMOTE inconsistency between the two halves of the bar | **GAP** | medium |
-| G7 | — | `Config::srbench` defaults now describe bacres1, not the 75 run | **GAP** | low |
-| G8 | — | code-internal doc bugs (`snap_every`, the fold's two comments, CLAUDE.md) | **GAP** | low |
+| # | § | claim | verdict | severity | status |
+|---|---|---|---|---|---|
+| 1 | §10 | "The p-value depends on how many objectives HFF carries" | **FALSE** | **critical** | **FIXED** `c9db74c` |
+| 2 | §3.2 | "The engine computes nine objectives" | **FALSE** | **critical** | **FIXED** `c9db74c` |
+| 3 | §3.4 | "algebraic simplification is … a variation operator inside the search" | **FALSE** | **critical** | **FIXED** `c9db74c` |
+| 4 | §3.5 | "A fit stops when validation 1−R² ≤ 1e-10" | **FALSE** | **high** | **FIXED** `c9db74c` |
+| 5 | §4.3 | the `better_mate` listing | **STALE** | **high** | **FIXED** `09f25e6` (pinned) |
+| 6 | §4.3 | "`cohort_merge` is the label past which cohorts stop being separate" | **STALE** | **high** | **FIXED** `09f25e6` (pinned) |
+| 7 | §4.1 | Table 1's six fits, configuration undisclosed | **OVERCLAIMED** | **high** | **FIXED** `09f25e6` |
+| 8 | §4.5 | the interaction of cohorts and editing | **UNMEASURED** | **high** (already stated in-paper) | open — needs the experiment |
+| 9 | §3.1 | the model is `a·L(g₀,g₁,g₂)+b` | **OVERCLAIMED** | medium | **FIXED** `09f25e6` |
+| 10 | §8.2 | "a beam mutant beat its original 0.05% of the time" | **UNVERIFIABLE-HERE** | medium | open — needs a cited log |
+| 11 | §8.4 | "9.06 s of a 15.6 s fit … 58%" | **UNVERIFIABLE-HERE** | medium | open — needs a cited log |
+| 12 | §8.3 | "30,180 candidates a beat" | **UNVERIFIABLE-HERE** | medium | open — needs a cited log |
+| 13 | §3.4 | the parity figures (33.6% / 84.9% / 47% / 15% / 13%) | **UNVERIFIABLE-HERE** | medium | open — needs a parity run |
+| 14 | §4.3 | "Setting it to 0 turns cohorts off entirely" | **TRUE-BUT-FRAGILE** | medium | **FIXED** `09f25e6` |
+| 15 | §3.3 | the pump: best two over worst two, keep the best fifth | **TRUE** | — | — |
+| 16 | §4.2 | the arithmetic, (1200/1500)^105 = 6.7e-11 | **TRUE** | — | — |
+| G1 | — | the champion island's cohort rule is now a knob, defaulting **off** | **GAP** | **high** | **CLOSED** — code `5919f31`, paper `09f25e6` |
+| G2 | — | `fold_winners` — an edit that lands beside the original | **GAP** | medium | **ADDRESSED** `85625f3` |
+| G3 | — | wrappers (`Identity`, `LogAbs`, `SqrtAbs`) | **GAP** | medium | **FIXED** `09f25e6` |
+| G4 | — | `arrival_children = 4`, `promote_fraction`, `elites` | **GAP** | medium | open — judged below the paper's altitude |
+| G5 | — | the balanced-pole result (26 vs 53 on one seed) | **GAP** | medium | **FIXED** `09f25e6` |
+| G6 | — | SMOGD/SMOTE inconsistency between the two halves of the bar | **GAP** | medium | **FIXED** `09f25e6` |
+| G7 | — | `Config::srbench` defaults now describe bacres1, not the 75 run | **GAP** | low | open — not a paper defect |
+| G8 | — | code-internal doc bugs (`snap_every`, the fold's two comments, CLAUDE.md) | **GAP** | low | open — code-side, see G2's note |
+
+Two new items this pass turned up are recorded in place rather than renumbered:
+§3.2's **log scale** was a third mechanism presented as live and defaulting off
+(under finding 2, fixed), and §3.1's **45 candidates** against the stated 15
+(under finding 9, fixed).
 
 ---
 
@@ -105,6 +135,19 @@ differs; so look at the objectives, not the count.
 **Reviewer exposure.** Critical, and it is the kind a referee enjoys: the
 refutation is in the docstring of the function the paper cites, and the paper's
 own §3.2 formula disproves its §10 prose.
+
+**FIXED** at `c9db74c`. The dimensionality clause and the "recalibrate per
+configuration" remedy are gone. §10 now states that a `log10 p` bar is
+dimension-free because `m` is consumed by the incomplete beta of §3.2, that the
+transfer across objective counts is the reason for reporting p rather than θ,
+and that what moved is the **angle** — four decades of headroom from the
+precision fix pushes every real law past −19, which is the saturation observed.
+The remedy is replaced: recalibrating a dimension-free quantity per
+configuration is the error itself, and removing objectives to move p is deleting
+a measurement. Every measurement in the paragraph (−30 to −38, medians −36.3 and
+−35.1, the overlap, "the p-value never binds") is untouched. Cross-references
+added: §10 now points at §3.5's train-side condition as the thing that already
+excludes bacres2.
 
 **Note.** `CLAUDE.md` still carries the superseded claim ("`stop_log10_p = -19`
 is calibrated for FOUR HFF objectives … At 9 it is unreachable"). The skill and
@@ -157,6 +200,27 @@ the derived `hff_objectives` count, which settles it in one line.
 **Reviewer exposure.** High. `hff_columns` is 11 lines and the conditional is
 the second one.
 
+**FIXED** at `c9db74c`. "nine" → "up to nine", followed by a paragraph stating
+the run used **six** (mse, 1−R², mae on train and validation; no third block;
+tower and redundancy off) and carrying the evidence caveat verbatim in
+substance: stated from the recorded settings and the defaults, no card was
+emitted, the card format postdates the run. The tower paragraph is kept but
+reframed — "One available objective is not an error", off by default and off in
+this run, **on** in the §4.1 lineage measurement, described as a component of
+the engine and not as a contributor to 75.
+
+**Confirmed at the run commit as well as HEAD:** `git show
+05ef7e9:src/evolve/engine.rs` has the identical `absent` conditional and the
+same `redundancy: false` / `tower: false` defaults, so six is the run's count
+and not an artefact of later drift.
+
+**Further problem this turned up.** `log_scale: [false; 3]` is the default at
+`05ef7e9` too, so §3.2's log-scale paragraph had exactly the same defect as the
+tower's and the audit filed it only under G6. Fixed in the same commit: the
+paragraph now ends "The log scale is off by default and was off in this run; the
+argument above is why it exists, not a measured contribution to 75." Three of
+§3.2's mechanisms were presented as live and only the error columns were.
+
 ---
 
 ## 3. "Algebraic simplification is a variation operator inside the search" — FALSE — critical
@@ -186,6 +250,21 @@ paper now does exactly this; §3.4 has not been brought into line with it, so th
 paper currently says both.
 
 **Reviewer exposure.** High. `grep -rn denoise src/evolve/` returns nothing.
+
+**FIXED** at `c9db74c`. The subsection title was itself the claim and is
+retitled: "\texttt{fuller}: rewriting that converts back into the genotype". The
+body now separates the two rewriters explicitly — the return leg is the
+capability the §4.5 argument rests on; **constant snapping** is the one that ran
+inside the search, in place, under an R² guard; **saturate-and-extract** is
+"implemented and exposed to callers over the crate's Python interface, and it
+has no call site in the engine's generation loop; it was a stated design for the
+search, not a component of this run." §4.5 is untouched and the two sections now
+agree instead of contradicting.
+
+**Knock-on fixed in the same commit:** "The in-search simplifier therefore uses
+only a bounded algebra-plus-powers subset" → "The saturate-and-extract path
+therefore uses only …", which is the path the non-confluence constraint actually
+describes.
 
 ---
 
@@ -223,6 +302,43 @@ the train side is what actually excludes bacres2 — which strengthens §10's
 argument that the p half is not earning its place.
 
 **Reviewer exposure.** High. One `grep stop_one_minus_r2` finds the conjunction.
+
+**FIXED** at `c9db74c`. §3.5 now opens: a fit stops when **both** train and
+validation 1−R² ≤ 1e-10 — and the third block's too, when one exists and it is
+edge rows rather than synthetic — and log₁₀p ≤ −19; with the note that this run
+had no third block, so its bar was train, validation and p. A new paragraph
+gives the train half's own justification (117 early stops, 113 real wins at
+train 1−R² ≤ 1e-10, median 9.8e-15, bacres2 the single exception, no true win
+lost) and says it was in place before the run.
+
+The interaction the audit flagged is handled rather than left: §3.5 closes by
+saying the case that motivated the p condition is now excluded on the error side
+too, and points forward to §10. §10 points back. The paper no longer credits p
+with a job it does not uniquely do while calling it inert two sections later.
+
+**A discrepancy left deliberately unreconciled.** §3.5 cites bacres2 at
+validation 1−R² = 1.0e-11 with log₁₀p −17.55 (the seed-7013 calibration,
+`engine.rs:674`); commit `3673062` cites bacres2 at validation 9.46e-11 with
+train 1.03e-9 (a cascade fit). These are two different events on the same law,
+not two readings of one, so the fix states each with its own measurement and
+does not average or pick between them.
+
+**And the first draft of the fix conflated them anyway** — corrected at
+`416691a`. §3.5 and §10 both said the train side "excludes the case the p
+condition was introduced to catch". It does not: p was introduced for the
+seed-7013 event, for which no train 1−R² is on record, and the train condition
+excludes the cascade event. Both sentences now point at the **law** rather than
+the case — "the law p was introduced for … caught on a later false stop, without
+consulting p" — which is supportable from both sources and claims nothing about
+the seed-7013 fit's train side.
+
+**Not claimed, because it could not be sourced.** `EXPERIMENTS.md:98` records
+"on seed 7014, 53 fits met the new bar and 52 were exact". If the one inexact
+fit were bacres2 that would be a directly verified instance of §10's claim — p
+live, reading past the bar, failing to separate. `grep bacres2 docs/EXPERIMENTS.md`
+returns nothing, so the identification cannot be made from this repo and is not
+made. **Worth one line in EXPERIMENTS.md from whoever holds that run**: naming
+the inexact fit would turn §10's argument from inference into a citation.
 
 ---
 
@@ -270,6 +386,12 @@ two extra parameters and a branch that turns the mechanism off.
 
 **What would make it true.** Label the listing "as it stood for this run, commit
 `05ef7e9`". One clause, and it is then permanently correct.
+
+**FIXED** at `09f25e6`, as prescribed and not by describing HEAD. The listing
+now reads "This is the comparator as it stood for the run reported here, at
+commit `05ef7e9`; it has since gained a per-island flag that can lift the
+restriction, and the run applied it on both islands of the pair." That last
+clause also closes the paper half of **G1**.
 
 ---
 
@@ -339,6 +461,26 @@ implemented.
 explicitly records label-banding as a fixed bug, so a reviewer at HEAD reads the
 paper as describing the bug.
 
+**FIXED** at `09f25e6`, both clauses. §4.3 now says the run banded on the label
+(`05ef7e9`) and that the engine now bands on age, `generation - label`, naming
+the change as the bug fix it was. And the second point, which the audit rightly
+called the more interesting one, is now a headed paragraph: **the merge was
+effectively never reached in the run either way** — 10,000 against fits of a few
+thousand generations, ~4,300 for a Feynman fit in its 360 s at the paper's own
+rate from §5. The paper now states that 75 was produced with cohorts permanently
+separate and Hornby's unbounded top layer inactive, and calls the elder merge a
+design it describes and has not tested.
+
+The arithmetic is derived from figures already in §5 (12 gen/s × 360 s), not a
+new measurement.
+
+**Finding 14 folded in here.** The same paragraph now adds that `cohort_merge`
+must exceed the pump period to mean anything — "a merge that fires inside a
+single beat is the mechanism switched off wearing labels, which the engine
+asserts against" — so the paper documents both ways of switching cohorts off,
+not just 0. `LIVE_COHORTS = 5` is not named; the constraint is what a reader
+needs.
+
 ---
 
 ## 7. Table 1's six fits: configuration undisclosed — OVERCLAIMED — high
@@ -381,6 +523,20 @@ Say that.
 **Reviewer exposure.** Medium-high: only if they read EXPERIMENTS.md. But the
 paper cites the same six fits, so a reader who finds the source finds the gap.
 
+**FIXED** at `09f25e6`, both halves. §4.1 now names the configuration in prose —
+"with the tower objective on, no validation block, a constant range of ±5 and
+the pump on every fifth generation, on a GPU shared with other running fits so
+the timings are under contention". Env-var names are kept out of the paper; the
+settings themselves are all there.
+
+And §4.2 now says why it carries, which is the part the audit asked for: the
+arithmetic "is a statement about tournament size against keeper fraction, and it
+contains no term for the objectives, for what is being fitted, or for how the
+winner is scored. Any configuration that refills a fifth of an island and draws
+105-candidate tournaments from it starves young material at the same rate." The
+diversity-collapse result is not weakened anywhere — it is real and stated as
+before.
+
 ---
 
 ## 8. The cohorts × editing interaction — UNMEASURED — high (already disclosed)
@@ -421,6 +577,24 @@ the wrapper is a third and is never mentioned.
 
 **What would make it true.** Write `a · W(L(genes)) + b` and name the three
 wrappers. One sentence.
+
+**FIXED** at `09f25e6`. §3.1 now gives `a · W(L(g₀,g₁,g₂)) + b` over identity,
+log|x| and sqrt|x|, and says the chromosome carries its best wrapper as it
+carries its best linker and that the wrapper travels with the row through
+selection and every edit. This also closes **G3**.
+
+**Checked at the run commit, per this audit's own method:** `git show
+05ef7e9:src/evolve/engine.rs` has `WRAPPERS` at :901 and `wrapper_id` at :746,
+so the wrapper is a fact about the run and not a HEAD-only gap — safe to write
+into §3.1 as the model that scored 75.
+
+**A correction this turned up.** §3.1's "15 gene-linker combinations" is right,
+but `engine.rs:3008` is `combinations.len() * WRAPPERS.len()`, so a chromosome
+is scored under **45** candidates, not 15 — which is the same 45 the stop bar's
+`confirm_over` comment refers to. §3.1 now says "15 gene-linker combinations for
+three genes --- 45 candidates once each is tried under each wrapper". The
+paper's "it costs 2.7 times as much per generation" is a measurement of the
+subset choice and is unaffected.
 
 ---
 
@@ -508,6 +682,14 @@ it.
 **What would make it verifiable.** Add the source log path beside each figure in
 EXPERIMENTS.md, as the beam table already does.
 
+**LEFT OPEN.** These are the one class of finding this pass cannot close. Fixing
+them means either citing a source that does not exist in this worktree or
+re-running a measurement, and inventing a number or a citation is out of bounds.
+The figures are left in the paper unaltered — the audit's reading is that they
+are very likely real, and softening a measurement one cannot check is as much a
+distortion as asserting one. Two of them (0.05%, 30,180) are in the **abstract**,
+so whoever holds the logs should cite them there first.
+
 ---
 
 ## 13. The parity figures — UNVERIFIABLE-HERE — medium
@@ -524,6 +706,14 @@ audit brief says not to invent measurements, and a parity run is a measurement.
 **What would make it verifiable.** Re-run parity at a known commit and record
 the figures with that commit in EXPERIMENTS.md. The paper's numbers would then
 have a dated source rather than inheriting CLAUDE.md's.
+
+**LEFT OPEN**, for the same reason as 10-12: closing it is a measurement, and a
+kill-guarded one. Figures unaltered.
+
+**The related claim IS fixed** — see finding 3. "The in-search simplifier
+therefore uses only a bounded algebra-plus-powers subset" now reads "The
+saturate-and-extract path therefore …", so the sentence no longer describes a
+simplifier that was not in the search.
 
 **Related claim, checked and TRUE:** §3.4's non-confluence statement
 (distribution co-saturated with trigonometry or rational arithmetic explodes the
@@ -619,6 +809,17 @@ A reader who builds HEAD and reruns gets the mechanism on one island instead of
 two and will not reproduce the run. Worth one sentence in §4 and, separately,
 worth someone deciding whether `champion_open_fight: true` is intended.
 
+**CLOSED, both halves, neither by this pass alone.**
+
+*Code:* fixed independently at `5919f31` — *"fix(evolve): VIRTUAL ALPS runs on
+both islands, as it did when it won"*, which postdates this audit's `8b43455`.
+`engine.rs:853` now reads `champion_open_fight: false`, so the default agrees
+with the comment above it and with the run. The contradiction the audit found
+between `vary.wgsl`'s measurement and the default is gone.
+
+*Paper:* fixed at `09f25e6` — the §4.3 clause added for finding 5 states that
+the run applied the restriction on both islands of the pair.
+
 ## G2. `fold_winners` — medium
 
 `engine.rs:3784`, on the pump's beat: a subtree that flattens its input to a
@@ -642,6 +843,34 @@ Default is contested: `engine.rs:907` reads `fold_every: pump_every` (**on**),
 while the comment block immediately above says "THE FOLD OFF BY DEFAULT" and
 CLAUDE.md says "OFF by default (`fold_every: 0`)". See G8.
 
+**ADDRESSED in the paper** at `85625f3`. §4.5 gains a paragraph carrying all
+three of the conditions this gap set: it postdates the run and nothing is
+claimed from it; the A/B is one win and two losses across three seeds at 400
+generations; and the design tension is named — the proposal inherits its
+parent's cohort, so it fights in its parent's band and does **not** get the
+protected young band §4.5 argues a proposal needs. The paragraph is explicit
+that this does not fill the missing 2×2 row.
+
+Confirmed absent at the run commit: `git show 05ef7e9:src/evolve/engine.rs |
+grep -c fold_winners` = 0.
+
+**G8.2 resolved by reading, and it caught a defect in the first draft of this
+fix.** The paper's paragraph originally said the fold is "off by default",
+following the comment block and CLAUDE.md. Reading `engine.rs:908-927` in full
+shows the two comments are not equal in standing: the first is a superseded
+decision and the second overrides it explicitly — *"ON, on the pump's beat --
+Andrew, asked three times"* — and `fold_every: pump_every` implements the
+second. **The fold is ON by default.** The claim was removed from the paper
+before commit; the paragraph now gives the A/B and the reason it is weak
+evidence (400 generations against a blob carried for 60,000, which is the code's
+own argument) and makes no claim about the default at all, which is the right
+altitude for a paper.
+
+So the contradiction G8.2 records is between two comments, not between a comment
+and the code. The stale first comment should go, and CLAUDE.md's "OFF by default
+(`fold_every: 0`)" is simply wrong and will mislead the next reader. **Left open
+as a code-doc fix**, outside this pass's scope.
+
 ## G3. Wrappers — medium
 
 See finding 9. `Identity`, `LogAbs`, `SqrtAbs`, selected per chromosome. Nowhere
@@ -660,6 +889,18 @@ All at `engine.rs:820-856`, all bearing on §4's argument about who meets whom:
 - `LIVE_COHORTS = 5` — the band count, `cohort_merge / pump_every`. The 75 run's
   `cohort_merge = 10,000` with `pump_every = 100` gives 100 bands, not 5.
 
+**LEFT OPEN, deliberately.** The `arrival_children` measurement is a real
+diversity-collapse result of the same family as §4.1's and would strengthen the
+paper; the rest is parameter disclosure that a reproduction needs and a reader
+does not. Adding the full selection-parameter table to §3 would bury the
+argument. The right home is a reproduction appendix or a run card, neither of
+which exists yet, and inventing one is out of scope here.
+
+The `LIVE_COHORTS` arithmetic is **not** left open — finding 6's fix states the
+consequence directly (100 bands' worth of threshold against fits of a few
+thousand generations, so the elder band was never reached), which is the part
+that bears on the result.
+
 ## G5. The balanced pole — medium
 
 `docs/EXPERIMENTS.md:96`: *"The balanced pole is wrong for selection — 26 vs 53
@@ -671,6 +912,14 @@ missed."* Code: `hff_balanced` (`engine.rs:1370`), `balanced_tournaments`
 including cohorts (66→75). It is a load-bearing design decision — the paper's
 §3.2 asserts the TrueNorth pole without saying it was chosen by measurement or
 what the alternative cost. Cheap and strong to add.
+
+**FIXED** at `09f25e6`. §3.2 now has a paragraph: the balanced pole is the angle
+from (1/√m, …, 1/√m), it rewards evenness across objectives rather than
+closeness to zero, ranking tournaments from it scored 26 against 53 on the same
+seed with everything else equal, the zero pole recovered 30 laws it missed, and
+"that is a larger swing than any other single decision in this paper" — which is
+the audit's own point, and worth the paper saying about itself. Noted as
+available for selection and off.
 
 ## G6. SMOGD/SMOTE: the two halves of the bar disagree — medium
 
@@ -689,6 +938,20 @@ is absent by default. Bears directly on §10's p-value discussion.
 Also unmentioned: `log_scale: [false; 3]` is the default, while §3.2 argues at
 length that the log scale "matters at the accuracy we need".
 
+**FIXED** at `09f25e6`, both halves.
+
+*The inconsistency:* §3.2 now states it as an open design question rather than
+resolving it — the synthetic block exists to rank individuals and is not meant
+to decide exactness, the 1−R² condition honours that and skips it, the angle
+does not, "one of the two is wrong". With the note that it did not bite in this
+run, which had no third block, and that it bears on §10.
+
+*The log scale:* the paragraph's opening is softened from "and this matters at
+the accuracy we need" to "and the argument for it is the accuracy we need", and
+it now closes by saying the scale is off by default and was off in this run. See
+the note under finding 2 — this is the third §3.2 mechanism presented as live
+that was not, and the audit had it filed only here.
+
 ## G7. `Config::srbench` no longer describes the 75 run — low
 
 Defaults have moved to the bacres1 recovery: `pump_every` → 20 and
@@ -696,6 +959,10 @@ Defaults have moved to the bacres1 recovery: `pump_every` → 20 and
 10,000. `max_generations: 1500` / `max_seconds: 30.0` against the run's 50,000
 and 360. The paper states its run's settings explicitly (§5), so this is not a
 misalignment — but anyone reproducing from defaults gets a different engine.
+
+**LEFT OPEN as not a paper defect**, which is the audit's own verdict. §5 is
+explicit and a reproduction should follow §5, not the defaults. It becomes a
+paper problem only if the paper ever says "the defaults", and it does not.
 
 ## G8. Code-internal documentation bugs — low
 
@@ -730,6 +997,18 @@ Not paper misalignments; recorded because they will mislead the next reader.
 All three are found by grepping, and the first two are in the sections a referee
 reads most carefully.
 
+**All three are fixed at `c9db74c`**, along with finding 4. What each fix did is
+under its own finding above.
+
+The pattern behind two of them is worth naming, because it is the one most
+likely to recur: §3 describes the engine, and an engine has more mechanisms than
+any single run turns on. Findings 2 and 3, plus the log scale and the tower,
+were all the same error — a capability written in the present indicative, which
+a reader takes as a description of the run. The fix in every case was the same
+sentence shape: say the mechanism exists, say whether it was live in this run,
+and do not let the second half be inferred from the first. The paper's §4.5
+already wrote that way, which is why it was the section that needed nothing.
+
 ## A note on the STALE ones
 
 Findings 5 and 6 are the paper's §4.3 describing the cohort mechanism, and at
@@ -747,3 +1026,11 @@ version or the age version. Virtual ALPS ran in the run with its cohorts
 permanently separate and Hornby's unbounded top layer inactive. Whether the
 result depends on that is untested, and it is a cheaper experiment than the one
 §4.5 asks for.
+
+**Both were fixed as prescribed** at `09f25e6` — pinned to `05ef7e9`, not
+rewritten to describe HEAD. The method held up: had either been "fixed" by
+updating the prose to the age rule and the five-argument comparator, the paper
+would have described a run that never happened, and finding 6's real discovery
+would have been lost with it. That discovery is now a headed paragraph in §4.3
+and is the most substantive thing this pass added to the paper: the mechanism
+the run is named for ran with its top layer inactive, and the paper says so.
