@@ -5441,7 +5441,7 @@ impl Engine {
             }
             generation += 1;
             let t = Instant::now();
-            self.dev.vary(&self.islands, &GenParams { seed: c.seed, generation, rnc_lo: c.rnc_lo, rnc_hi: c.rnc_hi, cohort_merge: c.cohort_merge, vhead: self.vhead_at(generation) })?;
+            self.dev.vary(&self.islands, &GenParams { seed: c.seed, generation, rnc_lo: c.rnc_lo, rnc_hi: c.rnc_hi, cohort_merge: c.cohort_merge, vhead: self.vhead_at(generation), typed_depth: c.typed_depth })?;
             // Only elites arrive evaluated: the kernel puts the j-th fittest row
             // of an island (ties to the lower row) in the island's j-th row.
             let mut carried: Vec<(usize, Option<Scored>)> = Vec::new();

@@ -693,7 +693,7 @@ mod tests {
         let rates = Rates::with_cleanse(layout, 0.5);
         let islands = [Island { lo: 0, hi: 300, elites: 2, tournsize: 20, arrivals: 0, arrival_children: 0, open_fight: false, cohort_merge: 0, rates }, Island { lo: 300, hi: 400, elites: 2, tournsize: 7, arrivals: 0, arrival_children: 0, open_fight: false, cohort_merge: 0, rates }];
         for generation in 1..=200 {
-            now = vary(&now, &islands, &codes, &GenParams { seed: 5, generation, rnc_lo: -100, rnc_hi: 100, cohort_merge: 0, vhead: 0 }).unwrap();
+            now = vary(&now, &islands, &codes, &GenParams { seed: 5, generation, rnc_lo: -100, rnc_hi: 100, cohort_merge: 0, vhead: 0, typed_depth: None }).unwrap();
             now.pop.check(&codes).unwrap();
             never(&now, "vary");
             for (r, f) in now.fitness.iter_mut().enumerate() {

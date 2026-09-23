@@ -12,6 +12,10 @@ use wgpu::util::DeviceExt;
 use super::vary::{validate, GenParams, Generation, Island};
 use super::{InitParams, Layout, Population, SymbolCodes, EVOLVE_WGSL, VARY_WGSL};
 
+/// The longest head + tail the typed sampler's kernel-side budget holds —
+/// `MAX_HT` in `evolve.wgsl` and `vary.wgsl`, which must agree with this.
+pub const MAX_HT: u32 = 256;
+
 /// The uniform block of `evolve.wgsl`, field for field.
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -60,6 +64,10 @@ struct GenUniform {
     cohort_merge: u32,
     rnc_id: u32,
     vhead: u32,
+    /// The transcendental ceiling (0 = off) and the depth-free function count,
+    /// as `InitUniform` carries them.
+    typed_depth: u32,
+    n_flat: u32,
 }
 
 /// One generation's worth of resident buffers.
@@ -172,7 +180,8 @@ impl EvolveDevice {
         // symbol costs. Both are read whatever the ceiling is; with `typed_depth`
         // off the kernel never looks at them.
         let init_layout = bind_layout(&device, "fuller-evolve-init", 9, |i| !(3..6).contains(&i));
-        let vary_layout = bind_layout(&device, "fuller-evolve-vary", 17, |i| i < 9 || i == 15);
+        // Two more read-only tables at the end: the typed sampler's, as init has.
+        let vary_layout = bind_layout(&device, "fuller-evolve-vary", 19, |i| i < 9 || i == 15 || i >= 17);
         let init_pipeline = pipeline(EVOLVE_WGSL, "fuller-evolve", &init_layout, "init_main");
         let vary_pipelines = [
             pipeline(VARY_WGSL, "fuller-vary", &vary_layout, "first_main"),
@@ -256,6 +265,16 @@ impl EvolveDevice {
     pub fn init_rows(&self, p: &InitParams, first_row: u32, n_rows: u32) -> Result<(), String> {
         if p.rnc_hi < p.rnc_lo || p.n_wrappers == 0 {
             return Err("init: need rnc_lo <= rnc_hi and n_wrappers > 0".into());
+        }
+        // THE KERNEL'S BUDGET ARRAY IS FIXED (`MAX_HT` in evolve.wgsl). Past it
+        // the kernel would fall back to untyped draws while the CPU reference
+        // stayed typed, so a fit would quietly run neither arm of the A/B. Said
+        // here rather than discovered in a histogram.
+        if p.typed_depth.is_some() && self.layout.head + self.layout.tail > MAX_HT {
+            return Err(format!(
+                "typed_depth: head + tail is {}, and the kernel's budget holds {MAX_HT}",
+                self.layout.head + self.layout.tail
+            ));
         }
         if first_row + n_rows > self.layout.pop {
             return Err(format!("rows {first_row}..{} are outside a population of {}", first_row + n_rows, self.layout.pop));
@@ -368,6 +387,14 @@ impl EvolveDevice {
         if p.rnc_hi < p.rnc_lo {
             return Err("vary: need rnc_lo <= rnc_hi".into());
         }
+        // As `init_rows`: past the kernel's fixed budget the device would draw
+        // untyped while the host reference stayed typed.
+        if p.typed_depth.is_some() && self.layout.head + self.layout.tail > MAX_HT {
+            return Err(format!(
+                "typed_depth: head + tail is {}, and the kernel's budget holds {MAX_HT}",
+                self.layout.head + self.layout.tail
+            ));
+        }
         let l = self.layout;
         let params_buf = self.uniform(&GenUniform {
             pop: l.pop,
@@ -385,6 +412,8 @@ impl EvolveDevice {
             cohort_merge: p.cohort_merge,
             rnc_id: self.rnc_id,
             vhead: super::virtual_head(p.vhead, self.layout)?,
+            typed_depth: p.typed_depth.unwrap_or(0),
+            n_flat: self.n_flat,
         });
         // The island table, and each island's own fourteen rates after it — the
         // swim lane's rules, uploaded with the table the dispatch already sends.
@@ -427,6 +456,8 @@ impl EvolveDevice {
                 &self.stage1_buf,
                 &self.cohort_buf[self.current],
                 &self.cohort_buf[1 - self.current],
+                &self.flat_buf,
+                &self.depth_cost_buf,
             ],
         );
         let mut enc = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
@@ -510,7 +541,7 @@ mod tests {
     use super::super::vary::tests::{islands, start};
     use super::super::vary::{vary, GenParams, Island, Rates};
     use super::super::{below, draw, init, Layout};
-    use super::EvolveDevice;
+    use super::{EvolveDevice, MAX_HT};
 
     /// The kernel and the CPU reference are the same function: same seed, same
     /// population, bit for bit — which also proves the WGSL generator against
@@ -634,7 +665,7 @@ mod tests {
         dev.write_fitness(&cpu.fitness).expect("fitness");
         for generation in 1..=20u32 {
             let vhead = if generation <= 10 { 8 } else { 12 };
-            let p = GenParams { seed: 13, generation, rnc_lo: -100, rnc_hi: 100, cohort_merge: 0, vhead };
+            let p = GenParams { seed: 13, generation, rnc_lo: -100, rnc_hi: 100, cohort_merge: 0, vhead, typed_depth: None };
             cpu = vary(&cpu, &isl, &codes, &p).unwrap();
             dev.vary(&isl, &p).expect("vary");
             let on_device = dev.read_generation().expect("read");
@@ -646,7 +677,7 @@ mod tests {
             cpu.fitness.copy_from_slice(&scored);
             dev.write_fitness(&scored).expect("fitness");
         }
-        assert!(dev.vary(&isl, &GenParams { seed: 13, generation: 21, rnc_lo: -100, rnc_hi: 100, cohort_merge: 0, vhead: 49 }).is_err());
+        assert!(dev.vary(&isl, &GenParams { seed: 13, generation: 21, rnc_lo: -100, rnc_hi: 100, cohort_merge: 0, vhead: 49, typed_depth: None }).is_err());
     }
 
     /// Twenty generations of select + mutate + crossover on the device, each
@@ -664,7 +695,7 @@ mod tests {
         dev.init(&params(11)).expect("init");
         dev.write_fitness(&cpu.fitness).expect("fitness");
         for generation in 1..=20u32 {
-            let p = GenParams { seed: 11, generation, rnc_lo: -100, rnc_hi: 100, cohort_merge: 0, vhead: 0 };
+            let p = GenParams { seed: 11, generation, rnc_lo: -100, rnc_hi: 100, cohort_merge: 0, vhead: 0, typed_depth: None };
             cpu = vary(&cpu, &isl, &codes, &p).unwrap();
             dev.vary(&isl, &p).expect("vary");
             let on_device = dev.read_generation().expect("read");
@@ -677,5 +708,45 @@ mod tests {
             cpu.fitness.copy_from_slice(&scored);
             dev.write_fitness(&scored).expect("fitness");
         }
+    }
+
+    /// AND TWENTY GENERATIONS OF TYPED VARIATION MATCH TOO. The point mutation
+    /// spends the same depth budget on both sides; every other operator moves
+    /// spans whole and is untouched, which is the spec's own preference.
+    #[test]
+    fn twenty_typed_generations_match_the_cpu_reference_bit_for_bit() {
+        let (codes, isl) = (codes(), islands());
+        let mut cpu = start(11);
+        let mut dev = EvolveDevice::new(cpu.pop.layout, &codes).expect("device");
+        let born = crate::evolve::InitParams { typed_depth: Some(2), ..params(11) };
+        dev.init(&born).expect("init");
+        cpu.pop = crate::evolve::init(cpu.pop.layout, &codes, &born).expect("init");
+        dev.write_fitness(&cpu.fitness).expect("fitness");
+        for generation in 1..=20u32 {
+            let p = GenParams { seed: 11, generation, rnc_lo: -100, rnc_hi: 100, cohort_merge: 0, vhead: 0, typed_depth: Some(2) };
+            cpu = vary(&cpu, &isl, &codes, &p).unwrap();
+            dev.vary(&isl, &p).expect("vary");
+            let on_device = dev.read_generation().expect("read");
+            assert_eq!(on_device.pop, cpu.pop, "generation {generation}");
+            on_device.pop.check(&codes).unwrap();
+            let scored: Vec<f32> = (0..800).map(|r| below(draw(11, generation, r, 1, 99), 1_000_000) as f32).collect();
+            cpu.fitness.copy_from_slice(&scored);
+            dev.write_fitness(&scored).expect("fitness");
+        }
+    }
+
+    /// A HEAD LONGER THAN THE KERNEL'S BUDGET IS REFUSED, not run untyped.
+    /// Past `MAX_HT` the device would fall back to untyped draws while the host
+    /// reference stayed typed, and the fit would be neither arm of the A/B.
+    #[test]
+    fn a_head_past_the_kernels_budget_is_refused_rather_than_run_untyped() {
+        let layout = Layout::for_arity(8, 1, 200, 2, 4);
+        assert!(layout.head + layout.tail > MAX_HT, "the layout must exceed the budget to test this");
+        let dev = EvolveDevice::new(layout, &codes()).expect("device");
+        let mut p = params(3);
+        p.typed_depth = Some(2);
+        assert!(dev.init(&p).is_err(), "a head past MAX_HT must be refused with the ceiling on");
+        p.typed_depth = None;
+        assert!(dev.init(&p).is_ok(), "and must still run with the ceiling off");
     }
 }
