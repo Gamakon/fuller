@@ -1063,6 +1063,40 @@ fn hff_balanced(objectives: &[f64], col_max: &[f64], log_scaled: &[bool]) -> f64
 /// The scaled error that HFF's log scale calls zero.
 const HFF_LOG_FLOOR: f64 = 1e-12;
 
+/// WHAT ONE ROW'S f64 RE-SCORE FOUND: the candidate TrueNorth chose, and the
+/// candidate the STOP BAR would choose.
+///
+/// They are usually the same and they need not be. `confirm_over` scores all 45
+/// candidates of a row and then takes an argmin on the HFF angle — an aggregate
+/// over every objective, including the tower penalty when it is on. The stop
+/// bar asks a different question: is EVERY error block under `stop_one_minus_r2`.
+/// A depth-4 candidate that is the law at 1e-12 loses the angle to a depth-2
+/// near-miss at 1e-7, because the tower is charged and the log scale has
+/// flattened the difference between the two errors to nothing — and then only
+/// the near-miss was ever compared against the bar. The law was computed, held
+/// in a local, and dropped, 45 times a generation.
+///
+/// So the argmin is taken twice over the same loop. `hff` is what ranks, breeds
+/// and is reported; `for_the_bar` is the one the stop check also tests. No
+/// extra evaluation, no extra scoring — one more comparison in a loop that was
+/// already running.
+#[derive(Clone, Copy, Debug)]
+pub struct Confirmed {
+    pub hff: Scored,
+    pub for_the_bar: Scored,
+}
+
+/// The largest of a candidate's error blocks — what the stop bar is really
+/// asking about, since it requires every block to be under the same number.
+/// The extrapolation block counts only when there is one.
+fn worst_error(one_minus_r2: &[f64; 3], n_extrap: usize) -> f64 {
+    let mut worst = one_minus_r2[0].max(one_minus_r2[1]);
+    if n_extrap > 0 {
+        worst = worst.max(one_minus_r2[2]);
+    }
+    if worst.is_nan() { f64::INFINITY } else { worst }
+}
+
 /// HOW SMALL A ROW'S DEVICE ERROR MUST BE before the f64 re-score looks at it.
 ///
 /// The device's f32 metrics cannot resolve 1e-10; they can only say "this one
@@ -2832,7 +2866,7 @@ impl Engine {
     /// The row's best candidate re-scored in f64 by `chrom_score`, the
     /// definition: what may stop a fit or be reported. The device's f32 metrics
     /// only rank.
-    fn confirm(&self, gen: &Generation, row: usize) -> Result<Option<Scored>, String> {
+    fn confirm(&self, gen: &Generation, row: usize) -> Result<Option<Confirmed>, String> {
         self.confirm_with(gen, row, &WRAPPERS)
     }
 
@@ -2841,7 +2875,7 @@ impl Engine {
     /// functional wraps to ask what the same individual would score wrapped in one
     /// of them, at the same f64 grade. `Scored::wrapper` indexes the list that was
     /// passed, so a caller with its own list must read it back with that list.
-    fn confirm_with(&self, gen: &Generation, row: usize, wrappers: &[Wrapper]) -> Result<Option<Scored>, String> {
+    fn confirm_with(&self, gen: &Generation, row: usize, wrappers: &[Wrapper]) -> Result<Option<Confirmed>, String> {
         self.confirm_over(gen, row, wrappers, &self.combinations()?, None)
     }
 
@@ -2867,7 +2901,7 @@ impl Engine {
         wrappers: &[Wrapper],
         combinations: &[GeneLinker],
         inner: Option<(usize, Wrapper)>,
-    ) -> Result<Option<Scored>, String> {
+    ) -> Result<Option<Confirmed>, String> {
         let l = self.layout;
         let (width, nr, g_n) = (l.gene_width() as usize, l.n_rnc as usize, l.n_genes as usize);
         let mut batch = ExprBatch::new();
@@ -2907,6 +2941,9 @@ impl Engine {
         let n_ex = self.data.splits.n_extrap;
         let col_max = self.col_max.unwrap_or([1.0; 9]);
         let mut best: Option<Scored> = None;
+        // AND THE CANDIDATE THE STOP BAR WOULD LIKE BEST, which is not always
+        // the one TrueNorth picks — see `Confirmed`.
+        let mut for_the_bar: Option<Scored> = None;
         for c in 0..combinations.len() * wrappers.len() {
             let s = &scores[c * SCORE_WIDTH..c * SCORE_WIDTH + METRIC_WIDTH];
             if !s[0].is_finite() {
@@ -2925,11 +2962,15 @@ impl Engine {
                 logs.push(false);
             }
             let fitness = hff_truenorth(&used, &maxes, &logs);
+            let scored = Scored { fitness, linker: combination.linker, wrapper: c % wrappers.len(), a: s[0], b: s[1], one_minus_r2: omr2, t_depth: tower, selection: fitness, genes: combination.genes };
             if best.is_none_or(|b| fitness < b.fitness) {
-                best = Some(Scored { fitness, linker: combination.linker, wrapper: c % wrappers.len(), a: s[0], b: s[1], one_minus_r2: omr2, t_depth: tower, selection: fitness, genes: combination.genes });
+                best = Some(scored);
+            }
+            if for_the_bar.is_none_or(|b| worst_error(&scored.one_minus_r2, n_ex) < worst_error(&b.one_minus_r2, n_ex)) {
+                for_the_bar = Some(scored);
             }
         }
-        Ok(best)
+        Ok(best.map(|hff| Confirmed { hff, for_the_bar: for_the_bar.unwrap_or(hff) }))
     }
 
     /// SNAP WINNERS (`hff_sr_engine.py::_apply_snap_to_winners`, per gene as
@@ -3220,7 +3261,7 @@ impl Engine {
             // THE ORIGINAL IN f64, so a wrap is compared against the same grade it
             // is scored at. The device's f32 score only RANKS; comparing an f64
             // wrap against it would count a wrap better on rounding alone.
-            let baseline = self.confirm(gen, row)?.map_or(original.fitness, |s| s.fitness);
+            let baseline = self.confirm(gen, row)?.map_or(original.fitness, |c| c.hff.fitness);
             // Each wrap on each host gene: which won, and which was refused as not
             // total on the data. A refusal is the guard working, not a failure.
             let mut wrapped: Option<(usize, usize, Scored)> = None;
@@ -3236,7 +3277,7 @@ impl Engine {
                     // IDENTITY on top: the wrap is INSIDE the linker, where the graft
                     // puts it, so the engine's own outer wrappers are not what is
                     // being asked about here.
-                    match self.confirm_over(gen, row, &[Wrapper::Identity], &using, Some((host, wrap)))? {
+                    match self.confirm_over(gen, row, &[Wrapper::Identity], &using, Some((host, wrap)))?.map(|c| c.hff) {
                         Some(s) => {
                             if s.fitness < baseline {
                                 counts.wrap_better[k] += 1;
@@ -4045,6 +4086,9 @@ impl Engine {
         let mut individuals = u64::from(self.layout.pop);
         self.dev.write_fitness(&gen.fitness)?;
         let (mut generation, mut stopped_by) = (0u32, "n_gen");
+        // The CANDIDATE that met the stop bar, when one did: not always the one
+        // TrueNorth would pick out of the same row.
+        let mut stopped_with: Option<Scored> = None;
         // Seconds spent BEFORE this process started, from a checkpoint.
         let mut already_spent = 0.0f64;
         let mut last_checkpoint = Instant::now();
@@ -4286,23 +4330,42 @@ impl Engine {
             // so the candidates were never the gap — the rows were.
             if let Some((row, ranked)) = self.best(&gen) {
                 if ranked.one_minus_r2[1] <= PRESCREEN {
-                    if let Some(s) = self.confirm(&gen, row)? {
-                        let edge_ok = c.smogd || self.data.splits.n_extrap == 0 || s.one_minus_r2[2] <= c.stop_one_minus_r2;
-                        // `confirm` scores TrueNorth over the error blocks and t_depth
-                        // (not redundancy): that is the sphere its angle lives on.
-                        let (_, log10_p) = hff_p_value(s.fitness, self.hff_dimensions() - usize::from(c.redundancy));
-                        // THE TRAIN SIDE COUNTS TOO. Validation alone can pass on a
-                        // lucky split: strogatz bacres2 stopped with val 1-R2
-                        // 9.46e-11 while TRAIN was 1.03e-9 — validation ten times
-                        // better than the rows the model was fitted on, which is
-                        // noise, not a fit, and the function was not the law.
-                        // Measured over the cascade's 117 early stops: all 113 real
-                        // wins have train 1-R2 <= 1e-10 (median 9.8e-15), and
-                        // bacres2 is the only fit that does not. Requiring both
-                        // costs no true win on record.
-                        let train_ok = s.one_minus_r2[0] <= c.stop_one_minus_r2;
-                        if s.one_minus_r2[1] <= c.stop_one_minus_r2 && train_ok && edge_ok && log10_p <= c.stop_log10_p {
-                            stopped_by = "early_stop";
+                    if let Some(found) = self.confirm(&gen, row)? {
+                        // BOTH CANDIDATES ARE TESTED. TrueNorth's winner is the
+                        // model this row IS, and it is tried first so a fit that
+                        // would have stopped before still stops on the same
+                        // candidate. The stop bar's own winner is tried after:
+                        // when the tower is charged, a deep candidate that is the
+                        // law at 1e-12 loses the angle to a shallow near-miss at
+                        // 1e-7, and it used to be computed and dropped unseen.
+                        // They are the same candidate in almost every row, and
+                        // testing the second costs one more comparison.
+                        for s in [found.hff, found.for_the_bar] {
+                            let edge_ok = c.smogd || self.data.splits.n_extrap == 0 || s.one_minus_r2[2] <= c.stop_one_minus_r2;
+                            // `confirm` scores TrueNorth over the error blocks and t_depth
+                            // (not redundancy): that is the sphere its angle lives on.
+                            let (_, log10_p) = hff_p_value(s.fitness, self.hff_dimensions() - usize::from(c.redundancy));
+                            // THE TRAIN SIDE COUNTS TOO. Validation alone can pass on a
+                            // lucky split: strogatz bacres2 stopped with val 1-R2
+                            // 9.46e-11 while TRAIN was 1.03e-9 — validation ten times
+                            // better than the rows the model was fitted on, which is
+                            // noise, not a fit, and the function was not the law.
+                            // Measured over the cascade's 117 early stops: all 113 real
+                            // wins have train 1-R2 <= 1e-10 (median 9.8e-15), and
+                            // bacres2 is the only fit that does not. Requiring both
+                            // costs no true win on record.
+                            let train_ok = s.one_minus_r2[0] <= c.stop_one_minus_r2;
+                            if s.one_minus_r2[1] <= c.stop_one_minus_r2 && train_ok && edge_ok && log10_p <= c.stop_log10_p {
+                                stopped_by = "early_stop";
+                                // THE CANDIDATE THAT PASSED IS THE ONE REPORTED.
+                                // Without this the report would re-confirm the row
+                                // and take TrueNorth's winner, which is how the
+                                // law would be found and then thrown away again.
+                                stopped_with = Some(s);
+                                break;
+                            }
+                        }
+                        if stopped_by == "early_stop" {
                             break;
                         }
                     }
@@ -4401,7 +4464,16 @@ impl Engine {
             row = row.min(l.pop as usize - 1);
             hof_restored = true;
         }
-        let best = self.confirm(&gen, row)?.unwrap_or(ranked);
+        // THE CANDIDATE THAT STOPPED THE FIT, when one did. Re-confirming the row
+        // here would take TrueNorth's winner out of it, and when the bar was met
+        // by the OTHER candidate that is a different model — so the fit would
+        // report something that did not pass while the thing that did was
+        // discarded. With no early stop this is the row's TrueNorth winner,
+        // exactly as before.
+        let best = match stopped_with {
+            Some(s) => s,
+            None => self.confirm(&gen, row)?.map_or(ranked, |c| c.hff),
+        };
         // THE WINNER'S LINEAGE: its mark, and its whole chain back to its founder
         // appended to the log. When the hall of fame's winner was put back into a
         // row (balanced tournaments), the lineage reported is the one it had when
@@ -5814,7 +5886,7 @@ mod tests {
             let mut gen = plant(&engine, &genes);
             engine.evaluate(&mut gen, &mut fresh_timing()).expect("evaluate");
             let ranked = engine.scored[0].expect("row 0 scored");
-            let confirmed = engine.confirm(&gen, 0).expect("confirm").expect("row 0 confirmed");
+            let confirmed = engine.confirm(&gen, 0).expect("confirm").map(|c| c.hff).expect("row 0 confirmed");
             assert_eq!((ranked.genes, confirmed.genes), (want_genes, want_genes), "switch {on}: {ranked:?} / {confirmed:?}");
             let math = engine.math_of(&gen, 0, &confirmed);
             if on {
@@ -5848,7 +5920,7 @@ mod tests {
         let mut gen = plant(&engine, &genes);
         engine.evaluate(&mut gen, &mut fresh_timing()).expect("evaluate");
         let ranked = engine.scored[0].expect("row 0 scored");
-        let confirmed = engine.confirm(&gen, 0).expect("confirm").expect("row 0 confirmed");
+        let confirmed = engine.confirm(&gen, 0).expect("confirm").map(|c| c.hff).expect("row 0 confirmed");
         assert_eq!((ranked.genes, confirmed.genes), (0b011, 0b011), "{ranked:?} / {confirmed:?}");
         assert!(confirmed.one_minus_r2[1] < 1e-12 && ranked.one_minus_r2[1] < 1e-6, "{ranked:?} / {confirmed:?}");
         assert!(matches!(LINKER_NAMES[confirmed.linker], "avgval" | "addval"), "{confirmed:?}");
@@ -5989,6 +6061,59 @@ mod tests {
             );
             for (r, (d, h)) in device_fitness.iter().zip(&host_fitness).enumerate() {
                 assert!((d - h).abs() < 1e-5, "{what}: row {r} tournament fitness — device {d} host {h}");
+            }
+        }
+    }
+
+    /// THE STOP BAR'S CANDIDATE IS NEVER WORSE ON ERROR THAN TRUENORTH'S.
+    ///
+    /// That is the whole invariant: `for_the_bar` is an argmin over the largest
+    /// error block, so whatever it names must be at or below what `hff` names,
+    /// in every row of a real population. If the two argmins were reading the
+    /// same key — the bug this exists to prevent — the assertion would still
+    /// hold but the strict case would never appear, so the test also counts how
+    /// often they genuinely differ and requires the tower run to find some.
+    #[test]
+    fn the_stop_bars_candidate_is_never_worse_on_error_than_truenorths() {
+        // With the tower charged, the angle prefers a shallow candidate and the
+        // error does not, which is exactly when the two winners come apart.
+        for tower in [false, true] {
+            let mut engine = Engine::new(Config { tower, ..toy_config(120, 40) }, toy_data()).expect("engine");
+            let mut gen = drawn_generation(&engine, 31);
+            gen.fitness.iter_mut().for_each(|f| *f = f32::NAN);
+            let mut timing = Timing {
+                vary: 0.0, read: 0.0, decode: 0.0, evaluate: 0.0, score: 0.0,
+                hff: 0.0, pump: 0.0, cross: 0.0, snap: 0.0, genealogy: 0.0, beam: 0.0,
+            };
+            engine.evaluate(&mut gen, &mut timing).expect("evaluate");
+            let n_ex = engine.data.splits.n_extrap;
+            let (mut checked, mut differed) = (0, 0);
+            for row in 0..engine.layout.pop as usize {
+                let Some(found) = engine.confirm(&gen, row).expect("confirm") else { continue };
+                checked += 1;
+                let bar = worst_error(&found.for_the_bar.one_minus_r2, n_ex);
+                let hff = worst_error(&found.hff.one_minus_r2, n_ex);
+                assert!(
+                    bar <= hff || (bar - hff).abs() < 1e-12,
+                    "tower {tower}, row {row}: the stop bar's candidate is WORSE on error ({bar}) than TrueNorth's ({hff})"
+                );
+                if bar < hff {
+                    differed += 1;
+                    // And when they differ, they must really be different
+                    // candidates, not the same one scored twice.
+                    assert_ne!(
+                        (found.hff.linker, found.hff.wrapper, found.hff.genes),
+                        (found.for_the_bar.linker, found.for_the_bar.wrapper, found.for_the_bar.genes),
+                        "tower {tower}, row {row}: two different errors from the same candidate"
+                    );
+                }
+            }
+            assert!(checked > 0, "tower {tower}: no row confirmed, so this proved nothing");
+            if tower {
+                assert!(
+                    differed > 0,
+                    "tower on and the two winners never came apart in {checked} rows — the second argmin is reading the same key as the first"
+                );
             }
         }
     }
@@ -6685,7 +6810,7 @@ mod tests {
         let mut gen = plant(&engine, &genes);
         engine.evaluate(&mut gen, &mut fresh_timing()).expect("evaluate");
         let (row, original) = engine.best(&gen).expect("the near miss is scored");
-        let confirmed_before = engine.confirm(&gen, row).expect("confirm").expect("scored");
+        let confirmed_before = engine.confirm(&gen, row).expect("confirm").map(|c| c.hff).expect("scored");
         // It really IS a near miss: close, and not the law.
         assert!(confirmed_before.one_minus_r2[1] > 1e-6, "the planted chromosome is already exact: {confirmed_before:?}");
         let before_math = engine.math_of(&gen, row, &confirmed_before);
@@ -6721,7 +6846,7 @@ mod tests {
         // And the survivor IS better, confirmed in f64 like anything that may be
         // reported — not just better on the device's f32 ranking scores.
         engine.evaluate(&mut gen, &mut fresh_timing()).expect("evaluate the survivor");
-        let after = engine.confirm(&gen, landed).expect("confirm").expect("the survivor is scored");
+        let after = engine.confirm(&gen, landed).expect("confirm").map(|c| c.hff).expect("the survivor is scored");
         assert!(after.fitness < confirmed_before.fitness, "the survivor {:?} did not beat the original {:?}", after, confirmed_before);
         assert!(beat.best_log10_p_after < beat.best_log10_p_before, "{beat:?}");
         // The spurious factor is gone and what is left computes the law.
@@ -6787,10 +6912,10 @@ mod tests {
         let mut gen = plant(&engine, &genes);
         engine.evaluate(&mut gen, &mut fresh_timing()).expect("evaluate");
         let (row, _) = engine.best(&gen).expect("scored");
-        let before = engine.confirm(&gen, row).expect("confirm").expect("scored");
+        let before = engine.confirm(&gen, row).expect("confirm").map(|c| c.hff).expect("scored");
         assert!(before.one_minus_r2[1] > 1e-4, "exp(u) alone already fits 1/(exp(u)-1): {before:?}");
         // The wrap, scored the way the beam scores it: f64, confirm grade.
-        let wrapped = engine.confirm_with(&gen, row, &BEAM_WRAPS).expect("confirm the wraps").expect("a wrap scored");
+        let wrapped = engine.confirm_with(&gen, row, &BEAM_WRAPS).expect("confirm the wraps").map(|c| c.hff).expect("a wrap scored");
         assert_eq!(BEAM_WRAPS[wrapped.wrapper], Wrapper::Recip1, "the winning wrap is not 1/(x - 1): {wrapped:?}");
         assert!(wrapped.one_minus_r2[1] < 1e-12, "the wrap did not recover the law: {wrapped:?}");
         assert!(wrapped.fitness < before.fitness);
@@ -6810,7 +6935,7 @@ mod tests {
         // The GRAFTED chromosome computes the law: the wrap is in the gene now.
         let landed = (0..engine.layout.pop as usize).find(|&r| gen.fitness[r].is_nan()).expect("the survivor's row");
         engine.evaluate(&mut gen, &mut fresh_timing()).expect("evaluate the survivor");
-        let after = engine.confirm(&gen, landed).expect("confirm").expect("scored");
+        let after = engine.confirm(&gen, landed).expect("confirm").map(|c| c.hff).expect("scored");
         assert!(after.one_minus_r2[1] < 1e-10, "the grafted wrap does not compute the law: {after:?}");
         assert!(after.fitness < before.fitness);
         let row_w = (engine.layout.n_genes * engine.layout.gene_width()) as usize;
@@ -6851,7 +6976,7 @@ mod tests {
         let mut gen = plant(&engine, &genes);
         engine.evaluate(&mut gen, &mut fresh_timing()).expect("evaluate");
         let (row, _) = engine.best(&gen).expect("scored");
-        let before = engine.confirm(&gen, row).expect("confirm").expect("scored");
+        let before = engine.confirm(&gen, row).expect("confirm").map(|c| c.hff).expect("scored");
         assert!(before.one_minus_r2[1] > 1e-4, "the monomial alone already fits u/(exp(u)-1): {before:?}");
 
         // IT HAS A SPELLING NOW — three nodes, the outermost taking the host twice.
@@ -6871,7 +6996,7 @@ mod tests {
         // blockers hid.
         let landed = (0..engine.layout.pop as usize).find(|&r| gen.fitness[r].is_nan()).expect("the survivor's row");
         engine.evaluate(&mut gen, &mut fresh_timing()).expect("evaluate the survivor");
-        let after = engine.confirm(&gen, landed).expect("confirm").expect("scored");
+        let after = engine.confirm(&gen, landed).expect("confirm").map(|c| c.hff).expect("scored");
         assert!(after.one_minus_r2[1] < 1e-10, "the grafted backreference does not compute the law: {after:?}");
         let row_w = (engine.layout.n_genes * engine.layout.gene_width()) as usize;
         assert_eq!(gen.pop.genome[landed * row_w..(landed + 1) * row_w], genome[..]);
@@ -6979,7 +7104,7 @@ mod tests {
         let mut gen = plant(&engine, &genes);
         engine.evaluate(&mut gen, &mut fresh_timing()).expect("evaluate");
         let (row, _) = engine.best(&gen).expect("scored");
-        let before = engine.confirm(&gen, row).expect("confirm").expect("scored");
+        let before = engine.confirm(&gen, row).expect("confirm").map(|c| c.hff).expect("scored");
         assert!(before.one_minus_r2[1] > 1e-4, "the unwrapped genes already fit the law: {before:?}");
 
         let (beat, appended) = engine.beam(&mut gen, 1).expect("a beam beat");
@@ -6992,7 +7117,7 @@ mod tests {
         // THE GRAFTED ROW COMPUTES THE LAW — prefactor and all.
         let landed = (0..engine.layout.pop as usize).find(|&r| gen.fitness[r].is_nan()).expect("the survivor's row");
         engine.evaluate(&mut gen, &mut fresh_timing()).expect("evaluate the survivor");
-        let after = engine.confirm(&gen, landed).expect("confirm").expect("scored");
+        let after = engine.confirm(&gen, landed).expect("confirm").map(|c| c.hff).expect("scored");
         assert!(after.one_minus_r2[1] < 1e-8, "the graft does not compute the prefactor law: {after:?}");
         // and the OTHER genes still stand: the prefactor is still in the chromosome,
         // which is exactly what collapsing them to 1 destroyed.
@@ -7050,7 +7175,7 @@ mod tests {
             let using: Vec<GeneLinker> = all.iter().copied().filter(|c| c.genes >> host & 1 == 1).collect();
             for &wrap in BEAM_WRAPS.iter() {
                 // The beam's score: the wrap INSIDE the linker, on the host gene.
-                let Some(scored) = engine.confirm_over(&gen, row, &[Wrapper::Identity], &using, Some((host, wrap))).expect("confirm") else {
+                let Some(scored) = engine.confirm_over(&gen, row, &[Wrapper::Identity], &using, Some((host, wrap))).expect("confirm").map(|c| c.hff) else {
                     continue;
                 };
                 let Some((grafted, consts)) = engine.graft_wrap(&genome, &rnc, wrap, host, 1) else { continue };
@@ -7067,6 +7192,7 @@ mod tests {
                 let re = engine
                     .confirm_over(&scratch, to, &[Wrapper::Identity], &using, None)
                     .expect("confirm the graft")
+                    .map(|c| c.hff)
                     .expect("the graft is scored");
                 // THE EQUALITY: the value the beam SCORED and the value the GRAFTED
                 // row computes are the same number. Every other gene is the constant
@@ -7203,7 +7329,7 @@ mod tests {
         let mut gen = plant(&engine, &genes);
         engine.evaluate(&mut gen, &mut fresh_timing()).expect("evaluate");
         let (row, _) = engine.best(&gen).expect("scored");
-        let used = engine.confirm(&gen, row).expect("confirm").expect("scored").genes;
+        let used = engine.confirm(&gen, row).expect("confirm").map(|c| c.hff).expect("scored").genes;
         // The model does not use gene 0 — whatever else it uses, gene 1 is its
         // FIRST, and gene 1 is where the wrap must go.
         assert_eq!(used & 1, 0, "the model uses the junk gene 0: {used:#b}");
