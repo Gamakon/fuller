@@ -427,6 +427,11 @@ impl WatchState {
         format!("{id}").contains(needle)
     }
 
+    /// The generation the last good snapshot was taken at; 0 before one arrives.
+    fn generation(&self) -> u32 {
+        self.snapshot.as_ref().map_or(0, |s| s.header.generation)
+    }
+
     fn view(&self, c: &CohortRow, merge: u32) -> CohortView {
         let h = self.history.get(&c.id);
         let previous = self
@@ -435,7 +440,13 @@ impl WatchState {
             .and_then(|p| p.global_cohorts.iter().find(|q| q.id == c.id))
             .and_then(|q| q.best_hff);
         let gain = match (c.best_hff, previous) {
-            _ if c.id >= merge && merge > 0 => Gain::Merged,
+            // MERGED IS AN AGE, NOT A LABEL. `c.id` is the generation a line
+            // arrived and never changes, so `id >= merge` called a cohort born at
+            // 1480 an elder the moment the run passed generation 1000 — while it
+            // was 78 generations old. The kernel bands on `generation - label`
+            // and this must say the same thing or the table describes a rule the
+            // search is not using.
+            _ if merge > 0 && self.generation().saturating_sub(c.id) >= merge => Gain::Merged,
             (None, _) => Gain::Unscored,
             // No previous best of its own: the cohort is new to this stream.
             (Some(_), None) => Gain::New,
