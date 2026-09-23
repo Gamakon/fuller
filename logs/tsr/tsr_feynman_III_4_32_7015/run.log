@@ -1,0 +1,8 @@
+BUDGET	seed 7015	180 s
+POPULATION	800 intake + 400 champion
+POPULATION	800 intake + 400 champion
+CARD	written /Users/andrewmorgan/Dev/gamakon/fuller/.claude/worktrees/agent-a5ccf50f291890f3a/logs/tsr/tsr_feynman_III_4_32_7015/card.json	id tsr_feynman_III_4_32_7015	6 HFF objectives
+CARD	written /Users/andrewmorgan/Dev/gamakon/fuller/.claude/worktrees/agent-a5ccf50f291890f3a/logs/tsr/tsr_feynman_III_4_32_7015/card.json	id tsr_feynman_III_4_32_7015	6 HFF objectives
+    gen    secs  head      min_hff      avg_hff    mse_train       r2_train     r2_val_bl2     r2_val_bk3  t_depth   log10_p
+    500      44    34  6.905340e-4  7.568195e-1    8.9401e-5   0.9999988376   0.9999993602              -        1    -16.27
+  cohorts 4 alive | c0:386@6.905e-4  c400:139@6.905e-4  c300:35@7.720e-4  c500:640@6.543e-1

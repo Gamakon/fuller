@@ -121,11 +121,15 @@ The headline, in one line each:
 
 * **On `strogatz_bacres1` TSR fails exactly as untyped does.** No recovery,
   same settings. A null on the outcome.
-* **`feynman_I_26_2` — `arcsin(n sin θ₂)`, the depth-2 law — is recovered in
-  its true form on BOTH seeds**, generation 169 and generation 2, and is
-  unsolved in all 7 prior untyped races on the record.
-* **The T2 ceiling is reached in every fit**, and from initialisation, so it is
-  nowhere a formality.
+* **`feynman_I_15_10` is the one real result, on one seed.** At seed 7014 and a
+  matched 180 s budget, TSR recovers `m₀v/sqrt(1−v²/c²)` exactly while the
+  untyped engine reports `tan(tan(log(1/cos(x_1/x_2))))` — a **depth-4 tower**,
+  the very shape TSR forbids. One seed, so not yet a kept result.
+* **`feynman_I_26_2` is NOT evidence for typing.** TSR recovers it, but so does
+  the untyped engine at the same budget. What it does establish is that the T2
+  rung is **necessary** — a ceiling at T1 would lose a law the engine can find.
+* **The T2 rung is reached in every fit** — but untyped populations reach it
+  too, so that is not a difference between the kingdoms.
 * **The pace cost is not established.** The machine was shared and a third
   bacres1 run came out *faster* than untyped; no timing claim survives that.
 

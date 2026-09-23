@@ -1,0 +1,35 @@
+BUDGET	seed 7014	180 s
+POPULATION	800 intake + 400 champion
+POPULATION	800 intake + 400 champion
+CARD	written /Users/andrewmorgan/Dev/gamakon/fuller/.claude/worktrees/agent-a5ccf50f291890f3a/logs/tsr/tsr_feynman_I_26_2_7014/card.json	id tsr_feynman_I_26_2_7014	6 HFF objectives
+CARD	written /Users/andrewmorgan/Dev/gamakon/fuller/.claude/worktrees/agent-a5ccf50f291890f3a/logs/tsr/tsr_feynman_I_26_2_7014/card.json	id tsr_feynman_I_26_2_7014	6 HFF objectives
+    gen    secs  head      min_hff      avg_hff    mse_train       r2_train     r2_val_bl2     r2_val_bk3  t_depth   log10_p
+    169      18    34   0.000000e0  3.725151e-1   4.2610e-15   1.0000000000   1.0000000000              -        2      -inf
+  cohorts 2 alive | c0:559@0.000e0  c100:641@1.710e-2
+dataset /Users/andrewmorgan/Dev/gamakon/fuller/.claude/worktrees/agent-a5ccf50f291890f3a/logs/tsr/data/feynman_I_26_2.tsv
+rows: train 4000, validation 1000, unseen test 18750
+population 1 x (800+400) = 1200 | 169 generations in 18.1 s = 107.3 ms per generation | 204000 individuals = 11250 per second | stopped by early_stop
+seconds: variation 0.03 | read-back 1.19 | decode 0.38 | evaluate 8.08 | link+scale+metrics 0.00 | HFF 0.64 | pump 0.04 | cross 0.00
+seconds: snap 0.44 (0.037 per beat in the snap step itself)
+SNAP	8	2400	140	140	0	140	head_oversize=0/no_rnc_slot=0/unmappable_op=0/not_closed=0/types_do_not_close=0/unchanged=0/model_oversize=0
+SNAP_DETAIL	rows=800	rows_skipped=0	genes_examined=2400	genes_with_nonwhole_literal=288	literals_offered=288	literals_matched=140	by_family=Pi=133/E=1/Root=0/Rational=0/Physical=6/Other=0	band_overflows=0	kept_by_device=140	refused_by_f64=0	written_back=140	rows_changed=140	seconds_per_beat=0.0368
+seconds: fold 7.46 (0.906 per beat in the fold step itself)
+FOLD	beats=8	rows=800	rows_changed=195	genes=2400	subtrees=6642	flat=195	folded=195	nodes_saved=891	secs=7.249	not_finite=0/unrepresentable=0/passes_variation=1/no_rnc_slot=0/no_landing=0/relevel_refused=0
+seconds: beam 0.22 (0.028 per beat)
+BEAM	8	96	0	-8.40	-8.40	0.22
+BEAM_WRAPS	96	grafted 0	kept 0	graft refused 0	better/refused per wrap: recip_1=0/8 x_over_expm1=0/0 recip_sqrt_1m=0/20 recip_1m=0/8
+BEAM_FLOAT	0	0
+genes evaluated 152396 (unique per generation), over the 64-node limit 0
+TYPED	ceiling=2	refused=32262	depths=0:185 1:2352 2:810 3:173 4:47 5:23 6:6 7:4
+1 - R²: train 1.598e-14, validation 1.716e-14
+model: asin((x_0*sin(x_1)))
+GENERATIONS	169	early_stop	1.716e-14
+HFF	0.000000	1.598e-14	1.716e-14	-
+MSE	3.885e-15	4.099e-15	-
+TOWER	2	reported only
+PVALUE	2.077e-36	-35.68	6
+GENES	152396	0	204000
+MODEL_INFIX	asin((x_0*sin(x_1)))
+MODEL_PLAIN	asin((x_0*sin(x_1)))
+RAW_MATH	(Add (Mul (Num 0.9999999806607333) (ProtectedAsin (Mul (Var "x_0") (Sin (Var "x_1"))))) (Num -5.938626812529435e-10))
+R² on the unseen test rows: 1.000000

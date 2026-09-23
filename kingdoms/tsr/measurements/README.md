@@ -28,23 +28,39 @@ What DID change there is the population's shape: genes past depth 2 fell from
 178 to 78, and the reported model is depth-2 legal where the prior untyped
 run's was `cos(sqrt(acos(1/x_1)) + 59)`, a depth-3 tower.
 
-**On two Feynman problems TSR recovered the law in its true form** —
-`I.15.10` and `I.26.2`, both unsolved across every untyped race on the record.
-The budgets are not matched, so see the prior-results table before reading that
-as a win.
+**TSR recovered two laws in their true form. One of those is a real result and
+the other is not, and it took a check to tell them apart.**
 
-**A recovery is not a property of TSR until it holds on two seeds, and the two
-behave differently:**
+After the sweep I ran the untyped engine on the two recoveries — same binary,
+same seed, same budget, one setting different. **That is the only comparison in
+this file that is actually matched**, and it changes the reading completely:
 
-| law | seed 7014 | seed 7015 | holds? |
-|---|---|---|---|
-| **I.26.2**, `arcsin(n sin θ₂)`, **depth 2** | recovered, gen 169 | **recovered, gen 2** | **YES** |
-| I.15.10, `m₀v/sqrt(1−v²/c²)`, depth 1 | recovered, gen 1,001 | not recovered | no |
+| law | seed | TSR | untyped, matched | verdict |
+|---|---|---|---|---|
+| **I.15.10**, `m₀v/sqrt(1−v²/c²)` | 7014 | **recovered**, gen 1,001 | **NOT recovered**, train 1-R² 1.53e-7 | **a real TSR result** |
+| I.26.2, `arcsin(n sin θ₂)` | 7014 | recovered, gen 169 | **also recovered**, gen 201 | not a TSR result |
+| I.26.2 | 7015 | recovered, gen 2 | **also recovered**, gen 2 | an initialisation artefact |
+| I.15.10 | 7015 | not recovered | — | seed-dependent |
 
-So `I.15.10` is a seed-7014 result and not a TSR result. **`I.26.2` is the one
-that survives the record's two-seed rule** — the same exact expression,
-`asin((x_0*sin(x_1)))`, on both seeds, and unsolved in all 7 prior untyped
-races. On 7015 it took 2 generations and 0.4 seconds.
+**I.26.2 is not evidence for typing.** The untyped engine finds it too, at a
+near-identical generation. On seed 7015 both find it at generation 2 — the
+counter-based generator draws the same initial tokens for any slot that is
+within budget, so typed and untyped initialisation are *identical* there. An
+earlier draft of this file called I.26.2 "the result that survives the two-seed
+rule". That was wrong, and it was wrong because I compared against seven old
+short races instead of against the engine as it stands.
+
+**I.15.10 is the real one, and it is the spec's own argument made visible.**
+At the same seed and budget, the untyped engine reports
+
+```
+tan(tan(log(1/cos(x_1/x_2)))) · ...        train 1-R² 1.53e-7
+```
+
+a **depth-4 tower** — exactly the shape TSR makes unrepresentable — while TSR
+reports the law itself at train 1-R² 1.16e-13. One seed, so by the record's own
+two-seed rule it is not yet a kept result; seed 7015 did not recover it under
+TSR either.
 
 ## What was live when these ran
 
@@ -97,9 +113,13 @@ From the race ledgers under `hff/notebooks/sr_logs/*/race_ledger.json`
 | feynman_III_4_32 | 7 | 0 |
 | strogatz_bacres1 | 6 | 0 |
 
-**Read this carefully, because it is easy to overclaim.** The two laws TSR
-recovered had never been solved in any untyped race on the record. But those
-races are not a matched control:
+**These ledgers are NOT a control, and an earlier draft of this file leaned on
+them as though they were.** They are Python-era and 6-second-Rust races; the
+60/133 and 67/133 Rust races in `docs/EXPERIMENTS.md` do not write a
+`race_ledger.json` and are not in this table at all. "Unsolved in 7 races" is
+therefore a statement about those seven old configurations and **not** about
+the engine as it stands — which, checked directly, solves I.26.2 at this
+budget. The matched runs in the headline are what to read instead.
 
 | | prior untyped | TSR here |
 |---|---|---|
@@ -128,13 +148,18 @@ them is not measured here, and the instruction for this work was not to run it.
 Bold rows met the stop bar AND were confirmed by reading the form against the
 true law. **2 of 7.**
 
-**The T2 ceiling is reached in every single fit** — every population carries
-genes at depth 2. It is nowhere a formality, and nowhere unreached.
+**The T2 rung is reached in every single fit** — every population carries genes
+at depth 2, so the ceiling is nowhere unreached.
 
-And it is reached **from initialisation, not only after evolution**: the
-seed-7015 `I.26.2` fit ended at generation 2 with 732 of its 3,600 genes
-already at depth 2. The typed sampler fills the rung straight away rather than
-the search having to climb to it.
+Precisely what is measured: genes sitting **at** depth 2, not sampler
+redirections to `sample_flat`. It is a fair proxy, because every depth-2 gene
+has a budget-exhausted slot beneath its second transcendental where the
+redirect must have fired — but the redirect itself is not counted, and a direct
+count would be a better measurement.
+
+Untyped populations reach depth 2 too (the untyped bacres1 run had 1,298 genes
+there), so **this is not a difference between the kingdoms.** It says the
+ceiling is live, not that typing put anything at it.
 
 Refusals sit between **1.77% and 5.30% of gene-slots per generation**, well
 under the spec's predicted 23% of sub-expressions — though those are different
@@ -180,10 +205,12 @@ symbol for symbol. Not a model that scores well with the wrong shape.
 
 ### feynman_I_26_2 — Snell's law, `arcsin(n·sin θ₂)`, **DEPTH 2**
 
-**The case the T2 rung exists for.** This law is a transcendental applied to
-something containing another transcendental. At a ceiling of T1 it would have
-no legal signature — though that is a property of the type system, true before
-any run, and not something this fit measures.
+**The case the T2 rung exists for — and NOT evidence for typing.** The untyped
+engine recovers this law at the same budget (gen 201 against TSR's 169 on seed
+7014; both at gen 2 on seed 7015). What it does show is that **the T2 rung is
+necessary**: at a ceiling of T1 this law has no legal signature, so a stricter
+ceiling would have lost a law the engine can otherwise find. That is a real
+constraint on the design even though it is not a win for it.
 
 **LAW RECOVERED IN ITS TRUE FORM**, seed 7014, at generation **169**, in 18
 seconds:
@@ -307,5 +334,8 @@ distribution.
    the skill file requires.
 5. **The machine was shared.** Other agents ran fits on this GPU during the
    sweep. One TSR fit (bacres1 in the sweep) died at 79 s of its 180 s budget
-   with no error and did not reproduce by hand, so it is recorded as external.
-   No timing number here should be read as a clean measurement of pace.
+   with no error and did not reproduce by hand, so it is recorded as external —
+   **cause unknown, consistent with a signal.** Clean mid-generation death with
+   no output is not what contention looks like; another process's `pkill` is a
+   likelier shape, but nothing here establishes it. No timing number in this
+   file should be read as a clean measurement of pace.
