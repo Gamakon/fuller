@@ -38,7 +38,7 @@ AST language ships one.
 | folder | status | what it evolves |
 |---|---|---|
 | `symbolic-regression/` | **live** | the general float-typed op set the engine runs today |
-| `law-finder/` | proposed | a specialised vocabulary aimed at physical law, not general regression |
+| `tsr/` | **specified** | **TSR — Transcendental Symbolic Regression.** The same op set with the distance between functions TYPED, so illegal depth is unrepresentable rather than penalised |
 | `sql/` | proposed | SQL statements — the original nucleotable motivation: reverse-engineering running systems |
 | `regex/` | proposed | regular expressions; the typing system was sketched in the nucleotable work |
 | `brainfuck/` | proposed | a minimal language, chosen because it is small enough to be a clean test of the harness itself |
