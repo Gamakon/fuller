@@ -29,6 +29,7 @@ cargo run --release --bin parity -- parity/corpus/*.jsonl   # SymPy-parity score
 - `src/extract.rs` — `denoise()`: saturate (algebra+powers only, bounded) → `extract_variants` → score on data → smallest within R² tolerance, else unchanged. The live mutation operator. Never raises.
 - `src/physics.rs` — `generate()`: pure one-to-many physics-prior mutation GENERATOR (NO eval/score). Tags candidates `speculative` (caller must extrapolation-gate those).
 - `src/snap.rs` — constant snapping (π/e/√2/G… within tol → symbol annotation; Math stays pure-numeric).
+- `Engine::fold_winners` (`src/evolve/engine.rs`) — **THE FOLD AS A MUTATION**, on the pump's beat over the best `fold_top_k` rows of every island: a subtree that flattens its input to a constant is collapsed to that constant (`vary::relevel`, the cleanse's collapse chosen by measurement not dice) and the clean gene LANDS IN ITS ISLAND'S WORST ROW, original untouched, unevaluated, for the tournament to judge. Reports each fold to the telemetry stream mid-fit with its row. **OFF by default** (`fold_every: 0`, `EVOLVE_FOLD_EVERY` to switch on): at 400 generations the A/B is 1 win / 2 losses, so it works but has not been shown to pay — see commit da8c346.
 - `src/geneframe.rs` — the **nucleotable data model, owned here**: master `SymbolTable`, typed many-hot arity, kingdom = a query. The direction the symbol/pset layer migrates toward.
 - `src/parity.rs` + `src/bin/parity.rs` — SymPy-parity scorer, **per-family** (`Family::Algebra|Rational|Trig`).
 - `src/python.rs` — PyO3: `denoise`, `denoise_karva`, `physics_mutate`, `physics_mutate_karva`, `master_pset`.
@@ -43,6 +44,8 @@ cargo run --release --bin parity -- parity/corpus/*.jsonl   # SymPy-parity score
 - **`Protected*` are distinct functions** from raw ops (real-domain raw vs the engine's guarded semantics). Never map a protected geppy name to a raw semantic_id — unsound on negatives/zero.
 - **The old "no bare commutativity" advice is nuanced** — egglog's own tests ship bare comm/assoc rewrites; they're fine *bounded*, fatal at unbounded fixpoint with other expand rules. Measured finding: commutativity is NOT the parity wall here (≈2/600 pairs); the gaps are structural.
 - **Determinism**: same input + rng_seed = identical output (tests assert). HashMap iteration order bit us once — sort when choosing among equal-keyed entries.
+- **A "near-constant" subtree is one that DESTROYS the variation under it, not one that is small relative to its own mean.** `x + 4000` passes `range <= 1% of |mean|` while being exactly `x`; folding it deletes a live variable. `Engine::fold_winners` therefore tests against the CHILD's swing. The first A/B without that check was 3-40x worse on train 1-R² across three seeds.
+- **`vary::relevel` keeps a surviving "?" on its Dc INDEX, not its value.** Anything grafting a new "?" must pick a slot no surviving "?" reads, or it silently rewrites another literal of the same gene.
 
 ## Parity status (the SymPy-replacement metric)
 
