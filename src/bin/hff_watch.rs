@@ -87,10 +87,19 @@ impl Theme {
         if self.light { Color::Rgb(110, 110, 110) } else { Color::DarkGray }
     }
 
-    /// The selected row. A wash, not a block: the text keeps the foreground it
-    /// had, so the selection cannot hide what it is selecting.
+    /// The selected row's background. A wash, not a block.
     fn selection(self) -> Color {
         if self.light { Color::Rgb(206, 228, 236) } else { Color::Rgb(26, 58, 67) }
+    }
+
+    /// The INK on a selected row. A cell that carries its own colour — the gain,
+    /// the sparkline — keeps that colour over the wash, and on a light terminal
+    /// a cyan sparkline or a grey gain on a pale blue background is not
+    /// readable. A selected row therefore takes one explicit foreground for
+    /// every cell, dark on the light theme and bright on the dark one, so the
+    /// selection never hides what it is selecting.
+    fn selected_ink(self) -> Color {
+        if self.light { Color::Rgb(10, 30, 40) } else { Color::Rgb(226, 242, 247) }
     }
 
     /// The accent — the run's own numbers. Cyan is legible on both, but it is
@@ -727,11 +736,14 @@ fn cohort_table(f: &mut Frame, theme: Theme, state: &WatchState, area: Rect, wid
         .map(|r| {
             let selected = state.selected == Some(r.id);
             let style = match (selected, r.extinct) {
-                (true, _) => Style::default().bg(theme.selection()).add_modifier(Modifier::BOLD),
+                (true, _) => Style::default().bg(theme.selection()).fg(theme.selected_ink()).add_modifier(Modifier::BOLD),
                 (false, true) => Style::default().fg(theme.dim()),
                 (false, false) => Style::default(),
             };
-            let gain = Cell::from(gain_text(r.gain)).style(Style::default().fg(gain_colour(theme, r.gain)));
+            // A selected row's cells take the row's ink; unselected they keep
+            // their own meaning-carrying colour.
+            let ink = |own: Color| if selected { theme.selected_ink() } else { own };
+            let gain = Cell::from(gain_text(r.gain)).style(Style::default().fg(ink(gain_colour(theme, r.gain))));
             if wide {
                 Row::new(vec![
                     Cell::from(format!("c{}", r.id)),
@@ -740,7 +752,7 @@ fn cohort_table(f: &mut Frame, theme: Theme, state: &WatchState, area: Rect, wid
                     Cell::from(or_dash(r.best_hff, 4)),
                     Cell::from(or_dash(r.best_ever, 4)),
                     gain,
-                    Cell::from(bars(&r.spark)).style(Style::default().fg(theme.accent())),
+                    Cell::from(bars(&r.spark)).style(Style::default().fg(ink(theme.accent()))),
                 ])
                 .style(style)
             } else {
