@@ -100,5 +100,12 @@
     ],
     "live_cohorts": 100
   },
-  "notes": []
+  "notes": [
+    {
+      "written_utc": "2026-09-23T23:19:35Z",
+      "testing": "TSR on strogatz_bacres1 at ceiling 2, 180 s, SECOND SEED 7015 -- the final fit of the sweep.",
+      "outcome": "Not recovered, as on seed 7014 and as the untyped engine has always done on this problem. 6,284 generations in 180 s = 28.6 ms/generation, train 1-R2 7.549e-7, validation 6.311e-7, log10 p -16.85. 894,104 genes refused = 3.95% of gene-slots per generation; 0 oversized. Depths 0:1225 1:1325 2:902 3:121 4:18 5:7 6:1 7:1 -- 902 genes at the ceiling. THE PACE NUMBER IS THE POINT HERE: 28.6 ms/gen sits BETWEEN the untyped 26.9 and the typed 29.6 measured earlier on this same problem, which is further evidence that these timings track machine load rather than typing. The pace claim stays withdrawn.",
+      "recovered": false
+    }
+  ]
 }

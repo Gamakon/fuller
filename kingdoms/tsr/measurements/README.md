@@ -133,7 +133,7 @@ across the whole untyped record, at generation counts those races never
 reached.** Whether the untyped engine at 1,000 generations would also find
 them is not measured here, and the instruction for this work was not to run it.
 
-## The sweep — 7 Feynman problems × 2 development seeds, 180 s a fit
+## The sweep — 8 problems × 2 development seeds, 180 s a fit (15 fits; one died, rerun by hand)
 
 | problem | seed | gens | ms/gen | train 1-R² | val 1-R² | log10 p | refused, % of gene-slots | genes past the ceiling |
 |---|---|---|---|---|---|---|---|---|
@@ -151,19 +151,21 @@ them is not measured here, and the instruction for this work was not to run it.
 | II.24.17 | 7015 | 1,087 | 165.6 | 6.471e-06 | 8.027e-06 | −14.03 | 4.75% | 9.6% |
 | III.4.32 | 7014 | 2,060 | 87.7 | 8.784e-07 | 8.083e-07 | −16.46 | 1.77% | 2.4% |
 | III.4.32 | 7015 | 1,743 | 103.3 | 2.875e-07 | 1.871e-07 | −17.41 | 2.39% | 4.0% |
+| bacres1 | 7014 | 7,240 | 24.9 | 3.611e-06 | 1.056e-07 | −17.88 | 3.75% | 5.3% |
+| bacres1 | 7015 | 6,284 | 28.6 | 7.549e-07 | 6.311e-07 | −16.85 | 3.95% | 4.1% |
 
 Bold rows met the stop bar AND were confirmed by reading the form against the
-true law: **3 of 14.** Of those three, **one survives a matched untyped check**
+true law: **3 of 15.** Of those three, **one survives a matched untyped check**
 (I.15.10 at seed 7014) — see the headline.
 
-The other eleven fits reach train 1-R² between 2.9e-7 and 8.3e-4 and recover
+The other twelve fits reach train 1-R² between 2.9e-7 and 8.3e-4 and recover
 nothing, which is the ordinary state of this engine on these problems at three
 minutes a fit.
 
-**The T2 rung is reached in all 14 fits** — every population carries genes at
+**The T2 rung is reached in all 15 fits** — every population carries genes at
 depth 2, so the ceiling is nowhere unreached.
 
-Refusals span **1.76% to 5.30% of gene-slots per generation** across the 14,
+Refusals span **1.76% to 5.30% of gene-slots per generation** across the 15,
 and genes past the ceiling **0.9% to 9.6%** of the final population.
 
 Precisely what is measured: genes sitting **at** depth 2, not sampler
@@ -312,14 +314,17 @@ and would need its own measurement.
 overstated it.** Three bacres1 runs on the same machine, same settings, same
 seed, differing only in budget and in what else the machine was doing:
 
-| run | budget | ms/generation |
-|---|---|---|
-| untyped | 420 s | 26.9 |
-| TSR | 420 s | 29.6 |
-| TSR | 180 s | **24.9** |
+| run | seed | budget | ms/generation |
+|---|---|---|---|
+| untyped | 7014 | 420 s | 26.9 |
+| TSR | 7014 | 420 s | 29.6 |
+| TSR | 7014 | 180 s | **24.9** |
+| TSR | 7015 | 180 s | 28.6 |
 
-The 420 s pair suggested a 10% tax. The 180 s TSR run is **faster than the
-untyped run**, which that reading cannot explain. The machine was running other
+The 420 s pair suggested a 10% tax. The third run is **faster than the untyped
+run** and the fourth lands **between** the two, which that reading cannot
+explain — four TSR/untyped timings on one problem spanning 24.9 to 29.6 with no
+ordering by kingdom. The machine was running other
 agents' fits for part of this session, so **load, not typing, dominates these
 numbers** and no pace claim is supported by them. Measuring the pace cost
 properly needs a quiet machine and matched budgets, and was not done.
