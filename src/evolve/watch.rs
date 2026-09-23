@@ -539,6 +539,7 @@ impl WatchState {
         // The reference pace is one decade per hundred generations, stated here
         // rather than buried: it is a scale for a meter, not a claim about what
         // a healthy fit does.
+        let no_island_best = row.is_some_and(|r| r.best_hff.is_none());
         let improvement = match (row.and_then(|r| r.best_hff), self.previous.as_ref().and_then(|p| p.islands.get(island)).and_then(|r| r.best_hff)) {
             (Some(now), Some(before)) if now > 0.0 && before > 0.0 => {
                 let gens = s.map_or(0, |s| s.header.generation).saturating_sub(self.previous.as_ref().map_or(0, |p| p.header.generation));
@@ -560,14 +561,24 @@ impl WatchState {
         // labelled as such — the brief warns that the submitted/plain
         // expression's finite fraction is a DIFFERENT metric, and this screen
         // does not claim to show that one.
-        let coverage = row.map(|r| {
-            let scored = r.rows.saturating_sub(r.nan_rows);
-            f64::from(scored) / f64::from(r.rows.max(1))
+        //
+        // `nan_rows: None` is NOT EMITTED, and coverage is then None too. A
+        // producer that never counted the unscored rows would otherwise be
+        // reported as "100% scored" — a fabricated island metric on a stream
+        // that said nothing, which is the first thing the brief forbids.
+        let coverage = row.and_then(|r| {
+            let nan = r.nan_rows?;
+            let scored = r.rows.saturating_sub(nan);
+            Some(f64::from(scored) / f64::from(r.rows.max(1)))
         });
         [
-            ("improvement", improvement, "no previous window"),
+            (
+                "improvement",
+                improvement,
+                if no_island_best { "island best not emitted" } else { "no previous window" },
+            ),
             ("fresh lines", None, survival_reason),
-            ("scored rows", coverage, "no island"),
+            ("scored rows", coverage, "unscored rows not emitted"),
         ]
     }
 }
@@ -916,6 +927,103 @@ mod tests {
         let mut one = WatchState::new(false);
         one.apply_record(Record::Snapshot(state.snapshot.clone().expect("a frame")));
         assert_eq!(one.gain_window(), None);
+    }
+
+    /// THE MOCKUP'S RUN, as a telemetry stream: the gen 10–170 checkpoints the
+    /// design brief's interactive mockup replays, with the island values left
+    /// exactly as the brief has them — `best_hff: null`, `cohorts: []`, because
+    /// the supplied log could not recover which island those rows occupied.
+    const MOCKUP: &str = include_str!("../../tests/fixtures/mockup_bacres1_seed7015.jsonl");
+
+    fn mockup_upto(generation: u32) -> WatchState {
+        let (records, bad) = parse_stream(MOCKUP);
+        assert_eq!(bad, 0);
+        let mut state = WatchState::new(false);
+        for r in records.into_iter().take_while(|r| r.header().generation <= generation) {
+            state.apply_record(r);
+        }
+        state
+    }
+
+    /// THE BRIEF'S FIRST ACCEPTANCE CHECK, on the brief's own numbers: c0 holds
+    /// 200,000 rows through gen 90; at gen 100 it is 120,000 with c100 at
+    /// 80,000; and c100 improves to 5.356e-3 by gen 170.
+    #[test]
+    fn the_mockups_run_replays_the_cohort_progression_the_brief_describes() {
+        let at_90 = mockup_upto(90);
+        let rows = at_90.rows();
+        assert_eq!(rows.len(), 1, "c0 is the only cohort through gen 90");
+        assert_eq!((rows[0].id, rows[0].rows), (0, 200_000));
+        let at_100 = mockup_upto(100);
+        let rows = at_100.rows();
+        assert_eq!(rows.len(), 2, "c100 appears at gen 100");
+        let by_id = |rs: &[CohortView], id: u32| rs.iter().find(|r| r.id == id).expect("the cohort").clone();
+        assert_eq!(by_id(&rows, 0).rows, 120_000);
+        assert_eq!(by_id(&rows, 100).rows, 80_000);
+        // A cohort that has just appeared is the WORD NEW, not a percentage.
+        assert_eq!(by_id(&rows, 100).gain, Gain::New);
+        let at_170 = mockup_upto(170);
+        let rows = at_170.rows();
+        assert_eq!(by_id(&rows, 100).best_hff, Some(0.005356), "c100 improved to 5.356e-3 by gen 170");
+        assert_eq!(by_id(&rows, 0).best_hff, Some(0.0004079));
+        assert_eq!(at_170.snapshot.as_ref().expect("a frame").global.best_hff, Some(0.0004078684));
+    }
+
+    /// AND ON THAT RUN, GAIN SORT LIFTS c100 ABOVE c0 — the brief's second
+    /// acceptance check — although c100's absolute HFF is an order of magnitude
+    /// worse. The selection stays on c100 across the sort and the next snapshot.
+    #[test]
+    fn on_the_mockups_run_gain_lifts_c100_above_the_better_c0() {
+        let mut state = mockup_upto(110);
+        state.sort = Sort::Best;
+        let by_best = state.rows();
+        assert_eq!(by_best[0].id, 0, "by best HFF, c0 leads");
+        state.sort = Sort::Gain;
+        let by_gain = state.rows();
+        assert_eq!(by_gain[0].id, 100, "by gain, the improving c100 leads");
+        // It really is the worse one that was lifted.
+        let c100 = by_gain[0].best_hff.expect("c100's best");
+        let c0 = by_gain.iter().find(|r| r.id == 0).expect("c0").best_hff.expect("c0's best");
+        assert!(c100 > c0, "c100 {c100:e} should be the WORSE absolute HFF than c0 {c0:e}");
+        // The selection follows c100 by ID through the sort AND the next
+        // snapshot, which is the rest of that acceptance check.
+        state.selected = Some(100);
+        for sort in [Sort::Best, Sort::Rows, Sort::Gain] {
+            state.sort = sort;
+            let _ = state.rows();
+            assert_eq!(state.selected, Some(100));
+        }
+        let (records, _) = parse_stream(MOCKUP);
+        for r in records.into_iter().filter(|r| r.header().generation > 110) {
+            state.apply_record(r);
+            assert_eq!(state.selected, Some(100), "a snapshot moved the selection off c100");
+        }
+        assert_eq!(state.rows().iter().find(|r| r.id == 100).expect("c100").best_hff, Some(0.005356));
+    }
+
+    /// NO PANEL PRETENDS TO KNOW WHAT THE STREAM DID NOT SAY. On the mockup's
+    /// run the islands carry no best and no cohort split, and the pulse must
+    /// report that as a dash WITH ITS REASON — not as "0% improvement" and
+    /// certainly not as "100% of rows scored", which is a fabricated island
+    /// metric on a stream that emitted nothing.
+    #[test]
+    fn a_stream_with_no_island_metrics_fabricates_none() {
+        let state = mockup_upto(170);
+        let islands = state.islands();
+        assert_eq!(islands.len(), 2);
+        assert!(islands.iter().all(|i| i.best_hff.is_none() && i.cohorts.is_empty() && i.nan_rows.is_none()));
+        for island in 0..islands.len() {
+            let pulse = state.pulse(island);
+            for (label, value, reason) in pulse {
+                assert_eq!(value, None, "{label} was invented from a stream that did not emit it");
+                assert!(!reason.is_empty(), "{label} dashed without saying why");
+            }
+        }
+        // And the engine's own stream, which DOES emit them, still shows them —
+        // the silence is the producer's, not a blanket refusal to draw.
+        let ours = replayed();
+        let coverage = ours.pulse(0)[2].1;
+        assert!(coverage.is_some(), "a stream that emits unscored counts must show coverage");
     }
 
     /// Every undefined number is a dash in ONE place, and a dash is never a zero.

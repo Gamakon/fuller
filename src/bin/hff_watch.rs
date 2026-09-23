@@ -625,6 +625,22 @@ fn cohort_table(f: &mut Frame, state: &WatchState, area: Rect, wide: bool) {
         );
         return;
     }
+    // A FOCUSED ISLAND THAT EMITTED NO SPLIT is a silence, not an empty island.
+    // The brief's own example record carries `cohorts: []` because the log it
+    // was derived from could not say which island a cohort's rows sat on, and
+    // drawing a blank table under that heading would be the screen pretending to
+    // know.
+    if state.island_focus && state.islands().get(state.island).is_some_and(|i| i.cohorts.is_empty()) {
+        f.render_widget(
+            Paragraph::new(vec![
+                Line::from(Span::styled("no per-island cohort split in this stream", Style::default().fg(Color::Yellow))),
+                Line::from(Span::styled("the producer emitted global totals only · g for those", Style::default().fg(Color::DarkGray))),
+            ])
+            .block(block),
+            area,
+        );
+        return;
+    }
     let rows = state.rows();
     // The gain column states the window it is over. A snapshot is written at the
     // progress beat but no more often than once a second, so the window is

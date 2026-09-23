@@ -99,27 +99,42 @@ pub struct Header {
 pub struct RunStart {
     #[serde(flatten)]
     pub header: Header,
+    #[serde(default)]
     pub dataset: String,
+    #[serde(default)]
     pub seed: u32,
     /// The whole population, `layout.pop` — the number the invariant checks sum
     /// to. It is NOT `pop_intake + pop_champion`: the float zone's rows are real
     /// intake rows and are in it.
+    #[serde(default)]
     pub population: u32,
+    #[serde(default)]
     pub n_pairs: u32,
+    #[serde(default)]
     pub pop_intake: u32,
+    #[serde(default)]
     pub pop_champion: u32,
+    #[serde(default)]
     pub float_zone: u32,
     /// Rows in the train, validation and third (edge / SMOGD) blocks.
+    #[serde(default)]
     pub n_train: usize,
+    #[serde(default)]
     pub n_val: usize,
+    #[serde(default)]
     pub n_extrap: usize,
     /// The time cap in milliseconds; the budget bar's denominator.
+    #[serde(default)]
     pub budget_ms: u64,
+    #[serde(default)]
     pub max_generations: u32,
     /// `cohort_merge`: 0 means VIRTUAL ALPS is off and there are no cohorts to
     /// table. The viewer says so rather than drawing an empty table.
+    #[serde(default)]
     pub cohort_merge: u32,
+    #[serde(default)]
     pub pump_every: u32,
+    #[serde(default)]
     pub progress_every: u32,
 }
 
@@ -138,10 +153,12 @@ pub struct Snapshot {
     /// by its `seq`. None until the first model has been written. The full
     /// expression is NEVER on a snapshot: it is hundreds of characters and it
     /// changes far more rarely than the numbers do.
+    #[serde(default)]
     pub model_ref: Option<u64>,
     /// Pumps run since the previous snapshot — the denominator for "did a fresh
     /// line survive a pump beat", and the reason the viewer can say `—` for
     /// survival honestly rather than calling a quiet window zero.
+    #[serde(default)]
     pub pumps_since: u32,
 }
 
@@ -165,11 +182,14 @@ pub struct Global {
     /// The best model's HFF angle as a p-value, log10.
     pub log10_p: Option<f64>,
     /// The tower height of the best model: how deep its nesting goes.
+    #[serde(default)]
     pub t_depth: u32,
     /// The virtual head in force at this generation — the room a gene may use.
+    #[serde(default)]
     pub vhead: u32,
     /// Rows that produced no score at all. A JSON number cannot be NaN, so the
     /// count is carried and the reader is never left to infer it from a gap.
+    #[serde(default)]
     pub nan_rows: u32,
 }
 
@@ -179,13 +199,26 @@ pub struct Global {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct IslandRow {
     /// `intake-0`, `champion-0`, `intake-1`, … — pair p is islands 2p and 2p+1.
+    /// The brief's example writes the bare `intake` / `champion` of a
+    /// single-pair run; the suffix is what makes the id unique once there is
+    /// more than one pair, and a reader treats it as an opaque label.
     pub id: String,
-    pub kind: IslandKind,
+    /// None when the producer did not say. The brief's example record has no
+    /// `kind`, and a viewer that cannot tell intake from champion should show
+    /// the id it was given rather than guess.
+    #[serde(default)]
+    pub kind: Option<IslandKind>,
+    #[serde(default)]
     pub pair: u32,
     pub rows: u32,
     pub best_hff: Option<f64>,
+    #[serde(default)]
     pub avg_hff: Option<f64>,
-    pub nan_rows: u32,
+    /// Rows that produced no score. `None` = NOT EMITTED, which is a different
+    /// thing from zero: a viewer must not turn a silence into "100% of rows
+    /// scored". The engine always fills it; the brief's example does not.
+    #[serde(default)]
+    pub nan_rows: Option<u32>,
     /// THIS ISLAND's cohort split. Per the brief's invariant, a cohort's island
     /// counts sum to its global count — which is what makes the global table's
     /// rows attributable instead of a total nobody can place.
@@ -214,6 +247,7 @@ pub struct CohortRow {
     pub rows: u32,
     pub best_hff: Option<f64>,
     /// Rows of this cohort that produced no score.
+    #[serde(default)]
     pub nan_rows: u32,
 }
 
@@ -556,7 +590,12 @@ pub enum Parsed {
 pub struct Tailer {
     path: std::path::PathBuf,
     offset: u64,
-    partial: String,
+    /// BYTES, not a `String`. A read lands mid-line as a matter of course, and
+    /// on a file being appended to it can land mid-CHARACTER: decoding the chunk
+    /// before the line is whole would turn a split multi-byte character into a
+    /// permanent replacement char and lose that record. The bytes are held and
+    /// decoded once the newline that ends the line has arrived.
+    partial: Vec<u8>,
     /// Bumped when the file shrank or vanished and reading restarted — the
     /// viewer shows it, because a silent restart looks like a stall.
     pub rotations: u32,
@@ -565,7 +604,7 @@ pub struct Tailer {
 
 impl Tailer {
     pub fn new(path: impl Into<std::path::PathBuf>) -> Tailer {
-        Tailer { path: path.into(), offset: 0, partial: String::new(), rotations: 0, bad_lines: 0 }
+        Tailer { path: path.into(), offset: 0, partial: Vec::new(), rotations: 0, bad_lines: 0 }
     }
 
     /// Everything that has arrived since the last call. Returns an empty vector
@@ -591,18 +630,16 @@ impl Tailer {
         let mut buf = Vec::new();
         let Ok(read) = file.read_to_end(&mut buf) else { return Vec::new() };
         self.offset += read as u64;
-        // Invalid UTF-8 in the middle of a multi-byte character is the same
-        // problem as a partial line and is handled the same way: lossy here
-        // would corrupt it permanently, so the bytes are only decoded once the
-        // line is whole.
-        let text = String::from_utf8_lossy(&buf);
-        self.partial.push_str(&text);
+        self.partial.extend_from_slice(&buf);
         let mut out = Vec::new();
         // A line is only a line once its terminator has arrived. Whatever is
-        // after the last newline is next poll's problem.
-        while let Some(at) = self.partial.find('\n') {
-            let line: String = self.partial.drain(..=at).collect();
-            let line = line.trim_end_matches(['\n', '\r']);
+        // after the last newline is next poll's problem — including a
+        // multi-byte character the read cut in half, which is why the decode
+        // happens HERE, per whole line, and not on the chunk above.
+        while let Some(at) = self.partial.iter().position(|&b| b == b'\n') {
+            let line: Vec<u8> = self.partial.drain(..=at).collect();
+            let text = String::from_utf8_lossy(&line);
+            let line = text.trim_end_matches(['\n', '\r']);
             if line.trim().is_empty() {
                 continue;
             }
@@ -663,17 +700,23 @@ pub fn check_snapshot(s: &Snapshot, population: u32, cohorts_on: bool) -> Vec<St
             problems.push(format!("cohort rows sum to {cohort_rows}, population is {population}"));
         }
         // Each cohort's island counts sum to its global count — the check that
-        // makes the global table attributable.
-        let mut per_island: BTreeMap<u32, u32> = BTreeMap::new();
-        for island in &s.islands {
-            for c in &island.cohorts {
-                *per_island.entry(c.id).or_default() += c.rows;
+        // makes the global table attributable. ONLY when a split was emitted at
+        // all: a producer that cannot recover which island a cohort's rows sat
+        // on (the brief's own example record) emits `cohorts: []`, and holding
+        // that to a sum it never claimed would turn an honest silence into a
+        // failed invariant.
+        if s.islands.iter().any(|i| !i.cohorts.is_empty()) {
+            let mut per_island: BTreeMap<u32, u32> = BTreeMap::new();
+            for island in &s.islands {
+                for c in &island.cohorts {
+                    *per_island.entry(c.id).or_default() += c.rows;
+                }
             }
-        }
-        for c in &s.global_cohorts {
-            let seen = per_island.get(&c.id).copied().unwrap_or(0);
-            if seen != c.rows {
-                problems.push(format!("cohort {} has {} rows globally but {seen} over the islands", c.id, c.rows));
+            for c in &s.global_cohorts {
+                let seen = per_island.get(&c.id).copied().unwrap_or(0);
+                if seen != c.rows {
+                    problems.push(format!("cohort {} has {} rows globally but {seen} over the islands", c.id, c.rows));
+                }
             }
         }
     }
@@ -712,6 +755,40 @@ mod tests {
         for r in &records {
             assert_eq!(r.header().schema_version, SCHEMA_VERSION, "every record carries the version");
         }
+    }
+
+    /// THE BRIEF'S OWN EXAMPLE RECORD, pasted verbatim from the design brief.
+    ///
+    /// It is the line a later consumer — a gRPC viewer, somebody's script —
+    /// will start from, so it has to parse as written: every field this schema
+    /// added beyond it is `#[serde(default)]`, and the ones it cannot know
+    /// (which island a cohort sat on, how many rows failed to score) come back
+    /// as the silences they are rather than as zeros.
+    const BRIEF_EXAMPLE: &str = r#"{"schema_version":1,"type":"snapshot","run_id":"bacres1-seed7015","seq":17,"timestamp_utc":"2026-09-23T00:00:00Z","elapsed_ms":376000,"generation":170,"budget_ms":450000,"global":{"best_hff":0.0004078684,"avg_hff":0.3721728,"mse_train":0.0000019019,"r2_train":0.9999997090,"r2_val":0.9999996989,"log10_p":-17.42},"islands":[{"id":"intake","rows":100000,"best_hff":null,"cohorts":[]},{"id":"champion","rows":100000,"best_hff":null,"cohorts":[]}],"global_cohorts":[{"id":0,"birth_generation":0,"rows":120000,"best_hff":0.0004079},{"id":100,"birth_generation":100,"rows":80000,"best_hff":0.005356}]}"#;
+
+    #[test]
+    fn the_briefs_own_example_record_parses() {
+        let record: Record = serde_json::from_str(BRIEF_EXAMPLE).expect("the brief's example record must parse");
+        let Record::Snapshot(s) = record else { panic!("not a snapshot") };
+        assert_eq!(s.header.generation, 170);
+        assert_eq!(s.header.seq, 17);
+        assert_eq!(s.global.best_hff, Some(0.0004078684));
+        assert_eq!(s.islands.len(), 2);
+        assert_eq!(s.islands[0].id, "intake");
+        // The fields the brief's record does not carry come back as SILENCE,
+        // not as zero: the island has no best, no kind and no unscored count.
+        assert_eq!(s.islands[0].best_hff, None);
+        assert_eq!(s.islands[0].kind, None);
+        assert_eq!(s.islands[0].nan_rows, None, "a missing count must not read as zero");
+        assert!(s.islands[0].cohorts.is_empty());
+        assert_eq!(s.global_cohorts.len(), 2);
+        assert_eq!((s.global_cohorts[1].id, s.global_cohorts[1].rows), (100, 80000));
+        // And it passes the invariants: the island rows sum to the population,
+        // the cohort rows sum to the population, and the per-cohort island check
+        // is SKIPPED because no split was emitted — holding a producer to a sum
+        // it never claimed would turn an honest silence into a failure.
+        let problems = check_snapshot(&s, 200_000, true);
+        assert!(problems.is_empty(), "the brief's own record fails our invariants: {problems:?}");
     }
 
     #[test]
@@ -794,6 +871,65 @@ mod tests {
         std::fs::write(&path, "\n").expect("truncate");
         tailer.poll();
         assert_eq!(tailer.rotations, 1, "the rotation was noticed");
+        std::fs::remove_file(&path).expect("remove the stream");
+        std::fs::remove_dir(&dir).expect("remove its directory");
+    }
+
+    /// A READ THAT LANDS MID-CHARACTER loses nothing. A stream being appended to
+    /// can be read with a multi-byte character cut in half, and decoding the
+    /// chunk rather than the finished line would turn it into a replacement
+    /// character permanently — the record would parse, with a corrupted string
+    /// in it, which is worse than a bad line because nothing would say so.
+    #[test]
+    fn a_read_that_splits_a_character_loses_nothing() {
+        let dir = std::env::temp_dir().join("fuller-telemetry-split-char");
+        std::fs::create_dir_all(&dir).expect("a scratch directory");
+        let path = dir.join("stream.jsonl");
+        // A dataset name with a multi-byte character in it.
+        let w = Writer::create(
+            path.to_str().expect("a path"),
+            "run-é".to_string(),
+            RunStartFields {
+                dataset: "données-µ.tsv".to_string(),
+                seed: 1,
+                population: 4,
+                n_pairs: 1,
+                pop_intake: 2,
+                pop_champion: 2,
+                float_zone: 0,
+                n_train: 1,
+                n_val: 1,
+                n_extrap: 0,
+                budget_ms: 1,
+                max_generations: 1,
+                cohort_merge: 0,
+                pump_every: 1,
+                progress_every: 1,
+            },
+        )
+        .expect("a stream");
+        // The run_start is flushed as it is written, so the file is whole here;
+        // the writer is dropped so nothing holds the handle while the test
+        // rewrites the file under it.
+        assert_eq!(w.run_id(), "run-é");
+        drop(w);
+        let whole = std::fs::read(&path).expect("the stream's bytes");
+        // Cut inside the last multi-byte character before the newline.
+        let cut = whole.iter().rposition(|b| *b >= 0x80).expect("a multi-byte character");
+        std::fs::write(&path, &whole[..cut + 1]).expect("half a character");
+        let mut tailer = Tailer::new(&path);
+        assert!(tailer.poll().is_empty(), "half a line is not a line");
+        std::fs::write(&path, &whole).expect("the rest");
+        let got = tailer.poll();
+        assert_eq!(got.len(), 1);
+        match &got[0] {
+            Parsed::Ok(r) => match r.as_ref() {
+                Record::RunStart(s) => assert_eq!(s.dataset, "données-µ.tsv", "the split character was corrupted"),
+                other => panic!("{other:?}"),
+            },
+            Parsed::Bad(e) => panic!("the split character made the line unparseable: {e}"),
+        }
+        assert_eq!(tailer.bad_lines, 0);
         std::fs::remove_file(&path).expect("remove the stream");
         std::fs::remove_dir(&dir).expect("remove its directory");
     }

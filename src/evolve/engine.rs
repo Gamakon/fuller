@@ -3122,12 +3122,15 @@ impl Engine {
                 };
                 IslandRow {
                     id: format!("{}-{}", if i % 2 == 0 { "intake" } else { "champion" }, i / 2),
-                    kind: if i % 2 == 0 { IslandKind::Intake } else { IslandKind::Champion },
+                    kind: Some(if i % 2 == 0 { IslandKind::Intake } else { IslandKind::Champion }),
                     pair: i as u32 / 2,
                     rows: isl.hi - isl.lo,
                     best_hff: finite(ibest),
                     avg_hff: (in_scored > 0).then(|| isum / f64::from(in_scored)),
-                    nan_rows: inan,
+                    // ALWAYS Some from the engine: it counted them. `None` on
+                    // the wire means a producer did not emit the number, and a
+                    // viewer must be able to tell that from a genuine zero.
+                    nan_rows: Some(inan),
                     cohorts: cohorts.iter().map(row_of).collect(),
                 }
             })
@@ -3395,6 +3398,22 @@ impl Engine {
                     pump_every: c.pump_every,
                     progress_every: c.progress_every,
                 })?;
+                let mut writer = writer;
+                // THE MERGE RULE, stated once and up front. The brief asks for a
+                // `cohort_merge` event "explaining how displayed IDs aggregate",
+                // because a merge changes the classification the table is drawn
+                // under and a table that silently re-labels is a lie. The rule
+                // is fixed from generation 0 here — cohorts at or past the label
+                // are ONE band — so it is announced once rather than re-sent.
+                if c.cohort_merge > 0 {
+                    writer.event(
+                        0,
+                        telemetry::EventKind::CohortMerge,
+                        format!("cohorts at or past c{} are one band: their rows aggregate and a gain on them is a gain on the band", c.cohort_merge),
+                        None,
+                        Some(f64::from(c.cohort_merge)),
+                    )?;
+                }
                 Some(TelemetryState {
                     writer,
                     best_seen: f64::INFINITY,
