@@ -30,16 +30,20 @@ fn main() {
         sample_functions: (0..12).collect(),
         sample_terminals: (12..20).collect(),
         rnc_id: Some(19),
+        // The four unary functions stand in for the transcendentals.
+        depth_cost: [vec![0; 8], vec![1; 4], vec![0; 8]].concat(),
+        sample_flat: (0..8).collect(),
     };
     let mut dev = EvolveDevice::new(layout, &codes).expect("device");
-    dev.init(&InitParams { seed: 1, generation: 0, rnc_lo: -100, rnc_hi: 100, n_wrappers: 3, vhead: 0 }).expect("init");
+    dev.init(&InitParams { seed: 1, generation: 0, rnc_lo: -100, rnc_hi: 100, n_wrappers: 3, vhead: 0, typed_depth: None })
+        .expect("init");
     let fitness: Vec<f32> = (0..pop).map(|r| ((r * 2_654_435_761u32.wrapping_mul(r + 1)) % 100_000) as f32).collect();
     dev.write_fitness(&fitness).expect("fitness");
     dev.finish();
 
     let t = Instant::now();
     for generation in 1..=generations {
-        dev.vary(&islands, &GenParams { seed: 1, generation, rnc_lo: -100, rnc_hi: 100, cohort_merge: 0, vhead: 0 }).expect("vary");
+        dev.vary(&islands, &GenParams { seed: 1, generation, rnc_lo: -100, rnc_hi: 100, cohort_merge: 0, vhead: 0, typed_depth: None }).expect("vary");
         dev.write_fitness(&fitness).expect("fitness");
     }
     dev.finish();

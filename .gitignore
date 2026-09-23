@@ -25,3 +25,9 @@ docs/paper/**/*.aux
 docs/paper/**/*.log
 docs/paper/**/*.out
 docs/paper/**/*.synctex.gz
+
+# A/B binary snapshots: 7.5 MB apiece, and rebuildable from the commit the
+# run card names. The card is the record, not the binary.
+logs/*/evolve_fit_*
+# TSR sweep datasets: copied from hff/notebooks/sr_logs, not ours to version.
+logs/tsr/data/

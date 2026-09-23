@@ -1,0 +1,41 @@
+BUDGET	seed 7015	180 s
+POPULATION	800 intake + 400 champion
+POPULATION	800 intake + 400 champion
+CARD	written /Users/andrewmorgan/Dev/gamakon/fuller/.claude/worktrees/agent-a5ccf50f291890f3a/logs/tsr/tsr_feynman_II_24_17_7015/card.json	id tsr_feynman_II_24_17_7015	6 HFF objectives
+CARD	written /Users/andrewmorgan/Dev/gamakon/fuller/.claude/worktrees/agent-a5ccf50f291890f3a/logs/tsr/tsr_feynman_II_24_17_7015/card.json	id tsr_feynman_II_24_17_7015	6 HFF objectives
+    gen    secs  head      min_hff      avg_hff    mse_train       r2_train     r2_val_bl2     r2_val_bk3  t_depth   log10_p
+    500      64    34  3.145533e-3  6.682369e-1    1.2029e-5   0.9999843491   0.9999821529              -        2    -12.98
+  cohorts 4 alive | c0:386@3.146e-3  c400:121@4.980e-3  c300:53@6.030e-3  c500:640@8.430e-2
+   1000     165    34  1.983408e-3  6.169939e-1    5.3745e-6   0.9999930071   0.9999916864              -        2    -13.98
+  cohorts 4 alive | c0:388@1.983e-3  c800:52@1.983e-3  c900:120@1.983e-3  c1000:640@8.592e-2
+   1087     180    34  1.922366e-3  4.056629e-1    4.9736e-6   0.9999935287   0.9999919726              -        2    -14.05
+  cohorts 4 alive | c800:3@1.922e-3  c900:126@1.922e-3  c1000:673@1.922e-3  c0:398@1.983e-3
+dataset /Users/andrewmorgan/Dev/gamakon/fuller/.claude/worktrees/agent-a5ccf50f291890f3a/logs/tsr/data/feynman_II_24_17.tsv
+rows: train 4000, validation 1000, unseen test 18750
+population 1 x (800+400) = 1200 | 1087 generations in 180.0 s = 165.6 ms per generation | 1305600 individuals = 7252 per second | stopped by time
+seconds: variation 0.14 | read-back 10.54 | decode 2.69 | evaluate 55.98 | link+scale+metrics 0.00 | HFF 7.06 | pump 0.48 | cross 0.00
+seconds: snap 0.84 (0.007 per beat in the snap step itself)
+SNAP	54	16200	77	70	0	67	head_oversize=0/no_rnc_slot=0/unmappable_op=1/not_closed=0/types_do_not_close=2/unchanged=0/model_oversize=3
+SNAP_DETAIL	rows=5400	rows_skipped=0	genes_examined=16200	genes_with_nonwhole_literal=364	literals_offered=361	literals_matched=77	by_family=Pi=17/E=7/Root=4/Rational=7/Physical=40/Other=2	band_overflows=0	kept_by_device=70	refused_by_f64=0	written_back=67	rows_changed=67	seconds_per_beat=0.0069
+seconds: fold 101.41 (1.852 per beat in the fold step itself)
+FOLD	beats=54	rows=5400	rows_changed=1615	genes=16200	subtrees=78993	flat=1618	folded=1618	nodes_saved=20155	secs=100.022	not_finite=17/unrepresentable=0/passes_variation=2654/no_rnc_slot=0/no_landing=0/relevel_refused=0
+seconds: beam 1.84 (0.034 per beat)
+BEAM	54	648	1	-10.90	-10.92	1.84
+BEAM_WRAPS	648	grafted 1	kept 1	graft refused 0	better/refused per wrap: recip_1=0/0 x_over_expm1=0/0 recip_sqrt_1m=0/24 recip_1m=1/0
+BEAM_FLOAT	1	0
+genes evaluated 1238343 (unique per generation), over the 64-node limit 0
+TYPED	ceiling=2	refused=186004	depths=0:1100 1:864 2:1289 3:194 4:96 5:40 6:15 7:1 8:0 9:1
+1 - R²: train 6.471e-6, validation 8.027e-6
+FOLD	16	0.999810301	tanh((((-34.0) + (x_2 - x_1))*(-(1/(((x_2/x_1)/x_1) + x_0)))))
+FOLD	2	0.999431012	(0.9998103014455011**3)
+model: (((-1.0339384701736742)*(((x_0 - ((x_0 + (x_0/x_1)) - (1/((1/x_2) + x_2))))*(tanh((((-34.0) + (x_2 - x_1))/(((x_2/x_1)/x_1) + x_0)))**3))*(tanh((x_2*log((x_1/(x_0 - ((-26.0)/((x_0/x_1)*(94.0/x_1))))))))**3))) + 0.0396366601907201)
+GENERATIONS	1087	time	8.027e-6
+HFF	0.001938	6.471e-6	8.027e-6	-
+MSE	4.974e-6	5.451e-6	-
+TOWER	2	reported only
+PVALUE	9.273e-15	-14.03	6
+GENES	1238343	0	1305600
+MODEL_INFIX	(((-1.0339384701736742)*(((x_0 - ((x_0 + (x_0/x_1)) - (1/((1/x_2) + x_2))))*(tanh((((-34.0) + (x_2 - x_1))/(((x_2/x_1)/x_1) + x_0)))**3))*(tanh((x_2*log((x_1/(x_0 - ((-26.0)/((x_0/x_1)*(94.0/x_1))))))))**3))) + 0.0396366601907201)
+MODEL_PLAIN	(((-1.0339384701736742)*(((x_0 - ((x_0 + (x_0/x_1)) - (1/((1/x_2) + x_2))))*(tanh((((-34.0) + (x_2 - x_1))/(((x_2/x_1)/x_1) + x_0)))**3))*(tanh((x_2*log((x_1/(x_0 - ((-26.0)/((x_0/x_1)*(94.0/x_1))))))))**3))) + 0.0396366601907201)
+RAW_MATH	(Add (Mul (Num 1.0339384701736742) (Mul (Mul (Sub (Var "x_0") (Add (Add (Var "x_0") (ProtectedDiv (Var "x_0") (Var "x_1"))) (Neg (ProtectedInv (Add (ProtectedInv (Var "x_2")) (Var "x_2")))))) (Pow3 (Tanh (Mul (Add (Num -34.0) (Sub (Var "x_2") (Var "x_1"))) (Neg (ProtectedInv (Add (ProtectedDiv (ProtectedDiv (Var "x_2") (Var "x_1")) (Var "x_1")) (Var "x_0")))))))) (Pow3 (Tanh (Mul (Var "x_2") (ProtectedLog (ProtectedDiv (Var "x_1") (Sub (Var "x_0") (ProtectedDiv (Num -26.0) (Mul (ProtectedDiv (Var "x_0") (Var "x_1")) (ProtectedDiv (Num 94.0) (Var "x_1")))))))))))) (Num 0.0396366601907201))
+R² on the unseen test rows: 0.999994

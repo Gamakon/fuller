@@ -1,0 +1,39 @@
+BUDGET	seed 7015	180 s
+POPULATION	800 intake + 400 champion
+POPULATION	800 intake + 400 champion
+CARD	written /Users/andrewmorgan/Dev/gamakon/fuller/.claude/worktrees/agent-a5ccf50f291890f3a/logs/tsr/tsr_feynman_I_48_2_7015/card.json	id tsr_feynman_I_48_2_7015	6 HFF objectives
+CARD	written /Users/andrewmorgan/Dev/gamakon/fuller/.claude/worktrees/agent-a5ccf50f291890f3a/logs/tsr/tsr_feynman_I_48_2_7015/card.json	id tsr_feynman_I_48_2_7015	6 HFF objectives
+    gen    secs  head      min_hff      avg_hff    mse_train       r2_train     r2_val_bl2     r2_val_bk3  t_depth   log10_p
+    500      78    34  6.905340e-4  6.241778e-1    9.6097e-3   0.9999990697   0.9999990831              -        2    -16.27
+  cohorts 4 alive | c0:386@6.905e-4  c300:38@6.905e-4  c400:136@6.905e-4  c500:640@1.650e-2
+   1000     161    34  5.980200e-4  6.091846e-1    8.8426e-3   0.9999991440   0.9999992185              -        2    -16.59
+  cohorts 6 alive | c0:386@5.980e-4  c300:5@5.980e-4  c800:38@5.980e-4  c900:130@5.980e-4  c700:1@6.089e-3  c1000:640@1.650e-2
+   1120     182    34  5.980200e-4  3.111252e-1    8.8426e-3   0.9999991440   0.9999992185              -        2    -16.59
+  cohorts 5 alive | c0:385@5.980e-4  c300:5@5.980e-4  c1000:169@5.980e-4  c900:6@4.381e-3  c1100:635@1.201e-2
+dataset /Users/andrewmorgan/Dev/gamakon/fuller/.claude/worktrees/agent-a5ccf50f291890f3a/logs/tsr/data/feynman_I_48_2.tsv
+rows: train 4000, validation 1000, unseen test 18750
+population 1 x (800+400) = 1200 | 1120 generations in 181.8 s = 162.4 ms per generation | 1345200 individuals = 7397 per second | stopped by time
+seconds: variation 0.17 | read-back 10.43 | decode 2.88 | evaluate 42.07 | link+scale+metrics 0.00 | HFF 6.64 | pump 0.46 | cross 0.00
+seconds: snap 1.08 (0.008 per beat in the snap step itself)
+SNAP	56	16800	33	33	0	33	head_oversize=0/no_rnc_slot=0/unmappable_op=0/not_closed=0/types_do_not_close=0/unchanged=0/model_oversize=2
+SNAP_DETAIL	rows=5600	rows_skipped=0	genes_examined=16800	genes_with_nonwhole_literal=190	literals_offered=189	literals_matched=33	by_family=Pi=15/E=2/Root=4/Rational=1/Physical=8/Other=3	band_overflows=0	kept_by_device=33	refused_by_f64=0	written_back=33	rows_changed=33	seconds_per_beat=0.0083
+seconds: fold 114.62 (2.018 per beat in the fold step itself)
+FOLD	beats=56	rows=5600	rows_changed=266	genes=16800	subtrees=86979	flat=270	folded=269	nodes_saved=1460	secs=112.995	not_finite=20/unrepresentable=1/passes_variation=67/no_rnc_slot=0/no_landing=0/relevel_refused=0
+seconds: beam 1.78 (0.032 per beat)
+BEAM	56	672	0	-12.41	-12.41	1.78
+BEAM_WRAPS	672	grafted 0	kept 0	graft refused 0	better/refused per wrap: recip_1=0/0 x_over_expm1=0/0 recip_sqrt_1m=0/112 recip_1m=0/0
+BEAM_FLOAT	0	0
+genes evaluated 1292116 (unique per generation), over the 64-node limit 0
+TYPED	ceiling=2	refused=139978	depths=0:1946 1:771 2:797 3:65 4:20 5:0 6:1
+1 - R²: train 8.560e-7, validation 7.815e-7
+model: (((-3.0017955050664)*(((log(((x_0 + x_1) - sqrt(x_0))) - (((x_2**2) + (x_1 + ((x_1**3)/(x_2**2))))*x_0)) + log((((x_0 - (x_1*x_0)) + (1/x_0)) + x_0)))/3.0)) + 0.274739315052841)
+GENERATIONS	1120	time	7.815e-7
+HFF	0.000637	8.560e-7	7.815e-7	-
+MSE	8.843e-3	8.704e-3	-
+TOWER	2	reported only
+PVALUE	3.565e-17	-16.45	6
+GENES	1292116	0	1345200
+MODEL_INFIX	(((-3.0017955050664)*(((log(((x_0 + x_1) - sqrt(x_0))) - (((x_2**2) + (x_1 + ((x_1**3)/(x_2**2))))*x_0)) + log((((x_0 - (x_1*x_0)) + (1/x_0)) + x_0)))/3.0)) + 0.274739315052841)
+MODEL_PLAIN	(((-3.0017955050664)*(((log(((x_0 + x_1) - sqrt(x_0))) - (((x_2**2) + (x_1 + ((x_1**3)/(x_2**2))))*x_0)) + log((((x_0 - (x_1*x_0)) + (1/x_0)) + x_0)))/3.0)) + 0.274739315052841)
+RAW_MATH	(Add (Mul (Num -3.0017955050664) (Div (Add (Add (ProtectedLog (Add (Neg (Neg (Sub (Neg (Var "x_1")) (Var "x_0")))) (ProtectedSqrt (Var "x_0")))) (Mul (Neg (Add (Mul (Var "x_2") (Var "x_2")) (Add (Var "x_1") (ProtectedSqrt (ProtectedDiv (Pow2 (Pow3 (Var "x_1"))) (Mul (Var "x_2") (Neg (Pow3 (Var "x_2"))))))))) (Var "x_0"))) (ProtectedLog (Add (Neg (Neg (Sub (Sub (Var "x_0") (Mul (Var "x_1") (Var "x_0"))) (Neg (ProtectedInv (Var "x_0")))))) (Var "x_0")))) (Num 3.0))) (Num 0.274739315052841))
+R² on the unseen test rows: 0.999999

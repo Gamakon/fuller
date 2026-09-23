@@ -95,6 +95,23 @@ pub struct SymbolCodes {
     /// mutation needs it to keep each surviving "?" on its own constant, and to
     /// collapse a subtree into a constant.
     pub rnc_id: Option<u32>,
+    /// WHAT A SYMBOL COSTS IN TRANSCENDENTAL DEPTH: 1 for a depth-raising
+    /// function (`sin cos tan log exp sqrt abs tanh asin acos` and the
+    /// protected forms), 0 for everything else — arithmetic, whole powers and
+    /// every terminal. The spec's "one `u32` per symbol row".
+    ///
+    /// Lockstep with `geneframe::DEPTH_RAISING` and with `engine::t_depth`:
+    /// the sampler spends this budget top-down while the decoder measures the
+    /// same quantity bottom-up, so they must be one list.
+    pub depth_cost: Vec<u32>,
+    /// THE FLAT FUNCTIONS — those with `depth_cost == 0`. A slot with no depth
+    /// budget left draws from this list instead of `sample_functions`, which is
+    /// the spec's "one comparison per draw": the sampler never places a symbol
+    /// the ceiling forbids.
+    ///
+    /// Empty is legal and means the set is all transcendental; a slot out of
+    /// budget then takes a terminal.
+    pub sample_flat: Vec<u32>,
 }
 
 impl SymbolCodes {
@@ -113,7 +130,84 @@ impl SymbolCodes {
                 return Err(format!("sample_terminals holds {t}, which is not a terminal id"));
             }
         }
+        if self.depth_cost.len() != self.arity.len() {
+            return Err("depth_cost must name every symbol the arity table does".into());
+        }
+        for &f in &self.sample_flat {
+            if f >= n || self.arity[f as usize] == 0 || self.depth_cost[f as usize] != 0 {
+                return Err(format!("sample_flat holds {f}, which is not a depth-free function id"));
+            }
+        }
         Ok(())
+    }
+
+    /// THE FUNCTIONS A SLOT WITH `budget` LEVELS LEFT MAY DRAW FROM.
+    ///
+    /// With budget to spend, every function; with none, only the flat ones —
+    /// the spec's ceiling, enforced where the symbol is CHOSEN rather than
+    /// checked afterwards. `None` means no function fits and the slot takes a
+    /// terminal, which is always legal because a terminal is depth 0.
+    pub fn functions_within(&self, budget: u32) -> Option<&[u32]> {
+        if budget > 0 {
+            Some(&self.sample_functions)
+        } else if self.sample_flat.is_empty() {
+            None
+        } else {
+            Some(&self.sample_flat)
+        }
+    }
+}
+
+/// THE DEPTH BUDGET A KARVA HEAD SPENDS, position by position.
+///
+/// A gene is read left to right and a position's children are the next
+/// unclaimed positions, so **a position's parent always sits at a lower index**
+/// and its budget is known before the position is reached. One forward pass,
+/// carried through the loop the sampler already runs — there is no second pass
+/// and no tree to build.
+///
+/// `budget[0]` is the ceiling; a child gets its parent's budget less what the
+/// parent's symbol cost. A position no live parent ever claims (past the end of
+/// the expression, in the dead region a Karva gene always carries) keeps the
+/// full ceiling: it is not part of the expression, so it constrains nothing.
+///
+/// This is a REDUCTION, not the guarantee. A later edit — a crossover, a
+/// transposition — can move a subtree under a new parent and make a position
+/// live that was dead, and then the budget it was filled under no longer
+/// applies. `decode_gene` is what rejects that, exactly as it rejects a head
+/// that does not close.
+pub struct DepthBudget {
+    budget: Vec<u32>,
+    next_child: usize,
+}
+
+impl DepthBudget {
+    /// A budget walk over a head of `n` positions with `ceiling` levels.
+    pub fn new(n: usize, ceiling: u32) -> DepthBudget {
+        DepthBudget { budget: vec![ceiling; n], next_child: 1 }
+    }
+
+    /// What position `pos` may still spend.
+    pub fn at(&self, pos: usize) -> u32 {
+        self.budget.get(pos).copied().unwrap_or(0)
+    }
+
+    /// Record that position `pos` holds a symbol of this arity and depth cost:
+    /// its children take its budget less the cost. A position beyond the live
+    /// expression claims no children, and one whose symbol is a terminal claims
+    /// none either.
+    pub fn place(&mut self, pos: usize, arity: u32, cost: u32) {
+        if pos >= self.next_child {
+            // dead region: this position is nobody's child, so it parents nobody
+            return;
+        }
+        let child_budget = self.budget[pos].saturating_sub(cost);
+        for _ in 0..arity {
+            if self.next_child < self.budget.len() {
+                self.budget[self.next_child] = child_budget;
+            }
+            self.next_child += 1;
+        }
     }
 }
 
@@ -128,6 +222,9 @@ pub struct InitParams {
     /// function; the rest of the head holds terminals, as the tail does. 0 = the
     /// whole head, the ordinary GEP gene. See [`virtual_head`].
     pub vhead: u32,
+    /// THE TRANSCENDENTAL CEILING, or `None` for the engine as it was. See
+    /// [`DepthBudget`] and `Config::typed_depth`.
+    pub typed_depth: Option<u32>,
 }
 
 /// The head length the operators work with: `vhead`, or the whole head when it is
@@ -212,7 +309,7 @@ pub fn init(layout: Layout, codes: &SymbolCodes, p: &InitParams) -> Result<Popul
     if p.rnc_hi < p.rnc_lo || p.n_wrappers == 0 || layout.n_rnc == 0 {
         return Err("init: need rnc_lo <= rnc_hi, n_wrappers > 0 and n_rnc > 0".into());
     }
-    let (nf, nt) = (codes.sample_functions.len() as u32, codes.sample_terminals.len() as u32);
+    let nt = codes.sample_terminals.len() as u32;
     let span = (p.rnc_hi - p.rnc_lo + 1) as u32;
     let width = layout.gene_width();
     let mut genome = vec![0u32; layout.genome_len()];
@@ -223,12 +320,24 @@ pub fn init(layout: Layout, codes: &SymbolCodes, p: &InitParams) -> Result<Popul
     for row in 0..layout.pop {
         for g in 0..layout.n_genes {
             let base = ((row * layout.n_genes + g) * width) as usize;
+            // THE DEPTH BUDGET, carried through the loop that already exists.
+            // `None` never touches a draw: the untyped engine is what it was.
+            let mut budget = p.typed_depth.map(|c| DepthBudget::new((layout.head + layout.tail) as usize, c));
             for pos in 0..width {
                 let slot = g * width + pos;
                 let terminal = codes.sample_terminals[below(d(row, slot, STREAM_SYMBOL), nt) as usize];
-                genome[base + pos as usize] = if pos < vhead {
+                let id = if pos < vhead {
                     if coin(d(row, slot, STREAM_KIND)) {
-                        codes.sample_functions[below(d(row, slot, STREAM_SYMBOL), nf) as usize]
+                        // With a ceiling, a slot out of budget draws from the
+                        // FLAT functions instead — the same draw, mapped onto a
+                        // shorter list. With no ceiling this is `sample_functions`
+                        // and `nf`, exactly as before.
+                        match budget.as_ref().map(|b| b.at(pos as usize)).map_or(Some(&codes.sample_functions[..]), |left| {
+                            codes.functions_within(left)
+                        }) {
+                            Some(list) => list[below(d(row, slot, STREAM_SYMBOL), list.len() as u32) as usize],
+                            None => terminal,
+                        }
                     } else {
                         terminal
                     }
@@ -237,6 +346,12 @@ pub fn init(layout: Layout, codes: &SymbolCodes, p: &InitParams) -> Result<Popul
                 } else {
                     below(d(row, slot, STREAM_DC), layout.n_rnc)
                 };
+                genome[base + pos as usize] = id;
+                if let Some(b) = budget.as_mut() {
+                    if pos < layout.head + layout.tail {
+                        b.place(pos as usize, codes.arity[id as usize], codes.depth_cost[id as usize]);
+                    }
+                }
             }
             let rbase = ((row * layout.n_genes + g) * layout.n_rnc) as usize;
             for k in 0..layout.n_rnc {
@@ -278,18 +393,25 @@ impl Population {
 pub(crate) mod tests {
     use super::*;
 
+    /// The checksum of `init(Layout::for_arity(64, 3, 16, 2, 10), codes(), params(7))`
+    /// taken at f8ba1c4, the commit before typed transcendental depth.
+    const GOLDEN_UNTYPED_POPULATION: u64 = 16_188_080_267_887_817_392;
+
     /// ids 0..4 functions (arity 2,2,2,1), 4..8 terminals; 7 is withheld.
+    /// Id 3, the unary, is the depth-raising one — the stand-in transcendental.
     pub(crate) fn codes() -> SymbolCodes {
         SymbolCodes {
             arity: vec![2, 2, 2, 1, 0, 0, 0, 0],
             sample_functions: vec![0, 1, 2, 3],
             sample_terminals: vec![4, 5, 6],
             rnc_id: Some(6),
+            depth_cost: vec![0, 0, 0, 1, 0, 0, 0, 0],
+            sample_flat: vec![0, 1, 2],
         }
     }
 
     pub(crate) fn params(seed: u32) -> InitParams {
-        InitParams { seed, generation: 0, rnc_lo: -100, rnc_hi: 100, n_wrappers: 3, vhead: 0 }
+        InitParams { seed, generation: 0, rnc_lo: -100, rnc_hi: 100, n_wrappers: 3, vhead: 0, typed_depth: None }
     }
 
     #[test]
@@ -302,6 +424,32 @@ pub(crate) mod tests {
         assert!(pop.genome.chunks(width).all(|g| g[..symbols].iter().all(|&id| id != 7)));
         assert!(pop.rnc.iter().all(|v| (-100.0..=100.0).contains(v) && v.fract() == 0.0));
         assert!(pop.wrapper_id.iter().all(|&w| w < 3));
+    }
+
+    /// THE GOLDEN POPULATION, pinned BEFORE typed depth existed (commit f8ba1c4).
+    ///
+    /// `Config::typed_depth: None` must be the engine exactly as it was, and the
+    /// only way to assert that is a number taken from the untyped engine and
+    /// frozen. Pinned AFTER the change it would be tautological — it would record
+    /// whatever the typed code happens to do with the knob off.
+    ///
+    /// If this fails, an untyped draw moved. That is a REGRESSION, not a test to
+    /// update.
+    #[test]
+    fn the_untyped_population_is_bit_identical_to_the_pinned_golden() {
+        let layout = Layout::for_arity(64, 3, 16, 2, 10);
+        let pop = init(layout, &codes(), &params(7)).unwrap();
+        let mut h: u64 = 0;
+        for &t in &pop.genome {
+            h = mix64(h ^ u64::from(t));
+        }
+        for &v in &pop.rnc {
+            h = mix64(h ^ u64::from(v.to_bits()));
+        }
+        for &w in &pop.wrapper_id {
+            h = mix64(h ^ u64::from(w));
+        }
+        assert_eq!(h, GOLDEN_UNTYPED_POPULATION, "an untyped draw moved");
     }
 
     #[test]

@@ -79,11 +79,60 @@ the symbol table, not the search.
 That makes the A/B clean. Same engine, same selection, same pump, same islands,
 same HFF; only the table differs.
 
+## How it is built
+
+`Config::typed_depth: Option<u32>`, **default `None`** — `None` is the
+`symbolic-regression` kingdom, `Some(2)` is this one. `EVOLVE_TYPED_DEPTH`
+names it and the run card carries it, so an A/B's two arms differ by one line
+of the card diff. `Some(0)` is refused at `Engine::new` rather than read as
+"off": a ceiling of zero is a search with no transcendental in it, which is a
+different thing.
+
+The symbol table is `geneframe::typed_depth_table()` — its own kingdom, so the
+untyped rows are literally untouched. `symbols.md` states it row by row.
+
+**The engine spends a depth budget top-down rather than matching output types
+slot by slot**, which is the same predicate: both compute the largest
+transcendental count on a root-to-leaf path, which is what `engine::t_depth`
+already measured bottom-up. One `u32` per symbol (`depth_cost`) and one extra
+draw list (`sample_flat`) is the whole cost, as the spec estimated.
+
+Typed: `init` and point mutation, on the GPU and in the CPU reference, checked
+against each other bit for bit. Not typed, on purpose: the span-moving
+operators, which are left to the decode — see `symbols.md`.
+
+Two things in the spec did not survive being built, and both are corrected in
+`docs/SPEC_typed_transcendental_depth.md`: there is **no existing arity walk**
+for the sampler to read a demanded type out of (`decode_gene` runs on the host,
+long after the kernel has filled the row), and a typed refusal is **not** what
+the engine reports as `oversized` (that is a gene that decoded and was too
+big).
+
 ## Status
 
-Specified, validated against the true-model distribution, implementation in
-flight. The A/B runs at the settings that recovered 75 of 133 — 800 intake +
-400 champion, pump every 100, `cohort_merge` 10,000, gene subsets on — over at
-least three development seeds.
+**Built, tested and measured.** Full results and their caveats in
+`measurements/`; every fit's own findings are in its run card's `notes`.
 
-Results land in `measurements/` with their run cards.
+There is **no control arm**, on Andrew's instruction — "We don't need an A test
+… Just do TSR." The budget went on breadth instead: eight datasets over two
+development seeds, at the settings that recovered 75 of 133.
+
+The headline, in one line each:
+
+* **On `strogatz_bacres1` TSR fails exactly as untyped does.** No recovery,
+  same settings. A null on the outcome.
+* **`feynman_I_15_10` is the one real result, on one seed.** At seed 7014 and a
+  matched 180 s budget, TSR recovers `m₀v/sqrt(1−v²/c²)` exactly while the
+  untyped engine reports `tan(tan(log(1/cos(x_1/x_2))))` — a **depth-4 tower**,
+  the very shape TSR forbids. One seed, so not yet a kept result.
+* **`feynman_I_26_2` is NOT evidence for typing.** TSR recovers it, but so does
+  the untyped engine at the same budget. What it does establish is that the T2
+  rung is **necessary** — a ceiling at T1 would lose a law the engine can find.
+* **The T2 rung is reached in every fit** — but untyped populations reach it
+  too, so that is not a difference between the kingdoms.
+* **The pace cost is not established.** The machine was shared and a third
+  bacres1 run came out *faster* than untyped; no timing claim survives that.
+
+The one thing the spec did not foresee: at `n_genes = 3` with `gene_subsets`
+on, a refused gene does **not** kill its row. It rides along unscored, so
+typing accumulates dead weight rather than removing shapes from the population.

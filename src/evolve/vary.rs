@@ -633,6 +633,10 @@ pub struct GenParams {
     /// it; the cleanse keeps functions inside it. Crossover needs no rule: both
     /// parents already keep theirs.
     pub vhead: u32,
+    /// THE TRANSCENDENTAL CEILING, or `None` for the engine as it was. Point
+    /// mutation draws within the budget; the other operators move spans whole
+    /// and are left to the decode, which is the spec's own preference.
+    pub typed_depth: Option<u32>,
 }
 
 /// A population with its fitness (NaN = not evaluated; lower is fitter).
@@ -737,7 +741,7 @@ pub fn mutate(
     let vh = super::virtual_head(p.vhead, l).expect("the virtual head");
     let row_w = (g_n * width) as usize;
     let rnc_w = (g_n * nr) as usize;
-    let (nf, nt) = (codes.sample_functions.len() as u32, codes.sample_terminals.len() as u32);
+    let nt = codes.sample_terminals.len() as u32;
     let span = (p.rnc_hi - p.rnc_lo + 1) as u32;
     let mut next = now.clone();
     for isl in islands {
@@ -759,16 +763,34 @@ pub fn mutate(
 
             // 1. uniform point mutation
             for g in 0..g_n {
+                // THE DEPTH BUDGET, as `init` spends it: the loop below already
+                // runs positions in order and edits in place, so a position's
+                // parent is final by the time the position is reached.
+                //
+                // It is a REDUCTION, not the guarantee. A point draw fits its own
+                // slot but does not re-type the subtree beneath it, and a slot
+                // that was dead can be brought live by a later operator. The
+                // decode is what refuses those; this only stops the sampler from
+                // placing a tower on purpose.
+                let mut budget = p.typed_depth.map(|c| super::DepthBudget::new(ht as usize, c));
                 for pos in 0..ht {
                     let slot = g * width + pos;
-                    if !chance(d(slot, STREAM_MUT_HIT), isl.rates.mut_point) {
-                        continue;
+                    if chance(d(slot, STREAM_MUT_HIT), isl.rates.mut_point) {
+                        row[at(g, pos)] = if pos < vh && coin(d(slot, STREAM_MUT_KIND)) {
+                            match budget.as_ref().map(|b| b.at(pos as usize)).map_or(Some(&codes.sample_functions[..]), |left| {
+                                codes.functions_within(left)
+                            }) {
+                                Some(list) => list[below(d(slot, STREAM_MUT_SYMBOL), list.len() as u32) as usize],
+                                None => codes.sample_terminals[below(d(slot, STREAM_MUT_SYMBOL), nt) as usize],
+                            }
+                        } else {
+                            codes.sample_terminals[below(d(slot, STREAM_MUT_SYMBOL), nt) as usize]
+                        };
                     }
-                    row[at(g, pos)] = if pos < vh && coin(d(slot, STREAM_MUT_KIND)) {
-                        codes.sample_functions[below(d(slot, STREAM_MUT_SYMBOL), nf) as usize]
-                    } else {
-                        codes.sample_terminals[below(d(slot, STREAM_MUT_SYMBOL), nt) as usize]
-                    };
+                    if let Some(b) = budget.as_mut() {
+                        let id = row[at(g, pos)] as usize;
+                        b.place(pos as usize, codes.arity[id], codes.depth_cost[id]);
+                    }
                 }
             }
             // 2. inversion, inside one head
@@ -982,7 +1004,7 @@ pub(crate) mod tests {
     }
 
     fn gen_params(seed: u32, generation: u32) -> GenParams {
-        GenParams { seed, generation, rnc_lo: -100, rnc_hi: 100, cohort_merge: 0, vhead: 0 }
+        GenParams { seed, generation, rnc_lo: -100, rnc_hi: 100, cohort_merge: 0, vhead: 0, typed_depth: None }
     }
 
     #[test]
@@ -1013,7 +1035,7 @@ pub(crate) mod tests {
         // every operator on, the cleanse included — on the islands that breed.
         let rates = Rates::with_cleanse(layout, 0.5);
         let isl: Vec<Island> = islands().into_iter().map(|i| Island { rates, ..i }).collect();
-        let born = crate::evolve::InitParams { seed: 5, generation: 0, rnc_lo: -100, rnc_hi: 100, n_wrappers: 3, vhead: 8 };
+        let born = crate::evolve::InitParams { seed: 5, generation: 0, rnc_lo: -100, rnc_hi: 100, n_wrappers: 3, vhead: 8 , typed_depth: None };
         let pop = init(layout, &codes, &born).unwrap();
         let mut now = Generation { pop, fitness: (0..800).map(|r| below(draw(5, 0, r, 0, 99), 1_000_000) as f32).collect() };
         assert!(head_in_use(&now, &codes) <= 8, "born with a function past the virtual head");
@@ -1021,7 +1043,7 @@ pub(crate) mod tests {
             // the head grows by one position every 50 generations: 8, 9, 10, 11, 12
             let vhead = 8 + generation / 50;
             let before = now.clone();
-            now = vary(&now, &isl, &codes, &GenParams { seed: 5, generation, rnc_lo: -100, rnc_hi: 100, cohort_merge: 0, vhead }).unwrap();
+            now = vary(&now, &isl, &codes, &GenParams { seed: 5, generation, rnc_lo: -100, rnc_hi: 100, cohort_merge: 0, vhead, typed_depth: None }).unwrap();
             now.pop.check(&codes).unwrap();
             assert!(head_in_use(&now, &codes) <= vhead as usize, "generation {generation}: a function past virtual head {vhead}");
             // the elites are the old genes, untouched by the step to a longer head

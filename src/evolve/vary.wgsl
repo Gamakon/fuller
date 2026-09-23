@@ -32,6 +32,10 @@ struct Gen {
     rnc_id: u32,       // the "?" token, or NONE
     // The virtual head, already resolved by the host (never 0 here).
     vhead: u32,
+    // TYPED TRANSCENDENTAL DEPTH: the ceiling, or 0 for OFF, and how many
+    // depth-free functions a slot out of budget may draw from.
+    typed_depth: u32,
+    n_flat: u32,
 }
 
 // THE LANE'S OWN RULES. An island carries the fourteen variation rates it
@@ -71,6 +75,11 @@ struct Island {
     cleanse_collapse: u32,
 }
 
+// TYPED TRANSCENDENTAL DEPTH, the point mutation's half. 0 is OFF and not one
+// draw below changes. `MAX_HT` must equal `device::MAX_HT` and evolve.wgsl's.
+const MAX_HT: u32 = 256u;
+var<private> mut_budget: array<u32, 256>;
+
 @group(0) @binding(0) var<uniform> gp: Gen;
 @group(0) @binding(1) var<storage, read> sample_functions: array<u32>;
 @group(0) @binding(2) var<storage, read> sample_terminals: array<u32>;
@@ -92,6 +101,9 @@ struct Island {
 // elder, which is what keeps young material from meeting one in a tournament.
 @group(0) @binding(15) var<storage, read> cohort_now: array<u32>;
 @group(0) @binding(16) var<storage, read_write> cohort: array<u32>;
+// The typed sampler's two tables, as the init kernel has them.
+@group(0) @binding(17) var<storage, read> sample_flat: array<u32>;
+@group(0) @binding(18) var<storage, read> depth_cost: array<u32>;
 
 const STREAM_SELECT_1: u32 = 6u;
 const STREAM_SELECT_2: u32 = 7u;
@@ -523,16 +535,42 @@ fn mutate_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     fitness[row] = bitcast<f32>(NAN_BITS);
 
     // 1. uniform point mutation
+    let typed = gp.typed_depth > 0u && ht <= MAX_HT;
     for (var g = 0u; g < gp.n_genes; g = g + 1u) {
+        // The depth budget, spent through the loop that already runs in order.
+        if (typed) {
+            for (var i = 0u; i < ht; i = i + 1u) {
+                mut_budget[i] = gp.typed_depth;
+            }
+        }
+        var next_child = 1u;
         for (var pos = 0u; pos < ht; pos = pos + 1u) {
             let slot = g * width + pos;
-            if (!chance(row, slot, STREAM_MUT_HIT, isl.mut_point)) {
-                continue;
+            if (chance(row, slot, STREAM_MUT_HIT, isl.mut_point)) {
+                if (pos < vh && coin(row, slot, STREAM_MUT_KIND)) {
+                    if (typed && mut_budget[pos] == 0u) {
+                        if (gp.n_flat == 0u) {
+                            genome[at(base, g, pos)] = sample_terminals[below(row, slot, STREAM_MUT_SYMBOL, gp.n_terminals)];
+                        } else {
+                            genome[at(base, g, pos)] = sample_flat[below(row, slot, STREAM_MUT_SYMBOL, gp.n_flat)];
+                        }
+                    } else {
+                        genome[at(base, g, pos)] = sample_functions[below(row, slot, STREAM_MUT_SYMBOL, gp.n_functions)];
+                    }
+                } else {
+                    genome[at(base, g, pos)] = sample_terminals[below(row, slot, STREAM_MUT_SYMBOL, gp.n_terminals)];
+                }
             }
-            if (pos < vh && coin(row, slot, STREAM_MUT_KIND)) {
-                genome[at(base, g, pos)] = sample_functions[below(row, slot, STREAM_MUT_SYMBOL, gp.n_functions)];
-            } else {
-                genome[at(base, g, pos)] = sample_terminals[below(row, slot, STREAM_MUT_SYMBOL, gp.n_terminals)];
+            if (typed && pos < next_child) {
+                let id = genome[at(base, g, pos)];
+                let a = arity[id];
+                let child = mut_budget[pos] - min(mut_budget[pos], depth_cost[id]);
+                for (var k = 0u; k < a; k = k + 1u) {
+                    if (next_child < ht) {
+                        mut_budget[next_child] = child;
+                    }
+                    next_child = next_child + 1u;
+                }
             }
         }
     }

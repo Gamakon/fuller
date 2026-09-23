@@ -168,8 +168,28 @@ impl SymbolTable {
         SymbolCodes {
             arity: ids.clone().map(|i| self.arity(i)).collect(),
             sample_functions: ids.clone().filter(|&i| self.arity(i) > 0).collect(),
-            sample_terminals: ids.filter(|&i| self.arity(i) == 0 && !self.withheld[i as usize]).collect(),
+            sample_terminals: ids.clone().filter(|&i| self.arity(i) == 0 && !self.withheld[i as usize]).collect(),
             rnc_id: self.symbols.iter().position(|s| *s == Symbol::Rnc).map(|i| i as u32),
+            depth_cost: ids.clone().map(|i| self.depth_cost(i)).collect(),
+            sample_flat: ids.filter(|&i| self.arity(i) > 0 && self.depth_cost(i) == 0).collect(),
+        }
+    }
+
+    /// WHAT THIS SYMBOL COSTS IN TRANSCENDENTAL DEPTH — 1 for a depth-raising
+    /// function, 0 for everything else. The top-down half of the rule
+    /// [`t_depth`] measures bottom-up, and
+    /// `the_typed_table_is_the_predicate_t_depth_already_computes` is what holds
+    /// the two together.
+    ///
+    /// A COMPOUND costs what its expansion costs: `SqrtSum` is `sqrt|a + b|`,
+    /// one root on the path, so it spends one level like the `sqrt` it expands
+    /// to. Charging it zero would let a compound smuggle a level past the
+    /// ceiling that `decode_gene` would then reject.
+    pub fn depth_cost(&self, id: u32) -> u32 {
+        match self.symbols[id as usize] {
+            Symbol::Function(op) => u32::from(DEPTH_RAISING_OPS.contains(&op)),
+            Symbol::Compound(c) => u32::from(c.expansion().iter().any(|op| DEPTH_RAISING_OPS.contains(op))),
+            _ => 0,
         }
     }
 
@@ -807,6 +827,45 @@ pub struct Config {
     /// place, so the intake cannot grow for ever. 0 = off, the default; the
     /// population is then exactly what it always was.
     pub float_zone: u32,
+    /// **TSR — TRANSCENDENTAL SYMBOLIC REGRESSION** (Andrew's name for it): the
+    /// ceiling on nested transcendentals, or `None` for the engine exactly as it
+    /// was. See `kingdoms/tsr/README.md` and
+    /// `docs/SPEC_typed_transcendental_depth.md`.
+    ///
+    /// > "It's the only symbolic regression to properly handle the distance
+    /// > needed between the functions."
+    ///
+    /// Ordinary SR gives every function the same type, so `exp` accepts
+    /// `tanh`'s output as readily as it accepts `x`. TSR types the DISTANCE
+    /// between functions: the depth a term sits at becomes part of its type,
+    /// and a term too deep has no signature at all.
+    ///
+    /// `None` is the `symbolic-regression` kingdom — the untyped float op set —
+    /// and `Some(2)` is the `tsr` kingdom. Two phylogenetic spaces over ONE
+    /// engine: same selection, same pump, same islands, same HFF, only the
+    /// symbol table differs. That is what makes the A/B clean.
+    ///
+    /// The measurement behind it: across all 133 SRBench true models there are
+    /// ZERO directly nested transcendental pairs, and the depths are 78 laws at
+    /// 0, 47 at 1, THREE at 2 and NONE beyond. `log`, `tan` and `abs` never
+    /// appear in a true law at all. Meanwhile 7 of our 8 reported models are
+    /// towers the ceiling would forbid, and 23% of the sub-expressions a live
+    /// population carries would be illegal.
+    ///
+    /// `Some(2)` is the spec: the sampler draws only what the remaining budget
+    /// allows ([`super::DepthBudget`]), so a tower is never BUILT rather than
+    /// being built and penalised — which is what the `tower` objective does and
+    /// what the fold cleans up afterwards.
+    ///
+    /// **`None` IS THE DEFAULT AND MUST STAY BIT-IDENTICAL**, which
+    /// `the_untyped_population_is_bit_identical_to_the_pinned_golden` asserts
+    /// against a checksum taken before this field existed.
+    ///
+    /// The risk the A/B exists to measure: the search may need illegal shapes as
+    /// STEPPING STONES. A blob at depth 4 might be the waypoint to a depth-1
+    /// law even though no law is depth 4, and nothing in the true-model
+    /// distribution can answer that.
+    pub typed_depth: Option<u32>,
 }
 
 impl Config {
@@ -944,6 +1003,10 @@ impl Config {
             telemetry_run_id: None,
             telemetry_dataset: None,
             float_zone: 0,
+            // OFF until an A/B says otherwise. Every claim the spec makes is
+            // about the true-model distribution, and that is not the same thing
+            // as search behaviour.
+            typed_depth: None,
         }
     }
 }
@@ -1223,6 +1286,15 @@ pub struct FitResult {
     pub individuals: u64,
     pub unique_genes: u64,
     pub oversized_genes: u64,
+    /// GENES THE TRANSCENDENTAL CEILING REFUSED, over the whole fit. Counted
+    /// apart from `oversized_genes`, which is a different failure: that one
+    /// decoded and was too big, this one decoded and was too deep. 0 when
+    /// `Config::typed_depth` is None.
+    pub typed_refused: u64,
+    /// THE FINAL POPULATION'S TRANSCENDENTAL DEPTHS, `depths[d]` genes at depth
+    /// `d`, index 0 upward. What the typed arm is supposed to change, measured
+    /// rather than assumed — under a ceiling every entry past it must be 0.
+    pub depth_histogram: Vec<u64>,
     pub stopped_by: &'static str,
     pub best: Scored,
     pub math: String,
@@ -1296,6 +1368,18 @@ pub fn hff_p_value(theta: f64, m: usize) -> (f64, f64) {
     (p, hff_core::higd::log_cdf_beta_correction(theta, m) / std::f64::consts::LN_10)
 }
 
+/// THE OPS THAT RAISE TRANSCENDENTAL DEPTH — the one list [`t_depth`] measures
+/// by and [`SymbolTable::depth_cost`] spends by. Kept in lockstep with
+/// `geneframe::DEPTH_RAISING`, which names the same set by semantic id.
+///
+/// `Pow` is not here and is handled separately: it counts only when its exponent
+/// is not a whole number, which is a property of the NODE and not of the op.
+/// `SymbolTable::wide` carries no raw `Pow`, so the sampler never has to decide.
+pub const DEPTH_RAISING_OPS: [Op; 15] = [
+    Op::Abs, Op::Sqrt, Op::Log, Op::Exp, Op::Sin, Op::Cos, Op::Tan, Op::Tanh, Op::ProtectedSqrt,
+    Op::ProtectedLog, Op::ProtectedExp, Op::Asin, Op::Acos, Op::ProtectedAsin, Op::ProtectedAcos,
+];
+
 /// TRANSCENDENTAL NESTING DEPTH of a decoded gene: the most transcendental
 /// functions met on any path from the root to a leaf — exp, log, sin, cos, tan,
 /// tanh, asin, acos, Abs, sqrt (and their protected forms), and a `Pow` whose exponent is not
@@ -1310,11 +1394,10 @@ pub fn t_depth(nodes: &[GpuNode]) -> u32 {
     let counts = |i: usize| -> u32 {
         let n = &nodes[i];
         let whole = |c: usize| nodes.get(c).is_some_and(|e| e.op == Op::Num as u32 && e.konst.fract() == 0.0);
-        let t = [
-            Op::Abs, Op::Sqrt, Op::Log, Op::Exp, Op::Sin, Op::Cos, Op::Tan, Op::Tanh, Op::ProtectedSqrt, Op::ProtectedLog,
-            Op::ProtectedExp, Op::Asin, Op::Acos, Op::ProtectedAsin, Op::ProtectedAcos,
-        ];
-        u32::from(t.iter().any(|&o| o as u32 == n.op) || (n.op == Op::Pow as u32 && !whole(n.arg1 as usize)))
+        u32::from(
+            DEPTH_RAISING_OPS.iter().any(|&o| o as u32 == n.op)
+                || (n.op == Op::Pow as u32 && !whole(n.arg1 as usize)),
+        )
     };
     if nodes.is_empty() {
         return 0;
@@ -2629,6 +2712,15 @@ pub struct Engine {
     /// for the labels only when they have actually moved.
     live_cohorts: Vec<u32>,
     cohorts_stale: bool,
+    /// HOW MANY GENES THE CEILING HAS REFUSED, counted apart from `oversized`
+    /// so the A/B can say what typing costs the effective population.
+    ///
+    /// They are different failures and the spec conflates them: `oversized` is a
+    /// gene that decoded and then had more than `MAX_NODES` nodes, while this is
+    /// a gene that closed but reached past `typed_depth`. A crossover or a
+    /// transposition can land a legal span in a place that makes it illegal, and
+    /// this is where that is paid for. 0 for the whole of an untyped fit.
+    typed_refused: u64,
     /// A checkpoint to CONTINUE, taken by `fit` on its first beat. None starts a
     /// fresh search.
     resume: Option<checkpoint::Checkpoint>,
@@ -2825,6 +2917,13 @@ impl Engine {
         if config.n_pairs == 0 {
             return Err("n_pairs: a population is at least one pair of islands".into());
         }
+        // A ceiling of 0 is a search with no transcendental in it at all, which is
+        // a different thing from typing being off and is not what this knob is
+        // for. Said here rather than read as "off", which is how a fit silently
+        // runs the wrong arm of an A/B.
+        if config.typed_depth == Some(0) {
+            return Err("typed_depth: 0 would forbid every transcendental; leave it unset for the untyped engine".into());
+        }
         // THE FLOAT ZONE: the intake island is `pop_intake + float_zone` rows wide,
         // so a beam survivor is APPENDED into room the island already has rather
         // than displacing a row. The zone is rounded UP to an even number of rows
@@ -2948,7 +3047,7 @@ impl Engine {
         // HFF ON THE DEVICE, unless the host walk was asked for. Built once: the
         // pipeline is compiled here, not per generation.
         let hff = if config.hff_on_host { None } else { Some(super::hff_gpu::GpuHff::new(&evaluator)?) };
-        Ok(Engine { scored: vec![None; pop as usize], live_cohorts: Vec::new(), cohorts_stale: true, cohorts, resume, slots, config, table, layout, islands, dev, evaluator, scorer, hff, data, caps, col_max: None, snap, fold, lineage: None, telemetry: None })
+        Ok(Engine { scored: vec![None; pop as usize], typed_refused: 0, live_cohorts: Vec::new(), cohorts_stale: true, cohorts, resume, slots, config, table, layout, islands, dev, evaluator, scorer, hff, data, caps, col_max: None, snap, fold, lineage: None, telemetry: None })
     }
 
     /// Score every unevaluated row of `gen`; returns (unique genes, oversized).
@@ -2969,7 +3068,14 @@ impl Engine {
                 let tokens = &gen.pop.genome[(r * g_n + g) * width..(r * g_n + g + 1) * width];
                 let consts = &gen.pop.rnc[(r * g_n + g) * nr..(r * g_n + g + 1) * nr];
                 let nodes = decode_gene(tokens, consts, l, &self.table);
-                let fits = nodes.as_ref().is_some_and(|n| n.len() <= MAX_NODES);
+                let depth = nodes.as_deref().map_or(0, t_depth);
+                // THE CEILING, ON THE GENE AS IT NOW STANDS. The sampler draws
+                // within budget, but crossover and transposition move a span
+                // into a gene where it no longer fits, and the spec's own
+                // preference is to let that land and fail here rather than
+                // refuse the move and lose the diversity silently.
+                let over = self.config.typed_depth.is_some_and(|c| depth > c);
+                let fits = nodes.as_ref().is_some_and(|n| n.len() <= MAX_NODES) && !over;
                 let signature: Vec<u32> = match &nodes {
                     Some(n) if fits => n.iter().flat_map(|x| [x.op, x.arg0, x.arg1, x.konst.to_bits()]).collect(),
                     _ => vec![u32::MAX, (r * g_n + g) as u32],
@@ -2982,10 +3088,15 @@ impl Engine {
                     } else {
                         // keeps gene indices and batch slots aligned
                         batch.push(&[GpuNode { op: Op::Num as u32, arg0: 0, arg1: 0, konst: 0.0 }]);
-                        oversized += u64::from(nodes.is_some());
+                        // Counted apart: over the ceiling is not over MAX_NODES.
+                        if over {
+                            self.typed_refused += 1;
+                        } else {
+                            oversized += u64::from(nodes.is_some());
+                        }
                     }
                     gene_ok.push(fits);
-                    gene_tower.push(nodes.as_deref().map_or(0, t_depth));
+                    gene_tower.push(depth);
                 }
                 genes.push(at);
             }
@@ -3288,6 +3399,7 @@ impl Engine {
         super::init(self.layout, &self.table.codes(), &InitParams {
             seed: self.config.seed, generation: key, rnc_lo: self.config.rnc_lo, rnc_hi: self.config.rnc_hi, n_wrappers: WRAPPERS.len() as u32,
             vhead: self.vhead_at(generation),     // fresh rows are born at today's virtual head
+            typed_depth: self.config.typed_depth, // and under today's ceiling
         })
     }
 
@@ -3557,7 +3669,12 @@ impl Engine {
         for g in 0..g_n {
             let tokens = &gen.pop.genome[(row * g_n + g) * width..(row * g_n + g + 1) * width];
             let consts = &gen.pop.rnc[(row * g_n + g) * nr..(row * g_n + g + 1) * nr];
-            match decode_gene(tokens, consts, l, &self.table).filter(|n| n.len() <= MAX_NODES) {
+            // The ceiling applies here too, or a gene `evaluate` refused could
+            // still be confirmed at the stop bar and reported as the model.
+            match decode_gene(tokens, consts, l, &self.table)
+                .filter(|n| n.len() <= MAX_NODES)
+                .filter(|n| self.config.typed_depth.is_none_or(|c| t_depth(n) <= c))
+            {
                 Some(nodes) => {
                     gene_tower.push(t_depth(&nodes));
                     batch.push(&nodes);
@@ -3721,7 +3838,7 @@ impl Engine {
                 let (r, g) = owner[e];
                 let tokens = &mut gen.pop.genome[(r * g_n + g) * width..(r * g_n + g + 1) * width];
                 let consts = &mut gen.pop.rnc[(r * g_n + g) * nr..(r * g_n + g + 1) * nr];
-                let status = write_back(tokens, consts, l, vhead, &self.table, &grafts, &state.table);
+                let status = write_back(tokens, consts, l, vhead, &self.table, &grafts, &state.table, self.config.typed_depth);
                 counts.count(status);
                 // WHAT IT DID, not only that it did something. Only on `Grafted`:
                 // the gene really carries the named constant now, and the parse
@@ -4731,6 +4848,30 @@ impl Engine {
         Ok(())
     }
 
+    /// THE POPULATION'S TRANSCENDENTAL DEPTHS, `out[d]` genes at depth `d`.
+    ///
+    /// The A/B's third deliverable: what typing does to the shapes the search
+    /// actually carries, as opposed to what it does to the shapes a true law
+    /// has. A gene that does not decode is not in the histogram — it has no
+    /// depth, and counting it as 0 would make an unclosed population look flat.
+    fn depth_histogram(&self, gen: &Generation) -> Vec<u64> {
+        let l = self.layout;
+        let (width, nr) = (l.gene_width() as usize, l.n_rnc as usize);
+        let mut out: Vec<u64> = Vec::new();
+        for g in 0..(l.pop * l.n_genes) as usize {
+            let tokens = &gen.pop.genome[g * width..(g + 1) * width];
+            let consts = &gen.pop.rnc[g * nr..(g + 1) * nr];
+            if let Some(nodes) = decode_gene(tokens, consts, l, &self.table) {
+                let d = t_depth(&nodes) as usize;
+                if out.len() <= d {
+                    out.resize(d + 1, 0);
+                }
+                out[d] += 1;
+            }
+        }
+        out
+    }
+
     fn report_cohorts(&mut self, gen: &Generation) -> Result<Option<Vec<u32>>, String> {
         if self.cohorts.is_empty() {
             return Ok(None);
@@ -5141,7 +5282,7 @@ impl Engine {
         let c = self.config.clone();
         let started = Instant::now();
         let mut timing = Timing { vary: 0.0, read: 0.0, decode: 0.0, evaluate: 0.0, score: 0.0, hff: 0.0, pump: 0.0, cross: 0.0, snap: 0.0, fold: 0.0, genealogy: 0.0, beam: 0.0 };
-        self.dev.init(&InitParams { seed: c.seed, generation: 0, rnc_lo: c.rnc_lo, rnc_hi: c.rnc_hi, n_wrappers: WRAPPERS.len() as u32, vhead: self.vhead_at(0) })?;
+        self.dev.init(&InitParams { seed: c.seed, generation: 0, rnc_lo: c.rnc_lo, rnc_hi: c.rnc_hi, n_wrappers: WRAPPERS.len() as u32, vhead: self.vhead_at(0), typed_depth: c.typed_depth })?;
         let mut gen = self.dev.read_generation()?;
         gen.fitness.fill(f32::NAN);
         let (mut unique, mut oversized) = self.evaluate(&mut gen, &mut timing)?;
@@ -5334,7 +5475,7 @@ impl Engine {
             }
             generation += 1;
             let t = Instant::now();
-            self.dev.vary(&self.islands, &GenParams { seed: c.seed, generation, rnc_lo: c.rnc_lo, rnc_hi: c.rnc_hi, cohort_merge: c.cohort_merge, vhead: self.vhead_at(generation) })?;
+            self.dev.vary(&self.islands, &GenParams { seed: c.seed, generation, rnc_lo: c.rnc_lo, rnc_hi: c.rnc_hi, cohort_merge: c.cohort_merge, vhead: self.vhead_at(generation), typed_depth: c.typed_depth })?;
             // Only elites arrive evaluated: the kernel puts the j-th fittest row
             // of an island (ties to the lower row) in the island's j-th row.
             let mut carried: Vec<(usize, Option<Scored>)> = Vec::new();
@@ -5658,6 +5799,8 @@ impl Engine {
             individuals,
             unique_genes: unique,
             oversized_genes: oversized,
+            typed_refused: self.typed_refused,
+            depth_histogram: self.depth_histogram(&gen),
             stopped_by,
             math: self.math_of(&gen, row, &best),
             best,
@@ -5747,6 +5890,71 @@ mod tests {
         assert_eq!(t_depth(&nodes_of(r#"(ProtectedDiv (Cos (Var "x_0")) (Tan (Var "x_1")))"#)), 1);
     }
 
+    /// THE TYPED TABLE AND `t_depth` ARE ONE PREDICATE.
+    ///
+    /// `docs/SPEC_typed_transcendental_depth.md` states the typing rules as a
+    /// symbol table — terminals `out {F}`, arithmetic absorbing, transcendentals
+    /// raising with no `T2` row — and then gives the five expressions it admits
+    /// and forbids. Those rules compute the largest transcendental count on any
+    /// root-to-leaf path, which is exactly what [`t_depth`] already measures.
+    ///
+    /// This is the test that lets the engine check typing with `t_depth` rather
+    /// than a second traversal: if the two ever disagree, the sampler would be
+    /// filling to one rule while the decoder rejected by another.
+    #[test]
+    fn the_typed_table_is_the_predicate_t_depth_already_computes() {
+        // Every depth-raising row of the typed kingdom is a function `t_depth`
+        // counts, and every op `t_depth` counts has depth-raising rows.
+        let typed = crate::geneframe::typed_depth_table();
+        let raising: std::collections::BTreeSet<&str> = typed
+            .kingdom(crate::geneframe::TYPED_SR)
+            .into_iter()
+            .filter(|s| {
+                let (i, _) = s.arity.inputs.iter().next().expect("a row with inputs");
+                let (o, _) = s.arity.outputs.iter().next().expect("a row with an output");
+                s.arity.total_in() == 1 && o.depth() > i.depth()
+            })
+            .map(|s| s.semantic_id.as_str())
+            .collect();
+        assert_eq!(
+            raising,
+            crate::geneframe::DEPTH_RAISING.iter().copied().collect(),
+            "the typed table's raising rows and DEPTH_RAISING must be one set"
+        );
+        for sem in &raising {
+            let one = crate::karva::semantic_to_math(sem, &[r#"(Var "x_0")"#.to_string()])
+                .unwrap_or_else(|e| panic!("{sem}: {e}"));
+            assert_eq!(t_depth(&nodes_of(&one)), 1, "{sem} must raise depth by one in t_depth too");
+        }
+
+        // THE SPEC'S OWN TABLE, expression by expression.
+        let cases: [(&str, u32, bool); 6] = [
+            // m v^2 / 2 — flat, depth 0.
+            (r#"(Div (Mul (Var "x_0") (Pow2 (Var "x_1"))) (Num 2.0))"#, 0, true),
+            // sqrt(1 - v^2/c^2) — depth 1.
+            (r#"(Sqrt (Sub (Num 1.0) (Div (Pow2 (Var "x_1")) (Pow2 (Var "x_2")))))"#, 1, true),
+            // m_0 / sqrt(1 - v^2/c^2) — still depth 1 through the divide.
+            (
+                r#"(Div (Var "x_0") (Sqrt (Sub (Num 1.0) (Div (Pow2 (Var "x_1")) (Pow2 (Var "x_2"))))))"#,
+                1,
+                true,
+            ),
+            // exp(-(theta/sqrt 2)^2) — DEPTH 2 REACHED THROUGH ARITHMETIC, and
+            // legal. This is the row the T2 rung exists for; a strict ceiling at
+            // T1 would lose the three depth-2 laws.
+            (r#"(Exp (Neg (Pow2 (Div (Var "x_0") (Sqrt (Num 2.0))))))"#, 2, true),
+            // tanh(exp(cos(log x))) — four, and forbidden.
+            (r#"(Tanh (Exp (Cos (Log (Var "x_0")))))"#, 4, false),
+            // The measured blob's shape: five, forbidden.
+            (r#"(Exp (Tanh (ProtectedLog (Cos (Sqrt (Var "x_0"))))))"#, 5, false),
+        ];
+        for (math, depth, legal) in cases {
+            let got = t_depth(&nodes_of(math));
+            assert_eq!(got, depth, "{math}");
+            assert_eq!(got <= 2, legal, "{math} legality under a ceiling of 2");
+        }
+    }
+
     /// The wide table samples tan and the protected inverse-trig functions, a
     /// population drawn from it keeps the structural rules, and a gene that
     /// holds one decodes to the Math constructor of the same name.
@@ -5765,7 +5973,7 @@ mod tests {
         assert!(!table.symbols.contains(&Symbol::Function(Op::Asin)) && !table.symbols.contains(&Symbol::Function(Op::Acos)));
 
         let layout = Layout::for_arity(400, 2, 12, table.max_arity(), 5);
-        let p = crate::evolve::InitParams { seed: 11, generation: 0, rnc_lo: -10, rnc_hi: 10, n_wrappers: 3, vhead: 0 };
+        let p = crate::evolve::InitParams { seed: 11, generation: 0, rnc_lo: -10, rnc_hi: 10, n_wrappers: 3, vhead: 0 , typed_depth: None };
         let pop = crate::evolve::init(layout, &codes, &p).unwrap();
         pop.check(&codes).unwrap();
         assert_eq!(pop, crate::evolve::init(layout, &codes, &p).unwrap(), "same seed, same population");
@@ -5871,7 +6079,7 @@ mod tests {
     fn a_gene_without_a_compound_decodes_exactly_as_it_always_did() {
         let table = SymbolTable::wide(3);
         let layout = Layout::for_arity(300, 3, 34, table.max_arity(), 10);
-        let pop = crate::evolve::init(layout, &table.codes(), &crate::evolve::InitParams { seed: 9, generation: 0, rnc_lo: -5, rnc_hi: 5, n_wrappers: 3, vhead: 0 }).unwrap();
+        let pop = crate::evolve::init(layout, &table.codes(), &crate::evolve::InitParams { seed: 9, generation: 0, rnc_lo: -5, rnc_hi: 5, n_wrappers: 3, vhead: 0 , typed_depth: None }).unwrap();
         let (width, nr) = (layout.gene_width() as usize, layout.n_rnc as usize);
         let mut decoded = 0;
         for (g, gene) in pop.genome.chunks(width).enumerate() {
@@ -5943,7 +6151,7 @@ mod tests {
     fn a_population_with_compounds_keeps_the_rules_and_decodes() {
         let table = SymbolTable::wide(4).with_compounds();
         let layout = Layout::for_arity(400, 3, 34, table.max_arity(), 10);
-        let pop = crate::evolve::init(layout, &table.codes(), &crate::evolve::InitParams { seed: 3, generation: 0, rnc_lo: -5, rnc_hi: 5, n_wrappers: 3, vhead: 0 }).unwrap();
+        let pop = crate::evolve::init(layout, &table.codes(), &crate::evolve::InitParams { seed: 3, generation: 0, rnc_lo: -5, rnc_hi: 5, n_wrappers: 3, vhead: 0 , typed_depth: None }).unwrap();
         pop.check(&table.codes()).unwrap();
         let (width, nr) = (layout.gene_width() as usize, layout.n_rnc as usize);
         let (mut closed, mut with_compound) = (0, 0);
@@ -6120,6 +6328,92 @@ mod tests {
     ///
     /// The blob is `Tanh(Add(x_0, 40))`: tanh saturates, so on any rows the toy
     /// data holds it is 1.0 to eleven decimals — four positions wearing a 1. The
+    /// AN ILLEGAL SPAN THAT LANDS IS REFUSED, NOT DECODED WRONG.
+    ///
+    /// The spec prefers letting crossover and transposition move a span into a
+    /// gene where it no longer types, and letting the decode fail it, over
+    /// refusing the move — "the row scores `PI` and dies in the next
+    /// tournament". This is the test that the path actually does that: a tower
+    /// planted by hand, exactly as a crossover would leave one, must be
+    /// REFUSED, must be counted APART from `oversized`, and must not be scored.
+    ///
+    /// It also pins the thing that would be worst: the gene still decodes
+    /// perfectly well to the right tree. Nothing about it is malformed. The
+    /// ONLY thing wrong with it is its depth, so an engine that did not check
+    /// would score it and never notice.
+    #[test]
+    fn a_tower_that_lands_in_a_gene_is_refused_and_counted_apart() {
+        let l_of = |c: &Config| c.clone();
+        // Tanh(Exp(Cos(x_0))) — depth 3, closes, decodes, and is a tower.
+        let plant = |engine: &Engine, gen: &mut Generation| {
+            let l = engine.layout;
+            let width = l.gene_width() as usize;
+            let tanh = engine.table.function_id(Op::Tanh).expect("Tanh");
+            let exp = engine.table.function_id(Op::ProtectedExp).expect("ProtectedExp");
+            let cos = engine.table.function_id(Op::Cos).expect("Cos");
+            let x0 = engine.table.symbols.iter().position(|s| *s == Symbol::Input(0)).expect("x_0") as u32;
+            let gene = &mut gen.pop.genome[0..width];
+            for (i, &t) in [tanh, exp, cos, x0].iter().enumerate() {
+                gene[i] = t;
+            }
+            for slot in gene[4..(l.head + l.tail) as usize].iter_mut() {
+                *slot = x0;
+            }
+            for slot in gene[(l.head + l.tail) as usize..width].iter_mut() {
+                *slot = 0;
+            }
+        };
+
+        // With the ceiling OFF the tower is scored like anything else.
+        let mut off = Engine::new(Config { typed_depth: None, ..toy_config(20, 20) }, toy_data()).expect("engine");
+        let mut gen = drawn_generation(&off, 11);
+        plant(&off, &mut gen);
+        let l = off.layout;
+        let (width, nr) = (l.gene_width() as usize, l.n_rnc as usize);
+        let nodes = decode_gene(&gen.pop.genome[0..width], &gen.pop.rnc[0..nr], l, &off.table)
+            .expect("the planted tower DECODES — nothing about it is malformed");
+        assert_eq!(t_depth(&nodes), 3, "the planted gene is a depth-3 tower");
+        gen.fitness.fill(f32::NAN);
+        let mut timing = fresh_timing();
+        let (_, oversized_off) = off.evaluate(&mut gen, &mut timing).expect("evaluate");
+        assert_eq!(off.typed_refused, 0, "an untyped fit never refuses on type");
+        assert!(gen.fitness[0].is_finite(), "with the ceiling off the tower is scored");
+
+        // With the ceiling ON the same gene is refused, counted apart, unscored.
+        let mut on = Engine::new(Config { typed_depth: Some(2), ..l_of(&toy_config(20, 20)) }, toy_data()).expect("engine");
+        let mut gen = drawn_generation(&on, 11);
+        plant(&on, &mut gen);
+        gen.fitness.fill(f32::NAN);
+        let mut timing = fresh_timing();
+        let (_, oversized_on) = on.evaluate(&mut gen, &mut timing).expect("evaluate");
+        assert!(on.typed_refused >= 1, "the tower must be refused by the ceiling");
+        assert_eq!(
+            (oversized_off, oversized_on),
+            (0, 0),
+            "a typed refusal is NOT an oversized gene and must not be counted as one"
+        );
+        // AND THE REFUSED GENE IS STILL IN THE POPULATION, unscored.
+        //
+        // This is the mechanism that explains every TSR measurement's depth
+        // histogram, and it is worth an assertion rather than a paragraph: the
+        // row is a CHROMOSOME of `n_genes`, so one refused gene does not kill
+        // it. The row scores on its other genes and the illegal one rides
+        // along -- never scored, never removed, still there to be counted.
+        //
+        // So a typed run's histogram showing genes past the ceiling is NOT a
+        // leak in the check. Those entries ARE the refused genes. The spec's
+        // "the row scores PI and dies in the next tournament" holds only when
+        // every gene of the row is illegal.
+        assert!(on.config.n_genes > 1, "the riding-along mechanism needs a multi-gene chromosome");
+        let still_there = decode_gene(&gen.pop.genome[0..width], &gen.pop.rnc[0..nr], l, &on.table)
+            .expect("the refused gene is untouched, and still decodes");
+        assert_eq!(
+            t_depth(&still_there),
+            3,
+            "a refusal must not rewrite the gene -- it is left in place, unscored"
+        );
+    }
+
     /// gene is `Mul(x_0, Tanh(Add(x_0, 40)))` and what must come back is
     /// `Mul(x_0, ?)` with `?` reading 1.
     #[test]
@@ -7320,7 +7614,7 @@ mod tests {
     /// A generation with every row evaluated: a seeded population and a fitness
     /// drawn per row (distinct streams of the engine's own generator).
     fn drawn_generation(engine: &Engine, seed: u32) -> Generation {
-        let p = InitParams { seed, generation: 0, rnc_lo: -100, rnc_hi: 100, n_wrappers: WRAPPERS.len() as u32, vhead: 0 };
+        let p = InitParams { seed, generation: 0, rnc_lo: -100, rnc_hi: 100, n_wrappers: WRAPPERS.len() as u32, vhead: 0 , typed_depth: None };
         let pop = crate::evolve::init(engine.layout, &engine.table.codes(), &p).expect("init");
         let fitness = (0..engine.layout.pop).map(|r| crate::evolve::below(crate::evolve::draw(seed, 0, r, 0, 99), 1_000_000) as f32 * 1e-6).collect();
         Generation { pop, fitness }

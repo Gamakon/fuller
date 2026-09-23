@@ -211,6 +211,12 @@ pub enum WriteBack {
     UnmappableOp,
     /// The rewritten expression does not close within head + tail.
     NotClosed,
+    /// THE GRAFT'S TYPES DO NOT CLOSE: the rewritten gene reaches past
+    /// `Config::typed_depth`. Snap's own templates carry roots and inverses, so
+    /// a graft can add a level to a gene that was already at the ceiling — the
+    /// write-back refuses it exactly as it refuses one that overflows the head,
+    /// and the gene is left as it was.
+    TypesDoNotClose,
 }
 
 /// The gene symbol of a template operator; `Pow` is the caller's.
@@ -323,6 +329,7 @@ pub fn write_back(
     table: &SymbolTable,
     sites: &[(usize, Hit)],
     snap: &SnapTable,
+    typed_depth: Option<u32>,
 ) -> WriteBack {
     let codes = table.codes();
     let Some(tree) = GeneTree::of(tokens, layout, &codes) else { return WriteBack::NotClosed };
@@ -366,6 +373,18 @@ pub fn write_back(
         Err(Unfit::DcOversize) => WriteBack::NoRncSlot,
         Ok(()) if before == tokens && new_rnc.iter().zip(rnc.iter()).all(|(a, b)| a.to_bits() == b.to_bits()) => WriteBack::Unchanged,
         Ok(()) => {
+            // THE TYPES MUST CLOSE, beside the head fitting and the expression
+            // closing. `relevel` has already written the new gene, so a refusal
+            // puts the old one back — on anything but `Grafted` the gene is
+            // exactly as it was, which is this function's contract.
+            let over = typed_depth.is_some_and(|c| {
+                super::engine::decode_gene(tokens, &new_rnc, layout, table)
+                    .is_some_and(|n| super::engine::t_depth(&n) > c)
+            });
+            if over {
+                tokens.copy_from_slice(&before);
+                return WriteBack::TypesDoNotClose;
+            }
             rnc.copy_from_slice(&new_rnc);
             WriteBack::Grafted
         }
@@ -435,6 +454,8 @@ pub struct SnapCounts {
     pub no_rnc_slot: u64,
     pub unmappable_op: u64,
     pub not_closed: u64,
+    /// Grafts the transcendental ceiling refused. 0 for an untyped fit.
+    pub types_do_not_close: u64,
     /// Rows whose genome changed (re-scored by the next evaluation).
     pub rows_changed: u64,
     pub seconds: f64,
@@ -458,6 +479,7 @@ impl SnapCounts {
             WriteBack::NoRncSlot => &mut self.no_rnc_slot,
             WriteBack::UnmappableOp => &mut self.unmappable_op,
             WriteBack::NotClosed => &mut self.not_closed,
+            WriteBack::TypesDoNotClose => &mut self.types_do_not_close,
         } += 1;
     }
 
@@ -510,6 +532,7 @@ impl SnapCounts {
             (&mut self.no_rnc_slot, beat.no_rnc_slot),
             (&mut self.unmappable_op, beat.unmappable_op),
             (&mut self.not_closed, beat.not_closed),
+            (&mut self.types_do_not_close, beat.types_do_not_close),
             (&mut self.rows_changed, beat.rows_changed),
         ];
         for (total, n) in pairs {
@@ -533,7 +556,7 @@ impl SnapCounts {
     /// device>\t<refused by f64>\t<written back>\t<aborted: reason=n/...>`.
     pub fn line(&self) -> String {
         format!(
-            "SNAP\t{}\t{}\t{}\t{}\t{}\t{}\thead_oversize={}/no_rnc_slot={}/unmappable_op={}/not_closed={}/unchanged={}/model_oversize={}",
+            "SNAP\t{}\t{}\t{}\t{}\t{}\t{}\thead_oversize={}/no_rnc_slot={}/unmappable_op={}/not_closed={}/types_do_not_close={}/unchanged={}/model_oversize={}",
             self.beats,
             self.genes_examined,
             self.literals_matched,
@@ -544,6 +567,7 @@ impl SnapCounts {
             self.no_rnc_slot,
             self.unmappable_op,
             self.not_closed,
+            self.types_do_not_close,
             self.unchanged,
             self.model_oversize
         )
@@ -662,14 +686,14 @@ mod tests {
             let drawn = g.pop.genome.chunks(layout.gene_width() as usize).any(|gene| gene[..symbols].iter().any(|id| *id >= first_named));
             assert!(!drawn, "{when}: a withheld named constant was drawn");
         };
-        let pop = init(layout, &codes, &InitParams { seed: 5, generation: 0, rnc_lo: -100, rnc_hi: 100, n_wrappers: 3, vhead: 0 }).unwrap();
+        let pop = init(layout, &codes, &InitParams { seed: 5, generation: 0, rnc_lo: -100, rnc_hi: 100, n_wrappers: 3, vhead: 0 , typed_depth: None }).unwrap();
         let mut now = Generation { fitness: vec![0.0; 400], pop };
         never(&now, "init");
         // every operator on, the cleanse included — on the islands that breed.
         let rates = Rates::with_cleanse(layout, 0.5);
         let islands = [Island { lo: 0, hi: 300, elites: 2, tournsize: 20, arrivals: 0, arrival_children: 0, open_fight: false, cohort_merge: 0, rates }, Island { lo: 300, hi: 400, elites: 2, tournsize: 7, arrivals: 0, arrival_children: 0, open_fight: false, cohort_merge: 0, rates }];
         for generation in 1..=200 {
-            now = vary(&now, &islands, &codes, &GenParams { seed: 5, generation, rnc_lo: -100, rnc_hi: 100, cohort_merge: 0, vhead: 0 }).unwrap();
+            now = vary(&now, &islands, &codes, &GenParams { seed: 5, generation, rnc_lo: -100, rnc_hi: 100, cohort_merge: 0, vhead: 0, typed_depth: None }).unwrap();
             now.pop.check(&codes).unwrap();
             never(&now, "vary");
             for (r, f) in now.fitness.iter_mut().enumerate() {
@@ -714,7 +738,7 @@ mod tests {
         let sites = [(offered[0].0, pi)];
 
         let (before_tokens, before_rnc) = (tokens.clone(), rnc.clone());
-        assert_eq!(write_back(&mut tokens, &mut rnc, layout, layout.head, &t, &sites, &snap), WriteBack::Grafted);
+        assert_eq!(write_back(&mut tokens, &mut rnc, layout, layout.head, &t, &sites, &snap, None), WriteBack::Grafted);
         assert_ne!(tokens, before_tokens);
         // The rewritten gene IS x0 * pi + 5 * x1, in f64, and the other "?" still
         // reads ITS constant (the Dc domain was rebuilt: it was the third "?").
@@ -730,7 +754,7 @@ mod tests {
 
         // Deterministic: the same inputs, the same gene.
         let (mut again_tokens, mut again_rnc) = (before_tokens, before_rnc);
-        assert_eq!(write_back(&mut again_tokens, &mut again_rnc, layout, layout.head, &t, &sites, &snap), WriteBack::Grafted);
+        assert_eq!(write_back(&mut again_tokens, &mut again_rnc, layout, layout.head, &t, &sites, &snap, None), WriteBack::Grafted);
         assert_eq!((again_tokens, bits(&again_rnc)), (tokens, bits(&rnc)));
     }
 
@@ -751,7 +775,7 @@ mod tests {
             for negative in [false, true] {
                 let hit = Hit { entry, negative };
                 let (mut tokens, mut rnc) = (base_tokens.clone(), base_rnc.clone());
-                let status = write_back(&mut tokens, &mut rnc, layout, layout.head, &t, &[(2, hit)], &snap);
+                let status = write_back(&mut tokens, &mut rnc, layout, layout.head, &t, &[(2, hit)], &snap, None);
                 *census.entry(format!("{status:?}")).or_insert(0usize) += 1;
                 if status != WriteBack::Grafted {
                     assert!(tokens == base_tokens && bits(&rnc) == bits(&base_rnc), "{status:?} changed the gene");
@@ -774,12 +798,15 @@ mod tests {
     fn every_abort_leaves_the_gene_and_its_constants_bit_identical() {
         let snap = lattice();
         let t = table(3, &snap);
-        let refused = |math: &str, layout: Layout, vhead: u32, hit: Hit, want: WriteBack| {
+        let refused_under = |math: &str, layout: Layout, vhead: u32, hit: Hit, want: WriteBack, ceiling: Option<u32>| {
             let (mut tokens, mut rnc) = gene_of(math, layout, &t, 0.0);
             let (before_tokens, before_rnc) = (tokens.clone(), bits(&rnc));
             let sites: Vec<(usize, Hit)> = offered_sites(&tokens, &rnc, layout, &t).into_iter().map(|(site, _)| (site, hit)).collect();
-            assert_eq!(write_back(&mut tokens, &mut rnc, layout, vhead, &t, &sites, &snap), want, "{math}");
+            assert_eq!(write_back(&mut tokens, &mut rnc, layout, vhead, &t, &sites, &snap, ceiling), want, "{math}");
             assert_eq!((tokens, bits(&rnc)), (before_tokens, before_rnc), "{want:?} changed the gene");
+        };
+        let refused = |math: &str, layout: Layout, vhead: u32, hit: Hit, want: WriteBack| {
+            refused_under(math, layout, vhead, hit, want, None);
         };
         // 2 pi: a Mul, a "?" and pi where 44/7 was.
         let two_pi = snap.nearest_in(44.0 / 7.0, Context::Algebraic, TOL, LitMode::F64).expect("44/7 snaps");
@@ -797,7 +824,7 @@ mod tests {
         let wide = Layout::for_arity(1, 1, 24, t.max_arity(), 10);
         let unmappable = (0..snap.len() as u32).map(|entry| Hit { entry, negative: false }).find(|hit| {
             let (mut tokens, mut rnc) = gene_of(X0_TIMES_22_OVER_7, wide, &t, 0.0);
-            write_back(&mut tokens, &mut rnc, wide, wide.head, &t, &[(2, *hit)], &snap) == WriteBack::UnmappableOp
+            write_back(&mut tokens, &mut rnc, wide, wide.head, &t, &[(2, *hit)], &snap, None) == WriteBack::UnmappableOp
         });
         let hit = unmappable.expect("the lattice has an entry the gene symbols cannot write");
         eprintln!("unmappable_op: {}", snap.maths[hit.entry as usize]);
@@ -808,6 +835,42 @@ mod tests {
         refused(r#"(ProtectedDiv (Num 44.0) (Num 7.0))"#, tiny, tiny.head, Hit { negative: !two_pi.negative, ..two_pi }, WriteBack::NotClosed);
         // unchanged: no constant subtree to snap.
         refused(r#"(Mul (Var "x_0") (Add (Var "x_1") (Num 3.0)))"#, roomy, roomy.head, two_pi, WriteBack::Unchanged);
+
+        // TYPES DO NOT CLOSE: a lattice entry whose template carries a root,
+        // grafted UNDER a Sqrt that already spends the only level a ceiling of
+        // 1 allows. The same graft is accepted with the ceiling off and at 2,
+        // so the refusal is the ceiling and not the graft.
+        let rooted = (0..snap.len() as u32)
+            .map(|entry| Hit { entry, negative: false })
+            .find(|hit| {
+                let host = r#"(ProtectedSqrt (Mul (Var "x_0") (ProtectedDiv (Num 44.0) (Num 7.0))))"#;
+                let (mut tokens, mut rnc) = gene_of(host, wide, &t, 0.0);
+                let sites: Vec<(usize, Hit)> =
+                    offered_sites(&tokens, &rnc, wide, &t).into_iter().map(|(s, _)| (s, *hit)).collect();
+                if sites.is_empty() {
+                    return false;
+                }
+                // grafts cleanly with no ceiling ...
+                if write_back(&mut tokens, &mut rnc, wide, wide.head, &t, &sites, &snap, None) != WriteBack::Grafted {
+                    return false;
+                }
+                // ... and the result is deeper than one level.
+                decode_gene(&tokens, &rnc, wide, &t).is_some_and(|n| crate::evolve::engine::t_depth(&n) > 1)
+            });
+        if let Some(hit) = rooted {
+            let host = r#"(ProtectedSqrt (Mul (Var "x_0") (ProtectedDiv (Num 44.0) (Num 7.0))))"#;
+            eprintln!("types_do_not_close: {}", snap.maths[hit.entry as usize]);
+            refused_under(host, wide, wide.head, hit, WriteBack::TypesDoNotClose, Some(1));
+            // and the SAME graft lands when the ceiling has room for it
+            let (mut tokens, mut rnc) = gene_of(host, wide, &t, 0.0);
+            let sites: Vec<(usize, Hit)> =
+                offered_sites(&tokens, &rnc, wide, &t).into_iter().map(|(s, _)| (s, hit)).collect();
+            assert_eq!(
+                write_back(&mut tokens, &mut rnc, wide, wide.head, &t, &sites, &snap, Some(3)),
+                WriteBack::Grafted,
+                "the ceiling, not the graft, is what refused it"
+            );
+        }
     }
 
     /// 600 rows, x in 1 .. 2.
