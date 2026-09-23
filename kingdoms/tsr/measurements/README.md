@@ -21,8 +21,8 @@ reported because it exists, not because it was needed.
 ## The headline
 
 **On strogatz_bacres1 — the problem the untyped engine has failed on all week —
-TSR fails too.** Same settings, same seed, no recovery, and it costs about 10%
-of the pace. That is a null on the outcome, and it is the first thing to say.
+TSR fails too.** Same settings, same seed, no recovery. That is a null on the
+outcome, and it is the first thing to say.
 
 What DID change there is the population's shape: genes past depth 2 fell from
 178 to 78, and the reported model is depth-2 legal where the prior untyped
@@ -248,11 +248,27 @@ and would need its own measurement.
 
 ## What the ceiling costs
 
-The pace figure comes from **bacres1 only** — 29.6 vs 26.9 ms/generation, about
-**10%** — because that is the one problem here with an untyped run at matched
-settings to compare against. The Feynman fits have **no untyped pace
-comparison** and none should be inferred; their ms/generation is dominated by
-75,000 rows against bacres1's 300.
+**The pace cost is not established, and an earlier draft of this file
+overstated it.** Three bacres1 runs on the same machine, same settings, same
+seed, differing only in budget and in what else the machine was doing:
+
+| run | budget | ms/generation |
+|---|---|---|
+| untyped | 420 s | 26.9 |
+| TSR | 420 s | 29.6 |
+| TSR | 180 s | **24.9** |
+
+The 420 s pair suggested a 10% tax. The 180 s TSR run is **faster than the
+untyped run**, which that reading cannot explain. The machine was running other
+agents' fits for part of this session, so **load, not typing, dominates these
+numbers** and no pace claim is supported by them. Measuring the pace cost
+properly needs a quiet machine and matched budgets, and was not done.
+
+What the per-draw cost *should* be is one comparison and one table lookup, as
+the spec predicted; that is a claim about the code, not a measurement.
+
+The Feynman fits have **no untyped pace comparison at all** and none should be
+inferred; their ms/generation is dominated by 75,000 rows against bacres1's 300.
 
 Refusals run **2.5–5.3% of gene-slots per generation** across the fits.
 Against the spec's estimate of "one `u32` per symbol, one comparison per draw",
@@ -271,3 +287,7 @@ distribution.
 4. **Meeting the stop bar is not the same as recovering the law.** Every claim
    of recovery above was checked by reading the FORM against the true law, as
    the skill file requires.
+5. **The machine was shared.** Other agents ran fits on this GPU during the
+   sweep. One TSR fit (bacres1 in the sweep) died at 79 s of its 180 s budget
+   with no error and did not reproduce by hand, so it is recorded as external.
+   No timing number here should be read as a clean measurement of pace.
