@@ -662,7 +662,7 @@ mod tests {
             let drawn = g.pop.genome.chunks(layout.gene_width() as usize).any(|gene| gene[..symbols].iter().any(|id| *id >= first_named));
             assert!(!drawn, "{when}: a withheld named constant was drawn");
         };
-        let pop = init(layout, &codes, &InitParams { seed: 5, generation: 0, rnc_lo: -100, rnc_hi: 100, n_wrappers: 3, vhead: 0 }).unwrap();
+        let pop = init(layout, &codes, &InitParams { seed: 5, generation: 0, rnc_lo: -100, rnc_hi: 100, n_wrappers: 3, vhead: 0 , typed_depth: None }).unwrap();
         let mut now = Generation { fitness: vec![0.0; 400], pop };
         never(&now, "init");
         // every operator on, the cleanse included — on the islands that breed.

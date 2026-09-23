@@ -168,8 +168,28 @@ impl SymbolTable {
         SymbolCodes {
             arity: ids.clone().map(|i| self.arity(i)).collect(),
             sample_functions: ids.clone().filter(|&i| self.arity(i) > 0).collect(),
-            sample_terminals: ids.filter(|&i| self.arity(i) == 0 && !self.withheld[i as usize]).collect(),
+            sample_terminals: ids.clone().filter(|&i| self.arity(i) == 0 && !self.withheld[i as usize]).collect(),
             rnc_id: self.symbols.iter().position(|s| *s == Symbol::Rnc).map(|i| i as u32),
+            depth_cost: ids.clone().map(|i| self.depth_cost(i)).collect(),
+            sample_flat: ids.filter(|&i| self.arity(i) > 0 && self.depth_cost(i) == 0).collect(),
+        }
+    }
+
+    /// WHAT THIS SYMBOL COSTS IN TRANSCENDENTAL DEPTH — 1 for a depth-raising
+    /// function, 0 for everything else. The top-down half of the rule
+    /// [`t_depth`] measures bottom-up, and
+    /// `the_typed_table_is_the_predicate_t_depth_already_computes` is what holds
+    /// the two together.
+    ///
+    /// A COMPOUND costs what its expansion costs: `SqrtSum` is `sqrt|a + b|`,
+    /// one root on the path, so it spends one level like the `sqrt` it expands
+    /// to. Charging it zero would let a compound smuggle a level past the
+    /// ceiling that `decode_gene` would then reject.
+    pub fn depth_cost(&self, id: u32) -> u32 {
+        match self.symbols[id as usize] {
+            Symbol::Function(op) => u32::from(DEPTH_RAISING_OPS.contains(&op)),
+            Symbol::Compound(c) => u32::from(c.expansion().iter().any(|op| DEPTH_RAISING_OPS.contains(op))),
+            _ => 0,
         }
     }
 
@@ -797,6 +817,31 @@ pub struct Config {
     /// place, so the intake cannot grow for ever. 0 = off, the default; the
     /// population is then exactly what it always was.
     pub float_zone: u32,
+    /// TYPED TRANSCENDENTAL DEPTH — the ceiling on nested transcendentals, or
+    /// `None` for the engine exactly as it was.
+    /// (`docs/SPEC_typed_transcendental_depth.md`.)
+    ///
+    /// The measurement behind it: across all 133 SRBench true models there are
+    /// ZERO directly nested transcendental pairs, and the depths are 78 laws at
+    /// 0, 47 at 1, THREE at 2 and NONE beyond. `log`, `tan` and `abs` never
+    /// appear in a true law at all. Meanwhile 7 of our 8 reported models are
+    /// towers the ceiling would forbid, and 23% of the sub-expressions a live
+    /// population carries would be illegal.
+    ///
+    /// `Some(2)` is the spec: the sampler draws only what the remaining budget
+    /// allows ([`super::DepthBudget`]), so a tower is never BUILT rather than
+    /// being built and penalised — which is what the `tower` objective does and
+    /// what the fold cleans up afterwards.
+    ///
+    /// **`None` IS THE DEFAULT AND MUST STAY BIT-IDENTICAL**, which
+    /// `the_untyped_population_is_bit_identical_to_the_pinned_golden` asserts
+    /// against a checksum taken before this field existed.
+    ///
+    /// The risk the A/B exists to measure: the search may need illegal shapes as
+    /// STEPPING STONES. A blob at depth 4 might be the waypoint to a depth-1
+    /// law even though no law is depth 4, and nothing in the true-model
+    /// distribution can answer that.
+    pub typed_depth: Option<u32>,
 }
 
 impl Config {
@@ -924,6 +969,10 @@ impl Config {
             telemetry_run_id: None,
             telemetry_dataset: None,
             float_zone: 0,
+            // OFF until an A/B says otherwise. Every claim the spec makes is
+            // about the true-model distribution, and that is not the same thing
+            // as search behaviour.
+            typed_depth: None,
         }
     }
 }
@@ -1276,6 +1325,18 @@ pub fn hff_p_value(theta: f64, m: usize) -> (f64, f64) {
     (p, hff_core::higd::log_cdf_beta_correction(theta, m) / std::f64::consts::LN_10)
 }
 
+/// THE OPS THAT RAISE TRANSCENDENTAL DEPTH — the one list [`t_depth`] measures
+/// by and [`SymbolTable::depth_cost`] spends by. Kept in lockstep with
+/// `geneframe::DEPTH_RAISING`, which names the same set by semantic id.
+///
+/// `Pow` is not here and is handled separately: it counts only when its exponent
+/// is not a whole number, which is a property of the NODE and not of the op.
+/// `SymbolTable::wide` carries no raw `Pow`, so the sampler never has to decide.
+pub const DEPTH_RAISING_OPS: [Op; 15] = [
+    Op::Abs, Op::Sqrt, Op::Log, Op::Exp, Op::Sin, Op::Cos, Op::Tan, Op::Tanh, Op::ProtectedSqrt,
+    Op::ProtectedLog, Op::ProtectedExp, Op::Asin, Op::Acos, Op::ProtectedAsin, Op::ProtectedAcos,
+];
+
 /// TRANSCENDENTAL NESTING DEPTH of a decoded gene: the most transcendental
 /// functions met on any path from the root to a leaf — exp, log, sin, cos, tan,
 /// tanh, asin, acos, Abs, sqrt (and their protected forms), and a `Pow` whose exponent is not
@@ -1290,11 +1351,10 @@ pub fn t_depth(nodes: &[GpuNode]) -> u32 {
     let counts = |i: usize| -> u32 {
         let n = &nodes[i];
         let whole = |c: usize| nodes.get(c).is_some_and(|e| e.op == Op::Num as u32 && e.konst.fract() == 0.0);
-        let t = [
-            Op::Abs, Op::Sqrt, Op::Log, Op::Exp, Op::Sin, Op::Cos, Op::Tan, Op::Tanh, Op::ProtectedSqrt, Op::ProtectedLog,
-            Op::ProtectedExp, Op::Asin, Op::Acos, Op::ProtectedAsin, Op::ProtectedAcos,
-        ];
-        u32::from(t.iter().any(|&o| o as u32 == n.op) || (n.op == Op::Pow as u32 && !whole(n.arg1 as usize)))
+        u32::from(
+            DEPTH_RAISING_OPS.iter().any(|&o| o as u32 == n.op)
+                || (n.op == Op::Pow as u32 && !whole(n.arg1 as usize)),
+        )
     };
     if nodes.is_empty() {
         return 0;
@@ -3268,6 +3328,7 @@ impl Engine {
         super::init(self.layout, &self.table.codes(), &InitParams {
             seed: self.config.seed, generation: key, rnc_lo: self.config.rnc_lo, rnc_hi: self.config.rnc_hi, n_wrappers: WRAPPERS.len() as u32,
             vhead: self.vhead_at(generation),     // fresh rows are born at today's virtual head
+            typed_depth: self.config.typed_depth, // and under today's ceiling
         })
     }
 
@@ -5121,7 +5182,7 @@ impl Engine {
         let c = self.config.clone();
         let started = Instant::now();
         let mut timing = Timing { vary: 0.0, read: 0.0, decode: 0.0, evaluate: 0.0, score: 0.0, hff: 0.0, pump: 0.0, cross: 0.0, snap: 0.0, fold: 0.0, genealogy: 0.0, beam: 0.0 };
-        self.dev.init(&InitParams { seed: c.seed, generation: 0, rnc_lo: c.rnc_lo, rnc_hi: c.rnc_hi, n_wrappers: WRAPPERS.len() as u32, vhead: self.vhead_at(0) })?;
+        self.dev.init(&InitParams { seed: c.seed, generation: 0, rnc_lo: c.rnc_lo, rnc_hi: c.rnc_hi, n_wrappers: WRAPPERS.len() as u32, vhead: self.vhead_at(0), typed_depth: c.typed_depth })?;
         let mut gen = self.dev.read_generation()?;
         gen.fitness.fill(f32::NAN);
         let (mut unique, mut oversized) = self.evaluate(&mut gen, &mut timing)?;
@@ -5810,7 +5871,7 @@ mod tests {
         assert!(!table.symbols.contains(&Symbol::Function(Op::Asin)) && !table.symbols.contains(&Symbol::Function(Op::Acos)));
 
         let layout = Layout::for_arity(400, 2, 12, table.max_arity(), 5);
-        let p = crate::evolve::InitParams { seed: 11, generation: 0, rnc_lo: -10, rnc_hi: 10, n_wrappers: 3, vhead: 0 };
+        let p = crate::evolve::InitParams { seed: 11, generation: 0, rnc_lo: -10, rnc_hi: 10, n_wrappers: 3, vhead: 0 , typed_depth: None };
         let pop = crate::evolve::init(layout, &codes, &p).unwrap();
         pop.check(&codes).unwrap();
         assert_eq!(pop, crate::evolve::init(layout, &codes, &p).unwrap(), "same seed, same population");
@@ -5916,7 +5977,7 @@ mod tests {
     fn a_gene_without_a_compound_decodes_exactly_as_it_always_did() {
         let table = SymbolTable::wide(3);
         let layout = Layout::for_arity(300, 3, 34, table.max_arity(), 10);
-        let pop = crate::evolve::init(layout, &table.codes(), &crate::evolve::InitParams { seed: 9, generation: 0, rnc_lo: -5, rnc_hi: 5, n_wrappers: 3, vhead: 0 }).unwrap();
+        let pop = crate::evolve::init(layout, &table.codes(), &crate::evolve::InitParams { seed: 9, generation: 0, rnc_lo: -5, rnc_hi: 5, n_wrappers: 3, vhead: 0 , typed_depth: None }).unwrap();
         let (width, nr) = (layout.gene_width() as usize, layout.n_rnc as usize);
         let mut decoded = 0;
         for (g, gene) in pop.genome.chunks(width).enumerate() {
@@ -5988,7 +6049,7 @@ mod tests {
     fn a_population_with_compounds_keeps_the_rules_and_decodes() {
         let table = SymbolTable::wide(4).with_compounds();
         let layout = Layout::for_arity(400, 3, 34, table.max_arity(), 10);
-        let pop = crate::evolve::init(layout, &table.codes(), &crate::evolve::InitParams { seed: 3, generation: 0, rnc_lo: -5, rnc_hi: 5, n_wrappers: 3, vhead: 0 }).unwrap();
+        let pop = crate::evolve::init(layout, &table.codes(), &crate::evolve::InitParams { seed: 3, generation: 0, rnc_lo: -5, rnc_hi: 5, n_wrappers: 3, vhead: 0 , typed_depth: None }).unwrap();
         pop.check(&table.codes()).unwrap();
         let (width, nr) = (layout.gene_width() as usize, layout.n_rnc as usize);
         let (mut closed, mut with_compound) = (0, 0);
@@ -7365,7 +7426,7 @@ mod tests {
     /// A generation with every row evaluated: a seeded population and a fitness
     /// drawn per row (distinct streams of the engine's own generator).
     fn drawn_generation(engine: &Engine, seed: u32) -> Generation {
-        let p = InitParams { seed, generation: 0, rnc_lo: -100, rnc_hi: 100, n_wrappers: WRAPPERS.len() as u32, vhead: 0 };
+        let p = InitParams { seed, generation: 0, rnc_lo: -100, rnc_hi: 100, n_wrappers: WRAPPERS.len() as u32, vhead: 0 , typed_depth: None };
         let pop = crate::evolve::init(engine.layout, &engine.table.codes(), &p).expect("init");
         let fitness = (0..engine.layout.pop).map(|r| crate::evolve::below(crate::evolve::draw(seed, 0, r, 0, 99), 1_000_000) as f32 * 1e-6).collect();
         Generation { pop, fitness }

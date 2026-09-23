@@ -1013,7 +1013,7 @@ pub(crate) mod tests {
         // every operator on, the cleanse included — on the islands that breed.
         let rates = Rates::with_cleanse(layout, 0.5);
         let isl: Vec<Island> = islands().into_iter().map(|i| Island { rates, ..i }).collect();
-        let born = crate::evolve::InitParams { seed: 5, generation: 0, rnc_lo: -100, rnc_hi: 100, n_wrappers: 3, vhead: 8 };
+        let born = crate::evolve::InitParams { seed: 5, generation: 0, rnc_lo: -100, rnc_hi: 100, n_wrappers: 3, vhead: 8 , typed_depth: None };
         let pop = init(layout, &codes, &born).unwrap();
         let mut now = Generation { pop, fitness: (0..800).map(|r| below(draw(5, 0, r, 0, 99), 1_000_000) as f32).collect() };
         assert!(head_in_use(&now, &codes) <= 8, "born with a function past the virtual head");
