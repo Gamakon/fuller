@@ -1835,10 +1835,6 @@ pub fn evaluate_math(math: &str, rows: &[Vec<(String, f64)>]) -> Result<Vec<f64>
     crate::extract::eval_expr_rows(math, rows)
 }
 
-/// How many of the intake's oldest surviving cohorts the pump promotes from, in
-/// equal share. Five is Andrew's number.
-const PROMOTION_COHORTS: usize = 5;
-
 /// Set in the generation that keys THE CROSS STEP's fresh rows; no fit runs this
 /// many generations, so the key is never a pump's.
 const CROSS_KEY: u32 = 1 << 31;
@@ -2316,8 +2312,8 @@ impl Engine {
         Ok(())
     }
 
-    /// WHO THE PUMP PROMOTES: the best of each of the FIVE OLDEST cohorts still
-    /// alive in the intake, in equal share.
+    /// WHO THE PUMP PROMOTES: the best of EVERY living cohort, sharing the
+    /// promotion budget equally between them.
     ///
     /// A flat sort by fitness hands every promotion to the elders. They are
     /// converged and therefore fit, so they win a straight ranking, and the
@@ -2326,14 +2322,15 @@ impl Engine {
     /// selection. Measured on strogatz_bacres1: cohort 0 held the best score for
     /// 1,558 generations while cohorts were born, shrank and died around it.
     ///
-    /// Oldest is the SMALLEST label, because a label is the generation a line
-    /// arrived. Taking the oldest rather than the youngest is deliberate: a
-    /// cohort that has survived several pump beats has been tested, where one
-    /// born this beat has not, and the youngest are the ones the tournaments are
-    /// already protecting.
+    /// Every cohort alive contributes, not a chosen few: a cut at the oldest N
+    /// needs a number nothing measures, and a cohort that is alive has already
+    /// survived selection, which is the only qualification the pump can check.
     ///
-    /// Fewer than five cohorts alive is not a special case — every one alive
-    /// contributes, and with one cohort this is the flat ranking it always was.
+    /// The budget is `promote_fraction` of the champion island, so the SHARE is
+    /// what is divided — the rows come out fittest first within each cohort, and
+    /// round-robin between them so the split stays equal when the budget does not
+    /// divide evenly. With one cohort alive this is the flat ranking it always
+    /// was.
     fn promotion_slate(&self, intake: Island, gen: &Generation) -> Vec<u32> {
         let ranked = Self::by_fitness(intake, &gen.fitness);
         if self.live_cohorts.is_empty() {
@@ -2349,16 +2346,15 @@ impl Engine {
         if by_cohort.is_empty() {
             return ranked;
         }
-        // The five oldest: a BTreeMap is in label order, and the smallest label is
-        // the earliest birth.
-        let oldest: Vec<Vec<u32>> = by_cohort.into_values().take(PROMOTION_COHORTS).collect();
-        // Round-robin, so the share is equal however many rows each one has: the
-        // best of each, then the second best of each, and so on. A cohort that
-        // runs out simply stops contributing.
+        // Round-robin over every living cohort, oldest label first so that when
+        // the budget does not divide evenly the remainder goes to the cohorts
+        // that have survived longest. The caller takes as many as its budget
+        // allows, so a cohort is never promised rows it does not get.
+        let cohorts: Vec<Vec<u32>> = by_cohort.into_values().collect();
         let mut slate = Vec::with_capacity(ranked.len());
         for k in 0.. {
             let before = slate.len();
-            for rows in &oldest {
+            for rows in &cohorts {
                 if let Some(&row) = rows.get(k) {
                     slate.push(row);
                 }
@@ -4368,40 +4364,41 @@ mod tests {
         assert_eq!(drop_dead_subtrees(&tree, &rows(), FINAL_FORM_AGREE), tree);
     }
 
-    /// THE PUMP PROMOTES FROM THE FIVE OLDEST COHORTS, IN EQUAL SHARE.
+    /// THE PUMP PROMOTES FROM EVERY LIVING COHORT, IN EQUAL SHARE.
     ///
     /// A flat sort by fitness hands every promotion to the elders — they are
     /// converged and so they win a straight ranking, and the champion island then
     /// refills from a list the young cannot reach, undoing in the pump what the
     /// cohort-restricted tournaments do in selection.
     #[test]
-    fn the_promotion_takes_the_best_of_each_of_the_five_oldest_cohorts() {
+    fn the_promotion_shares_its_budget_between_all_living_cohorts() {
         let config = Config { cohort_merge: 400, ..toy_config(60, 20) };
         let mut engine = Engine::new(config, toy_data()).expect("engine");
         let mut gen = drawn_generation(&engine, 3);
         let intake = engine.islands[0];
-        // Seven cohorts over the intake island, oldest first by label, and a
-        // fitness that makes the YOUNGEST cohort the fittest — so a flat ranking
-        // would take all of its rows and none of the old ones.
+        // Seven cohorts over the intake island, and a fitness that makes the
+        // YOUNGEST the fittest — so a flat ranking would take its rows and
+        // nothing else.
         engine.live_cohorts = vec![0u32; engine.layout.pop as usize];
         let labels = [0u32, 100, 200, 300, 400, 500, 600];
         for (i, row) in (intake.lo..intake.hi).enumerate() {
             let label = labels[i % labels.len()];
             engine.live_cohorts[row as usize] = label;
-            // Younger label = better (smaller) fitness.
             gen.fitness[row as usize] = 1.0 - f32::from(label as u16) / 1000.0;
         }
         let slate = engine.promotion_slate(intake, &gen);
         assert!(!slate.is_empty(), "nobody was promoted");
         let cohort_of = |row: &u32| engine.live_cohorts[*row as usize];
-        let taken: std::collections::BTreeSet<u32> = slate.iter().take(5).map(cohort_of).collect();
-        // The five OLDEST, not the five fittest: 500 and 600 are fitter and must
-        // not appear at all.
-        assert_eq!(taken, [0, 100, 200, 300, 400].into_iter().collect(), "the slate is not the five oldest cohorts");
-        assert!(!slate.iter().any(|r| cohort_of(r) >= 500), "a younger cohort than the five oldest was promoted");
-        // EQUAL SHARE: the first five are one from each, then it goes round again.
-        let second = slate.iter().skip(5).take(5).map(cohort_of).collect::<std::collections::BTreeSet<u32>>();
-        assert_eq!(second, [0, 100, 200, 300, 400].into_iter().collect(), "the second round is not one from each");
+        // EVERY cohort is represented in the first round, not a chosen few and
+        // not just the fittest: the first seven are one from each.
+        let first: std::collections::BTreeSet<u32> = slate.iter().take(labels.len()).map(cohort_of).collect();
+        assert_eq!(first, labels.into_iter().collect(), "the first round is not one from every cohort");
+        // ... and the second round is one from each again, so the share is equal.
+        let second: std::collections::BTreeSet<u32> = slate.iter().skip(labels.len()).take(labels.len()).map(cohort_of).collect();
+        assert_eq!(second, labels.into_iter().collect(), "the second round is not one from each");
+        // The oldest is first in line, so a budget that does not divide evenly
+        // leaves its remainder with the cohorts that have survived longest.
+        assert_eq!(cohort_of(&slate[0]), 0, "the oldest cohort is not first in line");
     }
 
     /// THE MERGE IS BY AGE, AND THE DIRECTION IS THE WHOLE POINT.
