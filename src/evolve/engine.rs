@@ -663,9 +663,20 @@ pub struct Config {
     /// met the 1 - R² bar sat at -19.4 or below (most at -21 to -22) and the one fake
     /// that slipped under it (strogatz bacres2, validation 1 - R² 1.0e-11) sat at
     /// -17.55 — the clearest signal we have. A law a little above the bar is not
-    /// lost: the fit simply keeps evolving and reports its best. Measured with 4
-    /// objectives (train + t_depth); p depends on how many objectives HFF has.
+    /// lost: the fit simply keeps evolving and reports its best.
     /// `f64::INFINITY` switches this half off.
+    ///
+    /// THIS BAR DOES NOT NEED RECALIBRATING WHEN THE OBJECTIVE COUNT CHANGES.
+    /// An earlier version of this comment ended "Measured with 4 objectives
+    /// (train + t_depth); p depends on how many objectives HFF has", which is
+    /// wrong and cost an afternoon: the dimension is an argument to the
+    /// incomplete beta and is consumed by it, so p is a probability that means
+    /// the same thing at any dimension. See [`hff_p_value`]. -19 is the claim
+    /// "p <= 1e-19" and it is dimension-free.
+    ///
+    /// What DOES change with the objective set is the ANGLE, because more
+    /// columns can hold a model further from the pole. That is the objectives
+    /// doing their job, not the bar being miscalibrated.
     ///
     /// CARDED THROUGH [`finite_or_word`], because the infinities are documented
     /// SETTINGS here (`EVOLVE_STOP_LOG10_P=inf` switches the bar off, and the
@@ -1183,6 +1194,43 @@ const LINKER_NAMES: [&str; 3] = ["avgval", "mulval", "addval"];
 /// `higd::cdf_beta_correction`, `I_{sin² θ}((m-1)/2, 1/2)`. Returned as
 /// `(p, log10 p)`; the log comes from hff's log-space routine, so it stays
 /// finite in the deep left tail where `p` itself underflows to 0.
+///
+/// # THE P-VALUE IS NOT SUSCEPTIBLE TO DIMENSIONALITY. THAT IS ITS WHOLE POINT.
+///
+/// `m` is an argument to the incomplete beta, so the dimension is CONSUMED by
+/// the CDF and never survives into the answer. What comes out is a probability
+/// on [0, 1], and a p of 1e-19 means the same thing at 6 objectives, at 9, and
+/// at 19,000. Two fits over different objective sets are directly comparable on
+/// p in a way they are NOT comparable on the raw angle — concentration of
+/// measure is what buys that, and it is why the p-value exists at all rather
+/// than the engine just reading `theta`.
+///
+/// Andrew, who invented HFF and wrote the paper: "it doesn't matter if there's
+/// six, it doesn't matter if there's nine, it doesn't matter if there's 19,000,
+/// it doesn't matter one bit at all... the p-values themselves are 100%
+/// transferable across dimensions."
+///
+/// Two consequences that have each been got wrong:
+///
+/// * **`stop_log10_p` does NOT need recalibrating when the objective count
+///   changes.** A bar of -19 is the claim "p <= 1e-19" and that claim is
+///   dimension-free. Do not move the bar because a run has more objectives, and
+///   do not remove objectives to reach the bar. A whole afternoon went on
+///   turning SMOGD off to get from 9 columns back to 6, on the theory that 9
+///   made -19 unreachable. It does not.
+///
+/// * **When p differs between two runs, the ANGLE differs — so look at the
+///   objectives.** A 9-objective run reading -13.6 while a 6-objective run
+///   reads -inf is not an artefact of counting: the extra columns held the
+///   third block's error at 6.6e-3 while train and validation sat at 1e-14, so
+///   the point really was further from the pole. The p-value was telling the
+///   truth about a model that does not fit the synthetic rows. Whether it
+///   SHOULD be judged on those rows is a design question about the third block,
+///   not a problem with p.
+///
+/// `log10 p` is `log10` of that probability and nothing else — not a ratio of
+/// p-values, not a difference of them. It is in log space only because p
+/// underflows to 0 in the tail where the interesting fits live.
 pub fn hff_p_value(theta: f64, m: usize) -> (f64, f64) {
     let p = hff_core::higd::cdf_beta_correction(theta, m);
     (p, hff_core::higd::log_cdf_beta_correction(theta, m) / std::f64::consts::LN_10)

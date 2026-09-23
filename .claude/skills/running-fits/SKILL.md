@@ -26,42 +26,59 @@ outside:
 
 | run | objectives | log10 p | train 1-R² | the failing half |
 |---|---|---|---|---|
-| 20k+20k, 2,000 gens | 9 | -13.65 | 2.6e-14 ✓ | **p** — too strict at 9 objectives |
+| 20k+20k, 2,000 gens | 9 | -13.65 | 2.6e-14 ✓ | **p** — the third block held the angle open |
 | 800+400, 65,000 gens | 6 | -inf ✓ | 2.6e-6 ✗ | **error** — the law was not found |
 
 A whole afternoon was lost to reporting `min_hff 0.000000, log10 p -inf` as
 though it meant success. It does not. It means the f32 angle **saturated**. Read
 `mse_train` and `r2_train` on the same line before saying anything.
 
-## THE P-VALUE IS CALIBRATED FOR 4 OBJECTIVES, AND YOU ARE NOT RUNNING 4
+## THE P-VALUE IS NOT SUSCEPTIBLE TO DIMENSIONALITY
 
-`stop_log10_p = -19` was measured on development seed 7013 **with 4 objectives**
-(train + t_depth). Its job was to separate one fake at -17.55 from real laws at
--19.4 and below. `Config::stop_log10_p`'s own docstring says "p depends on how
-many objectives HFF has", and that sentence has been read and ignored twice.
+**This is the single most important fact about HFF and it has been got wrong
+twice.** Read `hff_p_value` in `src/evolve/engine.rs` before forming any theory
+that involves the objective count.
 
-`Engine::hff_dimensions()` is the count. It grows with:
+```rust
+let p = hff_core::higd::cdf_beta_correction(theta, m);   // I_{sin^2 theta}((m-1)/2, 1/2)
+```
 
-- the validation block (+3 columns when present)
-- the third block, SMOGD/SMOTE/edge (+3 columns)
-- `redundancy` (+1), `tower` (+1)
+`m` — the dimension — is an ARGUMENT TO THE INCOMPLETE BETA. It is consumed by
+the CDF and never survives into the answer. What comes out is a probability on
+[0, 1], and **p = 1e-19 means the same thing at 6 objectives, at 9, and at
+19,000.** Concentration of measure is what buys that, and it is the entire
+reason the engine reports a p-value instead of the raw angle.
 
-Measured behaviour of p against objective count, same dataset and seed:
+Andrew, who invented HFF and wrote the paper: *"it doesn't matter if there's
+six, it doesn't matter if there's nine, it doesn't matter if there's 19,000...
+the p-values themselves are 100% transferable across dimensions."*
 
-| objectives | third block | log10 p reached |
-|---|---|---|
-| 6 | none | **-inf** — saturated, discriminates nothing |
-| 9 | SMOGD+SMOTE | **-13.6** — cannot reach -19 however good the fit |
+`log10 p` is `log10` of that probability. **Not a ratio of p-values. Not a
+difference of them.** It is in log space only because p underflows to 0 in the
+tail where the interesting fits live.
 
-So at 9 the bar is unreachable, and at 6 it is uninformative. **In both cases
-1-R² is doing all the work.** The run that scored 75 of 133 recorded exactly
-this in `docs/EXPERIMENTS.md`: *"The p-value is inert at this operating point.
-Every log10 p sits between -30 and -38 against a -19 bar, and the solved and
-unsolved distributions overlap completely."*
+### Two things that follow, both of which have been got wrong
 
-If you change the objective count, the p bar is no longer calibrated. Either
-recalibrate it or switch that half off with `EVOLVE_STOP_LOG10_P=inf` and let
-1-R² decide.
+1. **`stop_log10_p` NEVER needs recalibrating for the objective count**, and you
+   must NEVER remove objectives to reach it. An afternoon went on switching
+   SMOGD off to get from 9 columns to 6, on the theory that 9 made -19
+   unreachable. That theory was wrong. A `Config` docstring said "p depends on
+   how many objectives HFF has" — it was wrong too, and is now corrected.
+
+2. **When p differs between runs, the ANGLE differs — go and look at the
+   objectives.** Measured, same dataset and seed:
+
+   | objectives | third block error | train / val | log10 p |
+   |---|---|---|---|
+   | 9 | 6.6e-3 | 2.6e-14 / 3.3e-14 | -13.6 |
+   | 6 | (absent) | 2.6e-6 | -inf |
+
+   The 9-objective run is not being penalised for having 9 columns. It is
+   genuinely further from the pole, because the third block's error is **a
+   hundred billion times** the train error. **The p-value is telling the truth
+   about a model that does not fit the synthetic rows.** Whether it SHOULD be
+   judged on those rows is a design question about the third block — not a
+   problem with p, and not a reason to delete data.
 
 ## SMOGD and SMOTE
 
@@ -69,13 +86,20 @@ The synthetic third block. Its own docstring states the rule: *"They are noisy
 on purpose — they rank individuals in the tournaments; they never decide that a
 fit is exact."*
 
-The engine honours that for the 1-R² half (`c.smogd ||` short-circuits the edge
-check) and **breaks it for the p half**, because `hff_dimensions()` counts the
-third block's three columns anyway. That inconsistency is why a 9-objective run
-cannot reach -19.
+The engine honours that for the 1-R² half — `c.smogd ||` short-circuits the edge
+check, so synthetic rows can never say a fit is exact. The p half has no such
+short-circuit: the third block's error enters the angle like any other
+objective.
 
-SMOGD/SMOTE are still worth having for what they were built for — ranking. Do
-not switch them off to "fix" p; fix the dimension count, or the bar.
+**That is a real inconsistency, and it is NOT about the dimension count.** (See
+the p-value section: dimensions are consumed by the incomplete beta.) It is
+about WHICH ROWS get to decide exactness. The 1-R² half says the synthetic rows
+do not; the p half lets them. One of the two is wrong and it is a design
+question for Andrew, not something to patch by deleting objectives.
+
+**NEVER switch SMOGD/SMOTE off to move a p-value.** That is deleting the
+measurement to make the number look better. They were built to rank individuals
+in tournaments and they do that whatever p reads.
 
 ## The settings that have actually recovered laws
 
