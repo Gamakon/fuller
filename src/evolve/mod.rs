@@ -18,6 +18,9 @@ pub mod hff_gpu;
 pub mod score;
 pub mod smogd;
 pub mod smote;
+// NOT behind `gpu`: the telemetry schema is what `hff-watch` reads, and the
+// viewer must build and be linted on a machine with no adapter.
+pub mod telemetry;
 pub mod umap2d;
 pub mod vary;
 #[cfg(feature = "gpu")]
