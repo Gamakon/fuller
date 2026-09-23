@@ -293,18 +293,35 @@ fn main() {
             // directory, which is where its other outputs already are. A run
             // with neither writes no file rather than dropping one into
             // whatever directory it was launched from, and says so.
-            let out_path = std::env::var("EVOLVE_CARD_OUT").ok().filter(|p| !p.is_empty()).or_else(|| {
-                config.telemetry_path.as_ref().and_then(|t| std::path::Path::new(t).parent().map(|d| d.join("card.json").to_string_lossy().into_owned()))
-            });
-            match out_path {
+            // BESIDE THE RUN ALWAYS, and in the library as well.
+            //
+            // `card.json` next to the telemetry stream is the copy that matters:
+            // "when we run something, I want to see the specification of what we
+            // ran BESIDE THE LOG FILES" (Andrew). It is written whenever there
+            // is a run directory to write it into, and `EVOLVE_CARD_OUT` no
+            // longer MOVES it -- pointing that at a card library used to take
+            // the card away from the run it describes, which is the opposite of
+            // the point.
+            let beside = config
+                .telemetry_path
+                .as_ref()
+                .and_then(|t| std::path::Path::new(t).parent().map(|d| d.join("card.json").to_string_lossy().into_owned()));
+            let library = std::env::var("EVOLVE_CARD_OUT").ok().filter(|p| !p.is_empty());
+            let mut wrote_any = false;
+            for path in [beside, library].into_iter().flatten() {
                 // A card that cannot be written must not kill a fit that is
                 // otherwise ready to run: the fit is the expensive thing and the
                 // card is a record of it.
-                Some(p) => match written.write(&p) {
-                    Ok(()) => eprintln!("CARD\twritten {p}\tid {}\t{} HFF objectives", written.card_id, written.derived.hff_objectives),
-                    Err(e) => eprintln!("CARD\tNOT WRITTEN: {e}"),
-                },
-                None => eprintln!("CARD\tnot written (no EVOLVE_CARD_OUT and no telemetry file to sit beside)"),
+                match written.write(&path) {
+                    Ok(()) => {
+                        eprintln!("CARD\twritten {path}\tid {}\t{} HFF objectives", written.card_id, written.derived.hff_objectives);
+                        wrote_any = true;
+                    }
+                    Err(e) => eprintln!("CARD\tNOT WRITTEN to {path}: {e}"),
+                }
+            }
+            if !wrote_any {
+                eprintln!("CARD\tnot written (no telemetry file to sit beside, and no EVOLVE_CARD_OUT)");
             }
         }
         let out = engine.fit().expect("fit");
