@@ -5727,6 +5727,71 @@ mod tests {
         assert_eq!(t_depth(&nodes_of(r#"(ProtectedDiv (Cos (Var "x_0")) (Tan (Var "x_1")))"#)), 1);
     }
 
+    /// THE TYPED TABLE AND `t_depth` ARE ONE PREDICATE.
+    ///
+    /// `docs/SPEC_typed_transcendental_depth.md` states the typing rules as a
+    /// symbol table — terminals `out {F}`, arithmetic absorbing, transcendentals
+    /// raising with no `T2` row — and then gives the five expressions it admits
+    /// and forbids. Those rules compute the largest transcendental count on any
+    /// root-to-leaf path, which is exactly what [`t_depth`] already measures.
+    ///
+    /// This is the test that lets the engine check typing with `t_depth` rather
+    /// than a second traversal: if the two ever disagree, the sampler would be
+    /// filling to one rule while the decoder rejected by another.
+    #[test]
+    fn the_typed_table_is_the_predicate_t_depth_already_computes() {
+        // Every depth-raising row of the typed kingdom is a function `t_depth`
+        // counts, and every op `t_depth` counts has depth-raising rows.
+        let typed = crate::geneframe::typed_depth_table();
+        let raising: std::collections::BTreeSet<&str> = typed
+            .kingdom(crate::geneframe::TYPED_SR)
+            .into_iter()
+            .filter(|s| {
+                let (i, _) = s.arity.inputs.iter().next().expect("a row with inputs");
+                let (o, _) = s.arity.outputs.iter().next().expect("a row with an output");
+                s.arity.total_in() == 1 && o.depth() > i.depth()
+            })
+            .map(|s| s.semantic_id.as_str())
+            .collect();
+        assert_eq!(
+            raising,
+            crate::geneframe::DEPTH_RAISING.iter().copied().collect(),
+            "the typed table's raising rows and DEPTH_RAISING must be one set"
+        );
+        for sem in &raising {
+            let one = crate::karva::semantic_to_math(sem, &[r#"(Var "x_0")"#.to_string()])
+                .unwrap_or_else(|e| panic!("{sem}: {e}"));
+            assert_eq!(t_depth(&nodes_of(&one)), 1, "{sem} must raise depth by one in t_depth too");
+        }
+
+        // THE SPEC'S OWN TABLE, expression by expression.
+        let cases: [(&str, u32, bool); 6] = [
+            // m v^2 / 2 — flat, depth 0.
+            (r#"(Div (Mul (Var "x_0") (Pow2 (Var "x_1"))) (Num 2.0))"#, 0, true),
+            // sqrt(1 - v^2/c^2) — depth 1.
+            (r#"(Sqrt (Sub (Num 1.0) (Div (Pow2 (Var "x_1")) (Pow2 (Var "x_2")))))"#, 1, true),
+            // m_0 / sqrt(1 - v^2/c^2) — still depth 1 through the divide.
+            (
+                r#"(Div (Var "x_0") (Sqrt (Sub (Num 1.0) (Div (Pow2 (Var "x_1")) (Pow2 (Var "x_2"))))))"#,
+                1,
+                true,
+            ),
+            // exp(-(theta/sqrt 2)^2) — DEPTH 2 REACHED THROUGH ARITHMETIC, and
+            // legal. This is the row the T2 rung exists for; a strict ceiling at
+            // T1 would lose the three depth-2 laws.
+            (r#"(Exp (Neg (Pow2 (Div (Var "x_0") (Sqrt (Num 2.0))))))"#, 2, true),
+            // tanh(exp(cos(log x))) — four, and forbidden.
+            (r#"(Tanh (Exp (Cos (Log (Var "x_0")))))"#, 4, false),
+            // The measured blob's shape: five, forbidden.
+            (r#"(Exp (Tanh (ProtectedLog (Cos (Sqrt (Var "x_0"))))))"#, 5, false),
+        ];
+        for (math, depth, legal) in cases {
+            let got = t_depth(&nodes_of(math));
+            assert_eq!(got, depth, "{math}");
+            assert_eq!(got <= 2, legal, "{math} legality under a ceiling of 2");
+        }
+    }
+
     /// The wide table samples tan and the protected inverse-trig functions, a
     /// population drawn from it keeps the structural rules, and a gene that
     /// holds one decodes to the Math constructor of the same name.
