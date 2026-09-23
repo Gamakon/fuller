@@ -358,6 +358,8 @@ pub struct RunEnd {
     /// than that when the hall of fame's winner is put back into a row. A viewer
     /// showing both must not read the difference as a bug.
     pub best_hff: Option<f64>,
+    /// The WHOLE fit's seconds, across every stop and resume — the same clock
+    /// the header's `elapsed_ms` carries, not this process's alone.
     pub seconds: f64,
 }
 
@@ -386,6 +388,14 @@ pub struct Writer {
     run_id: String,
     seq: u64,
     started: std::time::Instant,
+    /// THE SECONDS THE FIT SPENT BEFORE THIS PROCESS STARTED, from a checkpoint.
+    /// `started` clocks this process, and a resumed run has two of them, so a
+    /// header measured from `started` alone restarts the viewer's clock at zero
+    /// and puts a run 15 s in at 0 ms against a budget bar it is a quarter of
+    /// the way through. `elapsed_ms` is the WHOLE fit's, across every stop and
+    /// start, exactly as `generation` is — and it is the same quantity the fit
+    /// loop spends its budget against and writes into its checkpoints.
+    already_spent: f64,
     /// When the last snapshot went out, so the ≥1 s throttle the brief asks for
     /// can be applied without a second clock.
     last_snapshot: Option<std::time::Instant>,
@@ -419,7 +429,15 @@ impl Writer {
     /// as the hall of fame and the genealogy log do.
     pub fn create(path: &str, run_id: String, start: RunStartFields) -> Result<Writer, String> {
         let file = std::fs::File::create(path).map_err(|e| format!("telemetry file {path}: {e}"))?;
-        let mut w = Writer { file, run_id, seq: 0, started: std::time::Instant::now(), last_snapshot: None, last_model: None };
+        let mut w = Writer {
+            file,
+            run_id,
+            seq: 0,
+            started: std::time::Instant::now(),
+            already_spent: start.already_spent_seconds,
+            last_snapshot: None,
+            last_model: None,
+        };
         let header = w.header(0);
         let record = Record::RunStart(RunStart {
             header,
@@ -449,6 +467,14 @@ impl Writer {
         &self.run_id
     }
 
+    /// The fit's total wall clock, in milliseconds: what was spent before this
+    /// process plus what this process has spent. `as u64` saturates rather than
+    /// wrapping, so a checkpoint carrying an absurd `elapsed_seconds` gives a
+    /// clamped number instead of a panic or a small wrong one.
+    pub fn elapsed_ms(&self) -> u64 {
+        ((self.already_spent + self.started.elapsed().as_secs_f64()) * 1e3) as u64
+    }
+
     /// The next header, and the counter advanced. Every record gets one, so the
     /// sequence has no gaps by construction.
     fn header(&mut self, generation: u32) -> Header {
@@ -459,7 +485,7 @@ impl Writer {
             run_id: self.run_id.clone(),
             seq,
             timestamp_utc: now_utc(),
-            elapsed_ms: self.started.elapsed().as_millis() as u64,
+            elapsed_ms: self.elapsed_ms(),
             generation,
         }
     }
@@ -564,6 +590,10 @@ pub struct RunStartFields {
     pub cohort_merge: u32,
     pub pump_every: u32,
     pub progress_every: u32,
+    /// What a resumed fit had already spent when this process picked it up, so
+    /// every `elapsed_ms` this writer stamps is the whole fit's clock. 0 for a
+    /// fit starting from nothing.
+    pub already_spent_seconds: f64,
 }
 
 /// A snapshot without its header — what the engine builds.
@@ -1104,6 +1134,7 @@ mod tests {
                 cohort_merge: 0,
                 pump_every: 1,
                 progress_every: 1,
+                already_spent_seconds: 0.0,
             },
         )
         .expect("a stream");
@@ -1161,5 +1192,59 @@ mod tests {
         let now = now_utc();
         assert_eq!(now.len(), 20, "{now}");
         assert!(now.ends_with('Z') && now.contains('T'), "{now}");
+    }
+
+    /// A RESUMED RUN'S CLOCK STARTS WHERE IT STOPPED. `elapsed_ms` is the whole
+    /// fit's wall clock, so a writer opened on a fit that already spent 15 s
+    /// stamps its very first line past 15 s — the viewer's clock and its budget
+    /// bar are both read off this number, and one that restarted at zero would
+    /// show a run a quarter of the way through as having just begun.
+    #[test]
+    fn a_resumed_stream_starts_its_clock_where_the_fit_stopped() {
+        let dir = std::env::temp_dir().join("fuller-telemetry-resumed-clock");
+        std::fs::create_dir_all(&dir).expect("a scratch directory");
+        let path = dir.join("stream.jsonl");
+        let fields = |already_spent_seconds: f64| RunStartFields {
+            dataset: "d.tsv".to_string(),
+            seed: 1,
+            population: 4,
+            n_pairs: 1,
+            pop_intake: 2,
+            pop_champion: 2,
+            float_zone: 0,
+            n_train: 1,
+            n_val: 1,
+            n_extrap: 0,
+            budget_ms: 60_000,
+            max_generations: 1,
+            cohort_merge: 0,
+            pump_every: 1,
+            progress_every: 1,
+            already_spent_seconds,
+        };
+        // A fit starting from nothing: the clock starts at nothing too.
+        let fresh = Writer::create(path.to_str().expect("a path"), "r".to_string(), fields(0.0)).expect("a stream");
+        assert!(fresh.elapsed_ms() < 1_000, "a fresh run's clock did not start at zero: {}", fresh.elapsed_ms());
+        drop(fresh);
+        // The same fit resumed at 15 s, and everything it writes is past 15 s.
+        let mut w = Writer::create(path.to_str().expect("a path"), "r".to_string(), fields(15.0)).expect("a stream");
+        assert!(w.elapsed_ms() >= 15_000, "the resumed clock restarted: {}", w.elapsed_ms());
+        w.event(7, EventKind::NewBest, "best".to_string(), None, Some(1.0)).expect("an event");
+        w.run_end(7, "n_gen", 7, 1, Some(1.0), 15.5).expect("the last line");
+        drop(w);
+        let mut tailer = Tailer::new(&path);
+        let got = tailer.poll();
+        assert_eq!(tailer.bad_lines, 0);
+        assert_eq!(got.len(), 3, "run_start, event, run_end");
+        let mut last = 0u64;
+        for parsed in &got {
+            let Parsed::Ok(record) = parsed else { panic!("{parsed:?}") };
+            let elapsed = record.header().elapsed_ms;
+            assert!(elapsed >= 15_000, "a record of the resumed run is before the resume: {elapsed}");
+            assert!(elapsed >= last, "the clock went backwards: {last} then {elapsed}");
+            last = elapsed;
+        }
+        std::fs::remove_file(&path).expect("remove the stream");
+        std::fs::remove_dir(&dir).expect("remove its directory");
     }
 }

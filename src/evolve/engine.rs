@@ -3917,6 +3917,13 @@ impl Engine {
                     cohort_merge: c.cohort_merge,
                     pump_every: c.pump_every,
                     progress_every: c.progress_every,
+                    // THE STREAM'S CLOCK IS THE FIT'S, NOT THIS PROCESS'S. The
+                    // resume below has not run yet, so the seconds already spent
+                    // are read straight off the checkpoint that resume will take:
+                    // a writer opened without them stamps `elapsed_ms: 0` on a
+                    // run that is a quarter of the way through its budget, and
+                    // the viewer's clock and budget bar both lie.
+                    already_spent_seconds: self.resume.as_ref().map_or(0.0, |cp| cp.elapsed_seconds),
                 })?;
                 let mut writer = writer;
                 // THE MERGE RULE, stated once and up front. The brief asks for a
@@ -4257,7 +4264,11 @@ impl Engine {
             if stopped_by == "early_stop" {
                 let _ = state.writer.event(generation, telemetry::EventKind::EarlyStop, "the stop bar was met".to_string(), None, Some(best.fitness));
             }
-            if let Err(e) = state.writer.run_end(generation, stopped_by, generation, individuals, telemetry::finite(best.fitness), started.elapsed().as_secs_f64()) {
+            // The seconds are the FIT's, as the header's `elapsed_ms` is: a
+            // resumed run whose last line said it took as long as its last
+            // process would contradict its own header and the budget it stopped
+            // against.
+            if let Err(e) = state.writer.run_end(generation, stopped_by, generation, individuals, telemetry::finite(best.fitness), already_spent + started.elapsed().as_secs_f64()) {
                 eprintln!("TELEMETRY\tthe stream's last line was lost: {e}");
             }
         }
@@ -5077,6 +5088,70 @@ mod tests {
         assert_eq!(resumed.best.fitness.to_bits(), straight.best.fitness.to_bits(), "the resumed fit scored differently");
         assert_eq!(resumed.unique_genes, straight.unique_genes, "a different number of genes was evaluated");
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// THE CLOCK SURVIVES THE RESUME. `elapsed_ms` is the WHOLE fit's wall
+    /// clock, as `generation` is: a run stopped at 15 s and restarted must not
+    /// tell the viewer it has just begun. The budget bar is drawn from this
+    /// number against `budget_ms`, and `budget_ms` is the whole fit's cap — so a
+    /// stream whose clock restarted shows a run three quarters spent as one
+    /// quarter spent, and the `run_end` seconds contradict their own header.
+    #[test]
+    fn the_streams_clock_survives_a_resume() {
+        use crate::evolve::telemetry::{parse_stream, Record};
+        let dir = std::env::temp_dir().join(format!("fuller-resume-clock-{}", std::process::id()));
+        let (stream_dir, path) = telemetry_scratch("resume-clock");
+        std::fs::remove_dir_all(&dir).ok();
+        let base = Config {
+            max_generations: 24,
+            max_seconds: 3600.0,
+            stop_one_minus_r2: -1.0,
+            stop_log10_p: f64::NEG_INFINITY,
+            progress_every: 1,
+            checkpoint_dir: Some(dir.display().to_string()),
+            telemetry_path: Some(path.clone()),
+            telemetry_dataset: Some("toy".to_string()),
+            ..toy_config(60, 20)
+        };
+
+        // Stopped halfway. The last checkpoint is written at the end of the fit.
+        let half = Config { max_generations: 12, ..base.clone() };
+        Engine::new(half, toy_data()).expect("engine").fit().expect("fit");
+        let (checkpoint, _) = checkpoint::Slots::open(&dir).expect("the slots").newest();
+        let spent = checkpoint.expect("the stopped fit wrote a checkpoint").elapsed_seconds;
+        // A vacuous pass is the thing to guard against here: with no seconds on
+        // the checkpoint, a clock that restarted at zero would satisfy the bound.
+        assert!(spent > 0.0, "the checkpoint recorded no time at all");
+        let floor = (spent * 1e3) as u64;
+
+        // Resumed. The stream is TRUNCATED by the resuming process — a run owns
+        // its file — so every line in it now belongs to the second half, and
+        // every one of them must be at or past where the first half stopped.
+        Engine::new(base, toy_data()).expect("engine").fit().expect("fit");
+        let text = std::fs::read_to_string(&path).expect("the stream");
+        let (records, bad) = parse_stream(&text);
+        assert_eq!(bad, 0, "the resumed fit wrote a line that is not a record");
+        assert!(records.len() >= 2, "the resumed fit wrote nothing to watch");
+        let mut last = 0u64;
+        for r in &records {
+            let h = r.header();
+            assert!(h.elapsed_ms >= floor, "the clock restarted at the resume: {} ms against {floor} ms already spent", h.elapsed_ms);
+            assert!(h.elapsed_ms >= last, "the clock went backwards: {last} then {}", h.elapsed_ms);
+            last = h.elapsed_ms;
+        }
+        // The last line's own seconds are the fit's too, not the process's, so
+        // they cannot contradict the header they are written beside.
+        match records.last().expect("a last record") {
+            Record::RunEnd(e) => assert!(
+                e.seconds >= spent,
+                "the run_end counted only this process: {:.3} s against {spent:.3} s already spent",
+                e.seconds
+            ),
+            other => panic!("the stream does not end with a run_end: {other:?}"),
+        }
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::remove_file(&path).ok();
+        std::fs::remove_dir(&stream_dir).ok();
     }
 
     /// Every column positive on the data: |x| is x, and sqrt((a/b)^2) is a/b.
