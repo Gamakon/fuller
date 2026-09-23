@@ -2552,6 +2552,11 @@ pub struct FoldCounts {
     pub not_finite: u64,
     /// A blob whose value no f32 can carry — counted, never written.
     pub value_unrepresentable: u64,
+    /// A subtree that LOOKED flat against its own magnitude and was refused
+    /// because it passes its input's variation straight through: `x_1/x_0 - 440`
+    /// swings as much as `x_1/x_0` does, and folding it would delete a live
+    /// variable. The number that says how often the offset case is met.
+    pub passes_variation: u64,
     /// A collapse the gene could not take. A fold SHRINKS a tree, so this should
     /// stay at zero; where it does not, the number says so instead of hiding it.
     pub relevel_refused: u64,
@@ -2571,6 +2576,7 @@ impl FoldCounts {
             (&mut self.nodes_saved, beat.nodes_saved),
             (&mut self.not_finite, beat.not_finite),
             (&mut self.value_unrepresentable, beat.value_unrepresentable),
+            (&mut self.passes_variation, beat.passes_variation),
             (&mut self.relevel_refused, beat.relevel_refused),
         ] {
             *to += from;
@@ -2581,7 +2587,7 @@ impl FoldCounts {
     /// One line for the log, the shape `SnapCounts::line` has.
     pub fn line(&self) -> String {
         format!(
-            "FOLD\tbeats={}\trows={}\trows_changed={}\tgenes={}\tsubtrees={}\tflat={}\tfolded={}\tnodes_saved={}\tsecs={:.3}\tnot_finite={}/unrepresentable={}/relevel_refused={}",
+            "FOLD\tbeats={}\trows={}\trows_changed={}\tgenes={}\tsubtrees={}\tflat={}\tfolded={}\tnodes_saved={}\tsecs={:.3}\tnot_finite={}/unrepresentable={}/passes_variation={}/relevel_refused={}",
             self.beats,
             self.rows,
             self.rows_changed,
@@ -2593,6 +2599,7 @@ impl FoldCounts {
             self.seconds,
             self.not_finite,
             self.value_unrepresentable,
+            self.passes_variation,
             self.relevel_refused,
         )
     }
@@ -3658,6 +3665,56 @@ impl Engine {
                     if hi - lo > NEAR_CONSTANT_RANGE * mean.abs().max(1e-300) {
                         continue;
                     }
+                    // AND IT MUST ACTUALLY FLATTEN ITS INPUT, which the relative
+                    // test alone does NOT establish.
+                    //
+                    // `hi - lo <= flat * |mean|` is blind to an OFFSET: a subtree
+                    // `x_1/x_0 + (-440)` swings the full range of `x_1/x_0` and
+                    // still passes, because the large constant inflates `|mean|`
+                    // until 1% of it covers the whole swing. Measured on this
+                    // operator's first A/B — three seeds, train 1-R² 3 to 40 times
+                    // WORSE with the fold on — and visible in its own telemetry:
+                    // it folded `((x_1/x_0) + (79.0 + ...))` to -436.89, deleting a
+                    // live variable, while the final form's leave-one-out looked at
+                    // the same expression and dropped only the constant half.
+                    //
+                    // This is not a gate on the generator. It is what "the subtree
+                    // is a constant" MEANS: a constant destroys the variation
+                    // underneath it, so the test is against the CHILD's own swing
+                    // and not against the subtree's magnitude. `tanh(x + 40)` turns
+                    // a range of 4 into 1e-11 and passes; `tan(-32*(1/-7))` has no
+                    // varying child at all and passes; `x_1/x_0 - 440` passes
+                    // nothing through and is refused.
+                    let mut child_span: f64 = 0.0;
+                    let mut child_ok = true;
+                    for k in 0..self.table.arity(tokens[pos]) as usize {
+                        let kid = tree.child[pos] + k;
+                        let Some(kid_at) = node_of_position(&tree, tokens, &self.table, kid) else {
+                            child_ok = false;
+                            break;
+                        };
+                        let kid_math = nodes_to_math_named(&nodes, kid_at, &self.data.names, &named);
+                        counts.subtrees_evaluated += 1;
+                        let Ok(kv) = evaluate_math(&kid_math, &rows) else {
+                            child_ok = false;
+                            break;
+                        };
+                        if kv.iter().any(|x| !x.is_finite()) {
+                            child_ok = false;
+                            break;
+                        }
+                        let (klo, khi) = kv.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), x| (a.min(*x), b.max(*x)));
+                        child_span = child_span.max(khi - klo);
+                    }
+                    if !child_ok {
+                        continue;
+                    }
+                    // A child that does not move makes this a fold of constants,
+                    // which is always safe. One that does must be COMPRESSED.
+                    if child_span > 0.0 && hi - lo > NEAR_CONSTANT_RANGE * child_span {
+                        counts.passes_variation += 1;
+                        continue;
+                    }
                     chosen = Some((pos, mean, size, math));
                     break;
                 }
@@ -4175,21 +4232,6 @@ impl Engine {
     /// The fold operator's counts of this engine's fits so far.
     pub fn fold_counts(&self) -> FoldCounts {
         self.fold.as_ref().map_or_else(FoldCounts::default, |s| s.counts.clone())
-    }
-
-    /// WHAT THE ROUNDING GENERATOR FOUND, onto the stream — AFTER `run_end`.
-    ///
-    /// The fold runs in the final form, which is the caller's step and happens
-    /// once the fit has returned, so these events genuinely come after the line
-    /// that says the run is over. That is not a gap: the discovery was made then.
-    /// A viewer reads them as it reads any other event, and the stream stays
-    /// ordered because the generation given is the fit's last.
-    ///
-    /// Nothing here may end anything: the fit is already finished and its result
-    /// already computed, so a write that fails costs a line of telemetry and is
-    /// reported once, exactly as `report_telemetry` does it.
-    pub fn report_folds(&mut self, generation: u32, folds: &[Fold]) {
-        self.report_tidy(generation, folds, &[]);
     }
 
     /// BOTH HALVES OF THE TIDY, onto the stream — AFTER `run_end`.
@@ -5253,9 +5295,9 @@ impl Engine {
             self.save_checkpoint(&gen, generation, already_spent + started.elapsed().as_secs_f64(), hof.as_ref(), unique, oversized, individuals)?;
         }
         // THE WRITER OUTLIVES THE FIT, deliberately. `run_end` has been written
-        // and the run is over, but the ROUNDING GENERATOR has not run yet: it
-        // folds in the final form, which is the caller's step, and its findings
-        // reach the stream through [`Engine::report_folds`] after this returns.
+        // and the run is over, but THE FINAL FORM has not run yet: it folds and
+        // reduces the reported model, which is the caller's step, and its findings
+        // reach the stream through [`Engine::report_tidy`] after this returns.
         // Dropping the writer here closed the file before those events could be
         // appended, and the folds were lost. A second `fit()` on this engine
         // re-creates the writer from `Config::telemetry_path` (truncating, as a
@@ -5835,6 +5877,75 @@ mod tests {
         assert!(counts.genes_examined > 0, "the beat examined nothing: {counts:?}");
     }
 
+    /// A SUBTREE THAT ONLY LOOKS FLAT BECAUSE OF AN OFFSET IS NOT FOLDED.
+    ///
+    /// `x_0 + 4000` swings the whole range of `x_0` and still passes a test of
+    /// `range <= 1% of |mean|`, because the constant inflates the mean until one
+    /// percent of it covers the swing. Folding it deletes a live variable.
+    ///
+    /// This is the bug the operator's first A/B found: three seeds, train 1-R² 3
+    /// to 40 times WORSE with the fold on, and its own telemetry showed it folding
+    /// `((x_1/x_0) + (79.0 + ...))` to a constant while the final form's
+    /// leave-one-out, looking at the same expression, dropped only the constant
+    /// half. The fix is what "constant" means: a constant DESTROYS the variation
+    /// under it, so the test is against the child's own swing.
+    /// The blob the test plants, as Math: `(x_0 + 4000) + 4000`.
+    const OFFSET_BLOB: &str = r#"(Add (Add (Var "x_0") (Num 4000.0)) (Num 4000.0))"#;
+
+    #[test]
+    fn a_subtree_that_only_looks_flat_because_of_an_offset_is_not_folded() {
+        let config = Config { fold_every: 1, fold_top_k: 0, head: 8, ..toy_config(20, 20) };
+        let mut engine = Engine::new(config, toy_data()).expect("an engine");
+        let l = engine.layout;
+        let width = l.gene_width() as usize;
+        let codes = engine.table.codes();
+        let mut gen = drawn_generation(&engine, 13);
+        // Add(Add(x_0, ?), ?) with ? = 4000: the toy rows put x_0 in [1, 4], so
+        // the blob sits near 8002 and swings by 3 — well inside 1% of its mean,
+        // and yet every bit of that swing IS x_0. Four positions, so it is a
+        // candidate the operator really considers rather than one it skips for
+        // being too small to be worth a constant.
+        let add = engine.table.function_id(Op::Add).expect("Add");
+        let x0 = engine.table.symbols.iter().position(|s| *s == Symbol::Input(0)).expect("x_0") as u32;
+        let rnc_id = codes.rnc_id.expect("the table has a ?");
+        let mul = engine.table.function_id(Op::Mul).expect("Mul");
+        // Mul(x_0, Add(Add(x_0, ?), ?)) in Karva level order.
+        let plan = [mul, x0, add, add, rnc_id, x0, rnc_id];
+        for r in 0..l.pop as usize {
+            for g in 0..l.n_genes as usize {
+                let base = (r * l.n_genes as usize + g) * width;
+                let gene = &mut gen.pop.genome[base..base + width];
+                for (i, &t) in plan.iter().enumerate() {
+                    gene[i] = t;
+                }
+                for slot in gene[plan.len()..(l.head + l.tail) as usize].iter_mut() {
+                    *slot = x0;
+                }
+                // Both "?"s read Dc slot 0, which holds 4000.
+                for k in 0..l.tail as usize {
+                    gene[(l.head + l.tail) as usize + k] = 0;
+                }
+            }
+        }
+        for v in gen.pop.rnc.iter_mut() {
+            *v = 4000.0;
+        }
+        // The relative test alone WOULD call it flat — that is the trap.
+        let rows: Vec<Vec<(String, f64)>> = engine.fold.as_ref().expect("the fold is on").rows.clone();
+        let vals = evaluate_math(OFFSET_BLOB, &rows).expect("it evaluates");
+        let (lo, hi) = vals.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), x| (a.min(*x), b.max(*x)));
+        let mean = vals.iter().sum::<f64>() / vals.len() as f64;
+        assert!(hi - lo <= NEAR_CONSTANT_RANGE * mean.abs(), "the test case does not trip the relative test");
+        assert!(hi - lo > 0.0, "the offset subtree does not vary, so it proves nothing");
+        // ... and the operator refuses it, because it passes its input straight
+        // through instead of flattening it.
+        let genome_before = gen.pop.genome.clone();
+        let (changed, counts) = engine.fold_winners(&mut gen, 4).expect("the fold beat runs");
+        assert_eq!(changed, 0, "a live variable wearing an offset was folded away: {counts:?}");
+        assert_eq!(gen.pop.genome, genome_before, "the genome moved");
+        assert!(counts.passes_variation > 0, "the refusal was not counted as what it is: {counts:?}");
+    }
+
     /// WHAT ONE ROW'S FOLD COSTS, measured rather than guessed — the number that
     /// decides whether the fold can ride the pump beat.
     #[test]
@@ -5867,6 +5978,17 @@ mod tests {
             per_row * 1e3,
             per_eval * 1e3
         );
+        // THE BOUND THE PUMP BEAT IS SIZED AGAINST. A beat walks ~100 rows and a
+        // generation is ~30 ms, so a fit with a pump every 20 has ~600 ms to spend:
+        // at 10 ms a row the walk alone would eat the whole beat. Measured at 1.7 ms
+        // on this shape in release, which is the build a fit runs in — a debug build
+        // is roughly seven times slower and says nothing about what a run costs, so
+        // the bound is asserted where it means something and the number is printed
+        // either way.
+        if cfg!(not(debug_assertions)) {
+            assert!(per_row < 10e-3, "one row's fold walk costs {:.3} ms, which no pump beat can absorb", per_row * 1e3);
+            assert!(per_eval < 10e-3, "one evaluate_math costs {:.3} ms", per_eval * 1e3);
+        }
     }
 
     /// AND THE FOLD SAYS WHAT IT FOLDED. A count of folds is a number; "eleven

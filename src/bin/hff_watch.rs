@@ -1038,16 +1038,20 @@ fn discoveries(f: &mut Frame, theme: Theme, state: &WatchState, area: Rect) {
     // happens once the fit returns, so before that a zero would mean "not yet"
     // while reading as "none" — and a fit killed mid-run never runs it at all.
     // The codebase's own rule: a metric that is not emitted shows `—` and a reason.
-    let dropped = if state.tidy_reported {
-        format!("{reduces} {} dropped", plural(reduces, "subtree", "subtrees"))
-    } else {
-        "— dropped (the final form has not run)".to_string()
-    };
-    let block = Block::default().borders(Borders::ALL).title(format!(
+    let dropped = if state.tidy_reported { format!("{reduces} dropped") } else { "— dropped (final form pending)".to_string() };
+    // THE HEADING MUST FIT THE BORDER IT SITS IN. Three counts and their nouns
+    // spelled out is ~95 characters, and ratatui silently truncates a title that
+    // overruns — at 80 columns the fold count simply vanished, which is the one
+    // number this panel was rebuilt to show. The long form is drawn where there
+    // is room for it and the short one where there is not.
+    let long = format!(
         " DISCOVERIES · {snaps} {} snapped into genes · {folds} {} folded · {dropped} ",
         plural(snaps, "literal", "literals"),
         plural(folds, "subtree", "subtrees")
-    ));
+    );
+    let short = format!(" DISCOVERIES · {snaps} snapped · {folds} folded · {dropped} ");
+    let title = if long.chars().count() <= area.width.saturating_sub(2) as usize { long } else { short };
+    let block = Block::default().borders(Borders::ALL).title(title);
     let inner = block.inner(area);
     if state.discoveries.is_empty() {
         // Nothing found is NOT nothing to say: snap and the fold are both
@@ -1818,6 +1822,17 @@ mod tests {
                 // was held at to prove it could go, not something the model now
                 // carries, so it must never be drawn as an arrow's target.
                 assert!(screen.contains("dropped"), "{w}x{h}: a drop did not say it was dropped\n{screen}");
+                // AND THE HEADING'S NUMBERS SURVIVE THE WIDTH. A title that
+                // overruns its border is truncated silently, and at 80 columns the
+                // fold count — the one number this panel was rebuilt to show —
+                // simply vanished off the end of the long spelling.
+                // Either spelling, but the NUMBER must be there: the heading is
+                // drawn long where it fits and short where it does not.
+                let folds = state.found[Find::Fold as usize];
+                assert!(
+                    screen.contains(&format!("{folds} folded")) || screen.contains(&format!("{folds} subtrees folded")),
+                    "{w}x{h}: the fold count was truncated away\n{screen}"
+                );
                 for line in screen.lines() {
                     assert_eq!(line.chars().count(), w as usize, "{w}x{h}: a row is not the terminal's width");
                 }
@@ -1887,14 +1902,15 @@ mod tests {
         assert!(!old.tidy_reported, "the old recording carries a summary it should not");
         let screen = painted(&old, Theme::default(), 160, 50);
         assert!(screen.contains("— dropped"), "a count it does not have was printed as a number\n{screen}");
-        assert!(screen.contains("the final form has not run"), "the dash gave no reason\n{screen}");
+        assert!(screen.contains("final form pending"), "the dash gave no reason\n{screen}");
         // And the recording that DOES carry the note prints the number, even
         // though the number is small.
         let new = state_with_fold_operator();
         assert!(new.tidy_reported, "the note was not seen");
         let screen = painted(&new, Theme::default(), 160, 50);
         assert!(!screen.contains("— dropped"), "a known count was printed as a dash\n{screen}");
-        assert!(screen.contains("subtrees dropped") || screen.contains("subtree dropped"), "{screen}");
+        let reduces = new.found[Find::Reduce as usize];
+        assert!(screen.contains(&format!("{reduces} dropped")), "the known count is not on screen\n{screen}");
     }
 
     /// THE FOLD ARRIVES DURING THE SEARCH, which is the whole point of the

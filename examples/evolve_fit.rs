@@ -309,6 +309,17 @@ fn main() {
     if let Some(n) = env("EVOLVE_SNAP_TOP_K").and_then(|v| v.parse().ok()) {
         config.snap_top_k = n;
     }
+    //   EVOLVE_FOLD_EVERY               THE FOLD OPERATOR's beat in generations (0 = off): the
+    //                                   winners of every island have their near-constant subtrees
+    //                                   collapsed to the constants they are, and the clean gene is
+    //                                   written back into its own row
+    //   EVOLVE_FOLD_TOP_K               rows per island, by fitness, the fold examines (0 = all)
+    if let Some(n) = env("EVOLVE_FOLD_EVERY").and_then(|v| v.parse().ok()) {
+        config.fold_every = n;
+    }
+    if let Some(n) = env("EVOLVE_FOLD_TOP_K").and_then(|v| v.parse().ok()) {
+        config.fold_top_k = n;
+    }
     //   EVOLVE_GENEALOGY_FILE           THE GENEALOGY LOG: every individual of the fit gets an
     //                                   IDENTITY, an AGE (generations since its genotype entered
     //                                   the population) and a LINEAGE, and this file takes the
