@@ -372,6 +372,37 @@ pub fn write_back(
     }
 }
 
+/// ONE SUBSTITUTION SNAP ACTUALLY MADE — `3.142857 -> pi`, and where.
+///
+/// The counts below say HOW MANY; they never say WHAT, and what a snap did is the
+/// only part of it an operator can judge. A count of 4 in the `Algebraic` family
+/// is a number; `3.142857 -> pi` at generation 240 is a finding.
+///
+/// It is written ONLY for a `Grafted` write-back — the gene really carries the
+/// named constant from here on — so the formatting cost rides on the rarest
+/// branch of the whole pipeline and never on the examined-gene path, which runs
+/// thousands of times a beat.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SnapRecord {
+    pub generation: u32,
+    /// The population row and the gene within it — where to look in the genome.
+    pub row: usize,
+    pub gene: usize,
+    /// The folded constant subtree's value, before.
+    pub before: f64,
+    /// The lattice entry's form as infix — `pi`, `2*pi`, `sqrt(2)` — signed as it
+    /// was grafted.
+    pub after: String,
+    /// What that form computes, so a reader can see the snap's own error.
+    pub after_value: f64,
+}
+
+/// How many substitutions are kept. A fit runs 20,000 generations and this rides
+/// beside the hot loop, so the log is a RING and not a history: the last few are
+/// what a screen shows and what an operator asks about, and an unbounded vector
+/// of them would be the instrumentation growing with the run.
+pub const SNAP_RING: usize = 32;
+
 /// What snap did in a fit: the SNAP line of `examples/evolve_fit.rs`, and the
 /// measurement of whether snap can bite with whole-number constants.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -407,6 +438,15 @@ pub struct SnapCounts {
     /// Rows whose genome changed (re-scored by the next evaluation).
     pub rows_changed: u64,
     pub seconds: f64,
+    /// THE LAST [`SNAP_RING`] SUBSTITUTIONS, oldest first. Bounded by
+    /// construction, so a 20,000-generation fit carries the same 32 records a
+    /// 40-generation one does.
+    pub recent: std::collections::VecDeque<SnapRecord>,
+    /// How many substitutions there have EVER been, which is not `recent.len()`
+    /// once the ring has turned over. A reader that has written the first `n` as
+    /// events knows from this how many it missed, so a dropped record is a
+    /// countable gap rather than a silent one.
+    pub substitutions: u64,
 }
 
 impl SnapCounts {
@@ -419,6 +459,15 @@ impl SnapCounts {
             WriteBack::UnmappableOp => &mut self.unmappable_op,
             WriteBack::NotClosed => &mut self.not_closed,
         } += 1;
+    }
+
+    /// Keep one substitution, dropping the oldest past [`SNAP_RING`].
+    pub fn remember(&mut self, record: SnapRecord) {
+        self.substitutions += 1;
+        self.recent.push_back(record);
+        while self.recent.len() > SNAP_RING {
+            self.recent.pop_front();
+        }
     }
 
     /// THE MEASUREMENT's line: can snap bite with whole-number constants?
@@ -470,6 +519,14 @@ impl SnapCounts {
             *total += n;
         }
         self.seconds += beat.seconds;
+        // The beat's substitutions join the fit's, newest kept: the ring is the
+        // LAST few of the whole run, not the last few of one beat. The TOTAL is
+        // the beat's own, not the number of records that survived its ring —
+        // a beat that grafted more than the ring holds still says how many.
+        for record in &beat.recent {
+            self.remember(record.clone());
+        }
+        self.substitutions = self.substitutions - beat.recent.len() as u64 + beat.substitutions;
     }
 
     /// `SNAP\t<beats>\t<genes examined>\t<literals matched>\t<variants kept by
@@ -840,6 +897,44 @@ mod tests {
             pop.genome.len() / width,
             out.best.one_minus_r2[1]
         );
+    }
+
+    /// THE RING IS BOUNDED AND IT IS THE RUN'S, not one beat's. A fit that
+    /// grafts thousands of times carries the same 32 records, they are the LAST
+    /// 32, and the total says how many there really were — a dropped record is a
+    /// countable gap and never a silent one.
+    #[test]
+    fn the_substitution_log_is_a_ring_and_says_what_it_dropped() {
+        let record = |n: u32| SnapRecord {
+            generation: n,
+            row: n as usize,
+            gene: 0,
+            before: f64::from(n) + 0.5,
+            after: "pi".to_string(),
+            after_value: std::f64::consts::PI,
+        };
+        let mut beat = SnapCounts::default();
+        for n in 0..100 {
+            beat.remember(record(n));
+        }
+        assert_eq!(beat.recent.len(), SNAP_RING, "the ring grew past its bound");
+        assert_eq!(beat.substitutions, 100, "the total is every substitution, not the ring's length");
+        assert_eq!(beat.recent.front().map(|r| r.generation), Some(100 - SNAP_RING as u32));
+        assert_eq!(beat.recent.back().map(|r| r.generation), Some(99), "the ring keeps the NEWEST");
+
+        // Joined into a fit: the total is exact although the beat's own ring had
+        // already dropped 68 of them.
+        let mut fit = SnapCounts::default();
+        fit.remember(record(1000));
+        fit.add(&beat);
+        assert_eq!(fit.substitutions, 101, "the fit's total lost the records the beat's ring dropped");
+        assert_eq!(fit.recent.len(), SNAP_RING);
+        assert_eq!(fit.recent.back().map(|r| r.generation), Some(99));
+
+        // And the default is still the default: the off-by-default test compares
+        // against it, and a ring with anything in it would break that.
+        assert_eq!(SnapCounts::default().recent.len(), 0);
+        assert_eq!(SnapCounts::default().substitutions, 0);
     }
 
     /// The switch is off by default, and then nothing of snap is in the engine.

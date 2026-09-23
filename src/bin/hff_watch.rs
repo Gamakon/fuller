@@ -26,7 +26,7 @@
 use std::io::Write;
 
 use fuller::evolve::telemetry::{parse_stream, Tailer};
-use fuller::evolve::watch::{gain_text, or_dash, Gain, Liveness, WatchState};
+use fuller::evolve::watch::{elided, gain_text, or_dash, Gain, Liveness, WatchState};
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -344,7 +344,8 @@ fn draw(f: &mut Frame, state: &WatchState, ui: &Ui) {
                 Constraint::Length(2),  // header
                 Constraint::Length(3),  // global strip
                 Constraint::Length(8),  // island cards
-                Constraint::Min(8),     // cohort table + detail
+                Constraint::Min(8),     // cohort table + discoveries, and detail
+                Constraint::Length(1),  // the winning gene, one line
                 Constraint::Length(4),  // events
                 Constraint::Length(1),  // footer
             ])
@@ -359,7 +360,11 @@ fn draw(f: &mut Frame, state: &WatchState, ui: &Ui) {
                 // and ALL THREE pulse meters. A card that silently drops the
                 // third meter is a screen that hides a measurement.
                 Constraint::Length(6),
+                // At 80x24 this is 5 rows for the table and 4 for the
+                // discoveries below it: the panel degrades to a short list
+                // rather than disappearing, which is the whole point of it.
                 Constraint::Min(5),
+                Constraint::Length(1), // the winning gene, one line
                 Constraint::Length(1), // one-line events
                 Constraint::Length(1),
             ])
@@ -378,20 +383,31 @@ fn draw(f: &mut Frame, state: &WatchState, ui: &Ui) {
         if ui.detail_open {
             detail(f, theme, state, rows[3]);
         } else {
-            cohort_table(f, theme, state, split[0], true);
+            // THE DEAD SPACE UNDER THE TABLE is where the discoveries go. The
+            // cohort table rarely holds more than ten rows and the region is
+            // `Min(8)` of whatever is left, so on a tall terminal the table sat
+            // in a box three times its own height. The table takes what it
+            // needs; the discoveries take the rest.
+            let stack = table_and_discoveries(split[0], state.rows().len());
+            cohort_table(f, theme, state, stack[0], true);
+            discoveries(f, theme, state, stack[1]);
             detail(f, theme, state, split[1]);
         }
-        events(f, theme, state, rows[4]);
+        gene_line(f, theme, state, rows[4]);
+        events(f, theme, state, rows[5]);
     } else {
         one_island(f, theme, state, rows[2]);
         if ui.detail_open {
             detail(f, theme, state, rows[3]);
         } else {
-            cohort_table(f, theme, state, rows[3], false);
+            let stack = table_and_discoveries(rows[3], state.rows().len());
+            cohort_table(f, theme, state, stack[0], false);
+            discoveries(f, theme, state, stack[1]);
         }
-        one_line_events(f, theme, state, rows[4]);
+        gene_line(f, theme, state, rows[4]);
+        one_line_events(f, theme, state, rows[5]);
     }
-    footer(f, state, ui, rows[5]);
+    footer(f, state, ui, rows[6]);
     if ui.model_open {
         model_overlay(f, state, ui, area);
     }
@@ -789,6 +805,138 @@ fn bars(spark: &[u64]) -> String {
     spark.iter().rev().take(24).rev().map(|&v| BLOCKS[(v as usize).min(8)]).collect()
 }
 
+/// The smallest box the discoveries panel is worth drawing in: two borders and
+/// two rows of list. Below that the table keeps the whole region — half a
+/// bordered box with no room for a line in it is not a panel.
+const DISCOVERIES_MIN: u16 = 4;
+
+/// SPLIT THE TABLE'S COLUMN between the cohort table and the discoveries.
+///
+/// The table takes what its rows need — a header, two borders and one line per
+/// cohort — and the discoveries take the rest. That is the right way round: the
+/// table's height is known and bounded (a fit rarely holds more than a dozen
+/// cohorts at once), and the discoveries are a scrolling list with no natural
+/// end, so giving the fixed thing its size and the growing thing the remainder
+/// means neither is ever cut when the other is short.
+///
+/// WHEN THE TABLE ALONE WOULD FILL THE REGION, the discoveries still get their
+/// minimum and the table is scrolled rather than the panel being dropped. A
+/// cohort table is already a scrolling list — it lingers its dead for three
+/// beats and a long fit mints one cohort per pump — so a row below the fold is
+/// a row an operator reaches, while a panel that is not drawn at all is a
+/// finding they never learn exists. Only when even that would leave the table
+/// nothing to show does the table keep the whole region.
+fn table_and_discoveries(area: Rect, cohorts: usize) -> Vec<Rect> {
+    // The table's own minimum: two borders, the header, and two rows of it.
+    const TABLE_MIN: u16 = 5;
+    let wanted = (cohorts as u16).saturating_add(3);
+    if area.height < TABLE_MIN.saturating_add(DISCOVERIES_MIN) {
+        return vec![area, Rect { height: 0, ..area }];
+    }
+    // When the table wants more than the region has, the two SHARE it rather
+    // than the panel being squeezed to its bare minimum: a list of two lines
+    // under a table of nine is a panel nobody reads, and the table below the
+    // fold is scrolled to as it always was. A third to the panel, which is
+    // three or four findings at the sizes this is actually watched on.
+    let ceiling = (area.height - DISCOVERIES_MIN).max(TABLE_MIN);
+    let shared = (area.height - area.height / 3).max(TABLE_MIN);
+    let table = wanted.min(shared).clamp(TABLE_MIN, ceiling);
+    Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(table), Constraint::Min(DISCOVERIES_MIN)])
+        .split(area)
+        .to_vec()
+}
+
+/// THE DISCOVERIES: what snap substituted and what the rounding generator
+/// folded, newest first, one line each.
+///
+/// The two kinds are kept visibly apart — a snap is a substitution INTO the
+/// population and a fold is a reduction of the FINAL model — because a list that
+/// mixed them would be a list of unrelated numbers. They carry their own colour
+/// and their own arrow, and the heading names both.
+fn discoveries(f: &mut Frame, theme: Theme, state: &WatchState, area: Rect) {
+    use fuller::evolve::watch::Find;
+    if area.height < DISCOVERIES_MIN {
+        return;
+    }
+    let (snaps, folds) = state.discoveries.iter().fold((0, 0), |(s, d), x| match x.kind {
+        Find::Snap => (s + 1, d),
+        Find::Fold => (s, d + 1),
+    });
+    let plural = |n: usize, one: &str, many: &str| if n == 1 { one.to_string() } else { many.to_string() };
+    let block = Block::default().borders(Borders::ALL).title(format!(
+        " DISCOVERIES · {snaps} {} snapped into genes · {folds} {} folded ",
+        plural(snaps, "literal", "literals"),
+        plural(folds, "subtree", "subtrees")
+    ));
+    let inner = block.inner(area);
+    if state.discoveries.is_empty() {
+        // Nothing found is NOT nothing to say: snap and the fold are both
+        // switched on separately, and an empty panel that does not explain
+        // itself reads as a broken one.
+        f.render_widget(
+            Paragraph::new(vec![
+                Line::from(Span::styled("nothing yet", Style::default().fg(theme.dim()))),
+                Line::from(Span::styled(
+                    "snaps arrive through the run · folds once, after it ends",
+                    Style::default().fg(theme.dim()),
+                )),
+            ])
+            .block(block),
+            area,
+        );
+        return;
+    }
+    let width = inner.width as usize;
+    let lines: Vec<Line> = state
+        .discoveries
+        .iter()
+        .rev()
+        .take(inner.height as usize)
+        .map(|d| {
+            // A snap is the accent — it is the thing that went INTO the
+            // population. A fold is the warn colour: it removed structure from
+            // the reported model, which is a different kind of news. Both are
+            // legible on either terminal.
+            let (tag, colour) = match d.kind {
+                Find::Snap => ("snap", theme.accent()),
+                Find::Fold => ("fold", theme.warn()),
+            };
+            let size = d.nodes.map_or_else(String::new, |n| format!("{n} nodes "));
+            let body = format!("{size}{} → {}{}", d.what, d.became, d.times());
+            Line::from(vec![
+                Span::styled(format!("gen {:<6} ", d.generation), Style::default().fg(theme.dim())),
+                Span::styled(format!("{tag} "), Style::default().fg(colour).add_modifier(Modifier::BOLD)),
+                // The list is one line per discovery: a fourteen-node blob is
+                // the finding, and wrapping it would push the next one off.
+                Span::raw(elided(&body, width.saturating_sub(16))),
+            ])
+        })
+        .collect();
+    f.render_widget(Paragraph::new(lines).block(block), area);
+}
+
+/// THE WINNING GENE, one line, pretty-printed as a function.
+///
+/// `f(x, y) = ...`, not the engine's s-expression: it is there to be READ, and
+/// watching it change as the fit runs is the point of putting it on the screen
+/// at all. The literals are rounded for display; `m` still shows the model to
+/// the last digit. Too long for the terminal is TRUNCATED and not wrapped — one
+/// line is a line, and the full form is a keystroke away.
+fn gene_line(f: &mut Frame, theme: Theme, state: &WatchState, area: Rect) {
+    let label = "model  ";
+    let body = match state.gene_line.as_deref() {
+        Some(line) => Span::raw(elided(line, (area.width as usize).saturating_sub(label.len()))),
+        None if state.model.is_some() => Span::styled("the model record did not parse", Style::default().fg(theme.warn())),
+        None => Span::styled("no model record yet", Style::default().fg(theme.dim())),
+    };
+    f.render_widget(
+        Paragraph::new(Line::from(vec![Span::styled(label, Style::default().fg(theme.dim())), body])),
+        area,
+    );
+}
+
 fn detail(f: &mut Frame, theme: Theme, state: &WatchState, area: Rect) {
     let block = Block::default().borders(Borders::ALL).title(" COHORT DETAIL ");
     let Some(id) = state.selected else {
@@ -1049,5 +1197,189 @@ fn dump(state: &WatchState) -> String {
     for (gen, what) in state.events.iter().rev().take(4) {
         out.push_str(&format!("  gen {gen:>6}  {what}\n"));
     }
+    // THE SAME TWO PANELS THE SCREEN DRAWS, so a dump and a terminal never
+    // disagree about what the fit found — and so the panels can be checked
+    // without a tty.
+    out.push_str("\n  DISCOVERIES\n");
+    if state.discoveries.is_empty() {
+        out.push_str("  (none yet · snaps arrive through the run, folds once after it ends)\n");
+    }
+    for d in state.discoveries.iter().rev().take(12) {
+        let tag = match d.kind {
+            fuller::evolve::watch::Find::Snap => "snap",
+            fuller::evolve::watch::Find::Fold => "fold",
+        };
+        let size = d.nodes.map_or_else(String::new, |n| format!("{n} nodes "));
+        out.push_str(&format!("  gen {:>6}  {tag}  {size}{} -> {}{}\n", d.generation, d.what, d.became, d.times()));
+    }
+    out.push_str(&format!(
+        "\n  model  {}\n",
+        state.gene_line.as_deref().map_or("(no model record yet)", |l| l)
+    ));
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fuller::evolve::telemetry::{parse_stream, Record};
+    use fuller::evolve::watch::Find;
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+
+    const FIXTURE: &str = include_str!("../../tests/fixtures/telemetry_v1.jsonl");
+
+    /// A REAL RECORDING that has discoveries in it: a 30-second bacres1 fit
+    /// (seed 7014) that snapped 166 literals into genes and folded one
+    /// near-constant subtree, trimmed. `FIXTURE` predates both kinds, so a panel
+    /// drawn from it would be a panel drawn from a stream with none of what it
+    /// shows — which proves nothing.
+    const DISCOVERIES: &str = include_str!("../../tests/fixtures/telemetry_v1_discoveries.jsonl");
+
+    fn state_with_discoveries() -> WatchState {
+        let (records, bad) = parse_stream(DISCOVERIES);
+        assert_eq!(bad, 0, "the recording is clean");
+        let mut state = WatchState::new(false);
+        state.bad_lines = bad;
+        for r in records {
+            state.apply_record(r);
+        }
+        assert!(
+            state.discoveries.iter().any(|d| d.kind == Find::Snap) && state.discoveries.iter().any(|d| d.kind == Find::Fold),
+            "the recording must carry both kinds"
+        );
+        state
+    }
+
+    /// The whole screen, at one size and one theme, as the characters that
+    /// landed on it.
+    fn painted(state: &WatchState, theme: Theme, w: u16, h: u16) -> String {
+        let mut terminal = Terminal::new(TestBackend::new(w, h)).expect("a test terminal");
+        let ui = Ui { theme, ..Ui::default() };
+        terminal.draw(|f| draw(f, state, &ui)).expect("the frame draws");
+        terminal
+            .backend()
+            .buffer()
+            .content()
+            .chunks(w as usize)
+            .map(|row| row.iter().map(ratatui::buffer::Cell::symbol).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// THE NEW PANELS DRAW, at both layouts and in both themes, and the layout
+    /// still holds: nothing is cut off, nothing panics, and the discoveries and
+    /// the gene line are both on the screen at the wide size AND at 80x24.
+    #[test]
+    fn the_discoveries_and_the_gene_line_draw_at_both_sizes_and_in_both_themes() {
+        let state = state_with_discoveries();
+        for theme in [Theme { light: false }, Theme { light: true }] {
+            for (w, h) in [(120, 35), (160, 50), (80, 24)] {
+                let screen = painted(&state, theme, w, h);
+                assert!(screen.contains("DISCOVERIES"), "{w}x{h} light={}: no discoveries panel\n{screen}", theme.light);
+                assert!(screen.contains("snap"), "{w}x{h}: the snap is not on screen\n{screen}");
+                assert!(screen.contains("fold"), "{w}x{h}: the fold is not on screen\n{screen}");
+                assert!(screen.contains("2 nodes"), "{w}x{h}: the fold's size is not shown\n{screen}");
+                // The recording's snapped forms are on the screen as FORMS, not
+                // as the numbers they compute: `sqrt3` and `phi`, not 3.2114.
+                assert!(screen.contains("sqrt3") || screen.contains("g_earth"), "{w}x{h}: no snapped form\n{screen}");
+                assert!(screen.contains("model"), "{w}x{h}: no gene line\n{screen}");
+                assert!(screen.contains("f("), "{w}x{h}: the gene line is not a function\n{screen}");
+                // Every line fits the terminal: a panel that overruns its width
+                // is a panel that has pushed something off the screen.
+                for line in screen.lines() {
+                    assert_eq!(line.chars().count(), w as usize, "{w}x{h}: a row is not the terminal's width");
+                }
+            }
+        }
+    }
+
+    /// AND IT DEGRADES RATHER THAN BREAKING. Below 70x20 the compact warning is
+    /// drawn and neither new panel is — it is still a useful screen, not an
+    /// error message — and every size in between draws without panicking.
+    #[test]
+    fn a_small_terminal_falls_back_and_never_panics() {
+        let state = state_with_discoveries();
+        let small = painted(&state, Theme::default(), 69, 19);
+        assert!(small.contains("terminal too small"), "{small}");
+        assert!(!small.contains("DISCOVERIES"), "the compact screen drew a panel it has no room for\n{small}");
+        // The essential numbers are still there: it is a screen, not an error.
+        assert!(small.contains("gen ") && small.contains("best HFF"), "{small}");
+        // EVERY size from the minimum up draws. A `Length` added to a layout is
+        // exactly where a sum stops fitting, so the range is swept rather than
+        // sampled.
+        for h in 20..40u16 {
+            for w in [70u16, 79, 80, 119, 120, 121] {
+                let _ = painted(&state, Theme::default(), w, h);
+            }
+        }
+    }
+
+    /// A STREAM WITH NO DISCOVERIES SAYS SO. Snap and the fold are switched on
+    /// separately, and an empty panel that does not explain itself reads as a
+    /// broken one rather than as a fit that has not found anything yet.
+    #[test]
+    fn an_empty_discoveries_panel_explains_itself() {
+        let (records, _) = parse_stream(FIXTURE);
+        let mut state = WatchState::new(false);
+        for r in records {
+            state.apply_record(r);
+        }
+        assert!(state.discoveries.is_empty(), "the fixture predates the discovery events");
+        let screen = painted(&state, Theme::default(), 120, 35);
+        assert!(screen.contains("nothing yet"), "an empty panel said nothing\n{screen}");
+        assert!(screen.contains("after it ends"), "it did not say when folds arrive\n{screen}");
+        // And a stream with no model at all says that rather than drawing a
+        // half-written function.
+        let mut blank = WatchState::new(false);
+        blank.apply_record(Record::Snapshot(state.snapshot.clone().expect("a frame")));
+        let screen = painted(&blank, Theme::default(), 120, 35);
+        assert!(screen.contains("no model record yet"), "{screen}");
+    }
+
+    /// THE TABLE TAKES WHAT ITS ROWS NEED, and the discoveries take the rest —
+    /// so on a tall terminal every cohort is on screen AND the panel is under
+    /// it, which is the dead space the panel was put there to fill.
+    #[test]
+    fn the_table_gets_its_rows_first_and_the_panel_gets_the_rest() {
+        let state = state_with_discoveries();
+        let cohorts = state.rows().len();
+        assert!(cohorts > 4, "the fixture has enough cohorts to crowd a short region");
+        // Tall enough for both: every cohort is drawn and so is the panel.
+        let tall = painted(&state, Theme::default(), 140, 48);
+        let drawn = state.rows().iter().filter(|r| tall.contains(&format!("c{}", r.id))).count();
+        assert_eq!(drawn, cohorts, "a tall terminal lost a cohort row\n{tall}");
+        assert!(tall.contains("DISCOVERIES"), "a tall terminal has room for both\n{tall}");
+
+        // AND THE TABLE IS NEVER STARVED. However short the region, it keeps at
+        // least a header and rows, or the panel is not drawn at all.
+        for h in 24..48u16 {
+            let screen = painted(&state, Theme::default(), 140, h);
+            if screen.contains("DISCOVERIES") {
+                let shown = state.rows().iter().filter(|r| screen.contains(&format!("c{}", r.id))).count();
+                assert!(shown >= 2, "h={h}: the panel left the table {shown} rows\n{screen}");
+            }
+        }
+    }
+
+    /// `--dump` shows the SAME two panels the screen draws, so a dump and a
+    /// terminal never disagree about what the fit found.
+    #[test]
+    fn the_dump_carries_the_discoveries_and_the_gene_line() {
+        let state = state_with_discoveries();
+        let text = dump(&state);
+        assert!(text.contains("DISCOVERIES"), "{text}");
+        assert!(text.contains("2 nodes exp((-5.0))"), "{text}");
+        assert!(text.contains("-> ((3.0*sqrt3)/(1.0*phi))"), "{text}");
+        assert!(text.contains("model  f("), "{text}");
+        // Newest first, as the panel shows them: the fold came last.
+        let (fold, snap) = (text.find("fold").expect("a fold"), text.rfind("snap").expect("a snap"));
+        assert!(fold < snap, "the dump is oldest-first: {text}");
+        // Both kinds are named, so the two findings are never read as one list.
+        assert_eq!(state.discoveries.iter().filter(|d| d.kind == Find::Fold).count(), 1);
+        // AND THE REPEAT IS COLLAPSED. The recording holds four consecutive
+        // copies of one substitution — selection had copied the gene across
+        // four rows — and they are one line with a count, not four lines.
+        assert!(text.contains(" ×4"), "a repeated finding was not collapsed:\n{text}");
+    }
 }

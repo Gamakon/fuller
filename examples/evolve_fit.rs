@@ -12,7 +12,7 @@
 //! model and its R² on the unseen 25%.
 
 use fuller::chrom_score::Splits;
-use fuller::evolve::engine::{evaluate_math, final_form_within, resolve_protected, Config, Data, Engine, Lane};
+use fuller::evolve::engine::{evaluate_math, final_form_reporting, resolve_protected, Config, Data, Engine, Lane};
 use fuller::evolve::umap2d::embed_2d;
 use fuller::evolve::{below, draw, smogd, smote};
 use fuller::lint::node::Tree;
@@ -361,7 +361,7 @@ fn main() {
             break;
         }
     }
-    let (engine, mut out) = kept.expect("at least one search ran");
+    let (mut engine, mut out) = kept.expect("at least one search ran");
     out.generations = generations;
     out.individuals = individuals;
 
@@ -403,7 +403,15 @@ fn main() {
     let resolved = resolve_protected(&out.math, &fit_rows).unwrap_or_else(|_| out.math.clone());
     // The reduction sizes its tolerance against how well the model actually fits:
     // a term worth less than a tenth of the model's own error is not the law.
-    let tidied = final_form_within(&resolved, &names, &fit_rows, Some(out.best.one_minus_r2[0])).unwrap_or(resolved);
+    // AND WHAT THE ROUNDING GENERATOR FOUND on the way: the folds go onto the
+    // telemetry stream (after `run_end` — this is where the fold happens) so the
+    // viewer's discoveries panel can show them beside snap's substitutions.
+    let (tidied, folds) = final_form_reporting(&resolved, &names, &fit_rows, Some(out.best.one_minus_r2[0]))
+        .unwrap_or_else(|_| (resolved.clone(), Vec::new()));
+    for f in &folds {
+        println!("FOLD\t{}\t{:.9}\t{}", f.nodes, f.value, f.infix);
+    }
+    engine.report_folds(out.generations, &folds);
     // ... and the data guided rewrites once more: fuller's linter can WRITE a shape
     // they cover (it turns Add (Neg (Log b)) (Log a) into Sub (Log a) (Log b)), and a
     // form that only appears after the tidy must not slip past them.

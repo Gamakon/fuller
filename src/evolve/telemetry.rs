@@ -267,6 +267,25 @@ pub struct Event {
     /// The number the event turns on, when it has one (a new best's HFF, a
     /// merged cohort's label). Never a percentage: the viewer computes those.
     pub value: Option<f64>,
+    /// WHAT A DISCOVERY REPLACED, as a number — the literal snap found, or the
+    /// value a near-constant subtree was folded to. `value` above carries what it
+    /// BECAME, so before and after are two numbers and the viewer subtracts them
+    /// rather than parsing `message` back into arithmetic ("numbers are numbers",
+    /// at the top of this file).
+    #[serde(default)]
+    pub before: Option<f64>,
+    /// What it became, as a FORM: `pi`, `2*pi`, `sqrt(2)` for a snap. A fold's
+    /// after is a number and lives in `value`; its `detail` is the subtree that
+    /// went.
+    #[serde(default)]
+    pub detail: Option<String>,
+    /// How many nodes the discovery removed — a fold's whole point, and the
+    /// number that makes "thirteen operators wearing a 1" readable as a size.
+    #[serde(default)]
+    pub nodes: Option<u32>,
+    /// The population row a snap was written into, when the event is about one.
+    #[serde(default)]
+    pub row: Option<u32>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -284,6 +303,17 @@ pub enum EventKind {
     CohortMerge,
     /// The fit's stop bar was met.
     EarlyStop,
+    /// SNAP WROTE A NAMED CONSTANT INTO A GENE: a literal the search had fitted
+    /// numerically is now `pi` (or `2*pi`, or `sqrt(2)`) and breeds as that
+    /// token. Rare — it is the last branch of a four-stage pipeline — and
+    /// therefore exactly the kind of thing an event is for.
+    Snap,
+    /// THE ROUNDING GENERATOR FOLDED A NEAR-CONSTANT SUBTREE: a subtree whose
+    /// whole range across the rows was under a percent of its own value, replaced
+    /// by that value. These arrive AFTER `run_end` — the fold runs in the final
+    /// form, once the fit is over — which is the honest place for them and not a
+    /// gap in the stream.
+    Fold,
     /// Something the engine wants an operator to see that is not one of the above.
     Note,
 }
@@ -467,7 +497,26 @@ impl Writer {
 
     pub fn event(&mut self, generation: u32, kind: EventKind, message: String, cohort: Option<u32>, value: Option<f64>) -> Result<(), String> {
         let header = self.header(generation);
-        self.write(&Record::Event(Event { header, kind, message, cohort, value }))
+        self.write(&Record::Event(Event { header, kind, message, cohort, value, before: None, detail: None, nodes: None, row: None }))
+    }
+
+    /// A DISCOVERY: a snap or a fold, with its before and after carried as the
+    /// numbers and forms they are rather than only as prose. The `message` is
+    /// still written, because the events pane and `--dump` print it and a reader
+    /// that knows none of the new fields still sees what happened.
+    pub fn discovery(&mut self, generation: u32, kind: EventKind, message: String, d: Discovery) -> Result<(), String> {
+        let header = self.header(generation);
+        self.write(&Record::Event(Event {
+            header,
+            kind,
+            message,
+            cohort: None,
+            value: d.after,
+            before: d.before,
+            detail: d.detail,
+            nodes: d.nodes,
+            row: d.row,
+        }))
     }
 
     /// Write a model and remember its `seq`, so the snapshots after it point at it.
@@ -523,6 +572,17 @@ pub struct SnapshotBody {
     pub islands: Vec<IslandRow>,
     pub global_cohorts: Vec<CohortRow>,
     pub pumps_since: u32,
+}
+
+/// A discovery's typed half — the fields that make `before -> after` a pair of
+/// values instead of a sentence, as one argument rather than five.
+#[derive(Clone, Debug, Default)]
+pub struct Discovery {
+    pub before: Option<f64>,
+    pub after: Option<f64>,
+    pub detail: Option<String>,
+    pub nodes: Option<u32>,
+    pub row: Option<u32>,
 }
 
 pub struct ModelFields {
@@ -860,6 +920,131 @@ mod tests {
         let back: CohortRow = serde_json::from_str(&json).expect("round trip");
         assert_eq!(back.best_hff, None);
         assert_eq!(back.nan_rows, 3);
+    }
+
+    /// A REAL RECORDING OF A FIT THAT DISCOVERED THINGS: trimmed from a
+    /// 30-second bacres1 run (seed 7014) that made 166 snap substitutions and
+    /// one near-constant fold. [`FIXTURE`] predates both kinds, so it cannot
+    /// check that they are ordered, parse or carry their numbers — this one can,
+    /// and it is a recording rather than a hand-built stream, so a change to the
+    /// record shape has to be made against what the engine actually writes.
+    const DISCOVERIES: &str = include_str!("../../tests/fixtures/telemetry_v1_discoveries.jsonl");
+
+    /// THE STREAM'S GENERATIONS ONLY GO FORWARDS, over a recording that has
+    /// discoveries in it.
+    ///
+    /// A snap is stamped with THE GENERATION IT HAPPENED AT, which is earlier
+    /// than the beat that reports it — snap fires every 20 generations and a
+    /// snapshot lands every 30-odd. Writing them inside the snapshot's throttled
+    /// block put `snap gen 940` after `cohort_born gen 960` and every one of a
+    /// run's 166 snap events went backwards. They are written before the beat's
+    /// own records now, which is also where an event belongs: it must not wait
+    /// for a frame.
+    #[test]
+    fn a_recording_with_discoveries_in_it_still_only_goes_forwards() {
+        let (records, bad) = parse_stream(DISCOVERIES);
+        assert_eq!(bad, 0, "the recording is clean");
+        let (mut seq, mut generation) = (None, 0);
+        for r in &records {
+            let h = r.header();
+            if let Some(previous) = seq {
+                assert!(h.seq > previous, "seq went backwards at {}", h.seq);
+            }
+            seq = Some(h.seq);
+            assert!(h.generation >= generation, "generation went backwards at seq {}: {} < {generation}", h.seq, h.generation);
+            generation = h.generation;
+            assert_eq!(h.schema_version, SCHEMA_VERSION);
+        }
+        // It really holds both kinds, and their detail survived the round trip.
+        let kinds: Vec<EventKind> = records.iter().filter_map(|r| match r {
+            Record::Event(e) => Some(e.kind),
+            _ => None,
+        }).collect();
+        assert!(kinds.contains(&EventKind::Snap), "no snap in the recording");
+        assert!(kinds.contains(&EventKind::Fold), "no fold in the recording");
+        let snap = records.iter().find_map(|r| match r {
+            Record::Event(e) if e.kind == EventKind::Snap => Some(e.clone()),
+            _ => None,
+        }).expect("a snap");
+        assert!(snap.before.is_some_and(f64::is_finite), "a snap with no literal: {snap:?}");
+        assert!(snap.detail.as_ref().is_some_and(|d| !d.is_empty()), "a snap with no form: {snap:?}");
+        assert!(snap.row.is_some(), "a snap with no row: {snap:?}");
+        let fold = records.iter().find_map(|r| match r {
+            Record::Event(e) if e.kind == EventKind::Fold => Some(e.clone()),
+            _ => None,
+        }).expect("a fold");
+        assert!(fold.nodes.is_some_and(|n| n > 0), "a fold that removed nothing: {fold:?}");
+        // THE FOLD COMES AFTER `run_end`, by design: it runs in the final form,
+        // which is the caller's step once the fit has returned.
+        let ended = records.iter().position(|r| matches!(r, Record::RunEnd(_))).expect("a run_end");
+        let at = records.iter().position(|r| matches!(r, Record::Event(e) if e.kind == EventKind::Fold)).expect("a fold");
+        assert!(at > ended, "the fold was written before run_end");
+
+        // And every snapshot of it is coherent, by the same invariants.
+        let start = records.iter().find_map(|r| match r {
+            Record::RunStart(s) => Some(s.clone()),
+            _ => None,
+        }).expect("a run_start");
+        for r in &records {
+            if let Record::Snapshot(s) = r {
+                let problems = check_snapshot(s, start.population, start.cohort_merge > 0);
+                assert!(problems.is_empty(), "generation {}: {problems:?}", s.header.generation);
+            }
+        }
+    }
+
+    /// A DISCOVERY CARRIES ITS BEFORE AND AFTER AS VALUES, not only as prose —
+    /// "numbers are numbers", so a viewer never parses `message` back into
+    /// arithmetic. And every one of the fields it added is optional, so the
+    /// fixtures written before they existed still parse and the schema version
+    /// did not have to move.
+    #[test]
+    fn a_discovery_carries_its_before_and_after_and_adds_only_optional_fields() {
+        // An event WITHOUT any of the new fields — every event ever written
+        // before them — parses, and they come back as the silences they are.
+        let old = r#"{"schema_version":1,"type":"event","run_id":"r","seq":3,"timestamp_utc":"2026-09-23T00:00:00Z","elapsed_ms":10,"generation":5,"kind":"new_best","message":"global best HFF 1e-3","cohort":null,"value":0.001}"#;
+        let record: Record = serde_json::from_str(old).expect("an event without the discovery fields must still parse");
+        let Record::Event(e) = record else { panic!("not an event") };
+        assert_eq!((e.before, e.detail.clone(), e.nodes, e.row), (None, None, None, None));
+        assert_eq!(e.value, Some(0.001));
+        assert_eq!(SCHEMA_VERSION, 1, "optional fields must not have moved the version");
+
+        // And a snap round-trips with both halves of the substitution as numbers.
+        let snap = Event {
+            header: Header { schema_version: SCHEMA_VERSION, run_id: "r".into(), seq: 4, timestamp_utc: now_utc(), elapsed_ms: 11, generation: 6 },
+            kind: EventKind::Snap,
+            message: "snap: 3.142857143 -> pi (row 7, gene 0)".into(),
+            cohort: None,
+            value: finite(std::f64::consts::PI),
+            before: finite(22.0 / 7.0),
+            detail: Some("pi".into()),
+            nodes: None,
+            row: Some(7),
+        };
+        let json = serde_json::to_string(&Record::Event(snap)).expect("serialise");
+        assert!(json.contains("\"kind\":\"snap\""), "{json}");
+        let Record::Event(back) = serde_json::from_str::<Record>(&json).expect("round trip") else { panic!() };
+        assert_eq!(back.before, Some(22.0 / 7.0));
+        assert_eq!(back.value, Some(std::f64::consts::PI));
+        assert_eq!(back.detail.as_deref(), Some("pi"));
+        assert_eq!(back.row, Some(7));
+
+        // A fold's after is its value and its detail is the subtree that went.
+        let fold = Event {
+            header: Header { schema_version: SCHEMA_VERSION, run_id: "r".into(), seq: 5, timestamp_utc: now_utc(), elapsed_ms: 12, generation: 6 },
+            kind: EventKind::Fold,
+            message: "fold: 14 nodes [tanh(exp(cos(log(x))))] -> 1.000000000".into(),
+            cohort: None,
+            value: finite(1.0),
+            before: None,
+            detail: Some("tanh(exp(cos(log(x))))".into()),
+            nodes: Some(14),
+            row: None,
+        };
+        let json = serde_json::to_string(&Record::Event(fold)).expect("serialise");
+        assert!(json.contains("\"kind\":\"fold\""), "{json}");
+        let Record::Event(back) = serde_json::from_str::<Record>(&json).expect("round trip") else { panic!() };
+        assert_eq!((back.nodes, back.value), (Some(14), Some(1.0)));
     }
 
     /// The reader holds a partial line until the bytes that finish it arrive, and
