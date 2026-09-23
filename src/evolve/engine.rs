@@ -421,13 +421,39 @@ pub struct Config {
     /// same cohort over any other, however fit the other is, so a young line is
     /// never beaten by a converged elder that merely happened to be drawn.
     ///
-    /// Cohorts at or past this label are ONE band — Hornby's unbounded top
-    /// layer — so the elders co-mingle freely and only the young are kept
-    /// apart. 0 = off, and then selection is what it always was.
+    /// A line older than this many GENERATIONS joins one band with every other
+    /// elder — Hornby's unbounded top layer — so the converged co-mingle freely
+    /// and only the young are kept apart. It is an AGE, `generation - label`,
+    /// not a label: banding on the label alone kept the OLDEST cohorts apart for
+    /// ever and merged the youngest, which is the design upside down.
     ///
     /// The measurement this answers: a 105-row tournament had a 6.7e-11 chance
     /// of holding no converged elder, so young material was never sampled
     /// without one, and 294,000 pump-drawn individuals left no survivors.
+    ///
+    /// THE DEFAULT IS FIVE PUMP BEATS, which is the ratio that recovered a law.
+    /// On strogatz_bacres1 at 2,000 + 2,000 with the pump on 20, a merge of 100
+    /// held five to seven cohorts alive to generation 19,060, and the best model
+    /// at the end belonged to a cohort born 100 generations before it — the
+    /// youngest band on the board. That is the whole point of keeping them
+    /// apart, and it is the first time anything but the founding cohort led.
+    ///
+    /// FIVE BEATS, NOT A HUNDRED GENERATIONS. The number that matters is how
+    /// many cohorts are alive at once, and that is `cohort_merge / pump_every`.
+    /// Fixed at 100 with the default pump of 4 it would be twenty-five bands,
+    /// and a 7% tournament of a 600-row island draws 42 rows — under two of the
+    /// drawn rows would share the chooser's cohort, so the preference would
+    /// almost never find a match and selection would fall back to a plain
+    /// fitness draw wearing cohort labels. Tied to the beat, the five bands hold
+    /// at every population and beat.
+    ///
+    /// Two values that look like settings and are not:
+    ///
+    /// * 0 turns it off, and selection is what it was before any of this.
+    /// * 1 (or anything under one pump beat) is off by another road: every line
+    ///   is an elder by its first tournament, so one band holds the whole
+    ///   population and `same_cohort` is true for every pair — the same
+    ///   selection as 0, paid for with the label bookkeeping.
     pub cohort_merge: u32,
     /// THE SWIM LANES: one rule set per island pair, or None for the engine's
     /// single rule set everywhere.
@@ -597,8 +623,21 @@ pub struct Config {
 }
 
 impl Config {
+    /// How many cohorts VIRTUAL ALPS keeps apart at once. `cohort_merge` is an
+    /// age in generations and the pump stamps a new cohort every `pump_every`,
+    /// so the band count is their ratio — and the band count is the thing with
+    /// a measurement behind it, not the age.
+    pub const LIVE_COHORTS: u32 = 5;
+
     /// The SRBench entry's settings.
     pub fn srbench(seed: u32) -> Config {
+        // THE PUMP'S BEAT, 33 (Andrew). It was 4, which is a beat the engine
+        // has not won anything on: a fresh line got four generations to prove
+        // itself before the cut came for it, which is barely one breeding. The
+        // fit that recovered strogatz_bacres1 ran at 20 and held five to seven
+        // cohorts alive; 33 gives a new line half again as long to show what it
+        // can do, and widens every cohort band with it.
+        let pump_every = 33;
         Config {
             seed,
             pop_intake: 600,
@@ -612,7 +651,7 @@ impl Config {
             n_rnc: 10,
             rnc_lo: -100,
             rnc_hi: 100,
-            pump_every: 4,
+            pump_every,
             n_pairs: 1,
             cross_every: 0,
             k_migrants: 3,
@@ -620,7 +659,10 @@ impl Config {
             promote_fraction: 0.02,
             checkpoint_dir: None,
             checkpoint_every_seconds: 0.0,
-            cohort_merge: 0,
+            // FIVE COHORTS ALIVE AT ONCE, the ratio that recovered
+            // strogatz_bacres1. Written against the beat, so changing the beat
+            // keeps the band count rather than silently changing it too.
+            cohort_merge: Config::LIVE_COHORTS * pump_every,
             lanes: None,
             redundancy: false,
             smogd: false,
@@ -6146,6 +6188,36 @@ mod tests {
         }
     }
 
+    /// THE DEFAULTS ARE THE ONES THAT RECOVERED A LAW, and the two that depend
+    /// on each other stay that way.
+    ///
+    /// `cohort_merge` is an age and the pump stamps a cohort every
+    /// `pump_every`, so what VIRTUAL ALPS actually does is decided by their
+    /// RATIO — the number of bands alive at once. Setting either alone changes
+    /// it. This pins the ratio, which is the part with a measurement behind it:
+    /// strogatz_bacres1, seed 7014, 2,000 + 2,000, five to seven cohorts alive,
+    /// law recovered at generation 19,060. That fit ran the beat at 20; the beat
+    /// is now 33 and the band count is what carries over.
+    #[test]
+    fn the_cohort_band_is_five_pump_beats_wide() {
+        let c = Config::srbench(7014);
+        assert_eq!(c.pump_every, 33, "the pump's beat");
+        assert_eq!(c.cohort_merge, 165, "five bands of thirty-three generations");
+        assert_eq!(
+            c.cohort_merge / c.pump_every,
+            Config::LIVE_COHORTS,
+            "the band count is the ratio, and it is what the measurement is about — changing one of these without the other changes what ALPS does"
+        );
+        assert!(c.cohort_merge > c.pump_every, "a merge inside one beat is ALPS switched off wearing labels");
+        // And the bands must be wide enough that a tournament actually finds a
+        // same-cohort row to prefer. With 25 bands, a 7% draw on the default
+        // intake holds under two of them, and the preference stops meaning
+        // anything.
+        let drawn = (c.tournament_fraction * f64::from(c.pop_intake)).round();
+        let own_band = drawn / f64::from(Config::LIVE_COHORTS);
+        assert!(own_band >= 4.0, "a tournament draws {drawn} rows and only {own_band:.1} share the chooser's cohort");
+    }
+
     /// FNV-1a over everything a host step can change.
     fn digest(gen: &Generation) -> u64 {
         let words = gen.pop.genome.iter().copied()
@@ -6165,7 +6237,13 @@ mod tests {
             Island { lo: 0, hi: 600, elites: 2, tournsize: 42, rates: Rates::engine_defaults(Layout::for_arity(800, 3, 48, 2, 10)) },
             Island { lo: 600, hi: 800, elites: 2, tournsize: 14, rates: Rates::engine_defaults(Layout::for_arity(800, 3, 48, 2, 10)) },
         ]);
-        let mut engine = Engine::new(toy_config(60, 20), toy_data()).expect("engine");
+        // ALPS OFF, DELIBERATELY: this is the fixed point for "the engine as it
+        // WAS", so it is pinned against the selection the digests were taken
+        // under. With cohorts on — now the default — the pump also writes a
+        // label per row and the digests move, which is the feature working, not
+        // a drift. `the_pump_works_inside_each_pair` and
+        // `the_cohort_band_is_five_pump_beats_wide` cover the labelled pump.
+        let mut engine = Engine::new(Config { cohort_merge: 0, ..toy_config(60, 20) }, toy_data()).expect("engine");
         let mut gen = drawn_generation(&engine, 11);
         let mut seen = Vec::new();
         for generation in [4u32, 8, 12] {
