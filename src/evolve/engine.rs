@@ -2669,6 +2669,15 @@ pub struct Engine {
     /// for the labels only when they have actually moved.
     live_cohorts: Vec<u32>,
     cohorts_stale: bool,
+    /// HOW MANY GENES THE CEILING HAS REFUSED, counted apart from `oversized`
+    /// so the A/B can say what typing costs the effective population.
+    ///
+    /// They are different failures and the spec conflates them: `oversized` is a
+    /// gene that decoded and then had more than `MAX_NODES` nodes, while this is
+    /// a gene that closed but reached past `typed_depth`. A crossover or a
+    /// transposition can land a legal span in a place that makes it illegal, and
+    /// this is where that is paid for. 0 for the whole of an untyped fit.
+    typed_refused: u64,
     /// A checkpoint to CONTINUE, taken by `fit` on its first beat. None starts a
     /// fresh search.
     resume: Option<checkpoint::Checkpoint>,
@@ -2988,7 +2997,7 @@ impl Engine {
         // HFF ON THE DEVICE, unless the host walk was asked for. Built once: the
         // pipeline is compiled here, not per generation.
         let hff = if config.hff_on_host { None } else { Some(super::hff_gpu::GpuHff::new(&evaluator)?) };
-        Ok(Engine { scored: vec![None; pop as usize], live_cohorts: Vec::new(), cohorts_stale: true, cohorts, resume, slots, config, table, layout, islands, dev, evaluator, scorer, hff, data, caps, col_max: None, snap, fold, lineage: None, telemetry: None })
+        Ok(Engine { scored: vec![None; pop as usize], typed_refused: 0, live_cohorts: Vec::new(), cohorts_stale: true, cohorts, resume, slots, config, table, layout, islands, dev, evaluator, scorer, hff, data, caps, col_max: None, snap, fold, lineage: None, telemetry: None })
     }
 
     /// Score every unevaluated row of `gen`; returns (unique genes, oversized).
@@ -3009,7 +3018,14 @@ impl Engine {
                 let tokens = &gen.pop.genome[(r * g_n + g) * width..(r * g_n + g + 1) * width];
                 let consts = &gen.pop.rnc[(r * g_n + g) * nr..(r * g_n + g + 1) * nr];
                 let nodes = decode_gene(tokens, consts, l, &self.table);
-                let fits = nodes.as_ref().is_some_and(|n| n.len() <= MAX_NODES);
+                let depth = nodes.as_deref().map_or(0, t_depth);
+                // THE CEILING, ON THE GENE AS IT NOW STANDS. The sampler draws
+                // within budget, but crossover and transposition move a span
+                // into a gene where it no longer fits, and the spec's own
+                // preference is to let that land and fail here rather than
+                // refuse the move and lose the diversity silently.
+                let over = self.config.typed_depth.is_some_and(|c| depth > c);
+                let fits = nodes.as_ref().is_some_and(|n| n.len() <= MAX_NODES) && !over;
                 let signature: Vec<u32> = match &nodes {
                     Some(n) if fits => n.iter().flat_map(|x| [x.op, x.arg0, x.arg1, x.konst.to_bits()]).collect(),
                     _ => vec![u32::MAX, (r * g_n + g) as u32],
@@ -3022,10 +3038,15 @@ impl Engine {
                     } else {
                         // keeps gene indices and batch slots aligned
                         batch.push(&[GpuNode { op: Op::Num as u32, arg0: 0, arg1: 0, konst: 0.0 }]);
-                        oversized += u64::from(nodes.is_some());
+                        // Counted apart: over the ceiling is not over MAX_NODES.
+                        if over {
+                            self.typed_refused += 1;
+                        } else {
+                            oversized += u64::from(nodes.is_some());
+                        }
                     }
                     gene_ok.push(fits);
-                    gene_tower.push(nodes.as_deref().map_or(0, t_depth));
+                    gene_tower.push(depth);
                 }
                 genes.push(at);
             }
@@ -3598,7 +3619,12 @@ impl Engine {
         for g in 0..g_n {
             let tokens = &gen.pop.genome[(row * g_n + g) * width..(row * g_n + g + 1) * width];
             let consts = &gen.pop.rnc[(row * g_n + g) * nr..(row * g_n + g + 1) * nr];
-            match decode_gene(tokens, consts, l, &self.table).filter(|n| n.len() <= MAX_NODES) {
+            // The ceiling applies here too, or a gene `evaluate` refused could
+            // still be confirmed at the stop bar and reported as the model.
+            match decode_gene(tokens, consts, l, &self.table)
+                .filter(|n| n.len() <= MAX_NODES)
+                .filter(|n| self.config.typed_depth.is_none_or(|c| t_depth(n) <= c))
+            {
                 Some(nodes) => {
                     gene_tower.push(t_depth(&nodes));
                     batch.push(&nodes);
@@ -3762,7 +3788,7 @@ impl Engine {
                 let (r, g) = owner[e];
                 let tokens = &mut gen.pop.genome[(r * g_n + g) * width..(r * g_n + g + 1) * width];
                 let consts = &mut gen.pop.rnc[(r * g_n + g) * nr..(r * g_n + g + 1) * nr];
-                let status = write_back(tokens, consts, l, vhead, &self.table, &grafts, &state.table);
+                let status = write_back(tokens, consts, l, vhead, &self.table, &grafts, &state.table, self.config.typed_depth);
                 counts.count(status);
                 // WHAT IT DID, not only that it did something. Only on `Grafted`:
                 // the gene really carries the named constant now, and the parse
@@ -6226,6 +6252,78 @@ mod tests {
     ///
     /// The blob is `Tanh(Add(x_0, 40))`: tanh saturates, so on any rows the toy
     /// data holds it is 1.0 to eleven decimals — four positions wearing a 1. The
+    /// AN ILLEGAL SPAN THAT LANDS IS REFUSED, NOT DECODED WRONG.
+    ///
+    /// The spec prefers letting crossover and transposition move a span into a
+    /// gene where it no longer types, and letting the decode fail it, over
+    /// refusing the move — "the row scores `PI` and dies in the next
+    /// tournament". This is the test that the path actually does that: a tower
+    /// planted by hand, exactly as a crossover would leave one, must be
+    /// REFUSED, must be counted APART from `oversized`, and must not be scored.
+    ///
+    /// It also pins the thing that would be worst: the gene still decodes
+    /// perfectly well to the right tree. Nothing about it is malformed. The
+    /// ONLY thing wrong with it is its depth, so an engine that did not check
+    /// would score it and never notice.
+    #[test]
+    fn a_tower_that_lands_in_a_gene_is_refused_and_counted_apart() {
+        let l_of = |c: &Config| c.clone();
+        // Tanh(Exp(Cos(x_0))) — depth 3, closes, decodes, and is a tower.
+        let plant = |engine: &Engine, gen: &mut Generation| {
+            let l = engine.layout;
+            let width = l.gene_width() as usize;
+            let tanh = engine.table.function_id(Op::Tanh).expect("Tanh");
+            let exp = engine.table.function_id(Op::ProtectedExp).expect("ProtectedExp");
+            let cos = engine.table.function_id(Op::Cos).expect("Cos");
+            let x0 = engine.table.symbols.iter().position(|s| *s == Symbol::Input(0)).expect("x_0") as u32;
+            let gene = &mut gen.pop.genome[0..width];
+            for (i, &t) in [tanh, exp, cos, x0].iter().enumerate() {
+                gene[i] = t;
+            }
+            for slot in gene[4..(l.head + l.tail) as usize].iter_mut() {
+                *slot = x0;
+            }
+            for slot in gene[(l.head + l.tail) as usize..width].iter_mut() {
+                *slot = 0;
+            }
+        };
+
+        // With the ceiling OFF the tower is scored like anything else.
+        let mut off = Engine::new(Config { typed_depth: None, ..toy_config(20, 20) }, toy_data()).expect("engine");
+        let mut gen = drawn_generation(&off, 11);
+        plant(&off, &mut gen);
+        let l = off.layout;
+        let (width, nr) = (l.gene_width() as usize, l.n_rnc as usize);
+        let nodes = decode_gene(&gen.pop.genome[0..width], &gen.pop.rnc[0..nr], l, &off.table)
+            .expect("the planted tower DECODES — nothing about it is malformed");
+        assert_eq!(t_depth(&nodes), 3, "the planted gene is a depth-3 tower");
+        gen.fitness.fill(f32::NAN);
+        let mut timing = fresh_timing();
+        let (_, oversized_off) = off.evaluate(&mut gen, &mut timing).expect("evaluate");
+        assert_eq!(off.typed_refused, 0, "an untyped fit never refuses on type");
+        assert!(gen.fitness[0].is_finite(), "with the ceiling off the tower is scored");
+
+        // With the ceiling ON the same gene is refused, counted apart, unscored.
+        let mut on = Engine::new(Config { typed_depth: Some(2), ..l_of(&toy_config(20, 20)) }, toy_data()).expect("engine");
+        let mut gen = drawn_generation(&on, 11);
+        plant(&on, &mut gen);
+        gen.fitness.fill(f32::NAN);
+        let mut timing = fresh_timing();
+        let (_, oversized_on) = on.evaluate(&mut gen, &mut timing).expect("evaluate");
+        assert!(on.typed_refused >= 1, "the tower must be refused by the ceiling");
+        assert_eq!(
+            (oversized_off, oversized_on),
+            (0, 0),
+            "a typed refusal is NOT an oversized gene and must not be counted as one"
+        );
+        // The row is not scored on that gene: its fitness is either NaN (no gene
+        // of the chromosome survived) or comes from the row's OTHER genes.
+        assert!(
+            !gen.fitness[0].is_finite() || on.config.n_genes > 1,
+            "a refused gene must not be scored"
+        );
+    }
+
     /// gene is `Mul(x_0, Tanh(Add(x_0, 40)))` and what must come back is
     /// `Mul(x_0, ?)` with `?` reading 1.
     #[test]
