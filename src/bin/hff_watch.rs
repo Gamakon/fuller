@@ -50,16 +50,73 @@ const MINIMUM: (u16, u16) = (70, 20);
 /// viewer invented.
 const MODEL_TABS: [&str; 3] = ["protected", "plain", "simplified"];
 
+/// THE PALETTE, because a terminal is not always dark.
+///
+/// `DarkGray` on a white background is very nearly white, so every dimmed label
+/// — the column headings, the units, the "no pump in this window" notes —
+/// vanished on a light terminal, and the selected row's dark blue-grey took the
+/// text with it.
+///
+/// There is no portable way to ASK a terminal what colour it is. `COLORFGBG` is
+/// set by some (rxvt, konsole, and terminals that copy them) and is the only
+/// widely-honoured hint; the OSC 11 query is not safe to send when we do not own
+/// the terminal's input. So: honour `COLORFGBG` when it is there, honour an
+/// explicit `HFF_WATCH_THEME=light|dark` above everything, and default to dark,
+/// which is what this is usually watched on.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+struct Theme {
+    light: bool,
+}
+
+impl Theme {
+    fn detect() -> Theme {
+        if let Ok(v) = std::env::var("HFF_WATCH_THEME") {
+            return Theme { light: v.eq_ignore_ascii_case("light") };
+        }
+        // COLORFGBG is "fg;bg" or "fg;_;bg"; a background of 7 or 15 is white,
+        // and anything 0-6 or 8 is dark. Anything else we cannot read, so dark.
+        let light = std::env::var("COLORFGBG").ok().is_some_and(|v| {
+            v.rsplit(';').next().and_then(|bg| bg.trim().parse::<u8>().ok()).is_some_and(|bg| bg >= 7 && bg != 8)
+        });
+        Theme { light }
+    }
+
+    /// A label, a unit, a heading: present but not the point. The whole reason
+    /// this type exists — `DarkGray` is unreadable on white.
+    fn dim(self) -> Color {
+        if self.light { Color::Rgb(110, 110, 110) } else { Color::DarkGray }
+    }
+
+    /// The selected row. A wash, not a block: the text keeps the foreground it
+    /// had, so the selection cannot hide what it is selecting.
+    fn selection(self) -> Color {
+        if self.light { Color::Rgb(206, 228, 236) } else { Color::Rgb(26, 58, 67) }
+    }
+
+    /// The accent — the run's own numbers. Cyan is legible on both, but it is
+    /// thin on white, so the light theme takes it darker.
+    fn accent(self) -> Color {
+        if self.light { Color::Rgb(0, 95, 115) } else { Color::Cyan }
+    }
+
+    /// A warning, or a metric that is not instrumented.
+    fn warn(self) -> Color {
+        if self.light { Color::Rgb(140, 100, 0) } else { Color::Yellow }
+    }
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let mode = args.iter().position(|a| a == "--file" || a == "--follow");
+    let mode = args.iter().position(|a| a == "--file" || a == "--follow" || a == "--dump");
     let Some(at) = mode else {
-        eprintln!("usage: hff-watch --file <path> | --follow <path>");
+        eprintln!("usage: hff-watch --file <path> | --follow <path> | --dump <path>");
         eprintln!("  --file    replay a recorded telemetry stream");
         eprintln!("  --follow  tail a live one (the fit is never touched)");
+        eprintln!("  --dump    print the current frame as text and exit");
         std::process::exit(2);
     };
     let following = args[at] == "--follow";
+    let dumping = args[at] == "--dump";
     let Some(path) = args.get(at + 1).cloned() else {
         eprintln!("{} needs a path", args[at]);
         std::process::exit(2);
@@ -68,7 +125,7 @@ fn main() {
     // A REPLAY is read whole, up front: it is a recording, there is nothing to
     // wait for, and reading it in one go means the first frame is the last one
     // rather than an empty screen that fills in.
-    let mut tailer = if following {
+    let mut tailer = if following && !dumping {
         Some(Tailer::new(&path))
     } else {
         match std::fs::read_to_string(&path) {
@@ -86,7 +143,14 @@ fn main() {
             }
         }
     };
-    let mut ui = Ui::default();
+    // --dump: the same state machine, printed rather than drawn. A terminal is
+    // never opened, so it works down a pipe, in a log, or from another process
+    // watching alongside an operator who has the live view open.
+    if dumping {
+        print!("{}", dump(&state));
+        return;
+    }
+    let mut ui = Ui { theme: Theme::detect(), ..Ui::default() };
     let mut terminal = ratatui::init();
     let outcome = loop {
         if let Some(t) = tailer.as_mut() {
@@ -149,6 +213,10 @@ fn main() {
 /// than in `WatchState` because they say nothing about the fit.
 #[derive(Default)]
 struct Ui {
+    /// The palette. Detected once at start-up: a terminal does not change
+    /// colour mid-run, and re-detecting every frame would read the environment
+    /// sixty times a minute for an answer that cannot have moved.
+    theme: Theme,
     model_open: bool,
     model_tab: usize,
     /// `Enter`: the detail pane is expanded over the table on a narrow screen.
@@ -251,9 +319,10 @@ fn copy_model(state: &WatchState) -> Option<String> {
 // ---------------------------------------------------------------------------
 
 fn draw(f: &mut Frame, state: &WatchState, ui: &Ui) {
+    let theme = ui.theme;
     let area = f.area();
     if area.width < MINIMUM.0 || area.height < MINIMUM.1 {
-        compact(f, state, area);
+        compact(f, theme, state, area);
         return;
     }
     // The wide screen is the brief's region table. Narrower than that and the
@@ -287,10 +356,10 @@ fn draw(f: &mut Frame, state: &WatchState, ui: &Ui) {
             ])
             .split(area)
     };
-    header(f, state, rows[0]);
-    global_strip(f, state, rows[1]);
+    header(f, theme, state, rows[0]);
+    global_strip(f, theme, state, rows[1]);
     if wide {
-        island_cards(f, state, rows[2]);
+        island_cards(f, theme, state, rows[2]);
         let split = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Min(60), Constraint::Length(38)])
@@ -298,20 +367,20 @@ fn draw(f: &mut Frame, state: &WatchState, ui: &Ui) {
         // `Enter` expands the detail over the table, which is how a long model
         // summary is read on a screen that is wide but not tall.
         if ui.detail_open {
-            detail(f, state, rows[3]);
+            detail(f, theme, state, rows[3]);
         } else {
-            cohort_table(f, state, split[0], true);
-            detail(f, state, split[1]);
+            cohort_table(f, theme, state, split[0], true);
+            detail(f, theme, state, split[1]);
         }
-        events(f, state, rows[4]);
+        events(f, theme, state, rows[4]);
     } else {
-        one_island(f, state, rows[2]);
+        one_island(f, theme, state, rows[2]);
         if ui.detail_open {
-            detail(f, state, rows[3]);
+            detail(f, theme, state, rows[3]);
         } else {
-            cohort_table(f, state, rows[3], false);
+            cohort_table(f, theme, state, rows[3], false);
         }
-        one_line_events(f, state, rows[4]);
+        one_line_events(f, theme, state, rows[4]);
     }
     footer(f, state, ui, rows[5]);
     if ui.model_open {
@@ -322,11 +391,11 @@ fn draw(f: &mut Frame, state: &WatchState, ui: &Ui) {
 /// Below 70x20: the essential metrics and a warning, and nothing that would be
 /// unreadable at this size. It is still a useful screen — the global best, the
 /// generation and the clock — not an error message.
-fn compact(f: &mut Frame, state: &WatchState, area: Rect) {
+fn compact(f: &mut Frame, theme: Theme, state: &WatchState, area: Rect) {
     let s = state.snapshot.as_ref();
     let generation = s.map_or(0, |s| s.header.generation);
     let mut lines = vec![
-        Line::from(Span::styled("hff-watch · terminal too small", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))),
+        Line::from(Span::styled("hff-watch · terminal too small", Style::default().fg(theme.warn()).add_modifier(Modifier::BOLD))),
         Line::from(format!("{}x{} — the full screen needs {}x{}", area.width, area.height, WIDE.0, WIDE.1)),
         Line::from(""),
         Line::from(format!("gen {generation}  best HFF {}", or_dash(s.and_then(|s| s.global.best_hff), 4))),
@@ -338,7 +407,7 @@ fn compact(f: &mut Frame, state: &WatchState, area: Rect) {
             s.map_or_else(|| "—".to_string(), |s| format!("{:.0}s", s.header.elapsed_ms as f64 / 1000.0))
         )),
     ];
-    lines.push(Line::from(Span::styled("q to quit", Style::default().fg(Color::DarkGray))));
+    lines.push(Line::from(Span::styled("q to quit", Style::default().fg(theme.dim()))));
     f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: true }), area);
 }
 
@@ -360,15 +429,15 @@ fn badge_text(state: &WatchState) -> String {
     base
 }
 
-fn badge_colour(state: &WatchState) -> Color {
+fn badge_colour(theme: Theme, state: &WatchState) -> Color {
     match state.liveness() {
         Liveness::Finished => Color::Green,
         Liveness::Stale => Color::Red,
-        Liveness::Live => Color::Cyan,
+        Liveness::Live => theme.accent(),
     }
 }
 
-fn header(f: &mut Frame, state: &WatchState, area: Rect) {
+fn header(f: &mut Frame, theme: Theme, state: &WatchState, area: Rect) {
     let start = state.start.as_ref();
     let s = state.snapshot.as_ref();
     let generation = s.map_or(0, |s| s.header.generation);
@@ -383,22 +452,22 @@ fn header(f: &mut Frame, state: &WatchState, area: Rect) {
         (false, _) => "recorded".to_string(),
     };
     let one = Line::from(vec![
-        Span::styled("◉ HFF-SR / WATCH ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
-        Span::styled(format!(" {} ", badge_text(state)), Style::default().fg(badge_colour(state)).add_modifier(Modifier::BOLD)),
+        Span::styled("◉ HFF-SR / WATCH ", Style::default().fg(theme.accent()).add_modifier(Modifier::BOLD)),
+        Span::styled(format!(" {} ", badge_text(state)), Style::default().fg(badge_colour(theme, state)).add_modifier(Modifier::BOLD)),
         Span::raw("  "),
         Span::raw(start.map_or_else(|| "(no run_start)".to_string(), |s| s.dataset.clone())),
-        Span::styled(" · seed ", Style::default().fg(Color::DarkGray)),
+        Span::styled(" · seed ", Style::default().fg(theme.dim())),
         Span::raw(start.map_or_else(|| "—".to_string(), |s| s.seed.to_string())),
-        Span::styled("  run ", Style::default().fg(Color::DarkGray)),
+        Span::styled("  run ", Style::default().fg(theme.dim())),
         Span::raw(start.map_or_else(|| "—".to_string(), |s| s.header.run_id.clone())),
     ]);
     let two = Line::from(vec![
-        Span::styled("gen ", Style::default().fg(Color::DarkGray)),
+        Span::styled("gen ", Style::default().fg(theme.dim())),
         Span::styled(format!("{generation}"), Style::default().add_modifier(Modifier::BOLD)),
         Span::raw(format!("  {elapsed:.0}s / {budget:.0}s")),
-        Span::styled("  sampled ", Style::default().fg(Color::DarkGray)),
+        Span::styled("  sampled ", Style::default().fg(theme.dim())),
         Span::raw(age),
-        Span::styled("  train/val/third ", Style::default().fg(Color::DarkGray)),
+        Span::styled("  train/val/third ", Style::default().fg(theme.dim())),
         Span::raw(start.map_or_else(|| "—".to_string(), |s| format!("{}/{}/{}", s.n_train, s.n_val, s.n_extrap))),
         // A viewer that is silently skipping input is lying about what it shows.
         Span::styled(
@@ -407,13 +476,13 @@ fn header(f: &mut Frame, state: &WatchState, area: Rect) {
             } else {
                 String::new()
             },
-            Style::default().fg(Color::Yellow),
+            Style::default().fg(theme.warn()),
         ),
     ]);
     f.render_widget(Paragraph::new(vec![one, two]), area);
 }
 
-fn global_strip(f: &mut Frame, state: &WatchState, area: Rect) {
+fn global_strip(f: &mut Frame, theme: Theme, state: &WatchState, area: Rect) {
     let s = state.snapshot.as_ref();
     let g = s.map(|s| &s.global);
     // Three columns need about 40 each to say anything. Below that the error
@@ -436,30 +505,30 @@ fn global_strip(f: &mut Frame, state: &WatchState, area: Rect) {
     let best = Paragraph::new(vec![
         Line::from(Span::styled(
             if roomy { "GLOBAL BEST HFF ↓ (lower is better)" } else { "GLOBAL BEST HFF ↓ (lower wins)" },
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(theme.dim()),
         )),
         Line::from(vec![
-            Span::styled(or_dash(g.and_then(|g| g.best_hff), 6), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+            Span::styled(or_dash(g.and_then(|g| g.best_hff), 6), Style::default().fg(theme.accent()).add_modifier(Modifier::BOLD)),
             Span::raw("  "),
-            Span::styled(gain_text(gain), Style::default().fg(gain_colour(gain))),
+            Span::styled(gain_text(gain), Style::default().fg(gain_colour(theme, gain))),
             // Narrow: the errors come here rather than into a column too thin to
             // hold their headings.
             Span::styled(
                 if roomy { String::new() } else { format!("   1-R² train {train} val {val}") },
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(theme.dim()),
             ),
         ]),
         // BEST-EVER, separately: a current best is not a record, and the brief
         // asks for the two not to be confused.
         Line::from(Span::styled(
             format!("best ever {}   {} unscored rows", or_dash(g.and_then(|g| g.best_ever_hff), 4), g.map_or(0, |g| g.nan_rows)),
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(theme.dim()),
         )),
     ]);
     f.render_widget(best, columns[0]);
     if roomy {
         let quality = Paragraph::new(vec![
-            Line::from(Span::styled("ERROR", Style::default().fg(Color::DarkGray))),
+            Line::from(Span::styled("ERROR", Style::default().fg(theme.dim()))),
             Line::from(format!("train 1-R² {train}   val 1-R² {val}")),
             Line::from(Span::styled(
                 format!(
@@ -469,7 +538,7 @@ fn global_strip(f: &mut Frame, state: &WatchState, area: Rect) {
                     g.map_or(0, |g| g.t_depth),
                     g.map_or(0, |g| g.vhead)
                 ),
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(theme.dim()),
             )),
         ]);
         f.render_widget(quality, columns[1]);
@@ -485,42 +554,42 @@ fn global_strip(f: &mut Frame, state: &WatchState, area: Rect) {
         // The budget is always the LAST column, whether the strip has three or
         // (narrow, with the errors folded into the first) two.
         .split(columns[columns.len() - 1]);
-    f.render_widget(Paragraph::new(Span::styled("BUDGET", Style::default().fg(Color::DarkGray))), bar[0]);
+    f.render_widget(Paragraph::new(Span::styled("BUDGET", Style::default().fg(theme.dim()))), bar[0]);
     // A THIN TRACK with the number beside it, not a block bar with the label
     // buried in it: at 40 columns a filled `Gauge` reads as a wall of blocks
     // with a percentage somewhere inside, which is not a reading.
     f.render_widget(
-        LineGauge::default().filled_style(Style::default().fg(Color::Cyan)).ratio(fraction).label(format!("{:.0}%", fraction * 100.0)),
+        LineGauge::default().filled_style(Style::default().fg(theme.accent())).ratio(fraction).label(format!("{:.0}%", fraction * 100.0)),
         bar[1],
     );
     f.render_widget(
         Paragraph::new(Span::styled(
             format!("{:.0}s left", (budget.saturating_sub(elapsed)) as f64 / 1000.0),
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(theme.dim()),
         )),
         bar[2],
     );
 }
 
-fn gain_colour(g: Gain) -> Color {
+fn gain_colour(theme: Theme, g: Gain) -> Color {
     match g {
         // A FALLING HFF is an improvement, and it is cyan. This is the one place
         // a sign could be read backwards, so it is written out: positive gain =
         // HFF fell = better.
-        Gain::Percent(v) if v > 0.0 => Color::Cyan,
+        Gain::Percent(v) if v > 0.0 => theme.accent(),
         Gain::Percent(v) if v < 0.0 => Color::Red,
         Gain::Percent(_) => Color::Gray,
-        Gain::New | Gain::Merged => Color::Yellow,
+        Gain::New | Gain::Merged => theme.warn(),
         Gain::Extinct => Color::Red,
-        Gain::Unscored => Color::DarkGray,
+        Gain::Unscored => theme.dim(),
     }
 }
 
-fn island_cards(f: &mut Frame, state: &WatchState, area: Rect) {
+fn island_cards(f: &mut Frame, theme: Theme, state: &WatchState, area: Rect) {
     let islands = state.islands();
     if islands.is_empty() {
         f.render_widget(
-            Paragraph::new(Span::styled("no island data yet", Style::default().fg(Color::DarkGray)))
+            Paragraph::new(Span::styled("no island data yet", Style::default().fg(theme.dim())))
                 .block(Block::default().borders(Borders::ALL).title(" ISLANDS ")),
             area,
         );
@@ -536,13 +605,13 @@ fn island_cards(f: &mut Frame, state: &WatchState, area: Rect) {
         .constraints(shown.iter().map(|_| Constraint::Ratio(1, per_screen as u32)).collect::<Vec<_>>())
         .split(area);
     for (cell, &i) in cells.iter().zip(&shown) {
-        island_card(f, state, i, *cell, i == state.island);
+        island_card(f, theme, state, i, *cell, i == state.island);
     }
 }
 
-fn island_card(f: &mut Frame, state: &WatchState, i: usize, area: Rect, selected: bool) {
+fn island_card(f: &mut Frame, theme: Theme, state: &WatchState, i: usize, area: Rect, selected: bool) {
     let Some(island) = state.islands().get(i) else { return };
-    let style = if selected { Style::default().fg(Color::Cyan) } else { Style::default().fg(Color::DarkGray) };
+    let style = if selected { Style::default().fg(theme.accent()) } else { Style::default().fg(theme.dim()) };
     let title = format!(" {} · {} rows {} ", island.id.to_uppercase(), island.rows, if i + 1 < state.islands().len() || i > 0 { format!("({}/{})", i + 1, state.islands().len()) } else { String::new() });
     let block = Block::default().borders(Borders::ALL).border_style(style).title(title);
     let inner = block.inner(area);
@@ -556,9 +625,9 @@ fn island_card(f: &mut Frame, state: &WatchState, i: usize, area: Rect, selected
         .split(inner);
     f.render_widget(
         Paragraph::new(Line::from(vec![
-            Span::styled("best ", Style::default().fg(Color::DarkGray)),
-            Span::styled(or_dash(island.best_hff, 4), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
-            Span::styled("  avg ", Style::default().fg(Color::DarkGray)),
+            Span::styled("best ", Style::default().fg(theme.dim())),
+            Span::styled(or_dash(island.best_hff, 4), Style::default().fg(theme.accent()).add_modifier(Modifier::BOLD)),
+            Span::styled("  avg ", Style::default().fg(theme.dim())),
             Span::raw(or_dash(island.avg_hff, 3)),
         ])),
         rows[0],
@@ -566,26 +635,26 @@ fn island_card(f: &mut Frame, state: &WatchState, i: usize, area: Rect, selected
     // THE SEARCH PULSE: three labelled meters, NO composite. Each is its own
     // measurement with its own name, and a dash carries its reason.
     for (meter, row) in state.pulse(i).iter().zip(rows[1..4].iter()) {
-        meter_line(f, meter.0, meter.1, meter.2, *row);
+        meter_line(f, theme, meter.0, meter.1, meter.2, *row);
     }
 }
 
 /// One pulse meter. A value draws a bar; None draws the REASON it is not there,
 /// because "—" on its own tells an operator nothing about whether the metric is
 /// broken, off, or simply not applicable in this window.
-fn meter_line(f: &mut Frame, label: &str, value: Option<f64>, reason: &str, area: Rect) {
+fn meter_line(f: &mut Frame, theme: Theme, label: &str, value: Option<f64>, reason: &str, area: Rect) {
     let columns = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Length(12), Constraint::Min(6)])
         .split(area);
-    f.render_widget(Paragraph::new(Span::styled(label, Style::default().fg(Color::DarkGray))), columns[0]);
+    f.render_widget(Paragraph::new(Span::styled(label, Style::default().fg(theme.dim()))), columns[0]);
     match value {
         Some(v) => f.render_widget(
-            LineGauge::default().filled_style(Style::default().fg(Color::Cyan)).ratio(v.clamp(0.0, 1.0)).label(format!("{:.0}%", v * 100.0)),
+            LineGauge::default().filled_style(Style::default().fg(theme.accent())).ratio(v.clamp(0.0, 1.0)).label(format!("{:.0}%", v * 100.0)),
             columns[1],
         ),
         None => f.render_widget(
-            Paragraph::new(Span::styled(format!("—  {reason}"), Style::default().fg(Color::Yellow))),
+            Paragraph::new(Span::styled(format!("—  {reason}"), Style::default().fg(theme.warn()))),
             columns[1],
         ),
     }
@@ -593,11 +662,11 @@ fn meter_line(f: &mut Frame, label: &str, value: Option<f64>, reason: &str, area
 
 /// The 80x24 fallback's island region: ONE island, the selected one, on one
 /// summary line plus its meters.
-fn one_island(f: &mut Frame, state: &WatchState, area: Rect) {
-    island_card(f, state, state.island, area, true);
+fn one_island(f: &mut Frame, theme: Theme, state: &WatchState, area: Rect) {
+    island_card(f, theme, state, state.island, area, true);
 }
 
-fn cohort_table(f: &mut Frame, state: &WatchState, area: Rect, wide: bool) {
+fn cohort_table(f: &mut Frame, theme: Theme, state: &WatchState, area: Rect, wide: bool) {
     // The title says WHOSE cohorts these are. A per-island split and a global
     // total look identical as a table of numbers, and the brief is emphatic that
     // no panel may pretend to know which island a row occupied.
@@ -617,8 +686,8 @@ fn cohort_table(f: &mut Frame, state: &WatchState, area: Rect, wide: bool) {
         // one-row table pretending otherwise is worse than saying so.
         f.render_widget(
             Paragraph::new(vec![
-                Line::from(Span::styled("cohorts are off for this run", Style::default().fg(Color::Yellow))),
-                Line::from(Span::styled("(EVOLVE_COHORT_MERGE / Config::cohort_merge is 0)", Style::default().fg(Color::DarkGray))),
+                Line::from(Span::styled("cohorts are off for this run", Style::default().fg(theme.warn()))),
+                Line::from(Span::styled("(EVOLVE_COHORT_MERGE / Config::cohort_merge is 0)", Style::default().fg(theme.dim()))),
             ])
             .block(block),
             area,
@@ -633,8 +702,8 @@ fn cohort_table(f: &mut Frame, state: &WatchState, area: Rect, wide: bool) {
     if state.island_focus && state.islands().get(state.island).is_some_and(|i| i.cohorts.is_empty()) {
         f.render_widget(
             Paragraph::new(vec![
-                Line::from(Span::styled("no per-island cohort split in this stream", Style::default().fg(Color::Yellow))),
-                Line::from(Span::styled("the producer emitted global totals only · g for those", Style::default().fg(Color::DarkGray))),
+                Line::from(Span::styled("no per-island cohort split in this stream", Style::default().fg(theme.warn()))),
+                Line::from(Span::styled("the producer emitted global totals only · g for those", Style::default().fg(theme.dim()))),
             ])
             .block(block),
             area,
@@ -652,17 +721,17 @@ fn cohort_table(f: &mut Frame, state: &WatchState, area: Rect, wide: bool) {
     } else {
         Row::new(vec!["cohort".to_string(), "rows".into(), "best HFF ↓".into(), gain_column])
     }
-    .style(Style::default().fg(Color::DarkGray));
+    .style(Style::default().fg(theme.dim()));
     let body: Vec<Row> = rows
         .iter()
         .map(|r| {
             let selected = state.selected == Some(r.id);
             let style = match (selected, r.extinct) {
-                (true, _) => Style::default().bg(Color::Rgb(26, 58, 67)).add_modifier(Modifier::BOLD),
-                (false, true) => Style::default().fg(Color::DarkGray),
+                (true, _) => Style::default().bg(theme.selection()).add_modifier(Modifier::BOLD),
+                (false, true) => Style::default().fg(theme.dim()),
                 (false, false) => Style::default(),
             };
-            let gain = Cell::from(gain_text(r.gain)).style(Style::default().fg(gain_colour(r.gain)));
+            let gain = Cell::from(gain_text(r.gain)).style(Style::default().fg(gain_colour(theme, r.gain)));
             if wide {
                 Row::new(vec![
                     Cell::from(format!("c{}", r.id)),
@@ -671,7 +740,7 @@ fn cohort_table(f: &mut Frame, state: &WatchState, area: Rect, wide: bool) {
                     Cell::from(or_dash(r.best_hff, 4)),
                     Cell::from(or_dash(r.best_ever, 4)),
                     gain,
-                    Cell::from(bars(&r.spark)).style(Style::default().fg(Color::Cyan)),
+                    Cell::from(bars(&r.spark)).style(Style::default().fg(theme.accent())),
                 ])
                 .style(style)
             } else {
@@ -708,10 +777,10 @@ fn bars(spark: &[u64]) -> String {
     spark.iter().rev().take(24).rev().map(|&v| BLOCKS[(v as usize).min(8)]).collect()
 }
 
-fn detail(f: &mut Frame, state: &WatchState, area: Rect) {
+fn detail(f: &mut Frame, theme: Theme, state: &WatchState, area: Rect) {
     let block = Block::default().borders(Borders::ALL).title(" COHORT DETAIL ");
     let Some(id) = state.selected else {
-        f.render_widget(Paragraph::new(Span::styled("no cohort selected", Style::default().fg(Color::DarkGray))).block(block), area);
+        f.render_widget(Paragraph::new(Span::styled("no cohort selected", Style::default().fg(theme.dim()))).block(block), area);
         return;
     };
     let Some(r) = state.selected_row() else {
@@ -720,9 +789,9 @@ fn detail(f: &mut Frame, state: &WatchState, area: Rect) {
         f.render_widget(
             Paragraph::new(vec![
                 Line::from(Span::styled(format!("c{id}"), Style::default().add_modifier(Modifier::BOLD))),
-                Line::from(Span::styled("not in the current table", Style::default().fg(Color::Yellow))),
-                Line::from(Span::styled("(extinct, or excluded by the filter)", Style::default().fg(Color::DarkGray))),
-                Line::from(Span::styled("the selection is kept — j/k to move it", Style::default().fg(Color::DarkGray))),
+                Line::from(Span::styled("not in the current table", Style::default().fg(theme.warn()))),
+                Line::from(Span::styled("(extinct, or excluded by the filter)", Style::default().fg(theme.dim()))),
+                Line::from(Span::styled("the selection is kept — j/k to move it", Style::default().fg(theme.dim()))),
             ])
             .block(block)
             .wrap(Wrap { trim: true }),
@@ -734,21 +803,21 @@ fn detail(f: &mut Frame, state: &WatchState, area: Rect) {
     let span = r.spark_span.map_or_else(|| "—".to_string(), |(a, b)| format!("gen {a}–{b}"));
     let mut lines = vec![
         Line::from(vec![
-            Span::styled(format!("c{} ", r.id), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
-            Span::styled(format!("born gen {}", r.birth_generation), Style::default().fg(Color::DarkGray)),
+            Span::styled(format!("c{} ", r.id), Style::default().fg(theme.accent()).add_modifier(Modifier::BOLD)),
+            Span::styled(format!("born gen {}", r.birth_generation), Style::default().fg(theme.dim())),
         ]),
         Line::from(format!("best now  {}", or_dash(r.best_hff, 6))),
         Line::from(format!("best ever {}", or_dash(r.best_ever, 6))),
-        Line::from(vec![Span::raw("gain      "), Span::styled(gain_text(r.gain), Style::default().fg(gain_colour(r.gain)))]),
+        Line::from(vec![Span::raw("gain      "), Span::styled(gain_text(r.gain), Style::default().fg(gain_colour(theme, r.gain)))]),
         Line::from(format!("rows      {}  ({} unscored)", r.rows, r.nan_rows)),
         Line::from(""),
-        Line::from(Span::styled(format!("TRAJECTORY · {span}", ), Style::default().fg(Color::DarkGray))),
-        Line::from(Span::styled(bars(&r.spark), Style::default().fg(Color::Cyan))),
+        Line::from(Span::styled(format!("TRAJECTORY · {span}", ), Style::default().fg(theme.dim()))),
+        Line::from(Span::styled(bars(&r.spark), Style::default().fg(theme.accent()))),
         // The sparkline's direction, stated on the screen as the brief asks: it
         // is the one thing about this trace that cannot be guessed right.
-        Line::from(Span::styled("lower HFF = higher trace", Style::default().fg(Color::DarkGray))),
+        Line::from(Span::styled("lower HFF = higher trace", Style::default().fg(theme.dim()))),
         Line::from(""),
-        Line::from(Span::styled("GLOBAL (this run, not this cohort)", Style::default().fg(Color::DarkGray))),
+        Line::from(Span::styled("GLOBAL (this run, not this cohort)", Style::default().fg(theme.dim()))),
         Line::from(format!("train 1-R²  {}", or_dash(g.and_then(|g| g.r2_train).map(|r| 1.0 - r), 3))),
         Line::from(format!("val   1-R²  {}", or_dash(g.and_then(|g| g.r2_val).map(|r| 1.0 - r), 3))),
     ];
@@ -758,18 +827,18 @@ fn detail(f: &mut Frame, state: &WatchState, area: Rect) {
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
         "rows are descendants of one pump beat, not independent lines",
-        Style::default().fg(Color::DarkGray),
+        Style::default().fg(theme.dim()),
     )));
     if let Some(m) = state.model.as_ref() {
         lines.push(Line::from(Span::styled(
             format!("m · model, found gen {} (run best, not this cohort's)", m.found_generation),
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(theme.dim()),
         )));
     }
     f.render_widget(Paragraph::new(lines).block(block).wrap(Wrap { trim: true }), area);
 }
 
-fn events(f: &mut Frame, state: &WatchState, area: Rect) {
+fn events(f: &mut Frame, theme: Theme, state: &WatchState, area: Rect) {
     let block = Block::default().borders(Borders::ALL).title(" EVENTS ");
     let height = block.inner(area).height as usize;
     let lines: Vec<Line> = state
@@ -780,7 +849,7 @@ fn events(f: &mut Frame, state: &WatchState, area: Rect) {
         .rev()
         .map(|(gen, message)| {
             Line::from(vec![
-                Span::styled(format!("gen {gen:<6} "), Style::default().fg(Color::DarkGray)),
+                Span::styled(format!("gen {gen:<6} "), Style::default().fg(theme.dim())),
                 Span::raw(message.clone()),
             ])
         })
@@ -788,21 +857,22 @@ fn events(f: &mut Frame, state: &WatchState, area: Rect) {
     f.render_widget(Paragraph::new(lines).block(block), area);
 }
 
-fn one_line_events(f: &mut Frame, state: &WatchState, area: Rect) {
+fn one_line_events(f: &mut Frame, theme: Theme, state: &WatchState, area: Rect) {
     let last = state.events.last().map_or_else(
         || "no events".to_string(),
         |(gen, message)| format!("gen {gen} · {message}"),
     );
-    f.render_widget(Paragraph::new(Span::styled(last, Style::default().fg(Color::DarkGray))), area);
+    f.render_widget(Paragraph::new(Span::styled(last, Style::default().fg(theme.dim()))), area);
 }
 
 fn footer(f: &mut Frame, state: &WatchState, ui: &Ui, area: Rect) {
+    let theme = ui.theme;
     if state.filtering {
         f.render_widget(
             Paragraph::new(Line::from(vec![
-                Span::styled("/", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                Span::styled("/", Style::default().fg(theme.warn()).add_modifier(Modifier::BOLD)),
                 Span::raw(state.filter.clone()),
-                Span::styled("▏  Enter to keep · Esc to clear", Style::default().fg(Color::DarkGray)),
+                Span::styled("▏  Enter to keep · Esc to clear", Style::default().fg(theme.dim())),
             ])),
             area,
         );
@@ -812,7 +882,7 @@ fn footer(f: &mut Frame, state: &WatchState, ui: &Ui, area: Rect) {
         f.render_widget(
             Paragraph::new(Span::styled(
                 "no keyboard (stdin is not a terminal) · repainting as a display · end this process to stop watching",
-                Style::default().fg(Color::Yellow),
+                Style::default().fg(theme.warn()),
             )),
             area,
         );
@@ -821,7 +891,7 @@ fn footer(f: &mut Frame, state: &WatchState, ui: &Ui, area: Rect) {
     f.render_widget(
         Paragraph::new(Span::styled(
             "Tab island · j/k cohort · s sort · / filter · g global · Enter detail · m model · Space pause screen · q quit viewer (the fit runs on)",
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(theme.dim()),
         )),
         area,
     );
@@ -832,6 +902,7 @@ fn footer(f: &mut Frame, state: &WatchState, ui: &Ui, area: Rect) {
 /// saturation and is printed when the fit ends, and a different simplification
 /// here would be a fourth string nobody asked for.
 fn model_overlay(f: &mut Frame, state: &WatchState, ui: &Ui, area: Rect) {
+    let theme = ui.theme;
     let width = area.width.saturating_sub(6).max(20);
     let height = area.height.saturating_sub(4).max(8);
     // saturating: on a terminal narrower than the overlay's own minimum this
@@ -844,22 +915,22 @@ fn model_overlay(f: &mut Frame, state: &WatchState, ui: &Ui, area: Rect) {
         .enumerate()
         .flat_map(|(i, name)| {
             let style = if i == ui.model_tab {
-                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+                Style::default().fg(theme.accent()).add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(Color::DarkGray)
+                Style::default().fg(theme.dim())
             };
             [Span::styled(*name, style), Span::raw("  ")]
         })
         .collect();
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Cyan))
+        .border_style(Style::default().fg(theme.accent()))
         .title(" MODEL · Tab switches · w wrap · h/l scroll · y write to a file · Esc close ");
     let inner = block.inner(box_area);
     f.render_widget(block, box_area);
     let Some(m) = state.model.as_ref() else {
         f.render_widget(
-            Paragraph::new(Span::styled("no model record in this stream yet", Style::default().fg(Color::Yellow))),
+            Paragraph::new(Span::styled("no model record in this stream yet", Style::default().fg(theme.warn()))),
             inner,
         );
         return;
@@ -880,7 +951,7 @@ fn model_overlay(f: &mut Frame, state: &WatchState, ui: &Ui, area: Rect) {
     f.render_widget(
         Paragraph::new(Span::styled(
             format!("found at generation {} · HFF {} · depth {}", m.found_generation, or_dash(m.hff, 6), m.t_depth),
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(theme.dim()),
         )),
         rows[1],
     );
@@ -896,8 +967,75 @@ fn model_overlay(f: &mut Frame, state: &WatchState, ui: &Ui, area: Rect) {
                 Some(path) => format!("written to {path}"),
                 None => format!("{} · y writes all three forms to a file", if ui.model_wrap { "wrapped" } else { "scrolling" }),
             },
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(theme.dim()),
         )),
         rows[3],
     );
+}
+
+
+/// The current frame as plain text: the header, the global strip, the islands
+/// and the cohort table, in the order the screen shows them.
+///
+/// It is the SAME `WatchState` the terminal view draws, so a dump and a screen
+/// never disagree — and it means a second watcher can follow a run without
+/// taking a terminal, which is how an operator and a script watch the same fit.
+fn dump(state: &WatchState) -> String {
+    use fuller::evolve::watch::{gain_text, or_dash};
+    let mut out = String::new();
+    let live = match state.liveness() {
+        fuller::evolve::watch::Liveness::Live => "LIVE",
+        fuller::evolve::watch::Liveness::Stale => "STALE",
+        fuller::evolve::watch::Liveness::Finished => "FINISHED",
+    };
+    match (&state.start, &state.snapshot) {
+        (Some(rs), Some(sn)) => {
+            out.push_str(&format!(
+                "{live}  {}  seed {}  gen {}  {:.0}/{:.0} s\n",
+                rs.dataset,
+                rs.seed,
+                sn.header.generation,
+                sn.header.elapsed_ms as f64 / 1000.0,
+                sn.budget_ms as f64 / 1000.0
+            ));
+            out.push_str(&format!(
+                "  best hff {}   1-R2 train {}   val {}   log10 p {}\n",
+                or_dash(sn.global.best_hff, 6),
+                or_dash(sn.global.r2_train.map(|r| 1.0 - r), 3),
+                or_dash(sn.global.r2_val.map(|r| 1.0 - r), 3),
+                or_dash(sn.global.log10_p, 2)
+            ));
+            out.push_str(&format!("  global gain {}\n", gain_text(state.global_gain())));
+            for isl in state.islands() {
+                out.push_str(&format!(
+                    "  {:<12} rows {:>7}  best {}\n",
+                    isl.id,
+                    isl.rows,
+                    or_dash(isl.best_hff, 6)
+                ));
+            }
+        }
+        _ => out.push_str(&format!("{live}  no snapshot yet\n")),
+    }
+    let rows = state.rows();
+    out.push_str(&format!(
+        "\n  {:>6}  {:>6}  {:>8}  {:>12}  {:>12}  {:>10}\n",
+        "cohort", "born", "rows", "best hff", "best ever", "gain"
+    ));
+    for r in rows.iter().take(12) {
+        out.push_str(&format!(
+            "  {:>6}  {:>6}  {:>8}  {:>12}  {:>12}  {:>10}{}\n",
+            r.id,
+            r.birth_generation,
+            r.rows,
+            or_dash(r.best_hff, 6),
+            or_dash(r.best_ever, 6),
+            gain_text(r.gain),
+            if r.extinct { "  EXTINCT" } else { "" }
+        ));
+    }
+    for (gen, what) in state.events.iter().rev().take(4) {
+        out.push_str(&format!("  gen {gen:>6}  {what}\n"));
+    }
+    out
 }
