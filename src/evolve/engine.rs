@@ -635,13 +635,14 @@ impl Config {
 
     /// The SRBench entry's settings.
     pub fn srbench(seed: u32) -> Config {
-        // THE PUMP'S BEAT, 33 (Andrew). It was 4, which is a beat the engine
-        // has not won anything on: a fresh line got four generations to prove
-        // itself before the cut came for it, which is barely one breeding. The
-        // fit that recovered strogatz_bacres1 ran at 20 and held five to seven
-        // cohorts alive; 33 gives a new line half again as long to show what it
-        // can do, and widens every cohort band with it.
-        let pump_every = 33;
+        // THE PUMP'S BEAT, 20 -- the beat the only recovered law was found at.
+        // It was 4, which is a beat nothing has ever been won on: a fresh line
+        // got four generations to prove itself before the cut came for it,
+        // barely one breeding. It was briefly 33, which nothing has been won on
+        // either. 20 is what strogatz_bacres1 was recovered at, holding five to
+        // seven cohorts alive over 19,060 generations, so it is the one number
+        // here with a result behind it.
+        let pump_every = 20;
         Config {
             seed,
             pop_intake: 600,
@@ -6269,13 +6270,12 @@ mod tests {
     /// RATIO — the number of bands alive at once. Setting either alone changes
     /// it. This pins the ratio, which is the part with a measurement behind it:
     /// strogatz_bacres1, seed 7014, 2,000 + 2,000, five to seven cohorts alive,
-    /// law recovered at generation 19,060. That fit ran the beat at 20; the beat
-    /// is now 33 and the band count is what carries over.
+    /// law recovered at generation 19,060, at this same beat of 20.
     #[test]
     fn the_cohort_band_is_five_pump_beats_wide() {
         let c = Config::srbench(7014);
-        assert_eq!(c.pump_every, 33, "the pump's beat");
-        assert_eq!(c.cohort_merge, 165, "five bands of thirty-three generations");
+        assert_eq!(c.pump_every, 20, "the pump's beat -- the one the recovered law was found at");
+        assert_eq!(c.cohort_merge, 100, "five bands of twenty generations");
         assert_eq!(
             c.cohort_merge / c.pump_every,
             Config::LIVE_COHORTS,
