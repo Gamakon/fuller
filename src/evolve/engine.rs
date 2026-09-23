@@ -3917,6 +3917,16 @@ impl Engine {
                     cohort_merge: c.cohort_merge,
                     pump_every: c.pump_every,
                     progress_every: c.progress_every,
+                    // THE STOP BAR TRAVELS WITH THE RUN. The viewer colours the
+                    // p-value by whether it has cleared this, and the default
+                    // moves as the measurement improves — a screen carrying its
+                    // own copy would colour one run's p against another run's
+                    // bar. A half that is switched OFF is `None` rather than the
+                    // sentinel that switched it off: `f64::INFINITY` is not a
+                    // bar every p clears and a negative 1 - R² is not a bar no
+                    // model can reach, they are both "this half is not in force".
+                    stop_log10_p: telemetry::finite(c.stop_log10_p),
+                    stop_one_minus_r2: telemetry::finite(c.stop_one_minus_r2).filter(|v| *v >= 0.0),
                 })?;
                 let mut writer = writer;
                 // THE MERGE RULE, stated once and up front. The brief asks for a

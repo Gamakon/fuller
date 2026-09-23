@@ -109,6 +109,71 @@ pub enum Liveness {
     Stale,
 }
 
+/// THE SEARCH'S VERDICT, in the three states the engine can actually be in.
+///
+/// It is read off `stopped_by` — the engine's own word for why the fit ended —
+/// and NOT off the numbers on the last snapshot. The engine's stop bar has two
+/// halves (`stop_log10_p` AND `stop_one_minus_r2`) and it checks them against
+/// the CONFIRMED f64 rescore, which is not the f32 ranking score a snapshot
+/// carries; a viewer re-deciding from the snapshot would disagree with the fit
+/// about its own answer. So the engine decides and this reports.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Verdict {
+    /// The fit has not ended. It is still looking — including when the stream
+    /// has gone quiet, which is a fact about the TELEMETRY and not about the
+    /// search, and which the liveness badge says separately.
+    Searching,
+    /// `stopped_by == "early_stop"`: the fit met BOTH halves of its stop bar.
+    LawFound,
+    /// The fit ended on `time` or `n_gen` — it ran out of budget or generations
+    /// with the bar unmet. A run that stops for any reason that is not
+    /// `early_stop` did not clear the bar, so anything unrecognised lands here
+    /// too: the honest reading of an unknown ending is that nothing was proved.
+    LawUnfound,
+}
+
+impl Verdict {
+    /// The banner's words, in the CAPITALS they are drawn in.
+    pub fn label(self) -> &'static str {
+        match self {
+            Verdict::Searching => "SEARCHING",
+            Verdict::LawFound => "LAW FOUND",
+            Verdict::LawUnfound => "LAW UNFOUND",
+        }
+    }
+
+    /// The line beside the banner: what the verdict rests on, so the word is
+    /// never read as more than it is. LAW FOUND is the engine's `early_stop` and
+    /// nothing else, and SEARCHING is not a prediction about what comes next.
+    pub fn because(self) -> &'static str {
+        match self {
+            Verdict::Searching => "the fit has not ended · no verdict yet",
+            Verdict::LawFound => "early_stop · the fit met BOTH halves of its stop bar",
+            Verdict::LawUnfound => "the fit ended with the bar unmet",
+        }
+    }
+}
+
+/// WHERE THE p-VALUE SITS AGAINST THE STOP BAR's p HALF.
+///
+/// Lower is better — it is a log10 p-value — so CLEARED is `p <= bar`. This is
+/// ONE HALF of the bar: the other is `stop_one_minus_r2`, and a cleared p on its
+/// own is not a law. The screen colours the number and names the half.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PBar {
+    /// `p <= bar`: this half is met.
+    Cleared,
+    /// `p > bar`: the p-value is still above it.
+    NotCleared,
+    /// THE STREAM CARRIES NO BAR — written before the field existed, or by a run
+    /// with this half switched off. The viewer draws the number in ordinary ink
+    /// and says so: it must not supply a threshold the engine did not send, or a
+    /// run that moved its own bar would be coloured against somebody else's.
+    NoBar,
+    /// No p-value on the frame at all, so there is nothing to place.
+    NoP,
+}
+
 /// How the cohort table is ordered. `s` cycles it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Sort {
@@ -429,6 +494,45 @@ impl WatchState {
         match self.last_record {
             Some(t) if self.following && t.elapsed() > STALE_AFTER => Liveness::Stale,
             _ => Liveness::Live,
+        }
+    }
+
+    /// THE VERDICT, off the engine's own `stopped_by` and nothing else.
+    ///
+    /// It is built on `liveness()` rather than beside it: a run that has not
+    /// finished is SEARCHING whether its telemetry is arriving or has gone
+    /// quiet, because staleness is a fact about the stream and the verdict is a
+    /// fact about the fit. The badge keeps saying STALE, so the two readings sit
+    /// side by side and neither erases the other.
+    pub fn verdict(&self) -> Verdict {
+        match self.liveness() {
+            Liveness::Live | Liveness::Stale => Verdict::Searching,
+            // A `run_end` with no word on it is not an early stop, and an
+            // unrecognised word is not one either: only the engine's own
+            // `early_stop` clears the bar.
+            Liveness::Finished => match self.end.as_ref().map(|e| e.stopped_by.as_str()) {
+                Some("early_stop") => Verdict::LawFound,
+                _ => Verdict::LawUnfound,
+            },
+        }
+    }
+
+    /// The stop bar's p half, as the RUN published it. None when the stream did
+    /// not carry one — the viewer never substitutes the engine's default, which
+    /// moves, and which a run can override.
+    pub fn stop_log10_p(&self) -> Option<f64> {
+        self.start.as_ref().and_then(|s| s.stop_log10_p)
+    }
+
+    /// The frame's log10 p-value placed against that bar. LOWER IS BETTER, so
+    /// `p <= bar` is [`PBar::Cleared`] — and it is only the p HALF: the fit also
+    /// wants `1 - R²` under `stop_one_minus_r2` before it calls a model a law.
+    pub fn p_vs_bar(&self) -> PBar {
+        let Some(p) = self.snapshot.as_ref().and_then(|s| s.global.log10_p) else { return PBar::NoP };
+        match self.stop_log10_p() {
+            Some(bar) if p <= bar => PBar::Cleared,
+            Some(_) => PBar::NotCleared,
+            None => PBar::NoBar,
         }
     }
 
@@ -981,6 +1085,77 @@ mod tests {
         // One distinct value is flat at mid-height, not a full bar.
         assert_eq!(spark_of(&[Some(1e-3), Some(1e-3)]), vec![4, 4]);
         assert!(spark_of(&[None, None]).is_empty(), "nothing to draw is nothing drawn");
+    }
+
+    /// THE VERDICT IS THE ENGINE'S `stopped_by` AND NOTHING ELSE. `early_stop`
+    /// is the only ending that found a law; `time` and `n_gen` are the two
+    /// others the engine emits, and both mean it ran out with the bar unmet.
+    #[test]
+    fn the_verdict_is_the_engines_own_word_for_why_it_stopped() {
+        let mut state = replayed();
+        // The fixture ends on `time`: it ran out of budget.
+        assert_eq!(state.end.as_ref().expect("a run_end").stopped_by, "time");
+        assert_eq!(state.verdict(), Verdict::LawUnfound);
+        for word in ["time", "n_gen"] {
+            state.end.as_mut().expect("a run_end").stopped_by = word.to_string();
+            assert_eq!(state.verdict(), Verdict::LawUnfound, "{word} is not a law");
+        }
+        // And the one ending that IS a law.
+        state.end.as_mut().expect("a run_end").stopped_by = "early_stop".to_string();
+        assert_eq!(state.verdict(), Verdict::LawFound);
+        // A word the engine does not emit is NOT read as a law: the honest
+        // reading of an unknown ending is that nothing was proved.
+        state.end.as_mut().expect("a run_end").stopped_by = "who knows".to_string();
+        assert_eq!(state.verdict(), Verdict::LawUnfound);
+        // The words themselves are the CAPITALS the banner draws.
+        for v in [Verdict::Searching, Verdict::LawFound, Verdict::LawUnfound] {
+            assert_eq!(v.label(), v.label().to_uppercase(), "{v:?} is not in capitals");
+            assert!(!v.because().is_empty(), "{v:?} says nothing about what it rests on");
+        }
+    }
+
+    /// A STALE RUN IS STILL SEARCHING, and the liveness says STALE beside it.
+    /// The verdict is about the FIT and staleness is about the STREAM: collapsing
+    /// them would tell an operator a run had failed when the truth is that the
+    /// telemetry stopped arriving.
+    #[test]
+    fn a_stale_run_is_searching_and_stays_visibly_stale() {
+        let (records, _) = parse_stream(FIXTURE);
+        let mut live = WatchState::new(true);
+        for r in records.into_iter().filter(|r| !matches!(r, Record::RunEnd(_))) {
+            live.apply(Parsed::Ok(Box::new(r)));
+        }
+        assert_eq!((live.liveness(), live.verdict()), (Liveness::Live, Verdict::Searching));
+        live.last_record = Some(std::time::Instant::now() - STALE_AFTER - std::time::Duration::from_secs(1));
+        assert_eq!(live.liveness(), Liveness::Stale, "the stale state was erased");
+        assert_eq!(live.verdict(), Verdict::Searching, "a quiet stream is not a failed fit");
+    }
+
+    /// THE p-VALUE IS PLACED AGAINST THE BAR THE STREAM CARRIED, and against no
+    /// other. Lower is better, so `p <= bar` has cleared it; a stream with no bar
+    /// is `NoBar` and NEVER silently judged against the engine's default, which
+    /// moves and which a run can override.
+    #[test]
+    fn the_p_value_is_judged_only_against_the_bar_the_stream_sent() {
+        let mut state = replayed();
+        // The fixture predates the field, so it carries no bar at all.
+        assert_eq!(state.stop_log10_p(), None);
+        assert_eq!(state.p_vs_bar(), PBar::NoBar, "a viewer invented a threshold");
+        let start = state.start.as_mut().expect("a run_start");
+        start.stop_log10_p = Some(-19.0);
+        // p is well above the bar on this recording.
+        let p = state.snapshot.as_ref().expect("a frame").global.log10_p.expect("a p-value");
+        assert!(p > -19.0, "the fixture's p {p} is already under the bar");
+        assert_eq!(state.p_vs_bar(), PBar::NotCleared);
+        // Under it, and exactly ON it: the bar is inclusive, as the engine's own
+        // `log10_p <= c.stop_log10_p` is.
+        for (value, expect) in [(-21.4, PBar::Cleared), (-19.0, PBar::Cleared), (-18.9, PBar::NotCleared)] {
+            state.snapshot.as_mut().expect("a frame").global.log10_p = Some(value);
+            assert_eq!(state.p_vs_bar(), expect, "p {value} against bar -19.0");
+        }
+        // No p at all is its own answer, not a failure to clear.
+        state.snapshot.as_mut().expect("a frame").global.log10_p = None;
+        assert_eq!(state.p_vs_bar(), PBar::NoP);
     }
 
     /// A FINISHED run and a STALE one are different states. A replay is never

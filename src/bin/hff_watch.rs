@@ -26,7 +26,7 @@
 use std::io::Write;
 
 use fuller::evolve::telemetry::{parse_stream, Tailer};
-use fuller::evolve::watch::{elided, gain_text, or_dash, Gain, Liveness, WatchState};
+use fuller::evolve::watch::{elided, gain_text, or_dash, Gain, Liveness, PBar, Verdict, WatchState};
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -419,11 +419,19 @@ fn draw(f: &mut Frame, state: &WatchState, ui: &Ui) {
 fn compact(f: &mut Frame, theme: Theme, state: &WatchState, area: Rect) {
     let s = state.snapshot.as_ref();
     let generation = s.map_or(0, |s| s.header.generation);
+    let verdict = state.verdict();
     let mut lines = vec![
+        // THE VERDICT SURVIVES THE FALLBACK. A terminal too small for the layout
+        // is still a terminal somebody is reading the answer off, and the answer
+        // is the first thing on it.
+        Line::from(Span::styled(
+            format!(" {} ", verdict.label()),
+            Style::default().fg(verdict_colour(theme, verdict)).add_modifier(Modifier::BOLD | Modifier::REVERSED),
+        )),
         Line::from(Span::styled("hff-watch · terminal too small", Style::default().fg(theme.warn()).add_modifier(Modifier::BOLD))),
         Line::from(format!("{}x{} — the full screen needs {}x{}", area.width, area.height, WIDE.0, WIDE.1)),
-        Line::from(""),
         Line::from(format!("gen {generation}  best HFF {}", or_dash(s.and_then(|s| s.global.best_hff), 4))),
+        Line::from(p_spans(theme, state, false)),
         // Seconds as seconds. `or_dash` is scientific notation, which is right
         // for an HFF angle and absurd for a clock ("3e1 seconds").
         Line::from(format!(
@@ -456,9 +464,84 @@ fn badge_text(state: &WatchState) -> String {
 
 fn badge_colour(theme: Theme, state: &WatchState) -> Color {
     match state.liveness() {
-        Liveness::Finished => Color::Green,
+        // FINISHED IS NOT AN OUTCOME. It was green, which read as "it worked" on
+        // every run that merely ran out of budget; the verdict banner beside it
+        // carries the green now, and this says only that records have stopped.
+        Liveness::Finished => theme.accent(),
         Liveness::Stale => Color::Red,
         Liveness::Live => theme.accent(),
+    }
+}
+
+/// THE VERDICT BANNER'S COLOUR. Green is the only thing on this screen that
+/// means the fit cleared its bar, red is the only thing that means it did not,
+/// and SEARCHING takes the accent — a run still looking has not failed.
+///
+/// `Color::Green` and `Color::Red` are the terminal's own, as the badge and the
+/// gain column already use them: both are legible on a light and a dark
+/// background, which the dim greys and the cyan are not, and that is why those
+/// two go through [`Theme`] and these do not.
+fn verdict_colour(theme: Theme, verdict: Verdict) -> Color {
+    match verdict {
+        Verdict::LawFound => Color::Green,
+        Verdict::LawUnfound => Color::Red,
+        Verdict::Searching => theme.accent(),
+    }
+}
+
+/// THE COLOUR OF THE log10 p-VALUE: red while it is ABOVE the stop bar's p half,
+/// green once it is at or below it. Lower is better — it is a log10 p-value.
+///
+/// A stream that carries no bar gets ORDINARY INK and a note, never a colour: a
+/// viewer that coloured against a threshold of its own would be judging one run
+/// by another run's bar the first time the engine's default moved.
+fn p_colour(theme: Theme, bar: PBar) -> Color {
+    match bar {
+        PBar::Cleared => Color::Green,
+        PBar::NotCleared => Color::Red,
+        PBar::NoBar | PBar::NoP => theme.dim(),
+    }
+}
+
+/// THE log10 p-VALUE AS THE SCREEN DRAWS IT: a dim label, the number in the
+/// colour of its verdict against the bar, and the note that says which bar and
+/// which half. One builder, used by both layouts and by the compact fallback, so
+/// a narrow terminal and a wide one never colour the same number differently.
+fn p_spans(theme: Theme, state: &WatchState, roomy: bool) -> Vec<Span<'static>> {
+    let bar = state.p_vs_bar();
+    let p = state.snapshot.as_ref().and_then(|s| s.global.log10_p);
+    let note = p_note(state, roomy);
+    vec![
+        Span::styled("log10 p ", Style::default().fg(theme.dim())),
+        Span::styled(
+            p.map_or_else(|| "—".to_string(), |p| format!("{p:.2}")),
+            Style::default().fg(p_colour(theme, bar)).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            if note.is_empty() { String::new() } else { format!(" {note}") },
+            Style::default().fg(theme.dim()),
+        ),
+    ]
+}
+
+/// What the screen says about the p-value beside it: which half of the bar this
+/// is, and where the bar came from. It NAMES THE HALF because both halves must
+/// pass — a green p on its own is not a law, and the words are the only thing
+/// stopping the colour from being read that way.
+fn p_note(state: &WatchState, roomy: bool) -> String {
+    // WHERE THERE IS A HEADING TO CARRY THE BAR, the number carries none: the
+    // wide layout's ERROR heading names it, and repeating it on the same line
+    // as the p-value is what overran the column and printed a wrong bar.
+    if roomy {
+        return String::new();
+    }
+    match (state.p_vs_bar(), state.stop_log10_p()) {
+        (PBar::Cleared, Some(bar)) => format!("≤ bar {bar:.1}"),
+        (PBar::NotCleared, Some(bar)) => format!("> bar {bar:.1}"),
+        // A MISSING BAR IS SAID AT EVERY WIDTH. It is the one note that explains
+        // why the number has no colour, and half of it would say nothing.
+        (PBar::NoBar, _) => "no stop bar".to_string(),
+        _ => String::new(),
     }
 }
 
@@ -476,17 +559,35 @@ fn header(f: &mut Frame, theme: Theme, state: &WatchState, area: Rect) {
         (true, None) => "no telemetry yet".to_string(),
         (false, _) => "recorded".to_string(),
     };
+    // THE VERDICT, in capitals, first on the line and in reverse video: it is the
+    // one thing on this screen an operator wants from across a room, and it is
+    // the SEARCH's answer rather than the stream's state. The badge beside it
+    // still says LIVE / STALE / FINISHED, because a stale run is SEARCHING and
+    // the two readings must not collapse into one word.
+    let verdict = state.verdict();
     let one = Line::from(vec![
-        Span::styled("◉ HFF-SR / WATCH ", Style::default().fg(theme.accent()).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            format!(" {} ", verdict.label()),
+            Style::default().fg(verdict_colour(theme, verdict)).add_modifier(Modifier::BOLD | Modifier::REVERSED),
+        ),
+        Span::raw(" "),
         Span::styled(format!(" {} ", badge_text(state)), Style::default().fg(badge_colour(theme, state)).add_modifier(Modifier::BOLD)),
-        Span::raw("  "),
+        Span::raw(" "),
         Span::raw(start.map_or_else(|| "(no run_start)".to_string(), |s| s.dataset.clone())),
         Span::styled(" · seed ", Style::default().fg(theme.dim())),
         Span::raw(start.map_or_else(|| "—".to_string(), |s| s.seed.to_string())),
-        Span::styled("  run ", Style::default().fg(theme.dim())),
-        Span::raw(start.map_or_else(|| "—".to_string(), |s| s.header.run_id.clone())),
+        // The run id is the first thing to go when the line is tight: it is the
+        // only item here an operator already knows, having typed the path.
+        Span::styled(if area.width >= WIDE.0 { "  run " } else { "" }, Style::default().fg(theme.dim())),
+        Span::raw(match (area.width >= WIDE.0, start) {
+            (true, Some(s)) => s.header.run_id.clone(),
+            (true, None) => "—".to_string(),
+            (false, _) => String::new(),
+        }),
     ]);
     let two = Line::from(vec![
+        // The banner took line one's front, so the viewer names itself here.
+        Span::styled("◉ HFF-SR  ", Style::default().fg(theme.accent()).add_modifier(Modifier::BOLD)),
         Span::styled("gen ", Style::default().fg(theme.dim())),
         Span::styled(format!("{generation}"), Style::default().add_modifier(Modifier::BOLD)),
         Span::raw(format!("  {elapsed:.0}s / {budget:.0}s")),
@@ -527,6 +628,25 @@ fn global_strip(f: &mut Frame, theme: Theme, state: &WatchState, area: Rect) {
         or_dash(g.and_then(|g| g.r2_train).map(|r| 1.0 - r), 2),
         or_dash(g.and_then(|g| g.r2_val).map(|r| 1.0 - r), 2),
     );
+    // THE BEST-EVER LINE, which on the narrow layout also carries the p-value:
+    // the ERROR column that holds it when there is room is not drawn below 118
+    // columns, and a screen that dropped the one coloured number an operator is
+    // watching for would be worst at the size it is most often watched at.
+    // NARROW MEANS TIGHTER WORDS, not a dropped note: at 80 columns the
+    // best-ever line has to hold the p-value and the reason the bar is or is not
+    // there, so the unscored count loses its label rather than the note losing
+    // its end — a truncated "no sto" says nothing at all.
+    let mut best_ever = vec![Span::styled(
+        if roomy {
+            format!("best ever {}   {} unscored rows", or_dash(g.and_then(|g| g.best_ever_hff), 4), g.map_or(0, |g| g.nan_rows))
+        } else {
+            format!("ever {}  {} unscored  ", or_dash(g.and_then(|g| g.best_ever_hff), 3), g.map_or(0, |g| g.nan_rows))
+        },
+        Style::default().fg(theme.dim()),
+    )];
+    if !roomy {
+        best_ever.extend(p_spans(theme, state, false));
+    }
     let best = Paragraph::new(vec![
         Line::from(Span::styled(
             if roomy { "GLOBAL BEST HFF ↓ (lower is better)" } else { "GLOBAL BEST HFF ↓ (lower wins)" },
@@ -545,26 +665,40 @@ fn global_strip(f: &mut Frame, theme: Theme, state: &WatchState, area: Rect) {
         ]),
         // BEST-EVER, separately: a current best is not a record, and the brief
         // asks for the two not to be confused.
-        Line::from(Span::styled(
-            format!("best ever {}   {} unscored rows", or_dash(g.and_then(|g| g.best_ever_hff), 4), g.map_or(0, |g| g.nan_rows)),
-            Style::default().fg(theme.dim()),
-        )),
+        Line::from(best_ever),
     ]);
     f.render_widget(best, columns[0]);
     if roomy {
         let quality = Paragraph::new(vec![
-            Line::from(Span::styled("ERROR", Style::default().fg(theme.dim()))),
-            Line::from(format!("train 1-R² {train}   val 1-R² {val}")),
+            // THE BAR GOES IN THE HEADING, not beside the number. The ERROR
+            // column is about 40 columns at 120 wide, and a `Paragraph` clips
+            // rather than wraps — the bar printed after the p-value came out as
+            // "≤ p bar -19", a DIFFERENT BAR from the one the run set, which is
+            // worse than not printing it. The heading has the room, the number
+            // keeps its colour, and the two are one line apart.
             Line::from(Span::styled(
-                format!(
-                    "mse {}  log10 p {}  depth {}  head {}",
-                    or_dash(g.and_then(|g| g.mse_train), 2),
-                    g.and_then(|g| g.log10_p).map_or_else(|| "—".to_string(), |p| format!("{p:.2}")),
-                    g.map_or(0, |g| g.t_depth),
-                    g.map_or(0, |g| g.vhead)
-                ),
+                match state.stop_log10_p() {
+                    Some(bar) => format!("ERROR · stop bar p ≤ {bar:.1}"),
+                    None => "ERROR · no stop bar in stream".to_string(),
+                },
                 Style::default().fg(theme.dim()),
             )),
+            Line::from(format!("train 1-R² {train}   val 1-R² {val}")),
+            // THE p-VALUE IS ITS OWN SPAN, because it is the only number on this
+            // line that carries a colour: the rest is dim furniture, and the p
+            // says whether the fit has cleared half of its stop bar.
+            Line::from({
+                let mut spans = vec![Span::styled(
+                    format!("mse {}  ", or_dash(g.and_then(|g| g.mse_train), 2)),
+                    Style::default().fg(theme.dim()),
+                )];
+                spans.extend(p_spans(theme, state, true));
+                spans.push(Span::styled(
+                    format!("  depth {}  head {}", g.map_or(0, |g| g.t_depth), g.map_or(0, |g| g.vhead)),
+                    Style::default().fg(theme.dim()),
+                ));
+                spans
+            }),
         ]);
         f.render_widget(quality, columns[1]);
     }
@@ -1148,6 +1282,10 @@ fn dump(state: &WatchState) -> String {
         fuller::evolve::watch::Liveness::Stale => "STALE",
         fuller::evolve::watch::Liveness::Finished => "FINISHED",
     };
+    // THE VERDICT FIRST, in capitals, with what it rests on. `--dump` is how the
+    // answer is read out of a log file, so it opens with the answer.
+    let verdict = state.verdict();
+    out.push_str(&format!("{}  ({})\n", verdict.label(), verdict.because()));
     match (&state.start, &state.snapshot) {
         (Some(rs), Some(sn)) => {
             out.push_str(&format!(
@@ -1158,12 +1296,26 @@ fn dump(state: &WatchState) -> String {
                 sn.header.elapsed_ms as f64 / 1000.0,
                 sn.budget_ms as f64 / 1000.0
             ));
+            // The p-value carries its verdict against the bar as WORDS here: a
+            // dump has no colour, and the decision the screen draws in green or
+            // red must still be readable down a pipe.
+            let note = p_note(state, false);
             out.push_str(&format!(
-                "  best hff {}   1-R2 train {}   val {}   log10 p {}\n",
+                "  best hff {}   1-R2 train {}   val {}   log10 p {}{}\n",
                 or_dash(sn.global.best_hff, 6),
                 or_dash(sn.global.r2_train.map(|r| 1.0 - r), 3),
                 or_dash(sn.global.r2_val.map(|r| 1.0 - r), 3),
-                or_dash(sn.global.log10_p, 2)
+                or_dash(sn.global.log10_p, 2),
+                match state.p_vs_bar() {
+                    // A CLEARED p NAMES THE OTHER HALF. Both halves must pass
+                    // before the fit calls a model a law, and a dump that said
+                    // only "CLEARED" would invite exactly the reading the
+                    // verdict line above it is there to prevent.
+                    PBar::Cleared => format!("  CLEARED {note} (the 1-R² half must pass too)"),
+                    PBar::NotCleared => format!("  ABOVE {note}"),
+                    PBar::NoBar => format!("  ({note})"),
+                    PBar::NoP => String::new(),
+                }
             ));
             out.push_str(&format!("  global gain {}\n", gain_text(state.global_gain())));
             for isl in state.islands() {
@@ -1266,6 +1418,209 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n")
     }
+
+    /// THE COLOUR A RUN OF TEXT WAS DRAWN IN. `painted` gives the characters
+    /// only, and the whole point of the p-value's colour is that it is not a
+    /// character — so this finds the run on the screen and reads the foreground
+    /// off the cell its first character landed in.
+    fn colour_of(state: &WatchState, theme: Theme, w: u16, h: u16, needle: &str) -> Option<Color> {
+        let mut terminal = Terminal::new(TestBackend::new(w, h)).expect("a test terminal");
+        let ui = Ui { theme, ..Ui::default() };
+        terminal.draw(|f| draw(f, state, &ui)).expect("the frame draws");
+        let buffer = terminal.backend().buffer().clone();
+        let rows: Vec<String> = buffer
+            .content()
+            .chunks(w as usize)
+            .map(|row| row.iter().map(ratatui::buffer::Cell::symbol).collect::<String>())
+            .collect();
+        for (y, row) in rows.iter().enumerate() {
+            if let Some(byte_at) = row.find(needle) {
+                let x = row[..byte_at].chars().count() as u16;
+                return Some(buffer[(x, y as u16)].fg);
+            }
+        }
+        None
+    }
+
+    /// A state built from the fixture with its run_start, its p-value and its
+    /// ending set to whatever the case under test needs. The recorded streams
+    /// predate the stop bar, so the bar has to be put there to test against it —
+    /// and that is the point: a stream WITHOUT one is a case of its own.
+    fn state_with(bar: Option<f64>, p: Option<f64>, stopped_by: Option<&str>) -> WatchState {
+        let (records, _) = parse_stream(FIXTURE);
+        let mut state = WatchState::new(false);
+        for r in records {
+            state.apply_record(r);
+        }
+        state.start.as_mut().expect("a run_start").stop_log10_p = bar;
+        state.snapshot.as_mut().expect("a frame").global.log10_p = p;
+        match stopped_by {
+            Some(word) => state.end.as_mut().expect("a run_end").stopped_by = word.to_string(),
+            None => state.end = None,
+        }
+        state
+    }
+
+    /// THE VERDICT BANNER IS ON THE SCREEN, IN CAPITALS, at every size and in
+    /// both themes — and it is coloured by the outcome, not by the fact that the
+    /// run ended.
+    #[test]
+    fn the_verdict_banner_draws_in_capitals_at_every_size_and_theme() {
+        let cases = [
+            (Some("early_stop"), "LAW FOUND", Color::Green),
+            (Some("n_gen"), "LAW UNFOUND", Color::Red),
+            (Some("time"), "LAW UNFOUND", Color::Red),
+            (None, "SEARCHING", Color::Cyan),
+        ];
+        for theme in [Theme { light: false }, Theme { light: true }] {
+            for (stopped_by, word, dark_colour) in cases {
+                let state = state_with(Some(-19.0), Some(-13.0), stopped_by);
+                let want = if word == "SEARCHING" && theme.light { theme.accent() } else { dark_colour };
+                for (w, h) in [(120, 35), (160, 50), (80, 24)] {
+                    let screen = painted(&state, theme, w, h);
+                    assert!(screen.contains(word), "{w}x{h} light={}: no banner\n{screen}", theme.light);
+                    assert_eq!(
+                        colour_of(&state, theme, w, h, word),
+                        Some(want),
+                        "{w}x{h} light={}: {word} is the wrong colour",
+                        theme.light
+                    );
+                    // The layout still holds: every row is exactly the width.
+                    for line in screen.lines() {
+                        assert_eq!(line.chars().count(), w as usize, "{w}x{h}: a row is not the terminal's width");
+                    }
+                }
+            }
+        }
+    }
+
+    /// STALE AND SEARCHING SIT SIDE BY SIDE. A live run whose stream went quiet
+    /// still says SEARCHING — the fit has not ended — and the badge still says
+    /// STALE, so an operator can tell a quiet stream from a finished fit.
+    #[test]
+    fn a_stale_run_shows_both_searching_and_stale() {
+        let (records, _) = parse_stream(FIXTURE);
+        let mut state = WatchState::new(true);
+        for r in records.into_iter().filter(|r| !matches!(r, Record::RunEnd(_))) {
+            state.apply_record(r);
+        }
+        state.last_record = Some(std::time::Instant::now() - std::time::Duration::from_secs(60));
+        let screen = painted(&state, Theme::default(), 120, 35);
+        assert!(screen.contains("SEARCHING"), "a stale run lost its verdict\n{screen}");
+        assert!(screen.contains("STALE"), "the verdict erased the stale badge\n{screen}");
+    }
+
+    /// THE p-VALUE IS RED ABOVE THE BAR AND GREEN AT OR BELOW IT, on both
+    /// layouts and in both themes — and a stream with NO bar is drawn in
+    /// ordinary ink and says so, never coloured against a threshold the viewer
+    /// supplied for itself.
+    #[test]
+    fn the_p_value_is_red_above_the_bar_and_green_once_it_has_cleared_it() {
+        for theme in [Theme { light: false }, Theme { light: true }] {
+            // The p-value's own column is only drawn at 118 columns and up; the
+            // narrow layout carries it on the best-ever line, so both are here.
+            for (w, h) in [(120, 35), (160, 50), (80, 24)] {
+                // ABOVE the bar: red.
+                let above = state_with(Some(-19.0), Some(-13.04), Some("n_gen"));
+                assert_eq!(
+                    colour_of(&above, theme, w, h, "-13.04"),
+                    Some(Color::Red),
+                    "{w}x{h} light={}: a p above the bar is not red\n{}",
+                    theme.light,
+                    painted(&above, theme, w, h)
+                );
+                // AT OR BELOW it: green. Exactly on the bar counts, as the
+                // engine's own `<=` does.
+                for value in ["-21.40", "-19.00"] {
+                    let cleared = state_with(Some(-19.0), Some(value.parse().expect("a number")), Some("early_stop"));
+                    assert_eq!(
+                        colour_of(&cleared, theme, w, h, value),
+                        Some(Color::Green),
+                        "{w}x{h} light={}: p {value} has cleared the bar and is not green",
+                        theme.light
+                    );
+                }
+                // NO BAR IN THE STREAM: ordinary ink, and the screen says why.
+                let barless = state_with(None, Some(-13.04), Some("n_gen"));
+                assert_eq!(
+                    colour_of(&barless, theme, w, h, "-13.04"),
+                    Some(theme.dim()),
+                    "{w}x{h} light={}: a viewer coloured against a bar it invented",
+                    theme.light
+                );
+                let screen = painted(&barless, theme, w, h);
+                assert!(screen.contains("no stop bar"), "{w}x{h}: it did not say the bar is missing\n{screen}");
+                // AND THE BAR'S VALUE IS ON SCREEN WHOLE wherever there is one.
+                // A `Paragraph` clips rather than wraps, and a bar printed as
+                // "-19" or "-1" where the run set -19.0 is a DIFFERENT bar —
+                // the failure this assertion exists to catch.
+                for st in [&above, &state_with(Some(-19.0), Some(-21.40), Some("early_stop"))] {
+                    let screen = painted(st, theme, w, h);
+                    assert!(screen.contains("-19.0"), "{w}x{h} light={}: the bar was cut short\n{screen}", theme.light);
+                }
+                // And the layout holds at every one of these.
+                for line in screen.lines() {
+                    assert_eq!(line.chars().count(), w as usize, "{w}x{h}: a row is not the terminal's width");
+                }
+            }
+        }
+    }
+
+    /// THE BANNER SURVIVES THE NARROW FALLBACK and the fallback still does not
+    /// panic. Below 70x20 there is no layout, but there is still an answer.
+    #[test]
+    fn the_compact_fallback_keeps_the_verdict_and_never_panics() {
+        let state = state_with(Some(-19.0), Some(-13.0), Some("early_stop"));
+        let small = painted(&state, Theme::default(), 69, 19);
+        assert!(small.contains("LAW FOUND"), "the fallback dropped the verdict\n{small}");
+        assert!(small.contains("terminal too small"), "{small}");
+        // And every size from the minimum up still draws, banner and all.
+        for h in 20..40u16 {
+            for w in [70u16, 79, 80, 117, 118, 119, 120, 121] {
+                let screen = painted(&state, Theme::default(), w, h);
+                assert!(screen.contains("LAW FOUND"), "{w}x{h} lost the banner\n{screen}");
+                for line in screen.lines() {
+                    assert_eq!(line.chars().count(), w as usize, "{w}x{h}: a row is not the terminal's width");
+                }
+            }
+        }
+    }
+
+    /// `--dump` CARRIES THE VERDICT AND THE BAR DECISION, because a dump has no
+    /// colour and it is how the answer is read out of a log file.
+    #[test]
+    fn the_dump_opens_with_the_verdict_and_says_where_the_p_value_sits() {
+        // Cleared, and the fit stopped early: the dump's first word is the answer.
+        let found = state_with(Some(-19.0), Some(-21.4), Some("early_stop"));
+        let text = dump(&found);
+        assert!(text.starts_with("LAW FOUND"), "{text}");
+        assert!(text.contains("early_stop"), "{text}");
+        assert!(text.contains("CLEARED"), "the dump did not place the p-value\n{text}");
+        assert!(text.contains("bar -19.0"), "the dump did not name the bar\n{text}");
+        // The colour's meaning survives as words: BOTH halves are named, so a
+        // cleared p is never read on its own as a law.
+        assert!(text.contains("1-R²"), "the dump did not name the other half\n{text}");
+
+        // Above the bar, out of budget: the other verdict and the other word.
+        let unfound = state_with(Some(-19.0), Some(-13.0), Some("n_gen"));
+        let text = dump(&unfound);
+        assert!(text.starts_with("LAW UNFOUND"), "{text}");
+        assert!(text.contains("ABOVE"), "{text}");
+
+        // Still running: SEARCHING, and no claim either way.
+        let searching = state_with(Some(-19.0), Some(-13.0), None);
+        let text = dump(&searching);
+        assert!(text.starts_with("SEARCHING"), "{text}");
+        assert!(!text.contains("LAW"), "a running fit was given a verdict\n{text}");
+
+        // A stream with no bar says so rather than judging against one.
+        let barless = state_with(None, Some(-13.0), Some("n_gen"));
+        let text = dump(&barless);
+        assert!(text.contains("no stop bar"), "{text}");
+        assert!(!text.contains("CLEARED") && !text.contains("ABOVE"), "it judged without a bar\n{text}");
+    }
+
+
 
     /// THE NEW PANELS DRAW, at both layouts and in both themes, and the layout
     /// still holds: nothing is cut off, nothing panics, and the discoveries and

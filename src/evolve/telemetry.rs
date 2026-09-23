@@ -136,6 +136,27 @@ pub struct RunStart {
     pub pump_every: u32,
     #[serde(default)]
     pub progress_every: u32,
+    /// THE STOP BAR'S p HALF, as the engine holds it (`Config::stop_log10_p`):
+    /// the confirmed model's HFF angle as a log10 p-value must be at most this.
+    ///
+    /// It is on the wire because A VIEWER MUST NOT OWN A THRESHOLD THE ENGINE
+    /// OWNS. The default moves as the measurement improves and a run can
+    /// override it, so a screen carrying its own -19 would colour one run's
+    /// p-value against another run's bar the day either changes.
+    ///
+    /// None is the honest silence of a stream written before this field existed,
+    /// or of a run with the half switched off (`f64::INFINITY`, which is not a
+    /// bar any p can clear). The viewer draws the value in ordinary ink and says
+    /// the bar is not there, rather than supplying one.
+    #[serde(default)]
+    pub stop_log10_p: Option<f64>,
+    /// THE STOP BAR'S OTHER HALF (`Config::stop_one_minus_r2`): validation — and
+    /// edge, when there is one — 1 - R² must be at most this. Carried beside the
+    /// p half because BOTH must pass for the fit to call a model a law, and a
+    /// stream that published only one of them would invite a reader to conclude
+    /// from half a bar.
+    #[serde(default)]
+    pub stop_one_minus_r2: Option<f64>,
 }
 
 /// The repainting frame: the state of the search at one beat.
@@ -438,6 +459,8 @@ impl Writer {
             cohort_merge: start.cohort_merge,
             pump_every: start.pump_every,
             progress_every: start.progress_every,
+            stop_log10_p: start.stop_log10_p,
+            stop_one_minus_r2: start.stop_one_minus_r2,
         });
         w.write(&record)?;
         Ok(w)
@@ -564,6 +587,11 @@ pub struct RunStartFields {
     pub cohort_merge: u32,
     pub pump_every: u32,
     pub progress_every: u32,
+    /// The stop bar, both halves, straight off the config. `None` for a half
+    /// that is switched off — an infinite p bar or a negative 1 - R² bar is not
+    /// a bar, and the engine maps both to the silence they are.
+    pub stop_log10_p: Option<f64>,
+    pub stop_one_minus_r2: Option<f64>,
 }
 
 /// A snapshot without its header — what the engine builds.
@@ -1047,6 +1075,60 @@ mod tests {
         assert_eq!((back.nodes, back.value), (Some(14), Some(1.0)));
     }
 
+    /// THE STOP BAR IS ON THE WIRE, and adding it moved nothing else: a stream
+    /// written before the field existed still parses, and the bar comes back as
+    /// the silence it is rather than as a zero a viewer would colour against.
+    #[test]
+    fn the_stop_bar_rides_the_run_start_and_is_optional() {
+        // Every run_start ever written before this field: it parses, and the bar
+        // is None — not 0.0, which would be a bar every p-value fails.
+        let (records, _) = parse_stream(FIXTURE);
+        let start = records.iter().find_map(|r| match r {
+            Record::RunStart(s) => Some(s.clone()),
+            _ => None,
+        }).expect("the fixture's run_start");
+        assert_eq!((start.stop_log10_p, start.stop_one_minus_r2), (None, None));
+        assert_eq!(SCHEMA_VERSION, 1, "an optional field must not have moved the version");
+
+        // And a stream written now carries both halves through a round trip.
+        let dir = std::env::temp_dir().join("fuller-telemetry-stop-bar");
+        std::fs::create_dir_all(&dir).expect("a scratch directory");
+        let path = dir.join("stream.jsonl");
+        let w = Writer::create(
+            path.to_str().expect("a path"),
+            "r".to_string(),
+            RunStartFields {
+                dataset: "d.tsv".to_string(),
+                seed: 1,
+                population: 4,
+                n_pairs: 1,
+                pop_intake: 2,
+                pop_champion: 2,
+                float_zone: 0,
+                n_train: 1,
+                n_val: 1,
+                n_extrap: 0,
+                budget_ms: 1,
+                max_generations: 1,
+                cohort_merge: 0,
+                pump_every: 1,
+                progress_every: 1,
+                stop_log10_p: Some(-19.0),
+                stop_one_minus_r2: Some(1e-10),
+            },
+        )
+        .expect("a stream");
+        drop(w);
+        let text = std::fs::read_to_string(&path).expect("the stream");
+        let (records, bad) = parse_stream(&text);
+        assert_eq!(bad, 0);
+        let Some(Record::RunStart(s)) = records.first() else { panic!("no run_start") };
+        assert_eq!(s.stop_log10_p, Some(-19.0));
+        assert_eq!(s.stop_one_minus_r2, Some(1e-10));
+        std::fs::remove_file(&path).expect("remove the stream");
+        std::fs::remove_dir(&dir).expect("remove its directory");
+    }
+
     /// The reader holds a partial line until the bytes that finish it arrive, and
     /// a rotation (the file getting shorter) restarts it rather than stitching
     /// two runs into one frame.
@@ -1104,6 +1186,8 @@ mod tests {
                 cohort_merge: 0,
                 pump_every: 1,
                 progress_every: 1,
+                stop_log10_p: Some(-19.0),
+                stop_one_minus_r2: Some(1e-10),
             },
         )
         .expect("a stream");
