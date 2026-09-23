@@ -150,16 +150,39 @@ fn chance(row: u32, slot: u32, stream: u32, thr: u32) -> bool {
 // tournament holds no match at all the best of the draw still wins, so a cohort
 // that has died out costs nothing.
 //
-// `gp.cohort_merge` is the age at which cohorts stop being separate: past it
-// every elder is one band, which is Hornby's unbounded top layer. 0 = off, and
-// then this is the engine as it was.
+// `gp.cohort_merge` is the AGE at which cohorts stop being separate: a line
+// older than it joins one band with every other elder, which is Hornby's
+// unbounded top layer, while the young stay apart until they have earned their
+// place. 0 = off, and then this is the engine as it was.
+//
+// The age is `generation - label`, not the label: the label says WHEN a line
+// arrived and is fixed for ever, so banding on the label alone kept the OLDEST
+// cohorts apart permanently and merged the youngest — the opposite of the
+// design, and it meant the most refined lines never mingled at all.
+fn band_of(row: u32) -> u32 {
+    let label = cohort_now[row];
+    // A label cannot be in the future, but a resumed or re-labelled row could
+    // read as one; treat it as newborn rather than as older than the run.
+    var age = 0u;
+    if (gp.generation > label) {
+        age = gp.generation - label;
+    }
+    if (age >= gp.cohort_merge) {
+        return ELDERS;
+    }
+    return label;
+}
+
+// The band every elder shares. No cohort label can collide with it: a label is a
+// generation, and a fit that reached this many generations would have merged
+// long before.
+const ELDERS: u32 = 0xFFFFFFFFu;
+
 fn same_cohort(a: u32, b: u32) -> bool {
     if (gp.cohort_merge == 0u) {
         return true;
     }
-    let ca = min(cohort_now[a], gp.cohort_merge);
-    let cb = min(cohort_now[b], gp.cohort_merge);
-    return ca == cb;
+    return band_of(a) == band_of(b);
 }
 
 // Fitness as a sort key: lower is fitter, an unevaluated row (NaN) is last. The

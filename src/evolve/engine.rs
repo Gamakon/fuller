@@ -398,6 +398,10 @@ pub struct Config {
     pub k_migrants: u32,
     /// The cleansing mutation's rate per row (0 = off).
     pub cleanse: f64,
+    /// THE PUMP'S PROMOTION, as a fraction of the CHAMPION island — the island
+    /// being refreshed — so the turnover rate is the same whatever the size.
+    /// 0.01 is what "promote 2" meant at the 200-row island it was written for.
+    pub promote_fraction: f64,
     /// THE CHECKPOINT's directory: five rotating slots, so a fit killed at any
     /// moment resumes from the beat before. None = off.
     pub checkpoint_dir: Option<String>,
@@ -598,6 +602,7 @@ impl Config {
             cross_every: 0,
             k_migrants: 3,
             cleanse: 0.0,
+            promote_fraction: 0.01,
             checkpoint_dir: None,
             checkpoint_every_seconds: 0.0,
             cohort_merge: 0,
@@ -2316,7 +2321,22 @@ impl Engine {
         // The champion island's worst first; an unevaluated row is the worst of all.
         let mut worst_champion: Vec<u32> = (champion.lo..champion.hi).collect();
         worst_champion.sort_by(|&a, &b| gen.fitness[b as usize].total_cmp(&gen.fitness[a as usize]).then(b.cmp(&a)));
-        for (&from, &to) in best_intake.iter().zip(worst_champion.iter().take(2)) {
+        // PROMOTION IS A TURNOVER RATE, not a count. "Promote 2" was written when
+        // a champion island was 200 rows, where 2 IS one percent of it — the rate
+        // was always the intent and the absolute number was the size it was
+        // invented at. Left absolute it does not scale: at 100,000 rows two
+        // promotions a beat is 0.002%, and the island would need five million
+        // generations to turn over while the fit is budgeted for twenty thousand.
+        // The channel seals shut exactly when the population is large enough to
+        // need it.
+        //
+        // One percent of the DESTINATION, because the champion island is what is
+        // being refreshed: sized to the intake instead, the ratio between the two
+        // islands leaks into the dynamics and a large intake floods a small
+        // champion. At least one, or a small island promotes nobody and the pump
+        // stops meaning anything.
+        let promote = ((f64::from(champion.hi - champion.lo) * self.config.promote_fraction).round() as usize).max(1);
+        for (&from, &to) in best_intake.iter().zip(worst_champion.iter().take(promote)) {
             let (from, to) = (from as usize, to as usize);
             gen.pop.genome.copy_within(from * row_w..(from + 1) * row_w, to * row_w);
             gen.pop.rnc.copy_within(from * rnc_w..(from + 1) * rnc_w, to * rnc_w);
@@ -4290,6 +4310,54 @@ mod tests {
         assert_eq!(drop_dead_subtrees(&tree, &rows(), FINAL_FORM_AGREE), tree);
     }
 
+    /// THE MERGE IS BY AGE, AND THE DIRECTION IS THE WHOLE POINT.
+    ///
+    /// Andrew's design: "the elders only start to co-mingle openly after 10000
+    /// generations". Banding on the LABEL did the opposite — a label is fixed
+    /// for ever, so `min(label, merge)` kept the oldest cohorts apart
+    /// permanently and merged the youngest, and the most refined lines never
+    /// mingled at all. The age is `generation - label`, and this pins it.
+    #[test]
+    fn the_elders_merge_and_the_young_stay_apart() {
+        // The kernel's own arithmetic, so the test fails if the WGSL is inverted
+        // again: a row is an elder once its line is `merge` generations old.
+        let band = |generation: u32, label: u32, merge: u32| -> u32 {
+            let age = generation.saturating_sub(label);
+            if age >= merge { u32::MAX } else { label }
+        };
+        let merge = 10_000;
+        let at = 15_000;
+        // Two lines born long ago are BOTH elders, so they share a band and may
+        // breed together however far apart their births were.
+        assert_eq!(band(at, 0, merge), band(at, 4_000, merge), "two elders did not merge");
+        assert_eq!(band(at, 0, merge), u32::MAX, "an old line is not in the elder band");
+        // A line born recently is on its own, protected from them.
+        assert_ne!(band(at, 14_900, merge), band(at, 0, merge), "a newborn was merged with the elders");
+        assert_eq!(band(at, 14_900, merge), 14_900, "a young line lost its own band");
+        // Two young lines of DIFFERENT births stay apart from each other too.
+        assert_ne!(band(at, 14_900, merge), band(at, 14_000, merge), "two young cohorts were merged");
+        // And the boundary: exactly `merge` generations old is an elder.
+        assert_eq!(band(at, at - merge, merge), u32::MAX, "a line exactly at the age is not an elder");
+        assert_ne!(band(at, at - merge + 1, merge), u32::MAX, "a line one generation short is already an elder");
+    }
+
+    /// THE PUMP PROMOTES A FRACTION OF THE ISLAND IT FEEDS, not a count.
+    /// "Promote 2" was one percent of the 200-row champion island it was written
+    /// for; left absolute it becomes 0.002% at 100,000 rows, and the island
+    /// would need five million generations to turn over.
+    #[test]
+    fn the_promotion_is_a_share_of_the_champion_island() {
+        let share = |champion: u32, fraction: f64| ((f64::from(champion) * fraction).round() as usize).max(1);
+        // The rate that the original absolute number WAS, at the size it was written.
+        assert_eq!(share(200, 0.01), 2, "one percent of 200 is not the original 2");
+        // ... and it now scales, where the absolute number did not.
+        assert_eq!(share(100_000, 0.01), 1_000);
+        assert_eq!(share(5_000, 0.01), 50);
+        // A small island still promotes somebody, or the pump stops meaning anything.
+        assert_eq!(share(20, 0.01), 1, "a small island promoted nobody");
+        assert_eq!(share(1, 0.01), 1);
+    }
+
     /// THE LABELS ARE READ BACK ONLY WHEN THE PUMP HAS MOVED THEM.
     ///
     /// A snapshot needs two things: `gen.fitness`, which the fit already keeps on
@@ -4957,7 +5025,13 @@ mod tests {
                 }
             }
         }
-        assert_eq!(seen, vec![290130392017734542, 18034047553287649106, 11794650284444892442], "the pump on one pair");
+        // The digests changed once, when promotion became a SHARE of the champion
+        // island rather than the absolute 2 it was written as. At this toy size
+        // (20 champion rows) one percent rounds to one promotion where two were
+        // made before, so the pump moves a different row and everything downstream
+        // of it differs. The mechanism is what `the_pump_works_inside_each_pair`
+        // asserts; these are the fixed point that says it did not drift again.
+        assert_eq!(seen, vec![4537763176598439864, 12250385662605533526, 14892954882145952876], "the pump on one pair");
     }
 
     /// A row whole: its genes and its constants.
@@ -5005,14 +5079,17 @@ mod tests {
         engine.pump(&mut gen, 4).expect("the pump");
         let fresh = engine.fresh(4, 4).expect("fresh");
         for (p, (intake, champion)) in engine.pairs().into_iter().enumerate() {
-            // The intake's best two are its last two rows; the champion island's worst
-            // two are its first two, the worst of all first.
-            let promoted = [(intake.hi - 1, champion.lo), (intake.hi - 2, champion.lo + 1)];
-            for (from, to) in promoted {
+            // HOW MANY are promoted is a share of the champion island, so the test
+            // asks the rate rather than a count that was true at one size.
+            let n = ((f64::from(champion.hi - champion.lo) * engine.config.promote_fraction).round() as u32).max(1);
+            // The intake's best are its last rows; the champion island's worst are
+            // its first, the worst of all first.
+            for k in 0..n {
+                let (from, to) = (intake.hi - 1 - k, champion.lo + k);
                 assert_eq!(row_of(&gen, to), row_of(&before, from), "pair {p}: row {from} is promoted to row {to}");
                 assert_eq!(gen.fitness[to as usize], before.fitness[from as usize], "pair {p}: a promoted row keeps its fitness");
             }
-            for r in champion.lo + 2..champion.hi {
+            for r in champion.lo + n..champion.hi {
                 assert_eq!(row_of(&gen, r), row_of(&before, r), "pair {p}: the rest of the champion island is untouched");
                 assert_eq!(gen.fitness[r as usize], before.fitness[r as usize]);
             }
