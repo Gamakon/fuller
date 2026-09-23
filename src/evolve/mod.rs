@@ -23,6 +23,9 @@ pub mod smote;
 pub mod telemetry;
 pub mod umap2d;
 pub mod vary;
+// `hff-watch`'s state machine: what is on the screen, with no terminal in it, so
+// the replay and the live follow share one machine and a test can reach it.
+pub mod watch;
 #[cfg(feature = "gpu")]
 pub mod write_back;
 

@@ -287,6 +287,12 @@ pub struct RunEnd {
     pub stopped_by: String,
     pub generations: u32,
     pub individuals: u64,
+    /// THE CONFIRMED f64 RESCORE, which is NOT the last snapshot's
+    /// `global.best_hff`. A snapshot's numbers come from the device's f32
+    /// ranking scores; the fit's answer is re-scored in f64 at the end
+    /// (`Engine::confirm`), and the two differ in the last digits — and by more
+    /// than that when the hall of fame's winner is put back into a row. A viewer
+    /// showing both must not read the difference as a bug.
     pub best_hff: Option<f64>,
     pub seconds: f64,
 }
@@ -692,7 +698,7 @@ mod tests {
     /// snapshots, events, a model and a `run_end`, and its last two lines are a
     /// GARBAGE line and a TRUNCATED one: a stream that ends badly is the ordinary
     /// case (a killed fit) and must cost the reader nothing but a count.
-    const FIXTURE: &str = include_str!("../../parity/fixtures/telemetry_v1.jsonl");
+    const FIXTURE: &str = include_str!("../../tests/fixtures/telemetry_v1.jsonl");
 
     #[test]
     fn the_fixture_parses_and_the_bad_lines_are_only_counted() {

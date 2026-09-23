@@ -55,6 +55,13 @@ python = ["dep:pyo3"]
 # need a GPU adapter, and the CPU evaluator stays the correctness reference.
 gpu = ["dep:wgpu", "dep:pollster", "dep:bytemuck"]
 
+# The viewer's binary is named with a HYPHEN, as a command is; the file keeps
+# the underscore Rust needs. It is NOT behind `gpu`: watching a recorded stream
+# must work on a machine that could not run the fit that made it.
+[[bin]]
+name = "hff-watch"
+path = "src/bin/hff_watch.rs"
+
 [[example]]
 name = "00_calibration"
 

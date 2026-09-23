@@ -3598,16 +3598,14 @@ impl Engine {
             timing.cross += t.elapsed().as_secs_f64();
             self.dev.write_fitness(&gen.fitness)?;
             if c.progress_every > 0 && generation % c.progress_every == 0 {
-                let hof_now = hof.clone();
-                self.report(generation, started.elapsed().as_secs_f64(), &gen, hof_now.as_ref(), false)?;
+                self.report(generation, started.elapsed().as_secs_f64(), &gen, hof.as_ref(), false)?;
             }
         }
         // The last row of the logbook: however the fit ended, its final state is
         // reported and the hall of fame's best is in the file. `force`: the
         // telemetry's throttle never costs a recording its final frame.
         if c.progress_every > 0 && (stopped_by != "n_gen" || generation % c.progress_every != 0) {
-            let hof_now = hof.clone();
-            self.report(generation, started.elapsed().as_secs_f64(), &gen, hof_now.as_ref(), true)?;
+            self.report(generation, started.elapsed().as_secs_f64(), &gen, hof.as_ref(), true)?;
         }
         let (mut row, mut ranked) = self.best(&gen).ok_or("no individual could be scored")?;
         // Under balanced tournaments the TrueNorth best is not an elite and may have
