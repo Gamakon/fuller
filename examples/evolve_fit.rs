@@ -186,12 +186,21 @@ fn main() {
     //                                   argument is then the INTAKE island's size
     //                                   (1500 + 1500 rather than the 3:1 split, which
     //                                   dates from when a generation was slow)
+    //   EVOLVE_POP_INTAKE               the intake island's size, by name. The intake
+    //                                   used to come ONLY from positional argument 4,
+    //                                   so a caller setting EVOLVE_POP_INTAKE got the
+    //                                   default 600 and no complaint — a 200,000-row
+    //                                   run reported itself as 600 + 100,000.
+    if let Some(intake) = std::env::var("EVOLVE_POP_INTAKE").ok().and_then(|v| v.parse::<u32>().ok()) {
+        config.pop_intake = intake;
+    }
     if let Some(champion) = std::env::var("EVOLVE_POP_CHAMPION").ok().and_then(|v| v.parse::<u32>().ok()) {
         if let Some(intake) = args.get(4).and_then(|a| a.parse::<u32>().ok()) {
             config.pop_intake = intake;
         }
         config.pop_champion = champion;
     }
+    eprintln!("POPULATION\t{} intake + {} champion", config.pop_intake, config.pop_champion);
     // Experiment knobs come by environment so the positional arguments stay put:
     //   EVOLVE_RNC_LO / EVOLVE_RNC_HI   the range a gene's random constants are drawn from
     //   EVOLVE_RESTARTS                 split the time into this many independent searches
