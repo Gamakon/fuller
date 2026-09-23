@@ -329,7 +329,8 @@ Logs: `logs/beam_host_gene_alone.log` (the negative), and
 2. **The move to Rust and wgpu bought speed, not solves.** 35× faster per
    generation; the score stayed 44–47. The same problems are solved in 6 s that
    took 30–60 s. What bought solves came afterwards and on top of that speed:
-   the cascade took 47 to 66, and the cohorts took 66 to 75.
+   the two-pass race and then the cascade reached 66, and the cohorts took 66
+   to 75.
 3. **Only one change has earned its place on two seeds**: harvest-and-regrow (+1,
    +1). Cleanse, a 20,000 population and the redundancy objective did not. The
    cascade and the cohorts are one-seed results and are not in that count.
