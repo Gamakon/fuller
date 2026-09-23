@@ -3640,6 +3640,13 @@ impl Engine {
             let take = if self.config.fold_top_k == 0 { ranked.len() } else { self.config.fold_top_k as usize };
             winners.extend(ranked.into_iter().take(take));
         }
+        // THE LABELS AS THE DEVICE HAS THEM, as the pump reads them at the top of
+        // its own beat: a candidate inherits its parent's cohort, and the parent's
+        // label lives on the device between beats.
+        if !self.cohorts.is_empty() {
+            self.cohorts = self.dev.read_cohorts()?;
+        }
+        let mut wrote_cohorts = false;
         let mut changed: Vec<usize> = Vec::new();
         let mut records: Vec<FoldRecord> = Vec::new();
         // Rows this beat has already landed a candidate in, so two folds never
@@ -3652,6 +3659,10 @@ impl Engine {
             let mut genome = gen.pop.genome[r * row_w..(r + 1) * row_w].to_vec();
             let mut consts = gen.pop.rnc[r * g_n * nr..(r + 1) * g_n * nr].to_vec();
             let mut folded_here = false;
+            // This row's findings, held back until its candidate has a place to
+            // land: a fold nobody can see is not a discovery.
+            let (mut here_folded, mut here_saved) = (0u64, 0u64);
+            let mut here_records: Vec<FoldRecord> = Vec::new();
             for g in 0..g_n {
                 let rnc = consts[g * nr..(g + 1) * nr].to_vec();
                 let tokens = &mut genome[g * width..(g + 1) * width];
@@ -3795,11 +3806,15 @@ impl Engine {
                 consts[g * nr + slot as usize] = value;
                 match super::vary::relevel(tokens, l, vhead, &codes, &tree, &[(pos, super::vary::GRAFT)], &leaf) {
                     Ok(()) => {
-                        counts.folded += 1;
-                        counts.nodes_saved += size as u64 - 1;
+                        // PROVISIONAL until the row lands. A fold whose candidate
+                        // finds nowhere to go never enters the population, and
+                        // counting it here — or announcing it to the stream — would
+                        // report a discovery that does not exist anywhere.
+                        here_folded += 1;
+                        here_saved += size as u64 - 1;
                         folded_here = true;
                         let infix = crate::lint::node::Tree::parse(&math).map_or_else(|_| math.clone(), |t| t.to_infix());
-                        records.push(FoldRecord { generation, row: r, gene: g, value: mean, nodes: size, infix: truncated(&infix, FOLD_INFIX_MAX) });
+                        here_records.push(FoldRecord { generation, row: r, gene: g, value: mean, nodes: size, infix: truncated(&infix, FOLD_INFIX_MAX) });
                     }
                     Err(_) => {
                         // relevel leaves the gene exactly as it was, so the constant
@@ -3833,15 +3848,22 @@ impl Engine {
                 gen.pop.genome[to * row_w..(to + 1) * row_w].copy_from_slice(&genome);
                 gen.pop.rnc[to * g_n * nr..(to + 1) * g_n * nr].copy_from_slice(&consts);
                 gen.pop.wrapper_id[to] = gen.pop.wrapper_id[r];
-                // The fold is the same LINE as the row it came from, so the candidate
-                // carries its cohort: it is that line tidied, not a new one.
+                // THE SAME LINE, TIDIED, so the candidate carries its parent's
+                // cohort and fights in its parent's ALPS band rather than wearing
+                // the label of the row it displaced. Written to the device below,
+                // because the pump reads the labels back at the top of its own beat
+                // and a host-only write would be overwritten the same generation.
                 if !self.cohorts.is_empty() {
                     self.cohorts[to] = self.cohorts[r];
+                    wrote_cohorts = true;
                 }
                 landed.push(to);
                 changed.push(to);
-                for rec in records.iter_mut().rev().take_while(|rec| rec.row == r) {
+                counts.folded += here_folded;
+                counts.nodes_saved += here_saved;
+                for mut rec in here_records.drain(..) {
                     rec.row = to;
+                    records.push(rec);
                 }
             }
         }
@@ -3855,6 +3877,14 @@ impl Engine {
                 let record = lin.tracker.snap(r, generation);
                 lin.log.record("arrival", &record)?;
             }
+        }
+        // AND THE LABELS BACK TO THE DEVICE, or the kernel keeps the ones it had
+        // and every candidate fights in the band of the row it displaced. The
+        // population itself is written by the caller; this is the other half, and
+        // it is the half the pump was once missing too.
+        if wrote_cohorts {
+            self.dev.write_cohorts(&self.cohorts)?;
+            self.cohorts_stale = true;
         }
         counts.rows_changed = changed.len() as u64;
         counts.seconds = started.elapsed().as_secs_f64();
@@ -5963,6 +5993,11 @@ mod tests {
         // Nothing the gene could not take: a fold shrinks a tree, so the refusals
         // that bite a graft must not fire.
         assert_eq!(counts.relevel_refused, 0, "a shrinking collapse was refused: {counts:?}");
+        // AND NOTHING IS COUNTED THAT DID NOT LAND. A fold whose candidate found
+        // nowhere to go never enters the population, so reporting it would be
+        // announcing a discovery that exists in no row.
+        assert!(counts.folded <= counts.rows_changed * u64::from(l.n_genes), "more folds counted than landed rows can hold: {counts:?}");
+        assert_eq!(counts.rows_changed, changed, "the count and the return disagree");
     }
 
     /// A GENE WITH NOTHING FLAT IN IT IS LEFT ALONE. The operator may only fire on
