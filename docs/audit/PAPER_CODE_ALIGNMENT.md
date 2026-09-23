@@ -25,12 +25,21 @@ when the code moves; re-grep before trusting one.
 | commit | what it closed |
 |---|---|
 | `c9db74c` | findings 1, 2, 3, 4 — the four critical/high FALSE ones |
-| `09f25e6` | findings 5, 6, 7, 9; gaps G3, G5, G6 |
+| `09f25e6` | findings 5, 6, 7, 9, 14; gaps G3, G5, G6 |
 | `85625f3` | gap G2 |
+| `416691a` | a conflation introduced by `c9db74c` itself (see finding 4) |
 
 Still open: 8 (already disclosed in-paper, needs an experiment), 10-13
-(UNVERIFIABLE-HERE — need a cited log or a measurement run), 14 (folded into the
-§4.3 fix, see its note), G1 (code half fixed at `5919f31`), G4, G7, G8.
+(UNVERIFIABLE-HERE — need a cited log or a measurement run), G1 (code half fixed
+at `5919f31`), G4, G7, G8.
+
+**Re-check on merge.** Finding 2's fix carries an evidence caveat — "the run
+emitted no card recording the derived objective count, and the card format that
+does postdates it." A run card for the 75 run was being worked on elsewhere in
+the same session. **If one has landed, that caveat is stale and the sentence
+should be replaced by the card's `hff_objectives` figure**, which settles the
+count from an artefact instead of from a reconstruction. This is the first thing
+to check when these commits meet the rest of the branch.
 
 ## Verdicts
 
@@ -315,7 +324,7 @@ not two readings of one, so the fix states each with its own measurement and
 does not average or pick between them.
 
 **And the first draft of the fix conflated them anyway** — corrected at
-`f4a1a2e`. §3.5 and §10 both said the train side "excludes the case the p
+`416691a`. §3.5 and §10 both said the train side "excludes the case the p
 condition was introduced to catch". It does not: p was introduced for the
 seed-7013 event, for which no train 1−R² is on record, and the train condition
 excludes the cascade event. Both sentences now point at the **law** rather than
