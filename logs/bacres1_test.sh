@@ -12,6 +12,20 @@
 # synthetic third block, and where the checkpoint and the telemetry go.
 set -u
 
+# THE WHOLE SCRIPT IS ONE FUNCTION, CALLED AT THE END.
+#
+# zsh reads a script INCREMENTALLY, so editing this file while a run is in
+# flight makes the running shell re-read it at its old byte offset -- which
+# lands mid-word and then executes whatever follows. That happened: an edit
+# during the 20,000-row run printed "command not found: ry", fell into the new
+# lines, and RAN THE FIT A SECOND TIME. The second run resumed from the
+# checkpoint, was already finished, and its run_start TRUNCATED the telemetry
+# stream the first run had written -- 678 records gone.
+#
+# A function body must be parsed whole before it can be called, so an edit
+# mid-run can no longer splice itself into a running script.
+run_fit() {
+
 ROOT=/Users/andrewmorgan/Dev/gamakon/fuller
 DATA=${1:-/private/tmp/claude-501/-Users-andrewmorgan-Dev-gamakon-fuller/b3c1f1fe-1035-445f-ada0-9f05e732d5e6/scratchpad/bacres1.tsv}
 TAG=${2:-bacres1_test}
@@ -79,3 +93,6 @@ echo
 cd $ROOT
 ./target/release/examples/evolve_fit "$DATA"
 echo "RUN DONE"
+}
+
+run_fit "$@"
