@@ -400,7 +400,12 @@ pub struct Config {
     pub cleanse: f64,
     /// THE PUMP'S PROMOTION, as a fraction of the CHAMPION island — the island
     /// being refreshed — so the turnover rate is the same whatever the size.
-    /// 0.01 is what "promote 2" meant at the 200-row island it was written for.
+    /// 0.01 was what "promote 2" meant at the 200-row island it was written for;
+    /// 0.02 is what the champion island is run at now, because the promotion is
+    /// SPLIT between every living cohort. At 1% of a 2,000-row island that is 20
+    /// rows shared five ways — four apiece, so a cohort's challenge rests on its
+    /// four best rows and a young cohort barely gets a hearing. Doubling the
+    /// share doubles what each cohort sends without changing who is eligible.
     pub promote_fraction: f64,
     /// THE CHECKPOINT's directory: five rotating slots, so a fit killed at any
     /// moment resumes from the beat before. None = off.
@@ -602,7 +607,7 @@ impl Config {
             cross_every: 0,
             k_migrants: 3,
             cleanse: 0.0,
-            promote_fraction: 0.01,
+            promote_fraction: 0.02,
             checkpoint_dir: None,
             checkpoint_every_seconds: 0.0,
             cohort_merge: 0,
