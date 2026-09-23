@@ -2442,13 +2442,21 @@ impl Engine {
     /// was.
     fn promotion_slate(&self, intake: Island, gen: &Generation) -> Vec<u32> {
         let ranked = Self::by_fitness(intake, &gen.fitness);
-        if self.live_cohorts.is_empty() {
+        // `self.cohorts`, NOT `self.live_cohorts`. The latter is the REPORTING
+        // cache, refreshed on the progress beat and deliberately lazy, so at a
+        // pump beat it is stale or — for the first beats of a fit — empty, and an
+        // empty one falls through to the flat ranking this exists to replace.
+        // `self.cohorts` is read from the device at the top of every pump.
+        // Measured: with the cache, the champion island held 2,000 rows of
+        // cohort 0 and nothing else at generation 4,442, so no challenger ever
+        // arrived to fight in the open island.
+        if self.cohorts.is_empty() {
             return ranked;
         }
         // Each cohort's rows, already fittest first because `ranked` is.
         let mut by_cohort: std::collections::BTreeMap<u32, Vec<u32>> = std::collections::BTreeMap::new();
         for &row in &ranked {
-            if let Some(&label) = self.live_cohorts.get(row as usize) {
+            if let Some(&label) = self.cohorts.get(row as usize) {
                 by_cohort.entry(label).or_default().push(row);
             }
         }
@@ -4532,23 +4540,28 @@ mod tests {
             engine.live_cohorts[row as usize] = label;
         }
         let before = gen.clone();
-        let source = engine.promotion_slate(intake, &gen);
-        let best = *source.first().expect("somebody to promote");
         engine.pump(&mut gen, 4).expect("the pump");
 
         let row_of = |g: &Generation, r: u32| {
             let w = (engine.layout.n_genes * engine.layout.gene_width()) as usize;
             g.pop.genome[r as usize * w..(r as usize + 1) * w].to_vec()
         };
-        // THE COPY: the promoted line ARRIVES in the champion island.
-        let landed = (champion.lo..champion.hi).any(|r| row_of(&gen, r) == row_of(&before, best));
-        assert!(landed, "the promoted line did not arrive in the champion island");
-        // ... and it is still in the intake, because a promotion copies rather
-        // than moves. It is not necessarily in the ROW it came from: the pump
-        // promotes and then refills the intake from its keepers, which compacts
-        // them to the front. The line surviving is what matters, not its address.
-        let still_here = (intake.lo..intake.hi).any(|r| row_of(&gen, r) == row_of(&before, best));
-        assert!(still_here, "the promoted line left the intake: a promotion must copy, not move");
+        // THE COPY: whatever the pump promoted, it came FROM the intake and the
+        // line it copied is still there. Which row is not predictable — the pump
+        // re-reads the labels from the device and then refills the intake from
+        // its keepers, compacting them — so the test asks what must be true of
+        // any promotion rather than naming one in advance.
+        let arrived: Vec<Vec<u32>> = (champion.lo..champion.hi)
+            .filter(|&r| row_of(&gen, r) != row_of(&before, r))
+            .map(|r| row_of(&gen, r))
+            .collect();
+        assert!(!arrived.is_empty(), "the pump promoted nobody into the champion island");
+        for line in &arrived {
+            let from_intake = (intake.lo..intake.hi).any(|r| row_of(&before, r) == *line);
+            assert!(from_intake, "a champion row arrived from somewhere other than the intake");
+            let still_here = (intake.lo..intake.hi).any(|r| row_of(&gen, r) == *line);
+            assert!(still_here, "the promoted line left the intake: a promotion must copy, not move");
+        }
     }
 
     /// THE PUMP PROMOTES FROM EVERY LIVING COHORT, IN EQUAL SHARE.
@@ -4566,16 +4579,22 @@ mod tests {
         // Seven cohorts over the intake island, and a fitness that makes the
         // YOUNGEST the fittest — so a flat ranking would take its rows and
         // nothing else.
+        // BOTH fields: `cohorts` is what the pump reads and what the promotion
+        // must use, `live_cohorts` is the reporting cache. Setting only the cache
+        // is what hid this — the tests passed while the champion island filled
+        // with one cohort.
+        engine.cohorts = vec![0u32; engine.layout.pop as usize];
         engine.live_cohorts = vec![0u32; engine.layout.pop as usize];
         let labels = [0u32, 100, 200, 300, 400, 500, 600];
         for (i, row) in (intake.lo..intake.hi).enumerate() {
             let label = labels[i % labels.len()];
+            engine.cohorts[row as usize] = label;
             engine.live_cohorts[row as usize] = label;
             gen.fitness[row as usize] = 1.0 - f32::from(label as u16) / 1000.0;
         }
         let slate = engine.promotion_slate(intake, &gen);
         assert!(!slate.is_empty(), "nobody was promoted");
-        let cohort_of = |row: &u32| engine.live_cohorts[*row as usize];
+        let cohort_of = |row: &u32| engine.cohorts[*row as usize];
         // EVERY cohort is represented in the first round, not a chosen few and
         // not just the fittest: the first seven are one from each.
         let first: std::collections::BTreeSet<u32> = slate.iter().take(labels.len()).map(cohort_of).collect();
