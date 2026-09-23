@@ -33,11 +33,18 @@ run's was `cos(sqrt(acos(1/x_1)) + 59)`, a depth-3 tower.
 The budgets are not matched, so see the prior-results table before reading that
 as a win.
 
-**And a recovery is not a property of TSR until it holds on two seeds.**
-`I.15.10` recovered on seed 7014 and **did not** on 7015 (train 1-R² 5.4e-6,
-1,501 generations). So it is a seed-7014 result, not a TSR result — exactly
-what the record's two-seed rule exists to catch, and it is stated here rather
-than left for a reader to notice.
+**A recovery is not a property of TSR until it holds on two seeds, and the two
+behave differently:**
+
+| law | seed 7014 | seed 7015 | holds? |
+|---|---|---|---|
+| **I.26.2**, `arcsin(n sin θ₂)`, **depth 2** | recovered, gen 169 | **recovered, gen 2** | **YES** |
+| I.15.10, `m₀v/sqrt(1−v²/c²)`, depth 1 | recovered, gen 1,001 | not recovered | no |
+
+So `I.15.10` is a seed-7014 result and not a TSR result. **`I.26.2` is the one
+that survives the record's two-seed rule** — the same exact expression,
+`asin((x_0*sin(x_1)))`, on both seeds, and unsolved in all 7 prior untyped
+races. On 7015 it took 2 generations and 0.4 seconds.
 
 ## What was live when these ran
 
@@ -121,8 +128,13 @@ them is not measured here, and the instruction for this work was not to run it.
 Bold rows met the stop bar AND were confirmed by reading the form against the
 true law. **2 of 7.**
 
-**The T2 ceiling is reached in every single fit** — 7 of 7 populations carry
+**The T2 ceiling is reached in every single fit** — every population carries
 genes at depth 2. It is nowhere a formality, and nowhere unreached.
+
+And it is reached **from initialisation, not only after evolution**: the
+seed-7015 `I.26.2` fit ended at generation 2 with 732 of its 3,600 genes
+already at depth 2. The typed sampler fills the rung straight away rather than
+the search having to climb to it.
 
 Refusals sit between **1.77% and 5.30% of gene-slots per generation**, well
 under the spec's predicted 23% of sub-expressions — though those are different
