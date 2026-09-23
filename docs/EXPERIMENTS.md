@@ -320,21 +320,27 @@ Logs: `logs/beam_host_gene_alone.log` (the negative), and
 
 ## Summary
 
-1. **Best valid single-seed score: 47 of 133 = 35.3%** (Rust engine, harvest-and-
-   regrow, 6 s per problem, seed 7012; 45 on seed 7013). That is above every
-   published method except AIFeynman (54.1%) — with the caveat that theirs is a
-   10-seed figure and ours is one development seed.
+1. **Best single-seed score: 75 of 133 = 56.4%** (Rust engine, cohort-restricted
+   tournaments, 360 s per problem, seed 7014 — the virtual ALPS run below).
+   That is above every published method INCLUDING AIFeynman (54.1%, 72 of 133),
+   on 0.57% of the budget the benchmark allows — with the caveat that theirs is
+   a 10-seed figure and ours is one development seed, so by this document's own
+   rule it is not confirmed until it holds on a second.
 2. **The move to Rust and wgpu bought speed, not solves.** 35× faster per
    generation; the score stayed 44–47. The same problems are solved in 6 s that
-   took 30–60 s.
+   took 30–60 s. What bought solves came afterwards and on top of that speed:
+   the cascade took 47 to 66, and the cohorts took 66 to 75.
 3. **Only one change has earned its place on two seeds**: harvest-and-regrow (+1,
-   +1). Cleanse, a 20,000 population and the redundancy objective did not.
+   +1). Cleanse, a 20,000 population and the redundancy objective did not. The
+   cascade and the cohorts are one-seed results and are not in that count.
 4. **Half of all solves are in by generation 5.** The search finds a law at once or
-   mostly not at all; more generations and more individuals add little. The gap to
-   AIFeynman is about what the search can reach, not how long it runs.
+   mostly not at all; more generations and more individuals add little. That was
+   measured at 6 s a fit, and the 360 s run has it both ways: the cohorts found
+   laws a converged monoculture never reached, and TIME still bound every fit.
 5. **14 unsolved problems have test R² ≥ 0.9999** and are approximations, not
    reporting losses. Two more (II_6_15b, test_5) are correct laws the SRBench
-   scorer cannot recognise.
+   scorer cannot recognise. (Counted against the 6-second races' unsolved set;
+   not recounted against the 75-of-133 run.)
 6. **Reporting is sound**: the current engine's races show 0–1 REPORT FAULTs, each
    traced.
 
