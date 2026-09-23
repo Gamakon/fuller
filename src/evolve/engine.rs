@@ -4222,7 +4222,14 @@ impl Engine {
         if self.slots.is_some() {
             self.save_checkpoint(&gen, generation, already_spent + started.elapsed().as_secs_f64(), hof.as_ref(), unique, oversized, individuals)?;
         }
-        self.telemetry = None;
+        // THE WRITER OUTLIVES THE FIT, deliberately. `run_end` has been written
+        // and the run is over, but the ROUNDING GENERATOR has not run yet: it
+        // folds in the final form, which is the caller's step, and its findings
+        // reach the stream through [`Engine::report_folds`] after this returns.
+        // Dropping the writer here closed the file before those events could be
+        // appended, and the folds were lost. A second `fit()` on this engine
+        // re-creates the writer from `Config::telemetry_path` (truncating, as a
+        // run owns its file), so nothing accumulates across fits.
         Ok(FitResult {
             lineage: winner,
             population_ages,
