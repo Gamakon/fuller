@@ -212,35 +212,45 @@ impl GpuHff {
         }
         queue.submit(Some(enc.finish()));
 
-        // One staging buffer a result, read the way the scoring kernel reads its
-        // own: copy, map, wait, cast.
-        let read = |src: &wgpu::Buffer, len: usize| -> Result<Vec<u8>, String> {
-            let size = (len * 4).max(4) as u64;
-            let staging = device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("hff-readback"),
-                size,
-                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-                mapped_at_creation: false,
-            });
-            let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
-            enc.copy_buffer_to_buffer(src, 0, &staging, 0, size);
-            queue.submit(Some(enc.finish()));
-            let slice = staging.slice(..);
-            let (tx, rx) = std::sync::mpsc::channel();
-            slice.map_async(wgpu::MapMode::Read, move |r| {
-                let _ = tx.send(r);
-            });
-            device.poll(wgpu::Maintain::Wait);
-            rx.recv().map_err(|e| format!("map_async channel: {e}"))?.map_err(|e| format!("map_async: {e}"))?;
-            let out = slice.get_mapped_range().to_vec();
-            staging.unmap();
-            staging.destroy();
-            Ok(out)
-        };
-        let fitness = bytemuck::cast_slice::<u8, f32>(&read(&fit_buf, rows)?).to_vec();
-        let candidate = bytemuck::cast_slice::<u8, u32>(&read(&cand_buf, rows)?).to_vec();
-        let one_minus_r2 = bytemuck::cast_slice::<u8, f32>(&read(&omr2_buf, rows * 3)?).to_vec();
-        let selection = bytemuck::cast_slice::<u8, f32>(&read(&sel_buf, rows)?).to_vec();
+        // ONE STAGING BUFFER, ONE WAIT. This used to be four — a submit, a
+        // map_async, a `Maintain::Wait` and a destroy for each of the four
+        // outputs — and a round trip to the device costs the same whether it
+        // carries four values or four hundred thousand. Measured on
+        // strogatz_bacres1 at population 2,000, that fixed cost made the device
+        // walk 11.98 s against the host's 4.65 s: the kernel was winning the
+        // arithmetic and losing four times over on the journey. The four
+        // results are copied into one buffer at known offsets and read back
+        // together.
+        let (fit_at, sel_at, cand_at, omr2_at) = (0u64, (rows * 4) as u64, (rows * 8) as u64, (rows * 12) as u64);
+        let total = (rows * 24).max(4) as u64;
+        let staging = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("hff-readback"),
+            size: total,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+        let span = (rows * 4).max(4) as u64;
+        enc.copy_buffer_to_buffer(&fit_buf, 0, &staging, fit_at, span);
+        enc.copy_buffer_to_buffer(&sel_buf, 0, &staging, sel_at, span);
+        enc.copy_buffer_to_buffer(&cand_buf, 0, &staging, cand_at, span);
+        enc.copy_buffer_to_buffer(&omr2_buf, 0, &staging, omr2_at, (rows * 12).max(4) as u64);
+        queue.submit(Some(enc.finish()));
+        let slice = staging.slice(..);
+        let (tx, rx) = std::sync::mpsc::channel();
+        slice.map_async(wgpu::MapMode::Read, move |r| {
+            let _ = tx.send(r);
+        });
+        device.poll(wgpu::Maintain::Wait);
+        rx.recv().map_err(|e| format!("map_async channel: {e}"))?.map_err(|e| format!("map_async: {e}"))?;
+        let all = slice.get_mapped_range().to_vec();
+        staging.unmap();
+        staging.destroy();
+        let at = |from: u64, len: usize| &all[from as usize..from as usize + len * 4];
+        let fitness = bytemuck::cast_slice::<u8, f32>(at(fit_at, rows)).to_vec();
+        let selection = bytemuck::cast_slice::<u8, f32>(at(sel_at, rows)).to_vec();
+        let candidate = bytemuck::cast_slice::<u8, u32>(at(cand_at, rows)).to_vec();
+        let one_minus_r2 = bytemuck::cast_slice::<u8, f32>(at(omr2_at, rows * 3)).to_vec();
         for b in [uniform, scores_buf, columns_buf, logs_buf, max_buf, caps_buf, tower_buf, fit_buf, cand_buf, omr2_buf, sel_buf] {
             b.destroy();
         }

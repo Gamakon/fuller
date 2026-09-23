@@ -1,0 +1,13 @@
+=== pop 2000, HFF on device ===
+population 1 x (2000+200) = 2200 | 1500 generations in 46.2 s = 30.8 ms per generation | 3302200 individuals = 71506 per second | stopped by n_gen
+seconds: variation 0.26 | read-back 14.44 | decode 10.27 | evaluate 14.62 | link+scale+metrics 0.00 | HFF 4.39 | pump 5.59 | cross 0.00
+=== pop 2000, HFF on host ===
+population 1 x (2000+200) = 2200 | 1500 generations in 46.1 s = 30.8 ms per generation | 3302200 individuals = 71592 per second | stopped by n_gen
+seconds: variation 0.24 | read-back 14.62 | decode 9.70 | evaluate 14.90 | link+scale+metrics 0.00 | HFF 4.63 | pump 5.34 | cross 0.00
+=== pop 20000, HFF on device ===
+population 1 x (20000+200) = 20200 | 468 generations in 60.0 s = 128.3 ms per generation | 9473800 individuals = 157833 per second | stopped by time
+seconds: variation 0.38 | read-back 8.46 | decode 25.10 | evaluate 11.35 | link+scale+metrics 0.00 | HFF 3.87 | pump 13.78 | cross 0.00
+=== pop 20000, HFF on host ===
+population 1 x (20000+200) = 20200 | 395 generations in 60.1 s = 152.2 ms per generation | 7999200 individuals = 133053 per second | stopped by time
+seconds: variation 0.32 | read-back 8.42 | decode 23.37 | evaluate 9.86 | link+scale+metrics 0.00 | HFF 9.14 | pump 12.61 | cross 0.00
+AB2 DONE
