@@ -39,7 +39,9 @@ for SEED in 7014 7015 7016; do
   export EVOLVE_CARD_OUT=$OUT/card.json
   ln -sfn "$OUT/card.json" "$ROOT/logs/cards/$TAG.json"
   ln -sfn "$OUT/stream.jsonl" "$ROOT/logs/latest.jsonl"
-  echo "=== $TAG : init+mut typed, ceiling 2, seed=$SEED ${EVOLVE_SECONDS}s ==="
+  # The arm is the `tsr` KINGDOM, against `symbolic-regression`'s untyped float
+  # op set: two phylogenetic spaces over one engine, only the table differing.
+  echo "=== $TAG : kingdom=tsr (init+mut typed), ceiling 2, seed=$SEED ${EVOLVE_SECONDS}s ==="
   cd $ROOT
   $ROOT/logs/typed_ab/evolve_fit_b "$DATA" 2>&1 | tee $OUT/run.log
   echo "--- $TAG done ---"
