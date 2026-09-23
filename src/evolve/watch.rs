@@ -79,6 +79,12 @@ pub struct Discovery {
     pub became: String,
     /// The nodes a fold removed. None for a snap, which removes none.
     pub nodes: Option<u32>,
+    /// HOW MANY TIMES THIS SAME FINDING ARRIVED IN A ROW. A snap beat writes one
+    /// substitution per (row, gene), and selection has usually copied the
+    /// winning gene across many rows — so six identical lines is one finding
+    /// found in six places, and a panel three lines tall would show nothing but
+    /// that. Collapsed to `×6`, it is one line and the count is the news.
+    pub count: u32,
 }
 
 /// How stale a live stream may get before the screen says so. Four times the
@@ -344,9 +350,20 @@ impl WatchState {
                 // events pane it would flood. Everything else is an event.
                 match e.kind {
                     EventKind::Snap | EventKind::Fold => {
-                        self.discoveries.push(discovery_of(&e));
-                        let overflow = self.discoveries.len().saturating_sub(DISCOVERIES);
-                        self.discoveries.drain(..overflow);
+                        let d = discovery_of(&e);
+                        // THE SAME FINDING IN A ROW IS ONE LINE with a count.
+                        // Selection copies a winning gene across many rows, so
+                        // one substitution is written once per row it landed in;
+                        // six identical lines on a three-line panel would show
+                        // one finding and hide every other.
+                        match self.discoveries.last_mut() {
+                            Some(last) if last.same_finding(&d) => last.count += 1,
+                            _ => {
+                                self.discoveries.push(d);
+                                let overflow = self.discoveries.len().saturating_sub(DISCOVERIES);
+                                self.discoveries.drain(..overflow);
+                            }
+                        }
                     }
                     _ => {
                         self.events.push((e.header.generation, e.message));
@@ -659,6 +676,25 @@ impl WatchState {
     }
 }
 
+impl Discovery {
+    /// THE SAME FINDING, differing only in which row it landed in: one beat's
+    /// substitution copied across the rows selection had copied the gene into.
+    /// The generation is part of it — the same literal snapped again fifty
+    /// generations later is news, not a repeat.
+    pub fn same_finding(&self, other: &Discovery) -> bool {
+        self.kind == other.kind && self.generation == other.generation && self.what == other.what && self.became == other.became
+    }
+
+    /// The `×6` a collapsed run of findings carries, empty when it is one.
+    pub fn times(&self) -> String {
+        if self.count > 1 {
+            format!(" ×{}", self.count)
+        } else {
+            String::new()
+        }
+    }
+}
+
 /// One discovery event as the panel's row. A producer that sent a kind but not
 /// its detail is shown as what it said — the `message` — rather than as a row of
 /// dashes, because the message is always written and is always a sentence.
@@ -674,7 +710,7 @@ fn discovery_of(e: &super::telemetry::Event) -> Discovery {
         Find::Snap => e.detail.clone().unwrap_or_else(|| or_dash(e.value, 6)),
         Find::Fold => or_dash(e.value, 6),
     };
-    Discovery { kind, generation: e.header.generation, before: e.before, what, became, nodes: e.nodes }
+    Discovery { kind, generation: e.header.generation, before: e.before, what, became, nodes: e.nodes, count: 1 }
 }
 
 /// How many significant digits a literal keeps IN THE GENE LINE. Enough to
@@ -1255,6 +1291,51 @@ mod tests {
         state.apply_record(event(EventKind::Note, 301, "something else", D::default()));
         assert_eq!(state.events.len(), events_before + 1);
         assert_eq!(state.discoveries.len(), 2);
+    }
+
+    /// THE SAME FINDING IN A ROW IS ONE LINE WITH A COUNT. Selection copies a
+    /// winning gene across many rows, so one substitution is written once per
+    /// row it landed in — six identical lines on a three-line panel would show
+    /// one finding and hide every other.
+    #[test]
+    fn a_finding_repeated_across_rows_is_one_line_and_a_count() {
+        use super::super::telemetry::Discovery as D;
+        let mut state = WatchState::new(false);
+        let snap = |row: u32| {
+            event(
+                EventKind::Snap,
+                940,
+                "snap",
+                D { before: Some(0.826828679), after: Some(0.826_9), detail: Some("((3.0*sqrt3)/(2.0*pi))".into()), nodes: None, row: Some(row) },
+            )
+        };
+        for row in 0..6 {
+            state.apply_record(snap(row));
+        }
+        assert_eq!(state.discoveries.len(), 1, "six copies of one finding took six lines");
+        assert_eq!(state.discoveries[0].count, 6);
+        assert_eq!(state.discoveries[0].times(), " ×6");
+
+        // THE SAME LITERAL AT A LATER GENERATION IS NEWS, not a repeat: it was
+        // found again, and collapsing it would hide that.
+        state.apply_record(event(
+            EventKind::Snap,
+            990,
+            "snap",
+            D { before: Some(0.826828679), after: Some(0.826_9), detail: Some("((3.0*sqrt3)/(2.0*pi))".into()), nodes: None, row: Some(0) },
+        ));
+        assert_eq!(state.discoveries.len(), 2);
+        assert_eq!(state.discoveries[1].count, 1);
+        assert_eq!(state.discoveries[1].times(), "", "a single finding carries no count");
+
+        // And a DIFFERENT finding at the same generation is its own line.
+        state.apply_record(event(
+            EventKind::Snap,
+            990,
+            "snap",
+            D { before: Some(2.449489743), after: Some(2.449_5), detail: Some("(sqrt2*sqrt3)".into()), nodes: None, row: Some(1) },
+        ));
+        assert_eq!(state.discoveries.len(), 3);
     }
 
     /// The panel is BOUNDED. A fit that snaps thousands of times must not grow

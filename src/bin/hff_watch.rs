@@ -904,7 +904,7 @@ fn discoveries(f: &mut Frame, theme: Theme, state: &WatchState, area: Rect) {
                 Find::Fold => ("fold", theme.warn()),
             };
             let size = d.nodes.map_or_else(String::new, |n| format!("{n} nodes "));
-            let body = format!("{size}{} → {}", d.what, d.became);
+            let body = format!("{size}{} → {}{}", d.what, d.became, d.times());
             Line::from(vec![
                 Span::styled(format!("gen {:<6} ", d.generation), Style::default().fg(theme.dim())),
                 Span::styled(format!("{tag} "), Style::default().fg(colour).add_modifier(Modifier::BOLD)),
@@ -1210,7 +1210,7 @@ fn dump(state: &WatchState) -> String {
             fuller::evolve::watch::Find::Fold => "fold",
         };
         let size = d.nodes.map_or_else(String::new, |n| format!("{n} nodes "));
-        out.push_str(&format!("  gen {:>6}  {tag}  {size}{} -> {}\n", d.generation, d.what, d.became));
+        out.push_str(&format!("  gen {:>6}  {tag}  {size}{} -> {}{}\n", d.generation, d.what, d.became, d.times()));
     }
     out.push_str(&format!(
         "\n  model  {}\n",
@@ -1222,54 +1222,31 @@ fn dump(state: &WatchState) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fuller::evolve::telemetry::{parse_stream, Discovery as D, EventKind, Record};
+    use fuller::evolve::telemetry::{parse_stream, Record};
     use fuller::evolve::watch::Find;
     use ratatui::backend::TestBackend;
     use ratatui::Terminal;
 
     const FIXTURE: &str = include_str!("../../tests/fixtures/telemetry_v1.jsonl");
 
-    /// The fixture, plus a snap and a fold — the fixture predates both, and a
-    /// panel drawn from a stream that has none of what it shows proves nothing.
+    /// A REAL RECORDING that has discoveries in it: a 30-second bacres1 fit
+    /// (seed 7014) that snapped 166 literals into genes and folded one
+    /// near-constant subtree, trimmed. `FIXTURE` predates both kinds, so a panel
+    /// drawn from it would be a panel drawn from a stream with none of what it
+    /// shows — which proves nothing.
+    const DISCOVERIES: &str = include_str!("../../tests/fixtures/telemetry_v1_discoveries.jsonl");
+
     fn state_with_discoveries() -> WatchState {
-        use fuller::evolve::telemetry::{Event, Header, SCHEMA_VERSION};
-        let (records, bad) = parse_stream(FIXTURE);
+        let (records, bad) = parse_stream(DISCOVERIES);
+        assert_eq!(bad, 0, "the recording is clean");
         let mut state = WatchState::new(false);
         state.bad_lines = bad;
         for r in records {
             state.apply_record(r);
         }
-        let mut event = |kind, generation, message: &str, d: D| {
-            state.apply_record(Record::Event(Event {
-                header: Header {
-                    schema_version: SCHEMA_VERSION,
-                    run_id: "r".into(),
-                    seq: u64::from(generation),
-                    timestamp_utc: "2026-09-23T00:00:00Z".into(),
-                    elapsed_ms: 0,
-                    generation,
-                },
-                kind,
-                message: message.into(),
-                cohort: None,
-                value: d.after,
-                before: d.before,
-                detail: d.detail,
-                nodes: d.nodes,
-                row: d.row,
-            }));
-        };
-        event(
-            EventKind::Snap,
-            240,
-            "snap",
-            D { before: Some(22.0 / 7.0), after: Some(std::f64::consts::PI), detail: Some("pi".into()), nodes: None, row: Some(7) },
-        );
-        event(
-            EventKind::Fold,
-            300,
-            "fold",
-            D { before: None, after: Some(1.0), detail: Some("tanh(exp(cos(log(x_0))))".into()), nodes: Some(14), row: None },
+        assert!(
+            state.discoveries.iter().any(|d| d.kind == Find::Snap) && state.discoveries.iter().any(|d| d.kind == Find::Fold),
+            "the recording must carry both kinds"
         );
         state
     }
@@ -1302,7 +1279,10 @@ mod tests {
                 assert!(screen.contains("DISCOVERIES"), "{w}x{h} light={}: no discoveries panel\n{screen}", theme.light);
                 assert!(screen.contains("snap"), "{w}x{h}: the snap is not on screen\n{screen}");
                 assert!(screen.contains("fold"), "{w}x{h}: the fold is not on screen\n{screen}");
-                assert!(screen.contains("14 nodes"), "{w}x{h}: the fold's size is not shown\n{screen}");
+                assert!(screen.contains("2 nodes"), "{w}x{h}: the fold's size is not shown\n{screen}");
+                // The recording's snapped forms are on the screen as FORMS, not
+                // as the numbers they compute: `sqrt3` and `phi`, not 3.2114.
+                assert!(screen.contains("sqrt3") || screen.contains("g_earth"), "{w}x{h}: no snapped form\n{screen}");
                 assert!(screen.contains("model"), "{w}x{h}: no gene line\n{screen}");
                 assert!(screen.contains("f("), "{w}x{h}: the gene line is not a function\n{screen}");
                 // Every line fits the terminal: a panel that overruns its width
@@ -1389,13 +1369,17 @@ mod tests {
         let state = state_with_discoveries();
         let text = dump(&state);
         assert!(text.contains("DISCOVERIES"), "{text}");
-        assert!(text.contains("14 nodes tanh(exp(cos(log(x_0))))"), "{text}");
-        assert!(text.contains("3.142857143 -> pi") || text.contains("-> pi"), "{text}");
+        assert!(text.contains("2 nodes exp((-5.0))"), "{text}");
+        assert!(text.contains("-> ((3.0*sqrt3)/(1.0*phi))"), "{text}");
         assert!(text.contains("model  f("), "{text}");
         // Newest first, as the panel shows them: the fold came last.
         let (fold, snap) = (text.find("fold").expect("a fold"), text.rfind("snap").expect("a snap"));
         assert!(fold < snap, "the dump is oldest-first: {text}");
         // Both kinds are named, so the two findings are never read as one list.
         assert_eq!(state.discoveries.iter().filter(|d| d.kind == Find::Fold).count(), 1);
+        // AND THE REPEAT IS COLLAPSED. The recording holds four consecutive
+        // copies of one substitution — selection had copied the gene across
+        // four rows — and they are one line with a count, not four lines.
+        assert!(text.contains(" ×4"), "a repeated finding was not collapsed:\n{text}");
     }
 }

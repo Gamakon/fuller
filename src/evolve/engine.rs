@@ -3607,6 +3607,18 @@ impl Engine {
     /// the brief's "the fit continues normally when the TUI ... is killed",
     /// applied to the writer's own end of the pipe.
     fn report_telemetry(&mut self, generation: u32, gen: &Generation, best: &Scored, hof: Option<&HallOfFame>, live: Option<&[u32]>, force: bool) {
+        // SNAP'S SUBSTITUTIONS GO OUT FIRST, and they BYPASS THE THROTTLE.
+        //
+        // Two reasons, and they are the same reason. An event must not wait for
+        // a snapshot: it is rare, it is interesting, and a beat that is merely
+        // throttled would batch a whole window of them. And a snap is stamped
+        // with THE GENERATION IT HAPPENED AT, which is earlier than the one this
+        // report is for — snap fires every 20 generations and a snapshot lands
+        // every 30-odd, so writing them inside the throttled block put `snap gen
+        // 940` after `cohort_born gen 960` and the stream's generations went
+        // backwards. Written here, before anything of this beat, a snap's
+        // generation is at or after the last record and at or before the next.
+        self.report_snaps();
         let Some(state) = self.telemetry.as_ref() else { return };
         if !state.writer.snapshot_due(force) {
             return;
@@ -3628,20 +3640,6 @@ impl Engine {
             None => Vec::new(),
         };
         let improved = self.telemetry.as_ref().is_some_and(|s| best.fitness < s.best_seen);
-        // THE SUBSTITUTIONS SNAP HAS MADE since the last beat. They are read from
-        // the ring snap already fills, so nothing is scanned or formatted twice,
-        // and the ones the ring dropped between beats are counted rather than
-        // pretended away.
-        let snaps: (Vec<super::write_back::SnapRecord>, u64, u64) = match (self.snap.as_ref(), self.telemetry.as_ref()) {
-            (Some(snap), Some(t)) => {
-                let total = snap.counts.substitutions;
-                let fresh = total.saturating_sub(t.snaps_written);
-                let held = snap.counts.recent.len() as u64;
-                let take = fresh.min(held) as usize;
-                (snap.counts.recent.iter().rev().take(take).rev().cloned().collect(), total, fresh.saturating_sub(held))
-            }
-            _ => (Vec::new(), 0, 0),
-        };
         let model = hof.filter(|h| self.telemetry.as_ref().is_some_and(|s| s.model_written != Some(h.best.fitness)));
         // The model's two forms are a parse and two prints of an expression that
         // is already in hand — no egglog, no data, no rescoring. The SIMPLIFIED
@@ -3677,32 +3675,6 @@ impl Engine {
                     Some(best.fitness),
                 )?;
             }
-            // The discoveries go out BEFORE the snapshot, as the births and
-            // deaths above do: an operator reads what changed over the frame it
-            // changed in.
-            if snaps.2 > 0 {
-                state.writer.event(
-                    generation,
-                    telemetry::EventKind::Note,
-                    format!("{} more snap substitutions than the log holds: their detail was dropped", snaps.2),
-                    None,
-                    None,
-                )?;
-            }
-            for s in &snaps.0 {
-                state.writer.discovery(
-                    s.generation,
-                    telemetry::EventKind::Snap,
-                    format!("snap: {:.9} -> {} (row {}, gene {})", s.before, s.after, s.row, s.gene),
-                    telemetry::Discovery {
-                        before: telemetry::finite(s.before),
-                        after: telemetry::finite(s.after_value),
-                        detail: Some(s.after.clone()),
-                        nodes: None,
-                        row: u32::try_from(s.row).ok(),
-                    },
-                )?;
-            }
             if let Some(m) = model {
                 let fitness = m.hff;
                 state.writer.model(generation, m)?;
@@ -3719,7 +3691,67 @@ impl Engine {
             state.best_seen = state.best_seen.min(best.fitness);
             state.cohorts_seen = now;
             state.pumps_since = 0;
-            state.snaps_written = snaps.1;
+        }
+    }
+
+    /// THE SUBSTITUTIONS SNAP HAS MADE since the last time this ran, onto the
+    /// stream — outside the snapshot throttle, because an event must not wait
+    /// for a frame.
+    ///
+    /// They are read from the ring snap already fills, so nothing is scanned or
+    /// formatted twice. When more were made than the ring holds, the ones it
+    /// dropped are COUNTED and said: a discovery nobody can see is a gap, and a
+    /// gap that is not reported is a lie about what the fit found.
+    fn report_snaps(&mut self) {
+        let (fresh, total) = match (self.snap.as_ref(), self.telemetry.as_ref()) {
+            (Some(snap), Some(t)) => (snap.counts.substitutions.saturating_sub(t.snaps_written), snap.counts.substitutions),
+            _ => return,
+        };
+        if fresh == 0 {
+            return;
+        }
+        let held = self.snap.as_ref().map_or(0, |s| s.counts.recent.len() as u64);
+        let records: Vec<super::write_back::SnapRecord> = self
+            .snap
+            .as_ref()
+            .map(|s| s.counts.recent.iter().rev().take(fresh.min(held) as usize).rev().cloned().collect())
+            .unwrap_or_default();
+        let dropped = fresh.saturating_sub(held);
+        let Some(state) = self.telemetry.as_mut() else { return };
+        let mut write = || -> Result<(), String> {
+            if dropped > 0 {
+                let last = records.first().map_or(0, |r| r.generation);
+                state.writer.event(
+                    last,
+                    telemetry::EventKind::Note,
+                    format!("{dropped} more snap substitutions than the log holds: their detail was dropped"),
+                    None,
+                    None,
+                )?;
+            }
+            for s in &records {
+                state.writer.discovery(
+                    s.generation,
+                    telemetry::EventKind::Snap,
+                    format!("snap: {:.9} -> {} (row {}, gene {})", s.before, s.after, s.row, s.gene),
+                    telemetry::Discovery {
+                        before: telemetry::finite(s.before),
+                        after: telemetry::finite(s.after_value),
+                        detail: Some(s.after.clone()),
+                        nodes: None,
+                        row: u32::try_from(s.row).ok(),
+                    },
+                )?;
+            }
+            Ok(())
+        };
+        if let Err(e) = write() {
+            eprintln!("TELEMETRY\tthe stream stopped: {e}");
+            self.telemetry = None;
+            return;
+        }
+        if let Some(state) = self.telemetry.as_mut() {
+            state.snaps_written = total;
         }
     }
 

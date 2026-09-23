@@ -922,6 +922,77 @@ mod tests {
         assert_eq!(back.nan_rows, 3);
     }
 
+    /// A REAL RECORDING OF A FIT THAT DISCOVERED THINGS: trimmed from a
+    /// 30-second bacres1 run (seed 7014) that made 166 snap substitutions and
+    /// one near-constant fold. [`FIXTURE`] predates both kinds, so it cannot
+    /// check that they are ordered, parse or carry their numbers — this one can,
+    /// and it is a recording rather than a hand-built stream, so a change to the
+    /// record shape has to be made against what the engine actually writes.
+    const DISCOVERIES: &str = include_str!("../../tests/fixtures/telemetry_v1_discoveries.jsonl");
+
+    /// THE STREAM'S GENERATIONS ONLY GO FORWARDS, over a recording that has
+    /// discoveries in it.
+    ///
+    /// A snap is stamped with THE GENERATION IT HAPPENED AT, which is earlier
+    /// than the beat that reports it — snap fires every 20 generations and a
+    /// snapshot lands every 30-odd. Writing them inside the snapshot's throttled
+    /// block put `snap gen 940` after `cohort_born gen 960` and every one of a
+    /// run's 166 snap events went backwards. They are written before the beat's
+    /// own records now, which is also where an event belongs: it must not wait
+    /// for a frame.
+    #[test]
+    fn a_recording_with_discoveries_in_it_still_only_goes_forwards() {
+        let (records, bad) = parse_stream(DISCOVERIES);
+        assert_eq!(bad, 0, "the recording is clean");
+        let (mut seq, mut generation) = (None, 0);
+        for r in &records {
+            let h = r.header();
+            if let Some(previous) = seq {
+                assert!(h.seq > previous, "seq went backwards at {}", h.seq);
+            }
+            seq = Some(h.seq);
+            assert!(h.generation >= generation, "generation went backwards at seq {}: {} < {generation}", h.seq, h.generation);
+            generation = h.generation;
+            assert_eq!(h.schema_version, SCHEMA_VERSION);
+        }
+        // It really holds both kinds, and their detail survived the round trip.
+        let kinds: Vec<EventKind> = records.iter().filter_map(|r| match r {
+            Record::Event(e) => Some(e.kind),
+            _ => None,
+        }).collect();
+        assert!(kinds.contains(&EventKind::Snap), "no snap in the recording");
+        assert!(kinds.contains(&EventKind::Fold), "no fold in the recording");
+        let snap = records.iter().find_map(|r| match r {
+            Record::Event(e) if e.kind == EventKind::Snap => Some(e.clone()),
+            _ => None,
+        }).expect("a snap");
+        assert!(snap.before.is_some_and(f64::is_finite), "a snap with no literal: {snap:?}");
+        assert!(snap.detail.as_ref().is_some_and(|d| !d.is_empty()), "a snap with no form: {snap:?}");
+        assert!(snap.row.is_some(), "a snap with no row: {snap:?}");
+        let fold = records.iter().find_map(|r| match r {
+            Record::Event(e) if e.kind == EventKind::Fold => Some(e.clone()),
+            _ => None,
+        }).expect("a fold");
+        assert!(fold.nodes.is_some_and(|n| n > 0), "a fold that removed nothing: {fold:?}");
+        // THE FOLD COMES AFTER `run_end`, by design: it runs in the final form,
+        // which is the caller's step once the fit has returned.
+        let ended = records.iter().position(|r| matches!(r, Record::RunEnd(_))).expect("a run_end");
+        let at = records.iter().position(|r| matches!(r, Record::Event(e) if e.kind == EventKind::Fold)).expect("a fold");
+        assert!(at > ended, "the fold was written before run_end");
+
+        // And every snapshot of it is coherent, by the same invariants.
+        let start = records.iter().find_map(|r| match r {
+            Record::RunStart(s) => Some(s.clone()),
+            _ => None,
+        }).expect("a run_start");
+        for r in &records {
+            if let Record::Snapshot(s) = r {
+                let problems = check_snapshot(s, start.population, start.cohort_merge > 0);
+                assert!(problems.is_empty(), "generation {}: {problems:?}", s.header.generation);
+            }
+        }
+    }
+
     /// A DISCOVERY CARRIES ITS BEFORE AND AFTER AS VALUES, not only as prose —
     /// "numbers are numbers", so a viewer never parses `message` back into
     /// arithmetic. And every one of the fields it added is optional, so the
