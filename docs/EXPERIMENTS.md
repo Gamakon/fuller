@@ -482,3 +482,48 @@ pairs, then random once the combinations explode (k=3 is 19,600 on a 50-subtree
 model, past a 6,000 budget) — but on I_10_7 and I_48_2 it could not produce a
 baseline at all, because the full reported model is not finite on the train
 rows. That is what exposed the class above.
+
+## 75 of 133 — the virtual ALPS run (2026-09-23, seed 7014)
+
+The first run with the cohort-restricted tournaments. One development seed, 360 s
+a fit, 6 h 04 m for all 133.
+
+| challenge | target | the cascade (66) | this run (75) |
+|---|---|---|---|
+| Feynman I | 51 | 30 | **33** |
+| Feynman II | 33 | 24 | **25** |
+| Feynman III | 15 | 9 | **10** |
+| Feynman bonus | 20 | 0 | 0 |
+| Strogatz | 14 | 3 | **7** |
+| **total** | **133** | **66** | **75 (56.4%)** |
+
+**Past AIFeynman**, which recovers 54.1% (72 of 133) — on ten seeds at up to 8 h
+a fit. This is one seed at 6 minutes: 6.07 h against the 1,064 h the benchmark
+allows for 133 problems, or **0.57% of the budget**. Next best on the
+ground-truth track is GP-GOMEA at 27.1%.
+
+The settings: population 800 intake + 400 champion, pump every 100 generations,
+`cohort_merge = 10000`, gene subsets on, generation cap 50,000 so TIME binds
+everywhere (Strogatz runs at 33 gen/s against Feynman's 12, and a Feynman-sized
+generation cap was cutting it off with a third of its budget unspent).
+
+**Strogatz more than doubled, 3 to 7**, and that is the clearest attribution:
+the cohorts were built for it. `barmag2` was the overnight proof — stuck at
+1-R2 6.9e-3 in a converged monoculture, and with cohorts on it early-stops at
+generation 614 with 1-R2 6.66e-14.
+
+**Sequencing.** The run was ordered easy-first by OUR OWN signal — how fast the
+stop bar fired in the cascade, never the benchmark's verdict. 42 of the first 42
+solved in under a minute, and every law the cascade had ever solved was banked
+before the hard half began. It also exposed a harness bug: `--problems` was
+being applied to an already-shuffled list, so the order asked for was discarded.
+
+**The p-value is inert at this operating point.** Every log10 p in the run sits
+between -30 and -38 against a -19 bar, and the solved and unsolved distributions
+overlap completely (medians -36.3 and -35.1). `1 - R2` is doing all the work of
+the stop bar; the p-value never binds and cannot separate a law from a near miss
+here.
+
+**The double submission earns 4.** 75 scored on the sympy-tidied string against
+71 on fuller's own — so the tidy is worth four laws, the first time that pair has
+been anything but a diagnostic.
