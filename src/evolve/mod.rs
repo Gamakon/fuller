@@ -278,6 +278,10 @@ impl Population {
 pub(crate) mod tests {
     use super::*;
 
+    /// The checksum of `init(Layout::for_arity(64, 3, 16, 2, 10), codes(), params(7))`
+    /// taken at f8ba1c4, the commit before typed transcendental depth.
+    const GOLDEN_UNTYPED_POPULATION: u64 = 16_188_080_267_887_817_392;
+
     /// ids 0..4 functions (arity 2,2,2,1), 4..8 terminals; 7 is withheld.
     pub(crate) fn codes() -> SymbolCodes {
         SymbolCodes {
@@ -302,6 +306,32 @@ pub(crate) mod tests {
         assert!(pop.genome.chunks(width).all(|g| g[..symbols].iter().all(|&id| id != 7)));
         assert!(pop.rnc.iter().all(|v| (-100.0..=100.0).contains(v) && v.fract() == 0.0));
         assert!(pop.wrapper_id.iter().all(|&w| w < 3));
+    }
+
+    /// THE GOLDEN POPULATION, pinned BEFORE typed depth existed (commit f8ba1c4).
+    ///
+    /// `Config::typed_depth: None` must be the engine exactly as it was, and the
+    /// only way to assert that is a number taken from the untyped engine and
+    /// frozen. Pinned AFTER the change it would be tautological — it would record
+    /// whatever the typed code happens to do with the knob off.
+    ///
+    /// If this fails, an untyped draw moved. That is a REGRESSION, not a test to
+    /// update.
+    #[test]
+    fn the_untyped_population_is_bit_identical_to_the_pinned_golden() {
+        let layout = Layout::for_arity(64, 3, 16, 2, 10);
+        let pop = init(layout, &codes(), &params(7)).unwrap();
+        let mut h: u64 = 0;
+        for &t in &pop.genome {
+            h = mix64(h ^ u64::from(t));
+        }
+        for &v in &pop.rnc {
+            h = mix64(h ^ u64::from(v.to_bits()));
+        }
+        for &w in &pop.wrapper_id {
+            h = mix64(h ^ u64::from(w));
+        }
+        assert_eq!(h, GOLDEN_UNTYPED_POPULATION, "an untyped draw moved");
     }
 
     #[test]
