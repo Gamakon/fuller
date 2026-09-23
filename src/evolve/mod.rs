@@ -11,6 +11,7 @@
 pub mod device;
 #[cfg(feature = "gpu")]
 pub mod engine;
+pub mod checkpoint;
 pub mod genealogy;
 #[cfg(feature = "gpu")]
 pub mod hff_gpu;
@@ -41,7 +42,7 @@ pub const HFF_WGSL: &str = include_str!("hff.wgsl");
 
 /// The shape of a population. A gene is `head + tail + Dc`, geppy's own layout,
 /// and the Dc domain is as long as the tail.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Layout {
     pub pop: u32,
     pub n_genes: u32,
