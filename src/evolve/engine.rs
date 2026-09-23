@@ -1854,6 +1854,15 @@ pub struct Engine {
     /// VIRTUAL ALPS: the cohort label of every row, mirrored here because the
     /// pump writes its refills on the host. Empty when `cohort_merge` is 0.
     cohorts: Vec<u32>,
+    /// THE LABELS AS THE DEVICE HAS THEM, cached. A cohort label only changes
+    /// when the PUMP moves rows, so reading 800 KB back from the device every
+    /// snapshot re-learns what the last read already said. `cohorts_stale` is
+    /// set by the pump and cleared by the read, which decouples how often the
+    /// screen refreshes from what a refresh costs the GPU: a fit can report
+    /// every generation on `gen.fitness`, which is already on the host, and pay
+    /// for the labels only when they have actually moved.
+    live_cohorts: Vec<u32>,
+    cohorts_stale: bool,
     /// A checkpoint to CONTINUE, taken by `fit` on its first beat. None starts a
     /// fresh search.
     resume: Option<checkpoint::Checkpoint>,
@@ -2020,7 +2029,7 @@ impl Engine {
         if config.telemetry_path.is_some() && config.progress_every == 0 {
             return Err("telemetry_path: the stream rides on the progress report, so progress_every must be > 0".into());
         }
-        Ok(Engine { scored: vec![None; pop as usize], cohorts, resume, slots, config, table, layout, islands, dev, evaluator, scorer, data, caps, col_max: None, snap, lineage: None, telemetry: None })
+        Ok(Engine { scored: vec![None; pop as usize], live_cohorts: Vec::new(), cohorts_stale: true, cohorts, resume, slots, config, table, layout, islands, dev, evaluator, scorer, data, caps, col_max: None, snap, lineage: None, telemetry: None })
     }
 
     /// Score every unevaluated row of `gen`; returns (unique genes, oversized).
@@ -2288,6 +2297,9 @@ impl Engine {
         // only the newly drawn rows are stamped with this beat.
         if !self.cohorts.is_empty() {
             self.cohorts = self.dev.read_cohorts()?;
+            // The pump is about to move rows between islands, so whatever the
+            // reporting cache holds is about to be wrong.
+            self.cohorts_stale = true;
         }
         for (intake, champion) in self.pairs() {
             self.pump_pair(gen, intake, champion, &fresh, generation)?;
@@ -3107,11 +3119,18 @@ impl Engine {
         Ok(())
     }
 
-    fn report_cohorts(&self, gen: &Generation) -> Result<Option<Vec<u32>>, String> {
+    fn report_cohorts(&mut self, gen: &Generation) -> Result<Option<Vec<u32>>, String> {
         if self.cohorts.is_empty() {
             return Ok(None);
         }
-        let live = self.dev.read_cohorts().unwrap_or_else(|_| self.cohorts.clone());
+        // The device is read only when the pump has moved a label since the last
+        // read. Between beats the labels are what they were, and a read-back
+        // forces a sync the search is otherwise not paying for.
+        if self.cohorts_stale || self.live_cohorts.len() != self.cohorts.len() {
+            self.live_cohorts = self.dev.read_cohorts().unwrap_or_else(|_| self.cohorts.clone());
+            self.cohorts_stale = false;
+        }
+        let live = self.live_cohorts.clone();
         let mut by: std::collections::BTreeMap<u32, (usize, f64)> = std::collections::BTreeMap::new();
         for (row, &c) in live.iter().enumerate() {
             let f = gen.fitness.get(row).copied().unwrap_or(f32::NAN);
@@ -4269,6 +4288,38 @@ mod tests {
         let model = r#"(Add (Mul (Var "x_0") (Var "x_1")) (Var "x_2"))"#;
         let tree = Tree::parse(model).expect("parse");
         assert_eq!(drop_dead_subtrees(&tree, &rows(), FINAL_FORM_AGREE), tree);
+    }
+
+    /// THE LABELS ARE READ BACK ONLY WHEN THE PUMP HAS MOVED THEM.
+    ///
+    /// A snapshot needs two things: `gen.fitness`, which the fit already keeps on
+    /// the host, and the cohort labels, which live on the device. The labels only
+    /// change when the pump moves rows, so reading 800 KB back every snapshot
+    /// re-learns what the last read already said — and a read-back forces a sync
+    /// the search is otherwise not paying for. That is what decouples how often
+    /// the screen refreshes from what a refresh costs.
+    #[test]
+    fn the_cohort_labels_are_re_read_only_when_the_pump_has_moved_them() {
+        let config = Config {
+            max_generations: 24,
+            max_seconds: 3600.0,
+            stop_one_minus_r2: -1.0,
+            cohort_merge: 400,
+            pump_every: 8,
+            progress_every: 1,
+            ..toy_config(60, 20)
+        };
+        let mut engine = Engine::new(config, toy_data()).expect("engine");
+        // Fresh: nothing has been read, so the first report must read.
+        assert!(engine.cohorts_stale, "a new engine must read the labels once");
+        let gen = drawn_generation(&engine, 5);
+        engine.report_cohorts(&gen).expect("report");
+        assert!(!engine.cohorts_stale, "the read did not clear the flag");
+        let cached = engine.live_cohorts.clone();
+        // A second report with no pump between reuses what it has.
+        engine.report_cohorts(&gen).expect("report");
+        assert!(!engine.cohorts_stale, "a report with no pump marked the labels stale");
+        assert_eq!(engine.live_cohorts, cached, "the cache changed with no pump to change it");
     }
 
     /// THE CHECKPOINT'S WHOLE POINT: a fit stopped and started must equal one

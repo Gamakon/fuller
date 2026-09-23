@@ -370,6 +370,20 @@ pub struct Writer {
 /// second at a screen that repaints four times a second.
 const SNAPSHOT_MIN_GAP: std::time::Duration = std::time::Duration::from_millis(1000);
 
+/// The floor, when a caller asks for a faster pulse through
+/// `HFF_TELEMETRY_MIN_MS`. A snapshot costs a line of JSON and an O(population)
+/// walk over `gen.fitness`, which the fit already holds on the host — the cohort
+/// labels, the one part that came from the device, are now read only when the
+/// pump has moved them. So the pulse can be raised to whatever a screen can use;
+/// the viewer repaints at 2-4 Hz, so past about 250 ms the frames are written to
+/// be thrown away.
+fn snapshot_min_gap() -> std::time::Duration {
+    match std::env::var("HFF_TELEMETRY_MIN_MS").ok().and_then(|v| v.parse::<u64>().ok()) {
+        Some(ms) => std::time::Duration::from_millis(ms),
+        None => SNAPSHOT_MIN_GAP,
+    }
+}
+
 impl Writer {
     /// Open the stream and write its `run_start`. Truncates: a run owns its file,
     /// as the hall of fame and the genealogy log do.
@@ -431,7 +445,7 @@ impl Writer {
     /// per-island and per-cohort reductions are never run for a frame that will
     /// not be written. `force` is the last report of a fit, which always goes out.
     pub fn snapshot_due(&self, force: bool) -> bool {
-        force || self.last_snapshot.is_none_or(|t| t.elapsed() >= SNAPSHOT_MIN_GAP)
+        force || self.last_snapshot.is_none_or(|t| t.elapsed() >= snapshot_min_gap())
     }
 
     /// Write a snapshot. `body` is everything but the header — the caller builds
