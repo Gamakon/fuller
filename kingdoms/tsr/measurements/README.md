@@ -9,8 +9,14 @@ across them.
 > "We don't need an A test. We've been running A all week, and it's failed
 > every time. What I need is a B test. Just do TSR."
 
-Untyped numbers quoted below are **prior results from the record**
-(`docs/EXPERIMENTS.md`, `logs/cards/`), cited for context and never re-run.
+Untyped numbers quoted below are **prior results from the record**, cited for
+context and never re-run: the race ledgers under
+`hff/notebooks/sr_logs/*/race_ledger.json`, `docs/EXPERIMENTS.md`,
+`.claude/skills/running-fits/SKILL.md` and `logs/cards/`.
+
+The one exception is the bacres1 untyped row, which comes from a run made
+earlier in this session before the instruction to drop the control arm. It is
+reported because it exists, not because it was needed.
 
 ## The headline
 
