@@ -314,6 +314,23 @@ train 1.03e-9 (a cascade fit). These are two different events on the same law,
 not two readings of one, so the fix states each with its own measurement and
 does not average or pick between them.
 
+**And the first draft of the fix conflated them anyway** — corrected at
+`f4a1a2e`. §3.5 and §10 both said the train side "excludes the case the p
+condition was introduced to catch". It does not: p was introduced for the
+seed-7013 event, for which no train 1−R² is on record, and the train condition
+excludes the cascade event. Both sentences now point at the **law** rather than
+the case — "the law p was introduced for … caught on a later false stop, without
+consulting p" — which is supportable from both sources and claims nothing about
+the seed-7013 fit's train side.
+
+**Not claimed, because it could not be sourced.** `EXPERIMENTS.md:98` records
+"on seed 7014, 53 fits met the new bar and 52 were exact". If the one inexact
+fit were bacres2 that would be a directly verified instance of §10's claim — p
+live, reading past the bar, failing to separate. `grep bacres2 docs/EXPERIMENTS.md`
+returns nothing, so the identification cannot be made from this repo and is not
+made. **Worth one line in EXPERIMENTS.md from whoever holds that run**: naming
+the inexact fit would turn §10's argument from inference into a citation.
+
 ---
 
 ## 5. The `better_mate` listing — STALE — high

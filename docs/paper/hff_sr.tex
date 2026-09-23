@@ -57,8 +57,9 @@ programming with Karva K-expressions evaluated on the GPU; hyperspherical
 fitness (HFF), which treats the objective vector as a point on a sphere and
 ranks by its angle from the origin where every error vanishes; an island model
 with a pump that refills an intake island from fresh random draws; and
-\texttt{fuller}, an egglog-based rewriter that replaced sympy in the engine's
-inner loop. The result we report is 75 of 133.
+\texttt{fuller}, an egglog-based rewriter that replaced sympy as the engine's
+symbolic layer and converts back into the genotype. The result we report is 75
+of 133.
 
 The mechanism that got us there is one thing, not two. A search that converges
 onto a single line cannot be improved by handing it a better expression: the
@@ -142,8 +143,10 @@ $[0,1]$ against frozen ranges.
 \textbf{The run reported here used six.} The third block is dropped entirely when
 no synthetic or edge rows are generated, and the run generated none, so the
 objective set was mean squared error, $1 - R^2$ and mean absolute error on train
-and validation. The two non-error objectives below --- the tower and a
-redundancy column --- were both off. We state this from the run's recorded
+and validation. The engine's two non-error objectives --- the tower described
+below, and a redundancy column, a leave-one-gene-out score that charges a
+chromosome for carrying genes whose removal costs the fit nothing --- were both
+off. We state this from the run's recorded
 settings and the engine's defaults: the run emitted no card recording the
 derived objective count, and the card format that does postdates it.
 
@@ -283,9 +286,10 @@ the single exception was \texttt{bacres2} again --- stopping with validation ten
 times better than the rows the model was actually fitted on, which is a
 description of noise rather than of a fit. Requiring both sides cost no true win
 on record. It was in place before the run reported here. Note what this means
-for the p-value's job: the case that motivated the $p$ condition is now also
-excluded on the error side, and Section~\ref{sec:limits} returns to whether $p$
-is still earning its place.
+for the p-value's job: \texttt{bacres2} is the law both halves of the bar were
+hardened against, and the later of its two false stops is caught on the error
+side without $p$ being consulted. Section~\ref{sec:limits} returns to whether
+$p$ is still earning its place.
 
 The bar is ours. It never reads SRBench's verdict. That distinction does real
 work in Section~\ref{sec:integrity}.
@@ -951,9 +955,9 @@ it were not, and removing objectives to move $p$ would be deleting a measurement
 to improve a number. If the condition is to earn its place it has to be at an
 operating point where the angle discriminates --- which means asking which
 objectives enter it, not how many. As it stands the error half of the bar,
-strengthened on the train side (Section~\ref{sec:stopbar}), already excludes the
-case the $p$ condition was introduced to catch, and on this run $p$ adds
-nothing.
+strengthened on the train side (Section~\ref{sec:stopbar}), catches
+\texttt{bacres2} --- the law $p$ was introduced for --- on a later false stop
+and without consulting $p$ at all, and on this run $p$ adds nothing.
 
 \textbf{What we have not tested.} The noisy tracks. The Feynman bonus set, where
 we score 0 of 20 and always have. The nine problems of the
