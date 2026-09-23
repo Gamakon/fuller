@@ -12,6 +12,11 @@ pub mod device;
 #[cfg(feature = "gpu")]
 pub mod engine;
 pub mod checkpoint;
+// THE RUN CARD — the whole `Config` written at a fit's start, and read back to
+// start the same fit again. Behind `gpu` because `Config` is: the card IS the
+// config plus what the engine derived from it.
+#[cfg(feature = "gpu")]
+pub mod card;
 pub mod genealogy;
 #[cfg(feature = "gpu")]
 pub mod hff_gpu;
