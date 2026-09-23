@@ -58,12 +58,26 @@ fitness (HFF), which treats the objective vector as a point on a sphere and
 ranks by its angle from the origin where every error vanishes; an island model
 with a pump that refills an intake island from fresh random draws; and
 \texttt{fuller}, an egglog-based rewriter that replaced sympy in the engine's
-inner loop. The result we report is 75 of 133. The mechanism that got us there
-is a tie-break rule inside the tournament.
+inner loop. The result we report is 75 of 133.
+
+The mechanism that got us there is one thing, not two. A search that converges
+onto a single line cannot be improved by handing it a better expression: the
+better expression is selected out before it can develop, which is the same
+starvation Section~\ref{sec:alps} measures for fresh random individuals.
+Cohort-restricted tournaments make space in the population for material that is
+not yet competitive. Rewriting is what makes that space worth having, because it
+is how a \emph{proposal} gets made --- a gene decodes to an expression, the
+expression is rewritten, and the rewritten form converts back into a gene.
+Neither half is the contribution on its own. A system that makes space for
+edits, edits that are proposed rather than imposed, and selection that decides
+which of them survives: that is the claim. Section~\ref{sec:together} states it
+in full, and states plainly which part of it we have measured and which part we
+have not.
 
 Section~\ref{sec:system} describes the engine. Section~\ref{sec:alps} is the
-main contribution: the diversity measurement, its arithmetic, and the fix.
-Section~\ref{sec:results} gives the run. Section~\ref{sec:failure} is the
+main contribution: the diversity measurement, its arithmetic, the fix, and in
+Section~\ref{sec:together} the interaction with rewriting and the experiment
+that would isolate it. Section~\ref{sec:results} gives the run. Section~\ref{sec:failure} is the
 failure-class analysis, which reframed what we work on next.
 Section~\ref{sec:rewrites} covers data-guided rewrites, including one that
 recovered a law never solved in any prior run, and one we declined to loosen.
@@ -168,6 +182,7 @@ churns, and the pump is where diversity enters. Section~\ref{sec:alps} is about
 the measurement that showed it was not entering.
 
 \subsection{\texttt{fuller}: rewriting as a variation operator}
+\label{sec:rewriting}
 
 \texttt{fuller} is a Rust crate built on egglog 2.0 that replaced sympy in the
 engine. It holds a real-domain expression datatype with the engine's protected
@@ -322,6 +337,7 @@ a clamp. Setting it to 0 turns cohorts off entirely, and the CPU/GPU bit-for-bit
 parity tests then prove the engine is what it always was.
 
 \subsection{What it measured}
+\label{sec:measured}
 
 On one law --- Feynman III.8.54, the hardest we had --- the change is
 unambiguous. Measured over a single 500-generation fit at population 10{,}000
@@ -337,6 +353,65 @@ generation 614 with $1 - R^2 = 6.66\times10^{-14}$.
 Across the benchmark, Strogatz recovery went from 3 of 14 to 7 of 14. That is
 the clearest attribution in the run, because the cohorts were built for exactly
 this failure and Strogatz is where it bit hardest.
+
+\subsection{Space for editing, and what we have not measured}
+\label{sec:together}
+
+Cohorts and rewriting are presented above as two pieces of engineering. We think
+they are one mechanism, and the case for it is short.
+
+The unusual capability is the round trip of Section~\ref{sec:rewriting}: a gene
+decodes to an expression, the expression is rewritten into an equivalent form,
+and that form converts \emph{back into a gene} the search can breed from. Most
+symbolic regression systems convert one way only --- a genotype becomes an
+expression, the expression becomes a number, and the number is where it ends.
+Converting back is what makes a rewrite available to the search at all, rather
+than to the report.
+
+It is worth being exact about which rewriter did that in the run reported here.
+The operator that writes into a live gene is the constant snap of
+Section~\ref{sec:rewriting}: a folded constant is matched against the resident
+lattice, the substitution is kept only if the whole model's $R^2$ survives it,
+and the accepted form is written back into the gene in place. That is a repair
+of an individual rather than a proposal beside it --- the row keeps its identity,
+its age, its line and its cohort, and the guard, not a tournament, is what
+accepted the form. The algebraic half of \texttt{fuller}, the saturate-and-extract
+round trip, is a capability the crate provides and a stated design for the
+engine; it is not a component of the run that scored 75.
+
+The design the argument calls for is the stronger one: an edited form entering
+the population \emph{beside} the original rather than over it, unevaluated, with
+the tournament as the only thing that judges it. Then nothing is imposed. The
+engine would have no way to declare a rewritten form better and would not try
+to; it would enter the pool as a candidate and be held to the same fitness as
+every other row. That is guidance through equivalence rather than steering by
+hand.
+
+That is exactly the material Section~\ref{sec:alps} shows a converged population
+destroys. A proposal is, at the moment it is made, a row whose structure is
+untried. Dropped into a monoculture it would be drawn into a 105-candidate
+tournament against a converged elder with probability $1 - 6.7\times10^{-11}$,
+and it would be gone, however good the form it carries. Cohort restriction is
+what would give it a protected band to develop in before it has to answer to an
+incumbent. The two halves need each other in both directions: an edit without
+protection does not survive
+to be judged on its merits, and protection without edits is age-layered
+selection over random variation, which is worth having only when there is
+something worth protecting.
+
+\textbf{We have not isolated this.} The 75-of-133 run had both cohorts and snap
+on, and so did the cascade it is compared against. What the record supports is
+an attribution of the cohort change \emph{given} editing on: the same-seed arm
+on Feynman III.8.54 in Section~\ref{sec:measured}, the cascade at 66 against
+this run's 75, and Strogatz 3 of 14 to 7 of 14. What the record does not contain
+is a single fit with editing switched off, in either cohort condition. The
+two-by-two has one row, not one cell, and the missing row is the
+one that would show whether the cohort gain depends on there being proposals to
+protect or would have arrived just as well over random variation alone. The
+negative result in Section~\ref{sec:beam} does not fill the gap: it measures a
+generated mutant against its own original at the moment it is made, which is a
+different question from whether a protected band lets a proposal develop into a
+solve. The experiment is cheap and we have not run it.
 
 \section{The run}
 \label{sec:results}
@@ -624,6 +699,7 @@ running in parallel beat one was not supported. A law lost outright is a worse
 signal than a one-problem count difference is a good one.
 
 \subsection{The general mutation beam is exhausted}
+\label{sec:beam}
 
 The beam takes the best individual as it stands and generates thousands of
 mutations of it, scored on the data, with the original never lost. The tree half
@@ -758,10 +834,16 @@ a rate.
 \section{Conclusion}
 
 The result is 75 of 133 on one development seed at six minutes a fit, against a
-published best of 54.1\% at ten seeds and up to eight hours. The mechanism that
-moved it is a tie-break rule in a tournament, costing one \texttt{u32} per row
-and no additional dispatch, found by instrumenting lineage and discovering that
-294{,}000 fresh individuals had left no descendants.
+published best of 54.1\% at ten seeds and up to eight hours. The measured change
+that moved it is a selection restriction --- a tie-break in a tournament,
+costing one \texttt{u32} per row and no additional dispatch, found by
+instrumenting lineage and discovering that 294{,}000 fresh individuals had left
+no descendants. What we think it is worth is broader than that, and stated as a
+claim rather than a result: the restriction makes space in the population for
+material that is not yet competitive, and a rewriter that converts back into the
+genotype is what fills the space with proposals rather than with noise.
+Section~\ref{sec:together} names the experiment that would separate the two, and
+we have not run it.
 
 The failure analysis is the more durable finding. Of the 67 laws unsolved before
 this change, 53 were the search not reaching the law at all, and no amount of
