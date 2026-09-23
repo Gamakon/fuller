@@ -112,6 +112,37 @@ impl Theme {
     fn warn(self) -> Color {
         if self.light { Color::Rgb(140, 100, 0) } else { Color::Yellow }
     }
+
+    /// THE TRAFFIC LIGHTS, and the blue beside them. They are the verdict's
+    /// palette — green is a law found, red is one not found, blue is a search
+    /// still running — and the p-value's, which is the same reading of the same
+    /// bar.
+    ///
+    /// They go through `Theme` for the reason every colour here does: the
+    /// terminal's own `Green` is a pale mid-green that is legible on black and
+    /// washes out on white, and `Blue` is worse — a dark navy on black and a
+    /// thin wash on white. The light variants are darkened until they hold
+    /// against a white background, the dark ones brightened until they hold
+    /// against a black one, and the both-themes render tests are what keeps
+    /// either from silently regressing.
+    ///
+    /// GOOD, the green a cleared bar and a found law are drawn in.
+    fn good(self) -> Color {
+        if self.light { Color::Rgb(0, 110, 40) } else { Color::Rgb(80, 220, 120) }
+    }
+
+    /// BAD, the red a missed bar and an unfound law are drawn in.
+    fn bad(self) -> Color {
+        if self.light { Color::Rgb(170, 20, 20) } else { Color::Rgb(255, 105, 97) }
+    }
+
+    /// THE BLUE OF A SEARCH STILL RUNNING. Deliberately not `accent()`: the
+    /// accent is the run's ordinary numbers and is cyan, and a verdict that
+    /// shared it would be the one word on the screen that did not announce
+    /// itself as a verdict.
+    fn live(self) -> Color {
+        if self.light { Color::Rgb(20, 70, 190) } else { Color::Rgb(110, 160, 255) }
+    }
 }
 
 fn main() {
@@ -473,19 +504,16 @@ fn badge_colour(theme: Theme, state: &WatchState) -> Color {
     }
 }
 
-/// THE VERDICT BANNER'S COLOUR. Green is the only thing on this screen that
-/// means the fit cleared its bar, red is the only thing that means it did not,
-/// and SEARCHING takes the accent — a run still looking has not failed.
-///
-/// `Color::Green` and `Color::Red` are the terminal's own, as the badge and the
-/// gain column already use them: both are legible on a light and a dark
-/// background, which the dim greys and the cyan are not, and that is why those
-/// two go through [`Theme`] and these do not.
+/// THE VERDICT BANNER'S COLOUR: TRAFFIC LIGHTS for the two endings, blue for
+/// the search still running. Green is the only thing on this screen that means
+/// the fit cleared its bar, red the only thing that means it did not, and a run
+/// still looking is neither — it has not failed, so it is not red, and it has
+/// not succeeded, so it must not be green.
 fn verdict_colour(theme: Theme, verdict: Verdict) -> Color {
     match verdict {
-        Verdict::LawFound => Color::Green,
-        Verdict::LawUnfound => Color::Red,
-        Verdict::Searching => theme.accent(),
+        Verdict::LawFound => theme.good(),
+        Verdict::LawUnfound => theme.bad(),
+        Verdict::Searching => theme.live(),
     }
 }
 
@@ -497,8 +525,8 @@ fn verdict_colour(theme: Theme, verdict: Verdict) -> Color {
 /// by another run's bar the first time the engine's default moved.
 fn p_colour(theme: Theme, bar: PBar) -> Color {
     match bar {
-        PBar::Cleared => Color::Green,
-        PBar::NotCleared => Color::Red,
+        PBar::Cleared => theme.good(),
+        PBar::NotCleared => theme.bad(),
         PBar::NoBar | PBar::NoP => theme.dim(),
     }
 }
@@ -1466,16 +1494,16 @@ mod tests {
     /// run ended.
     #[test]
     fn the_verdict_banner_draws_in_capitals_at_every_size_and_theme() {
-        let cases = [
-            (Some("early_stop"), "LAW FOUND", Color::Green),
-            (Some("n_gen"), "LAW UNFOUND", Color::Red),
-            (Some("time"), "LAW UNFOUND", Color::Red),
-            (None, "SEARCHING", Color::Cyan),
-        ];
         for theme in [Theme { light: false }, Theme { light: true }] {
-            for (stopped_by, word, dark_colour) in cases {
+            // TRAFFIC LIGHTS, and blue for the search that is still running.
+            let cases = [
+                (Some("early_stop"), "LAW FOUND", theme.good()),
+                (Some("n_gen"), "LAW UNFOUND", theme.bad()),
+                (Some("time"), "LAW UNFOUND", theme.bad()),
+                (None, "SEARCHING", theme.live()),
+            ];
+            for (stopped_by, word, want) in cases {
                 let state = state_with(Some(-19.0), Some(-13.0), stopped_by);
-                let want = if word == "SEARCHING" && theme.light { theme.accent() } else { dark_colour };
                 for (w, h) in [(120, 35), (160, 50), (80, 24)] {
                     let screen = painted(&state, theme, w, h);
                     assert!(screen.contains(word), "{w}x{h} light={}: no banner\n{screen}", theme.light);
@@ -1490,6 +1518,17 @@ mod tests {
                         assert_eq!(line.chars().count(), w as usize, "{w}x{h}: a row is not the terminal's width");
                     }
                 }
+            }
+            // THE THREE VERDICTS ARE THREE COLOURS, and none of them is the
+            // accent the run's ordinary numbers wear — a banner that shared a
+            // colour with the HFF beside it would not announce itself.
+            let palette = [theme.good(), theme.bad(), theme.live()];
+            for (i, a) in palette.iter().enumerate() {
+                for b in &palette[i + 1..] {
+                    assert_ne!(a, b, "two verdicts share a colour on light={}", theme.light);
+                }
+                assert_ne!(*a, theme.accent(), "a verdict wears the accent on light={}", theme.light);
+                assert_ne!(*a, theme.dim(), "a verdict wears the dim ink on light={}", theme.light);
             }
         }
     }
@@ -1524,7 +1563,7 @@ mod tests {
                 let above = state_with(Some(-19.0), Some(-13.04), Some("n_gen"));
                 assert_eq!(
                     colour_of(&above, theme, w, h, "-13.04"),
-                    Some(Color::Red),
+                    Some(theme.bad()),
                     "{w}x{h} light={}: a p above the bar is not red\n{}",
                     theme.light,
                     painted(&above, theme, w, h)
@@ -1535,7 +1574,7 @@ mod tests {
                     let cleared = state_with(Some(-19.0), Some(value.parse().expect("a number")), Some("early_stop"));
                     assert_eq!(
                         colour_of(&cleared, theme, w, h, value),
-                        Some(Color::Green),
+                        Some(theme.good()),
                         "{w}x{h} light={}: p {value} has cleared the bar and is not green",
                         theme.light
                     );
