@@ -408,6 +408,13 @@ fn main() {
         println!("{}", out.snap.line());
         println!("{}", out.snap.detail());
     }
+    // THE FOLD OPERATOR: what it cost the search, per beat, and what it bought —
+    // the head positions it gave back to genes that were spending them on blobs
+    // holding one number.
+    if config.fold_every > 0 {
+        println!("seconds: fold {:.2} ({:.3} per beat in the fold step itself)", t.fold, out.fold.seconds / out.fold.beats.max(1) as f64);
+        println!("{}", out.fold.line());
+    }
     // THE BEAM: beats, mutants, how many beat their original, the best log10 p
     // before and after, and the seconds it cost — plus which wraps earned their
     // place and what the float zone held.

@@ -1080,6 +1080,8 @@ pub struct FitResult {
     pub timing: Timing,
     /// What snap did (all zero when `Config::snap_every` is 0).
     pub snap: SnapCounts,
+    /// What THE FOLD OPERATOR did (all zero when `Config::fold_every` is 0).
+    pub fold: FoldCounts,
     /// THE WINNER'S LINEAGE: its identity, how old it was in generations, and the
     /// generation and mechanism its line began at. None when the genealogy is off.
     pub lineage: Option<RowMark>,
@@ -5286,6 +5288,7 @@ impl Engine {
             best,
             timing,
             snap: self.snap.as_ref().map_or_else(SnapCounts::default, |s| s.counts.clone()),
+            fold: self.fold.as_ref().map_or_else(FoldCounts::default, |s| s.counts.clone()),
             beam,
         })
     }
@@ -5766,8 +5769,8 @@ mod tests {
             gene[i] = t;
         }
         // Every tail position a terminal, so the expression closes.
-        for i in plan.len()..(l.head + l.tail) as usize {
-            gene[i] = x0;
+        for slot in gene[plan.len()..(l.head + l.tail) as usize].iter_mut() {
+            *slot = x0;
         }
         // The gene's one "?" reads Dc slot 0, and slot 0 holds 40.
         gene[(l.head + l.tail) as usize] = 0;
@@ -5818,8 +5821,8 @@ mod tests {
                 for (i, &t) in plan.iter().enumerate() {
                     gene[i] = t;
                 }
-                for i in plan.len()..(l.head + l.tail) as usize {
-                    gene[i] = id(0);
+                for slot in gene[plan.len()..(l.head + l.tail) as usize].iter_mut() {
+                    *slot = id(0);
                 }
             }
         }

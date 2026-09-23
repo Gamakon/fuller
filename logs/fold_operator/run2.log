@@ -1,0 +1,20 @@
+   Compiling fuller v0.1.0 (/Users/andrewmorgan/Dev/gamakon/fuller/.claude/worktrees/agent-ad429133994c0dd3b)
+    Finished `release` profile [optimized] target(s) in 10.97s
+     Running `target/release/examples/evolve_fit /private/tmp/claude-501/-Users-andrewmorgan-Dev-gamakon-fuller/b3c1f1fe-1035-445f-ada0-9f05e732d5e6/scratchpad/bacres1.tsv`
+BUDGET	seed 7014	600 s
+SMOGD	316	rows from 300 real rows in 0.1 s, noise x1
+SMOTE	316	rows from 300 real rows in 0.0 s
+POPULATION	600 intake + 600 champion
+    gen    secs  head      min_hff      avg_hff    mse_train       r2_train     r2_val_bl2     r2_val_bk3  t_depth   log10_p
+     20       1    34  4.595051e-2  6.873231e-1    8.2654e-3   0.9986712788   0.9982099687   0.9873827770        3    -11.27
+  cohorts 2 alive | c0:720@4.595e-2  c20:480@1.165e-1
+     40       1    34  3.506638e-2  6.078020e-1    1.7502e-3   0.9997186410   0.9997876128   0.9871916529        0    -12.20
+  cohorts 3 alive | c0:640@3.507e-2  c40:480@6.327e-2  c20:80@7.831e-2
+     60       1    34  3.241977e-2  7.907364e-1    1.2061e-3   0.9998061190   0.9998668345   0.9872495336        4    -12.48
+  cohorts 4 alive | c0:605@3.242e-2  c40:86@5.982e-2  c20:29@6.033e-2  c60:480@1.203e-1
+     80       2    34  3.216501e-2  9.307465e-1    1.1712e-3   0.9998117220   0.9998662663   0.9872827083        4    -12.50
+  cohorts 5 alive | c0:589@3.217e-2  c20:17@5.974e-2  c40:34@5.974e-2  c60:80@6.248e-2  c80:480@1.184e-1
+    100       3    34  3.241793e-2  7.555319e-1    1.2036e-3   0.9998065137   0.9998674453   0.9872489572        4    -12.48
+  cohorts 6 alive | c0:585@3.242e-2  c80:122@4.749e-2  c40:5@4.753e-2  c20:4@5.950e-2  c60:4@5.950e-2  c100:480@1.254e-1
+    120       3    34  3.234797e-2  6.709562e-1    1.2020e-3   0.9998067658   0.9998704465   0.9872848997        4    -12.48
+  cohorts 5 alive | c0:584@3.235e-2  c80:59@4.402e-2  c100:76@7.735e-2  c120:480@1.083e-1  c40:1@3.142e0
