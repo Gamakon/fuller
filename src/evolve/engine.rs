@@ -682,12 +682,30 @@ impl Config {
             stop_one_minus_r2: 1e-10,
             stop_log10_p: -19.0,
             gene_subsets: false,
-            snap_every: 0,
-            snap_top_k: 0,
+            // SNAP ON, on the pump's beat. Measured on the fit that recovered
+            // strogatz_bacres1: 952 beats, 45,696 genes examined, 3,104 literals
+            // matched, 1,303 written back, 1,173 rows changed, and it cost 6.25 s
+            // of a 1,115 s fit -- 0.006 s a beat. A constant that is really pi or
+            // sqrt(2) is spelled exactly instead of being chased to fifteen
+            // digits the search will never land on.
+            snap_every: pump_every,
+            // The best 50 rows of each island. 0 means EVERY evaluated row, which
+            // at a 4,000-row population is the whole population through the snap
+            // pipeline every beat for the sake of the handful that lead.
+            snap_top_k: 50,
             snap_rel_tol: 1e-3,
             snap_r2_drop: crate::lint::snap_guard::R2_DROP_TOL,
             genealogy_path: None,
-            beam_every: 0,
+            // THE BEAM ON, on the pump's beat. It takes the best individual as
+            // it stands and scores thousands of mutations of it against the data
+            // -- and with `beam_tree` off, which is the default, the beat is the
+            // FUNCTIONAL WRAPS alone: the edge-case shapes the gene provably does
+            // not build (1/(x-1) for 1/(exp(u)-1), 1/sqrt(1-x) for the Lorentz
+            // factor), each with its a and b fitted in the same step. That
+            // subsetting is the measurement: a general beam over the whole
+            // cleanse neighbourhood closed no gap on six near misses, with
+            // mutants beating their original 0.05% of the time.
+            beam_every: pump_every,
             beam_width: 2000,
             beam_wraps: true,
             beam_tree: false,
@@ -6825,8 +6843,13 @@ mod tests {
     /// counts are all zero.
     #[test]
     fn with_the_beam_off_the_engine_is_the_engine_it_was() {
-        let base = Config { max_generations: 12, max_seconds: 3600.0, stop_one_minus_r2: -1.0, ..toy_config(60, 20) };
-        assert_eq!((base.beam_every, base.float_zone), (0, 0), "the beam and the float zone are off by default");
+        // THE BEAM IS ON BY DEFAULT; this test is about what happens with it
+        // OFF, so it turns it off explicitly. The switch has to be a real
+        // switch — a fit without the beam must be the engine that existed
+        // before the beam did — and that is what the assertions below check.
+        assert!(Config::srbench(1).beam_every > 0, "the beam is on by default");
+        let base = Config { max_generations: 12, max_seconds: 3600.0, stop_one_minus_r2: -1.0, beam_every: 0, ..toy_config(60, 20) };
+        assert_eq!((base.beam_every, base.float_zone), (0, 0), "the float zone is off by default");
         let fit = |config: &Config| {
             let mut engine = Engine::new(config.clone(), toy_data()).expect("engine");
             let islands = engine.islands.clone();

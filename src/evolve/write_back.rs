@@ -937,13 +937,22 @@ mod tests {
         assert_eq!(SnapCounts::default().substitutions, 0);
     }
 
-    /// The switch is off by default, and then nothing of snap is in the engine.
+    /// SNAP IS ON BY DEFAULT, and turning it OFF leaves nothing of it in the
+    /// engine.
+    ///
+    /// The second half is the invariant worth having: the switch has to be a
+    /// real switch, so that a fit run without snap is the engine it was, symbol
+    /// table included. The first half only records what the default is — snap
+    /// earned it on the fit that recovered strogatz_bacres1 (952 beats, 1,303
+    /// forms written back, 6.25 s of 1,115).
     #[test]
-    fn snap_is_off_by_default_and_the_symbol_table_is_then_the_one_it_was() {
+    fn snap_is_on_by_default_and_off_leaves_the_symbol_table_it_was() {
         let c = Config::srbench(1);
-        assert_eq!((c.snap_every, c.snap_top_k, c.snap_rel_tol, c.snap_r2_drop), (0, 0, 1e-3, 1e-4));
-        let engine = Engine::new(Config { pop_intake: 60, pop_champion: 20, head: 8, ..c }, sine_data()).expect("engine");
-        assert_eq!(engine.table.symbols, SymbolTable::wide(2).symbols);
+        assert_eq!((c.snap_every, c.snap_top_k, c.snap_rel_tol, c.snap_r2_drop), (c.pump_every, 50, 1e-3, 1e-4));
+        assert!(c.snap_every > 0, "snap is on by default");
+        let off = Config { pop_intake: 60, pop_champion: 20, head: 8, snap_every: 0, ..c };
+        let engine = Engine::new(off, sine_data()).expect("engine");
+        assert_eq!(engine.table.symbols, SymbolTable::wide(2).symbols, "with snap off the symbol table is the plain one");
         assert_eq!(engine.snap_counts(), SnapCounts::default());
     }
 }
