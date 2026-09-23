@@ -1003,7 +1003,7 @@ pub fn tower_penalty(t_depth: u32) -> f64 {
 
 /// Which of the nine objectives `[mse x3, 1-R2 x3, mae x3]` (blocks train,
 /// validation, third) feed HFF, and which of those are log-scaled.
-fn hff_columns(n_extrap: usize, without_validation: bool, log_scale: [bool; 3]) -> Vec<(usize, bool)> {
+pub(crate) fn hff_columns(n_extrap: usize, without_validation: bool, log_scale: [bool; 3]) -> Vec<(usize, bool)> {
     let mut columns = Vec::new();
     for metric in 0..3 {
         for (block, &log) in log_scale.iter().enumerate() {
@@ -1073,6 +1073,65 @@ pub fn hff_truenorth_for_test(objectives: &[f64], col_max: &[f64], log_scaled: &
 #[cfg(test)]
 pub fn hff_scaled_for_test(objectives: &[f64], col_max: &[f64], log_scaled: &[bool]) -> Option<Vec<f64>> {
     hff_scaled(objectives, col_max, log_scaled)
+}
+
+/// THE HOST'S CANDIDATE WALK, as one function, so that the device kernel has
+/// something to be tested AGAINST rather than something to be compared with a
+/// second copy of its own arithmetic.
+///
+/// The first parity test this kernel had re-implemented the kernel's statements
+/// in Rust and compared THAT to the host — which checks that two transcriptions
+/// of one formula agree, and cannot catch a shader that does not compile, binds
+/// the wrong buffer, walks the candidates in a different order or loses the
+/// balanced angle. It passed while the kernel had all of the last defect.
+///
+/// Returns the winner's `(truenorth, selection, candidate, omr2)` for one row's
+/// block of `per` candidates, or `None` when no candidate of that row is usable.
+#[cfg(test)]
+pub struct HostWalk<'a> {
+    pub scores: &'a [f64],
+    pub per: usize,
+    pub caps_var: [f64; 3],
+    pub caps_mad: [f64; 3],
+    pub col_max: [f64; 9],
+    pub columns: &'a [(usize, bool)],
+    pub tower_of: &'a [u32],
+    pub n_extrap: usize,
+    pub redundancy: bool,
+    pub tower_on: bool,
+    pub balanced: bool,
+}
+
+#[cfg(test)]
+pub fn host_candidate_winner_for_test(w: &HostWalk) -> Option<(f64, f64, usize, [f64; 3])> {
+    let caps = Caps { var: w.caps_var, mad: w.caps_mad };
+    let mut best: Option<(f64, f64, usize, [f64; 3])> = None;
+    for c in 0..w.per {
+        let s = &w.scores[c * WIDTH..(c + 1) * WIDTH];
+        if !s[0].is_finite() {
+            continue;
+        }
+        let (o, omr2) = caps.objectives(s, w.n_extrap);
+        let mut used: Vec<f64> = w.columns.iter().map(|&(k, _)| o[k]).collect();
+        let mut maxes: Vec<f64> = w.columns.iter().map(|&(k, _)| w.col_max[k]).collect();
+        let mut logs: Vec<bool> = w.columns.iter().map(|&(_, log)| log).collect();
+        if w.redundancy {
+            used.push(s[9].clamp(0.0, 1.0));
+            maxes.push(1.0);
+            logs.push(false);
+        }
+        if w.tower_on {
+            used.push(tower_penalty(w.tower_of[c]));
+            maxes.push(1.0);
+            logs.push(false);
+        }
+        let fitness = hff_truenorth(&used, &maxes, &logs);
+        let selection = if w.balanced { hff_balanced(&used, &maxes, &logs) } else { fitness };
+        if best.is_none_or(|b| selection < b.1) {
+            best = Some((fitness, selection, c, omr2));
+        }
+    }
+    best
 }
 
 fn hff_truenorth(objectives: &[f64], col_max: &[f64], log_scaled: &[bool]) -> f64 {

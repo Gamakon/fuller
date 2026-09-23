@@ -37,10 +37,18 @@ struct HffParams {
     balanced: u32,
 }
 
-/// The winner of each row: its angle, which candidate it was, and the three
-/// `1 - R2` the host still needs for the stop bar.
+/// The winner of each row: its TrueNorth angle, which candidate it was, the
+/// three `1 - R2` the host still needs for the stop bar, and the angle that
+/// CHOSE it.
+///
+/// `fitness` and `selection` differ only when `balanced_tournaments` is on, and
+/// then the difference matters in both directions: TrueNorth is what the stop
+/// bar and the hall of fame read, the balanced angle is what the tournament
+/// reads. `Engine::evaluate` keeps them in `Scored::fitness` and
+/// `Scored::selection`, and so does this.
 pub struct HffWinners {
     pub fitness: Vec<f32>,
+    pub selection: Vec<f32>,
     pub candidate: Vec<u32>,
     pub one_minus_r2: Vec<f32>,
 }
@@ -59,14 +67,14 @@ impl GpuHff {
         });
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("fuller-hff-layout"),
-            entries: &(0..10)
+            entries: &(0..11)
                 .map(|i| wgpu::BindGroupLayoutEntry {
                     binding: i,
                     visibility: wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::Buffer {
                         ty: match i {
                             0 => wgpu::BufferBindingType::Uniform,
-                            // 7, 8, 9 are the outputs.
+                            // 7..=10 are the outputs.
                             _ => wgpu::BufferBindingType::Storage { read_only: i < 7 },
                         },
                         has_dynamic_offset: false,
@@ -153,13 +161,14 @@ impl GpuHff {
         let fit_buf = out("hff fitness", rows);
         let cand_buf = out("hff candidate", rows);
         let omr2_buf = out("hff omr2", rows * 3);
+        let sel_buf = out("hff selection", rows);
 
         let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: None,
             layout: &self.layout,
             entries: &{
-                let buffers: [&wgpu::Buffer; 10] =
-                    [&uniform, &scores_buf, &columns_buf, &logs_buf, &max_buf, &caps_buf, &tower_buf, &fit_buf, &cand_buf, &omr2_buf];
+                let buffers: [&wgpu::Buffer; 11] =
+                    [&uniform, &scores_buf, &columns_buf, &logs_buf, &max_buf, &caps_buf, &tower_buf, &fit_buf, &cand_buf, &omr2_buf, &sel_buf];
                 buffers
                     .iter()
                     .enumerate()
@@ -204,11 +213,12 @@ impl GpuHff {
         let fitness = bytemuck::cast_slice::<u8, f32>(&read(&fit_buf, rows)?).to_vec();
         let candidate = bytemuck::cast_slice::<u8, u32>(&read(&cand_buf, rows)?).to_vec();
         let one_minus_r2 = bytemuck::cast_slice::<u8, f32>(&read(&omr2_buf, rows * 3)?).to_vec();
-        for b in [uniform, scores_buf, columns_buf, logs_buf, max_buf, caps_buf, tower_buf, fit_buf, cand_buf, omr2_buf] {
+        let selection = bytemuck::cast_slice::<u8, f32>(&read(&sel_buf, rows)?).to_vec();
+        for b in [uniform, scores_buf, columns_buf, logs_buf, max_buf, caps_buf, tower_buf, fit_buf, cand_buf, omr2_buf, sel_buf] {
             b.destroy();
         }
         device.poll(wgpu::Maintain::Poll);
-        Ok(HffWinners { fitness, candidate, one_minus_r2 })
+        Ok(HffWinners { fitness, selection, candidate, one_minus_r2 })
     }
 }
 
@@ -216,6 +226,177 @@ impl GpuHff {
 #[cfg(test)]
 mod tests {
     use crate::evolve::engine::{hff_scaled_for_test, hff_truenorth_for_test};
+
+    /// THE TEST THAT ACTUALLY RUNS THE SHADER.
+    ///
+    /// The two tests below it check arithmetic, statement by statement, in Rust.
+    /// That is worth having and it is not parity: it cannot catch a shader that
+    /// fails to compile, binds the wrong buffer, walks the candidates in another
+    /// order, or drops an output. The kernel shipped with exactly that last
+    /// defect — it returned the angle it SELECTED by, so with
+    /// `balanced_tournaments` on the balanced angle would have been handed to
+    /// the stop bar as though it were TrueNorth — and both tests below passed
+    /// the whole time.
+    ///
+    /// So: build a block of scores, dispatch, and compare against the host's own
+    /// candidate walk (`host_candidate_winner_for_test`, the same code
+    /// `Engine::evaluate` runs), with every flag on and off.
+    #[test]
+    fn the_dispatched_kernel_agrees_with_the_host_candidate_walk() {
+        use crate::evolve::engine::{host_candidate_winner_for_test, hff_columns, HostWalk};
+        use crate::gpu_eval::GpuEvaluator;
+
+        const WIDTH: usize = 10;
+        let (rows, per) = (7usize, 9usize);
+        // Scores spanning what the scorer really emits: good fits, bad fits, an
+        // unfitted candidate (NaN scale, skipped by both sides), and a couple of
+        // near-perfect ones so the log scale is exercised where it is steepest.
+        let mut scores = vec![0.0f32; rows * per * WIDTH];
+        for r in 0..rows {
+            for c in 0..per {
+                let base = (r * per + c) * WIDTH;
+                let k = (r * per + c) as f32;
+                if c == 3 {
+                    scores[base] = f32::NAN; // unfitted: not a choice
+                    continue;
+                }
+                let err = if c == 5 { 1e-11 } else { 1e-3 * (1.0 + k) };
+                scores[base] = 1.0 + 0.01 * k;          // a
+                scores[base + 1] = 0.5;                  // b
+                scores[base + 2] = err;                  // mse train
+                scores[base + 3] = err * 1.5;            // mse val
+                scores[base + 4] = err * 3.0;            // max err val
+                scores[base + 5] = err * 2.0;            // mse extrap
+                scores[base + 6] = err.sqrt();           // mae train
+                scores[base + 7] = err.sqrt() * 1.5;     // mae val
+                scores[base + 8] = err.sqrt() * 2.0;     // mae extrap
+                scores[base + 9] = 0.25 + 0.01 * k;      // redundancy
+            }
+        }
+        let caps_var = [1.0f64, 2.0, 4.0];
+        let caps_mad = [0.8f64, 1.2, 1.6];
+        let caps: [f32; 6] = [1.0, 2.0, 4.0, 0.8, 1.2, 1.6];
+        let col_max = [1.0f64; 9];
+        let col_max_f32 = [1.0f32; 9];
+        let tower: Vec<u32> = (0..rows * per).map(|i| (i % 7) as u32).collect();
+
+        // A tiny dataset only so the evaluator has a device; this kernel reads
+        // none of it.
+        let evaluator = GpuEvaluator::new(&[1.0, 2.0, 3.0, 4.0], 2).expect("device");
+        let gpu = super::GpuHff::new(&evaluator).expect("pipeline");
+
+        // n_extrap 0 and 3: with none, `hff_columns` drops the extrapolation
+        // block entirely, which is what keeps the kernel from reading an
+        // objective the host never computed.
+        for n_extrap in [0usize, 3] {
+            for log_scale in [[false, false, false], [true, true, true]] {
+                for &(tower_on, redundancy, balanced) in &[
+                    (false, false, false),
+                    (true, false, false),
+                    (false, true, false),
+                    (false, false, true),
+                    (true, true, true),
+                ] {
+                    let columns = hff_columns(n_extrap, false, log_scale);
+                    let column_ids: Vec<u32> = columns.iter().map(|&(k, _)| k as u32).collect();
+                    let logs: Vec<u32> = columns.iter().map(|&(_, l)| u32::from(l)).collect();
+                    let winners = gpu
+                        .best(
+                            &evaluator,
+                            &scores,
+                            rows,
+                            per,
+                            WIDTH,
+                            &column_ids,
+                            &logs,
+                            &col_max_f32,
+                            &caps,
+                            &tower,
+                            (tower_on, redundancy, balanced),
+                        )
+                        .expect("dispatch");
+                    let what = format!("n_extrap {n_extrap}, log {log_scale:?}, tower {tower_on}, redundancy {redundancy}, balanced {balanced}");
+                    for r in 0..rows {
+                        let host_scores: Vec<f64> = scores[r * per * WIDTH..(r + 1) * per * WIDTH].iter().map(|&v| f64::from(v)).collect();
+                        let host = host_candidate_winner_for_test(&HostWalk {
+                            scores: &host_scores,
+                            per,
+                            caps_var,
+                            caps_mad,
+                            col_max,
+                            columns: &columns,
+                            tower_of: &tower[r * per..(r + 1) * per],
+                            n_extrap,
+                            redundancy,
+                            tower_on,
+                            balanced,
+                        })
+                        .expect("the host picks a winner");
+                        assert_eq!(
+                            winners.candidate[r] as usize, host.2,
+                            "{what}: row {r} — the device chose candidate {} and the host chose {}",
+                            winners.candidate[r], host.2
+                        );
+                        assert!(
+                            (f64::from(winners.fitness[r]) - host.0).abs() < 1e-5,
+                            "{what}: row {r} TrueNorth — device {} host {}",
+                            winners.fitness[r], host.0
+                        );
+                        assert!(
+                            (f64::from(winners.selection[r]) - host.1).abs() < 1e-5,
+                            "{what}: row {r} selection — device {} host {}",
+                            winners.selection[r], host.1
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// AND THE TWO ANGLES MUST ACTUALLY DIFFER SOMEWHERE, or the test above
+    /// would pass on a kernel that returned one of them twice — which is the
+    /// bug it exists to catch.
+    #[test]
+    fn the_balanced_angle_is_not_the_truenorth_angle() {
+        use crate::evolve::engine::{host_candidate_winner_for_test, hff_columns, HostWalk};
+        const WIDTH: usize = 10;
+        let per = 2usize;
+        let mut scores = vec![0.0f64; per * WIDTH];
+        for c in 0..per {
+            let base = c * WIDTH;
+            let err = if c == 0 { 1e-6 } else { 0.3 };
+            scores[base] = 1.0;
+            scores[base + 2] = err;
+            scores[base + 3] = err;
+            scores[base + 5] = err;
+            scores[base + 6] = err;
+            scores[base + 7] = err;
+            scores[base + 8] = err;
+        }
+        let columns = hff_columns(0, false, [false, false, false]);
+        let walk = |balanced: bool| {
+            host_candidate_winner_for_test(&HostWalk {
+                scores: &scores,
+                per,
+                caps_var: [1.0, 1.0, 1.0],
+                caps_mad: [1.0, 1.0, 1.0],
+                col_max: [1.0; 9],
+                columns: &columns,
+                tower_of: &[0, 0],
+                n_extrap: 0,
+                redundancy: false,
+                tower_on: false,
+                balanced,
+            })
+            .expect("a winner")
+        };
+        let w = walk(true);
+        assert!(
+            (w.0 - w.1).abs() > 1e-6,
+            "the balanced angle {} and TrueNorth {} are the same number, so the parity test above proves nothing about which one the kernel returns",
+            w.1, w.0
+        );
+    }
 
     /// THE KERNEL MUST AGREE WITH THE HOST IT REPLACES. The device only ranks,
     /// but a ranking that disagrees with the f64 one picks a different
