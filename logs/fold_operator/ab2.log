@@ -1,1 +1,33 @@
 === seed 7014 fold=on ===
+population 1 x (600+600) = 1200 | 400 generations in 12.3 s = 30.8 ms per generation | 481200 individuals = 39066 per second | stopped by n_gen
+FOLD	beats=20	rows=2000	rows_changed=523	genes=6000	subtrees=20451	flat=554	folded=554	nodes_saved=2911	secs=1.562	not_finite=3/unrepresentable=0/passes_variation=768/relevel_refused=0
+GENERATIONS	400	n_gen	1.259e-6
+HFF	0.029567	5.902e-5	1.259e-6	1.303e-2
+R² on the unseen test rows: 0.999979
+=== seed 7014 fold=off ===
+population 1 x (600+600) = 1200 | 400 generations in 10.7 s = 26.8 ms per generation | 481200 individuals = 44836 per second | stopped by n_gen
+GENERATIONS	400	n_gen	3.033e-6
+HFF	0.029355	6.510e-6	3.033e-6	1.289e-2
+R² on the unseen test rows: 0.999990
+=== seed 7015 fold=on ===
+population 1 x (600+600) = 1200 | 400 generations in 15.0 s = 37.6 ms per generation | 481200 individuals = 32024 per second | stopped by n_gen
+FOLD	beats=20	rows=2000	rows_changed=557	genes=6000	subtrees=21243	flat=567	folded=567	nodes_saved=3111	secs=2.593	not_finite=1296/unrepresentable=0/passes_variation=218/relevel_refused=0
+GENERATIONS	400	n_gen	3.189e-6
+HFF	0.025748	5.971e-5	3.189e-6	1.095e-2
+R² on the unseen test rows: 0.999996
+=== seed 7015 fold=off ===
+population 1 x (600+600) = 1200 | 400 generations in 10.7 s = 26.7 ms per generation | 481200 individuals = 45137 per second | stopped by n_gen
+GENERATIONS	400	n_gen	2.445e-6
+HFF	0.025669	4.011e-6	2.445e-6	1.100e-2
+R² on the unseen test rows: 0.999996
+=== seed 7016 fold=on ===
+population 1 x (600+600) = 1200 | 400 generations in 12.2 s = 30.6 ms per generation | 481200 individuals = 39339 per second | stopped by n_gen
+FOLD	beats=20	rows=2000	rows_changed=548	genes=6000	subtrees=25590	flat=581	folded=581	nodes_saved=2634	secs=2.020	not_finite=0/unrepresentable=0/passes_variation=82/relevel_refused=0
+GENERATIONS	400	n_gen	1.106e-5
+HFF	0.035893	4.242e-5	1.106e-5	2.492e-2
+R² on the unseen test rows: 0.999982
+=== seed 7016 fold=off ===
+population 1 x (600+600) = 1200 | 400 generations in 10.0 s = 25.1 ms per generation | 481200 individuals = 47951 per second | stopped by n_gen
+GENERATIONS	400	n_gen	8.024e-7
+HFF	0.034917	2.022e-6	8.024e-7	2.487e-2
+R² on the unseen test rows: 1.000000

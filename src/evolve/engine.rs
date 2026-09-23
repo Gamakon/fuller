@@ -770,12 +770,20 @@ impl Config {
             snap_top_k: 50,
             snap_rel_tol: 1e-3,
             snap_r2_drop: crate::lint::snap_guard::R2_DROP_TOL,
-            // THE FOLD ON, on the pump's beat and over the same top 50 rows of
-            // every island snap takes. Measured at 1.7 ms a row on a 26-node model
-            // over 240 train rows, which is ~170 ms of a ~1,080 ms beat at one
-            // pair — the search buys back head space a blob was holding, and one
-            // measured fit held 26 positions of it for 60,000 generations.
-            fold_every: pump_every,
+            // THE FOLD OFF BY DEFAULT, because the measurement does not yet say it
+            // pays. Three seeds at 400 generations, fold against no fold, after the
+            // offset fix and the landing fix: 7014 better (HFF 0.029326 vs
+            // 0.029355, train 1-R2 four times better), 7015 and 7016 worse. One win
+            // and two losses is not a default.
+            //
+            // What it IS is the only mechanism that has ever seen the thing it is
+            // aimed at: a 26-position blob holding the number 1, carried for 60,000
+            // generations in a gene whose head is 34. A 400-generation fit is a poor
+            // test of a benefit that accrues over sixty thousand, and the honest
+            // reading is that the operator works and its VALUE is unproven — so it
+            // ships switched on by `EVOLVE_FOLD_EVERY` and off by default, and the
+            // long run is what decides it.
+            fold_every: 0,
             fold_top_k: 50,
             genealogy_path: None,
             // THE BEAM ON, on the pump's beat. It takes the best individual as
@@ -2172,6 +2180,15 @@ fn subtree_positions(tree: &super::vary::GeneTree, tokens: &[u32], codes: &Symbo
     (0..arity).map(|k| subtree_positions(tree, tokens, codes, tree.child[pos] + k)).sum::<usize>() + 1
 }
 
+/// EVERY GENE POSITION OF THE SUBTREE at `pos`, itself included — which positions
+/// a fold there would remove, and therefore whose Dc slots it frees.
+fn subtree_walk(tree: &super::vary::GeneTree, tokens: &[u32], table: &SymbolTable, pos: usize, out: &mut Vec<usize>) {
+    out.push(pos);
+    for k in 0..table.arity(tokens[pos]) as usize {
+        subtree_walk(tree, tokens, table, tree.child[pos] + k, out);
+    }
+}
+
 /// WHICH DECODED NODE a gene position is, so the subtree there can be written as
 /// `Math`.
 ///
@@ -2552,6 +2569,13 @@ pub struct FoldCounts {
     pub not_finite: u64,
     /// A blob whose value no f32 can carry — counted, never written.
     pub value_unrepresentable: u64,
+    /// A folded candidate with nowhere to land: every row of its island is
+    /// already a winner of this beat or has taken a candidate already.
+    pub no_landing: u64,
+    /// A fold with nowhere to put its constant: every Dc slot of the gene is
+    /// already read by a "?" that SURVIVES the collapse, so writing the mean
+    /// anywhere would silently rewrite another literal of the same gene.
+    pub no_rnc_slot: u64,
     /// A subtree that LOOKED flat against its own magnitude and was refused
     /// because it passes its input's variation straight through: `x_1/x_0 - 440`
     /// swings as much as `x_1/x_0` does, and folding it would delete a live
@@ -2577,6 +2601,8 @@ impl FoldCounts {
             (&mut self.not_finite, beat.not_finite),
             (&mut self.value_unrepresentable, beat.value_unrepresentable),
             (&mut self.passes_variation, beat.passes_variation),
+            (&mut self.no_rnc_slot, beat.no_rnc_slot),
+            (&mut self.no_landing, beat.no_landing),
             (&mut self.relevel_refused, beat.relevel_refused),
         ] {
             *to += from;
@@ -2587,7 +2613,7 @@ impl FoldCounts {
     /// One line for the log, the shape `SnapCounts::line` has.
     pub fn line(&self) -> String {
         format!(
-            "FOLD\tbeats={}\trows={}\trows_changed={}\tgenes={}\tsubtrees={}\tflat={}\tfolded={}\tnodes_saved={}\tsecs={:.3}\tnot_finite={}/unrepresentable={}/passes_variation={}/relevel_refused={}",
+            "FOLD\tbeats={}\trows={}\trows_changed={}\tgenes={}\tsubtrees={}\tflat={}\tfolded={}\tnodes_saved={}\tsecs={:.3}\tnot_finite={}/unrepresentable={}/passes_variation={}/no_rnc_slot={}/no_landing={}/relevel_refused={}",
             self.beats,
             self.rows,
             self.rows_changed,
@@ -2600,6 +2626,8 @@ impl FoldCounts {
             self.not_finite,
             self.value_unrepresentable,
             self.passes_variation,
+            self.no_rnc_slot,
+            self.no_landing,
             self.relevel_refused,
         )
     }
@@ -3614,7 +3642,10 @@ impl Engine {
         }
         let mut changed: Vec<usize> = Vec::new();
         let mut records: Vec<FoldRecord> = Vec::new();
-        for r in winners {
+        // Rows this beat has already landed a candidate in, so two folds never
+        // overwrite one another and a landing never eats a winner.
+        let mut landed: Vec<usize> = Vec::new();
+        for &r in &winners {
             let r = r as usize;
             counts.rows += 1;
             let row_w = g_n * width;
@@ -3729,11 +3760,36 @@ impl Engine {
                     counts.value_unrepresentable += 1;
                     continue;
                 }
-                // The collapse: gene position `pos` becomes ONE "?" reading the last
-                // constant slot, set to the blob's value. `relevel` rebuilds the Dc
-                // domain, so the slots the removed subtree's own "?"s held are freed
-                // by the same pass that takes them away.
-                let slot = l.n_rnc - 1;
+                // THE SLOT THE FOLD'S "?" WILL READ, and it must be one NO SURVIVING
+                // "?" is already reading.
+                //
+                // `relevel` keeps each surviving "?" on its own Dc INDEX, not on its
+                // own value, so writing the mean into a fixed slot silently rewrote
+                // whatever constant another "?" was pointing at — a second, unrelated
+                // literal of the same gene, changed by a fold that had nothing to do
+                // with it. The slots the removed subtree's own "?"s held ARE free,
+                // because the subtree goes; the rest are not.
+                let mut taken_slots: Vec<u32> = Vec::new();
+                {
+                    // The positions inside the blob, which are about to disappear.
+                    let mut inside = Vec::new();
+                    subtree_walk(&tree, tokens, &self.table, pos, &mut inside);
+                    for i in 0..tree.n {
+                        if inside.contains(&i) {
+                            continue;
+                        }
+                        let o = tree.ordinal[i];
+                        if o < l.tail as usize {
+                            taken_slots.push(tokens[(l.head + l.tail) as usize + o]);
+                        }
+                    }
+                }
+                let Some(slot) = (0..l.n_rnc).find(|s| !taken_slots.contains(s)) else {
+                    // Every slot is spoken for by a "?" that survives, so there is
+                    // nowhere to put the blob's value. Counted, never guessed at.
+                    counts.no_rnc_slot += 1;
+                    continue;
+                };
                 let leaf = [super::vary::Graft { token: rnc_id, kids: [0, 0], dc: slot }];
                 let before = consts[g * nr + slot as usize];
                 consts[g * nr + slot as usize] = value;
@@ -3753,16 +3809,45 @@ impl Engine {
                     }
                 }
             }
-            // THE CLEAN GENE GOES BACK INTO ITS OWN ROW. The fold is a repair of
-            // this individual — it keeps its id, its age and its line — so the row
-            // is written in place and left unevaluated, exactly as snap's
-            // write-back leaves a row it grafted into.
+            // THE CLEAN GENE GOES INTO THE POPULATION BESIDE ITS ORIGINAL, in the
+            // worst row of the island it came from — the beam's landing, not snap's.
+            //
+            // "No gate on the substitution, the tournament decides" only means
+            // anything if there is something to decide BETWEEN. Written over its own
+            // row the fold is not a candidate, it is an edict: a lossy mutation (the
+            // blob's whole range, up to a percent of its value, on rows fitted to
+            // 1e-6) imposed on the top rows of every island with nothing downstream
+            // able to refuse it. Measured: in-place, three seeds all came out WORSE
+            // than the fold switched off, on train 1-R2 and on HFF.
+            //
+            // Landing it in the island's worst row costs a row the pump was about to
+            // refill anyway, keeps the original where it is, and lets HFF on the data
+            // be the only judge — which is the engine's own rule for the beam, and
+            // the only reading of "put clean genes back into the population" that
+            // leaves the tournament a choice.
             if folded_here {
-                gen.pop.genome[r * row_w..(r + 1) * row_w].copy_from_slice(&genome);
-                gen.pop.rnc[r * g_n * nr..(r + 1) * g_n * nr].copy_from_slice(&consts);
-                changed.push(r);
+                let Some(to) = self.fold_landing(gen, r, &landed, &winners) else {
+                    counts.no_landing += 1;
+                    continue;
+                };
+                gen.pop.genome[to * row_w..(to + 1) * row_w].copy_from_slice(&genome);
+                gen.pop.rnc[to * g_n * nr..(to + 1) * g_n * nr].copy_from_slice(&consts);
+                gen.pop.wrapper_id[to] = gen.pop.wrapper_id[r];
+                // The fold is the same LINE as the row it came from, so the candidate
+                // carries its cohort: it is that line tidied, not a new one.
+                if !self.cohorts.is_empty() {
+                    self.cohorts[to] = self.cohorts[r];
+                }
+                landed.push(to);
+                changed.push(to);
+                for rec in records.iter_mut().rev().take_while(|rec| rec.row == r) {
+                    rec.row = to;
+                }
             }
         }
+        // NEVER ASSUMED GOOD: a landed candidate is evaluated on the engine's own
+        // path, as the pump's fresh rows and the beam's survivors are, before
+        // anything ranks or remembers it.
         for &r in &changed {
             gen.fitness[r] = f32::NAN;
             self.scored[r] = None;
@@ -3783,6 +3868,34 @@ impl Engine {
             state.counts.add(&counts);
         }
         Ok((changed.len() as u64, counts))
+    }
+
+    /// WHERE A FOLDED CANDIDATE LANDS: the worst row of the island `row` belongs
+    /// to, which is a row selection was going to discard anyway.
+    ///
+    /// [`Engine::beam_landing`] without the float zone, and for the same reason —
+    /// the original must keep its own row, or "the tournament decides" decides
+    /// nothing. An unevaluated row goes first (it carries no score to lose), then
+    /// the weakest by fitness; rows this beat has already used are skipped, as is
+    /// the source row itself.
+    fn fold_landing(&self, gen: &Generation, row: usize, landed: &[usize], winners: &[u32]) -> Option<usize> {
+        let island = self.islands.iter().find(|i| (i.lo..i.hi).contains(&(row as u32)))?;
+        let key = |r: u32| {
+            let f = gen.fitness[r as usize];
+            if f.is_nan() { f32::MAX } else { f }
+        };
+        // A row NOT read from this beat is the first choice — overwriting a winner
+        // would delete an original some other candidate is to be judged against.
+        // With `fold_top_k = 0` every row of the island is a winner and there is no
+        // such row, so the worst of them gives way rather than the beat landing
+        // nothing: the row that loses its place is the island's weakest either way.
+        let pick = |allow_winner: bool| {
+            (island.lo..island.hi)
+                .filter(|&r| r as usize != row && !landed.contains(&(r as usize)))
+                .filter(|&r| allow_winner || !winners.contains(&r))
+                .max_by(|&a, &b| key(a).total_cmp(&key(b)).then(a.cmp(&b)))
+        };
+        pick(false).or_else(|| pick(true)).map(|r| r as usize)
     }
 
     /// The beat's folds onto the telemetry stream, as they are made.
@@ -5824,19 +5937,29 @@ mod tests {
         engine.scored[0] = Some(Scored {
             fitness: 0.5, linker: 0, wrapper: 0, a: 1.0, b: 0.0, one_minus_r2: [0.1; 3], t_depth: 1, selection: 0.5, genes: 1,
         });
+        let genome_before = gen.pop.genome.clone();
         let (changed, counts) = engine.fold_winners(&mut gen, 4).expect("the fold beat runs");
         assert!(changed > 0, "nothing was folded: {counts:?}");
         assert!(counts.folded > 0 && counts.nodes_saved > 0, "{counts:?}");
-        // THE GENE IS SMALLER and the blob is one constant reading 1.
-        let after = decode_gene(&gen.pop.genome[0..width], &gen.pop.rnc[0..nr], l, &engine.table).expect("the folded gene decodes");
+        // THE ORIGINAL KEEPS ITS OWN ROW. A candidate the tournament cannot
+        // compare against its parent is not a candidate, it is an edict.
+        assert_eq!(&gen.pop.genome[0..width], &genome_before[0..width], "the fold overwrote the row it came from");
+        // The candidate landed SOMEWHERE ELSE, and the gene it carries is smaller
+        // than the one it was folded from, with the blob's value in a slot.
+        let landed = (0..l.pop as usize)
+            .find(|&r| gen.pop.genome[r * l.n_genes as usize * width..r * l.n_genes as usize * width + width] != genome_before[r * l.n_genes as usize * width..r * l.n_genes as usize * width + width])
+            .expect("no row took the folded candidate");
+        let base = landed * l.n_genes as usize;
+        let after = decode_gene(&gen.pop.genome[base * width..base * width + width], &gen.pop.rnc[base * nr..base * nr + nr], l, &engine.table)
+            .expect("the folded gene decodes");
         assert!(after.len() < before.len(), "the fold did not shrink the gene: {} -> {}", before.len(), after.len());
         let math = nodes_to_math_named(&after, 0, &names(), &engine.table.named_values());
-        let holds_one = (0..nr).any(|k| (f64::from(gen.pop.rnc[k]) - 1.0).abs() < 1e-6);
-        assert!(holds_one, "no constant slot holds the blob's value: {:?}\n{math}", &gen.pop.rnc[0..nr]);
-        // AND THE ROW IS LEFT UNEVALUATED, so the next generation scores what it
-        // now is — the tournament judges the fold, the fold does not judge itself.
-        assert!(gen.fitness[0].is_nan(), "a repaired row kept its old score");
-        assert!(engine.scored[0].is_none(), "a repaired row kept its old Scored");
+        let holds_one = (0..nr).any(|k| (f64::from(gen.pop.rnc[base * nr + k]) - 1.0).abs() < 1e-6);
+        assert!(holds_one, "no constant slot holds the blob's value: {:?}\n{math}", &gen.pop.rnc[base * nr..base * nr + nr]);
+        // AND THE LANDED ROW IS UNEVALUATED, so the next generation scores it —
+        // the tournament judges the fold, the fold does not judge itself.
+        assert!(gen.fitness[landed].is_nan(), "a landed candidate arrived already scored");
+        assert!(engine.scored[landed].is_none(), "a landed candidate kept a Scored");
         // Nothing the gene could not take: a fold shrinks a tree, so the refusals
         // that bite a graft must not fire.
         assert_eq!(counts.relevel_refused, 0, "a shrinking collapse was refused: {counts:?}");
