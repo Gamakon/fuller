@@ -172,6 +172,20 @@ fn main() {
     //                                   past this label are ONE band, so the elders
     //                                   co-mingle and only the young are kept apart.
     //                                   0 = off, and selection is what it always was.
+    //   EVOLVE_CHECKPOINT_DIR           five rotating slots, so a fit killed at any
+    //                                   moment resumes from the beat before it. The
+    //                                   benchmark is 1,330 fits over a month on a
+    //                                   laptop with other work: a run that cannot be
+    //                                   stopped and started is a run that cannot be
+    //                                   finished, and one whose result depends on
+    //                                   WHEN it was stopped is not reproducible.
+    //   EVOLVE_CHECKPOINT_EVERY         how often, in SECONDS (default 60 when a
+    //                                   directory is given; 0 = only at the end).
+    config.checkpoint_dir = std::env::var("EVOLVE_CHECKPOINT_DIR").ok().filter(|p| !p.is_empty());
+    if config.checkpoint_dir.is_some() {
+        config.checkpoint_every_seconds =
+            std::env::var("EVOLVE_CHECKPOINT_EVERY").ok().and_then(|v| v.parse().ok()).unwrap_or(60.0);
+    }
     if let Some(m) = std::env::var("EVOLVE_COHORT_MERGE").ok().and_then(|v| v.parse::<u32>().ok()) {
         config.cohort_merge = m;
     }

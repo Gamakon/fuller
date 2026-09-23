@@ -92,7 +92,7 @@ pub struct SavedHof {
     pub fitness: f64,
     pub one_minus_r2: [f64; 3],
     pub t_depth: u32,
-    pub linker: u32,
+    pub linker: usize,
     pub wrapper: usize,
     pub a: f64,
     pub b: f64,

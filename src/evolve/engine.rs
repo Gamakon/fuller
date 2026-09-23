@@ -16,6 +16,7 @@
 use std::collections::HashMap;
 use std::time::Instant;
 
+use super::checkpoint;
 use super::device::EvolveDevice;
 use super::genealogy::{Genealogy, GenealogyLog, Origin, PopulationAges, RowMark};
 use super::score::{GpuScorer, WIDTH};
@@ -397,6 +398,13 @@ pub struct Config {
     pub k_migrants: u32,
     /// The cleansing mutation's rate per row (0 = off).
     pub cleanse: f64,
+    /// THE CHECKPOINT's directory: five rotating slots, so a fit killed at any
+    /// moment resumes from the beat before. None = off.
+    pub checkpoint_dir: Option<String>,
+    /// How often a checkpoint is written, in SECONDS — the unit the benchmark
+    /// budgets a fit in, and the one that stays predictable when a generation's
+    /// cost changes with the population. 0 = only when the fit ends.
+    pub checkpoint_every_seconds: f64,
     /// VIRTUAL ALPS — "couples from the same century" (Andrew).
     ///
     /// Each row carries a COHORT label: the pump beat its line arrived on,
@@ -590,6 +598,8 @@ impl Config {
             cross_every: 0,
             k_migrants: 3,
             cleanse: 0.0,
+            checkpoint_dir: None,
+            checkpoint_every_seconds: 0.0,
             cohort_merge: 0,
             lanes: None,
             redundancy: false,
@@ -1844,6 +1854,11 @@ pub struct Engine {
     /// VIRTUAL ALPS: the cohort label of every row, mirrored here because the
     /// pump writes its refills on the host. Empty when `cohort_merge` is 0.
     cohorts: Vec<u32>,
+    /// A checkpoint to CONTINUE, taken by `fit` on its first beat. None starts a
+    /// fresh search.
+    resume: Option<checkpoint::Checkpoint>,
+    /// Where the rotating checkpoint slots live; None when checkpointing is off.
+    slots: Option<checkpoint::Slots>,
     /// THE TELEMETRY STREAM's writer and the little it has to remember between
     /// beats; None when `Config::telemetry_path` is None, and then nothing in the
     /// fit loop touches it and the engine is what it was.
@@ -1963,6 +1978,23 @@ impl Engine {
             .flatten()
             .collect();
         let cohorts = if config.cohort_merge > 0 { vec![0u32; pop as usize] } else { Vec::new() };
+        // THE CHECKPOINT DIRECTORY, and whatever is already in it. A slot that
+        // disagrees with this config is REFUSED here rather than at the first
+        // generation, so a mistyped population fails before the GPU is touched.
+        let (resume, slots) = match &config.checkpoint_dir {
+            None => (None, None),
+            Some(dir) => {
+                let slots = checkpoint::Slots::open(dir)?;
+                let (newest, skipped) = slots.newest();
+                for why in &skipped {
+                    eprintln!("CHECKPOINT\ta slot was unreadable and skipped: {why}");
+                }
+                if let Some(cp) = newest.as_ref() {
+                    cp.agrees_with(config.seed, layout, config.pop_intake, config.pop_champion, config.n_pairs)?;
+                }
+                (newest, Some(slots))
+            }
+        };
         super::vary::validate(layout, &islands)?;
         if data.y.len() != data.splits.total() || data.x.len() != data.y.len() * data.names.len() {
             return Err("data: x, y and the splits do not agree".into());
@@ -1988,7 +2020,7 @@ impl Engine {
         if config.telemetry_path.is_some() && config.progress_every == 0 {
             return Err("telemetry_path: the stream rides on the progress report, so progress_every must be > 0".into());
         }
-        Ok(Engine { scored: vec![None; pop as usize], cohorts, config, table, layout, islands, dev, evaluator, scorer, data, caps, col_max: None, snap, lineage: None, telemetry: None })
+        Ok(Engine { scored: vec![None; pop as usize], cohorts, resume, slots, config, table, layout, islands, dev, evaluator, scorer, data, caps, col_max: None, snap, lineage: None, telemetry: None })
     }
 
     /// Score every unevaluated row of `gen`; returns (unique genes, oversized).
@@ -3019,6 +3051,62 @@ impl Engine {
     /// needs exactly this vector, and `read_cohorts` is a device read-back. Doing
     /// it twice per beat would be the telemetry paying for its own frame out of
     /// the fit's budget, which is the one thing it must never do.
+    /// Write the search's whole state to the oldest of the rotating slots.
+    ///
+    /// Everything the fit loop mutates goes in; anything left out shows up as a
+    /// divergence in `a_stopped_fit_equals_an_uninterrupted_one`, which is why
+    /// that test is worth more than this function.
+    #[allow(clippy::too_many_arguments)]
+    fn save_checkpoint(
+        &self,
+        gen: &Generation,
+        generation: u32,
+        elapsed_seconds: f64,
+        hof: Option<&HallOfFame>,
+        unique_genes: u64,
+        oversized_genes: u64,
+        individuals: u64,
+    ) -> Result<(), String> {
+        let Some(slots) = self.slots.as_ref() else { return Ok(()) };
+        let cp = checkpoint::Checkpoint {
+            format_version: checkpoint::FORMAT_VERSION,
+            seed: self.config.seed,
+            layout: self.layout,
+            pop_intake: self.config.pop_intake,
+            pop_champion: self.config.pop_champion,
+            n_pairs: self.config.n_pairs,
+            generation,
+            elapsed_seconds,
+            genome: gen.pop.genome.clone(),
+            rnc: gen.pop.rnc.clone(),
+            wrapper_id: gen.pop.wrapper_id.clone(),
+            fitness: gen.fitness.clone(),
+            cohorts: self.cohorts.clone(),
+            col_max: self.col_max,
+            hof: hof.map(|h| checkpoint::SavedHof {
+                generation: h.generation,
+                math: h.math.clone(),
+                genome: h.genome.clone(),
+                rnc: h.rnc.clone(),
+                wrapper_id: h.wrapper_id,
+                fitness: h.best.fitness,
+                one_minus_r2: h.best.one_minus_r2,
+                t_depth: h.best.t_depth,
+                linker: h.best.linker,
+                wrapper: h.best.wrapper,
+                a: h.best.a,
+                b: h.best.b,
+                selection: h.best.selection,
+                genes: h.best.genes,
+            }),
+            unique_genes,
+            oversized_genes,
+            individuals,
+        };
+        slots.save(&cp)?;
+        Ok(())
+    }
+
     fn report_cohorts(&self, gen: &Generation) -> Result<Option<Vec<u32>>, String> {
         if self.cohorts.is_empty() {
             return Ok(None);
@@ -3356,6 +3444,9 @@ impl Engine {
         let mut individuals = u64::from(self.layout.pop);
         self.dev.write_fitness(&gen.fitness)?;
         let (mut generation, mut stopped_by) = (0u32, "n_gen");
+        // Seconds spent BEFORE this process started, from a checkpoint.
+        let mut already_spent = 0.0f64;
+        let mut last_checkpoint = Instant::now();
         // THE GENEALOGY, when it is on: the initial draw is the population's
         // founders, one line each, all age 0. A fit starts its own count, as the
         // hall of fame's file starts its own.
@@ -3432,8 +3523,56 @@ impl Engine {
         // breeding and one cut, so counting it after the NEXT cut is the number that
         // says whether the zone earns its keep.
         let (mut floated, mut just_floated): (Vec<Vec<u32>>, Vec<Vec<u32>>) = (Vec::new(), Vec::new());
-        self.remember(&mut hof, &gen, 0);
-        self.log_best(0, &gen, &mut timing)?;
+        // THE RESUME. A checkpoint puts the search back exactly where it stopped:
+        // the population, the generation the generator is keyed on, the cohort
+        // ages, HFF's frozen column maxima, the hall of fame and the seconds
+        // already spent. `Engine::new` has already refused a checkpoint whose
+        // seed, layout or islands disagree, so what is left is a continuation
+        // rather than a new search wearing an old name.
+        let mut resumed_from: Option<u32> = None;
+        if let Some(cp) = self.resume.take() {
+            gen = cp.generation_state();
+            generation = cp.generation;
+            already_spent = cp.elapsed_seconds;
+            self.col_max = cp.col_max;
+            unique = cp.unique_genes;
+            oversized = cp.oversized_genes;
+            individuals = cp.individuals;
+            if !cp.cohorts.is_empty() {
+                self.cohorts = cp.cohorts.clone();
+                self.dev.write_cohorts(&self.cohorts)?;
+            }
+            self.dev.write_population(&gen.pop)?;
+            self.dev.write_fitness(&gen.fitness)?;
+            // The rows come back scored, so the loop does not re-evaluate what the
+            // checkpoint already knows; `scored` is rebuilt from the population.
+            self.evaluate(&mut gen, &mut timing)?;
+            hof = cp.hof.as_ref().map(|h| HallOfFame {
+                generation: h.generation,
+                best: Scored {
+                    fitness: h.fitness,
+                    linker: h.linker,
+                    wrapper: h.wrapper,
+                    a: h.a,
+                    b: h.b,
+                    one_minus_r2: h.one_minus_r2,
+                    t_depth: h.t_depth,
+                    selection: h.selection,
+                    genes: h.genes,
+                },
+                math: h.math.clone(),
+                genome: h.genome.clone(),
+                rnc: h.rnc.clone(),
+                wrapper_id: h.wrapper_id,
+                mark: None,
+            });
+            resumed_from = Some(generation);
+            eprintln!("RESUMED\tgeneration {generation}\t{already_spent:.1} s already spent");
+        }
+        if resumed_from.is_none() {
+            self.remember(&mut hof, &gen, 0);
+            self.log_best(0, &gen, &mut timing)?;
+        }
         if c.progress_every > 0 {
             eprintln!("{REPORT_HEADER}{}", if c.genealogy_path.is_some() { LINEAGE_HEADER } else { "" });
         }
@@ -3445,9 +3584,20 @@ impl Engine {
             }).map_err(|e| format!("hall of fame file {path}: {e}"))?;
         }
         while generation < c.max_generations {
-            if started.elapsed().as_secs_f64() > c.max_seconds {
+            // The budget is the WHOLE fit's, not this process's: a resume that
+            // started its clock at zero would give a stopped run more time than
+            // an uninterrupted one, and `2T` would not equal `T + T`.
+            if already_spent + started.elapsed().as_secs_f64() > c.max_seconds {
                 stopped_by = "time";
                 break;
+            }
+            // THE CHECKPOINT, written before the generation it names is varied,
+            // so a resume redoes that generation from the same state rather than
+            // half of it. The clock is seconds, not generations: a generation's
+            // cost changes with the population and the benchmark budgets in time.
+            if c.checkpoint_every_seconds > 0.0 && last_checkpoint.elapsed().as_secs_f64() >= c.checkpoint_every_seconds {
+                self.save_checkpoint(&gen, generation, already_spent + started.elapsed().as_secs_f64(), hof.as_ref(), unique, oversized, individuals)?;
+                last_checkpoint = Instant::now();
             }
             generation += 1;
             let t = Instant::now();
@@ -3689,6 +3839,12 @@ impl Engine {
             if let Err(e) = state.writer.run_end(generation, stopped_by, generation, individuals, telemetry::finite(best.fitness), started.elapsed().as_secs_f64()) {
                 eprintln!("TELEMETRY\tthe stream's last line was lost: {e}");
             }
+        }
+        // THE LAST CHECKPOINT. A fit that ran out of time is the one most worth
+        // resuming, and without this the slot would be up to
+        // `checkpoint_every_seconds` behind where the search actually got to.
+        if self.slots.is_some() {
+            self.save_checkpoint(&gen, generation, already_spent + started.elapsed().as_secs_f64(), hof.as_ref(), unique, oversized, individuals)?;
         }
         self.telemetry = None;
         Ok(FitResult {
@@ -4113,6 +4269,47 @@ mod tests {
         let model = r#"(Add (Mul (Var "x_0") (Var "x_1")) (Var "x_2"))"#;
         let tree = Tree::parse(model).expect("parse");
         assert_eq!(drop_dead_subtrees(&tree, &rows(), FINAL_FORM_AGREE), tree);
+    }
+
+    /// THE CHECKPOINT'S WHOLE POINT: a fit stopped and started must equal one
+    /// that ran straight through.
+    ///
+    /// The benchmark is 1,330 fits over a month on a laptop with other work, so
+    /// a run WILL be interrupted. If the result depends on when, the run is not
+    /// reproducible and nothing built on it can be published. So this compares
+    /// 2N generations in one go against N, a stop, a resume, and N more, and it
+    /// compares the MODEL — anything left out of the checkpoint diverges here
+    /// and this test names it.
+    #[test]
+    fn a_stopped_fit_equals_an_uninterrupted_one() {
+        let dir = std::env::temp_dir().join(format!("fuller-resume-{}", std::process::id()));
+        std::fs::remove_dir_all(&dir).ok();
+        let base = Config {
+            max_generations: 24,
+            max_seconds: 3600.0,
+            stop_one_minus_r2: -1.0,
+            cohort_merge: 400,
+            pump_every: 4,
+            ..toy_config(60, 20)
+        };
+
+        // Straight through.
+        let straight = Engine::new(base.clone(), toy_data()).expect("engine").fit().expect("fit");
+
+        // Stopped halfway: the checkpoint is written at the end of the short fit.
+        let half = Config { max_generations: 12, checkpoint_dir: Some(dir.display().to_string()), ..base.clone() };
+        let first = Engine::new(half, toy_data()).expect("engine").fit().expect("fit");
+        assert_eq!(first.generations, 12, "the first half did not stop where it was told");
+
+        // ... and resumed, under the SAME config the straight run had.
+        let rest = Config { checkpoint_dir: Some(dir.display().to_string()), ..base };
+        let resumed = Engine::new(rest, toy_data()).expect("engine").fit().expect("fit");
+
+        assert_eq!(resumed.generations, straight.generations, "the resumed fit ran a different number of generations");
+        assert_eq!(resumed.math, straight.math, "the resumed fit found a different model");
+        assert_eq!(resumed.best.fitness.to_bits(), straight.best.fitness.to_bits(), "the resumed fit scored differently");
+        assert_eq!(resumed.unique_genes, straight.unique_genes, "a different number of genes was evaluated");
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     /// Every column positive on the data: |x| is x, and sqrt((a/b)^2) is a/b.
