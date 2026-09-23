@@ -1925,21 +1925,33 @@ pub fn final_form_reporting(
     // caller measured against the target; with none given the rewriter's own
     // bound stands and nothing changes.
     let drop_agree = one_minus_r2.map_or(FINAL_FORM_AGREE, |e| (e / 10.0).max(FINAL_FORM_AGREE));
-    // AND THE NEAR-CONSTANTS, judged on a different question.
+    // AND THE NEAR-CONSTANTS, WHICH ARE NOT JUDGED HERE AT ALL.
     //
-    // `drop_agree` asks "does this change the predictions by less than the model
-    // is already wrong by", and for a model fitted to 1e-11 that allows almost
-    // nothing: the better a fit, the less it may be simplified, which is
-    // backwards. A model that fits to 1e-11 and is not the law has nothing to
-    // protect at the eleventh decimal.
+    // THE FOLD IS A CANDIDATE GENERATOR, and a generator does not get to decide
+    // whether what it made is good. It used to: a fold whose predictions moved
+    // more than the model's own error was dropped where it was made, so the only
+    // folds that ever existed were the ones that changed nothing. That is a
+    // REWRITER's question ("is this the same expression?") asked of a MUTATION,
+    // and it threw away exactly the interesting answers — a fold that moves the
+    // prediction TOWARDS the target is the operator finding structure the search
+    // could not reach. `tanh(exp(pow(...)))` fitted to 23/157 is a WINNER, not a
+    // drift: what matters is that it wins, and something downstream always says
+    // whether it did.
     //
-    // So a near-constant fold is allowed a WHOLE ORDER of the model's error
-    // rather than a tenth of it. It still has to keep the fit — the candidate is
-    // scored against the reference like every other, below — but it is not held
-    // to a precision that only an overfit has.
-    let flat_agree = one_minus_r2.map_or(FINAL_FORM_AGREE, |e| (e * 10.0).max(FINAL_FORM_AGREE));
-    // The folds THEMSELVES, beside the candidates they produced: what was folded
-    // and to what, recorded where the generator keeps one and nowhere else.
+    // The engine's own rule, already written for the beam: "A beam mutation is
+    // NOT an equivalent rewrite, and that is the point: this is how new functions
+    // are explored. HFF on the data is the only judge."
+    //
+    // So every flat subtree is folded and every fold is a candidate. The one
+    // thing still refused is a fold that does not COMPUTE — NaN or an infinity
+    // on the rows is a broken expression, not a daring one, and that is a
+    // validity gate rather than a tolerance.
+    //
+    // Nothing is loosened downstream: the REPORTED form is still chosen under
+    // `FINAL_FORM_AGREE` below, because reporting a model that computes
+    // something else would be falsifying the fit's answer. The difference is
+    // that the fold now reaches that choice, and the choice is made in one
+    // place instead of two.
     let mut found: Vec<Fold> = Vec::new();
     let folded: Vec<crate::lint::node::Tree> = {
         let mut out = Vec::new();
@@ -1952,10 +1964,6 @@ pub fn final_form_reporting(
                 let candidate = replace_subtree(&t, &sub, &crate::lint::node::Tree::Num(value));
                 let Ok(pred) = evaluate_math(&candidate.to_math(), rows) else { continue };
                 if pred.len() != reference.len() || pred.iter().any(|v| !v.is_finite()) {
-                    continue;
-                }
-                let drift = pred.iter().zip(&reference).map(|(p, r)| (p - r).powi(2)).sum::<f64>() / n;
-                if drift > flat_agree * var {
                     continue;
                 }
                 found.push(Fold { infix: truncated(&sub.to_infix(), FOLD_INFIX_MAX), value, nodes: sub.node_count() });
@@ -4740,6 +4748,64 @@ mod tests {
         let alive = r#"(Add (Mul (Var "x_0") (Var "x_1")) (Var "x_2"))"#;
         let (_, none) = final_form_reporting(alive, &names(), &rows(), Some(1e-9)).expect("a final form");
         assert!(none.is_empty(), "a model with no flat subtree reported folds: {none:?}");
+    }
+
+    /// A FOLD THAT MOVES THE PREDICTION IS STILL A CANDIDATE.
+    ///
+    /// The fold used to be dropped where it was made if its predictions moved
+    /// more than the model's own error, so the only folds that existed were the
+    /// ones that changed nothing. That is a rewriter's question asked of a
+    /// mutation. A fold is a CANDIDATE: it goes into the pool and something
+    /// downstream says whether it won.
+    ///
+    /// Here the model is fitted to 1e-12 — a precision that, under the old gate,
+    /// made every fold on it impossible. The near-constant is still found and
+    /// still reported.
+    #[test]
+    fn a_fold_is_generated_even_when_it_moves_the_prediction() {
+        let model = r#"(Mul (Var "x_0") (Tanh (Add (Var "x_0") (Num 40.0))))"#;
+        // An absurdly tight claim about the fit: the old gate scaled its
+        // tolerance off this, so at 1e-12 it allowed essentially no movement.
+        let (_, found) = final_form_reporting(model, &names(), &rows(), Some(1e-12)).expect("a final form");
+        assert!(!found.is_empty(), "a tight fit suppressed the fold generator");
+        assert!(found[0].infix.contains("tanh"), "{}", found[0].infix);
+        // The same model with no claim at all, and with a loose one: the fold is
+        // found either way, because the generator no longer asks the question.
+        for claim in [None, Some(1e-3), Some(1.0)] {
+            let (_, f) = final_form_reporting(model, &names(), &rows(), claim).expect("a final form");
+            assert!(!f.is_empty(), "the fold generator was gated by one_minus_r2 = {claim:?}");
+        }
+
+        // WHAT IS STILL REFUSED is a fold that does not COMPUTE. `log` of a
+        // subtree that folds to a negative is NaN on the rows, and a broken
+        // expression is not a daring candidate — that is a validity gate, not a
+        // tolerance. Nothing it produces reaches the pool.
+        let broken = r#"(ProtectedLog (Tanh (Sub (Num -40.0) (Var "x_0"))))"#;
+        let (form, _) = final_form_reporting(broken, &names(), &rows(), Some(1e-3)).expect("a final form");
+        let values = evaluate_math(&form, &rows()).expect("the reported form evaluates");
+        assert!(values.iter().all(|v| v.is_finite()), "a fold that does not compute was reported: {form}");
+    }
+
+    /// AND THE REPORTED FORM IS STILL GATED. Loosening the generator must not
+    /// loosen the answer: the fit reports a form that computes what the model
+    /// computes, and a fold that drifts is a candidate that LOSES that choice
+    /// rather than one that was never made.
+    #[test]
+    fn the_reported_form_still_computes_what_the_model_computes() {
+        // A subtree that is nowhere near flat: nothing may replace it, and the
+        // reported form must still predict what the model predicts.
+        for model in [
+            r#"(Mul (Var "x_0") (Tanh (Add (Var "x_0") (Num 40.0))))"#,
+            r#"(Add (Mul (Var "x_0") (Var "x_1")) (Var "x_2"))"#,
+        ] {
+            let (form, _) = final_form_reporting(model, &names(), &rows(), Some(1e-12)).expect("a final form");
+            let (want, got) = (evaluate_math(model, &rows()).unwrap(), evaluate_math(&form, &rows()).unwrap());
+            let n = want.len() as f64;
+            let mean = want.iter().sum::<f64>() / n;
+            let var = want.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / n;
+            let drift = want.iter().zip(&got).map(|(w, g)| (w - g).powi(2)).sum::<f64>() / n / var;
+            assert!(drift <= FINAL_FORM_AGREE, "the reported form drifted by {drift}: {form}");
+        }
     }
 
     /// A DISPLAY TRUNCATION COUNTS CHARACTERS, not bytes: an infix form can hold
