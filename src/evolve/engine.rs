@@ -827,9 +827,23 @@ pub struct Config {
     /// place, so the intake cannot grow for ever. 0 = off, the default; the
     /// population is then exactly what it always was.
     pub float_zone: u32,
-    /// TYPED TRANSCENDENTAL DEPTH — the ceiling on nested transcendentals, or
-    /// `None` for the engine exactly as it was.
-    /// (`docs/SPEC_typed_transcendental_depth.md`.)
+    /// **TSR — TRANSCENDENTAL SYMBOLIC REGRESSION** (Andrew's name for it): the
+    /// ceiling on nested transcendentals, or `None` for the engine exactly as it
+    /// was. See `kingdoms/tsr/README.md` and
+    /// `docs/SPEC_typed_transcendental_depth.md`.
+    ///
+    /// > "It's the only symbolic regression to properly handle the distance
+    /// > needed between the functions."
+    ///
+    /// Ordinary SR gives every function the same type, so `exp` accepts
+    /// `tanh`'s output as readily as it accepts `x`. TSR types the DISTANCE
+    /// between functions: the depth a term sits at becomes part of its type,
+    /// and a term too deep has no signature at all.
+    ///
+    /// `None` is the `symbolic-regression` kingdom — the untyped float op set —
+    /// and `Some(2)` is the `tsr` kingdom. Two phylogenetic spaces over ONE
+    /// engine: same selection, same pump, same islands, same HFF, only the
+    /// symbol table differs. That is what makes the A/B clean.
     ///
     /// The measurement behind it: across all 133 SRBench true models there are
     /// ZERO directly nested transcendental pairs, and the depths are 78 laws at
