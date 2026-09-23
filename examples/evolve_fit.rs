@@ -28,8 +28,21 @@ fn shuffled(n: usize, seed: u32, stream: u32) -> Vec<usize> {
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let path = args.first().expect("usage: evolve_fit data.tsv [seed] [seconds] [max_rows]");
-    let seed: u32 = args.get(1).and_then(|a| a.parse().ok()).unwrap_or(7001);
-    let seconds: f64 = args.get(2).and_then(|a| a.parse().ok()).unwrap_or(30.0);
+    // POSITIONAL, and easy to get wrong: arg 1 is the SEED and arg 2 is the
+    // seconds. Passing a big number meaning "no time cap" in slot 1 sets the
+    // seed and leaves the cap at its 30 s default, which silently truncated
+    // several long runs. EVOLVE_SEED and EVOLVE_SECONDS say which is which.
+    let seed: u32 = std::env::var("EVOLVE_SEED")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .or_else(|| args.get(1).and_then(|a| a.parse().ok()))
+        .unwrap_or(7001);
+    let seconds: f64 = std::env::var("EVOLVE_SECONDS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .or_else(|| args.get(2).and_then(|a| a.parse().ok()))
+        .unwrap_or(30.0);
+    eprintln!("BUDGET\tseed {seed}\t{seconds:.0} s");
     let max_rows: usize = args.get(3).and_then(|a| a.parse().ok()).unwrap_or(5000);
 
     let text = std::fs::read_to_string(path).expect("read the data file");
