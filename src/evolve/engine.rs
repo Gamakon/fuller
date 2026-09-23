@@ -4437,14 +4437,17 @@ impl Engine {
             timing.cross += t.elapsed().as_secs_f64();
             self.dev.write_fitness(&gen.fitness)?;
             if c.progress_every > 0 && generation % c.progress_every == 0 {
-                self.report(generation, started.elapsed().as_secs_f64(), &gen, hof.as_ref(), false)?;
+                // THE WHOLE FIT'S SECONDS, so the logbook of a resumed run
+                // continues its clock instead of restarting it beside a
+                // generation counter that does not.
+                self.report(generation, already_spent + started.elapsed().as_secs_f64(), &gen, hof.as_ref(), false)?;
             }
         }
         // The last row of the logbook: however the fit ended, its final state is
         // reported and the hall of fame's best is in the file. `force`: the
         // telemetry's throttle never costs a recording its final frame.
         if c.progress_every > 0 && (stopped_by != "n_gen" || generation % c.progress_every != 0) {
-            self.report(generation, started.elapsed().as_secs_f64(), &gen, hof.as_ref(), true)?;
+            self.report(generation, already_spent + started.elapsed().as_secs_f64(), &gen, hof.as_ref(), true)?;
         }
         let (mut row, mut ranked) = self.best(&gen).ok_or("no individual could be scored")?;
         // Under balanced tournaments the TrueNorth best is not an elite and may have
@@ -4544,7 +4547,19 @@ impl Engine {
             genealogy_lines: lines,
             genealogy_bytes: bytes,
             generations: generation,
-            seconds: started.elapsed().as_secs_f64(),
+            // THE WHOLE FIT'S SECONDS, across every stop and start, as
+            // `generations` already is and as the telemetry header now is.
+            //
+            // This one leaves the repository: the SRBench harness reads it as
+            // `search_seconds` and it is the number the run log prints. Left as
+            // this process's own elapsed time, a fit resumed from a checkpoint
+            // reported the duration of its last leg — so a 360-second fit that
+            // was stopped once and finished in forty more seconds would be
+            // published as a forty-second fit. The checkpoint exists so that a
+            // stopped run and a straight-through run are indistinguishable, and
+            // a timing that is not is exactly the kind of thing that makes the
+            // result unpublishable.
+            seconds: already_spent + started.elapsed().as_secs_f64(),
             individuals,
             unique_genes: unique,
             oversized_genes: oversized,
@@ -5338,6 +5353,19 @@ mod tests {
         assert_eq!(resumed.math, straight.math, "the resumed fit found a different model");
         assert_eq!(resumed.best.fitness.to_bits(), straight.best.fitness.to_bits(), "the resumed fit scored differently");
         assert_eq!(resumed.unique_genes, straight.unique_genes, "a different number of genes was evaluated");
+        // AND THE TIME IT REPORTS IS THE WHOLE FIT'S. This number leaves the
+        // repository: the SRBench harness reads it as `search_seconds` and the
+        // run log prints it. Left as the last process's own elapsed time, a fit
+        // stopped once and resumed would be published as having taken only its
+        // final leg — the one claim about a resumed run that could make the
+        // result unpublishable, in the very feature that exists to make stopping
+        // safe.
+        assert!(
+            resumed.seconds >= first.seconds,
+            "the resumed fit reports {:.4} s, less than the {:.4} s its first half alone had spent",
+            resumed.seconds,
+            first.seconds
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 
