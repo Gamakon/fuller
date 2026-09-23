@@ -29,9 +29,15 @@ What DID change there is the population's shape: genes past depth 2 fell from
 run's was `cos(sqrt(acos(1/x_1)) + 59)`, a depth-3 tower.
 
 **On two Feynman problems TSR recovered the law in its true form** —
-`I.15.10` and `I.26.2`, both of which are unsolved across every untyped race on
-the record. The budgets are not matched, so see the prior-results table before
-reading that as a win.
+`I.15.10` and `I.26.2`, both unsolved across every untyped race on the record.
+The budgets are not matched, so see the prior-results table before reading that
+as a win.
+
+**And a recovery is not a property of TSR until it holds on two seeds.**
+`I.15.10` recovered on seed 7014 and **did not** on 7015 (train 1-R² 5.4e-6,
+1,501 generations). So it is a seed-7014 result, not a TSR result — exactly
+what the record's two-seed rule exists to catch, and it is stated here rather
+than left for a reader to notice.
 
 ## What was live when these ran
 
