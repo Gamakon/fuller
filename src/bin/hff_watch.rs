@@ -909,10 +909,15 @@ fn cohort_table(f: &mut Frame, theme: Theme, state: &WatchState, area: Rect, wid
         Row::new(vec!["cohort".to_string(), "rows".into(), "best HFF ↓".into(), gain_column])
     }
     .style(Style::default().fg(theme.dim()));
+    // THE HIGHLIGHT AND THE DETAIL PANE NAME THE SAME ROW. The pane follows the
+    // table until the operator picks, so the wash has to follow it too — a
+    // highlight on no row while the pane described one would be two panels
+    // disagreeing about what is selected.
+    let highlighted = state.detail_id();
     let body: Vec<Row> = rows
         .iter()
         .map(|r| {
-            let selected = state.selected == Some(r.id);
+            let selected = highlighted == Some(r.id);
             let style = match (selected, r.extinct) {
                 (true, _) => Style::default().bg(theme.selection()).fg(theme.selected_ink()).add_modifier(Modifier::BOLD),
                 (false, true) => Style::default().fg(theme.dim()),
@@ -1101,13 +1106,21 @@ fn gene_line(f: &mut Frame, theme: Theme, state: &WatchState, area: Rect) {
 
 fn detail(f: &mut Frame, theme: Theme, state: &WatchState, area: Rect) {
     let block = Block::default().borders(Borders::ALL).title(" COHORT DETAIL ");
-    let Some(id) = state.selected else {
-        f.render_widget(Paragraph::new(Span::styled("no cohort selected", Style::default().fg(theme.dim()))).block(block), area);
+    // The cohort this pane is about: the operator's pick, or the table's first
+    // row when they have not made one. An empty table has neither.
+    let Some(id) = state.detail_id() else {
+        f.render_widget(
+            Paragraph::new(Span::styled("no cohorts in the table", Style::default().fg(theme.dim()))).block(block),
+            area,
+        );
         return;
     };
     let Some(r) = state.selected_row() else {
-        // The selection is KEPT even when its row has gone — the viewer does not
-        // reassign it, it explains it.
+        // A CHOSEN cohort whose row has gone. Only reachable once `j`/`k` has
+        // picked one: an untouched pane follows the table and cannot land here,
+        // which is what used to make this message the first thing on screen.
+        // The selection is KEPT — the viewer does not reassign it, it explains
+        // it.
         f.render_widget(
             Paragraph::new(vec![
                 Line::from(Span::styled(format!("c{id}"), Style::default().add_modifier(Modifier::BOLD))),
@@ -1392,6 +1405,18 @@ fn dump(state: &WatchState) -> String {
         let size = d.nodes.map_or_else(String::new, |n| format!("{n} nodes "));
         out.push_str(&format!("  gen {:>6}  {tag}  {size}{} -> {}{}\n", d.generation, d.what, d.became, d.times()));
     }
+    // THE DETAIL PANE, as the screen shows it. It is here because this is how
+    // the pane is checked from a log file, and because the cohort it names is a
+    // thing that has been wrong: it used to latch onto the first snapshot's best
+    // and go on naming it long after that cohort died.
+    out.push_str(&format!(
+        "\n  COHORT DETAIL  {}\n",
+        match (state.detail_id(), state.selected_row()) {
+            (Some(id), Some(r)) => format!("c{id}  born {}  rows {}  best {}", r.birth_generation, r.rows, or_dash(r.best_hff, 6)),
+            (Some(id), None) => format!("c{id}  not in the current table (kept — j/k to move it)"),
+            (None, _) => "no cohorts in the table".to_string(),
+        }
+    ));
     out.push_str(&format!(
         "\n  model  {}\n",
         state.gene_line.as_deref().map_or("(no model record yet)", |l| l)
@@ -1652,6 +1677,11 @@ mod tests {
         assert!(text.starts_with("SEARCHING"), "{text}");
         assert!(!text.contains("LAW"), "a running fit was given a verdict\n{text}");
 
+        // THE DETAIL PANE NAMES A LIVE COHORT, and a dump is where that is
+        // checked from a log file.
+        let first = found.rows().first().expect("a table").id;
+        assert!(dump(&found).contains(&format!("COHORT DETAIL  c{first}")), "{}", dump(&found));
+
         // A stream with no bar says so rather than judging against one.
         let barless = state_with(None, Some(-13.0), Some("n_gen"));
         let text = dump(&barless);
@@ -1660,6 +1690,30 @@ mod tests {
     }
 
 
+
+    /// THE DETAIL PANE SHOWS A COHORT THAT IS IN THE TABLE, not one that died
+    /// thousands of generations ago. The pane used to latch onto the best cohort
+    /// of the first snapshot it ever saw, so a long fit's viewer read
+    /// "c0 · not in the current table" beside a table of live cohorts.
+    #[test]
+    fn the_detail_pane_shows_a_live_cohort_not_a_latched_dead_one() {
+        let state = state_with(Some(-19.0), Some(-13.0), Some("n_gen"));
+        let first = state.rows().first().expect("a table").id;
+        let screen = painted(&state, Theme::default(), 140, 40);
+        assert!(screen.contains("COHORT DETAIL"), "{screen}");
+        assert!(screen.contains(&format!("c{first}")), "the pane does not name the table's row\n{screen}");
+        assert!(
+            !screen.contains("not in the current table"),
+            "an untouched pane claimed its cohort had gone\n{screen}"
+        );
+        // A CHOSEN cohort that has gone still gets the message — the case it
+        // was written for, and now the only case that reaches it.
+        let mut chosen = state;
+        chosen.selected = Some(999_999);
+        let screen = painted(&chosen, Theme::default(), 140, 40);
+        assert!(screen.contains("not in the current table"), "a kept selection lost its explanation\n{screen}");
+        assert!(screen.contains("c999999"), "{screen}");
+    }
 
     /// THE NEW PANELS DRAW, at both layouts and in both themes, and the layout
     /// still holds: nothing is cut off, nothing panics, and the discoveries and
