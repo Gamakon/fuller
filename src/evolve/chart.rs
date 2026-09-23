@@ -460,7 +460,17 @@ pub fn figure(series: &[Series], x: XAxis, caption: &str, label: &str) -> String
     // THE KEY FOR BOTH PANELS lives here, under the figure, with the full label
     // off the run card. A SOLID line is train; a DOTTED line of the same colour
     // is that run's third block.
-    out.push_str("\\nextgroupplot[ylabel={$1-R^2$}, ymode=log, legend columns=2]\n");
+    //
+    // `ymin` IS FORCED DOWN TO THE BAR, and this is not cosmetic. pgfplots
+    // auto-ranges to the DATA and clips everything outside the axis, so a bar of
+    // 1e-10 under traces that bottom out at 5e-8 is drawn and then thrown away:
+    // the panel showed six traces converging with nothing on the page saying
+    // they were three decades short of the thing they had to reach. The bar is
+    // the reason this panel exists, so the panel is sized to include it. It
+    // compresses the traces, and that compression IS the finding.
+    let floor_r2 = bars_r2.values().copied().fold(f64::INFINITY, f64::min);
+    let ymin = if floor_r2.is_finite() { format!(", ymin={:e}", floor_r2 / 5.0) } else { String::new() };
+    out.push_str(&format!("\\nextgroupplot[ylabel={{$1-R^2$}}, ymode=log{ymin}, legend columns=2]\n"));
     for (i, s) in series.iter().enumerate() {
         let c = colours[i % colours.len()];
         out.push_str(&format!(
@@ -481,7 +491,8 @@ pub fn figure(series: &[Series], x: XAxis, caption: &str, label: &str) -> String
     }
     for v in bars_r2.values() {
         out.push_str(&format!(
-            "\\draw[dashed, gray!70] ({{rel axis cs:0,0}}|-{{axis cs:1,{v:e}}}) -- ({{rel axis cs:1,0}}|-{{axis cs:1,{v:e}}})\n  node[pos=0.06, above, font=\\scriptsize, gray!70] {{stop bar $1-R^2 \\le {v:e}$}};\n"
+            "\\draw[dashed, gray!70] ({{rel axis cs:0,0}}|-{{axis cs:1,{v:e}}}) -- ({{rel axis cs:1,0}}|-{{axis cs:1,{v:e}}})\n  node[pos=0.13, above, font=\\scriptsize, gray!70] {{stop bar $1-R^2 \\le {}$}};\n",
+            tex_scientific(*v)
         ));
     }
     out.push_str("\n\\end{groupplot}\n\\end{tikzpicture}\n");
@@ -498,6 +509,28 @@ pub fn standalone(figure_file: &str) -> String {
     format!(
         "% A wrapper so the figure compiles by itself: `pdflatex standalone.tex`.\n\\documentclass[11pt,a4paper]{{article}}\n\\usepackage[margin=1in]{{geometry}}\n\\usepackage{{amsmath}}\n{PREAMBLE}\\pagestyle{{empty}}\n\\begin{{document}}\n\\input{{{figure_file}}}\n\\end{{document}}\n"
     )
+}
+
+/// A number as MATHS, not as Rust's `{:e}`. `format!("{:e}", 1e-10)` is the
+/// string `1e-10`, which TeX sets as the letter e between two numbers with a
+/// minus sign — "1e − 10". A bar written that way is a bar nobody can read.
+///
+/// Returns the body of a maths expression (the caller supplies the `$…$`):
+/// `10^{-10}` when the mantissa is 1, `2.5\times 10^{-3}` otherwise.
+fn tex_scientific(v: f64) -> String {
+    if v == 0.0 || !v.is_finite() {
+        return format!("{v}");
+    }
+    let exponent = v.abs().log10().floor() as i32;
+    let mantissa = v / 10f64.powi(exponent);
+    let sign = if v < 0.0 { "-" } else { "" };
+    // Within a rounding of 1, the mantissa is not worth printing: 1e-10 is
+    // `10^{-10}`, not `1\times 10^{-10}`.
+    if (mantissa.abs() - 1.0).abs() < 1e-9 {
+        format!("{sign}10^{{{exponent}}}")
+    } else {
+        format!("{:.3}\\times 10^{{{exponent}}}", mantissa)
+    }
 }
 
 /// The characters a legend entry or a tag must not hand to TeX raw. Tags carry
@@ -654,7 +687,40 @@ mod tests {
         assert_eq!(bar.stop_log10_p, Some(-19.0));
         assert_eq!(bar.stop_one_minus_r2, Some(1e-10));
         let with = figure(&[bar], XAxis::Generation, "c", "fig:x");
-        assert!(with.contains("stop bar"), "the run's own bar was not drawn");
+        // BOTH halves, and on their OWN panels. A single `contains("stop bar")`
+        // passed while the 1-R² rule was being CLIPPED AWAY by the axis: the
+        // figure showed six traces converging with nothing saying they were
+        // three decades short of the bar. So each panel is checked separately.
+        let (top, bottom) = with.split_once("ylabel={$1-R^2$}").expect("the two panels");
+        assert!(top.contains("stop bar $\\log_{10} p"), "the p half was not drawn on the p panel");
+        assert!(bottom.contains("stop bar $1-R^2"), "the error half was not drawn on the error panel");
+        // AND THE ERROR PANEL IS SIZED TO SHOW IT. pgfplots auto-ranges to the
+        // data and clips outside the axis, so a rule below every trace is drawn
+        // and then thrown away unless `ymin` reaches down to it.
+        let ymin: f64 = bottom
+            .lines()
+            .next()
+            .and_then(|l| l.split("ymin=").nth(1))
+            .and_then(|r| r.split([',', ']']).next())
+            .expect("an ymin on the error panel")
+            .parse()
+            .expect("a number");
+        assert!(ymin < 1e-10, "ymin {ymin:e} does not reach the bar, so the rule is clipped away");
+        // The bar reads as maths, not as Rust's `{:e}`: `1e-10` sets as
+        // "1e - 10", which is not a number anybody can read.
+        assert!(bottom.contains("10^{-10}"), "the bar was written in Rust's exponent form");
+        assert!(!bottom.contains("\\le 1e-10"), "a raw `1e-10` reached the page");
+    }
+
+    /// A NUMBER ON THE PAGE IS MATHS. Rust's `{:e}` is a debugging format and
+    /// TeX sets it as a letter between two numbers.
+    #[test]
+    fn an_exponent_reaches_the_page_as_maths() {
+        assert_eq!(tex_scientific(1e-10), "10^{-10}");
+        assert_eq!(tex_scientific(1e-19), "10^{-19}");
+        assert_eq!(tex_scientific(1.0), "10^{0}");
+        assert!(tex_scientific(2.5e-3).starts_with("2.500\\times 10^{-3}"), "{}", tex_scientific(2.5e-3));
+        assert!(!tex_scientific(1e-10).contains('e'), "the letter e reached the maths");
     }
 
     /// THE LEGEND TELLS THE TRUTH ABOUT THE OBJECTIVE COUNT, which means it says

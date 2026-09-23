@@ -117,14 +117,25 @@ fn run() -> Result<(), String> {
         }
         let dat = out.join(format!("{}.dat", s.tag));
         std::fs::write(&dat, table(&s, x)).map_err(|e| format!("{}: {e}", dat.display()))?;
+        // WHETHER THE RUN EVER MET THE BAR, said on the way past. It is the one
+        // question the figure exists to answer and an operator should not have
+        // to read a PDF to learn that the answer was "no" for every series.
+        let met = match s.stop_log10_p.zip(s.stop_one_minus_r2) {
+            None => "   no bar recorded".to_string(),
+            Some(_) => match s.first_met_bar() {
+                Some(p) => format!("   MET BOTH HALVES at generation {}", p.generation),
+                None => "   met neither half".to_string(),
+            },
+        };
         println!(
-            "{:18} {:6} -> {:4} points   gen {} -> {}{}",
+            "{:18} {:6} -> {:4} points   gen {} -> {}{}{}",
             s.tag,
             s.snapshots,
             s.points.len(),
             s.points.first().map_or(0, |p| p.generation),
             s.points.last().map_or(0, |p| p.generation),
             if s.saturated() { "   SATURATED (p = 0, off the scale)" } else { "" },
+            met,
         );
         built.push(s);
     }
@@ -161,6 +172,27 @@ fn default_caption(series: &[Series]) -> String {
              the scale, not at a value, and they are not success: read the panel below them.",
         );
     }
+    // A RUN WHOSE STREAM CARRIES NO BAR IS NAMED, not quietly drawn under
+    // somebody else's rule: the rules belong to the runs that recorded them.
+    let barless: Vec<String> = series
+        .iter()
+        .filter(|s| s.stop_log10_p.is_none() && s.stop_one_minus_r2.is_none())
+        .map(|s| s.tag.replace('_', "\\_"))
+        .collect();
+    if !barless.is_empty() {
+        c.push_str(&format!(
+            " The dashed rules belong to the runs that recorded a bar; {} {} written before the \
+             stream carried one, so no rule here is theirs.",
+            barless.join(", "),
+            if barless.len() == 1 { "was" } else { "were" },
+        ));
+    }
+    c.push_str(
+        " In the lower panel a SOLID line is train error and a DOTTED line of the same colour is \
+         that run's third block (SMOGD/SMOTE synthetic rows), which enters the HFF angle like any \
+         other objective. Validation error is measured and is in the data tables; it is left off \
+         the panel only because it tracks train closely on every run drawn here.",
+    );
     c.push_str(" Traces are thinned to their steps; no value is averaged and every point drawn is a beat the run held.");
     c
 }

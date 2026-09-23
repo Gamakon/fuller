@@ -38,7 +38,7 @@
 % BOTH halves pass, and each has failed alone on real runs: an angle can
 % saturate at 1-R^2 = 2.6e-6 (no law), and 1-R^2 = 2.6e-14 can still fail p
 % because the third block holds the angle open. Hence two panels, not one.
-\nextgroupplot[ylabel={$1-R^2$}, ymode=log, legend columns=2]
+\nextgroupplot[ylabel={$1-R^2$}, ymode=log, ymin=2.0000000000000002e-11, legend columns=2]
 \addplot[blue!70!black, thick, mark=none] table[x=x, y=one_minus_r2_train] {bacres1_deep.dat};
 \addlegendentry{bacres1\_deep (2000+2000, pump 20, third block)}
 % The third block (SMOGD/SMOTE synthetic rows). It enters the HFF angle like
@@ -74,10 +74,10 @@
 \addlegendimage{densely dotted, thick, gray!60!black}
 \addlegendentry{(dotted, same colour) that run's third block}
 \draw[dashed, gray!70] ({rel axis cs:0,0}|-{axis cs:1,1e-10}) -- ({rel axis cs:1,0}|-{axis cs:1,1e-10})
-  node[pos=0.06, above, font=\scriptsize, gray!70] {stop bar $1-R^2 \le 1e-10$};
+  node[pos=0.13, above, font=\scriptsize, gray!70] {stop bar $1-R^2 \le 10^{-10}$};
 
 \end{groupplot}
 \end{tikzpicture}
-\caption{Convergence on the hyperspherical fitness function. $\log_{10} p$ (top) is $I_{\sin^2\theta}((m-1)/2, 1/2)$, in which the objective count $m$ is consumed by the incomplete beta: $p$ is a probability on $[0,1]$, so $p = 10^{-19}$ means the same thing at 6 objectives, at 9 and at 19{,}000, and runs under different objective sets are directly comparable on this axis in a way no error metric allows. A FALLING $p$ IS NOT BY ITSELF A RECOVERED LAW: the stop bar has two halves and both must pass, so $1-R^2$ (bottom) is drawn beside it with the bar each run was actually run under. Markers on the floor of the top panel are $p$ underflowed to exactly zero ($\log_{10} p = -\infty$) — the f32 angle saturated on the pole. They are off the scale, not at a value, and they are not success: read the panel below them. Traces are thinned to their steps; no value is averaged and every point drawn is a beat the run held.}
+\caption{Convergence on the hyperspherical fitness function. $\log_{10} p$ (top) is $I_{\sin^2\theta}((m-1)/2, 1/2)$, in which the objective count $m$ is consumed by the incomplete beta: $p$ is a probability on $[0,1]$, so $p = 10^{-19}$ means the same thing at 6 objectives, at 9 and at 19{,}000, and runs under different objective sets are directly comparable on this axis in a way no error metric allows. A FALLING $p$ IS NOT BY ITSELF A RECOVERED LAW: the stop bar has two halves and both must pass, so $1-R^2$ (bottom) is drawn beside it with the bar each run was actually run under. Markers on the floor of the top panel are $p$ underflowed to exactly zero ($\log_{10} p = -\infty$) — the f32 angle saturated on the pole. They are off the scale, not at a value, and they are not success: read the panel below them. The dashed rules belong to the runs that recorded a bar; bacres1\_10k, bacres1\_test were written before the stream carried one, so no rule here is theirs. In the lower panel a SOLID line is train error and a DOTTED line of the same colour is that run's third block (SMOGD/SMOTE synthetic rows), which enters the HFF angle like any other objective. Validation error is measured and is in the data tables; it is left off the panel only because it tracks train closely on every run drawn here. Traces are thinned to their steps; no value is averaged and every point drawn is a beat the run held.}
 \label{fig:convergence}
 \end{figure}
