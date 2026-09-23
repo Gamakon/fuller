@@ -567,3 +567,51 @@ CARD	written /Users/andrewmorgan/Dev/gamakon/fuller/.claude/worktrees/agent-a5cc
     gen    secs  head      min_hff      avg_hff    mse_train       r2_train     r2_val_bl2     r2_val_bk3  t_depth   log10_p
     500      44    34  6.905340e-4  7.568195e-1    8.9401e-5   0.9999988376   0.9999993602              -        1    -16.27
   cohorts 4 alive | c0:386@6.905e-4  c400:139@6.905e-4  c300:35@7.720e-4  c500:640@6.543e-1
+   1000      98    34   0.000000e0  8.036059e-1    2.2111e-5   0.9999997125   0.9999998129              -        2      -inf
+  cohorts 8 alive | c0:385@0.000e0  c400:1@0.000e0  c500:1@0.000e0  c600:4@0.000e0  c800:98@0.000e0  c900:70@1.292e-3
+   1500     154    34   0.000000e0  8.012602e-1    2.2111e-5   0.9999997125   0.9999998129              -        2      -inf
+  cohorts 7 alive | c0:385@0.000e0  c400:1@0.000e0  c500:1@0.000e0  c600:4@0.000e0  c1300:94@0.000e0  c1400:75@1.245e-3
+   1743     180    34   0.000000e0  5.794024e-1    2.2111e-5   0.9999997125   0.9999998129              -        2      -inf
+  cohorts 8 alive | c0:384@0.000e0  c400:1@0.000e0  c500:1@0.000e0  c600:5@0.000e0  c1300:17@0.000e0  c1500:54@0.000e0
+dataset /Users/andrewmorgan/Dev/gamakon/fuller/.claude/worktrees/agent-a5ccf50f291890f3a/logs/tsr/data/feynman_III_4_32.tsv
+rows: train 4000, validation 1000, unseen test 18750
+population 1 x (800+400) = 1200 | 1743 generations in 180.1 s = 103.3 ms per generation | 2092800 individuals = 11623 per second | stopped by time
+seconds: variation 0.34 | read-back 16.51 | decode 3.69 | evaluate 64.87 | link+scale+metrics 0.00 | HFF 12.21 | pump 0.71 | cross 0.00
+seconds: snap 2.27 (0.011 per beat in the snap step itself)
+SNAP	87	26100	192	171	0	163	head_oversize=0/no_rnc_slot=0/unmappable_op=1/not_closed=0/types_do_not_close=5/unchanged=2/model_oversize=0
+SNAP_DETAIL	rows=8700	rows_skipped=0	genes_examined=26100	genes_with_nonwhole_literal=938	literals_offered=942	literals_matched=192	by_family=Pi=119/E=11/Root=7/Rational=29/Physical=23/Other=3	band_overflows=0	kept_by_device=171	refused_by_f64=0	written_back=163	rows_changed=162	seconds_per_beat=0.0106
+seconds: fold 72.20 (0.801 per beat in the fold step itself)
+FOLD	beats=87	rows=8700	rows_changed=473	genes=26100	subtrees=56153	flat=480	folded=479	nodes_saved=2427	secs=69.660	not_finite=35/unrepresentable=1/passes_variation=769/no_rnc_slot=0/no_landing=0/relevel_refused=0
+seconds: beam 3.20 (0.037 per beat)
+BEAM	87	1044	0	-15.17	-15.17	3.20
+BEAM_WRAPS	1044	grafted 0	kept 0	graft refused 0	better/refused per wrap: recip_1=0/0 x_over_expm1=0/0 recip_sqrt_1m=0/159 recip_1m=0/0
+BEAM_FLOAT	0	0
+genes evaluated 1562030 (unique per generation), over the 64-node limit 0
+TYPED	ceiling=2	refused=149675	depths=0:1533 1:758 2:1165 3:108 4:25 5:6 6:2 7:2 8:0 9:1
+1 - R²: train 2.875e-7, validation 1.871e-7
+FOLD	2	0.011494253	(1/87.0)
+model: ((7.698384447209964*sqrt(((((((x_3/x_1)/(x_0/x_2))**2) + (((x_3/x_1)/(x_0/x_2))**2)) + 0.011494252873563218)/3.0))) + (-0.5103055014591416))
+GENERATIONS	1743	time	1.871e-7
+HFF	0.000410	2.875e-7	1.871e-7	-
+MSE	2.211e-5	1.903e-5	-
+TOWER	2	reported only
+PVALUE	3.933e-18	-17.41	6
+GENES	1562030	0	2092800
+MODEL_INFIX	((7.698384447209964*sqrt(((((((x_3/x_1)/(x_0/x_2))**2) + (((x_3/x_1)/(x_0/x_2))**2)) + 0.011494252873563218)/3.0))) + (-0.5103055014591416))
+MODEL_PLAIN	((7.698384447209964*sqrt(((((((x_3/x_1)/(x_0/x_2))**2) + (((x_3/x_1)/(x_0/x_2))**2)) + 0.011494252873563218)/3.0))) + (-0.5103055014591416))
+RAW_MATH	(Add (Mul (Num 7.698384447209964) (Sqrt (Abs (Div (Add (Add (Abs (Pow2 (Mul (ProtectedDiv (Var "x_3") (Var "x_1")) (Abs (ProtectedInv (ProtectedDiv (Var "x_0") (Var "x_2"))))))) (Abs (Pow2 (Mul (ProtectedDiv (Var "x_3") (Var "x_1")) (Abs (ProtectedInv (ProtectedDiv (Var "x_0") (Var "x_2")))))))) (ProtectedInv (Num 87.0))) (Num 3.0))))) (Num -0.5103055014591416))
+R² on the unseen test rows: 1.000000
+--- tsr_feynman_III_4_32_7015 done ---
+=== tsr_strogatz_bacres1_7015 : kingdom=tsr ceiling=2 seed=7015 180s ===
+BUDGET	seed 7015	180 s
+POPULATION	800 intake + 400 champion
+POPULATION	800 intake + 400 champion
+CARD	written /Users/andrewmorgan/Dev/gamakon/fuller/.claude/worktrees/agent-a5ccf50f291890f3a/logs/tsr/tsr_strogatz_bacres1_7015/card.json	id tsr_strogatz_bacres1_7015	6 HFF objectives
+CARD	written /Users/andrewmorgan/Dev/gamakon/fuller/.claude/worktrees/agent-a5ccf50f291890f3a/logs/tsr/tsr_strogatz_bacres1_7015/card.json	id tsr_strogatz_bacres1_7015	6 HFF objectives
+    gen    secs  head      min_hff      avg_hff    mse_train       r2_train     r2_val_bl2     r2_val_bk3  t_depth   log10_p
+    500      11    34  1.504984e-3  4.536017e-1    2.2215e-4   0.9999660076   0.9999896307              -        2    -14.58
+  cohorts 6 alive | c0:392@1.505e-3  c200:7@2.043e-3  c300:27@2.043e-3  c400:131@2.290e-3  c100:3@3.814e-3  c500:640@8.131e-2
+   1000      24    34  8.457280e-4  4.365856e-1    8.6702e-6   0.9999986733   0.9999990279              -        2    -15.83
+  cohorts 5 alive | c0:394@8.457e-4  c700:20@8.457e-4  c800:40@8.457e-4  c900:106@8.457e-4  c1000:640@7.057e-2
+   1500      38    34  4.882813e-4  4.785007e-1    4.9368e-6   0.9999992446   0.9999993693              -        2    -17.03
+  cohorts 4 alive | c0:394@4.883e-4  c1300:55@4.883e-4  c1400:111@4.883e-4  c1500:640@5.020e-2

@@ -133,23 +133,38 @@ across the whole untyped record, at generation counts those races never
 reached.** Whether the untyped engine at 1,000 generations would also find
 them is not measured here, and the instruction for this work was not to run it.
 
-## The sweep, seed 7014, 180 s a fit
+## The sweep — 7 Feynman problems × 2 development seeds, 180 s a fit
 
-| problem | gens | ms/gen | train 1-R² | val 1-R² | log10 p | refused, % of gene-slots | genes past the ceiling |
-|---|---|---|---|---|---|---|---|
-| **I.15.10** | 1,001 | 111.5 | **1.158e-13** | 1.056e-13 | −33.54 | 2.93% | 0.9% |
-| **I.26.2** | **169** | 107.3 | **1.598e-14** | 1.716e-14 | −35.68 | 5.30% | 7.0% |
-| I.48.2 | 1,377 | 130.7 | 5.076e-07 | 5.468e-07 | −17.46 | 2.52% | 4.3% |
-| I.15.3t | 1,159 | 155.3 | 3.753e-04 | 3.714e-04 | −10.53 | 4.21% | 3.4% |
-| II.11.27 | 1,740 | 103.8 | 1.996e-05 | 1.640e-05 | −13.68 | 4.39% | 7.2% |
-| II.24.17 | 1,369 | 131.5 | 5.015e-06 | 4.065e-06 | −14.70 | 4.64% | 8.2% |
-| III.4.32 | 2,060 | 87.7 | 8.784e-07 | 8.083e-07 | −16.46 | 1.77% | 2.4% |
+| problem | seed | gens | ms/gen | train 1-R² | val 1-R² | log10 p | refused, % of gene-slots | genes past the ceiling |
+|---|---|---|---|---|---|---|---|---|
+| **I.15.10** | 7014 | 1,001 | 111.5 | **1.158e-13** | 1.056e-13 | −33.54 | 2.93% | 0.9% |
+| I.15.10 | 7015 | 1,501 | 119.9 | 5.382e-06 | 7.497e-06 | −15.37 | 3.10% | 2.2% |
+| **I.26.2** | 7014 | **169** | 107.3 | **1.598e-14** | 1.716e-14 | −35.68 | 5.30% | 7.0% |
+| **I.26.2** | 7015 | **2** | 177.4 | **1.647e-14** | 1.745e-14 | −35.71 | 1.76% | 1.6% |
+| I.48.2 | 7014 | 1,377 | 130.7 | 5.076e-07 | 5.468e-07 | −17.46 | 2.52% | 4.3% |
+| I.48.2 | 7015 | 1,120 | 162.4 | 8.560e-07 | 7.815e-07 | −16.45 | 3.47% | 2.4% |
+| I.15.3t | 7014 | 1,159 | 155.3 | 3.753e-04 | 3.714e-04 | −10.53 | 4.21% | 3.4% |
+| I.15.3t | 7015 | 1,000 | 181.2 | 8.320e-04 | 1.116e-03 | −9.64 | 4.75% | 3.1% |
+| II.11.27 | 7014 | 1,740 | 103.8 | 1.996e-05 | 1.640e-05 | −13.68 | 4.39% | 7.2% |
+| II.11.27 | 7015 | 1,800 | 100.3 | 1.128e-06 | 1.095e-06 | −16.16 | 2.89% | 1.6% |
+| II.24.17 | 7014 | 1,369 | 131.5 | 5.015e-06 | 4.065e-06 | −14.70 | 4.64% | 8.2% |
+| II.24.17 | 7015 | 1,087 | 165.6 | 6.471e-06 | 8.027e-06 | −14.03 | 4.75% | 9.6% |
+| III.4.32 | 7014 | 2,060 | 87.7 | 8.784e-07 | 8.083e-07 | −16.46 | 1.77% | 2.4% |
+| III.4.32 | 7015 | 1,743 | 103.3 | 2.875e-07 | 1.871e-07 | −17.41 | 2.39% | 4.0% |
 
 Bold rows met the stop bar AND were confirmed by reading the form against the
-true law. **2 of 7.**
+true law: **3 of 14.** Of those three, **one survives a matched untyped check**
+(I.15.10 at seed 7014) — see the headline.
 
-**The T2 rung is reached in every single fit** — every population carries genes
-at depth 2, so the ceiling is nowhere unreached.
+The other eleven fits reach train 1-R² between 2.9e-7 and 8.3e-4 and recover
+nothing, which is the ordinary state of this engine on these problems at three
+minutes a fit.
+
+**The T2 rung is reached in all 14 fits** — every population carries genes at
+depth 2, so the ceiling is nowhere unreached.
+
+Refusals span **1.76% to 5.30% of gene-slots per generation** across the 14,
+and genes past the ceiling **0.9% to 9.6%** of the final population.
 
 Precisely what is measured: genes sitting **at** depth 2, not sampler
 redirections to `sample_flat`. It is a fair proxy, because every depth-2 gene

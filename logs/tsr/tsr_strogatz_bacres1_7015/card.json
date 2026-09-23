@@ -1,0 +1,104 @@
+{
+  "card_version": 1,
+  "card_id": "tsr_strogatz_bacres1_7015",
+  "written_utc": "2026-09-23T23:16:01Z",
+  "code": {
+    "git_commit": "0bea3b9e8f88353c6d7e46649ee0b148b788a4de",
+    "git_dirty": false
+  },
+  "data": {
+    "path": "/Users/andrewmorgan/Dev/gamakon/fuller/.claude/worktrees/agent-a5ccf50f291890f3a/logs/tsr/data/strogatz_bacres1.tsv",
+    "max_rows": 5000,
+    "use_all": false,
+    "edge_path": null,
+    "test_path": null,
+    "n_train": 180,
+    "n_val": 45,
+    "n_third": 0,
+    "n_test": 75
+  },
+  "synthetic": {
+    "smogd": false,
+    "smote": false,
+    "smogd_noise": 1.0
+  },
+  "run": {
+    "seed": 7015,
+    "budget_seconds": 180.0,
+    "restarts": 1
+  },
+  "config": {
+    "seed": 7015,
+    "pop_intake": 800,
+    "pop_champion": 400,
+    "tournament_fraction": 0.07,
+    "champion_tournament_fraction": null,
+    "arrival_children": 4,
+    "champion_open_fight": false,
+    "champion_elites": null,
+    "champion_cohort_merge": null,
+    "elites": 2,
+    "n_genes": 3,
+    "head": 34,
+    "n_rnc": 10,
+    "rnc_lo": -100,
+    "rnc_hi": 100,
+    "pump_every": 100,
+    "n_pairs": 1,
+    "cross_every": 0,
+    "k_migrants": 3,
+    "cleanse": 0.0,
+    "promote_fraction": 0.03,
+    "checkpoint_every_seconds": 0.0,
+    "cohort_merge": 10000,
+    "lanes": null,
+    "redundancy": false,
+    "smogd": false,
+    "log_scale": [
+      false,
+      false,
+      false
+    ],
+    "hff_without_validation": false,
+    "tower": false,
+    "progress_every": 500,
+    "vhead_start": 12,
+    "vhead_every": 0,
+    "balanced_tournaments": false,
+    "hff_on_host": false,
+    "compounds": false,
+    "max_generations": 1000000,
+    "max_seconds": 180.0,
+    "stop_one_minus_r2": 1e-10,
+    "stop_log10_p": -19.0,
+    "gene_subsets": true,
+    "snap_every": 20,
+    "snap_top_k": 50,
+    "snap_rel_tol": 0.001,
+    "snap_r2_drop": 0.0001,
+    "fold_every": 20,
+    "fold_top_k": 50,
+    "beam_every": 20,
+    "beam_width": 2000,
+    "beam_wraps": true,
+    "beam_tree": false,
+    "float_zone": 0,
+    "typed_depth": 2
+  },
+  "derived": {
+    "hff_objectives": 6,
+    "population": 1200,
+    "islands": [
+      {
+        "lo": 0,
+        "hi": 800
+      },
+      {
+        "lo": 800,
+        "hi": 1200
+      }
+    ],
+    "live_cohorts": 100
+  },
+  "notes": []
+}

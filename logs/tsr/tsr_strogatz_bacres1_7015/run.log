@@ -1,0 +1,12 @@
+BUDGET	seed 7015	180 s
+POPULATION	800 intake + 400 champion
+POPULATION	800 intake + 400 champion
+CARD	written /Users/andrewmorgan/Dev/gamakon/fuller/.claude/worktrees/agent-a5ccf50f291890f3a/logs/tsr/tsr_strogatz_bacres1_7015/card.json	id tsr_strogatz_bacres1_7015	6 HFF objectives
+CARD	written /Users/andrewmorgan/Dev/gamakon/fuller/.claude/worktrees/agent-a5ccf50f291890f3a/logs/tsr/tsr_strogatz_bacres1_7015/card.json	id tsr_strogatz_bacres1_7015	6 HFF objectives
+    gen    secs  head      min_hff      avg_hff    mse_train       r2_train     r2_val_bl2     r2_val_bk3  t_depth   log10_p
+    500      11    34  1.504984e-3  4.536017e-1    2.2215e-4   0.9999660076   0.9999896307              -        2    -14.58
+  cohorts 6 alive | c0:392@1.505e-3  c200:7@2.043e-3  c300:27@2.043e-3  c400:131@2.290e-3  c100:3@3.814e-3  c500:640@8.131e-2
+   1000      24    34  8.457280e-4  4.365856e-1    8.6702e-6   0.9999986733   0.9999990279              -        2    -15.83
+  cohorts 5 alive | c0:394@8.457e-4  c700:20@8.457e-4  c800:40@8.457e-4  c900:106@8.457e-4  c1000:640@7.057e-2
+   1500      38    34  4.882813e-4  4.785007e-1    4.9368e-6   0.9999992446   0.9999993693              -        2    -17.03
+  cohorts 4 alive | c0:394@4.883e-4  c1300:55@4.883e-4  c1400:111@4.883e-4  c1500:640@5.020e-2
