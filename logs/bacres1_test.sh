@@ -83,7 +83,19 @@ echo "telemetry  $EVOLVE_TELEMETRY_FILE"
 # objectives it ended up with. The BINARY writes it, after every override, so it
 # cannot say one thing while the fit does another.
 export EVOLVE_CARD_OUT=$OUT/card.json
-echo "card       $EVOLVE_CARD_OUT (and $ROOT/logs/cards/$TAG.json)"
+# THE CARD LIBRARY, linked BEFORE the run and not copied after it -- the same
+# reason logs/latest.jsonl is linked before the fit starts. A `cp` after the
+# binary exits does not survive the SCRIPT being killed, and the run whose card
+# is most wanted is exactly the one that was interrupted. The link is made now,
+# so the library entry is live the moment the binary writes the card.
+#
+# `diff logs/cards/A.json logs/cards/B.json` is the question that could not be
+# asked the day four runs were spent not knowing the configuration had drifted
+# from the one that found 75 of 133 laws.
+mkdir -p $ROOT/logs/cards
+ln -sfn "$OUT/card.json" "$ROOT/logs/cards/$TAG.json"
+echo "card       $EVOLVE_CARD_OUT"
+echo "           library $ROOT/logs/cards/$TAG.json -- diff two: diff logs/cards/A.json logs/cards/B.json"
 echo "engine     see the card -- it is the whole configuration, not a summary"
 echo
 # THE MONITOR COMMAND, printed BEFORE the fit starts and not after. Every run
@@ -97,15 +109,6 @@ echo
 
 cd $ROOT
 ./target/release/examples/evolve_fit "$DATA"
-# THE CARD LIBRARY. The card beside the run is the run's own record; this copy
-# is the one that can be COMPARED -- `diff logs/cards/a.json logs/cards/b.json`
-# is the question that could not be asked the day four runs were spent not
-# knowing the configuration had drifted from the one that found 75 of 133 laws.
-# The binary writes the card at the START of the fit, so this copy exists even
-# when the run was killed.
-mkdir -p $ROOT/logs/cards
-cp $OUT/card.json $ROOT/logs/cards/$TAG.json 2>/dev/null &&
-  echo "CARD       $ROOT/logs/cards/$TAG.json  (diff it against another: diff logs/cards/A.json logs/cards/B.json)"
 echo "RUN DONE"
 }
 
