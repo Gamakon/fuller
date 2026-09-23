@@ -183,7 +183,13 @@ fn hff_main(@builtin(global_invocation_id) gid: vec3<u32>) {
         let cos_theta = clamp(1.0 - min(energy / m, 1.0), -1.0, 1.0);
         var fitness = 0.0;
         if (cos_theta <= 1.0 - 1.1920929e-7) { fitness = acos(cos_theta); }
-        // TrueNorth always JUDGES; the balanced pole only decides who breeds.
+        // TrueNorth always JUDGES, AND IT ALSO CHOOSES THE CANDIDATE. The
+        // balanced pole only decides who breeds ONCE THE CANDIDATE IS CHOSEN:
+        // the host takes its argmin over `fitness` and then records the balanced
+        // angle OF THAT CANDIDATE. Selecting by the balanced angle here would
+        // pick a different candidate than the host for the same row -- a
+        // uniformly mediocre one, which is exactly what the balanced pole is
+        // banned as a fitness for rewarding.
         var key = fitness;
         if (hp.balanced == 1u) {
             // hff_core returns 0 outright for a vector with no energy, because
@@ -202,7 +208,7 @@ fn hff_main(@builtin(global_invocation_id) gid: vec3<u32>) {
                 key = acos(cb);
             }
         }
-        if (key < win) {
+        if (fitness < win_truenorth) {
             win = key;
             win_truenorth = fitness;
             win_at = c;

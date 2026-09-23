@@ -1125,9 +1125,12 @@ pub fn host_candidate_winner_for_test(w: &HostWalk) -> Option<(f64, f64, usize, 
             maxes.push(1.0);
             logs.push(false);
         }
+        // THE ARGMIN IS ON TRUENORTH, exactly as `Engine::evaluate` takes it.
+        // The balanced angle is then recorded for the candidate TrueNorth chose;
+        // it never chooses one itself.
         let fitness = hff_truenorth(&used, &maxes, &logs);
-        let selection = if w.balanced { hff_balanced(&used, &maxes, &logs) } else { fitness };
-        if best.is_none_or(|b| selection < b.1) {
+        if best.is_none_or(|b| fitness < b.0) {
+            let selection = if w.balanced { hff_balanced(&used, &maxes, &logs) } else { fitness };
             best = Some((fitness, selection, c, omr2));
         }
     }
