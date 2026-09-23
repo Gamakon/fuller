@@ -126,13 +126,22 @@ $1.2\times10^{-10}$ to $1.1\times10^{-14}$. The stopping bar sits at
 $10^{-10}$, so this was not a cosmetic fix.
 
 \subsection{Hyperspherical fitness}
+\label{sec:hff}
 
-The engine computes nine objectives: mean squared error, $1 - R^2$ and mean
-absolute error, each on three blocks of rows (train, validation, and a third
-block that may be synthetic-noisy or edge rows). Each is capped at the constant
-model's error on that block --- a model worse than predicting the mean is
-useless, and how much worse carries no information --- and scaled into $[0,1]$
-against frozen ranges.
+The engine computes up to nine error objectives: mean squared error, $1 - R^2$
+and mean absolute error, each on three blocks of rows (train, validation, and a
+third block that may be synthetic-noisy or edge rows). Each is capped at the
+constant model's error on that block --- a model worse than predicting the mean
+is useless, and how much worse carries no information --- and scaled into
+$[0,1]$ against frozen ranges.
+
+\textbf{The run reported here used six.} The third block is dropped entirely when
+no synthetic or edge rows are generated, and the run generated none, so the
+objective set was mean squared error, $1 - R^2$ and mean absolute error on train
+and validation. The two non-error objectives below --- the tower and a
+redundancy column --- were both off. We state this from the run's recorded
+settings and the engine's defaults: the run emitted no card recording the
+derived objective count, and the card format that does postdates it.
 
 HFF then treats the scaled vector as a point on the unit sphere and returns its
 angle from the pole where all errors are zero:
@@ -143,13 +152,14 @@ with $m$ the number of objectives. Lower is fitter. There is no weighting, no
 scalarisation of the objectives into one number by hand, and no parsimony term
 in the fitness. Size is a reporting decision, taken after the search ends.
 
-Objectives can be entered on a log scale, $1 + \log_{10}(x)/12$, and this matters
-at the accuracy we need. Squared as it stands, small errors weigh nothing: an
+Objectives can be entered on a log scale, $1 + \log_{10}(x)/12$, and the argument
+for it is the accuracy we need. Squared as it stands, small errors weigh nothing: an
 error of $5\times10^{-3}$ contributes $3\times10^{-5}$ and one of
 $2\times10^{-4}$ contributes $4\times10^{-8}$. A tournament cannot tell a
 plausible fake at $10^{-3}$ from an exact law at $10^{-12}$. On the log scale
 those two sit at 0.75 and 0, and every factor of ten in the error counts the
-same.
+same. The log scale is off by default and was off in this run; the argument
+above is why it exists, not a measured contribution to 75.
 
 The angle converts to a p-value: the probability that a point drawn uniformly on
 the $m$-objective hypersphere lies within $\theta$ of the pole, the regularised
@@ -157,10 +167,14 @@ incomplete beta $I_{\sin^2\theta}\!\left(\frac{m-1}{2}, \frac12\right)$. We
 report $\log_{10} p$ throughout, computed in log space so it stays finite deep
 in the left tail where $p$ itself underflows.
 
-One objective is not an error. The \emph{tower} objective is the transcendental
+One available objective is not an error. The \emph{tower} objective is the
+transcendental
 nesting depth of the decoded gene --- the most transcendental functions met on
 any path from root to leaf. Addition, subtraction, multiplication, division,
 negation, reciprocal and whole powers do not count, so a long flat law scores 0.
+It is off by default, and off in the run of Section~\ref{sec:results}; it was on
+in the lineage measurement of Section~\ref{sec:measurement}. We describe it
+because it is a component of the engine, not because it contributed to 75.
 This is not parsimony. It was calibrated on 1{,}230 labelled fits: every one of
 SRBench's 133 true laws has a depth of at most 2, and three quarters of the
 accurate-but-wrong models are 3 or more. The penalty has a free zone up to depth
@@ -181,7 +195,7 @@ The design intent is plain: the champion island accumulates, the intake island
 churns, and the pump is where diversity enters. Section~\ref{sec:alps} is about
 the measurement that showed it was not entering.
 
-\subsection{\texttt{fuller}: rewriting as a variation operator}
+\subsection{\texttt{fuller}: rewriting that converts back into the genotype}
 \label{sec:rewriting}
 
 \texttt{fuller} is a Rust crate built on egglog 2.0 that replaced sympy in the
@@ -191,18 +205,28 @@ semantics match the device exactly, and several rulesets: algebraic identities,
 powers, distribution, rational arithmetic and trigonometry.
 
 The important structural point is that \texttt{fuller} converts in both
-directions. A chromosome decodes to an expression, the expression is saturated
-and a variant extracted, and the simplified form converts \emph{back into a
-Karva gene}. Algebraic simplification is therefore a variation operator inside
-the search, not a cleanup pass at report time. The same machinery serves the
-constant-snapping stage, where a folded literal near $\pi$, $e$, $\sqrt2$ or a
-physical constant is matched against a resident lattice on the GPU, judged on
-whether the whole model's $R^2$ survives, and written back into the gene.
+directions. A chromosome decodes to an expression, the expression is rewritten,
+and the rewritten form converts \emph{back into a Karva gene}. That return leg
+is what makes a rewrite available to the search rather than only to the report,
+and it is the capability the argument of Section~\ref{sec:together} rests on.
+
+Two rewriters use it, and only one of them ran inside the search that produced
+75. \emph{Constant snapping} is the one that did: a folded literal near $\pi$,
+$e$, $\sqrt2$ or a physical constant is matched against a resident lattice on
+the GPU, judged on whether the whole model's $R^2$ survives, and written back
+into the gene in place. \emph{Saturate-and-extract} --- decode, run the
+e-graph to a bounded fixpoint, enumerate variants, score them on the data and
+keep the smallest within tolerance --- is the algebraic half. It is implemented
+and exposed to callers over the crate's Python interface, and it has no call
+site in the engine's generation loop; it was a stated design for the search, not
+a component of this run. Section~\ref{sec:together} is exact about which was
+which and why the distinction matters to the claim.
 
 Two things about this substrate cost us time. Rule
 families are non-confluent: distribution co-saturated with trigonometry or with
-rational arithmetic explodes the e-graph and pegs a CPU core. The in-search
-simplifier therefore uses only a bounded algebra-plus-powers subset, and
+rational arithmetic explodes the e-graph and pegs a CPU core. The
+saturate-and-extract path therefore uses only a bounded algebra-plus-powers
+subset, and
 distribution is kept out of it entirely --- it is a normal-form canonicaliser,
 and enumerating variants over its equivalence class does not terminate in useful
 time. And egglog does not constant-fold floating-point literals unless a rule
@@ -217,12 +241,29 @@ canonical forms, not the smaller expression a symbolic regressor wants --- but
 they are not solved.
 
 \subsection{The stopping bar}
+\label{sec:stopbar}
 
-A fit stops when validation $1 - R^2 \le 10^{-10}$ and $\log_{10} p \le -19$.
+A fit stops when \emph{both} train and validation $1 - R^2 \le 10^{-10}$ --- and
+the third block's too, when a third block exists and it is edge rows rather than
+synthetic ones --- and $\log_{10} p \le -19$. The run of
+Section~\ref{sec:results} had no third block, so its bar was train, validation
+and $p$.
+
 The p-value half was added after a measurement on development seed 7013: every
 real law that met the $R^2$ condition sat at $-19.4$ or below, most between $-21$
 and $-22$, and the one fake that slipped under the $R^2$ bar (Strogatz
 \texttt{bacres2}, validation $1-R^2 = 1.0\times10^{-11}$) sat at $-17.55$.
+
+The train half was added later and for the same failure from the other side. A
+validation split can be lucky: over the cascade's 117 early stops, all 113 real
+wins had train $1-R^2 \le 10^{-10}$ with a median of $9.8\times10^{-15}$, and
+the single exception was \texttt{bacres2} again --- stopping with validation ten
+times better than the rows the model was actually fitted on, which is a
+description of noise rather than of a fit. Requiring both sides cost no true win
+on record. It was in place before the run reported here. Note what this means
+for the p-value's job: the case that motivated the $p$ condition is now also
+excluded on the error side, and Section~\ref{sec:limits} returns to whether $p$
+is still earning its place.
 
 The bar is ours. It never reads SRBench's verdict. That distinction does real
 work in Section~\ref{sec:integrity}.
@@ -231,6 +272,7 @@ work in Section~\ref{sec:integrity}.
 \label{sec:alps}
 
 \subsection{The measurement}
+\label{sec:measurement}
 
 We instrumented every individual with an identity, an age (generations since its
 genotype entered the population, by Hornby's ALPS rule: an offspring is its
@@ -817,12 +859,31 @@ one.
 $-30$ and $-38$, against a bar of $-19$, and the solved and unsolved distributions
 overlap completely, with medians of $-36.3$ and $-35.1$. The p-value never binds
 and cannot separate a law from a near miss at this operating point; $1 - R^2$ is
-doing all the work of the stop bar. The bar was calibrated on a different
-configuration: four objectives, a different seed, and before the precision fix
-that moved the \texttt{f32} floor from $1.2\times10^{-10}$ to
-$1.1\times10^{-14}$. The p-value depends on how many objectives HFF carries, so
-both of those shift the distribution. Either way the condition is not currently
-earning its place, and we should recalibrate it per configuration or drop it.
+doing all the work of the stop bar.
+
+The reason is the angle, not the dimension. A $\log_{10} p$ bar is
+dimension-free: $m$ enters the incomplete beta of Section~\ref{sec:hff} as a
+parameter and is consumed by it, so what comes out is a probability, and $p =
+10^{-19}$ means the same thing at six objectives as at nine or at nineteen
+thousand. That is the whole point of reporting the angle as a probability rather
+than as $\theta$, and it means a bar calibrated under one objective set
+transfers to another unchanged. What did move is the angle itself. The bar was
+set on a different seed and before the precision fix that dropped the
+\texttt{f32} floor on a true law from $1.2\times10^{-10}$ to
+$1.1\times10^{-14}$; four decades of headroom at the accurate end pushes every
+real law far past $-19$, which is exactly the saturation we observe. The
+solved and unsolved distributions then overlap because both sit deep in the tail,
+not because the count of objectives changed the scale.
+
+The consequence is a real one and the remedy is not recalibration. Re-setting
+the bar per configuration would be treating a dimension-free quantity as though
+it were not, and removing objectives to move $p$ would be deleting a measurement
+to improve a number. If the condition is to earn its place it has to be at an
+operating point where the angle discriminates --- which means asking which
+objectives enter it, not how many. As it stands the error half of the bar,
+strengthened on the train side (Section~\ref{sec:stopbar}), already excludes the
+case the $p$ condition was introduced to catch, and on this run $p$ adds
+nothing.
 
 \textbf{What we have not tested.} The noisy tracks. The Feynman bonus set, where
 we score 0 of 20 and always have. The nine problems of the
