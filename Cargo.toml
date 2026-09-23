@@ -62,6 +62,13 @@ gpu = ["dep:wgpu", "dep:pollster", "dep:bytemuck"]
 name = "hff-watch"
 path = "src/bin/hff_watch.rs"
 
+# THE CONVERGENCE CHART. Not behind `gpu` either, and for the same reason: a
+# figure is drawn from a RECORDING, on whatever machine the paper is being
+# written on, which need not be one that could have run the fit.
+[[bin]]
+name = "hff-chart"
+path = "src/bin/hff_chart.rs"
+
 [[example]]
 name = "00_calibration"
 

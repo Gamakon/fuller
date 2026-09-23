@@ -18,3 +18,10 @@ nucleotable.db
 vendor-egglog/target/
 hof_pickles/
 logs/latest.jsonl
+
+# LaTeX build artifacts. Scoped to docs/paper/ ON PURPOSE: a bare `*.log` would
+# also swallow the 52 run logs under logs/, which are the record of the fits.
+docs/paper/**/*.aux
+docs/paper/**/*.log
+docs/paper/**/*.out
+docs/paper/**/*.synctex.gz

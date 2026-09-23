@@ -1,0 +1,11 @@
+% A wrapper so the figure compiles by itself: `pdflatex standalone.tex`.
+\documentclass[11pt,a4paper]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.18}
+\usepgfplotslibrary{groupplots}
+\pagestyle{empty}
+\begin{document}
+\input{convergence.tex}
+\end{document}

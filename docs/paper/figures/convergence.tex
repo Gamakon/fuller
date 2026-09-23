@@ -1,0 +1,83 @@
+% THE CONVERGENCE CHART, emitted by `hff-chart` from recorded telemetry.
+% Generated — do not edit by hand. Regenerate with the command in the caption.
+% Requires pgfplots (compat=1.18) and its groupplots library in the
+% DOCUMENT PREAMBLE. See `fuller::evolve::chart::PREAMBLE`, or compile
+% the standalone.tex written beside this file, which supplies them.
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}
+\begin{groupplot}[
+  group style={group size=1 by 2, vertical sep=7mm, x descriptions at=edge bottom},
+  width=0.94\linewidth, height=62mm,
+  xmode=log, log basis x=10,
+  xlabel={generation},
+  unbounded coords=jump,
+  grid=both, grid style={gray!18},
+  tick label style={font=\small}, label style={font=\small},
+  legend style={font=\scriptsize, draw=gray!40, at={(0.5,-0.28)}, anchor=north, cells={anchor=west}},
+]
+
+% Panel 1 --- log10 p. DIMENSION-FREE: p is I_{sin^2 theta}((m-1)/2, 1/2),
+% so m is consumed by the CDF and p = 1e-19 means the same thing at any m.
+% This is what makes runs with different objective counts overlayable.
+\nextgroupplot[ylabel={$\log_{10} p$}, legend style={font=\scriptsize, draw=gray!40, at={(0.02,0.42)}, anchor=west, cells={anchor=west}}]
+\addplot[blue!70!black, thick, mark=none, forget plot] table[x=x, y=log10_p] {bacres1_deep.dat};
+\addplot[red!70!black, thick, mark=none, forget plot] table[x=x, y=log10_p] {bacres1_10k.dat};
+\addplot[green!45!black, thick, mark=none, forget plot] table[x=x, y=log10_p] {bacres1_100k.dat};
+\addplot[orange!80!black, thick, mark=none, forget plot] table[x=x, y=log10_p] {bacres1_test.dat};
+\addplot[violet, thick, mark=none, forget plot] table[x=x, y=log10_p] {bacres1_75long.dat};
+\addplot[brown, thick, mark=none, forget plot] table[x=x, y=log10_p] {bacres1_fold.dat};
+% SATURATED: p underflowed to 0 (log10 p = -inf). Drawn ON A FLOOR, off the
+% scale, NEVER as a finite value --- and it is not success: see the caption.
+\addplot[violet, only marks, mark=pentagon*, mark size=1.1pt, opacity=0.7] table[x=x, y=sat] {bacres1_75long.dat};
+\addlegendentry{bacres1\_75long: $p=0$ ($\log_{10} p = -\infty$, f32 saturated --- OFF SCALE, not a value)}
+\draw[dashed, gray!70] ({rel axis cs:0,0}|-{axis cs:1,-19}) -- ({rel axis cs:1,0}|-{axis cs:1,-19})
+  node[pos=0.13, above, font=\scriptsize, gray!70] {stop bar $\log_{10} p \le -19$};
+
+% Panel 2 --- 1-R^2, THE OTHER HALF OF THE STOP BAR. A fit is a law only when
+% BOTH halves pass, and each has failed alone on real runs: an angle can
+% saturate at 1-R^2 = 2.6e-6 (no law), and 1-R^2 = 2.6e-14 can still fail p
+% because the third block holds the angle open. Hence two panels, not one.
+\nextgroupplot[ylabel={$1-R^2$}, ymode=log, legend columns=2]
+\addplot[blue!70!black, thick, mark=none] table[x=x, y=one_minus_r2_train] {bacres1_deep.dat};
+\addlegendentry{bacres1\_deep (2000+2000, pump 20, third block)}
+% The third block (SMOGD/SMOTE synthetic rows). It enters the HFF angle like
+% any other objective, so while it sits at ~7e-3 the angle cannot close and p
+% plateaus however far train falls --- which is the whole reading of this figure.
+\addplot[blue!70!black, densely dotted, thick, mark=none, forget plot] table[x=x, y=one_minus_r2_third] {bacres1_deep.dat};
+\addplot[red!70!black, thick, mark=none] table[x=x, y=one_minus_r2_train] {bacres1_10k.dat};
+\addlegendentry{bacres1\_10k (10000+10000, pump 33, third block)}
+% The third block (SMOGD/SMOTE synthetic rows). It enters the HFF angle like
+% any other objective, so while it sits at ~7e-3 the angle cannot close and p
+% plateaus however far train falls --- which is the whole reading of this figure.
+\addplot[red!70!black, densely dotted, thick, mark=none, forget plot] table[x=x, y=one_minus_r2_third] {bacres1_10k.dat};
+\addplot[green!45!black, thick, mark=none] table[x=x, y=one_minus_r2_train] {bacres1_100k.dat};
+\addlegendentry{bacres1\_100k (100000+100000, pump 20, third block)}
+% The third block (SMOGD/SMOTE synthetic rows). It enters the HFF angle like
+% any other objective, so while it sits at ~7e-3 the angle cannot close and p
+% plateaus however far train falls --- which is the whole reading of this figure.
+\addplot[green!45!black, densely dotted, thick, mark=none, forget plot] table[x=x, y=one_minus_r2_third] {bacres1_100k.dat};
+\addplot[orange!80!black, thick, mark=none] table[x=x, y=one_minus_r2_train] {bacres1_test.dat};
+\addlegendentry{bacres1\_test (2000+2000, pump 33, third block)}
+% The third block (SMOGD/SMOTE synthetic rows). It enters the HFF angle like
+% any other objective, so while it sits at ~7e-3 the angle cannot close and p
+% plateaus however far train falls --- which is the whole reading of this figure.
+\addplot[orange!80!black, densely dotted, thick, mark=none, forget plot] table[x=x, y=one_minus_r2_third] {bacres1_test.dat};
+\addplot[violet, thick, mark=none] table[x=x, y=one_minus_r2_train] {bacres1_75long.dat};
+\addlegendentry{bacres1\_75long (800+400, pump 100, no third block)}
+\addplot[brown, thick, mark=none] table[x=x, y=one_minus_r2_train] {bacres1_fold.dat};
+\addlegendentry{bacres1\_fold (800+400, pump 100, 9 objectives)}
+% The third block (SMOGD/SMOTE synthetic rows). It enters the HFF angle like
+% any other objective, so while it sits at ~7e-3 the angle cannot close and p
+% plateaus however far train falls --- which is the whole reading of this figure.
+\addplot[brown, densely dotted, thick, mark=none, forget plot] table[x=x, y=one_minus_r2_third] {bacres1_fold.dat};
+\addlegendimage{densely dotted, thick, gray!60!black}
+\addlegendentry{(dotted, same colour) that run's third block}
+\draw[dashed, gray!70] ({rel axis cs:0,0}|-{axis cs:1,1e-10}) -- ({rel axis cs:1,0}|-{axis cs:1,1e-10})
+  node[pos=0.06, above, font=\scriptsize, gray!70] {stop bar $1-R^2 \le 1e-10$};
+
+\end{groupplot}
+\end{tikzpicture}
+\caption{Convergence on the hyperspherical fitness function. $\log_{10} p$ (top) is $I_{\sin^2\theta}((m-1)/2, 1/2)$, in which the objective count $m$ is consumed by the incomplete beta: $p$ is a probability on $[0,1]$, so $p = 10^{-19}$ means the same thing at 6 objectives, at 9 and at 19{,}000, and runs under different objective sets are directly comparable on this axis in a way no error metric allows. A FALLING $p$ IS NOT BY ITSELF A RECOVERED LAW: the stop bar has two halves and both must pass, so $1-R^2$ (bottom) is drawn beside it with the bar each run was actually run under. Markers on the floor of the top panel are $p$ underflowed to exactly zero ($\log_{10} p = -\infty$) — the f32 angle saturated on the pole. They are off the scale, not at a value, and they are not success: read the panel below them. Traces are thinned to their steps; no value is averaged and every point drawn is a beat the run held.}
+\label{fig:convergence}
+\end{figure}

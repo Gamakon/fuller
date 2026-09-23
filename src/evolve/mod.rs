@@ -17,6 +17,12 @@ pub mod checkpoint;
 // config plus what the engine derived from it.
 #[cfg(feature = "gpu")]
 pub mod card;
+// THE CONVERGENCE CHART — recorded telemetry as a figure for the paper. NOT
+// behind `gpu`, for the same reason the viewer is not: a chart is drawn from a
+// recording, on whatever machine is writing the paper, and `cargo test` must
+// cover it. It reads the two fields it needs from a card BY NAME rather than
+// deserialising `Card`, which is why it does not drag that type's feature in.
+pub mod chart;
 pub mod genealogy;
 #[cfg(feature = "gpu")]
 pub mod hff_gpu;
