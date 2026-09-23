@@ -102,15 +102,19 @@ Section~\ref{sec:limits} the limitations.
 An individual is a gene expression programming chromosome: one to three genes,
 each a Karva K-expression with a head of 34 symbols and a tail sized so that
 every head arrangement decodes to a valid tree. Genes combine through a linker
---- average, product or sum --- and the model as scored is $a \cdot L(g_0, g_1,
-g_2) + b$ with $a$ and $b$ fitted by ordinary least squares in the same pass
-that evaluates the tree. The whole population is a flat buffer of \texttt{u32}
+--- average, product or sum --- and the linked result passes through an outer
+wrapper, one of identity, $\log|x|$ or $\sqrt{|x|}$, so the model as scored is
+$a \cdot W(L(g_0, g_1, g_2)) + b$ with $a$ and $b$ fitted by ordinary least
+squares in the same pass that evaluates the tree. The chromosome carries its
+best wrapper as it carries its best linker, and the wrapper travels with the row
+through selection and through every edit. The whole population is a flat buffer of \texttt{u32}
 tokens and \texttt{f32} constants; selection, mutation and crossover are four
 compute kernels, one dispatch each per generation.
 
 Two decisions here matter later. The first is the dynamic gene-subset choice: a
 chromosome is scored under every non-empty subset of its genes, each subset under
-each linker, so 15 gene-linker combinations for three genes, and it keeps the
+each linker, so 15 gene-linker combinations for three genes --- 45 candidates
+once each is tried under each wrapper --- and it keeps the
 best. A law that is one nested structure no longer needs the other two genes to
 evolve into exact do-nothing values. On Feynman I.26.2 the engine ran 328
 generations without the subset choice and did not solve it; with it, the fit
@@ -143,6 +147,15 @@ redundancy column --- were both off. We state this from the run's recorded
 settings and the engine's defaults: the run emitted no card recording the
 derived objective count, and the card format that does postdates it.
 
+The third block is where the two halves of the stop bar disagree, and we record
+it as an open design question rather than a resolved one. When the block holds
+synthetic noisy rows it exists to rank individuals in tournaments and is not
+meant to decide that a fit is exact --- the $1 - R^2$ condition of
+Section~\ref{sec:stopbar} honours that and skips it, but the angle does not, so
+the block's error enters $p$ like any other objective. One of the two is wrong.
+It did not bite in this run, which had no third block at all, but it bears on
+the p-value discussion of Section~\ref{sec:limits}.
+
 HFF then treats the scaled vector as a point on the unit sphere and returns its
 angle from the pole where all errors are zero:
 \[
@@ -151,6 +164,15 @@ angle from the pole where all errors are zero:
 with $m$ the number of objectives. Lower is fitter. There is no weighting, no
 scalarisation of the objectives into one number by hand, and no parsimony term
 in the fitness. Size is a reporting decision, taken after the search ends.
+
+The pole matters and was chosen by measurement. HFF also admits a
+\emph{balanced} pole --- the angle from $(1/\sqrt m, \ldots, 1/\sqrt m)$, which
+rewards an individual for being even across its objectives rather than for being
+close to zero on all of them. Ranking tournaments from that pole scored 26 laws
+against 53 for the zero pole on the same seed with everything else equal, and
+the zero pole recovered 30 laws the balanced pole missed. That is a larger swing
+than any other single decision in this paper. The balanced pole remains
+available for selection and is off.
 
 Objectives can be entered on a log scale, $1 + \log_{10}(x)/12$, and the argument
 for it is the accuracy we need. Squared as it stands, small errors weigh nothing: an
@@ -282,7 +304,10 @@ unset the engine is bit-identical to before and costs nothing. Nothing about
 selection changed for this measurement, and no age layers were added.
 
 Six fits on seed 7013, population 1{,}500 intake plus 1{,}500 champion, head 34,
-30~seconds each. Table~\ref{tab:lineage} is the result.
+30~seconds each, with the tower objective on, no validation block, a constant
+range of $\pm5$ and the pump on every fifth generation, on a GPU shared with
+other running fits so the timings are under contention.
+Table~\ref{tab:lineage} is the result.
 
 \begin{table}[htbp]
 \centering
@@ -341,6 +366,16 @@ is not outcompeted. It is never \emph{sampled} without a converged elder in the
 same draw. No amount of fresh genetic material fixes this, because the fresh
 material was never the bottleneck.
 
+This is why we are willing to carry the measurement across configurations. The
+six instrumented fits did not use the objective set or the constant range of the
+run in Section~\ref{sec:results} --- no validation block, the tower on, a
+narrower constant range that leaves constant snapping with little to bite on.
+The arithmetic above is the reason that does not matter here: it is a statement
+about tournament size against keeper fraction, and it contains no term for the
+objectives, for what is being fitted, or for how the winner is scored. Any
+configuration that refills a fifth of an island and draws 105-candidate
+tournaments from it starves young material at the same rate.
+
 \subsection{The change}
 
 Hornby's ALPS solves this with physical age layers: the population is split into
@@ -356,7 +391,9 @@ candidate of cohort $c$ over any other, however fit the other is.
 
 The device implementation is branchless. Rather than reject and redraw, which
 would put a loop on the GPU, the cohort is the first sort key and fitness the
-second:
+second. This is the comparator as it stood for the run reported here, at commit
+\texttt{05ef7e9}; it has since gained a per-island flag that can lift the
+restriction, and the run applied it on both islands of the pair:
 
 \begin{verbatim}
 fn better_mate(me: u32, c: u32, w: u32) -> bool {
@@ -372,11 +409,29 @@ the best of the draw still wins, so a cohort that has died out costs nothing and
 needs no special case. The whole mechanism is one \texttt{u32} per row and no
 extra dispatch.
 
-\texttt{cohort\_merge} is the label past which cohorts stop being separate: every
-cohort at or beyond it is clamped to one band, so the elders co-mingle freely and
-only the young are kept apart. That is Hornby's unbounded top layer, expressed as
-a clamp. Setting it to 0 turns cohorts off entirely, and the CPU/GPU bit-for-bit
-parity tests then prove the engine is what it always was.
+\texttt{cohort\_merge} is the threshold past which cohorts stop being separate:
+cohorts at or beyond it are clamped to one band, so the elders co-mingle freely
+and only the young are kept apart. That is Hornby's unbounded top layer,
+expressed as a clamp. In the run reported here it was a clamp on the label
+itself (\texttt{05ef7e9}); the engine now clamps on age, \texttt{generation -
+label}, which is the intended reading and was a bug fix --- banding on the label
+alone holds the oldest lines apart permanently and merges the youngest, the
+opposite of the design.
+
+\textbf{The merge was effectively never reached in the run either way.} It was
+set to 10{,}000 against fits of a few thousand generations --- at the rates of
+Section~\ref{sec:results}, a Feynman fit reaches about 4{,}300 generations in its
+360~seconds and only the longest Strogatz fits cross the threshold at all. So the
+75 was produced with the cohorts permanently separate and the unbounded top layer
+inactive. The elder merge is a design we describe and have not tested; whether
+the result depends on its absence is an open question, and a cheaper experiment
+than the one Section~\ref{sec:together} asks for.
+
+Setting \texttt{cohort\_merge} to 0 turns cohorts off entirely, and the CPU/GPU
+bit-for-bit parity tests then prove the engine is what it always was. It must
+also exceed the pump period to mean anything: a merge that fires inside a single
+beat is the mechanism switched off wearing labels, which the engine asserts
+against.
 
 \subsection{What it measured}
 \label{sec:measured}
