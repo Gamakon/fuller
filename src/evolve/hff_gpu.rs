@@ -276,11 +276,11 @@ mod tests {
     /// the whole time.
     ///
     /// So: build a block of scores, dispatch, and compare against the host's own
-    /// candidate walk (`host_candidate_winner_for_test`, the same code
+    /// candidate walk (`host_candidate_winner`, the same code
     /// `Engine::evaluate` runs), with every flag on and off.
     #[test]
     fn the_dispatched_kernel_agrees_with_the_host_candidate_walk() {
-        use crate::evolve::engine::{host_candidate_winner_for_test, hff_columns, HostWalk};
+        use crate::evolve::engine::{host_candidate_winner, hff_columns, HostWalk};
         use crate::gpu_eval::GpuEvaluator;
 
         const WIDTH: usize = 10;
@@ -360,7 +360,7 @@ mod tests {
                     let what = format!("n_extrap {n_extrap}, log {log_scale:?}, tower {tower_on}, redundancy {redundancy}, balanced {balanced}");
                     for r in 0..rows {
                         let host_scores: Vec<f64> = scores[r * per * WIDTH..(r + 1) * per * WIDTH].iter().map(|&v| f64::from(v)).collect();
-                        let host = host_candidate_winner_for_test(&HostWalk {
+                        let host = host_candidate_winner(&HostWalk {
                             scores: &host_scores,
                             per,
                             caps_var,
@@ -400,7 +400,7 @@ mod tests {
     /// bug it exists to catch.
     #[test]
     fn the_balanced_angle_is_not_the_truenorth_angle() {
-        use crate::evolve::engine::{host_candidate_winner_for_test, hff_columns, HostWalk};
+        use crate::evolve::engine::{host_candidate_winner, hff_columns, HostWalk};
         const WIDTH: usize = 10;
         let per = 2usize;
         let mut scores = vec![0.0f64; per * WIDTH];
@@ -417,7 +417,7 @@ mod tests {
         }
         let columns = hff_columns(0, false, [false, false, false]);
         let walk = |balanced: bool| {
-            host_candidate_winner_for_test(&HostWalk {
+            host_candidate_winner(&HostWalk {
                 scores: &scores,
                 per,
                 caps_var: [1.0, 1.0, 1.0],

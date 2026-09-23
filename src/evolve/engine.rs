@@ -1063,6 +1063,14 @@ fn hff_balanced(objectives: &[f64], col_max: &[f64], log_scaled: &[bool]) -> f64
 /// The scaled error that HFF's log scale calls zero.
 const HFF_LOG_FLOOR: f64 = 1e-12;
 
+/// HOW SMALL A ROW'S DEVICE ERROR MUST BE before the f64 re-score looks at it.
+///
+/// The device's f32 metrics cannot resolve 1e-10; they can only say "this one
+/// is worth confirming", which is what this bar means. It is the value the stop
+/// check has always applied to its single row, named here because it now
+/// selects the whole set of rows the check will confirm.
+const PRESCREEN: f64 = 1e-5;
+
 /// HFF, TrueNorth: objectives scaled into [0, 1] by frozen ranges, the angle
 /// from the all-zero pole — `acos(1 - min(sum(x^2) / m, 1))` (hff_core
 /// `true_north_cos_theta`: with the pole at (0, .., 0, 1) the cosine is the
@@ -1098,8 +1106,7 @@ pub fn hff_scaled_for_test(objectives: &[f64], col_max: &[f64], log_scaled: &[bo
 ///
 /// Returns the winner's `(truenorth, selection, candidate, omr2)` for one row's
 /// block of `per` candidates, or `None` when no candidate of that row is usable.
-#[cfg(test)]
-pub struct HostWalk<'a> {
+pub(crate) struct HostWalk<'a> {
     pub scores: &'a [f64],
     pub per: usize,
     pub caps_var: [f64; 3],
@@ -1113,8 +1120,7 @@ pub struct HostWalk<'a> {
     pub balanced: bool,
 }
 
-#[cfg(test)]
-pub fn host_candidate_winner_for_test(w: &HostWalk) -> Option<(f64, f64, usize, [f64; 3])> {
+pub(crate) fn host_candidate_winner(w: &HostWalk) -> Option<(f64, f64, usize, [f64; 3])> {
     let caps = Caps { var: w.caps_var, mad: w.caps_mad };
     let mut best: Option<(f64, f64, usize, [f64; 3])> = None;
     for c in 0..w.per {
@@ -2451,36 +2457,40 @@ impl Engine {
             // generation that has nothing to dispatch.
             _ => {
                 for (i, &r) in rows.iter().enumerate() {
-                    let mut best: Option<Scored> = None;
-                    for c in 0..per {
-                        let s = &scores[(i * per + c) * WIDTH..(i * per + c + 1) * WIDTH];
-                        if !s[0].is_finite() {
-                            continue;
-                        }
+                    // THE SAME FUNCTION THE PARITY TEST USES AS ITS ORACLE, so
+                    // that "the oracle is the code `evaluate` runs" is true by
+                    // construction rather than by two transcriptions happening
+                    // to agree. They did not: the first oracle copied the
+                    // kernel's argmin instead of this loop's and agreed with a
+                    // bug.
+                    let best = host_candidate_winner(&HostWalk {
+                        scores: &scores[i * per * WIDTH..(i + 1) * per * WIDTH],
+                        per,
+                        caps_var: self.caps.var,
+                        caps_mad: self.caps.mad,
+                        col_max,
+                        columns: &columns,
+                        tower_of: &towers[i * per..(i + 1) * per],
+                        n_extrap: n_ex,
+                        redundancy: self.config.redundancy,
+                        tower_on: self.config.tower,
+                        balanced: self.config.balanced_tournaments,
+                    })
+                    .map(|(fitness, selection, c, omr2)| {
                         let combination = combinations[c / WRAPPERS.len()];
-                        let tower = towers[i * per + c];
-                        let (o, omr2) = self.caps.objectives(s, n_ex);
-                        let mut used: Vec<f64> = columns.iter().map(|&(k, _)| o[k]).collect();
-                        let mut maxes: Vec<f64> = columns.iter().map(|&(k, _)| col_max[k]).collect();
-                        let mut logs: Vec<bool> = columns.iter().map(|&(_, log)| log).collect();
-                        if self.config.redundancy {
-                            used.push(s[9].clamp(0.0, 1.0));    // already on [0, 1]: its range is its scale
-                            maxes.push(1.0);
-                            logs.push(false);
+                        let s = &scores[(i * per + c) * WIDTH..(i * per + c + 1) * WIDTH];
+                        Scored {
+                            fitness,
+                            linker: combination.linker,
+                            wrapper: c % WRAPPERS.len(),
+                            a: s[0],
+                            b: s[1],
+                            one_minus_r2: omr2,
+                            t_depth: towers[i * per + c],
+                            selection,
+                            genes: combination.genes,
                         }
-                        if self.config.tower {
-                            used.push(tower_penalty(tower));    // on [0, 1] by construction
-                            maxes.push(1.0);
-                            logs.push(false);
-                        }
-                        let fitness = hff_truenorth(&used, &maxes, &logs);
-                        if best.is_none_or(|b| fitness < b.fitness) {
-                            // TrueNorth chooses the candidate and judges it; the balanced pole,
-                            // when it is on, only decides who breeds.
-                            let selection = if self.config.balanced_tournaments { hff_balanced(&used, &maxes, &logs) } else { fitness };
-                            best = Some(Scored { fitness, linker: combination.linker, wrapper: c % WRAPPERS.len(), a: s[0], b: s[1], one_minus_r2: omr2, t_depth: tower, selection, genes: combination.genes });
-                        }
-                    }
+                    });
                     self.scored[r] = best;
                     gen.fitness[r] = best.map_or(std::f32::consts::PI, |b| b.selection as f32);
                 }
@@ -4267,8 +4277,15 @@ impl Engine {
             }
             // The device's f32 metrics cannot resolve 1e-10; they can say "this
             // one is worth confirming". The f64 re-score decides.
+            //
+            // EVERY ROW THAT CLEARS THE PRESCREEN, not only the fittest. The HFF
+            // angle ranks rows, and in f32 over a log scale a law at 1e-11 and a
+            // near-miss at 1e-6 can rank the wrong way round; the row that was
+            // the law then sat unconfirmed while the fit ran on. `confirm_over`
+            // already re-scores all 45 candidates of whatever row it is given,
+            // so the candidates were never the gap — the rows were.
             if let Some((row, ranked)) = self.best(&gen) {
-                if ranked.one_minus_r2[1] <= 1e-5 {
+                if ranked.one_minus_r2[1] <= PRESCREEN {
                     if let Some(s) = self.confirm(&gen, row)? {
                         let edge_ok = c.smogd || self.data.splits.n_extrap == 0 || s.one_minus_r2[2] <= c.stop_one_minus_r2;
                         // `confirm` scores TrueNorth over the error blocks and t_depth
