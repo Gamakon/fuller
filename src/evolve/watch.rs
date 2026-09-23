@@ -21,7 +21,7 @@
 
 use std::collections::BTreeMap;
 
-use super::telemetry::{CohortRow, IslandRow, Parsed, Record, RunEnd, RunStart, Snapshot};
+use super::telemetry::{CohortRow, EventKind, IslandRow, Parsed, Record, RunEnd, RunStart, Snapshot};
 
 /// How many snapshots of history a cohort keeps for its sparkline and its gain.
 /// Enough to see a young cohort's whole climb at a 10-generation beat, small
@@ -43,6 +43,43 @@ pub const EXTINCT_LINGER: usize = 3;
 /// is dropped: the history map is keyed by every cohort the stream has EVER
 /// shown, and a long fit mints thousands of them.
 pub const HISTORY_LINGER: usize = 30;
+
+/// How many discoveries the panel keeps. The engine's own ring holds 32 per
+/// beat and a long fit can send many more than that over a run; the panel shows
+/// perhaps a dozen, so this is deep enough to scroll back through what just
+/// happened and shallow enough that a viewer's memory does not grow with the fit.
+pub const DISCOVERIES: usize = 128;
+
+/// WHICH KIND OF DISCOVERY, because the two are not the same finding and a list
+/// that mixed them silently would be a list of unrelated numbers.
+///
+/// A SNAP is a substitution INTO the population: a literal the search fitted
+/// numerically is now `pi` and breeds as that token. A FOLD is a reduction of
+/// the FINAL model: a subtree whose whole range was under a percent of its own
+/// value, replaced by that value. Snaps arrive through the run; folds arrive
+/// once, after `run_end`, because that is when the final form is computed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Find {
+    Snap,
+    Fold,
+}
+
+/// One line of the discoveries panel: what changed, and what it became.
+#[derive(Clone, Debug)]
+pub struct Discovery {
+    pub kind: Find,
+    pub generation: u32,
+    /// The literal a snap replaced. None for a fold, whose "before" is the
+    /// subtree in `what` rather than a number.
+    pub before: Option<f64>,
+    /// What it was: the folded subtree's infix for a fold, and for a snap the
+    /// literal it started from.
+    pub what: String,
+    /// What it became: `pi` for a snap, the folded value for a fold.
+    pub became: String,
+    /// The nodes a fold removed. None for a snap, which removes none.
+    pub nodes: Option<u32>,
+}
 
 /// How stale a live stream may get before the screen says so. Four times the
 /// writer's own minimum gap: a fit that is merely between beats is not stale,
@@ -183,8 +220,20 @@ pub struct WatchState {
     pub history: BTreeMap<u32, CohortHistory>,
     /// The events the stream has sent, newest last, capped.
     pub events: Vec<(u32, String)>,
+    /// THE DISCOVERIES, newest LAST (the panel reverses them). Snaps and folds
+    /// are kept here and NOT in `events`: the events pane is four lines, and a
+    /// fit that snaps steadily would push every birth, death and new best off it
+    /// within a beat. They are the same records; they have their own panel
+    /// because they have their own shape.
+    pub discoveries: Vec<Discovery>,
     /// The most recent `model` record, for the `m` viewer.
     pub model: Option<super::telemetry::Model>,
+    /// THE WINNING GENE as one readable line, `f(x, y) = ...`, computed WHEN THE
+    /// MODEL ARRIVES and not per frame. A model record is rare and the screen
+    /// repaints four times a second; formatting it on every repaint would be the
+    /// viewer parsing an expression sixty times a minute for an answer that
+    /// cannot have changed.
+    pub gene_line: Option<String>,
     /// THE SELECTION, held BY ID. The brief: "Keep the selected cohort by ID when
     /// rows reorder. Never auto-scroll away from a selected row." An index would
     /// mean the selection slides under the operator every time the sort changes
@@ -232,7 +281,9 @@ impl WatchState {
             end: None,
             history: BTreeMap::new(),
             events: Vec::new(),
+            discoveries: Vec::new(),
             model: None,
+            gene_line: None,
             selected: None,
             island: 0,
             island_focus: false,
@@ -289,13 +340,27 @@ impl WatchState {
                 }
             }
             Record::Event(e) => {
-                self.events.push((e.header.generation, e.message));
-                // Bounded: a long fit's events must not grow the viewer without
-                // limit, and only the recent ones are ever on screen.
-                let overflow = self.events.len().saturating_sub(200);
-                self.events.drain(..overflow);
+                // A DISCOVERY GOES TO ITS OWN PANEL, not into the four-line
+                // events pane it would flood. Everything else is an event.
+                match e.kind {
+                    EventKind::Snap | EventKind::Fold => {
+                        self.discoveries.push(discovery_of(&e));
+                        let overflow = self.discoveries.len().saturating_sub(DISCOVERIES);
+                        self.discoveries.drain(..overflow);
+                    }
+                    _ => {
+                        self.events.push((e.header.generation, e.message));
+                        // Bounded: a long fit's events must not grow the viewer
+                        // without limit, and only the recent ones are on screen.
+                        let overflow = self.events.len().saturating_sub(200);
+                        self.events.drain(..overflow);
+                    }
+                }
             }
-            Record::Model(m) => self.model = Some(m),
+            Record::Model(m) => {
+                self.gene_line = gene_line_of(&m);
+                self.model = Some(m);
+            }
             Record::RunEnd(e) => self.end = Some(e),
         }
     }
@@ -592,6 +657,94 @@ impl WatchState {
             ("scored rows", coverage, "unscored rows not emitted"),
         ]
     }
+}
+
+/// One discovery event as the panel's row. A producer that sent a kind but not
+/// its detail is shown as what it said — the `message` — rather than as a row of
+/// dashes, because the message is always written and is always a sentence.
+fn discovery_of(e: &super::telemetry::Event) -> Discovery {
+    let kind = if e.kind == EventKind::Fold { Find::Fold } else { Find::Snap };
+    // A snap's `what` is the literal it started from; a fold's is the subtree.
+    let what = match kind {
+        Find::Snap => e.before.map(|v| format!("{v:.9}")).unwrap_or_else(|| e.message.clone()),
+        Find::Fold => e.detail.clone().unwrap_or_else(|| e.message.clone()),
+    };
+    // And `became` is the other end: a snap's named form, a fold's value.
+    let became = match kind {
+        Find::Snap => e.detail.clone().unwrap_or_else(|| or_dash(e.value, 6)),
+        Find::Fold => or_dash(e.value, 6),
+    };
+    Discovery { kind, generation: e.header.generation, before: e.before, what, became, nodes: e.nodes }
+}
+
+/// How many significant digits a literal keeps IN THE GENE LINE. Enough to
+/// recognise a constant, few enough that a dozen of them fit on one row. The
+/// model itself is never touched: this is a display copy and the `m` overlay
+/// still shows every digit.
+pub const GENE_LINE_DIGITS: usize = 4;
+
+/// THE WINNING GENE AS A FUNCTION — `f(x, y) = -x*y/(0.5*x**2 + 1) - x + 20`.
+///
+/// It is the model the `m` overlay shows, read off the same `model` record, in
+/// the form a person reads rather than the engine's own s-expression. The
+/// literals are ROUNDED FOR DISPLAY ONLY: a model line carrying
+/// `19.99604829847362` thirteen times over is a line nobody can read, and the
+/// real model is a field away in the same record.
+///
+/// None when the record's `raw_math` will not parse — a viewer must not invent a
+/// function it could not read.
+pub fn gene_line_of(m: &super::telemetry::Model) -> Option<String> {
+    use crate::lint::node::Tree;
+    let tree = Tree::parse(&m.raw_math).ok()?;
+    // The arguments, in the order they first appear: the signature has to name
+    // the columns the model actually reads, not every column the data held.
+    let mut args: Vec<String> = Vec::new();
+    fn names(t: &Tree, out: &mut Vec<String>) {
+        match t {
+            Tree::Var(n) => {
+                if !out.contains(n) {
+                    out.push(n.clone());
+                }
+            }
+            Tree::App(_, kids) => kids.iter().for_each(|k| names(k, out)),
+            Tree::Num(_) => {}
+        }
+    }
+    names(&tree, &mut args);
+    Some(format!("f({}) = {}", args.join(", "), rounded(&tree).to_infix()))
+}
+
+/// The tree with every literal rounded to [`GENE_LINE_DIGITS`] significant
+/// figures. A DISPLAY COPY: the caller's tree is untouched, and nothing that is
+/// scored or reported ever sees this one.
+fn rounded(t: &crate::lint::node::Tree) -> crate::lint::node::Tree {
+    use crate::lint::node::Tree;
+    match t {
+        // Significant figures rather than decimal places, so 1.2345e-7 keeps its
+        // meaning instead of rounding to zero — the one way a display rounding
+        // can turn a real coefficient into nothing.
+        Tree::Num(v) if v.is_finite() && *v != 0.0 => {
+            let scale = 10f64.powi(GENE_LINE_DIGITS as i32 - 1 - v.abs().log10().floor() as i32);
+            let r = (v * scale).round() / scale;
+            Tree::Num(if r.is_finite() { r } else { *v })
+        }
+        Tree::App(op, kids) => Tree::App(*op, kids.iter().map(rounded).collect()),
+        other => other.clone(),
+    }
+}
+
+/// A line cut to `width` COLUMNS with an ellipsis. Characters, not bytes: a
+/// model line can hold a multi-byte column name and slicing one by byte is a
+/// panic in a draw path. The brief's rule — truncate rather than wrap, because
+/// the full model is a keystroke away on `m`.
+pub fn elided(text: &str, width: usize) -> String {
+    if width == 0 {
+        return String::new();
+    }
+    if text.chars().count() <= width {
+        return text.to_string();
+    }
+    text.chars().take(width.saturating_sub(1)).collect::<String>() + "…"
 }
 
 /// The improvement meter's full-scale mark: one decade of HFF per hundred
@@ -1035,6 +1188,158 @@ mod tests {
         let ours = replayed();
         let coverage = ours.pulse(0)[2].1;
         assert!(coverage.is_some(), "a stream that emits unscored counts must show coverage");
+    }
+
+    /// A discovery event, as the engine writes one.
+    fn event(kind: EventKind, generation: u32, message: &str, d: super::super::telemetry::Discovery) -> Record {
+        use super::super::telemetry::{Event, Header, SCHEMA_VERSION};
+        Record::Event(Event {
+            header: Header {
+                schema_version: SCHEMA_VERSION,
+                run_id: "r".into(),
+                seq: u64::from(generation),
+                timestamp_utc: "2026-09-23T00:00:00Z".into(),
+                elapsed_ms: 0,
+                generation,
+            },
+            kind,
+            message: message.into(),
+            cohort: None,
+            value: d.after,
+            before: d.before,
+            detail: d.detail,
+            nodes: d.nodes,
+            row: d.row,
+        })
+    }
+
+    /// A SNAP AND A FOLD GO TO THE DISCOVERIES PANEL, and NOT into the four-line
+    /// events pane they would flood. They are the same records; they have their
+    /// own panel because a fit that snaps steadily would otherwise push every
+    /// birth, death and new best off the screen within a beat.
+    #[test]
+    fn a_discovery_lands_in_its_own_panel_and_never_floods_the_events() {
+        use super::super::telemetry::Discovery as D;
+        let mut state = replayed();
+        let events_before = state.events.len();
+        assert!(events_before > 0, "the fixture has ordinary events");
+        state.apply_record(event(
+            EventKind::Snap,
+            240,
+            "snap: 3.142857143 -> pi (row 7, gene 0)",
+            D { before: Some(22.0 / 7.0), after: Some(std::f64::consts::PI), detail: Some("pi".into()), nodes: None, row: Some(7) },
+        ));
+        state.apply_record(event(
+            EventKind::Fold,
+            300,
+            "fold: 14 nodes [tanh(exp(cos(log(x))))] -> 1.000000000",
+            D { before: None, after: Some(1.0), detail: Some("tanh(exp(cos(log(x))))".into()), nodes: Some(14), row: None },
+        ));
+        assert_eq!(state.events.len(), events_before, "a discovery was pushed into the events pane");
+        assert_eq!(state.discoveries.len(), 2);
+        // A SNAP reads literal -> name; the before is a number, so the panel can
+        // show the snap's own error rather than only its prose.
+        let snap = &state.discoveries[0];
+        assert_eq!(snap.kind, Find::Snap);
+        assert_eq!((snap.generation, snap.nodes), (240, None));
+        assert_eq!(snap.became, "pi");
+        assert_eq!(snap.before, Some(22.0 / 7.0));
+        assert!(snap.what.starts_with("3.14285"), "{}", snap.what);
+        // A FOLD reads subtree -> value, and carries the size of what went.
+        let fold = &state.discoveries[1];
+        assert_eq!((fold.kind, fold.nodes), (Find::Fold, Some(14)));
+        assert_eq!(fold.what, "tanh(exp(cos(log(x))))");
+        assert!(fold.became.starts_with('1'), "{}", fold.became);
+
+        // An ordinary event still goes to the events pane.
+        state.apply_record(event(EventKind::Note, 301, "something else", D::default()));
+        assert_eq!(state.events.len(), events_before + 1);
+        assert_eq!(state.discoveries.len(), 2);
+    }
+
+    /// The panel is BOUNDED. A fit that snaps thousands of times must not grow
+    /// the viewer, and what is kept is the NEWEST — the panel shows what just
+    /// happened, not what happened first.
+    #[test]
+    fn the_discoveries_panel_is_bounded_and_keeps_the_newest() {
+        use super::super::telemetry::Discovery as D;
+        let mut state = WatchState::new(false);
+        for g in 0..(DISCOVERIES as u32 + 50) {
+            state.apply_record(event(
+                EventKind::Snap,
+                g,
+                "snap",
+                D { before: Some(1.0), after: Some(2.0), detail: Some("pi".into()), nodes: None, row: Some(0) },
+            ));
+        }
+        assert_eq!(state.discoveries.len(), DISCOVERIES);
+        assert_eq!(state.discoveries.last().map(|d| d.generation), Some(DISCOVERIES as u32 + 49));
+        assert_eq!(state.discoveries.first().map(|d| d.generation), Some(50), "the panel kept the oldest");
+        // And a new run clears them: they belong to the fit that found them.
+        let start = state.start.clone();
+        assert!(start.is_none());
+        let (records, _) = parse_stream(FIXTURE);
+        let first = records.into_iter().next().expect("a run_start");
+        state.apply_record(first.clone());
+        state.apply_record(first);
+        assert!(state.discoveries.is_empty(), "the old run's discoveries were carried over");
+    }
+
+    /// THE WINNING GENE AS A FUNCTION: `f(args) = infix`, with the literals
+    /// rounded FOR DISPLAY and the real model untouched.
+    #[test]
+    fn the_gene_line_is_a_readable_function_with_rounded_literals() {
+        let state = replayed();
+        let line = state.gene_line.as_deref().expect("the fixture has a model");
+        assert!(line.starts_with("f("), "not a function: {line}");
+        assert!(line.contains(") = "), "no body: {line}");
+        // It is INFIX, not the engine's s-expression.
+        let m = state.model.as_ref().expect("a model");
+        assert!(!line.contains("(Mul "), "the gene line is an s-expression: {line}");
+        assert!(!line.contains("(Var \""), "the gene line is an s-expression: {line}");
+        // Every column the model reads is named in the signature, and none that
+        // it does not.
+        let args = &line[2..line.find(')').expect("a signature")];
+        for name in ["x_0", "x_1"].iter().filter(|n| m.raw_math.contains(&format!("(Var \"{n}\")"))) {
+            assert!(args.contains(name), "{name} is read but not an argument: {line}");
+        }
+        // ROUNDING IS DISPLAY ONLY: the record still holds every digit.
+        assert_eq!(state.model.as_ref().map(|m| m.raw_math.clone()), Some(m.raw_math.clone()));
+
+        // A literal is rounded to four significant figures and a SMALL one does
+        // not round to zero — that is the one way a display rounding can turn a
+        // real coefficient into nothing.
+        use crate::lint::node::Tree;
+        let tiny = Tree::parse(r#"(Mul (Num 1.23456789e-7) (Var "x_0"))"#).expect("parse");
+        let Tree::App(_, kids) = rounded(&tiny) else { panic!("the shape changed") };
+        let Tree::Num(v) = kids[0] else { panic!("the literal went") };
+        assert!(v != 0.0, "a small coefficient was rounded away to nothing");
+        assert!((v - 1.235e-7).abs() < 1e-12, "four significant figures of 1.23456789e-7 is 1.235e-7, got {v}");
+        // SIGNIFICANT FIGURES, so a coefficient a hair under a round number
+        // reads as that number: `19.99604829847362` is `20.0` at four of them,
+        // which is what an operator watching for `+20` needs to see.
+        let big = Tree::parse(r#"(Add (Num 19.99604829847362) (Var "x_0"))"#).expect("parse");
+        assert_eq!(rounded(&big).to_infix(), "(20.0 + x_0)");
+        // And one that is NOT near a round number keeps its four figures.
+        let odd = Tree::parse(r#"(Add (Num 3.875123456) (Var "x_0"))"#).expect("parse");
+        assert_eq!(rounded(&odd).to_infix(), "(3.875 + x_0)");
+    }
+
+    /// A LINE TOO LONG IS CUT, not wrapped, and the cut counts CHARACTERS — a
+    /// model line can hold a multi-byte column name and slicing one by byte is a
+    /// panic in a draw path.
+    #[test]
+    fn the_gene_line_is_truncated_rather_than_wrapped() {
+        assert_eq!(elided("short", 20), "short");
+        assert_eq!(elided("", 0), "");
+        assert_eq!(elided("abcdef", 0), "");
+        assert_eq!(elided("abcdef", 4), "abc…");
+        assert_eq!(elided("abcd", 4), "abcd", "exactly at the width is not cut");
+        let multibyte = "f(é) = é*é + é";
+        for width in 0..=multibyte.chars().count() + 2 {
+            let cut = elided(multibyte, width);
+            assert!(cut.chars().count() <= width.max(0), "{width}: {cut}");
+        }
     }
 
     /// Every undefined number is a dash in ONE place, and a dash is never a zero.

@@ -26,7 +26,7 @@
 use std::io::Write;
 
 use fuller::evolve::telemetry::{parse_stream, Tailer};
-use fuller::evolve::watch::{gain_text, or_dash, Gain, Liveness, WatchState};
+use fuller::evolve::watch::{elided, gain_text, or_dash, Gain, Liveness, WatchState};
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -344,7 +344,8 @@ fn draw(f: &mut Frame, state: &WatchState, ui: &Ui) {
                 Constraint::Length(2),  // header
                 Constraint::Length(3),  // global strip
                 Constraint::Length(8),  // island cards
-                Constraint::Min(8),     // cohort table + detail
+                Constraint::Min(8),     // cohort table + discoveries, and detail
+                Constraint::Length(1),  // the winning gene, one line
                 Constraint::Length(4),  // events
                 Constraint::Length(1),  // footer
             ])
@@ -359,7 +360,11 @@ fn draw(f: &mut Frame, state: &WatchState, ui: &Ui) {
                 // and ALL THREE pulse meters. A card that silently drops the
                 // third meter is a screen that hides a measurement.
                 Constraint::Length(6),
+                // At 80x24 this is 5 rows for the table and 4 for the
+                // discoveries below it: the panel degrades to a short list
+                // rather than disappearing, which is the whole point of it.
                 Constraint::Min(5),
+                Constraint::Length(1), // the winning gene, one line
                 Constraint::Length(1), // one-line events
                 Constraint::Length(1),
             ])
@@ -378,20 +383,31 @@ fn draw(f: &mut Frame, state: &WatchState, ui: &Ui) {
         if ui.detail_open {
             detail(f, theme, state, rows[3]);
         } else {
-            cohort_table(f, theme, state, split[0], true);
+            // THE DEAD SPACE UNDER THE TABLE is where the discoveries go. The
+            // cohort table rarely holds more than ten rows and the region is
+            // `Min(8)` of whatever is left, so on a tall terminal the table sat
+            // in a box three times its own height. The table takes what it
+            // needs; the discoveries take the rest.
+            let stack = table_and_discoveries(split[0], state.rows().len());
+            cohort_table(f, theme, state, stack[0], true);
+            discoveries(f, theme, state, stack[1]);
             detail(f, theme, state, split[1]);
         }
-        events(f, theme, state, rows[4]);
+        gene_line(f, theme, state, rows[4]);
+        events(f, theme, state, rows[5]);
     } else {
         one_island(f, theme, state, rows[2]);
         if ui.detail_open {
             detail(f, theme, state, rows[3]);
         } else {
-            cohort_table(f, theme, state, rows[3], false);
+            let stack = table_and_discoveries(rows[3], state.rows().len());
+            cohort_table(f, theme, state, stack[0], false);
+            discoveries(f, theme, state, stack[1]);
         }
-        one_line_events(f, theme, state, rows[4]);
+        gene_line(f, theme, state, rows[4]);
+        one_line_events(f, theme, state, rows[5]);
     }
-    footer(f, state, ui, rows[5]);
+    footer(f, state, ui, rows[6]);
     if ui.model_open {
         model_overlay(f, state, ui, area);
     }
@@ -789,6 +805,121 @@ fn bars(spark: &[u64]) -> String {
     spark.iter().rev().take(24).rev().map(|&v| BLOCKS[(v as usize).min(8)]).collect()
 }
 
+/// The smallest box the discoveries panel is worth drawing in: two borders and
+/// two rows of list. Below that the table keeps the whole region — half a
+/// bordered box with no room for a line in it is not a panel.
+const DISCOVERIES_MIN: u16 = 4;
+
+/// SPLIT THE TABLE'S COLUMN between the cohort table and the discoveries.
+///
+/// The table takes what its rows need — a header, two borders and one line per
+/// cohort — and the discoveries take the rest. That is the right way round: the
+/// table's height is known and bounded (a fit rarely holds more than a dozen
+/// cohorts at once), and the discoveries are a scrolling list with no natural
+/// end, so giving the fixed thing its size and the growing thing the remainder
+/// means neither is ever cut when the other is short.
+///
+/// On a region too small for both, the table keeps all of it: a cohort with no
+/// row is a fact missing from the screen, and a discovery that has to wait for a
+/// taller terminal is not.
+fn table_and_discoveries(area: Rect, cohorts: usize) -> Vec<Rect> {
+    let wanted = (cohorts as u16).saturating_add(3);
+    if area.height < wanted.saturating_add(DISCOVERIES_MIN) {
+        return vec![area, Rect { height: 0, ..area }];
+    }
+    Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(wanted), Constraint::Min(DISCOVERIES_MIN)])
+        .split(area)
+        .to_vec()
+}
+
+/// THE DISCOVERIES: what snap substituted and what the rounding generator
+/// folded, newest first, one line each.
+///
+/// The two kinds are kept visibly apart — a snap is a substitution INTO the
+/// population and a fold is a reduction of the FINAL model — because a list that
+/// mixed them would be a list of unrelated numbers. They carry their own colour
+/// and their own arrow, and the heading names both.
+fn discoveries(f: &mut Frame, theme: Theme, state: &WatchState, area: Rect) {
+    use fuller::evolve::watch::Find;
+    if area.height < DISCOVERIES_MIN {
+        return;
+    }
+    let (snaps, folds) = state.discoveries.iter().fold((0, 0), |(s, d), x| match x.kind {
+        Find::Snap => (s + 1, d),
+        Find::Fold => (s, d + 1),
+    });
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(format!(" DISCOVERIES · {snaps} snapped into genes · {folds} subtrees folded "));
+    let inner = block.inner(area);
+    if state.discoveries.is_empty() {
+        // Nothing found is NOT nothing to say: snap and the fold are both
+        // switched on separately, and an empty panel that does not explain
+        // itself reads as a broken one.
+        f.render_widget(
+            Paragraph::new(vec![
+                Line::from(Span::styled("nothing yet", Style::default().fg(theme.dim()))),
+                Line::from(Span::styled(
+                    "snaps arrive through the run · folds once, after it ends",
+                    Style::default().fg(theme.dim()),
+                )),
+            ])
+            .block(block),
+            area,
+        );
+        return;
+    }
+    let width = inner.width as usize;
+    let lines: Vec<Line> = state
+        .discoveries
+        .iter()
+        .rev()
+        .take(inner.height as usize)
+        .map(|d| {
+            // A snap is the accent — it is the thing that went INTO the
+            // population. A fold is the warn colour: it removed structure from
+            // the reported model, which is a different kind of news. Both are
+            // legible on either terminal.
+            let (tag, colour) = match d.kind {
+                Find::Snap => ("snap", theme.accent()),
+                Find::Fold => ("fold", theme.warn()),
+            };
+            let size = d.nodes.map_or_else(String::new, |n| format!("{n} nodes "));
+            let body = format!("{size}{} → {}", d.what, d.became);
+            Line::from(vec![
+                Span::styled(format!("gen {:<6} ", d.generation), Style::default().fg(theme.dim())),
+                Span::styled(format!("{tag} "), Style::default().fg(colour).add_modifier(Modifier::BOLD)),
+                // The list is one line per discovery: a fourteen-node blob is
+                // the finding, and wrapping it would push the next one off.
+                Span::raw(elided(&body, width.saturating_sub(16))),
+            ])
+        })
+        .collect();
+    f.render_widget(Paragraph::new(lines).block(block), area);
+}
+
+/// THE WINNING GENE, one line, pretty-printed as a function.
+///
+/// `f(x, y) = ...`, not the engine's s-expression: it is there to be READ, and
+/// watching it change as the fit runs is the point of putting it on the screen
+/// at all. The literals are rounded for display; `m` still shows the model to
+/// the last digit. Too long for the terminal is TRUNCATED and not wrapped — one
+/// line is a line, and the full form is a keystroke away.
+fn gene_line(f: &mut Frame, theme: Theme, state: &WatchState, area: Rect) {
+    let label = "model  ";
+    let body = match state.gene_line.as_deref() {
+        Some(line) => Span::raw(elided(line, (area.width as usize).saturating_sub(label.len()))),
+        None if state.model.is_some() => Span::styled("the model record did not parse", Style::default().fg(theme.warn())),
+        None => Span::styled("no model record yet", Style::default().fg(theme.dim())),
+    };
+    f.render_widget(
+        Paragraph::new(Line::from(vec![Span::styled(label, Style::default().fg(theme.dim())), body])),
+        area,
+    );
+}
+
 fn detail(f: &mut Frame, theme: Theme, state: &WatchState, area: Rect) {
     let block = Block::default().borders(Borders::ALL).title(" COHORT DETAIL ");
     let Some(id) = state.selected else {
@@ -1049,5 +1180,24 @@ fn dump(state: &WatchState) -> String {
     for (gen, what) in state.events.iter().rev().take(4) {
         out.push_str(&format!("  gen {gen:>6}  {what}\n"));
     }
+    // THE SAME TWO PANELS THE SCREEN DRAWS, so a dump and a terminal never
+    // disagree about what the fit found — and so the panels can be checked
+    // without a tty.
+    out.push_str("\n  DISCOVERIES\n");
+    if state.discoveries.is_empty() {
+        out.push_str("  (none yet · snaps arrive through the run, folds once after it ends)\n");
+    }
+    for d in state.discoveries.iter().rev().take(12) {
+        let tag = match d.kind {
+            fuller::evolve::watch::Find::Snap => "snap",
+            fuller::evolve::watch::Find::Fold => "fold",
+        };
+        let size = d.nodes.map_or_else(String::new, |n| format!("{n} nodes "));
+        out.push_str(&format!("  gen {:>6}  {tag}  {size}{} -> {}\n", d.generation, d.what, d.became));
+    }
+    out.push_str(&format!(
+        "\n  model  {}\n",
+        state.gene_line.as_deref().map_or("(no model record yet)", |l| l)
+    ));
     out
 }
