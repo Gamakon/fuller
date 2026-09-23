@@ -1252,6 +1252,15 @@ pub struct FitResult {
     pub individuals: u64,
     pub unique_genes: u64,
     pub oversized_genes: u64,
+    /// GENES THE TRANSCENDENTAL CEILING REFUSED, over the whole fit. Counted
+    /// apart from `oversized_genes`, which is a different failure: that one
+    /// decoded and was too big, this one decoded and was too deep. 0 when
+    /// `Config::typed_depth` is None.
+    pub typed_refused: u64,
+    /// THE FINAL POPULATION'S TRANSCENDENTAL DEPTHS, `depths[d]` genes at depth
+    /// `d`, index 0 upward. What the typed arm is supposed to change, measured
+    /// rather than assumed — under a ceiling every entry past it must be 0.
+    pub depth_histogram: Vec<u64>,
     pub stopped_by: &'static str,
     pub best: Scored,
     pub math: String,
@@ -2873,6 +2882,13 @@ impl Engine {
         };
         if config.n_pairs == 0 {
             return Err("n_pairs: a population is at least one pair of islands".into());
+        }
+        // A ceiling of 0 is a search with no transcendental in it at all, which is
+        // a different thing from typing being off and is not what this knob is
+        // for. Said here rather than read as "off", which is how a fit silently
+        // runs the wrong arm of an A/B.
+        if config.typed_depth == Some(0) {
+            return Err("typed_depth: 0 would forbid every transcendental; leave it unset for the untyped engine".into());
         }
         // THE FLOAT ZONE: the intake island is `pop_intake + float_zone` rows wide,
         // so a beam survivor is APPENDED into room the island already has rather
@@ -4798,6 +4814,30 @@ impl Engine {
         Ok(())
     }
 
+    /// THE POPULATION'S TRANSCENDENTAL DEPTHS, `out[d]` genes at depth `d`.
+    ///
+    /// The A/B's third deliverable: what typing does to the shapes the search
+    /// actually carries, as opposed to what it does to the shapes a true law
+    /// has. A gene that does not decode is not in the histogram — it has no
+    /// depth, and counting it as 0 would make an unclosed population look flat.
+    fn depth_histogram(&self, gen: &Generation) -> Vec<u64> {
+        let l = self.layout;
+        let (width, nr) = (l.gene_width() as usize, l.n_rnc as usize);
+        let mut out: Vec<u64> = Vec::new();
+        for g in 0..(l.pop * l.n_genes) as usize {
+            let tokens = &gen.pop.genome[g * width..(g + 1) * width];
+            let consts = &gen.pop.rnc[g * nr..(g + 1) * nr];
+            if let Some(nodes) = decode_gene(tokens, consts, l, &self.table) {
+                let d = t_depth(&nodes) as usize;
+                if out.len() <= d {
+                    out.resize(d + 1, 0);
+                }
+                out[d] += 1;
+            }
+        }
+        out
+    }
+
     fn report_cohorts(&mut self, gen: &Generation) -> Result<Option<Vec<u32>>, String> {
         if self.cohorts.is_empty() {
             return Ok(None);
@@ -5725,6 +5765,8 @@ impl Engine {
             individuals,
             unique_genes: unique,
             oversized_genes: oversized,
+            typed_refused: self.typed_refused,
+            depth_histogram: self.depth_histogram(&gen),
             stopped_by,
             math: self.math_of(&gen, row, &best),
             best,

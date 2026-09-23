@@ -460,6 +460,13 @@ pub fn apply_env(config: &mut Config, env: &dyn Fn(&str) -> Option<String>) {
     if let Some(n) = num(env, "EVOLVE_FLOAT_ZONE") {
         config.float_zone = n;
     }
+    //   EVOLVE_TYPED_DEPTH              TYPED TRANSCENDENTAL DEPTH: the ceiling on nested
+    //                                   transcendentals. UNSET is the engine as it was; 0
+    //                                   would be a search with no transcendental at all and
+    //                                   is refused rather than read as "off".
+    if let Some(n) = num(env, "EVOLVE_TYPED_DEPTH") {
+        config.typed_depth = Some(n);
+    }
     //   EVOLVE_POP_INTAKE / EVOLVE_POP_CHAMPION   the two islands' sizes, by name.
     //
     // THE POSITIONAL `population` ARGUMENT is not here: it is a 3:1 split of one
@@ -531,6 +538,7 @@ mod tests {
             gene_subsets: true,
             beam_tree: true,
             float_zone: 500,
+            typed_depth: Some(2),
             lanes: Some(vec![
                 Lane { name: "general".into(), explore: 1.0, recombine: 1.0, cleanse: None },
                 Lane { name: "explorer".into(), explore: 3.0, recombine: 0.5, cleanse: Some(0.25) },
@@ -625,6 +633,25 @@ mod tests {
         assert_eq!(config.head, 21);
         assert_eq!(config.float_zone, 500);
         assert_eq!(config.log_scale, [true, false, true]);
+        // The ceiling round-trips through the card, so an A/B's two arms differ
+        // by one line of the diff and nothing else.
+        assert_eq!(config.typed_depth, Some(2));
+    }
+
+    /// TYPED TRANSCENDENTAL DEPTH comes off the environment, and UNSET means the
+    /// untyped engine rather than a ceiling of zero.
+    #[test]
+    fn the_transcendental_ceiling_is_unset_by_default_and_named_by_the_environment() {
+        let mut config = Config::srbench(1);
+        assert_eq!(config.typed_depth, None, "the knob is OFF by default");
+        let unset = |_: &str| -> Option<String> { None };
+        apply_env(&mut config, &unset);
+        assert_eq!(config.typed_depth, None, "an empty environment leaves it off");
+        let ceiling = |k: &str| -> Option<String> {
+            if k == "EVOLVE_TYPED_DEPTH" { Some("2".to_string()) } else { None }
+        };
+        apply_env(&mut config, &ceiling);
+        assert_eq!(config.typed_depth, Some(2));
     }
 
     /// THE STOP BAR'S INFINITY survives JSON. serde_json writes a non-finite
