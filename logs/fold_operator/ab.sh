@@ -22,7 +22,9 @@ cd $ROOT
 for SEED in 7014 7015 7016; do
   export EVOLVE_SEED=$SEED
   for MODE in on off; do
-    if [[ $MODE == off ]]; then export EVOLVE_FOLD_EVERY=0; else unset EVOLVE_FOLD_EVERY; fi
+    # The fold ships OFF, so "on" has to ask for it. 33 is this fit's pump beat,
+    # which the run_start line reports -- the fold rides the pump.
+    if [[ $MODE == off ]]; then export EVOLVE_FOLD_EVERY=0; else export EVOLVE_FOLD_EVERY=33; fi
     echo "=== seed $SEED fold=$MODE ==="
     cargo run --release --features gpu --example evolve_fit -- $DATA 2>/dev/null | grep -E "^HFF|^GENERATIONS|^FOLD\tbeats|R. on the unseen|ms per generation"
   done
