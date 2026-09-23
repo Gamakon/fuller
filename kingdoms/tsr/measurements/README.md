@@ -84,6 +84,50 @@ symbol for symbol. Not a model that scores well with the wrong shape.
 **The T2 ceiling binds and is not vacuous**: 239 genes sit exactly at it. Only
 0.9% of genes are past it, and those are refused genes riding along unscored.
 
+### feynman_I_26_2 — Snell's law, `arcsin(n·sin θ₂)`, **DEPTH 2**
+
+**The case the T2 rung exists for, and the direct test of the spec's central
+choice.** This law is a transcendental applied to something containing another
+transcendental. **At a ceiling of T1 it has no legal signature and could not be
+found at all.**
+
+**LAW RECOVERED IN ITS TRUE FORM**, seed 7014, at generation **169**, in 18
+seconds:
+
+```
+asin((x_0*sin(x_1)))
+```
+
+Ground truth from `pmlb_repo/datasets/feynman_I_26_2/metadata.yaml` is
+`theta1 = arcsin(n*sin(theta2))`, and the columns are `n, theta2` — so this is
+`arcsin(n·sin θ₂)`, symbol for symbol.
+
+| | |
+|---|---|
+| stopped by | `early_stop` |
+| generations | **169** (18.1 s) |
+| ms/generation | 107.3 |
+| train 1-R² | 1.598e-14 |
+| validation 1-R² | 1.716e-14 |
+| log10 p | −35.68 |
+| test R² | 1.000000 |
+| refused on type | 32,262 = **5.30% of gene-slots/generation** |
+| depth histogram | 0:185 1:2352 **2:810** 3:173 4:47 5:23 6:6 7:4 |
+
+810 genes sit at the ceiling, the recovered law is itself depth 2, and the fit
+took 169 generations. **The ceiling was reached, used, and correct.** This is
+the measurement that says two and not one.
+
+### feynman_I_15_3t — `x/sqrt(1 − v²/c²)`-family, 180 s, seed 7014
+
+Law not recovered in the budget: 1,159 generations at 155.3 ms/generation,
+train 1-R² 3.753e-4, log10 p −10.53. 4.21% of gene-slots refused on type.
+
+Depth histogram 0:1234 1:723 **2:1519** 3:95 4:10 5:15 6:4 — **the population
+lives AT the ceiling here**, with more genes at depth 2 than at any other
+depth. This is the clearest case so far that T2 is not a formality: the search
+spends its budget right up to the limit and would go further if allowed.
+
 ### strogatz_bacres1, depth 0 — 420 s, seed 7014
 
 Law not recovered, which is what 800+400 has always done on this problem
