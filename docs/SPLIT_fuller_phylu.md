@@ -395,14 +395,44 @@ README, `.claude/skills/`, and every command line in the docs.
    `engine.rs`. Check whether phylu needs `egglog` directly or can go through
    fuller's re-exports.
 
-### phylu's git history
+### phylu's git history — DECIDED: carry it
 
-A fresh repo drops ~150 commits of engine engineering log — the fold operator,
-the pump, cohorts, ALPS, the watcher. Rules.md: *"commit messages are the
-engineering log."* **Recommendation:** `git filter-repo` on a *clone* to carry
-the engine's history into phylu, leaving fuller's history untouched. If that
-proves awkward, start fresh and say so in phylu's first commit rather than
-letting it happen silently.
+A fresh repo would drop ~150 commits of engine engineering log — the fold
+operator, the pump, cohorts, virtual ALPS, the watcher, the telemetry schema.
+`docs/Rules.md`: *"Commit messages are the engineering log."* Those messages
+carry root causes, measurements and the reasoning behind decisions that are not
+recoverable from the code.
+
+**Decision (Andrew, this session): keep it all.**
+
+Method: `git filter-repo` on a **clone**, never on a working repository.
+
+```bash
+git clone /Users/andrewmorgan/Dev/gamakon/fuller /tmp/phylu-carve
+cd /tmp/phylu-carve
+git filter-repo --path src/evolve --path src/chrom_score.rs \
+  --path src/bin/hff_watch.rs --path src/bin/hff_chart.rs \
+  --path examples/evolve_fit.rs --path examples/evolve_speed.rs \
+  --path tests/fixtures --path experiments
+```
+
+**Two hazards, both met on this machine already, both cheap to avoid:**
+
+1. **Take a bundle first.** `git bundle create /tmp/phylu-before.bundle --all`.
+   A `filter-repo` run in this session lost an entire history because
+   `--invert-paths` was split onto its own line by a terminal wrap and zsh
+   dropped it — without the flag the command KEEPS the listed paths and deletes
+   everything else, which is the inverse of what was meant. The bundle made it
+   a five-minute recovery instead of a disaster.
+2. **Check the file count after, before pushing.** `git ls-files | wc -l`
+   against what was expected. A filter that emptied the tree looks like success
+   until you look. Never push a rewritten history without that check.
+
+Note the two hazards point opposite ways here: this carve WANTS the listed
+paths (no `--invert-paths`), where the codegraph fix wanted everything else. Say
+which you mean, then verify you got it.
+
+fuller's own history is untouched — the clone is thrown away afterwards.
 
 ## 6. Order of work
 
