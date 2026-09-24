@@ -51,6 +51,24 @@ logs/live_*
 logs/probe/
 logs/laws/
 
+# A RUN'S OWN DIRECTORY. The rules above ignore a run's files by extension, but
+# an untracked DIRECTORY still shows in `git status` as one entry, so a sweep
+# leaves the tree looking dirty even when nothing in it is tracked. These are
+# the directories runs write into; the cards and scripts inside them are still
+# un-ignored by the exemptions below.
+logs/RUN/
+logs/cascade133/
+logs/watchtest/
+logs/gputest/
+logs/tsr/
+
+# codegraph writes its logs into the working directory unconditionally
+# (codegraph.rs:632), which from a Claude Code session is this repo.
+.codegraph/
+
+# SurrealDB CLI history, written where the client is run.
+history.txt
+
 # A/B binary snapshots: 7.5 MB apiece, and rebuildable from the commit the
 # run card names. The card is the record, not the binary.
 logs/*/evolve_fit_*
