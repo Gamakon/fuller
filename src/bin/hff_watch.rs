@@ -1269,12 +1269,12 @@ fn footer(f: &mut Frame, state: &WatchState, ui: &Ui, area: Rect) {
 /// lines, and a printer that splits everything turns a small model into a column
 /// of single characters.
 fn indent_expression(src: &str, width: usize) -> String {
-    // The matching close for every open bracket, so a span's length is known
-    // before deciding whether to break it.
-    let bytes: Vec<char> = src.chars().collect();
-    let mut close_of = vec![usize::MAX; bytes.len()];
+    let chars: Vec<char> = src.chars().collect();
+    // The matching close for every open bracket, so a span's width is known
+    // before anything is committed to a line.
+    let mut close_of = vec![usize::MAX; chars.len()];
     let mut stack = Vec::new();
-    for (i, c) in bytes.iter().enumerate() {
+    for (i, c) in chars.iter().enumerate() {
         match c {
             '(' => stack.push(i),
             ')' => {
@@ -1285,55 +1285,90 @@ fn indent_expression(src: &str, width: usize) -> String {
             _ => {}
         }
     }
+
     let mut out = String::new();
     let mut line = String::new();
     let mut depth = 0usize;
     let mut i = 0usize;
-    // A line is only ever flushed here, so the indent and the newline stay
-    // together and a stray break cannot lose the leading spaces.
-    macro_rules! flush {
-        () => {
-            if !line.trim().is_empty() {
-                out.push_str(&"  ".repeat(depth));
-                out.push_str(line.trim_end());
-                out.push('\n');
-            }
-            line.clear();
-        };
-    }
-    while i < bytes.len() {
-        let c = bytes[i];
-        match c {
-            '(' => {
-                // The whole span, brackets included. If it fits in what is left
-                // of the width it is copied verbatim and never split.
-                let end = close_of[i];
-                let fits = end != usize::MAX && (end - i + 1) + depth * 2 + line.chars().count() <= width;
-                if fits {
-                    line.extend(&bytes[i..=end]);
+    // THE INDENT IS WHERE THE LINE STARTED, not where it ended. Brackets opened
+    // and closed while the line was being filled move `depth` on, so indenting
+    // by the current value put a continuation further left than its own parent
+    // and the column no longer showed the nesting.
+    let mut line_depth = 0usize;
+    let indent = |d: usize| "  ".repeat(d);
+
+    while i < chars.len() {
+        let c = chars[i];
+
+        // A WHOLE SPAN THAT FITS is copied verbatim. This is what keeps eight
+        // terms on a line instead of one: the printer only ever breaks what it
+        // has to, and most sub-expressions of a model are short.
+        if c == '(' {
+            let end = close_of[i];
+            if end != usize::MAX {
+                let span = end - i + 1;
+                if line_depth * 2 + line.chars().count() + span <= width {
+                    line.extend(&chars[i..=end]);
                     i = end + 1;
                     continue;
                 }
-                line.push('(');
-                flush!();
-                depth += 1;
             }
-            ')' => {
-                flush!();
-                depth = depth.saturating_sub(1);
-                line.push(')');
-            }
-            // A separator at THIS level ends the sibling. Operators inside a
-            // span that fitted were consumed above and never reach here.
-            '+' | '-' | '*' | '/' | ',' => {
-                line.push(c);
-                flush!();
-            }
-            _ => line.push(c),
+            // Too wide for what is left, so it opens a block. The bracket is a
+            // TAB STOP: it stays on the current line and the indent moves in
+            // behind it, rather than taking a line of its own.
+            line.push('(');
+            depth += 1;
+            i += 1;
+            continue;
         }
+
+        if c == ')' {
+            // A closing bracket NEVER starts a line. It attaches to whatever is
+            // in hand, so a tail reads as `))) + x_1` and not as three rows of
+            // punctuation.
+            depth = depth.saturating_sub(1);
+            line.push(')');
+            i += 1;
+            continue;
+        }
+
+        // A separator is a legal break point. The line is only broken when the
+        // next term would not fit, so terms pack until the width runs out.
+        if matches!(c, '+' | '-' | '*' | '/' | ',') {
+            line.push(c);
+            i += 1;
+            // Measure the next term at this level before committing to it.
+            let mut j = i;
+            let mut d = 0usize;
+            while j < chars.len() {
+                match chars[j] {
+                    '(' => d += 1,
+                    ')' if d == 0 => break,
+                    ')' => d -= 1,
+                    '+' | '-' | '*' | '/' | ',' if d == 0 => break,
+                    _ => {}
+                }
+                j += 1;
+            }
+            if line_depth * 2 + line.chars().count() + (j - i) > width && !line.trim().is_empty() {
+                out.push_str(&indent(line_depth));
+                out.push_str(line.trim_end());
+                out.push('\n');
+                line.clear();
+                line_depth = depth;
+            }
+            continue;
+        }
+
+        line.push(c);
         i += 1;
     }
-    flush!();
+
+    if !line.trim().is_empty() {
+        out.push_str(&indent(line_depth));
+        out.push_str(line.trim_end());
+        out.push('\n');
+    }
     if out.is_empty() { src.to_string() } else { out }
 }
 
