@@ -39,6 +39,12 @@ use ratatui::Frame;
 /// viewer from spinning a core on a stream that is quiet.
 const TICK: std::time::Duration = std::time::Duration::from_millis(250);
 
+/// How many consecutive input failures before the viewer gives up and exits.
+/// At [`TICK`] apiece that is about thirty seconds of a keyboard that cannot be
+/// read — long enough to ride out a transient, short enough that a wedged
+/// viewer does not have to be killed from another pane.
+const INPUT_GIVE_UP: u64 = 120;
+
 /// Below this the full screen does not fit and the 80x24 fallback is drawn.
 const WIDE: (u16, u16) = (120, 35);
 /// Below THIS there is no useful layout at all and the compact warning is drawn.
@@ -234,6 +240,14 @@ fn main() {
         return;
     }
     let mut ui = Ui { theme: Theme::detect(), ..Ui::default() };
+    // A MISSING TERMINAL IS A MESSAGE, NOT A PANIC. Run down a pipe, under a
+    // harness, or with stdin redirected, `ratatui::init` aborts with a stack
+    // trace; the honest answer is to say there is no terminal and name the mode
+    // that works without one.
+    if !std::io::IsTerminal::is_terminal(&std::io::stdout()) {
+        eprintln!("hff-watch: not a terminal — use --dump for text output");
+        std::process::exit(2);
+    }
     let mut terminal = ratatui::init();
     let outcome = loop {
         if let Some(t) = tailer.as_mut() {
@@ -268,7 +282,17 @@ fn main() {
                     }
                 }
                 Ok(_) => {}
-                Err(_) => ui.input_errors += 1,
+                // A READ THAT FAILS AFTER A READY POLL IS A SPIN. `poll`
+                // reported an event, so it will report one again immediately,
+                // and without a sleep here the loop runs at the speed of the
+                // syscall: a pegged core, a screen that never repaints, and no
+                // Ctrl-C because the key is never delivered. Measured on a
+                // finished 83 MB stream — parse is 0.42 s and a frame 0.54 ms,
+                // so neither the read nor the render was ever the cost.
+                Err(_) => {
+                    ui.input_errors += 1;
+                    std::thread::sleep(TICK);
+                }
             },
             Ok(false) => {}
             Err(_) => {
@@ -277,6 +301,15 @@ fn main() {
                 // it would spin a core at the speed of the file system.
                 std::thread::sleep(TICK);
             }
+        }
+        // A VIEWER WITH NO KEYBOARD MUST STILL BE KILLABLE. Past this many
+        // consecutive failures the input path is not coming back — stdin is
+        // redirected, the terminal is gone — and a display nobody can quit from
+        // the keyboard is worse than no display. It says so and exits, leaving
+        // the terminal restored, rather than holding the screen until it is
+        // killed from another pane.
+        if ui.input_errors > INPUT_GIVE_UP {
+            break Err(std::io::Error::other("no usable keyboard: input failed repeatedly"));
         }
     };
     ratatui::restore();
@@ -1708,6 +1741,20 @@ mod tests {
     use fuller::evolve::watch::Find;
     use ratatui::backend::TestBackend;
     use ratatui::Terminal;
+
+    /// A VIEWER WITH NO KEYBOARD GIVES UP RATHER THAN WEDGING.
+    ///
+    /// A read that fails after a ready poll will be ready again at once, so
+    /// without a sleep the loop spins a core, never repaints, and never gets
+    /// the Ctrl-C — the screen goes white and the only way out is to kill it
+    /// from another pane. This pins the bound: past INPUT_GIVE_UP consecutive
+    /// failures the viewer exits on its own.
+    #[test]
+    fn the_input_give_up_is_about_thirty_seconds() {
+        let budget = TICK * INPUT_GIVE_UP as u32;
+        assert!(budget >= std::time::Duration::from_secs(20), "long enough to ride out a transient");
+        assert!(budget <= std::time::Duration::from_secs(60), "short enough not to need killing");
+    }
 
     /// A FINISHED RUN IS OPENED BY ITS DIRECTORY. Remembering the file's name
     /// inside a run directory is one more thing to get wrong at the moment you
