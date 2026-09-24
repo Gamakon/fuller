@@ -20,6 +20,8 @@ pub mod snap_graft;
 pub mod snap_guard;
 pub mod snap_table;
 pub mod tables;
+#[cfg(test)]
+pub(crate) mod test_rng;
 
 use engine::{CallerFacts, Config, LitMode, Outcome, Search};
 use node::Tree;

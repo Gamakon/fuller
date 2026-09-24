@@ -988,7 +988,7 @@ pub use gpu::SnapKernel;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::evolve::draw;
+    use crate::lint::test_rng::draw;
     use crate::lint::pack::arity;
     use std::f64::consts::PI;
 
@@ -1023,7 +1023,7 @@ mod tests {
             .map(|row| {
                 let u = (draw(7, 0, row, 0, 0) >> 11) as f64 / (1u64 << 53) as f64;
                 let magnitude = 10f64.powf(-6.0 + 12.0 * u);
-                let v = if crate::evolve::coin(draw(7, 0, row, 1, 0)) { -magnitude } else { magnitude };
+                let v = if crate::lint::test_rng::coin(draw(7, 0, row, 1, 0)) { -magnitude } else { magnitude };
                 v as f32
             })
             .collect();

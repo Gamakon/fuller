@@ -821,7 +821,7 @@ pub use gpu::{GuardBlocks, Guarded, SnapGuard};
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::evolve::draw;
+    use crate::lint::test_rng::draw;
     use crate::lint::engine::LitMode;
     use crate::lint::node::Tree;
     use crate::lint::snap_graft::{match_literals, snap_graft};

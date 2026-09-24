@@ -652,7 +652,7 @@ pub use gpu::{GraftWords, SnapGraft};
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::evolve::{below, coin, draw};
+    use crate::lint::test_rng::{below, coin, draw};
     use crate::lint::flat::is_canonical;
     use crate::lint::node::Tree;
     use crate::snap_karva::snap_variants;
