@@ -50,6 +50,11 @@ pub const HISTORY_LINGER: usize = 30;
 /// happened and shallow enough that a viewer's memory does not grow with the fit.
 pub const DISCOVERIES: usize = 128;
 
+/// How many model records the hall of fame keeps. A fit writes one per
+/// improvement; twenty-odd is the most seen on a hard law, and this leaves room
+/// while keeping a long watch bounded.
+pub const HALL_OF_FAME: usize = 64;
+
 /// WHICH KIND OF DISCOVERY, because the two are not the same finding and a list
 /// that mixed them silently would be a list of unrelated numbers.
 ///
@@ -325,6 +330,11 @@ pub struct WatchState {
     pub tidy_reported: bool,
     /// The most recent `model` record, for the `m` viewer.
     pub model: Option<super::telemetry::Model>,
+    /// EVERY model record this run has written, oldest first — the search's own
+    /// ladder of bests. Capped at [`HALL_OF_FAME`], oldest dropped, because a
+    /// long fit writes one per improvement and the viewer must not grow without
+    /// bound while it watches.
+    pub hall: Vec<super::telemetry::Model>,
     /// THE WINNING GENE as one readable line, `f(x, y) = ...`, computed WHEN THE
     /// MODEL ARRIVES and not per frame. A model record is rare and the screen
     /// repaints four times a second; formatting it on every repaint would be the
@@ -382,6 +392,7 @@ impl WatchState {
             found: [0; 3],
             tidy_reported: false,
             model: None,
+            hall: Vec::new(),
             gene_line: None,
             selected: None,
             island: 0,
@@ -487,6 +498,18 @@ impl WatchState {
             }
             Record::Model(m) => {
                 self.gene_line = gene_line_of(&m);
+                // THE HALL OF FAME. A fit writes a model record every time it
+                // betters itself, so the stream already holds the whole ladder
+                // — up to twenty-odd on a hard law. Keeping only the last threw
+                // away the search's own account of how it got there, which is
+                // what an operator reads to see whether it converged or jumped.
+                //
+                // A law that early-stops at generation 1 has one entry, and the
+                // list is then the model; nothing special-cases that.
+                self.hall.push(m.clone());
+                if self.hall.len() > HALL_OF_FAME {
+                    self.hall.remove(0);
+                }
                 self.model = Some(m);
             }
             Record::RunEnd(e) => self.end = Some(e),

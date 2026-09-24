@@ -265,6 +265,11 @@ struct Ui {
     /// usefully. `w` toggles wrapping.
     model_scroll: u16,
     model_wrap: bool,
+    /// WHICH HALL-OF-FAME ENTRY the pane is showing, as an index from the END:
+    /// 0 is the newest, 1 the one before it. Counting from the end means a new
+    /// model arriving does not slide the selection under the operator, which an
+    /// index from the start would do on every improvement.
+    model_pick: usize,
     copied: Option<String>,
     /// Polls that could not read the keyboard — stdin redirected, no tty. The
     /// viewer keeps repainting as a display and SAYS SO, because a screen that
@@ -300,6 +305,17 @@ fn press(state: &mut WatchState, ui: &mut Ui, code: KeyCode, modifiers: KeyModif
             KeyCode::Char('w') => ui.model_wrap = !ui.model_wrap,
             KeyCode::Char('h') => ui.model_scroll = ui.model_scroll.saturating_sub(8),
             KeyCode::Char('l') => ui.model_scroll = ui.model_scroll.saturating_add(8),
+            // WALK THE HALL OF FAME. The pane below redraws for whichever entry
+            // is selected, so moving the selection changes the printed model.
+            // The scroll resets, or the new model would open part-read.
+            KeyCode::Up | KeyCode::Char('k') => {
+                ui.model_pick = (ui.model_pick + 1).min(state.hall.len().saturating_sub(1));
+                ui.model_scroll = 0;
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                ui.model_pick = ui.model_pick.saturating_sub(1);
+                ui.model_scroll = 0;
+            }
             // COPY-TO-FILE: the brief asks for it, and a file is the honest form
             // of it — a terminal has no clipboard a program can rely on, and
             // pretending otherwise is a key that silently does nothing.
@@ -1396,10 +1412,19 @@ fn model_overlay(f: &mut Frame, state: &WatchState, ui: &Ui, area: Rect) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(theme.accent()))
-        .title(" MODEL · Tab switches · w wrap · h/l scroll · y write to a file · Esc close ");
+        .title(" MODEL · ↑↓ walk the hall of fame · Tab form · h/l scroll · w raw · y file · Esc close ");
     let inner = block.inner(box_area);
     f.render_widget(block, box_area);
-    let Some(m) = state.model.as_ref() else {
+    // The SELECTED entry, counted back from the newest. `model` is the last one
+    // written, so an empty hall (a stream with no model yet) falls through to
+    // the same message it always did.
+    let picked = state
+        .hall
+        .len()
+        .checked_sub(1 + ui.model_pick)
+        .and_then(|i| state.hall.get(i))
+        .or(state.model.as_ref());
+    let Some(m) = picked else {
         f.render_widget(
             Paragraph::new(Span::styled("no model record in this stream yet", Style::default().fg(theme.warn()))),
             inner,
@@ -1418,10 +1443,33 @@ fn model_overlay(f: &mut Frame, state: &WatchState, ui: &Ui, area: Rect) {
         .direction(Direction::Vertical)
         .constraints([Constraint::Length(1), Constraint::Length(1), Constraint::Min(1), Constraint::Length(1)])
         .split(inner);
+    // THE LADDER BESIDE THE MODEL. With more than one entry and room for it, the
+    // hall is a column on the left and the printed model fills the rest; moving
+    // the selection redraws the right-hand side. One entry needs no list.
+    let (list_area, body_area) = if state.hall.len() > 1 && rows[2].width >= 64 {
+        let split = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Length(26), Constraint::Min(36)])
+            .split(rows[2]);
+        (Some(split[0]), split[1])
+    } else {
+        (None, rows[2])
+    };
     f.render_widget(Paragraph::new(Line::from(tabs)), rows[0]);
     f.render_widget(
         Paragraph::new(Span::styled(
-            format!("found at generation {} · HFF {} · depth {}", m.found_generation, or_dash(m.hff, 6), m.t_depth),
+            if state.hall.len() > 1 {
+                format!(
+                    "entry {} of {} · found at generation {} · HFF {} · depth {}",
+                    state.hall.len() - ui.model_pick.min(state.hall.len() - 1),
+                    state.hall.len(),
+                    m.found_generation,
+                    or_dash(m.hff, 6),
+                    m.t_depth
+                )
+            } else {
+                format!("found at generation {} · HFF {} · depth {}", m.found_generation, or_dash(m.hff, 6), m.t_depth)
+            },
             Style::default().fg(theme.dim()),
         )),
         rows[1],
@@ -1429,16 +1477,38 @@ fn model_overlay(f: &mut Frame, state: &WatchState, ui: &Ui, area: Rect) {
     // INDENTED BY DEFAULT. A model is read for its shape, and the shape is what
     // one long line destroys; `w` gives back the raw line for a copy or a diff.
     let pretty = !ui.model_wrap;
-    let shown = if pretty { indent_expression(&body, rows[2].width as usize) } else { body };
+    if let Some(la) = list_area {
+        let mut items: Vec<Line> = Vec::new();
+        for (n, e) in state.hall.iter().enumerate().rev() {
+            let back = state.hall.len() - 1 - n;
+            let sel = back == ui.model_pick;
+            let style = if sel {
+                Style::default().fg(theme.accent()).add_modifier(Modifier::BOLD | Modifier::REVERSED)
+            } else {
+                Style::default().fg(theme.dim())
+            };
+            items.push(Line::from(Span::styled(
+                format!(" gen {:>6}  {:>9} ", e.found_generation, or_dash(e.hff, 3)),
+                style,
+            )));
+        }
+        // The selection is kept on screen without a scrollbar: the window slides
+        // to hold it, which is all a list this short needs.
+        let h = la.height as usize;
+        let from = ui.model_pick.saturating_sub(h.saturating_sub(1));
+        let view: Vec<Line> = items.into_iter().skip(from).take(h).collect();
+        f.render_widget(Paragraph::new(view), la);
+    }
+    let shown = if pretty { indent_expression(&body, body_area.width as usize) } else { body };
     let lines = shown.lines().count() as u16;
-    let page = rows[2].height;
+    let page = body_area.height;
     // Scrolling is now DOWN the indented text rather than sideways along one
     // line, and it stops at the end instead of running off into blank screen.
     let max_scroll = lines.saturating_sub(page);
     let offset = ui.model_scroll.min(max_scroll);
     let text = Paragraph::new(shown);
     let text = if pretty { text.scroll((offset, 0)) } else { text.wrap(Wrap { trim: false }) };
-    f.render_widget(text, rows[2]);
+    f.render_widget(text, body_area);
     f.render_widget(
         Paragraph::new(Span::styled(
             match &ui.copied {
@@ -1595,6 +1665,51 @@ mod tests {
     use fuller::evolve::watch::Find;
     use ratatui::backend::TestBackend;
     use ratatui::Terminal;
+
+    /// WALKING THE HALL CHANGES THE PRINTED MODEL. The point of the list is
+    /// that the pane beside it follows the selection; a list that moved a
+    /// highlight without redrawing the model would be decoration.
+    #[test]
+    fn walking_the_hall_of_fame_changes_the_model_on_screen() {
+        let mut state = WatchState::new(true);
+        for (gen, expr) in [(10u32, "(x_0*x_1)"), (20, "(x_0+x_1)"), (30, "(x_0/x_1)")] {
+            state.apply_record(Record::Model(fuller::evolve::telemetry::Model {
+                header: fuller::evolve::telemetry::Header {
+                    schema_version: 1,
+                    run_id: "r".into(),
+                    seq: gen as u64,
+                    timestamp_utc: String::new(),
+                    elapsed_ms: 0,
+                    generation: gen,
+                },
+                found_generation: gen,
+                hff: Some(1.0 / gen as f64),
+                t_depth: 0,
+                infix_protected: expr.into(),
+                infix_plain: expr.into(),
+                raw_math: expr.into(),
+            }));
+        }
+        assert_eq!(state.hall.len(), 3, "every improvement is kept, not just the last");
+
+        let mut ui = Ui { theme: Theme::detect(), model_open: true, ..Ui::default() };
+        let render = |ui: &Ui| {
+            let mut t = Terminal::new(TestBackend::new(110, 30)).expect("terminal");
+            t.draw(|f| model_overlay(f, &state, ui, f.area())).expect("draw");
+            let b = t.backend().buffer().clone();
+            (0..b.area.height)
+                .map(|y| (0..b.area.width).map(|x| b[(x, y)].symbol()).collect::<String>())
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        let newest = render(&ui);
+        assert!(newest.contains("x_0/x_1"), "opens on the newest entry");
+
+        ui.model_pick = 2; // walk back to the oldest
+        let oldest = render(&ui);
+        assert!(oldest.contains("x_0*x_1"), "the pane redraws for the selected entry");
+        assert!(!oldest.contains("x_0/x_1"), "and stops showing the one it left");
+    }
 
     /// THE INDENTED MODEL KEEPS EVERY TOKEN. A pretty-printer that dropped or
     /// reordered a character would be showing an equation the fit never found,
