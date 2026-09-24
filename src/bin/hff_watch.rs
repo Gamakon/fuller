@@ -1252,6 +1252,91 @@ fn footer(f: &mut Frame, state: &WatchState, ui: &Ui, area: Rect) {
 /// than showing a form this viewer computed — the fit's own final form costs a
 /// saturation and is printed when the fit ends, and a different simplification
 /// here would be a fourth string nobody asked for.
+/// AN EXPRESSION, INDENTED BY ITS OWN BRACKETS — the model pane's readable form.
+///
+/// A recovered model is one line of several hundred characters. Wrapped it is a
+/// wall; scrolled sideways it is a slot. Neither shows the SHAPE, which is the
+/// thing an operator is reading it for: which factor multiplies which sum, how
+/// deep the nesting goes, where the constant sits.
+///
+/// So it is broken the way a nested document is: a bracket that opens starts an
+/// indented block, a comma or a top-level operator starts a sibling line, and a
+/// bracket that closes ends it. The tokens are untouched — this only adds line
+/// breaks and leading spaces, so what is on screen is still exactly the model.
+///
+/// SHORT SPANS STAY ON ONE LINE. A bracket whose whole contents fit in the width
+/// left to it is not split: `(x_0*x_1)` is more readable as itself than as five
+/// lines, and a printer that splits everything turns a small model into a column
+/// of single characters.
+fn indent_expression(src: &str, width: usize) -> String {
+    // The matching close for every open bracket, so a span's length is known
+    // before deciding whether to break it.
+    let bytes: Vec<char> = src.chars().collect();
+    let mut close_of = vec![usize::MAX; bytes.len()];
+    let mut stack = Vec::new();
+    for (i, c) in bytes.iter().enumerate() {
+        match c {
+            '(' => stack.push(i),
+            ')' => {
+                if let Some(open) = stack.pop() {
+                    close_of[open] = i;
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut out = String::new();
+    let mut line = String::new();
+    let mut depth = 0usize;
+    let mut i = 0usize;
+    // A line is only ever flushed here, so the indent and the newline stay
+    // together and a stray break cannot lose the leading spaces.
+    macro_rules! flush {
+        () => {
+            if !line.trim().is_empty() {
+                out.push_str(&"  ".repeat(depth));
+                out.push_str(line.trim_end());
+                out.push('\n');
+            }
+            line.clear();
+        };
+    }
+    while i < bytes.len() {
+        let c = bytes[i];
+        match c {
+            '(' => {
+                // The whole span, brackets included. If it fits in what is left
+                // of the width it is copied verbatim and never split.
+                let end = close_of[i];
+                let fits = end != usize::MAX && (end - i + 1) + depth * 2 + line.chars().count() <= width;
+                if fits {
+                    line.extend(&bytes[i..=end]);
+                    i = end + 1;
+                    continue;
+                }
+                line.push('(');
+                flush!();
+                depth += 1;
+            }
+            ')' => {
+                flush!();
+                depth = depth.saturating_sub(1);
+                line.push(')');
+            }
+            // A separator at THIS level ends the sibling. Operators inside a
+            // span that fitted were consumed above and never reach here.
+            '+' | '-' | '*' | '/' | ',' => {
+                line.push(c);
+                flush!();
+            }
+            _ => line.push(c),
+        }
+        i += 1;
+    }
+    flush!();
+    if out.is_empty() { src.to_string() } else { out }
+}
+
 fn model_overlay(f: &mut Frame, state: &WatchState, ui: &Ui, area: Rect) {
     let theme = ui.theme;
     let width = area.width.saturating_sub(6).max(20);
@@ -1306,17 +1391,30 @@ fn model_overlay(f: &mut Frame, state: &WatchState, ui: &Ui, area: Rect) {
         )),
         rows[1],
     );
-    let text = Paragraph::new(body);
-    // Wrapping or horizontal scrolling, as the brief asks: a 900-character model
-    // is unreadable wrapped into a wall and unreadable cut off, so it is the
-    // operator's choice which.
-    let text = if ui.model_wrap { text.wrap(Wrap { trim: false }) } else { text.scroll((0, ui.model_scroll)) };
+    // INDENTED BY DEFAULT. A model is read for its shape, and the shape is what
+    // one long line destroys; `w` gives back the raw line for a copy or a diff.
+    let pretty = !ui.model_wrap;
+    let shown = if pretty { indent_expression(&body, rows[2].width as usize) } else { body };
+    let lines = shown.lines().count() as u16;
+    let page = rows[2].height;
+    // Scrolling is now DOWN the indented text rather than sideways along one
+    // line, and it stops at the end instead of running off into blank screen.
+    let max_scroll = lines.saturating_sub(page);
+    let offset = ui.model_scroll.min(max_scroll);
+    let text = Paragraph::new(shown);
+    let text = if pretty { text.scroll((offset, 0)) } else { text.wrap(Wrap { trim: false }) };
     f.render_widget(text, rows[2]);
     f.render_widget(
         Paragraph::new(Span::styled(
             match &ui.copied {
                 Some(path) => format!("written to {path}"),
-                None => format!("{} · y writes all three forms to a file", if ui.model_wrap { "wrapped" } else { "scrolling" }),
+                None if pretty => format!(
+                    "indented · line {}-{} of {} · h/l scroll · w raw line · y writes a file",
+                    offset + 1,
+                    (offset + page).min(lines),
+                    lines
+                ),
+                None => "raw line, wrapped · w indents it · y writes a file".to_string(),
             },
             Style::default().fg(theme.dim()),
         )),
@@ -1462,6 +1560,38 @@ mod tests {
     use fuller::evolve::watch::Find;
     use ratatui::backend::TestBackend;
     use ratatui::Terminal;
+
+    /// THE INDENTED MODEL KEEPS EVERY TOKEN. A pretty-printer that dropped or
+    /// reordered a character would be showing an equation the fit never found,
+    /// which is worse than an unreadable one — so the round trip is asserted on
+    /// a REAL recovered model, not a toy.
+    #[test]
+    fn the_indented_model_is_the_same_expression() {
+        let model = "(48.999999646850476*((x_0/(x_0 - (x_0**2)))*(x_2/((-49.0)/x_1))))";
+        let pretty = indent_expression(model, 40);
+        assert!(pretty.contains('\n'), "a model wider than the pane is broken over lines");
+        let stripped: String = pretty.chars().filter(|c| !c.is_whitespace()).collect();
+        let original: String = model.chars().filter(|c| !c.is_whitespace()).collect();
+        assert_eq!(stripped, original, "indenting adds only breaks and spaces");
+    }
+
+    /// A SHORT MODEL IS LEFT ALONE. `(x_0*x_1)` split over five lines is less
+    /// readable than itself, and most recovered laws are this short.
+    #[test]
+    fn a_model_that_fits_is_not_split() {
+        assert_eq!(indent_expression("(x_0*x_1)", 40).trim(), "(x_0*x_1)");
+    }
+
+    /// The deep case: nesting shows as increasing indent, which is the whole
+    /// point of the pane.
+    #[test]
+    fn nesting_shows_as_indent() {
+        let pretty = indent_expression("(a+(b*(c+(d*(e+f)))))", 12);
+        let depths: Vec<usize> = pretty.lines().map(|l| l.len() - l.trim_start().len()).collect();
+        assert!(depths.iter().max() > Some(&0), "deeper terms are indented further");
+        let stripped: String = pretty.chars().filter(|c| !c.is_whitespace()).collect();
+        assert_eq!(stripped, "(a+(b*(c+(d*(e+f)))))");
+    }
 
     const FIXTURE: &str = include_str!("../../tests/fixtures/telemetry_v1.jsonl");
 
