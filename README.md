@@ -244,8 +244,38 @@ cargo build --release --features gpu --bin hff-watch
 ./target/release/hff-watch --dump logs/cascade133/60s/strogatz_lv2
 ```
 
+![hff-watch, the main view](docs/img/hff-watch-main.png)
+
+The verdict is the SEARCH's answer, in capitals, first on the line: this fit
+ran its full 180 s and **did not** reach a law, which is a different reading
+from the stream being finished — the badge beside it says that. Below it the
+two islands, the cohort table (`c2800` has gone EXTINCT and keeps its row until
+its history ages out), the discoveries the fit made as it ran, and the model on
+one line at the foot.
+
+Note `log10 p -10.30` in red: above the stop bar of −19, so the p half was
+never met. The viewer colours it against the bar the ENGINE sent, not one of
+its own, so a run that moves the bar is still read correctly.
+
+### The model pane, and the hall of fame
+
+A fit writes a model record every time it betters itself, so the stream holds
+the whole ladder. `m` opens it and `↑`/`↓` walk it — the pane redraws for the
+selected entry:
+
+![the model pane with the hall of fame](docs/img/hff-watch-model-hall-of-fame.png)
+
+Fifty-three entries here, falling from 2.508e-2 at generation 1139 to 1.079e-2
+at 3423 — the search's own account of how it got where it stopped, which is
+what tells you whether it converged steadily or jumped. The model beside it is
+indented on its own brackets; as one line it runs several hundred characters
+off the edge.
+
+### The same state as text
+
 `--dump` is the same state machine as the screen, printed instead of drawn, so
-a dump and a view can never disagree. Everything below is real output from it.
+a dump and a view can never disagree. It needs no terminal, which is how a
+script and an operator watch the same fit.
 
 **A law that was found:**
 
