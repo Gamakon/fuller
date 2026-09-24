@@ -145,6 +145,35 @@ impl Theme {
     }
 }
 
+/// The stream a path names. A file is itself; a directory is the stream inside
+/// it, which is `stream.jsonl` by convention and otherwise the newest `.jsonl`
+/// it holds — so a run written under another name still opens.
+fn resolve_stream(path: &str) -> Result<String, String> {
+    let p = std::path::Path::new(path);
+    if p.is_file() {
+        return Ok(path.to_string());
+    }
+    if !p.is_dir() {
+        return Err(format!("{path}: no such file or directory"));
+    }
+    let named = p.join("stream.jsonl");
+    if named.is_file() {
+        return Ok(named.to_string_lossy().into_owned());
+    }
+    let mut found: Vec<(std::time::SystemTime, std::path::PathBuf)> = std::fs::read_dir(p)
+        .map_err(|e| format!("{path}: {e}"))?
+        .flatten()
+        .map(|e| e.path())
+        .filter(|q| q.extension().is_some_and(|x| x == "jsonl"))
+        .filter_map(|q| q.metadata().and_then(|m| m.modified()).ok().map(|t| (t, q)))
+        .collect();
+    found.sort_by_key(|(t, _)| *t);
+    match found.pop() {
+        Some((_, q)) => Ok(q.to_string_lossy().into_owned()),
+        None => Err(format!("{path}: a directory with no .jsonl stream in it")),
+    }
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mode = args.iter().position(|a| a == "--file" || a == "--follow" || a == "--dump");
@@ -153,6 +182,9 @@ fn main() {
         eprintln!("  --file    replay a recorded telemetry stream");
         eprintln!("  --follow  tail a live one (the fit is never touched)");
         eprintln!("  --dump    print the current frame as text and exit");
+        eprintln!();
+        eprintln!("  <path> is a stream.jsonl OR a run directory holding one,");
+        eprintln!("  so a finished cascade is opened by naming its directory.");
         std::process::exit(2);
     };
     let following = args[at] == "--follow";
@@ -160,6 +192,17 @@ fn main() {
     let Some(path) = args.get(at + 1).cloned() else {
         eprintln!("{} needs a path", args[at]);
         std::process::exit(2);
+    };
+    // A RUN DIRECTORY IS A LEGAL PATH. A finished cascade is a directory with a
+    // stream in it, and remembering the file's name inside it is one more thing
+    // to get wrong at the moment you want to read a result. Naming the
+    // directory is what an operator has to hand.
+    let path = match resolve_stream(&path) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("hff-watch: {e}");
+            std::process::exit(1);
+        }
     };
     let mut state = WatchState::new(following);
     // A REPLAY is read whole, up front: it is a recording, there is nothing to
@@ -1665,6 +1708,31 @@ mod tests {
     use fuller::evolve::watch::Find;
     use ratatui::backend::TestBackend;
     use ratatui::Terminal;
+
+    /// A FINISHED RUN IS OPENED BY ITS DIRECTORY. Remembering the file's name
+    /// inside a run directory is one more thing to get wrong at the moment you
+    /// want to read a result, so the directory is a legal path.
+    #[test]
+    fn a_run_directory_resolves_to_the_stream_inside_it() {
+        let dir = std::env::temp_dir().join(format!("hff_resolve_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let d = dir.to_str().expect("utf-8");
+
+        // A directory with no stream says so rather than opening nothing.
+        assert!(resolve_stream(d).is_err(), "an empty directory is an error, not a silent no-op");
+
+        // The conventional name wins.
+        let named = dir.join("stream.jsonl");
+        std::fs::write(&named, "{}\n").expect("write");
+        assert_eq!(resolve_stream(d).expect("resolves"), named.to_string_lossy());
+
+        // A file path is still itself.
+        assert_eq!(
+            resolve_stream(named.to_str().expect("utf-8")).expect("resolves"),
+            named.to_string_lossy()
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
 
     /// WALKING THE HALL CHANGES THE PRINTED MODEL. The point of the list is
     /// that the pane beside it follows the selection; a list that moved a
