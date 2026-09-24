@@ -22,26 +22,37 @@ one crate, so phylu's carried history includes the fixes; the carve comes after.
 | step | state |
 |---|---|
 | Item 1 — lint tests off the engine's RNG | **DONE** `d36178c`. `lint/test_rng.rs`, bit-identical copy, cross-checked by a test. 575 + 21 green. |
-| Item 2 — `Splits` in `GuardData::train` | **BLOCKED on the decision below** |
-| Item 3 — `python.rs` bindings | **BLOCKED on the decision below.** Finding: `gpu_score_karva` and `gpu_predict_karva` use only `gpu_eval` (stays in fuller) — only `GpuSession.score_chromosomes` / `score_width` / `metric_width` bind `chrom_score`. |
-| Item 4 — dependencies | not started |
-| Carve phylu (filter-repo on a clone, bundle first, count files after) | not started |
+| Item 2 — `Splits` in `GuardData::train` | **DISSOLVED** by the decision below — `Splits` stays in fuller with `chrom_score`. |
+| Item 3 — `python.rs` bindings | **DISSOLVED** — `python.rs` stays whole in fuller; codegraph confirms it has no production use of `evolve`. |
+| Item 4 — dependencies | in progress, in phylu's `Cargo.toml` |
+| Carve phylu (filter-repo on a clone, bundle first, count files after) | in progress |
 | Move, rewire imports, slim fuller, READMEs, rename viewer, push | not started |
 
-**OPEN DECISION (Andrew's): where does `chrom_score` live?**
-
-The plan moves it to phylu. Found during execution, not in the plan: **hff's
-Python engine and notebook call `fuller.GpuSession.score_chromosomes`**
+**DECIDED (auto mode, reversible): `chrom_score` stays in fuller.** hff's Python
+engine and notebook call `fuller.GpuSession.score_chromosomes`
 (`hff/notebooks/hff_sr_engine.py:1080`,
-`hff/notebooks/v1.0.4_Multidemic_SymbolicEquationRecovery.py:2179`). Moving it
-breaks both and requires phylu to ship its own PyO3 module.
+`hff/notebooks/v1.0.4_Multidemic_SymbolicEquationRecovery.py:2179`); moving it
+would break both and need a second PyO3 module. It imports nothing from the
+crate and is scoring — link, wrap, least squares, metrics — which fits
+"fuller: define, rewrite, evaluate". phylu calls `fuller::chrom_score`.
 
-Recommendation on record: **keep `chrom_score` in fuller.** It imports nothing
-from the crate (rayon only) and is scoring — link, wrap, least squares, metrics
-— which fits "fuller: define, rewrite, evaluate". That dissolves items 2 and 3
-and breaks nothing; phylu calls `fuller::chrom_score`. Confirmed by codegraph
-`agentic_impact`: the only fuller breaks from moving it are `snap_guard.rs:40`
-and `python.rs:1738`.
+**The carve manifest** (§5's list was incomplete — an unlisted path is silently
+left behind). phylu takes the history of: `src/evolve`, `src/bin/hff_watch.rs`,
+`src/bin/hff_chart.rs`, `examples/evolve_fit.rs`, `examples/evolve_speed.rs`,
+`tests/fixtures`, `experiments`, `logs`, `kingdoms`, `.claude/skills/running-fits`,
+`docs/img`, `docs/paper`, `docs/audit`, `docs/EXPERIMENTS.md`,
+`docs/STUDY_near_misses.md`, `docs/PLAN_engine_on_gpu.md`,
+`docs/SPEC_typed_transcendental_depth.md`, this document,
+`papers/HFF_Heterogeneous_Tournaments.tex`, and the crate scaffolding
+(`Cargo.toml`, `Cargo.lock`, `build.rs`, `clippy.toml`, `.gitignore`, `LICENSE`,
+`README.md`, `CLAUDE.md`) which is then rewritten. fuller keeps `kingdoms/`
+(the symbol-table design is geneframe's) minus its `measurements/`, and the
+four `logs/` scripts that drive fuller itself (`run_parity_simplify.sh`,
+`run_lint_join.sh`, `apply_*.py`).
+
+**Test count to hold:** 575 + 21 today. `the_copy_matches_the_engine_generator`
+is the one sanctioned deletion (it compares against the engine), so after the
+split fuller + phylu lib tests = 574, viewer tests 21.
 
 **Use the codegraph MCP tools** (`agentic_impact`, `agentic_context`, …) for
 dependency questions — Andrew's standing instruction. Caveat learned: it
@@ -344,7 +355,7 @@ It becomes a separate crate when it has a second consumer, not before.
 
 `extract` · `expr` · `eval` · `ruleset/` · `karva` · `snap` · `snap_karva` ·
 `physics` · `score` · `parity` · `calibration` · `lint/` · `bf/` ·
-**`geneframe`** · **`gpu_eval`** · `python.rs` (its own bindings)
+**`geneframe`** · **`gpu_eval`** · **`chrom_score`** (decided in STATUS) · `python.rs` (whole)
 
 Binaries: `parity`. Examples: the `bf_*` set, the `lint`/`parity` probes,
 `measure_smallest_form`, `profile_candidates`, `snapdbg`, `00_calibration`.
@@ -354,7 +365,6 @@ Binaries: `parity`. Examples: the `bf_*` set, the `lint`/`parity` probes,
 | What | Lines |
 |---|---|
 | `src/evolve/` — engine, device, vary, write_back, telemetry, watch, chart, card, checkpoint, genealogy, hff_gpu, score, smogd, smote, umap2d | 21,701 |
-| `src/chrom_score.rs` — link, wrap, LSM, metrics, the behavioural signature | 970 |
 | `src/bin/hff_watch.rs` → **`phylu-sr-watch`**, `src/bin/hff_chart.rs` → **`phylu-sr-chart`** (§5a) | 2,645 |
 | `examples/evolve_fit.rs`, `examples/evolve_speed.rs` | — |
 | `tests/fixtures/*.jsonl` — all five are telemetry recordings | — |
@@ -445,10 +455,7 @@ Method: `git filter-repo` on a **clone**, never on a working repository.
 ```bash
 git clone /Users/andrewmorgan/Dev/gamakon/fuller /tmp/phylu-carve
 cd /tmp/phylu-carve
-git filter-repo --path src/evolve --path src/chrom_score.rs \
-  --path src/bin/hff_watch.rs --path src/bin/hff_chart.rs \
-  --path examples/evolve_fit.rs --path examples/evolve_speed.rs \
-  --path tests/fixtures --path experiments
+git filter-repo $(sed 's/^/--path /' manifest.txt)   # the STATUS manifest, one path per line
 ```
 
 **Two hazards, both met on this machine already, both cheap to avoid:**
@@ -565,9 +572,20 @@ The 180 s stage consumed roughly 40% of the 5.39 hours and recovered nothing.
 **This is a measurement, not a property of the code** — it comes from one
 cascade (seed 7014, commit `b21ea30`) read back by `logs/report.py`. It should
 be reproduced on a second seed before the budget ladder is changed on it.
-Either the budget ladder should stop at 120 s, or the third stage should change
-something other than time — a different seed, a wider population, a different
-kingdom. Time alone is spent.
+
+**The diagnosis is replay, not "time spent".** `logs/cascade133.sh` starts every
+stage from generation 0 with the same `EVOLVE_SEED=7014` and no checkpoint. The
+engine is deterministic, so the 120 s stage re-walks the path the 60 s stage
+already walked and the 180 s stage re-walks it again: of 360 s spent on a law
+that reaches the third stage, only 180 s is new search. Roughly half the
+cascade's wall clock is recomputation.
+
+**The remedy is resume, not a new seed.** A seed per stage is three independent
+searches, which is what `sec:integrity` rejects as *"cheating-like"* (it scored
+54). Resuming each stage from the previous stage's checkpoint keeps it one fit
+per problem and turns every second of the ladder into new generations.
+Checkpoint and resume already exist in the engine; the script does not use
+them.
 
 ### 7c. Typed refusal does not remove shapes
 
