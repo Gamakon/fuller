@@ -13,6 +13,41 @@
 > **Reading is not grepping** (`docs/Rules.md`). If you searched this file for a
 > keyword and landed here, go back to the top.
 
+## STATUS — where execution stands (update this block as work lands)
+
+Execution began after the plan was verified against source and the code graph.
+Sequencing call: the boundary items are resolved in fuller FIRST, while it is
+one crate, so phylu's carried history includes the fixes; the carve comes after.
+
+| step | state |
+|---|---|
+| Item 1 — lint tests off the engine's RNG | **DONE** `d36178c`. `lint/test_rng.rs`, bit-identical copy, cross-checked by a test. 575 + 21 green. |
+| Item 2 — `Splits` in `GuardData::train` | **BLOCKED on the decision below** |
+| Item 3 — `python.rs` bindings | **BLOCKED on the decision below.** Finding: `gpu_score_karva` and `gpu_predict_karva` use only `gpu_eval` (stays in fuller) — only `GpuSession.score_chromosomes` / `score_width` / `metric_width` bind `chrom_score`. |
+| Item 4 — dependencies | not started |
+| Carve phylu (filter-repo on a clone, bundle first, count files after) | not started |
+| Move, rewire imports, slim fuller, READMEs, rename viewer, push | not started |
+
+**OPEN DECISION (Andrew's): where does `chrom_score` live?**
+
+The plan moves it to phylu. Found during execution, not in the plan: **hff's
+Python engine and notebook call `fuller.GpuSession.score_chromosomes`**
+(`hff/notebooks/hff_sr_engine.py:1080`,
+`hff/notebooks/v1.0.4_Multidemic_SymbolicEquationRecovery.py:2179`). Moving it
+breaks both and requires phylu to ship its own PyO3 module.
+
+Recommendation on record: **keep `chrom_score` in fuller.** It imports nothing
+from the crate (rayon only) and is scoring — link, wrap, least squares, metrics
+— which fits "fuller: define, rewrite, evaluate". That dissolves items 2 and 3
+and breaks nothing; phylu calls `fuller::chrom_score`. Confirmed by codegraph
+`agentic_impact`: the only fuller breaks from moving it are `snap_guard.rs:40`
+and `python.rs:1738`.
+
+**Use the codegraph MCP tools** (`agentic_impact`, `agentic_context`, …) for
+dependency questions — Andrew's standing instruction. Caveat learned: it
+resolves calls by name and cannot see `#[cfg(test)]`, so confirm a
+production-vs-test back-edge in the source before acting on it.
+
 ## 0. The vision — read this before anything else
 
 **The objective is 133 of 133.** Every ground-truth law in SRBench recovered
