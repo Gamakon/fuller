@@ -222,129 +222,13 @@ preservation is decided exactly rather than statistically — and the same
 technique applies to any target with decidable equivalence (SQL, regex, sorting
 networks, compiler IR).
 
-## Watching a fit — `hff-watch`
+## The evolution engine: phylu
 
-A fit writes a **telemetry stream**: one JSON object per line, versioned and
-numeric, at the beat the progress report already runs on. `hff-watch` repaints
-from it. The engine's prose log is unchanged and is still what an offline
-diagnosis reads; the stream exists because an operator cannot read a scrolling
-report of a 450-second search.
-
-```bash
-cargo build --release --features gpu --bin hff-watch
-
-# a live fit, or a live cascade of many, as it runs
-./target/release/hff-watch --follow <your-run>/stream.jsonl
-
-# a finished run: name the directory, not the file inside it
-./target/release/hff-watch --file <your-run>
-
-# the same state as text, for a pipe, a log, or a second watcher
-./target/release/hff-watch --dump <your-run>
-```
-
-`<your-run>` is wherever the fit was told to write (`EVOLVE_TELEMETRY_FILE`).
-Run output is not versioned — see [`experiments/README.md`](experiments/README.md)
-for the full set of environment variables and where a run puts things.
-
-![hff-watch, the main view](docs/img/hff-watch-main.png)
-
-The verdict is the SEARCH's answer, in capitals, first on the line: this fit
-ran its full 180 s and **did not** reach a law, which is a different reading
-from the stream being finished — the badge beside it says that. Below it the
-two islands, the cohort table (`c2800` has gone EXTINCT and keeps its row until
-its history ages out), the discoveries the fit made as it ran, and the model on
-one line at the foot.
-
-Note `log10 p -10.30` in red: above the stop bar of −19, so the p half was
-never met. The viewer colours it against the bar the ENGINE sent, not one of
-its own, so a run that moves the bar is still read correctly.
-
-### The model pane, and the hall of fame
-
-A fit writes a model record every time it betters itself, so the stream holds
-the whole ladder. `m` opens it and `↑`/`↓` walk it — the pane redraws for the
-selected entry:
-
-![the model pane with the hall of fame](docs/img/hff-watch-model-hall-of-fame.png)
-
-Fifty-three entries here, falling from 2.508e-2 at generation 1139 to 1.079e-2
-at 3423 — the search's own account of how it got where it stopped, which is
-what tells you whether it converged steadily or jumped. The model beside it is
-indented on its own brackets; as one line it runs several hundred characters
-off the edge.
-
-### The same state as text
-
-`--dump` is the same state machine as the screen, printed instead of drawn, so
-a dump and a view can never disagree. It needs no terminal, which is how a
-script and an operator watch the same fit.
-
-**A law that was found:**
-
-```
-LAW FOUND  (early_stop · the fit met BOTH halves of its stop bar)
-FINISHED  strogatz_lv2.tsv  seed 7014  gen 177  6/60 s
-  best hff 0.000000e0   1-R2 train 3.564e-14   val 3.675e-14   log10 p —
-  intake-0     rows    2000  best 0.000000e0
-  champion-0   rows    2000  best 1.132101e-1
-
-  cohort    born      rows      best hff     best ever        gain
-       0       0      2400    0.000000e0    0.000000e0         NEW
-     100     100      1600   1.923106e-1   1.923106e-1         NEW
-
-  DISCOVERIES · 0 snapped · 82 folded · 0 dropped
-  gen    177  fold  3 nodes ((-88.0)/44.0) -> -2.000000e0
-  gen    160  fold  4 nodes tanh((1/log(Abs((-17.0))))) -> 3.389946e-1 ×26
-  gen     20  fold  4 nodes cos((x_0 - x_0)) -> 1.000000e0 ×5
-```
-
-**One that was not** — the verdict is the SEARCH's answer, not the stream's
-state, so a finished fit that missed says so in capitals:
-
-```
-LAW UNFOUND  (the fit ended with the bar unmet)
-FINISHED  feynman_III_15_27.tsv  seed 7014  gen 371  60/60 s
-  best hff 0.000000e0   1-R2 train 3.551e-9   val 1.153e-9   log10 p —
-```
-
-Note `best hff 0.000000` beside a non-zero `1-R²`: the f32 angle has saturated,
-which is why the viewer prints both and never reports the angle alone.
-
-### Keys
-
-| key | |
-|---|---|
-| `m` | the model pane: the discovered expression, indented on its own brackets |
-| `↑` `↓` | walk the **hall of fame** — every model the fit bettered itself with; the pane redraws for the selected one |
-| `Tab` | protected form · plain form · the engine's raw `Math` |
-| `h` `l` | scroll the printed model · `w` gives back the raw single line · `y` writes it to a file |
-| `Tab` (main view) | focus an island · `Enter` a cohort's detail · `/` filter · `g` global cohorts |
-| `Space` | pause the redraw — records keep arriving, and the fit is never touched |
-
-The model pane matters more than it sounds: a recovered model is one line of
-several hundred characters, and wrapped it is a wall while scrolled sideways it
-is a slot. Indenting on its own brackets is what makes the *shape* readable —
-which factor multiplies which sum, how deep the nesting goes. Terms pack up to
-the pane width rather than taking a line each.
-
-### Watching a cascade of many fits
-
-A sweep runs one fit per law, a minute each. With a file per law the viewer is
-pointed at a stream that dies sixty seconds later, so a cascade sets
-`HFF_TELEMETRY_APPEND=1` and every law writes its own `run_start` into **one**
-file. The viewer follows by byte offset and reads a fresh `run_start` as a new
-run, so it rolls from law to law on its own — one path, live from the first law
-to the last.
-
-```bash
-HFF_TELEMETRY_APPEND=1 EVOLVE_TELEMETRY_FILE=$PWD/logs/RUN/stream.jsonl \
-  ./target/release/examples/evolve_fit data.tsv
-```
-
-Truncating stays the default: a single fit owning its file is right for a single
-fit, and a sweep silently appending to an earlier sweep's stream would be worse
-than either.
+The GPU evolutionary engine that drives fuller inside a search — GEP
+populations, HFF selection, the pump, the in-search fold/snap editors,
+telemetry and the `phylu-sr-watch` viewer — lives in its own repository,
+[phylu](https://github.com/Gamakon/phylu). phylu depends on fuller; fuller
+depends on nothing of phylu's.
 
 ## Python API
 

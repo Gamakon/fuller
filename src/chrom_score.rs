@@ -77,7 +77,7 @@ pub enum Wrapper {
     /// `x * x` — `_w_square`.
     Square,
     /// THE BEAM'S FUNCTIONAL WRAPS. These are NOT sampled by the engine's
-    /// `WRAPPERS`: they exist so [`super::evolve::engine::Engine::beam`] can ask
+    /// `WRAPPERS`: they exist so phylu's `Engine::beam` can ask
     /// "what if this individual's value went through this shape?" and let least
     /// squares fit the `a`, `b` around it. Every one is PARTIAL — off its domain
     /// it returns NaN, which `score_one` already refuses, so a candidate that is

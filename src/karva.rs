@@ -88,7 +88,7 @@ pub fn master_pset() -> Vec<(&'static str, usize)> {
 }
 
 /// Map a semantic id + child Math strings into a `Math` s-expression node.
-pub(crate) fn semantic_to_math(semantic: &str, children: &[String]) -> Result<String, String> {
+pub fn semantic_to_math(semantic: &str, children: &[String]) -> Result<String, String> {
     let ctor = match (semantic, children.len()) {
         ("add", 2) => "Add",
         ("sub", 2) => "Sub",

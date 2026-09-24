@@ -605,7 +605,7 @@ pub fn denoise_assuming(
 /// e-graph (datatype only, no rules), extract the term, and eval per row.
 /// This is how the denoise entry points obtain the input's OWN reference
 /// predictions, independent of what the variant enumerator surfaces.
-pub(crate) fn eval_expr_rows(math: &str, rows: &[Vec<(String, f64)>]) -> Result<Vec<f64>, String> {
+pub fn eval_expr_rows(math: &str, rows: &[Vec<(String, f64)>]) -> Result<Vec<f64>, String> {
     let node = parse_pnode(math).ok_or_else(|| format!("could not parse {math:?}"))?;
     let mut termdag = TermDag::default();
     let term = pnode_to_term(&node, &mut termdag);

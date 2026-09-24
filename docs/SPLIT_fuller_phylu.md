@@ -24,9 +24,11 @@ one crate, so phylu's carried history includes the fixes; the carve comes after.
 | Item 1 — lint tests off the engine's RNG | **DONE** `d36178c`. `lint/test_rng.rs`, bit-identical copy, cross-checked by a test. 575 + 21 green. |
 | Item 2 — `Splits` in `GuardData::train` | **DISSOLVED** by the decision below — `Splits` stays in fuller with `chrom_score`. |
 | Item 3 — `python.rs` bindings | **DISSOLVED** — `python.rs` stays whole in fuller; codegraph confirms it has no production use of `evolve`. |
-| Item 4 — dependencies | in progress, in phylu's `Cargo.toml` |
-| Carve phylu (filter-repo on a clone, bundle first, count files after) | in progress |
-| Move, rewire imports, slim fuller, READMEs, rename viewer, push | not started |
+| Item 4 — dependencies | **DONE.** phylu: `fuller` path dep, `hff`, wgpu/pollster/bytemuck (`gpu` also enables `fuller/gpu`), ratatui, serde, rayon, ndarray. No direct `egglog`. fuller drops `ratatui`, the two viewer bins, the `evolve_*` examples and `build.rs` (only the run card read it; phylu's is `PHYLU_GIT_*`). Two fuller items widened to `pub`: `extract::eval_expr_rows`, `karva::semantic_to_math`. |
+| Carve phylu | **DONE.** `~/Dev/gamakon/phylu`, 156 files, 265 commits carried by filter-repo from a clone; bundle taken first. Largest blob 39 MB (historical checkpoints), under GitHub's limit. |
+| Move, rewire, slim, READMEs, rename | **DONE.** `crate::{lint,gpu_eval,chrom_score,karva,snap_karva,geneframe,extract}` → `fuller::`; `hff-watch`/`hff-chart` → `phylu-sr-watch`/`phylu-sr-chart`, screenshots renamed. RNG cross-check replaced by one golden table asserted in BOTH repos. |
+| Verification | **DONE.** fuller 349 + phylu 227 (226 moved + the pinned-RNG test) = 575 lib tests, + 21 viewer; zero warnings, clippy clean, both. `evolve_fit` pre-split (`22ef5d8`) vs phylu at 300 generations, seed 7014, fold+snap on: identical model, identical 661 folds / 177 snaps, identical test R² — only timings differ. |
+| Push both | pending |
 
 **DECIDED (auto mode, reversible): `chrom_score` stays in fuller.** hff's Python
 engine and notebook call `fuller.GpuSession.score_chromosomes`
@@ -50,9 +52,7 @@ left behind). phylu takes the history of: `src/evolve`, `src/bin/hff_watch.rs`,
 four `logs/` scripts that drive fuller itself (`run_parity_simplify.sh`,
 `run_lint_join.sh`, `apply_*.py`).
 
-**Test count to hold:** 575 + 21 today. `the_copy_matches_the_engine_generator`
-is the one sanctioned deletion (it compares against the engine), so after the
-split fuller + phylu lib tests = 574, viewer tests 21.
+**Test count held:** 575 + 21 before and after (see Verification above).
 
 **Use the codegraph MCP tools** (`agentic_impact`, `agentic_context`, …) for
 dependency questions — Andrew's standing instruction. Caveat learned: it
