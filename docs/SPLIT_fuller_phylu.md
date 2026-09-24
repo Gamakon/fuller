@@ -59,8 +59,11 @@ any language with a symbol table, not only symbolic regression.
   arrival crossover
 - **in-search editors** — fold, snap and beam as mutation operators that fire
   during evolution, not after it
-- **telemetry and the watcher** — a versioned JSONL stream and `hff-watch`:
-  verdict, islands, cohort table, discoveries, the hall-of-fame ladder
+- **telemetry and the watcher** — a versioned JSONL stream and
+  **`phylu-sr-watch`** (renamed, §5a): verdict, islands, cohort table,
+  discoveries, the hall-of-fame ladder. Kingdom-specific by design — the gene
+  line and the model pane render arithmetic, so a second kingdom gets its own
+  viewer rather than sharing this one.
 - **run cards, checkpoints, resume** — a run is attributable and restartable
 
 ## 3. How the two relate
@@ -96,9 +99,20 @@ returns nothing, and the paper says so in terms (`sec:rewriting`): saturate-and-
 extract *"has no call site in the engine's generation loop; it was a stated
 design for the search, not a component of this run."*
 
-Per-generation call counts into fuller, measured at HEAD: `lint::node` 44,
-`lint::snap_table` 6, `lint::snap_guard` 5, `lint::tables` 2,
-`lint::snap_graft` 2, `snap_karva::constant_values` 3. Zero e-graph.
+Production call sites into fuller, measured at HEAD (tests excluded, which an
+earlier count did not do — it said 44 for `lint::node` where production is 5):
+`lint::node` 5, `lint::snap_table` 2, `lint::snap_guard` 1, `lint::flat` 1.
+Zero e-graph.
+
+**And the boundary carries little traffic, which is the case for it.** The code
+graph counts **207 calls crossing `evolve/` → `lint/`** against **3,672 made
+inside `engine.rs` alone** — about 5%. A seam carrying 5% is a library call; one
+carrying 40% would be cutting through the middle of a mechanism.
+
+Worth recording alongside it: `engine.rs` looks like a coupling hotspot at 3,672
+outgoing calls, 3.6x the next file. Normalised it is **0.40 calls per line —
+identical to every other module**. It is not badly coupled, it is 9,267 lines,
+four times the next largest. That is a size observation, not a design finding.
 
 **The e-graph API is built, tested and exposed — and never wired in.**
 `eclass_variants`, `denoise_candidates_assuming` and `smallest_form` all exist
@@ -206,10 +220,58 @@ Binaries: `parity`. Examples: the `bf_*` set, the `lint`/`parity` probes,
 |---|---|
 | `src/evolve/` — engine, device, vary, write_back, telemetry, watch, chart, card, checkpoint, genealogy, hff_gpu, score, smogd, smote, umap2d | 21,701 |
 | `src/chrom_score.rs` — link, wrap, LSM, metrics, the behavioural signature | 970 |
-| `src/bin/hff_watch.rs`, `src/bin/hff_chart.rs` | 2,645 |
+| `src/bin/hff_watch.rs` → **`phylu-sr-watch`**, `src/bin/hff_chart.rs` → **`phylu-sr-chart`** (§5a) | 2,645 |
 | `examples/evolve_fit.rs`, `examples/evolve_speed.rs` | — |
 | `tests/fixtures/*.jsonl` — all five are telemetry recordings | — |
 | `experiments/`, `logs/{cascade133.sh, report.py, tally.sh}`, `.claude/skills/running-fits`, the fit docs | — |
+
+### 5a. The viewer is renamed, because it is not general
+
+`hff-watch` becomes **`phylu-sr-watch`**, and `hff-chart` becomes
+**`phylu-sr-chart`**.
+
+The current name says which *fitness function* the engine uses. The new one says
+which **product** owns it and which **kingdom** it serves, and the second half
+is the part that matters.
+
+**The viewer is kingdom-specific, and this is not a defect to fix.**
+`gene_line_of` (`watch.rs:949`) renders `f(x_0, x_1) = …` — a mathematical
+function signature, with variables in first-appearance order and literals
+rounded to three significant figures. For a REGEX kingdom that line is
+meaningless; for SQL it is meaningless. The model pane's bracket indenter
+assumes infix arithmetic. These are SR displays, not generic infrastructure.
+
+So when phylu gains a second kingdom, the viewer is **per kingdom**, not shared,
+and the name should make that obvious rather than leaving someone to discover it
+when `phylu-watch` will not render a pattern. The panels divide along a line the
+rename anticipates:
+
+| any kingdom | SR only |
+|---|---|
+| the verdict, the badge, the budget | the gene line at the foot |
+| islands, cohorts, the trajectory sparkline | the model pane and its indenter |
+| discoveries, events | the hall-of-fame ladder's HFF column |
+
+**A consequence worth knowing before the move.** The viewer imports
+`lint::node::Tree` purely to parse `raw_math`, walk it for variable names, and
+round literals for display — `watch.rs:950, 973, 1791`. `Tree` lives in
+`node.rs`, which imports `egglog::TermDag`, `extract::PNode` and `gpu_eval::Op`,
+so **the terminal viewer transitively depends on the whole e-graph crate to
+pretty-print a number.** Verified: `Tree::parse` and `Tree::to_infix` touch
+neither egglog nor `PNode` — only `Op`, for operator names.
+
+A ~120-line display parser (operator as a `String`, not an `Op`) would let
+`phylu-sr-watch` build with only `serde`, `ratatui` and phylu's telemetry
+schema — a binary you can hand to someone. **Not required for the split**, and
+it carries a real risk of two parsers drifting; the mitigation is that the
+display parser only ever renders, and `gene_line_of` already returns `None` on a
+parse failure, so it can produce no answer but never a wrong one. Decide it
+after the move, not during.
+
+**Rules.md** says never rename without necessity. This clears that bar: the
+binary is moving repositories regardless, so the rename costs nothing extra and
+is the one moment it is free. It touches `Cargo.toml`'s `[[bin]]` stanzas, the
+README, `.claude/skills/`, and every command line in the docs.
 
 ### Four things to resolve during the move
 
@@ -256,12 +318,36 @@ letting it happen silently.
 
 Path dependencies while the boundary settles; pin to a git revision once it has.
 
-## 7. Known deficiencies, carried into phylu
+## 7. The road to 133 of 133
 
-These are open on the engine today. They are recorded here because the split is
-the moment they would otherwise be lost, and because several are the difference
-between 73/133 and a better number. **None is a blocker for the split.** Each
-needs its own measurement, in the order a scientist would take them.
+**The objective is every law found, not a better score.** That changes what
+belongs in this section: not a defect list, but what each unsolved law NEEDS.
+
+The paper classified all 67 misses of the cascade run (`sec:failure`, Table 4).
+This is the only honest starting point, and it says the work divides unevenly:
+
+| class | what happened | laws | touched by |
+|---|---|---|---|
+| **D. Ran out of time** | the search never reached the law | **53** | the search itself |
+| **B. No model scored** | our string too long for the scorer to parse | 16 | the reporting path |
+| **C. Hit the generation cap** | the cap ended it, not the search | 11 | one config value |
+| **A. False stop** | met the bar with the wrong function | 3 | the stop bar |
+
+Classes overlap; a law can be capped and unscored. The paper's own conclusion:
+
+> *"Of the 67 laws unsolved before this change, **53 were the search not reaching
+> the law at all, and no amount of work on how we write the answer touches
+> those**. The recoverable remainder is concentrated in how the answer is written
+> and when the search is allowed to stop."*
+
+**So this section has two halves, and the first draft only had one.** Everything
+7a–7g addressed is the recoverable remainder — worth perhaps 30 laws and cheap.
+The 53 need the search to reach laws it has never reached, and the honest
+position is that we do not know how. §7z states what has already been tried and
+failed there, because at a 100% objective the negative results are the map.
+
+**None of this blocks the split.** It is recorded here because the split is the
+moment it would otherwise be lost.
 
 ### 7a. The return path — the highest-value item
 
@@ -451,6 +537,65 @@ central claim rests on. **It should run before 7a.**
 - **The slot-search / Occam operator** — specified, never built
 - **`logs/tally.sh` and `logs/report.py` overlap** — one live view, one record;
   they read the same directory by different means and should share a reader
+
+### 7z. The 53 — what has been tried, and what this run adds
+
+**This is the hard half and it has no plan yet.** Recording it honestly is worth
+more than a proposal, because four routes have already been measured and lost.
+Each is a road not to retake without a reason.
+
+**Bigger populations lose.** `sec:negative`: 20,000 individuals at a 35-
+generation cap scored **42 of 133 against 46** for the ordinary configuration.
+The cause is measured: 58% of a 15.6 s fit is data evaluation, not population
+handling, so throughput per individual does not convert into search. (That arm
+also carried a redundancy objective, so it is not a clean population-only test.)
+
+**Differentiated swim lanes lose.** Three islands under different variation
+rates: the uniform arm solved 4 of 10, the differentiated arm 3 — and lost
+`I_15_10`, a Lorentz law the uniform arm found at generation 186. *"A law lost
+outright is a worse signal than a one-problem count difference is a good one."*
+
+**The general mutation beam is exhausted.** Over six near misses a beam mutant
+beat its original **0.05%** of the time. Changing population size alone moved
+log₁₀ p by up to 1.8 decades on the same problems — more than the beam ever did.
+The tree half is off by default.
+
+**Combination masking converted nothing** (`sec:negative`).
+
+**And the integrity rules close the cheap routes.** `sec:integrity`: no
+restarts, one fit per problem; splitting a budget into three independent
+searches scored 54 and was *"rejected as cheating-like"*; the benchmark's
+verdict never steers the search. A 133 reached by any of those is not a 133.
+
+#### Two things this session's cascade adds that the paper does not have
+
+1. **`feynman_test_5` was recovered.** The paper reports the 20-problem bonus
+   set as *"0 of 20 and always have"*. Our cascade found it at 60 s:
+   `1.0048·sqrt(4·9.775·x_0³/(x_1·(x_2+x_3)))`, test R² 1.000000 — a real
+   recovery, not a fitted blob. **1 of 20 on a set that had never scored.** The
+   configuration differed (typed depth 2, 2000+2000), and one event is not a
+   rate, but it is the first crack in that set and it should be reproduced on a
+   second seed before anything is concluded from it.
+
+2. **The 133 has never been run at the paper's own settings.** The paper's 75
+   was 800+400 untyped; our 73 was 2000+2000 typed. Neither is a controlled
+   comparison of the other, so *"typing costs two laws"* is not established —
+   it is two different runs. A like-for-like pair is cheap and has not been run.
+
+#### What is left untested, from the paper's own limitations
+
+- **The noisy tracks** — never attempted.
+- **The `1/sqrt(1 - v²/c²)` family, nine problems** — never solved in any run.
+  `I_10_7` fell once to a grafted wrap at generation 7 with test R² 1.000000 on
+  one seed and not another. One event, not a rate — but it is evidence the
+  family is reachable, and the wrap that found it is the only mechanism that
+  ever has.
+
+**The honest statement for a 100% objective:** the recoverable ~30 are
+engineering and are covered above. The 53 are a research problem, the four
+obvious attacks have been measured and lost, and the two live threads are the
+grafted wrap that took `I_10_7` and whatever took `test_5`. Both are single
+events that need reproducing before they are anything.
 
 ## 8. Verification
 
