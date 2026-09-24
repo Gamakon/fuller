@@ -1,6 +1,106 @@
-# Split `fuller` into two products: `fuller` and `phylu`
+# phylu and fuller — the vision, and the split that serves it
 
-## 1. Why this is being done
+> ## READ EVERY LINE OF THIS DOCUMENT BEFORE YOU TOUCH THE CODE.
+>
+> Not the section you think your task lives in. **Every line.**
+>
+> This is not a refactoring plan with a vision statement attached. It is a
+> statement of what is being built, followed by the administrative work that
+> serves it. An agent who reads §5 and starts moving files will make decisions
+> that are locally sensible and globally wrong, because the constraints that
+> matter are in §0 and §7, not in the file list.
+>
+> **Reading is not grepping** (`docs/Rules.md`). If you searched this file for a
+> keyword and landed here, go back to the top.
+
+## 0. The vision — read this before anything else
+
+**The objective is 133 of 133.** Every ground-truth law in SRBench recovered
+exactly. Not a better score, not a competitive score — all of them. Any decision
+that trades a law for tidiness, speed or convenience is the wrong decision.
+
+That objective is not aspirational padding. It is reachable *because this
+project holds two instruments that no symbolic-regression system has ever had*,
+and an agent who does not understand them will optimise the wrong things.
+
+### The first instrument: an e-graph inside the evolutionary loop
+
+Every SR system in the literature simplifies its answer **at the end**. Sympy,
+by convention, as a reporting step. The reason is structural: an unsound rewrite
+inside the loop corrupts the population, so nobody risks it.
+
+`fuller` is an **egglog equality-saturation engine**. Its rewrites are *proved*
+equivalent, or gated on data so behaviour cannot change. That removes the reason
+nobody does this. A rewrite can therefore be a **genetic operator** — and one
+gene can become an entire equivalence class of forms, all computing the same
+function, differently shaped, for selection to choose between.
+
+The design phrase is **"fuller proposes, HFF disposes."** A rewriter that
+converts back into the genotype is a mechanism no competitor has, and a
+simplification once found is *heritable* — crossover propagates it.
+
+**This is not yet switched on.** §3 records that saturate-and-extract has never
+been called from a generation loop. The API is built, tested and exposed; it has
+no call site. That is the single largest unexploited capability in the project,
+and it is the thing a new agent is most likely to mistake for a loose end.
+
+### The second instrument: k-expressions executing directly on the GPU
+
+Karva is a flat, level-order linearisation: a gene's child positions are
+computable from the **tokens alone**, independent of the data. So threads in a
+warp run the same op sequence over different rows — the property SIMD needs,
+which tree-GP cannot offer.
+
+Measured on this machine: **62.5 million gene-row evaluations per second**, and
+30 million evaluations in 480 ms. One dispatch covers islands × individuals ×
+genes × e-class variants × wrappers, against data uploaded once and resident.
+
+The consequence is not "faster." It is that **exploring a wide equivalence class
+becomes affordable**. Every existing bound on e-class width, beam width and
+candidate count exists because scoring was expensive. It is not any more.
+
+### Why the two together are the whole bet
+
+An e-graph generates many forms. A GPU scores all of them at once. HFF — a
+dimension-free angular fitness over many objectives — picks without a weighted
+sum and without parsimony pressure. Each is interesting; together they are a
+search that operates on **meaning** where GEP's own operators work on tokens.
+
+And it generalises. A kingdom is a query over a typed symbol table, so the same
+engine evolves SQL, regex or Brainfuck by changing rows, not code. **phylu** =
+phylogeny + universal. That is the frontier claim, and it is why the tool is not
+called `sr-engine`.
+
+### What this means for the work in §7
+
+The 67 unsolved laws were classified by the paper, and 53 are "the search never
+reached the law." §7z lists four attacks already measured and lost: bigger
+populations, differentiated swim lanes, the general mutation beam, combination
+masking.
+
+**Notice what those four have in common — every one is a conventional GP move.**
+They lost because conventional GP is not what this project is. The instruments
+above are absent from that list entirely.
+
+So do not read §7z as "the 53 are unreachable." Read it as: *the ordinary
+routes are closed, and the extraordinary ones have not been tried.* An agent
+who concludes the remaining work is incremental has misread this document.
+
+### The standard of work
+
+- **Measure, do not assume.** Every number here names the run that produced it.
+  A claim without a measurement is a hypothesis, and must say so.
+- **A negative result is a deliverable** — recorded with its mechanism, in the
+  tree. Four are in §7z, and they are why the list is honest.
+- **Never delete a measurement to improve a number.**
+- **Every new mechanism is a switch** (§7f), default off, in the run card. An
+  A/B that cannot be run from the command line is not an experiment.
+- The benchmark's verdict never steers the search. No restarts, no best-of-n.
+  A 133 reached by those routes is not a 133.
+
+---
+
+## 1. Why the split is being done
 
 `fuller`'s README opens: *"An e-graph engine for making symbolic expressions
 smaller — provably without changing what they compute."* That is an accurate
@@ -494,15 +594,57 @@ A review of `docs/paper/hff_sr.tex` against this plan found four open items the
 paper states and §7 did not carry. They are listed here in the paper's own
 terms, because each is already measured.
 
-**A perfect 38-law predictor, unbuilt.** `sec:failure`: of the 133, 38 produce a
-non-finite value on at least one row, and *"every single solve is on the finite
-side. Not one of the 38 was ever solved, in any run. In 133 laws it is a perfect
-predictor with no exceptions."* The analogous ROUNDING gate is built and wired
-(`lint/node.rs:178` `dies_on_rounding`, used in the final-form sort at
-`engine.rs:2658`); the FINITENESS gate is not — no pre-submit finite-on-every-
-row check exists anywhere in `src/evolve/` or `src/lint/`. The paper calls it
-*"knowable before submitting"*. This is the cheapest item in §7 and the best
-evidenced.
+**38 laws we may have already solved and then broke on the way out.** This was
+first written here as "a perfect 38-law predictor, unbuilt" — which framed a
+DIAGNOSIS as a FILTER. Building a gate that refuses to submit those 38 recovers
+**zero laws**. It converts a wrong answer into no answer. The framing was wrong
+and the correction matters, because it changes the work from screening to
+repair.
+
+What `sec:failure` actually reports: of the 133, 38 produce a non-finite value
+on at least one row in the **submitted** string, and not one of the 38 has ever
+been solved. But the cause is ours. The engine scores the **faithful** form,
+where a protected operator returns a guard value; we submit the **plain** form,
+where the same expression is raw and returns NaN. `feynman_II_11_28` scores
+1−R² = 8e-6 on the form the engine selected while **the string handed to the
+benchmark is undefined on 59% of the rows.** Four laws are undefined on 100%.
+
+**The specific mechanism, traced in source.** `resolve_protected`
+(`engine.rs:1687-2189`) already converts protected operators to raw ones — that
+is the paper's §7 and it is worth ten laws. Every conversion is justified on
+`fit_rows` = train + validation (`examples/evolve_fit.rs:516-518`). But the
+model is judged on **test** rows. The `Abs`-shed at `engine.rs:2043-2051` fires
+when its argument is non-negative on every *fit* row; on a test row where the
+sign flips, `log(-x)` is NaN, and the protected operator that would have caught
+it has been removed. **The rewrite is justified on a strictly smaller row set
+than the one it is scored on.**
+
+Two corrections to the paper's own account, found in the code: `eval.rs:192`
+guards `ProtectedLog` only at `x == 0` and non-finite, not on negatives; and
+`node.rs:156` renders the plain form as `log(Abs(x))`, which is finite on
+negatives. So the plain-NaN sites are **narrower** than the paper implies, and
+the `Abs`-shed carries more of the 38 than the protected/plain split does.
+
+**Three routes, in order of honesty:**
+
+1. **Score what we submit.** The engine optimises one function and reports
+   another; nothing anywhere evaluates the plain string for finiteness
+   (`engine.rs:2550-2658` checks only the protected reference). If the plain
+   form were scored alongside the faithful one, a chromosome undefined on 59% of
+   rows would lose its fitness and the search would leave it on its own. This is
+   the root cause; the other two are repairs.
+2. **Justify a rewrite on the rows it is judged on**, or refuse it. The shed
+   needs evidence covering test rows, not just fit rows.
+3. **Rewrite so the guard cannot fire** — `log(Abs(x))` or `log(x²)/2` is total
+   on the reals and needs no guard. That is fuller's job, and the e-graph can do
+   it.
+
+**There is a per-law discriminator**, and it is a scan over strings already on
+disk: if a `Piecewise` survives in `MODEL_INFIX`, the fit genuinely depends on
+guard values and the plain string is a different function — really unsolved. If
+no `Piecewise` survives and the plain string is still non-finite on test rows,
+it is the `Abs`-shed, and the law is recoverable. **That scan splits the 38 into
+"unsolved" and "broken in reporting" and nobody has run it.**
 
 **16 laws lost to bloat — and that is fuller's own job.** `sec:failure` Table 4,
 class B: SRBench's scorer returned `None` because our string was too long to
