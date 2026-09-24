@@ -466,8 +466,31 @@ fn snapshot_min_gap() -> std::time::Duration {
 impl Writer {
     /// Open the stream and write its `run_start`. Truncates: a run owns its file,
     /// as the hall of fame and the genealogy log do.
+    ///
+    /// **`HFF_TELEMETRY_APPEND=1` opens it for APPEND instead**, and that is what
+    /// makes a CASCADE watchable. A sweep over the 133 runs one fit per law, each
+    /// lasting a minute; with a file per law the viewer is pointed at a stream
+    /// that dies sixty seconds later, and following a corpse through a 133-law
+    /// run is no way to watch it. Appending puts every law in ONE file: each fit
+    /// writes its own `run_start`, and the viewer's `Tailer` — which follows a
+    /// path by byte offset and reads a fresh `run_start` as a new run — rolls
+    /// onto the next law on its own. One path, live from the first law to the
+    /// last, with no symlink and no helper process to go stale.
+    ///
+    /// Truncating stays the default because a single fit owning its file is the
+    /// right behaviour for a single fit, and a sweep that silently appended to a
+    /// previous sweep's stream would be worse than either.
     pub fn create(path: &str, run_id: String, start: RunStartFields) -> Result<Writer, String> {
-        let file = std::fs::File::create(path).map_err(|e| format!("telemetry file {path}: {e}"))?;
+        let append = std::env::var("HFF_TELEMETRY_APPEND").is_ok_and(|v| v == "1");
+        let file = if append {
+            std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path)
+                .map_err(|e| format!("telemetry file {path}: {e}"))?
+        } else {
+            std::fs::File::create(path).map_err(|e| format!("telemetry file {path}: {e}"))?
+        };
         let mut w = Writer {
             file,
             run_id,
@@ -615,6 +638,7 @@ impl Writer {
 }
 
 /// The fixed facts a `run_start` carries, as one argument rather than fifteen.
+#[derive(Default)]
 pub struct RunStartFields {
     pub dataset: String,
     pub seed: u32,
@@ -892,6 +916,49 @@ mod tests {
     /// GARBAGE line and a TRUNCATED one: a stream that ends badly is the ordinary
     /// case (a killed fit) and must cost the reader nothing but a count.
     const FIXTURE: &str = include_str!("../../tests/fixtures/telemetry_v1.jsonl");
+
+    /// A CASCADE IS WATCHABLE ONLY IF ITS LAWS SHARE ONE FILE.
+    ///
+    /// The 133 sweep runs a fit per law. Without append every fit truncates, the
+    /// file holds whichever law is running, and a viewer following it sees one
+    /// law's stream replaced by the next — which is why this is pinned rather
+    /// than left to a docstring. The property the viewer depends on: after two
+    /// fits, BOTH `run_start` records are in the file, in order.
+    #[test]
+    fn appending_puts_every_law_of_a_cascade_in_one_stream() {
+        let dir = std::env::temp_dir().join(format!("hff_append_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("stream.jsonl");
+        let p = path.to_str().expect("utf-8 path");
+        let fields = || RunStartFields { dataset: "law.tsv".into(), ..Default::default() };
+
+        // Two fits in a row, as a cascade runs them.
+        unsafe { std::env::set_var("HFF_TELEMETRY_APPEND", "1") };
+        drop(Writer::create(p, "law_one".into(), fields()).expect("first fit"));
+        drop(Writer::create(p, "law_two".into(), fields()).expect("second fit"));
+        unsafe { std::env::remove_var("HFF_TELEMETRY_APPEND") };
+
+        let text = std::fs::read_to_string(p).expect("read back");
+        let (records, _) = parse_stream(&text);
+        let ids: Vec<&str> = records
+            .iter()
+            .filter(|r| matches!(r, Record::RunStart(_)))
+            .map(|r| r.header().run_id.as_str())
+            .collect();
+        assert_eq!(ids, vec!["law_one", "law_two"], "both laws are in the one file, in order");
+
+        // And the default still truncates: a lone fit owns its file.
+        drop(Writer::create(p, "law_three".into(), fields()).expect("third fit"));
+        let text = std::fs::read_to_string(p).expect("read back");
+        let (records, _) = parse_stream(&text);
+        let ids: Vec<&str> = records
+            .iter()
+            .filter(|r| matches!(r, Record::RunStart(_)))
+            .map(|r| r.header().run_id.as_str())
+            .collect();
+        assert_eq!(ids, vec!["law_three"], "without the variable a run owns its file");
+        std::fs::remove_dir_all(&dir).ok();
+    }
 
     #[test]
     fn the_fixture_parses_and_the_bad_lines_are_only_counted() {
