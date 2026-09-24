@@ -1,6 +1,0 @@
-capture wall=240s  lines=  113484
-sr_logs/live_capture
-  0/7 exact (0%)   0/7 numerical
-distinct expressions 113444 of 113484
-egglog smallest_form on the live corpus: 619s
-######## ALL DONE

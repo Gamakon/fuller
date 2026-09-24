@@ -1,8 +1,0 @@
-   Compiling fuller v0.1.0 (/Users/andrewmorgan/Dev/gamakon/fuller)
-    Finished `release` profile [optimized] target(s) in 0.37s
-     Running `target/release/parity parity/corpus/powsimp.jsonl parity/corpus/radsimp.jsonl parity/corpus/ratsimp.jsonl parity/corpus/simplify.jsonl parity/corpus/trigsimp.jsonl`
-module                   matched   total   parity
---------------------------------------------------
-powsimp                      146     172    84.9%
-radsimp                       35     200    17.5%
-ratsimp                       28     200    14.0%

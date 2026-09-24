@@ -233,16 +233,19 @@ report of a 450-second search.
 ```bash
 cargo build --release --features gpu --bin hff-watch
 
-# a live fit, or a live cascade of many
-./target/release/hff-watch --follow logs/RUN/stream.jsonl
+# a live fit, or a live cascade of many, as it runs
+./target/release/hff-watch --follow <your-run>/stream.jsonl
 
 # a finished run: name the directory, not the file inside it
-./target/release/hff-watch --file logs/RUN
-./target/release/hff-watch --file logs/cascade133/60s/feynman_I_39_11
+./target/release/hff-watch --file <your-run>
 
 # the same state as text, for a pipe, a log, or a second watcher
-./target/release/hff-watch --dump logs/cascade133/60s/strogatz_lv2
+./target/release/hff-watch --dump <your-run>
 ```
+
+`<your-run>` is wherever the fit was told to write (`EVOLVE_TELEMETRY_FILE`).
+Run output is not versioned — see [`experiments/README.md`](experiments/README.md)
+for the full set of environment variables and where a run puts things.
 
 ![hff-watch, the main view](docs/img/hff-watch-main.png)
 

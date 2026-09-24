@@ -1,4 +1,0 @@
-kernel compiled and tables uploaded in 0.094 s
-Bit: 113444 expressions in 8 batches | differ 0 | not canonical 0 | refused 0 | rewrites 10225 | GPU 0.0022 ms/expr (0.25 s total incl. encode+readback) | CPU 0.0024 ms/expr
-Rounding: 113444 expressions in 8 batches | differ 0 | not canonical 0 | refused 0 | rewrites 10225 | GPU 0.0019 ms/expr (0.22 s total incl. encode+readback) | CPU 0.0024 ms/expr
-Finite: 113444 expressions in 8 batches | differ 0 | not canonical 0 | refused 0 | rewrites 19447 | GPU 0.0018 ms/expr (0.21 s total incl. encode+readback) | CPU 0.0032 ms/expr

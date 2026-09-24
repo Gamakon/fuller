@@ -17,17 +17,55 @@ dist/
 nucleotable.db
 vendor-egglog/target/
 hof_pickles/
-logs/latest.jsonl
 
-# LaTeX build artifacts. Scoped to docs/paper/ ON PURPOSE: a bare `*.log` would
-# also swallow the 52 run logs under logs/, which are the record of the fits.
-docs/paper/**/*.aux
-docs/paper/**/*.log
-docs/paper/**/*.out
-docs/paper/**/*.synctex.gz
+# ---------------------------------------------------------------------------
+# RUN OUTPUT IS LOCAL. logs/ is where fits write, and a fit writes a lot: one
+# 133-law cascade left 83 MB of telemetry in a single stream. That belongs on
+# the machine that ran it, not in every clone of the repo forever.
+#
+# The rule is: what a run PRODUCES is ignored; what DESCRIBES or REPRODUCES a
+# run is tracked. So the cards, the scripts and the measurement write-ups stay
+# in git, and the streams, the progress logs and the intermediate tables do not.
+#
+# This reverses an earlier decision to version the run logs. The reason it was
+# made — that the logs are the record of the fits — is real, and the answer to
+# it is the run card: `card.json` carries the whole Config, the dataset, the
+# git commit and the derived objective count, which is what makes a result
+# attributable and reproducible. The stream is the raw feed behind a screen;
+# the card is the record.
+# ---------------------------------------------------------------------------
+
+# Telemetry streams: the viewer's raw feed. Regenerable, and large.
+logs/**/*.jsonl
+logs/*.jsonl
+
+# Per-fit output: progress logs, checkpoints, hall-of-fame and genealogy dumps.
+logs/**/*.log
+logs/**/*.err
+logs/**/checkpoint/
+logs/**/*.tsv
+logs/**/*.txt
+
+# Working files from the rule-mining and parity sweeps.
+logs/live_*
+logs/probe/
+logs/laws/
 
 # A/B binary snapshots: 7.5 MB apiece, and rebuildable from the commit the
 # run card names. The card is the record, not the binary.
 logs/*/evolve_fit_*
 # TSR sweep datasets: copied from hff/notebooks/sr_logs, not ours to version.
 logs/tsr/data/
+
+# KEPT, against the rules above: a run card is how a result is attributed, a
+# script is how it is re-run, and a measurement write-up is the finding itself.
+!logs/**/card.json
+!logs/**/*.sh
+!logs/**/*.py
+!logs/**/*.md
+
+# LaTeX build artifacts.
+docs/paper/**/*.aux
+docs/paper/**/*.log
+docs/paper/**/*.out
+docs/paper/**/*.synctex.gz

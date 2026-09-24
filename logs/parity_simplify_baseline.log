@@ -1,5 +1,0 @@
-   Compiling fuller v0.1.0 (/Users/andrewmorgan/Dev/gamakon/fuller)
-    Finished `release` profile [optimized] target(s) in 2.86s
-     Running `target/release/parity parity/corpus/simplify.jsonl`
-module                   matched   total   parity
---------------------------------------------------
