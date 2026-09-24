@@ -27,7 +27,7 @@ one crate, so phylu's carried history includes the fixes; the carve comes after.
 | Item 4 — dependencies | **DONE.** phylu: `fuller` path dep, `hff`, wgpu/pollster/bytemuck (`gpu` also enables `fuller/gpu`), ratatui, serde, rayon, ndarray. No direct `egglog`. fuller drops `ratatui`, the two viewer bins, the `evolve_*` examples and `build.rs` (only the run card read it; phylu's is `PHYLU_GIT_*`). Two fuller items widened to `pub`: `extract::eval_expr_rows`, `karva::semantic_to_math`. |
 | Carve phylu | **DONE.** `~/Dev/gamakon/phylu`, 156 files, 265 commits carried by filter-repo from a clone; bundle taken first. Largest blob 39 MB (historical checkpoints), under GitHub's limit. |
 | Move, rewire, slim, READMEs, rename | **DONE.** `crate::{lint,gpu_eval,chrom_score,karva,snap_karva,geneframe,extract}` → `fuller::`; `hff-watch`/`hff-chart` → `phylu-sr-watch`/`phylu-sr-chart`, screenshots renamed. RNG cross-check replaced by one golden table asserted in BOTH repos. |
-| Verification | **DONE.** fuller 349 + phylu 227 (226 moved + the pinned-RNG test) = 575 lib tests, + 21 viewer; zero warnings, clippy clean, both. `evolve_fit` pre-split (`22ef5d8`) vs phylu at 300 generations, seed 7014, fold+snap on: identical model, identical 661 folds / 177 snaps, identical test R² — only timings differ. |
+| Verification | **DONE.** fuller 349 + phylu 227 (226 moved + the pinned-RNG test) = **576** lib tests (575 before; fuller's golden test replaced the cross-check 1:1, phylu's pinned test is the one new one — commits 92b4a4c and 67ee585 say 575, an under-count by one), + 21 viewer; zero warnings, clippy clean, both. Parity: `powsimp` 148/172 = 86.0% (CLAUDE.md records 84.9%, so no regression); the other four corpora not re-run — no e-graph code changed, only two visibility widenings. `evolve_fit` pre-split (`22ef5d8`) vs phylu at 300 generations, seed 7014, fold+snap on: identical model, identical 661 folds / 177 snaps, identical test R² — only timings differ. |
 | Push both | **DONE.** fuller `92b4a4c` to Gamakon/fuller (public). phylu to Gamakon/phylu, created **private** — the engine is the moat; flip with `gh repo edit Gamakon/phylu --visibility public`. |
 
 **DECIDED (auto mode, reversible): `chrom_score` stays in fuller.** hff's Python
@@ -52,7 +52,7 @@ left behind). phylu takes the history of: `src/evolve`, `src/bin/hff_watch.rs`,
 four `logs/` scripts that drive fuller itself (`run_parity_simplify.sh`,
 `run_lint_join.sh`, `apply_*.py`).
 
-**Test count held:** 575 + 21 before and after (see Verification above).
+**Test count held:** 575 + 21 before; 576 + 21 after (see Verification above).
 
 **Use the codegraph MCP tools** (`agentic_impact`, `agentic_context`, …) for
 dependency questions — Andrew's standing instruction. Caveat learned: it
