@@ -758,10 +758,133 @@ central claim rests on. **It should run before 7a.**
 ### 7h. Smaller, recorded
 
 - **Open audit findings 8, 10–13, G4, G7, G8** in `docs/audit/PAPER_CODE_ALIGNMENT.md`
-- **Per-cohort keeping** in the pump's refill — specified, never built
+- **Per-cohort keeping** — specified below in 7i, never built
 - **The slot-search / Occam operator** — specified, never built
 - **`logs/tally.sh` and `logs/report.py` overlap** — one live view, one record;
   they read the same directory by different means and should share a reader
+
+### 7i. Per-cohort elitism — keep the best of every cohort, not only the island's
+
+**The observation (Andrew, this session):** watching a fit, the global best
+jumps around rather than descending smoothly. The cause is measured in the
+code: **elitism is per ISLAND, hard-coded at 2** (`vary.wgsl` `select_main`
+elite branch; `Config::elites = 2`, no env var). Only the island's top two
+rows are copied forward unchanged each generation. A cohort that does not
+hold one of those two rows has **no protection** — its own best can lose a
+tournament and be mutated away, so a band's finest line is not safe between
+beats. Per-cohort keeping was listed in 7h as specified-never-built; this is
+the spec.
+
+**What it should do, in one line:** partition each island by cohort band,
+rank within each band, and give the top `E` of every band a free pass into the
+next generation. `E = 1` keeps each cohort's single best; `E = 2` its best two.
+
+**The invariant it must not break.** Elites are a **contiguous prefix**
+`[isl.lo, isl.lo + isl.elites)`, and the whole engine leans on that: the
+crossover pass pairs `b` with `b-1` (`genealogy.rs:569` `mate_of`), the
+`(size - elites)` even-parity check (`vary.rs` validate), the arrival band
+placement (`engine.rs` cross/pump, arrivals land at `lo + elites`), and the
+`take(elites)` "only elites arrive evaluated" (`engine.rs`). Verified by the
+code graph: the reads of `elites` are confined to `mate_of`, `vary.rs`'s
+elite-copy/parity, `engine.rs`'s arrival band, and the kernel's
+`band = lo + elites`. Nothing else derives from it. So the prefix must stay
+packed at `lo`; only its WIDTH and WHICH ROWS FILL IT may change.
+
+**The design — decided on the host, filled in the kernel.**
+
+1. **Width per generation, host-side.** The host already reads cohort labels
+   back every generation to draw the cohort table, so it knows the live bands
+   (via the same `band_of` rule: age ≥ `cohort_merge` → `ELDERS`). Per island:
+   `elites_eff = clamp(max(base_elites, E × n_live_bands), base_elites,
+   ELITES_MAX)`, then `+1` if `(size - elites_eff)` is odd — the crossover
+   parity the validate step requires. `isl.elites` is SET to `elites_eff`, so
+   every existing reader (`mate_of`, arrival band, parity, kernel `lo + elites`)
+   stays correct with no new field in the `Island` literals.
+
+2. **Who fills each slot, host-side.** A small `elite_target[slot]` buffer per
+   island: slot `j` in `0 .. E × n_bands` targets band `(j / E)` (bands in
+   ascending label order, `ELDERS` last) at within-band rank `j % E`; a band
+   with fewer than `E` members yields what it has. Any remaining slots up to
+   `elites_eff` carry the sentinel `ANY` = global rank among rows not already
+   taken — so the prefix is always full and a run with few cohorts is exactly
+   today's engine. This is a **pure function** (`bands, sizes → targets`),
+   unit-tested on the CPU: parity adjustment, the cap, and the short-band and
+   ANY fallbacks.
+
+3. **The scan, kernel-side.** `select_main`'s elite branch keeps its structure
+   — slot `j`'s thread selection-scans slots `0..j`, each excluding `taken` —
+   but a candidate for slot `e` must satisfy `band_of(r) == target[e]` (or any
+   band when `target[e] == ANY`). `taken: array<u32, MAX_ELITES>` replaces the
+   current `array<u32, 8>` (raise `MAX_ELITES` to 64; host validates
+   `elites_eff ≤ 64`). Cost per elite thread ≈ `MAX_ELITES × n`, acceptable.
+
+**The CPU mirror.** `vary.rs::select` is the CPU twin (tests only; the fit runs
+on the GPU). `Generation` carries no cohort labels, so either thread them into
+the CPU path and apply the same rule, or gate the CPU per-cohort branch off and
+assert the GPU path in a device test. Do not silently diverge the two — the
+`dev.vary` parity tests (`device.rs`) are the guard.
+
+**SECOND CONSUMER — found while tracing, not in the codegraph read.** After
+`dev.vary`, the engine reconstructs which rows became elites to carry their
+`Scored` metadata forward (`engine.rs:5511-5518`): `order.sort_by(fitness);
+order.take(isl.elites)`. This ASSUMES the top-`elites`-by-fitness rule. If the
+kernel picks elites per-cohort, this loop attaches the wrong `Scored` to the
+wrong rows unless it uses the SAME ordering. This is why the target must be
+computed ONCE on the host as an ordered list of source rows per island, and
+BOTH the kernel copy and this loop read that one list — not each deriving its
+own. A "let the kernel decide from `cohort_now`" design desyncs this loop.
+
+**Freshness of `self.cohorts`.** The host's label copy is re-read from the
+device only on certain beats (`engine.rs:3440`, `:3978`, `:4907`, guarded by
+"the pump has moved them"). The width computation and the elite ordering both
+need the labels as the kernel will see them at THIS `vary`. Confirm the copy is
+current at `:5507` or force a read-back there; a stale copy gives a width and
+an ordering the kernel does not reproduce. This is the subtlest correctness
+point in 7i.
+
+**Build order for next session (spec is done, scaffolding is on branch
+`feat/per-cohort-elitism`, commit d9745f0):**
+1. A pure host function `elite_sources(island, &fitness, &cohorts, gen, merge,
+   E, elites_max) -> Vec<u32>` — the ordered source rows for the elite prefix.
+   Unit-tested: per-island top-E rule reproduced when `E=0`; per-cohort fill,
+   parity width, cap, short-band and global fallback when `E>0`.
+2. Use it at BOTH `:5515` (the `Scored` carry) and to size `isl.elites`.
+3. Kernel: either upload the ordered source list as a per-island buffer and copy
+   by it (simplest, no scan), or keep the scan and pass the width — the buffer
+   is less code and removes the `MAX_ELITES` scan cost.
+4. Card `derived`: `champion_elites_effective`, and `elites_eff` per island when
+   on. `experiments/README.md` rows. MCP `switches` undocumented-check.
+5. Verify OFF identical (`GOLDEN_UNTYPED_POPULATION`, 300-gen A/B), then E=1/E=2.
+
+**The switches (the 7f rule, and "give users choices").**
+
+| field | env | off |
+|---|---|---|
+| `elites_per_cohort` | `EVOLVE_ELITES_PER_COHORT` | `0` = today's engine, byte-for-byte |
+| `elites` | `EVOLVE_ELITES` | `2` (had no env var; Andrew noticed) |
+| `champion_elites` | `EVOLVE_CHAMPION_ELITES` | unset = shares `elites` |
+| `elites_max` | `EVOLVE_ELITES_MAX` | `64`, the kernel cap |
+
+`EVOLVE_ELITES_PER_COHORT=E` is Andrew's ask directly: `1` = the best of every
+cohort, `2` = the best two. `0` selects nothing new and the engine is
+unchanged.
+
+**The card must tell the truth.** `champion_elites: null` today hides that the
+effective value is `elites` — a reader cannot tell what ran without the
+`unwrap_or` rule in the source (Andrew: *"that is not the truth… it doesn't
+convey the settings vs what they could be"*). The card's `derived` block gains
+`champion_elites_effective` and, when per-cohort is on, the `elites_eff` the
+run actually used and the rule text. `experiments/README.md` gets a row per
+switch; the MCP `switches` verb's undocumented-check fails until they are there.
+
+**Verification.**
+- OFF is identical: `GOLDEN_UNTYPED_POPULATION` checksum unmoved; a 300-gen
+  `evolve_fit` A/B, same seed, byte-identical log minus timings (the method
+  already used for the split).
+- The host `targets` function: unit tests for parity, cap, short-band, ANY.
+- ON produces numbers: `EVOLVE_ELITES_PER_COHORT=1` and `=2` on power plant
+  500+500/2000 gen, against the per-island baseline, reported as test MSE and
+  whether the descent is smoother.
 
 ### 7z. The 53 — what has been tried, and what this run adds
 
