@@ -195,8 +195,43 @@ pub fn master_table() -> SymbolTable {
             arity: Arity::uniform(f, *n),
         });
     }
+
+    // THE LAW KINGDOM — the flat subset with the transcendentals removed. A law
+    // is flat: arithmetic, integer powers, a root, a reciprocal — never a stack
+    // of nested sin/cos/exp/log. The subexpression regression (7j) draws from
+    // this kingdom so it structurally cannot rebuild a tower while re-expressing
+    // one. `protected_sqrt` is kept (real laws take roots); it raises the
+    // sensor's t_depth but is not a transcendental that nests without bound. Its
+    // semantic ids are a SUBSET of the SR kingdom's, so a gene found here decodes
+    // in the SR table too (`law_kingdom_is_a_flat_subset` pins that).
+    let law: &[(&str, &str, u32)] = &[
+        ("add", "+", 2),
+        ("sub", "-", 2),
+        ("mul", "*", 2),
+        ("protected_div", "protected_div", 2),
+        ("neg", "neg", 1),
+        ("pow2", "**2", 1),
+        ("pow3", "**3", 1),
+        ("protected_sqrt", "protected_sqrt", 1),
+        ("protected_inv", "protected_inv", 1),
+    ];
+    for (i, (sem, alias, n)) in law.iter().enumerate() {
+        t.push(Symbol {
+            kingdom: LAW.to_string(),
+            symbol: (i + 1) as i64,
+            symbol_name: sem.to_string(),
+            alias: alias.to_string(),
+            semantic_id: sem.to_string(),
+            arity: Arity::uniform(f, *n),
+        });
+    }
     t
 }
+
+/// The kingdom name the subexpression regression (7j) draws from: the flat law
+/// alphabet, the transcendentals removed. A subset of the "Symbolic Regression"
+/// kingdom's semantic ids.
+pub const LAW: &str = "Law";
 
 /// The kingdom name [`typed_depth_table`] files its rows under.
 pub const TYPED_SR: &str = "Symbolic Regression (typed depth)";
@@ -337,8 +372,32 @@ mod tests {
     #[test]
     fn kingdom_query_isolates() {
         let t = master_table();
-        assert_eq!(t.kingdoms(), vec!["Symbolic Regression".to_string()]);
+        // The master table now holds two kingdoms: the full SR op set and the
+        // flat Law subset. `kingdoms()` sorts, so Law comes first.
+        assert_eq!(t.kingdoms(), vec!["Law".to_string(), "Symbolic Regression".to_string()]);
         assert!(t.kingdom("SQL").is_empty()); // not loaded yet
+    }
+
+    #[test]
+    fn law_kingdom_is_a_flat_subset_of_symbolic_regression() {
+        let t = master_table();
+        let sr: std::collections::HashSet<&str> =
+            t.kingdom("Symbolic Regression").iter().map(|s| s.semantic_id.as_str()).collect();
+        let law = t.kingdom(LAW);
+        assert!(!law.is_empty(), "the Law kingdom is populated");
+        for s in &law {
+            // Every Law op is an SR op, so a gene found in Law decodes in SR.
+            assert!(sr.contains(s.semantic_id.as_str()), "Law op {} is not in SR", s.semantic_id);
+            // No transcendental that nests without bound — the whole point. A
+            // root (sqrt) is allowed: it is in DEPTH_RAISING but a law takes
+            // roots, and it cannot build a tower on its own.
+            let nesting_transcendental = DEPTH_RAISING.contains(&s.semantic_id.as_str())
+                && !matches!(s.semantic_id.as_str(), "sqrt" | "protected_sqrt");
+            assert!(!nesting_transcendental, "the Law kingdom must not contain {}", s.semantic_id);
+        }
+        // Max arity is still 2 (add/mul/div/protected_div), so a gene decodes the
+        // same way as an SR gene.
+        assert_eq!(t.max_arity(LAW), 2);
     }
 
     /// The typed kingdom is a SEPARATE query, so the untyped SR rows are
