@@ -41,6 +41,7 @@ pub mod karva;
 pub mod pattern_match;
 pub mod lint;
 pub mod parity;
+pub mod srbench_equiv;
 pub mod physics;
 pub mod ruleset;
 pub mod score;
