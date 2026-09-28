@@ -166,6 +166,18 @@ fn oracle_program() -> String {
 /// are nonzero). Returns `Ok(true)` iff, after `round_floats`, the difference OR
 /// the ratio folds to a numeric constant — SRBench's exact criterion.
 pub fn srbench_equivalent(model: &str, truth: &str, vars: &[String]) -> Result<bool, String> {
+    // SIZE GUARD, FIRST. The comm/assoc + rational rules reorder a fixed operand
+    // multiset — bounded, but COMBINATORIALLY LARGE on a deep tower with repeated
+    // subterms. A 30+ node fitter tower blew the e-graph to 29 GB and took the
+    // machine down. So: refuse anything past a hard token budget and return
+    // Ok(false) — "not proven equal", the sound outcome — rather than build the
+    // graph. Measured: real laws are < 60 tokens; the towers are the pathological
+    // input, and they are exactly the ones this oracle should NOT chew on.
+    const MAX_TOKENS: usize = 400;
+    let toks = model.len().max(truth.len());
+    if toks > MAX_TOKENS * 8 || model.matches('(').count() + truth.matches('(').count() > MAX_TOKENS {
+        return Ok(false);
+    }
     // round_floats both sides (SRBench rounds truth too — pi -> 3.142, etc.).
     let m = snap_constants(model);
     let t = snap_constants(truth);
