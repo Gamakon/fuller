@@ -11,10 +11,12 @@
 //! to a handful of sums per column, and every (subtree × pattern) score is O(1)
 //! arithmetic on those sums. No per-row host traffic per pair.
 //!
-//! This module is the HOST reduction (the correctness reference and the first
-//! working version). A WGSL sum-reduction kernel can replace [`column_sums`]
-//! later for the order-of-magnitude speedup; [`affine_residual`] stays the same
-//! math on either path.
+//! [`ColumnSums`]/[`affine_residual`] are the HOST reduction — the correctness
+//! reference. [`PatternVerify`] is the ON-GPU reduction: the whole
+//! (subtree × pattern) score is computed on the device from the resident eval
+//! predictions (`pattern_verify.wgsl`), and only the `n_cand × n_pat` scalar
+//! `1 - R²` values return. That is the order-of-magnitude path; the host
+//! reduction stays as the reference the GPU is tested against.
 
 /// The five sums of one value column needed for an affine fit against a target,
 /// plus the target's own sums, over the JOINTLY-FINITE rows. `n` is that finite
@@ -114,6 +116,152 @@ pub fn score_subtrees(
         .collect()
 }
 
+#[cfg(feature = "gpu")]
+pub use gpu::PatternVerify;
+
+/// The on-GPU (subtree × pattern) reduction. A second compute kernel over the
+/// eval predictions the evaluator leaves resident, so the affine 1 - R² of every
+/// pair is computed on the device and only the pair scores return.
+#[cfg(feature = "gpu")]
+mod gpu {
+    use crate::gpu_eval::GpuEvaluator;
+    use std::borrow::Cow;
+    use wgpu::util::DeviceExt;
+
+    const PATTERN_VERIFY_WGSL: &str = include_str!("pattern_verify.wgsl");
+
+    /// Owns the verify pipeline. Built from a [`GpuEvaluator`]'s device and driven
+    /// with predictions that same evaluator produced.
+    pub struct PatternVerify {
+        pipeline: wgpu::ComputePipeline,
+        layout: wgpu::BindGroupLayout,
+    }
+
+    impl PatternVerify {
+        pub fn new(evaluator: &GpuEvaluator) -> PatternVerify {
+            let device = evaluator.device();
+            let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("pattern-verify"),
+                source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(PATTERN_VERIFY_WGSL)),
+            });
+            // binding 0 preds (read), 1 out (read-write), 2 cfg (uniform).
+            let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("pattern-verify-layout"),
+                entries: &(0..3)
+                    .map(|i| wgpu::BindGroupLayoutEntry {
+                        binding: i,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: if i == 2 {
+                            wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Uniform,
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            }
+                        } else {
+                            wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: i == 0 },
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            }
+                        },
+                        count: None,
+                    })
+                    .collect::<Vec<_>>(),
+            });
+            let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: None,
+                bind_group_layouts: &[&layout],
+                push_constant_ranges: &[],
+            });
+            let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("pattern-verify-pipeline"),
+                layout: Some(&pipeline_layout),
+                module: &shader,
+                entry_point: "verify_main",
+                compilation_options: Default::default(),
+            });
+            PatternVerify { pipeline, layout }
+        }
+
+        /// Score every (candidate subtree, pattern) pair from predictions the
+        /// evaluator left resident (`preds`, `n_expr = n_cand + n_pat` columns of
+        /// `n_rows`, candidates first). Returns `n_cand * n_pat` values, indexed
+        /// `out[cand * n_pat + pat]` = affine `1 - R²`, or `2.0` for an unscorable
+        /// pair (too few finite rows, or a constant column). The reduction runs on
+        /// the GPU; only these scalars cross to the host.
+        pub fn verify(
+            &self,
+            evaluator: &GpuEvaluator,
+            preds: &wgpu::Buffer,
+            n_cand: u32,
+            n_pat: u32,
+            n_rows: u32,
+            min_rows: u32,
+        ) -> Result<Vec<f32>, String> {
+            let device = evaluator.device();
+            let pairs = (n_cand as u64) * (n_pat as u64);
+            if pairs == 0 {
+                return Ok(Vec::new());
+            }
+            if pairs > u32::MAX as u64 {
+                return Err(format!("{n_cand} candidates x {n_pat} patterns overflows the pair index"));
+            }
+            let out_buf = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("pattern-verify-out"),
+                size: pairs * 4,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+                mapped_at_creation: false,
+            });
+            let read_buf = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("pattern-verify-readback"),
+                size: pairs * 4,
+                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                mapped_at_creation: false,
+            });
+            let cfg = [n_cand, n_pat, n_rows, min_rows];
+            let cfg_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("pattern-verify-cfg"),
+                contents: bytemuck::cast_slice(&cfg),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
+            let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: None,
+                layout: &self.layout,
+                entries: &[
+                    wgpu::BindGroupEntry { binding: 0, resource: preds.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 1, resource: out_buf.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 2, resource: cfg_buf.as_entire_binding() },
+                ],
+            });
+            let groups = (pairs as u32).div_ceil(64);
+            let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+            {
+                let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor { label: None, timestamp_writes: None });
+                pass.set_pipeline(&self.pipeline);
+                pass.set_bind_group(0, &bind, &[]);
+                pass.dispatch_workgroups(groups, 1, 1);
+            }
+            enc.copy_buffer_to_buffer(&out_buf, 0, &read_buf, 0, pairs * 4);
+            evaluator.queue().submit(Some(enc.finish()));
+
+            let slice = read_buf.slice(..);
+            let (tx, rx) = std::sync::mpsc::channel();
+            slice.map_async(wgpu::MapMode::Read, move |r| {
+                let _ = tx.send(r);
+            });
+            device.poll(wgpu::Maintain::Wait);
+            rx.recv().map_err(|e| format!("map_async channel: {e}"))?.map_err(|e| format!("map_async: {e}"))?;
+            let out = bytemuck::cast_slice::<u8, f32>(&slice.get_mapped_range()).to_vec();
+            read_buf.unmap();
+            out_buf.destroy();
+            read_buf.destroy();
+            cfg_buf.destroy();
+            device.poll(wgpu::Maintain::Poll);
+            Ok(out)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -175,5 +323,49 @@ mod tests {
         assert_eq!(scores.len(), 2);
         assert!(scores[0].unwrap() < 1e-9, "node 0 is the target");
         assert!(scores[1].is_none(), "node 1 is constant");
+    }
+
+    #[cfg(feature = "gpu")]
+    #[test]
+    fn gpu_verify_matches_the_host_reduction() {
+        use crate::gpu_eval::{ExprBatch, GpuEvaluator, GpuNode, Op};
+        // 4 rows, 2 vars. Two CANDIDATE columns: c0 = a (matches pattern p0=a
+        // exactly, 1-R²=0), c1 = a*b (unrelated to a). One PATTERN column p0 = a.
+        let rows: Vec<f32> = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
+        let n_rows = 4u32;
+        let ev = match GpuEvaluator::new(&rows, 2) {
+            Ok(e) => e,
+            Err(e) => {
+                eprintln!("no GPU ({e}); skipping");
+                return;
+            }
+        };
+        let var_a = [GpuNode { op: Op::Var as u32, arg0: 0, arg1: 0, konst: 0.0 }];
+        let mul_ab = [
+            GpuNode { op: Op::Mul as u32, arg0: 1, arg1: 2, konst: 0.0 },
+            GpuNode { op: Op::Var as u32, arg0: 0, arg1: 0, konst: 0.0 },
+            GpuNode { op: Op::Var as u32, arg0: 1, arg1: 0, konst: 0.0 },
+        ];
+        // Batch: candidate 0 (a), candidate 1 (a*b), pattern 0 (a). n_cand=2, n_pat=1.
+        let mut batch = ExprBatch::new();
+        batch.push(&var_a);
+        batch.push(&mul_ab);
+        batch.push(&var_a);
+        let preds = ev.eval_resident(&batch).expect("eval_resident");
+        // Host reference: eval the same batch, score each candidate vs the pattern.
+        let flat = ev.eval(&batch).expect("eval");
+        let col = |e: usize| &flat[e * n_rows as usize..(e + 1) * n_rows as usize];
+        let pat_f64: Vec<f64> = col(2).iter().map(|v| f64::from(*v)).collect();
+        let host0 = affine_residual(ColumnSums::of(col(0), &pat_f64), 2.0).expect("host c0");
+        let host1 = affine_residual(ColumnSums::of(col(1), &pat_f64), 2.0).expect("host c1");
+
+        let pv = PatternVerify::new(&ev);
+        let got = pv.verify(&ev, &preds, 2, 1, n_rows, 2).expect("gpu verify");
+        preds.destroy();
+        assert_eq!(got.len(), 2, "n_cand * n_pat pair scores");
+        // out[cand * n_pat + pat]; pat=0 so index == cand.
+        assert!((f64::from(got[0]) - host0).abs() < 1e-4, "GPU c0 {} vs host {host0}", got[0]);
+        assert!((f64::from(got[1]) - host1).abs() < 1e-4, "GPU c1 {} vs host {host1}", got[1]);
+        assert!(f64::from(got[0]) < 1e-5, "c0 (== pattern a) is an affine match: {}", got[0]);
     }
 }
