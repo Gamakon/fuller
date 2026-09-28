@@ -206,6 +206,12 @@ struct Meta {
     // 65535 workgroups = 4.19M invocations, and the population x e-class
     // cross-product is far past that, so the dispatch is 2-D.
     stride: u32,
+    // 1 = also write every subtree's value to `partials`, laid out
+    // partials[(expr * MAX_NODES + k) * n_rows + row] = scratch[k]. 0 = leave
+    // `partials` untouched (the ordinary eval, byte-identical to before this
+    // field existed). Every subtree value is ALREADY computed in `scratch`; this
+    // only decides whether it is emitted.
+    emit_partials: u32,
 };
 
 @group(0) @binding(0) var<storage, read>       nodes:   array<Node>;
@@ -216,6 +222,9 @@ struct Meta {
 @group(0) @binding(3) var<storage, read>       data:    array<f32>;
 @group(0) @binding(4) var<storage, read_write> out:     array<f32>;
 @group(0) @binding(5) var<uniform>             cfg:     Meta;
+// Per-subtree values, written only when cfg.emit_partials == 1u. When off it is
+// bound to a 1-element dummy and never touched.
+@group(0) @binding(6) var<storage, read_write> partials: array<f32>;
 
 const MAX_NODES: u32 = 64u;
 fn nan() -> f32 { return bitcast<f32>(0x7fc00000u); }
@@ -371,6 +380,19 @@ fn eval_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
 
     if (poison) { out[idx] = nan(); } else { out[idx] = scratch[0]; }
+
+    // EMIT PARTIALS: every subtree's value, already in scratch. Off by default,
+    // so the ordinary eval writes nothing here and is unchanged.
+    if (cfg.emit_partials == 1u) {
+        var j: u32 = 0u;
+        loop {
+            if (j >= n) { break; }
+            var pv: f32 = scratch[j];
+            if (poison) { pv = nan(); }
+            partials[(expr * MAX_NODES + j) * cfg.n_rows + row] = pv;
+            j = j + 1u;
+        }
+    }
 }
 "#;
 
@@ -662,7 +684,7 @@ mod device {
 
             let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("fuller-eval-layout"),
-                entries: &(0..6)
+                entries: &(0..7)
                     .map(|i| wgpu::BindGroupLayoutEntry {
                         binding: i,
                         visibility: wgpu::ShaderStages::COMPUTE,
@@ -674,8 +696,9 @@ mod device {
                             }
                         } else {
                             wgpu::BindingType::Buffer {
+                                // binding 4 (out) and 6 (partials) are written.
                                 ty: wgpu::BufferBindingType::Storage {
-                                    read_only: i != 4,
+                                    read_only: i != 4 && i != 6,
                                 },
                                 has_dynamic_offset: false,
                                 min_binding_size: None,
@@ -758,7 +781,7 @@ mod device {
             let groups = total.div_ceil(64) as u32;
             let groups_x = groups.min(MAX_GROUPS_PER_DIM);
             let groups_y = groups.div_ceil(groups_x);
-            let meta = [n_expr, self.n_rows, self.n_vars, groups_x * 64];
+            let meta = [n_expr, self.n_rows, self.n_vars, groups_x * 64, 0];
             let meta_buf = self
                 .device
                 .create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -766,6 +789,10 @@ mod device {
                     contents: bytemuck::cast_slice(&meta),
                     usage: wgpu::BufferUsages::UNIFORM,
                 });
+            // emit_partials is 0 here, so `partials` is never written; bind a
+            // 1-element dummy to satisfy the layout without allocating the big
+            // per-subtree buffer.
+            let dummy = self.storage(&[0u32], "partials-dummy");
             let bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: None,
                 layout: &self.layout,
@@ -776,6 +803,7 @@ mod device {
                     wgpu::BindGroupEntry { binding: 3, resource: self.data_buf.as_entire_binding() },
                     wgpu::BindGroupEntry { binding: 4, resource: out_buf.as_entire_binding() },
                     wgpu::BindGroupEntry { binding: 5, resource: meta_buf.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 6, resource: dummy.as_entire_binding() },
                 ],
             });
             {
@@ -787,6 +815,7 @@ mod device {
                 pass.set_bind_group(0, &bind, &[]);
                 pass.dispatch_workgroups(groups_x, groups_y, 1);
             }
+            dummy.destroy();
             Ok(meta_buf)
         }
 
@@ -901,7 +930,7 @@ mod device {
             let groups = total.div_ceil(64) as u32;
             let groups_x = groups.min(MAX_GROUPS_PER_DIM);
             let groups_y = groups.div_ceil(groups_x);
-            let meta = [n_expr, self.n_rows, self.n_vars, groups_x * 64];
+            let meta = [n_expr, self.n_rows, self.n_vars, groups_x * 64, 0];
             let meta_buf = self
                 .device
                 .create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -910,6 +939,8 @@ mod device {
                     usage: wgpu::BufferUsages::UNIFORM,
                 });
 
+            // emit_partials 0: dummy partials binding, as in eval_pass.
+            let dummy = self.storage(&[0u32], "partials-dummy");
             let bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: None,
                 layout: &self.layout,
@@ -920,6 +951,7 @@ mod device {
                     wgpu::BindGroupEntry { binding: 3, resource: self.data_buf.as_entire_binding() },
                     wgpu::BindGroupEntry { binding: 4, resource: out_buf.as_entire_binding() },
                     wgpu::BindGroupEntry { binding: 5, resource: meta_buf.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 6, resource: dummy.as_entire_binding() },
                 ],
             });
 
@@ -964,6 +996,7 @@ mod device {
             meta_buf.destroy();
             out_buf.destroy();
             read_buf.destroy();
+            dummy.destroy();
 
             // Drain wgpu's deferred-release queue. submit() hands wgpu a
             // command buffer and staging allocations that it holds until the
@@ -974,6 +1007,124 @@ mod device {
             // and Metal reports "Context leak detected" once per dispatch.
             self.device.poll(wgpu::Maintain::Poll);
             Ok(out)
+        }
+
+        /// Evaluate `batch` AND emit every subtree's value.
+        ///
+        /// Returns `(roots, partials)`:
+        /// - `roots`: `n_expr * n_rows`, expression-major, as [`Self::eval`].
+        /// - `partials`: `n_expr * MAX_NODES * n_rows`, indexed
+        ///   `partials[(expr * MAX_NODES + k) * n_rows + row]` = the value of the
+        ///   subtree rooted at node `k` of expression `expr` on that row. Slots
+        ///   `k >= lengths[expr]` are untouched (leave them 0); the caller reads
+        ///   only `k < lengths[expr]`.
+        ///
+        /// This is [`Self::eval`] with `emit_partials = 1` and a real partials
+        /// buffer. It reuses the SAME scan and shader — the subtree values are
+        /// already computed there; this only writes them out. The partials buffer
+        /// is `n_expr * MAX_NODES * n_rows * 4` bytes, so pass a SMALL batch (the
+        /// selected near-miss genes), not the whole population.
+        pub fn eval_with_partials(&self, batch: &ExprBatch) -> Result<(Vec<f32>, Vec<f32>), String> {
+            if batch.is_empty() || batch.nodes.is_empty() {
+                let total = batch.len() * self.n_rows as usize;
+                return Ok((vec![f32::NAN; total], vec![0.0; total * MAX_NODES]));
+            }
+            let n_expr = batch.len() as u32;
+            let total = (n_expr as u64) * (self.n_rows as u64);
+            let part_total = total * MAX_NODES as u64;
+            if part_total > u32::MAX as u64 {
+                return Err(format!(
+                    "partials of {n_expr} expressions x {MAX_NODES} nodes x {} rows overflows the \
+                     kernel's u32 index; pass fewer genes",
+                    self.n_rows
+                ));
+            }
+            let node_bytes: Vec<u32> = batch.nodes.iter().flat_map(|n| [n.op, n.arg0, n.arg1, n.konst.to_bits()]).collect();
+            let nodes_buf = self.storage(&node_bytes, "nodes");
+            let offs_buf = self.storage(&batch.offsets, "offsets");
+            let lens_buf = self.storage(&batch.lengths, "lengths");
+            let out_buf = self.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("out"),
+                size: total * 4,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+                mapped_at_creation: false,
+            });
+            let part_buf = self.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("partials"),
+                size: part_total * 4,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+                mapped_at_creation: false,
+            });
+            let part_read = self.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("partials-readback"),
+                size: part_total * 4,
+                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                mapped_at_creation: false,
+            });
+            let read_buf = self.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("readback"),
+                size: total * 4,
+                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                mapped_at_creation: false,
+            });
+            let groups = total.div_ceil(64) as u32;
+            let groups_x = groups.min(MAX_GROUPS_PER_DIM);
+            let groups_y = groups.div_ceil(groups_x);
+            let meta = [n_expr, self.n_rows, self.n_vars, groups_x * 64, 1];
+            let meta_buf = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("meta"),
+                contents: bytemuck::cast_slice(&meta),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
+            let bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: None,
+                layout: &self.layout,
+                entries: &[
+                    wgpu::BindGroupEntry { binding: 0, resource: nodes_buf.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 1, resource: offs_buf.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 2, resource: lens_buf.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 3, resource: self.data_buf.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 4, resource: out_buf.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 5, resource: meta_buf.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 6, resource: part_buf.as_entire_binding() },
+                ],
+            });
+            let mut enc = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+            {
+                let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor { label: None, timestamp_writes: None });
+                pass.set_pipeline(&self.pipeline);
+                pass.set_bind_group(0, &bind, &[]);
+                pass.dispatch_workgroups(groups_x, groups_y, 1);
+            }
+            enc.copy_buffer_to_buffer(&out_buf, 0, &read_buf, 0, total * 4);
+            enc.copy_buffer_to_buffer(&part_buf, 0, &part_read, 0, part_total * 4);
+            self.queue.submit(Some(enc.finish()));
+
+            let read = |buf: &wgpu::Buffer| -> Result<Vec<f32>, String> {
+                let slice = buf.slice(..);
+                let (tx, rx) = std::sync::mpsc::channel();
+                slice.map_async(wgpu::MapMode::Read, move |r| {
+                    let _ = tx.send(r);
+                });
+                self.device.poll(wgpu::Maintain::Wait);
+                rx.recv().map_err(|e| format!("map_async channel: {e}"))?.map_err(|e| format!("map_async: {e}"))?;
+                let v = bytemuck::cast_slice::<u8, f32>(&slice.get_mapped_range()).to_vec();
+                buf.unmap();
+                Ok(v)
+            };
+            let out = read(&read_buf)?;
+            let partials = read(&part_read)?;
+
+            nodes_buf.destroy();
+            offs_buf.destroy();
+            lens_buf.destroy();
+            meta_buf.destroy();
+            out_buf.destroy();
+            read_buf.destroy();
+            part_buf.destroy();
+            part_read.destroy();
+            self.device.poll(wgpu::Maintain::Poll);
+            Ok((out, partials))
         }
 
         fn storage<T: bytemuck::Pod>(&self, v: &[T], label: &str) -> wgpu::Buffer {
@@ -1144,6 +1295,68 @@ mod device_tests {
                 "row {i}: got {} want {want}",
                 got[i]
             );
+        }
+    }
+
+    #[test]
+    fn partials_emit_every_subtree_value() {
+        // 4 rows, 2 vars (a, b). Mul(a, b): node0 = a*b, node1 = a, node2 = b.
+        let rows: Vec<f32> = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
+        let ev = match GpuEvaluator::new(&rows, 2) {
+            Ok(e) => e,
+            Err(e) => {
+                eprintln!("no GPU available ({e}); skipping");
+                return;
+            }
+        };
+        let nodes = [
+            GpuNode { op: Op::Mul as u32, arg0: 1, arg1: 2, konst: 0.0 },
+            GpuNode { op: Op::Var as u32, arg0: 0, arg1: 0, konst: 0.0 },
+            GpuNode { op: Op::Var as u32, arg0: 1, arg1: 0, konst: 0.0 },
+        ];
+        let mut batch = ExprBatch::new();
+        batch.push(&nodes);
+
+        let (roots, partials) = ev.eval_with_partials(&batch).expect("eval_with_partials");
+        let n_rows = 4usize;
+        assert_eq!(roots.len(), n_rows, "one root per row");
+        assert_eq!(partials.len(), MAX_NODES * n_rows, "one expr x MAX_NODES x rows");
+        let at = |k: usize, row: usize| partials[(k) * n_rows + row]; // expr 0
+        for (row, chunk) in rows.chunks(2).enumerate() {
+            let (a, b) = (chunk[0], chunk[1]);
+            // node0 = a*b (also the root), node1 = a, node2 = b — each subtree's value.
+            assert!((at(0, row) - a * b).abs() <= 1e-5 * (a * b).abs().max(1.0), "subtree0 (a*b) row {row}: {}", at(0, row));
+            assert!((at(1, row) - a).abs() <= 1e-5 * a.abs().max(1.0), "subtree1 (a) row {row}: {}", at(1, row));
+            assert!((at(2, row) - b).abs() <= 1e-5 * b.abs().max(1.0), "subtree2 (b) row {row}: {}", at(2, row));
+            // the root partial equals the ordinary eval root.
+            assert!((at(0, row) - roots[row]).abs() <= 1e-6, "root partial == eval root");
+        }
+    }
+
+    #[test]
+    fn eval_is_unchanged_by_the_partials_field() {
+        // The ordinary eval (emit_partials 0) must be byte-identical to before:
+        // compare against a hand value on a mixed expression.
+        let rows: Vec<f32> = vec![2.0, 3.0, 5.0, 7.0];
+        let ev = match GpuEvaluator::new(&rows, 2) {
+            Ok(e) => e,
+            Err(_) => return,
+        };
+        // Add(Mul(a,b), a): node0 Add(1,2), node1 Mul(3,4), node2 Var a, node3 Var a, node4 Var b
+        let nodes = [
+            GpuNode { op: Op::Add as u32, arg0: 1, arg1: 2, konst: 0.0 },
+            GpuNode { op: Op::Mul as u32, arg0: 3, arg1: 4, konst: 0.0 },
+            GpuNode { op: Op::Var as u32, arg0: 0, arg1: 0, konst: 0.0 },
+            GpuNode { op: Op::Var as u32, arg0: 0, arg1: 0, konst: 0.0 },
+            GpuNode { op: Op::Var as u32, arg0: 1, arg1: 0, konst: 0.0 },
+        ];
+        let mut batch = ExprBatch::new();
+        batch.push(&nodes);
+        let got = ev.eval(&batch).expect("eval");
+        for (row, chunk) in rows.chunks(2).enumerate() {
+            let (a, b) = (chunk[0], chunk[1]);
+            let want = a * b + a;
+            assert!((got[row] - want).abs() <= 1e-5 * want.abs().max(1.0), "row {row}: got {} want {want}", got[row]);
         }
     }
 
