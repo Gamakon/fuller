@@ -88,6 +88,47 @@ pub fn abs_corr(s: ColumnSums, min_rows: f64) -> Option<f64> {
     affine_residual(s, min_rows).map(|one_minus_r2| (1.0 - one_minus_r2).sqrt())
 }
 
+/// THE RESIDUAL TEST, host reference — the coefficient of variation of the ratio
+/// `subtree / pattern` over the rows. This mirrors [`PatternVerify`] exactly and
+/// is the reference the GPU kernel is tested against.
+///
+/// A CONSTANT ratio means the subtree IS the pattern up to a single scale factor
+/// (the outer model supplies the scale) — the "y / template is simple" test the
+/// whole-output residual path uses, per subtree. NO affine fit, NO intercept: a
+/// pattern is a MULTIPLICATIVE factor, matched by a flat ratio. Returns
+/// `std(ratio)/|mean(ratio)|` in `[0, ∞)`, `0` = perfectly constant = the shape.
+/// `None` when too few rows have a usable (finite, non-zero-divisor) ratio, or
+/// the mean ratio is ~0 (the subtree is ~0 everywhere — no scale to speak of).
+///
+/// Rows where the subtree or pattern is non-finite, or the pattern is ~0, are
+/// dropped: the ratio is undefined there, which is not evidence against the shape.
+pub fn ratio_cov(subtree: &[f32], pattern: &[f32], min_rows: usize) -> Option<f64> {
+    debug_assert_eq!(subtree.len(), pattern.len(), "same rows");
+    let (mut n, mut sr, mut srr) = (0.0f64, 0.0f64, 0.0f64);
+    for (&s, &p) in subtree.iter().zip(pattern) {
+        let (s, p) = (f64::from(s), f64::from(p));
+        if !s.is_finite() || !p.is_finite() || p.abs() <= 1e-20 {
+            continue;
+        }
+        let r = s / p;
+        if !r.is_finite() {
+            continue;
+        }
+        n += 1.0;
+        sr += r;
+        srr += r * r;
+    }
+    if (n as usize) < min_rows {
+        return None;
+    }
+    let mean = sr / n;
+    if mean.abs() < 1e-20 {
+        return None;
+    }
+    let variance = (srr / n - mean * mean).max(0.0);
+    Some(variance.sqrt() / mean.abs())
+}
+
 /// Score every subtree column of ONE expression's partials against a target.
 ///
 /// `partials` is the [`crate::gpu_eval::GpuEvaluator::eval_with_partials`] output;
@@ -120,8 +161,9 @@ pub fn score_subtrees(
 pub use gpu::PatternVerify;
 
 /// The on-GPU (subtree × pattern) reduction. A second compute kernel over the
-/// eval predictions the evaluator leaves resident, so the affine 1 - R² of every
-/// pair is computed on the device and only the pair scores return.
+/// eval predictions the evaluator leaves resident, so the ratio coefficient of
+/// variation of every pair (the residual test, [`ratio_cov`]) is computed on the
+/// device and only the pair scores return.
 #[cfg(feature = "gpu")]
 mod gpu {
     use crate::gpu_eval::GpuEvaluator;
@@ -186,9 +228,10 @@ mod gpu {
         /// Score every (candidate subtree, pattern) pair from predictions the
         /// evaluator left resident (`preds`, `n_expr = n_cand + n_pat` columns of
         /// `n_rows`, candidates first). Returns `n_cand * n_pat` values, indexed
-        /// `out[cand * n_pat + pat]` = affine `1 - R²`, or `2.0` for an unscorable
-        /// pair (too few finite rows, or a constant column). The reduction runs on
-        /// the GPU; only these scalars cross to the host.
+        /// `out[cand * n_pat + pat]` = the ratio coefficient of variation (0 = the
+        /// subtree is the pattern up to scale), or `2.0` for an unscorable pair
+        /// (too few usable rows, or a ~0 mean ratio). The reduction runs on the
+        /// GPU; only these scalars cross to the host.
         pub fn verify(
             &self,
             evaluator: &GpuEvaluator,
@@ -329,8 +372,9 @@ mod tests {
     #[test]
     fn gpu_verify_matches_the_host_reduction() {
         use crate::gpu_eval::{ExprBatch, GpuEvaluator, GpuNode, Op};
-        // 4 rows, 2 vars. Two CANDIDATE columns: c0 = a (matches pattern p0=a
-        // exactly, 1-R²=0), c1 = a*b (unrelated to a). One PATTERN column p0 = a.
+        // 4 rows, 2 vars. Two CANDIDATE columns: c0 = a (ratio to pattern a is
+        // constant 1 -> CoV 0), c1 = a*b (ratio to a is b, which varies -> CoV
+        // large). One PATTERN column p0 = a.
         let rows: Vec<f32> = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
         let n_rows = 4u32;
         let ev = match GpuEvaluator::new(&rows, 2) {
@@ -352,12 +396,12 @@ mod tests {
         batch.push(&mul_ab);
         batch.push(&var_a);
         let preds = ev.eval_resident(&batch).expect("eval_resident");
-        // Host reference: eval the same batch, score each candidate vs the pattern.
+        // Host reference: eval the same batch, score each candidate's ratio to the
+        // pattern with the ratio_cov reference the GPU kernel mirrors.
         let flat = ev.eval(&batch).expect("eval");
         let col = |e: usize| &flat[e * n_rows as usize..(e + 1) * n_rows as usize];
-        let pat_f64: Vec<f64> = col(2).iter().map(|v| f64::from(*v)).collect();
-        let host0 = affine_residual(ColumnSums::of(col(0), &pat_f64), 2.0).expect("host c0");
-        let host1 = affine_residual(ColumnSums::of(col(1), &pat_f64), 2.0).expect("host c1");
+        let host0 = ratio_cov(col(0), col(2), 2).expect("host c0");
+        let host1 = ratio_cov(col(1), col(2), 2).expect("host c1");
 
         let pv = PatternVerify::new(&ev);
         let got = pv.verify(&ev, &preds, 2, 1, n_rows, 2).expect("gpu verify");
@@ -366,6 +410,7 @@ mod tests {
         // out[cand * n_pat + pat]; pat=0 so index == cand.
         assert!((f64::from(got[0]) - host0).abs() < 1e-4, "GPU c0 {} vs host {host0}", got[0]);
         assert!((f64::from(got[1]) - host1).abs() < 1e-4, "GPU c1 {} vs host {host1}", got[1]);
-        assert!(f64::from(got[0]) < 1e-5, "c0 (== pattern a) is an affine match: {}", got[0]);
+        assert!(f64::from(got[0]) < 1e-5, "c0 (ratio to pattern a is constant): {}", got[0]);
+        assert!(f64::from(got[1]) > 1e-2, "c1 (ratio to a varies): {}", got[1]);
     }
 }
