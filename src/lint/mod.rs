@@ -29,13 +29,14 @@ use tables::{Exactness, Refused, Tables};
 
 /// The rule texts the linter is derived from, in load order. Rule ids follow
 /// this order, so it is part of the linter's determinism.
-pub fn standard_sources() -> [(&'static str, &'static str); 6] {
+pub fn standard_sources() -> [(&'static str, &'static str); 7] {
     [
         ("guards", crate::expr::GUARD_RELATIONS),
         ("algebra", crate::ruleset::identities::ALGEBRA_RULESET),
         ("powers", crate::ruleset::powers::POWERS_RULESET),
         ("sign", crate::ruleset::sign::SIGN_RULESET),
         ("rational", crate::ruleset::rational::RATIONAL_RULESET),
+        ("cofunction", crate::ruleset::cofunction::COFUNCTION_RULESET),
         ("collect", crate::ruleset::collect::COLLECT_RULESET),
     ]
 }
