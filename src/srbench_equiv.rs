@@ -119,10 +119,37 @@ fn oracle_program() -> String {
 ; bare shared factor in num & denom: (Div (Mul a b) (Mul a c)) = b/c, guarded.
 (rewrite (Div (Mul a b) (Mul a c)) (Div b c) :when ((is-nonzero a)) :ruleset oraclefolds)
 (rewrite (ProtectedDiv (Mul a b) (Mul a c)) (ProtectedDiv b c) :when ((is-nonzero a)) :ruleset oraclefolds)
-; is-num: mark any e-class that holds a numeric literal, so the verdict is one
-; check. (A relation, seeded structurally on Num.)
-(relation is-num (Math))
-(rule ((= e (Num a))) ((is-num e)) :ruleset oraclefolds)
+; pull a literal coefficient OUT of a quotient numerator: (c*x)/y = c*(x/y), so
+; the sqrt-quotient rule below can see the two bare roots. Size-neutral.
+(rewrite (ProtectedDiv (Mul (Num c) x) y) (Mul (Num c) (ProtectedDiv x y)) :ruleset oraclefolds)
+(rewrite (Div (Mul (Num c) x) y) (Mul (Num c) (Div x y)) :ruleset oraclefolds)
+; ---- ProtectedSqrt QUOTIENT (radsimp), CONTRACTIVE: sqrt|a|/sqrt|b| =
+; sqrt|a/b| (two roots -> one; fires only on a Div of two roots, cannot loop).
+(rewrite (ProtectedDiv (ProtectedSqrt a) (ProtectedSqrt b)) (ProtectedSqrt (ProtectedDiv a b)) :ruleset oraclefolds)
+; (x / k) / x = 1/k, CONTRACTIVE, leaves the coefficient OUTSIDE the sqrt so no
+; expanding c*sqrt|x| -> sqrt(c^2 x) is needed (that one blew up: 99 -> 9801 ...).
+; Euclidean: 1.414*sqrt((S/2)/S) -> 1.414*sqrt(1/2), a constant.
+(rewrite (ProtectedDiv (ProtectedDiv x (Num k)) x) (Num (/ 1.0 k)) :when ((is-nonzero x) (!= k 0.0)) :ruleset oraclefolds)
+; sum of squares with a nonzero term is nonzero (SOUND: both terms >= 0). Unlocks
+; the cancel over a compound denominator S = (x2-x3)^2 + (x1-x0)^2 (only Vars are
+; asserted nonzero by the caller). NO general `Add a b` rule — x + (-x) = 0.
+(rule ((is-nonzero a) (= e (Add (Pow2 a) (Pow2 b)))) ((is-nonzero e)) :ruleset oraclefolds)
+(rule ((is-nonzero b) (= e (Add (Pow2 a) (Pow2 b)))) ((is-nonzero e)) :ruleset oraclefolds)
+; nonzero flows THROUGH a root/inv/abs to the argument (sqrt|x| != 0 => x != 0),
+; so asserting the truth (denominator) nonzero reaches a compound inside it.
+(rule ((is-nonzero e) (= e (ProtectedSqrt x))) ((is-nonzero x)) :ruleset oraclefolds)
+(rule ((is-nonzero e) (= e (Sqrt x))) ((is-nonzero x)) :ruleset oraclefolds)
+(rule ((is-nonzero e) (= e (Abs x))) ((is-nonzero x)) :ruleset oraclefolds)
+(rule ((is-nonzero e) (= e (ProtectedInv x))) ((is-nonzero x)) :ruleset oraclefolds)
+; ---- is-const: the VERDICT. A Num is const, and constness PROPAGATES through
+; the ops egglog cannot fold numerically (it has f64 * + - but NOT sqrt), so
+; sqrt(0.5) is const without computing its value — SRBench's frac.is_constant().
+(relation is-const (Math))
+(rule ((= e (Num a))) ((is-const e)) :ruleset oraclefolds)
+(rule ((= e (ProtectedSqrt x)) (is-const x)) ((is-const e)) :ruleset oraclefolds)
+(rule ((= e (Neg x)) (is-const x)) ((is-const e)) :ruleset oraclefolds)
+(rule ((= e (Abs x)) (is-const x)) ((is-const e)) :ruleset oraclefolds)
+(rule ((= e (Mul a b)) (is-const a) (is-const b)) ((is-const e)) :ruleset oraclefolds)
 "#;
     format!(
         "{MATH_DATATYPE}\n{GUARD_RELATIONS}\n\
@@ -156,19 +183,23 @@ pub fn srbench_equivalent(model: &str, truth: &str, vars: &[String]) -> Result<b
         .map_err(|e| format!("load oracle rulesets: {e}"))?;
 
     // Build the difference and the ratio, run the oracle, then ask whether
-    // EITHER e-class is numeric (is-num). Two separate checks, OR'd.
+    // EITHER e-class is const. Two checks, OR'd. Assert the TRUTH (the ratio's
+    // denominator) nonzero: model/truth == const is only a meaningful question
+    // where truth != 0, and SRBench's symbolic frac.is_constant() makes the same
+    // generic-nonzero assumption. This unlocks cancellation over a COMPOUND
+    // denominator (e.g. S = sum of squares) that the per-Var asserts cannot reach.
     let prog = format!(
         "(let __diff (Sub {m} {t}))\n\
          (let __frac (ProtectedDiv {m} {t}))\n\
-         {asserts}\
+         {asserts}(is-nonzero {t})\n\
          (run-schedule (repeat {ITERS} (run oracle)))\n"
     );
     egraph
         .parse_and_run_program(None, &prog)
         .map_err(|e| format!("run oracle on {model:?}: {e}"))?;
 
-    let diff_num = check_holds(&mut egraph, "(check (is-num __diff))");
-    let frac_num = check_holds(&mut egraph, "(check (is-num __frac))");
+    let diff_num = check_holds(&mut egraph, "(check (is-const __diff))");
+    let frac_num = check_holds(&mut egraph, "(check (is-const __frac))");
     Ok(diff_num || frac_num)
 }
 
@@ -225,6 +256,24 @@ mod tests {
         let model = r#"(Add (Mul (Var "x_0") (Var "x_1")) (Num 5.0))"#;
         let truth = r#"(Mul (Var "x_0") (Var "x_1"))"#;
         assert!(srbench_equivalent(model, truth, &vars(2)).unwrap(), "truth+c counts");
+    }
+
+    #[test]
+    fn euclidean_distance_sqrt_folds() {
+        // I_8_14 tidied: 1.4142*sqrt(S/2) == sqrt(S). Coefficient pulls out of the
+        // quotient, roots merge (sqrt-quotient), (S/2)/S -> 1/2, ratio = 1.414*sqrt(1/2),
+        // a constant. radsimp — sympy PASSes it, the Algebra check could not.
+        let s = r#"(Add (Pow2 (Sub (Var "x_2") (Var "x_3"))) (Pow2 (Sub (Var "x_1") (Var "x_0"))))"#;
+        let model = format!(r#"(Mul (Num 1.4142135638900017) (ProtectedSqrt (ProtectedDiv {s} (Num 2.0))))"#);
+        let truth = format!(r#"(ProtectedSqrt {s})"#);
+        assert!(srbench_equivalent(&model, &truth, &vars(4)).unwrap(), "sqrt(2)*sqrt(S/2) == sqrt(S)");
+    }
+
+    #[test]
+    fn sqrt_of_sum_is_not_sum_of_sqrts() {
+        let model = r#"(ProtectedSqrt (Add (Var "x_0") (Var "x_1")))"#;
+        let truth = r#"(Add (ProtectedSqrt (Var "x_0")) (ProtectedSqrt (Var "x_1")))"#;
+        assert!(!srbench_equivalent(model, truth, &vars(2)).unwrap(), "sqrt(a+b) != sqrt a + sqrt b");
     }
 
     #[test]
