@@ -637,6 +637,13 @@ mod device {
         pipeline: wgpu::ComputePipeline,
         layout: wgpu::BindGroupLayout,
         data_buf: wgpu::Buffer,
+        // A persistent 1-element storage buffer bound at binding 6 when
+        // emit_partials is 0. It must OUTLIVE every dispatch that references it —
+        // `eval_pass` only RECORDS the pass and the caller submits later, so a
+        // per-call dummy destroyed before that submit is a use-after-free
+        // ("Buffer is destroyed" on Queue::submit). Owning it here ties its life
+        // to the evaluator's instead.
+        dummy_partials: wgpu::Buffer,
         n_rows: u32,
         n_vars: u32,
     }
@@ -731,12 +738,22 @@ mod device {
                 usage: wgpu::BufferUsages::STORAGE,
             });
 
+            // The persistent binding-6 dummy for emit_partials == 0 dispatches.
+            // Lives as long as the evaluator, so a recorded-then-later-submitted
+            // pass never references a destroyed buffer.
+            let dummy_partials = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("fuller-partials-dummy"),
+                contents: bytemuck::cast_slice(&[0u32]),
+                usage: wgpu::BufferUsages::STORAGE,
+            });
+
             Ok(Self {
                 device,
                 queue,
                 pipeline,
                 layout,
                 data_buf,
+                dummy_partials,
                 n_rows,
                 n_vars: n_vars as u32,
             })
@@ -789,10 +806,9 @@ mod device {
                     contents: bytemuck::cast_slice(&meta),
                     usage: wgpu::BufferUsages::UNIFORM,
                 });
-            // emit_partials is 0 here, so `partials` is never written; bind a
-            // 1-element dummy to satisfy the layout without allocating the big
-            // per-subtree buffer.
-            let dummy = self.storage(&[0u32], "partials-dummy");
+            // emit_partials is 0 here, so `partials` is never written; bind the
+            // evaluator's persistent 1-element dummy (it must outlive this
+            // recorded pass, which the caller submits later).
             let bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: None,
                 layout: &self.layout,
@@ -803,7 +819,7 @@ mod device {
                     wgpu::BindGroupEntry { binding: 3, resource: self.data_buf.as_entire_binding() },
                     wgpu::BindGroupEntry { binding: 4, resource: out_buf.as_entire_binding() },
                     wgpu::BindGroupEntry { binding: 5, resource: meta_buf.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 6, resource: dummy.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 6, resource: self.dummy_partials.as_entire_binding() },
                 ],
             });
             {
@@ -815,7 +831,6 @@ mod device {
                 pass.set_bind_group(0, &bind, &[]);
                 pass.dispatch_workgroups(groups_x, groups_y, 1);
             }
-            dummy.destroy();
             Ok(meta_buf)
         }
 
@@ -939,8 +954,7 @@ mod device {
                     usage: wgpu::BufferUsages::UNIFORM,
                 });
 
-            // emit_partials 0: dummy partials binding, as in eval_pass.
-            let dummy = self.storage(&[0u32], "partials-dummy");
+            // emit_partials 0: the evaluator's persistent dummy at binding 6.
             let bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: None,
                 layout: &self.layout,
@@ -951,7 +965,7 @@ mod device {
                     wgpu::BindGroupEntry { binding: 3, resource: self.data_buf.as_entire_binding() },
                     wgpu::BindGroupEntry { binding: 4, resource: out_buf.as_entire_binding() },
                     wgpu::BindGroupEntry { binding: 5, resource: meta_buf.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 6, resource: dummy.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 6, resource: self.dummy_partials.as_entire_binding() },
                 ],
             });
 
@@ -996,7 +1010,6 @@ mod device {
             meta_buf.destroy();
             out_buf.destroy();
             read_buf.destroy();
-            dummy.destroy();
 
             // Drain wgpu's deferred-release queue. submit() hands wgpu a
             // command buffer and staging allocations that it holds until the
