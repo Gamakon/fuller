@@ -73,6 +73,70 @@ pub fn snap(expr: &str, library: &[(&str, f64)], rel_tol: f64) -> Result<Snapped
     Ok(Snapped { expr: tree.to_math(), snapped })
 }
 
+/// Rational snap: rewrite every near-rational numeric atom `Num(v)` into the
+/// exact ratio `(Div (Num p) (Num q))` for the smallest denominator `q` (2..=`max_q`)
+/// with `|v - p/q| <= rel_tol * |v|`. Integers and atoms with no small rational
+/// are left untouched.
+///
+/// WHY THIS IS ITS OWN SNAP, not a library entry for [`snap`]: constant snap
+/// corrects a `Num`'s VALUE and records a symbol name, but the atom stays a
+/// single float `Num` — and `to_infix` prints the decimal, the symbol being
+/// metadata that never reaches the benchmark. SRBench's `round_floats` then
+/// rounds that float to three decimals. A fitted `-0.0111111` that is really
+/// `-1/90` therefore dies: its distributed coefficients round to `0.891/0.099`
+/// instead of `0.9/0.1`. Emitting the RATIO STRUCTURE `(-1)/90` makes SymPy
+/// carry it as an exact `Rational`, which `round_floats` leaves alone — so the
+/// numerically-correct law is finally certified (proved on strogatz_shearflow2).
+///
+/// `snapped` records `value -> "p/q"` for each rewritten atom.
+pub fn snap_rational(expr: &str, rel_tol: f64, max_q: i64) -> Result<Snapped, String> {
+    let mut tree = parse(expr).ok_or_else(|| format!("could not parse {expr:?}"))?;
+    let mut snapped: Vec<(String, String)> = Vec::new();
+    snap_rational_node(&mut tree, rel_tol, max_q, &mut snapped);
+    snapped.sort();
+    snapped.dedup();
+    Ok(Snapped { expr: tree.to_math(), snapped })
+}
+
+/// The smallest-denominator exact rational `(p, q)` (q in 2..=`max_q`) within
+/// `rel_tol` of `v`, sign carried on `p`. None for integers, non-finite, or no
+/// small rational.
+fn best_rational(v: f64, rel_tol: f64, max_q: i64) -> Option<(i64, i64)> {
+    if !v.is_finite() || v == 0.0 || v == v.trunc() {
+        return None;
+    }
+    let a = v.abs();
+    let mut best: Option<(i64, i64)> = None;
+    for q in 2i64..=max_q {
+        let p = (a * q as f64).round() as i64;
+        if p == 0 {
+            continue;
+        }
+        let rel = (p as f64 / q as f64 - a).abs() / a;
+        if rel <= rel_tol && best.map(|(_, bq)| q < bq).unwrap_or(true) {
+            best = Some((p, q));
+        }
+    }
+    best.map(|(p, q)| (if v < 0.0 { -p } else { p }, q))
+}
+
+fn snap_rational_node(node: &mut Node, rel_tol: f64, max_q: i64, out: &mut Vec<(String, String)>) {
+    match node {
+        Node::Num(v) => {
+            if let Some((p, q)) = best_rational(*v, rel_tol, max_q) {
+                out.push((fmt_f64(*v), format!("{p}/{q}")));
+                *node = Node::App("Div".to_string(), vec![Node::Num(p as f64), Node::Num(q as f64)]);
+            }
+        }
+        Node::App(_, ch) => {
+            for c in ch.iter_mut() {
+                snap_rational_node(c, rel_tol, max_q, out);
+            }
+        }
+        Node::Var(_) => {}
+    }
+}
+
 fn snap_node(
     node: &mut Node,
     library: &[(&str, f64)],
@@ -234,6 +298,30 @@ mod tests {
         // 3.5 is not within 1e-3 of any constant -> unchanged, nothing recorded.
         let r = snap(r#"(Mul (Num 3.5) (Var "r"))"#, &lib, 1e-3).unwrap();
         assert_eq!(r.expr, r#"(Mul (Num 3.5) (Var "r"))"#);
+        assert!(r.snapped.is_empty());
+    }
+
+    #[test]
+    fn rational_snap_recovers_the_shearflow2_constant() {
+        // The fitted leading constant of strogatz_shearflow2's reported form is
+        // -0.011111110940650105, which IS -1/90. Rational snap must rewrite it to
+        // the exact ratio (Div (Num -1) (Num 90)) so SymPy carries it symbolically
+        // and SRBench's round_floats cannot degrade the distributed coefficients.
+        let r = snap_rational(r#"(Mul (Num -0.011111110940650105) (Var "s"))"#, 1e-3, 128).unwrap();
+        assert_eq!(r.expr, r#"(Mul (Div (Num -1.0) (Num 90.0)) (Var "s"))"#, "{}", r.expr);
+        assert!(r.snapped.iter().any(|(_, s)| s == "-1/90"), "{:?}", r.snapped);
+        // to_infix of the rewritten form prints the ratio, not a decimal — this
+        // is what reaches SRBench and survives round_floats (int-emit: -1 not -1.0).
+        let infix = crate::lint::node::Tree::parse(&r.expr).unwrap().to_infix();
+        assert!(infix.contains("(-1)/90"), "{infix}");
+    }
+
+    #[test]
+    fn rational_snap_leaves_integers_and_irrationals_alone() {
+        // Integers are untouched; a value with no small rational is untouched.
+        let r = snap_rational(r#"(Add (Num 3.0) (Num 0.31830988618))"#, 1e-3, 12).unwrap();
+        // 1/pi = 0.3183... has no p/q with q<=12 within 1e-3, and 3 is an integer.
+        assert_eq!(r.expr, r#"(Add (Num 3.0) (Num 0.31830988618))"#, "{}", r.expr);
         assert!(r.snapped.is_empty());
     }
 
