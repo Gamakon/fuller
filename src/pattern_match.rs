@@ -227,7 +227,9 @@ mod gpu {
 
         /// Score every (candidate subtree, pattern) pair from predictions the
         /// evaluator left resident (`preds`, `n_expr = n_cand + n_pat` columns of
-        /// `n_rows`, candidates first). Returns `n_cand * n_pat` values, indexed
+        /// `n_rows`, candidates first), over the first `rows_used` rows of each
+        /// column — the train block of an evaluator that holds every split.
+        /// Returns `n_cand * n_pat` values, indexed
         /// `out[cand * n_pat + pat]` = the ratio coefficient of variation (0 = the
         /// subtree is the pattern up to scale), or `2.0` for an unscorable pair
         /// (too few usable rows, or a ~0 mean ratio). The reduction runs on the
@@ -239,12 +241,16 @@ mod gpu {
             n_cand: u32,
             n_pat: u32,
             n_rows: u32,
+            rows_used: u32,
             min_rows: u32,
         ) -> Result<Vec<f32>, String> {
             let device = evaluator.device();
             let pairs = (n_cand as u64) * (n_pat as u64);
             if pairs == 0 {
                 return Ok(Vec::new());
+            }
+            if rows_used == 0 || rows_used > n_rows {
+                return Err(format!("verify: {rows_used} rows used of a column of {n_rows}"));
             }
             if pairs > u32::MAX as u64 {
                 return Err(format!("{n_cand} candidates x {n_pat} patterns overflows the pair index"));
@@ -261,7 +267,7 @@ mod gpu {
                 usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
                 mapped_at_creation: false,
             });
-            let cfg = [n_cand, n_pat, n_rows, min_rows];
+            let cfg = [n_cand, n_pat, n_rows, rows_used, min_rows];
             let cfg_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("pattern-verify-cfg"),
                 contents: bytemuck::cast_slice(&cfg),
@@ -404,7 +410,14 @@ mod tests {
         let host1 = ratio_cov(col(1), col(2), 2).expect("host c1");
 
         let pv = PatternVerify::new(&ev);
-        let got = pv.verify(&ev, &preds, 2, 1, n_rows, 2).expect("gpu verify");
+        let got = pv.verify(&ev, &preds, 2, 1, n_rows, n_rows, 2).expect("gpu verify");
+        // The first two rows only: a = 1, 3 against a; a*b = 2, 12 against a = 1, 3
+        // (ratios 2 and 4).
+        let top = pv.verify(&ev, &preds, 2, 1, n_rows, 2, 2).expect("gpu verify, two rows");
+        let host_top1 = ratio_cov(&col(1)[..2], &col(2)[..2], 2).expect("host c1 top");
+        assert!((f64::from(top[1]) - host_top1).abs() < 1e-4, "GPU c1 over two rows {} vs host {host_top1}", top[1]);
+        assert!(pv.verify(&ev, &preds, 2, 1, n_rows, 0, 2).is_err(), "no rows is refused");
+        assert!(pv.verify(&ev, &preds, 2, 1, n_rows, n_rows + 1, 2).is_err(), "past the column is refused");
         preds.destroy();
         assert_eq!(got.len(), 2, "n_cand * n_pat pair scores");
         // out[cand * n_pat + pat]; pat=0 so index == cand.

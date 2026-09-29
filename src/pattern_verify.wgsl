@@ -16,7 +16,8 @@
 struct Meta {
     n_cand:  u32,
     n_pat:   u32,
-    n_rows:  u32,
+    n_rows:  u32,    // the stride: rows a column holds
+    rows_used: u32,  // rows reduced, from the top of each column (the train block)
     min_rows: u32,   // fewer usable rows than this -> the pair is unscorable (out = 2.0)
 };
 
@@ -57,7 +58,7 @@ fn verify_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     var srr: f32 = 0.0;  // sum of ratio^2
     var row: u32 = 0u;
     loop {
-        if (row >= cfg.n_rows) { break; }
+        if (row >= cfg.rows_used) { break; }
         let cv = preds[c_base + row];
         let pv = preds[p_base + row];
         // Drop a row where either side is non-finite OR the pattern is ~0 (the
