@@ -130,9 +130,21 @@ impl Tree {
     pub fn to_infix(&self) -> String {
         let one = |k: &[Tree]| k[0].to_infix();
         let two = |k: &[Tree]| (k[0].to_infix(), k[1].to_infix());
+        // An integer-valued float prints as an INTEGER (`1`, not `1.0`). SRBench's
+        // truth carries `sqrt(1 - v^2/c^2)` with an integer 1; our `1.0` made
+        // `round_floats` leave `1.0` while the truth kept `1`, so `sym_diff` did
+        // not cancel and a form that IS the law scored NO (the whole relativistic
+        // family). Emitting ints as ints removes that false negative.
+        let num = |v: f64| -> String {
+            if v.is_finite() && v == v.trunc() && v.abs() < 1e15 {
+                format!("{}", v as i64)
+            } else {
+                format!("{v:?}")
+            }
+        };
         match self {
-            Tree::Num(v) if *v < 0.0 => format!("({v:?})"),
-            Tree::Num(v) => format!("{v:?}"),
+            Tree::Num(v) if *v < 0.0 => format!("({})", num(*v)),
+            Tree::Num(v) => num(*v),
             Tree::Var(name) => name.clone(),
             Tree::App(op, k) => match op {
                 Op::Add => { let (a, b) = two(k); format!("({a} + {b})") }
@@ -348,7 +360,11 @@ mod tests {
     fn infix_text_needs_no_algebra_system() {
         let e = t(r#"(Sub (ProtectedDiv (Var "a") (Pow2 (Var "b"))) (Mul (Num -2.5) (ProtectedSqrt (Neg (Var "c")))))"#);
         assert_eq!(e.to_infix(), "((a/(b**2)) - ((-2.5)*sqrt(Abs((-c)))))");
-        assert_eq!(t("(Num 3.0)").to_infix(), "3.0");
+        // Integer-valued floats print as integers (3, not 3.0) — SRBench's truth
+        // uses integer literals, and `1.0` vs `1` was a false-negative source.
+        assert_eq!(t("(Num 3.0)").to_infix(), "3");
+        assert_eq!(t("(Num 2.5)").to_infix(), "2.5");
+        assert_eq!(t("(Num 1.0)").to_infix(), "1");
     }
 
     /// The inverse-trig ops: text round trip, the plain rendering (protected
