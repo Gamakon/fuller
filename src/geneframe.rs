@@ -15,16 +15,27 @@
 
 use std::collections::BTreeMap;
 
-/// The base value types a symbol's slots can carry (the `in_*`/`out_*` columns).
-/// Extensible: a new kingdom adds variants without changing existing rows.
+/// The value types a symbol's slots can carry — the `in_*`/`out_*` columns of
+/// `docs/design/DataModel.md`, as enum variants so `Arity`'s many-hot maps are
+/// keyed by them. THE FULL SET IS DECLARED NOW so the row structure is stable
+/// over time: a new kingdom REUSES these columns, it does not add a variant and
+/// migrate every row. Most types are zero on any given row. A new type is a
+/// genuinely new value class (not a new kingdom), and only then is a variant
+/// added — and because every match on `Ty` is non-exhaustive (a `_` arm), that
+/// addition stays backward-compatible.
+///
+/// Ordering: the base + depth-ladder types come FIRST and never move, so
+/// [`Ty::depth`], [`Ty::LADDER`] and [`Ty::at_depth`] — the SR depth typing —
+/// are unaffected by anything below `T2`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Ty {
-    S,
-    I,
-    F,
-    B,
-    A,
-    L,
+    // ---- Base types (Symbolic Regression / SQL / REGEX kingdoms) ----
+    S, // String
+    I, // Integer
+    F, // Float — also transcendental DEPTH 0
+    B, // Boolean
+    A, // Array
+    L, // List
     /// TRANSCENDENTAL DEPTH 1: the output of one transcendental applied to
     /// plain floats. See [`typed_depth_table`].
     T1,
@@ -32,6 +43,36 @@ pub enum Ty {
     /// `T1`. **There is no `T3`, and that absence is the depth rule** — not a
     /// check and not a penalty, an arity signature that does not exist.
     T2,
+
+    // ---- NLP-English input types (NLP kingdom) — spaCy entity/phrase labels ----
+    Person,
+    Org,
+    Gpe,
+    Loc,
+    Norp,
+    Fac,
+    Event,
+    Product,
+    Date,
+    Time,
+    Money,
+    Quantity,
+    Cardinal,
+    Percent,
+    Np,     // noun phrase
+    Ap,     // adjective phrase
+    Clause,
+    Verb,
+
+    // ---- NLP-English Phylo OUTPUT types (NLP kingdom) ----
+    Entity,     // 📦
+    Relation,   // 🔗
+    Metric,     // 📊
+    Procedure,  // ⚙️
+    Narrative,  // 📜
+
+    // ---- BotjiKingdom types ----
+    Addr, // botji address string
 }
 
 impl Ty {
