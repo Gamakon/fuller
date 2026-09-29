@@ -315,7 +315,14 @@ fn eval_main(@builtin(global_invocation_id) gid: vec3<u32>) {
                     if (c == 0.0) { v = nan(); } else { v = sin(a) / c; }
                 } else { v = nan(); poison = poison || !(a != a); }
             }
-            case 14u: { v = tanh(scratch[nd.arg0]); }
+            // Tanh: Metal's tanh is 0 at 44 and NaN past it (exp(2x) overflows
+            // inside it), where the engine's math.tanh is +-1. Past 20 the f32
+            // answer IS +-1 exactly (tanh(20) = 1 - 8e-18), so saturate there;
+            // a NaN input stays NaN, as the engine's does.
+            case 14u: {
+                let a = scratch[nd.arg0];
+                if (a != a) { v = a; } else if (a > 20.0) { v = 1.0; } else if (a < -20.0) { v = -1.0; } else { v = tanh(a); }
+            }
             case 15u: {                                            // Pow
                 let a = scratch[nd.arg0];
                 let b = scratch[nd.arg1];
@@ -1894,6 +1901,28 @@ mod protected_parity_tests {
             Op::Sqrt => a.sqrt(),
             other => panic!("no CPU reference for {other:?}"),
         }
+    }
+
+    /// THE DEVICE'S TANH SATURATES LIKE THE ENGINE'S. Measured before the fix
+    /// on Apple silicon: tanh(44) = 0, tanh(45) = NaN, because Metal's tanh
+    /// overflows exp(2x) inside. The engine (Python's math.tanh) is +-1 there,
+    /// and a fold judging `Tanh(x + 40)` flat needs 1 on every row.
+    #[test]
+    fn tanh_saturates_to_one_past_twenty_instead_of_overflowing() {
+        let xs = [0.5f32, 10.0, 19.9, 20.5, 44.0, 45.0, 100.0, 1e30, -44.0, -100.0, -1e30];
+        let Some(v) = gpu_unary(Op::Tanh, &xs) else {
+            eprintln!("no GPU available; skipping");
+            return;
+        };
+        for (x, got) in xs.iter().zip(v.iter()) {
+            let want = f64::from(*x).tanh() as f32;
+            assert!(got.is_finite(), "tanh({x}) = {got}");
+            assert!((got - want).abs() <= 1e-6, "tanh({x}) = {got}, want {want}");
+        }
+        // Non-finite in: infinity saturates as the engine's math.tanh(inf) = 1.0; NaN stays NaN.
+        let v = gpu_unary(Op::Tanh, &[f32::INFINITY, f32::NEG_INFINITY, f32::NAN]).expect("gpu");
+        assert_eq!((v[0], v[1]), (1.0, -1.0));
+        assert!(v[2].is_nan());
     }
 
     /// Run a one-arg op on the GPU over `xs`, one row per value.
