@@ -263,6 +263,16 @@ pub fn steps(t: &Tree, index: &RuleIndex, strict: &Ann, loose: Option<&Ann>, mod
 /// so this is the tolerance at which the move is invisible to their ruler.
 pub const SNAP_CANDIDATE_TOL: f64 = 1e-4;
 
+/// Rational snap tolerance: a literal within this RELATIVE distance of a small
+/// rational `p/q` is offered as that exact ratio. A genuine fit sits far inside
+/// it; the slack absorbs the f64 rounding a fitted coefficient carries.
+pub const RATIONAL_SNAP_TOL: f64 = 1e-3;
+
+/// Largest denominator considered for rational snap. Covers the coefficients
+/// SRBench laws actually use (1/90 for strogatz_shearflow2, 1/12, 3/7, ...)
+/// without opening the door to spurious high-denominator "fits".
+pub const RATIONAL_SNAP_MAX_Q: i64 = 128;
+
 /// The snapped CANDIDATE: every literal within `tol` of an integer (zero
 /// included) becomes that integer. Unlike [`snap_literals`] this moves the
 /// value — 2.99996 -> 3 is a different model — so it is never accepted as an

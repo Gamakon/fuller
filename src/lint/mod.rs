@@ -191,6 +191,23 @@ pub fn forms(
             offered.push((tidy, "snap"));
         }
     }
+    // Rational snap: spell a near-rational literal as the exact ratio `p/q`.
+    // SRBench's `round_floats` rounds a Float coefficient to three decimals but
+    // leaves a SymPy Rational exact, so a fitted `-0.0111111` (== -1/90) whose
+    // distributed coefficients would degrade to `0.891/0.099` is instead offered
+    // as `(-1)/90`, which the benchmark cannot round away (strogatz_shearflow2).
+    // NB: the rational form is offered AS-IS, NOT through `run` — the linter's
+    // rational ruleset constant-folds `(Div (Num -1) (Num 90))` straight back to
+    // a single `Num -0.0111…`, destroying the exact ratio. The whole point is to
+    // KEEP the ratio structure so SRBench sees a Rational, so it must bypass the
+    // fold.
+    if let Ok(rat) = crate::snap::snap_rational(&tree.to_math(), engine::RATIONAL_SNAP_TOL, engine::RATIONAL_SNAP_MAX_Q) {
+        if let Ok(rat_tree) = Tree::parse(&rat.expr) {
+            if rat_tree != tree && offered.iter().all(|(f, _)| *f != rat_tree) {
+                offered.push((rat_tree, "rational"));
+            }
+        }
+    }
     if !rows.is_empty() {
         let tidy = outcome.best.to_math();
         if let Ok(reference) = crate::extract::eval_expr_rows(&tidy, rows) {
@@ -299,6 +316,22 @@ mod tests {
         // Outside the tolerance nothing is offered.
         assert!(engine::snap_candidate(&Tree::parse("(Num 2.9998)").unwrap(), engine::SNAP_CANDIDATE_TOL).is_none());
         assert!(engine::snap_candidate(&Tree::parse("(Num 3.0)").unwrap(), engine::SNAP_CANDIDATE_TOL).is_none());
+    }
+
+    /// `forms` OFFERS the rational spelling of a near-rational coefficient, so
+    /// a numerically-correct law whose constant is a decimal (which SRBench's
+    /// round_floats would degrade) also travels as `p/q` (which it cannot).
+    /// strogatz_shearflow2's `-0.0111111` (== -1/90) must appear as `(-1)/90`.
+    #[test]
+    fn forms_offers_the_rational_spelling_of_a_coefficient() {
+        let tables = Tables::standard().unwrap();
+        let inputs: Vec<String> = ["x_0", "x_1"].iter().map(|s| s.to_string()).collect();
+        let e = r#"(Mul (Num -0.011111110940650105) (Var "x_0"))"#;
+        let out = forms(&tables, e, &inputs, Exactness::Finite, 8, DataFacts::default()).unwrap();
+        let has_ratio = out.iter().any(|(t, label)| {
+            *label == "rational" && t.to_infix().contains("(-1)/90")
+        });
+        assert!(has_ratio, "no rational spelling offered: {:?}", out.iter().map(|(t, l)| (t.to_infix(), *l)).collect::<Vec<_>>());
     }
 
     /// Feynman I.47.23: three separate roots become the truth's one root.
