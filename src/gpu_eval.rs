@@ -870,6 +870,24 @@ mod device {
             n_expr: u32,
             expr_base: u32,
         ) -> Result<wgpu::Buffer, String> {
+            self.eval_pass_range_with(enc, buffers, None, n_expr, expr_base)
+        }
+
+        /// [`Self::eval_pass_range`] that ALSO writes every subtree's value into
+        /// `partials` when one is given, at `partials[(expr * MAX_NODES + k) * n_rows + row]`
+        /// for `expr` in `0..n_expr` (batch coordinates, the base already
+        /// applied) — the resident form of [`Self::eval_with_partials`]. A
+        /// poisoned row (an infinite trig argument) is NaN in every one of its
+        /// partials, as it is in `out`. Entries `k >= lengths[expr]` are NOT
+        /// written and hold whatever the buffer held: a consumer reads the length.
+        pub fn eval_pass_range_with(
+            &self,
+            enc: &mut wgpu::CommandEncoder,
+            buffers: [&wgpu::Buffer; 4],
+            partials: Option<&wgpu::Buffer>,
+            n_expr: u32,
+            expr_base: u32,
+        ) -> Result<wgpu::Buffer, String> {
             let align = u64::from(self.device.limits().min_storage_buffer_offset_alignment);
             let offset = u64::from(expr_base) * 4;
             if offset % align != 0 {
@@ -890,7 +908,7 @@ mod device {
             let groups = total.div_ceil(64) as u32;
             let groups_x = groups.min(MAX_GROUPS_PER_DIM);
             let groups_y = groups.div_ceil(groups_x);
-            let meta = [n_expr, self.n_rows, self.n_vars, groups_x * 64, 0];
+            let meta = [n_expr, self.n_rows, self.n_vars, groups_x * 64, u32::from(partials.is_some())];
             let meta_buf = self
                 .device
                 .create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -910,7 +928,7 @@ mod device {
                     wgpu::BindGroupEntry { binding: 3, resource: self.data_buf.as_entire_binding() },
                     wgpu::BindGroupEntry { binding: 4, resource: out_buf.as_entire_binding() },
                     wgpu::BindGroupEntry { binding: 5, resource: meta_buf.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 6, resource: self.dummy_partials.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 6, resource: partials.unwrap_or(&self.dummy_partials).as_entire_binding() },
                 ],
             });
             {
@@ -1240,10 +1258,254 @@ mod device {
                 })
         }
     }
+
+    /// THE SUBTREE STATISTICS KERNEL: one invocation per (expression, node),
+    /// reducing that subtree's partials over rows `row_lo..row_hi` to its
+    /// min, max, sum and a finite flag — the numbers a fold judges flatness
+    /// by, without a partial ever leaving the device. A node past the
+    /// expression's length is (NaN, NaN, 0, 0). One thread walks one node's
+    /// rows in order, so the f32 sum is the same every time.
+    pub const STATS_WGSL: &str = r#"
+struct Meta {
+    n_expr: u32,
+    n_rows: u32,
+    row_lo: u32,
+    row_hi: u32,
+};
+@group(0) @binding(0) var<storage, read>       partials: array<f32>;
+@group(0) @binding(1) var<storage, read>       lengths:  array<u32>;
+@group(0) @binding(2) var<storage, read_write> stats:    array<f32>;
+@group(0) @binding(3) var<uniform>             cfg:      Meta;
+
+const MAX_NODES: u32 = 64u;
+fn nan() -> f32 { return bitcast<f32>(0x7fc00000u); }
+fn is_finite(x: f32) -> bool { return abs(x) <= 3.4028235e38; }
+
+@compute @workgroup_size(64, 1, 1)
+fn stats_main(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let idx = gid.x;
+    if (idx >= cfg.n_expr * MAX_NODES) { return; }
+    let expr = idx / MAX_NODES;
+    let k = idx % MAX_NODES;
+    let o = idx * 4u;
+    if (k >= lengths[expr]) {
+        stats[o] = nan(); stats[o + 1u] = nan(); stats[o + 2u] = 0.0; stats[o + 3u] = 0.0;
+        return;
+    }
+    var lo: f32 = 3.4028235e38;
+    var hi: f32 = -3.4028235e38;
+    var sum: f32 = 0.0;
+    var finite: f32 = 1.0;
+    var row: u32 = cfg.row_lo;
+    loop {
+        if (row >= cfg.row_hi) { break; }
+        let v = partials[idx * cfg.n_rows + row];
+        if (!is_finite(v)) { finite = 0.0; break; }
+        lo = min(lo, v);
+        hi = max(hi, v);
+        sum = sum + v;
+        row = row + 1u;
+    }
+    stats[o] = lo; stats[o + 1u] = hi; stats[o + 2u] = sum; stats[o + 3u] = finite;
+}
+"#;
+
+    /// One subtree's reduction over the rows asked for.
+    #[derive(Debug, Clone, Copy, PartialEq)]
+    pub struct SubtreeStat {
+        pub min: f32,
+        pub max: f32,
+        pub sum: f32,
+        /// Every row finite. False on any NaN or infinity — including a
+        /// poisoned expression, whose partials are all NaN.
+        pub finite: bool,
+    }
+
+    impl SubtreeStat {
+        pub fn mean(&self, n_rows: usize) -> f64 {
+            f64::from(self.sum) / n_rows as f64
+        }
+    }
+
+    /// The most partial bytes one block may hold: banding keeps a wide dataset
+    /// from asking the device for one enormous buffer.
+    const PARTIALS_BYTES_CAP: u64 = 64 * 1024 * 1024;
+
+    /// SUBTREE STATISTICS FOR A BATCH, on the device: the batch's node arrays
+    /// go up, `eval_main` writes every subtree's value into a resident
+    /// partials buffer, `stats_main` reduces them, and only the reductions
+    /// (16 bytes a node) come back. Allocated once at construction for the
+    /// block size the device's binding limit allows; a bigger batch runs in
+    /// blocks. This is what a fold, on the search's beat or in the finishing
+    /// kitchen sink, judges flatness from.
+    pub struct SubtreeStats {
+        pipeline: wgpu::ComputePipeline,
+        layout: wgpu::BindGroupLayout,
+        nodes_buf: wgpu::Buffer,
+        offsets_buf: wgpu::Buffer,
+        lengths_buf: wgpu::Buffer,
+        partials_buf: wgpu::Buffer,
+        out_buf: wgpu::Buffer,
+        stats_buf: wgpu::Buffer,
+        staging: wgpu::Buffer,
+        /// Expressions a block holds.
+        block: usize,
+        n_rows: u32,
+    }
+
+    impl SubtreeStats {
+        pub fn new(evaluator: &GpuEvaluator) -> Result<Self, String> {
+            let device = evaluator.device();
+            let n_rows = evaluator.n_rows();
+            let limits = device.limits();
+            let per_expr = MAX_NODES as u64 * u64::from(n_rows) * 4;
+            let cap = PARTIALS_BYTES_CAP.min(u64::from(limits.max_storage_buffer_binding_size));
+            // One workgroup of 64 threads reduces one expression's 64 nodes, and
+            // the dispatch is one-dimensional: a block is at most one dimension's
+            // worth of workgroups.
+            let block = ((cap / per_expr) as usize).min(MAX_GROUPS_PER_DIM as usize);
+            if block == 0 {
+                return Err(format!("subtree stats: one expression's {MAX_NODES} x {n_rows} partials do not fit the device's binding limit"));
+            }
+            let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("fuller-subtree-stats"),
+                source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(STATS_WGSL)),
+            });
+            let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("fuller-subtree-stats-layout"),
+                entries: &(0..4)
+                    .map(|i| wgpu::BindGroupLayoutEntry {
+                        binding: i,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: if i == 3 {
+                            wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: None }
+                        } else {
+                            wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: i != 2 }, has_dynamic_offset: false, min_binding_size: None }
+                        },
+                        count: None,
+                    })
+                    .collect::<Vec<_>>(),
+            });
+            let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: None, bind_group_layouts: &[&layout], push_constant_ranges: &[] });
+            let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("fuller-subtree-stats-pipeline"),
+                layout: Some(&pipeline_layout),
+                module: &shader,
+                entry_point: "stats_main",
+                compilation_options: Default::default(),
+            });
+            let storage = |bytes: u64, label: &str| {
+                device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some(label),
+                    size: bytes.max(4),
+                    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
+                    mapped_at_creation: false,
+                })
+            };
+            let stats_bytes = block as u64 * MAX_NODES as u64 * 16;
+            Ok(Self {
+                pipeline,
+                layout,
+                nodes_buf: storage(block as u64 * MAX_NODES as u64 * 16, "subtree stats nodes"),
+                offsets_buf: storage(block as u64 * 4, "subtree stats offsets"),
+                lengths_buf: storage(block as u64 * 4, "subtree stats lengths"),
+                partials_buf: storage(block as u64 * per_expr, "subtree stats partials"),
+                out_buf: storage(block as u64 * u64::from(n_rows) * 4, "subtree stats roots"),
+                stats_buf: storage(stats_bytes, "subtree stats"),
+                staging: device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("subtree stats staging"),
+                    size: stats_bytes.max(4),
+                    usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                    mapped_at_creation: false,
+                }),
+                block,
+                n_rows,
+            })
+        }
+
+        /// Expressions one block holds.
+        pub fn block(&self) -> usize {
+            self.block
+        }
+
+        /// Every subtree's statistics over rows `row_lo..row_hi`, for every
+        /// expression of `batch`: `MAX_NODES` entries an expression, in batch
+        /// order, entries past an expression's length marked not finite. An
+        /// expression the batch flagged oversized (length 0) is all not finite.
+        pub fn run(&self, evaluator: &GpuEvaluator, batch: &ExprBatch, row_lo: u32, row_hi: u32) -> Result<Vec<SubtreeStat>, String> {
+            if row_hi > self.n_rows || row_lo >= row_hi {
+                return Err(format!("subtree stats: rows {row_lo}..{row_hi} of {}", self.n_rows));
+            }
+            let device = evaluator.device();
+            let queue = evaluator.queue();
+            let mut out: Vec<SubtreeStat> = Vec::with_capacity(batch.len() * MAX_NODES);
+            let mut e0 = 0usize;
+            while e0 < batch.len() {
+                let n = self.block.min(batch.len() - e0);
+                // The block's node arrays, re-based to the block, up in one write each.
+                let node_lo = batch.offsets[e0] as usize;
+                let node_hi = (e0 + n..batch.len()).next().map_or(batch.nodes.len(), |e| batch.offsets[e] as usize);
+                let node_words: Vec<u32> = batch.nodes[node_lo..node_hi].iter().flat_map(|nd| [nd.op, nd.arg0, nd.arg1, nd.konst.to_bits()]).collect();
+                let offsets: Vec<u32> = batch.offsets[e0..e0 + n].iter().map(|o| o - node_lo as u32).collect();
+                let lengths = &batch.lengths[e0..e0 + n];
+                if !node_words.is_empty() {
+                    queue.write_buffer(&self.nodes_buf, 0, bytemuck::cast_slice(&node_words));
+                }
+                queue.write_buffer(&self.offsets_buf, 0, bytemuck::cast_slice(&offsets));
+                queue.write_buffer(&self.lengths_buf, 0, bytemuck::cast_slice(lengths));
+                let meta = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("subtree stats meta"),
+                    contents: bytemuck::cast_slice(&[n as u32, self.n_rows, row_lo, row_hi]),
+                    usage: wgpu::BufferUsages::UNIFORM,
+                });
+                let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: None,
+                    layout: &self.layout,
+                    entries: &[
+                        wgpu::BindGroupEntry { binding: 0, resource: self.partials_buf.as_entire_binding() },
+                        wgpu::BindGroupEntry { binding: 1, resource: self.lengths_buf.as_entire_binding() },
+                        wgpu::BindGroupEntry { binding: 2, resource: self.stats_buf.as_entire_binding() },
+                        wgpu::BindGroupEntry { binding: 3, resource: meta.as_entire_binding() },
+                    ],
+                });
+                let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("subtree stats") });
+                // The root predictions are a by-product here, written to their own
+                // buffer: two writable bindings may not alias.
+                let eval_meta = evaluator.eval_pass_range_with(&mut enc, [&self.nodes_buf, &self.offsets_buf, &self.lengths_buf, &self.out_buf], Some(&self.partials_buf), n as u32, 0)?;
+                {
+                    let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor { label: None, timestamp_writes: None });
+                    pass.set_pipeline(&self.pipeline);
+                    pass.set_bind_group(0, &bind, &[]);
+                    pass.dispatch_workgroups(((n * MAX_NODES) as u32).div_ceil(64), 1, 1);
+                }
+                let stats_bytes = (n * MAX_NODES * 16) as u64;
+                enc.copy_buffer_to_buffer(&self.stats_buf, 0, &self.staging, 0, stats_bytes);
+                queue.submit(Some(enc.finish()));
+                let slice = self.staging.slice(..stats_bytes);
+                let (tx, rx) = std::sync::mpsc::channel();
+                slice.map_async(wgpu::MapMode::Read, move |r| {
+                    let _ = tx.send(r);
+                });
+                device.poll(wgpu::Maintain::Wait);
+                rx.recv().map_err(|e| format!("map_async channel: {e}"))?.map_err(|e| format!("map_async: {e}"))?;
+                {
+                    let words = slice.get_mapped_range();
+                    let f: &[f32] = bytemuck::cast_slice(&words);
+                    out.extend(f.chunks_exact(4).map(|c| SubtreeStat { min: c[0], max: c[1], sum: c[2], finite: c[3] == 1.0 }));
+                }
+                self.staging.unmap();
+                eval_meta.destroy();
+                meta.destroy();
+                device.poll(wgpu::Maintain::Poll);
+                e0 += n;
+            }
+            Ok(out)
+        }
+    }
 }
 
 #[cfg(feature = "gpu")]
-pub use device::GpuEvaluator;
+pub use device::{GpuEvaluator, SubtreeStat, SubtreeStats, STATS_WGSL};
 
 /// Per-expression error terms, reduced on the host from the device's
 /// predictions. These are the columns an HFF objective vector is built from.
@@ -1501,6 +1763,98 @@ mod device_tests {
             let want = rows[0] + k as f32;
             let g = got[k * 100];
             assert!((g - want).abs() <= 1e-4 * want.abs().max(1.0), "expr {k}: {g} vs {want}");
+        }
+    }
+}
+
+#[cfg(all(test, feature = "gpu"))]
+mod subtree_stats_tests {
+    use super::*;
+
+    fn var(i: u32) -> GpuNode {
+        GpuNode { op: Op::Var as u32, arg0: i, arg1: 0, konst: 0.0 }
+    }
+    fn num(v: f32) -> GpuNode {
+        GpuNode { op: Op::Num as u32, arg0: 0, arg1: 0, konst: v }
+    }
+    fn bin(op: Op, a: u32, b: u32) -> GpuNode {
+        GpuNode { op: op as u32, arg0: a, arg1: b, konst: 0.0 }
+    }
+    fn un(op: Op, a: u32) -> GpuNode {
+        GpuNode { op: op as u32, arg0: a, arg1: 0, konst: 0.0 }
+    }
+
+    /// EVERY SUBTREE'S MIN, MAX AND SUM, on the device, equal the host's; a
+    /// subtree that does not compute is not finite; a poisoned expression
+    /// (an infinite trig argument) is not finite in every node, its finite
+    /// leaves included, exactly as `eval_main` scores the row; entries past
+    /// an expression's length are not finite; and a row range reduces only
+    /// those rows.
+    #[test]
+    fn subtree_statistics_match_the_host_and_carry_the_kernels_poison() {
+        // 4 rows, 2 vars: a = 1,3,5,7  b = 2,4,6,8
+        let rows: Vec<f32> = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
+        let ev = match GpuEvaluator::new(&rows, 2) {
+            Ok(e) => e,
+            Err(e) => {
+                eprintln!("no GPU available ({e}); skipping");
+                return;
+            }
+        };
+        let stats = SubtreeStats::new(&ev).expect("stats");
+        let mut batch = ExprBatch::new();
+        batch.push(&[bin(Op::Mul, 1, 2), var(0), var(1)]); // a*b
+        batch.push(&[un(Op::Log, 1), bin(Op::Sub, 2, 3), var(0), var(1)]); // log(a-b): a-b < 0
+        batch.push(&[un(Op::Sin, 1), un(Op::Exp, 2), num(1000.0)]); // sin(exp(1000)) = sin(inf): poison
+        let s = stats.run(&ev, &batch, 0, 4).expect("run");
+        assert_eq!(s.len(), 3 * MAX_NODES);
+        let at = |e: usize, k: usize| s[e * MAX_NODES + k];
+        // a*b on every row: 2, 12, 30, 56.
+        assert!(at(0, 0).finite);
+        assert_eq!((at(0, 0).min, at(0, 0).max, at(0, 0).sum), (2.0, 56.0, 100.0));
+        assert_eq!((at(0, 1).min, at(0, 1).max, at(0, 1).sum), (1.0, 7.0, 16.0), "leaf a");
+        assert_eq!((at(0, 2).min, at(0, 2).max, at(0, 2).sum), (2.0, 8.0, 20.0), "leaf b");
+        assert!((at(0, 0).mean(4) - 25.0).abs() < 1e-9);
+        assert!(!at(0, 3).finite, "past the length is not finite");
+        // log of a negative: the root does not compute, its child does.
+        assert!(!at(1, 0).finite);
+        assert!(at(1, 1).finite);
+        assert_eq!((at(1, 1).min, at(1, 1).max), (-1.0, -1.0));
+        // Poison: every node of the expression, the finite leaf 1000 included.
+        assert!(!at(2, 0).finite);
+        assert!(!at(2, 1).finite);
+        assert!(!at(2, 2).finite, "a poisoned row is NaN in every partial, so the leaf reads not finite");
+        // Rows 1..3 only: a*b = 12, 30.
+        let s = stats.run(&ev, &batch, 1, 3).expect("run");
+        assert_eq!((s[0].min, s[0].max, s[0].sum), (12.0, 30.0, 42.0));
+        // An empty range or one past the data is refused.
+        assert!(stats.run(&ev, &batch, 2, 2).is_err());
+        assert!(stats.run(&ev, &batch, 0, 5).is_err());
+    }
+
+    /// A batch larger than one block runs in blocks and comes back whole, in order.
+    #[test]
+    fn a_batch_past_the_block_runs_in_blocks() {
+        let rows: Vec<f32> = vec![1.0, 2.0, 3.0, 4.0];
+        let ev = match GpuEvaluator::new(&rows, 1) {
+            Ok(e) => e,
+            Err(e) => {
+                eprintln!("no GPU available ({e}); skipping");
+                return;
+            }
+        };
+        let stats = SubtreeStats::new(&ev).expect("stats");
+        let n = stats.block() + 3;
+        let mut batch = ExprBatch::new();
+        for i in 0..n {
+            batch.push(&[bin(Op::Add, 1, 2), var(0), num(i as f32)]); // a + i
+        }
+        let s = stats.run(&ev, &batch, 0, 4).expect("run");
+        assert_eq!(s.len(), n * MAX_NODES);
+        for i in 0..n {
+            let r = s[i * MAX_NODES];
+            assert!(r.finite, "expr {i}");
+            assert_eq!((r.min, r.max), (1.0 + i as f32, 4.0 + i as f32), "expr {i}");
         }
     }
 }
