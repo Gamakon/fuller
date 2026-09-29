@@ -201,6 +201,40 @@ impl Tree {
         }
     }
 
+    /// The EXACT round_floats test, on data: does applying SRBench's
+    /// `round_floats` to this form's literals move its predictions off
+    /// `reference` (the raw form's predictions) by more than `tol`?
+    ///
+    /// [`dies_on_rounding`] is the cheap structural necessary condition (a
+    /// literal that VANISHES). It misses the class where rounding does not zero
+    /// a literal but still DEGRADES it: `0.9*cos^2 + 0.1` written from a decimal
+    /// coefficient rounds its distributed coefficients to `0.891/0.099` and no
+    /// longer equals the law — the literal never vanished. This test catches
+    /// that by rounding the constants ([`crate::srbench_equiv::snap_constants`],
+    /// SRBench's rule verbatim) and re-evaluating. A form spelled with exact
+    /// integers or `p/q` ratios rounds to itself and does NOT die; the decimal
+    /// twin does — which is precisely why the rational spelling should win the
+    /// reported-form sort. A rounding that produces a non-finite prediction
+    /// (a denominator sent to zero) counts as dying.
+    pub fn dies_on_rounding_on_data(&self, rows: &[Vec<(String, f64)>], reference: &[f64], tol: f64) -> bool {
+        if rows.is_empty() || reference.is_empty() {
+            return self.dies_on_rounding(); // no data: fall back to the structural check
+        }
+        let rounded = crate::srbench_equiv::snap_constants(&self.to_math());
+        let Ok(pred) = crate::extract::eval_expr_rows(&rounded, rows) else {
+            return true;
+        };
+        if pred.len() != reference.len() || pred.iter().any(|v| !v.is_finite()) {
+            return true;
+        }
+        let n = reference.len() as f64;
+        let mean = reference.iter().sum::<f64>() / n;
+        let var = reference.iter().map(|r| (r - mean).powi(2)).sum::<f64>() / n;
+        let var = if var > 0.0 { var } else { 1.0 };
+        let drift = pred.iter().zip(reference).map(|(p, r)| (p - r).powi(2)).sum::<f64>() / n / var;
+        !drift.is_finite() || drift > tol
+    }
+
     pub fn node_count(&self) -> usize {
         match self {
             Tree::Num(_) | Tree::Var(_) => 1,
@@ -320,6 +354,29 @@ mod tests {
         let s = r#"(Sub (Neg (Var "a")) (Mul (Num 2.0) (Var "b")))"#;
         assert_eq!(t(s).to_math(), s);
         assert_eq!(t(s).node_count(), 6);
+    }
+
+    /// The data round_floats test: the DECIMAL spelling of shearflow2's law dies
+    /// (its distributed coeffs degrade under round-to-3dp) while the RATIONAL
+    /// spelling of the SAME law survives — so the sort that keys on this prefers
+    /// the ratio, the form SRBench actually certifies.
+    #[test]
+    fn rational_spelling_survives_data_rounding_where_the_decimal_dies() {
+        // rows over x_0, x_1; reference = the raw decimal form's predictions.
+        let rows: Vec<Vec<(String, f64)>> = (0..40)
+            .map(|i| {
+                let x0 = 0.1 * i as f64;
+                let x1 = 0.05 * i as f64 + 0.3;
+                vec![("x_0".to_string(), x0), ("x_1".to_string(), x1)]
+            })
+            .collect();
+        let decimal = r#"(Mul (Num -0.011111110940650105) (Mul (Sub (Num -9.0) (Pow2 (Mul (Num -9.0) (Cos (Var "x_1"))))) (Sin (Var "x_0"))))"#;
+        let rational = r#"(Mul (Div (Num -1.0) (Num 90.0)) (Mul (Sub (Num -9.0) (Pow2 (Mul (Num -9.0) (Cos (Var "x_1"))))) (Sin (Var "x_0"))))"#;
+        let reference = crate::extract::eval_expr_rows(decimal, &rows).unwrap();
+        // The decimal DIES: rounding -0.0111 -> -0.011 shifts every prediction.
+        assert!(t(decimal).dies_on_rounding_on_data(&rows, &reference, 1e-10), "decimal should die on rounding");
+        // The rational SURVIVES: -1.0 and 90.0 round to themselves, drift 0.
+        assert!(!t(rational).dies_on_rounding_on_data(&rows, &reference, 1e-10), "rational should survive rounding");
     }
 
     #[test]
