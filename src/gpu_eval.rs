@@ -632,8 +632,13 @@ mod device {
     /// Holds the device and the RESIDENT dataset. Built once per fit; every
     /// generation reuses it, uploading only tokens.
     pub struct GpuEvaluator {
-        device: wgpu::Device,
-        queue: wgpu::Queue,
+        // ONE DEVICE for the whole fit. The evolution engine's own kernels
+        // (phylu's decoder, sampler, variation, scorer, typer, HFF) run on this
+        // device too, so a buffer one of them writes is a buffer the next one
+        // binds — a bind group cannot take a buffer from another device. The
+        // handles are shared, not cloned (wgpu 0.20's are not `Clone`).
+        device: std::sync::Arc<wgpu::Device>,
+        queue: std::sync::Arc<wgpu::Queue>,
         pipeline: wgpu::ComputePipeline,
         layout: wgpu::BindGroupLayout,
         data_buf: wgpu::Buffer,
@@ -683,6 +688,7 @@ mod device {
                 )
                 .await
                 .map_err(|e| format!("request_device: {e}"))?;
+            let (device, queue) = (std::sync::Arc::new(device), std::sync::Arc::new(queue));
 
             let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("fuller-eval"),
@@ -773,6 +779,17 @@ mod device {
             &self.queue
         }
 
+        /// The device and queue, SHARED: what the evolution engine builds its
+        /// own resident buffers and kernels on, so they and the evaluator's
+        /// live on one device and bind each other's buffers.
+        pub fn shared_device(&self) -> std::sync::Arc<wgpu::Device> {
+            std::sync::Arc::clone(&self.device)
+        }
+
+        pub fn shared_queue(&self) -> std::sync::Arc<wgpu::Queue> {
+            std::sync::Arc::clone(&self.queue)
+        }
+
         /// Record the evaluation of `n_expr` expressions that are ALREADY on this
         /// device onto a caller's encoder — `buffers` is (nodes, offsets,
         /// lengths, out), in `eval_resident`'s layouts, `out` taking `n_expr *
@@ -816,6 +833,80 @@ mod device {
                     wgpu::BindGroupEntry { binding: 0, resource: nodes_buf.as_entire_binding() },
                     wgpu::BindGroupEntry { binding: 1, resource: offs_buf.as_entire_binding() },
                     wgpu::BindGroupEntry { binding: 2, resource: lens_buf.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 3, resource: self.data_buf.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 4, resource: out_buf.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 5, resource: meta_buf.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 6, resource: self.dummy_partials.as_entire_binding() },
+                ],
+            });
+            {
+                let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: None,
+                    timestamp_writes: None,
+                });
+                pass.set_pipeline(&self.pipeline);
+                pass.set_bind_group(0, &bind, &[]);
+                pass.dispatch_workgroups(groups_x, groups_y, 1);
+            }
+            Ok(meta_buf)
+        }
+
+        /// [`eval_pass`] over a RANGE of expressions already on the device. The
+        /// same kernel; `offsets` and `lengths` are bound from entry `expr_base`
+        /// on, so a caller holding the WHOLE population's offsets and lengths
+        /// resident evaluates one block of `n_expr` of them into `out`
+        /// (`n_expr * n_rows` f32) without re-uploading anything. `offsets`
+        /// stay GLOBAL into `nodes`, which is bound whole. This is what the
+        /// device decoder's outputs are evaluated through, block by block.
+        ///
+        /// `expr_base * 4` must be a multiple of the device's
+        /// `min_storage_buffer_offset_alignment` — the caller chooses its block
+        /// size so every block start is; an unaligned base is an error, not a
+        /// silent mis-read.
+        pub fn eval_pass_range(
+            &self,
+            enc: &mut wgpu::CommandEncoder,
+            buffers: [&wgpu::Buffer; 4],
+            n_expr: u32,
+            expr_base: u32,
+        ) -> Result<wgpu::Buffer, String> {
+            let align = u64::from(self.device.limits().min_storage_buffer_offset_alignment);
+            let offset = u64::from(expr_base) * 4;
+            if offset % align != 0 {
+                return Err(format!(
+                    "eval_pass_range: expression base {expr_base} is byte offset {offset}, \
+                     not a multiple of the device's storage offset alignment {align}"
+                ));
+            }
+            let total = (n_expr as u64) * (self.n_rows as u64);
+            if n_expr == 0 || total > u32::MAX as u64 {
+                return Err(format!(
+                    "batch of {n_expr} expressions x {} rows = {total} \
+                     invocations: empty, or past the kernel's u32 index",
+                    self.n_rows
+                ));
+            }
+            let [nodes_buf, offs_buf, lens_buf, out_buf] = buffers;
+            let groups = total.div_ceil(64) as u32;
+            let groups_x = groups.min(MAX_GROUPS_PER_DIM);
+            let groups_y = groups.div_ceil(groups_x);
+            let meta = [n_expr, self.n_rows, self.n_vars, groups_x * 64, 0];
+            let meta_buf = self
+                .device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("meta"),
+                    contents: bytemuck::cast_slice(&meta),
+                    usage: wgpu::BufferUsages::UNIFORM,
+                });
+            let offs_from = wgpu::BindingResource::Buffer(wgpu::BufferBinding { buffer: offs_buf, offset, size: None });
+            let lens_from = wgpu::BindingResource::Buffer(wgpu::BufferBinding { buffer: lens_buf, offset, size: None });
+            let bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: None,
+                layout: &self.layout,
+                entries: &[
+                    wgpu::BindGroupEntry { binding: 0, resource: nodes_buf.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 1, resource: offs_from },
+                    wgpu::BindGroupEntry { binding: 2, resource: lens_from },
                     wgpu::BindGroupEntry { binding: 3, resource: self.data_buf.as_entire_binding() },
                     wgpu::BindGroupEntry { binding: 4, resource: out_buf.as_entire_binding() },
                     wgpu::BindGroupEntry { binding: 5, resource: meta_buf.as_entire_binding() },
