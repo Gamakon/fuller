@@ -431,6 +431,8 @@ fn num_expr(s: &Sexp, names: &Names) -> Result<NumExpr, Fail> {
                 (Some("*"), 3) => Ok(NumExpr::Mul(arg(1)?, arg(2)?)),
                 (Some("+"), 3) => Ok(NumExpr::Add(arg(1)?, arg(2)?)),
                 (Some("^"), 3) => Ok(NumExpr::Pow(arg(1)?, arg(2)?)),
+                (Some("-"), 3) => Ok(NumExpr::Sub(arg(1)?, arg(2)?)),
+                (Some("/"), 3) => Ok(NumExpr::Div(arg(1)?, arg(2)?)),
                 (other, _) => Err(Fail::Error(format!("unsupported literal primitive {other:?}"))),
             }
         }

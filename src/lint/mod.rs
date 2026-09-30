@@ -334,6 +334,20 @@ mod tests {
         assert!(has_ratio, "no rational spelling offered: {:?}", out.iter().map(|(t, l)| (t.to_infix(), *l)).collect::<Vec<_>>());
     }
 
+    /// Feynman II.38.14: the fit reported sqrt|1/(1/Y)^2| / (sigma - 1/tanh(-72)),
+    /// numerically Y/(sigma + 1) with Y > 0 on every row, and SRBench refused it
+    /// 114 times. With the positivity fact `forms` must offer Y itself.
+    #[test]
+    fn a_root_of_a_reciprocal_square_is_the_variable_under_positivity() {
+        let tables = Tables::standard().unwrap();
+        let inputs: Vec<String> = ["x_0", "x_1"].iter().map(|s| s.to_string()).collect();
+        let e = r#"(Mul (Num 0.5) (ProtectedDiv (ProtectedSqrt (ProtectedInv (Pow2 (ProtectedInv (Var "x_0"))))) (Sub (Var "x_1") (ProtectedInv (Tanh (Num -72.0))))))"#;
+        let facts = DataFacts { rows: &[], positive_vars: vec!["x_0".to_string()], nonzero_vars: vec!["x_0".to_string()] };
+        let out = forms(&tables, e, &inputs, Exactness::Finite, 16, facts).unwrap();
+        let spelled: Vec<String> = out.iter().map(|(t, _)| t.to_infix()).collect();
+        assert!(spelled.iter().any(|s| s.contains("(0.5*(x_0/(x_1") || s.contains("(0.5*(x_0/(x_1 + 1))") || s.contains("x_0/(x_1")), "Y never appears bare: {spelled:?}");
+    }
+
     /// Feynman I.47.23: three separate roots become the truth's one root.
     #[test]
     fn separate_roots_merge_into_one() {

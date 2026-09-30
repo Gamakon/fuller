@@ -74,6 +74,31 @@ pub const POWERS_RULESET: &str = r#"
 (rewrite (Mul (Mul (Num b) q) (Num a)) (Mul (Num (* a b)) q) :ruleset powers)
 (rewrite (Mul (Mul q (Num b)) (Num a)) (Mul (Num (* a b)) q) :ruleset powers)
 
+; ---- a square moves through a reciprocal (Feynman II.38.14) ----
+; The fit reported sqrt|1/(1/Y)^2| for Y: every rule of the chain existed
+; (1/(1/y) = y, sqrt(y^2) = |y|, |y| = y for y > 0) except the first step,
+; (1/x)^2 = 1/x^2. Sound unguarded for the raw op (x = 0: NaN on both sides)
+; and for the protected one (x = 0: ProtectedInv(0) = 1, so 1 on both sides).
+; The swap (1/x)^2 = 1/x^2 on its own is size-neutral and the linter's
+; termination measure refuses it, so the chain is written as the SHRINKING
+; steps the linter accepts, guarded on the caller's fact about x itself
+; (the linter's facts are the caller's facts on its inputs, not derived):
+;   1/(1/x)^2 = x^2 and (1/x)^2 = 1/x^2 opened, x != 0.
+(rewrite (ProtectedInv (Pow2 (ProtectedInv x))) (Pow2 x) :when ((is-nonzero x)) :ruleset powers)
+(rewrite (ProtectedInv (Pow2 (ProtectedInv x))) (Pow2 x) :when ((is-positive x)) :ruleset powers)
+(rewrite (Inv (Pow2 (Inv x))) (Pow2 x) :when ((is-nonzero x)) :ruleset powers)
+(rewrite (ProtectedInv (ProtectedInv (Pow2 x))) (Pow2 x) :when ((is-nonzero x)) :ruleset powers)
+(rewrite (ProtectedInv (ProtectedInv (Pow2 x))) (Pow2 x) :when ((is-positive x)) :ruleset powers)
+; 1/(1/y) = y for the PROTECTED reciprocal too, where y is not 0 — unguarded it
+; is wrong at 0 (ProtectedInv(ProtectedInv 0) = 1), which `protected_ops_are_inert` pins.
+(rewrite (ProtectedInv (ProtectedInv y)) y :when ((is-nonzero y)) :ruleset powers)
+; tanh of a literal folds (no tanh primitive: (e^2c - 1)/(e^2c + 1)), and so does
+; the protected reciprocal of a non-zero literal. Feynman II.38.14 carried
+; ProtectedInv(Tanh(-72)) for -1.
+(rewrite (Tanh (Num c)) (Num (/ (- (^ 2.718281828459045 (* 2.0 c)) 1.0) (+ (^ 2.718281828459045 (* 2.0 c)) 1.0))) :ruleset powers)
+(rule ((= e (ProtectedInv (Num c))) (> c 0.0)) ((union e (Num (/ 1.0 c)))) :ruleset powers)
+(rule ((= e (ProtectedInv (Num c))) (< c 0.0)) ((union e (Num (/ 1.0 c)))) :ruleset powers)
+
 ; sqrt(p)^2 = p, GUARDED on p > 0. Unguarded it is unsound in the real domain
 ; (for p < 0 the left side is NaN and the right side is p). The same rule
 ; lives in `distribute`, but distribute cannot be co-saturated with the live
@@ -214,6 +239,29 @@ mod tests {
         assert_eq!(simplify(r#"(Mul (Num 2.0) (Mul (Num 3.0) (Var "x")))"#, ""), r#"(Mul (Num 6.0) (Var "x"))"#);
         // sqrt of a negative literal is left alone: NaN in the real domain.
         assert_eq!(simplify("(Sqrt (Num -4.0))", ""), "(Sqrt (Num -4.0))");
+    }
+
+    /// FEYNMAN II.38.14's shape: sqrt|1/(1/x)^2| is x for x > 0, and the
+    /// protected double reciprocal opens only under a non-zero fact.
+    #[test]
+    fn a_square_moves_through_a_reciprocal_and_the_double_reciprocal_opens_when_nonzero() {
+        assert_eq!(simplify(r#"(ProtectedInv (Pow2 (ProtectedInv (Var "x"))))"#, r#"(is-positive (Var "x"))"#), r#"(Pow2 (Var "x"))"#);
+        assert_eq!(simplify(r#"(Inv (Pow2 (Inv (Var "x"))))"#, r#"(is-nonzero (Var "x"))"#), r#"(Pow2 (Var "x"))"#);
+        assert_sound(r#"(ProtectedInv (Pow2 (ProtectedInv (Var "x"))))"#, r#"(is-nonzero (Var "x"))"#, &[("x", -2.5)]);
+        // Without a fact nothing opens: at x = 0 the protected form is 1, not 0.
+        let stays = simplify(r#"(ProtectedInv (Pow2 (ProtectedInv (Var "x"))))"#, "");
+        assert!(stays.contains("ProtectedInv"), "opened without a fact: {stays}");
+        // Without a fact the double reciprocal stays (ProtectedInv(ProtectedInv 0) = 1).
+        let stays = simplify(r#"(ProtectedInv (ProtectedInv (Pow2 (Var "x"))))"#, "");
+        assert!(stays.contains("ProtectedInv"), "opened without a fact: {stays}");
+        // With x non-zero, x^2 is positive, hence non-zero, and it opens.
+        // (This harness runs only the powers ruleset, so the fact is stated on x.)
+        assert_eq!(simplify(r#"(ProtectedInv (ProtectedInv (Pow2 (Var "x"))))"#, r#"(is-nonzero (Var "x"))"#), r#"(Pow2 (Var "x"))"#);
+        assert_eq!(simplify(r#"(ProtectedInv (ProtectedInv (Var "y")))"#, r#"(is-nonzero (Var "y"))"#), r#"(Var "y")"#);
+        assert_eq!(simplify("(Tanh (Num -72.0))", ""), "(Num -1.0)");
+        assert_eq!(simplify("(ProtectedInv (Num -1.0))", ""), "(Num -1.0)");
+        assert_eq!(simplify("(ProtectedInv (Num 4.0))", ""), "(Num 0.25)");
+        assert_eq!(simplify("(ProtectedInv (Num 0.0))", ""), "(ProtectedInv (Num 0.0))", "the protected reciprocal of 0 is 1 and is left to the evaluator");
     }
 
     #[test]
