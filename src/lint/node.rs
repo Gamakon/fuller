@@ -263,6 +263,36 @@ impl Tree {
         !drift.is_finite() || drift > tol
     }
 
+    /// THE SPELLING SRBENCH CAN READ of a trig-of-inverse-trig composition.
+    /// SRBench's truths carry `arcsin`/`arccos` as UNDEFINED sympy functions, so
+    /// its simplify cannot see that `cos(arcsin(x))` is `sqrt(1 - x^2)` — and
+    /// the search likes that spelling (Feynman II.13.23 was refused 7 times as
+    /// `rho/cos(arcsin(v/c))` for `rho/sqrt(1 - v^2/c^2)`). This rewrites the
+    /// compositions to their algebraic forms, which is a change of spelling, not
+    /// of value, for |x| <= 1 (where the raw inverse functions are defined). The
+    /// protected forms are left alone: past |x| = 1 they clamp, and the algebraic
+    /// form would not.
+    pub fn srbench_spelling(&self) -> Tree {
+        match self {
+            Tree::Num(_) | Tree::Var(_) => self.clone(),
+            Tree::App(op, kids) => {
+                let kids: Vec<Tree> = kids.iter().map(Tree::srbench_spelling).collect();
+                let one_minus_sq = |x: &Tree| Tree::App(Op::Sqrt, vec![Tree::App(Op::Sub, vec![Tree::Num(1.0), Tree::App(Op::Pow2, vec![x.clone()])])]);
+                if let [Tree::App(inner, k1)] = kids.as_slice() {
+                    let x = &k1[0];
+                    match (op, inner) {
+                        (Op::Cos, Op::Asin) | (Op::Sin, Op::Acos) => return one_minus_sq(x),
+                        (Op::Sin, Op::Asin) | (Op::Cos, Op::Acos) => return x.clone(),
+                        (Op::Tan, Op::Asin) => return Tree::App(Op::Div, vec![x.clone(), one_minus_sq(x)]),
+                        (Op::Tan, Op::Acos) => return Tree::App(Op::Div, vec![one_minus_sq(x), x.clone()]),
+                        _ => {}
+                    }
+                }
+                Tree::App(*op, kids)
+            }
+        }
+    }
+
     pub fn node_count(&self) -> usize {
         match self {
             Tree::Num(_) | Tree::Var(_) => 1,
@@ -457,6 +487,26 @@ mod tests {
         assert_eq!(t("(Num 6.283185307179586)").to_infix(), "(2*pi)");
         assert_eq!(t("(Num 1.4142129717195346)").to_infix(), "1.4142129717195346");
         assert_eq!(t("(Mul (Num 3.141592653589793) (Var \"r\"))").to_infix(), "(pi*r)");
+    }
+
+    /// cos(arcsin x) becomes sqrt(1 - x^2) and friends; the protected forms and
+    /// everything else stay; values agree where the raw functions are defined.
+    #[test]
+    fn trig_of_inverse_trig_is_spelled_algebraically_for_srbench() {
+        let e = t(r#"(Div (Var "rho") (Cos (Asin (Div (Var "v") (Var "c")))))"#);
+        assert_eq!(e.srbench_spelling().to_infix(), "(rho/sqrt((1 - ((v/c)**2))))");
+        assert_eq!(t(r#"(Sin (Acos (Var "x")))"#).srbench_spelling().to_infix(), "sqrt((1 - (x**2)))");
+        assert_eq!(t(r#"(Sin (Asin (Var "x")))"#).srbench_spelling().to_infix(), "x");
+        assert_eq!(t(r#"(Tan (Asin (Var "x")))"#).srbench_spelling().to_infix(), "(x/sqrt((1 - (x**2))))");
+        let untouched = t(r#"(Cos (ProtectedAsin (Var "x")))"#);
+        assert_eq!(untouched.srbench_spelling(), untouched, "the clamped form is not the algebraic one past |x| = 1");
+        let plain = t(r#"(Mul (Var "a") (Cos (Var "b")))"#);
+        assert_eq!(plain.srbench_spelling(), plain);
+        // Same value on a point inside the domain.
+        let rows = vec![vec![("rho".to_string(), 2.0), ("v".to_string(), 0.6), ("c".to_string(), 1.0)]];
+        let before = crate::extract::eval_expr_rows(&e.to_math(), &rows).unwrap()[0];
+        let after = crate::extract::eval_expr_rows(&e.srbench_spelling().to_math(), &rows).unwrap()[0];
+        assert!((before - after).abs() < 1e-12, "{before} vs {after}");
     }
 
     /// The inverse-trig ops: text round trip, the plain rendering (protected
