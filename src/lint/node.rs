@@ -300,6 +300,88 @@ impl Tree {
         }
     }
 
+    /// EVERY LITERAL FACTOR OF A PRODUCT, MULTIPLIED INTO ONE. A fit spells a
+    /// constant as pieces scattered through a product — `0.00468 * (x_1 * (34 /
+    /// x_2)) * x_0` for `0.159 * x_0 * x_1 / x_2` — and SRBench's rounding kills
+    /// the small piece (0.00468 -> 0.005) where the whole constant would have
+    /// survived. This flattens chains of `Mul`, `Div` and `Neg` into numerator
+    /// and denominator factor lists, folds the literal factors into one number
+    /// out front, and rebuilds; other operators are left in place and their
+    /// arguments consolidated recursively. Pure arithmetic on the literals, a
+    /// change of spelling only.
+    pub fn consolidate_literals(&self) -> Tree {
+        /// Walk a Mul/Div/Neg chain: non-literal factors into `num` or `den`,
+        /// literal factors into the numerator's or denominator's constant,
+        /// negations into the sign.
+        fn split(t: &Tree, num: &mut Vec<Tree>, den: &mut Vec<Tree>, cn: &mut f64, cd: &mut f64, sign: &mut f64, in_den: bool) {
+            match t {
+                Tree::Num(v) => {
+                    if in_den {
+                        *cd *= v;
+                    } else {
+                        *cn *= v;
+                    }
+                }
+                Tree::App(Op::Mul, k) => {
+                    split(&k[0], num, den, cn, cd, sign, in_den);
+                    split(&k[1], num, den, cn, cd, sign, in_den);
+                }
+                Tree::App(Op::Div, k) => {
+                    split(&k[0], num, den, cn, cd, sign, in_den);
+                    split(&k[1], num, den, cn, cd, sign, !in_den);
+                }
+                Tree::App(Op::Neg, k) => {
+                    *sign = -*sign;
+                    split(&k[0], num, den, cn, cd, sign, in_den);
+                }
+                other => {
+                    let o = other.consolidate_literals();
+                    if in_den {
+                        den.push(o);
+                    } else {
+                        num.push(o);
+                    }
+                }
+            }
+        }
+        fn product(mut parts: Vec<Tree>) -> Option<Tree> {
+            if parts.is_empty() {
+                return None;
+            }
+            let mut acc = parts.remove(0);
+            for p in parts {
+                acc = Tree::App(Op::Mul, vec![acc, p]);
+            }
+            Some(acc)
+        }
+        match self {
+            Tree::App(Op::Mul | Op::Div | Op::Neg, _) => {
+                let (mut num, mut den) = (Vec::new(), Vec::new());
+                let (mut cn, mut cd, mut sign) = (1.0, 1.0, 1.0);
+                split(self, &mut num, &mut den, &mut cn, &mut cd, &mut sign, false);
+                let constant = sign * cn / cd;
+                if !constant.is_finite() {
+                    return self.clone();
+                }
+                let body = match (product(num), product(den)) {
+                    (None, None) => return Tree::Num(constant),
+                    (Some(n), None) => n,
+                    (None, Some(d)) => Tree::App(Op::Div, vec![Tree::Num(1.0), d]),
+                    (Some(n), Some(d)) => Tree::App(Op::Div, vec![n, d]),
+                };
+                if constant == 1.0 {
+                    body
+                } else if constant == -1.0 {
+                    Tree::App(Op::Neg, vec![body])
+                } else {
+                    Tree::App(Op::Mul, vec![Tree::Num(constant), body])
+                }
+            }
+            Tree::App(op, kids) => Tree::App(*op, kids.iter().map(Tree::consolidate_literals).collect()),
+            leaf => leaf.clone(),
+        }
+    }
+
     pub fn node_count(&self) -> usize {
         match self {
             Tree::Num(_) | Tree::Var(_) => 1,
@@ -494,6 +576,30 @@ mod tests {
         assert_eq!(t("(Num 6.283185307179586)").to_infix(), "(2*pi)");
         assert_eq!(t("(Num 1.4142129717195346)").to_infix(), "1.4142129717195346");
         assert_eq!(t("(Mul (Num 3.141592653589793) (Var \"r\"))").to_infix(), "(pi*r)");
+    }
+
+    /// The literals of a product fold into one number out front; the value is
+    /// unchanged; forms with no product structure are untouched.
+    #[test]
+    fn literal_factors_of_a_product_fold_into_one() {
+        let e = t(r#"(Mul (Num 0.004681027700504323) (Mul (Mul (Var "x_1") (Div (Num 34.0) (Var "x_2"))) (Var "x_0")))"#);
+        let c = e.consolidate_literals();
+        let infix = c.to_infix();
+        assert!(infix.starts_with("(0.15915494"), "{infix}");
+        assert!(!infix.contains("34"), "the inner literal was not folded: {infix}");
+        let rows = vec![vec![("x_0".to_string(), 2.0), ("x_1".to_string(), 3.0), ("x_2".to_string(), 5.0)]];
+        let a = crate::extract::eval_expr_rows(&e.to_math(), &rows).unwrap()[0];
+        let b = crate::extract::eval_expr_rows(&c.to_math(), &rows).unwrap()[0];
+        assert!((a - b).abs() < 1e-12 * a.abs(), "{a} vs {b}");
+        // A negation and a literal denominator: -(x / 4) * 2 -> -0.5 * x.
+        let e = t(r#"(Mul (Neg (Div (Var "x") (Num 4.0))) (Num 2.0))"#);
+        assert_eq!(e.consolidate_literals().to_infix(), "((-0.5)*x)");
+        // Nothing to fold: unchanged.
+        let e = t(r#"(Add (Var "x") (Sin (Var "y")))"#);
+        assert_eq!(e.consolidate_literals(), e);
+        // Inside another operator the product still folds.
+        let e = t(r#"(Sin (Mul (Num 2.0) (Mul (Var "x") (Num 3.0))))"#);
+        assert_eq!(e.consolidate_literals().to_infix(), "sin((6*x))");
     }
 
     /// A rational spelling has zero rounding drift; a decimal that rounds has some.
