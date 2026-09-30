@@ -112,7 +112,7 @@ impl Tree {
             }
             Tree::App(op @ (Op::ProtectedAsin | Op::ProtectedAcos), k) => {
                 let a = k[0].to_infix_faithful();
-                let f = if *op == Op::ProtectedAsin { "asin" } else { "acos" };
+                let f = if *op == Op::ProtectedAsin { "arcsin" } else { "arccos" };
                 // The clamp as a Piecewise, not Min/Max: numpy cannot execute sympy's
                 // Min(1, Max(-1, array)) (it builds a ragged array and raises), and
                 // the faithful form exists to be executed.
@@ -135,8 +135,31 @@ impl Tree {
         // `round_floats` leave `1.0` while the truth kept `1`, so `sym_diff` did
         // not cancel and a form that IS the law scored NO (the whole relativistic
         // family). Emitting ints as ints removes that false negative.
+        // A SNAPPED CONSTANT PRINTS AS ITS SYMBOL. Snap corrects 1.4142129 to
+        // the exact f64 sqrt(2), but printed as 1.4142135623730951 SRBench's
+        // round_floats makes it 1.414 and sqrt(2)*sqrt(d^2/2) no longer cancels
+        // to sqrt(d^2) (Feynman I.8.14: NO as a number, YES as `sqrt(2)`). Only
+        // the exact library value (to 1e-12 relative) is spelled symbolically,
+        // so a fitted number that merely happens to be close still prints as
+        // the number it is.
+        let symbolic = |v: f64| -> Option<&'static str> {
+            let near = |c: f64| (v - c).abs() <= 1e-12 * c.abs();
+            if near(std::f64::consts::PI) {
+                Some("pi")
+            } else if near(std::f64::consts::E) {
+                Some("E")
+            } else if near(std::f64::consts::SQRT_2) {
+                Some("sqrt(2)")
+            } else if near(std::f64::consts::TAU) {
+                Some("(2*pi)")
+            } else {
+                None
+            }
+        };
         let num = |v: f64| -> String {
-            if v.is_finite() && v == v.trunc() && v.abs() < 1e15 {
+            if let Some(sym) = symbolic(v) {
+                sym.to_string()
+            } else if v.is_finite() && v == v.trunc() && v.abs() < 1e15 {
                 format!("{}", v as i64)
             } else {
                 format!("{v:?}")
@@ -166,8 +189,13 @@ impl Tree {
                 Op::Inv | Op::ProtectedInv => format!("(1/{})", one(k)),
                 Op::ProtectedSqrt => format!("sqrt(Abs({}))", one(k)),
                 Op::ProtectedLog => format!("log(Abs({}))", one(k)),
-                Op::Asin | Op::ProtectedAsin => format!("asin({})", one(k)),
-                Op::Acos | Op::ProtectedAcos => format!("acos({})", one(k)),
+                // SRBench's truths come from metadata.yaml as NUMPY names: arcsin
+                // and arccos are UNDEFINED sympy functions there, not sympy's
+                // asin/acos, so a model spelled asin can never equal a truth
+                // spelled arcsin (measured on Feynman I.30.5 and I.26.2: the
+                // exact law is NO as asin, YES as arcsin). We spell them their way.
+                Op::Asin | Op::ProtectedAsin => format!("arcsin({})", one(k)),
+                Op::Acos | Op::ProtectedAcos => format!("arccos({})", one(k)),
                 Op::Var | Op::Num => unreachable!("leaves are not applications"),
             },
         }
@@ -422,6 +450,13 @@ mod tests {
         assert_eq!(t("(Num 3.0)").to_infix(), "3");
         assert_eq!(t("(Num 2.5)").to_infix(), "2.5");
         assert_eq!(t("(Num 1.0)").to_infix(), "1");
+        // The exact library constants print as symbols; a nearby number does not.
+        assert_eq!(t("(Num 1.4142135623730951)").to_infix(), "sqrt(2)");
+        assert_eq!(t("(Num 3.141592653589793)").to_infix(), "pi");
+        assert_eq!(t("(Num 2.718281828459045)").to_infix(), "E");
+        assert_eq!(t("(Num 6.283185307179586)").to_infix(), "(2*pi)");
+        assert_eq!(t("(Num 1.4142129717195346)").to_infix(), "1.4142129717195346");
+        assert_eq!(t("(Mul (Num 3.141592653589793) (Var \"r\"))").to_infix(), "(pi*r)");
     }
 
     /// The inverse-trig ops: text round trip, the plain rendering (protected
@@ -429,7 +464,7 @@ mod tests {
     /// the clamp and the non-finite case the protected forms really compute.
     #[test]
     fn inverse_trig_round_trips_and_prints() {
-        for (ctor, plain) in [("Asin", "asin"), ("Acos", "acos"), ("ProtectedAsin", "asin"), ("ProtectedAcos", "acos")] {
+        for (ctor, plain) in [("Asin", "arcsin"), ("Acos", "arccos"), ("ProtectedAsin", "arcsin"), ("ProtectedAcos", "arccos")] {
             let s = format!(r#"({ctor} (Mul (Var "n") (Sin (Var "t"))))"#);
             let e = t(&s);
             assert_eq!(e.to_math(), s);
@@ -449,7 +484,7 @@ mod tests {
         // An operand's protected op is spelled out under a plain parent.
         assert_eq!(
             t(r#"(Sin (ProtectedAsin (Var "x")))"#).to_infix_faithful(),
-            "sin(Piecewise((asin(Piecewise((-1, x < -1), (1, x > 1), (x, True))), Abs(x) < 1.7976931348623157e308), (0, True)))"
+            "sin(Piecewise((arcsin(Piecewise((-1, x < -1), (1, x > 1), (x, True))), Abs(x) < 1.7976931348623157e308), (0, True)))"
         );
     }
 
