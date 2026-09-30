@@ -248,19 +248,26 @@ impl Tree {
         if rows.is_empty() || reference.is_empty() {
             return self.dies_on_rounding(); // no data: fall back to the structural check
         }
+        self.rounding_drift_on_data(rows, reference).is_none_or(|drift| drift > tol)
+    }
+
+    /// HOW FAR SRBENCH'S ROUNDING MOVES THIS SPELLING ON THE DATA: the literals
+    /// rounded as `round_floats` rounds them, the form re-evaluated on `rows`,
+    /// and the mean squared drift from `reference` relative to the reference's
+    /// variance. 0.0 is a spelling rounding cannot touch (an integer, a
+    /// rational, a symbol); None when the rounded form does not evaluate.
+    pub fn rounding_drift_on_data(&self, rows: &[Vec<(String, f64)>], reference: &[f64]) -> Option<f64> {
         let rounded = crate::srbench_equiv::snap_constants(&self.to_math());
-        let Ok(pred) = crate::extract::eval_expr_rows(&rounded, rows) else {
-            return true;
-        };
+        let pred = crate::extract::eval_expr_rows(&rounded, rows).ok()?;
         if pred.len() != reference.len() || pred.iter().any(|v| !v.is_finite()) {
-            return true;
+            return None;
         }
         let n = reference.len() as f64;
         let mean = reference.iter().sum::<f64>() / n;
         let var = reference.iter().map(|r| (r - mean).powi(2)).sum::<f64>() / n;
         let var = if var > 0.0 { var } else { 1.0 };
         let drift = pred.iter().zip(reference).map(|(p, r)| (p - r).powi(2)).sum::<f64>() / n / var;
-        !drift.is_finite() || drift > tol
+        drift.is_finite().then_some(drift)
     }
 
     /// THE SPELLING SRBENCH CAN READ of a trig-of-inverse-trig composition.
@@ -487,6 +494,21 @@ mod tests {
         assert_eq!(t("(Num 6.283185307179586)").to_infix(), "(2*pi)");
         assert_eq!(t("(Num 1.4142129717195346)").to_infix(), "1.4142129717195346");
         assert_eq!(t("(Mul (Num 3.141592653589793) (Var \"r\"))").to_infix(), "(pi*r)");
+    }
+
+    /// A rational spelling has zero rounding drift; a decimal that rounds has some.
+    #[test]
+    fn rounding_drift_is_zero_for_an_exact_spelling_and_positive_for_a_rounded_decimal() {
+        let rows: Vec<Vec<(String, f64)>> = (0..20).map(|i| vec![("x".to_string(), 0.5 + i as f64 * 0.1)]).collect();
+        let reference: Vec<f64> = rows.iter().map(|r| r[0].1 / 9.0).collect();
+        let rational = t(r#"(Mul (Div (Num 1.0) (Num 9.0)) (Var "x"))"#);
+        let decimal = t(r#"(Mul (Num 0.1111111111111111) (Var "x"))"#);
+        let r = rational.rounding_drift_on_data(&rows, &reference).expect("evaluates");
+        assert!(r < 1e-20, "an exact spelling drifts only by f64 noise: {r}");
+        let d = decimal.rounding_drift_on_data(&rows, &reference).expect("evaluates");
+        assert!(d > 0.0 && d < 1e-4, "0.111 against 1/9: {d}");
+        assert!(!rational.dies_on_rounding_on_data(&rows, &reference, 1e-9));
+        assert!(decimal.dies_on_rounding_on_data(&rows, &reference, 1e-9));
     }
 
     /// cos(arcsin x) becomes sqrt(1 - x^2) and friends; the protected forms and
