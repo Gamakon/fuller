@@ -97,6 +97,9 @@ pub enum NumExpr {
     Neg(Box<NumExpr>),
     Mul(Box<NumExpr>, Box<NumExpr>),
     Add(Box<NumExpr>, Box<NumExpr>),
+    /// egglog's `^`: `a` to the power `b` (how a ruleset spells exp and sqrt
+    /// of a literal, egglog's f64 having neither).
+    Pow(Box<NumExpr>, Box<NumExpr>),
 }
 
 impl NumExpr {
@@ -107,6 +110,7 @@ impl NumExpr {
             NumExpr::Neg(a) => -a.eval(nums),
             NumExpr::Mul(a, b) => a.eval(nums) * b.eval(nums),
             NumExpr::Add(a, b) => a.eval(nums) + b.eval(nums),
+            NumExpr::Pow(a, b) => a.eval(nums).powf(b.eval(nums)),
         }
     }
 

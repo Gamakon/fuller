@@ -50,6 +50,30 @@ pub const POWERS_RULESET: &str = r#"
 ; exp(a) * exp(b) = exp(a+b)  — sound for all reals
 (rewrite (Mul (Exp a) (Exp b)) (Exp (Add a b)) :ruleset powers)
 
+; ---- a LITERAL in an exponent comes out and folds (Feynman I.6.2a) ----
+; The fit reported 5.54e-12 * sqrt(exp(50 - x^2)): exactly exp(-x^2/2)/sqrt(2 pi),
+; spelled with the normalising constant hidden as exp(25) inside the root and a
+; coefficient SRBench's round_floats zeroes (|a| < 1e-4 -> 0). Pulled out and
+; folded it reads 0.3989 * exp(-x^2/2), which certifies. egglog's f64 has no exp
+; or sqrt primitive, so exp c is (^ e c) and sqrt k is (^ k 0.5).
+; sqrt(exp a) = exp(a/2): exp > 0 everywhere, so the root is always defined.
+(rewrite (Sqrt (Exp a)) (Exp (Mul (Num 0.5) a)) :ruleset powers)
+(rewrite (Exp (Add (Num c) b)) (Mul (Num (^ 2.718281828459045 c)) (Exp b)) :ruleset powers)
+(rewrite (Exp (Add b (Num c))) (Mul (Num (^ 2.718281828459045 c)) (Exp b)) :ruleset powers)
+(rewrite (Exp (Sub (Num c) b)) (Mul (Num (^ 2.718281828459045 c)) (Exp (Neg b))) :ruleset powers)
+(rewrite (Exp (Sub b (Num c))) (Mul (Num (^ 2.718281828459045 (neg c))) (Exp b)) :ruleset powers)
+(rewrite (Exp (Num c)) (Num (^ 2.718281828459045 c)) :ruleset powers)
+; sqrt of a non-negative literal folds; a positive literal factor leaves a root
+(rule ((= e (Sqrt (Num k))) (>= k 0.0)) ((union e (Num (^ k 0.5)))) :ruleset powers)
+(rule ((= e (Sqrt (Mul (Num k) p))) (> k 0.0)) ((union e (Mul (Num (^ k 0.5)) (Sqrt p)))) :ruleset powers)
+(rule ((= e (Sqrt (Mul p (Num k)))) (> k 0.0)) ((union e (Mul (Num (^ k 0.5)) (Sqrt p)))) :ruleset powers)
+; literal products fold, and a chain of literal factors collapses to one
+(rewrite (Mul (Num a) (Num b)) (Num (* a b)) :ruleset powers)
+(rewrite (Mul (Num a) (Mul (Num b) q)) (Mul (Num (* a b)) q) :ruleset powers)
+(rewrite (Mul (Num a) (Mul q (Num b))) (Mul (Num (* a b)) q) :ruleset powers)
+(rewrite (Mul (Mul (Num b) q) (Num a)) (Mul (Num (* a b)) q) :ruleset powers)
+(rewrite (Mul (Mul q (Num b)) (Num a)) (Mul (Num (* a b)) q) :ruleset powers)
+
 ; sqrt(p)^2 = p, GUARDED on p > 0. Unguarded it is unsound in the real domain
 ; (for p < 0 the left side is NaN and the right side is p). The same rule
 ; lives in `distribute`, but distribute cannot be co-saturated with the live
@@ -165,6 +189,31 @@ mod tests {
         assert_eq!(simplify(r#"(Pow (Var "x") (Num 0.0))"#, ""), "(Num 1.0)");
         assert_eq!(simplify(r#"(Pow (Var "x") (Num 1.0))"#, ""), r#"(Var "x")"#);
         assert_eq!(simplify(r#"(Pow (Var "x") (Num 2.0))"#, ""), r#"(Pow2 (Var "x"))"#);
+    }
+
+    /// FEYNMAN I.6.2a AS THE FIT REPORTED IT: 5.54e-12 * sqrt(exp(50 - x^2)).
+    /// The literal in the exponent comes out through the root and folds with
+    /// the coefficient, so the form reads as one constant times exp of the
+    /// variable part — the spelling SRBench's round_floats keeps.
+    #[test]
+    fn a_literal_in_an_exponent_comes_out_and_folds() {
+        let form = r#"(Mul (Num 0.0000000000055404896011045205) (Sqrt (Exp (Sub (Num 50.0) (Pow2 (Var "x"))))))"#;
+        let out = simplify(form, "");
+        assert!(!out.contains("Sub (Num 50.0)"), "the literal stayed in the exponent: {out}");
+        // The smallest member is 0.3989 * sqrt(exp(-x^2)); exp(-x^2/2) is in the
+        // same class and `forms` extracts both spellings. Either is fine here.
+        assert!(out.contains("(Exp (Neg (Pow2") || out.contains("(Exp (Mul (Num 0.5)"), "the exponent is not the variable part alone: {out}");
+        // The one literal left is the folded normalising constant 1/sqrt(2 pi).
+        let nums: Vec<f64> = out.split("(Num ").skip(1).filter_map(|t| t.split(')').next()?.trim().parse().ok()).collect();
+        assert!(nums.iter().any(|v| (v - 0.398942).abs() < 2e-5), "no folded 0.3989 in {out}");
+        assert!(nums.iter().all(|v| v.abs() >= 1e-4), "a literal round_floats would zero remains: {out}");
+        assert_sound(form, "", &[("x", 0.7)]);
+        assert_sound(form, "", &[("x", -2.3)]);
+        assert_eq!(simplify("(Exp (Num 0.0))", ""), "(Num 1.0)");
+        assert_eq!(simplify("(Sqrt (Num 9.0))", ""), "(Num 3.0)");
+        assert_eq!(simplify(r#"(Mul (Num 2.0) (Mul (Num 3.0) (Var "x")))"#, ""), r#"(Mul (Num 6.0) (Var "x"))"#);
+        // sqrt of a negative literal is left alone: NaN in the real domain.
+        assert_eq!(simplify("(Sqrt (Num -4.0))", ""), "(Sqrt (Num -4.0))");
     }
 
     #[test]
