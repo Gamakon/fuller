@@ -482,7 +482,7 @@ mod gpu {
             let inv_scale = data.inv_scale()? as f32;
             let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("fuller-snap-guard"),
-                source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(SNAP_GUARD_WGSL)),
+                source: wgpu::ShaderSource::Wgsl(Cow::Owned(crate::gpu_eval::with_limits(SNAP_GUARD_WGSL))),
             });
             let lengths_layout = layout_of(device, "fuller-snap-guard-lengths", &[(1, Some(true)), (2, Some(false)), (3, None)]);
             let residuals_layout = layout_of(device, "fuller-snap-guard-residuals", &[(3, None), (6, Some(true)), (8, Some(false))]);
@@ -945,7 +945,7 @@ mod tests {
         assert_eq!(got.r2_original, 1.0);
         // Longer than the slot: no form, no verdict on it.
         let mut long = r#"(Num 3.1416)"#.to_string();
-        for _ in 0..40 {
+        for _ in 0..(crate::lint::device::SLOT / 2 + 1) {
             long = format!(r#"(Add (Var "x0") {long})"#);
         }
         let (variants, got) = guarded(&long, &d, &t);

@@ -59,7 +59,7 @@ pub const LIT_EXACT: u32 = NONE;
 /// The literal the match kernel is handed for a node that is not one.
 pub const NOT_A_LITERAL: u32 = 0x7fc0_0000;
 /// The work area: a full slot, the largest template, and the `Neg` over it.
-const WORK: usize = 80;
+const WORK: usize = crate::gpu_eval::WORK_NODES;
 const _: () = assert!(SLOT + TEMPLATE_MAX < WORK);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -444,7 +444,7 @@ mod gpu {
             let device = kernel.device();
             let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("fuller-snap-graft"),
-                source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(SNAP_GRAFT_WGSL)),
+                source: wgpu::ShaderSource::Wgsl(Cow::Owned(crate::gpu_eval::with_limits(SNAP_GRAFT_WGSL))),
             });
             let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("fuller-snap-graft-layout"),
@@ -873,24 +873,27 @@ pub(crate) mod tests {
     #[test]
     fn a_graft_past_the_slot_is_skipped_and_counted() {
         let t = table();
-        // A 7-node template: 58 - 1 + 7 = 64 fits, 60 - 1 + 7 = 66 does not.
+        // A 7-node template on a chain of 2k+2 nodes: SLOT-6 - 1 + 7 = SLOT fits,
+        // SLOT-4 - 1 + 7 = SLOT+2 does not. Written against SLOT so the test is the
+        // same statement at 64 and at 128.
         let seven = seven_nodes(&t);
         let literal = t.values[seven];
-        let (f, s) = snapped(&chain(28, literal), &t);
-        assert_eq!(f.nodes.len(), 58);
+        let fits = (SLOT - 8) / 2;
+        let (f, s) = snapped(&chain(fits, literal), &t);
+        assert_eq!(f.nodes.len(), SLOT - 6);
         assert_eq!(s.variants[0].status, Status::Grafted);
         assert_eq!(s.variants[0].form.as_ref().unwrap().nodes.len(), SLOT);
-        let (f, s) = snapped(&chain(29, literal), &t);
-        assert_eq!(f.nodes.len(), 60);
+        let (f, s) = snapped(&chain(fits + 1, literal), &t);
+        assert_eq!(f.nodes.len(), SLOT - 4);
         assert_eq!((s.variants[0].status, s.variants[0].sites), (Status::NodeOversize, 0));
         assert_eq!(s.variants[0].form.as_ref().unwrap().nodes, f.nodes);
-        assert_eq!(s.variants[0].from_template, vec![false; 60]);
+        assert_eq!(s.variants[0].from_template, vec![false; SLOT - 4]);
         assert_layout(std::slice::from_ref(&s));
-        // Longer than the slot: no form at all.
-        let (f, s) = snapped(&chain(31, literal), &t);
-        assert_eq!(f.nodes.len(), 64);
+        // Exactly the slot: no graft fits. Past the slot: no form at all.
+        let (f, s) = snapped(&chain((SLOT - 2) / 2, literal), &t);
+        assert_eq!(f.nodes.len(), SLOT);
         assert_eq!(s.variants[0].status, Status::NodeOversize);
-        let (_, s) = snapped(&chain(32, literal), &t);
+        let (_, s) = snapped(&chain(SLOT / 2, literal), &t);
         assert!(s.hits.is_empty());
         assert!(s.variants.iter().all(|v| v.status == Status::Refused && v.form.is_none()));
     }
@@ -959,7 +962,9 @@ pub(crate) mod tests {
             let mut counts = [0usize; 4];
             batch.iter().flat_map(|s| &s.variants).for_each(|v| counts[v.status as usize] += 1);
             eprintln!("snap graft {mode:?}, 200 expressions: no_hit {}, grafted {}, node_oversize {}, refused {}", counts[0], counts[1], counts[2], counts[3]);
-            assert!(counts[1] > 200 && counts[2] > 0, "{counts:?}");
+            // Oversize grafts among the 200 happen at a 64-node slot and not at
+            // 128; the slot test above covers that status on purpose.
+            assert!(counts[1] > 200, "{counts:?}");
         }
     }
 
@@ -1076,7 +1081,7 @@ pub(crate) mod tests {
             format!("const REFUSED: u32 = {}u;", Status::Refused as u32),
             "const NONE: u32 = 0xffffffffu;".to_string(),
         ] {
-            assert!(SNAP_GRAFT_WGSL.contains(&needle), "snap_graft.wgsl lacks `{needle}`");
+            assert!(crate::gpu_eval::with_limits(SNAP_GRAFT_WGSL).contains(&needle), "snap_graft.wgsl lacks `{needle}`");
         }
         assert_eq!(f32::from_bits(NOT_A_LITERAL).to_bits() & 0x7f80_0000, 0x7f80_0000, "a NaN: the match refuses it");
     }

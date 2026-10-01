@@ -184,7 +184,7 @@ mod gpu {
             let device = evaluator.device();
             let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("pattern-verify"),
-                source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(PATTERN_VERIFY_WGSL)),
+                source: wgpu::ShaderSource::Wgsl(Cow::Owned(crate::gpu_eval::with_limits(PATTERN_VERIFY_WGSL))),
             });
             // binding 0 preds (read), 1 out (read-write), 2 cfg (uniform).
             let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {

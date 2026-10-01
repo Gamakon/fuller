@@ -205,7 +205,7 @@ mod gpu {
                 .map_err(|e| format!("request_device: {e}"))?;
             let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("fuller-lint"),
-                source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(LINT_WGSL)),
+                source: wgpu::ShaderSource::Wgsl(Cow::Owned(crate::gpu_eval::with_limits(LINT_WGSL))),
             });
             let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("fuller-lint-layout"),
@@ -416,7 +416,7 @@ mod tests {
             format!("const SLOT: u32 = {SLOT}u;"),
             format!("const HEAP: u32 = {}u;", crate::lint::pack::HEAP_SLOTS),
         ] {
-            assert!(LINT_WGSL.contains(&needle), "kernel.wgsl lacks `{needle}`");
+            assert!(crate::gpu_eval::with_limits(LINT_WGSL).contains(&needle), "kernel.wgsl lacks `{needle}`");
         }
     }
 

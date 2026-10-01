@@ -50,11 +50,35 @@
 //! finalists on the CPU f64 evaluator in [`crate::eval`], which stays the
 //! correctness reference.
 
-/// Longest k-expression this evaluator handles. Measured p90 is 6-7 and the
-/// observed max is 34; 64 leaves headroom while keeping per-thread scratch at
-/// 64 floats. Longer expressions fall back to the CPU evaluator rather than
-/// being silently truncated.
-pub const MAX_NODES: usize = 64;
+/// Longest expression this evaluator handles — THE ONE NODE LIMIT. Every shader
+/// in fuller and in phylu's decoder sizes its per-thread scratch from this
+/// through [`with_limits`], so raising it here raises it everywhere. It was 64,
+/// chosen when a k-expression's p90 was 6-7 nodes and the max 34; at 5000+5000
+/// populations with three-gene models judged as one flat expression, 64 sat
+/// below the laws (the snap guard skipped 287 models in one trial for size,
+/// and a gene of 43+ nodes could not express at all). 128 is the measured next
+/// step; see `docs/` for the throughput cost.
+pub const MAX_NODES: usize = 128;
+
+/// Nodes of work area a shader that grafts a template onto a slot needs: the
+/// slot plus the largest template (15) and a `Neg` over it.
+pub const WORK_NODES: usize = MAX_NODES + 16;
+
+/// A shader's source with its fixed-size scratch sized from [`MAX_NODES`]. The
+/// WGSL files are written against the historical 64 (and 80 for the work area)
+/// so they read as plain WGSL; this is the only place those literals are
+/// rewritten, and every `ShaderSource::Wgsl` in the crate goes through it.
+pub fn with_limits(src: &str) -> String {
+    src.replace("const MAX_NODES: u32 = 64u;", &format!("const MAX_NODES: u32 = {MAX_NODES}u;"))
+        .replace("const SLOT: u32 = 64u;", &format!("const SLOT: u32 = {MAX_NODES}u;"))
+        .replace("const WORK: u32 = 80u;", &format!("const WORK: u32 = {WORK_NODES}u;"))
+        .replace("array<f32, 64>", &format!("array<f32, {MAX_NODES}>"))
+        .replace("array<u32, 64>", &format!("array<u32, {MAX_NODES}>"))
+        .replace("array<u32, 80>", &format!("array<u32, {WORK_NODES}>"))
+        .replace("array<Node, 64>", &format!("array<Node, {MAX_NODES}>"))
+        .replace("array<Node, 80>", &format!("array<Node, {WORK_NODES}>"))
+        .replace("array<u32, 128>", &format!("array<u32, {}>", 2 * MAX_NODES))
+}
 
 /// wgpu's per-dimension workgroup cap (`max_compute_workgroups_per_dimension`).
 pub const MAX_GROUPS_PER_DIM: u32 = 65535;
@@ -699,7 +723,7 @@ mod device {
 
             let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("fuller-eval"),
-                source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(EVAL_WGSL)),
+                source: wgpu::ShaderSource::Wgsl(Cow::Owned(with_limits(EVAL_WGSL))),
             });
 
             let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -1367,16 +1391,16 @@ fn stats_main(@builtin(global_invocation_id) gid: vec3<u32>) {
             let limits = device.limits();
             let per_expr = MAX_NODES as u64 * u64::from(n_rows) * 4;
             let cap = PARTIALS_BYTES_CAP.min(u64::from(limits.max_storage_buffer_binding_size));
-            // One workgroup of 64 threads reduces one expression's 64 nodes, and
-            // the dispatch is one-dimensional: a block is at most one dimension's
-            // worth of workgroups.
-            let block = ((cap / per_expr) as usize).min(MAX_GROUPS_PER_DIM as usize);
+            // A workgroup of 64 threads reduces 64 nodes, so an expression takes
+            // MAX_NODES / 64 workgroups, and the dispatch is one-dimensional: a
+            // block is at most one dimension's worth of workgroups.
+            let block = ((cap / per_expr) as usize).min(MAX_GROUPS_PER_DIM as usize * 64 / MAX_NODES);
             if block == 0 {
                 return Err(format!("subtree stats: one expression's {MAX_NODES} x {n_rows} partials do not fit the device's binding limit"));
             }
             let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("fuller-subtree-stats"),
-                source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(STATS_WGSL)),
+                source: wgpu::ShaderSource::Wgsl(Cow::Owned(crate::gpu_eval::with_limits(STATS_WGSL))),
             });
             let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("fuller-subtree-stats-layout"),

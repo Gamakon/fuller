@@ -710,7 +710,7 @@ mod gpu {
     fn resident(device: &wgpu::Device, table: &SnapTable) -> Resident {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("fuller-snap"),
-            source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(SNAP_WGSL)),
+            source: wgpu::ShaderSource::Wgsl(Cow::Owned(crate::gpu_eval::with_limits(SNAP_WGSL))),
         });
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("fuller-snap-layout"),
