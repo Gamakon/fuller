@@ -121,6 +121,31 @@ pub enum Op {
     Acos = 25,
     ProtectedAsin = 26,
     ProtectedAcos = 27,
+    // ---- REGEX kingdom (the regex AST operators). These are NEVER evaluated by
+    // the numeric `EVAL_WGSL` switch (it returns NaN on its default arm); they are
+    // consumed only by the regex compile kernel, which lowers them to the Thompson
+    // VM instruction array. Appended after the SR ops so no SR opcode value moves.
+    // Phase 1 set: no counted repetition (which would expand multiplicatively),
+    // so no Integer operand — `RegexLit`/`RegexStar` are unary, `RegexConcat`/
+    // `RegexAlt` binary, the rest nullary. A bare `Num`/`Var` in a Pattern slot is
+    // read by the compiler as a literal byte (the only coercion).
+    /// `lit`: one literal byte (its Char child) → a one-byte Pattern.
+    RegexLit = 28,
+    /// `concat`: sequence two Patterns.
+    RegexConcat = 29,
+    /// `alt` (`|`): either Pattern.
+    RegexAlt = 30,
+    /// `star` (`*`): zero or more of a Pattern — an NFA loop, not a copy.
+    RegexDot = 31,
+    /// `.`: any one byte.
+    RegexStar = 32,
+    /// `\d` `\w` `\s`: character-class Pattern terminals.
+    RegexCcDigit = 33,
+    RegexCcWord = 34,
+    RegexCcSpace = 35,
+    /// `^` `$`: zero-width anchors.
+    RegexAnchorStart = 36,
+    RegexAnchorEnd = 37,
 }
 
 impl Op {
@@ -161,7 +186,14 @@ impl Op {
 
     pub fn arity(self) -> usize {
         match self {
-            Op::Var | Op::Num => 0,
+            Op::Var
+            | Op::Num
+            | Op::RegexDot
+            | Op::RegexCcDigit
+            | Op::RegexCcWord
+            | Op::RegexCcSpace
+            | Op::RegexAnchorStart
+            | Op::RegexAnchorEnd => 0,
             Op::Neg
             | Op::Abs
             | Op::Sqrt
@@ -181,7 +213,10 @@ impl Op {
             | Op::Asin
             | Op::Acos
             | Op::ProtectedAsin
-            | Op::ProtectedAcos => 1,
+            | Op::ProtectedAcos
+            | Op::RegexLit
+            | Op::RegexStar => 1,
+            // RegexConcat, RegexAlt (and the SR binary ops) are arity 2.
             _ => 2,
         }
     }

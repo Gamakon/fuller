@@ -197,6 +197,20 @@ impl Tree {
                 Op::Asin | Op::ProtectedAsin => format!("arcsin({})", one(k)),
                 Op::Acos | Op::ProtectedAcos => format!("arccos({})", one(k)),
                 Op::Var | Op::Num => unreachable!("leaves are not applications"),
+                // The REGEX kingdom's opcodes never appear in a fuller `Tree`:
+                // they are not produced by `from_math`/`math_to_nodes`, and regex
+                // ASTs live in phylu's GpuNodes, compiled by the regex kernel, not
+                // rendered as SR infix here.
+                Op::RegexLit
+                | Op::RegexConcat
+                | Op::RegexAlt
+                | Op::RegexDot
+                | Op::RegexStar
+                | Op::RegexCcDigit
+                | Op::RegexCcWord
+                | Op::RegexCcSpace
+                | Op::RegexAnchorStart
+                | Op::RegexAnchorEnd => unreachable!("regex opcodes are not fuller Math"),
             },
         }
     }

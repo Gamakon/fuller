@@ -73,6 +73,15 @@ pub enum Ty {
 
     // ---- BotjiKingdom types ----
     Addr, // botji address string
+
+    // ---- REGEX kingdom types ----
+    // Appended last so the base + depth-ladder types keep their positions and
+    // `Ty::depth`/`LADDER`/`at_depth` are unaffected (the ordering rule above).
+    // Integer repeat counts reuse `Ty::I`; they are not needed until counted
+    // repetition is added (Phase 1 omits it).
+    Char,      // one literal byte
+    CharClass, // a set of bytes ([a-z], \d, …)
+    Pattern,   // a regex sub-tree — the kingdom's root/hub type
 }
 
 impl Ty {
@@ -277,6 +286,11 @@ pub const LAW: &str = "Law";
 /// The kingdom name [`typed_depth_table`] files its rows under.
 pub const TYPED_SR: &str = "Symbolic Regression (typed depth)";
 
+/// The REGEX kingdom — the regex AST operators, typed over `Char`, `CharClass`,
+/// `Pattern` (and `I` for repeat counts, unused in the Phase-1 set). See
+/// [`regex_table`] and `docs/PLAN_regex_kingdom_build.md`.
+pub const REGEX: &str = "Regex";
+
 /// The semantic ids that RAISE transcendental depth. Lockstep with
 /// `evolve::engine::t_depth`'s own list — the table and the engine's measured
 /// depth must be the same predicate or the sampler and the checker disagree.
@@ -352,6 +366,59 @@ pub fn typed_depth_table() -> SymbolTable {
     t
 }
 
+/// THE REGEX KINGDOM — the regex AST operators as typed symbols. A gene decodes
+/// to a regex AST (every operator arity ≤ 2, the decoder's limit), which the GPU
+/// compile kernel lowers to the Thompson VM. The types make an ill-typed regex
+/// unconstructable: `lit` takes a `Char` and yields a `Pattern`, `concat`/`alt`
+/// combine `Pattern`s, `star` loops a `Pattern`, and the class/dot/anchor
+/// terminals are `Pattern`s directly.
+///
+/// Phase-1 set: NO counted repetition (`{n}`/`{n,m}`), because it would expand
+/// the instruction program multiplicatively; so no `Integer` operand appears and
+/// `star` (an NFA loop, not a copy) is the only repetition. `semantic_id`s match
+/// the `gpu_eval::Op` regex opcodes; `alias` is the regex surface spelling.
+///
+/// A `Char` terminal is the gene's `?` RNC byte (a printable-ASCII constant), so
+/// it is not a row here — it enters via the RNC mechanism, like SR's constants.
+pub fn regex_table() -> SymbolTable {
+    let mut t = SymbolTable::new();
+    let pat = Ty::Pattern;
+    let ch = Ty::Char;
+    // (semantic_id, alias, inputs, output). Inputs are the typed child slots in
+    // order; an empty input list is a terminal.
+    let rows: &[(&str, &str, &[Ty], Ty)] = &[
+        // terminals (arity 0) — Pattern-valued
+        ("regex_dot", ".", &[], pat),
+        ("regex_cc_digit", r"\d", &[], pat),
+        ("regex_cc_word", r"\w", &[], pat),
+        ("regex_cc_space", r"\s", &[], pat),
+        ("regex_anchor_start", "^", &[], pat),
+        ("regex_anchor_end", "$", &[], pat),
+        // unary
+        ("regex_lit", "lit", &[ch], pat),
+        ("regex_star", "*", &[pat], pat),
+        // binary
+        ("regex_concat", "concat", &[pat, pat], pat),
+        ("regex_alt", "|", &[pat, pat], pat),
+    ];
+    for (i, (sem, alias, ins, out)) in rows.iter().enumerate() {
+        let mut arity = Arity::default();
+        for &inp in *ins {
+            *arity.inputs.entry(inp).or_insert(0) += 1;
+        }
+        arity.outputs.insert(*out, 1);
+        t.push(Symbol {
+            kingdom: REGEX.to_string(),
+            symbol: (i + 1) as i64,
+            symbol_name: sem.to_string(),
+            alias: alias.to_string(),
+            semantic_id: sem.to_string(),
+            arity,
+        });
+    }
+    t
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -414,9 +481,34 @@ mod tests {
     fn kingdom_query_isolates() {
         let t = master_table();
         // The master table now holds two kingdoms: the full SR op set and the
-        // flat Law subset. `kingdoms()` sorts, so Law comes first.
+        // flat Law subset. `kingdoms()` sorts, so Law comes first. REGEX is a
+        // SEPARATE table (`regex_table`), so this assertion is unchanged.
         assert_eq!(t.kingdoms(), vec!["Law".to_string(), "Symbolic Regression".to_string()]);
         assert!(t.kingdom("SQL").is_empty()); // not loaded yet
+        assert!(t.kingdom(REGEX).is_empty()); // the regex kingdom is its own table
+    }
+
+    /// The REGEX kingdom is well-formed: every row is under `REGEX`, every arity
+    /// is ≤ 2 (the decoder's limit), the hub type `Pattern` is the output of
+    /// every operator, and the Phase-1 set carries no counted repetition (no `I`
+    /// input anywhere — repeat counts are deferred).
+    #[test]
+    fn regex_kingdom_is_well_formed_and_arity_two() {
+        let t = regex_table();
+        let rows = t.kingdom(REGEX);
+        assert_eq!(rows.len(), 10, "the Phase-1 regex set");
+        assert_eq!(t.max_arity(REGEX), 2, "the decoder caps arity at 2");
+        for s in &rows {
+            assert!(s.arity.total_in() <= 2, "{} has arity {}", s.semantic_id, s.arity.total_in());
+            assert_eq!(s.arity.outputs.get(&Ty::Pattern), Some(&1), "{} must output a Pattern", s.semantic_id);
+            assert_eq!(s.arity.inputs.get(&Ty::I), None, "{} must not take a repeat count in Phase 1", s.semantic_id);
+        }
+        // The semantic ids are exactly those the engine maps to regex opcodes.
+        let sems: std::collections::HashSet<&str> = rows.iter().map(|s| s.semantic_id.as_str()).collect();
+        for needed in ["regex_lit", "regex_concat", "regex_alt", "regex_star", "regex_dot",
+            "regex_cc_digit", "regex_cc_word", "regex_cc_space", "regex_anchor_start", "regex_anchor_end"] {
+            assert!(sems.contains(needed), "regex kingdom missing {needed}");
+        }
     }
 
     #[test]
