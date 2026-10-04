@@ -146,6 +146,29 @@ pub enum Op {
     /// `^` `$`: zero-width anchors.
     RegexAnchorStart = 36,
     RegexAnchorEnd = 37,
+    // ---- POSIX ERE extension (Phase 4 of the multi-typed GEP build). These make
+    // the regex kingdom genuinely MULTI-TYPED: Pattern, CharClass, Char, Integer.
+    // Appended after the Phase-1 set so no opcode value moves. Like the ops above
+    // they are compile-kernel metadata, never run by the numeric EVAL switch.
+    /// `+`: one or more of a Pattern (`concat(p, star(p))`).
+    RegexPlus = 38,
+    /// `?`: zero or one of a Pattern (needs the empty/ε leaf).
+    RegexOpt = 39,
+    /// `{n}`: exactly n copies of a Pattern — in(Pattern, Integer).
+    RegexRepN = 40,
+    /// `{0,k}`: zero to k copies of a Pattern — in(Pattern, Integer).
+    RegexRepUpto = 41,
+    /// a CharClass used as a Pattern (matches one byte of the set).
+    RegexClassOf = 42,
+    /// `a-z`: a byte range → CharClass. in(Char, Char).
+    RegexCcRange = 43,
+    /// `[··]`: union of two CharClasses → CharClass.
+    RegexCcUnion = 44,
+    /// `[^··]`: negation of a CharClass → CharClass.
+    RegexCcNegate = 45,
+    /// ε: the empty Pattern (matches the empty string) — the Pattern fallback and
+    /// `opt`'s second branch.
+    RegexEmpty = 46,
 }
 
 impl Op {
@@ -193,7 +216,8 @@ impl Op {
             | Op::RegexCcWord
             | Op::RegexCcSpace
             | Op::RegexAnchorStart
-            | Op::RegexAnchorEnd => 0,
+            | Op::RegexAnchorEnd
+            | Op::RegexEmpty => 0,
             Op::Neg
             | Op::Abs
             | Op::Sqrt
@@ -215,8 +239,13 @@ impl Op {
             | Op::ProtectedAsin
             | Op::ProtectedAcos
             | Op::RegexLit
-            | Op::RegexStar => 1,
-            // RegexConcat, RegexAlt (and the SR binary ops) are arity 2.
+            | Op::RegexStar
+            | Op::RegexPlus
+            | Op::RegexOpt
+            | Op::RegexClassOf
+            | Op::RegexCcNegate => 1,
+            // Arity 2: RegexConcat, RegexAlt, RegexRepN, RegexRepUpto,
+            // RegexCcRange, RegexCcUnion (and the SR binary ops).
             _ => 2,
         }
     }

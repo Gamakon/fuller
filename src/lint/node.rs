@@ -210,7 +210,16 @@ impl Tree {
                 | Op::RegexCcWord
                 | Op::RegexCcSpace
                 | Op::RegexAnchorStart
-                | Op::RegexAnchorEnd => unreachable!("regex opcodes are not fuller Math"),
+                | Op::RegexAnchorEnd
+                | Op::RegexPlus
+                | Op::RegexOpt
+                | Op::RegexRepN
+                | Op::RegexRepUpto
+                | Op::RegexClassOf
+                | Op::RegexCcRange
+                | Op::RegexCcUnion
+                | Op::RegexCcNegate
+                | Op::RegexEmpty => unreachable!("regex opcodes are not fuller Math"),
             },
         }
     }

@@ -394,19 +394,36 @@ pub fn regex_table() -> SymbolTable {
     // in a Pattern slot IS a one-byte pattern, so a separate `lit(Char)->Pattern`
     // would be the one symbol whose child slot the all-`?` tail cannot always
     // fill, breaking GEP's "all offspring are valid programs" guarantee.
+    let cc = Ty::CharClass;
+    let ch = Ty::Char;
+    let int = Ty::I;
     let rows: &[(&str, &str, &[Ty], Ty)] = &[
-        // terminals (arity 0) — Pattern-valued
+        // ---- Pattern terminals (arity 0) ----
         ("regex_dot", ".", &[], pat),
-        ("regex_cc_digit", r"\d", &[], pat),
-        ("regex_cc_word", r"\w", &[], pat),
-        ("regex_cc_space", r"\s", &[], pat),
         ("regex_anchor_start", "^", &[], pat),
         ("regex_anchor_end", "$", &[], pat),
-        // unary
+        ("regex_empty", "", &[], pat),
+        // ---- CharClass terminals (arity 0) — the built-in classes ----
+        ("regex_cc_digit", r"\d", &[], cc),
+        ("regex_cc_word", r"\w", &[], cc),
+        ("regex_cc_space", r"\s", &[], cc),
+        // ---- Pattern ops ----
         ("regex_star", "*", &[pat], pat),
-        // binary
+        ("regex_plus", "+", &[pat], pat),
+        ("regex_opt", "?", &[pat], pat),
         ("regex_concat", "concat", &[pat, pat], pat),
         ("regex_alt", "|", &[pat, pat], pat),
+        // counted repetition — the Integer-typed slot that makes the kingdom
+        // genuinely multi-typed (`docs/PLAN_multityped_gep.md`).
+        ("regex_rep_n", "{n}", &[pat, int], pat),
+        ("regex_rep_upto", "{0,k}", &[pat, int], pat),
+        // ---- coercions / class algebra ----
+        // a CharClass or a Char used as a Pattern (match one byte of it).
+        ("regex_class_of", "class_of", &[cc], pat),
+        ("regex_lit", "lit", &[ch], pat),
+        ("regex_cc_range", "a-z", &[ch, ch], cc),
+        ("regex_cc_union", "cc_union", &[cc, cc], cc),
+        ("regex_cc_negate", "^cc", &[cc], cc),
     ];
     for (i, (sem, alias, ins, out)) in rows.iter().enumerate() {
         let mut arity = Arity::default();
@@ -496,31 +513,38 @@ mod tests {
     }
 
     /// The REGEX kingdom is well-formed: every row is under `REGEX`, every arity
-    /// is ≤ 2 (the decoder's limit), the hub type `Pattern` is the output of
-    /// every operator, and the Phase-1 set carries no counted repetition (no `I`
-    /// input anywhere — repeat counts are deferred).
+    /// is ≤ 2 (the decoder's limit), every output is the hub type `Pattern` or a
+    /// `CharClass`, every input is one of the four value types, and — now that it
+    /// is MULTI-TYPED — counted repetition carries an Integer slot. The total
+    /// typed decoder (Design C) keeps every gene valid, so mixed types are safe.
     #[test]
     fn regex_kingdom_is_well_formed_and_arity_two() {
         let t = regex_table();
         let rows = t.kingdom(REGEX);
-        assert_eq!(rows.len(), 9, "the Phase-1 regex set (no lit: a byte literal is a Pattern)");
         assert_eq!(t.max_arity(REGEX), 2, "the decoder caps arity at 2");
+        let value_types = [Ty::Pattern, Ty::CharClass, Ty::Char, Ty::I];
         for s in &rows {
             assert!(s.arity.total_in() <= 2, "{} has arity {}", s.semantic_id, s.arity.total_in());
-            assert_eq!(s.arity.outputs.get(&Ty::Pattern), Some(&1), "{} must output a Pattern", s.semantic_id);
-            // GEP VALIDITY: every input slot is a Pattern. No Char, no Integer —
-            // so the all-`?` tail (a Pattern-valued byte) can fill ANY child slot,
-            // and every decoded gene expresses.
-            for (ty, _) in &s.arity.inputs {
-                assert_eq!(*ty, Ty::Pattern, "{} takes a non-Pattern child {ty:?}", s.semantic_id);
+            // Output is Pattern or CharClass (the two producible types).
+            let out = *s.arity.outputs.keys().next().expect("an output type");
+            assert!(out == Ty::Pattern || out == Ty::CharClass, "{} outputs {out:?}", s.semantic_id);
+            // Every input slot is one of the four value types.
+            for ty in s.arity.inputs.keys() {
+                assert!(value_types.contains(ty), "{} takes an unexpected child {ty:?}", s.semantic_id);
             }
         }
-        // The semantic ids are exactly those the engine maps to regex opcodes.
+        // The multi-typed POSIX ERE set is present, including counted repetition
+        // (the Integer-typed slot that makes the kingdom genuinely multi-typed).
         let sems: std::collections::HashSet<&str> = rows.iter().map(|s| s.semantic_id.as_str()).collect();
-        for needed in ["regex_concat", "regex_alt", "regex_star", "regex_dot",
+        for needed in ["regex_concat", "regex_alt", "regex_star", "regex_plus", "regex_opt",
+            "regex_rep_n", "regex_rep_upto", "regex_class_of", "regex_lit", "regex_cc_range",
+            "regex_cc_union", "regex_cc_negate", "regex_dot", "regex_empty",
             "regex_cc_digit", "regex_cc_word", "regex_cc_space", "regex_anchor_start", "regex_anchor_end"] {
             assert!(sems.contains(needed), "regex kingdom missing {needed}");
         }
+        // At least one operator demands an Integer child — the proof it is
+        // multi-typed, not the single-Pattern Phase-1 set.
+        assert!(rows.iter().any(|s| s.arity.inputs.get(&Ty::I) == Some(&1)), "no Integer-typed slot — not multi-typed");
     }
 
     #[test]
