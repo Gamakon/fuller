@@ -383,9 +383,17 @@ pub fn typed_depth_table() -> SymbolTable {
 pub fn regex_table() -> SymbolTable {
     let mut t = SymbolTable::new();
     let pat = Ty::Pattern;
-    let ch = Ty::Char;
     // (semantic_id, alias, inputs, output). Inputs are the typed child slots in
     // order; an empty input list is a terminal.
+    //
+    // THE GEP VALIDITY GUARANTEE: every head symbol takes only `Pattern` children
+    // (or none), and the sole terminal is the `?` RNC byte, which decodes to a
+    // one-byte `Pattern` (a literal-byte leaf) by coercion. So EVERY decoded gene
+    // expresses — there is no symbol that demands a child the tail cannot supply.
+    // There is deliberately NO `lit` operator and NO `Char` type: a byte literal
+    // in a Pattern slot IS a one-byte pattern, so a separate `lit(Char)->Pattern`
+    // would be the one symbol whose child slot the all-`?` tail cannot always
+    // fill, breaking GEP's "all offspring are valid programs" guarantee.
     let rows: &[(&str, &str, &[Ty], Ty)] = &[
         // terminals (arity 0) — Pattern-valued
         ("regex_dot", ".", &[], pat),
@@ -395,7 +403,6 @@ pub fn regex_table() -> SymbolTable {
         ("regex_anchor_start", "^", &[], pat),
         ("regex_anchor_end", "$", &[], pat),
         // unary
-        ("regex_lit", "lit", &[ch], pat),
         ("regex_star", "*", &[pat], pat),
         // binary
         ("regex_concat", "concat", &[pat, pat], pat),
@@ -496,16 +503,21 @@ mod tests {
     fn regex_kingdom_is_well_formed_and_arity_two() {
         let t = regex_table();
         let rows = t.kingdom(REGEX);
-        assert_eq!(rows.len(), 10, "the Phase-1 regex set");
+        assert_eq!(rows.len(), 9, "the Phase-1 regex set (no lit: a byte literal is a Pattern)");
         assert_eq!(t.max_arity(REGEX), 2, "the decoder caps arity at 2");
         for s in &rows {
             assert!(s.arity.total_in() <= 2, "{} has arity {}", s.semantic_id, s.arity.total_in());
             assert_eq!(s.arity.outputs.get(&Ty::Pattern), Some(&1), "{} must output a Pattern", s.semantic_id);
-            assert_eq!(s.arity.inputs.get(&Ty::I), None, "{} must not take a repeat count in Phase 1", s.semantic_id);
+            // GEP VALIDITY: every input slot is a Pattern. No Char, no Integer —
+            // so the all-`?` tail (a Pattern-valued byte) can fill ANY child slot,
+            // and every decoded gene expresses.
+            for (ty, _) in &s.arity.inputs {
+                assert_eq!(*ty, Ty::Pattern, "{} takes a non-Pattern child {ty:?}", s.semantic_id);
+            }
         }
         // The semantic ids are exactly those the engine maps to regex opcodes.
         let sems: std::collections::HashSet<&str> = rows.iter().map(|s| s.semantic_id.as_str()).collect();
-        for needed in ["regex_lit", "regex_concat", "regex_alt", "regex_star", "regex_dot",
+        for needed in ["regex_concat", "regex_alt", "regex_star", "regex_dot",
             "regex_cc_digit", "regex_cc_word", "regex_cc_space", "regex_anchor_start", "regex_anchor_end"] {
             assert!(sems.contains(needed), "regex kingdom missing {needed}");
         }
