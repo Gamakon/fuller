@@ -165,6 +165,48 @@ pub fn proves_equal_assuming(
     }
 }
 
+/// The REWRITE DISTANCE from `input` to `target`: run the ruleset ONE iteration
+/// at a time and, after each, ask whether the two are in the same e-class. The
+/// iteration at which they merge is how many rounds of rewriting separate them —
+/// the recoverability metric that matters (a 30-node tower ONE fold from the law
+/// is distance 1, though its raw tree-edit distance is huge). Returns
+/// `Some(iters)` on merge, `None` if they never merge within `max_iters` — the
+/// "not reachable with these rules" (genuine search-gap) verdict.
+///
+/// Uses the given `family` (e.g. `Family::Rational` or a beam-equivalent). Assumes
+/// `nonzero_vars` nonzero, as the equivalence check does.
+pub fn rewrite_distance(
+    input: &str,
+    target: &str,
+    family: Family,
+    nonzero_vars: &[String],
+    max_iters: u32,
+) -> Result<Option<u32>, String> {
+    let mut egraph = EGraph::default();
+    egraph
+        .parse_and_run_program(None, &program_for(family))
+        .map_err(|e| format!("load rulesets: {e}"))?;
+    let asserts: String = nonzero_vars.iter().map(|v| format!("(is-nonzero (Var \"{v}\"))\n")).collect();
+    egraph
+        .parse_and_run_program(None, &format!("(let __in {input})\n(let __tgt {target})\n{asserts}"))
+        .map_err(|e| format!("load pair {input:?}: {e}"))?;
+    // Iteration 0: already equal (identical forms) before any rewrite.
+    for i in 0..=max_iters {
+        match egraph.parse_and_run_program(None, "(check (= __in __tgt))") {
+            Ok(_) => return Ok(Some(i)),
+            Err(egglog::Error::CheckError(..)) => {}
+            Err(e) => return Err(format!("check {input:?}: {e}")),
+        }
+        if i == max_iters {
+            break;
+        }
+        egraph
+            .parse_and_run_program(None, "(run-schedule (run all))")
+            .map_err(|e| format!("run {input:?}: {e}"))?;
+    }
+    Ok(None)
+}
+
 /// Convenience: score with the Algebra family (the default for everything
 /// except the trig corpus).
 pub fn proves_equal(input: &str, target: &str) -> Result<bool, String> {

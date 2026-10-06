@@ -249,6 +249,29 @@ impl Op {
             _ => 2,
         }
     }
+
+    /// The `Op` for an opcode value, or `None` if it is not a known opcode. The
+    /// inverse of `op as u32`; a decoded `GpuNode.op` goes back to its name this
+    /// way (for AST printing, export, and reporting). Opcodes are contiguous
+    /// 0..=46; this match is total and moves no value.
+    pub fn from_u32(op: u32) -> Option<Op> {
+        let o = match op {
+            0 => Op::Var, 1 => Op::Num, 2 => Op::Add, 3 => Op::Sub, 4 => Op::Mul,
+            5 => Op::Div, 6 => Op::Neg, 7 => Op::Abs, 8 => Op::Sqrt, 9 => Op::Log,
+            10 => Op::Exp, 11 => Op::Sin, 12 => Op::Cos, 13 => Op::Tan, 14 => Op::Tanh,
+            15 => Op::Pow, 16 => Op::Pow2, 17 => Op::Pow3, 18 => Op::Inv, 19 => Op::ProtectedDiv,
+            20 => Op::ProtectedSqrt, 21 => Op::ProtectedLog, 22 => Op::ProtectedExp,
+            23 => Op::ProtectedInv, 24 => Op::Asin, 25 => Op::Acos, 26 => Op::ProtectedAsin,
+            27 => Op::ProtectedAcos, 28 => Op::RegexLit, 29 => Op::RegexConcat, 30 => Op::RegexAlt,
+            31 => Op::RegexDot, 32 => Op::RegexStar, 33 => Op::RegexCcDigit, 34 => Op::RegexCcWord,
+            35 => Op::RegexCcSpace, 36 => Op::RegexAnchorStart, 37 => Op::RegexAnchorEnd,
+            38 => Op::RegexPlus, 39 => Op::RegexOpt, 40 => Op::RegexRepN, 41 => Op::RegexRepUpto,
+            42 => Op::RegexClassOf, 43 => Op::RegexCcRange, 44 => Op::RegexCcUnion,
+            45 => Op::RegexCcNegate, 46 => Op::RegexEmpty,
+            _ => return None,
+        };
+        Some(o)
+    }
 }
 
 /// One node, as uploaded. 16 bytes, so a 64-node expression is 1 KiB and a
