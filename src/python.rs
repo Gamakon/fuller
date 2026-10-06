@@ -1357,6 +1357,39 @@ fn bf_unparse(sexpr: &str) -> PyResult<String> {
         .map_err(pyo3::exceptions::PyValueError::new_err)
 }
 
+/// Simplify a regex given as a phylu `ast_sexpr` S-expression by equality
+/// saturation, returning a dict with keys:
+/// - `source`: the simplified regex in the same `ast_sexpr` format.
+/// - `op_count`: node count of the simplified AST.
+/// - `changed`: True if strictly fewer nodes than the input.
+///
+/// Never raises on normal input — returns the input unchanged on any internal
+/// error. Raises ValueError only on a hard internal failure.
+#[pyfunction]
+fn regex_simplify(py: Python<'_>, ast_sexpr: &str) -> PyResult<Py<pyo3::types::PyDict>> {
+    let result = crate::regex::extract::regex_simplify(ast_sexpr)
+        .map_err(pyo3::exceptions::PyValueError::new_err)?;
+    let out = pyo3::types::PyDict::new_bound(py);
+    out.set_item("source", result.source)?;
+    out.set_item("op_count", result.op_count)?;
+    out.set_item("changed", result.changed)?;
+    Ok(out.into())
+}
+
+/// Convert a phylu `ast_sexpr` regex to its egglog `Re` s-expression.
+#[pyfunction]
+fn regex_parse(ast_sexpr: &str) -> PyResult<String> {
+    crate::regex::parse::parse_regex(ast_sexpr)
+        .map_err(pyo3::exceptions::PyValueError::new_err)
+}
+
+/// Convert an egglog `Re` s-expression back to the phylu `ast_sexpr` format.
+#[pyfunction]
+fn regex_unparse(re_sexpr: &str) -> PyResult<String> {
+    crate::regex::parse::unparse_regex(re_sexpr)
+        .map_err(pyo3::exceptions::PyValueError::new_err)
+}
+
 /// Enumerate the equivalence class of a karva chromosome under a FULL rule
 /// family (algebra+powers+distribute, or algebra+powers+trig) — the wide
 /// saturation the tournament figure needs, NOT the bounded denoise subset.
@@ -1926,5 +1959,8 @@ fn _fuller(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(bf_simplify, m)?)?;
     m.add_function(wrap_pyfunction!(bf_parse, m)?)?;
     m.add_function(wrap_pyfunction!(bf_unparse, m)?)?;
+    m.add_function(wrap_pyfunction!(regex_simplify, m)?)?;
+    m.add_function(wrap_pyfunction!(regex_parse, m)?)?;
+    m.add_function(wrap_pyfunction!(regex_unparse, m)?)?;
     Ok(())
 }

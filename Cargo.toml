@@ -36,6 +36,11 @@ version = "0.22"
 features = ["extension-module"]
 optional = true
 
+[dev-dependencies]
+# TEST-ONLY oracle for the regex simplifier: render a Re AST to a regex string
+# and compare match results before/after simplify. Never a run path.
+regex = "1"
+
 [features]
 # `python` builds the PyO3 extension module; off by default so plain
 # `cargo build` / `cargo test` / examples never need the Python link env.

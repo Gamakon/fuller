@@ -43,6 +43,7 @@ pub mod lint;
 pub mod parity;
 pub mod srbench_equiv;
 pub mod physics;
+pub mod regex;
 pub mod ruleset;
 pub mod score;
 pub mod snap;

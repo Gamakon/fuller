@@ -783,6 +783,7 @@ dependencies = [
  "pollster",
  "pyo3",
  "rayon",
+ "regex",
  "serde",
  "serde_json",
  "wgpu",
