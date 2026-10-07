@@ -48,13 +48,17 @@ part once: image, device, concurrency, outputs, collection.
    have laptop paths; make dataset and binary paths arguments/env; the oracle
    (Python + sympy + SRBench's `assess_symbolic_model`) must install from
    requirements inside the image. *(phylu, medium — the one real porting job.)*
-3. **Image.** `Dockerfile`: Ubuntu 24.04, Rust stable, `libvulkan1` +
-   `vulkan-tools`, Python 3 + sympy + SRBench checker deps, both repos at pinned
-   commits, `cargo build --release --features gpu` for `evolve_fit` and
-   `kitchen_sink`, SRBench ground-truth datasets (133 `.tsv.gz`, ~tens of MB)
-   baked in. Entry point: `law_runner.py` reading `PHYLU_*` env. Push to a
-   registry (Docker Hub or GHCR). Build on the laptop with
-   `--platform linux/amd64`. *(fuller side can write it; phylu owns the paths.)*
+3. **Build on the pod, not an image, for this trial.** Cross-building Rust
+   for amd64 under emulation on the Mac would eat the day. Use a stock Ubuntu
+   or CUDA base pod, install Rust and `libvulkan1` + `vulkan-tools` + Python
+   with sympy and the SRBench checker deps, clone both repos at pinned commits
+   onto the network volume at `/workspace`, `cargo build --release --features
+   gpu` there for `evolve_fit` and `kitchen_sink`. The H100 pod mounts the
+   same volume and reuses the binaries (same x86_64; wgpu is GPU-agnostic).
+   The data must be the PMLB layout the checker expects, each law's folder
+   with its `.tsv.gz` **and its `metadata.yaml`** (the ground-truth formula
+   SRBench's `assess_symbolic_model` reads), copied from the hff clone. A
+   registry image is for the later 30-worker serverless run, not this trial.
 4. **Sweep driver for the pod.** A script that reads the law list, keeps N
    jobs running (`xargs -P N` is enough), writes to `/workspace/AB1/<law>/`,
    starts the web watcher on port 8787. *(small.)*
@@ -67,17 +71,28 @@ part once: image, device, concurrency, outputs, collection.
 1. ★ Load credit: $20 covers the trial with margin. ★ Create an API key and
    `export RUNPOD_API_KEY=…` in the shell this session runs from (OAuth alone
    does not unlock runpodctl). Then `runpodctl ssh add-key` once.
-2. Create a network volume, 20 GB, in a data centre with H100 stock (read live
-   at launch; today H100 SXM shows HIGH across many).
-3. **Test hour, RTX 4090 pod ($0.74/h), same DC, volume mounted, 2 h
-   terminate guard:** `vulkaninfo --summary` lists the GPU; `cargo test
-   --release --features gpu` in phylu and fuller (record which float-parity
-   tests differ on Vulkan); one law, one seed, ms/generation vs laptop 15.5;
-   then shear flow at 1, 2, 4, 8 concurrent fits → the knee. Remove the pod.
-4. **The A/B, H100 SXM pod ($3.49/h), volume mounted, 2 h terminate guard:**
-   run the sweep driver at the knee's concurrency (plan: 8), watch the web page
-   through the pod's HTTP proxy URL, let it run to the end. Expected under one
-   hour at the cap, less with early stops.
+2. Create a network volume, 20 GB, in a data centre that has H100 SXM stock
+   (today: AP-IN-1, AP-JP-1, CA-MTL-1, EU-FR-1, EU-NL-1, EUR-IS-3, EUR-NO-2,
+   US-GA-2, US-MO-1, US-NE-1; all LOW, re-read at launch). The volume is
+   locked to its DC, so every pod in this plan runs there.
+3. **Test hour, same DC, volume mounted, 2 h terminate guard.** Today no DC
+   has both the RTX 4090 and the H100, so the test GPU is either the H100
+   itself ($3.49 for the hour, no device switch, the simplest) or a co-located
+   cheaper card: A40 at $0.49 in CA-MTL-1, L40S at $1.09 in EU-NL-1. ★ Andrew
+   picks. Checks: `vulkaninfo --summary` lists the GPU; the build of item 3;
+   `cargo test --release --features gpu` in phylu and fuller (record which
+   float-parity tests differ on Vulkan); one law, one seed, ms/generation
+   against the laptop's 15.5. Read the pod's vCPU count: 8 fits plus sympy
+   checkers is a CPU question, not a GPU one.
+4. **The A/B, H100 SXM pod ($3.49/h), volume mounted, 2 h terminate guard.**
+   First ten minutes: the knee, measured on the H100 itself (shear flow at 1,
+   2, 4, 8 concurrent, about $0.60); a knee measured on another card does not
+   transfer. Then the sweep driver at that concurrency (plan: 8), the web page
+   through the pod's HTTP proxy URL, run to the end. Expected under one hour at
+   the cap, less with early stops. Under 8-way contention a hard law gets
+   fewer generations before the 90 s cap than on the laptop, so the two arms
+   compare fairly with each other, but the found-count is not comparable to
+   CASCADE2's.
 5. Collect, verify, remove the pod. Keep the volume until the files are on the
    laptop and checked; then delete it.
 
@@ -103,19 +118,22 @@ one `AB1/` folder on the laptop.
 
 | step | GPU | time | cost |
 |---|---|---|---|
-| test hour | 1 × RTX 4090 | 1 h | $0.74 |
+| test hour | 1 × H100 SXM (or a co-located A40 at $0.49) | 1 h | $3.49 |
 | A/B, 266 fits at 90 s cap, 8 concurrent | 1 × H100 SXM | ≤ 50 min | ≤ $2.90 |
 | volume 20 GB, a day | — | — | < $0.20 |
-| **total** | | **≈ 2 h of attention** | **≈ $4** |
+| **total** | | **≈ 2 h of attention** | **≈ $7 (≈ $4 with the A40 test)** |
 
 Build effort before any rental: items 1–5 above, roughly one working day
 across phylu and fuller.
 
 ## What would stop us
 
-- Vulkan not visible in the container → fix the image (ICD, driver
-  capabilities) before renting anything bigger.
-- Knee below 4 → use 4090 pods (option B) instead; cost rises to ~$5.
+- Vulkan not visible in the pod → the graphics capability is exposed by
+  Runpod's container runtime, not by anything we install. Check Runpod's docs
+  and templates for Vulkan support; if the runtime does not pass it, Runpod
+  pods are out for us and the fallback is a provider that rents a full VM.
+- Knee below 4 → scale out on cheaper pods (option B) instead; cost rises to
+  about $5.
 - Float-parity tests fail on Vulkan → record, run anyway (results are
   bit-identical to themselves on that device), and state the device.
 - Checker port takes longer than a day → run the sweep without `--check`,
