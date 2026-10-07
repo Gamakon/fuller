@@ -262,23 +262,30 @@ model says the fold pays. That instrument, with evolution proposing the trees,
 points at three places beyond symbolic regression. All three are envisioned;
 none has a row or a kernel.
 
-- *Evolving GPU kernels.* WGSL compiles through naga, whose intermediate
-  representation already holds each function's expressions as a DAG with a
-  statement tree for control flow, and validates what it is given. A WGSL
-  kingdom's types (scalars, vectors, booleans, integers) fit the geneframe's
-  base types, so the rows are cheap. The safe level is the expression DAG inside
-  a fixed kernel template, which is our engine emitting compiled code instead of
-  interpreting it; the next is kernel structure (workgroup size, tiling,
-  unrolling, memory layout), mostly a parameter search with large gains; the
-  hardest is arbitrary statements, where most mutants fail validation. The
-  honest cost: evaluating a kernel means compiling and timing it, milliseconds
-  each and noisy, which inverts the cost structure the rest of this document
-  rests on; compiled pipelines must be cached and timings taken as medians of
-  repeats, and HFF can carry the timing and its variance as two zero-seeking
-  objectives. Prior work exists in the community: genetic programming for
-  shader simplification (Sitthi-amorn, Modly, Weimer and Lawrence, SIGGRAPH
-  Asia 2011) and Langdon and Harman's genetic improvement of CUDA kernels
-  (EuroGP 2014 and after), both with fitness measured on the GPU.
+- *Evolving GPU kernels: correctness and efficiency as one fitness.* A
+  language model writes a kernel; it compiles, the test passes, and we call it
+  done. Nothing in that loop asks what the kernel costs. The geneframe asks.
+  Fitness is the end-to-end result *and* the efficiency: the kernel must match
+  the reference output, bit-exact or within a stated tolerance, which is a
+  gate not an objective, and then time, memory traffic and energy are
+  zero-seeking objectives under HFF. The language model is one editor on the
+  immigration interval, proposing kernels the tournament judges; the share
+  editor and the rewrite families are the other editors; the population is
+  the memory of what has worked. WGSL compiles through naga, whose intermediate
+  representation already holds expressions as a DAG with a statement tree for
+  control flow and validates what it is given, so most mutants are filtered
+  free, and a WGSL kingdom's types fit the geneframe's base types. The economic
+  target is inference on Apple silicon: MLX models run on Metal kernels, MLX
+  accepts custom kernels, and faxl's hash and probe kernels are already marked
+  for transcription to the device. A kernel found once runs billions of times
+  a day, so the slow kingdom's cost, a compile and a timed run per individual
+  with medians over repeats, is repaid by a single win; the denominator is
+  tokens served, not individuals a second. Prior work in the community did
+  this with the tools of its time: genetic programming for shader
+  simplification (Sitthi-amorn, Modly, Weimer and Lawrence, SIGGRAPH Asia
+  2011) and Langdon and Harman's genetic improvement of CUDA kernels (EuroGP
+  2014 and after), both with fitness measured on the GPU and both reporting
+  real speed-ups on kernels people had already accepted as finished.
 - *Datapath and circuit design.* A circuit is a DAG, and equality saturation
   is already used to optimise register-transfer-level datapaths: Coward,
   Constantinides and Drane at Intel and Imperial (ARITH 2022, DAC 2023) report
