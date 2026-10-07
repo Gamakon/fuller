@@ -410,6 +410,30 @@ structure is the slow kingdom's: a fitness evaluation is a Spark job on a
 sample, so populations are small and the payoff is counted in cluster hours,
 not in individuals a second.
 
+**A learned RNN from a thousand seeds.** *(Envisioned.)* In noctiluca a seed
+is free to switch, so a thousand seeded reservoirs cost what one
+thousand-times-larger reservoir costs, about 1.5 ms a step at a million
+neurons. The proposal is to run them concurrently and *select*, neuron by
+neuron, which seed's wiring each position keeps, assembling a recurrent
+network whose genome is one small integer per neuron and whose weights are
+never stored. It is the assembly gene with a thousand domains in place of
+four, ten bits a neuron, and it is Stage 2 of the roadmap at the scale where it
+has a chance. The theory is already published: the strong lottery ticket
+results show that selecting a subnetwork of random weights, never changing a
+value, matches a trained network (Ramanujan, Wortsman, Kembhavi, Farhadi and
+Rastegari, CVPR 2020), and that a large enough random network provably
+contains such a subnetwork for any bounded target (Malach, Yehudai,
+Shalev-Shwartz and Shamir, ICML 2020). noctiluca's own measurement supplies
+the missing premise, that four-level weights lose nothing, so the dynamics
+need the wiring, not the values. The open problem is credit assignment under
+recurrent, noisy fitness, where the feedforward gradient those papers rely on
+does not exist. Two routes to compare on one task: per-neuron evolution under
+the flat 33-start HFF protocol, and a per-neuron per-seed score estimated on
+teacher-forced runs, where the ridge readout gives a gradient to the state,
+with the free run as the judge only. One hazard from the ledger: the
+information lives in the pattern of small values across many neurons, so
+selection should move modules of neurons by seed before it moves neurons.
+
 **Scale.** The laptop figures are one device. Multi-GPU islands make the
 population a function of the number of devices, with the immigration interval
 as the only coupling. Waits on multi-GPU islands.
