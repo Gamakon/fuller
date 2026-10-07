@@ -59,8 +59,7 @@ rewriting. On this architecture we run two kingdoms. Symbolic regression is the
 single-type special case, decoding byte-for-byte as before; on the 133
 ground-truth SRBench problems it recovers 74 laws in 90~s each on one
 development seed, and 79 once the rewriting system generates candidates from the
-near misses --- a count of the same order as AI~Feynman's zero-noise rate on
-that track, obtained under a weaker protocol. The second kingdom evolves regular expressions over four value types on
+near misses. The second kingdom evolves regular expressions over four value types on
 the same engine with no change to variation or selection; a multi-typed detector
 for UK postcodes raises held-out recall from 92.4\% to 97.5\% while rejecting
 every foreign-format negative. The design is the contribution; the numbers are
@@ -470,7 +469,7 @@ identically on host and device and compile to a program that matches nothing.
 \paragraph{Throughput.} Table~\ref{tab:throughput} gives representative
 generation times on an Apple Silicon laptop through the Metal backend of wgpu.
 The move from the original Python engine to the device engine is a factor of
-about thirty at a population of 800; from there the generation time grows
+about 34 at a population of 800; from there the generation time grows
 sub-linearly in population, and the regular-expression kingdom, whose match is
 the heavier kernel, still sustains a quarter of a million individuals per second
 at a population of 2{,}600.
@@ -479,7 +478,8 @@ at a population of 2{,}600.
 \caption{Generation time and throughput, one seed, Apple Silicon via wgpu/Metal.
 Symbolic-regression figures are on Feynman problems with 4{,}000 training rows;
 regular-expression figures are on the postcode task of
-Section~\ref{sec:results-regex}.}
+Section~\ref{sec:results-regex}. Individuals per second are derived from the
+logged generation counts and run times, not measured separately.}
 \label{tab:throughput}
 \small
 \begin{tabular}{@{}lrrr@{}}
@@ -512,10 +512,33 @@ every objective vanishes; fitness is the angular distance from that pole:
 \]
 where the cosine is the normalised energy of the objective vector, so
 $\theta=0$ exactly at the pole and larger the farther the individual lies from
-it. Because the objectives enter one angle, many heterogeneous objectives stay
-comparable without hand-tuned weights, and the angle is computed on the device
-for the whole population each generation. Selection is then tournament
-selection on the scalar $\theta$, lower preferred.
+it (Figure~\ref{fig:hff}). Because the objectives enter one angle, many
+heterogeneous objectives stay comparable without hand-tuned weights, and the
+angle is computed on the device for the whole population each generation.
+Selection is then tournament selection on the scalar $\theta$, lower preferred.
+
+\begin{figure}[t]
+\centering
+\begin{tikzpicture}[scale=1.6, every node/.style={font=\small}]
+  \draw[->] (-1.25,0) -- (1.25,0);
+  \draw[->] (0,-0.15) -- (0,1.35) node[above] {pole $\mathbf{p}_{TN}$};
+  \draw (1,0) arc (0:180:1);
+  \fill (0,1) circle (0.025);
+  \coordinate (A) at ({sin(22)},{cos(22)});
+  \coordinate (B) at ({sin(63)},{cos(63)});
+  \draw[->, thick] (0,0) -- (A) node[above right] {$\mathbf{a}$};
+  \draw[->, thick] (0,0) -- (B) node[right] {$\mathbf{b}$};
+  \draw (0,0.45) arc (90:68:0.45) node[midway, above right, inner sep=1pt] {$\theta_a$};
+  \draw (0,0.7) arc (90:27:0.7) node[pos=0.6, above right, inner sep=1pt] {$\theta_b$};
+\end{tikzpicture}
+\caption{Hyperspherical fitness. Each individual's objective vector is placed on
+the unit sphere; fitness is its angular distance from the pole, where every
+objective is zero. Individual $\mathbf{a}$ (smaller $\theta$) is preferred over
+$\mathbf{b}$ in a tournament. Lower is better.}
+\Description{A unit semicircle with the pole at the top and two objective
+vectors at different angles from it.}
+\label{fig:hff}
+\end{figure}
 
 Three choices in how the objective vector is assembled matter here.
 
@@ -776,7 +799,11 @@ withheld from initialisation and variation. A postcode rule of the form
 bit-exact, and measured, but it is a standalone measurement; scheduling it on
 the immigration interval with a budget small enough for one generation is the
 next increment. A chromosome whose saturation hits the tuple ceiling is detected on a
-partially saturated graph, and the editor does not yet report that it did.
+partially saturated graph, and the editor does not yet report that it did. The
+measurement is on one population at one head length, and the ceiling was set
+from that population's measured growth; both bugs found while building the
+editor appeared only on real population data, never on the hand-built test
+cases, so a different kingdom or a longer head should expect to re-calibrate.
 \item \textbf{Which rewrite families matter on real populations.} The share
 editor's expanding rule was chosen to demonstrate the mechanism. Which families
 expose sharing often enough to be worth their saturation cost is a question for
