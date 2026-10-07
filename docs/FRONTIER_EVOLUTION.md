@@ -254,6 +254,53 @@ individuals that the tournament judges like any other, folded into the
 existing mechanism rather than built beside it. Depends on the editor template
 (built); nothing of this is started.
 
+**DAG-shaped optimisation: evolution plus share-equivalence.** The share editor
+is, stripped of its context, a general instrument: take a forest of trees that
+compute over the same inputs, find the subcomputations that are equal, including
+those equal only after rewriting, and fold them into a DAG when a measured cost
+model says the fold pays. That instrument, with evolution proposing the trees,
+points at three places beyond symbolic regression. All three are envisioned;
+none has a row or a kernel.
+
+- *Evolving GPU kernels.* WGSL compiles through naga, whose intermediate
+  representation already holds each function's expressions as a DAG with a
+  statement tree for control flow, and validates what it is given. A WGSL
+  kingdom's types (scalars, vectors, booleans, integers) fit the geneframe's
+  base types, so the rows are cheap. The safe level is the expression DAG inside
+  a fixed kernel template, which is our engine emitting compiled code instead of
+  interpreting it; the next is kernel structure (workgroup size, tiling,
+  unrolling, memory layout), mostly a parameter search with large gains; the
+  hardest is arbitrary statements, where most mutants fail validation. The
+  honest cost: evaluating a kernel means compiling and timing it, milliseconds
+  each and noisy, which inverts the cost structure the rest of this document
+  rests on; compiled pipelines must be cached and timings taken as medians of
+  repeats, and HFF can carry the timing and its variance as two zero-seeking
+  objectives. Prior work exists in the community: genetic programming for
+  shader simplification (Sitthi-amorn, Modly, Weimer and Lawrence, SIGGRAPH
+  Asia 2011) and Langdon and Harman's genetic improvement of CUDA kernels
+  (EuroGP 2014 and after), both with fitness measured on the GPU.
+- *Datapath and circuit design.* A circuit is a DAG, and equality saturation
+  is already used to optimise register-transfer-level datapaths: Coward,
+  Constantinides and Drane at Intel and Imperial (ARITH 2022, DAC 2023) report
+  up to 71 % area and 77 % delay improvement from e-graph rewriting of RTL.
+  That is the rewriting half of our loop applied to hardware. The evolutionary
+  half, proposing structures the rewriter then shares and the cost model then
+  judges, is the open move, and evolvable hardware is a long-standing GECCO
+  topic. Required: a cost model for area and delay in place of operation
+  counts, and a kingdom whose types are bit widths.
+- *Analytics estates organised around reuse.* An enterprise's reporting is a
+  forest of pipelines, built by chains of people, each recomputing what another
+  already computed in a different spelling. Exact deduplication misses the
+  rewritten equivalents; share-equivalence after saturation finds them. The
+  instrument we built for three-gene chromosomes is the same instrument at the
+  scale of a data estate: assert every pipeline into one e-graph under the
+  rules of the query language, extract the DAG with free reuse, and let a cost
+  model gated on measured execution decide which shared results to materialise.
+  This is the DAG-plan literature the share editor already cites (Neumann and
+  Moerkotte), aimed at the whole estate rather than one query. Required: a SQL
+  kingdom's rows and rule family, and the e-graph tuple budget that the
+  share editor already needed at head length 34, scaled to pipelines.
+
 **Scale.** The laptop figures are one device. Multi-GPU islands make the
 population a function of the number of devices, with the immigration interval
 as the only coupling. Waits on multi-GPU islands.
