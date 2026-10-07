@@ -25,7 +25,7 @@
 //! directly on `egraph_serialize` types) is reused as a model.
 
 use egraph_serialize::{ClassId, EGraph as SerEGraph, Node, NodeId};
-use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 /// A concrete, acyclic extraction result: exactly one winning `NodeId` per
 /// `ClassId` reachable from `roots`, plus the TOTAL joint cost (every
@@ -35,7 +35,7 @@ use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 /// recomputed by a separate pass.
 #[derive(Debug, Clone)]
 pub struct ExtractedDag {
-    pub chosen: HashMap<ClassId, NodeId>,
+    pub chosen: BTreeMap<ClassId, NodeId>,
     pub roots: Vec<ClassId>,
     pub total_cost: u64,
 }
@@ -65,16 +65,51 @@ fn op_cost(node: &Node) -> Option<u64> {
     Some(if node.op == "Num" || node.op == "Var" || node.children.is_empty() { 0 } else { 1 })
 }
 
-/// One e-class's current best candidate during a round: which node wins,
-/// and the FULL set of classes reachable through it (own class included)
-/// — the reachable SET, not a tree-summed cost, is what makes reuse free:
-/// a class counted in two different candidates' reachable sets still only
-/// contributes its own op_cost once to a joint total built from the union
-/// of those sets.
+/// One e-class's current best candidate during a round: which node wins.
+///
+/// Deliberately does NOT cache a "reachable set" alongside the node.
+/// An earlier version did, and that was a real, reproducible bug: a
+/// candidate built while some child's `best` entry still pointed at an
+/// OLDER, smaller-reach choice keeps that stale, smaller reach forever —
+/// nothing re-derives it later unless the STALE candidate's RANK also
+/// changes, and rank is a scalar cost. A literal (`Num`/`Var` payload,
+/// `f64`/`String` sort) costs exactly 0, so adding one to a reachable set
+/// changes NOTHING about rank — the parent is never re-examined, and its
+/// cached reach silently diverges from the true descendant set. Confirmed
+/// directly: a repeated `Num` literal shared across two genes triggered
+/// this in ~1 of 5-20 runs (order-dependent on which candidate settles
+/// first), producing a `chosen` map whose node's own child class was
+/// never itself a key — `materialize` then had a dangling reference.
+///
+/// The fix: reach is never cached. It is computed FRESH, by DFS over the
+/// settled `best` map, every time it's needed (`reach_from`, below) —
+/// correct by construction, since it only ever reads the FINAL state of
+/// each class's winner, never an intermediate snapshot.
 #[derive(Clone, Debug)]
 struct Candidate {
     node: NodeId,
-    reachable: BTreeSet<ClassId>,
+}
+
+/// DFS the set of classes reachable from `start`'s chosen node, by
+/// repeatedly resolving each child's class and following THAT class's
+/// CURRENT entry in `best` — never a cached/snapshotted set. `start`
+/// itself must already have a `best` entry (the caller's responsibility;
+/// returns `Err` naming the exact missing class otherwise, never
+/// silently stops early).
+fn reach_from(ser: &SerEGraph, best: &BTreeMap<ClassId, Candidate>, start: &ClassId) -> Result<BTreeSet<ClassId>, String> {
+    let mut reachable = BTreeSet::new();
+    let mut stack = vec![start.clone()];
+    while let Some(cid) = stack.pop() {
+        if !reachable.insert(cid.clone()) {
+            continue;
+        }
+        let cand = best.get(&cid).ok_or_else(|| format!("reach_from: class {cid} has no settled candidate (reachable from {start})"))?;
+        let node = &ser.nodes[&cand.node];
+        for child in &node.children {
+            stack.push(ser.nodes[child].eclass.clone());
+        }
+    }
+    Ok(reachable)
 }
 
 /// Bottom-up worklist (Bellman-Ford style — e-graphs built under
@@ -108,17 +143,17 @@ struct Candidate {
 /// different parent edges into the SAME class can carry two DIFFERENT
 /// `NodeId`s. Re-resolving through `.eclass` every time sidesteps this
 /// entirely; trusting the raw `NodeId` would not.
-fn bottom_up_pass(ser: &SerEGraph, roots: &[ClassId], root_reach: &HashMap<ClassId, BTreeSet<ClassId>>) -> Result<HashMap<ClassId, Candidate>, String> {
-    let mut best: HashMap<ClassId, Candidate> = HashMap::new();
+fn bottom_up_pass(ser: &SerEGraph, roots: &[ClassId], root_reach: &BTreeMap<ClassId, BTreeSet<ClassId>>) -> Result<BTreeMap<ClassId, Candidate>, String> {
+    let mut best: BTreeMap<ClassId, Candidate> = BTreeMap::new();
 
     // Reverse index: ClassId -> every NodeId that has at least one child
     // resolving to that class (via `.eclass`, never the raw `children[i]`).
-    let mut depends_on: HashMap<ClassId, Vec<NodeId>> = HashMap::new();
+    let mut depends_on: BTreeMap<ClassId, Vec<NodeId>> = BTreeMap::new();
     for (nid, node) in &ser.nodes {
         if node.subsumed {
             continue;
         }
-        let mut seen_child_classes: HashSet<ClassId> = HashSet::new();
+        let mut seen_child_classes: BTreeSet<ClassId> = BTreeSet::new();
         for child in &node.children {
             let cid = ser.nodes[child].eclass.clone();
             if seen_child_classes.insert(cid.clone()) {
@@ -130,7 +165,7 @@ fn bottom_up_pass(ser: &SerEGraph, roots: &[ClassId], root_reach: &HashMap<Class
     // Collect every class reachable from `roots` (BFS over classes, via
     // `.eclass` on every member node's children) -- the worklist only
     // ever needs to consider classes in this set.
-    let mut reachable_classes: HashSet<ClassId> = HashSet::new();
+    let mut reachable_classes: BTreeSet<ClassId> = BTreeSet::new();
     let mut frontier: VecDeque<ClassId> = roots.iter().cloned().collect();
     while let Some(cid) = frontier.pop_front() {
         if !reachable_classes.insert(cid.clone()) {
@@ -150,34 +185,36 @@ fn bottom_up_pass(ser: &SerEGraph, roots: &[ClassId], root_reach: &HashMap<Class
         }
     }
 
-    fn try_candidate(ser: &SerEGraph, best: &HashMap<ClassId, Candidate>, node_id: &NodeId) -> Option<Candidate> {
+    // Build a candidate for `node_id`, checking only that EVERY child's
+    // class already has a settled `best` entry -- NOT caching reach (see
+    // `Candidate`'s doc for why that was the actual bug). The cycle guard
+    // is now a fresh DFS (`reach_from`) from each ready child, checked
+    // for `own_class`, rather than a cached-set membership test.
+    let try_candidate = |best: &BTreeMap<ClassId, Candidate>, node_id: &NodeId| -> Option<Candidate> {
         let node = &ser.nodes[node_id];
         if node.subsumed {
             return None;
         }
         let own_class = node.eclass.clone();
-        let mut reachable: BTreeSet<ClassId> = BTreeSet::new();
-        reachable.insert(own_class.clone());
-        let mut child_classes: HashSet<ClassId> = HashSet::new();
+        let mut child_classes: BTreeSet<ClassId> = BTreeSet::new();
         for child in &node.children {
             let cid = ser.nodes[child].eclass.clone();
             if !child_classes.insert(cid.clone()) {
                 continue;
             }
-            let child_best = best.get(&cid)?; // not ready yet: this node's candidate can't be built this round
-            reachable.extend(child_best.reachable.iter().cloned());
-        }
-        // A cycle through already-decided classes: a child's reachable
-        // set already contained this node's own class before we added it
-        // ourselves. Never choose it.
-        if !node.children.is_empty() {
-            let would_recount = node.children.iter().filter_map(|c| best.get(&ser.nodes[c].eclass)).any(|cand| cand.reachable.contains(&own_class));
-            if would_recount {
-                return None;
+            if !best.contains_key(&cid) {
+                return None; // not ready yet: this node's candidate can't be built this round
             }
         }
-        Some(Candidate { node: node_id.clone(), reachable })
-    }
+        // Cycle check: does DFS from any ready child reach own_class?
+        for cid in &child_classes {
+            let child_reach = reach_from(ser, best, cid).ok()?;
+            if child_reach.contains(&own_class) {
+                return None; // a cycle through already-decided classes -- never choose it
+            }
+        }
+        Some(Candidate { node: node_id.clone() })
+    };
 
     // Seed: every leaf node (Num/Var, zero children) is an immediate
     // candidate for its class.
@@ -189,9 +226,15 @@ fn bottom_up_pass(ser: &SerEGraph, roots: &[ClassId], root_reach: &HashMap<Class
             if node.subsumed || !node.children.is_empty() {
                 continue;
             }
-            if let Some(cand) = try_candidate(ser, &best, nid) {
-                let new_rank = rank(ser, &best, &cand, cid, root_reach);
-                let better = best.get(cid).map(|b| cmp_candidates(new_rank, &cand.node, rank(ser, &best, b, cid, root_reach), &b.node)).unwrap_or(true);
+            if let Some(cand) = try_candidate(&best, nid) {
+                let new_rank = rank(ser, &best, &cand, cid, root_reach).ok_or_else(|| format!("rank: class {cid} candidate {} has an unresolvable reach -- should be impossible once try_candidate accepted it", cand.node))?;
+                let better = match best.get(cid) {
+                    Some(b) => {
+                        let old_rank = rank(ser, &best, b, cid, root_reach).ok_or_else(|| format!("rank: class {cid}'s own settled candidate {} has an unresolvable reach", b.node))?;
+                        cmp_candidates(new_rank, &cand.node, old_rank, &b.node)
+                    }
+                    None => true,
+                };
                 if better {
                     best.insert(cid.clone(), cand);
                 }
@@ -200,19 +243,32 @@ fn bottom_up_pass(ser: &SerEGraph, roots: &[ClassId], root_reach: &HashMap<Class
         worklist.push_back(cid.clone());
     }
 
+    // Insurance, not a known-reachable case: converts any future
+    // non-termination (a correctness bug neither the fresh-reach fix nor
+    // this pass's own logic rules out, by proof rather than just by
+    // testing) into a named `Err`, never another unbounded hang.
+    let max_pops = 100 * reachable_classes.len().max(1);
+    let mut pops = 0usize;
     while let Some(cid) = worklist.pop_front() {
+        pops += 1;
+        if pops > max_pops {
+            return Err(format!("bottom_up_pass: worklist exceeded {max_pops} pops ({} reachable classes) -- likely non-termination, not expected input", reachable_classes.len()));
+        }
         let Some(dependents) = depends_on.get(&cid).cloned() else { continue };
         for nid in dependents {
             let target_class = ser.nodes[&nid].eclass.clone();
             if !reachable_classes.contains(&target_class) {
                 continue;
             }
-            if let Some(cand) = try_candidate(ser, &best, &nid) {
-                let new_rank = rank(ser, &best, &cand, &target_class, root_reach);
-                let better = best
-                    .get(&target_class)
-                    .map(|b| cmp_candidates(new_rank, &cand.node, rank(ser, &best, b, &target_class, root_reach), &b.node))
-                    .unwrap_or(true);
+            if let Some(cand) = try_candidate(&best, &nid) {
+                let new_rank = rank(ser, &best, &cand, &target_class, root_reach).ok_or_else(|| format!("rank: class {target_class} candidate {} has an unresolvable reach -- should be impossible once try_candidate accepted it", cand.node))?;
+                let better = match best.get(&target_class) {
+                    Some(b) => {
+                        let old_rank = rank(ser, &best, b, &target_class, root_reach).ok_or_else(|| format!("rank: class {target_class}'s own settled candidate {} has an unresolvable reach", b.node))?;
+                        cmp_candidates(new_rank, &cand.node, old_rank, &b.node)
+                    }
+                    None => true,
+                };
                 if better {
                     best.insert(target_class.clone(), cand);
                     worklist.push_back(target_class);
@@ -239,7 +295,7 @@ fn bottom_up_pass(ser: &SerEGraph, roots: &[ClassId], root_reach: &HashMap<Class
 /// of `k` could be entirely a consequence of `c`'s OWN current choice,
 /// which is circular — exactly the bug a flat global `covered` union had
 /// before this function existed).
-fn is_free_to(root_reach: &HashMap<ClassId, BTreeSet<ClassId>>, k: &ClassId, c: &ClassId) -> bool {
+fn is_free_to(root_reach: &BTreeMap<ClassId, BTreeSet<ClassId>>, k: &ClassId, c: &ClassId) -> bool {
     root_reach.values().any(|reach| reach.contains(k) && !reach.contains(c))
 }
 
@@ -250,26 +306,29 @@ fn is_free_to(root_reach: &HashMap<ClassId, BTreeSet<ClassId>>, k: &ClassId, c: 
 /// with `root_reach` empty (round 0) nothing is free yet, identical to
 /// plain free-reuse cost.
 ///
-/// CRITICAL: every class in `cand.reachable` other than `target_class`
-/// MUST be costed via `best`'s CURRENT winning node for that class, never
-/// via `ser.classes()[cid].nodes.first()` — a class can have more than
-/// one member (that is the entire reason this module exists), and
-/// `nodes.first()` returns an ARBITRARY one, not necessarily the one any
-/// candidate actually depends on. `target_class` itself is costed via
-/// `cand.node` (the node THIS candidate represents), since `best` has not
-/// been updated with it yet at the point this is called. Every other
-/// class in `reachable` is guaranteed to already have a `best` entry by
-/// the time this runs (`try_candidate` only includes a child's reachable
-/// set after confirming `best.get(&cid)` succeeded).
-fn rank(ser: &SerEGraph, best: &HashMap<ClassId, Candidate>, cand: &Candidate, target_class: &ClassId, root_reach: &HashMap<ClassId, BTreeSet<ClassId>>) -> u64 {
-    cand.reachable
-        .iter()
-        .filter(|cid| *cid == target_class || !is_free_to(root_reach, cid, target_class))
-        .filter_map(|cid| {
-            let nid = if cid == target_class { &cand.node } else { &best.get(cid)?.node };
-            op_cost(&ser.nodes[nid])
-        })
-        .sum()
+/// Reach is computed FRESH here (`reach_from`), never read from a cache
+/// on `cand` — `cand` doesn't carry one (see `Candidate`'s doc for why a
+/// cached reach was the actual bug this module had). `target_class`
+/// itself is temporarily inserted into a scratch `best` so `reach_from`
+/// can walk through it consistently with every other class's CURRENT
+/// settled entry. Returns `None` only if some class in the reach has no
+/// settled entry at all (an invariant violation, named by `reach_from`'s
+/// own error) — propagated as `None` here (via `rank`'s `?` caller sites)
+/// rather than silently excluded from the cost sum, which is exactly the
+/// "silent degradation" this module no longer does anywhere.
+fn rank(ser: &SerEGraph, best: &BTreeMap<ClassId, Candidate>, cand: &Candidate, target_class: &ClassId, root_reach: &BTreeMap<ClassId, BTreeSet<ClassId>>) -> Option<u64> {
+    let mut scratch = best.clone();
+    scratch.insert(target_class.clone(), cand.clone());
+    let reach = reach_from(ser, &scratch, target_class).ok()?;
+    let mut total = 0u64;
+    for cid in &reach {
+        if cid != target_class && is_free_to(root_reach, cid, target_class) {
+            continue;
+        }
+        let nid = &scratch.get(cid)?.node;
+        total += op_cost(&ser.nodes[nid])?;
+    }
+    Some(total)
 }
 
 /// Deterministic candidate comparison: strictly lower rank wins; on a
@@ -280,6 +339,23 @@ fn cmp_candidates(new_rank: u64, new_node: &NodeId, old_rank: u64, old_node: &No
 }
 
 const MAX_ROUNDS: usize = 8;
+
+/// Saturation and extraction's shared size/iteration budget — exposed so
+/// a caller on a tight beat (phylu's generation-loop pump) can pass a
+/// smaller budget than the generous defaults measurement/demo callers
+/// use. `extract::maximal_shared_saturated` takes one of these (see its
+/// doc); the saturation half (`SHARE_ITERS`/`SHARE_MAX_TUPLES`-shaped
+/// fields) lives there since this module has no egglog dependency of its
+/// own -- only `MAX_ROUNDS` (the fixpoint's own round cap) belongs here.
+pub struct ExtractionBudget {
+    pub max_rounds: usize,
+}
+
+impl Default for ExtractionBudget {
+    fn default() -> Self {
+        ExtractionBudget { max_rounds: MAX_ROUNDS }
+    }
+}
 
 /// MARGINAL-COST FIXPOINT, jointly over ALL roots — see this module's doc
 /// and `docs/PLAN_saturated_share_equivalence_v1.md` §2 for why plain
@@ -294,31 +370,50 @@ const MAX_ROUNDS: usize = 8;
 /// This is explicitly a HEURISTIC, not a provably-terminating fixpoint:
 /// pricing each root against the others' current picks can oscillate
 /// rather than settle, so this keeps the best `total_cost` seen across
-/// all rounds (not just the last), caps at `MAX_ROUNDS`, and stops early
-/// if a round's per-root reach set repeats one already seen (a detected
-/// cycle, not just "unchanged from last round").
+/// all rounds (not just the last), caps at `budget.max_rounds`, and stops
+/// early if a round's per-root reach set repeats one already seen (a
+/// detected cycle, not just "unchanged from last round").
+///
+/// `covered`/`chosen` for the WINNING round are derived by a FRESH
+/// `reach_from` walk per root over that round's OWN settled `best` map
+/// (`pass`), immediately, never by caching a `reachable` set computed
+/// mid-pass and never by reading any OTHER round's data — this is the
+/// fix for the real bug a cached-reachable-set design had (see
+/// `Candidate`'s doc): the walk only ever reads one fully-settled `best`
+/// map, so it cannot disagree with itself.
 pub fn extract_shared_dag(ser: &SerEGraph, roots: &[ClassId]) -> Result<ExtractedDag, String> {
-    let mut root_reach: HashMap<ClassId, BTreeSet<ClassId>> = HashMap::new();
-    let mut seen_root_reach: HashSet<Vec<(ClassId, BTreeSet<ClassId>)>> = HashSet::new();
-    let mut best_total: Option<(u64, HashMap<ClassId, NodeId>)> = None;
+    extract_shared_dag_with_budget(ser, roots, &ExtractionBudget::default())
+}
 
-    for _round in 0..MAX_ROUNDS {
+/// [`extract_shared_dag`] with an explicit [`ExtractionBudget`] instead
+/// of the default.
+pub fn extract_shared_dag_with_budget(ser: &SerEGraph, roots: &[ClassId], budget: &ExtractionBudget) -> Result<ExtractedDag, String> {
+    let mut root_reach: BTreeMap<ClassId, BTreeSet<ClassId>> = BTreeMap::new();
+    let mut seen_root_reach: BTreeSet<Vec<(ClassId, BTreeSet<ClassId>)>> = BTreeSet::new();
+    let mut best_total: Option<(u64, BTreeMap<ClassId, NodeId>)> = None;
+
+    for _round in 0..budget.max_rounds {
         let pass = bottom_up_pass(ser, roots, &root_reach)?;
-        let mut new_root_reach: HashMap<ClassId, BTreeSet<ClassId>> = HashMap::new();
+        let mut new_root_reach: BTreeMap<ClassId, BTreeSet<ClassId>> = BTreeMap::new();
         let mut covered: BTreeSet<ClassId> = BTreeSet::new();
-        let mut chosen: HashMap<ClassId, NodeId> = HashMap::new();
         for root in roots {
-            let cand = pass.get(root).ok_or_else(|| format!("root class {root} has no candidate"))?;
-            new_root_reach.insert(root.clone(), cand.reachable.clone());
-            covered.extend(cand.reachable.iter().cloned());
+            if !pass.contains_key(root) {
+                return Err(format!("root class {root} has no candidate"));
+            }
+            let reach = reach_from(ser, &pass, root)?;
+            new_root_reach.insert(root.clone(), reach.clone());
+            covered.extend(reach);
         }
         // Record every reachable class's chosen node (not just roots'
         // own direct candidate), so `materialize` can rewrite every
-        // child edge, not just root edges.
+        // child edge, not just root edges. Every class in `covered` came
+        // from `reach_from` walking `pass` itself, so `pass[cid]` is
+        // guaranteed to exist -- no silent skip, a real bug if it ever
+        // doesn't.
+        let mut chosen: BTreeMap<ClassId, NodeId> = BTreeMap::new();
         for cid in &covered {
-            if let Some(cand) = pass.get(cid) {
-                chosen.insert(cid.clone(), cand.node.clone());
-            }
+            let cand = pass.get(cid).ok_or_else(|| format!("class {cid} was reached by reach_from but has no entry in this round's settled best map -- should be impossible"))?;
+            chosen.insert(cid.clone(), cand.node.clone());
         }
         let total_cost: u64 = covered.iter().filter_map(|cid| chosen.get(cid)).filter_map(|nid| op_cost(&ser.nodes[nid])).sum();
 
@@ -327,11 +422,7 @@ pub fn extract_shared_dag(ser: &SerEGraph, roots: &[ClassId]) -> Result<Extracte
             best_total = Some((total_cost, chosen));
         }
 
-        let snapshot: Vec<(ClassId, BTreeSet<ClassId>)> = {
-            let mut v: Vec<_> = new_root_reach.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-            v.sort_by(|a, b| a.0.cmp(&b.0));
-            v
-        };
+        let snapshot: Vec<(ClassId, BTreeSet<ClassId>)> = new_root_reach.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
         if !seen_root_reach.insert(snapshot) {
             break; // cycle detected: this per-root reach set was already tried
         }
@@ -352,30 +443,43 @@ pub fn extract_shared_dag(ser: &SerEGraph, roots: &[ClassId]) -> Result<Extracte
 /// `extract::shared_sites_in` walks; one member per class makes
 /// `class.nodes.first()` unambiguous by construction, so no further
 /// `ClassId`-rekeying is needed downstream.
-pub fn materialize(ser: &SerEGraph, extracted: &ExtractedDag) -> SerEGraph {
+pub fn materialize(ser: &SerEGraph, extracted: &ExtractedDag) -> Result<SerEGraph, String> {
     let mut out = SerEGraph::default();
     for (cid, nid) in &extracted.chosen {
         let node = &ser.nodes[nid];
-        let new_children: Vec<NodeId> = node
-            .children
-            .iter()
-            .map(|c| {
-                let child_class = &ser.nodes[c].eclass;
-                extracted.chosen.get(child_class).cloned().unwrap_or_else(|| c.clone())
-            })
-            .collect();
+        let mut new_children: Vec<NodeId> = Vec::with_capacity(node.children.len());
+        for c in &node.children {
+            let child_class = &ser.nodes[c].eclass;
+            // NEVER fall back to the original (un-rewritten) child id: a
+            // class not present in `extracted.chosen` here is a real
+            // invariant violation (every class in a chosen node's own
+            // `reachable` set must itself have been chosen -- see
+            // `try_candidate`'s unconditional `reachable.extend` from
+            // every ready child) and falling back would silently emit a
+            // dangling reference into a node `out` never inserts, which
+            // is exactly the bug a prior version of this function had:
+            // it panicked or errored much later, far from the real
+            // cause, inside `shared_sites_in`/`render_math` instead of
+            // here where the actual violation is visible.
+            let chosen_child = extracted
+                .chosen
+                .get(child_class)
+                .ok_or_else(|| format!("materialize: class {child_class} (child of chosen node {nid} for class {cid}) was never chosen -- a real bug in extract_shared_dag's reachable-set bookkeeping, not expected input"))?;
+            new_children.push(chosen_child.clone());
+        }
         out.add_node(
             nid.clone(),
             Node { op: node.op.clone(), children: new_children, eclass: cid.clone(), cost: node.cost, subsumed: false },
         );
     }
     out.root_eclasses = extracted.roots.clone();
-    out
+    Ok(out)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::{HashMap, HashSet};
 
     fn leaf(id: &str, class: &str, op: &str) -> (NodeId, Node) {
         (id.into(), Node { op: op.to_string(), children: vec![], eclass: class.into(), cost: egraph_serialize::Cost::new(1.0).unwrap(), subsumed: false })

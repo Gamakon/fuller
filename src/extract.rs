@@ -1617,8 +1617,34 @@ pub(crate) fn shared_sites_in(ser: &egraph_serialize::EGraph, min_ops: usize) ->
 }
 
 const SHARE_ITERS: u32 = 40; // TOTAL iteration cap across all SHARE_CHUNK-sized chunks, same convention as DENOISE_ITERS
-const SHARE_CHUNK: u32 = 5; // iterations per chunk, between which the num_tuples() blowup guard checks
-const SHARE_MAX_TUPLES: usize = 50_000; // provisional ceiling -- revisit after real-population mining (see docs/PLAN_saturated_share_equivalence_v1.md §6)
+const SHARE_CHUNK: u32 = 1; // MUST be 1 -- see docs/PLAN_saturated_share_equivalence_v1.md §1 for the measured blowup this guards against.
+const SHARE_MAX_TUPLES: usize = 5_000; // measured, not provisional -- see the plan doc §1: per-iteration cost is quadratic in tuple count, so the cap must bound what the CROSSING iteration costs, not just final graph size.
+
+/// Saturation's size/iteration budget, exposed so a caller on a tight
+/// beat (phylu's generation-loop pump measured ~0.42s/chromosome at the
+/// defaults, dominated by saturation, not extraction) can pass a smaller
+/// budget than the generous defaults a measurement/demo caller uses.
+/// `max_rounds` is `extract_dag::ExtractionBudget`'s own field (the
+/// marginal-cost fixpoint's round cap) — bundled here so one struct
+/// covers the whole call's cost knobs, not two separate ones a caller
+/// has to keep in sync.
+pub struct SaturationBudget {
+    pub share_iters: u32,
+    pub share_chunk: u32,
+    pub share_max_tuples: usize,
+    pub max_rounds: usize,
+}
+
+impl Default for SaturationBudget {
+    fn default() -> Self {
+        SaturationBudget {
+            share_iters: SHARE_ITERS,
+            share_chunk: SHARE_CHUNK,
+            share_max_tuples: SHARE_MAX_TUPLES,
+            max_rounds: crate::extract_dag::ExtractionBudget::default().max_rounds,
+        }
+    }
+}
 
 /// `docs/PLAN_saturated_share_equivalence_v1.md` §5 steps 1-3: assert all
 /// genes into one e-graph, saturate with the same bounded
@@ -1647,6 +1673,14 @@ const SHARE_MAX_TUPLES: usize = 50_000; // provisional ceiling -- revisit after 
 /// hit first — total iterations reaching `SHARE_ITERS`, or the tuple
 /// ceiling exceeded.
 pub fn maximal_shared_saturated(genes: &[String], min_ops: usize) -> Result<(Vec<Match>, u64, Vec<String>), String> {
+    maximal_shared_saturated_with_budget(genes, min_ops, &SaturationBudget::default())
+}
+
+/// [`maximal_shared_saturated`] with an explicit [`SaturationBudget`]
+/// instead of the generous defaults — for a caller on a tight beat
+/// (phylu's generation-loop pump) that needs a smaller saturation/
+/// extraction budget than a measurement/demo call uses.
+pub fn maximal_shared_saturated_with_budget(genes: &[String], min_ops: usize, budget: &SaturationBudget) -> Result<(Vec<Match>, u64, Vec<String>), String> {
     use egglog::prelude::exprs as fs_exprs;
     use egglog::{EGraph as FsEGraph, SerializeConfig};
 
@@ -1673,13 +1707,13 @@ pub fn maximal_shared_saturated(genes: &[String], min_ops: usize) -> Result<(Vec
         .map_err(|e| format!("combined ruleset: {e}"))?;
 
     let mut iters_run = 0u32;
-    while iters_run < SHARE_ITERS {
-        let chunk = SHARE_CHUNK.min(SHARE_ITERS - iters_run);
+    while iters_run < budget.share_iters {
+        let chunk = budget.share_chunk.min(budget.share_iters - iters_run);
         egraph
             .parse_and_run_program(None, &format!("(run-schedule (repeat {chunk} (run share_all)))\n"))
             .map_err(|e| format!("saturate: {e}"))?;
         iters_run += chunk;
-        if egraph.num_tuples() > SHARE_MAX_TUPLES {
+        if egraph.num_tuples() > budget.share_max_tuples {
             break; // planned early stop: keep whatever has been proven so far
         }
     }
@@ -1697,8 +1731,9 @@ pub fn maximal_shared_saturated(genes: &[String], min_ops: usize) -> Result<(Vec
     });
     let ser = out.egraph;
     let roots: Vec<egraph_serialize::ClassId> = ser.root_eclasses.clone();
-    let extracted = crate::extract_dag::extract_shared_dag(&ser, &roots)?;
-    let materialized = crate::extract_dag::materialize(&ser, &extracted);
+    let extraction_budget = crate::extract_dag::ExtractionBudget { max_rounds: budget.max_rounds };
+    let extracted = crate::extract_dag::extract_shared_dag_with_budget(&ser, &roots, &extraction_budget)?;
+    let materialized = crate::extract_dag::materialize(&ser, &extracted)?;
     let matches = shared_sites_in(&materialized, min_ops);
 
     // Render each gene root's CHOSEN (post-extraction) form back to Math
@@ -1924,6 +1959,74 @@ mod tests {
         let gene = r#"(Add (Mul (Var "x0") (Num 2.0)) (Sub (Var "x1") (Num -3.5)))"#.to_string();
         let (_matches, _cost, forms) = maximal_shared_saturated(std::slice::from_ref(&gene), 1).expect("maximal_shared_saturated");
         assert_eq!(forms, vec![gene], "a gene with no rewrite opportunity must render back to its own exact input text");
+    }
+
+    /// REGRESSION, a real bug found by phylu running `maximal_shared_
+    /// saturated` repeatedly over a real 800-chromosome population:
+    /// intermittent (order-dependent, ~1 in 3-20 calls) `Err` or hard
+    /// panic on a gene set containing a REPEATED numeric literal across
+    /// two genes (`8.8541878128e-12` here, matching the real repro
+    /// exactly). Root cause: `extract_dag::Candidate` used to cache a
+    /// "reachable set" alongside each class's winning node; a parent
+    /// candidate built while a child's `best` entry still pointed at an
+    /// OLDER (smaller) choice kept that STALE, smaller reach forever,
+    /// because nothing re-examines a candidate whose RANK doesn't
+    /// change — and a zero-cost literal class (`f64`/`String` sort)
+    /// changes nothing about rank when it's added to a reach set. Fixed
+    /// by never caching reach: it is now computed fresh, by DFS over the
+    /// FINAL settled `best` map, every time it's needed. Looping many
+    /// times is the only way to catch this -- a single call succeeds
+    /// most of the time, which is exactly what made it hard to find.
+    #[test]
+    fn repeated_literal_across_genes_never_produces_a_dangling_reference() {
+        let genes = vec![
+            r#"(Add (Num 8.8541878128e-12) (Num 9.80665))"#.to_string(),
+            r#"(Var "x_0")"#.to_string(),
+            r#"(Add (Num 8.8541878128e-12) (Add (Mul (Num 8.8541878128e-12) (Mul (Num 6.62607015e-34) (ProtectedDiv (ProtectedInv (Num 9.80665)) (Var "x_1")))) (Num 1.054571817e-34)))"#
+                .to_string(),
+        ];
+        for attempt in 0..200 {
+            maximal_shared_saturated(&genes, 1).unwrap_or_else(|e| panic!("attempt {attempt}: {e}"));
+        }
+    }
+
+    /// REGRESSION, a second real bug found on the SAME real population:
+    /// a deeply-nested real gene (`ProtectedExp`/`ProtectedAsin`/`Tanh`
+    /// chains several levels deep) combined with `share`'s reverse
+    /// direction and `algebra`'s commutativity/associativity makes the
+    /// saturated e-graph grow EXPONENTIALLY, roughly 3-4x per iteration
+    /// at the tail (measured directly: 5,579 -> 21,247 tuples in one
+    /// iteration, 206ms -> 3.8s). Per-iteration COST is quadratic in
+    /// tuple count, so the original `SHARE_MAX_TUPLES = 50_000` guard
+    /// could not fire in time: by the time an iteration's tuple count
+    /// crossed 50,000, THAT iteration had already cost tens of seconds
+    /// and multiple GB -- the check runs after the damage, by
+    /// construction, no matter how fine the chunking. Fixed by lowering
+    /// the cap to 5,000 (keeping `SHARE_CHUNK = 1`), so the CROSSING
+    /// iteration's own cost stays bounded (confirmed: this exact case
+    /// now completes in well under a second). This test's generous 10s
+    /// bound exists to catch a FUTURE regression of the cap, not to
+    /// assert a tight performance number.
+    #[test]
+    fn exponential_saturation_growth_stops_at_the_tuple_cap_in_bounded_time() {
+        let genes = vec![
+            r#"(Add (Var "x_0") (Var "x_1"))"#.to_string(),
+            r#"(ProtectedExp (ProtectedAsin (Abs (Tanh (Sub (Var "x_2") (Mul (Var "x_3") (ProtectedInv (Tanh (Mul (ProtectedExp (ProtectedSqrt (Var "x_0"))) (Tanh (ProtectedSqrt (ProtectedSqrt (Mul (Sub (Var "x_3") (Var "x_2")) (ProtectedDiv (Abs (Add (ProtectedLog (ProtectedAcos (Mul (Num -5.0) (Sub (Var "x_3") (Var "x_3"))))) (Mul (Var "x_0") (Var "x_0")))) (Var "x_1")))))))))))))))"#
+                .to_string(),
+            r#"(Add (Var "x_0") (Add (Mul (Tanh (Var "x_3")) (Mul (ProtectedDiv (Neg (Cos (ProtectedDiv (Add (Var "x_1") (Var "x_1")) (Var "x_0")))) (Var "x_1")) (Pow3 (ProtectedLog (Var "x_0"))))) (Num -37.0)))"#
+                .to_string(),
+        ];
+        // 589ms in a release build; debug builds measured ~20s for this
+        // same case (the quadratic per-iteration cost this test guards
+        // against is CPU-bound, so the usual debug/release gap applies
+        // in full) -- 60s is generous for either profile while still
+        // catching a real regression of the cap (which hung for minutes
+        // and consumed double-digit GB before this fix).
+        let start = std::time::Instant::now();
+        let (_matches, _cost, forms) = maximal_shared_saturated(&genes, 1).expect("maximal_shared_saturated");
+        let elapsed = start.elapsed();
+        assert!(elapsed < std::time::Duration::from_secs(60), "took {elapsed:?} -- the tuple cap regressed; this used to hang for minutes before the fix");
+        assert_eq!(forms.len(), 3);
     }
 
     fn rows(var: &str, vals: &[f64]) -> Vec<Vec<(String, f64)>> {
