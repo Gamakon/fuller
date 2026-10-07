@@ -301,6 +301,32 @@ none has a row or a kernel.
   kingdom's rows and rule family, and the e-graph tuple budget that the
   share editor already needed at head length 34, scaled to pipelines.
 
+**Dagnetic: the Spark hypothesis stated.** *(Envisioned; the domain is
+registered.)* An enterprise's Spark SQL views are a registry of explain plans.
+An individual is a chromosome whose genes select plans from that registry and
+combine them; the view identifiers are typed terminals of type Relation, the
+head holds the share and join operators, and a shared intermediate is a gene
+reference the share editor already writes. Selection of *which* views to pull
+together and *how* to share them is therefore one search, exactly as the
+regular-expression kingdom's constant slot selects which field a gene matches.
+Mutation is of two sound kinds: the share editor's fold, which exposes
+equivalence after rewriting under relational rules, and Catalyst-legal
+rewrites of each plan, including join order. Fitness is measured, not
+estimated: the combined DAG is run on sampled data and scored under HFF on
+time, shuffle bytes, and the count of shared objects, each weighted by how
+often the workload runs those views, so that the engine is pulled toward
+high-value savings rather than large ones. A shared object the search finds
+becomes a new registry entry, which is the replacement dictionary learning
+across runs. In a population, this process is evolution; its output is the set
+of intermediates worth materialising, with the measured saving attached.
+Catalyst already deduplicates exact repeats within one query and does nothing
+across queries; equality saturation over relational algebra is established
+(SPORES, VLDB 2020); a genetic algorithm already orders large joins in
+PostgreSQL. What is new is the three together over the whole estate. The cost
+structure is the slow kingdom's: a fitness evaluation is a Spark job on a
+sample, so populations are small and the payoff is counted in cluster hours,
+not in individuals a second.
+
 **Scale.** The laptop figures are one device. Multi-GPU islands make the
 population a function of the number of devices, with the immigration interval
 as the only coupling. Waits on multi-GPU islands.
