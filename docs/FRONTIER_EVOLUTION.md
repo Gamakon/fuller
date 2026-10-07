@@ -133,6 +133,59 @@ typing off has not been done.
 
 ---
 
+## 2a. The second engine: noctiluca (Measured)
+
+Frontier evolution is not one codebase. noctiluca (`~/Dev/gamakon/noctiluca-dev`,
+four draft papers and a findings ledger) is an echo state network library in
+which no weight matrix is stored: every connection and weight is a pure
+function of its address under one hash primitive, generated when used and
+discarded. The construction is UltraDim's formula-mode projection applied to a
+reservoir's own recurrent wiring. Measured on one Apple M3 laptop: a
+million-neuron reservoir builds in 0.43 s and occupies 188 MB; 25 million
+neurons run in 2.4 GB; a 262,144-neuron reservoir learns next-token prediction
+with the whole loop resident on the GPU. It is Rust on wgpu, like phylu.
+
+What makes it a second instance of the same idea rather than a neighbour:
+
+- **The specification text is the genome.** A network is a few lines of text;
+  its hash is its identity; an edit to the text is an edit to the network at
+  no cost, because nothing is stored to rebuild. A search over networks is a
+  search over text, and in 3,408 evaluations across three searches no genome
+  failed to build. Evolution found heterogeneous modules no one had written.
+- **A gene can be carried by one neuron.** The assembly line gives k neurons
+  each a value naming which of four domains its wiring is drawn from;
+  mutating one gene rewires one neuron and nothing else. The companion note
+  maps this onto Holland's constrained generating procedures: a tag is a hash
+  key, matching is a fetch, and a sliding-offset gene makes neighbouring
+  genomes neighbouring networks.
+- **Three swept hyperparameters became formulas.** Projecting the state onto
+  a sphere fixes every signal's size in advance, so radius, input gain and
+  fan-in follow from the geometry up to one constant each. The search treats
+  them as heuristics, never genes, which is the same discipline as HFF's
+  refusal to tune weights.
+- **Noisy fitness is handled by a ladder of islands.** Because free-running
+  survival varies widely across start points, island 0 scores a candidate on
+  10 starts and island 3 on 50, survivors migrate upward and are re-scored,
+  and the population median is the result, never the best. This is the
+  answer the kernel kingdom of Section 5 needs for noisy GPU timings, already
+  built and measured.
+- **The same honesty.** The ledger records an inert tournament found after
+  the runs, three genome-parsing defects, and a Mackey–Glass error 25 times
+  Jaeger and Haas's, and lets the results stand as measured.
+
+The connection to the geneframe is direct: the specification grammar
+(drive, layer, source, assembly) is a typed language whose rows fit the
+table, so a reservoir kingdom is rows plus the evaluation path noctiluca
+already has. The connection to the kernel question is the roadmap's Stage 3:
+placement-aware evolution under measured hardware envelopes, where a module
+must fit the machine it lands on, is efficiency as a constraint on fitness,
+stated before the kernel discussion began. And the common root is the same
+move three times over: UltraDim regenerates projections from their name,
+noctiluca regenerates a network from its name, and the geneframe makes a
+kingdom a query over one table. Gamakon's stack has one primitive, a
+counter-based hash that turns identity into text, and frontier evolution is
+what selection does on top of it.
+
 ## 3. What a kingdom is, and the three that exist
 
 A kingdom is: rows in the geneframe (symbols with typed signatures), one
