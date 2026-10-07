@@ -220,6 +220,11 @@ impl Tree {
                 | Op::RegexCcUnion
                 | Op::RegexCcNegate
                 | Op::RegexEmpty => unreachable!("regex opcodes are not fuller Math"),
+                // GeneRef is never produced by from_math/math_to_nodes: it is
+                // written only by the fold operator's own edit, directly into
+                // a GpuNode array, never through this host-side Tree/Math
+                // round-trip.
+                Op::GeneRef => unreachable!("GeneRef is not produced by the Math round-trip"),
             },
         }
     }

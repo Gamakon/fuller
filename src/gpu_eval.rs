@@ -169,6 +169,17 @@ pub enum Op {
     /// ε: the empty Pattern (matches the empty string) — the Pattern fallback and
     /// `opt`'s second branch.
     RegexEmpty = 46,
+    // ---- Cross-gene sharing (FoldToDag). A `GeneRef` leaf never comes from
+    // the host-side Math/karva round-trip and is never drawable by mutation:
+    // it is written ONLY by the fold operator's own edit (`fold_to_dag.rs`),
+    // replacing a repeated subtree with a reference to a value computed once,
+    // in a separate PASS, before the gene that reads it is evaluated. Reads
+    // `shared[(shared_base[expr] + arg0) * n_rows + row]` — never `data[]` —
+    // because the shared value is per-chromosome, not part of the resident
+    // dataset every expression in a dispatch shares.
+    /// Leaf: read the shared value at local index `arg0` (resolved via
+    /// `shared_base[expr]`), computed by an earlier, separate PASS.
+    GeneRef = 47,
 }
 
 impl Op {
@@ -217,7 +228,8 @@ impl Op {
             | Op::RegexCcSpace
             | Op::RegexAnchorStart
             | Op::RegexAnchorEnd
-            | Op::RegexEmpty => 0,
+            | Op::RegexEmpty
+            | Op::GeneRef => 0,
             Op::Neg
             | Op::Abs
             | Op::Sqrt
@@ -253,7 +265,7 @@ impl Op {
     /// The `Op` for an opcode value, or `None` if it is not a known opcode. The
     /// inverse of `op as u32`; a decoded `GpuNode.op` goes back to its name this
     /// way (for AST printing, export, and reporting). Opcodes are contiguous
-    /// 0..=46; this match is total and moves no value.
+    /// 0..=47; this match is total and moves no value.
     pub fn from_u32(op: u32) -> Option<Op> {
         let o = match op {
             0 => Op::Var, 1 => Op::Num, 2 => Op::Add, 3 => Op::Sub, 4 => Op::Mul,
@@ -267,7 +279,7 @@ impl Op {
             35 => Op::RegexCcSpace, 36 => Op::RegexAnchorStart, 37 => Op::RegexAnchorEnd,
             38 => Op::RegexPlus, 39 => Op::RegexOpt, 40 => Op::RegexRepN, 41 => Op::RegexRepUpto,
             42 => Op::RegexClassOf, 43 => Op::RegexCcRange, 44 => Op::RegexCcUnion,
-            45 => Op::RegexCcNegate, 46 => Op::RegexEmpty,
+            45 => Op::RegexCcNegate, 46 => Op::RegexEmpty, 47 => Op::GeneRef,
             _ => return None,
         };
         Some(o)
@@ -336,6 +348,14 @@ struct Meta {
 // Per-subtree values, written only when cfg.emit_partials == 1u. When off it is
 // bound to a 1-element dummy and never touched.
 @group(0) @binding(6) var<storage, read_write> partials: array<f32>;
+// FoldToDag cross-gene sharing (GeneRef, opcode 47). `shared` holds every
+// live definition's PASS-1 output, laid out shared[def * n_rows + row] —
+// `def` a GLOBAL index across the whole pass-1 batch. `shared_base` is one
+// entry per PASS-2 expression, the global `def` offset that expression's
+// own GeneRef-local index 0 resolves to. Both bound to a 1-element dummy
+// when a dispatch has no GeneRef nodes at all, at no extra cost.
+@group(0) @binding(7) var<storage, read>       shared_vals: array<f32>;
+@group(0) @binding(8) var<storage, read>       shared_base: array<u32>;
 
 const MAX_NODES: u32 = 64u;
 fn nan() -> f32 { return bitcast<f32>(0x7fc00000u); }
@@ -491,6 +511,9 @@ fn eval_main(@builtin(global_invocation_id) gid: vec3<u32>) {
             case 27u: {                                            // ProtectedAcos
                 let a = scratch[nd.arg0];
                 if (is_finite(a)) { v = acos(clamp(a, -1.0, 1.0)); } else { v = 0.0; }
+            }
+            case 47u: {                                            // GeneRef
+                v = shared_vals[(shared_base[expr] + nd.arg0) * cfg.n_rows + row];
             }
             default: { v = bitcast<f32>(0x7fc00000u); }
         }
@@ -767,6 +790,11 @@ mod device {
         // ("Buffer is destroyed" on Queue::submit). Owning it here ties its life
         // to the evaluator's instead.
         dummy_partials: wgpu::Buffer,
+        // Same pattern, bindings 7/8 (GeneRef/FoldToDag): a dispatch with no
+        // GENEREF nodes at all binds these 1-element dummies instead of real
+        // shared-value buffers, at no extra cost.
+        dummy_shared: wgpu::Buffer,
+        dummy_shared_base: wgpu::Buffer,
         n_rows: u32,
         n_vars: u32,
     }
@@ -815,7 +843,7 @@ mod device {
 
             let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("fuller-eval-layout"),
-                entries: &(0..7)
+                entries: &(0..9)
                     .map(|i| wgpu::BindGroupLayoutEntry {
                         binding: i,
                         visibility: wgpu::ShaderStages::COMPUTE,
@@ -828,6 +856,7 @@ mod device {
                         } else {
                             wgpu::BindingType::Buffer {
                                 // binding 4 (out) and 6 (partials) are written.
+                                // 7 (shared_vals) and 8 (shared_base) are read-only.
                                 ty: wgpu::BufferBindingType::Storage {
                                     read_only: i != 4 && i != 6,
                                 },
@@ -870,6 +899,18 @@ mod device {
                 contents: bytemuck::cast_slice(&[0u32]),
                 usage: wgpu::BufferUsages::STORAGE,
             });
+            // Bindings 7/8 (GeneRef): a dispatch with no shared-value reads at
+            // all binds these instead of real buffers, same lifetime pattern.
+            let dummy_shared = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("fuller-shared-dummy"),
+                contents: bytemuck::cast_slice(&[0.0f32]),
+                usage: wgpu::BufferUsages::STORAGE,
+            });
+            let dummy_shared_base = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("fuller-shared-base-dummy"),
+                contents: bytemuck::cast_slice(&[0u32]),
+                usage: wgpu::BufferUsages::STORAGE,
+            });
 
             Ok(Self {
                 device,
@@ -878,6 +919,8 @@ mod device {
                 layout,
                 data_buf,
                 dummy_partials,
+                dummy_shared,
+                dummy_shared_base,
                 n_rows,
                 n_vars: n_vars as u32,
             })
@@ -921,6 +964,27 @@ mod device {
             buffers: [&wgpu::Buffer; 4],
             n_expr: u32,
         ) -> Result<wgpu::Buffer, String> {
+            self.eval_pass_with_shared(enc, buffers, None, n_expr)
+        }
+
+        /// [`Self::eval_pass`], ALSO binding FoldToDag's cross-gene sharing
+        /// buffers (`GeneRef`, opcode 47) when `shared` is given: `(shared_vals,
+        /// shared_base)`, laid out as `EVAL_WGSL`'s bindings 7/8 document.
+        /// `None` binds the evaluator's persistent 1-element dummies — the same
+        /// pattern `partials: Option<&Buffer>` already uses for binding 6 — so
+        /// a dispatch with no GENEREF nodes costs nothing extra. This is the
+        /// PASS-2 call of FoldToDag's two-pass chain: pass 1 (the live
+        /// definitions) writes `shared_vals` via a plain `eval_pass` with
+        /// `out_buf` pointed at it; pass 2 (the folded genes) reads it back
+        /// through this method, on the SAME encoder, before either is
+        /// submitted.
+        pub fn eval_pass_with_shared(
+            &self,
+            enc: &mut wgpu::CommandEncoder,
+            buffers: [&wgpu::Buffer; 4],
+            shared: Option<(&wgpu::Buffer, &wgpu::Buffer)>,
+            n_expr: u32,
+        ) -> Result<wgpu::Buffer, String> {
             let total = (n_expr as u64) * (self.n_rows as u64);
             if n_expr == 0 || total > u32::MAX as u64 {
                 return Err(format!(
@@ -941,6 +1005,7 @@ mod device {
                     contents: bytemuck::cast_slice(&meta),
                     usage: wgpu::BufferUsages::UNIFORM,
                 });
+            let (shared_vals_buf, shared_base_buf) = shared.unwrap_or((&self.dummy_shared, &self.dummy_shared_base));
             // emit_partials is 0 here, so `partials` is never written; bind the
             // evaluator's persistent 1-element dummy (it must outlive this
             // recorded pass, which the caller submits later).
@@ -955,6 +1020,8 @@ mod device {
                     wgpu::BindGroupEntry { binding: 4, resource: out_buf.as_entire_binding() },
                     wgpu::BindGroupEntry { binding: 5, resource: meta_buf.as_entire_binding() },
                     wgpu::BindGroupEntry { binding: 6, resource: self.dummy_partials.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 7, resource: shared_vals_buf.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 8, resource: shared_base_buf.as_entire_binding() },
                 ],
             });
             {
@@ -1047,6 +1114,8 @@ mod device {
                     wgpu::BindGroupEntry { binding: 4, resource: out_buf.as_entire_binding() },
                     wgpu::BindGroupEntry { binding: 5, resource: meta_buf.as_entire_binding() },
                     wgpu::BindGroupEntry { binding: 6, resource: partials.unwrap_or(&self.dummy_partials).as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 7, resource: self.dummy_shared.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 8, resource: self.dummy_shared_base.as_entire_binding() },
                 ],
             });
             {
@@ -1193,6 +1262,8 @@ mod device {
                     wgpu::BindGroupEntry { binding: 4, resource: out_buf.as_entire_binding() },
                     wgpu::BindGroupEntry { binding: 5, resource: meta_buf.as_entire_binding() },
                     wgpu::BindGroupEntry { binding: 6, resource: self.dummy_partials.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 7, resource: self.dummy_shared.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 8, resource: self.dummy_shared_base.as_entire_binding() },
                 ],
             });
 
@@ -1327,6 +1398,8 @@ mod device {
                     wgpu::BindGroupEntry { binding: 4, resource: out_buf.as_entire_binding() },
                     wgpu::BindGroupEntry { binding: 5, resource: meta_buf.as_entire_binding() },
                     wgpu::BindGroupEntry { binding: 6, resource: part_buf.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 7, resource: self.dummy_shared.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 8, resource: self.dummy_shared_base.as_entire_binding() },
                 ],
             });
             let mut enc = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
@@ -1740,6 +1813,24 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn from_u32_round_trips_every_opcode() {
+        // Opcodes are contiguous 0..=47 (Op::GeneRef is the last); every one
+        // must survive op as u32 -> Op::from_u32 -> op as u32 unchanged, so a
+        // future opcode addition that forgets a from_u32 arm fails here
+        // instead of silently decoding to None downstream.
+        for u in 0..=(Op::GeneRef as u32) {
+            let op = Op::from_u32(u).unwrap_or_else(|| panic!("no Op for opcode {u}"));
+            assert_eq!(op as u32, u, "from_u32({u}) round-tripped to {}", op as u32);
+        }
+        assert!(Op::from_u32(Op::GeneRef as u32 + 1).is_none(), "an opcode past the last variant must be None");
+    }
+
+    #[test]
+    fn generef_is_nullary() {
+        assert_eq!(Op::GeneRef.arity(), 0);
+    }
 }
 
 #[cfg(all(test, feature = "gpu"))]
@@ -1815,6 +1906,91 @@ mod device_tests {
             // the root partial equals the ordinary eval root.
             assert!((at(0, row) - roots[row]).abs() <= 1e-6, "root partial == eval root");
         }
+    }
+
+    /// `Op::GeneRef` (opcode 47) reads from `shared_vals`, offset by
+    /// `shared_base[expr]`, never from `data`. Hand-fills both with a
+    /// deliberately NON-ZERO base, since that is the exact wiring a
+    /// single-definition case (base always 0) could pass by coincidence
+    /// without actually proving.
+    #[test]
+    fn generef_reads_the_shared_value_at_its_resolved_global_slot() {
+        use wgpu::util::DeviceExt;
+
+        let rows: Vec<f32> = vec![1.0, 2.0, 3.0, 4.0]; // 4 rows, 1 var (unused by this expr)
+        let ev = match GpuEvaluator::new(&rows, 1) {
+            Ok(e) => e,
+            Err(e) => {
+                eprintln!("no GPU available ({e}); skipping");
+                return;
+            }
+        };
+        let device = ev.device();
+        let buf = |contents: &[u8], label: &str| -> wgpu::Buffer {
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some(label),
+                contents,
+                usage: wgpu::BufferUsages::STORAGE,
+            })
+        };
+
+        // One expression: a bare GeneRef leaf reading local index 0.
+        let nodes = [GpuNode { op: Op::GeneRef as u32, arg0: 0, arg1: 0, konst: 0.0 }];
+        let mut batch = ExprBatch::new();
+        batch.push(&nodes);
+        let node_bytes: Vec<u32> = batch.nodes.iter().flat_map(|n| [n.op, n.arg0, n.arg1, n.konst.to_bits()]).collect();
+        let nodes_buf = buf(bytemuck::cast_slice(&node_bytes), "nodes");
+        let offs_buf = buf(bytemuck::cast_slice(&batch.offsets), "offsets");
+        let lens_buf = buf(bytemuck::cast_slice(&batch.lengths), "lengths");
+        let n_rows = 4u64;
+        let out_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("out"),
+            size: n_rows * 4,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+        // shared_vals has TWO definitions' worth of rows (def 0, def 1), 4
+        // rows each; shared_base[0] = 1, so this expression's local index 0
+        // resolves to GLOBAL def 1, not def 0 -- the non-zero-base case.
+        let shared_vals: Vec<f32> = vec![
+            100.0, 101.0, 102.0, 103.0, // def 0 (must NOT be read)
+            200.0, 201.0, 202.0, 203.0, // def 1 (must be read)
+        ];
+        let shared_vals_buf = buf(bytemuck::cast_slice(&shared_vals), "shared_vals_test");
+        let shared_base_buf = buf(bytemuck::cast_slice(&[1u32]), "shared_base_test");
+
+        let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+        let meta_buf = ev
+            .eval_pass_with_shared(&mut enc, [&nodes_buf, &offs_buf, &lens_buf, &out_buf], Some((&shared_vals_buf, &shared_base_buf)), 1)
+            .expect("eval_pass_with_shared");
+        let read_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("readback"),
+            size: n_rows * 4,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        enc.copy_buffer_to_buffer(&out_buf, 0, &read_buf, 0, n_rows * 4);
+        ev.queue().submit(Some(enc.finish()));
+
+        let slice = read_buf.slice(..);
+        let (tx, rx) = std::sync::mpsc::channel();
+        slice.map_async(wgpu::MapMode::Read, move |r: Result<(), wgpu::BufferAsyncError>| {
+            let _ = tx.send(r);
+        });
+        device.poll(wgpu::Maintain::Wait);
+        rx.recv().unwrap().unwrap();
+        let got = bytemuck::cast_slice::<u8, f32>(&slice.get_mapped_range()).to_vec();
+        read_buf.unmap();
+
+        assert_eq!(got, vec![200.0, 201.0, 202.0, 203.0], "GeneRef must read def 1 (via shared_base=1), not def 0");
+
+        nodes_buf.destroy();
+        offs_buf.destroy();
+        lens_buf.destroy();
+        out_buf.destroy();
+        shared_vals_buf.destroy();
+        shared_base_buf.destroy();
+        meta_buf.destroy();
     }
 
     #[test]
