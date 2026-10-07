@@ -34,6 +34,24 @@ built** — it may belong in phylu instead of fuller (it needs a population
 export and `fold_to_dag_measure.rs`'s harness, both phylu-side); this is
 flagged as an open question, not decided unilaterally.
 
+**Two more real bugs found and fixed AFTER the above landed**, by phylu
+running `maximal_shared_saturated` repeatedly against a real
+800-chromosome population (single calls mostly succeeded, which is what
+made both hard to find): (1) `extract_dag::Candidate` used to CACHE a
+"reachable set" alongside each class's winning node — this went stale
+when a child's `best` entry improved without the cached candidate's RANK
+changing (a zero-cost literal class changes nothing about rank), causing
+an intermittent dangling reference `materialize` could not resolve.
+Fixed: `Candidate` no longer caches a reachable set at all; it is
+computed fresh, by DFS over the FINAL settled `best` map, every time
+it's needed (`reach_from`). (2) The tuple-count blowup guard's cap
+(`SHARE_MAX_TUPLES`) was set past the point where checking it is
+affordable — §1's blowup guard subsection now has the full correction
+and the real measured numbers. Both are covered by new regression tests
+using the exact real gene sets that found them. See the commit history
+for the full detail; this doc records the corrected design, not a replay
+of the debugging.
+
 ### Revision note (v1 → this version)
 
 A prior version of this plan used plain greedy-DAG extraction (price each
@@ -147,30 +165,59 @@ e-graph size independently, between (or instead of relying solely on)
 repeat iterations:
 
 ```rust
-/// Checked between schedule steps (via egglog's own, already-cheap
-/// `EGraph::num_tuples()` — a running total tuple count, not a
-/// serialize-time operation): if the e-graph's total size exceeds this
+/// Checked between EVERY single iteration (`SHARE_CHUNK = 1`, not 5 —
+/// see the correction below), via egglog's own, already-cheap
+/// `EGraph::num_tuples()`. If the e-graph's total size exceeds this
 /// ceiling, saturation stops EARLY (whatever has been proven so far is
-/// kept; this is not a kill-guard in the "machine got pegged" sense,
-/// it is a planned, graceful early stop). Chosen generously above what a
-/// real chromosome's genes should ever need; tightened only if real
-/// population testing (§6) shows it is too generous in practice.
-const SHARE_MAX_TUPLES: usize = 50_000; // provisional -- revisit after §6's real-population mining
+/// kept; a planned, graceful early stop, not a kill in the "machine got
+/// pegged" sense).
+const SHARE_MAX_TUPLES: usize = 5_000; // MEASURED, not provisional -- see the correction below for why 50,000 (and chunk=5) was wrong.
 ```
+
+**Correction, found during implementation, not anticipated here**: this
+section originally set `SHARE_CHUNK = 5` and `SHARE_MAX_TUPLES = 50_000`
+as a "generous, provisional" pair. Both were wrong, in a way this plan's
+own words ("chosen generously... tightened only if real population
+testing shows it is too generous") assumed the wrong failure mode —
+too generous meant "doesn't find enough forms," not "cannot even
+finish." The real failure, found by phylu running the real pipeline
+against a real population: a deeply-nested real gene combined with
+`share`'s reverse direction and `algebra`'s commutativity/associativity
+grows the e-graph **exponentially**, roughly 3-4x per iteration at the
+tail — measured directly: iteration 9 had 5,579 tuples (206ms for that
+ONE iteration); iteration 10 had 21,247 tuples (3.8 SECONDS for that one
+iteration). Per-iteration cost is quadratic in tuple count (time ∝
+tuples², confirmed from the ratio across these two measurements). This
+means **the tuple-count check cannot fire in time no matter how finely
+it's chunked**, once the cap is set past the point where the CROSSING
+iteration itself is affordable: with `SHARE_CHUNK=5` and
+`SHARE_MAX_TUPLES=50_000`, the guard could not even see the problem
+until iterations 10-14 had ALL completed (each one several times more
+expensive than the last), by which point the real run had consumed
+double-digit GB and tens of seconds to minutes — a check that only
+ever runs AFTER the damage, by construction, regardless of how small
+`SHARE_CHUNK` is made. `SHARE_CHUNK=1` alone is necessary (checking
+every iteration, not every 5th) but NOT sufficient on its own — the cap
+itself also had to come down, to the point where the quadratic cost of
+the iteration that CROSSES it stays bounded (5,000 tuples keeps that
+iteration under ~1 second in the worst case observed). Confirmed fixed
+on the real 800-row population: 0 errors, median 22.7ms/row, max
+594ms/row (the two previously-pathological rows), 19.3s total.
 
 Implementation note: egglog's `run-schedule` doesn't itself expose a
 per-step size callback from the Rust API in the same call used elsewhere
-in this codebase (`parse_and_run_program`) — the straightforward
-implementation is to run `repeat` in SMALLER increments (e.g. `repeat 5`
-at a time, in a Rust-side loop) and check `egraph.num_tuples()` between
-increments, stopping the loop (not erroring) the first time the ceiling is
-exceeded or `SHARE_ITERS` total iterations are reached, whichever comes
-first. Both guards are real and independent; neither alone is sufficient
-(confirmed: the existing codebase relies on iteration count alone today
-BECAUSE its existing bounded rulesets, algebra+powers+sign, don't combine
-with an expander like `share`'s reverse rule — this plan is the first
-place in this codebase pairing a bounded family with a genuine expander in
-the SAME schedule, so it needs a guard the existing code has never needed).
+in this codebase (`parse_and_run_program`) — the implementation runs
+`repeat` ONE iteration at a time (`SHARE_CHUNK = 1`) in a Rust-side loop,
+checking `egraph.num_tuples()` after every single iteration, stopping the
+loop (not erroring) the first time the ceiling is exceeded or
+`SHARE_ITERS` total iterations are reached, whichever comes first. Both
+guards (iteration count, tuple count) are real and independent; neither
+alone is sufficient (confirmed: the existing codebase relies on iteration
+count alone today BECAUSE its existing bounded rulesets, algebra+powers
++sign, don't combine with an expander like `share`'s reverse rule — this
+plan is the first place in this codebase pairing a bounded family with a
+genuine expander in the SAME schedule, so it needs a guard the existing
+code has never needed).
 
 Confirmed by direct probe (not assumed): asserting three BARE roots
 (`Exp(Add x y)`, `Exp(x)`, `Exp(y)`) with algebra+powers+sign alone leaves
@@ -185,7 +232,25 @@ from documentation.
 
 ### 2. `src/extract_dag.rs` (new): marginal-cost fixpoint extraction
 
-Not plain greedy-DAG (see revision note). The real algorithm, concretely:
+Not plain greedy-DAG (see revision note). **A further correction, found
+after this section's design shipped**: `Candidate` as sketched below
+caches a `reachable: BTreeSet<ClassId>` alongside each class's winning
+node. This is WRONG — confirmed by a real, intermittent, order-dependent
+dangling-reference bug on real population data (a repeated numeric
+literal across two genes). A cached reach goes stale when a child's
+`best` entry improves without the PARENT candidate's own RANK changing —
+and a zero-cost class (a `Num`/`Var` literal payload) changes nothing
+about rank when it's added to a reach set, so the parent is never
+re-examined and its cached reach silently diverges from the true
+descendant set. **The real implementation does NOT cache `reachable` on
+`Candidate` at all** — `Candidate` holds only `{ node: NodeId }`, and
+reach is computed FRESH by a `reach_from` DFS over the FINAL settled
+`best` map, every time it's needed (both for `rank`'s cost comparisons
+during a round, and for deriving that round's `covered`/`chosen` once
+the worklist has drained). The pseudocode below still shows the
+cached-set shape for the WORKED ARITHMETIC TRACE's sake (the numbers
+are unaffected by which design computes them) — read `src/extract_dag.rs`
+itself for the real, current implementation, not this code block.
 
 ```rust
 use egraph_serialize::{ClassId, EGraph as SerEGraph, Node, NodeId};
