@@ -24,7 +24,7 @@
 
 \title{The Geneframe and Its Engine: Typed, Multi-Kingdom\\
 Gene Expression Programming on the GPU}
-\subtitle{One symbol table, two kingdoms, and expression rewriting folded into
+\subtitle{One symbol table, three kingdoms, and expression rewriting folded into
 the search}
 
 \author{Andrew James Morgan}
@@ -55,15 +55,18 @@ reformulate the age-layered population structure as a cohort preference. The
 rewriting system supplies in-search editors built on equality saturation:
 simplification, constant snapping, and a new editor that finds subexpressions
 shared across the genes of one chromosome, including sharing visible only after
-rewriting. On this architecture we run two kingdoms. Symbolic regression is the
-single-type special case, decoding byte-for-byte as before; on the 133
-ground-truth SRBench problems it recovers 74 laws in 90~s each on one
-development seed, and 79 once the rewriting system generates candidates from the
-near misses. The second kingdom evolves regular expressions over four value types on
-the same engine with no change to variation or selection; a multi-typed detector
-for UK postcodes raises held-out recall from 92.4\% to 97.5\% while rejecting
-every foreign-format negative. The design is the contribution; the numbers are
-highlights, reported with their conditions.
+rewriting. On this architecture we run three kingdoms. Untyped symbolic
+regression is the single-type special case and decodes byte-for-byte as before.
+Transcendental symbolic regression (TSR) gives the same operators a type that
+records transcendental depth, so that a transcendental nested more than two deep
+has no signature and does not express; on the 133 ground-truth SRBench problems
+it recovers 74 laws in 90~s each on one development seed, and 79 once the
+rewriting system generates candidates from the near misses. The third kingdom
+evolves regular expressions over four value types on the same engine with no
+change to variation or selection; a multi-typed detector for UK postcodes raises
+held-out recall from 92.4\% to 97.5\% while rejecting every foreign-format
+negative. The design is the contribution; the numbers are highlights, reported
+with their conditions.
 \end{abstract}
 
 \maketitle
@@ -103,9 +106,9 @@ systems: \emph{phylu}, which evolves, and \emph{fuller}, which defines,
 rewrites and evaluates expressions. The division is not an implementation detail.
 It is what lets expression rewriting --- equality saturation over an e-graph ---
 act as a mutation operator inside the search rather than as a post-processing
-step, and it is what lets a second, genuinely multi-typed language run on the
-same engine without a line of kingdom-specific selection code. The contributions
-are:
+step, and it is what lets a genuinely multi-typed language run on the same
+engine, beside two symbolic-regression kingdoms, without a line of
+kingdom-specific selection code. The contributions are:
 
 \begin{enumerate}
 \item \textbf{The geneframe} (Section~\ref{sec:geneframe}): one typed symbol
@@ -119,7 +122,10 @@ mismatched token is replaced by the demanded type's fallback leaf and its subtre
 becomes non-coding. Every gene expresses, the operators are untouched, and
 heterogeneous types live in one gene. The count of substituted codons is kept as
 a parity invariant between the host and device decoders and as the acceptance
-gate on an edited gene.
+gate on an edited gene. The first use of the typed table, the transcendental
+depth ladder of the TSR kingdom, is narrower: a gene with no typing does not
+express. Both decoders are in the engine and the paper says which kingdom uses
+which.
 \item \textbf{A device-resident evolutionary loop} (Section~\ref{sec:engine}):
 decode, variation and evaluation are compute kernels, and the population never
 leaves the device during a generation. For the regular-expression kingdom the
@@ -294,10 +300,10 @@ well-typed tree, so any layout-respecting edit the raw operators produce still
 yields a valid program. The representation records the type relation; the decoder
 enforces it.
 
-\subsection{The two kingdoms}
+\subsection{The three kingdoms}
 
 \paragraph{Symbolic regression: one float type.} The symbolic-regression
-kingdom is the set of real-domain operators --- arithmetic, powers, roots, the
+kingdom is the set of 26 real-domain operators --- arithmetic, powers, roots, the
 reciprocal, the transcendentals, and their protected variants, which are
 distinct symbols from the raw operators because they disagree on negative and
 zero arguments. Every symbol consumes and produces the single float type
@@ -305,7 +311,36 @@ $\ty{F}$, the typed arity is a uniform float count, and the maximum total arity
 is two. In this kingdom the type demand is always satisfied and the geneframe
 reduces to the classical single-type table.
 
-\paragraph{Regular expressions: four value types.} The second kingdom evolves
+\paragraph{Transcendental symbolic regression: three depth types.} The TSR
+kingdom holds the same 26 operators, but its type records \emph{transcendental
+depth}: $\ty{F}$ is a plain float (a variable, a constant, or arithmetic over
+plain floats), $\ty{T1}$ is the output of one transcendental applied to plain
+floats, and $\ty{T2}$ is a transcendental applied to something already
+$\ty{T1}$. Each operator is expanded into one row per accepted input
+combination. Arithmetic is \emph{absorbing}: it accepts any mix of depths and
+yields the highest it saw, six rows for a binary operator, so depth is carried
+through $+$, $-$, $\times$ and $\div$. A transcendental (sine, cosine, tangent,
+logarithm, exponential, root, absolute value, hyperbolic tangent, the inverse
+trigonometric functions, and their protected forms) \emph{raises} depth by one
+and has exactly two rows:
+\begin{align*}
+\ty{exp}&:\ \ty{F}\to\ty{T1}\\
+\ty{exp}&:\ \ty{T1}\to\ty{T2}.
+\end{align*}
+There is no row accepting $\ty{T2}$, and no type above it. That missing row is
+the whole design: a third nested transcendental is not penalised, it has no
+signature and cannot be expressed. The ceiling was chosen by measurement, not
+taste. Over the 133 SRBench ground-truth models (128 parse), no law nests two
+transcendentals directly; 78 lie at depth zero, 47 at depth one, 3 at depth two,
+and none deeper. The three depth-two laws, such as
+$\exp(-(\theta/\sqrt{2})^{2})$, reach that depth through arithmetic, which is
+why arithmetic must absorb rather than reset. Every parsed law types under the
+ladder, and 7 of 8 models the untyped engine had previously reported on the
+same problems were towers the ladder forbids. The name is the author's: it is
+symbolic regression that handles the distance a law keeps between its
+functions.
+
+\paragraph{Regular expressions: four value types.} The third kingdom evolves
 regular expressions over \ty{Pattern} (the root type), \ty{CharClass},
 \ty{Char} and \ty{Integer}. Representative rows, written as $\textit{inputs}\to
 \textit{output}$:
@@ -424,14 +459,37 @@ diverged. And it is the acceptance gate when an edited gene is re-inserted
 count is zero, which certifies that the re-inserted gene is a valid multi-typed
 gene expressing with no fallback.
 
-\subsection{Symbolic regression is byte-for-byte unchanged}
+\subsection{Two decoders: refusal and projection}
 
-Design C is a strict superset. In a single-type kingdom the demand is always
-satisfied, the fallback is never used, the masked count is identically zero, and
-the decode reduces to the classical path. The symbolic-regression kingdom is held
-byte-identical against a pinned golden population and against the CPU reference
-decode, so the typing is an extension of the existing engine and not a
-perturbation of it.
+The TSR kingdom was the first use of the typed table and it types the other way
+round. After the Karva walk has laid out the node array, the device decoder
+derives a type for every node bottom-up, in reverse index order, since a child's
+index is always greater than its parent's: a terminal is $\ty{F}$, an absorbing
+operator takes the maximum of its children, a raiser adds one. A raiser over
+$\ty{T2}$ has no row, and a gene with no derivation does not express: its
+program has length zero and it is counted as \emph{refused}, separately from the
+count of genes that exceed the node limit. Initialisation and variation draw
+under a per-position depth budget --- the ceiling at the root, a child's budget
+being its parent's less the parent's cost --- which reduces refusals but is not
+the guarantee; the decoder is. The budget and the bottom-up derivation compute
+the same predicate, the largest transcendental count on any root-to-leaf path,
+and that agreement is a test. A refused gene is not a dead individual: a
+chromosome of three genes scores on its other two, and the refused gene is
+carried unscored and keeps varying. That is the honest limit of
+``unrepresentable'' at the chromosome level, and it is why the final
+population of a TSR run still holds genes past the ceiling.
+
+Design C, the projection of Section~\ref{sec:decoder}, generalises the ladder to
+heterogeneous types and makes every gene express; it is the decoder of the
+regular-expression kingdom, and the TSR ladder has not yet been re-expressed
+through it. Design C is a strict superset of the classical decode: in a
+single-type kingdom the demand is always satisfied, the fallback is never used,
+the masked count is identically zero, and the decode reduces to the classical
+path. The untyped symbolic-regression kingdom, with both typings off, is held
+byte-identical against a golden population pinned before either typing existed
+and against the CPU reference decode; the TSR decode is held to host--device
+parity on fixtures and to lockstep with the symbol table's rows. The typing is
+therefore an extension of the existing engine and not a perturbation of it.
 
 %% ===== SECTION 6 =====
 \section{The Engine on the Device}
@@ -478,11 +536,16 @@ at a population of 2{,}600.
 
 \begin{table}[t]
 \caption{Generation time and throughput, one seed, Apple Silicon via wgpu/Metal.
-Symbolic-regression figures are on Feynman problems at the engine's default
-data split (up to 4{,}000 training rows); regular-expression figures are on
-the postcode task of Section~\ref{sec:results-regex}, the same two runs as
-Table~\ref{tab:regex}. Individuals per second are derived from the logged
-generation counts and run times, not measured separately.}
+Untyped symbolic-regression figures are on Feynman problems at the engine's
+default data split (up to 4{,}000 training rows), taken on the 21 September
+2026 build, before the device-resident generation described above made the
+engine faster (the same problem fell from 58 to 12.5~ms per generation across
+that rebuild with identical trajectories), so they are conservative. The TSR
+row is the Strogatz shear-flow run of the SRBench study (240 training rows).
+Regular-expression figures are on the postcode task of
+Section~\ref{sec:results-regex}, the same two runs as Table~\ref{tab:regex}.
+Individuals per second are derived from the logged generation counts and run
+times, not measured separately.}
 \label{tab:throughput}
 \small
 \begin{tabular}{@{}lrrr@{}}
@@ -490,10 +553,11 @@ generation counts and run times, not measured separately.}
 Configuration & Pop. & ms/gen. & Indiv./s \\
 \midrule
 Python engine (reference) & 800 & 1{,}200 & 670 \\
-Device, SR & 800 & 35 & 23{,}000 \\
-Device, SR & 2{,}000 & 46 & 43{,}000 \\
-Device, SR & 20{,}000 & 176 & 114{,}000 \\
-Device, SR & 40{,}000 & 296 & 135{,}000 \\
+Device, SR untyped & 800 & 35 & 23{,}000 \\
+Device, SR untyped & 2{,}000 & 46 & 43{,}000 \\
+Device, SR untyped & 20{,}000 & 176 & 114{,}000 \\
+Device, SR untyped & 40{,}000 & 296 & 135{,}000 \\
+Device, TSR & 2{,}000 & 15.5 & 129{,}500 \\
 Device, regex, single-type & 2{,}600 & 21 & 125{,}000 \\
 Device, regex, multi-typed & 2{,}600 & 10 & 253{,}000 \\
 \bottomrule
@@ -702,7 +766,15 @@ multi-seed study.
 On the 133 ground-truth problems of SRBench~\cite{lacava2021srbench} (119
 Feynman and 14 Strogatz systems, noise-free), with one development seed, a
 population of 2{,}000 across two islands, 90 seconds per problem and SRBench's
-sympy-based symbolic-equivalence check, the engine recovered 74 of 133 laws (55.6\%).
+sympy-based symbolic-equivalence check, the TSR kingdom recovered 74 of 133 laws
+(55.6\%). The untyped engine's previous certified best on the same problems was
+62, and the union of every law any earlier configuration had solved was 69; the
+TSR run found 16 laws outside that union and missed 6 inside it. This is not a
+controlled comparison --- engine builds, budgets and seeds differ, and no
+same-seed run with typing off exists --- so we report it as history, not as a
+typing effect. The decoder refused 31 million genes over the 133 runs; on the
+hardest system, Strogatz shear flow, about a fifth of all evaluations were
+refused.
 Fuller's post-search candidate generation --- saturating each near miss under the
 physics-prior and algebra families and testing the variants with the same
 criterion --- recovered 5 more, for 79 of 133 (59.4\%). That gain, from 74 to
@@ -768,9 +840,9 @@ Corrupted UK accepted & 14/50 & 26/50 \\
 
 This result is the existence proof for the generality claim. The
 regular-expression kingdom is a genuinely four-typed language that runs on the
-same engine as symbolic regression with no change to variation or selection:
-the difference between the two kingdoms is the rows in the symbol table and the
-evaluation kernel.
+same engine as the two symbolic-regression kingdoms with no change to variation
+or selection: the difference between the kingdoms is the rows in the symbol
+table, the decoder's typing mode, and the evaluation kernel.
 
 \subsection{Shared subexpressions: correct, and correctly refused}
 \label{sec:results-share}
@@ -818,9 +890,22 @@ cases, so a different kingdom or a longer head should expect to re-calibrate.
 editor's expanding rule was chosen to demonstrate the mechanism. Which families
 expose sharing often enough to be worth their saturation cost is a question for
 the populations themselves, by mining them, not for intuition.
+\item \textbf{The depth ceiling is untested as a search aid.} The ladder is
+justified from the distribution of true laws, which says nothing about whether
+the search needs illegal shapes as stepping stones; the same-seed comparison
+with typing off that would answer this has not been run. A second, later
+ceiling on the stream order of a tree (the Horton--Strahler number) was
+measured as a hard rule on 83 problems and lost, 84.69\% against 85.61\% of
+trials, with whole Lorentz and Gaussian laws among the losses; it is off in
+every run reported here and survives only as a ranking column.
+\item \textbf{One ladder, two decoders.} The TSR ladder is applied by the
+device as a fixed absorb-and-raise rule checked against the symbol table's rows,
+not read from them through the projection decoder. Re-expressing it as a
+projection kingdom is the increment that would make the three kingdoms one
+mechanism.
 \item \textbf{Further kingdoms.} The geneframe admits any typed language whose
 operators fit the arity limit, and the regular-expression kingdom shows that a
-new kingdom costs rows and a kernel. We report only the two kingdoms that are
+new kingdom costs rows and a kernel. We report only the three kingdoms that are
 built and run.
 \end{itemize}
 
@@ -833,18 +918,20 @@ single integer arity with a many-hot typed signature and defining a kingdom as a
 query over one typed table. A total typed projection decoder keeps every gene
 expressing and the operators unchanged under multiple value types, with the
 masked-codon count serving as the host--device parity invariant and the
-acceptance gate on edited genes; symbolic regression is the single-type special
-case and is byte-for-byte unchanged. The engine keeps the population on the
+acceptance gate on edited genes; untyped symbolic regression is the single-type
+special case and is byte-for-byte unchanged. The engine keeps the population on the
 device and selects by hyperspherical fitness in cohort tournaments, a
 reformulation of the age-layered population structure that keeps its protection
 of young lines without a layered population, with training and validation error
 both as objectives and no parsimony term. Compactness, constants, and shared
 subexpressions come instead from editors that fold equality-saturated rewrites
 back into the population, where the tournament judges them like any other
-individual. On this one architecture we run two kingdoms. The symbolic-regression
-kingdom recovers 74 of the 133 SRBench ground-truth laws in 90 seconds each on
-one seed, and 79 once the rewriting system generates candidates from the near
-misses; the regular-expression kingdom raises held-out postcode recall from
+individual. On this one architecture we run three kingdoms. The TSR kingdom,
+whose three types record transcendental depth so that a third nested
+transcendental cannot be expressed, recovers 74 of the 133 SRBench ground-truth
+laws in 90 seconds each on one seed, and 79 once the rewriting system generates
+candidates from the near misses; the regular-expression kingdom raises held-out
+postcode recall from
 92.4\% to 97.5\% with every foreign format rejected. Multi-seed statistics, the
 official SRBench protocol, device-side counted repetition, and the live
 scheduling of the share editor are the next increments.
@@ -873,7 +960,8 @@ immigration interval 50 generations, merge age 10{,}000 (no line reached the
 oldest group within a 90-second fit). Data: 80/20 training/validation of at
 most 5{,}000 rows --- 4{,}000 and 1{,}000 for the Feynman sets, 240 and 60 for
 the 400-row Strogatz sets --- with a 25\% test split held back. 90 seconds per
-problem; typed depth 2. A problem counts as recovered when a model passes
+problem; the TSR kingdom with its ceiling at depth two, the stream-order ceiling
+off. A problem counts as recovered when a model passes
 SRBench's sympy-based symbolic-equivalence check, which was also the stop
 condition. Fuller's post-search candidate generation
 takes the best model of an unrecovered problem, saturates it under the
