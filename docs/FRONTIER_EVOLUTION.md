@@ -265,6 +265,21 @@ in `fuller/src/geneframe.rs`. None has rows loaded or a kernel.
 The type enum declares every one of these types now so that the row structure
 stays stable as kingdoms are added; none has a symbol row or a kernel.
 
+| kingdom | proposed types | purpose | status |
+|---|---|---|---|
+| Reservoir (noctiluca) | Drive, Layer, Coupling, Assembly; integer and float terminals for width, leak, fan, gain, readout, offset and gene digits | evolve echo state network architectures and per-neuron wiring on the geneframe; the specification grammar of noctiluca's appendix is the row set | proposed 7 Oct 2026, endorsed; the evaluation path (build from text, run the benchmark, read survival and error) already exists in noctiluca, so this is the first kingdom whose kernel is written before its rows |
+
+What the reservoir kingdom would add to noctiluca's own search: the typed
+decoder guarantees a well-formed specification under raw operators, so
+crossover can splice layers and couplings across genomes that differ in shape;
+HFF carries survival, error, build cost and step cost as objectives without
+weights; cohort tournaments protect young architectures; and the editors apply,
+since a specification is an expression tree. What noctiluca adds to the
+geneframe: the island ladder for noisy fitness, and a genome whose candidates
+cost nothing to instantiate. The research question is Stage 2 of the roadmap,
+whether per-neuron gene selection can learn tasks, asked on an engine built
+for selection.
+
 ---
 
 ## 5. What it could inspire (Envisioned)
