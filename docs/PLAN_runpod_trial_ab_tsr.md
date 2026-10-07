@@ -133,6 +133,12 @@ across phylu and fuller.
   only under the `graphics` capability; no stock Runpod template sets it, and
   without it `vulkaninfo` finds no device. This is the first thing the test
   hour checks.
+- **Measured 2026-10-07 on the H100 pod (runpod-torch-v280 image):** with the
+  env set, the driver's libraries and `/etc/vulkan/icd.d/nvidia_icd.json` are
+  mounted, but `vulkaninfo` still fails with `ERROR_INCOMPATIBLE_DRIVER`
+  because the ICD (`libGLX_nvidia.so.0`) needs X11/GL runtime libraries the
+  image lacks. Fix: `apt-get install libvulkan1 vulkan-tools libx11-6 libxext6
+  libglvnd0 libgl1 libegl1`. Then vulkaninfo lists the H100 (driver 580.126).
 - Vulkan still not visible with that set → the graphics capability is exposed by
   Runpod's container runtime, not by anything we install. Check Runpod's docs
   and templates for Vulkan support; if the runtime does not pass it, Runpod
