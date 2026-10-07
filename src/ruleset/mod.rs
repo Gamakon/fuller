@@ -16,6 +16,7 @@ pub mod distribute;
 pub mod identities;
 pub mod powers;
 pub mod rational;
+pub mod share;
 pub mod sign;
 pub mod sympy_mined;
 pub mod trig;

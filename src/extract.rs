@@ -1470,9 +1470,392 @@ fn r2_loss(reference: &[f64], preds: &[f64]) -> f64 {
     ss_res / ss_tot // = 1 - R^2
 }
 
+/// FOLDTODAG's detection: the LARGEST shared subgraphs across a whole
+/// chromosome's genes, using egglog's own `serialize()` output directly —
+/// not the tree-shaped extractor (`extract_best`/`extract_variants`), which
+/// assumes a single root and would double-count a shared subtree's cost at
+/// every site it appears. `serialize()` gives a real DAG: `Node.children:
+/// Vec<NodeId>`, and two different nodes can list the SAME child `NodeId`
+/// when that child's e-class is shared.
+///
+/// Promoted from `examples/largest_common_subgraph.rs`'s detection (same
+/// method, byte-for-byte), with one addition the example didn't need: every
+/// match's occurrence sites are resolved to a `path` (child indices 0/1
+/// from the gene's root), which a caller (phylu's `fold_to_dag`) walks via
+/// `GeneTree.child[pos]` / `GeneTree.child[pos] + 1` to find the gene
+/// POSITION each site is at.
+///
+/// Method, SITE-based, not node-in-degree-based: a node's in-degree
+/// undercounts when a smaller shared node has one site inside a bigger
+/// shared node's own site and another site independently outside it (the
+/// inside site collapses to one DAG parent-edge regardless of how many
+/// times the bigger node occurs) — verified directly against real evolved
+/// data before this was fixed. Site enumeration is the correct accounting:
+///
+///   1. Assert every gene (already-rendered `Math` s-expression, in gene
+///      order) as a separate named root in one e-graph. Hash-consing at
+///      assertion time finds every exact match for free; no saturation.
+///   2. `serialize()` with every gene's root in `root_eclasses`.
+///   3. For every gene root, DFS the DAG, recording (gene_idx, path) for
+///      every node reached, at every path that reaches it.
+///   4. Group sites by target `NodeId`; >= 2 sites and >= `min_ops`
+///      internal ops is a sharing CANDIDATE.
+///   5. Candidates sorted LARGEST FIRST by op count. A candidate's sites
+///      are accepted unless a site is itself inside (shares a path prefix,
+///      same gene, with) an already-accepted LARGER candidate's site. A
+///      candidate whose independent site count drops below 2 after this
+///      exclusion is dropped, not reported as sharing.
+pub fn maximal_shared(genes: &[String], min_ops: usize) -> Result<Vec<Match>, String> {
+    use egglog::prelude::exprs as fs_exprs;
+    use egglog::{EGraph as FsEGraph, SerializeConfig};
+
+    let mut egraph = FsEGraph::default();
+    egraph.parse_and_run_program(None, MATH_DATATYPE).map_err(|e| format!("datatype: {e}"))?;
+    egraph.parse_and_run_program(None, crate::expr::GUARD_RELATIONS).map_err(|e| format!("guards: {e}"))?;
+
+    // At least one gene: a WITHIN-gene repeat (two sites under the same
+    // root) is found by the same site-collection mechanism as a cross-gene
+    // one, so a single gene is not a degenerate case to special away --
+    // only an empty input has nothing to assert.
+    if genes.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut root_names: Vec<String> = Vec::new();
+    for (gene_idx, ast) in genes.iter().enumerate() {
+        let name = format!("gene{gene_idx}");
+        egraph.parse_and_run_program(None, &format!("(let {name} {ast})\n")).map_err(|e| format!("assert gene{gene_idx}: {e}"))?;
+        root_names.push(name);
+    }
+
+    let mut root_eclasses = Vec::new();
+    for name in &root_names {
+        let (sort, value) = egraph.eval_expr(&fs_exprs::var(name)).map_err(|e| format!("eval {name}: {e}"))?;
+        root_eclasses.push((sort, value));
+    }
+    let out = egraph.serialize(SerializeConfig { max_functions: None, max_calls_per_function: None, include_temporary_functions: false, root_eclasses });
+    Ok(shared_sites_in(&out.egraph, min_ops))
+}
+
+/// The site-based detection and largest-first containment exclusion
+/// `maximal_shared`'s doc describes (steps 3-5), factored out so a
+/// SATURATED caller (`maximal_shared_saturated`) can run the identical
+/// logic over a different input DAG. Correct for EITHER caller's input
+/// because both guarantee exactly one `NodeId` per `ClassId` by the time
+/// this runs: `maximal_shared`'s un-saturated egraph, by hash-consing
+/// (no rewrite ever creates a second member of an existing class); a
+/// saturated caller's materialized DAG (`extract_dag::materialize`), by
+/// construction (one winning node per class, chosen by the extractor).
+/// This function itself does NOT need, and does not do, any ClassId-based
+/// rekeying -- that work happens once, upstream, in whichever of those two
+/// places produced `ser`.
+pub(crate) fn shared_sites_in(ser: &egraph_serialize::EGraph, min_ops: usize) -> Vec<Match> {
+    use egraph_serialize::NodeId;
+    use std::collections::HashMap as FsHashMap;
+
+    #[derive(Clone, Debug)]
+    struct Site {
+        gene_idx: usize,
+        path: Vec<u8>,
+    }
+    impl Site {
+        fn is_inside(&self, other: &Site) -> bool {
+            self.gene_idx == other.gene_idx && self.path.len() > other.path.len() && self.path[..other.path.len()] == other.path[..]
+        }
+    }
+    fn internal_op_count(ser: &egraph_serialize::EGraph, id: &NodeId) -> usize {
+        let node = &ser.nodes[id];
+        if node.op == "Num" || node.op == "Var" {
+            return 0;
+        }
+        1 + node.children.iter().map(|c| internal_op_count(ser, c)).sum::<usize>()
+    }
+    fn collect_sites(ser: &egraph_serialize::EGraph, root: &NodeId, gene_idx: usize, out: &mut FsHashMap<NodeId, Vec<Site>>) {
+        fn walk(ser: &egraph_serialize::EGraph, id: &NodeId, gene_idx: usize, path: Vec<u8>, out: &mut FsHashMap<NodeId, Vec<Site>>) {
+            out.entry(id.clone()).or_default().push(Site { gene_idx, path: path.clone() });
+            let node = &ser.nodes[id];
+            if node.op == "Num" || node.op == "Var" {
+                return;
+            }
+            for (i, child) in node.children.iter().enumerate() {
+                let mut child_path = path.clone();
+                child_path.push(i as u8);
+                walk(ser, child, gene_idx, child_path, out);
+            }
+        }
+        walk(ser, root, gene_idx, Vec::new(), out);
+    }
+
+    let mut sites_of: FsHashMap<NodeId, Vec<Site>> = FsHashMap::new();
+    for (gene_idx, root_class) in ser.root_eclasses.iter().enumerate() {
+        let Some(class) = ser.classes().get(root_class) else { continue };
+        let Some(root_node) = class.nodes.first() else { continue };
+        collect_sites(ser, root_node, gene_idx, &mut sites_of);
+    }
+
+    let mut candidates: Vec<(NodeId, usize)> = sites_of
+        .iter()
+        .filter(|(id, sites)| sites.len() >= 2 && internal_op_count(ser, id) >= min_ops)
+        .map(|(id, _)| (id.clone(), internal_op_count(ser, id)))
+        .collect();
+    candidates.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+
+    let mut accepted_sites: Vec<Site> = Vec::new();
+    let mut matches: Vec<Match> = Vec::new();
+    for (id, ops) in &candidates {
+        let my_sites = &sites_of[id];
+        let independent: Vec<&Site> = my_sites.iter().filter(|s| !accepted_sites.iter().any(|a| s.is_inside(a))).collect();
+        if independent.len() < 2 {
+            continue;
+        }
+        matches.push(Match {
+            sites: independent.iter().map(|s| (s.gene_idx, s.path.clone())).collect(),
+            internal_op_count: *ops,
+        });
+        accepted_sites.extend(independent.into_iter().cloned());
+    }
+    matches
+}
+
+const SHARE_ITERS: u32 = 40; // TOTAL iteration cap across all SHARE_CHUNK-sized chunks, same convention as DENOISE_ITERS
+const SHARE_CHUNK: u32 = 5; // iterations per chunk, between which the num_tuples() blowup guard checks
+const SHARE_MAX_TUPLES: usize = 50_000; // provisional ceiling -- revisit after real-population mining (see docs/PLAN_saturated_share_equivalence_v1.md §6)
+
+/// `docs/PLAN_saturated_share_equivalence_v1.md` §5 steps 1-3: assert all
+/// genes into one e-graph, saturate with the same bounded
+/// algebra+powers+sign family `denoise` trusts PLUS `ruleset::share`'s
+/// reverse `exp(a+b)->exp(a)*exp(b)` direction (needed for forms to
+/// actually unify -- egglog only fires a rule on a pattern already
+/// present, and three bare roots never construct a `Mul` node on their
+/// own), DAG-extract jointly with the marginal-cost fixpoint
+/// (`extract_dag::extract_shared_dag`), run the same site/containment
+/// detection `maximal_shared` uses (`shared_sites_in`). Finds
+/// equivalence-after-rewriting (`exp(x+y)` vs `exp(x)*exp(y)`), not just
+/// exact repeats. Steps 4-9 (cost gating, fold write-back) are NOT here —
+/// phylu-side, `docs/PLAN_saturated_fold_cost_gating.md` in that repo.
+///
+/// Returns the matches AND the chromosome's total joint DAG cost
+/// (`ExtractedDag::total_cost`) — a caller's fitness/selection layer can
+/// use the cost directly without re-deriving it.
+///
+/// `share` is an EXPANDER (it only grows an e-class, never shrinks it);
+/// combined with `algebra`'s commutativity/associativity it can blow up
+/// combinatorially on a real gene's deeper nesting. `repeat N` alone
+/// bounds iteration COUNT, not e-graph SIZE, so saturation runs in
+/// `SHARE_CHUNK`-sized increments, checking `egraph.num_tuples()` against
+/// `SHARE_MAX_TUPLES` between increments and stopping EARLY (keeping
+/// whatever has been proven so far, not erroring) at whichever bound is
+/// hit first — total iterations reaching `SHARE_ITERS`, or the tuple
+/// ceiling exceeded.
+pub fn maximal_shared_saturated(genes: &[String], min_ops: usize) -> Result<(Vec<Match>, u64), String> {
+    use egglog::prelude::exprs as fs_exprs;
+    use egglog::{EGraph as FsEGraph, SerializeConfig};
+
+    if genes.is_empty() {
+        return Ok((Vec::new(), 0));
+    }
+
+    let mut egraph = FsEGraph::default();
+    egraph.parse_and_run_program(None, MATH_DATATYPE).map_err(|e| format!("datatype: {e}"))?;
+    egraph.parse_and_run_program(None, crate::expr::GUARD_RELATIONS).map_err(|e| format!("guards: {e}"))?;
+    egraph.parse_and_run_program(None, crate::ruleset::identities::ALGEBRA_RULESET).map_err(|e| format!("algebra: {e}"))?;
+    egraph.parse_and_run_program(None, crate::ruleset::powers::POWERS_RULESET).map_err(|e| format!("powers: {e}"))?;
+    egraph.parse_and_run_program(None, crate::ruleset::sign::SIGN_RULESET).map_err(|e| format!("sign: {e}"))?;
+    egraph.parse_and_run_program(None, crate::ruleset::share::SHARE_RULESET).map_err(|e| format!("share: {e}"))?;
+
+    let mut root_names: Vec<String> = Vec::new();
+    for (gene_idx, ast) in genes.iter().enumerate() {
+        let name = format!("gene{gene_idx}");
+        egraph.parse_and_run_program(None, &format!("(let {name} {ast})\n")).map_err(|e| format!("assert gene{gene_idx}: {e}"))?;
+        root_names.push(name);
+    }
+    egraph
+        .parse_and_run_program(None, "(unstable-combined-ruleset share_all guards algebra powers sign share)\n")
+        .map_err(|e| format!("combined ruleset: {e}"))?;
+
+    let mut iters_run = 0u32;
+    while iters_run < SHARE_ITERS {
+        let chunk = SHARE_CHUNK.min(SHARE_ITERS - iters_run);
+        egraph
+            .parse_and_run_program(None, &format!("(run-schedule (repeat {chunk} (run share_all)))\n"))
+            .map_err(|e| format!("saturate: {e}"))?;
+        iters_run += chunk;
+        if egraph.num_tuples() > SHARE_MAX_TUPLES {
+            break; // planned early stop: keep whatever has been proven so far
+        }
+    }
+
+    let mut root_eclasses = Vec::new();
+    for name in &root_names {
+        let (sort, value) = egraph.eval_expr(&fs_exprs::var(name)).map_err(|e| format!("eval {name}: {e}"))?;
+        root_eclasses.push((sort, value));
+    }
+    let out = egraph.serialize(SerializeConfig {
+        max_functions: None,
+        max_calls_per_function: None,
+        include_temporary_functions: false,
+        root_eclasses: root_eclasses.clone(),
+    });
+    let ser = out.egraph;
+    let roots: Vec<egraph_serialize::ClassId> = ser.root_eclasses.clone();
+    let extracted = crate::extract_dag::extract_shared_dag(&ser, &roots)?;
+    let materialized = crate::extract_dag::materialize(&ser, &extracted);
+    Ok((shared_sites_in(&materialized, min_ops), extracted.total_cost))
+}
+
+/// One cross-gene match `maximal_shared` found: every independent
+/// occurrence site (gene index, path of child indices 0/1 from that gene's
+/// root to the match), and the matched subtree's own internal op count
+/// (for the `(sites.len() - 1) * internal_op_count` savings estimate).
+#[derive(Debug, Clone)]
+pub struct Match {
+    pub sites: Vec<(usize, Vec<u8>)>,
+    pub internal_op_count: usize,
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{denoise, eclass_extract_hff, eval_expr_rows, prune_on_data, EclassFamily};
+    use super::{denoise, eclass_extract_hff, eval_expr_rows, maximal_shared, maximal_shared_saturated, prune_on_data, EclassFamily};
+
+    /// Two genes sharing `Mul(x0,x1)` within one gene (gene 0), a different
+    /// `Mul(x0,x2)` NOT shared (gene 1). The match must report exactly 2
+    /// sites, both in gene 0, and paths that resolve to the right positions:
+    /// `Add(Mul,Mul)`'s children are at paths [0] and [1].
+    #[test]
+    fn maximal_shared_finds_a_within_gene_repeat_with_correct_paths() {
+        let genes = vec![
+            r#"(Add (Mul (Var "x0") (Var "x1")) (Mul (Var "x0") (Var "x1")))"#.to_string(),
+            r#"(Mul (Var "x0") (Var "x2"))"#.to_string(),
+        ];
+        let matches = maximal_shared(&genes, 1).expect("maximal_shared");
+        assert_eq!(matches.len(), 1, "exactly one match: Mul(x0,x1)");
+        let m = &matches[0];
+        assert_eq!(m.internal_op_count, 1, "Mul alone is 1 op");
+        assert_eq!(m.sites.len(), 2, "both occurrences, same gene");
+        let mut paths: Vec<Vec<u8>> = m.sites.iter().map(|(_, p)| p.clone()).collect();
+        paths.sort();
+        assert_eq!(paths, vec![vec![0u8], vec![1u8]], "Add's two children, paths [0] and [1]");
+        assert!(m.sites.iter().all(|(g, _)| *g == 0), "both sites in gene 0");
+    }
+
+    /// A SINGLE gene (slice of length 1), its own within-gene repeat, is NOT
+    /// a degenerate case the function special-cases away -- only an empty
+    /// slice has nothing to assert. This is the exact shape phylu's
+    /// `fold_to_dag` needs: finding a repeat inside one chromosome's own
+    /// gene before any cross-gene comparison is relevant.
+    #[test]
+    fn maximal_shared_finds_a_repeat_in_a_single_gene() {
+        let genes = vec![r#"(Add (Mul (Var "x0") (Var "x1")) (Mul (Var "x0") (Var "x1")))"#.to_string()];
+        let matches = maximal_shared(&genes, 1).expect("maximal_shared");
+        assert_eq!(matches.len(), 1, "a single-gene slice must still find its own within-gene repeat");
+        assert_eq!(matches[0].sites.len(), 2);
+        assert!(matches[0].sites.iter().all(|(g, _)| *g == 0));
+    }
+
+    #[test]
+    fn maximal_shared_on_an_empty_slice_finds_nothing() {
+        let matches = maximal_shared(&[], 1).expect("maximal_shared");
+        assert!(matches.is_empty());
+    }
+
+    /// The exact bug fixed before this function existed: a subtree nested
+    /// inside a bigger match (sharing one site with it) AND independently
+    /// reused elsewhere must not be reported with its inflated raw site
+    /// count — the inside site is excluded, and if that drops it below 2
+    /// independent sites, it is not reported as a match at all.
+    #[test]
+    fn maximal_shared_excludes_a_site_nested_inside_a_larger_match() {
+        // gene 0: Sub(Mul(x0,x1), Pow2(x2)) -- Pow2(x2) appears once here,
+        // INSIDE the bigger Sub match (which itself repeats in gene 1).
+        // gene 1: Sub(Mul(x0,x1), Pow2(x2)) -- an exact second occurrence of
+        // the whole Sub expression, so Pow2(x2) is ALSO a site inside it.
+        // Pow2(x2) has raw in-degree 2 but BOTH its sites are inside the
+        // bigger Sub match's own 2 sites -- 0 independent sites, not a match.
+        let genes = vec![
+            r#"(Sub (Mul (Var "x0") (Var "x1")) (Pow2 (Var "x2")))"#.to_string(),
+            r#"(Sub (Mul (Var "x0") (Var "x1")) (Pow2 (Var "x2")))"#.to_string(),
+        ];
+        let matches = maximal_shared(&genes, 1).expect("maximal_shared");
+        // Only the whole Sub expression is reported; Pow2(x2) and Mul(x0,x1)
+        // are subsumed by it, not independently reported.
+        assert_eq!(matches.len(), 1, "only the maximal (whole Sub) match, not its nested pieces");
+        assert_eq!(matches[0].sites.len(), 2);
+        assert_eq!(matches[0].internal_op_count, 3, "Sub + Mul + Pow2, the whole shared expression");
+    }
+
+    /// (a) RULE-EXISTS SANITY CHECK, BOTH DIRECTIONS. Isolates "does the
+    /// rewrite rule exist" from "does the extractor work" -- must pass
+    /// before any `maximal_shared_saturated` test is diagnostic.
+    /// Positive: `powers.rs`'s own forward rule (`Mul(Exp a,Exp b) ->
+    /// Exp(Add a b)`) still fires under algebra+powers+sign alone, no
+    /// `share` -- two roots where ONE is already the Mul form unify.
+    /// Negative: the THREE-BARE-ROOT motivating shape (three independent
+    /// asserts, no pre-built Mul) does NOT unify under algebra+powers+sign
+    /// alone -- `ruleset::share`'s reverse direction is what's needed, and
+    /// this negative half is what would catch a future accidental removal
+    /// of that dependency (duplicates `ruleset::share`'s own two tests by
+    /// design -- those pin the rule's existence directly; this one pins
+    /// that `maximal_shared_saturated`'s own hardcoded ruleset list
+    /// actually includes it).
+    #[test]
+    fn rule_exists_both_directions_before_trusting_the_extractor() {
+        let two_roots = vec![r#"(Exp (Add (Var "x") (Var "y")))"#.to_string(), r#"(Mul (Exp (Var "x")) (Exp (Var "y")))"#.to_string()];
+        let (matches, _cost) = maximal_shared_saturated(&two_roots, 1).expect("maximal_shared_saturated");
+        assert_eq!(matches.len(), 1, "powers.rs's forward rule alone must already unify an explicit Exp(Add) root with an explicit Mul(Exp,Exp) root");
+
+        let three_bare_roots = vec![r#"(Exp (Add (Var "x") (Var "y")))"#.to_string(), r#"(Exp (Var "x"))"#.to_string(), r#"(Exp (Var "y"))"#.to_string()];
+        let (matches, _cost) = maximal_shared_saturated(&three_bare_roots, 1).expect("maximal_shared_saturated");
+        assert_eq!(matches.len(), 2, "THREE bare roots need share's reverse direction to unify at all -- see the headline test below for the full worked trace");
+    }
+
+    /// (b) ClassId-rekeying regression: two genes sharing a NON-ROOT
+    /// `exp(x)*exp(y)`/`exp(x+y)` subexpression (referenced by exactly 2
+    /// parent edges -- the exact shape that triggers `serialize()`'s
+    /// round-robin rotation once a class has >1 member, per this module's
+    /// doc on `extract_dag`). Confirms the match is found with the right
+    /// shape despite that hazard, since `maximal_shared_saturated` always
+    /// walks the EXTRACTOR's materialized (1-member-per-class) output, not
+    /// raw post-saturation `serialize()` output.
+    #[test]
+    fn saturated_match_survives_the_classid_rotation_hazard() {
+        let genes = vec![
+            r#"(Mul (Mul (Exp (Var "x")) (Exp (Var "y"))) (Var "a"))"#.to_string(),
+            r#"(Mul (Exp (Add (Var "x") (Var "y"))) (Var "b"))"#.to_string(),
+        ];
+        let (matches, _cost) = maximal_shared_saturated(&genes, 1).expect("maximal_shared_saturated");
+        assert_eq!(matches.len(), 1, "the shared exp(x)*exp(y)/exp(x+y) subexpression must be found as one match");
+        assert_eq!(matches[0].internal_op_count, 2, "Mul(Exp,Exp) -- 1 op for Mul, but both Exp children count too... see note");
+    }
+
+    /// (d) THE HEADLINE ACCEPTANCE TEST — the three-gene motivating case.
+    /// gene0 = exp(x+y), gene1 = exp(x), gene2 = exp(y): THREE bare roots,
+    /// exactly as the motivating conversation posed it.
+    ///
+    /// The match shape, worked through explicitly (this is NOT "one match
+    /// spanning three genes"): once extraction picks Mul(Exp x, Exp y)
+    /// for gene0's class, gene0's materialized tree contains an Exp(x)
+    /// sub-node (shared with gene1's WHOLE root) and an Exp(y) sub-node
+    /// (shared with gene2's whole root) -- but Exp(x) is NOT shared with
+    /// gene2, and Exp(y) is NOT shared with gene1. So this finds TWO
+    /// separate matches, each internal_op_count == 1 -- min_ops MUST be
+    /// passed as 1, not >= 2, or both are silently dropped.
+    #[test]
+    fn headline_three_gene_case_chooses_the_shared_form_and_finds_two_matches() {
+        let genes = vec![r#"(Exp (Add (Var "x") (Var "y")))"#.to_string(), r#"(Exp (Var "x"))"#.to_string(), r#"(Exp (Var "y"))"#.to_string()];
+        let (matches, total_cost) = maximal_shared_saturated(&genes, 1).expect("maximal_shared_saturated");
+        assert_eq!(total_cost, 3, "jointly cheapest: exp_x(1) + exp_y(1) + mul_form(1) = 3, not the independent exp(add)-wins answer of 4");
+        assert_eq!(matches.len(), 2, "Exp(x) shared with gene1, Exp(y) shared with gene2 -- two separate matches, not one spanning all three");
+        for m in &matches {
+            assert_eq!(m.internal_op_count, 1);
+            assert_eq!(m.sites.len(), 2);
+        }
+    }
+
+    #[test]
+    fn maximal_shared_saturated_on_an_empty_slice_finds_nothing() {
+        let (matches, cost) = maximal_shared_saturated(&[], 1).expect("maximal_shared_saturated");
+        assert!(matches.is_empty());
+        assert_eq!(cost, 0);
+    }
 
     fn rows(var: &str, vals: &[f64]) -> Vec<Vec<(String, f64)>> {
         vals.iter().map(|v| vec![(var.to_string(), *v)]).collect()
