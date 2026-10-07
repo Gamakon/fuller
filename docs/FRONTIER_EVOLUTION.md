@@ -163,12 +163,20 @@ What makes it a second instance of the same idea rather than a neighbour:
   fan-in follow from the geometry up to one constant each. The search treats
   them as heuristics, never genes, which is the same discipline as HFF's
   refusal to tune weights.
-- **Noisy fitness is handled by a ladder of islands.** Because free-running
-  survival varies widely across start points, island 0 scores a candidate on
-  10 starts and island 3 on 50, survivors migrate upward and are re-scored,
-  and the population median is the result, never the best. This is the
-  answer the kernel kingdom of Section 5 needs for noisy GPU timings, already
-  built and measured.
+- **Noisy fitness, and two answers tried.** Free-running survival varies
+  widely across start points, and few starts are not merely noisy but biased
+  upward: twelve starts read 2.8 times better than the network is, and a
+  two-start median lands in the upper half of the distribution. noctiluca's
+  search answered with a ladder of islands, island 0 scoring on 10 starts and
+  island 3 on 50, survivors re-scored as they migrate up, and the population
+  median as the result. The ladder was run, and the bias it corrects was
+  measured, but it was never shown to beat a flat protocol, and its one
+  reported run had an inert tournament. nluca's later GEP tuning dropped the
+  ladder for a flat 33 starts on two keys, every start a coordinate, and HFF's
+  angle to the pole as the fitness, so that an uneven profile scores worse
+  than an even one of the same mean; champions are re-scored on twelve keys
+  before being believed. Either is a candidate for noisy GPU timings in the
+  kernel kingdom of Section 5; which one works is a measurement not yet made.
 - **The same honesty.** The ledger records an inert tournament found after
   the runs, three genome-parsing defects, and a Mackey–Glass error 25 times
   Jaeger and Haas's, and lets the results stand as measured.
@@ -275,8 +283,8 @@ crossover can splice layers and couplings across genomes that differ in shape;
 HFF carries survival, error, build cost and step cost as objectives without
 weights; cohort tournaments protect young architectures; and the editors apply,
 since a specification is an expression tree. What noctiluca adds to the
-geneframe: the island ladder for noisy fitness, and a genome whose candidates
-cost nothing to instantiate. The research question is Stage 2 of the roadmap,
+geneframe: a measured account of how noisy fitness misleads selection, and a
+genome whose candidates cost nothing to instantiate. The research question is Stage 2 of the roadmap,
 whether per-neuron gene selection can learn tasks, asked on an engine built
 for selection.
 
