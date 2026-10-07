@@ -128,7 +128,12 @@ across phylu and fuller.
 
 ## What would stop us
 
-- Vulkan not visible in the pod → the graphics capability is exposed by
+- **Every pod must be created with the env `NVIDIA_DRIVER_CAPABILITIES=all`.**
+  The Vulkan ICD ships with the host driver and is mounted into the container
+  only under the `graphics` capability; no stock Runpod template sets it, and
+  without it `vulkaninfo` finds no device. This is the first thing the test
+  hour checks.
+- Vulkan still not visible with that set → the graphics capability is exposed by
   Runpod's container runtime, not by anything we install. Check Runpod's docs
   and templates for Vulkan support; if the runtime does not pass it, Runpod
   pods are out for us and the fallback is a provider that rents a full VM.
