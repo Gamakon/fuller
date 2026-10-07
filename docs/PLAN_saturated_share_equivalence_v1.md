@@ -600,9 +600,26 @@ this up next should weigh in before building it in either place.
   plan (implementation only).
 - Steps 4-9 of the design doc's §5 — phylu-side
   (`phylu/docs/PLAN_saturated_fold_cost_gating.md`), consuming this plan's
-  `maximal_shared_saturated(genes, min_ops) -> Result<(Vec<Match>, u64), String>`
+  `maximal_shared_saturated(genes, min_ops) -> Result<(Vec<Match>, u64, Vec<String>), String>`
   signature directly, including the re-encoder needed because a saturated
   match's chosen form can legitimately differ from a site's original
   as-written gene text (unlike an exact match) — see that plan for how
   `relevel`'s existing `Graft` mechanism already supports this without new
   low-level machinery.
+  **Signature correction (post-commit, same day):** the original
+  committed signature returned only `(Vec<Match>, u64)`, materializing
+  the chosen DAG internally and discarding it — a real contract gap
+  phylu's review caught: a caller cannot resolve a `Match`'s path, or
+  build a re-encoder for a gene whose chosen form differs from its own
+  text, without that materialized tree. Fixed by adding a third return
+  value, `Vec<String>` — the chosen form per gene root, rendered back to
+  the same `Math` s-expr text every caller already asserts/parses
+  (`render_math`, new in `extract.rs`), parallel to the input `genes`
+  order. Deliberately NOT a raw `SerEGraph` or any `egraph_serialize`
+  type crossing the crate boundary, per phylu's explicit request to
+  avoid that coupling. Covered by two new tests: the headline test now
+  asserts `chosen_forms[0]` renders as the `Mul` form (different from
+  gene0's own input text) while `chosen_forms[1]`/`[2]` render unchanged;
+  a separate round-trip test confirms an unrewritten gene (nested
+  literals, negative floats, multi-arg ops) renders back to its own
+  exact input text byte-for-byte.

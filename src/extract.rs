@@ -1646,12 +1646,12 @@ const SHARE_MAX_TUPLES: usize = 50_000; // provisional ceiling -- revisit after 
 /// whatever has been proven so far, not erroring) at whichever bound is
 /// hit first — total iterations reaching `SHARE_ITERS`, or the tuple
 /// ceiling exceeded.
-pub fn maximal_shared_saturated(genes: &[String], min_ops: usize) -> Result<(Vec<Match>, u64), String> {
+pub fn maximal_shared_saturated(genes: &[String], min_ops: usize) -> Result<(Vec<Match>, u64, Vec<String>), String> {
     use egglog::prelude::exprs as fs_exprs;
     use egglog::{EGraph as FsEGraph, SerializeConfig};
 
     if genes.is_empty() {
-        return Ok((Vec::new(), 0));
+        return Ok((Vec::new(), 0, Vec::new()));
     }
 
     let mut egraph = FsEGraph::default();
@@ -1699,7 +1699,50 @@ pub fn maximal_shared_saturated(genes: &[String], min_ops: usize) -> Result<(Vec
     let roots: Vec<egraph_serialize::ClassId> = ser.root_eclasses.clone();
     let extracted = crate::extract_dag::extract_shared_dag(&ser, &roots)?;
     let materialized = crate::extract_dag::materialize(&ser, &extracted);
-    Ok((shared_sites_in(&materialized, min_ops), extracted.total_cost))
+    let matches = shared_sites_in(&materialized, min_ops);
+
+    // Render each gene root's CHOSEN (post-extraction) form back to Math
+    // s-expr text, one String per gene, parallel to the input `genes`
+    // order -- the stable, crate-boundary-safe way for a caller
+    // (phylu's fold_to_dag) to resolve a Match's path against the form
+    // the path is actually relative to, without that caller ever
+    // touching `egraph_serialize` types directly. A gene whose chosen
+    // form differs from its own original text (the whole reason this
+    // function exists) renders DIFFERENTLY from `genes[gene_idx]` here;
+    // that difference IS the signal a caller's re-encoder acts on.
+    let mut chosen_forms: Vec<String> = Vec::with_capacity(materialized.root_eclasses.len());
+    for root_class in &materialized.root_eclasses {
+        let Some(class) = materialized.classes().get(root_class) else {
+            return Err(format!("materialized root class {root_class} has no member node"));
+        };
+        let Some(root_node) = class.nodes.first() else {
+            return Err(format!("materialized root class {root_class} has an empty node list"));
+        };
+        chosen_forms.push(render_math(&materialized, root_node)?);
+    }
+
+    Ok((matches, extracted.total_cost, chosen_forms))
+}
+
+/// Render a node of a MATERIALIZED (one member per class, by construction
+/// of `extract_dag::materialize`) `egraph_serialize::EGraph` back to
+/// `Math` s-expr text — the format every caller already asserts/parses
+/// (`(let gene0 (Exp (Var "x")))`-style). `Var`'s and `Num`'s single
+/// child is a primitive (string/float literal) node whose `op` field IS
+/// already the correctly-quoted/formatted literal text (confirmed by
+/// direct inspection of a real serialized egraph: a `Var "x"` node's
+/// child has `op == "\"x\""`, already containing the quotes) — rendered
+/// verbatim, never re-escaped.
+fn render_math(ser: &egraph_serialize::EGraph, node_id: &egraph_serialize::NodeId) -> Result<String, String> {
+    let node = ser.nodes.get(node_id).ok_or_else(|| format!("render_math: no node {node_id}"))?;
+    if node.children.is_empty() {
+        return Ok(node.op.clone());
+    }
+    let mut parts = vec![node.op.clone()];
+    for child in &node.children {
+        parts.push(render_math(ser, child)?);
+    }
+    Ok(format!("({})", parts.join(" ")))
 }
 
 /// One cross-gene match `maximal_shared` found: every independent
@@ -1799,11 +1842,11 @@ mod tests {
     #[test]
     fn rule_exists_both_directions_before_trusting_the_extractor() {
         let two_roots = vec![r#"(Exp (Add (Var "x") (Var "y")))"#.to_string(), r#"(Mul (Exp (Var "x")) (Exp (Var "y")))"#.to_string()];
-        let (matches, _cost) = maximal_shared_saturated(&two_roots, 1).expect("maximal_shared_saturated");
+        let (matches, _cost, _forms) = maximal_shared_saturated(&two_roots, 1).expect("maximal_shared_saturated");
         assert_eq!(matches.len(), 1, "powers.rs's forward rule alone must already unify an explicit Exp(Add) root with an explicit Mul(Exp,Exp) root");
 
         let three_bare_roots = vec![r#"(Exp (Add (Var "x") (Var "y")))"#.to_string(), r#"(Exp (Var "x"))"#.to_string(), r#"(Exp (Var "y"))"#.to_string()];
-        let (matches, _cost) = maximal_shared_saturated(&three_bare_roots, 1).expect("maximal_shared_saturated");
+        let (matches, _cost, _forms) = maximal_shared_saturated(&three_bare_roots, 1).expect("maximal_shared_saturated");
         assert_eq!(matches.len(), 2, "THREE bare roots need share's reverse direction to unify at all -- see the headline test below for the full worked trace");
     }
 
@@ -1821,7 +1864,7 @@ mod tests {
             r#"(Mul (Mul (Exp (Var "x")) (Exp (Var "y"))) (Var "a"))"#.to_string(),
             r#"(Mul (Exp (Add (Var "x") (Var "y"))) (Var "b"))"#.to_string(),
         ];
-        let (matches, _cost) = maximal_shared_saturated(&genes, 1).expect("maximal_shared_saturated");
+        let (matches, _cost, _forms) = maximal_shared_saturated(&genes, 1).expect("maximal_shared_saturated");
         assert_eq!(matches.len(), 1, "the shared exp(x)*exp(y)/exp(x+y) subexpression must be found as one match");
         assert_eq!(matches[0].internal_op_count, 2, "Mul(Exp,Exp) -- 1 op for Mul, but both Exp children count too... see note");
     }
@@ -1838,23 +1881,49 @@ mod tests {
     /// gene2, and Exp(y) is NOT shared with gene1. So this finds TWO
     /// separate matches, each internal_op_count == 1 -- min_ops MUST be
     /// passed as 1, not >= 2, or both are silently dropped.
+    ///
+    /// ALSO asserts on the third return value (`chosen_forms`, a phylu
+    /// -facing contract: one rendered Math s-expr string per gene root,
+    /// parallel to input order, so a caller can resolve a Match's path
+    /// against the CHOSEN form without ever touching `egraph_serialize`
+    /// types) -- gene0's chosen form must render as the Mul form, NOT
+    /// its own original Exp(Add) text, which is the entire reason this
+    /// output exists: gene0's gene, as originally written, differs from
+    /// what sharing actually requires it to become.
     #[test]
     fn headline_three_gene_case_chooses_the_shared_form_and_finds_two_matches() {
         let genes = vec![r#"(Exp (Add (Var "x") (Var "y")))"#.to_string(), r#"(Exp (Var "x"))"#.to_string(), r#"(Exp (Var "y"))"#.to_string()];
-        let (matches, total_cost) = maximal_shared_saturated(&genes, 1).expect("maximal_shared_saturated");
+        let (matches, total_cost, chosen_forms) = maximal_shared_saturated(&genes, 1).expect("maximal_shared_saturated");
         assert_eq!(total_cost, 3, "jointly cheapest: exp_x(1) + exp_y(1) + mul_form(1) = 3, not the independent exp(add)-wins answer of 4");
         assert_eq!(matches.len(), 2, "Exp(x) shared with gene1, Exp(y) shared with gene2 -- two separate matches, not one spanning all three");
         for m in &matches {
             assert_eq!(m.internal_op_count, 1);
             assert_eq!(m.sites.len(), 2);
         }
+        assert_eq!(chosen_forms.len(), 3, "one chosen form per gene root, parallel to input order");
+        assert_eq!(chosen_forms[0], r#"(Mul (Exp (Var "x")) (Exp (Var "y")))"#, "gene0's CHOSEN form must be the Mul form -- different from its own original text, which is the whole point of this output");
+        assert_eq!(chosen_forms[1], r#"(Exp (Var "x"))"#, "gene1's chosen form already equals its own original text -- unchanged");
+        assert_eq!(chosen_forms[2], r#"(Exp (Var "y"))"#, "gene2's chosen form already equals its own original text -- unchanged");
     }
 
     #[test]
     fn maximal_shared_saturated_on_an_empty_slice_finds_nothing() {
-        let (matches, cost) = maximal_shared_saturated(&[], 1).expect("maximal_shared_saturated");
+        let (matches, cost, forms) = maximal_shared_saturated(&[], 1).expect("maximal_shared_saturated");
         assert!(matches.is_empty());
         assert_eq!(cost, 0);
+        assert!(forms.is_empty());
+    }
+
+    /// `chosen_forms` round-trips a gene with NOTHING to rewrite (no
+    /// sibling root, no applicable rule) back to EXACTLY its own input
+    /// text, nested literals included -- isolates `render_math`'s own
+    /// correctness (Num/Var literal rendering, nesting, multi-arg ops)
+    /// from the headline test's more complex multi-gene scenario.
+    #[test]
+    fn chosen_forms_round_trips_an_unrewritten_gene_verbatim() {
+        let gene = r#"(Add (Mul (Var "x0") (Num 2.0)) (Sub (Var "x1") (Num -3.5)))"#.to_string();
+        let (_matches, _cost, forms) = maximal_shared_saturated(std::slice::from_ref(&gene), 1).expect("maximal_shared_saturated");
+        assert_eq!(forms, vec![gene], "a gene with no rewrite opportunity must render back to its own exact input text");
     }
 
     fn rows(var: &str, vals: &[f64]) -> Vec<Vec<(String, f64)>> {
