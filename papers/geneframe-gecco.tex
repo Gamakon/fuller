@@ -439,8 +439,9 @@ perturbation of it.
 
 A population is a flat buffer of 32-bit tokens and 32-bit constants held
 resident on the device across generations. Decode, variation and evaluation are
-compute kernels in WGSL, recorded onto one command encoder per generation, so the
-population never leaves the device in the hot loop. Each device kernel has a
+compute kernels in WGSL, three command submissions per generation (variation,
+decode, and the fitness chain), and the population never leaves the device in
+the hot loop. Each device kernel has a
 bit-exact host reference, and the regular-expression kernels are additionally
 cross-checked against an independent engine (Rust's \texttt{regex} library) as an
 oracle.
@@ -463,8 +464,9 @@ work is cubic --- population $\times$ genes $\times$ rows --- and a single flat
 dispatch over that product overran the device buffer limit on a realistic column;
 the match and the score are therefore \emph{banded} over row chunks and
 dispatched in two dimensions. Malformed trees that recombination can produce (an
-out-of-range child index, a self-reference, a disconnected node) are refused
-identically on host and device and compile to a program that matches nothing.
+out-of-range child index, a self-reference, a disconnected node) are refused by
+the same checks in the same order on host and device; on the device such a gene
+compiles to an empty program, which matches nothing.
 
 \paragraph{Throughput.} Table~\ref{tab:throughput} gives representative
 generation times on an Apple Silicon laptop through the Metal backend of wgpu.
@@ -476,10 +478,11 @@ at a population of 2{,}600.
 
 \begin{table}[t]
 \caption{Generation time and throughput, one seed, Apple Silicon via wgpu/Metal.
-Symbolic-regression figures are on Feynman problems with 4{,}000 training rows;
-regular-expression figures are on the postcode task of
-Section~\ref{sec:results-regex}. Individuals per second are derived from the
-logged generation counts and run times, not measured separately.}
+Symbolic-regression figures are on Feynman problems at the engine's default
+data split (up to 4{,}000 training rows); regular-expression figures are on
+the postcode task of Section~\ref{sec:results-regex}, the same two runs as
+Table~\ref{tab:regex}. Individuals per second are derived from the logged
+generation counts and run times, not measured separately.}
 \label{tab:throughput}
 \small
 \begin{tabular}{@{}lrrr@{}}
@@ -490,7 +493,7 @@ Python engine (reference) & 800 & 1{,}200 & 670 \\
 Device, SR & 800 & 35 & 23{,}000 \\
 Device, SR & 2{,}000 & 46 & 43{,}000 \\
 Device, SR & 20{,}000 & 176 & 114{,}000 \\
-Device, SR & 40{,}000 & 296 & 138{,}000 \\
+Device, SR & 40{,}000 & 296 & 135{,}000 \\
 Device, regex, single-type & 2{,}600 & 21 & 125{,}000 \\
 Device, regex, multi-typed & 2{,}600 & 10 & 253{,}000 \\
 \bottomrule
@@ -574,21 +577,26 @@ keeping age-indexed sub-populations with restricted migration and a periodically
 reseeded youngest layer. We want that protection without carrying separate
 sub-populations across the device, so we reformulate it inside the tournament.
 Every individual carries a \emph{cohort} label: the immigration interval on
-which its founding line arrived, inherited by every descendant. (Random
-immigrants --- fresh individuals --- are admitted every fixed number of
-generations; we call that number the immigration interval.) A tournament
+which its founding line arrived, inherited by every descendant. (Islands run in
+pairs. Every fixed number of generations --- the immigration interval --- the
+intake island of a pair keeps its best fifth and refills the rest with random
+immigrants, and its two best individuals replace the two worst of its champion
+island, which otherwise evolves by the same variation and selection.) A tournament
 \emph{prefers} a candidate of the drawing individual's own cohort over any other,
 whatever that other's fitness, so a young line is not eliminated by a converged
 older line that merely happened to be drawn. Lines are grouped by age: a line
 older than a merge age --- measured as generations since its label, not as the
 label itself --- joins a single oldest group with every other such line, the
 counterpart of ALPS's unbounded top layer, so the converged mix freely and only
-the young are kept apart. The elite positions of each island are filled per age
-group.
+the young are kept apart. The elite prefix of each island can be filled per age
+group; every run reported here used plain per-island elitism.
 
 The quantity that matters is how many cohorts are alive at once, the merge age
 divided by the immigration interval --- five by default --- which holds at any
-population size. The motivating measurement is a tournament of 105 individuals
+population size. The regular-expression runs reported below used that default;
+the SRBench run used a merge age of 10{,}000 generations with an immigration
+interval of 50, so within a 90-second fit no line reached the oldest group and
+the cohorts stayed apart throughout. The motivating measurement is a tournament of 105 individuals
 that had a $6.7\times10^{-11}$ chance of containing no converged older line:
 without the preference, 294{,}000 random immigrants left no survivors; with the
 merge, the best model on one Strogatz problem belonged to the youngest age
@@ -694,7 +702,7 @@ multi-seed study.
 On the 133 ground-truth problems of SRBench~\cite{lacava2021srbench} (119
 Feynman and 14 Strogatz systems, noise-free), with one development seed, a
 population of 2{,}000 across two islands, 90 seconds per problem and SRBench's
-own symbolic-equivalence criterion, the engine recovered 74 of 133 laws (55.6\%).
+sympy-based symbolic-equivalence check, the engine recovered 74 of 133 laws (55.6\%).
 Fuller's post-search candidate generation --- saturating each near miss under the
 physics-prior and algebra families and testing the variants with the same
 criterion --- recovered 5 more, for 79 of 133 (59.4\%). That gain, from 74 to
@@ -710,9 +718,9 @@ budget of up to eight hours per run and no access to the answer. Our count of
 74--79 of 133 is of the same order, but it was obtained under a weaker protocol:
 one seed, 90 seconds per problem on a laptop GPU, and the symbolic criterion used
 as the stop condition. A run on the pre-registered official seeds without access
-to the ground truth is in progress, and until it completes we claim only that
-the two systems together reach the same order of recovery in a small fraction of
-the time.
+to the ground truth was begun and stopped before completion, and is not reported
+here; we therefore claim only that the two systems together reach the same
+order of recovery in a small fraction of the time.
 
 \subsection{A regular-expression kingdom}
 \label{sec:results-regex}
@@ -729,8 +737,8 @@ seconds on one seed with a population of 2{,}600.
 
 Table~\ref{tab:regex} compares the single-type baseline --- the same engine with
 the kingdom restricted to \ty{Pattern} --- against the four-type kingdom. Typing
-raises held-out recall by five points and shortens the rule from nine tokens to
-four, with every foreign-format negative still rejected. The cost is plain:
+raises held-out recall by five points and shortens the compiled program from
+nine instructions to four, with every foreign-format negative still rejected. The cost is plain:
 the typed rule's negated range \rx{[^X-t]+} is looser on corrupted UK values,
 and it accepts 26 of 50 against 14. Typing earns its place on recall and on
 generalisation to unseen postcodes; precision on the near-miss class is the
@@ -742,19 +750,20 @@ string an external oracle scores is exactly the program the device fitness used.
 counts negatives the rule wrongly accepted (false positives).}
 \label{tab:regex}
 \small
+\resizebox{\columnwidth}{!}{%
 \begin{tabular}{@{}lrr@{}}
 \toprule
  & Single-type & Multi-typed \\
 \midrule
 Evolved rule & \texttt{(?:\textbackslash w)*\textbackslash d\textbackslash s(?:.)*} & \texttt{(?:[\textasciicircum X-t])+[\textasciicircum 0-;]} \\
-Rule length (tokens) & 9 & 4 \\
+Program length (instructions) & 9 & 4 \\
 Held-out recall & 92.4\% & 97.5\% \\
 US ZIP accepted & 0/60 & 0/60 \\
 US ZIP+4 accepted & 0/30 & 0/30 \\
 Canadian accepted & 0/60 & 0/60 \\
 Corrupted UK accepted & 14/50 & 26/50 \\
 \bottomrule
-\end{tabular}
+\end{tabular}}
 \end{table}
 
 This result is the existence proof for the generality claim. The
@@ -772,7 +781,8 @@ them only through a rewritten form, and every fold evaluated correctly: exact
 folds bit-identical to the unfolded chromosome, rewritten folds within
 $10^{-4}$ relative error, no rejects. Folding all of it removes 2.7\% of the
 population's operations, while the second dispatch pass costs the equivalent of
-177--366 operations per submission against chromosomes of at most 17 operations.
+177--366 operations per submission in uncontended runs, against chromosomes of
+at most 17 operations.
 The calibrated gate therefore rejects every fold, and forcing it measured
 5--49\% slower population-wide. Detection costs 28~ms per chromosome. The
 mechanism is correct and the gate is right to refuse: at this repeat rate, sharing does
@@ -786,8 +796,8 @@ parsimony objective would read if one were wanted.
 \begin{itemize}
 \item \textbf{Multi-seed statistics and external baselines.} Every number above
 is one seed. The SRBench count under the official protocol --- the
-pre-registered seeds, without access to the ground truth --- is running and is
-not reported here; the regular-expression
+pre-registered seeds, without access to the ground truth --- was begun and
+stopped before completion, and is not reported here; the regular-expression
 kingdom has no comparison against an external regex-inference
 baseline~\cite{bartoli2016regex}.
 \item \textbf{Counted repetition is not yet drawable.} \ty{rep\_n} and the
@@ -857,10 +867,15 @@ against the code and the run logs by the author.
 \paragraph{SRBench.} Problems: the 133 ground-truth data sets of
 SRBench~\cite{lacava2021srbench} at noise level zero (119 Feynman, 14 Strogatz).
 One development seed (7014); the ten official seeds are reserved. Population
-1{,}000 + 1{,}000 across an immigrant island and an elite island; 4{,}000 training
-and 1{,}000 validation rows; 90 seconds per problem; typed depth 2. A problem
-counts as recovered when a model passes SRBench's symbolic-equivalence check,
-which was also the stop condition. Fuller's post-search candidate generation
+1{,}000 + 1{,}000 across an intake island, which admits the random immigrants,
+and a champion island, which receives the intake's two best each interval;
+immigration interval 50 generations, merge age 10{,}000 (no line reached the
+oldest group within a 90-second fit). Data: 80/20 training/validation of at
+most 5{,}000 rows --- 4{,}000 and 1{,}000 for the Feynman sets, 240 and 60 for
+the 400-row Strogatz sets --- with a 25\% test split held back. 90 seconds per
+problem; typed depth 2. A problem counts as recovered when a model passes
+SRBench's sympy-based symbolic-equivalence check, which was also the stop
+condition. Fuller's post-search candidate generation
 takes the best model of an unrecovered problem, saturates it under the
 physics-prior and algebra families, and tests each extracted variant with the
 same check.
@@ -870,24 +885,29 @@ Office validator~\cite{govuk2015postcode}. Negatives: US ZIP (60 held out), US
 ZIP+4 (30), Canadian (60), and corrupted UK postcodes (50) generated from the
 masks of real postcodes and kept only if the validator rejects them. Training
 461 positives and 200 negatives; held-out 198 positives and 200 negatives, scored
-once. Seed 7013, 180 seconds, population 2{,}000 + 600, eight HFF objectives
-(the confusion matrix on training and on validation), simplify editor on. The
+once. Seed 7013, 180 seconds, population 2{,}000 + 600, immigration interval
+20 generations, merge age 100, eight HFF objectives (the confusion matrix on
+training and on validation), simplify editor on. The
 single-type configuration is the same engine with the kingdom restricted to the
 \ty{Pattern} type.
 
 \paragraph{Masks.} Where a mask is used as a feature it is the data-quality
-profile of the value~\cite{morgan2017bytefreq,morgan2017spark}: each character
-is replaced by its Unicode category (\texttt{A} upper, \texttt{a} lower,
-\texttt{9} digit; grammar marks and whitespace kept), either length-preserving
-or run-collapsing. A gene selects which field it matches through one of its
+profile of the value~\cite{morgan2017bytefreq,morgan2017spark}: each ASCII
+letter or digit is replaced by its class (\texttt{A} upper, \texttt{a} lower,
+\texttt{9} digit) and other characters by their Unicode category; the four
+grammar marks space, hyphen, full stop and comma are kept, any whitespace
+becomes one space, and all other punctuation becomes an underscore. The mask is
+either length-preserving or run-collapsing. A gene selects which field it matches through one of its
 reserved constant slots; masks are inputs only, and the confusion matrix is
 scored on the label.
 
 \paragraph{Shared subexpressions.} Population: 800 individuals of three genes
 from a 30-second fit of Feynman I.29.16, seed 7013, head length 34. Costs were
-calibrated on the device: per-operator cost $2.2$--$2.9\times10^{-7}$~s,
-per-reference read $0.00$--$0.06$ operation-equivalents, two-pass dispatch
-177--366 operation-equivalents per submission. Saturation: the algebra, powers
+calibrated on the device, in uncontended runs: per-operator cost
+$2.2$--$2.9\times10^{-7}$~s, per-reference read $0.00$--$0.06$
+operation-equivalents, two-pass dispatch 177--366 operation-equivalents per
+submission (one run under GPU contention measured $3.9\times10^{-7}$~s,
+$0.37$ and $1{,}343$ respectively, and is excluded). Saturation: the algebra, powers
 and sign families plus the single expanding rule $e^{a+b}\to e^{a}e^{b}$, at
 most 40 iterations, checked after each against a ceiling of 5{,}000 e-graph
 tuples. Extraction: at most 8 fixed-point rounds.
