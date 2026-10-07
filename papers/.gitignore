@@ -1,0 +1,10 @@
+# LaTeX build artifacts (latexmk); the .tex and .bib are the sources.
+*.aux
+*.bbl
+*.blg
+*.fdb_latexmk
+*.fls
+*.log
+*.out
+*.synctex.gz
+comment.cut
