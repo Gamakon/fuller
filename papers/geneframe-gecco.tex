@@ -92,8 +92,9 @@ That property depends on an assumption, closure: every symbol must accept, in
 every argument slot, the output of every other symbol. Classical GEP enforces
 closure by admitting one value type, so each symbol needs only an untyped operand
 count and any output may fill any slot. This is adequate for symbolic regression,
-where every operator consumes and produces a real number. It is not adequate when
-the operators are typed. A counted repetition in a regular expression consumes a
+where every operator consumes and produces a real number, although even there a
+type can forbid shapes no law has, as Section~\ref{sec:geneframe} shows. It is
+not adequate when the operators are typed. A counted repetition in a regular expression consumes a
 pattern and an integer; a character class is assembled from characters and is a
 different kind of value from a pattern. An operand count cannot express ``two
 children, the first a pattern and the second an integer,'' and the raw operators,
@@ -123,9 +124,9 @@ becomes non-coding. Every gene expresses, the operators are untouched, and
 heterogeneous types live in one gene. The count of substituted codons is kept as
 a parity invariant between the host and device decoders and as the acceptance
 gate on an edited gene. The first use of the typed table, the transcendental
-depth ladder of the TSR kingdom, is narrower: a gene with no typing does not
-express. Both decoders are in the engine and the paper says which kingdom uses
-which.
+depth ladder of the TSR kingdom, is narrower: a gene with no type derivation
+does not express. Both decoders are in the engine and Section~\ref{sec:decoder}
+states which kingdom uses which.
 \item \textbf{A device-resident evolutionary loop} (Section~\ref{sec:engine}):
 decode, variation and evaluation are compute kernels, and the population never
 leaves the device during a generation. For the regular-expression kingdom the
@@ -329,16 +330,13 @@ and has exactly two rows:
 \end{align*}
 There is no row accepting $\ty{T2}$, and no type above it. That missing row is
 the whole design: a third nested transcendental is not penalised, it has no
-signature and cannot be expressed. The ceiling was chosen by measurement, not
-taste. Over the 133 SRBench ground-truth models (128 parse), no law nests two
+signature and cannot be expressed. The ceiling was chosen by measurement. Over the 133 SRBench ground-truth models (128 parse), no law nests two
 transcendentals directly; 78 lie at depth zero, 47 at depth one, 3 at depth two,
 and none deeper. The three depth-two laws, such as
 $\exp(-(\theta/\sqrt{2})^{2})$, reach that depth through arithmetic, which is
 why arithmetic must absorb rather than reset. Every parsed law types under the
-ladder, and 7 of 8 models the untyped engine had previously reported on the
-same problems were towers the ladder forbids. The name is the author's: it is
-symbolic regression that handles the distance a law keeps between its
-functions.
+ladder, and 7 of 8 models the untyped engine had previously reported were
+towers the ladder forbids.
 
 \paragraph{Regular expressions: four value types.} The third kingdom evolves
 regular expressions over \ty{Pattern} (the root type), \ty{CharClass},
@@ -385,6 +383,9 @@ not incur.
 \item[C --- a total typed decoder.] Heterogeneous genes \emph{and} raw operators
 unchanged. This is what we build.
 \end{description}
+The TSR kingdom was built first and lies between B and C: raw operators
+unchanged and heterogeneous depth types in one gene, but a gene that does not
+type is refused, so validity is below 100\%. That cost is what motivated C.
 
 \subsection{The projection}
 
@@ -479,7 +480,7 @@ carried unscored and keeps varying. That is the honest limit of
 ``unrepresentable'' at the chromosome level, and it is why the final
 population of a TSR run still holds genes past the ceiling.
 
-Design C, the projection of Section~\ref{sec:decoder}, generalises the ladder to
+Design C, the projection above, generalises the ladder to
 heterogeneous types and makes every gene express; it is the decoder of the
 regular-expression kingdom, and the TSR ladder has not yet been re-expressed
 through it. Design C is a strict superset of the classical decode: in a
@@ -539,7 +540,7 @@ at a population of 2{,}600.
 Untyped symbolic-regression figures are on Feynman problems at the engine's
 default data split (up to 4{,}000 training rows), taken on the 21 September
 2026 build, before the device-resident generation described above made the
-engine faster (the same problem fell from 58 to 12.5~ms per generation across
+engine faster (Strogatz shear flow fell from 58 to 12.5~ms per generation across
 that rebuild with identical trajectories), so they are conservative. The TSR
 row is the Strogatz shear-flow run of the SRBench study (240 training rows).
 Regular-expression figures are on the postcode task of
@@ -772,9 +773,9 @@ sympy-based symbolic-equivalence check, the TSR kingdom recovered 74 of 133 laws
 TSR run found 16 laws outside that union and missed 6 inside it. This is not a
 controlled comparison --- engine builds, budgets and seeds differ, and no
 same-seed run with typing off exists --- so we report it as history, not as a
-typing effect. The decoder refused 31 million genes over the 133 runs; on the
-hardest system, Strogatz shear flow, about a fifth of all evaluations were
-refused.
+typing effect. The decoder refused 31 million genes over the 133 runs; on
+Strogatz shear flow, 477 thousand of the 6.6 million genes decoded (about
+7\%) were refused.
 Fuller's post-search candidate generation --- saturating each near miss under the
 physics-prior and algebra families and testing the variants with the same
 criterion --- recovered 5 more, for 79 of 133 (59.4\%). That gain, from 74 to
