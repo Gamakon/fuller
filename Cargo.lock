@@ -780,6 +780,7 @@ dependencies = [
  "egglog",
  "egraph-serialize",
  "hff",
+ "naga",
  "ndarray",
  "pollster",
  "pyo3",
