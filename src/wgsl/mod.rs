@@ -19,7 +19,7 @@ pub mod reader;
 pub mod scaffold;
 pub mod table;
 
-pub use chromosome::{chromosome, ChromosomeOptions, WgslChromosome};
+pub use chromosome::{chromosome, chromosome_typed, ChromosomeOptions, WgslChromosome};
 pub use infer::{infer_function, FunctionTypes, NodeType, TypeStats, TypedTree};
 pub use loader::{wgsl_duals, wgsl_fallback_table, wgsl_table, WgslDual, WgslKingdom, WgslRow, WGSL};
 pub use reader::{read, Kernel, KernelFunction, Node, Root, RootKind};

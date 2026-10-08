@@ -32,7 +32,7 @@ use std::collections::BTreeMap;
 use fuller::gpu_eval::MAX_NODES;
 use fuller::homeotic::{unfold, FoldedChromosome};
 use fuller::karva::karva_to_terms_generic;
-use fuller::wgsl::{chromosome, infer_function, read, round_trip, ChromosomeOptions, RootKind, WgslKingdom};
+use fuller::wgsl::{chromosome, chromosome_typed, infer_function, read, round_trip, ChromosomeOptions, RootKind, WgslKingdom};
 
 fn main() -> Result<(), String> {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -141,8 +141,9 @@ fn main() -> Result<(), String> {
         }
         // The chromosome dump, if asked: tokens as the engine would upload them.
         if dump_path.is_some() {
+            let kingdom = WgslKingdom::load();
             for f in &kernel.functions {
-                if let Ok(c) = chromosome(f, &ChromosomeOptions::default()) {
+                if let Ok(c) = chromosome_typed(f, &kingdom, &ChromosomeOptions::default()) {
                     if let Some((h, genes)) = &c.genes {
                         let tok = |t: &fuller::karva::Token| match t {
                             fuller::karva::Token::Func(n) => serde_json::json!({ "f": n }),
@@ -161,7 +162,8 @@ fn main() -> Result<(), String> {
                             "tail_slots": c.folded.tail.len(),
                             "tail_filled": c.folded.filled,
                             "pset": { "variables": c.pset.variables, "functions": functions, "rnc_values": c.pset.rnc_values },
-                            "genes": genes.iter().map(|(head, tail)| serde_json::json!({ "head": head.iter().map(tok).collect::<Vec<_>>(), "tail": tail.iter().map(tok).collect::<Vec<_>>() })).collect::<Vec<_>>(),
+                            "genes": genes.iter().zip(&c.ty_codes).map(|((head, tail), codes)| serde_json::json!({ "head": head.iter().map(tok).collect::<Vec<_>>(), "tail": tail.iter().map(tok).collect::<Vec<_>>(), "ty_codes": codes })).collect::<Vec<_>>(),
+                            "refused_forms": c.refused_forms,
                             "roots": c.roots,
                             "folded": { "head": c.folded.head, "tail": c.folded.tail },
                         }));

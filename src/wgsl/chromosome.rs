@@ -17,9 +17,12 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::extract::Match;
+use crate::geneframe::Ty;
 use crate::homeotic::{self, FoldOptions, FoldedChromosome, KarvaGene};
 use crate::karva::{karva_to_terms_generic, parse_math, FunctionSpec, MathNode, PsetSpec};
 
+use super::infer::infer_function;
+use super::loader::WgslKingdom;
 use super::reader::{KernelFunction, RootKind};
 
 /// What one function became.
@@ -43,6 +46,15 @@ pub struct WgslChromosome {
     pub oversized_at: Vec<(usize, usize)>,
     /// The Karva genes at the first head length every gene fits, if any.
     pub genes: Option<(usize, Vec<KarvaGene>)>,
+    /// Per gene (head genes then tail genes, as `genes`), the dual CODE of
+    /// each live head token in level order (`Ty::code()`; `None` where the
+    /// slot has no dual or a form conflict left the node opaque). A tail
+    /// gene's root dual is what an `href<t>` leaf carries. Empty when the
+    /// chromosome was built untyped.
+    pub ty_codes: Vec<Vec<Option<u32>>>,
+    /// Repeated subtrees refused for sharing because their occurrences
+    /// were read under two forms (the plan's form-conflict rule).
+    pub refused_forms: usize,
 }
 
 /// Options for [`chromosome`].
@@ -185,9 +197,35 @@ fn pset_of(roots: &[MathNode]) -> Result<PsetSpec, String> {
     })
 }
 
-/// Fold and encode one read function.
+/// Fold and encode one read function, untyped (no duals carried).
 pub fn chromosome(f: &KernelFunction, opts: &ChromosomeOptions) -> Result<WgslChromosome, String> {
+    build(f, opts, None)
+}
+
+/// [`chromosome`] with the duals of [`infer_function`] carried: a text read
+/// under two forms is never shared, and every gene carries a `ty_code` per
+/// live head token.
+pub fn chromosome_typed(f: &KernelFunction, kingdom: &WgslKingdom, opts: &ChromosomeOptions) -> Result<WgslChromosome, String> {
+    build(f, opts, Some(kingdom))
+}
+
+fn build(f: &KernelFunction, opts: &ChromosomeOptions, kingdom: Option<&WgslKingdom>) -> Result<WgslChromosome, String> {
     let roots: Vec<MathNode> = f.roots.iter().map(|r| parse_math(&r.tree.to_sexpr())).collect::<Result<_, _>>()?;
+    // The dual of every subtree TEXT (canonical rendering), and the texts
+    // whose occurrences took more than one: those must not be shared.
+    let mut dual_of_text: BTreeMap<String, Option<Ty>> = BTreeMap::new();
+    let mut two_forms: BTreeSet<String> = BTreeSet::new();
+    if let Some(kingdom) = kingdom {
+        let types = infer_function(f, kingdom);
+        for (text, duals) in &types.by_text {
+            let key = render(&parse_math(text)?);
+            if duals.len() > 1 {
+                two_forms.insert(key);
+            } else if let Some(d) = duals.iter().next() {
+                dual_of_text.insert(key, *d);
+            }
+        }
+    }
     let stored: BTreeSet<String> = f
         .roots
         .iter()
@@ -199,6 +237,22 @@ pub fn chromosome(f: &KernelFunction, opts: &ChromosomeOptions) -> Result<WgslCh
         .collect();
     let canonical: Vec<String> = roots.iter().map(render).collect();
     let (matches, refused_loads) = exact_shared(&roots, &stored, opts.min_ops);
+    // The form-conflict rule: a repeated text whose occurrences were read
+    // under two forms keeps its own dual at each site and is not folded.
+    let (matches, refused_forms): (Vec<Match>, usize) = {
+        let mut kept = Vec::new();
+        let mut refused = 0usize;
+        for m in matches {
+            let Some((gene, path)) = m.sites.first() else { continue };
+            let text = node_at(&roots[*gene], path).map(render).unwrap_or_default();
+            if two_forms.contains(&text) {
+                refused += 1;
+            } else {
+                kept.push(m);
+            }
+        }
+        (kept, refused)
+    };
     let max_head = opts.head_lengths.iter().copied().max().unwrap_or(0);
     let folded = homeotic::fold(&canonical, &matches, FoldOptions { tail_slots: opts.tail_slots, max_definition_ops: Some(max_head) })?;
     // The fold must unfold to what it was given.
@@ -229,6 +283,15 @@ pub fn chromosome(f: &KernelFunction, opts: &ChromosomeOptions) -> Result<WgslCh
             genes = Some((h, encoded));
         }
     }
+    // Duals per live head token, level order, for every gene: a leaf
+    // `href<t>` carries tail gene t's root dual; a literal's `Num` child
+    // carries the literal's dual.
+    let ty_codes = if kingdom.is_some() {
+        let tail_root_dual: Vec<Option<Ty>> = folded.tail.iter().map(|g| parse_math(g).ok().and_then(|n| dual_of_text.get(&render(&n)).copied().flatten())).collect();
+        all_genes.iter().map(|g| level_order_duals(g, &dual_of_text, &tail_root_dual)).collect()
+    } else {
+        Vec::new()
+    };
     Ok(WgslChromosome {
         function: f.name.clone(),
         roots: canonical,
@@ -239,7 +302,43 @@ pub fn chromosome(f: &KernelFunction, opts: &ChromosomeOptions) -> Result<WgslCh
         head_needed,
         oversized_at,
         genes,
+        ty_codes,
+        refused_forms,
     })
+}
+
+fn node_at<'a>(root: &'a MathNode, path: &[u8]) -> Option<&'a MathNode> {
+    let mut cur = root;
+    for &i in path {
+        match cur {
+            MathNode::App(_, children) => cur = children.get(i as usize)?,
+            _ => return None,
+        }
+    }
+    Some(cur)
+}
+
+/// The dual code of every node of `g` in the encoder's level order (the
+/// order of the live head tokens), `None` where unknown.
+fn level_order_duals(g: &MathNode, dual_of_text: &BTreeMap<String, Option<Ty>>, tail_root_dual: &[Option<Ty>]) -> Vec<Option<u32>> {
+    let mut out = Vec::new();
+    let mut queue: std::collections::VecDeque<(&MathNode, Option<Ty>)> = std::collections::VecDeque::new();
+    queue.push_back((g, None));
+    while let Some((n, inherited)) = queue.pop_front() {
+        let own = match n {
+            MathNode::Var(name) => homeotic::href_slot(name).and_then(|t| tail_root_dual.get(t).copied().flatten()).or_else(|| dual_of_text.get(&render(n)).copied().flatten()),
+            MathNode::Num(_) => inherited,
+            MathNode::App(..) => dual_of_text.get(&render(n)).copied().flatten(),
+        };
+        out.push(own.map(Ty::code));
+        if let MathNode::App(ctor, children) = n {
+            let pass = if ctor.starts_with("literal.") { own } else { None };
+            for c in children {
+                queue.push_back((c, pass));
+            }
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -297,6 +396,46 @@ fn main() {
         assert!(c.refused_loads >= 1);
         assert_eq!(c.folded.filled, 0);
         assert!(c.genes.is_some());
+    }
+
+    #[test]
+    fn the_typed_chromosome_carries_a_dual_per_live_token_and_refuses_two_form_texts() {
+        let kingdom = WgslKingdom::load();
+        // A float pipeline: every token has a dual.
+        let k = read(TWO_STORES).unwrap();
+        let c = chromosome_typed(&k.functions[0], &kingdom, &ChromosomeOptions::default()).unwrap();
+        let (_, genes) = c.genes.as_ref().unwrap();
+        assert_eq!(c.ty_codes.len(), genes.len());
+        let texts: Vec<&String> = c.folded.head.iter().chain(c.folded.tail.iter()).collect();
+        for ((codes, (head, _)), text) in c.ty_codes.iter().zip(genes).zip(texts) {
+            assert!(codes.len() <= head.len(), "codes cover the live prefix of the head");
+            if *text == homeotic::EMPTY_SLOT {
+                assert_eq!(codes, &vec![None], "an empty tail slot carries no dual");
+                continue;
+            }
+            assert!(codes.iter().all(|d| d.is_some()), "{text}: {codes:?}");
+            assert!(codes.iter().flatten().all(|d| *d >= Ty::TABLE_CODE_BASE));
+        }
+        let store = &c.ty_codes[c.roots.len() - 1];
+        assert_eq!(store[0], Some(kingdom.duals.iter().position(|d| d.dual == "store.store").unwrap() as u32 + Ty::TABLE_CODE_BASE), "a store root's root token is the store dual");
+        // A text read as an index in one root and as bits in another is not shared.
+        let src = r#"
+@group(0) @binding(0) var<storage, read> xs: array<u32>;
+@group(0) @binding(1) var<storage, read_write> a: array<u32>;
+@group(0) @binding(2) var<storage, read_write> b: array<u32>;
+@compute @workgroup_size(1)
+fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+    a[gid.x] = xs[gid.x * 2u + 1u] + 1u;
+    b[gid.x] = xs[gid.x * 2u + 1u] & 1u;
+}
+"#;
+        let k = read(src).unwrap();
+        let untyped = chromosome(&k.functions[0], &ChromosomeOptions::default()).unwrap();
+        let typed = chromosome_typed(&k.functions[0], &kingdom, &ChromosomeOptions::default()).unwrap();
+        assert!(untyped.matches >= 1, "untyped, the load of xs[...] repeats and folds");
+        assert_eq!(typed.refused_forms, 1, "typed, that text was read as index and as bits");
+        assert_eq!(typed.matches, untyped.matches - 1);
+        assert!(typed.genes.is_some());
     }
 
     #[test]
