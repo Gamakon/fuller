@@ -112,7 +112,12 @@ fn main() -> Result<(), String> {
             }
             match encode(&folded, &pset, 7013, head_len) {
                 Ok(_) => encode_ok += 1,
-                Err(_) => encode_fail += 1,
+                Err(e) => {
+                    if encode_fail == 0 {
+                        println!("first encode failure, individual {id}: {e}");
+                    }
+                    encode_fail += 1;
+                }
             }
             if example.is_none() {
                 example = Some((*id, genes.clone(), folded.head.clone(), folded.tail.clone()));
