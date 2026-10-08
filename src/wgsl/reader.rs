@@ -531,7 +531,7 @@ fn expand(ctx: &mut Ctx, h: Handle<Expression>, count: bool) -> Node {
         Expression::FunctionArgument(i) => {
             let arg = &ctx.func.arguments[i as usize];
             let name = match &arg.binding {
-                Some(naga::Binding::BuiltIn(b)) => format!("builtin.{}", snake(&format!("{b:?}"))),
+                Some(naga::Binding::BuiltIn(b)) => format!("builtin.{}", super::naga_names::builtin_name(*b)),
                 _ => format!("arg.{}", arg.name.clone().unwrap_or_else(|| format!("{i}"))),
             };
             Node::Leaf { name, slot }
@@ -685,21 +685,6 @@ fn convert_name(from: Option<ScalarKind>, to: NagaKind, convert: bool) -> Option
         (ScalarKind::Uint, NagaKind::Float, false) => "convert.bitcast_bits_f32",
         _ => return None,
     })
-}
-
-fn snake(camel: &str) -> String {
-    let mut out = String::new();
-    for (i, c) in camel.chars().enumerate() {
-        if c.is_uppercase() {
-            if i > 0 {
-                out.push('_');
-            }
-            out.push(c.to_ascii_lowercase());
-        } else {
-            out.push(c);
-        }
-    }
-    out
 }
 
 #[cfg(test)]
