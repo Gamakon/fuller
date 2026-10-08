@@ -81,6 +81,25 @@ expression containing a derivative or a barrier-dependent builtin is never
 moved (uniform control flow), and an expression whose evaluation is
 unbounded in time does not exist in this language.
 
+**What may be shared at all (pure and deterministic).** Equal text and
+equal lineage imply equal values only for expressions that are functions
+of their operands and of the invocation. The admissible set is stated, not
+assumed: rows of the classes `arith`, `trig`, `geom`, `index`, `count`,
+`int`, `fixed`, `convert`, `quantise`, `bits`, `hash`, `compare`, `logic`,
+`select`, `shape`; literals; loads, under their version; `let` uses, under
+their binding; and the invocation builtins (`global_invocation_id`,
+`local_invocation_id`, `local_invocation_index`, `workgroup_id`,
+`num_workgroups`), which are constant within one invocation's program and
+so shareable within it. Excluded from sharing, always: a call result (its
+own effect unless the callee is proven to store nothing and read only
+versioned locations, which is a later refinement, not assumed), atomic
+results, image and sampler operations, derivatives, anything reading a
+barrier-visible location across a barrier, and any builtin not in the list
+above. Floating-point operations are deterministic for a given device and
+compiler; the oracle compares two programs compiled by the same compiler on
+the same device, so contraction (`fma`) does not enter until the
+algebraic rewrites of §7 step 4, which get their own criterion.
+
 **Iterations are explicit.** A location's header phi is a version distinct
 from the pre-loop version, so "inside the loop" and "before the loop" are
 different lineages by construction, and a definition may be placed OUTSIDE
@@ -245,6 +264,17 @@ first such rewrite is admitted, never by loosening this gate. This is fuller's o
 
 The same harness is the correctness gate for every mutation that follows.
 
+**A third implementation.** The reader and the rebuild could share one
+wrong assumption, as they did in the `let` fault; the oracle compares the
+original and the rebuilt program through the SAME compiler and device. So
+a small reference interpreter, written independently of both
+(`src/wgsl/interp.rs`: scalar `f32`/`i32`/`u32`/`bool` rows, loads and
+stores on host arrays, the scaffold's loops and branches, one invocation at
+a time), executes the chromosome directly on the oracle's inputs, and its
+outputs are compared with the device's. Three implementations, any two
+agreeing against the third name the faulty one. Vector and matrix rows
+join the interpreter when a kernel in the set needs them.
+
 ## 5. What changes, where
 
 The legality decision is one function on the annotated DAG, in one place:
@@ -253,9 +283,20 @@ The legality decision is one function on the annotated DAG, in one place:
 legality::decide(dag, candidate_sites) -> Accept { placement } | Refuse { reason }
 ```
 
-where `reason` is one of: text differs, lineage differs, no dominating
-point, binding out of scope, unsafe to move (derivative/barrier builtin),
-not loop-invariant for the placement asked. The fold, the rebuild, the
+where `reason` is one of: not admissible (§1's pure set), text differs,
+lineage differs, no dominating point, operand not available at the
+placement (a `let` binding or a local not yet defined there, or out of
+lexical scope), version not current at the placement (a bump between the
+placement and a use), unsafe to move (derivative/barrier builtin), not
+loop-invariant for the placement asked.
+
+**The placement invariant, tested as such.** Version equality between the
+sites does not by itself make a placement legal. `decide` establishes, and
+a test pins for each clause: every operand of the definition is defined
+before `d` in evaluation order and in lexical scope at `d`; `d` dominates
+every use; for every lineage location the version at `d` equals the
+version at every use, with no bump on any path from `d` to a use. The
+tests construct a kernel per clause where exactly that clause fails. The fold, the rebuild, the
 report and every later mutation call this and nothing else; a mutation
 that moves or merges a computation is legal iff `decide` accepts it. That
 is the reviewer's "first-class property of the DAG", and it is what makes
@@ -263,7 +304,8 @@ the optimiser reasoned about in one place.
 
 | piece | change |
 |---|---|
-| `src/wgsl/legality.rs` (new) | the decision above, over the lineage-annotated DAG; the reasons are counted in the report |
+| `src/wgsl/legality.rs` (new) | the decision above, over the lineage-annotated DAG; the reasons are counted in the report; the placement invariant's clause tests |
+| `src/wgsl/interp.rs` (new) | the independent reference interpreter of the chromosome, scalar rows first |
 | `src/wgsl/reader.rs` | version table per function; loads named with their version; `lineage` per node; loop/branch/call bumps |
 | `src/wgsl/chromosome.rs` | drop the conservative load rule; the fold asks `legality::decide`; refusals by reason; placement per tail slot |
 | `src/wgsl/scaffold.rs` | emit a definition at its placement as a `let`; strip versions at rebuild |
@@ -303,14 +345,25 @@ the optimiser reasoned about in one place.
 ## 7. Order
 
 1. Versions and lineage in the reader, with the unit tests (no device).
-2. The oracle harness over the six kernels and 100 generated programs
-   (one device process, announced).
-3. Fold placement and the chromosome change; six-kernel numbers.
-4. Then, and only then, the first mutations: the `Math` rewrite rules on
+2. `legality::decide` with the clause tests; the reference interpreter
+   over the scalar rows, checked against the six kernels' stored answers
+   where phylu's suite gives them (no device).
+3. The oracle harness: original on device, rebuilt on device, chromosome
+   in the interpreter, over the adversarial set and 100 generated
+   programs (one device process, announced).
+4. Fold placement and the chromosome change; six-kernel numbers.
+5. Then, and only then, the first mutations: the `Math` rewrite rules on
    `arith`/`trig` regions with no loads, gated by the oracle.
-5. The compile-and-time evaluator on top.
+6. The compile-and-time evaluator on top.
 
 ## Review
+
+External review, third pass (2026-10-09), folded in: the admissible
+(pure, deterministic) set stated before sharing; the placement invariant
+stated and tested clause by clause (availability, scope, dominance,
+version currency on every path); an independent reference interpreter as
+the third implementation in the oracle. Verdict: proceed with the reader,
+memory SSA and legality first.
 
 External review (2026-10-09, after the first revision), folded in: the
 invariant restated as four conditions decided together; safe evaluation
