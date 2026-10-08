@@ -272,8 +272,14 @@ a small reference interpreter, written independently of both
 stores on host arrays, the scaffold's loops and branches, one invocation at
 a time), executes the chromosome directly on the oracle's inputs, and its
 outputs are compared with the device's. Three implementations, any two
-agreeing against the third name the faulty one. Vector and matrix rows
-join the interpreter when a kernel in the set needs them.
+agreeing against the third point at the faulty one, but a majority is not
+an authority: the ORIGINAL kernel's device output is the reference, and
+for the hand-written adversarial kernels the expected outputs are written
+down by hand with the kernel (computed independently, never copied from a
+run). When the interpreter and the device disagree on the original, that
+is a finding about the interpreter or about naga, settled against the
+hand-written expectation, not by vote. Vector and matrix rows join the
+interpreter when a kernel in the set needs them.
 
 ## 5. What changes, where
 
@@ -341,6 +347,16 @@ the optimiser reasoned about in one place.
 - The six kernels: round trip and the sweep still hold; the refused counts
   fall and the shared counts rise (numbers in the README).
 - The oracle: 1,000 generated kernels, zero differences, seed recorded.
+- The admitted rows at WGSL's edges, each a hand-written kernel with its
+  expected output written beside it: float division by zero, `sqrt` and
+  `log` of negatives, overflow to infinity, NaN through `min`/`max`/
+  `select`/comparisons, `-0.0`; integer division and remainder by zero
+  and `i32::MIN / -1` (WGSL defines both), shifts by 32 or more, wrapping
+  add and multiply; out-of-range indexing (clamped by naga's bounds
+  checks, so the rebuilt kernel must keep the same policy), negative
+  `i32` indices, `u32` to `i32` conversions and `f32` to integer
+  conversions out of range. The interpreter must reproduce the WGSL
+  definition, not Rust's, for every one of these.
 
 ## 7. Order
 
@@ -357,6 +373,13 @@ the optimiser reasoned about in one place.
 6. The compile-and-time evaluator on top.
 
 ## Review
+
+External review, fourth pass (2026-10-09): approved for implementation,
+with one qualification, folded in: the original kernel and hand-written
+expected outputs are the authority when the three implementations
+disagree (§4), and the admitted rows get edge-case tests for
+floating-point behaviour and indexing (§6). The design is not to be
+expanded further before implementation evidence.
 
 External review, third pass (2026-10-09), folded in: the admissible
 (pure, deterministic) set stated before sharing; the placement invariant
