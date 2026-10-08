@@ -13,10 +13,13 @@
 
 pub mod chromosome;
 pub mod loader;
+pub mod naga_names;
 pub mod reader;
+pub mod scaffold;
 pub mod table;
 
 pub use chromosome::{chromosome, ChromosomeOptions, WgslChromosome};
 pub use loader::{wgsl_duals, wgsl_fallback_table, wgsl_table, WgslDual, WgslKingdom, WgslRow, WGSL};
 pub use reader::{read, Kernel, KernelFunction, Node, Root, RootKind};
+pub use scaffold::{rebuild, round_trip, Rebuilt};
 pub use table::{FunctionTable, ScalarKind, Template};

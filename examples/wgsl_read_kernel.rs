@@ -11,6 +11,11 @@
 //! rule), every gene encoded as Karva through the generic pair and decoded
 //! back (`KARVA ok`), with the head length each function needs.
 //!
+//! Last, the naga round trip per kernel: every function's genes DECODED from
+//! Karva, unfolded, rebuilt into a naga module, validated, written as WGSL,
+//! read again and compared root by root (`ROUND_TRIP ok`, or the first
+//! difference).
+//!
 //! `--sexpr` also prints every root's s-expression. A kernel that is assembled
 //! from several files at build time (`mix64.wgsl` with `vary.wgsl`, `splice.wgsl`
 //! with `kernel.wgsl`) is given as `a.wgsl+b.wgsl`: the files are concatenated
@@ -19,7 +24,9 @@
 use std::collections::BTreeMap;
 
 use fuller::gpu_eval::MAX_NODES;
-use fuller::wgsl::{chromosome, read, ChromosomeOptions, RootKind};
+use fuller::homeotic::{unfold, FoldedChromosome};
+use fuller::karva::karva_to_terms_generic;
+use fuller::wgsl::{chromosome, read, round_trip, ChromosomeOptions, RootKind};
 
 fn main() -> Result<(), String> {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -106,6 +113,38 @@ fn main() -> Result<(), String> {
                 }
                 Err(e) => println!("    {:<20} KARVA FAILED: {e}", f.name),
             }
+        }
+        // The naga round trip, from the decoded genes of every function.
+        let mut roots_all: Vec<Vec<String>> = Vec::new();
+        let mut trip_err: Option<String> = None;
+        for f in &kernel.functions {
+            match chromosome(f, &ChromosomeOptions::default()) {
+                Ok(c) => match c.genes.as_ref() {
+                    Some((_, genes)) => {
+                        let decoded: Result<Vec<String>, String> = genes.iter().map(|(h, t)| karva_to_terms_generic(h, t, &c.pset)).collect();
+                        match decoded {
+                            Ok(d) => {
+                                let n_head = c.folded.head.len();
+                                let folded = FoldedChromosome { head: d[..n_head].to_vec(), tail: d[n_head..].to_vec(), filled: c.folded.filled, skipped: c.folded.skipped };
+                                match unfold(&folded) {
+                                    Ok(r) => roots_all.push(r),
+                                    Err(e) => trip_err = trip_err.or(Some(format!("{}: unfold: {e}", f.name))),
+                                }
+                            }
+                            Err(e) => trip_err = trip_err.or(Some(format!("{}: decode: {e}", f.name))),
+                        }
+                    }
+                    None => trip_err = trip_err.or(Some(format!("{}: no head length fits", f.name))),
+                },
+                Err(e) => trip_err = trip_err.or(Some(format!("{}: {e}", f.name))),
+            }
+        }
+        match trip_err {
+            Some(e) => println!("    ROUND_TRIP FAILED before the rebuild: {e}"),
+            None => match round_trip(&kernel, &roots_all) {
+                Ok(r) => println!("    ROUND_TRIP ok ({} functions rebuilt, {} bytes of WGSL written and read back)", kernel.functions.len(), r.wgsl.len()),
+                Err(e) => println!("    ROUND_TRIP FAILED: {e}"),
+            },
         }
         for (name, n) in kernel.functions_used() {
             let known = !name.starts_with("naga.");

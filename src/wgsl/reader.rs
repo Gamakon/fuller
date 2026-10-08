@@ -227,7 +227,7 @@ fn read_function(
     let mut unread = BTreeMap::new();
     for (h, local) in func.local_variables.iter() {
         if let Some(init) = local.init {
-            let name = local.name.clone().unwrap_or_else(|| format!("local{}", h.index()));
+            let name = format!("{}@{}", local.name.clone().unwrap_or_else(|| "local".into()), h.index());
             let tree = expand(&mut ctx, init, true);
             roots.push(Root {
                 kind: RootKind::Init { local: format!("local.{name}") },
@@ -324,7 +324,7 @@ fn walk_block(
                     roots.push(Root {
                         kind: RootKind::Argument { callee: callee.clone(), position: p },
                         path: path.clone(),
-                        tree: Node::App { name: format!("store.arg.{callee}.{p}"), slot: "store".into(), known: true, kids: vec![tree] },
+                        tree: Node::App { name: format!("store.callarg.{callee}.{p}"), slot: "store".into(), known: true, kids: vec![tree] },
                     });
                 }
             }
@@ -352,14 +352,14 @@ fn condition_root(ctx: &mut Ctx, cond: Handle<Expression>, statement: &'static s
 /// a local `win` → (`win`, None); a uniform field `hp.rows` → (`hp.rows`, None).
 fn pointer_target(ctx: &mut Ctx, pointer: Handle<Expression>) -> (String, Option<Node>) {
     match &ctx.func.expressions[pointer] {
+        // The target names each step in order: a field by name, an index as
+        // `#` (its tree is the index child; several nest as `naga.NestedAccess`
+        // outer-first), so `buf[i].hi` is `buffer.buf.#.hi` and the rebuild
+        // applies the steps in the order the kernel did.
         Expression::Access { base, index } => {
             let (name, inner) = pointer_target(ctx, *base);
             let ix = expand(ctx, *index, true);
-            match inner {
-                None => (name, Some(ix)),
-                // A nested index (array of arrays): compose the two.
-                Some(outer) => (name, Some(Node::App { name: "naga.NestedAccess".into(), slot: "u32".into(), known: false, kids: vec![outer, ix] })),
-            }
+            (format!("{name}.#"), Some(nest(inner, ix)))
         }
         Expression::AccessIndex { base, index } => {
             let (name, inner) = pointer_target(ctx, *base);
@@ -369,10 +369,7 @@ fn pointer_target(ctx: &mut Ctx, pointer: Handle<Expression>) -> (String, Option
                 // A constant index into an array, vector or matrix: the same
                 // index child a dynamic access has, as a literal.
                 let ix = Node::Literal { form: "index".into(), slot: "u32".into(), value: f64::from(*index) };
-                match inner {
-                    None => (name, Some(ix)),
-                    Some(outer) => (name, Some(Node::App { name: "naga.NestedAccess".into(), slot: "u32".into(), known: false, kids: vec![outer, ix] })),
-                }
+                (format!("{name}.#"), Some(nest(inner, ix)))
             }
         }
         // The target carries its kind, as the table's templates do
@@ -391,9 +388,19 @@ fn pointer_target(ctx: &mut Ctx, pointer: Handle<Expression>) -> (String, Option
             };
             (format!("{kind}.{name}"), None)
         }
-        Expression::LocalVariable(l) => (format!("local.{}", ctx.func.local_variables[*l].name.clone().unwrap_or_else(|| format!("local{}", l.index()))), None),
+        // A local carries its arena index: two locals in different scopes may
+        // share a name, and the index is what the rebuild selects by.
+        Expression::LocalVariable(l) => (format!("local.{}@{}", ctx.func.local_variables[*l].name.clone().unwrap_or_else(|| "local".into()), l.index()), None),
         Expression::FunctionArgument(i) => (format!("arg.{}", ctx.func.arguments[*i as usize].name.clone().unwrap_or_else(|| format!("{i}"))), None),
         other => (format!("naga.{}", variant_name(other)), None),
+    }
+}
+
+/// Chain a further index after an earlier one, outer first.
+fn nest(inner: Option<Node>, ix: Node) -> Node {
+    match inner {
+        None => ix,
+        Some(outer) => Node::App { name: "naga.NestedAccess".into(), slot: "u32".into(), known: false, kids: vec![outer, ix] },
     }
 }
 
@@ -463,7 +470,7 @@ pub fn slot_name(types: &UniqueArena<naga::Type>, inner: &TypeInner) -> String {
     }
 }
 
-fn kind_of(inner: &TypeInner) -> Option<ScalarKind> {
+pub(crate) fn kind_of(inner: &TypeInner) -> Option<ScalarKind> {
     let s = match inner {
         TypeInner::Scalar(s) | TypeInner::Vector { scalar: s, .. } | TypeInner::Matrix { scalar: s, .. } | TypeInner::ValuePointer { scalar: s, .. } => *s,
         _ => return None,
@@ -536,8 +543,8 @@ fn expand(ctx: &mut Ctx, h: Handle<Expression>, count: bool) -> Node {
             Node::Leaf { name: format!("global.{name}"), slot }
         }
         Expression::LocalVariable(l) => {
-            let name = ctx.func.local_variables[l].name.clone().unwrap_or_else(|| format!("local{}", l.index()));
-            Node::Leaf { name: format!("local.{name}"), slot }
+            let name = ctx.func.local_variables[l].name.clone().unwrap_or_else(|| "local".into());
+            Node::Leaf { name: format!("local.{name}@{}", l.index()), slot }
         }
         Expression::Load { pointer } => {
             let (target, index) = pointer_target(ctx, pointer);
@@ -614,8 +621,10 @@ fn expand(ctx: &mut Ctx, h: Handle<Expression>, count: bool) -> Node {
         Expression::AccessIndex { base, index } => {
             let b = expand(ctx, base, count);
             let base_inner = ctx.info[base].ty.inner_with(&ctx.module.types);
+            // A struct field read from a VALUE is named by member position:
+            // structural, and immune to the writer renaming a field.
             let known = matches!(base_inner, TypeInner::Vector { .. }) && index < 4;
-            let name = if known { format!("shape.access_{index}") } else { format!("naga.AccessIndex.{}", field_name(ctx, base, index)) };
+            let name = if known { format!("shape.access_{index}") } else { format!("naga.AccessIndex.{index}") };
             Node::App { name, slot, known, kids: vec![b] }
         }
         Expression::Splat { size, value } => {
@@ -632,13 +641,18 @@ fn expand(ctx: &mut Ctx, h: Handle<Expression>, count: bool) -> Node {
             }).collect();
             Node::App { name: format!("shape.swizzle.{pat}"), slot, known: true, kids: vec![v] }
         }
-        Expression::Compose { components, .. } => {
+        Expression::Compose { ty, components } => {
+            // The composed TYPE rides in the name (the gene text has no other
+            // place for it, and the rebuild needs the exact type handle): the
+            // slot for a vector or matrix, the struct's name otherwise.
             let kids: Vec<Node> = components.iter().map(|c| expand(ctx, *c, count)).collect();
             let n = kids.len();
             let (name, known) = match (&inner, n) {
-                (TypeInner::Vector { .. }, 2..=4) => (format!("shape.compose{n}"), true),
-                (TypeInner::Matrix { .. }, 2) => ("shape.compose_mat".to_string(), true),
-                _ => (format!("naga.Compose{n}"), false),
+                (TypeInner::Vector { .. }, 2..=4) => (format!("shape.compose{n}.{slot}"), true),
+                (TypeInner::Matrix { .. }, 2) => (format!("shape.compose_mat.{slot}"), true),
+                // Any other composed type (a struct, an array) by its handle
+                // index, which a cloned module keeps.
+                _ => (format!("naga.Compose.type{}", ty.index()), false),
             };
             Node::App { name, slot, known, kids }
         }
@@ -710,10 +724,10 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         assert_eq!((f.name.as_str(), f.entry_point), ("main", true));
         assert_eq!(f.roots.len(), 1);
         let r = &f.roots[0];
-        assert_eq!(r.kind, RootKind::Store { target: "buffer.out".into() });
+        assert_eq!(r.kind, RootKind::Store { target: "buffer.out.#".into() });
         assert_eq!(
             r.tree.to_sexpr(),
-            "(store.buffer.out (shape.access_0 (Var \"builtin.global_invocation_id\")) (arith.add (arith.mul (load.buffer.xs (shape.access_0 (Var \"builtin.global_invocation_id\"))) (literal.real (Num 2.0))) (literal.real (Num 1.0))))"
+            "(store.buffer.out.# (shape.access_0 (Var \"builtin.global_invocation_id\")) (arith.add (arith.mul (load.buffer.xs.# (shape.access_0 (Var \"builtin.global_invocation_id\"))) (literal.real (Num 2.0))) (literal.real (Num 1.0))))"
         );
         assert!(f.unread_statements.is_empty());
         // gid.x is reached twice (the store index and the load index).
@@ -741,22 +755,22 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         assert_eq!(
             kinds,
             vec![
-                &RootKind::Init { local: "local.acc".into() },
+                &RootKind::Init { local: "local.acc@0".into() },
                 &RootKind::Condition { statement: "if" },
-                &RootKind::Store { target: "local.acc".into() },
-                &RootKind::Store { target: "buffer.out".into() },
+                &RootKind::Store { target: "local.acc@0".into() },
+                &RootKind::Store { target: "buffer.out.#".into() },
             ]
         );
-        assert_eq!(f.roots[0].tree.to_sexpr(), "(store.local.acc (literal.index (Num 0.0)))");
+        assert_eq!(f.roots[0].tree.to_sexpr(), "(store.local.acc@0 (literal.index (Num 0.0)))");
         assert!(f.roots[0].path.is_empty());
         assert_eq!(f.roots[1].tree.to_sexpr(), "(store.branch (compare.gt (shape.access_0 (Var \"builtin.global_invocation_id\")) (literal.index (Num 4.0))))");
-        assert_eq!(f.roots[2].tree.to_sexpr(), "(store.local.acc (bits.and (shape.access_0 (Var \"builtin.global_invocation_id\")) (literal.index (Num 3.0))))");
+        assert_eq!(f.roots[2].tree.to_sexpr(), "(store.local.acc@0 (bits.and (shape.access_0 (Var \"builtin.global_invocation_id\")) (literal.index (Num 3.0))))");
         // Emit-free paths: the if is the body's first non-Emit statement, the
         // store the first statement of its accept block.
         assert_eq!(f.roots[1].path, vec![0]);
         assert_eq!(f.roots[2].path, vec![0, 0, 0]);
         assert_eq!(f.roots[3].path, vec![1]);
-        assert_eq!(f.roots[3].tree.to_sexpr(), "(store.buffer.out (literal.index (Num 0.0)) (Var \"load.local.acc\"))");
+        assert_eq!(f.roots[3].tree.to_sexpr(), "(store.buffer.out.# (literal.index (Num 0.0)) (Var \"load.local.acc@0\"))");
     }
 
     #[test]
@@ -776,10 +790,10 @@ fn main() {
         let f = &k.functions[0];
         let sexprs: Vec<String> = f.roots.iter().map(|r| r.tree.to_sexpr()).collect();
         // select(f, t, c) renders (accept t, reject f, cond c), the table's (value, value, cond).
-        assert!(sexprs.iter().any(|s| s.contains("(select.scalar_cond (convert.index_to_f32 (Var \"load.local.i\")) (literal.real (Num 1.0)) (compare.gt (Var \"load.local.i\") (literal.index (Num 1.0))))")), "{sexprs:?}");
-        assert!(sexprs.iter().any(|s| s == "(store.branch (compare.lt (Var \"load.local.i\") (literal.index (Num 4.0))))"), "the for condition is an if root inside the loop: {sexprs:?}");
-        assert!(sexprs.iter().any(|s| s == "(store.local.i (index.add (Var \"load.local.i\") (literal.index (Num 1.0))))"), "{sexprs:?}");
-        assert!(sexprs.iter().any(|s| s.starts_with("(store.buffer.out (literal.index (Num 0.0)) ")), "a constant index is an index child: {sexprs:?}");
+        assert!(sexprs.iter().any(|s| s.contains("(select.scalar_cond (convert.index_to_f32 (Var \"load.local.i@1\")) (literal.real (Num 1.0)) (compare.gt (Var \"load.local.i@1\") (literal.index (Num 1.0))))")), "{sexprs:?}");
+        assert!(sexprs.iter().any(|s| s == "(store.branch (compare.lt (Var \"load.local.i@1\") (literal.index (Num 4.0))))"), "the for condition is an if root inside the loop: {sexprs:?}");
+        assert!(sexprs.iter().any(|s| s == "(store.local.i@1 (index.add (Var \"load.local.i@1\") (literal.index (Num 1.0))))"), "{sexprs:?}");
+        assert!(sexprs.iter().any(|s| s.starts_with("(store.buffer.out.# (literal.index (Num 0.0)) ")), "a constant index is an index child: {sexprs:?}");
         let used = k.functions_used();
         assert!(used.contains_key("arith.fract"));
         assert!(used.keys().any(|n| n.starts_with("naga.Math.Modf")), "modf has no row and is named: {used:?}");

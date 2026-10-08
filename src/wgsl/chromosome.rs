@@ -271,7 +271,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         assert_eq!(c.refused_loads, 0, "xs is never stored, so its loads may share");
         assert!(c.folded.filled >= 1);
         assert!(c.folded.head[0].contains("href0") && c.folded.head[1].contains("href0"), "{:?}", c.folded.head);
-        assert!(c.folded.tail[0].contains("load.buffer.xs"), "{:?}", c.folded.tail);
+        assert!(c.folded.tail[0].contains("load.buffer.xs.#"), "{:?}", c.folded.tail);
         let (h, genes) = c.genes.as_ref().expect("fits at some head length");
         assert_eq!(genes.len(), 2 + 3);
         assert!(*h <= 16);
@@ -293,6 +293,7 @@ fn main() {
         let k = read(src).unwrap();
         let c = chromosome(&k.functions[0], &ChromosomeOptions::default()).unwrap();
         // `s * s + 2.0` is textually repeated but s is stored between the two reads.
+        // (locals read as load.local.s@<index>; the stored set uses the same names)
         assert_eq!(c.matches, 0);
         assert!(c.refused_loads >= 1);
         assert_eq!(c.folded.filled, 0);
