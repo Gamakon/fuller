@@ -128,13 +128,47 @@ the first of 8/12/16/24/32/48/64 at which every gene fits.
 | `crossover_main` | 112 | 16 | 8 | 4 | 28 | 32 | ok |
 | `lint_main` | 61 | 7 | 7 | 4 | 20 | 24 | ok |
 
-Every function of the six files round-trips (59 of 59). Readings: a head of
-32 holds every entry point; the tail fills in every entry point, and in
-`score_main`, `mutate_main` and `crossover_main` 8 slots are not enough; the
-conservative load rule refuses more repeats than it admits in the large
-kernels (local reads under loop-carried stores), which is the plan's finer
-rule's job to recover. The naga round trip (rebuild the module from the
-genes and compare structurally) is the next piece.
+Every function of the six files round-trips through Karva (59 of 59).
+Readings: a head of 32 holds every entry point; the tail fills in every
+entry point, and in `score_main`, `mutate_main` and `crossover_main` 8 slots
+are not enough; the conservative load rule refuses more repeats than it
+admits in the large kernels (local reads under loop-carried stores), which
+is the plan's finer rule's job to recover.
+
+### The naga round trip (measured 2026-10-08)
+
+`ROUND_TRIP ok` on all six: every function's genes DECODED from Karva,
+unfolded, rebuilt into a naga module (`src/wgsl/scaffold.rs`), validated,
+written as WGSL, parsed and validated again, read again and compared root
+by root (kind, tree, Emit-free path), names by arena position because
+naga's writer renames identifiers.
+
+| kernel | functions rebuilt | WGSL written and read back |
+|---|---|---|
+| decode.wgsl | 8 | 33,029 bytes |
+| score.wgsl | 12 | 44,388 |
+| hff.wgsl | 4 | 12,130 |
+| cand.wgsl | 1 | 2,721 |
+| mix64+vary.wgsl | 24 | 64,407 |
+| splice+kernel.wgsl | 7 | 32,641 |
+
+This is the structural gate, necessary not sufficient; the proof is the
+device run (compile original and rebuilt, same inputs, bit-exact outputs),
+the plan's step 5. A sample chromosome set for phylu's decoder is in
+`samples/hff.chromosomes.json` (`--dump`).
+
+### Open items
+
+- `builtin.num_workgroups` is typed `vec3<u32>.count` and the type table
+  has no vector count dual: add the dual or retype the builtin (a spec
+  decision).
+- 8 tail slots are short for the three largest entry points.
+- The conservative load rule; the plan's finer rule (no intervening store
+  in statement order) would share the loop-carried local reads it refuses.
+- 3.0 % of nodes sit on naga nodes with no row: struct-field reads from
+  values (by member position), `arrayLength`, one `u32 → i32` cast, struct
+  and array composes. They rebuild exactly; they have no kingdom row to
+  evolve with.
 
 ## Evaluation path (the kingdom's kernel)
 
@@ -156,7 +190,9 @@ repaid because the product runs billions of times.
 | generic Karva pair for `class.instance` names at any arity up to 4 (`karva::terms_to_karva_generic`) | built |
 | symbol rows with slot × content arity (the loader, `Ty::Wgsl`) | waits on phylu's phase 2 (the cast migration) |
 | chromosome: roots folded into a homeotic tail, encoded and decoded through the generic pair (`src/wgsl/chromosome.rs`) | built; 59 of 59 functions `KARVA ok` (table above) |
-| form inference by use, the scaffold rebuild and the structural gate | not started |
+| the scaffold rebuild and the structural gate (`src/wgsl/scaffold.rs`, `round_trip`) | built; `ROUND_TRIP ok` on the six kernels |
+| form inference by use (`infer.rs`) | not started; forms are the slot's default |
+| device parity of a rebuilt kernel (the proof) | not started; step 5 |
 | the scaffold-with-holes chromosome and its decoder (phylu) | not started |
 | compile-run-time evaluation path with the correctness gate (phylu) | not started |
 | first target: one of our own kernels, read in, round-tripped, then evolved for time | not started |

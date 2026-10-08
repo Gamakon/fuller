@@ -4,7 +4,11 @@
 //! `class.instance` rows used and the naga nodes the table has no row for,
 //! the per-kernel terminals, and the raw repeats across roots.
 //!
-//!   cargo run --release --features wgsl --example wgsl_read_kernel -- [--sexpr] <file.wgsl>...
+//!   cargo run --release --features wgsl --example wgsl_read_kernel -- [--sexpr] [--dump <out.json>] <file.wgsl>...
+//!
+//! `--dump <out.json>` writes every function's chromosome (pset, head
+//! length, tail slots, Karva genes as tokens) and the kingdom's size, the
+//! artefact phylu uploads and decodes on the device.
 //!
 //! Then, per function, the chromosome: the roots as head genes, repeated
 //! subtrees folded into a homeotic tail (exact repeats, conservative load
@@ -31,7 +35,9 @@ use fuller::wgsl::{chromosome, read, round_trip, ChromosomeOptions, RootKind};
 fn main() -> Result<(), String> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let show_sexpr = args.iter().any(|a| a == "--sexpr");
-    let paths: Vec<&String> = args.iter().filter(|a| !a.starts_with("--")).collect();
+    let dump_path = args.iter().position(|a| a == "--dump").and_then(|i| args.get(i + 1).cloned());
+    let paths: Vec<&String> = args.iter().enumerate().filter(|(i, a)| !a.starts_with("--") && !(*i > 0 && args[i - 1] == "--dump")).map(|(_, a)| a).collect();
+    let mut dump: Vec<serde_json::Value> = Vec::new();
     if paths.is_empty() {
         return Err("usage: wgsl_read_kernel [--sexpr] <file.wgsl>...".into());
     }
@@ -114,6 +120,36 @@ fn main() -> Result<(), String> {
                 Err(e) => println!("    {:<20} KARVA FAILED: {e}", f.name),
             }
         }
+        // The chromosome dump, if asked: tokens as the engine would upload them.
+        if dump_path.is_some() {
+            for f in &kernel.functions {
+                if let Ok(c) = chromosome(f, &ChromosomeOptions::default()) {
+                    if let Some((h, genes)) = &c.genes {
+                        let tok = |t: &fuller::karva::Token| match t {
+                            fuller::karva::Token::Func(n) => serde_json::json!({ "f": n }),
+                            fuller::karva::Token::Var(n) => serde_json::json!({ "v": n }),
+                            fuller::karva::Token::Num(v) => serde_json::json!({ "n": v }),
+                        };
+                        let mut functions: Vec<serde_json::Value> = c.pset.functions.iter().map(|(n, spec)| serde_json::json!({ "name": n, "arity": spec.arity })).collect();
+                        functions.sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));
+                        dump.push(serde_json::json!({
+                            "file": file,
+                            "function": f.name,
+                            "head_length": h,
+                            "tail_length": h * 3 + 1,
+                            "k": 4,
+                            "head_genes": c.folded.head.len(),
+                            "tail_slots": c.folded.tail.len(),
+                            "tail_filled": c.folded.filled,
+                            "pset": { "variables": c.pset.variables, "functions": functions, "rnc_values": c.pset.rnc_values },
+                            "genes": genes.iter().map(|(head, tail)| serde_json::json!({ "head": head.iter().map(tok).collect::<Vec<_>>(), "tail": tail.iter().map(tok).collect::<Vec<_>>() })).collect::<Vec<_>>(),
+                            "roots": c.roots,
+                            "folded": { "head": c.folded.head, "tail": c.folded.tail },
+                        }));
+                    }
+                }
+            }
+        }
         // The naga round trip, from the decoded genes of every function.
         let mut roots_all: Vec<Vec<String>> = Vec::new();
         let mut trip_err: Option<String> = None;
@@ -153,6 +189,15 @@ fn main() -> Result<(), String> {
         }
         let terminals = kernel.terminals();
         println!("    terminals ({}): {}", terminals.len(), terminals.iter().cloned().collect::<Vec<_>>().join(" "));
+    }
+    if let Some(path) = dump_path {
+        let kingdom = fuller::wgsl::WgslKingdom::load();
+        let out = serde_json::json!({
+            "kingdom": { "name": fuller::wgsl::WGSL, "duals": kingdom.duals.len(), "instances": kingdom.rows.len(), "k_max": fuller::gpu_eval::K_MAX, "tables": "kingdoms/wgsl/{types,functions}.tsv; fuller::wgsl::WgslKingdom::load()" },
+            "functions": dump,
+        });
+        std::fs::write(&path, serde_json::to_string_pretty(&out).map_err(|e| e.to_string())?).map_err(|e| format!("write {path}: {e}"))?;
+        println!("dumped {} chromosomes to {path}", out["functions"].as_array().map_or(0, |a| a.len()));
     }
     let total_known: usize = all_known.values().sum();
     let total_unknown: usize = all_unknown.values().sum();
