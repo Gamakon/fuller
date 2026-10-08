@@ -42,18 +42,20 @@ FALLBACK = {
     "real": "0.0", "int": "0", "q15_16": "0", "q15_16w": "vec2(0, 0)", "index": "0u", "count": "0u",
     "code4": "0u", "code8": "0u", "code16": "0u", "code1024": "0u", "bits": "0u", "hash32": "0u",
     "hash64": "vec2(0u, 0u)", "flag": "false", "sign": "true (+1)", "opaque": "the slot's zero", "store": "no-op, codon masked",
+    "<form of T>": "the element's fallback",
 }
 
 # The fallback by machine: the lane's 32-bit pattern as an unsigned integer. Vectors and matrices
 # repeat the lane, so one number suffices. Only `sign` (true = +1) is non-zero. `store` substitutes
-# nothing (fallback_masked = 1) and `array<T>` defers to its element (fallback_elem = 1); their bits
-# are placeholders the loader must not read before testing those two columns.
+# nothing (fallback_noop = 1; every substitution counts the codon as masked, so that word is not
+# reused here) and `array<T>` defers to its element (fallback_elem = 1); their bits are placeholders
+# the loader must not read before testing those two columns.
 FALLBACK_BITS = {
     "real": 0, "int": 0, "q15_16": 0, "q15_16w": 0, "index": 0, "count": 0,
     "code4": 0, "code8": 0, "code16": 0, "code1024": 0, "bits": 0, "hash32": 0,
     "hash64": 0, "flag": 0, "sign": 1, "opaque": 0, "store": 0, "<form of T>": 0,
 }
-assert set(FALLBACK_BITS) >= set(FALLBACK) | {"<form of T>"}, "every form with a fallback needs its bits"
+assert set(FALLBACK_BITS) == set(FALLBACK), "every form with a fallback needs its bits, and no more"
 
 
 def slot_name(scalar: str, lanes: int) -> str:
@@ -61,12 +63,12 @@ def slot_name(scalar: str, lanes: int) -> str:
 
 
 def build_types():
-    rows = []  # (ref, dual, slot, form, lanes, fallback, fallback_bits, fallback_masked, fallback_elem, meaning)
+    rows = []  # (ref, dual, slot, form, lanes, fallback, fallback_bits, fallback_noop, fallback_elem, meaning)
 
     def add(slot, form, lanes, meaning):
-        masked = int(form == "store")
+        noop = int(form == "store")
         elem = int(slot == "array<T>")
-        rows.append((f"T{len(rows) + 1:03d}", f"{slot}.{form}", slot, form, lanes, FALLBACK.get(form, "the element's fallback"), FALLBACK_BITS[form], masked, elem, meaning))
+        rows.append((f"T{len(rows) + 1:03d}", f"{slot}.{form}", slot, form, lanes, FALLBACK[form], FALLBACK_BITS[form], noop, elem, meaning))
 
     for form, (meaning, scalars) in FORMS.items():
         for s in scalars:
@@ -247,7 +249,7 @@ def write_tsv(path, header, rows):
 
 def main():
     types = build_types()
-    write_tsv(os.path.join(HERE, "types.tsv"), ["ref", "dual", "slot", "form", "lanes", "fallback", "fallback_bits", "fallback_masked", "fallback_elem", "meaning"], types)
+    write_tsv(os.path.join(HERE, "types.tsv"), ["ref", "dual", "slot", "form", "lanes", "fallback", "fallback_bits", "fallback_noop", "fallback_elem", "meaning"], types)
     frows = [(f"F{i + 1:03d}", c, inst, naga, " ".join(ins) if ins else "-", out, len(ins), note) for i, (c, inst, naga, ins, out, note) in enumerate(FUNCTIONS)]
     write_tsv(os.path.join(HERE, "functions.tsv"), ["ref", "class", "instance", "naga", "in", "out", "arity", "note"], frows)
 
@@ -258,11 +260,11 @@ def main():
         md.write("## Forms\n\n| form | meaning | legal scalar slots |\n|---|---|---|\n")
         for form, (meaning, scalars) in FORMS.items():
             md.write(f"| `{form}` | {meaning} | {', '.join(scalars) if scalars else 'see duals'} |\n")
-        md.write("\n## Duals\n\n| ref | dual | slot | form | lanes | fallback | bits | masked | elem |\n|---|---|---|---|---|---|---|---|---|\n")
-        for ref, dual, slot, form, lanes, fb, bits, masked, elem, _ in types:
-            md.write(f"| {ref} | `{dual}` | `{slot}` | `{form}` | {lanes} | `{fb}` | {bits} | {masked} | {elem} |\n")
+        md.write("\n## Duals\n\n| ref | dual | slot | form | lanes | fallback | bits | noop | elem |\n|---|---|---|---|---|---|---|---|---|\n")
+        for ref, dual, slot, form, lanes, fb, bits, noop, elem, _ in types:
+            md.write(f"| {ref} | `{dual}` | `{slot}` | `{form}` | {lanes} | `{fb}` | {bits} | {noop} | {elem} |\n")
         md.write(f"\n{len(types)} duals. The fallback is what Design C's projection substitutes for a codon whose dual does not match the demand; the codon is counted as masked.\n")
-        md.write("\nThe three machine columns (`fallback_bits`, `fallback_masked`, `fallback_elem` in `types.tsv`) are what the loader builds the fallback leaf from, never the prose: `bits` is the lane's 32-bit pattern as an unsigned integer, repeated across the lanes of a vector or matrix (only `bool.sign` is non-zero, true = +1); `masked` is 1 for `store.store`, whose fallback is a no-op; `elem` is 1 for `array<T>`, whose fallback is its element's. The loader tests `masked` and `elem` before reading `bits`; for those two rows `bits` is a placeholder 0.\n")
+        md.write("\nThe three machine columns (`fallback_bits`, `fallback_noop`, `fallback_elem` in `types.tsv`) are what the loader builds the fallback leaf from, never the prose: `bits` is the lane's 32-bit pattern as an unsigned integer, repeated across the lanes of a vector or matrix (only `bool.sign` is non-zero, true = +1); `noop` is 1 for `store.store`, which substitutes no value at all; `elem` is 1 for `array<T>`, whose fallback is its element's. The loader tests `noop` and `elem` before reading `bits`; for those two rows `bits` is a placeholder 0. Every substitution, whichever column decides it, counts the codon as masked.\n")
         md.write("\n## Not in the table\n\nAtomics, images, samplers, ray queries, binding arrays, pointers as values, non-square `f16` matrices.\n")
 
     with open(os.path.join(HERE, "symbols.md"), "w") as md:

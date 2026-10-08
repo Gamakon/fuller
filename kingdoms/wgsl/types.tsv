@@ -1,4 +1,4 @@
-ref	dual	slot	form	lanes	fallback	fallback_bits	fallback_masked	fallback_elem	meaning
+ref	dual	slot	form	lanes	fallback	fallback_bits	fallback_noop	fallback_elem	meaning
 T001	f32.real	f32	real	1	0.0	0	0	0	a plain number
 T002	vec2<f32>.real	vec2<f32>	real	2	0.0	0	0	0	a plain number
 T003	vec3<f32>.real	vec3<f32>	real	3	0.0	0	0	0	a plain number
