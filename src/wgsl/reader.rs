@@ -229,9 +229,9 @@ fn read_function(
             let name = local.name.clone().unwrap_or_else(|| format!("local{}", h.index()));
             let tree = expand(&mut ctx, init, true);
             roots.push(Root {
-                kind: RootKind::Init { local: name.clone() },
+                kind: RootKind::Init { local: format!("local.{name}") },
                 path: Vec::new(),
-                tree: Node::App { name: format!("store.{name}"), slot: "store".into(), known: true, kids: vec![tree] },
+                tree: Node::App { name: format!("store.local.{name}"), slot: "store".into(), known: true, kids: vec![tree] },
             });
         }
     }
@@ -367,9 +367,24 @@ fn pointer_target(ctx: &mut Ctx, pointer: Handle<Expression>) -> (String, Option
                 }
             }
         }
-        Expression::GlobalVariable(g) => (ctx.module.global_variables[*g].name.clone().unwrap_or_else(|| format!("global{}", g.index())), None),
-        Expression::LocalVariable(l) => (ctx.func.local_variables[*l].name.clone().unwrap_or_else(|| format!("local{}", l.index())), None),
-        Expression::FunctionArgument(i) => (ctx.func.arguments[*i as usize].name.clone().unwrap_or_else(|| format!("arg{i}")), None),
+        // The target carries its kind, as the table's templates do
+        // (`load.buffer`, `load.uniform`, `load.local`, `arg`), so a local and
+        // a buffer of the same name are two targets.
+        Expression::GlobalVariable(g) => {
+            let gv = &ctx.module.global_variables[*g];
+            let name = gv.name.clone().unwrap_or_else(|| format!("global{}", g.index()));
+            let kind = match gv.space {
+                naga::AddressSpace::Storage { .. } => "buffer",
+                naga::AddressSpace::Uniform => "uniform",
+                naga::AddressSpace::WorkGroup => "workgroup",
+                naga::AddressSpace::Private => "private",
+                naga::AddressSpace::PushConstant => "push",
+                naga::AddressSpace::Handle | naga::AddressSpace::Function => "global",
+            };
+            (format!("{kind}.{name}"), None)
+        }
+        Expression::LocalVariable(l) => (format!("local.{}", ctx.func.local_variables[*l].name.clone().unwrap_or_else(|| format!("local{}", l.index()))), None),
+        Expression::FunctionArgument(i) => (format!("arg.{}", ctx.func.arguments[*i as usize].name.clone().unwrap_or_else(|| format!("{i}"))), None),
         other => (format!("naga.{}", variant_name(other)), None),
     }
 }
@@ -573,7 +588,11 @@ fn expand(ctx: &mut Ctx, h: Handle<Expression>, count: bool) -> Node {
             let name = convert_name(from, to_kind, convert.is_some());
             match name {
                 Some(n) => Node::App { name: n.into(), slot, known: true, kids: vec![kid] },
-                None => Node::App { name: format!("naga.As.{from:?}.{to_kind:?}.{}", if convert.is_some() { "convert" } else { "bitcast" }), slot, known: false, kids: vec![kid] },
+                None => {
+                    let from = from.map_or("none".to_string(), |k| format!("{k:?}").to_lowercase());
+                    let to = format!("{to_kind:?}").to_lowercase();
+                    Node::App { name: format!("naga.As.{from}_to_{to}.{}", if convert.is_some() { "convert" } else { "bitcast" }), slot, known: false, kids: vec![kid] }
+                }
             }
         }
         Expression::Access { base, index } => {
@@ -680,10 +699,10 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         assert_eq!((f.name.as_str(), f.entry_point), ("main", true));
         assert_eq!(f.roots.len(), 1);
         let r = &f.roots[0];
-        assert_eq!(r.kind, RootKind::Store { target: "out".into() });
+        assert_eq!(r.kind, RootKind::Store { target: "buffer.out".into() });
         assert_eq!(
             r.tree.to_sexpr(),
-            "(store.out (shape.access_0 (Var \"builtin.global_invocation_id\")) (arith.add (arith.mul (load.xs (shape.access_0 (Var \"builtin.global_invocation_id\"))) (literal.real (Num 2.0))) (literal.real (Num 1.0))))"
+            "(store.buffer.out (shape.access_0 (Var \"builtin.global_invocation_id\")) (arith.add (arith.mul (load.buffer.xs (shape.access_0 (Var \"builtin.global_invocation_id\"))) (literal.real (Num 2.0))) (literal.real (Num 1.0))))"
         );
         assert!(f.unread_statements.is_empty());
         // gid.x is reached twice (the store index and the load index).
@@ -711,20 +730,20 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         assert_eq!(
             kinds,
             vec![
-                &RootKind::Init { local: "acc".into() },
+                &RootKind::Init { local: "local.acc".into() },
                 &RootKind::Condition { statement: "if" },
-                &RootKind::Store { target: "acc".into() },
-                &RootKind::Store { target: "out".into() },
+                &RootKind::Store { target: "local.acc".into() },
+                &RootKind::Store { target: "buffer.out".into() },
             ]
         );
-        assert_eq!(f.roots[0].tree.to_sexpr(), "(store.acc (literal.index (Num 0.0)))");
+        assert_eq!(f.roots[0].tree.to_sexpr(), "(store.local.acc (literal.index (Num 0.0)))");
         assert!(f.roots[0].path.is_empty());
         assert_eq!(f.roots[1].tree.to_sexpr(), "(store.branch (compare.gt (shape.access_0 (Var \"builtin.global_invocation_id\")) (literal.index (Num 4.0))))");
-        assert_eq!(f.roots[2].tree.to_sexpr(), "(store.acc (bits.and (shape.access_0 (Var \"builtin.global_invocation_id\")) (literal.index (Num 3.0))))");
+        assert_eq!(f.roots[2].tree.to_sexpr(), "(store.local.acc (bits.and (shape.access_0 (Var \"builtin.global_invocation_id\")) (literal.index (Num 3.0))))");
         // The path counts naga's Emit statements too: [if's index in the body, 0 = accept, the store's index in that block].
         assert_eq!(f.roots[1].path.len(), 1);
         assert_eq!((f.roots[2].path.len(), f.roots[2].path[0], f.roots[2].path[1]), (3, f.roots[1].path[0], 0));
-        assert_eq!(f.roots[3].tree.to_sexpr(), "(store.out (literal.index (Num 0.0)) (Var \"load.acc\"))");
+        assert_eq!(f.roots[3].tree.to_sexpr(), "(store.buffer.out (literal.index (Num 0.0)) (Var \"load.local.acc\"))");
     }
 
     #[test]
@@ -744,10 +763,10 @@ fn main() {
         let f = &k.functions[0];
         let sexprs: Vec<String> = f.roots.iter().map(|r| r.tree.to_sexpr()).collect();
         // select(f, t, c) renders (accept t, reject f, cond c), the table's (value, value, cond).
-        assert!(sexprs.iter().any(|s| s.contains("(select.scalar_cond (convert.index_to_f32 (Var \"load.i\")) (literal.real (Num 1.0)) (compare.gt (Var \"load.i\") (literal.index (Num 1.0))))")), "{sexprs:?}");
-        assert!(sexprs.iter().any(|s| s == "(store.branch (compare.lt (Var \"load.i\") (literal.index (Num 4.0))))"), "the for condition is an if root inside the loop: {sexprs:?}");
-        assert!(sexprs.iter().any(|s| s == "(store.i (index.add (Var \"load.i\") (literal.index (Num 1.0))))"), "{sexprs:?}");
-        assert!(sexprs.iter().any(|s| s.starts_with("(store.out (literal.index (Num 0.0)) ")), "a constant index is an index child: {sexprs:?}");
+        assert!(sexprs.iter().any(|s| s.contains("(select.scalar_cond (convert.index_to_f32 (Var \"load.local.i\")) (literal.real (Num 1.0)) (compare.gt (Var \"load.local.i\") (literal.index (Num 1.0))))")), "{sexprs:?}");
+        assert!(sexprs.iter().any(|s| s == "(store.branch (compare.lt (Var \"load.local.i\") (literal.index (Num 4.0))))"), "the for condition is an if root inside the loop: {sexprs:?}");
+        assert!(sexprs.iter().any(|s| s == "(store.local.i (index.add (Var \"load.local.i\") (literal.index (Num 1.0))))"), "{sexprs:?}");
+        assert!(sexprs.iter().any(|s| s.starts_with("(store.buffer.out (literal.index (Num 0.0)) ")), "a constant index is an index child: {sexprs:?}");
         let used = k.functions_used();
         assert!(used.contains_key("arith.fract"));
         assert!(used.keys().any(|n| n.starts_with("naga.Math.Modf")), "modf has no row and is named: {used:?}");

@@ -6,6 +6,11 @@
 //!
 //!   cargo run --release --features wgsl --example wgsl_read_kernel -- [--sexpr] <file.wgsl>...
 //!
+//! Then, per function, the chromosome: the roots as head genes, repeated
+//! subtrees folded into a homeotic tail (exact repeats, conservative load
+//! rule), every gene encoded as Karva through the generic pair and decoded
+//! back (`KARVA ok`), with the head length each function needs.
+//!
 //! `--sexpr` also prints every root's s-expression. A kernel that is assembled
 //! from several files at build time (`mix64.wgsl` with `vary.wgsl`, `splice.wgsl`
 //! with `kernel.wgsl`) is given as `a.wgsl+b.wgsl`: the files are concatenated
@@ -14,7 +19,7 @@
 use std::collections::BTreeMap;
 
 use fuller::gpu_eval::MAX_NODES;
-use fuller::wgsl::{read, RootKind};
+use fuller::wgsl::{chromosome, read, ChromosomeOptions, RootKind};
 
 fn main() -> Result<(), String> {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -79,6 +84,27 @@ fn main() -> Result<(), String> {
                 for r in &f.roots {
                     println!("    [{:?}] {}", r.kind, r.tree.to_sexpr());
                 }
+            }
+        }
+        println!("    {:<20} {:>5} {:>6} {:>6} {:>7} {:>5} {:>7} {:>5}  oversized per head length", "chromosome", "genes", "shared", "filled", "refused", "head", "fits@", "karva");
+        for f in &kernel.functions {
+            match chromosome(f, &ChromosomeOptions::default()) {
+                Ok(c) => {
+                    let over: Vec<String> = c.oversized_at.iter().map(|(h, n)| format!("{h}:{n}")).collect();
+                    println!(
+                        "    {:<20} {:>5} {:>6} {:>6} {:>7} {:>5} {:>7} {:>5}  {}",
+                        c.function,
+                        c.folded.head.len() + c.folded.tail.len(),
+                        c.matches,
+                        c.folded.filled,
+                        c.refused_loads,
+                        c.head_needed,
+                        c.genes.as_ref().map(|(h, _)| h.to_string()).unwrap_or_else(|| "none".into()),
+                        if c.genes.is_some() { "ok" } else { "-" },
+                        over.join(" ")
+                    );
+                }
+                Err(e) => println!("    {:<20} KARVA FAILED: {e}", f.name),
             }
         }
         for (name, n) in kernel.functions_used() {

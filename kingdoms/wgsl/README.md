@@ -108,6 +108,34 @@ a head of 32 covers the 90th percentile of every entry point and 64 covers
 all but one function; and struct-valued locals are the one shape the table
 must still say something about before a rebuild can be exact.
 
+### As chromosomes (measured 2026-10-08)
+
+Per entry point: the roots as head genes, exact repeats across them folded
+into a homeotic tail of 8 slots (`homeotic::fold`, definitions of at least
+2 operators, the conservative load rule: a load of a target the function
+stores anywhere is never shared), every gene encoded through the generic
+Karva pair and decoded back. `KARVA ok` means every gene of the function
+decodes to its own text. `head` is the largest gene after folding; `fits@`
+the first of 8/12/16/24/32/48/64 at which every gene fits.
+
+| entry point | genes | repeats found | tail filled | refused by the load rule | head needed | fits@ | Karva |
+|---|---|---|---|---|---|---|---|
+| `decode_main` | 208 | 6 | 6 | 40 | 26 | 32 | ok |
+| `score_main` | 342 | 23 | 8 | 36 | 31 | 32 | ok |
+| `hff_main` | 77 | 7 | 7 | 14 | 32 | 32 | ok |
+| `type_main` | 21 | 2 | 2 | 1 | 21 | 24 | ok |
+| `mutate_main` | 393 | 27 | 8 | 34 | 14 | 16 | ok |
+| `crossover_main` | 112 | 16 | 8 | 4 | 28 | 32 | ok |
+| `lint_main` | 61 | 7 | 7 | 4 | 20 | 24 | ok |
+
+Every function of the six files round-trips (59 of 59). Readings: a head of
+32 holds every entry point; the tail fills in every entry point, and in
+`score_main`, `mutate_main` and `crossover_main` 8 slots are not enough; the
+conservative load rule refuses more repeats than it admits in the large
+kernels (local reads under loop-carried stores), which is the plan's finer
+rule's job to recover. The naga round trip (rebuild the module from the
+genes and compare structurally) is the next piece.
+
 ## Evaluation path (the kingdom's kernel)
 
 Unlike the other kingdoms, an individual is evaluated by compiling it and
@@ -127,6 +155,7 @@ repaid because the product runs billions of times.
 | the reader: a kernel cut at its effects into roots and `class.instance` trees (`src/wgsl/reader.rs`, `examples/wgsl_read_kernel.rs`) | built; the six kernels read (table above) |
 | generic Karva pair for `class.instance` names at any arity up to 4 (`karva::terms_to_karva_generic`) | built |
 | symbol rows with slot × content arity (the loader, `Ty::Wgsl`) | waits on phylu's phase 2 (the cast migration) |
+| chromosome: roots folded into a homeotic tail, encoded and decoded through the generic pair (`src/wgsl/chromosome.rs`) | built; 59 of 59 functions `KARVA ok` (table above) |
 | form inference by use, the scaffold rebuild and the structural gate | not started |
 | the scaffold-with-holes chromosome and its decoder (phylu) | not started |
 | compile-run-time evaluation path with the correctness gate (phylu) | not started |

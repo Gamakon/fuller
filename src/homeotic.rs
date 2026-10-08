@@ -245,10 +245,23 @@ pub fn pset_with_hrefs(pset: &PsetSpec, tail_slots: usize) -> PsetSpec {
 /// `max_definition_ops = Some(head_length)` prevents it for definitions, and a
 /// head gene only shrinks under folding.
 pub fn encode(folded: &FoldedChromosome, pset: &PsetSpec, rng_seed: u64, head_length: usize) -> Result<Vec<KarvaGene>, String> {
+    encode_with(folded, pset, rng_seed, head_length, &terms_to_karva_sized)
+}
+
+/// [`encode`] through the generic Karva encoder (`karva::terms_to_karva_generic`):
+/// a kingdom whose symbols are `class.instance` names rather than `Math`
+/// constructors (the WGSL kingdom) folds and encodes with this one.
+pub fn encode_generic(folded: &FoldedChromosome, pset: &PsetSpec, rng_seed: u64, head_length: usize) -> Result<Vec<KarvaGene>, String> {
+    encode_with(folded, pset, rng_seed, head_length, &crate::karva::terms_to_karva_generic)
+}
+
+type Encoder = dyn Fn(&str, &PsetSpec, u64, Option<usize>) -> Result<(Vec<Token>, Vec<Token>, bool), String>;
+
+fn encode_with(folded: &FoldedChromosome, pset: &PsetSpec, rng_seed: u64, head_length: usize, encoder: &Encoder) -> Result<Vec<KarvaGene>, String> {
     let pset = pset_with_hrefs(pset, folded.tail.len());
     let mut genes = Vec::with_capacity(folded.head.len() + folded.tail.len());
     for (i, g) in folded.head.iter().chain(folded.tail.iter()).enumerate() {
-        let (head, tail, oversized) = terms_to_karva_sized(g, &pset, rng_seed.wrapping_add(i as u64), Some(head_length))?;
+        let (head, tail, oversized) = encoder(g, &pset, rng_seed.wrapping_add(i as u64), Some(head_length))?;
         if oversized {
             return Err(format!("gene {i} needs a head longer than {head_length}: {g}"));
         }
