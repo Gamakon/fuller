@@ -230,6 +230,37 @@ telemetry and the `phylu-sr-watch` viewer — lives in its own repository,
 [phylu](https://github.com/Gamakon/phylu). phylu depends on fuller; fuller
 depends on nothing of phylu's.
 
+## Maximal share-equivalence: a DAG from two trees
+
+Two expression trees that compute the same value in two places are a DAG
+waiting to be found. `extract::maximal_shared` finds the exact repeats: every
+tree of a chromosome is asserted into one e-graph with no rules, hash-consing
+merges identical subtrees across the roots, and the subtrees with two or more
+independent occurrences, largest first, are the matches. `extract::
+maximal_shared_saturated` finds the repeats that exist only after rewriting:
+the trees are saturated under a bounded rule family (algebra, powers, sign,
+and the one expanding rule `exp(a+b) → exp(a)·exp(b)`), checked every
+iteration against a tuple ceiling, then **extracted as a DAG** with a
+marginal-cost extractor (`extract_dag.rs`) in which a node reachable from
+several roots is paid for once, and the matches are read off the extracted
+DAG, where every class has exactly one member and two occurrences of one
+value render identically. This is share equivalence in Neumann and
+Moerkotte's sense: the e-graph says a fold is legal, nothing more.
+
+Whether a fold pays is a separate question. The calibrated cost gate compares
+the operators saved against the measured cost of a second dispatch and a
+per-reference read; on three-gene symbolic-regression chromosomes it refused
+every fold, correctly. Whether a fold is kept by evolution is a third
+question, answered by the tournament.
+
+`homeotic::fold` turns the matches into a chromosome with a homeotic tail:
+each repeated subtree becomes a tail gene, every occurrence a reference
+terminal `href<t>`, references forward only, and `homeotic::unfold` is the
+check that the fold is exact. `homeotic::encode` returns the genes as Karva.
+phylu owns the loop that selects chromosomes, calls these in parallel, and
+upserts the folded genes into the population (phylu's README, "Homeotic
+genes, and share-equivalence as a mutation").
+
 ## Python API
 
 | Function | Purpose |
