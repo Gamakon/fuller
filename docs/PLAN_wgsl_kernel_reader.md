@@ -105,24 +105,26 @@ stays independent. `examples/wgsl_dag_study.rs` and the new example require
 - Tests: 68 duals load; every function instance's inputs and output are
   duals; no instance outside `convert` has inputs and output of different
   forms except where `symbols.md` says (compare → flag, bits counts →
-  count, quantise, hash → index); **max total arity 2**; the table has no
-  row whose semantic id is not a naga node name or a `composite`.
+  count, quantise, hash → index); **max total arity 4** (`K_MAX`); the
+  table has no row whose semantic id is not a naga node name or a
+  `composite`.
 
-### 2a. Arity: the kingdom is arity 2, by lowering (decision)
+### 2a. Arity: K per kingdom, K_MAX = 4, via phylu's richer-arity plan (decision, revised)
 
-phylu's device node is `GpuNode{op, arg0, arg1}` (`gpu_eval.rs:171`),
-`decode.wgsl` walks two children, `TypedCodes` carries two `in_ty` slots
-(phylu `engine.rs:368-369`), and `vary`'s graft has `kids: [usize; 2]`.
-Arity 3 is not free. As the regex kingdom lowered its one 3-ary operator,
-this kingdom lowers every 3-ary template in `gen_tables.py` before the
-loader exists: `select.scalar_cond(c, a, b)` → `select.pick(c,
-shape.pair(a, b))` with a `pair` dual per `S.c`; `fma(a, b, c)` →
-`arith.add(arith.mul(a, b), c)`; `clamp(x, lo, hi)` → `min(max(x, lo), hi)`;
-`mix` and `smoothstep` as composites of 2-ary rows; `extractBits(v, o, n)`
-→ `bits.and(bits.shr(v, o), mask_n)` with `mask_n` a `bits` literal;
-`insertBits` likewise; `compose3/4` and `refract`, `face_forward` as
-chained 2-ary rows. Widening phylu to three children stays an option,
-recorded, not required.
+phylu's review first pushed this kingdom to lower `select`, `fma`, `clamp`
+and `mix` to pairs of 2-ary rows. That bends the kingdom to the engine's
+stride, which is the wrong way round; Andrew: "what I'd like is arbitrary,
+what I will be is pragmatic." phylu's `docs/PLAN_arbitrary_arity.md`
+(c45703f3) makes the node `(op, first_child, konst)` with children
+contiguous in level order and arity from the op table, `K` per kingdom
+(SR/TSR/REGEX stay at 2, byte-identical), `K_MAX = 4`. So: **no lowering
+of 3-ary templates**; only templates above 4 children (`compose_mat` of
+more than four vectors, `pack4` and friends) stay composed. The tail rule
+becomes `head·(K−1)+1` with `K = 4` for this kingdom. The retired `arg1`
+word becomes `ty_code`, the node's out dual (`Ty::code()`), which is how a
+literal leaf carries its dual on the device. Sequencing: fuller phase 1 of
+that plan (node semantics, `Op::arity`, `Ty::code()`, generated fallback)
+is built first, in this crate, and this reader builds on it.
 
 ### 2b. Literals carry their dual (decision)
 
@@ -143,9 +145,8 @@ token name directly (`pset.functions[name].arity` is the arity), with no
 `Math` semantic table. `Num` and `Var` leaves unchanged. The `Math` pair stays
 as is; the generic pair is what the WGSL kingdom and any future
 `class.instance` kingdom use. Tests: dotted names tokenise, a `literal.index` leaf round-trips with its
-dual, the tail rule is `h+1` at max arity 2, and an arity-3 token in the
-pset is refused by the loader (the lowering rule above is a test, not a
-convention).
+dual, `(select.scalar_cond c a b)` round-trips at arity 3, the tail rule is
+`3h+1` at `K = 4`, and a 5-ary token is refused.
 
 ### 4. `src/wgsl/` — the reader (new module, feature `wgsl`)
 
@@ -180,11 +181,13 @@ convention).
     refused for that partial and the occurrences keep their own duals. No
     `convert` node is ever inserted that the kernel did not have. The report
     counts conflicting-use partials per kernel.
-  - **Tail depth.** phylu's two-pass evaluation computes definitions with
-    `shared = None`, so a tail gene may not reference another tail gene.
-    `homeotic::fold` gains `max_depth` (default 1 for this kingdom); nested
-    partials stay inlined and are counted. Multi-pass is a later phylu
-    increment.
+  - **Tail depth.** phylu's two-pass evaluation today computes definitions
+    with `shared = None`, so a tail gene may not reference another.
+    `homeotic::fold` gains `max_depth` (default 1 until phylu evaluates the
+    tail last slot to first in one ordered pass, which allows any depth);
+    then the cap is removed and depth is read off the population (tail
+    slots read per individual, longest reference chain), decided by
+    selection, not set.
   - Every `Node` is rendered as `(class.instance child …)` using
     `functions.tsv`'s naga column in reverse (naga node → `class.instance`,
     e.g. `Binary::Add` on `f32` → `arith.add`); leaves as `(Var "load.buf@i")`
