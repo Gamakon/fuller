@@ -90,3 +90,6 @@ docs/paper/**/*.synctex.gz
 
 # Built from papers/*.tex; the source is the record.
 papers/*.pdf
+
+# The six-kernel chromosome dump is 13 MB and regenerable (wgsl_read_kernel --dump); only hff's is tracked as the sample.
+kingdoms/wgsl/samples/six_kernels.chromosomes.json

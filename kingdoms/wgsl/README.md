@@ -155,7 +155,7 @@ naga's writer renames identifiers.
 This is the structural gate, necessary not sufficient; the proof is the
 device run (compile original and rebuilt, same inputs, bit-exact outputs),
 the plan's step 5. A sample chromosome set for phylu's decoder is in
-`samples/six_kernels.chromosomes.json` (`--dump`), and the six rebuilt kernels in `samples/rebuilt/` (`--rebuilt`).
+`samples/hff.chromosomes.json` (`--dump`; the six-kernel dump is 13 MB, regenerable, untracked), and the six rebuilt kernels in `samples/rebuilt/` (`--rebuilt`).
 
 ### Open items
 
