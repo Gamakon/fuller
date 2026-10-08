@@ -273,18 +273,22 @@ pub fn pack_guards(guards: &[GuardRule], codes: &mut LiteralCodes) -> Result<Vec
 
 /// The arity the kernel uses for an opcode. `Var` and `Num` are leaves.
 pub fn arity(op: u32) -> usize {
-    [
-        Op::Var, Op::Num, Op::Add, Op::Sub, Op::Mul, Op::Div, Op::Neg, Op::Abs, Op::Sqrt, Op::Log,
-        Op::Exp, Op::Sin, Op::Cos, Op::Tan, Op::Tanh, Op::Pow, Op::Pow2, Op::Pow3, Op::Inv,
-        Op::ProtectedDiv, Op::ProtectedSqrt, Op::ProtectedLog, Op::ProtectedExp, Op::ProtectedInv,
-        Op::Asin, Op::Acos, Op::ProtectedAsin, Op::ProtectedAcos,
-    ]
-    .get(op as usize)
-    .map_or(0, |o| o.arity())
+    Op::from_u32(op).map_or(0, |o| o.arity())
 }
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn arity_is_total_over_every_opcode_including_the_ternary_one() {
+        use crate::gpu_eval::Op;
+        for u in 0..=Op::LAST {
+            assert_eq!(super::arity(u), Op::from_u32(u).unwrap().arity(), "arity({u})");
+        }
+        assert_eq!(super::arity(Op::Select3 as u32), 3);
+        assert_eq!(super::arity(Op::LAST + 1), 0, "an unknown code has no children");
+        assert_eq!(crate::lint::flat::op_of(Op::Select3 as u32), Op::Select3);
+    }
+
     use super::*;
     use crate::lint::tables::Tables;
 

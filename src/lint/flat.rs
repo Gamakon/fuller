@@ -117,13 +117,10 @@ impl Flat {
     }
 }
 
+/// The `Op` for a node's code, total over every opcode (a code past the last
+/// variant is a corrupt node, and says so).
 pub fn op_of(code: u32) -> Op {
-    [
-        Op::Var, Op::Num, Op::Add, Op::Sub, Op::Mul, Op::Div, Op::Neg, Op::Abs, Op::Sqrt, Op::Log,
-        Op::Exp, Op::Sin, Op::Cos, Op::Tan, Op::Tanh, Op::Pow, Op::Pow2, Op::Pow3, Op::Inv,
-        Op::ProtectedDiv, Op::ProtectedSqrt, Op::ProtectedLog, Op::ProtectedExp, Op::ProtectedInv,
-        Op::Asin, Op::Acos, Op::ProtectedAsin, Op::ProtectedAcos,
-    ][code as usize]
+    Op::from_u32(code).unwrap_or_else(|| panic!("no Op for node code {code}"))
 }
 
 /// K1. One backward scan: children are at higher indices, so their facts are
