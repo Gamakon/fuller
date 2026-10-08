@@ -1040,12 +1040,12 @@ mod tests {
             let batch = snap_batch(exprs, t, TOL, LitMode::F32);
             let name_vals = name_values(t).unwrap();
             let nodes_of = |words: Vec<u32>| -> Vec<GpuNode> {
-                words.chunks_exact(4).map(|w| GpuNode { op: w[0], arg0: w[1], arg1: w[2], konst: f32::from_bits(w[3]) }).collect()
+                words.chunks_exact(4).map(|w| GpuNode { op: w[0], arg0: w[1], ty_code: crate::geneframe::Ty::F.code(), konst: f32::from_bits(w[3]) }).collect()
             };
             let (mut originals, mut variants) = (ExprBatch::new(), ExprBatch::new());
             for (f, s) in exprs.iter().zip(&batch) {
                 let own: Vec<GpuNode> =
-                    f.nodes.iter().map(|n| GpuNode { op: n.op, arg0: n.arg0, arg1: n.arg1, konst: n.lit as f32 }).collect();
+                    f.nodes.iter().map(|n| GpuNode { op: n.op, arg0: n.arg0, ty_code: crate::geneframe::Ty::F.code(), konst: n.lit as f32 }).collect();
                 originals.push(&own);
                 for v in &s.variants {
                     let words = if v.status == Status::Grafted { device_words(v, d.cols.len() as u32, &name_vals, &|_| 0) } else { Vec::new() };

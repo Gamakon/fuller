@@ -390,11 +390,11 @@ mod tests {
                 return;
             }
         };
-        let var_a = [GpuNode { op: Op::Var as u32, arg0: 0, arg1: 0, konst: 0.0 }];
+        let var_a = [GpuNode { op: Op::Var as u32, arg0: 0, ty_code: 0, konst: 0.0 }];
         let mul_ab = [
-            GpuNode { op: Op::Mul as u32, arg0: 1, arg1: 2, konst: 0.0 },
-            GpuNode { op: Op::Var as u32, arg0: 0, arg1: 0, konst: 0.0 },
-            GpuNode { op: Op::Var as u32, arg0: 1, arg1: 0, konst: 0.0 },
+            GpuNode { op: Op::Mul as u32, arg0: 1, ty_code: 2, konst: 0.0 },
+            GpuNode { op: Op::Var as u32, arg0: 0, ty_code: 0, konst: 0.0 },
+            GpuNode { op: Op::Var as u32, arg0: 1, ty_code: 0, konst: 0.0 },
         ];
         // Batch: candidate 0 (a), candidate 1 (a*b), pattern 0 (a). n_cand=2, n_pat=1.
         let mut batch = ExprBatch::new();

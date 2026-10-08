@@ -163,7 +163,7 @@ impl Ty {
 /// (host↔device parity). The regex kingdom's four demanded types have their
 /// own leaves; every other base type falls back to `Num 0`.
 pub fn fallback_leaf(ty: Ty) -> GpuNode {
-    let leaf = |op: Op, konst: f32| GpuNode { op: op as u32, arg0: 0, arg1: 0, konst };
+    let leaf = |op: Op, konst: f32| GpuNode { op: op as u32, arg0: 0, ty_code: ty.code(), konst };
     match ty {
         Ty::Pattern => leaf(Op::RegexEmpty, 0.0),
         Ty::CharClass => leaf(Op::RegexCcDigit, 0.0),
@@ -772,7 +772,8 @@ mod tests {
         for t in Ty::ALL {
             let leaf = table[t.code() as usize];
             let want = fallback_leaf(t);
-            assert_eq!((leaf.op, leaf.arg0, leaf.arg1, leaf.konst.to_bits()), (want.op, want.arg0, want.arg1, want.konst.to_bits()), "{t:?}");
+            assert_eq!((leaf.op, leaf.arg0, leaf.ty_code, leaf.konst.to_bits()), (want.op, want.arg0, want.ty_code, want.konst.to_bits()), "{t:?}");
+            assert_eq!(leaf.ty_code, t.code(), "{t:?}: a fallback leaf carries its own type");
             assert_eq!(Op::from_u32(leaf.op).unwrap().arity(), 0, "{t:?}: a fallback is a leaf");
         }
         // The regex kingdom's demanded types, as the host and device decoders

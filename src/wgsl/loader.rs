@@ -130,7 +130,7 @@ pub fn wgsl_fallback_leaf(d: &WgslDual) -> Result<Option<GpuNode>, String> {
     if d.scalar() == Some("f16") && d.fallback_bits != 0 {
         return Err(format!("{}: a non-zero f16 fallback ({:#x}) has no 32-bit placement", d.dual, d.fallback_bits));
     }
-    Ok(Some(GpuNode { op: FN_ID_NUM, arg0: 0, arg1: 0, konst: f32::from_bits(d.fallback_bits) }))
+    Ok(Some(GpuNode { op: FN_ID_NUM, arg0: 0, ty_code: d.ty().code(), konst: f32::from_bits(d.fallback_bits) }))
 }
 
 /// The fallback table over the duals, indexed by `Ty::Wgsl(i).code() -

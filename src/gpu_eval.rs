@@ -358,12 +358,11 @@ pub struct GpuNode {
     /// of arity `k` has its children at `arg0 .. arg0 + k`, contiguous because
     /// the array is in level order ([`GpuNode::child`]).
     pub arg0: u32,
-    /// MIGRATION WORD. It mirrors `arg0 + 1` on every node of arity two or
-    /// more (the fixtures assert it) and carries the linter's literal id on a
-    /// `Num`; the evaluator no longer reads it for a child. It becomes
-    /// `ty_code`, the node's out type as `Ty::code()`, when phylu's phase 4
-    /// retires it.
-    pub arg1: u32,
+    /// The node's OUT type as `Ty::code()`: `Ty::F.code()` for every `Math`
+    /// node, a regex node's regex type, a WGSL node's dual. Never a child:
+    /// child `i` is `arg0 + i` ([`GpuNode::child`]). The evaluator does not
+    /// read it; the decoders write it and the hash covers it.
+    pub ty_code: u32,
     /// Literal value for `Num`; unused otherwise.
     pub konst: f32,
 }
@@ -389,11 +388,11 @@ impl GpuNode {
 /// and returns +inf on overflow, matching the engine.
 pub const EVAL_WGSL: &str = r#"
 // (fn_id, first_child, ty_code, konst). A node's children are contiguous
-// from arg0 (level order), so child i is arg0 + i; arg1 is never read here.
+// from arg0 (level order), so child i is arg0 + i; ty_code is never read here.
 struct Node {
     op: u32,
     arg0: u32,
-    arg1: u32,
+    ty_code: u32,
     konst: f32,
 };
 
@@ -793,7 +792,9 @@ fn flatten(root: &Tree, vars: &[String]) -> Result<Vec<GpuNode>, String> {
     let mut queue: std::collections::VecDeque<(&Tree, usize)> =
         std::collections::VecDeque::new();
 
-    out.push(GpuNode { op: 0, arg0: 0, arg1: 0, konst: 0.0 });
+    // Every node of a `Math` tree is a float: its out type code is `Ty::F`.
+    let f_code = crate::geneframe::Ty::F.code();
+    out.push(GpuNode { op: 0, arg0: 0, ty_code: f_code, konst: 0.0 });
     queue.push_back((root, 0));
 
     while let Some((tree, slot)) = queue.pop_front() {
@@ -802,7 +803,7 @@ fn flatten(root: &Tree, vars: &[String]) -> Result<Vec<GpuNode>, String> {
                 out[slot] = GpuNode {
                     op: Op::Num as u32,
                     arg0: 0,
-                    arg1: 0,
+                    ty_code: f_code,
                     konst: *v as f32,
                 };
             }
@@ -814,7 +815,7 @@ fn flatten(root: &Tree, vars: &[String]) -> Result<Vec<GpuNode>, String> {
                 out[slot] = GpuNode {
                     op: Op::Var as u32,
                     arg0: col as u32,
-                    arg1: 0,
+                    ty_code: f_code,
                     konst: 0.0,
                 };
             }
@@ -824,12 +825,12 @@ fn flatten(root: &Tree, vars: &[String]) -> Result<Vec<GpuNode>, String> {
                 // Reserve the children's slots now so their indices are known.
                 let first = out.len();
                 for _ in kids {
-                    out.push(GpuNode { op: 0, arg0: 0, arg1: 0, konst: 0.0 });
+                    out.push(GpuNode { op: 0, arg0: 0, ty_code: f_code, konst: 0.0 });
                 }
                 out[slot] = GpuNode {
                     op: op as u32,
                     arg0: first as u32,
-                    arg1: if kids.len() > 1 { first as u32 + 1 } else { 0 },
+                    ty_code: f_code,
                     konst: 0.0,
                 };
                 for (i, k) in kids.iter().enumerate() {
@@ -1241,7 +1242,7 @@ mod device {
             let node_bytes: Vec<u32> = batch
                 .nodes
                 .iter()
-                .flat_map(|n| [n.op, n.arg0, n.arg1, n.konst.to_bits()])
+                .flat_map(|n| [n.op, n.arg0, n.ty_code, n.konst.to_bits()])
                 .collect();
             let nodes_buf = self.storage(&node_bytes, "nodes");
             let offs_buf = self.storage(&batch.offsets, "offsets");
@@ -1290,7 +1291,7 @@ mod device {
             let node_bytes: Vec<u32> = batch
                 .nodes
                 .iter()
-                .flat_map(|n| [n.op, n.arg0, n.arg1, n.konst.to_bits()])
+                .flat_map(|n| [n.op, n.arg0, n.ty_code, n.konst.to_bits()])
                 .collect();
 
             let nodes_buf = self.storage(&node_bytes, "nodes");
@@ -1430,7 +1431,7 @@ mod device {
                     self.n_rows
                 ));
             }
-            let node_bytes: Vec<u32> = batch.nodes.iter().flat_map(|n| [n.op, n.arg0, n.arg1, n.konst.to_bits()]).collect();
+            let node_bytes: Vec<u32> = batch.nodes.iter().flat_map(|n| [n.op, n.arg0, n.ty_code, n.konst.to_bits()]).collect();
             let nodes_buf = self.storage(&node_bytes, "nodes");
             let offs_buf = self.storage(&batch.offsets, "offsets");
             let lens_buf = self.storage(&batch.lengths, "lengths");
@@ -1716,7 +1717,7 @@ fn stats_main(@builtin(global_invocation_id) gid: vec3<u32>) {
                 // The block's node arrays, re-based to the block, up in one write each.
                 let node_lo = batch.offsets[e0] as usize;
                 let node_hi = (e0 + n..batch.len()).next().map_or(batch.nodes.len(), |e| batch.offsets[e] as usize);
-                let node_words: Vec<u32> = batch.nodes[node_lo..node_hi].iter().flat_map(|nd| [nd.op, nd.arg0, nd.arg1, nd.konst.to_bits()]).collect();
+                let node_words: Vec<u32> = batch.nodes[node_lo..node_hi].iter().flat_map(|nd| [nd.op, nd.arg0, nd.ty_code, nd.konst.to_bits()]).collect();
                 let offsets: Vec<u32> = batch.offsets[e0..e0 + n].iter().map(|o| o - node_lo as u32).collect();
                 let lengths = &batch.lengths[e0..e0 + n];
                 if !node_words.is_empty() {
@@ -1862,7 +1863,7 @@ mod tests {
 
     #[test]
     fn batch_tracks_offsets_and_flags_oversized() {
-        let leaf = GpuNode { op: Op::Var as u32, arg0: 0, arg1: 0, konst: 0.0 };
+        let leaf = GpuNode { op: Op::Var as u32, arg0: 0, ty_code: 0, konst: 0.0 };
         let mut b = ExprBatch::new();
         assert_eq!(b.push(&[leaf]), 0);
         assert_eq!(b.push(&[leaf, leaf, leaf]), 1);
@@ -1930,29 +1931,30 @@ mod tests {
     }
 
     #[test]
-    fn every_node_of_arity_two_or_more_has_arg1_equal_to_arg0_plus_one() {
-        // The migration assertion: until phylu retires `arg1` as `ty_code`, the
-        // flattener writes `arg0 + 1` into it on every node with two or more
-        // children, and leaves (whose arg0 is a column, not a child) are
-        // excluded. The kernels read `arg0 + 1u`, never `arg1`.
+    fn every_math_node_carries_f_as_its_ty_code_and_children_are_contiguous() {
+        // The node is (fn_id, first_child, ty_code, konst): every node of a
+        // Math tree carries Ty::F's code, children sit at arg0 + i, and the
+        // kernels read arg0 + 1u, never the third word, for a child.
         let vars = vec!["x".to_string(), "y".to_string()];
         let exprs = [
             "(Add (Mul (Var \"x\") (Var \"y\")) (ProtectedDiv (Num 3.0) (Pow (Var \"x\") (Num 2.0))))",
             "(Select3 (Sub (Var \"x\") (Var \"y\")) (Sin (Var \"x\")) (Num 0.5))",
             "(Neg (Var \"y\"))",
         ];
+        let f = crate::geneframe::Ty::F.code();
         for e in exprs {
-            for n in math_to_nodes(e, &vars).unwrap() {
+            let nodes = math_to_nodes(e, &vars).unwrap();
+            for (i, n) in nodes.iter().enumerate() {
+                assert_eq!(n.ty_code, f, "{e}: node {i} is a float");
                 let op = Op::from_u32(n.op).unwrap();
-                if Op::is_engine_leaf(n.op) {
-                    continue;
-                }
-                if op.arity() >= 2 {
-                    assert_eq!(n.arg1, n.arg0 + 1, "{e}: {op:?} arg1 must mirror arg0 + 1");
+                if !Op::is_engine_leaf(n.op) {
+                    for c in 0..op.arity() {
+                        assert!(n.child(c) > i && n.child(c) < nodes.len(), "{e}: node {i} child {c}");
+                    }
                 }
             }
         }
-        assert!(!EVAL_WGSL.contains("nd.arg1"), "the eval kernel must not read arg1 for a child");
+        assert!(!EVAL_WGSL.contains("nd.ty_code"), "the eval kernel must not read ty_code");
     }
 
     #[test]
@@ -2007,9 +2009,9 @@ mod device_tests {
 
         // Mul(Var a, Var b) in level order: node0 = Mul(children 1,2)
         let nodes = [
-            GpuNode { op: Op::Mul as u32, arg0: 1, arg1: 2, konst: 0.0 },
-            GpuNode { op: Op::Var as u32, arg0: 0, arg1: 0, konst: 0.0 },
-            GpuNode { op: Op::Var as u32, arg0: 1, arg1: 0, konst: 0.0 },
+            GpuNode { op: Op::Mul as u32, arg0: 1, ty_code: 2, konst: 0.0 },
+            GpuNode { op: Op::Var as u32, arg0: 0, ty_code: 0, konst: 0.0 },
+            GpuNode { op: Op::Var as u32, arg0: 1, ty_code: 0, konst: 0.0 },
         ];
         let mut batch = ExprBatch::new();
         batch.push(&nodes);
@@ -2038,9 +2040,9 @@ mod device_tests {
             }
         };
         let nodes = [
-            GpuNode { op: Op::Mul as u32, arg0: 1, arg1: 2, konst: 0.0 },
-            GpuNode { op: Op::Var as u32, arg0: 0, arg1: 0, konst: 0.0 },
-            GpuNode { op: Op::Var as u32, arg0: 1, arg1: 0, konst: 0.0 },
+            GpuNode { op: Op::Mul as u32, arg0: 1, ty_code: 2, konst: 0.0 },
+            GpuNode { op: Op::Var as u32, arg0: 0, ty_code: 0, konst: 0.0 },
+            GpuNode { op: Op::Var as u32, arg0: 1, ty_code: 0, konst: 0.0 },
         ];
         let mut batch = ExprBatch::new();
         batch.push(&nodes);
@@ -2088,10 +2090,10 @@ mod device_tests {
         };
 
         // One expression: a bare GeneRef leaf reading local index 0.
-        let nodes = [GpuNode { op: Op::GeneRef as u32, arg0: 0, arg1: 0, konst: 0.0 }];
+        let nodes = [GpuNode { op: Op::GeneRef as u32, arg0: 0, ty_code: 0, konst: 0.0 }];
         let mut batch = ExprBatch::new();
         batch.push(&nodes);
-        let node_bytes: Vec<u32> = batch.nodes.iter().flat_map(|n| [n.op, n.arg0, n.arg1, n.konst.to_bits()]).collect();
+        let node_bytes: Vec<u32> = batch.nodes.iter().flat_map(|n| [n.op, n.arg0, n.ty_code, n.konst.to_bits()]).collect();
         let nodes_buf = buf(bytemuck::cast_slice(&node_bytes), "nodes");
         let offs_buf = buf(bytemuck::cast_slice(&batch.offsets), "offsets");
         let lens_buf = buf(bytemuck::cast_slice(&batch.lengths), "lengths");
@@ -2157,11 +2159,11 @@ mod device_tests {
         };
         // Add(Mul(a,b), a): node0 Add(1,2), node1 Mul(3,4), node2 Var a, node3 Var a, node4 Var b
         let nodes = [
-            GpuNode { op: Op::Add as u32, arg0: 1, arg1: 2, konst: 0.0 },
-            GpuNode { op: Op::Mul as u32, arg0: 3, arg1: 4, konst: 0.0 },
-            GpuNode { op: Op::Var as u32, arg0: 0, arg1: 0, konst: 0.0 },
-            GpuNode { op: Op::Var as u32, arg0: 0, arg1: 0, konst: 0.0 },
-            GpuNode { op: Op::Var as u32, arg0: 1, arg1: 0, konst: 0.0 },
+            GpuNode { op: Op::Add as u32, arg0: 1, ty_code: 2, konst: 0.0 },
+            GpuNode { op: Op::Mul as u32, arg0: 3, ty_code: 4, konst: 0.0 },
+            GpuNode { op: Op::Var as u32, arg0: 0, ty_code: 0, konst: 0.0 },
+            GpuNode { op: Op::Var as u32, arg0: 0, ty_code: 0, konst: 0.0 },
+            GpuNode { op: Op::Var as u32, arg0: 1, ty_code: 0, konst: 0.0 },
         ];
         let mut batch = ExprBatch::new();
         batch.push(&nodes);
@@ -2180,7 +2182,7 @@ mod device_tests {
             Ok(e) => e,
             Err(_) => return,
         };
-        let leaf = GpuNode { op: Op::Var as u32, arg0: 0, arg1: 0, konst: 0.0 };
+        let leaf = GpuNode { op: Op::Var as u32, arg0: 0, ty_code: 0, konst: 0.0 };
         let mut batch = ExprBatch::new();
         batch.push(&vec![leaf; MAX_NODES + 1]);
         let got = ev.eval(&batch).expect("eval");
@@ -2198,9 +2200,9 @@ mod device_tests {
         let mut batch = ExprBatch::new();
         for k in 0..500u32 {
             batch.push(&[
-                GpuNode { op: Op::Add as u32, arg0: 1, arg1: 2, konst: 0.0 },
-                GpuNode { op: Op::Var as u32, arg0: 0, arg1: 0, konst: 0.0 },
-                GpuNode { op: Op::Num as u32, arg0: 0, arg1: 0, konst: k as f32 },
+                GpuNode { op: Op::Add as u32, arg0: 1, ty_code: 2, konst: 0.0 },
+                GpuNode { op: Op::Var as u32, arg0: 0, ty_code: 0, konst: 0.0 },
+                GpuNode { op: Op::Num as u32, arg0: 0, ty_code: 0, konst: k as f32 },
             ]);
         }
         let got = ev.eval(&batch).expect("eval");
@@ -2219,16 +2221,16 @@ mod subtree_stats_tests {
     use super::*;
 
     fn var(i: u32) -> GpuNode {
-        GpuNode { op: Op::Var as u32, arg0: i, arg1: 0, konst: 0.0 }
+        GpuNode { op: Op::Var as u32, arg0: i, ty_code: 0, konst: 0.0 }
     }
     fn num(v: f32) -> GpuNode {
-        GpuNode { op: Op::Num as u32, arg0: 0, arg1: 0, konst: v }
+        GpuNode { op: Op::Num as u32, arg0: 0, ty_code: 0, konst: v }
     }
     fn bin(op: Op, a: u32, b: u32) -> GpuNode {
-        GpuNode { op: op as u32, arg0: a, arg1: b, konst: 0.0 }
+        GpuNode { op: op as u32, arg0: a, ty_code: b, konst: 0.0 }
     }
     fn un(op: Op, a: u32) -> GpuNode {
-        GpuNode { op: op as u32, arg0: a, arg1: 0, konst: 0.0 }
+        GpuNode { op: op as u32, arg0: a, ty_code: 0, konst: 0.0 }
     }
 
     /// EVERY SUBTREE'S MIN, MAX AND SUM, on the device, equal the host's; a
@@ -2370,8 +2372,8 @@ mod protected_parity_tests {
         let ev = GpuEvaluator::new(xs, 1).ok()?;
         let mut b = ExprBatch::new();
         b.push(&[
-            GpuNode { op: op as u32, arg0: 1, arg1: 0, konst: 0.0 },
-            GpuNode { op: Op::Var as u32, arg0: 0, arg1: 0, konst: 0.0 },
+            GpuNode { op: op as u32, arg0: 1, ty_code: 0, konst: 0.0 },
+            GpuNode { op: Op::Var as u32, arg0: 0, ty_code: 0, konst: 0.0 },
         ]);
         ev.eval(&b).ok()
     }
@@ -2381,9 +2383,9 @@ mod protected_parity_tests {
         let ev = GpuEvaluator::new(bs, 1).ok()?;
         let mut batch = ExprBatch::new();
         batch.push(&[
-            GpuNode { op: op as u32, arg0: 1, arg1: 2, konst: 0.0 },
-            GpuNode { op: Op::Num as u32, arg0: 0, arg1: 0, konst: a },
-            GpuNode { op: Op::Var as u32, arg0: 0, arg1: 0, konst: 0.0 },
+            GpuNode { op: op as u32, arg0: 1, ty_code: 2, konst: 0.0 },
+            GpuNode { op: Op::Num as u32, arg0: 0, ty_code: 0, konst: a },
+            GpuNode { op: Op::Var as u32, arg0: 0, ty_code: 0, konst: 0.0 },
         ]);
         ev.eval(&batch).ok()
     }
@@ -2400,10 +2402,10 @@ mod protected_parity_tests {
         };
         let mut batch = ExprBatch::new();
         batch.push(&[
-            GpuNode { op: Op::Select3 as u32, arg0: 1, arg1: 2, konst: 0.0 },
-            GpuNode { op: Op::Var as u32, arg0: 0, arg1: 0, konst: 0.0 },
-            GpuNode { op: Op::Num as u32, arg0: 0, arg1: 0, konst: 10.0 },
-            GpuNode { op: Op::Num as u32, arg0: 0, arg1: 0, konst: 20.0 },
+            GpuNode { op: Op::Select3 as u32, arg0: 1, ty_code: 2, konst: 0.0 },
+            GpuNode { op: Op::Var as u32, arg0: 0, ty_code: 0, konst: 0.0 },
+            GpuNode { op: Op::Num as u32, arg0: 0, ty_code: 0, konst: 10.0 },
+            GpuNode { op: Op::Num as u32, arg0: 0, ty_code: 0, konst: 20.0 },
         ]);
         let got = ev.eval(&batch).expect("eval");
         for (c, g) in cs.iter().zip(&got) {
@@ -2517,21 +2519,21 @@ mod protected_parity_tests {
         let Ok(ev) = GpuEvaluator::new(&[1000.0f32], 1) else { return };
         let inf = |neg: bool| -> Vec<GpuNode> {
             // [op, (Neg,) Exp, Var]
-            let mut v = vec![GpuNode { op: 0, arg0: 0, arg1: 0, konst: 0.0 }];
+            let mut v = vec![GpuNode { op: 0, arg0: 0, ty_code: 0, konst: 0.0 }];
             if neg {
-                v.push(GpuNode { op: Op::Neg as u32, arg0: 2, arg1: 0, konst: 0.0 });
-                v.push(GpuNode { op: Op::Exp as u32, arg0: 3, arg1: 0, konst: 0.0 });
+                v.push(GpuNode { op: Op::Neg as u32, arg0: 2, ty_code: 0, konst: 0.0 });
+                v.push(GpuNode { op: Op::Exp as u32, arg0: 3, ty_code: 0, konst: 0.0 });
             } else {
-                v.push(GpuNode { op: Op::Exp as u32, arg0: 2, arg1: 0, konst: 0.0 });
+                v.push(GpuNode { op: Op::Exp as u32, arg0: 2, ty_code: 0, konst: 0.0 });
             }
-            v.push(GpuNode { op: Op::Var as u32, arg0: 0, arg1: 0, konst: 0.0 });
+            v.push(GpuNode { op: Op::Var as u32, arg0: 0, ty_code: 0, konst: 0.0 });
             v
         };
         let mut b = ExprBatch::new();
         for op in [Op::ProtectedSqrt, Op::ProtectedLog, Op::ProtectedExp] {
             for neg in [false, true] {
                 let mut nodes = inf(neg);
-                nodes[0] = GpuNode { op: op as u32, arg0: 1, arg1: 0, konst: 0.0 };
+                nodes[0] = GpuNode { op: op as u32, arg0: 1, ty_code: 0, konst: 0.0 };
                 b.push(&nodes);
             }
         }
@@ -2570,15 +2572,15 @@ mod protected_parity_tests {
         for op in ops {
             // op(Exp(x)) = op(+inf), op(Neg(Exp(x))) = op(-inf)
             b.push(&[
-                GpuNode { op: op as u32, arg0: 1, arg1: 0, konst: 0.0 },
-                GpuNode { op: Op::Exp as u32, arg0: 2, arg1: 0, konst: 0.0 },
-                GpuNode { op: Op::Var as u32, arg0: 0, arg1: 0, konst: 0.0 },
+                GpuNode { op: op as u32, arg0: 1, ty_code: 0, konst: 0.0 },
+                GpuNode { op: Op::Exp as u32, arg0: 2, ty_code: 0, konst: 0.0 },
+                GpuNode { op: Op::Var as u32, arg0: 0, ty_code: 0, konst: 0.0 },
             ]);
             b.push(&[
-                GpuNode { op: op as u32, arg0: 1, arg1: 0, konst: 0.0 },
-                GpuNode { op: Op::Neg as u32, arg0: 2, arg1: 0, konst: 0.0 },
-                GpuNode { op: Op::Exp as u32, arg0: 3, arg1: 0, konst: 0.0 },
-                GpuNode { op: Op::Var as u32, arg0: 0, arg1: 0, konst: 0.0 },
+                GpuNode { op: op as u32, arg0: 1, ty_code: 0, konst: 0.0 },
+                GpuNode { op: Op::Neg as u32, arg0: 2, ty_code: 0, konst: 0.0 },
+                GpuNode { op: Op::Exp as u32, arg0: 3, ty_code: 0, konst: 0.0 },
+                GpuNode { op: Op::Var as u32, arg0: 0, ty_code: 0, konst: 0.0 },
             ]);
         }
         let got = ev.eval(&b).expect("eval");
@@ -2599,10 +2601,10 @@ mod protected_parity_tests {
         for trig in [Op::Sin, Op::Cos] {
             // ProtectedSqrt(trig(Exp(x)))
             b.push(&[
-                GpuNode { op: Op::ProtectedSqrt as u32, arg0: 1, arg1: 0, konst: 0.0 },
-                GpuNode { op: trig as u32, arg0: 2, arg1: 0, konst: 0.0 },
-                GpuNode { op: Op::Exp as u32, arg0: 3, arg1: 0, konst: 0.0 },
-                GpuNode { op: Op::Var as u32, arg0: 0, arg1: 0, konst: 0.0 },
+                GpuNode { op: Op::ProtectedSqrt as u32, arg0: 1, ty_code: 0, konst: 0.0 },
+                GpuNode { op: trig as u32, arg0: 2, ty_code: 0, konst: 0.0 },
+                GpuNode { op: Op::Exp as u32, arg0: 3, ty_code: 0, konst: 0.0 },
+                GpuNode { op: Op::Var as u32, arg0: 0, ty_code: 0, konst: 0.0 },
             ]);
         }
         let got = ev.eval(&b).expect("eval");
@@ -2624,9 +2626,9 @@ mod protected_parity_tests {
         let mut b = ExprBatch::new();
         for trig in [Op::Sin, Op::Cos] {
             b.push(&[
-                GpuNode { op: Op::ProtectedSqrt as u32, arg0: 1, arg1: 0, konst: 0.0 },
-                GpuNode { op: trig as u32, arg0: 2, arg1: 0, konst: 0.0 },
-                GpuNode { op: Op::Var as u32, arg0: 0, arg1: 0, konst: 0.0 },
+                GpuNode { op: Op::ProtectedSqrt as u32, arg0: 1, ty_code: 0, konst: 0.0 },
+                GpuNode { op: trig as u32, arg0: 2, ty_code: 0, konst: 0.0 },
+                GpuNode { op: Op::Var as u32, arg0: 0, ty_code: 0, konst: 0.0 },
             ]);
         }
         let got = ev.eval(&b).expect("eval");
@@ -2830,7 +2832,7 @@ mod real_expression_tests {
                 _ => 1,
             };
             if arity == 2 {
-                assert!(n.arg1 as usize > i, "node {i}: child arg1={} not after it", n.arg1);
+                assert!(n.child(1) > i, "node {i}: child 1 at {} not after it", n.child(1));
             }
         }
     }
@@ -2955,19 +2957,19 @@ mod undecodable_batch_tests {
                 GpuNode {
                     op: Op::Add as u32,
                     arg0: 1,
-                    arg1: 2,
+                    ty_code: 2,
                     konst: 0.0,
                 },
                 GpuNode {
                     op: Op::Var as u32,
                     arg0: 0,
-                    arg1: 0,
+                    ty_code: 0,
                     konst: 0.0,
                 },
                 GpuNode {
                     op: Op::Num as u32,
                     arg0: 0,
-                    arg1: 0,
+                    ty_code: 0,
                     konst: i as f32,
                 },
             ]);
