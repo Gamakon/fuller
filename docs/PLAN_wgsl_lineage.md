@@ -37,6 +37,12 @@ kernels, most of them legal.
 
 ## 1. The invariant
 
+Stated once, as the external reviewer put it: **sharing requires
+equivalent values, compatible memory histories, valid dominance and safe
+evaluation placement.** The four are decided together, as one property of
+the annotated DAG (§5, `legality`), never as separate checks spread over
+the reader, the chromosome and the scaffold.
+
 For an expression occurrence `e` at program point `p`:
 
 ```
@@ -61,6 +67,29 @@ defined) but runs it unconditionally; that is a cost decision for the
 compile-and-time evaluator, not a correctness one, and the oracle cannot
 see it. If no legal `d` exists (a store to a lineage location sits between
 the uses, a binding is out of scope), the occurrences are not shared.
+
+**Safe evaluation at `d`.** WGSL expressions are total: indexing is
+clamped, integer division by zero and float overflow are defined, there
+are no traps and no exceptions, so evaluating `e` at `d` with the same
+lineage yields the same value it would have inside its original branch,
+and the branch's guard changes only whether the value is USED. Safety is
+therefore implied by lineage, dominance and scope in this kingdom. It is
+still a named condition of the invariant, because a kingdom whose
+expressions can trap (a CPU language, a kingdom with asserts) would need
+it decided, and because two WGSL cases are excluded explicitly: an
+expression containing a derivative or a barrier-dependent builtin is never
+moved (uniform control flow), and an expression whose evaluation is
+unbounded in time does not exist in this language.
+
+**Iterations are explicit.** A location's header phi is a version distinct
+from the pre-loop version, so "inside the loop" and "before the loop" are
+different lineages by construction, and a definition may be placed OUTSIDE
+a loop only when no location in its lineage has a phi at that loop: that
+is the proof of loop invariance, and nothing is hoisted without it. Within
+one iteration two occurrences with the same static version read the same
+value because the shared definition is itself placed inside the loop and
+recomputed each iteration; the static version names the loop-carried value
+per iteration, never one across iterations.
 `version(loc, p)` is well defined only once the phis of §2 are placed:
 before that, two paths into `p` can carry different versions and the
 number at `p` is whichever path the reader walked last, which is the
@@ -166,18 +195,21 @@ the scaffold", not "definitions evaluated up front". The chromosome records
 placement per tail slot; the device decode of the chromosome is unchanged
 (placement is scaffold metadata the rebuild consumes).
 
-**E-graph.** Lineage is asserted as relations when the saturated finder
-runs over kernel trees (future, when the `arith`/`trig` classes get rules):
+**E-graph: effect-qualified identities, not lineage checked later.** A
+memory-dependent expression never enters an unrestricted equivalence
+class: a load is the term `(Load loc version)` with its version as part of
+the term, a `let` use is `(Bind id)`, so two loads of different versions
+are different terms and no rewrite can merge them; once an unsound equality
+has merged two classes, checking lineage at extraction is too late. With
+that, lineage is a function of the term and needs no side relation:
 
 ```
-(relation reads (Math Loc i64))       ; expression e reads loc at version
-(relation lineage (Math Loc i64))     ; closure over children
-(rule ((reads e l v)) ((lineage e l v)))
-(rule ((lineage c l v) (= e (Op c ...))) ((lineage e l v)))
+(datatype Expr ... (Load Loc i64) (Bind i64) ...)
 ```
 
-and share-legality is "same class AND same lineage set", checked at
-extraction. Nothing here changes the Math kingdoms, which have no memory.
+Rewrite rules apply to pure subgraphs (`arith`, `trig`, …) whose leaves
+may be effect-qualified terms; a rule never mentions `Load` or `Bind`. The
+Math kingdoms have no memory and are unchanged.
 
 ## 4. The oracle (the reviewer's test)
 
@@ -196,7 +228,18 @@ in one arm and after the join; and it records, per generated program,
 which repeats the fold shared and which it refused. A difference is a
 fault in the representation or the fold, named by the generated program.
 A thousand kernels with zero differences prove little unless the generator
-reaches the programs where folding would be wrong. This is fuller's own harness
+reaches the programs where folding would be wrong. Beside the generator, a
+fixed set of adversarial kernels written by hand and kept in the repo:
+aliasing through pointers, conditional stores inside loops, dynamic
+indexing with repeated loads, workgroup memory with barriers, expressions
+that are valid only within a branch (an index guarded by `if (i < n)`),
+and the step-5 queue case.
+
+Bit equality is the criterion while expressions are unchanged. The
+arithmetic rewrites that come after (§7 step 4) reorder floating-point
+operations and need their own numerical criterion (an error bound on the
+data, as the Math kingdoms' `denoise` already uses), decided before the
+first such rewrite is admitted, never by loosening this gate. This is fuller's own harness
 (the device run needs no phylu suite): `examples/wgsl_oracle.rs`, under
 `gpu,wgsl`, N programs per run, the seed printed, one process.
 
@@ -204,10 +247,25 @@ The same harness is the correctness gate for every mutation that follows.
 
 ## 5. What changes, where
 
+The legality decision is one function on the annotated DAG, in one place:
+
+```
+legality::decide(dag, candidate_sites) -> Accept { placement } | Refuse { reason }
+```
+
+where `reason` is one of: text differs, lineage differs, no dominating
+point, binding out of scope, unsafe to move (derivative/barrier builtin),
+not loop-invariant for the placement asked. The fold, the rebuild, the
+report and every later mutation call this and nothing else; a mutation
+that moves or merges a computation is legal iff `decide` accepts it. That
+is the reviewer's "first-class property of the DAG", and it is what makes
+the optimiser reasoned about in one place.
+
 | piece | change |
 |---|---|
+| `src/wgsl/legality.rs` (new) | the decision above, over the lineage-annotated DAG; the reasons are counted in the report |
 | `src/wgsl/reader.rs` | version table per function; loads named with their version; `lineage` per node; loop/branch/call bumps |
-| `src/wgsl/chromosome.rs` | drop the conservative load rule; `refused_lineage`; placement per tail slot |
+| `src/wgsl/chromosome.rs` | drop the conservative load rule; the fold asks `legality::decide`; refusals by reason; placement per tail slot |
 | `src/wgsl/scaffold.rs` | emit a definition at its placement as a `let`; strip versions at rebuild |
 | `src/homeotic.rs` | `FoldedChromosome` gains per-slot placement (an opaque path for the kingdom that uses it); SR unaffected |
 | `examples/wgsl_oracle.rs` | the generator and the device comparison |
@@ -253,6 +311,15 @@ The same harness is the correctness gate for every mutation that follows.
 5. The compile-and-time evaluator on top.
 
 ## Review
+
+External review (2026-10-09, after the first revision), folded in: the
+invariant restated as four conditions decided together; safe evaluation
+at the placement point made explicit (total in WGSL, excluded builtins
+named); iteration semantics made explicit (header phi distinct from the
+pre-loop version; hoisting only on proven invariance); effect-qualified
+terms in the e-graph instead of lineage checked at extraction; the
+adversarial kernel set; a separate numerical criterion for the later
+floating-point rewrites; legality as one first-class decision on the DAG.
 
 Reviewed adversarially by phylu-regex (2026-10-09, twelve findings, all
 folded in): the loop exit phi, phi placement by dominance frontiers
