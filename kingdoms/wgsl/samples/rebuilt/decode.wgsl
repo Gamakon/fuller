@@ -85,7 +85,7 @@ var<storage> fallback_k: array<u32>;
 var<private> kid_first: array<u32, 512>;
 var<private> node_op: array<u32, 64>;
 var<private> node_a0_: array<u32, 64>;
-var<private> node_a1_: array<u32, 64>;
+var<private> node_tc: array<u32, 64>;
 var<private> node_k: array<u32, 64>;
 var<private> node_nk: array<u32, 64>;
 var<private> node_ty: array<u32, 64>;
@@ -188,7 +188,6 @@ fn decode_main(@builtin(global_invocation_id) id: vec3<u32>) {
     var masked: u32 = 0u;
     var op: u32;
     var a0_: u32;
-    var a1_: u32;
     var kv: u32;
     var nk: u32;
     var l: u32;
@@ -306,67 +305,70 @@ fn decode_main(@builtin(global_invocation_id) id: vec3<u32>) {
         let _e175 = params.typed_kingdom;
         let _e180 = out_ty[sid_1];
         if (((_e175 == 1u) && (left == 0u)) && (_e180 != demand)) {
-            let _e186 = count;
-            let _e189 = fallback_op[demand];
-            node_op[_e186] = _e189;
-            let _e193 = count;
-            node_a0_[_e193] = 0u;
+            let _e186 = fallback_op[demand];
+            if (_e186 == 4294967295u) {
+                fail(gid_1);
+                return;
+            }
+            let _e191 = count;
+            let _e194 = fallback_op[demand];
+            node_op[_e191] = _e194;
             let _e198 = count;
-            node_a1_[_e198] = 0u;
-            let _e203 = count;
-            let _e206 = fallback_k[demand];
-            node_k[_e203] = _e206;
-            let _e210 = count;
-            node_nk[_e210] = 0u;
+            node_a0_[_e198] = 0u;
+            let _e202 = count;
+            node_tc[_e202] = demand;
+            let _e207 = count;
+            let _e210 = fallback_k[demand];
+            node_k[_e207] = _e210;
             let _e214 = count;
-            count = (_e214 + 1u);
-            let _e218 = masked;
-            masked = (_e218 + 1u);
+            node_nk[_e214] = 0u;
+            let _e218 = count;
+            count = (_e218 + 1u);
+            let _e222 = masked;
+            masked = (_e222 + 1u);
             continue;
         }
         let k_3 = kind[sid_1];
         op = 0u;
         a0_ = 0u;
-        a1_ = 0u;
+        let ty_1 = out_ty[sid_1];
         kv = 0u;
         nk = 0u;
         if (k_3 == KIND_COMPOUND) {
             let c_3 = code[sid_1];
             let len = compound_len[c_3];
             l = left;
-            let _e244 = l;
-            if (_e244 == 0u) {
+            let _e249 = l;
+            if (_e249 == 0u) {
                 l = len;
             }
-            let _e253 = l;
-            let _e257 = compound_ops[((c_3 * 3u) + (_e253 - 1u))];
-            op = _e257;
-            let _e260 = l;
-            if (_e260 == 1u) {
-                let _e265 = tail_i;
-                let _e268 = kid_first[pos];
-                q_pos[_e265] = _e268;
-                let _e272 = tail_i;
-                q_left[_e272] = 0u;
-                let _e276 = tail_i;
-                q_demand[_e276] = demand;
-                let _e280 = tail_i;
-                tail_i = (_e280 + 1u);
-                let _e286 = tail_i;
-                let _e289 = kid_first[pos];
-                q_pos[_e286] = (_e289 + 1u);
-                let _e294 = tail_i;
-                q_left[_e294] = 0u;
-                let _e298 = tail_i;
-                q_demand[_e298] = demand;
-                let _e302 = tail_i;
-                tail_i = (_e302 + 1u);
-                let _e306 = next;
-                next = (_e306 + 2u);
+            let _e258 = l;
+            let _e262 = compound_ops[((c_3 * 3u) + (_e258 - 1u))];
+            op = _e262;
+            let _e265 = l;
+            if (_e265 == 1u) {
+                let _e270 = tail_i;
+                let _e273 = kid_first[pos];
+                q_pos[_e270] = _e273;
+                let _e277 = tail_i;
+                q_left[_e277] = 0u;
+                let _e281 = tail_i;
+                q_demand[_e281] = demand;
+                let _e285 = tail_i;
+                tail_i = (_e285 + 1u);
+                let _e291 = tail_i;
+                let _e294 = kid_first[pos];
+                q_pos[_e291] = (_e294 + 1u);
+                let _e299 = tail_i;
+                q_left[_e299] = 0u;
+                let _e303 = tail_i;
+                q_demand[_e303] = demand;
+                let _e307 = tail_i;
+                tail_i = (_e307 + 1u);
                 let _e311 = next;
-                a0_ = (_e311 - 2u);
+                next = (_e311 + 2u);
                 let _e316 = next;
-                a1_ = (_e316 - 1u);
+                a0_ = (_e316 - 2u);
                 nk = 2u;
             } else {
                 let _e322 = tail_i;
@@ -420,103 +422,100 @@ fn decode_main(@builtin(global_invocation_id) id: vec3<u32>) {
                 next = (_e403 + a_1);
                 let _e407 = next;
                 a0_ = (_e407 - a_1);
-                let _e414 = a0_;
-                a1_ = select(0u, (_e414 + 1u), (a_1 >= 2u));
                 nk = a_1;
             } else {
                 if (k_3 == KIND_INPUT) {
                     op = OP_VAR;
-                    let _e426 = code[sid_1];
-                    a0_ = _e426;
+                    let _e417 = code[sid_1];
+                    a0_ = _e417;
                 } else {
                     if (k_3 == KIND_CONSTANT) {
                         op = OP_NUM;
-                        let _e434 = konst[sid_1];
-                        kv = bitcast<u32>(_e434);
+                        let _e425 = konst[sid_1];
+                        kv = bitcast<u32>(_e425);
                     } else {
                         if (k_3 == KIND_RNC) {
                             op = OP_NUM;
                             idx = 0u;
                             i_1 = 0u;
                             loop {
-                                let _e445 = i_1;
-                                if (_e445 < pos) {
+                                let _e436 = i_1;
+                                if (_e436 < pos) {
                                 } else {
                                     break;
                                 }
                                 {
-                                    let _e451 = i_1;
-                                    let _e454 = genome[(base + _e451)];
-                                    let _e456 = kind[_e454];
-                                    if (_e456 == KIND_RNC) {
-                                        let _e460 = idx;
-                                        idx = (_e460 + 1u);
+                                    let _e442 = i_1;
+                                    let _e445 = genome[(base + _e442)];
+                                    let _e447 = kind[_e445];
+                                    if (_e447 == KIND_RNC) {
+                                        let _e451 = idx;
+                                        idx = (_e451 + 1u);
                                     }
                                 }
                                 continuing {
-                                    let _e464 = i_1;
-                                    i_1 = (_e464 + 1u);
+                                    let _e455 = i_1;
+                                    i_1 = (_e455 + 1u);
                                 }
                             }
-                            let _e469 = idx;
-                            let dc = genome[((base + ht) + _e469)];
-                            let _e475 = params.n_rnc;
-                            if (dc >= _e475) {
+                            let _e460 = idx;
+                            let dc = genome[((base + ht) + _e460)];
+                            let _e466 = params.n_rnc;
+                            if (dc >= _e466) {
                                 fail(gid_1);
                                 return;
                             }
-                            let _e481 = rnc[(rbase + dc)];
-                            kv = bitcast<u32>(_e481);
-                            let _e485 = n_rnc_seen;
-                            n_rnc_seen = (_e485 + 1u);
+                            let _e472 = rnc[(rbase + dc)];
+                            kv = bitcast<u32>(_e472);
+                            let _e476 = n_rnc_seen;
+                            n_rnc_seen = (_e476 + 1u);
                         } else {
                             if (k_3 == KIND_GENEREF) {
                                 op = OP_GENEREF;
-                                let _e494 = code[sid_1];
-                                a0_ = _e494;
+                                let _e485 = code[sid_1];
+                                a0_ = _e485;
                             } else {
                                 op = OP_NUM;
-                                let _e501 = code[sid_1];
-                                a0_ = (_e501 + 1u);
-                                let _e506 = konst[sid_1];
-                                kv = bitcast<u32>(_e506);
+                                let _e492 = code[sid_1];
+                                a0_ = (_e492 + 1u);
+                                let _e497 = konst[sid_1];
+                                kv = bitcast<u32>(_e497);
                             }
                         }
                     }
                 }
             }
         }
-        let _e511 = count;
-        let _e513 = op;
-        node_op[_e511] = _e513;
-        let _e517 = count;
-        let _e519 = a0_;
-        node_a0_[_e517] = _e519;
-        let _e523 = count;
-        let _e525 = a1_;
-        node_a1_[_e523] = _e525;
+        let _e502 = count;
+        let _e504 = op;
+        node_op[_e502] = _e504;
+        let _e508 = count;
+        let _e510 = a0_;
+        node_a0_[_e508] = _e510;
+        let _e513 = count;
+        node_tc[_e513] = ty_1;
+        let _e518 = count;
+        let _e520 = kv;
+        node_k[_e518] = _e520;
+        let _e524 = count;
+        let _e526 = nk;
+        node_nk[_e524] = _e526;
         let _e529 = count;
-        let _e531 = kv;
-        node_k[_e529] = _e531;
-        let _e535 = count;
-        let _e537 = nk;
-        node_nk[_e535] = _e537;
-        let _e540 = count;
-        count = (_e540 + 1u);
+        count = (_e529 + 1u);
     }
-    let _e544 = count;
-    k2_ = _e544;
+    let _e533 = count;
+    k2_ = _e533;
     loop {
-        let _e547 = k2_;
-        if (_e547 == 0u) {
+        let _e536 = k2_;
+        if (_e536 == 0u) {
             break;
         }
-        let _e551 = k2_;
-        k2_ = (_e551 - 1u);
-        let _e555 = k2_;
-        let op_5 = node_op[_e555];
-        let _e560 = k2_;
-        let nk_1 = node_nk[_e560];
+        let _e540 = k2_;
+        k2_ = (_e540 - 1u);
+        let _e544 = k2_;
+        let op_5 = node_op[_e544];
+        let _e549 = k2_;
+        let nk_1 = node_nk[_e549];
         ty = TY_F;
         d = 0u;
         if (nk_1 == 0u) {
@@ -525,182 +524,182 @@ fn decode_main(@builtin(global_invocation_id) id: vec3<u32>) {
             m = TY_F;
             c = 0u;
             loop {
-                let _e576 = c;
-                if (_e576 < nk_1) {
+                let _e565 = c;
+                if (_e565 < nk_1) {
                 } else {
                     break;
                 }
                 {
-                    let _e581 = k2_;
-                    let _e583 = node_a0_[_e581];
-                    let _e584 = c;
-                    let kid = (_e583 + _e584);
-                    let _e588 = m;
-                    let _e590 = node_ty[kid];
-                    m = max(_e588, _e590);
-                    let _e594 = d;
-                    let _e596 = node_depth[kid];
-                    d = max(_e594, _e596);
+                    let _e570 = k2_;
+                    let _e572 = node_a0_[_e570];
+                    let _e573 = c;
+                    let kid = (_e572 + _e573);
+                    let _e577 = m;
+                    let _e579 = node_ty[kid];
+                    m = max(_e577, _e579);
+                    let _e583 = d;
+                    let _e585 = node_depth[kid];
+                    d = max(_e583, _e585);
                 }
                 continuing {
-                    let _e600 = c;
-                    c = (_e600 + 1u);
+                    let _e589 = c;
+                    c = (_e589 + 1u);
                 }
             }
-            let _e603 = m;
-            let _e604 = apply(op_5, _e603);
-            ty = _e604;
-            let _e608 = ty;
-            if (_e608 == TY_NONE) {
+            let _e592 = m;
+            let _e593 = apply(op_5, _e592);
+            ty = _e593;
+            let _e597 = ty;
+            if (_e597 == TY_NONE) {
                 ok = false;
             }
-            let _e612 = is_raiser_op(op_5);
-            if _e612 {
-                let _e615 = d;
-                d = (_e615 + 1u);
+            let _e601 = is_raiser_op(op_5);
+            if _e601 {
+                let _e604 = d;
+                d = (_e604 + 1u);
             }
         }
-        let _e620 = k2_;
-        let _e622 = ty;
-        node_ty[_e620] = _e622;
-        let _e626 = k2_;
-        let _e628 = d;
-        node_depth[_e626] = _e628;
+        let _e609 = k2_;
+        let _e611 = ty;
+        node_ty[_e609] = _e611;
+        let _e615 = k2_;
+        let _e617 = d;
+        node_depth[_e615] = _e617;
         if (nk_1 == 0u) {
-            let _e634 = k2_;
-            node_best[_e634] = 1u;
-            let _e639 = k2_;
-            node_ties[_e639] = 0u;
-            let _e644 = k2_;
-            node_order[_e644] = 1u;
+            let _e623 = k2_;
+            node_best[_e623] = 1u;
+            let _e628 = k2_;
+            node_ties[_e628] = 0u;
+            let _e633 = k2_;
+            node_order[_e633] = 1u;
         } else {
-            let _e646 = family(op_5);
+            let _e635 = family(op_5);
             best = 0u;
             ties = 0u;
             c_1 = 0u;
             loop {
-                let _e654 = c_1;
-                if (_e654 < nk_1) {
+                let _e643 = c_1;
+                if (_e643 < nk_1) {
                 } else {
                     break;
                 }
                 {
-                    let _e659 = k2_;
-                    let _e661 = node_a0_[_e659];
-                    let _e662 = c_1;
-                    let kid_1 = (_e661 + _e662);
-                    let _e666 = node_op[kid_1];
-                    let _e667 = family(_e666);
-                    if ((_e646 != 0u) && (_e667 == _e646)) {
-                        let _e675 = node_best[kid_1];
-                        o = _e675;
-                        let _e679 = node_ties[kid_1];
-                        t = _e679;
+                    let _e648 = k2_;
+                    let _e650 = node_a0_[_e648];
+                    let _e651 = c_1;
+                    let kid_1 = (_e650 + _e651);
+                    let _e655 = node_op[kid_1];
+                    let _e656 = family(_e655);
+                    if ((_e635 != 0u) && (_e656 == _e635)) {
+                        let _e664 = node_best[kid_1];
+                        o = _e664;
+                        let _e668 = node_ties[kid_1];
+                        t = _e668;
                     } else {
-                        let _e683 = node_order[kid_1];
-                        o = _e683;
+                        let _e672 = node_order[kid_1];
+                        o = _e672;
                         t = 1u;
                     }
-                    let _e688 = o;
-                    let _e689 = best;
-                    if (_e688 > _e689) {
-                        let _e693 = o;
-                        best = _e693;
-                        let _e696 = t;
-                        ties = _e696;
+                    let _e677 = o;
+                    let _e678 = best;
+                    if (_e677 > _e678) {
+                        let _e682 = o;
+                        best = _e682;
+                        let _e685 = t;
+                        ties = _e685;
                     } else {
-                        let _e699 = o;
-                        let _e700 = best;
-                        if (_e699 == _e700) {
-                            let _e704 = ties;
-                            let _e705 = t;
-                            ties = (_e704 + _e705);
+                        let _e688 = o;
+                        let _e689 = best;
+                        if (_e688 == _e689) {
+                            let _e693 = ties;
+                            let _e694 = t;
+                            ties = (_e693 + _e694);
                         }
                     }
                 }
                 continuing {
-                    let _e709 = c_1;
-                    c_1 = (_e709 + 1u);
+                    let _e698 = c_1;
+                    c_1 = (_e698 + 1u);
                 }
             }
-            let _e714 = k2_;
-            let _e716 = best;
-            node_best[_e714] = _e716;
-            let _e720 = k2_;
+            let _e703 = k2_;
+            let _e705 = best;
+            node_best[_e703] = _e705;
+            let _e709 = k2_;
+            let _e711 = ties;
+            node_ties[_e709] = _e711;
+            let _e719 = k2_;
+            let _e721 = best;
             let _e722 = ties;
-            node_ties[_e720] = _e722;
-            let _e730 = k2_;
-            let _e732 = best;
-            let _e733 = ties;
-            node_order[_e730] = (_e732 + select(0u, 1u, (_e733 >= 2u)));
+            node_order[_e719] = (_e721 + select(0u, 1u, (_e722 >= 2u)));
         }
     }
-    let _e741 = params.typed;
-    let _e743 = ok;
-    if ((_e741 == 1u) && !(_e743)) {
+    let _e730 = params.typed;
+    let _e732 = ok;
+    if ((_e730 == 1u) && !(_e732)) {
         fail(gid_1);
         return;
     }
-    let _e749 = params.order_ceiling;
-    if (_e749 > 0u) {
-        let _e755 = node_order[0];
-        let _e757 = params.order_ceiling;
-        if (_e755 > _e757) {
+    let _e738 = params.order_ceiling;
+    if (_e738 > 0u) {
+        let _e744 = node_order[0];
+        let _e746 = params.order_ceiling;
+        if (_e744 > _e746) {
             fail(gid_1);
             return;
         }
         loop {
-            let _e761 = k;
-            let _e762 = count;
-            if (_e761 < _e762) {
+            let _e750 = k;
+            let _e751 = count;
+            if (_e750 < _e751) {
             } else {
                 break;
             }
             {
-                let _e766 = k;
-                let op_6 = node_op[_e766];
-                let _e772 = k;
-                let _e774 = node_nk[_e772];
-                if (_e774 == 0u) {
+                let _e755 = k;
+                let op_6 = node_op[_e755];
+                let _e761 = k;
+                let _e763 = node_nk[_e761];
+                if (_e763 == 0u) {
                     continue;
                 }
-                let _e777 = k;
-                let _e778 = is_unary(_e777);
-                let _e779 = is_transparent(op_6);
-                if (_e778 && !(_e779)) {
-                    let _e784 = k;
-                    let _e786 = node_a0_[_e784];
-                    let _e787 = through_transparent(_e786);
-                    let _e788 = is_unary(_e787);
-                    let _e794 = op_stack[op_6];
-                    let _e796 = node_op[_e787];
-                    if (_e788 && ((_e794 & (1u << _e796)) == 0u)) {
+                let _e766 = k;
+                let _e767 = is_unary(_e766);
+                let _e768 = is_transparent(op_6);
+                if (_e767 && !(_e768)) {
+                    let _e773 = k;
+                    let _e775 = node_a0_[_e773];
+                    let _e776 = through_transparent(_e775);
+                    let _e777 = is_unary(_e776);
+                    let _e783 = op_stack[op_6];
+                    let _e785 = node_op[_e776];
+                    if (_e777 && ((_e783 & (1u << _e785)) == 0u)) {
                         fail(gid_1);
                         return;
                     }
                 }
-                let _e804 = op_order[op_6];
-                let lo = (_e804 & 255u);
-                let _e809 = op_order[op_6];
-                let hi = (_e809 >> 8u);
+                let _e793 = op_order[op_6];
+                let lo = (_e793 & 255u);
+                let _e798 = op_order[op_6];
+                let hi = (_e798 >> 8u);
                 c_2 = 0u;
                 loop {
-                    let _e816 = c_2;
-                    let _e817 = k;
-                    let _e819 = node_nk[_e817];
-                    if (_e816 < _e819) {
+                    let _e805 = c_2;
+                    let _e806 = k;
+                    let _e808 = node_nk[_e806];
+                    if (_e805 < _e808) {
                     } else {
                         break;
                     }
                     {
-                        let _e825 = c_2;
-                        if ((op_6 == OP_POW) && (_e825 == 1u)) {
+                        let _e814 = c_2;
+                        if ((op_6 == OP_POW) && (_e814 == 1u)) {
                             continue;
                         }
-                        let _e831 = k;
-                        let _e833 = node_a0_[_e831];
-                        let _e834 = c_2;
-                        let kid_2 = (_e833 + _e834);
+                        let _e820 = k;
+                        let _e822 = node_a0_[_e820];
+                        let _e823 = c_2;
+                        let kid_2 = (_e822 + _e823);
                         let o_1 = node_order[kid_2];
                         if ((o_1 < lo) || (o_1 > hi)) {
                             fail(gid_1);
@@ -708,72 +707,72 @@ fn decode_main(@builtin(global_invocation_id) id: vec3<u32>) {
                         }
                     }
                     continuing {
-                        let _e844 = c_2;
-                        c_2 = (_e844 + 1u);
+                        let _e833 = c_2;
+                        c_2 = (_e833 + 1u);
                     }
                 }
             }
             continuing {
-                let _e848 = k;
-                k = (_e848 + 1u);
+                let _e837 = k;
+                k = (_e837 + 1u);
             }
         }
     }
     let out = ((gid_1 * MAX_NODES) * 4u);
-    let _e857 = count;
-    h = (2166136261u ^ _e857);
+    let _e846 = count;
+    h = (2166136261u ^ _e846);
     loop {
-        let _e861 = i_2;
-        let _e862 = count;
-        if (_e861 < _e862) {
+        let _e850 = i_2;
+        let _e851 = count;
+        if (_e850 < _e851) {
         } else {
             break;
         }
         {
-            let _e868 = i_2;
-            let _e872 = i_2;
-            let _e874 = node_op[_e872];
-            nodes[(out + (_e868 * 4u))] = _e874;
-            let _e880 = i_2;
-            let _e885 = i_2;
-            let _e887 = node_a0_[_e885];
-            nodes[((out + (_e880 * 4u)) + 1u)] = _e887;
-            let _e893 = i_2;
-            let _e898 = i_2;
-            let _e900 = node_a1_[_e898];
-            nodes[((out + (_e893 * 4u)) + 2u)] = _e900;
-            let _e906 = i_2;
-            let _e911 = i_2;
-            let _e913 = node_k[_e911];
-            nodes[((out + (_e906 * 4u)) + 3u)] = _e913;
-            let _e918 = h;
-            let _e919 = i_2;
-            let _e921 = node_op[_e919];
-            h = ((_e918 ^ _e921) * 16777619u);
-            let _e928 = h;
-            let _e929 = i_2;
-            let _e931 = node_a0_[_e929];
-            h = ((_e928 ^ _e931) * 16777619u);
-            let _e938 = h;
-            let _e939 = i_2;
-            let _e941 = node_a1_[_e939];
-            h = ((_e938 ^ _e941) * 16777619u);
-            let _e948 = h;
-            let _e949 = i_2;
-            let _e951 = node_k[_e949];
-            h = ((_e948 ^ _e951) * 16777619u);
+            let _e857 = i_2;
+            let _e861 = i_2;
+            let _e863 = node_op[_e861];
+            nodes[(out + (_e857 * 4u))] = _e863;
+            let _e869 = i_2;
+            let _e874 = i_2;
+            let _e876 = node_a0_[_e874];
+            nodes[((out + (_e869 * 4u)) + 1u)] = _e876;
+            let _e882 = i_2;
+            let _e887 = i_2;
+            let _e889 = node_tc[_e887];
+            nodes[((out + (_e882 * 4u)) + 2u)] = _e889;
+            let _e895 = i_2;
+            let _e900 = i_2;
+            let _e902 = node_k[_e900];
+            nodes[((out + (_e895 * 4u)) + 3u)] = _e902;
+            let _e907 = h;
+            let _e908 = i_2;
+            let _e910 = node_op[_e908];
+            h = ((_e907 ^ _e910) * 16777619u);
+            let _e917 = h;
+            let _e918 = i_2;
+            let _e920 = node_a0_[_e918];
+            h = ((_e917 ^ _e920) * 16777619u);
+            let _e927 = h;
+            let _e928 = i_2;
+            let _e930 = node_tc[_e928];
+            h = ((_e927 ^ _e930) * 16777619u);
+            let _e937 = h;
+            let _e938 = i_2;
+            let _e940 = node_k[_e938];
+            h = ((_e937 ^ _e940) * 16777619u);
         }
         continuing {
-            let _e956 = i_2;
-            i_2 = (_e956 + 1u);
+            let _e945 = i_2;
+            i_2 = (_e945 + 1u);
         }
     }
-    let _e961 = count;
-    lengths[gid_1] = _e961;
+    let _e950 = count;
+    lengths[gid_1] = _e950;
     gene_ok[gid_1] = 1u;
-    let _e970 = node_depth[0];
-    gene_depth[gid_1] = _e970;
-    let _e974 = h;
-    gene_hash[gid_1] = _e974;
+    let _e959 = node_depth[0];
+    gene_depth[gid_1] = _e959;
+    let _e963 = h;
+    gene_hash[gid_1] = _e963;
     return;
 }
