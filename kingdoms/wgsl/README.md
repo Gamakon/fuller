@@ -235,7 +235,9 @@ repaid because the product runs billions of times.
 | symbol rows with slot × content arity (the loader, `Ty::Wgsl`) | waits on phylu's phase 2 (the cast migration) |
 | chromosome: roots folded into a homeotic tail, encoded and decoded through the generic pair (`src/wgsl/chromosome.rs`) | built; 59 of 59 functions `KARVA ok` (table above) |
 | the scaffold rebuild and the structural gate (`src/wgsl/scaffold.rs`, `round_trip`) | built; `ROUND_TRIP ok` on the six kernels |
-| form inference by use (`src/wgsl/infer.rs`) | built; table above. Not yet carried into the chromosome (duals per gene node, the two-form rule in the fold) |
+| form inference by use (`src/wgsl/infer.rs`) | built; table above |
+| the typed chromosome (`chromosome_typed`: a dual code per live token, the two-form rule in the fold) and phylu's typed sample gate (241a462f: 134 fully typed genes of the hff sample decode on host and device with no projection, the device's `ty_code` word equal to fuller's node for node) | built, verified 2026-10-08 23:57 |
+| the node word `ty_code` in both crates (the `arg1` retirement; phylu R/T, fuller T) | done 2026-10-08 23:48 |
 | device parity of a rebuilt kernel (the proof) | DONE: all 10 entry points compile both ways on Metal, and phylu's suite holds the golden checksum and the sample gate with each of the five rebuilt kernels substituted |
 | the scaffold-with-holes chromosome and its decoder (phylu) | not started |
 | compile-run-time evaluation path with the correctness gate (phylu) | not started |
