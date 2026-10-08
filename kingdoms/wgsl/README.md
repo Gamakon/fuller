@@ -192,10 +192,9 @@ no row for by design. The row count after the `shape`-class fix (an
 
 ### Open items
 
-- `builtin.num_workgroups` is typed `vec3<u32>.count` and the type table
-  has no vector count dual: add the dual or retype the builtin (a spec
-  decision).
-- 8 tail slots are short for the three largest entry points.
+- Decided 2026-10-08: the vector count duals (`vec2/3/4<u32>.count`) are
+  in the table, so `builtin.num_workgroups` instantiates; the default tail
+  is 16 slots.
 - The conservative load rule; the plan's finer rule (no intervening store
   in statement order) would share the loop-carried local reads it refuses.
 - 3.0 % of nodes sit on naga nodes with no row: struct-field reads from

@@ -58,7 +58,7 @@ pub struct ChromosomeOptions {
 
 impl Default for ChromosomeOptions {
     fn default() -> Self {
-        ChromosomeOptions { tail_slots: 8, min_ops: 2, head_lengths: vec![8, 12, 16, 24, 32, 48, 64], rng_seed: 7013 }
+        ChromosomeOptions { tail_slots: 16, min_ops: 2, head_lengths: vec![8, 12, 16, 24, 32, 48, 64], rng_seed: 7013 }
     }
 }
 
@@ -194,7 +194,7 @@ pub fn chromosome(f: &KernelFunction, opts: &ChromosomeOptions) -> Result<WgslCh
         .filter_map(|r| match &r.kind {
             RootKind::Store { target } => Some(target.clone()),
             RootKind::Init { local } => Some(local.clone()),
-            _ => None,
+            RootKind::Let { .. } | RootKind::Condition { .. } | RootKind::Return | RootKind::Argument { .. } => None,
         })
         .collect();
     let canonical: Vec<String> = roots.iter().map(render).collect();
@@ -265,19 +265,16 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         let k = read(TWO_STORES).unwrap();
         let f = &k.functions[0];
         let c = chromosome(f, &ChromosomeOptions { tail_slots: 3, min_ops: 2, head_lengths: vec![4, 8, 16], rng_seed: 1 }).unwrap();
-        assert_eq!(c.roots.len(), 2, "two store roots, no locals (let is not a var)");
-        // `xs[i] * xs[i]` over the read-only buffer xs, with `gid.x*2+1` inside, repeats across both roots.
-        assert!(c.matches >= 1, "{:?}", c.folded);
-        assert_eq!(c.refused_loads, 0, "xs is never stored, so its loads may share");
-        assert!(c.folded.filled >= 1);
-        assert!(c.folded.head[0].contains("href0") && c.folded.head[1].contains("href0"), "{:?}", c.folded.head);
-        assert!(c.folded.tail[0].contains("load.buffer.xs.#"), "{:?}", c.folded.tail);
+        assert_eq!(c.roots.len(), 4, "two lets and two stores");
+        // With `let i` and `let v` bound once, the stores read them by name:
+        // nothing repeats with two or more operators, so nothing folds.
+        assert_eq!(c.refused_loads, 0, "xs is never stored");
         let (h, genes) = c.genes.as_ref().expect("fits at some head length");
-        assert_eq!(genes.len(), 2 + 3);
+        assert_eq!(genes.len(), 4 + 3);
         assert!(*h <= 16);
         // The kingdom's K = 4 sets every gene's layout: tail 3·head + 1.
         assert!(genes.iter().all(|(head, tail)| head.len() == *h && tail.len() == 3 * h + 1));
-        assert_eq!(c.oversized_at.iter().find(|(l, _)| *l == 4).map(|(_, n)| *n > 0), Some(true), "head 4 is too short for a store root");
+        assert!(c.pset.variables.iter().any(|v| v.starts_with("let.v@")), "{:?}", c.pset.variables);
     }
 
     #[test]

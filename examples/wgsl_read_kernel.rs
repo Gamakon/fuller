@@ -50,8 +50,8 @@ fn main() -> Result<(), String> {
         return Err("usage: wgsl_read_kernel [--sexpr] <file.wgsl>...".into());
     }
     println!(
-        "{:<18} {:<20} {:>5} {:>5} {:>5} {:>4} {:>4} {:>5} {:>5} {:>6} {:>6} {:>6} {:>6} {:>6}",
-        "file", "function", "roots", "store", "cond", "init", "ret", "args", "nodes", "max", "p90", ">lim", "shared", "ldshr"
+        "{:<18} {:<20} {:>5} {:>5} {:>5} {:>4} {:>4} {:>5} {:>4} {:>5} {:>6} {:>6} {:>6} {:>6} {:>6}",
+        "file", "function", "roots", "store", "cond", "init", "ret", "args", "let", "nodes", "max", "p90", ">lim", "shared", "ldshr"
     );
     let mut all_unknown: BTreeMap<String, usize> = BTreeMap::new();
     let mut all_known: BTreeMap<String, usize> = BTreeMap::new();
@@ -64,7 +64,7 @@ fn main() -> Result<(), String> {
         let file: Vec<String> = path.split('+').map(|p| std::path::Path::new(p).file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default()).collect();
         let file = file.join("+");
         for f in &kernel.functions {
-            let mut by_kind = [0usize; 5];
+            let mut by_kind = [0usize; 6];
             let mut sizes: Vec<usize> = Vec::new();
             for r in &f.roots {
                 let k = match r.kind {
@@ -73,6 +73,7 @@ fn main() -> Result<(), String> {
                     RootKind::Init { .. } => 2,
                     RootKind::Return => 3,
                     RootKind::Argument { .. } => 4,
+                    RootKind::Let { .. } => 5,
                 };
                 by_kind[k] += 1;
                 sizes.push(r.tree.size());
@@ -83,7 +84,7 @@ fn main() -> Result<(), String> {
             let p90 = if sizes.is_empty() { 0 } else { sizes[(sizes.len() * 9 / 10).min(sizes.len() - 1)] };
             let over = sizes.iter().filter(|&&n| n > MAX_NODES).count();
             println!(
-                "{file:<18} {:<20} {:>5} {:>5} {:>5} {:>4} {:>4} {:>5} {:>5} {:>6} {:>6} {:>6} {:>6} {:>6}",
+                "{file:<18} {:<20} {:>5} {:>5} {:>5} {:>4} {:>4} {:>5} {:>4} {:>5} {:>6} {:>6} {:>6} {:>6} {:>6}",
                 f.name,
                 f.roots.len(),
                 by_kind[0],
@@ -91,6 +92,7 @@ fn main() -> Result<(), String> {
                 by_kind[2],
                 by_kind[3],
                 by_kind[4],
+                by_kind[5],
                 total,
                 max,
                 p90,

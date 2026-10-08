@@ -20,50 +20,53 @@ T018	vec2<u32>.index	vec2<u32>	index	2	0u	0	0	0	a position into an array, row, g
 T019	vec3<u32>.index	vec3<u32>	index	3	0u	0	0	0	a position into an array, row, gene or node
 T020	vec4<u32>.index	vec4<u32>	index	4	0u	0	0	0	a position into an array, row, gene or node
 T021	u32.count	u32	count	1	0u	0	0	0	a cardinality or a length
-T022	u32.code4	u32	code4	1	0u	0	0	0	a 4-level codebook entry
-T023	u32.code8	u32	code8	1	0u	0	0	0	an 8-level codebook entry
-T024	u32.code16	u32	code16	1	0u	0	0	0	a 16-level codebook entry
-T025	u32.code1024	u32	code1024	1	0u	0	0	0	a 1,024-level codebook entry
-T026	u32.bits	u32	bits	1	0u	0	0	0	a bit field, mask, packed lanes or a hash at rest
-T027	vec2<u32>.bits	vec2<u32>	bits	2	0u	0	0	0	a bit field, mask, packed lanes or a hash at rest
-T028	vec3<u32>.bits	vec3<u32>	bits	3	0u	0	0	0	a bit field, mask, packed lanes or a hash at rest
-T029	vec4<u32>.bits	vec4<u32>	bits	4	0u	0	0	0	a bit field, mask, packed lanes or a hash at rest
-T030	u32.hash32	u32	hash32	1	0u	0	0	0	a 32-bit counter-based hash state (fmix32)
-T031	bool.flag	bool	flag	1	false	0	0	0	a predicate
-T032	vec2<bool>.flag	vec2<bool>	flag	2	false	0	0	0	a predicate
-T033	vec3<bool>.flag	vec3<bool>	flag	3	false	0	0	0	a predicate
-T034	vec4<bool>.flag	vec4<bool>	flag	4	false	0	0	0	a predicate
-T035	bool.sign	bool	sign	1	true (+1)	1	0	0	±1 carried as one bit
-T036	f32.opaque	f32	opaque	1	the slot's zero	0	0	0	a value carried through unchanged; any slot
-T037	vec2<f32>.opaque	vec2<f32>	opaque	2	the slot's zero	0	0	0	a value carried through unchanged; any slot
-T038	vec3<f32>.opaque	vec3<f32>	opaque	3	the slot's zero	0	0	0	a value carried through unchanged; any slot
-T039	vec4<f32>.opaque	vec4<f32>	opaque	4	the slot's zero	0	0	0	a value carried through unchanged; any slot
-T040	f16.opaque	f16	opaque	1	the slot's zero	0	0	0	a value carried through unchanged; any slot
-T041	vec2<f16>.opaque	vec2<f16>	opaque	2	the slot's zero	0	0	0	a value carried through unchanged; any slot
-T042	vec3<f16>.opaque	vec3<f16>	opaque	3	the slot's zero	0	0	0	a value carried through unchanged; any slot
-T043	vec4<f16>.opaque	vec4<f16>	opaque	4	the slot's zero	0	0	0	a value carried through unchanged; any slot
-T044	i32.opaque	i32	opaque	1	the slot's zero	0	0	0	a value carried through unchanged; any slot
-T045	vec2<i32>.opaque	vec2<i32>	opaque	2	the slot's zero	0	0	0	a value carried through unchanged; any slot
-T046	vec3<i32>.opaque	vec3<i32>	opaque	3	the slot's zero	0	0	0	a value carried through unchanged; any slot
-T047	vec4<i32>.opaque	vec4<i32>	opaque	4	the slot's zero	0	0	0	a value carried through unchanged; any slot
-T048	u32.opaque	u32	opaque	1	the slot's zero	0	0	0	a value carried through unchanged; any slot
-T049	vec2<u32>.opaque	vec2<u32>	opaque	2	the slot's zero	0	0	0	a value carried through unchanged; any slot
-T050	vec3<u32>.opaque	vec3<u32>	opaque	3	the slot's zero	0	0	0	a value carried through unchanged; any slot
-T051	vec4<u32>.opaque	vec4<u32>	opaque	4	the slot's zero	0	0	0	a value carried through unchanged; any slot
-T052	bool.opaque	bool	opaque	1	the slot's zero	0	0	0	a value carried through unchanged; any slot
-T053	vec2<bool>.opaque	vec2<bool>	opaque	2	the slot's zero	0	0	0	a value carried through unchanged; any slot
-T054	vec3<bool>.opaque	vec3<bool>	opaque	3	the slot's zero	0	0	0	a value carried through unchanged; any slot
-T055	vec4<bool>.opaque	vec4<bool>	opaque	4	the slot's zero	0	0	0	a value carried through unchanged; any slot
-T056	vec2<i32>.q15_16w	vec2<i32>	q15_16w	2	vec2(0, 0)	0	0	0	the two-limb wide accumulator of q15_16 (vec2<i32> only)
-T057	vec2<u32>.hash64	vec2<u32>	hash64	2	vec2(0u, 0u)	0	0	0	a 64-bit hash state as two limbs (mix64); vec2<u32> only
-T058	mat2x2<f32>.real	mat2x2<f32>	real	4	0.0	0	0	0	a matrix of plain numbers
-T059	mat2x3<f32>.real	mat2x3<f32>	real	6	0.0	0	0	0	a matrix of plain numbers
-T060	mat2x4<f32>.real	mat2x4<f32>	real	8	0.0	0	0	0	a matrix of plain numbers
-T061	mat3x2<f32>.real	mat3x2<f32>	real	6	0.0	0	0	0	a matrix of plain numbers
-T062	mat3x3<f32>.real	mat3x3<f32>	real	9	0.0	0	0	0	a matrix of plain numbers
-T063	mat3x4<f32>.real	mat3x4<f32>	real	12	0.0	0	0	0	a matrix of plain numbers
-T064	mat4x2<f32>.real	mat4x2<f32>	real	8	0.0	0	0	0	a matrix of plain numbers
-T065	mat4x3<f32>.real	mat4x3<f32>	real	12	0.0	0	0	0	a matrix of plain numbers
-T066	mat4x4<f32>.real	mat4x4<f32>	real	16	0.0	0	0	0	a matrix of plain numbers
-T067	array<T>.<form of T>	array<T>	<form of T>	0	the element's fallback	0	0	1	a storage or uniform buffer of T; indexed by u32.index; one row per buffer at read-in
-T068	store.store	store	store	0	no-op, codon masked	0	1	0	the statement a head gene's root produces
+T022	vec2<u32>.count	vec2<u32>	count	2	0u	0	0	0	a cardinality or a length
+T023	vec3<u32>.count	vec3<u32>	count	3	0u	0	0	0	a cardinality or a length
+T024	vec4<u32>.count	vec4<u32>	count	4	0u	0	0	0	a cardinality or a length
+T025	u32.code4	u32	code4	1	0u	0	0	0	a 4-level codebook entry
+T026	u32.code8	u32	code8	1	0u	0	0	0	an 8-level codebook entry
+T027	u32.code16	u32	code16	1	0u	0	0	0	a 16-level codebook entry
+T028	u32.code1024	u32	code1024	1	0u	0	0	0	a 1,024-level codebook entry
+T029	u32.bits	u32	bits	1	0u	0	0	0	a bit field, mask, packed lanes or a hash at rest
+T030	vec2<u32>.bits	vec2<u32>	bits	2	0u	0	0	0	a bit field, mask, packed lanes or a hash at rest
+T031	vec3<u32>.bits	vec3<u32>	bits	3	0u	0	0	0	a bit field, mask, packed lanes or a hash at rest
+T032	vec4<u32>.bits	vec4<u32>	bits	4	0u	0	0	0	a bit field, mask, packed lanes or a hash at rest
+T033	u32.hash32	u32	hash32	1	0u	0	0	0	a 32-bit counter-based hash state (fmix32)
+T034	bool.flag	bool	flag	1	false	0	0	0	a predicate
+T035	vec2<bool>.flag	vec2<bool>	flag	2	false	0	0	0	a predicate
+T036	vec3<bool>.flag	vec3<bool>	flag	3	false	0	0	0	a predicate
+T037	vec4<bool>.flag	vec4<bool>	flag	4	false	0	0	0	a predicate
+T038	bool.sign	bool	sign	1	true (+1)	1	0	0	±1 carried as one bit
+T039	f32.opaque	f32	opaque	1	the slot's zero	0	0	0	a value carried through unchanged; any slot
+T040	vec2<f32>.opaque	vec2<f32>	opaque	2	the slot's zero	0	0	0	a value carried through unchanged; any slot
+T041	vec3<f32>.opaque	vec3<f32>	opaque	3	the slot's zero	0	0	0	a value carried through unchanged; any slot
+T042	vec4<f32>.opaque	vec4<f32>	opaque	4	the slot's zero	0	0	0	a value carried through unchanged; any slot
+T043	f16.opaque	f16	opaque	1	the slot's zero	0	0	0	a value carried through unchanged; any slot
+T044	vec2<f16>.opaque	vec2<f16>	opaque	2	the slot's zero	0	0	0	a value carried through unchanged; any slot
+T045	vec3<f16>.opaque	vec3<f16>	opaque	3	the slot's zero	0	0	0	a value carried through unchanged; any slot
+T046	vec4<f16>.opaque	vec4<f16>	opaque	4	the slot's zero	0	0	0	a value carried through unchanged; any slot
+T047	i32.opaque	i32	opaque	1	the slot's zero	0	0	0	a value carried through unchanged; any slot
+T048	vec2<i32>.opaque	vec2<i32>	opaque	2	the slot's zero	0	0	0	a value carried through unchanged; any slot
+T049	vec3<i32>.opaque	vec3<i32>	opaque	3	the slot's zero	0	0	0	a value carried through unchanged; any slot
+T050	vec4<i32>.opaque	vec4<i32>	opaque	4	the slot's zero	0	0	0	a value carried through unchanged; any slot
+T051	u32.opaque	u32	opaque	1	the slot's zero	0	0	0	a value carried through unchanged; any slot
+T052	vec2<u32>.opaque	vec2<u32>	opaque	2	the slot's zero	0	0	0	a value carried through unchanged; any slot
+T053	vec3<u32>.opaque	vec3<u32>	opaque	3	the slot's zero	0	0	0	a value carried through unchanged; any slot
+T054	vec4<u32>.opaque	vec4<u32>	opaque	4	the slot's zero	0	0	0	a value carried through unchanged; any slot
+T055	bool.opaque	bool	opaque	1	the slot's zero	0	0	0	a value carried through unchanged; any slot
+T056	vec2<bool>.opaque	vec2<bool>	opaque	2	the slot's zero	0	0	0	a value carried through unchanged; any slot
+T057	vec3<bool>.opaque	vec3<bool>	opaque	3	the slot's zero	0	0	0	a value carried through unchanged; any slot
+T058	vec4<bool>.opaque	vec4<bool>	opaque	4	the slot's zero	0	0	0	a value carried through unchanged; any slot
+T059	vec2<i32>.q15_16w	vec2<i32>	q15_16w	2	vec2(0, 0)	0	0	0	the two-limb wide accumulator of q15_16 (vec2<i32> only)
+T060	vec2<u32>.hash64	vec2<u32>	hash64	2	vec2(0u, 0u)	0	0	0	a 64-bit hash state as two limbs (mix64); vec2<u32> only
+T061	mat2x2<f32>.real	mat2x2<f32>	real	4	0.0	0	0	0	a matrix of plain numbers
+T062	mat2x3<f32>.real	mat2x3<f32>	real	6	0.0	0	0	0	a matrix of plain numbers
+T063	mat2x4<f32>.real	mat2x4<f32>	real	8	0.0	0	0	0	a matrix of plain numbers
+T064	mat3x2<f32>.real	mat3x2<f32>	real	6	0.0	0	0	0	a matrix of plain numbers
+T065	mat3x3<f32>.real	mat3x3<f32>	real	9	0.0	0	0	0	a matrix of plain numbers
+T066	mat3x4<f32>.real	mat3x4<f32>	real	12	0.0	0	0	0	a matrix of plain numbers
+T067	mat4x2<f32>.real	mat4x2<f32>	real	8	0.0	0	0	0	a matrix of plain numbers
+T068	mat4x3<f32>.real	mat4x3<f32>	real	12	0.0	0	0	0	a matrix of plain numbers
+T069	mat4x4<f32>.real	mat4x4<f32>	real	16	0.0	0	0	0	a matrix of plain numbers
+T070	array<T>.<form of T>	array<T>	<form of T>	0	the element's fallback	0	0	1	a storage or uniform buffer of T; indexed by u32.index; one row per buffer at read-in
+T071	store.store	store	store	0	no-op, codon masked	0	1	0	the statement a head gene's root produces

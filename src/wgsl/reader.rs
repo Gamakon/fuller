@@ -109,6 +109,13 @@ pub enum RootKind {
     Return,
     /// One argument of a `Statement::Call`.
     Argument { callee: String, position: usize },
+    /// A source `let` (a naga named expression): its value is bound ONCE
+    /// where naga emits it and read later by name, which matters when an
+    /// operand's target is stored between the binding and a use
+    /// (`let pos = q_pos[head_i]; head_i += 1u;`). Inlining it at each use
+    /// would re-read after the store; the rebuilt decode kernel refused 19
+    /// of 27 sample genes that way (2026-10-08). `name` is `<name>@<idx>`.
+    Let { name: String },
 }
 
 /// One root: a hole in the scaffold and the tree that fills it.
@@ -212,6 +219,8 @@ struct Ctx<'a> {
     info: &'a naga::valid::FunctionInfo,
     /// How many roots reached each handle.
     reached: BTreeMap<u32, usize>,
+    /// Handles already bound as `let` roots: a later use is a leaf.
+    lets: BTreeSet<u32>,
 }
 
 fn read_function(
@@ -222,7 +231,7 @@ fn read_function(
     name: String,
     entry_point: bool,
 ) -> KernelFunction {
-    let mut ctx = Ctx { module, table, func, info, reached: BTreeMap::new() };
+    let mut ctx = Ctx { module, table, func, info, reached: BTreeMap::new(), lets: BTreeSet::new() };
     let mut roots = Vec::new();
     let mut unread = BTreeMap::new();
     for (h, local) in func.local_variables.iter() {
@@ -257,7 +266,24 @@ fn walk_block(
     // places its Emits differently, and the paths must still agree.
     let mut index = 0usize;
     for stmt in block.iter() {
-        if matches!(stmt, Statement::Emit(_)) {
+        if let Statement::Emit(range) = stmt {
+            // A named expression in this Emit is a `let`: a root at the
+            // position of the statement that follows (the path the rebuild
+            // places it before), in handle order.
+            for h in range.clone() {
+                if let Some(name) = ctx.func.named_expressions.get(&h).filter(|n| !is_bake(n)) {
+                    let name = format!("{name}@{}", h.index());
+                    ctx.lets.insert(h.index() as u32);
+                    let tree = expand_let(ctx, h);
+                    let mut p = path.clone();
+                    p.push(index);
+                    roots.push(Root {
+                        kind: RootKind::Let { name: name.clone() },
+                        path: p,
+                        tree: Node::App { name: format!("store.let.{name}"), slot: "store".into(), known: true, kids: vec![tree] },
+                    });
+                }
+            }
             continue;
         }
         path.push(index);
@@ -496,12 +522,32 @@ fn default_form(kind: Option<ScalarKind>) -> &'static str {
 
 /// Expand an expression handle into a tree. `count` marks the handle as
 /// reached by the current root (shared-handle statistics).
+/// A name naga's writer invented for a multiply-used expression (`_e12`),
+/// not a source `let`: reading a written text back must not turn those
+/// into roots, or the original and its round trip would disagree.
+pub(crate) fn is_bake(name: &str) -> bool {
+    name.strip_prefix("_e").is_some_and(|rest| !rest.is_empty() && rest.chars().all(|c| c.is_ascii_digit()))
+}
+
+/// Expand the tree of a `let` root itself: its own handle is not a leaf,
+/// but every earlier let it reaches is.
+fn expand_let(ctx: &mut Ctx, h: Handle<Expression>) -> Node {
+    ctx.lets.remove(&(h.index() as u32));
+    let tree = expand(ctx, h, true);
+    ctx.lets.insert(h.index() as u32);
+    tree
+}
+
 fn expand(ctx: &mut Ctx, h: Handle<Expression>, count: bool) -> Node {
     if count {
         *ctx.reached.entry(h.index() as u32).or_default() += 1;
     }
     let inner = ctx.info[h].ty.inner_with(&ctx.module.types).clone();
     let slot = slot_name(&ctx.module.types, &inner);
+    if ctx.lets.contains(&(h.index() as u32)) {
+        let name = ctx.func.named_expressions.get(&h).cloned().unwrap_or_else(|| "let".into());
+        return Node::Leaf { name: format!("let.{name}@{}", h.index()), slot };
+    }
     let kind = kind_of(&inner);
     let expr = ctx.func.expressions[h].clone();
     match expr {
@@ -707,18 +753,21 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         assert_eq!(k.functions.len(), 1);
         let f = &k.functions[0];
         assert_eq!((f.name.as_str(), f.entry_point), ("main", true));
-        assert_eq!(f.roots.len(), 1);
-        let r = &f.roots[0];
+        // `let i = gid.x;` is a root of its own; the store reads it by name.
+        assert_eq!(f.roots.len(), 2);
+        let (l, r) = (&f.roots[0], &f.roots[1]);
+        assert!(matches!(&l.kind, RootKind::Let { name } if name.starts_with("i@")), "{:?}", l.kind);
+        assert!(l.tree.to_sexpr().starts_with("(store.let.i@"), "{}", l.tree.to_sexpr());
+        assert!(l.tree.to_sexpr().ends_with(" (shape.access_0 (Var \"builtin.global_invocation_id\")))"));
         assert_eq!(r.kind, RootKind::Store { target: "buffer.out.#".into() });
-        assert_eq!(
-            r.tree.to_sexpr(),
-            "(store.buffer.out.# (shape.access_0 (Var \"builtin.global_invocation_id\")) (arith.add (arith.mul (load.buffer.xs.# (shape.access_0 (Var \"builtin.global_invocation_id\"))) (literal.real (Num 2.0))) (literal.real (Num 1.0))))"
-        );
+        let s = r.tree.to_sexpr();
+        assert!(s.starts_with("(store.buffer.out.# (Var \"let.i@"), "{s}");
+        assert!(s.contains("(arith.add (arith.mul (load.buffer.xs.# (Var \"let.i@"), "{s}");
+        assert!(s.ends_with("(literal.real (Num 2.0))) (literal.real (Num 1.0))))"), "{s}");
         assert!(f.unread_statements.is_empty());
-        // gid.x is reached twice (the store index and the load index).
-        assert_eq!(f.shared_handles.values().copied().max(), Some(2));
         assert_eq!(f.shared_loads, 0);
-        assert_eq!(k.terminals(), ["builtin.global_invocation_id".to_string()].into_iter().collect());
+        let terms = k.terminals();
+        assert!(terms.contains("builtin.global_invocation_id") && terms.iter().any(|t| t.starts_with("let.i@")), "{terms:?}");
     }
 
     #[test]
@@ -755,6 +804,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         assert_eq!(f.roots[1].path, vec![0]);
         assert_eq!(f.roots[2].path, vec![0, 0, 0]);
         assert_eq!(f.roots[3].path, vec![1]);
+        assert!(f.roots.iter().all(|r| !matches!(r.kind, RootKind::Let { .. })), "no let in this kernel");
         assert_eq!(f.roots[3].tree.to_sexpr(), "(store.buffer.out.# (literal.index (Num 0.0)) (Var \"load.local.acc@0\"))");
     }
 

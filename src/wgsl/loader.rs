@@ -1,4 +1,4 @@
-//! The WGSL kingdom's rows, loaded from the generated tables: the 68 duals of
+//! The WGSL kingdom's rows, loaded from the generated tables: the 71 duals of
 //! `types.tsv` as [`WgslDual`]s (each a `Ty::Wgsl(index)`), and the 197
 //! function templates of `functions.tsv` instantiated over the duals they
 //! name into concrete typed rows ([`WgslRow`]), one per legal dual, lanes
@@ -82,7 +82,7 @@ impl WgslDual {
     }
 }
 
-/// The 68 duals, in table order.
+/// The 71 duals, in table order.
 pub fn wgsl_duals() -> Vec<WgslDual> {
     parse_duals(include_str!("../../kingdoms/wgsl/types.tsv")).unwrap_or_else(|e| panic!("kingdoms/wgsl/types.tsv does not parse: {e}"))
 }
@@ -536,19 +536,19 @@ mod tests {
     #[test]
     fn the_68_duals_load_with_their_machine_fallbacks() {
         let d = wgsl_duals();
-        assert_eq!(d.len(), 68);
+        assert_eq!(d.len(), 71);
         assert_eq!((d[0].reference.as_str(), d[0].dual.as_str(), d[0].ty()), ("T001", "f32.real", Ty::Wgsl(0)));
-        assert_eq!(d[67].dual, "store.store");
-        assert!(d[67].fallback_noop && !d[66].fallback_noop);
-        assert!(d[66].fallback_elem, "T067 array<T> defers to its element");
+        assert_eq!(d[70].dual, "store.store");
+        assert!(d[70].fallback_noop && !d[69].fallback_noop);
+        assert!(d[69].fallback_elem, "T070 array<T> defers to its element");
         let sign = d.iter().find(|x| x.dual == "bool.sign").unwrap();
         assert_eq!(sign.fallback_bits, 1);
         assert_eq!(d.iter().filter(|x| x.fallback_bits != 0).count(), 1, "only sign is non-zero");
         assert_eq!(d.iter().find(|x| x.dual == "mat3x4<f32>.real").unwrap().matrix_shape(), Some((3, 4)));
         assert_eq!(d.iter().find(|x| x.dual == "vec3<u32>.index").unwrap().scalar(), Some("u32"));
         let table = wgsl_fallback_table().unwrap();
-        assert_eq!(table.len(), 68);
-        assert!(table[67].is_none() && table[66].is_none());
+        assert_eq!(table.len(), 71);
+        assert!(table[70].is_none() && table[69].is_none());
         assert_eq!(table[0].unwrap().op, FN_ID_NUM);
         assert_eq!(table[sign.index as usize].unwrap().konst.to_bits(), 1);
         // A non-zero f16 pattern is refused, not widened.
@@ -562,11 +562,9 @@ mod tests {
         let k = WgslKingdom::load();
         let per_kernel: Vec<&String> = k.uninstantiated.iter().filter(|(_, why)| why.as_str() == "per-kernel").map(|(n, _)| n).collect();
         let other: Vec<(&str, &str)> = k.uninstantiated.iter().filter(|(_, why)| why.as_str() != "per-kernel").map(|(n, w)| (n.as_str(), w.as_str())).collect();
-        // ONE KNOWN TABLE GAP, pinned so it cannot grow silently: the builtin
-        // `num_workgroups` is typed `vec3<u32>.count` and the type table has
-        // no vector count dual (count is scalar-only). Whether the dual is
-        // added or the builtin retyped is a spec decision, not the loader's.
-        assert_eq!(other, vec![("builtin.num_workgroups", "no dual satisfies the pattern")]);
+        // No template is left without a rule: the vector count duals (T022–T024)
+        // were added for `builtin.num_workgroups`, which was the one gap.
+        assert!(other.is_empty(), "templates with no instantiation rule: {other:?}");
         let expected: std::collections::BTreeSet<&str> = per_kernel_templates().iter().copied().collect();
         let got: std::collections::BTreeSet<&str> = per_kernel.iter().map(|s| s.as_str()).collect();
         assert_eq!(got, expected, "the per-kernel set is exactly the documented one");
@@ -623,7 +621,7 @@ mod tests {
         assert!(add.iter().all(|r| r.inputs.len() == 2 && r.inputs[0] == r.inputs[1] && r.inputs[0] == r.output));
         // index.add: scalar and vector u32.index.
         assert_eq!(by("index.add").len(), 4);
-        // count.add: one row.
+        // count.add: one row (its template names u32.count exactly; the vector count duals serve the builtin).
         assert_eq!(by("count.add").len(), 1);
         // compare.lt over the ordered forms, scalar and vector, out flag per lane.
         let lt = by("compare.lt");

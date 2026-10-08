@@ -26,7 +26,7 @@ content mistake unrepresentable. The reader is the first consumer of the
 generated tables, so it is also their test.
 
 **Status.** Specified: `kingdoms/wgsl/{README,TYPES,symbols}.md`,
-`gen_tables.py`, `types.tsv` (68 duals), `functions.tsv` (197 templates).
+`gen_tables.py`, `types.tsv` (71 duals), `functions.tsv` (197 templates).
 Built: `examples/wgsl_dag_study.rs` (naga parse + DAG measurement),
 `homeotic::{fold,encode,unfold}`, `karva::terms_to_karva_sized`. Not built:
 everything below. fuller only; phylu's decoder, the evaluator and evolution
@@ -106,7 +106,7 @@ stays independent. `examples/wgsl_dag_study.rs` and the new example require
 - The loader test prints the instance count after template expansion, so
   phylu's per-fit device tables (`out_ty`, `in_ty`, fallback per id, sized by
   `n_ids`) are sized on a number, not a guess.
-- Tests: 68 duals load; every function instance's inputs and output are
+- Tests: 71 duals load; every function instance's inputs and output are
   duals; no instance outside `convert` has inputs and output of different
   forms except where `symbols.md` says (compare → flag, bits counts →
   count, quantise, hash → index); **max total arity 4** (`K_MAX`); the
@@ -317,7 +317,7 @@ layout stops both crates until the layout is re-agreed in both plans.
 
 - `RUSTFLAGS="-D warnings" cargo test --features wgsl` and
   `cargo clippy --all-targets --features wgsl -- -D warnings`: zero warnings.
-- Unit tests, each pinning one property: the 68 duals and 197 templates
+- Unit tests, each pinning one property: the 71 duals and 197 templates
   load and instantiate; arity-3 generic Karva round trip; a one-store
   kernel reads to one gene and rebuilds structurally equal; a kernel with
   an `if` yields a condition root; a kernel with the same subexpression in

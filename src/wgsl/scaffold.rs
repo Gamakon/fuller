@@ -14,6 +14,11 @@
 //! range, and a later `call.<fn>@<idx>` leaf resolves to it. Loads are
 //! re-emitted at every site; no handle is ever borrowed across blocks.
 //!
+//! A source `let` is a root of its own (the reader binds it once where naga
+//! emits it; later uses are `let.<name>@<idx>` leaves) and the rebuild
+//! emits it at that position and names it, so the writer writes the `let`
+//! back and a read of the text finds the same roots.
+//!
 //! Three losses the gene text cannot carry are refused with a message rather
 //! than papered over: an `f16` literal (the text says `literal.real`, which
 //! rebuilds as `f32`), a `ZeroValue` of a composite (read as a scalar `0.0`),
@@ -188,6 +193,7 @@ fn kind_key(kind: &super::reader::RootKind, module: &Module, f: &Function) -> Re
         RootKind::Condition { statement } => format!("cond:{statement}"),
         RootKind::Return => "return".to_string(),
         RootKind::Argument { callee, position } => format!("arg:{}:{position}", canonical(&format!("(call.{callee})"), module, f)?),
+        RootKind::Let { name } => format!("let:{}", canonical(&format!("(x.let.{name})"), module, f)?),
     };
     Ok(name)
 }
@@ -202,6 +208,10 @@ fn canonical(sexpr: &str, module: &Module, f: &Function) -> Result<String, Strin
     let globals: Vec<String> = module.global_variables.iter().enumerate().map(|(i, (_, g))| g.name.clone().unwrap_or_else(|| format!("global{i}"))).collect();
     let functions: Vec<String> = module.functions.iter().enumerate().map(|(i, (_, g))| g.name.clone().unwrap_or_else(|| format!("fn{i}"))).collect();
     let constants: Vec<String> = module.constants.iter().enumerate().map(|(i, (_, c))| c.name.clone().unwrap_or_else(|| format!("const{i}"))).collect();
+    // `let`s by their order among the function's named expressions (handle order).
+    let mut lets: Vec<(usize, String)> = f.named_expressions.iter().filter(|(_, n)| !super::reader::is_bake(n)).map(|(h, n)| (h.index(), n.clone())).collect();
+    lets.sort();
+    let lets: Vec<String> = lets.into_iter().map(|(h, _)| h.to_string()).collect();
     let by_position = |name: &str| -> String {
         // Every named thing by its position in its arena: `arg.<n>`,
         // `local.<n>`, `buffer.<n>` (and the other global kinds),
@@ -218,6 +228,7 @@ fn canonical(sexpr: &str, module: &Module, f: &Function) -> Result<String, Strin
                 "buffer" | "uniform" | "workgroup" | "private" | "push" | "global" => Some(&globals),
                 "call" => Some(&functions),
                 "const" => Some(&constants),
+                "let" => Some(&lets),
                 _ => None,
             };
             // A struct field after a target: by member position (the writer
@@ -235,6 +246,8 @@ fn canonical(sexpr: &str, module: &Module, f: &Function) -> Result<String, Strin
                     let (raw, at) = parts[i + 1].split_once('@').map(|(r, a)| (r, Some(a))).unwrap_or((parts[i + 1], None));
                     let idx = match (p, at) {
                         ("local", Some(k)) => format!("#{k}"),
+                        // a let is `<name>@<handle>`: position of that handle among the named expressions
+                        ("let", Some(k)) => lets.iter().position(|h| h == k).map(|i| format!("#{i}")).unwrap_or_else(|| format!("?{k}")),
                         _ => pool.iter().position(|n| n == raw).map(|k| format!("#{k}")).unwrap_or_else(|| raw.to_string()),
                     };
                     out.push(p.to_string());
@@ -279,11 +292,15 @@ struct Builder<'a> {
     typifier: Typifier,
     /// Original call-result handle index → the rebuilt `CallResult`.
     call_results: BTreeMap<u32, Handle<Expression>>,
+    /// Original `let` handle index → the rebuilt expression bound for it.
+    lets: BTreeMap<u32, Handle<Expression>>,
+    /// The rebuilt let handles with their source names, for `named_expressions`.
+    let_names: Vec<(Handle<Expression>, String)>,
 }
 
 impl<'a> Builder<'a> {
     fn new(module: &'a Module, table: &'a FunctionTable, kingdom: &'a WgslKingdom, original: &'a Function, trees: &'a [MathNode], name: &'a str) -> Self {
-        Builder { module, table, kingdom, original, name, trees, next_root: 0, arena: Arena::new(), typifier: Typifier::new(), call_results: BTreeMap::new() }
+        Builder { module, table, kingdom, original, name, trees, next_root: 0, arena: Arena::new(), typifier: Typifier::new(), call_results: BTreeMap::new(), lets: BTreeMap::new(), let_names: Vec::new() }
     }
 
     fn err<T>(&self, msg: impl std::fmt::Display) -> Result<T, String> {
@@ -333,6 +350,9 @@ impl<'a> Builder<'a> {
             return self.err(format!("{} roots given, {} used", self.trees.len(), self.next_root));
         }
         f.expressions = std::mem::replace(&mut self.arena, Arena::new());
+        for (h, name) in std::mem::take(&mut self.let_names) {
+            f.named_expressions.insert(h, name);
+        }
         f.body = body;
         Ok(f)
     }
@@ -361,7 +381,27 @@ impl<'a> Builder<'a> {
         let mut out = Block::new();
         for stmt in original.iter() {
             match stmt {
-                Statement::Emit(_) => {}
+                Statement::Emit(range) => {
+                    // A `let` of this Emit is a root: build its tree here, in
+                    // handle order, and bind its name for the uses that follow.
+                    let named: Vec<(Handle<Expression>, String)> = range.clone().filter_map(|h| self.original.named_expressions.get(&h).filter(|n| !super::reader::is_bake(n)).map(|n| (h, n.clone()))).collect();
+                    for (h, name) in named {
+                        let tree = self.take_root("a let")?;
+                        let (index, value) = self.unwrap_store(tree)?;
+                        if index.is_some() {
+                            return self.err("a let root has an index child");
+                        }
+                        let mut leaves = BTreeMap::new();
+                        self.emit_leaves(value, &mut leaves)?;
+                        let start = self.arena.len();
+                        let v = self.build(value, &leaves)?;
+                        self.emit(&mut out, start);
+                        self.lets.insert(h.index() as u32, v);
+                        // Named, so the writer writes `let <name> = …;` and a
+                        // read of the text finds the same root again.
+                        self.let_names.push((v, name));
+                    }
+                }
                 Statement::Break => out.push(Statement::Break, Span::UNDEFINED),
                 Statement::Continue => out.push(Statement::Continue, Span::UNDEFINED),
                 Statement::Kill => out.push(Statement::Kill, Span::UNDEFINED),
@@ -468,7 +508,7 @@ impl<'a> Builder<'a> {
     fn emit_leaves(&mut self, n: &MathNode, leaves: &mut BTreeMap<String, Handle<Expression>>) -> Result<(), String> {
         match n {
             MathNode::Var(name) => {
-                if name.starts_with("call.") {
+                if name.starts_with("call.") || name.starts_with("let.") {
                     return Ok(());
                 }
                 if let Some(target) = name.strip_prefix("load.") {
@@ -686,6 +726,10 @@ impl<'a> Builder<'a> {
             MathNode::Var(name) => {
                 if let Some(h) = leaves.get(name) {
                     return Ok(*h);
+                }
+                if let Some(rest) = name.strip_prefix("let.") {
+                    let idx: u32 = rest.rsplit_once('@').and_then(|(_, i)| i.parse().ok()).ok_or_else(|| format!("{}: let leaf {name} has no handle index", self.name))?;
+                    return self.lets.get(&idx).copied().ok_or_else(|| format!("{}: let {name} used before its binding", self.name));
                 }
                 if let Some(rest) = name.strip_prefix("call.") {
                     let idx: u32 = rest.rsplit_once('@').and_then(|(_, i)| i.parse().ok()).ok_or_else(|| format!("{}: call leaf {name} has no handle index", self.name))?;
@@ -955,7 +999,8 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 "#;
         let k = read(src).unwrap();
         let c = chromosome(&k.functions[0], &ChromosomeOptions::default()).unwrap();
-        assert!(c.folded.filled >= 1);
+        // `let i` and `let v` are roots now, so the stores share through the
+        // let leaves rather than a repeated subtree; the round trip is the point.
         // From the DECODED genes: decode, unfold, rebuild.
         let (_, genes) = c.genes.as_ref().unwrap();
         let decoded: Vec<String> = genes.iter().map(|(h, t)| crate::karva::karva_to_terms_generic(h, t, &c.pset).unwrap()).collect();

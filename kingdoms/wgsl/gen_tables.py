@@ -73,8 +73,9 @@ def build_types():
     for form, (meaning, scalars) in FORMS.items():
         for s in scalars:
             for l in LANES:
-                # vector forms that make no sense: codes, counts and hashes are scalar-only
-                if l > 1 and form in ("count", "code4", "code8", "code16", "code1024", "hash32", "sign"):
+                # vector forms that make no sense: codes, hashes and signs are scalar-only;
+                # a count has vector slots because the builtin num_workgroups is a vec3<u32>.count
+                if l > 1 and form in ("code4", "code8", "code16", "code1024", "hash32", "sign"):
                     continue
                 add(slot_name(s, l), form, l, meaning)
     add("vec2<i32>", "q15_16w", 2, FORMS["q15_16w"][0])

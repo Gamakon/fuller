@@ -753,7 +753,7 @@ mod tests {
         assert_eq!(Ty::ALL.len(), 35);
         // The table-defined family sits past every base code.
         assert_eq!(Ty::Wgsl(0).code(), 256);
-        assert_eq!(Ty::Wgsl(67).code(), 323);
+        assert_eq!(Ty::Wgsl(70).code(), 326);
         assert_eq!(Ty::from_code(300), Some(Ty::Wgsl(44)));
         assert!(Ty::Wgsl(0) > Ty::Pattern, "ordered after every base variant");
         let mut codes: Vec<u32> = Ty::ALL.iter().map(|t| t.code()).collect();
