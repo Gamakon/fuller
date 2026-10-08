@@ -75,7 +75,11 @@ stays independent. `examples/wgsl_dag_study.rs` and the new example require
 
 - `Ty::Wgsl(u16)`: the index of a dual in `types.tsv` (ref `T001` → 0).
   One variant, appended last (the ordering rule at `geneframe.rs:78-84`).
-  `Copy + Ord` keep every `BTreeMap` working.
+  `Copy + Ord` keep every `BTreeMap` working. **Lands in step 3, not step
+  1:** a payload variant stops every `ty as u32` in phylu compiling, so
+  phylu's phase 2 moves its casts to `Ty::code()` first (delivered in step
+  1 as the declaration index, equal to `as u32` today; `TABLE_CODE_BASE =
+  256` reserved for the duals).
 - `pub const WGSL: &str = "WGSL"`.
 - `pub fn wgsl_table() -> SymbolTable` built from
   `include_str!("../kingdoms/wgsl/types.tsv")` and
@@ -126,9 +130,11 @@ literal leaf carries its dual on the device; and the `op` word becomes the
 **kingdom's function id** (an index into the uploaded symbol table, with
 per-kingdom `op_arity`, `op_semantic`, `out_ty`, `in_ty × K` and fallback
 tables), so the node is `(fn_id, first_child, ty_code, konst)`. SR's table
-maps id to `Op` one to one, so its bytes are unchanged. A fixed prefix of
-ids is reserved in every kingdom for the engine-level leaves (Var, literal,
-GeneRef). Tail genes are evaluated one dispatch per dependency level, head
+maps id to `Op` one to one, so its bytes are unchanged. Fixed ids, the same
+in every kingdom's table, mark the engine-level leaves: `FN_ID_VAR` 0,
+`FN_ID_NUM` 1, `FN_ID_GENE_REF` 47 (fixed values, not a contiguous prefix:
+GeneRef was given 47 when it was added and moving it would change the bytes
+of every fold fixture; a kingdom table must not reuse these ids). Tail genes are evaluated one dispatch per dependency level, head
 last, so depth is unbounded and found by selection. Sequencing: fuller phase 1 of
 that plan (node semantics, `Op::arity`, `Ty::code()`, generated fallback)
 is built first, in this crate, and this reader builds on it.
@@ -289,7 +295,7 @@ test count. Nothing on the GPU without announcing to Andrew first.
 
 | step | who | work | gate before the next step | fuller's end-to-end check |
 |---|---|---|---|---|
-| 1 | fuller | node semantics `(fn_id, first_child, ty_code, konst)`, `Op::arity`, reserved engine ids, `Ty::code()`, generated fallback table, n-ary lint bridges | fuller tests green, clippy clean, commit id sent to phylu with the four `ty as u32` sites named | fuller's own suite; phylu HEAD still builds against it |
+| 1 | fuller | node semantics `(fn_id, first_child, ty_code, konst)`, `Op::arity` exhaustive + `op_arity_table()`, `Op::Select3` (48, the 3-ary op), fixed engine leaf ids, `K_MAX`, `Ty::code()`/`from_code`/`ALL`, `fallback_leaf`/`fallback_table`, n-ary `Flat::to_tree`, lint `arity`/`op_of` total | **DELIVERED 2026-10-08**, fuller `30f1639` + lint fix; 403 plain / 444 gpu tests, clippy clean; phylu's full gpu suite (380 + 22, golden included) passes against it | done: fuller's suites; phylu HEAD checked `-D warnings --features gpu` and its suite run here |
 | 2 | phylu | decoder host+device with `fn_id` tables, `in_ty × K`, `out_ty`, fallback by code; kid arrays to 512 | their unit tests + host↔device parity + the golden checksum, commit id back | SR, TSR and REGEX golden runs on the laptop: byte-identical populations (announced) |
 | 3 | fuller | WGSL loader (`wgsl_table()`), generic Karva pair, reader, scaffold, `wgsl_read_kernel` | reader round-trips the six kernels `ROUND_TRIP ok`, commit id sent | the six-kernel table in the kingdom README |
 | 4 | phylu | variation grafts `K_MAX`, fold/hash/export/order/tower loops, tail evaluated per dependency level, 3-ary test kingdom, retire `arg1` | their tests + the 3-ary kingdom end to end, commit id back | a WGSL chromosome from step 3 uploaded, decoded on the device, hash and export agree with the host; depth cap lifted in `homeotic::fold` |
@@ -297,7 +303,7 @@ test count. Nothing on the GPU without announcing to Andrew first.
 
 Messages to phylu, in order (sent only when the gate is met):
 
-- **M1, after step 1:** "fuller `<id>`: node semantics and `Ty::code()` landed; `Op::arity` table; reserved ids 0..N; fallback table generated. Your four cast sites: engine.rs:363-374, 551-569, device.rs:89. Start phase 2 against this HEAD. Return: commit id, unit test count, parity and golden results."
+- **M1, after step 1 (sent 2026-10-08):** fuller HEAD id; what exists by name; the two deviations needing phylu's ack (fixed leaf ids 0/1/47, not a prefix; `Ty::Wgsl` in step 3, so the cast sites engine.rs:363-374, 551-569, device.rs:89 and the test at device.rs:1118 move to `code()` in phase 2); adopt `fallback_table()`; `Op::Select3` is the 3-ary op, add no other. Return: commit id, unit test count, parity and golden results.
 - **M2, after step 2 returns:** "Golden runs on SR/TSR/REGEX reproduced here byte-identical (or: not, with the first diverging generation). Start nothing; I build the loader and reader against your HEAD."
 - **M3, after step 3:** "fuller `<id>`: reader round-trips six kernels; a WGSL chromosome and its symbol table are at `<path>` (instance count N, head H, K=4). Start phases 3–4; the uploaded-table shape you need is in `kingdoms/wgsl/*.tsv` and `geneframe::wgsl_table()`."
 - **M4, after step 4 returns:** results of the device decode/hash/export check on the WGSL chromosome; depth cap lifted; request the per-level tail evaluation is on by default for the kingdom.
