@@ -534,6 +534,26 @@ pub fn terms_to_karva_generic(
     rng_seed: u64,
     target_head_length: Option<usize>,
 ) -> Result<(Vec<Token>, Vec<Token>, bool), String> {
+    terms_to_karva_generic_k(term, pset, rng_seed, target_head_length, None)
+}
+
+/// [`terms_to_karva_generic`] with the kingdom's `K` given explicitly: the
+/// tail is `head·(K−1)+1` whatever this pset's widest symbol, because `K` is
+/// a fact of the kingdom's table (every gene of a kingdom has one layout),
+/// not of the symbols one function happens to use. `None` derives it from
+/// the pset, for a pset that is the whole kingdom.
+pub fn terms_to_karva_generic_k(
+    term: &str,
+    pset: &PsetSpec,
+    rng_seed: u64,
+    target_head_length: Option<usize>,
+    k: Option<usize>,
+) -> Result<(Vec<Token>, Vec<Token>, bool), String> {
+    if let Some(k) = k {
+        if let Some((name, spec)) = pset.functions.iter().find(|(_, f)| f.arity > k) {
+            return Err(format!("pset function {name:?} has arity {}, past the kingdom's K {k}", spec.arity));
+        }
+    }
     if let Some((name, spec)) = pset.functions.iter().find(|(_, f)| f.arity > crate::gpu_eval::K_MAX) {
         return Err(format!(
             "pset function {name:?} has arity {}, past K_MAX {}",
@@ -555,7 +575,7 @@ pub fn terms_to_karva_generic(
         }
         Ok(ctor.to_string())
     })?;
-    pad(head, pset, rng_seed, target_head_length)
+    pad_k(head, pset, rng_seed, target_head_length, k)
 }
 
 /// BFS the tree; emit a Token per node in level order. Leaves become Var/Num
@@ -608,10 +628,21 @@ fn emit_head(
 /// Honour a requested head length and pad the tail by the GEP rule, both from
 /// one deterministic terminal stream seeded by `rng_seed`.
 fn pad(
+    head: Vec<Token>,
+    pset: &PsetSpec,
+    rng_seed: u64,
+    target_head_length: Option<usize>,
+) -> Result<(Vec<Token>, Vec<Token>, bool), String> {
+    pad_k(head, pset, rng_seed, target_head_length, None)
+}
+
+/// [`pad`] with the kingdom's `K` given, or derived from the pset.
+fn pad_k(
     mut head: Vec<Token>,
     pset: &PsetSpec,
     rng_seed: u64,
     target_head_length: Option<usize>,
+    k: Option<usize>,
 ) -> Result<(Vec<Token>, Vec<Token>, bool), String> {
     // The terminal pool for both head-extension filler and tail padding.
     let mut pool: Vec<Token> = pset.variables.iter().cloned().map(Token::Var).collect();
@@ -648,13 +679,7 @@ fn pad(
     // expression-derived n_max of 1 would get a 1-token tail; a later head
     // point-mutation to a binary op (which the pset permits) would then run off
     // the end of the stream, and uniform-length mating would break.
-    let pset_max_arity = pset
-        .functions
-        .values()
-        .map(|f| f.arity)
-        .max()
-        .unwrap_or(1)
-        .max(1);
+    let pset_max_arity = k.unwrap_or_else(|| pset.functions.values().map(|f| f.arity).max().unwrap_or(1)).max(1);
     let tail_len = head.len() * (pset_max_arity - 1) + 1;
     let tail: Vec<Token> = (0..tail_len).map(|_| pool[next() % pool.len()].clone()).collect();
 
@@ -980,6 +1005,25 @@ mod tests {
         wide.functions.insert("shape.compose5".into(), FunctionSpec { semantic_id: "shape.compose5".into(), arity: 5 });
         let refused = terms_to_karva_generic("(arith.add (Var \"c\") (Num 1.0))", &wide, 0, None);
         assert!(refused.unwrap_err().contains("past K_MAX 4"), "a 5-ary token is refused");
+    }
+
+    #[test]
+    fn the_kingdoms_k_sets_the_tail_whatever_the_psets_widest_symbol() {
+        // A pset using only 2-ary names, encoded for a kingdom whose K is 4:
+        // the tail is still 3·head + 1, because every gene of the kingdom has
+        // one layout.
+        let mut functions = HashMap::new();
+        functions.insert("arith.add".to_string(), FunctionSpec { semantic_id: "arith.add".into(), arity: 2 });
+        let pset = PsetSpec { variables: vec!["c".into()], functions, rnc_values: vec![1.0] };
+        let (head, tail, _) = terms_to_karva_generic_k("(arith.add (Var \"c\") (Num 1.0))", &pset, 1, Some(5), Some(4)).unwrap();
+        assert_eq!((head.len(), tail.len()), (5, 3 * 5 + 1));
+        // Derived from the pset it would be 2·head + 1.
+        let (_, tail2, _) = terms_to_karva_generic("(arith.add (Var \"c\") (Num 1.0))", &pset, 1, Some(5)).unwrap();
+        assert_eq!(tail2.len(), 5 + 1);
+        // A symbol past the given K is refused.
+        let mut wide = pset.clone();
+        wide.functions.insert("x.five".into(), FunctionSpec { semantic_id: "x.five".into(), arity: 3 });
+        assert!(terms_to_karva_generic_k("(arith.add (Var \"c\") (Num 1.0))", &wide, 1, None, Some(2)).unwrap_err().contains("past the kingdom's K 2"));
     }
 
     #[test]

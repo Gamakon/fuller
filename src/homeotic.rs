@@ -255,6 +255,12 @@ pub fn encode_generic(folded: &FoldedChromosome, pset: &PsetSpec, rng_seed: u64,
     encode_with(folded, pset, rng_seed, head_length, &crate::karva::terms_to_karva_generic)
 }
 
+/// [`encode_generic`] at the kingdom's `K` (the tail is `head·(K−1)+1` for
+/// every gene, whatever symbols the chromosome uses).
+pub fn encode_generic_k(folded: &FoldedChromosome, pset: &PsetSpec, rng_seed: u64, head_length: usize, k: usize) -> Result<Vec<KarvaGene>, String> {
+    encode_with(folded, pset, rng_seed, head_length, &move |t, p, s, h| crate::karva::terms_to_karva_generic_k(t, p, s, h, Some(k)))
+}
+
 type Encoder = dyn Fn(&str, &PsetSpec, u64, Option<usize>) -> Result<(Vec<Token>, Vec<Token>, bool), String>;
 
 fn encode_with(folded: &FoldedChromosome, pset: &PsetSpec, rng_seed: u64, head_length: usize, encoder: &Encoder) -> Result<Vec<KarvaGene>, String> {

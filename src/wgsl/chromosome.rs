@@ -216,7 +216,7 @@ pub fn chromosome(f: &KernelFunction, opts: &ChromosomeOptions) -> Result<WgslCh
         let over = all_genes.iter().filter(|g| node_count(g) > h).count();
         oversized_at.push((h, over));
         if over == 0 && genes.is_none() {
-            let encoded = homeotic::encode_generic(&folded, &pset, opts.rng_seed, h)?;
+            let encoded = homeotic::encode_generic_k(&folded, &pset, opts.rng_seed, h, crate::gpu_eval::K_MAX)?;
             // The Karva round trip: every gene decodes to its own text.
             for (i, ((head, tail), text)) in encoded.iter().zip(folded.head.iter().chain(folded.tail.iter())).enumerate() {
                 // Compared as trees through one renderer: the decoder spells a
@@ -275,6 +275,8 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         let (h, genes) = c.genes.as_ref().expect("fits at some head length");
         assert_eq!(genes.len(), 2 + 3);
         assert!(*h <= 16);
+        // The kingdom's K = 4 sets every gene's layout: tail 3·head + 1.
+        assert!(genes.iter().all(|(head, tail)| head.len() == *h && tail.len() == 3 * h + 1));
         assert_eq!(c.oversized_at.iter().find(|(l, _)| *l == 4).map(|(_, n)| *n > 0), Some(true), "head 4 is too short for a store root");
     }
 

@@ -6,7 +6,9 @@
 //!
 //!   cargo run --release --features wgsl --example wgsl_read_kernel -- [--sexpr] [--dump <out.json>] <file.wgsl>...
 //!
-//! `--dump <out.json>` writes every function's chromosome (pset, head
+//! `--rebuilt <dir>` writes each kernel's rebuilt WGSL text (the device
+//! parity run compiles it beside the original). `--dump <out.json>` writes
+//! every function's chromosome (pset, head
 //! length, tail slots, Karva genes as tokens) and the kingdom's size, the
 //! artefact phylu uploads and decodes on the device.
 //!
@@ -36,7 +38,13 @@ fn main() -> Result<(), String> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let show_sexpr = args.iter().any(|a| a == "--sexpr");
     let dump_path = args.iter().position(|a| a == "--dump").and_then(|i| args.get(i + 1).cloned());
-    let paths: Vec<&String> = args.iter().enumerate().filter(|(i, a)| !(a.starts_with("--") || (*i > 0 && args[i - 1] == "--dump"))).map(|(_, a)| a).collect();
+    let rebuilt_dir = args.iter().position(|a| a == "--rebuilt").and_then(|i| args.get(i + 1).cloned());
+    let paths: Vec<&String> = args
+        .iter()
+        .enumerate()
+        .filter(|(i, a)| !(a.starts_with("--") || (*i > 0 && (args[i - 1] == "--dump" || args[i - 1] == "--rebuilt"))))
+        .map(|(_, a)| a)
+        .collect();
     let mut dump: Vec<serde_json::Value> = Vec::new();
     if paths.is_empty() {
         return Err("usage: wgsl_read_kernel [--sexpr] <file.wgsl>...".into());
@@ -178,7 +186,16 @@ fn main() -> Result<(), String> {
         match trip_err {
             Some(e) => println!("    ROUND_TRIP FAILED before the rebuild: {e}"),
             None => match round_trip(&kernel, &roots_all) {
-                Ok(r) => println!("    ROUND_TRIP ok ({} functions rebuilt, {} bytes of WGSL written and read back)", kernel.functions.len(), r.wgsl.len()),
+                Ok(r) => {
+                    println!("    ROUND_TRIP ok ({} functions rebuilt, {} bytes of WGSL written and read back)", kernel.functions.len(), r.wgsl.len());
+                    // The rebuilt text, for the device run against the original.
+                    if let Some(dir) = &rebuilt_dir {
+                        std::fs::create_dir_all(dir).map_err(|e| format!("mkdir {dir}: {e}"))?;
+                        let out = format!("{dir}/{}", file.replace('+', "_"));
+                        std::fs::write(&out, &r.wgsl).map_err(|e| format!("write {out}: {e}"))?;
+                        println!("    rebuilt WGSL written to {out}");
+                    }
+                }
                 Err(e) => println!("    ROUND_TRIP FAILED: {e}"),
             },
         }
