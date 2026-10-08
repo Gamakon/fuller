@@ -2,7 +2,7 @@
   "kingdom": {
     "name": "WGSL",
     "duals": 68,
-    "instances": 1205,
+    "instances": 1061,
     "k_max": 4,
     "tables": "kingdoms/wgsl/{types,functions}.tsv; fuller::wgsl::WgslKingdom::load()"
   },

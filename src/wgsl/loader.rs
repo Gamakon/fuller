@@ -394,10 +394,12 @@ fn instantiate_template(t: &Template, duals: &[WgslDual], by_name: &BTreeMap<&st
         });
         // `shape.access_N`: the note says the row exists only for L > N.
         let min_lanes = t.instance.strip_prefix("access_").and_then(|n| n.parse::<u32>().ok()).map(|n| n + 1);
+        let scalar_anchor = t.class == "shape" && matches!(anchor, Some(Pat::Family { .. }));
         let anchors: Vec<Option<usize>> = match anchor {
             Some(p) => candidates(p, form_c)
                 .into_iter()
                 .filter(|&i| min_lanes.is_none_or(|m| duals[i].lanes >= m))
+                .filter(|&i| !scalar_anchor || duals[i].lanes == 1)
                 .map(Some)
                 .collect(),
             None => vec![None],
@@ -411,9 +413,13 @@ fn instantiate_template(t: &Template, duals: &[WgslDual], by_name: &BTreeMap<&st
                         let ad = &duals[a.ok_or("a family pattern with no anchor")?];
                         let scalar = scalar.clone().unwrap_or_else(|| ad.scalar().unwrap_or("?").to_string());
                         let form = if form == "c" { form_c.to_string() } else { form.clone() };
-                        // `<vec2.c>` is fixed; `<vecL.c>` and a family follow the anchor's lanes.
+                        // `<vec2.c>` is fixed; `<vecL.c>` follows the anchor's lanes; a
+                        // family `<S.c>` follows them too, EXCEPT in the `shape` class,
+                        // where `S` is the scalar a vector is built from or taken apart
+                        // into (`access_N: <vecL.c> → <S.c>`, `splatN: <S.c> → <vecN.c>`).
                         let lanes = match p {
                             Pat::Vector { lanes: Some(l), .. } => *l,
+                            Pat::Family { .. } if t.class == "shape" => 1,
                             _ => ad.lanes,
                         };
                         let slot = if lanes == 1 { scalar } else { format!("vec{lanes}<{scalar}>") };
@@ -639,8 +645,12 @@ mod tests {
         // literal.real is a terminal over the eight real duals; builtins are terminals.
         assert!(by("literal.real").iter().all(|r| r.terminal) && by("literal.real").len() == 8);
         assert_eq!(by("builtin.global_invocation_id").len(), 1);
-        // shape.access_2 exists only for 3 and 4 lanes.
-        assert!(by("shape.access_2").iter().all(|r| k.dual(r.inputs[0]).unwrap().lanes >= 3));
+        // shape.access_2 exists only for 3 and 4 lanes, and takes a vector apart into its scalar.
+        assert!(by("shape.access_2").iter().all(|r| k.dual(r.inputs[0]).unwrap().lanes >= 3 && k.dual(r.output).unwrap().lanes == 1));
+        assert!(by("shape.access_0").iter().any(|r| dual(r.inputs[0]) == "vec3<u32>.index" && dual(r.output) == "u32.index"));
+        // splat3 builds a vec3 from a scalar, never from a vector.
+        assert!(by("shape.splat3").iter().all(|r| k.dual(r.inputs[0]).unwrap().lanes == 1 && k.dual(r.output).unwrap().lanes == 3));
+        assert!(by("shape.compose2").iter().all(|r| k.dual(r.inputs[0]).unwrap().lanes == 1 && k.dual(r.output).unwrap().lanes == 2));
         // convert.f32_to_q15_16 is one row.
         assert_eq!(by("convert.f32_to_q15_16").len(), 1);
         // The symbol table view: kingdom name, unique semantic ids, k-hot keys are duals.

@@ -32,7 +32,7 @@ use std::collections::BTreeMap;
 use fuller::gpu_eval::MAX_NODES;
 use fuller::homeotic::{unfold, FoldedChromosome};
 use fuller::karva::karva_to_terms_generic;
-use fuller::wgsl::{chromosome, read, round_trip, ChromosomeOptions, RootKind};
+use fuller::wgsl::{chromosome, infer_function, read, round_trip, ChromosomeOptions, RootKind, WgslKingdom};
 
 fn main() -> Result<(), String> {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -127,6 +127,15 @@ fn main() -> Result<(), String> {
                 }
                 Err(e) => println!("    {:<20} KARVA FAILED: {e}", f.name),
             }
+        }
+        // Form inference: duals by use, conflicts, texts read under two forms.
+        let kingdom = WgslKingdom::load();
+        println!("    {:<20} {:>6} {:>6} {:>9} {:>8} {:>7} {:>9}  untyped by slot", "inference", "nodes", "typed", "conflicts", "no dual", "no row", "2-form");
+        for f in &kernel.functions {
+            let t = infer_function(f, &kingdom);
+            let st = &t.stats;
+            let by_slot: Vec<String> = st.untyped_by_slot.iter().map(|(s, n)| format!("{s}:{n}")).collect();
+            println!("    {:<20} {:>6} {:>6} {:>9} {:>8} {:>7} {:>9}  {}", f.name, st.nodes, st.typed, st.conflicts, st.no_dual, st.no_row, st.conflicting_texts, by_slot.join(" "));
         }
         // The chromosome dump, if asked: tokens as the engine would upload them.
         if dump_path.is_some() {

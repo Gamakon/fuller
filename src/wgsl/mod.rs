@@ -12,6 +12,7 @@
 //! Compiled only under the `wgsl` feature (naga in and out).
 
 pub mod chromosome;
+pub mod infer;
 pub mod loader;
 pub mod naga_names;
 pub mod reader;
@@ -19,6 +20,7 @@ pub mod scaffold;
 pub mod table;
 
 pub use chromosome::{chromosome, ChromosomeOptions, WgslChromosome};
+pub use infer::{infer_function, FunctionTypes, NodeType, TypeStats, TypedTree};
 pub use loader::{wgsl_duals, wgsl_fallback_table, wgsl_table, WgslDual, WgslKingdom, WgslRow, WGSL};
 pub use reader::{read, Kernel, KernelFunction, Node, Root, RootKind};
 pub use scaffold::{rebuild, round_trip, Rebuilt};

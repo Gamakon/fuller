@@ -162,6 +162,34 @@ storage buffers). The second half, the same real inputs through both and
 the golden checksum deciding, waits on a source-override hook in phylu. A sample chromosome set for phylu's decoder is in
 `samples/hff.chromosomes.json` (`--dump`; the six-kernel dump is 13 MB, regenerable, untracked), and the six rebuilt kernels in `samples/rebuilt/` (`--rebuilt`).
 
+### Form inference by use (measured 2026-10-08)
+
+`src/wgsl/infer.rs`: produce bottom-up (a row's out form at the node's
+slot), demand top-down (a row's input duals; a leaf, literal or load takes
+the demanded form; any other node demanded under a form it did not produce
+is a FORM CONFLICT, typed `opaque`, never bridged by a `convert` the kernel
+did not write). Over the entry points of the six kernels:
+
+| entry point | nodes | typed | conflicts | no dual | no row | texts read under two forms |
+|---|---|---|---|---|---|---|
+| `decode_main` | 1,183 | 1,176 | 7 | 0 | 7 | 2 |
+| `score_main` | 1,826 | 1,746 | 2 | 78 | 12 | 3 |
+| `hff_main` | 423 | 420 | 2 | 1 | 2 | 0 |
+| `type_main` | 118 | 117 | 1 | 0 | 1 | 1 |
+| `mutate_main` | 1,691 | 1,678 | 0 | 13 | 0 | 0 |
+| `crossover_main` | 461 | 447 | 1 | 13 | 1 | 0 |
+| `lint_main` | 318 | 316 | 0 | 2 | 0 | 0 |
+
+Readings: the slot's default form is right for 98 % or more of every
+kernel's nodes; the conflicts are a handful of `u32` values the kernels
+add as indices and then mask or shift as bits (`decode_main` has seven),
+exactly the places a typed kingdom would make a `convert` explicit; the
+dual-less nodes are struct-, array- and pointer-slotted (the `ptr<array>`
+arguments `arrayLength` reads in `score_main`), which the type table has
+no row for by design. The row count after the `shape`-class fix (an
+`S` there is the scalar a vector is built from or taken apart into) is
+1,061 typed rows from 188 templates.
+
 ### Open items
 
 - `builtin.num_workgroups` is typed `vec3<u32>.count` and the type table
@@ -196,7 +224,7 @@ repaid because the product runs billions of times.
 | symbol rows with slot × content arity (the loader, `Ty::Wgsl`) | waits on phylu's phase 2 (the cast migration) |
 | chromosome: roots folded into a homeotic tail, encoded and decoded through the generic pair (`src/wgsl/chromosome.rs`) | built; 59 of 59 functions `KARVA ok` (table above) |
 | the scaffold rebuild and the structural gate (`src/wgsl/scaffold.rs`, `round_trip`) | built; `ROUND_TRIP ok` on the six kernels |
-| form inference by use (`infer.rs`) | not started; forms are the slot's default |
+| form inference by use (`src/wgsl/infer.rs`) | built; table above. Not yet carried into the chromosome (duals per gene node, the two-form rule in the fold) |
 | device parity of a rebuilt kernel (the proof) | half: all 10 entry points compile both ways on Metal (`examples/wgsl_device_compile.rs`); the run on real inputs waits on phylu's source-override hook |
 | the scaffold-with-holes chromosome and its decoder (phylu) | not started |
 | compile-run-time evaluation path with the correctness gate (phylu) | not started |
