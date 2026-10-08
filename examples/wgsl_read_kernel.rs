@@ -36,7 +36,7 @@ fn main() -> Result<(), String> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let show_sexpr = args.iter().any(|a| a == "--sexpr");
     let dump_path = args.iter().position(|a| a == "--dump").and_then(|i| args.get(i + 1).cloned());
-    let paths: Vec<&String> = args.iter().enumerate().filter(|(i, a)| !a.starts_with("--") && !(*i > 0 && args[i - 1] == "--dump")).map(|(_, a)| a).collect();
+    let paths: Vec<&String> = args.iter().enumerate().filter(|(i, a)| !(a.starts_with("--") || (*i > 0 && args[i - 1] == "--dump"))).map(|(_, a)| a).collect();
     let mut dump: Vec<serde_json::Value> = Vec::new();
     if paths.is_empty() {
         return Err("usage: wgsl_read_kernel [--sexpr] <file.wgsl>...".into());
