@@ -276,6 +276,37 @@ count after expansion printed by the loader (§2); duals and templates used,
 opaque by slot and sidecar coverage in the report (§5). Three of these (1, 2,
 9 in the review) are phylu-shape decisions and are written here as such.
 
+## Coordination with phylu (project management, this session owns it)
+
+Two crates, one node layout, four phylu phases (`phylu/docs/
+PLAN_arbitrary_arity.md`) interleaved with two fuller phases. Rules: each
+crate unit-tests its own work and commits clippy-clean; every commit builds
+against the other crate's HEAD; **fuller owns end-to-end testing** at every
+join and reports results to Andrew. Each handoff is one message to
+`phylu-regex` stating what is now true, the commit id, and what phylu may
+start; each return is one message back with the commit id and their unit
+test count. Nothing on the GPU without announcing to Andrew first.
+
+| step | who | work | gate before the next step | fuller's end-to-end check |
+|---|---|---|---|---|
+| 1 | fuller | node semantics `(fn_id, first_child, ty_code, konst)`, `Op::arity`, reserved engine ids, `Ty::code()`, generated fallback table, n-ary lint bridges | fuller tests green, clippy clean, commit id sent to phylu with the four `ty as u32` sites named | fuller's own suite; phylu HEAD still builds against it |
+| 2 | phylu | decoder host+device with `fn_id` tables, `in_ty × K`, `out_ty`, fallback by code; kid arrays to 512 | their unit tests + host↔device parity + the golden checksum, commit id back | SR, TSR and REGEX golden runs on the laptop: byte-identical populations (announced) |
+| 3 | fuller | WGSL loader (`wgsl_table()`), generic Karva pair, reader, scaffold, `wgsl_read_kernel` | reader round-trips the six kernels `ROUND_TRIP ok`, commit id sent | the six-kernel table in the kingdom README |
+| 4 | phylu | variation grafts `K_MAX`, fold/hash/export/order/tower loops, tail evaluated per dependency level, 3-ary test kingdom, retire `arg1` | their tests + the 3-ary kingdom end to end, commit id back | a WGSL chromosome from step 3 uploaded, decoded on the device, hash and export agree with the host; depth cap lifted in `homeotic::fold` |
+| 5 | fuller | device parity of a rebuilt kernel (phase 2 proof): compile original and rebuilt, same inputs, bit-exact outputs | `PARITY ok` on the six kernels | the proof the plan's gate pointed at |
+
+Messages to phylu, in order (sent only when the gate is met):
+
+- **M1, after step 1:** "fuller `<id>`: node semantics and `Ty::code()` landed; `Op::arity` table; reserved ids 0..N; fallback table generated. Your four cast sites: engine.rs:363-374, 551-569, device.rs:89. Start phase 2 against this HEAD. Return: commit id, unit test count, parity and golden results."
+- **M2, after step 2 returns:** "Golden runs on SR/TSR/REGEX reproduced here byte-identical (or: not, with the first diverging generation). Start nothing; I build the loader and reader against your HEAD."
+- **M3, after step 3:** "fuller `<id>`: reader round-trips six kernels; a WGSL chromosome and its symbol table are at `<path>` (instance count N, head H, K=4). Start phases 3–4; the uploaded-table shape you need is in `kingdoms/wgsl/*.tsv` and `geneframe::wgsl_table()`."
+- **M4, after step 4 returns:** results of the device decode/hash/export check on the WGSL chromosome; depth cap lifted; request the per-level tail evaluation is on by default for the kingdom.
+- **M5, after step 5:** parity results to Andrew and phylu; what the kingdom still lacks before evolving (the evaluator that compiles and times).
+
+Escalation: a gate not met within a step is reported to Andrew as a
+measurement, not worked around; a phylu finding that changes the node
+layout stops both crates until the layout is re-agreed in both plans.
+
 ## Verification
 
 - `RUSTFLAGS="-D warnings" cargo test --features wgsl` and
