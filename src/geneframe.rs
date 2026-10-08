@@ -84,6 +84,13 @@ pub enum Ty {
     Char,      // one literal byte
     CharClass, // a set of bytes ([a-z], \d, …)
     Pattern,   // a regex sub-tree — the kingdom's root/hub type
+
+    // ---- Table-defined type families ----
+    /// A dual `slot.form` of the WGSL kingdom: the index of its row in
+    /// `kingdoms/wgsl/types.tsv` (ref `T001` → 0). One variant for the whole
+    /// family, so a new dual is a table row, not a variant; its device code
+    /// is [`Ty::TABLE_CODE_BASE`] + the index ([`Ty::code`]). Appended last.
+    Wgsl(u16),
 }
 
 impl Ty {
@@ -122,21 +129,30 @@ impl Ty {
 
     /// The type's code on the device: THE ONE SPELLING of a `Ty` as a `u32`
     /// (the node's `ty_code` word, the `out_ty`/`in_ty` tables, the fallback
-    /// table's index). Base variants are their declaration index from 0, so
-    /// today `code()` equals `ty as u32`; a kingdom whose types are rows in a
-    /// table rather than variants (the WGSL kingdom's duals) is given codes
-    /// from [`Ty::TABLE_CODE_BASE`] when its variant lands, and `as u32` stops
-    /// compiling then — which is why every cast is to move here first.
+    /// table's index). A base variant's code is its declaration index from 0
+    /// (what `ty as u32` was before the payload variant made the cast
+    /// uncompilable); a WGSL dual's code is [`Ty::TABLE_CODE_BASE`] + its row.
     pub fn code(self) -> u32 {
-        self as u32
+        match self {
+            Ty::Wgsl(i) => Ty::TABLE_CODE_BASE + u32::from(i),
+            base => Ty::ALL
+                .iter()
+                .position(|t| *t == base)
+                .map(|i| i as u32)
+                .unwrap_or_else(|| unreachable!("every base variant is in Ty::ALL (test-pinned)")),
+        }
     }
 
-    /// The first code a table-defined type family may use; base variants stay
+    /// The first code a table-defined type family uses; base variants stay
     /// below it.
     pub const TABLE_CODE_BASE: u32 = 256;
 
-    /// The inverse of [`Ty::code`] over the base variants.
+    /// The inverse of [`Ty::code`]: a base variant by index, a WGSL dual by
+    /// offset from [`Ty::TABLE_CODE_BASE`].
     pub fn from_code(code: u32) -> Option<Ty> {
+        if code >= Ty::TABLE_CODE_BASE {
+            return u16::try_from(code - Ty::TABLE_CODE_BASE).ok().map(Ty::Wgsl);
+        }
         Ty::ALL.get(code as usize).copied()
     }
 }
@@ -731,10 +747,15 @@ mod tests {
         // order: a variant added without a slot here fails this test.
         for (i, t) in Ty::ALL.iter().enumerate() {
             assert_eq!(t.code(), i as u32, "{t:?}");
-            assert_eq!(t.code(), *t as u32, "{t:?}");
             assert_eq!(Ty::from_code(i as u32), Some(*t));
         }
-        assert_eq!(Ty::ALL.len(), Ty::Pattern as usize + 1, "ALL ends at the last variant");
+        assert_eq!(Ty::ALL.last(), Some(&Ty::Pattern), "ALL ends at the last base variant");
+        assert_eq!(Ty::ALL.len(), 35);
+        // The table-defined family sits past every base code.
+        assert_eq!(Ty::Wgsl(0).code(), 256);
+        assert_eq!(Ty::Wgsl(67).code(), 323);
+        assert_eq!(Ty::from_code(300), Some(Ty::Wgsl(44)));
+        assert!(Ty::Wgsl(0) > Ty::Pattern, "ordered after every base variant");
         let mut codes: Vec<u32> = Ty::ALL.iter().map(|t| t.code()).collect();
         codes.dedup();
         assert_eq!(codes.len(), Ty::ALL.len(), "codes are unique");
