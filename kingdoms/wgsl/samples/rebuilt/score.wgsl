@@ -107,32 +107,30 @@ fn linked(c_1: u32, genes: u32, linker: u32, row_7: u32) -> f32 {
             }
             let _e24 = g_3;
             let _e25 = gene_index(c_1, _e24);
+            let _e30 = sp.n_rows;
+            let v_6 = preds[((_e25 * _e30) + row_7)];
             if (linker == 1u) {
-                let _e33 = acc;
-                let _e35 = sp.n_rows;
-                let _e39 = preds[((_e25 * _e35) + row_7)];
-                let _e41 = keep((_e33 * _e39));
+                let _e39 = acc;
+                let _e41 = keep((_e39 * v_6));
                 acc = _e41;
             } else {
-                let _e47 = acc;
-                let _e49 = sp.n_rows;
-                let _e53 = preds[((_e25 * _e49) + row_7)];
-                let _e55 = keep((_e47 + _e53));
-                acc = _e55;
+                let _e44 = acc;
+                let _e46 = keep((_e44 + v_6));
+                acc = _e46;
             }
         }
         continuing {
-            let _e59 = g_3;
-            g_3 = (_e59 + 1u);
+            let _e50 = g_3;
+            g_3 = (_e50 + 1u);
         }
     }
     if (linker == 0u) {
-        let _e65 = acc;
-        let _e69 = div(_e65, f32(countOneBits(genes)));
-        acc = _e69;
+        let _e56 = acc;
+        let _e60 = div(_e56, f32(countOneBits(genes)));
+        acc = _e60;
     }
-    let _e72 = acc;
-    return _e72;
+    let _e63 = acc;
+    return _e63;
 }
 
 fn linked_without(c_2: u32, genes_1: u32, linker_1: u32, row_8: u32, skip: u32, held: f32) -> f32 {
@@ -318,961 +316,888 @@ fn score_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     var i_3: u32;
     var j: u32;
 
-    let _e23 = sp.n_chromosomes;
-    if (gid.x >= (_e23 * arrayLength((&combinations)))) {
+    let t = gid.x;
+    let n_combinations = arrayLength((&combinations));
+    let _e24 = sp.n_chromosomes;
+    if (t >= (_e24 * n_combinations)) {
         return;
     }
+    let c_4 = (t / n_combinations);
+    let combination = combinations[(t % n_combinations)];
+    let genes_2 = (combination & 16777215u);
+    let linker_2 = (combination >> 24u);
+    let _e40 = sp.row_base;
+    let out = (((((_e40 + c_4) * n_combinations) + (t % n_combinations)) * N_WRAPPERS) * WIDTH);
+    let nan = bitcast<f32>(NAN_BITS);
     loop {
-        let _e29 = i;
-        if (_e29 < 30u) {
+        let _e51 = i;
+        if (_e51 < 30u) {
         } else {
             break;
         }
         {
-            let _e40 = sp.row_base;
-            let _e53 = i;
-            scores[((((((_e40 + (gid.x / arrayLength((&combinations)))) * arrayLength((&combinations))) + (gid.x % arrayLength((&combinations)))) * N_WRAPPERS) * WIDTH) + _e53)] = bitcast<f32>(NAN_BITS);
+            let _e55 = i;
+            scores[(out + _e55)] = nan;
         }
         continuing {
-            let _e59 = i;
-            i = (_e59 + 1u);
+            let _e60 = i;
+            i = (_e60 + 1u);
         }
     }
     loop {
-        let _e63 = g;
-        let _e65 = sp.genes_per;
-        if (_e63 < _e65) {
+        let _e64 = g;
+        let _e66 = sp.genes_per;
+        if (_e64 < _e66) {
         } else {
             break;
         }
         {
-            let _e73 = g;
-            let _e74 = gene_index((gid.x / arrayLength((&combinations))), _e73);
-            let _e88 = combinations[(gid.x % arrayLength((&combinations)))];
-            let _e90 = g;
-            let _e95 = sp.gene_base;
-            let _e98 = gene_ok[(_e95 + _e74)];
-            if (((((_e88 & 16777215u) >> _e90) & 1u) == 1u) && (_e98 == 0u)) {
+            let _e69 = g;
+            let _e70 = gene_index(c_4, _e69);
+            let _e76 = g;
+            let _e81 = sp.gene_base;
+            let _e84 = gene_ok[(_e81 + _e70)];
+            if ((((genes_2 >> _e76) & 1u) == 1u) && (_e84 == 0u)) {
                 return;
             }
         }
         continuing {
-            let _e103 = g;
-            g = (_e103 + 1u);
+            let _e89 = g;
+            g = (_e89 + 1u);
         }
     }
-    let _e118 = combinations[(gid.x % arrayLength((&combinations)))];
-    let _e128 = combinations[(gid.x % arrayLength((&combinations)))];
-    let _e131 = linked((gid.x / arrayLength((&combinations))), (_e118 & 16777215u), (_e128 >> 24u), 0u);
+    let nt = sp.n_train;
+    let _e96 = sp.n_val;
+    let v1_ = (nt + _e96);
+    let _e99 = linked(c_4, genes_2, linker_2, 0u);
     loop {
-        let _e134 = w;
-        if (_e134 < N_WRAPPERS) {
+        let _e102 = w;
+        if (_e102 < N_WRAPPERS) {
         } else {
             break;
         }
         {
-            let _e139 = w;
-            sum[_e139] = vec2<f32>(0f, 0f);
-            let _e145 = w;
-            ok[_e145] = true;
-            let _e148 = w;
-            let _e149 = wrapped(_e131, _e148);
-            let _e152 = w;
-            x0_[_e152] = _e149;
-            let _e157 = w;
-            let _e159 = w;
-            let _e161 = x0_[_e159];
-            lo[_e157] = _e161;
-            let _e165 = w;
-            let _e167 = w;
-            let _e169 = x0_[_e167];
-            hi[_e165] = _e169;
+            let _e107 = w;
+            sum[_e107] = vec2<f32>(0f, 0f);
+            let _e113 = w;
+            ok[_e113] = true;
+            let _e116 = w;
+            let _e117 = wrapped(_e99, _e116);
+            let _e120 = w;
+            x0_[_e120] = _e117;
+            let _e125 = w;
+            let _e127 = w;
+            let _e129 = x0_[_e127];
+            lo[_e125] = _e129;
+            let _e133 = w;
+            let _e135 = w;
+            let _e137 = x0_[_e135];
+            hi[_e133] = _e137;
         }
         continuing {
-            let _e172 = w;
-            w = (_e172 + 1u);
+            let _e140 = w;
+            w = (_e140 + 1u);
         }
     }
     loop {
-        let _e176 = row;
-        let _e178 = sp.n_rows;
-        if (_e176 < _e178) {
+        let _e144 = row;
+        let _e146 = sp.n_rows;
+        if (_e144 < _e146) {
         } else {
             break;
         }
         {
-            let _e193 = combinations[(gid.x % arrayLength((&combinations)))];
-            let _e203 = combinations[(gid.x % arrayLength((&combinations)))];
-            let _e206 = row;
-            let _e207 = linked((gid.x / arrayLength((&combinations))), (_e193 & 16777215u), (_e203 >> 24u), _e206);
+            let _e149 = row;
+            let _e150 = linked(c_4, genes_2, linker_2, _e149);
             w_1 = 0u;
             loop {
-                let _e212 = w_1;
-                if (_e212 < N_WRAPPERS) {
+                let _e155 = w_1;
+                if (_e155 < N_WRAPPERS) {
                 } else {
                     break;
                 }
                 {
-                    let _e215 = w_1;
-                    let _e216 = wrapped(_e207, _e215);
-                    let _e217 = finite(_e207);
-                    let _e218 = finite(_e216);
-                    if (!(_e217) || !(_e218)) {
-                        let _e225 = w_1;
-                        ok[_e225] = false;
+                    let _e158 = w_1;
+                    let _e159 = wrapped(_e150, _e158);
+                    let _e160 = finite(_e150);
+                    let _e161 = finite(_e159);
+                    if (!(_e160) || !(_e161)) {
+                        let _e168 = w_1;
+                        ok[_e168] = false;
                     } else {
-                        let _e229 = row;
-                        let _e231 = sp.n_train;
-                        if (_e229 < _e231) {
-                            let _e235 = w_1;
-                            let _e237 = x0_[_e235];
-                            let _e239 = keep((_e216 - _e237));
-                            let _e242 = w_1;
-                            let _e244 = sum[_e242];
-                            let _e245 = add(_e244, _e239);
-                            let _e248 = w_1;
-                            sum[_e248] = _e245;
-                            let _e252 = w_1;
-                            let _e254 = w_1;
-                            let _e256 = lo[_e254];
-                            lo[_e252] = min(_e256, _e216);
-                            let _e260 = w_1;
-                            let _e262 = w_1;
-                            let _e264 = hi[_e262];
-                            hi[_e260] = max(_e264, _e216);
+                        let _e171 = row;
+                        if (_e171 < nt) {
+                            let _e175 = w_1;
+                            let _e177 = x0_[_e175];
+                            let _e179 = keep((_e159 - _e177));
+                            let _e182 = w_1;
+                            let _e184 = sum[_e182];
+                            let _e185 = add(_e184, _e179);
+                            let _e188 = w_1;
+                            sum[_e188] = _e185;
+                            let _e192 = w_1;
+                            let _e194 = w_1;
+                            let _e196 = lo[_e194];
+                            lo[_e192] = min(_e196, _e159);
+                            let _e200 = w_1;
+                            let _e202 = w_1;
+                            let _e204 = hi[_e202];
+                            hi[_e200] = max(_e204, _e159);
                         }
                     }
                 }
                 continuing {
-                    let _e268 = w_1;
-                    w_1 = (_e268 + 1u);
+                    let _e208 = w_1;
+                    w_1 = (_e208 + 1u);
                 }
             }
         }
         continuing {
-            let _e272 = row;
-            row = (_e272 + 1u);
+            let _e212 = row;
+            row = (_e212 + 1u);
         }
     }
     loop {
-        let _e276 = w_2;
-        if (_e276 < N_WRAPPERS) {
+        let _e216 = w_2;
+        if (_e216 < N_WRAPPERS) {
         } else {
             break;
         }
         {
-            let _e280 = w_2;
-            let _e282 = sum[_e280];
-            let _e283 = total(_e282);
-            let _e286 = sp.n_train;
-            let _e288 = div(_e283, f32(_e286));
-            let _e291 = w_2;
-            let _e293 = x0_[_e291];
-            let _e295 = keep((_e293 + _e288));
-            let _e298 = w_2;
-            mx[_e298] = _e295;
+            let _e220 = w_2;
+            let _e222 = sum[_e220];
+            let _e223 = total(_e222);
+            let _e225 = div(_e223, f32(nt));
+            let _e228 = w_2;
+            let _e230 = x0_[_e228];
+            let _e232 = keep((_e230 + _e225));
+            let _e235 = w_2;
+            mx[_e235] = _e232;
         }
         continuing {
-            let _e302 = w_2;
-            w_2 = (_e302 + 1u);
+            let _e239 = w_2;
+            w_2 = (_e239 + 1u);
         }
     }
     loop {
-        let _e306 = w_3;
-        if (_e306 < N_WRAPPERS) {
+        let _e243 = w_3;
+        if (_e243 < N_WRAPPERS) {
         } else {
             break;
         }
         {
-            let _e311 = w_3;
-            sxx[_e311] = vec2<f32>(0f, 0f);
-            let _e317 = w_3;
-            sxy[_e317] = vec2<f32>(0f, 0f);
+            let _e248 = w_3;
+            sxx[_e248] = vec2<f32>(0f, 0f);
+            let _e254 = w_3;
+            sxy[_e254] = vec2<f32>(0f, 0f);
         }
         continuing {
-            let _e322 = w_3;
-            w_3 = (_e322 + 1u);
+            let _e259 = w_3;
+            w_3 = (_e259 + 1u);
         }
     }
     loop {
-        let _e326 = row_1;
-        let _e328 = sp.n_train;
-        if (_e326 < _e328) {
+        let _e262 = row_1;
+        if (_e262 < nt) {
         } else {
             break;
         }
         {
-            let _e343 = combinations[(gid.x % arrayLength((&combinations)))];
-            let _e353 = combinations[(gid.x % arrayLength((&combinations)))];
-            let _e356 = row_1;
-            let _e357 = linked((gid.x / arrayLength((&combinations))), (_e343 & 16777215u), (_e353 >> 24u), _e356);
-            let _e361 = row_1;
-            let _e363 = y_1[_e361];
-            let _e365 = sp.y_mean_train;
-            let _e367 = keep((_e363 - _e365));
+            let _e265 = row_1;
+            let _e266 = linked(c_4, genes_2, linker_2, _e265);
+            let _e270 = row_1;
+            let _e272 = y_1[_e270];
+            let _e274 = sp.y_mean_train;
+            let _e276 = keep((_e272 - _e274));
             w_4 = 0u;
             loop {
-                let _e372 = w_4;
-                if (_e372 < N_WRAPPERS) {
+                let _e281 = w_4;
+                if (_e281 < N_WRAPPERS) {
                 } else {
                     break;
                 }
                 {
-                    let _e376 = w_4;
-                    let _e378 = ok[_e376];
-                    if _e378 {
-                        let _e380 = w_4;
-                        let _e381 = wrapped(_e357, _e380);
-                        let _e384 = w_4;
-                        let _e386 = mx[_e384];
-                        let _e388 = keep((_e381 - _e386));
-                        let _e390 = keep((_e388 * _e388));
-                        let _e393 = w_4;
-                        let _e395 = sxx[_e393];
-                        let _e396 = add(_e395, _e390);
-                        let _e399 = w_4;
-                        sxx[_e399] = _e396;
-                        let _e402 = keep((_e388 * _e367));
-                        let _e405 = w_4;
-                        let _e407 = sxy[_e405];
-                        let _e408 = add(_e407, _e402);
-                        let _e411 = w_4;
-                        sxy[_e411] = _e408;
+                    let _e285 = w_4;
+                    let _e287 = ok[_e285];
+                    if _e287 {
+                        let _e289 = w_4;
+                        let _e290 = wrapped(_e266, _e289);
+                        let _e293 = w_4;
+                        let _e295 = mx[_e293];
+                        let _e297 = keep((_e290 - _e295));
+                        let _e299 = keep((_e297 * _e297));
+                        let _e302 = w_4;
+                        let _e304 = sxx[_e302];
+                        let _e305 = add(_e304, _e299);
+                        let _e308 = w_4;
+                        sxx[_e308] = _e305;
+                        let _e311 = keep((_e297 * _e276));
+                        let _e314 = w_4;
+                        let _e316 = sxy[_e314];
+                        let _e317 = add(_e316, _e311);
+                        let _e320 = w_4;
+                        sxy[_e320] = _e317;
                     }
                 }
                 continuing {
-                    let _e415 = w_4;
-                    w_4 = (_e415 + 1u);
+                    let _e324 = w_4;
+                    w_4 = (_e324 + 1u);
                 }
             }
         }
         continuing {
-            let _e419 = row_1;
-            row_1 = (_e419 + 1u);
+            let _e328 = row_1;
+            row_1 = (_e328 + 1u);
         }
     }
     loop {
-        let _e423 = w_5;
-        if (_e423 < N_WRAPPERS) {
+        let _e332 = w_5;
+        if (_e332 < N_WRAPPERS) {
         } else {
             break;
         }
         {
-            let _e427 = w_5;
-            let _e429 = sxx[_e427];
-            let _e430 = total(_e429);
-            let _e440 = w_5;
-            let _e442 = ok[_e440];
-            let _e444 = w_5;
-            let _e446 = hi[_e444];
-            let _e447 = w_5;
-            let _e449 = lo[_e447];
-            let _e451 = w_5;
-            let _e453 = mx[_e451];
-            if ((!(_e442) || ((_e446 - _e449) <= (2f * (0.00000001f + (CONSTANT_REL_TOL * abs(_e453)))))) || (_e430 <= 0f)) {
-                let _e465 = w_5;
-                ok[_e465] = false;
+            let _e336 = w_5;
+            let _e338 = sxx[_e336];
+            let _e339 = total(_e338);
+            let _e349 = w_5;
+            let _e351 = ok[_e349];
+            let _e353 = w_5;
+            let _e355 = hi[_e353];
+            let _e356 = w_5;
+            let _e358 = lo[_e356];
+            let _e360 = w_5;
+            let _e362 = mx[_e360];
+            if ((!(_e351) || ((_e355 - _e358) <= (2f * (0.00000001f + (CONSTANT_REL_TOL * abs(_e362)))))) || (_e339 <= 0f)) {
+                let _e374 = w_5;
+                ok[_e374] = false;
                 continue;
             }
-            let _e469 = w_5;
-            let _e471 = sxy[_e469];
-            let _e472 = total(_e471);
-            let _e473 = div(_e472, _e430);
-            let _e476 = w_5;
-            a[_e476] = _e473;
-            let _e481 = w_5;
-            let _e483 = a[_e481];
-            let _e484 = w_5;
-            let _e486 = mx[_e484];
-            let _e488 = keep((_e483 * _e486));
-            let _e491 = sp.y_mean_train;
-            let _e493 = keep((_e491 - _e488));
-            let _e496 = w_5;
-            b[_e496] = _e493;
-            let _e500 = w_5;
-            let _e502 = a[_e500];
-            let _e503 = finite(_e502);
-            let _e506 = w_5;
-            let _e508 = b[_e506];
-            let _e509 = finite(_e508);
-            if (!(_e503) || !(_e509)) {
-                let _e516 = w_5;
-                ok[_e516] = false;
+            let _e378 = w_5;
+            let _e380 = sxy[_e378];
+            let _e381 = total(_e380);
+            let _e382 = div(_e381, _e339);
+            let _e385 = w_5;
+            a[_e385] = _e382;
+            let _e390 = w_5;
+            let _e392 = a[_e390];
+            let _e393 = w_5;
+            let _e395 = mx[_e393];
+            let _e397 = keep((_e392 * _e395));
+            let _e400 = sp.y_mean_train;
+            let _e402 = keep((_e400 - _e397));
+            let _e405 = w_5;
+            b[_e405] = _e402;
+            let _e409 = w_5;
+            let _e411 = a[_e409];
+            let _e412 = finite(_e411);
+            let _e415 = w_5;
+            let _e417 = b[_e415];
+            let _e418 = finite(_e417);
+            if (!(_e412) || !(_e418)) {
+                let _e425 = w_5;
+                ok[_e425] = false;
             }
         }
         continuing {
-            let _e520 = w_5;
-            w_5 = (_e520 + 1u);
+            let _e429 = w_5;
+            w_5 = (_e429 + 1u);
         }
     }
     loop {
-        let _e524 = i_1;
-        if (_e524 < 9u) {
+        let _e433 = i_1;
+        if (_e433 < 9u) {
         } else {
             break;
         }
         {
-            let _e529 = i_1;
-            sq[_e529] = vec2<f32>(0f, 0f);
-            let _e535 = i_1;
-            ab[_e535] = vec2<f32>(0f, 0f);
+            let _e438 = i_1;
+            sq[_e438] = vec2<f32>(0f, 0f);
+            let _e444 = i_1;
+            ab[_e444] = vec2<f32>(0f, 0f);
         }
         continuing {
-            let _e540 = i_1;
-            i_1 = (_e540 + 1u);
+            let _e449 = i_1;
+            i_1 = (_e449 + 1u);
         }
     }
     loop {
-        let _e544 = w_6;
-        if (_e544 < N_WRAPPERS) {
+        let _e453 = w_6;
+        if (_e453 < N_WRAPPERS) {
         } else {
             break;
         }
         {
-            let _e549 = w_6;
-            worst[_e549] = 0f;
+            let _e458 = w_6;
+            worst[_e458] = 0f;
         }
         continuing {
-            let _e553 = w_6;
-            w_6 = (_e553 + 1u);
+            let _e462 = w_6;
+            w_6 = (_e462 + 1u);
         }
     }
     loop {
-        let _e557 = row_2;
-        let _e559 = sp.n_rows;
-        if (_e557 < _e559) {
+        let _e466 = row_2;
+        let _e468 = sp.n_rows;
+        if (_e466 < _e468) {
         } else {
             break;
         }
         {
-            let _e574 = combinations[(gid.x % arrayLength((&combinations)))];
-            let _e584 = combinations[(gid.x % arrayLength((&combinations)))];
-            let _e587 = row_2;
-            let _e588 = linked((gid.x / arrayLength((&combinations))), (_e574 & 16777215u), (_e584 >> 24u), _e587);
+            let _e471 = row_2;
+            let _e472 = linked(c_4, genes_2, linker_2, _e471);
             split = 2u;
-            let _e593 = row_2;
-            let _e595 = sp.n_train;
-            if (_e593 < _e595) {
+            let _e476 = row_2;
+            if (_e476 < nt) {
                 split = 0u;
             } else {
-                let _e601 = row_2;
-                let _e603 = sp.n_train;
-                let _e605 = sp.n_val;
-                if (_e601 < (_e603 + _e605)) {
+                let _e481 = row_2;
+                if (_e481 < v1_) {
                     split = 1u;
                 }
             }
             w_7 = 0u;
             loop {
-                let _e614 = w_7;
-                if (_e614 < N_WRAPPERS) {
+                let _e489 = w_7;
+                if (_e489 < N_WRAPPERS) {
                 } else {
                     break;
                 }
                 {
-                    let _e618 = w_7;
-                    let _e620 = ok[_e618];
-                    if _e620 {
-                        let _e622 = w_7;
-                        let _e623 = wrapped(_e588, _e622);
-                        let _e626 = w_7;
-                        let _e628 = a[_e626];
-                        let _e630 = keep((_e628 * _e623));
-                        let _e633 = w_7;
-                        let _e635 = b[_e633];
-                        let _e637 = keep((_e630 + _e635));
-                        let _e640 = row_2;
-                        let _e642 = y_1[_e640];
-                        let _e644 = keep((_e642 - _e637));
-                        let _e646 = keep((_e644 * _e644));
-                        let _e651 = w_7;
-                        let _e653 = split;
-                        let _e656 = sq[((_e651 * 3u) + _e653)];
-                        let _e657 = add(_e656, _e646);
-                        let _e662 = w_7;
-                        let _e664 = split;
-                        sq[((_e662 * 3u) + _e664)] = _e657;
-                        let _e671 = w_7;
-                        let _e673 = split;
-                        let _e676 = ab[((_e671 * 3u) + _e673)];
-                        let _e678 = add(_e676, abs(_e644));
-                        let _e683 = w_7;
-                        let _e685 = split;
-                        ab[((_e683 * 3u) + _e685)] = _e678;
-                        let _e690 = split;
-                        if (_e690 == 1u) {
-                            let _e694 = w_7;
-                            let _e696 = w_7;
-                            let _e698 = worst[_e696];
-                            worst[_e694] = max(_e698, abs(_e644));
+                    let _e493 = w_7;
+                    let _e495 = ok[_e493];
+                    if _e495 {
+                        let _e497 = w_7;
+                        let _e498 = wrapped(_e472, _e497);
+                        let _e501 = w_7;
+                        let _e503 = a[_e501];
+                        let _e505 = keep((_e503 * _e498));
+                        let _e508 = w_7;
+                        let _e510 = b[_e508];
+                        let _e512 = keep((_e505 + _e510));
+                        let _e515 = row_2;
+                        let _e517 = y_1[_e515];
+                        let _e519 = keep((_e517 - _e512));
+                        let _e521 = keep((_e519 * _e519));
+                        let _e526 = w_7;
+                        let _e528 = split;
+                        let _e531 = sq[((_e526 * 3u) + _e528)];
+                        let _e532 = add(_e531, _e521);
+                        let _e537 = w_7;
+                        let _e539 = split;
+                        sq[((_e537 * 3u) + _e539)] = _e532;
+                        let _e546 = w_7;
+                        let _e548 = split;
+                        let _e551 = ab[((_e546 * 3u) + _e548)];
+                        let _e553 = add(_e551, abs(_e519));
+                        let _e558 = w_7;
+                        let _e560 = split;
+                        ab[((_e558 * 3u) + _e560)] = _e553;
+                        let _e565 = split;
+                        if (_e565 == 1u) {
+                            let _e569 = w_7;
+                            let _e571 = w_7;
+                            let _e573 = worst[_e571];
+                            worst[_e569] = max(_e573, abs(_e519));
                         }
                     }
                 }
                 continuing {
-                    let _e703 = w_7;
-                    w_7 = (_e703 + 1u);
+                    let _e578 = w_7;
+                    w_7 = (_e578 + 1u);
                 }
             }
         }
         continuing {
-            let _e707 = row_2;
-            row_2 = (_e707 + 1u);
+            let _e582 = row_2;
+            row_2 = (_e582 + 1u);
         }
     }
     loop {
-        let _e711 = w_8;
-        if (_e711 < N_WRAPPERS) {
+        let _e586 = w_8;
+        if (_e586 < N_WRAPPERS) {
         } else {
             break;
         }
         {
-            let _e715 = w_8;
-            let _e717 = ok[_e715];
-            if !(_e717) {
+            let _e590 = w_8;
+            let _e592 = ok[_e590];
+            if !(_e592) {
                 continue;
             }
-            let _e728 = sp.row_base;
-            let _e741 = w_8;
-            let _e745 = w_8;
-            let _e747 = a[_e745];
-            scores[((((((_e728 + (gid.x / arrayLength((&combinations)))) * arrayLength((&combinations))) + (gid.x % arrayLength((&combinations)))) * N_WRAPPERS) * WIDTH) + (_e741 * WIDTH))] = _e747;
-            let _e758 = sp.row_base;
-            let _e771 = w_8;
-            let _e776 = w_8;
-            let _e778 = b[_e776];
-            scores[(((((((_e758 + (gid.x / arrayLength((&combinations)))) * arrayLength((&combinations))) + (gid.x % arrayLength((&combinations)))) * N_WRAPPERS) * WIDTH) + (_e771 * WIDTH)) + 1u)] = _e778;
-            let _e782 = w_8;
-            let _e785 = sq[(_e782 * 3u)];
-            let _e786 = total(_e785);
-            let _e790 = sp.n_train;
-            let _e793 = sp.n_val;
-            let _e796 = sp.n_extrap;
-            let _e801 = div(_e786, array<f32, 3>(f32(_e790), f32(_e793), f32(max(_e796, 1u)))[0]);
-            let _e811 = sp.row_base;
-            let _e824 = w_8;
-            scores[(((((((_e811 + (gid.x / arrayLength((&combinations)))) * arrayLength((&combinations))) + (gid.x % arrayLength((&combinations)))) * N_WRAPPERS) * WIDTH) + (_e824 * WIDTH)) + 2u)] = _e801;
-            let _e833 = w_8;
-            let _e837 = sq[((_e833 * 3u) + 1u)];
-            let _e838 = total(_e837);
-            let _e842 = sp.n_train;
-            let _e845 = sp.n_val;
-            let _e848 = sp.n_extrap;
-            let _e853 = div(_e838, array<f32, 3>(f32(_e842), f32(_e845), f32(max(_e848, 1u)))[1]);
-            let _e863 = sp.row_base;
-            let _e876 = w_8;
-            scores[(((((((_e863 + (gid.x / arrayLength((&combinations)))) * arrayLength((&combinations))) + (gid.x % arrayLength((&combinations)))) * N_WRAPPERS) * WIDTH) + (_e876 * WIDTH)) + 3u)] = _e853;
-            let _e891 = sp.row_base;
-            let _e904 = w_8;
-            let _e909 = w_8;
-            let _e911 = worst[_e909];
-            scores[(((((((_e891 + (gid.x / arrayLength((&combinations)))) * arrayLength((&combinations))) + (gid.x % arrayLength((&combinations)))) * N_WRAPPERS) * WIDTH) + (_e904 * WIDTH)) + 4u)] = _e911;
-            let _e916 = w_8;
-            let _e920 = sq[((_e916 * 3u) + 2u)];
-            let _e921 = total(_e920);
-            let _e925 = sp.n_train;
-            let _e928 = sp.n_val;
-            let _e931 = sp.n_extrap;
-            let _e936 = div(_e921, array<f32, 3>(f32(_e925), f32(_e928), f32(max(_e931, 1u)))[2]);
-            let _e946 = sp.row_base;
-            let _e959 = w_8;
-            scores[(((((((_e946 + (gid.x / arrayLength((&combinations)))) * arrayLength((&combinations))) + (gid.x % arrayLength((&combinations)))) * N_WRAPPERS) * WIDTH) + (_e959 * WIDTH)) + 5u)] = _e936;
-            let _e967 = w_8;
-            let _e970 = ab[(_e967 * 3u)];
-            let _e971 = total(_e970);
-            let _e975 = sp.n_train;
-            let _e978 = sp.n_val;
-            let _e981 = sp.n_extrap;
-            let _e986 = div(_e971, array<f32, 3>(f32(_e975), f32(_e978), f32(max(_e981, 1u)))[0]);
-            let _e996 = sp.row_base;
-            let _e1009 = w_8;
-            scores[(((((((_e996 + (gid.x / arrayLength((&combinations)))) * arrayLength((&combinations))) + (gid.x % arrayLength((&combinations)))) * N_WRAPPERS) * WIDTH) + (_e1009 * WIDTH)) + 6u)] = _e986;
-            let _e1018 = w_8;
-            let _e1022 = ab[((_e1018 * 3u) + 1u)];
-            let _e1023 = total(_e1022);
-            let _e1027 = sp.n_train;
-            let _e1030 = sp.n_val;
-            let _e1033 = sp.n_extrap;
-            let _e1038 = div(_e1023, array<f32, 3>(f32(_e1027), f32(_e1030), f32(max(_e1033, 1u)))[1]);
-            let _e1048 = sp.row_base;
-            let _e1061 = w_8;
-            scores[(((((((_e1048 + (gid.x / arrayLength((&combinations)))) * arrayLength((&combinations))) + (gid.x % arrayLength((&combinations)))) * N_WRAPPERS) * WIDTH) + (_e1061 * WIDTH)) + 7u)] = _e1038;
-            let _e1070 = w_8;
-            let _e1074 = ab[((_e1070 * 3u) + 2u)];
-            let _e1075 = total(_e1074);
-            let _e1079 = sp.n_train;
-            let _e1082 = sp.n_val;
-            let _e1085 = sp.n_extrap;
-            let _e1090 = div(_e1075, array<f32, 3>(f32(_e1079), f32(_e1082), f32(max(_e1085, 1u)))[2]);
-            let _e1100 = sp.row_base;
-            let _e1113 = w_8;
-            scores[(((((((_e1100 + (gid.x / arrayLength((&combinations)))) * arrayLength((&combinations))) + (gid.x % arrayLength((&combinations)))) * N_WRAPPERS) * WIDTH) + (_e1113 * WIDTH)) + 8u)] = _e1090;
-            let _e1128 = sp.row_base;
-            let _e1141 = w_8;
-            scores[(((((((_e1128 + (gid.x / arrayLength((&combinations)))) * arrayLength((&combinations))) + (gid.x % arrayLength((&combinations)))) * N_WRAPPERS) * WIDTH) + (_e1141 * WIDTH)) + 9u)] = 0f;
+            let _e596 = w_8;
+            let o = (out + (_e596 * WIDTH));
+            let _e603 = sp.n_val;
+            let _e606 = sp.n_extrap;
+            let n = array<f32, 3>(f32(nt), f32(_e603), f32(max(_e606, 1u)));
+            let _e614 = w_8;
+            let _e616 = a[_e614];
+            scores[o] = _e616;
+            let _e623 = w_8;
+            let _e625 = b[_e623];
+            scores[(o + 1u)] = _e625;
+            let _e629 = w_8;
+            let _e632 = sq[(_e629 * 3u)];
+            let _e633 = total(_e632);
+            let _e635 = div(_e633, n[0]);
+            scores[(o + 2u)] = _e635;
+            let _e644 = w_8;
+            let _e648 = sq[((_e644 * 3u) + 1u)];
+            let _e649 = total(_e648);
+            let _e651 = div(_e649, n[1]);
+            scores[(o + 3u)] = _e651;
+            let _e662 = w_8;
+            let _e664 = worst[_e662];
+            scores[(o + 4u)] = _e664;
+            let _e669 = w_8;
+            let _e673 = sq[((_e669 * 3u) + 2u)];
+            let _e674 = total(_e673);
+            let _e676 = div(_e674, n[2]);
+            scores[(o + 5u)] = _e676;
+            let _e684 = w_8;
+            let _e687 = ab[(_e684 * 3u)];
+            let _e688 = total(_e687);
+            let _e690 = div(_e688, n[0]);
+            scores[(o + 6u)] = _e690;
+            let _e699 = w_8;
+            let _e703 = ab[((_e699 * 3u) + 1u)];
+            let _e704 = total(_e703);
+            let _e706 = div(_e704, n[1]);
+            scores[(o + 7u)] = _e706;
+            let _e715 = w_8;
+            let _e719 = ab[((_e715 * 3u) + 2u)];
+            let _e720 = total(_e719);
+            let _e722 = div(_e720, n[2]);
+            scores[(o + 8u)] = _e722;
+            scores[(o + 9u)] = 0f;
             i_2 = 0u;
             loop {
-                let _e1150 = i_2;
-                if (_e1150 < WIDTH) {
+                let _e736 = i_2;
+                if (_e736 < WIDTH) {
                 } else {
                     break;
                 }
                 {
-                    let _e1161 = sp.row_base;
-                    let _e1174 = w_8;
-                    let _e1177 = i_2;
-                    let _e1180 = scores[(((((((_e1161 + (gid.x / arrayLength((&combinations)))) * arrayLength((&combinations))) + (gid.x % arrayLength((&combinations)))) * N_WRAPPERS) * WIDTH) + (_e1174 * WIDTH)) + _e1177)];
-                    let _e1181 = finite(_e1180);
-                    if !(_e1181) {
+                    let _e740 = i_2;
+                    let _e743 = scores[(o + _e740)];
+                    let _e744 = finite(_e743);
+                    if !(_e744) {
                         k = 0u;
                         loop {
-                            let _e1187 = k;
-                            if (_e1187 < WIDTH) {
+                            let _e750 = k;
+                            if (_e750 < WIDTH) {
                             } else {
                                 break;
                             }
                             {
-                                let _e1199 = sp.row_base;
-                                let _e1212 = w_8;
-                                let _e1215 = k;
-                                scores[(((((((_e1199 + (gid.x / arrayLength((&combinations)))) * arrayLength((&combinations))) + (gid.x % arrayLength((&combinations)))) * N_WRAPPERS) * WIDTH) + (_e1212 * WIDTH)) + _e1215)] = bitcast<f32>(NAN_BITS);
+                                let _e754 = k;
+                                scores[(o + _e754)] = nan;
                             }
                             continuing {
-                                let _e1221 = k;
-                                k = (_e1221 + 1u);
+                                let _e759 = k;
+                                k = (_e759 + 1u);
                             }
                         }
-                        let _e1226 = w_8;
-                        ok[_e1226] = false;
+                        let _e764 = w_8;
+                        ok[_e764] = false;
                         break;
                     }
                 }
                 continuing {
-                    let _e1230 = i_2;
-                    i_2 = (_e1230 + 1u);
+                    let _e768 = i_2;
+                    i_2 = (_e768 + 1u);
                 }
             }
         }
         continuing {
-            let _e1234 = w_8;
-            w_8 = (_e1234 + 1u);
+            let _e772 = w_8;
+            w_8 = (_e772 + 1u);
         }
     }
-    let _e1245 = combinations[(gid.x % arrayLength((&combinations)))];
-    if (countOneBits((_e1245 & 16777215u)) == 1u) {
+    if (countOneBits(genes_2) == 1u) {
         return;
     }
     loop {
-        let _e1251 = row_3;
-        let _e1253 = sp.n_train;
-        if (_e1251 < _e1253) {
+        let _e778 = row_3;
+        if (_e778 < nt) {
         } else {
             break;
         }
         {
-            let _e1258 = row_3;
-            let _e1260 = y_1[_e1258];
-            let _e1262 = sp.y_mean_train;
-            let _e1264 = keep((_e1260 - _e1262));
-            let _e1266 = keep((_e1264 * _e1264));
-            let _e1268 = syy;
-            let _e1269 = add(_e1268, _e1266);
-            syy = _e1269;
+            let _e783 = row_3;
+            let _e785 = y_1[_e783];
+            let _e787 = sp.y_mean_train;
+            let _e789 = keep((_e785 - _e787));
+            let _e791 = keep((_e789 * _e789));
+            let _e793 = syy;
+            let _e794 = add(_e793, _e791);
+            syy = _e794;
         }
         continuing {
-            let _e1273 = row_3;
-            row_3 = (_e1273 + LOO_STRIDE);
+            let _e798 = row_3;
+            row_3 = (_e798 + LOO_STRIDE);
         }
     }
-    let _e1276 = syy;
-    let _e1277 = total(_e1276);
+    let _e801 = syy;
+    let _e802 = total(_e801);
     loop {
-        let _e1280 = w_9;
-        if (_e1280 < N_WRAPPERS) {
+        let _e805 = w_9;
+        if (_e805 < N_WRAPPERS) {
         } else {
             break;
         }
         {
-            let _e1285 = w_9;
-            n_loss[_e1285] = 0u;
+            let _e810 = w_9;
+            n_loss[_e810] = 0u;
         }
         continuing {
-            let _e1289 = w_9;
-            w_9 = (_e1289 + 1u);
+            let _e814 = w_9;
+            w_9 = (_e814 + 1u);
         }
     }
     loop {
-        let _e1294 = g_1;
-        let _e1296 = sp.genes_per;
-        if (_e1294 < min(_e1296, 8u)) {
+        let _e819 = g_1;
+        let _e821 = sp.genes_per;
+        if (_e819 < min(_e821, 8u)) {
         } else {
             break;
         }
         {
-            let _e1310 = combinations[(gid.x % arrayLength((&combinations)))];
-            let _e1312 = g_1;
-            if ((((_e1310 & 16777215u) >> _e1312) & 1u) == 0u) {
+            let _e827 = g_1;
+            if (((genes_2 >> _e827) & 1u) == 0u) {
                 continue;
             }
-            let _e1322 = g_1;
-            let _e1323 = gene_index((gid.x / arrayLength((&combinations))), _e1322);
+            let _e832 = g_1;
+            let _e833 = gene_index(c_4, _e832);
+            let _e837 = sp.n_rows;
+            let g0_ = preds[(_e833 * _e837)];
             gsum = vec2<f32>(0f, 0f);
-            let _e1331 = sp.n_rows;
-            let _e1334 = preds[(_e1323 * _e1331)];
-            gmin = _e1334;
-            let _e1339 = sp.n_rows;
-            let _e1342 = preds[(_e1323 * _e1339)];
-            ghi = _e1342;
+            gmin = g0_;
+            ghi = g0_;
             n_read = 0f;
             row_4 = 0u;
             loop {
-                let _e1349 = row_4;
-                let _e1351 = sp.n_train;
-                if (_e1349 < _e1351) {
+                let _e851 = row_4;
+                if (_e851 < nt) {
                 } else {
                     break;
                 }
                 {
-                    let _e1357 = sp.n_rows;
-                    let _e1359 = row_4;
-                    let _e1362 = preds[((_e1323 * _e1357) + _e1359)];
-                    let _e1364 = sp.n_rows;
-                    let _e1367 = preds[(_e1323 * _e1364)];
-                    let _e1369 = keep((_e1362 - _e1367));
-                    let _e1371 = gsum;
-                    let _e1372 = add(_e1371, _e1369);
-                    gsum = _e1372;
-                    let _e1378 = gmin;
-                    let _e1380 = sp.n_rows;
-                    let _e1382 = row_4;
-                    let _e1385 = preds[((_e1323 * _e1380) + _e1382)];
-                    gmin = min(_e1378, _e1385);
-                    let _e1391 = ghi;
-                    let _e1393 = sp.n_rows;
-                    let _e1395 = row_4;
-                    let _e1398 = preds[((_e1323 * _e1393) + _e1395)];
-                    ghi = max(_e1391, _e1398);
-                    let _e1402 = n_read;
-                    n_read = (_e1402 + 1f);
+                    let _e857 = sp.n_rows;
+                    let _e859 = row_4;
+                    let v_7 = preds[((_e833 * _e857) + _e859)];
+                    let _e864 = keep((v_7 - g0_));
+                    let _e866 = gsum;
+                    let _e867 = add(_e866, _e864);
+                    gsum = _e867;
+                    let _e870 = gmin;
+                    gmin = min(_e870, v_7);
+                    let _e873 = ghi;
+                    ghi = max(_e873, v_7);
+                    let _e877 = n_read;
+                    n_read = (_e877 + 1f);
                 }
                 continuing {
-                    let _e1406 = row_4;
-                    row_4 = (_e1406 + LOO_STRIDE);
+                    let _e881 = row_4;
+                    row_4 = (_e881 + LOO_STRIDE);
                 }
             }
-            let _e1409 = gsum;
-            let _e1410 = total(_e1409);
-            let _e1412 = n_read;
-            let _e1413 = div(_e1410, _e1412);
-            let _e1417 = sp.n_rows;
-            let _e1420 = preds[(_e1323 * _e1417)];
-            let _e1422 = keep((_e1420 + _e1413));
-            let _e1428 = ghi;
-            let _e1429 = gmin;
-            if ((_e1428 - _e1429) <= (2f * (0.00000001f + (CONSTANT_REL_TOL * abs(_e1422))))) {
+            let _e884 = gsum;
+            let _e885 = total(_e884);
+            let _e887 = n_read;
+            let _e888 = div(_e885, _e887);
+            let _e890 = keep((g0_ + _e888));
+            let _e896 = ghi;
+            let _e897 = gmin;
+            if ((_e896 - _e897) <= (2f * (0.00000001f + (CONSTANT_REL_TOL * abs(_e890))))) {
                 continue;
             }
-            let _e1449 = combinations[(gid.x % arrayLength((&combinations)))];
-            let _e1459 = combinations[(gid.x % arrayLength((&combinations)))];
-            let _e1463 = g_1;
-            let _e1464 = linked_without((gid.x / arrayLength((&combinations))), (_e1449 & 16777215u), (_e1459 >> 24u), 0u, _e1463, _e1422);
+            let _e906 = g_1;
+            let _e907 = linked_without(c_4, genes_2, linker_2, 0u, _e906, _e890);
             w_10 = 0u;
             loop {
-                let _e1469 = w_10;
-                if (_e1469 < N_WRAPPERS) {
+                let _e912 = w_10;
+                if (_e912 < N_WRAPPERS) {
                 } else {
                     break;
                 }
                 {
-                    let _e1474 = w_10;
-                    m1_[_e1474] = vec2<f32>(0f, 0f);
-                    let _e1478 = w_10;
-                    let _e1479 = wrapped(_e1464, _e1478);
-                    let _e1482 = w_10;
-                    lo1_[_e1482] = _e1479;
-                    let _e1487 = w_10;
-                    let _e1489 = w_10;
-                    let _e1491 = lo1_[_e1489];
-                    hi1_[_e1487] = _e1491;
+                    let _e917 = w_10;
+                    m1_[_e917] = vec2<f32>(0f, 0f);
+                    let _e921 = w_10;
+                    let _e922 = wrapped(_e907, _e921);
+                    let _e925 = w_10;
+                    lo1_[_e925] = _e922;
+                    let _e930 = w_10;
+                    let _e932 = w_10;
+                    let _e934 = lo1_[_e932];
+                    hi1_[_e930] = _e934;
                 }
                 continuing {
-                    let _e1494 = w_10;
-                    w_10 = (_e1494 + 1u);
+                    let _e937 = w_10;
+                    w_10 = (_e937 + 1u);
                 }
             }
             row_5 = 0u;
             loop {
-                let _e1500 = row_5;
-                let _e1502 = sp.n_train;
-                if (_e1500 < _e1502) {
+                let _e942 = row_5;
+                if (_e942 < nt) {
                 } else {
                     break;
                 }
                 {
-                    let _e1517 = combinations[(gid.x % arrayLength((&combinations)))];
-                    let _e1527 = combinations[(gid.x % arrayLength((&combinations)))];
-                    let _e1530 = row_5;
-                    let _e1532 = g_1;
-                    let _e1533 = linked_without((gid.x / arrayLength((&combinations))), (_e1517 & 16777215u), (_e1527 >> 24u), _e1530, _e1532, _e1422);
+                    let _e945 = row_5;
+                    let _e947 = g_1;
+                    let _e948 = linked_without(c_4, genes_2, linker_2, _e945, _e947, _e890);
                     w_11 = 0u;
                     loop {
-                        let _e1538 = w_11;
-                        if (_e1538 < N_WRAPPERS) {
+                        let _e953 = w_11;
+                        if (_e953 < N_WRAPPERS) {
                         } else {
                             break;
                         }
                         {
-                            let _e1541 = w_11;
-                            let _e1542 = wrapped(_e1533, _e1541);
-                            let _e1545 = w_11;
-                            let _e1547 = m1_[_e1545];
-                            let _e1548 = add(_e1547, _e1542);
-                            let _e1551 = w_11;
-                            m1_[_e1551] = _e1548;
-                            let _e1555 = w_11;
-                            let _e1557 = w_11;
-                            let _e1559 = lo1_[_e1557];
-                            lo1_[_e1555] = min(_e1559, _e1542);
-                            let _e1563 = w_11;
-                            let _e1565 = w_11;
-                            let _e1567 = hi1_[_e1565];
-                            hi1_[_e1563] = max(_e1567, _e1542);
+                            let _e956 = w_11;
+                            let _e957 = wrapped(_e948, _e956);
+                            let _e960 = w_11;
+                            let _e962 = m1_[_e960];
+                            let _e963 = add(_e962, _e957);
+                            let _e966 = w_11;
+                            m1_[_e966] = _e963;
+                            let _e970 = w_11;
+                            let _e972 = w_11;
+                            let _e974 = lo1_[_e972];
+                            lo1_[_e970] = min(_e974, _e957);
+                            let _e978 = w_11;
+                            let _e980 = w_11;
+                            let _e982 = hi1_[_e980];
+                            hi1_[_e978] = max(_e982, _e957);
                         }
                         continuing {
-                            let _e1571 = w_11;
-                            w_11 = (_e1571 + 1u);
+                            let _e986 = w_11;
+                            w_11 = (_e986 + 1u);
                         }
                     }
                 }
                 continuing {
-                    let _e1575 = row_5;
-                    row_5 = (_e1575 + LOO_STRIDE);
+                    let _e990 = row_5;
+                    row_5 = (_e990 + LOO_STRIDE);
                 }
             }
             w_12 = 0u;
             loop {
-                let _e1581 = w_12;
-                if (_e1581 < N_WRAPPERS) {
+                let _e996 = w_12;
+                if (_e996 < N_WRAPPERS) {
                 } else {
                     break;
                 }
                 {
-                    let _e1586 = w_12;
-                    xx[_e1586] = vec2<f32>(0f, 0f);
-                    let _e1592 = w_12;
-                    xy[_e1592] = vec2<f32>(0f, 0f);
+                    let _e1001 = w_12;
+                    xx[_e1001] = vec2<f32>(0f, 0f);
+                    let _e1007 = w_12;
+                    xy[_e1007] = vec2<f32>(0f, 0f);
                 }
                 continuing {
-                    let _e1597 = w_12;
-                    w_12 = (_e1597 + 1u);
+                    let _e1012 = w_12;
+                    w_12 = (_e1012 + 1u);
                 }
             }
             row_6 = 0u;
             loop {
-                let _e1603 = row_6;
-                let _e1605 = sp.n_train;
-                if (_e1603 < _e1605) {
+                let _e1017 = row_6;
+                if (_e1017 < nt) {
                 } else {
                     break;
                 }
                 {
-                    let _e1620 = combinations[(gid.x % arrayLength((&combinations)))];
-                    let _e1630 = combinations[(gid.x % arrayLength((&combinations)))];
-                    let _e1633 = row_6;
-                    let _e1635 = g_1;
-                    let _e1636 = linked_without((gid.x / arrayLength((&combinations))), (_e1620 & 16777215u), (_e1630 >> 24u), _e1633, _e1635, _e1422);
-                    let _e1640 = row_6;
-                    let _e1642 = y_1[_e1640];
-                    let _e1644 = sp.y_mean_train;
-                    let _e1646 = keep((_e1642 - _e1644));
+                    let _e1020 = row_6;
+                    let _e1022 = g_1;
+                    let _e1023 = linked_without(c_4, genes_2, linker_2, _e1020, _e1022, _e890);
+                    let _e1027 = row_6;
+                    let _e1029 = y_1[_e1027];
+                    let _e1031 = sp.y_mean_train;
+                    let _e1033 = keep((_e1029 - _e1031));
                     w_13 = 0u;
                     loop {
-                        let _e1651 = w_13;
-                        if (_e1651 < N_WRAPPERS) {
+                        let _e1038 = w_13;
+                        if (_e1038 < N_WRAPPERS) {
                         } else {
                             break;
                         }
                         {
-                            let _e1654 = w_13;
-                            let _e1655 = wrapped(_e1636, _e1654);
-                            let _e1658 = w_13;
-                            let _e1660 = m1_[_e1658];
-                            let _e1661 = total(_e1660);
-                            let _e1663 = n_read;
-                            let _e1664 = div(_e1661, _e1663);
-                            let _e1666 = keep((_e1655 - _e1664));
-                            let _e1668 = keep((_e1666 * _e1666));
-                            let _e1671 = w_13;
-                            let _e1673 = xx[_e1671];
-                            let _e1674 = add(_e1673, _e1668);
-                            let _e1677 = w_13;
-                            xx[_e1677] = _e1674;
-                            let _e1680 = keep((_e1666 * _e1646));
-                            let _e1683 = w_13;
-                            let _e1685 = xy[_e1683];
-                            let _e1686 = add(_e1685, _e1680);
-                            let _e1689 = w_13;
-                            xy[_e1689] = _e1686;
+                            let _e1041 = w_13;
+                            let _e1042 = wrapped(_e1023, _e1041);
+                            let _e1045 = w_13;
+                            let _e1047 = m1_[_e1045];
+                            let _e1048 = total(_e1047);
+                            let _e1050 = n_read;
+                            let _e1051 = div(_e1048, _e1050);
+                            let _e1053 = keep((_e1042 - _e1051));
+                            let _e1055 = keep((_e1053 * _e1053));
+                            let _e1058 = w_13;
+                            let _e1060 = xx[_e1058];
+                            let _e1061 = add(_e1060, _e1055);
+                            let _e1064 = w_13;
+                            xx[_e1064] = _e1061;
+                            let _e1067 = keep((_e1053 * _e1033));
+                            let _e1070 = w_13;
+                            let _e1072 = xy[_e1070];
+                            let _e1073 = add(_e1072, _e1067);
+                            let _e1076 = w_13;
+                            xy[_e1076] = _e1073;
                         }
                         continuing {
-                            let _e1693 = w_13;
-                            w_13 = (_e1693 + 1u);
+                            let _e1080 = w_13;
+                            w_13 = (_e1080 + 1u);
                         }
                     }
                 }
                 continuing {
-                    let _e1697 = row_6;
-                    row_6 = (_e1697 + LOO_STRIDE);
+                    let _e1084 = row_6;
+                    row_6 = (_e1084 + LOO_STRIDE);
                 }
             }
             w_14 = 0u;
             loop {
-                let _e1703 = w_14;
-                if (_e1703 < N_WRAPPERS) {
+                let _e1090 = w_14;
+                if (_e1090 < N_WRAPPERS) {
                 } else {
                     break;
                 }
                 {
-                    let _e1707 = w_14;
-                    let _e1709 = ok[_e1707];
-                    if !(_e1709) {
+                    let _e1094 = w_14;
+                    let _e1096 = ok[_e1094];
+                    if !(_e1096) {
                         continue;
                     }
-                    let _e1720 = sp.row_base;
-                    let _e1733 = w_14;
-                    let _e1738 = scores[(((((((_e1720 + (gid.x / arrayLength((&combinations)))) * arrayLength((&combinations))) + (gid.x % arrayLength((&combinations)))) * N_WRAPPERS) * WIDTH) + (_e1733 * WIDTH)) + 2u)];
-                    let _e1740 = sp.n_train;
-                    let _e1743 = keep((_e1738 * f32(_e1740)));
-                    let _e1746 = keep((_e1277 * 4f));
-                    let _e1749 = div(_e1743, max(_e1746, 0.000000000000000000000000000001f));
-                    let _e1752 = keep((1f - _e1749));
-                    let _e1755 = w_14;
-                    let _e1757 = xx[_e1755];
-                    let _e1758 = total(_e1757);
-                    let _e1761 = w_14;
-                    let _e1763 = xy[_e1761];
-                    let _e1764 = total(_e1763);
+                    let _e1100 = w_14;
+                    let o_1 = (out + (_e1100 * WIDTH));
+                    let _e1107 = scores[(o_1 + 2u)];
+                    let _e1110 = keep((_e1107 * f32(nt)));
+                    let _e1113 = keep((_e802 * 4f));
+                    let _e1116 = div(_e1110, max(_e1113, 0.000000000000000000000000000001f));
+                    let _e1119 = keep((1f - _e1116));
+                    let _e1122 = w_14;
+                    let _e1124 = xx[_e1122];
+                    let _e1125 = total(_e1124);
+                    let _e1128 = w_14;
+                    let _e1130 = xy[_e1128];
+                    let _e1131 = total(_e1130);
                     without = 0f;
-                    let _e1769 = w_14;
-                    let _e1771 = m1_[_e1769];
-                    let _e1772 = total(_e1771);
-                    let _e1774 = n_read;
-                    let _e1775 = div(_e1772, _e1774);
-                    let _e1776 = finite(_e1758);
-                    let _e1777 = finite(_e1764);
-                    let _e1785 = w_14;
-                    let _e1787 = hi1_[_e1785];
-                    let _e1788 = w_14;
-                    let _e1790 = lo1_[_e1788];
-                    if ((((((_e1787 - _e1790) > (2f * (0.00000001f + (CONSTANT_REL_TOL * abs(_e1775))))) && (_e1758 > 0f)) && (_e1277 > 0f)) && _e1776) && _e1777) {
-                        let _e1804 = keep((_e1764 * _e1764));
-                        let _e1806 = keep((_e1758 * _e1277));
-                        let _e1807 = div(_e1804, _e1806);
-                        without = clamp(_e1807, 0f, 1f);
+                    let _e1136 = w_14;
+                    let _e1138 = m1_[_e1136];
+                    let _e1139 = total(_e1138);
+                    let _e1141 = n_read;
+                    let _e1142 = div(_e1139, _e1141);
+                    let _e1149 = w_14;
+                    let _e1151 = hi1_[_e1149];
+                    let _e1152 = w_14;
+                    let _e1154 = lo1_[_e1152];
+                    let varies = ((_e1151 - _e1154) > (2f * (0.00000001f + (CONSTANT_REL_TOL * abs(_e1142)))));
+                    let _e1161 = finite(_e1125);
+                    let _e1162 = finite(_e1131);
+                    if ((((varies && (_e1125 > 0f)) && (_e802 > 0f)) && _e1161) && _e1162) {
+                        let _e1171 = keep((_e1131 * _e1131));
+                        let _e1173 = keep((_e1125 * _e802));
+                        let _e1174 = div(_e1171, _e1173);
+                        without = clamp(_e1174, 0f, 1f);
                     }
                     l = 1f;
-                    if (_e1752 > 0.000001f) {
-                        let _e1817 = without;
-                        let _e1818 = div(_e1817, _e1752);
-                        let _e1821 = keep((1f - _e1818));
-                        l = clamp(_e1821, 0f, 1f);
+                    if (_e1119 > 0.000001f) {
+                        let _e1184 = without;
+                        let _e1185 = div(_e1184, _e1119);
+                        let _e1188 = keep((1f - _e1185));
+                        l = clamp(_e1188, 0f, 1f);
                     }
-                    let _e1831 = w_14;
-                    let _e1833 = w_14;
-                    let _e1835 = n_loss[_e1833];
-                    let _e1838 = l;
-                    loss[((_e1831 * 8u) + _e1835)] = _e1838;
-                    let _e1842 = w_14;
-                    let _e1844 = w_14;
-                    let _e1846 = n_loss[_e1844];
-                    n_loss[_e1842] = (_e1846 + 1u);
+                    let _e1198 = w_14;
+                    let _e1200 = w_14;
+                    let _e1202 = n_loss[_e1200];
+                    let _e1205 = l;
+                    loss[((_e1198 * 8u) + _e1202)] = _e1205;
+                    let _e1209 = w_14;
+                    let _e1211 = w_14;
+                    let _e1213 = n_loss[_e1211];
+                    n_loss[_e1209] = (_e1213 + 1u);
                 }
                 continuing {
-                    let _e1850 = w_14;
-                    w_14 = (_e1850 + 1u);
+                    let _e1217 = w_14;
+                    w_14 = (_e1217 + 1u);
                 }
             }
         }
         continuing {
-            let _e1854 = g_1;
-            g_1 = (_e1854 + 1u);
+            let _e1221 = g_1;
+            g_1 = (_e1221 + 1u);
         }
     }
     loop {
-        let _e1858 = w_15;
-        if (_e1858 < N_WRAPPERS) {
+        let _e1225 = w_15;
+        if (_e1225 < N_WRAPPERS) {
         } else {
             break;
         }
         {
-            let _e1864 = w_15;
-            let _e1866 = ok[_e1864];
-            let _e1868 = w_15;
-            let _e1870 = n_loss[_e1868];
-            if (!(_e1866) || (_e1870 == 0u)) {
+            let _e1231 = w_15;
+            let _e1233 = ok[_e1231];
+            let _e1235 = w_15;
+            let _e1237 = n_loss[_e1235];
+            if (!(_e1233) || (_e1237 == 0u)) {
                 continue;
             }
+            let _e1242 = w_15;
+            let n_1 = n_loss[_e1242];
             i_3 = 1u;
             loop {
-                let _e1878 = i_3;
-                let _e1879 = w_15;
-                let _e1881 = n_loss[_e1879];
-                if (_e1878 < _e1881) {
+                let _e1248 = i_3;
+                if (_e1248 < n_1) {
                 } else {
                     break;
                 }
                 {
-                    let _e1885 = i_3;
-                    j = _e1885;
+                    let _e1254 = w_15;
+                    let _e1256 = i_3;
+                    let v_8 = loss[((_e1254 * 8u) + _e1256)];
+                    let _e1262 = i_3;
+                    j = _e1262;
                     loop {
-                        let _e1893 = j;
-                        let _e1895 = w_15;
-                        let _e1897 = j;
-                        let _e1901 = loss[(((_e1895 * 8u) + _e1897) - 1u)];
-                        let _e1902 = w_15;
-                        let _e1904 = i_3;
-                        let _e1907 = loss[((_e1902 * 8u) + _e1904)];
-                        if ((_e1893 == 0u) || (_e1901 <= _e1907)) {
+                        let _e1269 = j;
+                        let _e1271 = w_15;
+                        let _e1273 = j;
+                        let _e1277 = loss[(((_e1271 * 8u) + _e1273) - 1u)];
+                        if ((_e1269 == 0u) || (_e1277 <= v_8)) {
                             break;
                         }
-                        let _e1915 = w_15;
-                        let _e1917 = j;
-                        let _e1920 = w_15;
-                        let _e1922 = j;
-                        let _e1926 = loss[(((_e1920 * 8u) + _e1922) - 1u)];
-                        loss[((_e1915 * 8u) + _e1917)] = _e1926;
-                        let _e1929 = j;
-                        j = (_e1929 - 1u);
+                        let _e1285 = w_15;
+                        let _e1287 = j;
+                        let _e1290 = w_15;
+                        let _e1292 = j;
+                        let _e1296 = loss[(((_e1290 * 8u) + _e1292) - 1u)];
+                        loss[((_e1285 * 8u) + _e1287)] = _e1296;
+                        let _e1299 = j;
+                        j = (_e1299 - 1u);
                     }
-                    let _e1936 = w_15;
-                    let _e1938 = j;
-                    let _e1941 = w_15;
-                    let _e1943 = i_3;
-                    let _e1946 = loss[((_e1941 * 8u) + _e1943)];
-                    loss[((_e1936 * 8u) + _e1938)] = _e1946;
+                    let _e1305 = w_15;
+                    let _e1307 = j;
+                    loss[((_e1305 * 8u) + _e1307)] = v_8;
                 }
                 continuing {
-                    let _e1949 = i_3;
-                    i_3 = (_e1949 + 1u);
+                    let _e1312 = i_3;
+                    i_3 = (_e1312 + 1u);
                 }
             }
-            let _e1957 = w_15;
-            let _e1959 = w_15;
-            let _e1961 = n_loss[_e1959];
-            let _e1966 = loss[((_e1957 * 8u) + ((_e1961 - 1u) / 2u))];
-            let _e1967 = w_15;
-            let _e1969 = w_15;
-            let _e1971 = n_loss[_e1969];
-            let _e1975 = loss[((_e1967 * 8u) + (_e1971 / 2u))];
-            let _e1977 = keep((_e1966 + _e1975));
-            let _e1980 = keep((0.5f * _e1977));
-            let _e1983 = keep((1f - _e1980));
-            let _e1993 = sp.row_base;
-            let _e2006 = w_15;
-            scores[(((((((_e1993 + (gid.x / arrayLength((&combinations)))) * arrayLength((&combinations))) + (gid.x % arrayLength((&combinations)))) * N_WRAPPERS) * WIDTH) + (_e2006 * WIDTH)) + 9u)] = _e1983;
+            let _e1319 = w_15;
+            let _e1325 = loss[((_e1319 * 8u) + ((n_1 - 1u) / 2u))];
+            let _e1326 = w_15;
+            let _e1331 = loss[((_e1326 * 8u) + (n_1 / 2u))];
+            let _e1333 = keep((_e1325 + _e1331));
+            let _e1336 = keep((0.5f * _e1333));
+            let _e1339 = keep((1f - _e1336));
+            let _e1344 = w_15;
+            scores[((out + (_e1344 * WIDTH)) + 9u)] = _e1339;
         }
         continuing {
-            let _e2013 = w_15;
-            w_15 = (_e2013 + 1u);
+            let _e1351 = w_15;
+            w_15 = (_e1351 + 1u);
         }
     }
     return;

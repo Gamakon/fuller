@@ -153,13 +153,25 @@ naga's writer renames identifiers.
 | splice+kernel.wgsl | 7 | 32,641 |
 
 This is the structural gate, necessary not sufficient; the proof is the
-device run (compile original and rebuilt, same inputs, bit-exact outputs),
-the plan's step 5. Its first half is measured (2026-10-08,
-`examples/wgsl_device_compile.rs`, Apple M3 Max, Metal): all 10 (kernel,
-entry point) pairs create a compute pipeline both from the original and
-from the rebuilt text, at the adapter's limits (these kernels bind up to 21
-storage buffers). The second half, the same real inputs through both and
-the golden checksum deciding, waits on a source-override hook in phylu. A sample chromosome set for phylu's decoder is in
+device run, the plan's step 5, and it is DONE (2026-10-08 23:08, Apple M3
+Max, Metal). First half: all 10 (kernel, entry point) pairs create a
+compute pipeline both from the original and from the rebuilt text
+(`examples/wgsl_device_compile.rs`). Second half: phylu's own suite driving
+each rebuilt kernel in place of the shipped source (`PHYLU_WGSL_DIR`,
+`phylu/scripts/wgsl_override_sweep.sh`, phylu 220c43e0): the untyped
+golden checksum and the hff-sample host/device decode gate hold for the
+rebuilt decode, hff, cand, score and mix64+vary kernels, one binary at a
+time, control first. Five of five bit-exact on real inputs.
+
+What the proof found on the way: the first rebuilt `decode.wgsl` held the
+golden but refused 19 of 27 sample genes. naga's own parse, validate and
+write of the same kernel passed, and the diff showed why: naga keeps every
+source `let`, and the reader had expanded each use. `let pos =
+q_pos[head_i]; head_i = head_i + 1u;` re-read the queue after the store
+when inlined. A source `let` is now a root (`RootKind::Let`, bound once at
+its Emit, later uses `let.<name>@<idx>` leaves) and the rebuild names it so
+the writer writes it back. The rebuilt texts shrank to naga's own size
+(decode 23,326 bytes against 33,029 before). A sample chromosome set for phylu's decoder is in
 `samples/hff.chromosomes.json` (`--dump`; the six-kernel dump is 13 MB, regenerable, untracked), and the six rebuilt kernels in `samples/rebuilt/` (`--rebuilt`).
 
 ### Form inference by use (measured 2026-10-08)
@@ -224,7 +236,7 @@ repaid because the product runs billions of times.
 | chromosome: roots folded into a homeotic tail, encoded and decoded through the generic pair (`src/wgsl/chromosome.rs`) | built; 59 of 59 functions `KARVA ok` (table above) |
 | the scaffold rebuild and the structural gate (`src/wgsl/scaffold.rs`, `round_trip`) | built; `ROUND_TRIP ok` on the six kernels |
 | form inference by use (`src/wgsl/infer.rs`) | built; table above. Not yet carried into the chromosome (duals per gene node, the two-form rule in the fold) |
-| device parity of a rebuilt kernel (the proof) | half: all 10 entry points compile both ways on Metal (`examples/wgsl_device_compile.rs`); the run on real inputs waits on phylu's source-override hook |
+| device parity of a rebuilt kernel (the proof) | DONE: all 10 entry points compile both ways on Metal, and phylu's suite holds the golden checksum and the sample gate with each of the five rebuilt kernels substituted |
 | the scaffold-with-holes chromosome and its decoder (phylu) | not started |
 | compile-run-time evaluation path with the correctness gate (phylu) | not started |
 | first target: one of our own kernels, read in, round-tripped, then evolved for time | not started |

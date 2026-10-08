@@ -209,7 +209,16 @@ fn canonical(sexpr: &str, module: &Module, f: &Function) -> Result<String, Strin
     let functions: Vec<String> = module.functions.iter().enumerate().map(|(i, (_, g))| g.name.clone().unwrap_or_else(|| format!("fn{i}"))).collect();
     let constants: Vec<String> = module.constants.iter().enumerate().map(|(i, (_, c))| c.name.clone().unwrap_or_else(|| format!("const{i}"))).collect();
     // `let`s by their order among the function's named expressions (handle order).
-    let mut lets: Vec<(usize, String)> = f.named_expressions.iter().filter(|(_, n)| !super::reader::is_bake(n)).map(|(h, n)| (h.index(), n.clone())).collect();
+    // Only the lets that are roots: emitted expressions. A `let` aliasing an
+    // argument or a global needs no Emit and makes no root; a `let` naming a
+    // call's result is the Call statement's, and the writer gives it a bake
+    // name (`_e6`) rather than the source name.
+    let mut lets: Vec<(usize, String)> = f
+        .named_expressions
+        .iter()
+        .filter(|(h, n)| !super::reader::is_bake(n) && !f.expressions[**h].needs_pre_emit() && !matches!(f.expressions[**h], Expression::CallResult(_)))
+        .map(|(h, n)| (h.index(), n.clone()))
+        .collect();
     lets.sort();
     let lets: Vec<String> = lets.into_iter().map(|(h, _)| h.to_string()).collect();
     let by_position = |name: &str| -> String {

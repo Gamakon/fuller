@@ -138,7 +138,22 @@ var<private> cl_tok: array<u32, 512>;
 var<private> cl_dc: array<u32, 512>;
 
 fn mul32x32_64_(a: u32, b: u32) -> vec2<u32> {
-    return vec2<u32>((((a & 65535u) * (b & 65535u)) + ((((a & 65535u) * (b >> 16u)) + ((a >> 16u) * (b & 65535u))) << 16u)), ((((a >> 16u) * (b >> 16u)) + (((((a & 65535u) * (b >> 16u)) + ((a >> 16u) * (b & 65535u))) >> 16u) | (select(0u, 1u, ((((a & 65535u) * (b >> 16u)) + ((a >> 16u) * (b & 65535u))) < ((a & 65535u) * (b >> 16u)))) << 16u))) + select(0u, 1u, ((((a & 65535u) * (b & 65535u)) + ((((a & 65535u) * (b >> 16u)) + ((a >> 16u) * (b & 65535u))) << 16u)) < ((a & 65535u) * (b & 65535u))))));
+    let a0_ = (a & 65535u);
+    let a1_ = (a >> 16u);
+    let b0_ = (b & 65535u);
+    let b1_ = (b >> 16u);
+    let p00_ = (a0_ * b0_);
+    let p01_ = (a0_ * b1_);
+    let p10_ = (a1_ * b0_);
+    let p11_ = (a1_ * b1_);
+    let mid = (p01_ + p10_);
+    let mid_carry = select(0u, 1u, (mid < p01_));
+    let mid_lo = (mid << 16u);
+    let mid_hi = ((mid >> 16u) | (mid_carry << 16u));
+    let lo_1 = (p00_ + mid_lo);
+    let lo_carry = select(0u, 1u, (lo_1 < p00_));
+    let hi_1 = ((p11_ + mid_hi) + lo_carry);
+    return vec2<u32>(lo_1, hi_1);
 }
 
 fn mul64_lo(a_1: vec2<u32>, b_1: vec2<u32>) -> vec2<u32> {
@@ -187,7 +202,9 @@ fn mix64_modp(domain_1: vec2<u32>, a_3: vec2<u32>, b_3: vec2<u32>, c_1: vec2<u32
     let _e4 = mix64_3p(domain_1, a_3, b_3, c_1);
     let _e7 = mul32x32_64_(_e4.x, n);
     let _e10 = mul32x32_64_(_e4.y, n);
-    return (_e10.y + select(0u, 1u, ((_e7.y + _e10.x) < _e7.y)));
+    let mid_1 = (_e7.y + _e10.x);
+    let carry = select(0u, 1u, (mid_1 < _e7.y));
+    return (_e10.y + carry);
 }
 
 fn hash(row: u32, slot: u32, stream: u32) -> vec2<u32> {
@@ -219,19 +236,17 @@ fn chance(row_3: u32, slot_3: u32, stream_3: u32, thr: u32) -> bool {
 fn band_of(row_4: u32, merge: u32) -> u32 {
     var age: u32 = 0u;
 
-    let _e5 = gp.generation;
-    let _e7 = cohort_now[row_4];
-    if (_e5 > _e7) {
-        let _e14 = gp.generation;
-        let _e16 = cohort_now[row_4];
-        age = (_e14 - _e16);
+    let label = cohort_now[row_4];
+    let _e7 = gp.generation;
+    if (_e7 > label) {
+        let _e12 = gp.generation;
+        age = (_e12 - label);
     }
-    let _e20 = age;
-    if (_e20 >= merge) {
+    let _e16 = age;
+    if (_e16 >= merge) {
         return ELDERS;
     }
-    let _e26 = cohort_now[row_4];
-    return _e26;
+    return label;
 }
 
 fn same_cohort(a_4: u32, b_4: u32, merge_1: u32) -> bool {
@@ -244,12 +259,11 @@ fn same_cohort(a_4: u32, b_4: u32, merge_1: u32) -> bool {
 }
 
 fn key(row_5: u32) -> f32 {
-    let _e5 = fitness_now[row_5];
-    if ((bitcast<u32>(_e5) & 2147483647u) > 2139095040u) {
+    let f = fitness_now[row_5];
+    if ((bitcast<u32>(f) & 2147483647u) > 2139095040u) {
         return F32_MAX;
     }
-    let _e14 = fitness_now[row_5];
-    return min(_e14, F32_MAX);
+    return min(f, F32_MAX);
 }
 
 fn better_mate(me: u32, c_2: u32, w_2: u32, open_fight: bool, merge_2: u32) -> bool {
@@ -314,16 +328,16 @@ fn reverse(lo: u32, hi: u32) {
         }
         let _e13 = b_5;
         b_5 = (_e13 - 1u);
-        let _e18 = a_5;
-        let _e20 = b_5;
-        let _e22 = genome[_e20];
-        genome[_e18] = _e22;
-        let _e26 = b_5;
-        let _e28 = a_5;
-        let _e30 = genome[_e28];
-        genome[_e26] = _e30;
-        let _e33 = a_5;
-        a_5 = (_e33 + 1u);
+        let _e17 = a_5;
+        let held = genome[_e17];
+        let _e23 = a_5;
+        let _e25 = b_5;
+        let _e27 = genome[_e25];
+        genome[_e23] = _e27;
+        let _e30 = b_5;
+        genome[_e30] = held;
+        let _e34 = a_5;
+        a_5 = (_e34 + 1u);
     }
     return;
 }
@@ -348,265 +362,241 @@ fn cleanse_gene(row_7: u32, gene: u32, collapse_thr: u32) {
     var x_2: u32 = 0u;
     var x_3: u32 = 0u;
 
-    let _e19 = gp.head;
-    let _e21 = gp.tail;
-    if ((_e19 + _e21) > MAX_CLEANSE) {
+    let h = gp.vhead;
+    let _e21 = gp.head;
+    let _e23 = gp.tail;
+    let ht = (_e21 + _e23);
+    if (ht > MAX_CLEANSE) {
         return;
     }
     loop {
-        let _e28 = need;
-        let _e30 = n_2;
-        let _e32 = gp.head;
-        let _e34 = gp.tail;
-        if ((_e28 <= 0i) || (_e30 >= (_e32 + _e34))) {
+        let _e30 = need;
+        let _e32 = n_2;
+        if ((_e30 <= 0i) || (_e32 >= ht)) {
             break;
         }
-        let _e44 = need;
-        let _e45 = n_2;
-        let _e48 = genome[(gene + _e45)];
-        let _e50 = arity[_e48];
-        need = ((_e44 + i32(_e50)) - 1i);
-        let _e56 = n_2;
-        n_2 = (_e56 + 1u);
+        let _e41 = need;
+        let _e42 = n_2;
+        let _e45 = genome[(gene + _e42)];
+        let _e47 = arity[_e45];
+        need = ((_e41 + i32(_e47)) - 1i);
+        let _e53 = n_2;
+        n_2 = (_e53 + 1u);
     }
-    let _e60 = need;
-    if (_e60 > 0i) {
+    let _e57 = need;
+    if (_e57 > 0i) {
         return;
     }
     loop {
-        let _e64 = i_14;
-        let _e65 = n_2;
-        if (_e64 < _e65) {
+        let _e61 = i_14;
+        let _e62 = n_2;
+        if (_e61 < _e62) {
         } else {
             break;
         }
         {
-            let _e70 = i_14;
-            let _e72 = next_child_1;
-            cl_child[_e70] = _e72;
-            let _e78 = next_child_1;
-            let _e79 = i_14;
-            let _e82 = genome[(gene + _e79)];
-            let _e84 = arity[_e82];
-            next_child_1 = (_e78 + _e84);
-            let _e89 = i_14;
-            cl_ordinal[_e89] = NONE;
-            let _e97 = gp.rnc_id;
-            let _e99 = i_14;
-            let _e102 = genome[(gene + _e99)];
-            let _e104 = gp.rnc_id;
-            if ((_e97 != NONE) && (_e102 == _e104)) {
-                let _e110 = i_14;
-                let _e112 = n_rnc;
-                cl_ordinal[_e110] = _e112;
-                let _e115 = n_rnc;
-                n_rnc = (_e115 + 1u);
+            let _e67 = i_14;
+            let tok = genome[(gene + _e67)];
+            let _e74 = i_14;
+            let _e76 = next_child_1;
+            cl_child[_e74] = _e76;
+            let _e79 = next_child_1;
+            let _e81 = arity[tok];
+            next_child_1 = (_e79 + _e81);
+            let _e86 = i_14;
+            cl_ordinal[_e86] = NONE;
+            let _e91 = gp.rnc_id;
+            let _e94 = gp.rnc_id;
+            if ((_e91 != NONE) && (tok == _e94)) {
+                let _e100 = i_14;
+                let _e102 = n_rnc;
+                cl_ordinal[_e100] = _e102;
+                let _e105 = n_rnc;
+                n_rnc = (_e105 + 1u);
             }
-            let _e122 = i_14;
-            let _e125 = genome[(gene + _e122)];
-            let _e127 = arity[_e125];
-            if (_e127 > 0u) {
-                let _e131 = n_fn_1;
-                n_fn_1 = (_e131 + 1u);
+            let _e110 = arity[tok];
+            if (_e110 > 0u) {
+                let _e114 = n_fn_1;
+                n_fn_1 = (_e114 + 1u);
             }
         }
         continuing {
-            let _e135 = i_14;
-            i_14 = (_e135 + 1u);
+            let _e118 = i_14;
+            i_14 = (_e118 + 1u);
         }
     }
-    let _e139 = n_fn_1;
-    if (_e139 == 0u) {
+    let _e122 = n_fn_1;
+    if (_e122 == 0u) {
         return;
     }
-    let _e145 = n_fn_1;
-    let _e146 = below(row_7, 1u, STREAM_CLEANSE, _e145);
+    let _e128 = n_fn_1;
+    let _e129 = below(row_7, 1u, STREAM_CLEANSE, _e128);
     loop {
-        let _e149 = i_15;
-        let _e150 = n_2;
-        if (_e149 < _e150) {
+        let _e132 = i_15;
+        let _e133 = n_2;
+        if (_e132 < _e133) {
         } else {
             break;
         }
         {
-            let _e157 = i_15;
-            let _e160 = genome[(gene + _e157)];
-            let _e162 = arity[_e160];
-            if (_e162 > 0u) {
-                let _e165 = seen_1;
-                if (_e165 == _e146) {
-                    let _e169 = i_15;
-                    p = _e169;
+            let _e140 = i_15;
+            let _e143 = genome[(gene + _e140)];
+            let _e145 = arity[_e143];
+            if (_e145 > 0u) {
+                let _e148 = seen_1;
+                if (_e148 == _e129) {
+                    let _e152 = i_15;
+                    p = _e152;
                 }
-                let _e172 = seen_1;
-                seen_1 = (_e172 + 1u);
+                let _e155 = seen_1;
+                seen_1 = (_e155 + 1u);
             }
         }
         continuing {
-            let _e176 = i_15;
-            i_15 = (_e176 + 1u);
+            let _e159 = i_15;
+            i_15 = (_e159 + 1u);
         }
     }
-    let _e182 = chance(row_7, 2u, STREAM_CLEANSE, collapse_thr);
-    let _e186 = gp.rnc_id;
-    if !(((_e186 != NONE) && _e182)) {
-        let _e197 = p;
-        let _e200 = genome[(gene + _e197)];
-        let _e202 = arity[_e200];
-        let _e203 = below(row_7, 3u, STREAM_CLEANSE, _e202);
-        let _e207 = p;
-        let _e209 = cl_child[_e207];
-        q_1 = (_e209 + _e203);
+    let _e165 = chance(row_7, 2u, STREAM_CLEANSE, collapse_thr);
+    let _e169 = gp.rnc_id;
+    let collapse = ((_e169 != NONE) && _e165);
+    if !(collapse) {
+        let _e180 = p;
+        let _e183 = genome[(gene + _e180)];
+        let _e185 = arity[_e183];
+        let _e186 = below(row_7, 3u, STREAM_CLEANSE, _e185);
+        let _e190 = p;
+        let _e192 = cl_child[_e190];
+        q_1 = (_e192 + _e186);
     }
-    let _e216 = gp.n_rnc;
-    let _e217 = below(row_7, 4u, STREAM_CLEANSE, _e216);
-    let _e223 = q_1;
-    let _e224 = p;
-    cl_queue[0] = select(0u, _e223, (_e224 == 0u));
+    let _e199 = gp.n_rnc;
+    let _e200 = below(row_7, 4u, STREAM_CLEANSE, _e199);
+    let _e206 = q_1;
+    let _e207 = p;
+    cl_queue[0] = select(0u, _e206, (_e207 == 0u));
     loop {
-        let _e229 = head;
-        let _e230 = tail;
-        if (_e229 >= _e230) {
+        let _e212 = head;
+        let _e213 = tail;
+        if (_e212 >= _e213) {
             break;
         }
-        let _e234 = head;
-        head = (_e234 + 1u);
-        let _e239 = head;
-        let _e241 = cl_queue[_e239];
-        if (_e241 == LEAF) {
-            let _e246 = m;
-            let _e249 = gp.rnc_id;
-            cl_tok[_e246] = _e249;
-            let _e252 = k_3;
-            cl_dc[_e252] = _e217;
-            let _e256 = k_3;
-            k_3 = (_e256 + 1u);
-            let _e260 = m;
-            m = (_e260 + 1u);
+        let _e217 = head;
+        let i_16 = cl_queue[_e217];
+        let _e222 = head;
+        head = (_e222 + 1u);
+        if (i_16 == LEAF) {
+            let _e229 = m;
+            let _e232 = gp.rnc_id;
+            cl_tok[_e229] = _e232;
+            let _e235 = k_3;
+            cl_dc[_e235] = _e200;
+            let _e239 = k_3;
+            k_3 = (_e239 + 1u);
+            let _e243 = m;
+            m = (_e243 + 1u);
             continue;
         }
-        let _e268 = m;
-        let _e270 = head;
-        let _e272 = cl_queue[_e270];
-        let _e275 = genome[(gene + _e272)];
-        cl_tok[_e268] = _e275;
-        let _e280 = head;
-        let _e282 = cl_queue[_e280];
-        let _e284 = cl_ordinal[_e282];
-        if (_e284 != NONE) {
-            let _e295 = k_3;
-            let _e298 = gp.head;
-            let _e300 = gp.tail;
-            let _e303 = head;
-            let _e305 = cl_queue[_e303];
-            let _e307 = cl_ordinal[_e305];
-            let _e310 = genome[((gene + (_e298 + _e300)) + _e307)];
-            let _e311 = head;
-            let _e313 = cl_queue[_e311];
-            let _e315 = cl_ordinal[_e313];
-            let _e317 = gp.tail;
-            cl_dc[_e295] = select(0u, _e310, (_e315 < _e317));
-            let _e322 = k_3;
-            k_3 = (_e322 + 1u);
+        let tok_1 = genome[(gene + i_16)];
+        let _e252 = m;
+        cl_tok[_e252] = tok_1;
+        let _e257 = cl_ordinal[i_16];
+        if (_e257 != NONE) {
+            let _e266 = k_3;
+            let _e270 = cl_ordinal[i_16];
+            let _e273 = genome[((gene + ht) + _e270)];
+            let _e275 = cl_ordinal[i_16];
+            let _e277 = gp.tail;
+            cl_dc[_e266] = select(0u, _e273, (_e275 < _e277));
+            let _e282 = k_3;
+            k_3 = (_e282 + 1u);
         }
-        let _e326 = m;
-        m = (_e326 + 1u);
+        let _e286 = m;
+        m = (_e286 + 1u);
         j = 0u;
         loop {
-            let _e336 = j;
-            let _e337 = head;
-            let _e339 = cl_queue[_e337];
-            let _e342 = genome[(gene + _e339)];
-            let _e344 = arity[_e342];
-            if (_e336 < _e344) {
+            let _e292 = j;
+            let _e294 = arity[tok_1];
+            if (_e292 < _e294) {
             } else {
                 break;
             }
             {
-                let _e353 = tail;
-                let _e355 = q_1;
-                let _e356 = head;
-                let _e358 = cl_queue[_e356];
-                let _e360 = cl_child[_e358];
-                let _e361 = j;
-                let _e363 = head;
-                let _e365 = cl_queue[_e363];
-                let _e367 = cl_child[_e365];
-                let _e368 = j;
-                let _e370 = p;
-                cl_queue[_e353] = select((_e360 + _e361), _e355, ((_e367 + _e368) == _e370));
-                let _e375 = tail;
-                tail = (_e375 + 1u);
+                let _e299 = cl_child[i_16];
+                let _e300 = j;
+                let c_3 = (_e299 + _e300);
+                let _e306 = tail;
+                let _e308 = q_1;
+                let _e309 = p;
+                cl_queue[_e306] = select(c_3, _e308, (c_3 == _e309));
+                let _e314 = tail;
+                tail = (_e314 + 1u);
             }
             continuing {
-                let _e379 = j;
-                j = (_e379 + 1u);
+                let _e318 = j;
+                j = (_e318 + 1u);
             }
         }
     }
-    let _e383 = k_3;
-    let _e385 = gp.tail;
-    if (_e383 > _e385) {
+    let _e322 = k_3;
+    let _e324 = gp.tail;
+    if (_e322 > _e324) {
         return;
     }
-    let _e390 = gp.vhead;
-    x_1 = _e390;
+    x_1 = h;
     loop {
-        let _e393 = x_1;
-        let _e394 = m;
-        if (_e393 < _e394) {
+        let _e329 = x_1;
+        let _e330 = m;
+        if (_e329 < _e330) {
         } else {
             break;
         }
         {
-            let _e400 = x_1;
-            let _e402 = cl_tok[_e400];
-            let _e404 = arity[_e402];
-            if (_e404 > 0u) {
+            let _e336 = x_1;
+            let _e338 = cl_tok[_e336];
+            let _e340 = arity[_e338];
+            if (_e340 > 0u) {
                 return;
             }
         }
         continuing {
-            let _e408 = x_1;
-            x_1 = (_e408 + 1u);
+            let _e344 = x_1;
+            x_1 = (_e344 + 1u);
         }
     }
     loop {
-        let _e412 = x_2;
-        let _e413 = m;
-        if (_e412 < _e413) {
+        let _e348 = x_2;
+        let _e349 = m;
+        if (_e348 < _e349) {
         } else {
             break;
         }
         {
-            let _e419 = x_2;
-            let _e422 = x_2;
-            let _e424 = cl_tok[_e422];
-            genome[(gene + _e419)] = _e424;
+            let _e355 = x_2;
+            let _e358 = x_2;
+            let _e360 = cl_tok[_e358];
+            genome[(gene + _e355)] = _e360;
         }
         continuing {
-            let _e427 = x_2;
-            x_2 = (_e427 + 1u);
+            let _e363 = x_2;
+            x_2 = (_e363 + 1u);
         }
     }
     loop {
-        let _e431 = x_3;
-        let _e432 = k_3;
-        if (_e431 < _e432) {
+        let _e367 = x_3;
+        let _e368 = k_3;
+        if (_e367 < _e368) {
         } else {
             break;
         }
         {
-            let _e440 = gp.head;
-            let _e442 = gp.tail;
-            let _e445 = x_3;
-            let _e448 = x_3;
-            let _e450 = cl_dc[_e448];
-            genome[((gene + (_e440 + _e442)) + _e445)] = _e450;
+            let _e375 = x_3;
+            let _e378 = x_3;
+            let _e380 = cl_dc[_e378];
+            genome[((gene + ht) + _e375)] = _e380;
         }
         continuing {
-            let _e453 = x_3;
-            x_3 = (_e453 + 1u);
+            let _e383 = x_3;
+            x_3 = (_e383 + 1u);
         }
     }
     return;
@@ -615,46 +605,31 @@ fn cleanse_gene(row_7: u32, gene: u32, collapse_thr: u32) {
 fn swap_tokens(a_6: u32, b_6: u32, g_3: u32, from_pos: u32, to_pos: u32) {
     var pos_10: u32;
 
+    let _e3 = gp.head;
+    let _e5 = gp.tail;
+    let width = (_e3 + (2u * _e5));
+    let _e10 = gp.n_genes;
+    let row_w = (_e10 * width);
     pos_10 = from_pos;
     loop {
-        let _e4 = pos_10;
-        if (_e4 < to_pos) {
+        let _e16 = pos_10;
+        if (_e16 < to_pos) {
         } else {
             break;
         }
         {
-            let _e14 = gp.n_genes;
-            let _e16 = gp.head;
-            let _e18 = gp.tail;
-            let _e24 = gp.head;
-            let _e26 = gp.tail;
-            let _e31 = pos_10;
-            let _e35 = gp.n_genes;
-            let _e37 = gp.head;
-            let _e39 = gp.tail;
-            let _e45 = gp.head;
-            let _e47 = gp.tail;
-            let _e52 = pos_10;
-            let _e55 = genome[(((b_6 * (_e35 * (_e37 + (2u * _e39)))) + (g_3 * (_e45 + (2u * _e47)))) + _e52)];
-            genome[(((a_6 * (_e14 * (_e16 + (2u * _e18)))) + (g_3 * (_e24 + (2u * _e26)))) + _e31)] = _e55;
-            let _e64 = gp.n_genes;
-            let _e66 = gp.head;
-            let _e68 = gp.tail;
-            let _e74 = gp.head;
-            let _e76 = gp.tail;
-            let _e81 = pos_10;
-            let _e85 = gp.n_genes;
-            let _e87 = gp.head;
-            let _e89 = gp.tail;
-            let _e95 = gp.head;
-            let _e97 = gp.tail;
-            let _e102 = pos_10;
-            let _e105 = genome[(((a_6 * (_e85 * (_e87 + (2u * _e89)))) + (g_3 * (_e95 + (2u * _e97)))) + _e102)];
-            genome[(((b_6 * (_e64 * (_e66 + (2u * _e68)))) + (g_3 * (_e74 + (2u * _e76)))) + _e81)] = _e105;
+            let _e24 = pos_10;
+            let ia = (((a_6 * row_w) + (g_3 * width)) + _e24);
+            let _e32 = pos_10;
+            let ib = (((b_6 * row_w) + (g_3 * width)) + _e32);
+            let held_1 = genome[ia];
+            let _e40 = genome[ib];
+            genome[ia] = _e40;
+            genome[ib] = held_1;
         }
         continuing {
-            let _e108 = pos_10;
-            pos_10 = (_e108 + 1u);
+            let _e45 = pos_10;
+            pos_10 = (_e45 + 1u);
         }
     }
     return;
@@ -663,38 +638,31 @@ fn swap_tokens(a_6: u32, b_6: u32, g_3: u32, from_pos: u32, to_pos: u32) {
 fn swap_consts(a_7: u32, ga: u32, b_7: u32, gb: u32) {
     var k_4: u32 = 0u;
 
+    let _e3 = gp.n_genes;
+    let _e5 = gp.n_rnc;
+    let rnc_w = (_e3 * _e5);
     loop {
-        let _e3 = k_4;
-        let _e5 = gp.n_rnc;
-        if (_e3 < _e5) {
+        let _e9 = k_4;
+        let _e11 = gp.n_rnc;
+        if (_e9 < _e11) {
         } else {
             break;
         }
         {
-            let _e15 = gp.n_genes;
-            let _e17 = gp.n_rnc;
-            let _e21 = gp.n_rnc;
-            let _e24 = k_4;
-            let _e28 = gp.n_genes;
+            let _e19 = gp.n_rnc;
+            let _e22 = k_4;
+            let ia_1 = (((a_7 * rnc_w) + (ga * _e19)) + _e22);
             let _e30 = gp.n_rnc;
-            let _e34 = gp.n_rnc;
-            let _e37 = k_4;
-            let _e40 = rnc[(((b_7 * (_e28 * _e30)) + (gb * _e34)) + _e37)];
-            rnc[(((a_7 * (_e15 * _e17)) + (ga * _e21)) + _e24)] = _e40;
-            let _e49 = gp.n_genes;
-            let _e51 = gp.n_rnc;
-            let _e55 = gp.n_rnc;
-            let _e58 = k_4;
-            let _e62 = gp.n_genes;
-            let _e64 = gp.n_rnc;
-            let _e68 = gp.n_rnc;
-            let _e71 = k_4;
-            let _e74 = rnc[(((a_7 * (_e62 * _e64)) + (ga * _e68)) + _e71)];
-            rnc[(((b_7 * (_e49 * _e51)) + (gb * _e55)) + _e58)] = _e74;
+            let _e33 = k_4;
+            let ib_1 = (((b_7 * rnc_w) + (gb * _e30)) + _e33);
+            let held_2 = rnc[ia_1];
+            let _e41 = rnc[ib_1];
+            rnc[ia_1] = _e41;
+            rnc[ib_1] = held_2;
         }
         continuing {
-            let _e77 = k_4;
-            k_4 = (_e77 + 1u);
+            let _e46 = k_4;
+            k_4 = (_e46 + 1u);
         }
     }
     return;
@@ -705,34 +673,38 @@ fn first_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     var w: u32 = NONE;
     var i: u32 = 0u;
 
+    let row_8 = gid.x;
     let _e6 = gp.pop;
-    if (gid.x >= _e6) {
+    if (row_8 >= _e6) {
         return;
     }
-    let _e10 = island_of(gid.x);
+    let _e8 = island_of(row_8);
+    let open_fight_1 = (_e8.open_fight == 1u);
+    let n_3 = (_e8.hi - _e8.lo);
     loop {
-        let _e12 = i;
-        if (_e12 < _e10.tournsize) {
+        let _e16 = i;
+        if (_e16 < _e8.tournsize) {
         } else {
             break;
         }
         {
-            let _e18 = i;
-            let _e23 = below(gid.x, _e18, STREAM_SELECT_1_, (_e10.hi - _e10.lo));
-            let _e29 = w;
-            let _e34 = better_mate(gid.x, (_e10.lo + _e23), _e29, (_e10.open_fight == 1u), _e10.cohort_merge);
-            let _e37 = w;
-            if ((_e37 == NONE) || _e34) {
-                w = (_e10.lo + _e23);
+            let _e20 = i;
+            let _e22 = below(row_8, _e20, STREAM_SELECT_1_, n_3);
+            let c_4 = (_e8.lo + _e22);
+            let _e26 = w;
+            let _e28 = better_mate(row_8, c_4, _e26, open_fight_1, _e8.cohort_merge);
+            let _e31 = w;
+            if ((_e31 == NONE) || _e28) {
+                w = c_4;
             }
         }
         continuing {
-            let _e45 = i;
-            i = (_e45 + 1u);
+            let _e37 = i;
+            i = (_e37 + 1u);
         }
     }
-    let _e52 = w;
-    stage1_[gid.x] = _e52;
+    let _e42 = w;
+    stage1_[row_8] = _e42;
     return;
 }
 
@@ -747,30 +719,33 @@ fn select_main(@builtin(global_invocation_id) gid_1: vec3<u32>) {
     var w_1: u32 = NONE;
     var t: u32 = 0u;
 
+    let row_9 = gid_1.x;
     let _e8 = gp.pop;
-    if (gid_1.x >= _e8) {
+    if (row_9 >= _e8) {
         return;
     }
-    let _e12 = island_of(gid_1.x);
-    if (gid_1.x < (_e12.lo + _e12.elites)) {
-        let _e24 = elite_src[gid_1.x];
-        if (_e24 != NONE) {
-            let _e33 = elite_src[gid_1.x];
-            parent[gid_1.x] = _e33;
+    let _e10 = island_of(row_9);
+    let open_fight_2 = (_e10.open_fight == 1u);
+    let n_4 = (_e10.hi - _e10.lo);
+    if (row_9 < (_e10.lo + _e10.elites)) {
+        let src = elite_src[row_9];
+        if (src != NONE) {
+            parent[row_9] = src;
             return;
         }
+        let j_1 = (row_9 - _e10.lo);
         loop {
-            let _e36 = e;
-            if (_e36 <= (gid_1.x - _e12.lo)) {
+            let _e31 = e;
+            if (_e31 <= j_1) {
             } else {
                 break;
             }
             {
                 best = NONE;
-                r = _e12.lo;
+                r = _e10.lo;
                 loop {
-                    let _e46 = r;
-                    if (_e46 < _e12.hi) {
+                    let _e38 = r;
+                    if (_e38 < _e10.hi) {
                     } else {
                         break;
                     }
@@ -778,88 +753,89 @@ fn select_main(@builtin(global_invocation_id) gid_1: vec3<u32>) {
                         used = false;
                         q = 0u;
                         loop {
-                            let _e55 = q;
-                            let _e56 = e;
-                            if (_e55 < _e56) {
+                            let _e47 = q;
+                            let _e48 = e;
+                            if (_e47 < _e48) {
                             } else {
                                 break;
                             }
                             {
-                                let _e61 = q;
-                                let _e63 = taken[_e61];
-                                let _e64 = r;
-                                if (_e63 == _e64) {
+                                let _e53 = q;
+                                let _e55 = taken[_e53];
+                                let _e56 = r;
+                                if (_e55 == _e56) {
                                     used = true;
                                 }
                             }
                             continuing {
-                                let _e70 = q;
-                                q = (_e70 + 1u);
+                                let _e62 = q;
+                                q = (_e62 + 1u);
                             }
                         }
-                        let _e73 = r;
-                        let _e74 = key(_e73);
-                        let _e76 = best;
-                        let _e77 = key(_e76);
-                        let _e81 = used;
-                        let _e83 = best;
-                        if (!(_e81) && ((_e83 == NONE) || (_e74 < _e77))) {
-                            let _e90 = r;
-                            best = _e90;
+                        let _e65 = r;
+                        let _e66 = key(_e65);
+                        let _e68 = best;
+                        let _e69 = key(_e68);
+                        let _e73 = used;
+                        let _e75 = best;
+                        if (!(_e73) && ((_e75 == NONE) || (_e66 < _e69))) {
+                            let _e82 = r;
+                            best = _e82;
                         }
                     }
                     continuing {
-                        let _e93 = r;
-                        r = (_e93 + 1u);
+                        let _e85 = r;
+                        r = (_e85 + 1u);
                     }
                 }
-                let _e98 = e;
-                let _e100 = best;
-                taken[_e98] = _e100;
+                let _e90 = e;
+                let _e92 = best;
+                taken[_e90] = _e92;
             }
             continuing {
-                let _e103 = e;
-                e = (_e103 + 1u);
+                let _e95 = e;
+                e = (_e95 + 1u);
             }
         }
-        let _e110 = best;
-        parent[gid_1.x] = _e110;
+        let _e100 = best;
+        parent[row_9] = _e100;
         return;
     }
-    if ((((_e12.arrivals > 0u) && (_e12.arrival_children > 0u)) && (gid_1.x >= (_e12.lo + _e12.elites))) && (gid_1.x < ((_e12.lo + _e12.elites) + (_e12.arrivals * (_e12.arrival_children + 1u))))) {
-        if (((gid_1.x - (_e12.lo + _e12.elites)) % (_e12.arrival_children + 1u)) == 0u) {
-            parent[gid_1.x] = gid_1.x;
+    let stride = (_e10.arrival_children + 1u);
+    let band = (_e10.lo + _e10.elites);
+    if ((((_e10.arrivals > 0u) && (_e10.arrival_children > 0u)) && (row_9 >= band)) && (row_9 < (band + (_e10.arrivals * stride)))) {
+        if (((row_9 - band) % stride) == 0u) {
+            parent[row_9] = row_9;
         } else {
-            let _e169 = below(gid_1.x, ((gid_1.x - (_e12.lo + _e12.elites)) % (_e12.arrival_children + 1u)), STREAM_ARRIVAL_MATE, (_e12.hi - _e12.lo));
-            parent[gid_1.x] = (_e12.lo + _e169);
+            let _e129 = below(row_9, ((row_9 - band) % stride), STREAM_ARRIVAL_MATE, n_4);
+            parent[row_9] = (_e10.lo + _e129);
         }
         return;
     }
     loop {
-        let _e177 = t;
-        if (_e177 < _e12.tournsize) {
+        let _e135 = t;
+        if (_e135 < _e10.tournsize) {
         } else {
             break;
         }
         {
-            let _e183 = t;
-            let _e188 = below(gid_1.x, _e183, STREAM_SELECT_2_, (_e12.hi - _e12.lo));
-            let _e195 = stage1_[(_e12.lo + _e188)];
-            let _e197 = w_1;
-            let _e202 = better_mate(gid_1.x, _e195, _e197, (_e12.open_fight == 1u), _e12.cohort_merge);
-            let _e205 = w_1;
-            if ((_e205 == NONE) || _e202) {
-                let _e213 = stage1_[(_e12.lo + _e188)];
-                w_1 = _e213;
+            let _e139 = t;
+            let _e141 = below(row_9, _e139, STREAM_SELECT_2_, n_4);
+            let c_5 = stage1_[(_e10.lo + _e141)];
+            let _e148 = w_1;
+            let _e150 = better_mate(row_9, c_5, _e148, open_fight_2, _e10.cohort_merge);
+            let _e153 = w_1;
+            if ((_e153 == NONE) || _e150) {
+                w_1 = c_5;
             }
         }
         continuing {
-            let _e216 = t;
-            t = (_e216 + 1u);
+            let _e159 = t;
+            t = (_e159 + 1u);
         }
     }
-    let _e223 = w_1;
-    parent[gid_1.x] = _e223;
+    let _e164 = w_1;
+    parent[row_9] = _e164;
     return;
 }
 
@@ -896,866 +872,685 @@ fn mutate_main(@builtin(global_invocation_id) gid_2: vec3<u32>) {
     var i_12: u32 = 0u;
     var k_2: u32 = 0u;
 
+    let row_10 = gid_2.x;
     let _e18 = gp.pop;
-    if (gid_2.x >= _e18) {
+    if (row_10 >= _e18) {
         return;
     }
-    let _e22 = island_of(gid_2.x);
+    let _e20 = island_of(row_10);
+    let h_1 = gp.head;
+    let vh = gp.vhead;
+    let t_1 = gp.tail;
+    let ht_1 = (h_1 + t_1);
+    let width_1 = (h_1 + (2u * t_1));
+    let _e36 = gp.n_genes;
+    let row_w_1 = (_e36 * width_1);
+    let _e40 = gp.n_genes;
+    let _e42 = gp.n_rnc;
+    let rnc_w_1 = (_e40 * _e42);
+    let src_1 = parent[row_10];
+    let base_1 = (row_10 * row_w_1);
+    let rbase = (row_10 * rnc_w_1);
     loop {
-        let _e26 = i_1;
-        let _e28 = gp.n_genes;
-        let _e30 = gp.head;
-        let _e32 = gp.tail;
-        if (_e26 < (_e28 * (_e30 + (2u * _e32)))) {
+        let _e50 = i_1;
+        if (_e50 < row_w_1) {
         } else {
             break;
         }
         {
-            let _e46 = gp.n_genes;
-            let _e48 = gp.head;
-            let _e50 = gp.tail;
             let _e55 = i_1;
-            let _e60 = parent[gid_2.x];
-            let _e62 = gp.n_genes;
-            let _e64 = gp.head;
-            let _e66 = gp.tail;
-            let _e71 = i_1;
-            let _e74 = genome_now[((_e60 * (_e62 * (_e64 + (2u * _e66)))) + _e71)];
-            genome[((gid_2.x * (_e46 * (_e48 + (2u * _e50)))) + _e55)] = _e74;
+            let _e59 = i_1;
+            let _e62 = genome_now[((src_1 * row_w_1) + _e59)];
+            genome[(base_1 + _e55)] = _e62;
         }
         continuing {
-            let _e77 = i_1;
-            i_1 = (_e77 + 1u);
+            let _e65 = i_1;
+            i_1 = (_e65 + 1u);
         }
     }
     loop {
-        let _e81 = i_2;
-        let _e83 = gp.n_genes;
-        let _e85 = gp.n_rnc;
-        if (_e81 < (_e83 * _e85)) {
+        let _e68 = i_2;
+        if (_e68 < rnc_w_1) {
         } else {
             break;
         }
         {
-            let _e96 = gp.n_genes;
-            let _e98 = gp.n_rnc;
-            let _e101 = i_2;
-            let _e106 = parent[gid_2.x];
-            let _e108 = gp.n_genes;
-            let _e110 = gp.n_rnc;
-            let _e113 = i_2;
-            let _e116 = rnc_now[((_e106 * (_e108 * _e110)) + _e113)];
-            rnc[((gid_2.x * (_e96 * _e98)) + _e101)] = _e116;
+            let _e73 = i_2;
+            let _e77 = i_2;
+            let _e80 = rnc_now[((src_1 * rnc_w_1) + _e77)];
+            rnc[(rbase + _e73)] = _e80;
         }
         continuing {
-            let _e119 = i_2;
-            i_2 = (_e119 + 1u);
+            let _e83 = i_2;
+            i_2 = (_e83 + 1u);
         }
     }
-    let _e129 = parent[gid_2.x];
-    let _e131 = wrapper_now[_e129];
-    wrapper_id[gid_2.x] = _e131;
-    let _e140 = parent[gid_2.x];
-    let _e142 = cohort_now[_e140];
-    cohort[gid_2.x] = _e142;
-    if (gid_2.x < (_e22.lo + _e22.elites)) {
-        let _e157 = parent[gid_2.x];
-        let _e159 = fitness_now[_e157];
-        fitness[gid_2.x] = _e159;
+    let _e89 = wrapper_now[src_1];
+    wrapper_id[row_10] = _e89;
+    let _e94 = cohort_now[src_1];
+    cohort[row_10] = _e94;
+    if (row_10 < (_e20.lo + _e20.elites)) {
+        let _e103 = fitness_now[src_1];
+        fitness[row_10] = _e103;
         return;
     }
-    fitness[gid_2.x] = bitcast<f32>(NAN_BITS);
+    fitness[row_10] = bitcast<f32>(NAN_BITS);
+    let _e112 = gp.typed_depth;
+    let typed = ((_e112 > 0u) && (ht_1 <= MAX_HT));
     loop {
-        let _e168 = g;
-        let _e170 = gp.n_genes;
-        if (_e168 < _e170) {
+        let _e118 = g;
+        let _e120 = gp.n_genes;
+        if (_e118 < _e120) {
         } else {
             break;
         }
         {
-            let _e176 = gp.typed_depth;
-            let _e179 = gp.head;
-            let _e181 = gp.tail;
-            if ((_e176 > 0u) && ((_e179 + _e181) <= MAX_HT)) {
+            if typed {
                 i_3 = 0u;
                 loop {
-                    let _e189 = i_3;
-                    let _e191 = gp.head;
-                    let _e193 = gp.tail;
-                    if (_e189 < (_e191 + _e193)) {
+                    let _e125 = i_3;
+                    if (_e125 < ht_1) {
                     } else {
                         break;
                     }
                     {
-                        let _e199 = i_3;
-                        let _e202 = gp.typed_depth;
-                        mut_budget[_e199] = _e202;
+                        let _e130 = i_3;
+                        let _e133 = gp.typed_depth;
+                        mut_budget[_e130] = _e133;
                     }
                     continuing {
-                        let _e205 = i_3;
-                        i_3 = (_e205 + 1u);
+                        let _e136 = i_3;
+                        i_3 = (_e136 + 1u);
                     }
                 }
             }
             next_child = 1u;
             pos = 0u;
             loop {
-                let _e213 = pos;
-                let _e215 = gp.head;
-                let _e217 = gp.tail;
-                if (_e213 < (_e215 + _e217)) {
+                let _e143 = pos;
+                if (_e143 < ht_1) {
                 } else {
                     break;
                 }
                 {
-                    let _e226 = g;
-                    let _e228 = gp.head;
-                    let _e230 = gp.tail;
-                    let _e234 = pos;
-                    let _e238 = chance(gid_2.x, ((_e226 * (_e228 + (2u * _e230))) + _e234), STREAM_MUT_HIT, _e22.mut_point);
-                    if _e238 {
-                        let _e245 = g;
-                        let _e247 = gp.head;
-                        let _e249 = gp.tail;
-                        let _e253 = pos;
-                        let _e256 = coin(gid_2.x, ((_e245 * (_e247 + (2u * _e249))) + _e253), STREAM_MUT_KIND);
-                        let _e259 = pos;
-                        let _e261 = gp.vhead;
-                        if ((_e259 < _e261) && _e256) {
-                            let _e270 = gp.typed_depth;
-                            let _e273 = gp.head;
-                            let _e275 = gp.tail;
-                            let _e279 = pos;
-                            let _e281 = mut_budget[_e279];
-                            if (((_e270 > 0u) && ((_e273 + _e275) <= MAX_HT)) && (_e281 == 0u)) {
-                                let _e287 = gp.n_flat;
-                                if (_e287 == 0u) {
-                                    let _e294 = gp.n_genes;
-                                    let _e296 = gp.head;
-                                    let _e298 = gp.tail;
-                                    let _e304 = g;
-                                    let _e306 = pos;
-                                    let _e307 = at((gid_2.x * (_e294 * (_e296 + (2u * _e298)))), _e304, _e306);
-                                    let _e314 = g;
-                                    let _e316 = gp.head;
-                                    let _e318 = gp.tail;
-                                    let _e322 = pos;
-                                    let _e327 = gp.n_terminals;
-                                    let _e328 = below(gid_2.x, ((_e314 * (_e316 + (2u * _e318))) + _e322), STREAM_MUT_SYMBOL, _e327);
-                                    let _e333 = sample_terminals[_e328];
-                                    genome[_e307] = _e333;
+                    let _e147 = g;
+                    let _e149 = pos;
+                    let slot_4 = ((_e147 * width_1) + _e149);
+                    let _e153 = chance(row_10, slot_4, STREAM_MUT_HIT, _e20.mut_point);
+                    if _e153 {
+                        let _e155 = coin(row_10, slot_4, STREAM_MUT_KIND);
+                        let _e157 = pos;
+                        if ((_e157 < vh) && _e155) {
+                            let _e163 = pos;
+                            let _e165 = mut_budget[_e163];
+                            if (typed && (_e165 == 0u)) {
+                                let _e171 = gp.n_flat;
+                                if (_e171 == 0u) {
+                                    let _e174 = g;
+                                    let _e176 = pos;
+                                    let _e177 = at(base_1, _e174, _e176);
+                                    let _e181 = gp.n_terminals;
+                                    let _e182 = below(row_10, slot_4, STREAM_MUT_SYMBOL, _e181);
+                                    let _e187 = sample_terminals[_e182];
+                                    genome[_e177] = _e187;
                                 } else {
-                                    let _e339 = gp.n_genes;
-                                    let _e341 = gp.head;
-                                    let _e343 = gp.tail;
-                                    let _e349 = g;
-                                    let _e351 = pos;
-                                    let _e352 = at((gid_2.x * (_e339 * (_e341 + (2u * _e343)))), _e349, _e351);
-                                    let _e359 = g;
-                                    let _e361 = gp.head;
-                                    let _e363 = gp.tail;
-                                    let _e367 = pos;
-                                    let _e372 = gp.n_flat;
-                                    let _e373 = below(gid_2.x, ((_e359 * (_e361 + (2u * _e363))) + _e367), STREAM_MUT_SYMBOL, _e372);
-                                    let _e378 = sample_flat[_e373];
-                                    genome[_e352] = _e378;
+                                    let _e189 = g;
+                                    let _e191 = pos;
+                                    let _e192 = at(base_1, _e189, _e191);
+                                    let _e196 = gp.n_flat;
+                                    let _e197 = below(row_10, slot_4, STREAM_MUT_SYMBOL, _e196);
+                                    let _e202 = sample_flat[_e197];
+                                    genome[_e192] = _e202;
                                 }
                             } else {
-                                let _e384 = gp.n_genes;
-                                let _e386 = gp.head;
-                                let _e388 = gp.tail;
-                                let _e394 = g;
-                                let _e396 = pos;
-                                let _e397 = at((gid_2.x * (_e384 * (_e386 + (2u * _e388)))), _e394, _e396);
-                                let _e404 = g;
-                                let _e406 = gp.head;
-                                let _e408 = gp.tail;
-                                let _e412 = pos;
-                                let _e417 = gp.n_functions;
-                                let _e418 = below(gid_2.x, ((_e404 * (_e406 + (2u * _e408))) + _e412), STREAM_MUT_SYMBOL, _e417);
-                                let _e423 = sample_functions[_e418];
-                                genome[_e397] = _e423;
+                                let _e204 = g;
+                                let _e206 = pos;
+                                let _e207 = at(base_1, _e204, _e206);
+                                let _e211 = gp.n_functions;
+                                let _e212 = below(row_10, slot_4, STREAM_MUT_SYMBOL, _e211);
+                                let _e217 = sample_functions[_e212];
+                                genome[_e207] = _e217;
                             }
                         } else {
-                            let _e429 = gp.n_genes;
-                            let _e431 = gp.head;
-                            let _e433 = gp.tail;
-                            let _e439 = g;
-                            let _e441 = pos;
-                            let _e442 = at((gid_2.x * (_e429 * (_e431 + (2u * _e433)))), _e439, _e441);
-                            let _e449 = g;
-                            let _e451 = gp.head;
-                            let _e453 = gp.tail;
-                            let _e457 = pos;
-                            let _e462 = gp.n_terminals;
-                            let _e463 = below(gid_2.x, ((_e449 * (_e451 + (2u * _e453))) + _e457), STREAM_MUT_SYMBOL, _e462);
-                            let _e468 = sample_terminals[_e463];
-                            genome[_e442] = _e468;
+                            let _e219 = g;
+                            let _e221 = pos;
+                            let _e222 = at(base_1, _e219, _e221);
+                            let _e226 = gp.n_terminals;
+                            let _e227 = below(row_10, slot_4, STREAM_MUT_SYMBOL, _e226);
+                            let _e232 = sample_terminals[_e227];
+                            genome[_e222] = _e232;
                         }
                     }
-                    let _e475 = gp.typed_depth;
-                    let _e478 = gp.head;
-                    let _e480 = gp.tail;
-                    let _e484 = pos;
-                    let _e485 = next_child;
-                    if (((_e475 > 0u) && ((_e478 + _e480) <= MAX_HT)) && (_e484 < _e485)) {
-                        let _e493 = gp.n_genes;
-                        let _e495 = gp.head;
-                        let _e497 = gp.tail;
-                        let _e503 = g;
-                        let _e505 = pos;
-                        let _e506 = at((gid_2.x * (_e493 * (_e495 + (2u * _e497)))), _e503, _e505);
+                    let _e235 = pos;
+                    let _e236 = next_child;
+                    if (typed && (_e235 < _e236)) {
+                        let _e240 = g;
+                        let _e242 = pos;
+                        let _e243 = at(base_1, _e240, _e242);
+                        let id = genome[_e243];
+                        let a_8 = arity[id];
+                        let _e253 = pos;
+                        let _e255 = mut_budget[_e253];
+                        let _e256 = pos;
+                        let _e258 = mut_budget[_e256];
+                        let _e260 = depth_cost[id];
+                        let child = (_e255 - min(_e258, _e260));
                         k = 0u;
                         loop {
-                            let _e512 = k;
-                            let _e514 = genome[_e506];
-                            let _e516 = arity[_e514];
-                            if (_e512 < _e516) {
+                            let _e266 = k;
+                            if (_e266 < a_8) {
                             } else {
                                 break;
                             }
                             {
-                                let _e520 = next_child;
-                                let _e522 = gp.head;
-                                let _e524 = gp.tail;
-                                if (_e520 < (_e522 + _e524)) {
-                                    let _e532 = next_child;
-                                    let _e534 = pos;
-                                    let _e536 = mut_budget[_e534];
-                                    let _e537 = pos;
-                                    let _e539 = mut_budget[_e537];
-                                    let _e541 = genome[_e506];
-                                    let _e543 = depth_cost[_e541];
-                                    mut_budget[_e532] = (_e536 - min(_e539, _e543));
+                                let _e269 = next_child;
+                                if (_e269 < ht_1) {
+                                    let _e273 = next_child;
+                                    mut_budget[_e273] = child;
                                 }
-                                let _e548 = next_child;
-                                next_child = (_e548 + 1u);
+                                let _e277 = next_child;
+                                next_child = (_e277 + 1u);
                             }
                             continuing {
-                                let _e552 = k;
-                                k = (_e552 + 1u);
+                                let _e281 = k;
+                                k = (_e281 + 1u);
                             }
                         }
                     }
                 }
                 continuing {
-                    let _e556 = pos;
-                    pos = (_e556 + 1u);
+                    let _e285 = pos;
+                    pos = (_e285 + 1u);
                 }
             }
         }
         continuing {
-            let _e560 = g;
-            g = (_e560 + 1u);
+            let _e289 = g;
+            g = (_e289 + 1u);
         }
     }
-    let _e567 = chance(gid_2.x, OP_INVERT, STREAM_OPERATOR, _e22.invert);
-    if _e567 {
-        let _e574 = gp.n_genes;
-        let _e575 = below(gid_2.x, 0u, STREAM_INVERT, _e574);
-        let _e583 = gp.vhead;
-        let _e585 = below(gid_2.x, 1u, STREAM_INVERT, (_e583 - 1u));
-        let _e594 = gp.vhead;
-        let _e598 = below(gid_2.x, 2u, STREAM_INVERT, ((_e594 - (2u + _e585)) + 1u));
-        let _e604 = gp.n_genes;
-        let _e606 = gp.head;
-        let _e608 = gp.tail;
-        let _e613 = at((gid_2.x * (_e604 * (_e606 + (2u * _e608)))), _e575, _e598);
-        let _e619 = gp.n_genes;
-        let _e621 = gp.head;
-        let _e623 = gp.tail;
-        let _e631 = at((gid_2.x * (_e619 * (_e621 + (2u * _e623)))), _e575, (_e598 + (2u + _e585)));
-        reverse(_e613, _e631);
+    let _e294 = chance(row_10, OP_INVERT, STREAM_OPERATOR, _e20.invert);
+    if _e294 {
+        let _e299 = gp.n_genes;
+        let _e300 = below(row_10, 0u, STREAM_INVERT, _e299);
+        let _e305 = below(row_10, 1u, STREAM_INVERT, (vh - 1u));
+        let len = (2u + _e305);
+        let _e313 = below(row_10, 2u, STREAM_INVERT, ((vh - len) + 1u));
+        let _e314 = at(base_1, _e300, _e313);
+        let _e316 = at(base_1, _e300, (_e313 + len));
+        reverse(_e314, _e316);
     }
-    let _e637 = chance(gid_2.x, OP_IS, STREAM_OPERATOR, _e22.is_transpose);
-    if _e637 {
-        let _e644 = gp.n_genes;
-        let _e645 = below(gid_2.x, 0u, STREAM_IS, _e644);
-        let _e652 = gp.n_genes;
-        let _e653 = below(gid_2.x, 1u, STREAM_IS, _e652);
-        let _e661 = gp.vhead;
-        let _e663 = below(gid_2.x, 2u, STREAM_IS, (_e661 - 1u));
-        let _e671 = gp.head;
-        let _e673 = gp.tail;
-        let _e678 = below(gid_2.x, 3u, STREAM_IS, (((_e671 + _e673) - (1u + _e663)) + 1u));
-        let _e686 = gp.vhead;
-        let _e689 = below(gid_2.x, 4u, STREAM_IS, (_e686 - (1u + _e663)));
+    let _e320 = chance(row_10, OP_IS, STREAM_OPERATOR, _e20.is_transpose);
+    if _e320 {
+        let _e325 = gp.n_genes;
+        let _e326 = below(row_10, 0u, STREAM_IS, _e325);
+        let _e331 = gp.n_genes;
+        let _e332 = below(row_10, 1u, STREAM_IS, _e331);
+        let _e337 = below(row_10, 2u, STREAM_IS, (vh - 1u));
+        let len_1 = (1u + _e337);
+        let _e345 = below(row_10, 3u, STREAM_IS, ((ht_1 - len_1) + 1u));
+        let _e349 = below(row_10, 4u, STREAM_IS, (vh - len_1));
+        let ins = (1u + _e349);
         loop {
-            let _e692 = i_4;
-            if (_e692 < (1u + _e663)) {
+            let _e353 = i_4;
+            if (_e353 < len_1) {
             } else {
                 break;
             }
             {
-                let _e700 = gp.n_genes;
-                let _e702 = gp.head;
-                let _e704 = gp.tail;
-                let _e710 = i_4;
-                let _e712 = at((gid_2.x * (_e700 * (_e702 + (2u * _e704)))), _e645, (_e678 + _e710));
-                let _e716 = i_4;
-                let _e719 = genome[_e712];
-                segment[_e716] = _e719;
+                let _e356 = i_4;
+                let _e358 = at(base_1, _e326, (_e345 + _e356));
+                let _e362 = i_4;
+                let _e365 = genome[_e358];
+                segment[_e362] = _e365;
             }
             continuing {
-                let _e722 = i_4;
-                i_4 = (_e722 + 1u);
+                let _e368 = i_4;
+                i_4 = (_e368 + 1u);
             }
         }
         loop {
-            let _e726 = i_5;
-            let _e728 = gp.vhead;
-            if (_e726 < _e728) {
+            let _e371 = i_5;
+            if (_e371 < vh) {
             } else {
                 break;
             }
             {
-                let _e735 = gp.n_genes;
-                let _e737 = gp.head;
-                let _e739 = gp.tail;
-                let _e745 = i_5;
-                let _e746 = at((gid_2.x * (_e735 * (_e737 + (2u * _e739)))), _e653, _e745);
-                let _e750 = i_5;
-                let _e753 = genome[_e746];
-                before[_e750] = _e753;
+                let _e374 = i_5;
+                let _e375 = at(base_1, _e332, _e374);
+                let _e379 = i_5;
+                let _e382 = genome[_e375];
+                before[_e379] = _e382;
             }
             continuing {
-                let _e756 = i_5;
-                i_5 = (_e756 + 1u);
+                let _e385 = i_5;
+                i_5 = (_e385 + 1u);
             }
         }
-        pos_1 = ((1u + _e689) + (1u + _e663));
+        pos_1 = (ins + len_1);
         loop {
-            let _e765 = pos_1;
-            let _e767 = gp.vhead;
-            if (_e765 < _e767) {
+            let _e390 = pos_1;
+            if (_e390 < vh) {
             } else {
                 break;
             }
             {
-                let _e774 = gp.n_genes;
-                let _e776 = gp.head;
-                let _e778 = gp.tail;
-                let _e784 = pos_1;
-                let _e785 = at((gid_2.x * (_e774 * (_e776 + (2u * _e778)))), _e653, _e784);
-                let _e791 = pos_1;
-                let _e795 = before[(_e791 - (1u + _e663))];
-                genome[_e785] = _e795;
+                let _e393 = pos_1;
+                let _e394 = at(base_1, _e332, _e393);
+                let _e399 = pos_1;
+                let _e402 = before[(_e399 - len_1)];
+                genome[_e394] = _e402;
             }
             continuing {
-                let _e798 = pos_1;
-                pos_1 = (_e798 + 1u);
+                let _e405 = pos_1;
+                pos_1 = (_e405 + 1u);
             }
         }
         loop {
-            let _e802 = i_6;
-            if (_e802 < (1u + _e663)) {
+            let _e408 = i_6;
+            if (_e408 < len_1) {
             } else {
                 break;
             }
             {
-                let _e810 = gp.n_genes;
-                let _e812 = gp.head;
-                let _e814 = gp.tail;
-                let _e822 = i_6;
-                let _e824 = at((gid_2.x * (_e810 * (_e812 + (2u * _e814)))), _e653, ((1u + _e689) + _e822));
-                let _e829 = i_6;
-                let _e831 = segment[_e829];
-                genome[_e824] = _e831;
+                let _e411 = i_6;
+                let _e413 = at(base_1, _e332, (ins + _e411));
+                let _e418 = i_6;
+                let _e420 = segment[_e418];
+                genome[_e413] = _e420;
             }
             continuing {
-                let _e834 = i_6;
-                i_6 = (_e834 + 1u);
+                let _e423 = i_6;
+                i_6 = (_e423 + 1u);
             }
         }
     }
-    let _e841 = chance(gid_2.x, OP_RIS, STREAM_OPERATOR, _e22.ris_transpose);
-    if _e841 {
+    let _e428 = chance(row_10, OP_RIS, STREAM_OPERATOR, _e20.ris_transpose);
+    if _e428 {
         loop {
-            let _e846 = trial;
-            let _e848 = gp.n_genes;
-            if (_e846 < ((2u * _e848) + 1u)) {
+            let _e433 = trial;
+            let _e435 = gp.n_genes;
+            if (_e433 < ((2u * _e435) + 1u)) {
             } else {
                 break;
             }
             {
-                let _e856 = trial;
-                let _e861 = gp.n_genes;
-                let _e862 = below(gid_2.x, (_e856 * 4u), STREAM_RIS, _e861);
-                let _e868 = trial;
-                let _e874 = gp.n_genes;
-                let _e875 = below(gid_2.x, ((_e868 * 4u) + 1u), STREAM_RIS, _e874);
+                let _e441 = trial;
+                let _e446 = gp.n_genes;
+                let _e447 = below(row_10, (_e441 * 4u), STREAM_RIS, _e446);
+                let _e451 = trial;
+                let _e457 = gp.n_genes;
+                let _e458 = below(row_10, ((_e451 * 4u) + 1u), STREAM_RIS, _e457);
                 n_fn = 0u;
                 pos_2 = 0u;
                 loop {
-                    let _e882 = pos_2;
-                    let _e884 = gp.vhead;
-                    if (_e882 < _e884) {
+                    let _e464 = pos_2;
+                    if (_e464 < vh) {
                     } else {
                         break;
                     }
                     {
-                        let _e891 = gp.n_genes;
-                        let _e893 = gp.head;
-                        let _e895 = gp.tail;
-                        let _e901 = pos_2;
-                        let _e902 = at((gid_2.x * (_e891 * (_e893 + (2u * _e895)))), _e862, _e901);
-                        let _e907 = genome[_e902];
-                        let _e909 = arity[_e907];
-                        if (_e909 > 0u) {
-                            let _e913 = n_fn;
-                            n_fn = (_e913 + 1u);
+                        let _e467 = pos_2;
+                        let _e468 = at(base_1, _e447, _e467);
+                        let _e473 = genome[_e468];
+                        let _e475 = arity[_e473];
+                        if (_e475 > 0u) {
+                            let _e479 = n_fn;
+                            n_fn = (_e479 + 1u);
                         }
                     }
                     continuing {
-                        let _e917 = pos_2;
-                        pos_2 = (_e917 + 1u);
+                        let _e483 = pos_2;
+                        pos_2 = (_e483 + 1u);
                     }
                 }
-                let _e921 = n_fn;
-                if (_e921 == 0u) {
+                let _e487 = n_fn;
+                if (_e487 == 0u) {
                     continue;
                 }
-                let _e928 = trial;
-                let _e933 = n_fn;
-                let _e934 = below(gid_2.x, ((_e928 * 4u) + 2u), STREAM_RIS, _e933);
+                let _e492 = trial;
+                let _e497 = n_fn;
+                let _e498 = below(row_10, ((_e492 * 4u) + 2u), STREAM_RIS, _e497);
                 start = 0u;
                 seen = 0u;
                 pos_3 = 0u;
                 loop {
-                    let _e943 = pos_3;
-                    let _e945 = gp.vhead;
-                    if (_e943 < _e945) {
+                    let _e506 = pos_3;
+                    if (_e506 < vh) {
                     } else {
                         break;
                     }
                     {
-                        let _e952 = gp.n_genes;
-                        let _e954 = gp.head;
-                        let _e956 = gp.tail;
-                        let _e962 = pos_3;
-                        let _e963 = at((gid_2.x * (_e952 * (_e954 + (2u * _e956)))), _e862, _e962);
-                        let _e968 = genome[_e963];
-                        let _e970 = arity[_e968];
-                        if (_e970 > 0u) {
-                            let _e973 = seen;
-                            if (_e973 == _e934) {
-                                let _e977 = pos_3;
-                                start = _e977;
+                        let _e509 = pos_3;
+                        let _e510 = at(base_1, _e447, _e509);
+                        let _e515 = genome[_e510];
+                        let _e517 = arity[_e515];
+                        if (_e517 > 0u) {
+                            let _e520 = seen;
+                            if (_e520 == _e498) {
+                                let _e524 = pos_3;
+                                start = _e524;
                             }
-                            let _e980 = seen;
-                            seen = (_e980 + 1u);
+                            let _e527 = seen;
+                            seen = (_e527 + 1u);
                         }
                     }
                     continuing {
-                        let _e984 = pos_3;
-                        pos_3 = (_e984 + 1u);
+                        let _e531 = pos_3;
+                        pos_3 = (_e531 + 1u);
                     }
                 }
-                let _e991 = trial;
-                let _e999 = gp.vhead;
-                let _e1001 = gp.head;
-                let _e1003 = gp.tail;
-                let _e1005 = start;
-                let _e1009 = below(gid_2.x, ((_e991 * 4u) + 3u), STREAM_RIS, (min(_e999, ((_e1001 + _e1003) - _e1005)) - 1u));
+                let _e536 = trial;
+                let _e542 = start;
+                let _e546 = below(row_10, ((_e536 * 4u) + 3u), STREAM_RIS, (min(vh, (ht_1 - _e542)) - 1u));
+                let len_2 = (2u + _e546);
                 i_7 = 0u;
                 loop {
-                    let _e1014 = i_7;
-                    if (_e1014 < (2u + _e1009)) {
+                    let _e552 = i_7;
+                    if (_e552 < len_2) {
                     } else {
                         break;
                     }
                     {
-                        let _e1022 = gp.n_genes;
-                        let _e1024 = gp.head;
-                        let _e1026 = gp.tail;
-                        let _e1033 = start;
-                        let _e1034 = i_7;
-                        let _e1036 = at((gid_2.x * (_e1022 * (_e1024 + (2u * _e1026)))), _e862, (_e1033 + _e1034));
-                        let _e1040 = i_7;
-                        let _e1043 = genome[_e1036];
-                        segment[_e1040] = _e1043;
+                        let _e556 = start;
+                        let _e557 = i_7;
+                        let _e559 = at(base_1, _e447, (_e556 + _e557));
+                        let _e563 = i_7;
+                        let _e566 = genome[_e559];
+                        segment[_e563] = _e566;
                     }
                     continuing {
-                        let _e1046 = i_7;
-                        i_7 = (_e1046 + 1u);
+                        let _e569 = i_7;
+                        i_7 = (_e569 + 1u);
                     }
                 }
                 i_8 = 0u;
                 loop {
-                    let _e1052 = i_8;
-                    let _e1054 = gp.vhead;
-                    if (_e1052 < _e1054) {
+                    let _e574 = i_8;
+                    if (_e574 < vh) {
                     } else {
                         break;
                     }
                     {
-                        let _e1061 = gp.n_genes;
-                        let _e1063 = gp.head;
-                        let _e1065 = gp.tail;
-                        let _e1071 = i_8;
-                        let _e1072 = at((gid_2.x * (_e1061 * (_e1063 + (2u * _e1065)))), _e875, _e1071);
-                        let _e1076 = i_8;
-                        let _e1079 = genome[_e1072];
-                        before[_e1076] = _e1079;
+                        let _e577 = i_8;
+                        let _e578 = at(base_1, _e458, _e577);
+                        let _e582 = i_8;
+                        let _e585 = genome[_e578];
+                        before[_e582] = _e585;
                     }
                     continuing {
-                        let _e1082 = i_8;
-                        i_8 = (_e1082 + 1u);
+                        let _e588 = i_8;
+                        i_8 = (_e588 + 1u);
                     }
                 }
-                pos_4 = (2u + _e1009);
+                pos_4 = len_2;
                 loop {
-                    let _e1089 = pos_4;
-                    let _e1091 = gp.vhead;
-                    if (_e1089 < _e1091) {
+                    let _e592 = pos_4;
+                    if (_e592 < vh) {
                     } else {
                         break;
                     }
                     {
-                        let _e1098 = gp.n_genes;
-                        let _e1100 = gp.head;
-                        let _e1102 = gp.tail;
-                        let _e1108 = pos_4;
-                        let _e1109 = at((gid_2.x * (_e1098 * (_e1100 + (2u * _e1102)))), _e875, _e1108);
-                        let _e1115 = pos_4;
-                        let _e1119 = before[(_e1115 - (2u + _e1009))];
-                        genome[_e1109] = _e1119;
+                        let _e595 = pos_4;
+                        let _e596 = at(base_1, _e458, _e595);
+                        let _e601 = pos_4;
+                        let _e604 = before[(_e601 - len_2)];
+                        genome[_e596] = _e604;
                     }
                     continuing {
-                        let _e1122 = pos_4;
-                        pos_4 = (_e1122 + 1u);
+                        let _e607 = pos_4;
+                        pos_4 = (_e607 + 1u);
                     }
                 }
                 i_9 = 0u;
                 loop {
-                    let _e1128 = i_9;
-                    if (_e1128 < (2u + _e1009)) {
+                    let _e612 = i_9;
+                    if (_e612 < len_2) {
                     } else {
                         break;
                     }
                     {
-                        let _e1136 = gp.n_genes;
-                        let _e1138 = gp.head;
-                        let _e1140 = gp.tail;
-                        let _e1146 = i_9;
-                        let _e1147 = at((gid_2.x * (_e1136 * (_e1138 + (2u * _e1140)))), _e875, _e1146);
-                        let _e1152 = i_9;
-                        let _e1154 = segment[_e1152];
-                        genome[_e1147] = _e1154;
+                        let _e615 = i_9;
+                        let _e616 = at(base_1, _e458, _e615);
+                        let _e621 = i_9;
+                        let _e623 = segment[_e621];
+                        genome[_e616] = _e623;
                     }
                     continuing {
-                        let _e1157 = i_9;
-                        i_9 = (_e1157 + 1u);
+                        let _e626 = i_9;
+                        i_9 = (_e626 + 1u);
                     }
                 }
                 break;
             }
             continuing {
-                let _e1161 = trial;
-                trial = (_e1161 + 1u);
+                let _e630 = trial;
+                trial = (_e630 + 1u);
             }
         }
     }
-    let _e1168 = chance(gid_2.x, OP_GENE_T, STREAM_OPERATOR, _e22.gene_transpose);
-    let _e1172 = gp.n_genes;
-    if ((_e1172 > 1u) && _e1168) {
-        let _e1182 = gp.n_genes;
-        let _e1184 = below(gid_2.x, 0u, STREAM_GENE_T, (_e1182 - 1u));
+    let _e635 = chance(row_10, OP_GENE_T, STREAM_OPERATOR, _e20.gene_transpose);
+    let _e639 = gp.n_genes;
+    if ((_e639 > 1u) && _e635) {
+        let _e647 = gp.n_genes;
+        let _e649 = below(row_10, 0u, STREAM_GENE_T, (_e647 - 1u));
+        let source = (1u + _e649);
         loop {
-            let _e1188 = pos_5;
-            let _e1190 = gp.head;
-            let _e1192 = gp.tail;
-            if (_e1188 < (_e1190 + (2u * _e1192))) {
+            let _e653 = pos_5;
+            if (_e653 < width_1) {
             } else {
                 break;
             }
             {
-                let _e1201 = gp.n_genes;
-                let _e1203 = gp.head;
-                let _e1205 = gp.tail;
-                let _e1212 = pos_5;
-                let _e1213 = at((gid_2.x * (_e1201 * (_e1203 + (2u * _e1205)))), 0u, _e1212);
-                let _e1219 = gp.n_genes;
-                let _e1221 = gp.head;
-                let _e1223 = gp.tail;
-                let _e1230 = pos_5;
-                let _e1231 = at((gid_2.x * (_e1219 * (_e1221 + (2u * _e1223)))), 0u, _e1230);
-                let _e1237 = gp.n_genes;
-                let _e1239 = gp.head;
-                let _e1241 = gp.tail;
-                let _e1249 = pos_5;
-                let _e1250 = at((gid_2.x * (_e1237 * (_e1239 + (2u * _e1241)))), (1u + _e1184), _e1249);
-                let _e1254 = genome[_e1250];
-                genome[_e1231] = _e1254;
-                let _e1260 = gp.n_genes;
-                let _e1262 = gp.head;
-                let _e1264 = gp.tail;
-                let _e1272 = pos_5;
-                let _e1273 = at((gid_2.x * (_e1260 * (_e1262 + (2u * _e1264)))), (1u + _e1184), _e1272);
-                let _e1277 = genome[_e1213];
-                genome[_e1273] = _e1277;
+                let _e657 = pos_5;
+                let _e658 = at(base_1, 0u, _e657);
+                let held_3 = genome[_e658];
+                let _e664 = pos_5;
+                let _e665 = at(base_1, 0u, _e664);
+                let _e667 = pos_5;
+                let _e668 = at(base_1, source, _e667);
+                let _e672 = genome[_e668];
+                genome[_e665] = _e672;
+                let _e674 = pos_5;
+                let _e675 = at(base_1, source, _e674);
+                genome[_e675] = held_3;
             }
             continuing {
-                let _e1280 = pos_5;
-                pos_5 = (_e1280 + 1u);
+                let _e680 = pos_5;
+                pos_5 = (_e680 + 1u);
             }
         }
         loop {
-            let _e1284 = k_1;
-            let _e1286 = gp.n_rnc;
-            if (_e1284 < _e1286) {
+            let _e684 = k_1;
+            let _e686 = gp.n_rnc;
+            if (_e684 < _e686) {
             } else {
                 break;
             }
             {
-                let _e1295 = gp.n_genes;
-                let _e1297 = gp.n_rnc;
-                let _e1300 = k_1;
-                let _e1305 = gp.n_genes;
-                let _e1307 = gp.n_rnc;
-                let _e1312 = gp.n_rnc;
-                let _e1315 = k_1;
-                let _e1318 = rnc[(((gid_2.x * (_e1305 * _e1307)) + ((1u + _e1184) * _e1312)) + _e1315)];
-                rnc[((gid_2.x * (_e1295 * _e1297)) + _e1300)] = _e1318;
-                let _e1326 = gp.n_genes;
-                let _e1328 = gp.n_rnc;
-                let _e1333 = gp.n_rnc;
-                let _e1336 = k_1;
-                let _e1341 = gp.n_genes;
-                let _e1343 = gp.n_rnc;
-                let _e1346 = k_1;
-                let _e1349 = rnc[((gid_2.x * (_e1341 * _e1343)) + _e1346)];
-                rnc[(((gid_2.x * (_e1326 * _e1328)) + ((1u + _e1184) * _e1333)) + _e1336)] = _e1349;
+                let _e690 = k_1;
+                let held_4 = rnc[(rbase + _e690)];
+                let _e697 = k_1;
+                let _e701 = gp.n_rnc;
+                let _e704 = k_1;
+                let _e707 = rnc[((rbase + (source * _e701)) + _e704)];
+                rnc[(rbase + _e697)] = _e707;
+                let _e712 = gp.n_rnc;
+                let _e715 = k_1;
+                rnc[((rbase + (source * _e712)) + _e715)] = held_4;
             }
             continuing {
-                let _e1352 = k_1;
-                k_1 = (_e1352 + 1u);
+                let _e720 = k_1;
+                k_1 = (_e720 + 1u);
             }
         }
     }
     loop {
-        let _e1356 = g_1;
-        let _e1358 = gp.n_genes;
-        if (_e1356 < _e1358) {
+        let _e724 = g_1;
+        let _e726 = gp.n_genes;
+        if (_e724 < _e726) {
         } else {
             break;
         }
         {
-            let _e1363 = gp.head;
-            let _e1365 = gp.tail;
-            pos_6 = (_e1363 + _e1365);
+            pos_6 = ht_1;
             loop {
-                let _e1370 = pos_6;
-                let _e1372 = gp.head;
-                let _e1374 = gp.tail;
-                if (_e1370 < (_e1372 + (2u * _e1374))) {
+                let _e730 = pos_6;
+                if (_e730 < width_1) {
                 } else {
                     break;
                 }
                 {
-                    let _e1384 = g_1;
-                    let _e1386 = gp.head;
-                    let _e1388 = gp.tail;
-                    let _e1392 = pos_6;
-                    let _e1396 = chance(gid_2.x, ((_e1384 * (_e1386 + (2u * _e1388))) + _e1392), STREAM_DC_HIT, _e22.dc_point);
-                    if _e1396 {
-                        let _e1402 = gp.n_genes;
-                        let _e1404 = gp.head;
-                        let _e1406 = gp.tail;
-                        let _e1412 = g_1;
-                        let _e1414 = pos_6;
-                        let _e1415 = at((gid_2.x * (_e1402 * (_e1404 + (2u * _e1406)))), _e1412, _e1414);
-                        let _e1422 = g_1;
-                        let _e1424 = gp.head;
-                        let _e1426 = gp.tail;
-                        let _e1430 = pos_6;
-                        let _e1435 = gp.n_rnc;
-                        let _e1436 = below(gid_2.x, ((_e1422 * (_e1424 + (2u * _e1426))) + _e1430), STREAM_DC_VALUE, _e1435);
-                        genome[_e1415] = _e1436;
+                    let _e734 = g_1;
+                    let _e736 = pos_6;
+                    let slot_5 = ((_e734 * width_1) + _e736);
+                    let _e740 = chance(row_10, slot_5, STREAM_DC_HIT, _e20.dc_point);
+                    if _e740 {
+                        let _e742 = g_1;
+                        let _e744 = pos_6;
+                        let _e745 = at(base_1, _e742, _e744);
+                        let _e749 = gp.n_rnc;
+                        let _e750 = below(row_10, slot_5, STREAM_DC_VALUE, _e749);
+                        genome[_e745] = _e750;
                     }
                 }
                 continuing {
-                    let _e1441 = pos_6;
-                    pos_6 = (_e1441 + 1u);
+                    let _e755 = pos_6;
+                    pos_6 = (_e755 + 1u);
                 }
             }
         }
         continuing {
-            let _e1445 = g_1;
-            g_1 = (_e1445 + 1u);
+            let _e759 = g_1;
+            g_1 = (_e759 + 1u);
         }
     }
-    let _e1452 = chance(gid_2.x, OP_INVERT_DC, STREAM_OPERATOR, _e22.invert_dc);
-    let _e1456 = gp.tail;
-    if ((_e1456 >= 2u) && _e1452) {
-        let _e1465 = gp.n_genes;
-        let _e1466 = below(gid_2.x, 0u, STREAM_INVERT_DC, _e1465);
-        let _e1474 = gp.tail;
-        let _e1476 = below(gid_2.x, 1u, STREAM_INVERT_DC, (_e1474 - 1u));
-        let _e1485 = gp.tail;
-        let _e1489 = below(gid_2.x, 2u, STREAM_INVERT_DC, ((_e1485 - (2u + _e1476)) + 1u));
-        let _e1495 = gp.n_genes;
-        let _e1497 = gp.head;
-        let _e1499 = gp.tail;
-        let _e1506 = gp.head;
-        let _e1508 = gp.tail;
-        let _e1511 = at((gid_2.x * (_e1495 * (_e1497 + (2u * _e1499)))), _e1466, ((_e1506 + _e1508) + _e1489));
-        let _e1517 = gp.n_genes;
-        let _e1519 = gp.head;
-        let _e1521 = gp.tail;
-        let _e1530 = gp.head;
-        let _e1532 = gp.tail;
-        let _e1538 = at((gid_2.x * (_e1517 * (_e1519 + (2u * _e1521)))), _e1466, ((((_e1530 + _e1532) + _e1489) + (2u + _e1476)) - 1u));
-        reverse(_e1511, _e1538);
+    let _e764 = chance(row_10, OP_INVERT_DC, STREAM_OPERATOR, _e20.invert_dc);
+    if ((t_1 >= 2u) && _e764) {
+        let _e772 = gp.n_genes;
+        let _e773 = below(row_10, 0u, STREAM_INVERT_DC, _e772);
+        let _e778 = below(row_10, 1u, STREAM_INVERT_DC, (t_1 - 1u));
+        let len_3 = (2u + _e778);
+        let _e786 = below(row_10, 2u, STREAM_INVERT_DC, ((t_1 - len_3) + 1u));
+        let start_1 = (ht_1 + _e786);
+        let _e788 = at(base_1, _e773, start_1);
+        let _e792 = at(base_1, _e773, ((start_1 + len_3) - 1u));
+        reverse(_e788, _e792);
     }
-    let _e1544 = chance(gid_2.x, OP_TRANSPOSE_DC, STREAM_OPERATOR, _e22.transpose_dc);
-    if _e1544 {
-        let _e1551 = gp.n_genes;
-        let _e1552 = below(gid_2.x, 0u, STREAM_TRANSPOSE_DC, _e1551);
-        let _e1559 = gp.n_genes;
-        let _e1560 = below(gid_2.x, 1u, STREAM_TRANSPOSE_DC, _e1559);
-        let _e1567 = gp.tail;
-        let _e1568 = below(gid_2.x, 2u, STREAM_TRANSPOSE_DC, _e1567);
-        let _e1576 = gp.tail;
-        let _e1580 = below(gid_2.x, 3u, STREAM_TRANSPOSE_DC, ((_e1576 - (1u + _e1568)) + 1u));
-        let _e1588 = gp.tail;
-        let _e1592 = below(gid_2.x, 4u, STREAM_TRANSPOSE_DC, ((_e1588 - (1u + _e1568)) + 1u));
+    let _e796 = chance(row_10, OP_TRANSPOSE_DC, STREAM_OPERATOR, _e20.transpose_dc);
+    if _e796 {
+        let _e801 = gp.n_genes;
+        let _e802 = below(row_10, 0u, STREAM_TRANSPOSE_DC, _e801);
+        let _e807 = gp.n_genes;
+        let _e808 = below(row_10, 1u, STREAM_TRANSPOSE_DC, _e807);
+        let _e811 = below(row_10, 2u, STREAM_TRANSPOSE_DC, t_1);
+        let len_4 = (1u + _e811);
+        let _e819 = below(row_10, 3u, STREAM_TRANSPOSE_DC, ((t_1 - len_4) + 1u));
+        let start_2 = (ht_1 + _e819);
+        let _e826 = below(row_10, 4u, STREAM_TRANSPOSE_DC, ((t_1 - len_4) + 1u));
+        let ins_1 = (ht_1 + _e826);
         loop {
-            let _e1595 = i_10;
-            if (_e1595 < (1u + _e1568)) {
+            let _e829 = i_10;
+            if (_e829 < len_4) {
             } else {
                 break;
             }
             {
-                let _e1603 = gp.n_genes;
-                let _e1605 = gp.head;
-                let _e1607 = gp.tail;
-                let _e1615 = gp.head;
-                let _e1617 = gp.tail;
-                let _e1620 = i_10;
-                let _e1622 = at((gid_2.x * (_e1603 * (_e1605 + (2u * _e1607)))), _e1552, (((_e1615 + _e1617) + _e1580) + _e1620));
-                let _e1626 = i_10;
-                let _e1629 = genome[_e1622];
-                segment[_e1626] = _e1629;
+                let _e832 = i_10;
+                let _e834 = at(base_1, _e802, (start_2 + _e832));
+                let _e838 = i_10;
+                let _e841 = genome[_e834];
+                segment[_e838] = _e841;
             }
             continuing {
-                let _e1632 = i_10;
-                i_10 = (_e1632 + 1u);
+                let _e844 = i_10;
+                i_10 = (_e844 + 1u);
             }
         }
         loop {
-            let _e1636 = i_11;
-            let _e1638 = gp.tail;
-            if (_e1636 < _e1638) {
+            let _e847 = i_11;
+            if (_e847 < t_1) {
             } else {
                 break;
             }
             {
-                let _e1645 = gp.n_genes;
-                let _e1647 = gp.head;
-                let _e1649 = gp.tail;
-                let _e1657 = gp.head;
-                let _e1659 = gp.tail;
-                let _e1661 = i_11;
-                let _e1663 = at((gid_2.x * (_e1645 * (_e1647 + (2u * _e1649)))), _e1560, ((_e1657 + _e1659) + _e1661));
-                let _e1667 = i_11;
-                let _e1670 = genome[_e1663];
-                before[_e1667] = _e1670;
+                let _e850 = i_11;
+                let _e852 = at(base_1, _e808, (ht_1 + _e850));
+                let _e856 = i_11;
+                let _e859 = genome[_e852];
+                before[_e856] = _e859;
             }
             continuing {
-                let _e1673 = i_11;
-                i_11 = (_e1673 + 1u);
+                let _e862 = i_11;
+                i_11 = (_e862 + 1u);
             }
         }
-        let _e1679 = gp.head;
-        let _e1681 = gp.tail;
-        pos_7 = (((_e1679 + _e1681) + _e1592) + (1u + _e1568));
+        pos_7 = (ins_1 + len_4);
         loop {
-            let _e1689 = pos_7;
-            let _e1691 = gp.head;
-            let _e1693 = gp.tail;
-            if (_e1689 < (_e1691 + (2u * _e1693))) {
+            let _e867 = pos_7;
+            if (_e867 < width_1) {
             } else {
                 break;
             }
             {
-                let _e1702 = gp.n_genes;
-                let _e1704 = gp.head;
-                let _e1706 = gp.tail;
-                let _e1712 = pos_7;
-                let _e1713 = at((gid_2.x * (_e1702 * (_e1704 + (2u * _e1706)))), _e1560, _e1712);
-                let _e1720 = pos_7;
-                let _e1724 = gp.head;
-                let _e1726 = gp.tail;
-                let _e1730 = before[((_e1720 - (1u + _e1568)) - (_e1724 + _e1726))];
-                genome[_e1713] = _e1730;
+                let _e870 = pos_7;
+                let _e871 = at(base_1, _e808, _e870);
+                let _e876 = pos_7;
+                let _e880 = before[((_e876 - len_4) - ht_1)];
+                genome[_e871] = _e880;
             }
             continuing {
-                let _e1733 = pos_7;
-                pos_7 = (_e1733 + 1u);
+                let _e883 = pos_7;
+                pos_7 = (_e883 + 1u);
             }
         }
         loop {
-            let _e1737 = i_12;
-            if (_e1737 < (1u + _e1568)) {
+            let _e886 = i_12;
+            if (_e886 < len_4) {
             } else {
                 break;
             }
             {
-                let _e1745 = gp.n_genes;
-                let _e1747 = gp.head;
-                let _e1749 = gp.tail;
-                let _e1757 = gp.head;
-                let _e1759 = gp.tail;
-                let _e1762 = i_12;
-                let _e1764 = at((gid_2.x * (_e1745 * (_e1747 + (2u * _e1749)))), _e1560, (((_e1757 + _e1759) + _e1592) + _e1762));
-                let _e1769 = i_12;
-                let _e1771 = segment[_e1769];
-                genome[_e1764] = _e1771;
+                let _e889 = i_12;
+                let _e891 = at(base_1, _e808, (ins_1 + _e889));
+                let _e896 = i_12;
+                let _e898 = segment[_e896];
+                genome[_e891] = _e898;
             }
             continuing {
-                let _e1774 = i_12;
-                i_12 = (_e1774 + 1u);
+                let _e901 = i_12;
+                i_12 = (_e901 + 1u);
             }
         }
     }
     loop {
-        let _e1778 = k_2;
-        let _e1780 = gp.n_genes;
-        let _e1782 = gp.n_rnc;
-        if (_e1778 < (_e1780 * _e1782)) {
+        let _e904 = k_2;
+        if (_e904 < rnc_w_1) {
         } else {
             break;
         }
         {
-            let _e1788 = k_2;
-            let _e1791 = chance(gid_2.x, _e1788, STREAM_RNC_HIT, _e22.rnc_point);
-            if _e1791 {
-                let _e1795 = k_2;
-                let _e1799 = gp.rnc_span;
-                let _e1800 = below(gid_2.x, _e1795, STREAM_RNC_VALUE, _e1799);
-                let _e1807 = gp.n_genes;
-                let _e1809 = gp.n_rnc;
-                let _e1812 = k_2;
-                let _e1816 = gp.rnc_lo;
-                rnc[((gid_2.x * (_e1807 * _e1809)) + _e1812)] = f32((_e1816 + i32(_e1800)));
+            let _e907 = k_2;
+            let _e910 = chance(row_10, _e907, STREAM_RNC_HIT, _e20.rnc_point);
+            if _e910 {
+                let _e912 = k_2;
+                let _e916 = gp.rnc_span;
+                let _e917 = below(row_10, _e912, STREAM_RNC_VALUE, _e916);
+                let _e921 = k_2;
+                let _e925 = gp.rnc_lo;
+                rnc[(rbase + _e921)] = f32((_e925 + i32(_e917)));
             }
         }
         continuing {
-            let _e1822 = k_2;
-            k_2 = (_e1822 + 1u);
+            let _e931 = k_2;
+            k_2 = (_e931 + 1u);
         }
     }
-    let _e1829 = chance(gid_2.x, OP_CLEANSE, STREAM_OPERATOR, _e22.cleanse);
-    if _e1829 {
-        let _e1836 = gp.n_genes;
-        let _e1837 = below(gid_2.x, 0u, STREAM_CLEANSE, _e1836);
-        let _e1845 = gp.n_genes;
-        let _e1847 = gp.head;
-        let _e1849 = gp.tail;
-        let _e1855 = gp.head;
-        let _e1857 = gp.tail;
-        cleanse_gene(gid_2.x, ((gid_2.x * (_e1845 * (_e1847 + (2u * _e1849)))) + (_e1837 * (_e1855 + (2u * _e1857)))), _e22.cleanse_collapse);
+    let _e936 = chance(row_10, OP_CLEANSE, STREAM_OPERATOR, _e20.cleanse);
+    if _e936 {
+        let _e941 = gp.n_genes;
+        let _e942 = below(row_10, 0u, STREAM_CLEANSE, _e941);
+        cleanse_gene(row_10, (base_1 + (_e942 * width_1)), _e20.cleanse_collapse);
         return;
     } else {
         return;
@@ -1768,135 +1563,112 @@ fn crossover_main(@builtin(global_invocation_id) gid_3: vec3<u32>) {
     var whole_1: u32;
     var pos_8: u32 = 0u;
 
+    let b_8 = gid_3.x;
     let _e6 = gp.pop;
-    if (gid_3.x >= _e6) {
+    if (b_8 >= _e6) {
         return;
     }
-    let _e10 = island_of(gid_3.x);
-    if ((gid_3.x <= (_e10.lo + _e10.elites)) || (((gid_3.x - (_e10.lo + _e10.elites)) & 1u) == 0u)) {
+    let _e8 = island_of(b_8);
+    let first = (_e8.lo + _e8.elites);
+    if ((b_8 <= first) || (((b_8 - first) & 1u) == 0u)) {
         return;
     }
-    let _e32 = chance(gid_3.x, OP_CX_1P, STREAM_OPERATOR, _e10.cx_one_point);
-    if ((((_e10.arrivals > 0u) && (_e10.arrival_children > 0u)) && (gid_3.x < ((_e10.lo + _e10.elites) + (_e10.arrivals * (_e10.arrival_children + 1u))))) || _e32) {
-        let _e59 = gp.n_genes;
-        let _e60 = below(gid_3.x, 0u, STREAM_CX_1P, _e59);
-        let _e68 = gp.head;
-        let _e70 = gp.tail;
-        let _e73 = below(gid_3.x, 1u, STREAM_CX_1P, (_e68 + (2u * _e70)));
+    let a_9 = (b_8 - 1u);
+    let _e24 = gp.head;
+    let _e26 = gp.tail;
+    let width_2 = (_e24 + (2u * _e26));
+    let _e31 = gp.n_genes;
+    let row_w_2 = (_e31 * width_2);
+    let arrival_pair = (((_e8.arrivals > 0u) && (_e8.arrival_children > 0u)) && (b_8 < (first + (_e8.arrivals * (_e8.arrival_children + 1u)))));
+    let _e50 = chance(b_8, OP_CX_1P, STREAM_OPERATOR, _e8.cx_one_point);
+    if (arrival_pair || _e50) {
+        let _e56 = gp.n_genes;
+        let _e57 = below(b_8, 0u, STREAM_CX_1P, _e56);
+        let _e60 = below(b_8, 1u, STREAM_CX_1P, width_2);
         loop {
-            let _e75 = whole;
-            if (_e75 < _e60) {
+            let _e62 = whole;
+            if (_e62 < _e57) {
             } else {
                 break;
             }
             {
-                let _e84 = whole;
-                let _e89 = gp.head;
-                let _e91 = gp.tail;
-                swap_tokens((gid_3.x - 1u), gid_3.x, _e84, 0u, (_e89 + (2u * _e91)));
-                let _e99 = whole;
-                let _e103 = whole;
-                swap_consts((gid_3.x - 1u), _e99, gid_3.x, _e103);
+                let _e65 = whole;
+                swap_tokens(a_9, b_8, _e65, 0u, width_2);
+                let _e68 = whole;
+                let _e70 = whole;
+                swap_consts(a_9, _e68, b_8, _e70);
             }
             continuing {
-                let _e106 = whole;
-                whole = (_e106 + 1u);
+                let _e73 = whole;
+                whole = (_e73 + 1u);
             }
         }
-        swap_tokens((gid_3.x - 1u), gid_3.x, _e60, 0u, (_e73 + 1u));
+        swap_tokens(a_9, b_8, _e57, 0u, (_e60 + 1u));
     }
-    let _e122 = chance(gid_3.x, OP_CX_2P, STREAM_OPERATOR, _e10.cx_two_point);
-    if _e122 {
-        let _e129 = gp.n_genes;
-        let _e130 = below(gid_3.x, 0u, STREAM_CX_2P, _e129);
-        let _e137 = gp.n_genes;
-        let _e138 = below(gid_3.x, 1u, STREAM_CX_2P, _e137);
-        let _e146 = gp.head;
-        let _e148 = gp.tail;
-        let _e151 = below(gid_3.x, 2u, STREAM_CX_2P, (_e146 + (2u * _e148)));
-        let _e159 = gp.head;
-        let _e161 = gp.tail;
-        let _e164 = below(gid_3.x, 3u, STREAM_CX_2P, (_e159 + (2u * _e161)));
-        if (min(_e130, _e138) == max(_e130, _e138)) {
-            swap_tokens((gid_3.x - 1u), gid_3.x, min(_e130, _e138), min(_e151, _e164), (max(_e151, _e164) + 1u));
+    let _e81 = chance(b_8, OP_CX_2P, STREAM_OPERATOR, _e8.cx_two_point);
+    if _e81 {
+        let _e86 = gp.n_genes;
+        let _e87 = below(b_8, 0u, STREAM_CX_2P, _e86);
+        let _e92 = gp.n_genes;
+        let _e93 = below(b_8, 1u, STREAM_CX_2P, _e92);
+        let g1_ = min(_e87, _e93);
+        let g2_ = max(_e87, _e93);
+        let _e98 = below(b_8, 2u, STREAM_CX_2P, width_2);
+        let _e101 = below(b_8, 3u, STREAM_CX_2P, width_2);
+        if (g1_ == g2_) {
+            swap_tokens(a_9, b_8, g1_, min(_e98, _e101), (max(_e98, _e101) + 1u));
         } else {
-            whole_1 = (min(_e130, _e138) + 1u);
+            whole_1 = (g1_ + 1u);
             loop {
-                let _e184 = whole_1;
-                if (_e184 < max(_e130, _e138)) {
+                let _e111 = whole_1;
+                if (_e111 < g2_) {
                 } else {
                     break;
                 }
                 {
-                    let _e194 = whole_1;
-                    let _e199 = gp.head;
-                    let _e201 = gp.tail;
-                    swap_tokens((gid_3.x - 1u), gid_3.x, _e194, 0u, (_e199 + (2u * _e201)));
-                    let _e209 = whole_1;
-                    let _e213 = whole_1;
-                    swap_consts((gid_3.x - 1u), _e209, gid_3.x, _e213);
+                    let _e114 = whole_1;
+                    swap_tokens(a_9, b_8, _e114, 0u, width_2);
+                    let _e117 = whole_1;
+                    let _e119 = whole_1;
+                    swap_consts(a_9, _e117, b_8, _e119);
                 }
                 continuing {
-                    let _e216 = whole_1;
-                    whole_1 = (_e216 + 1u);
+                    let _e122 = whole_1;
+                    whole_1 = (_e122 + 1u);
                 }
             }
-            let _e228 = gp.head;
-            let _e230 = gp.tail;
-            swap_tokens((gid_3.x - 1u), gid_3.x, min(_e130, _e138), _e151, (_e228 + (2u * _e230)));
-            swap_tokens((gid_3.x - 1u), gid_3.x, max(_e130, _e138), 0u, (_e164 + 1u));
+            swap_tokens(a_9, b_8, g1_, _e98, width_2);
+            swap_tokens(a_9, b_8, g2_, 0u, (_e101 + 1u));
         }
     }
-    let _e248 = chance(gid_3.x, OP_CX_GENE, STREAM_OPERATOR, _e10.cx_gene);
-    if _e248 {
-        let _e255 = gp.n_genes;
-        let _e256 = below(gid_3.x, 0u, STREAM_CX_GENE, _e255);
-        let _e263 = gp.n_genes;
-        let _e264 = below(gid_3.x, 1u, STREAM_CX_GENE, _e263);
+    let _e130 = chance(b_8, OP_CX_GENE, STREAM_OPERATOR, _e8.cx_gene);
+    if _e130 {
+        let _e135 = gp.n_genes;
+        let _e136 = below(b_8, 0u, STREAM_CX_GENE, _e135);
+        let _e141 = gp.n_genes;
+        let _e142 = below(b_8, 1u, STREAM_CX_GENE, _e141);
         loop {
-            let _e268 = pos_8;
-            let _e270 = gp.head;
-            let _e272 = gp.tail;
-            if (_e268 < (_e270 + (2u * _e272))) {
+            let _e144 = pos_8;
+            if (_e144 < width_2) {
             } else {
                 break;
             }
             {
-                let _e285 = gp.n_genes;
-                let _e287 = gp.head;
-                let _e289 = gp.tail;
-                let _e295 = gp.head;
-                let _e297 = gp.tail;
-                let _e302 = pos_8;
-                let _e307 = gp.n_genes;
-                let _e309 = gp.head;
-                let _e311 = gp.tail;
-                let _e317 = gp.head;
-                let _e319 = gp.tail;
-                let _e324 = pos_8;
-                let _e327 = genome[(((gid_3.x * (_e307 * (_e309 + (2u * _e311)))) + (_e264 * (_e317 + (2u * _e319)))) + _e324)];
-                genome[((((gid_3.x - 1u) * (_e285 * (_e287 + (2u * _e289)))) + (_e256 * (_e295 + (2u * _e297)))) + _e302)] = _e327;
-                let _e336 = gp.n_genes;
-                let _e338 = gp.head;
-                let _e340 = gp.tail;
-                let _e346 = gp.head;
-                let _e348 = gp.tail;
-                let _e353 = pos_8;
-                let _e359 = gp.n_genes;
-                let _e361 = gp.head;
-                let _e363 = gp.tail;
-                let _e369 = gp.head;
-                let _e371 = gp.tail;
-                let _e376 = pos_8;
-                let _e379 = genome[((((gid_3.x - 1u) * (_e359 * (_e361 + (2u * _e363)))) + (_e256 * (_e369 + (2u * _e371)))) + _e376)];
-                genome[(((gid_3.x * (_e336 * (_e338 + (2u * _e340)))) + (_e264 * (_e346 + (2u * _e348)))) + _e353)] = _e379;
+                let _e150 = pos_8;
+                let ia_2 = (((a_9 * row_w_2) + (_e136 * width_2)) + _e150);
+                let _e156 = pos_8;
+                let ib_2 = (((b_8 * row_w_2) + (_e142 * width_2)) + _e156);
+                let held_5 = genome[ia_2];
+                let _e164 = genome[ib_2];
+                genome[ia_2] = _e164;
+                genome[ib_2] = held_5;
             }
             continuing {
-                let _e382 = pos_8;
-                pos_8 = (_e382 + 1u);
+                let _e169 = pos_8;
+                pos_8 = (_e169 + 1u);
             }
         }
-        swap_consts((gid_3.x - 1u), _e256, gid_3.x, _e264);
+        swap_consts(a_9, _e136, b_8, _e142);
         return;
     } else {
         return;

@@ -30,65 +30,60 @@ fn type_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     var usable: bool = true;
     var g: u32 = 0u;
 
-    let _e7 = tp.pop;
-    let _e9 = tp.n_combinations;
-    let _e11 = tp.wrappers;
-    if (gid.x >= (_e7 * (_e9 * _e11))) {
+    let cid = gid.x;
+    let _e7 = tp.n_combinations;
+    let _e9 = tp.wrappers;
+    let per = (_e7 * _e9);
+    let _e13 = tp.pop;
+    if (cid >= (_e13 * per)) {
         return;
     }
+    let row = (cid / per);
+    let rem = (cid % per);
+    let _e20 = tp.wrappers;
+    let combo = (rem / _e20);
+    let _e24 = tp.wrappers;
+    let w = (rem % _e24);
+    let _e29 = combinations[combo];
+    let genes = (_e29 & 16777215u);
     loop {
-        let _e17 = g;
-        let _e19 = tp.n_genes;
-        if (_e17 < _e19) {
+        let _e33 = g;
+        let _e35 = tp.n_genes;
+        if (_e33 < _e35) {
         } else {
             break;
         }
         {
-            let _e30 = tp.n_combinations;
-            let _e32 = tp.wrappers;
-            let _e36 = tp.wrappers;
-            let _e39 = combinations[((gid.x % (_e30 * _e32)) / _e36)];
-            let _e41 = g;
-            if ((((_e39 & 16777215u) >> _e41) & 1u) == 0u) {
+            let _e40 = g;
+            if (((genes >> _e40) & 1u) == 0u) {
                 continue;
             }
-            let _e52 = tp.n_combinations;
-            let _e54 = tp.wrappers;
-            let _e58 = tp.n_genes;
-            let _e60 = g;
-            let _e63 = gene_ok[(((gid.x / (_e52 * _e54)) * _e58) + _e60)];
-            if (_e63 == 0u) {
+            let _e47 = tp.n_genes;
+            let _e49 = g;
+            let id = ((row * _e47) + _e49);
+            let _e54 = gene_ok[id];
+            if (_e54 == 0u) {
                 usable = false;
             } else {
-                let _e72 = depth;
-                let _e75 = tp.n_combinations;
-                let _e77 = tp.wrappers;
-                let _e81 = tp.n_genes;
-                let _e83 = g;
-                let _e86 = gene_depth[(((gid.x / (_e75 * _e77)) * _e81) + _e83)];
-                depth = max(_e72, _e86);
+                let _e60 = depth;
+                let _e62 = gene_depth[id];
+                depth = max(_e60, _e62);
             }
         }
         continuing {
-            let _e90 = g;
-            g = (_e90 + 1u);
+            let _e66 = g;
+            g = (_e66 + 1u);
         }
     }
-    let _e97 = depth;
-    tower[gid.x] = _e97;
-    let _e106 = tp.typed;
-    let _e108 = usable;
-    let _e112 = tp.n_combinations;
-    let _e114 = tp.wrappers;
-    let _e118 = tp.wrappers;
-    let _e122 = depth;
-    let _e126 = tp.identity_only;
-    let _e130 = tp.n_combinations;
-    let _e132 = tp.wrappers;
-    let _e136 = tp.wrappers;
-    if (((((_e106 == 1u) && _e108) && (((gid.x % (_e112 * _e114)) % _e118) != 0u)) && (_e122 >= 2u)) || ((_e126 == 1u) && (((gid.x % (_e130 * _e132)) % _e136) != 0u))) {
-        let _e147 = tp.width;
-        scores[(gid.x * _e147)] = bitcast<f32>(NAN_BITS);
+    let _e71 = depth;
+    tower[cid] = _e71;
+    let _e79 = tp.typed;
+    let _e81 = usable;
+    let _e85 = depth;
+    let _e89 = tp.identity_only;
+    if (((((_e79 == 1u) && _e81) && (w != 0u)) && (_e85 >= 2u)) || ((_e89 == 1u) && (w != 0u))) {
+        let _e98 = tp.width;
+        scores[(cid * _e98)] = bitcast<f32>(NAN_BITS);
         return;
     } else {
         return;
