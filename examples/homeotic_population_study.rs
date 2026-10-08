@@ -68,6 +68,11 @@ fn main() -> Result<(), String> {
     let mut sat_errors = 0usize;
     let mut sat_time = 0.0f64;
     let mut example: Option<Example> = None;
+    // What was shared: definition -> chromosomes sharing it; whole-gene copies vs subtrees;
+    // cross-gene vs within-gene; a per-chromosome table.
+    let mut definitions: BTreeMap<String, usize> = BTreeMap::new();
+    let (mut whole_gene_defs, mut subtree_defs, mut cross_gene, mut within_gene) = (0usize, 0usize, 0usize, 0usize);
+    let mut per_chromosome: Vec<String> = vec!["individual\tfilled\tops_before\tops_after\twhole_gene\tdefinitions".to_string()];
     for (id, genes) in &by_individual {
         let matches = maximal_shared(genes, 2)?;
         let folded = fold(genes, &matches, opts)?;
@@ -78,6 +83,29 @@ fn main() -> Result<(), String> {
             let before: usize = genes.iter().map(|g| op_count(g)).sum();
             let after: usize = folded.head.iter().chain(folded.tail.iter()).map(|g| op_count(g)).sum();
             exact_ops_removed += before.saturating_sub(after);
+            let mut whole = 0usize;
+            let mut defs = Vec::new();
+            for (slot, def) in folded.tail.iter().take(folded.filled).enumerate() {
+                *definitions.entry(def.clone()).or_default() += 1;
+                let canon_genes: Vec<String> = genes.iter().map(|g| canonical(g)).collect::<Result<_, _>>()?;
+                let reference = format!("(Var \"href{slot}\")");
+                let is_whole = canon_genes.iter().any(|g| g == def);
+                if is_whole {
+                    whole += 1;
+                    whole_gene_defs += 1;
+                } else {
+                    subtree_defs += 1;
+                }
+                let genes_reading = folded.head.iter().filter(|h| h.contains(&reference)).count()
+                    + folded.tail.iter().take(folded.filled).filter(|t| t.contains(&reference)).count();
+                if genes_reading >= 2 {
+                    cross_gene += 1;
+                } else {
+                    within_gene += 1;
+                }
+                defs.push(def.clone());
+            }
+            per_chromosome.push(format!("{id}\t{}\t{before}\t{after}\t{whole}\t{}", folded.filled, defs.join(" | ")));
             let want: Vec<String> = genes.iter().map(|g| canonical(g)).collect::<Result<_, _>>()?;
             if unfold(&folded)? != want {
                 unfold_fail += 1;
@@ -122,6 +150,16 @@ fn main() -> Result<(), String> {
             println!("  tail {g}");
         }
     }
+    println!("definitions: whole-gene copies {whole_gene_defs}, subtrees {subtree_defs}; read by >=2 genes {cross_gene}, read within one gene only {within_gene}");
+    let mut ranked: Vec<(&String, &usize)> = definitions.iter().collect();
+    ranked.sort_by(|a, b| b.1.cmp(a.1).then(a.0.cmp(b.0)));
+    println!("top shared definitions (chromosomes sharing it, definition):");
+    for (def, n) in ranked.iter().take(15) {
+        println!("  {n:>5}  {def}");
+    }
+    let table = format!("{}.homeotic_folds.tsv", path.trim_end_matches(".tsv"));
+    fs::write(&table, per_chromosome.join("\n") + "\n").map_err(|e| format!("write {table}: {e}"))?;
+    println!("per-chromosome table: {table}");
     println!("total {:.1} s", t0.elapsed().as_secs_f64());
     Ok(())
 }
