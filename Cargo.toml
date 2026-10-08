@@ -43,6 +43,9 @@ features = ["extension-module"]
 optional = true
 
 [dev-dependencies]
+# WGSL front end for the kernel-DAG study (examples/wgsl_dag_study.rs); the
+# same naga wgpu already pulls in.
+naga = { version = "0.20", features = ["wgsl-in"] }
 # TEST-ONLY oracle for the regex simplifier: render a Re AST to a regex string
 # and compare match results before/after simplify. Never a run path.
 regex = "1"
