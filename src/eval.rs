@@ -223,6 +223,11 @@ pub fn apply_op(op: Op, args: &[f64]) -> Option<f64> {
             let a = a();
             if a.is_finite() { a.clamp(-1.0, 1.0).acos() } else { 0.0 }
         }
+        // The first three-child op: `a` when `c > 0`, else `b`. A NaN `c`
+        // fails the comparison and selects `b`, as the device does.
+        (Op::Select3, 3) => {
+            if a() > 0.0 { args[1] } else { args[2] }
+        }
         _ => return None,
     })
 }

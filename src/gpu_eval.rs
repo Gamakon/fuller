@@ -180,7 +180,31 @@ pub enum Op {
     /// Leaf: read the shared value at local index `arg0` (resolved via
     /// `shared_base[expr]`), computed by an earlier, separate PASS.
     GeneRef = 47,
+    // ---- Richer arity (docs/PLAN_wgsl_kernel_reader.md §2a; phylu
+    // docs/PLAN_arbitrary_arity.md). The node is `(fn_id, first_child,
+    // ty_code, konst)`: a node of arity k has its children at
+    // `arg0, arg0 + 1, …, arg0 + k − 1`, contiguous because the layout is
+    // level order. `Select3` is the first op with three children, the one
+    // that proves every consumer walks `arity` children instead of naming
+    // two. Appended last so no opcode value moves.
+    /// `Select3(c, a, b)`: `a` if `c > 0`, else `b` (NaN `c` selects `b`).
+    /// Children at `arg0`, `arg0 + 1`, `arg0 + 2`.
+    Select3 = 48,
 }
+
+/// The engine-level leaf ids, THE SAME IN EVERY KINGDOM'S FUNCTION TABLE: the
+/// decoder, variation, fold and hash recognise these without consulting the
+/// uploaded table. They are fixed values, not a contiguous prefix, because
+/// `GeneRef` was given 47 when it was added and moving it would change the
+/// bytes of every fold fixture; a kingdom table must not reuse these ids.
+pub const FN_ID_VAR: u32 = Op::Var as u32;
+pub const FN_ID_NUM: u32 = Op::Num as u32;
+pub const FN_ID_GENE_REF: u32 = Op::GeneRef as u32;
+pub const ENGINE_LEAF_IDS: [u32; 3] = [FN_ID_VAR, FN_ID_NUM, FN_ID_GENE_REF];
+
+/// The largest number of children a node may have in any kingdom (`K_MAX`
+/// in the arity plans); a kingdom's own `K` is at most this.
+pub const K_MAX: usize = 4;
 
 impl Op {
     /// Map a `Math` constructor name to an opcode.
@@ -214,10 +238,14 @@ impl Op {
             "Acos" => Op::Acos,
             "ProtectedAsin" => Op::ProtectedAsin,
             "ProtectedAcos" => Op::ProtectedAcos,
+            "Select3" => Op::Select3,
             _ => return None,
         })
     }
 
+    /// How many children the op has. Exhaustive on purpose: a new variant
+    /// must say its arity here or fail to compile, never decode as binary by
+    /// default.
     pub fn arity(self) -> usize {
         match self {
             Op::Var
@@ -256,16 +284,35 @@ impl Op {
             | Op::RegexOpt
             | Op::RegexClassOf
             | Op::RegexCcNegate => 1,
-            // Arity 2: RegexConcat, RegexAlt, RegexRepN, RegexRepUpto,
-            // RegexCcRange, RegexCcUnion (and the SR binary ops).
-            _ => 2,
+            Op::Add
+            | Op::Sub
+            | Op::Mul
+            | Op::Div
+            | Op::Pow
+            | Op::ProtectedDiv
+            | Op::RegexConcat
+            | Op::RegexAlt
+            | Op::RegexRepN
+            | Op::RegexRepUpto
+            | Op::RegexCcRange
+            | Op::RegexCcUnion => 2,
+            Op::Select3 => 3,
         }
     }
+
+    /// Whether `id` is one of the engine-level leaves ([`ENGINE_LEAF_IDS`]):
+    /// its `arg0` is a column or a shared-slot index, never a child.
+    pub fn is_engine_leaf(id: u32) -> bool {
+        ENGINE_LEAF_IDS.contains(&id)
+    }
+
+    /// The last opcode value; opcodes are contiguous `0..=LAST`.
+    pub const LAST: u32 = Op::Select3 as u32;
 
     /// The `Op` for an opcode value, or `None` if it is not a known opcode. The
     /// inverse of `op as u32`; a decoded `GpuNode.op` goes back to its name this
     /// way (for AST printing, export, and reporting). Opcodes are contiguous
-    /// 0..=47; this match is total and moves no value.
+    /// `0..=Op::LAST`; this match is total and moves no value.
     pub fn from_u32(op: u32) -> Option<Op> {
         let o = match op {
             0 => Op::Var, 1 => Op::Num, 2 => Op::Add, 3 => Op::Sub, 4 => Op::Mul,
@@ -280,10 +327,21 @@ impl Op {
             38 => Op::RegexPlus, 39 => Op::RegexOpt, 40 => Op::RegexRepN, 41 => Op::RegexRepUpto,
             42 => Op::RegexClassOf, 43 => Op::RegexCcRange, 44 => Op::RegexCcUnion,
             45 => Op::RegexCcNegate, 46 => Op::RegexEmpty, 47 => Op::GeneRef,
+            48 => Op::Select3,
             _ => return None,
         };
         Some(o)
     }
+}
+
+/// The per-op arity table, indexed by opcode, for upload beside a kingdom's
+/// typed tables: the device reads `op_arity[op]` where it used to hard-code
+/// one or two children. SR's function ids are opcodes one to one, so this IS
+/// SR's `op_arity`; another kingdom builds its own from its symbol rows.
+pub fn op_arity_table() -> Vec<u32> {
+    (0..=Op::LAST)
+        .map(|u| Op::from_u32(u).map_or(0, |o| o.arity() as u32))
+        .collect()
 }
 
 /// One node, as uploaded. 16 bytes, so a 64-node expression is 1 KiB and a
@@ -292,15 +350,31 @@ impl Op {
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct GpuNode {
-    /// [`Op`] as u32.
+    /// The function id: [`Op`] as u32 in the SR, TSR and REGEX kingdoms,
+    /// whose tables map id to opcode one to one.
     pub op: u32,
-    /// `Var`: column index into the resident data buffer. Otherwise: index of
-    /// the first child, resolved on the host.
+    /// `Var`: column index into the resident data buffer; `GeneRef`: the
+    /// chromosome-local shared-slot index. Otherwise the FIRST CHILD: a node
+    /// of arity `k` has its children at `arg0 .. arg0 + k`, contiguous because
+    /// the array is in level order ([`GpuNode::child`]).
     pub arg0: u32,
-    /// Index of the second child for binary ops; unused otherwise.
+    /// MIGRATION WORD. It mirrors `arg0 + 1` on every node of arity two or
+    /// more (the fixtures assert it) and carries the linter's literal id on a
+    /// `Num`; the evaluator no longer reads it for a child. It becomes
+    /// `ty_code`, the node's out type as `Ty::code()`, when phylu's phase 4
+    /// retires it.
     pub arg1: u32,
     /// Literal value for `Num`; unused otherwise.
     pub konst: f32,
+}
+
+impl GpuNode {
+    /// The index of child `i` of a node of arity `k`, `i < k`: `arg0 + i`.
+    /// Meaningful on a level-order array (every [`ExprBatch`], the decoder's
+    /// output); the linter's rule heap is not one and keeps explicit words.
+    pub fn child(&self, i: usize) -> usize {
+        self.arg0 as usize + i
+    }
 }
 
 /// The WGSL interpreter.
@@ -314,6 +388,8 @@ pub struct GpuNode {
 /// raw ops, because they are different functions. `ProtectedExp` is uncapped
 /// and returns +inf on overflow, matching the engine.
 pub const EVAL_WGSL: &str = r#"
+// (fn_id, first_child, ty_code, konst). A node's children are contiguous
+// from arg0 (level order), so child i is arg0 + i; arg1 is never read here.
 struct Node {
     op: u32,
     arg0: u32,
@@ -405,15 +481,15 @@ fn eval_main(@builtin(global_invocation_id) gid: vec3<u32>) {
         switch (nd.op) {
             case 0u: { v = data[row * cfg.n_vars + nd.arg0]; }   // Var
             case 1u: { v = nd.konst; }                            // Num
-            case 2u: { v = scratch[nd.arg0] + scratch[nd.arg1]; }
-            case 3u: { v = scratch[nd.arg0] - scratch[nd.arg1]; }
-            case 4u: { v = scratch[nd.arg0] * scratch[nd.arg1]; }
+            case 2u: { v = scratch[nd.arg0] + scratch[nd.arg0 + 1u]; }
+            case 3u: { v = scratch[nd.arg0] - scratch[nd.arg0 + 1u]; }
+            case 4u: { v = scratch[nd.arg0] * scratch[nd.arg0 + 1u]; }
             // Raw ops carry the crate's div0 contract: division by zero is
             // NaN, NOT IEEE infinity. Bare `/` gives inf, which diverges from
             // eval.rs and would put a +inf member and a NaN member in the same
             // e-class (Pow(x,-1) and Inv(x) are equivalent under the rules).
             case 5u: {                                             // Div
-                let d = scratch[nd.arg1];
+                let d = scratch[nd.arg0 + 1u];
                 if (d == 0.0) { v = nan(); } else { v = scratch[nd.arg0] / d; }
             }
             case 6u: { v = -scratch[nd.arg0]; }
@@ -456,7 +532,7 @@ fn eval_main(@builtin(global_invocation_id) gid: vec3<u32>) {
             }
             case 15u: {                                            // Pow
                 let a = scratch[nd.arg0];
-                let b = scratch[nd.arg1];
+                let b = scratch[nd.arg0 + 1u];
                 if (a == 0.0 && b < 0.0) { v = nan(); } else { v = pow(a, b); }
             }
             case 16u: { let a = scratch[nd.arg0]; v = a * a; }
@@ -472,7 +548,7 @@ fn eval_main(@builtin(global_invocation_id) gid: vec3<u32>) {
             // only when b == 0: b = sin(omega * -2.3e-8) = -1e-7 gave 0 on the
             // engine and c / -1e-7 here.
             case 19u: {
-                let d = scratch[nd.arg1];
+                let d = scratch[nd.arg0 + 1u];
                 if (abs(d) < 1e-6) { v = 0.0; } else { v = scratch[nd.arg0] / d; }
             }
             case 20u: {                                            // ProtectedSqrt
@@ -514,6 +590,10 @@ fn eval_main(@builtin(global_invocation_id) gid: vec3<u32>) {
             }
             case 47u: {                                            // GeneRef
                 v = shared_vals[(shared_base[expr] + nd.arg0) * cfg.n_rows + row];
+            }
+            case 48u: {                                            // Select3(c, a, b)
+                let c = scratch[nd.arg0];
+                if (c > 0.0) { v = scratch[nd.arg0 + 1u]; } else { v = scratch[nd.arg0 + 2u]; }
             }
             default: { v = bitcast<f32>(0x7fc00000u); }
         }
@@ -1806,7 +1886,8 @@ mod tests {
     fn wgsl_switch_covers_every_opcode() {
         // A missing `case Nu:` is a silent NaN on device, so check the shader
         // source mentions each discriminant.
-        for op in 0u32..=23 {
+        let evaluated = (0u32..=27).chain([Op::GeneRef as u32, Op::Select3 as u32]);
+        for op in evaluated {
             assert!(
                 EVAL_WGSL.contains(&format!("case {op}u:")),
                 "WGSL has no case for opcode {op}"
@@ -1816,20 +1897,92 @@ mod tests {
 
     #[test]
     fn from_u32_round_trips_every_opcode() {
-        // Opcodes are contiguous 0..=47 (Op::GeneRef is the last); every one
+        // Opcodes are contiguous 0..=Op::LAST; every one
         // must survive op as u32 -> Op::from_u32 -> op as u32 unchanged, so a
         // future opcode addition that forgets a from_u32 arm fails here
         // instead of silently decoding to None downstream.
-        for u in 0..=(Op::GeneRef as u32) {
+        for u in 0..=Op::LAST {
             let op = Op::from_u32(u).unwrap_or_else(|| panic!("no Op for opcode {u}"));
             assert_eq!(op as u32, u, "from_u32({u}) round-tripped to {}", op as u32);
         }
-        assert!(Op::from_u32(Op::GeneRef as u32 + 1).is_none(), "an opcode past the last variant must be None");
+        assert!(Op::from_u32(Op::LAST + 1).is_none(), "an opcode past the last variant must be None");
     }
 
     #[test]
     fn generef_is_nullary() {
         assert_eq!(Op::GeneRef.arity(), 0);
+    }
+
+    // ---- Richer arity: the node is (fn_id, first_child, ty_code, konst) ----
+
+    #[test]
+    fn select3_is_the_first_ternary_op_and_flattens_its_children_contiguously() {
+        assert_eq!(Op::Select3.arity(), 3);
+        let vars = vec!["c".to_string()];
+        let nodes = math_to_nodes("(Select3 (Var \"c\") (Num 1.0) (Add (Var \"c\") (Num 2.0)))", &vars).unwrap();
+        // Level order: root, then its three children at 1, 2, 3, then Add's two at 4, 5.
+        assert_eq!(nodes[0].op, Op::Select3 as u32);
+        assert_eq!((nodes[0].child(0), nodes[0].child(1), nodes[0].child(2)), (1, 2, 3));
+        assert_eq!(nodes[1].op, Op::Var as u32);
+        assert_eq!((nodes[2].op, nodes[2].konst), (Op::Num as u32, 1.0));
+        assert_eq!((nodes[3].op, nodes[3].child(0), nodes[3].child(1)), (Op::Add as u32, 4, 5));
+        assert_eq!(nodes.len(), 6);
+    }
+
+    #[test]
+    fn every_node_of_arity_two_or_more_has_arg1_equal_to_arg0_plus_one() {
+        // The migration assertion: until phylu retires `arg1` as `ty_code`, the
+        // flattener writes `arg0 + 1` into it on every node with two or more
+        // children, and leaves (whose arg0 is a column, not a child) are
+        // excluded. The kernels read `arg0 + 1u`, never `arg1`.
+        let vars = vec!["x".to_string(), "y".to_string()];
+        let exprs = [
+            "(Add (Mul (Var \"x\") (Var \"y\")) (ProtectedDiv (Num 3.0) (Pow (Var \"x\") (Num 2.0))))",
+            "(Select3 (Sub (Var \"x\") (Var \"y\")) (Sin (Var \"x\")) (Num 0.5))",
+            "(Neg (Var \"y\"))",
+        ];
+        for e in exprs {
+            for n in math_to_nodes(e, &vars).unwrap() {
+                let op = Op::from_u32(n.op).unwrap();
+                if Op::is_engine_leaf(n.op) {
+                    continue;
+                }
+                if op.arity() >= 2 {
+                    assert_eq!(n.arg1, n.arg0 + 1, "{e}: {op:?} arg1 must mirror arg0 + 1");
+                }
+            }
+        }
+        assert!(!EVAL_WGSL.contains("nd.arg1"), "the eval kernel must not read arg1 for a child");
+    }
+
+    #[test]
+    fn engine_leaf_ids_are_fixed_and_the_arity_table_covers_every_opcode() {
+        assert_eq!(ENGINE_LEAF_IDS, [0, 1, 47]);
+        assert!(Op::is_engine_leaf(Op::Var as u32));
+        assert!(Op::is_engine_leaf(Op::Num as u32));
+        assert!(Op::is_engine_leaf(Op::GeneRef as u32));
+        assert!(!Op::is_engine_leaf(Op::Add as u32));
+        for id in ENGINE_LEAF_IDS {
+            assert_eq!(Op::from_u32(id).unwrap().arity(), 0, "an engine leaf has no children");
+        }
+        let table = op_arity_table();
+        assert_eq!(table.len(), Op::LAST as usize + 1);
+        for (u, k) in table.iter().enumerate() {
+            assert_eq!(*k as usize, Op::from_u32(u as u32).unwrap().arity(), "op_arity[{u}]");
+        }
+        let widest = table.iter().copied().max().unwrap() as usize;
+        assert_eq!(widest, 3, "Select3 is the widest op today");
+        assert!(widest <= K_MAX);
+    }
+
+    #[test]
+    fn select3_host_reference_picks_by_the_sign_of_its_condition() {
+        use crate::eval::apply_op;
+        assert_eq!(apply_op(Op::Select3, &[1.0, 10.0, 20.0]), Some(10.0));
+        assert_eq!(apply_op(Op::Select3, &[0.0, 10.0, 20.0]), Some(20.0));
+        assert_eq!(apply_op(Op::Select3, &[-2.0, 10.0, 20.0]), Some(20.0));
+        assert_eq!(apply_op(Op::Select3, &[f64::NAN, 10.0, 20.0]), Some(20.0));
+        assert_eq!(apply_op(Op::Select3, &[1.0, 10.0]), None, "arity is three, not two");
     }
 }
 
@@ -2233,6 +2386,30 @@ mod protected_parity_tests {
             GpuNode { op: Op::Var as u32, arg0: 0, arg1: 0, konst: 0.0 },
         ]);
         ev.eval(&batch).ok()
+    }
+
+    /// `Select3` on the device agrees with the host reference, row by row,
+    /// including the NaN condition: the first op whose children are read as
+    /// `arg0`, `arg0 + 1`, `arg0 + 2`.
+    #[test]
+    fn select3_matches_the_host_reference_on_the_device() {
+        let cs = [1.0f32, 0.0, -2.0, f32::NAN, 1e-9, f32::INFINITY];
+        let Ok(ev) = GpuEvaluator::new(&cs, 1) else {
+            eprintln!("no GPU available; skipping");
+            return;
+        };
+        let mut batch = ExprBatch::new();
+        batch.push(&[
+            GpuNode { op: Op::Select3 as u32, arg0: 1, arg1: 2, konst: 0.0 },
+            GpuNode { op: Op::Var as u32, arg0: 0, arg1: 0, konst: 0.0 },
+            GpuNode { op: Op::Num as u32, arg0: 0, arg1: 0, konst: 10.0 },
+            GpuNode { op: Op::Num as u32, arg0: 0, arg1: 0, konst: 20.0 },
+        ]);
+        let got = ev.eval(&batch).expect("eval");
+        for (c, g) in cs.iter().zip(&got) {
+            let want = crate::eval::apply_op(Op::Select3, &[f64::from(*c), 10.0, 20.0]).unwrap();
+            agree(*g, want, &format!("Select3({c}, 10, 20)"));
+        }
     }
 
     fn agree(got: f32, want: f64, ctx: &str) {

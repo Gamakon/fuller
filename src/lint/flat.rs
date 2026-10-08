@@ -99,14 +99,18 @@ impl Flat {
         Ok(f)
     }
 
+    /// A `Flat` is level-ordered, so a node's children are contiguous from
+    /// `arg0` and the walk reads `arity` of them (the n-ary bridge). The
+    /// pointer-walking passes below (`splice`, `apply`) keep explicit `arg1`:
+    /// they run over the rule heap and a half-rewired array, neither of which
+    /// is level-ordered until `splice` renumbers it.
     pub fn to_tree(&self) -> Tree {
         fn go(f: &Flat, i: usize) -> Tree {
             let n = &f.nodes[i];
             match arity(n.op) {
                 0 if n.op == Op::Num as u32 => Tree::Num(n.lit),
                 0 => Tree::Var(f.vars[n.arg0 as usize].clone()),
-                1 => Tree::App(op_of(n.op), vec![go(f, n.arg0 as usize)]),
-                _ => Tree::App(op_of(n.op), vec![go(f, n.arg0 as usize), go(f, n.arg1 as usize)]),
+                k => Tree::App(op_of(n.op), (0..k).map(|c| go(f, n.arg0 as usize + c)).collect()),
             }
         }
         go(self, 0)

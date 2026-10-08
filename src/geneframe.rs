@@ -15,6 +15,8 @@
 
 use std::collections::BTreeMap;
 
+use crate::gpu_eval::{GpuNode, Op};
+
 /// The value types a symbol's slots can carry — the `in_*`/`out_*` columns of
 /// `docs/design/DataModel.md`, as enum variants so `Arity`'s many-hot maps are
 /// keyed by them. THE FULL SET IS DECLARED NOW so the row structure is stable
@@ -106,6 +108,62 @@ impl Ty {
     pub fn at_depth(depth: u32) -> Option<Ty> {
         Ty::LADDER.get(depth as usize).copied()
     }
+
+    /// Every variant, in declaration order. [`Ty::code`] is the position here.
+    pub const ALL: [Ty; 35] = [
+        Ty::S, Ty::I, Ty::F, Ty::B, Ty::A, Ty::L, Ty::T1, Ty::T2,
+        Ty::Person, Ty::Org, Ty::Gpe, Ty::Loc, Ty::Norp, Ty::Fac, Ty::Event, Ty::Product,
+        Ty::Date, Ty::Time, Ty::Money, Ty::Quantity, Ty::Cardinal, Ty::Percent, Ty::Np, Ty::Ap,
+        Ty::Clause, Ty::Verb,
+        Ty::Entity, Ty::Relation, Ty::Metric, Ty::Procedure, Ty::Narrative,
+        Ty::Addr,
+        Ty::Char, Ty::CharClass, Ty::Pattern,
+    ];
+
+    /// The type's code on the device: THE ONE SPELLING of a `Ty` as a `u32`
+    /// (the node's `ty_code` word, the `out_ty`/`in_ty` tables, the fallback
+    /// table's index). Base variants are their declaration index from 0, so
+    /// today `code()` equals `ty as u32`; a kingdom whose types are rows in a
+    /// table rather than variants (the WGSL kingdom's duals) is given codes
+    /// from [`Ty::TABLE_CODE_BASE`] when its variant lands, and `as u32` stops
+    /// compiling then — which is why every cast is to move here first.
+    pub fn code(self) -> u32 {
+        self as u32
+    }
+
+    /// The first code a table-defined type family may use; base variants stay
+    /// below it.
+    pub const TABLE_CODE_BASE: u32 = 256;
+
+    /// The inverse of [`Ty::code`] over the base variants.
+    pub fn from_code(code: u32) -> Option<Ty> {
+        Ty::ALL.get(code as usize).copied()
+    }
+}
+
+/// THE PER-TYPE FALLBACK LEAF (Design C's projection): the zero-arity node a
+/// decoder emits when a codon's type does not match the demanded type, so
+/// every gene expresses. One per type; the device's table must equal this
+/// (host↔device parity). The regex kingdom's four demanded types have their
+/// own leaves; every other base type falls back to `Num 0`.
+pub fn fallback_leaf(ty: Ty) -> GpuNode {
+    let leaf = |op: Op, konst: f32| GpuNode { op: op as u32, arg0: 0, arg1: 0, konst };
+    match ty {
+        Ty::Pattern => leaf(Op::RegexEmpty, 0.0),
+        Ty::CharClass => leaf(Op::RegexCcDigit, 0.0),
+        // Char falls back to a printable byte (a `Num` the compiler reads as a
+        // literal byte); Integer to the count 1 (a `{1}` is a no-op repeat).
+        Ty::Char => leaf(Op::Num, f32::from(b'0')),
+        Ty::I => leaf(Op::Num, 1.0),
+        _ => leaf(Op::Num, 0.0),
+    }
+}
+
+/// The fallback table indexed by [`Ty::code`]: `fallback_table()[ty.code()]`
+/// is [`fallback_leaf`]`(ty)`. What a decoder uploads; sized by the base
+/// variants today, extended by the table-defined duals when they land.
+pub fn fallback_table() -> Vec<GpuNode> {
+    Ty::ALL.iter().map(|t| fallback_leaf(*t)).collect()
 }
 
 /// A typed many-hot arity signature: how many inputs / outputs of each type.
@@ -662,5 +720,46 @@ mod tests {
                 );
             }
         }
+    }
+
+    // ---- Ty::code(), the one spelling of a type on the device ----
+
+    #[test]
+    fn ty_code_is_the_declaration_index_and_every_variant_is_listed_once() {
+        // Pins `code() == ty as u32` for every base variant, so phylu's moved
+        // cast sites see the same numbers, and that `ALL` is complete and in
+        // order: a variant added without a slot here fails this test.
+        for (i, t) in Ty::ALL.iter().enumerate() {
+            assert_eq!(t.code(), i as u32, "{t:?}");
+            assert_eq!(t.code(), *t as u32, "{t:?}");
+            assert_eq!(Ty::from_code(i as u32), Some(*t));
+        }
+        assert_eq!(Ty::ALL.len(), Ty::Pattern as usize + 1, "ALL ends at the last variant");
+        let mut codes: Vec<u32> = Ty::ALL.iter().map(|t| t.code()).collect();
+        codes.dedup();
+        assert_eq!(codes.len(), Ty::ALL.len(), "codes are unique");
+        assert!(Ty::Pattern.code() < Ty::TABLE_CODE_BASE, "base codes stay below the table-defined range");
+        assert_eq!(Ty::from_code(Ty::ALL.len() as u32), None);
+        // The depth ladder is unmoved by the numbering.
+        assert_eq!((Ty::F.code(), Ty::T1.code(), Ty::T2.code()), (2, 6, 7));
+    }
+
+    #[test]
+    fn fallback_table_is_total_over_the_base_codes_and_matches_the_decoders_leaves() {
+        let table = fallback_table();
+        assert_eq!(table.len(), Ty::ALL.len());
+        for t in Ty::ALL {
+            let leaf = table[t.code() as usize];
+            let want = fallback_leaf(t);
+            assert_eq!((leaf.op, leaf.arg0, leaf.arg1, leaf.konst.to_bits()), (want.op, want.arg0, want.arg1, want.konst.to_bits()), "{t:?}");
+            assert_eq!(Op::from_u32(leaf.op).unwrap().arity(), 0, "{t:?}: a fallback is a leaf");
+        }
+        // The regex kingdom's demanded types, as the host and device decoders
+        // have always emitted them (phylu engine.rs fallback_node, decode.wgsl).
+        assert_eq!(table[Ty::Pattern.code() as usize].op, Op::RegexEmpty as u32);
+        assert_eq!(table[Ty::CharClass.code() as usize].op, Op::RegexCcDigit as u32);
+        assert_eq!((table[Ty::Char.code() as usize].op, table[Ty::Char.code() as usize].konst), (Op::Num as u32, 48.0));
+        assert_eq!((table[Ty::I.code() as usize].op, table[Ty::I.code() as usize].konst), (Op::Num as u32, 1.0));
+        assert_eq!((table[Ty::F.code() as usize].op, table[Ty::F.code() as usize].konst), (Op::Num as u32, 0.0));
     }
 }

@@ -196,6 +196,14 @@ impl Tree {
                 // exact law is NO as asin, YES as arcsin). We spell them their way.
                 Op::Asin | Op::ProtectedAsin => format!("arcsin({})", one(k)),
                 Op::Acos | Op::ProtectedAcos => format!("arccos({})", one(k)),
+                // Three children: spelled as sympy's Piecewise, the one form
+                // SRBench's reader parses for a conditional.
+                Op::Select3 => format!(
+                    "Piecewise(({}, {} > 0), ({}, True))",
+                    k[1].to_infix(),
+                    k[0].to_infix(),
+                    k[2].to_infix()
+                ),
                 Op::Var | Op::Num => unreachable!("leaves are not applications"),
                 // The REGEX kingdom's opcodes never appear in a fuller `Tree`:
                 // they are not produced by `from_math`/`math_to_nodes`, and regex
