@@ -122,7 +122,14 @@ of 3-ary templates**; only templates above 4 children (`compose_mat` of
 more than four vectors, `pack4` and friends) stay composed. The tail rule
 becomes `head·(K−1)+1` with `K = 4` for this kingdom. The retired `arg1`
 word becomes `ty_code`, the node's out dual (`Ty::code()`), which is how a
-literal leaf carries its dual on the device. Sequencing: fuller phase 1 of
+literal leaf carries its dual on the device; and the `op` word becomes the
+**kingdom's function id** (an index into the uploaded symbol table, with
+per-kingdom `op_arity`, `op_semantic`, `out_ty`, `in_ty × K` and fallback
+tables), so the node is `(fn_id, first_child, ty_code, konst)`. SR's table
+maps id to `Op` one to one, so its bytes are unchanged. A fixed prefix of
+ids is reserved in every kingdom for the engine-level leaves (Var, literal,
+GeneRef). Tail genes are evaluated one dispatch per dependency level, head
+last, so depth is unbounded and found by selection. Sequencing: fuller phase 1 of
 that plan (node semantics, `Op::arity`, `Ty::code()`, generated fallback)
 is built first, in this crate, and this reader builds on it.
 
