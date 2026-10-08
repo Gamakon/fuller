@@ -154,7 +154,12 @@ naga's writer renames identifiers.
 
 This is the structural gate, necessary not sufficient; the proof is the
 device run (compile original and rebuilt, same inputs, bit-exact outputs),
-the plan's step 5. A sample chromosome set for phylu's decoder is in
+the plan's step 5. Its first half is measured (2026-10-08,
+`examples/wgsl_device_compile.rs`, Apple M3 Max, Metal): all 10 (kernel,
+entry point) pairs create a compute pipeline both from the original and
+from the rebuilt text, at the adapter's limits (these kernels bind up to 21
+storage buffers). The second half, the same real inputs through both and
+the golden checksum deciding, waits on a source-override hook in phylu. A sample chromosome set for phylu's decoder is in
 `samples/hff.chromosomes.json` (`--dump`; the six-kernel dump is 13 MB, regenerable, untracked), and the six rebuilt kernels in `samples/rebuilt/` (`--rebuilt`).
 
 ### Open items
@@ -192,7 +197,7 @@ repaid because the product runs billions of times.
 | chromosome: roots folded into a homeotic tail, encoded and decoded through the generic pair (`src/wgsl/chromosome.rs`) | built; 59 of 59 functions `KARVA ok` (table above) |
 | the scaffold rebuild and the structural gate (`src/wgsl/scaffold.rs`, `round_trip`) | built; `ROUND_TRIP ok` on the six kernels |
 | form inference by use (`infer.rs`) | not started; forms are the slot's default |
-| device parity of a rebuilt kernel (the proof) | not started; step 5 |
+| device parity of a rebuilt kernel (the proof) | half: all 10 entry points compile both ways on Metal (`examples/wgsl_device_compile.rs`); the run on real inputs waits on phylu's source-override hook |
 | the scaffold-with-holes chromosome and its decoder (phylu) | not started |
 | compile-run-time evaluation path with the correctness gate (phylu) | not started |
 | first target: one of our own kernels, read in, round-tripped, then evolved for time | not started |

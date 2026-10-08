@@ -95,3 +95,7 @@ required-features = ["wgsl"]
 [[example]]
 name = "wgsl_read_kernel"
 required-features = ["wgsl"]
+
+[[example]]
+name = "wgsl_device_compile"
+required-features = ["gpu", "wgsl"]
