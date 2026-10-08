@@ -116,7 +116,8 @@ pub enum RootKind {
 pub struct Root {
     pub kind: RootKind,
     /// The path of statement indices from the function body to the holed
-    /// statement (nested blocks, then-branches as `accept`, loops as `body`).
+    /// statement (nested blocks, then-branches as `accept`, loops as `body`),
+    /// counting every statement but naga's `Emit`s.
     pub path: Vec<usize>,
     pub tree: Node,
 }
@@ -252,8 +253,15 @@ fn walk_block(
     roots: &mut Vec<Root>,
     unread: &mut BTreeMap<String, usize>,
 ) {
-    for (i, stmt) in block.iter().enumerate() {
-        path.push(i);
+    // `path` indexes statements with naga's Emits skipped: a rebuilt body
+    // places its Emits differently, and the paths must still agree.
+    let mut index = 0usize;
+    for stmt in block.iter() {
+        if matches!(stmt, Statement::Emit(_)) {
+            continue;
+        }
+        path.push(index);
+        index += 1;
         match stmt {
             Statement::Emit(_) | Statement::Break | Statement::Continue | Statement::Kill => {}
             Statement::Block(b) => walk_block(ctx, b, path, roots, unread),
@@ -539,8 +547,11 @@ fn expand(ctx: &mut Ctx, h: Handle<Expression>, count: bool) -> Node {
             }
         }
         Expression::CallResult(f) => {
+            // Named by the RESULT's handle index too: a function called twice
+            // has two live results, and the rebuild must put each leaf on the
+            // CallResult its own Call statement created.
             let name = ctx.module.functions[f].name.clone().unwrap_or_else(|| format!("fn{}", f.index()));
-            Node::Leaf { name: format!("call.{name}"), slot }
+            Node::Leaf { name: format!("call.{name}@{}", h.index()), slot }
         }
         Expression::Unary { op, expr } => {
             let kid = expand(ctx, expr, count);
@@ -740,9 +751,11 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         assert!(f.roots[0].path.is_empty());
         assert_eq!(f.roots[1].tree.to_sexpr(), "(store.branch (compare.gt (shape.access_0 (Var \"builtin.global_invocation_id\")) (literal.index (Num 4.0))))");
         assert_eq!(f.roots[2].tree.to_sexpr(), "(store.local.acc (bits.and (shape.access_0 (Var \"builtin.global_invocation_id\")) (literal.index (Num 3.0))))");
-        // The path counts naga's Emit statements too: [if's index in the body, 0 = accept, the store's index in that block].
-        assert_eq!(f.roots[1].path.len(), 1);
-        assert_eq!((f.roots[2].path.len(), f.roots[2].path[0], f.roots[2].path[1]), (3, f.roots[1].path[0], 0));
+        // Emit-free paths: the if is the body's first non-Emit statement, the
+        // store the first statement of its accept block.
+        assert_eq!(f.roots[1].path, vec![0]);
+        assert_eq!(f.roots[2].path, vec![0, 0, 0]);
+        assert_eq!(f.roots[3].path, vec![1]);
         assert_eq!(f.roots[3].tree.to_sexpr(), "(store.buffer.out (literal.index (Num 0.0)) (Var \"load.local.acc\"))");
     }
 
@@ -790,7 +803,7 @@ fn main() {
         let main = k.functions.iter().find(|f| f.name == "main").unwrap();
         let kinds: Vec<&RootKind> = main.roots.iter().map(|r| &r.kind).collect();
         assert_eq!(kinds[0], &RootKind::Argument { callee: "twice".into(), position: 0 });
-        assert!(main.roots[1].tree.to_sexpr().contains("(Var \"call.twice\")"));
+        assert!(main.roots[1].tree.to_sexpr().contains("(Var \"call.twice@"), "{}", main.roots[1].tree.to_sexpr());
     }
 
     #[test]
