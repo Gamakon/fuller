@@ -43,13 +43,28 @@ For an expression occurrence `e` at program point `p`:
 lineage(e, p) = { (loc, version(loc, p)) : loc read by e }  ∪  lineage of its children
 ```
 
+where a `let` binding counts as a location whose version is the binding
+itself (a use of a `let` reads that binding, never the text re-evaluated).
+
 Two occurrences `(e, p1)` and `(e, p2)` may share one definition iff
 `text(e) = text(e')` and `lineage(e, p1) = lineage(e, p2)`. The definition
-is emitted at the latest point `d` that dominates every use, such that
-`version(loc, d) = version(loc, p_i)` for every `(loc, _)` in the lineage.
-If no such `d` exists (a store to a lineage location sits between the uses,
-or the uses lie in different loop iterations), the occurrences are not
-shared.
+is emitted at a point `d` that dominates every use, with
+`version(loc, d) = version(loc, p_i)` for every `(loc, _)` in the lineage,
+and that is in lexical scope of every `let` binding the lineage reads
+(WGSL scoping is lexical: a `let` bound in an `if` arm is not visible after
+the join, and dominance alone does not say so). Among the legal points,
+the one chosen is the EARLIEST outside the deepest loop that contains all
+the uses: any legal point is correct, and a point inside a loop recomputes
+per iteration. Hoisting an occurrence out of a branch arm to a point before
+the branch is legal (WGSL has no traps: indexing is clamped, division is
+defined) but runs it unconditionally; that is a cost decision for the
+compile-and-time evaluator, not a correctness one, and the oracle cannot
+see it. If no legal `d` exists (a store to a lineage location sits between
+the uses, a binding is out of scope), the occurrences are not shared.
+`version(loc, p)` is well defined only once the phis of §2 are placed:
+before that, two paths into `p` can carry different versions and the
+number at `p` is whichever path the reader walked last, which is the
+reading-error class the step-5 fault belonged to.
 
 What this subsumes: the `let` rule (a `let` is an occurrence with a fixed
 lineage at its binding, and its uses carry that lineage, not the lineage of
@@ -67,32 +82,54 @@ order", stated for loops too.
 | a local scalar `var` | the local | a store to it |
 | a local array `var` | the local, whole array | a store to any element |
 | a struct field through a pointer | the base location (whole) | as its base |
+| a location reached through a pointer `let` (`let p = &a[i]; *p = x;`) | the base of what it points at (naga resolves it) | a store through the pointer bumps the base |
+| a location an atomic acts on | the base | every atomic operation is a store to it (its result is its own effect and is never shared, as now) |
 | the atomic result, image, call result | its own effect | never shared (as now) |
+
+**Barriers.** `workgroupBarrier()` and `storageBarrier()` make other
+invocations' stores visible: a barrier is a call that stores to every
+workgroup location (and every storage location, for the storage barrier),
+so two loads with a barrier between them never share. Unsynchronised
+stores by other invocations are a WGSL data race and out of scope: the
+model is one invocation's program order plus barriers.
 
 Whole-array granularity is the first version: `a[i] = x` bumps `a` for
 every index. It is sound and it is what the kernels need; distinguishing
 provably different constant indices is a refinement with its own test, not
 part of this set.
 
-**Loops.** A location stored anywhere inside a loop body (including nested
-blocks and callees) takes a *loop version* at the loop header: a value
-loaded in the body before the store reads the header version, one loaded
-after the store reads the post-store version, and the next iteration's
-header version is a new one. In SSA terms the header carries a phi for each
-such location. Consequence: an occurrence inside the loop and one outside
-it never share a lineage that includes a looped location, and two
-occurrences inside the body share only if no store to their locations lies
-between them within the body. A `break_if` condition is evaluated at the
-end of `continuing`, with that point's versions.
+**Phi placement, the rule.** Versions are placed as memory SSA places
+them: at every join of control flow where the incoming versions of a
+location differ, the location takes a new version (a phi) at that join.
+The joins are computed from the statement tree's dominance frontiers, not
+enumerated by construct: `if` (one arm stores, or both arms store different
+versions), `switch` (any case stores), a loop header (all its
+predecessors: the entry, the fall-through end of `continuing`, every
+`continue`), and the loop EXIT (every `break`, `break_if` and the normal
+exit, which can carry different versions). Enumerating constructs is how
+the `let` fault happened; the frontier rule is the one that holds for
+cases not named here.
 
-**Branches.** An `if` with a store in one arm bumps the location after the
-join (a phi), whichever arm ran. Occurrences in different arms never share
-(no dominating point); an occurrence before the `if` and one after share
-only if neither arm stores to its lineage.
+**Loops, in those terms.** A location stored anywhere in the loop (body,
+`continuing`, nested blocks, callees) has a header phi, so a load in the
+body before the store reads the header version and one after reads the
+post-store version, and an exit phi, so a load after the loop reads
+neither of those by number: the same text inside and after the loop are
+different versions, as they must be (the post-store version is this
+iteration's inside the loop and the last iteration's after it). A
+`break_if` condition is evaluated at the end of `continuing`, with that
+point's versions.
 
-**Calls.** A call bumps every location its callee (transitively) stores to.
-The reader has the callee's roots, so the set is known; a pointer argument
-is treated as the whole location it points at.
+**Branches.** A phi after the join wherever an arm stores; occurrences in
+different arms never share (no dominating point in scope); an occurrence
+before the `if` and one after share only if neither arm stores to its
+lineage.
+
+**Calls.** A callee's store set is expressed in its own terms (its globals
+and its parameters) and substituted per call site: a store through a
+`ptr<function>` parameter bumps the caller's argument at that site,
+different at every site; a store to a global bumps that global for every
+caller. The reader has every callee's roots, so the sets are known.
 
 ## 3. Representation
 
@@ -101,11 +138,12 @@ is treated as the whole location it points at.
 function-wide version number of that location at the load's program point.
 Every node carries `lineage: BTreeSet<(LocationId, u32)>` computed
 bottom-up (a leaf's own version plus its children's). A `let` root's uses
-carry the root's lineage. Two subtrees are *share-candidates* iff their
-rendered text (which now includes versions on loads) is equal; the text
-equality is then the lineage equality for free, because versions are in
-the text. This is the whole mechanism: the finder stays an exact text
-finder.
+carry the root's lineage. A `let` use is rendered with its binding id. Two subtrees are
+*share-candidates* iff their rendered text (versions on loads, binding ids
+on `let` uses) is equal; with versions phi-placed per §2 the text equality
+is the lineage equality, and the finder stays an exact text finder. The
+placement check of §1 is then a check on the DEFINITION's point, not a
+second test of equality.
 
 **Chromosome.** `exact_shared` drops the conservative load rule; the
 version in the text does its job. The `let` rule stays (a `let` is still a
@@ -149,8 +187,16 @@ loop-carried local, an `if` with a store in one arm, a nested index, a
 `let` before and after a store, a call to a helper that stores. Each
 generated kernel is: read, folded (with lineage), rebuilt, and both the
 original and the rebuilt kernel are run on the device on random inputs;
-outputs compared bit for bit. A difference is a fault in the representation
-or the fold, named by the generated program. This is fuller's own harness
+outputs compared as bits (`to_bits`, so NaN payloads count), inputs
+including NaN and infinities. The generator produces the REFUSAL classes on
+purpose, so the gate proves refusals and not only accepted folds: a store
+between two textual repeats, a barrier between repeats, a `let` used after
+a store to its operand's target, a repeat inside and after a loop, a repeat
+in one arm and after the join; and it records, per generated program,
+which repeats the fold shared and which it refused. A difference is a
+fault in the representation or the fold, named by the generated program.
+A thousand kernels with zero differences prove little unless the generator
+reaches the programs where folding would be wrong. This is fuller's own harness
 (the device run needs no phylu suite): `examples/wgsl_oracle.rs`, under
 `gpu,wgsl`, N programs per run, the seed printed, one process.
 
@@ -174,7 +220,18 @@ The same harness is the correctness gate for every mutation that follows.
 - Loops: a load before and after a store in one body are two versions; the
   same load in two iterations are two versions; a load of an unstored
   location inside the loop shares with one outside.
-- Branches: a store in one arm bumps after the join; arms never share.
+- Branches: a store in one arm bumps after the join; arms never share;
+  `switch` cases likewise.
+- Loop exit: a load after the loop is a third version, distinct from the
+  header and the post-store versions; a `break` before the store merges
+  into the exit phi.
+- Barriers and atomics: a workgroup load before and after a barrier are
+  two versions; an atomic bumps its location.
+- Pointer lets and call sites: a store through `let p = &a[i]` bumps `a`;
+  a callee storing through a `ptr<function>` parameter bumps the caller's
+  argument at that site only.
+- Scope: a definition reading a `let` bound in an arm is not placed after
+  the join.
 - `let`: a use after a store carries the binding's lineage (the step-5
   case, as a unit test on a four-line kernel).
 - Fold placement: two stores sharing a partial whose lineage is current at
@@ -197,6 +254,12 @@ The same harness is the correctness gate for every mutation that follows.
 
 ## Review
 
-For adversarial review by phylu-regex before anything is built: the loop
-and branch versioning rules (§2) and the placement rule (§1) are the two
-places a wrong reading becomes a wrong program again.
+Reviewed adversarially by phylu-regex (2026-10-09, twelve findings, all
+folded in): the loop exit phi, phi placement by dominance frontiers
+instead of by construct, barriers and atomics as stores, `let` scope and
+binding order in placement, the placement point stated once (earliest
+legal outside the deepest loop), hoisting out of an arm as a cost
+decision, pointer lets, per-call-site substitution, all loop predecessors,
+the iteration sentence dropped, versions well defined only after phis, and
+the oracle generating the refusal classes with bit comparison and NaN
+inputs.
