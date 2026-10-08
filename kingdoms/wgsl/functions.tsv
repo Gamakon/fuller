@@ -1,0 +1,198 @@
+ref	class	instance	naga	in	out	arity	note
+F001	literal	real	Literal	-	<S.real>	0	an RNC-style constant in the kingdom's range
+F002	literal	int	Literal	-	i32.int	0	
+F003	literal	index	Literal	-	u32.index	0	
+F004	literal	count	Literal	-	u32.count	0	
+F005	literal	bits	Literal	-	u32.bits	0	
+F006	literal	flag	Literal	-	bool.flag	0	
+F007	load	buffer	Load(Access)	u32.index	<T.form of the buffer>	1	one instance per buffer the kernel binds; the buffer is the instance's identity
+F008	load	uniform	Load(AccessIndex)	-	<T.form of the field>	0	one instance per uniform field
+F009	load	local	Load	-	<T.form of the local>	0	one instance per local at that scaffold point
+F010	arg	<name>	FunctionArgument	-	<T.form of the argument>	0	one instance per argument
+F011	builtin	global_invocation_id	FunctionArgument(builtin)	-	vec3<u32>.index	0	
+F012	builtin	local_invocation_id	FunctionArgument(builtin)	-	vec3<u32>.index	0	
+F013	builtin	workgroup_id	FunctionArgument(builtin)	-	vec3<u32>.index	0	
+F014	builtin	local_invocation_index	FunctionArgument(builtin)	-	u32.index	0	
+F015	builtin	num_workgroups	FunctionArgument(builtin)	-	vec3<u32>.count	0	
+F016	arith	add	Binary::Add	<S.real> <S.real>	<S.real>	2	per real dual, lanes equal
+F017	arith	sub	Binary::Subtract	<S.real> <S.real>	<S.real>	2	per real dual, lanes equal
+F018	arith	mul	Binary::Multiply	<S.real> <S.real>	<S.real>	2	per real dual, lanes equal
+F019	arith	div	Binary::Divide	<S.real> <S.real>	<S.real>	2	per real dual, lanes equal
+F020	arith	mul_scalar_vec	Binary::Multiply	f32.real <vecL<f32>.real>	<vecL<f32>.real>	2	
+F021	arith	mul_mat_vec	Binary::Multiply	<matCxR<f32>.real> <vecC<f32>.real>	<vecR<f32>.real>	2	
+F022	arith	mul_mat_mat	Binary::Multiply	<matAxB<f32>.real> <matBxC<f32>.real>	<matAxC<f32>.real>	2	
+F023	arith	neg	Unary::Negate	<S.real>	<S.real>	1	
+F024	arith	abs	Math::Abs	<S.real>	<S.real>	1	
+F025	arith	sign	Math::Sign	<S.real>	<S.real>	1	
+F026	arith	floor	Math::Floor	<S.real>	<S.real>	1	
+F027	arith	ceil	Math::Ceil	<S.real>	<S.real>	1	
+F028	arith	round	Math::Round	<S.real>	<S.real>	1	
+F029	arith	fract	Math::Fract	<S.real>	<S.real>	1	
+F030	arith	trunc	Math::Trunc	<S.real>	<S.real>	1	
+F031	arith	saturate	Math::Saturate	<S.real>	<S.real>	1	
+F032	arith	sqrt	Math::Sqrt	<S.real>	<S.real>	1	
+F033	arith	inverse_sqrt	Math::InverseSqrt	<S.real>	<S.real>	1	
+F034	arith	exp	Math::Exp	<S.real>	<S.real>	1	
+F035	arith	exp2	Math::Exp2	<S.real>	<S.real>	1	
+F036	arith	log	Math::Log	<S.real>	<S.real>	1	
+F037	arith	log2	Math::Log2	<S.real>	<S.real>	1	
+F038	arith	min	Math::Min	<S.real> <S.real>	<S.real>	2	
+F039	arith	max	Math::Max	<S.real> <S.real>	<S.real>	2	
+F040	arith	step	Math::Step	<S.real> <S.real>	<S.real>	2	
+F041	arith	pow	Math::Pow	<S.real> <S.real>	<S.real>	2	
+F042	arith	atan2	Math::Atan2	<S.real> <S.real>	<S.real>	2	
+F043	arith	ldexp	Math::Ldexp	<S.real> <S.real>	<S.real>	2	
+F044	arith	clamp	Math::Clamp	<S.real> <S.real> <S.real>	<S.real>	3	arity 3
+F045	arith	mix	Math::Mix	<S.real> <S.real> <S.real>	<S.real>	3	arity 3
+F046	arith	fma	Math::Fma	<S.real> <S.real> <S.real>	<S.real>	3	arity 3
+F047	arith	smoothstep	Math::Smoothstep	<S.real> <S.real> <S.real>	<S.real>	3	arity 3
+F048	arith	mix_scalar_weight	Math::Mix	<vecL<f32>.real> <vecL<f32>.real> f32.real	<vecL<f32>.real>	3	arity 3
+F049	trig	sin	Math::Sin	<S.real>	<S.real>	1	
+F050	trig	cos	Math::Cos	<S.real>	<S.real>	1	
+F051	trig	tan	Math::Tan	<S.real>	<S.real>	1	
+F052	trig	sinh	Math::Sinh	<S.real>	<S.real>	1	
+F053	trig	cosh	Math::Cosh	<S.real>	<S.real>	1	
+F054	trig	tanh	Math::Tanh	<S.real>	<S.real>	1	
+F055	trig	asin	Math::Asin	<S.real>	<S.real>	1	
+F056	trig	acos	Math::Acos	<S.real>	<S.real>	1	
+F057	trig	atan	Math::Atan	<S.real>	<S.real>	1	
+F058	trig	asinh	Math::Asinh	<S.real>	<S.real>	1	
+F059	trig	acosh	Math::Acosh	<S.real>	<S.real>	1	
+F060	trig	atanh	Math::Atanh	<S.real>	<S.real>	1	
+F061	trig	radians	Math::Radians	<S.real>	<S.real>	1	
+F062	trig	degrees	Math::Degrees	<S.real>	<S.real>	1	
+F063	geom	dot	Math::Dot	<vecL<f32>.real> <vecL<f32>.real>	f32.real	2	
+F064	geom	cross	Math::Cross	vec3<f32>.real vec3<f32>.real	vec3<f32>.real	2	
+F065	geom	length	Math::Length	<vecL<f32>.real>	f32.real	1	
+F066	geom	distance	Math::Distance	<vecL<f32>.real> <vecL<f32>.real>	f32.real	2	
+F067	geom	normalize	Math::Normalize	<vecL<f32>.real>	<vecL<f32>.real>	1	
+F068	geom	outer	Math::Outer	<vecR<f32>.real> <vecC<f32>.real>	<matCxR<f32>.real>	2	
+F069	geom	transpose	Math::Transpose	<matCxR<f32>.real>	<matRxC<f32>.real>	1	
+F070	geom	determinant	Math::Determinant	<matNxN<f32>.real>	f32.real	1	
+F071	geom	inverse	Math::Inverse	<matNxN<f32>.real>	<matNxN<f32>.real>	1	
+F072	geom	reflect	Math::Reflect	<vecL<f32>.real> <vecL<f32>.real>	<vecL<f32>.real>	2	
+F073	geom	refract	Math::Refract	<vecL<f32>.real> <vecL<f32>.real> f32.real	<vecL<f32>.real>	3	arity 3
+F074	geom	face_forward	Math::FaceForward	<vecL<f32>.real> <vecL<f32>.real> <vecL<f32>.real>	<vecL<f32>.real>	3	arity 3
+F075	index	add	Binary::Add	<u32.index> <u32.index>	<u32.index>	2	lanes equal
+F076	index	sub	Binary::Subtract	<u32.index> <u32.index>	<u32.index>	2	lanes equal
+F077	index	mul	Binary::Multiply	<u32.index> <u32.index>	<u32.index>	2	lanes equal
+F078	index	div	Binary::Divide	<u32.index> <u32.index>	<u32.index>	2	lanes equal
+F079	index	mod	Binary::Modulo	<u32.index> <u32.index>	<u32.index>	2	lanes equal
+F080	index	min	Math::Min	<u32.index> <u32.index>	<u32.index>	2	lanes equal
+F081	index	max	Math::Max	<u32.index> <u32.index>	<u32.index>	2	lanes equal
+F082	index	clamp	Math::Clamp	<u32.index> <u32.index> <u32.index>	<u32.index>	3	arity 3
+F083	index	of_int	composite	i32.int	u32.index	1	floor at zero
+F084	index	of_count	composite	u32.count	u32.index	1	
+F085	index	clamp_to	composite	u32.index u32.count	u32.index	2	i < n
+F086	index	band_of	composite	u32.index u32.count	u32.index	2	i / band
+F087	count	add	Binary::Add	u32.count u32.count	u32.count	2	sub floors at zero
+F088	count	sub_floor	composite	u32.count u32.count	u32.count	2	sub floors at zero
+F089	count	min	Math::Min	u32.count u32.count	u32.count	2	sub floors at zero
+F090	count	max	Math::Max	u32.count u32.count	u32.count	2	sub floors at zero
+F091	int	add	Binary::Add	<i32.int> <i32.int>	<i32.int>	2	lanes equal
+F092	int	sub	Binary::Subtract	<i32.int> <i32.int>	<i32.int>	2	lanes equal
+F093	int	mul	Binary::Multiply	<i32.int> <i32.int>	<i32.int>	2	lanes equal
+F094	int	div	Binary::Divide	<i32.int> <i32.int>	<i32.int>	2	lanes equal
+F095	int	mod	Binary::Modulo	<i32.int> <i32.int>	<i32.int>	2	lanes equal
+F096	int	neg	Unary::Negate	<i32.int>	<i32.int>	1	lanes equal
+F097	int	abs	Math::Abs	<i32.int>	<i32.int>	1	lanes equal
+F098	int	min	Math::Min	<i32.int> <i32.int>	<i32.int>	2	lanes equal
+F099	int	max	Math::Max	<i32.int> <i32.int>	<i32.int>	2	lanes equal
+F100	fixed	add_sat	composite	i32.q15_16 i32.q15_16	i32.q15_16	2	saturating
+F101	fixed	sub_sat	composite	i32.q15_16 i32.q15_16	i32.q15_16	2	saturating
+F102	fixed	mul	composite	i32.q15_16 i32.q15_16	i32.q15_16	2	(x*y) >> 16 with rounding; the only multiply on q15_16
+F103	fixed	shl	composite	i32.q15_16 u32.count	i32.q15_16	2	
+F104	fixed	shr	composite	i32.q15_16 u32.count	i32.q15_16	2	
+F105	fixed	wide_mul	composite	i32.q15_16 i32.q15_16	vec2<i32>.q15_16w	2	two limbs, no rescale
+F106	fixed	wide_add_sat	composite	vec2<i32>.q15_16w vec2<i32>.q15_16w	vec2<i32>.q15_16w	2	
+F107	fixed	narrow	composite	vec2<i32>.q15_16w	i32.q15_16	1	
+F108	convert	f32_to_f16	As	f32.real	f16.real	1	
+F109	convert	f16_to_f32	As	f16.real	f32.real	1	
+F110	convert	f32_to_q15_16	composite	f32.real	i32.q15_16	1	round to nearest, saturate
+F111	convert	q15_16_to_f32	composite	i32.q15_16	f32.real	1	
+F112	convert	int_to_f32	As	i32.int	f32.real	1	
+F113	convert	f32_to_int	As	f32.real	i32.int	1	truncating
+F114	convert	count_to_f32	As	u32.count	f32.real	1	
+F115	convert	index_to_f32	As	u32.index	f32.real	1	
+F116	convert	f32_to_count	As	f32.real	u32.count	1	truncating, floor at 0
+F117	convert	bitcast_f32_bits	As(bitcast)	f32.real	u32.bits	1	
+F118	convert	bitcast_bits_f32	As(bitcast)	u32.bits	f32.real	1	
+F119	convert	sign_to_real	composite	bool.sign	f32.real	1	±1.0
+F120	convert	hash32_to_bits	composite	u32.hash32	u32.bits	1	
+F121	convert	hash32_to_unit	composite	u32.hash32	f32.real	1	scale to [0, 1)
+F122	convert	hash32_to_index	composite	u32.hash32 u32.count	u32.index	2	masked rejection, never modulo
+F123	quantise	real_to_code4	composite	f32.real	u32.code4	1	nearest of the 4-level codebook
+F124	quantise	code4_to_real	composite	u32.code4	f32.real	1	the level's value
+F125	quantise	real_to_code8	composite	f32.real	u32.code8	1	nearest of the 8-level codebook
+F126	quantise	code8_to_real	composite	u32.code8	f32.real	1	the level's value
+F127	quantise	real_to_code16	composite	f32.real	u32.code16	1	nearest of the 16-level codebook
+F128	quantise	code16_to_real	composite	u32.code16	f32.real	1	the level's value
+F129	quantise	real_to_code1024	composite	f32.real	u32.code1024	1	nearest of the 1024-level codebook
+F130	quantise	code1024_to_real	composite	u32.code1024	f32.real	1	the level's value
+F131	quantise	pack4_code8	composite	u32.code8 u32.code8 u32.code8	u32.bits	3	arity 3: three lanes; pack4_code8_hi adds the fourth
+F132	quantise	pack4_code8_hi	composite	u32.bits u32.code8	u32.bits	2	
+F133	quantise	unpack_code8	composite	u32.bits u32.index	u32.code8	2	lane i
+F134	bits	and	Binary::And	<u32.bits> <u32.bits>	<u32.bits>	2	lanes equal
+F135	bits	or	Binary::InclusiveOr	<u32.bits> <u32.bits>	<u32.bits>	2	lanes equal
+F136	bits	xor	Binary::ExclusiveOr	<u32.bits> <u32.bits>	<u32.bits>	2	lanes equal
+F137	bits	not	Unary::BitwiseNot	<u32.bits>	<u32.bits>	1	
+F138	bits	shl	Binary::ShiftLeft	<u32.bits> u32.count	<u32.bits>	2	
+F139	bits	shr	Binary::ShiftRight	<u32.bits> u32.count	<u32.bits>	2	
+F140	bits	count_ones	Math::CountOneBits	u32.bits	u32.count	1	
+F141	bits	leading_zeros	Math::CountLeadingZeros	u32.bits	u32.count	1	
+F142	bits	trailing_zeros	Math::CountTrailingZeros	u32.bits	u32.count	1	
+F143	bits	find_lsb	Math::FindLsb	u32.bits	u32.count	1	
+F144	bits	find_msb	Math::FindMsb	u32.bits	u32.count	1	
+F145	bits	reverse	Math::ReverseBits	u32.bits	u32.bits	1	
+F146	bits	extract	Math::ExtractBits	u32.bits u32.index u32.count	u32.bits	3	arity 3
+F147	bits	insert_lo	composite	u32.bits u32.bits u32.index	u32.bits	3	arity 3; with insert_hi composes naga InsertBits (arity 4)
+F148	bits	insert_hi	composite	u32.bits u32.count	u32.bits	2	
+F149	bits	pack_sign	composite	bool.sign	u32.bits	1	
+F150	bits	unpack_sign	composite	u32.bits u32.index	bool.sign	2	
+F151	bits	pack4x8snorm	Math::Pack4x8snorm	vec4<f32>.real	u32.bits	1	
+F152	bits	unpack4x8snorm	Math::UnPack4x8snorm	u32.bits	vec4<f32>.real	1	
+F153	bits	pack4x8unorm	Math::Pack4x8unorm	vec4<f32>.real	u32.bits	1	
+F154	bits	unpack4x8unorm	Math::UnPack4x8unorm	u32.bits	vec4<f32>.real	1	
+F155	bits	pack2x16snorm	Math::Pack2x16snorm	vec2<f32>.real	u32.bits	1	
+F156	bits	unpack2x16snorm	Math::UnPack2x16snorm	u32.bits	vec2<f32>.real	1	
+F157	bits	pack2x16unorm	Math::Pack2x16unorm	vec2<f32>.real	u32.bits	1	
+F158	bits	unpack2x16unorm	Math::UnPack2x16unorm	u32.bits	vec2<f32>.real	1	
+F159	bits	pack2x16float	Math::Pack2x16float	vec2<f32>.real	u32.bits	1	
+F160	bits	unpack2x16float	Math::UnPack2x16float	u32.bits	vec2<f32>.real	1	
+F161	hash	mix64	composite	vec2<u32>.hash64	vec2<u32>.hash64	1	SplitMix64 finaliser, two limbs
+F162	hash	fmix32	composite	u32.hash32	u32.hash32	1	MurmurHash3 finaliser
+F163	hash	combine	composite	u32.hash32 u32.bits	u32.hash32	2	xor-in a key or an index
+F164	hash	split_lo	composite	vec2<u32>.hash64	u32.hash32	1	
+F165	hash	split_hi	composite	vec2<u32>.hash64	u32.hash32	1	
+F166	compare	eq	Binary::Equal	<S.c> <S.c>	<bool.flag per lane>	2	any form c that permits comparison (not bits, hash, opaque; codes eq/ne only)
+F167	compare	ne	Binary::NotEqual	<S.c> <S.c>	<bool.flag per lane>	2	any form c that permits comparison (not bits, hash, opaque; codes eq/ne only)
+F168	compare	lt	Binary::Less	<S.c> <S.c>	<bool.flag per lane>	2	any form c that permits comparison (not bits, hash, opaque; codes eq/ne only)
+F169	compare	le	Binary::LessEqual	<S.c> <S.c>	<bool.flag per lane>	2	any form c that permits comparison (not bits, hash, opaque; codes eq/ne only)
+F170	compare	gt	Binary::Greater	<S.c> <S.c>	<bool.flag per lane>	2	any form c that permits comparison (not bits, hash, opaque; codes eq/ne only)
+F171	compare	ge	Binary::GreaterEqual	<S.c> <S.c>	<bool.flag per lane>	2	any form c that permits comparison (not bits, hash, opaque; codes eq/ne only)
+F172	logic	and	Binary::LogicalAnd	bool.flag bool.flag	bool.flag	2	
+F173	logic	or	Binary::LogicalOr	bool.flag bool.flag	bool.flag	2	
+F174	logic	not	Unary::LogicalNot	bool.flag	bool.flag	1	
+F175	logic	all	Relational::All	<vecL<bool>.flag>	bool.flag	1	
+F176	logic	any	Relational::Any	<vecL<bool>.flag>	bool.flag	1	
+F177	logic	is_nan	Relational::IsNan	<S.real>	<bool.flag per lane>	1	
+F178	logic	is_inf	Relational::IsInf	<S.real>	<bool.flag per lane>	1	
+F179	select	scalar_cond	Select	<S.c> <S.c> bool.flag	<S.c>	3	arity 3; both branches one dual
+F180	select	lane_cond	Select	<vecL.c> <vecL.c> <vecL<bool>.flag>	<vecL.c>	3	arity 3
+F181	select	negate_if	composite	<S.real> bool.sign	<S.real>	2	
+F182	shape	access_0	AccessIndex	<vecL.c>	<S.c>	1	lane 0; row exists only for L > 0
+F183	shape	access_1	AccessIndex	<vecL.c>	<S.c>	1	lane 1; row exists only for L > 1
+F184	shape	access_2	AccessIndex	<vecL.c>	<S.c>	1	lane 2; row exists only for L > 2
+F185	shape	access_3	AccessIndex	<vecL.c>	<S.c>	1	lane 3; row exists only for L > 3
+F186	shape	access_dyn	Access	<array<T>.c> u32.index	<T.c>	2	
+F187	shape	swizzle	Swizzle	<vecL.c>	<vecK.c>	1	one instance per pattern met at read-in (xy, xyz, zyx, …)
+F188	shape	compose2	Compose	<S.c> <S.c>	<vec2.c>	2	
+F189	shape	compose3	Compose	<vec2.c> <S.c>	<vec3.c>	2	composed from compose2
+F190	shape	compose4	Compose	<vec3.c> <S.c>	<vec4.c>	2	
+F191	shape	compose_mat	Compose	<vecR<f32>.real> <vecR<f32>.real>	<mat2xR<f32>.real>	2	wider matrices by further composes
+F192	shape	splat2	Splat	<S.c>	<vec2.c>	1	
+F193	shape	splat3	Splat	<S.c>	<vec3.c>	1	
+F194	shape	splat4	Splat	<S.c>	<vec4.c>	1	
+F195	store	buffer	Store(Access)	u32.index <T.form of the buffer>	store	2	one instance per buffer; a head gene's root
+F196	store	local	Store	<T.form of the local>	store	1	
+F197	store	branch	If/Loop condition	bool.flag	store	1	a branch-condition root in the scaffold
