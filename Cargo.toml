@@ -42,10 +42,17 @@ version = "0.22"
 features = ["extension-module"]
 optional = true
 
+# The WGSL kingdom (feature = "wgsl"): naga is the front end that reads a
+# kernel into its expression arena and the back end that writes a rebuilt
+# module out again (kingdoms/wgsl, docs/PLAN_wgsl_kernel_reader.md). The same
+# naga wgpu already pulls in; `wgsl-out` is the one feature wgpu does not
+# enable on this platform.
+[dependencies.naga]
+version = "0.20"
+features = ["wgsl-in", "wgsl-out"]
+optional = true
+
 [dev-dependencies]
-# WGSL front end for the kernel-DAG study (examples/wgsl_dag_study.rs); the
-# same naga wgpu already pulls in.
-naga = { version = "0.20", features = ["wgsl-in"] }
 # TEST-ONLY oracle for the regex simplifier: render a Re AST to a regex string
 # and compare match results before/after simplify. Never a run path.
 regex = "1"
@@ -58,6 +65,9 @@ python = ["dep:pyo3"]
 # `gpu` adds the wgpu batch evaluator. Off by default: a plain build must never
 # need a GPU adapter, and the CPU evaluator stays the correctness reference.
 gpu = ["dep:wgpu", "dep:pollster", "dep:bytemuck"]
+# `wgsl` adds the WGSL kingdom's reader and loader (naga in and out). Off by
+# default and independent of `gpu`: reading a kernel needs no adapter.
+wgsl = ["dep:naga"]
 
 [[example]]
 name = "00_calibration"
@@ -77,3 +87,7 @@ path = "examples/bf_hff_study/main.rs"
 [[example]]
 name = "parity_device"
 required-features = ["gpu"]
+
+[[example]]
+name = "wgsl_dag_study"
+required-features = ["wgsl"]

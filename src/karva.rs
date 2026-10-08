@@ -169,6 +169,37 @@ fn fmt_f64(v: f64) -> String {
 /// Neutral-region tokens (beyond the live expression) are ignored, exactly as
 /// they would be when the chromosome is evaluated.
 pub fn karva_to_terms(head: &[Token], tail: &[Token], pset: &PsetSpec) -> Result<String, String> {
+    decode(head, tail, pset, &|spec, kids| semantic_to_math(spec.semantic_id, kids))
+}
+
+/// The generic decoder: the same GEP walk as [`karva_to_terms`], rendering a
+/// function token as `(<token name> child …)` with no semantic table in
+/// between. This is the pair the WGSL kingdom (and any kingdom whose symbols
+/// are `class.instance` names rather than `Math` constructors) decodes with;
+/// a `Var` leaf renders `(Var "name")` and a `Num` leaf `(Num v)` exactly as
+/// the `Math` decoder does, so a kingdom's literal-with-dual leaf is an
+/// ordinary 1-ary node over a `Num`, e.g. `(literal.index (Num 5.0))`.
+pub fn karva_to_terms_generic(head: &[Token], tail: &[Token], pset: &PsetSpec) -> Result<String, String> {
+    decode(head, tail, pset, &|spec, kids| Ok(format!("({} {})", spec.token, kids.join(" "))))
+}
+
+/// A function token with its name, for the generic renderer.
+struct NamedSpec<'a> {
+    token: &'a str,
+    semantic_id: &'a str,
+}
+
+/// How a decoder renders one application from its token and rendered children.
+type RenderApp<'a> = &'a dyn Fn(&NamedSpec, &[String]) -> Result<String, String>;
+
+/// The GEP decode walk shared by both decoders; `render_app` turns a function
+/// token and its rendered children into text.
+fn decode(
+    head: &[Token],
+    tail: &[Token],
+    pset: &PsetSpec,
+    render_app: RenderApp,
+) -> Result<String, String> {
     if head.is_empty() {
         return Err("empty head".to_string());
     }
@@ -214,6 +245,7 @@ pub fn karva_to_terms(head: &[Token], tail: &[Token], pset: &PsetSpec) -> Result
         stream: &[&Token],
         children_of: &[Vec<usize>],
         pset: &PsetSpec,
+        render_app: RenderApp,
         depth: usize,
     ) -> Result<String, String> {
         if depth > crate::MAX_EXPR_DEPTH {
@@ -230,15 +262,15 @@ pub fn karva_to_terms(head: &[Token], tail: &[Token], pset: &PsetSpec) -> Result
                     .ok_or_else(|| format!("function token {name:?} not in pset"))?;
                 let kids: Result<Vec<String>, String> = children_of[idx]
                     .iter()
-                    .map(|&c| render(c, stream, children_of, pset, depth + 1))
+                    .map(|&c| render(c, stream, children_of, pset, render_app, depth + 1))
                     .collect();
-                semantic_to_math(&spec.semantic_id, &kids?)
+                render_app(&NamedSpec { token: name, semantic_id: &spec.semantic_id }, &kids?)
             }
             leaf => leaf_to_math(leaf, pset),
         }
     }
 
-    render(0, &stream, &children_of, pset, 0)
+    render(0, &stream, &children_of, pset, render_app, 0)
 }
 
 // ---------------------------------------------------------------------------
@@ -480,12 +512,62 @@ pub fn terms_to_karva_sized(
     target_head_length: Option<usize>,
 ) -> Result<(Vec<Token>, Vec<Token>, bool), String> {
     let root = parse_math(term)?;
+    let head = emit_head(&root, pset, &|ctor, n_children| {
+        let semantic = math_ctor_to_semantic(ctor)
+            .ok_or_else(|| format!("non-karva constructor {ctor:?}"))?;
+        func_token_for_semantic_arity(semantic, pset, Some(n_children))
+    })?;
+    pad(head, pset, rng_seed, target_head_length)
+}
 
-    // BFS the tree; emit a Token per node in level order. Functions become
-    // Func tokens (by semantic id -> pset name); leaves become Var/Num tokens.
+/// The generic encoder, the inverse of [`karva_to_terms_generic`]: an
+/// application's constructor IS the pset token name, and its child count must
+/// equal that token's arity (a karva head carries arity only implicitly, so a
+/// mismatch would re-parent the rest of the stream). No pset function may take
+/// more than [`crate::gpu_eval::K_MAX`] children: the device node has room for
+/// `K_MAX` contiguous child slots and no more. The tail follows the GEP rule
+/// for the pset's maximum arity, so a kingdom with a 4-ary symbol pads
+/// `3·head + 1` terminals.
+pub fn terms_to_karva_generic(
+    term: &str,
+    pset: &PsetSpec,
+    rng_seed: u64,
+    target_head_length: Option<usize>,
+) -> Result<(Vec<Token>, Vec<Token>, bool), String> {
+    if let Some((name, spec)) = pset.functions.iter().find(|(_, f)| f.arity > crate::gpu_eval::K_MAX) {
+        return Err(format!(
+            "pset function {name:?} has arity {}, past K_MAX {}",
+            spec.arity,
+            crate::gpu_eval::K_MAX
+        ));
+    }
+    let root = parse_math(term)?;
+    let head = emit_head(&root, pset, &|ctor, n_children| {
+        let spec = pset
+            .functions
+            .get(ctor)
+            .ok_or_else(|| format!("function {ctor:?} not in pset"))?;
+        if spec.arity != n_children {
+            return Err(format!(
+                "function {ctor:?} takes {} children, {n_children} given",
+                spec.arity
+            ));
+        }
+        Ok(ctor.to_string())
+    })?;
+    pad(head, pset, rng_seed, target_head_length)
+}
+
+/// BFS the tree; emit a Token per node in level order. Leaves become Var/Num
+/// tokens; an application becomes the Func token `name_for(ctor, n_children)`.
+fn emit_head(
+    root: &MathNode,
+    pset: &PsetSpec,
+    name_for: &dyn Fn(&str, usize) -> Result<String, String>,
+) -> Result<Vec<Token>, String> {
     let mut head: Vec<Token> = Vec::new();
     let mut queue: std::collections::VecDeque<&MathNode> = std::collections::VecDeque::new();
-    queue.push_back(&root);
+    queue.push_back(root);
     while let Some(node) = queue.pop_front() {
         match node {
             MathNode::Num(v) => {
@@ -513,18 +595,24 @@ pub fn terms_to_karva_sized(
                 // func_token_for_semantic_arity). diff_sq in particular
                 // round-trips as its expansion Pow2(Sub ..), where the pset's
                 // diff_sq is binary and Pow2 is unary.
-                let semantic = math_ctor_to_semantic(ctor)
-                    .ok_or_else(|| format!("non-karva constructor {ctor:?}"))?;
-                let name = func_token_for_semantic_arity(
-                    semantic, pset, Some(children.len()))?;
-                head.push(Token::Func(name));
+                head.push(Token::Func(name_for(ctor, children.len())?));
                 for c in children {
                     queue.push_back(c);
                 }
             }
         }
     }
+    Ok(head)
+}
 
+/// Honour a requested head length and pad the tail by the GEP rule, both from
+/// one deterministic terminal stream seeded by `rng_seed`.
+fn pad(
+    mut head: Vec<Token>,
+    pset: &PsetSpec,
+    rng_seed: u64,
+    target_head_length: Option<usize>,
+) -> Result<(Vec<Token>, Vec<Token>, bool), String> {
     // The terminal pool for both head-extension filler and tail padding.
     let mut pool: Vec<Token> = pset.variables.iter().cloned().map(Token::Var).collect();
     pool.extend(pset.rnc_values.iter().copied().map(Token::Num));
@@ -833,5 +921,82 @@ mod tests {
         assert!(matches!(&head[0], Token::Func(n) if pset().functions[n].semantic_id == "abs")
             || head.iter().any(|t| matches!(t, Token::Func(_))));
     }
-}
 
+    // ---- The generic pair: class.instance kingdoms, any arity up to K_MAX ----
+
+    fn wgsl_like_pset() -> PsetSpec {
+        let mut functions = HashMap::new();
+        for (name, arity) in [
+            ("arith.add", 2),
+            ("arith.mul", 2),
+            ("literal.index", 1),
+            ("select.scalar_cond", 3),
+            ("arith.fma", 3),
+            ("shape.compose4", 4),
+        ] {
+            functions.insert(name.to_string(), FunctionSpec { semantic_id: name.into(), arity });
+        }
+        PsetSpec {
+            variables: vec!["load.x".into(), "load.y".into(), "c".into()],
+            functions,
+            rnc_values: vec![1.0, 2.0],
+        }
+    }
+
+    #[test]
+    fn generic_pair_round_trips_dotted_names_a_literal_dual_and_a_ternary_node() {
+        let pset = wgsl_like_pset();
+        let term = "(select.scalar_cond (Var \"c\") (arith.add (Var \"load.x\") (literal.index (Num 5.0))) (arith.mul (Var \"load.y\") (Var \"load.x\")))";
+        let (head, tail, oversized) = terms_to_karva_generic(term, &pset, 7, None).unwrap();
+        assert!(!oversized);
+        assert_eq!(head[0], Token::Func("select.scalar_cond".into()));
+        assert_eq!(head.len(), 9, "nine live nodes in level order");
+        let back = karva_to_terms_generic(&head, &tail, &pset).unwrap();
+        assert_eq!(back, term);
+    }
+
+    #[test]
+    fn generic_tail_follows_the_gep_rule_for_the_psets_widest_symbol() {
+        // A 4-ary symbol in the pset means K = 4 and tail = 3·head + 1,
+        // whatever this term uses.
+        let pset = wgsl_like_pset();
+        let (head, tail, _) = terms_to_karva_generic("(arith.add (Var \"c\") (Num 1.0))", &pset, 1, Some(6)).unwrap();
+        assert_eq!(head.len(), 6);
+        assert_eq!(tail.len(), 3 * 6 + 1);
+        assert!(tail.iter().all(|t| !matches!(t, Token::Func(_))), "a tail is terminals only");
+        // Determinism: the same seed pads the same way.
+        let again = terms_to_karva_generic("(arith.add (Var \"c\") (Num 1.0))", &pset, 1, Some(6)).unwrap();
+        assert_eq!((head, tail), (again.0, again.1));
+    }
+
+    #[test]
+    fn generic_encoder_refuses_an_arity_mismatch_an_unknown_function_and_a_symbol_past_k_max() {
+        let pset = wgsl_like_pset();
+        let two_for_three = terms_to_karva_generic("(arith.fma (Var \"c\") (Num 1.0))", &pset, 0, None);
+        assert!(two_for_three.unwrap_err().contains("takes 3 children, 2 given"));
+        let unknown = terms_to_karva_generic("(arith.pow (Var \"c\") (Num 1.0))", &pset, 0, None);
+        assert!(unknown.unwrap_err().contains("not in pset"));
+        let mut wide = wgsl_like_pset();
+        wide.functions.insert("shape.compose5".into(), FunctionSpec { semantic_id: "shape.compose5".into(), arity: 5 });
+        let refused = terms_to_karva_generic("(arith.add (Var \"c\") (Num 1.0))", &wide, 0, None);
+        assert!(refused.unwrap_err().contains("past K_MAX 4"), "a 5-ary token is refused");
+    }
+
+    #[test]
+    fn generic_decoder_reads_a_four_child_node_and_ignores_the_neutral_region() {
+        let pset = wgsl_like_pset();
+        let term = "(shape.compose4 (Var \"c\") (Num 1.0) (Var \"load.x\") (Num 2.0))";
+        let (head, tail, _) = terms_to_karva_generic(term, &pset, 3, Some(9)).unwrap();
+        assert_eq!(karva_to_terms_generic(&head, &tail, &pset).unwrap(), term);
+    }
+
+    #[test]
+    fn math_pair_is_unchanged_by_the_refactor() {
+        // The Math decoder and encoder still agree with each other through the
+        // shared walk, on a term that exercises the semantic table.
+        let pset = pset();
+        let term = "(Add (Mul (Var \"x\") (Num 2.0)) (Sqrt (Abs (Var \"y\"))))";
+        let (head, tail) = terms_to_karva(term, &pset, 11).unwrap();
+        assert_eq!(karva_to_terms(&head, &tail, &pset).unwrap(), term);
+    }
+}

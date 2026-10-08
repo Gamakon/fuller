@@ -4,7 +4,7 @@
 //! so how many are repeats a value-numbering pass would remove; and how many
 //! statements carry effects (stores) or control flow (if, loop, switch).
 //!
-//!   cargo run --release --example wgsl_dag_study -- <file.wgsl>...
+//!   cargo run --release --features wgsl --example wgsl_dag_study -- <file.wgsl>...
 use std::collections::HashMap;
 
 fn canonical_count(func: &naga::Function) -> (usize, usize, usize) {
