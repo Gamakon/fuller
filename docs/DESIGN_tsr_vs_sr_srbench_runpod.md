@@ -60,7 +60,7 @@ split, the ranking rows and the seed, so AB1 stays a development result.
 | split | sklearn `train_test_split(train_size=0.75, random_state=seed)` per law × seed; the fit and the canonicaliser read only the 75 % | SRBench's own partition; the 25 % is only read by the offline scorer |
 | configurations | TSR: `EVOLVE_TYPED_DEPTH=2`; untyped: unset. Nothing else differs | the one-variable A/B |
 | engine card | CASCADE2: 3 genes, head 34, intake 1000 + champion 1000, pump every 50, cohort merge 10 000, typed snap every 10 (subtree), fold/snap/beam every 20, `EVOLVE_WRAPPERS=identity`, `EVOLVE_DIVERSITY=1` | the production card; identity wrapper so a solution is the engine's form, not a log/sqrt wrap |
-| stop | early stop at the law bar: log10 p ≤ -19 and 1-R² ≤ 1e-6 (train and val); cap 90 s wall clock; no evaluation cap in the run | Andrew's ruling of 2026-10-07 (`law_runner.py`), AB1's setting. The v2 plan's card says 1e-10 because at 1e-6 the gate fired on 28 near-misses in 531 trials; under this design a false stop costs the trial. Build item 1a sets the TF card to 1e-6 so both runs agree; this is the one setting to confirm before the build |
+| stop | early stop at the law bar: log10 p ≤ -19 and 1-R² ≤ 1e-10 (train and val); cap 90 s wall clock; no evaluation cap in the run | Andrew's ruling, 2026-10-08: 1e-10 finds an actual law, anything looser is approximate; if a run is not stopped by a law it runs to the cap. Matches the v2 card (at 1e-6 the gate fired on 28 near-misses in 531 trials). AB1 ran at 1e-6, one more reason it is a development result. Build item 1a changes `law_runner.py`'s fixed bar to 1e-10 |
 | 1 M censor | post hoc from `evaluations.total` and the gate generation (30 260 evaluations per generation, so 1 M ≈ 33 generations); the canonicaliser's own scoring is post-processing and not counted | SRBench's rule, recovered from the same run; AB1: 108 of 160 gate passes fell within 1 M |
 | canonicaliser | kitchen sink on train.tsv, HFF-ranked, one form emitted, laptop (Metal) | the finisher the v2 plan built; deterministic on a device, and the device is recorded; Metal/Vulkan float parity is a stated threat |
 | verdict | SRBench `assess_symbolic_model` on the emitted form, laptop, offline | the only score that counts; sympy never on rented time |
@@ -95,7 +95,7 @@ each reading a results root; the go/no-go is every one rendering from AB1.
 1. **Build (laptop, before any rental; about one working day).** (a)
    `srbench_tf_run.py`: `--typed-depth 2|none`, `--phase fit|finish` (fit
    writes card, run.log, hof, stream; finish runs the kitchen sink later),
-   the stop at 1e-6, train.tsv written ONCE per law × seed and read by both
+   the stop at 1e-10 (and `law_runner.py`'s fixed bar moved to 1e-10), train.tsv written ONCE per law × seed and read by both
    configurations, then gzipped after the second fit; each fit's stream
    gzipped on exit (the stream is per-edit events, typed_snap and fold, not
    gated by progress_every; gzip is the cut). (b) Pod wrapper
