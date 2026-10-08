@@ -11,8 +11,10 @@
 //!
 //! Compiled only under the `wgsl` feature (naga in and out).
 
+pub mod loader;
 pub mod reader;
 pub mod table;
 
+pub use loader::{wgsl_duals, wgsl_fallback_table, wgsl_table, WgslDual, WgslKingdom, WgslRow, WGSL};
 pub use reader::{read, Kernel, KernelFunction, Node, Root, RootKind};
 pub use table::{FunctionTable, ScalarKind, Template};
