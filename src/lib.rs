@@ -50,6 +50,8 @@ pub mod ruleset;
 pub mod score;
 pub mod snap;
 pub mod snap_karva;
+#[cfg(feature = "wgsl")]
+pub mod wgsl;
 
 #[cfg(feature = "python")]
 mod python;

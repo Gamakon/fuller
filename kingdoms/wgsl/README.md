@@ -75,6 +75,39 @@ expression DAG ends and the fixed scaffold begins.
    naga validation → compile → a parity run against the original kernel on
    recorded inputs. Bit-exact on the same device.
 
+## The six kernels, read (measured 2026-10-08)
+
+`examples/wgsl_read_kernel.rs` (`cargo run --release --features wgsl --example
+wgsl_read_kernel -- <files>`; a kernel assembled from two files is given as
+`a.wgsl+b.wgsl`). Roots: every store, branch condition, local initialiser,
+return value and call argument. Nodes are what the generic Karva encoder
+would put in a head (a literal counts two: `literal.<form>` over its `Num`).
+`>64` is roots past the device's `MAX_NODES`. Shared: expression handles
+reached from more than one root, before the load-sharing rule (the loads
+among them are counted, not merged).
+
+| kernel (entry point) | roots | store | cond | init | ret | args | nodes | max | p90 | >64 | shared | of which loads |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| phylu `decode_main` | 200 | 127 | 42 | 14 | 0 | 17 | 1,335 | 29 | 17 | 0 | 55 | 35 |
+| phylu `score_main` | 334 | 115 | 51 | 17 | 0 | 151 | 2,015 | 32 | 10 | 0 | 65 | 16 |
+| phylu `hff_main` | 69 | 38 | 18 | 10 | 0 | 3 | 499 | 38 | 21 | 0 | 38 | 14 |
+| phylu `type_main` (cand) | 13 | 5 | 5 | 3 | 0 | 0 | 132 | 41 | 21 | 0 | 13 | 5 |
+| phylu `mutate_main` (mix64+vary) | 385 | 76 | 48 | 14 | 0 | 247 | 1,866 | 29 | 12 | 0 | 66 | 13 |
+| phylu `crossover_main` (mix64+vary) | 104 | 6 | 9 | 2 | 0 | 87 | 513 | 49 | 7 | 0 | 34 | 5 |
+| fuller `lint_main` (splice+kernel) | 53 | 31 | 12 | 5 | 0 | 5 | 363 | 20 | 15 | 0 | 14 | 4 |
+
+Over all 59 functions of the six files: 6,010 nodes on 430 distinct
+`class.instance` names; 185 nodes (3.0 %) sit on 33 naga nodes the table has
+no row for, which the reader names `naga.<node>` and counts rather than
+inventing a row. They are field reads of struct-typed VALUES (`p.arg0` after
+`let p = params[i]`; 28 names), `arrayLength` (72 nodes), one `u32 → i32`
+cast and a `vec3` compose of a non-vector. One root in the whole set is past
+64 nodes: `mul32x32_64` in `mix64.wgsl`, a single return of 152 nodes.
+Readings: the measured kernels are wide and shallow, as the DAG study said;
+a head of 32 covers the 90th percentile of every entry point and 64 covers
+all but one function; and struct-valued locals are the one shape the table
+must still say something about before a rebuild can be exact.
+
 ## Evaluation path (the kingdom's kernel)
 
 Unlike the other kingdoms, an individual is evaluated by compiling it and
@@ -89,9 +122,12 @@ repaid because the product runs billions of times.
 | piece | status |
 |---|---|
 | naga reader and DAG measurement (`examples/wgsl_dag_study.rs`) | built |
-| type table (`TYPES.md`) | specified |
-| symbol rows with slot × content arity | not started |
-| naga ↔ Math-shaped datatype so fuller's encoder and e-graph see a kernel | not started |
+| type table (`TYPES.md`) with machine-readable fallback columns | specified, generated |
+| function table read in Rust (`src/wgsl/table.rs`, naga node → `class.instance` by scalar kind) | built |
+| the reader: a kernel cut at its effects into roots and `class.instance` trees (`src/wgsl/reader.rs`, `examples/wgsl_read_kernel.rs`) | built; the six kernels read (table above) |
+| generic Karva pair for `class.instance` names at any arity up to 4 (`karva::terms_to_karva_generic`) | built |
+| symbol rows with slot × content arity (the loader, `Ty::Wgsl`) | waits on phylu's phase 2 (the cast migration) |
+| form inference by use, the scaffold rebuild and the structural gate | not started |
 | the scaffold-with-holes chromosome and its decoder (phylu) | not started |
 | compile-run-time evaluation path with the correctness gate (phylu) | not started |
 | first target: one of our own kernels, read in, round-tripped, then evolved for time | not started |

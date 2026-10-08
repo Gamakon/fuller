@@ -91,3 +91,7 @@ required-features = ["gpu"]
 [[example]]
 name = "wgsl_dag_study"
 required-features = ["wgsl"]
+
+[[example]]
+name = "wgsl_read_kernel"
+required-features = ["wgsl"]
