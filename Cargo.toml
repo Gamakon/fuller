@@ -101,5 +101,9 @@ name = "wgsl_device_compile"
 required-features = ["gpu", "wgsl"]
 
 [[example]]
+name = "wgsl_oracle"
+required-features = ["gpu", "wgsl"]
+
+[[example]]
 name = "wgsl_naga_only"
 required-features = ["wgsl"]

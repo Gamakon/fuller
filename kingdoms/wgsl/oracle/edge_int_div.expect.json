@@ -1,0 +1,170 @@
+{
+ "what": "integer division and remainder by zero, MIN / -1, truncation toward zero (WGSL spec); this platform (Apple M3 Max, Metal, naga 0.20) gives x / 0 = -1 (all ones) and x % 0 = x, listed as a known deviation on lanes 0 and 3",
+ "interpreter": true,
+ "inputs": {
+  "buffer.a": {
+   "i32": [
+    7,
+    -2147483648,
+    -7,
+    -2147483648,
+    9,
+    -9,
+    0,
+    5
+   ]
+  },
+  "buffer.b": {
+   "i32": [
+    0,
+    -1,
+    2,
+    0,
+    -2,
+    4,
+    0,
+    5
+   ]
+  },
+  "buffer.q": {
+   "i32": [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
+   ]
+  },
+  "buffer.r": {
+   "i32": [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
+   ]
+  },
+  "buffer.ua": {
+   "u32": [
+    9,
+    4294967295,
+    10,
+    3,
+    0,
+    8,
+    1,
+    100
+   ]
+  },
+  "buffer.ub": {
+   "u32": [
+    0,
+    1,
+    3,
+    0,
+    0,
+    8,
+    2,
+    7
+   ]
+  },
+  "buffer.uq": {
+   "u32": [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
+   ]
+  },
+  "buffer.ur": {
+   "u32": [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
+   ]
+  }
+ },
+ "expected": {
+  "buffer.q": {
+   "i32": [
+    7,
+    -2147483648,
+    -3,
+    -2147483648,
+    -4,
+    -2,
+    0,
+    1
+   ]
+  },
+  "buffer.r": {
+   "i32": [
+    0,
+    0,
+    -1,
+    0,
+    1,
+    -1,
+    0,
+    0
+   ]
+  },
+  "buffer.uq": {
+   "u32": [
+    9,
+    4294967295,
+    3,
+    3,
+    0,
+    1,
+    0,
+    14
+   ]
+  },
+  "buffer.ur": {
+   "u32": [
+    0,
+    0,
+    1,
+    0,
+    0,
+    0,
+    1,
+    2
+   ]
+  }
+ },
+ "device_deviates": {
+  "buffer.q": [
+   0,
+   3
+  ],
+  "buffer.r": [
+   0,
+   3
+  ],
+  "buffer.uq": [
+   0,
+   3
+  ],
+  "buffer.ur": [
+   0,
+   3
+  ]
+ }
+}

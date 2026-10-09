@@ -1,0 +1,31 @@
+{
+ "what": "out-of-range load reads zero, out-of-range store is skipped (wgpu ReadZeroSkipWrite on Metal)",
+ "interpreter": true,
+ "inputs": {
+  "buffer.xs": {
+   "f32": [
+    10.0,
+    20.0,
+    30.0
+   ]
+  },
+  "buffer.out": {
+   "f32": [
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ]
+  }
+ },
+ "expected": {
+  "buffer.out": {
+   "f32": [
+    21.0,
+    31.0,
+    1.0,
+    2.0
+   ]
+  }
+ }
+}

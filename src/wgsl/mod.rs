@@ -17,6 +17,7 @@ pub mod interp;
 pub mod legality;
 pub mod loader;
 pub mod naga_names;
+pub mod oracle;
 pub mod reader;
 pub mod scaffold;
 pub mod table;

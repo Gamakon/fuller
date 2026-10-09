@@ -235,6 +235,50 @@ struct Use {
     let_index: Option<usize>,
 }
 
+/// A reader path in the shape the chain walk wants: statement index, child
+/// index, statement index, …; a `Statement::Block` (one child block, no
+/// child index in the reader's path) gets an explicit child index 0.
+fn normalise(f: &KernelFunction, path: &[usize]) -> Vec<usize> {
+    let mut out = Vec::with_capacity(path.len() + 2);
+    let mut prefix = Vec::with_capacity(path.len());
+    let mut i = 0;
+    while i < path.len() {
+        prefix.push(path[i]);
+        out.push(path[i]);
+        i += 1;
+        if f.block_statements.contains(&prefix) {
+            out.push(0);
+            continue;
+        }
+        if i < path.len() {
+            prefix.push(path[i]);
+            out.push(path[i]);
+            i += 1;
+        }
+    }
+    out
+}
+
+/// The reader's shape of a normalised path (the inserted child indices of
+/// block statements removed).
+fn denormalise(f: &KernelFunction, path: &[usize]) -> Vec<usize> {
+    let mut out = Vec::with_capacity(path.len());
+    let mut i = 0;
+    while i < path.len() {
+        out.push(path[i]);
+        i += 1;
+        if f.block_statements.contains(&out) {
+            i += 1;
+            continue;
+        }
+        if i < path.len() {
+            out.push(path[i]);
+            i += 1;
+        }
+    }
+    out
+}
+
 /// Decide whether the occurrences at `sites` of one text may share one
 /// definition, and where it goes. `roots` are the function's root trees in
 /// `f.roots` order (as the finder saw them).
@@ -261,7 +305,7 @@ pub(crate) fn decide(f: &KernelFunction, roots: &[MathNode], sites: &[(usize, Ve
     let mut lets_at: BTreeMap<Vec<usize>, Vec<String>> = BTreeMap::new();
     for r in &f.roots {
         if let RootKind::Let { name } = &r.kind {
-            lets_at.entry(r.point.clone()).or_default().push(name.clone());
+            lets_at.entry(normalise(f, &r.point)).or_default().push(name.clone());
         }
     }
     let binding_of = |name: &str| -> Option<(Vec<usize>, usize)> {
@@ -274,11 +318,12 @@ pub(crate) fn decide(f: &KernelFunction, roots: &[MathNode], sites: &[(usize, Ve
         if r.point.is_empty() {
             return refuse(Reason::NoDominatingPoint);
         }
+        let point = normalise(f, &r.point);
         let let_index = match &r.kind {
-            RootKind::Let { name } => lets_at.get(&r.point).and_then(|names| names.iter().position(|n| n == name)),
+            RootKind::Let { name } => lets_at.get(&point).and_then(|names| names.iter().position(|n| n == name)),
             _ => None,
         };
-        uses.push(Use { point: r.point.clone(), let_index });
+        uses.push(Use { point, let_index });
     }
     // The dominator chain: for every block that holds every use (a common
     // even-length prefix), the statement indices up to the one containing
@@ -317,7 +362,7 @@ pub(crate) fn decide(f: &KernelFunction, roots: &[MathNode], sites: &[(usize, Ve
     let mut last_operand = None;
     for point in candidates {
         // Versions current at the point.
-        let Some(at) = f.points.get(&point) else { continue };
+        let Some(at) = f.points.get(&denormalise(f, &point)) else { continue };
         if let Some((loc, v)) = loads.iter().find(|(loc, v)| at.get(*loc).copied().unwrap_or(0) != **v) {
             last_version = Some(format!("{loc}@v{v} at {point:?}"));
             continue;
@@ -339,9 +384,9 @@ pub(crate) fn decide(f: &KernelFunction, roots: &[MathNode], sites: &[(usize, Ve
             }
         }
         for c in &calls {
-            match f.calls.get(c) {
+            match f.calls.get(c).map(|bp| normalise(f, bp)) {
                 None => unavailable = Some(format!("call result {c} has no call statement")),
-                Some(bp) if !bound_before(bp, &point, true) => unavailable = Some(format!("call result {c} is bound at {bp:?}, after {point:?}")),
+                Some(bp) if !bound_before(&bp, &point, true) => unavailable = Some(format!("call result {c} is bound at {bp:?}, after {point:?}")),
                 Some(_) => {}
             }
         }
@@ -354,7 +399,7 @@ pub(crate) fn decide(f: &KernelFunction, roots: &[MathNode], sites: &[(usize, Ve
             last_operand = Some(format!("let {bad} at {point:?} reads the text but is bound before an operand of it"));
             continue;
         }
-        return Decision::Accept { placement: Placement { path: point, after_let } };
+        return Decision::Accept { placement: Placement { path: denormalise(f, &point), after_let } };
     }
     refuse(match (last_version, last_operand) {
         (_, Some(o)) => Reason::OperandUnavailable(o),
@@ -563,6 +608,35 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         let site_text: BTreeSet<String> = sites.iter().map(|(g, p)| render(node_at(&roots2[*g], p).unwrap())).collect();
         assert_eq!(site_text.len(), 1, "{site_text:?}");
         assert!(matches!(reason(decide(f, &roots2, &sites)), Reason::OperandUnavailable(_)));
+    }
+
+    #[test]
+    fn a_repeat_in_a_loop_body_reading_a_let_bound_there_is_placed_after_the_let() {
+        let src = r#"
+@group(0) @binding(0) var<storage, read> ks: array<u32>;
+@group(0) @binding(1) var<storage, read_write> ys: array<f32>;
+@group(0) @binding(2) var<storage, read_write> out: array<f32>;
+@group(0) @binding(3) var<storage, read_write> out2: array<f32>;
+@compute @workgroup_size(1)
+fn main() {
+    for (var i = 0u; i < 4u; i = i + 1u) {
+        let j = ks[i];
+        out[i] = ys[j] * ys[j] + ys[j];
+        out2[i] = ys[j] * ys[j] - 1.0;
+        ys[j] = ys[j] * 2.0;
+    }
+}
+"#;
+        let k = read(src).unwrap();
+        let j = k.functions[0].roots.iter().find_map(|r| match &r.kind {
+            RootKind::Let { name } if name.starts_with("j@") => Some(name.clone()),
+            _ => None,
+        }).unwrap();
+        let text = format!("(arith.mul (load.buffer.ys.#@v1 (Var \"let.{j}\")) (load.buffer.ys.#@v1 (Var \"let.{j}\")))");
+        let p = accept(decide_text(src, "main", &text));
+        // naga wraps a `for` body in a Block statement (body statement 1, after
+        // the break-if): the first statement inside it is [0, 0, 1, 0].
+        assert_eq!(p, Placement { path: vec![0, 0, 1, 0], after_let: 1 }, "in the body, after `let j`");
     }
 
     #[test]

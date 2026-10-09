@@ -187,6 +187,11 @@ pub struct KernelFunction {
     /// `call.<fn>@<idx>` leaf) → the statement's path. A call result is a
     /// value bound once, like a `let`, available after its statement.
     pub calls: BTreeMap<u32, Vec<usize>>,
+    /// The paths of every `Statement::Block`: a block statement holds ONE
+    /// child block whose statements continue the path with no child index
+    /// (`[.., b, k]`, not `[.., b, 0, k]`), unlike an if, a switch or a
+    /// loop. `legality` needs to know where those are to walk the chain.
+    pub block_statements: BTreeSet<Vec<usize>>,
 }
 
 /// A kernel read: the naga module and its validation info, kept for the
@@ -290,6 +295,7 @@ struct Ctx<'a> {
     errors: Vec<String>,
     points: BTreeMap<Vec<usize>, BTreeMap<String, u32>>,
     calls: BTreeMap<u32, Vec<usize>>,
+    block_statements: BTreeSet<Vec<usize>>,
 }
 
 impl<'a> Ctx<'a> {
@@ -310,6 +316,7 @@ impl<'a> Ctx<'a> {
             errors: Vec::new(),
             points: BTreeMap::new(),
             calls: BTreeMap::new(),
+            block_statements: BTreeSet::new(),
         }
     }
 
@@ -385,7 +392,7 @@ fn read_function(mut ctx: Ctx, name: String, entry_point: bool) -> Result<Kernel
         .iter()
         .filter(|(h, e)| shared_handles.contains_key(&(h.index() as u32)) && matches!(e, Expression::Load { .. }))
         .count();
-    Ok(KernelFunction { name, entry_point, roots, shared_handles, shared_loads, unread_statements: unread, versions: ctx.counters.created().clone(), points: ctx.points, calls: ctx.calls })
+    Ok(KernelFunction { name, entry_point, roots, shared_handles, shared_loads, unread_statements: unread, versions: ctx.counters.created().clone(), points: ctx.points, calls: ctx.calls, block_statements: ctx.block_statements })
 }
 
 fn walk_block(
@@ -449,7 +456,10 @@ fn walk_block(
                 ctx.state.live = false;
             }
             Statement::Kill => ctx.state.live = false,
-            Statement::Block(b) => walk_block(ctx, b, path, roots, unread),
+            Statement::Block(b) => {
+                ctx.block_statements.insert(path.clone());
+                walk_block(ctx, b, path, roots, unread);
+            }
             Statement::Store { pointer, value } => {
                 let (target, index) = pointer_target(ctx, *pointer);
                 let value_tree = expand(ctx, *value, true);

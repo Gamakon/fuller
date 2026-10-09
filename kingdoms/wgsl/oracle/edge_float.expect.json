@@ -1,0 +1,56 @@
+{
+ "what": "IEEE float edges and WGSL's NaN rules for min, max and select; round ties to even; sign(-0.0)",
+ "interpreter": true,
+ "inputs": {
+  "buffer.a": {
+   "f32": [
+    1.0,
+    -4.0,
+    0.0,
+    "nan",
+    3.0,
+    1.0,
+    2.5,
+    1e+30
+   ]
+  },
+  "buffer.b": {
+   "f32": [
+    0.0,
+    0.0,
+    0.0,
+    2.0,
+    "nan",
+    "nan",
+    -0.0,
+    1e+30
+   ]
+  },
+  "buffer.out": {
+   "f32": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ]
+  }
+ },
+ "expected": {
+  "buffer.out": {
+   "f32": [
+    "inf",
+    "nan",
+    "-inf",
+    2.0,
+    3.0,
+    1.0,
+    2.0,
+    "inf"
+   ]
+  }
+ }
+}

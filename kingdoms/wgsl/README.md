@@ -313,6 +313,40 @@ the recorded inputs (the gate), then timing as the median of repeated runs
 (the fitness, with its variance as a second objective). Slow per individual,
 repaid because the product runs billions of times.
 
+### The oracle, hand-written set (measured 2026-10-09)
+
+Ten kernels in `kingdoms/wgsl/oracle/`, each with an expectation file
+written by hand from the WGSL spec and IEEE 754 (inputs, expected
+outputs, what it tests): four edge kernels (integer division and
+remainder by zero and `i32::MIN / -1`; masked shifts, wrapping and
+saturating float→int; float edges with NaN through `min`, `max` and
+`select`, `round` to even, `sign(-0.0)`; out-of-range loads and stores)
+and six adversarial ones (the step-5 queue `let`, a conditional store in
+a loop, a `let` valid only in a branch, a pointer parameter and a pointer
+`let`, workgroup memory with barriers across 64 invocations, dynamic
+indexing with repeated loads across a store). Each runs three ways:
+the original text on the device (the authority), the text the scaffold
+rebuilds from the chromosome on the device, and the folded chromosome in
+the reference interpreter (`src/wgsl/interp.rs`; the barrier kernel is
+device-only). Lanes are compared as bits.
+
+Result on Apple M3 Max (Metal): 10 of 10 agree three ways with their
+expectation. The set reaches three refusal classes of the decision
+(`lineage_differs` in three kernels, `version_not_current` in one) and
+shares where it may (inside the branch arm; within one version of the
+dynamically indexed buffer).
+
+**Finding: integer division by zero on this platform.** The device gives
+`x / 0 = 0xffffffff` and `x % 0 = x` for both `i32` and `u32`, where the
+WGSL spec says `x` and `0`; naga 0.20's MSL output does not guard
+integer division and Metal's hardware returns all ones. The interpreter
+follows the spec and the expectation file says so; the two lanes are
+listed under `device_deviates` and reported as a known deviation (`ok*`),
+never folded into the expectation. `i32::MIN / -1` agrees with the spec
+(wraps to `i32::MIN`). A mutation that could introduce a division by a
+possibly-zero integer therefore cannot be judged by the interpreter on
+this platform, only by the device.
+
 ## What is built, what is not
 
 | piece | status |
@@ -332,7 +366,8 @@ repaid because the product runs billions of times.
 | memory versions in the reader (`src/wgsl/versions.rs`; lineage plan step 1) | built 2026-10-09: loads named with their version, phis by join, barriers/atomics/calls as bumps, pointer lets checked; the lineage column above |
 | `legality::decide` (`src/wgsl/legality.rs`; lineage plan step 2): one decision per repeat, placement per tail slot, refusals by reason | built 2026-10-09; the table above |
 | the reference interpreter (`src/wgsl/interp.rs`): the folded chromosome executed against the statement tree, definitions evaluated at their placements, WGSL semantics per naga op, `ReadZeroSkipWrite` indexing | built 2026-10-09; its edge cases (integer division and remainder by zero, `i32::MIN / -1`, masked shifts, wrapping, saturating float→int, IEEE float edges, NaN through `min`/`max`/`select`, ties-to-even `round`, out-of-range loads and stores) each pinned by a hand-computed test; device agreement is the oracle's job |
-| the oracle, placement in the rebuild, mutations, the evaluator (lineage plan steps 3–6) | not started |
+| the oracle's hand-written set (`kingdoms/wgsl/oracle/`, `src/wgsl/oracle.rs`, `examples/wgsl_oracle.rs`): ten kernels with expected outputs written by hand, run three ways on the device | built 2026-10-09: 10 of 10 agree (original, rebuilt text, interpreter) on Apple M3 Max; one platform deviation found and recorded (below) |
+| the oracle's generator (random kernels over the refusal classes), placement in the rebuild, mutations, the evaluator (lineage plan steps 3–6) | not started |
 | the scaffold-with-holes chromosome and its decoder (phylu) | not started |
 | compile-run-time evaluation path with the correctness gate (phylu) | not started |
 | first target: one of our own kernels, read in, round-tripped, then evolved for time | not started |

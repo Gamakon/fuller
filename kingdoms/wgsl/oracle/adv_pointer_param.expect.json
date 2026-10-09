@@ -1,0 +1,26 @@
+{
+ "what": "a store through a pointer parameter bumps the argument at that site; a pointer let's store bumps its base",
+ "interpreter": true,
+ "inputs": {
+  "buffer.out": {
+   "f32": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ]
+  }
+ },
+ "expected": {
+  "buffer.out": {
+   "f32": [
+    13.0,
+    11.0,
+    16.0,
+    10.0,
+    10.0
+   ]
+  }
+ }
+}
