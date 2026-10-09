@@ -237,7 +237,15 @@ share-or-recompute choice of §2.1 for free. Fold sits in the schedule
 after variation and before evaluation, so evaluation always sees current
 definitions; Fold itself evaluates nothing.
 
-**The homeotic tail and its open reading frame (Andrew).** Nothing is
+**First version: let it grow (Andrew).** The tail starts empty and grows
+by what each generation adds; no eviction, no frame, no maximum. Every
+row keeps its referrer count per generation, and the run records rows
+added per generation, the growth curve, the use histogram and, for any
+definition that goes from unused back to used, how long it was unused.
+The maximum, the frame and the ordering below are set from that study,
+not before it.
+
+**Later: the homeotic tail and its open reading frame (Andrew).** Nothing is
 retired by rule. The homeotic rows are one tail of fixed length, sorted
 every generation by current use (referrer count, ties by age then by
 hash, so the order is a function of the population and deterministic).
