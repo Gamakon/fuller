@@ -114,6 +114,8 @@ The criterion holds with a margin of 30 on the shipped kernel, so a reordered su
 
 The kernel's rate does not depend on d or on the banding: the bench is the production regime. At 121 G/s the production build would take 233 s, not the inventory's 130 s, so that figure was taken under other conditions (another machine or load); task 4 measures production here before and after. The criterion ratio falls with m as τ √m expects.
 
+**The gate after the first measurement (2026-10-09, `logs/WGSL_GRAM/evolve_smoke.log`).** The shipped kernel itself fails τ on the duplicate kind (half the rows identical): max ratio 1.45 at d = 2,048, m = 8,192, and 1.40 on the validation pair of that kind. With identical terms the rounding is systematic and the random-walk model behind τ = 4 ε √m does not hold. The gate is therefore τ or twice the shipped kernel's own largest ratio on that pair, whichever is larger, with every non-finite cell still required to agree in class. ShapeDistance itself is unchanged; the HFF caps were already the shipped kernel's own errors.
+
 ## 1b. Fitness: HFF over ShapeDistance
 
 A kernel is a map from an input dataset to an output dataset. Fitness is a distance between the output it produces and the output it should produce, over the same rows and columns, falling to zero when the kernel computes the dataset; the HFF angle over that distance on three splits, then speed. No parsimony column: validation does that work.

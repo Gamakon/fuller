@@ -210,6 +210,16 @@ fn columns(s: &Score, caps: &Caps) -> [f64; 4] {
     x
 }
 
+/// The gate on one pair: every cell finite in class, and the largest ratio
+/// within τ or within twice the shipped kernel's own largest ratio on that
+/// pair, whichever is larger. The second clause was added after the smoke
+/// run (2026-10-09): on the duplicate kind the shipped kernel's error is
+/// systematic (identical rows), 1.45 τ at d = 2,048, m = 8,192, and the
+/// random-walk model behind τ does not hold there.
+fn gate(v: &fuller::wgsl::gram::Verdict, shipped_max: f64) -> bool {
+    v.non_finite == 0 && v.max_ratio <= (2.0 * shipped_max).max(1.0)
+}
+
 /// One kernel on the sampled pairs, paired against the shipped builds of
 /// the same pairs taken in this generation.
 fn evaluate(dev: &Device, rr: &Renderer, tree: &Tree, pairs: &[&Pair], shipped: &[(f64, f64, f64)], limit: u64) -> Score {
@@ -222,7 +232,7 @@ fn evaluate(dev: &Device, rr: &Renderer, tree: &Tree, pairs: &[&Pair], shipped: 
         Err(e) => return Score { refused: Some(format!("compile: {}", e.lines().next().unwrap_or(""))), angle: f64::INFINITY, ..Default::default() },
     };
     let (mut mean, mut max, mut ratios, mut gated) = (0.0, 0.0f64, Vec::new(), true);
-    for (p, (t_shipped, _, _)) in pairs.iter().zip(shipped) {
+    for (p, (t_shipped, _, s_max)) in pairs.iter().zip(shipped) {
         if t_shipped.partial_cmp(&0.0) != Some(std::cmp::Ordering::Greater) {
             return Score { refused: Some(format!("shipped time {t_shipped} ms on {}", p.name())), angle: f64::INFINITY, ..Default::default() };
         }
@@ -233,7 +243,7 @@ fn evaluate(dev: &Device, rr: &Renderer, tree: &Tree, pairs: &[&Pair], shipped: 
         let v = check(&b.h, &p.h_ref, p.d, p.m);
         mean += v.mean_ratio / pairs.len() as f64;
         max = max.max(v.max_ratio);
-        gated &= v.passes();
+        gated &= gate(&v, *s_max);
         ratios.push(b.gpu_ms / t_shipped);
     }
     if ratios.iter().any(|r| !r.is_finite()) {
@@ -306,11 +316,15 @@ fn main() -> Result<(), String> {
     for gen in 0..gens {
         let t_gen = Instant::now();
         // The sample of training pairs, the shipped kernel built on each (the pairing).
-        let mut idx: Vec<usize> = (0..train.len()).collect();
+        // Pairs under about 100 ms of GPU time are dispatch noise (the smoke
+        // run: the shipped tree read 0.48x against the shipped text on an
+        // 8 ms pair), so the sample is drawn from the pairs of at least
+        // 1.5e10 multiply-adds.
+        let mut idx: Vec<usize> = (0..train.len()).filter(|&i| (train[i].d * train[i].d * train[i].m) as f64 >= 1.5e10).collect();
         for i in (1..idx.len()).rev() {
             idx.swap(i, (next(&mut state) % (i as u64 + 1)) as usize);
         }
-        let pairs: Vec<&Pair> = idx[..sample_n].iter().map(|&i| &train[i]).collect();
+        let pairs: Vec<&Pair> = idx[..sample_n.min(idx.len())].iter().map(|&i| &train[i]).collect();
         let mut shipped: Vec<(f64, f64, f64)> = Vec::new();
         for p in &pairs {
             let b = shipped_gram.build(&p.phi, p.d, p.m, limit)?;
@@ -424,12 +438,12 @@ fn main() -> Result<(), String> {
             let v = check(&b.h, &p.h_ref, p.d, p.m);
             let sb = shipped_gram.build(&p.phi, p.d, p.m, limit)?;
             let sv = check(&sb.h, &p.h_ref, p.d, p.m);
-            gated += usize::from(v.passes());
+            gated += usize::from(gate(&v, sv.max_ratio));
             mean += v.mean_ratio / pairs.len() as f64;
             max = max.max(v.max_ratio);
             smean += sv.mean_ratio / pairs.len() as f64;
             smax = smax.max(sv.max_ratio);
-            if !v.passes() {
+            if !gate(&v, sv.max_ratio) {
                 println!("  {name} {}: FAIL max ratio {:.3} (shipped {:.3}) non-finite {}", p.name(), v.max_ratio, sv.max_ratio, v.non_finite);
             }
         }
