@@ -222,7 +222,7 @@ fn start_watchdog() {
         std::thread::sleep(std::time::Duration::from_millis(500));
         let deadline = WATCHDOG.lock().expect("watchdog").load(std::sync::atomic::Ordering::SeqCst);
         if deadline != 0 && START.get().expect("started").elapsed().as_millis() as u64 > deadline {
-            eprintln!("[{}] watchdog: a build exceeded its deadline; the device is wedged; exiting (the ledger's last pending line names the kernel)", stamp());
+            eprintln!("[{}] watchdog: a build exceeded its deadline; the device is wedged; exiting (the log's last 'will run' line and the ledger's last pending line name the kernel)", stamp());
             std::process::exit(3);
         }
     });
@@ -391,9 +391,19 @@ fn main() -> Result<(), String> {
         }
         let mut scores: Vec<Score> = vec![Score::default(); population.len()];
         for &i in &order {
-            writeln!(ledger, "{gen}\t{i}\t{}\t{}\tpending\t-\t-\t-\t-\t-\t-\t{}", population[i].1, population[i].0.size(), population[i].0.to_sexpr()).map_err(|e| e.to_string())?;
+            let (tree, origin) = &population[i];
+            writeln!(ledger, "{gen}\t{i}\t{origin}\t{}\tpending\t-\t-\t-\t-\t-\t-\t{}", tree.size(), tree.to_sexpr()).map_err(|e| e.to_string())?;
             ledger.flush().map_err(|e| e.to_string())?;
-            scores[i] = evaluate(&dev, &rr, &population[i].0, &pairs, &shipped, limit, &bound);
+            // What is about to run, then what ran: a hang or a wedge is then
+            // attributable from the log alone.
+            let c = cost(tree);
+            let grid = rr.kernel(tree).map(|o| format!("grid {}x{} block {}x{}", o.grid.x, o.grid.y, o.grid.bx, o.grid.by)).unwrap_or_else(|e| format!("refused: {e}"));
+            let head = tree.to_sexpr();
+            println!("[{}] gen {gen:>2} id {i:>2} will run: {origin}, {} nodes, cost {:.0}/item {:.0} base, {grid}; {}", stamp(), tree.size(), c.per_item, c.base, &head[..head.len().min(160)]);
+            let t = Instant::now();
+            scores[i] = evaluate(&dev, &rr, tree, &pairs, &shipped, limit, &bound);
+            let s = &scores[i];
+            println!("[{}] gen {gen:>2} id {i:>2} ran in {:.2} s: {}", stamp(), t.elapsed().as_secs_f64(), match &s.refused { Some(r) => format!("refused ({r})"), None => format!("gated {}, mean {:.2e}, max {:.2e}, time {:.3}x, spread {:.3}", s.gated, s.mean_ratio, s.max_ratio, s.time_ratio, s.spread) });
         }
         // Caps from the shipped kernel's own values on this sample; the column
         // maxima frozen at generation 0 over the gated population.
