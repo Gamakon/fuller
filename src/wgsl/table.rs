@@ -192,7 +192,7 @@ mod tests {
         assert_eq!(t.rows[238].reference, "F239");
         assert_eq!(t.rows.iter().map(|r| r.arity).max(), Some(4), "the widest template is grid.of, 4-ary (K_MAX)");
         let names: std::collections::BTreeSet<String> = t.rows.iter().map(Template::name).collect();
-        assert_eq!(names.len(), 197, "class.instance names are unique");
+        assert_eq!(names.len(), 239, "class.instance names are unique");
     }
 
     #[test]

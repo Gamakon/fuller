@@ -17,6 +17,7 @@ use std::time::Instant;
 use wgpu::util::DeviceExt;
 
 use crate::wgsl::oracle::device::Device;
+use crate::wgsl::render::{Grid, Rendered};
 
 /// The shipped kernel, verbatim from `H_GRAM_ACCUM_WGSL`.
 pub const SHIPPED: &str = include_str!("../../kingdoms/wgsl/gram/shipped.wgsl");
@@ -189,7 +190,9 @@ pub struct Build {
 pub struct Gram<'a> {
     dev: &'a Device,
     pipeline: wgpu::ComputePipeline,
-    workgroup: (u32, u32),
+    /// Workgroup size and the cells per thread; the driver dispatches
+    /// `ceil(d / (x bx)) × ceil(r_rows / (y by))`.
+    pub grid: Grid,
     period_ns: f32,
 }
 
@@ -202,17 +205,31 @@ impl<'a> Gram<'a> {
         let module = naga::front::wgsl::parse_str(source).map_err(|e| e.emit_to_string(source))?;
         naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::all()).validate(&module).map_err(|e| format!("validation: {}", e.emit_to_string(source)))?;
         let ep = module.entry_points.iter().find(|e| e.name == ENTRY).ok_or_else(|| format!("no entry point {ENTRY}"))?;
-        let workgroup = (ep.workgroup_size[0], ep.workgroup_size[1]);
+        Self::compile_with(dev, source, Grid { x: ep.workgroup_size[0], y: ep.workgroup_size[1], bx: 1, by: 1 })
+    }
+
+    /// A rendered kernel: its text and the grid it asked for.
+    pub fn compile_rendered(dev: &'a Device, r: &Rendered) -> Result<Gram<'a>, String> {
+        naga::front::wgsl::parse_str(&r.text).map_err(|e| e.emit_to_string(&r.text)).and_then(|m| naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::all()).validate(&m).map(|_| ()).map_err(|e| format!("validation: {}", e.emit_to_string(&r.text))))?;
+        Self::compile_with(dev, &r.text, r.grid)
+    }
+
+    fn compile_with(dev: &'a Device, source: &str, grid: Grid) -> Result<Gram<'a>, String> {
         if !dev.device.features().contains(wgpu::Features::TIMESTAMP_QUERY) {
             return Err("this device has no timestamp queries".into());
         }
         dev.device.push_error_scope(wgpu::ErrorFilter::Validation);
         let shader = dev.device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("gram"), source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(source)) });
-        let pipeline = dev.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor { label: Some("gram"), layout: None, module: &shader, entry_point: ENTRY, compilation_options: Default::default() });
+        // An explicit layout over the role's three bindings: a kernel that
+        // reads none of them (a random gene may) still binds them all.
+        let entry = |binding: u32, ty: wgpu::BufferBindingType| wgpu::BindGroupLayoutEntry { binding, visibility: wgpu::ShaderStages::COMPUTE, ty: wgpu::BindingType::Buffer { ty, has_dynamic_offset: false, min_binding_size: None }, count: None };
+        let bgl = dev.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some("gram"), entries: &[entry(0, wgpu::BufferBindingType::Storage { read_only: true }), entry(1, wgpu::BufferBindingType::Storage { read_only: false }), entry(2, wgpu::BufferBindingType::Uniform)] });
+        let layout = dev.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: Some("gram"), bind_group_layouts: &[&bgl], push_constant_ranges: &[] });
+        let pipeline = dev.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor { label: Some("gram"), layout: Some(&layout), module: &shader, entry_point: ENTRY, compilation_options: Default::default() });
         if let Some(e) = pollster::block_on(dev.device.pop_error_scope()) {
             return Err(format!("pipeline: {e}"));
         }
-        Ok(Gram { dev, pipeline, workgroup, period_ns: dev.queue.get_timestamp_period() })
+        Ok(Gram { dev, pipeline, grid, period_ns: dev.queue.get_timestamp_period() })
     }
 
     /// Build `H` over `phi` (item-major `m × d`) as production does, under
@@ -268,8 +285,8 @@ impl<'a> Gram<'a> {
                 .zip(&cfgs)
                 .map(|((pb, _), cfg)| device.create_bind_group(&wgpu::BindGroupDescriptor { label: Some("gram bind"), layout: &layout, entries: &[wgpu::BindGroupEntry { binding: 0, resource: pb.as_entire_binding() }, wgpu::BindGroupEntry { binding: 1, resource: h_buffer.as_entire_binding() }, wgpu::BindGroupEntry { binding: 2, resource: cfg.as_entire_binding() }] }))
                 .collect();
-            let wg_x = (d as u32).div_ceil(self.workgroup.0);
-            let wg_y = (r_rows as u32).div_ceil(self.workgroup.1);
+            let wg_x = (d as u32).div_ceil(self.grid.x * self.grid.bx);
+            let wg_y = (r_rows as u32).div_ceil(self.grid.y * self.grid.by);
             let staging = device.create_buffer(&wgpu::BufferDescriptor { label: Some("gram staging"), size: band_bytes, usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false });
             let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("gram output band") });
             enc.clear_buffer(&h_buffer, 0, None);
@@ -355,6 +372,67 @@ mod tests {
         let v = check(&[1.0, 0.6, 0.5, 1.0], &h_ref, d, 16);
         assert_eq!(v.failures, 1);
         assert_eq!(v.worst, (0, 1));
+    }
+
+    /// The shipped kernel as a typed tree, rendered, on the device: the same
+    /// H within the criterion as the shipped text.
+    #[test]
+    fn the_rendered_shipped_tree_passes_the_criterion_on_the_device() {
+        use crate::wgsl::render::{gram_role, gram_shipped_tree, Renderer};
+        use crate::wgsl::{loader::WgslKingdom, table::FunctionTable};
+        let (k, t, r) = (WgslKingdom::load(), FunctionTable::shipped(), gram_role());
+        let out = Renderer::new(&k, &t, &r).kernel(&gram_shipped_tree(&k).unwrap()).unwrap();
+        let (d, m) = (64, 1000);
+        let p = phi(d, m, 11);
+        let h_ref = reference(&p, d, m);
+        let dev = Device::new().expect("device");
+        let gram = Gram::compile_rendered(&dev, &out).expect("compile");
+        let build = gram.build(&p, d, m, 4096).expect("build");
+        let v = check(&build.h, &h_ref, d, m);
+        assert!(v.passes(), "{v:?}");
+        // Bit-identical to the shipped text: the same arithmetic in the same order.
+        let shipped = Gram::compile(&dev, SHIPPED).expect("compile").build(&p, d, m, 4096).expect("build");
+        assert_eq!(build.h.iter().map(|x| x.to_bits()).collect::<Vec<_>>(), shipped.h.iter().map(|x| x.to_bits()).collect::<Vec<_>>());
+    }
+
+    /// The kingdom gate on the device: random typed kernels rendered,
+    /// compiled by Metal and dispatched at a small size, every failure named.
+    #[test]
+    fn random_typed_kernels_compile_and_run_on_the_device() {
+        use crate::wgsl::render::{dual_ty, gram_role, sample, Renderer};
+        use crate::wgsl::{loader::WgslKingdom, table::FunctionTable};
+        let (k, t, r) = (WgslKingdom::load(), FunctionTable::shipped(), gram_role());
+        let rr = Renderer::new(&k, &t, &r);
+        let root = dual_ty(&k, "kernel.kernel").unwrap();
+        let (d, m) = (64, 100);
+        let p = phi(d, m, 5);
+        let dev = Device::new().expect("device");
+        let limit = effective_buffer_limit(&dev.device);
+        let n = 100u64;
+        let (mut refused, mut compiled, mut ran, mut finite) = (0, 0, 0, 0);
+        let mut failed: Vec<String> = Vec::new();
+        for seed in 0..n {
+            let tree = sample(&k, &r, root, 7, 1000 + seed).unwrap();
+            let Ok(out) = rr.kernel(&tree) else { refused += 1; continue };
+            match Gram::compile_rendered(&dev, &out) {
+                Err(e) => failed.push(format!("seed {seed} compile: {}", e.lines().next().unwrap_or(""))),
+                Ok(g) => {
+                    compiled += 1;
+                    match g.build(&p, d, m, limit) {
+                        Err(e) => failed.push(format!("seed {seed} run: {e}")),
+                        Ok(b) => {
+                            ran += 1;
+                            if b.h.iter().all(|x| x.is_finite()) {
+                                finite += 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        println!("{n} random kernels on the device: {refused} refused by construction, {compiled} compiled, {ran} ran, {finite} with every cell finite");
+        assert!(failed.is_empty(), "{} failures:\n{}", failed.len(), failed.join("\n"));
+        assert_eq!(compiled, ran);
     }
 
     #[test]
