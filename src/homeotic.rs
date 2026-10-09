@@ -242,6 +242,28 @@ pub fn unfold(folded: &FoldedChromosome) -> Result<Vec<String>, String> {
     Ok(head.iter().map(render).collect())
 }
 
+/// Unfold ONE tail slot: substitute slot `s`'s definition back into every
+/// gene that reads it (head genes and earlier tail slots), and leave the
+/// slot empty. The share-or-recompute choice of `docs/PLAN_wgsl_superopt.md`
+/// §2.1: a chromosome with a subset of its shares is the fold with the
+/// others unfolded. Placements of the remaining slots are unchanged (a
+/// definition's text is independent of where its users sit).
+pub fn unfold_slot(folded: &FoldedChromosome, s: usize) -> Result<FoldedChromosome, String> {
+    let mut tail: Vec<MathNode> = folded.tail.iter().map(|g| parse_math(g)).collect::<Result<_, _>>()?;
+    let mut head: Vec<MathNode> = folded.head.iter().map(|g| parse_math(g)).collect::<Result<_, _>>()?;
+    if s >= tail.len() {
+        return Err(format!("unfold_slot: slot {s} of {}", tail.len()));
+    }
+    let pattern = render(&MathNode::Var(href_name(s)));
+    let def = tail[s].clone();
+    for g in head.iter_mut().chain(tail[..s].iter_mut()) {
+        *g = replace_occurrences(g, &pattern, &def);
+    }
+    tail[s] = parse_math(EMPTY_SLOT)?;
+    let filled = tail.iter().filter(|g| render(g) != EMPTY_SLOT).count();
+    Ok(FoldedChromosome { head: head.iter().map(render).collect(), tail: tail.iter().map(render).collect(), filled, skipped: folded.skipped })
+}
+
 /// The canonical rendering `fold`/`unfold` compare against.
 pub fn canonical(form: &str) -> Result<String, String> {
     Ok(render(&parse_math(form)?))

@@ -40,10 +40,15 @@ fn main() -> Result<(), String> {
     let dump_path = args.iter().position(|a| a == "--dump").and_then(|i| args.get(i + 1).cloned());
     let rebuilt_dir = args.iter().position(|a| a == "--rebuilt").and_then(|i| args.get(i + 1).cloned());
     let folded_dir = args.iter().position(|a| a == "--rebuilt-folded").and_then(|i| args.get(i + 1).cloned());
+    // --variants <dir>: every subset of the ENTRY POINT's filled tail slots as
+    // its own folded rebuild, <dir>/v<mask>/<file>, the share-or-recompute
+    // population of docs/PLAN_wgsl_superopt.md §2.1 (helper functions keep
+    // every share). Written only for a file with one entry point.
+    let variants_dir = args.iter().position(|a| a == "--variants").and_then(|i| args.get(i + 1).cloned());
     let paths: Vec<&String> = args
         .iter()
         .enumerate()
-        .filter(|(i, a)| !(a.starts_with("--") || (*i > 0 && (args[i - 1] == "--dump" || args[i - 1] == "--rebuilt" || args[i - 1] == "--rebuilt-folded"))))
+        .filter(|(i, a)| !(a.starts_with("--") || (*i > 0 && (args[i - 1] == "--dump" || args[i - 1] == "--rebuilt" || args[i - 1] == "--rebuilt-folded" || args[i - 1] == "--variants"))))
         .map(|(_, a)| a)
         .collect();
     let mut dump: Vec<serde_json::Value> = Vec::new();
@@ -206,6 +211,31 @@ fn main() -> Result<(), String> {
                 },
                 Err(e) => trip_err = trip_err.or(Some(format!("{}: {e}", f.name))),
             }
+        }
+        if let (Some(dir), None) = (&variants_dir, &trip_err) {
+            let entries: Vec<usize> = kernel.functions.iter().enumerate().filter(|(_, f)| f.entry_point).map(|(i, _)| i).collect();
+            if entries.len() != 1 {
+                return Err(format!("--variants needs one entry point, {path} has {}", entries.len()));
+            }
+            let e = entries[0];
+            let filled: Vec<usize> = (0..chromosomes_all[e].folded.tail.len()).filter(|&s| chromosomes_all[e].folded.tail[s] != fuller::homeotic::EMPTY_SLOT).collect();
+            println!("    VARIANTS: {} filled slots in {} → {} subsets", filled.len(), kernel.functions[e].name, 1usize << filled.len());
+            for mask in 0..(1usize << filled.len()) {
+                let mut cs = chromosomes_all.clone();
+                // Unfold the slots NOT in the subset, highest slot first so a
+                // definition that reads a later slot is substituted after it.
+                for (bit, &slot) in filled.iter().enumerate().rev() {
+                    if mask & (1 << bit) == 0 {
+                        cs[e].folded = fuller::homeotic::unfold_slot(&cs[e].folded, slot)?;
+                    }
+                }
+                let r = rebuild_folded(&kernel, &cs).map_err(|e| format!("variant {mask}: {e}"))?;
+                let vdir = format!("{dir}/v{mask:02}");
+                std::fs::create_dir_all(&vdir).map_err(|e| format!("mkdir {vdir}: {e}"))?;
+                let out = format!("{vdir}/{}", file.replace('+', "_"));
+                std::fs::write(&out, &r.wgsl).map_err(|e| format!("write {out}: {e}"))?;
+            }
+            println!("    VARIANTS written to {dir}/v00 .. v{:02}", (1usize << filled.len()) - 1);
         }
         // The folded rebuild: every shared definition a `let` at its
         // placement; validated and written, no structural gate (the roots

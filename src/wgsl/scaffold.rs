@@ -82,7 +82,10 @@ pub fn rebuild_folded(kernel: &Kernel, chromosomes: &[WgslChromosome]) -> Result
             if c.placements.len() != tail.len() {
                 return Err(format!("{}: {} placements for {} tail slots", c.function, c.placements.len(), tail.len()));
             }
-            Ok(Program { head, tail, placements: c.placements.clone() })
+            // An empty slot (never filled, or unfolded by `homeotic::unfold_slot`)
+            // has no definition to emit whatever its placement says.
+            let placements = c.placements.iter().zip(&c.folded.tail).map(|(p, t)| if t == homeotic::EMPTY_SLOT { None } else { p.clone() }).collect();
+            Ok(Program { head, tail, placements })
         })
         .collect::<Result<_, _>>()?;
     rebuild_programs(kernel, &programs)
