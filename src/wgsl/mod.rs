@@ -23,6 +23,7 @@ pub mod mutate;
 pub mod naga_names;
 pub mod oracle;
 pub mod reader;
+pub mod render;
 pub mod scaffold;
 pub mod table;
 pub mod versions;

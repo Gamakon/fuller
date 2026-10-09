@@ -20,7 +20,7 @@ F018	arith	mul	Binary::Multiply	<S.real> <S.real>	<S.real>	2	per real dual, lane
 F019	arith	div	Binary::Divide	<S.real> <S.real>	<S.real>	2	per real dual, lanes equal
 F020	arith	mul_scalar_vec	Binary::Multiply	f32.real <vecL<f32>.real>	<vecL<f32>.real>	2	
 F021	arith	mul_mat_vec	Binary::Multiply	<matCxR<f32>.real> <vecC<f32>.real>	<vecR<f32>.real>	2	
-F022	arith	mul_mat_mat	Binary::Multiply	<matAxB<f32>.real> <matBxC<f32>.real>	<matAxC<f32>.real>	2	
+F022	arith	mul_mat_mat	Binary::Multiply	<matKxR<f32>.real> <matCxK<f32>.real>	<matCxR<f32>.real>	2	WGSL matCxR is C columns of R rows: the left's columns equal the right's rows
 F023	arith	neg	Unary::Negate	<S.real>	<S.real>	1	
 F024	arith	abs	Math::Abs	<S.real>	<S.real>	1	
 F025	arith	sign	Math::Sign	<S.real>	<S.real>	1	
@@ -196,3 +196,45 @@ F194	shape	splat4	Splat	<S.c>	<vec4.c>	1
 F195	store	buffer	Store(Access)	u32.index <T.form of the buffer>	store	2	one instance per buffer; a head gene's root
 F196	store	local	Store	<T.form of the local>	store	1	
 F197	store	branch	If/Loop condition	bool.flag	store	1	a branch-condition root in the scaffold
+F198	literal	wgdim	Literal	-	u32.wgdim	0	a workgroup dimension from {4, 8, 16, 32, 64}; the renderer snaps the constant to the set
+F199	literal	blk	Literal	-	u32.blk	0	a block factor from {1, 2, 4}
+F200	literal	unroll	Literal	-	u32.unroll	0	an unroll factor from {2, 4, 8}
+F201	kernel	entry	composite	grid.grid block.block	kernel.kernel	2	the module: bindings, registers, workgroup arrays, @workgroup_size(x, y, 1) fn main
+F202	grid	of	composite	u32.wgdim u32.wgdim u32.blk u32.blk	grid.grid	4	arity 4: workgroup x, y and the cells per thread bx, by; the driver dispatches ceil(d / (x bx)) x ceil(rows / (y by)); x y > 1,024 threads is refused
+F203	block	one	composite	stmt.stmt	block.block	1	
+F204	block	seq2	composite	stmt.stmt stmt.stmt	block.block	2	the statements in order
+F205	block	seq3	composite	stmt.stmt stmt.stmt stmt.stmt	block.block	3	arity 3
+F206	block	seq4	composite	stmt.stmt stmt.stmt stmt.stmt stmt.stmt	block.block	4	arity 4
+F207	stmt	block	composite	block.block	stmt.stmt	1	{ ... }
+F208	stmt	if	composite	bool.flag block.block	stmt.stmt	2	if (c) { ... }
+F209	stmt	if_else	composite	bool.flag block.block block.block	stmt.stmt	3	arity 3
+F210	stmt	return	composite	-	stmt.stmt	0	return; the thread guard's exit
+F211	stmt	barrier	composite	-	stmt.stmt	0	workgroupBarrier()
+F212	loop	items	composite	block.block	stmt.stmt	1	for (t = 0u; t < cfg.m; t++) { ... }: the one long loop; nested in another loop.items the kernel is refused
+F213	loop	items_unrolled	composite	u32.unroll block.block	stmt.stmt	2	the body k times with t + j, then the remainder loop
+F214	loop	tile	composite	u32.wgdim block.block	stmt.stmt	2	for (k = 0u; k < n; k++) { ... }: a short loop
+F215	builtin	item	composite	-	u32.index	0	t, the item loop's index; 0u outside it
+F216	builtin	tile	composite	-	u32.index	0	k, the tile loop's index; 0u outside it
+F217	reg	f0	composite	-	reg<f32>.real	0	a register, declared at the top of the kernel and initialised to its form's fallback
+F218	reg	f1	composite	-	reg<f32>.real	0	a register, declared at the top of the kernel and initialised to its form's fallback
+F219	reg	f2	composite	-	reg<f32>.real	0	a register, declared at the top of the kernel and initialised to its form's fallback
+F220	reg	f3	composite	-	reg<f32>.real	0	a register, declared at the top of the kernel and initialised to its form's fallback
+F221	reg	v0	composite	-	reg<vec4<f32>>.real	0	a register, declared at the top of the kernel and initialised to its form's fallback
+F222	reg	v1	composite	-	reg<vec4<f32>>.real	0	a register, declared at the top of the kernel and initialised to its form's fallback
+F223	reg	i0	composite	-	reg<u32>.index	0	a register, declared at the top of the kernel and initialised to its form's fallback
+F224	reg	i1	composite	-	reg<u32>.index	0	a register, declared at the top of the kernel and initialised to its form's fallback
+F225	reg	i2	composite	-	reg<u32>.index	0	a register, declared at the top of the kernel and initialised to its form's fallback
+F226	reg	i3	composite	-	reg<u32>.index	0	a register, declared at the top of the kernel and initialised to its form's fallback
+F227	reg	b0	composite	-	reg<bool>.flag	0	a register, declared at the top of the kernel and initialised to its form's fallback
+F228	reg	get_f	composite	reg<f32>.real	f32.real	1	the register's value
+F229	reg	set_f	composite	reg<f32>.real f32.real	stmt.stmt	2	name = value;
+F230	reg	get_v	composite	reg<vec4<f32>>.real	vec4<f32>.real	1	the register's value
+F231	reg	set_v	composite	reg<vec4<f32>>.real vec4<f32>.real	stmt.stmt	2	name = value;
+F232	reg	get_i	composite	reg<u32>.index	u32.index	1	the register's value
+F233	reg	set_i	composite	reg<u32>.index u32.index	stmt.stmt	2	name = value;
+F234	reg	get_b	composite	reg<bool>.flag	bool.flag	1	the register's value
+F235	reg	set_b	composite	reg<bool>.flag bool.flag	stmt.stmt	2	name = value;
+F236	wg	a	composite	-	wgmem<f32>.real	0	workgroup array a
+F237	wg	b	composite	-	wgmem<f32>.real	0	workgroup array b
+F238	wg	get	composite	wgmem<f32>.real u32.index	f32.real	2	a[i & 4095u]
+F239	wg	set	composite	wgmem<f32>.real u32.index f32.real	stmt.stmt	3	arity 3: a[i & 4095u] = v;

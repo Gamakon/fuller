@@ -24,6 +24,13 @@ A type is a dual `slot.form`: the slot is what the hardware stores, the form is 
 | `flag` | a predicate | bool |
 | `sign` | ±1 carried as one bit | bool |
 | `opaque` | a value carried through unchanged; any slot | f32, f16, i32, u32, bool |
+| `kernel` | the entry point: a grid and a body; a gene's root | see duals |
+| `grid` | workgroup size (x, y) and the block of cells each thread owns (bx, by) | see duals |
+| `block` | a sequence of statements | see duals |
+| `stmt` | one statement | see duals |
+| `wgdim` | a workgroup dimension, a literal from {4, 8, 16, 32, 64} | u32 |
+| `blk` | a block factor, a literal from {1, 2, 4} | u32 |
+| `unroll` | an unroll factor, a literal from {2, 4, 8} | u32 |
 
 ## Duals
 
@@ -100,8 +107,20 @@ A type is a dual `slot.form`: the slot is what the hardware stores, the form is 
 | T069 | `mat4x4<f32>.real` | `mat4x4<f32>` | `real` | 16 | `0.0` | 0 | 0 | 0 |
 | T070 | `array<T>.<form of T>` | `array<T>` | `<form of T>` | 0 | `the element's fallback` | 0 | 0 | 1 |
 | T071 | `store.store` | `store` | `store` | 0 | `no-op, codon masked` | 0 | 1 | 0 |
+| T072 | `kernel.kernel` | `kernel` | `kernel` | 0 | `an empty kernel` | 0 | 0 | 0 |
+| T073 | `grid.grid` | `grid` | `grid` | 0 | `16 x 16, 1 x 1` | 0 | 0 | 0 |
+| T074 | `block.block` | `block` | `block` | 0 | `empty` | 0 | 0 | 0 |
+| T075 | `stmt.stmt` | `stmt` | `stmt` | 0 | `empty` | 0 | 0 | 0 |
+| T076 | `reg<f32>.real` | `reg<f32>` | `real` | 1 | `0.0` | 0 | 0 | 0 |
+| T077 | `reg<vec4<f32>>.real` | `reg<vec4<f32>>` | `real` | 4 | `0.0` | 0 | 0 | 0 |
+| T078 | `reg<u32>.index` | `reg<u32>` | `index` | 1 | `0u` | 0 | 0 | 0 |
+| T079 | `reg<bool>.flag` | `reg<bool>` | `flag` | 1 | `false` | 0 | 0 | 0 |
+| T080 | `wgmem<f32>.real` | `wgmem<f32>` | `real` | 0 | `0.0` | 0 | 0 | 0 |
+| T081 | `u32.wgdim` | `u32` | `wgdim` | 1 | `4u` | 0 | 0 | 0 |
+| T082 | `u32.blk` | `u32` | `blk` | 1 | `1u` | 0 | 0 | 0 |
+| T083 | `u32.unroll` | `u32` | `unroll` | 1 | `2u` | 0 | 0 | 0 |
 
-71 duals. The fallback is what Design C's projection substitutes for a codon whose dual does not match the demand; the codon is counted as masked.
+83 duals. The fallback is what Design C's projection substitutes for a codon whose dual does not match the demand; the codon is counted as masked.
 
 The three machine columns (`fallback_bits`, `fallback_noop`, `fallback_elem` in `types.tsv`) are what the loader builds the fallback leaf from, never the prose: `bits` is the lane's 32-bit pattern as an unsigned integer, repeated across the lanes of a vector or matrix (only `bool.sign` is non-zero, true = +1); `noop` is 1 for `store.store`, which substitutes no value at all; `elem` is 1 for `array<T>`, whose fallback is its element's. The loader tests `noop` and `elem` before reading `bits`; for those two rows `bits` is a placeholder 0. Every substitution, whichever column decides it, counts the codon as masked.
 

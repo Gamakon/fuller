@@ -70,3 +70,15 @@ T068	mat4x3<f32>.real	mat4x3<f32>	real	12	0.0	0	0	0	a matrix of plain numbers
 T069	mat4x4<f32>.real	mat4x4<f32>	real	16	0.0	0	0	0	a matrix of plain numbers
 T070	array<T>.<form of T>	array<T>	<form of T>	0	the element's fallback	0	0	1	a storage or uniform buffer of T; indexed by u32.index; one row per buffer at read-in
 T071	store.store	store	store	0	no-op, codon masked	0	1	0	the statement a head gene's root produces
+T072	kernel.kernel	kernel	kernel	0	an empty kernel	0	0	0	the entry point: a grid and a body; a gene's root
+T073	grid.grid	grid	grid	0	16 x 16, 1 x 1	0	0	0	workgroup size (x, y) and the block of cells each thread owns (bx, by)
+T074	block.block	block	block	0	empty	0	0	0	a sequence of statements
+T075	stmt.stmt	stmt	stmt	0	empty	0	0	0	one statement
+T076	reg<f32>.real	reg<f32>	real	1	0.0	0	0	0	a named f32 register: f0, f1, f2, f3
+T077	reg<vec4<f32>>.real	reg<vec4<f32>>	real	4	0.0	0	0	0	a named vec4<f32> register: v0, v1
+T078	reg<u32>.index	reg<u32>	index	1	0u	0	0	0	a named u32 register: i0, i1, i2, i3
+T079	reg<bool>.flag	reg<bool>	flag	1	false	0	0	0	a named bool register: b0
+T080	wgmem<f32>.real	wgmem<f32>	real	0	0.0	0	0	0	a workgroup-memory array of 4,096 f32: a, b
+T081	u32.wgdim	u32	wgdim	1	4u	0	0	0	a workgroup dimension, a literal from {4, 8, 16, 32, 64}
+T082	u32.blk	u32	blk	1	1u	0	0	0	a block factor, a literal from {1, 2, 4}
+T083	u32.unroll	u32	unroll	1	2u	0	0	0	an unroll factor, a literal from {2, 4, 8}

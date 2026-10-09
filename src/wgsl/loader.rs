@@ -51,13 +51,25 @@ impl WgslDual {
     /// `None` for the array and store rows.
     pub fn scalar(&self) -> Option<&str> {
         let s = self.slot.as_str();
-        if s == "array<T>" || s == "store" {
-            return None;
-        }
-        Some(match s.find('<') {
-            Some(i) => &s[i + 1..s.len() - 1],
+        let base = match s.find('<') {
+            Some(i) => {
+                // Only a vector or matrix slot wraps a scalar; `reg<f32>`,
+                // `wgmem<f32>` and `array<T>` are not value slots.
+                if !(s.starts_with("vec") || s.starts_with("mat")) {
+                    return None;
+                }
+                &s[i + 1..s.len() - 1]
+            }
             None => s,
-        })
+        };
+        ["f32", "f16", "i32", "u32", "bool"].contains(&base).then_some(base)
+    }
+
+    /// A statement-level dual (`kernel`, `grid`, `block`, `stmt`, a register
+    /// or a workgroup array): no value slot, rendered by `render.rs`.
+    pub fn is_statement_level(&self) -> bool {
+        let s = self.slot.as_str();
+        matches!(s, "kernel" | "grid" | "block" | "stmt") || s.starts_with("reg<") || s.starts_with("wgmem<")
     }
 
     /// `Some(n)` for a vector of n lanes, `None` otherwise.
@@ -82,7 +94,7 @@ impl WgslDual {
     }
 }
 
-/// The 71 duals, in table order.
+/// The 83 duals, in table order.
 pub fn wgsl_duals() -> Vec<WgslDual> {
     parse_duals(include_str!("../../kingdoms/wgsl/types.tsv")).unwrap_or_else(|e| panic!("kingdoms/wgsl/types.tsv does not parse: {e}"))
 }
@@ -474,7 +486,8 @@ fn instantiate_matrix(t: &Template, ins: &[Pat], out: &Pat, duals: &[WgslDual], 
     for &a in &dims {
         for &b in &dims {
             for &c in &dims {
-                let env: BTreeMap<char, u32> = [('A', a), ('B', b), ('C', c), ('R', b), ('N', a), ('L', a)].into_iter().collect();
+                // WGSL spells a matrix matCxR (C columns, R rows). K is the contracted dimension of a product.
+                let env: BTreeMap<char, u32> = [('A', a), ('B', b), ('C', c), ('R', b), ('N', a), ('L', a), ('K', a)].into_iter().collect();
                 let dim = |d: &Dim| match d {
                     Dim::Fixed(n) => Some(*n),
                     Dim::Var(v) => env.get(v).copied(),
@@ -534,9 +547,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_68_duals_load_with_their_machine_fallbacks() {
+    fn the_83_duals_load_with_their_machine_fallbacks() {
         let d = wgsl_duals();
-        assert_eq!(d.len(), 71);
+        assert_eq!(d.len(), 83);
         assert_eq!((d[0].reference.as_str(), d[0].dual.as_str(), d[0].ty()), ("T001", "f32.real", Ty::Wgsl(0)));
         assert_eq!(d[70].dual, "store.store");
         assert!(d[70].fallback_noop && !d[69].fallback_noop);
@@ -546,9 +559,19 @@ mod tests {
         assert_eq!(d.iter().filter(|x| x.fallback_bits != 0).count(), 1, "only sign is non-zero");
         assert_eq!(d.iter().find(|x| x.dual == "mat3x4<f32>.real").unwrap().matrix_shape(), Some((3, 4)));
         assert_eq!(d.iter().find(|x| x.dual == "vec3<u32>.index").unwrap().scalar(), Some("u32"));
+        // The statement-level duals come after the value duals, so every
+        // earlier ref is unchanged; their fallback is a plain leaf the
+        // renderer gives a meaning (an empty statement, the first register).
+        assert_eq!(d[71].dual, "kernel.kernel");
+        assert_eq!(d[82].dual, "u32.unroll");
+        assert!(d[71..].iter().all(|x| x.fallback_bits == 0 && !x.fallback_noop && !x.fallback_elem));
+        assert_eq!(d.iter().filter(|x| x.is_statement_level()).count(), 9);
+        assert_eq!(d.iter().find(|x| x.dual == "reg<f32>.real").unwrap().scalar(), None, "a register is not a value slot");
+        assert_eq!(d.iter().find(|x| x.dual == "u32.wgdim").unwrap().scalar(), Some("u32"));
         let table = wgsl_fallback_table().unwrap();
-        assert_eq!(table.len(), 71);
+        assert_eq!(table.len(), 83);
         assert!(table[70].is_none() && table[69].is_none());
+        assert_eq!(table[71].unwrap().ty_code, Ty::Wgsl(71).code());
         assert_eq!(table[0].unwrap().op, FN_ID_NUM);
         assert_eq!(table[sign.index as usize].unwrap().konst.to_bits(), 1);
         // A non-zero f16 pattern is refused, not widened.
@@ -568,8 +591,8 @@ mod tests {
         let expected: std::collections::BTreeSet<&str> = per_kernel_templates().iter().copied().collect();
         let got: std::collections::BTreeSet<&str> = per_kernel.iter().map(|s| s.as_str()).collect();
         assert_eq!(got, expected, "the per-kernel set is exactly the documented one");
-        println!("WGSL kingdom: {} rows from {} templates ({} per-kernel)", k.rows.len(), 197 - k.uninstantiated.len(), per_kernel.len());
-        assert!(k.rows.len() > 197);
+        println!("WGSL kingdom: {} rows from {} templates ({} per-kernel)", k.rows.len(), 239 - k.uninstantiated.len(), per_kernel.len());
+        assert!(k.rows.len() > 239);
     }
 
     #[test]
@@ -581,13 +604,13 @@ mod tests {
             for i in &r.inputs {
                 let d = k.dual(*i).unwrap_or_else(|| panic!("{}: input is not a dual", r.name));
                 // Lanes equal across inputs and output, except the rows that say otherwise.
-                let shape_changing = r.name.starts_with("shape.") || r.name.starts_with("geom.") || r.name.starts_with("bits.") || r.name.starts_with("arith.mul_mat") || r.name == "arith.mul_scalar_vec" || r.name == "arith.mix_scalar_weight" || r.name.starts_with("hash.") || r.name.starts_with("fixed.") || r.name.starts_with("quantise.") || r.name.starts_with("convert.") || r.name.starts_with("select.") || r.name.starts_with("logic.") || r.name.starts_with("store.") || r.name.starts_with("index.") || r.name.starts_with("compare.");
+                let shape_changing = r.name.starts_with("shape.") || r.name.starts_with("geom.") || r.name.starts_with("bits.") || r.name.starts_with("arith.mul_mat") || r.name == "arith.mul_scalar_vec" || r.name == "arith.mix_scalar_weight" || r.name.starts_with("hash.") || r.name.starts_with("fixed.") || r.name.starts_with("quantise.") || r.name.starts_with("convert.") || r.name.starts_with("select.") || r.name.starts_with("logic.") || r.name.starts_with("store.") || r.name.starts_with("index.") || r.name.starts_with("compare.") || r.name.starts_with("wg.") || r.name.starts_with("reg.");
                 if !shape_changing && out.lanes > 0 && d.lanes > 0 {
                     assert_eq!(d.lanes, out.lanes, "{}: {} vs {}", r.name, d.dual, out.dual);
                 }
             }
         }
-        assert_eq!(k.rows.iter().map(|r| r.inputs.len()).max(), Some(3));
+        assert_eq!(k.rows.iter().map(|r| r.inputs.len()).max(), Some(crate::gpu_eval::K_MAX), "grid.of takes four");
     }
 
     #[test]
@@ -604,7 +627,11 @@ mod tests {
         // bits counts produce counts; quantise and hash land in codes,
         // indices and reals; index/count/fixed/select/store take a second
         // form as a count, an int, a sign or a condition.
-        let allowed: std::collections::BTreeSet<String> = ["convert", "compare", "logic", "bits", "quantise", "hash", "index", "count", "fixed", "select", "store"].iter().map(|s| s.to_string()).collect();
+        // The statement classes cross by nature: a condition and a block
+        // make a statement, statements make a block, a grid and a block a
+        // kernel, a register and a value a statement, an array and an
+        // index a value.
+        let allowed: std::collections::BTreeSet<String> = ["convert", "compare", "logic", "bits", "quantise", "hash", "index", "count", "fixed", "select", "store", "kernel", "grid", "block", "stmt", "loop", "reg", "wg"].iter().map(|s| s.to_string()).collect();
         assert!(crossing.is_subset(&allowed), "forms cross in {crossing:?}, allowed {allowed:?}");
         assert!(crossing.contains("convert"));
         assert!(!crossing.contains("arith") && !crossing.contains("trig") && !crossing.contains("int"), "{crossing:?}");
@@ -638,6 +665,13 @@ mod tests {
         let mv = by("arith.mul_mat_vec");
         assert_eq!(mv.len(), 9);
         assert!(mv.iter().any(|r| dual(r.inputs[0]) == "mat2x3<f32>.real" && dual(r.inputs[1]) == "vec2<f32>.real" && dual(r.output) == "vec3<f32>.real"));
+        // arith.mul_mat_mat: the left's columns equal the right's rows (WGSL matCxR), 27 shapes.
+        let mm = by("arith.mul_mat_mat");
+        assert_eq!(mm.len(), 27);
+        assert!(mm.iter().all(|r| {
+            let (l, rt, o) = (k.dual(r.inputs[0]).unwrap().matrix_shape().unwrap(), k.dual(r.inputs[1]).unwrap().matrix_shape().unwrap(), k.dual(r.output).unwrap().matrix_shape().unwrap());
+            l.0 == rt.1 && o == (rt.0, l.1)
+        }), "a product's shapes");
         // geom.determinant: square matrices only.
         assert_eq!(by("geom.determinant").len(), 3);
         // literal.real is a terminal over the eight real duals; builtins are terminals.
@@ -651,6 +685,20 @@ mod tests {
         assert!(by("shape.compose2").iter().all(|r| k.dual(r.inputs[0]).unwrap().lanes == 1 && k.dual(r.output).unwrap().lanes == 2));
         // convert.f32_to_q15_16 is one row.
         assert_eq!(by("convert.f32_to_q15_16").len(), 1);
+        // The statement rows: one each, typed over the statement duals; the
+        // value rows did not pick up a register or an array as a value.
+        assert_eq!(by("kernel.entry").len(), 1);
+        assert_eq!(by("grid.of")[0].inputs.len(), 4);
+        assert_eq!(by("block.seq4")[0].inputs.len(), 4);
+        assert_eq!(by("loop.items").len(), 1);
+        assert!(by("stmt.return")[0].terminal && by("stmt.barrier")[0].terminal);
+        assert!(by("reg.f0")[0].terminal && dual(by("reg.f0")[0].output) == "reg<f32>.real");
+        assert_eq!(dual(by("reg.get_f")[0].output), "f32.real");
+        assert_eq!(dual(by("reg.set_v")[0].inputs[1]), "vec4<f32>.real");
+        assert!(by("arith.add").iter().all(|r| !dual(r.output).starts_with("reg")), "no arithmetic on registers");
+        assert!(!by("select.scalar_cond").iter().any(|r| dual(r.output).ends_with(".wgdim")), "no select over the literal codes");
+        assert_eq!(dual(by("wg.get")[0].inputs[0]), "wgmem<f32>.real");
+        assert!(dual(by("literal.wgdim")[0].output) == "u32.wgdim" && by("literal.wgdim")[0].terminal);
         // The symbol table view: kingdom name, unique semantic ids, k-hot keys are duals.
         let t = k.symbol_table();
         assert_eq!(t.kingdoms(), vec![WGSL.to_string()]);
@@ -661,6 +709,6 @@ mod tests {
         ids.dedup();
         assert_eq!(ids.len(), n, "semantic ids are unique");
         assert!(t.kingdom(WGSL).iter().all(|s| s.arity.inputs.keys().chain(s.arity.outputs.keys()).all(|ty| matches!(ty, Ty::Wgsl(_)))));
-        assert_eq!(t.max_arity(WGSL), 3);
+        assert_eq!(t.max_arity(WGSL), 4);
     }
 }

@@ -36,6 +36,15 @@ FORMS = {
     "flag": ("a predicate", ["bool"]),
     "sign": ("±1 carried as one bit", ["bool"]),
     "opaque": ("a value carried through unchanged; any slot", SCALARS),
+    # Statement-level forms (the multityped kingdom, PLAN_wgsl_gram_superopt §2):
+    # a random typed gene whose root is `kernel.kernel` is a whole kernel.
+    "kernel": ("the entry point: a grid and a body; a gene's root", []),
+    "grid": ("workgroup size (x, y) and the block of cells each thread owns (bx, by)", []),
+    "block": ("a sequence of statements", []),
+    "stmt": ("one statement", []),
+    "wgdim": ("a workgroup dimension, a literal from {4, 8, 16, 32, 64}", ["u32"]),
+    "blk": ("a block factor, a literal from {1, 2, 4}", ["u32"]),
+    "unroll": ("an unroll factor, a literal from {2, 4, 8}", ["u32"]),
 }
 
 FALLBACK = {
@@ -43,6 +52,11 @@ FALLBACK = {
     "code4": "0u", "code8": "0u", "code16": "0u", "code1024": "0u", "bits": "0u", "hash32": "0u",
     "hash64": "vec2(0u, 0u)", "flag": "false", "sign": "true (+1)", "opaque": "the slot's zero", "store": "no-op, codon masked",
     "<form of T>": "the element's fallback",
+    # The renderer gives a statement-level fallback leaf its meaning: an empty
+    # kernel, the 16 x 16 x 1 x 1 grid, an empty block, an empty statement, the
+    # smallest literal, the first register, the first workgroup array.
+    "kernel": "an empty kernel", "grid": "16 x 16, 1 x 1", "block": "empty", "stmt": "empty",
+    "wgdim": "4u", "blk": "1u", "unroll": "2u",
 }
 
 # The fallback by machine: the lane's 32-bit pattern as an unsigned integer. Vectors and matrices
@@ -54,6 +68,7 @@ FALLBACK_BITS = {
     "real": 0, "int": 0, "q15_16": 0, "q15_16w": 0, "index": 0, "count": 0,
     "code4": 0, "code8": 0, "code16": 0, "code1024": 0, "bits": 0, "hash32": 0,
     "hash64": 0, "flag": 0, "sign": 1, "opaque": 0, "store": 0, "<form of T>": 0,
+    "kernel": 0, "grid": 0, "block": 0, "stmt": 0, "wgdim": 0, "blk": 0, "unroll": 0,
 }
 assert set(FALLBACK_BITS) == set(FALLBACK), "every form with a fallback needs its bits, and no more"
 
@@ -71,11 +86,13 @@ def build_types():
         rows.append((f"T{len(rows) + 1:03d}", f"{slot}.{form}", slot, form, lanes, FALLBACK[form], FALLBACK_BITS[form], noop, elem, meaning))
 
     for form, (meaning, scalars) in FORMS.items():
+        if form in ("wgdim", "blk", "unroll"):
+            continue  # added after the specials, below, so T070/T071 keep their refs
         for s in scalars:
             for l in LANES:
                 # vector forms that make no sense: codes, hashes and signs are scalar-only;
                 # a count has vector slots because the builtin num_workgroups is a vec3<u32>.count
-                if l > 1 and form in ("code4", "code8", "code16", "code1024", "hash32", "sign"):
+                if l > 1 and form in ("code4", "code8", "code16", "code1024", "hash32", "sign", "wgdim", "blk", "unroll"):
                     continue
                 add(slot_name(s, l), form, l, meaning)
     add("vec2<i32>", "q15_16w", 2, FORMS["q15_16w"][0])
@@ -85,6 +102,19 @@ def build_types():
             add(f"mat{c}x{r}<f32>", "real", c * r, "a matrix of plain numbers")
     add("array<T>", "<form of T>", 0, "a storage or uniform buffer of T; indexed by u32.index; one row per buffer at read-in")
     add("store", "store", 0, "the statement a head gene's root produces")
+    # Statement-level duals, appended after the value duals so every earlier
+    # ref and index is unchanged.
+    add("kernel", "kernel", 0, FORMS["kernel"][0])
+    add("grid", "grid", 0, FORMS["grid"][0])
+    add("block", "block", 0, FORMS["block"][0])
+    add("stmt", "stmt", 0, FORMS["stmt"][0])
+    add("reg<f32>", "real", 1, "a named f32 register: f0, f1, f2, f3")
+    add("reg<vec4<f32>>", "real", 4, "a named vec4<f32> register: v0, v1")
+    add("reg<u32>", "index", 1, "a named u32 register: i0, i1, i2, i3")
+    add("reg<bool>", "flag", 1, "a named bool register: b0")
+    add("wgmem<f32>", "real", 0, "a workgroup-memory array of 4,096 f32: a, b")
+    for form in ("wgdim", "blk", "unroll"):
+        add("u32", form, 1, FORMS[form][0])
     return rows
 
 
@@ -117,7 +147,7 @@ for op, naga in [("add", "Binary::Add"), ("sub", "Binary::Subtract"), ("mul", "B
     f("arith", op, naga, ["<S.real>", "<S.real>"], "<S.real>", "per real dual, lanes equal")
 f("arith", "mul_scalar_vec", "Binary::Multiply", ["f32.real", "<vecL<f32>.real>"], "<vecL<f32>.real>", "")
 f("arith", "mul_mat_vec", "Binary::Multiply", ["<matCxR<f32>.real>", "<vecC<f32>.real>"], "<vecR<f32>.real>", "")
-f("arith", "mul_mat_mat", "Binary::Multiply", ["<matAxB<f32>.real>", "<matBxC<f32>.real>"], "<matAxC<f32>.real>", "")
+f("arith", "mul_mat_mat", "Binary::Multiply", ["<matKxR<f32>.real>", "<matCxK<f32>.real>"], "<matCxR<f32>.real>", "WGSL matCxR is C columns of R rows: the left's columns equal the right's rows")
 f("arith", "neg", "Unary::Negate", ["<S.real>"], "<S.real>", "")
 for op in ["abs", "sign", "floor", "ceil", "round", "fract", "trunc", "saturate", "sqrt", "inverse_sqrt", "exp", "exp2", "log", "log2"]:
     f("arith", op, f"Math::{op.title().replace('_', '')}", ["<S.real>"], "<S.real>", "")
@@ -240,6 +270,37 @@ f("store", "buffer", "Store(Access)", ["u32.index", "<T.form of the buffer>"], "
 f("store", "local", "Store", ["<T.form of the local>"], "store", "")
 f("store", "branch", "If/Loop condition", ["bool.flag"], "store", "a branch-condition root in the scaffold")
 
+# ---- statements: the multityped kingdom (PLAN_wgsl_gram_superopt §2). ----
+# Every row is rendered to text by src/wgsl/render.rs; naga validates the text.
+f("literal", "wgdim", "Literal", [], "u32.wgdim", "a workgroup dimension from {4, 8, 16, 32, 64}; the renderer snaps the constant to the set")
+f("literal", "blk", "Literal", [], "u32.blk", "a block factor from {1, 2, 4}")
+f("literal", "unroll", "Literal", [], "u32.unroll", "an unroll factor from {2, 4, 8}")
+f("kernel", "entry", "composite", ["grid.grid", "block.block"], "kernel.kernel", "the module: bindings, registers, workgroup arrays, @workgroup_size(x, y, 1) fn main")
+f("grid", "of", "composite", ["u32.wgdim", "u32.wgdim", "u32.blk", "u32.blk"], "grid.grid", "arity 4: workgroup x, y and the cells per thread bx, by; the driver dispatches ceil(d / (x bx)) x ceil(rows / (y by)); x y > 1,024 threads is refused")
+f("block", "one", "composite", ["stmt.stmt"], "block.block", "")
+f("block", "seq2", "composite", ["stmt.stmt", "stmt.stmt"], "block.block", "the statements in order")
+f("block", "seq3", "composite", ["stmt.stmt"] * 3, "block.block", "arity 3")
+f("block", "seq4", "composite", ["stmt.stmt"] * 4, "block.block", "arity 4")
+f("stmt", "block", "composite", ["block.block"], "stmt.stmt", "{ ... }")
+f("stmt", "if", "composite", ["bool.flag", "block.block"], "stmt.stmt", "if (c) { ... }")
+f("stmt", "if_else", "composite", ["bool.flag", "block.block", "block.block"], "stmt.stmt", "arity 3")
+f("stmt", "return", "composite", [], "stmt.stmt", "return; the thread guard's exit")
+f("stmt", "barrier", "composite", [], "stmt.stmt", "workgroupBarrier()")
+f("loop", "items", "composite", ["block.block"], "stmt.stmt", "for (t = 0u; t < cfg.m; t++) { ... }: the one long loop; nested in another loop.items the kernel is refused")
+f("loop", "items_unrolled", "composite", ["u32.unroll", "block.block"], "stmt.stmt", "the body k times with t + j, then the remainder loop")
+f("loop", "tile", "composite", ["u32.wgdim", "block.block"], "stmt.stmt", "for (k = 0u; k < n; k++) { ... }: a short loop")
+f("builtin", "item", "composite", [], "u32.index", "t, the item loop's index; 0u outside it")
+f("builtin", "tile", "composite", [], "u32.index", "k, the tile loop's index; 0u outside it")
+for name, dual in [("f0", "reg<f32>.real"), ("f1", "reg<f32>.real"), ("f2", "reg<f32>.real"), ("f3", "reg<f32>.real"), ("v0", "reg<vec4<f32>>.real"), ("v1", "reg<vec4<f32>>.real"), ("i0", "reg<u32>.index"), ("i1", "reg<u32>.index"), ("i2", "reg<u32>.index"), ("i3", "reg<u32>.index"), ("b0", "reg<bool>.flag")]:
+    f("reg", name, "composite", [], dual, "a register, declared at the top of the kernel and initialised to its form's fallback")
+for suffix, reg, val in [("f", "reg<f32>.real", "f32.real"), ("v", "reg<vec4<f32>>.real", "vec4<f32>.real"), ("i", "reg<u32>.index", "u32.index"), ("b", "reg<bool>.flag", "bool.flag")]:
+    f("reg", f"get_{suffix}", "composite", [reg], val, "the register's value")
+    f("reg", f"set_{suffix}", "composite", [reg, val], "stmt.stmt", "name = value;")
+f("wg", "a", "composite", [], "wgmem<f32>.real", "workgroup array a")
+f("wg", "b", "composite", [], "wgmem<f32>.real", "workgroup array b")
+f("wg", "get", "composite", ["wgmem<f32>.real", "u32.index"], "f32.real", "a[i & 4095u]")
+f("wg", "set", "composite", ["wgmem<f32>.real", "u32.index", "f32.real"], "stmt.stmt", "arity 3: a[i & 4095u] = v;")
+
 
 def write_tsv(path, header, rows):
     with open(path, "w") as out:
@@ -279,7 +340,7 @@ def main():
                 cur = c
                 md.write(f"\n## class `{c}`\n\n| ref | instance | naga | in | out | n | note |\n|---|---|---|---|---|---|---|\n")
             md.write(f"| {ref} | `{c}.{inst}` | `{naga}` | `{ins}` | `{out}` | {arity} | {note} |\n")
-        md.write(f"\n{len(frows)} function templates. Deliberately absent: atomics, barriers, images, derivatives, subgroup operations, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.\n")
+        md.write(f"\n{len(frows)} function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Deliberately absent: atomics, images, derivatives, subgroup operations, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.\n")
     print(f"{len(types)} duals, {len(frows)} functions")
 
 

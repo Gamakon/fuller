@@ -184,12 +184,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_shipped_table_has_197_templates_with_consistent_arities() {
+    fn the_shipped_table_has_239_templates_with_consistent_arities() {
         let t = FunctionTable::shipped();
-        assert_eq!(t.rows.len(), 197);
+        assert_eq!(t.rows.len(), 239);
         assert_eq!(t.rows[0].reference, "F001");
         assert_eq!(t.rows[196].reference, "F197");
-        assert_eq!(t.rows.iter().map(|r| r.arity).max(), Some(3), "the widest template today is 3-ary");
+        assert_eq!(t.rows[238].reference, "F239");
+        assert_eq!(t.rows.iter().map(|r| r.arity).max(), Some(4), "the widest template is grid.of, 4-ary (K_MAX)");
         let names: std::collections::BTreeSet<String> = t.rows.iter().map(Template::name).collect();
         assert_eq!(names.len(), 197, "class.instance names are unique");
     }
