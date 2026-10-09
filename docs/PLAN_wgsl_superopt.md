@@ -157,25 +157,41 @@ below shipped and the two spreads do not overlap.
 
 ## 6. Order
 
-1. Per-pass timestamps in phylu's resident chain (phylu), the spread
-   sized on shipped (three runs); fuller's `Device::time` gains
-   timestamps too. The SAME instrumented fit also counts subtree reuse
-   per generation (§7). **Decision point, from those two numbers:** if
-   eval is the large pass and reuse is high, the incremental population
-   DAG (§7) is worth more than any 10 % on decode and is built first, as
-   its own plan for the engine; the kernel search then targets the
-   kernels that remain after that change, not the ones it replaces. If
-   decode is the large pass or reuse is low, this plan continues as
-   written.
-2. The inventory and the phenotype in fuller (§2.1–2.3, §3): shares as
-   choices, hoists, cached loads; unit tests per move on the oracle's
-   kernels; the oracle's 1,000 programs with random genotypes through the
-   device (bit-exact, as the folded rebuild was).
-3. The integer ruleset (§2.4), gated by the oracle.
-4. The search loop with the gate and the timing per variant; decode
-   first.
-5. The generated-code diff of the best genotype.
-6. The validation of §5 and the README tables.
+The measurements of §8 (63 % of a population's work is repeated inside
+one generation; a kernel of a few hundred definitions compiles in
+80 ms, thousands in seconds) put the incremental population first and
+the decode search after it. Each step is a measurement before the next
+is built.
+
+**Track A, the incremental population (§7, §8).**
+
+1. Reuse BETWEEN generations: the predator-prey fit again with the
+   population exported every generation; count the fraction of each
+   generation's subtrees present in the generation before, and the
+   number of new definitions per generation. One 90 s run, one host
+   count. This number decides the rest: high reuse means a small delta
+   that compiles off the generation's path; low reuse means the compiled
+   path never catches up and the track stops here with that result.
+2. The arena and the delta compiler in fuller: a band of new definitions
+   emitted as one kernel that reads its dependencies from the arena and
+   writes its own values; bands dispatched in order; rows whose
+   definitions are not yet compiled evaluated by the interpreter. Tested
+   on the exported population: bit-identical to the interpreter.
+3. Fold as an operator in phylu's generation loop: add definitions,
+   rewrite chromosomes to reference them, grow the tail; evaluation reads
+   definition values from the arena; the delta compiled off the
+   generation's path (every few generations or on another thread).
+4. The experiment of §8: three laws, three seeds, 300 generations,
+   interpreter against compiled-incremental, bit-identical populations;
+   ms per generation for both and the break-even churn.
+5. Compaction and the tail study: merge bands in the background; record
+   growth, use counts and return depths; set the frame and the maximum
+   from them.
+
+**Track B, the decode search (§1–§5), after Track A's step 4** and
+targeting the kernels that remain after it: per-pass timestamps and the
+spread; the inventory and phenotype; the integer ruleset; the search
+with the gate and timing; the generated-code diff; the validation.
 
 ## 7. Incremental folding: a general requirement (Andrew, 2026-10-09)
 
