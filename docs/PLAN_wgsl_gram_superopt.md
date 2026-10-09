@@ -2,7 +2,7 @@
 
 ## Context
 
-**Objective.** Find, by search over legal structural variants and
+**Objective.** Find, by search over sum-preserving structural variants and
 measured GPU time, the fastest WGSL kernel computing the weighted Gram
 `H = ΦᵀΦ` (d × d, contracted over the item axis) that reproduces the
 reference within a stated numerical bound; report the speed-up against
@@ -36,7 +36,7 @@ and is scored by how much of the ceiling it reaches in how many
 evaluations. The winner is validated at production size inside Blue
 World and its Metal compiler output diffed against the shipped kernel's.
 
-**Unique feature.** The search space is the space of legal kernels, not
+**Unique feature.** The search space is the space of kernels that compute the same sum, not
 of parameters of one kernel: register blocking, workgroup tiling,
 vectorised loads, loop unrolling, symmetric half-computation and split
 accumulators are composed freely by the generator, and the criterion and
@@ -52,8 +52,8 @@ measure (`PLAN_wgsl_superopt.md` §6a).
 expression trees inside a fixed scaffold; the gains here are in the
 scaffold (tiles, loops, memory), which the chromosome cannot express.
 So the genotype is the move vector of `PLAN_wgsl_superopt.md` §3, the
-kernel is rebuilt by a template, and legality is by construction of each
-move plus the reference gate. That is stated plainly, not hidden.
+kernel is rebuilt by a template, and each move preserves the sum by construction, the
+reference gate checking it. That is stated plainly, not hidden.
 
 ## 1. The measurement and the criterion
 
@@ -101,7 +101,17 @@ Apple M3 Max, Metal, 128 MiB per binding (production's `effective_buffer_limit`)
 
 The criterion holds with a margin of 30 on the shipped kernel, so a reordered sum has room; the ratio's worst entries are the diagonal, where every term is positive and the rounding is systematic. The run-to-run spread of the GPU time is 12 % (the first build fastest), which fixes the paired protocol of §1 for every later comparison. The reference is cached at `logs/WGSL_GRAM/ref_d2048_m65536_s1.f64` (32 MB) and the harness reads it on every later run. Tests: `cargo test --features gpu,wgsl gram` (5: Φ determinism and unit rows, the reference on a hand case, the criterion's counts, and the shipped kernel on the device at d = 64, m = 1,000 banded 63 × 4 and unbanded, both inside τ).
 
-## 2. The genotype: legal moves
+**Is the bench the production regime?** The inventory's 130 s at d = 8,192, m = 419,734 is 2.82 × 10¹³ multiply-adds, 217 G/s; the bench runs at 117 G/s. Two more shapes of the bench's work (2.75 × 10¹¹ multiply-adds), three rounds each (`logs/WGSL_GRAM/shape_*.log`):
+
+| shape | bands | GPU time, median of 3 | rate | max ratio |
+|---|---|---|---|---|
+| d = 2,048, m = 65,536 | 4 item × 1 row | 2.35 s | 117 G/s | 0.033 |
+| d = 4,096, m = 16,384 | 2 item × 1 row | 2.31 s | 119 G/s | 0.007 |
+| d = 8,192, m = 4,096 (production's own pass shape) | 1 item × 2 row | 2.27 s | 121 G/s | 0.002 |
+
+The kernel's rate does not depend on d or on the banding: the bench is the production regime. At 121 G/s the production build would take 233 s, not the inventory's 130 s, so that figure was taken under other conditions (another machine or load); task 4 measures production here before and after. The criterion ratio falls with m as τ √m expects.
+
+## 2. The genotype: sum-preserving moves
 
 Each move is a transformation of the thread-per-output loop whose
 result is the same sum in a different order or grouping:
@@ -168,7 +178,7 @@ Every task follows `~/dev/minkymorgan/qdrant/docs/Rules.md`: no stubs,
 real data, warnings fixed, every change committed with a factual message,
 wall-clock and GPU time reported, timeouts from the run's own cost, one
 GPU process at a time, paired randomised timing only. The wider project,
-for every task: the WGSL kingdom's legal-transformation machinery
+for every task: the WGSL kingdom's sum-preserving-transformation machinery
 (fuller `src/wgsl/*`) applied as a superoptimiser to a production kernel
 of the Blue World stack (qdrant `lib/blueworld`), the first kernel where
 the gain is measurable in seconds. Tools: fuller (wgpu 0.20, Metal, the
