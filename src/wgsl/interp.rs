@@ -17,7 +17,10 @@
 //! matrices, atomics, images and barriers are refused with a message, as
 //! is any row the table maps that is not implemented here: the oracle
 //! reports those as their own class. Workgroup memory shared between
-//! invocations is out of scope (one invocation runs alone).
+//! invocations is out of scope (one invocation runs alone). A pointer
+//! parameter is `ptr<function>` only (WGSL admits no `ptr<storage>`
+//! parameter without an extension), so a call site passes `&local`.
+//! A `break` exits the innermost loop OR switch, as naga's `Break` says.
 //!
 //! **WGSL semantics, as the spec writes them**, each pinned by a test with
 //! its expected value computed by hand: integer `x / 0 == x` and
@@ -1275,6 +1278,34 @@ fn main() {
         let mut it = Interp::new(&k, std::slice::from_ref(&late), m, inv).unwrap();
         let e = it.run("main").unwrap_err();
         assert!(e.contains("read before its definition"), "{e}");
+    }
+
+    #[test]
+    fn a_break_in_a_switch_inside_a_loop_leaves_the_switch_and_the_loop_runs_on() {
+        let src = r#"
+@group(0) @binding(0) var<storage, read_write> out: array<u32>;
+@compute @workgroup_size(1)
+fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+    var i = 0u;
+    var hits = 0u;
+    loop {
+        if (i >= 5u) { break; }
+        switch (i % 2u) {
+            case 0u: { hits = hits + 1u; break; }
+            default: { hits = hits + 10u; }
+        }
+        i = i + 1u;
+    }
+    out[0] = i;
+    out[1] = hits;
+}
+"#;
+        // Hand-computed: i runs 0..5 (the breaks in the cases leave the
+        // switch only); even i: +1 (three times), odd i: +10 (twice) → 23.
+        let mut m = Memory::default();
+        m.set("buffer.out", u32s(&[0; 2]));
+        let m = run(src, m, 0).unwrap();
+        assert_eq!(out_u32(&m, "buffer.out"), vec![5, 23]);
     }
 
     #[test]

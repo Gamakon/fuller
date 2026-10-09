@@ -256,9 +256,13 @@ pub fn read(source: &str) -> Result<Kernel, String> {
     Ok(Kernel { module, info, functions })
 }
 
-/// The states collected for a loop's joins while its body is walked.
+/// The states collected for a loop's or a switch's joins while its body is
+/// walked. naga's `Break` exits the innermost enclosing loop OR switch
+/// (WGSL's rule too), so a `break` in a case body joins the switch's exit,
+/// not the loop's; `Continue` always reaches the innermost loop.
 #[derive(Default)]
 struct LoopFrame {
+    is_switch: bool,
     breaks: Vec<State>,
     continues: Vec<State>,
 }
@@ -439,7 +443,7 @@ fn walk_block(
             }
             Statement::Continue => {
                 let s = ctx.state.clone();
-                if let Some(frame) = ctx.loops.last_mut() {
+                if let Some(frame) = ctx.loops.iter_mut().rev().find(|f| !f.is_switch) {
                     frame.continues.push(s);
                 }
                 ctx.state.live = false;
@@ -481,6 +485,7 @@ fn walk_block(
                 let entry = ctx.state.clone();
                 let mut ends: Vec<State> = Vec::new();
                 let mut carry: Option<State> = None;
+                ctx.loops.push(LoopFrame { is_switch: true, ..Default::default() });
                 for (c, case) in cases.iter().enumerate() {
                     // A fall-through case's end flows into the next case.
                     ctx.state = match carry.take() {
@@ -502,6 +507,8 @@ fn walk_block(
                 if !cases.iter().any(|c| matches!(c.value, naga::SwitchValue::Default)) {
                     ends.push(entry);
                 }
+                // A `break` in a case body exits the switch.
+                ends.extend(ctx.loops.pop().expect("the switch's frame").breaks);
                 ctx.state = versions::merge(&ends, &mut ctx.counters);
             }
             Statement::Loop { body, continuing, break_if } => {
@@ -1234,6 +1241,34 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         // No store in either arm: no phi, the same version in both arms and after.
         assert!(store(2).ends_with("@v4\"))") && store(3).ends_with("@v4\"))") && store(4).ends_with("@v4\"))"), "{s:?}");
         assert_eq!(versions.get("local.s@0"), Some(&4));
+    }
+
+    #[test]
+    fn a_break_in_a_switch_case_exits_the_switch_not_the_loop() {
+        let src = r#"
+@group(0) @binding(0) var<storage, read_write> out: array<u32>;
+@compute @workgroup_size(1)
+fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+    var s = 0u;
+    var i = 0u;
+    loop {
+        if (i >= 3u) { break; }
+        switch (gid.x) {
+            case 0u: { s = 7u; break; }
+            default: {}
+        }
+        out[i] = s;
+        i = i + 1u;
+    }
+    out[3] = s;
+}
+"#;
+        let (s, versions) = sexprs(src, "main");
+        let store = |n: &str| s.iter().find(|t| t.starts_with(&format!("(store.buffer.out.# {n}"))).cloned().unwrap_or_else(|| panic!("{s:?}"));
+        // s: header phi v1; case 0 stores v2 and breaks (to the switch's
+        // join); the join with the default arm is a phi v3; out[i] reads v3.
+        assert!(store("(Var \"load.local.i@1@v1\")").ends_with("(Var \"load.local.s@0@v3\"))"), "{}", store("(Var \"load.local.i@1@v1\")"));
+        assert_eq!(versions.get("local.s@0"), Some(&4), "header, the store, the switch phi, the loop exit");
     }
 
     #[test]
