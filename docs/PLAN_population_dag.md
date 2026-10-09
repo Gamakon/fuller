@@ -261,6 +261,42 @@ numbers: decode's pass time, the reuse fraction per generation, and
 the compile time per band.
 
 
+## 2a. Task 1 measured: reuse between generations (2026-10-09, 11:02–11:04)
+
+`strogatz_predprey1`, the sweep's config, seed 7014, 90 s: 4,110
+generations (21.9 ms each), the population exported at generations
+0 and 1 modulo 250 (phylu 6bd8cb63, `EVOLVE_EXPORT_POP_DIR`/`_EVERY`;
+33 files, 601 MB, `phylu/logs/REUSE_predprey1/pop/`). Sixteen
+consecutive pairs, counted on the host (wall clock 3 min):
+
+| what, per pair (g, g+1) | mean over 16 pairs |
+|---|---|
+| distinct subtrees of g+1 present in g | 24 % (6,500 of 27,000) |
+| REPEATED subtrees of g+1 (two or more occurrences, one or more operators) present in g | 72 % (3,650 of 5,050) |
+| new repeated subtrees per generation | 1,431 |
+| genes of g+1 textually identical to a gene of g | 65 % (7,800 of 12,000) |
+
+The spread across the sixteen pairs is narrow (22–26 %, 66–76 %,
+1,130–1,820, 62–70 %); the numbers are stable over the whole fit.
+
+**Reading.** Two thirds of the genes survive a generation unchanged,
+and nearly three quarters of the shared definitions do; but a quarter
+of the working set of definitions is new every generation, about 1,400
+of them. At the measured compile costs (§2: 80 ms for a band of a few
+hundred, 490 ms for 1,000) compiling each generation's new definitions
+would cost roughly 0.5 s against a 22 ms generation, even banded, even
+off the generation's path: the compiled arm as "compile what is new"
+cannot keep up with this churn. What survives: (a) variant B, the shared
+DAG with memoised values and no compilation, which is unaffected by
+compile cost and inherits 72 % of its definitions' values each
+generation; (b) a compiled arm restricted to definitions that have
+proved STABLE, those present for k generations (the use-sorted frame's
+top), compiled once and reused for as long as they live, with the
+unstable quarter interpreted. The decisive experiment of §4 keeps its
+three variants with C redefined as (b), and the tail study (task 7)
+gains the number that sets k: the survival curve of a definition by
+age.
+
 ## 3. The reviewer's three risks, answered as design
 
 - **Dispatch overhead (A).** Hundreds of small kernels may cost more than
@@ -295,7 +331,7 @@ generations):
 |---|---|
 | A | the current GPU interpreter (decode → eval over node arrays) |
 | B | the shared DAG evaluated without compilation: homeotic rows memoised in the arena, ordinary rows interpreted against it |
-| C | the shared DAG with incrementally compiled bands (delta kernels reading the arena) |
+| C | the shared DAG with its STABLE definitions compiled (present k generations; §2a), bands reading the arena, the unstable rest interpreted |
 
 Measured per generation, wall clock stamped: total ms; GPU memory
 (arena and buffers); compilation cost (C only, when it happens); exact
@@ -317,7 +353,7 @@ fuller `src/homeotic.rs`, `src/geneframe.rs`, `src/wgsl/*`; phylu
 `examples/{evolve_fit,kernel_time}.rs`; wgpu 0.20 on Metal. One GPU
 process at a time, launched by the fuller session, announced, logged.
 
-1. **Read docs/Rules.md, then: reuse between generations.** Purpose:
+1. **DONE 2026-10-09 (§2a). Read docs/Rules.md, then: reuse between generations.** Purpose:
    the number the programme rests on. Architecture: `evolve_fit` with
    the population exported every generation (`EVOLVE_EXPORT_POP` per
    generation, a phylu change), predator-prey, 90 s; a host count

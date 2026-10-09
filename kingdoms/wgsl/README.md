@@ -553,10 +553,13 @@ and they cover 63 % of all occurrences. A straight-line kernel of the
 cached on Apple M3 Max; naga takes 0.5 s of it. A generation of this fit
 is 25 ms. Compile time against kernel size, cold: 50 definitions 79 ms,
 200 → 86 ms, 1,000 → 490 ms, 3,000 → 2.7 s, 6,836 → 8.9 s: flat near
-80 ms to a few hundred definitions, then worse than linear. The
-superoptimiser plan's §8 records what follows for the compiled arm
-(append-only bands of a few hundred definitions, compiled off the
-generation's path).
+80 ms to a few hundred definitions, then worse than linear. Between
+consecutive generations (sixteen pairs over a 4,110-generation fit):
+24 % of distinct subtrees, 72 % of repeated subtrees and 65 % of genes
+carry over; about 1,400 repeated subtrees are new each generation, so
+compiling what is new cannot keep up (0.5 s against a 22 ms
+generation) and the compiled arm is restricted to definitions that
+have proved stable (`docs/PLAN_population_dag.md` §2a).
 
 ## What is built, what is not
 
