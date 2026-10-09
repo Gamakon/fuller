@@ -388,6 +388,58 @@ that distribution, a few hundred definitions, which compiles in 80 ms.
 Open: why the intake keeps 82 % of its genes but only 28 % of its
 definitions; it decides whether the intake needs the DAG at all.
 
+## 2f. Task 4 measured on the device: variant B does not pay at this shape (2026-10-09, 15:19–15:27)
+
+phylu `examples/population_dag_ab.rs` (phylu commit after d46adc61) over
+the sixteen exported pairs of `strogatz_predprey1`, the law's 400 rows,
+the fit's symbol table rebuilt (`wide(2)` plus the snap lattice's named
+constants, compounds off) and proven by re-rendering all 12,000 genes
+against the export's `ast` field: A, the interpreter, one dispatch of
+every gene; B, the population hash-consed by exact node words into
+homeotic definitions (global ids, `GENEREF` leaves, `shared_base` zero),
+the definitions dispatched one pass per dependency level, then the
+genes; B+memo, B with the definitions that survived from the previous
+generation keeping their `shared` rows by a device copy and only the new
+ones evaluated. Median of ten submit-to-wait timings.
+
+| per generation, mean of 16 pairs | device ms | node words evaluated | level passes |
+|---|---|---|---|
+| A, the interpreter | 6.4 | 158,000 | 1 |
+| B, the shared DAG | 7.8 (+23 %) | 60,000 | 16–21 |
+| B+memo (about 2,300 of 5,000 definitions new) | 7.6 (+20 %) | 60,000 less the survivors | 12–17 |
+| the host fold of B (hash-cons, rewrite, flatten) | 400 ms | | |
+
+The arithmetic falls by 2.6 times and the device time RISES. At 400 rows
+the evaluation is not arithmetic-bound: one dispatch over 12,000 genes
+costs about 6 ms whatever the genes hold, and B adds twelve to twenty
+level passes and the copies, each worth a fraction of a millisecond
+(§2b). The memos save a third of the definitions' passes and the time
+barely moves. The host fold costs eighteen generations. So variant B, as
+one shared DAG evaluated by level on this engine at the SRBench shape,
+does not pay; it would need the definitions' levels collapsed into one
+or two dispatches, the fold done on the device or incrementally over the
+65 % unchanged genes, and far more rows per gene than this law has.
+
+**A second finding, on determinism.** In four of the sixteen pairs, one
+to five genes of 12,000 disagree between A and B: in every case A gives
+NaN and B a number or an infinity, and the gene holds a transcendental
+of a huge intermediate (`ProtectedLog(Cos(Pow3(Pow2(−72))))`, cos of
+1.4 × 10¹¹). Keying the hash-cons by exact node words instead of the
+rendered text changed nothing. The same node words evaluated in one
+invocation and through a stored intermediate give different garbage on
+this platform's fast-math transcendentals. Those genes are nonsense
+either way, but the engine's contract is bit identity (the golden
+checksum), so a shared evaluation on this platform would have to pin
+those cases or accept a weaker contract; that is a decision, not a bug
+to fix in the harness.
+
+**What this decides.** Task 5 (compiled bands) and task 6 (the A/B/C
+experiment in the engine) are not worth building on this measurement;
+the saving the host counted in §2c does not reach the device at this
+shape. The idea stands where the arithmetic dominates: many rows per
+gene, deep genes, or the SQL and Spark kingdoms where a shared node is
+a scan or a join, not a cosine. Logs: `phylu/logs/POPDAG_AB/`.
+
 ## 3. The reviewer's three risks, answered as design
 
 - **Dispatch overhead (A).** Hundreds of small kernels may cost more than
@@ -464,7 +516,7 @@ process at a time, launched by the fuller session, announced, logged.
    component pair test, the level-order test, determinism (homeotic
    rows present or stripped, bit-identical). Done when the tests pass
    on the exported population.
-4. **Read docs/Rules.md, then: variant B in phylu.** Purpose: sharing
+4. **MEASURED 2026-10-09 (§2f): variant B does not pay at the SRBench shape; not integrated. Read docs/Rules.md, then: variant B in phylu.** Purpose: sharing
    without compilation. Architecture: Fold as an operator in the
    generation loop (adds, rewrites, re-sorts), evaluation reading the
    arena for homeotic rows, ordinary rows interpreted; checkpoints

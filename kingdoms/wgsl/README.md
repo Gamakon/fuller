@@ -575,7 +575,10 @@ generation) and the compiled arm is restricted to definitions that
 have proved stable (`docs/PLAN_population_dag.md` §2a). Evaluated as
 one shared DAG on the host (`src/population_dag.rs`), the population
 costs 33 % of an interpreter's operator evaluations, 24.5 % with last
-generation's memos, values bit-identical (§2c).
+generation's memos, values bit-identical (§2c). On the device (phylu
+`examples/population_dag_ab.rs`, 400 rows) the shared DAG is 23 % SLOWER
+than the interpreter and the memos do not recover it: the evaluation is
+dispatch-bound, not arithmetic-bound, at this shape (§2f).
 
 ## What is built, what is not
 
