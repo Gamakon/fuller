@@ -1,0 +1,5 @@
+{
+  "// why": "src/wgsl (and the gpu evaluator) compile only under cargo features; without these, rust-analyzer reports every file under src/wgsl as 'not included in any crates'",
+  "rust-analyzer.cargo.features": ["gpu", "wgsl"],
+  "rust-analyzer.cargo.allTargets": true
+}
