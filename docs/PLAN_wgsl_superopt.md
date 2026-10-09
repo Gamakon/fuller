@@ -224,6 +224,19 @@ fold(population)        -> population'      (adds the definitions the new rows n
 eval(data, population)  -> population'      (memoises every row once, homeotic rows first)
 ```
 
+**Fold is an operator.** In this form Fold is a variation operator
+beside mutation and crossover, `population -> population'`,
+deterministic and value-preserving on every ordinary row. Per
+generation it ADDS a homeotic chromosome for each subtree the new
+population repeats and no row yet defines (with its root type),
+REWRITES ordinary chromosomes to reference those rows by href where the
+typed projection admits it, and RETIRES homeotic chromosomes whose
+referrer count is zero past their nursery. Its inverse, unfold (inline
+a definition into its users), is an operator too, which is the
+share-or-recompute choice of §2.1 for free. Fold sits in the schedule
+after variation and before evaluation, so evaluation always sees current
+definitions; Fold itself evaluates nothing.
+
 Consequences: evaluation is uniform, every row once per data version,
 homeotic rows in dependency order first, which is phylu's tail-per-level
 dispatch applied across the population instead of inside an individual;
