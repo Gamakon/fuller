@@ -310,6 +310,56 @@ kingdoms instantiate; it is recorded here so the kernel search, the
 engine's own speed and the Dagnetic Spark kingdom are designed on one
 idea.
 
+## 8. The experiment that tests the idea (Andrew: "build a kernel for the population itself")
+
+The 10 % of §1 is the reviewer's milestone for decode, not a test of
+the incremental idea. The idea is that a population's work can be
+COMPILED instead of interpreted, and stay compiled across generations
+because little changes. The study that proves or bounds it:
+
+**Hypothesis.** A kernel generated for the population's shared DAG
+(the homeotic tail), compiled by Metal, evaluates a generation faster
+than phylu's interpreter (decode and eval over node arrays); and because
+generation N+1 reuses most of N, the compile is amortised, so the total
+per generation is lower. The number that decides it is the break-even
+churn: how many new definitions per generation the compiled path can
+absorb before recompiling costs more than interpreting saves.
+
+**Data and problem.** Three SRBench Feynman laws at the CASCADE2 shape
+(population 600 + 200, three genes, head 34), 300 generations, three
+seeds, the official data windows. Same seeds, same laws, two
+evaluators, bit-identical populations required.
+
+**The two arms.** Interpreted: the current chain, per-pass timed.
+Compiled, incremental: the homeotic tail emitted as one WGSL kernel that
+writes definition values into the device arena (the kingdom's rebuild
+already writes WGSL from trees), recompiled only when the tail changes;
+the ordinary chromosomes stay node arrays whose leaves reference the
+arena through GeneRef.
+
+**Measured per generation.** Rows added to the tail; whether a
+recompile happened and its cost; the eval time of each arm; the reuse
+fraction. Derived: the speedup per evaluation of compiled over
+interpreted, compile time as a function of tail size, the break-even
+churn.
+
+**What proves it.** Compiled-incremental total per generation below
+interpreted on all three laws and seeds, spreads sized and not
+overlapping, populations bit-identical. If compile time grows faster
+than the tail amortises, the result is the measured break-even and the
+idea is bounded, not proven; that is a result.
+
+**The unknown that decides it early, measured first.** Metal's compile
+time for a kernel of tens of thousands of expressions: emit a kernel
+for one real population's definitions, compile it, time it. If that is
+seconds, the compiled arm must be split into pieces compiled separately
+(one kernel per band of the tail, recompiled only when its band
+changes), and the plan changes before anything else is built.
+
+This section governs the order: the compile-time measurement comes
+right after the per-pass timestamps of §6 step 1, and the decision
+point there reads three numbers, not two.
+
 ## What could make this fail, stated now
 
 - The compiler may already make every move the inventory offers on
