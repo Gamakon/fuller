@@ -138,7 +138,7 @@ fn replace_occurrences(n: &MathNode, pattern: &str, with: &MathNode) -> MathNode
     }
 }
 
-fn hrefs_in(n: &MathNode, out: &mut Vec<usize>) {
+pub(crate) fn hrefs_in(n: &MathNode, out: &mut Vec<usize>) {
     match n {
         MathNode::Var(name) => {
             if let Some(slot) = href_slot(name) {

@@ -174,10 +174,56 @@ stripped at the rebuild). What the lineage column says: of the textual
 repeats that read a stored location, `decode_main` has 3, `score_main` 1
 and `hff_main` 1 that are read under two versions and so must stay apart;
 the 7, 10 and 1 the conservative rule still refuses are repeats of ONE
-version, which the legality step (`legality::decide`, next) may admit with
-a placement. In `hff_main` 25 of the 66 terminals carry a version
+version, which the legality step may admit with a placement. In
+`hff_main` 25 of the 66 terminals carry a version
 (`samples/hff.chromosomes.json`, regenerated; phylu's typed sample gate
 reads it).
+
+### Sharing decided by legality (measured 2026-10-09, lineage plan step 2)
+
+The conservative load rule is gone. Every textual repeat (all its
+occurrences, since the fold replaces by text) goes through
+`legality::decide` (`src/wgsl/legality.rs`): admissible nodes only, equal
+text, and the earliest statement point that dominates every occurrence at
+which every versioned load is current and every `let` and call result the
+text reads is bound and in scope. The placement is recorded per tail slot
+(`placements` in the chromosome and the dump); the rebuild still unfolds,
+so the device sees the same kernel as before (`ROUND_TRIP ok` on all six,
+rebuilt texts byte-identical).
+
+| entry point | repeats found | tail filled | refused, by reason |
+|---|---|---|---|
+| `decode_main` | 6 (was 3) | 6 | 3 lineage differs, 5 not admissible |
+| `score_main` | 6 (was 4) | 6 | 1 lineage differs, 1 no dominating point, 4 not admissible |
+| `hff_main` | 2 (was 1) | 2 | 1 lineage differs |
+| `colmax_main` | 0 | 0 | |
+| `type_main` | 1 | 1 | |
+| `first_main` | 0 | 0 | |
+| `select_main` | 2 | 2 | |
+| `mutate_main` | 4 (was 9) | 4 | 8 not admissible |
+| `crossover_main` | 0 (was 3) | 0 | 3 not admissible |
+| `lint_main` | 4 | 4 | |
+
+Readings. The gains (`decode_main` 3 → 6, `score_main` 4 → 6, `hff_main`
+1 → 2) are repeats of loads under ONE version that the conservative rule
+had refused: a legal share each, with a placement. The losses in
+`mutate_main` and `crossover_main` are not value sharing lost: every one
+of the "not admissible" refusals there is a whole ROOT repeated, a call
+site passing the literal `0u` or `1u` (`store.callarg.below.1 (literal.index
+0)`) at several calls, which the earlier finder had folded as if the hole
+were a value (a head gene of one `href`); a `store.*` node is a hole in
+the scaffold, not an expression, and `decide` says so. `score_main`'s
+"no dominating point" is `vec2(0.0, 0.0)`, repeated in 17 local
+initialisers (evaluated before any statement) and the body. "Lineage
+differs" is the same expression over two memory histories, exactly as the
+step-1 column counted it. The decision's clause tests
+(`legality::tests`) pin each refusal and each placement on a kernel of its
+own: a partial current at the start is placed before statement 0; one
+read after a store is placed after the store; one inside a loop whose
+header phi it reads stays in the loop body while a loop-invariant one is
+hoisted before the loop; a `let` bound in an arm is available in the arm
+after it and nowhere after the join; a definition at a `let`'s point
+follows the lets it reads; a call result is available after its `Call`.
 
 ### The naga round trip (measured 2026-10-08)
 
@@ -284,7 +330,8 @@ repaid because the product runs billions of times.
 | the node word `ty_code` in both crates (the `arg1` retirement; phylu R/T, fuller T) | done 2026-10-08 23:48 |
 | device parity of a rebuilt kernel (the proof) | DONE: all 10 entry points compile both ways on Metal, and phylu's suite holds the golden checksum and the sample gate with each of the five rebuilt kernels substituted |
 | memory versions in the reader (`src/wgsl/versions.rs`; lineage plan step 1) | built 2026-10-09: loads named with their version, phis by join, barriers/atomics/calls as bumps, pointer lets checked; the lineage column above |
-| `legality::decide`, the reference interpreter, the oracle, placement, mutations, the evaluator (lineage plan steps 2–6) | not started |
+| `legality::decide` (`src/wgsl/legality.rs`; lineage plan step 2): one decision per repeat, placement per tail slot, refusals by reason | built 2026-10-09; the table above |
+| the reference interpreter, the oracle, placement in the rebuild, mutations, the evaluator (lineage plan steps 2–6) | not started |
 | the scaffold-with-holes chromosome and its decoder (phylu) | not started |
 | compile-run-time evaluation path with the correctness gate (phylu) | not started |
 | first target: one of our own kernels, read in, round-tripped, then evolved for time | not started |

@@ -7,12 +7,14 @@
 //!
 //! **Sharing.** Exact repeats only, found by hash-consing the roots' trees in
 //! Rust (the e-graph finder speaks the `Math` datatype, which has no
-//! `class.instance` constructors). The load-sharing rule is applied in its
-//! CONSERVATIVE form: a load of a target that is stored anywhere in the
-//! function is unique at every site, so no two roots may share it; a load of
-//! a target the function never stores (a read-only buffer, a uniform, an
-//! argument) may. The plan's finer rule (no intervening store in statement
-//! order) would admit more; what this form refuses is counted and reported.
+//! `class.instance` constructors). Every repeat goes through
+//! `legality::decide`, the one place that says whether its occurrences may
+//! share a definition and where that definition is placed
+//! (`docs/PLAN_wgsl_lineage.md`); refusals are counted by reason and each
+//! filled tail slot carries its placement. The rebuild still unfolds the
+//! tail into the roots, so a share is value-correct on the device whatever
+//! its placement; the placement becomes executable when the scaffold emits
+//! definitions (lineage plan step 4).
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -22,8 +24,9 @@ use crate::homeotic::{self, FoldOptions, FoldedChromosome, KarvaGene};
 use crate::karva::{karva_to_terms_generic, parse_math, FunctionSpec, MathNode, PsetSpec};
 
 use super::infer::infer_function;
+use super::legality::{self, Decision, Placement};
 use super::loader::WgslKingdom;
-use super::reader::{KernelFunction, RootKind};
+use super::reader::KernelFunction;
 use super::versions::split_version;
 
 /// What one function became.
@@ -36,8 +39,12 @@ pub struct WgslChromosome {
     pub folded: FoldedChromosome,
     /// Matches the finder reported.
     pub matches: usize,
-    /// Repeated subtrees the conservative load rule refused to share.
-    pub refused_loads: usize,
+    /// Repeats `legality::decide` refused, by reason name
+    /// (`legality::Reason::name`).
+    pub refused: BTreeMap<String, usize>,
+    /// Per tail slot, where its definition is placed (`None` for an empty
+    /// slot).
+    pub placements: Vec<Option<Placement>>,
     /// The pset the genes are encoded over: the function's terminals, the
     /// `class.instance` names it uses with their arities, and the hrefs.
     pub pset: PsetSpec,
@@ -58,7 +65,8 @@ pub struct WgslChromosome {
     pub refused_forms: usize,
     /// Repeats the history forbids: subtree texts equal once the load
     /// versions are stripped, but read under more than one version
-    /// (`docs/PLAN_wgsl_lineage.md` §3). Counted, never folded.
+    /// (`docs/PLAN_wgsl_lineage.md` §3): `decide` answers `LineageDiffers`
+    /// for them. Also in `refused`.
     pub refused_lineage: usize,
 }
 
@@ -108,16 +116,6 @@ fn node_count(n: &MathNode) -> usize {
     }
 }
 
-/// Whether a subtree reads a target in `stored` (a `load.<target>` node or
-/// leaf, or a local read as `(Var "load.<target>")`).
-fn reads_stored(n: &MathNode, stored: &BTreeSet<String>) -> bool {
-    match n {
-        MathNode::Var(name) => split_version(name).0.strip_prefix("load.").is_some_and(|t| stored.contains(t)),
-        MathNode::App(ctor, children) => split_version(ctor).0.strip_prefix("load.").is_some_and(|t| stored.contains(t)) || children.iter().any(|c| reads_stored(c, stored)),
-        MathNode::Num(_) => false,
-    }
-}
-
 /// `n` with every load's version stripped: the text two occurrences would
 /// share if memory had no history.
 fn strip_versions(n: &MathNode) -> MathNode {
@@ -128,66 +126,70 @@ fn strip_versions(n: &MathNode) -> MathNode {
     }
 }
 
-/// Repeats the history forbids: distinct version-stripped texts with at
-/// least `min_ops` operators that occur at two or more sites under more
-/// than one versioned text.
-pub(crate) fn refused_by_lineage(roots: &[MathNode], min_ops: usize) -> usize {
-    fn walk(n: &MathNode, out: &mut BTreeMap<String, (usize, BTreeSet<String>, usize)>) {
-        if op_count(n) >= 1 {
-            let entry = out.entry(render(&strip_versions(n))).or_insert_with(|| (op_count(n), BTreeSet::new(), 0));
-            entry.1.insert(render(n));
-            entry.2 += 1;
-        }
-        if let MathNode::App(_, children) = n {
-            for c in children {
-                walk(c, out);
-            }
-        }
-    }
-    let mut groups = BTreeMap::new();
-    for r in roots {
-        walk(r, &mut groups);
-    }
-    groups.values().filter(|(ops, texts, sites)| *ops >= min_ops && *sites >= 2 && texts.len() > 1).count()
+#[derive(Clone)]
+struct Site {
+    gene: usize,
+    path: Vec<u8>,
 }
 
-/// Exact repeats across (and within) the roots, largest first, with the
-/// containment rule of `extract::shared_sites_in` and the conservative load
-/// rule. Returns the matches and how many candidate repeats the load rule
-/// refused.
-pub(crate) fn exact_shared(roots: &[MathNode], stored: &BTreeSet<String>, min_ops: usize) -> (Vec<Match>, usize) {
-    #[derive(Clone)]
-    struct Site {
-        gene: usize,
-        path: Vec<u8>,
-    }
-    fn walk<'a>(n: &'a MathNode, gene: usize, path: Vec<u8>, out: &mut BTreeMap<String, (usize, Vec<Site>, &'a MathNode)>) {
-        let key = render(n);
-        let entry = out.entry(key).or_insert_with(|| (op_count(n), Vec::new(), n));
-        entry.1.push(Site { gene, path: path.clone() });
+/// Every subtree with at least one operator, grouped by `key(n)`: (operator
+/// count, sites, the distinct rendered texts).
+fn group_subtrees(roots: &[MathNode], key: &dyn Fn(&MathNode) -> String) -> BTreeMap<String, (usize, Vec<Site>, BTreeSet<String>)> {
+    fn walk(n: &MathNode, gene: usize, path: Vec<u8>, key: &dyn Fn(&MathNode) -> String, out: &mut BTreeMap<String, (usize, Vec<Site>, BTreeSet<String>)>) {
+        if op_count(n) >= 1 {
+            let entry = out.entry(key(n)).or_insert_with(|| (op_count(n), Vec::new(), BTreeSet::new()));
+            entry.1.push(Site { gene, path: path.clone() });
+            entry.2.insert(render(n));
+        }
         if let MathNode::App(_, children) = n {
             for (i, c) in children.iter().enumerate() {
                 let mut p = path.clone();
                 p.push(i as u8);
-                walk(c, gene, p, out);
+                walk(c, gene, p, key, out);
             }
         }
     }
-    let mut sites_of: BTreeMap<String, (usize, Vec<Site>, &MathNode)> = BTreeMap::new();
+    let mut out = BTreeMap::new();
     for (g, root) in roots.iter().enumerate() {
-        walk(root, g, Vec::new(), &mut sites_of);
+        walk(root, g, Vec::new(), key, &mut out);
     }
-    let mut candidates: Vec<(&String, usize, &Vec<Site>, &MathNode)> =
-        sites_of.iter().filter(|(_, (ops, sites, _))| sites.len() >= 2 && *ops >= min_ops).map(|(k, (ops, sites, n))| (k, *ops, sites, *n)).collect();
+    out
+}
+
+/// What the finder found: the matches `decide` accepted (with the
+/// containment rule of `extract::shared_sites_in`), the placement of every
+/// accepted text, and the refusals by reason.
+pub(crate) struct Shared {
+    pub matches: Vec<Match>,
+    pub placements: BTreeMap<String, Placement>,
+    pub refused: BTreeMap<String, usize>,
+}
+
+/// Exact repeats across (and within) the roots, largest first, each decided
+/// by `legality::decide` over ALL its occurrences (the fold replaces by
+/// text everywhere). Repeats that are equal only with the versions stripped
+/// are decided too, so their refusal (`lineage_differs`) is counted by the
+/// same function.
+pub(crate) fn exact_shared(f: &KernelFunction, roots: &[MathNode], min_ops: usize) -> Shared {
+    let mut refused: BTreeMap<String, usize> = BTreeMap::new();
+    let mut placements = BTreeMap::new();
+    let mut matches = Vec::new();
+    let sites_of = group_subtrees(roots, &render);
+    let mut candidates: Vec<(&String, usize, &Vec<Site>)> =
+        sites_of.iter().filter(|(_, (ops, sites, _))| sites.len() >= 2 && *ops >= min_ops).map(|(k, (ops, sites, _))| (k, *ops, sites)).collect();
     candidates.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(b.0)));
     let inside = |s: &Site, a: &Site| s.gene == a.gene && s.path.len() > a.path.len() && s.path[..a.path.len()] == a.path[..];
     let mut accepted: Vec<Site> = Vec::new();
-    let mut matches = Vec::new();
-    let mut refused = 0usize;
-    for (_, ops, sites, node) in candidates {
-        if reads_stored(node, stored) {
-            refused += 1;
-            continue;
+    for (text, ops, sites) in candidates {
+        let all: Vec<(usize, Vec<u8>)> = sites.iter().map(|s| (s.gene, s.path.clone())).collect();
+        match legality::decide(f, roots, &all) {
+            Decision::Refuse { reason } => {
+                *refused.entry(reason.name().to_string()).or_default() += 1;
+                continue;
+            }
+            Decision::Accept { placement } => {
+                placements.insert(text.clone(), placement);
+            }
         }
         let independent: Vec<&Site> = sites.iter().filter(|s| !accepted.iter().any(|a| inside(s, a))).collect();
         if independent.len() < 2 {
@@ -196,7 +198,29 @@ pub(crate) fn exact_shared(roots: &[MathNode], stored: &BTreeSet<String>, min_op
         matches.push(Match { sites: independent.iter().map(|s| (s.gene, s.path.clone())).collect(), internal_op_count: ops });
         accepted.extend(independent.into_iter().cloned());
     }
-    (matches, refused)
+    // The repeats the history forbids: one text with the versions stripped,
+    // more than one with them.
+    for (ops, sites, texts) in group_subtrees(roots, &|n| render(&strip_versions(n))).values() {
+        if *ops >= min_ops && sites.len() >= 2 && texts.len() > 1 {
+            let all: Vec<(usize, Vec<u8>)> = sites.iter().map(|s| (s.gene, s.path.clone())).collect();
+            if let Decision::Refuse { reason } = legality::decide(f, roots, &all) {
+                *refused.entry(reason.name().to_string()).or_default() += 1;
+            }
+        }
+    }
+    Shared { matches, placements, refused }
+}
+
+/// `n` with every `href<t>` replaced by tail slot t's definition, recursively.
+fn expand_refs(n: &MathNode, tail: &[MathNode]) -> MathNode {
+    match n {
+        MathNode::Var(name) => match homeotic::href_slot(name) {
+            Some(t) => expand_refs(&tail[t], tail),
+            None => n.clone(),
+        },
+        MathNode::Num(_) => n.clone(),
+        MathNode::App(ctor, children) => MathNode::App(ctor.clone(), children.iter().map(|c| expand_refs(c, tail)).collect()),
+    }
 }
 
 /// The pset a function's genes are encoded over.
@@ -264,18 +288,9 @@ fn build(f: &KernelFunction, opts: &ChromosomeOptions, kingdom: Option<&WgslKing
             }
         }
     }
-    let stored: BTreeSet<String> = f
-        .roots
-        .iter()
-        .filter_map(|r| match &r.kind {
-            RootKind::Store { target } => Some(target.clone()),
-            RootKind::Init { local } => Some(local.clone()),
-            RootKind::Let { .. } | RootKind::Condition { .. } | RootKind::Return | RootKind::Argument { .. } => None,
-        })
-        .collect();
     let canonical: Vec<String> = roots.iter().map(render).collect();
-    let (matches, refused_loads) = exact_shared(&roots, &stored, opts.min_ops);
-    let refused_lineage = refused_by_lineage(&roots, opts.min_ops);
+    let Shared { matches, placements: placement_of, refused } = exact_shared(f, &roots, opts.min_ops);
+    let refused_lineage = refused.get("lineage_differs").copied().unwrap_or(0);
     // The form-conflict rule: a repeated text whose occurrences were read
     // under two forms keeps its own dual at each site and is not folded.
     let (matches, refused_forms): (Vec<Match>, usize) = {
@@ -300,6 +315,29 @@ fn build(f: &KernelFunction, opts: &ChromosomeOptions, kingdom: Option<&WgslKing
         return Err(format!("{}: the fold does not unfold to its input", f.name));
     }
     let all_genes: Vec<MathNode> = folded.head.iter().chain(folded.tail.iter()).map(|g| parse_math(g)).collect::<Result<_, _>>()?;
+    // Each filled slot's placement, by its unfolded text; a slot's
+    // definition must not be placed before any slot it references.
+    let tail_nodes: Vec<MathNode> = folded.tail.iter().map(|g| parse_math(g)).collect::<Result<_, _>>()?;
+    let mut placements: Vec<Option<Placement>> = Vec::new();
+    for (slot, def) in tail_nodes.iter().enumerate() {
+        if folded.tail[slot] == homeotic::EMPTY_SLOT {
+            placements.push(None);
+            continue;
+        }
+        let text = render(&expand_refs(def, &tail_nodes));
+        let p = placement_of.get(&text).cloned().ok_or_else(|| format!("{}: tail slot {slot} ({text}) was folded without a decision", f.name))?;
+        placements.push(Some(p));
+    }
+    for (slot, def) in tail_nodes.iter().enumerate() {
+        let mut refs = Vec::new();
+        homeotic::hrefs_in(def, &mut refs);
+        for u in refs {
+            match (&placements[slot], placements.get(u).and_then(|p| p.as_ref())) {
+                (Some(ps), Some(pu)) if pu > ps => return Err(format!("{}: tail slot {slot} at {ps:?} reads slot {u} placed later at {pu:?}", f.name)),
+                _ => {}
+            }
+        }
+    }
     let mut pset = pset_of(&all_genes)?;
     pset = homeotic::pset_with_hrefs(&pset, folded.tail.len());
     let head_needed = all_genes.iter().map(node_count).max().unwrap_or(0);
@@ -336,7 +374,8 @@ fn build(f: &KernelFunction, opts: &ChromosomeOptions, kingdom: Option<&WgslKing
         roots: canonical,
         folded,
         matches: matches.len(),
-        refused_loads,
+        refused,
+        placements,
         pset,
         head_needed,
         oversized_at,
@@ -407,7 +446,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         assert_eq!(c.roots.len(), 4, "two lets and two stores");
         // With `let i` and `let v` bound once, the stores read them by name:
         // nothing repeats with two or more operators, so nothing folds.
-        assert_eq!(c.refused_loads, 0, "xs is never stored");
+        assert!(c.refused.is_empty(), "{:?}", c.refused);
         let (h, genes) = c.genes.as_ref().expect("fits at some head length");
         assert_eq!(genes.len(), 4 + 3);
         assert!(*h <= 16);
@@ -417,7 +456,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
 
     #[test]
-    fn a_load_of_a_stored_local_is_never_shared() {
+    fn a_load_of_a_stored_local_shares_under_one_version_and_not_across_two() {
         let src = r#"
 @group(0) @binding(0) var<storage, read_write> out: array<f32>;
 @compute @workgroup_size(1)
@@ -434,12 +473,13 @@ fn main() {
         // are `load.local.s@0@v0` and `@v1`, so the finder sees no repeat at
         // all and the lineage count says why.
         assert_eq!(c.matches, 0);
-        assert_eq!(c.refused_loads, 0, "no repeat of one version reaches the load rule");
         assert_eq!(c.refused_lineage, 1, "s * s + 2.0 under two versions");
+        assert_eq!(c.refused.get("lineage_differs"), Some(&1));
         assert_eq!(c.folded.filled, 0);
         assert!(c.genes.is_some());
-        // The same two reads with no store between them share, and the rule
-        // that refuses a stored target's load still holds (step 1 keeps it).
+        // The same two reads with no store between them read one version:
+        // shared, the definition placed at the function start (the plan's
+        // §6 case), and the chromosome still unfolds to its roots.
         let src = r#"
 @group(0) @binding(0) var<storage, read_write> out: array<f32>;
 @compute @workgroup_size(1)
@@ -452,7 +492,10 @@ fn main() {
 "#;
         let k = read(src).unwrap();
         let c = chromosome(&k.functions[0], &ChromosomeOptions::default()).unwrap();
-        assert_eq!((c.matches, c.refused_loads, c.refused_lineage), (0, 1, 0), "equal versions, refused by the conservative rule until legality lands");
+        assert_eq!((c.matches, c.folded.filled, c.refused_lineage), (1, 1, 0), "{:?}", c.refused);
+        assert_eq!(c.placements[0], Some(Placement { path: vec![0], after_let: 0 }));
+        assert!(c.placements[1..].iter().all(Option::is_none));
+        assert!(c.genes.is_some());
     }
 
     #[test]

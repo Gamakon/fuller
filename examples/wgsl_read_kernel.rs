@@ -120,7 +120,7 @@ fn main() -> Result<(), String> {
                         c.folded.head.len() + c.folded.tail.len(),
                         c.matches,
                         c.folded.filled,
-                        c.refused_loads,
+                        c.refused.values().sum::<usize>(),
                         c.refused_lineage,
                         c.head_needed,
                         c.genes.as_ref().map(|(h, _)| h.to_string()).unwrap_or_else(|| "none".into()),
@@ -166,6 +166,8 @@ fn main() -> Result<(), String> {
                             "genes": genes.iter().zip(&c.ty_codes).map(|((head, tail), codes)| serde_json::json!({ "head": head.iter().map(tok).collect::<Vec<_>>(), "tail": tail.iter().map(tok).collect::<Vec<_>>(), "ty_codes": codes })).collect::<Vec<_>>(),
                             "refused_forms": c.refused_forms,
                             "refused_lineage": c.refused_lineage,
+                            "refused": c.refused,
+                            "placements": c.placements.iter().map(|p| p.as_ref().map(|p| serde_json::json!({ "path": p.path, "after_let": p.after_let }))).collect::<Vec<_>>(),
                             "roots": c.roots,
                             "folded": { "head": c.folded.head, "tail": c.folded.tail },
                         }));

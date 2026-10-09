@@ -152,6 +152,11 @@ pub struct Root {
     /// statement (nested blocks, then-branches as `accept`, loops as `body`),
     /// counting every statement but naga's `Emit`s.
     pub path: Vec<usize>,
+    /// Where the tree is EVALUATED: `path` for every kind but a loop's
+    /// `break_if`, which naga evaluates at the end of `continuing`
+    /// (`loop path ++ [1, statements in continuing]`). The versions at this
+    /// point are the ones the tree's loads carry.
+    pub point: Vec<usize>,
     pub tree: Node,
 }
 
@@ -173,6 +178,15 @@ pub struct KernelFunction {
     /// Versions created per bumped location (stores, phis, barriers, calls):
     /// the locations whose loads carry `@v<n>`.
     pub versions: BTreeMap<String, u32>,
+    /// The version of every bumped location before every statement (keyed
+    /// by the statement's path) and at every `break_if` point: what
+    /// `legality::decide` reads to place a shared definition. A location
+    /// absent from a map is at version 0 there.
+    pub points: BTreeMap<Vec<usize>, BTreeMap<String, u32>>,
+    /// Every `Call` statement with a result: the result's handle index (the
+    /// `call.<fn>@<idx>` leaf) → the statement's path. A call result is a
+    /// value bound once, like a `let`, available after its statement.
+    pub calls: BTreeMap<u32, Vec<usize>>,
 }
 
 /// A kernel read: the naga module and its validation info, kept for the
@@ -270,6 +284,8 @@ struct Ctx<'a> {
     /// lineage is unchanged since the binding. Handle → lineage at binding.
     pointer_lets: BTreeMap<u32, BTreeSet<String>>,
     errors: Vec<String>,
+    points: BTreeMap<Vec<usize>, BTreeMap<String, u32>>,
+    calls: BTreeMap<u32, Vec<usize>>,
 }
 
 impl<'a> Ctx<'a> {
@@ -288,7 +304,14 @@ impl<'a> Ctx<'a> {
             lets: BTreeSet::new(),
             pointer_lets: BTreeMap::new(),
             errors: Vec::new(),
+            points: BTreeMap::new(),
+            calls: BTreeMap::new(),
         }
+    }
+
+    /// Record the versions current before the statement at `path`.
+    fn record_point(&mut self, path: &[usize]) {
+        self.points.insert(path.to_vec(), self.state.current.clone());
     }
 
     /// A new version of `loc` at the current point.
@@ -343,6 +366,7 @@ fn read_function(mut ctx: Ctx, name: String, entry_point: bool) -> Result<Kernel
             roots.push(Root {
                 kind: RootKind::Init { local: format!("local.{name}") },
                 path: Vec::new(),
+                point: Vec::new(),
                 tree: Node::App { name: format!("store.local.{name}"), slot: "store".into(), known: true, kids: vec![tree] },
             });
         }
@@ -357,7 +381,7 @@ fn read_function(mut ctx: Ctx, name: String, entry_point: bool) -> Result<Kernel
         .iter()
         .filter(|(h, e)| shared_handles.contains_key(&(h.index() as u32)) && matches!(e, Expression::Load { .. }))
         .count();
-    Ok(KernelFunction { name, entry_point, roots, shared_handles, shared_loads, unread_statements: unread, versions: ctx.counters.created().clone() })
+    Ok(KernelFunction { name, entry_point, roots, shared_handles, shared_loads, unread_statements: unread, versions: ctx.counters.created().clone(), points: ctx.points, calls: ctx.calls })
 }
 
 fn walk_block(
@@ -390,9 +414,11 @@ fn walk_block(
                     let tree = expand_let(ctx, h);
                     let mut p = path.clone();
                     p.push(index);
+                    ctx.record_point(&p);
                     roots.push(Root {
                         kind: RootKind::Let { name: name.clone() },
-                        path: p,
+                        path: p.clone(),
+                        point: p,
                         tree: Node::App { name: format!("store.let.{name}"), slot: "store".into(), known: true, kids: vec![tree] },
                     });
                 }
@@ -401,6 +427,7 @@ fn walk_block(
         }
         path.push(index);
         index += 1;
+        ctx.record_point(path);
         match stmt {
             Statement::Emit(_) => {}
             Statement::Break => {
@@ -430,6 +457,7 @@ fn walk_block(
                 roots.push(Root {
                     kind: RootKind::Store { target: target.clone() },
                     path: path.clone(),
+                    point: path.clone(),
                     tree: Node::App { name: format!("store.{target}"), slot: "store".into(), known: true, kids },
                 });
                 let loc = ctx.location(*pointer);
@@ -495,9 +523,18 @@ fn walk_block(
                 ctx.state = versions::merge(&into_continuing, &mut ctx.counters);
                 path.push(1);
                 walk_block(ctx, continuing, path, roots, unread);
-                path.pop();
                 if let Some(b) = break_if {
-                    roots.push(condition_root(ctx, *b, "loop", path));
+                    // Evaluated at the end of `continuing`, under its versions.
+                    let n = continuing.iter().filter(|s| !matches!(s, Statement::Emit(_))).count();
+                    path.push(n);
+                    ctx.record_point(path);
+                    let mut root = condition_root(ctx, *b, "loop", path);
+                    path.pop();
+                    path.pop();
+                    root.path = path.clone();
+                    roots.push(root);
+                } else {
+                    path.pop();
                 }
                 // Exit phi: every `break` and the `break_if` join; a location
                 // the loop stores takes a fresh version after it.
@@ -521,18 +558,23 @@ fn walk_block(
                     roots.push(Root {
                         kind: RootKind::Return,
                         path: path.clone(),
+                        point: path.clone(),
                         tree: Node::App { name: "store.return".into(), slot: "store".into(), known: true, kids: vec![tree] },
                     });
                 }
                 ctx.state.live = false;
             }
-            Statement::Call { function, arguments, .. } => {
+            Statement::Call { function, arguments, result } => {
                 let callee = ctx.module.functions[*function].name.clone().unwrap_or_else(|| format!("fn{}", function.index()));
+                if let Some(r) = result {
+                    ctx.calls.insert(r.index() as u32, path.clone());
+                }
                 for (p, a) in arguments.iter().enumerate() {
                     let tree = expand(ctx, *a, true);
                     roots.push(Root {
                         kind: RootKind::Argument { callee: callee.clone(), position: p },
                         path: path.clone(),
+                        point: path.clone(),
                         tree: Node::App { name: format!("store.callarg.{callee}.{p}"), slot: "store".into(), known: true, kids: vec![tree] },
                     });
                 }
@@ -569,6 +611,7 @@ fn condition_root(ctx: &mut Ctx, cond: Handle<Expression>, statement: &'static s
     Root {
         kind: RootKind::Condition { statement },
         path: path.to_vec(),
+        point: path.to_vec(),
         tree: Node::App { name: "store.branch".into(), slot: "store".into(), known: true, kids: vec![tree] },
     }
 }
