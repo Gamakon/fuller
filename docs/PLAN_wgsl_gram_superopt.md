@@ -123,13 +123,24 @@ A kernel is a map from an input dataset to an output dataset. Fitness is a dista
 
 `ShapeDistance_mean = Σ δ / d²`, `ShapeDistance_max = max δ`. The gate of §1 is `ShapeDistance_max ≤ τ` on every split; a kernel outside it is not scored.
 
-**Splits: input–output pairs.** One Φ is one draw of the input distribution, so a split is many pairs, each a different seed and shape, the kernel never seeing the same banding twice in a row:
+**Splits: input–output pairs.** Fifty different training examples, not fifty seeds of one: each pair is a distinct kind of Φ, so a kernel that is right only on well-behaved Gaussian rows fails the dataset. The kinds, each at its own shape (d ∈ {512, 1,024, 2,048, 4,096}, m from 2,048 to 65,536) and seed:
 
-| split | pairs | shapes | work per pair | reference cost |
-|---|---|---|---|---|
-| train | 50 | d ∈ {512, 1,024, 2,048, 4,096}, m from 2,048 to 65,536, 10 of them with m not a multiple of the item band | 2 × 10⁹ to 2.75 × 10¹¹ multiply-adds | 0.1–6 s each, about 2 min in all |
-| validation | 20 | the same ranges, seeds the search never scores on | | about 1 min |
-| extrapolation | 20 | d = 8,192 (production's width), m from 1,024 to 8,192, two output-row bands | up to 5.5 × 10¹¹ | about 4 min |
+| kind of Φ | what it exercises | pairs |
+|---|---|---|
+| unit-normalised Gaussian rows (the sphere convention) | the common case | 6 |
+| √Dₜ-weighted rows, weights log-uniform over 6 decades | production's weighting, wide dynamic range in the sum | 6 |
+| low-rank rows (rank 4, 16, 64 plus noise) | near-singular H, cancellation | 4 |
+| sparse rows (90 %, 99 % zeros) | zero products, skipped work | 4 |
+| heavy-tailed rows (Student t, ν = 2) | a few huge terms dominating the sum | 4 |
+| rows with mixed sign and exact cancellation (x and −x pairs) | sums that should be exactly zero | 4 |
+| integer-valued rows (small integers, exactly representable) | bit-exact sums expected | 4 |
+| tiny magnitudes (10⁻²⁰, near denormal) and huge (10¹⁵) | underflow, overflow, flush-to-zero on Metal | 4 |
+| cells with NaN and ±∞ at known positions | non-finite class propagation | 4 |
+| duplicate and constant rows | H with repeated rows and columns | 3 |
+| m not a multiple of the item band, d not a multiple of 16 | ragged bands and partial workgroups | 4 |
+| a real Φ exported from Blue World (any split, any width) | the production distribution | 3 |
+
+Validation: 20 pairs, the same twelve kinds at other seeds and shapes, never scored on by the search. Extrapolation: 20 pairs at d = 8,192 (production's width, two output-row bands), the kinds in the same proportion. The gate (`ShapeDistance_max ≤ τ`) applies per pair; τ's norms are each pair's own column norms, so the weighted and heavy-tailed kinds are judged at their own scale.
 
 Every pair's f64 reference is cached by `(d, m, seed)`. ShapeDistance mean and max for a split are taken over all cells of all its pairs. Cost of scoring: the 50 train pairs sum to about 10 s of GPU time per kernel, so the grid's first pass (3,840 kernels) gates and times each on a fixed sample of 5 train pairs (about 1 s of GPU time, 4,000 s for the grid), and the full three-split score with five paired rounds is paid by the top 5 % (192 kernels, about 2 min each, 6 h); the genetic algorithm scores each generation on a fresh random sample of 5 train pairs and the full set on its elite, as the SR engine samples rows.
 
