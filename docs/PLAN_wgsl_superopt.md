@@ -242,6 +242,44 @@ launched only by the fuller session, announced, under nohup with a log.
    `docs/PLAN_population_dag.md`, which runs first; this plan's tasks
    1–7 follow its decisive experiment.
 
+## 6a. Tasks 1 and 3 measured: the decode pass and the share-or-recompute population (2026-10-09, 15:45–16:04)
+
+Apple M3 Max, Metal; phylu `examples/kernel_time.rs` with
+`EVOLVE_TIME_DECODE=1` (GPU timestamp queries around the decode pass,
+phylu f502d685), `feynman_I_29_16`, 100 generations, seed 7013, the
+population 600 + 200 × 3 genes. The population of variants: every
+subset of decode's six legal shares, 64 kernels written by
+`wgsl_read_kernel --variants` (fuller 1780839; v00 is the unfolded
+rebuild, v63 the folded one), run in random order with the shipped
+kernel as a control every eight runs. Logs: `phylu/logs/DECODE_VARIANTS/`.
+
+| measurement | expected | measured | vs expected |
+|---|---|---|---|
+| decode pass, shipped, GPU ms per generation (9 controls) | 1–3 ms | 0.301 ms (0.296–0.315) | −70 % to −90 % |
+| decode's share of a 33.6 ms generation | 20–30 % | 0.9 % | |
+| control noise band | ±1.2 % (whole chain) | ±3.1 % | wider |
+| variants within ±5 % of shipped | 64 of 64 | 54 of 64 | |
+| fastest variant (v13) | none faster than noise | −2.2 % | inside noise |
+| slowest variant (v14) | | +10.1 % | load rising at the end of the run |
+| variants faster than shipped beyond the noise band | 0 | 0 | as expected |
+
+Readings. Decode is one per cent of a generation, not a fifth: a 10 %
+gain on it would be 0.03 ms, a tenth of the noise, so the reviewer's
+milestone as stated cannot be measured on this pass; the evaluation and
+scoring passes hold the time. No subset of the six shares makes decode
+faster; ten subsets look slower by 5–10 %, all late in the run as the
+machine's load rose from 3 to 8.5 (other sessions' processes), and a
+first, unrandomised sweep of the same 64 kernels showed a 2–3× "slowdown"
+on 31 of them that a paired, randomised rerun of four kernels (five
+rounds, all within 0.297–0.316 ms) proved to be load, not kernels. The
+paired protocol of §8 is therefore not optional.
+
+What follows: the search's target moves from decode to the passes that
+cost, measured next with the same timer on each pass (eval, score,
+type, hff) before any inventory is built; the correctness of the whole
+share population is confirmed (the fit's individuals and evaluations are
+identical for every variant).
+
 ## 7. The incremental population DAG: its own programme
 
 The design and the measurements that were §7 and §8 of this plan are

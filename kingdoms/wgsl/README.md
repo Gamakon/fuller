@@ -580,6 +580,16 @@ generation's memos, values bit-identical (§2c). On the device (phylu
 than the interpreter and the memos do not recover it: the evaluation is
 dispatch-bound, not arithmetic-bound, at this shape (§2f).
 
+### The decode pass timed on the GPU, and its share population (measured 2026-10-09)
+
+Decode's pass costs 0.301 ms of a 33.6 ms generation (GPU timestamps,
+nine controls, 0.296–0.315 ms): under one per cent. All 64 subsets of
+its six legal shares, run in random order against shipped controls:
+none faster beyond the ±3 % noise, ten slower by 5–10 % as the machine's
+load rose; every variant produces the identical fit. An unrandomised
+first sweep had shown a 2–3× slowdown on half of them, which a paired
+rerun proved to be background load (`docs/PLAN_wgsl_superopt.md` §6a).
+
 ## What is built, what is not
 
 | piece | status |
