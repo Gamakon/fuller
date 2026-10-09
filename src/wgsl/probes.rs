@@ -153,9 +153,12 @@ pub fn run_probes(gram: &crate::wgsl::gram::Gram, probes: &[Probe]) -> Result<Ve
 mod tests {
     use super::*;
 
-    /// The shipped kernel passes every probe; the shipped kernel with its
-    /// accumulation broken (the product replaced by one operand) fails
-    /// some and passes others, which is the probes' independence.
+    /// The shipped kernel passes every probe. The shipped kernel with the
+    /// product replaced by one operand fails every probe (measured
+    /// 2026-10-09: 1,024 of 1,024): a global break fails every probe, so
+    /// the probes' independence shows only for local breaks, which the
+    /// second broken kernel is: the item loop stopped one item early
+    /// fails exactly the probes that touch the last item.
     #[test]
     fn the_shipped_kernel_passes_every_probe_and_a_broken_one_fails_some() {
         use crate::wgsl::gram::{Gram, SHIPPED};
@@ -173,8 +176,17 @@ mod tests {
         assert_ne!(broken, SHIPPED);
         let b = run_probes(&Gram::compile(&dev, &broken).unwrap(), &ps).unwrap();
         let fails = b.iter().filter(|d| **d > PASS).count();
-        println!("broken kernel fails {fails} of {}", ps.len());
-        assert!(fails > 100 && fails < ps.len(), "{fails}");
+        println!("product replaced by one operand: fails {fails} of {}", ps.len());
+        assert_eq!(fails, ps.len());
+        // The loop stopped one item early: only the probes that place a value at the last item fail.
+        let short = SHIPPED.replace("t < cfg.m;", "t + 1u < cfg.m;");
+        assert_ne!(short, SHIPPED);
+        let b = run_probes(&Gram::compile(&dev, &short).unwrap(), &ps).unwrap();
+        let failing: Vec<&Probe> = ps.iter().zip(&b).filter(|(_, d)| **d > PASS).map(|(p, _)| p).collect();
+        let touches_last = ps.iter().filter(|p| p.phi[(p.m - 1) * p.d..].iter().any(|x| *x != 0.0)).count();
+        println!("loop one item short: fails {} of {}; probes with a value at the last item: {touches_last}", failing.len(), ps.len());
+        assert!(!failing.is_empty() && failing.len() < ps.len());
+        assert!(failing.iter().all(|p| p.phi[(p.m - 1) * p.d..].iter().any(|x| *x != 0.0)), "a failing probe has no value at the last item");
     }
 
     #[test]
