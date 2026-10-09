@@ -43,7 +43,7 @@ accumulators are composed freely by the generator, and the criterion and
 the reference decide what counts, not the author's expectation of what
 is fast on this GPU.
 
-**Status.** Task 1 delivered 2026-10-09 (fuller 5a999b0, §1a): the harness, the reference and the criterion are built and the shipped kernel is measured at the bench size. Tasks 2–6 not started. Prompted by Andrew: "pick
+**Status.** Task 1 delivered 2026-10-09 (fuller 5a999b0, §1a). The multityped kingdom of §2 delivered 2026-10-09 (fuller f7d6d35, 304e039, §2g): the rows, the loader, the renderer, the shipped kernel as a tree (bit-identical on the device), random typed kernels valid N of N. Not started: the pair generators of §1b (twelve kinds), phylu's evolution loop over the kingdom, the grid, the search. Prompted by Andrew: "pick
 a challenge, organise the whole experiment, search for the most
 efficient supercompiled WGSL", after the decode pass proved too small to
 measure (`PLAN_wgsl_superopt.md` §6a).
@@ -257,6 +257,18 @@ genes that render and compile; the shipped tree; each statement row
 rendered and validated alone). phylu: the evolution loop over this
 kingdom's table with `kernel.kernel` as the root dual, HFF on the eight
 normalised columns, the seed population.
+
+### 2g. Built and measured (2026-10-09, fuller f7d6d35, 304e039)
+
+| measurement | expected | measured |
+|---|---|---|
+| duals, templates in the regenerated tables | 71 + 12, 197 + 42 | 83, 239 |
+| the shipped kernel as a typed tree | under 128 nodes (one gene) | 82 nodes; rendered text validates; H on the device bit-identical to the shipped text at d = 64, m = 1,000, banded 63 × 4 |
+| 500 random typed kernels (depth ≤ 7, mean 35 nodes), rendered and validated by naga | every rendered text valid | 440 rendered, 440 valid; 60 refused by construction, all nested long loops (m² iterations); 122 barriers masked for non-uniform control flow |
+| 100 random typed kernels compiled by Metal and dispatched at d = 64, m = 100 | every rendered one compiles and runs | 94 rendered, 94 compiled, 94 ran, 93 with every cell of H finite |
+| every statement row alone, every composite row alone | valid | 15 statement cases and 44 composite rows, all valid |
+
+Decisions taken while building, each a line in `render.rs`: literals pass through `lit_f32/u32/i32` so naga's constant evaluator never sees a literal-only expression (a folded NaN or a division by a literal zero is a validation error, on the device a value); statements after a `return` in the same block are dropped (naga refuses instructions after a return); a `workgroupBarrier` inside an `if` or after a conditional return is masked and counted (WGSL's uniformity rule), the typed projection's masking at the statement level; a long loop inside a long loop is refused; the matrix product template was wrong for WGSL's `matCxR` and is corrected (27 shapes). A kernel that uses no binding still binds all three (explicit layout). The sampler never draws an `f16` dual (the prologue does not enable f16).
 
 ## 3. The search
 
