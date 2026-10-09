@@ -32,17 +32,18 @@ use std::collections::BTreeMap;
 use fuller::gpu_eval::MAX_NODES;
 use fuller::homeotic::{unfold, FoldedChromosome};
 use fuller::karva::karva_to_terms_generic;
-use fuller::wgsl::{chromosome, chromosome_typed, infer_function, read, round_trip, ChromosomeOptions, RootKind, WgslKingdom};
+use fuller::wgsl::{chromosome, chromosome_typed, infer_function, read, rebuild_folded, round_trip, ChromosomeOptions, RootKind, WgslKingdom};
 
 fn main() -> Result<(), String> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let show_sexpr = args.iter().any(|a| a == "--sexpr");
     let dump_path = args.iter().position(|a| a == "--dump").and_then(|i| args.get(i + 1).cloned());
     let rebuilt_dir = args.iter().position(|a| a == "--rebuilt").and_then(|i| args.get(i + 1).cloned());
+    let folded_dir = args.iter().position(|a| a == "--rebuilt-folded").and_then(|i| args.get(i + 1).cloned());
     let paths: Vec<&String> = args
         .iter()
         .enumerate()
-        .filter(|(i, a)| !(a.starts_with("--") || (*i > 0 && (args[i - 1] == "--dump" || args[i - 1] == "--rebuilt"))))
+        .filter(|(i, a)| !(a.starts_with("--") || (*i > 0 && (args[i - 1] == "--dump" || args[i - 1] == "--rebuilt" || args[i - 1] == "--rebuilt-folded"))))
         .map(|(_, a)| a)
         .collect();
     let mut dump: Vec<serde_json::Value> = Vec::new();
@@ -178,6 +179,7 @@ fn main() -> Result<(), String> {
         // The naga round trip, from the decoded genes of every function.
         let mut roots_all: Vec<Vec<String>> = Vec::new();
         let mut trip_err: Option<String> = None;
+        let mut chromosomes_all = Vec::new();
         for f in &kernel.functions {
             match chromosome(f, &ChromosomeOptions::default()) {
                 Ok(c) => match c.genes.as_ref() {
@@ -191,6 +193,11 @@ fn main() -> Result<(), String> {
                                     Ok(r) => roots_all.push(r),
                                     Err(e) => trip_err = trip_err.or(Some(format!("{}: unfold: {e}", f.name))),
                                 }
+                                // The folded rebuild takes the DECODED genes with
+                                // their placements: what the device will run.
+                                let mut decoded_c = c.clone();
+                                decoded_c.folded = folded;
+                                chromosomes_all.push(decoded_c);
                             }
                             Err(e) => trip_err = trip_err.or(Some(format!("{}: decode: {e}", f.name))),
                         }
@@ -198,6 +205,21 @@ fn main() -> Result<(), String> {
                     None => trip_err = trip_err.or(Some(format!("{}: no head length fits", f.name))),
                 },
                 Err(e) => trip_err = trip_err.or(Some(format!("{}: {e}", f.name))),
+            }
+        }
+        // The folded rebuild: every shared definition a `let` at its
+        // placement; validated and written, no structural gate (the roots
+        // differ by design), proven by the device (the oracle, the sweep).
+        if let (Some(dir), None) = (&folded_dir, &trip_err) {
+            match rebuild_folded(&kernel, &chromosomes_all) {
+                Ok(r) => {
+                    std::fs::create_dir_all(dir).map_err(|e| format!("mkdir {dir}: {e}"))?;
+                    let out = format!("{dir}/{}", file.replace('+', "_"));
+                    std::fs::write(&out, &r.wgsl).map_err(|e| format!("write {out}: {e}"))?;
+                    let defs = r.wgsl.matches("let def_").count();
+                    println!("    FOLDED rebuild ok ({} functions, {} bytes, {defs} shared definitions emitted) written to {out}", kernel.functions.len(), r.wgsl.len());
+                }
+                Err(e) => println!("    FOLDED rebuild FAILED: {e}"),
             }
         }
         match trip_err {

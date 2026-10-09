@@ -377,6 +377,14 @@ Apple M3 Max (Metal), 2026-10-09:
 | out-of-range indices | 214 | checked by the agreement |
 | not admissible (a repeated root) | | 38 |
 
+The rebuilt text the device ran here is the UNFOLDED one (the tail
+substituted back into the roots, as `rebuild` does), so on the device
+every placement is a no-op: the device has confirmed the reader and the
+rebuild, and the interpreter alone has confirmed the placements
+(hoisting included) against the device. Step 4 makes the placements
+executable in the rebuild; until then the hoist, step-5 `let` and
+out-of-range rows above are verified by the interpreter only.
+
 Interpreter lanes against the device over the 1,000 programs: 23,627
 exact, 359 within 8 ulps, 8 within 64 ulps, 5 non-finite on one side
 only, 1 signed zero; 235 programs have non-finite inputs and the
@@ -414,6 +422,39 @@ With those three kept out of the generator's way, the residual
 differences are the contraction lanes, which the plan reserves for the
 numerical criterion of the arithmetic rewrites (step 5).
 
+### Placements executed: the folded rebuild (measured 2026-10-09, lineage plan step 4)
+
+`scaffold::rebuild_folded` emits every filled tail slot as a named `let`
+(`def_a`, `def_b`, …) at its placement, after the lets it reads and
+before the statement, in descending slot order at one point, and every
+`href` leaf reads that `let`; a definition read before its placement is
+an error, as in the interpreter. The builder walks the statement tree
+with the reader's paths (Emits skipped, child indices for if/switch/loop
+arms, none for a Block, a `break_if` at the end of `continuing`). The
+structural gate does not apply to the folded text (its roots differ by
+design); the proof is the device. The oracle's rebuilt column is now
+this text.
+
+Same 1,000 programs (seed 1000), Apple M3 Max: 1,000 of 1,000 agree
+three ways; the folded text against the original, bit for bit on the
+device: 23,966 lanes exact, 34 lanes in 29 programs within 8 ulps, none
+farther, no NaN or infinity on one side only. The 944 sharing programs
+ran their placements on the device, hoisted definitions before loops
+included (288 programs intended a hoist).
+
+**Finding: sharing a float partial changes contraction.** With fast math
+on, Metal fuses `a * b + c` in the original; once `a * b` is bound to a
+`let` and added twice, the product is rounded once and the two adds are
+separate, and one lane in a thousand programs moves by one to four ulps.
+No integer lane ever moved. So on this platform even sharing, a
+transform that is exact in exact arithmetic, is not bit-preserving for
+floats; the compile-and-time evaluator needs the numerical criterion from
+its first float kernel, not only after the algebraic rewrites of step 5.
+
+The six kernels' folded rebuilds are in `samples/rebuilt_folded/`
+(decode 6 definitions, score 9, hff 4, cand 1, mix64+vary 8); phylu's
+override sweep with them is the real-workload proof (below).
+
 ## What is built, what is not
 
 | piece | status |
@@ -435,7 +476,8 @@ numerical criterion of the arithmetic rewrites (step 5).
 | the reference interpreter (`src/wgsl/interp.rs`): the folded chromosome executed against the statement tree, definitions evaluated at their placements, WGSL semantics per naga op, `ReadZeroSkipWrite` indexing | built 2026-10-09; its edge cases (integer division and remainder by zero, `i32::MIN / -1`, masked shifts, wrapping, saturating float→int, IEEE float edges, NaN through `min`/`max`/`select`, ties-to-even `round`, out-of-range loads and stores) each pinned by a hand-computed test; device agreement is the oracle's job |
 | the oracle's hand-written set (`kingdoms/wgsl/oracle/`, `src/wgsl/oracle.rs`, `examples/wgsl_oracle.rs`): ten kernels with expected outputs written by hand, run three ways on the device | built 2026-10-09: 10 of 10 agree (original, rebuilt text, interpreter) on Apple M3 Max; one platform deviation found and recorded (below) |
 | the oracle's generator (`src/wgsl/generator.rs`; `wgsl_oracle --generate N --seed S`): seeded random kernels that reach the refusal classes on purpose, run three ways | built 2026-10-09: 1,000 of 1,000 from seed 1000 agree (below) |
-| placement in the rebuild, arithmetic mutations, the compile-and-time evaluator (lineage plan steps 4–6) | not started |
+| placement in the rebuild (`rebuild_folded`, lineage plan step 4): every shared definition emitted as a named `let` at its placement, the uses reading it; `wgsl_read_kernel --rebuilt-folded` | built 2026-10-09: 1,000 of 1,000 generated programs agree on the device with the FOLDED text (23,966 lanes exact, 34 within 8 ulps where the shared `let` changed Metal's contraction); the six kernels' folded rebuilds in `samples/rebuilt_folded/` (28 definitions emitted) |
+| arithmetic mutations, the compile-and-time evaluator (lineage plan steps 5–6) | not started |
 | the scaffold-with-holes chromosome and its decoder (phylu) | not started |
 | compile-run-time evaluation path with the correctness gate (phylu) | not started |
 | first target: one of our own kernels, read in, round-tripped, then evolved for time | not started |

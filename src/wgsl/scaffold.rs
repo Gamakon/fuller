@@ -34,8 +34,11 @@ use naga::{
     front::Typifier, proc::ResolveContext, Arena, Block, Expression, Function, Handle, Module, Span, Statement, TypeInner,
 };
 
+use crate::homeotic;
 use crate::karva::{parse_math, MathNode};
 
+use super::chromosome::WgslChromosome;
+use super::legality::Placement;
 use super::loader::WgslKingdom;
 use super::naga_names;
 use super::reader::{read, slot_name, Kernel};
@@ -56,15 +59,51 @@ pub fn rebuild(kernel: &Kernel, roots: &[Vec<String>]) -> Result<Rebuilt, String
     if roots.len() != kernel.functions.len() {
         return Err(format!("{} functions, {} root lists", kernel.functions.len(), roots.len()));
     }
+    let programs: Vec<Program> = roots.iter().map(|r| r.iter().map(|s| parse_math(s)).collect::<Result<Vec<_>, _>>().map(|head| Program { head, tail: Vec::new(), placements: Vec::new() })).collect::<Result<_, _>>()?;
+    rebuild_programs(kernel, &programs)
+}
+
+/// Rebuild `kernel` from FOLDED chromosomes (one per function, in
+/// `kernel.functions` order): the head genes keep their `href` leaves, and
+/// every filled tail slot is emitted as a named `let` at its placement
+/// (`legality::Placement`), so the written text computes each shared
+/// definition once where the decision put it. This is what the device
+/// oracle compares with the original; the structural gate does not apply
+/// (the roots differ by design).
+pub fn rebuild_folded(kernel: &Kernel, chromosomes: &[WgslChromosome]) -> Result<Rebuilt, String> {
+    if chromosomes.len() != kernel.functions.len() {
+        return Err(format!("{} functions, {} chromosomes", kernel.functions.len(), chromosomes.len()));
+    }
+    let programs: Vec<Program> = chromosomes
+        .iter()
+        .map(|c| {
+            let head = c.folded.head.iter().map(|g| parse_math(g)).collect::<Result<Vec<_>, _>>()?;
+            let tail = c.folded.tail.iter().map(|g| parse_math(g)).collect::<Result<Vec<_>, _>>()?;
+            if c.placements.len() != tail.len() {
+                return Err(format!("{}: {} placements for {} tail slots", c.function, c.placements.len(), tail.len()));
+            }
+            Ok(Program { head, tail, placements: c.placements.clone() })
+        })
+        .collect::<Result<_, _>>()?;
+    rebuild_programs(kernel, &programs)
+}
+
+/// One function's genes as the builder consumes them.
+struct Program {
+    head: Vec<MathNode>,
+    tail: Vec<MathNode>,
+    placements: Vec<Option<Placement>>,
+}
+
+fn rebuild_programs(kernel: &Kernel, programs: &[Program]) -> Result<Rebuilt, String> {
     let table = FunctionTable::shipped();
     let kingdom = WgslKingdom::load();
     let mut module = kernel.module.clone();
     let n_fns = kernel.module.functions.len();
     let mut rebuilt_fns: Vec<Function> = Vec::new();
     for (i, f) in kernel.module.functions.iter().map(|(_, f)| f).chain(kernel.module.entry_points.iter().map(|ep| &ep.function)).enumerate() {
-        let trees: Vec<MathNode> = roots[i].iter().map(|s| parse_math(s)).collect::<Result<_, _>>()?;
         let name = kernel.functions[i].name.clone();
-        let mut b = Builder::new(&kernel.module, &table, &kingdom, f, &trees, &name);
+        let mut b = Builder::new(&kernel.module, &table, &kingdom, f, &programs[i], &name);
         let rebuilt = b.function()?;
         rebuilt_fns.push(rebuilt);
     }
@@ -302,6 +341,14 @@ struct Builder<'a> {
     original: &'a Function,
     name: &'a str,
     trees: &'a [MathNode],
+    /// The tail definitions and their placements (empty for an unfolded rebuild).
+    tail: &'a [MathNode],
+    placements: &'a [Option<Placement>],
+    /// Tail slot → the handle its `let` was bound to, once emitted.
+    defs: BTreeMap<usize, Handle<Expression>>,
+    /// The statement path as the reader numbers it (Emits skipped, child
+    /// indices for if/switch/loop arms, none for a Block).
+    path: Vec<usize>,
     next_root: usize,
     arena: Arena<Expression>,
     typifier: Typifier,
@@ -314,8 +361,50 @@ struct Builder<'a> {
 }
 
 impl<'a> Builder<'a> {
-    fn new(module: &'a Module, table: &'a FunctionTable, kingdom: &'a WgslKingdom, original: &'a Function, trees: &'a [MathNode], name: &'a str) -> Self {
-        Builder { module, table, kingdom, original, name, trees, next_root: 0, arena: Arena::new(), typifier: Typifier::new(), call_results: BTreeMap::new(), lets: BTreeMap::new(), let_names: Vec::new() }
+    fn new(module: &'a Module, table: &'a FunctionTable, kingdom: &'a WgslKingdom, original: &'a Function, program: &'a Program, name: &'a str) -> Self {
+        Builder {
+            module,
+            table,
+            kingdom,
+            original,
+            name,
+            trees: &program.head,
+            tail: &program.tail,
+            placements: &program.placements,
+            defs: BTreeMap::new(),
+            path: Vec::new(),
+            next_root: 0,
+            arena: Arena::new(),
+            typifier: Typifier::new(),
+            call_results: BTreeMap::new(),
+            lets: BTreeMap::new(),
+            let_names: Vec::new(),
+        }
+    }
+
+    /// Emit the definitions placed at `(path, after_let)`, in descending
+    /// slot order (a definition reads only later slots), each as one Emit
+    /// range named `def_<letters>` so the writer spells a `let`.
+    fn definitions_at(&mut self, out: &mut Block, after_let: usize) -> Result<(), String> {
+        let slots: Vec<usize> = self
+            .placements
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| p.as_ref().is_some_and(|p| p.path == self.path && p.after_let == after_let))
+            .map(|(s, _)| s)
+            .rev()
+            .collect();
+        for slot in slots {
+            let def = self.tail[slot].clone();
+            let mut leaves = BTreeMap::new();
+            self.emit_leaves(&def, &mut leaves)?;
+            let start = self.arena.len();
+            let h = self.build(&def, &leaves)?;
+            self.emit(out, start);
+            self.defs.insert(slot, h);
+            self.let_names.push((h, def_name(slot)));
+        }
+        Ok(())
     }
 
     fn err<T>(&self, msg: impl std::fmt::Display) -> Result<T, String> {
@@ -394,7 +483,16 @@ impl<'a> Builder<'a> {
 
     fn block(&mut self, original: &Block) -> Result<Block, String> {
         let mut out = Block::new();
+        let mut index = 0usize;
+        // Lets bound so far before the statement at `index`: the definitions
+        // placed among them follow the lets they read.
+        let mut lets_here = 0usize;
         for stmt in original.iter() {
+            if !matches!(stmt, Statement::Emit(_)) {
+                self.path.push(index);
+                self.definitions_at(&mut out, lets_here)?;
+                self.path.pop();
+            }
             match stmt {
                 Statement::Emit(range) => {
                     // A `let` of this Emit is a root: build its tree here, in
@@ -407,6 +505,10 @@ impl<'a> Builder<'a> {
                         .filter_map(|h| self.original.named_expressions.get(&h).filter(|n| !super::reader::is_bake(n)).map(|n| (h, n.clone())))
                         .collect();
                     for (h, name) in named {
+                        self.path.push(index);
+                        self.definitions_at(&mut out, lets_here)?;
+                        self.path.pop();
+                        lets_here += 1;
                         let tree = self.take_root("a let")?;
                         let (index, value) = self.unwrap_store(tree)?;
                         if index.is_some() {
@@ -422,13 +524,16 @@ impl<'a> Builder<'a> {
                         // read of the text finds the same root again.
                         self.let_names.push((v, name));
                     }
+                    continue;
                 }
                 Statement::Break => out.push(Statement::Break, Span::UNDEFINED),
                 Statement::Continue => out.push(Statement::Continue, Span::UNDEFINED),
                 Statement::Kill => out.push(Statement::Kill, Span::UNDEFINED),
                 Statement::Barrier(b) => out.push(Statement::Barrier(*b), Span::UNDEFINED),
                 Statement::Block(b) => {
+                    self.path.push(index);
                     let inner = self.block(b)?;
+                    self.path.pop();
                     out.push(Statement::Block(inner), Span::UNDEFINED);
                 }
                 Statement::Store { .. } => {
@@ -452,26 +557,50 @@ impl<'a> Builder<'a> {
                 }
                 Statement::If { accept, reject, .. } => {
                     let condition = self.hole(&mut out, "an if condition")?;
+                    self.path.push(index);
+                    self.path.push(0);
                     let accept = self.block(accept)?;
+                    self.path.pop();
+                    self.path.push(1);
                     let reject = self.block(reject)?;
+                    self.path.pop();
+                    self.path.pop();
                     out.push(Statement::If { condition, accept, reject }, Span::UNDEFINED);
                 }
                 Statement::Switch { cases, .. } => {
                     let selector = self.hole(&mut out, "a switch selector")?;
                     let mut new_cases = Vec::with_capacity(cases.len());
-                    for c in cases {
+                    self.path.push(index);
+                    for (ci, c) in cases.iter().enumerate() {
+                        self.path.push(ci);
                         let body = self.block(&c.body)?;
+                        self.path.pop();
                         new_cases.push(naga::SwitchCase { value: c.value, body, fall_through: c.fall_through });
                     }
+                    self.path.pop();
                     out.push(Statement::Switch { selector, cases: new_cases }, Span::UNDEFINED);
                 }
                 Statement::Loop { body, continuing, break_if } => {
+                    self.path.push(index);
+                    self.path.push(0);
                     let body = self.block(body)?;
+                    self.path.pop();
+                    self.path.push(1);
+                    let n = continuing.iter().filter(|s| !matches!(s, Statement::Emit(_))).count();
                     let mut continuing = self.block(continuing)?;
                     let break_if = match break_if {
-                        Some(_) => Some(self.hole(&mut continuing, "a loop break_if")?),
+                        Some(_) => {
+                            // Evaluated at the end of `continuing`: definitions
+                            // placed there come first.
+                            self.path.push(n);
+                            self.definitions_at(&mut continuing, 0)?;
+                            self.path.pop();
+                            Some(self.hole(&mut continuing, "a loop break_if")?)
+                        }
                         None => None,
                     };
+                    self.path.pop();
+                    self.path.pop();
                     out.push(Statement::Loop { body, continuing, break_if }, Span::UNDEFINED);
                 }
                 Statement::Return { value } => {
@@ -498,6 +627,8 @@ impl<'a> Builder<'a> {
                 }
                 other => return self.err(format!("statement {:?} is outside the kingdom", variant(other))),
             }
+            index += 1;
+            lets_here = 0;
         }
         Ok(out)
     }
@@ -540,7 +671,7 @@ impl<'a> Builder<'a> {
     fn emit_leaves(&mut self, n: &MathNode, leaves: &mut BTreeMap<String, Handle<Expression>>) -> Result<(), String> {
         match n {
             MathNode::Var(name) => {
-                if name.starts_with("call.") || name.starts_with("let.") {
+                if name.starts_with("call.") || name.starts_with("let.") || homeotic::href_slot(name).is_some() {
                     return Ok(());
                 }
                 if let Some(target) = split_version(name).0.strip_prefix("load.") {
@@ -767,6 +898,9 @@ impl<'a> Builder<'a> {
                     let idx: u32 = rest.rsplit_once('@').and_then(|(_, i)| i.parse().ok()).ok_or_else(|| format!("{}: call leaf {name} has no handle index", self.name))?;
                     return self.call_results.get(&idx).copied().ok_or_else(|| format!("{}: call result {name} before its call", self.name));
                 }
+                if let Some(slot) = homeotic::href_slot(name) {
+                    return self.defs.get(&slot).copied().ok_or_else(|| format!("{}: {name} read at {:?} before its definition was emitted at its placement", self.name, self.path));
+                }
                 if let Some(target) = split_version(name).0.strip_prefix("load.") {
                     let p = self.pointer(target, None, leaves)?;
                     return self.append(Expression::Load { pointer: p });
@@ -921,6 +1055,22 @@ impl<'a> Builder<'a> {
     }
 }
 
+/// The `let` name of tail slot `slot`: letters only, so naga's writer
+/// neither renames it (a name ending in a digit gets `_`) nor clashes
+/// with a source name.
+fn def_name(slot: usize) -> String {
+    let mut s = String::from("def_");
+    let mut n = slot;
+    loop {
+        s.push((b'a' + (n % 26) as u8) as char);
+        n /= 26;
+        if n == 0 {
+            break;
+        }
+    }
+    s
+}
+
 fn render(n: &MathNode) -> String {
     match n {
         MathNode::Num(v) => format!("(Num {v:?})"),
@@ -1060,6 +1210,118 @@ fn main() {
         let k = read(src).unwrap();
         let r = round_trip(&k, &roots_of(&k)).unwrap_or_else(|e| panic!("{e}"));
         assert!(r.wgsl.contains("fn poke("), "{}", r.wgsl);
+    }
+
+    fn folded(src: &str) -> (Kernel, Vec<crate::wgsl::chromosome::WgslChromosome>) {
+        use crate::wgsl::chromosome::{chromosome, ChromosomeOptions};
+        let k = read(src).unwrap();
+        let cs = k.functions.iter().map(|f| chromosome(f, &ChromosomeOptions::default()).unwrap()).collect();
+        (k, cs)
+    }
+
+    #[test]
+    fn a_folded_rebuild_emits_a_shared_definition_as_a_let_after_the_store_it_depends_on() {
+        let src = r#"
+@group(0) @binding(0) var<storage, read> xs: array<f32>;
+@group(0) @binding(1) var<storage, read_write> out: array<f32>;
+@compute @workgroup_size(1)
+fn main() {
+    var s = 1.0;
+    out[0] = 0.0;
+    s = 3.0;
+    out[1] = s * s * 2.0 + xs[0];
+    out[2] = s * s * 2.0 + xs[1];
+}
+"#;
+        let (k, cs) = folded(src);
+        assert_eq!(cs[0].folded.filled, 1);
+        assert_eq!(cs[0].placements[0].as_ref().unwrap().path, vec![2]);
+        let r = rebuild_folded(&k, &cs).unwrap_or_else(|e| panic!("{e}"));
+        let text = r.wgsl;
+        let def = text.find("let def_a").expect("the definition is a let");
+        let store_s = text.find("s = 3").expect("the store");
+        let use1 = text.find("def_a *").or_else(|| text.rfind("def_a")).unwrap();
+        assert!(store_s < def && def < use1, "store, then the definition, then its uses:\n{text}");
+        assert_eq!(text.matches("def_a").count(), 3, "bound once, used twice:\n{text}");
+    }
+
+    #[test]
+    fn a_loop_invariant_definition_is_emitted_before_the_loop_and_a_dependent_one_inside() {
+        let src = r#"
+@group(0) @binding(0) var<storage, read> xs: array<f32>;
+@group(0) @binding(1) var<storage, read_write> out: array<f32>;
+@compute @workgroup_size(1)
+fn main() {
+    var s = 0.0;
+    var i = 0u;
+    loop {
+        if (i >= 4u) { break; }
+        out[0] = s * s * 2.0 + xs[0] * xs[0];
+        out[1] = s * s * 2.0 + 1.0;
+        s = s + 1.0;
+        out[2] = xs[0] * xs[0] + 1.0;
+        i = i + 1u;
+    }
+}
+"#;
+        let (k, cs) = folded(src);
+        assert_eq!(cs[0].folded.filled, 2, "{:?}", cs[0].refused);
+        let r = rebuild_folded(&k, &cs).unwrap_or_else(|e| panic!("{e}"));
+        let text = r.wgsl;
+        let loop_at = text.find("loop {").unwrap();
+        let defs: Vec<usize> = text.match_indices("let def_").map(|(i, _)| i).collect();
+        assert_eq!(defs.len(), 2, "{text}");
+        assert!(defs.iter().any(|&d| d < loop_at), "the invariant one before the loop:\n{text}");
+        assert!(defs.iter().any(|&d| d > loop_at), "the one reading s inside the loop:\n{text}");
+    }
+
+    #[test]
+    fn a_definition_in_an_arm_is_emitted_in_the_arm_after_the_let_it_reads() {
+        let src = r#"
+@group(0) @binding(0) var<storage, read> xs: array<f32>;
+@group(0) @binding(1) var<storage, read_write> out: array<f32>;
+@compute @workgroup_size(1)
+fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+    var r = 0.0;
+    if (gid.x > 0u) {
+        let v = xs[gid.x];
+        out[0] = v * v * 3.0 + 1.0;
+        r = v * v * 3.0 + 1.0;
+    }
+    out[1] = r;
+}
+"#;
+        let (k, cs) = folded(src);
+        assert_eq!(cs[0].folded.filled, 1, "{:?}", cs[0].refused);
+        let r = rebuild_folded(&k, &cs).unwrap_or_else(|e| panic!("{e}"));
+        let text = r.wgsl;
+        let v_at = text.find("let v").unwrap();
+        let def_at = text.find("let def_a").unwrap();
+        let close = text[v_at..].find('}').map(|i| i + v_at).unwrap();
+        assert!(v_at < def_at && def_at < close, "inside the arm, after `let v`:\n{text}");
+    }
+
+    #[test]
+    fn a_placement_after_a_use_is_refused_by_the_folded_rebuild() {
+        let src = r#"
+@group(0) @binding(0) var<storage, read> xs: array<f32>;
+@group(0) @binding(1) var<storage, read_write> out: array<f32>;
+@compute @workgroup_size(1)
+fn main() {
+    var s = 1.0;
+    out[0] = 0.0;
+    s = 3.0;
+    out[1] = s * s * 2.0 + xs[0];
+    out[2] = s * s * 2.0 + xs[1];
+}
+"#;
+        let (k, mut cs) = folded(src);
+        cs[0].placements[0] = Some(crate::wgsl::legality::Placement { path: vec![3], after_let: 0 });
+        let e = match rebuild_folded(&k, &cs) {
+            Err(e) => e,
+            Ok(_) => panic!("a placement after the uses was accepted"),
+        };
+        assert!(e.contains("before its definition was emitted"), "{e}");
     }
 
     #[test]

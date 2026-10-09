@@ -3,8 +3,10 @@
 //! compared with its hand-written expectation:
 //!
 //!   original  — the kernel's own text on the device (the authority);
-//!   rebuilt   — the text the scaffold rebuilds from the chromosome, on
-//!               the device;
+//!   rebuilt   — the text the scaffold rebuilds from the FOLDED chromosome
+//!               (every shared definition a `let` at its placement), on
+//!               the device; the unfolded rebuild goes through the
+//!               structural gate separately;
 //!   interp    — the folded chromosome in the reference interpreter
 //!               (`src/wgsl/interp.rs`), where the kernel is one
 //!               invocation.
@@ -33,7 +35,7 @@ use std::path::PathBuf;
 
 use fuller::wgsl::generator::generate;
 use fuller::wgsl::oracle::{bindings, check, device::Device, entry_name, hand_kernels, interpret};
-use fuller::wgsl::{chromosome, read, rebuild, round_trip, ChromosomeOptions, Interp, Invocation, Memory, Value};
+use fuller::wgsl::{chromosome, read, rebuild_folded, round_trip, ChromosomeOptions, Interp, Invocation, Memory, Value};
 
 fn main() -> Result<(), String> {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -131,6 +133,8 @@ fn generated(device: &Device, n: usize, seed0: u64) -> Result<(), String> {
     let mut reached: BTreeMap<String, usize> = BTreeMap::new();
     let (mut agree, mut interp_differs, mut rebuilt_differs, mut gate_refused, mut errors, mut shared_programs, mut non_finite_programs, mut non_finite_differs) = (0usize, 0usize, 0usize, 0usize, 0usize, 0usize, 0usize, 0usize);
     let mut lanes = Lanes::default();
+    let mut rebuilt_lanes = Lanes::default();
+    let mut rebuilt_contracted_programs = 0usize;
     let mut failures: Vec<String> = Vec::new();
     let mut all_notes: Vec<String> = Vec::new();
     for seed in seed0..seed0 + n as u64 {
@@ -177,7 +181,9 @@ fn generated(device: &Device, n: usize, seed0: u64) -> Result<(), String> {
             gate_refused += 1;
             all_notes.push(format!("seed {seed}: gate: {}", e.lines().collect::<Vec<_>>().join(" | ")));
         }
-        let rebuilt = rebuild(&kernel, &roots).and_then(|r| device.run(&r.wgsl, &entry, &memory, &binds));
+        // The FOLDED rebuild: every shared definition emitted as a let at
+        // its placement, so the device runs the placements.
+        let rebuilt = rebuild_folded(&kernel, &chromosomes).and_then(|r| device.run(&r.wgsl, &entry, &memory, &binds));
         let mut notes = Vec::new();
         match interp {
             Err(e) => notes.push(format!("interp: {e}")),
@@ -210,18 +216,36 @@ fn generated(device: &Device, n: usize, seed0: u64) -> Result<(), String> {
         }
         let interp_bad = !notes.is_empty();
         let mut rebuilt_bad = false;
+        // The folded rebuild against the original, same compiler: bits,
+        // except that binding a float partial to a `let` changes what Metal
+        // contracts (the original fuses `a * b + c`; the shared product is
+        // rounded once and added twice), so a lane within a few ulps is the
+        // contraction class here too, counted apart; a NaN or an infinity on
+        // one side, or anything farther, is a difference.
         match rebuilt {
             Err(e) => {
                 rebuilt_bad = true;
                 notes.push(format!("rebuilt: {e}"));
             }
             Ok(m) => {
+                let mut program_contracted = 0usize;
                 for loc in ["buffer.out", "buffer.cnt", "buffer.ys"] {
-                    let d = bit_differences(m.get(loc).unwrap(), original.get(loc).unwrap());
+                    let l = classify(m.get(loc).unwrap(), original.get(loc).unwrap());
+                    program_contracted += l.near + l.far;
+                    rebuilt_lanes.exact += l.exact;
+                    rebuilt_lanes.near += l.near;
+                    rebuilt_lanes.far += l.far;
+                    let mut d = l.differ.clone();
+                    if l.non_finite > 0 || l.signed_zero > 0 {
+                        d.extend(bit_differences(m.get(loc).unwrap(), original.get(loc).unwrap()).into_iter().filter(|(i, _, _)| !l.differ.iter().any(|(j, _, _)| j == i)));
+                    }
                     if let Some((i, a, b)) = d.first() {
                         rebuilt_bad = true;
                         notes.push(format!("rebuilt {loc}[{i}]: rebuilt 0x{a:08x}, original 0x{b:08x}; {} lanes", d.len()));
                     }
+                }
+                if program_contracted > 0 {
+                    rebuilt_contracted_programs += 1;
                 }
             }
         }
@@ -242,6 +266,7 @@ fn generated(device: &Device, n: usize, seed0: u64) -> Result<(), String> {
     }
     println!("\ngenerated: {n} programs from seed {seed0}: {agree} agree three ways, {interp_differs} interpreter differs, {rebuilt_differs} rebuilt differs on the device, {gate_refused} refused by the structural gate, {errors} failed to run; {shared_programs} programs share; {non_finite_programs} programs have non-finite inputs, the interpreter differs on {non_finite_differs} of them (fast math, not counted)");
     println!("interpreter lanes against the device: {} exact, {} within {NEAR_ULPS} ulps (contraction), {} within {FAR_ULPS} ulps, {} non-finite on one side (fast math), {} signed zero", lanes.exact, lanes.near, lanes.far, lanes.non_finite, lanes.signed_zero);
+    println!("folded rebuild lanes against the original on the device: {} exact, {} within {NEAR_ULPS} ulps, {} within {FAR_ULPS} ulps (contraction changed by the shared let), in {rebuilt_contracted_programs} programs", rebuilt_lanes.exact, rebuilt_lanes.near, rebuilt_lanes.far);
     for n in &all_notes {
         println!("  {n}");
     }
@@ -286,7 +311,10 @@ fn hand_set(device: &Device, dir: &std::path::Path) -> Result<(), String> {
         let binds = bindings(&k.kernel.module)?;
         let original = verdict(device.run(&k.source, &entry, &memory, &binds), true);
         let roots: Vec<Vec<String>> = k.chromosomes.iter().map(|c| fuller::homeotic::unfold(&c.folded)).collect::<Result<_, _>>()?;
-        let rebuilt = verdict(round_trip(&k.kernel, &roots).and_then(|r| device.run(&r.wgsl, &entry, &memory, &binds)), true);
+        if let Err(e) = round_trip(&k.kernel, &roots) {
+            println!("    gate (unfolded): {}", e.lines().next().unwrap_or(""));
+        }
+        let rebuilt = verdict(rebuild_folded(&k.kernel, &k.chromosomes).and_then(|r| device.run(&r.wgsl, &entry, &memory, &binds)), true);
         let interp = if k.expectation.interpreter { verdict(interpret(k), false) } else { ("skipped".to_string(), Vec::new()) };
         let main = k.chromosomes.iter().find(|c| c.function == entry).ok_or("no entry chromosome")?;
         let refused: usize = main.refused.values().sum();

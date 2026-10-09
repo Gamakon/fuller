@@ -27,9 +27,12 @@ BUILT and measured the same day (`kingdoms/wgsl/README.md`): memory
 versions in the reader (afae87a), `legality::decide` with placement per
 tail slot (f436a90), the reference interpreter (36e4860), the oracle's
 hand-written set (4c0827d) and generator (31e497e, 1,000 of 1,000 agree
-three ways on Apple M3 Max; three platform findings recorded). Steps 4–6
-(placement in the rebuild, arithmetic mutations, the evaluator) not
-started. Prompted by the external review of the step-5 result:
+three ways on Apple M3 Max; three platform findings recorded); step 4,
+placement in the rebuild (`rebuild_folded`), built and proven on the
+device with the same 1,000 programs (a fourth finding: sharing a float
+partial changes Metal's contraction by an ulp or so, so the evaluator
+needs the numerical criterion from its first float kernel). Steps 5–6
+(arithmetic mutations, the evaluator) not started. Prompted by the external review of the step-5 result:
 "expression equivalence is not execution equivalence; sharing must
 respect execution order, memory effects and the lifetime of computed
 values."
