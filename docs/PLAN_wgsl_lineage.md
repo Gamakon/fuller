@@ -22,10 +22,17 @@ share equivalence needs once operands can change under a plan: the same
 subplan over the same relation *versions*. The two together make a fold a
 graph property, and the randomised oracle has something precise to check.
 
-**Status.** Design, 2026-10-09. Nothing built. Prompted by the external
-review of the step-5 result: "expression equivalence is not execution
-equivalence; sharing must respect execution order, memory effects and the
-lifetime of computed values."
+**Status.** Design 2026-10-09, approved by four reviews; steps 1–3 of §7
+BUILT and measured the same day (`kingdoms/wgsl/README.md`): memory
+versions in the reader (afae87a), `legality::decide` with placement per
+tail slot (f436a90), the reference interpreter (36e4860), the oracle's
+hand-written set (4c0827d) and generator (31e497e, 1,000 of 1,000 agree
+three ways on Apple M3 Max; three platform findings recorded). Steps 4–6
+(placement in the rebuild, arithmetic mutations, the evaluator) not
+started. Prompted by the external review of the step-5 result:
+"expression equivalence is not execution equivalence; sharing must
+respect execution order, memory effects and the lifetime of computed
+values."
 
 **Why now.** The step-5 proof found exactly this fault: an inlined `let`
 re-read a queue after a store, and the structural gate could not see it

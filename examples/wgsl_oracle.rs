@@ -33,13 +33,18 @@ use std::path::PathBuf;
 
 use fuller::wgsl::generator::generate;
 use fuller::wgsl::oracle::{bindings, check, device::Device, entry_name, hand_kernels, interpret};
-use fuller::wgsl::{chromosome, read, round_trip, ChromosomeOptions, Interp, Invocation, Memory, Value};
+use fuller::wgsl::{chromosome, read, rebuild, round_trip, ChromosomeOptions, Interp, Invocation, Memory, Value};
 
 fn main() -> Result<(), String> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let dir = args.iter().position(|a| a == "--dir").and_then(|i| args.get(i + 1)).map(PathBuf::from).unwrap_or_else(|| PathBuf::from("kingdoms/wgsl/oracle"));
     let generate_n: usize = args.iter().position(|a| a == "--generate").and_then(|i| args.get(i + 1)).and_then(|n| n.parse().ok()).unwrap_or(0);
     let seed0: u64 = args.iter().position(|a| a == "--seed").and_then(|i| args.get(i + 1)).and_then(|n| n.parse().ok()).unwrap_or(1);
+    if let Some(seed) = args.iter().position(|a| a == "--show").and_then(|i| args.get(i + 1)).and_then(|n| n.parse::<u64>().ok()) {
+        let g = generate(seed);
+        println!("// seed {seed}, intended {:?}, xs {:?}, ks {:?}, ys {:?}, n {}\n{}", g.intended, g.xs, g.ks, g.ys, g.n, g.source);
+        return Ok(());
+    }
     let device = Device::new()?;
     println!("device: {}", device.name);
     hand_set(&device, &dir)?;
@@ -60,48 +65,72 @@ fn ulps(a: u32, b: u32) -> Option<u32> {
     Some(key(a).abs_diff(key(b)))
 }
 
-/// Lanes where `a` and `b` differ. With `tolerance` (the interpreter
-/// against the device): any NaN equals any NaN, and a float lane within
-/// `max_ulps` counts as contraction (Metal fuses `a * b + c`, the
-/// interpreter does not) and is reported separately, not as a difference.
-/// Without it (the rebuilt text against the original, same compiler): bits.
-fn lane_differences(a: &Value, b: &Value, tolerance: Option<u32>) -> (Vec<(usize, u32, u32)>, usize) {
-    let (wa, wb) = (fuller::wgsl::oracle::to_words(a), fuller::wgsl::oracle::to_words(b));
-    let mut out = Vec::new();
-    let mut contracted = 0usize;
-    for i in 0..wa.len().max(wb.len()) {
-        let (x, y) = (wa.get(i).copied(), wb.get(i).copied());
-        let same = match (x, y, tolerance) {
-            (Some(x), Some(y), _) if x == y => true,
-            (Some(x), Some(y), Some(max_ulps)) => {
-                if f32::from_bits(x).is_nan() && f32::from_bits(y).is_nan() {
-                    true
-                } else if ulps(x, y).is_some_and(|u| u <= max_ulps) {
-                    contracted += 1;
-                    true
-                } else {
-                    false
-                }
-            }
-            _ => false,
-        };
-        if !same {
-            out.push((i, x.unwrap_or(0), y.unwrap_or(0)));
-        }
-    }
-    (out, contracted)
+/// How the interpreter's lanes relate to the device's. wgpu leaves Metal's
+/// fast math on, so the device fuses `a * b + c` into one rounding, may
+/// reassociate, treats signed zeros loosely and assumes no NaN or
+/// infinity arises (`0.0 / x` folds to `0.0`): the spec's IEEE answer and
+/// the device's differ in those cases, and the interpreter follows the
+/// spec. The classes are reported, never folded into agreement silently.
+#[derive(Default, Debug, Clone)]
+struct Lanes {
+    exact: usize,
+    /// Finite, within 8 ulps: contraction.
+    near: usize,
+    /// Finite, within 64 ulps: reassociation along a longer value.
+    far: usize,
+    /// A NaN or an infinity on one side only, or both NaN (payloads differ):
+    /// fast math's no-NaN assumption.
+    non_finite: usize,
+    /// `-0.0` against `0.0`.
+    signed_zero: usize,
+    /// Everything else: a real difference (lane, interp word, device word).
+    differ: Vec<(usize, u32, u32)>,
 }
 
-/// The float lanes the interpreter may differ on by contraction: Metal
-/// fuses a multiply and an add into one rounding and the interpreter
-/// rounds twice (wgpu leaves Metal's default fast math on); a few such
-/// fusions along one value make a few ulps.
-const CONTRACTION_ULPS: u32 = 8;
+const NEAR_ULPS: u32 = 8;
+const FAR_ULPS: u32 = 64;
+
+fn classify(interp: &Value, device: &Value) -> Lanes {
+    let (wa, wb) = (fuller::wgsl::oracle::to_words(interp), fuller::wgsl::oracle::to_words(device));
+    let mut l = Lanes::default();
+    for i in 0..wa.len().max(wb.len()) {
+        let (Some(&x), Some(&y)) = (wa.get(i), wb.get(i)) else {
+            l.differ.push((i, wa.get(i).copied().unwrap_or(0), wb.get(i).copied().unwrap_or(0)));
+            continue;
+        };
+        let (fx, fy) = (f32::from_bits(x), f32::from_bits(y));
+        if x == y {
+            l.exact += 1;
+        } else if fx.is_nan() || fy.is_nan() || fx.is_infinite() || fy.is_infinite() {
+            l.non_finite += 1;
+        } else if fx == 0.0 && fy == 0.0 {
+            l.signed_zero += 1;
+        } else if let Some(u) = ulps(x, y) {
+            if u <= NEAR_ULPS {
+                l.near += 1;
+            } else if u <= FAR_ULPS {
+                l.far += 1;
+            } else {
+                l.differ.push((i, x, y));
+            }
+        } else {
+            l.differ.push((i, x, y));
+        }
+    }
+    l
+}
+
+/// Lanes where two device results differ, bit for bit (same compiler).
+fn bit_differences(a: &Value, b: &Value) -> Vec<(usize, u32, u32)> {
+    let (wa, wb) = (fuller::wgsl::oracle::to_words(a), fuller::wgsl::oracle::to_words(b));
+    (0..wa.len().max(wb.len())).filter(|&i| wa.get(i) != wb.get(i)).map(|i| (i, wa.get(i).copied().unwrap_or(0), wb.get(i).copied().unwrap_or(0))).collect()
+}
 
 fn generated(device: &Device, n: usize, seed0: u64) -> Result<(), String> {
     let mut intended: BTreeMap<&str, usize> = BTreeMap::new();
     let mut reached: BTreeMap<String, usize> = BTreeMap::new();
-    let (mut agree, mut interp_differs, mut rebuilt_differs, mut errors, mut shared_programs, mut contracted_lanes, mut contracted_programs) = (0usize, 0usize, 0usize, 0usize, 0usize, 0usize, 0usize);
+    let (mut agree, mut interp_differs, mut rebuilt_differs, mut gate_refused, mut errors, mut shared_programs, mut non_finite_programs, mut non_finite_differs) = (0usize, 0usize, 0usize, 0usize, 0usize, 0usize, 0usize, 0usize);
+    let mut lanes = Lanes::default();
     let mut failures: Vec<String> = Vec::new();
     let mut all_notes: Vec<String> = Vec::new();
     for seed in seed0..seed0 + n as u64 {
@@ -142,19 +171,41 @@ fn generated(device: &Device, n: usize, seed0: u64) -> Result<(), String> {
         // An unused binding is not read back: keep its initial content.
         let interp = Interp::new(&kernel, &chromosomes, memory.clone(), Invocation::default()).and_then(|mut it| it.run(&entry).map(|_| it.memory));
         let roots: Vec<Vec<String>> = chromosomes.iter().map(|c| fuller::homeotic::unfold(&c.folded)).collect::<Result<_, _>>()?;
-        let rebuilt = round_trip(&kernel, &roots).and_then(|r| device.run(&r.wgsl, &entry, &memory, &binds));
+        // The structural gate is reported on its own; the rebuilt text runs
+        // on the device whether or not the gate accepted it.
+        if let Err(e) = round_trip(&kernel, &roots) {
+            gate_refused += 1;
+            all_notes.push(format!("seed {seed}: gate: {}", e.lines().collect::<Vec<_>>().join(" | ")));
+        }
+        let rebuilt = rebuild(&kernel, &roots).and_then(|r| device.run(&r.wgsl, &entry, &memory, &binds));
         let mut notes = Vec::new();
-        let mut program_contracted = 0usize;
         match interp {
             Err(e) => notes.push(format!("interp: {e}")),
             Ok(m) => {
                 for loc in ["buffer.out", "buffer.cnt", "buffer.ys"] {
-                    let (d, c) = lane_differences(m.get(loc).unwrap(), original.get(loc).unwrap(), Some(CONTRACTION_ULPS));
-                    program_contracted += c;
-                    if let Some((i, a, b)) = d.first() {
-                        notes.push(format!("interp {loc}[{i}]: interp 0x{a:08x} ({}), device 0x{b:08x} ({}); {} lanes", f32::from_bits(*a), f32::from_bits(*b), d.len()));
+                    let l = classify(m.get(loc).unwrap(), original.get(loc).unwrap());
+                    lanes.exact += l.exact;
+                    lanes.near += l.near;
+                    lanes.far += l.far;
+                    lanes.non_finite += l.non_finite;
+                    lanes.signed_zero += l.signed_zero;
+                    if let Some((i, a, b)) = l.differ.first() {
+                        notes.push(format!("interp {loc}[{i}]: interp 0x{a:08x} ({}), device 0x{b:08x} ({}); {} lanes", f32::from_bits(*a), f32::from_bits(*b), l.differ.len()));
                     }
                 }
+            }
+        }
+        // A program with a NaN or an infinity among its inputs: the device's
+        // fast math may fold `s - s` or `s / s` to a constant where the spec
+        // (and the interpreter) has NaN, and the result can flip a branch or
+        // an index; counted apart, not held to agree.
+        let non_finite = g.non_finite_inputs();
+        if non_finite {
+            non_finite_programs += 1;
+            if !notes.is_empty() {
+                non_finite_differs += 1;
+                all_notes.push(format!("seed {seed} (non-finite inputs): {}", notes.join("; ")));
+                notes.clear();
             }
         }
         let interp_bad = !notes.is_empty();
@@ -166,17 +217,13 @@ fn generated(device: &Device, n: usize, seed0: u64) -> Result<(), String> {
             }
             Ok(m) => {
                 for loc in ["buffer.out", "buffer.cnt", "buffer.ys"] {
-                    let (d, _) = lane_differences(m.get(loc).unwrap(), original.get(loc).unwrap(), None);
+                    let d = bit_differences(m.get(loc).unwrap(), original.get(loc).unwrap());
                     if let Some((i, a, b)) = d.first() {
                         rebuilt_bad = true;
                         notes.push(format!("rebuilt {loc}[{i}]: rebuilt 0x{a:08x}, original 0x{b:08x}; {} lanes", d.len()));
                     }
                 }
             }
-        }
-        contracted_lanes += program_contracted;
-        if program_contracted > 0 {
-            contracted_programs += 1;
         }
         if interp_bad {
             interp_differs += 1;
@@ -193,7 +240,8 @@ fn generated(device: &Device, n: usize, seed0: u64) -> Result<(), String> {
             }
         }
     }
-    println!("\ngenerated: {n} programs from seed {seed0}: {agree} agree three ways, {interp_differs} interpreter differs, {rebuilt_differs} rebuilt differs, {errors} failed to run; {shared_programs} programs share; {contracted_lanes} lanes in {contracted_programs} programs within {CONTRACTION_ULPS} ulps (contraction)");
+    println!("\ngenerated: {n} programs from seed {seed0}: {agree} agree three ways, {interp_differs} interpreter differs, {rebuilt_differs} rebuilt differs on the device, {gate_refused} refused by the structural gate, {errors} failed to run; {shared_programs} programs share; {non_finite_programs} programs have non-finite inputs, the interpreter differs on {non_finite_differs} of them (fast math, not counted)");
+    println!("interpreter lanes against the device: {} exact, {} within {NEAR_ULPS} ulps (contraction), {} within {FAR_ULPS} ulps, {} non-finite on one side (fast math), {} signed zero", lanes.exact, lanes.near, lanes.far, lanes.non_finite, lanes.signed_zero);
     for n in &all_notes {
         println!("  {n}");
     }

@@ -347,6 +347,73 @@ never folded into the expectation. `i32::MIN / -1` agrees with the spec
 possibly-zero integer therefore cannot be judged by the interpreter on
 this platform, only by the device.
 
+### The oracle, generated set (measured 2026-10-09)
+
+`src/wgsl/generator.rs` makes a small valid kernel from a seed: eight-lane
+buffers (`xs`, `ks` read; `out`, `cnt`, `ys` written; a uniform `n`),
+four locals, a pure helper, a helper that stores and one with a
+`ptr<function>` parameter, four to ten statements (stores, local stores,
+`let`s, `if`/`else`, bounded `for` loops, calls) and one to three repeat
+patterns aimed at a class each: a repeat under one version, across a
+store to its lineage, inside and after a loop that stores its lineage or
+leaves it alone, a `let` bound in an arm, the step-5 `let`, and (one
+program in five) indices past the end. A third of the programs carry a
+NaN, an infinity or `-0.0` in an input lane. Each program runs three
+ways, as the hand-written set does.
+
+`cargo run --release --features gpu,wgsl --example wgsl_oracle -- --generate 1000 --seed 1000`,
+Apple M3 Max (Metal), 2026-10-09:
+
+| programs | agree three ways | rebuilt text differs on the device | interpreter differs | structural gate refused | programs that share |
+|---|---|---|---|---|---|
+| 1,000 (seeds 1000–1999) | 1,000 | 0 | 0 | 0 | 944 |
+
+| class | programs that intended it | the decision's count |
+|---|---|---|
+| share | 850 | 944 programs share |
+| lineage differs | 587 | 1,826 refusals |
+| hoist (a loop-invariant repeat placed before the loop) | 288 | checked by the agreement |
+| the step-5 `let` | 290 | checked by the agreement |
+| out-of-range indices | 214 | checked by the agreement |
+| not admissible (a repeated root) | | 38 |
+
+Interpreter lanes against the device over the 1,000 programs: 23,627
+exact, 359 within 8 ulps, 8 within 64 ulps, 5 non-finite on one side
+only, 1 signed zero; 235 programs have non-finite inputs and the
+interpreter differs on none of them. The rebuilt text matched the
+original bit for bit on every lane of every program: the plan's
+"a thousand kernels with zero differences", with the refusal classes
+reached and counted.
+
+**Findings about this platform, from the first runs** (each one a
+difference the oracle reported, then traced):
+
+- **Fast math is on.** wgpu does not turn Metal's default fast math off,
+  so the device contracts `a * b + c` into one rounding (359 lanes within
+  8 ulps, 8 within 64 after a longer chain), folds `s - s` to `0.0` and
+  `s / s` to `1.0` whatever `s` holds, and `0.0 / x` to `0.0`: where the
+  spec and the interpreter say NaN, the device says a number, and a NaN
+  inside an index or a branch condition changes which lane is written
+  (seeds 1087, 1542 and 1691 of the earlier runs). The interpreter keeps
+  the spec; the generator keeps its own float formations NaN-free
+  (`sqrt(abs(x))`, `x / (abs(y) + 0.5)`) and leaves NaN to the inputs,
+  whose programs are reported apart.
+- **An out-of-range float to integer conversion is undefined in MSL**:
+  `u32(-1.35)` saturated to 0 at run time (the edge kernel) but was folded
+  to an arbitrary value when the compiler could see the operand (seed 5).
+  The generator clamps before converting; the edge kernel keeps the
+  run-time case.
+- **naga folds literal-only expressions on read.** A `let` bound to a
+  constant (`let w = f32(5u)`) is folded into its uses by naga, so the
+  rebuilt text spells `5.0 * 5.0 + 1.0`, which naga folds to `26.0` when
+  it reads the text back: the structural gate refused 13 such programs
+  whose device results were identical. The generator binds no `let` to a
+  constant expression; the gate stays as it is (necessary, not sufficient).
+
+With those three kept out of the generator's way, the residual
+differences are the contraction lanes, which the plan reserves for the
+numerical criterion of the arithmetic rewrites (step 5).
+
 ## What is built, what is not
 
 | piece | status |
@@ -367,7 +434,8 @@ this platform, only by the device.
 | `legality::decide` (`src/wgsl/legality.rs`; lineage plan step 2): one decision per repeat, placement per tail slot, refusals by reason | built 2026-10-09; the table above |
 | the reference interpreter (`src/wgsl/interp.rs`): the folded chromosome executed against the statement tree, definitions evaluated at their placements, WGSL semantics per naga op, `ReadZeroSkipWrite` indexing | built 2026-10-09; its edge cases (integer division and remainder by zero, `i32::MIN / -1`, masked shifts, wrapping, saturating float→int, IEEE float edges, NaN through `min`/`max`/`select`, ties-to-even `round`, out-of-range loads and stores) each pinned by a hand-computed test; device agreement is the oracle's job |
 | the oracle's hand-written set (`kingdoms/wgsl/oracle/`, `src/wgsl/oracle.rs`, `examples/wgsl_oracle.rs`): ten kernels with expected outputs written by hand, run three ways on the device | built 2026-10-09: 10 of 10 agree (original, rebuilt text, interpreter) on Apple M3 Max; one platform deviation found and recorded (below) |
-| the oracle's generator (random kernels over the refusal classes), placement in the rebuild, mutations, the evaluator (lineage plan steps 3–6) | not started |
+| the oracle's generator (`src/wgsl/generator.rs`; `wgsl_oracle --generate N --seed S`): seeded random kernels that reach the refusal classes on purpose, run three ways | built 2026-10-09: 1,000 of 1,000 from seed 1000 agree (below) |
+| placement in the rebuild, arithmetic mutations, the compile-and-time evaluator (lineage plan steps 4–6) | not started |
 | the scaffold-with-holes chromosome and its decoder (phylu) | not started |
 | compile-run-time evaluation path with the correctness gate (phylu) | not started |
 | first target: one of our own kernels, read in, round-tripped, then evolved for time | not started |

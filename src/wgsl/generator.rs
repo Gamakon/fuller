@@ -43,6 +43,15 @@ pub struct Generated {
     pub n: u32,
 }
 
+impl Generated {
+    /// Whether an input lane is NaN or infinite: the device's fast math
+    /// assumes neither, so the interpreter (which follows the spec) is
+    /// compared on these programs but not held to agree.
+    pub fn non_finite_inputs(&self) -> bool {
+        self.xs.iter().chain(self.ys.iter()).any(|x| !x.is_finite())
+    }
+}
+
 /// xorshift64*, enough for a generator that must only be deterministic.
 pub struct Rng(u64);
 
@@ -108,6 +117,19 @@ impl Gen {
             scope.push(name.clone());
         }
         name
+    }
+
+    /// A `let` must not be bound to a constant expression: naga folds such a
+    /// let into its uses, the reader then sees literal-only operator
+    /// applications (`5.0 * 5.0 + 1.0`), and naga folds THOSE when it reads
+    /// the rebuilt text back (`26.0`), so the structural gate refuses a
+    /// kernel the device runs identically. A literal initialiser gets `t`.
+    fn nonconst(&self, e: String) -> String {
+        if is_const(&e) {
+            format!("({e} + t)")
+        } else {
+            e
+        }
     }
 
     fn uidx(&mut self) -> String {
@@ -182,8 +204,13 @@ impl Gen {
             0 => format!("({a} + {b})"),
             1 => format!("({a} - {b})"),
             2 => format!("({a} * {b})"),
-            3 => format!("({a} / {b})"),
-            4 if !is_literal(&a) => format!("sqrt({a})"),
+            // No NaN of the program's own making (`x / 0.0`, `sqrt(-x)`):
+            // Metal's fast math folds `s / s` and `s - s` to constants whatever
+            // s holds, so a NaN that the spec produces and the device does not
+            // is a known class, not a representation fault; the generator
+            // keeps its own expressions NaN-free and leaves NaN to the inputs.
+            3 => format!("({a} / (abs({b}) + 0.5))"),
+            4 if !is_literal(&a) => format!("sqrt(abs({a}))"),
             4 => format!("sqrt(abs({a}) + t)"),
             5 => format!("abs({a})"),
             6 => format!("min({a}, {b})"),
@@ -246,6 +273,7 @@ impl Gen {
             }
             6 => {
                 let v = self.fexpr(2);
+                let v = self.nonconst(v);
                 let l = self.fresh_let();
                 self.line(format!("let {l} = {v};"));
             }
@@ -355,6 +383,7 @@ impl Gen {
                 // after the join; the arm's repeat shares, the join's not.
                 let c = self.bexpr();
                 let v = self.fexpr(1);
+                let v = self.nonconst(v);
                 self.line(format!("if {c} {{"));
                 self.indent += 1;
                 self.line(format!("let w = {v};"));
@@ -386,6 +415,16 @@ impl Gen {
             }
         }
     }
+}
+
+/// Whether an expression text reads no variable (so naga folds it): every
+/// identifier in it is a function name or a type.
+fn is_const(e: &str) -> bool {
+    // A call to the helper is never folded, so it counts as a variable.
+    const NOT_VARIABLES: &[&str] = &["sqrt", "abs", "min", "max", "select", "clamp", "f32", "u32", "u", "e"];
+    !e.split(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .filter(|tok| !tok.is_empty() && tok.chars().next().is_some_and(|c| c.is_ascii_alphabetic()))
+        .any(|tok| !NOT_VARIABLES.contains(&tok))
 }
 
 /// Generate the program for `seed`.
@@ -460,6 +499,26 @@ mod tests {
     use super::*;
     use crate::wgsl::chromosome::{chromosome, ChromosomeOptions};
     use crate::wgsl::reader::read;
+
+    #[test]
+    fn a_let_initialiser_is_never_a_constant_expression() {
+        assert!(is_const("f32(5u)"));
+        assert!(is_const("abs(1.42)"));
+        assert!(is_const("-0.45"));
+        assert!(!is_const("(5.0 + t)"));
+        assert!(!is_const("xs[(acc & 7u)]"));
+        assert!(!is_const("pure2(l1, 2.0)"));
+        assert!(!is_const("pure2(2.08, 1.33)"), "a call is not folded");
+        for seed in 1..=200 {
+            let g = generate(seed);
+            for line in g.source.lines() {
+                if let Some(rest) = line.trim().strip_prefix("let ") {
+                    let init = rest.split_once('=').map(|(_, v)| v.trim().trim_end_matches(';')).unwrap_or("");
+                    assert!(!is_const(init), "seed {seed}: {line}");
+                }
+            }
+        }
+    }
 
     #[test]
     fn generated_programs_parse_validate_read_and_fold_and_the_classes_are_reached() {
