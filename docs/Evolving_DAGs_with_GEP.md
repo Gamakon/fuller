@@ -1,5 +1,17 @@
 # Evolving DAGs with GEP
 
+> **Superseded (2026-10-09).** The current design is
+> `docs/PLAN_population_dag.md` (§1, §2d): the population table holds two row
+> kinds, ordinary chromosomes and homeotic chromosomes (population-wide shared
+> definitions with a stable row id, a root type, memoised row values and a
+> referrer count); an href names a homeotic row by its stable id, never a tail
+> position; Fold is a variation operator that adds definitions, rewrites
+> ordinary chromosomes to reference them and re-sorts the homeotic tail by
+> use; execution follows a level schedule. FoldToDag did NOT replace the
+> homeotic design: `docs/Geneframe_Homeotic_Genes_design.md` (revision 4, §8)
+> is current, and §6 below is kept as history. This document's text is
+> unchanged below.
+
 Status: design discussion, no code written. Captures a conversation; supersedes
 the framing in `Geneframe_Homeotic_Genes_design.md` where the two disagree (see
 §6).
@@ -256,6 +268,10 @@ multiple simultaneous substitutions sharing one underlying definition — an
 open implementation question, not a precedent phylu already answers.
 
 ## 6. Where this supersedes the homeotic-gene design
+
+*Note (2026-10-09):* this section's claim is reversed. The homeotic design,
+made population-wide in `Geneframe_Homeotic_Genes_design.md` §8 and
+`PLAN_population_dag.md` §1, is current; FoldToDag did not replace it.
 
 `Geneframe_Homeotic_Genes_design.md` proposed `REF_0..REF_{G-1}` — a fixed
 terminal family where gene *i* may only reference gene *j < i*. That design is

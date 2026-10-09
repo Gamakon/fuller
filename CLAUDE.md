@@ -30,6 +30,10 @@ cargo run --release --bin parity -- parity/corpus/*.jsonl   # SymPy-parity score
 - `src/physics.rs` — `generate()`: pure one-to-many physics-prior mutation GENERATOR (NO eval/score). Tags candidates `speculative` (caller must extrapolation-gate those).
 - `src/snap.rs` — constant snapping (π/e/√2/G… within tol → symbol annotation; Math stays pure-numeric).
 - `src/geneframe.rs` — the **nucleotable data model, owned here**: master `SymbolTable`, typed many-hot arity, kingdom = a query. The direction the symbol/pset layer migrates toward.
+- **The geneframe holds two row kinds** (design 2026-10-09, `docs/PLAN_population_dag.md`): ordinary chromosomes and homeotic chromosomes (population-wide shared definitions with a stable row id, a root type, memoised row values and a referrer count). An href names a homeotic row by its stable id, never a position in the homeotic tail. Fold is a variation operator: it adds definitions, rewrites ordinary rows to reference them and re-sorts the homeotic tail by use; execution follows a separate level schedule (a definition after everything it references). The memoised top of the homeotic tail is the expressed frame. Determinism is a tested contract: values bit-identical with homeotic rows present or stripped.
+- `src/population_dag.rs` — the population DAG on the host (plan task 3): hash-consed nodes, homeotic rows, memos keyed by node, data version, type and input binding, level schedule, nothing evicted. The device arena (variant B in phylu) is not built.
+- `src/homeotic.rs` — the earlier per-chromosome homeotic tail (fold of a chromosome's shared subtrees into tail slots, encode back to Karva). Its slot-addressed href is superseded by the stable-row-id href of the population design; see its module header.
+- `src/wgsl/` — the WGSL kingdom (feature `wgsl`): naga reader cutting a kernel at its effects into a chromosome over `kingdoms/wgsl` tables, scaffold, interpreter, oracle, mutation, rebuild.
 - `src/parity.rs` + `src/bin/parity.rs` — SymPy-parity scorer, **per-family** (`Family::Algebra|Rational|Trig`).
 - `src/python.rs` — PyO3: `denoise`, `denoise_karva`, `physics_mutate`, `physics_mutate_karva`, `master_pset`.
 - `parity/` — `gen_corpus.py` (offline sympy→Math corpus), `label_corpus.py` (offline family-labeler for the classifier), `corpus/*.jsonl`.
@@ -57,7 +61,8 @@ Against frozen SymPy corpora (`parity/corpus/*.jsonl`, generated offline; sympy 
 
 ## In flight
 
-- **Simplify-corpus instrumentation** merged in `hff/` (env-gated `GAMAK_SIMPLIFY_CORPUS`) — captures real before→after sympy edits on the SRBench sweep. `parity/label_corpus.py` labels them by family → train a **kingdom classifier** (the learned router that picks which rule family to load, dodging the non-confluence problem). Waiting on the near-miss re-sweep to emit the corpus.
+- **The population DAG programme** (`docs/PLAN_population_dag.md`, ahead of the WGSL superoptimiser): tasks 1–3 measured (63 % of subtree occurrences repeated within a generation; 72 % of repeated subtrees survive a generation; the shared DAG does a third of an interpreter's operator evaluations, a quarter with memos). Next: variant B in phylu (Fold in the generation loop, the device arena, checkpoints carrying homeotic rows), then the banded compiler restricted to stable definitions, then the paired A/B/C experiment.
+- Earlier item, status not re-checked 2026-10-09: **Simplify-corpus instrumentation** merged in `hff/` (env-gated `GAMAK_SIMPLIFY_CORPUS`) — captures real before→after sympy edits on the SRBench sweep. `parity/label_corpus.py` labels them by family → train a **kingdom classifier** (the learned router that picks which rule family to load, dodging the non-confluence problem). Waiting on the near-miss re-sweep to emit the corpus.
 
 ## Workflow & memory
 

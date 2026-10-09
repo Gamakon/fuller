@@ -22,6 +22,20 @@ as the one to build from. The two disagree on the homeotic-gene design
 (`Geneframe_Homeotic_Genes_design.md`) — v2's view, like v1's, is that
 `FoldToDag` replaces it; see Open questions.
 
+**Correction (2026-10-09).** FoldToDag did NOT replace the homeotic design.
+The current design is `docs/PLAN_population_dag.md` (§1, §2d), stated in
+`Geneframe_Homeotic_Genes_design.md` revision 4, §8, which is current over
+this document where they differ. The genotype gains a second row kind: the
+population table holds ordinary chromosomes and homeotic chromosomes
+(population-wide shared definitions with a stable row id, a root type,
+memoised row values and a referrer count). An href names a homeotic row by
+its stable id, never a tail position. Fold is a variation operator that adds
+homeotic rows, rewrites ordinary chromosomes to reference them (value-
+preserving, so the rewrite is in place, not a second candidate) and re-sorts
+the homeotic tail by use. Execution follows a level schedule. The two
+equivalences of §1, the evidence of §5 and the `relevel` mechanics of §4
+remain true.
+
 **Why.** DAG-shaped reuse of subcomputations is Thomas Neumann's lifelong
 subject in query optimization (Neumann & Moerkotte, CSRD 2009,
 `docs/PAPER_neumann_moerkotte_dag_query_plans.pdf`), and the same two ideas he
@@ -183,6 +197,10 @@ it uses to perform the edit is exactly what `FoldToDag` needs:
   population as a new, unevaluated candidate next to the untouched original,
   and the tournament decides which survives (`engine.rs:5753`). `FoldToDag`
   should do the same.
+  *Correction (2026-10-09):* true of the constant fold, not of the share
+  Fold. A share fold is value-preserving, so Fold rewrites ordinary
+  chromosomes in place to reference homeotic rows (`PLAN_population_dag.md`
+  §1).
 
 What `relevel` does not yet cover: a magic-symbol reference needs the shared
 definition's free leaves carried along as live argument slots at the
@@ -226,7 +244,9 @@ either law (§2.1).
    subtrees, or was that just true of the two laws tested?
 4. `Geneframe_Homeotic_Genes_design.md`'s `REF_j` mechanism assumed a fixed
    per-chromosome reference direction (gene *i* may reference only gene
-   *j < i*) and no new symbol table. `FoldToDag` + `magic_table` replaces
+   *j < i*) and no new symbol table. *Answered 2026-10-09: no, it does not
+   replace it; the homeotic design, made population-wide, is current
+   (`PLAN_population_dag.md` §1).* `FoldToDag` + `magic_table` replaces
    that design rather than extending it — confirm this is the intended
    direction before any of its still-useful observations (karva round-trip
    stays bidirectional; `GeneLinker`'s subset exclusion already handles

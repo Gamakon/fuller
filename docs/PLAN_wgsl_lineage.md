@@ -231,6 +231,22 @@ the scaffold", not "definitions evaluated up front". The chromosome records
 placement per tail slot; the device decode of the chromosome is unchanged
 (placement is scaffold metadata the rebuild consumes).
 
+**Under the population design (2026-10-09, `docs/PLAN_population_dag.md`).**
+The per-chromosome tail slot this section places is superseded as the unit
+of sharing: a shared definition becomes a homeotic chromosome, a row of the
+population table with a stable row id (an href names that id, never a slot
+or a position in the homeotic tail), a root type, memoised row values and a
+referrer count. Placement stays what it is here, scaffold metadata, but it
+is carried on the homeotic row, and the `src/homeotic.rs` row of the §5
+table reads accordingly: per-row placement, not per-slot. The lineage this
+plan computes becomes part of the memo key: a memo is keyed by node, data
+version, root type and input binding, and for kernels the input binding
+includes the (location, version) lineage, so two definitions equal in text
+but differing in lineage are two homeotic rows and two memos. Execution
+order is the level schedule (a definition after everything it references),
+separate from the use order of the homeotic tail; for a kernel, placement
+decides where in the scaffold a level's definition is emitted.
+
 **E-graph: effect-qualified identities, not lineage checked later.** A
 memory-dependent expression never enters an unrestricted equivalence
 class: a load is the term `(Load loc version)` with its version as part of

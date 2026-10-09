@@ -12,6 +12,20 @@
 //!
 //! Types (the many-hot arity columns, base set — extensible per kingdom):
 //! S(tring) I(nteger) F(loat) B(oolean) A(rray) L(ist).
+//!
+//! Two row kinds (design 2026-10-09, `docs/PLAN_population_dag.md` §1, not
+//! yet built here): the population table holds ordinary chromosomes and
+//! homeotic chromosomes. A homeotic chromosome is one population-wide shared
+//! definition: a gene tree with a stable row id assigned when it is interned,
+//! a root type (its dual, so a reference is type-checked by the typed
+//! projection like a terminal), memoised row values and a referrer count.
+//! Ordinary genes reference it by href, and an href names the stable id,
+//! never a position in the homeotic tail. Fold is a variation operator that
+//! adds homeotic rows, rewrites ordinary rows to reference them and re-sorts
+//! the homeotic tail by use; execution follows a separate level schedule (a
+//! definition after everything it references). The memoised top of the
+//! homeotic tail is the expressed frame. The symbol table above is unchanged
+//! by this: it types both row kinds.
 
 use std::collections::BTreeMap;
 

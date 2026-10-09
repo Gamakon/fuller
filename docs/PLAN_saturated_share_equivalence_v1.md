@@ -21,6 +21,23 @@ gating, block-and-re-extract, chromosome-level fold/no-fold gate, GENEREF
 write-back) are a later increment (`phylu/docs/PLAN_saturated_fold_cost_gating.md`),
 once steps 1–3 are built and measured.
 
+### How this sits in the population DAG design (2026-10-09)
+
+The agreed design is `docs/PLAN_population_dag.md` (§1, §2d). The population
+table holds two row kinds, ordinary chromosomes and homeotic chromosomes
+(population-wide shared definitions with a stable row id, a root type,
+memoised row values and a referrer count). Fold is a variation operator that
+adds homeotic rows, rewrites ordinary chromosomes to reference them by stable
+id, and re-sorts the homeotic tail by use; execution follows one level
+schedule for the whole population. In that design `maximal_shared_saturated`
+keeps exactly the job this plan built it for: it supplies candidate
+equivalences, exact and after rewriting, that Fold may turn into homeotic
+rows. The per-chromosome steps 4–9 it hands to
+`phylu/docs/PLAN_saturated_fold_cost_gating.md` (second dispatch, chromosome
+gate, per-chromosome GENEREF write-back) are superseded there by the
+population-wide level schedule; the chosen forms it returns become homeotic
+row text, typed by their root dual.
+
 ### Implementation status
 
 Steps 1-4 (the `share` ruleset, `extract_dag.rs`'s extractor, `extract.rs`'s

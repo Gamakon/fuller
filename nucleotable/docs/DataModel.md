@@ -293,6 +293,23 @@ CREATE TABLE geneframe (
 );
 ```
 
+**Two row kinds (design 2026-10-09, fuller `docs/PLAN_population_dag.md`, not
+built in this schema).** The population table holds ordinary chromosomes and
+homeotic chromosomes. A homeotic chromosome is one population-wide shared
+definition, a gene tree that ordinary genes reference by href; it persists
+across generations and individuals, so it is not keyed by `individual_id`.
+The schema above gains, per chromosome: a row-kind column (ordinary or
+homeotic); for a homeotic row, a stable row id assigned when it is interned
+and kept for its life (an href names this id, never a `gene_seq_id` or a
+position in the homeotic tail), its root type (one of §2's typed columns, so
+a reference is type-checked like a terminal), its referrer count, its use
+rank and its level (one more than its deepest referenced definition, the
+execution order); and a memo slot holding its row values with the data
+version they were computed on. The use rank orders the homeotic tail; the
+level orders evaluation; the two are kept apart. The memoised top of the
+homeotic tail is the expressed frame. The `ishead` column above keeps its
+Karva meaning (head or tail region of one gene) and is unrelated.
+
 ---
 
 ## 4. MaxArity and TailLength

@@ -230,17 +230,18 @@ live loop; "not started" means a design exists at most.
 | TSR re-expressed through the projection decoder | not started | one typing mechanism for every kingdom; today the ladder is a fixed rule the device applies and the table only checks |
 | Cohort tournaments (ALPS reformulated), two islands, random immigrants | built | protection of young lines without a layered population |
 | Editors in the live loop: simplify, snap, typed snap (shape library), beam (functional wraps fitted by least squares), fold (constant collapse, off by default) | built | compact models with recognisable constants; the fold's cost on the device fell from 155 ms to 4 ms a beat |
-| Share editor (saturated share-equivalence, DAG extraction, calibrated cost gate) | partial: built and measured, not scheduled in the live loop | shared subexpressions executed once when they pay; a per-individual executed-cost figure for parsimony |
+| Share editor (saturated share-equivalence, DAG extraction, calibrated cost gate) | partial: built and measured, not scheduled in the live loop; under the population design its saturation supplies candidate equivalences to Fold | shared subexpressions executed once when they pay; a per-individual executed-cost figure for parsimony (note: `Geneframe_Homeotic_Genes_design.md`'s "no parsimony" is current; the executed cost is a sensor, never a fitness column) |
+| Population DAG: homeotic chromosomes as a second row kind of the population table (population-wide shared definitions with a stable row id, a root type, memoised row values and a referrer count); Fold as a variation operator that adds definitions, rewrites ordinary chromosomes to reference them by href and re-sorts the homeotic tail by use; execution by level schedule (`docs/PLAN_population_dag.md`) | designed, not built in the engine; host-side DAG, memo keys and level schedule built in fuller (`src/population_dag.rs`) and measured | sharing across the whole population: on a real unsolved population 63 % of subtree occurrences are repeated, 72 % of repeated subtrees survive a generation, and the shared DAG does a third of an interpreter's operator evaluations, a quarter with memos |
 | Counted repetition on the device decoder | partial: table rows and host expansion exist, withheld from device initialisation and variation | regular expressions with `{n,m}` and the Integer type drawable |
-| Nested folding (a shared definition that itself contains a reference) | not started | deeper sharing |
-| Checkpoint and bit-exact resume (counter-based random draws, periodic by seconds) | built | the official SRBench protocol, which is 1,330 runs of up to eight hours, about a month of one GPU, run in pieces |
+| Nested folding (a shared definition that itself contains a reference) | built in phylu's per-level dispatch (arity four, nesting, `PLAN_arbitrary_arity.md`); in the population design nested definitions are homeotic rows ordered by level | deeper sharing |
+| Checkpoint and bit-exact resume (counter-based random draws, periodic by seconds) | built; under the population design a checkpoint must also carry the homeotic rows (not yet) | the official SRBench protocol, which is 1,330 runs of up to eight hours, about a month of one GPU, run in pieces |
 | Telemetry stream and watchers (one append-only stream; progress, chart, genealogy, two-dimensional map of the population) | built | a run that can be read while it runs |
 | Run card with every switch and the git commit baked in | built | every number traceable to a configuration |
 | Synthetic rows as objectives (SMOGD, SMOTE) | built, off in reported runs | selection on data the search has not seen |
 | Stream-order ceiling (Horton–Strahler) as a law-likeness sensor | built as a sensor; lost as a hard rule, off | ranking column |
 | Multi-seed statistics; the official SRBench protocol | partial: one official run begun and stopped | a reportable benchmark number |
 | Multi-GPU islands | not started: no code, no plan | populations of millions; one island per device |
-| Replacement dictionary across runs (data-discovered pattern to replacement pairs that persist) | not started | learning across problems, not just within a run |
+| Replacement dictionary across runs (data-discovered pattern to replacement pairs that persist) | not started; in the population design it is the homeotic tail persisted across runs (saving the table) | learning across problems, not just within a run |
 | Typed snap shape library beyond physics (power laws, growth and saturation, distributions, periodic, engineering) | partial: 11 physics shapes | symbolic regression for every science, not Feynman's |
 | Kingdom classifier (the learned router that picks which rewrite family to load) | not started: corpus instrumentation exists | rewriting that scales past the non-confluence of rule families |
 
@@ -389,7 +390,10 @@ registered.)* An enterprise's Spark SQL views are a registry of explain plans.
 An individual is a chromosome whose genes select plans from that registry and
 combine them; the view identifiers are typed terminals of type Relation, the
 head holds the share and join operators, and a shared intermediate is a gene
-reference the share editor already writes. Selection of *which* views to pull
+reference the share editor already writes; in the population design
+(`docs/PLAN_population_dag.md`) that intermediate is a homeotic row of the
+population table, named by a stable row id and shared by every individual
+that uses it. Selection of *which* views to pull
 together and *how* to share them is therefore one search, exactly as the
 regular-expression kingdom's constant slot selects which field a gene matches.
 Mutation is of two sound kinds: the share editor's fold, which exposes
@@ -457,7 +461,12 @@ domain with use. Waits on the dictionary.
   problem.
 - **The share editor's economics.** The calibrated gate refuses every fold at
   the measured repeat rate. If that holds at longer heads and other kingdoms,
-  shared execution is a parsimony sensor and not a speed-up.
+  shared execution is a parsimony sensor and not a speed-up. That gate is
+  per chromosome; across the whole population the repeat rate is far higher
+  (63 % of subtree occurrences repeated on `strogatz_predprey1`), which is why
+  sharing moves population-wide in `docs/PLAN_population_dag.md`. If the
+  population DAG's decisive experiment (that plan's §4) shows no saving on the
+  device, sharing is a sensor there too.
 
 ---
 

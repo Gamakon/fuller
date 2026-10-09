@@ -274,6 +274,9 @@ a higher index than its parent, so one backward scan visits children first.
 Constraint: a rewritten form must decode into its gene's head length or it is
 dropped and counted (`n_oversized`, BUILT in `denoise_karva_candidates_batch`).
 
+For the population-wide shared definitions (homeotic rows) and the shared
+node arena they decode into, see the paragraph at the end of §6a.
+
 ## 4. Kernels
 
 | # | Kernel | Work item | Status |
@@ -424,6 +427,25 @@ population -> K1 facts -> K2 match -> K3 apply -> K4 fold -> K5 evaluate -> scor
   device), `f64_replay_mismatch` (the CPU f64 re-derivation disagrees with the
   device's f32 form), `encode_error`. Nothing is dropped or substituted
   silently. A form used for reporting or write-back is always the CPU f64 one.
+
+**Under the population design (2026-10-09, `docs/PLAN_population_dag.md`).**
+The pipeline above treats each individual alone. The design the engine moves
+to adds a second row kind to the population: homeotic chromosomes,
+population-wide shared definitions, each with a stable row id, a root type,
+memoised row values and a referrer count. For §3's layout this means the
+device decodes homeotic rows into one shared node arena and an ordinary
+gene's GeneRef leaf names a homeotic row by its stable id (never a position
+in the homeotic tail); the level-order rule within a gene is unchanged.
+For this section it means K5 evaluates every homeotic row once per data
+version, by the level schedule (a definition after everything it
+references), before the ordinary rows that read it, and a row whose memo key
+(node, data version, root type, input binding) matches is not recomputed. The
+share Fold, which adds definitions, rewrites ordinary rows to reference them
+and re-sorts the homeotic tail by use, is a variation operator before K5; it
+is distinct from K4's constant fold. The memoised top of the homeotic tail is
+the expressed frame. A homeotic row changes whether a value is recomputed,
+never what it is: the determinism test asserts bit-identical scores with
+homeotic rows present or stripped.
 
 ## 7. What is lost against egglog
 

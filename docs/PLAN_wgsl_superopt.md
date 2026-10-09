@@ -103,8 +103,8 @@ decision in `legality.rs` or by a rule stated here and tested.
 ## 3. The genotype and the search
 
 - **One DAG, not one text per variant.** The population of variants is
-  held as one hash-consed DAG of the kernel's roots (the §7 requirement
-  applied here): a genotype is a delta against it, the fold and the
+  held as one hash-consed DAG of the kernel's roots (the population DAG
+  requirement, now `docs/PLAN_population_dag.md` §1, applied here): a genotype is a delta against it, the fold and the
   decision are maintained, and only the rebuild to text and the compile
   are per variant, because the compiler needs text.
 - **Inventory.** For a kernel, the list of legal moves (§2.1–2.4) with a
@@ -150,10 +150,12 @@ have already happened.
 
 The winning genotype on three laws (`feynman_I_29_16` and two others
 phylu names) and three engine seeds, 300 generations each, the decode
-pass time against shipped with the spread; the override sweep's golden
-checksum on each; the generated-code diff for one. A reproducible 10 %
-means: on every law and seed, the median decode pass is at least 10 %
-below shipped and the two spreads do not overlap.
+pass time against shipped as paired, randomised measurements with
+confidence intervals (§8: same inputs, the two variants in random order per
+repeat, ten repeats); the override sweep's golden checksum on each; the
+generated-code diff for one. A reproducible 10 % means: on every law and
+seed, the paired difference in decode pass time is at least 10 % of
+shipped, with its confidence interval wholly beyond 10 %.
 
 ## 6. Order, as tasks
 
@@ -183,7 +185,8 @@ launched only by the fuller session, announced, under nohup with a log.
    per generation into the KERNEL_TIME line of `kernel_time.rs`;
    fuller's `Device::time` gains the same for the oracle's kernels.
    Measure: decode's median pass time and the spread over three shipped
-   runs, plus subtree reuse per generation (for §7). Done when the three
+   runs, plus subtree reuse per generation (for `docs/PLAN_population_dag.md`,
+   where it was measured as that plan's task 1, §2a). Done when the three
    runs and their spread are in the README with wall-clock times.
 2. **Read docs/Rules.md, then: loop-invariant motion and memory access
    as legal moves.** Purpose: the moves the compiler cannot make, since
@@ -229,11 +232,12 @@ launched only by the fuller session, announced, under nohup with a log.
    the diff and its reading are in the README.
 7. **Read docs/Rules.md, then: validation.** Purpose: reproducible means
    across workloads and seeds. Architecture: §5, three laws, three
-   seeds, 300 generations each, shipped against the winner, spreads
-   sized, the override sweep's golden checksum on each. Done when the
-   table shows the decode pass at least 10 % below shipped on every law
-   and seed with non-overlapping spreads, or states by how much it
-   falls short.
+   seeds, 300 generations each, shipped against the winner as paired,
+   randomised measurements with confidence intervals (§8), the override
+   sweep's golden checksum on each. Done when the table shows the decode
+   pass at least 10 % below shipped on every law and seed, the confidence
+   interval of the paired difference wholly beyond 10 %, or states by how
+   much it falls short.
 8. **Read docs/Rules.md, then: the incremental population** is
    `docs/PLAN_population_dag.md`, which runs first; this plan's tasks
    1–7 follow its decisive experiment.

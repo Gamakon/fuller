@@ -139,6 +139,12 @@ last, so depth is unbounded and found by selection. Sequencing: fuller phase 1 o
 that plan (node semantics, `Op::arity`, `Ty::code()`, generated fallback)
 is built first, in this crate, and this reader builds on it.
 
+> **Current (note 2026-10-09).** This per-level dispatch, arity up to four
+> and nested definitions are what is built (phylu 6fa2e4f8, step 4 below).
+> phylu's `README.md` §Homeotic genes and the GECCO paper
+> (`papers/geneframe-gecco.tex`, the two-pass evaluation) still describe one
+> or two ordered passes and arity two; they are the stale side.
+
 ### 2b. Literals carry their dual (decision)
 
 `(Num v)` cannot rebuild `Literal::U32` against `F32` or `Bool`. A literal
@@ -201,6 +207,10 @@ dual, `(select.scalar_cond c a b)` round-trips at arity 3, the tail rule is
     then the cap is removed and depth is read off the population (tail
     slots read per individual, longest reference chain), decided by
     selection, not set.
+    *Note 2026-10-09: the depth-1 cap here is superseded; the per-level
+    dispatch of §2a is built and nesting is unbounded, which is current
+    (the cap-at-1 entries in the review findings and the depth-1 test
+    below are history).*
   - Every `Node` is rendered as `(class.instance child …)` using
     `functions.tsv`'s naga column in reverse (naga node → `class.instance`,
     e.g. `Binary::Add` on `f32` → `arith.add`); leaves as `(Var "load.buf@i")`
@@ -245,6 +255,20 @@ dual, `(select.scalar_cond c a b)` round-trips at arity 3, the tail rule is
   length, and returns per-gene head requirement from the encoder's
   `oversized` flag at a sweep of head lengths (8, 12, 16, 24, 32).
 
+**Under the population design (2026-10-09, `docs/PLAN_population_dag.md`).**
+The per-chromosome `homeotic::fold` and its tail slots above are what the
+reader builds today, and they stay correct for reading one kernel. The
+design the engine moves to puts shared definitions in the population, not
+in each chromosome: a homeotic chromosome is a population-wide definition
+with a stable row id, a root type (its dual), memoised row values and a
+referrer count, and an href (the GeneRef leaf, `FN_ID_GENE_REF` 47) names
+that id, never a slot or a position in the homeotic tail. For this kingdom
+a population of kernel variants then shares the scaffold's definitions as
+homeotic rows, Fold adds and rewrites them and re-sorts the homeotic tail
+by use, and execution follows the level schedule of §2a (a definition after
+everything it references). Placement and lineage (`PLAN_wgsl_lineage.md`)
+become metadata and memo-key components on the homeotic row.
+
 ### 5. `examples/wgsl_read_kernel.rs`
 
 `cargo run --release --features wgsl --example wgsl_read_kernel -- <kernel.wgsl> [--tail 8] [--head 16]`
@@ -277,7 +301,7 @@ dual (§2b); the load-sharing rule and its survival count (§4); structural
 equality as the gate, device run as the proof, per-block comparison (§4
 scaffold); operands re-emitted locally and the cross-block negative test
 (§4, verification); calls as argument roots with `CallResult` leaves (§4);
-tail depth capped at 1 (§4); roots over 64 nodes reported (§5); instance
+tail depth capped at 1 (§4); [superseded: unbounded nesting by level is current, see §2a's note] roots over 64 nodes reported (§5); instance
 count after expansion printed by the loader (§2); duals and templates used,
 opaque by slot and sidecar coverage in the report (§5). Three of these (1, 2,
 9 in the review) are phylu-shape decisions and are written here as such.

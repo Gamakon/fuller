@@ -32,6 +32,18 @@ It extends classical GEP with:
 - **SQL-native evolution** — initial population generation, mutation, crossover, and fitness evaluation are all SQL queries over DuckDB. No objects in memory; populations are relational rows.
 - **Botji addressing** — every gene has a four-part hierarchical address (`population/generation/individual/chromosome`) that uniquely identifies it in the corpus.
 
+**Two row kinds (design 2026-10-09, fuller `docs/PLAN_population_dag.md`).** The
+geneframe as adopted into fuller holds ordinary chromosomes and homeotic
+chromosomes: population-wide shared definitions, each with a stable row id, a
+root type, memoised row values and a referrer count. Ordinary genes reference
+a definition by href, which names the stable id, never a position in the
+homeotic tail. Fold, a variation operator beside mutation and crossover, adds
+definitions, rewrites ordinary rows to reference them and re-sorts the
+homeotic tail by use; evaluation follows a level schedule, a definition after
+everything it references. The population is then its own cache, with no
+kingdom-specific one: a thousand SQL statements over the same tables share
+scans, filters and joins as homeotic rows, as SR genes share subtrees.
+
 ---
 
 ## The OODA Intelligence Loop

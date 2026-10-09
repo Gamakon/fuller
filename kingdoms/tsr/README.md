@@ -108,6 +108,18 @@ long after the kernel has filled the row), and a typed refusal is **not** what
 the engine reports as `oversized` (that is a gene that decoded and was too
 big).
 
+**Shared definitions under the population design** (2026-10-09,
+`docs/PLAN_population_dag.md`, not built). When a population's repeated
+subtrees become homeotic chromosomes, population-wide definitions with a
+stable row id, a root type, memoised row values and a referrer count, the
+root type in this kingdom is the definition's depth rung, `F`, `T1` or `T2`.
+A reference to a homeotic row is type-checked like a terminal of that rung,
+so Fold cannot hide depth: `exp` applied to a reference to a `T2` definition
+has no signature, exactly as it has none when the subtree is written out, and
+the depth rule holds across the href. A definition's level in the level
+schedule (one more than its deepest referenced definition) is an execution
+order, not a transcendental depth; the two are separate numbers.
+
 ## Status
 
 **Built, tested and measured.** Full results and their caveats in

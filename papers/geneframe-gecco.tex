@@ -55,7 +55,10 @@ reformulate the age-layered population structure as a cohort preference. The
 rewriting system supplies in-search editors built on equality saturation:
 simplification, constant snapping, and a new editor that finds subexpressions
 shared across the genes of one chromosome, including sharing visible only after
-rewriting. On this architecture we run three kingdoms. Untyped symbolic
+rewriting; we also set out, as design measured on the host but not yet built into
+the device loop, its extension to the whole population, in which shared
+definitions are homeotic chromosomes, rows of the population table executed by a
+level schedule. On this architecture we run three kingdoms. Untyped symbolic
 regression is the single-type special case and decodes byte-for-byte as before.
 Transcendental symbolic regression (TSR) gives the same operators a type that
 records transcendental depth, so that a transcendental nested more than two deep
@@ -147,7 +150,10 @@ willsey2021egg,egglog}, re-encoded into a valid typed gene, and returned to the
 population for the tournament to judge. Three editors are built on this
 template: simplification, constant snapping, and a shared-subexpression editor
 that finds, across the genes of one chromosome, subtrees that are equal
-\emph{after} rewriting, and executes them once.
+\emph{after} rewriting, and executes them once. The same section sets out, as
+design, the extension of that sharing from one chromosome to the population:
+shared definitions held as homeotic chromosomes, a second kind of row in the
+population table, executed by a level schedule.
 \end{enumerate}
 
 Section~\ref{sec:results} reports three highlights under their conditions ---
@@ -224,7 +230,10 @@ Table~\ref{tab:ownership} the division of responsibilities.
 evaluation, selection and variation (phylu). Between generations the best
 individuals of each island are passed to fuller, which rewrites them and returns a re-encoded
 gene that replaces the island's worst individual, unevaluated, for the next
-tournament to judge.}
+tournament to judge. In the population design of Section~\ref{sec:editors}
+(not yet built into this loop) share becomes Fold, a variation operator over the
+whole population that adds homeotic chromosomes and rewrites ordinary
+chromosomes to reference them.}
 \Description{A block diagram of the generation loop with the phylu and fuller
 boundaries drawn as dashed boxes.}
 \label{fig:arch}
@@ -243,7 +252,7 @@ egglog rulesets and saturation & HFF selection, cohort tournaments \\
 smallest-form and variant extraction & islands and random immigrants \\
 constant snapping, physics priors & the in-search editor schedule \\
 the device evaluator & telemetry, run cards, checkpoints \\
-shared-subexpression detection & the two-pass shared evaluation \\
+shared-subexpression detection; memo keys and level schedule of shared definitions & per-level evaluation of shared definitions; Fold in the generation loop (designed) \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -355,10 +364,12 @@ A \ty{CharClass} becomes a \ty{Pattern} only through the explicit \ty{class\_of}
 operator, never implicitly, so the tree records exactly which type each node
 holds. Terminals (the dot, anchors, the empty pattern and the built-in classes
 \texttt{\textbackslash d}, \texttt{\textbackslash w}, \texttt{\textbackslash s})
-carry an output type and no inputs. Every operator has
-total arity at most two, the decoder's structural limit; a bounded interval is
+carry an output type and no inputs. Every operator here has
+total arity at most two. The decoder's structural limit is four inputs per
+symbol; a bounded interval is nevertheless
 composed from \ty{rep\_n} and a bounded repeat rather than carried as a
 three-argument symbol.
+% Arity limit: four (K_MAX = 4), delivered in fuller docs/PLAN_wgsl_kernel_reader.md section 2a; earlier drafts said two.
 
 %% ===== SECTION 5 =====
 \section{The Total Typed Projection Decoder}
@@ -738,9 +749,13 @@ prices a candidate against what the \emph{other} roots' current choices already
 cover, and keeps the cheapest joint cost seen. The extracted graph is then
 searched for its maximal shared subtrees, counting occurrence \emph{sites} rather
 than in-degrees so that a small subtree nested inside a larger shared one is not
-double-counted. Each shared subtree becomes a definition executed in a first
-device pass, and the genes that use it read its value through a new reference
-opcode in a second pass, both passes on one command encoder.
+double-counted. Each shared subtree becomes a definition, and the genes that
+use it read its value through a new reference opcode. Definitions are executed
+by a \emph{level schedule}: one device dispatch per dependency level, a
+definition after every definition it references, and the genes last, all on one
+command encoder. A definition may itself hold a reference, so the nesting depth
+is not capped and is found by selection.
+% Evaluation order: per-level dispatch (phylu 6fa2e4f8) is current; earlier drafts described two ordered passes.
 
 Two guards are essential. The expanding rule combined with commutativity and
 associativity grows the e-graph exponentially on a deeply nested gene --- we
@@ -752,6 +767,28 @@ sharing is legal, following the DAG-plan literature~\cite{neumann2009dag}: a
 calibrated per-dispatch cost and per-reference cost, both measured on the
 device in operation-equivalents, gate the fold, and a chromosome that fails the
 gate is evaluated as the tree it was.
+
+One chromosome repeats little, and the gate refuses its sharing
+(Section~\ref{sec:results-share}); a population repeats much more. On an
+unsolved Strogatz predator--prey population of 4{,}000 three-gene individuals,
+63\% of subtree occurrences belong to subtrees repeated within the generation,
+and 72\% of those repeated subtrees survive into the next generation. The design
+that follows, measured on the host and not yet built into the device loop, moves
+sharing to the population. The population table holds two kinds of row:
+ordinary chromosomes, and \emph{homeotic chromosomes}, each of which is one
+shared definition with a stable row id, a root type, memoised values over the
+data rows and a count of its referrers. A reference names a homeotic row by its
+id, never by a position, and is type-checked by the projection like a terminal.
+Fold becomes a variation operator beside mutation and recombination: each
+generation it adds a homeotic chromosome for each subtree the population repeats,
+rewrites ordinary chromosomes to reference it, and re-sorts the homeotic rows by
+use. Execution follows the level schedule above, kept apart from that use order.
+A homeotic row changes only whether a value is recomputed, never what it is, and
+that is a test: values are bit-identical with the homeotic rows present or
+stripped. On the host, over sixteen consecutive generation pairs of that
+population, the shared graph performs a third of an interpreter's operator
+evaluations, and a quarter when the previous generation's memoised values are
+reused, with every value bit-identical.
 
 %% ===== SECTION 9 =====
 \section{Results as Highlights}
@@ -853,14 +890,18 @@ the share editor found cross-gene sharing in 39 individuals (43 matches), two of
 them only through a rewritten form, and every fold evaluated correctly: exact
 folds bit-identical to the unfolded chromosome, rewritten folds within
 $10^{-4}$ relative error, no rejects. Folding all of it removes 2.7\% of the
-population's operations, while the second dispatch pass costs the equivalent of
+population's operations, while the extra dispatch pass the shared definitions
+needed in that build costs the equivalent of
 177--366 operations per submission in uncontended runs, against chromosomes of
 at most 17 operations.
 The calibrated gate therefore rejects every fold, and forcing it measured
 5--49\% slower population-wide. Detection costs 28~ms per chromosome. The
 mechanism is correct and the gate is right to refuse: at this repeat rate, sharing does
 not pay, and the per-individual executed cost the editor reports is what a
-parsimony objective would read if one were wanted.
+parsimony objective would read if one were wanted. That fixed cost per dispatch,
+paid for a few operations of one chromosome, is why the design of
+Section~\ref{sec:editors} shares across the whole population, where one dispatch
+per level serves every individual.
 
 %% ===== SECTION 10 =====
 \section{What Is Not Yet Done}
@@ -887,6 +928,12 @@ measurement is on one population at one head length, and the ceiling was set
 from that population's measured growth; both bugs found while building the
 editor appeared only on real population data, never on the hand-built test
 cases, so a different kingdom or a longer head should expect to re-calibrate.
+Nor is the population design of Section~\ref{sec:editors} in the loop: the
+shared graph, its memo keys and its level schedule exist on the host and are
+measured there, but Fold is not yet an operator in the device generation, and
+whether population-wide sharing pays on the device, measured as paired
+randomised comparisons with confidence intervals against the interpreter, is
+not yet known.
 \item \textbf{Which rewrite families matter on real populations.} The share
 editor's expanding rule was chosen to demonstrate the mechanism. Which families
 expose sharing often enough to be worth their saturation cost is a question for
@@ -905,7 +952,7 @@ not read from them through the projection decoder. Re-expressing it as a
 projection kingdom is the increment that would make the three kingdoms one
 mechanism.
 \item \textbf{Further kingdoms.} The geneframe admits any typed language whose
-operators fit the arity limit, and the regular-expression kingdom shows that a
+operators fit the arity limit of four inputs per symbol, and the regular-expression kingdom shows that a
 new kingdom costs rows and a kernel. We report only the three kingdoms that are
 built and run.
 \end{itemize}
@@ -934,8 +981,10 @@ laws in 90 seconds each on one seed, and 79 once the rewriting system generates
 candidates from the near misses; the regular-expression kingdom raises held-out
 postcode recall from
 92.4\% to 97.5\% with every foreign format rejected. Multi-seed statistics, the
-official SRBench protocol, device-side counted repetition, and the live
-scheduling of the share editor are the next increments.
+official SRBench protocol, device-side counted repetition, the live
+scheduling of the share editor, and sharing across the whole population through
+homeotic chromosomes, designed and measured on the host, are the next
+increments.
 
 \begin{acks}
 The author thanks the maintainers of egglog and wgpu. Claude Code was used in

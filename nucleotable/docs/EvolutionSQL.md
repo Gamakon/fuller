@@ -21,6 +21,27 @@ SELECT [next generation] FROM [current generation via CTEs];
 The previous generation remains intact. `generation_id` increments. The full
 evolutionary history is queryable at any time.
 
+**Append-only, with homeotic rows (design 2026-10-09, fuller
+`docs/PLAN_population_dag.md`).** The population gains a second row kind,
+homeotic chromosomes: population-wide shared definitions that ordinary genes
+reference by a stable row id (see `DataModel.md` §3.6). They keep this
+principle where it matters: a definition is only ever appended (Fold INSERTs
+a homeotic row for each subtree the new generation repeats and no row yet
+defines), its text and root type never change, and nothing is deleted in the
+first version (the homeotic tail grows without eviction). What does change
+per generation are columns that describe use, not content: the referrer
+count, the use rank by which the homeotic tail is re-sorted, and the memo
+slot's values and data version. Those are either updated in place or, kept
+strictly append-only, written as a per-generation use table keyed by
+(generation, homeotic row id); either way the history of the definitions
+themselves stays the fossil record. Fitness (§3) evaluates every homeotic
+row once per data version, by level (a definition after everything it
+references), before the ordinary rows that read it, and reuses a memo whose
+key (node, data version, root type, input binding) matches. The full
+generation step (§7) gains one operator after mutation and before fitness:
+Fold, which adds definitions, rewrites ordinary rows to reference them and
+re-sorts the homeotic tail.
+
 ---
 
 ## 2. Head and Tail Selection
@@ -79,6 +100,9 @@ The implementation is kingdom-specific:
 - NLP-English: semantic similarity or information density score
 - SQL: query execution result correctness
 - BotjiKingdom: address navigation accuracy
+
+With homeotic rows present, they are evaluated first, by level, and memoised
+per data version; see the homeotic paragraph in §1.
 
 ---
 
@@ -300,6 +324,9 @@ INSERT INTO geneframe SELECT * FROM next_generation;
 ```
 
 One statement. One INSERT. The entire generation is produced by SQL.
+
+Under the homeotic design a Fold step follows mutation and precedes fitness
+(§1's homeotic paragraph).
 
 ---
 

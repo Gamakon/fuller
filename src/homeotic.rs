@@ -32,6 +32,25 @@
 //! can only reference slots allocated after it; `fold` asserts it anyway.
 //! Unread slots are non-coding: an empty slot holds [`EMPTY_SLOT`], which
 //! nothing references and the evaluator never runs.
+//!
+//! **Superseded in the design, still the code: per-chromosome slots.** The
+//! slot form above (`href<t>` naming a position in one chromosome's tail,
+//! references pointing forward by slot, [`EMPTY_SLOT`] filling unused
+//! positions) is the rev 3 design and is what this module implements today.
+//! The agreed design is `docs/PLAN_population_dag.md` §1 and §2d: the
+//! population table holds two row kinds, ordinary chromosomes and HOMEOTIC
+//! CHROMOSOMES, each homeotic row one population-wide shared definition with
+//! a stable row id, a root type, memoised row values and a referrer count. An
+//! href names a homeotic row by that stable id, never a position, because the
+//! homeotic tail is re-sorted by use every generation and only a rank column
+//! moves. Acyclicity is held by level (a definition's level is one more than
+//! its deepest referenced definition; execution goes level by level), not by
+//! slot order. Fold is a variation operator on the population: it ADDS a
+//! homeotic row for each subtree the population repeats, REWRITES ordinary
+//! chromosomes to reference it, and RE-SORTS the homeotic tail by use. The
+//! expressed, memoised top of the homeotic tail is the expressed frame.
+//! Evaluation is one function, and values are bit-identical with homeotic
+//! rows present or stripped, a tested contract.
 
 use std::collections::BTreeMap;
 

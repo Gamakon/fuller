@@ -1,5 +1,18 @@
 # Saturated share-equivalence: finding `exp(x+y)` ≡ `exp(x)*exp(y)`
 
+> **Partly superseded (2026-10-09).** The current design is
+> `docs/PLAN_population_dag.md` (§1, §2d). Saturation keeps one job: it
+> supplies candidate equivalences (legality, ≡S) to Fold. Fold is a
+> population-wide variation operator that adds homeotic chromosomes (shared
+> definitions with a stable row id, a root type, memoised row values and a
+> referrer count), rewrites ordinary chromosomes to reference them by that
+> id, and re-sorts the homeotic tail by use. Execution follows one level
+> schedule for the whole population, not a second dispatch per chromosome,
+> so the per-chromosome dispatch calibration, chromosome-level gate and
+> per-chromosome GENEREF write-back of §2 and §5 steps 4, 7, 8 and 9 are
+> superseded. §1, §3 and §4 (why extraction sits between saturation and
+> detection, and the design history) remain true.
+
 ## Context
 
 **Objective.** `FoldToDag` (`Evolving_DAGs_with_GEP_v3.md`) finds and folds
@@ -71,6 +84,9 @@ something `FoldToDag`'s fold step can act on?
 - `fold_chromosome`'s GENEREF mechanism and the two-pass device chain
   (`eval_population_folded`), unmodified. Folding is still "replace every
   occurrence site with a reference to one extracted definition."
+  *Superseded 2026-10-09:* the definition is a population-wide homeotic row
+  named by a stable id and evaluated in the level schedule, not a
+  per-chromosome second dispatch (`PLAN_population_dag.md` §1, §3).
 
 ## 3. What is new: extraction between saturation and detection
 
@@ -218,6 +234,12 @@ sequence.*
 
 9. **Write GENEREFs back** into whichever chromosomes passed the gate, via
    `fold_chromosome`, unchanged.
+
+*Note (2026-10-09):* steps 4 and 7–9 assume a second dispatch and a
+gate per chromosome. Under `PLAN_population_dag.md` the dispatch is paid once
+per level for the whole population, Fold writes references to homeotic rows
+across the population, and steps 1–3, 5 and 6 survive as the way saturation
+proposes candidate equivalences to Fold.
 
 ## 6. What is not yet known
 

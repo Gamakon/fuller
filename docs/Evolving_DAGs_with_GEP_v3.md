@@ -1,5 +1,22 @@
 # Evolving DAGs with GEP
 
+> **Correction (2026-10-09).** Three claims below no longer hold, and the
+> current design is `docs/PLAN_population_dag.md` (§1, §2d), stated in
+> `Geneframe_Homeotic_Genes_design.md` revision 4, §8, which is current over
+> this document where they differ. (1) FoldToDag did not replace the homeotic
+> design; the homeotic design, made population-wide, is live. (2) The
+> genotype layout does change: the population table gains a second row kind,
+> homeotic chromosomes (population-wide shared definitions with a stable row
+> id, a root type, memoised row values and a referrer count), and an href in
+> an ordinary chromosome names a homeotic row by its stable id. (3) Fold does
+> edit in place: it is a value-preserving variation operator that adds
+> homeotic rows, rewrites ordinary chromosomes to reference them and
+> re-sorts the homeotic tail by use; execution follows a level schedule. The
+> problem statement, the two equivalences, the measurements and the
+> implementation pointers remain true. Measured since: 63 % of a
+> population's subtree occurrences are repeated and 72 % of repeated subtrees
+> survive a generation (`PLAN_population_dag.md` §2, §2a).
+
 ## Abstract
 
 Gene expression programming evolves trees, but the programs those trees
@@ -238,7 +255,9 @@ definition, is an open implementation question rather than a decided one.
 The edit itself, in either case, produces a new candidate placed beside the
 unmodified original, never a change made in place: nothing in this proposal
 is permitted to assert that a fold is correct before the tournament has
-judged it.
+judged it. *(Superseded 2026-10-09: a share fold is value-preserving, so Fold
+rewrites ordinary chromosomes in place to reference homeotic rows;
+`PLAN_population_dag.md` §1.)*
 
 ### Why not a different representation
 
@@ -256,7 +275,9 @@ own algebra, not a property of how the genotype is laid out. Nothing about
 the karva representation, its fixed-length invariant, or any operator that
 acts on it needs to change for this discovery to happen; the one addition is
 a reversible edit, built from machinery that already exists, applied after
-decoding and before evaluation. A Cartesian representation would have made
+decoding and before evaluation. *(Superseded 2026-10-09: the genotype gains a
+second row kind, homeotic chromosomes, that the references name;
+`PLAN_population_dag.md` §1.)* A Cartesian representation would have made
 sharing visible in the genotype from the start, at the cost of giving up the
 guarantee that every offspring of every operator is valid — the single
 property that makes gene expression programming the representation worth
@@ -347,7 +368,9 @@ The tournament's scoring mechanism, and its existing support for scoring a
 chromosome under a declared subset of its genes: `src/chrom_score.rs`, this
 repository.
 
-This document supersedes the treatment of cross-gene reference in
+*Correction (2026-10-09): the next paragraph's claim is reversed;
+`Geneframe_Homeotic_Genes_design.md` revision 4 (§8) is current and FoldToDag
+did not replace it.* This document supersedes the treatment of cross-gene reference in
 `Geneframe_Homeotic_Genes_design.md`, which proposed a fixed per-chromosome
 reference direction with no new symbol table; that design's remaining
 correct observations — that the karva round-trip is unaffected by adding a

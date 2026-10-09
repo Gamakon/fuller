@@ -65,6 +65,19 @@ Whether the harness generalises is the thing the other kingdoms are for, and
 the first one that needs a change to the ENGINE rather than to a table is the
 one that falsifies it.
 
+The population design of `docs/PLAN_population_dag.md` (2026-10-09) is stated
+in the same spirit: shared definitions belong to the geneframe, not to a
+kingdom. The population table holds two row kinds, ordinary chromosomes and
+homeotic chromosomes (population-wide shared definitions, each with a stable
+row id, a root type taken from the kingdom's own types, memoised row values
+and a referrer count). Fold adds definitions, rewrites ordinary rows to
+reference them by href (an href names the stable id, never a position in the
+homeotic tail) and re-sorts the homeotic tail by use; evaluation follows the
+level schedule, a definition after everything it references. SR expressions,
+WGSL kernels and SQL or Spark plans instantiate that one mechanism, so a
+kingdom that needed its own cache would count against the harness claim
+above.
+
 ## A note on scope
 
 LLMs have changed what SQL reverse-engineering is worth. The design is still

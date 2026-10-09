@@ -8,6 +8,25 @@ replaced by positional gene references; parsimony framing removed, replaced by
 the actual selection mechanism: HFF tournament). §§1–6 are revision 2 as
 written; where §7 supersedes them it says so.
 
+> **Revision 4 (2026-10-09): the homeotic tail is population-wide.** The
+> agreed design is `docs/PLAN_population_dag.md` §1 and §2d, summarised in §8
+> below. The population table holds two row kinds, ordinary chromosomes and
+> homeotic chromosomes (population-wide shared definitions with a stable row
+> id, a root type, memoised row values and a referrer count); an href names a
+> homeotic row by its stable id, never a tail position; Fold adds definitions,
+> rewrites ordinary chromosomes to reference them and re-sorts the homeotic
+> tail by use; execution follows a level schedule. Where §7 describes a
+> per-chromosome tail, slots, last-to-first evaluation or a per-chromosome
+> gate, §8 supersedes it; §7's text is kept as the record of revision 3.
+>
+> Note: `docs/Evolving_DAGs_with_GEP.md` (and its `_v2`, `_v3`) say FoldToDag
+> replaced the homeotic design. It did not; this document (revision 4) is
+> current, and FoldToDag's chromosome-level fold is the predecessor that §8's
+> population-wide Fold generalises.
+>
+> Note: `docs/FRONTIER_EVOLUTION.md` speaks of executed cost "for parsimony".
+> This document's position, §1 (no parsimony or size penalty), is current.
+
 ## 1. Context — what problem this solves
 
 fuller/phylu evolve GEP chromosomes: each individual is one or more *genes*,
@@ -505,6 +524,10 @@ gene, lifted to the chromosome, and it is the gene-ordered two-pass evaluation
 `fold_to_dag` already performs, generalised from "definitions, then readers"
 to a fixed order over the tail. No cycle detection anywhere.
 
+*Revision 4:* superseded. A reference names a homeotic row by its stable id
+and acyclicity is held by level: a definition's level is one more than its
+deepest referenced definition, and levels run in ascending order (§8).
+
 **Unread tail genes are non-coding.** A tail gene nothing references costs
 nothing at evaluation and is not scored. It drifts under mutation and
 crossover exactly as Karva's non-coding region does, a neutral store that a
@@ -545,6 +568,12 @@ Two consequences:
   with no second dispatch. The genome records the sharing; the evaluator
   decides whether to exploit it. Revision 2's two layers stay separate.
 
+*Revision 4:* the per-chromosome gate is superseded. The 177–366
+operation-equivalents a second dispatch costs per submission (§7.1) is why
+sharing goes population-wide: one level schedule for the whole population pays
+the dispatch once, not once per chromosome (§8). The no-parsimony position of
+§1 stands; executed cost is not added as a selection term by this design.
+
 ### 7.4 Where it pays, and where it is measured not to
 
 The three-gene SR chromosome does not repeat enough for sharing to pay at
@@ -564,6 +593,13 @@ not a chromosome's, and the saturating finder does not scale to it;
 population-level sharing is a separate mechanism (hash-cons and evaluate each
 class once) and is not what the homeotic tail is for.
 
+*Retracted in revision 4.* Population-wide sharing is exactly what the
+homeotic tail is for. The homeotic rows are the population's hash-consed
+shared definitions, each evaluated once per data version and memoised (§8).
+Measured on `strogatz_predprey1`: 63 % of a population's subtree occurrences
+belong to repeated subtrees and 72 % of repeated subtrees survive a generation
+(`PLAN_population_dag.md` §2, §2a).
+
 ### 7.5 What is new against what is built, revision 3
 
 | piece | status |
@@ -581,6 +617,9 @@ class once) and is not what the homeotic tail is for.
 1. **Tail size.** Fixed per kingdom like the Karva tail, or a layout parameter
    the run card carries? A fixed small tail (two to four slots) is enough to
    measure whether anything stays in it.
+   *Revision 4:* superseded. The homeotic tail is population-wide, starts
+   empty and grows without eviction at first; its maximum and the expressed
+   frame are set from the tail study (`PLAN_population_dag.md` §1, task 7).
 2. **Can a tail gene read the head?** No, under the forward-only rule; the
    head reads the tail, never the reverse. Confirm this is the intended
    asymmetry, since it is what keeps evaluation one ordered pass.
@@ -591,3 +630,65 @@ class once) and is not what the homeotic tail is for.
    diversity telemetry plus one new counter, how many tail slots are read per
    individual over generations. If that number stays at zero the tail is
    dead weight; if it rises and holds, the population is evolving DAG plans.
+
+
+## 8. Revision 4 — homeotic chromosomes, population-wide (2026-10-09)
+
+Revision 3 put the tail inside each chromosome. Revision 4 moves it to the
+population, as `docs/PLAN_population_dag.md` §1 sets out; this section states
+the design as it applies here, and §7 remains as the record of what it
+replaces.
+
+**Two row kinds.** The geneframe's population table holds ordinary
+chromosomes, whose genes may reference shared definitions, and homeotic
+chromosomes, each of which is one shared definition: a gene tree with a root
+type (its dual), memoised row values and a count of its referrers. The
+homeotic rows together are the homeotic tail. The population is the union;
+no cache value exists beside it.
+
+**An href names a stable row id.** A homeotic row is given an id when it is
+interned and keeps it for its life. The device's GeneRef leaf carries that
+id. The homeotic tail is re-sorted by use every generation, and the sort
+permutes a rank column only, so no referrer is ever rewritten by a re-sort.
+A reference is type-checked by Design C's typed projection against the row's
+root type, exactly as §7.2's closure-by-type rule said for slots.
+
+**Fold is a variation operator.** Beside mutation and crossover, Fold maps
+population to population, deterministic and value-preserving on every
+ordinary row. Each generation it ADDS a homeotic row for each subtree the
+population repeats and no row yet defines, REWRITES ordinary chromosomes to
+reference those rows where the typed projection admits it, and RE-SORTS the
+homeotic tail by use (referrer count, ties by age then by hash). It runs
+after variation and before evaluation and evaluates nothing. Unfold, inlining
+a definition into its users, is its inverse.
+
+**Execution follows a level schedule.** A definition's level is one more
+than its deepest referenced definition; levels are dispatched in ascending
+order, so no definition is evaluated before one it references. Nesting is
+allowed. The use order (liveness) and the level order (execution) are kept
+apart in the data. This replaces §7.2's last-to-first pass and is the
+per-level dispatch phylu already runs, applied across the population.
+
+**Growth, then the expressed frame.** The homeotic tail starts empty and
+grows by what each generation adds, with no eviction at first. Later, its
+length is fixed and its expressed, memoised top is the expressed frame: rows
+there keep their values in the device arena; a row below the frame keeps its
+text and type, so a subtree that returns finds its definition and only its
+values miss. Persisting the homeotic tail across runs is the replacement
+dictionary (§2.6, §3.4).
+
+**One evaluation, determinism tested.** Evaluation is one function with no
+batch or incremental mode. A memo is keyed by node, data version, root type
+and input binding. Values are bit-identical with homeotic rows present or
+stripped, and a test asserts it.
+
+**Selection is unchanged.** Revision 2's two layers still hold. Fold
+establishes legality; HFF judges individuals; no parsimony or size term is
+added (§1). A definition's use count is its own measured fitness: a useful
+definition outlives the individuals that made it.
+
+**Measured** (`PLAN_population_dag.md` §2, §2a, §2c, `strogatz_predprey1`):
+63 % of subtree occurrences are repeated within a generation; 72 % of
+repeated subtrees survive a generation; the shared DAG does a third of an
+interpreter's operator evaluations, a quarter with last generation's memos,
+with values bit-identical.

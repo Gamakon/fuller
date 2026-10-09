@@ -6,6 +6,8 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 
 **Arity.** naga's select, fma, clamp, mix, smoothstep and extractBits take three operands; the decoders' structural limit is two today. This kingdom needs the limit at three; four-operand nodes are composed from two rows.
 
+*Note (2026-10-09): superseded by `docs/PLAN_wgsl_kernel_reader.md` §2a, which is current: the limit is now four (`K_MAX` = 4), delivered in both decoders; the sentence above dates from before it.*
+
 
 ## class `literal`
 

@@ -13,6 +13,10 @@
 > **Reading is not grepping** (`docs/Rules.md`). If you searched this file for a
 > keyword and landed here, go back to the top.
 
+> **Two copies; the phylu copy is current** (`phylu/docs/SPLIT_fuller_phylu.md`).
+> This fuller copy had diverged by missing §7j; §7j and §7k were copied in
+> verbatim on 2026-10-09. Edit the phylu copy first.
+
 ## STATUS — where execution stands (update this block as work lands)
 
 Execution began after the plan was verified against source and the code graph.
@@ -211,6 +215,27 @@ any language with a symbol table, not only symbolic regression.
   line and the model pane render arithmetic, so a second kingdom gets its own
   viewer rather than sharing this one.
 - **run cards, checkpoints, resume** — a run is attributable and restartable
+
+**Shared definitions across the population (design 2026-10-09,
+`docs/PLAN_population_dag.md`).** Two different operations are called fold.
+The CONSTANT fold, phylu's in-search editor above, collapses a subtree that
+evaluates to a constant and overwrites the gene. The SHARE Fold is a
+variation operator, `population -> population'`: it adds homeotic
+chromosomes (population-wide shared definitions, each with a stable row id,
+a root type, memoised row values and a referrer count) for the subtrees the
+population repeats, rewrites ordinary chromosomes to reference them by href
+(the href names the stable id, never a position in the homeotic tail), and
+re-sorts the homeotic tail by use. The split of ownership follows §2's line:
+fuller owns the mechanism (the device arena of memoised row values, the memo
+keys of node, data version, root type and input binding, and the level
+schedule that evaluates a definition after everything it references, kept
+apart from the use order); phylu owns calling Fold in the generation loop and
+carrying the homeotic rows in checkpoints and gene exports, so a resumed run
+holds the same homeotic tail. Determinism is a tested contract on both
+sides: one generation with homeotic rows stripped and with them present
+gives bit-identical fitness and ordinary population, and the golden checksum
+holds with homeotic rows on. The memoised top of the homeotic tail is the
+expressed frame.
 
 ## 3. How the two relate
 
@@ -885,6 +910,110 @@ switch; the MCP `switches` verb's undocumented-check fails until they are there.
 - ON produces numbers: `EVOLVE_ELITES_PER_COHORT=1` and `=2` on power plant
   500+500/2000 gen, against the per-island baseline, reported as test MSE and
   whether the descent is smoother.
+
+### 7j. Subexpression regression — collapse the towers the search cannot
+
+**The observation (Andrew, watching a power-plant run).** The winning models are
+766-character towers — `sqrt(Abs(sin(cos(x·asin(1/tan(...))))))` — and none of
+the in-search editors touch them. `fold` only collapses a subtree that
+evaluates to a CONSTANT; `snap` only replaces a literal with a symbol; `beam`'s
+wraps grafted 0 and kept 0 on that run. All three work on constants and
+literals; NONE attacks STRUCTURAL bloat. So the search never finds the compact
+form, and selection breeds the tower.
+
+**The mechanism that would — the e-graph as a genetic operator — is built and
+never called.** `fuller::extract::{smallest_form, denoise, eclass_variants}`
+all exist; `src/evolve/` calls none of them. This is §0's "largest unexploited
+capability". 7j wires it in, plus a search the e-graph alone cannot do.
+
+**The design, in Andrew's words: "run fuller, find the smallest equivalent form
+of the tower … then run the regression on the shortest thing fuller's e-graphs
+find."** Two stages, e-graph first because it is free and exact, regression
+second for what rewriting cannot reach:
+
+1. **A tower SENSOR, integer, off the tokens.** `docs/BRAINSTORM_tower_detector.md`
+   §3 is a one-pass scan over a gene's Karva tokens — the running `child`
+   pointer `decode_gene` already keeps IS the parent map — computing `t_depth`
+   (transcendental nesting depth) and `tower_mass` per node, and the `deepest`
+   node where the tallest tower sits. No data, no evaluation, ≤64 iterations a
+   gene, Python-verified bit-exact on 20,000 expressions. This picks the target
+   subtree: the tallest tower, not a random one.
+
+2. **fuller's e-graph on that subtree.** `smallest_form` returns the smallest
+   PROVABLY-equivalent form — `sin(asin(x)) → x`, `log(exp(x)) → x`, algebraic
+   cancellation. Free where it works.
+
+3. **Regression on the e-graph's output, because the e-graph is DATA-BLIND.**
+   Andrew: *"it depends on the input data — sometimes the input data results in
+   a constant 1/5 being discovered, so the e-graph doesn't always work."* A
+   subtree that is constant OVER THIS DATA but not in general slips past
+   rewriting, which only knows algebraic identities. So: evaluate the (already
+   e-graph-shrunk) subtree over the data to get its value vector, and run a
+   TINY inner SR for the simplest expression matching that vector. The e-graph
+   does the free provable shrinking; the regression catches the data-dependent
+   collapses it cannot see.
+
+4. **Graft the shortest result back** in place of the tower, and the rewritten
+   winner enters the population as new material.
+
+**Where it fires: the pump, on the winners being promoted.** Andrew: *"when we
+do the pump, we run this on all the winners in the cohorts to be promoted."*
+Not every individual every generation — the promoted cohort winners, on the
+pump beat. That bounds the cost to a handful of subtrees per beat.
+
+**Open design questions, for measurement not a guess:**
+- **The inner SR's home.** A nested `Engine::fit` on the subtree (reuses the GPU
+  pipeline, but drags a whole dispatch in for a ~6-token search) versus a small
+  dedicated CPU inner loop. Depends on how many winners a pump promotes and how
+  often a subtree is flagged — measure before choosing.
+- **The tiny config.** Head, generations, population of the inner SR. Small by
+  default; `EVOLVE_SUBEXPR_*` if it needs tuning per run.
+- **The threshold.** `t_depth ≥ 3` is the brainstorm's tower floor (all 133 true
+  laws are ≤ 2). A subtree at or below it is not a tower and is left alone.
+
+**The switch (7f).** `EVOLVE_SUBEXPR_EVERY` on the pump beat, `0` = off, default
+off. Card and `experiments/README.md` rows. It changes the population, so it is
+an editor like fold and snap and lands as one.
+
+**Build order (the matrix must finish first — this rebuilds `evolve_fit`):**
+1. The sensor kernel (Rust CPU reference + WGSL), with the bit-exact parity test
+   the brainstorm specifies, on a random population. Cheap, needed regardless.
+2. `smallest_form` on a flagged subtree, off the generation thread.
+3. The inner SR on its output; graft; enter through the pump.
+4. Verify OFF identical; measure on the laws where bloat blocks recovery (the 16
+   class-B laws the paper lost to a string too long to score), not power plant,
+   which has no law to collapse to.
+
+### 7k. The share Fold and the population's homeotic rows — who owns what
+
+**Design, not built** (fuller `docs/PLAN_population_dag.md`, agreed
+2026-10-09). The population table holds two row kinds: ordinary chromosomes,
+and HOMEOTIC CHROMOSOMES, population-wide shared definitions each with a stable
+row id, a root type, memoised row values and a referrer count. An href names a
+homeotic row by its stable id, never a position in the homeotic tail. Two folds
+must not be confused: the CONSTANT fold (`Engine::fold_winners`,
+`vary::relevel`) collapses a subtree that flattens to a constant and lands the
+clean gene in a worst row; the SHARE Fold is a variation operator after
+variation and before evaluation that ADDS a homeotic row for each subtree the
+population repeats, REWRITES ordinary genes to reference it, and RE-SORTS the
+homeotic tail by use. Execution follows a level schedule (a definition after
+everything it references), kept apart from the use order; the tail grows
+without eviction at first, and its expressed, memoised top is the expressed
+frame.
+
+**The split of ownership.** fuller owns the mechanism, as a geneframe item: the
+arena of memoised row values, the memo keys (node, data version, root type,
+input binding), and the level schedule (`src/population_dag.rs` holds the host
+side today). phylu owns its use in the generation loop: Fold as an operator,
+evaluation reading the arena for homeotic rows, and CHECKPOINTS THAT CARRY THE
+HOMEOTIC ROWS so a resume is still exact. As everywhere in this split, phylu
+depends on fuller and asks for a widening there when it needs one.
+
+**The determinism test is the contract.** A homeotic row changes only whether a
+value is recomputed, never what it is: one generation run with the homeotic
+rows stripped and with them present gives bit-identical fitness and ordinary
+population, and the golden checksum holds with homeotic rows on. A difference
+is a fault in the memo keys, never noise.
 
 ### 7z. The 53 — what has been tried, and what this run adds
 
