@@ -95,7 +95,12 @@ pub enum Kind {
     Sparse,
     /// Student t with two degrees of freedom: a few terms dominate.
     HeavyTailed,
-    /// Each row paired with its negation: H's off-diagonal sums cancel exactly.
+    /// Each row paired with its negation. H = ΦᵀΦ is a sum of squares and
+    /// cannot cancel; what the pair does is contribute the same term twice
+    /// with the same sign (r rᵀ and (−r)(−r)ᵀ), so every off-diagonal cell
+    /// is an exact doubling and the sign handling of the product is tested.
+    /// (The review of 2026-10-09 found the earlier description, "sums
+    /// cancel exactly", false.)
     Cancelling,
     /// Small integers in −3..=3: every product and sum is exact.
     Integer,
@@ -598,7 +603,13 @@ mod tests {
             let h = reference(&a, d, m);
             match kind {
                 Kind::Integer => assert!(a.iter().all(|x| x.fract() == 0.0 && x.abs() <= 3.0)),
-                Kind::Cancelling => assert!(h.iter().all(|x| x.is_finite()) && (0..m / 2).all(|i| a[2 * i * d..(2 * i + 1) * d].iter().zip(&a[(2 * i + 1) * d..(2 * i + 2) * d]).all(|(x, y)| *x == -*y))),
+                Kind::Cancelling => {
+                    assert!((0..m / 2).all(|i| a[2 * i * d..(2 * i + 1) * d].iter().zip(&a[(2 * i + 1) * d..(2 * i + 2) * d]).all(|(x, y)| *x == -*y)));
+                    // The pair doubles: H equals twice the Gram of the even rows.
+                    let even: Vec<f32> = (0..m / 2).flat_map(|i| a[2 * i * d..(2 * i + 1) * d].to_vec()).collect();
+                    let h2 = reference(&even, d, m / 2);
+                    assert!(h.iter().zip(&h2).all(|(x, y)| (x - 2.0 * y).abs() <= 1e-9 * (1.0 + y.abs())));
+                }
                 Kind::NonFinite => assert!(a[3 * d + 1].is_nan() && a[7 * d + 2] == f32::INFINITY && h[d + 1].is_nan()),
                 Kind::Sparse => assert!(a.iter().filter(|x| **x == 0.0).count() > d * m / 2),
                 Kind::Extreme => assert!(a.iter().any(|x| x.abs() > 1e13) && a.iter().any(|x| x.abs() < 1e-18 && *x != 0.0)),

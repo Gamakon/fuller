@@ -92,12 +92,44 @@ components is task 2b after the report shows which components the correct kernel
 ### The loop (`examples/hgp_gram.rs`)
 
 Population 32; generation 0 = 32 fresh calls; later generations keep up to 8 rung-4 elites
-and make 24 offspring by the operator probabilities; 500 evaluations (~16 generations);
+(fewer when fewer reach rung 4; the slots stay empty) and make 24 offspring by the operator probabilities; 500 evaluations = 32 + 19.5 × 24, so 20 generations;
 ledger row per candidate (gen, id, operator, parents, rung, diagnostic, probes passed, pair
 ratio, speed-ups, angle, path to text); the run restartable from the ledger; the cost bound
 and watchdog of `wgsl_gram_evolve` reused; one GPU process; the GPU's speed re-measured
 first (shipped build 2.35 s at bench, 15:43; 8.4 s at 19:14 — a machine restart is needed
 before rung-4 timing means anything; rungs 1–3 can run regardless).
+
+## Reviews (2026-10-09 evening) and what changed
+
+Two adversarial reviews, both read every line of the plan and the code it reuses:
+Codex (`logs/HGP/codex_review.md`, 19 findings) and an independent Claude reviewer with no
+context from the day (`logs/HGP/claude_review.md`, 7 sections). Accepted, with the change
+each causes:
+
+| finding (both unless marked) | change |
+|---|---|
+| The HFF angle in `wgsl_gram_evolve.rs` was the angle to the diagonal: 0 for ANY constant vector, blind to magnitude (Claude 4.1). This, not only the cliff, is a cause of "learned nothing". | Replaced by phylu's definition (`hff.wgsl` 212–213): cos θ = 1 − mean(x²). Committed. |
+| Mutation A (the e-graph rules) rewrites only f32 arithmetic regions; it cannot reach tiling, blocking, loops, stores, the grid (Claude 1.2, Codex 6). It is not the "strong editor" for this problem as the code stands. | A becomes a measured pilot (experiment step 2), not 0.35 of the budget; its expected effect on speed is about zero. |
+| "Fails all probes" was asserted in the plan while the test asserted otherwise (Codex 1, Claude 1.10). | Measured and recorded in the test: a global break fails 1,024/1,024; the loop one item short fails 306/1,024, every one a probe touching the last item. The probes discriminate local breaks. |
+| The 128-probe admission is unstratified and can omit every band-forcing probe (Codex 2); probes are too small for tiled kernels (Claude 4.6); the probe pass is a mean over cells and lets one cell be 1 % wrong (Claude 4.7); rung 3's ranking mixes denominators (Codex 3). | Admission is stratified across families with every band-forcing D probe included; probes added at d ≥ 130, m ≥ 2 × the largest tile; pass is the per-cell maximum; a kernel is "correct" only after all 1,024 probes and all training pairs; rung 4 requires it. |
+| No cost bound exists for model text; the watchdog cannot pre-empt the GPU; compile is unguarded; device errors can panic (Claude 1.1, 6.1–6.4). | Every candidate evaluated in a child process; a naga-IR pass refuses loops not bounded by `cfg.m`, `cfg.d`, `cfg.r_rows` or a literal ≤ 4,096 and nested bounds over m × 64; the first run is the smallest probe under a 2 s deadline; error scopes for Validation and Internal and an uncaptured-error handler. |
+| The model call runs with tools and CLAUDE.md discovery, so the proposer can read the judge (Claude 1.9). | `claude -p --bare --model sonnet` with no tools, from an empty directory; the auth path verified first. |
+| The grid header is unchecked against `@workgroup_size` (Codex 8, Claude 1.6). | x and y come from naga; only bx, by from the header; a mismatch is refused at rung 2. |
+| Symmetric-half strategies cannot work across output-row bands under this driver (Claude 1.5). | Removed from the strategies and the edit instructions; the band constraint stated in the contract. |
+| Timing: three rounds against a 12 % spread selects noise; the timed builds' H is unchecked; the held-out shapes are selected on; no shipped-vs-shipped null; no GPU acceptance test (Codex 10–11, Claude 2.3, 2.4, 4.3–4.5). | Every timed build's H checked against its reference and bit-identical over two builds; the shipped-vs-shipped null every batch; the GPU accepted only when the shipped bench build is within 10 % of 2.35 s; selection shapes and report shapes disjoint; the champion re-timed in a fresh session with 5+ rounds. The clock is `gpu_ms` (timestamps, non-zero at the shapes used, resolved after completion). |
+| The research question has no compute-matched control (Codex 12, Claude 2.1). | The comparison arm is best-of-N fresh calls at the same model-call and GPU budget. |
+| The share-equivalence scan needs cross-kernel alpha-renaming, let inlining, index AC-canonicalisation, statement-level components and per-kernel referrer sets, none of which the reader or `population_dag` provide (Codex 16–17, Claude 5.1–5.6). | The scan is deferred until the reader's statement increment and a canonicaliser exist; task 2 keeps only the text-level report (distinct normalised texts, strategies); task 2b waits. |
+| Budget arithmetic and wall clock wrong (Codex 14, Claude 1.11, 3.3). | Corrected below. |
+| `Kind::Cancelling` did not cancel (Claude 2.8). | Redescribed and retested: the pair doubles every off-diagonal term; sign handling is what it tests. |
+
+Not accepted: Codex's reading that the probes have "no slope" is answered by the measurement above; the `#[allow(dead_code)]` on `timing` (Claude 1.7) is removed with the next edit of the example.
+
+## The smallest experiment (replaces the loop as the first thing built)
+
+0. **Positive control and timing null**, after the machine restart: one tiled kernel written by hand (16 × 16 workgroup, 4 × 4 register block, item tile in workgroup memory) and the shipped kernel through 1,024 probes, all training pairs and the extrapolation pairs; then paired timing, 5 rounds, at d = 2,048, m = 65,536, beside shipped-vs-shipped rounds. If the tiled kernel is not at least 1.3× faster under this driver, the speed question has no headroom here and the experiment stops.
+1. **Generation 0 alone**: 32 isolated `--bare` calls, texts saved; rungs 1–2; every validating kernel through all 1,024 probes and all training pairs; every correct one timed as in step 0. Report per strategy: parsed, validated, correct, faster; distinct texts among the 32. If none is correct and faster, one repair pass over the 32 is the only next step.
+2. **Operator A on real inputs**: the shipped kernel and the best generation-0 kernel through read → `mutants_of_roots(2, 8, 4, true)` → rebuild; distinct texts counted; three mutants timed against their parent. Expected: no distinct speed.
+3. **Only if 0 and 1 pass**: best-of-N fresh calls against the evolutionary loop at equal budgets (N = 100), the champion re-timed on unseen shapes and fresh rounds against the null; the hypothesis holds only if the loop's champion beats best-of-N by more than the null's spread.
 
 ## Expectations, stated before any run
 
@@ -110,7 +142,7 @@ before rung-4 timing means anything; rungs 1–3 can run regardless).
 | best geometric-mean speed-up after 500 evaluations | 2–6× |
 | worst-shape speed-up of the champion | ≥ 0.7 × its mean |
 | model calls per correct kernel; GPU seconds per correct kernel | 3–6; 60–200 |
-| wall clock | 4–6 h |
+| wall clock, steps 0–2 | 3–4 h at the healthy GPU rate (1,024 probes at 100 s a kernel on the slowed GPU is the dominant cost; ten correct kernels) |
 
 ## Tasks (each "Read docs/Rules.md, then:")
 

@@ -192,15 +192,19 @@ struct Score {
     refused: Option<String>,
 }
 
-/// The TrueNorth angle over normalised columns `x` (each in [0, 1], 0 best):
-/// the angle between the complements and the diagonal.
+/// The TrueNorth angle as phylu's `hff.wgsl` computes it (lines 212–213):
+/// over scaled columns `x` in [0, 1], `cos θ = 1 − mean(x²)`, `θ = acos`.
+/// Zero only when every column is 0; a constant vector c gives
+/// `acos(1 − c²)`, so the angle sees magnitude. The earlier formula here
+/// (the angle to the diagonal) gave 0 for ANY constant vector and was
+/// blind to magnitude; both reviews of `docs/PLAN_hgp_gram.md` found it.
 fn angle(x: &[f64]) -> f64 {
-    let comp: Vec<f64> = x.iter().map(|v| 1.0 - v.clamp(0.0, 1.0)).collect();
-    let norm = comp.iter().map(|v| v * v).sum::<f64>().sqrt();
-    if norm == 0.0 {
+    if x.is_empty() {
         return std::f64::consts::FRAC_PI_2;
     }
-    (comp.iter().sum::<f64>() / ((x.len() as f64).sqrt() * norm)).clamp(-1.0, 1.0).acos()
+    let energy = x.iter().map(|v| { let c = v.clamp(0.0, 1.0); c * c }).sum::<f64>();
+    let cos = (1.0 - (energy / x.len() as f64).min(1.0)).clamp(-1.0, 1.0);
+    if cos > 1.0 - 1.1920929e-7 { 0.0 } else { cos.acos() }
 }
 
 /// The work a candidate may do, relative to the shipped kernel: eight
