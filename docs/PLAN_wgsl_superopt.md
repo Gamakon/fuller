@@ -211,8 +211,41 @@ the scaffold and most definitions, it is the symbolic half of the
 search (read, fold, decide, rebuild) made incremental, while the fitness
 half (compile and timed dispatches) stays per variant.
 
-What it costs: cached values are rows times live nodes and must live
-on the device to pay off. What decides it, measured first from one
+**Functional design, with determinism as a tested property.** The
+population DAG and its memos are one value, the cache, passed in and
+returned, never reached by any other path:
+
+```
+fold(cache, population)        -> (cache', folded)
+eval(cache, data, population)  -> (cache', fitness)
+```
+
+There is no batch mode and no incremental mode: one function body. An
+empty cache in makes the call a batch (every node a miss); last
+generation's cache in makes it incremental (reused nodes hit, only the
+nodes above a child's change are computed); a data version bump inside
+the cache makes every memo stale and the next call a batch again. A
+run is a fold over generations with the cache as the accumulator.
+
+The cache holds the DAG (node hashes, child pointers) and, per live
+node, a slot of its row values with the data version they were computed
+on and a last-use mark; the slots are a device-resident arena allocated
+once, addressed by node hash, evicted least-recently-used under a
+memory budget, so an evicted node is just a miss. The arena is owned by
+the cache value: whoever holds the cache holds the memory, dropping it
+frees everything, and no session-global state exists.
+
+Determinism is the contract and a test: the cache changes only whether
+a value is recomputed, never what it is. The test runs one generation
+with an empty cache and with the previous generation's cache and asserts
+bit-identical fitness and population; the same seed and the same
+starting cache give the same run; and the golden checksum holds with
+the cache on. A difference is a fault in the memo keys, never tolerated
+as noise.
+
+What it costs: cached values are rows times live nodes (an SRBench-
+shaped fit, about 50,000 live nodes at 1,000 rows, is about 200 MB) and
+must live on the device to pay off. What decides it, measured first from one
 fit before anything is built: the fraction of subtrees per generation
 already present in the previous generation, and the eval pass's share
 of the generation (from the per-pass timestamps of §1). If reuse is
