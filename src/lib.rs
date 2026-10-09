@@ -34,6 +34,7 @@ pub mod expr;
 pub mod extract;
 pub mod extract_dag;
 pub mod homeotic;
+pub mod population_dag;
 pub mod geneframe;
 // GPU batch evaluator. The module (opcodes, batch layout, WGSL source) always
 // compiles so its tests run on any machine; only the wgpu device code is

@@ -559,7 +559,10 @@ consecutive generations (sixteen pairs over a 4,110-generation fit):
 carry over; about 1,400 repeated subtrees are new each generation, so
 compiling what is new cannot keep up (0.5 s against a 22 ms
 generation) and the compiled arm is restricted to definitions that
-have proved stable (`docs/PLAN_population_dag.md` §2a).
+have proved stable (`docs/PLAN_population_dag.md` §2a). Evaluated as
+one shared DAG on the host (`src/population_dag.rs`), the population
+costs 33 % of an interpreter's operator evaluations, 24.5 % with last
+generation's memos, values bit-identical (§2c).
 
 ## What is built, what is not
 

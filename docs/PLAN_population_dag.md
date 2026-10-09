@@ -317,6 +317,33 @@ compiled arm may hold up to a few tens of bands between compactions,
 and the interpreter's own per-level dispatches (one per tail level per
 generation today) sit on the same curve.
 
+## 2c. Task 3 measured: the shared DAG with memos, on the host (2026-10-09, 11:11–11:13)
+
+`src/population_dag.rs` (fold into one hash-consed DAG; homeotic rows
+= repeated nodes doing work; memo keyed by node, data version, type and
+input binding; level schedule; nothing evicted) and
+`examples/population_dag_reuse.rs`, over the sixteen exported pairs of
+`strogatz_predprey1` with 200 real rows of the law's data, host only:
+
+| per generation (mean of 16) | operator evaluations |
+|---|---|
+| an interpreter (every operator of every gene, occurrences and all) | 99,661 |
+| the shared DAG, fresh (one per distinct subtree) | 33,167 (33.3 %) |
+| the shared DAG with last generation's memos | 24,433 (24.5 %) |
+
+The memos avoid 26 % of the DAG's own work (72 % of the definitions
+survive, their values hit); the sharing within a generation does the
+larger part, three times fewer operator evaluations before any memo.
+Memoised values are bit-identical to a fresh evaluation on every pair
+(the determinism test, held on real data). The DAG holds about 50,000
+nodes for 12,000 genes, 5,000 of them homeotic, 1,400 of those new each
+generation. Host time (a per-row Rust loop, not the device): 176 ms
+fresh, 161 ms with memos; the host cost is dominated by hashing and
+copying, so the device measurement (variant B, task 4) is the one that
+counts. What task 3 establishes: the work a population-wide DAG saves
+on this population is a factor of four in operator evaluations, a
+quarter of it from memos across generations, with no change in values.
+
 ## 3. The reviewer's three risks, answered as design
 
 - **Dispatch overhead (A).** Hundreds of small kernels may cost more than
@@ -385,7 +412,7 @@ process at a time, launched by the fuller session, announced, logged.
    Architecture: `Device::time` over N trivial kernels in one submission
    for N in 1, 10, 100, 1,000, against one kernel; the curve sets band
    size and compaction interval. Done when the curve is in the README.
-3. **Read docs/Rules.md, then: the arena, the memo keys and the level
+3. **DONE 2026-10-09 (§2c, host side; the device arena is task 4). Read docs/Rules.md, then: the arena, the memo keys and the level
    schedule in fuller.** Purpose: variant B's machinery. Architecture:
    §1 and §3; homeotic rows with structural hash, root dual, data
    version, input binding; levels computed from references; the arena
