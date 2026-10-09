@@ -452,8 +452,19 @@ floats; the compile-and-time evaluator needs the numerical criterion from
 its first float kernel, not only after the algebraic rewrites of step 5.
 
 The six kernels' folded rebuilds are in `samples/rebuilt_folded/`
-(decode 6 definitions, score 9, hff 4, cand 1, mix64+vary 8); phylu's
-override sweep with them is the real-workload proof (below).
+(decode 6 definitions, score 9, hff 4, cand 1, mix64+vary 8). phylu's
+override sweep (`scripts/wgsl_override_sweep.sh`, `REBUILT=` pointed at
+that directory, phylu 8f33c71e, fuller f1ef50b, logs in
+`phylu/logs/WGSL_OVERRIDE_F/`) ran the control and then each folded
+kernel in place of the shipped source, one binary at a time: the
+untyped golden checksum and the hff sample gate held for all five
+(decode, hff, cand, score, mix64+vary). The override was proven live by
+a negative control in the same directory: the folded decode kernel with
+its first shared definition deliberately doubled (`neg_decode/`) makes
+the hff sample gate fail and the run's log names the override
+(`KERNEL decode.wgsl override …`). So the 28 shared definitions, placed
+by the decision and emitted by the rebuild, run the engine's real
+workloads bit-identically.
 
 ## What is built, what is not
 
@@ -476,7 +487,7 @@ override sweep with them is the real-workload proof (below).
 | the reference interpreter (`src/wgsl/interp.rs`): the folded chromosome executed against the statement tree, definitions evaluated at their placements, WGSL semantics per naga op, `ReadZeroSkipWrite` indexing | built 2026-10-09; its edge cases (integer division and remainder by zero, `i32::MIN / -1`, masked shifts, wrapping, saturating float→int, IEEE float edges, NaN through `min`/`max`/`select`, ties-to-even `round`, out-of-range loads and stores) each pinned by a hand-computed test; device agreement is the oracle's job |
 | the oracle's hand-written set (`kingdoms/wgsl/oracle/`, `src/wgsl/oracle.rs`, `examples/wgsl_oracle.rs`): ten kernels with expected outputs written by hand, run three ways on the device | built 2026-10-09: 10 of 10 agree (original, rebuilt text, interpreter) on Apple M3 Max; one platform deviation found and recorded (below) |
 | the oracle's generator (`src/wgsl/generator.rs`; `wgsl_oracle --generate N --seed S`): seeded random kernels that reach the refusal classes on purpose, run three ways | built 2026-10-09: 1,000 of 1,000 from seed 1000 agree (below) |
-| placement in the rebuild (`rebuild_folded`, lineage plan step 4): every shared definition emitted as a named `let` at its placement, the uses reading it; `wgsl_read_kernel --rebuilt-folded` | built 2026-10-09: 1,000 of 1,000 generated programs agree on the device with the FOLDED text (23,966 lanes exact, 34 within 8 ulps where the shared `let` changed Metal's contraction); the six kernels' folded rebuilds in `samples/rebuilt_folded/` (28 definitions emitted) |
+| placement in the rebuild (`rebuild_folded`, lineage plan step 4): every shared definition emitted as a named `let` at its placement, the uses reading it; `wgsl_read_kernel --rebuilt-folded` | built 2026-10-09: 1,000 of 1,000 generated programs agree on the device with the FOLDED text (23,966 lanes exact, 34 within 8 ulps where the shared `let` changed Metal's contraction); the six kernels' folded rebuilds in `samples/rebuilt_folded/` (28 definitions) hold phylu's golden checksum and sample gate in the override sweep, negative control included |
 | arithmetic mutations, the compile-and-time evaluator (lineage plan steps 5–6) | not started |
 | the scaffold-with-holes chromosome and its decoder (phylu) | not started |
 | compile-run-time evaluation path with the correctness gate (phylu) | not started |
