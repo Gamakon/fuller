@@ -43,7 +43,7 @@ accumulators are composed freely by the generator, and the criterion and
 the reference decide what counts, not the author's expectation of what
 is fast on this GPU.
 
-**Status.** Design, 2026-10-09; nothing built. Prompted by Andrew: "pick
+**Status.** Task 1 delivered 2026-10-09 (fuller 5a999b0, §1a): the harness, the reference and the criterion are built and the shipped kernel is measured at the bench size. Tasks 2–6 not started. Prompted by Andrew: "pick
 a challenge, organise the whole experiment, search for the most
 efficient supercompiled WGSL", after the decode pass proved too small to
 measure (`PLAN_wgsl_superopt.md` §6a).
@@ -85,6 +85,21 @@ move plus the reference gate. That is stated plainly, not hidden.
   randomised order, five rounds, median and the interval; the device's
   `WindowServer` load noted before and after each batch, as the decode
   runs taught.
+
+## 1a. Task 1 measured (2026-10-09, `logs/WGSL_GRAM/baseline.log`)
+
+Apple M3 Max, Metal, 128 MiB per binding (production's `effective_buffer_limit`), so the bench Φ (537 MB) runs as 4 item bands × 1 output-row band = 4 compute passes per build. Φ: unit-normalised Gaussian rows, seed 1. Five builds of the shipped kernel, back to back, 15:43 UTC, load average 4.7 before and 7.7 after.
+
+| measurement (conditions) | expected (§5) | measured | vs expected |
+|---|---|---|---|
+| shipped kernel GPU time per build, d = 2,048, m = 65,536, timestamp sum of 4 passes, median of 5 | 0.8–2 s | 2.35 s (min 2.09, max 2.37) | +17 % over the upper bound |
+| the same, wall clock per build, uploads excluded | — | 2.39 s | — |
+| Φ upload per build, 4 bands of 134 MB | — | 86 ms | — |
+| shipped kernel's max criterion ratio, error / (τ ‖φ_r‖ ‖φ_c‖), τ = 1.22 × 10⁻⁴ | 0.05–0.3 | 0.033 (at the diagonal entry 1684, |diff| 1.3 × 10⁻⁴); mean 6 × 10⁻⁵; 0 failures | below the lower bound: 30× inside τ |
+| f64 reference, 1.375 × 10¹¹ multiply-adds (upper triangle), 16 threads | about a minute | 5.6 s | 10× faster than stated |
+| pipeline compile of the shipped text | 80 ms | 42 ms | −48 % |
+
+The criterion holds with a margin of 30 on the shipped kernel, so a reordered sum has room; the ratio's worst entries are the diagonal, where every term is positive and the rounding is systematic. The run-to-run spread of the GPU time is 12 % (the first build fastest), which fixes the paired protocol of §1 for every later comparison. The reference is cached at `logs/WGSL_GRAM/ref_d2048_m65536_s1.f64` (32 MB) and the harness reads it on every later run. Tests: `cargo test --features gpu,wgsl gram` (5: Φ determinism and unit rows, the reference on a hand case, the criterion's counts, and the shipped kernel on the device at d = 64, m = 1,000 banded 63 × 4 and unbanded, both inside τ).
 
 ## 2. The genotype: legal moves
 
