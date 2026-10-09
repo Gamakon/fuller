@@ -315,16 +315,29 @@ pub mod device {
         /// identity and must agree in kind).
         pub fn run(&self, source: &str, entry: &str, memory: &Memory, original: &[Binding]) -> Result<Memory, String> {
             let module = naga::front::wgsl::parse_str(source).map_err(|e| e.emit_to_string(source))?;
+            let info = naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::all()).validate(&module).map_err(|e| format!("validation: {}", e.emit_to_string(source)))?;
             let own: Vec<Binding> = bindings(&module)?;
             if own.len() != original.len() {
                 return Err(format!("oracle: {} bindings, the original has {}", own.len(), original.len()));
             }
+            // wgpu's automatic layout holds only the globals the entry point
+            // USES; an unused binding must not be bound.
+            let ep = module.entry_points.iter().position(|e| e.name == entry).ok_or_else(|| format!("oracle: no entry point {entry}"))?;
+            let fi = info.get_entry_point(ep);
+            let used: std::collections::BTreeSet<(u32, u32)> = module
+                .global_variables
+                .iter()
+                .filter(|(h, g)| g.binding.is_some() && !fi[*h].is_empty())
+                .map(|(_, g)| g.binding.as_ref().map(|b| (b.group, b.binding)).expect("filtered"))
+                .collect();
             let mut binds = Vec::with_capacity(own.len());
             for (a, b) in own.iter().zip(original) {
                 if (a.group, a.binding, a.uniform, a.read_write, a.elem, a.array) != (b.group, b.binding, b.uniform, b.read_write, b.elem, b.array) {
                     return Err(format!("oracle: binding {}/{} differs from the original: {a:?} vs {b:?}", a.group, a.binding));
                 }
-                binds.push(b.clone());
+                if used.contains(&(b.group, b.binding)) {
+                    binds.push(b.clone());
+                }
             }
             self.device.push_error_scope(wgpu::ErrorFilter::Validation);
             let shader = self.device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some(entry), source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(source)) });

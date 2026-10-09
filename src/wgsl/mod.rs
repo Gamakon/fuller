@@ -12,6 +12,7 @@
 //! Compiled only under the `wgsl` feature (naga in and out).
 
 pub mod chromosome;
+pub mod generator;
 pub mod infer;
 pub mod interp;
 pub mod legality;
