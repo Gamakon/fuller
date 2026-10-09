@@ -123,7 +123,15 @@ A kernel is a map from an input dataset to an output dataset. Fitness is a dista
 
 `ShapeDistance_mean = Σ δ / d²`, `ShapeDistance_max = max δ`. The gate of §1 is `ShapeDistance_max ≤ τ` on every split; a kernel outside it is not scored.
 
-**Splits.** Train: Φ seed 1 at the bench shape (d = 2,048, m = 65,536). Validation: Φ seed 2, the same shape, never used to choose. Extrapolation: Φ seed 3 at the production pass shape (d = 8,192, m = 4,096: 1 item band, 2 output-row bands, so the banding differs too). Each split has its own cached f64 reference.
+**Splits: input–output pairs.** One Φ is one draw of the input distribution, so a split is many pairs, each a different seed and shape, the kernel never seeing the same banding twice in a row:
+
+| split | pairs | shapes | work per pair | reference cost |
+|---|---|---|---|---|
+| train | 50 | d ∈ {512, 1,024, 2,048, 4,096}, m from 2,048 to 65,536, 10 of them with m not a multiple of the item band | 2 × 10⁹ to 2.75 × 10¹¹ multiply-adds | 0.1–6 s each, about 2 min in all |
+| validation | 20 | the same ranges, seeds the search never scores on | | about 1 min |
+| extrapolation | 20 | d = 8,192 (production's width), m from 1,024 to 8,192, two output-row bands | up to 5.5 × 10¹¹ | about 4 min |
+
+Every pair's f64 reference is cached by `(d, m, seed)`. ShapeDistance mean and max for a split are taken over all cells of all its pairs. Cost of scoring: the 50 train pairs sum to about 10 s of GPU time per kernel, so the grid's first pass (3,840 kernels) gates and times each on a fixed sample of 5 train pairs (about 1 s of GPU time, 4,000 s for the grid), and the full three-split score with five paired rounds is paid by the top 5 % (192 kernels, about 2 min each, 6 h); the genetic algorithm scores each generation on a fresh random sample of 5 train pairs and the full set on its elite, as the SR engine samples rows.
 
 **The columns.** Six quality, two speed:
 
