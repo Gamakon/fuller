@@ -378,6 +378,19 @@ compile time per band measured against its size before the design is
 fixed. That is the plan change this section said would follow; it
 follows.
 
+**Compile time against kernel size (measured 2026-10-09, same
+population, cold compiles on Apple M3 Max):** 50 definitions 79 ms,
+200 → 86 ms, 1,000 → 490 ms, 3,000 → 2.7 s, 6,836 → 8.9 s. Flat at
+about 80 ms up to a few hundred definitions (the fixed cost of a
+pipeline), then worse than linear. So the append-only form (Andrew:
+"compile things previously uncompiled, and run both executables
+together") works at a band of a few hundred definitions: one delta
+kernel per band, its dependencies read from the arena, the live kernels
+dispatched in order, compaction in the background. The fixed 80 ms is
+three generations, so a delta is compiled every few generations or on
+another thread while the interpreter carries the new rows, never on the
+generation's own path.
+
 This section governs the order: the compile-time measurement came
 first (above), and the decision point of §6 step 1 reads three
 numbers: decode's pass time, the reuse fraction per generation, and

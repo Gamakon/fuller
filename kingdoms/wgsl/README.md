@@ -551,8 +551,12 @@ and they cover 63 % of all occurrences. A straight-line kernel of the
 6,836 repeated subtrees with two or more operators
 (`samples/predprey1.definitions.wgsl`) compiles in 8.9 s cold and 0.45 s
 cached on Apple M3 Max; naga takes 0.5 s of it. A generation of this fit
-is 25 ms. The superoptimiser plan's §8 records what follows for the
-compiled arm.
+is 25 ms. Compile time against kernel size, cold: 50 definitions 79 ms,
+200 → 86 ms, 1,000 → 490 ms, 3,000 → 2.7 s, 6,836 → 8.9 s: flat near
+80 ms to a few hundred definitions, then worse than linear. The
+superoptimiser plan's §8 records what follows for the compiled arm
+(append-only bands of a few hundred definitions, compiled off the
+generation's path).
 
 ## What is built, what is not
 
