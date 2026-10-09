@@ -70,6 +70,23 @@ fn main() -> Result<(), String> {
     }
     let device = Device::new()?;
     println!("device: {}", device.name);
+    if args.iter().any(|a| a == "--dispatch") {
+        // Task 2 of PLAN_population_dag.md: the cost of many small passes in
+        // one submission, against one pass, on the hand set's simplest kernel.
+        let k = hand_kernels(&dir)?.into_iter().find(|k| k.name == "adv_queue_let").ok_or("no adv_queue_let")?;
+        let entry = entry_name(&k.kernel)?;
+        let mut memory = Memory::default();
+        for (loc, v) in &k.expectation.inputs {
+            memory.set(loc, v.clone());
+        }
+        let binds = bindings(&k.kernel.module)?;
+        println!("{:>8} {:>9} {:>12} {:>12} {:>14}  (one submission; 4 pipelines cycled; median of 15)", "passes", "pipelines", "median ms", "min ms", "us per pass");
+        for passes in [1usize, 10, 100, 1000] {
+            let (m, lo) = device.time_passes(&k.source, &entry, &memory, &binds, passes, 4, 15)?;
+            println!("{passes:>8} {:>9} {m:>12.3} {lo:>12.3} {:>14.1}", 4.min(passes), m * 1e3 / passes as f64);
+        }
+        return Ok(());
+    }
     if args.iter().any(|a| a == "--time") {
         return timed(&device, &dir, mutate_n.max(1), seed0);
     }

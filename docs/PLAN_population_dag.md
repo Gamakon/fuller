@@ -297,6 +297,26 @@ three variants with C redefined as (b), and the tail study (task 7)
 gains the number that sets k: the survival curve of a definition by
 age.
 
+## 2b. Task 2 measured: dispatch overhead (2026-10-09, 11:06)
+
+`wgsl_oracle --dispatch`: one submission holding N compute passes of
+one workgroup each, four pipelines cycled so every pass pays a pipeline
+switch as banded kernels would, median of 15 submissions, Apple M3 Max:
+
+| passes per submission | median ms | µs per pass |
+|---|---|---|
+| 1 | 1.27 | 1,267 |
+| 10 | 1.28 | 128 |
+| 100 | 3.69 | 37 |
+| 1,000 | 22.6 | 22.6 |
+
+A submission costs about 1.3 ms whatever it holds, and each further
+pass about 22 µs. Against a 22 ms generation: ten bands are free, a
+hundred cost 2.4 ms (11 %), a thousand cost a whole generation. So the
+compiled arm may hold up to a few tens of bands between compactions,
+and the interpreter's own per-level dispatches (one per tail level per
+generation today) sit on the same curve.
+
 ## 3. The reviewer's three risks, answered as design
 
 - **Dispatch overhead (A).** Hundreds of small kernels may cost more than
@@ -361,7 +381,7 @@ process at a time, launched by the fuller session, announced, logged.
    generation's subtrees present in the previous generation, and of new
    definitions per generation. Done when the curve is in the README
    with wall-clock times.
-2. **Read docs/Rules.md, then: dispatch overhead.** Purpose: risk A.
+2. **DONE 2026-10-09 (§2b). Read docs/Rules.md, then: dispatch overhead.** Purpose: risk A.
    Architecture: `Device::time` over N trivial kernels in one submission
    for N in 1, 10, 100, 1,000, against one kernel; the curve sets band
    size and compaction interval. Done when the curve is in the README.

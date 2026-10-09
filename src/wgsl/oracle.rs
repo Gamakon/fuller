@@ -343,6 +343,42 @@ pub mod device {
             Ok((times[times.len() / 2], times[0]))
         }
 
+        /// Dispatch overhead (`docs/PLAN_population_dag.md` task 2): one
+        /// submission holding `passes` compute passes, each one workgroup of
+        /// `source` (`variants` pipelines compiled from it and cycled, so a
+        /// pipeline switch is paid every pass as banded kernels would pay
+        /// it); the median and minimum wall-clock milliseconds per
+        /// submission over `repeats`.
+        pub fn time_passes(&self, source: &str, entry: &str, memory: &Memory, original: &[Binding], passes: usize, variants: usize, repeats: usize) -> Result<(f64, f64), String> {
+            let mut prepared = Vec::with_capacity(variants.max(1));
+            for _ in 0..variants.max(1) {
+                prepared.push(self.prepare(source, entry, memory, original)?);
+            }
+            let mut times = Vec::with_capacity(repeats);
+            for _ in 0..repeats {
+                let mut enc = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some(entry) });
+                for i in 0..passes {
+                    let (pipeline, bind, _) = &prepared[i % prepared.len()];
+                    let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some(entry), timestamp_writes: None });
+                    pass.set_pipeline(pipeline);
+                    pass.set_bind_group(0, bind, &[]);
+                    pass.dispatch_workgroups(1, 1, 1);
+                }
+                let t = std::time::Instant::now();
+                self.queue.submit(Some(enc.finish()));
+                self.device.poll(wgpu::Maintain::Wait);
+                times.push(t.elapsed().as_secs_f64() * 1e3);
+            }
+            for (_, _, buffers) in &prepared {
+                for (_, buf, _) in buffers {
+                    buf.destroy();
+                }
+            }
+            self.device.poll(wgpu::Maintain::Poll);
+            times.sort_by(|a, b| a.partial_cmp(b).expect("finite"));
+            Ok((times[times.len() / 2], times[0]))
+        }
+
         /// Compile, bind and upload: the pipeline, its bind group and the
         /// buffers (binding, buffer, words).
         fn prepare(&self, source: &str, entry: &str, memory: &Memory, original: &[Binding]) -> Result<Prepared, String> {
