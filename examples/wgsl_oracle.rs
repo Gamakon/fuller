@@ -47,11 +47,134 @@ fn main() -> Result<(), String> {
         println!("// seed {seed}, intended {:?}, xs {:?}, ks {:?}, ys {:?}, n {}\n{}", g.intended, g.xs, g.ks, g.ys, g.n, g.source);
         return Ok(());
     }
+    let mutate_n: usize = args.iter().position(|a| a == "--mutate").and_then(|i| args.get(i + 1)).and_then(|n| n.parse().ok()).unwrap_or(0);
+    let with_loads = args.iter().any(|a| a == "--with-loads");
+    if let Some(i) = args.iter().position(|a| a == "--regions") {
+        // No device: count the rewritable regions and variants of real kernels.
+        use fuller::wgsl::mutate::mutants_of_roots;
+        println!("{:<28} {:<20} {:>8} {:>10} {:>9} {:>8}", "file", "entry point", "regions", "with loads", "operators", "variants");
+        for path in &args[i + 1..] {
+            let mut src = String::new();
+            for part in path.split('+') {
+                src.push_str(&std::fs::read_to_string(part).map_err(|e| format!("read {part}: {e}"))?);
+            }
+            let kernel = read(&src).map_err(|e| format!("{path}: {e}"))?;
+            let file: Vec<String> = path.split('+').map(|p| std::path::Path::new(p).file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default()).collect();
+            for f in kernel.functions.iter().filter(|f| f.entry_point) {
+                let roots: Vec<String> = f.roots.iter().map(|r| r.tree.to_sexpr()).collect();
+                let (_, st) = mutants_of_roots(&roots, 2, 3, 2, true)?;
+                println!("{:<28} {:<20} {:>8} {:>10} {:>9} {:>8}", file.join("+"), f.name, st.regions, st.regions_with_loads, st.region_ops, st.variants);
+            }
+        }
+        return Ok(());
+    }
     let device = Device::new()?;
     println!("device: {}", device.name);
+    if mutate_n > 0 {
+        return mutated(&device, mutate_n, seed0, with_loads);
+    }
     hand_set(&device, &dir)?;
     if generate_n > 0 {
         generated(&device, generate_n, seed0)?;
+    }
+    Ok(())
+}
+
+/// The numerical criterion of the plan (§4): integer lanes bit-exact,
+/// non-finite classes equal, finite float lanes within 64 ulps, signed
+/// zeros equal. `Err` names the first lane that fails.
+fn criterion(mutant: &Memory, original: &Memory) -> Result<(usize, usize), String> {
+    let (mut exact, mut moved) = (0usize, 0usize);
+    for loc in ["buffer.out", "buffer.cnt", "buffer.ys"] {
+        let l = classify(mutant.get(loc).unwrap(), original.get(loc).unwrap());
+        exact += l.exact + l.signed_zero;
+        moved += l.near + l.far;
+        if l.non_finite > 0 {
+            let d = bit_differences(mutant.get(loc).unwrap(), original.get(loc).unwrap());
+            let (i, a, b) = d[0];
+            return Err(format!("{loc}[{i}]: non-finite class differs, mutant 0x{a:08x} ({}), original 0x{b:08x} ({})", f32::from_bits(a), f32::from_bits(b)));
+        }
+        if let Some((i, a, b)) = l.differ.first() {
+            return Err(format!("{loc}[{i}]: mutant 0x{a:08x} ({}), original 0x{b:08x} ({}), past {FAR_ULPS} ulps", f32::from_bits(*a), f32::from_bits(*b)));
+        }
+    }
+    Ok((exact, moved))
+}
+
+/// Step 5: algebraic mutants of the generated programs' load-free regions,
+/// each rebuilt folded, run on the device and judged by the criterion.
+fn mutated(device: &Device, n: usize, seed0: u64, with_loads: bool) -> Result<(), String> {
+    use fuller::wgsl::mutate::{mutants_of_roots, MutateStats};
+    let mut totals = MutateStats::default();
+    let (mut programs_with_mutants, mut built, mut failed_build, mut passed, mut failed, mut moved_lanes, mut exact_lanes) = (0usize, 0usize, 0usize, 0usize, 0usize, 0usize, 0usize);
+    let mut failures: Vec<String> = Vec::new();
+    for seed in seed0..seed0 + n as u64 {
+        let g = generate(seed);
+        let kernel = read(&g.source).map_err(|e| format!("seed {seed}: {e}"))?;
+        let entry = entry_name(&kernel)?;
+        let fi = kernel.functions.iter().position(|f| f.name == entry).unwrap();
+        let chromosomes: Vec<_> = kernel.functions.iter().map(|f| chromosome(f, &ChromosomeOptions::default())).collect::<Result<_, _>>()?;
+        let roots: Vec<String> = kernel.functions[fi].roots.iter().map(|r| r.tree.to_sexpr()).collect();
+        let (by_root, stats) = mutants_of_roots(&roots, 2, 3, 2, with_loads).map_err(|e| format!("seed {seed}: {e}"))?;
+        totals.regions += stats.regions;
+        totals.regions_with_loads += stats.regions_with_loads;
+        totals.region_ops += stats.region_ops;
+        totals.variants += stats.variants;
+        totals.dropped_no_row += stats.dropped_no_row;
+        if by_root.is_empty() {
+            continue;
+        }
+        programs_with_mutants += 1;
+        let mut memory = Memory::default();
+        memory.set("buffer.xs", Value::Vec(g.xs.iter().map(|&x| Value::F32(x)).collect()));
+        memory.set("buffer.ks", Value::Vec(g.ks.iter().map(|&x| Value::U32(x)).collect()));
+        memory.set("uniform.n", Value::U32(g.n));
+        memory.set("buffer.out", Value::Vec(vec![Value::F32(0.0); 8]));
+        memory.set("buffer.cnt", Value::Vec(vec![Value::U32(0); 8]));
+        memory.set("buffer.ys", Value::Vec(g.ys.iter().map(|&x| Value::F32(x)).collect()));
+        let binds = bindings(&kernel.module)?;
+        let original = device.run(&g.source, &entry, &memory, &binds)?;
+        for (root_index, ms) in &by_root {
+            for m in ms {
+                let mut new_roots = roots.clone();
+                new_roots[*root_index] = m.root_text();
+                let mut cs = chromosomes.clone();
+                let result = fuller::wgsl::chromosome_with_roots(&kernel.functions[fi], &new_roots, &ChromosomeOptions::default()).and_then(|c| {
+                    cs[fi] = c;
+                    rebuild_folded(&kernel, &cs)
+                }).and_then(|r| device.run(&r.wgsl, &entry, &memory, &binds));
+                match result {
+                    Err(e) => {
+                        failed_build += 1;
+                        if failures.len() < 8 {
+                            failures.push(format!("seed {seed} root {root_index}: {} → {}: build/run: {e}", m.from, m.to));
+                        }
+                    }
+                    Ok(mem) => {
+                        built += 1;
+                        match criterion(&mem, &original) {
+                            Ok((e, mv)) => {
+                                passed += 1;
+                                exact_lanes += e;
+                                moved_lanes += mv;
+                            }
+                            Err(why) => {
+                                failed += 1;
+                                if failures.len() < 8 {
+                                    failures.push(format!("seed {seed} root {root_index} (non-finite inputs: {}): {} → {}: {why}", g.non_finite_inputs(), m.from, m.to));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    println!("
+mutated: {n} programs from seed {seed0}, regions with loads {}: {} regions ({} with loads; {} operators), {} variants, {} dropped for want of a row; {programs_with_mutants} programs mutated", if with_loads { "mutated" } else { "not mutated" }, totals.regions, totals.regions_with_loads, totals.region_ops, totals.variants, totals.dropped_no_row);
+    println!("mutants: {built} built and ran, {failed_build} failed to build or run; {passed} passed the criterion ({exact_lanes} lanes exact, {moved_lanes} within {FAR_ULPS} ulps), {failed} refused");
+    for f in &failures {
+        println!("  {f}");
     }
     Ok(())
 }

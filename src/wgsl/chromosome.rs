@@ -271,8 +271,23 @@ pub fn chromosome_typed(f: &KernelFunction, kingdom: &WgslKingdom, opts: &Chromo
     build(f, opts, Some(kingdom))
 }
 
+/// [`chromosome`] over replacement root TEXTS (one per root of `f`, in
+/// order, as the reader renders them): what a mutation produces. The
+/// roots' kinds, paths and points are `f`'s; only the trees differ.
+pub fn chromosome_with_roots(f: &KernelFunction, roots: &[String], opts: &ChromosomeOptions) -> Result<WgslChromosome, String> {
+    if roots.len() != f.roots.len() {
+        return Err(format!("{}: {} root texts for {} roots", f.name, roots.len(), f.roots.len()));
+    }
+    let roots: Vec<MathNode> = roots.iter().map(|r| parse_math(r)).collect::<Result<_, _>>()?;
+    build_roots(f, roots, opts, None)
+}
+
 fn build(f: &KernelFunction, opts: &ChromosomeOptions, kingdom: Option<&WgslKingdom>) -> Result<WgslChromosome, String> {
     let roots: Vec<MathNode> = f.roots.iter().map(|r| parse_math(&r.tree.to_sexpr())).collect::<Result<_, _>>()?;
+    build_roots(f, roots, opts, kingdom)
+}
+
+fn build_roots(f: &KernelFunction, roots: Vec<MathNode>, opts: &ChromosomeOptions, kingdom: Option<&WgslKingdom>) -> Result<WgslChromosome, String> {
     // The dual of every subtree TEXT (canonical rendering), and the texts
     // whose occurrences took more than one: those must not be shared.
     let mut dual_of_text: BTreeMap<String, Option<Ty>> = BTreeMap::new();

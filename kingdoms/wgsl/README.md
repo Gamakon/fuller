@@ -377,13 +377,11 @@ Apple M3 Max (Metal), 2026-10-09:
 | out-of-range indices | 214 | checked by the agreement |
 | not admissible (a repeated root) | | 38 |
 
-The rebuilt text the device ran here is the UNFOLDED one (the tail
-substituted back into the roots, as `rebuild` does), so on the device
-every placement is a no-op: the device has confirmed the reader and the
-rebuild, and the interpreter alone has confirmed the placements
-(hoisting included) against the device. Step 4 makes the placements
-executable in the rebuild; until then the hoist, step-5 `let` and
-out-of-range rows above are verified by the interpreter only.
+In this first run the rebuilt text the device ran was the UNFOLDED one
+(the tail substituted back into the roots, as `rebuild` does), so the
+device confirmed the reader and the rebuild while the interpreter alone
+confirmed the placements. The next section (step 4) runs the FOLDED text
+on the device, where the placements, hoisting included, are executed.
 
 Interpreter lanes against the device over the 1,000 programs: 23,627
 exact, 359 within 8 ulps, 8 within 64 ulps, 5 non-finite on one side
@@ -466,6 +464,42 @@ the hff sample gate fail and the run's log names the override
 by the decision and emitted by the rebuild, run the engine's real
 workloads bit-identically.
 
+### Arithmetic mutations (measured 2026-10-09, lineage plan step 5)
+
+`mutate::mutants_of_roots` finds the maximal `arith`/`trig` regions of
+a root that the `Math` datatype can rewrite (add, sub, mul, div, neg,
+sqrt, abs, exp, log, pow, sin, cos, tan, tanh, asin, acos); everything
+else under a region is an opaque leaf `(Var "L<n>")` that comes back by
+index to its exact text, so a versioned load or a `let` use is a fixed
+leaf the rewrite can neither move across a store nor change. Variants
+come from `extract::eclass_variants` over the bounded Algebra family
+(three variants, two iterations); a variant needing an operator with no
+row (`Protected*`) is dropped and counted; `Pow2`, `Pow3` and `Inv` are
+spelled with `arith.mul` and `arith.div`. Each mutant's root goes through
+the whole pipeline (`chromosome_with_roots` → fold and legality →
+`rebuild_folded` → device) and is judged by the plan's criterion against
+the original on the device: integer lanes bit-exact, non-finite classes
+equal, finite float lanes within 64 ulps.
+
+`wgsl_oracle --mutate 200 --seed 1000` (programs 1000–1199), Apple M3 Max:
+
+| increment | regions | variants | built and ran | passed | lanes exact | within 64 ulps | refused |
+|---|---|---|---|---|---|---|---|
+| load-free regions only (the plan's first) | 114 of 1,094 (980 read a load) | 105 | 105 | 105 | 2,520 | 0 | 0 |
+| regions with loads as opaque leaves | 1,094 | 426 | 426 | 426 | 10,216 | 8 | 0 |
+
+Every mutant compiled, ran and passed; the eight moved lanes are
+contraction again (a rewrite regroups what Metal fuses). The six real
+kernels (`--regions`): decode, cand, mutate, crossover, first, select
+and lint have NO rewritable float region; score has 3 regions (12
+operators, 3 variants) and hff 7 (16 operators, 3 variants). The engine's
+kernels are integer and index code; the Math kingdom's rules reach ten
+regions in them, and the rewrites worth having there are over `index`,
+`bits` and `logic` rows, which no e-graph ruleset yet covers. For score
+and hff the per-lane criterion is a smoke test only: phylu reads a score
+by its rank, so those two are gated selection-identical by the override
+sweep (the plan's tiering, from phylu's advisory).
+
 ## What is built, what is not
 
 | piece | status |
@@ -488,7 +522,8 @@ workloads bit-identically.
 | the oracle's hand-written set (`kingdoms/wgsl/oracle/`, `src/wgsl/oracle.rs`, `examples/wgsl_oracle.rs`): ten kernels with expected outputs written by hand, run three ways on the device | built 2026-10-09: 10 of 10 agree (original, rebuilt text, interpreter) on Apple M3 Max; one platform deviation found and recorded (below) |
 | the oracle's generator (`src/wgsl/generator.rs`; `wgsl_oracle --generate N --seed S`): seeded random kernels that reach the refusal classes on purpose, run three ways | built 2026-10-09: 1,000 of 1,000 from seed 1000 agree (below) |
 | placement in the rebuild (`rebuild_folded`, lineage plan step 4): every shared definition emitted as a named `let` at its placement, the uses reading it; `wgsl_read_kernel --rebuilt-folded` | built 2026-10-09: 1,000 of 1,000 generated programs agree on the device with the FOLDED text (23,966 lanes exact, 34 within 8 ulps where the shared `let` changed Metal's contraction); the six kernels' folded rebuilds in `samples/rebuilt_folded/` (28 definitions) hold phylu's golden checksum and sample gate in the override sweep, negative control included |
-| arithmetic mutations, the compile-and-time evaluator (lineage plan steps 5–6) | not started |
+| arithmetic mutations (`src/wgsl/mutate.rs`, lineage plan step 5): the Math e-graph's algebra family over `arith`/`trig` regions with opaque leaves, gated by the numerical criterion on the device; `wgsl_oracle --mutate N [--with-loads]`, `--regions <files>` | built 2026-10-09: 105 of 105 load-free mutants and 426 of 426 with loads pass on the device (below); the six kernels have 10 rewritable regions in all, in score and hff |
+| the compile-and-time evaluator (lineage plan step 6) | not started |
 | the scaffold-with-holes chromosome and its decoder (phylu) | not started |
 | compile-run-time evaluation path with the correctness gate (phylu) | not started |
 | first target: one of our own kernels, read in, round-tripped, then evolved for time | not started |

@@ -17,6 +17,7 @@ pub mod infer;
 pub mod interp;
 pub mod legality;
 pub mod loader;
+pub mod mutate;
 pub mod naga_names;
 pub mod oracle;
 pub mod reader;
@@ -24,7 +25,7 @@ pub mod scaffold;
 pub mod table;
 pub mod versions;
 
-pub use chromosome::{chromosome, chromosome_typed, ChromosomeOptions, WgslChromosome};
+pub use chromosome::{chromosome, chromosome_typed, chromosome_with_roots, ChromosomeOptions, WgslChromosome};
 pub use infer::{infer_function, FunctionTypes, NodeType, TypeStats, TypedTree};
 pub use interp::{Interp, Invocation, Memory, Value};
 pub use legality::{Decision, Placement, Reason};

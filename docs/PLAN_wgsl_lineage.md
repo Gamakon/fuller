@@ -31,8 +31,12 @@ three ways on Apple M3 Max; three platform findings recorded); step 4,
 placement in the rebuild (`rebuild_folded`), built and proven on the
 device with the same 1,000 programs (a fourth finding: sharing a float
 partial changes Metal's contraction by an ulp or so, so the evaluator
-needs the numerical criterion from its first float kernel). Steps 5–6
-(arithmetic mutations, the evaluator) not started. Prompted by the external review of the step-5 result:
+needs the numerical criterion from its first float kernel); step 5, the
+first mutations (`mutate.rs`, the Algebra family over arith/trig regions
+with opaque leaves), 426 of 426 mutants of 200 generated programs pass
+the criterion on the device, and the six real kernels hold only ten such
+regions (score, hff): the engine's kernels are integer code. Step 6 (the
+evaluator) not started. Prompted by the external review of the step-5 result:
 "expression equivalence is not execution equivalence; sharing must
 respect execution order, memory effects and the lifetime of computed
 values."
@@ -265,10 +269,44 @@ that are valid only within a branch (an index guarded by `if (i < n)`),
 and the step-5 queue case.
 
 Bit equality is the criterion while expressions are unchanged. The
-arithmetic rewrites that come after (§7 step 4) reorder floating-point
-operations and need their own numerical criterion (an error bound on the
-data, as the Math kingdoms' `denoise` already uses), decided before the
-first such rewrite is admitted, never by loosening this gate. This is fuller's own harness
+arithmetic rewrites that come after (§7 step 5) reorder floating-point
+operations and need their own numerical criterion, decided here before
+the first such rewrite is admitted, never by loosening this gate.
+
+**The numerical criterion (decided 2026-10-09, from the measurements).**
+A mutant is compared with the ORIGINAL on the device, same compiler, on
+the oracle's inputs, never against the interpreter. It is accepted when:
+every integer lane is bit-exact; every lane that is NaN or infinite in
+the original is the same class in the mutant (NaN against NaN, an
+infinity of the same sign), and no lane is non-finite on one side only;
+and every finite float lane is within 64 units in the last place of the
+original. Where 64 comes from: the platform leaves Metal's fast math on,
+and the step-4 run measured what that alone does to an unchanged
+expression, sharing moved 34 lanes of 24,000 by up to 8 ulps and a
+longer chain by up to 64 (the interpreter's "far" class), so 64 ulps is
+the noise floor of expression-preserving changes on this device, and a
+rewrite that moves a lane further has changed the value, not the
+rounding. Signed zeros are equal. The bound is per lane, not aggregate:
+one lane past it refuses the mutant.
+
+**Tiering (phylu's advisory, 2026-10-09).** The per-lane criterion is the
+oracle's smoke test: it catches a wrong program, it does not certify a
+kernel for the engine. phylu reads a score by its RANK, never as a
+number: HFF selection, the tournament, the pump, cohort promotion and
+the −19 / 1e-10 gate are comparisons between rows, a one-ulp move on a
+near-tie flips a survivor and the population diverges within a
+generation, and the engine's contract is bit-identical determinism. So:
+decode, cand, vary, evolve (discrete outputs) are gated bit-exact,
+always; score and hff are gated SELECTION-IDENTICAL on real populations,
+which is the override sweep (the pinned golden through real generations,
+the sample gate, exact resume), with the lane test as the smoke test
+only. Three amplifiers make lane ulps the wrong unit there: reductions
+(a score sums over rows), near-zero outputs (1−R² at a law is ~1e-11,
+where the gate's absolute threshold sits), and the OLS wrapper's 2×2
+solve on an ill-conditioned row. A float share or rewrite in score/hff
+that is legal by lineage may still be refused by the golden; that is a
+measurement of the engine's sensitivity, not a flaw in the gate. The
+compile-and-time evaluator measures at the decision level for those two. This is fuller's own harness
 (the device run needs no phylu suite): `examples/wgsl_oracle.rs`, under
 `gpu,wgsl`, N programs per run, the seed printed, one process.
 
