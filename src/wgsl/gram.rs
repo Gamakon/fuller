@@ -19,6 +19,15 @@ use wgpu::util::DeviceExt;
 use crate::wgsl::oracle::device::Device;
 use crate::wgsl::render::{Grid, Rendered};
 
+/// The seed tree must be the one the tests proved bit-identical: 82 nodes
+/// with `kernel.entry` at the root.
+pub fn gram_shipped_tree_check(t: &crate::wgsl::render::Tree) -> Result<(), String> {
+    if t.name != "kernel.entry" || t.size() != 82 {
+        return Err(format!("the shipped tree is {} with {} nodes, not kernel.entry with 82", t.name, t.size()));
+    }
+    Ok(())
+}
+
 /// The shipped kernel, verbatim from `H_GRAM_ACCUM_WGSL`.
 pub const SHIPPED: &str = include_str!("../../kingdoms/wgsl/gram/shipped.wgsl");
 
@@ -400,8 +409,15 @@ pub fn check(h_gpu: &[f32], h_ref: &[f64], d: usize, m: usize) -> Verdict {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Build {
     pub h: Vec<f32>,
-    /// GPU milliseconds, the sum of every compute pass's timestamps.
+    /// GPU milliseconds, the sum of every compute pass's timestamps,
+    /// resolved in a submission AFTER the passes have completed: resolved in
+    /// the same submission, short passes read 0 on Metal (measured, the
+    /// test `every_build_in_a_sequence_has_a_compute_time`). The search's time.
     pub gpu_ms: f64,
+    /// Wall-clock milliseconds of the compute submissions alone: submit to
+    /// completion of the passes, before any read-back; about 1–2 ms above
+    /// `gpu_ms` (the submission).
+    pub compute_ms: f64,
     /// Wall-clock milliseconds of the dispatches and read-backs (uploads excluded).
     pub wall_ms: f64,
     /// Wall-clock milliseconds of the `phi` uploads.
@@ -495,6 +511,7 @@ impl<'a> Gram<'a> {
 
         let mut h = vec![0.0f32; d * d];
         let mut gpu_ns = 0.0f64;
+        let mut compute_ms = 0.0f64;
         let t1 = Instant::now();
         let mut r_off = 0usize;
         while r_off < d {
@@ -522,6 +539,13 @@ impl<'a> Gram<'a> {
                 pass.set_bind_group(0, bind, &[]);
                 pass.dispatch_workgroups(wg_x, wg_y, 1);
             }
+            // The compute alone: submit, wait, the wall clock around it.
+            let t_compute = Instant::now();
+            queue.submit(Some(enc.finish()));
+            device.poll(wgpu::Maintain::Wait);
+            compute_ms += t_compute.elapsed().as_secs_f64() * 1e3;
+            // Then the timestamps and the band, read back.
+            let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("gram read-back") });
             enc.resolve_query_set(&query_set, 0..2 * item_bands as u32, &resolve_buf, 0);
             enc.copy_buffer_to_buffer(&resolve_buf, 0, &stamps_read, 0, stamps_bytes);
             enc.copy_buffer_to_buffer(&h_buffer, 0, &staging, 0, band_bytes);
@@ -556,7 +580,7 @@ impl<'a> Gram<'a> {
             b.destroy();
         }
         device.poll(wgpu::Maintain::Poll);
-        Ok(Build { h, gpu_ms: gpu_ns / 1e6, wall_ms, upload_ms, passes: item_bands * row_bands, item_bands, row_bands })
+        Ok(Build { h, gpu_ms: gpu_ns / 1e6, compute_ms, wall_ms, upload_ms, passes: item_bands * row_bands, item_bands, row_bands })
     }
 }
 
@@ -686,6 +710,25 @@ mod tests {
         println!("{n} random kernels on the device: {refused} refused by construction, {compiled} compiled, {ran} ran, {finite} with every cell finite");
         assert!(failed.is_empty(), "{} failures:\n{}", failed.len(), failed.join("\n"));
         assert_eq!(compiled, ran);
+    }
+
+    /// Every build reports a compute time, build after build, shape after
+    /// shape; the timestamp sum is printed beside it (it reads 0 for short
+    /// passes on Apple silicon, which is why the search uses compute_ms).
+    #[test]
+    fn every_build_in_a_sequence_has_a_compute_time() {
+        let dev = Device::new().expect("device");
+        let gram = Gram::compile(&dev, SHIPPED).expect("compile");
+        let limit = effective_buffer_limit(&dev.device);
+        let shapes = [(64usize, 1000usize), (32, 500), (64, 1000), (128, 2000), (32, 500), (32, 500)];
+        let mut times = Vec::new();
+        for (d, m) in shapes {
+            let p = phi(d, m, 1);
+            let b = gram.build(&p, d, m, limit).expect("build");
+            times.push((b.compute_ms, b.gpu_ms));
+        }
+        println!("compute ms and timestamp ms per build: {times:?}");
+        assert!(times.iter().all(|t| t.0 > 0.0 && t.1 > 0.0 && t.1 < t.0), "{times:?}");
     }
 
     #[test]

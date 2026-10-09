@@ -71,7 +71,7 @@ fn main() -> Result<(), String> {
     let dev = Device::new()?;
     let limit = effective_buffer_limit(&dev.device);
     println!("[{}] device {} limit {} MiB per binding", stamp(), dev.name, limit >> 20);
-    println!("{:<28} {:>5} {:>9} {:>9} {:>9} {:>6} {:>9} {:>9} {:>8}", "kernel", "round", "gpu ms", "wall ms", "upload ms", "passes", "max ratio", "mean", "fails");
+    println!("{:<28} {:>5} {:>9} {:>10} {:>9} {:>9} {:>6} {:>9} {:>9} {:>8}", "kernel", "round", "gpu ms", "compute ms", "wall ms", "upload ms", "passes", "max ratio", "mean", "fails");
     for (name, source) in &kernels {
         let t = Instant::now();
         let gram = match Gram::compile(&dev, source) {
@@ -86,14 +86,14 @@ fn main() -> Result<(), String> {
         for round in 0..rounds {
             let b = gram.build(&p, d, m, limit)?;
             let v = check(&b.h, &h_ref, d, m);
-            println!("{name:<28} {round:>5} {:>9.2} {:>9.2} {:>9.2} {:>6} {:>9.4} {:>9.5} {:>8}{}", b.gpu_ms, b.wall_ms, b.upload_ms, b.passes, v.max_ratio, v.mean_ratio, v.failures, if v.passes() { "" } else { "  FAIL" });
+            println!("{name:<28} {round:>5} {:>9.2} {:>10.2} {:>9.2} {:>9.2} {:>6} {:>9.4} {:>9.5} {:>8}{}", b.gpu_ms, b.compute_ms, b.wall_ms, b.upload_ms, b.passes, v.max_ratio, v.mean_ratio, v.failures, if v.passes() { "" } else { "  FAIL" });
             if round == 0 {
                 println!("{name:<28}   compile {compile_ms:.1} ms; bands {} item × {} row; tau {:.3e}; worst entry ({}, {}) |diff| {:.3e}; non-finite {}", b.item_bands, b.row_bands, v.tau, v.worst.0, v.worst.1, v.max_abs, v.non_finite);
             }
             gpu.push(b.gpu_ms);
         }
         gpu.sort_by(|a, b| a.partial_cmp(b).expect("finite"));
-        println!("{name:<28} median {:.2} ms  min {:.2}  max {:.2}  ({} rounds)", gpu[gpu.len() / 2], gpu[0], gpu[gpu.len() - 1], gpu.len());
+        println!("{name:<28} gpu ms median {:.2}  min {:.2}  max {:.2}  ({} rounds)", gpu[gpu.len() / 2], gpu[0], gpu[gpu.len() - 1], gpu.len());
     }
     println!("[{}] done", stamp());
     Ok(())
