@@ -526,8 +526,9 @@ folded rebuild at a time through `PHYLU_WGSL_DIR`
 | cand, folded (1) | 32.58 |
 | mix64 + vary, folded (8) | 32.14 |
 
-753,894 evaluations and 80,800 individuals in every run. Every folded
-kernel is within 2 % of the shipped one, which is run-to-run noise: the
+753,894 evaluations and 80,800 individuals in every run. Three shipped
+runs measured 32.74, 32.36 and 32.40 ms, a spread of 1.2 %; every
+folded kernel sits inside that spread: the
 shared definitions neither cost nor save at this shape, because Metal's
 compiler already shares what the decision shares. No speedup is claimed.
 What the loop now has: a representation whose sharing and rewrites are
