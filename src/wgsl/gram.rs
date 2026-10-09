@@ -72,6 +72,207 @@ pub fn phi(d: usize, m: usize, seed: u64) -> Vec<f32> {
     out
 }
 
+/// The twelve kinds of Φ of the plan's §1b. Each is item-major `m × d`;
+/// `seed` fixes the draw. `Gaussian` is [`phi`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Kind {
+    /// Unit-normalised Gaussian rows, the sphere convention.
+    Gaussian,
+    /// Gaussian rows scaled by √Dₜ, the weights log-uniform over six decades.
+    Weighted,
+    /// Rows in a subspace of rank 4, 16 or 64 (by seed), plus noise at 1e-3.
+    LowRank,
+    /// Rows with 90 % or 99 % zeros (by seed).
+    Sparse,
+    /// Student t with two degrees of freedom: a few terms dominate.
+    HeavyTailed,
+    /// Each row paired with its negation: H's off-diagonal sums cancel exactly.
+    Cancelling,
+    /// Small integers in −3..=3: every product and sum is exact.
+    Integer,
+    /// Rows at 1e-20 (odd rows) and 1e15 (even rows): underflow and overflow.
+    Extreme,
+    /// Gaussian rows with NaN and ±∞ at known cells.
+    NonFinite,
+    /// Half the rows duplicates of the first row, a quarter constant.
+    Duplicate,
+    /// Gaussian rows; the shape itself is ragged (the caller chooses m, d).
+    Ragged,
+}
+
+impl Kind {
+    pub const ALL: [Kind; 11] = [Kind::Gaussian, Kind::Weighted, Kind::LowRank, Kind::Sparse, Kind::HeavyTailed, Kind::Cancelling, Kind::Integer, Kind::Extreme, Kind::NonFinite, Kind::Duplicate, Kind::Ragged];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Kind::Gaussian => "gaussian",
+            Kind::Weighted => "weighted",
+            Kind::LowRank => "lowrank",
+            Kind::Sparse => "sparse",
+            Kind::HeavyTailed => "heavytailed",
+            Kind::Cancelling => "cancelling",
+            Kind::Integer => "integer",
+            Kind::Extreme => "extreme",
+            Kind::NonFinite => "nonfinite",
+            Kind::Duplicate => "duplicate",
+            Kind::Ragged => "ragged",
+        }
+    }
+}
+
+fn unit(state: &mut u64) -> f64 {
+    (splitmix64(state) >> 11) as f64 / (1u64 << 53) as f64
+}
+
+fn gaussian_pair(state: &mut u64) -> (f64, f64) {
+    let u1 = unit(state);
+    let u2 = unit(state);
+    let r = (-2.0 * (1.0 - u1).ln()).sqrt();
+    let (s, c) = (2.0 * std::f64::consts::PI * u2).sin_cos();
+    (r * c, r * s)
+}
+
+fn gaussian_row(d: usize, state: &mut u64) -> Vec<f64> {
+    let mut row = Vec::with_capacity(d);
+    while row.len() < d {
+        let (a, b) = gaussian_pair(state);
+        row.push(a);
+        if row.len() < d {
+            row.push(b);
+        }
+    }
+    row
+}
+
+fn normalise(row: &mut [f64]) {
+    let n = row.iter().map(|x| x * x).sum::<f64>().sqrt();
+    if n > 0.0 {
+        for x in row.iter_mut() {
+            *x /= n;
+        }
+    }
+}
+
+/// Φ of a kind. Deterministic in `(kind, d, m, seed)`.
+pub fn phi_of(kind: Kind, d: usize, m: usize, seed: u64) -> Vec<f32> {
+    if kind == Kind::Gaussian || kind == Kind::Ragged {
+        return phi(d, m, seed);
+    }
+    let mut state = seed ^ 0xA076_1D64_78BD_642F ^ ((kind as u64) << 48);
+    let mut rows: Vec<Vec<f64>> = Vec::with_capacity(m);
+    match kind {
+        Kind::Gaussian | Kind::Ragged => unreachable!("handled above"),
+        Kind::Weighted => {
+            for _ in 0..m {
+                let mut r = gaussian_row(d, &mut state);
+                normalise(&mut r);
+                let w = 10f64.powf(unit(&mut state) * 6.0 - 3.0).sqrt();
+                for x in &mut r {
+                    *x *= w;
+                }
+                rows.push(r);
+            }
+        }
+        Kind::LowRank => {
+            let rank = [4usize, 16, 64][(seed % 3) as usize].min(d);
+            let basis: Vec<Vec<f64>> = (0..rank).map(|_| { let mut b = gaussian_row(d, &mut state); normalise(&mut b); b }).collect();
+            for _ in 0..m {
+                let coeffs = gaussian_row(rank, &mut state);
+                let mut r = vec![0.0; d];
+                for (c, b) in coeffs.iter().zip(&basis) {
+                    for (x, y) in r.iter_mut().zip(b) {
+                        *x += c * y;
+                    }
+                }
+                let noise = gaussian_row(d, &mut state);
+                for (x, n) in r.iter_mut().zip(noise) {
+                    *x += 1e-3 * n;
+                }
+                normalise(&mut r);
+                rows.push(r);
+            }
+        }
+        Kind::Sparse => {
+            let density = if seed.is_multiple_of(2) { 0.1 } else { 0.01 };
+            for _ in 0..m {
+                let mut r = gaussian_row(d, &mut state);
+                for x in &mut r {
+                    if unit(&mut state) >= density {
+                        *x = 0.0;
+                    }
+                }
+                normalise(&mut r);
+                rows.push(r);
+            }
+        }
+        Kind::HeavyTailed => {
+            for _ in 0..m {
+                // t with ν = 2: z / sqrt(chi²₂ / 2), chi²₂ = −2 ln u.
+                let r: Vec<f64> = gaussian_row(d, &mut state).into_iter().map(|z| { let chi = -2.0 * (1.0 - unit(&mut state)).ln(); z / (chi / 2.0).sqrt() }).collect();
+                rows.push(r);
+            }
+        }
+        Kind::Cancelling => {
+            for i in 0..m {
+                if i % 2 == 0 {
+                    let mut r = gaussian_row(d, &mut state);
+                    normalise(&mut r);
+                    rows.push(r);
+                } else {
+                    let prev = rows[i - 1].iter().map(|x| -x).collect();
+                    rows.push(prev);
+                }
+            }
+        }
+        Kind::Integer => {
+            for _ in 0..m {
+                rows.push((0..d).map(|_| (unit(&mut state) * 7.0).floor() - 3.0).collect());
+            }
+        }
+        Kind::Extreme => {
+            for i in 0..m {
+                let scale = if i % 2 == 0 { 1e15 } else { 1e-20 };
+                let mut r = gaussian_row(d, &mut state);
+                normalise(&mut r);
+                for x in &mut r {
+                    *x *= scale;
+                }
+                rows.push(r);
+            }
+        }
+        Kind::NonFinite => {
+            for i in 0..m {
+                let mut r = gaussian_row(d, &mut state);
+                normalise(&mut r);
+                // Item 3: NaN at column 1; item 7: +∞ at column 2; item 11: −∞ at column 0.
+                match i {
+                    3 if d > 1 => r[1] = f64::NAN,
+                    7 if d > 2 => r[2] = f64::INFINITY,
+                    11 => r[0] = f64::NEG_INFINITY,
+                    _ => {}
+                }
+                rows.push(r);
+            }
+        }
+        Kind::Duplicate => {
+            let mut first = gaussian_row(d, &mut state);
+            normalise(&mut first);
+            for i in 0..m {
+                if i % 2 == 0 {
+                    rows.push(first.clone());
+                } else if i % 4 == 1 {
+                    rows.push(vec![1.0 / (d as f64).sqrt(); d]);
+                } else {
+                    let mut r = gaussian_row(d, &mut state);
+                    normalise(&mut r);
+                    rows.push(r);
+                }
+            }
+        }
+    }
+    rows.into_iter().flat_map(|r| r.into_iter().map(|x| x as f32)).collect()
+}
+
 /// `H = ΦᵀΦ` in f64 on the host, `d × d` row-major, computed as the upper
 /// triangle over threads and mirrored.
 pub fn reference(phi: &[f32], d: usize, m: usize) -> Vec<f64> {
@@ -147,13 +348,37 @@ pub fn check(h_gpu: &[f32], h_ref: &[f64], d: usize, m: usize) -> Verdict {
     for r in 0..d {
         for c in 0..d {
             let g = f64::from(h_gpu[r * d + c]);
+            let want = h_ref[r * d + c];
+            // A non-finite cell: the classes must agree (NaN with NaN, +∞ with
+            // +∞, −∞ with −∞), the plan's ShapeDistance for such a cell.
+            if !want.is_finite() {
+                let same = (g.is_nan() && want.is_nan()) || g == want;
+                if !same {
+                    v.failures += 1;
+                    v.non_finite += 1;
+                    if v.max_ratio < 1.0 {
+                        v.max_ratio = 1.0;
+                        v.worst = (r, c);
+                    }
+                    sum += 1.0;
+                }
+                continue;
+            }
             if !g.is_finite() {
                 v.non_finite += 1;
                 v.failures += 1;
+                sum += 1.0;
+                if v.max_ratio < 1.0 {
+                    v.max_ratio = 1.0;
+                    v.worst = (r, c);
+                }
                 continue;
             }
-            let diff = (g - h_ref[r * d + c]).abs();
-            let ratio = diff / (tau * norms[r] * norms[c]);
+            let diff = (g - want).abs();
+            // A zero column norm (an all-zero column of Φ) makes the scale zero;
+            // the entry must then be exactly zero.
+            let scale = tau * norms[r] * norms[c];
+            let ratio = if scale > 0.0 { diff / scale } else if diff == 0.0 { 0.0 } else { f64::INFINITY };
             sum += ratio;
             if diff > v.max_abs {
                 v.max_abs = diff;
@@ -338,6 +563,34 @@ impl<'a> Gram<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_kind_is_deterministic_and_has_its_property() {
+        let (d, m) = (16, 40);
+        for kind in Kind::ALL {
+            let a = phi_of(kind, d, m, 3);
+            assert_eq!(a.len(), d * m);
+            assert_eq!(a.iter().map(|x| x.to_bits()).collect::<Vec<_>>(), phi_of(kind, d, m, 3).iter().map(|x| x.to_bits()).collect::<Vec<_>>(), "{kind:?}");
+            let h = reference(&a, d, m);
+            match kind {
+                Kind::Integer => assert!(a.iter().all(|x| x.fract() == 0.0 && x.abs() <= 3.0)),
+                Kind::Cancelling => assert!(h.iter().all(|x| x.is_finite()) && (0..m / 2).all(|i| a[2 * i * d..(2 * i + 1) * d].iter().zip(&a[(2 * i + 1) * d..(2 * i + 2) * d]).all(|(x, y)| *x == -*y))),
+                Kind::NonFinite => assert!(a[3 * d + 1].is_nan() && a[7 * d + 2] == f32::INFINITY && h[d + 1].is_nan()),
+                Kind::Sparse => assert!(a.iter().filter(|x| **x == 0.0).count() > d * m / 2),
+                Kind::Extreme => assert!(a.iter().any(|x| x.abs() > 1e13) && a.iter().any(|x| x.abs() < 1e-18 && *x != 0.0)),
+                Kind::Duplicate => assert_eq!(a[..d], a[2 * d..3 * d]),
+                _ => assert!(h.iter().all(|x| x.is_finite()), "{kind:?}"),
+            }
+        }
+        // The criterion on the non-finite kind: a kernel that agrees in class passes, one that does not fails.
+        let a = phi_of(Kind::NonFinite, d, m, 3);
+        let h = reference(&a, d, m);
+        let same: Vec<f32> = h.iter().map(|x| *x as f32).collect();
+        assert!(check(&same, &h, d, m).passes());
+        let mut wrong = same.clone();
+        wrong[d + 1] = 0.0;
+        assert_eq!(check(&wrong, &h, d, m).non_finite, 1);
+    }
 
     #[test]
     fn phi_is_deterministic_and_unit_rows() {
