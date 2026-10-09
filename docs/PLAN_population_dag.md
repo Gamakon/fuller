@@ -114,7 +114,7 @@ every generation by current use (referrer count, ties by age then by
 hash, so the order is a function of the population and deterministic).
 A definition nobody uses sinks one place per generation as used ones
 rise, and falls off the end when it reaches it. The top of the tail is
-the open reading frame: the rows that are expressed, whose values are
+the expressed frame: the rows that are expressed, whose values are
 memoised in the device arena; its length is the memory budget in rows.
 Below the frame a row keeps only its text and type, so a subtree that
 returns finds its definition and only its values are a miss. This gives
@@ -208,8 +208,9 @@ interpreted, compile time as a function of tail size, the break-even
 churn.
 
 **What proves it.** Compiled-incremental total per generation below
-interpreted on all three laws and seeds, spreads sized and not
-overlapping, populations bit-identical. If compile time grows faster
+interpreted on all three laws and seeds, as paired randomised
+measurements with confidence intervals (§4; the arms and laws are
+§4's), populations bit-identical. If compile time grows faster
 than the tail amortises, the result is the measured break-even and the
 idea is bounded, not proven; that is a result.
 
@@ -255,10 +256,8 @@ three generations, so a delta is compiled every few generations or on
 another thread while the interpreter carries the new rows, never on the
 generation's own path.
 
-This section governs the order: the compile-time measurement came
-first (above), and the decision point of §6 step 1 reads three
-numbers: decode's pass time, the reuse fraction per generation, and
-the compile time per band.
+The compile-time measurement came first (above); the order is §5 of
+this plan.
 
 
 ## 2a. Task 1 measured: reuse between generations (2026-10-09, 11:02–11:04)
@@ -343,6 +342,23 @@ copying, so the device measurement (variant B, task 4) is the one that
 counts. What task 3 establishes: the work a population-wide DAG saves
 on this population is a factor of four in operator evaluations, a
 quarter of it from memos across generations, with no change in values.
+
+## 2d. Two things the survey of the documents found missing (2026-10-09)
+
+**An href names a stable row id, never a tail position.** The homeotic
+tail is re-sorted by use every generation; if a reference pointed at a
+position, every re-sort would rewrite every referrer. So a homeotic row
+has an id assigned when it is interned and kept for its life
+(`population_dag::PopulationDag` already does this: the node index is
+the id, the use rank and the level are separate columns), the device's
+GeneRef leaf carries that id, and the sort permutes a rank column
+only.
+
+**Names.** "Tail" and "open reading frame" already name Karva's gene
+tail and coding region in `Fuller_System.tex` and `SPEC_fuller_gpu.md`.
+In this plan the population-wide structure is always the HOMEOTIC TAIL,
+in full, and its expressed, memoised top is the EXPRESSED FRAME; the
+Karva terms keep their meanings.
 
 ## 3. The reviewer's three risks, answered as design
 
