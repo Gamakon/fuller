@@ -356,9 +356,32 @@ seconds, the compiled arm must be split into pieces compiled separately
 (one kernel per band of the tail, recompiled only when its band
 changes), and the plan changes before anything else is built.
 
-This section governs the order: the compile-time measurement comes
-right after the per-pass timestamps of §6 step 1, and the decision
-point there reads three numbers, not two.
+**Measured 2026-10-09, on Andrew's instruction ("run a hard problem,
+unsolved for 90 s").** `strogatz_predprey1`, the sweep's config, seed
+7014, 90 s: 3,535 generations, 14.1 M individuals, not solved (1−R²
+7.6e-3, test R² 0.992), population of 4,000 individuals × 3 genes
+exported (`phylu/logs/HARD_predprey1/population.json`; `feynman_I_26_2`,
+also run, solved at generation 79 in 13.4 s, so it is no longer hard).
+Hash-consed, the final population has 288,918 subtree occurrences,
+37,345 distinct subtrees, 7,012 of them repeated with at least one
+operator (182,037 of the occurrences, 63 %), 6,836 with two or more;
+5,694 distinct genes of 12,000. A kernel of those 6,836 definitions
+(`kingdoms/wgsl/samples/predprey1.definitions.wgsl`, 466 KB, straight
+line, one `let` each, values into an arena) compiles on the device in
+8.9 s cold and 0.45 s when Metal's cache has it; naga's own parse,
+validate and write take 0.5 s of that. A generation takes 25 ms. So the
+compiled arm cannot be one kernel recompiled when the tail changes: a
+cold compile costs 350 generations. The arm must be banded (kernels
+over slices of the tail, each recompiled only when its slice changes)
+or restricted to the stable, heavily reused definitions, with the
+compile time per band measured against its size before the design is
+fixed. That is the plan change this section said would follow; it
+follows.
+
+This section governs the order: the compile-time measurement came
+first (above), and the decision point of §6 step 1 reads three
+numbers: decode's pass time, the reuse fraction per generation, and
+the compile time per band.
 
 ## What could make this fail, stated now
 

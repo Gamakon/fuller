@@ -541,6 +541,19 @@ ruleset covers them yet) or structural moves (hoisting across the
 scaffold, loop restructuring) that this representation can now express
 and gate.
 
+### A real population, hash-consed, and its kernel compiled (measured 2026-10-09)
+
+`strogatz_predprey1` run for 90 s with the sweep's config (3,535
+generations, not solved, test R² 0.992): the final population of 4,000
+individuals has 37,345 distinct subtrees among 288,918 occurrences;
+7,012 distinct subtrees are repeated and carry at least one operator,
+and they cover 63 % of all occurrences. A straight-line kernel of the
+6,836 repeated subtrees with two or more operators
+(`samples/predprey1.definitions.wgsl`) compiles in 8.9 s cold and 0.45 s
+cached on Apple M3 Max; naga takes 0.5 s of it. A generation of this fit
+is 25 ms. The superoptimiser plan's §8 records what follows for the
+compiled arm.
+
 ## What is built, what is not
 
 | piece | status |
