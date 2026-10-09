@@ -108,7 +108,7 @@ definition that goes from unused back to used, how long it was unused.
 The maximum, the frame and the ordering below are set from that study,
 not before it.
 
-**Later: the homeotic tail and its open reading frame (Andrew).** Nothing is
+**Later: the homeotic tail and its expressed frame (Andrew).** Nothing is
 retired by rule. The homeotic rows are one tail of fixed length, sorted
 every generation by current use (referrer count, ties by age then by
 hash, so the order is a function of the population and deterministic).
@@ -146,7 +146,7 @@ the accumulator.
 The homeotic rows hold the DAG (node hashes, child pointers) and, per
 row, a slot of its row values with the data version they were computed
 on; the slots are a device-resident arena allocated once, one per row
-of the open reading frame, released when a row sinks below the frame,
+of the expressed frame, released when a row sinks below the frame,
 so a definition that returns is just a miss. The arena is owned by the
 population value: whoever holds the population holds the memory,
 dropping it frees everything, and no session-global state exists.
