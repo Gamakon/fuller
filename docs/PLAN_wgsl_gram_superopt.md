@@ -157,9 +157,9 @@ Every pair's f64 reference is cached by `(d, m, seed)`. ShapeDistance mean and m
 | 7 | time ratio | median over 5 paired, randomised rounds of `T_k / T_shipped` (GPU timestamps, same minute) | 1 |
 | 8 | time spread | `(max − min) / median` of those 5 ratios | shipped's own spread (0.12 at the baseline) |
 
-**Normalised inputs.** `x_i = log10(1 + v_i / c_i) / M_i`, where `M_i` is the column's maximum over the first population scored, frozen (phylu's `col_max`), clipped so `x_i ∈ [0, 1]`; the log because the quality columns range over decades. The quality caps are the shipped kernel's own errors, so `x_i < log10(2)/M_i` means more accurate than shipped on that split.
+**Normalised inputs.** Each column is scaled into [0, 1] by its caller: `x_i = log10(1 + v_i / c_i) / M_i`, with `M_i` the column's maximum over the first population scored, frozen, and the result clipped; the log because the quality columns range over decades. The quality caps are the shipped kernel's own errors, so a column under `log10(2)/M_i` means more accurate than shipped on that split.
 
-**The angle.** With the pole `p = (0, …, 0)` the ideal, fitness is the TrueNorth angle `θ(k) = arccos( Σ (1 − x_i) / (√8 · ‖1 − x‖) )`, the angle between the vector of complements and the diagonal; zero only when every column is at its best, and a kernel that is faster but less accurate is not ranked above one that is slower and exact until the accuracy columns say so. Selection, the hall of fame and the report use `θ`; the grid's ceiling (§3) is the smallest θ over the grid, and the time ratio of that kernel is the speed-up reported.
+**The angle.** phylu's HFF takes the array as it is and returns the TrueNorth angle; it does not know what the columns are. Nothing changes in fuller for this: fuller's harness produces the eight values per kernel, the evolution loop (in phylu, as every fit is) normalises them and calls HFF. Selection, the hall of fame and the report use the angle; the grid's ceiling (§3) is the smallest angle over the grid, and that kernel's time ratio is the speed-up reported.
 
 ## 2. The genotype: sum-preserving moves
 
