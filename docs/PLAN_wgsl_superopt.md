@@ -155,43 +155,100 @@ checksum on each; the generated-code diff for one. A reproducible 10 %
 means: on every law and seed, the median decode pass is at least 10 %
 below shipped and the two spreads do not overlap.
 
-## 6. Order
+## 6. Order, as tasks
 
-The order follows the reviewer's priorities as given: loop-invariant
-code motion, sharing versus recomputation, integer and bitwise
-rewrites, memory access; a reproducible 10 % on decode measured as GPU
-execution time; the generated code compared; then realistic workloads
-and seeds; the genetic algorithm exploring legal graphs with measured
-GPU time as its fitness. Each step is measured before the next is built.
+Every task below follows `~/dev/minkymorgan/qdrant/docs/Rules.md`: no
+stubs, no simulated results, no failovers, warnings fixed at the root,
+every change committed with a factual message, real data, tests that
+fail loudly and run to completion, wall-clock time reported for every
+run, timeouts set from the run's own requirement (a fit's budget plus
+its build, never a round number), temporary scripts kept in tmp/. The
+order follows the reviewer's priorities. The wider project, for every
+task: the WGSL kingdom turns a compute kernel into a chromosome whose
+sharing and rewrites are legal by construction (memory versions,
+`legality::decide`, the folded rebuild, the oracle, all built and
+measured in `kingdoms/wgsl/README.md`); this plan uses that to make
+phylu's decode kernel measurably faster by evolutionary search, with
+the device's own time as the fitness and bit-identical output as the
+gate. Tools throughout: fuller (`src/wgsl/*`, `examples/wgsl_oracle.rs`,
+`examples/wgsl_read_kernel.rs`), phylu (`examples/kernel_time.rs`, the
+resident chain in `src/evolve/resident.rs`, `scripts/wgsl_override_sweep.sh`),
+wgpu 0.20 on Metal, naga 0.20, `xcrun metal`. One GPU process at a time,
+launched only by the fuller session, announced, under nohup with a log.
 
-1. **Per-pass GPU time.** Timestamp queries around each pass of phylu's
-   resident chain; decode's own time; the spread sized on three shipped
-   runs. The same instrumented fit records subtree reuse per generation
-   for §7.
-2. **Loop-invariant code motion** (§2.2) and **memory access** (§2.3,
-   the cached re-read load, the load hoisted across a loop the compiler
-   cannot prove safe): the inventory and the phenotype, unit tests per
-   move, the oracle's 1,000 programs with random genotypes through the
-   device, bit-exact.
-3. **Sharing versus recomputation** (§2.1): fold and unfold as the two
-   moves; register pressure against ALU, decided by the device.
-4. **Integer and bitwise rewrites** (§2.4): the ruleset over the rows
-   decode is made of, gated by the oracle.
-5. **The search** (§3): genotypes over the inventory, measured decode
-   pass time as fitness, bit-identical output as the gate, one GPU run
-   at a time, a ledger of every variant.
-6. **The generated code** (§4): naga's MSL and the Metal compiler's AIR
-   for shipped and winner, diffed; the gain explained or withdrawn.
-7. **Validation** (§5): three laws, three seeds, 300 generations,
-   spreads not overlapping, the golden checksum held: the 10 %.
-8. **The incremental population** (§7, §8), built on what the search
-   needed anyway (the shared DAG of variants, the arena, the delta
-   compiler): reuse between generations measured, Fold as an operator
-   in the engine's loop, the compiled-against-interpreted experiment,
-   compaction and the tail study. The measurements already taken (63 %
-   repeated work in one generation; 80 ms to compile a band of a few
-   hundred definitions) say it is worth doing; they do not reorder the
-   reviewer's milestone.
+1. **Read docs/Rules.md, then: per-pass GPU time.** Purpose: the target
+   is decode's own time, which no number today gives (a generation is
+   32.5 ms over five passes). Architecture: `wgpu::Features::TIMESTAMP_QUERY`
+   and `timestamp_writes` on each compute pass of `Resident::run`, resolved
+   per generation into the KERNEL_TIME line of `kernel_time.rs`;
+   fuller's `Device::time` gains the same for the oracle's kernels.
+   Measure: decode's median pass time and the spread over three shipped
+   runs, plus subtree reuse per generation (for §7). Done when the three
+   runs and their spread are in the README with wall-clock times.
+2. **Read docs/Rules.md, then: loop-invariant motion and memory access
+   as legal moves.** Purpose: the moves the compiler cannot make, since
+   it must assume storage buffers alias and our versions know they do
+   not. Architecture: `wgsl::superopt::inventory` in fuller lists, per
+   kernel, every single-use subtree inside a loop whose placement by
+   `legality::decide` leaves the loop (§2.2) and every load repeated
+   under one version, `min_ops` 1 for `load.*` texts (§2.3); the
+   phenotype applies a choice vector and calls `rebuild_folded`. Tests:
+   one unit test per move on the oracle's hand-written kernels; the
+   1,000 generated programs with random choice vectors through the
+   device, bit-exact. Done when both pass and decode's inventory is
+   counted in the README.
+3. **Read docs/Rules.md, then: sharing versus recomputation.** Purpose:
+   sharing costs registers on a GPU and may lose; the device decides.
+   Architecture: each accepted repeat becomes a choice (fold or inline)
+   in the inventory; unfold is the inverse operator (§2.1). Tests: the
+   all-zero vector reproduces the shipped text, the all-one vector the
+   folded rebuild, bit-exact on the oracle. Done when decode's
+   choices are counted.
+4. **Read docs/Rules.md, then: integer and bitwise rewrites.** Purpose:
+   decode is integer code; the Math rules reach nothing in it.
+   Architecture: a new egglog ruleset in `src/ruleset/` over the `index`,
+   `int`, `bits` and `logic` rows (§2.4), used by `mutate.rs` with the
+   same opaque-leaf mapping; bit-exact by construction and still gated
+   by the oracle's criterion. Tests: a unit test per rule; the 1,000
+   generated programs' integer regions mutated and run on the device.
+   Done when the pass rate and the count of decode's integer regions are
+   in the README.
+5. **Read docs/Rules.md, then: the search.** Purpose: let selection
+   find what is fastest among the legal graphs. Architecture: §3, a
+   genotype per inventory entry, population 16, mutation flips a
+   choice, uniform crossover, 20 generations, fitness the decode pass
+   time of task 1 through `PHYLU_WGSL_DIR`, gate the bit-identical
+   decode output, a ledger (genotype, text hash, gate, time, wall
+   clock) per variant, `examples/wgsl_superopt.rs`. Timeout per variant:
+   its warm-up plus its measured generations, not a round number. Done
+   when the ledger and the best genotype are in the README.
+6. **Read docs/Rules.md, then: the generated code.** Purpose: a gain
+   must be explained or withdrawn. Architecture: §4, naga's MSL for
+   shipped and winner with wgpu-hal's Metal options, `xcrun -sdk macosx
+   metal -S` to AIR, a diff read line by line, no sampling. Done when
+   the diff and its reading are in the README.
+7. **Read docs/Rules.md, then: validation.** Purpose: reproducible means
+   across workloads and seeds. Architecture: §5, three laws, three
+   seeds, 300 generations each, shipped against the winner, spreads
+   sized, the override sweep's golden checksum on each. Done when the
+   table shows the decode pass at least 10 % below shipped on every law
+   and seed with non-overlapping spreads, or states by how much it
+   falls short.
+8. **Read docs/Rules.md, then: the incremental population.** Purpose:
+   §7's general requirement, measured in §8 (63 % repeated work in one
+   generation; 80 ms to compile a band of a few hundred definitions).
+   Architecture: reuse between generations measured first (the
+   predator-prey fit with the population exported every generation);
+   then the arena and the delta compiler in fuller (a band of new
+   definitions as one kernel reading the arena, bands dispatched in
+   order, interpreter for uncompiled rows, bit-identical to the
+   interpreter on the exported population); then Fold as an operator in
+   phylu's loop with the delta compiled off the generation's path; then
+   the experiment of §8 (three laws, three seeds, 300 generations,
+   compiled-incremental against interpreted, bit-identical, ms per
+   generation, break-even churn); then compaction and the tail study.
+   Each a measurement before the next; done when the experiment's table
+   is in the README.
 
 ## 7. Incremental folding: a general requirement (Andrew, 2026-10-09)
 
