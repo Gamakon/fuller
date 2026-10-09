@@ -157,41 +157,41 @@ below shipped and the two spreads do not overlap.
 
 ## 6. Order
 
-The measurements of §8 (63 % of a population's work is repeated inside
-one generation; a kernel of a few hundred definitions compiles in
-80 ms, thousands in seconds) put the incremental population first and
-the decode search after it. Each step is a measurement before the next
-is built.
+The order follows the reviewer's priorities as given: loop-invariant
+code motion, sharing versus recomputation, integer and bitwise
+rewrites, memory access; a reproducible 10 % on decode measured as GPU
+execution time; the generated code compared; then realistic workloads
+and seeds; the genetic algorithm exploring legal graphs with measured
+GPU time as its fitness. Each step is measured before the next is built.
 
-**Track A, the incremental population (§7, §8).**
-
-1. Reuse BETWEEN generations: the predator-prey fit again with the
-   population exported every generation; count the fraction of each
-   generation's subtrees present in the generation before, and the
-   number of new definitions per generation. One 90 s run, one host
-   count. This number decides the rest: high reuse means a small delta
-   that compiles off the generation's path; low reuse means the compiled
-   path never catches up and the track stops here with that result.
-2. The arena and the delta compiler in fuller: a band of new definitions
-   emitted as one kernel that reads its dependencies from the arena and
-   writes its own values; bands dispatched in order; rows whose
-   definitions are not yet compiled evaluated by the interpreter. Tested
-   on the exported population: bit-identical to the interpreter.
-3. Fold as an operator in phylu's generation loop: add definitions,
-   rewrite chromosomes to reference them, grow the tail; evaluation reads
-   definition values from the arena; the delta compiled off the
-   generation's path (every few generations or on another thread).
-4. The experiment of §8: three laws, three seeds, 300 generations,
-   interpreter against compiled-incremental, bit-identical populations;
-   ms per generation for both and the break-even churn.
-5. Compaction and the tail study: merge bands in the background; record
-   growth, use counts and return depths; set the frame and the maximum
-   from them.
-
-**Track B, the decode search (§1–§5), after Track A's step 4** and
-targeting the kernels that remain after it: per-pass timestamps and the
-spread; the inventory and phenotype; the integer ruleset; the search
-with the gate and timing; the generated-code diff; the validation.
+1. **Per-pass GPU time.** Timestamp queries around each pass of phylu's
+   resident chain; decode's own time; the spread sized on three shipped
+   runs. The same instrumented fit records subtree reuse per generation
+   for §7.
+2. **Loop-invariant code motion** (§2.2) and **memory access** (§2.3,
+   the cached re-read load, the load hoisted across a loop the compiler
+   cannot prove safe): the inventory and the phenotype, unit tests per
+   move, the oracle's 1,000 programs with random genotypes through the
+   device, bit-exact.
+3. **Sharing versus recomputation** (§2.1): fold and unfold as the two
+   moves; register pressure against ALU, decided by the device.
+4. **Integer and bitwise rewrites** (§2.4): the ruleset over the rows
+   decode is made of, gated by the oracle.
+5. **The search** (§3): genotypes over the inventory, measured decode
+   pass time as fitness, bit-identical output as the gate, one GPU run
+   at a time, a ledger of every variant.
+6. **The generated code** (§4): naga's MSL and the Metal compiler's AIR
+   for shipped and winner, diffed; the gain explained or withdrawn.
+7. **Validation** (§5): three laws, three seeds, 300 generations,
+   spreads not overlapping, the golden checksum held: the 10 %.
+8. **The incremental population** (§7, §8), built on what the search
+   needed anyway (the shared DAG of variants, the arena, the delta
+   compiler): reuse between generations measured, Fold as an operator
+   in the engine's loop, the compiled-against-interpreted experiment,
+   compaction and the tail study. The measurements already taken (63 %
+   repeated work in one generation; 80 ms to compile a band of a few
+   hundred definitions) say it is worth doing; they do not reorder the
+   reviewer's milestone.
 
 ## 7. Incremental folding: a general requirement (Andrew, 2026-10-09)
 
