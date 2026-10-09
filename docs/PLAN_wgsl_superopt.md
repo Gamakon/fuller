@@ -102,6 +102,11 @@ decision in `legality.rs` or by a rule stated here and tested.
 
 ## 3. The genotype and the search
 
+- **One DAG, not one text per variant.** The population of variants is
+  held as one hash-consed DAG of the kernel's roots (the §7 requirement
+  applied here): a genotype is a delta against it, the fold and the
+  decision are maintained, and only the rebuild to text and the compile
+  are per variant, because the compiler needs text.
 - **Inventory.** For a kernel, the list of legal moves (§2.1–2.4) with a
   stable order: repeats by their text, hoists by their site, cached
   loads by their text, rewrites by region and variant. The inventory is
@@ -154,7 +159,14 @@ below shipped and the two spreads do not overlap.
 
 1. Per-pass timestamps in phylu's resident chain (phylu), the spread
    sized on shipped (three runs); fuller's `Device::time` gains
-   timestamps too.
+   timestamps too. The SAME instrumented fit also counts subtree reuse
+   per generation (§7). **Decision point, from those two numbers:** if
+   eval is the large pass and reuse is high, the incremental population
+   DAG (§7) is worth more than any 10 % on decode and is built first, as
+   its own plan for the engine; the kernel search then targets the
+   kernels that remain after that change, not the ones it replaces. If
+   decode is the large pass or reuse is low, this plan continues as
+   written.
 2. The inventory and the phenotype in fuller (§2.1–2.3, §3): shares as
    choices, hoists, cached loads; unit tests per move on the oracle's
    kernels; the oracle's 1,000 programs with random genotypes through the
