@@ -230,20 +230,32 @@ deterministic and value-preserving on every ordinary row. Per
 generation it ADDS a homeotic chromosome for each subtree the new
 population repeats and no row yet defines (with its root type),
 REWRITES ordinary chromosomes to reference those rows by href where the
-typed projection admits it, and RETIRES homeotic chromosomes whose
-referrer count is zero past their nursery. Its inverse, unfold (inline
+typed projection admits it, and RE-SORTS the homeotic tail (below). Its
+inverse, unfold (inline
 a definition into its users), is an operator too, which is the
 share-or-recompute choice of §2.1 for free. Fold sits in the schedule
 after variation and before evaluation, so evaluation always sees current
 definitions; Fold itself evaluates nothing.
 
+**The homeotic tail and its open reading frame (Andrew).** Nothing is
+retired by rule. The homeotic rows are one tail of fixed length, sorted
+every generation by current use (referrer count, ties by age then by
+hash, so the order is a function of the population and deterministic).
+A definition nobody uses sinks one place per generation as used ones
+rise, and falls off the end when it reaches it. The top of the tail is
+the open reading frame: the rows that are expressed, whose values are
+memoised in the device arena; its length is the memory budget in rows.
+Below the frame a row keeps only its text and type, so a subtree that
+returns finds its definition and only its values are a miss. This gives
+bounded memory with no eviction policy, graceful forgetting instead of a
+nursery timer, and the replacement dictionary for free: persisting the
+tail across runs is saving the table.
+
 Consequences: evaluation is uniform, every row once per data version,
 homeotic rows in dependency order first, which is phylu's tail-per-level
 dispatch applied across the population instead of inside an individual;
-liveness replaces eviction, a homeotic chromosome with no referrers is
-dead and one with many is valuable, a fitness measured by use that
-joins the replacement dictionary and nursery ideas (a useful definition
-outlives the individuals that made it and persists across runs); the
+use is a definition's fitness, measured, not judged (a useful definition
+outlives the individuals that made it); the
 href space is the table, an href names a homeotic row, the device
 decodes homeotic rows into a shared node arena and ordinary genes point
 into it with the GeneRef leaf that exists today; a homeotic row carries
@@ -262,9 +274,9 @@ the accumulator.
 
 The homeotic rows hold the DAG (node hashes, child pointers) and, per
 row, a slot of its row values with the data version they were computed
-on; the slots are a device-resident arena allocated once, addressed by
-row, released when a row dies (no referrers, past its nursery), so a
-definition that returns is just a miss. The arena is owned by the
+on; the slots are a device-resident arena allocated once, one per row
+of the open reading frame, released when a row sinks below the frame,
+so a definition that returns is just a miss. The arena is owned by the
 population value: whoever holds the population holds the memory,
 dropping it frees everything, and no session-global state exists.
 
