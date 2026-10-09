@@ -288,6 +288,10 @@ pub mod device {
     use super::{bindings, from_words, to_words, Binding};
     use crate::wgsl::interp::{Memory, Value};
 
+    /// A compiled kernel with its bind group and the buffers (binding,
+    /// buffer, words) behind it.
+    type Prepared = (wgpu::ComputePipeline, wgpu::BindGroup, Vec<(Binding, wgpu::Buffer, usize)>);
+
     pub struct Device {
         pub device: wgpu::Device,
         pub queue: wgpu::Queue,
@@ -307,13 +311,41 @@ pub mod device {
             Ok(Device { device, queue, name })
         }
 
-        /// Compile `source`, bind every binding from `memory` (its initial
-        /// content), dispatch `(1, 1, 1)` on `entry`, and return the memory
-        /// with every read-write binding replaced by what the device wrote.
-        /// `original` names the bindings (a rebuilt text's writer may rename
-        /// a global, `out2` → `out2_`; the (group, binding) slots are the
-        /// identity and must agree in kind).
-        pub fn run(&self, source: &str, entry: &str, memory: &Memory, original: &[Binding]) -> Result<Memory, String> {
+        /// Time `source`: compile and bind as [`Device::run`] does, then
+        /// `repeats` submissions of `dispatches` workgroups each, the wall
+        /// clock around submit-and-wait; the MEDIAN milliseconds per
+        /// submission and the device's MINIMUM. Outputs are not read back;
+        /// every workgroup runs the same invocation, which is idempotent for
+        /// the oracle's kernels. At one invocation per workgroup this measures
+        /// dispatch overhead, not the kernel; a real workload needs the
+        /// engine's buffers (phylu's `kernel_time`).
+        pub fn time(&self, source: &str, entry: &str, memory: &Memory, original: &[Binding], dispatches: u32, repeats: usize) -> Result<(f64, f64), String> {
+            let (pipeline, bind, buffers) = self.prepare(source, entry, memory, original)?;
+            let mut times = Vec::with_capacity(repeats);
+            for _ in 0..repeats {
+                let mut enc = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some(entry) });
+                {
+                    let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some(entry), timestamp_writes: None });
+                    pass.set_pipeline(&pipeline);
+                    pass.set_bind_group(0, &bind, &[]);
+                    pass.dispatch_workgroups(dispatches, 1, 1);
+                }
+                let t = std::time::Instant::now();
+                self.queue.submit(Some(enc.finish()));
+                self.device.poll(wgpu::Maintain::Wait);
+                times.push(t.elapsed().as_secs_f64() * 1e3);
+            }
+            for (_, buf, _) in &buffers {
+                buf.destroy();
+            }
+            self.device.poll(wgpu::Maintain::Poll);
+            times.sort_by(|a, b| a.partial_cmp(b).expect("finite"));
+            Ok((times[times.len() / 2], times[0]))
+        }
+
+        /// Compile, bind and upload: the pipeline, its bind group and the
+        /// buffers (binding, buffer, words).
+        fn prepare(&self, source: &str, entry: &str, memory: &Memory, original: &[Binding]) -> Result<Prepared, String> {
             let module = naga::front::wgsl::parse_str(source).map_err(|e| e.emit_to_string(source))?;
             let info = naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::all()).validate(&module).map_err(|e| format!("validation: {}", e.emit_to_string(source)))?;
             let own: Vec<Binding> = bindings(&module)?;
@@ -379,6 +411,17 @@ pub mod device {
             if let Some(e) = pollster::block_on(self.device.pop_error_scope()) {
                 return Err(format!("bind group: {e}"));
             }
+            Ok((pipeline, bind, buffers))
+        }
+
+        /// Compile `source`, bind every binding from `memory` (its initial
+        /// content), dispatch `(1, 1, 1)` on `entry`, and return the memory
+        /// with every read-write binding replaced by what the device wrote.
+        /// `original` names the bindings (a rebuilt text's writer may rename
+        /// a global, `out2` → `out2_`; the (group, binding) slots are the
+        /// identity and must agree in kind).
+        pub fn run(&self, source: &str, entry: &str, memory: &Memory, original: &[Binding]) -> Result<Memory, String> {
+            let (pipeline, bind, buffers) = self.prepare(source, entry, memory, original)?;
             let reads: Vec<(usize, wgpu::Buffer)> = buffers
                 .iter()
                 .enumerate()

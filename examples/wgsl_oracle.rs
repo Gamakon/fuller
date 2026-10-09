@@ -70,6 +70,9 @@ fn main() -> Result<(), String> {
     }
     let device = Device::new()?;
     println!("device: {}", device.name);
+    if args.iter().any(|a| a == "--time") {
+        return timed(&device, &dir, mutate_n.max(1), seed0);
+    }
     if mutate_n > 0 {
         return mutated(&device, mutate_n, seed0, with_loads);
     }
@@ -99,6 +102,88 @@ fn criterion(mutant: &Memory, original: &Memory) -> Result<(usize, usize), Strin
         }
     }
     Ok((exact, moved))
+}
+
+/// Step 6, the mechanism: compile, gate, time, rank. For every hand-written
+/// kernel and the first generated programs with mutants: the original, the
+/// folded rebuild and every mutant that passes the criterion, timed as
+/// `DISPATCHES` workgroups per submission, median of `REPEATS`. At one
+/// invocation per workgroup this is dispatch overhead; the table says so.
+const DISPATCHES: u32 = 4096;
+const REPEATS: usize = 15;
+
+fn timed(device: &Device, dir: &std::path::Path, n: usize, seed0: u64) -> Result<(), String> {
+    use fuller::wgsl::mutate::mutants_of_roots;
+    println!("{:<30} {:<18} {:>10} {:>10}  ({DISPATCHES} workgroups per submission, median of {REPEATS}; one invocation each: dispatch overhead)", "kernel", "variant", "median ms", "min ms");
+    let mut rows: Vec<(String, String, f64, f64)> = Vec::new();
+    for k in hand_kernels(dir)? {
+        let entry = entry_name(&k.kernel)?;
+        let mut memory = Memory::default();
+        for (loc, v) in &k.expectation.inputs {
+            memory.set(loc, v.clone());
+        }
+        let binds = bindings(&k.kernel.module)?;
+        let (m, lo) = device.time(&k.source, &entry, &memory, &binds, DISPATCHES, REPEATS)?;
+        rows.push((k.name.clone(), "original".into(), m, lo));
+        let folded = rebuild_folded(&k.kernel, &k.chromosomes)?;
+        let (m, lo) = device.time(&folded.wgsl, &entry, &memory, &binds, DISPATCHES, REPEATS)?;
+        rows.push((k.name.clone(), "folded".into(), m, lo));
+    }
+    let mut shown = 0usize;
+    for seed in seed0.. {
+        if shown >= n {
+            break;
+        }
+        let g = generate(seed);
+        let kernel = read(&g.source)?;
+        let entry = entry_name(&kernel)?;
+        let fi = kernel.functions.iter().position(|f| f.name == entry).unwrap();
+        let roots: Vec<String> = kernel.functions[fi].roots.iter().map(|r| r.tree.to_sexpr()).collect();
+        let (by_root, _) = mutants_of_roots(&roots, 2, 3, 2, true)?;
+        if by_root.is_empty() {
+            continue;
+        }
+        shown += 1;
+        let chromosomes: Vec<_> = kernel.functions.iter().map(|f| chromosome(f, &ChromosomeOptions::default())).collect::<Result<_, _>>()?;
+        let mut memory = Memory::default();
+        memory.set("buffer.xs", Value::Vec(g.xs.iter().map(|&x| Value::F32(x)).collect()));
+        memory.set("buffer.ks", Value::Vec(g.ks.iter().map(|&x| Value::U32(x)).collect()));
+        memory.set("uniform.n", Value::U32(g.n));
+        memory.set("buffer.out", Value::Vec(vec![Value::F32(0.0); 8]));
+        memory.set("buffer.cnt", Value::Vec(vec![Value::U32(0); 8]));
+        memory.set("buffer.ys", Value::Vec(g.ys.iter().map(|&x| Value::F32(x)).collect()));
+        let binds = bindings(&kernel.module)?;
+        let original = device.run(&g.source, &entry, &memory, &binds)?;
+        let name = format!("seed {seed}");
+        let (m, lo) = device.time(&g.source, &entry, &memory, &binds, DISPATCHES, REPEATS)?;
+        rows.push((name.clone(), "original".into(), m, lo));
+        let folded = rebuild_folded(&kernel, &chromosomes)?;
+        let (m, lo) = device.time(&folded.wgsl, &entry, &memory, &binds, DISPATCHES, REPEATS)?;
+        rows.push((name.clone(), "folded".into(), m, lo));
+        let mut k = 0usize;
+        for (root_index, ms) in &by_root {
+            for mu in ms {
+                let mut new_roots = roots.clone();
+                new_roots[*root_index] = mu.root_text();
+                let mut cs = chromosomes.clone();
+                cs[fi] = fuller::wgsl::chromosome_with_roots(&kernel.functions[fi], &new_roots, &ChromosomeOptions::default())?;
+                let text = rebuild_folded(&kernel, &cs)?.wgsl;
+                let mem = device.run(&text, &entry, &memory, &binds)?;
+                let verdict = criterion(&mem, &original);
+                if verdict.is_err() {
+                    continue;
+                }
+                let (m, lo) = device.time(&text, &entry, &memory, &binds, DISPATCHES, REPEATS)?;
+                rows.push((name.clone(), format!("mutant {k}: {} → {}", mu.from, mu.to), m, lo));
+                k += 1;
+            }
+        }
+    }
+    for (kernel, variant, m, lo) in &rows {
+        let v: String = variant.chars().take(18).collect();
+        println!("{kernel:<30} {v:<18} {m:>10.3} {lo:>10.3}");
+    }
+    Ok(())
 }
 
 /// Step 5: algebraic mutants of the generated programs' load-free regions,
