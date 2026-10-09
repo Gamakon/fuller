@@ -13,6 +13,8 @@
 
 pub mod chromosome;
 pub mod generator;
+#[cfg(feature = "gpu")]
+pub mod gram;
 pub mod infer;
 pub mod interp;
 pub mod legality;

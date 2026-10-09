@@ -304,7 +304,7 @@ pub mod device {
             let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default())).ok_or("no adapter")?;
             let name = format!("{} ({:?})", adapter.get_info().name, adapter.get_info().backend);
             let (device, queue) = pollster::block_on(adapter.request_device(
-                &wgpu::DeviceDescriptor { label: Some("wgsl-oracle"), required_features: wgpu::Features::empty(), required_limits: adapter.limits() },
+                &wgpu::DeviceDescriptor { label: Some("wgsl-oracle"), required_features: adapter.features() & wgpu::Features::TIMESTAMP_QUERY, required_limits: adapter.limits() },
                 None,
             ))
             .map_err(|e| format!("request_device: {e}"))?;
