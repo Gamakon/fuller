@@ -135,6 +135,50 @@ are not enough; the conservative load rule refuses more repeats than it
 admits in the large kernels (local reads under loop-carried stores), which
 is the plan's finer rule's job to recover.
 
+### Sharing with source `let`s as roots and memory versions (measured 2026-10-09)
+
+Two later changes moved these numbers. First, a source `let` became a
+root of its own (195dfe7, found by the device proof): its uses are
+`let.<name>@<idx>` leaves, so a value the kernel computed once is no longer
+a textual repeat at every use, and most of the repeats above vanished
+with it. Second, the lineage plan's first step
+(`docs/PLAN_wgsl_lineage.md`, `src/wgsl/versions.rs`): a load of a
+location the function ever bumps (a store, an atomic, a barrier, a call
+that stores) is named with its memory version, `load.local.i@1@v3`,
+`load.buffer.q.#@v2`, with phis at every join (if, switch, loop header,
+loop exit), so equal text is equal lineage. Measured on the same six
+files at the previous commit (`before`) and with versions (`after`), 16
+tail slots, definitions of at least 2 operators. `refused` is the
+conservative load rule as before; `lineage` is new: textual repeats whose
+loads sit under different versions, which no rule may ever share.
+
+| entry point | genes | repeats found | tail filled | refused before | refused after | lineage |
+|---|---|---|---|---|---|---|
+| `decode_main` | 242 | 3 | 3 | 8 | 7 | 3 |
+| `score_main` | 368 | 4 | 4 | 10 | 10 | 1 |
+| `hff_main` | 98 | 1 | 1 | 2 | 1 | 1 |
+| `colmax_main` | 30 | 0 | 0 | 0 | 0 | 0 |
+| `type_main` | 37 | 1 | 1 | 0 | 0 | 0 |
+| `first_main` | 38 | 0 | 0 | 0 | 0 | 0 |
+| `select_main` | 73 | 2 | 2 | 0 | 0 | 0 |
+| `mutate_main` | 430 | 9 | 9 | 2 | 2 | 0 |
+| `crossover_main` | 131 | 3 | 3 | 0 | 0 | 0 |
+| `lint_main` | 74 | 4 | 4 | 0 | 0 | 0 |
+
+Over all 59 functions the repeats found, the tail fills, the head needed
+and the Karva result are identical before and after (versions change what
+the finder may see, and the conservative rule still refuses every load of
+a stored target); `ROUND_TRIP ok` holds on all six files and the six
+rebuilt kernels in `samples/rebuilt/` are byte-identical (versions are
+stripped at the rebuild). What the lineage column says: of the textual
+repeats that read a stored location, `decode_main` has 3, `score_main` 1
+and `hff_main` 1 that are read under two versions and so must stay apart;
+the 7, 10 and 1 the conservative rule still refuses are repeats of ONE
+version, which the legality step (`legality::decide`, next) may admit with
+a placement. In `hff_main` 25 of the 66 terminals carry a version
+(`samples/hff.chromosomes.json`, regenerated; phylu's typed sample gate
+reads it).
+
 ### The naga round trip (measured 2026-10-08)
 
 `ROUND_TRIP ok` on all six: every function's genes DECODED from Karva,
@@ -239,6 +283,8 @@ repaid because the product runs billions of times.
 | the typed chromosome (`chromosome_typed`: a dual code per live token, the two-form rule in the fold) and phylu's typed sample gate (241a462f: 134 fully typed genes of the hff sample decode on host and device with no projection, the device's `ty_code` word equal to fuller's node for node) | built, verified 2026-10-08 23:57 |
 | the node word `ty_code` in both crates (the `arg1` retirement; phylu R/T, fuller T) | done 2026-10-08 23:48 |
 | device parity of a rebuilt kernel (the proof) | DONE: all 10 entry points compile both ways on Metal, and phylu's suite holds the golden checksum and the sample gate with each of the five rebuilt kernels substituted |
+| memory versions in the reader (`src/wgsl/versions.rs`; lineage plan step 1) | built 2026-10-09: loads named with their version, phis by join, barriers/atomics/calls as bumps, pointer lets checked; the lineage column above |
+| `legality::decide`, the reference interpreter, the oracle, placement, mutations, the evaluator (lineage plan steps 2–6) | not started |
 | the scaffold-with-holes chromosome and its decoder (phylu) | not started |
 | compile-run-time evaluation path with the correctness gate (phylu) | not started |
 | first target: one of our own kernels, read in, round-tripped, then evolved for time | not started |

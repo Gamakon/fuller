@@ -24,6 +24,7 @@ use crate::karva::{karva_to_terms_generic, parse_math, FunctionSpec, MathNode, P
 use super::infer::infer_function;
 use super::loader::WgslKingdom;
 use super::reader::{KernelFunction, RootKind};
+use super::versions::split_version;
 
 /// What one function became.
 #[derive(Debug, Clone)]
@@ -55,6 +56,10 @@ pub struct WgslChromosome {
     /// Repeated subtrees refused for sharing because their occurrences
     /// were read under two forms (the plan's form-conflict rule).
     pub refused_forms: usize,
+    /// Repeats the history forbids: subtree texts equal once the load
+    /// versions are stripped, but read under more than one version
+    /// (`docs/PLAN_wgsl_lineage.md` §3). Counted, never folded.
+    pub refused_lineage: usize,
 }
 
 /// Options for [`chromosome`].
@@ -107,10 +112,43 @@ fn node_count(n: &MathNode) -> usize {
 /// leaf, or a local read as `(Var "load.<target>")`).
 fn reads_stored(n: &MathNode, stored: &BTreeSet<String>) -> bool {
     match n {
-        MathNode::Var(name) => name.strip_prefix("load.").is_some_and(|t| stored.contains(t)),
-        MathNode::App(ctor, children) => ctor.strip_prefix("load.").is_some_and(|t| stored.contains(t)) || children.iter().any(|c| reads_stored(c, stored)),
+        MathNode::Var(name) => split_version(name).0.strip_prefix("load.").is_some_and(|t| stored.contains(t)),
+        MathNode::App(ctor, children) => split_version(ctor).0.strip_prefix("load.").is_some_and(|t| stored.contains(t)) || children.iter().any(|c| reads_stored(c, stored)),
         MathNode::Num(_) => false,
     }
+}
+
+/// `n` with every load's version stripped: the text two occurrences would
+/// share if memory had no history.
+fn strip_versions(n: &MathNode) -> MathNode {
+    match n {
+        MathNode::Num(v) => MathNode::Num(*v),
+        MathNode::Var(name) => MathNode::Var(split_version(name).0.to_string()),
+        MathNode::App(ctor, children) => MathNode::App(split_version(ctor).0.to_string(), children.iter().map(strip_versions).collect()),
+    }
+}
+
+/// Repeats the history forbids: distinct version-stripped texts with at
+/// least `min_ops` operators that occur at two or more sites under more
+/// than one versioned text.
+pub(crate) fn refused_by_lineage(roots: &[MathNode], min_ops: usize) -> usize {
+    fn walk(n: &MathNode, out: &mut BTreeMap<String, (usize, BTreeSet<String>, usize)>) {
+        if op_count(n) >= 1 {
+            let entry = out.entry(render(&strip_versions(n))).or_insert_with(|| (op_count(n), BTreeSet::new(), 0));
+            entry.1.insert(render(n));
+            entry.2 += 1;
+        }
+        if let MathNode::App(_, children) = n {
+            for c in children {
+                walk(c, out);
+            }
+        }
+    }
+    let mut groups = BTreeMap::new();
+    for r in roots {
+        walk(r, &mut groups);
+    }
+    groups.values().filter(|(ops, texts, sites)| *ops >= min_ops && *sites >= 2 && texts.len() > 1).count()
 }
 
 /// Exact repeats across (and within) the roots, largest first, with the
@@ -237,6 +275,7 @@ fn build(f: &KernelFunction, opts: &ChromosomeOptions, kingdom: Option<&WgslKing
         .collect();
     let canonical: Vec<String> = roots.iter().map(render).collect();
     let (matches, refused_loads) = exact_shared(&roots, &stored, opts.min_ops);
+    let refused_lineage = refused_by_lineage(&roots, opts.min_ops);
     // The form-conflict rule: a repeated text whose occurrences were read
     // under two forms keeps its own dual at each site and is not folded.
     let (matches, refused_forms): (Vec<Match>, usize) = {
@@ -304,6 +343,7 @@ fn build(f: &KernelFunction, opts: &ChromosomeOptions, kingdom: Option<&WgslKing
         genes,
         ty_codes,
         refused_forms,
+        refused_lineage,
     })
 }
 
@@ -390,12 +430,29 @@ fn main() {
 "#;
         let k = read(src).unwrap();
         let c = chromosome(&k.functions[0], &ChromosomeOptions::default()).unwrap();
-        // `s * s + 2.0` is textually repeated but s is stored between the two reads.
-        // (locals read as load.local.s@<index>; the stored set uses the same names)
+        // `s * s + 2.0` repeats only with the versions stripped: the reads
+        // are `load.local.s@0@v0` and `@v1`, so the finder sees no repeat at
+        // all and the lineage count says why.
         assert_eq!(c.matches, 0);
-        assert!(c.refused_loads >= 1);
+        assert_eq!(c.refused_loads, 0, "no repeat of one version reaches the load rule");
+        assert_eq!(c.refused_lineage, 1, "s * s + 2.0 under two versions");
         assert_eq!(c.folded.filled, 0);
         assert!(c.genes.is_some());
+        // The same two reads with no store between them share, and the rule
+        // that refuses a stored target's load still holds (step 1 keeps it).
+        let src = r#"
+@group(0) @binding(0) var<storage, read_write> out: array<f32>;
+@compute @workgroup_size(1)
+fn main() {
+    var s = 1.0;
+    out[0] = s * s + 2.0;
+    out[1] = s * s + 2.0;
+    s = 3.0;
+}
+"#;
+        let k = read(src).unwrap();
+        let c = chromosome(&k.functions[0], &ChromosomeOptions::default()).unwrap();
+        assert_eq!((c.matches, c.refused_loads, c.refused_lineage), (0, 1, 0), "equal versions, refused by the conservative rule until legality lands");
     }
 
     #[test]

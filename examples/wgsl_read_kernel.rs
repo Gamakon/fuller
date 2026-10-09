@@ -109,18 +109,19 @@ fn main() -> Result<(), String> {
                 }
             }
         }
-        println!("    {:<20} {:>5} {:>6} {:>6} {:>7} {:>5} {:>7} {:>5}  oversized per head length", "chromosome", "genes", "shared", "filled", "refused", "head", "fits@", "karva");
+        println!("    {:<20} {:>5} {:>6} {:>6} {:>7} {:>7} {:>5} {:>7} {:>5}  oversized per head length", "chromosome", "genes", "shared", "filled", "refused", "lineage", "head", "fits@", "karva");
         for f in &kernel.functions {
             match chromosome(f, &ChromosomeOptions::default()) {
                 Ok(c) => {
                     let over: Vec<String> = c.oversized_at.iter().map(|(h, n)| format!("{h}:{n}")).collect();
                     println!(
-                        "    {:<20} {:>5} {:>6} {:>6} {:>7} {:>5} {:>7} {:>5}  {}",
+                        "    {:<20} {:>5} {:>6} {:>6} {:>7} {:>7} {:>5} {:>7} {:>5}  {}",
                         c.function,
                         c.folded.head.len() + c.folded.tail.len(),
                         c.matches,
                         c.folded.filled,
                         c.refused_loads,
+                        c.refused_lineage,
                         c.head_needed,
                         c.genes.as_ref().map(|(h, _)| h.to_string()).unwrap_or_else(|| "none".into()),
                         if c.genes.is_some() { "ok" } else { "-" },
@@ -164,6 +165,7 @@ fn main() -> Result<(), String> {
                             "pset": { "variables": c.pset.variables, "functions": functions, "rnc_values": c.pset.rnc_values },
                             "genes": genes.iter().zip(&c.ty_codes).map(|((head, tail), codes)| serde_json::json!({ "head": head.iter().map(tok).collect::<Vec<_>>(), "tail": tail.iter().map(tok).collect::<Vec<_>>(), "ty_codes": codes })).collect::<Vec<_>>(),
                             "refused_forms": c.refused_forms,
+                            "refused_lineage": c.refused_lineage,
                             "roots": c.roots,
                             "folded": { "head": c.folded.head, "tail": c.folded.tail },
                         }));

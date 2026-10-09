@@ -13,12 +13,21 @@
 //! Every interior node is named from the function table by its naga node and
 //! the scalar kind of the slot it computes; a node the table has no row for
 //! is rendered as `naga.<Variant>` and counted, never silently dropped.
+//!
+//! **Versions.** A load of a location the function ever bumps (stores,
+//! atomics, barriers, calls that store; `versions`) is named with the
+//! version current at its program point: `load.local.i@1@v3`,
+//! `load.buffer.q.#@v2`. A load of a location the function never bumps
+//! carries no version (its version is 0 everywhere, so the bare text already
+//! says so). Equal text therefore means equal lineage: two loads with the
+//! same name read the same value, whatever lies between them.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use naga::{Expression, Handle, Module, ScalarKind as NagaKind, Statement, TypeInner, UniqueArena};
 
 use super::table::{FunctionTable, ScalarKind};
+use super::versions::{self, Counters, Effects, State};
 
 /// A tree as the reader produces it.
 #[derive(Debug, Clone, PartialEq)]
@@ -85,6 +94,23 @@ impl Node {
             }
         }
     }
+
+    /// The lineage of this subtree: every versioned load name and every
+    /// `let` binding it reads (`docs/PLAN_wgsl_lineage.md` §1). Two subtrees
+    /// with equal text have equal lineage; this is what a pointer `let`'s
+    /// index is checked against at each use.
+    pub fn lineage(&self) -> BTreeSet<String> {
+        let mut nodes = Vec::new();
+        self.walk(&mut nodes);
+        nodes
+            .into_iter()
+            .filter_map(|n| match n {
+                Node::Leaf { name, .. } if name.starts_with("load.") || name.starts_with("let.") => Some(name.clone()),
+                Node::App { name, .. } if name.starts_with("load.") => Some(name.clone()),
+                _ => None,
+            })
+            .collect()
+    }
 }
 
 fn fmt_num(v: f64) -> String {
@@ -144,6 +170,9 @@ pub struct KernelFunction {
     /// Statements the kingdom does not read (atomics, barriers, image
     /// stores, …), by name.
     pub unread_statements: BTreeMap<String, usize>,
+    /// Versions created per bumped location (stores, phis, barriers, calls):
+    /// the locations whose loads carry `@v<n>`.
+    pub versions: BTreeMap<String, u32>,
 }
 
 /// A kernel read: the naga module and its validation info, kept for the
@@ -200,16 +229,24 @@ pub fn read(source: &str) -> Result<Kernel, String> {
         .validate(&module)
         .map_err(|e| format!("validation: {e:?}"))?;
     let table = FunctionTable::shipped();
+    let effects = versions::module_effects(&module);
     let mut functions = Vec::new();
     for (handle, f) in module.functions.iter() {
-        let fi = &info[handle];
-        functions.push(read_function(&module, &table, f, fi, f.name.clone().unwrap_or_else(|| format!("fn{}", handle.index())), false));
+        let ctx = Ctx::new(&module, &table, &effects, handle.index(), f, &info[handle]);
+        functions.push(read_function(ctx, f.name.clone().unwrap_or_else(|| format!("fn{}", handle.index())), false)?);
     }
     for (i, ep) in module.entry_points.iter().enumerate() {
-        let fi = info.get_entry_point(i);
-        functions.push(read_function(&module, &table, &ep.function, fi, ep.name.clone(), true));
+        let ctx = Ctx::new(&module, &table, &effects, module.functions.len() + i, &ep.function, info.get_entry_point(i));
+        functions.push(read_function(ctx, ep.name.clone(), true)?);
     }
     Ok(Kernel { module, info, functions })
+}
+
+/// The states collected for a loop's joins while its body is walked.
+#[derive(Default)]
+struct LoopFrame {
+    breaks: Vec<State>,
+    continues: Vec<State>,
 }
 
 struct Ctx<'a> {
@@ -217,21 +254,86 @@ struct Ctx<'a> {
     table: &'a FunctionTable,
     func: &'a naga::Function,
     info: &'a naga::valid::FunctionInfo,
+    /// Every function's effects, by the reader's function index.
+    effects: &'a [Effects],
+    /// Locations this function bumps anywhere: their loads carry a version.
+    bumped: BTreeSet<String>,
+    state: State,
+    counters: Counters,
+    loops: Vec<LoopFrame>,
     /// How many roots reached each handle.
     reached: BTreeMap<u32, usize>,
     /// Handles already bound as `let` roots: a later use is a leaf.
     lets: BTreeSet<u32>,
+    /// Pointer-typed `let`s (`let p = &a[i]`): not roots; their index is
+    /// re-expanded at each use, which is exact only while the index's
+    /// lineage is unchanged since the binding. Handle → lineage at binding.
+    pointer_lets: BTreeMap<u32, BTreeSet<String>>,
+    errors: Vec<String>,
 }
 
-fn read_function(
-    module: &Module,
-    table: &FunctionTable,
-    func: &naga::Function,
-    info: &naga::valid::FunctionInfo,
-    name: String,
-    entry_point: bool,
-) -> KernelFunction {
-    let mut ctx = Ctx { module, table, func, info, reached: BTreeMap::new(), lets: BTreeSet::new() };
+impl<'a> Ctx<'a> {
+    fn new(module: &'a Module, table: &'a FunctionTable, effects: &'a [Effects], index: usize, func: &'a naga::Function, info: &'a naga::valid::FunctionInfo) -> Self {
+        Ctx {
+            module,
+            table,
+            func,
+            info,
+            effects,
+            bumped: versions::bumped_locations(func, &effects[index]),
+            state: State::entry(),
+            counters: Counters::default(),
+            loops: Vec::new(),
+            reached: BTreeMap::new(),
+            lets: BTreeSet::new(),
+            pointer_lets: BTreeMap::new(),
+            errors: Vec::new(),
+        }
+    }
+
+    /// A new version of `loc` at the current point.
+    fn bump(&mut self, loc: &str) {
+        versions::bump(&mut self.state, &mut self.counters, loc);
+    }
+
+    /// The location a pointer expression stores to or loads from, with a
+    /// pointer parameter named as `pointer_target` names it.
+    fn location(&self, pointer: Handle<Expression>) -> String {
+        let loc = versions::location_of(self.module, self.func, pointer);
+        match loc.strip_prefix("arg#") {
+            Some(i) => versions::param_location(self.func, i.parse().expect("arg# carries the index")),
+            None => loc,
+        }
+    }
+
+    /// A call's effects at this site: the callee's globals, and its stored
+    /// pointer parameters substituted by the arguments passed here.
+    fn apply_call(&mut self, function: Handle<naga::Function>, arguments: &[Handle<Expression>]) {
+        let callee = self.effects[function.index()].clone();
+        for loc in &callee.locations {
+            if !loc.starts_with("local.") {
+                self.bump(loc);
+            }
+        }
+        for &p in &callee.params {
+            if let Some(&a) = arguments.get(p as usize) {
+                let loc = self.location(a);
+                self.bump(&loc);
+            }
+        }
+    }
+
+    fn barrier(&mut self, flags: naga::Barrier) {
+        let mut locs = BTreeSet::new();
+        versions::barrier_locations(self.module, flags, &mut locs);
+        for loc in locs {
+            self.bump(&loc);
+        }
+    }
+}
+
+fn read_function(mut ctx: Ctx, name: String, entry_point: bool) -> Result<KernelFunction, String> {
+    let func = ctx.func;
     let mut roots = Vec::new();
     let mut unread = BTreeMap::new();
     for (h, local) in func.local_variables.iter() {
@@ -246,13 +348,16 @@ fn read_function(
         }
     }
     walk_block(&mut ctx, &func.body, &mut Vec::new(), &mut roots, &mut unread);
+    if let Some(e) = ctx.errors.first() {
+        return Err(format!("{name}: {e}"));
+    }
     let shared_handles: BTreeMap<u32, usize> = ctx.reached.iter().filter(|(_, &n)| n > 1).map(|(&h, &n)| (h, n)).collect();
     let shared_loads = func
         .expressions
         .iter()
         .filter(|(h, e)| shared_handles.contains_key(&(h.index() as u32)) && matches!(e, Expression::Load { .. }))
         .count();
-    KernelFunction { name, entry_point, roots, shared_handles, shared_loads, unread_statements: unread }
+    Ok(KernelFunction { name, entry_point, roots, shared_handles, shared_loads, unread_statements: unread, versions: ctx.counters.created().clone() })
 }
 
 fn walk_block(
@@ -272,6 +377,14 @@ fn walk_block(
             // places it before), in handle order.
             for h in range.clone() {
                 if let Some(name) = ctx.func.named_expressions.get(&h).filter(|n| !is_bake(n)) {
+                    if matches!(ctx.info[h].ty.inner_with(&ctx.module.types), TypeInner::Pointer { .. } | TypeInner::ValuePointer { .. }) {
+                        // A pointer `let` binds a place, not a value: no root.
+                        // Its index is re-expanded at each use; the lineage
+                        // at the binding is what each use is checked against.
+                        let lineage = pointer_lineage(ctx, h);
+                        ctx.pointer_lets.insert(h.index() as u32, lineage);
+                        continue;
+                    }
                     let name = format!("{name}@{}", h.index());
                     ctx.lets.insert(h.index() as u32);
                     let tree = expand_let(ctx, h);
@@ -289,7 +402,22 @@ fn walk_block(
         path.push(index);
         index += 1;
         match stmt {
-            Statement::Emit(_) | Statement::Break | Statement::Continue | Statement::Kill => {}
+            Statement::Emit(_) => {}
+            Statement::Break => {
+                let s = ctx.state.clone();
+                if let Some(frame) = ctx.loops.last_mut() {
+                    frame.breaks.push(s);
+                }
+                ctx.state.live = false;
+            }
+            Statement::Continue => {
+                let s = ctx.state.clone();
+                if let Some(frame) = ctx.loops.last_mut() {
+                    frame.continues.push(s);
+                }
+                ctx.state.live = false;
+            }
+            Statement::Kill => ctx.state.live = false,
             Statement::Block(b) => walk_block(ctx, b, path, roots, unread),
             Statement::Store { pointer, value } => {
                 let (target, index) = pointer_target(ctx, *pointer);
@@ -304,33 +432,87 @@ fn walk_block(
                     path: path.clone(),
                     tree: Node::App { name: format!("store.{target}"), slot: "store".into(), known: true, kids },
                 });
+                let loc = ctx.location(*pointer);
+                ctx.bump(&loc);
             }
             Statement::If { condition, accept, reject } => {
                 roots.push(condition_root(ctx, *condition, "if", path));
+                let entry = ctx.state.clone();
                 path.push(0);
                 walk_block(ctx, accept, path, roots, unread);
                 path.pop();
+                let after_accept = std::mem::replace(&mut ctx.state, entry);
                 path.push(1);
                 walk_block(ctx, reject, path, roots, unread);
                 path.pop();
+                let after_reject = ctx.state.clone();
+                ctx.state = versions::merge(&[after_accept, after_reject], &mut ctx.counters);
             }
             Statement::Switch { selector, cases } => {
                 roots.push(condition_root(ctx, *selector, "switch", path));
+                let entry = ctx.state.clone();
+                let mut ends: Vec<State> = Vec::new();
+                let mut carry: Option<State> = None;
                 for (c, case) in cases.iter().enumerate() {
+                    // A fall-through case's end flows into the next case.
+                    ctx.state = match carry.take() {
+                        Some(from_above) => versions::merge(&[entry.clone(), from_above], &mut ctx.counters),
+                        None => entry.clone(),
+                    };
                     path.push(c);
                     walk_block(ctx, &case.body, path, roots, unread);
                     path.pop();
+                    if case.fall_through {
+                        carry = Some(ctx.state.clone());
+                    } else {
+                        ends.push(ctx.state.clone());
+                    }
                 }
+                if let Some(s) = carry {
+                    ends.push(s);
+                }
+                if !cases.iter().any(|c| matches!(c.value, naga::SwitchValue::Default)) {
+                    ends.push(entry);
+                }
+                ctx.state = versions::merge(&ends, &mut ctx.counters);
             }
             Statement::Loop { body, continuing, break_if } => {
+                // Header phi: every location the loop stores takes a fresh
+                // version before the body, distinct from the pre-loop one.
+                let stored = versions::loop_stores(ctx.module, ctx.func, ctx.effects, body, continuing);
+                for loc in &stored {
+                    ctx.bump(loc);
+                }
+                ctx.loops.push(LoopFrame::default());
                 path.push(0);
                 walk_block(ctx, body, path, roots, unread);
                 path.pop();
+                // The back edge: the end of the body and every `continue`
+                // flow into `continuing`.
+                let body_end = ctx.state.clone();
+                let mut into_continuing = vec![body_end];
+                into_continuing.extend(std::mem::take(&mut ctx.loops.last_mut().expect("the loop's frame").continues));
+                ctx.state = versions::merge(&into_continuing, &mut ctx.counters);
                 path.push(1);
                 walk_block(ctx, continuing, path, roots, unread);
                 path.pop();
                 if let Some(b) = break_if {
                     roots.push(condition_root(ctx, *b, "loop", path));
+                }
+                // Exit phi: every `break` and the `break_if` join; a location
+                // the loop stores takes a fresh version after it.
+                let frame = ctx.loops.pop().expect("the loop's frame");
+                let mut exits = frame.breaks;
+                if break_if.is_some() {
+                    exits.push(ctx.state.clone());
+                }
+                if exits.is_empty() {
+                    // No way out: what follows is dead.
+                    exits.push(State { current: ctx.state.current.clone(), live: false });
+                }
+                ctx.state = versions::merge(&exits, &mut ctx.counters);
+                for loc in &stored {
+                    ctx.bump(loc);
                 }
             }
             Statement::Return { value } => {
@@ -342,6 +524,7 @@ fn walk_block(
                         tree: Node::App { name: "store.return".into(), slot: "store".into(), known: true, kids: vec![tree] },
                     });
                 }
+                ctx.state.live = false;
             }
             Statement::Call { function, arguments, .. } => {
                 let callee = ctx.module.functions[*function].name.clone().unwrap_or_else(|| format!("fn{}", function.index()));
@@ -353,15 +536,32 @@ fn walk_block(
                         tree: Node::App { name: format!("store.callarg.{callee}.{p}"), slot: "store".into(), known: true, kids: vec![tree] },
                     });
                 }
+                ctx.apply_call(*function, arguments);
             }
             other => {
                 let name = format!("{other:?}");
                 let name = name.split(|c: char| !c.is_alphanumeric()).next().unwrap_or("?").to_string();
                 *unread.entry(name).or_default() += 1;
+                // Unread, but not without effect on what follows.
+                match other {
+                    Statement::Barrier(flags) => ctx.barrier(*flags),
+                    Statement::WorkGroupUniformLoad { .. } => ctx.barrier(naga::Barrier::WORK_GROUP),
+                    Statement::Atomic { pointer, .. } | Statement::ImageStore { image: pointer, .. } => {
+                        let loc = ctx.location(*pointer);
+                        ctx.bump(&loc);
+                    }
+                    _ => {}
+                }
             }
         }
         path.pop();
     }
+}
+
+/// The lineage of a pointer `let`'s index expressions at its binding.
+fn pointer_lineage(ctx: &mut Ctx, h: Handle<Expression>) -> BTreeSet<String> {
+    let (_, index) = pointer_target(ctx, h);
+    index.map(|n| n.lineage()).unwrap_or_default()
 }
 
 fn condition_root(ctx: &mut Ctx, cond: Handle<Expression>, statement: &'static str, path: &[usize]) -> Root {
@@ -377,6 +577,23 @@ fn condition_root(ctx: &mut Ctx, cond: Handle<Expression>, statement: &'static s
 /// index tree. `best_omr2[row * 3u]` → (`best_omr2`, Some(tree of `row * 3u`));
 /// a local `win` → (`win`, None); a uniform field `hp.rows` → (`hp.rows`, None).
 fn pointer_target(ctx: &mut Ctx, pointer: Handle<Expression>) -> (String, Option<Node>) {
+    let (name, index) = pointer_steps(ctx, pointer);
+    // A use of a pointer `let` re-expands its index here; that is the
+    // kernel's value only while nothing in the index's lineage was bumped
+    // since the binding.
+    if let Some(at_binding) = ctx.pointer_lets.get(&(pointer.index() as u32)) {
+        let now = index.as_ref().map(Node::lineage).unwrap_or_default();
+        if now != *at_binding {
+            let let_name = ctx.func.named_expressions.get(&pointer).cloned().unwrap_or_default();
+            ctx.errors.push(format!(
+                "pointer let `{let_name}` is used after a store to its index's lineage (bound over {at_binding:?}, used over {now:?}); the kingdom cannot yet bind a pointer once"
+            ));
+        }
+    }
+    (name, index)
+}
+
+fn pointer_steps(ctx: &mut Ctx, pointer: Handle<Expression>) -> (String, Option<Node>) {
     match &ctx.func.expressions[pointer] {
         // The target names each step in order: a field by name, an index as
         // `#` (its tree is the index child; several nest as `naga.NestedAccess`
@@ -594,9 +811,14 @@ fn expand(ctx: &mut Ctx, h: Handle<Expression>, count: bool) -> Node {
         }
         Expression::Load { pointer } => {
             let (target, index) = pointer_target(ctx, pointer);
+            // A load of a location this function bumps anywhere carries the
+            // version current here; one it never bumps is version 0 always
+            // and says so by having no suffix.
+            let loc = ctx.location(pointer);
+            let version = if ctx.bumped.contains(&loc) { format!("@v{}", ctx.state.version(&loc)) } else { String::new() };
             match index {
-                Some(ix) => Node::App { name: format!("load.{target}"), slot, known: true, kids: vec![ix] },
-                None => Node::Leaf { name: format!("load.{target}"), slot },
+                Some(ix) => Node::App { name: format!("load.{target}{version}"), slot, known: true, kids: vec![ix] },
+                None => Node::Leaf { name: format!("load.{target}{version}"), slot },
             }
         }
         Expression::CallResult(f) => {
@@ -805,7 +1027,8 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         assert_eq!(f.roots[2].path, vec![0, 0, 0]);
         assert_eq!(f.roots[3].path, vec![1]);
         assert!(f.roots.iter().all(|r| !matches!(r.kind, RootKind::Let { .. })), "no let in this kernel");
-        assert_eq!(f.roots[3].tree.to_sexpr(), "(store.buffer.out.# (literal.index (Num 0.0)) (Var \"load.local.acc@0\"))");
+        // acc is stored in one arm only: the read after the join is the phi (v2).
+        assert_eq!(f.roots[3].tree.to_sexpr(), "(store.buffer.out.# (literal.index (Num 0.0)) (Var \"load.local.acc@0@v2\"))");
     }
 
     #[test]
@@ -825,9 +1048,11 @@ fn main() {
         let f = &k.functions[0];
         let sexprs: Vec<String> = f.roots.iter().map(|r| r.tree.to_sexpr()).collect();
         // select(f, t, c) renders (accept t, reject f, cond c), the table's (value, value, cond).
-        assert!(sexprs.iter().any(|s| s.contains("(select.scalar_cond (convert.index_to_f32 (Var \"load.local.i@1\")) (literal.real (Num 1.0)) (compare.gt (Var \"load.local.i@1\") (literal.index (Num 1.0))))")), "{sexprs:?}");
-        assert!(sexprs.iter().any(|s| s == "(store.branch (compare.lt (Var \"load.local.i@1\") (literal.index (Num 4.0))))"), "the for condition is an if root inside the loop: {sexprs:?}");
-        assert!(sexprs.iter().any(|s| s == "(store.local.i@1 (index.add (Var \"load.local.i@1\") (literal.index (Num 1.0))))"), "{sexprs:?}");
+        // Inside the loop `i` reads its header version (v1); `s` after the loop its exit version.
+        assert!(sexprs.iter().any(|s| s.contains("(select.scalar_cond (convert.index_to_f32 (Var \"load.local.i@1@v1\")) (literal.real (Num 1.0)) (compare.gt (Var \"load.local.i@1@v1\") (literal.index (Num 1.0))))")), "{sexprs:?}");
+        assert!(sexprs.iter().any(|s| s == "(store.branch (compare.lt (Var \"load.local.i@1@v1\") (literal.index (Num 4.0))))"), "the for condition is an if root inside the loop: {sexprs:?}");
+        assert!(sexprs.iter().any(|s| s == "(store.local.i@1 (index.add (Var \"load.local.i@1@v1\") (literal.index (Num 1.0))))"), "{sexprs:?}");
+        assert!(sexprs.iter().any(|s| s.contains("(arith.fract (Var \"load.local.s@0@v3\"))")), "{sexprs:?}");
         assert!(sexprs.iter().any(|s| s.starts_with("(store.buffer.out.# (literal.index (Num 0.0)) ")), "a constant index is an index child: {sexprs:?}");
         let used = k.functions_used();
         assert!(used.contains_key("arith.fract"));
@@ -858,5 +1083,226 @@ fn main() {
     #[test]
     fn an_invalid_kernel_is_an_error_not_a_partial_read() {
         assert!(read("fn main() { let x: f32 = 1u; }").is_err());
+    }
+
+    // ---- memory versions (docs/PLAN_wgsl_lineage.md §6) ----
+
+    fn sexprs(src: &str, function: &str) -> (Vec<String>, BTreeMap<String, u32>) {
+        let k = read(src).unwrap_or_else(|e| panic!("{e}"));
+        let f = k.functions.iter().find(|f| f.name == function).unwrap_or_else(|| panic!("no function {function}"));
+        (f.roots.iter().map(|r| r.tree.to_sexpr()).collect(), f.versions.clone())
+    }
+
+    #[test]
+    fn a_store_bumps_its_location_and_no_other_and_a_uniform_never_bumps() {
+        let src = r#"
+@group(0) @binding(0) var<storage, read_write> a: array<f32>;
+@group(0) @binding(1) var<storage, read_write> b: array<f32>;
+@group(0) @binding(2) var<uniform> u: f32;
+@compute @workgroup_size(1)
+fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let i = gid.x;
+    b[i] = a[i] * u;
+    a[i] = a[i] + u;
+    b[i] = a[i] * u;
+}
+"#;
+        let (s, versions) = sexprs(src, "main");
+        assert!(s[1].contains("(load.buffer.a.#@v0 ") && s[1].contains("(Var \"load.uniform.u\")"), "{}", s[1]);
+        assert!(s[2].contains("(load.buffer.a.#@v0 "), "the store's own value reads the version before it: {}", s[2]);
+        assert!(s[3].contains("(load.buffer.a.#@v1 "), "after the store to a: {}", s[3]);
+        assert!(!s[3].contains("@v2"), "the store to b bumps b, not a: {}", s[3]);
+        assert_eq!(versions, BTreeMap::from([("buffer.a".to_string(), 1), ("buffer.b".to_string(), 2)]), "u is never bumped");
+    }
+
+    #[test]
+    fn a_call_bumps_what_the_callee_stores() {
+        let src = r#"
+@group(0) @binding(0) var<storage, read_write> a: array<f32>;
+fn poke() { a[0] = 1.0; }
+@compute @workgroup_size(1)
+fn main() {
+    let x = a[1];
+    poke();
+    a[2] = a[1] + x;
+}
+"#;
+        let (s, versions) = sexprs(src, "main");
+        assert!(s[0].contains("(load.buffer.a.#@v0 "), "{}", s[0]);
+        assert!(s[1].contains("(load.buffer.a.#@v1 ") && s[1].contains("(Var \"let.x@"), "{}", s[1]);
+        assert_eq!(versions.get("buffer.a"), Some(&2), "the call and the store");
+    }
+
+    #[test]
+    fn a_loop_gives_a_stored_local_a_header_version_a_post_store_version_and_an_exit_version() {
+        let src = r#"
+@group(0) @binding(0) var<storage, read> xs: array<f32>;
+@group(0) @binding(1) var<storage, read_write> out: array<f32>;
+@compute @workgroup_size(1)
+fn main() {
+    var s = 0.0;
+    var i = 0u;
+    out[0] = s + xs[0];
+    loop {
+        if (i >= 4u) { break; }
+        out[1] = s + xs[0];
+        s = s + xs[i];
+        out[2] = s * xs[0];
+        i = i + 1u;
+    }
+    out[3] = s + xs[0];
+}
+"#;
+        let (s, versions) = sexprs(src, "main");
+        let store = |n: usize| s.iter().find(|t| t.starts_with(&format!("(store.buffer.out.# (literal.index (Num {n}.0))"))).cloned().unwrap_or_else(|| panic!("no store to out[{n}]: {s:?}"));
+        assert!(store(0).contains("(Var \"load.local.s@0@v0\")"), "before the loop: {}", store(0));
+        assert!(store(1).contains("(Var \"load.local.s@0@v1\")"), "the header version: {}", store(1));
+        assert!(store(2).contains("(Var \"load.local.s@0@v2\")"), "after the store in the body: {}", store(2));
+        assert!(store(3).contains("(Var \"load.local.s@0@v3\")"), "the exit version, a third one: {}", store(3));
+        // A location the loop never stores has the same text inside and after it.
+        assert!(s.iter().filter(|t| t.contains("(load.buffer.xs.# ")).count() >= 4, "xs carries no version: {s:?}");
+        assert!(!s.iter().any(|t| t.contains("xs.#@v")), "{s:?}");
+        assert_eq!(versions.get("local.s@0"), Some(&3));
+        assert_eq!(versions.get("local.i@1"), Some(&3), "header, the increment, exit");
+    }
+
+    #[test]
+    fn a_store_in_one_arm_bumps_after_the_join_for_if_and_for_switch() {
+        let src = r#"
+@group(0) @binding(0) var<storage, read_write> out: array<f32>;
+@compute @workgroup_size(1)
+fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+    var s = 1.0;
+    if (gid.x > 0u) { s = 2.0; }
+    out[0] = s;
+    switch (gid.x) {
+        case 0u: { s = 4.0; }
+        default: {}
+    }
+    out[1] = s;
+    if (gid.x > 2u) { out[2] = s; } else { out[3] = s; }
+    out[4] = s;
+}
+"#;
+        let (s, versions) = sexprs(src, "main");
+        let store = |n: usize| s.iter().find(|t| t.starts_with(&format!("(store.buffer.out.# (literal.index (Num {n}.0))"))).cloned().unwrap();
+        assert!(store(0).ends_with("(Var \"load.local.s@0@v2\"))"), "phi after the if: {}", store(0));
+        assert!(store(1).ends_with("(Var \"load.local.s@0@v4\"))"), "phi after the switch: {}", store(1));
+        // No store in either arm: no phi, the same version in both arms and after.
+        assert!(store(2).ends_with("@v4\"))") && store(3).ends_with("@v4\"))") && store(4).ends_with("@v4\"))"), "{s:?}");
+        assert_eq!(versions.get("local.s@0"), Some(&4));
+    }
+
+    #[test]
+    fn a_barrier_bumps_every_workgroup_location_and_an_atomic_bumps_its_own() {
+        let src = r#"
+var<workgroup> w: array<f32, 64>;
+@group(0) @binding(0) var<storage, read_write> out: array<f32>;
+@group(0) @binding(1) var<storage, read_write> cnt: atomic<u32>;
+@compute @workgroup_size(64)
+fn main(@builtin(local_invocation_id) lid: vec3<u32>) {
+    w[lid.x] = f32(lid.x);
+    workgroupBarrier();
+    out[0] = w[0];
+    workgroupBarrier();
+    out[1] = w[0];
+    atomicAdd(&cnt, 1u);
+    out[2] = f32(atomicLoad(&cnt));
+}
+"#;
+        let k = read(src).unwrap_or_else(|e| panic!("{e}"));
+        let f = &k.functions[0];
+        let s: Vec<String> = f.roots.iter().map(|r| r.tree.to_sexpr()).collect();
+        let store = |n: usize| s.iter().find(|t| t.starts_with(&format!("(store.buffer.out.# (literal.index (Num {n}.0))"))).cloned().unwrap();
+        assert!(store(0).contains("(load.workgroup.w.#@v2 "), "stored once, then the barrier: {}", store(0));
+        assert!(store(1).contains("(load.workgroup.w.#@v3 "), "the second barrier: {}", store(1));
+        assert!(store(2).contains("cnt@v1"), "the atomic bumped cnt: {}", store(2));
+        assert_eq!(f.versions.get("workgroup.w"), Some(&3));
+        assert_eq!(f.versions.get("buffer.cnt"), Some(&1));
+        assert_eq!(f.unread_statements.get("Barrier"), Some(&2));
+        assert_eq!(f.unread_statements.get("Atomic"), Some(&1));
+    }
+
+    #[test]
+    fn a_pointer_let_store_bumps_its_base_and_a_pointer_parameter_bumps_the_callers_argument_at_that_site() {
+        let src = r#"
+@group(0) @binding(0) var<storage, read_write> a: array<f32>;
+@group(0) @binding(1) var<storage, read_write> out: array<f32>;
+fn poke(p: ptr<function, f32>) { *p = 1.0; }
+@compute @workgroup_size(1)
+fn main() {
+    var x = 0.0;
+    var y = 0.0;
+    let before = x + y;
+    poke(&x);
+    out[0] = x + y;
+    poke(&y);
+    out[1] = x + y;
+    let p = &a[2];
+    out[2] = a[2];
+    *p = 5.0;
+    out[3] = a[2];
+}
+"#;
+        let k = read(src).unwrap_or_else(|e| panic!("{e}"));
+        let poke = k.functions.iter().find(|f| f.name == "poke").unwrap();
+        assert_eq!(poke.versions, BTreeMap::from([("arg.p".to_string(), 1)]));
+        assert_eq!(poke.roots[0].kind, RootKind::Store { target: "arg.p".into() });
+        let main = k.functions.iter().find(|f| f.name == "main").unwrap();
+        let s: Vec<String> = main.roots.iter().map(|r| r.tree.to_sexpr()).collect();
+        let store = |n: usize| s.iter().find(|t| t.starts_with(&format!("(store.buffer.out.# (literal.index (Num {n}.0))"))).cloned().unwrap();
+        let before = main.roots.iter().find(|r| matches!(&r.kind, RootKind::Let { name } if name.starts_with("before@"))).unwrap().tree.to_sexpr();
+        assert!(before.contains("load.local.x@0@v0") && before.contains("load.local.y@1@v0"), "{before}");
+        assert!(store(0).contains("load.local.x@0@v1") && store(0).contains("load.local.y@1@v0"), "poke(&x) bumped x only: {}", store(0));
+        assert!(store(1).contains("load.local.x@0@v1") && store(1).contains("load.local.y@1@v1"), "poke(&y) bumped y only: {}", store(1));
+        assert!(store(2).contains("(load.buffer.a.#@v0 "), "{}", store(2));
+        assert!(store(3).contains("(load.buffer.a.#@v1 "), "the store through p bumped a: {}", store(3));
+        assert!(!main.roots.iter().any(|r| matches!(&r.kind, RootKind::Let { name } if name.starts_with("p@"))), "a pointer let is not a root");
+        assert!(main.roots.iter().any(|r| matches!(&r.kind, RootKind::Let { name } if name.starts_with("before@"))));
+    }
+
+    #[test]
+    fn a_pointer_let_whose_index_lineage_changes_before_a_use_is_refused() {
+        let src = r#"
+@group(0) @binding(0) var<storage, read_write> a: array<f32>;
+@compute @workgroup_size(1)
+fn main() {
+    var i = 0u;
+    let p = &a[i];
+    i = 1u;
+    *p = 2.0;
+}
+"#;
+        let e = match read(src) {
+            Err(e) => e,
+            Ok(_) => panic!("read accepted a pointer let used after a store to its index"),
+        };
+        assert!(e.contains("pointer let `p`") && e.contains("local.i@0@v0") && e.contains("local.i@0@v1"), "{e}");
+    }
+
+    #[test]
+    fn a_let_use_after_a_store_carries_the_bindings_lineage() {
+        // The step-5 fault: `let pos = q[head]; head += 1u;` read after the store.
+        let src = r#"
+@group(0) @binding(0) var<storage, read> q: array<u32>;
+@group(0) @binding(1) var<storage, read_write> out: array<u32>;
+@compute @workgroup_size(1)
+fn main() {
+    var head = 0u;
+    let pos = q[head];
+    head = head + 1u;
+    out[0] = pos + q[head];
+}
+"#;
+        let k = read(src).unwrap_or_else(|e| panic!("{e}"));
+        let f = &k.functions[0];
+        let binding = &f.roots[1];
+        assert!(matches!(&binding.kind, RootKind::Let { name } if name.starts_with("pos@")));
+        assert_eq!(binding.tree.lineage(), BTreeSet::from(["load.buffer.q.#".to_string(), "load.local.head@0@v0".to_string()]), "q is never stored: no version");
+        let store = f.roots.iter().find(|r| matches!(r.kind, RootKind::Store { .. }) && r.tree.to_sexpr().starts_with("(store.buffer.out")).unwrap();
+        let lineage = store.tree.lineage();
+        assert!(lineage.iter().any(|n| n.starts_with("let.pos@")), "{lineage:?}");
+        assert!(lineage.contains("load.local.head@0@v1"), "{lineage:?}");
+        assert!(!lineage.contains("load.local.head@0@v0"), "the use carries the binding, not the text re-read: {lineage:?}");
     }
 }

@@ -40,6 +40,7 @@ use super::loader::WgslKingdom;
 use super::naga_names;
 use super::reader::{read, slot_name, Kernel};
 use super::table::FunctionTable;
+use super::versions::split_version;
 
 /// A rebuilt kernel: the module, its validation info and the WGSL text.
 pub struct Rebuilt {
@@ -224,7 +225,9 @@ fn canonical(sexpr: &str, module: &Module, f: &Function) -> Result<String, Strin
     let by_position = |name: &str| -> String {
         // Every named thing by its position in its arena: `arg.<n>`,
         // `local.<n>`, `buffer.<n>` (and the other global kinds),
-        // `call.<fn>`, `store.arg.<fn>.<p>`.
+        // `call.<fn>`, `store.arg.<fn>.<p>`. A load's version rides along
+        // unchanged: both sides are read by the same reader.
+        let (name, version) = split_version(name);
         let parts: Vec<&str> = name.split('.').collect();
         let mut out = Vec::new();
         let mut i = 0;
@@ -269,7 +272,10 @@ fn canonical(sexpr: &str, module: &Module, f: &Function) -> Result<String, Strin
                 }
             }
         }
-        out.join(".")
+        match version {
+            Some(v) => format!("{}@v{v}", out.join(".")),
+            None => out.join("."),
+        }
     };
     fn go(n: &MathNode, by_position: &dyn Fn(&str) -> String) -> String {
         match n {
@@ -520,7 +526,7 @@ impl<'a> Builder<'a> {
                 if name.starts_with("call.") || name.starts_with("let.") {
                     return Ok(());
                 }
-                if let Some(target) = name.strip_prefix("load.") {
+                if let Some(target) = split_version(name).0.strip_prefix("load.") {
                     return self.emit_base(target, leaves);
                 }
                 if !leaves.contains_key(name) {
@@ -537,7 +543,7 @@ impl<'a> Builder<'a> {
                         slot.insert(h);
                     }
                 } else {
-                    if let Some(target) = ctor.strip_prefix("load.") {
+                    if let Some(target) = split_version(ctor).0.strip_prefix("load.") {
                         self.emit_base(target, leaves)?;
                     }
                     for k in kids {
@@ -744,7 +750,7 @@ impl<'a> Builder<'a> {
                     let idx: u32 = rest.rsplit_once('@').and_then(|(_, i)| i.parse().ok()).ok_or_else(|| format!("{}: call leaf {name} has no handle index", self.name))?;
                     return self.call_results.get(&idx).copied().ok_or_else(|| format!("{}: call result {name} before its call", self.name));
                 }
-                if let Some(target) = name.strip_prefix("load.") {
+                if let Some(target) = split_version(name).0.strip_prefix("load.") {
                     let p = self.pointer(target, None, leaves)?;
                     return self.append(Expression::Load { pointer: p });
                 }
@@ -754,7 +760,7 @@ impl<'a> Builder<'a> {
                 if ctor.starts_with("literal.") {
                     return leaves.get(&render(n)).copied().ok_or_else(|| format!("{}: literal {} was not pre-emitted", self.name, render(n)));
                 }
-                if let Some(target) = ctor.strip_prefix("load.") {
+                if let Some(target) = split_version(ctor).0.strip_prefix("load.") {
                     let ix = match kids.as_slice() {
                         [ix] => ix,
                         _ => return self.err(format!("{ctor} with {} children", kids.len())),
