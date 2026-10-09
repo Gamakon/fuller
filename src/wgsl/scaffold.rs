@@ -399,7 +399,13 @@ impl<'a> Builder<'a> {
                 Statement::Emit(range) => {
                     // A `let` of this Emit is a root: build its tree here, in
                     // handle order, and bind its name for the uses that follow.
-                    let named: Vec<(Handle<Expression>, String)> = range.clone().filter_map(|h| self.original.named_expressions.get(&h).filter(|n| !super::reader::is_bake(n)).map(|n| (h, n.clone()))).collect();
+                    // A pointer `let` (`let p = &a[i]`) is no root (the reader
+                    // resolves its uses to the base); it is not rebuilt either.
+                    let named: Vec<(Handle<Expression>, String)> = range
+                        .clone()
+                        .filter(|h| !self.is_pointer(*h))
+                        .filter_map(|h| self.original.named_expressions.get(&h).filter(|n| !super::reader::is_bake(n)).map(|n| (h, n.clone())))
+                        .collect();
                     for (h, name) in named {
                         let tree = self.take_root("a let")?;
                         let (index, value) = self.unwrap_store(tree)?;
@@ -498,6 +504,17 @@ impl<'a> Builder<'a> {
 
     /// Fill one single-value hole: emit the next root's value tree into
     /// `out` and return its handle.
+    /// Whether an ORIGINAL expression is a pointer: a variable, or an access
+    /// chain down from one, or a pointer parameter.
+    fn is_pointer(&self, h: Handle<Expression>) -> bool {
+        match &self.original.expressions[h] {
+            Expression::GlobalVariable(_) | Expression::LocalVariable(_) => true,
+            Expression::Access { base, .. } | Expression::AccessIndex { base, .. } => self.is_pointer(*base),
+            Expression::FunctionArgument(i) => matches!(self.module.types[self.original.arguments[*i as usize].ty].inner, TypeInner::Pointer { .. }),
+            _ => false,
+        }
+    }
+
     fn hole(&mut self, out: &mut Block, what: &str) -> Result<Handle<Expression>, String> {
         let tree = self.take_root(what)?;
         let (index, value) = self.unwrap_store(tree)?;
@@ -1022,6 +1039,27 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         let folded = homeotic::FoldedChromosome { head: decoded[..c.folded.head.len()].to_vec(), tail: decoded[c.folded.head.len()..].to_vec(), filled: c.folded.filled, skipped: c.folded.skipped };
         let roots = homeotic::unfold(&folded).unwrap();
         round_trip(&k, &[roots]).unwrap();
+    }
+
+    #[test]
+    fn a_kernel_with_a_pointer_let_and_a_pointer_parameter_round_trips() {
+        let src = r#"
+@group(0) @binding(0) var<storage, read_write> a: array<f32>;
+@group(0) @binding(1) var<storage, read_write> out: array<f32>;
+fn poke(p: ptr<function, f32>) { *p = 1.0; }
+@compute @workgroup_size(1)
+fn main() {
+    var x = 0.0;
+    poke(&x);
+    let p = &a[2];
+    out[0] = a[2] + x;
+    *p = 5.0;
+    out[1] = a[2];
+}
+"#;
+        let k = read(src).unwrap();
+        let r = round_trip(&k, &roots_of(&k)).unwrap_or_else(|e| panic!("{e}"));
+        assert!(r.wgsl.contains("fn poke("), "{}", r.wgsl);
     }
 
     #[test]
