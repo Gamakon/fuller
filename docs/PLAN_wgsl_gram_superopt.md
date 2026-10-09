@@ -111,6 +111,37 @@ The criterion holds with a margin of 30 on the shipped kernel, so a reordered su
 
 The kernel's rate does not depend on d or on the banding: the bench is the production regime. At 121 G/s the production build would take 233 s, not the inventory's 130 s, so that figure was taken under other conditions (another machine or load); task 4 measures production here before and after. The criterion ratio falls with m as τ √m expects.
 
+## 1b. Fitness: HFF over ShapeDistance
+
+A kernel is a map from an input dataset to an output dataset. Fitness is a distance between the output it produces and the output it should produce, over the same rows and columns, falling to zero when the kernel computes the dataset; the HFF angle over that distance on three splits, then speed. No parsimony column: validation does that work.
+
+**ShapeDistance.** For kernel k on a split with output `H_k` and reference `H_ref` (both d × d), the per-cell distance by cell kind:
+
+- float cell: `δ(r,c) = |H_k[r,c] − H_ref[r,c]| / (‖φ_·r‖ ‖φ_·c‖)`, the Cauchy–Schwarz-scaled error;
+- non-finite cell: 0 if the same class (NaN, +∞, −∞) on both sides, else 1;
+- integer or flag cell (other kernels): 0 if the bits are equal, else 1.
+
+`ShapeDistance_mean = Σ δ / d²`, `ShapeDistance_max = max δ`. The gate of §1 is `ShapeDistance_max ≤ τ` on every split; a kernel outside it is not scored.
+
+**Splits.** Train: Φ seed 1 at the bench shape (d = 2,048, m = 65,536). Validation: Φ seed 2, the same shape, never used to choose. Extrapolation: Φ seed 3 at the production pass shape (d = 8,192, m = 4,096: 1 item band, 2 output-row bands, so the banding differs too). Each split has its own cached f64 reference.
+
+**The columns.** Six quality, two speed:
+
+| i | column | value v_i | cap c_i |
+|---|---|---|---|
+| 1 | ShapeDistance_mean, train | as above | shipped's value on the split |
+| 2 | ShapeDistance_max, train | | shipped's |
+| 3 | ShapeDistance_mean, validation | | shipped's |
+| 4 | ShapeDistance_max, validation | | shipped's |
+| 5 | ShapeDistance_mean, extrapolation | | shipped's |
+| 6 | ShapeDistance_max, extrapolation | | shipped's |
+| 7 | time ratio | median over 5 paired, randomised rounds of `T_k / T_shipped` (GPU timestamps, same minute) | 1 |
+| 8 | time spread | `(max − min) / median` of those 5 ratios | shipped's own spread (0.12 at the baseline) |
+
+**Normalised inputs.** `x_i = log10(1 + v_i / c_i) / M_i`, where `M_i` is the column's maximum over the first population scored, frozen (phylu's `col_max`), clipped so `x_i ∈ [0, 1]`; the log because the quality columns range over decades. The quality caps are the shipped kernel's own errors, so `x_i < log10(2)/M_i` means more accurate than shipped on that split.
+
+**The angle.** With the pole `p = (0, …, 0)` the ideal, fitness is the TrueNorth angle `θ(k) = arccos( Σ (1 − x_i) / (√8 · ‖1 − x‖) )`, the angle between the vector of complements and the diagonal; zero only when every column is at its best, and a kernel that is faster but less accurate is not ranked above one that is slower and exact until the accuracy columns say so. Selection, the hall of fame and the report use `θ`; the grid's ceiling (§3) is the smallest θ over the grid, and the time ratio of that kernel is the speed-up reported.
+
 ## 2. The genotype: sum-preserving moves
 
 Each move is a transformation of the thread-per-output loop whose
@@ -135,14 +166,15 @@ with a stated reason and the refusals are counted.
 ## 3. The search
 
 1. **The ceiling first.** Enumerate the grid at the bench size: 3,840
-   kernels, each compiled once (about 80 ms) and timed (one round, then
-   the top 5 % re-timed five rounds paired against shipped). This gives
+   kernels, each compiled once (about 40 ms), gated and timed on the
+   train split (one round), then the top 5 % scored in full (§1b: three
+   splits, five paired rounds). This gives
    the best reachable kernel and the whole landscape, and it is what the
    genetic algorithm is scored against.
 2. **The genetic algorithm.** Population 32 over the genotype,
    tournament selection, uniform crossover, one-move mutation, 30
-   generations, fitness the paired median GPU time, the criterion as the
-   gate; deterministic from a seed; a ledger of every evaluation. Scored
+   generations, fitness the HFF angle of §1b over the three splits, the
+   criterion as the gate; deterministic from a seed; a ledger of every evaluation. Scored
    by the fraction of the ceiling's speed-up reached and the number of
    evaluations spent against the grid's 3,840.
 3. **Three seeds** of the algorithm, reported separately.
