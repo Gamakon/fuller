@@ -211,37 +211,57 @@ the scaffold and most definitions, it is the symbolic half of the
 search (read, fold, decide, rebuild) made incremental, while the fitness
 half (compile and timed dispatches) stays per variant.
 
-**Functional design, with determinism as a tested property.** The
-population DAG and its memos are one value, the cache, passed in and
-returned, never reached by any other path:
+**The design (Andrew): the cache is embedded in the population.** The
+geneframe already holds the population as a table of chromosomes. Make
+it a table of TWO row kinds: ordinary chromosomes, whose genes reference
+shared definitions by href, and HOMEOTIC CHROMOSOMES, each of which IS
+one definition, a gene tree with a root type, memoised row values and
+a count of its referrers. The population is the union, so no separate
+cache value exists; the geneframe is the state:
 
 ```
-fold(cache, population)        -> (cache', folded)
-eval(cache, data, population)  -> (cache', fitness)
+fold(population)        -> population'      (adds the definitions the new rows need)
+eval(data, population)  -> population'      (memoises every row once, homeotic rows first)
 ```
 
-There is no batch mode and no incremental mode: one function body. An
-empty cache in makes the call a batch (every node a miss); last
-generation's cache in makes it incremental (reused nodes hit, only the
-nodes above a child's change are computed); a data version bump inside
-the cache makes every memo stale and the next call a batch again. A
-run is a fold over generations with the cache as the accumulator.
+Consequences: evaluation is uniform, every row once per data version,
+homeotic rows in dependency order first, which is phylu's tail-per-level
+dispatch applied across the population instead of inside an individual;
+liveness replaces eviction, a homeotic chromosome with no referrers is
+dead and one with many is valuable, a fitness measured by use that
+joins the replacement dictionary and nursery ideas (a useful definition
+outlives the individuals that made it and persists across runs); the
+href space is the table, an href names a homeotic row, the device
+decodes homeotic rows into a shared node arena and ordinary genes point
+into it with the GeneRef leaf that exists today; a homeotic row carries
+its root dual, so a reference is type-checked by the typed projection
+like a terminal. The earlier form of this section (a cache value passed
+beside the population) is kept below as the functional contract it
+still satisfies: the population IS that value.
 
-The cache holds the DAG (node hashes, child pointers) and, per live
-node, a slot of its row values with the data version they were computed
-on and a last-use mark; the slots are a device-resident arena allocated
-once, addressed by node hash, evicted least-recently-used under a
-memory budget, so an evicted node is just a miss. The arena is owned by
-the cache value: whoever holds the cache holds the memory, dropping it
-frees everything, and no session-global state exists.
+There is no batch mode and no incremental mode: one function body. A
+population with no homeotic rows (or no memos) makes the call a batch
+(every node a miss); last generation's population makes it incremental
+(reused definitions hit, only the nodes above a child's change are
+computed); a data version bump makes every memo stale and the next call
+a batch again. A run is a fold over generations with the population as
+the accumulator.
 
-Determinism is the contract and a test: the cache changes only whether
-a value is recomputed, never what it is. The test runs one generation
-with an empty cache and with the previous generation's cache and asserts
-bit-identical fitness and population; the same seed and the same
-starting cache give the same run; and the golden checksum holds with
-the cache on. A difference is a fault in the memo keys, never tolerated
-as noise.
+The homeotic rows hold the DAG (node hashes, child pointers) and, per
+row, a slot of its row values with the data version they were computed
+on; the slots are a device-resident arena allocated once, addressed by
+row, released when a row dies (no referrers, past its nursery), so a
+definition that returns is just a miss. The arena is owned by the
+population value: whoever holds the population holds the memory,
+dropping it frees everything, and no session-global state exists.
+
+Determinism is the contract and a test: a homeotic row changes only
+whether a value is recomputed, never what it is. The test runs one
+generation with the homeotic rows stripped and with them present and
+asserts bit-identical fitness and ordinary population; the same seed and
+the same starting population give the same run; and the golden checksum
+holds with homeotic rows on. A difference is a fault in the memo keys,
+never tolerated as noise.
 
 What it costs: cached values are rows times live nodes (an SRBench-
 shaped fit, about 50,000 live nodes at 1,000 rows, is about 200 MB) and
