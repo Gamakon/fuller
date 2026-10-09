@@ -165,7 +165,21 @@ below shipped and the two spreads do not overlap.
 5. The generated-code diff of the best genotype.
 6. The validation of §5 and the README tables.
 
-## 7. Incremental folding (a concept in this plan, Andrew, 2026-10-09)
+## 7. Incremental folding: a general requirement (Andrew, 2026-10-09)
+
+**The requirement, kingdom-independent.** Whatever the genes are, SR
+expressions, WGSL kernels, SQL statements or Spark plans (the Dagnetic
+Spark kingdom), a population under selection evolves slowly: most of
+generation N+1 is generation N. So the evaluation of a population must
+be a shared, incrementally maintained DAG with per-node memoised
+results, not a per-individual recomputation, in every kingdom. The SQL
+case makes it plain: a thousand statements over the same tables share
+scans, filters and joins (Neumann and Moerkotte's share equivalence),
+and the population's next generation re-uses almost all of them; an
+optimiser that re-plans and re-costs every statement every generation
+does the same work a thousand times over. The mechanism below is the
+geneframe's, not the WGSL kingdom's; this plan states it for the first
+two kingdoms it will serve.
 
 A population evolves slowly: generation 101 shares most of its genes
 with generation 100 (elites and survivors are identical, a child differs
@@ -191,8 +205,12 @@ fit before anything is built: the fraction of subtrees per generation
 already present in the previous generation, and the eval pass's share
 of the generation (from the per-pass timestamps of §1). If reuse is
 high and eval is the large pass, the incremental DAG is the next plan
-for phylu's engine; it is recorded here so the kernel search and the
-engine's own speed are designed on one idea.
+for phylu's engine, written as a general mechanism (a population DAG
+with hash-consed nodes, a per-generation delta, per-node memoised
+results keyed by node and data version) that the SR, WGSL and SQL
+kingdoms instantiate; it is recorded here so the kernel search, the
+engine's own speed and the Dagnetic Spark kingdom are designed on one
+idea.
 
 ## What could make this fail, stated now
 
