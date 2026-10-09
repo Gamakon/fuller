@@ -165,6 +165,35 @@ below shipped and the two spreads do not overlap.
 5. The generated-code diff of the best genotype.
 6. The validation of §5 and the README tables.
 
+## 7. Incremental folding (a concept in this plan, Andrew, 2026-10-09)
+
+A population evolves slowly: generation 101 shares most of its genes
+with generation 100 (elites and survivors are identical, a child differs
+from its parent by one gene or one subtree), so the fold, the decode and
+the evaluation done at 100 are most of the work of 101, and today every
+generation does them from scratch.
+
+The concept: one shared DAG for the whole population's genes, hash-
+consed so that equal subtree text is one node whichever individual
+holds it, adjusted for change rather than rebuilt. A generation is then
+a delta: new children add only their new nodes; a node keeps the values
+it computed per row (the evaluation pass) so a child re-evaluates only
+the nodes above its change; the fold is the DAG itself, maintained,
+never recomputed. It is the lineage DAG without versions, since SR genes
+read no memory; for kernels, where the population of variants shares
+the scaffold and most definitions, it is the symbolic half of the
+search (read, fold, decide, rebuild) made incremental, while the fitness
+half (compile and timed dispatches) stays per variant.
+
+What it costs: cached values are rows times live nodes and must live
+on the device to pay off. What decides it, measured first from one
+fit before anything is built: the fraction of subtrees per generation
+already present in the previous generation, and the eval pass's share
+of the generation (from the per-pass timestamps of §1). If reuse is
+high and eval is the large pass, the incremental DAG is the next plan
+for phylu's engine; it is recorded here so the kernel search and the
+engine's own speed are designed on one idea.
+
 ## What could make this fail, stated now
 
 - The compiler may already make every move the inventory offers on
