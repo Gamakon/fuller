@@ -48,12 +48,15 @@ a challenge, organise the whole experiment, search for the most
 efficient supercompiled WGSL", after the decode pass proved too small to
 measure (`PLAN_wgsl_superopt.md` §6a).
 
-**Why this and not the chromosome.** The kingdom's chromosome evolves
-expression trees inside a fixed scaffold; the gains here are in the
-scaffold (tiles, loops, memory), which the chromosome cannot express.
-So the genotype is the move vector of `PLAN_wgsl_superopt.md` §3, the
-kernel is rebuilt by a template, and each move preserves the sum by construction, the
-reference gate checking it. That is stated plainly, not hidden.
+**The genotype is the chromosome, not a template** (Andrew, 2026-10-09:
+"why are you not assigning random genes using symbol table types … you
+need a multityped kingdom"). The first draft of this plan varied a
+hand-written template over eight structural moves because the kingdom's
+table held only pure expressions and kept statements as a fixed
+scaffold. That is replaced by §2: statements, loops, registers,
+workgroup memory and the entry point become typed rows of the kingdom's
+own table, so a random typed gene is a whole kernel by construction, as
+a random typed gene of the regex kingdom is a pattern. The scaffold goes.
 
 ## 1. The measurement and the criterion
 
@@ -161,26 +164,99 @@ Every pair's f64 reference is cached by `(d, m, seed)`. ShapeDistance mean and m
 
 **The angle.** phylu's HFF takes the array as it is and returns the TrueNorth angle; it does not know what the columns are. Nothing changes in fuller for this: fuller's harness produces the eight values per kernel, the evolution loop (in phylu, as every fit is) normalises them and calls HFF. Selection, the hall of fame and the report use the angle; the grid's ceiling (§3) is the smallest angle over the grid, and that kernel's time ratio is the speed-up reported.
 
-## 2. The genotype: sum-preserving moves
+## 2. The genotype: the WGSL kingdom made multityped over statements
 
-Each move is a transformation of the thread-per-output loop whose
-result is the same sum in a different order or grouping:
+The kingdom's table (`kingdoms/wgsl/gen_tables.py` → `types.tsv`,
+`functions.tsv`) gains the types below. Every row has a dual, an arity
+and a signature over duals, nothing else; the typed projection (Design
+C) draws only well-formed genes; the renderer writes text from the typed
+tree; naga validates; the harness compiles, gates and scores. A gene's
+root dual is `kernel.kernel`.
 
-| move | choices | what changes |
+### 2a. New duals
+
+| dual | meaning |
+|---|---|
+| `kernel.kernel` | the entry point: a grid and a body; the root |
+| `grid.grid` | workgroup size (x, y) and the block of cells each thread owns (bx, by); the driver dispatches `ceil(d / (x·bx)) × ceil(r_rows / (y·by))` |
+| `block.block` | a sequence of statements |
+| `stmt.stmt` | one statement |
+| `u32.wgdim` | a workgroup dimension, literal from {4, 8, 16, 32, 64} |
+| `u32.blk` | a block factor, literal from {1, 2, 4} |
+| `u32.unroll` | an unroll factor, literal from {2, 4, 8} |
+| `reg<f32>.real`, `reg<vec4<f32>>.real`, `reg<u32>.index`, `reg<bool>.flag` | a named register (a `var` declared at the top of the kernel, initialised to the form's fallback): `f0…f3`, `v0…v1`, `i0…i3`, `b0` |
+| `wgmem<f32>.real` | a workgroup-memory array of 4,096 f32: `a`, `b` |
+
+### 2b. New functions
+
+| class.instance | in → out | renders as |
 |---|---|---|
-| register blocking | 1×1, 2×2, 4×4, 4×1 | each thread computes a block of H, loading each φ value once per block row/column |
-| workgroup tile of items | none, 8, 16, 32, 64 | a tile of Φ rows staged in workgroup memory, shared by the 16 × 16 threads |
-| workgroup size | 8×8, 16×16, 32×8, 8×32 | occupancy against register pressure |
-| vector loads | 1, 4 (vec4 along c, contiguous in item-major Φ) | memory transactions |
-| unroll of the item loop | 1, 2, 4, 8 | instruction scheduling |
-| symmetric half | off, on (compute c ≥ r, mirror on write) | half the work; a write pattern the criterion still checks everywhere |
-| split accumulators | 1, 2, 4 | independent partial sums, summed at the end (a reordering) |
-| accumulation precision | f32, f32 with pairwise tile sums | the rounding order inside τ |
+| `kernel.entry` | grid, block → kernel | the module: bindings, registers, workgroup arrays, `@workgroup_size(x, y, 1) fn main` |
+| `grid.of` | wgdim, wgdim, blk, blk → grid | the attribute and the driver's dispatch |
+| `literal.wgdim`, `literal.blk`, `literal.unroll` | → the code | the number |
+| `block.one`, `block.seq2`, `block.seq3`, `block.seq4` | stmt… → block | the statements in order |
+| `stmt.block` | block → stmt | `{ … }` |
+| `stmt.if`, `stmt.if_else` | flag, block[, block] → stmt | `if (c) { … } else { … }` |
+| `stmt.barrier` | → stmt | `workgroupBarrier()` |
+| `loop.items` | block → stmt | `for (t = 0u; t < cfg.m; t++) { … }`, the one long loop; nested in another `loop.items` the kernel is refused (the reason counted) |
+| `loop.items_unrolled` | unroll, block → stmt | the body k times with `t + j`, then the remainder loop |
+| `loop.tile` | wgdim, block → stmt | `for (k = 0u; k < n; k++)`, a short loop |
+| `builtin.item`, `builtin.tile` | → u32.index | `t`, `k` (0 outside their loop: both are declared registers the loop assigns) |
+| `reg.get` | reg<T> → T | the name |
+| `reg.set` | reg<T>, T → stmt | `name = value;` |
+| `wg.get` | wgmem, u32.index → f32.real | `a[i]` |
+| `wg.set` | wgmem, u32.index, f32.real → stmt | `a[i] = v;` |
+| `load.phi`, `load.phi4` | u32.index → f32.real, vec4<f32>.real | `phi[i]`, `vec4(phi[i], …, phi[i+3])` |
+| `load.h`, `store.h` | u32.index [, f32.real] → f32.real, stmt | `h[i]`, `h[i] = v;` |
+| `load.cfg_d`, `load.cfg_m`, `load.cfg_r_rows` → u32.count; `load.cfg_r_off` → u32.index | | the uniform's fields |
 
-Grid size 4 × 5 × 4 × 2 × 4 × 2 × 3 × 2 = 3,840 genotypes. Not every
-combination is well formed (a 4 × 4 block with an 8 × 8 workgroup and a
-64-item tile may exceed workgroup memory); the generator refuses those
-with a stated reason and the refusals are counted.
+The `store.h`, `load.*` rows are the per-kernel instances the kingdom
+already provides for a kernel's bindings (`per_kernel_templates`), here
+fixed by the Gram's three bindings. `stmt.*`, `block.*`, `loop.*`,
+`reg.*`, `wg.*`, `grid.*`, `kernel.*` and the three literal forms are
+general and go in the table for every kernel.
+
+### 2c. What is expressible, and what the moves of the first draft become
+
+Register blocking: a `grid.of` with bx, by > 1 and a body that stores
+several cells from register accumulators. Workgroup tiling: `loop.items`
+over a `wg.set` of a tile, `stmt.barrier`, a `loop.tile` reading
+`wg.get`. Vector loads: `load.phi4`. Unrolling: `loop.items_unrolled`.
+Symmetric half: `stmt.if` on `compare.ge(c, r)` with two `store.h`.
+Split accumulators and pairwise sums: several registers summed at the
+end. None of these is a move any more; each is a shape a random typed
+gene can take and the search can find or not.
+
+### 2d. Bounds and refusals (by construction, counted)
+
+Every buffer index is bounds-checked by WGSL (read zero, skip write);
+workgroup-array indices are masked to the array; `loop.items` is bounded
+by `cfg.m` and may not nest; `loop.tile` by its literal; the workgroup
+size by 1,024 threads; registers are declared, so every read is defined.
+A tree the renderer refuses (nested item loops, workgroup too large) is
+counted by reason, as the generator counts its refusals. A kernel that
+compiles but writes the wrong cells, or none, is scored by ShapeDistance
+and ranks last; it is not refused.
+
+### 2e. The seed and the reader
+
+The population seeds from the shipped kernel written as a typed tree
+(a test proves it renders to a text that compiles and passes the
+criterion on the train pairs) plus random typed genes. Reading an
+arbitrary kernel's statements into the tree (the reader's statement
+tree becoming `block`/`stmt`/`loop` nodes) is the next increment after
+the search runs; it is not needed to seed this experiment.
+
+### 2f. What fuller delivers and what phylu does
+
+fuller: the rows in `gen_tables.py` and the regenerated tables, the
+loader instantiating them, the renderer (`src/wgsl/render.rs`: typed
+tree → text, refusals), the Gram harness scoring a rendered kernel over
+the pairs of §1b, tests (the kingdom gate: the share of random typed
+genes that render and compile; the shipped tree; each statement row
+rendered and validated alone). phylu: the evolution loop over this
+kingdom's table with `kernel.kernel` as the root dual, HFF on the eight
+normalised columns, the seed population.
 
 ## 3. The search
 
