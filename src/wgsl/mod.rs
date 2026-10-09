@@ -13,6 +13,7 @@
 
 pub mod chromosome;
 pub mod infer;
+pub mod interp;
 pub mod legality;
 pub mod loader;
 pub mod naga_names;
@@ -23,6 +24,7 @@ pub mod versions;
 
 pub use chromosome::{chromosome, chromosome_typed, ChromosomeOptions, WgslChromosome};
 pub use infer::{infer_function, FunctionTypes, NodeType, TypeStats, TypedTree};
+pub use interp::{Interp, Invocation, Memory, Value};
 pub use legality::{Decision, Placement, Reason};
 pub use loader::{wgsl_duals, wgsl_fallback_table, wgsl_table, WgslDual, WgslKingdom, WgslRow, WGSL};
 pub use reader::{read, Kernel, KernelFunction, Node, Root, RootKind};

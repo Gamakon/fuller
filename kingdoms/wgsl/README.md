@@ -331,7 +331,8 @@ repaid because the product runs billions of times.
 | device parity of a rebuilt kernel (the proof) | DONE: all 10 entry points compile both ways on Metal, and phylu's suite holds the golden checksum and the sample gate with each of the five rebuilt kernels substituted |
 | memory versions in the reader (`src/wgsl/versions.rs`; lineage plan step 1) | built 2026-10-09: loads named with their version, phis by join, barriers/atomics/calls as bumps, pointer lets checked; the lineage column above |
 | `legality::decide` (`src/wgsl/legality.rs`; lineage plan step 2): one decision per repeat, placement per tail slot, refusals by reason | built 2026-10-09; the table above |
-| the reference interpreter, the oracle, placement in the rebuild, mutations, the evaluator (lineage plan steps 2–6) | not started |
+| the reference interpreter (`src/wgsl/interp.rs`): the folded chromosome executed against the statement tree, definitions evaluated at their placements, WGSL semantics per naga op, `ReadZeroSkipWrite` indexing | built 2026-10-09; its edge cases (integer division and remainder by zero, `i32::MIN / -1`, masked shifts, wrapping, saturating float→int, IEEE float edges, NaN through `min`/`max`/`select`, ties-to-even `round`, out-of-range loads and stores) each pinned by a hand-computed test; device agreement is the oracle's job |
+| the oracle, placement in the rebuild, mutations, the evaluator (lineage plan steps 3–6) | not started |
 | the scaffold-with-holes chromosome and its decoder (phylu) | not started |
 | compile-run-time evaluation path with the correctness gate (phylu) | not started |
 | first target: one of our own kernels, read in, round-tripped, then evolved for time | not started |
