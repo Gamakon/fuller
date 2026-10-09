@@ -360,6 +360,34 @@ In this plan the population-wide structure is always the HOMEOTIC TAIL,
 in full, and its expressed, memoised top is the EXPRESSED FRAME; the
 Karva terms keep their meanings.
 
+## 2e. Stability is the island (Andrew, 2026-10-09)
+
+The engine already keeps the population as an intake island (try and
+discard) and a champion island (worth investing in), and tracks age by
+cohort. The stability criterion for folding and compiling is therefore
+not an age threshold but the promotion itself: the intake is
+interpreted and nothing is invested in it; a definition is folded when
+it lives in the champion island and compiled when its cohort age there
+says the compile pays back. Measured on the sixteen predator-prey pairs
+(rows 0–1,999 taken as the intake, to be confirmed from the island
+code; shared definition = repeated, one or more operators):
+
+| island | shared definitions | survive to the next generation | genes unchanged |
+|---|---|---|---|
+| intake | 724 | 28 % | 82 % |
+| champion | 4,256 | 57 % | 48 % |
+
+The sharing lives in the champion island (six times the definitions,
+its chromosomes having converged on common parts) and a champion
+definition survives twice as long. The use distribution within a
+generation is heavily skewed: of 4,799 definitions, 2,212 are used
+exactly twice and 108 account for two thirds of all occurrences, the
+most used being one- or two-operator forms (`x_0³` 3,194 times,
+`−x_0` 1,646, `tanh(x_0)` 1,499). So memos and bands go to the head of
+that distribution, a few hundred definitions, which compiles in 80 ms.
+Open: why the intake keeps 82 % of its genes but only 28 % of its
+definitions; it decides whether the intake needs the DAG at all.
+
 ## 3. The reviewer's three risks, answered as design
 
 - **Dispatch overhead (A).** Hundreds of small kernels may cost more than
