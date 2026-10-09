@@ -21,7 +21,7 @@ use fuller::geneframe::Ty;
 use fuller::wgsl::gram::{check, effective_buffer_limit, gram_shipped_tree_check, phi_of, reference, Gram, Kind, SHIPPED};
 use fuller::wgsl::loader::WgslKingdom;
 use fuller::wgsl::oracle::device::Device;
-use fuller::wgsl::render::{dual_ty, gram_role, gram_shipped_tree, sample, Renderer, Tree};
+use fuller::wgsl::render::{cost, dual_ty, gram_role, gram_shipped_tree, sample, Renderer, Tree};
 use fuller::wgsl::table::FunctionTable;
 
 fn stamp() -> String {
@@ -193,6 +193,41 @@ fn angle(x: &[f64]) -> f64 {
     (comp.iter().sum::<f64>() / ((x.len() as f64).sqrt() * norm)).clamp(-1.0, 1.0).acos()
 }
 
+/// The work a candidate may do, relative to the shipped kernel: eight
+/// times its per-item cost and a base of 20,000 operations; the deadline
+/// for one build is 50 times the shipped build on that pair, at least ten
+/// seconds (the bound makes a longer build a wedged device, not work).
+struct CostBound {
+    per_item: f64,
+    base: f64,
+}
+
+impl CostBound {
+    fn deadline_ms(&self, shipped_ms: f64) -> f64 {
+        (50.0 * shipped_ms).max(10_000.0)
+    }
+}
+
+/// The watchdog's deadline as milliseconds since the process started; 0 = disarmed.
+static WATCHDOG: std::sync::Mutex<std::sync::atomic::AtomicU64> = std::sync::Mutex::new(std::sync::atomic::AtomicU64::new(0));
+static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+
+fn deadline_at(ms_from_now: f64) -> u64 {
+    START.get_or_init(Instant::now).elapsed().as_millis() as u64 + ms_from_now as u64
+}
+
+fn start_watchdog() {
+    START.get_or_init(Instant::now);
+    std::thread::spawn(|| loop {
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        let deadline = WATCHDOG.lock().expect("watchdog").load(std::sync::atomic::Ordering::SeqCst);
+        if deadline != 0 && START.get().expect("started").elapsed().as_millis() as u64 > deadline {
+            eprintln!("[{}] watchdog: a build exceeded its deadline; the device is wedged; exiting (the ledger's last pending line names the kernel)", stamp());
+            std::process::exit(3);
+        }
+    });
+}
+
 struct Caps {
     mean: f64,
     max: f64,
@@ -222,7 +257,12 @@ fn gate(v: &fuller::wgsl::gram::Verdict, shipped_max: f64) -> bool {
 
 /// One kernel on the sampled pairs, paired against the shipped builds of
 /// the same pairs taken in this generation.
-fn evaluate(dev: &Device, rr: &Renderer, tree: &Tree, pairs: &[&Pair], shipped: &[(f64, f64, f64)], limit: u64) -> Score {
+fn evaluate(dev: &Device, rr: &Renderer, tree: &Tree, pairs: &[&Pair], shipped: &[(f64, f64, f64)], limit: u64, bound: &CostBound) -> Score {
+    // The static bound before anything touches the device.
+    let c = cost(tree);
+    if c.per_item > bound.per_item || c.base > bound.base {
+        return Score { refused: Some(format!("cost: {:.0} per item, {:.0} base (bound {:.0}, {:.0})", c.per_item, c.base, bound.per_item, bound.base)), angle: f64::INFINITY, ..Default::default() };
+    }
     let out = match rr.kernel(tree) {
         Ok(o) => o,
         Err(e) => return Score { refused: Some(e), angle: f64::INFINITY, ..Default::default() },
@@ -236,7 +276,15 @@ fn evaluate(dev: &Device, rr: &Renderer, tree: &Tree, pairs: &[&Pair], shipped: 
         if t_shipped.partial_cmp(&0.0) != Some(std::cmp::Ordering::Greater) {
             return Score { refused: Some(format!("shipped time {t_shipped} ms on {}", p.name())), angle: f64::INFINITY, ..Default::default() };
         }
-        let b = match gram.build(&p.phi, p.d, p.m, limit) {
+        // The watchdog: a build over the deadline ends the process with the
+        // culprit named (the ledger line was written before this call).
+        let deadline = bound.deadline_ms(*t_shipped);
+        let armed = WATCHDOG.lock().expect("watchdog");
+        armed.store(deadline_at(deadline), std::sync::atomic::Ordering::SeqCst);
+        drop(armed);
+        let b = gram.build(&p.phi, p.d, p.m, limit);
+        WATCHDOG.lock().expect("watchdog").store(0, std::sync::atomic::Ordering::SeqCst);
+        let b = match b {
             Ok(b) => b,
             Err(e) => return Score { refused: Some(format!("run: {e}")), angle: f64::INFINITY, ..Default::default() },
         };
@@ -289,6 +337,10 @@ fn main() -> Result<(), String> {
     println!("[{}] device {} limit {} MiB", stamp(), dev.name, limit >> 20);
     let shipped_tree = gram_shipped_tree(&kingdom)?;
     gram_shipped_tree_check(&shipped_tree)?;
+    let shipped_cost = cost(&shipped_tree);
+    let bound = CostBound { per_item: 8.0 * shipped_cost.per_item, base: 20_000.0 };
+    println!("[{}] shipped cost {:.0} per item, {:.0} base; bound {:.0} per item, {:.0} base; deadline 50x the shipped build, at least 10 s", stamp(), shipped_cost.per_item, shipped_cost.base, bound.per_item, bound.base);
+    start_watchdog();
     let shipped_gram = Gram::compile(&dev, SHIPPED)?;
 
     let mut ledger = std::fs::File::create(out_dir.join("ledger.tsv")).map_err(|e| format!("ledger: {e}"))?;
@@ -339,7 +391,9 @@ fn main() -> Result<(), String> {
         }
         let mut scores: Vec<Score> = vec![Score::default(); population.len()];
         for &i in &order {
-            scores[i] = evaluate(&dev, &rr, &population[i].0, &pairs, &shipped, limit);
+            writeln!(ledger, "{gen}\t{i}\t{}\t{}\tpending\t-\t-\t-\t-\t-\t-\t{}", population[i].1, population[i].0.size(), population[i].0.to_sexpr()).map_err(|e| e.to_string())?;
+            ledger.flush().map_err(|e| e.to_string())?;
+            scores[i] = evaluate(&dev, &rr, &population[i].0, &pairs, &shipped, limit, &bound);
         }
         // Caps from the shipped kernel's own values on this sample; the column
         // maxima frozen at generation 0 over the gated population.

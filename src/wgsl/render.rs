@@ -743,6 +743,65 @@ impl<'a> Renderer<'a> {
     }
 }
 
+/// A static estimate of a kernel's work per thread: `base` operations
+/// outside the item loop, `per_item` inside it (multiplied by `cfg.m` at
+/// run time), from node counts with loop multipliers. A search bounds the
+/// per-item cost against the shipped kernel's before dispatching: a tile
+/// loop inside the item loop multiplies the work by up to 32, and a
+/// kernel a few hundred times the shipped cost wedges the device (the
+/// 2026-10-09 run hung 22 minutes in generation 23).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Cost {
+    pub base: f64,
+    pub per_item: f64,
+}
+
+pub fn cost(t: &Tree) -> Cost {
+    fn node_cost(name: &str) -> f64 {
+        match name {
+            n if n.starts_with("load.") || n.starts_with("store.") || n.starts_with("wg.") => 4.0,
+            "geom.inverse" | "hash.mix64" | "fixed.wide_mul" | "fixed.mul" => 40.0,
+            n if n.starts_with("trig.") || n.starts_with("arith.exp") || n.starts_with("arith.log") || n.starts_with("arith.pow") => 8.0,
+            "stmt.barrier" => 50.0,
+            "fallback" => 0.0,
+            _ => 1.0,
+        }
+    }
+    // (base, per_item) of a subtree; `tile` is the enclosing tile multiplier,
+    // `in_items` whether an item loop encloses it.
+    fn walk(t: &Tree, tile: f64, in_items: bool) -> (f64, f64) {
+        let own = node_cost(&t.name) * tile;
+        let (mut base, mut per_item) = if in_items { (0.0, own) } else { (own, 0.0) };
+        match t.name.as_str() {
+            "loop.items" | "loop.items_unrolled" => {
+                for k in &t.kids {
+                    let (b, p) = walk(k, tile, true);
+                    // The body runs once per item; a nested long loop is refused by the renderer.
+                    per_item += b + p;
+                }
+            }
+            "loop.tile" => {
+                let n = t.kids.first().map_or(4.0, |k| if k.name.starts_with("literal.") { f64::from(snap(&WGDIM, k.konst)) } else { f64::from(WGDIM[0]) });
+                for k in &t.kids {
+                    let (b, p) = walk(k, tile * n, in_items);
+                    base += b;
+                    per_item += p;
+                }
+            }
+            _ => {
+                for k in &t.kids {
+                    let (b, p) = walk(k, tile, in_items);
+                    base += b;
+                    per_item += p;
+                }
+            }
+        }
+        (base, per_item)
+    }
+    let (base, per_item) = walk(t, 1.0, false);
+    Cost { base, per_item }
+}
+
 /// The constructor spelling of a slot: `vec3<f32>`, `f32`, `mat2x3<f32>`.
 fn slot_ctor(slot: &str) -> Result<String, String> {
     if slot.starts_with("vec") || slot.starts_with("mat") || ["f32", "i32", "u32", "bool"].contains(&slot) {
@@ -867,6 +926,21 @@ mod tests {
         assert!(out.text.contains("for (t = 0u; t < cfg.m; t = t + 1u)"), "{}", out.text);
         assert!(out.text.contains("h[(((i1 * cfg.d) + i2))] = ((h[(((i1 * cfg.d) + i2))] + f0));"), "{}", out.text);
         validate_text(&out.text).unwrap_or_else(|e| panic!("{e}\n{}", out.text));
+    }
+
+    #[test]
+    fn the_cost_estimate_counts_loop_multipliers() {
+        let (k, _, _) = setup();
+        let ty = |n: &str| dual_ty(&k, n).unwrap();
+        let shipped = cost(&gram_shipped_tree(&k).unwrap());
+        assert!(shipped.per_item > 10.0 && shipped.per_item < 40.0, "{shipped:?}");
+        assert!(shipped.base > 10.0 && shipped.base < 200.0, "{shipped:?}");
+        // A tile of 32 around the item loop multiplies the per-item cost by 32.
+        let (stmt, block) = (ty("stmt.stmt"), ty("block.block"));
+        let body = Tree::new("loop.items", stmt, vec![Tree::new("block.one", block, vec![Tree::new("reg.set_f", stmt, vec![Tree::new("reg.f0", ty("reg<f32>.real"), vec![]), Tree::new("load.phi", ty("f32.real"), vec![Tree::new("builtin.item", ty("u32.index"), vec![])])])])]);
+        let inner = cost(&Tree::new("kernel.entry", ty("kernel.kernel"), vec![Tree::fallback(ty("grid.grid")), Tree::new("block.one", block, vec![body.clone()])]));
+        let tiled = cost(&Tree::new("kernel.entry", ty("kernel.kernel"), vec![Tree::fallback(ty("grid.grid")), Tree::new("block.one", block, vec![Tree::new("loop.tile", stmt, vec![Tree::literal("literal.wgdim", ty("u32.wgdim"), 32.0), Tree::new("block.one", block, vec![body])])])]));
+        assert_eq!(tiled.per_item, 32.0 * inner.per_item, "{inner:?} {tiled:?}");
     }
 
     /// Every statement row inside a minimal kernel, validated by naga.
