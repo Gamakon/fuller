@@ -35,8 +35,11 @@ needs the numerical criterion from its first float kernel); step 5, the
 first mutations (`mutate.rs`, the Algebra family over arith/trig regions
 with opaque leaves), 426 of 426 mutants of 200 generated programs pass
 the criterion on the device, and the six real kernels hold only ten such
-regions (score, hff): the engine's kernels are integer code. Step 6 (the
-evaluator) not started. Prompted by the external review of the step-5 result:
+regions (score, hff): the engine's kernels are integer code; step 6, the
+evaluator: fuller's `Device::time` (dispatch overhead on the oracle's
+kernels) and phylu's `kernel_time` on the real chain (ccb47c46): each
+folded kernel within 2 % of shipped, noise, no speedup claimed. All six
+steps built and measured 2026-10-09. Prompted by the external review of the step-5 result:
 "expression equivalence is not execution equivalence; sharing must
 respect execution order, memory effects and the lifetime of computed
 values."

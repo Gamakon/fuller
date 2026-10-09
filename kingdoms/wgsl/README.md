@@ -500,6 +500,46 @@ and hff the per-lane criterion is a smoke test only: phylu reads a score
 by its rank, so those two are gated selection-identical by the override
 sweep (the plan's tiering, from phylu's advisory).
 
+### The evaluator (measured 2026-10-09, lineage plan step 6)
+
+The mechanism in fuller (`oracle::device::Device::time`, `wgsl_oracle
+--time`): compile, bind, gate by the criterion, time N workgroups per
+submission (median of 15), list original, folded rebuild and every
+passing mutant. On the oracle's kernels every variant measures 1.52 ms
+per 4,096 workgroups, the same to three digits: at one invocation per
+workgroup that is dispatch overhead, and the table says so.
+
+The real workload is phylu's `examples/kernel_time.rs` (phylu ccb47c46,
+written on request, run here): an SRBench-shaped engine (population
+600 + 200, 3 genes, head 34) on `feynman_I_29_16`, every stop off, a
+5-generation warm-up, then 100 generations of the real chain
+(decode → eval → score → type → hff), shipped kernels against one
+folded rebuild at a time through `PHYLU_WGSL_DIR`
+(`phylu/logs/WGSL_TIME/*.log`):
+
+| kernels | ms per generation (100 generations) |
+|---|---|
+| shipped | 32.74 |
+| decode, folded (6 definitions) | 32.42 |
+| score, folded (9) | 32.61 |
+| hff, folded (4) | 32.48 |
+| cand, folded (1) | 32.58 |
+| mix64 + vary, folded (8) | 32.14 |
+
+753,894 evaluations and 80,800 individuals in every run. Every folded
+kernel is within 2 % of the shipped one, which is run-to-run noise: the
+shared definitions neither cost nor save at this shape, because Metal's
+compiler already shares what the decision shares. No speedup is claimed.
+What the loop now has: a representation whose sharing and rewrites are
+legal by construction and proven on the device, a criterion, and a
+timing harness on the real chain; what it lacks for a measurable gain
+is a mutation that the compiler does not already perform, which, given
+that the engine's kernels are integer code with ten float regions in
+all, means rewrites over `index`, `bits` and `logic` rows (no e-graph
+ruleset covers them yet) or structural moves (hoisting across the
+scaffold, loop restructuring) that this representation can now express
+and gate.
+
 ## What is built, what is not
 
 | piece | status |
@@ -523,7 +563,7 @@ sweep (the plan's tiering, from phylu's advisory).
 | the oracle's generator (`src/wgsl/generator.rs`; `wgsl_oracle --generate N --seed S`): seeded random kernels that reach the refusal classes on purpose, run three ways | built 2026-10-09: 1,000 of 1,000 from seed 1000 agree (below) |
 | placement in the rebuild (`rebuild_folded`, lineage plan step 4): every shared definition emitted as a named `let` at its placement, the uses reading it; `wgsl_read_kernel --rebuilt-folded` | built 2026-10-09: 1,000 of 1,000 generated programs agree on the device with the FOLDED text (23,966 lanes exact, 34 within 8 ulps where the shared `let` changed Metal's contraction); the six kernels' folded rebuilds in `samples/rebuilt_folded/` (28 definitions) hold phylu's golden checksum and sample gate in the override sweep, negative control included |
 | arithmetic mutations (`src/wgsl/mutate.rs`, lineage plan step 5): the Math e-graph's algebra family over `arith`/`trig` regions with opaque leaves, gated by the numerical criterion on the device; `wgsl_oracle --mutate N [--with-loads]`, `--regions <files>` | built 2026-10-09: 105 of 105 load-free mutants and 426 of 426 with loads pass on the device (below); the six kernels have 10 rewritable regions in all, in score and hff |
-| the compile-and-time evaluator (lineage plan step 6) | not started |
+| the compile-and-time evaluator (lineage plan step 6): `Device::time` and `wgsl_oracle --time` (compile, gate, time, rank) in fuller; the real workload is phylu's `examples/kernel_time.rs` (ccb47c46), run here | built 2026-10-09: on the oracle's kernels every variant measures the same 1.52 ms per 4,096 workgroups (dispatch overhead); on phylu's real chain (100 generations of an SRBench-shaped fit) each folded kernel runs within 2 % of the shipped one, run-to-run noise, no speedup claimed (below) |
 | the scaffold-with-holes chromosome and its decoder (phylu) | not started |
 | compile-run-time evaluation path with the correctness gate (phylu) | not started |
 | first target: one of our own kernels, read in, round-tripped, then evolved for time | not started |
