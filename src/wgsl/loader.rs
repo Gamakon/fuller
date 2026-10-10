@@ -69,7 +69,7 @@ impl WgslDual {
     /// or a workgroup array): no value slot, rendered by `render.rs`.
     pub fn is_statement_level(&self) -> bool {
         let s = self.slot.as_str();
-        matches!(s, "kernel" | "grid" | "block" | "stmt") || s.starts_with("reg<") || s.starts_with("wgmem<")
+        matches!(s, "kernel" | "grid" | "block" | "stmt") || s.starts_with("reg<") || s.starts_with("wgmem<") || s.starts_with("parr<")
     }
 
     /// `Some(n)` for a vector of n lanes, `None` otherwise.
@@ -601,7 +601,7 @@ mod tests {
     #[test]
     fn the_safe_kingdom_keeps_wgsl_and_pins_its_rules() {
         let (w, s) = (wgsl_duals(), safe_duals());
-        assert_eq!(s.len(), 108);
+        assert_eq!(s.len(), 126);
         for (a, b) in w.iter().zip(&s) {
             assert_eq!((a.reference.as_str(), a.dual.as_str()), (b.reference.as_str(), b.dual.as_str()));
         }
@@ -610,24 +610,26 @@ mod tests {
         for (a, b) in fw.rows.iter().zip(&fs.rows) {
             assert_eq!((a.reference.as_str(), a.name()), (b.reference.as_str(), b.name()));
         }
-        assert_eq!(fs.rows.len(), 355);
+        assert_eq!(fs.rows.len(), 557);
         let dual = |t: Ty| k.dual(t).unwrap().dual.clone();
         let producers = |d: &str| -> Vec<String> { k.rows.iter().filter(|r| dual(r.output) == d).map(|r| r.name.clone()).collect() };
         assert_eq!(producers("kernel.safe"), vec!["kernel.entry_safe"]);
-        // One kind of loop condition, five bounds.
+        // One kind of loop condition: a loop's own counter below one of four
+        // bounds (the item loop), or a tile counter below a literal (three depths).
         let bound = producers("bool.bound");
-        assert_eq!(bound.len(), 5, "{bound:?}");
+        assert_eq!(bound.len(), 7, "{bound:?}");
         assert!(bound.iter().all(|n| n.starts_with("safe.lt_")));
-        assert!(k.rows.iter().filter(|r| r.name.starts_with("safe.lt_")).all(|r| dual(r.inputs[0]) == "u32.counter"));
-        // No barrier in a conditional context; barriers at L0, L1, L2 only.
+        assert!(k.rows.iter().filter(|r| r.name.starts_with("safe.lt_")).all(|r| dual(r.inputs[0]) == "u32.counter" || dual(r.inputs[0]).starts_with("u32.tcounter")));
+        // No barrier in a conditional context; barriers at L0..L4 only.
         // (The WGSL kingdom's own `stmt.barrier → stmt.stmt` stays; `stmt.stmt`
         // is never demanded under the safe root `kernel.entry_safe`.)
         let barriers: Vec<String> = k.rows.iter().filter(|r| r.name.starts_with("stmt.barrier")).map(|r| dual(r.output)).filter(|d| d != "stmt.stmt").collect();
-        assert_eq!(barriers, vec!["stmt.L0", "stmt.L1", "stmt.L2"]);
+        assert_eq!(barriers, vec!["stmt.L0", "stmt.L1", "stmt.L2", "stmt.L3", "stmt.L4"]);
         assert!(k.rows.iter().all(|r| !(r.name.starts_with("stmt.barrier") && dual(r.output).starts_with("stmt.C"))));
-        // The item loop only produces an L0 statement; nothing produces a loop at L2.
+        // The item loop only produces an L0 statement; no loop at L4 or C4 (tile loops nest three deep).
         assert!(k.rows.iter().filter(|r| r.name.starts_with("loop.items_bound") || r.name.starts_with("loop.items_unrolled_bound")).all(|r| dual(r.output) == "stmt.L0"));
-        assert!(k.rows.iter().filter(|r| r.name.starts_with("loop.")).all(|r| dual(r.output) != "stmt.L2"));
+        assert!(k.rows.iter().filter(|r| r.name.starts_with("loop.")).all(|r| dual(r.output) != "stmt.L4" && dual(r.output) != "stmt.C4"));
+        assert!(k.rows.iter().filter(|r| r.name.starts_with("loop.tile_")).all(|r| dual(r.inputs[0]) == "u32.lit64"));
         // No return in a conditional context (a later barrier would be non-uniform).
         assert!(k.rows.iter().filter(|r| r.name.starts_with("stmt.return_")).all(|r| !dual(r.output).starts_with("stmt.C")));
         // A conditional block's statements are C statements, which no loop or barrier produces.
@@ -635,9 +637,9 @@ mod tests {
         // store.h only at an owned cell; load.phi only at a phi index; both produced by one row each.
         assert!(k.rows.iter().filter(|r| r.name.starts_with("store.h_")).all(|r| dual(r.inputs[0]) == "u32.cell"));
         assert_eq!(producers("u32.cell"), vec!["safe.cell_of"]);
-        assert_eq!(producers("u32.phi"), vec!["safe.phi_of"]);
         assert_eq!(producers("u32.wgindex"), vec!["safe.wg_of"]);
-        assert!(k.rows.iter().filter(|r| r.name == "load.phi_safe").all(|r| dual(r.inputs[0]) == "u32.phi"));
+        assert_eq!(producers("u32.wgvindex"), vec!["safe.wgv_of"]);
+        assert!(k.rows.iter().filter(|r| r.name.starts_with("loop.items_strided")).all(|r| dual(r.inputs[1]) == "u32.lit64"));
     }
 
     #[test]

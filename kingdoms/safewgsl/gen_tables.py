@@ -58,14 +58,17 @@ FORMS = {
     "lit64": ("a loop bound that is a literal at most 64", ["u32"]),
     "lit4096": ("a loop bound that is a literal at most 4,096", ["u32"]),
     # The loop's own counter, and the only condition a loop may test.
-    "counter": ("a loop's counter, stepped by the loop row itself", ["u32"]),
+    "counter": ("the item loop's counter, stepped by the loop row itself", ["u32"]),
+    "tcounter": ("a tile loop's counter k, stepped by the loop row itself", ["u32"]),
+    "tcounter2": ("an inner tile loop's counter k2, stepped by the loop row itself", ["u32"]),
     "bound": ("a loop condition: counter < bound, produced by nothing else", ["bool"]),
     # Index provenance: where an index came from decides what it may address.
     "threadrow": ("a row index derived from the thread's own ids and block factor", ["u32"]),
     "threadcol": ("a column index derived from the thread's own ids and block factor", ["u32"]),
     "cell": ("an output cell index row*d + col owned by this thread; the only index a store to h accepts", ["u32"]),
-    "phi": ("an item-major phi index item*d + column; the only index a load of phi accepts", ["u32"]),
+    "phi": ("unused: a load of phi takes any index, since a read past the buffer is zero by WGSL's rule; kept so earlier refs stand", ["u32"]),
     "wgindex": ("a workgroup-array index, masked to the array by its row", ["u32"]),
+    "wgvindex": ("an index into a vec4 workgroup array, masked to the array by its row", ["u32"]),
     # Statement rungs: L0 outside any loop, L1 inside the item loop, L2 inside a tile loop;
     # C marks a block under a thread-dependent condition, where no barrier may stand.
     "L0": ("a statement or block at the top level", []),
@@ -74,11 +77,17 @@ FORMS = {
     "C0": ("a statement or block under a condition at the top level: no barrier", []),
     "C1": ("a statement or block under a condition inside the item loop: no barrier", []),
     "C2": ("a statement or block under a condition inside a tile loop: no barrier", []),
+    "L3": ("a statement or block inside an inner tile loop", []),
+    "C3": ("a statement or block under a condition inside an inner tile loop: no barrier", []),
+    "tcounter3": ("a third nested tile loop's counter k3, stepped by the loop row itself", ["u32"]),
+    "L4": ("a statement or block inside a third nested tile loop", []),
+    "C4": ("a statement or block under a condition inside a third nested tile loop: no barrier", []),
     "safe": ("the safeWGSL kernel: the root dual of this kingdom, produced only by kernel.entry_safe", []),
+    "pindex": ("a private-array index, masked to the array by its row", ["u32"]),
 }
 
-SAFE_FORMS = ["safe", "boundm", "boundd", "boundrows", "lit64", "lit4096", "counter", "bound", "threadrow", "threadcol", "cell", "phi", "wgindex", "L0", "L1", "L2", "C0", "C1", "C2"]
-RUNGS = ["L0", "L1", "L2", "C0", "C1", "C2"]
+SAFE_FORMS = ["safe", "pindex", "boundm", "boundd", "boundrows", "lit64", "lit4096", "counter", "tcounter", "tcounter2", "L3", "C3", "tcounter3", "L4", "C4", "wgvindex", "bound", "threadrow", "threadcol", "cell", "phi", "wgindex", "L0", "L1", "L2", "C0", "C1", "C2"]
+RUNGS = ["L0", "L1", "L2", "L3", "L4", "C0", "C1", "C2", "C3", "C4"]
 
 FALLBACK = {
     "real": "0.0", "int": "0", "q15_16": "0", "q15_16w": "vec2(0, 0)", "index": "0u", "count": "0u",
@@ -91,9 +100,10 @@ FALLBACK = {
     "kernel": "an empty kernel", "grid": "16 x 16, 1 x 1", "block": "empty", "stmt": "empty",
     "wgdim": "4u", "blk": "1u", "unroll": "2u",
     "boundm": "cfg.m", "boundd": "cfg.d", "boundrows": "cfg.r_rows", "lit64": "1u", "lit4096": "1u",
-    "counter": "0u", "bound": "false", "threadrow": "0u", "threadcol": "0u", "cell": "0u", "phi": "0u", "wgindex": "0u",
-    "L0": "empty", "L1": "empty", "L2": "empty", "C0": "empty", "C1": "empty", "C2": "empty",
-    "safe": "an empty kernel",
+    "counter": "0u", "tcounter": "0u", "tcounter2": "0u", "bound": "false", "threadrow": "0u", "threadcol": "0u", "cell": "0u", "phi": "0u", "wgindex": "0u",
+    "L0": "empty", "L1": "empty", "L2": "empty", "L3": "empty", "C0": "empty", "C1": "empty", "C2": "empty", "C3": "empty",
+    "safe": "an empty kernel", "pindex": "0u",
+    "tcounter3": "0u", "L4": "empty", "C4": "empty", "wgvindex": "0u",
 }
 
 # The fallback by machine: the lane's 32-bit pattern as an unsigned integer. Vectors and matrices
@@ -107,8 +117,9 @@ FALLBACK_BITS = {
     "hash64": 0, "flag": 0, "sign": 1, "opaque": 0, "store": 0, "<form of T>": 0,
     "kernel": 0, "grid": 0, "block": 0, "stmt": 0, "wgdim": 0, "blk": 0, "unroll": 0,
     "boundm": 0, "boundd": 0, "boundrows": 0, "lit64": 0, "lit4096": 0,
-    "counter": 0, "bound": 0, "threadrow": 0, "threadcol": 0, "cell": 0, "phi": 0, "wgindex": 0,
-    "L0": 0, "L1": 0, "L2": 0, "C0": 0, "C1": 0, "C2": 0, "safe": 0,
+    "counter": 0, "tcounter": 0, "tcounter2": 0, "bound": 0, "threadrow": 0, "threadcol": 0, "cell": 0, "phi": 0, "wgindex": 0,
+    "L0": 0, "L1": 0, "L2": 0, "L3": 0, "C0": 0, "C1": 0, "C2": 0, "C3": 0, "safe": 0, "pindex": 0,
+    "tcounter3": 0, "L4": 0, "C4": 0, "wgvindex": 0,
 }
 assert set(FALLBACK_BITS) == set(FALLBACK), "every form with a fallback needs its bits, and no more"
 
@@ -152,17 +163,35 @@ def build_types():
     add("reg<vec4<f32>>", "real", 4, "a named vec4<f32> register: v0, v1")
     add("reg<u32>", "index", 1, "a named u32 register: i0, i1, i2, i3")
     add("reg<bool>", "flag", 1, "a named bool register: b0")
-    add("wgmem<f32>", "real", 0, "a workgroup-memory array of 4,096 f32: a, b")
+    add("wgmem<f32>", "real", 0, "a workgroup-memory array of 2,048 f32: a, b")
     for form in ("wgdim", "blk", "unroll"):
         add("u32", form, 1, FORMS[form][0])
     # ---- safeWGSL duals, after every WGSL dual (T084 on) ----
     for form in ("boundm", "boundd", "boundrows", "lit64", "lit4096", "counter", "threadrow", "threadcol", "cell", "phi", "wgindex"):
         add("u32", form, 1, FORMS[form][0])
     add("bool", "bound", 1, FORMS["bound"][0])
-    for r in RUNGS:
+    for r in ("L0", "L1", "L2", "C0", "C1", "C2"):
         add("stmt", r, 0, "a statement " + FORMS[r][0][len("a statement or block "):])
         add("block", r, 0, "a block " + FORMS[r][0][len("a statement or block "):])
     add("kernel", "safe", 0, FORMS["safe"][0])
+    add("u32", "tcounter", 1, FORMS["tcounter"][0])
+    add("u32", "tcounter2", 1, FORMS["tcounter2"][0])
+    add("u32", "pindex", 1, FORMS["pindex"][0])
+    # Private arrays: a thread's own, fixed size, every index masked by its row.
+    add("parr<f32>", "real", 0, "a private array of 64 f32: pa, pb")
+    add("parr<vec4<f32>>", "real", 0, "a private array of 16 vec4<f32>: pv")
+    add("parr<u32>", "index", 0, "a private array of 16 u32: pi")
+    for r in ("L3", "C3"):
+        add("stmt", r, 0, "a statement " + FORMS[r][0][len("a statement or block "):])
+        add("block", r, 0, "a block " + FORMS[r][0][len("a statement or block "):])
+    # A third nested tile loop (register-blocked kernels loop over rows, columns and the tile).
+    add("u32", "tcounter3", 1, FORMS["tcounter3"][0])
+    for r in ("L4", "C4"):
+        add("stmt", r, 0, "a statement " + FORMS[r][0][len("a statement or block "):])
+        add("block", r, 0, "a block " + FORMS[r][0][len("a statement or block "):])
+    add("parr<bool>", "flag", 0, "a private array of 16 bool: pm, pn")
+    add("wgmem<vec4<f32>>", "real", 0, "a workgroup-memory array of 256 vec4<f32>: va, vb")
+    add("u32", "wgvindex", 1, FORMS["wgvindex"][0])
     return rows
 
 
@@ -346,8 +375,42 @@ for suffix, reg, val in [("f", "reg<f32>.real", "f32.real"), ("v", "reg<vec4<f32
     f("reg", f"set_{suffix}", "composite", [reg, val], "stmt.stmt", "name = value;")
 f("wg", "a", "composite", [], "wgmem<f32>.real", "workgroup array a")
 f("wg", "b", "composite", [], "wgmem<f32>.real", "workgroup array b")
-f("wg", "get", "composite", ["wgmem<f32>.real", "u32.index"], "f32.real", "a[i & 4095u]")
-f("wg", "set", "composite", ["wgmem<f32>.real", "u32.index", "f32.real"], "stmt.stmt", "arity 3: a[i & 4095u] = v;")
+f("wg", "get", "composite", ["wgmem<f32>.real", "u32.index"], "f32.real", "a[i & 2047u]")
+f("wg", "set", "composite", ["wgmem<f32>.real", "u32.index", "f32.real"], "stmt.stmt", "arity 3: a[i & 2047u] = v;")
+
+# More registers for drafted kernels (sixteen f32, eight vec4, eight u32, four bool).
+for i in range(4, 16):
+    f("reg", f"f{i}", "composite", [], "reg<f32>.real", "a register")
+for i in range(2, 8):
+    f("reg", f"v{i}", "composite", [], "reg<vec4<f32>>.real", "a register")
+for i in range(4, 16):
+    f("reg", f"i{i}", "composite", [], "reg<u32>.index", "a register")
+for i in range(1, 4):
+    f("reg", f"b{i}", "composite", [], "reg<bool>.flag", "a register")
+
+# Private arrays (a thread's own) with masked indices.
+f("parr", "a", "composite", [], "parr<f32>.real", "private array pa of 64 f32")
+f("parr", "b", "composite", [], "parr<f32>.real", "private array pb of 64 f32")
+f("parr", "c", "composite", [], "parr<f32>.real", "private array pc of 64 f32")
+f("parr", "d", "composite", [], "parr<f32>.real", "private array pd of 64 f32")
+f("parr", "v", "composite", [], "parr<vec4<f32>>.real", "private array pv of 16 vec4<f32>")
+f("parr", "i", "composite", [], "parr<u32>.index", "private array pi of 16 u32")
+f("safe", "pidx64", "composite", ["u32.index"], "u32.pindex", "i & 63u")
+f("safe", "pidx16", "composite", ["u32.index"], "u32.pindex", "i & 15u")
+f("parr", "get_f", "composite", ["parr<f32>.real", "u32.pindex"], "f32.real", "pa[i]")
+f("parr", "get_v", "composite", ["parr<vec4<f32>>.real", "u32.pindex"], "vec4<f32>.real", "pv[i]")
+f("parr", "get_i", "composite", ["parr<u32>.index", "u32.pindex"], "u32.index", "pi[i]")
+f("parr", "m", "composite", [], "parr<bool>.flag", "private array pm of 16 bool")
+f("parr", "n", "composite", [], "parr<bool>.flag", "private array pn of 16 bool")
+f("parr", "e", "composite", [], "parr<f32>.real", "private array pe of 64 f32")
+f("parr", "f", "composite", [], "parr<f32>.real", "private array pf of 64 f32")
+f("parr", "j", "composite", [], "parr<u32>.index", "private array pj of 16 u32")
+f("parr", "k", "composite", [], "parr<u32>.index", "private array pk of 16 u32")
+f("wg", "va", "composite", [], "wgmem<vec4<f32>>.real", "workgroup array va of 256 vec4<f32>")
+f("wg", "vb", "composite", [], "wgmem<vec4<f32>>.real", "workgroup array vb of 256 vec4<f32>")
+f("safe", "wgv_of", "composite", ["u32.index"], "u32.wgvindex", "i & 255u, in range by construction")
+f("wg", "get_v_safe", "composite", ["wgmem<vec4<f32>>.real", "u32.wgvindex"], "vec4<f32>.real", "va[i], in range by its type")
+f("parr", "get_b", "composite", ["parr<bool>.flag", "u32.pindex"], "bool.flag", "pm[i]")
 
 # ---- safeWGSL rows: the only spellings of loops, conditions, stores and loads ----
 # Bounds: the bindings' counts and small literals are the only loop bounds.
@@ -357,20 +420,47 @@ f("bound", "rows", "composite", [], "u32.boundrows", "cfg.r_rows")
 f("literal", "lit64", "Literal", [], "u32.lit64", "a literal snapped into 1..=64")
 f("literal", "lit4096", "Literal", [], "u32.lit4096", "a literal snapped into 1..=4096")
 # The loop condition: counter < bound, and nothing else produces a flag.bound.
-for b in ("boundm", "boundd", "boundrows", "lit64", "lit4096"):
+for b in ("boundm", "boundd", "boundrows", "lit4096"):
     f("safe", "lt_" + b, "Binary::Less", ["u32.counter", "u32." + b], "bool.bound", "the only producer of a loop condition")
-f("safe", "counter", "composite", [], "u32.counter", "the enclosing loop's counter (0u outside a loop)")
-f("safe", "counter_index", "composite", ["u32.counter"], "u32.index", "the counter as a plain index")
+f("safe", "lt_lit64", "Binary::Less", ["u32.tcounter", "u32.lit64"], "bool.bound", "a tile loop's condition")
+f("safe", "lt_lit64_2", "Binary::Less", ["u32.tcounter2", "u32.lit64"], "bool.bound", "an inner tile loop's condition")
+f("safe", "lt_lit64_3", "Binary::Less", ["u32.tcounter3", "u32.lit64"], "bool.bound", "a third nested tile loop's condition")
+f("safe", "tile_counter3", "composite", [], "u32.tcounter3", "the third nested tile loop's counter k3 (0u outside it)")
+f("safe", "tile_index3", "composite", ["u32.tcounter3"], "u32.index", "the third tile counter as a plain index")
+f("safe", "row_plus_tile3", "composite", ["u32.threadrow", "u32.tcounter3"], "u32.threadrow", "row + min(k3, block rows - 1)")
+f("safe", "col_plus_tile3", "composite", ["u32.threadcol", "u32.tcounter3"], "u32.threadcol", "col + min(k3, block columns - 1)")
+f("safe", "counter", "composite", [], "u32.counter", "the item loop's counter t (0u outside it)")
+f("safe", "tile_counter", "composite", [], "u32.tcounter", "the tile loop's counter k (0u outside it)")
+f("safe", "tile_counter2", "composite", [], "u32.tcounter2", "the inner tile loop's counter k2 (0u outside it)")
+f("safe", "counter_index", "composite", ["u32.counter"], "u32.index", "the item counter as a plain index")
+f("safe", "tile_index", "composite", ["u32.tcounter"], "u32.index", "the tile counter as a plain index")
+f("safe", "tile_index2", "composite", ["u32.tcounter2"], "u32.index", "the inner tile counter as a plain index")
+f("safe", "row_plus_tile", "composite", ["u32.threadrow", "u32.tcounter"], "u32.threadrow", "row + min(k, block rows - 1): still a row this thread owns")
+f("safe", "col_plus_tile", "composite", ["u32.threadcol", "u32.tcounter"], "u32.threadcol", "col + min(k, block columns - 1)")
+f("safe", "row_plus_tile2", "composite", ["u32.threadrow", "u32.tcounter2"], "u32.threadrow", "row + min(k2, block rows - 1)")
+f("safe", "col_plus_tile2", "composite", ["u32.threadcol", "u32.tcounter2"], "u32.threadcol", "col + min(k2, block columns - 1)")
 # Index provenance.
 f("safe", "thread_row", "composite", ["vec3<u32>.index", "u32.blk"], "u32.threadrow", "gid.y * blk (+ i by the block row): a row this thread owns")
 f("safe", "thread_col", "composite", ["vec3<u32>.index", "u32.blk"], "u32.threadcol", "gid.x * blk (+ j by the block column): a column this thread owns")
+f("safe", "thread_row_s", "composite", ["vec3<u32>.index", "vec3<u32>.index", "u32.blk"], "u32.threadrow", "arity 3: wid.y * (Y * blk) + lid.y: the first row of a thread's STRIDED block (its rows Y apart)")
+f("safe", "thread_col_s", "composite", ["vec3<u32>.index", "vec3<u32>.index", "u32.blk"], "u32.threadcol", "arity 3: wid.x * (X * blk) + lid.x: the first column of a thread's strided block")
+f("safe", "row_plus_s", "composite", ["u32.threadrow", "u32.lit64"], "u32.threadrow", "row + min(i, blk - 1) * Y: the i-th row of a strided block")
+f("safe", "col_plus_s", "composite", ["u32.threadcol", "u32.lit64"], "u32.threadcol", "col + min(j, blk - 1) * X")
+f("safe", "row_plus_tile_s", "composite", ["u32.threadrow", "u32.tcounter"], "u32.threadrow", "row + min(k, blk - 1) * Y: the k-th row of a strided block")
+f("safe", "col_plus_tile_s", "composite", ["u32.threadcol", "u32.tcounter"], "u32.threadcol", "col + min(k, blk - 1) * X")
+f("safe", "row_plus_tile2_s", "composite", ["u32.threadrow", "u32.tcounter2"], "u32.threadrow", "row + min(k2, blk - 1) * Y")
+f("safe", "col_plus_tile2_s", "composite", ["u32.threadcol", "u32.tcounter2"], "u32.threadcol", "col + min(k2, blk - 1) * X")
+f("safe", "row_plus_tile3_s", "composite", ["u32.threadrow", "u32.tcounter3"], "u32.threadrow", "row + min(k3, blk - 1) * Y")
+f("safe", "col_plus_tile3_s", "composite", ["u32.threadcol", "u32.tcounter3"], "u32.threadcol", "col + min(k3, blk - 1) * X")
 f("safe", "cell_of", "composite", ["u32.threadrow", "u32.threadcol"], "u32.cell", "row * cfg.d + col, the cell this thread owns; the only index store.h accepts")
-f("safe", "phi_of", "composite", ["u32.counter", "u32.index"], "u32.phi", "item * cfg.d + column; the only index load.phi accepts")
-f("safe", "wg_of", "composite", ["u32.index"], "u32.wgindex", "i & 4095u, in range by construction")
+f("safe", "phi_of", "composite", ["u32.counter", "u32.index"], "u32.phi", "unused (a load of phi takes any index); kept so earlier refs stand")
+f("safe", "wg_of", "composite", ["u32.index"], "u32.wgindex", "i & 2047u, in range by construction")
+f("safe", "row_plus", "composite", ["u32.threadrow", "u32.lit64"], "u32.threadrow", "row + min(i, block rows - 1)")
+f("safe", "col_plus", "composite", ["u32.threadcol", "u32.lit64"], "u32.threadcol", "col + min(j, block columns - 1)")
 f("safe", "row_as_index", "composite", ["u32.threadrow"], "u32.index", "")
 f("safe", "col_as_index", "composite", ["u32.threadcol"], "u32.index", "")
 # Statements by rung. A top-level or loop-body statement may hold a barrier; a conditional one may not.
-CTX = {"L0": "C0", "L1": "C1", "L2": "C2"}
+CTX = {"L0": "C0", "L1": "C1", "L2": "C2", "L3": "C3", "L4": "C4"}
 for r in RUNGS:
     f("block", "one_" + r, "composite", ["stmt." + r], "block." + r, "")
     f("block", "seq2_" + r, "composite", ["stmt." + r] * 2, "block." + r, "")
@@ -387,25 +477,40 @@ for r in RUNGS:
     f("reg", "set_i_" + r, "composite", ["reg<u32>.index", "u32.index"], "stmt." + r, "")
     f("reg", "set_b_" + r, "composite", ["reg<bool>.flag", "bool.flag"], "stmt." + r, "")
     f("wg", "set_" + r, "composite", ["wgmem<f32>.real", "u32.wgindex", "f32.real"], "stmt." + r, "arity 3; the index is in range by its type")
+    f("wg", "set_v_" + r, "composite", ["wgmem<vec4<f32>>.real", "u32.wgvindex", "vec4<f32>.real"], "stmt." + r, "arity 3: va[i] = v")
+    f("parr", "set_f_" + r, "composite", ["parr<f32>.real", "u32.pindex", "f32.real"], "stmt." + r, "arity 3: pa[i] = v")
+    f("parr", "set_v_" + r, "composite", ["parr<vec4<f32>>.real", "u32.pindex", "vec4<f32>.real"], "stmt." + r, "arity 3: pv[i] = v")
+    f("parr", "set_i_" + r, "composite", ["parr<u32>.index", "u32.pindex", "u32.index"], "stmt." + r, "arity 3: pi[i] = v")
+    f("parr", "set_b_" + r, "composite", ["parr<bool>.flag", "u32.pindex", "bool.flag"], "stmt." + r, "arity 3: pm[i] = v")
     f("store", "h_" + r, "composite", ["u32.cell", "f32.real"], "stmt." + r, "h[cell] = h[cell] + v: read-add-write of a cell this thread owns")
     # A condition puts its block in the C context of the same level: no barrier under it.
     c = CTX.get(r, r)
     f("stmt", "if_" + r, "composite", ["bool.flag", "block." + c], "stmt." + r, "if (c) { ... }: the body is a conditional context")
     f("stmt", "if_else_" + r, "composite", ["bool.flag", "block." + c, "block." + c], "stmt." + r, "arity 3")
 # Barriers only where control flow is uniform: top level and loop bodies, never under a condition.
-for r in ("L0", "L1", "L2"):
-    f("stmt", "barrier_" + r, "composite", [], "stmt." + r, "workgroupBarrier(); never in C0/C1/C2")
+for r in ("L0", "L1", "L2", "L3", "L4"):
+    f("stmt", "barrier_" + r, "composite", [], "stmt." + r, "workgroupBarrier(); never in a conditional context")
 # Loops: the item loop only at the top level, bounded by m, d or rows; the tile loop at L0 or L1, bounded by a literal <= 64; no loop produces an L2 statement, so a tile loop never nests.
 for b in ("boundm", "boundd", "boundrows"):
-    f("loop", "items_" + b, "composite", ["u32." + b, "block.L1"], "stmt.L0", "for (counter = 0u; counter < bound; counter++) { ... }: the one long loop")
+    f("loop", "items_" + b, "composite", ["u32." + b, "block.L1"], "stmt.L0", "for (t = 0u; t < bound; t = t + 1u) { ... }: the one long loop")
     f("loop", "items_unrolled_" + b, "composite", ["u32.unroll", "u32." + b, "block.L1"], "stmt.L0", "arity 3: the body k times, then the remainder")
-f("loop", "tile_L0", "composite", ["u32.lit64", "block.L2"], "stmt.L0", "a short loop at the top level")
-f("loop", "tile_L1", "composite", ["u32.lit64", "block.L2"], "stmt.L1", "a short loop inside the item loop")
+    f("loop", "items_strided_" + b, "composite", ["u32." + b, "u32.lit64", "block.L1"], "stmt.L0", "arity 3: for (t = 0u; t < bound; t = t + stride): a tile of items per iteration, the stride a literal in 1..=64")
+f("loop", "tile_L0", "composite", ["u32.lit64", "block.L2"], "stmt.L0", "a short loop (counter k) at the top level")
+f("loop", "tile_L1", "composite", ["u32.lit64", "block.L2"], "stmt.L1", "a short loop (counter k) inside the item loop")
+f("loop", "tile_L2", "composite", ["u32.lit64", "block.L3"], "stmt.L2", "an inner short loop (counter k2) inside a tile loop; nothing produces a loop at L3")
+f("loop", "tile_C0", "composite", ["u32.lit64", "block.C1"], "stmt.C0", "a short loop (counter k) under a condition; its body stays conditional (no barrier)")
+f("loop", "tile_C1", "composite", ["u32.lit64", "block.C2"], "stmt.C1", "a short loop (counter k) under a condition inside the item loop")
+f("loop", "tile_C2", "composite", ["u32.lit64", "block.C3"], "stmt.C2", "an inner short loop (counter k2) under a condition inside a tile loop")
+f("loop", "tile_L3", "composite", ["u32.lit64", "block.L4"], "stmt.L3", "a third nested short loop (counter k3); nothing produces a loop at L4")
+f("loop", "tile_C3", "composite", ["u32.lit64", "block.C4"], "stmt.C3", "a third nested short loop (counter k3) under a condition")
+# A stepped tile loop: for (k = 0u; k < n; k = k + s), the step a literal in 1..=64.
+for r, body in (("L0", "L2"), ("L1", "L2"), ("L2", "L3"), ("L3", "L4"), ("C0", "C1"), ("C1", "C2"), ("C2", "C3"), ("C3", "C4")):
+    f("loop", "tile_strided_" + r, "composite", ["u32.lit64", "u32.lit64", "block." + body], "stmt." + r, "arity 3: a short loop stepped by a literal (the counter of its depth)")
 # The kernel: a grid and a top-level block.
 f("kernel", "entry_safe", "composite", ["grid.grid", "block.L0"], "kernel.safe", "the safeWGSL kernel, the only producer of the root dual kernel.safe: its body is an L0 block")
 # Loads of the kernel's bindings by provenance.
-f("load", "phi_safe", "composite", ["u32.phi"], "f32.real", "phi[item * d + col]")
-f("load", "phi4_safe", "composite", ["u32.phi"], "vec4<f32>.real", "four consecutive columns from a phi index")
+f("load", "phi_safe", "composite", ["u32.index"], "f32.real", "phi[i]: any index, a read past the buffer is zero (WGSL's rule)")
+f("load", "phi4_safe", "composite", ["u32.index"], "vec4<f32>.real", "four consecutive values from an index")
 f("load", "h_safe", "composite", ["u32.cell"], "f32.real", "h[cell], the thread's own cell")
 f("wg", "get_safe", "composite", ["wgmem<f32>.real", "u32.wgindex"], "f32.real", "a[i], in range by its type")
 

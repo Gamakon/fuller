@@ -179,7 +179,7 @@ pub fn gram_shipped_safe_tree(kingdom: &WgslKingdom) -> Result<Tree, String> {
     let in_range = Tree::new("logic.and", flag, vec![lt(Tree::new("safe.row_as_index", index, vec![row()]), cnt("load.cfg_r_rows")), lt(Tree::new("safe.col_as_index", index, vec![col()]), cnt("load.cfg_d"))]);
     // for t < m: f0 = f0 + phi[t*d + gr] * phi[t*d + col]
     let counter = || Tree::new("safe.counter", t("u32.counter").expect("dual"), vec![]);
-    let phi = |c: Tree| Tree::new("load.phi_safe", real, vec![Tree::new("safe.phi_of", t("u32.phi").expect("dual"), vec![counter(), c])]);
+    let phi = |c: Tree| Tree::new("load.phi_safe", real, vec![Tree::new("index.add", index, vec![Tree::new("index.mul", index, vec![Tree::new("safe.counter_index", index, vec![counter()]), cnt("load.cfg_d")]), c])]);
     let get_i3 = || Tree::new("reg.get_i", index, vec![Tree::new("reg.i3", ri, vec![])]);
     let body = Tree::new("reg.set_f_L1", l1, vec![Tree::new("reg.f0", rf, vec![]), Tree::new("arith.add", real, vec![f0(), Tree::new("arith.mul", real, vec![phi(get_i3()), phi(Tree::new("safe.col_as_index", index, vec![col()]))])])]);
     let items = Tree::new("loop.items_boundm", l0, vec![Tree::new("bound.m", t("u32.boundm")?, vec![]), Tree::new("block.one_L1", b1, vec![body])]);
@@ -213,7 +213,10 @@ pub struct Rendered {
 pub const WGDIM: [u32; 4] = [4, 8, 16, 32];
 pub const BLK: [u32; 3] = [1, 2, 4];
 pub const UNROLL: [u32; 3] = [2, 4, 8];
-pub const WGMEM_LEN: u32 = 4096;
+pub const WGMEM_LEN: u32 = 2048;
+/// The length of each vec4 workgroup array (`wg_va`, `wg_vb`); the four
+/// arrays together take 24 KB, under the 32 KB a Metal threadgroup has.
+pub const WGVEC_LEN: u32 = 256;
 pub const MAX_THREADS: u32 = 1024;
 
 fn snap(set: &[u32], v: f32) -> u32 {
@@ -232,6 +235,7 @@ pub struct Renderer<'a> {
 struct Scope {
     in_items: bool,
     in_tile: bool,
+    tile_depth: usize,
     /// The kernel's grid, for the safe rows' block offsets.
     grid: Grid,
     /// Inside an `if`: control flow naga's uniformity analysis treats as
@@ -259,7 +263,7 @@ impl<'a> Renderer<'a> {
         if d.dual != "kernel.kernel" && d.dual != "kernel.safe" {
             return Err(format!("the root is {} ({}), not kernel.kernel or kernel.safe", root.name, d.dual));
         }
-        let mut scope = Scope { in_items: false, in_tile: false, grid: Grid { x: 16, y: 16, bx: 1, by: 1 }, in_cond: 0, returned: false, helpers: Vec::new(), masked: Vec::new() };
+        let mut scope = Scope { in_items: false, in_tile: false, tile_depth: 0, grid: Grid { x: 16, y: 16, bx: 1, by: 1 }, in_cond: 0, returned: false, helpers: Vec::new(), masked: Vec::new() };
         let (grid, body) = match root.name.as_str() {
             "kernel.entry" | "kernel.entry_safe" => {
                 let [g, b] = root.kids.as_slice() else { return Err(format!("{} with {} children", root.name, root.kids.len())) };
@@ -276,7 +280,7 @@ impl<'a> Renderer<'a> {
         let mut text = String::new();
         text.push_str(&self.role.prologue);
         text.push('\n');
-        text.push_str(&format!("var<workgroup> wg_a: array<f32, {WGMEM_LEN}>;\nvar<workgroup> wg_b: array<f32, {WGMEM_LEN}>;\n"));
+        text.push_str(&format!("var<workgroup> wg_a: array<f32, {WGMEM_LEN}>;\nvar<workgroup> wg_b: array<f32, {WGMEM_LEN}>;\nvar<workgroup> wg_va: array<vec4<f32>, {WGVEC_LEN}>;\nvar<workgroup> wg_vb: array<vec4<f32>, {WGVEC_LEN}>;\n"));
         // Literals pass through these so naga's constant evaluator never sees
         // a literal-only expression: a NaN, a division or a remainder by a
         // literal zero would otherwise be refused at validation, while on the
@@ -290,7 +294,7 @@ impl<'a> Renderer<'a> {
             text.push('\n');
         }
         text.push_str(&format!("@compute @workgroup_size({}, {}, 1)\nfn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_index) lidx: u32, @builtin(num_workgroups) nwg: vec3<u32>) {{\n", grid.x, grid.y));
-        text.push_str("    var f0: f32 = 0.0; var f1: f32 = 0.0; var f2: f32 = 0.0; var f3: f32 = 0.0;\n    var v0: vec4<f32> = vec4<f32>(0.0); var v1: vec4<f32> = vec4<f32>(0.0);\n    var i0: u32 = 0u; var i1: u32 = 0u; var i2: u32 = 0u; var i3: u32 = 0u;\n    var b0: bool = false;\n    var t: u32 = 0u; var k: u32 = 0u;\n");
+        text.push_str("    var f0: f32 = 0.0; var f1: f32 = 0.0; var f2: f32 = 0.0; var f3: f32 = 0.0;\n    var f4: f32 = 0.0; var f5: f32 = 0.0; var f6: f32 = 0.0; var f7: f32 = 0.0;\n    var f8: f32 = 0.0; var f9: f32 = 0.0; var f10: f32 = 0.0; var f11: f32 = 0.0;\n    var f12: f32 = 0.0; var f13: f32 = 0.0; var f14: f32 = 0.0; var f15: f32 = 0.0;\n    var v0: vec4<f32> = vec4<f32>(0.0); var v1: vec4<f32> = vec4<f32>(0.0); var v2: vec4<f32> = vec4<f32>(0.0); var v3: vec4<f32> = vec4<f32>(0.0);\n    var v4: vec4<f32> = vec4<f32>(0.0); var v5: vec4<f32> = vec4<f32>(0.0); var v6: vec4<f32> = vec4<f32>(0.0); var v7: vec4<f32> = vec4<f32>(0.0);\n    var i0: u32 = 0u; var i1: u32 = 0u; var i2: u32 = 0u; var i3: u32 = 0u; var i4: u32 = 0u; var i5: u32 = 0u; var i6: u32 = 0u; var i7: u32 = 0u;\n    var i8: u32 = 0u; var i9: u32 = 0u; var i10: u32 = 0u; var i11: u32 = 0u; var i12: u32 = 0u; var i13: u32 = 0u; var i14: u32 = 0u; var i15: u32 = 0u;\n    var b0: bool = false; var b1: bool = false; var b2: bool = false; var b3: bool = false;\n    var t: u32 = 0u; var k: u32 = 0u; var k2: u32 = 0u; var k3: u32 = 0u;\n    var pa: array<f32, 64>; var pb: array<f32, 64>; var pc: array<f32, 64>; var pd: array<f32, 64>; var pe: array<f32, 64>; var pf: array<f32, 64>;\n    var pv: array<vec4<f32>, 16>; var pi: array<u32, 16>; var pj: array<u32, 16>; var pk: array<u32, 16>; var pm: array<bool, 16>; var pn: array<bool, 16>;\n");
         text.push_str(&body);
         text.push_str("}\n");
         Ok(Rendered { text, grid, helpers: scope.helpers, masked: scope.masked })
@@ -412,17 +416,36 @@ impl<'a> Renderer<'a> {
                 out.push_str(&format!("        t = t - {}u;\n    }}\n    for (; t < {bound}; t = t + 1u) {{\n{body}    }}\n", u - 1));
                 Ok(out)
             }
-            "loop.tile_bounded" => {
-                // (lit64, block): for (k = 0u; k < lit; k++); the tile loop's counter is k.
-                n(2)?;
-                if scope.in_tile {
-                    return Err("a tile loop inside a tile loop (the safe grammar does not produce this)".into());
+            "loop.items_strided_bounded" => {
+                // (bound, stride, block): for (t = 0u; t < bound; t = t + stride)
+                n(3)?;
+                if scope.in_items {
+                    return Err("a long loop inside a long loop (the safe grammar does not produce this)".into());
                 }
+                let bound = self.value(&kids[0], scope)?;
+                let stride = self.lit(&kids[1], 64)?;
+                scope.in_items = true;
+                let body = self.block(&kids[2], scope);
+                scope.in_items = false;
+                Ok(format!("    for (t = 0u; t < {bound}; t = t + {stride}u) {{\n{}    }}\n", body?))
+            }
+            "loop.tile_bounded" | "loop.tile_strided_bounded" => {
+                // (lit64, [step,] block): for (k = 0u; k < lit; k = k + step); nested
+                // tile loops count on k2, then k3.
+                let strided = safe_base(&s.name) == "loop.tile_strided_bounded";
+                n(if strided { 3 } else { 2 })?;
                 let count = self.lit(&kids[0], 64)?;
+                let step = if strided { self.lit(&kids[1], 64)? } else { 1 };
+                let Some(var) = ["k", "k2", "k3"].get(scope.tile_depth) else {
+                    return Err("a fourth nested tile loop (the safe grammar does not produce this)".into());
+                };
+                let was = scope.in_tile;
                 scope.in_tile = true;
-                let body = self.block(&kids[1], scope);
-                scope.in_tile = false;
-                Ok(format!("    for (k = 0u; k < {count}u; k = k + 1u) {{\n{}    }}\n", body?))
+                scope.tile_depth += 1;
+                let body = self.block(&kids[if strided { 2 } else { 1 }], scope);
+                scope.tile_depth -= 1;
+                scope.in_tile = was;
+                Ok(format!("    for ({var} = 0u; {var} < {count}u; {var} = {var} + {step}u) {{\n{}    }}\n", body?))
             }
             "store.h_safe" => {
                 n(2)?;
@@ -432,6 +455,10 @@ impl<'a> Renderer<'a> {
             "wg.set_safe" => {
                 n(3)?;
                 Ok(format!("    {}[{}] = {};\n", self.wgmem(&kids[0])?, self.value(&kids[1], scope)?, self.value(&kids[2], scope)?))
+            }
+            "parr.set_safe" => {
+                n(3)?;
+                Ok(format!("    {}[{}] = {};\n", parr_name(&kids[0])?, self.value(&kids[1], scope)?, self.value(&kids[2], scope)?))
             }
             "stmt.block" => {
                 n(1)?;
@@ -540,25 +567,22 @@ impl<'a> Renderer<'a> {
         }
     }
 
-    fn register(&self, r: &Tree) -> Result<&'static str, String> {
+    fn register(&self, r: &Tree) -> Result<String, String> {
         let d = self.dual(r.ty)?;
+        let ok = |n: &str, kind: char, max: usize| n.strip_prefix(kind).and_then(|k| k.parse::<usize>().ok()).is_some_and(|k| k < max);
         Ok(match (r.name.as_str(), d.dual.as_str()) {
-            ("reg.f0", _) => "f0",
-            ("reg.f1", _) => "f1",
-            ("reg.f2", _) => "f2",
-            ("reg.f3", _) => "f3",
-            ("reg.v0", _) => "v0",
-            ("reg.v1", _) => "v1",
-            ("reg.i0", _) => "i0",
-            ("reg.i1", _) => "i1",
-            ("reg.i2", _) => "i2",
-            ("reg.i3", _) => "i3",
-            ("reg.b0", _) => "b0",
-            ("fallback", "reg<f32>.real") => "f0",
-            ("fallback", "reg<vec4<f32>>.real") => "v0",
-            ("fallback", "reg<u32>.index") => "i0",
-            ("fallback", "reg<bool>.flag") => "b0",
-            (other, dual) => return Err(format!("{other} ({dual}) is not a register")),
+            ("fallback", "reg<f32>.real") => "f0".to_string(),
+            ("fallback", "reg<vec4<f32>>.real") => "v0".to_string(),
+            ("fallback", "reg<u32>.index") => "i0".to_string(),
+            ("fallback", "reg<bool>.flag") => "b0".to_string(),
+            (name, _) => {
+                let n = name.strip_prefix("reg.").unwrap_or("");
+                if ok(n, 'f', 16) || ok(n, 'v', 8) || ok(n, 'i', 16) || ok(n, 'b', 4) {
+                    n.to_string()
+                } else {
+                    return Err(format!("{name} ({}) is not a register", d.dual));
+                }
+            }
         })
     }
 
@@ -566,6 +590,8 @@ impl<'a> Renderer<'a> {
         Ok(match w.name.as_str() {
             "wg.a" | "fallback" => "wg_a",
             "wg.b" => "wg_b",
+            "wg.va" => "wg_va",
+            "wg.vb" => "wg_vb",
             other => return Err(format!("{other} is not a workgroup array")),
         })
     }
@@ -595,10 +621,11 @@ impl<'a> Renderer<'a> {
             return self.fill(p, v, scope);
         }
         match name {
-            "reg.get_f" | "reg.get_v" | "reg.get_i" | "reg.get_b" => return Ok(self.register(&v.kids[0])?.into()),
+            "reg.get_f" | "reg.get_v" | "reg.get_i" | "reg.get_b" => return self.register(&v.kids[0]),
             "wg.get" => return Ok(format!("{}[({}) & {}u]", self.wgmem(&v.kids[0])?, self.value(&v.kids[1], scope)?, WGMEM_LEN - 1)),
             // The safe read: the index is in range by its type (safe.wg_of masks it).
-            "wg.get_safe" => return Ok(format!("{}[{}]", self.wgmem(&v.kids[0])?, self.value(&v.kids[1], scope)?)),
+            "wg.get_safe" | "wg.get_v_safe" => return Ok(format!("{}[{}]", self.wgmem(&v.kids[0])?, self.value(&v.kids[1], scope)?)),
+            "parr.get_f" | "parr.get_v" | "parr.get_i" | "parr.get_b" => return Ok(format!("{}[{}]", parr_name(&v.kids[0])?, self.value(&v.kids[1], scope)?)),
             _ => {}
         }
         let kids: Result<Vec<String>, String> = v.kids.iter().map(|k| self.value(k, scope)).collect();
@@ -608,10 +635,29 @@ impl<'a> Renderer<'a> {
             "bound.m" => return Ok("cfg.m".into()),
             "bound.d" => return Ok("cfg.d".into()),
             "bound.rows" => return Ok("cfg.r_rows".into()),
-            "safe.counter" => return Ok(if scope.in_tile && !scope.in_items { "k".into() } else { "t".into() }),
-            "safe.counter_index" => return self.value(&v.kids[0], scope),
+            "safe.counter" => return Ok("t".into()),
+            "safe.tile_counter" => return Ok("k".into()),
+            "safe.tile_counter2" => return Ok("k2".into()),
+            "safe.tile_counter3" => return Ok("k3".into()),
+            "safe.counter_index" | "safe.tile_index" | "safe.tile_index2" | "safe.tile_index3" => return self.value(&v.kids[0], scope),
+            "safe.row_plus_tile" | "safe.row_plus_tile2" | "safe.row_plus_tile3" | "safe.col_plus_tile" | "safe.col_plus_tile2" | "safe.col_plus_tile3" => {
+                let blk = if safe_base(name).starts_with("safe.row") { scope.grid.by } else { scope.grid.bx };
+                return Ok(format!("({} + min({}, {}u))", self.value(&v.kids[0], scope)?, self.value(&v.kids[1], scope)?, blk.saturating_sub(1)));
+            }
+            "safe.row_plus_tile_s" | "safe.row_plus_tile2_s" | "safe.row_plus_tile3_s" | "safe.col_plus_tile_s" | "safe.col_plus_tile2_s" | "safe.col_plus_tile3_s" => {
+                // The k-th row of a strided block: rows W apart, k snapped below the block factor.
+                let (blk, w) = if safe_base(name).starts_with("safe.row") { (scope.grid.by, scope.grid.y) } else { (scope.grid.bx, scope.grid.x) };
+                return Ok(format!("({} + min({}, {}u) * {w}u)", self.value(&v.kids[0], scope)?, self.value(&v.kids[1], scope)?, blk.saturating_sub(1)));
+            }
             "safe.thread_row" => return Ok(format!("(gid.y * {}u)", scope.grid.by)),
             "safe.thread_col" => return Ok(format!("(gid.x * {}u)", scope.grid.bx)),
+            "safe.thread_row_s" => return Ok(format!("(wid.y * {}u + lid.y)", scope.grid.y * scope.grid.by)),
+            "safe.thread_col_s" => return Ok(format!("(wid.x * {}u + lid.x)", scope.grid.x * scope.grid.bx)),
+            "safe.row_plus_s" | "safe.col_plus_s" => {
+                let (blk, w) = if safe_base(name) == "safe.row_plus_s" { (scope.grid.by, scope.grid.y) } else { (scope.grid.bx, scope.grid.x) };
+                let off = self.lit(&v.kids[1], 64)?.min(blk.saturating_sub(1));
+                return Ok(format!("({} + {}u)", self.value(&v.kids[0], scope)?, off * w));
+            }
             "safe.row_plus" | "safe.col_plus" => {
                 // An offset within the thread's block, snapped below the block factor.
                 let blk = if safe_base(name) == "safe.row_plus" { scope.grid.by } else { scope.grid.bx };
@@ -629,6 +675,9 @@ impl<'a> Renderer<'a> {
                 return Ok(format!("(({t}) * cfg.d + ({c}))"));
             }
             "safe.wg_of" => return Ok(format!("(({}) & {}u)", self.value(&v.kids[0], scope)?, WGMEM_LEN - 1)),
+            "safe.wgv_of" => return Ok(format!("(({}) & {}u)", self.value(&v.kids[0], scope)?, WGVEC_LEN - 1)),
+            "safe.pidx64" => return Ok(format!("(({}) & 63u)", self.value(&v.kids[0], scope)?)),
+            "safe.pidx16" => return Ok(format!("(({}) & 15u)", self.value(&v.kids[0], scope)?)),
             "safe.row_as_index" | "safe.col_as_index" => return self.value(&v.kids[0], scope),
             "load.phi_safe" => return Ok(format!("phi[{}]", self.value(&v.kids[0], scope)?)),
             "load.phi4_safe" => {
@@ -655,6 +704,12 @@ impl<'a> Renderer<'a> {
         }
         if name == "wg.a" || name == "wg.b" {
             return Err(format!("{name} is a workgroup array, not a value (a row took wgmem as a value input)"));
+        }
+        // A per-kernel swizzle (`shape.swizzle.xy`): the pattern is the instance.
+        if let Some(pat) = name.strip_prefix("shape.swizzle.") {
+            if a.len() == 1 && !pat.is_empty() && pat.chars().all(|c| "xyzw".contains(c)) {
+                return Ok(format!("({}).{pat}", a[0]));
+            }
         }
         let template = self.table.named(name).ok_or_else(|| format!("{name} is not a row of the function table"))?;
         let col = template.naga.as_str();
@@ -963,12 +1018,14 @@ pub fn cost(t: &Tree) -> Cost {
 /// `store.h_safe`, a rung-specific wg set to `wg.set_safe`. A WGSL kingdom
 /// name passes through unchanged.
 pub fn safe_base(name: &str) -> &str {
-    for rung in ["_L0", "_L1", "_L2", "_C0", "_C1", "_C2"] {
+    for rung in ["_L0", "_L1", "_L2", "_L3", "_L4", "_C0", "_C1", "_C2", "_C3", "_C4"] {
         if let Some(stem) = name.strip_suffix(rung) {
             return match stem {
                 "store.h" => "store.h_safe",
-                "wg.set" => "wg.set_safe",
+                "wg.set" | "wg.set_v" => "wg.set_safe",
+                "parr.set_f" | "parr.set_v" | "parr.set_i" | "parr.set_b" => "parr.set_safe",
                 "loop.tile" => "loop.tile_bounded",
+                "loop.tile_strided" => "loop.tile_strided_bounded",
                 other => other,
             };
         }
@@ -976,10 +1033,32 @@ pub fn safe_base(name: &str) -> &str {
     if name.starts_with("loop.items_unrolled_bound") {
         return "loop.items_unrolled_bounded";
     }
+    if name.starts_with("loop.items_strided_bound") {
+        return "loop.items_strided_bounded";
+    }
     if name.starts_with("loop.items_bound") {
         return "loop.items_bounded";
     }
     name
+}
+
+/// A private array leaf's variable name.
+fn parr_name(t: &Tree) -> Result<&'static str, String> {
+    Ok(match t.name.as_str() {
+        "parr.a" | "fallback" => "pa",
+        "parr.b" => "pb",
+        "parr.c" => "pc",
+        "parr.d" => "pd",
+        "parr.v" => "pv",
+        "parr.e" => "pe",
+        "parr.f" => "pf",
+        "parr.i" => "pi",
+        "parr.j" => "pj",
+        "parr.k" => "pk",
+        "parr.m" => "pm",
+        "parr.n" => "pn",
+        other => return Err(format!("{other} is not a private array")),
+    })
 }
 
 /// The constructor spelling of a slot: `vec3<f32>`, `f32`, `mat2x3<f32>`.

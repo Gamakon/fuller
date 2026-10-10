@@ -78,7 +78,7 @@ T076	reg<f32>.real	reg<f32>	real	1	0.0	0	0	0	a named f32 register: f0, f1, f2, f
 T077	reg<vec4<f32>>.real	reg<vec4<f32>>	real	4	0.0	0	0	0	a named vec4<f32> register: v0, v1
 T078	reg<u32>.index	reg<u32>	index	1	0u	0	0	0	a named u32 register: i0, i1, i2, i3
 T079	reg<bool>.flag	reg<bool>	flag	1	false	0	0	0	a named bool register: b0
-T080	wgmem<f32>.real	wgmem<f32>	real	0	0.0	0	0	0	a workgroup-memory array of 4,096 f32: a, b
+T080	wgmem<f32>.real	wgmem<f32>	real	0	0.0	0	0	0	a workgroup-memory array of 2,048 f32: a, b
 T081	u32.wgdim	u32	wgdim	1	4u	0	0	0	a workgroup dimension, a literal from {4, 8, 16, 32, 64}
 T082	u32.blk	u32	blk	1	1u	0	0	0	a block factor, a literal from {1, 2, 4}
 T083	u32.unroll	u32	unroll	1	2u	0	0	0	an unroll factor, a literal from {2, 4, 8}
@@ -87,11 +87,11 @@ T085	u32.boundd	u32	boundd	1	cfg.d	0	0	0	a loop bound that is the width cfg.d
 T086	u32.boundrows	u32	boundrows	1	cfg.r_rows	0	0	0	a loop bound that is the band's rows cfg.r_rows
 T087	u32.lit64	u32	lit64	1	1u	0	0	0	a loop bound that is a literal at most 64
 T088	u32.lit4096	u32	lit4096	1	1u	0	0	0	a loop bound that is a literal at most 4,096
-T089	u32.counter	u32	counter	1	0u	0	0	0	a loop's counter, stepped by the loop row itself
+T089	u32.counter	u32	counter	1	0u	0	0	0	the item loop's counter, stepped by the loop row itself
 T090	u32.threadrow	u32	threadrow	1	0u	0	0	0	a row index derived from the thread's own ids and block factor
 T091	u32.threadcol	u32	threadcol	1	0u	0	0	0	a column index derived from the thread's own ids and block factor
 T092	u32.cell	u32	cell	1	0u	0	0	0	an output cell index row*d + col owned by this thread; the only index a store to h accepts
-T093	u32.phi	u32	phi	1	0u	0	0	0	an item-major phi index item*d + column; the only index a load of phi accepts
+T093	u32.phi	u32	phi	1	0u	0	0	0	unused: a load of phi takes any index, since a read past the buffer is zero by WGSL's rule; kept so earlier refs stand
 T094	u32.wgindex	u32	wgindex	1	0u	0	0	0	a workgroup-array index, masked to the array by its row
 T095	bool.bound	bool	bound	1	false	0	0	0	a loop condition: counter < bound, produced by nothing else
 T096	stmt.L0	stmt	L0	0	empty	0	0	0	a statement at the top level
@@ -107,3 +107,21 @@ T105	block.C1	block	C1	0	empty	0	0	0	a block under a condition inside the item l
 T106	stmt.C2	stmt	C2	0	empty	0	0	0	a statement under a condition inside a tile loop: no barrier
 T107	block.C2	block	C2	0	empty	0	0	0	a block under a condition inside a tile loop: no barrier
 T108	kernel.safe	kernel	safe	0	an empty kernel	0	0	0	the safeWGSL kernel: the root dual of this kingdom, produced only by kernel.entry_safe
+T109	u32.tcounter	u32	tcounter	1	0u	0	0	0	a tile loop's counter k, stepped by the loop row itself
+T110	u32.tcounter2	u32	tcounter2	1	0u	0	0	0	an inner tile loop's counter k2, stepped by the loop row itself
+T111	u32.pindex	u32	pindex	1	0u	0	0	0	a private-array index, masked to the array by its row
+T112	parr<f32>.real	parr<f32>	real	0	0.0	0	0	0	a private array of 64 f32: pa, pb
+T113	parr<vec4<f32>>.real	parr<vec4<f32>>	real	0	0.0	0	0	0	a private array of 16 vec4<f32>: pv
+T114	parr<u32>.index	parr<u32>	index	0	0u	0	0	0	a private array of 16 u32: pi
+T115	stmt.L3	stmt	L3	0	empty	0	0	0	a statement inside an inner tile loop
+T116	block.L3	block	L3	0	empty	0	0	0	a block inside an inner tile loop
+T117	stmt.C3	stmt	C3	0	empty	0	0	0	a statement under a condition inside an inner tile loop: no barrier
+T118	block.C3	block	C3	0	empty	0	0	0	a block under a condition inside an inner tile loop: no barrier
+T119	u32.tcounter3	u32	tcounter3	1	0u	0	0	0	a third nested tile loop's counter k3, stepped by the loop row itself
+T120	stmt.L4	stmt	L4	0	empty	0	0	0	a statement inside a third nested tile loop
+T121	block.L4	block	L4	0	empty	0	0	0	a block inside a third nested tile loop
+T122	stmt.C4	stmt	C4	0	empty	0	0	0	a statement under a condition inside a third nested tile loop: no barrier
+T123	block.C4	block	C4	0	empty	0	0	0	a block under a condition inside a third nested tile loop: no barrier
+T124	parr<bool>.flag	parr<bool>	flag	0	false	0	0	0	a private array of 16 bool: pm, pn
+T125	wgmem<vec4<f32>>.real	wgmem<vec4<f32>>	real	0	0.0	0	0	0	a workgroup-memory array of 256 vec4<f32>: va, vb
+T126	u32.wgvindex	u32	wgvindex	1	0u	0	0	0	an index into a vec4 workgroup array, masked to the array by its row

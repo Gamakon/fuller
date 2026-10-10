@@ -121,5 +121,9 @@ name = "wgsl_gram_hgp"
 required-features = ["gpu", "wgsl"]
 
 [[example]]
+name = "wgsl_safe_convert"
+required-features = ["wgsl"]
+
+[[example]]
 name = "wgsl_naga_only"
 required-features = ["wgsl"]

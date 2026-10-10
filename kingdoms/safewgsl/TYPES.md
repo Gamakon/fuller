@@ -36,20 +36,29 @@ A type is a dual `slot.form`: the slot is what the hardware stores, the form is 
 | `boundrows` | a loop bound that is the band's rows cfg.r_rows | u32 |
 | `lit64` | a loop bound that is a literal at most 64 | u32 |
 | `lit4096` | a loop bound that is a literal at most 4,096 | u32 |
-| `counter` | a loop's counter, stepped by the loop row itself | u32 |
+| `counter` | the item loop's counter, stepped by the loop row itself | u32 |
+| `tcounter` | a tile loop's counter k, stepped by the loop row itself | u32 |
+| `tcounter2` | an inner tile loop's counter k2, stepped by the loop row itself | u32 |
 | `bound` | a loop condition: counter < bound, produced by nothing else | bool |
 | `threadrow` | a row index derived from the thread's own ids and block factor | u32 |
 | `threadcol` | a column index derived from the thread's own ids and block factor | u32 |
 | `cell` | an output cell index row*d + col owned by this thread; the only index a store to h accepts | u32 |
-| `phi` | an item-major phi index item*d + column; the only index a load of phi accepts | u32 |
+| `phi` | unused: a load of phi takes any index, since a read past the buffer is zero by WGSL's rule; kept so earlier refs stand | u32 |
 | `wgindex` | a workgroup-array index, masked to the array by its row | u32 |
+| `wgvindex` | an index into a vec4 workgroup array, masked to the array by its row | u32 |
 | `L0` | a statement or block at the top level | see duals |
 | `L1` | a statement or block inside the item loop | see duals |
 | `L2` | a statement or block inside a tile loop | see duals |
 | `C0` | a statement or block under a condition at the top level: no barrier | see duals |
 | `C1` | a statement or block under a condition inside the item loop: no barrier | see duals |
 | `C2` | a statement or block under a condition inside a tile loop: no barrier | see duals |
+| `L3` | a statement or block inside an inner tile loop | see duals |
+| `C3` | a statement or block under a condition inside an inner tile loop: no barrier | see duals |
+| `tcounter3` | a third nested tile loop's counter k3, stepped by the loop row itself | u32 |
+| `L4` | a statement or block inside a third nested tile loop | see duals |
+| `C4` | a statement or block under a condition inside a third nested tile loop: no barrier | see duals |
 | `safe` | the safeWGSL kernel: the root dual of this kingdom, produced only by kernel.entry_safe | see duals |
+| `pindex` | a private-array index, masked to the array by its row | u32 |
 
 ## Duals
 
@@ -163,8 +172,26 @@ A type is a dual `slot.form`: the slot is what the hardware stores, the form is 
 | T106 | `stmt.C2` | `stmt` | `C2` | 0 | `empty` | 0 | 0 | 0 |
 | T107 | `block.C2` | `block` | `C2` | 0 | `empty` | 0 | 0 | 0 |
 | T108 | `kernel.safe` | `kernel` | `safe` | 0 | `an empty kernel` | 0 | 0 | 0 |
+| T109 | `u32.tcounter` | `u32` | `tcounter` | 1 | `0u` | 0 | 0 | 0 |
+| T110 | `u32.tcounter2` | `u32` | `tcounter2` | 1 | `0u` | 0 | 0 | 0 |
+| T111 | `u32.pindex` | `u32` | `pindex` | 1 | `0u` | 0 | 0 | 0 |
+| T112 | `parr<f32>.real` | `parr<f32>` | `real` | 0 | `0.0` | 0 | 0 | 0 |
+| T113 | `parr<vec4<f32>>.real` | `parr<vec4<f32>>` | `real` | 0 | `0.0` | 0 | 0 | 0 |
+| T114 | `parr<u32>.index` | `parr<u32>` | `index` | 0 | `0u` | 0 | 0 | 0 |
+| T115 | `stmt.L3` | `stmt` | `L3` | 0 | `empty` | 0 | 0 | 0 |
+| T116 | `block.L3` | `block` | `L3` | 0 | `empty` | 0 | 0 | 0 |
+| T117 | `stmt.C3` | `stmt` | `C3` | 0 | `empty` | 0 | 0 | 0 |
+| T118 | `block.C3` | `block` | `C3` | 0 | `empty` | 0 | 0 | 0 |
+| T119 | `u32.tcounter3` | `u32` | `tcounter3` | 1 | `0u` | 0 | 0 | 0 |
+| T120 | `stmt.L4` | `stmt` | `L4` | 0 | `empty` | 0 | 0 | 0 |
+| T121 | `block.L4` | `block` | `L4` | 0 | `empty` | 0 | 0 | 0 |
+| T122 | `stmt.C4` | `stmt` | `C4` | 0 | `empty` | 0 | 0 | 0 |
+| T123 | `block.C4` | `block` | `C4` | 0 | `empty` | 0 | 0 | 0 |
+| T124 | `parr<bool>.flag` | `parr<bool>` | `flag` | 0 | `false` | 0 | 0 | 0 |
+| T125 | `wgmem<vec4<f32>>.real` | `wgmem<vec4<f32>>` | `real` | 0 | `0.0` | 0 | 0 | 0 |
+| T126 | `u32.wgvindex` | `u32` | `wgvindex` | 1 | `0u` | 0 | 0 | 0 |
 
-108 duals. The fallback is what Design C's projection substitutes for a codon whose dual does not match the demand; the codon is counted as masked.
+126 duals. The fallback is what Design C's projection substitutes for a codon whose dual does not match the demand; the codon is counted as masked.
 
 The three machine columns (`fallback_bits`, `fallback_noop`, `fallback_elem` in `types.tsv`) are what the loader builds the fallback leaf from, never the prose: `bits` is the lane's 32-bit pattern as an unsigned integer, repeated across the lanes of a vector or matrix (only `bool.sign` is non-zero, true = +1); `noop` is 1 for `store.store`, which substitutes no value at all; `elem` is 1 for `array<T>`, whose fallback is its element's. The loader tests `noop` and `elem` before reading `bits`; for those two rows `bits` is a placeholder 0. Every substitution, whichever column decides it, counts the codon as masked.
 
