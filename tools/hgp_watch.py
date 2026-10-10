@@ -18,8 +18,12 @@ def read_tsv(path):
         lines = [l.rstrip("\n").split("\t") for l in f]
     if not lines:
         return []
+    # The header is the one the file was created with; lines written after
+    # the HFF columns were added carry four more fields, named here.
     head = lines[0]
-    return [dict(zip(head, l)) for l in lines[1:] if len(l) == len(head)]
+    extra = ["worst_train", "worst_val", "worst_extrap", "hff"]
+    full = head + [c for c in extra if c not in head]
+    return [dict(zip(full, l)) for l in lines[1:] if len(l) >= len(head)]
 
 def stage_of(log):
     """The last stage line of an individual's evaluation log."""
@@ -46,8 +50,12 @@ def hff(r):
         return float(r["hff"])
     xs = []
     for part in r["speedups"].split(","):
+        if ":" not in part:
+            continue
         m = float(part.split(":")[1].split("[")[0])
         xs.append(min(1.0, 1.0 / m))
+    if len(xs) != 3:
+        return None
     e = float(r["worst_pair_ratio"])
     xs += [min(1.0, e / 2.0)] * 3
     energy = sum(x * x for x in xs) / len(xs)
