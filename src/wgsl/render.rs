@@ -154,6 +154,41 @@ pub fn gram_shipped_tree(kingdom: &WgslKingdom) -> Result<Tree, String> {
     Ok(Tree::new("kernel.entry", t("kernel.kernel")?, vec![grid, Tree::new("block.seq3", block, vec![setup, items, store])]))
 }
 
+/// The shipped Gram kernel as a safeWGSL tree: the item loop bounded by
+/// cfg.m, the store at the thread's own cell, the loads at phi indices.
+/// The guard `if (lr >= r_rows || c >= d) return;` has no spelling in the
+/// safe grammar (a return under a condition is `stmt.return_C0`, allowed),
+/// so it is kept as such.
+pub fn gram_shipped_safe_tree(kingdom: &WgslKingdom) -> Result<Tree, String> {
+    let t = |n: &str| dual_ty(kingdom, n);
+    let (index, count, real, flag) = (t("u32.index")?, t("u32.count")?, t("f32.real")?, t("bool.flag")?);
+    let (l0, b0, c0, l1, b1) = (t("stmt.L0")?, t("block.L0")?, t("block.C0")?, t("stmt.L1")?, t("block.L1")?);
+    let (rf, ri) = (t("reg<f32>.real")?, t("reg<u32>.index")?);
+    let gid = || Tree::new("builtin.global_invocation_id", t("vec3<u32>.index").expect("dual"), vec![]);
+    let blk = || Tree::literal("literal.blk", t("u32.blk").expect("dual"), 1.0);
+    let row = || Tree::new("safe.thread_row", t("u32.threadrow").expect("dual"), vec![gid(), blk()]);
+    let col = || Tree::new("safe.thread_col", t("u32.threadcol").expect("dual"), vec![gid(), blk()]);
+    let cnt = |n: &str| Tree::new("index.of_count", index, vec![Tree::new(n, count, vec![])]);
+    let f0 = || Tree::new("reg.get_f", real, vec![Tree::new("reg.f0", rf, vec![])]);
+    // gr = r_off + row (kept in i3 as a plain index)
+    let gr = Tree::new("reg.set_i_L0", l0, vec![Tree::new("reg.i3", ri, vec![]), Tree::new("index.add", index, vec![Tree::new("load.cfg_r_off", index, vec![]), Tree::new("safe.row_as_index", index, vec![row()])])]);
+    // The guard: the safe grammar has no return under a condition (a later
+    // barrier would be non-uniform), so an out-of-range thread computes
+    // (its loads read zero past the buffer) and the STORE is guarded.
+    let lt = |a: Tree, b: Tree| Tree::new("compare.lt", flag, vec![a, b]);
+    let in_range = Tree::new("logic.and", flag, vec![lt(Tree::new("safe.row_as_index", index, vec![row()]), cnt("load.cfg_r_rows")), lt(Tree::new("safe.col_as_index", index, vec![col()]), cnt("load.cfg_d"))]);
+    // for t < m: f0 = f0 + phi[t*d + gr] * phi[t*d + col]
+    let counter = || Tree::new("safe.counter", t("u32.counter").expect("dual"), vec![]);
+    let phi = |c: Tree| Tree::new("load.phi_safe", real, vec![Tree::new("safe.phi_of", t("u32.phi").expect("dual"), vec![counter(), c])]);
+    let get_i3 = || Tree::new("reg.get_i", index, vec![Tree::new("reg.i3", ri, vec![])]);
+    let body = Tree::new("reg.set_f_L1", l1, vec![Tree::new("reg.f0", rf, vec![]), Tree::new("arith.add", real, vec![f0(), Tree::new("arith.mul", real, vec![phi(get_i3()), phi(Tree::new("safe.col_as_index", index, vec![col()]))])])]);
+    let items = Tree::new("loop.items_boundm", l0, vec![Tree::new("bound.m", t("u32.boundm")?, vec![]), Tree::new("block.one_L1", b1, vec![body])]);
+    // if (in range) { h[cell] = h[cell] + f0 }
+    let store = Tree::new("stmt.if_L0", l0, vec![in_range, Tree::new("block.one_C0", c0, vec![Tree::new("store.h_C0", t("stmt.C0")?, vec![Tree::new("safe.cell_of", t("u32.cell")?, vec![row(), col()]), f0()])])]);
+    let grid = Tree::new("grid.of", t("grid.grid")?, vec![Tree::literal("literal.wgdim", t("u32.wgdim")?, 16.0), Tree::literal("literal.wgdim", t("u32.wgdim")?, 16.0), blk(), blk()]);
+    Ok(Tree::new("kernel.entry_safe", t("kernel.safe")?, vec![grid, Tree::new("block.seq3_L0", b0, vec![gr, items, store])]))
+}
+
 /// The grid a rendered kernel asks the driver for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Grid {
@@ -194,10 +229,11 @@ pub struct Renderer<'a> {
 }
 
 /// What the renderer is inside while walking statements.
-#[derive(Default)]
 struct Scope {
     in_items: bool,
     in_tile: bool,
+    /// The kernel's grid, for the safe rows' block offsets.
+    grid: Grid,
     /// Inside an `if`: control flow naga's uniformity analysis treats as
     /// non-uniform, where a barrier is refused.
     in_cond: usize,
@@ -220,14 +256,16 @@ impl<'a> Renderer<'a> {
     /// `fallback` of the kernel dual (an empty kernel).
     pub fn kernel(&self, root: &Tree) -> Result<Rendered, String> {
         let d = self.dual(root.ty)?;
-        if d.dual != "kernel.kernel" {
-            return Err(format!("the root is {} ({}), not kernel.kernel", root.name, d.dual));
+        if d.dual != "kernel.kernel" && d.dual != "kernel.safe" {
+            return Err(format!("the root is {} ({}), not kernel.kernel or kernel.safe", root.name, d.dual));
         }
-        let mut scope = Scope::default();
+        let mut scope = Scope { in_items: false, in_tile: false, grid: Grid { x: 16, y: 16, bx: 1, by: 1 }, in_cond: 0, returned: false, helpers: Vec::new(), masked: Vec::new() };
         let (grid, body) = match root.name.as_str() {
-            "kernel.entry" => {
-                let [g, b] = root.kids.as_slice() else { return Err(format!("kernel.entry with {} children", root.kids.len())) };
-                (self.grid(g)?, self.block(b, &mut scope)?)
+            "kernel.entry" | "kernel.entry_safe" => {
+                let [g, b] = root.kids.as_slice() else { return Err(format!("{} with {} children", root.name, root.kids.len())) };
+                let grid = self.grid(g)?;
+                scope.grid = grid;
+                (grid, self.block(b, &mut scope)?)
             }
             "fallback" => (Grid { x: 16, y: 16, bx: 1, by: 1 }, String::new()),
             other => return Err(format!("{other} is not a kernel row")),
@@ -269,6 +307,15 @@ impl<'a> Renderer<'a> {
         }
     }
 
+    /// A bounded literal (`literal.lit64`, `literal.lit4096`) or its fallback, clamped into 1..=max.
+    fn lit(&self, t: &Tree, max: u32) -> Result<u32, String> {
+        match t.name.as_str() {
+            "fallback" => Ok(1),
+            n if n.starts_with("literal.") => Ok(if t.konst.is_finite() { (t.konst.round() as i64).clamp(1, i64::from(max)) as u32 } else { 1 }),
+            other => Err(format!("{other} is not a bounded literal")),
+        }
+    }
+
     /// A literal code (`literal.wgdim`…) or its fallback, snapped to the set.
     fn code(&self, t: &Tree, set: &[u32]) -> Result<u32, String> {
         match t.name.as_str() {
@@ -286,7 +333,7 @@ impl<'a> Renderer<'a> {
     /// refuses instructions after a `return`, so a block stops at one and
     /// what follows in the gene is unreachable and dropped.
     fn block_t(&self, b: &Tree, scope: &mut Scope) -> Result<(String, bool), String> {
-        match b.name.as_str() {
+        match safe_base(&b.name) {
             "fallback" => Ok((String::new(), false)),
             "block.one" | "block.seq2" | "block.seq3" | "block.seq4" => {
                 let mut out = String::new();
@@ -305,7 +352,7 @@ impl<'a> Renderer<'a> {
 
     fn stmt_t(&self, s: &Tree, scope: &mut Scope) -> Result<(String, bool), String> {
         let kids = s.kids.as_slice();
-        match s.name.as_str() {
+        match safe_base(&s.name) {
             "stmt.return" => Ok((self.stmt(s, scope)?, true)),
             "stmt.block" if kids.len() == 1 => {
                 let (b, t) = self.block_t(&kids[0], scope)?;
@@ -326,8 +373,66 @@ impl<'a> Renderer<'a> {
     fn stmt(&self, s: &Tree, scope: &mut Scope) -> Result<String, String> {
         let kids = s.kids.as_slice();
         let n = |want: usize| -> Result<(), String> { if kids.len() == want { Ok(()) } else { Err(format!("{} with {} children, {want} expected", s.name, kids.len())) } };
-        match s.name.as_str() {
+        match safe_base(&s.name) {
             "fallback" => Ok(String::new()),
+            // ---- safeWGSL statements ----
+            "loop.items_bounded" => {
+                // (bound, block): for (t = 0u; t < bound; t = t + 1u), the counter the loop's own.
+                n(2)?;
+                if scope.in_items {
+                    return Err("a long loop inside a long loop (the safe grammar does not produce this)".into());
+                }
+                let bound = self.value(&kids[0], scope)?;
+                scope.in_items = true;
+                let body = self.block(&kids[1], scope);
+                scope.in_items = false;
+                Ok(format!("    for (t = 0u; t < {bound}; t = t + 1u) {{\n{}    }}\n", body?))
+            }
+            "loop.items_unrolled_bounded" => {
+                n(3)?;
+                if scope.in_items {
+                    return Err("a long loop inside a long loop (the safe grammar does not produce this)".into());
+                }
+                let u = self.code(&kids[0], &UNROLL)?;
+                let bound = self.value(&kids[1], scope)?;
+                scope.in_items = true;
+                let body = self.block_t(&kids[2], scope);
+                scope.in_items = false;
+                let (body, terminated) = body?;
+                if terminated {
+                    return Ok(format!("    for (t = 0u; t < {bound}; t = t + 1u) {{\n{body}    }}\n"));
+                }
+                let mut out = format!("    for (t = 0u; t + {u}u <= {bound}; t = t + {u}u) {{\n");
+                for j in 0..u {
+                    if j > 0 {
+                        out.push_str("        t = t + 1u;\n");
+                    }
+                    out.push_str(&body);
+                }
+                out.push_str(&format!("        t = t - {}u;\n    }}\n    for (; t < {bound}; t = t + 1u) {{\n{body}    }}\n", u - 1));
+                Ok(out)
+            }
+            "loop.tile_bounded" => {
+                // (lit64, block): for (k = 0u; k < lit; k++); the tile loop's counter is k.
+                n(2)?;
+                if scope.in_tile {
+                    return Err("a tile loop inside a tile loop (the safe grammar does not produce this)".into());
+                }
+                let count = self.lit(&kids[0], 64)?;
+                scope.in_tile = true;
+                let body = self.block(&kids[1], scope);
+                scope.in_tile = false;
+                Ok(format!("    for (k = 0u; k < {count}u; k = k + 1u) {{\n{}    }}\n", body?))
+            }
+            "store.h_safe" => {
+                n(2)?;
+                let cell = self.value(&kids[0], scope)?;
+                Ok(format!("    h[{cell}] = h[{cell}] + {};\n", self.value(&kids[1], scope)?))
+            }
+            "wg.set_safe" => {
+                n(3)?;
+                Ok(format!("    {}[{}] = {};\n", self.wgmem(&kids[0])?, self.value(&kids[1], scope)?, self.value(&kids[2], scope)?))
+            }
             "stmt.block" => {
                 n(1)?;
                 Ok(format!("    {{\n{}    }}\n", self.block(&kids[0], scope)?))
@@ -492,10 +597,52 @@ impl<'a> Renderer<'a> {
         match name {
             "reg.get_f" | "reg.get_v" | "reg.get_i" | "reg.get_b" => return Ok(self.register(&v.kids[0])?.into()),
             "wg.get" => return Ok(format!("{}[({}) & {}u]", self.wgmem(&v.kids[0])?, self.value(&v.kids[1], scope)?, WGMEM_LEN - 1)),
+            // The safe read: the index is in range by its type (safe.wg_of masks it).
+            "wg.get_safe" => return Ok(format!("{}[{}]", self.wgmem(&v.kids[0])?, self.value(&v.kids[1], scope)?)),
             _ => {}
         }
         let kids: Result<Vec<String>, String> = v.kids.iter().map(|k| self.value(k, scope)).collect();
         let a = kids?;
+        match safe_base(name) {
+            // ---- safeWGSL values ----
+            "bound.m" => return Ok("cfg.m".into()),
+            "bound.d" => return Ok("cfg.d".into()),
+            "bound.rows" => return Ok("cfg.r_rows".into()),
+            "safe.counter" => return Ok(if scope.in_tile && !scope.in_items { "k".into() } else { "t".into() }),
+            "safe.counter_index" => return self.value(&v.kids[0], scope),
+            "safe.thread_row" => return Ok(format!("(gid.y * {}u)", scope.grid.by)),
+            "safe.thread_col" => return Ok(format!("(gid.x * {}u)", scope.grid.bx)),
+            "safe.row_plus" | "safe.col_plus" => {
+                // An offset within the thread's block, snapped below the block factor.
+                let blk = if safe_base(name) == "safe.row_plus" { scope.grid.by } else { scope.grid.bx };
+                let off = self.lit(&v.kids[1], 64)?.min(blk.saturating_sub(1));
+                return Ok(format!("({} + {off}u)", self.value(&v.kids[0], scope)?));
+            }
+            "safe.cell_of" => {
+                let r = self.value(&v.kids[0], scope)?;
+                let c = self.value(&v.kids[1], scope)?;
+                return Ok(format!("(({r}) * cfg.d + ({c}))"));
+            }
+            "safe.phi_of" => {
+                let t = self.value(&v.kids[0], scope)?;
+                let c = self.value(&v.kids[1], scope)?;
+                return Ok(format!("(({t}) * cfg.d + ({c}))"));
+            }
+            "safe.wg_of" => return Ok(format!("(({}) & {}u)", self.value(&v.kids[0], scope)?, WGMEM_LEN - 1)),
+            "safe.row_as_index" | "safe.col_as_index" => return self.value(&v.kids[0], scope),
+            "load.phi_safe" => return Ok(format!("phi[{}]", self.value(&v.kids[0], scope)?)),
+            "load.phi4_safe" => {
+                let i = self.value(&v.kids[0], scope)?;
+                return Ok(format!("vec4<f32>(phi[{i}], phi[{i} + 1u], phi[{i} + 2u], phi[{i} + 3u])"));
+            }
+            "load.h_safe" => return Ok(format!("h[{}]", self.value(&v.kids[0], scope)?)),
+            _ => {}
+        }
+        if let Some(bound) = name.strip_prefix("safe.lt_") {
+            let _ = bound;
+            let a: Vec<String> = v.kids.iter().map(|k| self.value(k, scope)).collect::<Result<_, _>>()?;
+            return Ok(format!("({} < {})", a[0], a[1]));
+        }
         match name {
             "builtin.global_invocation_id" => return Ok("gid".into()),
             "builtin.local_invocation_id" => return Ok("lid".into()),
@@ -505,6 +652,9 @@ impl<'a> Renderer<'a> {
             "builtin.item" => return Ok("t".into()),
             "builtin.tile" => return Ok("k".into()),
             _ => {}
+        }
+        if name == "wg.a" || name == "wg.b" {
+            return Err(format!("{name} is a workgroup array, not a value (a row took wgmem as a value input)"));
         }
         let template = self.table.named(name).ok_or_else(|| format!("{name} is not a row of the function table"))?;
         let col = template.naga.as_str();
@@ -534,7 +684,10 @@ impl<'a> Renderer<'a> {
             };
             // A shift count is masked, as WGSL requires it below the width.
             if op == "ShiftLeft" || op == "ShiftRight" {
-                return Ok(format!("({} {sym} (({}) & 31u))", a[0], a[1]));
+                // The shift count is masked below the width and, for a vector
+                // operand, splatted to the operand's lanes (WGSL's rule).
+                let count = if d.lanes > 1 && d.slot.starts_with("vec") { format!("vec{}<u32>(({}) & 31u)", d.lanes, a[1]) } else { format!("(({}) & 31u)", a[1]) };
+                return Ok(format!("({} {sym} {count})", a[0], count = count));
             }
             return Ok(format!("({} {sym} {})", a[0], a[1]));
         }
@@ -697,6 +850,8 @@ impl<'a> Renderer<'a> {
             }
             "index" | "count" | "bits" | "hash32" | "code4" | "code8" | "code16" | "code1024" => format!("lit_u32({}u)", if v.is_finite() { v.clamp(0.0, 4_294_967_040.0) as u32 } else { 0 }),
             "wgdim" => format!("lit_u32({}u)", snap(&WGDIM, v)),
+            "lit64" => format!("lit_u32({}u)", if v.is_finite() { (v.round() as i64).clamp(1, 64) } else { 1 }),
+            "lit4096" => format!("lit_u32({}u)", if v.is_finite() { (v.round() as i64).clamp(1, 4096) } else { 1 }),
             "blk" => format!("lit_u32({}u)", snap(&BLK, v)),
             "unroll" => format!("lit_u32({}u)", snap(&UNROLL, v)),
             "int" | "q15_16" => format!("lit_i32({})", v.clamp(-2_147_483_648.0, 2_147_483_520.0) as i32),
@@ -800,6 +955,31 @@ pub fn cost(t: &Tree) -> Cost {
     }
     let (base, per_item) = walk(t, 1.0, false);
     Cost { base, per_item }
+}
+
+/// A safeWGSL row name reduced to its renderer case: the rung suffix
+/// (`_L0`, `_C1`, …) stripped, a bound-specific loop (`loop.items_boundm`)
+/// mapped to `loop.items_bounded`, a rung-specific store (`store.h_L1`) to
+/// `store.h_safe`, a rung-specific wg set to `wg.set_safe`. A WGSL kingdom
+/// name passes through unchanged.
+pub fn safe_base(name: &str) -> &str {
+    for rung in ["_L0", "_L1", "_L2", "_C0", "_C1", "_C2"] {
+        if let Some(stem) = name.strip_suffix(rung) {
+            return match stem {
+                "store.h" => "store.h_safe",
+                "wg.set" => "wg.set_safe",
+                "loop.tile" => "loop.tile_bounded",
+                other => other,
+            };
+        }
+    }
+    if name.starts_with("loop.items_unrolled_bound") {
+        return "loop.items_unrolled_bounded";
+    }
+    if name.starts_with("loop.items_bound") {
+        return "loop.items_bounded";
+    }
+    name
 }
 
 /// The constructor spelling of a slot: `vec3<f32>`, `f32`, `mat2x3<f32>`.
@@ -994,6 +1174,41 @@ mod tests {
         // An empty kernel (the root's fallback) is a kernel.
         let empty = rr.kernel(&Tree::fallback(ty("kernel.kernel"))).unwrap();
         validate_text(&empty.text).unwrap();
+    }
+
+    /// The safe kingdom: the shipped kernel as a safe tree renders and
+    /// validates; 500 random typed kernels from the safe root all render
+    /// (no refusal is possible by construction: no nested long loop, no
+    /// barrier under a condition) and all validate.
+    #[test]
+    fn the_safe_kingdom_renders_the_shipped_kernel_and_every_random_kernel() {
+        let (k, t, r) = (WgslKingdom::load_safe(), FunctionTable::safe(), gram_role());
+        let rr = Renderer::new(&k, &t, &r);
+        let tree = gram_shipped_safe_tree(&k).unwrap();
+        let out = rr.kernel(&tree).unwrap();
+        assert!(out.text.contains("for (t = 0u; t < cfg.m; t = t + 1u)"), "{}", out.text);
+        assert!(out.text.contains("if (") && out.text.contains("h[(((gid.y * 1u)) * cfg.d + ((gid.x * 1u)))] = h["), "{}", out.text);
+        validate_text(&out.text).unwrap_or_else(|e| panic!("{e}\n{}", out.text));
+        let root = dual_ty(&k, "kernel.safe").unwrap();
+        let n = 500;
+        let (mut refused, mut invalid, mut masked) = (Vec::new(), Vec::new(), 0usize);
+        for seed in 0..n {
+            let tree = sample(&k, &r, root, 7, seed).unwrap();
+            match rr.kernel(&tree) {
+                Err(e) => refused.push(format!("seed {seed}: {e}")),
+                Ok(out) => {
+                    masked += out.masked.len();
+                    if let Err(e) = validate_text(&out.text) {
+                        let brief: String = e.lines().filter(|l| !l.trim().is_empty()).take(4).collect::<Vec<_>>().join(" | ");
+                        invalid.push(format!("seed {seed} {}: {}", tree.head(), &brief[..brief.len().min(300)]));
+                    }
+                }
+            }
+        }
+        println!("safe kingdom: {n} random kernels, {} refused, {} invalid, {masked} barriers masked", refused.len(), invalid.len());
+        assert!(refused.is_empty(), "{} refused by construction:\n{}", refused.len(), refused.join("\n"));
+        assert_eq!(masked, 0, "a barrier under a condition has no spelling in the safe grammar");
+        assert!(invalid.is_empty(), "{} invalid:\n{}", invalid.len(), invalid.join("\n"));
     }
 
     /// Every composite helper, called from a kernel, validates.

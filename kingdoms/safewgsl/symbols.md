@@ -439,7 +439,7 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
 | F263 | `stmt.block_L0` | `composite` | `block.L0` | `stmt.L0` | 1 | { ... } |
-| F264 | `stmt.return_L0` | `composite` | `-` | `stmt.L0` | 0 | return; |
+| F264 | `stmt.return_L0` | `composite` | `-` | `stmt.L0` | 0 | return; never in a conditional context |
 
 ## class `reg`
 
@@ -483,7 +483,7 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
 | F277 | `stmt.block_L1` | `composite` | `block.L1` | `stmt.L1` | 1 | { ... } |
-| F278 | `stmt.return_L1` | `composite` | `-` | `stmt.L1` | 0 | return; |
+| F278 | `stmt.return_L1` | `composite` | `-` | `stmt.L1` | 0 | return; never in a conditional context |
 
 ## class `reg`
 
@@ -527,7 +527,7 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
 | F291 | `stmt.block_L2` | `composite` | `block.L2` | `stmt.L2` | 1 | { ... } |
-| F292 | `stmt.return_L2` | `composite` | `-` | `stmt.L2` | 0 | return; |
+| F292 | `stmt.return_L2` | `composite` | `-` | `stmt.L2` | 0 | return; never in a conditional context |
 
 ## class `reg`
 
@@ -571,158 +571,155 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
 | F305 | `stmt.block_C0` | `composite` | `block.C0` | `stmt.C0` | 1 | { ... } |
-| F306 | `stmt.return_C0` | `composite` | `-` | `stmt.C0` | 0 | return; |
 
 ## class `reg`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F307 | `reg.set_f_C0` | `composite` | `reg<f32>.real f32.real` | `stmt.C0` | 2 |  |
-| F308 | `reg.set_v_C0` | `composite` | `reg<vec4<f32>>.real vec4<f32>.real` | `stmt.C0` | 2 |  |
-| F309 | `reg.set_i_C0` | `composite` | `reg<u32>.index u32.index` | `stmt.C0` | 2 |  |
-| F310 | `reg.set_b_C0` | `composite` | `reg<bool>.flag bool.flag` | `stmt.C0` | 2 |  |
+| F306 | `reg.set_f_C0` | `composite` | `reg<f32>.real f32.real` | `stmt.C0` | 2 |  |
+| F307 | `reg.set_v_C0` | `composite` | `reg<vec4<f32>>.real vec4<f32>.real` | `stmt.C0` | 2 |  |
+| F308 | `reg.set_i_C0` | `composite` | `reg<u32>.index u32.index` | `stmt.C0` | 2 |  |
+| F309 | `reg.set_b_C0` | `composite` | `reg<bool>.flag bool.flag` | `stmt.C0` | 2 |  |
 
 ## class `wg`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F311 | `wg.set_C0` | `composite` | `wgmem<f32>.real u32.wgindex f32.real` | `stmt.C0` | 3 | arity 3; the index is in range by its type |
+| F310 | `wg.set_C0` | `composite` | `wgmem<f32>.real u32.wgindex f32.real` | `stmt.C0` | 3 | arity 3; the index is in range by its type |
 
 ## class `store`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F312 | `store.h_C0` | `composite` | `u32.cell f32.real` | `stmt.C0` | 2 | h[cell] = h[cell] + v: read-add-write of a cell this thread owns |
+| F311 | `store.h_C0` | `composite` | `u32.cell f32.real` | `stmt.C0` | 2 | h[cell] = h[cell] + v: read-add-write of a cell this thread owns |
 
 ## class `stmt`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F313 | `stmt.if_C0` | `composite` | `bool.flag block.C0` | `stmt.C0` | 2 | if (c) { ... }: the body is a conditional context |
-| F314 | `stmt.if_else_C0` | `composite` | `bool.flag block.C0 block.C0` | `stmt.C0` | 3 | arity 3 |
+| F312 | `stmt.if_C0` | `composite` | `bool.flag block.C0` | `stmt.C0` | 2 | if (c) { ... }: the body is a conditional context |
+| F313 | `stmt.if_else_C0` | `composite` | `bool.flag block.C0 block.C0` | `stmt.C0` | 3 | arity 3 |
 
 ## class `block`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F315 | `block.one_C1` | `composite` | `stmt.C1` | `block.C1` | 1 |  |
-| F316 | `block.seq2_C1` | `composite` | `stmt.C1 stmt.C1` | `block.C1` | 2 |  |
-| F317 | `block.seq3_C1` | `composite` | `stmt.C1 stmt.C1 stmt.C1` | `block.C1` | 3 | arity 3 |
-| F318 | `block.seq4_C1` | `composite` | `stmt.C1 stmt.C1 stmt.C1 stmt.C1` | `block.C1` | 4 | arity 4 |
+| F314 | `block.one_C1` | `composite` | `stmt.C1` | `block.C1` | 1 |  |
+| F315 | `block.seq2_C1` | `composite` | `stmt.C1 stmt.C1` | `block.C1` | 2 |  |
+| F316 | `block.seq3_C1` | `composite` | `stmt.C1 stmt.C1 stmt.C1` | `block.C1` | 3 | arity 3 |
+| F317 | `block.seq4_C1` | `composite` | `stmt.C1 stmt.C1 stmt.C1 stmt.C1` | `block.C1` | 4 | arity 4 |
 
 ## class `stmt`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F319 | `stmt.block_C1` | `composite` | `block.C1` | `stmt.C1` | 1 | { ... } |
-| F320 | `stmt.return_C1` | `composite` | `-` | `stmt.C1` | 0 | return; |
+| F318 | `stmt.block_C1` | `composite` | `block.C1` | `stmt.C1` | 1 | { ... } |
 
 ## class `reg`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F321 | `reg.set_f_C1` | `composite` | `reg<f32>.real f32.real` | `stmt.C1` | 2 |  |
-| F322 | `reg.set_v_C1` | `composite` | `reg<vec4<f32>>.real vec4<f32>.real` | `stmt.C1` | 2 |  |
-| F323 | `reg.set_i_C1` | `composite` | `reg<u32>.index u32.index` | `stmt.C1` | 2 |  |
-| F324 | `reg.set_b_C1` | `composite` | `reg<bool>.flag bool.flag` | `stmt.C1` | 2 |  |
+| F319 | `reg.set_f_C1` | `composite` | `reg<f32>.real f32.real` | `stmt.C1` | 2 |  |
+| F320 | `reg.set_v_C1` | `composite` | `reg<vec4<f32>>.real vec4<f32>.real` | `stmt.C1` | 2 |  |
+| F321 | `reg.set_i_C1` | `composite` | `reg<u32>.index u32.index` | `stmt.C1` | 2 |  |
+| F322 | `reg.set_b_C1` | `composite` | `reg<bool>.flag bool.flag` | `stmt.C1` | 2 |  |
 
 ## class `wg`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F325 | `wg.set_C1` | `composite` | `wgmem<f32>.real u32.wgindex f32.real` | `stmt.C1` | 3 | arity 3; the index is in range by its type |
+| F323 | `wg.set_C1` | `composite` | `wgmem<f32>.real u32.wgindex f32.real` | `stmt.C1` | 3 | arity 3; the index is in range by its type |
 
 ## class `store`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F326 | `store.h_C1` | `composite` | `u32.cell f32.real` | `stmt.C1` | 2 | h[cell] = h[cell] + v: read-add-write of a cell this thread owns |
+| F324 | `store.h_C1` | `composite` | `u32.cell f32.real` | `stmt.C1` | 2 | h[cell] = h[cell] + v: read-add-write of a cell this thread owns |
 
 ## class `stmt`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F327 | `stmt.if_C1` | `composite` | `bool.flag block.C1` | `stmt.C1` | 2 | if (c) { ... }: the body is a conditional context |
-| F328 | `stmt.if_else_C1` | `composite` | `bool.flag block.C1 block.C1` | `stmt.C1` | 3 | arity 3 |
+| F325 | `stmt.if_C1` | `composite` | `bool.flag block.C1` | `stmt.C1` | 2 | if (c) { ... }: the body is a conditional context |
+| F326 | `stmt.if_else_C1` | `composite` | `bool.flag block.C1 block.C1` | `stmt.C1` | 3 | arity 3 |
 
 ## class `block`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F329 | `block.one_C2` | `composite` | `stmt.C2` | `block.C2` | 1 |  |
-| F330 | `block.seq2_C2` | `composite` | `stmt.C2 stmt.C2` | `block.C2` | 2 |  |
-| F331 | `block.seq3_C2` | `composite` | `stmt.C2 stmt.C2 stmt.C2` | `block.C2` | 3 | arity 3 |
-| F332 | `block.seq4_C2` | `composite` | `stmt.C2 stmt.C2 stmt.C2 stmt.C2` | `block.C2` | 4 | arity 4 |
+| F327 | `block.one_C2` | `composite` | `stmt.C2` | `block.C2` | 1 |  |
+| F328 | `block.seq2_C2` | `composite` | `stmt.C2 stmt.C2` | `block.C2` | 2 |  |
+| F329 | `block.seq3_C2` | `composite` | `stmt.C2 stmt.C2 stmt.C2` | `block.C2` | 3 | arity 3 |
+| F330 | `block.seq4_C2` | `composite` | `stmt.C2 stmt.C2 stmt.C2 stmt.C2` | `block.C2` | 4 | arity 4 |
 
 ## class `stmt`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F333 | `stmt.block_C2` | `composite` | `block.C2` | `stmt.C2` | 1 | { ... } |
-| F334 | `stmt.return_C2` | `composite` | `-` | `stmt.C2` | 0 | return; |
+| F331 | `stmt.block_C2` | `composite` | `block.C2` | `stmt.C2` | 1 | { ... } |
 
 ## class `reg`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F335 | `reg.set_f_C2` | `composite` | `reg<f32>.real f32.real` | `stmt.C2` | 2 |  |
-| F336 | `reg.set_v_C2` | `composite` | `reg<vec4<f32>>.real vec4<f32>.real` | `stmt.C2` | 2 |  |
-| F337 | `reg.set_i_C2` | `composite` | `reg<u32>.index u32.index` | `stmt.C2` | 2 |  |
-| F338 | `reg.set_b_C2` | `composite` | `reg<bool>.flag bool.flag` | `stmt.C2` | 2 |  |
+| F332 | `reg.set_f_C2` | `composite` | `reg<f32>.real f32.real` | `stmt.C2` | 2 |  |
+| F333 | `reg.set_v_C2` | `composite` | `reg<vec4<f32>>.real vec4<f32>.real` | `stmt.C2` | 2 |  |
+| F334 | `reg.set_i_C2` | `composite` | `reg<u32>.index u32.index` | `stmt.C2` | 2 |  |
+| F335 | `reg.set_b_C2` | `composite` | `reg<bool>.flag bool.flag` | `stmt.C2` | 2 |  |
 
 ## class `wg`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F339 | `wg.set_C2` | `composite` | `wgmem<f32>.real u32.wgindex f32.real` | `stmt.C2` | 3 | arity 3; the index is in range by its type |
+| F336 | `wg.set_C2` | `composite` | `wgmem<f32>.real u32.wgindex f32.real` | `stmt.C2` | 3 | arity 3; the index is in range by its type |
 
 ## class `store`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F340 | `store.h_C2` | `composite` | `u32.cell f32.real` | `stmt.C2` | 2 | h[cell] = h[cell] + v: read-add-write of a cell this thread owns |
+| F337 | `store.h_C2` | `composite` | `u32.cell f32.real` | `stmt.C2` | 2 | h[cell] = h[cell] + v: read-add-write of a cell this thread owns |
 
 ## class `stmt`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F341 | `stmt.if_C2` | `composite` | `bool.flag block.C2` | `stmt.C2` | 2 | if (c) { ... }: the body is a conditional context |
-| F342 | `stmt.if_else_C2` | `composite` | `bool.flag block.C2 block.C2` | `stmt.C2` | 3 | arity 3 |
-| F343 | `stmt.barrier_L0` | `composite` | `-` | `stmt.L0` | 0 | workgroupBarrier(); never in C0/C1/C2 |
-| F344 | `stmt.barrier_L1` | `composite` | `-` | `stmt.L1` | 0 | workgroupBarrier(); never in C0/C1/C2 |
-| F345 | `stmt.barrier_L2` | `composite` | `-` | `stmt.L2` | 0 | workgroupBarrier(); never in C0/C1/C2 |
+| F338 | `stmt.if_C2` | `composite` | `bool.flag block.C2` | `stmt.C2` | 2 | if (c) { ... }: the body is a conditional context |
+| F339 | `stmt.if_else_C2` | `composite` | `bool.flag block.C2 block.C2` | `stmt.C2` | 3 | arity 3 |
+| F340 | `stmt.barrier_L0` | `composite` | `-` | `stmt.L0` | 0 | workgroupBarrier(); never in C0/C1/C2 |
+| F341 | `stmt.barrier_L1` | `composite` | `-` | `stmt.L1` | 0 | workgroupBarrier(); never in C0/C1/C2 |
+| F342 | `stmt.barrier_L2` | `composite` | `-` | `stmt.L2` | 0 | workgroupBarrier(); never in C0/C1/C2 |
 
 ## class `loop`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F346 | `loop.items_boundm` | `composite` | `u32.boundm block.L1` | `stmt.L0` | 2 | for (counter = 0u; counter < bound; counter++) { ... }: the one long loop |
-| F347 | `loop.items_unrolled_boundm` | `composite` | `u32.unroll u32.boundm block.L1` | `stmt.L0` | 3 | arity 3: the body k times, then the remainder |
-| F348 | `loop.items_boundd` | `composite` | `u32.boundd block.L1` | `stmt.L0` | 2 | for (counter = 0u; counter < bound; counter++) { ... }: the one long loop |
-| F349 | `loop.items_unrolled_boundd` | `composite` | `u32.unroll u32.boundd block.L1` | `stmt.L0` | 3 | arity 3: the body k times, then the remainder |
-| F350 | `loop.items_boundrows` | `composite` | `u32.boundrows block.L1` | `stmt.L0` | 2 | for (counter = 0u; counter < bound; counter++) { ... }: the one long loop |
-| F351 | `loop.items_unrolled_boundrows` | `composite` | `u32.unroll u32.boundrows block.L1` | `stmt.L0` | 3 | arity 3: the body k times, then the remainder |
-| F352 | `loop.tile_L0` | `composite` | `u32.lit64 block.L2` | `stmt.L0` | 2 | a short loop at the top level |
-| F353 | `loop.tile_L1` | `composite` | `u32.lit64 block.L2` | `stmt.L1` | 2 | a short loop inside the item loop |
+| F343 | `loop.items_boundm` | `composite` | `u32.boundm block.L1` | `stmt.L0` | 2 | for (counter = 0u; counter < bound; counter++) { ... }: the one long loop |
+| F344 | `loop.items_unrolled_boundm` | `composite` | `u32.unroll u32.boundm block.L1` | `stmt.L0` | 3 | arity 3: the body k times, then the remainder |
+| F345 | `loop.items_boundd` | `composite` | `u32.boundd block.L1` | `stmt.L0` | 2 | for (counter = 0u; counter < bound; counter++) { ... }: the one long loop |
+| F346 | `loop.items_unrolled_boundd` | `composite` | `u32.unroll u32.boundd block.L1` | `stmt.L0` | 3 | arity 3: the body k times, then the remainder |
+| F347 | `loop.items_boundrows` | `composite` | `u32.boundrows block.L1` | `stmt.L0` | 2 | for (counter = 0u; counter < bound; counter++) { ... }: the one long loop |
+| F348 | `loop.items_unrolled_boundrows` | `composite` | `u32.unroll u32.boundrows block.L1` | `stmt.L0` | 3 | arity 3: the body k times, then the remainder |
+| F349 | `loop.tile_L0` | `composite` | `u32.lit64 block.L2` | `stmt.L0` | 2 | a short loop at the top level |
+| F350 | `loop.tile_L1` | `composite` | `u32.lit64 block.L2` | `stmt.L1` | 2 | a short loop inside the item loop |
 
 ## class `kernel`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F354 | `kernel.entry_safe` | `composite` | `grid.grid block.L0` | `kernel.kernel` | 2 | the safeWGSL kernel: its body is an L0 block |
+| F351 | `kernel.entry_safe` | `composite` | `grid.grid block.L0` | `kernel.safe` | 2 | the safeWGSL kernel, the only producer of the root dual kernel.safe: its body is an L0 block |
 
 ## class `load`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F355 | `load.phi_safe` | `composite` | `u32.phi` | `f32.real` | 1 | phi[item * d + col] |
-| F356 | `load.phi4_safe` | `composite` | `u32.phi` | `vec4<f32>.real` | 1 | four consecutive columns from a phi index |
-| F357 | `load.h_safe` | `composite` | `u32.cell` | `f32.real` | 1 | h[cell], the thread's own cell |
+| F352 | `load.phi_safe` | `composite` | `u32.phi` | `f32.real` | 1 | phi[item * d + col] |
+| F353 | `load.phi4_safe` | `composite` | `u32.phi` | `vec4<f32>.real` | 1 | four consecutive columns from a phi index |
+| F354 | `load.h_safe` | `composite` | `u32.cell` | `f32.real` | 1 | h[cell], the thread's own cell |
 
 ## class `wg`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F358 | `wg.get_safe` | `composite` | `wgmem<f32>.real u32.wgindex` | `f32.real` | 2 | a[i], in range by its type |
+| F355 | `wg.get_safe` | `composite` | `wgmem<f32>.real u32.wgindex` | `f32.real` | 2 | a[i], in range by its type |
 
-358 function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Deliberately absent: atomics, images, derivatives, subgroup operations, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.
+355 function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Deliberately absent: atomics, images, derivatives, subgroup operations, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.

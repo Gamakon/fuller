@@ -49,6 +49,7 @@ A type is a dual `slot.form`: the slot is what the hardware stores, the form is 
 | `C0` | a statement or block under a condition at the top level: no barrier | see duals |
 | `C1` | a statement or block under a condition inside the item loop: no barrier | see duals |
 | `C2` | a statement or block under a condition inside a tile loop: no barrier | see duals |
+| `safe` | the safeWGSL kernel: the root dual of this kingdom, produced only by kernel.entry_safe | see duals |
 
 ## Duals
 
@@ -161,8 +162,9 @@ A type is a dual `slot.form`: the slot is what the hardware stores, the form is 
 | T105 | `block.C1` | `block` | `C1` | 0 | `empty` | 0 | 0 | 0 |
 | T106 | `stmt.C2` | `stmt` | `C2` | 0 | `empty` | 0 | 0 | 0 |
 | T107 | `block.C2` | `block` | `C2` | 0 | `empty` | 0 | 0 | 0 |
+| T108 | `kernel.safe` | `kernel` | `safe` | 0 | `an empty kernel` | 0 | 0 | 0 |
 
-107 duals. The fallback is what Design C's projection substitutes for a codon whose dual does not match the demand; the codon is counted as masked.
+108 duals. The fallback is what Design C's projection substitutes for a codon whose dual does not match the demand; the codon is counted as masked.
 
 The three machine columns (`fallback_bits`, `fallback_noop`, `fallback_elem` in `types.tsv`) are what the loader builds the fallback leaf from, never the prose: `bits` is the lane's 32-bit pattern as an unsigned integer, repeated across the lanes of a vector or matrix (only `bool.sign` is non-zero, true = +1); `noop` is 1 for `store.store`, which substitutes no value at all; `elem` is 1 for `array<T>`, whose fallback is its element's. The loader tests `noop` and `elem` before reading `bits`; for those two rows `bits` is a placeholder 0. Every substitution, whichever column decides it, counts the codon as masked.
 

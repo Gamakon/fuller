@@ -99,6 +99,14 @@ pub fn wgsl_duals() -> Vec<WgslDual> {
     parse_duals(include_str!("../../kingdoms/wgsl/types.tsv")).unwrap_or_else(|e| panic!("kingdoms/wgsl/types.tsv does not parse: {e}"))
 }
 
+/// The safeWGSL kingdom's duals (`kingdoms/safewgsl/types.tsv`): the WGSL
+/// duals, every one at its index, then the safety duals (T084 on).
+pub fn safe_duals() -> Vec<WgslDual> {
+    parse_duals(include_str!("../../kingdoms/safewgsl/types.tsv")).unwrap_or_else(|e| panic!("kingdoms/safewgsl/types.tsv does not parse: {e}"))
+}
+
+pub const SAFEWGSL: &str = "SAFEWGSL";
+
 pub fn parse_duals(tsv: &str) -> Result<Vec<WgslDual>, String> {
     let mut lines = tsv.lines();
     let header: Vec<&str> = lines.next().ok_or("empty types table")?.split('\t').collect();
@@ -212,6 +220,12 @@ pub struct WgslKingdom {
 impl WgslKingdom {
     pub fn load() -> WgslKingdom {
         instantiate(&FunctionTable::shipped(), wgsl_duals())
+    }
+
+    /// The safeWGSL kingdom: the WGSL rows plus the rows that make a
+    /// crashing or hanging kernel unrepresentable (`kingdoms/safewgsl`).
+    pub fn load_safe() -> WgslKingdom {
+        instantiate(&FunctionTable::safe(), safe_duals())
     }
 
     /// The rows as a `SymbolTable` kingdom: `symbol = i + 1` for a function,
@@ -578,6 +592,52 @@ mod tests {
         let mut bad = d.iter().find(|x| x.dual == "f16.real").unwrap().clone();
         bad.fallback_bits = 0x3c00;
         assert!(wgsl_fallback_leaf(&bad).is_err());
+    }
+
+    /// The safeWGSL tables: the WGSL duals and rows unchanged at their refs,
+    /// and the safety rules pinned: one way to make a loop condition, no
+    /// barrier under a condition, no loop nested past its rung, a store to
+    /// h only at an owned cell, a load of phi only at a phi index.
+    #[test]
+    fn the_safe_kingdom_keeps_wgsl_and_pins_its_rules() {
+        let (w, s) = (wgsl_duals(), safe_duals());
+        assert_eq!(s.len(), 108);
+        for (a, b) in w.iter().zip(&s) {
+            assert_eq!((a.reference.as_str(), a.dual.as_str()), (b.reference.as_str(), b.dual.as_str()));
+        }
+        let k = WgslKingdom::load_safe();
+        let (fw, fs) = (FunctionTable::shipped(), FunctionTable::safe());
+        for (a, b) in fw.rows.iter().zip(&fs.rows) {
+            assert_eq!((a.reference.as_str(), a.name()), (b.reference.as_str(), b.name()));
+        }
+        assert_eq!(fs.rows.len(), 355);
+        let dual = |t: Ty| k.dual(t).unwrap().dual.clone();
+        let producers = |d: &str| -> Vec<String> { k.rows.iter().filter(|r| dual(r.output) == d).map(|r| r.name.clone()).collect() };
+        assert_eq!(producers("kernel.safe"), vec!["kernel.entry_safe"]);
+        // One kind of loop condition, five bounds.
+        let bound = producers("bool.bound");
+        assert_eq!(bound.len(), 5, "{bound:?}");
+        assert!(bound.iter().all(|n| n.starts_with("safe.lt_")));
+        assert!(k.rows.iter().filter(|r| r.name.starts_with("safe.lt_")).all(|r| dual(r.inputs[0]) == "u32.counter"));
+        // No barrier in a conditional context; barriers at L0, L1, L2 only.
+        // (The WGSL kingdom's own `stmt.barrier → stmt.stmt` stays; `stmt.stmt`
+        // is never demanded under the safe root `kernel.entry_safe`.)
+        let barriers: Vec<String> = k.rows.iter().filter(|r| r.name.starts_with("stmt.barrier")).map(|r| dual(r.output)).filter(|d| d != "stmt.stmt").collect();
+        assert_eq!(barriers, vec!["stmt.L0", "stmt.L1", "stmt.L2"]);
+        assert!(k.rows.iter().all(|r| !(r.name.starts_with("stmt.barrier") && dual(r.output).starts_with("stmt.C"))));
+        // The item loop only produces an L0 statement; nothing produces a loop at L2.
+        assert!(k.rows.iter().filter(|r| r.name.starts_with("loop.items_bound") || r.name.starts_with("loop.items_unrolled_bound")).all(|r| dual(r.output) == "stmt.L0"));
+        assert!(k.rows.iter().filter(|r| r.name.starts_with("loop.")).all(|r| dual(r.output) != "stmt.L2"));
+        // No return in a conditional context (a later barrier would be non-uniform).
+        assert!(k.rows.iter().filter(|r| r.name.starts_with("stmt.return_")).all(|r| !dual(r.output).starts_with("stmt.C")));
+        // A conditional block's statements are C statements, which no loop or barrier produces.
+        assert!(k.rows.iter().filter(|r| r.name.starts_with("stmt.if_") && (dual(r.output).starts_with("stmt.L") || dual(r.output).starts_with("stmt.C"))).all(|r| dual(r.inputs[1]).starts_with("block.C")));
+        // store.h only at an owned cell; load.phi only at a phi index; both produced by one row each.
+        assert!(k.rows.iter().filter(|r| r.name.starts_with("store.h_")).all(|r| dual(r.inputs[0]) == "u32.cell"));
+        assert_eq!(producers("u32.cell"), vec!["safe.cell_of"]);
+        assert_eq!(producers("u32.phi"), vec!["safe.phi_of"]);
+        assert_eq!(producers("u32.wgindex"), vec!["safe.wg_of"]);
+        assert!(k.rows.iter().filter(|r| r.name == "load.phi_safe").all(|r| dual(r.inputs[0]) == "u32.phi"));
     }
 
     #[test]

@@ -106,3 +106,4 @@ T104	stmt.C1	stmt	C1	0	empty	0	0	0	a statement under a condition inside the item
 T105	block.C1	block	C1	0	empty	0	0	0	a block under a condition inside the item loop: no barrier
 T106	stmt.C2	stmt	C2	0	empty	0	0	0	a statement under a condition inside a tile loop: no barrier
 T107	block.C2	block	C2	0	empty	0	0	0	a block under a condition inside a tile loop: no barrier
+T108	kernel.safe	kernel	safe	0	an empty kernel	0	0	0	the safeWGSL kernel: the root dual of this kingdom, produced only by kernel.entry_safe

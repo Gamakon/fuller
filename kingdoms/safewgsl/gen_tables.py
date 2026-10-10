@@ -74,9 +74,10 @@ FORMS = {
     "C0": ("a statement or block under a condition at the top level: no barrier", []),
     "C1": ("a statement or block under a condition inside the item loop: no barrier", []),
     "C2": ("a statement or block under a condition inside a tile loop: no barrier", []),
+    "safe": ("the safeWGSL kernel: the root dual of this kingdom, produced only by kernel.entry_safe", []),
 }
 
-SAFE_FORMS = ["boundm", "boundd", "boundrows", "lit64", "lit4096", "counter", "bound", "threadrow", "threadcol", "cell", "phi", "wgindex", "L0", "L1", "L2", "C0", "C1", "C2"]
+SAFE_FORMS = ["safe", "boundm", "boundd", "boundrows", "lit64", "lit4096", "counter", "bound", "threadrow", "threadcol", "cell", "phi", "wgindex", "L0", "L1", "L2", "C0", "C1", "C2"]
 RUNGS = ["L0", "L1", "L2", "C0", "C1", "C2"]
 
 FALLBACK = {
@@ -92,6 +93,7 @@ FALLBACK = {
     "boundm": "cfg.m", "boundd": "cfg.d", "boundrows": "cfg.r_rows", "lit64": "1u", "lit4096": "1u",
     "counter": "0u", "bound": "false", "threadrow": "0u", "threadcol": "0u", "cell": "0u", "phi": "0u", "wgindex": "0u",
     "L0": "empty", "L1": "empty", "L2": "empty", "C0": "empty", "C1": "empty", "C2": "empty",
+    "safe": "an empty kernel",
 }
 
 # The fallback by machine: the lane's 32-bit pattern as an unsigned integer. Vectors and matrices
@@ -106,7 +108,7 @@ FALLBACK_BITS = {
     "kernel": 0, "grid": 0, "block": 0, "stmt": 0, "wgdim": 0, "blk": 0, "unroll": 0,
     "boundm": 0, "boundd": 0, "boundrows": 0, "lit64": 0, "lit4096": 0,
     "counter": 0, "bound": 0, "threadrow": 0, "threadcol": 0, "cell": 0, "phi": 0, "wgindex": 0,
-    "L0": 0, "L1": 0, "L2": 0, "C0": 0, "C1": 0, "C2": 0,
+    "L0": 0, "L1": 0, "L2": 0, "C0": 0, "C1": 0, "C2": 0, "safe": 0,
 }
 assert set(FALLBACK_BITS) == set(FALLBACK), "every form with a fallback needs its bits, and no more"
 
@@ -160,6 +162,7 @@ def build_types():
     for r in RUNGS:
         add("stmt", r, 0, "a statement " + FORMS[r][0][len("a statement or block "):])
         add("block", r, 0, "a block " + FORMS[r][0][len("a statement or block "):])
+    add("kernel", "safe", 0, FORMS["safe"][0])
     return rows
 
 
@@ -374,7 +377,11 @@ for r in RUNGS:
     f("block", "seq3_" + r, "composite", ["stmt." + r] * 3, "block." + r, "arity 3")
     f("block", "seq4_" + r, "composite", ["stmt." + r] * 4, "block." + r, "arity 4")
     f("stmt", "block_" + r, "composite", ["block." + r], "stmt." + r, "{ ... }")
-    f("stmt", "return_" + r, "composite", [], "stmt." + r, "return;")
+    if r in ("L0", "L1", "L2"):
+        # No return under a condition: a thread-dependent return makes every
+        # later barrier non-uniform (WGSL's rule); the guard is spelled as
+        # `if (in range) { store }` instead.
+        f("stmt", "return_" + r, "composite", [], "stmt." + r, "return; never in a conditional context")
     f("reg", "set_f_" + r, "composite", ["reg<f32>.real", "f32.real"], "stmt." + r, "")
     f("reg", "set_v_" + r, "composite", ["reg<vec4<f32>>.real", "vec4<f32>.real"], "stmt." + r, "")
     f("reg", "set_i_" + r, "composite", ["reg<u32>.index", "u32.index"], "stmt." + r, "")
@@ -395,7 +402,7 @@ for b in ("boundm", "boundd", "boundrows"):
 f("loop", "tile_L0", "composite", ["u32.lit64", "block.L2"], "stmt.L0", "a short loop at the top level")
 f("loop", "tile_L1", "composite", ["u32.lit64", "block.L2"], "stmt.L1", "a short loop inside the item loop")
 # The kernel: a grid and a top-level block.
-f("kernel", "entry_safe", "composite", ["grid.grid", "block.L0"], "kernel.kernel", "the safeWGSL kernel: its body is an L0 block")
+f("kernel", "entry_safe", "composite", ["grid.grid", "block.L0"], "kernel.safe", "the safeWGSL kernel, the only producer of the root dual kernel.safe: its body is an L0 block")
 # Loads of the kernel's bindings by provenance.
 f("load", "phi_safe", "composite", ["u32.phi"], "f32.real", "phi[item * d + col]")
 f("load", "phi4_safe", "composite", ["u32.phi"], "vec4<f32>.real", "four consecutive columns from a phi index")

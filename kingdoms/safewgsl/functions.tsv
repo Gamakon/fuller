@@ -262,7 +262,7 @@ F260	block	seq2_L0	composite	stmt.L0 stmt.L0	block.L0	2
 F261	block	seq3_L0	composite	stmt.L0 stmt.L0 stmt.L0	block.L0	3	arity 3
 F262	block	seq4_L0	composite	stmt.L0 stmt.L0 stmt.L0 stmt.L0	block.L0	4	arity 4
 F263	stmt	block_L0	composite	block.L0	stmt.L0	1	{ ... }
-F264	stmt	return_L0	composite	-	stmt.L0	0	return;
+F264	stmt	return_L0	composite	-	stmt.L0	0	return; never in a conditional context
 F265	reg	set_f_L0	composite	reg<f32>.real f32.real	stmt.L0	2	
 F266	reg	set_v_L0	composite	reg<vec4<f32>>.real vec4<f32>.real	stmt.L0	2	
 F267	reg	set_i_L0	composite	reg<u32>.index u32.index	stmt.L0	2	
@@ -276,7 +276,7 @@ F274	block	seq2_L1	composite	stmt.L1 stmt.L1	block.L1	2
 F275	block	seq3_L1	composite	stmt.L1 stmt.L1 stmt.L1	block.L1	3	arity 3
 F276	block	seq4_L1	composite	stmt.L1 stmt.L1 stmt.L1 stmt.L1	block.L1	4	arity 4
 F277	stmt	block_L1	composite	block.L1	stmt.L1	1	{ ... }
-F278	stmt	return_L1	composite	-	stmt.L1	0	return;
+F278	stmt	return_L1	composite	-	stmt.L1	0	return; never in a conditional context
 F279	reg	set_f_L1	composite	reg<f32>.real f32.real	stmt.L1	2	
 F280	reg	set_v_L1	composite	reg<vec4<f32>>.real vec4<f32>.real	stmt.L1	2	
 F281	reg	set_i_L1	composite	reg<u32>.index u32.index	stmt.L1	2	
@@ -290,7 +290,7 @@ F288	block	seq2_L2	composite	stmt.L2 stmt.L2	block.L2	2
 F289	block	seq3_L2	composite	stmt.L2 stmt.L2 stmt.L2	block.L2	3	arity 3
 F290	block	seq4_L2	composite	stmt.L2 stmt.L2 stmt.L2 stmt.L2	block.L2	4	arity 4
 F291	stmt	block_L2	composite	block.L2	stmt.L2	1	{ ... }
-F292	stmt	return_L2	composite	-	stmt.L2	0	return;
+F292	stmt	return_L2	composite	-	stmt.L2	0	return; never in a conditional context
 F293	reg	set_f_L2	composite	reg<f32>.real f32.real	stmt.L2	2	
 F294	reg	set_v_L2	composite	reg<vec4<f32>>.real vec4<f32>.real	stmt.L2	2	
 F295	reg	set_i_L2	composite	reg<u32>.index u32.index	stmt.L2	2	
@@ -304,56 +304,53 @@ F302	block	seq2_C0	composite	stmt.C0 stmt.C0	block.C0	2
 F303	block	seq3_C0	composite	stmt.C0 stmt.C0 stmt.C0	block.C0	3	arity 3
 F304	block	seq4_C0	composite	stmt.C0 stmt.C0 stmt.C0 stmt.C0	block.C0	4	arity 4
 F305	stmt	block_C0	composite	block.C0	stmt.C0	1	{ ... }
-F306	stmt	return_C0	composite	-	stmt.C0	0	return;
-F307	reg	set_f_C0	composite	reg<f32>.real f32.real	stmt.C0	2	
-F308	reg	set_v_C0	composite	reg<vec4<f32>>.real vec4<f32>.real	stmt.C0	2	
-F309	reg	set_i_C0	composite	reg<u32>.index u32.index	stmt.C0	2	
-F310	reg	set_b_C0	composite	reg<bool>.flag bool.flag	stmt.C0	2	
-F311	wg	set_C0	composite	wgmem<f32>.real u32.wgindex f32.real	stmt.C0	3	arity 3; the index is in range by its type
-F312	store	h_C0	composite	u32.cell f32.real	stmt.C0	2	h[cell] = h[cell] + v: read-add-write of a cell this thread owns
-F313	stmt	if_C0	composite	bool.flag block.C0	stmt.C0	2	if (c) { ... }: the body is a conditional context
-F314	stmt	if_else_C0	composite	bool.flag block.C0 block.C0	stmt.C0	3	arity 3
-F315	block	one_C1	composite	stmt.C1	block.C1	1	
-F316	block	seq2_C1	composite	stmt.C1 stmt.C1	block.C1	2	
-F317	block	seq3_C1	composite	stmt.C1 stmt.C1 stmt.C1	block.C1	3	arity 3
-F318	block	seq4_C1	composite	stmt.C1 stmt.C1 stmt.C1 stmt.C1	block.C1	4	arity 4
-F319	stmt	block_C1	composite	block.C1	stmt.C1	1	{ ... }
-F320	stmt	return_C1	composite	-	stmt.C1	0	return;
-F321	reg	set_f_C1	composite	reg<f32>.real f32.real	stmt.C1	2	
-F322	reg	set_v_C1	composite	reg<vec4<f32>>.real vec4<f32>.real	stmt.C1	2	
-F323	reg	set_i_C1	composite	reg<u32>.index u32.index	stmt.C1	2	
-F324	reg	set_b_C1	composite	reg<bool>.flag bool.flag	stmt.C1	2	
-F325	wg	set_C1	composite	wgmem<f32>.real u32.wgindex f32.real	stmt.C1	3	arity 3; the index is in range by its type
-F326	store	h_C1	composite	u32.cell f32.real	stmt.C1	2	h[cell] = h[cell] + v: read-add-write of a cell this thread owns
-F327	stmt	if_C1	composite	bool.flag block.C1	stmt.C1	2	if (c) { ... }: the body is a conditional context
-F328	stmt	if_else_C1	composite	bool.flag block.C1 block.C1	stmt.C1	3	arity 3
-F329	block	one_C2	composite	stmt.C2	block.C2	1	
-F330	block	seq2_C2	composite	stmt.C2 stmt.C2	block.C2	2	
-F331	block	seq3_C2	composite	stmt.C2 stmt.C2 stmt.C2	block.C2	3	arity 3
-F332	block	seq4_C2	composite	stmt.C2 stmt.C2 stmt.C2 stmt.C2	block.C2	4	arity 4
-F333	stmt	block_C2	composite	block.C2	stmt.C2	1	{ ... }
-F334	stmt	return_C2	composite	-	stmt.C2	0	return;
-F335	reg	set_f_C2	composite	reg<f32>.real f32.real	stmt.C2	2	
-F336	reg	set_v_C2	composite	reg<vec4<f32>>.real vec4<f32>.real	stmt.C2	2	
-F337	reg	set_i_C2	composite	reg<u32>.index u32.index	stmt.C2	2	
-F338	reg	set_b_C2	composite	reg<bool>.flag bool.flag	stmt.C2	2	
-F339	wg	set_C2	composite	wgmem<f32>.real u32.wgindex f32.real	stmt.C2	3	arity 3; the index is in range by its type
-F340	store	h_C2	composite	u32.cell f32.real	stmt.C2	2	h[cell] = h[cell] + v: read-add-write of a cell this thread owns
-F341	stmt	if_C2	composite	bool.flag block.C2	stmt.C2	2	if (c) { ... }: the body is a conditional context
-F342	stmt	if_else_C2	composite	bool.flag block.C2 block.C2	stmt.C2	3	arity 3
-F343	stmt	barrier_L0	composite	-	stmt.L0	0	workgroupBarrier(); never in C0/C1/C2
-F344	stmt	barrier_L1	composite	-	stmt.L1	0	workgroupBarrier(); never in C0/C1/C2
-F345	stmt	barrier_L2	composite	-	stmt.L2	0	workgroupBarrier(); never in C0/C1/C2
-F346	loop	items_boundm	composite	u32.boundm block.L1	stmt.L0	2	for (counter = 0u; counter < bound; counter++) { ... }: the one long loop
-F347	loop	items_unrolled_boundm	composite	u32.unroll u32.boundm block.L1	stmt.L0	3	arity 3: the body k times, then the remainder
-F348	loop	items_boundd	composite	u32.boundd block.L1	stmt.L0	2	for (counter = 0u; counter < bound; counter++) { ... }: the one long loop
-F349	loop	items_unrolled_boundd	composite	u32.unroll u32.boundd block.L1	stmt.L0	3	arity 3: the body k times, then the remainder
-F350	loop	items_boundrows	composite	u32.boundrows block.L1	stmt.L0	2	for (counter = 0u; counter < bound; counter++) { ... }: the one long loop
-F351	loop	items_unrolled_boundrows	composite	u32.unroll u32.boundrows block.L1	stmt.L0	3	arity 3: the body k times, then the remainder
-F352	loop	tile_L0	composite	u32.lit64 block.L2	stmt.L0	2	a short loop at the top level
-F353	loop	tile_L1	composite	u32.lit64 block.L2	stmt.L1	2	a short loop inside the item loop
-F354	kernel	entry_safe	composite	grid.grid block.L0	kernel.kernel	2	the safeWGSL kernel: its body is an L0 block
-F355	load	phi_safe	composite	u32.phi	f32.real	1	phi[item * d + col]
-F356	load	phi4_safe	composite	u32.phi	vec4<f32>.real	1	four consecutive columns from a phi index
-F357	load	h_safe	composite	u32.cell	f32.real	1	h[cell], the thread's own cell
-F358	wg	get_safe	composite	wgmem<f32>.real u32.wgindex	f32.real	2	a[i], in range by its type
+F306	reg	set_f_C0	composite	reg<f32>.real f32.real	stmt.C0	2	
+F307	reg	set_v_C0	composite	reg<vec4<f32>>.real vec4<f32>.real	stmt.C0	2	
+F308	reg	set_i_C0	composite	reg<u32>.index u32.index	stmt.C0	2	
+F309	reg	set_b_C0	composite	reg<bool>.flag bool.flag	stmt.C0	2	
+F310	wg	set_C0	composite	wgmem<f32>.real u32.wgindex f32.real	stmt.C0	3	arity 3; the index is in range by its type
+F311	store	h_C0	composite	u32.cell f32.real	stmt.C0	2	h[cell] = h[cell] + v: read-add-write of a cell this thread owns
+F312	stmt	if_C0	composite	bool.flag block.C0	stmt.C0	2	if (c) { ... }: the body is a conditional context
+F313	stmt	if_else_C0	composite	bool.flag block.C0 block.C0	stmt.C0	3	arity 3
+F314	block	one_C1	composite	stmt.C1	block.C1	1	
+F315	block	seq2_C1	composite	stmt.C1 stmt.C1	block.C1	2	
+F316	block	seq3_C1	composite	stmt.C1 stmt.C1 stmt.C1	block.C1	3	arity 3
+F317	block	seq4_C1	composite	stmt.C1 stmt.C1 stmt.C1 stmt.C1	block.C1	4	arity 4
+F318	stmt	block_C1	composite	block.C1	stmt.C1	1	{ ... }
+F319	reg	set_f_C1	composite	reg<f32>.real f32.real	stmt.C1	2	
+F320	reg	set_v_C1	composite	reg<vec4<f32>>.real vec4<f32>.real	stmt.C1	2	
+F321	reg	set_i_C1	composite	reg<u32>.index u32.index	stmt.C1	2	
+F322	reg	set_b_C1	composite	reg<bool>.flag bool.flag	stmt.C1	2	
+F323	wg	set_C1	composite	wgmem<f32>.real u32.wgindex f32.real	stmt.C1	3	arity 3; the index is in range by its type
+F324	store	h_C1	composite	u32.cell f32.real	stmt.C1	2	h[cell] = h[cell] + v: read-add-write of a cell this thread owns
+F325	stmt	if_C1	composite	bool.flag block.C1	stmt.C1	2	if (c) { ... }: the body is a conditional context
+F326	stmt	if_else_C1	composite	bool.flag block.C1 block.C1	stmt.C1	3	arity 3
+F327	block	one_C2	composite	stmt.C2	block.C2	1	
+F328	block	seq2_C2	composite	stmt.C2 stmt.C2	block.C2	2	
+F329	block	seq3_C2	composite	stmt.C2 stmt.C2 stmt.C2	block.C2	3	arity 3
+F330	block	seq4_C2	composite	stmt.C2 stmt.C2 stmt.C2 stmt.C2	block.C2	4	arity 4
+F331	stmt	block_C2	composite	block.C2	stmt.C2	1	{ ... }
+F332	reg	set_f_C2	composite	reg<f32>.real f32.real	stmt.C2	2	
+F333	reg	set_v_C2	composite	reg<vec4<f32>>.real vec4<f32>.real	stmt.C2	2	
+F334	reg	set_i_C2	composite	reg<u32>.index u32.index	stmt.C2	2	
+F335	reg	set_b_C2	composite	reg<bool>.flag bool.flag	stmt.C2	2	
+F336	wg	set_C2	composite	wgmem<f32>.real u32.wgindex f32.real	stmt.C2	3	arity 3; the index is in range by its type
+F337	store	h_C2	composite	u32.cell f32.real	stmt.C2	2	h[cell] = h[cell] + v: read-add-write of a cell this thread owns
+F338	stmt	if_C2	composite	bool.flag block.C2	stmt.C2	2	if (c) { ... }: the body is a conditional context
+F339	stmt	if_else_C2	composite	bool.flag block.C2 block.C2	stmt.C2	3	arity 3
+F340	stmt	barrier_L0	composite	-	stmt.L0	0	workgroupBarrier(); never in C0/C1/C2
+F341	stmt	barrier_L1	composite	-	stmt.L1	0	workgroupBarrier(); never in C0/C1/C2
+F342	stmt	barrier_L2	composite	-	stmt.L2	0	workgroupBarrier(); never in C0/C1/C2
+F343	loop	items_boundm	composite	u32.boundm block.L1	stmt.L0	2	for (counter = 0u; counter < bound; counter++) { ... }: the one long loop
+F344	loop	items_unrolled_boundm	composite	u32.unroll u32.boundm block.L1	stmt.L0	3	arity 3: the body k times, then the remainder
+F345	loop	items_boundd	composite	u32.boundd block.L1	stmt.L0	2	for (counter = 0u; counter < bound; counter++) { ... }: the one long loop
+F346	loop	items_unrolled_boundd	composite	u32.unroll u32.boundd block.L1	stmt.L0	3	arity 3: the body k times, then the remainder
+F347	loop	items_boundrows	composite	u32.boundrows block.L1	stmt.L0	2	for (counter = 0u; counter < bound; counter++) { ... }: the one long loop
+F348	loop	items_unrolled_boundrows	composite	u32.unroll u32.boundrows block.L1	stmt.L0	3	arity 3: the body k times, then the remainder
+F349	loop	tile_L0	composite	u32.lit64 block.L2	stmt.L0	2	a short loop at the top level
+F350	loop	tile_L1	composite	u32.lit64 block.L2	stmt.L1	2	a short loop inside the item loop
+F351	kernel	entry_safe	composite	grid.grid block.L0	kernel.safe	2	the safeWGSL kernel, the only producer of the root dual kernel.safe: its body is an L0 block
+F352	load	phi_safe	composite	u32.phi	f32.real	1	phi[item * d + col]
+F353	load	phi4_safe	composite	u32.phi	vec4<f32>.real	1	four consecutive columns from a phi index
+F354	load	h_safe	composite	u32.cell	f32.real	1	h[cell], the thread's own cell
+F355	wg	get_safe	composite	wgmem<f32>.real u32.wgindex	f32.real	2	a[i], in range by its type

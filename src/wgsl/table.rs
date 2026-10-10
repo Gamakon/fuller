@@ -120,6 +120,11 @@ pub struct FunctionTable {
 
 impl FunctionTable {
     /// The table shipped in the crate.
+    /// The safeWGSL kingdom's templates (`kingdoms/safewgsl/functions.tsv`).
+    pub fn safe() -> FunctionTable {
+        FunctionTable::parse(include_str!("../../kingdoms/safewgsl/functions.tsv")).unwrap_or_else(|e| panic!("kingdoms/safewgsl/functions.tsv does not parse: {e}"))
+    }
+
     pub fn shipped() -> FunctionTable {
         FunctionTable::parse(include_str!("../../kingdoms/wgsl/functions.tsv"))
             .unwrap_or_else(|e| panic!("kingdoms/wgsl/functions.tsv does not parse: {e}"))
