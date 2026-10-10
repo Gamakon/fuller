@@ -19,10 +19,6 @@ fn stamp() -> String {
     format!("{:02}:{:02}:{:02}Z", (secs / 3600) % 24, (secs / 60) % 60, secs % 60)
 }
 
-/// The strategies, one per call in turn; the diversity source, since the
-/// CLI exposes no sampling temperature.
-
-
 fn main() -> Result<(), String> {
     let mut args = std::env::args().skip(1);
     let sub = args.next().ok_or("usage: wgsl_gram_hgp gen0 [--n 32] [--seed 1] [--out dir] [--model sonnet]")?;
