@@ -1,6 +1,6 @@
 //! Hallucino-genetic programming, generation 0 (`docs/PLAN_hgp_gram.md`,
 //! the smallest experiment, step 1): `--n` isolated calls to Sonnet through
-//! the Claude Code CLI in bare mode with no tools, each asked for a complete
+//! the Claude Code CLI with no tools (bare mode cannot use the OAuth login), each asked for a complete
 //! Gram kernel under the role's contract and one strategy; every prompt and
 //! reply saved verbatim, the kernel text extracted (fences stripped) and
 //! written as `k<NN>.wgsl` for the ladder (`wgsl_gram_ladder`, one process
@@ -71,7 +71,11 @@ fn strip(reply: &str) -> String {
 fn call(model: &str, system: &str, prompt: &str) -> Result<(String, String, f64), String> {
     let t = Instant::now();
     let mut child = Command::new("claude")
-        .args(["-p", "--bare", "--model", model, "--output-format", "json", "--no-session-persistence", "--tools", "", "--system-prompt", system])
+        // Not `--bare`: bare mode reads only an API key and this machine is
+        // logged in through OAuth ("Not logged in" under --bare, measured).
+        // The isolation is: no tools at all, a temporary working directory
+        // with no project instructions, no session persistence.
+        .args(["-p", "--model", model, "--output-format", "json", "--no-session-persistence", "--tools", "", "--system-prompt", system])
         .current_dir(std::env::temp_dir())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -82,11 +86,18 @@ fn call(model: &str, system: &str, prompt: &str) -> Result<(String, String, f64)
     let out = child.wait_with_output().map_err(|e| e.to_string())?;
     let stdout = String::from_utf8_lossy(&out.stdout).to_string();
     if !out.status.success() {
-        return Err(format!("claude exited {}: {}", out.status, String::from_utf8_lossy(&out.stderr).lines().next().unwrap_or("")));
+        let err = String::from_utf8_lossy(&out.stderr);
+        let tail = &stdout[stdout.len().saturating_sub(700)..];
+        return Err(format!("claude exited {}: stderr {:?}; stdout tail {:?}", out.status, &err[..err.len().min(400)], tail));
     }
     // --output-format json: one JSON object (or an array of events) with a `result` string.
     let json: serde_json::Value = serde_json::from_str(&stdout).map_err(|e| format!("json: {e}: {}", &stdout[..stdout.len().min(200)]))?;
-    let result = json.get("result").and_then(|r| r.as_str()).map(str::to_string).or_else(|| json.as_array().and_then(|a| a.iter().find_map(|v| v.get("result").and_then(|r| r.as_str()).map(str::to_string)))).ok_or_else(|| format!("no result field: {}", &stdout[..stdout.len().min(300)]))?;
+    let event = if json.is_array() { json.as_array().and_then(|a| a.iter().find(|v| v.get("type").and_then(|t| t.as_str()) == Some("result"))).cloned() } else { Some(json) };
+    let event = event.ok_or_else(|| format!("no result event: {}", &stdout[..stdout.len().min(300)]))?;
+    let result = event.get("result").and_then(|r| r.as_str()).map(str::to_string).ok_or_else(|| format!("no result field: {}", &stdout[..stdout.len().min(300)]))?;
+    if event.get("is_error").and_then(|e| e.as_bool()) == Some(true) {
+        return Err(format!("claude error: {result}"));
+    }
     Ok((result, stdout, t.elapsed().as_secs_f64()))
 }
 
