@@ -16,6 +16,8 @@ pub mod generator;
 #[cfg(feature = "gpu")]
 pub mod gram;
 #[cfg(feature = "gpu")]
+pub mod pairs;
+#[cfg(feature = "gpu")]
 pub mod probes;
 pub mod infer;
 pub mod interp;

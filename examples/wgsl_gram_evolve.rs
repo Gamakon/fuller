@@ -17,11 +17,12 @@
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::io::Write as _;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::Instant;
 
 use fuller::geneframe::Ty;
-use fuller::wgsl::gram::{check, effective_buffer_limit, gram_shipped_tree_check, phi_of, reference, Gram, Kind, SHIPPED};
+use fuller::wgsl::gram::{check, effective_buffer_limit, gram_shipped_tree_check, Gram, SHIPPED};
+use fuller::wgsl::pairs::{splits, Pair};
 use fuller::wgsl::loader::WgslKingdom;
 use fuller::wgsl::probes::{probes, run_probes, Probe, PASS};
 use fuller::wgsl::oracle::device::Device;
@@ -43,71 +44,6 @@ fn next(state: &mut u64) -> u64 {
 
 fn unit(state: &mut u64) -> f64 {
     (next(state) >> 11) as f64 / (1u64 << 53) as f64
-}
-
-/// One input–output pair: a kind of Φ at a shape, with its f64 reference.
-struct Pair {
-    kind: Kind,
-    d: usize,
-    m: usize,
-    seed: u64,
-    phi: Vec<f32>,
-    h_ref: Vec<f64>,
-}
-
-impl Pair {
-    fn name(&self) -> String {
-        format!("{}_d{}_m{}_s{}", self.kind.name(), self.d, self.m, self.seed)
-    }
-
-    fn load(kind: Kind, d: usize, m: usize, seed: u64, cache: &Path) -> Result<Pair, String> {
-        let phi = phi_of(kind, d, m, seed);
-        let path = cache.join(format!("ref_{}_d{d}_m{m}_s{seed}.f64", kind.name()));
-        let h_ref = if path.exists() {
-            let bytes = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-            if bytes.len() != d * d * 8 {
-                return Err(format!("{}: {} bytes", path.display(), bytes.len()));
-            }
-            bytes.chunks(8).map(|c| f64::from_le_bytes(c.try_into().expect("8 bytes"))).collect()
-        } else {
-            let h = reference(&phi, d, m);
-            std::fs::write(&path, h.iter().flat_map(|v| v.to_le_bytes()).collect::<Vec<u8>>()).map_err(|e| format!("{}: {e}", path.display()))?;
-            h
-        };
-        Ok(Pair { kind, d, m, seed, phi, h_ref })
-    }
-}
-
-/// The splits of §1b: 47 generated training pairs (the three Blue World
-/// exports are not available and are not simulated), 20 validation, 20
-/// extrapolation at d = 8,192.
-type Splits = (Vec<Pair>, Vec<Pair>, Vec<Pair>);
-
-fn splits(cache: &Path) -> Result<Splits, String> {
-    let t = Instant::now();
-    let mut train = Vec::new();
-    let shapes = [(512, 2048), (1024, 4096), (2048, 8192), (1024, 16384)];
-    let counts: [(Kind, usize); 11] = [(Kind::Gaussian, 6), (Kind::Weighted, 6), (Kind::LowRank, 4), (Kind::Sparse, 4), (Kind::HeavyTailed, 4), (Kind::Cancelling, 4), (Kind::Integer, 4), (Kind::Extreme, 4), (Kind::NonFinite, 4), (Kind::Duplicate, 3), (Kind::Ragged, 4)];
-    let mut seed = 100u64;
-    for (kind, n) in counts {
-        for i in 0..n {
-            let (d, m) = if kind == Kind::Ragged { [(520, 4097), (1000, 3001), (2040, 5000), (512, 6151)][i % 4] } else { shapes[i % shapes.len()] };
-            train.push(Pair::load(kind, d, m, seed, cache)?);
-            seed += 1;
-        }
-    }
-    let mut val = Vec::new();
-    for (i, (kind, _)) in counts.iter().cycle().take(20).enumerate() {
-        let (d, m) = if *kind == Kind::Ragged { (1032, 2049) } else { shapes[(i + 1) % shapes.len()] };
-        val.push(Pair::load(*kind, d, m, 1000 + i as u64, cache)?);
-    }
-    let mut extrap = Vec::new();
-    for (i, (kind, _)) in counts.iter().cycle().take(20).enumerate() {
-        let m = [1024, 2048, 3000, 4096][i % 4];
-        extrap.push(Pair::load(*kind, 8192, m, 2000 + i as u64, cache)?);
-    }
-    println!("[{}] pairs: {} train, {} validation, {} extrapolation; references built or read in {:.1} s", stamp(), train.len(), val.len(), extrap.len(), t.elapsed().as_secs_f64());
-    Ok((train, val, extrap))
 }
 
 // ---- trees: paths, typed crossover and mutation ----
@@ -355,7 +291,9 @@ fn main() -> Result<(), String> {
     let t_all = Instant::now();
     println!("[{}] wgsl_gram_evolve pop {pop} gens {gens} seed {seed} sample {sample_n} start {} out {}", stamp(), if seed_shipped { "shipped tree".to_string() } else if damaged > 0 { format!("shipped tree damaged by {damaged} mutations") } else { "random trees".to_string() }, out_dir.display());
 
-    let (train, val, extrap) = splits(&cache)?;
+    let sp = splits(&cache)?;
+    println!("[{}] pairs: {} train, {} validation, {} extrapolation; references built or read in {:.1} s", stamp(), sp.train.len(), sp.val.len(), sp.extrap.len(), sp.seconds);
+    let (train, val, extrap) = (sp.train, sp.val, sp.extrap);
     let kingdom = WgslKingdom::load();
     let table = FunctionTable::shipped();
     let role = gram_role();

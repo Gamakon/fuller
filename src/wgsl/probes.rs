@@ -135,6 +135,24 @@ pub fn distance(h: &[f32], p: &Probe) -> f64 {
     sum / p.h_ref.len() as f64
 }
 
+/// The admission sample: every band-forcing probe (family D, 100) and
+/// seven of each other family, chosen by `seed`; 128 probes, so a kernel
+/// wrong on bands, items, columns, accumulation or non-finites fails here
+/// in seconds before the full set is paid for.
+pub fn admission(all: &[Probe], seed: u64) -> Vec<usize> {
+    let mut state = seed ^ 0x1234_5678_9ABC_DEF0;
+    let mut out: Vec<usize> = all.iter().enumerate().filter(|(_, p)| p.family == 'D').map(|(i, _)| i).collect();
+    for family in ['A', 'B', 'C', 'E'] {
+        let mut idx: Vec<usize> = all.iter().enumerate().filter(|(_, p)| p.family == family).map(|(i, _)| i).collect();
+        for i in (1..idx.len()).rev() {
+            idx.swap(i, (splitmix64(&mut state) % (i as u64 + 1)) as usize);
+        }
+        out.extend(idx.into_iter().take(7));
+    }
+    out.sort_unstable();
+    out
+}
+
 /// A probe passes when its distance is within f32 rounding of a few terms.
 pub const PASS: f64 = 1e-5;
 
@@ -216,5 +234,10 @@ mod tests {
         assert!(ps.iter().zip(&qs).any(|(p, q)| p.phi != q.phi));
         // D forces bands: at least one probe has a limit under one row band of its Φ.
         assert!(ps.iter().any(|p| p.family == 'D' && p.limit < (p.m * p.d * 4) as u64));
+        // The admission sample: 128, every D probe, seven of each other family.
+        let adm = admission(&ps, 1);
+        assert_eq!(adm.len(), 128);
+        assert_eq!(adm.iter().filter(|&&i| ps[i].family == 'D').count(), 100);
+        assert_eq!(adm.iter().filter(|&&i| ps[i].family == 'A').count(), 7);
     }
 }

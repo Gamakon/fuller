@@ -113,5 +113,9 @@ name = "wgsl_gram_evolve"
 required-features = ["gpu", "wgsl"]
 
 [[example]]
+name = "wgsl_gram_ladder"
+required-features = ["gpu", "wgsl"]
+
+[[example]]
 name = "wgsl_naga_only"
 required-features = ["wgsl"]
