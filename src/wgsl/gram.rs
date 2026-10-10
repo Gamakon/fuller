@@ -32,6 +32,11 @@ pub fn gram_shipped_tree_check(t: &crate::wgsl::render::Tree) -> Result<(), Stri
 /// `docs/PLAN_hgp_gram.md` step 0.
 pub const TILED: &str = include_str!("../../kingdoms/wgsl/gram/tiled.wgsl");
 
+/// The hand-written register-blocked kernel (no workgroup memory): 3.6x
+/// the shipped kernel's speed at the bench size (280 ms against 1,012 ms,
+/// 2026-10-10), the positive control that passed.
+pub const BLOCKED: &str = include_str!("../../kingdoms/wgsl/gram/blocked.wgsl");
+
 /// The shipped kernel, verbatim from `H_GRAM_ACCUM_WGSL`.
 pub const SHIPPED: &str = include_str!("../../kingdoms/wgsl/gram/shipped.wgsl");
 
@@ -782,18 +787,21 @@ mod tests {
         assert!(err.contains("the grid header says workgroup 8 x 8"), "{err}");
     }
 
-    /// The hand-written tiled kernel (plan step 0) agrees with the reference
+    /// The hand-written kernels (plan step 0) agree with the reference
     /// under the criterion, banded and unbanded, at ragged shapes.
     #[test]
-    fn the_tiled_kernel_passes_the_criterion_on_the_device() {
+    fn the_tiled_and_blocked_kernels_pass_the_criterion_on_the_device() {
         let dev = Device::new().expect("device");
-        let gram = Gram::compile(&dev, TILED).expect("compile");
-        for (d, m, limit) in [(64usize, 1000usize, 4096u64), (130, 77, 8192), (200, 33, u64::MAX), (64, 1000, u64::MAX)] {
-            let p = phi(d, m, 11);
-            let h_ref = reference(&p, d, m);
-            let b = gram.build(&p, d, m, limit).expect("build");
-            let v = check(&b.h, &h_ref, d, m);
-            assert!(v.passes(), "d {d} m {m} limit {limit}: {v:?}");
+        for (name, text) in [("tiled", TILED), ("blocked", BLOCKED)] {
+            let gram = Gram::compile(&dev, text).expect("compile");
+            assert_eq!(gram.grid, Grid { x: 16, y: 16, bx: 4, by: 4 });
+            for (d, m, limit) in [(64usize, 1000usize, 4096u64), (130, 77, 8192), (200, 33, u64::MAX), (64, 1000, u64::MAX), (33, 5, 1024)] {
+                let p = phi(d, m, 11);
+                let h_ref = reference(&p, d, m);
+                let b = gram.build(&p, d, m, limit).expect("build");
+                let v = check(&b.h, &h_ref, d, m);
+                assert!(v.passes(), "{name} d {d} m {m} limit {limit}: {v:?}");
+            }
         }
     }
 
