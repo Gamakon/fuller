@@ -623,6 +623,144 @@ impl<'a> Gram<'a> {
     }
 }
 
+/// The fast fitness evaluation phylu calls per individual
+/// (`docs/PLAN_hgp_gram.md`, step 2 of the evolutionary loop): the
+/// constraint on the 128 admission test cases, then six columns scaled
+/// into [0, 1] with 0 best — the time ratio against the shipped kernel on
+/// three problem sizes (one paired round each), and the worst error
+/// relative to the shipped kernel's on a few training, validation and
+/// extrapolation pairs — and the TrueNorth angle θ = acos(1 − mean(x²))
+/// (phylu's `hff.wgsl`, lines 212–213). About ten seconds for a feasible
+/// individual, two for an infeasible one.
+pub struct FitnessContext {
+    pub probes: Vec<crate::wgsl::probes::Probe>,
+    pub admission: Vec<usize>,
+    pub shipped_source: String,
+    /// The three timing shapes (d, m) and their Φ.
+    pub timing: Vec<(usize, usize, Vec<f32>)>,
+    /// Accuracy pairs by split: (name, d, m, phi, h_ref, shipped's max ratio).
+    pub train: Vec<(String, usize, usize, Vec<f32>, Vec<f64>, f64)>,
+    pub val: Vec<(String, usize, usize, Vec<f32>, Vec<f64>, f64)>,
+    pub extrap: Vec<(String, usize, usize, Vec<f32>, Vec<f64>, f64)>,
+    pub limit: u64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Fitness {
+    pub feasible: bool,
+    /// Admission cases passed, of 128.
+    pub passed: usize,
+    /// The six columns in [0, 1], 0 best, when feasible.
+    pub columns: [f64; 6],
+    /// Speed-up per timing shape (shipped / candidate), when feasible.
+    pub speedups: [f64; 3],
+    /// θ, when feasible; `f64::INFINITY` otherwise.
+    pub hff: f64,
+    pub detail: String,
+    pub seconds: f64,
+}
+
+/// θ over columns in [0, 1]: `acos(1 − mean(x²))`, 0 when every column is 0.
+pub fn truenorth(x: &[f64]) -> f64 {
+    let energy = x.iter().map(|v| { let c = v.clamp(0.0, 1.0); c * c }).sum::<f64>() / x.len().max(1) as f64;
+    let cos = (1.0 - energy.min(1.0)).clamp(-1.0, 1.0);
+    if cos > 1.0 - 1.1920929e-7 { 0.0 } else { cos.acos() }
+}
+
+impl FitnessContext {
+    /// Build the context once: the test cases, three training pairs, two
+    /// validation pairs and one extrapolation pair from the splits, the
+    /// three timing shapes, and the shipped kernel's own error on each pair.
+    pub fn new(dev: &Device, cache: &std::path::Path) -> Result<FitnessContext, String> {
+        use crate::wgsl::pairs::splits;
+        let probes = crate::wgsl::probes::probes(1);
+        let admission = crate::wgsl::probes::admission(&probes, 1);
+        let limit = effective_buffer_limit(&dev.device);
+        let shipped = Gram::compile(dev, SHIPPED)?;
+        let sp = splits(cache)?;
+        let pick = |pairs: &[crate::wgsl::pairs::Pair], idx: &[usize]| -> Result<Vec<(String, usize, usize, Vec<f32>, Vec<f64>, f64)>, String> {
+            idx.iter()
+                .map(|&i| {
+                    let p = &pairs[i];
+                    let b = shipped.build(&p.phi, p.d, p.m, limit)?;
+                    let v = check(&b.h, &p.h_ref, p.d, p.m);
+                    Ok((p.name(), p.d, p.m, p.phi.clone(), p.h_ref.clone(), v.max_ratio))
+                })
+                .collect()
+        };
+        // Three kinds on train (gaussian, weighted, ragged), two on validation, one production-width pair.
+        let train_idx: Vec<usize> = [Kind::Gaussian, Kind::Weighted, Kind::Ragged].iter().filter_map(|k| sp.train.iter().position(|p| p.kind == *k && (p.d * p.d * p.m) as f64 <= 4.5e9)).collect();
+        let val_idx: Vec<usize> = [Kind::LowRank, Kind::NonFinite].iter().filter_map(|k| sp.val.iter().position(|p| p.kind == *k && (p.d * p.d * p.m) as f64 <= 4.5e9)).collect();
+        let extrap_idx: Vec<usize> = vec![sp.extrap.iter().enumerate().min_by_key(|(_, p)| p.m).map(|(i, _)| i).ok_or("no extrapolation pair")?];
+        let timing = [(2048usize, 65536usize), (4096, 16384), (8192, 4096)].iter().map(|&(d, m)| (d, m, phi(d, m, 7))).collect();
+        Ok(FitnessContext { train: pick(&sp.train, &train_idx)?, val: pick(&sp.val, &val_idx)?, extrap: pick(&sp.extrap, &extrap_idx)?, probes, admission, shipped_source: SHIPPED.to_string(), timing, limit })
+    }
+
+    pub fn fitness(&self, dev: &Device, source: &str) -> Fitness {
+        let t = Instant::now();
+        let infeasible = |passed: usize, detail: String, t: Instant| Fitness { feasible: false, passed, columns: [1.0; 6], speedups: [0.0; 3], hff: f64::INFINITY, detail, seconds: t.elapsed().as_secs_f64() };
+        let gram = match Gram::compile(dev, source) {
+            Ok(g) => g,
+            Err(e) => return infeasible(0, format!("compile: {}", e.lines().find(|l| l.contains("error") || l.contains("header")).unwrap_or(e.lines().next().unwrap_or(""))), t),
+        };
+        let mut passed = 0;
+        let mut first_fail = String::new();
+        for &i in &self.admission {
+            let p = &self.probes[i];
+            let b = match gram.build(&p.phi, p.d, p.m, p.limit) {
+                Ok(b) => b,
+                Err(e) => return infeasible(passed, format!("run: {e}"), t),
+            };
+            let d = crate::wgsl::probes::distance(&b.h, p);
+            if d <= crate::wgsl::probes::PASS {
+                passed += 1;
+            } else if first_fail.is_empty() {
+                first_fail = format!("{} ({d:.2e})", p.name);
+            }
+        }
+        if passed < self.admission.len() {
+            return infeasible(passed, format!("admission {passed}/{}: {first_fail}", self.admission.len()), t);
+        }
+        let shipped = match Gram::compile(dev, &self.shipped_source) {
+            Ok(g) => g,
+            Err(e) => return infeasible(passed, format!("shipped compile: {e}"), t),
+        };
+        // Accuracy columns: the worst error relative to shipped's, min(1, e / 2).
+        let worst = |pairs: &[(String, usize, usize, Vec<f32>, Vec<f64>, f64)]| -> Result<f64, String> {
+            let mut w = 0.0f64;
+            for (name, d, m, phi, h_ref, smax) in pairs {
+                let b = gram.build(phi, *d, *m, self.limit)?;
+                let v = check(&b.h, h_ref, *d, *m);
+                if v.non_finite > 0 || v.max_ratio > (2.0 * smax).max(1.0) {
+                    return Err(format!("pair {name}: max {:.3} tau (shipped {smax:.3}), non-finite {}", v.max_ratio, v.non_finite));
+                }
+                w = w.max(if *smax > 0.0 { v.max_ratio / smax } else { v.max_ratio });
+            }
+            Ok(w)
+        };
+        let (et, ev, ex) = match (worst(&self.train), worst(&self.val), worst(&self.extrap)) {
+            (Ok(a), Ok(b), Ok(c)) => (a, b, c),
+            (Err(e), _, _) | (_, Err(e), _) | (_, _, Err(e)) => return infeasible(passed, e, t),
+        };
+        // Speed columns: one paired round per shape, random order by the shape.
+        let mut speedups = [0.0f64; 3];
+        for (k, (d, m, phi)) in self.timing.iter().enumerate() {
+            let cand_first = (k + passed) % 2 == 0;
+            let r = (|| -> Result<f64, String> {
+                let (tc, ts) = if cand_first { let tc = gram.build(phi, *d, *m, self.limit)?.gpu_ms; (tc, shipped.build(phi, *d, *m, self.limit)?.gpu_ms) } else { let ts = shipped.build(phi, *d, *m, self.limit)?.gpu_ms; (gram.build(phi, *d, *m, self.limit)?.gpu_ms, ts) };
+                if tc <= 0.0 || ts <= 0.0 { return Err(format!("zero time at d {d} m {m}")); }
+                Ok(ts / tc)
+            })();
+            match r {
+                Ok(s) => speedups[k] = s,
+                Err(e) => return infeasible(passed, e, t),
+            }
+        }
+        let columns = [(1.0 / speedups[0]).clamp(0.0, 1.0), (1.0 / speedups[1]).clamp(0.0, 1.0), (1.0 / speedups[2]).clamp(0.0, 1.0), (et / 2.0).clamp(0.0, 1.0), (ev / 2.0).clamp(0.0, 1.0), (ex / 2.0).clamp(0.0, 1.0)];
+        Fitness { feasible: true, passed, columns, speedups, hff: truenorth(&columns), detail: String::new(), seconds: t.elapsed().as_secs_f64() }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -803,6 +941,25 @@ mod tests {
                 assert!(v.passes(), "{name} d {d} m {m} limit {limit}: {v:?}");
             }
         }
+    }
+
+    /// The fast fitness: the shipped kernel is feasible at θ near
+    /// acos(1 − (3·1 + 3·0.25)/6) = 1.186; the blocked kernel is feasible
+    /// with a smaller θ; a kernel with its product broken is infeasible
+    /// with the failing case named.
+    #[test]
+    fn the_fast_fitness_ranks_blocked_above_shipped_and_refuses_a_broken_kernel() {
+        let dev = Device::new().expect("device");
+        let ctx = FitnessContext::new(&dev, std::path::Path::new("logs/WGSL_GRAM/pairs")).expect("context");
+        let s = ctx.fitness(&dev, SHIPPED);
+        assert!(s.feasible, "{s:?}");
+        assert!((s.hff - 1.186).abs() < 0.08, "{s:?}");
+        let b = ctx.fitness(&dev, BLOCKED);
+        assert!(b.feasible && b.hff < s.hff && b.speedups.iter().all(|x| *x > 2.0), "{b:?}");
+        let broken = SHIPPED.replace("phi[base + gr] * phi[base + c]", "phi[base + gr]");
+        let w = ctx.fitness(&dev, &broken);
+        assert!(!w.feasible && w.detail.starts_with("admission"), "{w:?}");
+        println!("shipped {:.3} in {:.1} s; blocked {:.3} in {:.1} s; broken in {:.1} s", s.hff, s.seconds, b.hff, b.seconds, w.seconds);
     }
 
     #[test]

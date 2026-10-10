@@ -15,6 +15,7 @@ pub mod chromosome;
 pub mod generator;
 #[cfg(feature = "gpu")]
 pub mod gram;
+pub mod individual;
 #[cfg(feature = "gpu")]
 pub mod pairs;
 #[cfg(feature = "gpu")]
