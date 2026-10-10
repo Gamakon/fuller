@@ -31,11 +31,11 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation
     {
     f1 = lit_f32(0.0f);
     f2 = lit_f32(0.0f);
-    if ((f32((t + (lid.y + (k * lit_u32(16u))))) < f32(cfg.m))) {
-    if ((f32(((wid.x * lit_u32(16u)) + lid.x)) < f32(cfg.d))) {
+    if (((t + (lid.y + (k * lit_u32(16u)))) < cfg.m)) {
+    if ((((wid.x * lit_u32(16u)) + lid.x) < cfg.d)) {
     f1 = phi[(((t + (lid.y + (k * lit_u32(16u)))) * cfg.d) + ((wid.x * lit_u32(16u)) + lid.x))];
     }
-    if (((f32(((wid.y * lit_u32(16u)) + lid.x)) < f32(cfg.r_rows)) && (f32((cfg.r_off + ((wid.y * lit_u32(16u)) + lid.x))) < f32(cfg.d)))) {
+    if (((((wid.y * lit_u32(16u)) + lid.x) < cfg.r_rows) && ((cfg.r_off + ((wid.y * lit_u32(16u)) + lid.x)) < cfg.d))) {
     f2 = phi[(((t + (lid.y + (k * lit_u32(16u)))) * cfg.d) + (cfg.r_off + ((wid.y * lit_u32(16u)) + lid.x)))];
     }
     }
@@ -56,7 +56,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation
     workgroupBarrier();
     }
     }
-    if ((((f32(((wid.y * lit_u32(16u)) + lid.y)) < f32(cfg.r_rows)) && (f32(((wid.x * lit_u32(16u)) + lid.x)) < f32(cfg.d))) && (f32((cfg.r_off + ((wid.y * lit_u32(16u)) + lid.y))) < f32(cfg.d)))) {
+    if ((((((wid.y * lit_u32(16u)) + lid.y) < cfg.r_rows) && (((wid.x * lit_u32(16u)) + lid.x) < cfg.d)) && ((cfg.r_off + ((wid.y * lit_u32(16u)) + lid.y)) < cfg.d))) {
     h[(((gid.y * 1u)) * cfg.d + ((gid.x * 1u)))] = h[(((gid.y * 1u)) * cfg.d + ((gid.x * 1u)))] + f0;
     }
 }

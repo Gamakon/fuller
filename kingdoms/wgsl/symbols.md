@@ -388,7 +388,7 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 |---|---|---|---|---|---|---|
 | F236 | `wg.a` | `composite` | `-` | `wgmem<f32>.real` | 0 | workgroup array a |
 | F237 | `wg.b` | `composite` | `-` | `wgmem<f32>.real` | 0 | workgroup array b |
-| F238 | `wg.get` | `composite` | `wgmem<f32>.real u32.index` | `f32.real` | 2 | a[i & 4095u] |
-| F239 | `wg.set` | `composite` | `wgmem<f32>.real u32.index f32.real` | `stmt.stmt` | 3 | arity 3: a[i & 4095u] = v; |
+| F238 | `wg.get` | `composite` | `wgmem<f32>.real u32.index` | `f32.real` | 2 | a[i & 2047u] |
+| F239 | `wg.set` | `composite` | `wgmem<f32>.real u32.index f32.real` | `stmt.stmt` | 3 | arity 3: a[i & 2047u] = v; |
 
 239 function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Deliberately absent: atomics, images, derivatives, subgroup operations, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.

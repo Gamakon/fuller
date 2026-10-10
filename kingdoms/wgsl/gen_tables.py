@@ -112,7 +112,7 @@ def build_types():
     add("reg<vec4<f32>>", "real", 4, "a named vec4<f32> register: v0, v1")
     add("reg<u32>", "index", 1, "a named u32 register: i0, i1, i2, i3")
     add("reg<bool>", "flag", 1, "a named bool register: b0")
-    add("wgmem<f32>", "real", 0, "a workgroup-memory array of 4,096 f32: a, b")
+    add("wgmem<f32>", "real", 0, "a workgroup-memory array of 2,048 f32: a, b (WGMEM_LEN in src/wgsl/render.rs)")
     for form in ("wgdim", "blk", "unroll"):
         add("u32", form, 1, FORMS[form][0])
     return rows
@@ -298,8 +298,8 @@ for suffix, reg, val in [("f", "reg<f32>.real", "f32.real"), ("v", "reg<vec4<f32
     f("reg", f"set_{suffix}", "composite", [reg, val], "stmt.stmt", "name = value;")
 f("wg", "a", "composite", [], "wgmem<f32>.real", "workgroup array a")
 f("wg", "b", "composite", [], "wgmem<f32>.real", "workgroup array b")
-f("wg", "get", "composite", ["wgmem<f32>.real", "u32.index"], "f32.real", "a[i & 4095u]")
-f("wg", "set", "composite", ["wgmem<f32>.real", "u32.index", "f32.real"], "stmt.stmt", "arity 3: a[i & 4095u] = v;")
+f("wg", "get", "composite", ["wgmem<f32>.real", "u32.index"], "f32.real", "a[i & 2047u]")
+f("wg", "set", "composite", ["wgmem<f32>.real", "u32.index", "f32.real"], "stmt.stmt", "arity 3: a[i & 2047u] = v;")
 
 
 def write_tsv(path, header, rows):

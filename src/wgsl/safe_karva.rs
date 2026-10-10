@@ -326,12 +326,25 @@ pub fn conform(t: &Tree, demand: Ty, kingdom: &WgslKingdom, per_kernel: &[PerKer
             return Ok(Tree::literal(&t.name, demand, t.konst));
         }
     } else {
+        // Every row of the name under the demand; the one that needs the
+        // fewest conversions inserted below it wins (a comparison of two
+        // indices takes the index row, not the real row with both sides
+        // converted), the table's first on a tie.
         let mut errors = Vec::new();
+        let mut best: Option<(usize, Vec<Tree>)> = None;
         for inputs in signatures(&t.name, demand, t.kids.len(), kingdom, per_kernel) {
             match t.kids.iter().zip(inputs).map(|(k, &d)| conform(k, d, kingdom, per_kernel)).collect::<Result<Vec<_>, _>>() {
-                Ok(kids) => return Ok(Tree { name: t.name.clone(), ty: demand, konst: t.konst, kids }),
+                Ok(kids) => {
+                    let inserted = kids.iter().map(Tree::size).sum::<usize>() - t.kids.iter().map(Tree::size).sum::<usize>();
+                    if best.as_ref().is_none_or(|(b, _)| inserted < *b) {
+                        best = Some((inserted, kids));
+                    }
+                }
                 Err(e) => errors.push(e),
             }
+        }
+        if let Some((_, kids)) = best {
+            return Ok(Tree { name: t.name.clone(), ty: demand, konst: t.konst, kids });
         }
         if let Some(e) = errors.into_iter().next() {
             return Err(e);

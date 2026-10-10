@@ -236,5 +236,5 @@ F234	reg	get_b	composite	reg<bool>.flag	bool.flag	1	the register's value
 F235	reg	set_b	composite	reg<bool>.flag bool.flag	stmt.stmt	2	name = value;
 F236	wg	a	composite	-	wgmem<f32>.real	0	workgroup array a
 F237	wg	b	composite	-	wgmem<f32>.real	0	workgroup array b
-F238	wg	get	composite	wgmem<f32>.real u32.index	f32.real	2	a[i & 4095u]
-F239	wg	set	composite	wgmem<f32>.real u32.index f32.real	stmt.stmt	3	arity 3: a[i & 4095u] = v;
+F238	wg	get	composite	wgmem<f32>.real u32.index	f32.real	2	a[i & 2047u]
+F239	wg	set	composite	wgmem<f32>.real u32.index f32.real	stmt.stmt	3	arity 3: a[i & 2047u] = v;

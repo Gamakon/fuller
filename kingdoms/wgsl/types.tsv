@@ -78,7 +78,7 @@ T076	reg<f32>.real	reg<f32>	real	1	0.0	0	0	0	a named f32 register: f0, f1, f2, f
 T077	reg<vec4<f32>>.real	reg<vec4<f32>>	real	4	0.0	0	0	0	a named vec4<f32> register: v0, v1
 T078	reg<u32>.index	reg<u32>	index	1	0u	0	0	0	a named u32 register: i0, i1, i2, i3
 T079	reg<bool>.flag	reg<bool>	flag	1	false	0	0	0	a named bool register: b0
-T080	wgmem<f32>.real	wgmem<f32>	real	0	0.0	0	0	0	a workgroup-memory array of 4,096 f32: a, b
+T080	wgmem<f32>.real	wgmem<f32>	real	0	0.0	0	0	0	a workgroup-memory array of 2,048 f32: a, b (WGMEM_LEN in src/wgsl/render.rs)
 T081	u32.wgdim	u32	wgdim	1	4u	0	0	0	a workgroup dimension, a literal from {4, 8, 16, 32, 64}
 T082	u32.blk	u32	blk	1	1u	0	0	0	a block factor, a literal from {1, 2, 4}
 T083	u32.unroll	u32	unroll	1	2u	0	0	0	an unroll factor, a literal from {2, 4, 8}
