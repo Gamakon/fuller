@@ -159,6 +159,15 @@ pub fn wgsl_fallback_table() -> Result<Vec<Option<GpuNode>>, String> {
     wgsl_duals().iter().map(wgsl_fallback_leaf).collect()
 }
 
+/// The fallback table over the safeWGSL duals: the WGSL table extended
+/// (the first 83 duals are the WGSL kingdom's, unchanged, so this table
+/// serves both kingdoms). A typed decoder without the safe entries refused
+/// every gene a mutation touched at a block, statement or bounded-count
+/// dual (108 of 108 offspring, fit_safe18, 2026-10-10).
+pub fn safe_fallback_table() -> Result<Vec<Option<GpuNode>>, String> {
+    safe_duals().iter().map(wgsl_fallback_leaf).collect()
+}
+
 /// One concrete typed row: a template instantiated at one choice of duals.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WgslRow {
@@ -598,6 +607,22 @@ mod tests {
     /// and the safety rules pinned: one way to make a loop condition, no
     /// barrier under a condition, no loop nested past its rung, a store to
     /// h only at an owned cell, a load of phi only at a phi index.
+    /// The safe fallback table extends the WGSL one entry for entry, and has
+    /// a leaf for every safe dual but the no-op and array ones.
+    #[test]
+    fn the_safe_fallback_table_extends_the_wgsl_one() {
+        let w = wgsl_fallback_table().unwrap();
+        let s = safe_fallback_table().unwrap();
+        assert_eq!(s.len(), safe_duals().len());
+        assert!(s.len() > w.len());
+        assert_eq!(&s[..w.len()], &w[..]);
+        let duals = safe_duals();
+        for (d, leaf) in duals.iter().zip(&s).skip(w.len()) {
+            assert_eq!(leaf.is_none(), d.fallback_noop || d.fallback_elem, "{}", d.dual);
+        }
+        assert!(s.iter().skip(w.len()).filter(|l| l.is_some()).count() >= 40);
+    }
+
     #[test]
     fn the_safe_kingdom_keeps_wgsl_and_pins_its_rules() {
         let (w, s) = (wgsl_duals(), safe_duals());
