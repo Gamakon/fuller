@@ -458,7 +458,7 @@ impl<'a> Renderer<'a> {
             }
             "parr.set_safe" => {
                 n(3)?;
-                Ok(format!("    {}[{}] = {};\n", parr_name(&kids[0])?, self.value(&kids[1], scope)?, self.value(&kids[2], scope)?))
+                Ok(format!("    {}[{}] = {};\n", self.parr_name(&kids[0])?, self.value(&kids[1], scope)?, self.value(&kids[2], scope)?))
             }
             "stmt.block" => {
                 n(1)?;
@@ -586,9 +586,16 @@ impl<'a> Renderer<'a> {
         })
     }
 
+    /// A workgroup array leaf's variable name; a fallback leaf names the
+    /// array of ITS DUAL (the vec4 array for a vec4 demand), never `wg_a`
+    /// regardless — a vec4 value stored into the f32 array was a compile
+    /// error the kingdom's types had not made (fit_safe18_v2, 2026-10-10).
     fn wgmem(&self, w: &Tree) -> Result<&'static str, String> {
+        if w.name == "fallback" {
+            return Ok(if self.dual(w.ty).is_ok_and(|d| d.dual.starts_with("wgmem<vec")) { "wg_va" } else { "wg_a" });
+        }
         Ok(match w.name.as_str() {
-            "wg.a" | "fallback" => "wg_a",
+            "wg.a" => "wg_a",
             "wg.b" => "wg_b",
             "wg.va" => "wg_va",
             "wg.vb" => "wg_vb",
@@ -625,7 +632,7 @@ impl<'a> Renderer<'a> {
             "wg.get" => return Ok(format!("{}[({}) & {}u]", self.wgmem(&v.kids[0])?, self.value(&v.kids[1], scope)?, WGMEM_LEN - 1)),
             // The safe read: the index is in range by its type (safe.wg_of masks it).
             "wg.get_safe" | "wg.get_v_safe" => return Ok(format!("{}[{}]", self.wgmem(&v.kids[0])?, self.value(&v.kids[1], scope)?)),
-            "parr.get_f" | "parr.get_v" | "parr.get_i" | "parr.get_b" => return Ok(format!("{}[{}]", parr_name(&v.kids[0])?, self.value(&v.kids[1], scope)?)),
+            "parr.get_f" | "parr.get_v" | "parr.get_i" | "parr.get_b" => return Ok(format!("{}[{}]", self.parr_name(&v.kids[0])?, self.value(&v.kids[1], scope)?)),
             _ => {}
         }
         let kids: Result<Vec<String>, String> = v.kids.iter().map(|k| self.value(k, scope)).collect();
@@ -1067,10 +1074,22 @@ pub fn safe_base(name: &str) -> &str {
     name
 }
 
+impl Renderer<'_> {
+    /// A private array leaf's variable name; a fallback leaf names the array
+    /// of ITS DUAL (`pv` for a vec4 demand, `pi` for u32, `pm` for bool).
+    fn parr_name(&self, t: &Tree) -> Result<&'static str, String> {
+        if t.name == "fallback" {
+            let d = self.dual(t.ty).map(|d| d.dual.clone()).unwrap_or_default();
+            return Ok(if d.starts_with("parr<vec") { "pv" } else if d.starts_with("parr<u32>") { "pi" } else if d.starts_with("parr<bool>") { "pm" } else { "pa" });
+        }
+        parr_name(t)
+    }
+}
+
 /// A private array leaf's variable name.
 fn parr_name(t: &Tree) -> Result<&'static str, String> {
     Ok(match t.name.as_str() {
-        "parr.a" | "fallback" => "pa",
+        "parr.a" => "pa",
         "parr.b" => "pb",
         "parr.c" => "pc",
         "parr.d" => "pd",

@@ -606,6 +606,20 @@ mod tests {
         assert_eq!(crate::wgsl::gram::grid_header(&out.text), Some((16, 16, 4, 4)));
     }
 
+    /// A store into a vec4 private array whose array leaf is of the wrong
+    /// kind: the leaf becomes the vec4 array's fallback and the text names
+    /// the vec4 array, so it validates (a vec4 into `pa` did not).
+    #[test]
+    fn an_array_fallback_names_the_array_of_its_dual() {
+        let k = WgslKingdom::load_safe();
+        let text = r#"(kernel.entry_safe (grid.of (literal.wgdim (Num 16.0)) (literal.wgdim (Num 16.0)) (literal.blk (Num 1.0)) (literal.blk (Num 1.0))) (block.seq2_L0 (parr.set_v_L0 (Var "parr.a") (safe.pidx16 (literal.index (Num 0.0))) (reg.get_v (Var "reg.v0"))) (wg.set_v_L0 (Var "wg.a") (safe.wgv_of (literal.index (Num 0.0))) (reg.get_v (Var "reg.v0")))))"#;
+        let t = build(text, &k, &gram_role()).unwrap();
+        assert_eq!(fallbacks(&t), 2, "{}", t.to_sexpr());
+        let r = render_tree(&t, &k).unwrap();
+        assert!(r.text.contains("pv[") && r.text.contains("wg_va["), "{}", r.text);
+        validate_text(&r.text).unwrap();
+    }
+
     /// A gene text with a token of the wrong dual projects to a fallback
     /// leaf rather than failing.
     #[test]
