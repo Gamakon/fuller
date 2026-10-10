@@ -410,6 +410,11 @@ f("wg", "va", "composite", [], "wgmem<vec4<f32>>.real", "workgroup array va of 2
 f("wg", "vb", "composite", [], "wgmem<vec4<f32>>.real", "workgroup array vb of 256 vec4<f32>")
 f("safe", "wgv_of", "composite", ["u32.index"], "u32.wgvindex", "i & 255u, in range by construction")
 f("wg", "get_v_safe", "composite", ["wgmem<vec4<f32>>.real", "u32.wgvindex"], "vec4<f32>.real", "va[i], in range by its type")
+# Index arithmetic the drafted kernels use on addresses: shifts (the count masked to 0..31) and masks.
+f("index", "shl", "composite", ["u32.index", "u32.index"], "u32.index", "i << (s & 31u)")
+f("index", "shr", "composite", ["u32.index", "u32.index"], "u32.index", "i >> (s & 31u)")
+f("index", "and", "composite", ["u32.index", "u32.index"], "u32.index", "i & j")
+f("index", "or", "composite", ["u32.index", "u32.index"], "u32.index", "i | j")
 f("parr", "get_b", "composite", ["parr<bool>.flag", "u32.pindex"], "bool.flag", "pm[i]")
 
 # ---- safeWGSL rows: the only spellings of loops, conditions, stores and loads ----

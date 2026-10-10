@@ -22,7 +22,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation
     var b0: bool = false; var b1: bool = false; var b2: bool = false; var b3: bool = false;
     var t: u32 = 0u; var k: u32 = 0u; var k2: u32 = 0u; var k3: u32 = 0u;
     var pa: array<f32, 64>; var pb: array<f32, 64>; var pc: array<f32, 64>; var pd: array<f32, 64>; var pe: array<f32, 64>; var pf: array<f32, 64>;
-    var pv: array<vec4<f32>, 16>; var pi: array<u32, 16>; var pj: array<u32, 16>; var pm: array<bool, 16>; var pn: array<bool, 16>;
+    var pv: array<vec4<f32>, 16>; var pi: array<u32, 16>; var pj: array<u32, 16>; var pk: array<u32, 16>; var pm: array<bool, 16>; var pn: array<bool, 16>;
     f0 = lit_f32(0.0f);
     f1 = lit_f32(0.0f);
     f2 = lit_f32(0.0f);
@@ -36,11 +36,11 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation
     {
     f4 = lit_f32(0.0f);
     f5 = lit_f32(0.0f);
-    if (((t + ((((lid.y * lit_u32(16u)) + lid.x) + (lit_u32(256u) * k)) / lit_u32(32u))) < cfg.m)) {
-    if (((((wid.y * lit_u32(32u)) + ((((lid.y * lit_u32(16u)) + lid.x) + (lit_u32(256u) * k)) % lit_u32(32u))) < cfg.r_rows) && ((cfg.r_off + ((wid.y * lit_u32(32u)) + ((((lid.y * lit_u32(16u)) + lid.x) + (lit_u32(256u) * k)) % lit_u32(32u)))) < cfg.d))) {
+    if ((f32((t + ((((lid.y * lit_u32(16u)) + lid.x) + (lit_u32(256u) * k)) / lit_u32(32u)))) < f32(cfg.m))) {
+    if (((f32(((wid.y * lit_u32(32u)) + ((((lid.y * lit_u32(16u)) + lid.x) + (lit_u32(256u) * k)) % lit_u32(32u)))) < f32(cfg.r_rows)) && (f32((cfg.r_off + ((wid.y * lit_u32(32u)) + ((((lid.y * lit_u32(16u)) + lid.x) + (lit_u32(256u) * k)) % lit_u32(32u))))) < f32(cfg.d)))) {
     f4 = phi[(((t + ((((lid.y * lit_u32(16u)) + lid.x) + (lit_u32(256u) * k)) / lit_u32(32u))) * cfg.d) + (cfg.r_off + ((wid.y * lit_u32(32u)) + ((((lid.y * lit_u32(16u)) + lid.x) + (lit_u32(256u) * k)) % lit_u32(32u)))))];
     }
-    if ((((wid.x * lit_u32(32u)) + ((((lid.y * lit_u32(16u)) + lid.x) + (lit_u32(256u) * k)) % lit_u32(32u))) < cfg.d)) {
+    if ((f32(((wid.x * lit_u32(32u)) + ((((lid.y * lit_u32(16u)) + lid.x) + (lit_u32(256u) * k)) % lit_u32(32u)))) < f32(cfg.d))) {
     f5 = phi[(((t + ((((lid.y * lit_u32(16u)) + lid.x) + (lit_u32(256u) * k)) / lit_u32(32u))) * cfg.d) + ((wid.x * lit_u32(32u)) + ((((lid.y * lit_u32(16u)) + lid.x) + (lit_u32(256u) * k)) % lit_u32(32u))))];
     }
     }
@@ -66,16 +66,16 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation
     }
     }
     {
-    if ((((((wid.y * lit_u32(32u)) + lid.y) < cfg.r_rows) && ((cfg.r_off + ((wid.y * lit_u32(32u)) + lid.y)) < cfg.d)) && (((wid.x * lit_u32(32u)) + lid.x) < cfg.d))) {
+    if ((((f32(((wid.y * lit_u32(32u)) + lid.y)) < f32(cfg.r_rows)) && (f32((cfg.r_off + ((wid.y * lit_u32(32u)) + lid.y))) < f32(cfg.d))) && (f32(((wid.x * lit_u32(32u)) + lid.x)) < f32(cfg.d)))) {
     h[(((wid.y * 32u + lid.y)) * cfg.d + ((wid.x * 32u + lid.x)))] = h[(((wid.y * 32u + lid.y)) * cfg.d + ((wid.x * 32u + lid.x)))] + f0;
     }
-    if ((((((wid.y * lit_u32(32u)) + lid.y) < cfg.r_rows) && ((cfg.r_off + ((wid.y * lit_u32(32u)) + lid.y)) < cfg.d)) && ((((wid.x * lit_u32(32u)) + lid.x) + lit_u32(16u)) < cfg.d))) {
+    if ((((f32(((wid.y * lit_u32(32u)) + lid.y)) < f32(cfg.r_rows)) && (f32((cfg.r_off + ((wid.y * lit_u32(32u)) + lid.y))) < f32(cfg.d))) && (f32((((wid.x * lit_u32(32u)) + lid.x) + lit_u32(16u))) < f32(cfg.d)))) {
     h[(((wid.y * 32u + lid.y)) * cfg.d + (((wid.x * 32u + lid.x) + 16u)))] = h[(((wid.y * 32u + lid.y)) * cfg.d + (((wid.x * 32u + lid.x) + 16u)))] + f1;
     }
-    if (((((((wid.y * lit_u32(32u)) + lid.y) + lit_u32(16u)) < cfg.r_rows) && ((cfg.r_off + (((wid.y * lit_u32(32u)) + lid.y) + lit_u32(16u))) < cfg.d)) && (((wid.x * lit_u32(32u)) + lid.x) < cfg.d))) {
+    if ((((f32((((wid.y * lit_u32(32u)) + lid.y) + lit_u32(16u))) < f32(cfg.r_rows)) && (f32((cfg.r_off + (((wid.y * lit_u32(32u)) + lid.y) + lit_u32(16u)))) < f32(cfg.d))) && (f32(((wid.x * lit_u32(32u)) + lid.x)) < f32(cfg.d)))) {
     h[((((wid.y * 32u + lid.y) + 16u)) * cfg.d + ((wid.x * 32u + lid.x)))] = h[((((wid.y * 32u + lid.y) + 16u)) * cfg.d + ((wid.x * 32u + lid.x)))] + f2;
     }
-    if (((((((wid.y * lit_u32(32u)) + lid.y) + lit_u32(16u)) < cfg.r_rows) && ((cfg.r_off + (((wid.y * lit_u32(32u)) + lid.y) + lit_u32(16u))) < cfg.d)) && ((((wid.x * lit_u32(32u)) + lid.x) + lit_u32(16u)) < cfg.d))) {
+    if ((((f32((((wid.y * lit_u32(32u)) + lid.y) + lit_u32(16u))) < f32(cfg.r_rows)) && (f32((cfg.r_off + (((wid.y * lit_u32(32u)) + lid.y) + lit_u32(16u)))) < f32(cfg.d))) && (f32((((wid.x * lit_u32(32u)) + lid.x) + lit_u32(16u))) < f32(cfg.d)))) {
     h[((((wid.y * 32u + lid.y) + 16u)) * cfg.d + (((wid.x * 32u + lid.x) + 16u)))] = h[((((wid.y * 32u + lid.y) + 16u)) * cfg.d + (((wid.x * 32u + lid.x) + 16u)))] + f3;
     }
     }

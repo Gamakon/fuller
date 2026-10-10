@@ -3,12 +3,20 @@
 //! name; a converted tree is rendered, validated by naga and written as
 //! `<out>/kNN.safe.wgsl` with its s-expression beside it.
 //!
-//!   cargo run --release --features wgsl --example wgsl_safe_convert -- <dir> [--out <dir>]
+//! With `--karva <dir>` every converted kernel is also encoded as Karva
+//! genes (`src/wgsl/safe_karva.rs`) at one head length and tail-slot count
+//! for the whole population, and written as `<dir>/kNN.json` in the dump
+//! form phylu's typed loader reads; `--head <n>` fixes the head length
+//! (default 32), the slot count is the largest any kernel needs, rounded up
+//! to a multiple of eight.
+//!
+//!   cargo run --release --features wgsl --example wgsl_safe_convert -- <dir> [--out <dir>] [--karva <dir> [--head <n>]]
 
 use std::path::PathBuf;
 
 use fuller::wgsl::loader::WgslKingdom;
-use fuller::wgsl::render::{gram_role, validate_text, Renderer};
+use fuller::wgsl::render::{gram_role, validate_text, Renderer, Tree};
+use fuller::wgsl::safe_karva::{dump_file, encode, head_needed, split};
 use fuller::wgsl::safe_reader::{read_safe, statement_outline};
 use fuller::wgsl::table::FunctionTable;
 
@@ -17,9 +25,17 @@ fn main() -> Result<(), String> {
     let dir = PathBuf::from(args.next().ok_or("usage: wgsl_safe_convert <dir> [--out <dir>]")?);
     let mut out = dir.join("safe");
     let mut outline: Option<String> = None;
+    let mut karva: Option<PathBuf> = None;
+    let mut head_length = 32usize;
     while let Some(a) = args.next() {
         if a == "--out" {
             out = PathBuf::from(args.next().ok_or("--out needs a value")?);
+        }
+        if a == "--karva" {
+            karva = Some(PathBuf::from(args.next().ok_or("--karva needs a value")?));
+        }
+        if a == "--head" {
+            head_length = args.next().ok_or("--head needs a value")?.parse().map_err(|e| format!("--head: {e}"))?;
         }
         if a == "--outline" {
             outline = Some(args.next().ok_or("--outline needs a kernel id")?);
@@ -40,6 +56,7 @@ fn main() -> Result<(), String> {
     files.sort();
     let (mut converted, mut valid) = (0, 0);
     let mut reasons: std::collections::BTreeMap<String, usize> = Default::default();
+    let mut trees: Vec<(String, Tree)> = Vec::new();
     println!("{:<6} {:<10} {:>6} {:<8} reason / notes", "kernel", "converted", "nodes", "valid");
     for f in &files {
         let id = f.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
@@ -70,6 +87,9 @@ fn main() -> Result<(), String> {
                 std::fs::write(out.join(format!("{id}.safe.wgsl")), &text).map_err(|e| e.to_string())?;
                 std::fs::write(out.join(format!("{id}.safe.sexpr")), r.tree.to_sexpr()).map_err(|e| e.to_string())?;
                 println!("{id:<6} {:<10} {:>6} {:<8} {}", "yes", r.tree.size(), ok, r.notes.join("; "));
+                if ok == "yes" {
+                    trees.push((id.clone(), r.tree));
+                }
             }
         }
     }
@@ -77,5 +97,33 @@ fn main() -> Result<(), String> {
     for (k, v) in &reasons {
         println!("  {v:3}  {k}");
     }
+    let Some(karva) = karva else { return Ok(()) };
+    std::fs::create_dir_all(&karva).map_err(|e| e.to_string())?;
+    // The layout: tail slots any kernel needs at each head length, then the
+    // chosen head length's count rounded up to a multiple of eight.
+    println!("\n{:<6} {:>8} {:>10}  slots needed per kernel", "head", "max", "mean");
+    let mut chosen_slots = 0usize;
+    for h in [16usize, 24, 32, 48, 64] {
+        let needs: Vec<usize> = trees.iter().map(|(_, t)| split(t, h).map(|s| s.tail.len()).unwrap_or(usize::MAX)).collect();
+        let max = needs.iter().copied().max().unwrap_or(0);
+        let mean = needs.iter().sum::<usize>() as f64 / needs.len().max(1) as f64;
+        println!("{h:<6} {max:>8} {mean:>10.1}");
+        if h == head_length {
+            chosen_slots = max.div_ceil(8) * 8;
+        }
+    }
+    if chosen_slots == 0 {
+        let max = trees.iter().map(|(_, t)| split(t, head_length).map(|s| s.tail.len()).unwrap_or(usize::MAX)).max().unwrap_or(0);
+        chosen_slots = max.div_ceil(8) * 8;
+    }
+    println!("\nlayout: head {head_length}, tail {}, {} tail slots, {} genes a kernel", head_length * 3 + 1, chosen_slots, chosen_slots + 1);
+    println!("{:<6} {:>6} {:>6} {:>10}", "kernel", "nodes", "slots", "head need");
+    for (id, t) in &trees {
+        let c = encode(t, head_length, chosen_slots, 7013).map_err(|e| format!("{id}: {e}"))?;
+        let v = dump_file(&format!("{id}.wgsl"), &kingdom, &c);
+        std::fs::write(karva.join(format!("{id}.json")), serde_json::to_string(&v).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+        println!("{id:<6} {:>6} {:>6} {:>10}", t.size(), c.folded.filled, head_needed(t));
+    }
+    println!("{} dumps written to {}", trees.len(), karva.display());
     Ok(())
 }

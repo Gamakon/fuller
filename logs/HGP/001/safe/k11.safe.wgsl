@@ -22,7 +22,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation
     var b0: bool = false; var b1: bool = false; var b2: bool = false; var b3: bool = false;
     var t: u32 = 0u; var k: u32 = 0u; var k2: u32 = 0u; var k3: u32 = 0u;
     var pa: array<f32, 64>; var pb: array<f32, 64>; var pc: array<f32, 64>; var pd: array<f32, 64>; var pe: array<f32, 64>; var pf: array<f32, 64>;
-    var pv: array<vec4<f32>, 16>; var pi: array<u32, 16>; var pj: array<u32, 16>; var pm: array<bool, 16>; var pn: array<bool, 16>;
+    var pv: array<vec4<f32>, 16>; var pi: array<u32, 16>; var pj: array<u32, 16>; var pk: array<u32, 16>; var pm: array<bool, 16>; var pn: array<bool, 16>;
     f0 = lit_f32(0.0f);
     f1 = lit_f32(0.0f);
     f2 = lit_f32(0.0f);
@@ -35,17 +35,17 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation
     {
     f4 = lit_f32(0.0f);
     f5 = lit_f32(0.0f);
-    if (((t + (((lid.y * lit_u32(16u)) + lid.x) >> ((lit_u32(5u)) & 31u))) < cfg.m)) {
-    if (((((wid.y * lit_u32(32u)) + (((lid.y * lit_u32(16u)) + lid.x) & lit_u32(31u))) < cfg.r_rows) && ((cfg.r_off + ((wid.y * lit_u32(32u)) + (((lid.y * lit_u32(16u)) + lid.x) & lit_u32(31u)))) < cfg.d))) {
-    f4 = phi[(((t + (((lid.y * lit_u32(16u)) + lid.x) >> ((lit_u32(5u)) & 31u))) * cfg.d) + (cfg.r_off + ((wid.y * lit_u32(32u)) + (((lid.y * lit_u32(16u)) + lid.x) & lit_u32(31u)))))];
+    if ((f32((t + ((((lid.y * lit_u32(16u)) + lid.x)) >> ((lit_u32(5u)) & 31u)))) < f32(cfg.m))) {
+    if (((f32(((wid.y * lit_u32(32u)) + ((((lid.y * lit_u32(16u)) + lid.x)) & (lit_u32(31u))))) < f32(cfg.r_rows)) && (f32((cfg.r_off + ((wid.y * lit_u32(32u)) + ((((lid.y * lit_u32(16u)) + lid.x)) & (lit_u32(31u)))))) < f32(cfg.d)))) {
+    f4 = phi[(((t + ((((lid.y * lit_u32(16u)) + lid.x)) >> ((lit_u32(5u)) & 31u))) * cfg.d) + (cfg.r_off + ((wid.y * lit_u32(32u)) + ((((lid.y * lit_u32(16u)) + lid.x)) & (lit_u32(31u))))))];
     }
-    if ((((wid.x * lit_u32(32u)) + (((lid.y * lit_u32(16u)) + lid.x) & lit_u32(31u))) < cfg.d)) {
-    f5 = phi[(((t + (((lid.y * lit_u32(16u)) + lid.x) >> ((lit_u32(5u)) & 31u))) * cfg.d) + ((wid.x * lit_u32(32u)) + (((lid.y * lit_u32(16u)) + lid.x) & lit_u32(31u))))];
+    if ((f32(((wid.x * lit_u32(32u)) + ((((lid.y * lit_u32(16u)) + lid.x)) & (lit_u32(31u))))) < f32(cfg.d))) {
+    f5 = phi[(((t + ((((lid.y * lit_u32(16u)) + lid.x)) >> ((lit_u32(5u)) & 31u))) * cfg.d) + ((wid.x * lit_u32(32u)) + ((((lid.y * lit_u32(16u)) + lid.x)) & (lit_u32(31u)))))];
     }
     }
     {
-    wg_a[(((((((lid.y * lit_u32(16u)) + lid.x) >> ((lit_u32(5u)) & 31u)) * lit_u32(32u)) + (((lid.y * lit_u32(16u)) + lid.x) & lit_u32(31u)))) & 2047u)] = f4;
-    wg_b[(((((((lid.y * lit_u32(16u)) + lid.x) >> ((lit_u32(5u)) & 31u)) * lit_u32(32u)) + (((lid.y * lit_u32(16u)) + lid.x) & lit_u32(31u)))) & 2047u)] = f5;
+    wg_a[((((((((lid.y * lit_u32(16u)) + lid.x)) >> ((lit_u32(5u)) & 31u)) * lit_u32(32u)) + ((((lid.y * lit_u32(16u)) + lid.x)) & (lit_u32(31u))))) & 2047u)] = f4;
+    wg_b[((((((((lid.y * lit_u32(16u)) + lid.x)) >> ((lit_u32(5u)) & 31u)) * lit_u32(32u)) + ((((lid.y * lit_u32(16u)) + lid.x)) & (lit_u32(31u))))) & 2047u)] = f5;
     workgroupBarrier();
     {
     i2 = lit_u32(0u);
@@ -64,19 +64,19 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation
     }
     for (k = 0u; k < 2u; k = k + 1u) {
     {
-    if ((((((wid.y * lit_u32(32u)) + lid.y) + (lit_u32(16u) * k)) < cfg.r_rows) && ((cfg.r_off + (((wid.y * lit_u32(32u)) + lid.y) + (lit_u32(16u) * k))) < cfg.d))) {
+    if (((f32((((wid.y * lit_u32(32u)) + lid.y) + (lit_u32(16u) * k))) < f32(cfg.r_rows)) && (f32((cfg.r_off + (((wid.y * lit_u32(32u)) + lid.y) + (lit_u32(16u) * k)))) < f32(cfg.d)))) {
     i3 = lit_u32(0u);
     for (k2 = 0u; k2 < 2u; k2 = k2 + 1u) {
     {
-    if (((((wid.x * lit_u32(32u)) + lid.x) + (lit_u32(16u) * k2)) < cfg.d)) {
-    if ((k == lit_u32(0u))) {
-    if ((k2 == lit_u32(0u))) {
+    if ((f32((((wid.x * lit_u32(32u)) + lid.x) + (lit_u32(16u) * k2))) < f32(cfg.d))) {
+    if ((f32(k) == f32(lit_u32(0u)))) {
+    if ((f32(k2) == f32(lit_u32(0u)))) {
     f6 = f0;
     } else {
     f6 = f1;
     }
     } else {
-    if ((k2 == lit_u32(0u))) {
+    if ((f32(k2) == f32(lit_u32(0u)))) {
     f6 = f2;
     } else {
     f6 = f3;

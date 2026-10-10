@@ -610,7 +610,7 @@ mod tests {
         for (a, b) in fw.rows.iter().zip(&fs.rows) {
             assert_eq!((a.reference.as_str(), a.name()), (b.reference.as_str(), b.name()));
         }
-        assert_eq!(fs.rows.len(), 557);
+        assert_eq!(fs.rows.len(), 561);
         let dual = |t: Ty| k.dual(t).unwrap().dual.clone();
         let producers = |d: &str| -> Vec<String> { k.rows.iter().filter(|r| dual(r.output) == d).map(|r| r.name.clone()).collect() };
         assert_eq!(producers("kernel.safe"), vec!["kernel.entry_safe"]);

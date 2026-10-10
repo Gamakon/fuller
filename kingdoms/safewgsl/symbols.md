@@ -480,658 +480,667 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 |---|---|---|---|---|---|---|
 | F293 | `wg.get_v_safe` | `composite` | `wgmem<vec4<f32>>.real u32.wgvindex` | `vec4<f32>.real` | 2 | va[i], in range by its type |
 
+## class `index`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F294 | `index.shl` | `composite` | `u32.index u32.index` | `u32.index` | 2 | i << (s & 31u) |
+| F295 | `index.shr` | `composite` | `u32.index u32.index` | `u32.index` | 2 | i >> (s & 31u) |
+| F296 | `index.and` | `composite` | `u32.index u32.index` | `u32.index` | 2 | i & j |
+| F297 | `index.or` | `composite` | `u32.index u32.index` | `u32.index` | 2 | i | j |
+
 ## class `parr`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F294 | `parr.get_b` | `composite` | `parr<bool>.flag u32.pindex` | `bool.flag` | 2 | pm[i] |
+| F298 | `parr.get_b` | `composite` | `parr<bool>.flag u32.pindex` | `bool.flag` | 2 | pm[i] |
 
 ## class `bound`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F295 | `bound.m` | `composite` | `-` | `u32.boundm` | 0 | cfg.m |
-| F296 | `bound.d` | `composite` | `-` | `u32.boundd` | 0 | cfg.d |
-| F297 | `bound.rows` | `composite` | `-` | `u32.boundrows` | 0 | cfg.r_rows |
+| F299 | `bound.m` | `composite` | `-` | `u32.boundm` | 0 | cfg.m |
+| F300 | `bound.d` | `composite` | `-` | `u32.boundd` | 0 | cfg.d |
+| F301 | `bound.rows` | `composite` | `-` | `u32.boundrows` | 0 | cfg.r_rows |
 
 ## class `literal`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F298 | `literal.lit64` | `Literal` | `-` | `u32.lit64` | 0 | a literal snapped into 1..=64 |
-| F299 | `literal.lit4096` | `Literal` | `-` | `u32.lit4096` | 0 | a literal snapped into 1..=4096 |
+| F302 | `literal.lit64` | `Literal` | `-` | `u32.lit64` | 0 | a literal snapped into 1..=64 |
+| F303 | `literal.lit4096` | `Literal` | `-` | `u32.lit4096` | 0 | a literal snapped into 1..=4096 |
 
 ## class `safe`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F300 | `safe.lt_boundm` | `Binary::Less` | `u32.counter u32.boundm` | `bool.bound` | 2 | the only producer of a loop condition |
-| F301 | `safe.lt_boundd` | `Binary::Less` | `u32.counter u32.boundd` | `bool.bound` | 2 | the only producer of a loop condition |
-| F302 | `safe.lt_boundrows` | `Binary::Less` | `u32.counter u32.boundrows` | `bool.bound` | 2 | the only producer of a loop condition |
-| F303 | `safe.lt_lit4096` | `Binary::Less` | `u32.counter u32.lit4096` | `bool.bound` | 2 | the only producer of a loop condition |
-| F304 | `safe.lt_lit64` | `Binary::Less` | `u32.tcounter u32.lit64` | `bool.bound` | 2 | a tile loop's condition |
-| F305 | `safe.lt_lit64_2` | `Binary::Less` | `u32.tcounter2 u32.lit64` | `bool.bound` | 2 | an inner tile loop's condition |
-| F306 | `safe.lt_lit64_3` | `Binary::Less` | `u32.tcounter3 u32.lit64` | `bool.bound` | 2 | a third nested tile loop's condition |
-| F307 | `safe.tile_counter3` | `composite` | `-` | `u32.tcounter3` | 0 | the third nested tile loop's counter k3 (0u outside it) |
-| F308 | `safe.tile_index3` | `composite` | `u32.tcounter3` | `u32.index` | 1 | the third tile counter as a plain index |
-| F309 | `safe.row_plus_tile3` | `composite` | `u32.threadrow u32.tcounter3` | `u32.threadrow` | 2 | row + min(k3, block rows - 1) |
-| F310 | `safe.col_plus_tile3` | `composite` | `u32.threadcol u32.tcounter3` | `u32.threadcol` | 2 | col + min(k3, block columns - 1) |
-| F311 | `safe.counter` | `composite` | `-` | `u32.counter` | 0 | the item loop's counter t (0u outside it) |
-| F312 | `safe.tile_counter` | `composite` | `-` | `u32.tcounter` | 0 | the tile loop's counter k (0u outside it) |
-| F313 | `safe.tile_counter2` | `composite` | `-` | `u32.tcounter2` | 0 | the inner tile loop's counter k2 (0u outside it) |
-| F314 | `safe.counter_index` | `composite` | `u32.counter` | `u32.index` | 1 | the item counter as a plain index |
-| F315 | `safe.tile_index` | `composite` | `u32.tcounter` | `u32.index` | 1 | the tile counter as a plain index |
-| F316 | `safe.tile_index2` | `composite` | `u32.tcounter2` | `u32.index` | 1 | the inner tile counter as a plain index |
-| F317 | `safe.row_plus_tile` | `composite` | `u32.threadrow u32.tcounter` | `u32.threadrow` | 2 | row + min(k, block rows - 1): still a row this thread owns |
-| F318 | `safe.col_plus_tile` | `composite` | `u32.threadcol u32.tcounter` | `u32.threadcol` | 2 | col + min(k, block columns - 1) |
-| F319 | `safe.row_plus_tile2` | `composite` | `u32.threadrow u32.tcounter2` | `u32.threadrow` | 2 | row + min(k2, block rows - 1) |
-| F320 | `safe.col_plus_tile2` | `composite` | `u32.threadcol u32.tcounter2` | `u32.threadcol` | 2 | col + min(k2, block columns - 1) |
-| F321 | `safe.thread_row` | `composite` | `vec3<u32>.index u32.blk` | `u32.threadrow` | 2 | gid.y * blk (+ i by the block row): a row this thread owns |
-| F322 | `safe.thread_col` | `composite` | `vec3<u32>.index u32.blk` | `u32.threadcol` | 2 | gid.x * blk (+ j by the block column): a column this thread owns |
-| F323 | `safe.thread_row_s` | `composite` | `vec3<u32>.index vec3<u32>.index u32.blk` | `u32.threadrow` | 3 | arity 3: wid.y * (Y * blk) + lid.y: the first row of a thread's STRIDED block (its rows Y apart) |
-| F324 | `safe.thread_col_s` | `composite` | `vec3<u32>.index vec3<u32>.index u32.blk` | `u32.threadcol` | 3 | arity 3: wid.x * (X * blk) + lid.x: the first column of a thread's strided block |
-| F325 | `safe.row_plus_s` | `composite` | `u32.threadrow u32.lit64` | `u32.threadrow` | 2 | row + min(i, blk - 1) * Y: the i-th row of a strided block |
-| F326 | `safe.col_plus_s` | `composite` | `u32.threadcol u32.lit64` | `u32.threadcol` | 2 | col + min(j, blk - 1) * X |
-| F327 | `safe.row_plus_tile_s` | `composite` | `u32.threadrow u32.tcounter` | `u32.threadrow` | 2 | row + min(k, blk - 1) * Y: the k-th row of a strided block |
-| F328 | `safe.col_plus_tile_s` | `composite` | `u32.threadcol u32.tcounter` | `u32.threadcol` | 2 | col + min(k, blk - 1) * X |
-| F329 | `safe.row_plus_tile2_s` | `composite` | `u32.threadrow u32.tcounter2` | `u32.threadrow` | 2 | row + min(k2, blk - 1) * Y |
-| F330 | `safe.col_plus_tile2_s` | `composite` | `u32.threadcol u32.tcounter2` | `u32.threadcol` | 2 | col + min(k2, blk - 1) * X |
-| F331 | `safe.row_plus_tile3_s` | `composite` | `u32.threadrow u32.tcounter3` | `u32.threadrow` | 2 | row + min(k3, blk - 1) * Y |
-| F332 | `safe.col_plus_tile3_s` | `composite` | `u32.threadcol u32.tcounter3` | `u32.threadcol` | 2 | col + min(k3, blk - 1) * X |
-| F333 | `safe.cell_of` | `composite` | `u32.threadrow u32.threadcol` | `u32.cell` | 2 | row * cfg.d + col, the cell this thread owns; the only index store.h accepts |
-| F334 | `safe.phi_of` | `composite` | `u32.counter u32.index` | `u32.phi` | 2 | unused (a load of phi takes any index); kept so earlier refs stand |
-| F335 | `safe.wg_of` | `composite` | `u32.index` | `u32.wgindex` | 1 | i & 2047u, in range by construction |
-| F336 | `safe.row_plus` | `composite` | `u32.threadrow u32.lit64` | `u32.threadrow` | 2 | row + min(i, block rows - 1) |
-| F337 | `safe.col_plus` | `composite` | `u32.threadcol u32.lit64` | `u32.threadcol` | 2 | col + min(j, block columns - 1) |
-| F338 | `safe.row_as_index` | `composite` | `u32.threadrow` | `u32.index` | 1 |  |
-| F339 | `safe.col_as_index` | `composite` | `u32.threadcol` | `u32.index` | 1 |  |
+| F304 | `safe.lt_boundm` | `Binary::Less` | `u32.counter u32.boundm` | `bool.bound` | 2 | the only producer of a loop condition |
+| F305 | `safe.lt_boundd` | `Binary::Less` | `u32.counter u32.boundd` | `bool.bound` | 2 | the only producer of a loop condition |
+| F306 | `safe.lt_boundrows` | `Binary::Less` | `u32.counter u32.boundrows` | `bool.bound` | 2 | the only producer of a loop condition |
+| F307 | `safe.lt_lit4096` | `Binary::Less` | `u32.counter u32.lit4096` | `bool.bound` | 2 | the only producer of a loop condition |
+| F308 | `safe.lt_lit64` | `Binary::Less` | `u32.tcounter u32.lit64` | `bool.bound` | 2 | a tile loop's condition |
+| F309 | `safe.lt_lit64_2` | `Binary::Less` | `u32.tcounter2 u32.lit64` | `bool.bound` | 2 | an inner tile loop's condition |
+| F310 | `safe.lt_lit64_3` | `Binary::Less` | `u32.tcounter3 u32.lit64` | `bool.bound` | 2 | a third nested tile loop's condition |
+| F311 | `safe.tile_counter3` | `composite` | `-` | `u32.tcounter3` | 0 | the third nested tile loop's counter k3 (0u outside it) |
+| F312 | `safe.tile_index3` | `composite` | `u32.tcounter3` | `u32.index` | 1 | the third tile counter as a plain index |
+| F313 | `safe.row_plus_tile3` | `composite` | `u32.threadrow u32.tcounter3` | `u32.threadrow` | 2 | row + min(k3, block rows - 1) |
+| F314 | `safe.col_plus_tile3` | `composite` | `u32.threadcol u32.tcounter3` | `u32.threadcol` | 2 | col + min(k3, block columns - 1) |
+| F315 | `safe.counter` | `composite` | `-` | `u32.counter` | 0 | the item loop's counter t (0u outside it) |
+| F316 | `safe.tile_counter` | `composite` | `-` | `u32.tcounter` | 0 | the tile loop's counter k (0u outside it) |
+| F317 | `safe.tile_counter2` | `composite` | `-` | `u32.tcounter2` | 0 | the inner tile loop's counter k2 (0u outside it) |
+| F318 | `safe.counter_index` | `composite` | `u32.counter` | `u32.index` | 1 | the item counter as a plain index |
+| F319 | `safe.tile_index` | `composite` | `u32.tcounter` | `u32.index` | 1 | the tile counter as a plain index |
+| F320 | `safe.tile_index2` | `composite` | `u32.tcounter2` | `u32.index` | 1 | the inner tile counter as a plain index |
+| F321 | `safe.row_plus_tile` | `composite` | `u32.threadrow u32.tcounter` | `u32.threadrow` | 2 | row + min(k, block rows - 1): still a row this thread owns |
+| F322 | `safe.col_plus_tile` | `composite` | `u32.threadcol u32.tcounter` | `u32.threadcol` | 2 | col + min(k, block columns - 1) |
+| F323 | `safe.row_plus_tile2` | `composite` | `u32.threadrow u32.tcounter2` | `u32.threadrow` | 2 | row + min(k2, block rows - 1) |
+| F324 | `safe.col_plus_tile2` | `composite` | `u32.threadcol u32.tcounter2` | `u32.threadcol` | 2 | col + min(k2, block columns - 1) |
+| F325 | `safe.thread_row` | `composite` | `vec3<u32>.index u32.blk` | `u32.threadrow` | 2 | gid.y * blk (+ i by the block row): a row this thread owns |
+| F326 | `safe.thread_col` | `composite` | `vec3<u32>.index u32.blk` | `u32.threadcol` | 2 | gid.x * blk (+ j by the block column): a column this thread owns |
+| F327 | `safe.thread_row_s` | `composite` | `vec3<u32>.index vec3<u32>.index u32.blk` | `u32.threadrow` | 3 | arity 3: wid.y * (Y * blk) + lid.y: the first row of a thread's STRIDED block (its rows Y apart) |
+| F328 | `safe.thread_col_s` | `composite` | `vec3<u32>.index vec3<u32>.index u32.blk` | `u32.threadcol` | 3 | arity 3: wid.x * (X * blk) + lid.x: the first column of a thread's strided block |
+| F329 | `safe.row_plus_s` | `composite` | `u32.threadrow u32.lit64` | `u32.threadrow` | 2 | row + min(i, blk - 1) * Y: the i-th row of a strided block |
+| F330 | `safe.col_plus_s` | `composite` | `u32.threadcol u32.lit64` | `u32.threadcol` | 2 | col + min(j, blk - 1) * X |
+| F331 | `safe.row_plus_tile_s` | `composite` | `u32.threadrow u32.tcounter` | `u32.threadrow` | 2 | row + min(k, blk - 1) * Y: the k-th row of a strided block |
+| F332 | `safe.col_plus_tile_s` | `composite` | `u32.threadcol u32.tcounter` | `u32.threadcol` | 2 | col + min(k, blk - 1) * X |
+| F333 | `safe.row_plus_tile2_s` | `composite` | `u32.threadrow u32.tcounter2` | `u32.threadrow` | 2 | row + min(k2, blk - 1) * Y |
+| F334 | `safe.col_plus_tile2_s` | `composite` | `u32.threadcol u32.tcounter2` | `u32.threadcol` | 2 | col + min(k2, blk - 1) * X |
+| F335 | `safe.row_plus_tile3_s` | `composite` | `u32.threadrow u32.tcounter3` | `u32.threadrow` | 2 | row + min(k3, blk - 1) * Y |
+| F336 | `safe.col_plus_tile3_s` | `composite` | `u32.threadcol u32.tcounter3` | `u32.threadcol` | 2 | col + min(k3, blk - 1) * X |
+| F337 | `safe.cell_of` | `composite` | `u32.threadrow u32.threadcol` | `u32.cell` | 2 | row * cfg.d + col, the cell this thread owns; the only index store.h accepts |
+| F338 | `safe.phi_of` | `composite` | `u32.counter u32.index` | `u32.phi` | 2 | unused (a load of phi takes any index); kept so earlier refs stand |
+| F339 | `safe.wg_of` | `composite` | `u32.index` | `u32.wgindex` | 1 | i & 2047u, in range by construction |
+| F340 | `safe.row_plus` | `composite` | `u32.threadrow u32.lit64` | `u32.threadrow` | 2 | row + min(i, block rows - 1) |
+| F341 | `safe.col_plus` | `composite` | `u32.threadcol u32.lit64` | `u32.threadcol` | 2 | col + min(j, block columns - 1) |
+| F342 | `safe.row_as_index` | `composite` | `u32.threadrow` | `u32.index` | 1 |  |
+| F343 | `safe.col_as_index` | `composite` | `u32.threadcol` | `u32.index` | 1 |  |
 
 ## class `block`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F340 | `block.one_L0` | `composite` | `stmt.L0` | `block.L0` | 1 |  |
-| F341 | `block.seq2_L0` | `composite` | `stmt.L0 stmt.L0` | `block.L0` | 2 |  |
-| F342 | `block.seq3_L0` | `composite` | `stmt.L0 stmt.L0 stmt.L0` | `block.L0` | 3 | arity 3 |
-| F343 | `block.seq4_L0` | `composite` | `stmt.L0 stmt.L0 stmt.L0 stmt.L0` | `block.L0` | 4 | arity 4 |
+| F344 | `block.one_L0` | `composite` | `stmt.L0` | `block.L0` | 1 |  |
+| F345 | `block.seq2_L0` | `composite` | `stmt.L0 stmt.L0` | `block.L0` | 2 |  |
+| F346 | `block.seq3_L0` | `composite` | `stmt.L0 stmt.L0 stmt.L0` | `block.L0` | 3 | arity 3 |
+| F347 | `block.seq4_L0` | `composite` | `stmt.L0 stmt.L0 stmt.L0 stmt.L0` | `block.L0` | 4 | arity 4 |
 
 ## class `stmt`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F344 | `stmt.block_L0` | `composite` | `block.L0` | `stmt.L0` | 1 | { ... } |
-| F345 | `stmt.return_L0` | `composite` | `-` | `stmt.L0` | 0 | return; never in a conditional context |
+| F348 | `stmt.block_L0` | `composite` | `block.L0` | `stmt.L0` | 1 | { ... } |
+| F349 | `stmt.return_L0` | `composite` | `-` | `stmt.L0` | 0 | return; never in a conditional context |
 
 ## class `reg`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F346 | `reg.set_f_L0` | `composite` | `reg<f32>.real f32.real` | `stmt.L0` | 2 |  |
-| F347 | `reg.set_v_L0` | `composite` | `reg<vec4<f32>>.real vec4<f32>.real` | `stmt.L0` | 2 |  |
-| F348 | `reg.set_i_L0` | `composite` | `reg<u32>.index u32.index` | `stmt.L0` | 2 |  |
-| F349 | `reg.set_b_L0` | `composite` | `reg<bool>.flag bool.flag` | `stmt.L0` | 2 |  |
+| F350 | `reg.set_f_L0` | `composite` | `reg<f32>.real f32.real` | `stmt.L0` | 2 |  |
+| F351 | `reg.set_v_L0` | `composite` | `reg<vec4<f32>>.real vec4<f32>.real` | `stmt.L0` | 2 |  |
+| F352 | `reg.set_i_L0` | `composite` | `reg<u32>.index u32.index` | `stmt.L0` | 2 |  |
+| F353 | `reg.set_b_L0` | `composite` | `reg<bool>.flag bool.flag` | `stmt.L0` | 2 |  |
 
 ## class `wg`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F350 | `wg.set_L0` | `composite` | `wgmem<f32>.real u32.wgindex f32.real` | `stmt.L0` | 3 | arity 3; the index is in range by its type |
-| F351 | `wg.set_v_L0` | `composite` | `wgmem<vec4<f32>>.real u32.wgvindex vec4<f32>.real` | `stmt.L0` | 3 | arity 3: va[i] = v |
+| F354 | `wg.set_L0` | `composite` | `wgmem<f32>.real u32.wgindex f32.real` | `stmt.L0` | 3 | arity 3; the index is in range by its type |
+| F355 | `wg.set_v_L0` | `composite` | `wgmem<vec4<f32>>.real u32.wgvindex vec4<f32>.real` | `stmt.L0` | 3 | arity 3: va[i] = v |
 
 ## class `parr`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F352 | `parr.set_f_L0` | `composite` | `parr<f32>.real u32.pindex f32.real` | `stmt.L0` | 3 | arity 3: pa[i] = v |
-| F353 | `parr.set_v_L0` | `composite` | `parr<vec4<f32>>.real u32.pindex vec4<f32>.real` | `stmt.L0` | 3 | arity 3: pv[i] = v |
-| F354 | `parr.set_i_L0` | `composite` | `parr<u32>.index u32.pindex u32.index` | `stmt.L0` | 3 | arity 3: pi[i] = v |
-| F355 | `parr.set_b_L0` | `composite` | `parr<bool>.flag u32.pindex bool.flag` | `stmt.L0` | 3 | arity 3: pm[i] = v |
+| F356 | `parr.set_f_L0` | `composite` | `parr<f32>.real u32.pindex f32.real` | `stmt.L0` | 3 | arity 3: pa[i] = v |
+| F357 | `parr.set_v_L0` | `composite` | `parr<vec4<f32>>.real u32.pindex vec4<f32>.real` | `stmt.L0` | 3 | arity 3: pv[i] = v |
+| F358 | `parr.set_i_L0` | `composite` | `parr<u32>.index u32.pindex u32.index` | `stmt.L0` | 3 | arity 3: pi[i] = v |
+| F359 | `parr.set_b_L0` | `composite` | `parr<bool>.flag u32.pindex bool.flag` | `stmt.L0` | 3 | arity 3: pm[i] = v |
 
 ## class `store`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F356 | `store.h_L0` | `composite` | `u32.cell f32.real` | `stmt.L0` | 2 | h[cell] = h[cell] + v: read-add-write of a cell this thread owns |
+| F360 | `store.h_L0` | `composite` | `u32.cell f32.real` | `stmt.L0` | 2 | h[cell] = h[cell] + v: read-add-write of a cell this thread owns |
 
 ## class `stmt`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F357 | `stmt.if_L0` | `composite` | `bool.flag block.C0` | `stmt.L0` | 2 | if (c) { ... }: the body is a conditional context |
-| F358 | `stmt.if_else_L0` | `composite` | `bool.flag block.C0 block.C0` | `stmt.L0` | 3 | arity 3 |
+| F361 | `stmt.if_L0` | `composite` | `bool.flag block.C0` | `stmt.L0` | 2 | if (c) { ... }: the body is a conditional context |
+| F362 | `stmt.if_else_L0` | `composite` | `bool.flag block.C0 block.C0` | `stmt.L0` | 3 | arity 3 |
 
 ## class `block`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F359 | `block.one_L1` | `composite` | `stmt.L1` | `block.L1` | 1 |  |
-| F360 | `block.seq2_L1` | `composite` | `stmt.L1 stmt.L1` | `block.L1` | 2 |  |
-| F361 | `block.seq3_L1` | `composite` | `stmt.L1 stmt.L1 stmt.L1` | `block.L1` | 3 | arity 3 |
-| F362 | `block.seq4_L1` | `composite` | `stmt.L1 stmt.L1 stmt.L1 stmt.L1` | `block.L1` | 4 | arity 4 |
+| F363 | `block.one_L1` | `composite` | `stmt.L1` | `block.L1` | 1 |  |
+| F364 | `block.seq2_L1` | `composite` | `stmt.L1 stmt.L1` | `block.L1` | 2 |  |
+| F365 | `block.seq3_L1` | `composite` | `stmt.L1 stmt.L1 stmt.L1` | `block.L1` | 3 | arity 3 |
+| F366 | `block.seq4_L1` | `composite` | `stmt.L1 stmt.L1 stmt.L1 stmt.L1` | `block.L1` | 4 | arity 4 |
 
 ## class `stmt`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F363 | `stmt.block_L1` | `composite` | `block.L1` | `stmt.L1` | 1 | { ... } |
-| F364 | `stmt.return_L1` | `composite` | `-` | `stmt.L1` | 0 | return; never in a conditional context |
+| F367 | `stmt.block_L1` | `composite` | `block.L1` | `stmt.L1` | 1 | { ... } |
+| F368 | `stmt.return_L1` | `composite` | `-` | `stmt.L1` | 0 | return; never in a conditional context |
 
 ## class `reg`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F365 | `reg.set_f_L1` | `composite` | `reg<f32>.real f32.real` | `stmt.L1` | 2 |  |
-| F366 | `reg.set_v_L1` | `composite` | `reg<vec4<f32>>.real vec4<f32>.real` | `stmt.L1` | 2 |  |
-| F367 | `reg.set_i_L1` | `composite` | `reg<u32>.index u32.index` | `stmt.L1` | 2 |  |
-| F368 | `reg.set_b_L1` | `composite` | `reg<bool>.flag bool.flag` | `stmt.L1` | 2 |  |
+| F369 | `reg.set_f_L1` | `composite` | `reg<f32>.real f32.real` | `stmt.L1` | 2 |  |
+| F370 | `reg.set_v_L1` | `composite` | `reg<vec4<f32>>.real vec4<f32>.real` | `stmt.L1` | 2 |  |
+| F371 | `reg.set_i_L1` | `composite` | `reg<u32>.index u32.index` | `stmt.L1` | 2 |  |
+| F372 | `reg.set_b_L1` | `composite` | `reg<bool>.flag bool.flag` | `stmt.L1` | 2 |  |
 
 ## class `wg`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F369 | `wg.set_L1` | `composite` | `wgmem<f32>.real u32.wgindex f32.real` | `stmt.L1` | 3 | arity 3; the index is in range by its type |
-| F370 | `wg.set_v_L1` | `composite` | `wgmem<vec4<f32>>.real u32.wgvindex vec4<f32>.real` | `stmt.L1` | 3 | arity 3: va[i] = v |
+| F373 | `wg.set_L1` | `composite` | `wgmem<f32>.real u32.wgindex f32.real` | `stmt.L1` | 3 | arity 3; the index is in range by its type |
+| F374 | `wg.set_v_L1` | `composite` | `wgmem<vec4<f32>>.real u32.wgvindex vec4<f32>.real` | `stmt.L1` | 3 | arity 3: va[i] = v |
 
 ## class `parr`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F371 | `parr.set_f_L1` | `composite` | `parr<f32>.real u32.pindex f32.real` | `stmt.L1` | 3 | arity 3: pa[i] = v |
-| F372 | `parr.set_v_L1` | `composite` | `parr<vec4<f32>>.real u32.pindex vec4<f32>.real` | `stmt.L1` | 3 | arity 3: pv[i] = v |
-| F373 | `parr.set_i_L1` | `composite` | `parr<u32>.index u32.pindex u32.index` | `stmt.L1` | 3 | arity 3: pi[i] = v |
-| F374 | `parr.set_b_L1` | `composite` | `parr<bool>.flag u32.pindex bool.flag` | `stmt.L1` | 3 | arity 3: pm[i] = v |
+| F375 | `parr.set_f_L1` | `composite` | `parr<f32>.real u32.pindex f32.real` | `stmt.L1` | 3 | arity 3: pa[i] = v |
+| F376 | `parr.set_v_L1` | `composite` | `parr<vec4<f32>>.real u32.pindex vec4<f32>.real` | `stmt.L1` | 3 | arity 3: pv[i] = v |
+| F377 | `parr.set_i_L1` | `composite` | `parr<u32>.index u32.pindex u32.index` | `stmt.L1` | 3 | arity 3: pi[i] = v |
+| F378 | `parr.set_b_L1` | `composite` | `parr<bool>.flag u32.pindex bool.flag` | `stmt.L1` | 3 | arity 3: pm[i] = v |
 
 ## class `store`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F375 | `store.h_L1` | `composite` | `u32.cell f32.real` | `stmt.L1` | 2 | h[cell] = h[cell] + v: read-add-write of a cell this thread owns |
+| F379 | `store.h_L1` | `composite` | `u32.cell f32.real` | `stmt.L1` | 2 | h[cell] = h[cell] + v: read-add-write of a cell this thread owns |
 
 ## class `stmt`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F376 | `stmt.if_L1` | `composite` | `bool.flag block.C1` | `stmt.L1` | 2 | if (c) { ... }: the body is a conditional context |
-| F377 | `stmt.if_else_L1` | `composite` | `bool.flag block.C1 block.C1` | `stmt.L1` | 3 | arity 3 |
+| F380 | `stmt.if_L1` | `composite` | `bool.flag block.C1` | `stmt.L1` | 2 | if (c) { ... }: the body is a conditional context |
+| F381 | `stmt.if_else_L1` | `composite` | `bool.flag block.C1 block.C1` | `stmt.L1` | 3 | arity 3 |
 
 ## class `block`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F378 | `block.one_L2` | `composite` | `stmt.L2` | `block.L2` | 1 |  |
-| F379 | `block.seq2_L2` | `composite` | `stmt.L2 stmt.L2` | `block.L2` | 2 |  |
-| F380 | `block.seq3_L2` | `composite` | `stmt.L2 stmt.L2 stmt.L2` | `block.L2` | 3 | arity 3 |
-| F381 | `block.seq4_L2` | `composite` | `stmt.L2 stmt.L2 stmt.L2 stmt.L2` | `block.L2` | 4 | arity 4 |
+| F382 | `block.one_L2` | `composite` | `stmt.L2` | `block.L2` | 1 |  |
+| F383 | `block.seq2_L2` | `composite` | `stmt.L2 stmt.L2` | `block.L2` | 2 |  |
+| F384 | `block.seq3_L2` | `composite` | `stmt.L2 stmt.L2 stmt.L2` | `block.L2` | 3 | arity 3 |
+| F385 | `block.seq4_L2` | `composite` | `stmt.L2 stmt.L2 stmt.L2 stmt.L2` | `block.L2` | 4 | arity 4 |
 
 ## class `stmt`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F382 | `stmt.block_L2` | `composite` | `block.L2` | `stmt.L2` | 1 | { ... } |
-| F383 | `stmt.return_L2` | `composite` | `-` | `stmt.L2` | 0 | return; never in a conditional context |
+| F386 | `stmt.block_L2` | `composite` | `block.L2` | `stmt.L2` | 1 | { ... } |
+| F387 | `stmt.return_L2` | `composite` | `-` | `stmt.L2` | 0 | return; never in a conditional context |
 
 ## class `reg`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F384 | `reg.set_f_L2` | `composite` | `reg<f32>.real f32.real` | `stmt.L2` | 2 |  |
-| F385 | `reg.set_v_L2` | `composite` | `reg<vec4<f32>>.real vec4<f32>.real` | `stmt.L2` | 2 |  |
-| F386 | `reg.set_i_L2` | `composite` | `reg<u32>.index u32.index` | `stmt.L2` | 2 |  |
-| F387 | `reg.set_b_L2` | `composite` | `reg<bool>.flag bool.flag` | `stmt.L2` | 2 |  |
+| F388 | `reg.set_f_L2` | `composite` | `reg<f32>.real f32.real` | `stmt.L2` | 2 |  |
+| F389 | `reg.set_v_L2` | `composite` | `reg<vec4<f32>>.real vec4<f32>.real` | `stmt.L2` | 2 |  |
+| F390 | `reg.set_i_L2` | `composite` | `reg<u32>.index u32.index` | `stmt.L2` | 2 |  |
+| F391 | `reg.set_b_L2` | `composite` | `reg<bool>.flag bool.flag` | `stmt.L2` | 2 |  |
 
 ## class `wg`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F388 | `wg.set_L2` | `composite` | `wgmem<f32>.real u32.wgindex f32.real` | `stmt.L2` | 3 | arity 3; the index is in range by its type |
-| F389 | `wg.set_v_L2` | `composite` | `wgmem<vec4<f32>>.real u32.wgvindex vec4<f32>.real` | `stmt.L2` | 3 | arity 3: va[i] = v |
+| F392 | `wg.set_L2` | `composite` | `wgmem<f32>.real u32.wgindex f32.real` | `stmt.L2` | 3 | arity 3; the index is in range by its type |
+| F393 | `wg.set_v_L2` | `composite` | `wgmem<vec4<f32>>.real u32.wgvindex vec4<f32>.real` | `stmt.L2` | 3 | arity 3: va[i] = v |
 
 ## class `parr`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F390 | `parr.set_f_L2` | `composite` | `parr<f32>.real u32.pindex f32.real` | `stmt.L2` | 3 | arity 3: pa[i] = v |
-| F391 | `parr.set_v_L2` | `composite` | `parr<vec4<f32>>.real u32.pindex vec4<f32>.real` | `stmt.L2` | 3 | arity 3: pv[i] = v |
-| F392 | `parr.set_i_L2` | `composite` | `parr<u32>.index u32.pindex u32.index` | `stmt.L2` | 3 | arity 3: pi[i] = v |
-| F393 | `parr.set_b_L2` | `composite` | `parr<bool>.flag u32.pindex bool.flag` | `stmt.L2` | 3 | arity 3: pm[i] = v |
+| F394 | `parr.set_f_L2` | `composite` | `parr<f32>.real u32.pindex f32.real` | `stmt.L2` | 3 | arity 3: pa[i] = v |
+| F395 | `parr.set_v_L2` | `composite` | `parr<vec4<f32>>.real u32.pindex vec4<f32>.real` | `stmt.L2` | 3 | arity 3: pv[i] = v |
+| F396 | `parr.set_i_L2` | `composite` | `parr<u32>.index u32.pindex u32.index` | `stmt.L2` | 3 | arity 3: pi[i] = v |
+| F397 | `parr.set_b_L2` | `composite` | `parr<bool>.flag u32.pindex bool.flag` | `stmt.L2` | 3 | arity 3: pm[i] = v |
 
 ## class `store`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F394 | `store.h_L2` | `composite` | `u32.cell f32.real` | `stmt.L2` | 2 | h[cell] = h[cell] + v: read-add-write of a cell this thread owns |
+| F398 | `store.h_L2` | `composite` | `u32.cell f32.real` | `stmt.L2` | 2 | h[cell] = h[cell] + v: read-add-write of a cell this thread owns |
 
 ## class `stmt`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F395 | `stmt.if_L2` | `composite` | `bool.flag block.C2` | `stmt.L2` | 2 | if (c) { ... }: the body is a conditional context |
-| F396 | `stmt.if_else_L2` | `composite` | `bool.flag block.C2 block.C2` | `stmt.L2` | 3 | arity 3 |
+| F399 | `stmt.if_L2` | `composite` | `bool.flag block.C2` | `stmt.L2` | 2 | if (c) { ... }: the body is a conditional context |
+| F400 | `stmt.if_else_L2` | `composite` | `bool.flag block.C2 block.C2` | `stmt.L2` | 3 | arity 3 |
 
 ## class `block`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F397 | `block.one_L3` | `composite` | `stmt.L3` | `block.L3` | 1 |  |
-| F398 | `block.seq2_L3` | `composite` | `stmt.L3 stmt.L3` | `block.L3` | 2 |  |
-| F399 | `block.seq3_L3` | `composite` | `stmt.L3 stmt.L3 stmt.L3` | `block.L3` | 3 | arity 3 |
-| F400 | `block.seq4_L3` | `composite` | `stmt.L3 stmt.L3 stmt.L3 stmt.L3` | `block.L3` | 4 | arity 4 |
+| F401 | `block.one_L3` | `composite` | `stmt.L3` | `block.L3` | 1 |  |
+| F402 | `block.seq2_L3` | `composite` | `stmt.L3 stmt.L3` | `block.L3` | 2 |  |
+| F403 | `block.seq3_L3` | `composite` | `stmt.L3 stmt.L3 stmt.L3` | `block.L3` | 3 | arity 3 |
+| F404 | `block.seq4_L3` | `composite` | `stmt.L3 stmt.L3 stmt.L3 stmt.L3` | `block.L3` | 4 | arity 4 |
 
 ## class `stmt`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F401 | `stmt.block_L3` | `composite` | `block.L3` | `stmt.L3` | 1 | { ... } |
+| F405 | `stmt.block_L3` | `composite` | `block.L3` | `stmt.L3` | 1 | { ... } |
 
 ## class `reg`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F402 | `reg.set_f_L3` | `composite` | `reg<f32>.real f32.real` | `stmt.L3` | 2 |  |
-| F403 | `reg.set_v_L3` | `composite` | `reg<vec4<f32>>.real vec4<f32>.real` | `stmt.L3` | 2 |  |
-| F404 | `reg.set_i_L3` | `composite` | `reg<u32>.index u32.index` | `stmt.L3` | 2 |  |
-| F405 | `reg.set_b_L3` | `composite` | `reg<bool>.flag bool.flag` | `stmt.L3` | 2 |  |
+| F406 | `reg.set_f_L3` | `composite` | `reg<f32>.real f32.real` | `stmt.L3` | 2 |  |
+| F407 | `reg.set_v_L3` | `composite` | `reg<vec4<f32>>.real vec4<f32>.real` | `stmt.L3` | 2 |  |
+| F408 | `reg.set_i_L3` | `composite` | `reg<u32>.index u32.index` | `stmt.L3` | 2 |  |
+| F409 | `reg.set_b_L3` | `composite` | `reg<bool>.flag bool.flag` | `stmt.L3` | 2 |  |
 
 ## class `wg`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F406 | `wg.set_L3` | `composite` | `wgmem<f32>.real u32.wgindex f32.real` | `stmt.L3` | 3 | arity 3; the index is in range by its type |
-| F407 | `wg.set_v_L3` | `composite` | `wgmem<vec4<f32>>.real u32.wgvindex vec4<f32>.real` | `stmt.L3` | 3 | arity 3: va[i] = v |
+| F410 | `wg.set_L3` | `composite` | `wgmem<f32>.real u32.wgindex f32.real` | `stmt.L3` | 3 | arity 3; the index is in range by its type |
+| F411 | `wg.set_v_L3` | `composite` | `wgmem<vec4<f32>>.real u32.wgvindex vec4<f32>.real` | `stmt.L3` | 3 | arity 3: va[i] = v |
 
 ## class `parr`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F408 | `parr.set_f_L3` | `composite` | `parr<f32>.real u32.pindex f32.real` | `stmt.L3` | 3 | arity 3: pa[i] = v |
-| F409 | `parr.set_v_L3` | `composite` | `parr<vec4<f32>>.real u32.pindex vec4<f32>.real` | `stmt.L3` | 3 | arity 3: pv[i] = v |
-| F410 | `parr.set_i_L3` | `composite` | `parr<u32>.index u32.pindex u32.index` | `stmt.L3` | 3 | arity 3: pi[i] = v |
-| F411 | `parr.set_b_L3` | `composite` | `parr<bool>.flag u32.pindex bool.flag` | `stmt.L3` | 3 | arity 3: pm[i] = v |
+| F412 | `parr.set_f_L3` | `composite` | `parr<f32>.real u32.pindex f32.real` | `stmt.L3` | 3 | arity 3: pa[i] = v |
+| F413 | `parr.set_v_L3` | `composite` | `parr<vec4<f32>>.real u32.pindex vec4<f32>.real` | `stmt.L3` | 3 | arity 3: pv[i] = v |
+| F414 | `parr.set_i_L3` | `composite` | `parr<u32>.index u32.pindex u32.index` | `stmt.L3` | 3 | arity 3: pi[i] = v |
+| F415 | `parr.set_b_L3` | `composite` | `parr<bool>.flag u32.pindex bool.flag` | `stmt.L3` | 3 | arity 3: pm[i] = v |
 
 ## class `store`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F412 | `store.h_L3` | `composite` | `u32.cell f32.real` | `stmt.L3` | 2 | h[cell] = h[cell] + v: read-add-write of a cell this thread owns |
+| F416 | `store.h_L3` | `composite` | `u32.cell f32.real` | `stmt.L3` | 2 | h[cell] = h[cell] + v: read-add-write of a cell this thread owns |
 
 ## class `stmt`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F413 | `stmt.if_L3` | `composite` | `bool.flag block.C3` | `stmt.L3` | 2 | if (c) { ... }: the body is a conditional context |
-| F414 | `stmt.if_else_L3` | `composite` | `bool.flag block.C3 block.C3` | `stmt.L3` | 3 | arity 3 |
+| F417 | `stmt.if_L3` | `composite` | `bool.flag block.C3` | `stmt.L3` | 2 | if (c) { ... }: the body is a conditional context |
+| F418 | `stmt.if_else_L3` | `composite` | `bool.flag block.C3 block.C3` | `stmt.L3` | 3 | arity 3 |
 
 ## class `block`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F415 | `block.one_L4` | `composite` | `stmt.L4` | `block.L4` | 1 |  |
-| F416 | `block.seq2_L4` | `composite` | `stmt.L4 stmt.L4` | `block.L4` | 2 |  |
-| F417 | `block.seq3_L4` | `composite` | `stmt.L4 stmt.L4 stmt.L4` | `block.L4` | 3 | arity 3 |
-| F418 | `block.seq4_L4` | `composite` | `stmt.L4 stmt.L4 stmt.L4 stmt.L4` | `block.L4` | 4 | arity 4 |
+| F419 | `block.one_L4` | `composite` | `stmt.L4` | `block.L4` | 1 |  |
+| F420 | `block.seq2_L4` | `composite` | `stmt.L4 stmt.L4` | `block.L4` | 2 |  |
+| F421 | `block.seq3_L4` | `composite` | `stmt.L4 stmt.L4 stmt.L4` | `block.L4` | 3 | arity 3 |
+| F422 | `block.seq4_L4` | `composite` | `stmt.L4 stmt.L4 stmt.L4 stmt.L4` | `block.L4` | 4 | arity 4 |
 
 ## class `stmt`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F419 | `stmt.block_L4` | `composite` | `block.L4` | `stmt.L4` | 1 | { ... } |
+| F423 | `stmt.block_L4` | `composite` | `block.L4` | `stmt.L4` | 1 | { ... } |
 
 ## class `reg`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F420 | `reg.set_f_L4` | `composite` | `reg<f32>.real f32.real` | `stmt.L4` | 2 |  |
-| F421 | `reg.set_v_L4` | `composite` | `reg<vec4<f32>>.real vec4<f32>.real` | `stmt.L4` | 2 |  |
-| F422 | `reg.set_i_L4` | `composite` | `reg<u32>.index u32.index` | `stmt.L4` | 2 |  |
-| F423 | `reg.set_b_L4` | `composite` | `reg<bool>.flag bool.flag` | `stmt.L4` | 2 |  |
+| F424 | `reg.set_f_L4` | `composite` | `reg<f32>.real f32.real` | `stmt.L4` | 2 |  |
+| F425 | `reg.set_v_L4` | `composite` | `reg<vec4<f32>>.real vec4<f32>.real` | `stmt.L4` | 2 |  |
+| F426 | `reg.set_i_L4` | `composite` | `reg<u32>.index u32.index` | `stmt.L4` | 2 |  |
+| F427 | `reg.set_b_L4` | `composite` | `reg<bool>.flag bool.flag` | `stmt.L4` | 2 |  |
 
 ## class `wg`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F424 | `wg.set_L4` | `composite` | `wgmem<f32>.real u32.wgindex f32.real` | `stmt.L4` | 3 | arity 3; the index is in range by its type |
-| F425 | `wg.set_v_L4` | `composite` | `wgmem<vec4<f32>>.real u32.wgvindex vec4<f32>.real` | `stmt.L4` | 3 | arity 3: va[i] = v |
+| F428 | `wg.set_L4` | `composite` | `wgmem<f32>.real u32.wgindex f32.real` | `stmt.L4` | 3 | arity 3; the index is in range by its type |
+| F429 | `wg.set_v_L4` | `composite` | `wgmem<vec4<f32>>.real u32.wgvindex vec4<f32>.real` | `stmt.L4` | 3 | arity 3: va[i] = v |
 
 ## class `parr`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F426 | `parr.set_f_L4` | `composite` | `parr<f32>.real u32.pindex f32.real` | `stmt.L4` | 3 | arity 3: pa[i] = v |
-| F427 | `parr.set_v_L4` | `composite` | `parr<vec4<f32>>.real u32.pindex vec4<f32>.real` | `stmt.L4` | 3 | arity 3: pv[i] = v |
-| F428 | `parr.set_i_L4` | `composite` | `parr<u32>.index u32.pindex u32.index` | `stmt.L4` | 3 | arity 3: pi[i] = v |
-| F429 | `parr.set_b_L4` | `composite` | `parr<bool>.flag u32.pindex bool.flag` | `stmt.L4` | 3 | arity 3: pm[i] = v |
+| F430 | `parr.set_f_L4` | `composite` | `parr<f32>.real u32.pindex f32.real` | `stmt.L4` | 3 | arity 3: pa[i] = v |
+| F431 | `parr.set_v_L4` | `composite` | `parr<vec4<f32>>.real u32.pindex vec4<f32>.real` | `stmt.L4` | 3 | arity 3: pv[i] = v |
+| F432 | `parr.set_i_L4` | `composite` | `parr<u32>.index u32.pindex u32.index` | `stmt.L4` | 3 | arity 3: pi[i] = v |
+| F433 | `parr.set_b_L4` | `composite` | `parr<bool>.flag u32.pindex bool.flag` | `stmt.L4` | 3 | arity 3: pm[i] = v |
 
 ## class `store`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F430 | `store.h_L4` | `composite` | `u32.cell f32.real` | `stmt.L4` | 2 | h[cell] = h[cell] + v: read-add-write of a cell this thread owns |
+| F434 | `store.h_L4` | `composite` | `u32.cell f32.real` | `stmt.L4` | 2 | h[cell] = h[cell] + v: read-add-write of a cell this thread owns |
 
 ## class `stmt`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F431 | `stmt.if_L4` | `composite` | `bool.flag block.C4` | `stmt.L4` | 2 | if (c) { ... }: the body is a conditional context |
-| F432 | `stmt.if_else_L4` | `composite` | `bool.flag block.C4 block.C4` | `stmt.L4` | 3 | arity 3 |
+| F435 | `stmt.if_L4` | `composite` | `bool.flag block.C4` | `stmt.L4` | 2 | if (c) { ... }: the body is a conditional context |
+| F436 | `stmt.if_else_L4` | `composite` | `bool.flag block.C4 block.C4` | `stmt.L4` | 3 | arity 3 |
 
 ## class `block`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F433 | `block.one_C0` | `composite` | `stmt.C0` | `block.C0` | 1 |  |
-| F434 | `block.seq2_C0` | `composite` | `stmt.C0 stmt.C0` | `block.C0` | 2 |  |
-| F435 | `block.seq3_C0` | `composite` | `stmt.C0 stmt.C0 stmt.C0` | `block.C0` | 3 | arity 3 |
-| F436 | `block.seq4_C0` | `composite` | `stmt.C0 stmt.C0 stmt.C0 stmt.C0` | `block.C0` | 4 | arity 4 |
+| F437 | `block.one_C0` | `composite` | `stmt.C0` | `block.C0` | 1 |  |
+| F438 | `block.seq2_C0` | `composite` | `stmt.C0 stmt.C0` | `block.C0` | 2 |  |
+| F439 | `block.seq3_C0` | `composite` | `stmt.C0 stmt.C0 stmt.C0` | `block.C0` | 3 | arity 3 |
+| F440 | `block.seq4_C0` | `composite` | `stmt.C0 stmt.C0 stmt.C0 stmt.C0` | `block.C0` | 4 | arity 4 |
 
 ## class `stmt`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F437 | `stmt.block_C0` | `composite` | `block.C0` | `stmt.C0` | 1 | { ... } |
+| F441 | `stmt.block_C0` | `composite` | `block.C0` | `stmt.C0` | 1 | { ... } |
 
 ## class `reg`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F438 | `reg.set_f_C0` | `composite` | `reg<f32>.real f32.real` | `stmt.C0` | 2 |  |
-| F439 | `reg.set_v_C0` | `composite` | `reg<vec4<f32>>.real vec4<f32>.real` | `stmt.C0` | 2 |  |
-| F440 | `reg.set_i_C0` | `composite` | `reg<u32>.index u32.index` | `stmt.C0` | 2 |  |
-| F441 | `reg.set_b_C0` | `composite` | `reg<bool>.flag bool.flag` | `stmt.C0` | 2 |  |
+| F442 | `reg.set_f_C0` | `composite` | `reg<f32>.real f32.real` | `stmt.C0` | 2 |  |
+| F443 | `reg.set_v_C0` | `composite` | `reg<vec4<f32>>.real vec4<f32>.real` | `stmt.C0` | 2 |  |
+| F444 | `reg.set_i_C0` | `composite` | `reg<u32>.index u32.index` | `stmt.C0` | 2 |  |
+| F445 | `reg.set_b_C0` | `composite` | `reg<bool>.flag bool.flag` | `stmt.C0` | 2 |  |
 
 ## class `wg`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F442 | `wg.set_C0` | `composite` | `wgmem<f32>.real u32.wgindex f32.real` | `stmt.C0` | 3 | arity 3; the index is in range by its type |
-| F443 | `wg.set_v_C0` | `composite` | `wgmem<vec4<f32>>.real u32.wgvindex vec4<f32>.real` | `stmt.C0` | 3 | arity 3: va[i] = v |
+| F446 | `wg.set_C0` | `composite` | `wgmem<f32>.real u32.wgindex f32.real` | `stmt.C0` | 3 | arity 3; the index is in range by its type |
+| F447 | `wg.set_v_C0` | `composite` | `wgmem<vec4<f32>>.real u32.wgvindex vec4<f32>.real` | `stmt.C0` | 3 | arity 3: va[i] = v |
 
 ## class `parr`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F444 | `parr.set_f_C0` | `composite` | `parr<f32>.real u32.pindex f32.real` | `stmt.C0` | 3 | arity 3: pa[i] = v |
-| F445 | `parr.set_v_C0` | `composite` | `parr<vec4<f32>>.real u32.pindex vec4<f32>.real` | `stmt.C0` | 3 | arity 3: pv[i] = v |
-| F446 | `parr.set_i_C0` | `composite` | `parr<u32>.index u32.pindex u32.index` | `stmt.C0` | 3 | arity 3: pi[i] = v |
-| F447 | `parr.set_b_C0` | `composite` | `parr<bool>.flag u32.pindex bool.flag` | `stmt.C0` | 3 | arity 3: pm[i] = v |
+| F448 | `parr.set_f_C0` | `composite` | `parr<f32>.real u32.pindex f32.real` | `stmt.C0` | 3 | arity 3: pa[i] = v |
+| F449 | `parr.set_v_C0` | `composite` | `parr<vec4<f32>>.real u32.pindex vec4<f32>.real` | `stmt.C0` | 3 | arity 3: pv[i] = v |
+| F450 | `parr.set_i_C0` | `composite` | `parr<u32>.index u32.pindex u32.index` | `stmt.C0` | 3 | arity 3: pi[i] = v |
+| F451 | `parr.set_b_C0` | `composite` | `parr<bool>.flag u32.pindex bool.flag` | `stmt.C0` | 3 | arity 3: pm[i] = v |
 
 ## class `store`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F448 | `store.h_C0` | `composite` | `u32.cell f32.real` | `stmt.C0` | 2 | h[cell] = h[cell] + v: read-add-write of a cell this thread owns |
+| F452 | `store.h_C0` | `composite` | `u32.cell f32.real` | `stmt.C0` | 2 | h[cell] = h[cell] + v: read-add-write of a cell this thread owns |
 
 ## class `stmt`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F449 | `stmt.if_C0` | `composite` | `bool.flag block.C0` | `stmt.C0` | 2 | if (c) { ... }: the body is a conditional context |
-| F450 | `stmt.if_else_C0` | `composite` | `bool.flag block.C0 block.C0` | `stmt.C0` | 3 | arity 3 |
+| F453 | `stmt.if_C0` | `composite` | `bool.flag block.C0` | `stmt.C0` | 2 | if (c) { ... }: the body is a conditional context |
+| F454 | `stmt.if_else_C0` | `composite` | `bool.flag block.C0 block.C0` | `stmt.C0` | 3 | arity 3 |
 
 ## class `block`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F451 | `block.one_C1` | `composite` | `stmt.C1` | `block.C1` | 1 |  |
-| F452 | `block.seq2_C1` | `composite` | `stmt.C1 stmt.C1` | `block.C1` | 2 |  |
-| F453 | `block.seq3_C1` | `composite` | `stmt.C1 stmt.C1 stmt.C1` | `block.C1` | 3 | arity 3 |
-| F454 | `block.seq4_C1` | `composite` | `stmt.C1 stmt.C1 stmt.C1 stmt.C1` | `block.C1` | 4 | arity 4 |
+| F455 | `block.one_C1` | `composite` | `stmt.C1` | `block.C1` | 1 |  |
+| F456 | `block.seq2_C1` | `composite` | `stmt.C1 stmt.C1` | `block.C1` | 2 |  |
+| F457 | `block.seq3_C1` | `composite` | `stmt.C1 stmt.C1 stmt.C1` | `block.C1` | 3 | arity 3 |
+| F458 | `block.seq4_C1` | `composite` | `stmt.C1 stmt.C1 stmt.C1 stmt.C1` | `block.C1` | 4 | arity 4 |
 
 ## class `stmt`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F455 | `stmt.block_C1` | `composite` | `block.C1` | `stmt.C1` | 1 | { ... } |
+| F459 | `stmt.block_C1` | `composite` | `block.C1` | `stmt.C1` | 1 | { ... } |
 
 ## class `reg`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F456 | `reg.set_f_C1` | `composite` | `reg<f32>.real f32.real` | `stmt.C1` | 2 |  |
-| F457 | `reg.set_v_C1` | `composite` | `reg<vec4<f32>>.real vec4<f32>.real` | `stmt.C1` | 2 |  |
-| F458 | `reg.set_i_C1` | `composite` | `reg<u32>.index u32.index` | `stmt.C1` | 2 |  |
-| F459 | `reg.set_b_C1` | `composite` | `reg<bool>.flag bool.flag` | `stmt.C1` | 2 |  |
+| F460 | `reg.set_f_C1` | `composite` | `reg<f32>.real f32.real` | `stmt.C1` | 2 |  |
+| F461 | `reg.set_v_C1` | `composite` | `reg<vec4<f32>>.real vec4<f32>.real` | `stmt.C1` | 2 |  |
+| F462 | `reg.set_i_C1` | `composite` | `reg<u32>.index u32.index` | `stmt.C1` | 2 |  |
+| F463 | `reg.set_b_C1` | `composite` | `reg<bool>.flag bool.flag` | `stmt.C1` | 2 |  |
 
 ## class `wg`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F460 | `wg.set_C1` | `composite` | `wgmem<f32>.real u32.wgindex f32.real` | `stmt.C1` | 3 | arity 3; the index is in range by its type |
-| F461 | `wg.set_v_C1` | `composite` | `wgmem<vec4<f32>>.real u32.wgvindex vec4<f32>.real` | `stmt.C1` | 3 | arity 3: va[i] = v |
+| F464 | `wg.set_C1` | `composite` | `wgmem<f32>.real u32.wgindex f32.real` | `stmt.C1` | 3 | arity 3; the index is in range by its type |
+| F465 | `wg.set_v_C1` | `composite` | `wgmem<vec4<f32>>.real u32.wgvindex vec4<f32>.real` | `stmt.C1` | 3 | arity 3: va[i] = v |
 
 ## class `parr`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F462 | `parr.set_f_C1` | `composite` | `parr<f32>.real u32.pindex f32.real` | `stmt.C1` | 3 | arity 3: pa[i] = v |
-| F463 | `parr.set_v_C1` | `composite` | `parr<vec4<f32>>.real u32.pindex vec4<f32>.real` | `stmt.C1` | 3 | arity 3: pv[i] = v |
-| F464 | `parr.set_i_C1` | `composite` | `parr<u32>.index u32.pindex u32.index` | `stmt.C1` | 3 | arity 3: pi[i] = v |
-| F465 | `parr.set_b_C1` | `composite` | `parr<bool>.flag u32.pindex bool.flag` | `stmt.C1` | 3 | arity 3: pm[i] = v |
+| F466 | `parr.set_f_C1` | `composite` | `parr<f32>.real u32.pindex f32.real` | `stmt.C1` | 3 | arity 3: pa[i] = v |
+| F467 | `parr.set_v_C1` | `composite` | `parr<vec4<f32>>.real u32.pindex vec4<f32>.real` | `stmt.C1` | 3 | arity 3: pv[i] = v |
+| F468 | `parr.set_i_C1` | `composite` | `parr<u32>.index u32.pindex u32.index` | `stmt.C1` | 3 | arity 3: pi[i] = v |
+| F469 | `parr.set_b_C1` | `composite` | `parr<bool>.flag u32.pindex bool.flag` | `stmt.C1` | 3 | arity 3: pm[i] = v |
 
 ## class `store`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F466 | `store.h_C1` | `composite` | `u32.cell f32.real` | `stmt.C1` | 2 | h[cell] = h[cell] + v: read-add-write of a cell this thread owns |
+| F470 | `store.h_C1` | `composite` | `u32.cell f32.real` | `stmt.C1` | 2 | h[cell] = h[cell] + v: read-add-write of a cell this thread owns |
 
 ## class `stmt`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F467 | `stmt.if_C1` | `composite` | `bool.flag block.C1` | `stmt.C1` | 2 | if (c) { ... }: the body is a conditional context |
-| F468 | `stmt.if_else_C1` | `composite` | `bool.flag block.C1 block.C1` | `stmt.C1` | 3 | arity 3 |
+| F471 | `stmt.if_C1` | `composite` | `bool.flag block.C1` | `stmt.C1` | 2 | if (c) { ... }: the body is a conditional context |
+| F472 | `stmt.if_else_C1` | `composite` | `bool.flag block.C1 block.C1` | `stmt.C1` | 3 | arity 3 |
 
 ## class `block`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F469 | `block.one_C2` | `composite` | `stmt.C2` | `block.C2` | 1 |  |
-| F470 | `block.seq2_C2` | `composite` | `stmt.C2 stmt.C2` | `block.C2` | 2 |  |
-| F471 | `block.seq3_C2` | `composite` | `stmt.C2 stmt.C2 stmt.C2` | `block.C2` | 3 | arity 3 |
-| F472 | `block.seq4_C2` | `composite` | `stmt.C2 stmt.C2 stmt.C2 stmt.C2` | `block.C2` | 4 | arity 4 |
+| F473 | `block.one_C2` | `composite` | `stmt.C2` | `block.C2` | 1 |  |
+| F474 | `block.seq2_C2` | `composite` | `stmt.C2 stmt.C2` | `block.C2` | 2 |  |
+| F475 | `block.seq3_C2` | `composite` | `stmt.C2 stmt.C2 stmt.C2` | `block.C2` | 3 | arity 3 |
+| F476 | `block.seq4_C2` | `composite` | `stmt.C2 stmt.C2 stmt.C2 stmt.C2` | `block.C2` | 4 | arity 4 |
 
 ## class `stmt`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F473 | `stmt.block_C2` | `composite` | `block.C2` | `stmt.C2` | 1 | { ... } |
+| F477 | `stmt.block_C2` | `composite` | `block.C2` | `stmt.C2` | 1 | { ... } |
 
 ## class `reg`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F474 | `reg.set_f_C2` | `composite` | `reg<f32>.real f32.real` | `stmt.C2` | 2 |  |
-| F475 | `reg.set_v_C2` | `composite` | `reg<vec4<f32>>.real vec4<f32>.real` | `stmt.C2` | 2 |  |
-| F476 | `reg.set_i_C2` | `composite` | `reg<u32>.index u32.index` | `stmt.C2` | 2 |  |
-| F477 | `reg.set_b_C2` | `composite` | `reg<bool>.flag bool.flag` | `stmt.C2` | 2 |  |
+| F478 | `reg.set_f_C2` | `composite` | `reg<f32>.real f32.real` | `stmt.C2` | 2 |  |
+| F479 | `reg.set_v_C2` | `composite` | `reg<vec4<f32>>.real vec4<f32>.real` | `stmt.C2` | 2 |  |
+| F480 | `reg.set_i_C2` | `composite` | `reg<u32>.index u32.index` | `stmt.C2` | 2 |  |
+| F481 | `reg.set_b_C2` | `composite` | `reg<bool>.flag bool.flag` | `stmt.C2` | 2 |  |
 
 ## class `wg`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F478 | `wg.set_C2` | `composite` | `wgmem<f32>.real u32.wgindex f32.real` | `stmt.C2` | 3 | arity 3; the index is in range by its type |
-| F479 | `wg.set_v_C2` | `composite` | `wgmem<vec4<f32>>.real u32.wgvindex vec4<f32>.real` | `stmt.C2` | 3 | arity 3: va[i] = v |
+| F482 | `wg.set_C2` | `composite` | `wgmem<f32>.real u32.wgindex f32.real` | `stmt.C2` | 3 | arity 3; the index is in range by its type |
+| F483 | `wg.set_v_C2` | `composite` | `wgmem<vec4<f32>>.real u32.wgvindex vec4<f32>.real` | `stmt.C2` | 3 | arity 3: va[i] = v |
 
 ## class `parr`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F480 | `parr.set_f_C2` | `composite` | `parr<f32>.real u32.pindex f32.real` | `stmt.C2` | 3 | arity 3: pa[i] = v |
-| F481 | `parr.set_v_C2` | `composite` | `parr<vec4<f32>>.real u32.pindex vec4<f32>.real` | `stmt.C2` | 3 | arity 3: pv[i] = v |
-| F482 | `parr.set_i_C2` | `composite` | `parr<u32>.index u32.pindex u32.index` | `stmt.C2` | 3 | arity 3: pi[i] = v |
-| F483 | `parr.set_b_C2` | `composite` | `parr<bool>.flag u32.pindex bool.flag` | `stmt.C2` | 3 | arity 3: pm[i] = v |
+| F484 | `parr.set_f_C2` | `composite` | `parr<f32>.real u32.pindex f32.real` | `stmt.C2` | 3 | arity 3: pa[i] = v |
+| F485 | `parr.set_v_C2` | `composite` | `parr<vec4<f32>>.real u32.pindex vec4<f32>.real` | `stmt.C2` | 3 | arity 3: pv[i] = v |
+| F486 | `parr.set_i_C2` | `composite` | `parr<u32>.index u32.pindex u32.index` | `stmt.C2` | 3 | arity 3: pi[i] = v |
+| F487 | `parr.set_b_C2` | `composite` | `parr<bool>.flag u32.pindex bool.flag` | `stmt.C2` | 3 | arity 3: pm[i] = v |
 
 ## class `store`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F484 | `store.h_C2` | `composite` | `u32.cell f32.real` | `stmt.C2` | 2 | h[cell] = h[cell] + v: read-add-write of a cell this thread owns |
+| F488 | `store.h_C2` | `composite` | `u32.cell f32.real` | `stmt.C2` | 2 | h[cell] = h[cell] + v: read-add-write of a cell this thread owns |
 
 ## class `stmt`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F485 | `stmt.if_C2` | `composite` | `bool.flag block.C2` | `stmt.C2` | 2 | if (c) { ... }: the body is a conditional context |
-| F486 | `stmt.if_else_C2` | `composite` | `bool.flag block.C2 block.C2` | `stmt.C2` | 3 | arity 3 |
+| F489 | `stmt.if_C2` | `composite` | `bool.flag block.C2` | `stmt.C2` | 2 | if (c) { ... }: the body is a conditional context |
+| F490 | `stmt.if_else_C2` | `composite` | `bool.flag block.C2 block.C2` | `stmt.C2` | 3 | arity 3 |
 
 ## class `block`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F487 | `block.one_C3` | `composite` | `stmt.C3` | `block.C3` | 1 |  |
-| F488 | `block.seq2_C3` | `composite` | `stmt.C3 stmt.C3` | `block.C3` | 2 |  |
-| F489 | `block.seq3_C3` | `composite` | `stmt.C3 stmt.C3 stmt.C3` | `block.C3` | 3 | arity 3 |
-| F490 | `block.seq4_C3` | `composite` | `stmt.C3 stmt.C3 stmt.C3 stmt.C3` | `block.C3` | 4 | arity 4 |
+| F491 | `block.one_C3` | `composite` | `stmt.C3` | `block.C3` | 1 |  |
+| F492 | `block.seq2_C3` | `composite` | `stmt.C3 stmt.C3` | `block.C3` | 2 |  |
+| F493 | `block.seq3_C3` | `composite` | `stmt.C3 stmt.C3 stmt.C3` | `block.C3` | 3 | arity 3 |
+| F494 | `block.seq4_C3` | `composite` | `stmt.C3 stmt.C3 stmt.C3 stmt.C3` | `block.C3` | 4 | arity 4 |
 
 ## class `stmt`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F491 | `stmt.block_C3` | `composite` | `block.C3` | `stmt.C3` | 1 | { ... } |
+| F495 | `stmt.block_C3` | `composite` | `block.C3` | `stmt.C3` | 1 | { ... } |
 
 ## class `reg`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F492 | `reg.set_f_C3` | `composite` | `reg<f32>.real f32.real` | `stmt.C3` | 2 |  |
-| F493 | `reg.set_v_C3` | `composite` | `reg<vec4<f32>>.real vec4<f32>.real` | `stmt.C3` | 2 |  |
-| F494 | `reg.set_i_C3` | `composite` | `reg<u32>.index u32.index` | `stmt.C3` | 2 |  |
-| F495 | `reg.set_b_C3` | `composite` | `reg<bool>.flag bool.flag` | `stmt.C3` | 2 |  |
+| F496 | `reg.set_f_C3` | `composite` | `reg<f32>.real f32.real` | `stmt.C3` | 2 |  |
+| F497 | `reg.set_v_C3` | `composite` | `reg<vec4<f32>>.real vec4<f32>.real` | `stmt.C3` | 2 |  |
+| F498 | `reg.set_i_C3` | `composite` | `reg<u32>.index u32.index` | `stmt.C3` | 2 |  |
+| F499 | `reg.set_b_C3` | `composite` | `reg<bool>.flag bool.flag` | `stmt.C3` | 2 |  |
 
 ## class `wg`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F496 | `wg.set_C3` | `composite` | `wgmem<f32>.real u32.wgindex f32.real` | `stmt.C3` | 3 | arity 3; the index is in range by its type |
-| F497 | `wg.set_v_C3` | `composite` | `wgmem<vec4<f32>>.real u32.wgvindex vec4<f32>.real` | `stmt.C3` | 3 | arity 3: va[i] = v |
+| F500 | `wg.set_C3` | `composite` | `wgmem<f32>.real u32.wgindex f32.real` | `stmt.C3` | 3 | arity 3; the index is in range by its type |
+| F501 | `wg.set_v_C3` | `composite` | `wgmem<vec4<f32>>.real u32.wgvindex vec4<f32>.real` | `stmt.C3` | 3 | arity 3: va[i] = v |
 
 ## class `parr`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F498 | `parr.set_f_C3` | `composite` | `parr<f32>.real u32.pindex f32.real` | `stmt.C3` | 3 | arity 3: pa[i] = v |
-| F499 | `parr.set_v_C3` | `composite` | `parr<vec4<f32>>.real u32.pindex vec4<f32>.real` | `stmt.C3` | 3 | arity 3: pv[i] = v |
-| F500 | `parr.set_i_C3` | `composite` | `parr<u32>.index u32.pindex u32.index` | `stmt.C3` | 3 | arity 3: pi[i] = v |
-| F501 | `parr.set_b_C3` | `composite` | `parr<bool>.flag u32.pindex bool.flag` | `stmt.C3` | 3 | arity 3: pm[i] = v |
+| F502 | `parr.set_f_C3` | `composite` | `parr<f32>.real u32.pindex f32.real` | `stmt.C3` | 3 | arity 3: pa[i] = v |
+| F503 | `parr.set_v_C3` | `composite` | `parr<vec4<f32>>.real u32.pindex vec4<f32>.real` | `stmt.C3` | 3 | arity 3: pv[i] = v |
+| F504 | `parr.set_i_C3` | `composite` | `parr<u32>.index u32.pindex u32.index` | `stmt.C3` | 3 | arity 3: pi[i] = v |
+| F505 | `parr.set_b_C3` | `composite` | `parr<bool>.flag u32.pindex bool.flag` | `stmt.C3` | 3 | arity 3: pm[i] = v |
 
 ## class `store`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F502 | `store.h_C3` | `composite` | `u32.cell f32.real` | `stmt.C3` | 2 | h[cell] = h[cell] + v: read-add-write of a cell this thread owns |
+| F506 | `store.h_C3` | `composite` | `u32.cell f32.real` | `stmt.C3` | 2 | h[cell] = h[cell] + v: read-add-write of a cell this thread owns |
 
 ## class `stmt`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F503 | `stmt.if_C3` | `composite` | `bool.flag block.C3` | `stmt.C3` | 2 | if (c) { ... }: the body is a conditional context |
-| F504 | `stmt.if_else_C3` | `composite` | `bool.flag block.C3 block.C3` | `stmt.C3` | 3 | arity 3 |
+| F507 | `stmt.if_C3` | `composite` | `bool.flag block.C3` | `stmt.C3` | 2 | if (c) { ... }: the body is a conditional context |
+| F508 | `stmt.if_else_C3` | `composite` | `bool.flag block.C3 block.C3` | `stmt.C3` | 3 | arity 3 |
 
 ## class `block`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F505 | `block.one_C4` | `composite` | `stmt.C4` | `block.C4` | 1 |  |
-| F506 | `block.seq2_C4` | `composite` | `stmt.C4 stmt.C4` | `block.C4` | 2 |  |
-| F507 | `block.seq3_C4` | `composite` | `stmt.C4 stmt.C4 stmt.C4` | `block.C4` | 3 | arity 3 |
-| F508 | `block.seq4_C4` | `composite` | `stmt.C4 stmt.C4 stmt.C4 stmt.C4` | `block.C4` | 4 | arity 4 |
+| F509 | `block.one_C4` | `composite` | `stmt.C4` | `block.C4` | 1 |  |
+| F510 | `block.seq2_C4` | `composite` | `stmt.C4 stmt.C4` | `block.C4` | 2 |  |
+| F511 | `block.seq3_C4` | `composite` | `stmt.C4 stmt.C4 stmt.C4` | `block.C4` | 3 | arity 3 |
+| F512 | `block.seq4_C4` | `composite` | `stmt.C4 stmt.C4 stmt.C4 stmt.C4` | `block.C4` | 4 | arity 4 |
 
 ## class `stmt`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F509 | `stmt.block_C4` | `composite` | `block.C4` | `stmt.C4` | 1 | { ... } |
+| F513 | `stmt.block_C4` | `composite` | `block.C4` | `stmt.C4` | 1 | { ... } |
 
 ## class `reg`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F510 | `reg.set_f_C4` | `composite` | `reg<f32>.real f32.real` | `stmt.C4` | 2 |  |
-| F511 | `reg.set_v_C4` | `composite` | `reg<vec4<f32>>.real vec4<f32>.real` | `stmt.C4` | 2 |  |
-| F512 | `reg.set_i_C4` | `composite` | `reg<u32>.index u32.index` | `stmt.C4` | 2 |  |
-| F513 | `reg.set_b_C4` | `composite` | `reg<bool>.flag bool.flag` | `stmt.C4` | 2 |  |
+| F514 | `reg.set_f_C4` | `composite` | `reg<f32>.real f32.real` | `stmt.C4` | 2 |  |
+| F515 | `reg.set_v_C4` | `composite` | `reg<vec4<f32>>.real vec4<f32>.real` | `stmt.C4` | 2 |  |
+| F516 | `reg.set_i_C4` | `composite` | `reg<u32>.index u32.index` | `stmt.C4` | 2 |  |
+| F517 | `reg.set_b_C4` | `composite` | `reg<bool>.flag bool.flag` | `stmt.C4` | 2 |  |
 
 ## class `wg`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F514 | `wg.set_C4` | `composite` | `wgmem<f32>.real u32.wgindex f32.real` | `stmt.C4` | 3 | arity 3; the index is in range by its type |
-| F515 | `wg.set_v_C4` | `composite` | `wgmem<vec4<f32>>.real u32.wgvindex vec4<f32>.real` | `stmt.C4` | 3 | arity 3: va[i] = v |
+| F518 | `wg.set_C4` | `composite` | `wgmem<f32>.real u32.wgindex f32.real` | `stmt.C4` | 3 | arity 3; the index is in range by its type |
+| F519 | `wg.set_v_C4` | `composite` | `wgmem<vec4<f32>>.real u32.wgvindex vec4<f32>.real` | `stmt.C4` | 3 | arity 3: va[i] = v |
 
 ## class `parr`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F516 | `parr.set_f_C4` | `composite` | `parr<f32>.real u32.pindex f32.real` | `stmt.C4` | 3 | arity 3: pa[i] = v |
-| F517 | `parr.set_v_C4` | `composite` | `parr<vec4<f32>>.real u32.pindex vec4<f32>.real` | `stmt.C4` | 3 | arity 3: pv[i] = v |
-| F518 | `parr.set_i_C4` | `composite` | `parr<u32>.index u32.pindex u32.index` | `stmt.C4` | 3 | arity 3: pi[i] = v |
-| F519 | `parr.set_b_C4` | `composite` | `parr<bool>.flag u32.pindex bool.flag` | `stmt.C4` | 3 | arity 3: pm[i] = v |
+| F520 | `parr.set_f_C4` | `composite` | `parr<f32>.real u32.pindex f32.real` | `stmt.C4` | 3 | arity 3: pa[i] = v |
+| F521 | `parr.set_v_C4` | `composite` | `parr<vec4<f32>>.real u32.pindex vec4<f32>.real` | `stmt.C4` | 3 | arity 3: pv[i] = v |
+| F522 | `parr.set_i_C4` | `composite` | `parr<u32>.index u32.pindex u32.index` | `stmt.C4` | 3 | arity 3: pi[i] = v |
+| F523 | `parr.set_b_C4` | `composite` | `parr<bool>.flag u32.pindex bool.flag` | `stmt.C4` | 3 | arity 3: pm[i] = v |
 
 ## class `store`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F520 | `store.h_C4` | `composite` | `u32.cell f32.real` | `stmt.C4` | 2 | h[cell] = h[cell] + v: read-add-write of a cell this thread owns |
+| F524 | `store.h_C4` | `composite` | `u32.cell f32.real` | `stmt.C4` | 2 | h[cell] = h[cell] + v: read-add-write of a cell this thread owns |
 
 ## class `stmt`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F521 | `stmt.if_C4` | `composite` | `bool.flag block.C4` | `stmt.C4` | 2 | if (c) { ... }: the body is a conditional context |
-| F522 | `stmt.if_else_C4` | `composite` | `bool.flag block.C4 block.C4` | `stmt.C4` | 3 | arity 3 |
-| F523 | `stmt.barrier_L0` | `composite` | `-` | `stmt.L0` | 0 | workgroupBarrier(); never in a conditional context |
-| F524 | `stmt.barrier_L1` | `composite` | `-` | `stmt.L1` | 0 | workgroupBarrier(); never in a conditional context |
-| F525 | `stmt.barrier_L2` | `composite` | `-` | `stmt.L2` | 0 | workgroupBarrier(); never in a conditional context |
-| F526 | `stmt.barrier_L3` | `composite` | `-` | `stmt.L3` | 0 | workgroupBarrier(); never in a conditional context |
-| F527 | `stmt.barrier_L4` | `composite` | `-` | `stmt.L4` | 0 | workgroupBarrier(); never in a conditional context |
+| F525 | `stmt.if_C4` | `composite` | `bool.flag block.C4` | `stmt.C4` | 2 | if (c) { ... }: the body is a conditional context |
+| F526 | `stmt.if_else_C4` | `composite` | `bool.flag block.C4 block.C4` | `stmt.C4` | 3 | arity 3 |
+| F527 | `stmt.barrier_L0` | `composite` | `-` | `stmt.L0` | 0 | workgroupBarrier(); never in a conditional context |
+| F528 | `stmt.barrier_L1` | `composite` | `-` | `stmt.L1` | 0 | workgroupBarrier(); never in a conditional context |
+| F529 | `stmt.barrier_L2` | `composite` | `-` | `stmt.L2` | 0 | workgroupBarrier(); never in a conditional context |
+| F530 | `stmt.barrier_L3` | `composite` | `-` | `stmt.L3` | 0 | workgroupBarrier(); never in a conditional context |
+| F531 | `stmt.barrier_L4` | `composite` | `-` | `stmt.L4` | 0 | workgroupBarrier(); never in a conditional context |
 
 ## class `loop`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F528 | `loop.items_boundm` | `composite` | `u32.boundm block.L1` | `stmt.L0` | 2 | for (t = 0u; t < bound; t = t + 1u) { ... }: the one long loop |
-| F529 | `loop.items_unrolled_boundm` | `composite` | `u32.unroll u32.boundm block.L1` | `stmt.L0` | 3 | arity 3: the body k times, then the remainder |
-| F530 | `loop.items_strided_boundm` | `composite` | `u32.boundm u32.lit64 block.L1` | `stmt.L0` | 3 | arity 3: for (t = 0u; t < bound; t = t + stride): a tile of items per iteration, the stride a literal in 1..=64 |
-| F531 | `loop.items_boundd` | `composite` | `u32.boundd block.L1` | `stmt.L0` | 2 | for (t = 0u; t < bound; t = t + 1u) { ... }: the one long loop |
-| F532 | `loop.items_unrolled_boundd` | `composite` | `u32.unroll u32.boundd block.L1` | `stmt.L0` | 3 | arity 3: the body k times, then the remainder |
-| F533 | `loop.items_strided_boundd` | `composite` | `u32.boundd u32.lit64 block.L1` | `stmt.L0` | 3 | arity 3: for (t = 0u; t < bound; t = t + stride): a tile of items per iteration, the stride a literal in 1..=64 |
-| F534 | `loop.items_boundrows` | `composite` | `u32.boundrows block.L1` | `stmt.L0` | 2 | for (t = 0u; t < bound; t = t + 1u) { ... }: the one long loop |
-| F535 | `loop.items_unrolled_boundrows` | `composite` | `u32.unroll u32.boundrows block.L1` | `stmt.L0` | 3 | arity 3: the body k times, then the remainder |
-| F536 | `loop.items_strided_boundrows` | `composite` | `u32.boundrows u32.lit64 block.L1` | `stmt.L0` | 3 | arity 3: for (t = 0u; t < bound; t = t + stride): a tile of items per iteration, the stride a literal in 1..=64 |
-| F537 | `loop.tile_L0` | `composite` | `u32.lit64 block.L2` | `stmt.L0` | 2 | a short loop (counter k) at the top level |
-| F538 | `loop.tile_L1` | `composite` | `u32.lit64 block.L2` | `stmt.L1` | 2 | a short loop (counter k) inside the item loop |
-| F539 | `loop.tile_L2` | `composite` | `u32.lit64 block.L3` | `stmt.L2` | 2 | an inner short loop (counter k2) inside a tile loop; nothing produces a loop at L3 |
-| F540 | `loop.tile_C0` | `composite` | `u32.lit64 block.C1` | `stmt.C0` | 2 | a short loop (counter k) under a condition; its body stays conditional (no barrier) |
-| F541 | `loop.tile_C1` | `composite` | `u32.lit64 block.C2` | `stmt.C1` | 2 | a short loop (counter k) under a condition inside the item loop |
-| F542 | `loop.tile_C2` | `composite` | `u32.lit64 block.C3` | `stmt.C2` | 2 | an inner short loop (counter k2) under a condition inside a tile loop |
-| F543 | `loop.tile_L3` | `composite` | `u32.lit64 block.L4` | `stmt.L3` | 2 | a third nested short loop (counter k3); nothing produces a loop at L4 |
-| F544 | `loop.tile_C3` | `composite` | `u32.lit64 block.C4` | `stmt.C3` | 2 | a third nested short loop (counter k3) under a condition |
-| F545 | `loop.tile_strided_L0` | `composite` | `u32.lit64 u32.lit64 block.L2` | `stmt.L0` | 3 | arity 3: a short loop stepped by a literal (the counter of its depth) |
-| F546 | `loop.tile_strided_L1` | `composite` | `u32.lit64 u32.lit64 block.L2` | `stmt.L1` | 3 | arity 3: a short loop stepped by a literal (the counter of its depth) |
-| F547 | `loop.tile_strided_L2` | `composite` | `u32.lit64 u32.lit64 block.L3` | `stmt.L2` | 3 | arity 3: a short loop stepped by a literal (the counter of its depth) |
-| F548 | `loop.tile_strided_L3` | `composite` | `u32.lit64 u32.lit64 block.L4` | `stmt.L3` | 3 | arity 3: a short loop stepped by a literal (the counter of its depth) |
-| F549 | `loop.tile_strided_C0` | `composite` | `u32.lit64 u32.lit64 block.C1` | `stmt.C0` | 3 | arity 3: a short loop stepped by a literal (the counter of its depth) |
-| F550 | `loop.tile_strided_C1` | `composite` | `u32.lit64 u32.lit64 block.C2` | `stmt.C1` | 3 | arity 3: a short loop stepped by a literal (the counter of its depth) |
-| F551 | `loop.tile_strided_C2` | `composite` | `u32.lit64 u32.lit64 block.C3` | `stmt.C2` | 3 | arity 3: a short loop stepped by a literal (the counter of its depth) |
-| F552 | `loop.tile_strided_C3` | `composite` | `u32.lit64 u32.lit64 block.C4` | `stmt.C3` | 3 | arity 3: a short loop stepped by a literal (the counter of its depth) |
+| F532 | `loop.items_boundm` | `composite` | `u32.boundm block.L1` | `stmt.L0` | 2 | for (t = 0u; t < bound; t = t + 1u) { ... }: the one long loop |
+| F533 | `loop.items_unrolled_boundm` | `composite` | `u32.unroll u32.boundm block.L1` | `stmt.L0` | 3 | arity 3: the body k times, then the remainder |
+| F534 | `loop.items_strided_boundm` | `composite` | `u32.boundm u32.lit64 block.L1` | `stmt.L0` | 3 | arity 3: for (t = 0u; t < bound; t = t + stride): a tile of items per iteration, the stride a literal in 1..=64 |
+| F535 | `loop.items_boundd` | `composite` | `u32.boundd block.L1` | `stmt.L0` | 2 | for (t = 0u; t < bound; t = t + 1u) { ... }: the one long loop |
+| F536 | `loop.items_unrolled_boundd` | `composite` | `u32.unroll u32.boundd block.L1` | `stmt.L0` | 3 | arity 3: the body k times, then the remainder |
+| F537 | `loop.items_strided_boundd` | `composite` | `u32.boundd u32.lit64 block.L1` | `stmt.L0` | 3 | arity 3: for (t = 0u; t < bound; t = t + stride): a tile of items per iteration, the stride a literal in 1..=64 |
+| F538 | `loop.items_boundrows` | `composite` | `u32.boundrows block.L1` | `stmt.L0` | 2 | for (t = 0u; t < bound; t = t + 1u) { ... }: the one long loop |
+| F539 | `loop.items_unrolled_boundrows` | `composite` | `u32.unroll u32.boundrows block.L1` | `stmt.L0` | 3 | arity 3: the body k times, then the remainder |
+| F540 | `loop.items_strided_boundrows` | `composite` | `u32.boundrows u32.lit64 block.L1` | `stmt.L0` | 3 | arity 3: for (t = 0u; t < bound; t = t + stride): a tile of items per iteration, the stride a literal in 1..=64 |
+| F541 | `loop.tile_L0` | `composite` | `u32.lit64 block.L2` | `stmt.L0` | 2 | a short loop (counter k) at the top level |
+| F542 | `loop.tile_L1` | `composite` | `u32.lit64 block.L2` | `stmt.L1` | 2 | a short loop (counter k) inside the item loop |
+| F543 | `loop.tile_L2` | `composite` | `u32.lit64 block.L3` | `stmt.L2` | 2 | an inner short loop (counter k2) inside a tile loop; nothing produces a loop at L3 |
+| F544 | `loop.tile_C0` | `composite` | `u32.lit64 block.C1` | `stmt.C0` | 2 | a short loop (counter k) under a condition; its body stays conditional (no barrier) |
+| F545 | `loop.tile_C1` | `composite` | `u32.lit64 block.C2` | `stmt.C1` | 2 | a short loop (counter k) under a condition inside the item loop |
+| F546 | `loop.tile_C2` | `composite` | `u32.lit64 block.C3` | `stmt.C2` | 2 | an inner short loop (counter k2) under a condition inside a tile loop |
+| F547 | `loop.tile_L3` | `composite` | `u32.lit64 block.L4` | `stmt.L3` | 2 | a third nested short loop (counter k3); nothing produces a loop at L4 |
+| F548 | `loop.tile_C3` | `composite` | `u32.lit64 block.C4` | `stmt.C3` | 2 | a third nested short loop (counter k3) under a condition |
+| F549 | `loop.tile_strided_L0` | `composite` | `u32.lit64 u32.lit64 block.L2` | `stmt.L0` | 3 | arity 3: a short loop stepped by a literal (the counter of its depth) |
+| F550 | `loop.tile_strided_L1` | `composite` | `u32.lit64 u32.lit64 block.L2` | `stmt.L1` | 3 | arity 3: a short loop stepped by a literal (the counter of its depth) |
+| F551 | `loop.tile_strided_L2` | `composite` | `u32.lit64 u32.lit64 block.L3` | `stmt.L2` | 3 | arity 3: a short loop stepped by a literal (the counter of its depth) |
+| F552 | `loop.tile_strided_L3` | `composite` | `u32.lit64 u32.lit64 block.L4` | `stmt.L3` | 3 | arity 3: a short loop stepped by a literal (the counter of its depth) |
+| F553 | `loop.tile_strided_C0` | `composite` | `u32.lit64 u32.lit64 block.C1` | `stmt.C0` | 3 | arity 3: a short loop stepped by a literal (the counter of its depth) |
+| F554 | `loop.tile_strided_C1` | `composite` | `u32.lit64 u32.lit64 block.C2` | `stmt.C1` | 3 | arity 3: a short loop stepped by a literal (the counter of its depth) |
+| F555 | `loop.tile_strided_C2` | `composite` | `u32.lit64 u32.lit64 block.C3` | `stmt.C2` | 3 | arity 3: a short loop stepped by a literal (the counter of its depth) |
+| F556 | `loop.tile_strided_C3` | `composite` | `u32.lit64 u32.lit64 block.C4` | `stmt.C3` | 3 | arity 3: a short loop stepped by a literal (the counter of its depth) |
 
 ## class `kernel`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F553 | `kernel.entry_safe` | `composite` | `grid.grid block.L0` | `kernel.safe` | 2 | the safeWGSL kernel, the only producer of the root dual kernel.safe: its body is an L0 block |
+| F557 | `kernel.entry_safe` | `composite` | `grid.grid block.L0` | `kernel.safe` | 2 | the safeWGSL kernel, the only producer of the root dual kernel.safe: its body is an L0 block |
 
 ## class `load`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F554 | `load.phi_safe` | `composite` | `u32.index` | `f32.real` | 1 | phi[i]: any index, a read past the buffer is zero (WGSL's rule) |
-| F555 | `load.phi4_safe` | `composite` | `u32.index` | `vec4<f32>.real` | 1 | four consecutive values from an index |
-| F556 | `load.h_safe` | `composite` | `u32.cell` | `f32.real` | 1 | h[cell], the thread's own cell |
+| F558 | `load.phi_safe` | `composite` | `u32.index` | `f32.real` | 1 | phi[i]: any index, a read past the buffer is zero (WGSL's rule) |
+| F559 | `load.phi4_safe` | `composite` | `u32.index` | `vec4<f32>.real` | 1 | four consecutive values from an index |
+| F560 | `load.h_safe` | `composite` | `u32.cell` | `f32.real` | 1 | h[cell], the thread's own cell |
 
 ## class `wg`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F557 | `wg.get_safe` | `composite` | `wgmem<f32>.real u32.wgindex` | `f32.real` | 2 | a[i], in range by its type |
+| F561 | `wg.get_safe` | `composite` | `wgmem<f32>.real u32.wgindex` | `f32.real` | 2 | a[i], in range by its type |
 
-557 function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Deliberately absent: atomics, images, derivatives, subgroup operations, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.
+561 function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Deliberately absent: atomics, images, derivatives, subgroup operations, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.

@@ -965,6 +965,9 @@ pub fn read_safe(source: &str, kingdom: &WgslKingdom) -> Result<SafeRead, String
     let g = |n: &str, v: u32| Tree::literal(n, dual_ty(kingdom, if n == "literal.wgdim" { "u32.wgdim" } else { "u32.blk" }).expect("dual"), v as f32);
     let grid_tree = Tree::new("grid.of", dual_ty(kingdom, "grid.grid")?, vec![g("literal.wgdim", grid.0), g("literal.wgdim", grid.1), g("literal.blk", grid.2), g("literal.blk", grid.3)]);
     let tree = Tree::new("kernel.entry_safe", dual_ty(kingdom, "kernel.safe")?, vec![grid_tree, block]);
+    // Row-consistent: every node under the dual its parent's row demands.
+    let per_kernel = crate::wgsl::safe_karva::per_kernel_rows(kingdom, &crate::wgsl::render::gram_role());
+    let tree = crate::wgsl::safe_karva::conform(&tree, tree.ty, kingdom, &per_kernel)?;
     Ok(SafeRead { tree, notes: ctx.notes, registers: ctx.registers })
 }
 
@@ -988,7 +991,7 @@ mod tests {
         let r = read_safe(&src, &k).unwrap_or_else(|e| panic!("{e}"));
         let sx = r.tree.to_sexpr();
         assert!(sx.contains("loop.items_boundm"), "{sx}");
-        assert!(sx.contains("load.phi_safe (index.add (index.mul (safe.counter_index safe.counter) load.cfg_d)"), "{sx}");
+        assert!(sx.contains("load.phi_safe (index.add (index.mul (safe.counter_index safe.counter) (index.of_count load.cfg_d))"), "{sx}");
         assert!(sx.contains("store.h_C0 (safe.cell_of (safe.thread_row"), "{sx}");
         assert!(r.notes.iter().any(|n| n.contains("guard")), "{:?}", r.notes);
         let (t, role) = (FunctionTable::safe(), gram_role());
