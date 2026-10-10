@@ -74,6 +74,23 @@ impl Individual {
         Ok(r)
     }
 
+    /// Rebuild with function `i`'s genes given as decoded s-expressions in
+    /// the reader's form (head genes first, then the tail slots): the path
+    /// for a decoder that applies the typed projection itself (phylu's host
+    /// decoder renders this form).
+    pub fn rebuild_with_sexprs(&self, i: usize, decoded: &[String]) -> Result<Rebuilt, String> {
+        let c = self.chromosomes.get(i).ok_or_else(|| format!("no function {i}"))?;
+        let n_head = c.folded.head.len();
+        let n_tail = c.folded.tail.len();
+        if decoded.len() != n_head + n_tail {
+            return Err(format!("{}: {} genes given, the chromosome has {n_head} head and {n_tail} tail", c.function, decoded.len()));
+        }
+        let mut chromosomes = self.chromosomes.clone();
+        chromosomes[i].folded.head = decoded[..n_head].to_vec();
+        chromosomes[i].folded.tail = decoded[n_head..].to_vec();
+        self.with_header(rebuild_folded(&self.kernel, &chromosomes)?)
+    }
+
     /// The kernel rebuilt from its own genes, unchanged: the round trip.
     pub fn rebuild_self(&self) -> Result<Rebuilt, String> {
         let mut chromosomes = self.chromosomes.clone();
@@ -126,9 +143,13 @@ mod tests {
             if let Some(h) = &ind.header {
                 assert!(r.wgsl.starts_with(h), "{name}: {}", r.wgsl.lines().next().unwrap_or(""));
             }
-            // The same text from rebuild_with as from rebuild_self.
+            // The same text from rebuild_with as from rebuild_self, and from
+            // the s-expression path given the chromosome's own folded genes.
             let r2 = ind.rebuild_with(0, &genes).unwrap();
             assert_eq!(r.wgsl, r2.wgsl, "{name}");
+            let own: Vec<String> = ind.chromosomes[0].folded.head.iter().chain(ind.chromosomes[0].folded.tail.iter()).cloned().collect();
+            let r3 = ind.rebuild_with_sexprs(0, &own).unwrap();
+            assert_eq!(r.wgsl, r3.wgsl, "{name}");
         }
     }
 
