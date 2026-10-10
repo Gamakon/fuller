@@ -581,7 +581,7 @@ mod tests {
         }
         assert!(wrap(&mut t, &k));
         let heavy = vec![karva_text(&t)];
-        let e = rebuild_bounded(&heavy, 0, &k, Some(&bound)).err().expect("refused");
+        let e = rebuild_bounded(&heavy, 0, &k, Some(&bound)).expect_err("refused");
         assert!(e.starts_with("cost:"), "{e}");
         assert!(cost(&t).per_item > bound.per_item);
     }
