@@ -632,6 +632,9 @@ impl<'a> Gram<'a> {
 /// extrapolation pairs — and the TrueNorth angle θ = acos(1 − mean(x²))
 /// (phylu's `hff.wgsl`, lines 212–213). About ten seconds for a feasible
 /// individual, two for an infeasible one.
+/// An accuracy pair for the fast fitness: name, d, m, Φ, the f64 reference, the shipped kernel's largest ratio on it.
+pub type AccuracyPair = (String, usize, usize, Vec<f32>, Vec<f64>, f64);
+
 pub struct FitnessContext {
     pub probes: Vec<crate::wgsl::probes::Probe>,
     pub admission: Vec<usize>,
@@ -639,9 +642,9 @@ pub struct FitnessContext {
     /// The three timing shapes (d, m) and their Φ.
     pub timing: Vec<(usize, usize, Vec<f32>)>,
     /// Accuracy pairs by split: (name, d, m, phi, h_ref, shipped's max ratio).
-    pub train: Vec<(String, usize, usize, Vec<f32>, Vec<f64>, f64)>,
-    pub val: Vec<(String, usize, usize, Vec<f32>, Vec<f64>, f64)>,
-    pub extrap: Vec<(String, usize, usize, Vec<f32>, Vec<f64>, f64)>,
+    pub train: Vec<AccuracyPair>,
+    pub val: Vec<AccuracyPair>,
+    pub extrap: Vec<AccuracyPair>,
     pub limit: u64,
 }
 
@@ -678,7 +681,7 @@ impl FitnessContext {
         let limit = effective_buffer_limit(&dev.device);
         let shipped = Gram::compile(dev, SHIPPED)?;
         let sp = splits(cache)?;
-        let pick = |pairs: &[crate::wgsl::pairs::Pair], idx: &[usize]| -> Result<Vec<(String, usize, usize, Vec<f32>, Vec<f64>, f64)>, String> {
+        let pick = |pairs: &[crate::wgsl::pairs::Pair], idx: &[usize]| -> Result<Vec<AccuracyPair>, String> {
             idx.iter()
                 .map(|&i| {
                     let p = &pairs[i];
@@ -726,7 +729,7 @@ impl FitnessContext {
             Err(e) => return infeasible(passed, format!("shipped compile: {e}"), t),
         };
         // Accuracy columns: the worst error relative to shipped's, min(1, e / 2).
-        let worst = |pairs: &[(String, usize, usize, Vec<f32>, Vec<f64>, f64)]| -> Result<f64, String> {
+        let worst = |pairs: &[AccuracyPair]| -> Result<f64, String> {
             let mut w = 0.0f64;
             for (name, d, m, phi, h_ref, smax) in pairs {
                 let b = gram.build(phi, *d, *m, self.limit)?;
