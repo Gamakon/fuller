@@ -116,6 +116,8 @@ The kernel's rate does not depend on d or on the banding: the bench is the produ
 
 **The gate after the first measurement (2026-10-09, `logs/WGSL_GRAM/evolve_smoke.log`).** The shipped kernel itself fails τ on the duplicate kind (half the rows identical): max ratio 1.45 at d = 2,048, m = 8,192, and 1.40 on the validation pair of that kind. With identical terms the rounding is systematic and the random-walk model behind τ = 4 ε √m does not hold. The gate is therefore τ or twice the shipped kernel's own largest ratio on that pair, whichever is larger, with every non-finite cell still required to agree in class. ShapeDistance itself is unchanged; the HFF caps were already the shipped kernel's own errors.
 
+**Baseline after the restart (2026-10-10 15:30 UTC, `logs/WGSL_GRAM/baseline_after_restart.log`).** The shipped kernel at d = 2,048, m = 65,536: 1,015 ms per build (1,014, 1,018, 1,015), 271 G multiply-adds/s. Yesterday's 2,348 ms was measured under load (the machine at load average 4.7–7.7 at the time), and the later 8.4–9.5 s was an orphaned kernel still running on the GPU after its process was killed (device utilisation 100 % with no owner until the restart). The bench number everything is compared against is now 1,015 ms, and the production estimate at 271 G/s is 104 s, under the inventory's 130 s.
+
 ## 1b. Fitness: HFF over ShapeDistance
 
 A kernel is a map from an input dataset to an output dataset. Fitness is a distance between the output it produces and the output it should produce, over the same rows and columns, falling to zero when the kernel computes the dataset; the HFF angle over that distance on three splits, then speed. No parsimony column: validation does that work.
