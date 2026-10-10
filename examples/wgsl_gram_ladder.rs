@@ -3,7 +3,7 @@
 //!   rung 1  naga parses it
 //!   rung 2  naga validates it and Metal compiles it (the `// grid` header
 //!           checked against the shader's workgroup size)
-//!   rung 3  the 128 admission probes, then all 1,024 probes, then every
+//!   stage 3  the constraint's 128 test cases, then all 1,024, then every
 //!           training, validation and extrapolation pair under the
 //!           criterion (correct = every probe and every pair)
 //!   rung 4  paired timing against the shipped kernel on three shapes,
@@ -142,7 +142,7 @@ fn main() -> Result<(), String> {
         s.detail = "timing only (probes and pairs passed in an earlier run)".into();
         return rung4(&dev, &gram, limit, &cache_dir, rounds, &mut s, &ledger, &path, t_all);
     }
-    // Rung 3: probes, admission first.
+    // Stage 3: the constraint's test cases first.
     let all = probes(1);
     let adm = admission(&all, 1);
     let t = Instant::now();
@@ -158,10 +158,10 @@ fn main() -> Result<(), String> {
             first_fail = Some(format!("{} (distance {dist:.2e})", p.name));
         }
     }
-    println!("[{}] rung 3 admission probes: {passed}/{} in {:.1} s{}", stamp(), adm.len(), t.elapsed().as_secs_f64(), first_fail.as_ref().map(|f| format!("; first failure {f}")).unwrap_or_default());
+    println!("[{}] stage 3 constraint cases: {passed}/{} in {:.1} s{}", stamp(), adm.len(), t.elapsed().as_secs_f64(), first_fail.as_ref().map(|f| format!("; first failure {f}")).unwrap_or_default());
     s.probes_passed = passed;
     if passed < adm.len() {
-        s.detail = format!("admission {passed}/{}: {}", adm.len(), first_fail.unwrap_or_default());
+        s.detail = format!("constraint {passed}/{} cases: {}", adm.len(), first_fail.unwrap_or_default());
         return finish(&ledger, &path, &s, t_all);
     }
     let t = Instant::now();

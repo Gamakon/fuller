@@ -625,7 +625,7 @@ impl<'a> Gram<'a> {
 
 /// The fast fitness evaluation phylu calls per individual
 /// (`docs/PLAN_hgp_gram.md`, step 2 of the evolutionary loop): the
-/// constraint on the 128 admission test cases, then six columns scaled
+/// constraint on its 128 stratified test cases, then six columns scaled
 /// into [0, 1] with 0 best — the time ratio against the shipped kernel on
 /// three problem sizes (one paired round each), and the worst error
 /// relative to the shipped kernel's on a few training, validation and
@@ -651,7 +651,7 @@ pub struct FitnessContext {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Fitness {
     pub feasible: bool,
-    /// Admission cases passed, of 128.
+    /// Test cases of the constraint passed, of 128.
     pub passed: usize,
     /// The six columns in [0, 1], 0 best, when feasible.
     pub columns: [f64; 6],
@@ -722,7 +722,7 @@ impl FitnessContext {
             }
         }
         if passed < self.admission.len() {
-            return infeasible(passed, format!("admission {passed}/{}: {first_fail}", self.admission.len()), t);
+            return infeasible(passed, format!("constraint {passed}/{} cases: {first_fail}", self.admission.len()), t);
         }
         let shipped = match Gram::compile(dev, &self.shipped_source) {
             Ok(g) => g,
@@ -961,7 +961,7 @@ mod tests {
         assert!(b.feasible && b.hff < s.hff && b.speedups.iter().all(|x| *x > 2.0), "{b:?}");
         let broken = SHIPPED.replace("phi[base + gr] * phi[base + c]", "phi[base + gr]");
         let w = ctx.fitness(&dev, &broken);
-        assert!(!w.feasible && w.detail.starts_with("admission"), "{w:?}");
+        assert!(!w.feasible && w.detail.starts_with("constraint"), "{w:?}");
         println!("shipped {:.3} in {:.1} s; blocked {:.3} in {:.1} s; broken in {:.1} s", s.hff, s.seconds, b.hff, b.seconds, w.seconds);
     }
 

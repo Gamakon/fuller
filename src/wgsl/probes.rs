@@ -135,7 +135,7 @@ pub fn distance(h: &[f32], p: &Probe) -> f64 {
     sum / p.h_ref.len() as f64
 }
 
-/// The admission sample: every band-forcing probe (family D, 100) and
+/// The constraint's stratified sample: every band-forcing case (family D, 100) and
 /// seven of each other family, chosen by `seed`; 128 probes, so a kernel
 /// wrong on bands, items, columns, accumulation or non-finites fails here
 /// in seconds before the full set is paid for.
@@ -234,7 +234,7 @@ mod tests {
         assert!(ps.iter().zip(&qs).any(|(p, q)| p.phi != q.phi));
         // D forces bands: at least one probe has a limit under one row band of its Φ.
         assert!(ps.iter().any(|p| p.family == 'D' && p.limit < (p.m * p.d * 4) as u64));
-        // The admission sample: 128, every D probe, seven of each other family.
+        // The constraint's sample: 128, every D case, seven of each other family.
         let adm = admission(&ps, 1);
         assert_eq!(adm.len(), 128);
         assert_eq!(adm.iter().filter(|&&i| ps[i].family == 'D').count(), 100);

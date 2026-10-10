@@ -60,7 +60,7 @@ Order of work: finish generation 0 and read the drafts; extend the genome and wr
 |---|---|---|
 | 1 | `naga::front::wgsl::parse_str` | pass, or the first error line |
 | 2 | naga validation; Metal pipeline (`Gram::compile_with` through an explicit layout) | pass, or the first error |
-| 3 | 128 admission probes (a fixed, seeded sample across families A–E); then the full 1,024 and the fixed pairs for the top 8 of the population | probes passed; pair criterion max ratio |
+| 3 | the constraint's 128 test cases (a fixed, seeded sample across families A–E); then the full 1,024 and the fixed pairs for the top 8 of the population | probes passed; pair criterion max ratio |
 | 4 | paired timing against shipped on 3 held-out shapes, 3 rounds, random order | speed-up per shape, geometric mean, worst shape, spread |
 
 Within stage 4 the HFF angle over: speed-up on each shape (reciprocal, shipped = 1),
@@ -124,7 +124,7 @@ each causes:
 | The HFF angle in `wgsl_gram_evolve.rs` was the angle to the diagonal: 0 for ANY constant vector, blind to magnitude (Claude 4.1). This, not only the cliff, is a cause of "learned nothing". | Replaced by phylu's definition (`hff.wgsl` 212–213): cos θ = 1 − mean(x²). Committed. |
 | Mutation A (the e-graph rules) rewrites only f32 arithmetic regions; it cannot reach tiling, blocking, loops, stores, the grid (Claude 1.2, Codex 6). It is not the "strong editor" for this problem as the code stands. | A becomes a measured pilot (experiment step 2), not 0.35 of the budget; its expected effect on speed is about zero. |
 | "Fails all probes" was asserted in the plan while the test asserted otherwise (Codex 1, Claude 1.10). | Measured and recorded in the test: a global break fails 1,024/1,024; the loop one item short fails 306/1,024, every one a probe touching the last item. The probes discriminate local breaks. |
-| The 128-probe admission is unstratified and can omit every band-forcing probe (Codex 2); probes are too small for tiled kernels (Claude 4.6); the probe pass is a mean over cells and lets one cell be 1 % wrong (Claude 4.7); stage 3's ranking mixes denominators (Codex 3). | Admission is stratified across families with every band-forcing D probe included; probes added at d ≥ 130, m ≥ 2 × the largest tile; pass is the per-cell maximum; a kernel is "correct" only after all 1,024 probes and all training pairs; stage 4 requires it. |
+| The 128-probe constraint is unstratified and can omit every band-forcing probe (Codex 2); probes are too small for tiled kernels (Claude 4.6); the probe pass is a mean over cells and lets one cell be 1 % wrong (Claude 4.7); stage 3's ranking mixes denominators (Codex 3). | Admission is stratified across families with every band-forcing D probe included; probes added at d ≥ 130, m ≥ 2 × the largest tile; pass is the per-cell maximum; a kernel is "correct" only after all 1,024 probes and all training pairs; stage 4 requires it. |
 | No cost bound exists for model text; the watchdog cannot pre-empt the GPU; compile is unguarded; device errors can panic (Claude 1.1, 6.1–6.4). | Every candidate evaluated in a child process; a naga-IR pass refuses loops not bounded by `cfg.m`, `cfg.d`, `cfg.r_rows` or a literal ≤ 4,096 and nested bounds over m × 64; the first run is the smallest probe under a 2 s deadline; error scopes for Validation and Internal and an uncaptured-error handler. |
 | The model call runs with tools and CLAUDE.md discovery, so the proposer can read the judge (Claude 1.9). | `claude -p --bare --model sonnet` with no tools, from an empty directory; the auth path verified first. |
 | The grid header is unchecked against `@workgroup_size` (Codex 8, Claude 1.6). | x and y come from naga; only bx, by from the header; a mismatch is refused at stage 2. |
@@ -164,7 +164,7 @@ The headroom exists (the rule was 1.3×), so the experiment continues. On a quie
 | one layout for the population: head length, tail length, tail slots, genes per individual | head ≤ 64 | head 32, tail 97, 48 slots (k04 needs 43), 49 genes |
 | genes per individual with a dual code on every live token | all | all (phylu's typed loader excludes none) |
 | individuals whose genes decode on the host with no fallback and rebuild to the converted kernel's text, byte for byte | 27 | 27 (fuller test `the_converted_population_round_trips_through_karva`, phylu test `the_safe_population_decodes_and_rebuilds_to_its_text`) |
-| converted kernels compiled and run on the device (feasible under the 128 admission cases) | 25–27 | not run: the GPU is held at 100 % by the kernel orphaned on 2026-10-10 (`ioreg` Device Utilization 100 % with no process of ours); needs the machine restart |
+| converted kernels compiled and run on the device (feasible under the the constraint's 128 test cases) | 25–27 | not run: the GPU is held at 100 % by the kernel orphaned on 2026-10-10 (`ioreg` Device Utilization 100 % with no process of ours); needs the machine restart |
 
 The dumps are `logs/HGP/001/safe/karva/kNN.json`; the converted kernels `logs/HGP/001/safe/kNN.safe.wgsl`. The run that follows the restart: `wgsl_fit --kingdom safe --dumps fuller/logs/HGP/001/safe/karva` (phylu), generation 0 first, every row evaluated once; expected: the 27 feasible, HFF as generation 0 measured them.
 
@@ -173,7 +173,7 @@ The dumps are `logs/HGP/001/safe/karva/kNN.json`; the converted kernels `logs/HG
 | measurement | expected |
 |---|---|
 | of 32 generation-0 kernels: parse; validate and compile | 28–32; 24–30 |
-| pass the 128 admission probes; pass all 1,024 and the pair criterion | 10–20; 5–15 |
+| pass the the constraint's 128 test cases; pass all 1,024 and the pair criterion | 10–20; 5–15 |
 | correct and faster than shipped on the held-out shapes, generation 0 | 1–5 |
 | offspring correct, by operator: rules, model edit, crossover, fresh, repair | 90 %, 40 %, 20 %, 25 %, 30 % |
 | best geometric-mean speed-up after 500 evaluations | 2–6× |
@@ -183,7 +183,7 @@ The dumps are `logs/HGP/001/safe/karva/kNN.json`; the converted kernels `logs/HG
 
 ## Tasks (each "Read docs/Rules.md, then:")
 
-1. **The caller and the fitness evaluation.** `examples/hgp_gram.rs`: contract prompt + strategies, the CLI call and JSON reply, fence stripping and the header, stages 1–4, the 128 admission probes (`probes(1)` sampled by seed), ledger and call logs. Tests (in the example's `#[cfg(test)]` or `src/wgsl/hgp.rs` if shared): header parses; fenced reply strips; the shipped text climbs to stage 4; a syntax error stops at stage 1 with its line. Run generation 0; put the stage counts in `docs/PLAN_hgp_gram.md` beside the expectations.
+1. **The caller and the fitness evaluation.** `examples/hgp_gram.rs`: contract prompt + strategies, the CLI call and JSON reply, fence stripping and the header, stages 1–4, the the constraint's 128 test cases (`probes(1)` sampled by seed), ledger and call logs. Tests (in the example's `#[cfg(test)]` or `src/wgsl/hgp.rs` if shared): header parses; fenced reply strips; the shipped text climbs to stage 4; a syntax error stops at stage 1 with its line. Run generation 0; put the stage counts in `docs/PLAN_hgp_gram.md` beside the expectations.
 2. **The three mutations and the loop.** Operators A (e-graph through the reader), B, C, fresh, repair; parentage; elites by stage then HFF; 500 evaluations; three seeds if time. Per-operator correctness rates and the champion table into the plan. The share-equivalence scan of the population each generation (reader → `population_dag` fold → homeotic rows by referrers) and its report: distinct subtrees, share rate, the top 20 components, the components correct kernels carry and incorrect ones lack.
 2b. **Evolve from components.** The popular components as terminals of the typed sampler and of subtree mutation; the tree search of `wgsl_gram_evolve` rerun with and without them; correct kernels per 100 evaluations, both ways, into the plan.
 3. **The champion in Blue World** (`PLAN_wgsl_gram_superopt.md` task 4 unchanged).
