@@ -24,6 +24,7 @@ fn main() -> Result<(), String> {
     let mut m = 65536usize;
     let mut seed = 1u64;
     let mut rounds = 5usize;
+    let mut warm = 0usize;
     let mut cache = PathBuf::from("logs/WGSL_GRAM");
     let mut kernels: Vec<(String, String)> = Vec::new();
     let mut args = std::env::args().skip(1);
@@ -34,6 +35,7 @@ fn main() -> Result<(), String> {
             "--m" => m = value("--m")?.parse().map_err(|e| format!("--m: {e}"))?,
             "--seed" => seed = value("--seed")?.parse().map_err(|e| format!("--seed: {e}"))?,
             "--rounds" => rounds = value("--rounds")?.parse().map_err(|e| format!("--rounds: {e}"))?,
+            "--warm" => warm = value("--warm")?.parse().map_err(|e| format!("--warm: {e}"))?,
             "--cache" => cache = PathBuf::from(value("--cache")?),
             path => kernels.push((path.to_string(), std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?)),
         }
@@ -82,6 +84,17 @@ fn main() -> Result<(), String> {
             }
         };
         let compile_ms = t.elapsed().as_secs_f64() * 1e3;
+        // `--warm n`: n tiny builds (d = 32, m = 16) before the rounds, to
+        // see whether a pipeline's speed changes after many dispatches.
+        if warm > 0 {
+            let (wd, wm) = (32usize, 16usize);
+            let wp = phi(wd, wm, 3);
+            let t = Instant::now();
+            for _ in 0..warm {
+                gram.build(&wp, wd, wm, limit)?;
+            }
+            println!("{name:<28}   warmed with {warm} tiny builds in {:.1} s", t.elapsed().as_secs_f64());
+        }
         let mut gpu = Vec::with_capacity(rounds);
         for round in 0..rounds {
             let b = gram.build(&p, d, m, limit)?;

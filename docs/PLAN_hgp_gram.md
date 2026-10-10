@@ -137,10 +137,10 @@ The machine restarted overnight; the orphaned kernel is gone and the shipped bui
 
 | kernel | correctness | speed-up over shipped, median of 5 paired rounds (null shipped/shipped) |
 |---|---|---|
-| tiled: 16 × 16 workgroup, 4 × 4 register block, 32-item tiles in workgroup memory | passes the criterion at ragged and banded shapes | 0.33× (scalar tiles), 0.59× (vec4 tiles): slower than shipped |
+| tiled: 16 × 16 workgroup, 4 × 4 register block, 32-item tiles in workgroup memory (vec4 groups) | 1,024/1,024 probes; 87/87 pairs | d 2,048: 8.08 (null 1.01); d 4,096: 7.99 (0.99); d 8,192: 7.76 (1.00); geometric mean 7.9. Earlier readings of 0.33× and 0.59× were taken while another GPU consumer had the chip at 96 % (shipped itself at 1.3–1.4 s); a kernel with barriers loses far more under contention than the shipped kernel, and the shipped-against-shipped null did not show it. Hence the GPU acceptance test now in the ladder: rung 4 runs only when shipped alone builds within 12 % of 1,015 ms. |
 | blocked: 16 × 16 workgroup, 4 × 4 register block, two 16-byte loads an item straight from phi, no workgroup memory | 1,024/1,024 probes; 87/87 pairs (train, validation, extrapolation); worst error equal to shipped's | d 2,048 m 65,536: 3.77 (null 0.99); d 4,096 m 16,384: 3.98 (1.00); d 8,192 m 4,096: 4.25 (1.02); geometric mean 4.0, worst shape 3.77 |
 
-The headroom exists (the rule was 1.3×), so the experiment continues. A fact for the prompts: on this GPU the win is register blocking with direct loads; staging items in workgroup memory loses. The ladder (`examples/wgsl_gram_ladder.rs`) ran the whole of rungs 1–4 in 115 s; 1,024 probes take 5.7 s on the healthy GPU (100–166 s on yesterday's).
+The headroom exists (the rule was 1.3×), so the experiment continues. On a quiet chip the workgroup-memory tiled kernel is the faster of the two (7.9× against 4.0×); both structures are worth asking the model for. The ladder (`examples/wgsl_gram_ladder.rs`) ran the whole of rungs 1–4 in 115 s; 1,024 probes take 5.7 s on the healthy GPU (100–166 s on yesterday's).
 
 ## Expectations, stated before any run
 

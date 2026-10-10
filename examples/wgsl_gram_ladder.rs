@@ -184,7 +184,25 @@ fn main() -> Result<(), String> {
         return finish(&ledger, &path, &s, t_all);
     }
     s.rung = 3;
-    // Rung 4: paired timing on three shapes with the null.
+    // Rung 4 only on an accepted GPU: the shipped kernel alone, at the
+    // bench shape, must build within 12 % of its reference 1,015 ms (the
+    // quiet-machine measurement of 2026-10-10 15:30). Contention hurts a
+    // kernel with barriers far more than the shipped one, so the
+    // shipped-against-shipped null alone does not detect it (the tiled
+    // kernel read 0.4x under contention and 7.9x on a quiet chip).
+    const REFERENCE_MS: f64 = 1015.0;
+    {
+        let p = Pair::load(fuller::wgsl::gram::Kind::Gaussian, 2048, 65536, 7, &cache)?;
+        let mut best = f64::INFINITY;
+        for _ in 0..3 {
+            best = best.min(shipped.build(&p.phi, 2048, 65536, limit)?.gpu_ms);
+        }
+        println!("[{}] GPU acceptance: shipped alone {best:.0} ms against the reference {REFERENCE_MS:.0} ms", stamp());
+        if best > 1.12 * REFERENCE_MS {
+            s.detail = format!("GPU busy: shipped alone {best:.0} ms, reference {REFERENCE_MS:.0} ms; rung 4 not run");
+            return finish(&ledger, &path, &s, t_all);
+        }
+    }
     let shipped2 = Gram::compile(&dev, SHIPPED)?;
     let mut state = 0x5EED_u64;
     let shapes: [(usize, usize); 3] = [(2048, 65536), (4096, 16384), (8192, 4096)];
