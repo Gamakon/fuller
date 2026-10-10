@@ -615,7 +615,8 @@ mod tests {
         let s = safe_fallback_table().unwrap();
         assert_eq!(s.len(), safe_duals().len());
         assert!(s.len() > w.len());
-        assert_eq!(&s[..w.len()], &w[..]);
+        let key = |l: &Option<GpuNode>| l.as_ref().map(|n| (n.op, n.ty_code, n.konst.to_bits()));
+        assert!(s.iter().zip(&w).all(|(a, b)| key(a) == key(b)), "the WGSL prefix differs");
         let duals = safe_duals();
         for (d, leaf) in duals.iter().zip(&s).skip(w.len()) {
             assert_eq!(leaf.is_none(), d.fallback_noop || d.fallback_elem, "{}", d.dual);
