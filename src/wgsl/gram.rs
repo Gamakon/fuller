@@ -28,6 +28,10 @@ pub fn gram_shipped_tree_check(t: &crate::wgsl::render::Tree) -> Result<(), Stri
     Ok(())
 }
 
+/// The hand-written tiled kernel, the positive control of
+/// `docs/PLAN_hgp_gram.md` step 0.
+pub const TILED: &str = include_str!("../../kingdoms/wgsl/gram/tiled.wgsl");
+
 /// The shipped kernel, verbatim from `H_GRAM_ACCUM_WGSL`.
 pub const SHIPPED: &str = include_str!("../../kingdoms/wgsl/gram/shipped.wgsl");
 
@@ -432,6 +436,15 @@ pub struct Build {
     pub row_bands: usize,
 }
 
+/// The `// grid x y bx by` header of a kernel text, if present on any line.
+pub fn grid_header(source: &str) -> Option<(u32, u32, u32, u32)> {
+    source.lines().map(str::trim).find_map(|l| {
+        let rest = l.strip_prefix("// grid ")?;
+        let v: Vec<u32> = rest.split_whitespace().map(|t| t.parse().ok()).collect::<Option<Vec<u32>>>()?;
+        (v.len() == 4).then_some((v[0], v[1], v[2], v[3]))
+    })
+}
+
 /// A compiled Gram kernel on the oracle's device.
 pub struct Gram<'a> {
     dev: &'a Device,
@@ -451,7 +464,23 @@ impl<'a> Gram<'a> {
         let module = naga::front::wgsl::parse_str(source).map_err(|e| e.emit_to_string(source))?;
         naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::all()).validate(&module).map_err(|e| format!("validation: {}", e.emit_to_string(source)))?;
         let ep = module.entry_points.iter().find(|e| e.name == ENTRY).ok_or_else(|| format!("no entry point {ENTRY}"))?;
-        Self::compile_with(dev, source, Grid { x: ep.workgroup_size[0], y: ep.workgroup_size[1], bx: 1, by: 1 })
+        let (x, y) = (ep.workgroup_size[0], ep.workgroup_size[1]);
+        // The optional header `// grid x y bx by`: x and y must agree with
+        // naga's workgroup size (the header is never trusted for them); bx
+        // and by, the cells per thread, come only from the header.
+        let (bx, by) = match grid_header(source) {
+            Some((hx, hy, bx, by)) => {
+                if (hx, hy) != (x, y) {
+                    return Err(format!("the grid header says workgroup {hx} x {hy}, the shader says {x} x {y}"));
+                }
+                if !(1..=16).contains(&bx) || !(1..=16).contains(&by) {
+                    return Err(format!("the grid header's block {bx} x {by} is outside 1..=16"));
+                }
+                (bx, by)
+            }
+            None => (1, 1),
+        };
+        Self::compile_with(dev, source, Grid { x, y, bx, by })
     }
 
     /// A rendered kernel: its text and the grid it asked for.
@@ -740,6 +769,32 @@ mod tests {
         }
         println!("compute ms and timestamp ms per build: {times:?}");
         assert!(times.iter().all(|t| t.0 > 0.0 && t.1 > 0.0 && t.1 < t.0), "{times:?}");
+    }
+
+    #[test]
+    fn the_grid_header_is_read_and_checked_against_the_shader() {
+        assert_eq!(grid_header(TILED), Some((16, 16, 4, 4)));
+        assert_eq!(grid_header(SHIPPED), None);
+        let dev = Device::new().expect("device");
+        assert_eq!(Gram::compile(&dev, TILED).unwrap().grid, Grid { x: 16, y: 16, bx: 4, by: 4 });
+        let wrong = TILED.replace("// grid 16 16 4 4", "// grid 8 8 4 4");
+        let err = match Gram::compile(&dev, &wrong) { Ok(_) => panic!("a mismatched header compiled"), Err(e) => e };
+        assert!(err.contains("the grid header says workgroup 8 x 8"), "{err}");
+    }
+
+    /// The hand-written tiled kernel (plan step 0) agrees with the reference
+    /// under the criterion, banded and unbanded, at ragged shapes.
+    #[test]
+    fn the_tiled_kernel_passes_the_criterion_on_the_device() {
+        let dev = Device::new().expect("device");
+        let gram = Gram::compile(&dev, TILED).expect("compile");
+        for (d, m, limit) in [(64usize, 1000usize, 4096u64), (130, 77, 8192), (200, 33, u64::MAX), (64, 1000, u64::MAX)] {
+            let p = phi(d, m, 11);
+            let h_ref = reference(&p, d, m);
+            let b = gram.build(&p, d, m, limit).expect("build");
+            let v = check(&b.h, &h_ref, d, m);
+            assert!(v.passes(), "d {d} m {m} limit {limit}: {v:?}");
+        }
     }
 
     #[test]
