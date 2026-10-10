@@ -131,6 +131,17 @@ Not accepted: Codex's reading that the probes have "no slope" is answered by the
 2. **Operator A on real inputs**: the shipped kernel and the best generation-0 kernel through read → `mutants_of_roots(2, 8, 4, true)` → rebuild; distinct texts counted; three mutants timed against their parent. Expected: no distinct speed.
 3. **Only if 0 and 1 pass**: best-of-N fresh calls against the evolutionary loop at equal budgets (N = 100), the champion re-timed on unseen shapes and fresh rounds against the null; the hypothesis holds only if the loop's champion beats best-of-N by more than the null's spread.
 
+## Step 0 measured (2026-10-10, `logs/HGP/ladder_blocked.log`, ledger `logs/HGP/ladder.tsv`)
+
+The machine restarted overnight; the orphaned kernel is gone and the shipped build is 1,015 ms at the bench size (yesterday's 2,348 ms was under load). Two kernels written by hand:
+
+| kernel | correctness | speed-up over shipped, median of 5 paired rounds (null shipped/shipped) |
+|---|---|---|
+| tiled: 16 × 16 workgroup, 4 × 4 register block, 32-item tiles in workgroup memory | passes the criterion at ragged and banded shapes | 0.33× (scalar tiles), 0.59× (vec4 tiles): slower than shipped |
+| blocked: 16 × 16 workgroup, 4 × 4 register block, two 16-byte loads an item straight from phi, no workgroup memory | 1,024/1,024 probes; 87/87 pairs (train, validation, extrapolation); worst error equal to shipped's | d 2,048 m 65,536: 3.77 (null 0.99); d 4,096 m 16,384: 3.98 (1.00); d 8,192 m 4,096: 4.25 (1.02); geometric mean 4.0, worst shape 3.77 |
+
+The headroom exists (the rule was 1.3×), so the experiment continues. A fact for the prompts: on this GPU the win is register blocking with direct loads; staging items in workgroup memory loses. The ladder (`examples/wgsl_gram_ladder.rs`) ran the whole of rungs 1–4 in 115 s; 1,024 probes take 5.7 s on the healthy GPU (100–166 s on yesterday's).
+
 ## Expectations, stated before any run
 
 | measurement | expected |
