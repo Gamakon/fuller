@@ -39,6 +39,19 @@ never judges. The committed design is `fuller/docs/PLAN_hgp_gram.md` (84a7c2b).
 - `claude` CLI at `/Users/andrewmorgan/.local/bin/claude`: `-p`, `--model sonnet`,
   `--output-format json`, `--system-prompt`, `--no-session-persistence`; no temperature flag.
 
+## The experiment in eight steps (Andrew, 2026-10-10, in plain words)
+
+1. **Understand the problem.** The kernel multiplies a matrix of items by its own transpose, in bands. The contract (bindings, band rules), the reference answers (87 large pairs, 1,024 small test cases) and the kernel to beat exist. Done.
+2. **A population.** Individuals are kernels.
+3. **The initial population is drafted by an AI**, one kernel per individual: 32 calls to Sonnet, each given the contract and a strategy. Running (generation 0).
+4. **Parse every draft into Karva genes.** This is why the drafts are not kept as text: as typed genes, crossover and random mutation stay well-formed, and fuller's share-equivalence scan over the population finds the subtrees many drafts have in common and moves them into homeotic genes, the reusable parts evolution composes from. That is where the search becomes creative instead of choosing among drafts. **Not built.** The kingdom's genome today covers expressions, an item loop, a few fixed registers and two shared arrays; the drafts use their own variables, loops with their own bounds, helper functions and arrays of their own sizes. Generation 0's 32 drafts show which constructs the genome must add; then a reader turns a draft into the genome. A few days.
+5. **Evolve from that population** in phylu's engine.
+6. **Fitness of an individual:** gene → kernel text (the renderer, exists) → run it (the ladder: parse, compile, test cases, reference pairs, timing; exists) → the HFF over the measurements.
+7. **Mutate some individuals with fuller** (the rewriting rules; exist for the arithmetic, the structure needs step 4).
+8. **Mutate some at random, cross over, hold tournaments:** phylu's operators.
+
+Order of work: finish generation 0 and read the drafts; extend the genome and write the reader (step 4); hand phylu the population with the fitness call; run steps 5–8.
+
 ## Design
 
 ### The ladder
