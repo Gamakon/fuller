@@ -20,7 +20,7 @@
 //! typed tree the renderer accepts; a token the demand has no row for
 //! becomes a fallback leaf, as the typed projection does on the device.
 
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 
 use crate::geneframe::Ty;
 use crate::homeotic::{self, href_name, href_slot, FoldedChromosome, KarvaGene, EMPTY_SLOT};
@@ -153,6 +153,15 @@ pub fn encode(tree: &Tree, head_length: usize, tail_slots: usize, rng_seed: u64)
     if s.tail.len() > tail_slots {
         return Err(format!("{} tail slots needed at head {head_length}, {tail_slots} in the layout", s.tail.len()));
     }
+    let mut tail: Vec<Option<Tree>> = s.tail.into_iter().map(Some).collect();
+    tail.resize(tail_slots, None);
+    encode_folded(&s.head, &tail, head_length, rng_seed)
+}
+
+/// Encode a head gene and an explicit tail (a definition per filled slot,
+/// `None` for an empty one; a definition references only lower slots).
+pub fn encode_folded(head: &Tree, tail: &[Option<Tree>], head_length: usize, rng_seed: u64) -> Result<SafeChromosome, String> {
+    let tail_slots = tail.len();
     // The pset: every terminal and every function with its arity.
     let mut variables: Vec<String> = Vec::new();
     let mut functions: BTreeMap<String, usize> = BTreeMap::new();
@@ -174,24 +183,22 @@ pub fn encode(tree: &Tree, head_length: usize, tail_slots: usize, rng_seed: u64)
         }
         t.kids.iter().try_for_each(|k| collect(k, variables, functions))
     }
-    collect(&s.head, &mut variables, &mut functions)?;
-    s.tail.iter().try_for_each(|t| collect(t, &mut variables, &mut functions))?;
+    collect(head, &mut variables, &mut functions)?;
+    tail.iter().flatten().try_for_each(|t| collect(t, &mut variables, &mut functions))?;
     if !variables.iter().any(|v| v == FALLBACK) {
         variables.push(FALLBACK.into());
     }
     let pset = PsetSpec { variables, functions: functions.iter().map(|(n, &a)| (n.clone(), FunctionSpec { semantic_id: n.clone(), arity: a })).collect(), rnc_values: vec![0.0] };
-    let mut tail: Vec<String> = s.tail.iter().map(karva_text).collect();
-    tail.resize(tail_slots, EMPTY_SLOT.to_string());
-    let folded = FoldedChromosome { head: vec![karva_text(&s.head)], tail, filled: s.tail.len(), skipped: 0 };
+    let tail_text: Vec<String> = tail.iter().map(|t| t.as_ref().map_or_else(|| EMPTY_SLOT.to_string(), karva_text)).collect();
+    let filled = tail.iter().filter(|t| t.is_some()).count();
+    let folded = FoldedChromosome { head: vec![karva_text(head)], tail: tail_text, filled, skipped: 0 };
     let genes = homeotic::encode_generic_k(&folded, &pset, rng_seed, head_length, K)?;
-    let mut ty_codes = vec![codes_of(&s.head)];
-    let mut roots = vec![Some(s.head.ty)];
-    for t in &s.tail {
-        ty_codes.push(codes_of(t));
-        roots.push(Some(t.ty));
+    let mut ty_codes = vec![codes_of(head)];
+    let mut roots = vec![Some(head.ty)];
+    for t in tail {
+        ty_codes.push(t.as_ref().map(codes_of).unwrap_or_default());
+        roots.push(t.as_ref().map(|t| t.ty));
     }
-    ty_codes.resize(tail_slots + 1, Vec::new());
-    roots.resize(tail_slots + 1, None);
     // Each gene's live tokens are as many as its codes.
     for (i, (g, codes)) in genes.iter().zip(&ty_codes).enumerate() {
         let live = live_tokens(&g.0, &g.1, &pset)?;
@@ -200,6 +207,122 @@ pub fn encode(tree: &Tree, head_length: usize, tail_slots: usize, rng_seed: u64)
         }
     }
     Ok(SafeChromosome { head_length, tail_slots, folded, pset, genes, ty_codes, roots })
+}
+
+/// A component shared across the population: its slot, text, how many
+/// individuals carry it and its node count.
+#[derive(Debug, Clone)]
+pub struct SharedDefinition {
+    pub slot: usize,
+    pub text: String,
+    pub referrers: usize,
+    pub occurrences: usize,
+    pub nodes: usize,
+}
+
+/// What the population fold found and produced.
+#[derive(Debug)]
+pub struct PopulationFold {
+    /// Per individual, its chromosome with the shared components at their
+    /// common slots, or why it could not be folded (its own definitions do
+    /// not fit below the reserved band).
+    pub chromosomes: Vec<Result<SafeChromosome, String>>,
+    pub shared: Vec<SharedDefinition>,
+    /// Distinct subtree texts over the population (internal nodes), their
+    /// occurrences, and the occurrences that are repeats of one seen before.
+    pub distinct_subtrees: usize,
+    pub occurrences: usize,
+    pub repeated_occurrences: usize,
+}
+
+/// SHARE-EQUIVALENCE OVER THE POPULATION (step 4 of the experiment): every
+/// subtree of every individual keyed by its text; a subtree that occurs in
+/// at least two individuals, fits a gene head and has at least `min_nodes`
+/// nodes is a shared component. The components take the slots from
+/// `reserved_from` up, the SAME slot in every individual, largest reach
+/// first (referrers, then size), and every occurrence becomes a reference
+/// to that slot; an individual's own hoisted definitions take the slots
+/// below `reserved_from`. The kernels are unchanged (the unfold restores
+/// every text); what changes is that the operators now move a component
+/// between individuals as one gene.
+pub fn fold_population(trees: &[Tree], head_length: usize, tail_slots: usize, reserved_from: usize, min_nodes: usize, rng_seed: u64) -> PopulationFold {
+    // 1. Every internal subtree by text: which individuals, how often, an example.
+    struct Seen {
+        individuals: BTreeSet<usize>,
+        occurrences: usize,
+        nodes: usize,
+        tokens: usize,
+        example: Tree,
+    }
+    let mut seen: HashMap<String, Seen> = HashMap::new();
+    let mut occurrences = 0usize;
+    fn walk(t: &Tree, who: usize, root: bool, seen: &mut HashMap<String, Seen>, occurrences: &mut usize) {
+        if !t.kids.is_empty() && !root {
+            *occurrences += 1;
+            let key = karva_text(t);
+            match seen.get_mut(&key) {
+                Some(s) => {
+                    s.individuals.insert(who);
+                    s.occurrences += 1;
+                }
+                None => {
+                    seen.insert(key, Seen { individuals: BTreeSet::from([who]), occurrences: 1, nodes: t.size(), tokens: head_needed(t), example: t.clone() });
+                }
+            }
+        }
+        for k in &t.kids {
+            walk(k, who, false, seen, occurrences);
+        }
+    }
+    for (i, t) in trees.iter().enumerate() {
+        walk(t, i, true, &mut seen, &mut occurrences);
+    }
+    let distinct_subtrees = seen.len();
+    let repeated_occurrences = occurrences - distinct_subtrees;
+    // 2. The components: shared by two or more, fitting a head, large enough.
+    let mut candidates: Vec<(&String, &Seen)> = seen.iter().filter(|(_, s)| s.individuals.len() >= 2 && s.tokens <= head_length && s.nodes >= min_nodes).collect();
+    candidates.sort_by(|a, b| b.1.individuals.len().cmp(&a.1.individuals.len()).then(b.1.nodes.cmp(&a.1.nodes)).then(a.0.cmp(b.0)));
+    let room = tail_slots.saturating_sub(reserved_from);
+    let mut shared: Vec<SharedDefinition> = Vec::new();
+    let mut by_text: HashMap<String, usize> = HashMap::new();
+    for (text, s) in candidates.into_iter().take(room) {
+        let slot = reserved_from + shared.len();
+        by_text.insert(text.clone(), slot);
+        shared.push(SharedDefinition { slot, text: text.clone(), referrers: s.individuals.len(), occurrences: s.occurrences, nodes: s.nodes });
+    }
+    // 3. Every occurrence becomes a reference, top-down (a component inside a
+    //    replaced component is not re-replaced), then each individual's own
+    //    definitions are hoisted below the reserved band.
+    fn replace(t: &Tree, by_text: &HashMap<String, usize>) -> Tree {
+        if !t.kids.is_empty() {
+            if let Some(&slot) = by_text.get(&karva_text(t)) {
+                return Tree::new(&href_name(slot), t.ty, vec![]);
+            }
+        }
+        Tree { name: t.name.clone(), ty: t.ty, konst: t.konst, kids: t.kids.iter().map(|k| replace(k, by_text)).collect() }
+    }
+    let defs: Vec<Tree> = shared.iter().map(|d| seen[&d.text].example.clone()).collect();
+    let chromosomes = trees
+        .iter()
+        .enumerate()
+        .map(|(i, t)| {
+            let folded = replace(t, &by_text);
+            let s = split(&folded, head_length)?;
+            if s.tail.len() > reserved_from {
+                return Err(format!("individual {i}: {} own definitions, {reserved_from} slots below the shared band", s.tail.len()));
+            }
+            let mut tail: Vec<Option<Tree>> = s.tail.into_iter().map(Some).collect();
+            tail.resize(tail_slots, None);
+            for (d, def) in shared.iter().zip(&defs) {
+                // Only the individuals that reference the slot hold the definition.
+                if karva_text(&s.head).contains(&format!("(Var \"{}\")", href_name(d.slot))) || tail.iter().flatten().any(|t| karva_text(t).contains(&format!("(Var \"{}\")", href_name(d.slot)))) {
+                    tail[d.slot] = Some(def.clone());
+                }
+            }
+            encode_folded(&s.head, &tail, head_length, rng_seed.wrapping_add(i as u64))
+        })
+        .collect();
+    PopulationFold { chromosomes, shared, distinct_subtrees, occurrences, repeated_occurrences }
 }
 
 /// The live token count of a gene: the GEP decode walk's reach.
@@ -618,6 +741,38 @@ mod tests {
         let r = render_tree(&t, &k).unwrap();
         assert!(r.text.contains("pv[") && r.text.contains("wg_va["), "{}", r.text);
         validate_text(&r.text).unwrap();
+    }
+
+    /// The population fold: two kernels that share a subtree get it as ONE
+    /// component at the same reserved slot, each references it, and both
+    /// still rebuild to their own text.
+    #[test]
+    fn the_population_fold_shares_a_component_at_one_slot_and_rebuilds_every_kernel() {
+        let k = WgslKingdom::load_safe();
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("logs/HGP/001/gen0");
+        let Ok(entries) = std::fs::read_dir(&dir) else { return };
+        let mut files: Vec<_> = entries.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "wgsl")).collect();
+        files.sort();
+        let trees: Vec<Tree> = files.iter().filter_map(|f| read_safe(&std::fs::read_to_string(f).ok()?, &k).ok()).map(|r| r.tree).take(12).collect();
+        assert!(trees.len() >= 8);
+        let direct: Vec<String> = trees.iter().map(|t| render_tree(t, &k).unwrap().text).collect();
+        let f = fold_population(&trees, 32, 48, 40, 3, 7);
+        assert!(!f.shared.is_empty(), "components shared by two or more kernels");
+        assert!(f.shared.iter().all(|d| d.referrers >= 2 && (40..48).contains(&d.slot)));
+        assert!(f.repeated_occurrences > 0);
+        let pset_slots = 48;
+        for (i, c) in f.chromosomes.iter().enumerate() {
+            let c = c.as_ref().unwrap_or_else(|e| panic!("{e}"));
+            let pset = homeotic::pset_with_hrefs(&c.pset, pset_slots);
+            let decoded: Vec<String> = c.genes.iter().map(|(hd, tl)| karva_to_terms_generic(hd, tl, &pset).unwrap()).collect();
+            let (r, fb) = rebuild(&decoded, c.folded.filled, &k).unwrap_or_else(|e| panic!("individual {i}: {e}"));
+            assert_eq!(fb, 0);
+            assert_eq!(r.text, direct[i], "individual {i} rebuilds to its own text after the fold");
+        }
+        // The first component sits at the same slot in every carrier.
+        let d = &f.shared[0];
+        let carriers = f.chromosomes.iter().filter(|c| c.as_ref().is_ok_and(|c| c.folded.tail[d.slot] == d.text)).count();
+        assert_eq!(carriers, d.referrers, "{}", d.text);
     }
 
     /// A gene text with a token of the wrong dual projects to a fallback
