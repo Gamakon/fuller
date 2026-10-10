@@ -16,6 +16,11 @@ use crate::wgsl::scaffold::{rebuild_folded, Rebuilt};
 pub struct Individual {
     pub kernel: Kernel,
     pub chromosomes: Vec<WgslChromosome>,
+    /// The source's `// grid x y bx by` line, if any: a comment, which the
+    /// rebuild drops, and which the driver needs (without it a 2 x 2
+    /// register-blocked kernel was dispatched with four times the
+    /// workgroups and read 0.63x where its draft read 2.45x, 2026-10-10).
+    pub header: Option<String>,
 }
 
 /// A gene as phylu holds it: head tokens and tail tokens.
@@ -29,7 +34,8 @@ impl Individual {
         let kernel = read(source)?;
         let opts = ChromosomeOptions::default();
         let chromosomes = kernel.functions.iter().map(|f| chromosome_typed(f, kingdom, &opts)).collect::<Result<Vec<_>, _>>()?;
-        Ok(Individual { kernel, chromosomes })
+        let header = source.lines().map(str::trim).find(|l| l.starts_with("// grid ")).map(str::to_string);
+        Ok(Individual { kernel, chromosomes, header })
     }
 
     /// The genes of function `i` as Karva tokens, head genes then tail
@@ -57,7 +63,15 @@ impl Individual {
         let mut chromosomes = self.chromosomes.clone();
         chromosomes[i].folded.head = decoded[..n_head].to_vec();
         chromosomes[i].folded.tail = decoded[n_head..].to_vec();
-        rebuild_folded(&self.kernel, &chromosomes)
+        self.with_header(rebuild_folded(&self.kernel, &chromosomes)?)
+    }
+
+    /// The grid header back on the rebuilt text.
+    fn with_header(&self, mut r: Rebuilt) -> Result<Rebuilt, String> {
+        if let Some(h) = &self.header {
+            r.wgsl = format!("{h}\n{}", r.wgsl);
+        }
+        Ok(r)
     }
 
     /// The kernel rebuilt from its own genes, unchanged: the round trip.
@@ -70,7 +84,7 @@ impl Individual {
             chromosomes[i].folded.head = decoded[..n_head].to_vec();
             chromosomes[i].folded.tail = decoded[n_head..].to_vec();
         }
-        rebuild_folded(&self.kernel, &chromosomes)
+        self.with_header(rebuild_folded(&self.kernel, &chromosomes)?)
     }
 }
 
@@ -107,6 +121,11 @@ mod tests {
             assert!(head_len >= 8 && !genes.is_empty(), "{name}");
             let r = ind.rebuild_self().unwrap_or_else(|e| panic!("{name}: {e}"));
             assert!(r.wgsl.contains("fn main"), "{name}");
+            // The grid header survives the rebuild (the source's, or none).
+            assert_eq!(r.wgsl.starts_with("// grid "), src.starts_with("// grid "), "{name}");
+            if let Some(h) = &ind.header {
+                assert!(r.wgsl.starts_with(h), "{name}: {}", r.wgsl.lines().next().unwrap_or(""));
+            }
             // The same text from rebuild_with as from rebuild_self.
             let r2 = ind.rebuild_with(0, &genes).unwrap();
             assert_eq!(r.wgsl, r2.wgsl, "{name}");
