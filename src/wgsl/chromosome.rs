@@ -378,9 +378,27 @@ fn build_roots(f: &KernelFunction, roots: Vec<MathNode>, opts: &ChromosomeOption
     // Duals per live head token, level order, for every gene: a leaf
     // `href<t>` carries tail gene t's root dual; a literal's `Num` child
     // carries the literal's dual.
-    let ty_codes = if kingdom.is_some() {
-        let tail_root_dual: Vec<Option<Ty>> = folded.tail.iter().map(|g| parse_math(g).ok().and_then(|n| dual_of_text.get(&render(&n)).copied().flatten())).collect();
-        all_genes.iter().map(|g| level_order_duals(g, &dual_of_text, &tail_root_dual)).collect()
+    let ty_codes = if let Some(kingdom) = kingdom {
+        // The dual map is keyed by the ORIGINAL subtree text; a folded gene's
+        // subtree that holds an href renders differently, so every lookup is
+        // of the UNFOLDED text (hrefs replaced by their tail definitions,
+        // recursively). A store root has no value dual: it carries the
+        // kingdom's store dual.
+        let tail_trees: Vec<Option<MathNode>> = folded.tail.iter().map(|g| if g == homeotic::EMPTY_SLOT { None } else { parse_math(g).ok() }).collect();
+        let store_dual = kingdom.duals.iter().position(|d| d.dual == "store.store").map(|i| Ty::Wgsl(i as u16));
+        let tail_root_dual: Vec<Option<Ty>> = tail_trees.iter().map(|t| t.as_ref().and_then(|n| dual_of_text.get(&render(&unfold_node(n, &tail_trees, 0))).copied().flatten())).collect();
+        // A `let` leaf whose own text has two forms (an index in one use, a
+        // count in another) carries its DEFINITION's dual: the root
+        // `(store.let.<name> <value>)` and the value's dual.
+        let mut let_dual: BTreeMap<String, Option<Ty>> = BTreeMap::new();
+        for root in &all_genes {
+            if let MathNode::App(ctor, kids) = root {
+                if let (Some(name), [value]) = (ctor.strip_prefix("store.let."), kids.as_slice()) {
+                    let_dual.insert(name.to_string(), dual_of_text.get(&render(&unfold_node(value, &tail_trees, 0))).copied().flatten());
+                }
+            }
+        }
+        all_genes.iter().map(|g| level_order_duals(g, &dual_of_text, &tail_root_dual, &tail_trees, store_dual, &let_dual)).collect()
     } else {
         Vec::new()
     };
@@ -414,15 +432,34 @@ fn node_at<'a>(root: &'a MathNode, path: &[u8]) -> Option<&'a MathNode> {
 
 /// The dual code of every node of `g` in the encoder's level order (the
 /// order of the live head tokens), `None` where unknown.
-fn level_order_duals(g: &MathNode, dual_of_text: &BTreeMap<String, Option<Ty>>, tail_root_dual: &[Option<Ty>]) -> Vec<Option<u32>> {
+/// `n` with every href replaced by its tail definition, recursively (a
+/// definition may itself hold hrefs); depth-bounded against a cycle.
+fn unfold_node(n: &MathNode, tail: &[Option<MathNode>], depth: usize) -> MathNode {
+    if depth > 64 {
+        return n.clone();
+    }
+    match n {
+        MathNode::Var(name) => match homeotic::href_slot(name).and_then(|t| tail.get(t).cloned().flatten()) {
+            Some(def) => unfold_node(&def, tail, depth + 1),
+            None => n.clone(),
+        },
+        MathNode::Num(_) => n.clone(),
+        MathNode::App(ctor, kids) => MathNode::App(ctor.clone(), kids.iter().map(|k| unfold_node(k, tail, depth + 1)).collect()),
+    }
+}
+
+fn level_order_duals(g: &MathNode, dual_of_text: &BTreeMap<String, Option<Ty>>, tail_root_dual: &[Option<Ty>], tail: &[Option<MathNode>], store_dual: Option<Ty>, let_dual: &BTreeMap<String, Option<Ty>>) -> Vec<Option<u32>> {
     let mut out = Vec::new();
     let mut queue: std::collections::VecDeque<(&MathNode, Option<Ty>)> = std::collections::VecDeque::new();
     queue.push_back((g, None));
     while let Some((n, inherited)) = queue.pop_front() {
         let own = match n {
-            MathNode::Var(name) => homeotic::href_slot(name).and_then(|t| tail_root_dual.get(t).copied().flatten()).or_else(|| dual_of_text.get(&render(n)).copied().flatten()),
+            MathNode::Var(name) => homeotic::href_slot(name)
+                .and_then(|t| tail_root_dual.get(t).copied().flatten())
+                .or_else(|| dual_of_text.get(&render(&unfold_node(n, tail, 0))).copied().flatten())
+                .or_else(|| name.strip_prefix("let.").and_then(|rest| let_dual.get(rest).copied().flatten())),
             MathNode::Num(_) => inherited,
-            MathNode::App(..) => dual_of_text.get(&render(n)).copied().flatten(),
+            MathNode::App(ctor, _) => dual_of_text.get(&render(&unfold_node(n, tail, 0))).copied().flatten().or_else(|| if ctor.starts_with("store.") { store_dual } else { None }),
         };
         out.push(own.map(Ty::code));
         if let MathNode::App(ctor, children) = n {
