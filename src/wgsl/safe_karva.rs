@@ -418,10 +418,17 @@ fn project(n: &MathNode, demand: Ty, kingdom: &WgslKingdom, per_kernel: &[(Strin
     }
 }
 
-/// The kernel text of a safe tree.
+/// The kernel text of a safe tree, headed by its `// grid x y bx by` line:
+/// the fitness evaluation dispatches from that header (ceil(d / (x·bx)) by
+/// ceil(rows / (y·by)) workgroups); without it a register-blocked kernel is
+/// dispatched at 1 × 1 blocks, sixteen times the workgroups for a 4 × 4
+/// block, and runs at a fraction of its speed.
 pub fn render_tree(tree: &Tree, kingdom: &WgslKingdom) -> Result<Rendered, String> {
     let (t, role) = (FunctionTable::safe(), gram_role());
-    Renderer::new(kingdom, &t, &role).kernel(tree)
+    let mut r = Renderer::new(kingdom, &t, &role).kernel(tree)?;
+    let g = r.grid;
+    r.text = format!("// grid {} {} {} {}\n{}", g.x, g.y, g.bx, g.by, r.text);
+    Ok(r)
 }
 
 /// Decoded genes to kernel text: unfold, project, render; with the number of
@@ -584,6 +591,19 @@ mod tests {
         let e = rebuild_bounded(&heavy, 0, &k, Some(&bound)).expect_err("refused");
         assert!(e.starts_with("cost:"), "{e}");
         assert!(cost(&t).per_item > bound.per_item);
+    }
+
+    /// The rendered text carries the grid header the fitness evaluation
+    /// dispatches from, with the tree's own block factors.
+    #[test]
+    fn the_rendered_text_carries_its_grid_header() {
+        let k = WgslKingdom::load_safe();
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("logs/HGP/001/gen0/k07.wgsl");
+        let Ok(src) = std::fs::read_to_string(&dir) else { return };
+        let r = read_safe(&src, &k).unwrap();
+        let out = render_tree(&r.tree, &k).unwrap();
+        assert!(out.text.starts_with("// grid 16 16 4 4\n"), "{}", out.text.lines().next().unwrap_or(""));
+        assert_eq!(crate::wgsl::gram::grid_header(&out.text), Some((16, 16, 4, 4)));
     }
 
     /// A gene text with a token of the wrong dual projects to a fallback

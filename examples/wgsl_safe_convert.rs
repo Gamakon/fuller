@@ -15,10 +15,9 @@
 use std::path::PathBuf;
 
 use fuller::wgsl::loader::WgslKingdom;
-use fuller::wgsl::render::{cost, gram_role, gram_shipped_safe_tree, validate_text, Renderer, Tree};
-use fuller::wgsl::safe_karva::{dump_file, encode, head_needed, split};
+use fuller::wgsl::render::{cost, gram_shipped_safe_tree, validate_text, Tree};
+use fuller::wgsl::safe_karva::{dump_file, encode, head_needed, render_tree, split};
 use fuller::wgsl::safe_reader::{read_safe, statement_outline};
-use fuller::wgsl::table::FunctionTable;
 
 fn main() -> Result<(), String> {
     let mut args = std::env::args().skip(1);
@@ -50,8 +49,6 @@ fn main() -> Result<(), String> {
     }
     std::fs::create_dir_all(&out).map_err(|e| e.to_string())?;
     let kingdom = WgslKingdom::load_safe();
-    let (table, role) = (FunctionTable::safe(), gram_role());
-    let rr = Renderer::new(&kingdom, &table, &role);
     let mut files: Vec<PathBuf> = std::fs::read_dir(&dir).map_err(|e| format!("{}: {e}", dir.display()))?.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "wgsl")).collect();
     files.sort();
     let (mut converted, mut valid) = (0, 0);
@@ -69,7 +66,7 @@ fn main() -> Result<(), String> {
             }
             Ok(r) => {
                 converted += 1;
-                let (text, ok) = match rr.kernel(&r.tree) {
+                let (text, ok) = match render_tree(&r.tree, &kingdom) {
                     Ok(o) => match validate_text(&o.text) {
                         Ok(()) => (o.text, "yes".to_string()),
                         Err(e) => {

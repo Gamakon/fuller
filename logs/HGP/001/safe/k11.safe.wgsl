@@ -1,3 +1,4 @@
+// grid 16 16 2 2
 struct Cfg { d: u32, m: u32, r_rows: u32, r_off: u32, };
 @group(0) @binding(0) var<storage, read> phi: array<f32>;
 @group(0) @binding(1) var<storage, read_write> h: array<f32>;
