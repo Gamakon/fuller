@@ -52,8 +52,36 @@ struct Summary {
     pairs_passed: usize,
     pairs_total: usize,
     worst_pair_ratio: f64,
+    /// The worst error over the training, validation and extrapolation
+    /// pairs, each in units of the shipped kernel's own worst error on that
+    /// pair: the accuracy and generalisation columns of the HFF.
+    worst_train: f64,
+    worst_val: f64,
+    worst_extrap: f64,
     speedups: Vec<(String, f64, f64, f64)>,
     null: Vec<(String, f64)>,
+}
+
+/// The HFF of a feasible individual: six columns in [0, 1], 0 best — the
+/// time ratio against the shipped kernel on each of the three problem
+/// sizes (min(1, 1 / speed-up)), and the worst error relative to the
+/// shipped kernel's on the training, validation and extrapolation pairs
+/// (min(1, ratio / 2): at the gate's limit, twice the shipped error, the
+/// column is 1; at the shipped error 0.5; better than shipped below).
+/// Fitness θ = acos(1 − mean(x²)) (phylu's hff.wgsl, lines 212–213); 0 is
+/// the ideal, π/2 a kernel no faster and no more accurate than shipped at
+/// the gate's limit. An infeasible individual has no angle.
+fn hff(s: &Summary) -> Option<f64> {
+    if s.rung < 4 || s.speedups.len() != 3 {
+        return None;
+    }
+    let mut x: Vec<f64> = s.speedups.iter().map(|(_, m, _, _)| (1.0 / m).clamp(0.0, 1.0)).collect();
+    for e in [s.worst_train, s.worst_val, s.worst_extrap] {
+        x.push((e / 2.0).clamp(0.0, 1.0));
+    }
+    let energy = x.iter().map(|v| v * v).sum::<f64>() / x.len() as f64;
+    let cos = (1.0 - energy.min(1.0)).clamp(-1.0, 1.0);
+    Some(if cos > 1.0 - 1.1920929e-7 { 0.0 } else { cos.acos() })
 }
 
 fn main() -> Result<(), String> {
@@ -79,7 +107,7 @@ fn main() -> Result<(), String> {
     let source = std::fs::read_to_string(&path).map_err(|e| format!("{path}: {e}"))?;
     let t_all = Instant::now();
     println!("[{}] ladder: {path} ({} bytes, header {:?})", stamp(), source.len(), grid_header(&source));
-    let mut s = Summary { rung: 0, detail: String::new(), probes_passed: 0, pairs_passed: 0, pairs_total: 0, worst_pair_ratio: 0.0, speedups: Vec::new(), null: Vec::new() };
+    let mut s = Summary { rung: 0, detail: String::new(), probes_passed: 0, pairs_passed: 0, pairs_total: 0, worst_pair_ratio: 0.0, worst_train: 0.0, worst_val: 0.0, worst_extrap: 0.0, speedups: Vec::new(), null: Vec::new() };
 
     // Rung 1: parse.
     match naga::front::wgsl::parse_str(&source) {
@@ -175,6 +203,11 @@ fn main() -> Result<(), String> {
             s.pairs_total += 1;
             let ratio = if sv.max_ratio > 0.0 { v.max_ratio / sv.max_ratio } else { v.max_ratio };
             s.worst_pair_ratio = s.worst_pair_ratio.max(ratio);
+            match split {
+                "train" => s.worst_train = s.worst_train.max(ratio),
+                "validation" => s.worst_val = s.worst_val.max(ratio),
+                _ => s.worst_extrap = s.worst_extrap.max(ratio),
+            }
             if gate(&v, sv.max_ratio) {
                 ok += 1;
                 s.pairs_passed += 1;
@@ -269,15 +302,16 @@ fn rung4(dev: &Device, gram: &Gram, limit: u64, cache: &std::path::Path, rounds:
 fn finish(ledger: &PathBuf, path: &str, s: &Summary, t_all: Instant) -> Result<(), String> {
     let geo = if s.speedups.is_empty() { 0.0 } else { (s.speedups.iter().map(|x| x.1.ln()).sum::<f64>() / s.speedups.len() as f64).exp() };
     let worst = s.speedups.iter().map(|x| x.1).fold(f64::INFINITY, f64::min);
-    println!("[{}] result: rung {} probes {} pairs {}/{} worst pair ratio {:.3}x shipped's error; speed-up geometric mean {geo:.3}, worst shape {:.3}; {:.0} s; {}", stamp(), s.rung, s.probes_passed, s.pairs_passed, s.pairs_total, s.worst_pair_ratio, if worst.is_finite() { worst } else { 0.0 }, t_all.elapsed().as_secs_f64(), s.detail);
+    let angle = hff(s);
+    println!("[{}] result: rung {} probes {} pairs {}/{} worst error train {:.3} val {:.3} extrap {:.3} (x shipped's); speed-up geometric mean {geo:.3}, min over sizes {:.3}; HFF {}; {:.0} s; {}", stamp(), s.rung, s.probes_passed, s.pairs_passed, s.pairs_total, s.worst_train, s.worst_val, s.worst_extrap, if worst.is_finite() { worst } else { 0.0 }, angle.map_or("infeasible".to_string(), |a| format!("{a:.4}")), t_all.elapsed().as_secs_f64(), s.detail);
     if let Some(dir) = ledger.parent() {
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
     let new = !ledger.exists();
     let mut f = std::fs::OpenOptions::new().append(true).create(true).open(ledger).map_err(|e| e.to_string())?;
     if new {
-        writeln!(f, "time\tkernel\trung\tprobes\tpairs\tworst_pair_ratio\tspeedups\tnull\tgeo\tworst\tseconds\tdetail").map_err(|e| e.to_string())?;
+        writeln!(f, "time\tkernel\trung\tprobes\tpairs\tworst_pair_ratio\tspeedups\tnull\tgeo\tworst\tseconds\tdetail\tworst_train\tworst_val\tworst_extrap\thff").map_err(|e| e.to_string())?;
     }
-    writeln!(f, "{}\t{path}\t{}\t{}\t{}/{}\t{:.4}\t{}\t{}\t{geo:.4}\t{:.4}\t{:.0}\t{}", stamp(), s.rung, s.probes_passed, s.pairs_passed, s.pairs_total, s.worst_pair_ratio, s.speedups.iter().map(|(n, m, lo, hi)| format!("{n}:{m:.3}[{lo:.3},{hi:.3}]")).collect::<Vec<_>>().join(","), s.null.iter().map(|(n, m)| format!("{n}:{m:.3}")).collect::<Vec<_>>().join(","), if worst.is_finite() { worst } else { 0.0 }, t_all.elapsed().as_secs_f64(), s.detail).map_err(|e| e.to_string())?;
+    writeln!(f, "{}\t{path}\t{}\t{}\t{}/{}\t{:.4}\t{}\t{}\t{geo:.4}\t{:.4}\t{:.0}\t{}\t{:.4}\t{:.4}\t{:.4}\t{}", stamp(), s.rung, s.probes_passed, s.pairs_passed, s.pairs_total, s.worst_pair_ratio, s.speedups.iter().map(|(n, m, lo, hi)| format!("{n}:{m:.3}[{lo:.3},{hi:.3}]")).collect::<Vec<_>>().join(","), s.null.iter().map(|(n, m)| format!("{n}:{m:.3}")).collect::<Vec<_>>().join(","), if worst.is_finite() { worst } else { 0.0 }, t_all.elapsed().as_secs_f64(), s.detail, s.worst_train, s.worst_val, s.worst_extrap, angle.map_or("-".to_string(), |a| format!("{a:.4}"))).map_err(|e| e.to_string())?;
     Ok(())
 }
