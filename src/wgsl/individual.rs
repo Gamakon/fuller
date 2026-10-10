@@ -85,6 +85,15 @@ impl Individual {
         if decoded.len() != n_head + n_tail {
             return Err(format!("{}: {} genes given, the chromosome has {n_head} head and {n_tail} tail", c.function, decoded.len()));
         }
+        // A loop's break condition is a root gene. A changed condition can
+        // make a loop unbounded, and an unbounded kernel occupies the GPU
+        // until the machine restarts (2026-10-10, twice). Conditions belong
+        // to the scaffold: a decoded condition gene must equal the draft's.
+        for (g, root) in self.kernel.functions[i].roots.iter().enumerate() {
+            if matches!(root.kind, crate::wgsl::reader::RootKind::Condition { .. }) && decoded.get(g) != c.folded.head.get(g) {
+                return Err(format!("{}: gene {g} is a loop or branch condition and may not change (got {}, the draft has {})", c.function, decoded.get(g).map_or("", |s| s.as_str()), c.folded.head.get(g).map_or("", |s| s.as_str())));
+            }
+        }
         let mut chromosomes = self.chromosomes.clone();
         chromosomes[i].folded.head = decoded[..n_head].to_vec();
         chromosomes[i].folded.tail = decoded[n_head..].to_vec();
@@ -170,6 +179,19 @@ mod tests {
         let again = ctx.fitness(&dev, &rebuilt.wgsl);
         assert!(original.feasible && again.feasible, "{original:?} {again:?}");
         assert!((original.hff - again.hff).abs() < 0.1, "{original:?} {again:?}");
+    }
+
+    /// A condition gene changed is refused by name, whatever it decodes to.
+    #[test]
+    fn a_changed_condition_gene_is_refused() {
+        let kingdom = WgslKingdom::load();
+        let ind = Individual::from_source(SHIPPED, &kingdom).unwrap();
+        let roots = &ind.kernel.functions[0].roots;
+        let cond = roots.iter().position(|r| matches!(r.kind, crate::wgsl::reader::RootKind::Condition { .. })).expect("the shipped kernel has a loop condition and a guard");
+        let mut own: Vec<String> = ind.chromosomes[0].folded.head.iter().chain(ind.chromosomes[0].folded.tail.iter()).cloned().collect();
+        own[cond] = "(literal.flag (Num 1.0))".into();
+        let err = match ind.rebuild_with_sexprs(0, &own) { Ok(_) => panic!("a changed condition rebuilt"), Err(e) => e };
+        assert!(err.contains("condition and may not change"), "{err}");
     }
 
     #[test]
