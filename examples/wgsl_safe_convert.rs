@@ -15,7 +15,7 @@
 use std::path::PathBuf;
 
 use fuller::wgsl::loader::WgslKingdom;
-use fuller::wgsl::render::{gram_role, validate_text, Renderer, Tree};
+use fuller::wgsl::render::{cost, gram_role, gram_shipped_safe_tree, validate_text, Renderer, Tree};
 use fuller::wgsl::safe_karva::{dump_file, encode, head_needed, split};
 use fuller::wgsl::safe_reader::{read_safe, statement_outline};
 use fuller::wgsl::table::FunctionTable;
@@ -117,12 +117,15 @@ fn main() -> Result<(), String> {
         chosen_slots = max.div_ceil(8) * 8;
     }
     println!("\nlayout: head {head_length}, tail {}, {} tail slots, {} genes a kernel", head_length * 3 + 1, chosen_slots, chosen_slots + 1);
-    println!("{:<6} {:>6} {:>6} {:>10}", "kernel", "nodes", "slots", "head need");
+    let shipped = cost(&gram_shipped_safe_tree(&kingdom)?);
+    println!("shipped safe tree: cost {:.0} per item, {:.0} base", shipped.per_item, shipped.base);
+    println!("{:<6} {:>6} {:>6} {:>10} {:>10} {:>8} {:>10}", "kernel", "nodes", "slots", "head need", "per item", "base", "x shipped");
     for (id, t) in &trees {
         let c = encode(t, head_length, chosen_slots, 7013).map_err(|e| format!("{id}: {e}"))?;
         let v = dump_file(&format!("{id}.wgsl"), &kingdom, &c);
         std::fs::write(karva.join(format!("{id}.json")), serde_json::to_string(&v).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
-        println!("{id:<6} {:>6} {:>6} {:>10}", t.size(), c.folded.filled, head_needed(t));
+        let k = cost(t);
+        println!("{id:<6} {:>6} {:>6} {:>10} {:>10.0} {:>8.0} {:>10.1}", t.size(), c.folded.filled, head_needed(t), k.per_item, k.base, k.per_item / shipped.per_item);
     }
     println!("{} dumps written to {}", trees.len(), karva.display());
     Ok(())

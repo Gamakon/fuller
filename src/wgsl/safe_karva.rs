@@ -26,7 +26,7 @@ use crate::geneframe::Ty;
 use crate::homeotic::{self, href_name, href_slot, FoldedChromosome, KarvaGene, EMPTY_SLOT};
 use crate::karva::{parse_math, FunctionSpec, MathNode, PsetSpec, Token};
 use crate::wgsl::loader::WgslKingdom;
-use crate::wgsl::render::{dual_ty, gram_role, Rendered, Renderer, Role, Tree};
+use crate::wgsl::render::{cost, dual_ty, gram_role, gram_shipped_safe_tree, Cost, Rendered, Renderer, Role, Tree};
 use crate::wgsl::table::FunctionTable;
 
 /// The kingdom's K: every node has at most four children.
@@ -427,10 +427,37 @@ pub fn render_tree(tree: &Tree, kingdom: &WgslKingdom) -> Result<Rendered, Strin
 /// Decoded genes to kernel text: unfold, project, render; with the number of
 /// fallback leaves the projection made.
 pub fn rebuild(decoded: &[String], filled: usize, kingdom: &WgslKingdom) -> Result<(Rendered, usize), String> {
+    rebuild_bounded(decoded, filled, kingdom, None).map(|(r, f, _)| (r, f))
+}
+
+/// The static cost bound a kernel must stay under BEFORE it is dispatched:
+/// work the GPU has started cannot be cancelled, and a legal kernel of
+/// bounded loops can still take hours (three nested tile loops of 64
+/// inside the item loop). Per item: `SHIPPED_COST_FACTOR` times the shipped
+/// kernel's per-thread cost (the converted drafts reach 23 times it, their
+/// register blocks doing more per thread for fewer threads); base: a fixed
+/// 20,000 operations.
+pub const SHIPPED_COST_FACTOR: f64 = 64.0;
+
+pub fn default_bound(kingdom: &WgslKingdom) -> Result<Cost, String> {
+    let shipped = cost(&gram_shipped_safe_tree(kingdom)?);
+    Ok(Cost { per_item: SHIPPED_COST_FACTOR * shipped.per_item, base: 20_000.0 })
+}
+
+/// [`rebuild`] refusing, by name, a kernel whose static cost exceeds
+/// `bound` (the per-item or the base figure); the kernel's cost is
+/// returned with the text.
+pub fn rebuild_bounded(decoded: &[String], filled: usize, kingdom: &WgslKingdom, bound: Option<&Cost>) -> Result<(Rendered, usize, Cost), String> {
     let text = unfold_decoded(decoded, filled)?;
     let tree = build(&text, kingdom, &gram_role())?;
     let f = fallbacks(&tree);
-    Ok((render_tree(&tree, kingdom)?, f))
+    let c = cost(&tree);
+    if let Some(b) = bound {
+        if c.per_item > b.per_item || c.base > b.base {
+            return Err(format!("cost: {:.0} per item, {:.0} base exceeds the bound {:.0}, {:.0}; not dispatched", c.per_item, c.base, b.per_item, b.base));
+        }
+    }
+    Ok((render_tree(&tree, kingdom)?, f, c))
 }
 
 #[cfg(test)]
@@ -449,7 +476,8 @@ mod tests {
         let c = encode(tree, h, slots, 7).unwrap_or_else(|e| panic!("{e}"));
         let pset = homeotic::pset_with_hrefs(&c.pset, slots);
         let decoded: Vec<String> = c.genes.iter().map(|(hd, tl)| karva_to_terms_generic(hd, tl, &pset).unwrap()).collect();
-        let (r, f) = rebuild(&decoded, c.folded.filled, kingdom).unwrap_or_else(|e| panic!("{e}"));
+        let bound = default_bound(kingdom).unwrap();
+        let (r, f, _) = rebuild_bounded(&decoded, c.folded.filled, kingdom, Some(&bound)).unwrap_or_else(|e| panic!("{e}"));
         let text = unfold_decoded(&decoded, c.folded.filled).unwrap();
         assert_eq!(f, 0, "fallbacks in {}\nfrom {text}", build(&text, kingdom, &gram_role()).unwrap().to_sexpr());
         assert_eq!(r.text, direct);
@@ -524,6 +552,38 @@ mod tests {
         }
         assert!(converted >= 27, "{converted} converted");
         assert!(slots_max <= 48, "{slots_max} slots");
+    }
+
+    /// A legal kernel of bounded loops that would still run for hours
+    /// (three nested tile loops of 64 inside the item loop) is refused by
+    /// the cost bound before any dispatch; the shipped kernel passes it.
+    #[test]
+    fn a_kernel_over_the_cost_bound_is_refused_before_dispatch() {
+        let k = WgslKingdom::load_safe();
+        let bound = default_bound(&k).unwrap();
+        let src = format!("// grid 16 16 1 1\n{SHIPPED}");
+        let r = read_safe(&src, &k).unwrap();
+        let shipped_genes = vec![karva_text(&r.tree)];
+        assert!(rebuild_bounded(&shipped_genes, 0, &k, Some(&bound)).is_ok());
+        // The item loop's body wrapped in three tile loops of 64.
+        let mut t = r.tree.clone();
+        fn wrap(t: &mut Tree, k: &WgslKingdom) -> bool {
+            if t.name == "loop.items_boundm" {
+                let body = t.kids[1].clone();
+                let lit = |v: f32| Tree::literal("literal.lit64", dual_ty(k, "u32.lit64").unwrap(), v);
+                let l3 = Tree::new("loop.tile_L3", dual_ty(k, "stmt.L3").unwrap(), vec![lit(64.0), Tree::new("block.one_L4", dual_ty(k, "block.L4").unwrap(), vec![Tree::new("stmt.block_L4", dual_ty(k, "stmt.L4").unwrap(), vec![Tree { ty: dual_ty(k, "block.L4").unwrap(), ..body.clone() }])])]);
+                let l2 = Tree::new("loop.tile_L2", dual_ty(k, "stmt.L2").unwrap(), vec![lit(64.0), Tree::new("block.one_L3", dual_ty(k, "block.L3").unwrap(), vec![l3])]);
+                let l1 = Tree::new("loop.tile_L1", dual_ty(k, "stmt.L1").unwrap(), vec![lit(64.0), Tree::new("block.one_L2", dual_ty(k, "block.L2").unwrap(), vec![l2])]);
+                t.kids[1] = Tree::new("block.one_L1", dual_ty(k, "block.L1").unwrap(), vec![l1]);
+                return true;
+            }
+            t.kids.iter_mut().any(|c| wrap(c, k))
+        }
+        assert!(wrap(&mut t, &k));
+        let heavy = vec![karva_text(&t)];
+        let e = rebuild_bounded(&heavy, 0, &k, Some(&bound)).err().expect("refused");
+        assert!(e.starts_with("cost:"), "{e}");
+        assert!(cost(&t).per_item > bound.per_item);
     }
 
     /// A gene text with a token of the wrong dual projects to a fallback

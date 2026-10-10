@@ -986,16 +986,37 @@ pub fn cost(t: &Tree) -> Cost {
     fn walk(t: &Tree, tile: f64, in_items: bool) -> (f64, f64) {
         let own = node_cost(&t.name) * tile;
         let (mut base, mut per_item) = if in_items { (0.0, own) } else { (own, 0.0) };
-        match t.name.as_str() {
-            "loop.items" | "loop.items_unrolled" => {
+        // A bounded literal as the renderer snaps it (1..=max), 1 for a fallback.
+        let lit = |k: Option<&Tree>, max: f64| k.map_or(1.0, |k| if k.name.starts_with("literal.") && k.konst.is_finite() { f64::from(k.konst).round().clamp(1.0, max) } else { 1.0 });
+        match safe_base(&t.name) {
+            "loop.items" | "loop.items_unrolled" | "loop.items_bounded" | "loop.items_unrolled_bounded" => {
                 for k in &t.kids {
                     let (b, p) = walk(k, tile, true);
                     // The body runs once per item; a nested long loop is refused by the renderer.
                     per_item += b + p;
                 }
             }
+            "loop.items_strided_bounded" => {
+                // (bound, stride, body): the body runs once per `stride` items.
+                let stride = lit(t.kids.get(1), 64.0);
+                for k in &t.kids {
+                    let (b, p) = walk(k, tile, true);
+                    per_item += (b + p) / stride;
+                }
+            }
             "loop.tile" => {
                 let n = t.kids.first().map_or(4.0, |k| if k.name.starts_with("literal.") { f64::from(snap(&WGDIM, k.konst)) } else { f64::from(WGDIM[0]) });
+                for k in &t.kids {
+                    let (b, p) = walk(k, tile * n, in_items);
+                    base += b;
+                    per_item += p;
+                }
+            }
+            "loop.tile_bounded" | "loop.tile_strided_bounded" => {
+                // (count, [step,] body): the body runs ceil(count / step) times, nested tile loops multiply.
+                let count = lit(t.kids.first(), 64.0);
+                let step = if safe_base(&t.name) == "loop.tile_strided_bounded" { lit(t.kids.get(1), 64.0) } else { 1.0 };
+                let n = (count / step).ceil();
                 for k in &t.kids {
                     let (b, p) = walk(k, tile * n, in_items);
                     base += b;
