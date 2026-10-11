@@ -857,6 +857,9 @@ impl FitnessContext {
         let mut passed = 0;
         let mut first_fail = String::new();
         let cases = self.admission.len();
+        // The projection is over the cases alone: the pipeline compile
+        // (50-300 ms on Metal) before them would be multiplied by 128.
+        let t_cases = Instant::now();
         for (n, &i) in self.admission.iter().enumerate() {
             let p = &self.probes[i];
             let b = match gram.build(&p.phi, p.d, p.m, p.limit) {
@@ -870,9 +873,9 @@ impl FitnessContext {
             } else if first_fail.is_empty() {
                 first_fail = format!("{} ({d:.2e})", p.name);
             }
-            let projected = elapsed_ms(t) * cases as f64 / (n + 1) as f64;
+            let projected = elapsed_ms(t_cases) * cases as f64 / (n + 1) as f64;
             if n + 1 < cases && projected > self.base_budget_ms / 3.0 {
-                return infeasible(passed, format!("slow: the correctness cases are projected at {:.1} s ({:.1} s for the first {}), over a third of the {:.1} s budget; the rest not dispatched", projected / 1e3, elapsed_ms(t) / 1e3, n + 1, self.base_budget_ms / 1e3), t, &meter);
+                return infeasible(passed, format!("slow: the correctness cases are projected at {:.1} s ({:.1} s for the first {}), over a third of the {:.1} s budget; the rest not dispatched", projected / 1e3, elapsed_ms(t_cases) / 1e3, n + 1, self.base_budget_ms / 1e3), t, &meter);
             }
         }
         if passed < cases {
@@ -1065,6 +1068,23 @@ mod tests {
         }
     }
 
+    /// The shipped kernel doing 64 times its work with the same H (see
+    /// `a_deliberately_slow_kernel_is_stopped_before_the_timing_shapes`).
+    fn slow_shipped() -> String {
+        let item_loop = "    var acc: f32 = 0.0;\n    for (var t: u32 = 0u; t < cfg.m; t = t + 1u) {\n        let base = t * cfg.d;\n        acc = acc + phi[base + gr] * phi[base + c];\n    }\n";
+        assert!(SHIPPED.contains(item_loop), "the item loop was not found in the shipped text");
+        SHIPPED.replace(item_loop, "    var acc: f32 = 0.0;\n    for (var k: u32 = 0u; k < 64u; k = k + 1u) {\n        var s: f32 = 0.0;\n        let off = (k * cfg.d) / (64u * cfg.d);\n        for (var t: u32 = 0u; t < cfg.m; t = t + 1u) {\n            let base = (t + off) * cfg.d;\n            s = s + phi[base + gr] * phi[base + c];\n        }\n        if (k == 0u) { acc = s; } else { acc = 0.5 * (acc + s); }\n    }\n")
+    }
+
+    /// The slow test kernel is valid WGSL (naga, no device).
+    #[test]
+    fn the_slow_test_kernel_is_valid_wgsl() {
+        let slow = slow_shipped();
+        let module = naga::front::wgsl::parse_str(&slow).unwrap_or_else(|e| panic!("{}", e.emit_to_string(&slow)));
+        naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::all()).validate(&module).unwrap_or_else(|e| panic!("{}", e.emit_to_string(&slow)));
+        assert!(slow.contains("k < 64u") && slow.contains("(k * cfg.d) / (64u * cfg.d)"));
+    }
+
     /// GPU (run when the device is free): a correct kernel doing 64 times
     /// the shipped kernel's work is stopped as "slow" before the timing
     /// shapes. Its item loop runs 64 times, each pass's sum `s` the shipped
@@ -1072,13 +1092,16 @@ mod tests {
     /// `acc = 0.5 * (acc + s)`, exact for equal values (2s and the halving
     /// are exact, and inf and NaN carry through), so its H is bit-identical
     /// to the shipped kernel's and it passes the correctness cases and the
-    /// pairs it reaches. The detail names the shape and the prediction, and
-    /// the evaluation takes well under the watchdog's base budget.
+    /// pairs it reaches. Each pass reads at an offset `(k d) / (64 d)`, zero
+    /// for every k < 64 but not provably so to the shader compiler, so no
+    /// pass can be hoisted out of the k loop as invariant. A "feasible"
+    /// result here means the compiler removed the repeated work anyway and
+    /// the test kernel must be made slower another way, not that the gate
+    /// failed. The detail names the shape and the prediction, and the
+    /// evaluation takes well under the watchdog's base budget.
     #[test]
     fn a_deliberately_slow_kernel_is_stopped_before_the_timing_shapes() {
-        let item_loop = "    var acc: f32 = 0.0;\n    for (var t: u32 = 0u; t < cfg.m; t = t + 1u) {\n        let base = t * cfg.d;\n        acc = acc + phi[base + gr] * phi[base + c];\n    }\n";
-        assert!(SHIPPED.contains(item_loop), "the item loop was not found in the shipped text");
-        let slow = SHIPPED.replace(item_loop, "    var acc: f32 = 0.0;\n    for (var k: u32 = 0u; k < 64u; k = k + 1u) {\n        var s: f32 = 0.0;\n        for (var t: u32 = 0u; t < cfg.m; t = t + 1u) {\n            let base = t * cfg.d;\n            s = s + phi[base + gr] * phi[base + c];\n        }\n        if (k == 0u) { acc = s; } else { acc = 0.5 * (acc + s); }\n    }\n");
+        let slow = slow_shipped();
         let dev = Device::new().expect("device");
         let ctx = FitnessContext::new(&dev, std::path::Path::new("logs/WGSL_GRAM/pairs")).expect("context");
         let f = ctx.fitness(&dev, &slow);
