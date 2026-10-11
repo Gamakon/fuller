@@ -757,3 +757,61 @@ F755	wg	set_v_lane_C3	composite	wgmem<vec4<f32>>.real u32.wgvindex u32.index f32
 F756	parr	set_v_lane_C3	composite	parr<vec4<f32>>.real u32.pindex u32.index f32.real	stmt.C3	4	arity 4: pv[i][j & 3u] = x;
 F757	wg	set_v_lane_C4	composite	wgmem<vec4<f32>>.real u32.wgvindex u32.index f32.real	stmt.C4	4	arity 4: va[i][j & 3u] = x;
 F758	parr	set_v_lane_C4	composite	parr<vec4<f32>>.real u32.pindex u32.index f32.real	stmt.C4	4	arity 4: pv[i][j & 3u] = x;
+F759	safe	lt_lit64_4	Binary::Less	u32.tcounter4 u32.lit64	bool.bound	2	a fourth nested tile loop's condition
+F760	safe	tile_counter4	composite	-	u32.tcounter4	0	the fourth nested tile loop's counter k4 (0u outside it)
+F761	safe	tile_index4	composite	u32.tcounter4	u32.index	1	the fourth tile counter as a plain index
+F762	safe	row_plus_tile4	composite	u32.threadrow u32.tcounter4	u32.threadrow	2	row + min(k4, block rows - 1)
+F763	safe	col_plus_tile4	composite	u32.threadcol u32.tcounter4	u32.threadcol	2	col + min(k4, block columns - 1)
+F764	safe	row_plus_tile4_s	composite	u32.threadrow u32.tcounter4	u32.threadrow	2	row + min(k4, blk - 1) * Y
+F765	safe	col_plus_tile4_s	composite	u32.threadcol u32.tcounter4	u32.threadcol	2	col + min(k4, blk - 1) * X
+F766	block	one_L5	composite	stmt.L5	block.L5	1	
+F767	block	seq2_L5	composite	stmt.L5 stmt.L5	block.L5	2	
+F768	block	seq3_L5	composite	stmt.L5 stmt.L5 stmt.L5	block.L5	3	arity 3
+F769	block	seq4_L5	composite	stmt.L5 stmt.L5 stmt.L5 stmt.L5	block.L5	4	arity 4
+F770	stmt	block_L5	composite	block.L5	stmt.L5	1	{ ... }
+F771	reg	set_f_L5	composite	reg<f32>.real f32.real	stmt.L5	2	
+F772	reg	set_v_L5	composite	reg<vec4<f32>>.real vec4<f32>.real	stmt.L5	2	
+F773	reg	set_i_L5	composite	reg<u32>.index u32.index	stmt.L5	2	
+F774	reg	set_b_L5	composite	reg<bool>.flag bool.flag	stmt.L5	2	
+F775	wg	set_L5	composite	wgmem<f32>.real u32.wgindex f32.real	stmt.L5	3	arity 3; the index is in range by its type
+F776	wg	set_v_L5	composite	wgmem<vec4<f32>>.real u32.wgvindex vec4<f32>.real	stmt.L5	3	arity 3: va[i] = v
+F777	parr	set_f_L5	composite	parr<f32>.real u32.pindex f32.real	stmt.L5	3	arity 3: pa[i] = v
+F778	parr	set_v_L5	composite	parr<vec4<f32>>.real u32.pindex vec4<f32>.real	stmt.L5	3	arity 3: pv[i] = v
+F779	parr	set_i_L5	composite	parr<u32>.index u32.pindex u32.index	stmt.L5	3	arity 3: pi[i] = v
+F780	parr	set_b_L5	composite	parr<bool>.flag u32.pindex bool.flag	stmt.L5	3	arity 3: pm[i] = v
+F781	store	h_L5	composite	u32.cell f32.real	stmt.L5	2	h[cell] = h[cell] + v: read-add-write of a cell this thread owns
+F782	stmt	if_L5	composite	bool.flag block.C5	stmt.L5	2	if (c) { ... }: the body is a conditional context
+F783	stmt	if_else_L5	composite	bool.flag block.C5 block.C5	stmt.L5	3	arity 3
+F784	reg	set_v_lane_L5	composite	reg<vec4<f32>>.real u32.index f32.real	stmt.L5	3	arity 3: v[i & 3u] = x;
+F785	wg	set_v_lane_L5	composite	wgmem<vec4<f32>>.real u32.wgvindex u32.index f32.real	stmt.L5	4	arity 4: va[i][j & 3u] = x;
+F786	parr	set_v_lane_L5	composite	parr<vec4<f32>>.real u32.pindex u32.index f32.real	stmt.L5	4	arity 4: pv[i][j & 3u] = x;
+F787	block	one_C5	composite	stmt.C5	block.C5	1	
+F788	block	seq2_C5	composite	stmt.C5 stmt.C5	block.C5	2	
+F789	block	seq3_C5	composite	stmt.C5 stmt.C5 stmt.C5	block.C5	3	arity 3
+F790	block	seq4_C5	composite	stmt.C5 stmt.C5 stmt.C5 stmt.C5	block.C5	4	arity 4
+F791	stmt	block_C5	composite	block.C5	stmt.C5	1	{ ... }
+F792	reg	set_f_C5	composite	reg<f32>.real f32.real	stmt.C5	2	
+F793	reg	set_v_C5	composite	reg<vec4<f32>>.real vec4<f32>.real	stmt.C5	2	
+F794	reg	set_i_C5	composite	reg<u32>.index u32.index	stmt.C5	2	
+F795	reg	set_b_C5	composite	reg<bool>.flag bool.flag	stmt.C5	2	
+F796	wg	set_C5	composite	wgmem<f32>.real u32.wgindex f32.real	stmt.C5	3	arity 3; the index is in range by its type
+F797	wg	set_v_C5	composite	wgmem<vec4<f32>>.real u32.wgvindex vec4<f32>.real	stmt.C5	3	arity 3: va[i] = v
+F798	parr	set_f_C5	composite	parr<f32>.real u32.pindex f32.real	stmt.C5	3	arity 3: pa[i] = v
+F799	parr	set_v_C5	composite	parr<vec4<f32>>.real u32.pindex vec4<f32>.real	stmt.C5	3	arity 3: pv[i] = v
+F800	parr	set_i_C5	composite	parr<u32>.index u32.pindex u32.index	stmt.C5	3	arity 3: pi[i] = v
+F801	parr	set_b_C5	composite	parr<bool>.flag u32.pindex bool.flag	stmt.C5	3	arity 3: pm[i] = v
+F802	store	h_C5	composite	u32.cell f32.real	stmt.C5	2	h[cell] = h[cell] + v: read-add-write of a cell this thread owns
+F803	stmt	if_C5	composite	bool.flag block.C5	stmt.C5	2	if (c) { ... }: the body is a conditional context
+F804	stmt	if_else_C5	composite	bool.flag block.C5 block.C5	stmt.C5	3	arity 3
+F805	reg	set_v_lane_C5	composite	reg<vec4<f32>>.real u32.index f32.real	stmt.C5	3	arity 3: v[i & 3u] = x;
+F806	wg	set_v_lane_C5	composite	wgmem<vec4<f32>>.real u32.wgvindex u32.index f32.real	stmt.C5	4	arity 4: va[i][j & 3u] = x;
+F807	parr	set_v_lane_C5	composite	parr<vec4<f32>>.real u32.pindex u32.index f32.real	stmt.C5	4	arity 4: pv[i][j & 3u] = x;
+F808	stmt	barrier_L5	composite	-	stmt.L5	0	workgroupBarrier(); never in a conditional context
+F809	loop	tile_L4	composite	u32.lit64 block.L5	stmt.L4	2	a fourth nested short loop (counter k4); nothing produces a loop at L5
+F810	loop	tile_C4	composite	u32.lit64 block.C5	stmt.C4	2	a fourth nested short loop (counter k4) under a condition
+F811	loop	tile_strided_L4	composite	u32.lit64 u32.lit64 block.L5	stmt.L4	3	arity 3: a short loop stepped by a literal (the counter of its depth)
+F812	loop	tilex_L4	composite	u32.boundx block.L5	stmt.L4	2	a short loop (the counter of its depth) bounded by an expression
+F813	loop	tilex_strided_L4	composite	u32.boundx u32.lit64 block.L5	stmt.L4	3	arity 3: the same, stepped by a literal
+F814	loop	tile_strided_C4	composite	u32.lit64 u32.lit64 block.C5	stmt.C4	3	arity 3: a short loop stepped by a literal (the counter of its depth)
+F815	loop	tilex_C4	composite	u32.boundx block.C5	stmt.C4	2	a short loop (the counter of its depth) bounded by an expression
+F816	loop	tilex_strided_C4	composite	u32.boundx u32.lit64 block.C5	stmt.C4	3	arity 3: the same, stepped by a literal

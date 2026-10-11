@@ -126,3 +126,8 @@ T124	parr<bool>.flag	parr<bool>	flag	0	false	0	0	0	a private array of 16 bool: p
 T125	wgmem<vec4<f32>>.real	wgmem<vec4<f32>>	real	0	0.0	0	0	0	a workgroup-memory array of 512 vec4<f32>: va, vb (256 until 2026-10-11; two f32 arrays of 2,048 and two vec4 arrays of 512 are Apple's 32 KB)
 T126	u32.wgvindex	u32	wgvindex	1	0u	0	0	0	an index into a vec4 workgroup array, masked to the array by its row
 T127	u32.boundx	u32	boundx	1	1u	0	0	0	a loop bound that is any index expression (cfg.m & ~3u, (cfg.d + 63u) / 64u, a register): rendered as written, never capped; costed at the worst shape
+T128	u32.tcounter4	u32	tcounter4	1	0u	0	0	0	a fourth nested tile loop's counter k4, stepped by the loop row itself
+T129	stmt.L5	stmt	L5	0	empty	0	0	0	a statement inside a fourth nested tile loop
+T130	block.L5	block	L5	0	empty	0	0	0	a block inside a fourth nested tile loop
+T131	stmt.C5	stmt	C5	0	empty	0	0	0	a statement under a condition inside a fourth nested tile loop: no barrier
+T132	block.C5	block	C5	0	empty	0	0	0	a block under a condition inside a fourth nested tile loop: no barrier

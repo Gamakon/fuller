@@ -58,6 +58,9 @@ reply_fitA_g001_r6x_reinvent_fable	reads	reads	run A: the row and column held in
 reply_fitA_g001_r6x_reinvent_g1_sonnet	reads	reads	run A: the row and column held in registers (i6 = i3 + 16u * k); the memo sees through them
 reply_fitA_g001_r6x_reinvent_g2_sonnet	reads	reads	run A: the row and column held in registers (i6 = i3 + 16u * k); the memo sees through them
 reply_fitA_g001_r6x_reinvent_g3_sonnet	reads	reads	run A: read here, declined by phylu's literal grid (112 and 157); the grid widened
-reply_fitA_seed08_sonnet	reads	reads	run A: sa[si][comp] = va, a lane of a vec4 workgroup element: wg.set_v_lane
+reply_fitA_seed08_sonnet	reads	reads	run A: sa[si][comp] = va, a lane of a vec4 workgroup element: wg.set_v_lane; wrong as written like k08 (threads race on lanes of shared vec4 elements: 6/128 cases by chance, 0/128 rebuilt)
 reply_fitA_g001_r4p1_sonnet	reads	reads	run A: the kingdom's own at_vec4f copied from a rendered kernel (var t = v; return t[i & 3u]) is read as shape.at
 reply_fitA_seed04_sonnet	reads	reads	run A: a helper with a local, ifs and lane stores (ldv) inlined as statements at its call
+reply_fitA_g002_r2x_union_g2_opus	reads	reads	run A: a u32 local the inference typed as bits (i1 = i0 >> 6u) had no register kind; bits and count locals take the u32 register
+reply_fitA_g002_r2x_union_g10_sonnet	reads	reads	run A: a fourth nested tile loop (item loop, then g, j, r, c): counter k4, rungs L5 and C5
+reply_fitA_g002_fresh48_opus	reads	reads	run A: a helper (wrow) with its own loop storing to h at a row passed as an argument; inlined with the caller's counters in scope, its locals named under the helper; computes as written (128/128)

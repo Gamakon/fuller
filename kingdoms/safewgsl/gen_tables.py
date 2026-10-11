@@ -85,10 +85,17 @@ FORMS = {
     "safe": ("the safeWGSL kernel: the root dual of this kingdom, produced only by kernel.entry_safe", []),
     "pindex": ("a private-array index, masked to the array by its row", ["u32"]),
     "boundx": ("a loop bound that is any index expression (cfg.m & ~3u, (cfg.d + 63u) / 64u, a register): rendered as written, never capped; costed at the worst shape", ["u32"]),
+    # A fourth nested tile loop (r2x_union_g9 and _g10 of run A: item loop, then g, j, r, c).
+    "tcounter4": ("a fourth nested tile loop's counter k4, stepped by the loop row itself", ["u32"]),
+    "L5": ("a statement or block inside a fourth nested tile loop", []),
+    "C5": ("a statement or block under a condition inside a fourth nested tile loop: no barrier", []),
 }
 
-SAFE_FORMS = ["safe", "pindex", "boundx", "boundm", "boundd", "boundrows", "lit64", "lit4096", "counter", "tcounter", "tcounter2", "L3", "C3", "tcounter3", "L4", "C4", "wgvindex", "bound", "threadrow", "threadcol", "cell", "phi", "wgindex", "L0", "L1", "L2", "C0", "C1", "C2"]
+SAFE_FORMS = ["tcounter4", "L5", "C5", "safe", "pindex", "boundx", "boundm", "boundd", "boundrows", "lit64", "lit4096", "counter", "tcounter", "tcounter2", "L3", "C3", "tcounter3", "L4", "C4", "wgvindex", "bound", "threadrow", "threadcol", "cell", "phi", "wgindex", "L0", "L1", "L2", "C0", "C1", "C2"]
 RUNGS = ["L0", "L1", "L2", "L3", "L4", "C0", "C1", "C2", "C3", "C4"]
+# The fifth rung came after every other row (run A, 2026-10-11); its rows are appended at the end so
+# every earlier ref stands, and it is kept out of RUNGS for that reason.
+RUNGS5 = ["L5", "C5"]
 
 FALLBACK = {
     "real": "0.0", "int": "0", "q15_16": "0", "q15_16w": "vec2(0, 0)", "index": "0u", "count": "0u",
@@ -106,6 +113,7 @@ FALLBACK = {
     "safe": "an empty kernel", "pindex": "0u",
     "tcounter3": "0u", "L4": "empty", "C4": "empty", "wgvindex": "0u",
     "boundx": "1u",
+    "tcounter4": "0u", "L5": "empty", "C5": "empty",
 }
 
 # The fallback by machine: the lane's 32-bit pattern as an unsigned integer. Vectors and matrices
@@ -123,6 +131,7 @@ FALLBACK_BITS = {
     "L0": 0, "L1": 0, "L2": 0, "L3": 0, "C0": 0, "C1": 0, "C2": 0, "C3": 0, "safe": 0, "pindex": 0,
     "tcounter3": 0, "L4": 0, "C4": 0, "wgvindex": 0,
     "boundx": 0,
+    "tcounter4": 0, "L5": 0, "C5": 0,
 }
 assert set(FALLBACK_BITS) == set(FALLBACK), "every form with a fallback needs its bits, and no more"
 
@@ -197,6 +206,11 @@ def build_types():
     add("u32", "wgvindex", 1, FORMS["wgvindex"][0])
     # ---- the complete kingdom (step 6, 2026-10-11) ----
     add("u32", "boundx", 1, FORMS["boundx"][0])
+    # ---- run A's declines (2026-10-11): a fourth nested tile loop ----
+    add("u32", "tcounter4", 1, FORMS["tcounter4"][0])
+    for r in RUNGS5:
+        add("stmt", r, 0, "a statement " + FORMS[r][0][len("a statement or block "):])
+        add("block", r, 0, "a block " + FORMS[r][0][len("a statement or block "):])
     return rows
 
 
@@ -584,6 +598,46 @@ f("parr", "get_v_lane", "composite", ["parr<vec4<f32>>.real", "u32.pindex", "u32
 for r in RUNGS:
     f("wg", "set_v_lane_" + r, "composite", ["wgmem<vec4<f32>>.real", "u32.wgvindex", "u32.index", "f32.real"], "stmt." + r, "arity 4: va[i][j & 3u] = x;")
     f("parr", "set_v_lane_" + r, "composite", ["parr<vec4<f32>>.real", "u32.pindex", "u32.index", "f32.real"], "stmt." + r, "arity 4: pv[i][j & 3u] = x;")
+# A fourth nested tile loop (r2x_union_g9 and _g10 of run A: the item loop, then loops over g, j, r and c):
+# the counter k4, the rungs L5 and C5 with every statement row the other rungs have, and the loops at L4/C4.
+f("safe", "lt_lit64_4", "Binary::Less", ["u32.tcounter4", "u32.lit64"], "bool.bound", "a fourth nested tile loop's condition")
+f("safe", "tile_counter4", "composite", [], "u32.tcounter4", "the fourth nested tile loop's counter k4 (0u outside it)")
+f("safe", "tile_index4", "composite", ["u32.tcounter4"], "u32.index", "the fourth tile counter as a plain index")
+f("safe", "row_plus_tile4", "composite", ["u32.threadrow", "u32.tcounter4"], "u32.threadrow", "row + min(k4, block rows - 1)")
+f("safe", "col_plus_tile4", "composite", ["u32.threadcol", "u32.tcounter4"], "u32.threadcol", "col + min(k4, block columns - 1)")
+f("safe", "row_plus_tile4_s", "composite", ["u32.threadrow", "u32.tcounter4"], "u32.threadrow", "row + min(k4, blk - 1) * Y")
+f("safe", "col_plus_tile4_s", "composite", ["u32.threadcol", "u32.tcounter4"], "u32.threadcol", "col + min(k4, blk - 1) * X")
+CTX["L5"] = "C5"
+for r in RUNGS5:
+    f("block", "one_" + r, "composite", ["stmt." + r], "block." + r, "")
+    f("block", "seq2_" + r, "composite", ["stmt." + r] * 2, "block." + r, "")
+    f("block", "seq3_" + r, "composite", ["stmt." + r] * 3, "block." + r, "arity 3")
+    f("block", "seq4_" + r, "composite", ["stmt." + r] * 4, "block." + r, "arity 4")
+    f("stmt", "block_" + r, "composite", ["block." + r], "stmt." + r, "{ ... }")
+    f("reg", "set_f_" + r, "composite", ["reg<f32>.real", "f32.real"], "stmt." + r, "")
+    f("reg", "set_v_" + r, "composite", ["reg<vec4<f32>>.real", "vec4<f32>.real"], "stmt." + r, "")
+    f("reg", "set_i_" + r, "composite", ["reg<u32>.index", "u32.index"], "stmt." + r, "")
+    f("reg", "set_b_" + r, "composite", ["reg<bool>.flag", "bool.flag"], "stmt." + r, "")
+    f("wg", "set_" + r, "composite", ["wgmem<f32>.real", "u32.wgindex", "f32.real"], "stmt." + r, "arity 3; the index is in range by its type")
+    f("wg", "set_v_" + r, "composite", ["wgmem<vec4<f32>>.real", "u32.wgvindex", "vec4<f32>.real"], "stmt." + r, "arity 3: va[i] = v")
+    f("parr", "set_f_" + r, "composite", ["parr<f32>.real", "u32.pindex", "f32.real"], "stmt." + r, "arity 3: pa[i] = v")
+    f("parr", "set_v_" + r, "composite", ["parr<vec4<f32>>.real", "u32.pindex", "vec4<f32>.real"], "stmt." + r, "arity 3: pv[i] = v")
+    f("parr", "set_i_" + r, "composite", ["parr<u32>.index", "u32.pindex", "u32.index"], "stmt." + r, "arity 3: pi[i] = v")
+    f("parr", "set_b_" + r, "composite", ["parr<bool>.flag", "u32.pindex", "bool.flag"], "stmt." + r, "arity 3: pm[i] = v")
+    f("store", "h_" + r, "composite", ["u32.cell", "f32.real"], "stmt." + r, "h[cell] = h[cell] + v: read-add-write of a cell this thread owns")
+    c = CTX.get(r, r)
+    f("stmt", "if_" + r, "composite", ["bool.flag", "block." + c], "stmt." + r, "if (c) { ... }: the body is a conditional context")
+    f("stmt", "if_else_" + r, "composite", ["bool.flag", "block." + c, "block." + c], "stmt." + r, "arity 3")
+    f("reg", "set_v_lane_" + r, "composite", ["reg<vec4<f32>>.real", "u32.index", "f32.real"], "stmt." + r, "arity 3: v[i & 3u] = x;")
+    f("wg", "set_v_lane_" + r, "composite", ["wgmem<vec4<f32>>.real", "u32.wgvindex", "u32.index", "f32.real"], "stmt." + r, "arity 4: va[i][j & 3u] = x;")
+    f("parr", "set_v_lane_" + r, "composite", ["parr<vec4<f32>>.real", "u32.pindex", "u32.index", "f32.real"], "stmt." + r, "arity 4: pv[i][j & 3u] = x;")
+f("stmt", "barrier_L5", "composite", [], "stmt.L5", "workgroupBarrier(); never in a conditional context")
+f("loop", "tile_L4", "composite", ["u32.lit64", "block.L5"], "stmt.L4", "a fourth nested short loop (counter k4); nothing produces a loop at L5")
+f("loop", "tile_C4", "composite", ["u32.lit64", "block.C5"], "stmt.C4", "a fourth nested short loop (counter k4) under a condition")
+for r, body in (("L4", "L5"), ("C4", "C5")):
+    f("loop", "tile_strided_" + r, "composite", ["u32.lit64", "u32.lit64", "block." + body], "stmt." + r, "arity 3: a short loop stepped by a literal (the counter of its depth)")
+    f("loop", "tilex_" + r, "composite", ["u32.boundx", "block." + body], "stmt." + r, "a short loop (the counter of its depth) bounded by an expression")
+    f("loop", "tilex_strided_" + r, "composite", ["u32.boundx", "u32.lit64", "block." + body], "stmt." + r, "arity 3: the same, stepped by a literal")
 
 
 def write_tsv(path, header, rows):

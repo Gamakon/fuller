@@ -627,8 +627,9 @@ mod tests {
     #[test]
     fn the_safe_kingdom_keeps_wgsl_and_pins_its_rules() {
         let (w, s) = (wgsl_duals(), safe_duals());
-        // 126 duals until 2026-10-11; 127 with u32.boundx (the complete kingdom, step 6).
-        assert_eq!(s.len(), 127);
+        // 126 duals until 2026-10-11; 127 with u32.boundx (the complete kingdom, step 6);
+        // 132 with the fourth nested tile loop (tcounter4, L5, C5; run A's declines).
+        assert_eq!(s.len(), 132);
         for (a, b) in w.iter().zip(&s) {
             assert_eq!((a.reference.as_str(), a.dual.as_str()), (b.reference.as_str(), b.dual.as_str()));
         }
@@ -639,25 +640,27 @@ mod tests {
         }
         // 561 rows until 2026-10-11; 606 with the complete kingdom's registers and arrays (step 6);
         // 758 after run A's declines (64 f32, 32 vec4, 64 u32, 16 bool registers; the array lane rows).
-        assert_eq!(fs.rows.len(), 758);
+        // 758 after run A's declines (64 f32, 32 vec4, 64 u32, 16 bool registers; the array lane rows);
+        // 816 with the fourth nested tile loop.
+        assert_eq!(fs.rows.len(), 816);
         let dual = |t: Ty| k.dual(t).unwrap().dual.clone();
         let producers = |d: &str| -> Vec<String> { k.rows.iter().filter(|r| dual(r.output) == d).map(|r| r.name.clone()).collect() };
         assert_eq!(producers("kernel.safe"), vec!["kernel.entry_safe"]);
         // One kind of loop condition: a loop's own counter below one of four
         // bounds (the item loop), or a tile counter below a literal (three depths).
         let bound = producers("bool.bound");
-        assert_eq!(bound.len(), 7, "{bound:?}");
+        assert_eq!(bound.len(), 8, "{bound:?}");
         assert!(bound.iter().all(|n| n.starts_with("safe.lt_")));
         assert!(k.rows.iter().filter(|r| r.name.starts_with("safe.lt_")).all(|r| dual(r.inputs[0]) == "u32.counter" || dual(r.inputs[0]).starts_with("u32.tcounter")));
-        // No barrier in a conditional context; barriers at L0..L4 only.
+        // No barrier in a conditional context; barriers at L0..L5 only.
         // (The WGSL kingdom's own `stmt.barrier → stmt.stmt` stays; `stmt.stmt`
         // is never demanded under the safe root `kernel.entry_safe`.)
         let barriers: Vec<String> = k.rows.iter().filter(|r| r.name.starts_with("stmt.barrier")).map(|r| dual(r.output)).filter(|d| d != "stmt.stmt").collect();
-        assert_eq!(barriers, vec!["stmt.L0", "stmt.L1", "stmt.L2", "stmt.L3", "stmt.L4"]);
+        assert_eq!(barriers, vec!["stmt.L0", "stmt.L1", "stmt.L2", "stmt.L3", "stmt.L4", "stmt.L5"]);
         assert!(k.rows.iter().all(|r| !(r.name.starts_with("stmt.barrier") && dual(r.output).starts_with("stmt.C"))));
-        // The item loop only produces an L0 statement; no loop at L4 or C4 (tile loops nest three deep).
+        // The item loop only produces an L0 statement; no loop at L5 or C5 (tile loops nest four deep).
         assert!(k.rows.iter().filter(|r| r.name.starts_with("loop.items_bound") || r.name.starts_with("loop.items_unrolled_bound")).all(|r| dual(r.output) == "stmt.L0"));
-        assert!(k.rows.iter().filter(|r| r.name.starts_with("loop.")).all(|r| dual(r.output) != "stmt.L4" && dual(r.output) != "stmt.C4"));
+        assert!(k.rows.iter().filter(|r| r.name.starts_with("loop.")).all(|r| dual(r.output) != "stmt.L5" && dual(r.output) != "stmt.C5"));
         assert!(k.rows.iter().filter(|r| r.name.starts_with("loop.tile_")).all(|r| dual(r.inputs[0]) == "u32.lit64"));
         // No return in a conditional context (a later barrier would be non-uniform).
         assert!(k.rows.iter().filter(|r| r.name.starts_with("stmt.return_")).all(|r| !dual(r.output).starts_with("stmt.C")));

@@ -232,6 +232,9 @@ pub struct Renderer<'a> {
 }
 
 /// What the renderer is inside while walking statements.
+/// The tile loops' counters by depth (a fourth since run A, 2026-10-11).
+const TILE_COUNTERS: [&str; 4] = ["k", "k2", "k3", "k4"];
+
 struct Scope {
     in_items: bool,
     in_tile: bool,
@@ -454,8 +457,8 @@ impl<'a> Renderer<'a> {
                 n(if strided { 3 } else { 2 })?;
                 let bound = self.value(&kids[0], scope)?;
                 let step = if strided { self.lit(&kids[1], 64)? } else { 1 };
-                let Some(var) = ["k", "k2", "k3"].get(scope.tile_depth) else {
-                    return Err("a fourth nested tile loop (the safe grammar does not produce this)".into());
+                let Some(var) = TILE_COUNTERS.get(scope.tile_depth) else {
+                    return Err("a fifth nested tile loop (the safe grammar does not produce this)".into());
                 };
                 let was = scope.in_tile;
                 scope.in_tile = true;
@@ -472,8 +475,8 @@ impl<'a> Renderer<'a> {
                 n(if strided { 3 } else { 2 })?;
                 let count = self.lit(&kids[0], 64)?;
                 let step = if strided { self.lit(&kids[1], 64)? } else { 1 };
-                let Some(var) = ["k", "k2", "k3"].get(scope.tile_depth) else {
-                    return Err("a fourth nested tile loop (the safe grammar does not produce this)".into());
+                let Some(var) = TILE_COUNTERS.get(scope.tile_depth) else {
+                    return Err("a fifth nested tile loop (the safe grammar does not produce this)".into());
                 };
                 let was = scope.in_tile;
                 scope.in_tile = true;
@@ -711,12 +714,13 @@ impl<'a> Renderer<'a> {
             "safe.tile_counter" => return Ok("k".into()),
             "safe.tile_counter2" => return Ok("k2".into()),
             "safe.tile_counter3" => return Ok("k3".into()),
-            "safe.counter_index" | "safe.tile_index" | "safe.tile_index2" | "safe.tile_index3" => return self.value(&v.kids[0], scope),
-            "safe.row_plus_tile" | "safe.row_plus_tile2" | "safe.row_plus_tile3" | "safe.col_plus_tile" | "safe.col_plus_tile2" | "safe.col_plus_tile3" => {
+            "safe.tile_counter4" => return Ok("k4".into()),
+            "safe.counter_index" | "safe.tile_index" | "safe.tile_index2" | "safe.tile_index3" | "safe.tile_index4" => return self.value(&v.kids[0], scope),
+            "safe.row_plus_tile" | "safe.row_plus_tile2" | "safe.row_plus_tile3" | "safe.row_plus_tile4" | "safe.col_plus_tile" | "safe.col_plus_tile2" | "safe.col_plus_tile3" | "safe.col_plus_tile4" => {
                 let blk = if safe_base(name).starts_with("safe.row") { scope.grid.by } else { scope.grid.bx };
                 return Ok(format!("({} + min({}, {}u))", self.value(&v.kids[0], scope)?, self.value(&v.kids[1], scope)?, blk.saturating_sub(1)));
             }
-            "safe.row_plus_tile_s" | "safe.row_plus_tile2_s" | "safe.row_plus_tile3_s" | "safe.col_plus_tile_s" | "safe.col_plus_tile2_s" | "safe.col_plus_tile3_s" => {
+            "safe.row_plus_tile_s" | "safe.row_plus_tile2_s" | "safe.row_plus_tile3_s" | "safe.row_plus_tile4_s" | "safe.col_plus_tile_s" | "safe.col_plus_tile2_s" | "safe.col_plus_tile3_s" | "safe.col_plus_tile4_s" => {
                 // The k-th row of a strided block: rows W apart, k snapped below the block factor.
                 let (blk, w) = if safe_base(name).starts_with("safe.row") { (scope.grid.by, scope.grid.y) } else { (scope.grid.bx, scope.grid.x) };
                 return Ok(format!("({} + min({}, {}u) * {w}u)", self.value(&v.kids[0], scope)?, self.value(&v.kids[1], scope)?, blk.saturating_sub(1)));
@@ -1195,7 +1199,7 @@ fn items_passes(bound: Option<&Tree>) -> f64 {
 /// `store.h_safe`, a rung-specific wg set to `wg.set_safe`. A WGSL kingdom
 /// name passes through unchanged.
 pub fn safe_base(name: &str) -> &str {
-    for rung in ["_L0", "_L1", "_L2", "_L3", "_L4", "_C0", "_C1", "_C2", "_C3", "_C4"] {
+    for rung in ["_L0", "_L1", "_L2", "_L3", "_L4", "_L5", "_C0", "_C1", "_C2", "_C3", "_C4", "_C5"] {
         if let Some(stem) = name.strip_suffix(rung) {
             return match stem {
                 "store.h" => "store.h_safe",
@@ -1269,7 +1273,7 @@ pub fn register_declarations() -> String {
             }
         }
     }
-    out.push_str("    var t: u32 = 0u; var k: u32 = 0u; var k2: u32 = 0u; var k3: u32 = 0u;\n");
+    out.push_str("    var t: u32 = 0u; var k: u32 = 0u; var k2: u32 = 0u; var k3: u32 = 0u; var k4: u32 = 0u;\n");
     out.push_str("    var pa: array<f32, 64>; var pb: array<f32, 64>; var pc: array<f32, 64>; var pd: array<f32, 64>; var pe: array<f32, 64>; var pf: array<f32, 64>;\n");
     out.push_str("    var pv: array<vec4<f32>, 16>; var pw: array<vec4<f32>, 16>; var pi: array<u32, 16>; var pj: array<u32, 16>; var pk: array<u32, 16>; var pm: array<bool, 16>; var pn: array<bool, 16>;\n");
     out

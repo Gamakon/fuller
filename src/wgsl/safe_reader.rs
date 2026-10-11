@@ -37,6 +37,7 @@ struct Ctx<'a> {
     tile_counter: Option<String>,
     tile_counter2: Option<String>,
     tile_counter3: Option<String>,
+    tile_counter4: Option<String>,
     /// Register allocation: local name (`local.acc@0`) → register row (`reg.f0`).
     registers: BTreeMap<String, String>,
     next_reg: BTreeMap<char, usize>,
@@ -64,6 +65,11 @@ struct Ctx<'a> {
     /// kind) its return value is written to.
     local_prefix: String,
     inline_result: Option<(String, char)>,
+    /// The arguments of a helper inlined as statements, already read into
+    /// the safe grammar IN THE CALLER (its counters, registers and lets):
+    /// read lazily inside the helper, the caller's item counter became an
+    /// unset register (seed04's `ldv(t0 + lt, …)` rebuilt 109 of 128 cases).
+    inline_values: Option<HashMap<String, Tree>>,
     /// While a helper body is being inlined: its arguments by `arg.<name>`,
     /// already resolved and typed in the caller.
     inline_args: Option<HashMap<String, Tree>>,
@@ -143,16 +149,33 @@ fn ty(ctx: &Ctx, name: &str) -> Result<Ty, String> {
 }
 
 /// The reader's node as a typed tree, duals by the inference's text, lets inlined.
+/// A local's name under the helper being inlined: `load.local.v@0@v2` →
+/// `load.local.ldv/v@0@v2`, so the helper's locals (registers, counters,
+/// arrays, memos) never collide with the caller's of the same name.
+fn prefixed(prefix: &str, name: &str) -> String {
+    match name.find("local.") {
+        Some(i) if !prefix.is_empty() && (i == 0 || name.as_bytes()[i - 1] == b'.') => format!("{}local.{prefix}{}", &name[..i], &name[i + 6..]),
+        _ => name.to_string(),
+    }
+}
+
 fn tree_of(ctx: &mut Ctx, n: &Node) -> Result<Tree, String> {
     let text = n.to_sexpr();
     match n {
         Node::Leaf { name, .. } => {
+            let name = &prefixed(&ctx.local_prefix, name);
             if let Some(def) = name.strip_prefix("let.").and_then(|k| ctx.lets.get(k)) {
                 let def = def.clone();
                 return tree_of(ctx, &def);
             }
             if name.starts_with("arg.") {
-                return ctx.inline_args.as_ref().and_then(|a| a.get(name)).cloned().ok_or_else(|| format!("{name} outside an inlined helper"));
+                let bound = ctx.inline_args.as_ref().and_then(|a| a.get(name)).cloned().ok_or_else(|| format!("{name} outside an inlined helper"))?;
+                // A statement-inlined helper's argument: a leaf the value
+                // step replaces by the caller's safe tree.
+                if ctx.inline_values.is_some() {
+                    return Ok(Tree::new(name, bound.ty, vec![]));
+                }
+                return Ok(bound);
             }
             // A helper's result: the helper's return expression with its
             // arguments substituted (its lets inlined on the way); the
@@ -228,6 +251,7 @@ fn tree_of(ctx: &mut Ctx, n: &Node) -> Result<Tree, String> {
             }
             let t = ctx.duals.get(&text).copied().flatten().ok_or_else(|| format!("untyped node {}", &text[..text.len().min(80)]))?;
             let kids = kids.iter().map(|k| tree_of(ctx, k)).collect::<Result<Vec<_>, _>>()?;
+            let name = &prefixed(&ctx.local_prefix, name);
             // A lane of a vector built in place (`vec2<f32>(a, b).x`): naga
             // flattens `vec3<f32>(vec2<f32>(a, b), c)` into the lanes of the
             // vec2, so the kingdom's own compose chains read back doubled at
@@ -368,7 +392,7 @@ enum Off {
 }
 
 /// The tile counters in effect, outer to inner.
-type Tiles<'t> = [&'t Option<String>; 3];
+type Tiles<'t> = [&'t Option<String>; 4];
 
 /// The kingdom's own spelling of a block offset: `min(k, B - 1)` with k a
 /// tile counter (and for a strided block `min(k, B - 1) * W`); a kernel
@@ -620,14 +644,16 @@ impl<'a> Ctx<'a> {
     }
 
     fn register(&mut self, local: &str, dual: &str) -> Result<String, String> {
-        let local = &format!("{}{local}", self.local_prefix);
         if let Some(r) = self.registers.get(local) {
             return Ok(r.clone());
         }
+        // A u32 local the inference typed as bits or a count (`i1 = i0 >> 6u`,
+        // r2x_union of run A) is the u32 register too; conform converts at
+        // the uses.
         let (kind, max) = match dual {
             "f32.real" => ('f', 64),
             "vec4<f32>.real" => ('v', 32),
-            "u32.index" => ('i', 64),
+            "u32.index" | "u32.bits" | "u32.count" => ('i', 64),
             "bool.flag" => ('b', 16),
             other => return Err(format!("local {local} has dual {other}, which has no register kind"),)
         };
@@ -655,6 +681,9 @@ impl<'a> Ctx<'a> {
         let d = self.kingdom.dual(t.ty).map(|d| d.dual.clone()).unwrap_or_default();
         // Leaves.
         if t.kids.is_empty() {
+            if let Some(v) = self.inline_values.as_ref().and_then(|m| m.get(&t.name)) {
+                return Ok(v.clone());
+            }
             if let Some(local) = local_name(&t.name) {
                 if self.item_counter.as_deref() == Some(local.as_str()) {
                     return Ok(Tree::new("safe.counter_index", ty(self, "u32.index")?, vec![Tree::new("safe.counter", ty(self, "u32.counter")?, vec![])]));
@@ -667,6 +696,9 @@ impl<'a> Ctx<'a> {
                 }
                 if self.tile_counter3.as_deref() == Some(local.as_str()) {
                     return Ok(Tree::new("safe.tile_index3", ty(self, "u32.index")?, vec![Tree::new("safe.tile_counter3", ty(self, "u32.tcounter3")?, vec![])]));
+                }
+                if self.tile_counter4.as_deref() == Some(local.as_str()) {
+                    return Ok(Tree::new("safe.tile_index4", ty(self, "u32.index")?, vec![Tree::new("safe.tile_counter4", ty(self, "u32.tcounter4")?, vec![])]));
                 }
                 let row = self.register(&local, &d)?;
                 let kind = row.chars().nth(4).unwrap_or('f');
@@ -775,7 +807,6 @@ impl<'a> Ctx<'a> {
 
     /// A local array as a private array row: (`parr.a|b|v|i`, kind, mask row).
     fn private_array(&mut self, local: &str, elem_dual: &str) -> Result<(&'static str, char, &'static str), String> {
-        let local = &format!("{}{local}", self.local_prefix);
         if let Some(a) = self.parrs.get(local) {
             return Ok(*a);
         }
@@ -826,10 +857,15 @@ impl<'a> Ctx<'a> {
     /// `t` with every scalar local the memo knows replaced by what it holds.
     fn expand_memo(&self, t: &Tree) -> Tree {
         if t.kids.is_empty() {
+            // A statement-inlined helper's argument: the caller's expression
+            // (fresh48 of run A: `wrow(r, c0)` storing to h[r * d + c0 + j]).
+            if let Some(raw) = self.inline_args.as_ref().and_then(|a| a.get(&t.name)).filter(|_| t.name.starts_with("arg.")) {
+                return self.expand_memo(raw);
+            }
             if let Some(local) = local_name(&t.name).filter(|_| !t.name.contains(".#")) {
                 // A loop's counter is the loop's own: its `k = 0u` before the
                 // loop is not what it holds inside.
-                let counter = [&self.item_counter, &self.tile_counter, &self.tile_counter2, &self.tile_counter3].iter().any(|c| c.as_deref() == Some(local.as_str()));
+                let counter = [&self.item_counter, &self.tile_counter, &self.tile_counter2, &self.tile_counter3, &self.tile_counter4].iter().any(|c| c.as_deref() == Some(local.as_str()));
                 if let Some((held, _)) = self.axis_memo.get(&local).filter(|_| !counter) {
                     return held.clone();
                 }
@@ -876,8 +912,8 @@ impl<'a> Ctx<'a> {
                     if !is_leaf(dd, "load.uniform.cfg.d") {
                         continue;
                     }
-                    let tiles = (self.tile_counter.clone(), self.tile_counter2.clone(), self.tile_counter3.clone());
-                    let tiles: Tiles = [&tiles.0, &tiles.1, &tiles.2];
+                    let tiles = (self.tile_counter.clone(), self.tile_counter2.clone(), self.tile_counter3.clone(), self.tile_counter4.clone());
+                    let tiles: Tiles = [&tiles.0, &tiles.1, &tiles.2, &tiles.3];
                     let (Some((by, i)), Some((bx, j))) = (thread_axis_off_in(r, 1, self.grid.1, tiles, &self.row_arrays), thread_axis_off_in(col, 0, self.grid.0, tiles, &self.row_arrays)) else { continue };
                     if by != self.grid.3 || bx != self.grid.2 {
                         return fail(&format!("block {bx} x {by} in the index, the grid says {} x {}", self.grid.2, self.grid.3));
@@ -909,7 +945,7 @@ impl<'a> Ctx<'a> {
                 }
             }
         }
-        fail(&format!("row or column is not this thread's (tile counters {:?} / {:?} / {:?})", self.tile_counter, self.tile_counter2, self.tile_counter3))
+        fail(&format!("row or column is not this thread's (tile counters {:?} / {:?} / {:?} / {:?})", self.tile_counter, self.tile_counter2, self.tile_counter3, self.tile_counter4))
     }
 
     fn stmt_ty(&self, rung: &str) -> Result<Ty, String> {
@@ -1001,8 +1037,11 @@ impl<'a> Ctx<'a> {
             return Err(format!("{callee}: {} arguments at the call, {} declared", args.len(), helper.args.len()));
         }
         let mut bound = HashMap::new();
+        let mut values = HashMap::new();
         for ((_, node), arg) in args.into_iter().zip(&helper.args) {
-            bound.insert(arg.clone(), tree_of(self, &node)?);
+            let raw = tree_of(self, &node)?;
+            values.insert(arg.clone(), self.value(&raw)?);
+            bound.insert(arg.clone(), raw);
         }
         let result_reg = match result {
             Some(idx) => {
@@ -1013,8 +1052,11 @@ impl<'a> Ctx<'a> {
             }
             None => None,
         };
-        // Enter the helper: its own roots, lets, calls, locals; no counter,
-        // no memo, no row array of the caller's is in scope.
+        // Enter the helper: its own roots, lets, calls and vector locals; its
+        // locals are named under the helper (`ldv/v@0`), so the caller's
+        // counters, registers, memo and row arrays stay in scope: a loop in
+        // the helper nests below the caller's loops, and a store to h in it
+        // (fresh48's `wrow`) is proved over the caller's row.
         let saved_roots = std::mem::replace(&mut self.roots, &helper.roots);
         let saved_lets = std::mem::replace(&mut self.lets, &helper.lets);
         let saved_calls = std::mem::replace(&mut self.calls, &helper.calls);
@@ -1022,10 +1064,7 @@ impl<'a> Ctx<'a> {
         let saved_fn = std::mem::replace(&mut self.naga_fn, helper.naga_fn);
         let saved_lanes = std::mem::replace(&mut self.local_lanes, helper.local_lanes.clone());
         let saved_args = self.inline_args.replace(bound);
-        let saved_counters = (self.item_counter.take(), self.tile_counter.take(), self.tile_counter2.take(), self.tile_counter3.take());
-        let saved_used = std::mem::take(&mut self.used_counters);
-        let saved_rows = std::mem::take(&mut self.row_arrays);
-        let saved_memo = std::mem::take(&mut self.axis_memo);
+        let saved_values = self.inline_values.replace(values);
         let saved_tail = std::mem::replace(&mut self.tail, true);
         let saved_result = std::mem::replace(&mut self.inline_result, result_reg);
         self.local_prefix = format!("{callee}/");
@@ -1033,11 +1072,8 @@ impl<'a> Ctx<'a> {
         self.local_prefix = String::new();
         self.inline_result = saved_result;
         self.tail = saved_tail;
-        self.axis_memo = saved_memo;
-        self.row_arrays = saved_rows;
-        self.used_counters = saved_used;
-        (self.item_counter, self.tile_counter, self.tile_counter2, self.tile_counter3) = saved_counters;
         self.inline_args = saved_args;
+        self.inline_values = saved_values;
         self.local_lanes = saved_lanes;
         self.naga_fn = saved_fn;
         self.arg_roots = saved_arg_roots;
@@ -1346,8 +1382,8 @@ impl<'a> Ctx<'a> {
                 // `lrs[i] = <this thread's i-th block row>` with i a tile counter:
                 // the array holds the thread's rows; a later `lrs[k]` is a row.
                 if idx.kids.is_empty() {
-                    let tiles = (self.tile_counter.clone(), self.tile_counter2.clone(), self.tile_counter3.clone());
-                    let tiles: Tiles = [&tiles.0, &tiles.1, &tiles.2];
+                    let tiles = (self.tile_counter.clone(), self.tile_counter2.clone(), self.tile_counter3.clone(), self.tile_counter4.clone());
+                    let tiles: Tiles = [&tiles.0, &tiles.1, &tiles.2, &tiles.3];
                     if let Some(n) = local_name(&idx.name).and_then(|l| tile_of(&l, tiles)) {
                         for (axis, wg) in [(1usize, self.grid.1), (0usize, self.grid.0)] {
                             match thread_axis_off_in(value, axis, wg, tiles, &self.row_arrays) {
@@ -1373,7 +1409,7 @@ impl<'a> Ctx<'a> {
         }
         if let Some(local) = local_name(name) {
             // A store to the loop counter inside its loop is the loop's own step.
-            if [&self.item_counter, &self.tile_counter, &self.tile_counter2, &self.tile_counter3].iter().any(|c| c.as_deref() == Some(local.as_str())) {
+            if [&self.item_counter, &self.tile_counter, &self.tile_counter2, &self.tile_counter3, &self.tile_counter4].iter().any(|c| c.as_deref() == Some(local.as_str())) {
                 return Ok(None);
             }
             // A finished item loop's counter set back to 0: the next item loop
@@ -1527,7 +1563,7 @@ impl<'a> Ctx<'a> {
         // The rung of the body and the loop row.
         // A tile loop's depth is the number of tile counters already in effect;
         // its body is one rung deeper (L0 and L1 both open at L2).
-        let depth = [&self.tile_counter, &self.tile_counter2, &self.tile_counter3].iter().filter(|c| c.is_some()).count() as u8 + 1;
+        let depth = [&self.tile_counter, &self.tile_counter2, &self.tile_counter3, &self.tile_counter4].iter().filter(|c| c.is_some()).count() as u8 + 1;
         let tile = if step == 1 { "tile" } else { "tile_strided" };
         // A literal-bounded loop is a tile loop at any rung; an expression-bounded
         // loop below the top level is a tilex loop (the counter of its depth,
@@ -1544,10 +1580,12 @@ impl<'a> Ctx<'a> {
             ("lit64", "L0" | "L1") => ("L2".to_string(), short(tile, rung)?, rung),
             ("lit64", "L2") => ("L3".to_string(), short(tile, "L2")?, "L2"),
             ("lit64", "L3") => ("L4".to_string(), short(tile, "L3")?, "L3"),
+            ("lit64", "L4") => ("L5".to_string(), short(tile, "L4")?, "L4"),
             ("lit64", "C0") => ("C1".to_string(), short(tile, "C0")?, "C0"),
             ("lit64", "C1") => ("C2".to_string(), short(tile, "C1")?, "C1"),
             ("lit64", "C2") => ("C3".to_string(), short(tile, "C2")?, "C2"),
             ("lit64", "C3") => ("C4".to_string(), short(tile, "C3")?, "C3"),
+            ("lit64", "C4") => ("C5".to_string(), short(tile, "C4")?, "C4"),
             ("lit64", _) => return Err(format!("a tile loop at rung {rung} (too deep)")),
             (b, "L0") if self.used_counters.contains(&counter) && step == 1 => ("L1".to_string(), format!("loop.items_cont_{b}"), "L0"),
             (b, "L0") if self.used_counters.contains(&counter) => ("L1".to_string(), format!("loop.items_cont_strided_{b}"), "L0"),
@@ -1556,18 +1594,20 @@ impl<'a> Ctx<'a> {
             ("boundx", "L1") => ("L2".to_string(), short(tilex, "L1")?, "L1"),
             ("boundx", "L2") => ("L3".to_string(), short(tilex, "L2")?, "L2"),
             ("boundx", "L3") => ("L4".to_string(), short(tilex, "L3")?, "L3"),
+            ("boundx", "L4") => ("L5".to_string(), short(tilex, "L4")?, "L4"),
             ("boundx", "C0") => ("C1".to_string(), short(tilex, "C0")?, "C0"),
             ("boundx", "C1") => ("C2".to_string(), short(tilex, "C1")?, "C1"),
             ("boundx", "C2") => ("C3".to_string(), short(tilex, "C2")?, "C2"),
             ("boundx", "C3") => ("C4".to_string(), short(tilex, "C3")?, "C3"),
+            ("boundx", "C4") => ("C5".to_string(), short(tilex, "C4")?, "C4"),
             ("boundx", _) => return Err(format!("an expression-bounded loop at rung {rung} (too deep)")),
             (_, _) => return Err(format!("a long loop bounded by a binding at rung {rung} (only at the top level; spell the bound as an expression to nest it)")),
         };
         let _ = cond;
-        if (kind == "lit64" || kind == "boundx") && depth > 3 && body_rung != "L1" {
-            return Err("a fourth nested tile loop".into());
+        if (kind == "lit64" || kind == "boundx") && depth > 4 && body_rung != "L1" {
+            return Err("a fifth nested tile loop".into());
         }
-        let saved = (self.item_counter.clone(), self.tile_counter.clone(), self.tile_counter2.clone(), self.tile_counter3.clone());
+        let saved = (self.item_counter.clone(), self.tile_counter.clone(), self.tile_counter2.clone(), self.tile_counter3.clone(), self.tile_counter4.clone());
         self.axis_memo.remove(&counter);
         if body_rung == "L1" {
             self.item_counter = Some(counter.clone());
@@ -1575,7 +1615,8 @@ impl<'a> Ctx<'a> {
             match depth {
                 1 => self.tile_counter = Some(counter.clone()),
                 2 => self.tile_counter2 = Some(counter.clone()),
-                _ => self.tile_counter3 = Some(counter.clone()),
+                3 => self.tile_counter3 = Some(counter.clone()),
+                _ => self.tile_counter4 = Some(counter.clone()),
             }
         }
         // The body after its test, at the body rung: the test is statement
@@ -1587,7 +1628,7 @@ impl<'a> Ctx<'a> {
         let rest = naga::Block::from_vec(rest);
         path.push(0);
         for local in stored_locals(self.naga_fn, body).into_iter().chain(stored_locals(self.naga_fn, continuing)) {
-            self.axis_memo.remove(&local);
+            self.axis_memo.remove(&prefixed(&self.local_prefix, &local));
         }
         let body_stmts = self.nested(|ctx, path| ctx.walk(&rest, path, &body_rung, test_pos + 1), path);
         path.pop();
@@ -1595,6 +1636,7 @@ impl<'a> Ctx<'a> {
         self.tile_counter = saved.1;
         self.tile_counter2 = saved.2;
         self.tile_counter3 = saved.3;
+        self.tile_counter4 = saved.4;
         if body_rung == "L1" {
             self.used_counters.insert(counter.clone());
         }
@@ -1823,7 +1865,7 @@ pub fn read_safe(source: &str, kingdom: &WgslKingdom) -> Result<SafeRead, String
         let mut local_lanes = HashMap::new();
         let mut uninit = Vec::new();
         for (h, lv) in nf.local_variables.iter() {
-            let local = format!("local.{}@{}", lv.name.clone().unwrap_or_else(|| "local".into()), h.index());
+            let local = format!("local.{name}/{}@{}", lv.name.clone().unwrap_or_else(|| "local".into()), h.index());
             if let naga::TypeInner::Vector { size, .. } = &kernel.module.types[lv.ty].inner {
                 local_lanes.insert(local.clone(), *size as u32);
             }
@@ -1871,7 +1913,7 @@ pub fn read_safe(source: &str, kingdom: &WgslKingdom) -> Result<SafeRead, String
             local_lanes.insert(format!("local.{name}@{}", h.index()), *size as u32);
         }
     }
-    let mut ctx = Ctx { kingdom, duals: &duals, lets: &lets, roots: &roots, item_counter: None, tile_counter: None, tile_counter2: None, tile_counter3: None, registers: BTreeMap::new(), next_reg: BTreeMap::new(), guard: None, tail: true, arrays: BTreeMap::new(), parrs: BTreeMap::new(), grid, notes: Vec::new(), helpers: &helpers, calls: &calls, arg_roots: &arg_roots, inline_args: None, row_arrays: BTreeMap::new(), used_counters: std::collections::BTreeSet::new(), local_lanes, axis_memo: BTreeMap::new(), loop_depth: 0, naga_fn, module: &kernel.module, local_prefix: String::new(), inline_result: None };
+    let mut ctx = Ctx { kingdom, duals: &duals, lets: &lets, roots: &roots, item_counter: None, tile_counter: None, tile_counter2: None, tile_counter3: None, tile_counter4: None, registers: BTreeMap::new(), next_reg: BTreeMap::new(), guard: None, tail: true, arrays: BTreeMap::new(), parrs: BTreeMap::new(), grid, notes: Vec::new(), helpers: &helpers, calls: &calls, arg_roots: &arg_roots, inline_args: None, row_arrays: BTreeMap::new(), used_counters: std::collections::BTreeSet::new(), local_lanes, axis_memo: BTreeMap::new(), loop_depth: 0, naga_fn, module: &kernel.module, local_prefix: String::new(), inline_result: None, inline_values: None };
     // Register initialisations first, in root order. A local initialised to
     // its form's fallback (0.0, 0u, false, a zero vector) costs nothing: the
     // register's declaration already holds that value, and the register is
