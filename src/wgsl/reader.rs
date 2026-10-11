@@ -200,6 +200,12 @@ pub struct Kernel {
     pub module: Module,
     pub info: naga::valid::ModuleInfo,
     pub functions: Vec<KernelFunction>,
+    /// The module was validated without naga's expression checks: its only
+    /// fault was a vector value indexed by a run-time index
+    /// (`IndexMustBeConstant`), which the safe grammar spells as a masked
+    /// lane. A second expression fault in such a module is caught only when
+    /// the rendered text is validated.
+    pub lenient: bool,
 }
 
 impl Kernel {
@@ -241,12 +247,36 @@ impl Kernel {
     }
 }
 
+/// Whether a validation error is exactly a run-time index on a vector value.
+fn is_index_must_be_constant(e: &naga::valid::ValidationError) -> bool {
+    use naga::valid::{EntryPointError, ExpressionError, FunctionError, ValidationError};
+    let function = |f: &FunctionError| matches!(f, FunctionError::Expression { source: ExpressionError::IndexMustBeConstant(_), .. });
+    match e {
+        ValidationError::Function { source, .. } => function(source),
+        ValidationError::EntryPoint { source: EntryPointError::Function(f), .. } => function(f),
+        _ => false,
+    }
+}
+
 /// Parse, validate and read a kernel.
 pub fn read(source: &str) -> Result<Kernel, String> {
     let module = naga::front::wgsl::parse_str(source).map_err(|e| e.emit_to_string(source))?;
-    let info = naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::all())
-        .validate(&module)
-        .map_err(|e| format!("validation: {e:?}"))?;
+    let mut lenient = false;
+    let info = match naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::all()).validate(&module) {
+        Ok(info) => info,
+        // A vector VALUE indexed at run time (`accs[i][j]` on a `let` array,
+        // r3x_reinvent of the smoke run): the one expression fault the
+        // kingdom has a spelling for. The typifier and the uniformity
+        // analysis run without the expression checks; the constness check
+        // is the only thing skipped.
+        Err(e) if is_index_must_be_constant(e.as_inner()) => {
+            lenient = true;
+            naga::valid::Validator::new(naga::valid::ValidationFlags::all() - naga::valid::ValidationFlags::EXPRESSIONS, naga::valid::Capabilities::all())
+                .validate(&module)
+                .map_err(|e| format!("validation: {e:?}"))?
+        }
+        Err(e) => return Err(format!("validation: {e:?}")),
+    };
     let table = FunctionTable::shipped();
     let effects = versions::module_effects(&module);
     let mut functions = Vec::new();
@@ -258,7 +288,7 @@ pub fn read(source: &str) -> Result<Kernel, String> {
         let ctx = Ctx::new(&module, &table, &effects, module.functions.len() + i, &ep.function, info.get_entry_point(i));
         functions.push(read_function(ctx, ep.name.clone(), true)?);
     }
-    Ok(Kernel { module, info, functions })
+    Ok(Kernel { module, info, functions, lenient })
 }
 
 /// The states collected for a loop's or a switch's joins while its body is

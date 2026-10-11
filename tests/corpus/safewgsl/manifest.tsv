@@ -34,7 +34,7 @@ reply_g001_r2p1_opus	reads	reads	a model kernel of the smoke run, 2026-10-11
 reply_g001_r2x_reinvent_sonnet	reads	reads	a model kernel of the smoke run, 2026-10-11
 reply_g001_r2x_union_fable	invalid	invalid	one stray closing brace at the end: the model copied the kingdom's rendered style (lit_u32() wrappers, nested { { blocks) and lost count; the renderer writes plain literals and flat blocks since 2026-10-11 (run A's third round); the clean sibling row reads
 reply_g001_r3p1_sonnet	reads	reads	a model kernel of the smoke run, 2026-10-11
-reply_g001_r3x_reinvent_sonnet	invalid	invalid	naga: a vector value indexed by a variable (IndexMustBeConstant)
+reply_g001_r3x_reinvent_sonnet	reads	reads	accs[i][j] on a let array of vec4 (naga refuses IndexMustBeConstant as written): read without naga's expression checks, the element as a select chain and the lane as shape.at; refused as written on the GPU, the rebuilt kernel is the verdict
 reply_g001_r3x_union_sonnet	reads	reads	a model kernel of the smoke run, 2026-10-11
 reply_g001_r4x_reinvent_sonnet	reads	reads	a model kernel of the smoke run, 2026-10-11
 reply_g001_r4x_union_sonnet	reads	reads	a model kernel of the smoke run, 2026-10-11

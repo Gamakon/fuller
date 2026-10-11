@@ -230,6 +230,29 @@ fn tree_of(ctx: &mut Ctx, n: &Node) -> Result<Tree, String> {
                 let kids = kids.iter().map(|k| tree_of(ctx, k)).collect::<Result<Vec<_>, _>>()?;
                 return Ok(Tree::new("naga.NestedAccess", ty(ctx, "u32.index")?, kids));
             }
+            // An element of an array VALUE chosen at run time (`let accs =
+            // array<vec4<f32>, 4>(...); accs[i]`, r3x_reinvent): a select
+            // chain over the elements on the index.
+            if name == "shape.access_dyn" && kids.len() == 2 {
+                // The array is usually a `let`: its definition.
+                let base = match &kids[0] {
+                    Node::Leaf { name, .. } => name.strip_prefix("let.").and_then(|k| ctx.lets.get(k)).unwrap_or(&kids[0]),
+                    other => other,
+                };
+                if let Node::App { name: cn, kids: elems, .. } = base {
+                    if cn.starts_with("naga.Compose.type") && !elems.is_empty() {
+                        let elems = elems.iter().map(|e| tree_of(ctx, e)).collect::<Result<Vec<_>, _>>()?;
+                        let idx = tree_of(ctx, &kids[1])?;
+                        let (flag, index_ty) = (ty(ctx, "bool.flag")?, ty(ctx, "u32.index")?);
+                        let mut chain = elems[elems.len() - 1].clone();
+                        for (i, e) in elems.iter().enumerate().rev().skip(1) {
+                            let eq = Tree::new("compare.eq", flag, vec![idx.clone(), Tree::literal("literal.index", index_ty, i as f32)]);
+                            chain = Tree::new("select.scalar_cond", e.ty, vec![e.clone(), chain, eq]);
+                        }
+                        return Ok(chain);
+                    }
+                }
+            }
             if !known {
                 return Err(format!("{name} has no row in the table"));
             }
@@ -249,8 +272,14 @@ fn tree_of(ctx: &mut Ctx, n: &Node) -> Result<Tree, String> {
                     }
                 }
             }
-            let t = ctx.duals.get(&text).copied().flatten().ok_or_else(|| format!("untyped node {}", &text[..text.len().min(80)]))?;
             let kids = kids.iter().map(|k| tree_of(ctx, k)).collect::<Result<Vec<_>, _>>()?;
+            // A lane of a vector chosen at run time has no type from the
+            // inference when naga refused the module for it: the vector's scalar.
+            let lane_of_vector = || -> Option<Ty> {
+                let d = ctx.kingdom.dual(kids.first()?.ty)?;
+                (name == "shape.access_dyn" && d.lanes > 1 && d.slot.starts_with("vec")).then(|| ty(ctx, &format!("{}.{}", d.scalar()?, d.form)).ok()).flatten()
+            };
+            let t = ctx.duals.get(&text).copied().flatten().or_else(lane_of_vector).ok_or_else(|| format!("untyped node {}", &text[..text.len().min(80)]))?;
             let name = &prefixed(&ctx.local_prefix, name);
             // A lane of a vector built in place (`vec2<f32>(a, b).x`): naga
             // flattens `vec3<f32>(vec2<f32>(a, b), c)` into the lanes of the
