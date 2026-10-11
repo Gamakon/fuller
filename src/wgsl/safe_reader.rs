@@ -70,6 +70,12 @@ struct Ctx<'a> {
     /// read lazily inside the helper, the caller's item counter became an
     /// unset register (seed04's `ldv(t0 + lt, …)` rebuilt 109 of 128 cases).
     inline_values: Option<HashMap<String, Tree>>,
+    /// The main function's lets bound to a register at their definition
+    /// (a use sits inside a loop that does not enclose the definition), by
+    /// name, with the path of the statement each precedes.
+    bound_lets: HashMap<String, Vec<usize>>,
+    /// The bound lets already set, with their register row.
+    let_regs: HashMap<String, String>,
     /// While a helper body is being inlined: its arguments by `arg.<name>`,
     /// already resolved and typed in the caller.
     inline_args: Option<HashMap<String, Tree>>,
@@ -168,6 +174,14 @@ fn tree_of(ctx: &mut Ctx, n: &Node) -> Result<Tree, String> {
             let name = &prefixed(&ctx.local_prefix, name);
             if let Some(def) = name.strip_prefix("let.").and_then(|k| ctx.lets.get(k)) {
                 let def = def.clone();
+                // A let bound to a register at its definition reads the register.
+                // (spelled as a load of the local `let.<name>`, which the value
+                // step reads as the register that local holds).
+                if let Some(k) = name.strip_prefix("let.").filter(|k| ctx.local_prefix.is_empty() && ctx.let_regs.contains_key(*k)) {
+                    let local = format!("load.local.let.{k}");
+                    let t = tree_of(ctx, &def)?;
+                    return Ok(Tree::new(&local, t.ty, vec![]));
+                }
                 return tree_of(ctx, &def);
             }
             if name.starts_with("arg.") {
@@ -672,6 +686,128 @@ fn scale_by(x: &Tree, lit: &Tree, ty: Ty) -> Tree {
         }
     }
     Tree::new("index.mul", ty, vec![x.clone(), lit.clone()])
+}
+
+/// The statement at a reader path (naga's Emits skipped; an if's or a
+/// loop's statement followed by 0 or 1 for its branch or body).
+fn stmt_at<'b>(body: &'b naga::Block, path: &[usize]) -> Option<&'b Statement> {
+    let nth = |b: &'b naga::Block, i: usize| b.iter().filter(|s| !matches!(s, Statement::Emit(_))).nth(i);
+    let mut block = body;
+    let mut i = 0;
+    loop {
+        let s = nth(block, *path.get(i)?)?;
+        if i + 1 == path.len() {
+            return Some(s);
+        }
+        match s {
+            Statement::Block(b) => {
+                block = b;
+                i += 1;
+            }
+            Statement::If { accept, reject, .. } => {
+                block = if *path.get(i + 1)? == 0 { accept } else { reject };
+                i += 2;
+            }
+            Statement::Loop { body, continuing, .. } => {
+                block = if *path.get(i + 1)? == 0 { body } else { continuing };
+                i += 2;
+            }
+            _ => return None,
+        }
+    }
+}
+
+/// Whether the statement at `used` sits inside a loop that does not enclose
+/// a definition made in the block at `def_block`.
+fn in_deeper_loop(body: &naga::Block, def_block: &[usize], used: &[usize]) -> bool {
+    if used.len() <= def_block.len() || used[..def_block.len()] != *def_block {
+        return false;
+    }
+    (def_block.len()..used.len() - 1).any(|i| matches!(stmt_at(body, &used[..=i]), Some(Statement::Loop { .. })) && used.len() > i + 1)
+}
+
+/// A loop's test (`if (!(k < n)) { break; }`, the reader's condition root):
+/// evaluated as the loop's header, so a let it reads is used at the loop.
+fn is_loop_test(body: &naga::Block, path: &[usize]) -> bool {
+    let only_break = |b: &naga::Block| b.iter().filter(|s| !matches!(s, Statement::Emit(_))).count() == 1 && b.iter().any(|s| matches!(s, Statement::Break));
+    path.len() >= 3 && path[path.len() - 2] == 0 && matches!(stmt_at(body, &path[..path.len() - 2]), Some(Statement::Loop { .. })) && matches!(stmt_at(body, path), Some(Statement::If { accept, reject, .. }) if only_break(accept) || only_break(reject))
+}
+
+/// The lets of a function bound to a register at their definition: those
+/// that read memory and have a use (followed through the lets that inline
+/// them) inside a loop that does not enclose the definition (fit_A2's
+/// r4x_reinvent: a vec4 of four workgroup reads per kk, used in the 4 x 4
+/// loop inside, was reloaded at every multiply-add). A use in a loop's own
+/// test counts as at the loop. Index arithmetic of ids, uniforms and
+/// counters stays inlined: binding it too (measured on the corpus, 2026-10-11)
+/// numbered each kernel's geometry by its own registers, and the drafts k15
+/// and k07 shared 13 nodes instead of over 30. By name, with the path of the
+/// statement each precedes.
+fn lets_used_in_deeper_loops(roots: &[Root], body: &naga::Block) -> HashMap<String, Vec<usize>> {
+    fn mentions(n: &Node, leaf: &str) -> bool {
+        match n {
+            Node::Leaf { name, .. } => name == leaf,
+            Node::App { kids, .. } => kids.iter().any(|k| mentions(k, leaf)),
+            _ => false,
+        }
+    }
+    let defs: Vec<(&String, &Vec<usize>, &Node)> = roots.iter().filter_map(|r| if let RootKind::Let { name } = &r.kind { Some((name, &r.path, &r.tree)) } else { None }).collect();
+    // A let's use sites: other roots that read it; a let that reads it
+    // contributes its own use sites (it is inlined there) or, once bound,
+    // its definition.
+    let mut bound: HashMap<String, Vec<usize>> = HashMap::new();
+    // Later lets first, so a reading let's binding is known before its reads are followed.
+    let mut order: Vec<usize> = (0..defs.len()).collect();
+    order.sort_by_key(|&i| std::cmp::Reverse(defs[i].0.rsplit('@').next().and_then(|x| x.parse::<u32>().ok()).unwrap_or(0)));
+    fn uses(name: &str, roots: &[Root], body: &naga::Block, bound: &HashMap<String, Vec<usize>>, depth: usize) -> Vec<Vec<usize>> {
+        let leaf = format!("let.{name}");
+        let mut out = Vec::new();
+        if depth > 64 {
+            return out;
+        }
+        for r in roots {
+            if !mentions(&r.tree, &leaf) {
+                continue;
+            }
+            match &r.kind {
+                RootKind::Let { name: m } if m == name => {}
+                RootKind::Let { name: m } => match bound.get(m) {
+                    Some(p) => out.push(p.clone()),
+                    None => out.extend(uses(m, roots, body, bound, depth + 1)),
+                },
+                _ if is_loop_test(body, &r.path) => out.push(r.path[..r.path.len() - 2].to_vec()),
+                _ => out.push(r.path.clone()),
+            }
+        }
+        out
+    }
+    // A read of memory (a buffer, a workgroup or private array): a uniform,
+    // a builtin, a register and index arithmetic are not, and a let of only
+    // those stays inlined (the ownership proof and shared sections see its
+    // expression).
+    fn reads_memory(n: &Node, defs: &[(&String, &Vec<usize>, &Node)]) -> bool {
+        match n {
+            Node::Leaf { name, .. } => match name.strip_prefix("let.") {
+                Some(k) => defs.iter().find(|(m, _, _)| m.as_str() == k).is_some_and(|(_, _, t)| reads_memory(t, defs)),
+                None => false,
+            },
+            Node::App { name, kids, .. } => {
+                // A load other than a uniform's or a scalar local's (a register).
+                let register = name.starts_with("load.local.") && !name.contains(".#");
+                let memory = name.starts_with("load.") && !name.starts_with("load.uniform.") && !register;
+                memory || kids.iter().any(|k| reads_memory(k, defs))
+            }
+            _ => false,
+        }
+    }
+    for i in order {
+        let (name, path, tree) = defs[i];
+        let def_block = &path[..path.len().saturating_sub(1)];
+        if reads_memory(tree, &defs) && uses(name, roots, body, &bound, 0).iter().any(|u| in_deeper_loop(body, def_block, u)) {
+            bound.insert(name.clone(), path.clone());
+        }
+    }
+    bound
 }
 
 /// Whether a statement tree stores h anywhere in it.
@@ -1512,6 +1648,40 @@ impl<'a> Ctx<'a> {
             path.push(index);
             index += 1;
             let here = path.clone();
+            // The lets defined just before this statement whose uses sit in a
+            // deeper loop: set once here, as the source computes them.
+            if self.local_prefix.is_empty() {
+                let mut here_lets: Vec<String> = self.bound_lets.iter().filter(|(_, p)| **p == here).map(|(n, _)| n.clone()).collect();
+                here_lets.sort_by_key(|n| n.rsplit('@').next().and_then(|i| i.parse::<u32>().ok()).unwrap_or(0));
+                for n in here_lets {
+                    let def = self.lets.get(&n).cloned().ok_or_else(|| format!("let {n} has no definition"))?;
+                    // An array let (`let accs = array<vec4<f32>, 4>(...)`) has no
+                    // single value: its indexed uses are read in place, as before.
+                    if matches!(&def, Node::App { name, .. } if name.starts_with("naga.Compose.type")) {
+                        self.notes.push(format!("let {n} is an array used in a deeper loop: its elements are read in place"));
+                        continue;
+                    }
+                    let t = tree_of(self, &def)?;
+                    let d = self.kingdom.dual(t.ty).map(|d| d.dual.clone()).unwrap_or_default();
+                    if !matches!(d.as_str(), "f32.real" | "vec4<f32>.real" | "u32.index" | "u32.bits" | "u32.count" | "bool.flag") {
+                        // No register of this dual (a vec2, a vec3, a matrix): the
+                        // let stays inlined at its uses, and the note says so.
+                        self.notes.push(format!("let {n} ({d}) is used in a deeper loop but has no register kind: inlined at its uses"));
+                        continue;
+                    }
+                    let v = self.value(&t)?;
+                    let row = self.register(&format!("local.let.{n}"), &d).map_err(|e| format!("let {n}, used in a deeper loop, bound to a register: {e}"))?;
+                    let kind = row.chars().nth(4).unwrap_or('f');
+                    out.push(Tree::new(&format!("reg.set_{kind}_{rung}"), st, vec![Tree::new(&row, ty(self, Self::reg_dual(kind))?, vec![]), v]));
+                    // The ownership proof sees through the register to what it
+                    // holds, as for a local (a let never changes in its scope).
+                    let held = self.expand_memo(&t);
+                    if held.size() <= 512 {
+                        self.axis_memo.insert(format!("local.let.{n}"), (held, self.loop_depth));
+                    }
+                    self.let_regs.insert(n, row);
+                }
+            }
             let result: Result<Option<Tree>, String> = (|| {
                 match stmt {
                     Statement::Emit(_) => Ok(None),
@@ -1838,7 +2008,13 @@ impl<'a> Ctx<'a> {
         path.pop();
         path.pop();
         let root = root.ok_or("no condition root at the loop's test")?;
-        let test = tree_of(self, &root.tree)?;
+        // The test is the loop's header: a let it reads is its value, inlined
+        // (a let never changes in its scope), so the bound stays an expression
+        // the cost estimator can value, not a register it cannot see.
+        let saved_regs = std::mem::take(&mut self.let_regs);
+        let test = tree_of(self, &root.tree);
+        self.let_regs = saved_regs;
+        let test = test?;
         let mut c = test.kids[0].clone();
         if negated {
             // naga lowers `for (; t < m;)` into `if (t >= m) { break; }`; a
@@ -2367,7 +2543,8 @@ pub fn read_safe(source: &str, kingdom: &WgslKingdom) -> Result<SafeRead, String
             local_lanes.insert(format!("local.{name}@{}", h.index()), *size as u32);
         }
     }
-    let mut ctx = Ctx { kingdom, duals: &duals, lets: &lets, roots: &roots, item_counter: None, tile_counter: None, tile_counter2: None, tile_counter3: None, tile_counter4: None, registers: BTreeMap::new(), next_reg: BTreeMap::new(), guard: None, tail: true, arrays: BTreeMap::new(), parrs: BTreeMap::new(), grid, notes: Vec::new(), helpers: &helpers, calls: &calls, arg_roots: &arg_roots, inline_args: None, row_arrays: BTreeMap::new(), used_counters: std::collections::BTreeSet::new(), local_lanes, axis_memo: BTreeMap::new(), loop_depth: 0, tile_bounds: BTreeMap::new(), naga_fn, module: &kernel.module, local_prefix: String::new(), inline_result: None, inline_values: None };
+    let bound_lets = lets_used_in_deeper_loops(&f.roots, &naga_fn.body);
+    let mut ctx = Ctx { kingdom, duals: &duals, lets: &lets, roots: &roots, item_counter: None, tile_counter: None, tile_counter2: None, tile_counter3: None, tile_counter4: None, registers: BTreeMap::new(), next_reg: BTreeMap::new(), guard: None, tail: true, arrays: BTreeMap::new(), parrs: BTreeMap::new(), grid, notes: Vec::new(), helpers: &helpers, calls: &calls, arg_roots: &arg_roots, inline_args: None, row_arrays: BTreeMap::new(), used_counters: std::collections::BTreeSet::new(), local_lanes, axis_memo: BTreeMap::new(), loop_depth: 0, tile_bounds: BTreeMap::new(), naga_fn, module: &kernel.module, local_prefix: String::new(), inline_result: None, inline_values: None, bound_lets, let_regs: HashMap::new() };
     // Register initialisations first, in root order. A local initialised to
     // its form's fallback (0.0, 0u, false, a zero vector) costs nothing: the
     // register's declaration already holds that value, and the register is
@@ -2671,6 +2848,28 @@ mod tests {
         let moved = src.replacen("var q0 = vec4<f32>(0.0);", "t0 = t0 + 0u; var q0 = vec4<f32>(0.0);", 1);
         let Err(e) = read_safe(&moved, &k) else { panic!("t0 changes in the body, and the kernel read") };
         assert!(e.contains("which the loop's body stores"), "{e}");
+    }
+
+    /// A LET THAT READS MEMORY, USED IN A DEEPER LOOP, IS SET ONCE WHERE IT IS
+    /// DEFINED (fit_A2's r4x_reinvent): `let a` and `let b` (four workgroup reads each) per kk,
+    /// used in the 4 x 4 loop inside, are registers set before that loop, so
+    /// the multiply-add reads registers; `let idx`, used in its own loop
+    /// body only, stays inlined. The per-item cost is pinned: 3,259 when
+    /// every let was inlined, below 1,000 now.
+    #[test]
+    fn a_let_used_in_a_deeper_loop_is_a_register_set_at_its_definition() {
+        let k = WgslKingdom::load_safe();
+        let src = include_str!("../../tests/corpus/safewgsl/reply_fitA2_g002_r4x_reinvent_sonnet.wgsl");
+        assert!(src.contains("let a = vec4<f32>(wg_a[") && src.contains("let idx = lidx + 128u * k;"));
+        let tree = read_safe(src, &k).unwrap_or_else(|e| panic!("{e}")).tree;
+        let (t, role) = (FunctionTable::safe(), gram_role());
+        let text = Renderer::new(&k, &t, &role).kernel(&tree).unwrap().text;
+        let fma = text.lines().find(|l| l.contains("pb[") && l.contains(" * ")).unwrap_or_else(|| panic!("no multiply-add\n{text}"));
+        assert!(!fma.contains("wg_a[") && !fma.contains("wg_b["), "the multiply-add reads registers: {fma}");
+        assert_eq!(text.matches("wg_a[((((k * 32u)").count(), 1, "a's first read once, before the inner loops\n{text}");
+        assert!(text.contains("wg_a[(((lidx + (128u * k))) & 2047u)]"), "idx, used in its own loop body, is inlined\n{text}");
+        let c = crate::wgsl::render::cost(&tree);
+        assert!(c.per_item < 1000.0, "per item {}", c.per_item);
     }
 
     /// A kernel with a helper function reads: the helper is inlined at its
