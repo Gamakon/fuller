@@ -136,7 +136,10 @@ pub fn tokens_from_json(v: &serde_json::Value) -> Result<Vec<Token>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::wgsl::gram::{BLOCKED, SHIPPED, TILED};
+    // The hand-written kernels' texts (the GPU-only gram module carries the same files).
+    const SHIPPED: &str = include_str!("../../kingdoms/wgsl/gram/shipped.wgsl");
+    const BLOCKED: &str = include_str!("../../kingdoms/wgsl/gram/blocked.wgsl");
+    const TILED: &str = include_str!("../../kingdoms/wgsl/gram/tiled.wgsl");
 
     #[test]
     fn the_hand_written_kernels_round_trip_through_their_own_genes() {

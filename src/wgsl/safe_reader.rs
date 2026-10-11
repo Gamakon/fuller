@@ -611,6 +611,58 @@ fn thread_axis_off_in(t: &Tree, axis: usize, workgroup: u32, tiles: Tiles, array
     None
 }
 
+/// An index expression with every literal factor distributed over the sums
+/// it multiplies and literal products folded: `(wid * 16u + lid) * 4u` is
+/// `wid * 64u + lid * 4u` (fit_A2 gen 2's fresh43 writes its block so), so
+/// every algebraically equal spelling of a thread's block reaches the
+/// ownership match in one form.
+fn distribute_literals(t: &Tree) -> Tree {
+    let t = Tree { name: t.name.clone(), ty: t.ty, konst: t.konst, kids: t.kids.iter().map(distribute_literals).collect() };
+    if t.name != "index.mul" || t.kids.len() != 2 {
+        return t;
+    }
+    let (lit, x) = match (literal_value(&t.kids[0]), literal_value(&t.kids[1])) {
+        (Some(_), Some(_)) => {
+            let mut folded = t.kids[0].clone();
+            folded.konst = t.kids[0].konst * t.kids[1].konst;
+            return folded;
+        }
+        (Some(_), None) => (&t.kids[0], &t.kids[1]),
+        (None, Some(_)) => (&t.kids[1], &t.kids[0]),
+        (None, None) => return t,
+    };
+    // A product of a non-literal by a literal stays as written.
+    let sum_or_product = x.name == "index.add" || (x.name == "index.mul" && x.kids.iter().any(|k| literal_value(k).is_some()));
+    if !sum_or_product {
+        return t;
+    }
+    scale_by(x, lit, t.ty)
+}
+
+/// `x * lit` with x already normalised: over a sum, each term scaled; over a
+/// product by a literal, the literals folded; otherwise the product as
+/// written (`x * lit`, the literal second).
+fn scale_by(x: &Tree, lit: &Tree, ty: Ty) -> Tree {
+    if x.name == "index.add" && x.kids.len() == 2 {
+        return Tree::new("index.add", x.ty, vec![scale_by(&x.kids[0], lit, ty), scale_by(&x.kids[1], lit, ty)]);
+    }
+    if let Some(v) = literal_value(x) {
+        let mut folded = x.clone();
+        folded.konst = v * lit.konst;
+        return folded;
+    }
+    if x.name == "index.mul" && x.kids.len() == 2 {
+        for (p, q) in [(&x.kids[0], &x.kids[1]), (&x.kids[1], &x.kids[0])] {
+            if let Some(v) = literal_value(p) {
+                let mut folded = p.clone();
+                folded.konst = v * lit.konst;
+                return Tree::new("index.mul", x.ty, vec![q.clone(), folded]);
+            }
+        }
+    }
+    Tree::new("index.mul", ty, vec![x.clone(), lit.clone()])
+}
+
 /// The terms of a sum, however it is nested.
 fn flatten_add<'t>(t: &'t Tree, out: &mut Vec<&'t Tree>) {
     if t.name == "index.add" && t.kids.len() == 2 {
@@ -1053,6 +1105,9 @@ impl<'a> Ctx<'a> {
                     }
                     let tiles = (self.tile_counter.clone(), self.tile_counter2.clone(), self.tile_counter3.clone(), self.tile_counter4.clone());
                     let tiles: Tiles = [&tiles.0, &tiles.1, &tiles.2, &tiles.3];
+                    // The row and column with literal factors distributed, so
+                    // `(wid * W + lid) * B + k` is proved as `wid * (W * B) + lid * B + k`.
+                    let (r, col) = (&distribute_literals(r), &distribute_literals(col));
                     let (Some((by, i)), Some((bx, j))) = (thread_axis_off_in(r, 1, self.grid.1, tiles, &self.row_arrays, &self.tile_bounds), thread_axis_off_in(col, 0, self.grid.0, tiles, &self.row_arrays, &self.tile_bounds)) else { continue };
                     if by != self.grid.3 || bx != self.grid.2 {
                         return fail(&format!("block {bx} x {by} in the index, the grid says {} x {}", self.grid.2, self.grid.3));
@@ -1939,7 +1994,7 @@ fn choose_dual(set: &std::collections::BTreeSet<Option<Ty>>, kingdom: &WgslKingd
 }
 
 /// The `// grid x y bx by` header.
-fn grid_header(source: &str) -> Option<(u32, u32, u32, u32)> {
+pub(crate) fn grid_header(source: &str) -> Option<(u32, u32, u32, u32)> {
     source.lines().map(str::trim).find_map(|l| {
         let rest = l.strip_prefix("// grid ")?;
         let v: Vec<u32> = rest.split_whitespace().map(|t| t.parse().ok()).collect::<Option<Vec<u32>>>()?;
@@ -2293,6 +2348,30 @@ mod tests {
         // r5 (run A: feasible, HFF 0.5213) was 3,023 per item when conform copied every compose part once per lane; 1,015 since.
         let r5 = r5_per_item.expect("r5 is in the population and the library");
         assert!(r5 < 1100.0 && r5 < bound.per_item, "r5 per item {r5}");
+    }
+
+    /// A THREAD'S BLOCK IN ANY ALGEBRAIC SPELLING (fit_A2 gen 2's fresh43:
+    /// `c0 = (wid.x * 16u + lid.x) * 4u`, workgroup 16, block 4): the
+    /// factored form, the literal first, and the expanded form
+    /// `wid.x * 64u + lid.x * 4u` all prove the same owned cell, rendered on
+    /// the kingdom's own thread rows.
+    #[test]
+    fn a_factored_block_index_is_proved_as_the_expanded_one() {
+        let k = WgslKingdom::load_safe();
+        let factored = include_str!("../../tests/corpus/safewgsl/reply_fitA2_g002_fresh43_sonnet.wgsl");
+        let (c0, r0) = ("let c0 = (wid.x * 16u + lid.x) * 4u;", "let r0 = (wid.y * 16u + lid.y) * 4u;");
+        assert!(factored.contains(c0) && factored.contains(r0));
+        let literal_first = factored.replace(c0, "let c0 = 4u * (lid.x + 16u * wid.x);").replace(r0, "let r0 = 4u * (lid.y + wid.y * 16u);");
+        let expanded = factored.replace(c0, "let c0 = wid.x * 64u + lid.x * 4u;").replace(r0, "let r0 = wid.y * 64u + lid.y * 4u;");
+        let cell = |src: &str| {
+            let sx = read_safe(src, &k).unwrap_or_else(|e| panic!("{e}")).tree.to_sexpr();
+            let at = sx.find("(safe.cell_of").unwrap_or_else(|| panic!("no owned cell: {sx}"));
+            sx[at..at + 160.min(sx.len() - at)].to_string()
+        };
+        let want = cell(&expanded);
+        assert!(want.contains("safe.thread_row") && want.contains("safe.thread_col"), "{want}");
+        assert_eq!(cell(factored), want);
+        assert_eq!(cell(&literal_first), want);
     }
 
     /// A kernel with a helper function reads: the helper is inlined at its

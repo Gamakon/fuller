@@ -842,7 +842,7 @@ mod tests {
         let r = read_safe(&src, &k).unwrap();
         let out = render_tree(&r.tree, &k).unwrap();
         assert!(out.text.starts_with("// grid 16 16 4 4\n"), "{}", out.text.lines().next().unwrap_or(""));
-        assert_eq!(crate::wgsl::gram::grid_header(&out.text), Some((16, 16, 4, 4)));
+        assert_eq!(crate::wgsl::safe_reader::grid_header(&out.text), Some((16, 16, 4, 4)));
     }
 
     /// A store into a vec4 private array whose array leaf is of the wrong
