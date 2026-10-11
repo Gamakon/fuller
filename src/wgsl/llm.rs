@@ -109,19 +109,45 @@ pub fn call(model: &str, system: &str, prompt: &str) -> Result<(String, String, 
     let out = child.wait_with_output().map_err(|e| e.to_string())?;
     let stdout = String::from_utf8_lossy(&out.stdout).to_string();
     if !out.status.success() {
+        // The reason is in the result event (fit_A2 15:39Z: a Fable call
+        // exited 1 and the log kept only the stdout's last 700 bytes, the
+        // usage statistics; the reason, "model_requires_usage_credits", 429,
+        // was lost). The reason first, the raw tail only when there is none.
+        if let Some(reason) = result_error(&stdout) {
+            return Err(format!("claude exited {}: {reason}", out.status));
+        }
         let err = String::from_utf8_lossy(&out.stderr);
         let tail = &stdout[stdout.len().saturating_sub(700)..];
         return Err(format!("claude exited {}: stderr {:?}; stdout tail {:?}", out.status, &err[..err.len().min(400)], tail));
     }
-    // --output-format json: one JSON object (or an array of events) with a `result` string.
-    let json: serde_json::Value = serde_json::from_str(&stdout).map_err(|e| format!("json: {e}: {}", &stdout[..stdout.len().min(200)]))?;
-    let event = if json.is_array() { json.as_array().and_then(|a| a.iter().find(|v| v.get("type").and_then(|t| t.as_str()) == Some("result"))).cloned() } else { Some(json) };
-    let event = event.ok_or_else(|| format!("no result event: {}", &stdout[..stdout.len().min(300)]))?;
+    let event = result_event(&stdout)?;
     let result = event.get("result").and_then(|r| r.as_str()).map(str::to_string).ok_or_else(|| format!("no result field: {}", &stdout[..stdout.len().min(300)]))?;
     if event.get("is_error").and_then(|e| e.as_bool()) == Some(true) {
-        return Err(format!("claude error: {result}"));
+        return Err(format!("claude error: {}", result_error(&stdout).unwrap_or(result)));
     }
     Ok((result, stdout, t.elapsed().as_secs_f64()))
+}
+
+/// `--output-format json`: one JSON object, or an array of events with one
+/// `result` event.
+fn result_event(stdout: &str) -> Result<serde_json::Value, String> {
+    let json: serde_json::Value = serde_json::from_str(stdout).map_err(|e| format!("json: {e}: {}", &stdout[..stdout.len().min(200)]))?;
+    let event = if json.is_array() { json.as_array().and_then(|a| a.iter().find(|v| v.get("type").and_then(|t| t.as_str()) == Some("result"))).cloned() } else { Some(json) };
+    event.ok_or_else(|| format!("no result event: {}", &stdout[..stdout.len().min(300)]))
+}
+
+/// A failed call's reason from its result event: the API's status and
+/// error name, then the message (`api_error_status`, `api_error`,
+/// `result`), or None when the output holds no error event.
+fn result_error(stdout: &str) -> Option<String> {
+    let event = result_event(stdout).ok()?;
+    if event.get("is_error").and_then(|e| e.as_bool()) != Some(true) {
+        return None;
+    }
+    let status = event.get("api_error_status").map(|s| s.to_string()).unwrap_or_else(|| "-".into());
+    let name = event.get("api_error").and_then(|s| s.as_str()).unwrap_or("-");
+    let message = event.get("result").and_then(|s| s.as_str()).unwrap_or("");
+    Some(format!("API error {status} {name}: {message}"))
 }
 
 fn call_codex(system: &str, prompt: &str) -> Result<(String, String, f64), String> {
@@ -306,6 +332,19 @@ mod tests {
 
     /// The mix over ten thousand draws is 70 / 20 / 5 / 5 within a point,
     /// and the same seed draws the same sequence.
+    /// A failed call's reason is read from its result event, not cut from
+    /// the output's tail (the 429 of fit_A2 15:39Z, shape as the CLI
+    /// printed it).
+    #[test]
+    fn a_failed_call_reports_the_api_reason() {
+        let out = r#"{"type":"result","subtype":"success","is_error":true,"api_error_status":429,"api_error":"model_requires_usage_credits","result":"You're out of usage credits.","usage":{"input_tokens":0},"subagent_stats":{"spawned":0}}"#;
+        assert_eq!(result_error(out).as_deref(), Some("API error 429 model_requires_usage_credits: You're out of usage credits."));
+        let ok = r#"{"type":"result","subtype":"success","is_error":false,"result":"// grid 16 16 1 1"}"#;
+        assert_eq!(result_error(ok), None);
+        let events = r#"[{"type":"system"},{"type":"result","is_error":true,"api_error_status":529,"api_error":"overloaded_error","result":"Overloaded"}]"#;
+        assert_eq!(result_error(events).as_deref(), Some("API error 529 overloaded_error: Overloaded"));
+    }
+
     #[test]
     fn the_model_mix_draws_its_shares_reproducibly() {
         let mut counts = std::collections::BTreeMap::new();
