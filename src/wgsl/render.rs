@@ -211,12 +211,12 @@ pub struct Rendered {
 }
 
 pub const WGDIM: [u32; 4] = [4, 8, 16, 32];
-pub const BLK: [u32; 3] = [1, 2, 4];
+pub const BLK: [u32; 4] = [1, 2, 4, 8];
 pub const UNROLL: [u32; 3] = [2, 4, 8];
 pub const WGMEM_LEN: u32 = 2048;
 /// The length of each vec4 workgroup array (`wg_va`, `wg_vb`); the four
 /// arrays together take 24 KB, under the 32 KB a Metal threadgroup has.
-pub const WGVEC_LEN: u32 = 256;
+pub const WGVEC_LEN: u32 = 512;
 pub const MAX_THREADS: u32 = 1024;
 
 fn snap(set: &[u32], v: f32) -> u32 {

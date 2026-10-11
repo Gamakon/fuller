@@ -47,8 +47,8 @@ FORMS = {
     "grid": ("workgroup size (x, y) and the block of cells each thread owns (bx, by)", []),
     "block": ("a sequence of statements", []),
     "stmt": ("one statement", []),
-    "wgdim": ("a workgroup dimension, a literal from {4, 8, 16, 32, 64}", ["u32"]),
-    "blk": ("a block factor, a literal from {1, 2, 4}", ["u32"]),
+    "wgdim": ("a workgroup dimension, a literal from {4, 8, 16, 32} (64 x 64 would pass 1,024 threads)", ["u32"]),
+    "blk": ("a block factor, a literal from {1, 2, 4, 8}", ["u32"]),
     "unroll": ("an unroll factor, a literal from {2, 4, 8}", ["u32"]),
     # ---- safeWGSL: the types below exist so that a bad program has no spelling ----
     # Bounded counts: the only values a loop may count to.
@@ -193,7 +193,7 @@ def build_types():
         add("stmt", r, 0, "a statement " + FORMS[r][0][len("a statement or block "):])
         add("block", r, 0, "a block " + FORMS[r][0][len("a statement or block "):])
     add("parr<bool>", "flag", 0, "a private array of 16 bool: pm, pn")
-    add("wgmem<vec4<f32>>", "real", 0, "a workgroup-memory array of 256 vec4<f32>: va, vb")
+    add("wgmem<vec4<f32>>", "real", 0, "a workgroup-memory array of 512 vec4<f32>: va, vb (256 until 2026-10-11; two f32 arrays of 2,048 and two vec4 arrays of 512 are Apple's 32 KB)")
     add("u32", "wgvindex", 1, FORMS["wgvindex"][0])
     # ---- the complete kingdom (step 6, 2026-10-11) ----
     add("u32", "boundx", 1, FORMS["boundx"][0])
@@ -354,8 +354,8 @@ f("store", "branch", "If/Loop condition", ["bool.flag"], "store", "a branch-cond
 
 # ---- statements: the multityped kingdom (PLAN_wgsl_gram_superopt §2). ----
 # Every row is rendered to text by src/wgsl/render.rs; naga validates the text.
-f("literal", "wgdim", "Literal", [], "u32.wgdim", "a workgroup dimension from {4, 8, 16, 32, 64}; the renderer snaps the constant to the set")
-f("literal", "blk", "Literal", [], "u32.blk", "a block factor from {1, 2, 4}")
+f("literal", "wgdim", "Literal", [], "u32.wgdim", "a workgroup dimension from {4, 8, 16, 32}; the renderer snaps the constant to the set")
+f("literal", "blk", "Literal", [], "u32.blk", "a block factor from {1, 2, 4, 8} (8 since 2026-10-11: a model child's 4 x 8 block)")
 f("literal", "unroll", "Literal", [], "u32.unroll", "an unroll factor from {2, 4, 8}")
 f("kernel", "entry", "composite", ["grid.grid", "block.block"], "kernel.kernel", "the module: bindings, registers, workgroup arrays, @workgroup_size(x, y, 1) fn main")
 f("grid", "of", "composite", ["u32.wgdim", "u32.wgdim", "u32.blk", "u32.blk"], "grid.grid", "arity 4: workgroup x, y and the cells per thread bx, by; the driver dispatches ceil(d / (x bx)) x ceil(rows / (y by)); x y > 1,024 threads is refused")
@@ -411,9 +411,9 @@ f("parr", "e", "composite", [], "parr<f32>.real", "private array pe of 64 f32")
 f("parr", "f", "composite", [], "parr<f32>.real", "private array pf of 64 f32")
 f("parr", "j", "composite", [], "parr<u32>.index", "private array pj of 16 u32")
 f("parr", "k", "composite", [], "parr<u32>.index", "private array pk of 16 u32")
-f("wg", "va", "composite", [], "wgmem<vec4<f32>>.real", "workgroup array va of 256 vec4<f32>")
-f("wg", "vb", "composite", [], "wgmem<vec4<f32>>.real", "workgroup array vb of 256 vec4<f32>")
-f("safe", "wgv_of", "composite", ["u32.index"], "u32.wgvindex", "i & 255u, in range by construction")
+f("wg", "va", "composite", [], "wgmem<vec4<f32>>.real", "workgroup array va of 512 vec4<f32>")
+f("wg", "vb", "composite", [], "wgmem<vec4<f32>>.real", "workgroup array vb of 512 vec4<f32>")
+f("safe", "wgv_of", "composite", ["u32.index"], "u32.wgvindex", "i & 511u, in range by construction")
 f("wg", "get_v_safe", "composite", ["wgmem<vec4<f32>>.real", "u32.wgvindex"], "vec4<f32>.real", "va[i], in range by its type")
 # Index arithmetic the drafted kernels use on addresses: shifts (the count masked to 0..31) and masks.
 f("index", "shl", "composite", ["u32.index", "u32.index"], "u32.index", "i << (s & 31u)")

@@ -308,8 +308,8 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F198 | `literal.wgdim` | `Literal` | `-` | `u32.wgdim` | 0 | a workgroup dimension from {4, 8, 16, 32, 64}; the renderer snaps the constant to the set |
-| F199 | `literal.blk` | `Literal` | `-` | `u32.blk` | 0 | a block factor from {1, 2, 4} |
+| F198 | `literal.wgdim` | `Literal` | `-` | `u32.wgdim` | 0 | a workgroup dimension from {4, 8, 16, 32}; the renderer snaps the constant to the set |
+| F199 | `literal.blk` | `Literal` | `-` | `u32.blk` | 0 | a block factor from {1, 2, 4, 8} (8 since 2026-10-11: a model child's 4 x 8 block) |
 | F200 | `literal.unroll` | `Literal` | `-` | `u32.unroll` | 0 | an unroll factor from {2, 4, 8} |
 
 ## class `kernel`
@@ -465,14 +465,14 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F290 | `wg.va` | `composite` | `-` | `wgmem<vec4<f32>>.real` | 0 | workgroup array va of 256 vec4<f32> |
-| F291 | `wg.vb` | `composite` | `-` | `wgmem<vec4<f32>>.real` | 0 | workgroup array vb of 256 vec4<f32> |
+| F290 | `wg.va` | `composite` | `-` | `wgmem<vec4<f32>>.real` | 0 | workgroup array va of 512 vec4<f32> |
+| F291 | `wg.vb` | `composite` | `-` | `wgmem<vec4<f32>>.real` | 0 | workgroup array vb of 512 vec4<f32> |
 
 ## class `safe`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F292 | `safe.wgv_of` | `composite` | `u32.index` | `u32.wgvindex` | 1 | i & 255u, in range by construction |
+| F292 | `safe.wgv_of` | `composite` | `u32.index` | `u32.wgvindex` | 1 | i & 511u, in range by construction |
 
 ## class `wg`
 

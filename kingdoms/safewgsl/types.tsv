@@ -79,8 +79,8 @@ T077	reg<vec4<f32>>.real	reg<vec4<f32>>	real	4	0.0	0	0	0	a named vec4<f32> regis
 T078	reg<u32>.index	reg<u32>	index	1	0u	0	0	0	a named u32 register: i0, i1, i2, i3
 T079	reg<bool>.flag	reg<bool>	flag	1	false	0	0	0	a named bool register: b0
 T080	wgmem<f32>.real	wgmem<f32>	real	0	0.0	0	0	0	a workgroup-memory array of 2,048 f32: a, b
-T081	u32.wgdim	u32	wgdim	1	4u	0	0	0	a workgroup dimension, a literal from {4, 8, 16, 32, 64}
-T082	u32.blk	u32	blk	1	1u	0	0	0	a block factor, a literal from {1, 2, 4}
+T081	u32.wgdim	u32	wgdim	1	4u	0	0	0	a workgroup dimension, a literal from {4, 8, 16, 32} (64 x 64 would pass 1,024 threads)
+T082	u32.blk	u32	blk	1	1u	0	0	0	a block factor, a literal from {1, 2, 4, 8}
 T083	u32.unroll	u32	unroll	1	2u	0	0	0	an unroll factor, a literal from {2, 4, 8}
 T084	u32.boundm	u32	boundm	1	cfg.m	0	0	0	a loop bound that is the item count cfg.m
 T085	u32.boundd	u32	boundd	1	cfg.d	0	0	0	a loop bound that is the width cfg.d
@@ -123,6 +123,6 @@ T121	block.L4	block	L4	0	empty	0	0	0	a block inside a third nested tile loop
 T122	stmt.C4	stmt	C4	0	empty	0	0	0	a statement under a condition inside a third nested tile loop: no barrier
 T123	block.C4	block	C4	0	empty	0	0	0	a block under a condition inside a third nested tile loop: no barrier
 T124	parr<bool>.flag	parr<bool>	flag	0	false	0	0	0	a private array of 16 bool: pm, pn
-T125	wgmem<vec4<f32>>.real	wgmem<vec4<f32>>	real	0	0.0	0	0	0	a workgroup-memory array of 256 vec4<f32>: va, vb
+T125	wgmem<vec4<f32>>.real	wgmem<vec4<f32>>	real	0	0.0	0	0	0	a workgroup-memory array of 512 vec4<f32>: va, vb (256 until 2026-10-11; two f32 arrays of 2,048 and two vec4 arrays of 512 are Apple's 32 KB)
 T126	u32.wgvindex	u32	wgvindex	1	0u	0	0	0	an index into a vec4 workgroup array, masked to the array by its row
 T127	u32.boundx	u32	boundx	1	1u	0	0	0	a loop bound that is any index expression (cfg.m & ~3u, (cfg.d + 63u) / 64u, a register): rendered as written, never capped; costed at the worst shape

@@ -28,8 +28,8 @@ A type is a dual `slot.form`: the slot is what the hardware stores, the form is 
 | `grid` | workgroup size (x, y) and the block of cells each thread owns (bx, by) | see duals |
 | `block` | a sequence of statements | see duals |
 | `stmt` | one statement | see duals |
-| `wgdim` | a workgroup dimension, a literal from {4, 8, 16, 32, 64} | u32 |
-| `blk` | a block factor, a literal from {1, 2, 4} | u32 |
+| `wgdim` | a workgroup dimension, a literal from {4, 8, 16, 32} (64 x 64 would pass 1,024 threads) | u32 |
+| `blk` | a block factor, a literal from {1, 2, 4, 8} | u32 |
 | `unroll` | an unroll factor, a literal from {2, 4, 8} | u32 |
 | `boundm` | a loop bound that is the item count cfg.m | u32 |
 | `boundd` | a loop bound that is the width cfg.d | u32 |

@@ -196,8 +196,8 @@ F194	shape	splat4	Splat	<S.c>	<vec4.c>	1
 F195	store	buffer	Store(Access)	u32.index <T.form of the buffer>	store	2	one instance per buffer; a head gene's root
 F196	store	local	Store	<T.form of the local>	store	1	
 F197	store	branch	If/Loop condition	bool.flag	store	1	a branch-condition root in the scaffold
-F198	literal	wgdim	Literal	-	u32.wgdim	0	a workgroup dimension from {4, 8, 16, 32, 64}; the renderer snaps the constant to the set
-F199	literal	blk	Literal	-	u32.blk	0	a block factor from {1, 2, 4}
+F198	literal	wgdim	Literal	-	u32.wgdim	0	a workgroup dimension from {4, 8, 16, 32}; the renderer snaps the constant to the set
+F199	literal	blk	Literal	-	u32.blk	0	a block factor from {1, 2, 4, 8} (8 since 2026-10-11: a model child's 4 x 8 block)
 F200	literal	unroll	Literal	-	u32.unroll	0	an unroll factor from {2, 4, 8}
 F201	kernel	entry	composite	grid.grid block.block	kernel.kernel	2	the module: bindings, registers, workgroup arrays, @workgroup_size(x, y, 1) fn main
 F202	grid	of	composite	u32.wgdim u32.wgdim u32.blk u32.blk	grid.grid	4	arity 4: workgroup x, y and the cells per thread bx, by; the driver dispatches ceil(d / (x bx)) x ceil(rows / (y by)); x y > 1,024 threads is refused
@@ -288,9 +288,9 @@ F286	parr	e	composite	-	parr<f32>.real	0	private array pe of 64 f32
 F287	parr	f	composite	-	parr<f32>.real	0	private array pf of 64 f32
 F288	parr	j	composite	-	parr<u32>.index	0	private array pj of 16 u32
 F289	parr	k	composite	-	parr<u32>.index	0	private array pk of 16 u32
-F290	wg	va	composite	-	wgmem<vec4<f32>>.real	0	workgroup array va of 256 vec4<f32>
-F291	wg	vb	composite	-	wgmem<vec4<f32>>.real	0	workgroup array vb of 256 vec4<f32>
-F292	safe	wgv_of	composite	u32.index	u32.wgvindex	1	i & 255u, in range by construction
+F290	wg	va	composite	-	wgmem<vec4<f32>>.real	0	workgroup array va of 512 vec4<f32>
+F291	wg	vb	composite	-	wgmem<vec4<f32>>.real	0	workgroup array vb of 512 vec4<f32>
+F292	safe	wgv_of	composite	u32.index	u32.wgvindex	1	i & 511u, in range by construction
 F293	wg	get_v_safe	composite	wgmem<vec4<f32>>.real u32.wgvindex	vec4<f32>.real	2	va[i], in range by its type
 F294	index	shl	composite	u32.index u32.index	u32.index	2	i << (s & 31u)
 F295	index	shr	composite	u32.index u32.index	u32.index	2	i >> (s & 31u)
