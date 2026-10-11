@@ -633,6 +633,21 @@ fn thread_axis_off_in(t: &Tree, axis: usize, workgroup: u32, tiles: Tiles, array
             }
         }
     }
+    // `gid.axis * K` plus SEVERAL offset terms, however the sum is nested
+    // (fit_A2's r8x_reinvent: i15 = i14 + 4u with i14 = gid.x * 8u + k2, k2 < 4,
+    // so the column is (gid.x * 8u + k2) + 4u): the offsets' sum proved below K
+    // from the counters' bounds.
+    let mut terms = Vec::new();
+    flatten_add(t, &mut terms);
+    if terms.len() > 2 {
+        if let Some(at) = terms.iter().position(|x| matches!(thread_axis(x, axis, workgroup), Some((_, 0))) && (gid_axis(x, axis) || x.name == "index.mul")) {
+            let (k, _) = thread_axis(terms[at], axis, workgroup)?;
+            let sum = terms.iter().enumerate().filter(|(i, _)| *i != at).map(|(_, x)| (*x).clone()).reduce(|acc, x| Tree::new("index.add", acc.ty, vec![acc, x]))?;
+            if offset_max(&sum, tiles, bounds).is_some_and(|m| m < f64::from(k)) {
+                return Some((k, Off::Expr(unclamped(&sum, k).clone())));
+            }
+        }
+    }
     None
 }
 
@@ -2995,6 +3010,23 @@ mod tests {
         let c = crate::wgsl::render::cost(&tree);
         let shipped = crate::wgsl::render::cost(&crate::wgsl::render::gram_shipped_safe_tree(&k).unwrap());
         assert!(c.per_item < 2.0 * shipped.per_item && c.base < 1000.0, "per item {} (shipped {}), base {}", c.per_item, shipped.per_item, c.base);
+    }
+
+    /// A COLUMN FROM A REGISTER DERIVED FROM ANOTHER (fit_A2's r8x_reinvent,
+    /// grid 16 x 16, block 8 x 4): i15 = i14 + 4u with i14 = gid.x * 8u + k2
+    /// and k2 < 4 is the column (gid.x * 8u + k2) + 4u, inside the thread's 8;
+    /// it is proved from k2's bound and stored on the kingdom's own rows. The
+    /// same with 5u, which reaches column 8, is not the thread's.
+    #[test]
+    fn gid_times_k_plus_several_offsets_is_proved_from_the_counters_bounds() {
+        let k = WgslKingdom::load_safe();
+        let src = include_str!("../../tests/corpus/safewgsl/reply_fitA2_g001_r8x_reinvent_opus.wgsl");
+        assert!(src.contains("i15 = (i14 + 4u);"));
+        let sx = read_safe(src, &k).unwrap_or_else(|e| panic!("{e}")).tree.to_sexpr();
+        assert!(sx.contains("safe.col_plus_x (safe.thread_col"), "{sx}");
+        let past = src.replace("i15 = (i14 + 4u);", "i15 = (i14 + 5u);");
+        let Err(e) = read_safe(&past, &k) else { panic!("k2 + 5 < 8 read as the thread's column") };
+        assert!(e.contains("not at this thread's cell"), "{e}");
     }
 
     /// A kernel with a helper function reads: the helper is inlined at its
