@@ -701,13 +701,20 @@ impl<'a> Ctx<'a> {
         if let Some(rest) = t.name.strip_prefix("load.workgroup.") {
             let arr = rest.split('.').next().unwrap_or("");
             if let Some((i, j)) = nested_index(rest, &t.kids) {
-                // A lane of a vec4 element: `sa[si][comp]`.
+                // A lane of a vec4 element: `sa[si][comp]`; a literal lane
+                // (`sa[si].x`, the kingdom's own rendering of a lane of a
+                // loaded element) is the element loaded whole, then its lane.
                 let which = self.array(arr, "vec4<f32>.real")?;
-                let (of, idx_dual, arr_dual, _, _) = Self::wg_rows(which);
+                let (of, idx_dual, arr_dual, get, _) = Self::wg_rows(which);
                 let i = self.value(unmasked(i, 511.0))?;
-                let j = self.value(unmasked(j, 3.0))?;
                 let wg = Tree::new(of, ty(self, idx_dual)?, vec![i]);
-                return Ok(Tree::new("wg.get_v_lane", t.ty, vec![Tree::new(which, ty(self, arr_dual)?, vec![]), wg, j]));
+                let element = Tree::new(which, ty(self, arr_dual)?, vec![]);
+                if let Some(lane) = literal_value(unmasked(j, 3.0)).filter(|l| (0.0..=3.0).contains(l)) {
+                    let whole = Tree::new(get, ty(self, "vec4<f32>.real")?, vec![element, wg]);
+                    return Ok(Tree::new(&format!("shape.access_{}", lane as u32), t.ty, vec![whole]));
+                }
+                let j = self.value(unmasked(j, 3.0))?;
+                return Ok(Tree::new("wg.get_v_lane", t.ty, vec![element, wg, j]));
             }
             let which = self.array(arr, &d)?;
             let (of, idx_dual, arr_dual, get, _) = Self::wg_rows(which);
@@ -728,9 +735,14 @@ impl<'a> Ctx<'a> {
                         return Err(format!("a lane of an element of {base}, which is not a vec4 array"));
                     }
                     let i = self.value(unmasked(i, 15.0))?;
-                    let j = self.value(unmasked(j, 3.0))?;
                     let pidx = Tree::new(mask, ty(self, "u32.pindex")?, vec![i]);
-                    return Ok(Tree::new("parr.get_v_lane", t.ty, vec![Tree::new(arr, ty(self, parr_dual(kind))?, vec![]), pidx, j]));
+                    let array = Tree::new(arr, ty(self, parr_dual(kind))?, vec![]);
+                    if let Some(lane) = literal_value(unmasked(j, 3.0)).filter(|l| (0.0..=3.0).contains(l)) {
+                        let whole = Tree::new("parr.get_v", ty(self, "vec4<f32>.real")?, vec![array, pidx]);
+                        return Ok(Tree::new(&format!("shape.access_{}", lane as u32), t.ty, vec![whole]));
+                    }
+                    let j = self.value(unmasked(j, 3.0))?;
+                    return Ok(Tree::new("parr.get_v_lane", t.ty, vec![array, pidx, j]));
                 }
                 if self.local_lanes.get(&base) == Some(&4) {
                     let row = self.register(&base, "vec4<f32>.real")?;
