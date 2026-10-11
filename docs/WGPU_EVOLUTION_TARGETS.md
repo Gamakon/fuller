@@ -51,7 +51,7 @@ evolution itself.
 
 ## The ten best next problems
 
-Ranked by Andrew's priority (2026-10-11): UltraDim's two hot paths first,
+Ranked by Andrew's priority (2026-10-11): UltraDim's search first,
 then our own evolution pipeline's kernels, then the rest by variety of
 computation, expected headroom and how easily a Gram-style fitness
 evaluation can be built. The UltraDim rows A–C follow ultradim-hotpath's
