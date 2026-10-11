@@ -1038,6 +1038,8 @@ fn convert_name(from: Option<ScalarKind>, to: NagaKind, convert: bool) -> Option
         (ScalarKind::Sint, NagaKind::Float, true) => "convert.int_to_f32",
         (ScalarKind::Float, NagaKind::Sint, true) => "convert.f32_to_int",
         (ScalarKind::Uint, NagaKind::Float, true) => "convert.index_to_f32",
+        (ScalarKind::Bool, NagaKind::Uint, true) => "convert.flag_to_index",
+        (ScalarKind::Bool, NagaKind::Float, true) => "convert.flag_to_f32",
         (ScalarKind::Float, NagaKind::Uint, true) => "convert.f32_to_count",
         (ScalarKind::Float, NagaKind::Uint, false) => "convert.bitcast_f32_bits",
         (ScalarKind::Uint, NagaKind::Float, false) => "convert.bitcast_bits_f32",

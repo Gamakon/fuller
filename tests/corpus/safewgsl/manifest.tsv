@@ -66,3 +66,5 @@ reply_fitA_g002_r2x_union_g10_sonnet	reads	reads	run A: a fourth nested tile loo
 reply_fitA_g002_fresh48_opus	reads	reads	run A: a helper (wrow) with its own loop storing to h at a row passed as an argument; inlined with the caller's counters in scope, its locals named under the helper; computes as written (128/128)
 reply_g001_r2x_union_fable_clean	reads	reads	the same reply without the stray brace: what the clean renderer's text would have produced
 reply_g001_r8x_union_fable_clean	reads	reads	the same reply without the stray brace: what the clean renderer's text would have produced
+reply_fitA2_g001_r2x_reinvent_sonnet	reads	reads	fit_A2: a row offset 2 * q + s over two tile counters (q < 4, s < 2, block of 8) and a column strided by 32; our reader had a bug, it proved one offset term only; the offset is now any expression the counters' bounds prove below the block, rendered clamped (safe.row_plus_x)
+reply_fitA2_g001_r2x_reinvent_g2_sonnet	reads	reads	fit_A2: u32(ok) and f32(ok) on a flag had no convert row; convert.flag_to_index and convert.flag_to_f32

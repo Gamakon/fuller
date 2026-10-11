@@ -638,6 +638,16 @@ for r, body in (("L4", "L5"), ("C4", "C5")):
     f("loop", "tile_strided_" + r, "composite", ["u32.lit64", "u32.lit64", "block." + body], "stmt." + r, "arity 3: a short loop stepped by a literal (the counter of its depth)")
     f("loop", "tilex_" + r, "composite", ["u32.boundx", "block." + body], "stmt." + r, "a short loop (the counter of its depth) bounded by an expression")
     f("loop", "tilex_strided_" + r, "composite", ["u32.boundx", "u32.lit64", "block." + body], "stmt." + r, "arity 3: the same, stepped by a literal")
+# A block offset that is any index expression, clamped into the block (fit_A2's r2x_reinvent: a row offset
+# 2 * q + s over two tile counters, which the reader proves below the block factor from the counters' bounds):
+# the clamp keeps the row this thread's whatever the expression.
+f("safe", "row_plus_x", "composite", ["u32.threadrow", "u32.index"], "u32.threadrow", "row + min(off, block rows - 1): any offset expression, clamped into the block")
+f("safe", "col_plus_x", "composite", ["u32.threadcol", "u32.index"], "u32.threadcol", "col + min(off, block columns - 1)")
+f("safe", "row_plus_x_s", "composite", ["u32.threadrow", "u32.index"], "u32.threadrow", "row + min(off, blk - 1) * Y: the off-th row of a strided block")
+f("safe", "col_plus_x_s", "composite", ["u32.threadcol", "u32.index"], "u32.threadcol", "col + min(off, blk - 1) * X")
+# u32(flag) (fit_A2's r2x_reinvent_g2: an index multiplied by u32(ok)).
+f("convert", "flag_to_index", "As", ["bool.flag"], "u32.index", "u32(b): 1 or 0")
+f("convert", "flag_to_f32", "As", ["bool.flag"], "f32.real", "f32(b): 1.0 or 0.0")
 
 
 def write_tsv(path, header, rows):

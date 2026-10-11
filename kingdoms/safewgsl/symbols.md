@@ -1673,4 +1673,20 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 | F815 | `loop.tilex_C4` | `composite` | `u32.boundx block.C5` | `stmt.C4` | 2 | a short loop (the counter of its depth) bounded by an expression |
 | F816 | `loop.tilex_strided_C4` | `composite` | `u32.boundx u32.lit64 block.C5` | `stmt.C4` | 3 | arity 3: the same, stepped by a literal |
 
-816 function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Deliberately absent: atomics, images, derivatives, subgroup operations, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.
+## class `safe`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F817 | `safe.row_plus_x` | `composite` | `u32.threadrow u32.index` | `u32.threadrow` | 2 | row + min(off, block rows - 1): any offset expression, clamped into the block |
+| F818 | `safe.col_plus_x` | `composite` | `u32.threadcol u32.index` | `u32.threadcol` | 2 | col + min(off, block columns - 1) |
+| F819 | `safe.row_plus_x_s` | `composite` | `u32.threadrow u32.index` | `u32.threadrow` | 2 | row + min(off, blk - 1) * Y: the off-th row of a strided block |
+| F820 | `safe.col_plus_x_s` | `composite` | `u32.threadcol u32.index` | `u32.threadcol` | 2 | col + min(off, blk - 1) * X |
+
+## class `convert`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F821 | `convert.flag_to_index` | `As` | `bool.flag` | `u32.index` | 1 | u32(b): 1 or 0 |
+| F822 | `convert.flag_to_f32` | `As` | `bool.flag` | `f32.real` | 1 | f32(b): 1.0 or 0.0 |
+
+822 function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Deliberately absent: atomics, images, derivatives, subgroup operations, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.

@@ -749,6 +749,15 @@ impl<'a> Renderer<'a> {
                 let (blk, w) = if safe_base(name).starts_with("safe.row") { (scope.grid.by, scope.grid.y) } else { (scope.grid.bx, scope.grid.x) };
                 return Ok(format!("({} + min({}, {}u) * {w}u)", self.value(&v.kids[0], scope)?, self.value(&v.kids[1], scope)?, blk.saturating_sub(1)));
             }
+            "safe.row_plus_x" | "safe.col_plus_x" => {
+                // Any offset expression, clamped into the block.
+                let blk = if safe_base(name) == "safe.row_plus_x" { scope.grid.by } else { scope.grid.bx };
+                return Ok(format!("({} + min({}, {}u))", self.value(&v.kids[0], scope)?, self.value(&v.kids[1], scope)?, blk.saturating_sub(1)));
+            }
+            "safe.row_plus_x_s" | "safe.col_plus_x_s" => {
+                let (blk, w) = if safe_base(name) == "safe.row_plus_x_s" { (scope.grid.by, scope.grid.y) } else { (scope.grid.bx, scope.grid.x) };
+                return Ok(format!("({} + min({}, {}u) * {w}u)", self.value(&v.kids[0], scope)?, self.value(&v.kids[1], scope)?, blk.saturating_sub(1)));
+            }
             "safe.thread_row" => return Ok(format!("(gid.y * {}u)", scope.grid.by)),
             "safe.thread_col" => return Ok(format!("(gid.x * {}u)", scope.grid.bx)),
             "safe.thread_row_s" => return Ok(format!("(wid.y * {}u + lid.y)", scope.grid.y * scope.grid.by)),

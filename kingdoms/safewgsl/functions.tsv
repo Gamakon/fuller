@@ -815,3 +815,9 @@ F813	loop	tilex_strided_L4	composite	u32.boundx u32.lit64 block.L5	stmt.L4	3	ari
 F814	loop	tile_strided_C4	composite	u32.lit64 u32.lit64 block.C5	stmt.C4	3	arity 3: a short loop stepped by a literal (the counter of its depth)
 F815	loop	tilex_C4	composite	u32.boundx block.C5	stmt.C4	2	a short loop (the counter of its depth) bounded by an expression
 F816	loop	tilex_strided_C4	composite	u32.boundx u32.lit64 block.C5	stmt.C4	3	arity 3: the same, stepped by a literal
+F817	safe	row_plus_x	composite	u32.threadrow u32.index	u32.threadrow	2	row + min(off, block rows - 1): any offset expression, clamped into the block
+F818	safe	col_plus_x	composite	u32.threadcol u32.index	u32.threadcol	2	col + min(off, block columns - 1)
+F819	safe	row_plus_x_s	composite	u32.threadrow u32.index	u32.threadrow	2	row + min(off, blk - 1) * Y: the off-th row of a strided block
+F820	safe	col_plus_x_s	composite	u32.threadcol u32.index	u32.threadcol	2	col + min(off, blk - 1) * X
+F821	convert	flag_to_index	As	bool.flag	u32.index	1	u32(b): 1 or 0
+F822	convert	flag_to_f32	As	bool.flag	f32.real	1	f32(b): 1.0 or 0.0

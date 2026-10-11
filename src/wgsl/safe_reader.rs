@@ -96,6 +96,8 @@ struct Ctx<'a> {
     /// the register.
     axis_memo: BTreeMap<String, (Tree, usize)>,
     loop_depth: usize,
+    /// The tile counters' literal bounds, while their loops are open.
+    tile_bounds: Bounds,
     /// The function whose body is being walked (its pointers resolve the
     /// locals a loop stores).
     naga_fn: &'a Function,
@@ -412,12 +414,81 @@ fn wid_lid_axis(t: &Tree, axis: usize, workgroup: u32) -> Option<(u32, u32)> {
 
 /// An offset within the thread's block: a literal, or a tile counter; for a
 /// strided block (rows W apart) a literal multiple of W.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, PartialEq)]
 enum Off {
     Lit(u32),
     Tile(u8),
     Strided(u32),
     StridedTile(u8),
+    /// Any index expression the counters' bounds prove below the block
+    /// factor (`2 * q + s`, fit_A2's r2x_reinvent); for a strided block, in
+    /// units of the workgroup width. Rendered clamped into the block.
+    Expr(Tree),
+    StridedExpr(Tree),
+}
+
+/// The tile counters' literal bounds by local name, for proving an offset.
+type Bounds = BTreeMap<String, u32>;
+
+/// The largest value an offset expression takes: a literal, a tile counter
+/// (its bound less one), a product by a literal, a sum, a `min` by a
+/// literal; `None` for anything else.
+fn offset_max(t: &Tree, tiles: Tiles, bounds: &Bounds) -> Option<f64> {
+    if let Some(v) = literal_value(t) {
+        return Some(f64::from(v));
+    }
+    if t.kids.is_empty() {
+        let local = local_name(&t.name)?;
+        tile_of(&local, tiles)?;
+        return bounds.get(&local).map(|b| f64::from(b.saturating_sub(1)));
+    }
+    match (t.name.as_str(), t.kids.as_slice()) {
+        ("index.add", [a, b]) => Some(offset_max(a, tiles, bounds)? + offset_max(b, tiles, bounds)?),
+        ("index.mul", [a, b]) => Some(offset_max(a, tiles, bounds)? * offset_max(b, tiles, bounds)?),
+        // `min(x, l)` with a literal l is at most l whatever x is (the kingdom's own clamp).
+        ("index.min", [a, b]) => match (literal_value(a), literal_value(b)) {
+            (Some(l), _) | (_, Some(l)) => Some(f64::from(l).min(offset_max(if literal_value(a).is_some() { b } else { a }, tiles, bounds).unwrap_or(f64::INFINITY))),
+            _ => Some(offset_max(a, tiles, bounds)?.min(offset_max(b, tiles, bounds)?)),
+        },
+        _ => None,
+    }
+}
+
+/// The kingdom's own clamp `min(x, B - 1)` read back: the offset x itself,
+/// so the clamp is not nested at every reading.
+fn unclamped(t: &Tree, b: u32) -> &Tree {
+    if t.name == "index.min" && t.kids.len() == 2 {
+        for (x, l) in [(&t.kids[0], &t.kids[1]), (&t.kids[1], &t.kids[0])] {
+            if literal_value(l) == Some(b.saturating_sub(1) as f32) {
+                return x;
+            }
+        }
+    }
+    t
+}
+
+/// A strided block's offset term in units of the workgroup width W: a
+/// literal multiple of W, `W * x` or `x * W`, or `c * x` with c a multiple
+/// of W.
+fn strided_unit(t: &Tree, workgroup: u32) -> Option<Tree> {
+    if let Some(v) = literal_value(t) {
+        let v = v as u32;
+        return v.is_multiple_of(workgroup).then(|| Tree::literal("literal.index", t.ty, (v / workgroup) as f32));
+    }
+    if t.name == "index.mul" && t.kids.len() == 2 {
+        for (p, q) in [(&t.kids[0], &t.kids[1]), (&t.kids[1], &t.kids[0])] {
+            if let Some(c) = literal_value(p) {
+                let c = c as u32;
+                if c == workgroup {
+                    return Some(q.clone());
+                }
+                if c.is_multiple_of(workgroup) && c > 0 {
+                    return Some(Tree::new("index.mul", t.ty, vec![Tree::literal("literal.index", p.ty, (c / workgroup) as f32), q.clone()]));
+                }
+            }
+        }
+    }
+    None
 }
 
 /// The tile counters in effect, outer to inner.
@@ -446,13 +517,13 @@ fn tile_of(local: &str, tiles: Tiles) -> Option<u8> {
 /// A row or column expression of this thread: `gid.axis`, `gid.axis * K`,
 /// `gid.axis * K + off` (off a literal below K, or a tile counter), with K
 /// the grid's block factor → `(blk, offset)`.
-fn thread_axis_off_in(t: &Tree, axis: usize, workgroup: u32, tiles: Tiles, arrays: &BTreeMap<String, (usize, bool, u32)>) -> Option<(u32, Off)> {
+fn thread_axis_off_in(t: &Tree, axis: usize, workgroup: u32, tiles: Tiles, arrays: &BTreeMap<String, (usize, bool, u32)>, bounds: &Bounds) -> Option<(u32, Off)> {
     // A guarded value: `select(0u, X, ok)` or `select(X, 0u, !ok)` is X here;
     // the store is guarded by its own row's bounds check anyway.
     if t.name == "select.scalar_cond" && t.kids.len() == 3 {
         for (a, b) in [(&t.kids[0], &t.kids[1]), (&t.kids[1], &t.kids[0])] {
             if literal_value(a) == Some(0.0) {
-                if let Some(x) = thread_axis_off_in(b, axis, workgroup, tiles, arrays) {
+                if let Some(x) = thread_axis_off_in(b, axis, workgroup, tiles, arrays, bounds) {
                     return Some(x);
                 }
             }
@@ -474,7 +545,7 @@ fn thread_axis_off_in(t: &Tree, axis: usize, workgroup: u32, tiles: Tiles, array
     if let Some((k, 0)) = thread_axis(t, axis, workgroup) {
         return Some((k, Off::Lit(0)));
     }
-    if let Some(x) = axis_terms(t, axis, workgroup, tiles) {
+    if let Some(x) = axis_terms(t, axis, workgroup, tiles, bounds) {
         return Some(x);
     }
     // A strided block: wid * (W * B) + lid, the i-th row at + i * W.
@@ -524,6 +595,11 @@ fn thread_axis_off_in(t: &Tree, axis: usize, workgroup: u32, tiles: Tiles, array
                 if let Some(n) = tile_min(y, tiles) {
                     return Some((k, Off::Tile(n)));
                 }
+                // Any other offset the counters' bounds (or the kingdom's own
+                // clamp) prove below the block factor.
+                if offset_max(y, tiles, bounds).is_some_and(|m| m < f64::from(k)) {
+                    return Some((k, Off::Expr(unclamped(y, k).clone())));
+                }
             }
         }
     }
@@ -544,10 +620,10 @@ fn flatten_add<'t>(t: &'t Tree, out: &mut Vec<&'t Tree>) {
 /// `lid.axis` or `lid.axis * B`, and at most one offset (a literal, a tile
 /// counter, or a tile counter times the workgroup width for a strided
 /// block), e.g. k26's `wid.y * 32u + i * 8u + lid.y`.
-fn axis_terms(t: &Tree, axis: usize, workgroup: u32, tiles: Tiles) -> Option<(u32, Off)> {
+fn axis_terms(t: &Tree, axis: usize, workgroup: u32, tiles: Tiles, bounds: &Bounds) -> Option<(u32, Off)> {
     let mut terms = Vec::new();
     flatten_add(t, &mut terms);
-    if terms.len() < 2 || terms.len() > 3 {
+    if terms.len() < 2 {
         return None;
     }
     let wid = |x: &Tree| scaled_id(x, axis, "builtin.work_group_id").or_else(|| scaled_id(x, axis, "builtin.workgroup_id"));
@@ -563,21 +639,30 @@ fn axis_terms(t: &Tree, axis: usize, workgroup: u32, tiles: Tiles) -> Option<(u3
         return None;
     }
     let tile_min = |x: &Tree| tile_min(x, tiles);
+    // Any other offset: a sum of terms the counters' bounds prove below the
+    // block factor (`2 * q + s` with q < 4 and s < 2 against a block of 8).
+    let sum_of = |terms: &[&Tree]| -> Option<Tree> {
+        let mut sum: Option<Tree> = None;
+        for x in terms {
+            sum = Some(match sum {
+                None => (*x).clone(),
+                Some(acc) => Tree::new("index.add", acc.ty, vec![acc, (*x).clone()]),
+            });
+        }
+        sum
+    };
     if kw == workgroup * kl {
         // A contiguous block of B = kl cells: offsets below B.
         let b = kl;
         return match rest.as_slice() {
             [] => Some((b, Off::Lit(0))),
-            [x] => {
-                if let Some(v) = literal_value(x) {
-                    return ((v as u32) < b).then_some((b, Off::Lit(v as u32)));
-                }
-                if x.kids.is_empty() {
-                    return local_name(&x.name).and_then(|l| tile_of(&l, tiles)).map(|n| (b, Off::Tile(n)));
-                }
-                tile_min(x).map(|n| (b, Off::Tile(n)))
+            [x] if literal_value(x).is_some() => literal_value(x).and_then(|v| ((v as u32) < b).then_some((b, Off::Lit(v as u32)))),
+            [x] if x.kids.is_empty() => local_name(&x.name).and_then(|l| tile_of(&l, tiles)).map(|n| (b, Off::Tile(n))),
+            [x] if tile_min(x).is_some() => tile_min(x).map(|n| (b, Off::Tile(n))),
+            _ => {
+                let sum = sum_of(&rest)?;
+                (offset_max(&sum, tiles, bounds)? < f64::from(b)).then_some((b, Off::Expr(unclamped(&sum, b).clone())))
             }
-            _ => None,
         };
     }
     if kl == 1 && kw.is_multiple_of(workgroup) && kw / workgroup > 1 {
@@ -602,9 +687,14 @@ fn axis_terms(t: &Tree, axis: usize, workgroup: u32, tiles: Tiles) -> Option<(u3
                         }
                     }
                 }
-                None
+                let unit = strided_unit(x, workgroup)?;
+                (offset_max(&unit, tiles, bounds)? < f64::from(b)).then_some((b, Off::StridedExpr(unclamped(&unit, b).clone())))
             }
-            _ => None,
+            _ => {
+                let units = rest.iter().map(|x| strided_unit(x, workgroup)).collect::<Option<Vec<_>>>()?;
+                let sum = sum_of(&units.iter().collect::<Vec<_>>())?;
+                (offset_max(&sum, tiles, bounds)? < f64::from(b)).then_some((b, Off::StridedExpr(sum)))
+            }
         };
     }
     None
@@ -943,38 +1033,47 @@ impl<'a> Ctx<'a> {
                     }
                     let tiles = (self.tile_counter.clone(), self.tile_counter2.clone(), self.tile_counter3.clone(), self.tile_counter4.clone());
                     let tiles: Tiles = [&tiles.0, &tiles.1, &tiles.2, &tiles.3];
-                    let (Some((by, i)), Some((bx, j))) = (thread_axis_off_in(r, 1, self.grid.1, tiles, &self.row_arrays), thread_axis_off_in(col, 0, self.grid.0, tiles, &self.row_arrays)) else { continue };
+                    let (Some((by, i)), Some((bx, j))) = (thread_axis_off_in(r, 1, self.grid.1, tiles, &self.row_arrays, &self.tile_bounds), thread_axis_off_in(col, 0, self.grid.0, tiles, &self.row_arrays, &self.tile_bounds)) else { continue };
                     if by != self.grid.3 || bx != self.grid.2 {
                         return fail(&format!("block {bx} x {by} in the index, the grid says {} x {}", self.grid.2, self.grid.3));
                     }
                     let gid = Tree::new("builtin.global_invocation_id", ty(self, "vec3<u32>.index")?, vec![]);
                     let blk = |v: u32| Tree::literal("literal.blk", ty(self, "u32.blk").expect("dual"), v as f32);
-                    let plus = |ctx: &Self, base: Tree, off: Off, axis: &str| -> Result<Tree, String> {
-                        let dual = ty(ctx, if axis == "row" { "u32.threadrow" } else { "u32.threadcol" })?;
-                        let counter = |ctx: &Self, n: u8| -> Result<Tree, String> {
-                            let suffix = if n == 1 { String::new() } else { n.to_string() };
-                            Ok(Tree::new(&format!("safe.tile_counter{suffix}"), ty(ctx, &format!("u32.tcounter{suffix}"))?, vec![]))
-                        };
-                        let suffix = |n: u8| if n == 1 { String::new() } else { n.to_string() };
-                        Ok(match off {
-                            Off::Lit(0) | Off::Strided(0) => base,
-                            Off::Strided(v) => Tree::new(&format!("safe.{axis}_plus_s"), dual, vec![base, Tree::literal("literal.lit64", ty(ctx, "u32.lit64")?, v as f32)]),
-                            Off::Lit(v) => Tree::new(&format!("safe.{axis}_plus"), dual, vec![base, Tree::literal("literal.lit64", ty(ctx, "u32.lit64")?, v as f32)]),
-                            Off::Tile(n) => Tree::new(&format!("safe.{axis}_plus_tile{}", suffix(n)), dual, vec![base, counter(ctx, n)?]),
-                            Off::StridedTile(n) => Tree::new(&format!("safe.{axis}_plus_tile{}_s", suffix(n)), dual, vec![base, counter(ctx, n)?]),
-                        })
-                    };
                     let wid = Tree::new("builtin.workgroup_id", ty(self, "vec3<u32>.index")?, vec![]);
                     let lid = Tree::new("builtin.local_invocation_id", ty(self, "vec3<u32>.index")?, vec![]);
-                    let base_row = if matches!(i, Off::Strided(_) | Off::StridedTile(_)) { Tree::new("safe.thread_row_s", ty(self, "u32.threadrow")?, vec![wid.clone(), lid.clone(), blk(by)]) } else { Tree::new("safe.thread_row", ty(self, "u32.threadrow")?, vec![gid.clone(), blk(by)]) };
-                    let base_col = if matches!(j, Off::Strided(_) | Off::StridedTile(_)) { Tree::new("safe.thread_col_s", ty(self, "u32.threadcol")?, vec![wid, lid, blk(bx)]) } else { Tree::new("safe.thread_col", ty(self, "u32.threadcol")?, vec![gid, blk(bx)]) };
-                    let row = plus(self, base_row, i, "row")?;
-                    let c = plus(self, base_col, j, "col")?;
+                    let strided = |o: &Off| matches!(o, Off::Strided(_) | Off::StridedTile(_) | Off::StridedExpr(_));
+                    let base_row = if strided(&i) { Tree::new("safe.thread_row_s", ty(self, "u32.threadrow")?, vec![wid.clone(), lid.clone(), blk(by)]) } else { Tree::new("safe.thread_row", ty(self, "u32.threadrow")?, vec![gid.clone(), blk(by)]) };
+                    let base_col = if strided(&j) { Tree::new("safe.thread_col_s", ty(self, "u32.threadcol")?, vec![wid, lid, blk(bx)]) } else { Tree::new("safe.thread_col", ty(self, "u32.threadcol")?, vec![gid, blk(bx)]) };
+                    let row = self.plus(base_row, i, "row")?;
+                    let c = self.plus(base_col, j, "col")?;
                     return Ok(Tree::new("safe.cell_of", ty(self, "u32.cell")?, vec![row, c]));
                 }
             }
         }
         fail(&format!("row or column is not this thread's (tile counters {:?} / {:?} / {:?} / {:?})", self.tile_counter, self.tile_counter2, self.tile_counter3, self.tile_counter4))
+    }
+
+    /// A thread's row or column plus an offset within its block, as the row that proves it.
+    fn plus(&mut self, base: Tree, off: Off, axis: &str) -> Result<Tree, String> {
+        let dual = ty(self, if axis == "row" { "u32.threadrow" } else { "u32.threadcol" })?;
+        let suffix = |n: u8| if n == 1 { String::new() } else { n.to_string() };
+        let counter = |ctx: &Self, n: u8| -> Result<Tree, String> { Ok(Tree::new(&format!("safe.tile_counter{}", suffix(n)), ty(ctx, &format!("u32.tcounter{}", suffix(n)))?, vec![])) };
+        let index_ty = ty(self, "u32.index")?;
+        Ok(match off {
+            Off::Lit(0) | Off::Strided(0) => base,
+            Off::Strided(v) => Tree::new(&format!("safe.{axis}_plus_s"), dual, vec![base, Tree::literal("literal.lit64", ty(self, "u32.lit64")?, v as f32)]),
+            Off::Lit(v) => Tree::new(&format!("safe.{axis}_plus"), dual, vec![base, Tree::literal("literal.lit64", ty(self, "u32.lit64")?, v as f32)]),
+            Off::Tile(n) => Tree::new(&format!("safe.{axis}_plus_tile{}", suffix(n)), dual, vec![base, counter(self, n)?]),
+            Off::StridedTile(n) => Tree::new(&format!("safe.{axis}_plus_tile{}_s", suffix(n)), dual, vec![base, counter(self, n)?]),
+            Off::Expr(e) => {
+                let e = Tree { ty: index_ty, ..self.value(&e)? };
+                Tree::new(&format!("safe.{axis}_plus_x"), dual, vec![base, e])
+            }
+            Off::StridedExpr(e) => {
+                let e = Tree { ty: index_ty, ..self.value(&e)? };
+                Tree::new(&format!("safe.{axis}_plus_x_s"), dual, vec![base, e])
+            }
+        })
     }
 
     fn stmt_ty(&self, rung: &str) -> Result<Ty, String> {
@@ -1415,7 +1514,7 @@ impl<'a> Ctx<'a> {
                     let tiles: Tiles = [&tiles.0, &tiles.1, &tiles.2, &tiles.3];
                     if let Some(n) = local_name(&idx.name).and_then(|l| tile_of(&l, tiles)) {
                         for (axis, wg) in [(1usize, self.grid.1), (0usize, self.grid.0)] {
-                            match thread_axis_off_in(value, axis, wg, tiles, &self.row_arrays) {
+                            match thread_axis_off_in(value, axis, wg, tiles, &self.row_arrays, &self.tile_bounds) {
                                 Some((blk, Off::StridedTile(m))) if m == n => {
                                     self.row_arrays.insert(local.clone(), (axis, true, blk));
                                 }
@@ -1638,6 +1737,11 @@ impl<'a> Ctx<'a> {
         }
         let saved = (self.item_counter.clone(), self.tile_counter.clone(), self.tile_counter2.clone(), self.tile_counter3.clone(), self.tile_counter4.clone());
         self.axis_memo.remove(&counter);
+        if kind == "lit64" {
+            if let Some(v) = literal_value(bound) {
+                self.tile_bounds.insert(counter.clone(), v as u32);
+            }
+        }
         if body_rung == "L1" {
             self.item_counter = Some(counter.clone());
         } else {
@@ -1666,6 +1770,7 @@ impl<'a> Ctx<'a> {
         self.tile_counter2 = saved.2;
         self.tile_counter3 = saved.3;
         self.tile_counter4 = saved.4;
+        self.tile_bounds.remove(&counter);
         if body_rung == "L1" {
             self.used_counters.insert(counter.clone());
         }
@@ -1942,7 +2047,7 @@ pub fn read_safe(source: &str, kingdom: &WgslKingdom) -> Result<SafeRead, String
             local_lanes.insert(format!("local.{name}@{}", h.index()), *size as u32);
         }
     }
-    let mut ctx = Ctx { kingdom, duals: &duals, lets: &lets, roots: &roots, item_counter: None, tile_counter: None, tile_counter2: None, tile_counter3: None, tile_counter4: None, registers: BTreeMap::new(), next_reg: BTreeMap::new(), guard: None, tail: true, arrays: BTreeMap::new(), parrs: BTreeMap::new(), grid, notes: Vec::new(), helpers: &helpers, calls: &calls, arg_roots: &arg_roots, inline_args: None, row_arrays: BTreeMap::new(), used_counters: std::collections::BTreeSet::new(), local_lanes, axis_memo: BTreeMap::new(), loop_depth: 0, naga_fn, module: &kernel.module, local_prefix: String::new(), inline_result: None, inline_values: None };
+    let mut ctx = Ctx { kingdom, duals: &duals, lets: &lets, roots: &roots, item_counter: None, tile_counter: None, tile_counter2: None, tile_counter3: None, tile_counter4: None, registers: BTreeMap::new(), next_reg: BTreeMap::new(), guard: None, tail: true, arrays: BTreeMap::new(), parrs: BTreeMap::new(), grid, notes: Vec::new(), helpers: &helpers, calls: &calls, arg_roots: &arg_roots, inline_args: None, row_arrays: BTreeMap::new(), used_counters: std::collections::BTreeSet::new(), local_lanes, axis_memo: BTreeMap::new(), loop_depth: 0, tile_bounds: BTreeMap::new(), naga_fn, module: &kernel.module, local_prefix: String::new(), inline_result: None, inline_values: None };
     // Register initialisations first, in root order. A local initialised to
     // its form's fallback (0.0, 0u, false, a zero vector) costs nothing: the
     // register's declaration already holds that value, and the register is
