@@ -1689,4 +1689,13 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 | F821 | `convert.flag_to_index` | `As` | `bool.flag` | `u32.index` | 1 | u32(b): 1 or 0 |
 | F822 | `convert.flag_to_f32` | `As` | `bool.flag` | `f32.real` | 1 | f32(b): 1.0 or 0.0 |
 
-822 function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Deliberately absent: atomics, images, derivatives, subgroup operations, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.
+## class `safe`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F823 | `safe.thread_row_g` | `composite` | `vec3<u32>.index vec3<u32>.index u32.blk u32.lit64` | `u32.threadrow` | 4 | arity 4: wid.y * (Y * blk) + lid.y * (blk / G): the first row of a thread's grouped block |
+| F824 | `safe.thread_col_g` | `composite` | `vec3<u32>.index vec3<u32>.index u32.blk u32.lit64` | `u32.threadcol` | 4 | arity 4: wid.x * (X * blk) + lid.x * (blk / G) |
+| F825 | `safe.row_plus_g` | `composite` | `u32.threadrow u32.lit64 u32.index u32.index` | `u32.threadrow` | 4 | arity 4: row + min(g, G - 1) * (Y * blk / G) + min(e, blk / G - 1) |
+| F826 | `safe.col_plus_g` | `composite` | `u32.threadcol u32.lit64 u32.index u32.index` | `u32.threadcol` | 4 | arity 4: col + min(g, G - 1) * (X * blk / G) + min(e, blk / G - 1) |
+
+826 function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Deliberately absent: atomics, images, derivatives, subgroup operations, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.

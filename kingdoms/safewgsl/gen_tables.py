@@ -648,6 +648,13 @@ f("safe", "col_plus_x_s", "composite", ["u32.threadcol", "u32.index"], "u32.thre
 # u32(flag) (fit_A2's r2x_reinvent_g2: an index multiplied by u32(ok)).
 f("convert", "flag_to_index", "As", ["bool.flag"], "u32.index", "u32(b): 1 or 0")
 f("convert", "flag_to_f32", "As", ["bool.flag"], "f32.real", "f32(b): 1.0 or 0.0")
+# A GROUPED block (fit_A2's r6x_reinvent: a thread's 8 columns as 2 groups of 4 contiguous columns 32 apart,
+# col = wid.x * 64u + hf * 32u + lid.x * 4u + e): the thread's first cell of the block, and a cell of it by group
+# and lane, both clamped (G groups of B / G cells, the groups W * B / G apart; G = 1 is the contiguous block).
+f("safe", "thread_row_g", "composite", ["vec3<u32>.index", "vec3<u32>.index", "u32.blk", "u32.lit64"], "u32.threadrow", "arity 4: wid.y * (Y * blk) + lid.y * (blk / G): the first row of a thread's grouped block")
+f("safe", "thread_col_g", "composite", ["vec3<u32>.index", "vec3<u32>.index", "u32.blk", "u32.lit64"], "u32.threadcol", "arity 4: wid.x * (X * blk) + lid.x * (blk / G)")
+f("safe", "row_plus_g", "composite", ["u32.threadrow", "u32.lit64", "u32.index", "u32.index"], "u32.threadrow", "arity 4: row + min(g, G - 1) * (Y * blk / G) + min(e, blk / G - 1)")
+f("safe", "col_plus_g", "composite", ["u32.threadcol", "u32.lit64", "u32.index", "u32.index"], "u32.threadcol", "arity 4: col + min(g, G - 1) * (X * blk / G) + min(e, blk / G - 1)")
 
 
 def write_tsv(path, header, rows):

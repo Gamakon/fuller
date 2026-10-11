@@ -758,6 +758,19 @@ impl<'a> Renderer<'a> {
                 let (blk, w) = if safe_base(name) == "safe.row_plus_x_s" { (scope.grid.by, scope.grid.y) } else { (scope.grid.bx, scope.grid.x) };
                 return Ok(format!("({} + min({}, {}u) * {w}u)", self.value(&v.kids[0], scope)?, self.value(&v.kids[1], scope)?, blk.saturating_sub(1)));
             }
+            "safe.thread_row_g" | "safe.thread_col_g" => {
+                // The first cell of a thread's block of G groups: wid * (W * B) + lid * (B / G).
+                let (axis, blk, w) = if safe_base(name) == "safe.thread_row_g" { ("y", scope.grid.by, scope.grid.y) } else { ("x", scope.grid.bx, scope.grid.x) };
+                let g = self.lit(&v.kids[3], 64)?.clamp(1, blk.max(1));
+                return Ok(format!("(wid.{axis} * {}u + lid.{axis} * {}u)", w * blk, blk / g));
+            }
+            "safe.row_plus_g" | "safe.col_plus_g" => {
+                // A cell of the grouped block by group and lane, both clamped.
+                let (blk, w) = if safe_base(name) == "safe.row_plus_g" { (scope.grid.by, scope.grid.y) } else { (scope.grid.bx, scope.grid.x) };
+                let g = self.lit(&v.kids[1], 64)?.clamp(1, blk.max(1));
+                let s = blk / g;
+                return Ok(format!("({} + min({}, {}u) * {}u + min({}, {}u))", self.value(&v.kids[0], scope)?, self.value(&v.kids[2], scope)?, g - 1, w * s, self.value(&v.kids[3], scope)?, s.saturating_sub(1)));
+            }
             "safe.thread_row" => return Ok(format!("(gid.y * {}u)", scope.grid.by)),
             "safe.thread_col" => return Ok(format!("(gid.x * {}u)", scope.grid.bx)),
             "safe.thread_row_s" => return Ok(format!("(wid.y * {}u + lid.y)", scope.grid.y * scope.grid.by)),

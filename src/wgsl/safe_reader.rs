@@ -425,6 +425,11 @@ enum Off {
     /// units of the workgroup width. Rendered clamped into the block.
     Expr(Tree),
     StridedExpr(Tree),
+    /// A GROUPED block (fit_A2's r6x_reinvent): the thread's B cells as G
+    /// groups of B / G contiguous cells, the groups W * B / G apart; the
+    /// group index and the lane index, both proved below their bounds and
+    /// rendered clamped.
+    Grouped(u32, Tree, Tree),
 }
 
 /// The tile counters' literal bounds by local name, for proving an offset.
@@ -664,6 +669,28 @@ fn axis_terms(t: &Tree, axis: usize, workgroup: u32, tiles: Tiles, bounds: &Boun
                 (offset_max(&sum, tiles, bounds)? < f64::from(b)).then_some((b, Off::Expr(unclamped(&sum, b).clone())))
             }
         };
+    }
+    // A grouped block: lid scaled by s = B / G with G > 1 groups (the kernel
+    // writes col = wid.x * 64u + hf * 32u + lid.x * 4u + e: W 8, B 8, s 4, G 2).
+    if kl > 1 && kw.is_multiple_of(workgroup) && (kw / workgroup).is_multiple_of(kl) && kw / workgroup / kl > 1 {
+        let (b, s) = (kw / workgroup, kl);
+        let g_count = b / s;
+        let stride = workgroup * s;
+        let (mut groups, mut lanes) = (Vec::new(), Vec::new());
+        for x in &rest {
+            match strided_unit(x, stride) {
+                Some(u) => groups.push(u),
+                None => lanes.push((*x).clone()),
+            }
+        }
+        let index_ty = t.ty;
+        let zero = || Tree::literal("literal.index", index_ty, 0.0);
+        let g = if groups.is_empty() { zero() } else { sum_of(&groups.iter().collect::<Vec<_>>())? };
+        let e = if lanes.is_empty() { zero() } else { sum_of(&lanes.iter().collect::<Vec<_>>())? };
+        if offset_max(&g, tiles, bounds)? < f64::from(g_count) && offset_max(&e, tiles, bounds)? < f64::from(s) {
+            return Some((b, Off::Grouped(g_count, unclamped(&g, g_count).clone(), unclamped(&e, s).clone())));
+        }
+        return None;
     }
     if kl == 1 && kw.is_multiple_of(workgroup) && kw / workgroup > 1 {
         // A strided block of B rows W apart: offsets are multiples of W.
@@ -1003,27 +1030,20 @@ impl<'a> Ctx<'a> {
         if idx.name != "index.add" || idx.kids.len() != 2 {
             return fail("not row * d + col");
         }
-        // `(row * d + col) + j` with j a literal: the literal belongs to the column.
-        let mut idx = idx.clone();
-        loop {
-            let mut folded = None;
-            for (inner, lit) in [(&idx.kids[0], &idx.kids[1]), (&idx.kids[1], &idx.kids[0])] {
-                if let Some(j) = literal_value(lit) {
-                    if inner.name == "index.add" && inner.kids.len() == 2 {
-                        // The column is the kid that is not `row * cfg.d`.
-                        let is_prod = |t: &Tree| t.name == "index.mul" && t.kids.iter().any(|k| is_leaf(k, "load.uniform.cfg.d"));
-                        let (p, c) = if is_prod(&inner.kids[0]) { (0, 1) } else { (1, 0) };
-                        let col = Tree::new("index.add", inner.ty, vec![inner.kids[c].clone(), Tree::literal(&lit.name, lit.ty, j)]);
-                        folded = Some(Tree::new("index.add", inner.ty, vec![inner.kids[p].clone(), col]));
-                        break;
-                    }
-                }
+        // The index as a sum of terms, however it is nested: the one term that
+        // is `row * cfg.d`, and the column as the sum of every other term
+        // (`row * d + c0 + e`, fit_A2's r6x_reinvent; `(row * d + col) + 1u`).
+        let mut terms = Vec::new();
+        flatten_add(idx, &mut terms);
+        let is_prod = |t: &Tree| t.name == "index.mul" && t.kids.len() == 2 && t.kids.iter().any(|k| is_leaf(k, "load.uniform.cfg.d"));
+        let idx = match terms.iter().position(|t| is_prod(t)) {
+            Some(p) if terms.len() >= 2 => {
+                let rest: Vec<Tree> = terms.iter().enumerate().filter(|(i, _)| *i != p).map(|(_, t)| (*t).clone()).collect();
+                let col = rest.into_iter().reduce(|acc, t| Tree::new("index.add", idx.ty, vec![acc, t])).expect("a column term");
+                Tree::new("index.add", idx.ty, vec![terms[p].clone(), col])
             }
-            match folded {
-                Some(t) => idx = t,
-                None => break,
-            }
-        }
+            _ => idx.clone(),
+        };
         let idx = &idx;
         for (prod, col) in [(&idx.kids[0], &idx.kids[1]), (&idx.kids[1], &idx.kids[0])] {
             if prod.name == "index.mul" && prod.kids.len() == 2 {
@@ -1042,8 +1062,17 @@ impl<'a> Ctx<'a> {
                     let wid = Tree::new("builtin.workgroup_id", ty(self, "vec3<u32>.index")?, vec![]);
                     let lid = Tree::new("builtin.local_invocation_id", ty(self, "vec3<u32>.index")?, vec![]);
                     let strided = |o: &Off| matches!(o, Off::Strided(_) | Off::StridedTile(_) | Off::StridedExpr(_));
-                    let base_row = if strided(&i) { Tree::new("safe.thread_row_s", ty(self, "u32.threadrow")?, vec![wid.clone(), lid.clone(), blk(by)]) } else { Tree::new("safe.thread_row", ty(self, "u32.threadrow")?, vec![gid.clone(), blk(by)]) };
-                    let base_col = if strided(&j) { Tree::new("safe.thread_col_s", ty(self, "u32.threadcol")?, vec![wid, lid, blk(bx)]) } else { Tree::new("safe.thread_col", ty(self, "u32.threadcol")?, vec![gid, blk(bx)]) };
+                    let lit64 = |ctx: &Self, v: u32| Tree::literal("literal.lit64", ty(ctx, "u32.lit64").expect("dual"), v as f32);
+                    let base_row = match &i {
+                        Off::Grouped(g, _, _) => Tree::new("safe.thread_row_g", ty(self, "u32.threadrow")?, vec![wid.clone(), lid.clone(), blk(by), lit64(self, *g)]),
+                        o if strided(o) => Tree::new("safe.thread_row_s", ty(self, "u32.threadrow")?, vec![wid.clone(), lid.clone(), blk(by)]),
+                        _ => Tree::new("safe.thread_row", ty(self, "u32.threadrow")?, vec![gid.clone(), blk(by)]),
+                    };
+                    let base_col = match &j {
+                        Off::Grouped(g, _, _) => Tree::new("safe.thread_col_g", ty(self, "u32.threadcol")?, vec![wid, lid, blk(bx), lit64(self, *g)]),
+                        o if strided(o) => Tree::new("safe.thread_col_s", ty(self, "u32.threadcol")?, vec![wid, lid, blk(bx)]),
+                        _ => Tree::new("safe.thread_col", ty(self, "u32.threadcol")?, vec![gid, blk(bx)]),
+                    };
                     let row = self.plus(base_row, i, "row")?;
                     let c = self.plus(base_col, j, "col")?;
                     return Ok(Tree::new("safe.cell_of", ty(self, "u32.cell")?, vec![row, c]));
@@ -1072,6 +1101,11 @@ impl<'a> Ctx<'a> {
             Off::StridedExpr(e) => {
                 let e = Tree { ty: index_ty, ..self.value(&e)? };
                 Tree::new(&format!("safe.{axis}_plus_x_s"), dual, vec![base, e])
+            }
+            Off::Grouped(g_count, g, e) => {
+                let g = Tree { ty: index_ty, ..self.value(&g)? };
+                let e = Tree { ty: index_ty, ..self.value(&e)? };
+                Tree::new(&format!("safe.{axis}_plus_g"), dual, vec![base, Tree::literal("literal.lit64", ty(self, "u32.lit64")?, g_count as f32), g, e])
             }
         })
     }

@@ -642,7 +642,8 @@ mod tests {
         // 758 after run A's declines (64 f32, 32 vec4, 64 u32, 16 bool registers; the array lane rows).
         // 758 after run A's declines (64 f32, 32 vec4, 64 u32, 16 bool registers; the array lane rows);
         // 816 with the fourth nested tile loop; 822 with the clamped offsets, u32(flag) and f32(flag) (fit_A2).
-        assert_eq!(fs.rows.len(), 822);
+        // 826 with the grouped block (fit_A2's r6x_reinvent).
+        assert_eq!(fs.rows.len(), 826);
         let dual = |t: Ty| k.dual(t).unwrap().dual.clone();
         let producers = |d: &str| -> Vec<String> { k.rows.iter().filter(|r| dual(r.output) == d).map(|r| r.name.clone()).collect() };
         assert_eq!(producers("kernel.safe"), vec!["kernel.entry_safe"]);
