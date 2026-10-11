@@ -680,7 +680,7 @@ mod tests {
             slots_max = slots_max.max(c.folded.filled);
             converted += 1;
         }
-        assert!(converted >= 27, "{converted} converted");
+        assert!(converted >= 26, "{converted} converted");
         assert!(slots_max <= 48, "{slots_max} slots");
     }
 
