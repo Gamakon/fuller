@@ -198,7 +198,22 @@ differences among the top kernels are timing noise.**
 | champion, generation 25 | 0.3204 | 10.57 (10.49–22.27) | 6.11× |
 | offspring at the floor | 0.3287 | 10.49 (10.46–10.56) | 6.15× |
 
-All four are the same speed within 1 %, every round correct. Thirty-five generations found many kernels as
+All four are the same speed within 1 %, every round correct.
+
+Repeated at the fitness's own three shapes (07:26Z, d 2048 m 65536, d 4096 m 16384, d 8192 m 4096, seven rounds,
+`logs/HGP/001/retime_shapes_*.log`, 0 failing rounds):
+
+| kernel | ms median at d 2048 / 4096 / 8192 | speed-up over shipped, re-timed | speed-up the run's single round gave |
+|---|---|---|---|
+| shipped | 1009 / 1005 / 1013 | 1 / 1 / 1 | — |
+| best draft, generation 0 (HFF 0.3300) | 150.0 / 146.3 / 152.9 | 6.73 / 6.87 / 6.62 | — |
+| champion, generation 15 (0.3228) | 150.0 / 155.4 / 152.1 | 6.73 / 6.47 / 6.66 | 8.55 / 6.82 / 7.54 |
+| champion, generation 25 (0.3204) | 155.1 / 146.3 / 152.3 | 6.51 / 6.87 / 6.65 | 7.81 / 8.00 / 7.84 |
+| offspring at the floor (0.3287) | 149.4 / 145.4 / 152.8 | 6.75 / 6.92 / 6.63 | — |
+
+The four kernels are within 4 % of one another at every shape; the run's single paired round per shape had
+put the same kernels anywhere from 6.0× to 8.7×, a spread four times the real differences. The ranking the
+fitness produced among the top kernels is timing noise. Thirty-five generations found many kernels as
 fast as the best model-written draft and none measurably faster: the "floor" at 0.3287 that the offspring
 kept hitting, and the "new bests" below it, are the timing spread of equal kernels. Before any further run
 the fitness needs more rounds per shape (or the median of repeated timings) so that a real 5 % gain is
