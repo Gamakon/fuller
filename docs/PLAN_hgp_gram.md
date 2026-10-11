@@ -341,6 +341,27 @@ prints the table and fails on one mismatch. Of the 10 replies, 3 are invalid WGS
 unbalanced braces, one indexing a vector value by a variable, which naga refuses); the other 7 and
 all 31 drafts must read. The 26 converted drafts must still round-trip byte-equal.
 
+**Done (2026-10-11 10:05Z; fuller a5a012b, 0821264, cb5c537).** The corpus: 31 of 31 drafts and 7 of 7
+valid model replies read and render valid WGSL; the 3 remaining replies are naga's own refusals
+(two with unbalanced braces, one indexing a vector value by a variable). 127 duals, 629 rows (was
+126 / 561). What was added, by the kernel that needed it:
+
+| gap | kernels | spelled as |
+|---|---|---|
+| registers beyond 16 / 8 / 16 / 4 | model kernels (reg.f7..f10) | 32 f32, 16 vec4, 32 u32, 8 bool registers; a second vec4 private array |
+| a loop bound that is any expression | k16, k26, pump declines | `u32.boundx` from `bound.of_index`; `loop.items_boundx` (+ strided, unrolled) at the top level, `loop.tilex_<rung>` below it; costed at the worst shape, never capped |
+| a loop test not written `t < bound` | k06 (`if (t + 4u > m) { break; }`) | normalised to `t < bound − k` (`index.sub_floor`), with `<=`, reversed operands and the negated break forms |
+| an item-loop stride above 64 | — | `lit4096` on the strided item loops |
+| a vector component by a variable | k08, a Sonnet child | `shape.at`, rendered through a helper that copies into a `var` (naga's constant-index rule) |
+| an array constructor into a local array | k08 | one private-array store per element |
+| helper functions | k05 | inlined at the call when the body is lets and one return |
+| a vector composed from vectors | k05 (`vec4(vec2, vec2)`) | the parts taken apart into lanes, then the step compose |
+| a thread's rows held in a private array; `select(0u, x, ok)` | k26 | the array recorded as a row array when filled at a tile counter; any sum of wid/lid/offset terms |
+| a high mask `m & ~3u` | k16, k26 | `index.round_down`; an integer literal above 2^24 is refused by name |
+
+Byte-equal round trip of the 31 drafts at both layouts; every brief restates the grammar's limits as
+they now are.
+
 **Order** (smallest change first, a commit and the corpus test after each): registers and arrays;
 expression bounds and loop-test normalisation; the dynamic vector component; the array constructor;
 helper inlining. Then the tables regenerated, the drafts re-encoded (`safe96`), the hall of fame and
