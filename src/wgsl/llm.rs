@@ -301,8 +301,12 @@ pub fn repair_task_measured(child: &str, failure: &str, measure: &ChildMeasure, 
     for (i, k) in parents.iter().enumerate() {
         p.push_str(&brief_block(k, &format!("PARENT {}", (b'A' + i as u8) as char)));
     }
+    // Where it came from, as it is: a pump's random row has no parents, and
+    // the brief said "made from the parents below" over none (fit_A2 17:24Z,
+    // r5p1, found by the Opus fixer).
+    let origin = if parents.is_empty() { "It was drawn at random (it has no parents)" } else { "It was made from the parents below" };
     format!(
-        "You are repairing an offspring kernel. It was made from the parents below and it FAILED. Make it correct while keeping its technique (its tiling, its accumulation, its loads): change as little as the failure needs. If the failure names a test case, that case's shape is where it is wrong; think about partial tiles, the band (r_rows, r_off), bounds, barriers under conditions, and uninitialised accumulators. If the failure says the kernel is not in the grammar, respell exactly the construct named within the grammar's limits below and change nothing else.\n\n{}\n\n{}\n\n===== THE OFFSPRING (failed) =====\nFAILURE: {failure}\n{}```wgsl\n{child}```\n\n{p}\nSIZE: at most {max_nodes} nodes of the grammar.\nRETURN ONLY the repaired kernel text, starting with the header comment line `// grid x y bx by`, no prose, no fences.",
+        "You are repairing an offspring kernel. {origin} and it FAILED. Make it correct while keeping its technique (its tiling, its accumulation, its loads): change as little as the failure needs. If the failure names a test case, that case's shape is where it is wrong; think about partial tiles, the band (r_rows, r_off), bounds, barriers under conditions, and uninitialised accumulators. If the failure says the kernel is not in the grammar, respell exactly the construct named within the grammar's limits below and change nothing else.\n\n{}\n\n{}\n\n===== THE OFFSPRING (failed) =====\nFAILURE: {failure}\n{}```wgsl\n{child}```\n\n{p}\nSIZE: at most {max_nodes} nodes of the grammar.\nRETURN ONLY the repaired kernel text, starting with the header comment line `// grid x y bx by`, no prose, no fences.",
         fitness_explainer(),
         grammar_limits(),
         measure.block()
@@ -336,6 +340,18 @@ mod tests {
     /// A failed call's reason is read from its result event, not cut from
     /// the output's tail (the 429 of fit_A2 15:39Z, shape as the CLI
     /// printed it).
+    /// A repair brief says where its offspring came from: parents when it
+    /// has them, a random draw when it has none.
+    #[test]
+    fn a_repair_brief_states_its_origin() {
+        let m = ChildMeasure { stage: "constraint".into(), passed: 0, of: 128, detail: "d".into(), columns: None, speedups: None, attempt: 1 };
+        let none = repair_task_measured("// grid 16 16 1 1\n", "constraint: d", &m, &[], 100);
+        assert!(none.contains("drawn at random (it has no parents)") && !none.contains("parents below"), "{none}");
+        let k = KernelBrief { id: "parent r1".into(), text: "// grid 16 16 1 1\n".into(), hff: 0.2, speedups: [1.0; 3], columns: [0.1; 6], problem: String::new() };
+        let one = repair_task_measured("// grid 16 16 1 1\n", "constraint: d", &m, &[&k], 100);
+        assert!(one.contains("made from the parents below") && one.contains("PARENT A"), "{one}");
+    }
+
     #[test]
     fn a_failed_call_reports_the_api_reason() {
         let out = r#"{"type":"result","subtype":"success","is_error":true,"api_error_status":429,"api_error":"model_requires_usage_credits","result":"You're out of usage credits.","usage":{"input_tokens":0},"subagent_stats":{"spawned":0}}"#;
