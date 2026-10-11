@@ -224,11 +224,45 @@ pub struct SharedDefinition {
 /// common section from the two individuals, then give that and the two
 /// originals to the model and ask it to rewrite the kernel around that
 /// largest share"): every sub-tree the two trees have in common with at
-/// least `min_nodes` nodes, largest first, ties by text, through the same
-/// matching the population fold uses (exact Karva text of the sub-tree).
+/// least `min_nodes` nodes, largest first, ties by text, matched as the
+/// population fold matches (exact Karva text of the sub-tree); only maximal
+/// sections, never a part of a larger shared one.
 pub fn shared_sections(a: &Tree, b: &Tree, min_nodes: usize) -> Vec<SharedDefinition> {
-    let fold = fold_population(&[a.clone(), b.clone()], 1 << 20, 1 << 16, 0, min_nodes, 1);
-    let mut shared: Vec<SharedDefinition> = fold.shared.into_iter().filter(|d| d.referrers == 2).collect();
+    fn walk(t: &Tree, min_nodes: usize, out: &mut HashMap<String, (usize, usize)>) {
+        if !t.kids.is_empty() && t.size() >= min_nodes {
+            let e = out.entry(karva_text(t)).or_insert((t.size(), 0));
+            e.1 += 1;
+        }
+        for k in &t.kids {
+            walk(k, min_nodes, out);
+        }
+    }
+    let (mut in_a, mut in_b) = (HashMap::new(), HashMap::new());
+    walk(a, min_nodes, &mut in_a);
+    walk(b, min_nodes, &mut in_b);
+    // Maximal sections only: a shared sub-tree inside a larger shared one is
+    // that one's part, not a section of its own.
+    fn maximal(t: &Tree, inside_shared: bool, in_a: &HashMap<String, (usize, usize)>, in_b: &HashMap<String, (usize, usize)>, keep: &mut HashMap<String, usize>) {
+        let text = if t.kids.is_empty() { None } else { Some(karva_text(t)) };
+        let shared = text.as_ref().is_some_and(|k| in_a.contains_key(k) && in_b.contains_key(k));
+        if shared && !inside_shared {
+            let k = text.expect("internal");
+            let n = in_a[&k].0;
+            keep.insert(k, n);
+        }
+        for kid in &t.kids {
+            maximal(kid, inside_shared || shared, in_a, in_b, keep);
+        }
+    }
+    let mut keep = HashMap::new();
+    maximal(a, false, &in_a, &in_b, &mut keep);
+    let mut shared: Vec<SharedDefinition> = keep
+        .into_iter()
+        .map(|(text, nodes)| {
+            let occurrences = in_a[&text].1 + in_b[&text].1;
+            SharedDefinition { slot: 0, text, referrers: 2, occurrences, nodes }
+        })
+        .collect();
     shared.sort_by(|x, y| y.nodes.cmp(&x.nodes).then_with(|| x.text.cmp(&y.text)));
     shared
 }
