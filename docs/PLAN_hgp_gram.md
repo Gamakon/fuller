@@ -362,6 +362,15 @@ valid model replies read and render valid WGSL; the 3 remaining replies are naga
 | a value the inference types two ways | a Fable child (local_invocation_index), two repairs (a loop counter) | the kingdom's preferred form chosen (index first), conform converts |
 | the kingdom's own block-offset spelling `min(k, B − 1) * W` | two repairs of rendered kernels | read back as the block row it is, so every kernel the kingdom renders reads again |
 
+**The GPU sweep (11:40Z, `logs/HGP/001/corpus_sweep.tsv`): 45 of 46 valid corpus kernels reach the same
+verdict as written and rebuilt; the 46th, k08, is wrong as written (a race on shared vec4 elements) and
+infeasible both ways.** The sweep found five more kingdom bugs the reader and the validator could not: a
+vec4 register's lane written or read by index (k04, k14, k18, k24, k27, k28, two children) was spelled as
+a private array and left the register untouched; a block factor of 8 (a Sonnet child) was snapped to 4;
+the vec4 workgroup arrays were 256 long where a Fable child needed 512 (now 512: two f32 arrays of 2,048
+and two vec4 arrays of 512 are exactly Apple's 32 KB and run); the remainder loop (k05, k26); the
+kingdom's own offset spelling. Every one is a row or a reader case now, with the corpus as the test.
+
 Checked on the GPU (`wgsl_eval_dump`, as written beside rebuilt on the same 128 cases and pairs):
 k05 and k26 feasible both ways after the continuing loop; the corpus sweep (`logs/HGP/001/corpus_sweep.tsv`)
 scores all 46 valid kernels both ways. The cost estimator counts an expression-bounded item loop by its

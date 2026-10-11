@@ -6,7 +6,7 @@ k04	reads	reads	a Sonnet draft of generation 0 (2026-10-10)
 k05	reads	reads	a Sonnet draft of generation 0 (2026-10-10)
 k06	reads	reads	a Sonnet draft of generation 0 (2026-10-10)
 k07	reads	reads	a Sonnet draft of generation 0 (2026-10-10)
-k08	reads	reads	a Sonnet draft of generation 0 (2026-10-10)
+k08	reads	reads	a Sonnet draft of generation 0; wrong as written (threads race on shared vec4 elements: 6/128 cases by chance, 0/128 rebuilt); reads and renders
 k09	reads	reads	a Sonnet draft of generation 0 (2026-10-10)
 k10	reads	reads	a Sonnet draft of generation 0 (2026-10-10)
 k11	reads	reads	a Sonnet draft of generation 0 (2026-10-10)
