@@ -229,16 +229,56 @@ pub fn reinvent_task(keep: &KernelBrief, other: &KernelBrief, shared: &[(usize, 
     )
 }
 
-/// THE REPAIR BRIEF: an offspring that failed, what failed, its parents.
+/// What the fitness measured of the child before the repair (Andrew,
+/// 2026-10-11: "send child fitness too, to help the repair").
+#[derive(Debug, Clone, Default)]
+pub struct ChildMeasure {
+    /// decode, rebuild, cost, compile, constraint, pairs, feasible.
+    pub stage: String,
+    /// Correctness cases passed, of `of` (0 when it never ran).
+    pub passed: usize,
+    pub of: usize,
+    /// The fitness's own detail: the first failing case and its distance, the
+    /// pair that failed and its error, or the compile error.
+    pub detail: String,
+    /// The six columns and speed-ups when it was feasible (a quality repair).
+    pub columns: Option<[f64; 6]>,
+    pub speedups: Option<[f64; 3]>,
+    /// Which repair attempt this is for the offspring.
+    pub attempt: usize,
+}
+
+impl ChildMeasure {
+    fn block(&self) -> String {
+        let mut s = format!("STAGE REACHED: {}.\nCORRECTNESS CASES PASSED: {} of {}.\nTHE FITNESS SAID: {}\n", self.stage, self.passed, self.of, self.detail);
+        if let (Some(c), Some(sp)) = (self.columns, self.speedups) {
+            s.push_str(&format!("MEASURED (feasible): speed-ups {:.2}x / {:.2}x / {:.2}x; columns {:.3} {:.3} {:.3} | {:.3} {:.3} {:.3}\n", sp[0], sp[1], sp[2], c[0], c[1], c[2], c[3], c[4], c[5]));
+        }
+        s.push_str("HOW TO READ A CASE NAME: `A t<t> c<j> v<v>` is one non-zero item t at column j with value v, so H must gain v*v at (j, j) and nothing elsewhere; `B t<t> c<j>,<k> v<a>,<b>` is one item with two columns, so H gains a*b at (j, k) and (k, j) too; `C t<t1>,<t2> c<j> v<a>,<b>` is two items in one column; `D d<d> m<m> bands<n>` is a real shape run in n bands of rows (r_rows, r_off), where partial tiles and the band offset bite; `E` cases carry special values (very large, very small, negative). A distance of 9.77e-4 with 0 cases passed usually means the kernel writes nothing, or the wrong cells.\n");
+        if self.attempt > 1 {
+            s.push_str(&format!("This is repair attempt {}; the earlier repairs did not make it feasible, so change something else.\n", self.attempt));
+        }
+        s
+    }
+}
+
+/// THE REPAIR BRIEF: an offspring that failed, what the fitness measured
+/// of it, its parents.
 pub fn repair_task(child: &str, failure: &str, parents: &[&KernelBrief], max_nodes: usize) -> String {
+    repair_task_measured(child, failure, &ChildMeasure { stage: "unknown".into(), detail: failure.to_string(), ..Default::default() }, parents, max_nodes)
+}
+
+/// The repair brief with the child's own measurement.
+pub fn repair_task_measured(child: &str, failure: &str, measure: &ChildMeasure, parents: &[&KernelBrief], max_nodes: usize) -> String {
     let mut p = String::new();
     for (i, k) in parents.iter().enumerate() {
         p.push_str(&brief_block(k, &format!("PARENT {}", (b'A' + i as u8) as char)));
     }
     format!(
-        "You are repairing an offspring kernel. It was made from the parents below and it FAILED. Make it correct while keeping its technique (its tiling, its accumulation, its loads): change as little as the failure needs. If the failure names a test case, that case's shape is where it is wrong; think about partial tiles, the band (r_rows, r_off), bounds, barriers under conditions, and uninitialised accumulators. If the failure says the kernel is not in the grammar, respell exactly the construct named within the grammar's limits below and change nothing else.\n\n{}\n\n{}\n\n===== THE OFFSPRING (failed) =====\nFAILURE: {failure}\n```wgsl\n{child}```\n\n{p}\nSIZE: at most {max_nodes} nodes of the grammar.\nRETURN ONLY the repaired kernel text, starting with the header comment line `// grid x y bx by`, no prose, no fences.",
+        "You are repairing an offspring kernel. It was made from the parents below and it FAILED. Make it correct while keeping its technique (its tiling, its accumulation, its loads): change as little as the failure needs. If the failure names a test case, that case's shape is where it is wrong; think about partial tiles, the band (r_rows, r_off), bounds, barriers under conditions, and uninitialised accumulators. If the failure says the kernel is not in the grammar, respell exactly the construct named within the grammar's limits below and change nothing else.\n\n{}\n\n{}\n\n===== THE OFFSPRING (failed) =====\nFAILURE: {failure}\n{}```wgsl\n{child}```\n\n{p}\nSIZE: at most {max_nodes} nodes of the grammar.\nRETURN ONLY the repaired kernel text, starting with the header comment line `// grid x y bx by`, no prose, no fences.",
         fitness_explainer(),
-        grammar_limits()
+        grammar_limits(),
+        measure.block()
     )
 }
 
@@ -294,6 +334,11 @@ mod tests {
         }
         let r = repair_task("// grid 1 1 1 1\n", "constraint 0/128 cases: A t0 c14 v3", &[&k("k15")], 3000);
         assert!(r.contains("FAILURE: constraint 0/128 cases: A t0 c14 v3") && r.contains("PARENT A: k15"));
+        let m = ChildMeasure { stage: "constraint".into(), passed: 12, of: 128, detail: "constraint 12/128 cases: A t0 c31 v1 (9.77e-4)".into(), columns: None, speedups: None, attempt: 2 };
+        let r2 = repair_task_measured("// grid 1 1 1 1\n", "x", &m, &[&k("k15")], 3000);
+        for needle in ["CORRECTNESS CASES PASSED: 12 of 128", "STAGE REACHED: constraint", "HOW TO READ A CASE NAME", "repair attempt 2"] {
+            assert!(r2.contains(needle), "{needle}");
+        }
         let v = reinvent_task(&k("k15"), &k("k07"), &[(33, "(logic.and ...)".into())], 3000);
         for needle in ["REINVENTS the shared middle", "PARENT A (keep its processing outside the shared middle): k15", "PARENT B (for reference only): k07", "33 nodes: (logic.and ...)"] {
             assert!(v.contains(needle), "{needle}");
