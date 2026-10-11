@@ -564,6 +564,27 @@ for r, body in (("L0", "L2"), ("L1", "L2"), ("L2", "L3"), ("L3", "L4"), ("C0", "
     f("loop", "tilex_" + r, "composite", ["u32.boundx", "block." + body], "stmt." + r, "a short loop (the counter of its depth) bounded by an expression")
     f("loop", "tilex_strided_" + r, "composite", ["u32.boundx", "u32.lit64", "block." + body], "stmt." + r, "arity 3: the same, stepped by a literal")
 
+# ---- run A's declines (2026-10-11): rows the model kernels of fit_A needed ----
+# Registers again: 64 f32, 32 vec4, 64 u32, 16 bool. Five model kernels copied the kingdom's own
+# rendered declarations (32 u32 registers and the four counters) and asked for a 33rd u32 register.
+# The reader also stopped allocating a register for a local whose only initialiser is its form's
+# fallback (the declaration already holds it), so a copy of a rendered kernel costs no registers.
+for i in range(32, 64):
+    f("reg", f"f{i}", "composite", [], "reg<f32>.real", "a register (f32 is spelled f32r: a reserved word)")
+for i in range(16, 32):
+    f("reg", f"v{i}", "composite", [], "reg<vec4<f32>>.real", "a register")
+for i in range(32, 64):
+    f("reg", f"i{i}", "composite", [], "reg<u32>.index", "a register (i32 is spelled i32r: a reserved word)")
+for i in range(8, 16):
+    f("reg", f"b{i}", "composite", [], "reg<bool>.flag", "a register")
+# A lane of a vec4 element of a workgroup or private array (seed08: `sa[si][comp] = va` on a
+# workgroup array of vec4): the element by its masked index, the lane masked to the four.
+f("wg", "get_v_lane", "composite", ["wgmem<vec4<f32>>.real", "u32.wgvindex", "u32.index"], "f32.real", "arity 3: va[i][j & 3u]")
+f("parr", "get_v_lane", "composite", ["parr<vec4<f32>>.real", "u32.pindex", "u32.index"], "f32.real", "arity 3: pv[i][j & 3u]")
+for r in RUNGS:
+    f("wg", "set_v_lane_" + r, "composite", ["wgmem<vec4<f32>>.real", "u32.wgvindex", "u32.index", "f32.real"], "stmt." + r, "arity 4: va[i][j & 3u] = x;")
+    f("parr", "set_v_lane_" + r, "composite", ["parr<vec4<f32>>.real", "u32.pindex", "u32.index", "f32.real"], "stmt." + r, "arity 4: pv[i][j & 3u] = x;")
+
 
 def write_tsv(path, header, rows):
     with open(path, "w") as out:

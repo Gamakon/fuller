@@ -506,6 +506,14 @@ impl<'a> Renderer<'a> {
                 n(3)?;
                 Ok(format!("    {}[{}] = {};\n", self.wgmem(&kids[0])?, self.value(&kids[1], scope)?, self.value(&kids[2], scope)?))
             }
+            "wg.set_v_lane" => {
+                n(4)?;
+                Ok(format!("    {}[{}][({}) & 3u] = {};\n", self.wgmem(&kids[0])?, self.value(&kids[1], scope)?, self.value(&kids[2], scope)?, self.value(&kids[3], scope)?))
+            }
+            "parr.set_v_lane" => {
+                n(4)?;
+                Ok(format!("    {}[{}][({}) & 3u] = {};\n", self.parr_name(&kids[0])?, self.value(&kids[1], scope)?, self.value(&kids[2], scope)?, self.value(&kids[3], scope)?))
+            }
             "parr.set_safe" => {
                 n(3)?;
                 Ok(format!("    {}[{}] = {};\n", self.parr_name(&kids[0])?, self.value(&kids[1], scope)?, self.value(&kids[2], scope)?))
@@ -627,7 +635,7 @@ impl<'a> Renderer<'a> {
             ("fallback", "reg<bool>.flag") => "b0".to_string(),
             (name, _) => {
                 let n = name.strip_prefix("reg.").unwrap_or("");
-                if ok(n, 'f', 32) || ok(n, 'v', 16) || ok(n, 'i', 32) || ok(n, 'b', 8) {
+                if ok(n, 'f', 64) || ok(n, 'v', 32) || ok(n, 'i', 64) || ok(n, 'b', 16) {
                     let k: usize = n[1..].parse().unwrap_or(0);
                     register_var(&n[..1], k)
                 } else {
@@ -681,6 +689,10 @@ impl<'a> Renderer<'a> {
         match name {
             "reg.get_f" | "reg.get_v" | "reg.get_i" | "reg.get_b" => return self.register(&v.kids[0]),
             "reg.get_v_lane" => return Ok(format!("{}[({}) & 3u]", self.register(&v.kids[0])?, self.value(&v.kids[1], scope)?)),
+            // A lane of a vec4 element of a workgroup or private array (seed08 of run A): the
+            // element is a reference, so the lane index may be a run-time value.
+            "wg.get_v_lane" => return Ok(format!("{}[{}][({}) & 3u]", self.wgmem(&v.kids[0])?, self.value(&v.kids[1], scope)?, self.value(&v.kids[2], scope)?)),
+            "parr.get_v_lane" => return Ok(format!("{}[{}][({}) & 3u]", self.parr_name(&v.kids[0])?, self.value(&v.kids[1], scope)?, self.value(&v.kids[2], scope)?)),
             "wg.get" => return Ok(format!("{}[({}) & {}u]", self.wgmem(&v.kids[0])?, self.value(&v.kids[1], scope)?, WGMEM_LEN - 1)),
             // The safe read: the index is in range by its type (safe.wg_of masks it).
             "wg.get_safe" | "wg.get_v_safe" => return Ok(format!("{}[{}]", self.wgmem(&v.kids[0])?, self.value(&v.kids[1], scope)?)),
@@ -1190,6 +1202,8 @@ pub fn safe_base(name: &str) -> &str {
                 "wg.set" | "wg.set_v" => "wg.set_safe",
                 "parr.set_f" | "parr.set_v" | "parr.set_i" | "parr.set_b" => "parr.set_safe",
                 "reg.set_v_lane" => "reg.set_v_lane",
+                "wg.set_v_lane" => "wg.set_v_lane",
+                "parr.set_v_lane" => "parr.set_v_lane",
                 "loop.tile" => "loop.tile_bounded",
                 "loop.tile_strided" => "loop.tile_strided_bounded",
                 "loop.tilex" => "loop.tilex_bounded",
@@ -1228,13 +1242,15 @@ impl Renderer<'_> {
     }
 }
 
-/// A register's WGSL variable name: `f3`, `v0`, `i12`, `b1`; `f16` alone is
-/// spelled `f16r`, because `f16` is a reserved WGSL keyword (the type).
+/// A register's WGSL variable name: `f3`, `v0`, `i12`, `b1`; `f16`, `f32`
+/// and `i32` are spelled `f16r`, `f32r`, `i32r`, because they are reserved
+/// WGSL words (the types).
 pub fn register_var(prefix: &str, k: usize) -> String {
-    if prefix == "f" && k == 16 {
-        "f16r".to_string()
+    let name = format!("{prefix}{k}");
+    if ["f16", "f32", "i32", "u32"].contains(&name.as_str()) {
+        format!("{name}r")
     } else {
-        format!("{prefix}{k}")
+        name
     }
 }
 
@@ -1242,7 +1258,7 @@ pub fn register_var(prefix: &str, k: usize) -> String {
 /// to their form's fallback, the loop counters, the private arrays).
 pub fn register_declarations() -> String {
     let mut out = String::new();
-    for (prefix, n, ty, init) in [("f", 32, "f32", "0.0"), ("v", 16, "vec4<f32>", "vec4<f32>(0.0)"), ("i", 32, "u32", "0u"), ("b", 8, "bool", "false")] {
+    for (prefix, n, ty, init) in [("f", 64, "f32", "0.0"), ("v", 32, "vec4<f32>", "vec4<f32>(0.0)"), ("i", 64, "u32", "0u"), ("b", 16, "bool", "false")] {
         for k in 0..n {
             if k % 8 == 0 {
                 out.push_str("    ");
@@ -1545,6 +1561,45 @@ mod tests {
         assert!(invalid.is_empty(), "{} invalid:\n{}", invalid.len(), invalid.join("\n"));
     }
 
+
+    /// The rows run A's declines added (2026-10-11): the registers up to
+    /// f63, v31, i63 and b15 (`f32` and `i32` are reserved words, spelled
+    /// `f32r` and `i32r`), and a lane of a vec4 element of a workgroup or
+    /// private array; each renders in a safe kernel and validates.
+    #[test]
+    fn the_rows_of_run_a_render_and_validate() {
+        let (k, t, r) = (WgslKingdom::load_safe(), FunctionTable::safe(), gram_role());
+        let ty = |n: &str| dual_ty(&k, n).unwrap();
+        let (stmt, index, real, flag) = (ty("stmt.L0"), ty("u32.index"), ty("f32.real"), ty("bool.flag"));
+        let lit_i = |v: f32| Tree::literal("literal.index", index, v);
+        let cases: Vec<(&str, Tree)> = vec![
+            ("set_f at the last register, a reserved word spelled with r", Tree::new("reg.set_f", stmt, vec![Tree::new("reg.f32", ty("reg<f32>.real"), vec![]), Tree::new("reg.get_f", real, vec![Tree::new("reg.f63", ty("reg<f32>.real"), vec![])])])),
+            ("set_i at a reserved word", Tree::new("reg.set_i", stmt, vec![Tree::new("reg.i32", ty("reg<u32>.index"), vec![]), Tree::new("reg.get_i", index, vec![Tree::new("reg.i63", ty("reg<u32>.index"), vec![])])])),
+            ("set_v at the last register", Tree::new("reg.set_v", stmt, vec![Tree::new("reg.v31", ty("reg<vec4<f32>>.real"), vec![]), Tree::new("reg.get_v", ty("vec4<f32>.real"), vec![Tree::new("reg.v16", ty("reg<vec4<f32>>.real"), vec![])])])),
+            ("set_b at the last register", Tree::new("reg.set_b", stmt, vec![Tree::new("reg.b15", ty("reg<bool>.flag"), vec![]), Tree::new("reg.get_b", flag, vec![Tree::new("reg.b8", ty("reg<bool>.flag"), vec![])])])),
+            ("wg.set_v_lane", Tree::new("wg.set_v_lane_L0", ty("stmt.L0"), vec![Tree::new("wg.va", ty("wgmem<vec4<f32>>.real"), vec![]), Tree::new("safe.wgv_of", ty("u32.wgvindex"), vec![lit_i(3.0)]), lit_i(2.0), Tree::new("wg.get_v_lane", real, vec![Tree::new("wg.vb", ty("wgmem<vec4<f32>>.real"), vec![]), Tree::new("safe.wgv_of", ty("u32.wgvindex"), vec![lit_i(5.0)]), lit_i(1.0)])])),
+            ("parr.set_v_lane", Tree::new("parr.set_v_lane_L0", ty("stmt.L0"), vec![Tree::new("parr.v", ty("parr<vec4<f32>>.real"), vec![]), Tree::new("safe.pidx16", ty("u32.pindex"), vec![lit_i(3.0)]), lit_i(2.0), Tree::new("parr.get_v_lane", real, vec![Tree::new("parr.w", ty("parr<vec4<f32>>.real"), vec![]), Tree::new("safe.pidx16", ty("u32.pindex"), vec![lit_i(5.0)]), lit_i(1.0)])])),
+        ];
+        let rr = Renderer::new(&k, &t, &r);
+        let grid = Tree::fallback(ty("grid.grid"));
+        for (name, s) in cases {
+            let tree = Tree::new("kernel.entry_safe", ty("kernel.safe"), vec![grid.clone(), Tree::new("block.one_L0", ty("block.L0"), vec![s])]);
+            let out = rr.kernel(&tree).unwrap_or_else(|e| panic!("{name}: {e}"));
+            validate_text(&out.text).unwrap_or_else(|e| panic!("{name}: {e}\n{}", out.text));
+            if name.starts_with("set_f at") {
+                assert!(out.text.contains("f32r = f63;"), "{}", out.text);
+            }
+            if name.starts_with("set_i at") {
+                assert!(out.text.contains("i32r = i63;"), "{}", out.text);
+            }
+            if name == "wg.set_v_lane" {
+                assert!(out.text.contains("wg_va[((lit_u32(3u)) & 511u)][(lit_u32(2u)) & 3u] = wg_vb[((lit_u32(5u)) & 511u)][(lit_u32(1u)) & 3u];"), "{}", out.text);
+            }
+        }
+        assert_eq!(register_var("i", 32), "i32r");
+        assert_eq!(register_var("f", 16), "f16r");
+        assert_eq!(register_var("v", 31), "v31");
+    }
     /// Every composite helper, called from a kernel, validates.
     #[test]
     fn every_composite_row_renders_and_validates() {

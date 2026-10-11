@@ -69,7 +69,7 @@ fn main() -> Result<(), String> {
             Err(e) => {
                 let key: String = e.split(':').next_back().unwrap_or(&e).trim().chars().take(60).collect();
                 *reasons.entry(key).or_default() += 1;
-                println!("{id:<6} {:<10} {:>6} {:<8} {}", "no", "-", "-", &e[..e.len().min(600)]);
+                println!("{id:<6} {:<10} {:>6} {:<8} {}", "no", "-", "-", &e[..e.len().min(1600)]);
             }
             Ok(r) => {
                 converted += 1;

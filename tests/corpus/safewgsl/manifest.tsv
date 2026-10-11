@@ -48,3 +48,16 @@ reply_g002_r3x_reinvent_sonnet	reads	reads	a model kernel of the smoke run, 2026
 reply_g002_r3x_union_sonnet	reads	reads	a model kernel of the smoke run, 2026-10-11 (added 10:50Z)
 reply_g002_r4p1_sonnet	reads	reads	a model kernel of the smoke run, 2026-10-11 (added 10:50Z)
 reply_g002_r5p1_sonnet	reads	reads	a model kernel of the smoke run, 2026-10-11 (added 10:50Z)
+reply_fitA_g001_r10p1_sonnet	reads	reads	run A: a copy of the kingdom's own declarations asked for a 33rd u32 register; a fallback initialiser costs no register now
+reply_fitA_g001_r11p1_fable	reads	reads	run A: a copy of the kingdom's own declarations asked for a 33rd u32 register; a fallback initialiser costs no register now
+reply_fitA_g001_r2p1_fable	reads	reads	run A: a copy of the kingdom's own declarations asked for a 33rd u32 register; a fallback initialiser costs no register now
+reply_fitA_g001_r3p1_opus	reads	reads	run A: a copy of the kingdom's own declarations asked for a 33rd u32 register; a fallback initialiser costs no register now
+reply_fitA_g001_r4p1_g1_sonnet	reads	reads	run A: a copy of the kingdom's own declarations asked for a 33rd u32 register; a fallback initialiser costs no register now
+reply_fitA_g001_r4p1_g2_fable	reads	reads	run A: the kingdom's own gid.y * 4u + min(k, 3u) did not read back on the gid path
+reply_fitA_g001_r6x_reinvent_fable	reads	reads	run A: the row and column held in registers (i6 = i3 + 16u * k); the memo sees through them
+reply_fitA_g001_r6x_reinvent_g1_sonnet	reads	reads	run A: the row and column held in registers (i6 = i3 + 16u * k); the memo sees through them
+reply_fitA_g001_r6x_reinvent_g2_sonnet	reads	reads	run A: the row and column held in registers (i6 = i3 + 16u * k); the memo sees through them
+reply_fitA_g001_r6x_reinvent_g3_sonnet	reads	reads	run A: read here, declined by phylu's literal grid (112 and 157); the grid widened
+reply_fitA_seed08_sonnet	reads	reads	run A: sa[si][comp] = va, a lane of a vec4 workgroup element: wg.set_v_lane
+reply_fitA_g001_r4p1_sonnet	reads	reads	run A: the kingdom's own at_vec4f copied from a rendered kernel (var t = v; return t[i & 3u]) is read as shape.at
+reply_fitA_seed04_sonnet	reads	reads	run A: a helper with a local, ifs and lane stores (ldv) inlined as statements at its call

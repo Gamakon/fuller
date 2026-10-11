@@ -647,3 +647,113 @@ F645	loop	tilex_C2	composite	u32.boundx block.C3	stmt.C2	2	a short loop (the cou
 F646	loop	tilex_strided_C2	composite	u32.boundx u32.lit64 block.C3	stmt.C2	3	arity 3: the same, stepped by a literal
 F647	loop	tilex_C3	composite	u32.boundx block.C4	stmt.C3	2	a short loop (the counter of its depth) bounded by an expression
 F648	loop	tilex_strided_C3	composite	u32.boundx u32.lit64 block.C4	stmt.C3	3	arity 3: the same, stepped by a literal
+F649	reg	f32	composite	-	reg<f32>.real	0	a register (f32 is spelled f32r: a reserved word)
+F650	reg	f33	composite	-	reg<f32>.real	0	a register (f32 is spelled f32r: a reserved word)
+F651	reg	f34	composite	-	reg<f32>.real	0	a register (f32 is spelled f32r: a reserved word)
+F652	reg	f35	composite	-	reg<f32>.real	0	a register (f32 is spelled f32r: a reserved word)
+F653	reg	f36	composite	-	reg<f32>.real	0	a register (f32 is spelled f32r: a reserved word)
+F654	reg	f37	composite	-	reg<f32>.real	0	a register (f32 is spelled f32r: a reserved word)
+F655	reg	f38	composite	-	reg<f32>.real	0	a register (f32 is spelled f32r: a reserved word)
+F656	reg	f39	composite	-	reg<f32>.real	0	a register (f32 is spelled f32r: a reserved word)
+F657	reg	f40	composite	-	reg<f32>.real	0	a register (f32 is spelled f32r: a reserved word)
+F658	reg	f41	composite	-	reg<f32>.real	0	a register (f32 is spelled f32r: a reserved word)
+F659	reg	f42	composite	-	reg<f32>.real	0	a register (f32 is spelled f32r: a reserved word)
+F660	reg	f43	composite	-	reg<f32>.real	0	a register (f32 is spelled f32r: a reserved word)
+F661	reg	f44	composite	-	reg<f32>.real	0	a register (f32 is spelled f32r: a reserved word)
+F662	reg	f45	composite	-	reg<f32>.real	0	a register (f32 is spelled f32r: a reserved word)
+F663	reg	f46	composite	-	reg<f32>.real	0	a register (f32 is spelled f32r: a reserved word)
+F664	reg	f47	composite	-	reg<f32>.real	0	a register (f32 is spelled f32r: a reserved word)
+F665	reg	f48	composite	-	reg<f32>.real	0	a register (f32 is spelled f32r: a reserved word)
+F666	reg	f49	composite	-	reg<f32>.real	0	a register (f32 is spelled f32r: a reserved word)
+F667	reg	f50	composite	-	reg<f32>.real	0	a register (f32 is spelled f32r: a reserved word)
+F668	reg	f51	composite	-	reg<f32>.real	0	a register (f32 is spelled f32r: a reserved word)
+F669	reg	f52	composite	-	reg<f32>.real	0	a register (f32 is spelled f32r: a reserved word)
+F670	reg	f53	composite	-	reg<f32>.real	0	a register (f32 is spelled f32r: a reserved word)
+F671	reg	f54	composite	-	reg<f32>.real	0	a register (f32 is spelled f32r: a reserved word)
+F672	reg	f55	composite	-	reg<f32>.real	0	a register (f32 is spelled f32r: a reserved word)
+F673	reg	f56	composite	-	reg<f32>.real	0	a register (f32 is spelled f32r: a reserved word)
+F674	reg	f57	composite	-	reg<f32>.real	0	a register (f32 is spelled f32r: a reserved word)
+F675	reg	f58	composite	-	reg<f32>.real	0	a register (f32 is spelled f32r: a reserved word)
+F676	reg	f59	composite	-	reg<f32>.real	0	a register (f32 is spelled f32r: a reserved word)
+F677	reg	f60	composite	-	reg<f32>.real	0	a register (f32 is spelled f32r: a reserved word)
+F678	reg	f61	composite	-	reg<f32>.real	0	a register (f32 is spelled f32r: a reserved word)
+F679	reg	f62	composite	-	reg<f32>.real	0	a register (f32 is spelled f32r: a reserved word)
+F680	reg	f63	composite	-	reg<f32>.real	0	a register (f32 is spelled f32r: a reserved word)
+F681	reg	v16	composite	-	reg<vec4<f32>>.real	0	a register
+F682	reg	v17	composite	-	reg<vec4<f32>>.real	0	a register
+F683	reg	v18	composite	-	reg<vec4<f32>>.real	0	a register
+F684	reg	v19	composite	-	reg<vec4<f32>>.real	0	a register
+F685	reg	v20	composite	-	reg<vec4<f32>>.real	0	a register
+F686	reg	v21	composite	-	reg<vec4<f32>>.real	0	a register
+F687	reg	v22	composite	-	reg<vec4<f32>>.real	0	a register
+F688	reg	v23	composite	-	reg<vec4<f32>>.real	0	a register
+F689	reg	v24	composite	-	reg<vec4<f32>>.real	0	a register
+F690	reg	v25	composite	-	reg<vec4<f32>>.real	0	a register
+F691	reg	v26	composite	-	reg<vec4<f32>>.real	0	a register
+F692	reg	v27	composite	-	reg<vec4<f32>>.real	0	a register
+F693	reg	v28	composite	-	reg<vec4<f32>>.real	0	a register
+F694	reg	v29	composite	-	reg<vec4<f32>>.real	0	a register
+F695	reg	v30	composite	-	reg<vec4<f32>>.real	0	a register
+F696	reg	v31	composite	-	reg<vec4<f32>>.real	0	a register
+F697	reg	i32	composite	-	reg<u32>.index	0	a register (i32 is spelled i32r: a reserved word)
+F698	reg	i33	composite	-	reg<u32>.index	0	a register (i32 is spelled i32r: a reserved word)
+F699	reg	i34	composite	-	reg<u32>.index	0	a register (i32 is spelled i32r: a reserved word)
+F700	reg	i35	composite	-	reg<u32>.index	0	a register (i32 is spelled i32r: a reserved word)
+F701	reg	i36	composite	-	reg<u32>.index	0	a register (i32 is spelled i32r: a reserved word)
+F702	reg	i37	composite	-	reg<u32>.index	0	a register (i32 is spelled i32r: a reserved word)
+F703	reg	i38	composite	-	reg<u32>.index	0	a register (i32 is spelled i32r: a reserved word)
+F704	reg	i39	composite	-	reg<u32>.index	0	a register (i32 is spelled i32r: a reserved word)
+F705	reg	i40	composite	-	reg<u32>.index	0	a register (i32 is spelled i32r: a reserved word)
+F706	reg	i41	composite	-	reg<u32>.index	0	a register (i32 is spelled i32r: a reserved word)
+F707	reg	i42	composite	-	reg<u32>.index	0	a register (i32 is spelled i32r: a reserved word)
+F708	reg	i43	composite	-	reg<u32>.index	0	a register (i32 is spelled i32r: a reserved word)
+F709	reg	i44	composite	-	reg<u32>.index	0	a register (i32 is spelled i32r: a reserved word)
+F710	reg	i45	composite	-	reg<u32>.index	0	a register (i32 is spelled i32r: a reserved word)
+F711	reg	i46	composite	-	reg<u32>.index	0	a register (i32 is spelled i32r: a reserved word)
+F712	reg	i47	composite	-	reg<u32>.index	0	a register (i32 is spelled i32r: a reserved word)
+F713	reg	i48	composite	-	reg<u32>.index	0	a register (i32 is spelled i32r: a reserved word)
+F714	reg	i49	composite	-	reg<u32>.index	0	a register (i32 is spelled i32r: a reserved word)
+F715	reg	i50	composite	-	reg<u32>.index	0	a register (i32 is spelled i32r: a reserved word)
+F716	reg	i51	composite	-	reg<u32>.index	0	a register (i32 is spelled i32r: a reserved word)
+F717	reg	i52	composite	-	reg<u32>.index	0	a register (i32 is spelled i32r: a reserved word)
+F718	reg	i53	composite	-	reg<u32>.index	0	a register (i32 is spelled i32r: a reserved word)
+F719	reg	i54	composite	-	reg<u32>.index	0	a register (i32 is spelled i32r: a reserved word)
+F720	reg	i55	composite	-	reg<u32>.index	0	a register (i32 is spelled i32r: a reserved word)
+F721	reg	i56	composite	-	reg<u32>.index	0	a register (i32 is spelled i32r: a reserved word)
+F722	reg	i57	composite	-	reg<u32>.index	0	a register (i32 is spelled i32r: a reserved word)
+F723	reg	i58	composite	-	reg<u32>.index	0	a register (i32 is spelled i32r: a reserved word)
+F724	reg	i59	composite	-	reg<u32>.index	0	a register (i32 is spelled i32r: a reserved word)
+F725	reg	i60	composite	-	reg<u32>.index	0	a register (i32 is spelled i32r: a reserved word)
+F726	reg	i61	composite	-	reg<u32>.index	0	a register (i32 is spelled i32r: a reserved word)
+F727	reg	i62	composite	-	reg<u32>.index	0	a register (i32 is spelled i32r: a reserved word)
+F728	reg	i63	composite	-	reg<u32>.index	0	a register (i32 is spelled i32r: a reserved word)
+F729	reg	b8	composite	-	reg<bool>.flag	0	a register
+F730	reg	b9	composite	-	reg<bool>.flag	0	a register
+F731	reg	b10	composite	-	reg<bool>.flag	0	a register
+F732	reg	b11	composite	-	reg<bool>.flag	0	a register
+F733	reg	b12	composite	-	reg<bool>.flag	0	a register
+F734	reg	b13	composite	-	reg<bool>.flag	0	a register
+F735	reg	b14	composite	-	reg<bool>.flag	0	a register
+F736	reg	b15	composite	-	reg<bool>.flag	0	a register
+F737	wg	get_v_lane	composite	wgmem<vec4<f32>>.real u32.wgvindex u32.index	f32.real	3	arity 3: va[i][j & 3u]
+F738	parr	get_v_lane	composite	parr<vec4<f32>>.real u32.pindex u32.index	f32.real	3	arity 3: pv[i][j & 3u]
+F739	wg	set_v_lane_L0	composite	wgmem<vec4<f32>>.real u32.wgvindex u32.index f32.real	stmt.L0	4	arity 4: va[i][j & 3u] = x;
+F740	parr	set_v_lane_L0	composite	parr<vec4<f32>>.real u32.pindex u32.index f32.real	stmt.L0	4	arity 4: pv[i][j & 3u] = x;
+F741	wg	set_v_lane_L1	composite	wgmem<vec4<f32>>.real u32.wgvindex u32.index f32.real	stmt.L1	4	arity 4: va[i][j & 3u] = x;
+F742	parr	set_v_lane_L1	composite	parr<vec4<f32>>.real u32.pindex u32.index f32.real	stmt.L1	4	arity 4: pv[i][j & 3u] = x;
+F743	wg	set_v_lane_L2	composite	wgmem<vec4<f32>>.real u32.wgvindex u32.index f32.real	stmt.L2	4	arity 4: va[i][j & 3u] = x;
+F744	parr	set_v_lane_L2	composite	parr<vec4<f32>>.real u32.pindex u32.index f32.real	stmt.L2	4	arity 4: pv[i][j & 3u] = x;
+F745	wg	set_v_lane_L3	composite	wgmem<vec4<f32>>.real u32.wgvindex u32.index f32.real	stmt.L3	4	arity 4: va[i][j & 3u] = x;
+F746	parr	set_v_lane_L3	composite	parr<vec4<f32>>.real u32.pindex u32.index f32.real	stmt.L3	4	arity 4: pv[i][j & 3u] = x;
+F747	wg	set_v_lane_L4	composite	wgmem<vec4<f32>>.real u32.wgvindex u32.index f32.real	stmt.L4	4	arity 4: va[i][j & 3u] = x;
+F748	parr	set_v_lane_L4	composite	parr<vec4<f32>>.real u32.pindex u32.index f32.real	stmt.L4	4	arity 4: pv[i][j & 3u] = x;
+F749	wg	set_v_lane_C0	composite	wgmem<vec4<f32>>.real u32.wgvindex u32.index f32.real	stmt.C0	4	arity 4: va[i][j & 3u] = x;
+F750	parr	set_v_lane_C0	composite	parr<vec4<f32>>.real u32.pindex u32.index f32.real	stmt.C0	4	arity 4: pv[i][j & 3u] = x;
+F751	wg	set_v_lane_C1	composite	wgmem<vec4<f32>>.real u32.wgvindex u32.index f32.real	stmt.C1	4	arity 4: va[i][j & 3u] = x;
+F752	parr	set_v_lane_C1	composite	parr<vec4<f32>>.real u32.pindex u32.index f32.real	stmt.C1	4	arity 4: pv[i][j & 3u] = x;
+F753	wg	set_v_lane_C2	composite	wgmem<vec4<f32>>.real u32.wgvindex u32.index f32.real	stmt.C2	4	arity 4: va[i][j & 3u] = x;
+F754	parr	set_v_lane_C2	composite	parr<vec4<f32>>.real u32.pindex u32.index f32.real	stmt.C2	4	arity 4: pv[i][j & 3u] = x;
+F755	wg	set_v_lane_C3	composite	wgmem<vec4<f32>>.real u32.wgvindex u32.index f32.real	stmt.C3	4	arity 4: va[i][j & 3u] = x;
+F756	parr	set_v_lane_C3	composite	parr<vec4<f32>>.real u32.pindex u32.index f32.real	stmt.C3	4	arity 4: pv[i][j & 3u] = x;
+F757	wg	set_v_lane_C4	composite	wgmem<vec4<f32>>.real u32.wgvindex u32.index f32.real	stmt.C4	4	arity 4: va[i][j & 3u] = x;
+F758	parr	set_v_lane_C4	composite	parr<vec4<f32>>.real u32.pindex u32.index f32.real	stmt.C4	4	arity 4: pv[i][j & 3u] = x;
