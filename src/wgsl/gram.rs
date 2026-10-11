@@ -669,6 +669,121 @@ impl<'a> Gram<'a> {
     }
 }
 
+/// The result of [`Gram::run_batch`]: each case's H and GPU milliseconds,
+/// and the one submission's wall milliseconds, submit to completion.
+pub struct Batch {
+    pub h: Vec<Vec<f32>>,
+    pub gpu_ms: Vec<f64>,
+    pub compute_ms: f64,
+}
+
+impl Gram<'_> {
+    /// Run over several Φ already on the device in ONE compute submission
+    /// and one read-back: every case's passes are those [`Gram::run`]
+    /// encodes (each output-row band cleared, then one pass per item band,
+    /// the same dispatch), each into its own accumulator, so each case's H
+    /// is what `run` gives. Returns each case's H and its GPU milliseconds
+    /// (its passes' timestamps), and the submission's wall milliseconds,
+    /// submit to completion, for all of them together.
+    pub fn run_batch(&self, rs: &[&Resident]) -> Result<Batch, String> {
+        let device = &self.dev.device;
+        let queue = &self.dev.queue;
+        let layout = self.pipeline.get_bind_group_layout(0);
+        // Every (case, row band): its accumulator, its offset in the staging buffer.
+        struct Band { case: usize, r_off: usize, r_rows: usize, h: wgpu::Buffer, at: u64, binds: Vec<wgpu::BindGroup>, first_query: u32 }
+        let mut bands: Vec<Band> = Vec::new();
+        let mut keep_cfgs: Vec<wgpu::Buffer> = Vec::new();
+        let (mut staging_bytes, mut queries) = (0u64, 0u32);
+        for (case, r) in rs.iter().enumerate() {
+            let d = r.d;
+            let row_band_rows = ((r.limit / (d as u64 * 4)).max(1) as usize).min(d);
+            let mut r_off = 0usize;
+            while r_off < d {
+                let r_rows = (r_off + row_band_rows).min(d) - r_off;
+                let band_bytes = (r_rows * d * 4) as u64;
+                let h = device.create_buffer(&wgpu::BufferDescriptor { label: Some("gram batch accumulator"), size: band_bytes, usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false });
+                let mut binds = Vec::with_capacity(r.bands.len());
+                for (pb, mb) in &r.bands {
+                    let cfg = device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some("gram cfg"), contents: bytemuck::cast_slice(&[d as u32, *mb, r_rows as u32, r_off as u32]), usage: wgpu::BufferUsages::UNIFORM });
+                    binds.push(device.create_bind_group(&wgpu::BindGroupDescriptor { label: Some("gram bind"), layout: &layout, entries: &[wgpu::BindGroupEntry { binding: 0, resource: pb.as_entire_binding() }, wgpu::BindGroupEntry { binding: 1, resource: h.as_entire_binding() }, wgpu::BindGroupEntry { binding: 2, resource: cfg.as_entire_binding() }] }));
+                    keep_cfgs.push(cfg);
+                }
+                let first_query = queries;
+                queries += 2 * r.bands.len() as u32;
+                bands.push(Band { case, r_off, r_rows, h, at: staging_bytes, binds, first_query });
+                staging_bytes += band_bytes;
+                r_off += r_rows;
+            }
+        }
+        let query_set = device.create_query_set(&wgpu::QuerySetDescriptor { label: Some("gram batch timestamps"), ty: wgpu::QueryType::Timestamp, count: queries.max(2) });
+        let stamps_bytes = 8 * u64::from(queries.max(2));
+        let resolve_buf = device.create_buffer(&wgpu::BufferDescriptor { label: Some("gram batch resolve"), size: stamps_bytes, usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC, mapped_at_creation: false });
+        let stamps_read = device.create_buffer(&wgpu::BufferDescriptor { label: Some("gram batch stamps read"), size: stamps_bytes, usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ, mapped_at_creation: false });
+        let staging = device.create_buffer(&wgpu::BufferDescriptor { label: Some("gram batch staging"), size: staging_bytes.max(4), usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false });
+        let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("gram batch") });
+        for b in &bands {
+            let d = rs[b.case].d;
+            enc.clear_buffer(&b.h, 0, None);
+            let wg_x = (d as u32).div_ceil(self.grid.x * self.grid.bx);
+            let wg_y = (b.r_rows as u32).div_ceil(self.grid.y * self.grid.by);
+            for (i, bind) in b.binds.iter().enumerate() {
+                let q = b.first_query + 2 * i as u32;
+                let timestamp_writes = Some(wgpu::ComputePassTimestampWrites { query_set: &query_set, beginning_of_pass_write_index: Some(q), end_of_pass_write_index: Some(q + 1) });
+                let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("gram batch item band"), timestamp_writes });
+                pass.set_pipeline(&self.pipeline);
+                pass.set_bind_group(0, bind, &[]);
+                pass.dispatch_workgroups(wg_x, wg_y, 1);
+            }
+        }
+        let t_compute = Instant::now();
+        queue.submit(Some(enc.finish()));
+        device.poll(wgpu::Maintain::Wait);
+        let compute_ms = t_compute.elapsed().as_secs_f64() * 1e3;
+        // The timestamps resolved after the passes completed (resolved in the
+        // same submission, short passes read 0 on Metal), and every band read back.
+        let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("gram batch read-back") });
+        enc.resolve_query_set(&query_set, 0..queries, &resolve_buf, 0);
+        enc.copy_buffer_to_buffer(&resolve_buf, 0, &stamps_read, 0, 8 * u64::from(queries));
+        for b in &bands {
+            enc.copy_buffer_to_buffer(&b.h, 0, &staging, b.at, (b.r_rows * rs[b.case].d * 4) as u64);
+        }
+        queue.submit(Some(enc.finish()));
+        let (tx, rx) = std::sync::mpsc::channel();
+        staging.slice(..).map_async(wgpu::MapMode::Read, { let tx = tx.clone(); move |r| { let _ = tx.send(r); } });
+        stamps_read.slice(..).map_async(wgpu::MapMode::Read, move |r| { let _ = tx.send(r); });
+        device.poll(wgpu::Maintain::Wait);
+        for _ in 0..2 {
+            rx.recv().map_err(|e| format!("map: {e}"))?.map_err(|e| format!("map: {e}"))?;
+        }
+        let mut hs: Vec<Vec<f32>> = rs.iter().map(|r| vec![0.0f32; r.d * r.d]).collect();
+        let mut gpu_ms = vec![0.0f64; rs.len()];
+        {
+            let mapped = staging.slice(..).get_mapped_range();
+            let all: &[f32] = bytemuck::cast_slice(&mapped);
+            let stamps_map = stamps_read.slice(..).get_mapped_range();
+            let stamps: &[u64] = bytemuck::cast_slice(&stamps_map);
+            for b in &bands {
+                let d = rs[b.case].d;
+                let at = (b.at / 4) as usize;
+                hs[b.case][b.r_off * d..(b.r_off + b.r_rows) * d].copy_from_slice(&all[at..at + b.r_rows * d]);
+                for i in 0..b.binds.len() {
+                    let q = (b.first_query + 2 * i as u32) as usize;
+                    gpu_ms[b.case] += stamps[q + 1].wrapping_sub(stamps[q]) as f64 * f64::from(self.period_ns) / 1e6;
+                }
+            }
+        }
+        staging.unmap();
+        stamps_read.unmap();
+        staging.destroy();
+        for b in &bands {
+            b.h.destroy();
+        }
+        drop(keep_cfgs);
+        device.poll(wgpu::Maintain::Poll);
+        Ok(Batch { h: hs, gpu_ms, compute_ms })
+    }
+}
+
 /// Φ on the device in the driver's item bands, uploaded once and run over
 /// by any number of kernels ([`Gram::run`]).
 pub struct Resident {
@@ -732,6 +847,9 @@ pub const ROUND_BUDGET_MS: f64 = 20_000.0;
 /// item-cells) make every step from one measured build to the next at
 /// most 32x. Their output is not judged: the pairs judge accuracy.
 pub const RUNGS: [(usize, usize); 2] = [(128, 64), (256, 512)];
+
+/// The correctness cases run this many to a submission.
+pub const CASE_CHUNK: usize = 16;
 
 /// The work of one build: d x d output cells, each a sum over m items.
 pub fn work(d: usize, m: usize) -> f64 {
@@ -904,6 +1022,8 @@ pub struct FitnessContext {
     /// the timing shapes, uploaded once at [`FitnessContext::new`] and kept
     /// on the device (about 0.9 GB, most of it the timing shapes).
     pub resident_rungs: Vec<Resident>,
+    /// Φ of the 128 correctness cases, in `admission` order.
+    pub resident_cases: Vec<Resident>,
     pub resident_pairs: [Vec<Resident>; 3],
     pub resident_timing: Vec<Resident>,
     /// The shipped kernel's GPU milliseconds at the three timing shapes,
@@ -986,10 +1106,11 @@ impl FitnessContext {
         let (train, val, extrap) = (pick(&sp.train, &train_idx)?, pick(&sp.val, &val_idx)?, pick(&sp.extrap, &extrap_idx)?);
         let up = |set: &[(usize, usize, &[f32])]| -> Result<Vec<Resident>, String> { set.iter().map(|(d, m, p)| Resident::upload(dev, p, *d, *m, limit)).collect() };
         let pairs_of = |set: &[AccuracyPair]| -> Result<Vec<Resident>, String> { up(&set.iter().map(|p| (p.1, p.2, p.3.as_slice())).collect::<Vec<_>>()) };
+        let resident_cases = admission.iter().map(|&i| { let p = &probes[i]; Resident::upload(dev, &p.phi, p.d, p.m, p.limit) }).collect::<Result<Vec<_>, String>>()?;
         let resident_rungs = up(&rungs.iter().map(|(d, m, p)| (*d, *m, p.as_slice())).collect::<Vec<_>>())?;
         let resident_pairs = [pairs_of(&train)?, pairs_of(&val)?, pairs_of(&extrap)?];
         let resident_timing = up(&timing.iter().map(|(d, m, p)| (*d, *m, p.as_slice())).collect::<Vec<_>>())?;
-        let ctx = FitnessContext { train, val, extrap, probes, admission, shipped_source: SHIPPED.to_string(), timing, limit, timing_rounds: 1, rungs, shipped_ms, base_budget_ms: BASE_BUDGET_MS, round_budget_ms: ROUND_BUDGET_MS, resident_rungs, resident_pairs, resident_timing, shipped_gpu_ms: std::cell::Cell::new([0.0; 3]) };
+        let ctx = FitnessContext { train, val, extrap, probes, admission, shipped_source: SHIPPED.to_string(), timing, limit, timing_rounds: 1, rungs, shipped_ms, base_budget_ms: BASE_BUDGET_MS, round_budget_ms: ROUND_BUDGET_MS, resident_rungs, resident_cases, resident_pairs, resident_timing, shipped_gpu_ms: std::cell::Cell::new([0.0; 3]) };
         ctx.time_shipped(dev)?;
         Ok(ctx)
     }
@@ -1033,33 +1154,41 @@ impl FitnessContext {
             Ok(g) => g,
             Err(e) => return infeasible(0, format!("compile: {}", e.lines().find(|l| l.contains("error") || l.contains("header")).unwrap_or(e.lines().next().unwrap_or(""))), t, &meter, &split),
         };
-        // The correctness cases, each timed. They are the same size, so the
-        // projection over them is linear in the count: a kernel whose cases
-        // alone would spend a third of the base budget is stopped between
-        // two cases (one case cannot be cancelled, all of them can).
+        // The correctness cases, run in chunks of `CASE_CHUNK`, one
+        // submission a chunk (one submission a case cost 16 ms of
+        // synchronisation; 2026-10-11). Each case's sample for the meter is
+        // the chunk's wall time shared equally. They are the same size, so
+        // the projection over them is linear in the count: a kernel whose
+        // cases alone would spend a third of the base budget is stopped
+        // between two chunks (one chunk cannot be cancelled, the rest can).
         let mut passed = 0;
         let mut first_fail = String::new();
         let cases = self.admission.len();
         // The projection is over the cases alone: the pipeline compile
         // (50-300 ms on Metal) before them would be multiplied by 128.
         let t_cases = Instant::now();
-        for (n, &i) in self.admission.iter().enumerate() {
-            let p = &self.probes[i];
-            let b = match gram.build(&p.phi, p.d, p.m, p.limit) {
-                Ok(b) => b,
+        let mut done = 0usize;
+        for chunk in self.admission.chunks(CASE_CHUNK).zip(self.resident_cases.chunks(CASE_CHUNK)) {
+            let (idx, res) = chunk;
+            let rs: Vec<&Resident> = res.iter().collect();
+            let Batch { h: hs, compute_ms, .. } = match gram.run_batch(&rs) {
+                Ok(x) => x,
                 Err(e) => return infeasible(passed, format!("run: {e}"), t, &meter, &split),
             };
-            meter.push(work(p.d, p.m), b.compute_ms);
-            split.build(&b);
-            let d = crate::wgsl::probes::distance(&b.h, p);
-            if d <= crate::wgsl::probes::PASS {
-                passed += 1;
-            } else if first_fail.is_empty() {
-                first_fail = format!("{} ({d:.2e})", p.name);
+            for (&i, h) in idx.iter().zip(&hs) {
+                let p = &self.probes[i];
+                meter.push(work(p.d, p.m), compute_ms / idx.len() as f64);
+                let d = crate::wgsl::probes::distance(h, p);
+                if d <= crate::wgsl::probes::PASS {
+                    passed += 1;
+                } else if first_fail.is_empty() {
+                    first_fail = format!("{} ({d:.2e})", p.name);
+                }
             }
-            let projected = elapsed_ms(t_cases) * cases as f64 / (n + 1) as f64;
-            if n + 1 < cases && projected > self.base_budget_ms / 3.0 {
-                return infeasible(passed, format!("slow: the correctness cases are projected at {:.1} s ({:.1} s for the first {}), over a third of the {:.1} s budget; the rest not dispatched", projected / 1e3, elapsed_ms(t_cases) / 1e3, n + 1, self.base_budget_ms / 1e3), t, &meter, &split);
+            done += idx.len();
+            let projected = elapsed_ms(t_cases) * cases as f64 / done as f64;
+            if done < cases && projected > self.base_budget_ms / 3.0 {
+                return infeasible(passed, format!("slow: the correctness cases are projected at {:.1} s ({:.1} s for the first {done}), over a third of the {:.1} s budget; the rest not dispatched", projected / 1e3, elapsed_ms(t_cases) / 1e3, self.base_budget_ms / 1e3), t, &meter, &split);
             }
         }
         split.cases = elapsed_ms(t_cases);
@@ -1404,6 +1533,29 @@ mod tests {
         for k in 0..3 {
             assert!((0.85..=1.15).contains(&f.speedups[k]), "{:?}", f.speedups);
             assert!((again[k] / first[k] - 1.0).abs() < 0.15, "{first:?} {again:?}");
+        }
+    }
+
+    /// GPU (run when the device is free): the 128 correctness cases run in
+    /// chunks give each case the H a one-case run gives, bit for bit, for
+    /// the shipped, tiled and blocked kernels.
+    #[test]
+    fn batched_cases_give_the_one_case_h_bit_for_bit() {
+        let dev = Device::new().expect("device");
+        let probes = crate::wgsl::probes::probes(1);
+        let admission = crate::wgsl::probes::admission(&probes, 1);
+        let res: Vec<Resident> = admission.iter().map(|&i| { let p = &probes[i]; Resident::upload(&dev, &p.phi, p.d, p.m, p.limit).expect("upload") }).collect();
+        for (name, text) in [("shipped", SHIPPED), ("tiled", TILED), ("blocked", BLOCKED)] {
+            let g = Gram::compile(&dev, text).expect("compile");
+            for chunk in res.chunks(CASE_CHUNK) {
+                let rs: Vec<&Resident> = chunk.iter().collect();
+                let Batch { h: hs, gpu_ms: gpu, compute_ms: ms } = g.run_batch(&rs).expect("batch");
+                assert!(ms > 0.0 && gpu.iter().all(|x| *x > 0.0), "{name}: {gpu:?}");
+                for (r, h) in rs.iter().zip(&hs) {
+                    let one = g.run(r, true).expect("run").h;
+                    assert_eq!(h.iter().map(|x| x.to_bits()).collect::<Vec<_>>(), one.iter().map(|x| x.to_bits()).collect::<Vec<_>>(), "{name} d {} m {}", r.d, r.m);
+                }
+            }
         }
     }
 
