@@ -386,6 +386,44 @@ helper inlining. Then the tables regenerated, the drafts re-encoded (`safe96`), 
 the library re-encoded, since a kernel's genes name rows and types by name and survive, but anything
 that pinned a count does not.
 
+## The cost gate measures, the estimate only guards (2026-10-11)
+
+**Why.** A Metal dispatch cannot be cancelled, so a kernel that does far too much work can hold the GPU
+for minutes (2026-10-08 it froze the machine). The static cost estimate kept such kernels out, but on
+2026-10-11 it was wrong four times (estimator or reader over-counts) and kept out correct kernels 8-9x
+faster than shipped. Andrew asked why we filter on an estimate; the answer is to measure.
+
+**What.** Every build in the fitness is timed (wall time, submit to completion). The time is modelled as
+a floor plus a rate per item-cell, `ms = floor + rate * d * d * m`: the floor is the median of the 128
+correctness cases (at most 8e4 item-cells, all submission cost), the rate the least-squares slope of every
+build so far through that floor, clamped at 0 (`gram::Meter`). The builds run smallest work first: the
+correctness cases, two timing rungs (d 128 m 64 and d 256 m 512, timed and not judged), then the six
+accuracy pairs across the three sets, then the timing shapes; no step is more than 32x the work of a
+measured build. Before each build the time is predicted; a kernel predicted over the limit, or past the
+evaluation's budget, is infeasible with stage `slow`, the detail naming the shape, the prediction and the
+rate, and is not dispatched there. The repair brief explains `slow` to the model.
+
+**The limits, from the watchdog.** `wgsl_fit`'s watchdog ends an evaluation at 30 s plus 20 s per timing
+round (`gram::BASE_BUDGET_MS`, `ROUND_BUDGET_MS`, read by both the watchdog and the gate). A round builds
+the candidate and the shipped kernel at the three shapes, so a candidate's build at a timing shape is
+limited to a third of what the shipped kernel's three measured times leave of 20 s (about 5.7 s at about
+1 s a shape); such a kernel is five times slower than shipped, its speed columns are already 1, and
+stopping it loses no ranking. The correctness cases are stopped if projected over a third of the 30 s,
+the rungs and pairs if a build would pass the 30 s.
+
+**The estimate.** `SHIPPED_COST_FACTOR` 64 to 640 (2,560 to 25,600 per item): the largest estimate of
+any feasible kernel in today's fit_A2 ledgers was 2,499, so the old bound was binding; all eleven kernels it
+kept out today (3,370 to 14,713) now run and are measured. The base (20,000) was never binding and is
+unchanged. The estimate remains the guard for kernels too big for even the correctness cases, and for
+time that scales other than as d*d*m within one 32x step.
+
+**Limits of the model.** The three timing shapes have the same work (2.75e11 item-cells), so one rate
+predicts one time for all three; a kernel whose speed differs by shape is predicted by its rate at the
+largest pair (d 8192). GPU tests to run when the device is free:
+`the_shipped_kernel_predicts_its_own_time_at_the_timing_shapes` (within a factor of two of each measured
+time) and `a_deliberately_slow_kernel_is_stopped_before_the_timing_shapes` (64 exact passes of the item
+loop: correct, stopped as `slow`, under 30 s).
+
 ## Expectations, stated before any run
 
 | measurement | expected |

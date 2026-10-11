@@ -195,6 +195,7 @@ pub fn fitness_explainer() -> String {
 A feasible kernel gets six columns, each in [0, 1], 0 best, and its score is the angle (HFF) between the column vector and the origin direction, so LOWER IS BETTER and the columns must ALL be small: \
 (1) (2) (3) SPEED on three shapes (d 2048 m 65536; d 4096 m 16384; d 8192 m 4096): 1 / speed-up over the shipped kernel, so 0.125 means 8x faster; \
 (4) (5) (6) QUALITY, the numeric error: the worst max-ratio error against the f64 reference on three sets of (phi, H) pairs (train, validation, extrapolation), each divided by the shipped kernel's own error on the same pair, then halved and capped at 1; 0.29 means the error is about 0.6 of shipped's, 0.5 means equal to shipped's, and more than twice shipped's error is INFEASIBLE. \
+TIME IS MEASURED AS IT RUNS. Every build is timed, from the correctness cases up through two larger timing shapes and the pairs (smallest first); a rate per item-cell (one output cell's sum over one item) is fitted to those times, and before each larger build the time is predicted from it. A kernel predicted to take more than about 5.7 s at any shape (about five times the shipped kernel's time at the speed shapes) is INFEASIBLE with stage SLOW and is never run at that shape: GPU work cannot be cancelled. \
 Accumulating in a different order changes the error: more independent partial sums and pairwise adds keep it low; a long serial sum raises it."
         .to_string()
 }
@@ -260,7 +261,7 @@ pub fn reinvent_task(keep: &KernelBrief, other: &KernelBrief, shared: &[(usize, 
 /// 2026-10-11: "send child fitness too, to help the repair").
 #[derive(Debug, Clone, Default)]
 pub struct ChildMeasure {
-    /// decode, rebuild, cost, compile, constraint, pairs, feasible.
+    /// decode, rebuild, cost, compile, constraint, slow, pairs, feasible.
     pub stage: String,
     /// Correctness cases passed, of `of` (0 when it never ran).
     pub passed: usize,
@@ -282,6 +283,9 @@ impl ChildMeasure {
             s.push_str(&format!("MEASURED (feasible): speed-ups {:.2}x / {:.2}x / {:.2}x; columns {:.3} {:.3} {:.3} | {:.3} {:.3} {:.3}\n", sp[0], sp[1], sp[2], c[0], c[1], c[2], c[3], c[4], c[5]));
         }
         s.push_str("HOW TO READ A CASE NAME: `A t<t> c<j> v<v>` is one non-zero item t at column j with value v, so H must gain v*v at (j, j) and nothing elsewhere; `B t<t> c<j>,<k> v<a>,<b>` is one item with two columns, so H gains a*b at (j, k) and (k, j) too; `C t<t1>,<t2> c<j> v<a>,<b>` is two items in one column; `D d<d> m<m> bands<n>` is a real shape run in n bands of rows (r_rows, r_off), where partial tiles and the band offset bite; `E` cases carry special values (very large, very small, negative). A distance of 9.77e-4 with 0 cases passed usually means the kernel writes nothing, or the wrong cells.\n");
+        if self.stage == "slow" {
+            s.push_str("WHAT SLOW MEANS: the kernel is correct on the cases it ran, but its measured time per item-cell predicts a run too long to dispatch at the shape named above. It does far more work per output cell per item than the shipped kernel. Remove repeated passes over the items, loops that redo the same sum, loads of phi repeated inside an inner loop that could be held in registers, and per-item work that grows with d or with the block; keep each item read once per tile of cells.\n");
+        }
         if self.attempt > 1 {
             s.push_str(&format!("This is repair attempt {}; the earlier repairs did not make it feasible, so change something else.\n", self.attempt));
         }
@@ -394,6 +398,12 @@ mod tests {
         let r2 = repair_task_measured("// grid 1 1 1 1\n", "x", &m, &[&k("k15")], 3000);
         for needle in ["CORRECTNESS CASES PASSED: 12 of 128", "STAGE REACHED: constraint", "HOW TO READ A CASE NAME", "repair attempt 2"] {
             assert!(r2.contains(needle), "{needle}");
+        }
+        assert!(!r2.contains("WHAT SLOW MEANS"));
+        let slow = ChildMeasure { stage: "slow".into(), passed: 128, of: 128, detail: "slow: predicted 41.0 s at the timing shape d 2048 m 65536 (2.75e11 item-cells), over the limit of 5.7 s a build".into(), columns: None, speedups: None, attempt: 1 };
+        let r3 = repair_task_measured("// grid 1 1 1 1\n", "x", &slow, &[&k("k15")], 3000);
+        for needle in ["STAGE REACHED: slow", "predicted 41.0 s at the timing shape d 2048 m 65536", "WHAT SLOW MEANS", "TIME IS MEASURED AS IT RUNS"] {
+            assert!(r3.contains(needle), "{needle}");
         }
         let v = reinvent_task(&k("k15"), &k("k07"), &[(33, "(logic.and ...)".into())], 3000);
         for needle in ["REINVENTS the shared middle", "PARENT A (keep its processing outside the shared middle): k15", "PARENT B (for reference only): k07", "33 nodes: (logic.and ...)"] {

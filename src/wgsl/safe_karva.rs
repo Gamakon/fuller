@@ -664,10 +664,22 @@ pub fn rebuild(decoded: &[String], filled: usize, kingdom: &WgslKingdom) -> Resu
 /// work the GPU has started cannot be cancelled, and a legal kernel of
 /// bounded loops can still take hours (three nested tile loops of 64
 /// inside the item loop). Per item: `SHIPPED_COST_FACTOR` times the shipped
-/// kernel's per-thread cost (the converted drafts reach 23 times it, their
-/// register blocks doing more per thread for fewer threads); base: a fixed
-/// 20,000 operations.
-pub const SHIPPED_COST_FACTOR: f64 = 64.0;
+/// kernel's per-thread cost; base: a fixed 20,000 operations.
+///
+/// Since 2026-10-11 this is only the LOOSE guard against a kernel too big
+/// to run even at the correctness cases' sizes: the fitness measures each
+/// kernel's time as it runs and stops it before a shape its measured rate
+/// says is too long (`gram::Meter`, stage "slow"). The factor was 64
+/// (2,560 per item) and it was binding: the largest estimate of any
+/// feasible kernel in the fit_A2 ledgers of 2026-10-11 was 2,499, and the
+/// eleven kernels it kept out in that day's `logs/HGP/001` ledgers
+/// estimated 3,370 to 14,713 per item; four times that day the estimate
+/// was an estimator or reader over-count that kept out a correct kernel
+/// 8-9x faster than shipped. At 640
+/// (25,600 per item) all eleven are dispatched and measured; three nested
+/// tile loops of 64 (2.6e5 times shipped) are still kept out. The base was
+/// never binding (no kernel of 2026-10-11 exceeded it) and is unchanged.
+pub const SHIPPED_COST_FACTOR: f64 = 640.0;
 
 pub fn default_bound(kingdom: &WgslKingdom) -> Result<Cost, String> {
     let shipped = cost(&gram_shipped_safe_tree(kingdom)?);

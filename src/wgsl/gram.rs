@@ -623,6 +623,112 @@ impl<'a> Gram<'a> {
     }
 }
 
+/// The evaluation's time budget before its timing rounds: compile, the
+/// 128 correctness cases, the timing rungs and the six accuracy pairs.
+/// phylu's `wgsl_fit` watchdog ends the process when an evaluation passes
+/// `BASE_BUDGET_MS + ROUND_BUDGET_MS * timing_rounds` (a Metal dispatch
+/// cannot be cancelled; on 2026-10-08 one froze the machine), and it reads
+/// both figures from here so the gate and the watchdog cannot disagree.
+pub const BASE_BUDGET_MS: f64 = 30_000.0;
+
+/// The time budget of one timing round: the candidate and the shipped
+/// kernel built once each at the three timing shapes.
+pub const ROUND_BUDGET_MS: f64 = 20_000.0;
+
+/// The two timing rungs (d, m) run between the correctness cases and the
+/// accuracy pairs. The largest correctness case is d 40 m 50 (8e4
+/// item-cells) and the smallest pair d 512 m 2,048 (5.4e8): a step of
+/// 6,700x, too far to predict across. The rungs (1.0e6, then 3.4e7
+/// item-cells) make every step from one measured build to the next at
+/// most 32x. Their output is not judged: the pairs judge accuracy.
+pub const RUNGS: [(usize, usize); 2] = [(128, 64), (256, 512)];
+
+/// The work of one build: d x d output cells, each a sum over m items.
+pub fn work(d: usize, m: usize) -> f64 {
+    d as f64 * d as f64 * m as f64
+}
+
+/// THE MEASURED COST MODEL. A kernel's wall time on the device (submit to
+/// completion, `Build::compute_ms`) is modelled as a floor plus a rate per
+/// item-cell: `ms = floor + rate * d * d * m`. The floor is the median
+/// time of the correctness cases, whose work (at most 8e4 item-cells) is
+/// below the submission's own cost; the rate is the least-squares slope of
+/// every sample so far through that floor, `sum w (t - floor) / sum w^2`,
+/// clamped at 0. The `w^2` weighting makes the largest measured build
+/// dominate the slope, which is the build closest to the next one; the
+/// noise of a correctness case (a millisecond over 8e4 item-cells) moves a
+/// prediction one step ahead by milliseconds, not seconds.
+///
+/// The model sees only `d * d * m`. A kernel whose time scales another way
+/// (a loop over d inside the item loop) is caught because every gated
+/// build is at most 32x the work of a measured one; the static cost
+/// estimate (`safe_karva::default_bound`) stays as the loose guard
+/// against a kernel too big to run even at the correctness cases' sizes.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Meter {
+    /// (work in item-cells, wall milliseconds), in the order measured.
+    pub samples: Vec<(f64, f64)>,
+    /// The floor in ms, fixed by [`Meter::fix_floor`] after the correctness cases.
+    pub floor_ms: f64,
+}
+
+impl Meter {
+    pub fn push(&mut self, work: f64, ms: f64) {
+        self.samples.push((work, ms));
+    }
+
+    /// The floor: the median of the samples so far (the correctness cases).
+    pub fn fix_floor(&mut self) {
+        let mut t: Vec<f64> = self.samples.iter().map(|s| s.1).collect();
+        self.floor_ms = median(&mut t);
+    }
+
+    /// Milliseconds per item-cell, the least-squares slope through the floor.
+    pub fn rate(&self) -> f64 {
+        let (num, den) = self.samples.iter().fold((0.0, 0.0), |(n, d), &(w, t)| (n + w * (t - self.floor_ms), d + w * w));
+        if den > 0.0 { (num / den).max(0.0) } else { 0.0 }
+    }
+
+    /// The predicted wall milliseconds of a build of `work` item-cells.
+    pub fn predict(&self, work: f64) -> f64 {
+        self.floor_ms + self.rate() * work
+    }
+
+    /// The rate in ms per 1e9 item-cells, for the reports.
+    pub fn rate_per_g(&self) -> f64 {
+        self.rate() * 1e9
+    }
+}
+
+/// The time limit of one candidate build at a timing shape: a timing round
+/// builds the candidate and the shipped kernel once at each of the three
+/// shapes inside `round_budget_ms`, so after the shipped kernel's three
+/// measured times the candidate has a third of what remains per shape
+/// (`(20 s - shipped) / 3`, about 5.7 s with the shipped kernel at about
+/// 1 s a shape). A kernel over it is at least five times slower than the
+/// shipped kernel, so its speed columns are already pinned at 1 and
+/// stopping it loses no ranking; it only keeps the watchdog from ending
+/// the run.
+pub fn slow_limit_ms(round_budget_ms: f64, shipped_ms: &[f64; 3]) -> f64 {
+    (round_budget_ms - shipped_ms.iter().sum::<f64>()) / 3.0
+}
+
+/// The gate before a build: `Err` with the detail of a "slow" outcome when
+/// the predicted time of the build exceeds `limit_ms`, or when the build
+/// would carry the evaluation past `budget_ms` (from its start, `elapsed_ms`
+/// already spent). `what` names the build (the shape and its role).
+pub fn gate(meter: &Meter, what: &str, work: f64, elapsed_ms: f64, limit_ms: f64, budget_ms: f64) -> Result<f64, String> {
+    let p = meter.predict(work);
+    let tail = format!("from a measured rate of {:.1} ms per 1e9 item-cells over a floor of {:.2} ms ({} builds measured, the largest {:.2e} item-cells)", meter.rate_per_g(), meter.floor_ms, meter.samples.len(), meter.samples.iter().map(|s| s.0).fold(0.0, f64::max));
+    if p > limit_ms {
+        return Err(format!("slow: predicted {:.1} s at {what} ({work:.2e} item-cells), over the limit of {:.1} s a build; {tail}; not dispatched", p / 1e3, limit_ms / 1e3));
+    }
+    if elapsed_ms + p > budget_ms {
+        return Err(format!("slow: predicted {:.1} s at {what} ({work:.2e} item-cells) after {:.1} s spent, over the evaluation's budget of {:.1} s; {tail}; not dispatched", p / 1e3, elapsed_ms / 1e3, budget_ms / 1e3));
+    }
+    Ok(p)
+}
+
 /// The fast fitness evaluation phylu calls per individual
 /// (`docs/PLAN_hgp_gram.md`, step 2 of the evolutionary loop): the
 /// constraint on its 128 stratified test cases, then six columns scaled
@@ -650,6 +756,15 @@ pub struct FitnessContext {
     /// One round scattered equal kernels by 15 % (the re-timing of
     /// 2026-10-11); five or more are needed to rank kernels.
     pub timing_rounds: usize,
+    /// The timing rungs (d, m, Φ), [`RUNGS`].
+    pub rungs: Vec<(usize, usize, Vec<f32>)>,
+    /// The shipped kernel's wall milliseconds at the three timing shapes,
+    /// measured once when the context is built.
+    pub shipped_ms: [f64; 3],
+    /// The budgets the gate holds a kernel to; [`BASE_BUDGET_MS`] and
+    /// [`ROUND_BUDGET_MS`] unless the caller sets them.
+    pub base_budget_ms: f64,
+    pub round_budget_ms: f64,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -665,6 +780,12 @@ pub struct Fitness {
     pub hff: f64,
     pub detail: String,
     pub seconds: f64,
+    /// The predicted wall milliseconds at the three timing shapes, from the
+    /// measured rate (0 when the evaluation stopped before predicting).
+    pub predicted_ms: [f64; 3],
+    /// The measured rate in ms per 1e9 item-cells and the floor in ms.
+    pub rate_per_g: f64,
+    pub floor_ms: f64,
 }
 
 /// θ over columns in [0, 1]: `acos(1 − mean(x²))`, 0 when every column is 0.
@@ -699,56 +820,111 @@ impl FitnessContext {
         let train_idx: Vec<usize> = [Kind::Gaussian, Kind::Weighted, Kind::Ragged].iter().filter_map(|k| sp.train.iter().position(|p| p.kind == *k && (p.d * p.d * p.m) as f64 <= 4.5e9)).collect();
         let val_idx: Vec<usize> = [Kind::LowRank, Kind::NonFinite].iter().filter_map(|k| sp.val.iter().position(|p| p.kind == *k && (p.d * p.d * p.m) as f64 <= 4.5e9)).collect();
         let extrap_idx: Vec<usize> = vec![sp.extrap.iter().enumerate().min_by_key(|(_, p)| p.m).map(|(i, _)| i).ok_or("no extrapolation pair")?];
-        let timing = [(2048usize, 65536usize), (4096, 16384), (8192, 4096)].iter().map(|&(d, m)| (d, m, phi(d, m, 7))).collect();
-        Ok(FitnessContext { train: pick(&sp.train, &train_idx)?, val: pick(&sp.val, &val_idx)?, extrap: pick(&sp.extrap, &extrap_idx)?, probes, admission, shipped_source: SHIPPED.to_string(), timing, limit , timing_rounds: 1 })
+        let timing: Vec<(usize, usize, Vec<f32>)> = [(2048usize, 65536usize), (4096, 16384), (8192, 4096)].iter().map(|&(d, m)| (d, m, phi(d, m, 7))).collect();
+        // The shipped kernel's wall time at each timing shape, after one
+        // warm-up build at the first, so the limit comes from this device.
+        shipped.build(&timing[0].2, timing[0].0, timing[0].1, limit)?;
+        let mut shipped_ms = [0.0f64; 3];
+        for (k, (d, m, p)) in timing.iter().enumerate() {
+            shipped_ms[k] = shipped.build(p, *d, *m, limit)?.compute_ms;
+        }
+        let worst_shipped = shipped_ms.iter().copied().fold(0.0, f64::max);
+        if slow_limit_ms(ROUND_BUDGET_MS, &shipped_ms) < worst_shipped {
+            return Err(format!("the shipped kernel takes {shipped_ms:?} ms at the timing shapes: a timing round of {ROUND_BUDGET_MS} ms cannot hold it and a kernel at its speed"));
+        }
+        let rungs = RUNGS.iter().map(|&(d, m)| (d, m, phi(d, m, 13))).collect();
+        Ok(FitnessContext { train: pick(&sp.train, &train_idx)?, val: pick(&sp.val, &val_idx)?, extrap: pick(&sp.extrap, &extrap_idx)?, probes, admission, shipped_source: SHIPPED.to_string(), timing, limit, timing_rounds: 1, rungs, shipped_ms, base_budget_ms: BASE_BUDGET_MS, round_budget_ms: ROUND_BUDGET_MS })
+    }
+
+    /// The limit of one candidate build at a timing shape, [`slow_limit_ms`].
+    pub fn slow_limit_ms(&self) -> f64 {
+        slow_limit_ms(self.round_budget_ms, &self.shipped_ms)
     }
 
     pub fn fitness(&self, dev: &Device, source: &str) -> Fitness {
         let t = Instant::now();
-        let infeasible = |passed: usize, detail: String, t: Instant| Fitness { feasible: false, passed, columns: [1.0; 6], speedups: [0.0; 3], hff: f64::INFINITY, detail, seconds: t.elapsed().as_secs_f64() };
+        let mut meter = Meter::default();
+        let infeasible = |passed: usize, detail: String, t: Instant, meter: &Meter| Fitness { feasible: false, passed, columns: [1.0; 6], speedups: [0.0; 3], hff: f64::INFINITY, detail, seconds: t.elapsed().as_secs_f64(), predicted_ms: [0.0; 3], rate_per_g: meter.rate_per_g(), floor_ms: meter.floor_ms };
+        let elapsed_ms = |t: Instant| t.elapsed().as_secs_f64() * 1e3;
         let gram = match Gram::compile(dev, source) {
             Ok(g) => g,
-            Err(e) => return infeasible(0, format!("compile: {}", e.lines().find(|l| l.contains("error") || l.contains("header")).unwrap_or(e.lines().next().unwrap_or(""))), t),
+            Err(e) => return infeasible(0, format!("compile: {}", e.lines().find(|l| l.contains("error") || l.contains("header")).unwrap_or(e.lines().next().unwrap_or(""))), t, &meter),
         };
+        // The correctness cases, each timed. They are the same size, so the
+        // projection over them is linear in the count: a kernel whose cases
+        // alone would spend a third of the base budget is stopped between
+        // two cases (one case cannot be cancelled, all of them can).
         let mut passed = 0;
         let mut first_fail = String::new();
-        for &i in &self.admission {
+        let cases = self.admission.len();
+        for (n, &i) in self.admission.iter().enumerate() {
             let p = &self.probes[i];
             let b = match gram.build(&p.phi, p.d, p.m, p.limit) {
                 Ok(b) => b,
-                Err(e) => return infeasible(passed, format!("run: {e}"), t),
+                Err(e) => return infeasible(passed, format!("run: {e}"), t, &meter),
             };
+            meter.push(work(p.d, p.m), b.compute_ms);
             let d = crate::wgsl::probes::distance(&b.h, p);
             if d <= crate::wgsl::probes::PASS {
                 passed += 1;
             } else if first_fail.is_empty() {
                 first_fail = format!("{} ({d:.2e})", p.name);
             }
+            let projected = elapsed_ms(t) * cases as f64 / (n + 1) as f64;
+            if n + 1 < cases && projected > self.base_budget_ms / 3.0 {
+                return infeasible(passed, format!("slow: the correctness cases are projected at {:.1} s ({:.1} s for the first {}), over a third of the {:.1} s budget; the rest not dispatched", projected / 1e3, elapsed_ms(t) / 1e3, n + 1, self.base_budget_ms / 1e3), t, &meter);
+            }
         }
-        if passed < self.admission.len() {
-            return infeasible(passed, format!("constraint {passed}/{} cases: {first_fail}", self.admission.len()), t);
+        if passed < cases {
+            return infeasible(passed, format!("constraint {passed}/{cases} cases: {first_fail}"), t, &meter);
+        }
+        meter.fix_floor();
+        let limit_ms = self.slow_limit_ms();
+        // The rungs: timed, gated, not judged.
+        for (d, m, phi) in &self.rungs {
+            if let Err(e) = gate(&meter, &format!("the timing rung d {d} m {m}"), work(*d, *m), elapsed_ms(t), limit_ms, self.base_budget_ms) {
+                return infeasible(passed, e, t, &meter);
+            }
+            match gram.build(phi, *d, *m, self.limit) {
+                Ok(b) => meter.push(work(*d, *m), b.compute_ms),
+                Err(e) => return infeasible(passed, format!("run: {e}"), t, &meter),
+            }
         }
         let shipped = match Gram::compile(dev, &self.shipped_source) {
             Ok(g) => g,
-            Err(e) => return infeasible(passed, format!("shipped compile: {e}"), t),
+            Err(e) => return infeasible(passed, format!("shipped compile: {e}"), t, &meter),
         };
-        // Accuracy columns: the worst error relative to shipped's, min(1, e / 2).
-        let worst = |pairs: &[AccuracyPair]| -> Result<f64, String> {
-            let mut w = 0.0f64;
-            for (name, d, m, phi, h_ref, smax) in pairs {
-                let b = gram.build(phi, *d, *m, self.limit)?;
-                let v = check(&b.h, h_ref, *d, *m);
-                if v.non_finite > 0 || v.max_ratio > (2.0 * smax).max(1.0) {
-                    return Err(format!("pair {name}: max {:.3} tau (shipped {smax:.3}), non-finite {}", v.max_ratio, v.non_finite));
-                }
-                w = w.max(if *smax > 0.0 { v.max_ratio / smax } else { v.max_ratio });
+        // Accuracy columns: the worst error relative to shipped's, min(1, e / 2),
+        // per set. The pairs run smallest work first across the three sets, so
+        // every pair is predicted from a measured build at most 32x smaller.
+        let mut order: Vec<(usize, &AccuracyPair)> = [&self.train, &self.val, &self.extrap].iter().enumerate().flat_map(|(k, set)| set.iter().map(move |p| (k, p))).collect();
+        order.sort_by(|a, b| work(a.1 .1, a.1 .2).total_cmp(&work(b.1 .1, b.1 .2)));
+        let mut worst = [0.0f64; 3];
+        for (k, (name, d, m, phi, h_ref, smax)) in order {
+            if let Err(e) = gate(&meter, &format!("pair {name} (d {d} m {m})"), work(*d, *m), elapsed_ms(t), limit_ms, self.base_budget_ms) {
+                return infeasible(passed, e, t, &meter);
             }
-            Ok(w)
-        };
-        let (et, ev, ex) = match (worst(&self.train), worst(&self.val), worst(&self.extrap)) {
-            (Ok(a), Ok(b), Ok(c)) => (a, b, c),
-            (Err(e), _, _) | (_, Err(e), _) | (_, _, Err(e)) => return infeasible(passed, e, t),
-        };
+            let b = match gram.build(phi, *d, *m, self.limit) {
+                Ok(b) => b,
+                Err(e) => return infeasible(passed, format!("run: {e}"), t, &meter),
+            };
+            meter.push(work(*d, *m), b.compute_ms);
+            let v = check(&b.h, h_ref, *d, *m);
+            if v.non_finite > 0 || v.max_ratio > (2.0 * smax).max(1.0) {
+                return infeasible(passed, format!("pair {name}: max {:.3} tau (shipped {smax:.3}), non-finite {}", v.max_ratio, v.non_finite), t, &meter);
+            }
+            worst[k] = worst[k].max(if *smax > 0.0 { v.max_ratio / smax } else { v.max_ratio });
+        }
+        let [et, ev, ex] = worst;
+        // The timing shapes predicted before any is dispatched; a kernel
+        // predicted over the limit at any of them is stopped here.
+        let mut predicted_ms = [0.0f64; 3];
+        for (k, (d, m, _)) in self.timing.iter().enumerate() {
+            match gate(&meter, &format!("the timing shape d {d} m {m}"), work(*d, *m), 0.0, limit_ms, f64::INFINITY) {
+                Ok(p) => predicted_ms[k] = p,
+                Err(e) => return Fitness { predicted_ms, ..infeasible(passed, e, t, &meter) },
+            }
+        }
         // Speed columns: `timing_rounds` paired rounds per shape, the order
         // alternating every round, the median of the rounds' ratios.
         let mut speedups = [0.0f64; 3];
@@ -764,13 +940,13 @@ impl FitnessContext {
                 })();
                 match r {
                     Ok(s) => ratios.push(s),
-                    Err(e) => return infeasible(passed, e, t),
+                    Err(e) => return Fitness { predicted_ms, ..infeasible(passed, e, t, &meter) },
                 }
             }
             speedups[k] = median(&mut ratios);
         }
         let columns = [(1.0 / speedups[0]).clamp(0.0, 1.0), (1.0 / speedups[1]).clamp(0.0, 1.0), (1.0 / speedups[2]).clamp(0.0, 1.0), (et / 2.0).clamp(0.0, 1.0), (ev / 2.0).clamp(0.0, 1.0), (ex / 2.0).clamp(0.0, 1.0)];
-        Fitness { feasible: true, passed, columns, speedups, hff: truenorth(&columns), detail: String::new(), seconds: t.elapsed().as_secs_f64() }
+        Fitness { feasible: true, passed, columns, speedups, hff: truenorth(&columns), detail: String::new(), seconds: t.elapsed().as_secs_f64(), predicted_ms, rate_per_g: meter.rate_per_g(), floor_ms: meter.floor_ms }
     }
 }
 
@@ -797,6 +973,120 @@ mod tests {
         assert_eq!(median(&mut [4.0, 1.0, 3.0, 2.0]), 2.5);
         assert_eq!(median(&mut [7.0]), 7.0);
         assert_eq!(median(&mut []), 0.0);
+    }
+
+    /// The rate fit: exact on a noiseless linear kernel, the floor the
+    /// median of the correctness cases.
+    #[test]
+    fn the_meter_fits_a_linear_kernel_exactly() {
+        let mut m = Meter::default();
+        for (k, t) in [2.0, 1.0, 3.0, 2.0, 2.0].into_iter().enumerate() {
+            m.push(1e4 + k as f64, t);
+        }
+        m.fix_floor();
+        assert_eq!(m.floor_ms, 2.0);
+        // 4 ms per 1e9 item-cells above the floor, at 1e6, 3.4e7 and 5.4e8.
+        let mut lin = Meter { samples: Vec::new(), floor_ms: 2.0 };
+        for w in [1e6, 3.4e7, 5.4e8] {
+            lin.push(w, 2.0 + 4e-9 * w);
+        }
+        assert!((lin.rate_per_g() - 4.0).abs() < 1e-9, "{}", lin.rate_per_g());
+        assert!((lin.predict(2.75e11) - (2.0 + 1100.0)).abs() < 1e-6);
+    }
+
+    /// The noise of the correctness cases does not predict seconds one rung
+    /// ahead, and a slope below the floor clamps at zero.
+    #[test]
+    fn noise_at_the_floor_predicts_milliseconds_not_seconds() {
+        let mut m = Meter::default();
+        for k in 0..128 {
+            // 1-3 ms of submission cost at up to 8e4 item-cells: all noise.
+            m.push(8e4 * (k % 5 + 1) as f64 / 5.0, 1.0 + (k % 3) as f64);
+        }
+        m.fix_floor();
+        assert!(m.predict(work(RUNGS[0].0, RUNGS[0].1)) < 50.0, "{}", m.predict(work(128, 64)));
+        let mut neg = Meter { samples: vec![(1e6, 0.5), (3.4e7, 0.4)], floor_ms: 2.0 };
+        assert_eq!(neg.rate(), 0.0);
+        assert_eq!(neg.predict(2.75e11), 2.0);
+        neg.push(5.4e8, 2.0 + 1e-8 * 5.4e8);
+        assert!(neg.rate() > 0.0);
+    }
+
+    /// Every gated step is at most 32x the work of the build before it.
+    #[test]
+    fn the_rungs_bridge_the_cases_to_the_pairs_in_steps_of_at_most_32() {
+        let largest_case = work(40, 50);
+        let smallest_pair = work(512, 2048);
+        let mut ladder = vec![largest_case];
+        ladder.extend(RUNGS.iter().map(|&(d, m)| work(d, m)));
+        ladder.push(smallest_pair);
+        for w in ladder.windows(2) {
+            assert!(w[1] / w[0] <= 32.0 && w[1] > w[0], "{ladder:?}");
+        }
+    }
+
+    /// The limit and the gate: a third of what the shipped kernel leaves of a
+    /// round; a prediction over it, or past the budget, is "slow" and names
+    /// the build and the prediction.
+    #[test]
+    fn the_gate_stops_a_build_predicted_over_the_limit_or_the_budget() {
+        let limit = slow_limit_ms(ROUND_BUDGET_MS, &[1000.0, 1100.0, 900.0]);
+        assert!((limit - 17_000.0 / 3.0).abs() < 1e-9);
+        // The shipped kernel's rate (about 1 s at 2.75e11 item-cells) passes.
+        let shipped = Meter { samples: vec![(6.9e10, 2.0 + 250.0)], floor_ms: 2.0 };
+        let p = gate(&shipped, "the timing shape d 2048 m 65536", work(2048, 65536), 0.0, limit, f64::INFINITY).expect("shipped passes");
+        assert!((p - (2.0 + 250.0 * work(2048, 65536) / 6.9e10)).abs() < 1e-6);
+        // Ten times slower is predicted at about 10 s: stopped, named.
+        let slow = Meter { samples: vec![(6.9e10, 2.0 + 2500.0)], floor_ms: 2.0 };
+        let e = gate(&slow, "the timing shape d 2048 m 65536", work(2048, 65536), 0.0, limit, f64::INFINITY).unwrap_err();
+        assert!(e.starts_with("slow: predicted 10.0 s at the timing shape d 2048 m 65536") && e.contains("over the limit of 5.7 s") && e.contains("not dispatched"), "{e}");
+        // Under the limit but past the evaluation's budget.
+        let e = gate(&shipped, "pair x", 6.9e10, 29_900.0, limit, BASE_BUDGET_MS).unwrap_err();
+        assert!(e.contains("over the evaluation's budget of 30.0 s"), "{e}");
+    }
+
+    /// GPU (run when the device is free): the shipped kernel's fitness
+    /// predicts its own measured time at the three timing shapes within a
+    /// factor of two. The three shapes have the same work (2.75e11
+    /// item-cells), so the model predicts one time for all three; the
+    /// factor of two covers the spread of the shipped kernel's own times
+    /// across the shapes (its memory access differs by d) and the run-to-
+    /// run scatter of one round (15 %, 2026-10-11).
+    #[test]
+    fn the_shipped_kernel_predicts_its_own_time_at_the_timing_shapes() {
+        let dev = Device::new().expect("device");
+        let ctx = FitnessContext::new(&dev, std::path::Path::new("logs/WGSL_GRAM/pairs")).expect("context");
+        let f = ctx.fitness(&dev, SHIPPED);
+        assert!(f.feasible, "{f:?}");
+        println!("shipped measured {:?} ms, predicted {:?} ms, rate {:.2} ms per 1e9 item-cells, floor {:.2} ms, limit {:.0} ms", ctx.shipped_ms, f.predicted_ms, f.rate_per_g, f.floor_ms, ctx.slow_limit_ms());
+        for k in 0..3 {
+            let ratio = f.predicted_ms[k] / ctx.shipped_ms[k];
+            assert!((0.5..=2.0).contains(&ratio), "shape {k}: predicted {} ms, measured {} ms", f.predicted_ms[k], ctx.shipped_ms[k]);
+        }
+    }
+
+    /// GPU (run when the device is free): a correct kernel doing 64 times
+    /// the shipped kernel's work is stopped as "slow" before the timing
+    /// shapes. Its item loop runs 64 times, each pass's sum `s` the shipped
+    /// kernel's own sum in the same order; the passes are folded as
+    /// `acc = 0.5 * (acc + s)`, exact for equal values (2s and the halving
+    /// are exact, and inf and NaN carry through), so its H is bit-identical
+    /// to the shipped kernel's and it passes the correctness cases and the
+    /// pairs it reaches. The detail names the shape and the prediction, and
+    /// the evaluation takes well under the watchdog's base budget.
+    #[test]
+    fn a_deliberately_slow_kernel_is_stopped_before_the_timing_shapes() {
+        let item_loop = "    var acc: f32 = 0.0;\n    for (var t: u32 = 0u; t < cfg.m; t = t + 1u) {\n        let base = t * cfg.d;\n        acc = acc + phi[base + gr] * phi[base + c];\n    }\n";
+        assert!(SHIPPED.contains(item_loop), "the item loop was not found in the shipped text");
+        let slow = SHIPPED.replace(item_loop, "    var acc: f32 = 0.0;\n    for (var k: u32 = 0u; k < 64u; k = k + 1u) {\n        var s: f32 = 0.0;\n        for (var t: u32 = 0u; t < cfg.m; t = t + 1u) {\n            let base = t * cfg.d;\n            s = s + phi[base + gr] * phi[base + c];\n        }\n        if (k == 0u) { acc = s; } else { acc = 0.5 * (acc + s); }\n    }\n");
+        let dev = Device::new().expect("device");
+        let ctx = FitnessContext::new(&dev, std::path::Path::new("logs/WGSL_GRAM/pairs")).expect("context");
+        let f = ctx.fitness(&dev, &slow);
+        println!("{:.1} s: {}", f.seconds, f.detail);
+        assert!(!f.feasible && f.passed == ctx.admission.len(), "{f:?}");
+        assert!(f.detail.starts_with("slow: predicted") && f.detail.contains("not dispatched"), "{}", f.detail);
+        assert!(f.detail.contains("the timing shape d") || f.detail.contains("pair "), "{}", f.detail);
+        assert!(f.seconds * 1e3 < BASE_BUDGET_MS, "{f:?}");
     }
 
     #[test]
