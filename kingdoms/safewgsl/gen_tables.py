@@ -84,9 +84,10 @@ FORMS = {
     "C4": ("a statement or block under a condition inside a third nested tile loop: no barrier", []),
     "safe": ("the safeWGSL kernel: the root dual of this kingdom, produced only by kernel.entry_safe", []),
     "pindex": ("a private-array index, masked to the array by its row", ["u32"]),
+    "boundx": ("a loop bound that is any index expression (cfg.m & ~3u, (cfg.d + 63u) / 64u, a register): rendered as written, never capped; costed at the worst shape", ["u32"]),
 }
 
-SAFE_FORMS = ["safe", "pindex", "boundm", "boundd", "boundrows", "lit64", "lit4096", "counter", "tcounter", "tcounter2", "L3", "C3", "tcounter3", "L4", "C4", "wgvindex", "bound", "threadrow", "threadcol", "cell", "phi", "wgindex", "L0", "L1", "L2", "C0", "C1", "C2"]
+SAFE_FORMS = ["safe", "pindex", "boundx", "boundm", "boundd", "boundrows", "lit64", "lit4096", "counter", "tcounter", "tcounter2", "L3", "C3", "tcounter3", "L4", "C4", "wgvindex", "bound", "threadrow", "threadcol", "cell", "phi", "wgindex", "L0", "L1", "L2", "C0", "C1", "C2"]
 RUNGS = ["L0", "L1", "L2", "L3", "L4", "C0", "C1", "C2", "C3", "C4"]
 
 FALLBACK = {
@@ -104,6 +105,7 @@ FALLBACK = {
     "L0": "empty", "L1": "empty", "L2": "empty", "L3": "empty", "C0": "empty", "C1": "empty", "C2": "empty", "C3": "empty",
     "safe": "an empty kernel", "pindex": "0u",
     "tcounter3": "0u", "L4": "empty", "C4": "empty", "wgvindex": "0u",
+    "boundx": "1u",
 }
 
 # The fallback by machine: the lane's 32-bit pattern as an unsigned integer. Vectors and matrices
@@ -120,6 +122,7 @@ FALLBACK_BITS = {
     "counter": 0, "tcounter": 0, "tcounter2": 0, "bound": 0, "threadrow": 0, "threadcol": 0, "cell": 0, "phi": 0, "wgindex": 0,
     "L0": 0, "L1": 0, "L2": 0, "L3": 0, "C0": 0, "C1": 0, "C2": 0, "C3": 0, "safe": 0, "pindex": 0,
     "tcounter3": 0, "L4": 0, "C4": 0, "wgvindex": 0,
+    "boundx": 0,
 }
 assert set(FALLBACK_BITS) == set(FALLBACK), "every form with a fallback needs its bits, and no more"
 
@@ -192,6 +195,8 @@ def build_types():
     add("parr<bool>", "flag", 0, "a private array of 16 bool: pm, pn")
     add("wgmem<vec4<f32>>", "real", 0, "a workgroup-memory array of 256 vec4<f32>: va, vb")
     add("u32", "wgvindex", 1, FORMS["wgvindex"][0])
+    # ---- the complete kingdom (step 6, 2026-10-11) ----
+    add("u32", "boundx", 1, FORMS["boundx"][0])
     return rows
 
 
@@ -499,7 +504,7 @@ for r in ("L0", "L1", "L2", "L3", "L4"):
 for b in ("boundm", "boundd", "boundrows"):
     f("loop", "items_" + b, "composite", ["u32." + b, "block.L1"], "stmt.L0", "for (t = 0u; t < bound; t = t + 1u) { ... }: the one long loop")
     f("loop", "items_unrolled_" + b, "composite", ["u32.unroll", "u32." + b, "block.L1"], "stmt.L0", "arity 3: the body k times, then the remainder")
-    f("loop", "items_strided_" + b, "composite", ["u32." + b, "u32.lit64", "block.L1"], "stmt.L0", "arity 3: for (t = 0u; t < bound; t = t + stride): a tile of items per iteration, the stride a literal in 1..=64")
+    f("loop", "items_strided_" + b, "composite", ["u32." + b, "u32.lit4096", "block.L1"], "stmt.L0", "arity 3: for (t = 0u; t < bound; t = t + stride): a tile of items per iteration, the stride a literal in 1..=4096 (64 until 2026-10-11)")
 f("loop", "tile_L0", "composite", ["u32.lit64", "block.L2"], "stmt.L0", "a short loop (counter k) at the top level")
 f("loop", "tile_L1", "composite", ["u32.lit64", "block.L2"], "stmt.L1", "a short loop (counter k) inside the item loop")
 f("loop", "tile_L2", "composite", ["u32.lit64", "block.L3"], "stmt.L2", "an inner short loop (counter k2) inside a tile loop; nothing produces a loop at L3")
@@ -530,6 +535,17 @@ for i in range(16, 32):
 for i in range(4, 8):
     f("reg", f"b{i}", "composite", [], "reg<bool>.flag", "a register")
 f("parr", "w", "composite", [], "parr<vec4<f32>>.real", "private array pw of 16 vec4<f32> (a second vec4 array)")
+# Expression-bounded loops (k16, k26: `cfg.m & ~3u`; the pump's `cfg.m / 4u`; k06: a test `t + 4u > m`,
+# normalised to t < m - 4). The bound is any index expression; the loop is finite because every u32 is;
+# the cost estimator evaluates the bound at the worst shape, so a slow kernel is refused before dispatch.
+f("bound", "of_index", "composite", ["u32.index"], "u32.boundx", "any index expression as a loop bound")
+f("index", "sub_floor", "composite", ["u32.index", "u32.index"], "u32.index", "i - j, floored at zero (a loop test `t + k > m` becomes t < m - k)")
+f("loop", "items_boundx", "composite", ["u32.boundx", "block.L1"], "stmt.L0", "for (t = 0u; t < expr; t = t + 1u)")
+f("loop", "items_strided_boundx", "composite", ["u32.boundx", "u32.lit4096", "block.L1"], "stmt.L0", "arity 3: for (t = 0u; t < expr; t = t + stride)")
+f("loop", "items_unrolled_boundx", "composite", ["u32.unroll", "u32.boundx", "block.L1"], "stmt.L0", "arity 3: the body k times, then the remainder")
+for r, body in (("L0", "L2"), ("L1", "L2"), ("L2", "L3"), ("L3", "L4"), ("C0", "C1"), ("C1", "C2"), ("C2", "C3"), ("C3", "C4")):
+    f("loop", "tilex_" + r, "composite", ["u32.boundx", "block." + body], "stmt." + r, "a short loop (the counter of its depth) bounded by an expression")
+    f("loop", "tilex_strided_" + r, "composite", ["u32.boundx", "u32.lit64", "block." + body], "stmt." + r, "arity 3: the same, stepped by a literal")
 
 
 def write_tsv(path, header, rows):

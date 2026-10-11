@@ -721,20 +721,28 @@ impl<'a> Ctx<'a> {
         let test = tree_of(self, &root.tree)?;
         let mut c = test.kids[0].clone();
         if negated {
-            // naga lowers `for (; t < m;)` into `if (t >= m) { break; }`.
+            // naga lowers `for (; t < m;)` into `if (t >= m) { break; }`; a
+            // draft writes `if (t + 4u > m) { break; }`: the break condition
+            // negated is the continue condition.
             if c.name == "logic.not" && c.kids.len() == 1 {
                 c = c.kids[0].clone();
-            } else if c.name == "compare.ge" && c.kids.len() == 2 {
-                c = Tree::new("compare.lt", c.ty, c.kids.clone());
             } else {
-                return Err(format!("a loop test `if (cond) break` that is not a negated counter < bound: {}", c.to_sexpr()));
+                let flipped = match c.name.as_str() {
+                    "compare.ge" => "compare.lt",
+                    "compare.gt" => "compare.le",
+                    "compare.le" => "compare.gt",
+                    "compare.lt" => "compare.ge",
+                    _ => return Err(format!("a loop test `if (cond) break` that is not a comparison of the counter with a bound: {}", c.to_sexpr())),
+                };
+                c = Tree::new(flipped, c.ty, c.kids.clone());
             }
         }
-        if c.name != "compare.lt" || c.kids.len() != 2 {
-            return Err(format!("a loop test that is not counter < bound: {}", c.to_sexpr()));
-        }
-        let counter = local_name(&c.kids[0].name).filter(|_| c.kids[0].kids.is_empty()).ok_or_else(|| format!("a loop test whose left side is not a local counter: {}", c.kids[0].to_sexpr()))?;
-        let bound = &c.kids[1];
+        // The test normalised to `counter < bound`: `bound > counter`,
+        // `counter <= bound` (bound + 1), `counter + k < bound` and
+        // `counter + k > bound` as `if (...) break` (bound - k, floored).
+        let (counter, bound) = normalise_test(&c).ok_or_else(|| format!("a loop test that is not a counter against a bound: {}", c.to_sexpr()))?;
+        let bound = &bound;
+        let index_ty = ty(self, "u32.index")?;
         let (bound_tree, kind) = if is_leaf(bound, "load.uniform.cfg.m") {
             (Tree::new("bound.m", ty(self, "u32.boundm")?, vec![]), "boundm")
         } else if is_leaf(bound, "load.uniform.cfg.d") {
@@ -744,7 +752,11 @@ impl<'a> Ctx<'a> {
         } else if let Some(v) = literal_value(bound).filter(|v| *v >= 1.0 && *v <= 64.0) {
             (Tree::literal("literal.lit64", ty(self, "u32.lit64")?, v), "lit64")
         } else {
-            return Err(format!("a loop bound that is not cfg.m, cfg.d, cfg.r_rows or a literal at most 64: {}", bound.to_sexpr()));
+            // Any other expression: the bound as written (the complete kingdom,
+            // step 6); the cost estimator values it at the worst shape.
+            let expr = self.value(bound)?;
+            let expr = Tree { ty: index_ty, ..expr };
+            (Tree::new("bound.of_index", ty(self, "u32.boundx")?, vec![expr]), "boundx")
         };
         // The step: the continuing block's store to the counter is counter + s, s a literal in 1..=64.
         let mut step: Option<u32> = None;
@@ -764,10 +776,10 @@ impl<'a> Ctx<'a> {
                         let v = &t.kids[0];
                         let lit = if v.name == "index.add" && v.kids.len() == 2 && v.kids.iter().any(|k| local_name(&k.name).as_deref() == Some(counter.as_str())) { v.kids.iter().find_map(literal_value) } else { None };
                         match lit {
-                            Some(x) if (1.0..=64.0).contains(&x) => step = Some(x as u32),
+                            Some(x) if (1.0..=4096.0).contains(&x) => step = Some(x as u32),
                             _ => {
                                 cpath.pop();
-                                return Err(format!("a loop step that is not counter + a literal in 1..=64: {}", v.to_sexpr()));
+                                return Err(format!("a loop step that is not counter + a literal in 1..=4096: {}", v.to_sexpr()));
                             }
                         }
                     }
@@ -788,7 +800,7 @@ impl<'a> Ctx<'a> {
                     if local_name(&t.name).as_deref() == Some(counter.as_str()) {
                         let v = &t.kids[0];
                         let lit = if v.name == "index.add" && v.kids.len() == 2 && v.kids.iter().any(|k| local_name(&k.name).as_deref() == Some(counter.as_str())) { v.kids.iter().find_map(literal_value) } else { None };
-                        if let Some(x) = lit.filter(|x| (1.0..=64.0).contains(x)) {
+                        if let Some(x) = lit.filter(|x| (1.0..=4096.0).contains(x)) {
                             step = Some(x as u32);
                             last_is_step = true;
                         }
@@ -796,27 +808,46 @@ impl<'a> Ctx<'a> {
                 }
             }
         }
-        let step = step.ok_or_else(|| format!("a loop whose continuing block or last statement does not step its counter {counter} by a literal in 1..=64"))?;
+        let step = step.ok_or_else(|| format!("a loop whose continuing block or last statement does not step its counter {counter} by a literal in 1..=4096"))?;
         // The rung of the body and the loop row.
         // A tile loop's depth is the number of tile counters already in effect;
         // its body is one rung deeper (L0 and L1 both open at L2).
         let depth = [&self.tile_counter, &self.tile_counter2, &self.tile_counter3].iter().filter(|c| c.is_some()).count() as u8 + 1;
         let tile = if step == 1 { "tile" } else { "tile_strided" };
+        // A literal-bounded loop is a tile loop at any rung; an expression-bounded
+        // loop below the top level is a tilex loop (the counter of its depth,
+        // the bound as written); a binding- or expression-bounded loop at the
+        // top level is an item loop. A tile loop's step is at most 64.
+        let tilex = if step == 1 { "tilex" } else { "tilex_strided" };
+        let short = |t: &str, rung: &str| -> Result<String, String> {
+            if step > 64 {
+                return Err(format!("a short loop stepped by {step} (at most 64)"));
+            }
+            Ok(format!("loop.{t}_{rung}"))
+        };
         let (body_rung, row_name, out_rung) = match (kind, rung) {
-            ("lit64", "L0" | "L1") => ("L2".to_string(), format!("loop.{tile}_{rung}"), rung),
-            ("lit64", "L2") => ("L3".to_string(), format!("loop.{tile}_L2"), "L2"),
-            ("lit64", "L3") => ("L4".to_string(), format!("loop.{tile}_L3"), "L3"),
-            ("lit64", "C0") => ("C1".to_string(), format!("loop.{tile}_C0"), "C0"),
-            ("lit64", "C1") => ("C2".to_string(), format!("loop.{tile}_C1"), "C1"),
-            ("lit64", "C2") => ("C3".to_string(), format!("loop.{tile}_C2"), "C2"),
-            ("lit64", "C3") => ("C4".to_string(), format!("loop.{tile}_C3"), "C3"),
+            ("lit64", "L0" | "L1") => ("L2".to_string(), short(tile, rung)?, rung),
+            ("lit64", "L2") => ("L3".to_string(), short(tile, "L2")?, "L2"),
+            ("lit64", "L3") => ("L4".to_string(), short(tile, "L3")?, "L3"),
+            ("lit64", "C0") => ("C1".to_string(), short(tile, "C0")?, "C0"),
+            ("lit64", "C1") => ("C2".to_string(), short(tile, "C1")?, "C1"),
+            ("lit64", "C2") => ("C3".to_string(), short(tile, "C2")?, "C2"),
+            ("lit64", "C3") => ("C4".to_string(), short(tile, "C3")?, "C3"),
             ("lit64", _) => return Err(format!("a tile loop at rung {rung} (too deep)")),
             (b, "L0") if step == 1 => ("L1".to_string(), format!("loop.items_{b}"), "L0"),
             (b, "L0") => ("L1".to_string(), format!("loop.items_strided_{b}"), "L0"),
-            (_, _) => return Err(format!("a long loop at rung {rung} (only at the top level)")),
+            ("boundx", "L1") => ("L2".to_string(), short(tilex, "L1")?, "L1"),
+            ("boundx", "L2") => ("L3".to_string(), short(tilex, "L2")?, "L2"),
+            ("boundx", "L3") => ("L4".to_string(), short(tilex, "L3")?, "L3"),
+            ("boundx", "C0") => ("C1".to_string(), short(tilex, "C0")?, "C0"),
+            ("boundx", "C1") => ("C2".to_string(), short(tilex, "C1")?, "C1"),
+            ("boundx", "C2") => ("C3".to_string(), short(tilex, "C2")?, "C2"),
+            ("boundx", "C3") => ("C4".to_string(), short(tilex, "C3")?, "C3"),
+            ("boundx", _) => return Err(format!("an expression-bounded loop at rung {rung} (too deep)")),
+            (_, _) => return Err(format!("a long loop bounded by a binding at rung {rung} (only at the top level; spell the bound as an expression to nest it)")),
         };
         let _ = cond;
-        if kind == "lit64" && depth > 3 {
+        if (kind == "lit64" || kind == "boundx") && depth > 3 && body_rung != "L1" {
             return Err("a fourth nested tile loop".into());
         }
         let saved = (self.item_counter.clone(), self.tile_counter.clone(), self.tile_counter2.clone(), self.tile_counter3.clone());
@@ -846,10 +877,47 @@ impl<'a> Ctx<'a> {
         let body_stmts = body_stmts?;
         let block = self.block(body_stmts, &body_rung)?;
         let st = self.stmt_ty(out_rung)?;
-        let kids = if step != 1 { vec![bound_tree, Tree::literal("literal.lit64", ty(self, "u32.lit64")?, step as f32), block] } else { vec![bound_tree, block] };
+        let step_lit = if body_rung == "L1" { Tree::literal("literal.lit4096", ty(self, "u32.lit4096")?, step as f32) } else { Tree::literal("literal.lit64", ty(self, "u32.lit64")?, step as f32) };
+        let kids = if step != 1 { vec![bound_tree, step_lit, block] } else { vec![bound_tree, block] };
         Ok(Some(Tree::new(&row_name, st, kids)))
     }
 
+}
+
+/// A loop test as `(counter local, bound tree)`: `c < b`, `b > c`, `c <= b`
+/// (bound + 1), `c + k < b` (bound − k, floored at zero), and under the
+/// reader's negation `c + k > b` has already become `c + k < b`... the
+/// counter is a bare local on one side, possibly plus a literal.
+fn normalise_test(c: &Tree) -> Option<(String, Tree)> {
+    if c.kids.len() != 2 {
+        return None;
+    }
+    let (l, r) = (&c.kids[0], &c.kids[1]);
+    // Orient as `left < right` or `left <= right`.
+    let (lhs, rhs, le) = match c.name.as_str() {
+        "compare.lt" => (l, r, false),
+        "compare.le" => (l, r, true),
+        "compare.gt" => (r, l, false),
+        "compare.ge" => (r, l, true),
+        _ => return None,
+    };
+    let index_ty = lhs.ty;
+    let bound = if le { Tree::new("index.add", index_ty, vec![rhs.clone(), Tree::literal("literal.index", index_ty, 1.0)]) } else { rhs.clone() };
+    // The counter alone.
+    if lhs.kids.is_empty() {
+        return local_name(&lhs.name).map(|c| (c, bound));
+    }
+    // The counter plus a literal: counter < bound - k.
+    if lhs.name == "index.add" && lhs.kids.len() == 2 {
+        for (a, b) in [(&lhs.kids[0], &lhs.kids[1]), (&lhs.kids[1], &lhs.kids[0])] {
+            if a.kids.is_empty() {
+                if let (Some(counter), Some(k)) = (local_name(&a.name), literal_value(b)) {
+                    return Some((counter, Tree::new("index.sub_floor", index_ty, vec![bound, Tree::literal("literal.index", index_ty, k)])));
+                }
+            }
+        }
+    }
+    None
 }
 
 fn stmt_name(s: &Statement) -> &'static str {

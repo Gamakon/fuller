@@ -426,11 +426,29 @@ impl<'a> Renderer<'a> {
                     return Err("a long loop inside a long loop (the safe grammar does not produce this)".into());
                 }
                 let bound = self.value(&kids[0], scope)?;
-                let stride = self.lit(&kids[1], 64)?;
+                let stride = self.lit(&kids[1], 4096)?;
                 scope.in_items = true;
                 let body = self.block(&kids[2], scope);
                 scope.in_items = false;
                 Ok(format!("    for (t = 0u; t < {bound}; t = t + {stride}u) {{\n{}    }}\n", body?))
+            }
+            "loop.tilex_bounded" | "loop.tilex_strided_bounded" => {
+                // (bound expression, [step,] block): for (k = 0u; k < (expr); k = k + step),
+                // the counter of the depth; the bound as written, never capped.
+                let strided = safe_base(&s.name) == "loop.tilex_strided_bounded";
+                n(if strided { 3 } else { 2 })?;
+                let bound = self.value(&kids[0], scope)?;
+                let step = if strided { self.lit(&kids[1], 64)? } else { 1 };
+                let Some(var) = ["k", "k2", "k3"].get(scope.tile_depth) else {
+                    return Err("a fourth nested tile loop (the safe grammar does not produce this)".into());
+                };
+                let was = scope.in_tile;
+                scope.in_tile = true;
+                scope.tile_depth += 1;
+                let body = self.block(&kids[if strided { 2 } else { 1 }], scope);
+                scope.tile_depth -= 1;
+                scope.in_tile = was;
+                Ok(format!("    for ({var} = 0u; {var} < {bound}; {var} = {var} + {step}u) {{\n{}    }}\n", body?))
             }
             "loop.tile_bounded" | "loop.tile_strided_bounded" => {
                 // (lit64, [step,] block): for (k = 0u; k < lit; k = k + step); nested
@@ -653,6 +671,7 @@ impl<'a> Renderer<'a> {
         let a = kids?;
         match safe_base(name) {
             // ---- safeWGSL values ----
+            "bound.of_index" => return Ok(format!("({})", self.value(&v.kids[0], scope)?)),
             "bound.m" => return Ok("cfg.m".into()),
             "bound.d" => return Ok("cfg.d".into()),
             "bound.rows" => return Ok("cfg.r_rows".into()),
@@ -879,6 +898,7 @@ impl<'a> Renderer<'a> {
             "index.shl" => Some(format!("(({}) << (({}) & 31u))", a[0], a[1])),
             "index.shr" => Some(format!("(({}) >> (({}) & 31u))", a[0], a[1])),
             "index.and" => Some(format!("(({}) & ({}))", a[0], a[1])),
+            "index.sub_floor" => Some(format!("select(({0}) - ({1}), 0u, ({1}) > ({0}))", a[0], a[1])),
             "index.or" => Some(format!("(({}) | ({}))", a[0], a[1])),
             "hash.split_lo" => Some(format!("{}.x", a[0])),
             "hash.split_hi" => Some(format!("{}.y", a[0])),
@@ -1019,7 +1039,7 @@ pub fn cost(t: &Tree) -> Cost {
             }
             "loop.items_strided_bounded" => {
                 // (bound, stride, body): the body runs once per `stride` items.
-                let stride = lit(t.kids.get(1), 64.0);
+                let stride = lit(t.kids.get(1), 4096.0);
                 for k in &t.kids {
                     let (b, p) = walk(k, tile, true);
                     per_item += (b + p) / stride;
@@ -1027,6 +1047,18 @@ pub fn cost(t: &Tree) -> Cost {
             }
             "loop.tile" => {
                 let n = t.kids.first().map_or(4.0, |k| if k.name.starts_with("literal.") { f64::from(snap(&WGDIM, k.konst)) } else { f64::from(WGDIM[0]) });
+                for k in &t.kids {
+                    let (b, p) = walk(k, tile * n, in_items);
+                    base += b;
+                    per_item += p;
+                }
+            }
+            "loop.tilex_bounded" | "loop.tilex_strided_bounded" => {
+                // (bound expression, [step,] body): the bound evaluated at the worst
+                // shape (d 8192, m 65536, r_rows 8192; a register unknown: 8192).
+                let count = t.kids.first().map_or(8192.0, worst_bound);
+                let step = if safe_base(&t.name) == "loop.tilex_strided_bounded" { lit(t.kids.get(1), 64.0) } else { 1.0 };
+                let n = (count / step).ceil().max(1.0);
                 for k in &t.kids {
                     let (b, p) = walk(k, tile * n, in_items);
                     base += b;
@@ -1058,6 +1090,39 @@ pub fn cost(t: &Tree) -> Cost {
     Cost { base, per_item }
 }
 
+/// An index expression evaluated at the worst shape the fitness times
+/// (d 8192, m 65536, r_rows 8192, r_off 0), for the cost of a loop it
+/// bounds; a value the estimator cannot see (a register, a load) is 8192.
+/// The result is clamped to [1, 65536].
+pub fn worst_bound(t: &Tree) -> f64 {
+    fn eval(t: &Tree) -> f64 {
+        if t.name.starts_with("literal.") {
+            return if t.konst.is_finite() { f64::from(t.konst).max(0.0) } else { 0.0 };
+        }
+        let k = |i: usize| t.kids.get(i).map_or(8192.0, eval);
+        match safe_base(&t.name) {
+            "load.cfg_d" | "load.cfg_r_rows" | "bound.d" | "bound.rows" => 8192.0,
+            "load.cfg_m" | "bound.m" => 65536.0,
+            "load.cfg_r_off" => 0.0,
+            "bound.of_index" | "index.of_count" | "safe.counter_index" | "safe.tile_index" | "safe.tile_index2" | "safe.tile_index3" => k(0),
+            "index.add" | "count.add" => k(0) + k(1),
+            "index.sub" => (k(0) - k(1)).max(0.0),
+            "index.sub_floor" | "count.sub_floor" => (k(0) - k(1)).max(0.0),
+            "index.mul" => k(0) * k(1),
+            "index.div" | "index.band_of" => k(0) / k(1).max(1.0),
+            "index.mod" => k(1).max(1.0) - 1.0,
+            "index.min" | "count.min" | "index.clamp_to" => k(0).min(k(1)),
+            "index.max" | "count.max" => k(0).max(k(1)),
+            "index.and" => k(0).min(k(1)),
+            "index.or" => k(0).max(k(1)) * 2.0,
+            "index.shl" => k(0) * 2f64.powf(k(1).min(31.0)),
+            "index.shr" => k(0) / 2f64.powf(k(1).min(31.0)),
+            _ => 8192.0,
+        }
+    }
+    eval(t).clamp(1.0, 65536.0)
+}
+
 /// A safeWGSL row name reduced to its renderer case: the rung suffix
 /// (`_L0`, `_C1`, …) stripped, a bound-specific loop (`loop.items_boundm`)
 /// mapped to `loop.items_bounded`, a rung-specific store (`store.h_L1`) to
@@ -1072,6 +1137,8 @@ pub fn safe_base(name: &str) -> &str {
                 "parr.set_f" | "parr.set_v" | "parr.set_i" | "parr.set_b" => "parr.set_safe",
                 "loop.tile" => "loop.tile_bounded",
                 "loop.tile_strided" => "loop.tile_strided_bounded",
+                "loop.tilex" => "loop.tilex_bounded",
+                "loop.tilex_strided" => "loop.tilex_strided_bounded",
                 other => other,
             };
         }

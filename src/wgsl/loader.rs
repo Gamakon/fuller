@@ -627,7 +627,8 @@ mod tests {
     #[test]
     fn the_safe_kingdom_keeps_wgsl_and_pins_its_rules() {
         let (w, s) = (wgsl_duals(), safe_duals());
-        assert_eq!(s.len(), 126);
+        // 126 duals until 2026-10-11; 127 with u32.boundx (the complete kingdom, step 6).
+        assert_eq!(s.len(), 127);
         for (a, b) in w.iter().zip(&s) {
             assert_eq!((a.reference.as_str(), a.dual.as_str()), (b.reference.as_str(), b.dual.as_str()));
         }
@@ -637,7 +638,7 @@ mod tests {
             assert_eq!((a.reference.as_str(), a.name()), (b.reference.as_str(), b.name()));
         }
         // 561 rows until 2026-10-11; 606 with the complete kingdom's registers and arrays (step 6).
-        assert_eq!(fs.rows.len(), 606);
+        assert_eq!(fs.rows.len(), 627);
         let dual = |t: Ty| k.dual(t).unwrap().dual.clone();
         let producers = |d: &str| -> Vec<String> { k.rows.iter().filter(|r| dual(r.output) == d).map(|r| r.name.clone()).collect() };
         assert_eq!(producers("kernel.safe"), vec!["kernel.entry_safe"]);
@@ -666,7 +667,10 @@ mod tests {
         assert_eq!(producers("u32.cell"), vec!["safe.cell_of"]);
         assert_eq!(producers("u32.wgindex"), vec!["safe.wg_of"]);
         assert_eq!(producers("u32.wgvindex"), vec!["safe.wgv_of"]);
-        assert!(k.rows.iter().filter(|r| r.name.starts_with("loop.items_strided")).all(|r| dual(r.inputs[1]) == "u32.lit64"));
+        assert!(k.rows.iter().filter(|r| r.name.starts_with("loop.items_strided")).all(|r| dual(r.inputs[1]) == "u32.lit4096"));
+        // An expression-bounded loop takes the bound dual only `bound.of_index` produces.
+        assert_eq!(producers("u32.boundx"), vec!["bound.of_index"]);
+        assert!(k.rows.iter().filter(|r| r.name.starts_with("loop.tilex_") || r.name.ends_with("_boundx")).all(|r| r.inputs.iter().any(|i| dual(*i) == "u32.boundx")));
     }
 
     #[test]

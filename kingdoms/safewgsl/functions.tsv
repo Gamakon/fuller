@@ -532,13 +532,13 @@ F530	stmt	barrier_L3	composite	-	stmt.L3	0	workgroupBarrier(); never in a condit
 F531	stmt	barrier_L4	composite	-	stmt.L4	0	workgroupBarrier(); never in a conditional context
 F532	loop	items_boundm	composite	u32.boundm block.L1	stmt.L0	2	for (t = 0u; t < bound; t = t + 1u) { ... }: the one long loop
 F533	loop	items_unrolled_boundm	composite	u32.unroll u32.boundm block.L1	stmt.L0	3	arity 3: the body k times, then the remainder
-F534	loop	items_strided_boundm	composite	u32.boundm u32.lit64 block.L1	stmt.L0	3	arity 3: for (t = 0u; t < bound; t = t + stride): a tile of items per iteration, the stride a literal in 1..=64
+F534	loop	items_strided_boundm	composite	u32.boundm u32.lit4096 block.L1	stmt.L0	3	arity 3: for (t = 0u; t < bound; t = t + stride): a tile of items per iteration, the stride a literal in 1..=4096 (64 until 2026-10-11)
 F535	loop	items_boundd	composite	u32.boundd block.L1	stmt.L0	2	for (t = 0u; t < bound; t = t + 1u) { ... }: the one long loop
 F536	loop	items_unrolled_boundd	composite	u32.unroll u32.boundd block.L1	stmt.L0	3	arity 3: the body k times, then the remainder
-F537	loop	items_strided_boundd	composite	u32.boundd u32.lit64 block.L1	stmt.L0	3	arity 3: for (t = 0u; t < bound; t = t + stride): a tile of items per iteration, the stride a literal in 1..=64
+F537	loop	items_strided_boundd	composite	u32.boundd u32.lit4096 block.L1	stmt.L0	3	arity 3: for (t = 0u; t < bound; t = t + stride): a tile of items per iteration, the stride a literal in 1..=4096 (64 until 2026-10-11)
 F538	loop	items_boundrows	composite	u32.boundrows block.L1	stmt.L0	2	for (t = 0u; t < bound; t = t + 1u) { ... }: the one long loop
 F539	loop	items_unrolled_boundrows	composite	u32.unroll u32.boundrows block.L1	stmt.L0	3	arity 3: the body k times, then the remainder
-F540	loop	items_strided_boundrows	composite	u32.boundrows u32.lit64 block.L1	stmt.L0	3	arity 3: for (t = 0u; t < bound; t = t + stride): a tile of items per iteration, the stride a literal in 1..=64
+F540	loop	items_strided_boundrows	composite	u32.boundrows u32.lit4096 block.L1	stmt.L0	3	arity 3: for (t = 0u; t < bound; t = t + stride): a tile of items per iteration, the stride a literal in 1..=4096 (64 until 2026-10-11)
 F541	loop	tile_L0	composite	u32.lit64 block.L2	stmt.L0	2	a short loop (counter k) at the top level
 F542	loop	tile_L1	composite	u32.lit64 block.L2	stmt.L1	2	a short loop (counter k) inside the item loop
 F543	loop	tile_L2	composite	u32.lit64 block.L3	stmt.L2	2	an inner short loop (counter k2) inside a tile loop; nothing produces a loop at L3
@@ -605,3 +605,24 @@ F603	reg	b5	composite	-	reg<bool>.flag	0	a register
 F604	reg	b6	composite	-	reg<bool>.flag	0	a register
 F605	reg	b7	composite	-	reg<bool>.flag	0	a register
 F606	parr	w	composite	-	parr<vec4<f32>>.real	0	private array pw of 16 vec4<f32> (a second vec4 array)
+F607	bound	of_index	composite	u32.index	u32.boundx	1	any index expression as a loop bound
+F608	index	sub_floor	composite	u32.index u32.index	u32.index	2	i - j, floored at zero (a loop test `t + k > m` becomes t < m - k)
+F609	loop	items_boundx	composite	u32.boundx block.L1	stmt.L0	2	for (t = 0u; t < expr; t = t + 1u)
+F610	loop	items_strided_boundx	composite	u32.boundx u32.lit4096 block.L1	stmt.L0	3	arity 3: for (t = 0u; t < expr; t = t + stride)
+F611	loop	items_unrolled_boundx	composite	u32.unroll u32.boundx block.L1	stmt.L0	3	arity 3: the body k times, then the remainder
+F612	loop	tilex_L0	composite	u32.boundx block.L2	stmt.L0	2	a short loop (the counter of its depth) bounded by an expression
+F613	loop	tilex_strided_L0	composite	u32.boundx u32.lit64 block.L2	stmt.L0	3	arity 3: the same, stepped by a literal
+F614	loop	tilex_L1	composite	u32.boundx block.L2	stmt.L1	2	a short loop (the counter of its depth) bounded by an expression
+F615	loop	tilex_strided_L1	composite	u32.boundx u32.lit64 block.L2	stmt.L1	3	arity 3: the same, stepped by a literal
+F616	loop	tilex_L2	composite	u32.boundx block.L3	stmt.L2	2	a short loop (the counter of its depth) bounded by an expression
+F617	loop	tilex_strided_L2	composite	u32.boundx u32.lit64 block.L3	stmt.L2	3	arity 3: the same, stepped by a literal
+F618	loop	tilex_L3	composite	u32.boundx block.L4	stmt.L3	2	a short loop (the counter of its depth) bounded by an expression
+F619	loop	tilex_strided_L3	composite	u32.boundx u32.lit64 block.L4	stmt.L3	3	arity 3: the same, stepped by a literal
+F620	loop	tilex_C0	composite	u32.boundx block.C1	stmt.C0	2	a short loop (the counter of its depth) bounded by an expression
+F621	loop	tilex_strided_C0	composite	u32.boundx u32.lit64 block.C1	stmt.C0	3	arity 3: the same, stepped by a literal
+F622	loop	tilex_C1	composite	u32.boundx block.C2	stmt.C1	2	a short loop (the counter of its depth) bounded by an expression
+F623	loop	tilex_strided_C1	composite	u32.boundx u32.lit64 block.C2	stmt.C1	3	arity 3: the same, stepped by a literal
+F624	loop	tilex_C2	composite	u32.boundx block.C3	stmt.C2	2	a short loop (the counter of its depth) bounded by an expression
+F625	loop	tilex_strided_C2	composite	u32.boundx u32.lit64 block.C3	stmt.C2	3	arity 3: the same, stepped by a literal
+F626	loop	tilex_C3	composite	u32.boundx block.C4	stmt.C3	2	a short loop (the counter of its depth) bounded by an expression
+F627	loop	tilex_strided_C3	composite	u32.boundx u32.lit64 block.C4	stmt.C3	3	arity 3: the same, stepped by a literal
