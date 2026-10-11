@@ -237,6 +237,12 @@ Variation becomes three model-mediated operators plus the head mutation, all thr
    line, the shared structure in words and s-expressions, and the size bound of the layout. The
    model writes one kernel around the shared structure. Proven once: k15 × k07 → feasible, HFF
    0.3245 against the parents' 0.3303 and 0.5196, accuracy of the better parent kept exactly.
+   **Two children a pair** (Andrew, 08:40Z: "crossover is often about the mixing of genes producing
+   surprising outcomes"): two model calls in parallel, one focused on the union (the parents
+   integrated around the shared section, into the row), one removing the union (parent A's
+   processing outside the shared middle kept, the middle reinvented, into the mate's row). Both
+   are checked after read-back: did the union keep the largest section, did the reinvention
+   remove it; both counted in the generation line.
 2. **Repair.** An offspring that scores infeasible goes to a model with its text, its failure detail
    (the first failing case or the compile error), its parents and the contract: "make it correct,
    keep its technique". The repaired text re-enters the gate. Only after the repair budget is spent
