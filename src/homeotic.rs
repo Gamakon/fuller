@@ -157,6 +157,51 @@ fn replace_occurrences(n: &MathNode, pattern: &str, with: &MathNode) -> MathNode
     }
 }
 
+/// The most operators an unfolded chromosome may hold. A tail gene that
+/// reads a later slot twice, whose definition reads a later slot twice, and
+/// so on, doubles at every slot: 48 slots is 2^48 nodes, and the run of
+/// 2026-10-11 02:45Z spent half an hour rendering one such chromosome that
+/// champion mating had assembled from two individuals' tails. The unfold
+/// refuses before any substitution that would pass this bound.
+pub const MAX_UNFOLD_OPS: usize = 1 << 16;
+
+/// Occurrences of the reference `name` in a gene (a leaf match, no rendering).
+fn count_href(n: &MathNode, name: &str) -> usize {
+    match n {
+        MathNode::Var(v) => usize::from(v == name),
+        MathNode::App(_, children) => children.iter().map(|c| count_href(c, name)).sum(),
+        MathNode::Num(_) => 0,
+    }
+}
+
+/// The reference `name` replaced by `with` everywhere in a gene.
+fn replace_href(n: &MathNode, name: &str, with: &MathNode) -> MathNode {
+    match n {
+        MathNode::Var(v) if v == name => with.clone(),
+        MathNode::App(ctor, children) => MathNode::App(ctor.clone(), children.iter().map(|c| replace_href(c, name, with)).collect()),
+        other => other.clone(),
+    }
+}
+
+/// Slot `s`'s definition substituted into every gene that reads it, or the
+/// refusal when the result would pass [`MAX_UNFOLD_OPS`].
+fn substitute_bounded(genes: &mut [&mut MathNode], s: usize, def: &MathNode) -> Result<(), String> {
+    let name = href_name(s);
+    let def_ops = op_count(def) + 1;
+    for g in genes.iter_mut() {
+        let occ = count_href(g, &name);
+        if occ == 0 {
+            continue;
+        }
+        let after = op_count(g) + occ * def_ops;
+        if after > MAX_UNFOLD_OPS {
+            return Err(format!("unfold: slot {s} read {occ} times would grow a gene to {after} operators, past {MAX_UNFOLD_OPS} (a reference chain that multiplies)"));
+        }
+        **g = replace_href(g, &name, def);
+    }
+    Ok(())
+}
+
 pub(crate) fn hrefs_in(n: &MathNode, out: &mut Vec<usize>) {
     match n {
         MathNode::Var(name) => {
@@ -233,11 +278,10 @@ pub fn unfold(folded: &FoldedChromosome) -> Result<Vec<String>, String> {
     let mut tail: Vec<MathNode> = folded.tail.iter().map(|g| parse_math(g)).collect::<Result<_, _>>()?;
     let mut head: Vec<MathNode> = folded.head.iter().map(|g| parse_math(g)).collect::<Result<_, _>>()?;
     for s in (0..tail.len()).rev() {
-        let pattern = render(&MathNode::Var(href_name(s)));
         let def = tail[s].clone();
-        for g in head.iter_mut().chain(tail[..s].iter_mut()) {
-            *g = replace_occurrences(g, &pattern, &def);
-        }
+        let (before, _) = tail.split_at_mut(s);
+        let mut genes: Vec<&mut MathNode> = head.iter_mut().chain(before.iter_mut()).collect();
+        substitute_bounded(&mut genes, s, &def)?;
     }
     Ok(head.iter().map(render).collect())
 }
@@ -254,10 +298,11 @@ pub fn unfold_slot(folded: &FoldedChromosome, s: usize) -> Result<FoldedChromoso
     if s >= tail.len() {
         return Err(format!("unfold_slot: slot {s} of {}", tail.len()));
     }
-    let pattern = render(&MathNode::Var(href_name(s)));
     let def = tail[s].clone();
-    for g in head.iter_mut().chain(tail[..s].iter_mut()) {
-        *g = replace_occurrences(g, &pattern, &def);
+    {
+        let (before, _) = tail.split_at_mut(s);
+        let mut genes: Vec<&mut MathNode> = head.iter_mut().chain(before.iter_mut()).collect();
+        substitute_bounded(&mut genes, s, &def)?;
     }
     tail[s] = parse_math(EMPTY_SLOT)?;
     let filled = tail.iter().filter(|g| render(g) != EMPTY_SLOT).count();
@@ -319,6 +364,24 @@ fn encode_with(folded: &FoldedChromosome, pset: &PsetSpec, rng_seed: u64, head_l
 
 #[cfg(test)]
 mod tests {
+    /// A chain of tail genes, each reading the next slot twice, doubles at
+    /// every slot: the unfold refuses it at once instead of building 2^40
+    /// nodes; the same chain cut to a few slots unfolds.
+    #[test]
+    fn an_unfold_that_multiplies_is_refused() {
+        let chain = |slots: usize| super::FoldedChromosome {
+            head: vec![format!("(Add (Var \"{0}\") (Var \"{0}\"))", super::href_name(0))],
+            tail: (0..slots).map(|s| if s + 1 < slots { format!("(Add (Var \"{0}\") (Var \"{0}\"))", super::href_name(s + 1)) } else { "(Var \"x\")".to_string() }).collect(),
+            filled: slots,
+            skipped: 0,
+        };
+        let small = super::unfold(&chain(4)).expect("four doublings unfold");
+        assert_eq!(small.len(), 1);
+        assert_eq!(small[0].matches("(Var \"x\")").count(), 16);
+        let err = super::unfold(&chain(40)).expect_err("forty doublings are refused");
+        assert!(err.contains("reference chain"), "{err}");
+    }
+
     use super::{canonical, encode, fold, href_name, href_slot, pset_with_hrefs, unfold, FoldOptions, EMPTY_SLOT};
     use crate::extract::{maximal_shared, maximal_shared_saturated, Match};
     use crate::karva::{karva_to_terms, FunctionSpec, PsetSpec};
