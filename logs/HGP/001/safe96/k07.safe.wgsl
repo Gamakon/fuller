@@ -7,7 +7,6 @@ var<workgroup> wg_a: array<f32, 2048>;
 var<workgroup> wg_b: array<f32, 2048>;
 var<workgroup> wg_va: array<vec4<f32>, 512>;
 var<workgroup> wg_vb: array<vec4<f32>, 512>;
-fn lit_u32(x: u32) -> u32 { return x; }
 @compute @workgroup_size(16, 16, 1)
 fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_index) lidx: u32, @builtin(num_workgroups) nwg: vec3<u32>) {
     var f0: f32 = 0.0; var f1: f32 = 0.0; var f2: f32 = 0.0; var f3: f32 = 0.0; var f4: f32 = 0.0; var f5: f32 = 0.0; var f6: f32 = 0.0; var f7: f32 = 0.0; 
@@ -34,7 +33,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation
     var b8: bool = false; var b9: bool = false; var b10: bool = false; var b11: bool = false; var b12: bool = false; var b13: bool = false; var b14: bool = false; var b15: bool = false; 
     var t: u32 = 0u; var k: u32 = 0u; var k2: u32 = 0u; var k3: u32 = 0u; var k4: u32 = 0u;
     var pa: array<f32, 64>; var pb: array<f32, 64>; var pc: array<f32, 64>; var pd: array<f32, 64>; var pe: array<f32, 64>; var pf: array<f32, 64>;
-    var pv: array<vec4<f32>, 16>; var pw: array<vec4<f32>, 16>; var pi: array<u32, 16>; var pj: array<u32, 16>; var pk: array<u32, 16>; var pm: array<bool, 16>; var pn: array<bool, 16>;
+    var pv: array<vec4<f32>, 16>; var pw: array<vec4<f32>, 16>; var px: array<vec4<f32>, 16>; var py: array<vec4<f32>, 16>; var pi: array<u32, 16>; var pj: array<u32, 16>; var pk: array<u32, 16>; var pm: array<bool, 16>; var pn: array<bool, 16>;
     for (k = 0u; k < 16u; k = k + 1u) {
     pa[((k) & 63u)] = 0.0f;
     }
@@ -57,22 +56,22 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation
     workgroupBarrier();
     i1 = 0u;
     for (k = 0u; k < 16u; k = k + 1u) {
-    pa[((lit_u32(0u)) & 63u)] = (pa[((lit_u32(0u)) & 63u)] + (wg_a[((((k * 64u) + lid.y)) & 2047u)] * wg_b[((((k * 64u) + lid.x)) & 2047u)]));
-    pa[((lit_u32(1u)) & 63u)] = (pa[((lit_u32(1u)) & 63u)] + (wg_a[((((k * 64u) + lid.y)) & 2047u)] * wg_b[(((((k * 64u) + lid.x) + 16u)) & 2047u)]));
-    pa[((lit_u32(2u)) & 63u)] = (pa[((lit_u32(2u)) & 63u)] + (wg_a[((((k * 64u) + lid.y)) & 2047u)] * wg_b[(((((k * 64u) + lid.x) + 32u)) & 2047u)]));
-    pa[((lit_u32(3u)) & 63u)] = (pa[((lit_u32(3u)) & 63u)] + (wg_a[((((k * 64u) + lid.y)) & 2047u)] * wg_b[(((((k * 64u) + lid.x) + 48u)) & 2047u)]));
-    pa[((lit_u32(4u)) & 63u)] = (pa[((lit_u32(4u)) & 63u)] + (wg_a[(((((k * 64u) + lid.y) + 16u)) & 2047u)] * wg_b[((((k * 64u) + lid.x)) & 2047u)]));
-    pa[((lit_u32(5u)) & 63u)] = (pa[((lit_u32(5u)) & 63u)] + (wg_a[(((((k * 64u) + lid.y) + 16u)) & 2047u)] * wg_b[(((((k * 64u) + lid.x) + 16u)) & 2047u)]));
-    pa[((lit_u32(6u)) & 63u)] = (pa[((lit_u32(6u)) & 63u)] + (wg_a[(((((k * 64u) + lid.y) + 16u)) & 2047u)] * wg_b[(((((k * 64u) + lid.x) + 32u)) & 2047u)]));
-    pa[((lit_u32(7u)) & 63u)] = (pa[((lit_u32(7u)) & 63u)] + (wg_a[(((((k * 64u) + lid.y) + 16u)) & 2047u)] * wg_b[(((((k * 64u) + lid.x) + 48u)) & 2047u)]));
-    pa[((lit_u32(8u)) & 63u)] = (pa[((lit_u32(8u)) & 63u)] + (wg_a[(((((k * 64u) + lid.y) + 32u)) & 2047u)] * wg_b[((((k * 64u) + lid.x)) & 2047u)]));
-    pa[((lit_u32(9u)) & 63u)] = (pa[((lit_u32(9u)) & 63u)] + (wg_a[(((((k * 64u) + lid.y) + 32u)) & 2047u)] * wg_b[(((((k * 64u) + lid.x) + 16u)) & 2047u)]));
-    pa[((lit_u32(10u)) & 63u)] = (pa[((lit_u32(10u)) & 63u)] + (wg_a[(((((k * 64u) + lid.y) + 32u)) & 2047u)] * wg_b[(((((k * 64u) + lid.x) + 32u)) & 2047u)]));
-    pa[((lit_u32(11u)) & 63u)] = (pa[((lit_u32(11u)) & 63u)] + (wg_a[(((((k * 64u) + lid.y) + 32u)) & 2047u)] * wg_b[(((((k * 64u) + lid.x) + 48u)) & 2047u)]));
-    pa[((lit_u32(12u)) & 63u)] = (pa[((lit_u32(12u)) & 63u)] + (wg_a[(((((k * 64u) + lid.y) + 48u)) & 2047u)] * wg_b[((((k * 64u) + lid.x)) & 2047u)]));
-    pa[((lit_u32(13u)) & 63u)] = (pa[((lit_u32(13u)) & 63u)] + (wg_a[(((((k * 64u) + lid.y) + 48u)) & 2047u)] * wg_b[(((((k * 64u) + lid.x) + 16u)) & 2047u)]));
-    pa[((lit_u32(14u)) & 63u)] = (pa[((lit_u32(14u)) & 63u)] + (wg_a[(((((k * 64u) + lid.y) + 48u)) & 2047u)] * wg_b[(((((k * 64u) + lid.x) + 32u)) & 2047u)]));
-    pa[((lit_u32(15u)) & 63u)] = (pa[((lit_u32(15u)) & 63u)] + (wg_a[(((((k * 64u) + lid.y) + 48u)) & 2047u)] * wg_b[(((((k * 64u) + lid.x) + 48u)) & 2047u)]));
+    pa[0u] = (pa[0u] + (wg_a[((((k * 64u) + lid.y)) & 2047u)] * wg_b[((((k * 64u) + lid.x)) & 2047u)]));
+    pa[1u] = (pa[1u] + (wg_a[((((k * 64u) + lid.y)) & 2047u)] * wg_b[(((((k * 64u) + lid.x) + 16u)) & 2047u)]));
+    pa[2u] = (pa[2u] + (wg_a[((((k * 64u) + lid.y)) & 2047u)] * wg_b[(((((k * 64u) + lid.x) + 32u)) & 2047u)]));
+    pa[3u] = (pa[3u] + (wg_a[((((k * 64u) + lid.y)) & 2047u)] * wg_b[(((((k * 64u) + lid.x) + 48u)) & 2047u)]));
+    pa[4u] = (pa[4u] + (wg_a[(((((k * 64u) + lid.y) + 16u)) & 2047u)] * wg_b[((((k * 64u) + lid.x)) & 2047u)]));
+    pa[5u] = (pa[5u] + (wg_a[(((((k * 64u) + lid.y) + 16u)) & 2047u)] * wg_b[(((((k * 64u) + lid.x) + 16u)) & 2047u)]));
+    pa[6u] = (pa[6u] + (wg_a[(((((k * 64u) + lid.y) + 16u)) & 2047u)] * wg_b[(((((k * 64u) + lid.x) + 32u)) & 2047u)]));
+    pa[7u] = (pa[7u] + (wg_a[(((((k * 64u) + lid.y) + 16u)) & 2047u)] * wg_b[(((((k * 64u) + lid.x) + 48u)) & 2047u)]));
+    pa[8u] = (pa[8u] + (wg_a[(((((k * 64u) + lid.y) + 32u)) & 2047u)] * wg_b[((((k * 64u) + lid.x)) & 2047u)]));
+    pa[9u] = (pa[9u] + (wg_a[(((((k * 64u) + lid.y) + 32u)) & 2047u)] * wg_b[(((((k * 64u) + lid.x) + 16u)) & 2047u)]));
+    pa[10u] = (pa[10u] + (wg_a[(((((k * 64u) + lid.y) + 32u)) & 2047u)] * wg_b[(((((k * 64u) + lid.x) + 32u)) & 2047u)]));
+    pa[11u] = (pa[11u] + (wg_a[(((((k * 64u) + lid.y) + 32u)) & 2047u)] * wg_b[(((((k * 64u) + lid.x) + 48u)) & 2047u)]));
+    pa[12u] = (pa[12u] + (wg_a[(((((k * 64u) + lid.y) + 48u)) & 2047u)] * wg_b[((((k * 64u) + lid.x)) & 2047u)]));
+    pa[13u] = (pa[13u] + (wg_a[(((((k * 64u) + lid.y) + 48u)) & 2047u)] * wg_b[(((((k * 64u) + lid.x) + 16u)) & 2047u)]));
+    pa[14u] = (pa[14u] + (wg_a[(((((k * 64u) + lid.y) + 48u)) & 2047u)] * wg_b[(((((k * 64u) + lid.x) + 32u)) & 2047u)]));
+    pa[15u] = (pa[15u] + (wg_a[(((((k * 64u) + lid.y) + 48u)) & 2047u)] * wg_b[(((((k * 64u) + lid.x) + 48u)) & 2047u)]));
     }
     workgroupBarrier();
     }

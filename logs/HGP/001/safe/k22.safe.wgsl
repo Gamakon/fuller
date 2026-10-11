@@ -7,7 +7,6 @@ var<workgroup> wg_a: array<f32, 2048>;
 var<workgroup> wg_b: array<f32, 2048>;
 var<workgroup> wg_va: array<vec4<f32>, 512>;
 var<workgroup> wg_vb: array<vec4<f32>, 512>;
-fn lit_u32(x: u32) -> u32 { return x; }
 @compute @workgroup_size(8, 8, 1)
 fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_index) lidx: u32, @builtin(num_workgroups) nwg: vec3<u32>) {
     var f0: f32 = 0.0; var f1: f32 = 0.0; var f2: f32 = 0.0; var f3: f32 = 0.0; var f4: f32 = 0.0; var f5: f32 = 0.0; var f6: f32 = 0.0; var f7: f32 = 0.0; 
@@ -34,7 +33,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation
     var b8: bool = false; var b9: bool = false; var b10: bool = false; var b11: bool = false; var b12: bool = false; var b13: bool = false; var b14: bool = false; var b15: bool = false; 
     var t: u32 = 0u; var k: u32 = 0u; var k2: u32 = 0u; var k3: u32 = 0u; var k4: u32 = 0u;
     var pa: array<f32, 64>; var pb: array<f32, 64>; var pc: array<f32, 64>; var pd: array<f32, 64>; var pe: array<f32, 64>; var pf: array<f32, 64>;
-    var pv: array<vec4<f32>, 16>; var pw: array<vec4<f32>, 16>; var pi: array<u32, 16>; var pj: array<u32, 16>; var pk: array<u32, 16>; var pm: array<bool, 16>; var pn: array<bool, 16>;
+    var pv: array<vec4<f32>, 16>; var pw: array<vec4<f32>, 16>; var px: array<vec4<f32>, 16>; var py: array<vec4<f32>, 16>; var pi: array<u32, 16>; var pj: array<u32, 16>; var pk: array<u32, 16>; var pm: array<bool, 16>; var pn: array<bool, 16>;
     for (k = 0u; k < 4u; k = k + 1u) {
     pv[((k) & 15u)] = vec4<f32>(0.0f);
     }
@@ -57,10 +56,10 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation
     workgroupBarrier();
     i1 = 0u;
     for (k = 0u; k < 16u; k = k + 1u) {
-    pv[((lit_u32(0u)) & 15u)] = (pv[((lit_u32(0u)) & 15u)] + (vec4<f32>(wg_b[((((k * 32u) + (lid.y * 4u))) & 2047u)]) * vec4<f32>(vec3<f32>(vec2<f32>(wg_a[((((k * 32u) + (lid.x * 4u))) & 2047u)], wg_a[(((((k * 32u) + (lid.x * 4u)) + 1u)) & 2047u)]), wg_a[(((((k * 32u) + (lid.x * 4u)) + 2u)) & 2047u)]), wg_a[(((((k * 32u) + (lid.x * 4u)) + 3u)) & 2047u)])));
-    pv[((lit_u32(1u)) & 15u)] = (pv[((lit_u32(1u)) & 15u)] + (vec4<f32>(wg_b[(((((k * 32u) + (lid.y * 4u)) + 1u)) & 2047u)]) * vec4<f32>(vec3<f32>(vec2<f32>(wg_a[((((k * 32u) + (lid.x * 4u))) & 2047u)], wg_a[(((((k * 32u) + (lid.x * 4u)) + 1u)) & 2047u)]), wg_a[(((((k * 32u) + (lid.x * 4u)) + 2u)) & 2047u)]), wg_a[(((((k * 32u) + (lid.x * 4u)) + 3u)) & 2047u)])));
-    pv[((lit_u32(2u)) & 15u)] = (pv[((lit_u32(2u)) & 15u)] + (vec4<f32>(wg_b[(((((k * 32u) + (lid.y * 4u)) + 2u)) & 2047u)]) * vec4<f32>(vec3<f32>(vec2<f32>(wg_a[((((k * 32u) + (lid.x * 4u))) & 2047u)], wg_a[(((((k * 32u) + (lid.x * 4u)) + 1u)) & 2047u)]), wg_a[(((((k * 32u) + (lid.x * 4u)) + 2u)) & 2047u)]), wg_a[(((((k * 32u) + (lid.x * 4u)) + 3u)) & 2047u)])));
-    pv[((lit_u32(3u)) & 15u)] = (pv[((lit_u32(3u)) & 15u)] + (vec4<f32>(wg_b[(((((k * 32u) + (lid.y * 4u)) + 3u)) & 2047u)]) * vec4<f32>(vec3<f32>(vec2<f32>(wg_a[((((k * 32u) + (lid.x * 4u))) & 2047u)], wg_a[(((((k * 32u) + (lid.x * 4u)) + 1u)) & 2047u)]), wg_a[(((((k * 32u) + (lid.x * 4u)) + 2u)) & 2047u)]), wg_a[(((((k * 32u) + (lid.x * 4u)) + 3u)) & 2047u)])));
+    pv[0u] = (pv[0u] + (vec4<f32>(wg_b[((((k * 32u) + (lid.y * 4u))) & 2047u)]) * vec4<f32>(vec3<f32>(vec2<f32>(wg_a[((((k * 32u) + (lid.x * 4u))) & 2047u)], wg_a[(((((k * 32u) + (lid.x * 4u)) + 1u)) & 2047u)]), wg_a[(((((k * 32u) + (lid.x * 4u)) + 2u)) & 2047u)]), wg_a[(((((k * 32u) + (lid.x * 4u)) + 3u)) & 2047u)])));
+    pv[1u] = (pv[1u] + (vec4<f32>(wg_b[(((((k * 32u) + (lid.y * 4u)) + 1u)) & 2047u)]) * vec4<f32>(vec3<f32>(vec2<f32>(wg_a[((((k * 32u) + (lid.x * 4u))) & 2047u)], wg_a[(((((k * 32u) + (lid.x * 4u)) + 1u)) & 2047u)]), wg_a[(((((k * 32u) + (lid.x * 4u)) + 2u)) & 2047u)]), wg_a[(((((k * 32u) + (lid.x * 4u)) + 3u)) & 2047u)])));
+    pv[2u] = (pv[2u] + (vec4<f32>(wg_b[(((((k * 32u) + (lid.y * 4u)) + 2u)) & 2047u)]) * vec4<f32>(vec3<f32>(vec2<f32>(wg_a[((((k * 32u) + (lid.x * 4u))) & 2047u)], wg_a[(((((k * 32u) + (lid.x * 4u)) + 1u)) & 2047u)]), wg_a[(((((k * 32u) + (lid.x * 4u)) + 2u)) & 2047u)]), wg_a[(((((k * 32u) + (lid.x * 4u)) + 3u)) & 2047u)])));
+    pv[3u] = (pv[3u] + (vec4<f32>(wg_b[(((((k * 32u) + (lid.y * 4u)) + 3u)) & 2047u)]) * vec4<f32>(vec3<f32>(vec2<f32>(wg_a[((((k * 32u) + (lid.x * 4u))) & 2047u)], wg_a[(((((k * 32u) + (lid.x * 4u)) + 1u)) & 2047u)]), wg_a[(((((k * 32u) + (lid.x * 4u)) + 2u)) & 2047u)]), wg_a[(((((k * 32u) + (lid.x * 4u)) + 3u)) & 2047u)])));
     }
     workgroupBarrier();
     }
