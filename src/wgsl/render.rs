@@ -248,6 +248,16 @@ struct Scope {
     returned: bool,
     helpers: Vec<String>,
     masked: Vec<String>,
+    /// Inside an arithmetic subtree whose leaves are all literals: every
+    /// literal passes through `lit_*` so naga's constant evaluator never
+    /// sees a literal-only operation (`1u / 0u`, `1u - 2u`, `1u << 40u`,
+    /// `asin(1.4)` are refused at validation; on the device they are values
+    /// the criterion judges; a nested literal-only operation is evaluated on
+    /// its own, so one wrapped leaf is not enough). Everywhere else a
+    /// literal is written plainly, so the text a model is shown reads as
+    /// ordinary WGSL (run A: two replies copied the wrapped style and lost
+    /// a brace).
+    const_depth: usize,
 }
 
 impl<'a> Renderer<'a> {
@@ -266,7 +276,7 @@ impl<'a> Renderer<'a> {
         if d.dual != "kernel.kernel" && d.dual != "kernel.safe" {
             return Err(format!("the root is {} ({}), not kernel.kernel or kernel.safe", root.name, d.dual));
         }
-        let mut scope = Scope { in_items: false, in_tile: false, tile_depth: 0, grid: Grid { x: 16, y: 16, bx: 1, by: 1 }, in_cond: 0, returned: false, helpers: Vec::new(), masked: Vec::new() };
+        let mut scope = Scope { in_items: false, in_tile: false, tile_depth: 0, grid: Grid { x: 16, y: 16, bx: 1, by: 1 }, in_cond: 0, returned: false, helpers: Vec::new(), masked: Vec::new(), const_depth: 0 };
         let (grid, body) = match root.name.as_str() {
             "kernel.entry" | "kernel.entry_safe" => {
                 let [g, b] = root.kids.as_slice() else { return Err(format!("{} with {} children", root.name, root.kids.len())) };
@@ -284,11 +294,13 @@ impl<'a> Renderer<'a> {
         text.push_str(&self.role.prologue);
         text.push('\n');
         text.push_str(&format!("var<workgroup> wg_a: array<f32, {WGMEM_LEN}>;\nvar<workgroup> wg_b: array<f32, {WGMEM_LEN}>;\nvar<workgroup> wg_va: array<vec4<f32>, {WGVEC_LEN}>;\nvar<workgroup> wg_vb: array<vec4<f32>, {WGVEC_LEN}>;\n"));
-        // Literals pass through these so naga's constant evaluator never sees
-        // a literal-only expression: a NaN, a division or a remainder by a
-        // literal zero would otherwise be refused at validation, while on the
-        // device they are values the criterion judges.
-        text.push_str("fn lit_f32(x: f32) -> f32 { return x; }\nfn lit_u32(x: u32) -> u32 { return x; }\nfn lit_i32(x: i32) -> i32 { return x; }\n");
+        // The pass-through functions a literal-only expression needs (see
+        // `Scope::const_depth`), declared only when the body uses them.
+        for (name, ty) in [("lit_f32", "f32"), ("lit_u32", "u32"), ("lit_i32", "i32")] {
+            if body.contains(&format!("{name}(")) {
+                text.push_str(&format!("fn {name}(x: {ty}) -> {ty} {{ return x; }}\n"));
+            }
+        }
         scope.helpers.sort();
         scope.helpers.dedup();
         for h in &scope.helpers {
@@ -348,7 +360,10 @@ impl<'a> Renderer<'a> {
             "block.one" | "block.seq2" | "block.seq3" | "block.seq4" => {
                 let mut out = String::new();
                 for k in &b.kids {
-                    let (text, terminated) = self.stmt_t(k, scope)?;
+                    // A nested block's statements are written in place: every
+                    // declaration is at the top of the kernel, so `{ }` would
+                    // scope nothing, and the braces misled a model (run A).
+                    let (text, terminated) = if safe_base(&k.name) == "stmt.block" && k.kids.len() == 1 { self.block_t(&k.kids[0], scope)? } else { self.stmt_t(k, scope)? };
                     out.push_str(&text);
                     if terminated {
                         return Ok((out, true));
@@ -364,10 +379,7 @@ impl<'a> Renderer<'a> {
         let kids = s.kids.as_slice();
         match safe_base(&s.name) {
             "stmt.return" => Ok((self.stmt(s, scope)?, true)),
-            "stmt.block" if kids.len() == 1 => {
-                let (b, t) = self.block_t(&kids[0], scope)?;
-                Ok((format!("    {{\n{b}    }}\n"), t))
-            }
+            "stmt.block" if kids.len() == 1 => self.block_t(&kids[0], scope),
             "stmt.if_else" if kids.len() == 3 => {
                 let c = self.value(&kids[0], scope)?;
                 scope.in_cond += 1;
@@ -678,13 +690,25 @@ impl<'a> Renderer<'a> {
 
     /// A value expression, parenthesised where an operator could bind.
     fn value(&self, v: &Tree, scope: &mut Scope) -> Result<String, String> {
+        if scope.const_depth == 0 && !v.kids.is_empty() && const_fragile(&v.name) && literal_only(v) {
+            scope.const_depth = 1;
+            let out = self.value_inner(v, scope);
+            scope.const_depth = 0;
+            return out;
+        }
+        self.value_inner(v, scope)
+    }
+
+    fn value_inner(&self, v: &Tree, scope: &mut Scope) -> Result<String, String> {
         let d = self.dual(v.ty)?;
         let name = v.name.as_str();
+        // The leaves of a literal-only operation pass through `lit_*`.
+        let wrap = scope.const_depth > 0;
         if name == "fallback" {
-            return self.fallback_value(d);
+            return self.fallback_value(d, wrap);
         }
         if let Some(form) = name.strip_prefix("literal.") {
-            return self.literal(form, v.konst, d);
+            return self.literal(form, v.konst, d, wrap);
         }
         if let Some(p) = self.per_kernel.get(name) {
             return self.fill(p, v, scope);
@@ -780,6 +804,13 @@ impl<'a> Renderer<'a> {
         }
         if name == "wg.a" || name == "wg.b" {
             return Err(format!("{name} is a workgroup array, not a value (a row took wgmem as a value input)"));
+        }
+        // `m & ~(k - 1)` as a rounding down to a multiple of a literal k: no
+        // zero guard, so the text stays plain (`cfg.m - cfg.m % 4u`).
+        if name == "index.round_down" && a.len() == 2 {
+            if let Some(k) = v.kids.get(1).filter(|k| k.name.starts_with("literal.") && k.konst >= 1.0) {
+                return Ok(format!("(({0}) - (({0}) % {1}u))", a[0], k.konst as u32));
+            }
         }
         // A run-time vector component: a helper copies the value into a `var`
         // and indexes it, which naga allows; the index is masked to the lanes.
@@ -992,7 +1023,8 @@ impl<'a> Renderer<'a> {
         Ok(format!("{helper}({})", a.join(", ")))
     }
 
-    fn literal(&self, form: &str, v: f32, d: &WgslDual) -> Result<String, String> {
+    fn literal(&self, form: &str, v: f32, d: &WgslDual, wrap: bool) -> Result<String, String> {
+        let u = |x: u32| if wrap { format!("lit_u32({x}u)") } else { format!("{x}u") };
         let scalar = match form {
             "real" => {
                 if !v.is_finite() {
@@ -1001,15 +1033,18 @@ impl<'a> Renderer<'a> {
                 if d.scalar() == Some("f16") {
                     return Err("literal.real over f16: the prologue does not enable f16".into());
                 }
-                format!("lit_f32({v:?}f)")
+                if wrap { format!("lit_f32({v:?}f)") } else { format!("{v:?}f") }
             }
-            "index" | "count" | "bits" | "hash32" | "code4" | "code8" | "code16" | "code1024" => format!("lit_u32({}u)", if v.is_finite() { v.clamp(0.0, 4_294_967_040.0) as u32 } else { 0 }),
-            "wgdim" => format!("lit_u32({}u)", snap(&WGDIM, v)),
-            "lit64" => format!("lit_u32({}u)", if v.is_finite() { (v.round() as i64).clamp(1, 64) } else { 1 }),
-            "lit4096" => format!("lit_u32({}u)", if v.is_finite() { (v.round() as i64).clamp(1, 4096) } else { 1 }),
-            "blk" => format!("lit_u32({}u)", snap(&BLK, v)),
-            "unroll" => format!("lit_u32({}u)", snap(&UNROLL, v)),
-            "int" | "q15_16" => format!("lit_i32({})", v.clamp(-2_147_483_648.0, 2_147_483_520.0) as i32),
+            "index" | "count" | "bits" | "hash32" | "code4" | "code8" | "code16" | "code1024" => u(if v.is_finite() { v.clamp(0.0, 4_294_967_040.0) as u32 } else { 0 }),
+            "wgdim" => u(snap(&WGDIM, v)),
+            "lit64" => u(if v.is_finite() { (v.round() as i64).clamp(1, 64) as u32 } else { 1 }),
+            "lit4096" => u(if v.is_finite() { (v.round() as i64).clamp(1, 4096) as u32 } else { 1 }),
+            "blk" => u(snap(&BLK, v)),
+            "unroll" => u(snap(&UNROLL, v)),
+            "int" | "q15_16" => {
+                let x = v.clamp(-2_147_483_648.0, 2_147_483_520.0) as i32;
+                if wrap { format!("lit_i32({x})") } else { format!("{x}") }
+            }
             "flag" | "sign" => (v != 0.0).to_string(),
             other => return Err(format!("literal.{other} has no text")),
         };
@@ -1019,20 +1054,21 @@ impl<'a> Renderer<'a> {
         Ok(scalar)
     }
 
-    fn fallback_value(&self, d: &WgslDual) -> Result<String, String> {
+    fn fallback_value(&self, d: &WgslDual, wrap: bool) -> Result<String, String> {
         if d.is_statement_level() {
             return Err(format!("a {} fallback where a value is needed", d.dual));
         }
         // The zero-value constructor for a vector or matrix; a scalar through
-        // lit_* so naga folds nothing.
+        // lit_* only inside a literal-only expression.
+        let f = |x: String, lit: &str| if wrap { format!("{lit}({x})") } else { x };
         if d.slot.starts_with("vec") || d.slot.starts_with("mat") {
             if d.scalar() == Some("f16") {
                 return Err("f16 fallback: the prologue does not enable f16".into());
             }
             let lane = match d.scalar() {
-                Some("f32") => "lit_f32(0.0f)".to_string(),
-                Some("i32") => "lit_i32(0)".to_string(),
-                Some("u32") => format!("lit_u32({}u)", d.fallback_bits),
+                Some("f32") => f("0.0f".to_string(), "lit_f32"),
+                Some("i32") => f("0".to_string(), "lit_i32"),
+                Some("u32") => f(format!("{}u", d.fallback_bits), "lit_u32"),
                 Some("bool") => (d.fallback_bits != 0).to_string(),
                 _ => return Err(format!("{}: no value fallback", d.dual)),
             };
@@ -1043,10 +1079,10 @@ impl<'a> Renderer<'a> {
             return Ok(format!("{}({lane})", slot_ctor(&d.slot)?));
         }
         Ok(match d.scalar() {
-            Some("f32") => "lit_f32(0.0f)".to_string(),
+            Some("f32") => f("0.0f".to_string(), "lit_f32"),
             Some("f16") => return Err("f16 fallback: the prologue does not enable f16".into()),
-            Some("i32") => "lit_i32(0)".to_string(),
-            Some("u32") => format!("lit_u32({}u)", d.fallback_bits),
+            Some("i32") => f("0".to_string(), "lit_i32"),
+            Some("u32") => f(format!("{}u", d.fallback_bits), "lit_u32"),
             Some("bool") => (d.fallback_bits != 0).to_string(),
             _ => return Err(format!("{}: no value fallback", d.dual)),
         })
@@ -1244,6 +1280,23 @@ impl Renderer<'_> {
         }
         parr_name(t)
     }
+}
+
+/// Whether a row is an operation naga's constant evaluator can refuse on
+/// literal operands (arithmetic, conversions, bit operations, hashes), or
+/// an array index naga would bounds-check as a constant (the `safe.` masks:
+/// a random kernel may mask a literal 22 to 63 on an array of 16), as
+/// opposed to a compose, a select or a comparison.
+fn const_fragile(name: &str) -> bool {
+    ["arith.", "trig.", "geom.", "index.", "count.", "int.", "fixed.", "convert.", "quantise.", "bits.", "hash.", "safe."].iter().any(|p| name.starts_with(p))
+}
+
+/// Whether every leaf of `t` is a literal or a fallback (a constant expression to naga).
+fn literal_only(t: &Tree) -> bool {
+    if t.kids.is_empty() {
+        return t.name.starts_with("literal.") || t.name == "fallback";
+    }
+    t.kids.iter().all(literal_only)
 }
 
 /// A register's WGSL variable name: `f3`, `v0`, `i12`, `b1`; `f16`, `f32`
@@ -1597,7 +1650,7 @@ mod tests {
                 assert!(out.text.contains("i32r = i63;"), "{}", out.text);
             }
             if name == "wg.set_v_lane" {
-                assert!(out.text.contains("wg_va[((lit_u32(3u)) & 511u)][(lit_u32(2u)) & 3u] = wg_vb[((lit_u32(5u)) & 511u)][(lit_u32(1u)) & 3u];"), "{}", out.text);
+                assert!(out.text.contains("wg_va[((lit_u32(3u)) & 511u)][(2u) & 3u] = wg_vb[((lit_u32(5u)) & 511u)][(1u) & 3u];"), "{}", out.text);
             }
         }
         assert_eq!(register_var("i", 32), "i32r");

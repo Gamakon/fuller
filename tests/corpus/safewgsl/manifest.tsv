@@ -32,14 +32,14 @@ k30	reads	reads	a Sonnet draft of generation 0 (2026-10-10)
 k31	reads	reads	a Sonnet draft of generation 0 (2026-10-10)
 reply_g001_r2p1_opus	reads	reads	a model kernel of the smoke run, 2026-10-11
 reply_g001_r2x_reinvent_sonnet	reads	reads	a model kernel of the smoke run, 2026-10-11
-reply_g001_r2x_union_fable	invalid	invalid	unbalanced braces: naga parse error
+reply_g001_r2x_union_fable	invalid	invalid	one stray closing brace at the end: the model copied the kingdom's rendered style (lit_u32() wrappers, nested { { blocks) and lost count; the renderer writes plain literals and flat blocks since 2026-10-11 (run A's third round); the clean sibling row reads
 reply_g001_r3p1_sonnet	reads	reads	a model kernel of the smoke run, 2026-10-11
 reply_g001_r3x_reinvent_sonnet	invalid	invalid	naga: a vector value indexed by a variable (IndexMustBeConstant)
 reply_g001_r3x_union_sonnet	reads	reads	a model kernel of the smoke run, 2026-10-11
 reply_g001_r4x_reinvent_sonnet	reads	reads	a model kernel of the smoke run, 2026-10-11
 reply_g001_r4x_union_sonnet	reads	reads	a model kernel of the smoke run, 2026-10-11
 reply_g001_r8x_reinvent_sonnet	reads	reads	a model kernel of the smoke run, 2026-10-11
-reply_g001_r8x_union_fable	invalid	invalid	unbalanced braces: naga parse error
+reply_g001_r8x_union_fable	invalid	invalid	one stray closing brace at the end: the model copied the kingdom's rendered style (lit_u32() wrappers, nested { { blocks) and lost count; the renderer writes plain literals and flat blocks since 2026-10-11 (run A's third round); the clean sibling row reads
 reply_g002_fresh16_sonnet	reads	reads	a model kernel of the smoke run, 2026-10-11 (added 10:50Z)
 reply_g002_fresh17_sonnet	reads	reads	a model kernel of the smoke run, 2026-10-11 (added 10:50Z)
 reply_g002_r2x_reinvent_fable	reads	reads	a model kernel of the smoke run, 2026-10-11 (added 10:50Z)
@@ -64,3 +64,5 @@ reply_fitA_seed04_sonnet	reads	reads	run A: a helper with a local, ifs and lane 
 reply_fitA_g002_r2x_union_g2_opus	reads	reads	run A: a u32 local the inference typed as bits (i1 = i0 >> 6u) had no register kind; bits and count locals take the u32 register
 reply_fitA_g002_r2x_union_g10_sonnet	reads	reads	run A: a fourth nested tile loop (item loop, then g, j, r, c): counter k4, rungs L5 and C5
 reply_fitA_g002_fresh48_opus	reads	reads	run A: a helper (wrow) with its own loop storing to h at a row passed as an argument; inlined with the caller's counters in scope, its locals named under the helper; computes as written (128/128)
+reply_g001_r2x_union_fable_clean	reads	reads	the same reply without the stray brace: what the clean renderer's text would have produced
+reply_g001_r8x_union_fable_clean	reads	reads	the same reply without the stray brace: what the clean renderer's text would have produced
