@@ -7,9 +7,6 @@ var<workgroup> wg_a: array<f32, 2048>;
 var<workgroup> wg_b: array<f32, 2048>;
 var<workgroup> wg_va: array<vec4<f32>, 512>;
 var<workgroup> wg_vb: array<vec4<f32>, 512>;
-fn lit_f32(x: f32) -> f32 { return x; }
-fn lit_u32(x: u32) -> u32 { return x; }
-fn lit_i32(x: i32) -> i32 { return x; }
 @compute @workgroup_size(16, 16, 1)
 fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_index) lidx: u32, @builtin(num_workgroups) nwg: vec3<u32>) {
     var f0: f32 = 0.0; var f1: f32 = 0.0; var f2: f32 = 0.0; var f3: f32 = 0.0; var f4: f32 = 0.0; var f5: f32 = 0.0; var f6: f32 = 0.0; var f7: f32 = 0.0; 
@@ -38,37 +35,29 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation
     var pa: array<f32, 64>; var pb: array<f32, 64>; var pc: array<f32, 64>; var pd: array<f32, 64>; var pe: array<f32, 64>; var pf: array<f32, 64>;
     var pv: array<vec4<f32>, 16>; var pw: array<vec4<f32>, 16>; var pi: array<u32, 16>; var pj: array<u32, 16>; var pk: array<u32, 16>; var pm: array<bool, 16>; var pn: array<bool, 16>;
     for (t = 0u; t < cfg.m; t = t + 16u) {
-    {
-    f0 = lit_f32(0.0f);
-    f1 = lit_f32(0.0f);
+    f0 = 0.0f;
+    f1 = 0.0f;
     if (((t + lid.y) < cfg.m)) {
-    if (((((wid.y * lit_u32(16u)) + lid.x) < cfg.r_rows) && ((cfg.r_off + ((wid.y * lit_u32(16u)) + lid.x)) < cfg.d))) {
-    f0 = phi[(((t + lid.y) * cfg.d) + (cfg.r_off + ((wid.y * lit_u32(16u)) + lid.x)))];
+    if (((((wid.y * 16u) + lid.x) < cfg.r_rows) && ((cfg.r_off + ((wid.y * 16u) + lid.x)) < cfg.d))) {
+    f0 = phi[(((t + lid.y) * cfg.d) + (cfg.r_off + ((wid.y * 16u) + lid.x)))];
     }
-    if ((((wid.x * lit_u32(16u)) + lid.x) < cfg.d)) {
-    f1 = phi[(((t + lid.y) * cfg.d) + ((wid.x * lit_u32(16u)) + lid.x))];
+    if ((((wid.x * 16u) + lid.x) < cfg.d)) {
+    f1 = phi[(((t + lid.y) * cfg.d) + ((wid.x * 16u) + lid.x))];
     }
     }
-    {
-    wg_a[((((lid.y * lit_u32(16u)) + lid.x)) & 2047u)] = f0;
-    wg_b[((((lid.y * lit_u32(16u)) + lid.x)) & 2047u)] = f1;
+    wg_a[((((lid.y * 16u) + lid.x)) & 2047u)] = f0;
+    wg_b[((((lid.y * 16u) + lid.x)) & 2047u)] = f1;
     workgroupBarrier();
-    {
-    i0 = lit_u32(0u);
+    i0 = 0u;
     for (k = 0u; k < 16u; k = k + 4u) {
-    {
-    f2 = (f2 + (wg_a[((((k * lit_u32(16u)) + lid.y)) & 2047u)] * wg_b[((((k * lit_u32(16u)) + lid.x)) & 2047u)]));
-    f3 = (f3 + (wg_a[(((((k + lit_u32(1u)) * lit_u32(16u)) + lid.y)) & 2047u)] * wg_b[(((((k + lit_u32(1u)) * lit_u32(16u)) + lid.x)) & 2047u)]));
-    f4 = (f4 + (wg_a[(((((k + lit_u32(2u)) * lit_u32(16u)) + lid.y)) & 2047u)] * wg_b[(((((k + lit_u32(2u)) * lit_u32(16u)) + lid.x)) & 2047u)]));
-    f5 = (f5 + (wg_a[(((((k + lit_u32(3u)) * lit_u32(16u)) + lid.y)) & 2047u)] * wg_b[(((((k + lit_u32(3u)) * lit_u32(16u)) + lid.x)) & 2047u)]));
-    }
+    f2 = (f2 + (wg_a[((((k * 16u) + lid.y)) & 2047u)] * wg_b[((((k * 16u) + lid.x)) & 2047u)]));
+    f3 = (f3 + (wg_a[(((((k + 1u) * 16u) + lid.y)) & 2047u)] * wg_b[(((((k + 1u) * 16u) + lid.x)) & 2047u)]));
+    f4 = (f4 + (wg_a[(((((k + 2u) * 16u) + lid.y)) & 2047u)] * wg_b[(((((k + 2u) * 16u) + lid.x)) & 2047u)]));
+    f5 = (f5 + (wg_a[(((((k + 3u) * 16u) + lid.y)) & 2047u)] * wg_b[(((((k + 3u) * 16u) + lid.x)) & 2047u)]));
     }
     workgroupBarrier();
     }
-    }
-    }
-    }
-    if (((((wid.y * lit_u32(16u)) + lid.y) < cfg.r_rows) && (((wid.x * lit_u32(16u)) + lid.x) < cfg.d))) {
+    if (((((wid.y * 16u) + lid.y) < cfg.r_rows) && (((wid.x * 16u) + lid.x) < cfg.d))) {
     if (((gid.y * 1u)) < cfg.r_rows && ((gid.x * 1u)) < cfg.d && (cfg.r_off + ((gid.y * 1u))) < cfg.d) { h[(((gid.y * 1u)) * cfg.d + ((gid.x * 1u)))] = h[(((gid.y * 1u)) * cfg.d + ((gid.x * 1u)))] + ((f2 + f3) + (f4 + f5)); }
     }
 }

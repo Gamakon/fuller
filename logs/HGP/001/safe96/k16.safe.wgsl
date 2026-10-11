@@ -7,9 +7,6 @@ var<workgroup> wg_a: array<f32, 2048>;
 var<workgroup> wg_b: array<f32, 2048>;
 var<workgroup> wg_va: array<vec4<f32>, 512>;
 var<workgroup> wg_vb: array<vec4<f32>, 512>;
-fn lit_f32(x: f32) -> f32 { return x; }
-fn lit_u32(x: u32) -> u32 { return x; }
-fn lit_i32(x: i32) -> i32 { return x; }
 @compute @workgroup_size(16, 16, 1)
 fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_index) lidx: u32, @builtin(num_workgroups) nwg: vec3<u32>) {
     var f0: f32 = 0.0; var f1: f32 = 0.0; var f2: f32 = 0.0; var f3: f32 = 0.0; var f4: f32 = 0.0; var f5: f32 = 0.0; var f6: f32 = 0.0; var f7: f32 = 0.0; 
@@ -39,18 +36,16 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation
     var pv: array<vec4<f32>, 16>; var pw: array<vec4<f32>, 16>; var pi: array<u32, 16>; var pj: array<u32, 16>; var pk: array<u32, 16>; var pm: array<bool, 16>; var pn: array<bool, 16>;
     i0 = (cfg.r_off + gid.y);
     i1 = gid.x;
-    for (t = 0u; t < (((cfg.m) - ((cfg.m) % max(lit_u32(4u), 1u)))); t = t + 4u) {
+    for (t = 0u; t < (((cfg.m) - ((cfg.m) % 4u))); t = t + 4u) {
     f0 = fma(phi[((t * cfg.d) + (cfg.r_off + gid.y))], phi[((t * cfg.d) + gid.x)], f0);
     f1 = fma(phi[(((t * cfg.d) + cfg.d) + (cfg.r_off + gid.y))], phi[(((t * cfg.d) + cfg.d) + gid.x)], f1);
     f2 = fma(phi[((((t * cfg.d) + cfg.d) + cfg.d) + (cfg.r_off + gid.y))], phi[((((t * cfg.d) + cfg.d) + cfg.d) + gid.x)], f2);
     f3 = fma(phi[(((((t * cfg.d) + cfg.d) + cfg.d) + cfg.d) + (cfg.r_off + gid.y))], phi[(((((t * cfg.d) + cfg.d) + cfg.d) + cfg.d) + gid.x)], f3);
     }
-    {
     for (; t < cfg.m; t = t + 1u) {
     f0 = fma(phi[((t * cfg.d) + (cfg.r_off + gid.y))], phi[((t * cfg.d) + gid.x)], f0);
     }
     if ((!(((gid.y >= cfg.r_rows) || (gid.x >= cfg.d)) || ((cfg.r_off + gid.y) >= cfg.d)))) {
     if (((gid.y * 1u)) < cfg.r_rows && ((gid.x * 1u)) < cfg.d && (cfg.r_off + ((gid.y * 1u))) < cfg.d) { h[(((gid.y * 1u)) * cfg.d + ((gid.x * 1u)))] = h[(((gid.y * 1u)) * cfg.d + ((gid.x * 1u)))] + ((f0 + f1) + (f2 + f3)); }
-    }
     }
 }
