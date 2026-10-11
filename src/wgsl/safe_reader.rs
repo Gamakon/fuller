@@ -2216,7 +2216,7 @@ mod tests {
         let mut failures = Vec::new();
         let mut checked = 0usize;
         let mut r5_per_item = None;
-        for dir in ["logs/HGP/001/popA_g001/texts", "logs/HGP/001/library_texts"] {
+        for dir in ["logs/HGP/001/popA_g001/texts", "logs/HGP/001/popA2_g001b/texts", "logs/HGP/001/library_texts"] {
             let dir = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/")).join(dir);
             let mut files: Vec<_> = std::fs::read_dir(&dir).unwrap_or_else(|e| panic!("{}: {e}", dir.display())).flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "wgsl")).collect();
             files.sort();
