@@ -40,3 +40,11 @@ reply_g001_r4x_reinvent_sonnet	reads	reads	a model kernel of the smoke run, 2026
 reply_g001_r4x_union_sonnet	reads	reads	a model kernel of the smoke run, 2026-10-11
 reply_g001_r8x_reinvent_sonnet	reads	reads	a model kernel of the smoke run, 2026-10-11
 reply_g001_r8x_union_fable	invalid	invalid	unbalanced braces: naga parse error
+reply_g002_fresh16_sonnet	reads	reads	a model kernel of the smoke run, 2026-10-11 (added 10:50Z)
+reply_g002_fresh17_sonnet	reads	reads	a model kernel of the smoke run, 2026-10-11 (added 10:50Z)
+reply_g002_r2x_reinvent_fable	reads	reads	a model kernel of the smoke run, 2026-10-11 (added 10:50Z)
+reply_g002_r2x_union_sonnet	reads	reads	a model kernel of the smoke run, 2026-10-11 (added 10:50Z)
+reply_g002_r3x_reinvent_sonnet	reads	reads	a model kernel of the smoke run, 2026-10-11 (added 10:50Z)
+reply_g002_r3x_union_sonnet	reads	reads	a model kernel of the smoke run, 2026-10-11 (added 10:50Z)
+reply_g002_r4p1_sonnet	reads	reads	a model kernel of the smoke run, 2026-10-11 (added 10:50Z)
+reply_g002_r5p1_sonnet	reads	reads	a model kernel of the smoke run, 2026-10-11 (added 10:50Z)

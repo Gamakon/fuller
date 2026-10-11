@@ -359,6 +359,19 @@ fn axis_terms(t: &Tree, axis: usize, workgroup: u32, tiles: Tiles) -> Option<(u3
     if workgroup == 0 {
         return None;
     }
+    // The kingdom's own spelling of a block offset: `min(k, B - 1)`, and for
+    // a strided block `min(k, B - 1) * W`; a kernel rendered by the kingdom
+    // must read back.
+    let tile_min = |x: &Tree| -> Option<u8> {
+        if x.name == "index.min" && x.kids.len() == 2 {
+            for (c, l) in [(&x.kids[0], &x.kids[1]), (&x.kids[1], &x.kids[0])] {
+                if c.kids.is_empty() && literal_value(l).is_some() {
+                    return local_name(&c.name).and_then(|n| tile_of(&n, tiles));
+                }
+            }
+        }
+        None
+    };
     if kw == workgroup * kl {
         // A contiguous block of B = kl cells: offsets below B.
         let b = kl;
@@ -371,7 +384,7 @@ fn axis_terms(t: &Tree, axis: usize, workgroup: u32, tiles: Tiles) -> Option<(u3
                 if x.kids.is_empty() {
                     return local_name(&x.name).and_then(|l| tile_of(&l, tiles)).map(|n| (b, Off::Tile(n)));
                 }
-                None
+                tile_min(x).map(|n| (b, Off::Tile(n)))
             }
             _ => None,
         };
@@ -388,8 +401,13 @@ fn axis_terms(t: &Tree, axis: usize, workgroup: u32, tiles: Tiles) -> Option<(u3
                 }
                 if x.name == "index.mul" && x.kids.len() == 2 {
                     for (p, q) in [(&x.kids[0], &x.kids[1]), (&x.kids[1], &x.kids[0])] {
-                        if literal_value(p) == Some(workgroup as f32) && q.kids.is_empty() {
-                            return local_name(&q.name).and_then(|l| tile_of(&l, tiles)).map(|n| (b, Off::StridedTile(n)));
+                        if literal_value(p) == Some(workgroup as f32) {
+                            if q.kids.is_empty() {
+                                return local_name(&q.name).and_then(|l| tile_of(&l, tiles)).map(|n| (b, Off::StridedTile(n)));
+                            }
+                            if let Some(n) = tile_min(q) {
+                                return Some((b, Off::StridedTile(n)));
+                            }
                         }
                     }
                 }
@@ -932,7 +950,7 @@ impl<'a> Ctx<'a> {
             // starts afresh; any other value has no spelling.
             if self.used_counters.contains(&local) {
                 return match literal_value(&tree.kids[0]) {
-                    Some(v) if v == 0.0 => {
+                    Some(v) if v.to_bits() == 0 => {
                         self.used_counters.remove(&local);
                         Ok(None)
                     }
@@ -1198,6 +1216,24 @@ fn stmt_name(s: &Statement) -> &'static str {
     }
 }
 
+/// The dual of a text the inference gave several candidates (a `u32` used
+/// as an index here and a count there): the one the kingdom's arithmetic
+/// prefers, in the order index, count, bits, real, int, flag; `conform`
+/// inserts the conversion wherever a row demands the other. A text with one
+/// candidate keeps it; one with none stays untyped (and is named).
+fn choose_dual(set: &std::collections::BTreeSet<Option<Ty>>, kingdom: &WgslKingdom) -> Option<Ty> {
+    let candidates: Vec<Ty> = set.iter().copied().flatten().collect();
+    if candidates.len() <= 1 {
+        return candidates.first().copied();
+    }
+    for form in ["index", "count", "bits", "real", "int", "flag"] {
+        if let Some(t) = candidates.iter().find(|t| kingdom.dual(**t).is_some_and(|d| d.form == form)) {
+            return Some(*t);
+        }
+    }
+    candidates.first().copied()
+}
+
 /// The `// grid x y bx by` header.
 fn grid_header(source: &str) -> Option<(u32, u32, u32, u32)> {
     source.lines().map(str::trim).find_map(|l| {
@@ -1275,7 +1311,7 @@ pub fn read_safe(source: &str, kingdom: &WgslKingdom) -> Result<SafeRead, String
         let body = body.ok_or_else(|| format!("helper {name} returns nothing"))?;
         let args = nf.arguments.iter().enumerate().map(|(i, a)| format!("arg.{}", a.name.clone().unwrap_or_else(|| i.to_string()))).collect();
         let types = infer_function(hf, kingdom);
-        helper_duals.extend(types.by_text.iter().map(|(text, set)| (text.clone(), if set.len() == 1 { set.iter().next().copied().flatten() } else { None })));
+        helper_duals.extend(types.by_text.iter().map(|(text, set)| (text.clone(), choose_dual(set, kingdom))));
         helpers.insert(name, Helper { args, body, lets });
     }
     // Roots by statement path; lets by name; duals by text (one form, else untyped).
@@ -1300,7 +1336,7 @@ pub fn read_safe(source: &str, kingdom: &WgslKingdom) -> Result<SafeRead, String
         }
     }
     let types = infer_function(f, kingdom);
-    let mut duals: BTreeMap<String, Option<Ty>> = types.by_text.iter().map(|(text, set)| (text.clone(), if set.len() == 1 { set.iter().next().copied().flatten() } else { None })).collect();
+    let mut duals: BTreeMap<String, Option<Ty>> = types.by_text.iter().map(|(text, set)| (text.clone(), choose_dual(set, kingdom))).collect();
     for (text, t) in helper_duals {
         duals.entry(text).or_insert(t);
     }
