@@ -84,3 +84,4 @@ reply_fitA2_g002_r16p1_1536Z_sonnet	bug	bug	the model's own bug: the Sonnet repl
 reply_fitA2_g002_r18p1_1536Z_sonnet	bug	bug	the model's own bug: the Sonnet reply drops one closing brace (22 open, 21 close; naga: expected expression at the end); the kernel blocks of its brief are balanced (49/49)
 reply_fitA2_g002_r10x_union_1625Z_sonnet	bug	bug	the model's own bug: the Sonnet reply drops one closing brace (20 open, 19 close; naga: expected expression at the end); the kernel blocks of its brief are balanced (47/47)
 reply_fitA2_g003_r2x_union_1702Z_sonnet	bug	bug	the model's own bug: the Sonnet reply drops one closing brace (21 open, 20 close; naga: expected expression at the end); the kernel blocks of its brief are balanced (39/39)
+reply_fitrepro2_g001_r13p1_sonnet	bug	bug	the model's own bug: the Sonnet repair dropped one closing brace (naga: expected expression at the end); every kernel block in its brief was balanced
