@@ -37,6 +37,10 @@ fn main() -> Result<(), String> {
         let r = ctx.fitness(&dev, &text);
         println!("{f}\t{}\t{:.4}\t{:.0} / {:.0} / {:.0}\t{:.0} / {:.0} / {:.0}\t{:.2}\t{:.2}\t{:.2}\t{}", r.feasible, r.hff, r.predicted_ms[0], r.predicted_ms[1], r.predicted_ms[2], r.measured_ms[0], r.measured_ms[1], r.measured_ms[2], r.rate_per_g, r.floor_ms, r.seconds, r.detail);
         println!("  split, s: {}", r.split.line());
+        if r.feasible {
+            let (sp, _, hff) = ctx.retime(&dev, &text, &r.columns)?;
+            println!("  re-timed: speed-ups {:.2} / {:.2} / {:.2} (were {:.2} / {:.2} / {:.2}), HFF {hff:.4} (was {:.4})", sp[0], sp[1], sp[2], r.speedups[0], r.speedups[1], r.speedups[2], r.hff);
+        }
         let side = if r.feasible { &mut feasible } else { &mut infeasible };
         side.0.add(&r.split);
         side.1 += 1;
