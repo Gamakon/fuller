@@ -61,6 +61,10 @@ struct Ctx<'a> {
     /// While a helper body is being inlined: its arguments by `arg.<name>`,
     /// already resolved and typed in the caller.
     inline_args: Option<HashMap<String, Tree>>,
+    /// Locals that are vectors (`var bv = vec4<f32>(0.0)`), by name with
+    /// their arena index: a `.#` load or store on one is a lane of a vec4
+    /// register, not a private array.
+    local_lanes: HashMap<String, u32>,
     /// Locals that have been the counter of a finished item loop: a later
     /// item loop over one of them CONTINUES it (`for (; t < m; …)`, the
     /// remainder loop of k05 and k26) unless the kernel set it back to 0.
@@ -553,8 +557,14 @@ impl<'a> Ctx<'a> {
         }
         if let Some(rest) = t.name.strip_prefix("load.local.") {
             if rest.contains(".#") {
-                // A private array: `load.local.acc@0.#@v3 (idx)`.
                 let local = format!("local.{}", rest.split('@').take(2).collect::<Vec<_>>().join("@"));
+                // A lane of a vector register: `load.local.bv@8.#@v2 (idx)`.
+                if self.local_lanes.get(&local) == Some(&4) {
+                    let row = self.register(&local, "vec4<f32>.real")?;
+                    let idx = self.value(&t.kids[0])?;
+                    return Ok(Tree::new("reg.get_v_lane", t.ty, vec![Tree::new(&row, ty(self, Self::reg_dual('v'))?, vec![]), idx]));
+                }
+                // A private array: `load.local.acc@0.#@v3 (idx)`.
                 let (arr, kind, mask) = self.private_array(&local, &d)?;
                 let idx = self.value(&t.kids[0])?;
                 let pidx = Tree::new(mask, ty(self, "u32.pindex")?, vec![idx]);
@@ -913,6 +923,13 @@ impl<'a> Ctx<'a> {
             if rest.contains(".#") {
                 let local = format!("local.{}", rest.split('@').take(2).collect::<Vec<_>>().join("@"));
                 let [idx, value] = tree.kids.as_slice() else { return Err("a store to a local array without an index".into()) };
+                // A lane of a vector register: `bv.x = …`, `v[j] = …`.
+                if self.local_lanes.get(&local) == Some(&4) {
+                    let row = self.register(&local, "vec4<f32>.real")?;
+                    let i = self.value(idx)?;
+                    let v = self.value(value)?;
+                    return Ok(Some(Tree::new(&format!("reg.set_v_lane_{rung}"), st, vec![Tree::new(&row, ty(self, Self::reg_dual('v'))?, vec![]), i, v])));
+                }
                 // `lrs[i] = <this thread's i-th block row>` with i a tile counter:
                 // the array holds the thread's rows; a later `lrs[k]` is a row.
                 if idx.kids.is_empty() {
@@ -1341,7 +1358,15 @@ pub fn read_safe(source: &str, kingdom: &WgslKingdom) -> Result<SafeRead, String
         duals.entry(text).or_insert(t);
     }
     let calls = f.calls.clone();
-    let mut ctx = Ctx { kingdom, duals: &duals, lets: &lets, roots: &roots, item_counter: None, tile_counter: None, tile_counter2: None, tile_counter3: None, registers: BTreeMap::new(), next_reg: BTreeMap::new(), guard: None, tail: true, arrays: BTreeMap::new(), parrs: BTreeMap::new(), grid, notes: Vec::new(), helpers: &helpers, calls: &calls, arg_roots: &arg_roots, inline_args: None, row_arrays: BTreeMap::new(), used_counters: std::collections::BTreeSet::new() };
+    // The vector locals, from naga's own types.
+    let mut local_lanes: HashMap<String, u32> = HashMap::new();
+    for (h, lv) in naga_fn.local_variables.iter() {
+        if let naga::TypeInner::Vector { size, .. } = &kernel.module.types[lv.ty].inner {
+            let name = lv.name.clone().unwrap_or_else(|| "local".into());
+            local_lanes.insert(format!("local.{name}@{}", h.index()), *size as u32);
+        }
+    }
+    let mut ctx = Ctx { kingdom, duals: &duals, lets: &lets, roots: &roots, item_counter: None, tile_counter: None, tile_counter2: None, tile_counter3: None, registers: BTreeMap::new(), next_reg: BTreeMap::new(), guard: None, tail: true, arrays: BTreeMap::new(), parrs: BTreeMap::new(), grid, notes: Vec::new(), helpers: &helpers, calls: &calls, arg_roots: &arg_roots, inline_args: None, row_arrays: BTreeMap::new(), used_counters: std::collections::BTreeSet::new(), local_lanes };
     // Register initialisations first, in root order.
     let mut stmts = Vec::new();
     for r in inits {

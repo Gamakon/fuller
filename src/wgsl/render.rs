@@ -498,6 +498,10 @@ impl<'a> Renderer<'a> {
                 };
                 Ok(format!("    if (({row}) < cfg.r_rows && ({col}) < cfg.d && (cfg.r_off + ({row})) < cfg.d) {{ h[{cell}] = h[{cell}] + {}; }}\n", self.value(&kids[1], scope)?))
             }
+            "reg.set_v_lane" => {
+                n(3)?;
+                Ok(format!("    {}[({}) & 3u] = {};\n", self.register(&kids[0])?, self.value(&kids[1], scope)?, self.value(&kids[2], scope)?))
+            }
             "wg.set_safe" => {
                 n(3)?;
                 Ok(format!("    {}[{}] = {};\n", self.wgmem(&kids[0])?, self.value(&kids[1], scope)?, self.value(&kids[2], scope)?))
@@ -676,6 +680,7 @@ impl<'a> Renderer<'a> {
         }
         match name {
             "reg.get_f" | "reg.get_v" | "reg.get_i" | "reg.get_b" => return self.register(&v.kids[0]),
+            "reg.get_v_lane" => return Ok(format!("{}[({}) & 3u]", self.register(&v.kids[0])?, self.value(&v.kids[1], scope)?)),
             "wg.get" => return Ok(format!("{}[({}) & {}u]", self.wgmem(&v.kids[0])?, self.value(&v.kids[1], scope)?, WGMEM_LEN - 1)),
             // The safe read: the index is in range by its type (safe.wg_of masks it).
             "wg.get_safe" | "wg.get_v_safe" => return Ok(format!("{}[{}]", self.wgmem(&v.kids[0])?, self.value(&v.kids[1], scope)?)),
@@ -1184,6 +1189,7 @@ pub fn safe_base(name: &str) -> &str {
                 "store.h" => "store.h_safe",
                 "wg.set" | "wg.set_v" => "wg.set_safe",
                 "parr.set_f" | "parr.set_v" | "parr.set_i" | "parr.set_b" => "parr.set_safe",
+                "reg.set_v_lane" => "reg.set_v_lane",
                 "loop.tile" => "loop.tile_bounded",
                 "loop.tile_strided" => "loop.tile_strided_bounded",
                 "loop.tilex" => "loop.tilex_bounded",

@@ -545,6 +545,12 @@ f("shape", "at", "composite", ["<vecL.c>", "u32.index"], "<S.c>", "lane (i maske
 # `m & ~3u` (k16, k26): the mask 0xFFFFFFFC is not exact in an f32 literal, so the reader spells it as a rounding
 # down to a multiple: i - i % k. An index literal above 2^24 is refused by name, never rounded silently.
 f("index", "round_down", "composite", ["u32.index", "u32.index"], "u32.index", "i rounded down to a multiple of k (k16's `m & ~3u` is round_down(m, 4))")
+# A vector register's lane by index (k04, k14: `bv.x = phi[...]`; k18: `v[j]`): a read or a write of one
+# component of a vec4 register, the index masked to the lanes. Spelled as a private array before, which
+# left the register itself unchanged: the sweep of 2026-10-11 found three drafts wrong for it.
+f("reg", "get_v_lane", "composite", ["reg<vec4<f32>>.real", "u32.index"], "f32.real", "v[i & 3u]")
+for r in RUNGS:
+    f("reg", "set_v_lane_" + r, "composite", ["reg<vec4<f32>>.real", "u32.index", "f32.real"], "stmt." + r, "arity 3: v[i & 3u] = x;")
 # A CONTINUING item loop (k05, k26: a strided main loop then a remainder loop over the SAME counter): the counter
 # is not reset; `for (; t < bound; t = t + s)`. Spelled only for a counter an earlier item loop stepped.
 for b in ("boundm", "boundd", "boundrows", "boundx"):
