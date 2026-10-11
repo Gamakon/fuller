@@ -1004,7 +1004,11 @@ impl<'a> Ctx<'a> {
     }
 
     /// A local array as a private array row: (`parr.a|b|v|i`, kind, mask row).
+    /// One array is one private array: its indexed accesses name it
+    /// `local.s0@7.#`, a whole-array constructor `local.s0@7` (fit_A2's
+    /// r2x_union, whose two constructed vec4 arrays took four private arrays).
     fn private_array(&mut self, local: &str, elem_dual: &str) -> Result<(&'static str, char, &'static str), String> {
+        let local = local.trim_end_matches(".#");
         if let Some(a) = self.parrs.get(local) {
             return Ok(*a);
         }
@@ -2388,6 +2392,19 @@ mod tests {
         let bound = crate::wgsl::safe_karva::default_bound(&k).unwrap();
         assert!(c.per_item < 250.0 && c.per_item < bound.per_item / 10.0, "per item {} against the bound {}", c.per_item, bound.per_item);
         assert!(c.base <= bound.base, "base {} against the bound {}", c.base, bound.base);
+    }
+
+    /// ONE ARRAY IS ONE PRIVATE ARRAY (fit_A2 gen 1's r2x_union): o0, o1,
+    /// s0 and s1, each built whole by an array constructor and then indexed,
+    /// take the four vec4 private arrays, one each.
+    #[test]
+    fn a_constructed_and_indexed_array_takes_one_private_array() {
+        let k = WgslKingdom::load_safe();
+        let src = include_str!("../../tests/corpus/safewgsl/reply_fitA2_g001_r2x_union_sonnet.wgsl");
+        let sx = read_safe(src, &k).unwrap_or_else(|e| panic!("{e}")).tree.to_sexpr();
+        for arr in ["parr.v", "parr.w", "parr.x", "parr.y"] {
+            assert!(sx.contains(arr), "{arr} unused");
+        }
     }
 
     /// A kernel with a helper function reads: the helper is inlined at its
