@@ -558,9 +558,11 @@ impl<'a> Ctx<'a> {
         if let Some(rest) = t.name.strip_prefix("load.local.") {
             if rest.contains(".#") {
                 let local = format!("local.{}", rest.split('@').take(2).collect::<Vec<_>>().join("@"));
-                // A lane of a vector register: `load.local.bv@8.#@v2 (idx)`.
-                if self.local_lanes.get(&local) == Some(&4) {
-                    let row = self.register(&local, "vec4<f32>.real")?;
+                // A lane of a vector register: `load.local.bv@8.#@v2 (idx)`; the
+                // register is the local's own (named without the `.#`).
+                let base = local.trim_end_matches(".#").to_string();
+                if self.local_lanes.get(&base) == Some(&4) {
+                    let row = self.register(&base, "vec4<f32>.real")?;
                     let idx = self.value(&t.kids[0])?;
                     return Ok(Tree::new("reg.get_v_lane", t.ty, vec![Tree::new(&row, ty(self, Self::reg_dual('v'))?, vec![]), idx]));
                 }
@@ -924,8 +926,9 @@ impl<'a> Ctx<'a> {
                 let local = format!("local.{}", rest.split('@').take(2).collect::<Vec<_>>().join("@"));
                 let [idx, value] = tree.kids.as_slice() else { return Err("a store to a local array without an index".into()) };
                 // A lane of a vector register: `bv.x = …`, `v[j] = …`.
-                if self.local_lanes.get(&local) == Some(&4) {
-                    let row = self.register(&local, "vec4<f32>.real")?;
+                let base = local.trim_end_matches(".#").to_string();
+                if self.local_lanes.get(&base) == Some(&4) {
+                    let row = self.register(&base, "vec4<f32>.real")?;
                     let i = self.value(idx)?;
                     let v = self.value(value)?;
                     return Ok(Some(Tree::new(&format!("reg.set_v_lane_{rung}"), st, vec![Tree::new(&row, ty(self, Self::reg_dual('v'))?, vec![]), i, v])));
