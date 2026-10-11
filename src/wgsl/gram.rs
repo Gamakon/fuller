@@ -729,6 +729,52 @@ pub fn gate(meter: &Meter, what: &str, work: f64, elapsed_ms: f64, limit_ms: f64
     Ok(p)
 }
 
+/// Where an evaluation's time went, in wall milliseconds per phase, and
+/// inside the device builds of all phases: the Phi uploads, and the
+/// read-backs with their buffer set-up (a build's wall time less its
+/// compute time). [`Split::add`] sums evaluations for a generation line.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Split {
+    pub compile: f64,
+    pub cases: f64,
+    pub rungs: f64,
+    /// The pairs' device builds, and the host check against the f64 reference.
+    pub pairs_build: f64,
+    pub pairs_check: f64,
+    /// The timing builds, candidate and shipped.
+    pub timing_cand: f64,
+    pub timing_shipped: f64,
+    pub upload: f64,
+    pub readback: f64,
+    /// The whole evaluation.
+    pub total: f64,
+}
+
+impl Split {
+    pub fn add(&mut self, o: &Split) {
+        self.compile += o.compile;
+        self.cases += o.cases;
+        self.rungs += o.rungs;
+        self.pairs_build += o.pairs_build;
+        self.pairs_check += o.pairs_check;
+        self.timing_cand += o.timing_cand;
+        self.timing_shipped += o.timing_shipped;
+        self.upload += o.upload;
+        self.readback += o.readback;
+        self.total += o.total;
+    }
+
+    fn build(&mut self, b: &Build) {
+        self.upload += b.upload_ms;
+        self.readback += (b.wall_ms - b.compute_ms).max(0.0);
+    }
+
+    /// One line, seconds: "compile 0.2, cases 0.4, ... (uploads 0.3, read-backs 0.9)".
+    pub fn line(&self) -> String {
+        format!("compile {:.1}, cases {:.1}, rungs {:.1}, pairs {:.1} + check {:.1}, timing candidate {:.1} + shipped {:.1}, other {:.1} (inside the builds: uploads {:.1}, read-backs {:.1})", self.compile / 1e3, self.cases / 1e3, self.rungs / 1e3, self.pairs_build / 1e3, self.pairs_check / 1e3, self.timing_cand / 1e3, self.timing_shipped / 1e3, (self.total - self.compile - self.cases - self.rungs - self.pairs_build - self.pairs_check - self.timing_cand - self.timing_shipped) / 1e3, self.upload / 1e3, self.readback / 1e3)
+    }
+}
+
 /// The fast fitness evaluation phylu calls per individual
 /// (`docs/PLAN_hgp_gram.md`, step 2 of the evolutionary loop): the
 /// constraint on its 128 stratified test cases, then six columns scaled
@@ -789,6 +835,8 @@ pub struct Fitness {
     /// The candidate's measured wall milliseconds at the three timing
     /// shapes, the median over the rounds (0 when it was not timed).
     pub measured_ms: [f64; 3],
+    /// Where the evaluation's time went.
+    pub split: Split,
 }
 
 /// θ over columns in [0, 1]: `acos(1 − mean(x²))`, 0 when every column is 0.
@@ -847,11 +895,14 @@ impl FitnessContext {
     pub fn fitness(&self, dev: &Device, source: &str) -> Fitness {
         let t = Instant::now();
         let mut meter = Meter::default();
-        let infeasible = |passed: usize, detail: String, t: Instant, meter: &Meter| Fitness { feasible: false, passed, columns: [1.0; 6], speedups: [0.0; 3], hff: f64::INFINITY, detail, seconds: t.elapsed().as_secs_f64(), predicted_ms: [0.0; 3], rate_per_g: meter.rate_per_g(), floor_ms: meter.floor_ms, measured_ms: [0.0; 3] };
+        let mut split = Split::default();
+        let infeasible = |passed: usize, detail: String, t: Instant, meter: &Meter, split: &Split| Fitness { feasible: false, passed, columns: [1.0; 6], speedups: [0.0; 3], hff: f64::INFINITY, detail, seconds: t.elapsed().as_secs_f64(), predicted_ms: [0.0; 3], rate_per_g: meter.rate_per_g(), floor_ms: meter.floor_ms, measured_ms: [0.0; 3], split: Split { total: t.elapsed().as_secs_f64() * 1e3, ..*split } };
         let elapsed_ms = |t: Instant| t.elapsed().as_secs_f64() * 1e3;
-        let gram = match Gram::compile(dev, source) {
+        let compiled = Gram::compile(dev, source);
+        split.compile = elapsed_ms(t);
+        let gram = match compiled {
             Ok(g) => g,
-            Err(e) => return infeasible(0, format!("compile: {}", e.lines().find(|l| l.contains("error") || l.contains("header")).unwrap_or(e.lines().next().unwrap_or(""))), t, &meter),
+            Err(e) => return infeasible(0, format!("compile: {}", e.lines().find(|l| l.contains("error") || l.contains("header")).unwrap_or(e.lines().next().unwrap_or(""))), t, &meter, &split),
         };
         // The correctness cases, each timed. They are the same size, so the
         // projection over them is linear in the count: a kernel whose cases
@@ -867,9 +918,10 @@ impl FitnessContext {
             let p = &self.probes[i];
             let b = match gram.build(&p.phi, p.d, p.m, p.limit) {
                 Ok(b) => b,
-                Err(e) => return infeasible(passed, format!("run: {e}"), t, &meter),
+                Err(e) => return infeasible(passed, format!("run: {e}"), t, &meter, &split),
             };
             meter.push(work(p.d, p.m), b.compute_ms);
+            split.build(&b);
             let d = crate::wgsl::probes::distance(&b.h, p);
             if d <= crate::wgsl::probes::PASS {
                 passed += 1;
@@ -878,46 +930,59 @@ impl FitnessContext {
             }
             let projected = elapsed_ms(t_cases) * cases as f64 / (n + 1) as f64;
             if n + 1 < cases && projected > self.base_budget_ms / 3.0 {
-                return infeasible(passed, format!("slow: the correctness cases are projected at {:.1} s ({:.1} s for the first {}), over a third of the {:.1} s budget; the rest not dispatched", projected / 1e3, elapsed_ms(t_cases) / 1e3, n + 1, self.base_budget_ms / 1e3), t, &meter);
+                return infeasible(passed, format!("slow: the correctness cases are projected at {:.1} s ({:.1} s for the first {}), over a third of the {:.1} s budget; the rest not dispatched", projected / 1e3, elapsed_ms(t_cases) / 1e3, n + 1, self.base_budget_ms / 1e3), t, &meter, &split);
             }
         }
+        split.cases = elapsed_ms(t_cases);
         if passed < cases {
-            return infeasible(passed, format!("constraint {passed}/{cases} cases: {first_fail}"), t, &meter);
+            return infeasible(passed, format!("constraint {passed}/{cases} cases: {first_fail}"), t, &meter, &split);
         }
         meter.fix_floor();
         let limit_ms = self.slow_limit_ms();
         // The rungs: timed, gated, not judged.
+        let t_rungs = Instant::now();
         for (d, m, phi) in &self.rungs {
             if let Err(e) = gate(&meter, &format!("the timing rung d {d} m {m}"), work(*d, *m), elapsed_ms(t), limit_ms, self.base_budget_ms) {
-                return infeasible(passed, e, t, &meter);
+                return infeasible(passed, e, t, &meter, &split);
             }
             match gram.build(phi, *d, *m, self.limit) {
-                Ok(b) => meter.push(work(*d, *m), b.compute_ms),
-                Err(e) => return infeasible(passed, format!("run: {e}"), t, &meter),
+                Ok(b) => {
+                    meter.push(work(*d, *m), b.compute_ms);
+                    split.build(&b);
+                }
+                Err(e) => return infeasible(passed, format!("run: {e}"), t, &meter, &split),
             }
         }
+        split.rungs = elapsed_ms(t_rungs);
+        let t_shc = Instant::now();
         let shipped = match Gram::compile(dev, &self.shipped_source) {
             Ok(g) => g,
-            Err(e) => return infeasible(passed, format!("shipped compile: {e}"), t, &meter),
+            Err(e) => return infeasible(passed, format!("shipped compile: {e}"), t, &meter, &split),
         };
         // Accuracy columns: the worst error relative to shipped's, min(1, e / 2),
         // per set. The pairs run smallest work first across the three sets, so
         // every pair is predicted from a measured build at most 32x smaller.
         let mut order: Vec<(usize, &AccuracyPair)> = [&self.train, &self.val, &self.extrap].iter().enumerate().flat_map(|(k, set)| set.iter().map(move |p| (k, p))).collect();
         order.sort_by(|a, b| work(a.1 .1, a.1 .2).total_cmp(&work(b.1 .1, b.1 .2)));
+        split.compile += elapsed_ms(t_shc);
         let mut worst = [0.0f64; 3];
         for (k, (name, d, m, phi, h_ref, smax)) in order {
             if let Err(e) = gate(&meter, &format!("pair {name} (d {d} m {m})"), work(*d, *m), elapsed_ms(t), limit_ms, self.base_budget_ms) {
-                return infeasible(passed, e, t, &meter);
+                return infeasible(passed, e, t, &meter, &split);
             }
+            let t_pb = Instant::now();
             let b = match gram.build(phi, *d, *m, self.limit) {
                 Ok(b) => b,
-                Err(e) => return infeasible(passed, format!("run: {e}"), t, &meter),
+                Err(e) => return infeasible(passed, format!("run: {e}"), t, &meter, &split),
             };
+            split.pairs_build += elapsed_ms(t_pb);
+            split.build(&b);
             meter.push(work(*d, *m), b.compute_ms);
+            let t_pc = Instant::now();
             let v = check(&b.h, h_ref, *d, *m);
+            split.pairs_check += elapsed_ms(t_pc);
             if v.non_finite > 0 || v.max_ratio > (2.0 * smax).max(1.0) {
-                return infeasible(passed, format!("pair {name}: max {:.3} tau (shipped {smax:.3}), non-finite {}", v.max_ratio, v.non_finite), t, &meter);
+                return infeasible(passed, format!("pair {name}: max {:.3} tau (shipped {smax:.3}), non-finite {}", v.max_ratio, v.non_finite), t, &meter, &split);
             }
             worst[k] = worst[k].max(if *smax > 0.0 { v.max_ratio / smax } else { v.max_ratio });
         }
@@ -928,7 +993,7 @@ impl FitnessContext {
         for (k, (d, m, _)) in self.timing.iter().enumerate() {
             match gate(&meter, &format!("the timing shape d {d} m {m}"), work(*d, *m), 0.0, limit_ms, f64::INFINITY) {
                 Ok(p) => predicted_ms[k] = p,
-                Err(e) => return Fitness { predicted_ms, ..infeasible(passed, e, t, &meter) },
+                Err(e) => return Fitness { predicted_ms, ..infeasible(passed, e, t, &meter, &split) },
             }
         }
         // Speed columns: `timing_rounds` paired rounds per shape, the order
@@ -942,7 +1007,14 @@ impl FitnessContext {
             for round in 0..rounds {
                 let cand_first = (k + passed + round) % 2 == 0;
                 let r = (|| -> Result<(f64, f64), String> {
-                    let (bc, ts) = if cand_first { let bc = gram.build(phi, *d, *m, self.limit)?; (bc, shipped.build(phi, *d, *m, self.limit)?.gpu_ms) } else { let ts = shipped.build(phi, *d, *m, self.limit)?.gpu_ms; (gram.build(phi, *d, *m, self.limit)?, ts) };
+                    let timed = |g: &Gram, split: &mut Split, shipped_side: bool| -> Result<Build, String> {
+                        let tb = Instant::now();
+                        let b = g.build(phi, *d, *m, self.limit)?;
+                        *if shipped_side { &mut split.timing_shipped } else { &mut split.timing_cand } += tb.elapsed().as_secs_f64() * 1e3;
+                        split.build(&b);
+                        Ok(b)
+                    };
+                    let (bc, ts) = if cand_first { let bc = timed(&gram, &mut split, false)?; (bc, timed(&shipped, &mut split, true)?.gpu_ms) } else { let ts = timed(&shipped, &mut split, true)?.gpu_ms; (timed(&gram, &mut split, false)?, ts) };
                     let tc = bc.gpu_ms;
                     if tc <= 0.0 || ts <= 0.0 { return Err(format!("zero time at d {d} m {m}")); }
                     Ok((ts / tc, bc.compute_ms))
@@ -952,14 +1024,14 @@ impl FitnessContext {
                         ratios.push(s);
                         walls.push(wall);
                     }
-                    Err(e) => return Fitness { predicted_ms, ..infeasible(passed, e, t, &meter) },
+                    Err(e) => return Fitness { predicted_ms, ..infeasible(passed, e, t, &meter, &split) },
                 }
             }
             speedups[k] = median(&mut ratios);
             measured_ms[k] = median(&mut walls);
         }
         let columns = [(1.0 / speedups[0]).clamp(0.0, 1.0), (1.0 / speedups[1]).clamp(0.0, 1.0), (1.0 / speedups[2]).clamp(0.0, 1.0), (et / 2.0).clamp(0.0, 1.0), (ev / 2.0).clamp(0.0, 1.0), (ex / 2.0).clamp(0.0, 1.0)];
-        Fitness { feasible: true, passed, columns, speedups, hff: truenorth(&columns), detail: String::new(), seconds: t.elapsed().as_secs_f64(), predicted_ms, rate_per_g: meter.rate_per_g(), floor_ms: meter.floor_ms, measured_ms }
+        Fitness { feasible: true, passed, columns, speedups, hff: truenorth(&columns), detail: String::new(), seconds: t.elapsed().as_secs_f64(), predicted_ms, rate_per_g: meter.rate_per_g(), floor_ms: meter.floor_ms, measured_ms, split: Split { total: t.elapsed().as_secs_f64() * 1e3, ..split } }
     }
 }
 

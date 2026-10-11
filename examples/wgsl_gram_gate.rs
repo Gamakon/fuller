@@ -19,6 +19,7 @@ fn main() -> Result<(), String> {
     for f in &files {
         let text = std::fs::read_to_string(f).map_err(|e| format!("{f}: {e}"))?;
         let r = ctx.fitness(&dev, &text);
+        println!("  split, s: {}", r.split.line());
         println!("{f}\t{}\t{:.4}\t{:.0} / {:.0} / {:.0}\t{:.0} / {:.0} / {:.0}\t{:.2}\t{:.2}\t{:.1}\t{}", r.feasible, r.hff, r.predicted_ms[0], r.predicted_ms[1], r.predicted_ms[2], r.measured_ms[0], r.measured_ms[1], r.measured_ms[2], r.rate_per_g, r.floor_ms, r.seconds, r.detail);
     }
     Ok(())
