@@ -646,6 +646,10 @@ pub struct FitnessContext {
     pub val: Vec<AccuracyPair>,
     pub extrap: Vec<AccuracyPair>,
     pub limit: u64,
+    /// Paired timing rounds per shape; the speed-up is the median over them.
+    /// One round scattered equal kernels by 15 % (the re-timing of
+    /// 2026-10-11); five or more are needed to rank kernels.
+    pub timing_rounds: usize,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -696,7 +700,7 @@ impl FitnessContext {
         let val_idx: Vec<usize> = [Kind::LowRank, Kind::NonFinite].iter().filter_map(|k| sp.val.iter().position(|p| p.kind == *k && (p.d * p.d * p.m) as f64 <= 4.5e9)).collect();
         let extrap_idx: Vec<usize> = vec![sp.extrap.iter().enumerate().min_by_key(|(_, p)| p.m).map(|(i, _)| i).ok_or("no extrapolation pair")?];
         let timing = [(2048usize, 65536usize), (4096, 16384), (8192, 4096)].iter().map(|&(d, m)| (d, m, phi(d, m, 7))).collect();
-        Ok(FitnessContext { train: pick(&sp.train, &train_idx)?, val: pick(&sp.val, &val_idx)?, extrap: pick(&sp.extrap, &extrap_idx)?, probes, admission, shipped_source: SHIPPED.to_string(), timing, limit })
+        Ok(FitnessContext { train: pick(&sp.train, &train_idx)?, val: pick(&sp.val, &val_idx)?, extrap: pick(&sp.extrap, &extrap_idx)?, probes, admission, shipped_source: SHIPPED.to_string(), timing, limit , timing_rounds: 1 })
     }
 
     pub fn fitness(&self, dev: &Device, source: &str) -> Fitness {
@@ -745,28 +749,55 @@ impl FitnessContext {
             (Ok(a), Ok(b), Ok(c)) => (a, b, c),
             (Err(e), _, _) | (_, Err(e), _) | (_, _, Err(e)) => return infeasible(passed, e, t),
         };
-        // Speed columns: one paired round per shape, random order by the shape.
+        // Speed columns: `timing_rounds` paired rounds per shape, the order
+        // alternating every round, the median of the rounds' ratios.
         let mut speedups = [0.0f64; 3];
+        let rounds = self.timing_rounds.max(1);
         for (k, (d, m, phi)) in self.timing.iter().enumerate() {
-            let cand_first = (k + passed) % 2 == 0;
-            let r = (|| -> Result<f64, String> {
-                let (tc, ts) = if cand_first { let tc = gram.build(phi, *d, *m, self.limit)?.gpu_ms; (tc, shipped.build(phi, *d, *m, self.limit)?.gpu_ms) } else { let ts = shipped.build(phi, *d, *m, self.limit)?.gpu_ms; (gram.build(phi, *d, *m, self.limit)?.gpu_ms, ts) };
-                if tc <= 0.0 || ts <= 0.0 { return Err(format!("zero time at d {d} m {m}")); }
-                Ok(ts / tc)
-            })();
-            match r {
-                Ok(s) => speedups[k] = s,
-                Err(e) => return infeasible(passed, e, t),
+            let mut ratios = Vec::with_capacity(rounds);
+            for round in 0..rounds {
+                let cand_first = (k + passed + round) % 2 == 0;
+                let r = (|| -> Result<f64, String> {
+                    let (tc, ts) = if cand_first { let tc = gram.build(phi, *d, *m, self.limit)?.gpu_ms; (tc, shipped.build(phi, *d, *m, self.limit)?.gpu_ms) } else { let ts = shipped.build(phi, *d, *m, self.limit)?.gpu_ms; (gram.build(phi, *d, *m, self.limit)?.gpu_ms, ts) };
+                    if tc <= 0.0 || ts <= 0.0 { return Err(format!("zero time at d {d} m {m}")); }
+                    Ok(ts / tc)
+                })();
+                match r {
+                    Ok(s) => ratios.push(s),
+                    Err(e) => return infeasible(passed, e, t),
+                }
             }
+            speedups[k] = median(&mut ratios);
         }
         let columns = [(1.0 / speedups[0]).clamp(0.0, 1.0), (1.0 / speedups[1]).clamp(0.0, 1.0), (1.0 / speedups[2]).clamp(0.0, 1.0), (et / 2.0).clamp(0.0, 1.0), (ev / 2.0).clamp(0.0, 1.0), (ex / 2.0).clamp(0.0, 1.0)];
         Fitness { feasible: true, passed, columns, speedups, hff: truenorth(&columns), detail: String::new(), seconds: t.elapsed().as_secs_f64() }
     }
 }
 
+/// The median of a sample (the mean of the middle two for an even count).
+fn median(v: &mut [f64]) -> f64 {
+    v.sort_by(|a, b| a.total_cmp(b));
+    let n = v.len();
+    if n == 0 {
+        0.0
+    } else if n % 2 == 1 {
+        v[n / 2]
+    } else {
+        (v[n / 2 - 1] + v[n / 2]) / 2.0
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_median_is_the_middle_of_the_sorted_sample() {
+        assert_eq!(median(&mut [3.0, 1.0, 2.0]), 2.0);
+        assert_eq!(median(&mut [4.0, 1.0, 3.0, 2.0]), 2.5);
+        assert_eq!(median(&mut [7.0]), 7.0);
+        assert_eq!(median(&mut []), 0.0);
+    }
 
     #[test]
     fn every_kind_is_deterministic_and_has_its_property() {

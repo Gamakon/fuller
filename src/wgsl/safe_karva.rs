@@ -220,6 +220,26 @@ pub struct SharedDefinition {
     pub nodes: usize,
 }
 
+/// THE SHARED SECTIONS OF TWO KERNELS (Andrew, 2026-10-11: "find the largest
+/// common section from the two individuals, then give that and the two
+/// originals to the model and ask it to rewrite the kernel around that
+/// largest share"): every sub-tree the two trees have in common with at
+/// least `min_nodes` nodes, largest first, ties by text, through the same
+/// matching the population fold uses (exact Karva text of the sub-tree).
+pub fn shared_sections(a: &Tree, b: &Tree, min_nodes: usize) -> Vec<SharedDefinition> {
+    let fold = fold_population(&[a.clone(), b.clone()], 1 << 20, 1 << 16, 0, min_nodes, 1);
+    let mut shared: Vec<SharedDefinition> = fold.shared.into_iter().filter(|d| d.referrers == 2).collect();
+    shared.sort_by(|x, y| y.nodes.cmp(&x.nodes).then_with(|| x.text.cmp(&y.text)));
+    shared
+}
+
+/// How many sub-trees of `tree` have exactly the Karva text `text` (the
+/// check that a model's child kept the shared section it was given).
+pub fn occurrences_of(tree: &Tree, text: &str) -> usize {
+    let here = usize::from(karva_text(tree) == text);
+    here + tree.kids.iter().map(|k| occurrences_of(k, text)).sum::<usize>()
+}
+
 /// What the population fold found and produced.
 #[derive(Debug)]
 pub struct PopulationFold {
@@ -592,6 +612,27 @@ pub fn rebuild_bounded(decoded: &[String], filled: usize, kingdom: &WgslKingdom,
 
 #[cfg(test)]
 mod tests {
+    /// The two drafts k15 (split accumulators) and k07 (workgroup tile and a
+    /// 4 x 4 register block) share their thread-to-cell geometry and store
+    /// guard: the largest shared section has over thirty nodes and occurs in
+    /// both; sections come largest first.
+    #[test]
+    fn two_drafts_share_their_geometry() {
+        let dir = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/logs/HGP/001/gen0"));
+        let (Ok(a), Ok(b)) = (std::fs::read_to_string(dir.join("k15.wgsl")), std::fs::read_to_string(dir.join("k07.wgsl"))) else { return };
+        let kingdom = crate::wgsl::loader::WgslKingdom::load_safe();
+        let ta = crate::wgsl::safe_reader::read_safe(&a, &kingdom).expect("k15 reads").tree;
+        let tb = crate::wgsl::safe_reader::read_safe(&b, &kingdom).expect("k07 reads").tree;
+        let shared = super::shared_sections(&ta, &tb, 5);
+        assert!(shared.len() >= 3, "{} shared sections", shared.len());
+        assert!(shared[0].nodes >= 30, "largest has {} nodes", shared[0].nodes);
+        assert!(shared.windows(2).all(|w| w[0].nodes >= w[1].nodes), "largest first");
+        for d in shared.iter().take(3) {
+            assert!(super::occurrences_of(&ta, &d.text) >= 1 && super::occurrences_of(&tb, &d.text) >= 1, "{} occurs in both", d.text);
+        }
+        assert_eq!(super::occurrences_of(&ta, "(Var \"no.such\")"), 0);
+    }
+
     use super::*;
     use crate::karva::karva_to_terms_generic;
     use crate::wgsl::render::{gram_shipped_safe_tree, validate_text};

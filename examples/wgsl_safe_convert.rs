@@ -10,7 +10,7 @@
 //! (default 32), the slot count is the largest any kernel needs, rounded up
 //! to a multiple of eight.
 //!
-//!   cargo run --release --features wgsl --example wgsl_safe_convert -- <dir> [--out <dir>] [--karva <dir> [--head <n>]]
+//!   cargo run --release --features wgsl --example wgsl_safe_convert -- <dir> [--out <dir>] [--karva <dir> [--head <n>] [--slots <n>]]
 
 use std::path::PathBuf;
 
@@ -26,12 +26,19 @@ fn main() -> Result<(), String> {
     let mut outline: Option<String> = None;
     let mut karva: Option<PathBuf> = None;
     let mut head_length = 32usize;
+    // --slots: the tail slot count forced (a population's layout must hold
+    // kernels larger than any draft, 2026-10-11); 0 = the smallest that fits.
+    let mut forced_slots = 0usize;
     while let Some(a) = args.next() {
         if a == "--out" {
             out = PathBuf::from(args.next().ok_or("--out needs a value")?);
         }
         if a == "--karva" {
             karva = Some(PathBuf::from(args.next().ok_or("--karva needs a value")?));
+        }
+        if a == "--slots" {
+            forced_slots = args.next().ok_or("--slots needs a value")?.parse().map_err(|e| format!("--slots: {e}"))?;
+            continue;
         }
         if a == "--head" {
             head_length = args.next().ok_or("--head needs a value")?.parse().map_err(|e| format!("--head: {e}"))?;
@@ -108,6 +115,9 @@ fn main() -> Result<(), String> {
         if h == head_length {
             chosen_slots = max.div_ceil(8) * 8;
         }
+    }
+    if forced_slots > 0 {
+        chosen_slots = forced_slots;
     }
     if chosen_slots == 0 {
         let max = trees.iter().map(|(_, t)| split(t, head_length).map(|s| s.tail.len()).unwrap_or(usize::MAX)).max().unwrap_or(0);
