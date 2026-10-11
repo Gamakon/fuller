@@ -1861,6 +1861,14 @@ impl<'a> Ctx<'a> {
         // `counter <= bound` (bound + 1), `counter + k < bound` and
         // `counter + k > bound` as `if (...) break` (bound - k, floored).
         let (counter, bound) = normalise_test(&c).ok_or_else(|| format!("a loop test that is not a counter against a bound: {}", c.to_sexpr()))?;
+        // The bound is evaluated once, so nothing it reads may change in the
+        // loop's body (fresh28's `t0` is the enclosing loop's counter).
+        let stored = stored_locals(self.naga_fn, body);
+        let mut read_locals = Vec::new();
+        locals_in(&bound, &mut read_locals);
+        if let Some(l) = read_locals.iter().find(|l| **l != counter && stored.contains(l)) {
+            return Err(format!("a loop bound that reads {l}, which the loop's body stores"));
+        }
         let bound = &bound;
         let index_ty = ty(self, "u32.index")?;
         let (bound_tree, kind) = if is_leaf(bound, "load.uniform.cfg.m") {
@@ -2029,6 +2037,31 @@ impl<'a> Ctx<'a> {
 /// reader's negation `c + k > b` has already become `c + k < b`... the
 /// counter is a bare local on one side, possibly plus a literal.
 fn normalise_test(c: &Tree) -> Option<(String, Tree)> {
+    normalise_test_for(c, None)
+}
+
+/// [`normalise_test`] with the counter known (from the other side of a
+/// conjunction), and two more forms: `x && y` over one counter is the
+/// smaller of the two bounds (fresh28 of fit_A2: `b < 16u && (t0 + b * 64u)
+/// < m`), and `a + k * c < M` with a literal c (both thresholds rise with the
+/// counter) is `k < (M - a, floored, + c - 1) / c`.
+fn normalise_test_for(c: &Tree, hint: Option<&str>) -> Option<(String, Tree)> {
+    if c.name == "logic.and" && c.kids.len() == 2 {
+        let (x, y) = (&c.kids[0], &c.kids[1]);
+        let (counter, bx, by) = match normalise_test_for(x, hint) {
+            Some((k, bx)) => {
+                let (k2, by) = normalise_test_for(y, Some(&k))?;
+                (k.clone(), bx, if k2 == k { by } else { return None })
+            }
+            None => {
+                let (k, by) = normalise_test_for(y, hint)?;
+                let (k2, bx) = normalise_test_for(x, Some(&k))?;
+                (k.clone(), if k2 == k { bx } else { return None }, by)
+            }
+        };
+        let ty = bx.ty;
+        return Some((counter, Tree::new("index.min", ty, vec![bx, by])));
+    }
     if c.kids.len() != 2 {
         return None;
     }
@@ -2052,12 +2085,59 @@ fn normalise_test(c: &Tree) -> Option<(String, Tree)> {
         for (a, b) in [(&lhs.kids[0], &lhs.kids[1]), (&lhs.kids[1], &lhs.kids[0])] {
             if a.kids.is_empty() {
                 if let (Some(counter), Some(k)) = (local_name(&a.name), literal_value(b)) {
-                    return Some((counter, Tree::new("index.sub_floor", index_ty, vec![bound, Tree::literal("literal.index", index_ty, k)])));
+                    if hint.is_none_or(|h| h == counter) {
+                        return Some((counter, Tree::new("index.sub_floor", index_ty, vec![bound, Tree::literal("literal.index", index_ty, k)])));
+                    }
                 }
             }
         }
     }
-    None
+    // `a + k * c < M`: one term the counter (alone or times a literal c > 0),
+    // the others free of it.
+    let mut terms = Vec::new();
+    flatten_add(lhs, &mut terms);
+    let counter_term = |t: &Tree| -> Option<(String, f32)> {
+        if t.kids.is_empty() {
+            return local_name(&t.name).map(|n| (n, 1.0));
+        }
+        if t.name == "index.mul" && t.kids.len() == 2 {
+            for (x, l) in [(&t.kids[0], &t.kids[1]), (&t.kids[1], &t.kids[0])] {
+                if let (true, Some(n), Some(v)) = (x.kids.is_empty(), local_name(&x.name), literal_value(l)) {
+                    if v >= 1.0 {
+                        return Some((n, v));
+                    }
+                }
+            }
+        }
+        None
+    };
+    let candidates: Vec<(usize, String, f32)> = terms.iter().enumerate().filter_map(|(i, t)| counter_term(t).map(|(n, v)| (i, n, v))).filter(|(_, n, _)| hint.is_none_or(|h| h == n)).collect();
+    let [(at, counter, step)] = candidates.as_slice() else { return None };
+    let mentions = |t: &Tree| -> bool {
+        fn any(t: &Tree, counter: &str) -> bool {
+            local_name(&t.name).as_deref() == Some(counter) || t.kids.iter().any(|k| any(k, counter))
+        }
+        any(t, counter)
+    };
+    let rest: Vec<Tree> = terms.iter().enumerate().filter(|(i, _)| i != at).map(|(_, t)| (*t).clone()).collect();
+    if rest.iter().any(mentions) {
+        return None;
+    }
+    let lit = |v: f32| Tree::literal("literal.index", index_ty, v);
+    let room = match rest.into_iter().reduce(|acc, t| Tree::new("index.add", index_ty, vec![acc, t])) {
+        Some(a) => Tree::new("index.sub_floor", index_ty, vec![bound, a]),
+        None => bound,
+    };
+    let bound = if *step == 1.0 { room } else { Tree::new("index.div", index_ty, vec![Tree::new("index.add", index_ty, vec![room, lit(step - 1.0)]), lit(*step)]) };
+    Some((counter.clone(), bound))
+}
+
+/// The locals a tree loads, as `local.<name>@<index>`.
+fn locals_in(t: &Tree, out: &mut Vec<String>) {
+    if let Some(l) = local_name(&t.name) {
+        out.push(l);
+    }
+    t.kids.iter().for_each(|k| locals_in(k, out));
 }
 
 /// The locals a block stores into, anywhere inside it, as `local.<name>@<index>`.
@@ -2572,6 +2652,25 @@ mod tests {
         // A mask or shift that leaves the block is not proved: r & 7u reaches 7, past a lane of 4.
         let wide = src.replace("(r & 3u)", "(r & 7u)");
         assert!(read_safe(&wide, &k).is_err(), "r & 7u is not a lane of 4");
+    }
+
+    /// A LOOP TESTED BY TWO CONDITIONS (fit_A2's fresh28: `b < 16u && (t0 +
+    /// b * 64u) < m`): the conjunction over one counter is the smaller bound,
+    /// and the affine test is `b < (sub_floor(m, t0) + 63u) / 64u`; the
+    /// kernel reads as a tile loop bounded by that expression. A bound that
+    /// reads a local the body stores is not a bound.
+    #[test]
+    fn a_loop_tested_by_a_conjunction_over_one_counter_reads_as_the_smaller_bound() {
+        let k = WgslKingdom::load_safe();
+        let src = include_str!("../../tests/corpus/safewgsl/reply_fitA2_g002_fresh28_opus.wgsl");
+        let test = "b < 16u && (t0 + b * 64u) < m";
+        assert!(src.contains(test));
+        let sx = read_safe(src, &k).unwrap_or_else(|e| panic!("{e}")).tree.to_sexpr();
+        assert!(sx.contains("(bound.of_index (index.min (literal.index 16) (index.div (index.add (index.sub_floor"), "{sx}");
+        // The bound read once must not change in the body: t0 stored inside the b loop is refused by name.
+        let moved = src.replacen("var q0 = vec4<f32>(0.0);", "t0 = t0 + 0u; var q0 = vec4<f32>(0.0);", 1);
+        let Err(e) = read_safe(&moved, &k) else { panic!("t0 changes in the body, and the kernel read") };
+        assert!(e.contains("which the loop's body stores"), "{e}");
     }
 
     /// A kernel with a helper function reads: the helper is inlined at its
