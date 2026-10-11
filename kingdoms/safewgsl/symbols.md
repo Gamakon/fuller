@@ -1143,4 +1143,59 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 |---|---|---|---|---|---|---|
 | F561 | `wg.get_safe` | `composite` | `wgmem<f32>.real u32.wgindex` | `f32.real` | 2 | a[i], in range by its type |
 
-561 function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Deliberately absent: atomics, images, derivatives, subgroup operations, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.
+## class `reg`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F562 | `reg.f16` | `composite` | `-` | `reg<f32>.real` | 0 | a register |
+| F563 | `reg.f17` | `composite` | `-` | `reg<f32>.real` | 0 | a register |
+| F564 | `reg.f18` | `composite` | `-` | `reg<f32>.real` | 0 | a register |
+| F565 | `reg.f19` | `composite` | `-` | `reg<f32>.real` | 0 | a register |
+| F566 | `reg.f20` | `composite` | `-` | `reg<f32>.real` | 0 | a register |
+| F567 | `reg.f21` | `composite` | `-` | `reg<f32>.real` | 0 | a register |
+| F568 | `reg.f22` | `composite` | `-` | `reg<f32>.real` | 0 | a register |
+| F569 | `reg.f23` | `composite` | `-` | `reg<f32>.real` | 0 | a register |
+| F570 | `reg.f24` | `composite` | `-` | `reg<f32>.real` | 0 | a register |
+| F571 | `reg.f25` | `composite` | `-` | `reg<f32>.real` | 0 | a register |
+| F572 | `reg.f26` | `composite` | `-` | `reg<f32>.real` | 0 | a register |
+| F573 | `reg.f27` | `composite` | `-` | `reg<f32>.real` | 0 | a register |
+| F574 | `reg.f28` | `composite` | `-` | `reg<f32>.real` | 0 | a register |
+| F575 | `reg.f29` | `composite` | `-` | `reg<f32>.real` | 0 | a register |
+| F576 | `reg.f30` | `composite` | `-` | `reg<f32>.real` | 0 | a register |
+| F577 | `reg.f31` | `composite` | `-` | `reg<f32>.real` | 0 | a register |
+| F578 | `reg.v8` | `composite` | `-` | `reg<vec4<f32>>.real` | 0 | a register |
+| F579 | `reg.v9` | `composite` | `-` | `reg<vec4<f32>>.real` | 0 | a register |
+| F580 | `reg.v10` | `composite` | `-` | `reg<vec4<f32>>.real` | 0 | a register |
+| F581 | `reg.v11` | `composite` | `-` | `reg<vec4<f32>>.real` | 0 | a register |
+| F582 | `reg.v12` | `composite` | `-` | `reg<vec4<f32>>.real` | 0 | a register |
+| F583 | `reg.v13` | `composite` | `-` | `reg<vec4<f32>>.real` | 0 | a register |
+| F584 | `reg.v14` | `composite` | `-` | `reg<vec4<f32>>.real` | 0 | a register |
+| F585 | `reg.v15` | `composite` | `-` | `reg<vec4<f32>>.real` | 0 | a register |
+| F586 | `reg.i16` | `composite` | `-` | `reg<u32>.index` | 0 | a register |
+| F587 | `reg.i17` | `composite` | `-` | `reg<u32>.index` | 0 | a register |
+| F588 | `reg.i18` | `composite` | `-` | `reg<u32>.index` | 0 | a register |
+| F589 | `reg.i19` | `composite` | `-` | `reg<u32>.index` | 0 | a register |
+| F590 | `reg.i20` | `composite` | `-` | `reg<u32>.index` | 0 | a register |
+| F591 | `reg.i21` | `composite` | `-` | `reg<u32>.index` | 0 | a register |
+| F592 | `reg.i22` | `composite` | `-` | `reg<u32>.index` | 0 | a register |
+| F593 | `reg.i23` | `composite` | `-` | `reg<u32>.index` | 0 | a register |
+| F594 | `reg.i24` | `composite` | `-` | `reg<u32>.index` | 0 | a register |
+| F595 | `reg.i25` | `composite` | `-` | `reg<u32>.index` | 0 | a register |
+| F596 | `reg.i26` | `composite` | `-` | `reg<u32>.index` | 0 | a register |
+| F597 | `reg.i27` | `composite` | `-` | `reg<u32>.index` | 0 | a register |
+| F598 | `reg.i28` | `composite` | `-` | `reg<u32>.index` | 0 | a register |
+| F599 | `reg.i29` | `composite` | `-` | `reg<u32>.index` | 0 | a register |
+| F600 | `reg.i30` | `composite` | `-` | `reg<u32>.index` | 0 | a register |
+| F601 | `reg.i31` | `composite` | `-` | `reg<u32>.index` | 0 | a register |
+| F602 | `reg.b4` | `composite` | `-` | `reg<bool>.flag` | 0 | a register |
+| F603 | `reg.b5` | `composite` | `-` | `reg<bool>.flag` | 0 | a register |
+| F604 | `reg.b6` | `composite` | `-` | `reg<bool>.flag` | 0 | a register |
+| F605 | `reg.b7` | `composite` | `-` | `reg<bool>.flag` | 0 | a register |
+
+## class `parr`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F606 | `parr.w` | `composite` | `-` | `parr<vec4<f32>>.real` | 0 | private array pw of 16 vec4<f32> (a second vec4 array) |
+
+606 function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Deliberately absent: atomics, images, derivatives, subgroup operations, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.

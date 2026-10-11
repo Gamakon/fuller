@@ -276,10 +276,10 @@ impl<'a> Ctx<'a> {
             return Ok(r.clone());
         }
         let (kind, max) = match dual {
-            "f32.real" => ('f', 16),
-            "vec4<f32>.real" => ('v', 8),
-            "u32.index" => ('i', 16),
-            "bool.flag" => ('b', 4),
+            "f32.real" => ('f', 32),
+            "vec4<f32>.real" => ('v', 16),
+            "u32.index" => ('i', 32),
+            "bool.flag" => ('b', 8),
             other => return Err(format!("local {local} has dual {other}, which has no register kind"),)
         };
         let n = *self.next_reg.get(&kind).unwrap_or(&0);
@@ -393,7 +393,7 @@ impl<'a> Ctx<'a> {
         let used: Vec<&'static str> = self.parrs.values().map(|a| a.0).collect();
         let arr = match kind {
             'f' => ["parr.a", "parr.b", "parr.c", "parr.d", "parr.e", "parr.f"].iter().copied().find(|a| !used.contains(a)).ok_or_else(|| format!("a seventh f32 local array {local}"))?,
-            'v' => if used.contains(&"parr.v") { return Err(format!("a second vec4 local array {local}")) } else { "parr.v" },
+            'v' => ["parr.v", "parr.w"].iter().copied().find(|a| !used.contains(a)).ok_or_else(|| format!("a third vec4 local array {local}"))?,
             'b' => ["parr.m", "parr.n"].iter().copied().find(|a| !used.contains(a)).ok_or_else(|| format!("a third bool local array {local}"))?,
             _ => ["parr.i", "parr.j", "parr.k"].iter().copied().find(|a| !used.contains(a)).ok_or_else(|| format!("a fourth u32 local array {local}"))?,
         };
@@ -998,6 +998,46 @@ mod tests {
         let out = Renderer::new(&k, &t, &role).kernel(&r.tree).unwrap();
         validate_text(&out.text).unwrap_or_else(|e| panic!("{e}\n{}", out.text));
         assert!(out.text.contains("for (t = 0u; t < cfg.m; t = t + 1u)"), "{}", out.text);
+    }
+
+    /// THE CORPUS (Andrew, 2026-10-11: "I want a fully complete kingdom"):
+    /// every draft and every model reply in `tests/corpus/safewgsl` does what
+    /// its manifest line says — reads into the kingdom, is refused by a
+    /// design rule (named), or is invalid WGSL that naga itself refuses. The
+    /// table is printed; one mismatch against `expected` (today's truth) fails
+    /// the test; `target` is what completeness demands and the unmet count
+    /// is printed until it is zero.
+    #[test]
+    fn the_corpus_reads_as_its_manifest_says() {
+        let dir = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/corpus/safewgsl"));
+        let manifest = std::fs::read_to_string(dir.join("manifest.tsv")).expect("manifest");
+        let k = WgslKingdom::load_safe();
+        let mut mismatches = Vec::new();
+        let mut unmet = 0usize;
+        let mut counts = std::collections::BTreeMap::new();
+        for line in manifest.lines().skip(1) {
+            let cols: Vec<&str> = line.split('\t').collect();
+            let (name, expected, target) = (cols[0], cols[1], cols[2]);
+            let src = std::fs::read_to_string(dir.join(format!("{name}.wgsl"))).unwrap_or_else(|e| panic!("{name}: {e}"));
+            let outcome = match read(&src) {
+                Err(e) => ("invalid".to_string(), e.lines().next().unwrap_or("").chars().take(90).collect::<String>()),
+                Ok(_) => match read_safe(&src, &k) {
+                    Ok(r) => ("reads".to_string(), format!("{} nodes", r.tree.size())),
+                    Err(e) => ("refused".to_string(), e.chars().take(90).collect::<String>()),
+                },
+            };
+            *counts.entry(outcome.0.clone()).or_insert(0usize) += 1;
+            let ok = outcome.0 == expected || (expected == "by-design" && outcome.0 == "refused");
+            if outcome.0 != target && !(target == "by-design" && outcome.0 == "refused") {
+                unmet += 1;
+            }
+            println!("{:<34} expected {:<9} target {:<9} got {:<8} {}{}", name, expected, target, outcome.0, if ok { "" } else { "MISMATCH " }, outcome.1);
+            if !ok {
+                mismatches.push(format!("{name}: expected {expected}, got {} ({})", outcome.0, outcome.1));
+            }
+        }
+        println!("corpus: {counts:?}; targets unmet: {unmet}");
+        assert!(mismatches.is_empty(), "{} mismatches:\n{}", mismatches.len(), mismatches.join("\n"));
     }
 
     /// A kernel with a helper function is refused by name.

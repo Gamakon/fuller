@@ -294,7 +294,10 @@ impl<'a> Renderer<'a> {
             text.push('\n');
         }
         text.push_str(&format!("@compute @workgroup_size({}, {}, 1)\nfn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_index) lidx: u32, @builtin(num_workgroups) nwg: vec3<u32>) {{\n", grid.x, grid.y));
-        text.push_str("    var f0: f32 = 0.0; var f1: f32 = 0.0; var f2: f32 = 0.0; var f3: f32 = 0.0;\n    var f4: f32 = 0.0; var f5: f32 = 0.0; var f6: f32 = 0.0; var f7: f32 = 0.0;\n    var f8: f32 = 0.0; var f9: f32 = 0.0; var f10: f32 = 0.0; var f11: f32 = 0.0;\n    var f12: f32 = 0.0; var f13: f32 = 0.0; var f14: f32 = 0.0; var f15: f32 = 0.0;\n    var v0: vec4<f32> = vec4<f32>(0.0); var v1: vec4<f32> = vec4<f32>(0.0); var v2: vec4<f32> = vec4<f32>(0.0); var v3: vec4<f32> = vec4<f32>(0.0);\n    var v4: vec4<f32> = vec4<f32>(0.0); var v5: vec4<f32> = vec4<f32>(0.0); var v6: vec4<f32> = vec4<f32>(0.0); var v7: vec4<f32> = vec4<f32>(0.0);\n    var i0: u32 = 0u; var i1: u32 = 0u; var i2: u32 = 0u; var i3: u32 = 0u; var i4: u32 = 0u; var i5: u32 = 0u; var i6: u32 = 0u; var i7: u32 = 0u;\n    var i8: u32 = 0u; var i9: u32 = 0u; var i10: u32 = 0u; var i11: u32 = 0u; var i12: u32 = 0u; var i13: u32 = 0u; var i14: u32 = 0u; var i15: u32 = 0u;\n    var b0: bool = false; var b1: bool = false; var b2: bool = false; var b3: bool = false;\n    var t: u32 = 0u; var k: u32 = 0u; var k2: u32 = 0u; var k3: u32 = 0u;\n    var pa: array<f32, 64>; var pb: array<f32, 64>; var pc: array<f32, 64>; var pd: array<f32, 64>; var pe: array<f32, 64>; var pf: array<f32, 64>;\n    var pv: array<vec4<f32>, 16>; var pi: array<u32, 16>; var pj: array<u32, 16>; var pk: array<u32, 16>; var pm: array<bool, 16>; var pn: array<bool, 16>;\n");
+        // The registers, counters and private arrays of the kingdom's rows:
+        // 32 f32, 16 vec4, 32 u32, 8 bool registers; six f32, two vec4, three
+        // u32 and two bool private arrays.
+        text.push_str(&register_declarations());
         text.push_str(&body);
         text.push_str("}\n");
         Ok(Rendered { text, grid, helpers: scope.helpers, masked: scope.masked })
@@ -587,8 +590,9 @@ impl<'a> Renderer<'a> {
             ("fallback", "reg<bool>.flag") => "b0".to_string(),
             (name, _) => {
                 let n = name.strip_prefix("reg.").unwrap_or("");
-                if ok(n, 'f', 16) || ok(n, 'v', 8) || ok(n, 'i', 16) || ok(n, 'b', 4) {
-                    n.to_string()
+                if ok(n, 'f', 32) || ok(n, 'v', 16) || ok(n, 'i', 32) || ok(n, 'b', 8) {
+                    let k: usize = n[1..].parse().unwrap_or(0);
+                    register_var(&n[..1], k)
                 } else {
                     return Err(format!("{name} ({}) is not a register", d.dual));
                 }
@@ -1096,6 +1100,37 @@ impl Renderer<'_> {
     }
 }
 
+/// A register's WGSL variable name: `f3`, `v0`, `i12`, `b1`; `f16` alone is
+/// spelled `f16r`, because `f16` is a reserved WGSL keyword (the type).
+pub fn register_var(prefix: &str, k: usize) -> String {
+    if prefix == "f" && k == 16 {
+        "f16r".to_string()
+    } else {
+        format!("{prefix}{k}")
+    }
+}
+
+/// The declarations every rendered kernel opens with (registers initialised
+/// to their form's fallback, the loop counters, the private arrays).
+pub fn register_declarations() -> String {
+    let mut out = String::new();
+    for (prefix, n, ty, init) in [("f", 32, "f32", "0.0"), ("v", 16, "vec4<f32>", "vec4<f32>(0.0)"), ("i", 32, "u32", "0u"), ("b", 8, "bool", "false")] {
+        for k in 0..n {
+            if k % 8 == 0 {
+                out.push_str("    ");
+            }
+            out.push_str(&format!("var {}: {ty} = {init}; ", register_var(prefix, k)));
+            if k % 8 == 7 || k == n - 1 {
+                out.push('\n');
+            }
+        }
+    }
+    out.push_str("    var t: u32 = 0u; var k: u32 = 0u; var k2: u32 = 0u; var k3: u32 = 0u;\n");
+    out.push_str("    var pa: array<f32, 64>; var pb: array<f32, 64>; var pc: array<f32, 64>; var pd: array<f32, 64>; var pe: array<f32, 64>; var pf: array<f32, 64>;\n");
+    out.push_str("    var pv: array<vec4<f32>, 16>; var pw: array<vec4<f32>, 16>; var pi: array<u32, 16>; var pj: array<u32, 16>; var pk: array<u32, 16>; var pm: array<bool, 16>; var pn: array<bool, 16>;\n");
+    out
+}
+
 /// A private array leaf's variable name.
 fn parr_name(t: &Tree) -> Result<&'static str, String> {
     Ok(match t.name.as_str() {
@@ -1104,6 +1139,7 @@ fn parr_name(t: &Tree) -> Result<&'static str, String> {
         "parr.c" => "pc",
         "parr.d" => "pd",
         "parr.v" => "pv",
+        "parr.w" => "pw",
         "parr.e" => "pe",
         "parr.f" => "pf",
         "parr.i" => "pi",

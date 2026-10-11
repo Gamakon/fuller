@@ -304,6 +304,49 @@ two-generation smoke run first (`--gens 2 --seconds 1800`), to see the operators
 
 **Launch.** Nothing launches until Andrew says so; the full configuration is stated first.
 
+## Step 6: the complete kingdom (Andrew, 2026-10-11 09:05Z: "Fix the kingdom!!!! I want a fully complete kingdom")
+
+**Objective.** No correct, safe kernel the contract allows is ever declined by the grammar. The
+smoke run of 08:52Z declined four model children in four, and five of the 32 drafts never read; each
+was a report that the kingdom is incomplete, which I had filed as model error and routed to repair.
+That broke Rules.md (no failovers, no graceful diversions, root causes not symptoms).
+
+**Complete means two lists, kept apart.**
+
+*Gaps, to be spelled (the job):*
+- a loop bound that is any u32 expression (`cfg.m & ~3u`, `cfg.m / 4u`, `(cfg.d + 63u) / 64u`, a local), not only `cfg.m`, `cfg.d`, `cfg.r_rows` or a literal ≤ 64 (k16, k26, two pump declines);
+- a loop test written as `t + 4u > m` (k06) or with the operands reversed, normalised to `counter < bound`;
+- a loop step above 64 for the item loop;
+- a vector component indexed by a variable, rendered through a helper so naga's constant-index rule holds (one Sonnet child);
+- an array constructor initialising a local array (k08), lowered to private-array stores;
+- helper functions whose body is lets and one `return expression` (k05), inlined at the call;
+- more registers (32 f32, 16 vec4, 32 u32, 8 bool) and private arrays (a second vec4 array).
+
+*Refused by design, kept (each protects a property the types were built for):*
+- a barrier under a thread-dependent condition (a WGSL uniformity error, a hang on the device);
+- a store to `h` at a cell this thread does not own (a data race between threads);
+- a return under a condition that is not the leading guard (makes every later barrier non-uniform);
+- more than two workgroup arrays of a kind (Apple's 32 KB threadgroup limit: the four arrays are 24 KB);
+- `switch`, `continue`, pointers, f16, subgroups, atomics (outside the contract).
+
+**Expression bounds and cost.** A loop bounded by an expression is rendered as written, never capped
+(a cap would compute the wrong thing silently on a large shape). The cost estimator counts such a
+bound as the worst shape's size (8,192 for one derived from `cfg.d` or `cfg.r_rows`, 65,536 from
+`cfg.m`, 8,192 otherwise), so a kernel that would be slow is refused at the cost bound before
+dispatch, by its true cost.
+
+**Acceptance.** `tests/corpus/safewgsl/`: the 31 drafts and the 10 saved model replies with a
+manifest (`reads` / `by-design` / `invalid`); `safe_reader::tests::the_corpus_reads_as_its_manifest_says`
+prints the table and fails on one mismatch. Of the 10 replies, 3 are invalid WGSL (two with
+unbalanced braces, one indexing a vector value by a variable, which naga refuses); the other 7 and
+all 31 drafts must read. The 26 converted drafts must still round-trip byte-equal.
+
+**Order** (smallest change first, a commit and the corpus test after each): registers and arrays;
+expression bounds and loop-test normalisation; the dynamic vector component; the array constructor;
+helper inlining. Then the tables regenerated, the drafts re-encoded (`safe96`), the hall of fame and
+the library re-encoded, since a kernel's genes name rows and types by name and survive, but anything
+that pinned a count does not.
+
 ## Expectations, stated before any run
 
 | measurement | expected |

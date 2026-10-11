@@ -636,7 +636,8 @@ mod tests {
         for (a, b) in fw.rows.iter().zip(&fs.rows) {
             assert_eq!((a.reference.as_str(), a.name()), (b.reference.as_str(), b.name()));
         }
-        assert_eq!(fs.rows.len(), 561);
+        // 561 rows until 2026-10-11; 606 with the complete kingdom's registers and arrays (step 6).
+        assert_eq!(fs.rows.len(), 606);
         let dual = |t: Ty| k.dual(t).unwrap().dual.clone();
         let producers = |d: &str| -> Vec<String> { k.rows.iter().filter(|r| dual(r.output) == d).map(|r| r.name.clone()).collect() };
         assert_eq!(producers("kernel.safe"), vec!["kernel.entry_safe"]);

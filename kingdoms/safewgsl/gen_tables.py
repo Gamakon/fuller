@@ -519,6 +519,18 @@ f("load", "phi4_safe", "composite", ["u32.index"], "vec4<f32>.real", "four conse
 f("load", "h_safe", "composite", ["u32.cell"], "f32.real", "h[cell], the thread's own cell")
 f("wg", "get_safe", "composite", ["wgmem<f32>.real", "u32.wgindex"], "f32.real", "a[i], in range by its type")
 
+# ---- the complete kingdom (step 6, 2026-10-11): rows the drafts and model kernels needed ----
+# More registers still: 32 f32, 16 vec4, 32 u32, 8 bool (a model kernel asked for f7..f10, the reader refused "more than 16 i registers").
+for i in range(16, 32):
+    f("reg", f"f{i}", "composite", [], "reg<f32>.real", "a register")
+for i in range(8, 16):
+    f("reg", f"v{i}", "composite", [], "reg<vec4<f32>>.real", "a register")
+for i in range(16, 32):
+    f("reg", f"i{i}", "composite", [], "reg<u32>.index", "a register")
+for i in range(4, 8):
+    f("reg", f"b{i}", "composite", [], "reg<bool>.flag", "a register")
+f("parr", "w", "composite", [], "parr<vec4<f32>>.real", "private array pw of 16 vec4<f32> (a second vec4 array)")
+
 
 def write_tsv(path, header, rows):
     with open(path, "w") as out:
