@@ -99,9 +99,25 @@ FORMS = {
     "O2": ("a statement or block of the epilogue inside two nested tile loops", []),
     "O3": ("a statement or block of the epilogue inside three nested tile loops", []),
     "O4": ("a statement or block of the epilogue inside four nested tile loops", []),
+    # THE THREAD'S AXES (2026-10-11: 69 of 92 engine-made offspring of fit_A2 failed correctness, typically
+    # one symbol of an index changed, lid.y for lid.x; 266 of 1,000 single-symbol mutants of the corpus swapped a
+    # thread-id axis or builtin): each thread id is its own dual, and its row and column components are of
+    # their own forms, so a mutation keeps the builtin and the axis a kernel wrote.
+    "gid": ("the thread's global id (global_invocation_id), its own dual", []),
+    "lid": ("the thread's id within its workgroup (local_invocation_id), its own dual", []),
+    "wid": ("the workgroup's id (workgroup_id), its own dual", []),
+    "rowid": ("the y component of a thread id: an index on the output's ROW axis", []),
+    "colid": ("the x component of a thread id: an index on the output's COLUMN axis", []),
+    "lidx": ("the thread's index within its workgroup (local_invocation_index), its own dual", []),
+    # A thread's row and column by the kind of its block: an offset of a strided or a grouped block applied to
+    # a contiguous block's row (or the reverse) leaves the thread's cells, so each kind is its own form.
+    "threadrows": ("a row of a thread's STRIDED block (rows Y apart)", ["u32"]),
+    "threadcols": ("a column of a thread's STRIDED block (columns X apart)", ["u32"]),
+    "threadrowg": ("a row of a thread's GROUPED block", ["u32"]),
+    "threadcolg": ("a column of a thread's GROUPED block", ["u32"]),
 }
 
-SAFE_FORMS = ["O0", "O1", "O2", "O3", "O4", "tcounter4", "L5", "C5", "safe", "pindex", "boundx", "boundm", "boundd", "boundrows", "lit64", "lit4096", "counter", "tcounter", "tcounter2", "L3", "C3", "tcounter3", "L4", "C4", "wgvindex", "bound", "threadrow", "threadcol", "cell", "phi", "wgindex", "L0", "L1", "L2", "C0", "C1", "C2"]
+SAFE_FORMS = ["lidx", "threadrows", "threadcols", "threadrowg", "threadcolg", "gid", "lid", "wid", "rowid", "colid", "O0", "O1", "O2", "O3", "O4", "tcounter4", "L5", "C5", "safe", "pindex", "boundx", "boundm", "boundd", "boundrows", "lit64", "lit4096", "counter", "tcounter", "tcounter2", "L3", "C3", "tcounter3", "L4", "C4", "wgvindex", "bound", "threadrow", "threadcol", "cell", "phi", "wgindex", "L0", "L1", "L2", "C0", "C1", "C2"]
 RUNGS = ["L0", "L1", "L2", "L3", "L4", "C0", "C1", "C2", "C3", "C4"]
 # The fifth rung came after every other row (run A, 2026-10-11); its rows are appended at the end so
 # every earlier ref stands, and it is kept out of RUNGS for that reason.
@@ -129,6 +145,8 @@ FALLBACK = {
     # The epilogue's fallback is a store, never nothing: h[cell] = h[cell] + f0 at the thread's first cell
     # (gid.y * by, gid.x * bx), under the store's own bounds check.
     "O0": "the thread's own store", "O1": "the thread's own store", "O2": "the thread's own store", "O3": "the thread's own store", "O4": "the thread's own store",
+    "gid": "0u", "lid": "0u", "wid": "0u", "rowid": "0u", "colid": "0u",
+    "lidx": "0u", "threadrows": "0u", "threadcols": "0u", "threadrowg": "0u", "threadcolg": "0u",
 }
 
 # The fallback by machine: the lane's 32-bit pattern as an unsigned integer. Vectors and matrices
@@ -148,6 +166,8 @@ FALLBACK_BITS = {
     "boundx": 0,
     "tcounter4": 0, "L5": 0, "C5": 0,
     "O0": 0, "O1": 0, "O2": 0, "O3": 0, "O4": 0,
+    "gid": 0, "lid": 0, "wid": 0, "rowid": 0, "colid": 0,
+    "lidx": 0, "threadrows": 0, "threadcols": 0, "threadrowg": 0, "threadcolg": 0,
 }
 assert set(FALLBACK_BITS) == set(FALLBACK), "every form with a fallback needs its bits, and no more"
 
@@ -231,6 +251,13 @@ def build_types():
     for r in EPILOGUE:
         add("stmt", r, 0, "a statement " + FORMS[r][0][len("a statement or block "):])
         add("block", r, 0, "a block " + FORMS[r][0][len("a statement or block "):])
+    # ---- the thread's axes (2026-10-11) ----
+    for b in ("gid", "lid", "wid"):
+        add("vec3<u32>", b, 3, FORMS[b][0])
+    add("u32", "rowid", 1, FORMS["rowid"][0])
+    add("u32", "colid", 1, FORMS["colid"][0])
+    for form in ("lidx", "threadrows", "threadcols", "threadrowg", "threadcolg"):
+        add("u32", form, 1, FORMS[form][0])
     return rows
 
 
@@ -255,7 +282,8 @@ f("load", "buffer", "Load(Access)", ["u32.index"], "<T.form of the buffer>", "on
 f("load", "uniform", "Load(AccessIndex)", [], "<T.form of the field>", "one instance per uniform field")
 f("load", "local", "Load", [], "<T.form of the local>", "one instance per local at that scaffold point")
 f("arg", "<name>", "FunctionArgument", [], "<T.form of the argument>", "one instance per argument")
-for b, out in [("global_invocation_id", "vec3<u32>.index"), ("local_invocation_id", "vec3<u32>.index"), ("workgroup_id", "vec3<u32>.index"), ("local_invocation_index", "u32.index"), ("num_workgroups", "vec3<u32>.count")]:
+# The three thread ids each their own dual (2026-10-11): one cannot be mutated into another.
+for b, out in [("global_invocation_id", "vec3<u32>.gid"), ("local_invocation_id", "vec3<u32>.lid"), ("workgroup_id", "vec3<u32>.wid"), ("local_invocation_index", "u32.lidx"), ("num_workgroups", "vec3<u32>.count")]:
     f("builtin", b, "FunctionArgument(builtin)", [], out, "")
 
 # arith: real
@@ -484,18 +512,18 @@ f("safe", "col_plus_tile", "composite", ["u32.threadcol", "u32.tcounter"], "u32.
 f("safe", "row_plus_tile2", "composite", ["u32.threadrow", "u32.tcounter2"], "u32.threadrow", "row + min(k2, block rows - 1)")
 f("safe", "col_plus_tile2", "composite", ["u32.threadcol", "u32.tcounter2"], "u32.threadcol", "col + min(k2, block columns - 1)")
 # Index provenance.
-f("safe", "thread_row", "composite", ["vec3<u32>.index", "u32.blk"], "u32.threadrow", "gid.y * blk (+ i by the block row): a row this thread owns")
-f("safe", "thread_col", "composite", ["vec3<u32>.index", "u32.blk"], "u32.threadcol", "gid.x * blk (+ j by the block column): a column this thread owns")
-f("safe", "thread_row_s", "composite", ["vec3<u32>.index", "vec3<u32>.index", "u32.blk"], "u32.threadrow", "arity 3: wid.y * (Y * blk) + lid.y: the first row of a thread's STRIDED block (its rows Y apart)")
-f("safe", "thread_col_s", "composite", ["vec3<u32>.index", "vec3<u32>.index", "u32.blk"], "u32.threadcol", "arity 3: wid.x * (X * blk) + lid.x: the first column of a thread's strided block")
-f("safe", "row_plus_s", "composite", ["u32.threadrow", "u32.lit64"], "u32.threadrow", "row + min(i, blk - 1) * Y: the i-th row of a strided block")
-f("safe", "col_plus_s", "composite", ["u32.threadcol", "u32.lit64"], "u32.threadcol", "col + min(j, blk - 1) * X")
-f("safe", "row_plus_tile_s", "composite", ["u32.threadrow", "u32.tcounter"], "u32.threadrow", "row + min(k, blk - 1) * Y: the k-th row of a strided block")
-f("safe", "col_plus_tile_s", "composite", ["u32.threadcol", "u32.tcounter"], "u32.threadcol", "col + min(k, blk - 1) * X")
-f("safe", "row_plus_tile2_s", "composite", ["u32.threadrow", "u32.tcounter2"], "u32.threadrow", "row + min(k2, blk - 1) * Y")
-f("safe", "col_plus_tile2_s", "composite", ["u32.threadcol", "u32.tcounter2"], "u32.threadcol", "col + min(k2, blk - 1) * X")
-f("safe", "row_plus_tile3_s", "composite", ["u32.threadrow", "u32.tcounter3"], "u32.threadrow", "row + min(k3, blk - 1) * Y")
-f("safe", "col_plus_tile3_s", "composite", ["u32.threadcol", "u32.tcounter3"], "u32.threadcol", "col + min(k3, blk - 1) * X")
+f("safe", "thread_row", "composite", ["vec3<u32>.gid", "u32.blk"], "u32.threadrow", "gid.y * blk (+ i by the block row): a row this thread owns")
+f("safe", "thread_col", "composite", ["vec3<u32>.gid", "u32.blk"], "u32.threadcol", "gid.x * blk (+ j by the block column): a column this thread owns")
+f("safe", "thread_row_s", "composite", ["vec3<u32>.wid", "vec3<u32>.lid", "u32.blk"], "u32.threadrows", "arity 3: wid.y * (Y * blk) + lid.y: the first row of a thread's STRIDED block (its rows Y apart)")
+f("safe", "thread_col_s", "composite", ["vec3<u32>.wid", "vec3<u32>.lid", "u32.blk"], "u32.threadcols", "arity 3: wid.x * (X * blk) + lid.x: the first column of a thread's strided block")
+f("safe", "row_plus_s", "composite", ["u32.threadrows", "u32.lit64"], "u32.threadrows", "row + min(i, blk - 1) * Y: the i-th row of a strided block")
+f("safe", "col_plus_s", "composite", ["u32.threadcols", "u32.lit64"], "u32.threadcols", "col + min(j, blk - 1) * X")
+f("safe", "row_plus_tile_s", "composite", ["u32.threadrows", "u32.tcounter"], "u32.threadrows", "row + min(k, blk - 1) * Y: the k-th row of a strided block")
+f("safe", "col_plus_tile_s", "composite", ["u32.threadcols", "u32.tcounter"], "u32.threadcols", "col + min(k, blk - 1) * X")
+f("safe", "row_plus_tile2_s", "composite", ["u32.threadrows", "u32.tcounter2"], "u32.threadrows", "row + min(k2, blk - 1) * Y")
+f("safe", "col_plus_tile2_s", "composite", ["u32.threadcols", "u32.tcounter2"], "u32.threadcols", "col + min(k2, blk - 1) * X")
+f("safe", "row_plus_tile3_s", "composite", ["u32.threadrows", "u32.tcounter3"], "u32.threadrows", "row + min(k3, blk - 1) * Y")
+f("safe", "col_plus_tile3_s", "composite", ["u32.threadcols", "u32.tcounter3"], "u32.threadcols", "col + min(k3, blk - 1) * X")
 f("safe", "cell_of", "composite", ["u32.threadrow", "u32.threadcol"], "u32.cell", "row * cfg.d + col, the cell this thread owns; the only index store.h accepts")
 f("safe", "phi_of", "composite", ["u32.counter", "u32.index"], "u32.phi", "unused (a load of phi takes any index); kept so earlier refs stand")
 f("safe", "wg_of", "composite", ["u32.index"], "u32.wgindex", "i & 2047u, in range by construction")
@@ -625,8 +653,8 @@ f("safe", "tile_counter4", "composite", [], "u32.tcounter4", "the fourth nested 
 f("safe", "tile_index4", "composite", ["u32.tcounter4"], "u32.index", "the fourth tile counter as a plain index")
 f("safe", "row_plus_tile4", "composite", ["u32.threadrow", "u32.tcounter4"], "u32.threadrow", "row + min(k4, block rows - 1)")
 f("safe", "col_plus_tile4", "composite", ["u32.threadcol", "u32.tcounter4"], "u32.threadcol", "col + min(k4, block columns - 1)")
-f("safe", "row_plus_tile4_s", "composite", ["u32.threadrow", "u32.tcounter4"], "u32.threadrow", "row + min(k4, blk - 1) * Y")
-f("safe", "col_plus_tile4_s", "composite", ["u32.threadcol", "u32.tcounter4"], "u32.threadcol", "col + min(k4, blk - 1) * X")
+f("safe", "row_plus_tile4_s", "composite", ["u32.threadrows", "u32.tcounter4"], "u32.threadrows", "row + min(k4, blk - 1) * Y")
+f("safe", "col_plus_tile4_s", "composite", ["u32.threadcols", "u32.tcounter4"], "u32.threadcols", "col + min(k4, blk - 1) * X")
 CTX["L5"] = "C5"
 for r in RUNGS5:
     f("block", "one_" + r, "composite", ["stmt." + r], "block." + r, "")
@@ -663,18 +691,18 @@ for r, body in (("L4", "L5"), ("C4", "C5")):
 # the clamp keeps the row this thread's whatever the expression.
 f("safe", "row_plus_x", "composite", ["u32.threadrow", "u32.index"], "u32.threadrow", "row + min(off, block rows - 1): any offset expression, clamped into the block")
 f("safe", "col_plus_x", "composite", ["u32.threadcol", "u32.index"], "u32.threadcol", "col + min(off, block columns - 1)")
-f("safe", "row_plus_x_s", "composite", ["u32.threadrow", "u32.index"], "u32.threadrow", "row + min(off, blk - 1) * Y: the off-th row of a strided block")
-f("safe", "col_plus_x_s", "composite", ["u32.threadcol", "u32.index"], "u32.threadcol", "col + min(off, blk - 1) * X")
+f("safe", "row_plus_x_s", "composite", ["u32.threadrows", "u32.index"], "u32.threadrows", "row + min(off, blk - 1) * Y: the off-th row of a strided block")
+f("safe", "col_plus_x_s", "composite", ["u32.threadcols", "u32.index"], "u32.threadcols", "col + min(off, blk - 1) * X")
 # u32(flag) (fit_A2's r2x_reinvent_g2: an index multiplied by u32(ok)).
 f("convert", "flag_to_index", "As", ["bool.flag"], "u32.index", "u32(b): 1 or 0")
 f("convert", "flag_to_f32", "As", ["bool.flag"], "f32.real", "f32(b): 1.0 or 0.0")
 # A GROUPED block (fit_A2's r6x_reinvent: a thread's 8 columns as 2 groups of 4 contiguous columns 32 apart,
 # col = wid.x * 64u + hf * 32u + lid.x * 4u + e): the thread's first cell of the block, and a cell of it by group
 # and lane, both clamped (G groups of B / G cells, the groups W * B / G apart; G = 1 is the contiguous block).
-f("safe", "thread_row_g", "composite", ["vec3<u32>.index", "vec3<u32>.index", "u32.blk", "u32.lit64"], "u32.threadrow", "arity 4: wid.y * (Y * blk) + lid.y * (blk / G): the first row of a thread's grouped block")
-f("safe", "thread_col_g", "composite", ["vec3<u32>.index", "vec3<u32>.index", "u32.blk", "u32.lit64"], "u32.threadcol", "arity 4: wid.x * (X * blk) + lid.x * (blk / G)")
-f("safe", "row_plus_g", "composite", ["u32.threadrow", "u32.lit64", "u32.index", "u32.index"], "u32.threadrow", "arity 4: row + min(g, G - 1) * (Y * blk / G) + min(e, blk / G - 1)")
-f("safe", "col_plus_g", "composite", ["u32.threadcol", "u32.lit64", "u32.index", "u32.index"], "u32.threadcol", "arity 4: col + min(g, G - 1) * (X * blk / G) + min(e, blk / G - 1)")
+f("safe", "thread_row_g", "composite", ["vec3<u32>.wid", "vec3<u32>.lid", "u32.blk", "u32.lit64"], "u32.threadrowg", "arity 4: wid.y * (Y * blk) + lid.y * (blk / G): the first row of a thread's grouped block")
+f("safe", "thread_col_g", "composite", ["vec3<u32>.wid", "vec3<u32>.lid", "u32.blk", "u32.lit64"], "u32.threadcolg", "arity 4: wid.x * (X * blk) + lid.x * (blk / G)")
+f("safe", "row_plus_g", "composite", ["u32.threadrowg", "u32.lit64", "u32.index", "u32.index"], "u32.threadrowg", "arity 4: row + min(g, G - 1) * (Y * blk / G) + min(e, blk / G - 1)")
+f("safe", "col_plus_g", "composite", ["u32.threadcolg", "u32.lit64", "u32.index", "u32.index"], "u32.threadcolg", "arity 4: col + min(g, G - 1) * (X * blk / G) + min(e, blk / G - 1)")
 # Four vec4 private arrays (fit_A2 gen 2's r2x_reinvent uses three: pe, po, p).
 f("parr", "x", "composite", [], "parr<vec4<f32>>.real", "private array px of 16 vec4<f32> (a third vec4 array)")
 f("parr", "y", "composite", [], "parr<vec4<f32>>.real", "private array py of 16 vec4<f32> (a fourth vec4 array)")
@@ -699,6 +727,25 @@ for d, r in enumerate(EPILOGUE):
         f("loop", "tile_strided_" + r, "composite", ["u32.lit64", "u32.lit64", body], "stmt." + r, "arity 3: stepped by a literal")
         f("loop", "tilex_" + r, "composite", ["u32.boundx", body], "stmt." + r, "bounded by an expression")
         f("loop", "tilex_strided_" + r, "composite", ["u32.boundx", "u32.lit64", body], "stmt." + r, "arity 3: bounded by an expression, stepped by a literal")
+
+# ---- the thread's axes (2026-10-11): a thread id's components by axis, after every other row ----
+# x is the column axis, y the row axis (the grid dispatches columns on x and rows on y); z is a plain index.
+for b in ("gid", "lid", "wid"):
+    f("axis", "x_" + b, "AccessIndex", ["vec3<u32>." + b], "u32.colid", f"{b}.x: an index on the column axis")
+    f("axis", "y_" + b, "AccessIndex", ["vec3<u32>." + b], "u32.rowid", f"{b}.y: an index on the row axis")
+    f("axis", "z_" + b, "AccessIndex", ["vec3<u32>." + b], "u32.index", f"{b}.z")
+f("index", "of_row", "composite", ["u32.rowid"], "u32.index", "a row-axis index used as a plain index")
+f("index", "of_col", "composite", ["u32.colid"], "u32.index", "a column-axis index used as a plain index")
+f("index", "of_lidx", "composite", ["u32.lidx"], "u32.index", "the thread's index within its workgroup used as a plain index")
+# The cell and the plain index of a row or column of each block kind.
+for r in ("threadrow", "threadrows", "threadrowg"):
+    for c in ("threadcol", "threadcols", "threadcolg"):
+        if (r, c) != ("threadrow", "threadcol"):
+            f("safe", "cell_of", "composite", ["u32." + r, "u32." + c], "u32.cell", "row * cfg.d + col, the cell this thread owns")
+for r in ("threadrows", "threadrowg"):
+    f("safe", "row_as_index", "composite", ["u32." + r], "u32.index", "")
+for c in ("threadcols", "threadcolg"):
+    f("safe", "col_as_index", "composite", ["u32." + c], "u32.index", "")
 
 
 def write_tsv(path, header, rows):

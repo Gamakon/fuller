@@ -141,3 +141,13 @@ T139	stmt.O3	stmt	O3	0	the thread's own store	0	0	0	a statement of the epilogue 
 T140	block.O3	block	O3	0	the thread's own store	0	0	0	a block of the epilogue inside three nested tile loops
 T141	stmt.O4	stmt	O4	0	the thread's own store	0	0	0	a statement of the epilogue inside four nested tile loops
 T142	block.O4	block	O4	0	the thread's own store	0	0	0	a block of the epilogue inside four nested tile loops
+T143	vec3<u32>.gid	vec3<u32>	gid	3	0u	0	0	0	the thread's global id (global_invocation_id), its own dual
+T144	vec3<u32>.lid	vec3<u32>	lid	3	0u	0	0	0	the thread's id within its workgroup (local_invocation_id), its own dual
+T145	vec3<u32>.wid	vec3<u32>	wid	3	0u	0	0	0	the workgroup's id (workgroup_id), its own dual
+T146	u32.rowid	u32	rowid	1	0u	0	0	0	the y component of a thread id: an index on the output's ROW axis
+T147	u32.colid	u32	colid	1	0u	0	0	0	the x component of a thread id: an index on the output's COLUMN axis
+T148	u32.lidx	u32	lidx	1	0u	0	0	0	the thread's index within its workgroup (local_invocation_index), its own dual
+T149	u32.threadrows	u32	threadrows	1	0u	0	0	0	a row of a thread's STRIDED block (rows Y apart)
+T150	u32.threadcols	u32	threadcols	1	0u	0	0	0	a column of a thread's STRIDED block (columns X apart)
+T151	u32.threadrowg	u32	threadrowg	1	0u	0	0	0	a row of a thread's GROUPED block
+T152	u32.threadcolg	u32	threadcolg	1	0u	0	0	0	a column of a thread's GROUPED block

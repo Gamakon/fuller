@@ -810,6 +810,32 @@ fn lets_used_in_deeper_loops(roots: &[Root], body: &naga::Block) -> HashMap<Stri
     bound
 }
 
+/// A tree with every component of a thread id (`shape.access_k` of
+/// `builtin.global_invocation_id`, `local_invocation_id`, `workgroup_id`)
+/// spelled as the axis row it is: x the column axis, y the row axis, z a
+/// plain index.
+fn by_axis(t: &Tree) -> Tree {
+    let kids: Vec<Tree> = t.kids.iter().map(by_axis).collect();
+    if let (Some(k), [b]) = (t.name.strip_prefix("shape.access_"), kids.as_slice()) {
+        let id = match b.name.as_str() {
+            "builtin.global_invocation_id" => Some("gid"),
+            "builtin.local_invocation_id" => Some("lid"),
+            "builtin.workgroup_id" => Some("wid"),
+            _ => None,
+        };
+        let component = match k {
+            "0" => Some("x"),
+            "1" => Some("y"),
+            "2" => Some("z"),
+            _ => None,
+        };
+        if let (Some(id), Some(component)) = (id, component) {
+            return Tree { name: format!("axis.{component}_{id}"), ty: t.ty, konst: t.konst, kids };
+        }
+    }
+    Tree { name: t.name.clone(), ty: t.ty, konst: t.konst, kids }
+}
+
 /// Whether a statement tree stores h anywhere in it.
 fn has_store(t: &Tree) -> bool {
     t.name.starts_with("store.h_") || t.kids.iter().any(has_store)
@@ -1292,10 +1318,10 @@ impl<'a> Ctx<'a> {
                     if by != self.grid.3 || bx != self.grid.2 {
                         return fail(&format!("block {bx} x {by} in the index, the grid says {} x {}", self.grid.2, self.grid.3));
                     }
-                    let gid = Tree::new("builtin.global_invocation_id", ty(self, "vec3<u32>.index")?, vec![]);
+                    let gid = Tree::new("builtin.global_invocation_id", ty(self, "vec3<u32>.gid")?, vec![]);
                     let blk = |v: u32| Tree::literal("literal.blk", ty(self, "u32.blk").expect("dual"), v as f32);
-                    let wid = Tree::new("builtin.workgroup_id", ty(self, "vec3<u32>.index")?, vec![]);
-                    let lid = Tree::new("builtin.local_invocation_id", ty(self, "vec3<u32>.index")?, vec![]);
+                    let wid = Tree::new("builtin.workgroup_id", ty(self, "vec3<u32>.wid")?, vec![]);
+                    let lid = Tree::new("builtin.local_invocation_id", ty(self, "vec3<u32>.lid")?, vec![]);
                     let strided = |o: &Off| matches!(o, Off::Strided(_) | Off::StridedTile(_) | Off::StridedExpr(_));
                     let lit64 = |ctx: &Self, v: u32| Tree::literal("literal.lit64", ty(ctx, "u32.lit64").expect("dual"), v as f32);
                     let base_row = match &i {
@@ -2575,6 +2601,10 @@ pub fn read_safe(source: &str, kingdom: &WgslKingdom) -> Result<SafeRead, String
     let g = |n: &str, v: u32| Tree::literal(n, dual_ty(kingdom, if n == "literal.wgdim" { "u32.wgdim" } else { "u32.blk" }).expect("dual"), v as f32);
     let grid_tree = Tree::new("grid.of", dual_ty(kingdom, "grid.grid")?, vec![g("literal.wgdim", grid.0), g("literal.wgdim", grid.1), g("literal.blk", grid.2), g("literal.blk", grid.3)]);
     let tree = Tree::new("kernel.entry_safe", dual_ty(kingdom, "kernel.safe")?, vec![grid_tree, block, epilogue]);
+    // The thread's axes: a component of a thread id is the axis row it is
+    // (`lid.y` is `axis.y_lid`, a row-axis index); renamed here, after the
+    // ownership proof, which reads the components as naga wrote them.
+    let tree = by_axis(&tree);
     // Row-consistent: every node under the dual its parent's row demands.
     let per_kernel = crate::wgsl::safe_karva::per_kernel_rows(kingdom, &crate::wgsl::render::gram_role());
     let tree = crate::wgsl::safe_karva::conform(&tree, tree.ty, kingdom, &per_kernel)?;

@@ -36,10 +36,10 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F011 | `builtin.global_invocation_id` | `FunctionArgument(builtin)` | `-` | `vec3<u32>.index` | 0 |  |
-| F012 | `builtin.local_invocation_id` | `FunctionArgument(builtin)` | `-` | `vec3<u32>.index` | 0 |  |
-| F013 | `builtin.workgroup_id` | `FunctionArgument(builtin)` | `-` | `vec3<u32>.index` | 0 |  |
-| F014 | `builtin.local_invocation_index` | `FunctionArgument(builtin)` | `-` | `u32.index` | 0 |  |
+| F011 | `builtin.global_invocation_id` | `FunctionArgument(builtin)` | `-` | `vec3<u32>.gid` | 0 |  |
+| F012 | `builtin.local_invocation_id` | `FunctionArgument(builtin)` | `-` | `vec3<u32>.lid` | 0 |  |
+| F013 | `builtin.workgroup_id` | `FunctionArgument(builtin)` | `-` | `vec3<u32>.wid` | 0 |  |
+| F014 | `builtin.local_invocation_index` | `FunctionArgument(builtin)` | `-` | `u32.lidx` | 0 |  |
 | F015 | `builtin.num_workgroups` | `FunctionArgument(builtin)` | `-` | `vec3<u32>.count` | 0 |  |
 
 ## class `arith`
@@ -535,18 +535,18 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 | F322 | `safe.col_plus_tile` | `composite` | `u32.threadcol u32.tcounter` | `u32.threadcol` | 2 | col + min(k, block columns - 1) |
 | F323 | `safe.row_plus_tile2` | `composite` | `u32.threadrow u32.tcounter2` | `u32.threadrow` | 2 | row + min(k2, block rows - 1) |
 | F324 | `safe.col_plus_tile2` | `composite` | `u32.threadcol u32.tcounter2` | `u32.threadcol` | 2 | col + min(k2, block columns - 1) |
-| F325 | `safe.thread_row` | `composite` | `vec3<u32>.index u32.blk` | `u32.threadrow` | 2 | gid.y * blk (+ i by the block row): a row this thread owns |
-| F326 | `safe.thread_col` | `composite` | `vec3<u32>.index u32.blk` | `u32.threadcol` | 2 | gid.x * blk (+ j by the block column): a column this thread owns |
-| F327 | `safe.thread_row_s` | `composite` | `vec3<u32>.index vec3<u32>.index u32.blk` | `u32.threadrow` | 3 | arity 3: wid.y * (Y * blk) + lid.y: the first row of a thread's STRIDED block (its rows Y apart) |
-| F328 | `safe.thread_col_s` | `composite` | `vec3<u32>.index vec3<u32>.index u32.blk` | `u32.threadcol` | 3 | arity 3: wid.x * (X * blk) + lid.x: the first column of a thread's strided block |
-| F329 | `safe.row_plus_s` | `composite` | `u32.threadrow u32.lit64` | `u32.threadrow` | 2 | row + min(i, blk - 1) * Y: the i-th row of a strided block |
-| F330 | `safe.col_plus_s` | `composite` | `u32.threadcol u32.lit64` | `u32.threadcol` | 2 | col + min(j, blk - 1) * X |
-| F331 | `safe.row_plus_tile_s` | `composite` | `u32.threadrow u32.tcounter` | `u32.threadrow` | 2 | row + min(k, blk - 1) * Y: the k-th row of a strided block |
-| F332 | `safe.col_plus_tile_s` | `composite` | `u32.threadcol u32.tcounter` | `u32.threadcol` | 2 | col + min(k, blk - 1) * X |
-| F333 | `safe.row_plus_tile2_s` | `composite` | `u32.threadrow u32.tcounter2` | `u32.threadrow` | 2 | row + min(k2, blk - 1) * Y |
-| F334 | `safe.col_plus_tile2_s` | `composite` | `u32.threadcol u32.tcounter2` | `u32.threadcol` | 2 | col + min(k2, blk - 1) * X |
-| F335 | `safe.row_plus_tile3_s` | `composite` | `u32.threadrow u32.tcounter3` | `u32.threadrow` | 2 | row + min(k3, blk - 1) * Y |
-| F336 | `safe.col_plus_tile3_s` | `composite` | `u32.threadcol u32.tcounter3` | `u32.threadcol` | 2 | col + min(k3, blk - 1) * X |
+| F325 | `safe.thread_row` | `composite` | `vec3<u32>.gid u32.blk` | `u32.threadrow` | 2 | gid.y * blk (+ i by the block row): a row this thread owns |
+| F326 | `safe.thread_col` | `composite` | `vec3<u32>.gid u32.blk` | `u32.threadcol` | 2 | gid.x * blk (+ j by the block column): a column this thread owns |
+| F327 | `safe.thread_row_s` | `composite` | `vec3<u32>.wid vec3<u32>.lid u32.blk` | `u32.threadrows` | 3 | arity 3: wid.y * (Y * blk) + lid.y: the first row of a thread's STRIDED block (its rows Y apart) |
+| F328 | `safe.thread_col_s` | `composite` | `vec3<u32>.wid vec3<u32>.lid u32.blk` | `u32.threadcols` | 3 | arity 3: wid.x * (X * blk) + lid.x: the first column of a thread's strided block |
+| F329 | `safe.row_plus_s` | `composite` | `u32.threadrows u32.lit64` | `u32.threadrows` | 2 | row + min(i, blk - 1) * Y: the i-th row of a strided block |
+| F330 | `safe.col_plus_s` | `composite` | `u32.threadcols u32.lit64` | `u32.threadcols` | 2 | col + min(j, blk - 1) * X |
+| F331 | `safe.row_plus_tile_s` | `composite` | `u32.threadrows u32.tcounter` | `u32.threadrows` | 2 | row + min(k, blk - 1) * Y: the k-th row of a strided block |
+| F332 | `safe.col_plus_tile_s` | `composite` | `u32.threadcols u32.tcounter` | `u32.threadcols` | 2 | col + min(k, blk - 1) * X |
+| F333 | `safe.row_plus_tile2_s` | `composite` | `u32.threadrows u32.tcounter2` | `u32.threadrows` | 2 | row + min(k2, blk - 1) * Y |
+| F334 | `safe.col_plus_tile2_s` | `composite` | `u32.threadcols u32.tcounter2` | `u32.threadcols` | 2 | col + min(k2, blk - 1) * X |
+| F335 | `safe.row_plus_tile3_s` | `composite` | `u32.threadrows u32.tcounter3` | `u32.threadrows` | 2 | row + min(k3, blk - 1) * Y |
+| F336 | `safe.col_plus_tile3_s` | `composite` | `u32.threadcols u32.tcounter3` | `u32.threadcols` | 2 | col + min(k3, blk - 1) * X |
 | F337 | `safe.cell_of` | `composite` | `u32.threadrow u32.threadcol` | `u32.cell` | 2 | row * cfg.d + col, the cell this thread owns; the only index store.h accepts |
 | F338 | `safe.phi_of` | `composite` | `u32.counter u32.index` | `u32.phi` | 2 | unused (a load of phi takes any index); kept so earlier refs stand |
 | F339 | `safe.wg_of` | `composite` | `u32.index` | `u32.wgindex` | 1 | i & 2047u, in range by construction |
@@ -1509,8 +1509,8 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 | F761 | `safe.tile_index4` | `composite` | `u32.tcounter4` | `u32.index` | 1 | the fourth tile counter as a plain index |
 | F762 | `safe.row_plus_tile4` | `composite` | `u32.threadrow u32.tcounter4` | `u32.threadrow` | 2 | row + min(k4, block rows - 1) |
 | F763 | `safe.col_plus_tile4` | `composite` | `u32.threadcol u32.tcounter4` | `u32.threadcol` | 2 | col + min(k4, block columns - 1) |
-| F764 | `safe.row_plus_tile4_s` | `composite` | `u32.threadrow u32.tcounter4` | `u32.threadrow` | 2 | row + min(k4, blk - 1) * Y |
-| F765 | `safe.col_plus_tile4_s` | `composite` | `u32.threadcol u32.tcounter4` | `u32.threadcol` | 2 | col + min(k4, blk - 1) * X |
+| F764 | `safe.row_plus_tile4_s` | `composite` | `u32.threadrows u32.tcounter4` | `u32.threadrows` | 2 | row + min(k4, blk - 1) * Y |
+| F765 | `safe.col_plus_tile4_s` | `composite` | `u32.threadcols u32.tcounter4` | `u32.threadcols` | 2 | col + min(k4, blk - 1) * X |
 
 ## class `block`
 
@@ -1679,8 +1679,8 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 |---|---|---|---|---|---|---|
 | F817 | `safe.row_plus_x` | `composite` | `u32.threadrow u32.index` | `u32.threadrow` | 2 | row + min(off, block rows - 1): any offset expression, clamped into the block |
 | F818 | `safe.col_plus_x` | `composite` | `u32.threadcol u32.index` | `u32.threadcol` | 2 | col + min(off, block columns - 1) |
-| F819 | `safe.row_plus_x_s` | `composite` | `u32.threadrow u32.index` | `u32.threadrow` | 2 | row + min(off, blk - 1) * Y: the off-th row of a strided block |
-| F820 | `safe.col_plus_x_s` | `composite` | `u32.threadcol u32.index` | `u32.threadcol` | 2 | col + min(off, blk - 1) * X |
+| F819 | `safe.row_plus_x_s` | `composite` | `u32.threadrows u32.index` | `u32.threadrows` | 2 | row + min(off, blk - 1) * Y: the off-th row of a strided block |
+| F820 | `safe.col_plus_x_s` | `composite` | `u32.threadcols u32.index` | `u32.threadcols` | 2 | col + min(off, blk - 1) * X |
 
 ## class `convert`
 
@@ -1693,10 +1693,10 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F823 | `safe.thread_row_g` | `composite` | `vec3<u32>.index vec3<u32>.index u32.blk u32.lit64` | `u32.threadrow` | 4 | arity 4: wid.y * (Y * blk) + lid.y * (blk / G): the first row of a thread's grouped block |
-| F824 | `safe.thread_col_g` | `composite` | `vec3<u32>.index vec3<u32>.index u32.blk u32.lit64` | `u32.threadcol` | 4 | arity 4: wid.x * (X * blk) + lid.x * (blk / G) |
-| F825 | `safe.row_plus_g` | `composite` | `u32.threadrow u32.lit64 u32.index u32.index` | `u32.threadrow` | 4 | arity 4: row + min(g, G - 1) * (Y * blk / G) + min(e, blk / G - 1) |
-| F826 | `safe.col_plus_g` | `composite` | `u32.threadcol u32.lit64 u32.index u32.index` | `u32.threadcol` | 4 | arity 4: col + min(g, G - 1) * (X * blk / G) + min(e, blk / G - 1) |
+| F823 | `safe.thread_row_g` | `composite` | `vec3<u32>.wid vec3<u32>.lid u32.blk u32.lit64` | `u32.threadrowg` | 4 | arity 4: wid.y * (Y * blk) + lid.y * (blk / G): the first row of a thread's grouped block |
+| F824 | `safe.thread_col_g` | `composite` | `vec3<u32>.wid vec3<u32>.lid u32.blk u32.lit64` | `u32.threadcolg` | 4 | arity 4: wid.x * (X * blk) + lid.x * (blk / G) |
+| F825 | `safe.row_plus_g` | `composite` | `u32.threadrowg u32.lit64 u32.index u32.index` | `u32.threadrowg` | 4 | arity 4: row + min(g, G - 1) * (Y * blk / G) + min(e, blk / G - 1) |
+| F826 | `safe.col_plus_g` | `composite` | `u32.threadcolg u32.lit64 u32.index u32.index` | `u32.threadcolg` | 4 | arity 4: col + min(g, G - 1) * (X * blk / G) + min(e, blk / G - 1) |
 
 ## class `parr`
 
@@ -1881,4 +1881,43 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 | F883 | `stmt.if_O4` | `composite` | `bool.flag block.O4` | `stmt.O4` | 2 | if (c) { epilogue } |
 | F884 | `stmt.if_else_O4` | `composite` | `bool.flag block.O4 block.O4` | `stmt.O4` | 3 | arity 3: both branches end in a store |
 
-884 function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Deliberately absent: atomics, images, derivatives, subgroup operations, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.
+## class `axis`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F885 | `axis.x_gid` | `AccessIndex` | `vec3<u32>.gid` | `u32.colid` | 1 | gid.x: an index on the column axis |
+| F886 | `axis.y_gid` | `AccessIndex` | `vec3<u32>.gid` | `u32.rowid` | 1 | gid.y: an index on the row axis |
+| F887 | `axis.z_gid` | `AccessIndex` | `vec3<u32>.gid` | `u32.index` | 1 | gid.z |
+| F888 | `axis.x_lid` | `AccessIndex` | `vec3<u32>.lid` | `u32.colid` | 1 | lid.x: an index on the column axis |
+| F889 | `axis.y_lid` | `AccessIndex` | `vec3<u32>.lid` | `u32.rowid` | 1 | lid.y: an index on the row axis |
+| F890 | `axis.z_lid` | `AccessIndex` | `vec3<u32>.lid` | `u32.index` | 1 | lid.z |
+| F891 | `axis.x_wid` | `AccessIndex` | `vec3<u32>.wid` | `u32.colid` | 1 | wid.x: an index on the column axis |
+| F892 | `axis.y_wid` | `AccessIndex` | `vec3<u32>.wid` | `u32.rowid` | 1 | wid.y: an index on the row axis |
+| F893 | `axis.z_wid` | `AccessIndex` | `vec3<u32>.wid` | `u32.index` | 1 | wid.z |
+
+## class `index`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F894 | `index.of_row` | `composite` | `u32.rowid` | `u32.index` | 1 | a row-axis index used as a plain index |
+| F895 | `index.of_col` | `composite` | `u32.colid` | `u32.index` | 1 | a column-axis index used as a plain index |
+| F896 | `index.of_lidx` | `composite` | `u32.lidx` | `u32.index` | 1 | the thread's index within its workgroup used as a plain index |
+
+## class `safe`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F897 | `safe.cell_of` | `composite` | `u32.threadrow u32.threadcols` | `u32.cell` | 2 | row * cfg.d + col, the cell this thread owns |
+| F898 | `safe.cell_of` | `composite` | `u32.threadrow u32.threadcolg` | `u32.cell` | 2 | row * cfg.d + col, the cell this thread owns |
+| F899 | `safe.cell_of` | `composite` | `u32.threadrows u32.threadcol` | `u32.cell` | 2 | row * cfg.d + col, the cell this thread owns |
+| F900 | `safe.cell_of` | `composite` | `u32.threadrows u32.threadcols` | `u32.cell` | 2 | row * cfg.d + col, the cell this thread owns |
+| F901 | `safe.cell_of` | `composite` | `u32.threadrows u32.threadcolg` | `u32.cell` | 2 | row * cfg.d + col, the cell this thread owns |
+| F902 | `safe.cell_of` | `composite` | `u32.threadrowg u32.threadcol` | `u32.cell` | 2 | row * cfg.d + col, the cell this thread owns |
+| F903 | `safe.cell_of` | `composite` | `u32.threadrowg u32.threadcols` | `u32.cell` | 2 | row * cfg.d + col, the cell this thread owns |
+| F904 | `safe.cell_of` | `composite` | `u32.threadrowg u32.threadcolg` | `u32.cell` | 2 | row * cfg.d + col, the cell this thread owns |
+| F905 | `safe.row_as_index` | `composite` | `u32.threadrows` | `u32.index` | 1 |  |
+| F906 | `safe.row_as_index` | `composite` | `u32.threadrowg` | `u32.index` | 1 |  |
+| F907 | `safe.col_as_index` | `composite` | `u32.threadcols` | `u32.index` | 1 |  |
+| F908 | `safe.col_as_index` | `composite` | `u32.threadcolg` | `u32.index` | 1 |  |
+
+908 function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Deliberately absent: atomics, images, derivatives, subgroup operations, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.

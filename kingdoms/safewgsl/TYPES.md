@@ -68,6 +68,16 @@ A type is a dual `slot.form`: the slot is what the hardware stores, the form is 
 | `O2` | a statement or block of the epilogue inside two nested tile loops | see duals |
 | `O3` | a statement or block of the epilogue inside three nested tile loops | see duals |
 | `O4` | a statement or block of the epilogue inside four nested tile loops | see duals |
+| `gid` | the thread's global id (global_invocation_id), its own dual | see duals |
+| `lid` | the thread's id within its workgroup (local_invocation_id), its own dual | see duals |
+| `wid` | the workgroup's id (workgroup_id), its own dual | see duals |
+| `rowid` | the y component of a thread id: an index on the output's ROW axis | see duals |
+| `colid` | the x component of a thread id: an index on the output's COLUMN axis | see duals |
+| `lidx` | the thread's index within its workgroup (local_invocation_index), its own dual | see duals |
+| `threadrows` | a row of a thread's STRIDED block (rows Y apart) | u32 |
+| `threadcols` | a column of a thread's STRIDED block (columns X apart) | u32 |
+| `threadrowg` | a row of a thread's GROUPED block | u32 |
+| `threadcolg` | a column of a thread's GROUPED block | u32 |
 
 ## Duals
 
@@ -215,8 +225,18 @@ A type is a dual `slot.form`: the slot is what the hardware stores, the form is 
 | T140 | `block.O3` | `block` | `O3` | 0 | `the thread's own store` | 0 | 0 | 0 |
 | T141 | `stmt.O4` | `stmt` | `O4` | 0 | `the thread's own store` | 0 | 0 | 0 |
 | T142 | `block.O4` | `block` | `O4` | 0 | `the thread's own store` | 0 | 0 | 0 |
+| T143 | `vec3<u32>.gid` | `vec3<u32>` | `gid` | 3 | `0u` | 0 | 0 | 0 |
+| T144 | `vec3<u32>.lid` | `vec3<u32>` | `lid` | 3 | `0u` | 0 | 0 | 0 |
+| T145 | `vec3<u32>.wid` | `vec3<u32>` | `wid` | 3 | `0u` | 0 | 0 | 0 |
+| T146 | `u32.rowid` | `u32` | `rowid` | 1 | `0u` | 0 | 0 | 0 |
+| T147 | `u32.colid` | `u32` | `colid` | 1 | `0u` | 0 | 0 | 0 |
+| T148 | `u32.lidx` | `u32` | `lidx` | 1 | `0u` | 0 | 0 | 0 |
+| T149 | `u32.threadrows` | `u32` | `threadrows` | 1 | `0u` | 0 | 0 | 0 |
+| T150 | `u32.threadcols` | `u32` | `threadcols` | 1 | `0u` | 0 | 0 | 0 |
+| T151 | `u32.threadrowg` | `u32` | `threadrowg` | 1 | `0u` | 0 | 0 | 0 |
+| T152 | `u32.threadcolg` | `u32` | `threadcolg` | 1 | `0u` | 0 | 0 | 0 |
 
-142 duals. The fallback is what Design C's projection substitutes for a codon whose dual does not match the demand; the codon is counted as masked.
+152 duals. The fallback is what Design C's projection substitutes for a codon whose dual does not match the demand; the codon is counted as masked.
 
 The three machine columns (`fallback_bits`, `fallback_noop`, `fallback_elem` in `types.tsv`) are what the loader builds the fallback leaf from, never the prose: `bits` is the lane's 32-bit pattern as an unsigned integer, repeated across the lanes of a vector or matrix (only `bool.sign` is non-zero, true = +1); `noop` is 1 for `store.store`, which substitutes no value at all; `elem` is 1 for `array<T>`, whose fallback is its element's. The loader tests `noop` and `elem` before reading `bits`; for those two rows `bits` is a placeholder 0. Every substitution, whichever column decides it, counts the codon as masked.
 

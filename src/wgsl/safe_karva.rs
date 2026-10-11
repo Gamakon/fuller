@@ -452,6 +452,11 @@ pub type PerKernelRow = (String, Vec<Ty>, Ty);
 pub fn per_kernel_rows(kingdom: &WgslKingdom, role: &Role) -> Vec<PerKernelRow> {
     role.per_kernel
         .iter()
+        // `load.h` reads h at ANY index: in the safe kingdom h is read only at
+        // the thread's own cell (`load.h_safe`), and a mutation of a phi load
+        // into `load.h` read another thread's cell (8 of 1,000 single-symbol
+        // mutants of the corpus, 2026-10-11). The reader never writes it.
+        .filter(|p| p.name != "load.h")
         .filter_map(|p| {
             let inputs = p.inputs.iter().map(|d| dual_ty(kingdom, d).ok()).collect::<Option<Vec<_>>>()?;
             Some((p.name.clone(), inputs, dual_ty(kingdom, &p.output).ok()?))
@@ -1042,5 +1047,106 @@ mod tests {
         assert!(failed.is_empty(), "{} did not render:\n{}", failed.len(), failed.iter().take(5).cloned().collect::<Vec<_>>().join("\n"));
         assert_eq!(stored, rendered, "{} of {rendered} rendered kernels never write h", rendered - stored);
         assert!(invalid.is_empty(), "{} rendered kernels naga refuses:\n{}", invalid.len(), invalid.iter().take(5).cloned().collect::<Vec<_>>().join("\n"));
+    }
+
+    /// SINGLE-SYMBOL MUTATIONS OF THE CORPUS (fit_A2, 2026-10-11: 69 of 92
+    /// engine-made offspring failed correctness, typically one symbol of an
+    /// index changed, lid.y for lid.x in a guard). N mutants: a corpus kernel
+    /// that reads, one node that is not a literal, its row replaced by another
+    /// row of exactly its signature (the engine's head mutation: a function of
+    /// the same arity and duals, a terminal of the same dual). Each mutant is
+    /// rendered, validated by naga and read back through the ownership proof;
+    /// the mutants that change a thread id or its axis are counted apart.
+    /// Measured 2026-10-11 with the same 1,000 draws: before the thread's
+    /// axes, 1,000 validated, 990 kept the store at the thread's own cell and
+    /// 273 changed a thread id or its axis; with them, 1,000, 1,000 and 0.
+    #[test]
+    fn single_symbol_mutations_of_the_corpus_keep_the_threads_cell() {
+        const N: usize = 1000;
+        let k = WgslKingdom::load_safe();
+        let role = gram_role();
+        let per_kernel = per_kernel_rows(&k, &role);
+        let dir = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/corpus/safewgsl"));
+        let manifest = std::fs::read_to_string(dir.join("manifest.tsv")).expect("manifest");
+        let trees: Vec<Tree> = manifest
+            .lines()
+            .skip(1)
+            .filter(|l| l.split('\t').nth(1) == Some("reads"))
+            .filter_map(|l| read_safe(&std::fs::read_to_string(dir.join(format!("{}.wgsl", l.split('\t').next()?))).ok()?, &k).ok())
+            .map(|r| r.tree)
+            .collect();
+        // Every row as (name, inputs, output).
+        let mut rows: Vec<(String, Vec<Ty>, Ty)> = k.rows.iter().map(|r| (r.name.clone(), r.inputs.clone(), r.output)).collect();
+        rows.extend(per_kernel.iter().cloned());
+        fn paths(t: &Tree, at: &mut Vec<usize>, out: &mut Vec<Vec<usize>>) {
+            if !t.name.starts_with("literal.") && t.name != FALLBACK {
+                out.push(at.clone());
+            }
+            if t.name.starts_with("literal.") {
+                return;
+            }
+            for (i, c) in t.kids.iter().enumerate() {
+                at.push(i);
+                paths(c, at, out);
+                at.pop();
+            }
+        }
+        fn node_at<'t>(t: &'t mut Tree, p: &[usize]) -> &'t mut Tree {
+            match p.split_first() {
+                None => t,
+                Some((i, rest)) => node_at(&mut t.kids[*i], rest),
+            }
+        }
+        let mut state = 0x6d75_7461_u64;
+        let mut next = move || {
+            state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            (state >> 33) as usize
+        };
+        // A thread id: the three ids and the local index, a component of an
+        // id (as naga writes it, or as the kingdom's axis row).
+        let ids = ["builtin.global_invocation_id", "builtin.local_invocation_id", "builtin.workgroup_id", "builtin.local_invocation_index"];
+        let thread_id = |t: &Tree| ids.contains(&t.name.as_str()) || t.name.starts_with("axis.") || (t.name.starts_with("shape.access_") && t.kids.first().is_some_and(|k| ids.contains(&k.name.as_str())));
+        let (mut valid, mut owned, mut lost, mut other, mut unrendered, mut axis_swaps, mut draws) = (0usize, 0usize, 0usize, 0usize, 0usize, 0usize, 0usize);
+        let mut made = 0usize;
+        while made < N {
+            draws += 1;
+            assert!(draws < 100 * N, "only {made} mutable nodes found in {draws} draws");
+            let tree = &trees[next() % trees.len()];
+            let mut ps = Vec::new();
+            paths(tree, &mut Vec::new(), &mut ps);
+            let p = &ps[next() % ps.len()];
+            let mut mutant = tree.clone();
+            let node = node_at(&mut mutant, p);
+            let ins: Vec<Ty> = node.kids.iter().map(|c| c.ty).collect();
+            let choices: Vec<&String> = rows.iter().filter(|(n, i, o)| *n != node.name && *o == node.ty && *i == ins && !n.starts_with("literal.")).map(|(n, _, _)| n).collect();
+            if choices.is_empty() {
+                continue;
+            }
+            let to = choices[next() % choices.len()].clone();
+            let was_id = thread_id(node);
+            node.name = to;
+            if was_id || thread_id(node) {
+                axis_swaps += 1;
+            }
+            made += 1;
+            let text = match render_tree(&mutant, &k) {
+                Ok(r) => r.text,
+                Err(_) => {
+                    unrendered += 1;
+                    continue;
+                }
+            };
+            if validate_text(&text).is_err() {
+                continue;
+            }
+            valid += 1;
+            match read_safe(&text, &k) {
+                Ok(_) => owned += 1,
+                Err(e) if e.contains("not at this thread's cell") => lost += 1,
+                Err(_) => other += 1,
+            }
+        }
+        println!("{N} single-symbol mutants of {} corpus kernels: {valid} validate, {owned} read back with the store at the thread's own cell, {lost} lose the thread's cell, {other} do not read back for another reason, {unrendered} do not render; {axis_swaps} change a thread id or its axis", trees.len());
+        assert_eq!((valid, owned, axis_swaps), (N, N, 0), "every mutant validates, keeps the thread's cell and keeps its thread ids and axes");
     }
 }

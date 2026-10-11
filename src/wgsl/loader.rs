@@ -629,8 +629,9 @@ mod tests {
         let (w, s) = (wgsl_duals(), safe_duals());
         // 126 duals until 2026-10-11; 127 with u32.boundx (the complete kingdom, step 6);
         // 132 with the fourth nested tile loop (tcounter4, L5, C5; run A's declines);
-        // 142 with the epilogue (stmt and block at O0..O4: every kernel ends in its thread's store).
-        assert_eq!(s.len(), 142);
+        // 142 with the epilogue (stmt and block at O0..O4: every kernel ends in its thread's store);
+        // 152 with the thread's axes (gid, lid, wid, rowid, colid, lidx; strided and grouped rows and columns).
+        assert_eq!(s.len(), 152);
         for (a, b) in w.iter().zip(&s) {
             assert_eq!((a.reference.as_str(), a.dual.as_str()), (b.reference.as_str(), b.dual.as_str()));
         }
@@ -645,8 +646,8 @@ mod tests {
         // 816 with the fourth nested tile loop; 822 with the clamped offsets, u32(flag) and f32(flag) (fit_A2).
         // 826 with the grouped block (fit_A2's r6x_reinvent).
         // 828 with the third and fourth vec4 private arrays (fit_A2 gen 2's r2x_reinvent);
-        // 884 with the epilogue's rows (O0..O4).
-        assert_eq!(fs.rows.len(), 884);
+        // 884 with the epilogue's rows (O0..O4); 908 with the thread's axes.
+        assert_eq!(fs.rows.len(), 908);
         let dual = |t: Ty| k.dual(t).unwrap().dual.clone();
         let producers = |d: &str| -> Vec<String> { k.rows.iter().filter(|r| dual(r.output) == d).map(|r| r.name.clone()).collect() };
         assert_eq!(producers("kernel.safe"), vec!["kernel.entry_safe"]);
@@ -654,6 +655,21 @@ mod tests {
         // block ends in an epilogue statement, and every epilogue statement is
         // the store of the thread's cell or holds an epilogue block (an if, an
         // if-else, a block, a tile loop one deeper), so every gene writes h.
+        // THE THREAD'S AXES: each thread id is its own dual (one is never
+        // another's mutation), its x component is a column-axis index and its
+        // y a row-axis index, and only the index.of_* rows carry them into
+        // plain index arithmetic; a strided or grouped block's offsets apply to
+        // that block's own rows and columns only.
+        for (b, d) in [("builtin.global_invocation_id", "vec3<u32>.gid"), ("builtin.local_invocation_id", "vec3<u32>.lid"), ("builtin.workgroup_id", "vec3<u32>.wid"), ("builtin.local_invocation_index", "u32.lidx")] {
+            assert_eq!(producers(d), vec![b.to_string()], "{d}");
+        }
+        assert!(producers("u32.rowid").iter().all(|n| n.starts_with("axis.y_")) && producers("u32.colid").iter().all(|n| n.starts_with("axis.x_")));
+        let consumers = |d: &str| -> Vec<String> { k.rows.iter().filter(|r| r.inputs.iter().any(|&t| dual(t) == d)).map(|r| r.name.clone()).collect() };
+        assert_eq!(consumers("u32.rowid"), vec!["index.of_row"]);
+        assert_eq!(consumers("u32.colid"), vec!["index.of_col"]);
+        for (kind, plus) in [("u32.threadrows", "_s"), ("u32.threadcols", "_s"), ("u32.threadrowg", "_g"), ("u32.threadcolg", "_g")] {
+            assert!(consumers(kind).iter().all(|n| n.ends_with(plus) || n == "safe.cell_of" || n.ends_with("_as_index")), "{kind}: {:?}", consumers(kind));
+        }
         let entry = k.rows.iter().find(|r| r.name == "kernel.entry_safe").unwrap();
         assert_eq!(entry.inputs.iter().map(|&t| dual(t)).collect::<Vec<_>>(), vec!["grid.grid", "block.L0", "block.O0"]);
         for d in 0..5 {
@@ -693,7 +709,8 @@ mod tests {
         assert!(k.rows.iter().filter(|r| r.name.starts_with("stmt.if_") && (dual(r.output).starts_with("stmt.L") || dual(r.output).starts_with("stmt.C"))).all(|r| dual(r.inputs[1]).starts_with("block.C")));
         // store.h only at an owned cell; load.phi only at a phi index; both produced by one row each.
         assert!(k.rows.iter().filter(|r| r.name.starts_with("store.h_")).all(|r| dual(r.inputs[0]) == "u32.cell"));
-        assert_eq!(producers("u32.cell"), vec!["safe.cell_of"]);
+        // (one cell_of per pair of block kinds, nine since the thread's axes)
+        assert!(producers("u32.cell").iter().all(|n| n == "safe.cell_of") && producers("u32.cell").len() == 9);
         assert_eq!(producers("u32.wgindex"), vec!["safe.wg_of"]);
         assert_eq!(producers("u32.wgvindex"), vec!["safe.wgv_of"]);
         assert!(k.rows.iter().filter(|r| r.name.starts_with("loop.items_strided")).all(|r| dual(r.inputs[1]) == "u32.lit4096"));

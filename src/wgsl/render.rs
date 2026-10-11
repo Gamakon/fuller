@@ -164,7 +164,7 @@ pub fn gram_shipped_safe_tree(kingdom: &WgslKingdom) -> Result<Tree, String> {
     let (index, count, real, flag) = (t("u32.index")?, t("u32.count")?, t("f32.real")?, t("bool.flag")?);
     let (l0, b0, l1, b1) = (t("stmt.L0")?, t("block.L0")?, t("stmt.L1")?, t("block.L1")?);
     let (rf, ri) = (t("reg<f32>.real")?, t("reg<u32>.index")?);
-    let gid = || Tree::new("builtin.global_invocation_id", t("vec3<u32>.index").expect("dual"), vec![]);
+    let gid = || Tree::new("builtin.global_invocation_id", t("vec3<u32>.gid").expect("dual"), vec![]);
     let blk = || Tree::literal("literal.blk", t("u32.blk").expect("dual"), 1.0);
     let row = || Tree::new("safe.thread_row", t("u32.threadrow").expect("dual"), vec![gid(), blk()]);
     let col = || Tree::new("safe.thread_col", t("u32.threadcol").expect("dual"), vec![gid(), blk()]);
@@ -377,7 +377,7 @@ impl<'a> Renderer<'a> {
     /// store's own bounds check.
     fn epilogue_fallback(&self, scope: &mut Scope) -> Result<String, String> {
         let t = |n: &str| dual_ty(self.kingdom, n);
-        let gid = || -> Result<Tree, String> { Ok(Tree::new("builtin.global_invocation_id", t("vec3<u32>.index")?, vec![])) };
+        let gid = || -> Result<Tree, String> { Ok(Tree::new("builtin.global_invocation_id", t("vec3<u32>.gid")?, vec![])) };
         let blk = |v: u32| -> Result<Tree, String> { Ok(Tree::literal("literal.blk", t("u32.blk")?, v as f32)) };
         let row = Tree::new("safe.thread_row", t("u32.threadrow")?, vec![gid()?, blk(scope.grid.by)?]);
         let col = Tree::new("safe.thread_col", t("u32.threadcol")?, vec![gid()?, blk(scope.grid.bx)?]);
@@ -866,6 +866,16 @@ impl<'a> Renderer<'a> {
             let _ = bound;
             let a: Vec<String> = v.kids.iter().map(|k| self.value(k, scope)).collect::<Result<_, _>>()?;
             return Ok(format!("({} < {})", a[0], a[1]));
+        }
+        // A thread id's component by axis (`axis.y_lid` is `lid.y`), and an
+        // axis index used as a plain index (its own text).
+        if let Some((component, id)) = name.strip_prefix("axis.").and_then(|r| r.split_once('_')) {
+            if v.kids.len() == 1 {
+                return Ok(format!("{id}.{component}"));
+            }
+        }
+        if (name == "index.of_row" || name == "index.of_col" || name == "index.of_lidx") && v.kids.len() == 1 {
+            return self.value(&v.kids[0], scope);
         }
         match name {
             "builtin.global_invocation_id" => return Ok("gid".into()),
