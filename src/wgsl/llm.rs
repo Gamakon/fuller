@@ -33,6 +33,7 @@ CONTRACT (fixed, the harness binds exactly these):\n\
 SEMANTICS. For every local row lr < r_rows and column c < d, with the global row gr = r_off + lr: h[lr*d + c] += sum over t in [0, m) of phi[t*d + gr] * phi[t*d + c]. The driver dispatches the kernel once per item band; h already holds earlier bands' partial sums, so the kernel must READ-ADD-WRITE h, never overwrite it. Rows outside [0, r_rows) and columns outside [0, d) must not be written. gr can exceed d - 1 when r_off + r_rows > d: such rows must not be read or written. A cell may be written by exactly one thread. d and m are arbitrary (not multiples of anything); r_rows <= d.\n\n\
 ENTRY POINT. `@compute @workgroup_size(X, Y, 1) fn main(...)` with any builtins you need. The FIRST LINE of your kernel must be the comment `// grid X Y BX BY` where X, Y are your workgroup size and BX, BY are the cells per thread along columns and rows (1 if one cell per thread). The harness dispatches ceil(d / (X*BX)) x ceil(r_rows / (Y*BY)) x 1 workgroups. Use workgroup_id, local_invocation_id or global_invocation_id consistently with that.\n\n\
 CONSTRAINTS. Only the three bindings above. No other global variables except var<workgroup> arrays (at most 16 KiB in total). workgroupBarrier() only in uniform control flow (never after a conditional return; guard with if-blocks instead). Every loop must terminate: bound item loops by cfg.m, tile loops by a literal. f32 arithmetic only; the result must match the reference to within f32 rounding (reordering the sum is fine).\n\n\
+SPEED NOTE (measured on this machine). Index every var<workgroup> and private array with a mask into its length, e.g. wg_a[(i) & 2047u] for an array of 2,048 and acc[(q) & 3u] for one of 4 (lengths powers of two): the Metal compiler then drops its bounds checks. The same kernel ran 1.7x faster masked (221.6 ms unmasked, 127.8 ms masked, at d 2048, m 65536). Storage buffers (phi, h) cannot be masked; guard them as the reference does.\n\n\
 REFERENCE KERNEL (correct, one thread per cell, the one to beat):\n```wgsl\n{SHIPPED}```\n\n\
 OUTPUT. Return ONLY the complete WGSL kernel text, starting with the `// grid` line, with no explanation, no markdown fences, no prose before or after.")
 }
@@ -346,6 +347,14 @@ mod tests {
     /// printed it).
     /// A repair brief says where its offspring came from: parents when it
     /// has them, a random draw when it has none.
+    /// The contract tells the models the measured masking rule (item 8,
+    /// 2026-10-11: masked indices let Metal drop bounds checks, 1.7x).
+    #[test]
+    fn the_contract_states_the_masking_rule() {
+        let c = contract();
+        assert!(c.contains("SPEED NOTE") && c.contains("& 2047u") && c.contains("1.7x"), "{c}");
+    }
+
     #[test]
     fn a_repair_brief_states_its_origin() {
         let m = ChildMeasure { stage: "constraint".into(), passed: 0, of: 128, detail: "d".into(), columns: None, speedups: None, attempt: 1 };
