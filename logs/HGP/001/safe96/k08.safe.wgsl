@@ -73,10 +73,11 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation
     pv[3u] = v5;
     for (k = 0u; k < 4u; k = k + 1u) {
     if (((((wid.y * 64u) + (lid.y * 4u)) + k) < cfg.r_rows)) {
+    v6 = pv[((k) & 15u)];
     i2 = 0u;
     for (k2 = 0u; k2 < 4u; k2 = k2 + 1u) {
     if (((((wid.x * 64u) + (lid.x * 4u)) + k2) < cfg.d)) {
-    if ((((gid.y * 4u) + min(k, 3u))) < cfg.r_rows && (((gid.x * 4u) + min(k2, 3u))) < cfg.d && (cfg.r_off + (((gid.y * 4u) + min(k, 3u)))) < cfg.d) { h[((((gid.y * 4u) + min(k, 3u))) * cfg.d + (((gid.x * 4u) + min(k2, 3u))))] = h[((((gid.y * 4u) + min(k, 3u))) * cfg.d + (((gid.x * 4u) + min(k2, 3u))))] + at_vec4f(pv[((k) & 15u)], k2); }
+    if ((((gid.y * 4u) + min(k, 3u))) < cfg.r_rows && (((gid.x * 4u) + min(k2, 3u))) < cfg.d && (cfg.r_off + (((gid.y * 4u) + min(k, 3u)))) < cfg.d) { h[((((gid.y * 4u) + min(k, 3u))) * cfg.d + (((gid.x * 4u) + min(k2, 3u))))] = h[((((gid.y * 4u) + min(k, 3u))) * cfg.d + (((gid.x * 4u) + min(k2, 3u))))] + at_vec4f(v6, k2); }
     }
     }
     }
