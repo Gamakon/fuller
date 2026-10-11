@@ -966,7 +966,7 @@ impl<'a> Ctx<'a> {
         let used: Vec<&'static str> = self.parrs.values().map(|a| a.0).collect();
         let arr = match kind {
             'f' => ["parr.a", "parr.b", "parr.c", "parr.d", "parr.e", "parr.f"].iter().copied().find(|a| !used.contains(a)).ok_or_else(|| format!("a seventh f32 local array {local}"))?,
-            'v' => ["parr.v", "parr.w"].iter().copied().find(|a| !used.contains(a)).ok_or_else(|| format!("a third vec4 local array {local}"))?,
+            'v' => ["parr.v", "parr.w", "parr.x", "parr.y"].iter().copied().find(|a| !used.contains(a)).ok_or_else(|| format!("a fifth vec4 local array {local}"))?,
             'b' => ["parr.m", "parr.n"].iter().copied().find(|a| !used.contains(a)).ok_or_else(|| format!("a third bool local array {local}"))?,
             _ => ["parr.i", "parr.j", "parr.k"].iter().copied().find(|a| !used.contains(a)).ok_or_else(|| format!("a fourth u32 local array {local}"))?,
         };

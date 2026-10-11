@@ -1388,7 +1388,7 @@ pub fn register_declarations() -> String {
     }
     out.push_str("    var t: u32 = 0u; var k: u32 = 0u; var k2: u32 = 0u; var k3: u32 = 0u; var k4: u32 = 0u;\n");
     out.push_str("    var pa: array<f32, 64>; var pb: array<f32, 64>; var pc: array<f32, 64>; var pd: array<f32, 64>; var pe: array<f32, 64>; var pf: array<f32, 64>;\n");
-    out.push_str("    var pv: array<vec4<f32>, 16>; var pw: array<vec4<f32>, 16>; var pi: array<u32, 16>; var pj: array<u32, 16>; var pk: array<u32, 16>; var pm: array<bool, 16>; var pn: array<bool, 16>;\n");
+    out.push_str("    var pv: array<vec4<f32>, 16>; var pw: array<vec4<f32>, 16>; var px: array<vec4<f32>, 16>; var py: array<vec4<f32>, 16>; var pi: array<u32, 16>; var pj: array<u32, 16>; var pk: array<u32, 16>; var pm: array<bool, 16>; var pn: array<bool, 16>;\n");
     out
 }
 
@@ -1411,6 +1411,8 @@ fn parr_name(t: &Tree) -> Result<&'static str, String> {
         "parr.d" => "pd",
         "parr.v" => "pv",
         "parr.w" => "pw",
+        "parr.x" => "px",
+        "parr.y" => "py",
         "parr.e" => "pe",
         "parr.f" => "pf",
         "parr.i" => "pi",

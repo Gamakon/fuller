@@ -1698,4 +1698,11 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 | F825 | `safe.row_plus_g` | `composite` | `u32.threadrow u32.lit64 u32.index u32.index` | `u32.threadrow` | 4 | arity 4: row + min(g, G - 1) * (Y * blk / G) + min(e, blk / G - 1) |
 | F826 | `safe.col_plus_g` | `composite` | `u32.threadcol u32.lit64 u32.index u32.index` | `u32.threadcol` | 4 | arity 4: col + min(g, G - 1) * (X * blk / G) + min(e, blk / G - 1) |
 
-826 function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Deliberately absent: atomics, images, derivatives, subgroup operations, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.
+## class `parr`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F827 | `parr.x` | `composite` | `-` | `parr<vec4<f32>>.real` | 0 | private array px of 16 vec4<f32> (a third vec4 array) |
+| F828 | `parr.y` | `composite` | `-` | `parr<vec4<f32>>.real` | 0 | private array py of 16 vec4<f32> (a fourth vec4 array) |
+
+828 function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Deliberately absent: atomics, images, derivatives, subgroup operations, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.

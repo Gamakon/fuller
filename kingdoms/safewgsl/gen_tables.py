@@ -655,6 +655,9 @@ f("safe", "thread_row_g", "composite", ["vec3<u32>.index", "vec3<u32>.index", "u
 f("safe", "thread_col_g", "composite", ["vec3<u32>.index", "vec3<u32>.index", "u32.blk", "u32.lit64"], "u32.threadcol", "arity 4: wid.x * (X * blk) + lid.x * (blk / G)")
 f("safe", "row_plus_g", "composite", ["u32.threadrow", "u32.lit64", "u32.index", "u32.index"], "u32.threadrow", "arity 4: row + min(g, G - 1) * (Y * blk / G) + min(e, blk / G - 1)")
 f("safe", "col_plus_g", "composite", ["u32.threadcol", "u32.lit64", "u32.index", "u32.index"], "u32.threadcol", "arity 4: col + min(g, G - 1) * (X * blk / G) + min(e, blk / G - 1)")
+# Four vec4 private arrays (fit_A2 gen 2's r2x_reinvent uses three: pe, po, p).
+f("parr", "x", "composite", [], "parr<vec4<f32>>.real", "private array px of 16 vec4<f32> (a third vec4 array)")
+f("parr", "y", "composite", [], "parr<vec4<f32>>.real", "private array py of 16 vec4<f32> (a fourth vec4 array)")
 
 
 def write_tsv(path, header, rows):
