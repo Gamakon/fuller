@@ -831,9 +831,9 @@ pub struct Split {
     /// The pairs' device builds, and the host check against the f64 reference.
     pub pairs_build: f64,
     pub pairs_check: f64,
-    /// The timing builds, candidate and shipped.
+    /// The candidate's timing builds (the shipped kernel is timed once a
+    /// generation, [`FitnessContext::time_shipped`]).
     pub timing_cand: f64,
-    pub timing_shipped: f64,
     pub upload: f64,
     pub readback: f64,
     /// The whole evaluation.
@@ -848,7 +848,6 @@ impl Split {
         self.pairs_build += o.pairs_build;
         self.pairs_check += o.pairs_check;
         self.timing_cand += o.timing_cand;
-        self.timing_shipped += o.timing_shipped;
         self.upload += o.upload;
         self.readback += o.readback;
         self.total += o.total;
@@ -861,7 +860,7 @@ impl Split {
 
     /// One line, seconds: "compile 0.2, cases 0.4, ... (uploads 0.3, read-backs 0.9)".
     pub fn line(&self) -> String {
-        format!("compile {:.1}, cases {:.1}, rungs {:.1}, pairs {:.1} + check {:.1}, timing candidate {:.1} + shipped {:.1}, other {:.1} (inside the builds: uploads {:.1}, read-backs {:.1})", self.compile / 1e3, self.cases / 1e3, self.rungs / 1e3, self.pairs_build / 1e3, self.pairs_check / 1e3, self.timing_cand / 1e3, self.timing_shipped / 1e3, (self.total - self.compile - self.cases - self.rungs - self.pairs_build - self.pairs_check - self.timing_cand - self.timing_shipped) / 1e3, self.upload / 1e3, self.readback / 1e3)
+        format!("compile {:.1}, cases {:.1}, rungs {:.1}, pairs {:.1} + check {:.1}, timing {:.1}, other {:.1} (inside the builds: uploads {:.1}, read-backs {:.1})", self.compile / 1e3, self.cases / 1e3, self.rungs / 1e3, self.pairs_build / 1e3, self.pairs_check / 1e3, self.timing_cand / 1e3, (self.total - self.compile - self.cases - self.rungs - self.pairs_build - self.pairs_check - self.timing_cand) / 1e3, self.upload / 1e3, self.readback / 1e3)
     }
 }
 
@@ -907,6 +906,10 @@ pub struct FitnessContext {
     pub resident_rungs: Vec<Resident>,
     pub resident_pairs: [Vec<Resident>; 3],
     pub resident_timing: Vec<Resident>,
+    /// The shipped kernel's GPU milliseconds at the three timing shapes,
+    /// the denominator of every speed-up until [`FitnessContext::time_shipped`]
+    /// measures them again (once a generation in phylu's `wgsl_fit`).
+    pub shipped_gpu_ms: std::cell::Cell<[f64; 3]>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -986,7 +989,31 @@ impl FitnessContext {
         let resident_rungs = up(&rungs.iter().map(|(d, m, p)| (*d, *m, p.as_slice())).collect::<Vec<_>>())?;
         let resident_pairs = [pairs_of(&train)?, pairs_of(&val)?, pairs_of(&extrap)?];
         let resident_timing = up(&timing.iter().map(|(d, m, p)| (*d, *m, p.as_slice())).collect::<Vec<_>>())?;
-        Ok(FitnessContext { train, val, extrap, probes, admission, shipped_source: SHIPPED.to_string(), timing, limit, timing_rounds: 1, rungs, shipped_ms, base_budget_ms: BASE_BUDGET_MS, round_budget_ms: ROUND_BUDGET_MS, resident_rungs, resident_pairs, resident_timing })
+        let ctx = FitnessContext { train, val, extrap, probes, admission, shipped_source: SHIPPED.to_string(), timing, limit, timing_rounds: 1, rungs, shipped_ms, base_budget_ms: BASE_BUDGET_MS, round_budget_ms: ROUND_BUDGET_MS, resident_rungs, resident_pairs, resident_timing, shipped_gpu_ms: std::cell::Cell::new([0.0; 3]) };
+        ctx.time_shipped(dev)?;
+        Ok(ctx)
+    }
+
+    /// Time the shipped kernel at the three timing shapes (after one
+    /// warm-up build at the first) and make those the denominators of the
+    /// speed-ups from now on: the median of `timing_rounds` builds a shape,
+    /// GPU timestamps as the candidate's are. Returns the times.
+    pub fn time_shipped(&self, dev: &Device) -> Result<[f64; 3], String> {
+        let shipped = Gram::compile(dev, &self.shipped_source)?;
+        shipped.run(&self.resident_timing[0], false)?;
+        let mut out = [0.0f64; 3];
+        for (k, res) in self.resident_timing.iter().enumerate() {
+            let mut v = Vec::with_capacity(self.timing_rounds.max(1));
+            for _ in 0..self.timing_rounds.max(1) {
+                v.push(shipped.run(res, false)?.gpu_ms);
+            }
+            out[k] = median(&mut v);
+            if out[k] <= 0.0 {
+                return Err(format!("the shipped kernel timed at zero at shape {k}"));
+            }
+        }
+        self.shipped_gpu_ms.set(out);
+        Ok(out)
     }
 
     /// The limit of one candidate build at a timing shape, [`slow_limit_ms`].
@@ -1056,17 +1083,11 @@ impl FitnessContext {
             }
         }
         split.rungs = elapsed_ms(t_rungs);
-        let t_shc = Instant::now();
-        let shipped = match Gram::compile(dev, &self.shipped_source) {
-            Ok(g) => g,
-            Err(e) => return infeasible(passed, format!("shipped compile: {e}"), t, &meter, &split),
-        };
         // Accuracy columns: the worst error relative to shipped's, min(1, e / 2),
         // per set. The pairs run smallest work first across the three sets, so
         // every pair is predicted from a measured build at most 32x smaller.
         let mut order: Vec<(usize, &AccuracyPair, &Resident)> = [&self.train, &self.val, &self.extrap].iter().zip(&self.resident_pairs).enumerate().flat_map(|(k, (set, res))| set.iter().zip(res).map(move |(p, r)| (k, p, r))).collect();
         order.sort_by(|a, b| work(a.1 .1, a.1 .2).total_cmp(&work(b.1 .1, b.1 .2)));
-        split.compile += elapsed_ms(t_shc);
         let mut worst = [0.0f64; 3];
         for (k, (name, d, m, _, h_ref, smax), res) in order {
             if let Err(e) = gate(&meter, &format!("pair {name} (d {d} m {m})"), work(*d, *m), elapsed_ms(t), limit_ms, self.base_budget_ms) {
@@ -1098,36 +1119,30 @@ impl FitnessContext {
                 Err(e) => return Fitness { predicted_ms, ..infeasible(passed, e, t, &meter, &split) },
             }
         }
-        // Speed columns: `timing_rounds` paired rounds per shape, the order
-        // alternating every round, the median of the rounds' ratios.
+        // Speed columns: `timing_rounds` candidate builds per shape, the
+        // median of their ratios to the shipped kernel's times of this
+        // generation ([`FitnessContext::time_shipped`]; until 2026-10-11 the
+        // shipped kernel was built beside every candidate, 3.4 s of 6.4).
+        let shipped_gpu = self.shipped_gpu_ms.get();
         let mut speedups = [0.0f64; 3];
         let mut measured_ms = [0.0f64; 3];
         let rounds = self.timing_rounds.max(1);
         for (k, ((d, m, _), res)) in self.timing.iter().zip(&self.resident_timing).enumerate() {
             let mut ratios = Vec::with_capacity(rounds);
             let mut walls = Vec::with_capacity(rounds);
-            for round in 0..rounds {
-                let cand_first = (k + passed + round) % 2 == 0;
-                let r = (|| -> Result<(f64, f64), String> {
-                    let timed = |g: &Gram, split: &mut Split, shipped_side: bool| -> Result<Build, String> {
-                        let tb = Instant::now();
-                        let b = g.run(res, false)?;
-                        *if shipped_side { &mut split.timing_shipped } else { &mut split.timing_cand } += tb.elapsed().as_secs_f64() * 1e3;
-                        split.build(&b);
-                        Ok(b)
-                    };
-                    let (bc, ts) = if cand_first { let bc = timed(&gram, &mut split, false)?; (bc, timed(&shipped, &mut split, true)?.gpu_ms) } else { let ts = timed(&shipped, &mut split, true)?.gpu_ms; (timed(&gram, &mut split, false)?, ts) };
-                    let tc = bc.gpu_ms;
-                    if tc <= 0.0 || ts <= 0.0 { return Err(format!("zero time at d {d} m {m}")); }
-                    Ok((ts / tc, bc.compute_ms))
-                })();
-                match r {
-                    Ok((s, wall)) => {
-                        ratios.push(s);
-                        walls.push(wall);
-                    }
+            for _ in 0..rounds {
+                let tb = Instant::now();
+                let b = match gram.run(res, false) {
+                    Ok(b) => b,
                     Err(e) => return Fitness { predicted_ms, ..infeasible(passed, e, t, &meter, &split) },
+                };
+                split.timing_cand += elapsed_ms(tb);
+                split.build(&b);
+                match speedup(shipped_gpu[k], b.gpu_ms) {
+                    Ok(r) => ratios.push(r),
+                    Err(e) => return Fitness { predicted_ms, ..infeasible(passed, format!("{e} at d {d} m {m}"), t, &meter, &split) },
                 }
+                walls.push(b.compute_ms);
             }
             speedups[k] = median(&mut ratios);
             measured_ms[k] = median(&mut walls);
@@ -1135,6 +1150,15 @@ impl FitnessContext {
         let columns = [(1.0 / speedups[0]).clamp(0.0, 1.0), (1.0 / speedups[1]).clamp(0.0, 1.0), (1.0 / speedups[2]).clamp(0.0, 1.0), (et / 2.0).clamp(0.0, 1.0), (ev / 2.0).clamp(0.0, 1.0), (ex / 2.0).clamp(0.0, 1.0)];
         Fitness { feasible: true, passed, columns, speedups, hff: truenorth(&columns), detail: String::new(), seconds: t.elapsed().as_secs_f64(), predicted_ms, rate_per_g: meter.rate_per_g(), floor_ms: meter.floor_ms, measured_ms, split: Split { total: t.elapsed().as_secs_f64() * 1e3, ..split } }
     }
+}
+
+/// A speed-up: the shipped kernel's GPU time over the candidate's, both
+/// positive (a zero is a timestamp that did not resolve, not a speed).
+pub fn speedup(shipped_gpu_ms: f64, candidate_gpu_ms: f64) -> Result<f64, String> {
+    if candidate_gpu_ms <= 0.0 || shipped_gpu_ms <= 0.0 {
+        return Err(format!("zero time (shipped {shipped_gpu_ms} ms, candidate {candidate_gpu_ms} ms)"));
+    }
+    Ok(shipped_gpu_ms / candidate_gpu_ms)
 }
 
 /// The median of a sample (the mean of the middle two for an even count).
@@ -1352,6 +1376,35 @@ mod tests {
         let h = reference(&p, d, 2);
         // H[r][c] = Σ_t p[t][r] p[t][c]
         assert_eq!(h, vec![17.0, 22.0, 27.0, 22.0, 29.0, 36.0, 27.0, 36.0, 45.0]);
+    }
+
+    /// The speed-up is the generation's shipped time over the candidate's;
+    /// a zero on either side is an error, never a speed.
+    #[test]
+    fn the_speedup_is_shipped_over_candidate_and_refuses_a_zero() {
+        assert_eq!(speedup(1000.0, 125.0), Ok(8.0));
+        assert_eq!(speedup(1000.0, 2000.0), Ok(0.5));
+        assert!(speedup(1000.0, 0.0).unwrap_err().starts_with("zero time"));
+        assert!(speedup(0.0, 10.0).is_err());
+    }
+
+    /// GPU (run when the device is free): with the shipped times taken once,
+    /// the shipped kernel scored as a candidate has speed-ups of 1 within
+    /// one-round noise (15 %, 2026-10-11), and a second timing of the
+    /// shipped kernel moves its times by less than that.
+    #[test]
+    fn the_generations_shipped_times_score_shipped_at_one() {
+        let dev = Device::new().expect("device");
+        let ctx = FitnessContext::new(&dev, std::path::Path::new("logs/WGSL_GRAM/pairs")).expect("context");
+        let first = ctx.shipped_gpu_ms.get();
+        let f = ctx.fitness(&dev, SHIPPED);
+        assert!(f.feasible, "{f:?}");
+        let again = ctx.time_shipped(&dev).expect("time shipped");
+        println!("shipped {first:?} then {again:?} ms; shipped as a candidate: speed-ups {:?}", f.speedups);
+        for k in 0..3 {
+            assert!((0.85..=1.15).contains(&f.speedups[k]), "{:?}", f.speedups);
+            assert!((again[k] / first[k] - 1.0).abs() < 0.15, "{first:?} {again:?}");
+        }
     }
 
     /// The parallel check returns the serial check's max ratio and
