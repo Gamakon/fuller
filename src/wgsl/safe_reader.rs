@@ -2872,6 +2872,20 @@ mod tests {
         assert!(c.per_item < 1000.0, "per item {}", c.per_item);
     }
 
+    /// fit_A2 gen 4's r3p1 (Opus): `let cv0` and `let cv1`, four phi reads
+    /// each per pass, used in the 8 x 4 loop inside, are registers set once
+    /// a pass; priced at 4,552 per item when they were inlined at every
+    /// multiply-add (bound 2,560), below 1,500 now.
+    #[test]
+    fn g004_r3p1_reads_its_vectors_once_a_pass() {
+        let k = WgslKingdom::load_safe();
+        let src = include_str!("../../tests/corpus/safewgsl/reply_fitA2_g004_r3p1_opus.wgsl");
+        let tree = read_safe(src, &k).unwrap_or_else(|e| panic!("{e}")).tree;
+        let c = crate::wgsl::render::cost(&tree);
+        let bound = crate::wgsl::safe_karva::default_bound(&k).unwrap();
+        assert!(c.per_item < 1500.0 && c.per_item < bound.per_item && c.base < bound.base, "per item {}, base {}", c.per_item, c.base);
+    }
+
     /// A kernel with a helper function reads: the helper is inlined at its
     /// calls (the complete kingdom, step 6; `load4`, with a local, an
     /// if-else and lane stores, as statements since run A), or the refusal
