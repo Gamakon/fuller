@@ -437,7 +437,7 @@ type Bounds = BTreeMap<String, u32>;
 
 /// The largest value an offset expression takes: a literal, a tile counter
 /// (its bound less one), a product by a literal, a sum, a `min` by a
-/// literal; `None` for anything else.
+/// literal, a shift right or a mask by a literal; `None` for anything else.
 fn offset_max(t: &Tree, tiles: Tiles, bounds: &Bounds) -> Option<f64> {
     if let Some(v) = literal_value(t) {
         return Some(f64::from(v));
@@ -450,6 +450,17 @@ fn offset_max(t: &Tree, tiles: Tiles, bounds: &Bounds) -> Option<f64> {
     match (t.name.as_str(), t.kids.as_slice()) {
         ("index.add", [a, b]) => Some(offset_max(a, tiles, bounds)? + offset_max(b, tiles, bounds)?),
         ("index.mul", [a, b]) => Some(offset_max(a, tiles, bounds)? * offset_max(b, tiles, bounds)?),
+        // `x >> s` with a literal s is at most max(x) / 2^s, and `x & l` with a
+        // literal l is at most l: one counter split into a group and a lane
+        // (fit_A2's r2x_reinvent: rows (r >> 2u) * 64u + lid.y * 4u + (r & 3u), r < 8).
+        ("bits.shr" | "index.shr", [a, b]) => {
+            let s = literal_value(b)?;
+            Some((offset_max(a, tiles, bounds)? / 2f64.powf(f64::from(s).min(31.0))).floor())
+        }
+        ("bits.and" | "index.and", [a, b]) => match (literal_value(a), literal_value(b)) {
+            (Some(l), _) | (_, Some(l)) => Some(f64::from(l).min(offset_max(if literal_value(a).is_some() { b } else { a }, tiles, bounds).unwrap_or(f64::INFINITY))),
+            _ => Some(offset_max(a, tiles, bounds)?.min(offset_max(b, tiles, bounds)?)),
+        },
         // `min(x, l)` with a literal l is at most l whatever x is (the kingdom's own clamp).
         ("index.min", [a, b]) => match (literal_value(a), literal_value(b)) {
             (Some(l), _) | (_, Some(l)) => Some(f64::from(l).min(offset_max(if literal_value(a).is_some() { b } else { a }, tiles, bounds).unwrap_or(f64::INFINITY))),
@@ -2544,6 +2555,23 @@ mod tests {
         for arr in ["parr.v", "parr.w", "parr.x", "parr.y"] {
             assert!(sx.contains(arr), "{arr} unused");
         }
+    }
+
+    /// A GROUPED BLOCK FROM ONE COUNTER (fit_A2 gen 2's r2x_reinvent, grid
+    /// 16 x 16, block 4 x 8): the row wid.y * 128u + (r >> 2u) * 64u +
+    /// lid.y * 4u + (r & 3u) with r < 8 is the thread's 8 rows as 2 groups
+    /// of 4, 64 apart; the shift and the mask prove the group below 2 and
+    /// the lane below 4, and the store is on the kingdom's grouped rows.
+    #[test]
+    fn a_grouped_block_from_one_counter_split_by_shift_and_mask_is_proved() {
+        let k = WgslKingdom::load_safe();
+        let src = include_str!("../../tests/corpus/safewgsl/reply_fitA2_g002_r2x_reinvent_onecounter_sonnet.wgsl");
+        assert!(src.contains("(r >> 2u) * 64u") && src.contains("(r & 3u)"));
+        let sx = read_safe(src, &k).unwrap_or_else(|e| panic!("{e}")).tree.to_sexpr();
+        assert!(sx.contains("(safe.row_plus_g (safe.thread_row_g"), "{sx}");
+        // A mask or shift that leaves the block is not proved: r & 7u reaches 7, past a lane of 4.
+        let wide = src.replace("(r & 3u)", "(r & 7u)");
+        assert!(read_safe(&wide, &k).is_err(), "r & 7u is not a lane of 4");
     }
 
     /// A kernel with a helper function reads: the helper is inlined at its
