@@ -1228,11 +1228,24 @@ pub fn cost(t: &Tree) -> Cost {
 /// bounds; a value the estimator cannot see (a register, a load) is 8192.
 /// The result is clamped to [1, 65536].
 pub fn worst_bound(t: &Tree) -> f64 {
-    fn eval(t: &Tree) -> f64 {
+    bound_at_worst(t).0
+}
+
+/// [`worst_bound`] and whether every value in the expression was seen: a
+/// register, a load or a row the estimator has no case for is taken as
+/// 8192 and makes the value unseen.
+fn bound_at_worst(t: &Tree) -> (f64, bool) {
+    fn eval(t: &Tree, seen: &mut bool) -> f64 {
         if t.name.starts_with("literal.") {
             return if t.konst.is_finite() { f64::from(t.konst).max(0.0) } else { 0.0 };
         }
-        let k = |i: usize| t.kids.get(i).map_or(8192.0, eval);
+        let mut k = |i: usize| match t.kids.get(i) {
+            Some(x) => eval(x, seen),
+            None => {
+                *seen = false;
+                8192.0
+            }
+        };
         match safe_base(&t.name) {
             "load.cfg_d" | "load.cfg_r_rows" | "bound.d" | "bound.rows" => 8192.0,
             "load.cfg_m" | "bound.m" => 65536.0,
@@ -1250,19 +1263,34 @@ pub fn worst_bound(t: &Tree) -> f64 {
             "index.or" => k(0).max(k(1)) * 2.0,
             "index.shl" => k(0) * 2f64.powf(k(1).min(31.0)),
             "index.shr" => k(0) / 2f64.powf(k(1).min(31.0)),
-            _ => 8192.0,
+            _ => {
+                *seen = false;
+                8192.0
+            }
         }
     }
-    eval(t).clamp(1.0, 1.0e12)
+    let mut seen = true;
+    let v = eval(t, &mut seen).clamp(1.0, 1.0e12);
+    (v, seen)
 }
 
-/// The item loop's bound relative to the worst shape's m: 1 for the
-/// bindings' counts and for an expression at most m, more for a quadratic
-/// bound (`cfg.m * cfg.d` is 8,192 passes over the items), so the cost
-/// bound refuses such a loop by its true size.
+/// The item loop's passes over the items relative to the worst shape's m:
+/// 1 for the bindings' counts; for an expression bound, its value at the
+/// worst shape over m, so a quadratic bound (`cfg.m * cfg.d`, 8,192 passes)
+/// is priced by its true size and a loop over item groups
+/// (`(cfg.m + 15u) / 16u`, fit_A2's fresh43_g12: a sixteenth of a pass) by
+/// its true size too. An expression with a value the estimator cannot see
+/// is at least one pass.
 fn items_passes(bound: Option<&Tree>) -> f64 {
     match bound {
-        Some(b) if safe_base(&b.name) == "bound.of_index" => (worst_bound(b) / 65536.0).max(1.0),
+        Some(b) if safe_base(&b.name) == "bound.of_index" => {
+            let (v, seen) = bound_at_worst(b);
+            if seen {
+                v / 65536.0
+            } else {
+                (v / 65536.0).max(1.0)
+            }
+        }
         _ => 1.0,
     }
 }

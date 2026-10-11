@@ -2374,6 +2374,22 @@ mod tests {
         assert_eq!(cell(&literal_first), want);
     }
 
+    /// AN ITEM LOOP OVER GROUPS OF ITEMS IS PRICED BY ITS PASSES (fit_A2 gen
+    /// 2's fresh43_g12, `t0 < (m + 15u) / 16u`, 16 items a pass; 128/128 on
+    /// the GPU and 8x faster than shipped): the estimate floored the passes
+    /// at one and priced it at 3,413 per item against the bound of 2,560, so
+    /// the run never dispatched it. It is 213 per item now.
+    #[test]
+    fn an_item_loop_over_groups_of_items_is_priced_by_its_passes() {
+        let k = WgslKingdom::load_safe();
+        let src = include_str!("../../tests/corpus/safewgsl/reply_fitA2_g002_fresh43_g12_opus.wgsl");
+        let tree = read_safe(src, &k).unwrap_or_else(|e| panic!("{e}")).tree;
+        let c = crate::wgsl::render::cost(&tree);
+        let bound = crate::wgsl::safe_karva::default_bound(&k).unwrap();
+        assert!(c.per_item < 250.0 && c.per_item < bound.per_item / 10.0, "per item {} against the bound {}", c.per_item, bound.per_item);
+        assert!(c.base <= bound.base, "base {} against the bound {}", c.base, bound.base);
+    }
+
     /// A kernel with a helper function reads: the helper is inlined at its
     /// calls (the complete kingdom, step 6; `load4`, with a local, an
     /// if-else and lane stores, as statements since run A), or the refusal
