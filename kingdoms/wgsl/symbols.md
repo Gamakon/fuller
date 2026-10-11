@@ -77,7 +77,7 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 | F044 | `arith.clamp` | `Math::Clamp` | `<S.real> <S.real> <S.real>` | `<S.real>` | 3 | arity 3 |
 | F045 | `arith.mix` | `Math::Mix` | `<S.real> <S.real> <S.real>` | `<S.real>` | 3 | arity 3 |
 | F046 | `arith.fma` | `Math::Fma` | `<S.real> <S.real> <S.real>` | `<S.real>` | 3 | arity 3 |
-| F047 | `arith.smoothstep` | `Math::Smoothstep` | `<S.real> <S.real> <S.real>` | `<S.real>` | 3 | arity 3 |
+| F047 | `arith.smoothstep` | `Math::SmoothStep` | `<S.real> <S.real> <S.real>` | `<S.real>` | 3 | arity 3 |
 | F048 | `arith.mix_scalar_weight` | `Math::Mix` | `<vecL<f32>.real> <vecL<f32>.real> f32.real` | `<vecL<f32>.real>` | 3 | arity 3 |
 
 ## class `trig`

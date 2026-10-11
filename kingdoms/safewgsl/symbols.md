@@ -77,7 +77,7 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 | F044 | `arith.clamp` | `Math::Clamp` | `<S.real> <S.real> <S.real>` | `<S.real>` | 3 | arity 3 |
 | F045 | `arith.mix` | `Math::Mix` | `<S.real> <S.real> <S.real>` | `<S.real>` | 3 | arity 3 |
 | F046 | `arith.fma` | `Math::Fma` | `<S.real> <S.real> <S.real>` | `<S.real>` | 3 | arity 3 |
-| F047 | `arith.smoothstep` | `Math::Smoothstep` | `<S.real> <S.real> <S.real>` | `<S.real>` | 3 | arity 3 |
+| F047 | `arith.smoothstep` | `Math::SmoothStep` | `<S.real> <S.real> <S.real>` | `<S.real>` | 3 | arity 3 |
 | F048 | `arith.mix_scalar_weight` | `Math::Mix` | `<vecL<f32>.real> <vecL<f32>.real> f32.real` | `<vecL<f32>.real>` | 3 | arity 3 |
 
 ## class `trig`
@@ -1920,4 +1920,13 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 | F907 | `safe.col_as_index` | `composite` | `u32.threadcols` | `u32.index` | 1 |  |
 | F908 | `safe.col_as_index` | `composite` | `u32.threadcolg` | `u32.index` | 1 |  |
 
-908 function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Deliberately absent: atomics, images, derivatives, subgroup operations, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.
+## class `block`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F909 | `block.cont_O1` | `composite` | `bool.flag block.O1` | `block.O1` | 2 | if (c) { continue; } then the rest of the epilogue block: skip this pass of the epilogue's tile loop |
+| F910 | `block.cont_O2` | `composite` | `bool.flag block.O2` | `block.O2` | 2 | if (c) { continue; } then the rest of the epilogue block: skip this pass of the epilogue's tile loop |
+| F911 | `block.cont_O3` | `composite` | `bool.flag block.O3` | `block.O3` | 2 | if (c) { continue; } then the rest of the epilogue block: skip this pass of the epilogue's tile loop |
+| F912 | `block.cont_O4` | `composite` | `bool.flag block.O4` | `block.O4` | 2 | if (c) { continue; } then the rest of the epilogue block: skip this pass of the epilogue's tile loop |
+
+912 function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Deliberately absent: atomics, images, derivatives, subgroup operations, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.

@@ -297,8 +297,10 @@ for op in ["abs", "sign", "floor", "ceil", "round", "fract", "trunc", "saturate"
     f("arith", op, f"Math::{op.title().replace('_', '')}", ["<S.real>"], "<S.real>", "")
 for op in ["min", "max", "step", "pow", "atan2", "ldexp"]:
     f("arith", op, f"Math::{op.title()}", ["<S.real>", "<S.real>"], "<S.real>", "")
-for op in ["clamp", "mix", "fma", "smoothstep"]:
-    f("arith", op, f"Math::{op.title()}", ["<S.real>", "<S.real>", "<S.real>"], "<S.real>", "arity 3")
+# naga's own names: SmoothStep (title-casing gave Smoothstep, which no naga function is, so a kernel's
+# smoothstep, the kingdom's own rendering included, did not read back; 2026-10-11).
+for op, naga in [("clamp", "Clamp"), ("mix", "Mix"), ("fma", "Fma"), ("smoothstep", "SmoothStep")]:
+    f("arith", op, f"Math::{naga}", ["<S.real>", "<S.real>", "<S.real>"], "<S.real>", "arity 3")
 f("arith", "mix_scalar_weight", "Math::Mix", ["<vecL<f32>.real>", "<vecL<f32>.real>", "f32.real"], "<vecL<f32>.real>", "arity 3")
 # trig
 for op in ["sin", "cos", "tan", "sinh", "cosh", "tanh", "asin", "acos", "atan", "asinh", "acosh", "atanh", "radians", "degrees"]:
@@ -746,6 +748,15 @@ for r in ("threadrows", "threadrowg"):
     f("safe", "row_as_index", "composite", ["u32." + r], "u32.index", "")
 for c in ("threadcols", "threadcolg"):
     f("safe", "col_as_index", "composite", ["u32." + c], "u32.index", "")
+
+# ---- continue (2026-10-11), in the epilogue only ----
+# `if (c) { continue; }` skips the rest of a pass. Anywhere a later barrier of the same loop body could stand,
+# a thread-dependent continue would make that barrier non-uniform, and a rung cannot say which loop it sits in.
+# The epilogue holds no barrier, and an epilogue block at depth d >= 1 is the body of an epilogue tile loop, so
+# there the continue is spelled: the guard, then the rest of the block (blocked.wgsl's `if (lr >= r_rows) { continue; }`).
+for d in range(1, len(EPILOGUE)):
+    r = EPILOGUE[d]
+    f("block", "cont_" + r, "composite", ["bool.flag", "block." + r], "block." + r, "if (c) { continue; } then the rest of the epilogue block: skip this pass of the epilogue's tile loop")
 
 
 def write_tsv(path, header, rows):

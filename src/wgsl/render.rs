@@ -393,6 +393,12 @@ impl<'a> Renderer<'a> {
         match safe_base(&b.name) {
             "fallback" if self.is_epilogue(b.ty) => Ok((self.epilogue_fallback(scope)?, false)),
             "fallback" => Ok((String::new(), false)),
+            // The epilogue's `if (c) { continue; }`, then the rest of its block.
+            "block.cont" if b.kids.len() == 2 => {
+                let c = self.value(&b.kids[0], scope)?;
+                let (rest, terminated) = self.block_t(&b.kids[1], scope)?;
+                Ok((format!("    if ({c}) {{ continue; }}\n{rest}"), terminated))
+            }
             "block.one" | "block.seq2" | "block.seq3" | "block.seq4" => {
                 let mut out = String::new();
                 for k in &b.kids {

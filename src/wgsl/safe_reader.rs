@@ -836,6 +836,24 @@ fn by_axis(t: &Tree) -> Tree {
     Tree { name: t.name.clone(), ty: t.ty, konst: t.konst, kids }
 }
 
+/// Why a continue outside the epilogue has no spelling.
+const CONTINUE_OUTSIDE: &str = "a continue outside the kernel's epilogue: a later barrier of its loop would be reached by some threads only; the epilogue's tile loops, which hold no barrier, spell `if (c) { continue; }`";
+
+/// Whether a statement tree holds a continue anywhere in it.
+fn has_continue(t: &Tree) -> bool {
+    t.name == "stmt.continue" || t.kids.iter().any(has_continue)
+}
+
+/// `if (c) { continue; }`: an if whose block is one continue.
+fn is_continue_guard(t: &Tree) -> bool {
+    if rung_stem(&t.name) != Some("stmt.if") || t.kids.len() != 2 {
+        return false;
+    }
+    let mut inner = Vec::new();
+    flatten_stmts(t.kids[1].clone(), &mut inner);
+    matches!(inner.as_slice(), [c] if c.name == "stmt.continue")
+}
+
 /// Whether a statement tree stores h anywhere in it.
 fn has_store(t: &Tree) -> bool {
     t.name.starts_with("store.h_") || t.kids.iter().any(has_store)
@@ -1198,6 +1216,13 @@ impl<'a> Ctx<'a> {
             let i = self.value(&t.kids[1])?;
             return Ok(Tree::new("shape.at", t.ty, vec![v, i]));
         }
+        // `ldexp(e, i32(x))`: WGSL's exponent is an integer per lane, and the
+        // kingdom's row takes the real it is converted from (the renderer
+        // writes the conversion; read back, it is the row's own argument).
+        if t.name == "arith.ldexp" && t.kids.len() == 2 && t.kids[1].name == "convert.f32_to_int" && t.kids[1].kids.len() == 1 {
+            let (e, x) = (self.value(&t.kids[0])?, self.value(&t.kids[1].kids[0])?);
+            return Ok(Tree { name: t.name.clone(), ty: t.ty, konst: t.konst, kids: vec![e, x] });
+        }
         let kids = t.kids.iter().map(|k| self.value(k)).collect::<Result<Vec<_>, _>>()?;
         // The reader suffixes a compose with its slot (`shape.compose4.vec4<f32>`);
         // the table's row is the bare name, the tree's dual carries the slot.
@@ -1395,6 +1420,9 @@ impl<'a> Ctx<'a> {
             return Err(format!("{} top-level statement(s) after the last store of h (the first: {}); the kernel's epilogue ends in that store", after.len(), after[0].name));
         }
         let last = stmts.pop().expect("the statement at p");
+        if stmts.iter().any(has_continue) {
+            return Err(CONTINUE_OUTSIDE.into());
+        }
         Ok((stmts, self.epilogue_block(vec![last], 0)?))
     }
 
@@ -1411,8 +1439,31 @@ impl<'a> Ctx<'a> {
         if p + 1 < list.len() {
             return Err(format!("{} statement(s) after the last store of h inside the epilogue (the first: {})", list.len() - p - 1, list[p + 1].name));
         }
+        // `if (c) { continue; }` before the store: the guard, then the rest
+        // of the block, as one epilogue block (block.cont_O<d>); only inside
+        // an epilogue tile loop (depth 1 and deeper).
+        if let Some(q) = list[..p].iter().position(is_continue_guard) {
+            if d == 0 {
+                return Err("a continue in the kernel's epilogue outside its tile loops".into());
+            }
+            let rest: Vec<Tree> = list[q + 1..].to_vec();
+            let cond = list[q].kids[0].clone();
+            let o = format!("O{d}");
+            let cont = Tree::new(&format!("block.cont_{o}"), ty(self, &format!("block.{o}"))?, vec![cond, self.epilogue_block(rest, d)?]);
+            if q == 0 {
+                return Ok(cont);
+            }
+            let last = Tree::new(&format!("stmt.block_{o}"), self.stmt_ty(&o)?, vec![cont]);
+            return self.epilogue_assemble(&list[..q], last, d);
+        }
         let last = self.epilogue_stmt(&list[p], d)?;
-        let mut prefix = list[..p].iter().map(|s| self.rerung(s, d)).collect::<Result<Vec<_>, _>>()?;
+        self.epilogue_assemble(&list[..p], last, d)
+    }
+
+    /// An epilogue block at depth d from the statements before its last
+    /// (moved to the conditional rung C<d>) and its last epilogue statement.
+    fn epilogue_assemble(&self, before: &[Tree], last: Tree, d: usize) -> Result<Tree, String> {
+        let mut prefix = before.iter().map(|s| self.rerung(s, d)).collect::<Result<Vec<_>, _>>()?;
         let c = format!("C{d}");
         if prefix.len() > 3 {
             // At most three conditional statements before the last: the
@@ -1467,6 +1518,9 @@ impl<'a> Ctx<'a> {
     /// of its tile depth (`C<d>`; a tile loop's body one deeper). A barrier,
     /// a return or an item loop has no conditional spelling.
     fn rerung(&self, t: &Tree, d: usize) -> Result<Tree, String> {
+        if t.name == "stmt.continue" {
+            return Err("a continue in the kernel's epilogue that is not a guard `if (c) { continue; }` ahead of the store".into());
+        }
         let Some(stem) = rung_stem(&t.name) else { return Ok(t.clone()) };
         if stem == "stmt.barrier" || stem == "stmt.return" || stem.starts_with("loop.items") {
             return Err(format!("{} before the last store of h, inside the kernel's epilogue (conditional statements only)", t.name));
@@ -1826,6 +1880,10 @@ impl<'a> Ctx<'a> {
                         }
                         Ok(Some(Tree::new(&format!("stmt.return_{rung}"), st, vec![])))
                     }
+                    // A continue is a marker here: the epilogue spells it (a guard
+                    // then the rest of an epilogue tile loop's body); anywhere else
+                    // it is refused by name when the kernel is split.
+                    Statement::Continue => Ok(Some(Tree::new("stmt.continue", st, vec![]))),
                     other => Err(format!("statement {} has no safe spelling", stmt_name(other))),
                 }
             })();
@@ -2941,18 +2999,29 @@ mod tests {
 
     /// A kernel with a helper function reads: the helper is inlined at its
     /// calls (the complete kingdom, step 6; `load4`, with a local, an
-    /// if-else and lane stores, as statements since run A), or the refusal
-    /// names the helper and what in it the grammar cannot inline. The
-    /// blocked kernel's own `continue` is what refuses it now, by name.
+    /// if-else and lane stores, as statements since run A). The blocked
+    /// kernel's own `if (lr >= cfg.r_rows) { continue; }`, in its epilogue
+    /// loop, is the epilogue's continue (block.cont_O1).
     #[test]
     fn a_kernel_with_a_helper_function_is_inlined_or_named() {
         let k = WgslKingdom::load_safe();
-        match read_safe(BLOCKED, &k) {
-            Ok(r) => assert!(r.tree.size() > 10),
-            Err(e) => {
-                assert!(!e.contains("helper") && !e.contains("load4"), "the helper is inlined, not named as the bug: {e}");
-                assert!(e.contains("Continue has no safe spelling"), "{e}");
-            }
-        }
+        let r = read_safe(BLOCKED, &k).unwrap_or_else(|e| panic!("{e}"));
+        assert!(r.tree.to_sexpr().contains("(block.cont_O1 "), "{}", r.tree.to_sexpr());
+        let (t, role) = (FunctionTable::safe(), gram_role());
+        let text = Renderer::new(&k, &t, &role).kernel(&r.tree).unwrap().text;
+        validate_text(&text).unwrap_or_else(|e| panic!("{e}\n{text}"));
+        assert!(text.contains(") >= cfg.r_rows)) { continue; }"), "{text}");
+    }
+
+    /// A CONTINUE OUTSIDE THE EPILOGUE IS REFUSED BY NAME: a later barrier of
+    /// its loop would be reached by some threads only. The blocked kernel
+    /// with its continue moved into the item loop is refused with the reason.
+    #[test]
+    fn a_continue_outside_the_epilogue_is_refused_by_name() {
+        let k = WgslKingdom::load_safe();
+        let moved = BLOCKED.replacen("        let rv = load4(", "        if (t == 7u) { continue; }\n        let rv = load4(", 1);
+        assert_ne!(moved, BLOCKED);
+        let Err(e) = read_safe(&moved, &k) else { panic!("a continue in the item loop read") };
+        assert!(e.contains("a continue outside the kernel's epilogue"), "{e}");
     }
 }

@@ -153,8 +153,9 @@ for op in ["abs", "sign", "floor", "ceil", "round", "fract", "trunc", "saturate"
     f("arith", op, f"Math::{op.title().replace('_', '')}", ["<S.real>"], "<S.real>", "")
 for op in ["min", "max", "step", "pow", "atan2", "ldexp"]:
     f("arith", op, f"Math::{op.title()}", ["<S.real>", "<S.real>"], "<S.real>", "")
-for op in ["clamp", "mix", "fma", "smoothstep"]:
-    f("arith", op, f"Math::{op.title()}", ["<S.real>", "<S.real>", "<S.real>"], "<S.real>", "arity 3")
+# naga's own names: SmoothStep (title-casing gave Smoothstep, which no naga function is; 2026-10-11).
+for op, naga in [("clamp", "Clamp"), ("mix", "Mix"), ("fma", "Fma"), ("smoothstep", "SmoothStep")]:
+    f("arith", op, f"Math::{naga}", ["<S.real>", "<S.real>", "<S.real>"], "<S.real>", "arity 3")
 f("arith", "mix_scalar_weight", "Math::Mix", ["<vecL<f32>.real>", "<vecL<f32>.real>", "f32.real"], "<vecL<f32>.real>", "arity 3")
 # trig
 for op in ["sin", "cos", "tan", "sinh", "cosh", "tanh", "asin", "acos", "atan", "asinh", "acosh", "atanh", "radians", "degrees"]:
