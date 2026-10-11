@@ -51,24 +51,29 @@ evolution itself.
 
 ## The ten best next problems
 
-Ranked by importance to our own pipeline, then variety of computation, then
-expected headroom, then how easily a Gram-style fitness evaluation can be
-built. "Kingdom gaps" are what the safeWGSL kingdom (`kingdoms/safewgsl`,
+Ranked by Andrew's priority (2026-10-11): UltraDim's two hot paths first,
+then our own evolution pipeline's kernels, then the rest by variety of
+computation, expected headroom and how easily a Gram-style fitness
+evaluation can be built. The two UltraDim rows wait on the ultradim-hotpath
+agent, which is tracing those call paths; this document names only the kernels
+found for them so far. "Kingdom gaps" are what the safeWGSL kingdom (`kingdoms/safewgsl`,
 specialised to Gram's three bindings `phi`, `h`, `cfg`) lacks for that kernel;
 the kingdom's general limits are listed after the table.
 
 | # | kernel (file, entry point) | computation | why it matters | expected headroom | correctness test | kingdom gaps |
 |---|---|---|---|---|---|---|
+| A | **pending ultradim-hotpath's report.** UltraDim search: the last-mile exact cosine re-score, Kahan-corrected, over about 1,000 candidates on every search | exact cosine of one query against a short candidate list, then the top results | every search | kernels found so far: Blue World `generator.rs:4984` `knn_top_k_main` (Kahan-compensated dot products and a private top-k; Blue World `world.rs:531` uses it for exact cosine k-nearest-neighbours), and `generator.rs:6134` `single_query_distances_main` with `:6190` `single_query_topk_main` (Kahan, one query against all points; the helper found no live caller). Which of these the search actually calls is what the report will settle | at about 1,000 candidates a dispatch is near the 1–3 ms dispatch-and-readback floor (`trellis/src/template_gpu.rs` header), so the headroom may be in batching queries, not in the arithmetic | candidate order against an f64 re-score, exact except near-ties | a query buffer, a gathered candidate index list, `u32` outputs, a private top-k |
+| B | **pending ultradim-hotpath's report.** The Trellis index (`lib/trellis`): its build and its HNSW-like search | `template_gpu.rs:23` `single_main` scores one query against a beam's candidates (the serving beam's inner step); `:35` `pairs_main` scores pairs of keys, d = 2,048, 10,000 to 1,000,000 pairs (the build's proposal step) | every search step and every build | the helper found both used only in tests and benches (`g7`, `g9`, `h11`) so far; the report will say what production calls | scalar loads, no `vec4`; `pairs_main` gathers both keys per pair; the beam issues hundreds of small dispatches per pass (`template_gpu.rs`) | dot products against an f64 reference within a tolerance; the `g7` bench is an existing harness to build on | gathered loads through an index buffer, a second key buffer, `u32` pair indices |
 | 1 | fuller `src/gpu_eval.rs` `EVAL_WGSL` → `eval_main` | expression interpreter: one thread per (expression, row) walks a node array backwards over a 128-float scratch | the bulk of every symbolic-regression generation (population × genes × rows threads) | high: the 128-float private scratch is too big for registers, so the compiler spills it (moves it to slow memory); each thread re-reads the same node array as every other thread of its expression; one row per thread | bit-identical predictions to the shipped kernel on recorded populations and data (the scorer and selection depend on every bit) | a `switch` on an opcode, a struct-typed node load (`Node`), a 128-element private array, a two-dimensional dispatch with a stride, NaN and infinity bit tests, eight bindings |
 | 2 | phylu `src/evolve/score.wgsl` → `score_main` | per candidate least-squares fit (the scale and offset that best match the target) and error sums: one thread per (chromosome, gene-linker combination), seven serial loops over the rows | every generation, every candidate; 15 combinations × 3 wrappers per individual | high: each of the seven row loops re-reads every gene's prediction (no reuse between loops); each thread walks its own run of consecutive rows, so one step of a workgroup touches many memory lines and uses one value from each (the loads do not coalesce, that is, merge into wide reads); no workgroup cooperation over rows | identical selection on a real population (memory: kernel mutation gate is selection); a summation-order change is a different number, so a pure tolerance test is not enough | struct `Meta` with nine fields, `arrayLength`, Neumaier compensated sums (a second float carries the rounding error of each addition, `vec2`), seven bindings, writes to a `scores` buffer at a computed slot rather than a thread-owned cell |
 | 3 | phylu `src/evolve/vary.wgsl` → `first_main`, `select_main` | tournament selection: per row, `tournsize` random draws (7 % of the island) and a fitness comparison each | every generation | medium at the shipped 600 + 200 population, high at large populations: tournament size grows with the island, so the work is quadratic in population (a 200,000 island draws 14,000 per row); each draw is a full 64-bit hash emulated with 16-bit limbs (`mix64.wgsl` `mul32x32_64`) | bit for bit against the CPU twin `phylu/src/evolve/vary.rs` (device.rs tests already assert this over 20 generations) | the `hash64` dual exists, but not the `mix64` call, the per-island struct (`Island`, 24 fields), cohort comparisons, a random gather over the fitness buffer, a `u32` store to `stage1`/`parent` |
 | 4 | phylu `src/evolve/vary.wgsl` → `mutate_main`, `crossover_main` | variation: copy the parent row's genome, then point, inversion, transposition and constant mutations; crossover per pair | every generation | medium: a serial copy of the whole row per thread (no vector loads), and every random draw pays the 64-bit hash | bit for bit against `vary.rs` (already tested) | as in #3, plus `u32` genome stores at computed positions, a 512-entry private array (`mut_budget`) |
 | 5 | phylu `src/evolve/hff.wgsl` → `colmax_main` and `hff_main` | `colmax_main`: maximum of each of 9 objective columns over all candidates; `hff_main`: per row, the TrueNorth angle of each of 45 candidates and the argmin (the index of the smallest) | `colmax_main` once per fit (generation 0); `hff_main` every generation | `colmax_main` very high: it launches 9 threads in total, each scanning population × 45 candidates serially; a parallel maximum is a textbook reduction, and a maximum is exact in any order, so the correctness test is simple; `hff_main` low at 800 rows, medium at large populations | `colmax_main`: bit-identical maxima; `hff_main`: identical winners and fitness (selection test) | `colmax_main` needs a reduction over a non-Gram buffer with a `u32`-indexed write of 9 outputs; `hff_main` needs `acos`, NaN bit tests, 14 bindings |
 | 6 | phylu `src/evolve/regex_match.wgsl` → `match_main` | regular-expression matching by a state machine (a Thompson NFA, which tracks every state the pattern could be in at once): one thread per (gene, text row), a 9-word bit set of live states stepped byte by byte | every generation of the regex kingdom | medium to high: the states reachable without reading a byte (the epsilon closure) are recomputed per byte by repeating until nothing changes; neighbouring threads run different programs, so they diverge; text bytes are re-read per gene with no workgroup sharing | bit for bit against `regex_match::is_full_match` (CPU twin exists) | bitwise operations on a 9-word private array, byte extraction, a different binding set (instructions, classes, text, offsets) |
-| 7 | qdrant `lib/hff-zenkai/src/shaders/nsga2_sort.wgsl` → `radix_count`, `radix_prefix_sum`, `radix_scatter` (as one problem: sort 32-bit keys) | radix sort: per-digit histogram, scan (running totals), scatter (writing each key to its computed place) | NSGA-II ranking in an HFF library; not live in production (see inventory) | high; but the radix kernels are not dispatched (the driver `nsga2_gpu.rs` runs only `parallel_sort`), and `radix_scatter` places keys with `atomicSub`, which is not stable, so it cannot serve as one pass of a several-digit radix sort. The problem should be "sort keys", with a correct reference sort, not "speed up this kernel" | exact: output equals a stable CPU sort of the same keys | integer atomics, workgroup histogram, a multi-pass driver (several dispatches per sort), `u32` keys and indices |
-| 8 | qdrant `lib/blueworld/src/sphere/generator.rs` → `knn_top_k_main` (line 4984) | k nearest neighbours: one thread per query keeps a private top-k (k ≤ 100) over every candidate point | sphere generation and kNN graphs in Blue World | high: two 100-entry private arrays per thread spill; insertion is a bubble pass of up to k swaps; every thread re-reads every candidate point with no workgroup tiling; each dot product is Kahan-compensated | index sets against a CPU brute force, exact except near-ties, which need a stated allowance | a private array of 100 plus a second of 100, an insertion loop with data-dependent exit, two outputs per query |
-| 9 | qdrant `lib/projection-voting-kmeans/src/lib.rs` → `build_euclidean_distance_pipeline` + `build_argmin_assign_pipeline` (lines 4686, 4714) | k-means assignment: point-to-centroid distances, then argmin per point | every iteration of projection-voting k-means (Lloyd's algorithm: assign points, then move centroids) | high: a full distance matrix is written to memory and read back by a second kernel; fusing the two and tiling centroids in workgroup memory is the known fast form | exact assignment indices (ties to lower index) against an f64 CPU reference; distances within a tolerance | the closest to Gram: the distance kernel is a thread per output over a dot product, so it needs only a second input buffer and a `cfg` with n, c and dimensions; the argmin needs a `u32` output and a running minimum; fusing the two needs both in one kernel |
-| 10 | qdrant `lib/blueworld/src/sphere/generator.rs` → `nearest_neighbor_histogram_main` (lines 4756, 4834) | histogram of nearest-neighbour distances: one thread per sampled point finds its nearest neighbour and adds one to a bin with `atomicAdd` | sphere quality diagnostics in Blue World | high: each sampled point compares itself with every point (O(N²·d) Kahan-compensated dot products, no workgroup tiling); the global `atomicAdd` on a few bins is a smaller cost (a per-workgroup histogram fixes it) | bin counts against a CPU histogram, exact except for distances within rounding of a bin edge, which need a stated allowance | integer atomics on a global buffer, workgroup histograms, float-to-bin conversion |
+| 7 | qdrant `lib/projection-voting-kmeans/src/lib.rs:4748` cosine assign (`build_cosine_assign_pipeline`) | k-means assignment: per point, the most similar of C centroid keys (2,048 dimensions); a matrix product and an argmax in one kernel | every cycle of the live k-means (64–100 cycles per clustering; N = 50,000 to 1,000,000 points, C up to 64,000; callers in `ultradimdb/src/cluster_ops.rs`); the hottest live qdrant kernel the helper found, up to about 1.3·10¹⁴ multiply-adds | high: each thread walks C × 2,048 serially with no tiling and no `vec4` loads; the Gram shape with an argmax on top | exact labels against an f64 reference, with an allowance where the top two are within 1e-6 | closest to Gram: a second input buffer, a `cfg` with n, C and dimensions, a `u32` output and a running maximum |
+| 8 | qdrant `lib/projection-voting-kmeans/src/lib.rs:5022, :5060, :5111` block histogram, cluster offsets, scatter ids (one problem: a stable counting sort of points by cluster) | histogram, scan (running totals) and scatter (writing each id to its computed place) | every k-means cycle | high and algorithmic: the histogram does O(blocks × C) work for an O(blocks) job (55 million threads at C = 64,000); mode 1 of the offsets runs a scan of up to 64,000 on one thread; the scatter does O(256²) per thread | exact: equal to a stable CPU counting sort | `u32` histogram and offset buffers, a scan, workgroup `u32` arrays |
+
+**Runners-up.** qdrant `generator.rs:4984` `knn_top_k_main` (top-k selection; may move up as row A). LoRA `GRAD_A` and `FORWARD_G` (`udv23-umap/src/ultradim/sparse_mf/lora_gpu.rs:787, :688`): matrix products on every training step of the live trainer, `GRAD_A` the same form as Gram. `centroid_project` (`lib.rs:4863`): a plain matrix product every k-means cycle. `umap_epoch_gather` (`umap/kernels_optimize.rs:400`): irregular gathers with a hash on every UMAP epoch. `nearest_neighbor_histogram_main` (`generator.rs:4757`): all-pairs with atomics. NSGA-II dominance (`hff-zenkai/src/shaders/nsga2_dominance.wgsl:28`): bit-exact, but not compiled in production.
 
 **Not in the ten, and why.** phylu `decode_main`: measured at under 1 % of a
 generation. `type_main` (`cand.wgsl`): tiny per-thread work, bounded by
@@ -79,9 +84,9 @@ reference member of the suite.
 
 **The variety this gives.** Interpreter (1), multi-pass reduction (2), random
 selection with a hash (3), random variation (4), column maximum and per-row
-argmin (5), finite-automaton simulation over bit sets (6), sort with scan (7),
-top-k selection (8), distance-then-argmin, matmul-like (9), histogram with
-atomics (10). Gram adds the dense matrix product.
+argmin (5), finite-automaton simulation over bit sets (6), matrix product with
+argmax (7), histogram, scan and scatter (8); rows A and B add short gathered
+dot products and top-k selection. Gram adds the dense matrix product.
 
 ### What the safeWGSL kingdom lacks for all of them
 
@@ -160,7 +165,7 @@ the M3 Max (`docs/PLAN_population_dag.md` §2a; `phylu/docs/PLAN_arbitrary_arity
 
 ### qdrant
 
-Production sizes were traced from callers only for the Gram kernel. For the other qdrant kernels this pass did not read the callers, so their production shapes are not given; a fitness evaluation for any of them starts by recording them.
+Production sizes and liveness below come from a second, line-by-line pass by a helper agent, which read each kernel's callers. Live k-means: N = 50,000 to 1,000,000 points, C up to 64,000 clusters, 2,048 projected dimensions, 64–100 cycles. Live UMAP: N = 70,000, 15 neighbours, 500 epochs. LoRA: 4,096 × 8,192 × rank 64 or 128, every training step. Bugs the helper found, none fixed: hff-zenkai's GPU NSGA-II gives every individual rank 0 and its crowding distances come from zero-filled buffers; Blue World's two repulsion kernels (`generator.rs:4072, :4400`) write points in place while other threads read them; `gpu_fingerprint_search.rs:328` `select_top_k` races, though nothing dispatches it; `scripts/bluenoise_alt` does not compile. Dead or test-only per the helper: `gpu_pruning.rs`, the UMAP fuzzy-graph kernels (production runs them on the CPU), `ultradim/gpu_shaders.rs`, the udv23 copy of the navigation kernels, and most query-distance kernels in `generator.rs` (5402–6190).
 
 `docs/GPU_FUNCTIONS_INVENTORY.md` (qdrant) counts 76 entry points across 15
 files. A grep of live `lib/` today finds 109 across 25 files, plus one in
@@ -174,13 +179,13 @@ a byte-identical copy of Blue World's four navigation kernels. Without those 34 
 
 | file : line, entry | computes | class | how often | workgroup memory, atomics | headroom | target? |
 |---|---|---|---|---|---|---|
-| blueworld `sphere/generator.rs:2882` `H_GRAM_ACCUM_WGSL` `main` | weighted Gram H = ΦᵀΦ, banded | matrix product | per family build; 419,734 items × d = 8,192 took 130 s, then cached (inventory doc) | none | evolved 10–14× | the existing problem |
+| blueworld `sphere/generator.rs:2882` `H_GRAM_ACCUM_WGSL` `main` | weighted Gram H = ΦᵀΦ, banded | matrix product | once per fit; 419,734 items × d = 8,192 took 130 s, then cached; its only remaining caller is in `attic/` (`itemrank_ops.rs:1369`), so no live code in `lib/` calls it | none | evolved 10–14× | the existing problem |
 | `generator.rs:4005` `sphere_generation_main` | Gaussian points normalised to the sphere | random generation | per build | none | low | no |
 | `generator.rs:4071` `blue_noise_repulsion_with_mask` | Thomson repulsion between points with a mask | all-pairs forces (n-body) | per relaxation step | none | high: all-pairs without tiling | yes, an n-body problem |
 | `generator.rs:4399` `blue_noise_repulsion_with_aggregates` | repulsion with far-field aggregates and exact near field | n-body, Barnes–Hut style | per relaxation step | none | medium | possible |
-| `generator.rs:4756`, `:4834` `nearest_neighbor_histogram_main` (two variants) | nearest-neighbour distance histogram | histogram, atomics | diagnostics per build | global `atomicAdd` on `u32` bins | high | yes, #10 |
-| `generator.rs:4911` `nearest_centroid_main` | nearest centroid by cosine | distance + argmin | clustering | none | high | yes, like #9 |
-| `generator.rs:4984`, `:5091` `knn_top_k_main` (two variants) | per-query top-k by similarity | top-k selection | kNN graph builds | none; 100-entry private arrays | high | yes, #8 |
+| `generator.rs:4756`, `:4834` `nearest_neighbor_histogram_main` (two variants) | nearest-neighbour distance histogram | histogram, atomics | diagnostics per build | global `atomicAdd` on `u32` bins | high | runner-up |
+| `generator.rs:4911` `nearest_centroid_main` | nearest centroid by cosine | distance + argmin | clustering | none | high | as #7 |
+| `generator.rs:4984`, `:5091` `knn_top_k_main` (two variants) | per-query top-k by similarity | top-k selection | kNN graph builds | none; 100-entry private arrays | high | runner-up; may serve row A |
 | `generator.rs:5402` `batched_queries_distances_main` | distances for a batch of queries | matrix product (tall, thin) | query serving | none | medium to high | yes |
 | `generator.rs:5544`, `:5656`, `:5918` `*_partial_distances_main` | partial distances over a dimension band (dense, batched, sparse) | banded dot products | query serving | none | medium | possible |
 | `generator.rs:5758`, `:6023` `*_reduce_partials_main` | sum the bands' partials | reduction | query serving | none | low | no |
@@ -191,13 +196,13 @@ a byte-identical copy of Blue World's four navigation kernels. Without those 34 
 | blueworld `gene/gpu_navigation_shaders.rs:1277,1498,1575,1634` `slerp_main`, `navigation_main`, `angular_distance_main`, `rank_children_main` | spherical interpolation, navigation steps, angular distances, ranking children | elementwise, gather, ranking | gene navigation | `rank_children_main` workgroup 256 | low to medium | possible (`rank_children_main` is a small sort) |
 | hffvenn-gpu `gpu_kernel.rs:975,1070` `pair_cosine_main`, `pair_cosine_masked_main` | cosine of feature pairs, optionally masked | dot products | fingerprinting | none | medium | possible |
 | hffvenn-gpu `esn_gpu_kernel.rs:529` `esn_main` | echo state network reservoir update | sequential recurrence, matrix-vector | fingerprinting | none | medium | possible: a recurrence problem |
-| projection-voting-kmeans `lib.rs:4686` euclidean distance | point-to-centroid distances | matrix product | every Lloyd iteration | none | high when fused with the next | yes, #9 |
-| `lib.rs:4714` argmin assign, `:4747` cosine assign | nearest centroid per point | argmin | every iteration | none | high | yes, #9 |
+| projection-voting-kmeans `lib.rs:4686` euclidean distance | point-to-centroid distances | matrix product | baseline configuration only | none | high when fused with the next | as #7 |
+| `lib.rs:4714` argmin assign, `:4747` cosine assign | nearest centroid per point; the cosine form fuses the 2,048-dimension dot products | argmin, matrix product | euclidean form: baseline only; cosine form: every cycle, the hottest live kernel | none | high | cosine assign is #7 |
 | `lib.rs:4808` mean update | centroid means, banded | segmented reduction | every iteration | none | medium | possible |
 | `lib.rs:4862` centroid project, `:4895` normalise keys | project centroids, normalise | small matrix product, elementwise | every iteration | none | low | no |
 | `lib.rs:4945` inertia contribution, `:4980` block reduce | per-point inertia and its fixed-order block sum | reduction | every iteration | none (fixed order, no atomics) | medium | possible |
-| `lib.rs:5021` block histogram, `:5059` cluster offsets, `:5110` scatter ids | counting sort of points by cluster | histogram, scan, scatter | every iteration | none; mode 1 of cluster offsets is a single-thread prefix sum | high on the scan | yes: a scan problem |
-| projection-voting-kmeans `gpu_kmeans.rs:562,614,664,733,802` `compute_distances`, `assign_points`, `update_centroids`, `compute_indexed_distances`, `select_top_k` | dense k-means and top-k | matrix product, argmin, reduction, top-k | per iteration | none | high | as #9 and #8 |
+| `lib.rs:5021` block histogram, `:5059` cluster offsets, `:5110` scatter ids | counting sort of points by cluster | histogram, scan, scatter | every cycle | none; mode 1 of cluster offsets is a single-thread prefix sum | high | yes, #8 |
+| projection-voting-kmeans `gpu_kmeans.rs:562,614,664,733,802` `compute_distances`, `assign_points`, `update_centroids`, `compute_indexed_distances`, `select_top_k` | dense k-means and top-k | matrix product, argmin, reduction, top-k | per iteration | none | high | as #7; `update_centroids` does O(n·k·d) work for an O(n·d) job |
 | `gpu_pruning.rs:1874,1982,2098` `compute_tile_assignment`, `select_per_tile_topk`, `validate_boundary` | tile pruning for k-means | gather, top-k | per iteration | none | medium | possible |
 | `gpu_chunk_shaders.rs:658,725` `energy_chunk_main`, `angle_chunk_main` | per-chunk energy and angle statistics | reduction | per chunk | none | medium | possible |
 | trellis `template_gpu.rs:23,35` `single_main`, `pairs_main` | template scores, single and paired | elementwise, gather | per query | none | low | no |
@@ -206,7 +211,7 @@ a byte-identical copy of Blue World's four navigation kernels. Without those 34 
 | udv23-umap `sparse_mf/lora_gpu.rs:687–858` seven kernels (`FORWARD_G`, `PAIR_COEFF`, `WEK`, `GRAD_A`, `GRAD_B`, `SGD_A`, `SGD_B`) | a sparse matrix-factorisation trainer (BPR, a ranking loss over pairs of items): forward, coefficients, gradients, updates | gather, scatter, small matrix products | every training step | none | medium to high on the gradients | possible: needs a training-loss tolerance, not exact output |
 | udv23-umap `umap/kernels_fuzzy.rs:72,169,466,500,539,587,634,673` (`SMOOTH_KNN_SIGMA`, `EDGE_WEIGHTS`, block histogram, cluster offsets, scatter ids, block reduce max, symmetrise combine, epsilon map) | UMAP fuzzy graph: per-point bandwidth by bisection, edge weights, counting sort, symmetrisation | search, histogram, scan, scatter | per UMAP build | none | medium | possible |
 | udv23-umap `umap/kernels_optimize.rs:400,547,608,868,1005,1065` (`umap_epoch_gather` ×2, `umap_ce_contrib` ×2, `block_sum`, `mix64_kat`) | UMAP layout epochs as gathers, cross-entropy terms, block sums, a hash self-test | gather, reduction | every epoch | none | medium | possible: tolerance on the layout's loss |
-| hff-zenkai `shaders/*.wgsl` (30 entry points: NSGA-II dominance, fronts, crowding, sorting; fitness angles; normalisation) | multi-objective ranking for HFF | sort, scan, histogram, pairwise dominance | not compiled in production | workgroup arrays, `u32` atomics | high; the radix kernels are not dispatched and `radix_scatter` is unstable | yes, #7, as "sort keys" |
+| hff-zenkai `shaders/*.wgsl` (30 entry points: NSGA-II dominance, fronts, crowding, sorting; fitness angles; normalisation) | multi-objective ranking for HFF | sort, scan, histogram, pairwise dominance | not compiled in production; most entry points are stubs or never dispatched | workgroup arrays, `u32` atomics | high; the radix kernels are not dispatched and `radix_scatter` is unstable | runner-up: `nsga2_dominance` is bit-exact; `normalize_to_hypersphere` rescans all N points per thread |
 | udv23-umap `synthetic/gene/gpu_navigation_shaders.rs` (4) | copy of Blue World's navigation kernels | | | | | no: duplicate |
 | qdrant `scripts/bluenoise_alt/main.rs` (1) | an experiment script | | | | | no |
 
@@ -242,19 +247,15 @@ equal kernels by 15 %, `gram.rs` `FitnessContext::timing_rounds`).
 6. **Regex match.** Reference: `regex_match::is_full_match`. Inputs: compiled
    programs from a regex fit and its text rows. Timing: the regex fit's
    population, and twice and ten times its text.
-7. **Sort.** Reference: a stable CPU sort. Inputs: random 32-bit keys,
-   already-sorted keys, keys with many duplicates. Timing: 10⁴, 10⁶, 10⁷ keys.
-8. **Top-k neighbours.** Reference: CPU brute force in f64, ties broken by
-   index, with an allowance where two similarities are within rounding.
-   Inputs: Gaussian points normalised to the sphere (the Gram generator's
-   convention). Timing: production query and candidate counts from
-   `generator.rs`, k = 10 and 100.
-9. **k-means assignment.** Reference: f64 distances, argmin with ties to the
-   lower index; distances within a relative tolerance like Gram's. Inputs:
-   clustered Gaussian points. Timing: production n, c and dimensions.
-10. **Histogram.** Reference: CPU nearest neighbour and histogram; counts exact
-    except where a distance sits within rounding of a bin edge.
-    Timing: production point counts and bin counts.
+7. **Cosine assign.** Reference: f64 dot products and argmax, ties to the
+   lower index, an allowance where the top two are within 1e-6. Inputs:
+   random unit keys of 2,048 dimensions. Timing: N = 100,000 with C = 1,000,
+   8,000 and 64,000.
+8. **Counting sort.** Reference: a stable CPU counting sort, exact. Inputs:
+   random labels, labels concentrated in a few clusters. Timing: N = 1,000,000
+   with C = 1,000 and 64,000.
+
+Rows A and B are written when ultradim-hotpath reports the production shapes.
 
 ## Can fuller's own work run on the GPU?
 
