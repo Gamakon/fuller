@@ -52,6 +52,27 @@ struct Ctx<'a> {
     parrs: BTreeMap<String, (&'static str, char, &'static str)>,
     grid: (u32, u32, u32, u32),
     notes: Vec<String>,
+    /// Helper functions whose body is lets and one `return expr`, inlined
+    /// at each call (k05's `prod`); the entry's call results by handle →
+    /// statement path, and the call arguments by statement path.
+    helpers: &'a HashMap<String, Helper>,
+    calls: &'a BTreeMap<u32, Vec<usize>>,
+    arg_roots: &'a HashMap<Vec<usize>, Vec<(usize, Node)>>,
+    /// While a helper body is being inlined: its arguments by `arg.<name>`,
+    /// already resolved and typed in the caller.
+    inline_args: Option<HashMap<String, Tree>>,
+    /// Private u32 arrays that hold this thread's own rows or columns (k26:
+    /// `lrs[i] = wid.y * 32u + i * 8u + lid.y`): local → (axis, strided, blk).
+    /// A load `lrs[k]` with a tile counter k is then that block row.
+    row_arrays: BTreeMap<String, (usize, bool, u32)>,
+}
+
+/// A helper function the grammar inlines: its argument names in order, its
+/// return expression, its lets.
+pub struct Helper {
+    pub args: Vec<String>,
+    pub body: Node,
+    pub lets: HashMap<String, Node>,
 }
 
 fn ty(ctx: &Ctx, name: &str) -> Result<Ty, String> {
@@ -67,10 +88,44 @@ fn tree_of(ctx: &mut Ctx, n: &Node) -> Result<Tree, String> {
                 let def = def.clone();
                 return tree_of(ctx, &def);
             }
+            if name.starts_with("arg.") {
+                return ctx.inline_args.as_ref().and_then(|a| a.get(name)).cloned().ok_or_else(|| format!("{name} outside an inlined helper"));
+            }
+            // A helper's result: the helper's return expression with its
+            // arguments substituted (its lets inlined on the way).
+            if let Some((callee, idx)) = name.strip_prefix("call.").and_then(|r| r.rsplit_once('@')) {
+                let idx: u32 = idx.parse().map_err(|_| format!("{name}: no handle"))?;
+                let helper = ctx.helpers.get(callee).ok_or_else(|| format!("a call of {callee}, which the grammar cannot inline"))?;
+                let path = ctx.calls.get(&idx).ok_or_else(|| format!("{name}: no call statement"))?;
+                let mut args: Vec<(usize, Node)> = ctx.arg_roots.get(path).cloned().unwrap_or_default();
+                args.sort_by_key(|(p, _)| *p);
+                if args.len() != helper.args.len() {
+                    return Err(format!("{callee}: {} arguments at the call, {} declared", args.len(), helper.args.len()));
+                }
+                if ctx.inline_args.is_some() {
+                    return Err(format!("{callee}: a helper calling a helper (not inlined)"));
+                }
+                let mut bound = HashMap::new();
+                for ((_, node), arg) in args.into_iter().zip(&helper.args) {
+                    // The argument is the CALLER's expression: resolved and typed here.
+                    bound.insert(arg.clone(), tree_of(ctx, &node)?);
+                }
+                let saved_lets = std::mem::replace(&mut ctx.lets, &helper.lets);
+                ctx.inline_args = Some(bound);
+                let body = helper.body.clone();
+                let out = tree_of(ctx, &body);
+                ctx.inline_args = None;
+                ctx.lets = saved_lets;
+                return out.map_err(|e| format!("inlining {callee}: {e}"));
+            }
             let t = ctx.duals.get(&text).copied().flatten().ok_or_else(|| format!("untyped leaf {name}"))?;
             Ok(Tree::new(name, t, vec![]))
         }
         Node::Literal { form, value, .. } => {
+            // An integer literal is carried as an f32 value: exact only below 2^24.
+            if form != "real" && value.abs() > 16_777_216.0 {
+                return Err(format!("the literal {value} exceeds the exact range of an integer literal (2^24); spell the mask as a rounding or a shift"));
+            }
             let t = match ctx.duals.get(&text).copied().flatten() {
                 Some(t) => t,
                 None => {
@@ -84,6 +139,22 @@ fn tree_of(ctx: &mut Ctx, n: &Node) -> Result<Tree, String> {
         Node::App { name, kids, known, .. } => {
             if !known {
                 return Err(format!("{name} has no row in the table"));
+            }
+            // `x & ~(k - 1)` with k a power of two (k16's `m & ~3u`): the mask
+            // is not exact as an f32 literal; it is `x` rounded down to a
+            // multiple of k.
+            if (name == "bits.and" || name == "index.and") && kids.len() == 2 {
+                for (x, m) in [(&kids[0], &kids[1]), (&kids[1], &kids[0])] {
+                    if let Node::Literal { value, .. } = m {
+                        let k = 4_294_967_296.0 - value;
+                        if *value >= 2_147_483_648.0 && k >= 1.0 && k.log2().fract() == 0.0 {
+                            let t = ctx.duals.get(&text).copied().flatten().ok_or_else(|| format!("untyped node {}", &text[..text.len().min(80)]))?;
+                            let x = tree_of(ctx, x)?;
+                            let kt = Tree::literal("literal.index", x.ty, k as f32);
+                            return Ok(Tree::new("index.round_down", t, vec![x, kt]));
+                        }
+                    }
+                }
             }
             let t = ctx.duals.get(&text).copied().flatten().ok_or_else(|| format!("untyped node {}", &text[..text.len().min(80)]))?;
             let kids = kids.iter().map(|k| tree_of(ctx, k)).collect::<Result<Vec<_>, _>>()?;
@@ -176,9 +247,36 @@ fn tile_of(local: &str, tiles: Tiles) -> Option<u8> {
 /// A row or column expression of this thread: `gid.axis`, `gid.axis * K`,
 /// `gid.axis * K + off` (off a literal below K, or a tile counter), with K
 /// the grid's block factor → `(blk, offset)`.
-fn thread_axis_off(t: &Tree, axis: usize, workgroup: u32, tiles: Tiles) -> Option<(u32, Off)> {
+fn thread_axis_off_in(t: &Tree, axis: usize, workgroup: u32, tiles: Tiles, arrays: &BTreeMap<String, (usize, bool, u32)>) -> Option<(u32, Off)> {
+    // A guarded value: `select(0u, X, ok)` or `select(X, 0u, !ok)` is X here;
+    // the store is guarded by its own row's bounds check anyway.
+    if t.name == "select.scalar_cond" && t.kids.len() == 3 {
+        for (a, b) in [(&t.kids[0], &t.kids[1]), (&t.kids[1], &t.kids[0])] {
+            if literal_value(a) == Some(0.0) {
+                if let Some(x) = thread_axis_off_in(b, axis, workgroup, tiles, arrays) {
+                    return Some(x);
+                }
+            }
+        }
+    }
+    // A load of a row array at a tile counter: that block row.
+    if let Some(rest) = t.name.strip_prefix("load.local.") {
+        if rest.contains(".#") && t.kids.len() == 1 && t.kids[0].kids.is_empty() {
+            let local = format!("local.{}", rest.split('@').take(2).collect::<Vec<_>>().join("@"));
+            if let Some(&(ax, strided, blk)) = arrays.get(&local) {
+                if ax == axis {
+                    if let Some(n) = local_name(&t.kids[0].name).and_then(|l| tile_of(&l, tiles)) {
+                        return Some((blk, if strided { Off::StridedTile(n) } else { Off::Tile(n) }));
+                    }
+                }
+            }
+        }
+    }
     if let Some((k, 0)) = thread_axis(t, axis, workgroup) {
         return Some((k, Off::Lit(0)));
+    }
+    if let Some(x) = axis_terms(t, axis, workgroup, tiles) {
+        return Some(x);
     }
     // A strided block: wid * (W * B) + lid, the i-th row at + i * W.
     if let Some(b) = strided_axis(t, axis, workgroup) {
@@ -221,6 +319,80 @@ fn thread_axis_off(t: &Tree, axis: usize, workgroup: u32, tiles: Tiles) -> Optio
                 }
             }
         }
+    }
+    None
+}
+
+/// The terms of a sum, however it is nested.
+fn flatten_add<'t>(t: &'t Tree, out: &mut Vec<&'t Tree>) {
+    if t.name == "index.add" && t.kids.len() == 2 {
+        flatten_add(&t.kids[0], out);
+        flatten_add(&t.kids[1], out);
+    } else {
+        out.push(t);
+    }
+}
+
+/// A row or column of this thread written as any sum of: `wid.axis * K`,
+/// `lid.axis` or `lid.axis * B`, and at most one offset (a literal, a tile
+/// counter, or a tile counter times the workgroup width for a strided
+/// block), e.g. k26's `wid.y * 32u + i * 8u + lid.y`.
+fn axis_terms(t: &Tree, axis: usize, workgroup: u32, tiles: Tiles) -> Option<(u32, Off)> {
+    let mut terms = Vec::new();
+    flatten_add(t, &mut terms);
+    if terms.len() < 2 || terms.len() > 3 {
+        return None;
+    }
+    let wid = |x: &Tree| scaled_id(x, axis, "builtin.work_group_id").or_else(|| scaled_id(x, axis, "builtin.workgroup_id"));
+    let lid = |x: &Tree| if id_axis(x, axis, "builtin.local_invocation_id") { Some(1) } else { scaled_id(x, axis, "builtin.local_invocation_id") };
+    let kw_i = terms.iter().position(|x| wid(x).is_some())?;
+    let kl_i = terms.iter().position(|x| lid(x).is_some())?;
+    if kw_i == kl_i {
+        return None;
+    }
+    let (kw, kl) = (wid(terms[kw_i])?, lid(terms[kl_i])?);
+    let rest: Vec<&Tree> = terms.iter().enumerate().filter(|(i, _)| *i != kw_i && *i != kl_i).map(|(_, x)| *x).collect();
+    if workgroup == 0 {
+        return None;
+    }
+    if kw == workgroup * kl {
+        // A contiguous block of B = kl cells: offsets below B.
+        let b = kl;
+        return match rest.as_slice() {
+            [] => Some((b, Off::Lit(0))),
+            [x] => {
+                if let Some(v) = literal_value(x) {
+                    return ((v as u32) < b).then_some((b, Off::Lit(v as u32)));
+                }
+                if x.kids.is_empty() {
+                    return local_name(&x.name).and_then(|l| tile_of(&l, tiles)).map(|n| (b, Off::Tile(n)));
+                }
+                None
+            }
+            _ => None,
+        };
+    }
+    if kl == 1 && kw.is_multiple_of(workgroup) && kw / workgroup > 1 {
+        // A strided block of B rows W apart: offsets are multiples of W.
+        let b = kw / workgroup;
+        return match rest.as_slice() {
+            [] => Some((b, Off::Strided(0))),
+            [x] => {
+                if let Some(v) = literal_value(x) {
+                    let v = v as u32;
+                    return (v.is_multiple_of(workgroup) && v / workgroup < b).then_some((b, Off::Strided(v / workgroup)));
+                }
+                if x.name == "index.mul" && x.kids.len() == 2 {
+                    for (p, q) in [(&x.kids[0], &x.kids[1]), (&x.kids[1], &x.kids[0])] {
+                        if literal_value(p) == Some(workgroup as f32) && q.kids.is_empty() {
+                            return local_name(&q.name).and_then(|l| tile_of(&l, tiles)).map(|n| (b, Off::StridedTile(n)));
+                        }
+                    }
+                }
+                None
+            }
+            _ => None,
+        };
     }
     None
 }
@@ -371,6 +543,12 @@ impl<'a> Ctx<'a> {
         if t.name.starts_with("load.") {
             return Err(format!("load {} has no safe spelling", t.name));
         }
+        // A vector component chosen at run time (`v[j]`): the kingdom's `shape.at`.
+        if t.name == "shape.access_dyn" && t.kids.len() == 2 && self.kingdom.dual(t.kids[0].ty).is_some_and(|d| d.lanes > 1 && d.slot.starts_with("vec")) {
+            let v = self.value(&t.kids[0])?;
+            let i = self.value(&t.kids[1])?;
+            return Ok(Tree::new("shape.at", t.ty, vec![v, i]));
+        }
         let kids = t.kids.iter().map(|k| self.value(k)).collect::<Result<Vec<_>, _>>()?;
         // The reader suffixes a compose with its slot (`shape.compose4.vec4<f32>`);
         // the table's row is the bare name, the tree's dual carries the slot.
@@ -464,7 +642,7 @@ impl<'a> Ctx<'a> {
                     }
                     let tiles = (self.tile_counter.clone(), self.tile_counter2.clone(), self.tile_counter3.clone());
                     let tiles: Tiles = [&tiles.0, &tiles.1, &tiles.2];
-                    let (Some((by, i)), Some((bx, j))) = (thread_axis_off(r, 1, self.grid.1, tiles), thread_axis_off(col, 0, self.grid.0, tiles)) else { continue };
+                    let (Some((by, i)), Some((bx, j))) = (thread_axis_off_in(r, 1, self.grid.1, tiles, &self.row_arrays), thread_axis_off_in(col, 0, self.grid.0, tiles, &self.row_arrays)) else { continue };
                     if by != self.grid.3 || bx != self.grid.2 {
                         return fail(&format!("block {bx} x {by} in the index, the grid says {} x {}", self.grid.2, self.grid.3));
                     }
@@ -558,8 +736,18 @@ impl<'a> Ctx<'a> {
                     }
                     Statement::Store { .. } => {
                         let root = self.root_at(&here, |k| matches!(k, RootKind::Store { .. })).ok_or("no store root at this statement")?;
-                        let tree = tree_of(self, &root.tree)?;
-                        self.store(&tree, rung)
+                        let node = root.tree.clone();
+                        let mut stmts = self.store_root(&node, rung)?;
+                        Ok(match stmts.len() {
+                            0 => None,
+                            1 => stmts.pop(),
+                            _ => Some(Tree::new(&format!("stmt.block_{rung}"), st, vec![self.block(stmts, rung)?])),
+                        })
+                    }
+                    Statement::Call { .. } => {
+                        // A helper's call: its result is inlined where it is
+                        // read; the call statement itself has no effect.
+                        Ok(None)
                     }
                     Statement::If { accept, reject, .. } => {
                         let root = self.root_at(&here, |k| matches!(k, RootKind::Condition { .. })).ok_or("no condition root at this if")?;
@@ -629,6 +817,35 @@ impl<'a> Ctx<'a> {
         Ok(out)
     }
 
+    /// A store root as statements: a local array written whole from an array
+    /// constructor (`var accs = array<vec4<f32>, 4>(a0, a1, a2, a3)`, k08)
+    /// becomes one private-array store per element; anything else is the
+    /// ordinary store.
+    fn store_root(&mut self, node: &Node, rung: &str) -> Result<Vec<Tree>, String> {
+        if let Node::App { name, kids, .. } = node {
+            if let (Some(rest), [Node::App { name: vname, kids: elems, .. }]) = (name.strip_prefix("store.local."), kids.as_slice()) {
+                if !rest.contains(".#") && vname.starts_with("naga.Compose.") {
+                    let local = format!("local.{}", rest.split('@').take(2).collect::<Vec<_>>().join("@"));
+                    let values = elems.iter().map(|e| tree_of(self, e)).collect::<Result<Vec<_>, _>>()?;
+                    let first = values.first().ok_or("an empty array constructor")?;
+                    let d = self.kingdom.dual(first.ty).map(|d| d.dual.clone()).unwrap_or_default();
+                    let (arr, kind, mask) = self.private_array(&local, &d)?;
+                    let st = self.stmt_ty(rung)?;
+                    let mut out = Vec::new();
+                    for (i, v) in values.iter().enumerate() {
+                        let v = self.value(v)?;
+                        let idx = Tree::literal("literal.index", ty(self, "u32.index")?, i as f32);
+                        let pidx = Tree::new(mask, ty(self, "u32.pindex")?, vec![idx]);
+                        out.push(Tree::new(&format!("parr.set_{kind}_{rung}"), st, vec![Tree::new(arr, ty(self, parr_dual(kind))?, vec![]), pidx, v]));
+                    }
+                    return Ok(out);
+                }
+            }
+        }
+        let tree = tree_of(self, node)?;
+        Ok(self.store(&tree, rung)?.into_iter().collect())
+    }
+
     fn store(&mut self, tree: &Tree, rung: &str) -> Result<Option<Tree>, String> {
         let st = self.stmt_ty(rung)?;
         let name = tree.name.as_str();
@@ -674,6 +891,25 @@ impl<'a> Ctx<'a> {
             if rest.contains(".#") {
                 let local = format!("local.{}", rest.split('@').take(2).collect::<Vec<_>>().join("@"));
                 let [idx, value] = tree.kids.as_slice() else { return Err("a store to a local array without an index".into()) };
+                // `lrs[i] = <this thread's i-th block row>` with i a tile counter:
+                // the array holds the thread's rows; a later `lrs[k]` is a row.
+                if idx.kids.is_empty() {
+                    let tiles = (self.tile_counter.clone(), self.tile_counter2.clone(), self.tile_counter3.clone());
+                    let tiles: Tiles = [&tiles.0, &tiles.1, &tiles.2];
+                    if let Some(n) = local_name(&idx.name).and_then(|l| tile_of(&l, tiles)) {
+                        for (axis, wg) in [(1usize, self.grid.1), (0usize, self.grid.0)] {
+                            match thread_axis_off_in(value, axis, wg, tiles, &self.row_arrays) {
+                                Some((blk, Off::StridedTile(m))) if m == n => {
+                                    self.row_arrays.insert(local.clone(), (axis, true, blk));
+                                }
+                                Some((blk, Off::Tile(m))) if m == n => {
+                                    self.row_arrays.insert(local.clone(), (axis, false, blk));
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
                 let d = self.kingdom.dual(value.ty).map(|d| d.dual.clone()).unwrap_or_default();
                 let (arr, kind, mask) = self.private_array(&local, &d)?;
                 let i = self.value(idx)?;
@@ -996,15 +1232,37 @@ pub fn statement_outline(source: &str) -> Result<Vec<String>, String> {
 pub fn read_safe(source: &str, kingdom: &WgslKingdom) -> Result<SafeRead, String> {
     let grid = grid_header(source).ok_or("no `// grid x y bx by` header")?;
     let kernel = read(source)?;
-    if kernel.module.functions.iter().next().is_some() {
-        return Err("the kernel has helper functions (no safe spelling yet)".into());
-    }
     let f = kernel.functions.iter().find(|f| f.entry_point).ok_or("no entry point")?;
     let naga_fn: &Function = &kernel.module.entry_points.first().ok_or("no entry point")?.function;
+    // Helper functions: lets and one return, inlined at their calls (k05).
+    let mut helpers: HashMap<String, Helper> = HashMap::new();
+    let mut helper_duals: Vec<(String, Option<Ty>)> = Vec::new();
+    for (handle, nf) in kernel.module.functions.iter() {
+        let name = nf.name.clone().unwrap_or_else(|| format!("fn{}", handle.index()));
+        let hf = kernel.functions.iter().find(|x| !x.entry_point && x.name == name).ok_or_else(|| format!("helper {name} was not read"))?;
+        let mut lets = HashMap::new();
+        let mut body = None;
+        for r in &hf.roots {
+            match (&r.kind, &r.tree) {
+                (RootKind::Let { name }, Node::App { kids, .. }) => {
+                    lets.insert(name.clone(), kids[0].clone());
+                }
+                (RootKind::Return, Node::App { kids, .. }) if body.is_none() => body = Some(kids[0].clone()),
+                (RootKind::Return, _) => return Err(format!("helper {name} returns twice (not inlined)")),
+                (other, _) => return Err(format!("helper {name} has a {other:?} statement: only lets and one return are inlined")),
+            }
+        }
+        let body = body.ok_or_else(|| format!("helper {name} returns nothing"))?;
+        let args = nf.arguments.iter().enumerate().map(|(i, a)| format!("arg.{}", a.name.clone().unwrap_or_else(|| i.to_string()))).collect();
+        let types = infer_function(hf, kingdom);
+        helper_duals.extend(types.by_text.iter().map(|(text, set)| (text.clone(), if set.len() == 1 { set.iter().next().copied().flatten() } else { None })));
+        helpers.insert(name, Helper { args, body, lets });
+    }
     // Roots by statement path; lets by name; duals by text (one form, else untyped).
     let mut roots: HashMap<Vec<usize>, Vec<&Root>> = HashMap::new();
     let mut lets: HashMap<String, Node> = HashMap::new();
     let mut inits: Vec<&Root> = Vec::new();
+    let mut arg_roots: HashMap<Vec<usize>, Vec<(usize, Node)>> = HashMap::new();
     for r in &f.roots {
         match &r.kind {
             RootKind::Let { name } => {
@@ -1013,19 +1271,26 @@ pub fn read_safe(source: &str, kingdom: &WgslKingdom) -> Result<SafeRead, String
                 }
             }
             RootKind::Init { .. } => inits.push(r),
+            RootKind::Argument { position, .. } => {
+                if let Node::App { kids, .. } = &r.tree {
+                    arg_roots.entry(r.path.clone()).or_default().push((*position, kids[0].clone()));
+                }
+            }
             _ => roots.entry(r.path.clone()).or_default().push(r),
         }
     }
     let types = infer_function(f, kingdom);
-    let duals: BTreeMap<String, Option<Ty>> = types.by_text.iter().map(|(text, set)| (text.clone(), if set.len() == 1 { set.iter().next().copied().flatten() } else { None })).collect();
-    let mut ctx = Ctx { kingdom, duals: &duals, lets: &lets, roots: &roots, item_counter: None, tile_counter: None, tile_counter2: None, tile_counter3: None, registers: BTreeMap::new(), next_reg: BTreeMap::new(), guard: None, tail: true, arrays: BTreeMap::new(), parrs: BTreeMap::new(), grid, notes: Vec::new() };
+    let mut duals: BTreeMap<String, Option<Ty>> = types.by_text.iter().map(|(text, set)| (text.clone(), if set.len() == 1 { set.iter().next().copied().flatten() } else { None })).collect();
+    for (text, t) in helper_duals {
+        duals.entry(text).or_insert(t);
+    }
+    let calls = f.calls.clone();
+    let mut ctx = Ctx { kingdom, duals: &duals, lets: &lets, roots: &roots, item_counter: None, tile_counter: None, tile_counter2: None, tile_counter3: None, registers: BTreeMap::new(), next_reg: BTreeMap::new(), guard: None, tail: true, arrays: BTreeMap::new(), parrs: BTreeMap::new(), grid, notes: Vec::new(), helpers: &helpers, calls: &calls, arg_roots: &arg_roots, inline_args: None, row_arrays: BTreeMap::new() };
     // Register initialisations first, in root order.
     let mut stmts = Vec::new();
     for r in inits {
-        let t = tree_of(&mut ctx, &r.tree)?;
-        if let Some(st) = ctx.store(&t, "L0").map_err(|e| format!("at init {}: {e}", r.tree.to_sexpr()))? {
-            stmts.push(st);
-        }
+        let node = r.tree.clone();
+        stmts.extend(ctx.store_root(&node, "L0").map_err(|e| format!("at init {}: {e}", r.tree.to_sexpr()))?);
     }
     let body = ctx.walk(&naga_fn.body, &mut Vec::new(), "L0", 0)?;
     stmts.extend(body);
@@ -1108,11 +1373,15 @@ mod tests {
         assert!(mismatches.is_empty(), "{} mismatches:\n{}", mismatches.len(), mismatches.join("\n"));
     }
 
-    /// A kernel with a helper function is refused by name.
+    /// A kernel with a helper function reads: the helper is inlined at its
+    /// calls (the complete kingdom, step 6), or the refusal names the helper
+    /// and what in it the grammar cannot inline.
     #[test]
-    fn a_kernel_with_a_helper_function_is_refused() {
+    fn a_kernel_with_a_helper_function_is_inlined_or_named() {
         let k = WgslKingdom::load_safe();
-        let err = read_safe(BLOCKED, &k).err().expect("refused");
-        assert!(err.contains("helper function"), "{err}");
+        match read_safe(BLOCKED, &k) {
+            Ok(r) => assert!(r.tree.size() > 10),
+            Err(e) => assert!(e.contains("helper") || e.contains("inlin"), "{e}"),
+        }
     }
 }

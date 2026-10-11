@@ -177,14 +177,13 @@ Accumulating in a different order changes the error: more independent partial su
 /// declined four children in four for exactly these).
 pub fn grammar_limits() -> String {
     "WHAT THE KERNEL GRAMMAR CAN SPELL (a kernel outside it is declined before it is ever run): \
-one entry point `main`, no helper functions; workgroup size from {4, 8, 16, 32, 64} per axis; a register block factor from {1, 2, 4}; an unroll factor from {2, 4, 8}; \
-every loop bounded by cfg.m, cfg.d, cfg.r_rows or a literal of at most 64, counting up by a constant step; \
-vector components accessed by a constant (.x .y .z .w or [0]..[3]), never by a variable; arrays indexed by u32 expressions; \
-var<workgroup> arrays of f32 (at most 2048) or vec4<f32> (at most 256); private arrays of at most 64 f32; at most 16 integer and 16 float scalar registers; \
-workgroupBarrier() only at the top level of a loop body, never under an if; \
-reads of phi and writes to h only through index expressions built from the builtins, cfg fields and loop counters; \
-plain WGSL as of 2024: no f16, no subgroup operations, no pointers, no switch, no while/loop-break forms (use for loops)."
-        .to_string()
+one entry point `main`; helper functions only if their body is lets and one `return expression` (they are inlined); workgroup size from {4, 8, 16, 32, 64} per axis; a register block factor from {1, 2, 4}; an unroll factor from {2, 4, 8}; \
+every loop a `for` counting up from 0 by a constant step, bounded by any u32 expression (cfg.m, cfg.d, cfg.r_rows, a literal, cfg.m / 4u, (cfg.d + 63u) / 64u, m & ~3u), the test written as counter < bound (or <=, or bound > counter, or `if (t + k > bound) { break; }`); \
+vector components by a constant (.x .y .z .w, [0]..[3]) or by a variable (v[j]); arrays indexed by u32 expressions; an array constructor to initialise a local array; \
+var<workgroup> arrays: at most two of f32 (2048 each) and two of vec4<f32> (256 each), Apple's threadgroup limit; private arrays of f32 (64, up to six), vec4<f32> (16, up to two), u32 (16, up to three), bool (16, up to two); 32 f32, 16 vec4<f32>, 32 u32 and 8 bool scalar registers; \
+integer literals below 2^24 (a high mask such as ~3u is spelled as a rounding or a shift); \
+workgroupBarrier() only at the top level of a loop body, never under an if; a thread writes h only at cells of its own block (its rows and columns from its ids, directly or through a private array it filled); reads of phi anywhere; \
+plain WGSL as of 2024: no f16, no subgroup operations, no pointers, no switch, no continue, no return under a condition except a leading guard."        .to_string()
 }
 
 fn brief_block(k: &KernelBrief, label: &str) -> String {

@@ -487,6 +487,30 @@ pub fn conform(t: &Tree, demand: Ty, kingdom: &WgslKingdom, per_kernel: &[PerKer
             return conform(&Tree { name: format!("index.{op}"), ty: t.ty, konst: t.konst, kids: t.kids.clone() }, demand, kingdom, per_kernel);
         }
     }
+    // A vector composed from vector parts (`vec4<f32>(a: vec2, b: vec2)`,
+    // k05): every part taken apart into its lanes first.
+    if t.name.starts_with("shape.compose") {
+        let lanes_of = |k: &Tree| kingdom.dual(k.ty).map_or(1, |d| if d.slot.starts_with("vec") { d.lanes as usize } else { 1 });
+        let want = kingdom.dual(demand).map_or(0, |d| if d.slot.starts_with("vec") { d.lanes as usize } else { 0 });
+        let total: usize = t.kids.iter().map(lanes_of).sum();
+        if want > 0 && total == want && t.kids.iter().any(|k| lanes_of(k) > 1) {
+            let mut flat = Vec::new();
+            for k in &t.kids {
+                let l = lanes_of(k);
+                if l > 1 {
+                    let scalar = kingdom.dual(k.ty).and_then(|d| d.scalar().map(|s| s.to_string())).unwrap_or_default();
+                    let form = kingdom.dual(k.ty).map(|d| d.form.clone()).unwrap_or_default();
+                    let sty = crate::wgsl::render::dual_ty(kingdom, &format!("{scalar}.{form}")).unwrap_or(k.ty);
+                    for i in 0..l {
+                        flat.push(Tree::new(&format!("shape.access_{i}"), sty, vec![k.clone()]));
+                    }
+                } else {
+                    flat.push(k.clone());
+                }
+            }
+            return conform(&Tree { name: format!("shape.compose{want}"), ty: t.ty, konst: t.konst, kids: flat }, demand, kingdom, per_kernel);
+        }
+    }
     // A vector written from all its lanes at once (naga's Compose): the
     // table composes in steps, a vector of n − 1 lanes and a scalar.
     if let Some(n) = t.name.strip_prefix("shape.compose").and_then(|n| n.parse::<usize>().ok()) {
@@ -831,11 +855,13 @@ mod tests {
         let trees: Vec<Tree> = files.iter().filter_map(|f| read_safe(&std::fs::read_to_string(f).ok()?, &k).ok()).map(|r| r.tree).take(12).collect();
         assert!(trees.len() >= 8);
         let direct: Vec<String> = trees.iter().map(|t| render_tree(t, &k).unwrap().text).collect();
-        let f = fold_population(&trees, 32, 48, 40, 3, 7);
+        // The population's layout: 96 tail slots (k05, inlined, needs 43 own
+        // definitions at head 32), the shared band the last eight.
+        let f = fold_population(&trees, 32, 96, 88, 3, 7);
         assert!(!f.shared.is_empty(), "components shared by two or more kernels");
-        assert!(f.shared.iter().all(|d| d.referrers >= 2 && (40..48).contains(&d.slot)));
+        assert!(f.shared.iter().all(|d| d.referrers >= 2 && (88..96).contains(&d.slot)));
         assert!(f.repeated_occurrences > 0);
-        let pset_slots = 48;
+        let pset_slots = 96;
         for (i, c) in f.chromosomes.iter().enumerate() {
             let c = c.as_ref().unwrap_or_else(|e| panic!("{e}"));
             let pset = homeotic::pset_with_hrefs(&c.pset, pset_slots);

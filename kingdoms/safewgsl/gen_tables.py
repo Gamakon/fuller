@@ -539,6 +539,12 @@ f("parr", "w", "composite", [], "parr<vec4<f32>>.real", "private array pw of 16 
 # normalised to t < m - 4). The bound is any index expression; the loop is finite because every u32 is;
 # the cost estimator evaluates the bound at the worst shape, so a slow kernel is refused before dispatch.
 f("bound", "of_index", "composite", ["u32.index"], "u32.boundx", "any index expression as a loop bound")
+# A vector component chosen at run time (k08's `v[j]`, a model child's): read through a helper, since naga
+# demands a constant index on a vector VALUE; the index is masked to the lanes.
+f("shape", "at", "composite", ["<vecL.c>", "u32.index"], "<S.c>", "lane (i masked to the lanes) of a vector, through a helper")
+# `m & ~3u` (k16, k26): the mask 0xFFFFFFFC is not exact in an f32 literal, so the reader spells it as a rounding
+# down to a multiple: i - i % k. An index literal above 2^24 is refused by name, never rounded silently.
+f("index", "round_down", "composite", ["u32.index", "u32.index"], "u32.index", "i rounded down to a multiple of k (k16's `m & ~3u` is round_down(m, 4))")
 f("index", "sub_floor", "composite", ["u32.index", "u32.index"], "u32.index", "i - j, floored at zero (a loop test `t + k > m` becomes t < m - k)")
 f("loop", "items_boundx", "composite", ["u32.boundx", "block.L1"], "stmt.L0", "for (t = 0u; t < expr; t = t + 1u)")
 f("loop", "items_strided_boundx", "composite", ["u32.boundx", "u32.lit4096", "block.L1"], "stmt.L0", "arity 3: for (t = 0u; t < expr; t = t + stride)")

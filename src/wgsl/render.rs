@@ -745,6 +745,24 @@ impl<'a> Renderer<'a> {
         if name == "wg.a" || name == "wg.b" {
             return Err(format!("{name} is a workgroup array, not a value (a row took wgmem as a value input)"));
         }
+        // A run-time vector component: a helper copies the value into a `var`
+        // and indexes it, which naga allows; the index is masked to the lanes.
+        if name == "shape.at" && a.len() == 2 {
+            let vd = self.dual(v.kids[0].ty)?;
+            let letter = match vd.scalar() {
+                Some("f32") => "f",
+                Some("u32") => "u",
+                Some("i32") => "i",
+                Some("bool") => "b",
+                other => return Err(format!("shape.at over {}: no helper for scalar {other:?}", vd.dual)),
+            };
+            if !(2..=4).contains(&vd.lanes) {
+                return Err(format!("shape.at over {}: not a vector", vd.dual));
+            }
+            let helper = format!("at_vec{}{letter}", vd.lanes);
+            scope.helpers.push(helper.clone());
+            return Ok(format!("{helper}({}, {})", a[0], a[1]));
+        }
         // A per-kernel swizzle (`shape.swizzle.xy`): the pattern is the instance.
         if let Some(pat) = name.strip_prefix("shape.swizzle.") {
             if a.len() == 1 && !pat.is_empty() && pat.chars().all(|c| "xyzw".contains(c)) {
@@ -899,6 +917,7 @@ impl<'a> Renderer<'a> {
             "index.shr" => Some(format!("(({}) >> (({}) & 31u))", a[0], a[1])),
             "index.and" => Some(format!("(({}) & ({}))", a[0], a[1])),
             "index.sub_floor" => Some(format!("select(({0}) - ({1}), 0u, ({1}) > ({0}))", a[0], a[1])),
+            "index.round_down" => Some(format!("(({0}) - (({0}) % max({1}, 1u)))", a[0], a[1])),
             "index.or" => Some(format!("(({}) | ({}))", a[0], a[1])),
             "hash.split_lo" => Some(format!("{}.x", a[0])),
             "hash.split_hi" => Some(format!("{}.y", a[0])),
@@ -1230,6 +1249,18 @@ fn slot_ctor(slot: &str) -> Result<String, String> {
 /// a one-line expression. Q15.16 arithmetic is on 32-bit two's complement
 /// with explicit saturation; the 64-bit products use 16-bit limbs.
 pub const COMPOSITES: &[(&str, &str)] = &[
+    ("at_vec2f", "fn at_vec2f(v: vec2<f32>, i: u32) -> f32 { var t = v; return t[i & 1u]; }"),
+    ("at_vec3f", "fn at_vec3f(v: vec3<f32>, i: u32) -> f32 { var t = v; return t[min(i, 2u)]; }"),
+    ("at_vec4f", "fn at_vec4f(v: vec4<f32>, i: u32) -> f32 { var t = v; return t[i & 3u]; }"),
+    ("at_vec2u", "fn at_vec2u(v: vec2<u32>, i: u32) -> u32 { var t = v; return t[i & 1u]; }"),
+    ("at_vec3u", "fn at_vec3u(v: vec3<u32>, i: u32) -> u32 { var t = v; return t[min(i, 2u)]; }"),
+    ("at_vec4u", "fn at_vec4u(v: vec4<u32>, i: u32) -> u32 { var t = v; return t[i & 3u]; }"),
+    ("at_vec2i", "fn at_vec2i(v: vec2<i32>, i: u32) -> i32 { var t = v; return t[i & 1u]; }"),
+    ("at_vec3i", "fn at_vec3i(v: vec3<i32>, i: u32) -> i32 { var t = v; return t[min(i, 2u)]; }"),
+    ("at_vec4i", "fn at_vec4i(v: vec4<i32>, i: u32) -> i32 { var t = v; return t[i & 3u]; }"),
+    ("at_vec2b", "fn at_vec2b(v: vec2<bool>, i: u32) -> bool { var t = v; return t[i & 1u]; }"),
+    ("at_vec3b", "fn at_vec3b(v: vec3<bool>, i: u32) -> bool { var t = v; return t[min(i, 2u)]; }"),
+    ("at_vec4b", "fn at_vec4b(v: vec4<bool>, i: u32) -> bool { var t = v; return t[i & 3u]; }"),
     ("inverse_2", "fn inverse_2(m: mat2x2<f32>) -> mat2x2<f32> {\n    let inv_det = 1.0 / determinant(m);\n    return mat2x2<f32>(vec2<f32>(m[1][1], -m[0][1]) * inv_det, vec2<f32>(-m[1][0], m[0][0]) * inv_det);\n}"),
     ("inverse_3", "fn inverse_3(m: mat3x3<f32>) -> mat3x3<f32> {\n    // Columns of the adjugate: cross products of the columns, transposed.\n    let c0 = cross(m[1], m[2]);\n    let c1 = cross(m[2], m[0]);\n    let c2 = cross(m[0], m[1]);\n    let inv_det = 1.0 / dot(m[0], c0);\n    return transpose(mat3x3<f32>(c0, c1, c2)) * inv_det;\n}"),
     ("inverse_4", "fn inverse_4(m: mat4x4<f32>) -> mat4x4<f32> {\n    // The adjugate from 2x2 sub-determinants (column-major m[col][row]).\n    let a00 = m[0][0]; let a01 = m[0][1]; let a02 = m[0][2]; let a03 = m[0][3];\n    let a10 = m[1][0]; let a11 = m[1][1]; let a12 = m[1][2]; let a13 = m[1][3];\n    let a20 = m[2][0]; let a21 = m[2][1]; let a22 = m[2][2]; let a23 = m[2][3];\n    let a30 = m[3][0]; let a31 = m[3][1]; let a32 = m[3][2]; let a33 = m[3][3];\n    let b00 = a00 * a11 - a01 * a10; let b01 = a00 * a12 - a02 * a10; let b02 = a00 * a13 - a03 * a10;\n    let b03 = a01 * a12 - a02 * a11; let b04 = a01 * a13 - a03 * a11; let b05 = a02 * a13 - a03 * a12;\n    let b06 = a20 * a31 - a21 * a30; let b07 = a20 * a32 - a22 * a30; let b08 = a20 * a33 - a23 * a30;\n    let b09 = a21 * a32 - a22 * a31; let b10 = a21 * a33 - a23 * a31; let b11 = a22 * a33 - a23 * a32;\n    let inv_det = 1.0 / (b00 * b11 - b01 * b10 + b02 * b09 + b03 * b08 - b04 * b07 + b05 * b06);\n    return mat4x4<f32>(\n        vec4<f32>(a11 * b11 - a12 * b10 + a13 * b09, a02 * b10 - a01 * b11 - a03 * b09, a31 * b05 - a32 * b04 + a33 * b03, a22 * b04 - a21 * b05 - a23 * b03),\n        vec4<f32>(a12 * b08 - a10 * b11 - a13 * b07, a00 * b11 - a02 * b08 + a03 * b07, a32 * b02 - a30 * b05 - a33 * b01, a20 * b05 - a22 * b02 + a23 * b01),\n        vec4<f32>(a10 * b10 - a11 * b08 + a13 * b06, a01 * b08 - a00 * b10 - a03 * b06, a30 * b04 - a31 * b02 + a33 * b00, a21 * b02 - a20 * b04 - a23 * b00),\n        vec4<f32>(a11 * b07 - a10 * b09 - a12 * b06, a00 * b09 - a01 * b07 + a02 * b06, a31 * b01 - a30 * b03 - a32 * b00, a20 * b03 - a21 * b01 + a22 * b00)) * inv_det;\n}"),

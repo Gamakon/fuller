@@ -3,10 +3,10 @@ k01	reads	reads	a Sonnet draft of generation 0 (2026-10-10)
 k02	reads	reads	a Sonnet draft of generation 0 (2026-10-10)
 k03	reads	reads	a Sonnet draft of generation 0 (2026-10-10)
 k04	reads	reads	a Sonnet draft of generation 0 (2026-10-10)
-k05	refused	reads	a Sonnet draft of generation 0 (2026-10-10)
+k05	reads	reads	a Sonnet draft of generation 0 (2026-10-10)
 k06	reads	reads	a Sonnet draft of generation 0 (2026-10-10)
 k07	reads	reads	a Sonnet draft of generation 0 (2026-10-10)
-k08	refused	reads	a Sonnet draft of generation 0 (2026-10-10)
+k08	reads	reads	a Sonnet draft of generation 0 (2026-10-10)
 k09	reads	reads	a Sonnet draft of generation 0 (2026-10-10)
 k10	reads	reads	a Sonnet draft of generation 0 (2026-10-10)
 k11	reads	reads	a Sonnet draft of generation 0 (2026-10-10)
@@ -24,7 +24,7 @@ k22	reads	reads	a Sonnet draft of generation 0 (2026-10-10)
 k23	reads	reads	a Sonnet draft of generation 0 (2026-10-10)
 k24	reads	reads	a Sonnet draft of generation 0 (2026-10-10)
 k25	reads	reads	a Sonnet draft of generation 0 (2026-10-10)
-k26	refused	reads	a Sonnet draft of generation 0 (2026-10-10)
+k26	reads	reads	a Sonnet draft of generation 0 (2026-10-10)
 k27	reads	reads	a Sonnet draft of generation 0 (2026-10-10)
 k28	reads	reads	a Sonnet draft of generation 0 (2026-10-10)
 k29	reads	reads	a Sonnet draft of generation 0 (2026-10-10)
@@ -35,7 +35,7 @@ reply_g001_r2x_reinvent_sonnet	reads	reads	a model kernel of the smoke run, 2026
 reply_g001_r2x_union_fable	invalid	invalid	unbalanced braces: naga parse error
 reply_g001_r3p1_sonnet	reads	reads	a model kernel of the smoke run, 2026-10-11
 reply_g001_r3x_reinvent_sonnet	invalid	invalid	naga: a vector value indexed by a variable (IndexMustBeConstant)
-reply_g001_r3x_union_sonnet	refused	reads	a model kernel of the smoke run, 2026-10-11
+reply_g001_r3x_union_sonnet	reads	reads	a model kernel of the smoke run, 2026-10-11
 reply_g001_r4x_reinvent_sonnet	reads	reads	a model kernel of the smoke run, 2026-10-11
 reply_g001_r4x_union_sonnet	reads	reads	a model kernel of the smoke run, 2026-10-11
 reply_g001_r8x_reinvent_sonnet	reads	reads	a model kernel of the smoke run, 2026-10-11
