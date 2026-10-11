@@ -1026,10 +1026,16 @@ pub struct FitnessContext {
     pub resident_cases: Vec<Resident>,
     pub resident_pairs: [Vec<Resident>; 3],
     pub resident_timing: Vec<Resident>,
-    /// The shipped kernel's GPU milliseconds at the three timing shapes,
-    /// the denominator of every speed-up until [`FitnessContext::time_shipped`]
-    /// measures them again (once a generation in phylu's `wgsl_fit`).
+    /// The shipped kernel's GPU milliseconds at the three timing shapes as
+    /// [`FitnessContext::time_shipped`] last measured them (once a
+    /// generation in phylu's `wgsl_fit`).
     pub shipped_gpu_ms: std::cell::Cell<[f64; 3]>,
+    /// The least of every measurement so far, per shape: the denominator of
+    /// every speed-up. Contention only slows a kernel, so the least time is
+    /// the shipped kernel's own; dividing by a contended time inflated
+    /// every speed-up of a generation by up to 60 % (fit_B gens 12-16,
+    /// 2026-10-11: shipped 1,013-1,787 ms, a 10.7x kernel scored as 17x).
+    pub shipped_min_gpu_ms: std::cell::Cell<[f64; 3]>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1110,15 +1116,16 @@ impl FitnessContext {
         let resident_rungs = up(&rungs.iter().map(|(d, m, p)| (*d, *m, p.as_slice())).collect::<Vec<_>>())?;
         let resident_pairs = [pairs_of(&train)?, pairs_of(&val)?, pairs_of(&extrap)?];
         let resident_timing = up(&timing.iter().map(|(d, m, p)| (*d, *m, p.as_slice())).collect::<Vec<_>>())?;
-        let ctx = FitnessContext { train, val, extrap, probes, admission, shipped_source: SHIPPED.to_string(), timing, limit, timing_rounds: 1, rungs, shipped_ms, base_budget_ms: BASE_BUDGET_MS, round_budget_ms: ROUND_BUDGET_MS, resident_rungs, resident_cases, resident_pairs, resident_timing, shipped_gpu_ms: std::cell::Cell::new([0.0; 3]) };
+        let ctx = FitnessContext { train, val, extrap, probes, admission, shipped_source: SHIPPED.to_string(), timing, limit, timing_rounds: 1, rungs, shipped_ms, base_budget_ms: BASE_BUDGET_MS, round_budget_ms: ROUND_BUDGET_MS, resident_rungs, resident_cases, resident_pairs, resident_timing, shipped_gpu_ms: std::cell::Cell::new([0.0; 3]), shipped_min_gpu_ms: std::cell::Cell::new([f64::INFINITY; 3]) };
         ctx.time_shipped(dev)?;
         Ok(ctx)
     }
 
     /// Time the shipped kernel at the three timing shapes (after one
-    /// warm-up build at the first) and make those the denominators of the
-    /// speed-ups from now on: the median of `timing_rounds` builds a shape,
-    /// GPU timestamps as the candidate's are. Returns the times.
+    /// warm-up build at the first): the median of `timing_rounds` builds a
+    /// shape, GPU timestamps as the candidate's are. The least time so far
+    /// per shape ([`shipped_min`]) is the speed-ups' denominator. Returns
+    /// this measurement.
     pub fn time_shipped(&self, dev: &Device) -> Result<[f64; 3], String> {
         let shipped = Gram::compile(dev, &self.shipped_source)?;
         shipped.run(&self.resident_timing[0], false)?;
@@ -1134,7 +1141,33 @@ impl FitnessContext {
             }
         }
         self.shipped_gpu_ms.set(out);
+        self.shipped_min_gpu_ms.set(shipped_min(self.shipped_min_gpu_ms.get(), out));
         Ok(out)
+    }
+
+    /// The speed-ups' denominators: the least shipped time per shape so far.
+    pub fn shipped_reference(&self) -> [f64; 3] {
+        self.shipped_min_gpu_ms.get()
+    }
+
+    /// Re-time a kernel already scored feasible: only its timing builds
+    /// rerun (`timing_rounds` a shape, the median), against the least
+    /// shipped times; its accuracy columns (`columns[3..6]`) are kept. The
+    /// new speed-ups, columns and HFF. A memoised elite must not keep a
+    /// speed measured against a contended shipped time.
+    pub fn retime(&self, dev: &Device, source: &str, columns: &[f64; 6]) -> Result<([f64; 3], [f64; 6], f64), String> {
+        let gram = Gram::compile(dev, source)?;
+        let reference = self.shipped_reference();
+        let mut speedups = [0.0f64; 3];
+        for (k, res) in self.resident_timing.iter().enumerate() {
+            let mut v = Vec::with_capacity(self.timing_rounds.max(1));
+            for _ in 0..self.timing_rounds.max(1) {
+                v.push(speedup(reference[k], gram.run(res, false)?.gpu_ms)?);
+            }
+            speedups[k] = median(&mut v);
+        }
+        let c = fitness_columns(speedups, [columns[3], columns[4], columns[5]]);
+        Ok((speedups, c, truenorth(&c)))
     }
 
     /// The limit of one candidate build at a timing shape, [`slow_limit_ms`].
@@ -1252,7 +1285,7 @@ impl FitnessContext {
         // median of their ratios to the shipped kernel's times of this
         // generation ([`FitnessContext::time_shipped`]; until 2026-10-11 the
         // shipped kernel was built beside every candidate, 3.4 s of 6.4).
-        let shipped_gpu = self.shipped_gpu_ms.get();
+        let shipped_gpu = self.shipped_reference();
         let mut speedups = [0.0f64; 3];
         let mut measured_ms = [0.0f64; 3];
         let rounds = self.timing_rounds.max(1);
@@ -1276,9 +1309,26 @@ impl FitnessContext {
             speedups[k] = median(&mut ratios);
             measured_ms[k] = median(&mut walls);
         }
-        let columns = [(1.0 / speedups[0]).clamp(0.0, 1.0), (1.0 / speedups[1]).clamp(0.0, 1.0), (1.0 / speedups[2]).clamp(0.0, 1.0), (et / 2.0).clamp(0.0, 1.0), (ev / 2.0).clamp(0.0, 1.0), (ex / 2.0).clamp(0.0, 1.0)];
+        let columns = fitness_columns(speedups, [(et / 2.0).clamp(0.0, 1.0), (ev / 2.0).clamp(0.0, 1.0), (ex / 2.0).clamp(0.0, 1.0)]);
         Fitness { feasible: true, passed, columns, speedups, hff: truenorth(&columns), detail: String::new(), seconds: t.elapsed().as_secs_f64(), predicted_ms, rate_per_g: meter.rate_per_g(), floor_ms: meter.floor_ms, measured_ms, split: Split { total: t.elapsed().as_secs_f64() * 1e3, ..split } }
     }
+}
+
+/// The six columns: 1 / speed-up per timing shape, clamped to [0, 1], then
+/// the three accuracy columns as given.
+pub fn fitness_columns(speedups: [f64; 3], accuracy: [f64; 3]) -> [f64; 6] {
+    [(1.0 / speedups[0]).clamp(0.0, 1.0), (1.0 / speedups[1]).clamp(0.0, 1.0), (1.0 / speedups[2]).clamp(0.0, 1.0), accuracy[0], accuracy[1], accuracy[2]]
+}
+
+/// The running least shipped time per shape after a new measurement.
+pub fn shipped_min(so_far: [f64; 3], new: [f64; 3]) -> [f64; 3] {
+    [so_far[0].min(new[0]), so_far[1].min(new[1]), so_far[2].min(new[2])]
+}
+
+/// Whether a shipped measurement is contended: any shape more than 10 %
+/// above the least so far.
+pub fn shipped_contended(latest: [f64; 3], least: [f64; 3]) -> bool {
+    latest.iter().zip(&least).any(|(l, m)| *l > 1.1 * m)
 }
 
 /// A speed-up: the shipped kernel's GPU time over the candidate's, both
@@ -1515,6 +1565,39 @@ mod tests {
         assert_eq!(speedup(1000.0, 2000.0), Ok(0.5));
         assert!(speedup(1000.0, 0.0).unwrap_err().starts_with("zero time"));
         assert!(speedup(0.0, 10.0).is_err());
+    }
+
+    /// A contended (inflated) shipped measurement never raises a speed-up:
+    /// the denominator is the least time so far, and the inflated
+    /// generation is flagged.
+    #[test]
+    fn an_inflated_shipped_time_does_not_raise_a_speedup() {
+        let first = [1010.0, 1005.0, 1012.0];
+        let mut least = shipped_min([f64::INFINITY; 3], first);
+        assert_eq!(least, first);
+        let candidate = [100.0, 95.0, 101.0];
+        let before: Vec<f64> = (0..3).map(|k| speedup(least[k], candidate[k]).unwrap()).collect();
+        let inflated = [1787.0, 1500.0, 1013.0];
+        assert!(shipped_contended(inflated, least));
+        least = shipped_min(least, inflated);
+        assert_eq!(least, first);
+        let after: Vec<f64> = (0..3).map(|k| speedup(least[k], candidate[k]).unwrap()).collect();
+        assert_eq!(before, after);
+        // A faster, uncontended measurement lowers the reference and is not flagged.
+        let quicker = [1000.0, 1005.0, 1012.0];
+        assert!(!shipped_contended(quicker, least));
+        assert_eq!(shipped_min(least, quicker), [1000.0, 1005.0, 1012.0]);
+    }
+
+    /// An elite's HFF follows a re-time: the accuracy columns kept, the
+    /// speed columns from the new speed-ups.
+    #[test]
+    fn an_elites_hff_follows_a_retime() {
+        let old = fitness_columns([17.0, 17.0, 17.0], [0.25, 0.3, 0.28]);
+        let new = fitness_columns([10.7, 10.7, 10.7], [old[3], old[4], old[5]]);
+        assert_eq!(&new[3..], &old[3..]);
+        assert!(truenorth(&new) > truenorth(&old));
+        assert_eq!(new[0], 1.0 / 10.7);
     }
 
     /// GPU (run when the device is free): with the shipped times taken once,
