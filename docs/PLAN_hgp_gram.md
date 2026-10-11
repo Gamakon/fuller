@@ -168,6 +168,43 @@ The headroom exists (the rule was 1.3×), so the experiment continues. On a quie
 
 The dumps are `logs/HGP/001/safe/karva/kNN.json`; the converted kernels `logs/HGP/001/safe/kNN.safe.wgsl`. The run that follows the restart: `wgsl_fit --kingdom safe --dumps fuller/logs/HGP/001/safe/karva` (phylu), generation 0 first, every row evaluated once; expected: the 27 feasible, HFF as generation 0 measured them.
 
+## Engine runs measured (2026-10-11, `logs/HGP/001/fit_engine3..5`, seed 3, population 30 = 26 drafts + 4 drawn)
+
+Fitness: the HFF angle over the speed-up columns (lower is better); an infeasible kernel scores π/2.
+
+| run | variation | generations | best HFF (gen) | feasible of 30 per generation | new feasible offspring per generation |
+|---|---|---|---|---|---|
+| fit_engine3 (control) | engine operators | 4 (stopped) | 0.3283 (3) | 5–7 | 1–3 of 26 |
+| fit_engine4 | engine operators + champion mating + the gate | 13 (hung, see below) | 0.3230 (1), flat to 13 | 18–27 | 6–23 |
+| fit_engine5 | head-only: deduplicating head mutation + champion mating + the gate | 35 (4 h budget) | 0.3204 (25); 0.3228 (15); 0.3254 (1) | 17–27 | 7–23 |
+
+Champion mating (Andrew: an infeasible individual is a failed kernel, not diversity) turned one to three
+feasible offspring a generation into about twenty. The gate (an infeasible offspring replaced, in turn, by a
+recross, the champion crossed with it, the champion with a head mutation, until feasible) still leaked 3–12
+rows a generation. Cost: an infeasible evaluation is 2.0 s (128 cases, one GPU round trip each), a feasible
+one 8 s; a generation 5–8 min.
+
+fit_engine4 froze at 02:45Z on the CPU: champion mating assembled a tail whose genes read later slots twice
+at every slot, 2^48 nodes to unfold; `homeotic::unfold` is now bounded at 65,536 operators (fuller 495d288).
+
+**The re-timing (07:22Z, d 1024, m 16384, 7 rounds each, `logs/HGP/001/retime_*.log`): the fitness
+differences among the top kernels are timing noise.**
+
+| kernel | HFF in the run | GPU ms median (min–max) | speed-up over shipped |
+|---|---|---|---|
+| shipped | — | 64.56 (64.40–73.83) | 1 |
+| best draft, generation 0 | 0.3300 | 10.66 (10.53–23.52) | 6.06× |
+| champion, generation 15 | 0.3228 | 10.61 (10.57–10.84) | 6.08× |
+| champion, generation 25 | 0.3204 | 10.57 (10.49–22.27) | 6.11× |
+| offspring at the floor | 0.3287 | 10.49 (10.46–10.56) | 6.15× |
+
+All four are the same speed within 1 %, every round correct. Thirty-five generations found many kernels as
+fast as the best model-written draft and none measurably faster: the "floor" at 0.3287 that the offspring
+kept hitting, and the "new bests" below it, are the timing spread of equal kernels. Before any further run
+the fitness needs more rounds per shape (or the median of repeated timings) so that a real 5 % gain is
+distinguishable from noise, and the 128-case screen needs its one-submission form (cases resident on the
+device, one command buffer) so a generation costs seconds, not minutes.
+
 ## Expectations, stated before any run
 
 | measurement | expected |
