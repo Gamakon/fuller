@@ -63,6 +63,11 @@ A type is a dual `slot.form`: the slot is what the hardware stores, the form is 
 | `tcounter4` | a fourth nested tile loop's counter k4, stepped by the loop row itself | u32 |
 | `L5` | a statement or block inside a fourth nested tile loop | see duals |
 | `C5` | a statement or block under a condition inside a fourth nested tile loop: no barrier | see duals |
+| `O0` | a statement or block of the epilogue, ending in the store of this thread's cell, outside any tile loop | see duals |
+| `O1` | a statement or block of the epilogue inside one tile loop | see duals |
+| `O2` | a statement or block of the epilogue inside two nested tile loops | see duals |
+| `O3` | a statement or block of the epilogue inside three nested tile loops | see duals |
+| `O4` | a statement or block of the epilogue inside four nested tile loops | see duals |
 
 ## Duals
 
@@ -200,8 +205,18 @@ A type is a dual `slot.form`: the slot is what the hardware stores, the form is 
 | T130 | `block.L5` | `block` | `L5` | 0 | `empty` | 0 | 0 | 0 |
 | T131 | `stmt.C5` | `stmt` | `C5` | 0 | `empty` | 0 | 0 | 0 |
 | T132 | `block.C5` | `block` | `C5` | 0 | `empty` | 0 | 0 | 0 |
+| T133 | `stmt.O0` | `stmt` | `O0` | 0 | `the thread's own store` | 0 | 0 | 0 |
+| T134 | `block.O0` | `block` | `O0` | 0 | `the thread's own store` | 0 | 0 | 0 |
+| T135 | `stmt.O1` | `stmt` | `O1` | 0 | `the thread's own store` | 0 | 0 | 0 |
+| T136 | `block.O1` | `block` | `O1` | 0 | `the thread's own store` | 0 | 0 | 0 |
+| T137 | `stmt.O2` | `stmt` | `O2` | 0 | `the thread's own store` | 0 | 0 | 0 |
+| T138 | `block.O2` | `block` | `O2` | 0 | `the thread's own store` | 0 | 0 | 0 |
+| T139 | `stmt.O3` | `stmt` | `O3` | 0 | `the thread's own store` | 0 | 0 | 0 |
+| T140 | `block.O3` | `block` | `O3` | 0 | `the thread's own store` | 0 | 0 | 0 |
+| T141 | `stmt.O4` | `stmt` | `O4` | 0 | `the thread's own store` | 0 | 0 | 0 |
+| T142 | `block.O4` | `block` | `O4` | 0 | `the thread's own store` | 0 | 0 | 0 |
 
-132 duals. The fallback is what Design C's projection substitutes for a codon whose dual does not match the demand; the codon is counted as masked.
+142 duals. The fallback is what Design C's projection substitutes for a codon whose dual does not match the demand; the codon is counted as masked.
 
 The three machine columns (`fallback_bits`, `fallback_noop`, `fallback_elem` in `types.tsv`) are what the loader builds the fallback leaf from, never the prose: `bits` is the lane's 32-bit pattern as an unsigned integer, repeated across the lanes of a vector or matrix (only `bool.sign` is non-zero, true = +1); `noop` is 1 for `store.store`, which substitutes no value at all; `elem` is 1 for `array<T>`, whose fallback is its element's. The loader tests `noop` and `elem` before reading `bits`; for those two rows `bits` is a placeholder 0. Every substitution, whichever column decides it, counts the codon as masked.
 

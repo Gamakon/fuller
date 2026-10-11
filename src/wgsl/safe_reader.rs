@@ -663,6 +663,35 @@ fn scale_by(x: &Tree, lit: &Tree, ty: Ty) -> Tree {
     Tree::new("index.mul", ty, vec![x.clone(), lit.clone()])
 }
 
+/// Whether a statement tree stores h anywhere in it.
+fn has_store(t: &Tree) -> bool {
+    t.name.starts_with("store.h_") || t.kids.iter().any(has_store)
+}
+
+/// A row name's stem without its statement rung (`stmt.if_L2` is `stmt.if`);
+/// `None` for a row with no rung (an expression).
+fn rung_stem(name: &str) -> Option<&str> {
+    let (stem, rung) = name.rsplit_once('_')?;
+    let mut c = rung.chars();
+    match (c.next(), c.next(), c.next()) {
+        (Some('L' | 'C' | 'O'), Some(n), None) if n.is_ascii_digit() => Some(stem),
+        _ => None,
+    }
+}
+
+/// A statement's statements in order, a block statement and a block opened
+/// in place (the reader nests the fifth statement on as a block statement).
+fn flatten_stmts(s: Tree, out: &mut Vec<Tree>) {
+    let open = |n: &str| rung_stem(n).is_some_and(|b| matches!(b, "stmt.block" | "block.one" | "block.seq2" | "block.seq3" | "block.seq4"));
+    if open(&s.name) {
+        for k in s.kids {
+            flatten_stmts(k, out);
+        }
+    } else if s.name != "fallback" {
+        out.push(s);
+    }
+}
+
 /// The terms of a sum, however it is nested.
 fn flatten_add<'t>(t: &'t Tree, out: &mut Vec<&'t Tree>) {
     if t.name == "index.add" && t.kids.len() == 2 {
@@ -1171,6 +1200,113 @@ impl<'a> Ctx<'a> {
 
     fn stmt_ty(&self, rung: &str) -> Result<Ty, String> {
         ty(self, &format!("stmt.{rung}"))
+    }
+
+    /// The top-level statements split into the body and the epilogue: the
+    /// last statement that stores h (with every guard and tile loop around
+    /// its store) as an `O0` block, the statements before it as the body. A
+    /// kernel that never writes h, or that has a statement after its last
+    /// store, has no spelling: the kingdom's root demands that every kernel
+    /// ends in the store of its thread's cell.
+    fn split_epilogue(&self, stmts: Vec<Tree>) -> Result<(Vec<Tree>, Tree), String> {
+        // Blocks opened in place first (a `{ ... }` around the whole kernel,
+        // a helper's statements), so the split is at the store's own level.
+        let mut flat = Vec::new();
+        for s in stmts {
+            flatten_stmts(s, &mut flat);
+        }
+        let mut stmts = flat;
+        let p = stmts.iter().rposition(has_store).ok_or("the kernel never writes h: the kingdom's root ends every kernel in the store of its thread's cell")?;
+        let after: Vec<Tree> = stmts.split_off(p + 1);
+        if !after.is_empty() {
+            return Err(format!("{} top-level statement(s) after the last store of h (the first: {}); the kernel's epilogue ends in that store", after.len(), after[0].name));
+        }
+        let last = stmts.pop().expect("the statement at p");
+        Ok((stmts, self.epilogue_block(vec![last], 0)?))
+    }
+
+    /// An epilogue block at tile depth d: the statements (flattened through
+    /// nested blocks) up to the last that stores h; those before it are
+    /// conditional statements of the depth (`C<d>`), the last an epilogue
+    /// statement (`O<d>`).
+    fn epilogue_block(&self, items: Vec<Tree>, d: usize) -> Result<Tree, String> {
+        let mut list = Vec::new();
+        for s in items {
+            flatten_stmts(s, &mut list);
+        }
+        let p = list.iter().rposition(has_store).ok_or("an epilogue block without a store of h")?;
+        if p + 1 < list.len() {
+            return Err(format!("{} statement(s) after the last store of h inside the epilogue (the first: {})", list.len() - p - 1, list[p + 1].name));
+        }
+        let last = self.epilogue_stmt(&list[p], d)?;
+        let mut prefix = list[..p].iter().map(|s| self.rerung(s, d)).collect::<Result<Vec<_>, _>>()?;
+        let c = format!("C{d}");
+        if prefix.len() > 3 {
+            // At most three conditional statements before the last: the
+            // leading ones nested as one block statement.
+            let keep = prefix.split_off(prefix.len() - 2);
+            let lead = Tree::new(&format!("stmt.block_{c}"), self.stmt_ty(&c)?, vec![self.block(prefix, &c)?]);
+            prefix = std::iter::once(lead).chain(keep).collect();
+        }
+        let o = format!("O{d}");
+        let name = match prefix.len() {
+            0 => "one",
+            1 => "seq2",
+            2 => "seq3",
+            _ => "seq4",
+        };
+        prefix.push(last);
+        Ok(Tree::new(&format!("block.{name}_{o}"), ty(self, &format!("block.{o}"))?, prefix))
+    }
+
+    /// The epilogue statement at depth d that holds the last store of h: the
+    /// store itself, an if or an if-else (both branches storing) around an
+    /// epilogue block, a block, or a tile loop whose body is the epilogue of
+    /// the next depth.
+    fn epilogue_stmt(&self, s: &Tree, d: usize) -> Result<Tree, String> {
+        let o = format!("O{d}");
+        let st = self.stmt_ty(&o)?;
+        let stem = rung_stem(&s.name).unwrap_or(&s.name);
+        let kids = s.kids.as_slice();
+        match (stem, kids) {
+            ("store.h", [cell, v]) => Ok(Tree::new(&format!("store.h_{o}"), st, vec![cell.clone(), v.clone()])),
+            ("stmt.if", [c, b]) => Ok(Tree::new(&format!("stmt.if_{o}"), st, vec![c.clone(), self.epilogue_block(vec![b.clone()], d)?])),
+            ("stmt.if_else", [c, a, b]) => {
+                if !has_store(a) || !has_store(b) {
+                    return Err("the last store of h is in one branch of an if-else only; the kernel's epilogue stores on every path".into());
+                }
+                Ok(Tree::new(&format!("stmt.if_else_{o}"), st, vec![c.clone(), self.epilogue_block(vec![a.clone()], d)?, self.epilogue_block(vec![b.clone()], d)?]))
+            }
+            ("stmt.block", [b]) => Ok(Tree::new(&format!("stmt.block_{o}"), st, vec![self.epilogue_block(vec![b.clone()], d)?])),
+            ("loop.tile" | "loop.tile_strided" | "loop.tilex" | "loop.tilex_strided", [lead @ .., body]) => {
+                if d + 1 > 4 {
+                    return Err("the last store of h is inside five nested tile loops (the epilogue has four)".into());
+                }
+                let mut k: Vec<Tree> = lead.to_vec();
+                k.push(self.epilogue_block(vec![body.clone()], d + 1)?);
+                Ok(Tree::new(&format!("{stem}_{o}"), st, k))
+            }
+            _ => Err(format!("the last store of h is inside {}, which has no epilogue spelling", s.name)),
+        }
+    }
+
+    /// A statement before the epilogue's last, moved to the conditional rung
+    /// of its tile depth (`C<d>`; a tile loop's body one deeper). A barrier,
+    /// a return or an item loop has no conditional spelling.
+    fn rerung(&self, t: &Tree, d: usize) -> Result<Tree, String> {
+        let Some(stem) = rung_stem(&t.name) else { return Ok(t.clone()) };
+        if stem == "stmt.barrier" || stem == "stmt.return" || stem.starts_with("loop.items") {
+            return Err(format!("{} before the last store of h, inside the kernel's epilogue (conditional statements only)", t.name));
+        }
+        let tile = matches!(stem, "loop.tile" | "loop.tile_strided" | "loop.tilex" | "loop.tilex_strided");
+        if tile && d + 1 > 5 {
+            return Err("a tile loop six deep inside the kernel's epilogue".into());
+        }
+        let last = t.kids.len().saturating_sub(1);
+        let kids = t.kids.iter().enumerate().map(|(i, k)| if tile && i == last { self.rerung(k, d + 1) } else { self.rerung(k, d) }).collect::<Result<Vec<_>, _>>()?;
+        let c = format!("C{d}");
+        let ty_name = if stem.starts_with("block.") { format!("block.{c}") } else { format!("stmt.{c}") };
+        Ok(Tree::new(&format!("{stem}_{c}"), ty(self, &ty_name)?, kids))
     }
 
     /// A list of statements as a block of the rung.
@@ -2159,10 +2295,13 @@ pub fn read_safe(source: &str, kingdom: &WgslKingdom) -> Result<SafeRead, String
     }
     let body = ctx.walk(&naga_fn.body, &mut Vec::new(), "L0", 0)?;
     stmts.extend(body);
+    // The kernel ends in its epilogue: the last top-level statement that
+    // stores h, with what wraps the store; everything before it is the body.
+    let (stmts, epilogue) = ctx.split_epilogue(stmts)?;
     let block = ctx.block(stmts, "L0")?;
     let g = |n: &str, v: u32| Tree::literal(n, dual_ty(kingdom, if n == "literal.wgdim" { "u32.wgdim" } else { "u32.blk" }).expect("dual"), v as f32);
     let grid_tree = Tree::new("grid.of", dual_ty(kingdom, "grid.grid")?, vec![g("literal.wgdim", grid.0), g("literal.wgdim", grid.1), g("literal.blk", grid.2), g("literal.blk", grid.3)]);
-    let tree = Tree::new("kernel.entry_safe", dual_ty(kingdom, "kernel.safe")?, vec![grid_tree, block]);
+    let tree = Tree::new("kernel.entry_safe", dual_ty(kingdom, "kernel.safe")?, vec![grid_tree, block, epilogue]);
     // Row-consistent: every node under the dual its parent's row demands.
     let per_kernel = crate::wgsl::safe_karva::per_kernel_rows(kingdom, &crate::wgsl::render::gram_role());
     let tree = crate::wgsl::safe_karva::conform(&tree, tree.ty, kingdom, &per_kernel)?;
@@ -2190,7 +2329,7 @@ mod tests {
         let sx = r.tree.to_sexpr();
         assert!(sx.contains("loop.items_boundm"), "{sx}");
         assert!(sx.contains("load.phi_safe (index.add (index.mul (safe.counter_index safe.counter) (index.of_count load.cfg_d))"), "{sx}");
-        assert!(sx.contains("store.h_C0 (safe.cell_of (safe.thread_row"), "{sx}");
+        assert!(sx.contains("(block.one_O0 (stmt.if_O0") && sx.contains("store.h_O0 (safe.cell_of (safe.thread_row"), "the guarded store is the epilogue: {sx}");
         assert!(r.notes.iter().any(|n| n.contains("guard")), "{:?}", r.notes);
         let (t, role) = (FunctionTable::safe(), gram_role());
         let out = Renderer::new(&k, &t, &role).kernel(&r.tree).unwrap();

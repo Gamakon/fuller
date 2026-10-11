@@ -555,7 +555,7 @@ F553	loop	tile_strided_C0	composite	u32.lit64 u32.lit64 block.C1	stmt.C0	3	arity
 F554	loop	tile_strided_C1	composite	u32.lit64 u32.lit64 block.C2	stmt.C1	3	arity 3: a short loop stepped by a literal (the counter of its depth)
 F555	loop	tile_strided_C2	composite	u32.lit64 u32.lit64 block.C3	stmt.C2	3	arity 3: a short loop stepped by a literal (the counter of its depth)
 F556	loop	tile_strided_C3	composite	u32.lit64 u32.lit64 block.C4	stmt.C3	3	arity 3: a short loop stepped by a literal (the counter of its depth)
-F557	kernel	entry_safe	composite	grid.grid block.L0	kernel.safe	2	the safeWGSL kernel, the only producer of the root dual kernel.safe: its body is an L0 block
+F557	kernel	entry_safe	composite	grid.grid block.L0 block.O0	kernel.safe	3	arity 3: the safeWGSL kernel, the only producer of the root dual kernel.safe: a body (an L0 block) and an epilogue (an O0 block) that ends in the store of the thread's cell; arity 2 until 2026-10-11, when a body alone let 51 of 133 repaired offspring never write h
 F558	load	phi_safe	composite	u32.index	f32.real	1	phi[i]: any index, a read past the buffer is zero (WGSL's rule)
 F559	load	phi4_safe	composite	u32.index	vec4<f32>.real	1	four consecutive values from an index
 F560	load	h_safe	composite	u32.cell	f32.real	1	h[cell], the thread's own cell
@@ -827,3 +827,59 @@ F825	safe	row_plus_g	composite	u32.threadrow u32.lit64 u32.index u32.index	u32.t
 F826	safe	col_plus_g	composite	u32.threadcol u32.lit64 u32.index u32.index	u32.threadcol	4	arity 4: col + min(g, G - 1) * (X * blk / G) + min(e, blk / G - 1)
 F827	parr	x	composite	-	parr<vec4<f32>>.real	0	private array px of 16 vec4<f32> (a third vec4 array)
 F828	parr	y	composite	-	parr<vec4<f32>>.real	0	private array py of 16 vec4<f32> (a fourth vec4 array)
+F829	block	one_O0	composite	stmt.O0	block.O0	1	the epilogue's last statement
+F830	block	seq2_O0	composite	stmt.C0 stmt.O0	block.O0	2	a conditional statement, then the epilogue's last
+F831	block	seq3_O0	composite	stmt.C0 stmt.C0 stmt.O0	block.O0	3	arity 3
+F832	block	seq4_O0	composite	stmt.C0 stmt.C0 stmt.C0 stmt.O0	block.O0	4	arity 4
+F833	stmt	block_O0	composite	block.O0	stmt.O0	1	{ ... }
+F834	store	h_O0	composite	u32.cell f32.real	stmt.O0	2	h[cell] = h[cell] + v: the store that ends the kernel
+F835	stmt	if_O0	composite	bool.flag block.O0	stmt.O0	2	if (c) { epilogue }
+F836	stmt	if_else_O0	composite	bool.flag block.O0 block.O0	stmt.O0	3	arity 3: both branches end in a store
+F837	loop	tile_O0	composite	u32.lit64 block.O1	stmt.O0	2	a short loop whose body ends in the store
+F838	loop	tile_strided_O0	composite	u32.lit64 u32.lit64 block.O1	stmt.O0	3	arity 3: stepped by a literal
+F839	loop	tilex_O0	composite	u32.boundx block.O1	stmt.O0	2	bounded by an expression
+F840	loop	tilex_strided_O0	composite	u32.boundx u32.lit64 block.O1	stmt.O0	3	arity 3: bounded by an expression, stepped by a literal
+F841	block	one_O1	composite	stmt.O1	block.O1	1	the epilogue's last statement
+F842	block	seq2_O1	composite	stmt.C1 stmt.O1	block.O1	2	a conditional statement, then the epilogue's last
+F843	block	seq3_O1	composite	stmt.C1 stmt.C1 stmt.O1	block.O1	3	arity 3
+F844	block	seq4_O1	composite	stmt.C1 stmt.C1 stmt.C1 stmt.O1	block.O1	4	arity 4
+F845	stmt	block_O1	composite	block.O1	stmt.O1	1	{ ... }
+F846	store	h_O1	composite	u32.cell f32.real	stmt.O1	2	h[cell] = h[cell] + v: the store that ends the kernel
+F847	stmt	if_O1	composite	bool.flag block.O1	stmt.O1	2	if (c) { epilogue }
+F848	stmt	if_else_O1	composite	bool.flag block.O1 block.O1	stmt.O1	3	arity 3: both branches end in a store
+F849	loop	tile_O1	composite	u32.lit64 block.O2	stmt.O1	2	a short loop whose body ends in the store
+F850	loop	tile_strided_O1	composite	u32.lit64 u32.lit64 block.O2	stmt.O1	3	arity 3: stepped by a literal
+F851	loop	tilex_O1	composite	u32.boundx block.O2	stmt.O1	2	bounded by an expression
+F852	loop	tilex_strided_O1	composite	u32.boundx u32.lit64 block.O2	stmt.O1	3	arity 3: bounded by an expression, stepped by a literal
+F853	block	one_O2	composite	stmt.O2	block.O2	1	the epilogue's last statement
+F854	block	seq2_O2	composite	stmt.C2 stmt.O2	block.O2	2	a conditional statement, then the epilogue's last
+F855	block	seq3_O2	composite	stmt.C2 stmt.C2 stmt.O2	block.O2	3	arity 3
+F856	block	seq4_O2	composite	stmt.C2 stmt.C2 stmt.C2 stmt.O2	block.O2	4	arity 4
+F857	stmt	block_O2	composite	block.O2	stmt.O2	1	{ ... }
+F858	store	h_O2	composite	u32.cell f32.real	stmt.O2	2	h[cell] = h[cell] + v: the store that ends the kernel
+F859	stmt	if_O2	composite	bool.flag block.O2	stmt.O2	2	if (c) { epilogue }
+F860	stmt	if_else_O2	composite	bool.flag block.O2 block.O2	stmt.O2	3	arity 3: both branches end in a store
+F861	loop	tile_O2	composite	u32.lit64 block.O3	stmt.O2	2	a short loop whose body ends in the store
+F862	loop	tile_strided_O2	composite	u32.lit64 u32.lit64 block.O3	stmt.O2	3	arity 3: stepped by a literal
+F863	loop	tilex_O2	composite	u32.boundx block.O3	stmt.O2	2	bounded by an expression
+F864	loop	tilex_strided_O2	composite	u32.boundx u32.lit64 block.O3	stmt.O2	3	arity 3: bounded by an expression, stepped by a literal
+F865	block	one_O3	composite	stmt.O3	block.O3	1	the epilogue's last statement
+F866	block	seq2_O3	composite	stmt.C3 stmt.O3	block.O3	2	a conditional statement, then the epilogue's last
+F867	block	seq3_O3	composite	stmt.C3 stmt.C3 stmt.O3	block.O3	3	arity 3
+F868	block	seq4_O3	composite	stmt.C3 stmt.C3 stmt.C3 stmt.O3	block.O3	4	arity 4
+F869	stmt	block_O3	composite	block.O3	stmt.O3	1	{ ... }
+F870	store	h_O3	composite	u32.cell f32.real	stmt.O3	2	h[cell] = h[cell] + v: the store that ends the kernel
+F871	stmt	if_O3	composite	bool.flag block.O3	stmt.O3	2	if (c) { epilogue }
+F872	stmt	if_else_O3	composite	bool.flag block.O3 block.O3	stmt.O3	3	arity 3: both branches end in a store
+F873	loop	tile_O3	composite	u32.lit64 block.O4	stmt.O3	2	a short loop whose body ends in the store
+F874	loop	tile_strided_O3	composite	u32.lit64 u32.lit64 block.O4	stmt.O3	3	arity 3: stepped by a literal
+F875	loop	tilex_O3	composite	u32.boundx block.O4	stmt.O3	2	bounded by an expression
+F876	loop	tilex_strided_O3	composite	u32.boundx u32.lit64 block.O4	stmt.O3	3	arity 3: bounded by an expression, stepped by a literal
+F877	block	one_O4	composite	stmt.O4	block.O4	1	the epilogue's last statement
+F878	block	seq2_O4	composite	stmt.C4 stmt.O4	block.O4	2	a conditional statement, then the epilogue's last
+F879	block	seq3_O4	composite	stmt.C4 stmt.C4 stmt.O4	block.O4	3	arity 3
+F880	block	seq4_O4	composite	stmt.C4 stmt.C4 stmt.C4 stmt.O4	block.O4	4	arity 4
+F881	stmt	block_O4	composite	block.O4	stmt.O4	1	{ ... }
+F882	store	h_O4	composite	u32.cell f32.real	stmt.O4	2	h[cell] = h[cell] + v: the store that ends the kernel
+F883	stmt	if_O4	composite	bool.flag block.O4	stmt.O4	2	if (c) { epilogue }
+F884	stmt	if_else_O4	composite	bool.flag block.O4 block.O4	stmt.O4	3	arity 3: both branches end in a store

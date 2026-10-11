@@ -131,3 +131,13 @@ T129	stmt.L5	stmt	L5	0	empty	0	0	0	a statement inside a fourth nested tile loop
 T130	block.L5	block	L5	0	empty	0	0	0	a block inside a fourth nested tile loop
 T131	stmt.C5	stmt	C5	0	empty	0	0	0	a statement under a condition inside a fourth nested tile loop: no barrier
 T132	block.C5	block	C5	0	empty	0	0	0	a block under a condition inside a fourth nested tile loop: no barrier
+T133	stmt.O0	stmt	O0	0	the thread's own store	0	0	0	a statement of the epilogue, ending in the store of this thread's cell, outside any tile loop
+T134	block.O0	block	O0	0	the thread's own store	0	0	0	a block of the epilogue, ending in the store of this thread's cell, outside any tile loop
+T135	stmt.O1	stmt	O1	0	the thread's own store	0	0	0	a statement of the epilogue inside one tile loop
+T136	block.O1	block	O1	0	the thread's own store	0	0	0	a block of the epilogue inside one tile loop
+T137	stmt.O2	stmt	O2	0	the thread's own store	0	0	0	a statement of the epilogue inside two nested tile loops
+T138	block.O2	block	O2	0	the thread's own store	0	0	0	a block of the epilogue inside two nested tile loops
+T139	stmt.O3	stmt	O3	0	the thread's own store	0	0	0	a statement of the epilogue inside three nested tile loops
+T140	block.O3	block	O3	0	the thread's own store	0	0	0	a block of the epilogue inside three nested tile loops
+T141	stmt.O4	stmt	O4	0	the thread's own store	0	0	0	a statement of the epilogue inside four nested tile loops
+T142	block.O4	block	O4	0	the thread's own store	0	0	0	a block of the epilogue inside four nested tile loops

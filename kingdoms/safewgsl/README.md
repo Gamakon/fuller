@@ -590,6 +590,45 @@ load rose; every variant produces the identical fit. An unrandomised
 first sweep had shown a 2–3× slowdown on half of them, which a paired
 rerun proved to be background load (`docs/PLAN_wgsl_superopt.md` §6a).
 
+### The epilogue: every kernel ends in its thread's store (2026-10-11)
+
+A kernel that never writes h cannot be a correct kernel, so it has no spelling. In fit_A2's runs of
+2026-10-11, 51 of 133 offspring sent for repair never wrote h. 28 came from the pump's random
+refills and 23 from crossovers that swapped unrelated tail slots, whose statements projected to
+empty fallbacks.
+
+The root is `kernel.entry_safe(grid, body, epilogue)` (F557, arity 3; arity 2 before). The body is an
+`L0` block. The epilogue is an `O0` block, and its rows (F829 to F884, duals T133 to T142) say what an
+epilogue at tile depth d (`O<d>`) can be:
+
+- a block of up to three conditional statements (`C<d>`: no barrier, no return, no item loop),
+  then one epilogue statement;
+- an epilogue statement: the store `h[cell] = h[cell] + v` itself, an `if` or `if-else` whose blocks
+  are epilogues (an if-else stores on both paths), a block, or a tile loop (four kinds, as at the other
+  rungs) whose body is the epilogue of depth d + 1, up to depth 4.
+
+The epilogue's fallback is a store, not nothing: `h[cell] = h[cell] + f0` at the thread's first cell,
+`(gid.y * by, gid.x * bx)`, under the store's own bounds check. A gene whose epilogue tokens are of the
+wrong dual still writes h.
+
+The reader takes the last top-level statement that stores h, with every guard and tile loop around
+the store, as the epilogue. It opens `{ }` blocks first. The statements in front of the store inside
+it move to the conditional rung of their depth. The rule forbids three things: a kernel with no store
+of h; a statement after the last store, at the top level or inside the epilogue; and a barrier, a
+return or an item loop in front of the store inside the epilogue.
+
+Measured on 1,000 random chromosomes at head 32 with 128 tail slots, using the engine's typed masking
+of hrefs (`every_random_gene_renders_a_store_of_h`):
+
+| kingdom | write h |
+|---|---|
+| before the epilogue | 0 of 1,000 |
+| with the epilogue | 1,000 of 1,000 |
+
+Every corpus kernel that read before still reads (73), and every rendered one reads back. The 31
+drafts convert at 48, 96 and 128 slots. 426 of the 441 model replies in today's fit_A runs read, and
+none of the 15 that do not fails on the epilogue.
+
 ## What is built, what is not
 
 | piece | status |

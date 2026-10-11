@@ -89,13 +89,25 @@ FORMS = {
     "tcounter4": ("a fourth nested tile loop's counter k4, stepped by the loop row itself", ["u32"]),
     "L5": ("a statement or block inside a fourth nested tile loop", []),
     "C5": ("a statement or block under a condition inside a fourth nested tile loop: no barrier", []),
+    # THE EPILOGUE (2026-10-11, Andrew's rule: a gene that cannot be a correct kernel is a kingdom bug; 51 of
+    # 133 of fit_A2's repaired offspring never wrote h): a statement or block that ENDS IN THE STORE of this
+    # thread's cell, at tile depth d after the item loop. Its leading statements are conditional statements of
+    # the same depth (C<d>: no barrier, no return); its last is a store, or an if, if-else, block or tile loop
+    # whose body is again an epilogue. The kernel's root takes one, so every gene writes h.
+    "O0": ("a statement or block of the epilogue, ending in the store of this thread's cell, outside any tile loop", []),
+    "O1": ("a statement or block of the epilogue inside one tile loop", []),
+    "O2": ("a statement or block of the epilogue inside two nested tile loops", []),
+    "O3": ("a statement or block of the epilogue inside three nested tile loops", []),
+    "O4": ("a statement or block of the epilogue inside four nested tile loops", []),
 }
 
-SAFE_FORMS = ["tcounter4", "L5", "C5", "safe", "pindex", "boundx", "boundm", "boundd", "boundrows", "lit64", "lit4096", "counter", "tcounter", "tcounter2", "L3", "C3", "tcounter3", "L4", "C4", "wgvindex", "bound", "threadrow", "threadcol", "cell", "phi", "wgindex", "L0", "L1", "L2", "C0", "C1", "C2"]
+SAFE_FORMS = ["O0", "O1", "O2", "O3", "O4", "tcounter4", "L5", "C5", "safe", "pindex", "boundx", "boundm", "boundd", "boundrows", "lit64", "lit4096", "counter", "tcounter", "tcounter2", "L3", "C3", "tcounter3", "L4", "C4", "wgvindex", "bound", "threadrow", "threadcol", "cell", "phi", "wgindex", "L0", "L1", "L2", "C0", "C1", "C2"]
 RUNGS = ["L0", "L1", "L2", "L3", "L4", "C0", "C1", "C2", "C3", "C4"]
 # The fifth rung came after every other row (run A, 2026-10-11); its rows are appended at the end so
 # every earlier ref stands, and it is kept out of RUNGS for that reason.
 RUNGS5 = ["L5", "C5"]
+# The epilogue's rungs by tile depth; O<d>'s leading statements are C<d> statements.
+EPILOGUE = ["O0", "O1", "O2", "O3", "O4"]
 
 FALLBACK = {
     "real": "0.0", "int": "0", "q15_16": "0", "q15_16w": "vec2(0, 0)", "index": "0u", "count": "0u",
@@ -114,6 +126,9 @@ FALLBACK = {
     "tcounter3": "0u", "L4": "empty", "C4": "empty", "wgvindex": "0u",
     "boundx": "1u",
     "tcounter4": "0u", "L5": "empty", "C5": "empty",
+    # The epilogue's fallback is a store, never nothing: h[cell] = h[cell] + f0 at the thread's first cell
+    # (gid.y * by, gid.x * bx), under the store's own bounds check.
+    "O0": "the thread's own store", "O1": "the thread's own store", "O2": "the thread's own store", "O3": "the thread's own store", "O4": "the thread's own store",
 }
 
 # The fallback by machine: the lane's 32-bit pattern as an unsigned integer. Vectors and matrices
@@ -132,6 +147,7 @@ FALLBACK_BITS = {
     "tcounter3": 0, "L4": 0, "C4": 0, "wgvindex": 0,
     "boundx": 0,
     "tcounter4": 0, "L5": 0, "C5": 0,
+    "O0": 0, "O1": 0, "O2": 0, "O3": 0, "O4": 0,
 }
 assert set(FALLBACK_BITS) == set(FALLBACK), "every form with a fallback needs its bits, and no more"
 
@@ -209,6 +225,10 @@ def build_types():
     # ---- run A's declines (2026-10-11): a fourth nested tile loop ----
     add("u32", "tcounter4", 1, FORMS["tcounter4"][0])
     for r in RUNGS5:
+        add("stmt", r, 0, "a statement " + FORMS[r][0][len("a statement or block "):])
+        add("block", r, 0, "a block " + FORMS[r][0][len("a statement or block "):])
+    # ---- the epilogue (2026-10-11): the kernel ends in the store of its thread's cell ----
+    for r in EPILOGUE:
         add("stmt", r, 0, "a statement " + FORMS[r][0][len("a statement or block "):])
         add("block", r, 0, "a block " + FORMS[r][0][len("a statement or block "):])
     return rows
@@ -531,7 +551,7 @@ f("loop", "tile_C3", "composite", ["u32.lit64", "block.C4"], "stmt.C3", "a third
 for r, body in (("L0", "L2"), ("L1", "L2"), ("L2", "L3"), ("L3", "L4"), ("C0", "C1"), ("C1", "C2"), ("C2", "C3"), ("C3", "C4")):
     f("loop", "tile_strided_" + r, "composite", ["u32.lit64", "u32.lit64", "block." + body], "stmt." + r, "arity 3: a short loop stepped by a literal (the counter of its depth)")
 # The kernel: a grid and a top-level block.
-f("kernel", "entry_safe", "composite", ["grid.grid", "block.L0"], "kernel.safe", "the safeWGSL kernel, the only producer of the root dual kernel.safe: its body is an L0 block")
+f("kernel", "entry_safe", "composite", ["grid.grid", "block.L0", "block.O0"], "kernel.safe", "arity 3: the safeWGSL kernel, the only producer of the root dual kernel.safe: a body (an L0 block) and an epilogue (an O0 block) that ends in the store of the thread's cell; arity 2 until 2026-10-11, when a body alone let 51 of 133 repaired offspring never write h")
 # Loads of the kernel's bindings by provenance.
 f("load", "phi_safe", "composite", ["u32.index"], "f32.real", "phi[i]: any index, a read past the buffer is zero (WGSL's rule)")
 f("load", "phi4_safe", "composite", ["u32.index"], "vec4<f32>.real", "four consecutive values from an index")
@@ -658,6 +678,27 @@ f("safe", "col_plus_g", "composite", ["u32.threadcol", "u32.lit64", "u32.index",
 # Four vec4 private arrays (fit_A2 gen 2's r2x_reinvent uses three: pe, po, p).
 f("parr", "x", "composite", [], "parr<vec4<f32>>.real", "private array px of 16 vec4<f32> (a third vec4 array)")
 f("parr", "y", "composite", [], "parr<vec4<f32>>.real", "private array py of 16 vec4<f32> (a fourth vec4 array)")
+
+# ---- the epilogue (2026-10-11): rows of the O rungs, after every other row so every ref stands ----
+# O<d> at tile depth d: a block of up to three conditional statements (C<d>) then one epilogue statement;
+# an epilogue statement is the store itself, an if or if-else whose blocks are epilogues, a block, or (below
+# depth 4) a tile loop whose body is the epilogue of the next depth.
+for d, r in enumerate(EPILOGUE):
+    c = f"C{d}"
+    f("block", "one_" + r, "composite", ["stmt." + r], "block." + r, "the epilogue's last statement")
+    f("block", "seq2_" + r, "composite", ["stmt." + c, "stmt." + r], "block." + r, "a conditional statement, then the epilogue's last")
+    f("block", "seq3_" + r, "composite", ["stmt." + c, "stmt." + c, "stmt." + r], "block." + r, "arity 3")
+    f("block", "seq4_" + r, "composite", ["stmt." + c, "stmt." + c, "stmt." + c, "stmt." + r], "block." + r, "arity 4")
+    f("stmt", "block_" + r, "composite", ["block." + r], "stmt." + r, "{ ... }")
+    f("store", "h_" + r, "composite", ["u32.cell", "f32.real"], "stmt." + r, "h[cell] = h[cell] + v: the store that ends the kernel")
+    f("stmt", "if_" + r, "composite", ["bool.flag", "block." + r], "stmt." + r, "if (c) { epilogue }")
+    f("stmt", "if_else_" + r, "composite", ["bool.flag", "block." + r, "block." + r], "stmt." + r, "arity 3: both branches end in a store")
+    if d + 1 < len(EPILOGUE):
+        body = "block." + EPILOGUE[d + 1]
+        f("loop", "tile_" + r, "composite", ["u32.lit64", body], "stmt." + r, "a short loop whose body ends in the store")
+        f("loop", "tile_strided_" + r, "composite", ["u32.lit64", "u32.lit64", body], "stmt." + r, "arity 3: stepped by a literal")
+        f("loop", "tilex_" + r, "composite", ["u32.boundx", body], "stmt." + r, "bounded by an expression")
+        f("loop", "tilex_strided_" + r, "composite", ["u32.boundx", "u32.lit64", body], "stmt." + r, "arity 3: bounded by an expression, stepped by a literal")
 
 
 def write_tsv(path, header, rows):

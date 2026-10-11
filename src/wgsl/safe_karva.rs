@@ -851,7 +851,7 @@ mod tests {
     #[test]
     fn an_array_fallback_names_the_array_of_its_dual() {
         let k = WgslKingdom::load_safe();
-        let text = r#"(kernel.entry_safe (grid.of (literal.wgdim (Num 16.0)) (literal.wgdim (Num 16.0)) (literal.blk (Num 1.0)) (literal.blk (Num 1.0))) (block.seq2_L0 (parr.set_v_L0 (Var "parr.a") (safe.pidx16 (literal.index (Num 0.0))) (reg.get_v (Var "reg.v0"))) (wg.set_v_L0 (Var "wg.a") (safe.wgv_of (literal.index (Num 0.0))) (reg.get_v (Var "reg.v0")))))"#;
+        let text = r#"(kernel.entry_safe (grid.of (literal.wgdim (Num 16.0)) (literal.wgdim (Num 16.0)) (literal.blk (Num 1.0)) (literal.blk (Num 1.0))) (block.seq2_L0 (parr.set_v_L0 (Var "parr.a") (safe.pidx16 (literal.index (Num 0.0))) (reg.get_v (Var "reg.v0"))) (wg.set_v_L0 (Var "wg.a") (safe.wgv_of (literal.index (Num 0.0))) (reg.get_v (Var "reg.v0")))) (block.one_O0 (store.h_O0 (safe.cell_of (safe.thread_row (Var "builtin.global_invocation_id") (literal.blk (Num 1.0))) (safe.thread_col (Var "builtin.global_invocation_id") (literal.blk (Num 1.0)))) (reg.get_f (Var "reg.f0")))))"#;
         let t = build(text, &k, &gram_role()).unwrap();
         assert_eq!(fallbacks(&t), 2, "{}", t.to_sexpr());
         let r = render_tree(&t, &k).unwrap();
@@ -898,10 +898,149 @@ mod tests {
     #[test]
     fn a_wrong_dual_becomes_a_fallback_leaf() {
         let k = WgslKingdom::load_safe();
-        let text = r#"(kernel.entry_safe (grid.of (literal.wgdim (Num 16.0)) (literal.wgdim (Num 16.0)) (literal.blk (Num 1.0)) (literal.blk (Num 1.0))) (block.one_L0 (reg.set_f_L0 (Var "reg.f0") (Var "safe.counter"))))"#;
+        let text = r#"(kernel.entry_safe (grid.of (literal.wgdim (Num 16.0)) (literal.wgdim (Num 16.0)) (literal.blk (Num 1.0)) (literal.blk (Num 1.0))) (block.one_L0 (reg.set_f_L0 (Var "reg.f0") (Var "safe.counter"))) (block.one_O0 (store.h_O0 (safe.cell_of (safe.thread_row (Var "builtin.global_invocation_id") (literal.blk (Num 1.0))) (safe.thread_col (Var "builtin.global_invocation_id") (literal.blk (Num 1.0)))) (reg.get_f (Var "reg.f0")))))"#;
         let t = build(text, &k, &gram_role()).unwrap();
         assert_eq!(fallbacks(&t), 1, "{}", t.to_sexpr());
         assert_eq!(t.kids[1].name, "block.one_L0");
         render_tree(&t, &k).unwrap();
+    }
+
+    /// EVERY RANDOM GENE IS A KERNEL THAT STORES (Andrew's rule: a gene the
+    /// kingdom admits that cannot be a correct kernel is a kingdom bug; 51 of
+    /// 133 of fit_A2's first repair briefs carried an offspring that never
+    /// writes h). N random chromosomes at the 128-slot layout (head 32, K 4,
+    /// tail 97): gene 0's root is `kernel.entry_safe` (as the engine fixes
+    /// it), every other head token is drawn over the whole symbol set (the
+    /// kingdom's rows, the role's loads, the 128 hrefs, a literal payload),
+    /// every tail token over the terminals; every gene is decoded, unfolded,
+    /// projected and rendered, and the text must write h and validate.
+    /// Measured 2026-10-11: 0 of 1,000 wrote h before the epilogue, 1,000 of
+    /// 1,000 with it, all 1,000 valid.
+    #[test]
+    fn every_random_gene_renders_a_store_of_h() {
+        const N: usize = 1000;
+        const HEAD: usize = 32;
+        const SLOTS: usize = 128;
+        let k = WgslKingdom::load_safe();
+        let role = gram_role();
+        let tail_len = HEAD * (K - 1) + 1;
+        let f16 = |t: &Ty| k.dual(*t).is_some_and(|d| d.scalar() == Some("f16"));
+        let mut functions: BTreeMap<String, usize> = BTreeMap::new();
+        let mut terminals: BTreeSet<String> = BTreeSet::new();
+        for r in k.rows.iter().filter(|r| !f16(&r.output) && !r.inputs.iter().any(f16)) {
+            if r.name.starts_with("literal.") {
+                functions.insert(r.name.clone(), 1);
+            } else if r.inputs.is_empty() {
+                terminals.insert(r.name.clone());
+            } else {
+                functions.insert(r.name.clone(), r.inputs.len());
+            }
+        }
+        let per_kernel = per_kernel_rows(&k, &role);
+        for (name, inputs, _) in per_kernel.iter().cloned() {
+            if inputs.is_empty() {
+                terminals.insert(name);
+            }
+        }
+        for s in 0..SLOTS {
+            terminals.insert(href_name(s));
+        }
+        let functions: Vec<(String, usize)> = functions.into_iter().filter(|(_, a)| *a <= K).collect();
+        let terminals: Vec<String> = terminals.into_iter().collect();
+        let pset = PsetSpec { variables: terminals.clone(), functions: functions.iter().map(|(n, a)| (n.clone(), FunctionSpec { semantic_id: n.clone(), arity: *a })).collect(), rnc_values: vec![0.0] };
+        let mut state = 0x5eed_u64;
+        let mut next = move || {
+            state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            (state >> 33) as usize
+        };
+        let terminal = |next: &mut dyn FnMut() -> usize| -> Token {
+            if next().is_multiple_of(8) {
+                Token::Num((next() % 64) as f64)
+            } else {
+                Token::Var(terminals[next() % terminals.len()].clone())
+            }
+        };
+        let (mut rendered, mut stored, mut failed, mut invalid) = (0usize, 0usize, Vec::new(), Vec::<String>::new());
+        for i in 0..N {
+            let mut genes: Vec<MathNode> = Vec::with_capacity(SLOTS + 1);
+            for g in 0..=SLOTS {
+                let head: Vec<Token> = (0..HEAD)
+                    .map(|p| {
+                        if g == 0 && p == 0 {
+                            Token::Func("kernel.entry_safe".into())
+                        } else if next().is_multiple_of(2) {
+                            Token::Func(functions[next() % functions.len()].0.clone())
+                        } else {
+                            terminal(&mut next)
+                        }
+                    })
+                    .collect();
+                let tail: Vec<Token> = (0..tail_len).map(|_| terminal(&mut next)).collect();
+                genes.push(parse_math(&karva_to_terms_generic(&head, &tail, &pset).unwrap_or_else(|e| panic!("chromosome {i} gene {g}: {e}"))).expect("a decoded gene parses"));
+            }
+            // The typed decode (the engine's): a slot's dual is its root's
+            // row's output, and an href where its slot's dual is not the
+            // demand is masked to the fallback, as a token of the wrong dual is.
+            let root_dual = |n: &MathNode| -> Option<Ty> {
+                match n {
+                    MathNode::App(c, kids) => k.rows.iter().find(|r| r.name == *c && (r.inputs.len() == kids.len() || c.starts_with("literal."))).map(|r| r.output),
+                    MathNode::Var(v) => k.rows.iter().find(|r| r.name == *v && r.inputs.is_empty()).map(|r| r.output).or_else(|| per_kernel.iter().find(|(n, i, _)| n == v && i.is_empty()).map(|(_, _, o)| *o)),
+                    MathNode::Num(_) => None,
+                }
+            };
+            let slot_duals: Vec<Option<Ty>> = genes[1..].iter().map(root_dual).collect();
+            fn mask(n: &MathNode, demand: Ty, slot_duals: &[Option<Ty>], k: &WgslKingdom, per_kernel: &[PerKernelRow]) -> MathNode {
+                match n {
+                    MathNode::Var(v) => match href_slot(v) {
+                        Some(s) if slot_duals.get(s).copied().flatten() == Some(demand) => n.clone(),
+                        Some(_) => MathNode::Var(FALLBACK.into()),
+                        None => n.clone(),
+                    },
+                    MathNode::Num(_) => n.clone(),
+                    MathNode::App(c, kids) if c.starts_with("literal.") => MathNode::App(c.clone(), kids.clone()),
+                    MathNode::App(c, kids) => match signatures(c, demand, kids.len(), k, per_kernel).next() {
+                        Some(inputs) => MathNode::App(c.clone(), kids.iter().zip(inputs).map(|(x, &d)| mask(x, d, slot_duals, k, per_kernel)).collect()),
+                        None => MathNode::Var(FALLBACK.into()),
+                    },
+                }
+            }
+            fn text(n: &MathNode) -> String {
+                match n {
+                    MathNode::Num(v) => format!("(Num {v:?})"),
+                    MathNode::Var(v) => format!("(Var {v:?})"),
+                    MathNode::App(c, kids) => format!("({c}{})", kids.iter().map(|x| format!(" {}", text(x))).collect::<String>()),
+                }
+            }
+            let root = dual_ty(&k, "kernel.safe").expect("the root dual");
+            let genes: Vec<String> = genes
+                .iter()
+                .enumerate()
+                .map(|(g, n)| {
+                    let demand = if g == 0 { Some(root) } else { slot_duals[g - 1] };
+                    demand.map_or_else(|| EMPTY_SLOT.to_string(), |d| text(&mask(n, d, &slot_duals, &k, &per_kernel)))
+                })
+                .collect();
+            let text = match unfold_decoded(&genes, SLOTS).and_then(|u| build(&u, &k, &role)).and_then(|t| render_tree(&t, &k)) {
+                Ok(r) => r.text,
+                Err(e) => {
+                    failed.push(format!("chromosome {i}: {}", &e[..e.len().min(160)]));
+                    continue;
+                }
+            };
+            rendered += 1;
+            if text.contains("h[") {
+                stored += 1;
+            }
+            if let Err(e) = validate_text(&text) {
+                invalid.push(format!("chromosome {i}: {}", e.lines().next().unwrap_or("")));
+            }
+        }
+        println!("{N} random chromosomes: {rendered} rendered, {stored} write h, {} valid WGSL, {} did not render", rendered - invalid.len(), failed.len());
+        for e in invalid.iter().take(5) {
+            println!("  {e}");
+        }
+        assert!(failed.is_empty(), "{} did not render:\n{}", failed.len(), failed.iter().take(5).cloned().collect::<Vec<_>>().join("\n"));
+        assert_eq!(stored, rendered, "{} of {rendered} rendered kernels never write h", rendered - stored);
+        assert!(invalid.is_empty(), "{} rendered kernels naga refuses:\n{}", invalid.len(), invalid.iter().take(5).cloned().collect::<Vec<_>>().join("\n"));
     }
 }

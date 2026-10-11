@@ -162,7 +162,7 @@ pub fn gram_shipped_tree(kingdom: &WgslKingdom) -> Result<Tree, String> {
 pub fn gram_shipped_safe_tree(kingdom: &WgslKingdom) -> Result<Tree, String> {
     let t = |n: &str| dual_ty(kingdom, n);
     let (index, count, real, flag) = (t("u32.index")?, t("u32.count")?, t("f32.real")?, t("bool.flag")?);
-    let (l0, b0, c0, l1, b1) = (t("stmt.L0")?, t("block.L0")?, t("block.C0")?, t("stmt.L1")?, t("block.L1")?);
+    let (l0, b0, l1, b1) = (t("stmt.L0")?, t("block.L0")?, t("stmt.L1")?, t("block.L1")?);
     let (rf, ri) = (t("reg<f32>.real")?, t("reg<u32>.index")?);
     let gid = || Tree::new("builtin.global_invocation_id", t("vec3<u32>.index").expect("dual"), vec![]);
     let blk = || Tree::literal("literal.blk", t("u32.blk").expect("dual"), 1.0);
@@ -183,10 +183,11 @@ pub fn gram_shipped_safe_tree(kingdom: &WgslKingdom) -> Result<Tree, String> {
     let get_i3 = || Tree::new("reg.get_i", index, vec![Tree::new("reg.i3", ri, vec![])]);
     let body = Tree::new("reg.set_f_L1", l1, vec![Tree::new("reg.f0", rf, vec![]), Tree::new("arith.add", real, vec![f0(), Tree::new("arith.mul", real, vec![phi(get_i3()), phi(Tree::new("safe.col_as_index", index, vec![col()]))])])]);
     let items = Tree::new("loop.items_boundm", l0, vec![Tree::new("bound.m", t("u32.boundm")?, vec![]), Tree::new("block.one_L1", b1, vec![body])]);
-    // if (in range) { h[cell] = h[cell] + f0 }
-    let store = Tree::new("stmt.if_L0", l0, vec![in_range, Tree::new("block.one_C0", c0, vec![Tree::new("store.h_C0", t("stmt.C0")?, vec![Tree::new("safe.cell_of", t("u32.cell")?, vec![row(), col()]), f0()])])]);
+    // The epilogue: if (in range) { h[cell] = h[cell] + f0 }
+    let (o0, bo0) = (t("stmt.O0")?, t("block.O0")?);
+    let store = Tree::new("stmt.if_O0", o0, vec![in_range, Tree::new("block.one_O0", bo0, vec![Tree::new("store.h_O0", o0, vec![Tree::new("safe.cell_of", t("u32.cell")?, vec![row(), col()]), f0()])])]);
     let grid = Tree::new("grid.of", t("grid.grid")?, vec![Tree::literal("literal.wgdim", t("u32.wgdim")?, 16.0), Tree::literal("literal.wgdim", t("u32.wgdim")?, 16.0), blk(), blk()]);
-    Ok(Tree::new("kernel.entry_safe", t("kernel.safe")?, vec![grid, Tree::new("block.seq3_L0", b0, vec![gr, items, store])]))
+    Ok(Tree::new("kernel.entry_safe", t("kernel.safe")?, vec![grid, Tree::new("block.seq2_L0", b0, vec![gr, items]), Tree::new("block.one_O0", bo0, vec![store])]))
 }
 
 /// The grid a rendered kernel asks the driver for.
@@ -278,12 +279,26 @@ impl<'a> Renderer<'a> {
         }
         let mut scope = Scope { in_items: false, in_tile: false, tile_depth: 0, grid: Grid { x: 16, y: 16, bx: 1, by: 1 }, in_cond: 0, returned: false, helpers: Vec::new(), masked: Vec::new(), const_depth: 0 };
         let (grid, body) = match root.name.as_str() {
-            "kernel.entry" | "kernel.entry_safe" => {
+            "kernel.entry" => {
                 let [g, b] = root.kids.as_slice() else { return Err(format!("{} with {} children", root.name, root.kids.len())) };
                 let grid = self.grid(g)?;
                 scope.grid = grid;
                 (grid, self.block(b, &mut scope)?)
             }
+            "kernel.entry_safe" => {
+                // A body, then the epilogue that ends in the store of the
+                // thread's cell (unless the body returned on every path).
+                let [g, b, e] = root.kids.as_slice() else { return Err(format!("{} with {} children, 3 expected (grid, body, epilogue)", root.name, root.kids.len())) };
+                let grid = self.grid(g)?;
+                scope.grid = grid;
+                let (mut text, terminated) = self.block_t(b, &mut scope)?;
+                if !terminated {
+                    text.push_str(&self.block(e, &mut scope)?);
+                }
+                (grid, text)
+            }
+            // An empty kernel of the safe root still ends in its thread's store.
+            "fallback" if d.dual == "kernel.safe" => (Grid { x: 16, y: 16, bx: 1, by: 1 }, self.epilogue_fallback(&mut scope)?),
             "fallback" => (Grid { x: 16, y: 16, bx: 1, by: 1 }, String::new()),
             other => return Err(format!("{other} is not a kernel row")),
         };
@@ -351,11 +366,32 @@ impl<'a> Renderer<'a> {
         Ok(self.block_t(b, scope)?.0)
     }
 
+    /// Whether a dual is one of the epilogue's (`stmt.O<d>`, `block.O<d>`).
+    fn is_epilogue(&self, ty: Ty) -> bool {
+        self.kingdom.dual(ty).is_some_and(|d| (d.slot == "stmt" || d.slot == "block") && d.form.starts_with('O'))
+    }
+
+    /// THE EPILOGUE'S FALLBACK: a store, never nothing (a gene whose epilogue
+    /// token is of the wrong dual still writes h): `h[cell] = h[cell] + f0`
+    /// at the thread's first cell, `(gid.y * by, gid.x * bx)`, under the
+    /// store's own bounds check.
+    fn epilogue_fallback(&self, scope: &mut Scope) -> Result<String, String> {
+        let t = |n: &str| dual_ty(self.kingdom, n);
+        let gid = || -> Result<Tree, String> { Ok(Tree::new("builtin.global_invocation_id", t("vec3<u32>.index")?, vec![])) };
+        let blk = |v: u32| -> Result<Tree, String> { Ok(Tree::literal("literal.blk", t("u32.blk")?, v as f32)) };
+        let row = Tree::new("safe.thread_row", t("u32.threadrow")?, vec![gid()?, blk(scope.grid.by)?]);
+        let col = Tree::new("safe.thread_col", t("u32.threadcol")?, vec![gid()?, blk(scope.grid.bx)?]);
+        let cell = Tree::new("safe.cell_of", t("u32.cell")?, vec![row, col]);
+        let f0 = Tree::new("reg.get_f", t("f32.real")?, vec![Tree::new("reg.f0", t("reg<f32>.real")?, vec![])]);
+        self.stmt(&Tree::new("store.h_O0", t("stmt.O0")?, vec![cell, f0]), scope)
+    }
+
     /// A block's text and whether it ends in a return on every path: naga
     /// refuses instructions after a `return`, so a block stops at one and
     /// what follows in the gene is unreachable and dropped.
     fn block_t(&self, b: &Tree, scope: &mut Scope) -> Result<(String, bool), String> {
         match safe_base(&b.name) {
+            "fallback" if self.is_epilogue(b.ty) => Ok((self.epilogue_fallback(scope)?, false)),
             "fallback" => Ok((String::new(), false)),
             "block.one" | "block.seq2" | "block.seq3" | "block.seq4" => {
                 let mut out = String::new();
@@ -396,6 +432,7 @@ impl<'a> Renderer<'a> {
         let kids = s.kids.as_slice();
         let n = |want: usize| -> Result<(), String> { if kids.len() == want { Ok(()) } else { Err(format!("{} with {} children, {want} expected", s.name, kids.len())) } };
         match safe_base(&s.name) {
+            "fallback" if self.is_epilogue(s.ty) => self.epilogue_fallback(scope),
             "fallback" => Ok(String::new()),
             // ---- safeWGSL statements ----
             "loop.items_bounded" => {
@@ -1301,7 +1338,7 @@ fn items_passes(bound: Option<&Tree>) -> f64 {
 /// `store.h_safe`, a rung-specific wg set to `wg.set_safe`. A WGSL kingdom
 /// name passes through unchanged.
 pub fn safe_base(name: &str) -> &str {
-    for rung in ["_L0", "_L1", "_L2", "_L3", "_L4", "_L5", "_C0", "_C1", "_C2", "_C3", "_C4", "_C5"] {
+    for rung in ["_L0", "_L1", "_L2", "_L3", "_L4", "_L5", "_C0", "_C1", "_C2", "_C3", "_C4", "_C5", "_O0", "_O1", "_O2", "_O3", "_O4"] {
         if let Some(stem) = name.strip_suffix(rung) {
             return match stem {
                 "store.h" => "store.h_safe",
@@ -1740,7 +1777,7 @@ mod tests {
         let rr = Renderer::new(&k, &t, &r);
         let grid = Tree::fallback(ty("grid.grid"));
         for (name, s) in cases {
-            let tree = Tree::new("kernel.entry_safe", ty("kernel.safe"), vec![grid.clone(), Tree::new("block.one_L0", ty("block.L0"), vec![s])]);
+            let tree = Tree::new("kernel.entry_safe", ty("kernel.safe"), vec![grid.clone(), Tree::new("block.one_L0", ty("block.L0"), vec![s]), Tree::fallback(ty("block.O0"))]);
             let out = rr.kernel(&tree).unwrap_or_else(|e| panic!("{name}: {e}"));
             validate_text(&out.text).unwrap_or_else(|e| panic!("{name}: {e}\n{}", out.text));
             if name.starts_with("set_f at") {

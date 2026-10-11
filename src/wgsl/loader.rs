@@ -628,8 +628,9 @@ mod tests {
     fn the_safe_kingdom_keeps_wgsl_and_pins_its_rules() {
         let (w, s) = (wgsl_duals(), safe_duals());
         // 126 duals until 2026-10-11; 127 with u32.boundx (the complete kingdom, step 6);
-        // 132 with the fourth nested tile loop (tcounter4, L5, C5; run A's declines).
-        assert_eq!(s.len(), 132);
+        // 132 with the fourth nested tile loop (tcounter4, L5, C5; run A's declines);
+        // 142 with the epilogue (stmt and block at O0..O4: every kernel ends in its thread's store).
+        assert_eq!(s.len(), 142);
         for (a, b) in w.iter().zip(&s) {
             assert_eq!((a.reference.as_str(), a.dual.as_str()), (b.reference.as_str(), b.dual.as_str()));
         }
@@ -643,11 +644,33 @@ mod tests {
         // 758 after run A's declines (64 f32, 32 vec4, 64 u32, 16 bool registers; the array lane rows);
         // 816 with the fourth nested tile loop; 822 with the clamped offsets, u32(flag) and f32(flag) (fit_A2).
         // 826 with the grouped block (fit_A2's r6x_reinvent).
-        // 828 with the third and fourth vec4 private arrays (fit_A2 gen 2's r2x_reinvent).
-        assert_eq!(fs.rows.len(), 828);
+        // 828 with the third and fourth vec4 private arrays (fit_A2 gen 2's r2x_reinvent);
+        // 884 with the epilogue's rows (O0..O4).
+        assert_eq!(fs.rows.len(), 884);
         let dual = |t: Ty| k.dual(t).unwrap().dual.clone();
         let producers = |d: &str| -> Vec<String> { k.rows.iter().filter(|r| dual(r.output) == d).map(|r| r.name.clone()).collect() };
         assert_eq!(producers("kernel.safe"), vec!["kernel.entry_safe"]);
+        // THE EPILOGUE: the root takes a body and an epilogue; every epilogue
+        // block ends in an epilogue statement, and every epilogue statement is
+        // the store of the thread's cell or holds an epilogue block (an if, an
+        // if-else, a block, a tile loop one deeper), so every gene writes h.
+        let entry = k.rows.iter().find(|r| r.name == "kernel.entry_safe").unwrap();
+        assert_eq!(entry.inputs.iter().map(|&t| dual(t)).collect::<Vec<_>>(), vec!["grid.grid", "block.L0", "block.O0"]);
+        for d in 0..5 {
+            let (st, bl) = (format!("stmt.O{d}"), format!("block.O{d}"));
+            for r in k.rows.iter().filter(|r| dual(r.output) == bl) {
+                assert_eq!(dual(*r.inputs.last().unwrap()), st, "{}", r.name);
+                assert!(r.inputs[..r.inputs.len() - 1].iter().all(|&t| dual(t) == format!("stmt.C{d}")), "{}", r.name);
+            }
+            for r in k.rows.iter().filter(|r| dual(r.output) == st) {
+                let ins: Vec<String> = r.inputs.iter().map(|&t| dual(t)).collect();
+                let stores = r.name.starts_with("store.h_") && ins == ["u32.cell", "f32.real"];
+                let holds = ins.iter().any(|i| i == &bl || i == &format!("block.O{}", d + 1));
+                assert!(stores || holds, "{} ({ins:?}) neither stores nor holds an epilogue block", r.name);
+                assert!(!holds || ins.iter().filter(|i| i.starts_with("block.")).all(|i| i.starts_with("block.O")), "{}: every block it holds is an epilogue", r.name);
+            }
+            assert!(k.rows.iter().any(|r| dual(r.output) == st && r.name.starts_with("store.h_")));
+        }
         // One kind of loop condition: a loop's own counter below one of four
         // bounds (the item loop), or a tile counter below a literal (three depths).
         let bound = producers("bool.bound");
