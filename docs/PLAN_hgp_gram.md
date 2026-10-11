@@ -358,6 +358,15 @@ valid model replies read and render valid WGSL; the 3 remaining replies are naga
 | a vector composed from vectors | k05 (`vec4(vec2, vec2)`) | the parts taken apart into lanes, then the step compose |
 | a thread's rows held in a private array; `select(0u, x, ok)` | k26 | the array recorded as a row array when filled at a tile counter; any sum of wid/lid/offset terms |
 | a high mask `m & ~3u` | k16, k26 | `index.round_down`; an integer literal above 2^24 is refused by name |
+| a second item loop over the same counter (a remainder loop) | k05, k26 | `loop.items_cont_<bound>` (+ strided): `for (; t < bound; …)`, the counter continuing; found by the GPU check, which had the rebuilt forms at 28/128 cases while the kernels as written passed |
+| a value the inference types two ways | a Fable child (local_invocation_index), two repairs (a loop counter) | the kingdom's preferred form chosen (index first), conform converts |
+| the kingdom's own block-offset spelling `min(k, B − 1) * W` | two repairs of rendered kernels | read back as the block row it is, so every kernel the kingdom renders reads again |
+
+Checked on the GPU (`wgsl_eval_dump`, as written beside rebuilt on the same 128 cases and pairs):
+k05 and k26 feasible both ways after the continuing loop; the corpus sweep (`logs/HGP/001/corpus_sweep.tsv`)
+scores all 46 valid kernels both ways. The cost estimator counts an expression-bounded item loop by its
+passes over the items at the worst shape (`cfg.m * cfg.d` is 8,192 passes, refused). The library's five
+genes re-encoded at the current kingdom (the strided item loop's stride dual changed).
 
 Byte-equal round trip of the 31 drafts at both layouts; every brief restates the grammar's limits as
 they now are.
