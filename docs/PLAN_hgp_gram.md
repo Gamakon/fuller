@@ -267,6 +267,35 @@ generation with 4 crossovers and 4 repairs is 3–8 min. Declines for table reas
 step b (was 75 %). Whether the champion improves beyond the drafts: unknown; that is the experiment,
 and only readable with step f on.
 
+**Codex's adversarial review (`logs/HGP/001/codex_review/reply.md`, 08:02Z) and what it changed.**
+Budgets defined: crossovers and repairs each capped a generation, repairs also per offspring (2); a
+row whose repairs fail goes on through the gate as before (recross, champion crossing, champion head
+mutation), counted as a gate failure, which Andrew set as the gate on 2026-10-11 01:10Z. The shared
+section is checked after read-back (`occurrences_of`) and reported, not enforced. The mix is drawn
+from one generator seeded by the run, in call order; a declined call counts against the budget and
+is named by model and reason. The library loads only dumps of the population's layout and names the
+rest. Timing rounds stay a flag, but the launch configuration below sets 5. Success criterion for
+"the crossover works": at least 40 % of model crossovers feasible over 10 generations, and at least
+one child under both its parents' HFF at 5 timing rounds. The one-submission 128-case screen and the
+engine-side table growth are not in this step. No timeout on model calls stands (Andrew's rule).
+
+**Built (2026-10-11 08:30Z; fuller 096f193, phylu ddaaf147), not run.** Steps a–f above are in the
+code: `wgsl_safe_convert --slots`, the drafts at `logs/HGP/001/safe96`; the table's vocabulary
+(`TypedPopulation::mint_kingdom`), the slot-0 reference, unexpressed positions as the empty token;
+the library; `llm` with the mix, the Codex route, saved calls and the two briefs; `shared_sections`;
+`FitnessContext::timing_rounds`; the operators in `wgsl_fit`. Tests: the 26 drafts add no symbol
+after minting; Opus's child replays into the layout adding none; prose is declined; k15 and k07
+share their geometry; the mix draws 70/20/5/5; the briefs carry the measurements; the median.
+Not yet tested: a live generation with the operators (needs the GPU and model calls).
+
+**The launch configuration proposed** (Andrew launches): `run_engine.sh fit_engine6 30 3 14400
+--dumps logs/HGP/001/safe96/karva --variation head --pump-every 2 --timing-rounds 5 --model-cross 4
+--repairs 4 --repairs-per-offspring 2 --mix true --llm 4 --library logs/HGP/001/library`.
+Population 30 (intake 20, champion 10), elites 2, seed 3, 30 generations or 4 h. Expected cost: 4
+crossovers + up to 4 repairs + (every other generation) 4 fresh kernels at 15–60 s each, plus the
+gate's evaluations at 2–8 s and 5 timing rounds a feasible kernel: 10–20 min a generation. A
+two-generation smoke run first (`--gens 2 --seconds 1800`), to see the operators' lines.
+
 **Launch.** Nothing launches until Andrew says so; the full configuration is stated first.
 
 ## Expectations, stated before any run
