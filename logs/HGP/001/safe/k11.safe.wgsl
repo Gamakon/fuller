@@ -83,7 +83,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation
     f6 = f3;
     }
     }
-    h[((((wid.y * 32u + lid.y) + min(k, 1u) * 16u)) * cfg.d + (((wid.x * 32u + lid.x) + min(k2, 1u) * 16u)))] = h[((((wid.y * 32u + lid.y) + min(k, 1u) * 16u)) * cfg.d + (((wid.x * 32u + lid.x) + min(k2, 1u) * 16u)))] + f6;
+    if ((((wid.y * 32u + lid.y) + min(k, 1u) * 16u)) < cfg.r_rows && (((wid.x * 32u + lid.x) + min(k2, 1u) * 16u)) < cfg.d && (cfg.r_off + (((wid.y * 32u + lid.y) + min(k, 1u) * 16u))) < cfg.d) { h[((((wid.y * 32u + lid.y) + min(k, 1u) * 16u)) * cfg.d + (((wid.x * 32u + lid.x) + min(k2, 1u) * 16u)))] = h[((((wid.y * 32u + lid.y) + min(k, 1u) * 16u)) * cfg.d + (((wid.x * 32u + lid.x) + min(k2, 1u) * 16u)))] + f6; }
     }
     }
     }

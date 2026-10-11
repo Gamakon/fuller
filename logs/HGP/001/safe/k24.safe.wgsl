@@ -81,17 +81,17 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation
     v4 = v3;
     }
     if ((((wid.x * lit_u32(64u)) + (lid.x * lit_u32(4u))) < cfg.d)) {
-    h[((((gid.y * 4u) + min(k, 3u))) * cfg.d + ((gid.x * 4u)))] = h[((((gid.y * 4u) + min(k, 3u))) * cfg.d + ((gid.x * 4u)))] + pa[((lit_u32(0u)) & 63u)];
+    if ((((gid.y * 4u) + min(k, 3u))) < cfg.r_rows && ((gid.x * 4u)) < cfg.d && (cfg.r_off + (((gid.y * 4u) + min(k, 3u)))) < cfg.d) { h[((((gid.y * 4u) + min(k, 3u))) * cfg.d + ((gid.x * 4u)))] = h[((((gid.y * 4u) + min(k, 3u))) * cfg.d + ((gid.x * 4u)))] + pa[((lit_u32(0u)) & 63u)]; }
     }
     if (((((wid.x * lit_u32(64u)) + (lid.x * lit_u32(4u))) + lit_u32(1u)) < cfg.d)) {
-    h[((((gid.y * 4u) + min(k, 3u))) * cfg.d + (((gid.x * 4u) + 1u)))] = h[((((gid.y * 4u) + min(k, 3u))) * cfg.d + (((gid.x * 4u) + 1u)))] + pa[((lit_u32(1u)) & 63u)];
+    if ((((gid.y * 4u) + min(k, 3u))) < cfg.r_rows && (((gid.x * 4u) + 1u)) < cfg.d && (cfg.r_off + (((gid.y * 4u) + min(k, 3u)))) < cfg.d) { h[((((gid.y * 4u) + min(k, 3u))) * cfg.d + (((gid.x * 4u) + 1u)))] = h[((((gid.y * 4u) + min(k, 3u))) * cfg.d + (((gid.x * 4u) + 1u)))] + pa[((lit_u32(1u)) & 63u)]; }
     }
     {
     if (((((wid.x * lit_u32(64u)) + (lid.x * lit_u32(4u))) + lit_u32(2u)) < cfg.d)) {
-    h[((((gid.y * 4u) + min(k, 3u))) * cfg.d + (((gid.x * 4u) + 2u)))] = h[((((gid.y * 4u) + min(k, 3u))) * cfg.d + (((gid.x * 4u) + 2u)))] + pa[((lit_u32(2u)) & 63u)];
+    if ((((gid.y * 4u) + min(k, 3u))) < cfg.r_rows && (((gid.x * 4u) + 2u)) < cfg.d && (cfg.r_off + (((gid.y * 4u) + min(k, 3u)))) < cfg.d) { h[((((gid.y * 4u) + min(k, 3u))) * cfg.d + (((gid.x * 4u) + 2u)))] = h[((((gid.y * 4u) + min(k, 3u))) * cfg.d + (((gid.x * 4u) + 2u)))] + pa[((lit_u32(2u)) & 63u)]; }
     }
     if (((((wid.x * lit_u32(64u)) + (lid.x * lit_u32(4u))) + lit_u32(3u)) < cfg.d)) {
-    h[((((gid.y * 4u) + min(k, 3u))) * cfg.d + (((gid.x * 4u) + 3u)))] = h[((((gid.y * 4u) + min(k, 3u))) * cfg.d + (((gid.x * 4u) + 3u)))] + pa[((lit_u32(3u)) & 63u)];
+    if ((((gid.y * 4u) + min(k, 3u))) < cfg.r_rows && (((gid.x * 4u) + 3u)) < cfg.d && (cfg.r_off + (((gid.y * 4u) + min(k, 3u)))) < cfg.d) { h[((((gid.y * 4u) + min(k, 3u))) * cfg.d + (((gid.x * 4u) + 3u)))] = h[((((gid.y * 4u) + min(k, 3u))) * cfg.d + (((gid.x * 4u) + 3u)))] + pa[((lit_u32(3u)) & 63u)]; }
     }
     }
     }

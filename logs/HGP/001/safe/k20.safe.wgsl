@@ -53,6 +53,6 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation
     }
     }
     if ((((((wid.y * lit_u32(16u)) + lid.y) < cfg.r_rows) && ((cfg.r_off + ((wid.y * lit_u32(16u)) + lid.y)) < cfg.d)) && (((wid.x * lit_u32(16u)) + lid.x) < cfg.d))) {
-    h[(((gid.y * 1u)) * cfg.d + ((gid.x * 1u)))] = h[(((gid.y * 1u)) * cfg.d + ((gid.x * 1u)))] + f0;
+    if (((gid.y * 1u)) < cfg.r_rows && ((gid.x * 1u)) < cfg.d && (cfg.r_off + ((gid.y * 1u))) < cfg.d) { h[(((gid.y * 1u)) * cfg.d + ((gid.x * 1u)))] = h[(((gid.y * 1u)) * cfg.d + ((gid.x * 1u)))] + f0; }
     }
 }

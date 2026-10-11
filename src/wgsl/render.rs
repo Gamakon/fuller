@@ -448,9 +448,19 @@ impl<'a> Renderer<'a> {
                 Ok(format!("    for ({var} = 0u; {var} < {count}u; {var} = {var} + {step}u) {{\n{}    }}\n", body?))
             }
             "store.h_safe" => {
+                // THE GUARDED STORE (the proposals of 2026-10-10/11, class 1: a
+                // guard and its store built apart could disagree). Every store
+                // to h carries the bounds check of ITS OWN cell: the row below
+                // the band, the column below d, the global row below d. A
+                // kernel's own guard, when it has one, is a second check.
                 n(2)?;
                 let cell = self.value(&kids[0], scope)?;
-                Ok(format!("    h[{cell}] = h[{cell}] + {};\n", self.value(&kids[1], scope)?))
+                let (row, col) = if safe_base(&kids[0].name) == "safe.cell_of" && kids[0].kids.len() == 2 {
+                    (self.value(&kids[0].kids[0], scope)?, self.value(&kids[0].kids[1], scope)?)
+                } else {
+                    ("0u".to_string(), "0u".to_string())
+                };
+                Ok(format!("    if (({row}) < cfg.r_rows && ({col}) < cfg.d && (cfg.r_off + ({row})) < cfg.d) {{ h[{cell}] = h[{cell}] + {}; }}\n", self.value(&kids[1], scope)?))
             }
             "wg.set_safe" => {
                 n(3)?;
