@@ -6,7 +6,7 @@ name=$1; gens=$2; seed=$3; secs=$4; shift 4
 cd /Users/andrewmorgan/Dev/gamakon/fuller
 out=logs/HGP/001/$name
 mkdir -p "$out"
-if pgrep -f "examples/wgsl_fit" >/dev/null; then echo "another fit is running; refusing"; exit 1; fi
+if pgrep -x wgsl_fit >/dev/null; then echo "another fit is running; refusing"; exit 1; fi
 echo "[$(date -u +%H:%M:%SZ)] start $name gens=$gens seed=$seed seconds=$secs $*"
 ../phylu/target/release/examples/wgsl_fit --dumps "$PWD/logs/HGP/001/${DUMPS:-safe/karva}" \
   --pop-intake 20 --pop-champion 10 --gens "$gens" --seed "$seed" --elites 2 --pump-every 5 --cohort-merge 20 \
