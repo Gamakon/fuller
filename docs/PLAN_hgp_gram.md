@@ -220,6 +220,55 @@ the fitness needs more rounds per shape (or the median of repeated timings) so t
 distinguishable from noise, and the 128-case screen needs its one-submission form (cases resident on the
 device, one command buffer) so a generation costs seconds, not minutes.
 
+## Step 5: model-repaired variation (Andrew, 2026-10-11 08:00Z) — the plan
+
+**Objective.** Make crossover produce feasible, new kernels that combine two parents' ideas, and
+make every infeasible offspring a repair job rather than a discard, so that over time the symbol
+table grows with what works, the share of feasible genes rises, and ideas mix and get tested.
+
+**Approach.** The standard engine (islands, tournament selection, elites, pump, cohorts) stays. Its
+own gene-slot crossover stays off (it mixed kernels of different geometry into garbage: 6 % feasible).
+Variation becomes three model-mediated operators plus the head mutation, all through the gate:
+
+1. **Shared-structure crossover.** For an offspring whose two tournament parents were both feasible
+   and distinct, fuller finds the largest sub-trees the parents share (`safe_karva::shared_sections`,
+   the population fold over a forest of two). The brief carries the contract, both parents' kernels,
+   the six fitness columns defined and each parent's measured values, each parent's problem in one
+   line, the shared structure in words and s-expressions, and the size bound of the layout. The
+   model writes one kernel around the shared structure. Proven once: k15 × k07 → feasible, HFF
+   0.3245 against the parents' 0.3303 and 0.5196, accuracy of the better parent kept exactly.
+2. **Repair.** An offspring that scores infeasible goes to a model with its text, its failure detail
+   (the first failing case or the compile error), its parents and the contract: "make it correct,
+   keep its technique". The repaired text re-enters the gate. Only after the repair budget is spent
+   does the gate fall back to the champion with a head mutation.
+3. **Fresh kernels** at the pump, as now, with the same brief quality (columns defined, the
+   population's best values stated as the bar).
+
+**The model mix** for every call: Sonnet 70 %, Opus 20 %, Fable 5 %, Codex 5 % (`claude -p --model`,
+`codex exec --skip-git-repo-check`), drawn per call from the run's seed; the ledger records which
+model wrote each kernel and whether it was feasible, so the mix can be judged per model. No timeout
+on a model call, ever; a kill guard only around GPU work. Every prompt and reply saved under
+`out/calls/`.
+
+**What has to change underneath, in this order.**
+
+| step | change | test |
+|---|---|---|
+| a | the layout: `wgsl_safe_convert --slots N`; the drafts re-encoded at the slot count a model kernel needs (the k15 × k07 child needs 64 at head 32; take 96 for headroom); `n_genes` checked through the fold's reserved band, `mate_of`, the linker mask | the population round-trip test at the new layout; the child encodes |
+| b | the table (Opus's review, `logs/HGP/001/opus_table/reply.md`): the slot-0 reference off-by-one; unexpressed gene positions written as the empty token, never as untyped names; the kingdom's whole vocabulary minted before any draft (every row as a typed function instance, every input-less row as a typed variable, the closed literal sets `flag`, `wgdim`, `blk`, `unroll`, `lit64`, `lit4096` in full, a fixed grid for the open literal types) | after minting, the 26 drafts add no symbol; the k15 × k07 child's remaining needs counted and named |
+| c | **learning across runs**: every feasible model-written kernel's dump is written to a library directory (`logs/HGP/001/library/`), loaded at the next launch beside the drafts, so the table and the seed population grow with what worked | a run's library loads and round-trips |
+| d | fuller `llm`: the model mix, the two new briefs, the saved calls; Codex as a caller | a replay path: a saved reply in place of the call drives brief → read-back → encode → table → dedup deterministically on `opus_cross/reply.wgsl` |
+| e | the hook: operator 1 for tournament pairs (budget `--model-cross N` a generation), operator 2 in the gate (budget `--repairs N`), declines by reason, the generation line gains attempted / feasible / declined per operator and per model | the replay test; a two-generation run before any long one |
+| f | **the fitness must be able to judge it**: `FitnessContext` takes timing rounds per shape and uses the median (`--timing-rounds`, default 1 so nothing changes until set). Re-timing showed one round scatters equal kernels by 15 %; the experiment "does this crossover work" is unanswerable at that resolution | the re-timed kernels rank equal at 5+ rounds |
+
+**Expectations before the run.** Feasible model crossovers: 40–70 % of calls (one of one so far).
+Repairs that make an infeasible offspring feasible: 30–50 %. Model cost: 15–60 s a call, so a
+generation with 4 crossovers and 4 repairs is 3–8 min. Declines for table reasons: under 10 % after
+step b (was 75 %). Whether the champion improves beyond the drafts: unknown; that is the experiment,
+and only readable with step f on.
+
+**Launch.** Nothing launches until Andrew says so; the full configuration is stated first.
+
 ## Expectations, stated before any run
 
 | measurement | expected |
