@@ -311,7 +311,7 @@ impl<'a> Renderer<'a> {
         text.push_str(&format!("var<workgroup> wg_a: array<f32, {WGMEM_LEN}>;\nvar<workgroup> wg_b: array<f32, {WGMEM_LEN}>;\nvar<workgroup> wg_va: array<vec4<f32>, {WGVEC_LEN}>;\nvar<workgroup> wg_vb: array<vec4<f32>, {WGVEC_LEN}>;\n"));
         // The pass-through functions a literal-only expression needs (see
         // `Scope::const_depth`), declared only when the body uses them.
-        for (name, ty) in [("lit_f32", "f32"), ("lit_u32", "u32"), ("lit_i32", "i32")] {
+        for (name, ty) in [("lit_f32", "f32"), ("lit_u32", "u32"), ("lit_i32", "i32"), ("lit_bool", "bool")] {
             if body.contains(&format!("{name}(")) {
                 text.push_str(&format!("fn {name}(x: {ty}) -> {ty} {{ return x; }}\n"));
             }
@@ -1136,7 +1136,10 @@ impl<'a> Renderer<'a> {
                 let x = v.clamp(-2_147_483_648.0, 2_147_483_520.0) as i32;
                 if wrap { format!("lit_i32({x})") } else { format!("{x}") }
             }
-            "flag" | "sign" => (v != 0.0).to_string(),
+            // A bool in a literal-only expression passes through `lit_bool`
+            // too: `log(f32(false))` was folded by naga to log(0) = -inf and
+            // refused (a random kernel, 2026-10-11).
+            "flag" | "sign" => if wrap { format!("lit_bool({})", v != 0.0) } else { (v != 0.0).to_string() },
             other => return Err(format!("literal.{other} has no text")),
         };
         if d.lanes > 1 && d.slot.starts_with("vec") {
@@ -1160,7 +1163,7 @@ impl<'a> Renderer<'a> {
                 Some("f32") => f("0.0f".to_string(), "lit_f32"),
                 Some("i32") => f("0".to_string(), "lit_i32"),
                 Some("u32") => f(format!("{}u", d.fallback_bits), "lit_u32"),
-                Some("bool") => (d.fallback_bits != 0).to_string(),
+                Some("bool") => f((d.fallback_bits != 0).to_string(), "lit_bool"),
                 _ => return Err(format!("{}: no value fallback", d.dual)),
             };
             if let Some((c, r)) = d.matrix_shape() {
@@ -1174,7 +1177,7 @@ impl<'a> Renderer<'a> {
             Some("f16") => return Err("f16 fallback: the prologue does not enable f16".into()),
             Some("i32") => f("0".to_string(), "lit_i32"),
             Some("u32") => f(format!("{}u", d.fallback_bits), "lit_u32"),
-            Some("bool") => (d.fallback_bits != 0).to_string(),
+            Some("bool") => f((d.fallback_bits != 0).to_string(), "lit_bool"),
             _ => return Err(format!("{}: no value fallback", d.dual)),
         })
     }
