@@ -2047,11 +2047,16 @@ impl<'a> Ctx<'a> {
         }
         let bound = &bound;
         let index_ty = ty(self, "u32.index")?;
-        let (bound_tree, kind) = if is_leaf(bound, "load.uniform.cfg.m") {
+        // A binding bound (cfg.m, cfg.d, cfg.r_rows) is the item loop's at the
+        // top level; nested (under a guard, inside a loop: fit_A2 gen 6's r12p1
+        // puts its whole body under `if (in range)`), it is spelled as the
+        // expression it is, a uniform, and the loop is an expression-bounded one.
+        let top = rung == "L0";
+        let (bound_tree, kind) = if top && is_leaf(bound, "load.uniform.cfg.m") {
             (Tree::new("bound.m", ty(self, "u32.boundm")?, vec![]), "boundm")
-        } else if is_leaf(bound, "load.uniform.cfg.d") {
+        } else if top && is_leaf(bound, "load.uniform.cfg.d") {
             (Tree::new("bound.d", ty(self, "u32.boundd")?, vec![]), "boundd")
-        } else if is_leaf(bound, "load.uniform.cfg.r_rows") {
+        } else if top && is_leaf(bound, "load.uniform.cfg.r_rows") {
             (Tree::new("bound.rows", ty(self, "u32.boundrows")?, vec![]), "boundrows")
         } else if let Some(v) = literal_value(bound).filter(|v| *v >= 1.0 && *v <= 64.0) {
             (Tree::literal("literal.lit64", ty(self, "u32.lit64")?, v), "lit64")
@@ -2884,6 +2889,24 @@ mod tests {
         let c = crate::wgsl::render::cost(&tree);
         let bound = crate::wgsl::safe_karva::default_bound(&k).unwrap();
         assert!(c.per_item < 1500.0 && c.per_item < bound.per_item && c.base < bound.base, "per item {}, base {}", c.per_item, c.base);
+    }
+
+    /// AN ITEM LOOP UNDER THE THREAD'S GUARD (fit_A2 gen 6's r12p1: the
+    /// shipped kernel with its whole body under `if (in range)`, so `for (tt
+    /// < cfg.m)` is nested): the binding bound is spelled as the expression
+    /// it is, an expression-bounded loop, and the estimator prices that loop
+    /// as item work (its trip count grows with m), not m times into the base.
+    #[test]
+    fn a_binding_bounded_loop_under_a_guard_reads_as_an_expression_bound_priced_per_item() {
+        let k = WgslKingdom::load_safe();
+        let src = include_str!("../../tests/corpus/safewgsl/reply_fitA2_g006_r12p1_sonnet.wgsl");
+        assert!(src.contains("for (var tt: u32 = 0u; tt < cfg.m; tt = tt + 1u)"));
+        let tree = read_safe(src, &k).unwrap_or_else(|e| panic!("{e}")).tree;
+        let sx = tree.to_sexpr();
+        assert!(sx.contains("(loop.tilex_C0 (bound.of_index (index.of_count load.cfg_m))"), "{sx}");
+        let c = crate::wgsl::render::cost(&tree);
+        let shipped = crate::wgsl::render::cost(&crate::wgsl::render::gram_shipped_safe_tree(&k).unwrap());
+        assert!(c.per_item < 2.0 * shipped.per_item && c.base < 1000.0, "per item {} (shipped {}), base {}", c.per_item, shipped.per_item, c.base);
     }
 
     /// A kernel with a helper function reads: the helper is inlined at its

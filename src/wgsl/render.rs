@@ -1229,6 +1229,18 @@ pub fn cost(t: &Tree) -> Cost {
                 let count = t.kids.first().map_or(8192.0, worst_bound);
                 let step = if safe_base(&t.name) == "loop.tilex_strided_bounded" { lit(t.kids.get(1), 64.0) } else { 1.0 };
                 let n = (count / step).ceil().max(1.0);
+                // A loop OUTSIDE the item loop whose trip count grows with m is
+                // item work (fit_A2 gen 6's r12p1: `for (tt < cfg.m)` under the
+                // thread's guard): its body is priced per item, n / m passes over
+                // the items, not n times into the base.
+                if !in_items && t.kids.first().is_some_and(grows_with_m) {
+                    let passes = n / 65536.0;
+                    for k in &t.kids {
+                        let (b, p) = walk(k, tile, true);
+                        per_item += (b + p) * passes;
+                    }
+                    return (base, per_item);
+                }
                 for k in &t.kids {
                     let (b, p) = walk(k, tile * n, in_items);
                     base += b;
@@ -1268,16 +1280,28 @@ pub fn worst_bound(t: &Tree) -> f64 {
     bound_at_worst(t).0
 }
 
+/// Whether a loop bound grows with the item count m: valued fully (every
+/// leaf seen) at the worst shape and again with m doubled, it is larger.
+fn grows_with_m(t: &Tree) -> bool {
+    let (at, seen) = bound_at(t, 65536.0);
+    seen && bound_at(t, 131072.0).0 > at
+}
+
 /// [`worst_bound`] and whether every value in the expression was seen: a
 /// register, a load or a row the estimator has no case for is taken as
 /// 8192 and makes the value unseen.
 fn bound_at_worst(t: &Tree) -> (f64, bool) {
-    fn eval(t: &Tree, seen: &mut bool) -> f64 {
+    bound_at(t, 65536.0)
+}
+
+/// [`bound_at_worst`] with the item count m given.
+fn bound_at(t: &Tree, m: f64) -> (f64, bool) {
+    fn eval(t: &Tree, seen: &mut bool, m: f64) -> f64 {
         if t.name.starts_with("literal.") {
             return if t.konst.is_finite() { f64::from(t.konst).max(0.0) } else { 0.0 };
         }
         let mut k = |i: usize| match t.kids.get(i) {
-            Some(x) => eval(x, seen),
+            Some(x) => eval(x, seen, m),
             None => {
                 *seen = false;
                 8192.0
@@ -1285,7 +1309,7 @@ fn bound_at_worst(t: &Tree) -> (f64, bool) {
         };
         match safe_base(&t.name) {
             "load.cfg_d" | "load.cfg_r_rows" | "bound.d" | "bound.rows" => 8192.0,
-            "load.cfg_m" | "bound.m" => 65536.0,
+            "load.cfg_m" | "bound.m" => m,
             "load.cfg_r_off" => 0.0,
             "bound.of_index" | "index.of_count" | "safe.counter_index" | "safe.tile_index" | "safe.tile_index2" | "safe.tile_index3" => k(0),
             "index.add" | "count.add" => k(0) + k(1),
@@ -1307,7 +1331,7 @@ fn bound_at_worst(t: &Tree) -> (f64, bool) {
         }
     }
     let mut seen = true;
-    let v = eval(t, &mut seen).clamp(1.0, 1.0e12);
+    let v = eval(t, &mut seen, m).clamp(1.0, 1.0e12);
     (v, seen)
 }
 
@@ -1614,7 +1638,8 @@ mod tests {
     /// An expression-bounded item loop is costed by its bound at the worst
     /// shape: `cfg.m * cfg.d` is 8,192 passes over the items and is refused
     /// by the cost bound, `(cfg.d + 63u) / 64u` is less than one pass; a
-    /// tilex loop bounded by cfg.m costs 65,536 bodies.
+    /// tilex loop outside the item loop bounded by cfg.m is item work, one
+    /// body per item; bounded by cfg.d, 8,192 bodies of base.
     #[test]
     fn an_expression_bound_is_costed_at_the_worst_shape() {
         let k = crate::wgsl::loader::WgslKingdom::load_safe();
@@ -1632,8 +1657,17 @@ mod tests {
         // 8,192 times (bound nodes + body) / (1 + body): between 8,192 and 65,536.
         assert!(q / p > 8192.0 && q / p < 65536.0, "quadratic {q} vs plain {p}");
         assert!(l < 8.0 * p, "a bound below m is one pass (its nodes aside): {l} vs {p}");
-        let tilex = Tree::new("loop.tilex_L0", t("stmt.L0"), vec![bound(m()), Tree::new("block.one_L2", t("block.L2"), vec![Tree::new("stmt.barrier_L2", t("stmt.L2"), vec![])])]);
-        assert!(cost(&tilex).base >= 65536.0 * 2.0, "{}", cost(&tilex).base);
+        // A tilex loop outside the item loop bounded by cfg.m is item work
+        // (fit_A2 gen 6's r12p1, 2026-10-11): one body per item, as the item
+        // loop costs it, not 65,536 bodies into the base. Bounded by cfg.d it
+        // does not grow with m and is base work, 8,192 bodies.
+        let tile_body = || Tree::new("block.one_L2", t("block.L2"), vec![Tree::new("stmt.barrier_L2", t("stmt.L2"), vec![])]);
+        let tilex = Tree::new("loop.tilex_L0", t("stmt.L0"), vec![bound(m()), tile_body()]);
+        let (c, p) = (cost(&tilex), cost(&plain));
+        // (its bound's nodes are read every pass too, so a few more per item)
+        assert!(c.per_item >= p.per_item && c.per_item <= p.per_item + 8.0 && c.base < 10.0, "{c:?} vs the item loop {p:?}");
+        let over_d = cost(&Tree::new("loop.tilex_L0", t("stmt.L0"), vec![bound(d()), tile_body()]));
+        assert!(over_d.base >= 8192.0 * 2.0 && over_d.per_item == 0.0, "{over_d:?}");
     }
 
     fn setup() -> (WgslKingdom, FunctionTable, Role) {
