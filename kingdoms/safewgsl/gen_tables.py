@@ -115,9 +115,15 @@ FORMS = {
     "threadcols": ("a column of a thread's STRIDED block (columns X apart)", ["u32"]),
     "threadrowg": ("a row of a thread's GROUPED block", ["u32"]),
     "threadcolg": ("a column of a thread's GROUPED block", ["u32"]),
+    # THE UNIFORMS, each its own dual (2026-10-11: a native offspring of fit_A2 compared its row with cfg.m
+    # instead of cfg.r_rows; 78 of 1,000 single-symbol mutants of the corpus read another uniform).
+    "cfgm": ("cfg.m, the item count", ["u32"]),
+    "cfgd": ("cfg.d, the width (columns of h, values per item)", ["u32"]),
+    "cfgrows": ("cfg.r_rows, the band's rows", ["u32"]),
+    "cfgroff": ("cfg.r_off, the band's first row", ["u32"]),
 }
 
-SAFE_FORMS = ["lidx", "threadrows", "threadcols", "threadrowg", "threadcolg", "gid", "lid", "wid", "rowid", "colid", "O0", "O1", "O2", "O3", "O4", "tcounter4", "L5", "C5", "safe", "pindex", "boundx", "boundm", "boundd", "boundrows", "lit64", "lit4096", "counter", "tcounter", "tcounter2", "L3", "C3", "tcounter3", "L4", "C4", "wgvindex", "bound", "threadrow", "threadcol", "cell", "phi", "wgindex", "L0", "L1", "L2", "C0", "C1", "C2"]
+SAFE_FORMS = ["cfgm", "cfgd", "cfgrows", "cfgroff", "lidx", "threadrows", "threadcols", "threadrowg", "threadcolg", "gid", "lid", "wid", "rowid", "colid", "O0", "O1", "O2", "O3", "O4", "tcounter4", "L5", "C5", "safe", "pindex", "boundx", "boundm", "boundd", "boundrows", "lit64", "lit4096", "counter", "tcounter", "tcounter2", "L3", "C3", "tcounter3", "L4", "C4", "wgvindex", "bound", "threadrow", "threadcol", "cell", "phi", "wgindex", "L0", "L1", "L2", "C0", "C1", "C2"]
 RUNGS = ["L0", "L1", "L2", "L3", "L4", "C0", "C1", "C2", "C3", "C4"]
 # The fifth rung came after every other row (run A, 2026-10-11); its rows are appended at the end so
 # every earlier ref stands, and it is kept out of RUNGS for that reason.
@@ -147,6 +153,7 @@ FALLBACK = {
     "O0": "the thread's own store", "O1": "the thread's own store", "O2": "the thread's own store", "O3": "the thread's own store", "O4": "the thread's own store",
     "gid": "0u", "lid": "0u", "wid": "0u", "rowid": "0u", "colid": "0u",
     "lidx": "0u", "threadrows": "0u", "threadcols": "0u", "threadrowg": "0u", "threadcolg": "0u",
+    "cfgm": "0u", "cfgd": "0u", "cfgrows": "0u", "cfgroff": "0u",
 }
 
 # The fallback by machine: the lane's 32-bit pattern as an unsigned integer. Vectors and matrices
@@ -168,6 +175,7 @@ FALLBACK_BITS = {
     "O0": 0, "O1": 0, "O2": 0, "O3": 0, "O4": 0,
     "gid": 0, "lid": 0, "wid": 0, "rowid": 0, "colid": 0,
     "lidx": 0, "threadrows": 0, "threadcols": 0, "threadrowg": 0, "threadcolg": 0,
+    "cfgm": 0, "cfgd": 0, "cfgrows": 0, "cfgroff": 0,
 }
 assert set(FALLBACK_BITS) == set(FALLBACK), "every form with a fallback needs its bits, and no more"
 
@@ -257,6 +265,8 @@ def build_types():
     add("u32", "rowid", 1, FORMS["rowid"][0])
     add("u32", "colid", 1, FORMS["colid"][0])
     for form in ("lidx", "threadrows", "threadcols", "threadrowg", "threadcolg"):
+        add("u32", form, 1, FORMS[form][0])
+    for form in ("cfgm", "cfgd", "cfgrows", "cfgroff"):
         add("u32", form, 1, FORMS[form][0])
     return rows
 
@@ -757,6 +767,19 @@ for c in ("threadcols", "threadcolg"):
 for d in range(1, len(EPILOGUE)):
     r = EPILOGUE[d]
     f("block", "cont_" + r, "composite", ["bool.flag", "block." + r], "block." + r, "if (c) { continue; } then the rest of the epilogue block: skip this pass of the epilogue's tile loop")
+
+# ---- the uniforms (2026-10-11), each its own dual: the role's loads are typed so in the safe kingdom ----
+# (safe_karva::per_kernel_rows), and these rows carry them into index and count arithmetic.
+for u in ("cfgm", "cfgd", "cfgrows", "cfgroff"):
+    f("index", "of_" + u, "composite", ["u32." + u], "u32.index", f"the uniform ({FORMS[u][0]}) as a plain index")
+for u in ("cfgm", "cfgd", "cfgrows"):
+    f("convert", u + "_count", "composite", ["u32." + u], "u32.count", f"the uniform ({FORMS[u][0]}) as a count")
+
+# ---- a register set to zero (2026-10-11), a row with no literal: a native offspring of fit_A2 started an
+# accumulator at vec4(8.0) for vec4(0.0) (a literal mutation); the corpus spells 703 register zero-inits ----
+for r in RUNGS + RUNGS5:
+    for kind, reg in (("f", "reg<f32>.real"), ("v", "reg<vec4<f32>>.real"), ("i", "reg<u32>.index"), ("b", "reg<bool>.flag")):
+        f("reg", f"clear_{kind}_{r}", "composite", [reg], "stmt." + r, "r = 0 (its form's zero): a reset with no literal to mutate")
 
 
 def write_tsv(path, header, rows):

@@ -151,3 +151,7 @@ T149	u32.threadrows	u32	threadrows	1	0u	0	0	0	a row of a thread's STRIDED block 
 T150	u32.threadcols	u32	threadcols	1	0u	0	0	0	a column of a thread's STRIDED block (columns X apart)
 T151	u32.threadrowg	u32	threadrowg	1	0u	0	0	0	a row of a thread's GROUPED block
 T152	u32.threadcolg	u32	threadcolg	1	0u	0	0	0	a column of a thread's GROUPED block
+T153	u32.cfgm	u32	cfgm	1	0u	0	0	0	cfg.m, the item count
+T154	u32.cfgd	u32	cfgd	1	0u	0	0	0	cfg.d, the width (columns of h, values per item)
+T155	u32.cfgrows	u32	cfgrows	1	0u	0	0	0	cfg.r_rows, the band's rows
+T156	u32.cfgroff	u32	cfgroff	1	0u	0	0	0	cfg.r_off, the band's first row

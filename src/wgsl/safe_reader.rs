@@ -851,6 +851,28 @@ fn by_axis(t: &Tree) -> Tree {
     Tree { name: t.name.clone(), ty: t.ty, konst: t.konst, kids }
 }
 
+/// Every `reg.set_<k>_<rung>(r, 0)` (a literal zero, or a vector built from
+/// literal zeros) as `reg.clear_<k>_<rung>(r)`.
+fn zero_sets(t: &Tree) -> Tree {
+    let kids: Vec<Tree> = t.kids.iter().map(zero_sets).collect();
+    if let Some(rest) = t.name.strip_prefix("reg.set_") {
+        if let Some((kind, rung)) = rest.split_once('_') {
+            if matches!(kind, "f" | "v" | "i" | "b") && rung_stem(&t.name).is_some() && !rung.contains('_') && kids.len() == 2 && is_literal_zero(&kids[1]) {
+                return Tree { name: format!("reg.clear_{kind}_{rung}"), ty: t.ty, konst: t.konst, kids: vec![kids[0].clone()] };
+            }
+        }
+    }
+    Tree { name: t.name.clone(), ty: t.ty, konst: t.konst, kids }
+}
+
+/// A literal zero, or a vector built from literal zeros (a splat or a compose).
+fn is_literal_zero(t: &Tree) -> bool {
+    if t.name.starts_with("literal.") {
+        return t.konst == 0.0 && t.kids.is_empty();
+    }
+    !t.kids.is_empty() && (t.name.starts_with("shape.splat") || t.name.starts_with("shape.compose")) && t.kids.iter().all(is_literal_zero)
+}
+
 /// Why a continue outside the epilogue has no spelling.
 const CONTINUE_OUTSIDE: &str = "a continue outside the kernel's epilogue: a later barrier of its loop would be reached by some threads only; the epilogue's tile loops, which hold no barrier, spell `if (c) { continue; }`";
 
@@ -2678,6 +2700,9 @@ pub fn read_safe(source: &str, kingdom: &WgslKingdom) -> Result<SafeRead, String
     // (`lid.y` is `axis.y_lid`, a row-axis index); renamed here, after the
     // ownership proof, which reads the components as naga wrote them.
     let tree = by_axis(&tree);
+    // A register set to a literal zero is the zeroing row, with no literal a
+    // mutation could change (an accumulator started at vec4(8.0), 2026-10-11).
+    let tree = zero_sets(&tree);
     // Row-consistent: every node under the dual its parent's row demands.
     let per_kernel = crate::wgsl::safe_karva::per_kernel_rows(kingdom, &crate::wgsl::render::gram_role());
     let tree = crate::wgsl::safe_karva::conform(&tree, tree.ty, kingdom, &per_kernel)?;
@@ -2704,7 +2729,7 @@ mod tests {
         let r = read_safe(&src, &k).unwrap_or_else(|e| panic!("{e}"));
         let sx = r.tree.to_sexpr();
         assert!(sx.contains("loop.items_boundm"), "{sx}");
-        assert!(sx.contains("load.phi_safe (index.add (index.mul (safe.counter_index safe.counter) (index.of_count load.cfg_d))"), "{sx}");
+        assert!(sx.contains("load.phi_safe (index.add (index.mul (safe.counter_index safe.counter) (index.of_cfgd load.cfg_d))"), "{sx}");
         assert!(sx.contains("(block.one_O0 (stmt.if_O0") && sx.contains("store.h_O0 (safe.cell_of (safe.thread_row"), "the guarded store is the epilogue: {sx}");
         assert!(r.notes.iter().any(|n| n.contains("guard")), "{:?}", r.notes);
         let (t, role) = (FunctionTable::safe(), gram_role());
@@ -3006,7 +3031,7 @@ mod tests {
         assert!(src.contains("for (var tt: u32 = 0u; tt < cfg.m; tt = tt + 1u)"));
         let tree = read_safe(src, &k).unwrap_or_else(|e| panic!("{e}")).tree;
         let sx = tree.to_sexpr();
-        assert!(sx.contains("(loop.tilex_C0 (bound.of_index (index.of_count load.cfg_m))"), "{sx}");
+        assert!(sx.contains("(loop.tilex_C0 (bound.of_index (index.of_cfgm load.cfg_m))"), "{sx}");
         let c = crate::wgsl::render::cost(&tree);
         let shipped = crate::wgsl::render::cost(&crate::wgsl::render::gram_shipped_safe_tree(&k).unwrap());
         assert!(c.per_item < 2.0 * shipped.per_item && c.base < 1000.0, "per item {} (shipped {}), base {}", c.per_item, shipped.per_item, c.base);

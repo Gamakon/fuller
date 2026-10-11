@@ -168,10 +168,20 @@ pub fn gram_shipped_safe_tree(kingdom: &WgslKingdom) -> Result<Tree, String> {
     let blk = || Tree::literal("literal.blk", t("u32.blk").expect("dual"), 1.0);
     let row = || Tree::new("safe.thread_row", t("u32.threadrow").expect("dual"), vec![gid(), blk()]);
     let col = || Tree::new("safe.thread_col", t("u32.threadcol").expect("dual"), vec![gid(), blk()]);
-    let cnt = |n: &str| Tree::new("index.of_count", index, vec![Tree::new(n, count, vec![])]);
+    // Each uniform carried into index arithmetic by its own row (the safe
+    // kingdom types each uniform as its own dual).
+    let cnt = |n: &str| {
+        let (own, conv) = match n {
+            "load.cfg_d" => ("u32.cfgd", "index.of_cfgd"),
+            "load.cfg_m" => ("u32.cfgm", "index.of_cfgm"),
+            "load.cfg_r_rows" => ("u32.cfgrows", "index.of_cfgrows"),
+            _ => ("u32.count", "index.of_count"),
+        };
+        Tree::new(conv, index, vec![Tree::new(n, t(own).unwrap_or(count), vec![])])
+    };
     let f0 = || Tree::new("reg.get_f", real, vec![Tree::new("reg.f0", rf, vec![])]);
     // gr = r_off + row (kept in i3 as a plain index)
-    let gr = Tree::new("reg.set_i_L0", l0, vec![Tree::new("reg.i3", ri, vec![]), Tree::new("index.add", index, vec![Tree::new("load.cfg_r_off", index, vec![]), Tree::new("safe.row_as_index", index, vec![row()])])]);
+    let gr = Tree::new("reg.set_i_L0", l0, vec![Tree::new("reg.i3", ri, vec![]), Tree::new("index.add", index, vec![Tree::new("index.of_cfgroff", index, vec![Tree::new("load.cfg_r_off", t("u32.cfgroff")?, vec![])]), Tree::new("safe.row_as_index", index, vec![row()])])]);
     // The guard: the safe grammar has no return under a condition (a later
     // barrier would be non-uniform), so an out-of-range thread computes
     // (its loads read zero past the buffer) and the STORE is guarded.
@@ -311,7 +321,7 @@ impl<'a> Renderer<'a> {
         text.push_str(&format!("var<workgroup> wg_a: array<f32, {WGMEM_LEN}>;\nvar<workgroup> wg_b: array<f32, {WGMEM_LEN}>;\nvar<workgroup> wg_va: array<vec4<f32>, {WGVEC_LEN}>;\nvar<workgroup> wg_vb: array<vec4<f32>, {WGVEC_LEN}>;\n"));
         // The pass-through functions a literal-only expression needs (see
         // `Scope::const_depth`), declared only when the body uses them.
-        for (name, ty) in [("lit_f32", "f32"), ("lit_u32", "u32"), ("lit_i32", "i32")] {
+        for (name, ty) in [("lit_f32", "f32"), ("lit_u32", "u32"), ("lit_i32", "i32"), ("lit_bool", "bool")] {
             if body.contains(&format!("{name}(")) {
                 text.push_str(&format!("fn {name}(x: {ty}) -> {ty} {{ return x; }}\n"));
             }
@@ -670,6 +680,17 @@ impl<'a> Renderer<'a> {
                 n(2)?;
                 Ok(format!("    {} = {};\n", self.register(&kids[0])?, self.value(&kids[1], scope)?))
             }
+            // A register set to its form's zero (no literal to mutate).
+            "reg.clear_f" | "reg.clear_v" | "reg.clear_i" | "reg.clear_b" => {
+                n(1)?;
+                let zero = match safe_base(&s.name) {
+                    "reg.clear_f" => "0.0f",
+                    "reg.clear_v" => "vec4<f32>(0.0f)",
+                    "reg.clear_i" => "0u",
+                    _ => "false",
+                };
+                Ok(format!("    {} = {zero};\n", self.register(&kids[0])?))
+            }
             "wg.set" => {
                 n(3)?;
                 Ok(format!("    {}[({}) & {}u] = {};\n", self.wgmem(&kids[0])?, self.value(&kids[1], scope)?, WGMEM_LEN - 1, self.value(&kids[2], scope)?))
@@ -880,7 +901,7 @@ impl<'a> Renderer<'a> {
                 return Ok(format!("{id}.{component}"));
             }
         }
-        if (name == "index.of_row" || name == "index.of_col" || name == "index.of_lidx") && v.kids.len() == 1 {
+        if (matches!(name, "index.of_row" | "index.of_col" | "index.of_lidx" | "index.of_cfgm" | "index.of_cfgd" | "index.of_cfgrows" | "index.of_cfgroff" | "convert.cfgm_count" | "convert.cfgd_count" | "convert.cfgrows_count")) && v.kids.len() == 1 {
             return self.value(&v.kids[0], scope);
         }
         match name {
@@ -1136,7 +1157,10 @@ impl<'a> Renderer<'a> {
                 let x = v.clamp(-2_147_483_648.0, 2_147_483_520.0) as i32;
                 if wrap { format!("lit_i32({x})") } else { format!("{x}") }
             }
-            "flag" | "sign" => (v != 0.0).to_string(),
+            // A bool in a literal-only expression passes through `lit_bool`
+            // too: `log(f32(false))` was folded by naga to log(0) = -inf and
+            // refused (a random kernel, 2026-10-11).
+            "flag" | "sign" => if wrap { format!("lit_bool({})", v != 0.0) } else { (v != 0.0).to_string() },
             other => return Err(format!("literal.{other} has no text")),
         };
         if d.lanes > 1 && d.slot.starts_with("vec") {
@@ -1160,7 +1184,7 @@ impl<'a> Renderer<'a> {
                 Some("f32") => f("0.0f".to_string(), "lit_f32"),
                 Some("i32") => f("0".to_string(), "lit_i32"),
                 Some("u32") => f(format!("{}u", d.fallback_bits), "lit_u32"),
-                Some("bool") => (d.fallback_bits != 0).to_string(),
+                Some("bool") => f((d.fallback_bits != 0).to_string(), "lit_bool"),
                 _ => return Err(format!("{}: no value fallback", d.dual)),
             };
             if let Some((c, r)) = d.matrix_shape() {
@@ -1174,7 +1198,7 @@ impl<'a> Renderer<'a> {
             Some("f16") => return Err("f16 fallback: the prologue does not enable f16".into()),
             Some("i32") => f("0".to_string(), "lit_i32"),
             Some("u32") => f(format!("{}u", d.fallback_bits), "lit_u32"),
-            Some("bool") => (d.fallback_bits != 0).to_string(),
+            Some("bool") => f((d.fallback_bits != 0).to_string(), "lit_bool"),
             _ => return Err(format!("{}: no value fallback", d.dual)),
         })
     }
@@ -1328,6 +1352,8 @@ fn bound_at(t: &Tree, m: f64) -> (f64, bool) {
             "load.cfg_m" | "bound.m" => m,
             "load.cfg_r_off" => 0.0,
             "bound.of_index" | "index.of_count" | "safe.counter_index" | "safe.tile_index" | "safe.tile_index2" | "safe.tile_index3" => k(0),
+            // A uniform's own dual carried into arithmetic: its value.
+            "index.of_cfgm" | "index.of_cfgd" | "index.of_cfgrows" | "index.of_cfgroff" | "convert.cfgm_count" | "convert.cfgd_count" | "convert.cfgrows_count" => k(0),
             "index.add" | "count.add" => k(0) + k(1),
             "index.sub" => (k(0) - k(1)).max(0.0),
             "index.sub_floor" | "count.sub_floor" => (k(0) - k(1)).max(0.0),

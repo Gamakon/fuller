@@ -1929,4 +1929,74 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 | F911 | `block.cont_O3` | `composite` | `bool.flag block.O3` | `block.O3` | 2 | if (c) { continue; } then the rest of the epilogue block: skip this pass of the epilogue's tile loop |
 | F912 | `block.cont_O4` | `composite` | `bool.flag block.O4` | `block.O4` | 2 | if (c) { continue; } then the rest of the epilogue block: skip this pass of the epilogue's tile loop |
 
-912 function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Deliberately absent: atomics, images, derivatives, subgroup operations, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.
+## class `index`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F913 | `index.of_cfgm` | `composite` | `u32.cfgm` | `u32.index` | 1 | the uniform (cfg.m, the item count) as a plain index |
+| F914 | `index.of_cfgd` | `composite` | `u32.cfgd` | `u32.index` | 1 | the uniform (cfg.d, the width (columns of h, values per item)) as a plain index |
+| F915 | `index.of_cfgrows` | `composite` | `u32.cfgrows` | `u32.index` | 1 | the uniform (cfg.r_rows, the band's rows) as a plain index |
+| F916 | `index.of_cfgroff` | `composite` | `u32.cfgroff` | `u32.index` | 1 | the uniform (cfg.r_off, the band's first row) as a plain index |
+
+## class `convert`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F917 | `convert.cfgm_count` | `composite` | `u32.cfgm` | `u32.count` | 1 | the uniform (cfg.m, the item count) as a count |
+| F918 | `convert.cfgd_count` | `composite` | `u32.cfgd` | `u32.count` | 1 | the uniform (cfg.d, the width (columns of h, values per item)) as a count |
+| F919 | `convert.cfgrows_count` | `composite` | `u32.cfgrows` | `u32.count` | 1 | the uniform (cfg.r_rows, the band's rows) as a count |
+
+## class `reg`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F920 | `reg.clear_f_L0` | `composite` | `reg<f32>.real` | `stmt.L0` | 1 | r = 0 (its form's zero): a reset with no literal to mutate |
+| F921 | `reg.clear_v_L0` | `composite` | `reg<vec4<f32>>.real` | `stmt.L0` | 1 | r = 0 (its form's zero): a reset with no literal to mutate |
+| F922 | `reg.clear_i_L0` | `composite` | `reg<u32>.index` | `stmt.L0` | 1 | r = 0 (its form's zero): a reset with no literal to mutate |
+| F923 | `reg.clear_b_L0` | `composite` | `reg<bool>.flag` | `stmt.L0` | 1 | r = 0 (its form's zero): a reset with no literal to mutate |
+| F924 | `reg.clear_f_L1` | `composite` | `reg<f32>.real` | `stmt.L1` | 1 | r = 0 (its form's zero): a reset with no literal to mutate |
+| F925 | `reg.clear_v_L1` | `composite` | `reg<vec4<f32>>.real` | `stmt.L1` | 1 | r = 0 (its form's zero): a reset with no literal to mutate |
+| F926 | `reg.clear_i_L1` | `composite` | `reg<u32>.index` | `stmt.L1` | 1 | r = 0 (its form's zero): a reset with no literal to mutate |
+| F927 | `reg.clear_b_L1` | `composite` | `reg<bool>.flag` | `stmt.L1` | 1 | r = 0 (its form's zero): a reset with no literal to mutate |
+| F928 | `reg.clear_f_L2` | `composite` | `reg<f32>.real` | `stmt.L2` | 1 | r = 0 (its form's zero): a reset with no literal to mutate |
+| F929 | `reg.clear_v_L2` | `composite` | `reg<vec4<f32>>.real` | `stmt.L2` | 1 | r = 0 (its form's zero): a reset with no literal to mutate |
+| F930 | `reg.clear_i_L2` | `composite` | `reg<u32>.index` | `stmt.L2` | 1 | r = 0 (its form's zero): a reset with no literal to mutate |
+| F931 | `reg.clear_b_L2` | `composite` | `reg<bool>.flag` | `stmt.L2` | 1 | r = 0 (its form's zero): a reset with no literal to mutate |
+| F932 | `reg.clear_f_L3` | `composite` | `reg<f32>.real` | `stmt.L3` | 1 | r = 0 (its form's zero): a reset with no literal to mutate |
+| F933 | `reg.clear_v_L3` | `composite` | `reg<vec4<f32>>.real` | `stmt.L3` | 1 | r = 0 (its form's zero): a reset with no literal to mutate |
+| F934 | `reg.clear_i_L3` | `composite` | `reg<u32>.index` | `stmt.L3` | 1 | r = 0 (its form's zero): a reset with no literal to mutate |
+| F935 | `reg.clear_b_L3` | `composite` | `reg<bool>.flag` | `stmt.L3` | 1 | r = 0 (its form's zero): a reset with no literal to mutate |
+| F936 | `reg.clear_f_L4` | `composite` | `reg<f32>.real` | `stmt.L4` | 1 | r = 0 (its form's zero): a reset with no literal to mutate |
+| F937 | `reg.clear_v_L4` | `composite` | `reg<vec4<f32>>.real` | `stmt.L4` | 1 | r = 0 (its form's zero): a reset with no literal to mutate |
+| F938 | `reg.clear_i_L4` | `composite` | `reg<u32>.index` | `stmt.L4` | 1 | r = 0 (its form's zero): a reset with no literal to mutate |
+| F939 | `reg.clear_b_L4` | `composite` | `reg<bool>.flag` | `stmt.L4` | 1 | r = 0 (its form's zero): a reset with no literal to mutate |
+| F940 | `reg.clear_f_C0` | `composite` | `reg<f32>.real` | `stmt.C0` | 1 | r = 0 (its form's zero): a reset with no literal to mutate |
+| F941 | `reg.clear_v_C0` | `composite` | `reg<vec4<f32>>.real` | `stmt.C0` | 1 | r = 0 (its form's zero): a reset with no literal to mutate |
+| F942 | `reg.clear_i_C0` | `composite` | `reg<u32>.index` | `stmt.C0` | 1 | r = 0 (its form's zero): a reset with no literal to mutate |
+| F943 | `reg.clear_b_C0` | `composite` | `reg<bool>.flag` | `stmt.C0` | 1 | r = 0 (its form's zero): a reset with no literal to mutate |
+| F944 | `reg.clear_f_C1` | `composite` | `reg<f32>.real` | `stmt.C1` | 1 | r = 0 (its form's zero): a reset with no literal to mutate |
+| F945 | `reg.clear_v_C1` | `composite` | `reg<vec4<f32>>.real` | `stmt.C1` | 1 | r = 0 (its form's zero): a reset with no literal to mutate |
+| F946 | `reg.clear_i_C1` | `composite` | `reg<u32>.index` | `stmt.C1` | 1 | r = 0 (its form's zero): a reset with no literal to mutate |
+| F947 | `reg.clear_b_C1` | `composite` | `reg<bool>.flag` | `stmt.C1` | 1 | r = 0 (its form's zero): a reset with no literal to mutate |
+| F948 | `reg.clear_f_C2` | `composite` | `reg<f32>.real` | `stmt.C2` | 1 | r = 0 (its form's zero): a reset with no literal to mutate |
+| F949 | `reg.clear_v_C2` | `composite` | `reg<vec4<f32>>.real` | `stmt.C2` | 1 | r = 0 (its form's zero): a reset with no literal to mutate |
+| F950 | `reg.clear_i_C2` | `composite` | `reg<u32>.index` | `stmt.C2` | 1 | r = 0 (its form's zero): a reset with no literal to mutate |
+| F951 | `reg.clear_b_C2` | `composite` | `reg<bool>.flag` | `stmt.C2` | 1 | r = 0 (its form's zero): a reset with no literal to mutate |
+| F952 | `reg.clear_f_C3` | `composite` | `reg<f32>.real` | `stmt.C3` | 1 | r = 0 (its form's zero): a reset with no literal to mutate |
+| F953 | `reg.clear_v_C3` | `composite` | `reg<vec4<f32>>.real` | `stmt.C3` | 1 | r = 0 (its form's zero): a reset with no literal to mutate |
+| F954 | `reg.clear_i_C3` | `composite` | `reg<u32>.index` | `stmt.C3` | 1 | r = 0 (its form's zero): a reset with no literal to mutate |
+| F955 | `reg.clear_b_C3` | `composite` | `reg<bool>.flag` | `stmt.C3` | 1 | r = 0 (its form's zero): a reset with no literal to mutate |
+| F956 | `reg.clear_f_C4` | `composite` | `reg<f32>.real` | `stmt.C4` | 1 | r = 0 (its form's zero): a reset with no literal to mutate |
+| F957 | `reg.clear_v_C4` | `composite` | `reg<vec4<f32>>.real` | `stmt.C4` | 1 | r = 0 (its form's zero): a reset with no literal to mutate |
+| F958 | `reg.clear_i_C4` | `composite` | `reg<u32>.index` | `stmt.C4` | 1 | r = 0 (its form's zero): a reset with no literal to mutate |
+| F959 | `reg.clear_b_C4` | `composite` | `reg<bool>.flag` | `stmt.C4` | 1 | r = 0 (its form's zero): a reset with no literal to mutate |
+| F960 | `reg.clear_f_L5` | `composite` | `reg<f32>.real` | `stmt.L5` | 1 | r = 0 (its form's zero): a reset with no literal to mutate |
+| F961 | `reg.clear_v_L5` | `composite` | `reg<vec4<f32>>.real` | `stmt.L5` | 1 | r = 0 (its form's zero): a reset with no literal to mutate |
+| F962 | `reg.clear_i_L5` | `composite` | `reg<u32>.index` | `stmt.L5` | 1 | r = 0 (its form's zero): a reset with no literal to mutate |
+| F963 | `reg.clear_b_L5` | `composite` | `reg<bool>.flag` | `stmt.L5` | 1 | r = 0 (its form's zero): a reset with no literal to mutate |
+| F964 | `reg.clear_f_C5` | `composite` | `reg<f32>.real` | `stmt.C5` | 1 | r = 0 (its form's zero): a reset with no literal to mutate |
+| F965 | `reg.clear_v_C5` | `composite` | `reg<vec4<f32>>.real` | `stmt.C5` | 1 | r = 0 (its form's zero): a reset with no literal to mutate |
+| F966 | `reg.clear_i_C5` | `composite` | `reg<u32>.index` | `stmt.C5` | 1 | r = 0 (its form's zero): a reset with no literal to mutate |
+| F967 | `reg.clear_b_C5` | `composite` | `reg<bool>.flag` | `stmt.C5` | 1 | r = 0 (its form's zero): a reset with no literal to mutate |
+
+967 function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Deliberately absent: atomics, images, derivatives, subgroup operations, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.
