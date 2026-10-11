@@ -195,6 +195,24 @@ pub fn crossover_task(a: &KernelBrief, b: &KernelBrief, shared: &[(usize, String
     )
 }
 
+/// THE REINVENTION BRIEF (Andrew, 2026-10-11: "crossover is often about the
+/// mixing of genes producing surprising outcomes"): the second child of a
+/// pair. The model keeps `keep`'s processing outside the shared section
+/// exactly and REINVENTS the shared middle, having seen how `other` does it.
+pub fn reinvent_task(keep: &KernelBrief, other: &KernelBrief, shared: &[(usize, String)], max_nodes: usize) -> String {
+    let mut shared_text = String::new();
+    for (nodes, text) in shared.iter().take(4) {
+        shared_text.push_str(&format!("{nodes} nodes: {text}\n"));
+    }
+    format!(
+        "You are the inventor in a crossover. Two correct kernels below share a MIDDLE: the structure named under THE SHARED STRUCTURE (how a thread is mapped to its output cells and how the store is guarded). Write ONE new kernel that keeps PARENT A's processing OUTSIDE that shared middle (its loads, its accumulation, its stores, its loop structure) as it is, and COMPLETELY REINVENTS the shared middle: a different thread-to-cell mapping, block shape, tile shape or work split than either parent uses, chosen to be faster on an Apple M3 Max under Metal. Parent B is shown so you know what the other parent did with the same middle; do not copy either parent's middle. The result must be correct for every d, m, r_rows, r_off the harness can pass, including partial tiles at the edges.\n\n{}\n\n{}\n{}\n===== THE SHARED STRUCTURE (what both parents do; reinvent this) =====\n{shared_text}\nSIZE: at most {max_nodes} nodes of the grammar (roughly {} lines).\nRETURN ONLY the kernel text, starting with the header comment line `// grid x y bx by`, no prose, no fences.",
+        fitness_explainer(),
+        brief_block(keep, "PARENT A (keep its processing outside the shared middle)"),
+        brief_block(other, "PARENT B (for reference only)"),
+        max_nodes / 12
+    )
+}
+
 /// THE REPAIR BRIEF: an offspring that failed, what failed, its parents.
 pub fn repair_task(child: &str, failure: &str, parents: &[&KernelBrief], max_nodes: usize) -> String {
     let mut p = String::new();
@@ -259,5 +277,9 @@ mod tests {
         }
         let r = repair_task("// grid 1 1 1 1\n", "constraint 0/128 cases: A t0 c14 v3", &[&k("k15")], 3000);
         assert!(r.contains("FAILURE: constraint 0/128 cases: A t0 c14 v3") && r.contains("PARENT A: k15"));
+        let v = reinvent_task(&k("k15"), &k("k07"), &[(33, "(logic.and ...)".into())], 3000);
+        for needle in ["REINVENTS the shared middle", "PARENT A (keep its processing outside the shared middle): k15", "PARENT B (for reference only): k07", "33 nodes: (logic.and ...)"] {
+            assert!(v.contains(needle), "{needle}");
+        }
     }
 }
