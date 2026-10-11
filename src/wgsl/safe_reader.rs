@@ -2019,16 +2019,19 @@ mod tests {
             let cols: Vec<&str> = line.split('\t').collect();
             let (name, expected, target) = (cols[0], cols[1], cols[2]);
             let src = std::fs::read_to_string(dir.join(format!("{name}.wgsl"))).unwrap_or_else(|e| panic!("{name}: {e}"));
+            // Two outcomes: the kernel reads, or our software has a bug
+            // (naga cannot parse the text our renderer led a model to, or
+            // the reader has no spelling for a construct); the bug is named.
             let outcome = match read(&src) {
-                Err(e) => ("invalid".to_string(), e.lines().next().unwrap_or("").chars().take(90).collect::<String>()),
+                Err(e) => ("bug".to_string(), format!("naga: {}", e.lines().next().unwrap_or("").chars().take(80).collect::<String>())),
                 Ok(_) => match read_safe(&src, &k) {
                     Ok(r) => ("reads".to_string(), format!("{} nodes", r.tree.size())),
-                    Err(e) => ("refused".to_string(), e.chars().take(90).collect::<String>()),
+                    Err(e) => ("bug".to_string(), format!("reader: {}", e.chars().take(80).collect::<String>())),
                 },
             };
             *counts.entry(outcome.0.clone()).or_insert(0usize) += 1;
-            let ok = outcome.0 == expected || (expected == "by-design" && outcome.0 == "refused");
-            if outcome.0 != target && !(target == "by-design" && outcome.0 == "refused") {
+            let ok = outcome.0 == expected;
+            if outcome.0 != target {
                 unmet += 1;
             }
             println!("{:<34} expected {:<9} target {:<9} got {:<8} {}{}", name, expected, target, outcome.0, if ok { "" } else { "MISMATCH " }, outcome.1);
@@ -2093,6 +2096,66 @@ mod tests {
         assert!(failures.is_empty(), "{} of {checked}:\n{}", failures.len(), failures.join("\n"));
     }
 
+    /// THE POPULATION AND THE LIBRARY ENTER A RUN WHOLE (Andrew, 2026-10-11,
+    /// after run A's r5 was costed at 3,023 per item against a bound of
+    /// 2,560 and kept out of run A2): every kernel text in
+    /// `logs/HGP/001/popA_g001/texts` and `logs/HGP/001/library_texts` reads,
+    /// renders within the default cost bound, and the rendered text reads
+    /// back. r5's per-item cost is pinned below the bound.
+    #[test]
+    fn the_population_and_the_library_read_render_within_the_bound_and_read_back() {
+        let k = WgslKingdom::load_safe();
+        let (t, role) = (FunctionTable::safe(), gram_role());
+        let rr = Renderer::new(&k, &t, &role);
+        let bound = crate::wgsl::safe_karva::default_bound(&k).unwrap();
+        let mut failures = Vec::new();
+        let mut checked = 0usize;
+        let mut r5_per_item = None;
+        for dir in ["logs/HGP/001/popA_g001/texts", "logs/HGP/001/library_texts"] {
+            let dir = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/")).join(dir);
+            let mut files: Vec<_> = std::fs::read_dir(&dir).unwrap_or_else(|e| panic!("{}: {e}", dir.display())).flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "wgsl")).collect();
+            files.sort();
+            for f in files {
+                let name = f.file_name().unwrap().to_string_lossy().to_string();
+                let src = std::fs::read_to_string(&f).unwrap();
+                checked += 1;
+                let tree = match read_safe(&src, &k) {
+                    Ok(r) => r.tree,
+                    Err(e) => {
+                        failures.push(format!("{name}: our software has a bug, it does not read: {}", &e[..e.len().min(200)]));
+                        continue;
+                    }
+                };
+                let c = crate::wgsl::render::cost(&tree);
+                if name.contains("g001_r5") {
+                    r5_per_item = Some(c.per_item);
+                }
+                if c.per_item > bound.per_item || c.base > bound.base {
+                    failures.push(format!("{name}: cost {:.0} per item, {:.0} base exceeds the bound {:.0}, {:.0}", c.per_item, c.base, bound.per_item, bound.base));
+                }
+                let text = match rr.kernel(&tree) {
+                    Ok(o) => format!("// grid {} {} {} {}\n{}", o.grid.x, o.grid.y, o.grid.bx, o.grid.by, o.text),
+                    Err(e) => {
+                        failures.push(format!("{name}: does not render: {e}"));
+                        continue;
+                    }
+                };
+                if let Err(e) = validate_text(&text) {
+                    failures.push(format!("{name}: naga on the rendered text: {}", e.lines().next().unwrap_or("")));
+                }
+                if let Err(e) = read_safe(&text, &k) {
+                    failures.push(format!("{name}: the rendered text does not read back: {}", &e[..e.len().min(200)]));
+                }
+                println!("{name:<44} {:>5} nodes, {:>6.0} per item, {:>6.0} base", tree.size(), c.per_item, c.base);
+            }
+        }
+        println!("{checked} kernels; bound {:.0} per item, {:.0} base", bound.per_item, bound.base);
+        assert!(failures.is_empty(), "{} of {checked}:\n{}", failures.len(), failures.join("\n"));
+        // r5 (run A: feasible, HFF 0.5213) was 3,023 per item when conform copied every compose part once per lane; 1,015 since.
+        let r5 = r5_per_item.expect("r5 is in the population and the library");
+        assert!(r5 < 1100.0 && r5 < bound.per_item, "r5 per item {r5}");
+    }
+
     /// A kernel with a helper function reads: the helper is inlined at its
     /// calls (the complete kingdom, step 6; `load4`, with a local, an
     /// if-else and lane stores, as statements since run A), or the refusal
@@ -2104,7 +2167,7 @@ mod tests {
         match read_safe(BLOCKED, &k) {
             Ok(r) => assert!(r.tree.size() > 10),
             Err(e) => {
-                assert!(!e.contains("helper") && !e.contains("load4"), "the helper is inlined, not refused: {e}");
+                assert!(!e.contains("helper") && !e.contains("load4"), "the helper is inlined, not named as the bug: {e}");
                 assert!(e.contains("Continue has no safe spelling"), "{e}");
             }
         }

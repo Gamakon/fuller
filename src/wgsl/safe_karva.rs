@@ -475,6 +475,30 @@ pub fn build(text: &str, kingdom: &WgslKingdom, role: &Role) -> Result<Tree, Str
 /// demand, and no conversion to it, is an error naming both; this is what
 /// makes a reader's tree a genotype whose dual codes a typed decoder can
 /// trust.
+/// The scalar lanes of a vector part: a compose's parts' lanes, a splat's
+/// value repeated, a scalar itself, an opaque vector taken apart by `access_i`.
+fn lanes(k: &Tree, kingdom: &WgslKingdom) -> Vec<Tree> {
+    let d = kingdom.dual(k.ty);
+    let l = d.map_or(1, |d| if d.slot.starts_with("vec") { d.lanes as usize } else { 1 });
+    if l == 1 {
+        return vec![k.clone()];
+    }
+    let stem = k.name.split('.').take(2).collect::<Vec<_>>().join(".");
+    if stem.starts_with("shape.compose") && !k.kids.is_empty() {
+        let parts: Vec<Tree> = k.kids.iter().flat_map(|p| lanes(p, kingdom)).collect();
+        if parts.len() == l {
+            return parts;
+        }
+    }
+    if stem.starts_with("shape.splat") && k.kids.len() == 1 {
+        return vec![k.kids[0].clone(); l];
+    }
+    let scalar = d.and_then(|d| d.scalar().map(|s| s.to_string())).unwrap_or_default();
+    let form = d.map(|d| d.form.clone()).unwrap_or_default();
+    let sty = crate::wgsl::render::dual_ty(kingdom, &format!("{scalar}.{form}")).unwrap_or(k.ty);
+    (0..l).map(|i| Tree::new(&format!("shape.access_{i}"), sty, vec![k.clone()])).collect()
+}
+
 pub fn conform(t: &Tree, demand: Ty, kingdom: &WgslKingdom, per_kernel: &[PerKernelRow]) -> Result<Tree, String> {
     let dual = |ty: Ty| kingdom.dual(ty).map(|d| d.dual.clone()).unwrap_or_else(|| format!("{ty:?}"));
     if t.name == FALLBACK {
@@ -488,26 +512,19 @@ pub fn conform(t: &Tree, demand: Ty, kingdom: &WgslKingdom, per_kernel: &[PerKer
         }
     }
     // A vector composed from vector parts (`vec4<f32>(a: vec2, b: vec2)`,
-    // k05): every part taken apart into its lanes first.
+    // k05): every part taken apart into its lanes first. A part that is
+    // itself a compose or a splat gives its own lanes; only an opaque
+    // vector part (a load, a register) is taken apart with `access_i`.
+    // Taking a compose apart with `access_i` of the whole part copied the
+    // part once per lane at every level (`vec2(vec2(a, b).x, vec2(a, b).y)`):
+    // the kingdom's own compose chains grew at every reading, and run A's
+    // r5 was costed at 3,023 per item for it.
     if t.name.starts_with("shape.compose") {
         let lanes_of = |k: &Tree| kingdom.dual(k.ty).map_or(1, |d| if d.slot.starts_with("vec") { d.lanes as usize } else { 1 });
         let want = kingdom.dual(demand).map_or(0, |d| if d.slot.starts_with("vec") { d.lanes as usize } else { 0 });
         let total: usize = t.kids.iter().map(lanes_of).sum();
         if want > 0 && total == want && t.kids.iter().any(|k| lanes_of(k) > 1) {
-            let mut flat = Vec::new();
-            for k in &t.kids {
-                let l = lanes_of(k);
-                if l > 1 {
-                    let scalar = kingdom.dual(k.ty).and_then(|d| d.scalar().map(|s| s.to_string())).unwrap_or_default();
-                    let form = kingdom.dual(k.ty).map(|d| d.form.clone()).unwrap_or_default();
-                    let sty = crate::wgsl::render::dual_ty(kingdom, &format!("{scalar}.{form}")).unwrap_or(k.ty);
-                    for i in 0..l {
-                        flat.push(Tree::new(&format!("shape.access_{i}"), sty, vec![k.clone()]));
-                    }
-                } else {
-                    flat.push(k.clone());
-                }
-            }
+            let flat = t.kids.iter().flat_map(|k| lanes(k, kingdom)).collect::<Vec<_>>();
             return conform(&Tree { name: format!("shape.compose{want}"), ty: t.ty, konst: t.konst, kids: flat }, demand, kingdom, per_kernel);
         }
     }

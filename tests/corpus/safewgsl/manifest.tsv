@@ -32,14 +32,14 @@ k30	reads	reads	a Sonnet draft of generation 0 (2026-10-10)
 k31	reads	reads	a Sonnet draft of generation 0 (2026-10-10)
 reply_g001_r2p1_opus	reads	reads	a model kernel of the smoke run, 2026-10-11
 reply_g001_r2x_reinvent_sonnet	reads	reads	a model kernel of the smoke run, 2026-10-11
-reply_g001_r2x_union_fable	invalid	invalid	one stray closing brace at the end: the model copied the kingdom's rendered style (lit_u32() wrappers, nested { { blocks) and lost count; the renderer writes plain literals and flat blocks since 2026-10-11 (run A's third round); the clean sibling row reads
+reply_g001_r2x_union_fable	bug	bug	our software had a bug: the renderer's text (lit_u32() wrappers, nested { { blocks) led the model to one stray closing brace at the end, so naga cannot parse the reply; fixed in d34ffb0 (plain literals, flat blocks); the clean sibling row reply_g001_r2x_union_fable_clean is the same reply without that brace, and it reads and computes as written (128/128)
 reply_g001_r3p1_sonnet	reads	reads	a model kernel of the smoke run, 2026-10-11
-reply_g001_r3x_reinvent_sonnet	reads	reads	accs[i][j] on a let array of vec4 (naga refuses IndexMustBeConstant as written): read without naga's expression checks, the element as a select chain and the lane as shape.at; refused as written on the GPU, the rebuilt kernel is the verdict
+reply_g001_r3x_reinvent_sonnet	reads	reads	accs[i][j] on a let array of vec4 (naga has no spelling for it as written: IndexMustBeConstant): read without naga's expression checks, the element as a select chain and the lane as shape.at; naga cannot compile it as written on the GPU, the rebuilt kernel is the verdict
 reply_g001_r3x_union_sonnet	reads	reads	a model kernel of the smoke run, 2026-10-11
 reply_g001_r4x_reinvent_sonnet	reads	reads	a model kernel of the smoke run, 2026-10-11
 reply_g001_r4x_union_sonnet	reads	reads	a model kernel of the smoke run, 2026-10-11
 reply_g001_r8x_reinvent_sonnet	reads	reads	a model kernel of the smoke run, 2026-10-11
-reply_g001_r8x_union_fable	invalid	invalid	one stray closing brace at the end: the model copied the kingdom's rendered style (lit_u32() wrappers, nested { { blocks) and lost count; the renderer writes plain literals and flat blocks since 2026-10-11 (run A's third round); the clean sibling row reads
+reply_g001_r8x_union_fable	bug	bug	our software had a bug: the renderer's text (lit_u32() wrappers, nested { { blocks) led the model to one stray closing brace at the end, so naga cannot parse the reply; fixed in d34ffb0 (plain literals, flat blocks); the clean sibling row reply_g001_r8x_union_fable_clean is the same reply without that brace, and it reads and computes as written (128/128)
 reply_g002_fresh16_sonnet	reads	reads	a model kernel of the smoke run, 2026-10-11 (added 10:50Z)
 reply_g002_fresh17_sonnet	reads	reads	a model kernel of the smoke run, 2026-10-11 (added 10:50Z)
 reply_g002_r2x_reinvent_fable	reads	reads	a model kernel of the smoke run, 2026-10-11 (added 10:50Z)
@@ -57,7 +57,7 @@ reply_fitA_g001_r4p1_g2_fable	reads	reads	run A: the kingdom's own gid.y * 4u + 
 reply_fitA_g001_r6x_reinvent_fable	reads	reads	run A: the row and column held in registers (i6 = i3 + 16u * k); the memo sees through them
 reply_fitA_g001_r6x_reinvent_g1_sonnet	reads	reads	run A: the row and column held in registers (i6 = i3 + 16u * k); the memo sees through them
 reply_fitA_g001_r6x_reinvent_g2_sonnet	reads	reads	run A: the row and column held in registers (i6 = i3 + 16u * k); the memo sees through them
-reply_fitA_g001_r6x_reinvent_g3_sonnet	reads	reads	run A: read here, declined by phylu's literal grid (112 and 157); the grid widened
+reply_fitA_g001_r6x_reinvent_g3_sonnet	reads	reads	run A: read here, kept out by phylu's literal grid (112 and 157); the grid widened
 reply_fitA_seed08_sonnet	reads	reads	run A: sa[si][comp] = va, a lane of a vec4 workgroup element: wg.set_v_lane; wrong as written like k08 (threads race on lanes of shared vec4 elements: 6/128 cases by chance, 0/128 rebuilt)
 reply_fitA_g001_r4p1_sonnet	reads	reads	run A: the kingdom's own at_vec4f copied from a rendered kernel (var t = v; return t[i & 3u]) is read as shape.at
 reply_fitA_seed04_sonnet	reads	reads	run A: a helper with a local, ifs and lane stores (ldv) inlined as statements at its call
