@@ -1065,18 +1065,22 @@ pub fn cost(t: &Tree) -> Cost {
         let lit = |k: Option<&Tree>, max: f64| k.map_or(1.0, |k| if k.name.starts_with("literal.") && k.konst.is_finite() { f64::from(k.konst).round().clamp(1.0, max) } else { 1.0 });
         match safe_base(&t.name) {
             "loop.items" | "loop.items_unrolled" | "loop.items_bounded" | "loop.items_unrolled_bounded" | "loop.items_cont_bounded" => {
+                // The body runs once per item, times the passes an expression
+                // bound makes over the items; a nested long loop is refused by the renderer.
+                let bound_i = if safe_base(&t.name) == "loop.items_unrolled_bounded" { 1 } else { 0 };
+                let passes = items_passes(t.kids.get(bound_i));
                 for k in &t.kids {
                     let (b, p) = walk(k, tile, true);
-                    // The body runs once per item; a nested long loop is refused by the renderer.
-                    per_item += b + p;
+                    per_item += (b + p) * passes;
                 }
             }
             "loop.items_strided_bounded" | "loop.items_cont_strided_bounded" => {
                 // (bound, stride, body): the body runs once per `stride` items.
                 let stride = lit(t.kids.get(1), 4096.0);
+                let passes = items_passes(t.kids.first());
                 for k in &t.kids {
                     let (b, p) = walk(k, tile, true);
-                    per_item += (b + p) / stride;
+                    per_item += (b + p) * passes / stride;
                 }
             }
             "loop.tile" => {
@@ -1154,7 +1158,18 @@ pub fn worst_bound(t: &Tree) -> f64 {
             _ => 8192.0,
         }
     }
-    eval(t).clamp(1.0, 65536.0)
+    eval(t).clamp(1.0, 1.0e12)
+}
+
+/// The item loop's bound relative to the worst shape's m: 1 for the
+/// bindings' counts and for an expression at most m, more for a quadratic
+/// bound (`cfg.m * cfg.d` is 8,192 passes over the items), so the cost
+/// bound refuses such a loop by its true size.
+fn items_passes(bound: Option<&Tree>) -> f64 {
+    match bound {
+        Some(b) if safe_base(&b.name) == "bound.of_index" => (worst_bound(b) / 65536.0).max(1.0),
+        _ => 1.0,
+    }
 }
 
 /// A safeWGSL row name reduced to its renderer case: the rung suffix
@@ -1379,6 +1394,31 @@ impl Tree {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An expression-bounded item loop is costed by its bound at the worst
+    /// shape: `cfg.m * cfg.d` is 8,192 passes over the items and is refused
+    /// by the cost bound, `(cfg.d + 63u) / 64u` is less than one pass; a
+    /// tilex loop bounded by cfg.m costs 65,536 bodies.
+    #[test]
+    fn an_expression_bound_is_costed_at_the_worst_shape() {
+        let k = crate::wgsl::loader::WgslKingdom::load_safe();
+        let t = |n: &str| dual_ty(&k, n).unwrap();
+        let (index, count) = (t("u32.index"), t("u32.count"));
+        let m = || Tree::new("index.of_count", index, vec![Tree::new("load.cfg_m", count, vec![])]);
+        let d = || Tree::new("index.of_count", index, vec![Tree::new("load.cfg_d", count, vec![])]);
+        let body = || Tree::new("block.one_L1", t("block.L1"), vec![Tree::new("stmt.barrier_L1", t("stmt.L1"), vec![])]);
+        let bound = |e: Tree| Tree::new("bound.of_index", t("u32.boundx"), vec![e]);
+        let quadratic = Tree::new("loop.items_boundx", t("stmt.L0"), vec![bound(Tree::new("index.mul", index, vec![m(), d()])), body()]);
+        let linear = Tree::new("loop.items_boundx", t("stmt.L0"), vec![bound(Tree::new("index.div", index, vec![Tree::new("index.add", index, vec![d(), Tree::literal("literal.index", index, 63.0)]), Tree::literal("literal.index", index, 64.0)])), body()]);
+        let plain = Tree::new("loop.items_boundm", t("stmt.L0"), vec![Tree::new("bound.m", t("u32.boundm"), vec![]), body()]);
+        let (q, l, p) = (cost(&quadratic).per_item, cost(&linear).per_item, cost(&plain).per_item);
+        // The bound's own nodes are costed with the body, so the ratio is
+        // 8,192 times (bound nodes + body) / (1 + body): between 8,192 and 65,536.
+        assert!(q / p > 8192.0 && q / p < 65536.0, "quadratic {q} vs plain {p}");
+        assert!(l < 8.0 * p, "a bound below m is one pass (its nodes aside): {l} vs {p}");
+        let tilex = Tree::new("loop.tilex_L0", t("stmt.L0"), vec![bound(m()), Tree::new("block.one_L2", t("block.L2"), vec![Tree::new("stmt.barrier_L2", t("stmt.L2"), vec![])])]);
+        assert!(cost(&tilex).base >= 65536.0 * 2.0, "{}", cost(&tilex).base);
+    }
 
     fn setup() -> (WgslKingdom, FunctionTable, Role) {
         (WgslKingdom::load(), FunctionTable::shipped(), gram_role())
