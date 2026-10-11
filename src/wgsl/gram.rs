@@ -419,6 +419,55 @@ pub fn check(h_gpu: &[f32], h_ref: &[f64], d: usize, m: usize) -> Verdict {
     v
 }
 
+/// [`check`]'s `max_ratio` and `non_finite`, the two figures the fitness
+/// reads, over row blocks on every core: the same per-cell arithmetic, and
+/// a maximum and a count do not depend on the order, so the result is
+/// bit-identical to [`check`]'s (tested).
+pub fn check_max(h_gpu: &[f32], h_ref: &[f64], d: usize, m: usize) -> (f64, usize) {
+    assert_eq!(h_gpu.len(), d * d);
+    assert_eq!(h_ref.len(), d * d);
+    let tau = 4.0 * f64::from(f32::EPSILON) * (m as f64).sqrt();
+    let norms: Vec<f64> = (0..d).map(|r| h_ref[r * d + r].sqrt()).collect();
+    let threads = std::thread::available_parallelism().map_or(1, usize::from).min(d.max(1));
+    let rows_per = d.div_ceil(threads);
+    let norms = &norms;
+    std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..threads)
+            .map(|k| {
+                scope.spawn(move || {
+                    let (mut max_ratio, mut non_finite) = (0.0f64, 0usize);
+                    for r in (k * rows_per)..((k + 1) * rows_per).min(d) {
+                        for c in 0..d {
+                            let g = f64::from(h_gpu[r * d + c]);
+                            let want = h_ref[r * d + c];
+                            if !want.is_finite() {
+                                if !((g.is_nan() && want.is_nan()) || g == want) {
+                                    non_finite += 1;
+                                    max_ratio = max_ratio.max(1.0);
+                                }
+                                continue;
+                            }
+                            if !g.is_finite() {
+                                non_finite += 1;
+                                max_ratio = max_ratio.max(1.0);
+                                continue;
+                            }
+                            let diff = (g - want).abs();
+                            let scale = tau * norms[r] * norms[c];
+                            let ratio = if scale > 0.0 { diff / scale } else if diff == 0.0 { 0.0 } else { f64::INFINITY };
+                            if ratio > max_ratio {
+                                max_ratio = ratio;
+                            }
+                        }
+                    }
+                    (max_ratio, non_finite)
+                })
+            })
+            .collect();
+        handles.into_iter().map(|h| h.join().expect("check thread")).fold((0.0f64, 0usize), |(a, n), (b, k)| (if b > a { b } else { a }, n + k))
+    })
+}
+
 /// One build of `H` on the device: the result and its times.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Build {
@@ -513,34 +562,28 @@ impl<'a> Gram<'a> {
     }
 
     /// Build `H` over `phi` (item-major `m × d`) as production does, under
-    /// `limit` bytes per binding.
+    /// `limit` bytes per binding: upload, run with the read-back, free.
     pub fn build(&self, phi: &[f32], d: usize, m: usize, limit: u64) -> Result<Build, String> {
-        if phi.len() != d * m {
-            return Err(format!("phi has {} values, not m × d = {}", phi.len(), d * m));
-        }
+        let r = Resident::upload(self.dev, phi, d, m, limit)?;
+        let mut b = self.run(&r, true)?;
+        b.upload_ms = r.upload_ms;
+        r.free();
+        Ok(b)
+    }
+
+    /// Run over Φ already on the device. With `read_h` false the result is
+    /// not read back (`Build::h` is empty): a timing build, whose output
+    /// nothing reads. The passes, their order and their timestamps are the
+    /// same either way; `upload_ms` is 0 (the upload was earlier).
+    pub fn run(&self, r: &Resident, read_h: bool) -> Result<Build, String> {
+        let (d, limit) = (r.d, r.limit);
         let device = &self.dev.device;
         let queue = &self.dev.queue;
         let row_bytes = d as u64 * 4;
-        if row_bytes > limit {
-            return Err(format!("one d-length row of {row_bytes} bytes exceeds the limit {limit}"));
-        }
-        let band_items = ((limit / row_bytes).max(1) as usize).min(m);
         let row_band_rows = ((limit / row_bytes).max(1) as usize).min(d);
-        let item_bands = m.div_ceil(band_items);
+        let item_bands = r.bands.len();
         let row_bands = d.div_ceil(row_band_rows);
-
-        let t0 = Instant::now();
-        let phi_bands: Vec<(wgpu::Buffer, u32)> = (0..item_bands)
-            .map(|i| {
-                let start = i * band_items;
-                let end = (start + band_items).min(m);
-                let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some("gram phi band"), contents: bytemuck::cast_slice(&phi[start * d..end * d]), usage: wgpu::BufferUsages::STORAGE });
-                (buffer, (end - start) as u32)
-            })
-            .collect();
-        queue.submit(None);
-        device.poll(wgpu::Maintain::Wait);
-        let upload_ms = t0.elapsed().as_secs_f64() * 1e3;
+        let phi_bands = &r.bands;
 
         let query_set = device.create_query_set(&wgpu::QuerySetDescriptor { label: Some("gram timestamps"), ty: wgpu::QueryType::Timestamp, count: 2 * item_bands as u32 });
         let stamps_bytes = 16 * item_bands as u64;
@@ -548,7 +591,7 @@ impl<'a> Gram<'a> {
         let stamps_read = device.create_buffer(&wgpu::BufferDescriptor { label: Some("gram timestamps read"), size: stamps_bytes, usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ, mapped_at_creation: false });
         let layout = self.pipeline.get_bind_group_layout(0);
 
-        let mut h = vec![0.0f32; d * d];
+        let mut h = if read_h { vec![0.0f32; d * d] } else { Vec::new() };
         let mut gpu_ns = 0.0f64;
         let mut compute_ms = 0.0f64;
         let t1 = Instant::now();
@@ -568,7 +611,7 @@ impl<'a> Gram<'a> {
                 .collect();
             let wg_x = (d as u32).div_ceil(self.grid.x * self.grid.bx);
             let wg_y = (r_rows as u32).div_ceil(self.grid.y * self.grid.by);
-            let staging = device.create_buffer(&wgpu::BufferDescriptor { label: Some("gram staging"), size: band_bytes, usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false });
+            let staging = read_h.then(|| device.create_buffer(&wgpu::BufferDescriptor { label: Some("gram staging"), size: band_bytes, usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false }));
             let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("gram output band") });
             enc.clear_buffer(&h_buffer, 0, None);
             for (i, bind) in binds.iter().enumerate() {
@@ -583,25 +626,32 @@ impl<'a> Gram<'a> {
             queue.submit(Some(enc.finish()));
             device.poll(wgpu::Maintain::Wait);
             compute_ms += t_compute.elapsed().as_secs_f64() * 1e3;
-            // Then the timestamps and the band, read back.
+            // Then the timestamps and (when asked) the band, read back.
             let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("gram read-back") });
             enc.resolve_query_set(&query_set, 0..2 * item_bands as u32, &resolve_buf, 0);
             enc.copy_buffer_to_buffer(&resolve_buf, 0, &stamps_read, 0, stamps_bytes);
-            enc.copy_buffer_to_buffer(&h_buffer, 0, &staging, 0, band_bytes);
+            if let Some(st) = &staging {
+                enc.copy_buffer_to_buffer(&h_buffer, 0, st, 0, band_bytes);
+            }
             queue.submit(Some(enc.finish()));
             let (tx, rx) = std::sync::mpsc::channel();
-            staging.slice(..).map_async(wgpu::MapMode::Read, { let tx = tx.clone(); move |r| { let _ = tx.send(r); } });
+            if let Some(st) = &staging {
+                st.slice(..).map_async(wgpu::MapMode::Read, { let tx = tx.clone(); move |r| { let _ = tx.send(r); } });
+            }
             stamps_read.slice(..).map_async(wgpu::MapMode::Read, move |r| { let _ = tx.send(r); });
             device.poll(wgpu::Maintain::Wait);
-            for _ in 0..2 {
+            for _ in 0..(1 + usize::from(staging.is_some())) {
                 rx.recv().map_err(|e| format!("map: {e}"))?.map_err(|e| format!("map: {e}"))?;
             }
-            {
-                let mapped = staging.slice(..).get_mapped_range();
-                let band: &[f32] = bytemuck::cast_slice(&mapped);
-                h[r_off * d..(r_off + r_rows) * d].copy_from_slice(band);
+            if let Some(st) = &staging {
+                {
+                    let mapped = st.slice(..).get_mapped_range();
+                    let band: &[f32] = bytemuck::cast_slice(&mapped);
+                    h[r_off * d..(r_off + r_rows) * d].copy_from_slice(band);
+                }
+                st.unmap();
+                st.destroy();
             }
-            staging.unmap();
             {
                 let mapped = stamps_read.slice(..).get_mapped_range();
                 let stamps: &[u64] = bytemuck::cast_slice(&mapped);
@@ -611,15 +661,55 @@ impl<'a> Gram<'a> {
             }
             stamps_read.unmap();
             h_buffer.destroy();
-            staging.destroy();
             r_off += r_rows;
         }
         let wall_ms = t1.elapsed().as_secs_f64() * 1e3;
-        for (b, _) in &phi_bands {
+        device.poll(wgpu::Maintain::Poll);
+        Ok(Build { h, gpu_ms: gpu_ns / 1e6, compute_ms, wall_ms, upload_ms: 0.0, passes: item_bands * row_bands, item_bands, row_bands })
+    }
+}
+
+/// Φ on the device in the driver's item bands, uploaded once and run over
+/// by any number of kernels ([`Gram::run`]).
+pub struct Resident {
+    pub d: usize,
+    pub m: usize,
+    pub limit: u64,
+    bands: Vec<(wgpu::Buffer, u32)>,
+    pub upload_ms: f64,
+}
+
+impl Resident {
+    /// Upload `phi` (item-major `m × d`) in item bands sized from `limit`.
+    pub fn upload(dev: &Device, phi: &[f32], d: usize, m: usize, limit: u64) -> Result<Resident, String> {
+        if phi.len() != d * m {
+            return Err(format!("phi has {} values, not m × d = {}", phi.len(), d * m));
+        }
+        let row_bytes = d as u64 * 4;
+        if row_bytes > limit {
+            return Err(format!("one d-length row of {row_bytes} bytes exceeds the limit {limit}"));
+        }
+        let band_items = ((limit / row_bytes).max(1) as usize).min(m);
+        let item_bands = m.div_ceil(band_items);
+        let t0 = Instant::now();
+        let bands = (0..item_bands)
+            .map(|i| {
+                let start = i * band_items;
+                let end = (start + band_items).min(m);
+                let buffer = dev.device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some("gram phi band"), contents: bytemuck::cast_slice(&phi[start * d..end * d]), usage: wgpu::BufferUsages::STORAGE });
+                (buffer, (end - start) as u32)
+            })
+            .collect();
+        dev.queue.submit(None);
+        dev.device.poll(wgpu::Maintain::Wait);
+        Ok(Resident { d, m, limit, bands, upload_ms: t0.elapsed().as_secs_f64() * 1e3 })
+    }
+
+    /// Release the device memory now rather than at drop.
+    pub fn free(&self) {
+        for (b, _) in &self.bands {
             b.destroy();
         }
-        device.poll(wgpu::Maintain::Poll);
-        Ok(Build { h, gpu_ms: gpu_ns / 1e6, compute_ms, wall_ms, upload_ms, passes: item_bands * row_bands, item_bands, row_bands })
     }
 }
 
@@ -811,6 +901,12 @@ pub struct FitnessContext {
     /// [`ROUND_BUDGET_MS`] unless the caller sets them.
     pub base_budget_ms: f64,
     pub round_budget_ms: f64,
+    /// Φ of the rungs, the pairs (train, val, extrap, in their order) and
+    /// the timing shapes, uploaded once at [`FitnessContext::new`] and kept
+    /// on the device (about 0.9 GB, most of it the timing shapes).
+    pub resident_rungs: Vec<Resident>,
+    pub resident_pairs: [Vec<Resident>; 3],
+    pub resident_timing: Vec<Resident>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -883,8 +979,14 @@ impl FitnessContext {
         if slow_limit_ms(ROUND_BUDGET_MS, &shipped_ms) < worst_shipped {
             return Err(format!("the shipped kernel takes {shipped_ms:?} ms at the timing shapes: a timing round of {ROUND_BUDGET_MS} ms cannot hold it and a kernel at its speed"));
         }
-        let rungs = RUNGS.iter().map(|&(d, m)| (d, m, phi(d, m, 13))).collect();
-        Ok(FitnessContext { train: pick(&sp.train, &train_idx)?, val: pick(&sp.val, &val_idx)?, extrap: pick(&sp.extrap, &extrap_idx)?, probes, admission, shipped_source: SHIPPED.to_string(), timing, limit, timing_rounds: 1, rungs, shipped_ms, base_budget_ms: BASE_BUDGET_MS, round_budget_ms: ROUND_BUDGET_MS })
+        let rungs: Vec<(usize, usize, Vec<f32>)> = RUNGS.iter().map(|&(d, m)| (d, m, phi(d, m, 13))).collect();
+        let (train, val, extrap) = (pick(&sp.train, &train_idx)?, pick(&sp.val, &val_idx)?, pick(&sp.extrap, &extrap_idx)?);
+        let up = |set: &[(usize, usize, &[f32])]| -> Result<Vec<Resident>, String> { set.iter().map(|(d, m, p)| Resident::upload(dev, p, *d, *m, limit)).collect() };
+        let pairs_of = |set: &[AccuracyPair]| -> Result<Vec<Resident>, String> { up(&set.iter().map(|p| (p.1, p.2, p.3.as_slice())).collect::<Vec<_>>()) };
+        let resident_rungs = up(&rungs.iter().map(|(d, m, p)| (*d, *m, p.as_slice())).collect::<Vec<_>>())?;
+        let resident_pairs = [pairs_of(&train)?, pairs_of(&val)?, pairs_of(&extrap)?];
+        let resident_timing = up(&timing.iter().map(|(d, m, p)| (*d, *m, p.as_slice())).collect::<Vec<_>>())?;
+        Ok(FitnessContext { train, val, extrap, probes, admission, shipped_source: SHIPPED.to_string(), timing, limit, timing_rounds: 1, rungs, shipped_ms, base_budget_ms: BASE_BUDGET_MS, round_budget_ms: ROUND_BUDGET_MS, resident_rungs, resident_pairs, resident_timing })
     }
 
     /// The limit of one candidate build at a timing shape, [`slow_limit_ms`].
@@ -941,11 +1043,11 @@ impl FitnessContext {
         let limit_ms = self.slow_limit_ms();
         // The rungs: timed, gated, not judged.
         let t_rungs = Instant::now();
-        for (d, m, phi) in &self.rungs {
+        for ((d, m, _), res) in self.rungs.iter().zip(&self.resident_rungs) {
             if let Err(e) = gate(&meter, &format!("the timing rung d {d} m {m}"), work(*d, *m), elapsed_ms(t), limit_ms, self.base_budget_ms) {
                 return infeasible(passed, e, t, &meter, &split);
             }
-            match gram.build(phi, *d, *m, self.limit) {
+            match gram.run(res, false) {
                 Ok(b) => {
                     meter.push(work(*d, *m), b.compute_ms);
                     split.build(&b);
@@ -962,16 +1064,16 @@ impl FitnessContext {
         // Accuracy columns: the worst error relative to shipped's, min(1, e / 2),
         // per set. The pairs run smallest work first across the three sets, so
         // every pair is predicted from a measured build at most 32x smaller.
-        let mut order: Vec<(usize, &AccuracyPair)> = [&self.train, &self.val, &self.extrap].iter().enumerate().flat_map(|(k, set)| set.iter().map(move |p| (k, p))).collect();
+        let mut order: Vec<(usize, &AccuracyPair, &Resident)> = [&self.train, &self.val, &self.extrap].iter().zip(&self.resident_pairs).enumerate().flat_map(|(k, (set, res))| set.iter().zip(res).map(move |(p, r)| (k, p, r))).collect();
         order.sort_by(|a, b| work(a.1 .1, a.1 .2).total_cmp(&work(b.1 .1, b.1 .2)));
         split.compile += elapsed_ms(t_shc);
         let mut worst = [0.0f64; 3];
-        for (k, (name, d, m, phi, h_ref, smax)) in order {
+        for (k, (name, d, m, _, h_ref, smax), res) in order {
             if let Err(e) = gate(&meter, &format!("pair {name} (d {d} m {m})"), work(*d, *m), elapsed_ms(t), limit_ms, self.base_budget_ms) {
                 return infeasible(passed, e, t, &meter, &split);
             }
             let t_pb = Instant::now();
-            let b = match gram.build(phi, *d, *m, self.limit) {
+            let b = match gram.run(res, true) {
                 Ok(b) => b,
                 Err(e) => return infeasible(passed, format!("run: {e}"), t, &meter, &split),
             };
@@ -979,12 +1081,12 @@ impl FitnessContext {
             split.build(&b);
             meter.push(work(*d, *m), b.compute_ms);
             let t_pc = Instant::now();
-            let v = check(&b.h, h_ref, *d, *m);
+            let (max_ratio, non_finite) = check_max(&b.h, h_ref, *d, *m);
             split.pairs_check += elapsed_ms(t_pc);
-            if v.non_finite > 0 || v.max_ratio > (2.0 * smax).max(1.0) {
-                return infeasible(passed, format!("pair {name}: max {:.3} tau (shipped {smax:.3}), non-finite {}", v.max_ratio, v.non_finite), t, &meter, &split);
+            if non_finite > 0 || max_ratio > (2.0 * smax).max(1.0) {
+                return infeasible(passed, format!("pair {name}: max {max_ratio:.3} tau (shipped {smax:.3}), non-finite {non_finite}"), t, &meter, &split);
             }
-            worst[k] = worst[k].max(if *smax > 0.0 { v.max_ratio / smax } else { v.max_ratio });
+            worst[k] = worst[k].max(if *smax > 0.0 { max_ratio / smax } else { max_ratio });
         }
         let [et, ev, ex] = worst;
         // The timing shapes predicted before any is dispatched; a kernel
@@ -1001,7 +1103,7 @@ impl FitnessContext {
         let mut speedups = [0.0f64; 3];
         let mut measured_ms = [0.0f64; 3];
         let rounds = self.timing_rounds.max(1);
-        for (k, (d, m, phi)) in self.timing.iter().enumerate() {
+        for (k, ((d, m, _), res)) in self.timing.iter().zip(&self.resident_timing).enumerate() {
             let mut ratios = Vec::with_capacity(rounds);
             let mut walls = Vec::with_capacity(rounds);
             for round in 0..rounds {
@@ -1009,7 +1111,7 @@ impl FitnessContext {
                 let r = (|| -> Result<(f64, f64), String> {
                     let timed = |g: &Gram, split: &mut Split, shipped_side: bool| -> Result<Build, String> {
                         let tb = Instant::now();
-                        let b = g.build(phi, *d, *m, self.limit)?;
+                        let b = g.run(res, false)?;
                         *if shipped_side { &mut split.timing_shipped } else { &mut split.timing_cand } += tb.elapsed().as_secs_f64() * 1e3;
                         split.build(&b);
                         Ok(b)
@@ -1250,6 +1352,28 @@ mod tests {
         let h = reference(&p, d, 2);
         // H[r][c] = Σ_t p[t][r] p[t][c]
         assert_eq!(h, vec![17.0, 22.0, 27.0, 22.0, 29.0, 36.0, 27.0, 36.0, 45.0]);
+    }
+
+    /// The parallel check returns the serial check's max ratio and
+    /// non-finite count to the bit, on random cells with NaN, ±inf, a zero
+    /// column and exact cells.
+    #[test]
+    fn check_max_is_bit_identical_to_check() {
+        for (d, m, seed) in [(1usize, 4usize, 1u64), (7, 9, 2), (64, 100, 3), (129, 33, 4), (300, 1000, 5)] {
+            let p = phi_of(Kind::NonFinite, d, m, seed);
+            let mut h_ref = reference(&p, d, m);
+            if d > 3 {
+                for c in 0..d {
+                    h_ref[3 * d + c] = 0.0;
+                    h_ref[c * d + 3] = 0.0;
+                }
+            }
+            let mut state = seed;
+            let h: Vec<f32> = h_ref.iter().map(|x| { let u = unit(&mut state); match (u * 50.0) as u32 { 0 => f32::NAN, 1 => f32::INFINITY, 2 => *x as f32 + 1.0, _ => (*x * (1.0 + 1e-7 * (u - 0.5))) as f32 } }).collect();
+            let v = check(&h, &h_ref, d, m);
+            let (mx, nf) = check_max(&h, &h_ref, d, m);
+            assert_eq!((mx.to_bits(), nf), (v.max_ratio.to_bits(), v.non_finite), "d {d} m {m}");
+        }
     }
 
     #[test]
