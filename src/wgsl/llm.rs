@@ -172,6 +172,21 @@ Accumulating in a different order changes the error: more independent partial su
         .to_string()
 }
 
+/// THE GRAMMAR'S LIMITS, stated to the model so it does not propose what
+/// the kernel grammar cannot spell (the smoke run of 2026-10-11 08:52Z
+/// declined four children in four for exactly these).
+pub fn grammar_limits() -> String {
+    "WHAT THE KERNEL GRAMMAR CAN SPELL (a kernel outside it is declined before it is ever run): \
+one entry point `main`, no helper functions; workgroup size from {4, 8, 16, 32, 64} per axis; a register block factor from {1, 2, 4}; an unroll factor from {2, 4, 8}; \
+every loop bounded by cfg.m, cfg.d, cfg.r_rows or a literal of at most 64, counting up by a constant step; \
+vector components accessed by a constant (.x .y .z .w or [0]..[3]), never by a variable; arrays indexed by u32 expressions; \
+var<workgroup> arrays of f32 (at most 2048) or vec4<f32> (at most 256); private arrays of at most 64 f32; at most 16 integer and 16 float scalar registers; \
+workgroupBarrier() only at the top level of a loop body, never under an if; \
+reads of phi and writes to h only through index expressions built from the builtins, cfg fields and loop counters; \
+plain WGSL as of 2024: no f16, no subgroup operations, no pointers, no switch, no while/loop-break forms (use for loops)."
+        .to_string()
+}
+
 fn brief_block(k: &KernelBrief, label: &str) -> String {
     format!(
         "===== {label}: {} =====\nHFF {:.4}; speed-ups {:.2}x / {:.2}x / {:.2}x; columns {:.3} {:.3} {:.3} | {:.3} {:.3} {:.3}\nPROBLEM: {}\n```wgsl\n{}```\n",
@@ -187,10 +202,11 @@ pub fn crossover_task(a: &KernelBrief, b: &KernelBrief, shared: &[(usize, String
         shared_text.push_str(&format!("{nodes} nodes: {text}\n"));
     }
     format!(
-        "You are the integrator in a crossover. Two correct kernels below were written by different strategies. Write ONE new kernel that keeps the SHARED STRUCTURE exactly (the same workgroup shape, the same thread-to-cell mapping, the same store guard) and combines the technique of each parent so that the child beats both on the score: as fast as the faster parent, as accurate as the more accurate one.\n\n{}\n\n{}\n{}\n===== THE SHARED STRUCTURE (sub-trees of the two kernels' typed parse trees that are identical, largest first; Karva s-expressions over the kernel grammar) =====\n{shared_text}\nSIZE: the kernel must parse to at most {max_nodes} nodes of the grammar (roughly {} lines); prefer the smaller of two equivalent spellings.\nRETURN ONLY the kernel text, starting with the header comment line `// grid x y bx by`, no prose, no fences.",
+        "You are the integrator in a crossover. Two correct kernels below were written by different strategies. Write ONE new kernel that keeps the SHARED STRUCTURE exactly (the same workgroup shape, the same thread-to-cell mapping, the same store guard) and combines the technique of each parent so that the child beats both on the score: as fast as the faster parent, as accurate as the more accurate one.\n\n{}\n\n{}\n{}\n===== THE SHARED STRUCTURE (sub-trees of the two kernels' typed parse trees that are identical, largest first; Karva s-expressions over the kernel grammar) =====\n{shared_text}\n{}\nSIZE: the kernel must parse to at most {max_nodes} nodes of the grammar (roughly {} lines); prefer the smaller of two equivalent spellings.\nRETURN ONLY the kernel text, starting with the header comment line `// grid x y bx by`, no prose, no fences.",
         fitness_explainer(),
         brief_block(a, "PARENT A"),
         brief_block(b, "PARENT B"),
+        grammar_limits(),
         max_nodes / 12
     )
 }
@@ -205,10 +221,11 @@ pub fn reinvent_task(keep: &KernelBrief, other: &KernelBrief, shared: &[(usize, 
         shared_text.push_str(&format!("{nodes} nodes: {text}\n"));
     }
     format!(
-        "You are the inventor in a crossover. Two correct kernels below share a MIDDLE: the structure named under THE SHARED STRUCTURE (how a thread is mapped to its output cells and how the store is guarded). Write ONE new kernel that keeps PARENT A's processing OUTSIDE that shared middle (its loads, its accumulation, its stores, its loop structure) as it is, and COMPLETELY REINVENTS the shared middle: a different thread-to-cell mapping, block shape, tile shape or work split than either parent uses, chosen to be faster on an Apple M3 Max under Metal. Parent B is shown so you know what the other parent did with the same middle; do not copy either parent's middle. The result must be correct for every d, m, r_rows, r_off the harness can pass, including partial tiles at the edges.\n\n{}\n\n{}\n{}\n===== THE SHARED STRUCTURE (what both parents do; reinvent this) =====\n{shared_text}\nSIZE: at most {max_nodes} nodes of the grammar (roughly {} lines).\nRETURN ONLY the kernel text, starting with the header comment line `// grid x y bx by`, no prose, no fences.",
+        "You are the inventor in a crossover. Two correct kernels below share a MIDDLE: the structure named under THE SHARED STRUCTURE (how a thread is mapped to its output cells and how the store is guarded). Write ONE new kernel that keeps PARENT A's processing OUTSIDE that shared middle (its loads, its accumulation, its stores, its loop structure) as it is, and COMPLETELY REINVENTS the shared middle: a different thread-to-cell mapping, block shape, tile shape or work split than either parent uses, chosen to be faster on an Apple M3 Max under Metal. Parent B is shown so you know what the other parent did with the same middle; do not copy either parent's middle. The result must be correct for every d, m, r_rows, r_off the harness can pass, including partial tiles at the edges.\n\n{}\n\n{}\n{}\n===== THE SHARED STRUCTURE (what both parents do; reinvent this) =====\n{shared_text}\n{}\nSIZE: at most {max_nodes} nodes of the grammar (roughly {} lines).\nRETURN ONLY the kernel text, starting with the header comment line `// grid x y bx by`, no prose, no fences.",
         fitness_explainer(),
         brief_block(keep, "PARENT A (keep its processing outside the shared middle)"),
         brief_block(other, "PARENT B (for reference only)"),
+        grammar_limits(),
         max_nodes / 12
     )
 }
@@ -220,8 +237,9 @@ pub fn repair_task(child: &str, failure: &str, parents: &[&KernelBrief], max_nod
         p.push_str(&brief_block(k, &format!("PARENT {}", (b'A' + i as u8) as char)));
     }
     format!(
-        "You are repairing an offspring kernel. It was made from the parents below and it FAILED the constraint. Make it correct while keeping its technique (its tiling, its accumulation, its loads): change as little as the failure needs. If the failure names a case, that case's shape is where it is wrong; think about partial tiles, the band (r_rows, r_off), bounds, barriers under conditions, and uninitialised accumulators.\n\n{}\n\n===== THE OFFSPRING (failed) =====\nFAILURE: {failure}\n```wgsl\n{child}```\n\n{p}\nSIZE: at most {max_nodes} nodes of the grammar.\nRETURN ONLY the repaired kernel text, starting with the header comment line `// grid x y bx by`, no prose, no fences.",
-        fitness_explainer()
+        "You are repairing an offspring kernel. It was made from the parents below and it FAILED. Make it correct while keeping its technique (its tiling, its accumulation, its loads): change as little as the failure needs. If the failure names a test case, that case's shape is where it is wrong; think about partial tiles, the band (r_rows, r_off), bounds, barriers under conditions, and uninitialised accumulators. If the failure says the kernel is not in the grammar, respell exactly the construct named within the grammar's limits below and change nothing else.\n\n{}\n\n{}\n\n===== THE OFFSPRING (failed) =====\nFAILURE: {failure}\n```wgsl\n{child}```\n\n{p}\nSIZE: at most {max_nodes} nodes of the grammar.\nRETURN ONLY the repaired kernel text, starting with the header comment line `// grid x y bx by`, no prose, no fences.",
+        fitness_explainer(),
+        grammar_limits()
     )
 }
 
@@ -272,7 +290,7 @@ mod tests {
     fn the_briefs_carry_the_measurements() {
         let k = |id: &str| KernelBrief { id: id.into(), text: "// grid 1 1 1 1\n".into(), hff: 0.33, speedups: [6.25, 6.82, 7.03], columns: [0.16, 0.147, 0.142, 0.296, 0.289, 0.293], problem: "slower".into() };
         let t = crossover_task(&k("k15"), &k("k07"), &[(33, "(logic.and ...)".into())], 3000);
-        for needle in ["QUALITY", "PARENT A: k15", "PARENT B: k07", "6.25x", "0.296", "PROBLEM: slower", "33 nodes: (logic.and ...)", "at most 3000 nodes"] {
+        for needle in ["QUALITY", "PARENT A: k15", "PARENT B: k07", "6.25x", "0.296", "PROBLEM: slower", "33 nodes: (logic.and ...)", "at most 3000 nodes", "WHAT THE KERNEL GRAMMAR CAN SPELL"] {
             assert!(t.contains(needle), "{needle}");
         }
         let r = repair_task("// grid 1 1 1 1\n", "constraint 0/128 cases: A t0 c14 v3", &[&k("k15")], 3000);
