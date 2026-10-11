@@ -177,7 +177,7 @@ Accumulating in a different order changes the error: more independent partial su
 /// declined four children in four for exactly these).
 pub fn grammar_limits() -> String {
     "WHAT THE KERNEL GRAMMAR CAN SPELL (a kernel outside it is declined before it is ever run): \
-one entry point `main`; helper functions only if their body is lets and one `return expression` (they are inlined); workgroup size from {4, 8, 16, 32} per axis (x times y at most 1,024); a register block factor from {1, 2, 4, 8}; an unroll factor from {2, 4, 8}; \
+one entry point `main`; helper functions are inlined at their calls (lets and a return, or locals, ifs, stores and one return at the end; no loops in a helper), and every function called must be defined in the text; workgroup size from {4, 8, 16, 32} per axis (x times y at most 1,024); a register block factor from {1, 2, 4, 8}; an unroll factor from {2, 4, 8}; \
 every loop a `for` counting up from 0 by a constant step, bounded by any u32 expression (cfg.m, cfg.d, cfg.r_rows, a literal, cfg.m / 4u, (cfg.d + 63u) / 64u, m & ~3u), the test written as counter < bound (or <=, or bound > counter, or `if (t + k > bound) { break; }`); \
 vector components by a constant (.x .y .z .w, [0]..[3]) or by a variable (v[j]); arrays indexed by u32 expressions; an array constructor to initialise a local array; \
 var<workgroup> arrays: at most two of f32 (2048 each) and two of vec4<f32> (512 each), together Apple's 32 KB threadgroup limit; private arrays of f32 (64, up to six), vec4<f32> (16, up to two), u32 (16, up to three), bool (16, up to two); 32 f32, 16 vec4<f32>, 32 u32 and 8 bool scalar registers; \

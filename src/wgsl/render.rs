@@ -519,19 +519,23 @@ impl<'a> Renderer<'a> {
             }
             "wg.set_safe" => {
                 n(3)?;
-                Ok(format!("    {}[{}] = {};\n", self.wgmem(&kids[0])?, self.value(&kids[1], scope)?, self.value(&kids[2], scope)?))
+                let a = self.wgmem(&kids[0])?;
+                Ok(format!("    {a}[{}] = {};\n", self.index_text(&kids[1], array_len(a), scope)?, self.value(&kids[2], scope)?))
             }
             "wg.set_v_lane" => {
                 n(4)?;
-                Ok(format!("    {}[{}][({}) & 3u] = {};\n", self.wgmem(&kids[0])?, self.value(&kids[1], scope)?, self.value(&kids[2], scope)?, self.value(&kids[3], scope)?))
+                let a = self.wgmem(&kids[0])?;
+                Ok(format!("    {a}[{}][({}) & 3u] = {};\n", self.index_text(&kids[1], array_len(a), scope)?, self.value(&kids[2], scope)?, self.value(&kids[3], scope)?))
             }
             "parr.set_v_lane" => {
                 n(4)?;
-                Ok(format!("    {}[{}][({}) & 3u] = {};\n", self.parr_name(&kids[0])?, self.value(&kids[1], scope)?, self.value(&kids[2], scope)?, self.value(&kids[3], scope)?))
+                let a = self.parr_name(&kids[0])?;
+                Ok(format!("    {a}[{}][({}) & 3u] = {};\n", self.index_text(&kids[1], array_len(a), scope)?, self.value(&kids[2], scope)?, self.value(&kids[3], scope)?))
             }
             "parr.set_safe" => {
                 n(3)?;
-                Ok(format!("    {}[{}] = {};\n", self.parr_name(&kids[0])?, self.value(&kids[1], scope)?, self.value(&kids[2], scope)?))
+                let a = self.parr_name(&kids[0])?;
+                Ok(format!("    {a}[{}] = {};\n", self.index_text(&kids[1], array_len(a), scope)?, self.value(&kids[2], scope)?))
             }
             "stmt.block" => {
                 n(1)?;
@@ -718,12 +722,24 @@ impl<'a> Renderer<'a> {
             "reg.get_v_lane" => return Ok(format!("{}[({}) & 3u]", self.register(&v.kids[0])?, self.value(&v.kids[1], scope)?)),
             // A lane of a vec4 element of a workgroup or private array (seed08 of run A): the
             // element is a reference, so the lane index may be a run-time value.
-            "wg.get_v_lane" => return Ok(format!("{}[{}][({}) & 3u]", self.wgmem(&v.kids[0])?, self.value(&v.kids[1], scope)?, self.value(&v.kids[2], scope)?)),
-            "parr.get_v_lane" => return Ok(format!("{}[{}][({}) & 3u]", self.parr_name(&v.kids[0])?, self.value(&v.kids[1], scope)?, self.value(&v.kids[2], scope)?)),
+            "wg.get_v_lane" => {
+                let a = self.wgmem(&v.kids[0])?;
+                return Ok(format!("{a}[{}][({}) & 3u]", self.index_text(&v.kids[1], array_len(a), scope)?, self.value(&v.kids[2], scope)?));
+            }
+            "parr.get_v_lane" => {
+                let a = self.parr_name(&v.kids[0])?;
+                return Ok(format!("{a}[{}][({}) & 3u]", self.index_text(&v.kids[1], array_len(a), scope)?, self.value(&v.kids[2], scope)?));
+            }
             "wg.get" => return Ok(format!("{}[({}) & {}u]", self.wgmem(&v.kids[0])?, self.value(&v.kids[1], scope)?, WGMEM_LEN - 1)),
             // The safe read: the index is in range by its type (safe.wg_of masks it).
-            "wg.get_safe" | "wg.get_v_safe" => return Ok(format!("{}[{}]", self.wgmem(&v.kids[0])?, self.value(&v.kids[1], scope)?)),
-            "parr.get_f" | "parr.get_v" | "parr.get_i" | "parr.get_b" => return Ok(format!("{}[{}]", self.parr_name(&v.kids[0])?, self.value(&v.kids[1], scope)?)),
+            "wg.get_safe" | "wg.get_v_safe" => {
+                let a = self.wgmem(&v.kids[0])?;
+                return Ok(format!("{a}[{}]", self.index_text(&v.kids[1], array_len(a), scope)?));
+            }
+            "parr.get_f" | "parr.get_v" | "parr.get_i" | "parr.get_b" => {
+                let a = self.parr_name(&v.kids[0])?;
+                return Ok(format!("{a}[{}]", self.index_text(&v.kids[1], array_len(a), scope)?));
+            }
             _ => {}
         }
         let kids: Result<Vec<String>, String> = v.kids.iter().map(|k| self.value(k, scope)).collect();
@@ -1295,6 +1311,28 @@ pub fn safe_base(name: &str) -> &str {
 impl Renderer<'_> {
     /// A private array leaf's variable name; a fallback leaf names the array
     /// of ITS DUAL (`pv` for a vec4 demand, `pi` for u32, `pm` for bool).
+    /// An array's index as text: a masked literal (`pv[((lit_u32(0u)) & 15u)]`
+    /// before 2026-10-11) is folded on the host into a plain literal inside
+    /// the array, `pv[0u]`, so the text a model copies is plain; any other
+    /// index is written as its row renders it.
+    fn index_text(&self, idx: &Tree, len: u32, scope: &mut Scope) -> Result<String, String> {
+        if let ["safe.wg_of" | "safe.wgv_of" | "safe.pidx64" | "safe.pidx16"] = [safe_base(&idx.name)] {
+            if let [k] = idx.kids.as_slice() {
+                if k.name.starts_with("literal.") && k.konst.is_finite() {
+                    let mask = match safe_base(&idx.name) {
+                        "safe.wg_of" => WGMEM_LEN - 1,
+                        "safe.wgv_of" => WGVEC_LEN - 1,
+                        "safe.pidx64" => 63,
+                        _ => 15,
+                    };
+                    let v = (k.konst.max(0.0) as u32 & mask).min(len.saturating_sub(1));
+                    return Ok(format!("{v}u"));
+                }
+            }
+        }
+        self.value(idx, scope)
+    }
+
     fn parr_name(&self, t: &Tree) -> Result<&'static str, String> {
         if t.name == "fallback" {
             let d = self.dual(t.ty).map(|d| d.dual.clone()).unwrap_or_default();
@@ -1352,6 +1390,16 @@ pub fn register_declarations() -> String {
     out.push_str("    var pa: array<f32, 64>; var pb: array<f32, 64>; var pc: array<f32, 64>; var pd: array<f32, 64>; var pe: array<f32, 64>; var pf: array<f32, 64>;\n");
     out.push_str("    var pv: array<vec4<f32>, 16>; var pw: array<vec4<f32>, 16>; var pi: array<u32, 16>; var pj: array<u32, 16>; var pk: array<u32, 16>; var pm: array<bool, 16>; var pn: array<bool, 16>;\n");
     out
+}
+
+/// The length of a workgroup or private array by its variable name.
+fn array_len(name: &str) -> u32 {
+    match name {
+        "wg_a" | "wg_b" => WGMEM_LEN,
+        "wg_va" | "wg_vb" => WGVEC_LEN,
+        "pa" | "pb" | "pc" | "pd" | "pe" | "pf" => 64,
+        _ => 16,
+    }
 }
 
 /// A private array leaf's variable name.
@@ -1672,7 +1720,7 @@ mod tests {
                 assert!(out.text.contains("i32r = i63;"), "{}", out.text);
             }
             if name == "wg.set_v_lane" {
-                assert!(out.text.contains("wg_va[((lit_u32(3u)) & 511u)][(2u) & 3u] = wg_vb[((lit_u32(5u)) & 511u)][(1u) & 3u];"), "{}", out.text);
+                assert!(out.text.contains("wg_va[3u][(2u) & 3u] = wg_vb[5u][(1u) & 3u];"), "{}", out.text);
             }
         }
         assert_eq!(register_var("i", 32), "i32r");
