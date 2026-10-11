@@ -432,6 +432,21 @@ impl<'a> Renderer<'a> {
                 scope.in_items = false;
                 Ok(format!("    for (t = 0u; t < {bound}; t = t + {stride}u) {{\n{}    }}\n", body?))
             }
+            "loop.items_cont_bounded" | "loop.items_cont_strided_bounded" => {
+                // (bound, [stride,] block): for (; t < bound; t = t + stride): the
+                // counter continues from where the earlier item loop left it.
+                let strided = safe_base(&s.name) == "loop.items_cont_strided_bounded";
+                n(if strided { 3 } else { 2 })?;
+                if scope.in_items {
+                    return Err("a long loop inside a long loop (the safe grammar does not produce this)".into());
+                }
+                let bound = self.value(&kids[0], scope)?;
+                let stride = if strided { self.lit(&kids[1], 4096)? } else { 1 };
+                scope.in_items = true;
+                let body = self.block(&kids[if strided { 2 } else { 1 }], scope);
+                scope.in_items = false;
+                Ok(format!("    for (; t < {bound}; t = t + {stride}u) {{\n{}    }}\n", body?))
+            }
             "loop.tilex_bounded" | "loop.tilex_strided_bounded" => {
                 // (bound expression, [step,] block): for (k = 0u; k < (expr); k = k + step),
                 // the counter of the depth; the bound as written, never capped.
@@ -1049,14 +1064,14 @@ pub fn cost(t: &Tree) -> Cost {
         // A bounded literal as the renderer snaps it (1..=max), 1 for a fallback.
         let lit = |k: Option<&Tree>, max: f64| k.map_or(1.0, |k| if k.name.starts_with("literal.") && k.konst.is_finite() { f64::from(k.konst).round().clamp(1.0, max) } else { 1.0 });
         match safe_base(&t.name) {
-            "loop.items" | "loop.items_unrolled" | "loop.items_bounded" | "loop.items_unrolled_bounded" => {
+            "loop.items" | "loop.items_unrolled" | "loop.items_bounded" | "loop.items_unrolled_bounded" | "loop.items_cont_bounded" => {
                 for k in &t.kids {
                     let (b, p) = walk(k, tile, true);
                     // The body runs once per item; a nested long loop is refused by the renderer.
                     per_item += b + p;
                 }
             }
-            "loop.items_strided_bounded" => {
+            "loop.items_strided_bounded" | "loop.items_cont_strided_bounded" => {
                 // (bound, stride, body): the body runs once per `stride` items.
                 let stride = lit(t.kids.get(1), 4096.0);
                 for k in &t.kids {
@@ -1164,6 +1179,12 @@ pub fn safe_base(name: &str) -> &str {
     }
     if name.starts_with("loop.items_unrolled_bound") {
         return "loop.items_unrolled_bounded";
+    }
+    if name.starts_with("loop.items_cont_strided_bound") {
+        return "loop.items_cont_strided_bounded";
+    }
+    if name.starts_with("loop.items_cont_bound") {
+        return "loop.items_cont_bounded";
     }
     if name.starts_with("loop.items_strided_bound") {
         return "loop.items_strided_bounded";

@@ -1215,30 +1215,48 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
 | F609 | `index.round_down` | `composite` | `u32.index u32.index` | `u32.index` | 2 | i rounded down to a multiple of k (k16's `m & ~3u` is round_down(m, 4)) |
-| F610 | `index.sub_floor` | `composite` | `u32.index u32.index` | `u32.index` | 2 | i - j, floored at zero (a loop test `t + k > m` becomes t < m - k) |
 
 ## class `loop`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F611 | `loop.items_boundx` | `composite` | `u32.boundx block.L1` | `stmt.L0` | 2 | for (t = 0u; t < expr; t = t + 1u) |
-| F612 | `loop.items_strided_boundx` | `composite` | `u32.boundx u32.lit4096 block.L1` | `stmt.L0` | 3 | arity 3: for (t = 0u; t < expr; t = t + stride) |
-| F613 | `loop.items_unrolled_boundx` | `composite` | `u32.unroll u32.boundx block.L1` | `stmt.L0` | 3 | arity 3: the body k times, then the remainder |
-| F614 | `loop.tilex_L0` | `composite` | `u32.boundx block.L2` | `stmt.L0` | 2 | a short loop (the counter of its depth) bounded by an expression |
-| F615 | `loop.tilex_strided_L0` | `composite` | `u32.boundx u32.lit64 block.L2` | `stmt.L0` | 3 | arity 3: the same, stepped by a literal |
-| F616 | `loop.tilex_L1` | `composite` | `u32.boundx block.L2` | `stmt.L1` | 2 | a short loop (the counter of its depth) bounded by an expression |
-| F617 | `loop.tilex_strided_L1` | `composite` | `u32.boundx u32.lit64 block.L2` | `stmt.L1` | 3 | arity 3: the same, stepped by a literal |
-| F618 | `loop.tilex_L2` | `composite` | `u32.boundx block.L3` | `stmt.L2` | 2 | a short loop (the counter of its depth) bounded by an expression |
-| F619 | `loop.tilex_strided_L2` | `composite` | `u32.boundx u32.lit64 block.L3` | `stmt.L2` | 3 | arity 3: the same, stepped by a literal |
-| F620 | `loop.tilex_L3` | `composite` | `u32.boundx block.L4` | `stmt.L3` | 2 | a short loop (the counter of its depth) bounded by an expression |
-| F621 | `loop.tilex_strided_L3` | `composite` | `u32.boundx u32.lit64 block.L4` | `stmt.L3` | 3 | arity 3: the same, stepped by a literal |
-| F622 | `loop.tilex_C0` | `composite` | `u32.boundx block.C1` | `stmt.C0` | 2 | a short loop (the counter of its depth) bounded by an expression |
-| F623 | `loop.tilex_strided_C0` | `composite` | `u32.boundx u32.lit64 block.C1` | `stmt.C0` | 3 | arity 3: the same, stepped by a literal |
-| F624 | `loop.tilex_C1` | `composite` | `u32.boundx block.C2` | `stmt.C1` | 2 | a short loop (the counter of its depth) bounded by an expression |
-| F625 | `loop.tilex_strided_C1` | `composite` | `u32.boundx u32.lit64 block.C2` | `stmt.C1` | 3 | arity 3: the same, stepped by a literal |
-| F626 | `loop.tilex_C2` | `composite` | `u32.boundx block.C3` | `stmt.C2` | 2 | a short loop (the counter of its depth) bounded by an expression |
-| F627 | `loop.tilex_strided_C2` | `composite` | `u32.boundx u32.lit64 block.C3` | `stmt.C2` | 3 | arity 3: the same, stepped by a literal |
-| F628 | `loop.tilex_C3` | `composite` | `u32.boundx block.C4` | `stmt.C3` | 2 | a short loop (the counter of its depth) bounded by an expression |
-| F629 | `loop.tilex_strided_C3` | `composite` | `u32.boundx u32.lit64 block.C4` | `stmt.C3` | 3 | arity 3: the same, stepped by a literal |
+| F610 | `loop.items_cont_boundm` | `composite` | `u32.boundm block.L1` | `stmt.L0` | 2 | for (; t < bound; t = t + 1u): the counter continues from the earlier item loop |
+| F611 | `loop.items_cont_strided_boundm` | `composite` | `u32.boundm u32.lit4096 block.L1` | `stmt.L0` | 3 | arity 3: for (; t < bound; t = t + stride), the counter continuing |
+| F612 | `loop.items_cont_boundd` | `composite` | `u32.boundd block.L1` | `stmt.L0` | 2 | for (; t < bound; t = t + 1u): the counter continues from the earlier item loop |
+| F613 | `loop.items_cont_strided_boundd` | `composite` | `u32.boundd u32.lit4096 block.L1` | `stmt.L0` | 3 | arity 3: for (; t < bound; t = t + stride), the counter continuing |
+| F614 | `loop.items_cont_boundrows` | `composite` | `u32.boundrows block.L1` | `stmt.L0` | 2 | for (; t < bound; t = t + 1u): the counter continues from the earlier item loop |
+| F615 | `loop.items_cont_strided_boundrows` | `composite` | `u32.boundrows u32.lit4096 block.L1` | `stmt.L0` | 3 | arity 3: for (; t < bound; t = t + stride), the counter continuing |
+| F616 | `loop.items_cont_boundx` | `composite` | `u32.boundx block.L1` | `stmt.L0` | 2 | for (; t < bound; t = t + 1u): the counter continues from the earlier item loop |
+| F617 | `loop.items_cont_strided_boundx` | `composite` | `u32.boundx u32.lit4096 block.L1` | `stmt.L0` | 3 | arity 3: for (; t < bound; t = t + stride), the counter continuing |
 
-629 function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Deliberately absent: atomics, images, derivatives, subgroup operations, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.
+## class `index`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F618 | `index.sub_floor` | `composite` | `u32.index u32.index` | `u32.index` | 2 | i - j, floored at zero (a loop test `t + k > m` becomes t < m - k) |
+
+## class `loop`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F619 | `loop.items_boundx` | `composite` | `u32.boundx block.L1` | `stmt.L0` | 2 | for (t = 0u; t < expr; t = t + 1u) |
+| F620 | `loop.items_strided_boundx` | `composite` | `u32.boundx u32.lit4096 block.L1` | `stmt.L0` | 3 | arity 3: for (t = 0u; t < expr; t = t + stride) |
+| F621 | `loop.items_unrolled_boundx` | `composite` | `u32.unroll u32.boundx block.L1` | `stmt.L0` | 3 | arity 3: the body k times, then the remainder |
+| F622 | `loop.tilex_L0` | `composite` | `u32.boundx block.L2` | `stmt.L0` | 2 | a short loop (the counter of its depth) bounded by an expression |
+| F623 | `loop.tilex_strided_L0` | `composite` | `u32.boundx u32.lit64 block.L2` | `stmt.L0` | 3 | arity 3: the same, stepped by a literal |
+| F624 | `loop.tilex_L1` | `composite` | `u32.boundx block.L2` | `stmt.L1` | 2 | a short loop (the counter of its depth) bounded by an expression |
+| F625 | `loop.tilex_strided_L1` | `composite` | `u32.boundx u32.lit64 block.L2` | `stmt.L1` | 3 | arity 3: the same, stepped by a literal |
+| F626 | `loop.tilex_L2` | `composite` | `u32.boundx block.L3` | `stmt.L2` | 2 | a short loop (the counter of its depth) bounded by an expression |
+| F627 | `loop.tilex_strided_L2` | `composite` | `u32.boundx u32.lit64 block.L3` | `stmt.L2` | 3 | arity 3: the same, stepped by a literal |
+| F628 | `loop.tilex_L3` | `composite` | `u32.boundx block.L4` | `stmt.L3` | 2 | a short loop (the counter of its depth) bounded by an expression |
+| F629 | `loop.tilex_strided_L3` | `composite` | `u32.boundx u32.lit64 block.L4` | `stmt.L3` | 3 | arity 3: the same, stepped by a literal |
+| F630 | `loop.tilex_C0` | `composite` | `u32.boundx block.C1` | `stmt.C0` | 2 | a short loop (the counter of its depth) bounded by an expression |
+| F631 | `loop.tilex_strided_C0` | `composite` | `u32.boundx u32.lit64 block.C1` | `stmt.C0` | 3 | arity 3: the same, stepped by a literal |
+| F632 | `loop.tilex_C1` | `composite` | `u32.boundx block.C2` | `stmt.C1` | 2 | a short loop (the counter of its depth) bounded by an expression |
+| F633 | `loop.tilex_strided_C1` | `composite` | `u32.boundx u32.lit64 block.C2` | `stmt.C1` | 3 | arity 3: the same, stepped by a literal |
+| F634 | `loop.tilex_C2` | `composite` | `u32.boundx block.C3` | `stmt.C2` | 2 | a short loop (the counter of its depth) bounded by an expression |
+| F635 | `loop.tilex_strided_C2` | `composite` | `u32.boundx u32.lit64 block.C3` | `stmt.C2` | 3 | arity 3: the same, stepped by a literal |
+| F636 | `loop.tilex_C3` | `composite` | `u32.boundx block.C4` | `stmt.C3` | 2 | a short loop (the counter of its depth) bounded by an expression |
+| F637 | `loop.tilex_strided_C3` | `composite` | `u32.boundx u32.lit64 block.C4` | `stmt.C3` | 3 | arity 3: the same, stepped by a literal |
+
+637 function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Deliberately absent: atomics, images, derivatives, subgroup operations, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.

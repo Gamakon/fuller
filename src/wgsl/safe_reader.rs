@@ -61,6 +61,10 @@ struct Ctx<'a> {
     /// While a helper body is being inlined: its arguments by `arg.<name>`,
     /// already resolved and typed in the caller.
     inline_args: Option<HashMap<String, Tree>>,
+    /// Locals that have been the counter of a finished item loop: a later
+    /// item loop over one of them CONTINUES it (`for (; t < m; …)`, the
+    /// remainder loop of k05 and k26) unless the kernel set it back to 0.
+    used_counters: std::collections::BTreeSet<String>,
     /// Private u32 arrays that hold this thread's own rows or columns (k26:
     /// `lrs[i] = wid.y * 32u + i * 8u + lid.y`): local → (axis, strided, blk).
     /// A load `lrs[k]` with a tile counter k is then that block row.
@@ -924,6 +928,17 @@ impl<'a> Ctx<'a> {
             if [&self.item_counter, &self.tile_counter, &self.tile_counter2, &self.tile_counter3].iter().any(|c| c.as_deref() == Some(local.as_str())) {
                 return Ok(None);
             }
+            // A finished item loop's counter set back to 0: the next item loop
+            // starts afresh; any other value has no spelling.
+            if self.used_counters.contains(&local) {
+                return match literal_value(&tree.kids[0]) {
+                    Some(v) if v == 0.0 => {
+                        self.used_counters.remove(&local);
+                        Ok(None)
+                    }
+                    _ => Err(format!("the item counter {local} set to {} between loops (only 0 has a spelling)", tree.kids[0].to_sexpr())),
+                };
+            }
             let d = self.kingdom.dual(tree.kids[0].ty).map(|d| d.dual.clone()).unwrap_or_default();
             let row = self.register(&local, &d)?;
             let kind = row.chars().nth(4).unwrap_or('f');
@@ -1070,6 +1085,8 @@ impl<'a> Ctx<'a> {
             ("lit64", "C2") => ("C3".to_string(), short(tile, "C2")?, "C2"),
             ("lit64", "C3") => ("C4".to_string(), short(tile, "C3")?, "C3"),
             ("lit64", _) => return Err(format!("a tile loop at rung {rung} (too deep)")),
+            (b, "L0") if self.used_counters.contains(&counter) && step == 1 => ("L1".to_string(), format!("loop.items_cont_{b}"), "L0"),
+            (b, "L0") if self.used_counters.contains(&counter) => ("L1".to_string(), format!("loop.items_cont_strided_{b}"), "L0"),
             (b, "L0") if step == 1 => ("L1".to_string(), format!("loop.items_{b}"), "L0"),
             (b, "L0") => ("L1".to_string(), format!("loop.items_strided_{b}"), "L0"),
             ("boundx", "L1") => ("L2".to_string(), short(tilex, "L1")?, "L1"),
@@ -1110,6 +1127,9 @@ impl<'a> Ctx<'a> {
         self.tile_counter = saved.1;
         self.tile_counter2 = saved.2;
         self.tile_counter3 = saved.3;
+        if body_rung == "L1" {
+            self.used_counters.insert(counter.clone());
+        }
         let body_stmts = body_stmts?;
         let block = self.block(body_stmts, &body_rung)?;
         let st = self.stmt_ty(out_rung)?;
@@ -1285,7 +1305,7 @@ pub fn read_safe(source: &str, kingdom: &WgslKingdom) -> Result<SafeRead, String
         duals.entry(text).or_insert(t);
     }
     let calls = f.calls.clone();
-    let mut ctx = Ctx { kingdom, duals: &duals, lets: &lets, roots: &roots, item_counter: None, tile_counter: None, tile_counter2: None, tile_counter3: None, registers: BTreeMap::new(), next_reg: BTreeMap::new(), guard: None, tail: true, arrays: BTreeMap::new(), parrs: BTreeMap::new(), grid, notes: Vec::new(), helpers: &helpers, calls: &calls, arg_roots: &arg_roots, inline_args: None, row_arrays: BTreeMap::new() };
+    let mut ctx = Ctx { kingdom, duals: &duals, lets: &lets, roots: &roots, item_counter: None, tile_counter: None, tile_counter2: None, tile_counter3: None, registers: BTreeMap::new(), next_reg: BTreeMap::new(), guard: None, tail: true, arrays: BTreeMap::new(), parrs: BTreeMap::new(), grid, notes: Vec::new(), helpers: &helpers, calls: &calls, arg_roots: &arg_roots, inline_args: None, row_arrays: BTreeMap::new(), used_counters: std::collections::BTreeSet::new() };
     // Register initialisations first, in root order.
     let mut stmts = Vec::new();
     for r in inits {

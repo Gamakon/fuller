@@ -545,6 +545,11 @@ f("shape", "at", "composite", ["<vecL.c>", "u32.index"], "<S.c>", "lane (i maske
 # `m & ~3u` (k16, k26): the mask 0xFFFFFFFC is not exact in an f32 literal, so the reader spells it as a rounding
 # down to a multiple: i - i % k. An index literal above 2^24 is refused by name, never rounded silently.
 f("index", "round_down", "composite", ["u32.index", "u32.index"], "u32.index", "i rounded down to a multiple of k (k16's `m & ~3u` is round_down(m, 4))")
+# A CONTINUING item loop (k05, k26: a strided main loop then a remainder loop over the SAME counter): the counter
+# is not reset; `for (; t < bound; t = t + s)`. Spelled only for a counter an earlier item loop stepped.
+for b in ("boundm", "boundd", "boundrows", "boundx"):
+    f("loop", "items_cont_" + b, "composite", ["u32." + b, "block.L1"], "stmt.L0", "for (; t < bound; t = t + 1u): the counter continues from the earlier item loop")
+    f("loop", "items_cont_strided_" + b, "composite", ["u32." + b, "u32.lit4096", "block.L1"], "stmt.L0", "arity 3: for (; t < bound; t = t + stride), the counter continuing")
 f("index", "sub_floor", "composite", ["u32.index", "u32.index"], "u32.index", "i - j, floored at zero (a loop test `t + k > m` becomes t < m - k)")
 f("loop", "items_boundx", "composite", ["u32.boundx", "block.L1"], "stmt.L0", "for (t = 0u; t < expr; t = t + 1u)")
 f("loop", "items_strided_boundx", "composite", ["u32.boundx", "u32.lit4096", "block.L1"], "stmt.L0", "arity 3: for (t = 0u; t < expr; t = t + stride)")
