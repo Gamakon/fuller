@@ -58,10 +58,11 @@ pub fn strip(reply: &str) -> String {
 }
 
 /// THE MODEL MIX (Andrew, 2026-10-11): every call draws its model, Sonnet
-/// 70 %, Opus 20 %, Fable 5 %, Codex 5 %, from the run's own generator so a
-/// run is reproducible call for call; the ledger names the model of every
-/// kernel so the mix can be judged per model.
-pub const MIX: [(&str, u64); 4] = [("sonnet", 70), ("opus", 20), ("fable", 5), ("codex", 5)];
+/// 70 %, Opus 25 %, Codex 5 %, from the run's own generator so a run is
+/// reproducible call for call; the ledger names the model of every kernel so
+/// the mix can be judged per model. Fable's 5 % moved to Opus at 15:50Z
+/// ("Move to opus, not fable": Fable out of usage credits, API 429).
+pub const MIX: [(&str, u64); 3] = [("sonnet", 70), ("opus", 25), ("codex", 5)];
 
 /// The next model of the mix from a 64-bit generator state (advanced here).
 pub fn draw_model(state: &mut u64) -> &'static str {
