@@ -459,18 +459,7 @@ pub fn per_kernel_rows(kingdom: &WgslKingdom, role: &Role) -> Vec<PerKernelRow> 
         .filter(|p| p.name != "load.h")
         .filter_map(|p| {
             let inputs = p.inputs.iter().map(|d| dual_ty(kingdom, d).ok()).collect::<Option<Vec<_>>>()?;
-            // Each uniform its own dual where the kingdom has one (the safe
-            // kingdom, 2026-10-11: a mutation read cfg.m for cfg.r_rows);
-            // index.of_cfg* and convert.cfg*_count carry it into arithmetic.
-            let own = match p.name.as_str() {
-                "load.cfg_m" => Some("u32.cfgm"),
-                "load.cfg_d" => Some("u32.cfgd"),
-                "load.cfg_r_rows" => Some("u32.cfgrows"),
-                "load.cfg_r_off" => Some("u32.cfgroff"),
-                _ => None,
-            };
-            let output = own.and_then(|d| dual_ty(kingdom, d).ok()).or_else(|| dual_ty(kingdom, &p.output).ok())?;
-            Some((p.name.clone(), inputs, output))
+            Some((p.name.clone(), inputs, dual_ty(kingdom, &p.output).ok()?))
         })
         .collect()
 }
@@ -1130,24 +1119,6 @@ mod tests {
         let ids = ["builtin.global_invocation_id", "builtin.local_invocation_id", "builtin.workgroup_id", "builtin.local_invocation_index"];
         let thread_id = |t: &Tree| ids.contains(&t.name.as_str()) || t.name.starts_with("axis.") || (t.name.starts_with("shape.access_") && t.kids.first().is_some_and(|k| ids.contains(&k.name.as_str())));
         let (mut valid, mut owned, mut lost, mut other, mut unrendered, mut axis_swaps, mut draws) = (0usize, 0usize, 0usize, 0usize, 0usize, 0usize, 0usize);
-        let (mut uniform_swaps, mut register_swaps, mut foreign_ops) = (0usize, 0usize, 0usize);
-        // The arithmetic the corpus's kernels use (2026-10-11: add 713, mul 567, fma 39 nodes).
-        const GRAM_ARITHMETIC: [&str; 3] = ["arith.add", "arith.mul", "arith.fma"];
-        // Register initialisations spelled with a literal zero: a literal
-        // mutation of one changes an accumulator's start (v14 = vec4(8.0)).
-        fn literal_zero_inits(t: &Tree) -> usize {
-            // reg.set_<f|v|i|b>_<rung> (not a lane set, whose second child is the lane)
-            let whole = t.name.strip_prefix("reg.set_").and_then(|r| r.split_once('_')).is_some_and(|(k, rung)| matches!(k, "f" | "v" | "i" | "b") && !rung.contains('_'));
-            let here = usize::from(whole && t.kids.get(1).is_some_and(is_literal_zero));
-            here + t.kids.iter().map(literal_zero_inits).sum::<usize>()
-        }
-        fn is_literal_zero(t: &Tree) -> bool {
-            if t.name.starts_with("literal.") {
-                return t.konst == 0.0;
-            }
-            !t.kids.is_empty() && (t.name.starts_with("shape.splat") || t.name.starts_with("shape.compose")) && t.kids.iter().all(is_literal_zero)
-        }
-        let zero_inits: usize = trees.iter().map(literal_zero_inits).sum();
         let mut made = 0usize;
         while made < N {
             draws += 1;
@@ -1165,19 +1136,6 @@ mod tests {
             }
             let to = choices[next() % choices.len()].clone();
             let was_id = thread_id(node);
-            // The classes fit_A2's native offspring failed by (2026-10-11): a
-            // uniform read for another (cfg.r_rows for cfg.m), a register for
-            // another (v12 for v11), an arithmetic row no Gram kernel uses
-            // (atan2 for +).
-            if node.name.starts_with("load.cfg_") || to.starts_with("load.cfg_") {
-                uniform_swaps += 1;
-            }
-            if node.kids.is_empty() && node.name.starts_with("reg.") && to.starts_with("reg.") {
-                register_swaps += 1;
-            }
-            if to.starts_with("arith.") && !GRAM_ARITHMETIC.contains(&to.as_str()) || to.starts_with("trig.") || to.starts_with("geom.") {
-                foreign_ops += 1;
-            }
             node.name = to;
             if was_id || thread_id(node) {
                 axis_swaps += 1;
@@ -1201,11 +1159,6 @@ mod tests {
             }
         }
         println!("{N} single-symbol mutants of {} corpus kernels: {valid} validate, {owned} read back with the store at the thread's own cell, {lost} lose the thread's cell, {other} do not read back for another reason, {unrendered} do not render; {axis_swaps} change a thread id or its axis", trees.len());
-        println!("of the {N}: {uniform_swaps} read another uniform, {register_swaps} name another register, {foreign_ops} bring in an arithmetic row no Gram kernel uses; the corpus spells {zero_inits} register zero-initialisations with a literal");
         assert_eq!((valid, owned, axis_swaps), (N, N, 0), "every mutant validates, keeps the thread's cell and keeps its thread ids and axes");
-        // Measured with the same draws, 2026-10-11: 78 read another uniform and
-        // the corpus spelled 692 zero-inits with a literal before each uniform
-        // was its own dual and a zeroing its own row; 0 and 0 after.
-        assert_eq!((uniform_swaps, zero_inits), (0, 0), "no mutant reads another uniform; no zero-init is a literal");
     }
 }
