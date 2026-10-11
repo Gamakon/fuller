@@ -424,6 +424,19 @@ largest pair (d 8192). GPU tests to run when the device is free:
 time) and `a_deliberately_slow_kernel_is_stopped_before_the_timing_shapes` (64 exact passes of the item
 loop: correct, stopped as `slow`, under 30 s).
 
+**Measured 2026-10-11 20:03Z** (release, M3 Max, `examples/wgsl_gram_gate`). Both GPU tests pass. Wall ms at
+the three timing shapes, predicted against measured:
+
+| kernel | predicted | measured | rate ms/1e9 | outcome |
+|---|---|---|---|---|
+| shipped | 1,030 x3 | 1,018 / 1,008 / 1,012 | 3.74 | feasible, HFF 1.186 |
+| popA2_g006j g006_r18 (best) | 155 x3 | 106 / 93 / 98 | 0.55 | feasible, HFF 0.103 |
+| fit_A2 g004 r3p1 Opus (old estimate 4,552, kept out) | 252 x3 | 210 / 210 / 216 | 0.90 | feasible, HFF 0.360 |
+| shipped with 64 item passes | 17,300 at the d 8192 pair | not dispatched | 252 | slow, stopped in 3.9 s |
+
+The limit on this device is 5,654 ms a build. Fast kernels are over-predicted by 1.2-1.6x (the floor and
+the pairs' data weigh more for them), the safe direction.
+
 ## Expectations, stated before any run
 
 | measurement | expected |

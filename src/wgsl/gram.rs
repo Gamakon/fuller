@@ -786,6 +786,9 @@ pub struct Fitness {
     /// The measured rate in ms per 1e9 item-cells and the floor in ms.
     pub rate_per_g: f64,
     pub floor_ms: f64,
+    /// The candidate's measured wall milliseconds at the three timing
+    /// shapes, the median over the rounds (0 when it was not timed).
+    pub measured_ms: [f64; 3],
 }
 
 /// θ over columns in [0, 1]: `acos(1 − mean(x²))`, 0 when every column is 0.
@@ -844,7 +847,7 @@ impl FitnessContext {
     pub fn fitness(&self, dev: &Device, source: &str) -> Fitness {
         let t = Instant::now();
         let mut meter = Meter::default();
-        let infeasible = |passed: usize, detail: String, t: Instant, meter: &Meter| Fitness { feasible: false, passed, columns: [1.0; 6], speedups: [0.0; 3], hff: f64::INFINITY, detail, seconds: t.elapsed().as_secs_f64(), predicted_ms: [0.0; 3], rate_per_g: meter.rate_per_g(), floor_ms: meter.floor_ms };
+        let infeasible = |passed: usize, detail: String, t: Instant, meter: &Meter| Fitness { feasible: false, passed, columns: [1.0; 6], speedups: [0.0; 3], hff: f64::INFINITY, detail, seconds: t.elapsed().as_secs_f64(), predicted_ms: [0.0; 3], rate_per_g: meter.rate_per_g(), floor_ms: meter.floor_ms, measured_ms: [0.0; 3] };
         let elapsed_ms = |t: Instant| t.elapsed().as_secs_f64() * 1e3;
         let gram = match Gram::compile(dev, source) {
             Ok(g) => g,
@@ -931,25 +934,32 @@ impl FitnessContext {
         // Speed columns: `timing_rounds` paired rounds per shape, the order
         // alternating every round, the median of the rounds' ratios.
         let mut speedups = [0.0f64; 3];
+        let mut measured_ms = [0.0f64; 3];
         let rounds = self.timing_rounds.max(1);
         for (k, (d, m, phi)) in self.timing.iter().enumerate() {
             let mut ratios = Vec::with_capacity(rounds);
+            let mut walls = Vec::with_capacity(rounds);
             for round in 0..rounds {
                 let cand_first = (k + passed + round) % 2 == 0;
-                let r = (|| -> Result<f64, String> {
-                    let (tc, ts) = if cand_first { let tc = gram.build(phi, *d, *m, self.limit)?.gpu_ms; (tc, shipped.build(phi, *d, *m, self.limit)?.gpu_ms) } else { let ts = shipped.build(phi, *d, *m, self.limit)?.gpu_ms; (gram.build(phi, *d, *m, self.limit)?.gpu_ms, ts) };
+                let r = (|| -> Result<(f64, f64), String> {
+                    let (bc, ts) = if cand_first { let bc = gram.build(phi, *d, *m, self.limit)?; (bc, shipped.build(phi, *d, *m, self.limit)?.gpu_ms) } else { let ts = shipped.build(phi, *d, *m, self.limit)?.gpu_ms; (gram.build(phi, *d, *m, self.limit)?, ts) };
+                    let tc = bc.gpu_ms;
                     if tc <= 0.0 || ts <= 0.0 { return Err(format!("zero time at d {d} m {m}")); }
-                    Ok(ts / tc)
+                    Ok((ts / tc, bc.compute_ms))
                 })();
                 match r {
-                    Ok(s) => ratios.push(s),
+                    Ok((s, wall)) => {
+                        ratios.push(s);
+                        walls.push(wall);
+                    }
                     Err(e) => return Fitness { predicted_ms, ..infeasible(passed, e, t, &meter) },
                 }
             }
             speedups[k] = median(&mut ratios);
+            measured_ms[k] = median(&mut walls);
         }
         let columns = [(1.0 / speedups[0]).clamp(0.0, 1.0), (1.0 / speedups[1]).clamp(0.0, 1.0), (1.0 / speedups[2]).clamp(0.0, 1.0), (et / 2.0).clamp(0.0, 1.0), (ev / 2.0).clamp(0.0, 1.0), (ex / 2.0).clamp(0.0, 1.0)];
-        Fitness { feasible: true, passed, columns, speedups, hff: truenorth(&columns), detail: String::new(), seconds: t.elapsed().as_secs_f64(), predicted_ms, rate_per_g: meter.rate_per_g(), floor_ms: meter.floor_ms }
+        Fitness { feasible: true, passed, columns, speedups, hff: truenorth(&columns), detail: String::new(), seconds: t.elapsed().as_secs_f64(), predicted_ms, rate_per_g: meter.rate_per_g(), floor_ms: meter.floor_ms, measured_ms }
     }
 }
 
@@ -1062,9 +1072,12 @@ mod tests {
         let f = ctx.fitness(&dev, SHIPPED);
         assert!(f.feasible, "{f:?}");
         println!("shipped measured {:?} ms, predicted {:?} ms, rate {:.2} ms per 1e9 item-cells, floor {:.2} ms, limit {:.0} ms", ctx.shipped_ms, f.predicted_ms, f.rate_per_g, f.floor_ms, ctx.slow_limit_ms());
+        println!("shipped as the candidate, measured {:?} ms", f.measured_ms);
         for k in 0..3 {
             let ratio = f.predicted_ms[k] / ctx.shipped_ms[k];
             assert!((0.5..=2.0).contains(&ratio), "shape {k}: predicted {} ms, measured {} ms", f.predicted_ms[k], ctx.shipped_ms[k]);
+            let own = f.predicted_ms[k] / f.measured_ms[k];
+            assert!((0.5..=2.0).contains(&own), "shape {k}: predicted {} ms, measured as the candidate {} ms", f.predicted_ms[k], f.measured_ms[k]);
         }
     }
 
