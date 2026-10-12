@@ -9,7 +9,7 @@
 //! refused at the first statement that fails, by name; it is never admitted
 //! by guessing.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use naga::{Expression, Function, Handle, Statement};
 
@@ -84,6 +84,9 @@ struct Ctx<'a> {
     /// (a use sits inside a loop that does not enclose the definition), by
     /// name, with the path of the statement each precedes.
     bound_lets: HashMap<String, Vec<usize>>,
+    /// Of those, the lets bound because a store changes a local they read
+    /// before a use: one with no register kind has no spelling.
+    stale_lets: BTreeSet<String>,
     /// The bound lets already set, with their register row.
     let_regs: HashMap<String, String>,
     /// A subgroup or atomic result inlined into a loop's bound (`subgroup@<h>`,
@@ -1071,7 +1074,13 @@ fn is_loop_test(body: &naga::Block, path: &[usize]) -> bool {
 /// numbered each kernel's geometry by its own registers, and the drafts k15
 /// and k07 shared 13 nodes instead of over 30. By name, with the path of the
 /// statement each precedes.
-fn lets_used_in_deeper_loops(roots: &[Root], body: &naga::Block) -> HashMap<String, Vec<usize>> {
+///
+/// Also bound: a let STALE at a use, one that reads a local (by the version
+/// its load names) that a store changes before the use reads it (a Kahan sum's
+/// `let s = sum + y; c = (s - sum) - y; sum = s;`: inlined, `sum = s` read the
+/// compensation already updated; 2026-10-12). Its value is the one at its
+/// definition, so it is set there, whatever it reads; the second map names them.
+fn lets_used_in_deeper_loops(roots: &[Root], body: &naga::Block, points: &BTreeMap<Vec<usize>, BTreeMap<String, u32>>) -> (HashMap<String, Vec<usize>>, BTreeSet<String>) {
     fn mentions(n: &Node, leaf: &str) -> bool {
         match n {
             Node::Leaf { name, .. } => name == leaf,
@@ -1128,14 +1137,62 @@ fn lets_used_in_deeper_loops(roots: &[Root], body: &naga::Block) -> HashMap<Stri
             _ => false,
         }
     }
+    // The versioned local loads a let's value reads (through the lets it
+    // inlines): `load.local.<name>@<i>@v<n>` is the location `local.<name>@<i>` at version n.
+    fn local_loads(n: &Node, defs: &[(&String, &Vec<usize>, &Node)], out: &mut BTreeSet<(String, u32)>, depth: usize) {
+        if depth > 64 {
+            return;
+        }
+        let name = match n {
+            Node::Leaf { name, .. } | Node::App { name, .. } => name.as_str(),
+            Node::Literal { .. } => return,
+        };
+        if let Some(k) = name.strip_prefix("let.") {
+            if let Some((_, _, t)) = defs.iter().find(|(m, _, _)| m.as_str() == k) {
+                local_loads(t, defs, out, depth + 1);
+            }
+        } else if let Some((loc, v)) = name.strip_prefix("load.").filter(|l| l.starts_with("local.") && !l.contains(".#")).and_then(|l| l.rsplit_once("@v")) {
+            if let Ok(v) = v.parse::<u32>() {
+                out.insert((loc.to_string(), v));
+            }
+        }
+        if let Node::App { kids, .. } = n {
+            kids.iter().for_each(|k| local_loads(k, defs, out, depth));
+        }
+    }
+    // Where a let's value is evaluated: the points of the roots that read it,
+    // through the lets that inline it (a bound one at its own definition).
+    fn use_points(name: &str, roots: &[Root], bound: &HashMap<String, Vec<usize>>, depth: usize) -> Vec<Vec<usize>> {
+        let leaf = format!("let.{name}");
+        let mut out = Vec::new();
+        if depth > 64 {
+            return out;
+        }
+        for r in roots.iter().filter(|r| mentions(&r.tree, &leaf)) {
+            match &r.kind {
+                RootKind::Let { name: m } if m == name => {}
+                RootKind::Let { name: m } if bound.contains_key(m) => out.push(r.point.clone()),
+                RootKind::Let { name: m } => out.extend(use_points(m, roots, bound, depth + 1)),
+                _ => out.push(r.point.clone()),
+            }
+        }
+        out
+    }
+    let at = |p: &Vec<usize>, loc: &str| points.get(p).and_then(|m| m.get(loc)).copied().unwrap_or(0);
+    let mut stale = BTreeSet::new();
     for i in order {
         let (name, path, tree) = defs[i];
         let def_block = &path[..path.len().saturating_sub(1)];
-        if reads_memory(tree, &defs) && uses(name, roots, body, &bound, 0).iter().any(|u| in_deeper_loop(body, def_block, u)) {
+        let mut loads = BTreeSet::new();
+        local_loads(tree, &defs, &mut loads, 0);
+        if !loads.is_empty() && use_points(name, roots, &bound, 0).iter().any(|p| loads.iter().any(|(loc, v)| at(p, loc) != *v)) {
+            stale.insert(name.clone());
+            bound.insert(name.clone(), path.clone());
+        } else if reads_memory(tree, &defs) && uses(name, roots, body, &bound, 0).iter().any(|u| in_deeper_loop(body, def_block, u)) {
             bound.insert(name.clone(), path.clone());
         }
     }
-    bound
+    (bound, stale)
 }
 
 /// A tree with every component of a thread id (`shape.access_k` of
@@ -2685,12 +2742,18 @@ impl<'a> Ctx<'a> {
                     // An array let (`let accs = array<vec4<f32>, 4>(...)`) has no
                     // single value: its indexed uses are read in place, as before.
                     if matches!(&def, Node::App { name, .. } if name.starts_with("naga.Compose.type")) {
+                        if self.stale_lets.contains(&n) {
+                            return Err(format!("let {n} is an array that reads a local a store changes before its use: no register holds it"));
+                        }
                         self.notes.push(format!("let {n} is an array used in a deeper loop: its elements are read in place"));
                         continue;
                     }
                     let t = tree_of(self, &def)?;
                     let d = self.kingdom.dual(t.ty).map(|d| d.dual.clone()).unwrap_or_default();
                     if !matches!(d.as_str(), "f32.real" | "vec4<f32>.real" | "u32.index" | "u32.bits" | "u32.count" | "bool.flag") {
+                        if self.stale_lets.contains(&n) {
+                            return Err(format!("let {n} ({d}) reads a local a store changes before its use, and no register of its dual holds its value"));
+                        }
                         // No register of this dual (a vec2, a vec3, a matrix): the
                         // let stays inlined at its uses, and the note says so.
                         self.notes.push(format!("let {n} ({d}) is used in a deeper loop but has no register kind: inlined at its uses"));
@@ -4135,8 +4198,8 @@ pub fn read_safe_literal(source: &str, kingdom: &WgslKingdom) -> Result<SafeRead
             local_lanes.insert(format!("local.{name}@{}", h.index()), *size as u32);
         }
     }
-    let bound_lets = lets_used_in_deeper_loops(&f.roots, &naga_fn.body);
-    let mut ctx = Ctx { kingdom, per_kernel_rows: crate::wgsl::safe_karva::per_kernel_rows(kingdom, &role), duals: &duals, lets: &lets, roots: &roots, item_counter: None, tile_counter: None, tile_counter2: None, tile_counter3: None, tile_counter4: None, registers: BTreeMap::new(), next_reg: BTreeMap::new(), guard: None, tail: true, arrays: BTreeMap::new(), array_lens: BTreeMap::new(), parrs: BTreeMap::new(), grid, rows_x: grid_rows_x(source).then_some(true), notes: Vec::new(), helpers: &helpers, calls: &calls, arg_roots: &arg_roots, inline_args: None, row_arrays: BTreeMap::new(), used_counters: std::collections::BTreeSet::new(), local_lanes, axis_memo: BTreeMap::new(), loop_depth: 0, tile_bounds: BTreeMap::new(), naga_fn, module: &kernel.module, local_prefix: String::new(), inline_result: None, inline_values: None, bound_lets, let_regs: HashMap::new(), inlined: HashMap::new(), stored_seen: std::collections::BTreeSet::new(), counter_offsets: HashMap::new(), pointer_args: HashMap::new() };
+    let (bound_lets, stale_lets) = lets_used_in_deeper_loops(&f.roots, &naga_fn.body, &f.points);
+    let mut ctx = Ctx { kingdom, per_kernel_rows: crate::wgsl::safe_karva::per_kernel_rows(kingdom, &role), duals: &duals, lets: &lets, roots: &roots, item_counter: None, tile_counter: None, tile_counter2: None, tile_counter3: None, tile_counter4: None, registers: BTreeMap::new(), next_reg: BTreeMap::new(), guard: None, tail: true, arrays: BTreeMap::new(), array_lens: BTreeMap::new(), parrs: BTreeMap::new(), grid, rows_x: grid_rows_x(source).then_some(true), notes: Vec::new(), helpers: &helpers, calls: &calls, arg_roots: &arg_roots, inline_args: None, row_arrays: BTreeMap::new(), used_counters: std::collections::BTreeSet::new(), local_lanes, axis_memo: BTreeMap::new(), loop_depth: 0, tile_bounds: BTreeMap::new(), naga_fn, module: &kernel.module, local_prefix: String::new(), inline_result: None, inline_values: None, bound_lets, stale_lets, let_regs: HashMap::new(), inlined: HashMap::new(), stored_seen: std::collections::BTreeSet::new(), counter_offsets: HashMap::new(), pointer_args: HashMap::new() };
     // Register initialisations first, in root order. A local initialised to
     // its form's fallback (0.0, 0u, false, a zero vector) costs nothing: the
     // register's declaration already holds that value, and the register is
@@ -4840,6 +4903,25 @@ mod tests {
         assert_ne!(other, src);
         let Err(e) = read_safe(&other, &k) else { panic!("a store of another cell's sum read") };
         assert!(e.contains("not read-add-write of the same cell"), "{e}");
+    }
+
+    /// A LET STALE AT ITS USE (2026-10-12, found reading the cosine
+    /// re-score): Kahan's `let s = sum + y; c = (s - sum) - y; sum = s;`.
+    /// Inlined at `sum = s`, `s` read the compensation after its store; the
+    /// let is set in a register at its definition, so the sum is a copy of it.
+    #[test]
+    fn a_let_a_store_changes_before_its_use_is_set_at_its_definition() {
+        let k = WgslKingdom::load_safe();
+        let (t, role) = (FunctionTable::safe(), gram_role());
+        let src = include_str!("../../tests/corpus/safewgsl/draft_kahan.wgsl");
+        let tree = read_safe(src, &k).unwrap_or_else(|e| panic!("{e}")).tree;
+        let text = Renderer::new(&k, &t, &role).kernel(&tree).unwrap().text;
+        let copy = |l: &str| -> bool {
+            let reg = |x: &str| x.strip_prefix('f').is_some_and(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()));
+            l.trim().strip_suffix(';').and_then(|l| l.split_once(" = ")).is_some_and(|(a, b)| reg(a) && reg(b))
+        };
+        assert!(text.lines().any(copy), "the sum is not a copy of the let's register:\n{text}");
+        validate_text(&text).unwrap_or_else(|e| panic!("{e}\n{text}"));
     }
 
     /// A SUBGROUP OPERATION IN A LOOP'S BOUND (2026-10-12; a single-symbol
