@@ -1,7 +1,8 @@
 # Constrained generating mutation for WGSL kernels
 
-Design, 2026-10-12. Status: **draft for review** (Codex adversarial review, then Andrew).
-Nothing in this document is built yet.
+Design, 2026-10-12. Status: **revision 2, after the Codex adversarial review**
+(`logs/HGP/001/codex_review/plan_constrained_mutation_review.md`; its six findings
+and what changed are in section 12). Next: Andrew's review. Nothing is built yet.
 
 ## Context
 
@@ -69,6 +70,29 @@ gets the worst fitness and dies in selection. Rules are judged by the share of
 their children that are legal (target: all) and by how often their children
 are faster (the evolutionary signal); correctness is the fitness's job.
 
+**Legality is checked, not assumed (review finding 1).** Joins, patterns and
+table lookups choose where a rule may fire; they are not a proof. After every
+rewrite the child passes a layered checker, and a child that fails it is a bug
+in the rule (counted, the rule's record lowered), never sent to the GPU:
+
+1. typed tree and lexical scope (every symbol read is in scope, every slot typed);
+2. the structural safety grammar kept from today's kingdom: a store to the
+   output only through the owned-cell type, barriers only in non-conditional
+   statement positions, loops only from the bounded loop constructors
+   (`functions.tsv` store and loop rows, `loader.rs` barrier duals);
+3. range proofs: every index in its buffer's or array's range, no `u32`
+   overflow at the largest shape of the shape set, the binding range inside
+   the buffer;
+4. barrier uniformity by control dependence, not by position alone;
+5. adapter checks: workgroup size, workgroup memory, subgroup and other
+   features against the selected adapter's limits and features (today
+   `render.rs` validates with every naga capability enabled; that is a bug
+   to fix first, so validation matches the device);
+6. bounded loops: every loop's trip count bounded by a literal or a uniform.
+
+Mined rules (section 6) are untrusted: they become rules only after the
+checker passes their children across the corpus, and they stay subject to it.
+
 ## 2. The gene: a full WGSL tree of blocks
 
 ### 2.1 Coverage
@@ -115,16 +139,26 @@ of the same group in the individual, in step. Examples:
 | tile length | the workgroup array's length, the load loop's bound, the compute loop's bound, the index mask |
 | workgroup shape | `@workgroup_size(x, y)`, the dispatch rule, every `lid` stride |
 
-**Implementation: one definition, many references.** A group is realised as a
-shared definition in the gene's tail (the homeotic mechanism the fold already
-uses: one slot, referenced by `href` from every use). The value lives once;
-uses are expressions of it (`bx`, `bx - 1u` as a mask, `wx * bx` as a stride).
-Changing the one definition changes every use consistently, and a single
-point mutation in that slot is a coordinated mutation. The group column marks
-which shared definitions are **knobs** (mutable by knob mutation, section 5.1)
-and which are structure. The fold already discovers shared definitions; the
-reader assigns a group when it reads a kernel (it knows which literal is the
-block factor: today's ownership proof identifies it).
+**Implementation: first-class parameter nodes (revised after review finding 2).**
+A group is a typed **parameter** of the kernel tree: a named node under the
+kernel root (for example `param.block_x : blk`) with its value, and every
+dependent position is an expression of that parameter (`block_x`,
+`block_x - 1u` as a mask, `wx * block_x` as a stride). A knob mutation
+changes the parameter's value; the renderer writes every dependent position
+from it, so one change is coherent by construction. Parameters are closed:
+they never mention loop counters, registers, bindings or locals, so they are
+context-free and survive crossover (a grafted block that reads `block_x`
+reads the receiving kernel's parameter; the graft is allowed only when the
+receiver declares it).
+
+Parameters are **not** the deduplication `href` mechanism: today's tail slots
+are whole, independently Karva-encoded genes addressed by position
+(`safe_karva.rs`, `homeotic.rs`), which is exactly what broke positional
+crossover. Lowering parameters to shared rows comes later, only through the
+stable-row-id population design (`docs/PLAN_population_dag.md`) with
+dependency closure, remapping and size budgets. The reader assigns
+parameters when it reads a kernel (its ownership proof already identifies the
+block factor, the workgroup shape and the tile lengths).
 
 ### 2.4 The interface (generic bindings)
 
@@ -218,16 +252,20 @@ Joins are cheap (a few rows per individual) and evaluated on the host.
 
 `find` patterns are matched with fuller's e-graph (egglog). fuller already
 runs WGSL regions through an e-graph (`src/wgsl/mutate.rs`, arithmetic
-regions with opaque leaves; `src/ruleset/share.rs`). The extension: the
-kernel's statement structure becomes e-graph terms (blocks as constructors,
-loads and stores as ordered effects in sequence terms so a rewrite cannot
-move a load across a store it depends on), and rules are egglog rewrites with
-conditions. The e-graph gives every match site at once, and equivalent
-spellings of the same structure match the same rule (`(wid*16 + lid)*4` and
-`wid*64 + lid*4`, the case the reader had to normalise by hand on 2026-10-11).
+regions with opaque leaves; `src/ruleset/share.rs`). **Revised after review finding 4.** An e-graph's equivalence unions are not
+an ordered-effect representation: putting loads and stores into sequence
+terms does not stop a class from equating terms with different effects. So
+the work splits:
 
-Saturation stays bounded: rules are applied once per mutation, never run to a
-fixpoint together (the crate's non-confluence rule).
+- **statement and block rules** match on a typed control-flow tree with
+  explicit sequencing, effects (which buffer and range each statement reads
+  and writes) and barrier regions, by a conventional typed matcher (a tree
+  pattern with typed holes, matched by walking the tree);
+- **egglog stays on pure, isolated expressions** (index arithmetic, value
+  arithmetic, as `mutate.rs` does today), where equivalent spellings merge
+  (`(wid*16 + lid)*4` and `wid*64 + lid*4`, the case the reader had to
+  normalise by hand on 2026-10-11), in small rule families with hard node and
+  time caps (the crate's non-confluence rule, `CLAUDE.md`).
 
 ### 4.3 Lookups in the magic symbol table
 
@@ -258,20 +296,24 @@ variables with their types, promoted when they win. Two uses here:
 
 ### 5.2 Meaning-preserving rewrites (always correct, different speed)
 
-From the standard catalogue of loop and memory transformations, each with its
-precondition:
+From the standard catalogue of loop and memory transformations. **Revised after
+review finding 3:** every precondition is stated over an explicit model of
+effects (buffer and range read and written per statement), aliasing (which
+bindings may overlap), atomics, barrier phases and control dependence; each
+rule ships with counterexample tests. Reductions state a numerical tolerance
+as their contract, not exact equality.
 
 | rewrite | precondition |
 |---|---|
 | tile / strip-mine a loop | trip count known or guarded tail |
-| interchange two loops | no dependence carried across the pair |
+| interchange two loops | no loop-carried, alias, atomic or control dependence across the pair, and no barrier inside either loop |
 | unroll (partial, full) | literal trip count for full |
-| fuse / split loops | no dependence violated |
-| hoist a loop-invariant load or expression | invariant in the loop; no intervening store to its source |
-| vectorise four loads into a vec4 load | contiguous, aligned or guarded |
-| mask an index into its array (`& (len-1)`) | length a power of two, index proved in range (measured 1.7x on 2026-10-11) |
+| fuse / split loops | as interchange, and barrier phases unchanged (no fusion of two barrier loops) |
+| hoist a loop-invariant load or expression | the VALUE is invariant: no barrier between, no store or atomic in the loop to any binding that may alias the source |
+| vectorise four loads into a vec4 load | contiguous, 16-byte aligned, the whole vec4 in range (one guard covering all four lanes or a scalar tail), no aliasing store between |
+| mask an index into its array (`& (len-1)`) | length a power of two AND the index already proved in range, so the mask is the identity in value; its gain is the compiler dropping its bounds check (measured 1.7x on 2026-10-11) |
 | pad to the tile (with the dispatch plan) | padded buffer allocated, padding values neutral for the reduce |
-| exploit symmetry (compute the upper triangle, mirror) | the output is symmetric (the Gram matrix is) |
+| exploit symmetry (compute the upper triangle, mirror) | NOT a kernel rewrite: a thread writing its mirror cell breaks own-cell ownership; it is a dispatch-plan change (an upper-triangle grid plus a mirror pass) with its own ownership definition |
 
 ### 5.3 Banding: map over chunks, then reduce
 
@@ -363,19 +405,36 @@ phylu depends on fuller; fuller never depends on phylu.
 
 ## 9. Measurement, with expectations stated before any run
 
-Baselines are from 2026-10-11. Each operator is measured on the same
-populations (`logs/HGP/001/popB_g080`, `popA2_g006j`) and in a run.
+**Pre-registered (revised after review finding 5).** Fixed before any run:
+the corpus (`tests/corpus/safewgsl` reading kernels, populations
+`logs/HGP/001/popB_g080` and `popA2_g006j`), the device (Apple M3 Max, Metal,
+the wgpu and naga versions of the build), seeds 1 to 5, the correctness
+oracle (the 128 cases plus the accuracy pairs), held-out shapes (ragged sizes
+and the largest shape), the time limit and the evaluation budget. Rates are
+reported with 95 % intervals and a failure taxonomy (which checker layer or
+fitness stage). Ablations at equal attempted and completed evaluations:
+uniform random legal knob settings; the same rules with repair or rejection
+instead of the checker; typed crossover with and without parameters;
+selection only (no variation); a small exhaustive grid over the knobs; and a
+hand-tuned kernel. Baselines are from 2026-10-11.
 
 | measure | baseline | expected after |
 |---|---|---|
 | knob mutation: legal on first evaluation | head mutation 16 of 92 | at least 95 % |
-| meaning-preserving rewrite: correct on the device | n/a | at least 95 % (only precondition errors fail) |
+| meaning-preserving rewrite: correct on the device | n/a | at least 95 %; every failure is a rule bug (a missing precondition), fixed |
 | block crossover: correct children on the device | 10 of 40 | 20 of 40 or more |
 | improvement of the best per 1,000 evaluations | none in 1,040 | at least one step in the first 1,000 |
 | best speed-up after 100 generations, no models | about 10.5x | 15x or more |
 
 ## 10. Tasks (each brief opens "Read docs/Rules.md, then:")
 
+0. **First, the cheapest test of the riskiest assumption (review finding 6):**
+   fix validation to the adapter's features and limits; then one first-class
+   `block_x` parameter and one closed rule changing it and every dependent
+   position. Run it over the saved populations and boundary shapes: render,
+   validate, compile and run on the device, check ownership and barriers,
+   measure legal share, diversity and speed. Only if it is close to 100 %
+   legal and yields viable faster variants do the later tasks proceed.
 1. Coverage: the full WGSL compute language in the kingdom (in progress).
 2. Blocks: loop, if, tile phase, guarded store, tree reduction, band as block
    symbols with typed slots.
@@ -402,3 +461,14 @@ answered in a revision, then Andrew's review. Nothing is built before.
    correct by construction) to save time, with a sampled check?
 3. How much of the dispatch plan should the gene own before the first
    UltraDim target (the trellis beam), which needs a batched, persistent kernel?
+
+## 12. Review findings and changes (Codex, 2026-10-12)
+
+| # | finding | change |
+|---|---|---|
+| 1 | Joins, patterns and lookups do not prove legality; validation runs with every naga capability, not the adapter's | Section 1: a layered checker after every rewrite; mined rules untrusted until certified; the validation bug is task 0 |
+| 2 | Shared tail definitions (positional hrefs) are unsound carriers for groups across crossover | Section 2.3: groups are first-class, closed parameter nodes; lowering to shared rows only via stable row ids later |
+| 3 | Rewrite preconditions too weak (barriers, aliasing, atomics, vector bounds); symmetry breaks ownership; masking is only an identity | Section 5.2: preconditions over an effect, alias and barrier model; symmetry moved to the dispatch plan; mask's precondition and gain stated |
+| 4 | An e-graph cannot hold ordered effects; large structural rule sets break the non-confluence rule | Section 4.2: statement rules on a typed control-flow matcher; egglog only on pure expressions, small capped families |
+| 5 | Expectations not pre-registered; baselines and ablations missing | Section 9: corpus, device, seeds, oracle, held-out shapes, budget fixed; intervals; six ablations |
+| 6 | The riskiest assumption is the group carrier | Section 10, task 0: one `block_x` parameter and one rule, measured, before anything else |
