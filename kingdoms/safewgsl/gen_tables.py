@@ -297,6 +297,9 @@ def build_types():
     # ---- vec4<u32> registers and vec2 private arrays (2026-10-12, gap 8) ----
     add("reg<vec4<u32>>", "bits", 4, "a named vec4<u32> register: u0..u7 (subgroupBallot's result)")
     add("parr<vec2<f32>>", "real", 0, "a private array of 16 vec2<f32>: pq, pr")
+    # ---- matrix registers (2026-10-12, gap 9) ----
+    for n in (2, 3, 4):
+        add(f"reg<mat{n}x{n}<f32>>", "real", n * n, f"a named mat{n}x{n}<f32> register")
     return rows
 
 
@@ -993,6 +996,29 @@ f("parr", "r", "composite", [], "parr<vec2<f32>>.real", "private array pr of 16 
 f("parr", "get_t", "composite", ["parr<vec2<f32>>.real", "u32.pindex"], "vec2<f32>.real", "pq[i]")
 for r in RUNGS + RUNGS5:
     f("parr", "set_t_" + r, "composite", ["parr<vec2<f32>>.real", "u32.pindex", "vec2<f32>.real"], "stmt." + r, "arity 3: pq[i] = v;")
+
+
+# ---- matrices (2026-10-12, WGSL_COVERAGE.md gap 9): composition from 3 and 4 columns, column access, the
+# products and sums WGSL has on matrices, and square matrix registers ----
+f("shape", "compose_mat3", "Compose", ["<vecR<f32>.real>"] * 3, "<mat3xR<f32>.real>", "arity 3: three columns")
+f("shape", "compose_mat4", "Compose", ["<vecR<f32>.real>"] * 4, "<mat4xR<f32>.real>", "arity 4: four columns")
+for C in (2, 3, 4):
+    for R in (2, 3, 4):
+        for i in range(C):
+            f("shape", f"col_{i}", "AccessIndex", [f"mat{C}x{R}<f32>.real"], f"vec{R}<f32>.real", f"m[{i}]: a column")
+f("shape", "col_at", "composite", ["<matCxR<f32>.real>", "u32.index"], "<vecR<f32>.real>", "m[min(i, C - 1)]: a column chosen at run time")
+f("arith", "mul_vec_mat", "Binary::Multiply", ["<vecR<f32>.real>", "<matCxR<f32>.real>"], "<vecC<f32>.real>", "v * m (a row vector)")
+f("arith", "mul_mat_scalar", "Binary::Multiply", ["<matCxR<f32>.real>", "f32.real"], "<matCxR<f32>.real>", "")
+f("arith", "mul_scalar_mat", "Binary::Multiply", ["f32.real", "<matCxR<f32>.real>"], "<matCxR<f32>.real>", "")
+f("arith", "add_mat", "Binary::Add", ["<matCxR<f32>.real>", "<matCxR<f32>.real>"], "<matCxR<f32>.real>", "")
+f("arith", "sub_mat", "Binary::Subtract", ["<matCxR<f32>.real>", "<matCxR<f32>.real>"], "<matCxR<f32>.real>", "")
+f("arith", "neg_mat", "Unary::Negate", ["<matCxR<f32>.real>"], "<matCxR<f32>.real>", "")
+for n, k in ((2, "x"), (3, "y"), (4, "z")):
+    for i in range(2):
+        f("reg", f"{k}{i}", "composite", [], f"reg<mat{n}x{n}<f32>>.real", f"a mat{n}x{n}<f32> register")
+    f("reg", f"get_{k}", "composite", [f"reg<mat{n}x{n}<f32>>.real"], f"mat{n}x{n}<f32>.real", "the register's value")
+    for r in RUNGS + RUNGS5:
+        f("reg", f"set_{k}_" + r, "composite", [f"reg<mat{n}x{n}<f32>>.real", f"mat{n}x{n}<f32>.real"], "stmt." + r, "")
 
 
 def write_tsv(path, header, rows):

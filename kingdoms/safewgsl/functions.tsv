@@ -1317,3 +1317,84 @@ F1315	parr	set_t_C3	composite	parr<vec2<f32>>.real u32.pindex vec2<f32>.real	stm
 F1316	parr	set_t_C4	composite	parr<vec2<f32>>.real u32.pindex vec2<f32>.real	stmt.C4	3	arity 3: pq[i] = v;
 F1317	parr	set_t_L5	composite	parr<vec2<f32>>.real u32.pindex vec2<f32>.real	stmt.L5	3	arity 3: pq[i] = v;
 F1318	parr	set_t_C5	composite	parr<vec2<f32>>.real u32.pindex vec2<f32>.real	stmt.C5	3	arity 3: pq[i] = v;
+F1319	shape	compose_mat3	Compose	<vecR<f32>.real> <vecR<f32>.real> <vecR<f32>.real>	<mat3xR<f32>.real>	3	arity 3: three columns
+F1320	shape	compose_mat4	Compose	<vecR<f32>.real> <vecR<f32>.real> <vecR<f32>.real> <vecR<f32>.real>	<mat4xR<f32>.real>	4	arity 4: four columns
+F1321	shape	col_0	AccessIndex	mat2x2<f32>.real	vec2<f32>.real	1	m[0]: a column
+F1322	shape	col_1	AccessIndex	mat2x2<f32>.real	vec2<f32>.real	1	m[1]: a column
+F1323	shape	col_0	AccessIndex	mat2x3<f32>.real	vec3<f32>.real	1	m[0]: a column
+F1324	shape	col_1	AccessIndex	mat2x3<f32>.real	vec3<f32>.real	1	m[1]: a column
+F1325	shape	col_0	AccessIndex	mat2x4<f32>.real	vec4<f32>.real	1	m[0]: a column
+F1326	shape	col_1	AccessIndex	mat2x4<f32>.real	vec4<f32>.real	1	m[1]: a column
+F1327	shape	col_0	AccessIndex	mat3x2<f32>.real	vec2<f32>.real	1	m[0]: a column
+F1328	shape	col_1	AccessIndex	mat3x2<f32>.real	vec2<f32>.real	1	m[1]: a column
+F1329	shape	col_2	AccessIndex	mat3x2<f32>.real	vec2<f32>.real	1	m[2]: a column
+F1330	shape	col_0	AccessIndex	mat3x3<f32>.real	vec3<f32>.real	1	m[0]: a column
+F1331	shape	col_1	AccessIndex	mat3x3<f32>.real	vec3<f32>.real	1	m[1]: a column
+F1332	shape	col_2	AccessIndex	mat3x3<f32>.real	vec3<f32>.real	1	m[2]: a column
+F1333	shape	col_0	AccessIndex	mat3x4<f32>.real	vec4<f32>.real	1	m[0]: a column
+F1334	shape	col_1	AccessIndex	mat3x4<f32>.real	vec4<f32>.real	1	m[1]: a column
+F1335	shape	col_2	AccessIndex	mat3x4<f32>.real	vec4<f32>.real	1	m[2]: a column
+F1336	shape	col_0	AccessIndex	mat4x2<f32>.real	vec2<f32>.real	1	m[0]: a column
+F1337	shape	col_1	AccessIndex	mat4x2<f32>.real	vec2<f32>.real	1	m[1]: a column
+F1338	shape	col_2	AccessIndex	mat4x2<f32>.real	vec2<f32>.real	1	m[2]: a column
+F1339	shape	col_3	AccessIndex	mat4x2<f32>.real	vec2<f32>.real	1	m[3]: a column
+F1340	shape	col_0	AccessIndex	mat4x3<f32>.real	vec3<f32>.real	1	m[0]: a column
+F1341	shape	col_1	AccessIndex	mat4x3<f32>.real	vec3<f32>.real	1	m[1]: a column
+F1342	shape	col_2	AccessIndex	mat4x3<f32>.real	vec3<f32>.real	1	m[2]: a column
+F1343	shape	col_3	AccessIndex	mat4x3<f32>.real	vec3<f32>.real	1	m[3]: a column
+F1344	shape	col_0	AccessIndex	mat4x4<f32>.real	vec4<f32>.real	1	m[0]: a column
+F1345	shape	col_1	AccessIndex	mat4x4<f32>.real	vec4<f32>.real	1	m[1]: a column
+F1346	shape	col_2	AccessIndex	mat4x4<f32>.real	vec4<f32>.real	1	m[2]: a column
+F1347	shape	col_3	AccessIndex	mat4x4<f32>.real	vec4<f32>.real	1	m[3]: a column
+F1348	shape	col_at	composite	<matCxR<f32>.real> u32.index	<vecR<f32>.real>	2	m[min(i, C - 1)]: a column chosen at run time
+F1349	arith	mul_vec_mat	Binary::Multiply	<vecR<f32>.real> <matCxR<f32>.real>	<vecC<f32>.real>	2	v * m (a row vector)
+F1350	arith	mul_mat_scalar	Binary::Multiply	<matCxR<f32>.real> f32.real	<matCxR<f32>.real>	2	
+F1351	arith	mul_scalar_mat	Binary::Multiply	f32.real <matCxR<f32>.real>	<matCxR<f32>.real>	2	
+F1352	arith	add_mat	Binary::Add	<matCxR<f32>.real> <matCxR<f32>.real>	<matCxR<f32>.real>	2	
+F1353	arith	sub_mat	Binary::Subtract	<matCxR<f32>.real> <matCxR<f32>.real>	<matCxR<f32>.real>	2	
+F1354	arith	neg_mat	Unary::Negate	<matCxR<f32>.real>	<matCxR<f32>.real>	1	
+F1355	reg	x0	composite	-	reg<mat2x2<f32>>.real	0	a mat2x2<f32> register
+F1356	reg	x1	composite	-	reg<mat2x2<f32>>.real	0	a mat2x2<f32> register
+F1357	reg	get_x	composite	reg<mat2x2<f32>>.real	mat2x2<f32>.real	1	the register's value
+F1358	reg	set_x_L0	composite	reg<mat2x2<f32>>.real mat2x2<f32>.real	stmt.L0	2	
+F1359	reg	set_x_L1	composite	reg<mat2x2<f32>>.real mat2x2<f32>.real	stmt.L1	2	
+F1360	reg	set_x_L2	composite	reg<mat2x2<f32>>.real mat2x2<f32>.real	stmt.L2	2	
+F1361	reg	set_x_L3	composite	reg<mat2x2<f32>>.real mat2x2<f32>.real	stmt.L3	2	
+F1362	reg	set_x_L4	composite	reg<mat2x2<f32>>.real mat2x2<f32>.real	stmt.L4	2	
+F1363	reg	set_x_C0	composite	reg<mat2x2<f32>>.real mat2x2<f32>.real	stmt.C0	2	
+F1364	reg	set_x_C1	composite	reg<mat2x2<f32>>.real mat2x2<f32>.real	stmt.C1	2	
+F1365	reg	set_x_C2	composite	reg<mat2x2<f32>>.real mat2x2<f32>.real	stmt.C2	2	
+F1366	reg	set_x_C3	composite	reg<mat2x2<f32>>.real mat2x2<f32>.real	stmt.C3	2	
+F1367	reg	set_x_C4	composite	reg<mat2x2<f32>>.real mat2x2<f32>.real	stmt.C4	2	
+F1368	reg	set_x_L5	composite	reg<mat2x2<f32>>.real mat2x2<f32>.real	stmt.L5	2	
+F1369	reg	set_x_C5	composite	reg<mat2x2<f32>>.real mat2x2<f32>.real	stmt.C5	2	
+F1370	reg	y0	composite	-	reg<mat3x3<f32>>.real	0	a mat3x3<f32> register
+F1371	reg	y1	composite	-	reg<mat3x3<f32>>.real	0	a mat3x3<f32> register
+F1372	reg	get_y	composite	reg<mat3x3<f32>>.real	mat3x3<f32>.real	1	the register's value
+F1373	reg	set_y_L0	composite	reg<mat3x3<f32>>.real mat3x3<f32>.real	stmt.L0	2	
+F1374	reg	set_y_L1	composite	reg<mat3x3<f32>>.real mat3x3<f32>.real	stmt.L1	2	
+F1375	reg	set_y_L2	composite	reg<mat3x3<f32>>.real mat3x3<f32>.real	stmt.L2	2	
+F1376	reg	set_y_L3	composite	reg<mat3x3<f32>>.real mat3x3<f32>.real	stmt.L3	2	
+F1377	reg	set_y_L4	composite	reg<mat3x3<f32>>.real mat3x3<f32>.real	stmt.L4	2	
+F1378	reg	set_y_C0	composite	reg<mat3x3<f32>>.real mat3x3<f32>.real	stmt.C0	2	
+F1379	reg	set_y_C1	composite	reg<mat3x3<f32>>.real mat3x3<f32>.real	stmt.C1	2	
+F1380	reg	set_y_C2	composite	reg<mat3x3<f32>>.real mat3x3<f32>.real	stmt.C2	2	
+F1381	reg	set_y_C3	composite	reg<mat3x3<f32>>.real mat3x3<f32>.real	stmt.C3	2	
+F1382	reg	set_y_C4	composite	reg<mat3x3<f32>>.real mat3x3<f32>.real	stmt.C4	2	
+F1383	reg	set_y_L5	composite	reg<mat3x3<f32>>.real mat3x3<f32>.real	stmt.L5	2	
+F1384	reg	set_y_C5	composite	reg<mat3x3<f32>>.real mat3x3<f32>.real	stmt.C5	2	
+F1385	reg	z0	composite	-	reg<mat4x4<f32>>.real	0	a mat4x4<f32> register
+F1386	reg	z1	composite	-	reg<mat4x4<f32>>.real	0	a mat4x4<f32> register
+F1387	reg	get_z	composite	reg<mat4x4<f32>>.real	mat4x4<f32>.real	1	the register's value
+F1388	reg	set_z_L0	composite	reg<mat4x4<f32>>.real mat4x4<f32>.real	stmt.L0	2	
+F1389	reg	set_z_L1	composite	reg<mat4x4<f32>>.real mat4x4<f32>.real	stmt.L1	2	
+F1390	reg	set_z_L2	composite	reg<mat4x4<f32>>.real mat4x4<f32>.real	stmt.L2	2	
+F1391	reg	set_z_L3	composite	reg<mat4x4<f32>>.real mat4x4<f32>.real	stmt.L3	2	
+F1392	reg	set_z_L4	composite	reg<mat4x4<f32>>.real mat4x4<f32>.real	stmt.L4	2	
+F1393	reg	set_z_C0	composite	reg<mat4x4<f32>>.real mat4x4<f32>.real	stmt.C0	2	
+F1394	reg	set_z_C1	composite	reg<mat4x4<f32>>.real mat4x4<f32>.real	stmt.C1	2	
+F1395	reg	set_z_C2	composite	reg<mat4x4<f32>>.real mat4x4<f32>.real	stmt.C2	2	
+F1396	reg	set_z_C3	composite	reg<mat4x4<f32>>.real mat4x4<f32>.real	stmt.C3	2	
+F1397	reg	set_z_C4	composite	reg<mat4x4<f32>>.real mat4x4<f32>.real	stmt.C4	2	
+F1398	reg	set_z_L5	composite	reg<mat4x4<f32>>.real mat4x4<f32>.real	stmt.L5	2	
+F1399	reg	set_z_C5	composite	reg<mat4x4<f32>>.real mat4x4<f32>.real	stmt.C5	2	

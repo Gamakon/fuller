@@ -934,7 +934,7 @@ impl<'a> Renderer<'a> {
                 scope.in_tile = false;
                 Ok(format!("    for (k = 0u; k < {count}u; k = k + 1u) {{\n{}    }}\n", body?))
             }
-            "reg.set_f" | "reg.set_v" | "reg.set_i" | "reg.set_b" | "reg.set_n" | "reg.set_u" => {
+            "reg.set_f" | "reg.set_v" | "reg.set_i" | "reg.set_b" | "reg.set_n" | "reg.set_u" | "reg.set_x" | "reg.set_y" | "reg.set_z" => {
                 n(2)?;
                 Ok(format!("    {} = {};\n", self.register(&kids[0])?, self.value(&kids[1], scope)?))
             }
@@ -965,9 +965,12 @@ impl<'a> Renderer<'a> {
             ("fallback", "reg<bool>.flag") => "b0".to_string(),
             ("fallback", "reg<i32>.int") => "n0".to_string(),
             ("fallback", "reg<vec4<u32>>.bits") => "u0".to_string(),
+            ("fallback", "reg<mat2x2<f32>>.real") => "x0".to_string(),
+            ("fallback", "reg<mat3x3<f32>>.real") => "y0".to_string(),
+            ("fallback", "reg<mat4x4<f32>>.real") => "z0".to_string(),
             (name, _) => {
                 let n = name.strip_prefix("reg.").unwrap_or("");
-                if ok(n, 'f', 64) || ok(n, 'v', 32) || ok(n, 'i', 64) || ok(n, 'b', 16) || ok(n, 'n', 16) || ok(n, 'u', 8) {
+                if ok(n, 'f', 64) || ok(n, 'v', 32) || ok(n, 'i', 64) || ok(n, 'b', 16) || ok(n, 'n', 16) || ok(n, 'u', 8) || ok(n, 'x', 2) || ok(n, 'y', 2) || ok(n, 'z', 2) {
                     let k: usize = n[1..].parse().unwrap_or(0);
                     register_var(&n[..1], k)
                 } else {
@@ -1119,7 +1122,7 @@ impl<'a> Renderer<'a> {
             return self.fill(p, v, scope);
         }
         match name {
-            "reg.get_f" | "reg.get_v" | "reg.get_i" | "reg.get_b" | "reg.get_n" | "reg.get_u" => return self.register(&v.kids[0]),
+            "reg.get_f" | "reg.get_v" | "reg.get_i" | "reg.get_b" | "reg.get_n" | "reg.get_u" | "reg.get_x" | "reg.get_y" | "reg.get_z" => return self.register(&v.kids[0]),
             "reg.get_v_lane" => return Ok(format!("{}[({}) & 3u]", self.register(&v.kids[0])?, self.value(&v.kids[1], scope)?)),
             // A lane of a vec4 element of a workgroup or private array (seed08 of run A): the
             // element is a reference, so the lane index may be a run-time value.
@@ -1288,6 +1291,15 @@ impl<'a> Renderer<'a> {
                 return Ok(format!("vec4<f32>(phi[{i}], phi[{i} + 1u], phi[{i} + 2u], phi[{i} + 3u])"));
             }
             "load.h_safe" => return Ok(format!("h[{}]", self.value(&v.kids[0], scope)?)),
+            // A matrix's column chosen at run time, clamped to its columns,
+            // through a helper's local copy (naga 0.20 indexes a matrix value
+            // by a constant only).
+            "shape.col_at" => {
+                let (cols, rows) = self.dual(v.kids[0].ty)?.matrix_shape().ok_or_else(|| format!("shape.col_at of {}, not a matrix", v.kids[0].name))?;
+                let helper = format!("col_mat{cols}x{rows}f");
+                scope.helpers.push(helper.clone());
+                return Ok(format!("{helper}({}, {})", self.value(&v.kids[0], scope)?, self.value(&v.kids[1], scope)?));
+            }
             _ => {}
         }
         if let Some(bound) = name.strip_prefix("safe.lt_") {
@@ -1476,6 +1488,10 @@ impl<'a> Renderer<'a> {
             }
             "AccessIndex" => {
                 arity(1)?;
+                // A matrix's column: `m[i]`.
+                if let Some(c) = template.instance.strip_prefix("col_") {
+                    return Ok(format!("{}[{c}]", a[0]));
+                }
                 let i: usize = template.instance.strip_prefix("access_").and_then(|n| n.parse().ok()).ok_or_else(|| format!("{name}: not an access"))?;
                 Ok(format!("{}.{}", a[0], ["x", "y", "z", "w"][i]))
             }
@@ -1958,7 +1974,7 @@ pub fn register_var(prefix: &str, k: usize) -> String {
 /// to their form's fallback, the loop counters, the private arrays).
 pub fn register_declarations() -> String {
     let mut out = String::new();
-    for (prefix, n, ty, init) in [("f", 64, "f32", "0.0"), ("v", 32, "vec4<f32>", "vec4<f32>(0.0)"), ("i", 64, "u32", "0u"), ("b", 16, "bool", "false"), ("n", 16, "i32", "0"), ("u", 8, "vec4<u32>", "vec4<u32>(0u)")] {
+    for (prefix, n, ty, init) in [("f", 64, "f32", "0.0"), ("v", 32, "vec4<f32>", "vec4<f32>(0.0)"), ("i", 64, "u32", "0u"), ("b", 16, "bool", "false"), ("n", 16, "i32", "0"), ("u", 8, "vec4<u32>", "vec4<u32>(0u)"), ("x", 2, "mat2x2<f32>", "mat2x2<f32>()"), ("y", 2, "mat3x3<f32>", "mat3x3<f32>()"), ("z", 2, "mat4x4<f32>", "mat4x4<f32>()")] {
         for k in 0..n {
             if k % 8 == 0 {
                 out.push_str("    ");
@@ -2037,6 +2053,15 @@ pub const COMPOSITES: &[(&str, &str)] = &[
     ("inverse_2", "fn inverse_2(m: mat2x2<f32>) -> mat2x2<f32> {\n    let inv_det = 1.0 / determinant(m);\n    return mat2x2<f32>(vec2<f32>(m[1][1], -m[0][1]) * inv_det, vec2<f32>(-m[1][0], m[0][0]) * inv_det);\n}"),
     ("inverse_3", "fn inverse_3(m: mat3x3<f32>) -> mat3x3<f32> {\n    // Columns of the adjugate: cross products of the columns, transposed.\n    let c0 = cross(m[1], m[2]);\n    let c1 = cross(m[2], m[0]);\n    let c2 = cross(m[0], m[1]);\n    let inv_det = 1.0 / dot(m[0], c0);\n    return transpose(mat3x3<f32>(c0, c1, c2)) * inv_det;\n}"),
     ("inverse_4", "fn inverse_4(m: mat4x4<f32>) -> mat4x4<f32> {\n    // The adjugate from 2x2 sub-determinants (column-major m[col][row]).\n    let a00 = m[0][0]; let a01 = m[0][1]; let a02 = m[0][2]; let a03 = m[0][3];\n    let a10 = m[1][0]; let a11 = m[1][1]; let a12 = m[1][2]; let a13 = m[1][3];\n    let a20 = m[2][0]; let a21 = m[2][1]; let a22 = m[2][2]; let a23 = m[2][3];\n    let a30 = m[3][0]; let a31 = m[3][1]; let a32 = m[3][2]; let a33 = m[3][3];\n    let b00 = a00 * a11 - a01 * a10; let b01 = a00 * a12 - a02 * a10; let b02 = a00 * a13 - a03 * a10;\n    let b03 = a01 * a12 - a02 * a11; let b04 = a01 * a13 - a03 * a11; let b05 = a02 * a13 - a03 * a12;\n    let b06 = a20 * a31 - a21 * a30; let b07 = a20 * a32 - a22 * a30; let b08 = a20 * a33 - a23 * a30;\n    let b09 = a21 * a32 - a22 * a31; let b10 = a21 * a33 - a23 * a31; let b11 = a22 * a33 - a23 * a32;\n    let inv_det = 1.0 / (b00 * b11 - b01 * b10 + b02 * b09 + b03 * b08 - b04 * b07 + b05 * b06);\n    return mat4x4<f32>(\n        vec4<f32>(a11 * b11 - a12 * b10 + a13 * b09, a02 * b10 - a01 * b11 - a03 * b09, a31 * b05 - a32 * b04 + a33 * b03, a22 * b04 - a21 * b05 - a23 * b03),\n        vec4<f32>(a12 * b08 - a10 * b11 - a13 * b07, a00 * b11 - a02 * b08 + a03 * b07, a32 * b02 - a30 * b05 - a33 * b01, a20 * b05 - a22 * b02 + a23 * b01),\n        vec4<f32>(a10 * b10 - a11 * b08 + a13 * b06, a01 * b08 - a00 * b10 - a03 * b06, a30 * b04 - a31 * b02 + a33 * b00, a21 * b02 - a20 * b04 - a23 * b00),\n        vec4<f32>(a11 * b07 - a10 * b09 - a12 * b06, a00 * b09 - a01 * b07 + a02 * b06, a31 * b01 - a30 * b03 - a32 * b00, a20 * b03 - a21 * b01 + a22 * b00)) * inv_det;\n}"),
+    ("col_mat2x2f", "fn col_mat2x2f(m: mat2x2<f32>, i: u32) -> vec2<f32> { var t = m; return t[min(i, 1u)]; }"),
+    ("col_mat2x3f", "fn col_mat2x3f(m: mat2x3<f32>, i: u32) -> vec3<f32> { var t = m; return t[min(i, 1u)]; }"),
+    ("col_mat2x4f", "fn col_mat2x4f(m: mat2x4<f32>, i: u32) -> vec4<f32> { var t = m; return t[min(i, 1u)]; }"),
+    ("col_mat3x2f", "fn col_mat3x2f(m: mat3x2<f32>, i: u32) -> vec2<f32> { var t = m; return t[min(i, 2u)]; }"),
+    ("col_mat3x3f", "fn col_mat3x3f(m: mat3x3<f32>, i: u32) -> vec3<f32> { var t = m; return t[min(i, 2u)]; }"),
+    ("col_mat3x4f", "fn col_mat3x4f(m: mat3x4<f32>, i: u32) -> vec4<f32> { var t = m; return t[min(i, 2u)]; }"),
+    ("col_mat4x2f", "fn col_mat4x2f(m: mat4x2<f32>, i: u32) -> vec2<f32> { var t = m; return t[min(i, 3u)]; }"),
+    ("col_mat4x3f", "fn col_mat4x3f(m: mat4x3<f32>, i: u32) -> vec3<f32> { var t = m; return t[min(i, 3u)]; }"),
+    ("col_mat4x4f", "fn col_mat4x4f(m: mat4x4<f32>, i: u32) -> vec4<f32> { var t = m; return t[min(i, 3u)]; }"),
     ("outer_2_2", "fn outer_2_2(a: vec2<f32>, b: vec2<f32>) -> mat2x2<f32> { return mat2x2<f32>(a * b.x, a * b.y); }"),
     ("outer_2_3", "fn outer_2_3(a: vec2<f32>, b: vec3<f32>) -> mat3x2<f32> { return mat3x2<f32>(a * b.x, a * b.y, a * b.z); }"),
     ("outer_2_4", "fn outer_2_4(a: vec2<f32>, b: vec4<f32>) -> mat4x2<f32> { return mat4x2<f32>(a * b.x, a * b.y, a * b.z, a * b.w); }"),

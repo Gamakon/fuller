@@ -249,6 +249,12 @@ fn tree_of(ctx: &mut Ctx, n: &Node) -> Result<Tree, String> {
                     let v = bound.get(&helper.args[0]).cloned().ok_or_else(|| format!("{callee}: no vector argument"))?;
                     let i = bound.get(&helper.args[1]).cloned().ok_or_else(|| format!("{callee}: no index argument"))?;
                     let vd = ctx.kingdom.dual(v.ty).ok_or_else(|| format!("{callee}: an untyped vector"))?;
+                    // The kingdom's own `col_matCxRf`: a matrix's column at run time.
+                    // (`CxR`: the column vector has R lanes.)
+                    if let Some(rows) = callee.strip_prefix("col_mat").and_then(|r| r.strip_suffix('f')).and_then(|r| r.rsplit('x').next()) {
+                        let t = ty(ctx, &format!("vec{rows}<f32>.real"))?;
+                        return Ok(Tree::new("shape.col_at", t, vec![v, i]));
+                    }
                     let scalar = vd.scalar().ok_or_else(|| format!("{callee} over {}: not a vector", vd.dual))?;
                     let t = ty(ctx, &format!("{scalar}.{}", vd.form))?;
                     return Ok(Tree::new("shape.at", t, vec![v, i]));
@@ -314,6 +320,17 @@ fn tree_of(ctx: &mut Ctx, n: &Node) -> Result<Tree, String> {
                 // the safe table (rows the safe kingdom added: insertBits,
                 // dot on integer vectors, % on reals): resolved there by its
                 // operand's scalar kind and arity.
+                // A matrix of 3 or 4 columns (the WGSL table spells 2), and a
+                // matrix's column by position.
+                let slot = slot_of(n);
+                if name.starts_with("naga.Compose.type") && slot.starts_with("mat") && (kids.len() == 3 || kids.len() == 4) {
+                    return tree_of(ctx, &Node::App { name: format!("shape.compose_mat{}.{slot}", kids.len()), slot: slot.to_string(), known: true, kids: kids.clone() });
+                }
+                if let (Some(i), [k]) = (name.strip_prefix("naga.AccessIndex."), kids.as_slice()) {
+                    if slot_of(k).starts_with("mat") {
+                        return tree_of(ctx, &Node::App { name: format!("shape.col_{i}"), slot: slot.to_string(), known: true, kids: kids.clone() });
+                    }
+                }
                 if let Some(row) = safe_row_for(name, kids) {
                     return tree_of(ctx, &Node::App { name: row, slot: slot_of(n).to_string(), known: true, kids: kids.clone() });
                 }
@@ -347,7 +364,9 @@ fn tree_of(ctx: &mut Ctx, n: &Node) -> Result<Tree, String> {
             // and arity.
             let by_row = || -> Option<Ty> {
                 let slot = slot_of(n);
-                ctx.kingdom.rows.iter().filter(|r| r.name == *name && r.inputs.len() == kids.len()).map(|r| r.output).find(|&o| ctx.kingdom.dual(o).is_some_and(|d| d.slot == slot))
+                // A compose carries its slot in its name (`shape.compose_mat3.mat3x3<f32>`).
+                let row = if name.starts_with("shape.compose") { name.split('.').take(2).collect::<Vec<_>>().join(".") } else { name.clone() };
+                ctx.kingdom.rows.iter().filter(|r| r.name == row && r.inputs.len() == kids.len()).map(|r| r.output).find(|&o| ctx.kingdom.dual(o).is_some_and(|d| d.slot == slot))
             };
             let t = ctx.duals.get(&text).copied().flatten().or_else(lane_of_vector).or_else(by_row).ok_or_else(|| format!("untyped node {}", &text[..text.len().min(80)]))?;
             let name = &prefixed(&ctx.local_prefix, name);
@@ -1241,6 +1260,9 @@ impl<'a> Ctx<'a> {
             "bool.flag" => ('b', 16),
             "i32.int" => ('n', 16),
             "vec4<u32>.bits" | "vec4<u32>.index" | "vec4<u32>.count" => ('u', 8),
+            "mat2x2<f32>.real" => ('x', 2),
+            "mat3x3<f32>.real" => ('y', 2),
+            "mat4x4<f32>.real" => ('z', 2),
             other => return Err(format!("local {local} has dual {other}, which has no register kind"),)
         };
         let n = *self.next_reg.get(&kind).unwrap_or(&0);
@@ -1251,6 +1273,34 @@ impl<'a> Ctx<'a> {
         let row = format!("reg.{kind}{n}");
         self.registers.insert(local.to_string(), row.clone());
         Ok(row)
+    }
+
+    /// A matrix local's columns and rows (`local.<name>@<h>`), from naga.
+    fn local_mat(&self, local: &str) -> Option<(u32, u32)> {
+        let h: usize = local.rsplit_once('@')?.1.parse().ok()?;
+        let (_, lv) = self.naga_fn.local_variables.iter().nth(h)?;
+        match self.module.types[lv.ty].inner {
+            naga::TypeInner::Matrix { columns, rows, .. } => Some((columns as u32, rows as u32)),
+            _ => None,
+        }
+    }
+
+    /// The register kind of a square matrix (`x` 2x2, `y` 3x3, `z` 4x4).
+    fn mat_kind(cols: u32, rows: u32) -> Result<char, String> {
+        match (cols, rows) {
+            (2, 2) => Ok('x'),
+            (3, 3) => Ok('y'),
+            (4, 4) => Ok('z'),
+            _ => Err(format!("a mat{cols}x{rows} local (the kingdom has square matrix registers)")),
+        }
+    }
+
+    /// A matrix local's value: its register read.
+    fn mat_register_value(&mut self, base: &str, cols: u32, rows: u32) -> Result<Tree, String> {
+        let kind = Self::mat_kind(cols, rows)?;
+        let dual = format!("mat{cols}x{rows}<f32>.real");
+        let row = self.register(base, &dual)?;
+        Ok(Tree::new(&format!("reg.get_{kind}"), ty(self, &dual)?, vec![Tree::new(&row, ty(self, Self::reg_dual(kind))?, vec![])]))
     }
 
     /// Whether a local (`local.<name>@<h>`) is a vector of u32.
@@ -1292,6 +1342,9 @@ impl<'a> Ctx<'a> {
             'i' => "reg<u32>.index",
             'n' => "reg<i32>.int",
             'u' => "reg<vec4<u32>>.bits",
+            'x' => "reg<mat2x2<f32>>.real",
+            'y' => "reg<mat3x3<f32>>.real",
+            'z' => "reg<mat4x4<f32>>.real",
             _ => "reg<bool>.flag",
         }
     }
@@ -1393,6 +1446,26 @@ impl<'a> Ctx<'a> {
                 // A lane of a vector register: `load.local.bv@8.#@v2 (idx)`; the
                 // register is the local's own (named without the `.#`).
                 let base = local.trim_end_matches(".#").to_string();
+                if let Some((cols, rows)) = self.local_mat(&base) {
+                    // A column of a matrix local (`m[1]`), or a lane of one (`m[1][0]`).
+                    let (col, lane) = match nested_index(rest, &t.kids) {
+                        Some((i, j)) => (i, Some(j)),
+                        None => (&t.kids[0], None),
+                    };
+                    let whole = self.mat_register_value(&base, cols, rows)?;
+                    let vty = ty(self, &format!("vec{rows}<f32>.real"))?;
+                    let column = match literal_value(col).filter(|c| *c >= 0.0 && (*c as u32) < cols) {
+                        Some(c) => Tree::new(&format!("shape.col_{}", c as u32), vty, vec![whole]),
+                        None => Tree::new("shape.col_at", vty, vec![whole, self.value(col)?]),
+                    };
+                    return Ok(match lane {
+                        None => column,
+                        Some(j) => match literal_value(j).filter(|l| *l >= 0.0 && (*l as u32) < rows) {
+                            Some(l) => Tree::new(&format!("shape.access_{}", l as u32), t.ty, vec![column]),
+                            None => Tree::new("shape.at", t.ty, vec![column, self.value(j)?]),
+                        },
+                    });
+                }
                 if let Some((i, j)) = nested_index(rest, &t.kids) {
                     // A lane of a vec4 (or vec2) element of a private array: `accs[i][j]`.
                     let elem = if self.local_elem_lanes(&base) == Some(2) { "vec2<f32>.real" } else { "vec4<f32>.real" };
@@ -1469,6 +1542,28 @@ impl<'a> Ctx<'a> {
                 let out = ty(self, &format!("vec{}<{}>.{}", lanes.len(), d.scalar().unwrap_or("f32"), d.form))?;
                 return Ok(Tree::new(&format!("shape.compose{}", lanes.len()), out, lanes));
             }
+        }
+        // Matrix arithmetic: naga's Multiply / Add / Subtract / Negate resolve
+        // by kind alone; the operands' shapes choose the row.
+        let is_mat = |ctx: &Self, k: &Tree| ctx.kingdom.dual(k.ty).is_some_and(|d| d.slot.starts_with("mat"));
+        let is_vec = |ctx: &Self, k: &Tree| ctx.kingdom.dual(k.ty).is_some_and(|d| d.slot.starts_with("vec"));
+        if matches!(t.name.as_str(), "arith.mul" | "arith.add" | "arith.sub" | "arith.neg") && t.kids.iter().any(|k| is_mat(self, k)) {
+            let row = match (t.name.as_str(), t.kids.as_slice()) {
+                ("arith.mul", [a, b]) if is_mat(self, a) && is_mat(self, b) => "arith.mul_mat_mat",
+                ("arith.mul", [a, b]) if is_mat(self, a) && is_vec(self, b) => "arith.mul_mat_vec",
+                ("arith.mul", [a, b]) if is_vec(self, a) && is_mat(self, b) => "arith.mul_vec_mat",
+                ("arith.mul", [a, _]) if is_mat(self, a) => "arith.mul_mat_scalar",
+                ("arith.mul", [_, _]) => "arith.mul_scalar_mat",
+                ("arith.add", _) => "arith.add_mat",
+                ("arith.sub", _) => "arith.sub_mat",
+                _ => "arith.neg_mat",
+            };
+            let kids = t.kids.iter().map(|k| self.value(k)).collect::<Result<Vec<_>, _>>()?;
+            return Ok(Tree { name: row.into(), ty: t.ty, konst: t.konst, kids });
+        }
+        if t.name == "shape.access_dyn" && t.kids.len() == 2 && is_mat(self, &t.kids[0]) {
+            let kids = t.kids.iter().map(|k| self.value(k)).collect::<Result<Vec<_>, _>>()?;
+            return Ok(Tree { name: "shape.col_at".into(), ty: t.ty, konst: t.konst, kids });
         }
         // `select(a, b, c)` with a vector of bools for c chooses per lane: the
         // kingdom's select.lane_cond (naga's Select resolves by kind alone).
@@ -2590,6 +2685,25 @@ impl<'a> Ctx<'a> {
                 let [idx, value] = tree.kids.as_slice() else { return Err("a store to a local array without an index".into()) };
                 // A lane of a vector register: `bv.x = …`, `v[j] = …`.
                 let base = local.trim_end_matches(".#").to_string();
+                if let Some((cols, rows)) = self.local_mat(&base) {
+                    // `m[i] = v`: the matrix rebuilt from its columns with column i
+                    // replaced (the kingdom writes a matrix register whole).
+                    let Some(c) = literal_value(idx).filter(|c| *c >= 0.0 && (*c as u32) < cols).map(|c| c as u32) else {
+                        return Err(format!("a store to a column of the matrix {base} chosen at run time (a column store has a literal column)"));
+                    };
+                    if nested_index(rest, &tree.kids[..1]).is_some() {
+                        return Err(format!("a store to one lane of a column of the matrix {base} (the kingdom writes a matrix register whole)"));
+                    }
+                    let vty = ty(self, &format!("vec{rows}<f32>.real"))?;
+                    let v = self.value(value)?;
+                    let whole = self.mat_register_value(&base, cols, rows)?;
+                    let columns: Vec<Tree> = (0..cols).map(|i| if i == c { v.clone() } else { Tree::new(&format!("shape.col_{i}"), vty, vec![whole.clone()]) }).collect();
+                    let mty = ty(self, &format!("mat{cols}x{rows}<f32>.real"))?;
+                    let compose = if cols == 2 { "shape.compose_mat".to_string() } else { format!("shape.compose_mat{cols}") };
+                    let kind = Self::mat_kind(cols, rows)?;
+                    let row = self.register(&base, &format!("mat{cols}x{rows}<f32>.real"))?;
+                    return Ok(Some(Tree::new(&format!("reg.set_{kind}_{rung}"), st, vec![Tree::new(&row, ty(self, Self::reg_dual(kind))?, vec![]), Tree::new(&compose, mty, columns)])));
+                }
                 if let Some((i, j)) = nested_index(rest, &tree.kids[..1]) {
                     // A lane of a vec4 element of a private array: `accs[i][j] = x`.
                     let (arr, kind, mask) = self.private_array(&format!("{base}.#"), "vec4<f32>.real")?;
@@ -3459,7 +3573,7 @@ pub fn read_safe(source: &str, kingdom: &WgslKingdom) -> Result<SafeRead, String
             }
         }
         let pure = inits.is_empty() && arg_roots.is_empty() && roots.values().all(|rs| rs.iter().all(|r| matches!(r.kind, RootKind::Return)));
-        let composite = name.starts_with("at_vec") && nf.arguments.len() == 2 && COMPOSITES.iter().any(|(n, text)| *n == name && source.contains(text));
+        let composite = (name.starts_with("at_vec") || name.starts_with("col_mat")) && nf.arguments.len() == 2 && COMPOSITES.iter().any(|(n, text)| *n == name && source.contains(text));
         if body.is_none() && (pure || composite) {
             return Err(format!("helper {name} returns nothing"));
         }

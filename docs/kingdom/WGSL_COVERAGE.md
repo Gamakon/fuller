@@ -93,9 +93,9 @@
 | `vec4<u32>` | covered | as a value, and the registers `reg.u0`..`u7` |
 | `vecN<i32>` | covered as values | `int.*` per lane; no vector i32 register |
 | `vecN<bool>` | covered | comparisons, `any` / `all`, a constructor, `select.lane_cond` |
-| matrices `mat2x2<f32>` | missing | constructed from four scalars: no `shape.compose_mat` from scalars |
-| matrices from columns (`mat3x3`, `mat4x4`, `mat3x4`) | missing | "naga.Compose.type6 has no row" |
-| matrix locals, column access `m[i]`, `m[i][j]` | missing | no matrix register; `AccessIndex` on a matrix |
+| matrices `mat2x2<f32>` | covered | from four scalars or two columns (`shape.compose_mat`) |
+| matrices from 3 and 4 columns (`mat3x3`, `mat4x4`, `mat3x4` ...) | covered | `shape.compose_mat3`, `compose_mat4` |
+| matrix locals, column access `m[i]`, `m[i][j]` | covered for square matrices | registers `reg.x*` (2x2), `y*` (3x3), `z*` (4x4); `shape.col_<i>`; a run-time column `shape.col_at` (through a helper's local copy: naga 0.20 indexes a matrix value by a constant only); a column store is the matrix rebuilt with that column. Non-square matrix locals have no register |
 | `array<T, N>` locals of f32, u32, bool, vec4 | covered | private arrays `parr.*` |
 | `array<vec2<f32>, N>` local | covered | `parr.q`, `parr.r` (16 vec2 each) |
 | `array<S, N>` of structs | covered | |
@@ -111,6 +111,7 @@
 | construct | status | rows / reason |
 |---|---|---|
 | `+ - * /` on f32 and vectors | covered | `arith.*` |
+| `* + -` on matrices (with vectors, scalars, matrices) | covered | `arith.mul_mat_vec`, `mul_vec_mat`, `mul_mat_mat`, `mul_mat_scalar`, `mul_scalar_mat`, `add_mat`, `sub_mat`, `neg_mat` |
 | `%` on f32 | covered | `arith.mod` (F1157) |
 | `%` on u32 | covered | `index.mod` |
 | unary `-` on vectors | covered | |
@@ -184,7 +185,7 @@ Each fill is its own commit with a corpus row and the full checklist. The order 
 6. Done: i32 registers, `i32(u32)`, `u32(i32)`, `i32(f32)`, `bitcast<i32>`, and with them `++` / `--`, i32 `abs/min/max/clamp/sign`, i32 subgroup operations and vecN<i32>; an atomic<i32>'s old value read later. 147 of 184 read.
 7. Done: `switch`, `break`, `break if`, `while` with its step in the body, `continue` in any loop; loops entered at a non-zero literal. 153 of 184 read.
 8. Partly done: swizzles and vec3 values (`cross`, 3-lane swizzles), 159 of 184 read; two conform bugs found on the way (an exponential search over overloads, and a 3-lane compose rebuilt without end). Then done: the thread id as a vector operand, `vec4<u32>` registers and `subgroupBallot`, vec2 private arrays, `select` on a vector condition, `bitcast` of a whole vector. 164 of 184 read.
-9. Matrices: construction from scalars and columns, matrix locals, column access.
+9. Done: matrices (composition from scalars and 2 to 4 columns, products with vectors, scalars and matrices, sums, negation, columns by literal and at run time, square matrix locals with column stores). 170 of 184 read.
 10. `modf` / `frexp` results, `arrayLength`.
 11. Module `const` and `override`, `var<private>`, workgroup scalars and `workgroupUniformLoad`.
 12. Helpers with an early return or a pointer argument.
