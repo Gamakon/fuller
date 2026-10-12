@@ -5574,6 +5574,10 @@ mod tests {
         assert!(fixpoint >= FIXPOINT_FLOOR, "random trees that read back to a fixpoint: {fixpoint}, fewer than the {FIXPOINT_FLOOR} already reached");
     }
 
+    /// The count of [`random_sampler_trees_parse_back_to_the_ast_drawn`]
+    /// reached so far (a ratchet: it only rises, to 1,000 of 1,000).
+    const AST_EQUAL_FLOOR: usize = 74;
+
     /// THE BAR (Andrew, 2026-10-13): AST to AST. 1,000 random trees of the
     /// kingdom's typed sampler (the safe root, depth 7, seeds 0..1000, the
     /// gram role) are emitted as text and parsed back; the tree parsed is the
@@ -5610,5 +5614,6 @@ mod tests {
         for (r, (c, seed)) in &causes {
             println!("  {c:>4}  seed {seed:>4}  {r}");
         }
+        assert!(equal >= AST_EQUAL_FLOOR, "random trees that parse back to the AST drawn: {equal}, fewer than the {AST_EQUAL_FLOOR} already reached");
     }
 }

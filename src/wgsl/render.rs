@@ -2723,9 +2723,16 @@ fn canonical_grid(kingdom: &WgslKingdom, mut root: Tree) -> Result<Tree, String>
         }
         row = &row.kids[0];
     }
+    // The grid row at the values the renderer writes in the header: the
+    // workgroup cut to the device's invocations, the block factors snapped
+    // to {1, 2, 4, 8}; a fallback is 16 x 16 at 1 x 1.
+    let g = grid_of(row)?;
+    let dim = |v: u32| -> Result<Tree, String> { Ok(Tree::literal("literal.wgdim", dual_ty(kingdom, "u32.wgdim")?, v as f32)) };
+    let blk = |v: u32| -> Result<Tree, String> { Ok(Tree::literal("literal.blk", dual_ty(kingdom, "u32.blk")?, v as f32)) };
+    let row = Tree::new(if g.rows_x { "grid.of_rows_x" } else { "grid.of" }, drawn.ty, vec![dim(g.x)?, dim(g.y)?, blk(g.bx)?, blk(g.by)?]);
     let mut grid = match ktile {
-        Some(t) => Tree::new("grid.with_ktile", drawn.ty, vec![row.clone(), t.clone()]),
-        None => row.clone(),
+        Some(t) => Tree::new("grid.with_ktile", drawn.ty, vec![row, t.clone()]),
+        None => row,
     };
     // The lengths the renderer writes: the plan's (the drawn declarations of
     // the arrays used, the rest at their defaults, halved to fit), or, for a
