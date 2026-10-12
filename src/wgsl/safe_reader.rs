@@ -149,6 +149,9 @@ pub struct Helper<'a> {
     pub lets: HashMap<String, Node>,
     pub pure: bool,
     pub composite: bool,
+    /// A kingdom helper written verbatim (`render::COMPOSITE_ROWS`): its row,
+    /// a call read back as it.
+    pub row: Option<&'static str>,
     pub roots: HashMap<Vec<usize>, Vec<&'a Root>>,
     pub inits: Vec<&'a Root>,
     /// Locals without an initialiser, with their dual: set to the fallback
@@ -252,6 +255,12 @@ fn tree_of(ctx: &mut Ctx, n: &Node) -> Result<Tree, String> {
             if let Some((callee, idx)) = name.strip_prefix("call.").and_then(|r| r.rsplit_once('@')) {
                 let idx: u32 = idx.parse().map_err(|_| format!("{name}: no handle"))?;
                 let helper = ctx.helpers.get(callee).ok_or_else(|| format!("a call of {callee}, which the grammar cannot inline"))?;
+                if let Some(row) = helper.row {
+                    let bound = ctx.call_arguments(callee, helper, idx)?;
+                    let args = helper.args.iter().map(|a| bound.get(a).cloned().ok_or_else(|| format!("{callee}: no argument {a}"))).collect::<Result<Vec<_>, _>>()?;
+                    let t = ctx.duals.get(&text).copied().flatten().or_else(|| ctx.kingdom.rows.iter().find(|r| r.name == row && r.inputs.len() == args.len() && r.inputs.iter().zip(&args).all(|(i, a)| *i == a.ty)).map(|r| r.output)).ok_or_else(|| format!("a call of {callee}: untyped"))?;
+                    return Ok(Tree::new(row, t, args));
+                }
                 if !helper.pure && !helper.composite {
                     let d = helper.ret_dual.as_deref().ok_or_else(|| format!("{callee} returns a value no register holds"))?;
                     return Ok(Tree::new(&format!("load.local.call.{callee}@{idx}"), ty(ctx, d)?, vec![]));
@@ -2041,7 +2050,9 @@ impl<'a> Ctx<'a> {
         let (kind, mask) = match elem_dual {
             "f32.real" => ('f', "safe.pidx64"),
             "vec4<f32>.real" => ('v', "safe.pidx16"),
-            "u32.index" => ('i', "safe.pidx16"),
+            // The kingdom's u32 private arrays (pi, pj, pk), whatever form the
+            // inference gives an element (an index, bits).
+            "u32.index" | "u32.bits" | "u32.count" => ('i', "safe.pidx16"),
             "bool.flag" => ('b', "safe.pidx16"),
             "vec2<f32>.real" => ('t', "safe.pidx16"),
             other => return Err(format!("a local array {local} of {other} has no private array")),
@@ -2118,8 +2129,16 @@ impl<'a> Ctx<'a> {
     /// where the kernel runs it). A ballot (vec4<u32>, no register), a
     /// broadcast whose lane is not a literal, and a result no register holds
     /// are refused by name.
-    fn subgroup_statement(&mut self, root: &Root, result: u32, rung: &str) -> Result<Tree, String> {
+    fn subgroup_statement(&mut self, root: &Root, result: u32, rung: &str) -> Result<Option<Tree>, String> {
         let (expr, d) = self.subgroup_expr(root)?;
+        // A result of a dual no register holds (a vec2 or vec3, the kingdom's
+        // renderer writes the operation inline at its use): read inline at
+        // its use, where naga's statement for it stands (2026-10-12: 80 of
+        // 1,000 random trees did not read back).
+        if matches!(d.as_str(), "vec2<f32>.real" | "vec3<f32>.real" | "vec2<u32>.index" | "vec3<u32>.index" | "vec2<i32>.int" | "vec3<i32>.int") {
+            self.inlined.insert(format!("subgroup@{result}"), expr);
+            return Ok(None);
+        }
         let kind = match d.as_str() {
             "f32.real" => 'f',
             "vec4<f32>.real" => 'v',
@@ -2137,7 +2156,7 @@ impl<'a> Ctx<'a> {
             self.axis_memo.insert(format!("local.subgroup@{result}"), (held, self.loop_depth));
         }
         let st = self.stmt_ty(rung)?;
-        Ok(Tree::new(&format!("reg.set_{kind}_{rung}"), st, vec![Tree::new(&row, ty(self, Self::reg_dual(kind))?, vec![]), expr]))
+        Ok(Some(Tree::new(&format!("reg.set_{kind}_{rung}"), st, vec![Tree::new(&row, ty(self, Self::reg_dual(kind))?, vec![]), expr])))
     }
 
     /// A subgroup operation's expression `subgroup.<fun>(x[, lane])` and its
@@ -2840,7 +2859,7 @@ impl<'a> Ctx<'a> {
                     }
                     Statement::SubgroupCollectiveOperation { result, .. } | Statement::SubgroupGather { result, .. } | Statement::SubgroupBallot { result, .. } => {
                         let root = self.root_at(&here, |k| matches!(k, RootKind::Subgroup { .. })).ok_or("no subgroup root at this statement")?;
-                        self.subgroup_statement(root, result.index() as u32, rung).map(Some)
+                        self.subgroup_statement(root, result.index() as u32, rung)
                     }
                     Statement::WorkGroupUniformLoad { result, .. } => {
                         // naga's lowering of workgroupUniformLoad(&p): a barrier,
@@ -2882,7 +2901,7 @@ impl<'a> Ctx<'a> {
                         // helper with statements is inlined here.
                         let callee = self.module.functions[*function].name.clone().unwrap_or_else(|| format!("fn{}", function.index()));
                         let helper = self.helpers.get(&callee).ok_or_else(|| format!("a call of {callee}, which the grammar cannot inline"))?;
-                        if helper.pure || helper.composite {
+                        if helper.pure || helper.composite || helper.row.is_some() {
                             return Ok(None);
                         }
                         self.inline_call(&callee, helper, result.map(|r| r.index() as u32), &here, rung)
@@ -3118,7 +3137,10 @@ impl<'a> Ctx<'a> {
     fn store_root(&mut self, node: &Node, rung: &str) -> Result<Vec<Tree>, String> {
         if let Node::App { name, kids, .. } = node {
             if let (Some(rest), [Node::App { name: vname, kids: elems, .. }]) = (name.strip_prefix("store.local."), kids.as_slice()) {
-                if !rest.contains(".#") && vname.starts_with("naga.Compose.") {
+                // Of an array local only: a matrix written whole from its
+                // columns (`y1 = mat3x3<f32>(...)`) is the ordinary store.
+                let array_local = rest.split('@').nth(1).and_then(|h| h.parse::<usize>().ok()).and_then(|h| self.naga_fn.local_variables.iter().nth(h)).is_some_and(|(_, l)| matches!(self.module.types[l.ty].inner, naga::TypeInner::Array { .. }));
+                if !rest.contains(".#") && vname.starts_with("naga.Compose.") && array_local {
                     let local = format!("local.{}", rest.split('@').take(2).collect::<Vec<_>>().join("@"));
                     let values = elems.iter().map(|e| tree_of(self, e)).collect::<Result<Vec<_>, _>>()?;
                     let first = values.first().ok_or("an empty array constructor")?;
@@ -3460,7 +3482,7 @@ impl<'a> Ctx<'a> {
             }
             let Statement::Call { function, .. } = s else { return Err("a loop whose first statement is not its test".into()) };
             let callee = self.module.functions[*function].name.clone().unwrap_or_else(|| format!("fn{}", function.index()));
-            if !self.helpers.get(&callee).is_some_and(|h| h.pure || h.composite) {
+            if !self.helpers.get(&callee).is_some_and(|h| h.pure || h.composite || h.row.is_some()) {
                 return Err(format!("a loop whose test calls {callee}, a helper with statements"));
             }
         }
@@ -4177,10 +4199,15 @@ pub fn read_safe_literal(source: &str, kingdom: &WgslKingdom) -> Result<SafeRead
                 }
             }
         }
+        // A kingdom helper, written verbatim: its row (a call is the row), its
+        // body not read (2026-10-12: hash32_to_index returns twice, fx_add_sat
+        // holds literals past 2^24; 100 of 1,000 random trees).
+        let row = crate::wgsl::render::COMPOSITE_ROWS.iter().find(|(_, h)| *h == name).filter(|_| COMPOSITES.iter().any(|(n, text)| *n == name && source.contains(text))).map(|(r, _)| *r);
         // One return: the helper's value. Several: `if (c) { return a; }` ...
         // `return b;` (or a last if-else of two returns) is the select chain
         // select(.., a, c), its guards' conditions read into it.
         match returns.as_slice() {
+            _ if row.is_some() => {}
             [] => {}
             [r] => {
                 if let Node::App { kids, .. } = &r.tree {
@@ -4198,7 +4225,7 @@ pub fn read_safe_literal(source: &str, kingdom: &WgslKingdom) -> Result<SafeRead
         }
         let pure = inits.is_empty() && arg_roots.is_empty() && roots.values().all(|rs| rs.iter().all(|r| matches!(r.kind, RootKind::Return)));
         let composite = (name.starts_with("at_vec") || name.starts_with("col_mat")) && nf.arguments.len() == 2 && COMPOSITES.iter().any(|(n, text)| *n == name && source.contains(text));
-        if body.is_none() && (pure || composite) {
+        if body.is_none() && (pure || composite) && row.is_none() {
             return Err(format!("helper {name} returns nothing"));
         }
         let args = nf.arguments.iter().enumerate().map(|(i, a)| format!("arg.{}", a.name.clone().unwrap_or_else(|| i.to_string()))).collect();
@@ -4216,7 +4243,7 @@ pub fn read_safe_literal(source: &str, kingdom: &WgslKingdom) -> Result<SafeRead
         let ret_dual = nf.result.as_ref().and_then(|r| dual_of_type(&kernel.module, r.ty));
         let types = infer_function(hf, kingdom);
         helper_duals.extend(types.by_text.iter().map(|(text, set)| (text.clone(), choose_dual(set, kingdom))));
-        helpers.insert(name, Helper { args, body, lets, pure, composite, roots, inits, uninit, local_lanes, calls: hf.calls.clone(), arg_roots, block: &nf.body, naga_fn: nf, ret_dual });
+        helpers.insert(name, Helper { args, body, lets, pure, composite, row, roots, inits, uninit, local_lanes, calls: hf.calls.clone(), arg_roots, block: &nf.body, naga_fn: nf, ret_dual });
     }
     // Roots by statement path; lets by name; duals by text (one form, else untyped).
     let mut roots: HashMap<Vec<usize>, Vec<&Root>> = HashMap::new();
@@ -5165,7 +5192,7 @@ mod tests {
     /// The counts of [`random_sampler_trees_read_back_to_their_own_text`]
     /// reached so far: to their own text, and read back at all.
     const READ_BACK_FLOOR: usize = 108;
-    const READ_AT_ALL_FLOOR: usize = 436;
+    const READ_AT_ALL_FLOOR: usize = 514;
 
     /// THE KINGDOM'S COMPLETENESS BAR (2026-10-12): 1,000 random trees of
     /// the kingdom's typed sampler (the safe root, depth 7, seeds 0..1000)

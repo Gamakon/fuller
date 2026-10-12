@@ -528,6 +528,22 @@ fn cont_below_top(t: &Tree, top: bool) -> bool {
 
 /// A uniform row as the index row (or the role's load) it computes alike:
 /// `uniform.add` is `index.add`, `uniform.cfg_d` is `load.cfg_d`.
+/// The rows written as a call of a kingdom helper (`COMPOSITES`), by row and
+/// helper; the reader reads a call of one back as its row.
+pub const COMPOSITE_ROWS: [(&str, &str); 11] = [
+    ("fixed.add_sat", "fx_add_sat"),
+    ("fixed.sub_sat", "fx_sub_sat"),
+    ("fixed.mul", "fx_mul"),
+    ("fixed.shl", "fx_shl"),
+    ("fixed.shr", "fx_shr"),
+    ("fixed.wide_mul", "fx_wide_mul"),
+    ("fixed.wide_add_sat", "fx_wide_add_sat"),
+    ("fixed.narrow", "fx_narrow"),
+    ("hash.mix64", "hash_mix64"),
+    ("hash.fmix32", "hash_fmix32"),
+    ("convert.hash32_to_index", "hash32_to_index"),
+];
+
 pub fn uniform_as_index(name: &str) -> Option<&'static str> {
     Some(match name {
         "uniform.cfg_m" => "load.cfg_m",
@@ -1942,19 +1958,8 @@ impl Renderer<'_> {
             let levels: f32 = k.strip_prefix("code").and_then(|n| n.parse().ok()).ok_or_else(|| format!("{name}: codebook size"))?;
             return Ok(format!("(f32(min({}, {}u)) * {:?} - 1.0)", a[0], levels as u32 - 1, 2.0 / (levels - 1.0)));
         }
-        let helper = match name {
-            "fixed.add_sat" => "fx_add_sat",
-            "fixed.sub_sat" => "fx_sub_sat",
-            "fixed.mul" => "fx_mul",
-            "fixed.shl" => "fx_shl",
-            "fixed.shr" => "fx_shr",
-            "fixed.wide_mul" => "fx_wide_mul",
-            "fixed.wide_add_sat" => "fx_wide_add_sat",
-            "fixed.narrow" => "fx_narrow",
-            "hash.mix64" => "hash_mix64",
-            "hash.fmix32" => "hash_fmix32",
-            "convert.hash32_to_index" => "hash32_to_index",
-            other => return Err(format!("{other}: composite with no WGSL body (out {})", out.dual)),
+        let Some(&(_, helper)) = COMPOSITE_ROWS.iter().find(|(row, _)| *row == name) else {
+            return Err(format!("{name}: composite with no WGSL body (out {})", out.dual));
         };
         // Helpers call helpers: declare their dependencies too.
         for dep in COMPOSITES.iter().filter(|(n, _)| *n == helper).flat_map(|(_, body)| COMPOSITES.iter().map(|(n, _)| *n).filter(|n| *n != helper && body.contains(&format!("{n}(")))) {
