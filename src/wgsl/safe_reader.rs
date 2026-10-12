@@ -331,6 +331,34 @@ fn tree_of(ctx: &mut Ctx, n: &Node) -> Result<Tree, String> {
                         return tree_of(ctx, &Node::App { name: format!("shape.col_{i}"), slot: slot.to_string(), known: true, kids: kids.clone() });
                     }
                 }
+                // A field of modf / frexp's struct (through a `let` of it), and
+                // the length of a binding.
+                if let (Some(i), [k]) = (name.strip_prefix("naga.AccessIndex."), kids.as_slice()) {
+                    let base = match k {
+                        Node::Leaf { name: l, .. } => l.strip_prefix("let.").and_then(|key| ctx.lets.get(key)).unwrap_or(k),
+                        other => other,
+                    };
+                    if let Node::App { name: f, kids: args, .. } = base {
+                        let row = match (f.as_str(), i) {
+                            ("naga.Math.Modf", "0") => Some("arith.modf_fract"),
+                            ("naga.Math.Modf", "1") => Some("arith.modf_whole"),
+                            ("naga.Math.Frexp", "0") => Some("arith.frexp_fract"),
+                            ("naga.Math.Frexp", "1") => Some("arith.frexp_exp"),
+                            _ => None,
+                        };
+                        if let (Some(row), [x]) = (row, args.as_slice()) {
+                            return tree_of(ctx, &Node::App { name: row.into(), slot: slot.to_string(), known: true, kids: vec![x.clone()] });
+                        }
+                    }
+                }
+                if let (true, [Node::Leaf { name: g, .. }]) = (name == "naga.ArrayLength", kids.as_slice()) {
+                    let row = match g.as_str() {
+                        "global.phi" => "load.phi_len",
+                        "global.h" => "load.h_len",
+                        other => return Err(format!("arrayLength of {other}: the Gram role's runtime-sized bindings are phi and h")),
+                    };
+                    return Ok(Tree::new(row, ty(ctx, "u32.count")?, vec![]));
+                }
                 if let Some(row) = safe_row_for(name, kids) {
                     return tree_of(ctx, &Node::App { name: row, slot: slot_of(n).to_string(), known: true, kids: kids.clone() });
                 }
@@ -1401,7 +1429,7 @@ impl<'a> Ctx<'a> {
                 // naga's name; the table's row is `builtin.num_workgroups`.
                 return Ok(Tree::new("builtin.num_workgroups", t.ty, vec![]));
             }
-            if t.name.starts_with("builtin.") || t.name.starts_with("literal.") {
+            if t.name.starts_with("builtin.") || t.name.starts_with("literal.") || t.name == "load.phi_len" || t.name == "load.h_len" {
                 return Ok(t.clone());
             }
             return Err(format!("leaf {} has no safe spelling", t.name));

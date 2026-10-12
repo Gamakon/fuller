@@ -659,8 +659,9 @@ mod tests {
         // 1,237 with i32 (registers, crossings, integer rows, subgroup operations; gap 6);
         // 1,272 with break and continue in loops (gap 7); 1,281 with the thread ids as vector operands
         // and the vector bitcasts (gap 8); 1,318 with the vec4<u32> registers, subgroupBallot and the
-        // vec2 private arrays; 1,399 with the matrices (gap 9).
-        assert_eq!(fs.rows.len(), 1399);
+        // vec2 private arrays; 1,399 with the matrices (gap 9); 1,405 with modf / frexp's fields and
+        // the bindings' lengths (gap 10).
+        assert_eq!(fs.rows.len(), 1405);
         let dual = |t: Ty| k.dual(t).unwrap().dual.clone();
         let producers = |d: &str| -> Vec<String> { k.rows.iter().filter(|r| dual(r.output) == d).map(|r| r.name.clone()).collect() };
         assert_eq!(producers("kernel.safe"), vec!["kernel.entry_safe"]);

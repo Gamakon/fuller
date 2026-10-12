@@ -100,11 +100,11 @@
 | `array<vec2<f32>, N>` local | covered | `parr.q`, `parr.r` (16 vec2 each) |
 | `array<S, N>` of structs | covered | |
 | array constructors | covered | |
-| runtime-sized arrays, `arrayLength` | missing | "naga.ArrayLength has no row" (phi is runtime-sized; its length is a binding fact) |
+| runtime-sized arrays, `arrayLength` | covered for the Gram role's bindings | `load.phi_len`, `load.h_len`; other runtime-sized bindings wait for the generic interface |
 | `atomic<u32>`, `atomic<i32>` in workgroup memory | covered | |
 | `ptr<function, T>` lets, `*p` | covered | `decl_ptr_local`, `decl_ptr_array_elem` |
 | `ptr` as a helper argument | missing | see helpers |
-| structs as values (`modf`, `frexp` results) | missing | "naga.AccessIndex.0 has no row" |
+| structs as values (`modf`, `frexp` results) | covered | each field its own row: `arith.modf_fract`, `modf_whole`, `frexp_fract`, `frexp_exp` |
 
 ## Expressions and operators
 
@@ -148,7 +148,7 @@
 | `refract` | covered | `geom.refract` |
 | two and three arguments (atan2, clamp, fma, ldexp, max, min, mix, pow, smoothstep, step) | covered | `arith.*` |
 | `mix` with a scalar weight | covered | `arith.mix_scalar_weight` |
-| `modf`, `frexp` | missing | struct results |
+| `modf`, `frexp` | covered | the field rows above |
 | `quantizeToF16` | naga 0.20 | not parsed |
 | integer abs, min, max, clamp, sign on i32 | covered | `int.*` |
 | bit functions and shifts on i32 | covered | `int.and/or/xor/not/shl/shr`, `int.count_ones` ... `int.insert` |
@@ -163,7 +163,7 @@
 | unpack4x8snorm/unorm, unpack2x16snorm/unorm/float | covered | `bits.unpack*` (their naga column was `UnPack…`; naga writes `Unpack…`) |
 | pack4xI8, pack4xU8, unpack4xI8, unpack4xU8, dot4I8Packed, dot4U8Packed | naga 0.20 | not parsed |
 | `select`, `all`, `any` | covered | |
-| `arrayLength` | missing | |
+| `arrayLength` | covered | `load.phi_len`, `load.h_len` |
 | atomics (workgroup): load, store, add, sub, max, min, and, or, xor, exchange | covered | `atomic.*` |
 | `atomicCompareExchangeWeak` | naga 0.20 | Metal backend: "FeatureNotImplemented(atomic CompareExchange)" |
 | subgroup reductions and scans on f32, u32 and vec4 | covered | `subgroup.*` |
@@ -186,7 +186,7 @@ Each fill is its own commit with a corpus row and the full checklist. The order 
 7. Done: `switch`, `break`, `break if`, `while` with its step in the body, `continue` in any loop; loops entered at a non-zero literal. 153 of 184 read.
 8. Partly done: swizzles and vec3 values (`cross`, 3-lane swizzles), 159 of 184 read; two conform bugs found on the way (an exponential search over overloads, and a 3-lane compose rebuilt without end). Then done: the thread id as a vector operand, `vec4<u32>` registers and `subgroupBallot`, vec2 private arrays, `select` on a vector condition, `bitcast` of a whole vector. 164 of 184 read.
 9. Done: matrices (composition from scalars and 2 to 4 columns, products with vectors, scalars and matrices, sums, negation, columns by literal and at run time, square matrix locals with column stores). 170 of 184 read.
-10. `modf` / `frexp` results, `arrayLength`.
+10. Done: `modf` / `frexp` results, `arrayLength` of phi and h. 173 of 184 read.
 11. Module `const` and `override`, `var<private>`, workgroup scalars and `workgroupUniformLoad`.
 12. Helpers with an early return or a pointer argument.
 

@@ -2731,4 +2731,20 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 | F1398 | `reg.set_z_L5` | `composite` | `reg<mat4x4<f32>>.real mat4x4<f32>.real` | `stmt.L5` | 2 |  |
 | F1399 | `reg.set_z_C5` | `composite` | `reg<mat4x4<f32>>.real mat4x4<f32>.real` | `stmt.C5` | 2 |  |
 
-1399 function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Deliberately absent: storage-buffer atomics, atomic compare-exchange (naga 0.20's Metal backend lacks it), subgroupBallot, images, derivatives, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.
+## class `arith`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F1400 | `arith.modf_fract` | `composite` | `<S.real>` | `<S.real>` | 1 | modf(x).fract |
+| F1401 | `arith.modf_whole` | `composite` | `<S.real>` | `<S.real>` | 1 | modf(x).whole |
+| F1402 | `arith.frexp_fract` | `composite` | `<S.real>` | `<S.real>` | 1 | frexp(x).fract |
+| F1403 | `arith.frexp_exp` | `composite` | `<f32.real>` | `<i32.int>` | 1 | frexp(x).exp |
+
+## class `load`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F1404 | `load.phi_len` | `ArrayLength` | `-` | `u32.count` | 0 | arrayLength(&phi) |
+| F1405 | `load.h_len` | `ArrayLength` | `-` | `u32.count` | 0 | arrayLength(&h) |
+
+1405 function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Deliberately absent: storage-buffer atomics, atomic compare-exchange (naga 0.20's Metal backend lacks it), subgroupBallot, images, derivatives, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.

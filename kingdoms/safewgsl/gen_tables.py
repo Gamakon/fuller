@@ -1021,6 +1021,17 @@ for n, k in ((2, "x"), (3, "y"), (4, "z")):
         f("reg", f"set_{k}_" + r, "composite", [f"reg<mat{n}x{n}<f32>>.real", f"mat{n}x{n}<f32>.real"], "stmt." + r, "")
 
 
+# ---- modf / frexp results and the bindings' lengths (2026-10-12, WGSL_COVERAGE.md gap 10) ----
+# modf and frexp return a struct; the kingdom spells each field as its own row. arrayLength of the Gram
+# role's runtime-sized bindings, phi and h.
+f("arith", "modf_fract", "composite", ["<S.real>"], "<S.real>", "modf(x).fract")
+f("arith", "modf_whole", "composite", ["<S.real>"], "<S.real>", "modf(x).whole")
+f("arith", "frexp_fract", "composite", ["<S.real>"], "<S.real>", "frexp(x).fract")
+f("arith", "frexp_exp", "composite", ["<f32.real>"], "<i32.int>", "frexp(x).exp")
+f("load", "phi_len", "ArrayLength", [], "u32.count", "arrayLength(&phi)")
+f("load", "h_len", "ArrayLength", [], "u32.count", "arrayLength(&h)")
+
+
 def write_tsv(path, header, rows):
     with open(path, "w") as out:
         out.write("\t".join(header) + "\n")

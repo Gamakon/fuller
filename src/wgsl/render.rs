@@ -1290,6 +1290,8 @@ impl<'a> Renderer<'a> {
                 return Ok(format!("vec4<f32>(phi[{i}], phi[{i} + 1u], phi[{i} + 2u], phi[{i} + 3u])"));
             }
             "load.h_safe" => return Ok(format!("h[{}]", self.value(&v.kids[0], scope)?)),
+            "load.phi_len" => return Ok("arrayLength(&phi)".into()),
+            "load.h_len" => return Ok("arrayLength(&h)".into()),
             // A matrix's column chosen at run time, clamped to its columns,
             // through a helper's local copy (naga 0.20 indexes a matrix value
             // by a constant only).
@@ -1503,6 +1505,10 @@ impl<'a> Renderer<'a> {
         let inline = match name {
             "index.of_int" => Some(format!("u32(max({}, 0))", a[0])),
             "index.of_count" => Some(a[0].clone()),
+            "arith.modf_fract" => Some(format!("modf({}).fract", a[0])),
+            "arith.modf_whole" => Some(format!("modf({}).whole", a[0])),
+            "arith.frexp_fract" => Some(format!("frexp({}).fract", a[0])),
+            "arith.frexp_exp" => Some(format!("frexp({}).exp", a[0])),
             "index.clamp_to" => Some(format!("min({}, max({}, 1u) - 1u)", a[0], a[1])),
             "index.band_of" => Some(format!("({} / max({}, 1u))", a[0], a[1])),
             "count.sub_floor" => Some(format!("select({0} - {1}, 0u, {1} > {0})", a[0], a[1])),
