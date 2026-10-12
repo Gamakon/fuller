@@ -2558,6 +2558,16 @@ pub fn statement_outline(source: &str) -> Result<Vec<String>, String> {
 pub fn read_safe(source: &str, kingdom: &WgslKingdom) -> Result<SafeRead, String> {
     let grid = grid_header(source).ok_or("no `// grid x y bx by` header")?;
     let kernel = read(source)?;
+    // The workgroup the header names is the one the kernel declares: x and y
+    // each 1..=1,024 with x * y <= 1,024 (the M3 Max's limits), z 1 (a thread
+    // owns cells by x and y; two threads differing only in z would share them).
+    let declared = kernel.module.entry_points.first().ok_or("no entry point")?.workgroup_size;
+    if declared != [grid.0, grid.1, 1] {
+        return Err(format!("the header's workgroup {} x {} is not the kernel's @workgroup_size({}, {}, {})", grid.0, grid.1, declared[0], declared[1], declared[2]));
+    }
+    if grid.0 == 0 || grid.1 == 0 || grid.0 * grid.1 > crate::wgsl::render::MAX_THREADS {
+        return Err(format!("workgroup {} x {} is outside 1..=1,024 invocations", grid.0, grid.1));
+    }
     let f = kernel.functions.iter().find(|f| f.entry_point).ok_or("no entry point")?;
     let naga_fn: &Function = &kernel.module.entry_points.first().ok_or("no entry point")?.function;
     // Helper functions: pure ones (lets and one return) inlined as
@@ -3027,6 +3037,39 @@ mod tests {
         let past = src.replace("i15 = (i14 + 4u);", "i15 = (i14 + 5u);");
         let Err(e) = read_safe(&past, &k) else { panic!("k2 + 5 < 8 read as the thread's column") };
         assert!(e.contains("not at this thread's cell"), "{e}");
+    }
+
+    /// THE FULL WORKGROUP RANGE (2026-10-12; {4, 8, 16, 32} per axis before):
+    /// the shipped kernel, one cell per global id, at 1-D and 2-D shapes up to
+    /// the M3 Max's 1,024 invocations reads, renders its own
+    /// `@workgroup_size`, validates and reads back; a header that names
+    /// another workgroup than the kernel declares is refused by name, and a
+    /// grid row of 64 x 32 renders as 64 x 16 (the shape the device runs).
+    #[test]
+    fn workgroup_shapes_over_the_full_legal_range_read_render_and_read_back() {
+        let k = WgslKingdom::load_safe();
+        let (t, role) = (FunctionTable::safe(), gram_role());
+        let rr = Renderer::new(&k, &t, &role);
+        assert!(SHIPPED.contains("@workgroup_size(16, 16)") || SHIPPED.contains("@workgroup_size(16, 16, 1)"));
+        let declared = if SHIPPED.contains("@workgroup_size(16, 16, 1)") { "@workgroup_size(16, 16, 1)" } else { "@workgroup_size(16, 16)" };
+        for (x, y) in [(256u32, 1u32), (64, 4), (1024, 1), (1, 1024), (32, 32), (48, 3)] {
+            let src = format!("// grid {x} {y} 1 1\n{}", SHIPPED.replace(declared, &format!("@workgroup_size({x}, {y}, 1)")));
+            let r = read_safe(&src, &k).unwrap_or_else(|e| panic!("{x} x {y}: {e}"));
+            let out = rr.kernel(&r.tree).unwrap_or_else(|e| panic!("{x} x {y}: {e}"));
+            assert!(out.text.contains(&format!("@workgroup_size({x}, {y}, 1)")) && (out.grid.x, out.grid.y) == (x, y), "{x} x {y}: {}", out.text);
+            validate_text(&out.text).unwrap_or_else(|e| panic!("{x} x {y}: {e}"));
+            read_safe(&format!("// grid {x} {y} 1 1\n{}", out.text), &k).unwrap_or_else(|e| panic!("{x} x {y} read back: {e}"));
+        }
+        let mismatch = format!("// grid 64 4 1 1\n{}", SHIPPED.replace(declared, "@workgroup_size(256, 1, 1)"));
+        let Err(e) = read_safe(&mismatch, &k) else { panic!("a header of 64 x 4 over @workgroup_size(256, 1, 1) read") };
+        assert!(e.contains("is not the kernel's @workgroup_size"), "{e}");
+        let ty = |n: &str| crate::wgsl::render::dual_ty(&k, n).unwrap();
+        let mut wide = read_safe(&format!("// grid 16 16 1 1\n{SHIPPED}"), &k).unwrap().tree;
+        wide.kids[0].kids[0] = Tree::literal("literal.wgdim", ty("u32.wgdim"), 64.0);
+        wide.kids[0].kids[1] = Tree::literal("literal.wgdim", ty("u32.wgdim"), 32.0);
+        let out = rr.kernel(&wide).unwrap();
+        assert_eq!((out.grid.x, out.grid.y), (64, 16));
+        validate_text(&out.text).unwrap();
     }
 
     /// A kernel with a helper function reads: the helper is inlined at its

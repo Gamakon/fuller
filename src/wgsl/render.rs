@@ -220,6 +220,20 @@ pub const WGMEM_LEN: u32 = 2048;
 pub const WGVEC_LEN: u32 = 512;
 pub const MAX_THREADS: u32 = 1024;
 
+/// A workgroup dimension as a grid row writes it (2026-10-12: the full legal
+/// range, not {4, 8, 16, 32}): any integer from 1 to [`MAX_THREADS`] (the
+/// M3 Max's per-axis and per-workgroup limit is 1,024), rounded.
+pub fn workgroup_dim(v: f32) -> u32 {
+    if v.is_finite() { (v.round() as i64).clamp(1, i64::from(MAX_THREADS)) as u32 } else { 1 }
+}
+
+/// A workgroup shape within [`MAX_THREADS`] invocations: x as written, y cut
+/// to the largest that fits beside it (64 x 32 is 64 x 16), so every grid a
+/// gene spells is a shape the device runs.
+pub fn workgroup_shape(x: u32, y: u32) -> (u32, u32) {
+    (x, y.min(MAX_THREADS / x.max(1)).max(1))
+}
+
 fn snap(set: &[u32], v: f32) -> u32 {
     let v = if v.is_finite() { v } else { 0.0 };
     *set.iter().min_by(|a, b| (f64::from(**a) - f64::from(v)).abs().partial_cmp(&(f64::from(**b) - f64::from(v)).abs()).expect("finite")).expect("a non-empty set")
@@ -337,7 +351,15 @@ impl<'a> Renderer<'a> {
         match g.name.as_str() {
             "grid.of" => {
                 let [x, y, bx, by] = g.kids.as_slice() else { return Err(format!("grid.of with {} children", g.kids.len())) };
-                Ok(Grid { x: self.code(x, &WGDIM)?, y: self.code(y, &WGDIM)?, bx: self.code(bx, &BLK)?, by: self.code(by, &BLK)? })
+                let dim = |t: &Tree| -> Result<u32, String> {
+                    match t.name.as_str() {
+                        "fallback" => Ok(16),
+                        n if n.starts_with("literal.") => Ok(workgroup_dim(t.konst)),
+                        other => Err(format!("{other} is not a workgroup dimension")),
+                    }
+                };
+                let (gx, gy) = workgroup_shape(dim(x)?, dim(y)?);
+                Ok(Grid { x: gx, y: gy, bx: self.code(bx, &BLK)?, by: self.code(by, &BLK)? })
             }
             "fallback" => Ok(Grid { x: 16, y: 16, bx: 1, by: 1 }),
             other => Err(format!("{other} is not a grid row")),
@@ -1127,7 +1149,7 @@ impl<'a> Renderer<'a> {
                 if wrap { format!("lit_f32({v:?}f)") } else { format!("{v:?}f") }
             }
             "index" | "count" | "bits" | "hash32" | "code4" | "code8" | "code16" | "code1024" => u(if v.is_finite() { v.clamp(0.0, 4_294_967_040.0) as u32 } else { 0 }),
-            "wgdim" => u(snap(&WGDIM, v)),
+            "wgdim" => u(workgroup_dim(v)),
             "lit64" => u(if v.is_finite() { (v.round() as i64).clamp(1, 64) as u32 } else { 1 }),
             "lit4096" => u(if v.is_finite() { (v.round() as i64).clamp(1, 4096) as u32 } else { 1 }),
             "blk" => u(snap(&BLK, v)),
@@ -1765,9 +1787,10 @@ mod tests {
         // Refusals by construction.
         let nested = Tree::new("kernel.entry", ty("kernel.kernel"), vec![grid.clone(), one(Tree::new("loop.items", stmt, vec![one(Tree::new("loop.items", stmt, vec![one(set_f())]))]))]);
         assert_eq!(rr.kernel(&nested).unwrap_err(), "loop.items nested in loop.items");
-        // The largest grid the codes allow is 32 x 32 = 1,024 threads, the limit; a literal above the set snaps down.
+        // A grid over 1,024 threads is cut to the device's limit: x as written, y the largest that fits
+        // (64 x 64 runs as 64 x 16; until 2026-10-12 each axis snapped to {4, 8, 16, 32}).
         let big = Tree::new("kernel.entry", ty("kernel.kernel"), vec![Tree::new("grid.of", ty("grid.grid"), vec![Tree::literal("literal.wgdim", ty("u32.wgdim"), 64.0), Tree::literal("literal.wgdim", ty("u32.wgdim"), 64.0), Tree::fallback(ty("u32.blk")), Tree::fallback(ty("u32.blk"))]), one(set_f())]);
-        assert_eq!(rr.kernel(&big).unwrap().grid, Grid { x: 32, y: 32, bx: 1, by: 1 });
+        assert_eq!(rr.kernel(&big).unwrap().grid, Grid { x: 64, y: 16, bx: 1, by: 1 });
         // An empty kernel (the root's fallback) is a kernel.
         let empty = rr.kernel(&Tree::fallback(ty("kernel.kernel"))).unwrap();
         validate_text(&empty.text).unwrap();

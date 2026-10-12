@@ -47,7 +47,7 @@ FORMS = {
     "grid": ("workgroup size (x, y) and the block of cells each thread owns (bx, by)", []),
     "block": ("a sequence of statements", []),
     "stmt": ("one statement", []),
-    "wgdim": ("a workgroup dimension, a literal from {4, 8, 16, 32} (64 x 64 would pass 1,024 threads)", ["u32"]),
+    "wgdim": ("a workgroup dimension, any integer 1..=1,024 (the M3 Max's per-axis limit); a grid's y is cut so x * y <= 1,024 invocations (2026-10-12; {4, 8, 16, 32} before)", ["u32"]),
     "blk": ("a block factor, a literal from {1, 2, 4, 8}", ["u32"]),
     "unroll": ("an unroll factor, a literal from {2, 4, 8}", ["u32"]),
     # ---- safeWGSL: the types below exist so that a bad program has no spelling ----
