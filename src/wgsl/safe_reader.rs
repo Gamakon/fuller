@@ -2556,9 +2556,16 @@ impl<'a> Ctx<'a> {
             }
             return Ok((stmts, Tree::fallback(ty(self, "block.O0")?)));
         }
-        // A body that returns, with statements after its last store: the
-        // epilogue was not written (the renderer stops at the return).
-        if self.main_returns && stmts.iter().rposition(has_store).is_some_and(|p| p + 1 < stmts.len()) {
+        // A body that returns (main ends in `return;`): the epilogue was not
+        // written (the renderer stops at the return, and writes none at the
+        // end of an epilogue).
+        let unspelled = |stmts: &[Tree]| -> bool {
+            match stmts.iter().rposition(has_store) {
+                Some(p) => p + 1 < stmts.len() || self.epilogue_block(vec![stmts[p].clone()], 0).is_err(),
+                None => true,
+            }
+        };
+        if self.main_returns && unspelled(&stmts) {
             stmts.push(Tree::new("stmt.return_L0", self.stmt_ty("L0")?, vec![]));
             return Ok((stmts, Tree::fallback(ty(self, "block.O0")?)));
         }
@@ -2773,12 +2780,29 @@ impl<'a> Ctx<'a> {
                 let d: usize = rung[1..].parse().unwrap_or(1);
                 // A later continue guard in the rest is the rest's own (the
                 // conditional rung's block reads it: block.cont_C<d>).
-                let rest = rest.iter().map(|t| if is_continue_guard(t) { Ok(t.clone()) } else { self.rerung(t, d) }).collect::<Result<Vec<_>, _>>()?;
-                let cont = Tree::new(&format!("block.cont_{rung}"), bt, vec![guard.kids[0].clone(), self.block(rest, &format!("C{d}"))?]);
-                if before.is_empty() {
+                // The rest the conditional rung spells; from the first statement
+                // it does not (a barrier, a reduction: the kingdom's continue in
+                // a conditional block before them, under a uniform condition),
+                // the block goes on at its own rung after the continue's block
+                // (the same text: the continue skips both; 2026-10-12).
+                let mut spelled = Vec::new();
+                let mut tail: Vec<Tree> = Vec::new();
+                for (i, t) in rest.iter().enumerate() {
+                    let r = if is_continue_guard(t) { Ok(t.clone()) } else { self.rerung(t, d) };
+                    match r {
+                        Ok(x) => spelled.push(x),
+                        Err(_) => {
+                            tail = rest[i..].to_vec();
+                            break;
+                        }
+                    }
+                }
+                let cont = Tree::new(&format!("block.cont_{rung}"), bt, vec![guard.kids[0].clone(), self.block(spelled, &format!("C{d}"))?]);
+                if before.is_empty() && tail.is_empty() {
                     return Ok(cont);
                 }
                 before.push(Tree::new(&format!("stmt.block_{rung}"), st, vec![cont]));
+                before.extend(tail);
                 return self.block(before, rung);
             }
         }
@@ -3288,12 +3312,7 @@ impl<'a> Ctx<'a> {
                     Statement::Return { value: None } => {
                         if stmt_tail {
                             // The function's implicit return (naga writes one at
-                            // the end of each branch of a trailing `if`). Written
-                            // at the end of main itself, it is a body's return
-                            // (the renderer writes no epilogue after it).
-                            if here.len() == 1 && self.local_prefix.is_empty() {
-                                self.main_returns = true;
-                            }
+                            // the end of each branch of a trailing `if`).
                             return Ok(None);
                         }
                         if cond {
@@ -4476,7 +4495,11 @@ pub fn read_safe_literal(source: &str, kingdom: &WgslKingdom) -> Result<SafeRead
         }
     }
     let (bound_lets, stale_lets) = lets_used_in_deeper_loops(&f.roots, &naga_fn.body, &f.points);
-    let mut ctx = Ctx { kingdom, main_returns: false, per_kernel_rows: crate::wgsl::safe_karva::per_kernel_rows(kingdom, &role), duals: &duals, lets: &lets, roots: &roots, item_counter: None, tile_counter: None, tile_counter2: None, tile_counter3: None, tile_counter4: None, registers: BTreeMap::new(), next_reg: BTreeMap::new(), guard: None, tail: true, arrays: BTreeMap::new(), array_lens: BTreeMap::new(), parrs: BTreeMap::new(), grid, rows_x: grid_rows_x(source).then_some(true), notes: Vec::new(), helpers: &helpers, calls: &calls, arg_roots: &arg_roots, inline_args: None, row_arrays: BTreeMap::new(), used_counters: std::collections::BTreeSet::new(), local_lanes, axis_memo: BTreeMap::new(), loop_depth: 0, tile_bounds: BTreeMap::new(), naga_fn, module: &kernel.module, local_prefix: String::new(), inline_result: None, inline_values: None, bound_lets, stale_lets, let_regs: HashMap::new(), inlined: HashMap::new(), stored_seen: std::collections::BTreeSet::new(), counter_offsets: HashMap::new(), pointer_args: HashMap::new() };
+    // Main's text ends in `return;`: the renderer writes it after a body
+    // that returns, with no epilogue after it (naga's own trailing return is
+    // in every kernel's IR, so the text decides).
+    let main_returns = source.find("fn main(").map(|i| &source[i..]).and_then(|m| m.rfind('}').map(|j| &m[..j])).is_some_and(|m| m.trim_end().ends_with("return;"));
+    let mut ctx = Ctx { kingdom, main_returns, per_kernel_rows: crate::wgsl::safe_karva::per_kernel_rows(kingdom, &role), duals: &duals, lets: &lets, roots: &roots, item_counter: None, tile_counter: None, tile_counter2: None, tile_counter3: None, tile_counter4: None, registers: BTreeMap::new(), next_reg: BTreeMap::new(), guard: None, tail: true, arrays: BTreeMap::new(), array_lens: BTreeMap::new(), parrs: BTreeMap::new(), grid, rows_x: grid_rows_x(source).then_some(true), notes: Vec::new(), helpers: &helpers, calls: &calls, arg_roots: &arg_roots, inline_args: None, row_arrays: BTreeMap::new(), used_counters: std::collections::BTreeSet::new(), local_lanes, axis_memo: BTreeMap::new(), loop_depth: 0, tile_bounds: BTreeMap::new(), naga_fn, module: &kernel.module, local_prefix: String::new(), inline_result: None, inline_values: None, bound_lets, stale_lets, let_regs: HashMap::new(), inlined: HashMap::new(), stored_seen: std::collections::BTreeSet::new(), counter_offsets: HashMap::new(), pointer_args: HashMap::new() };
     // Register initialisations first, in root order. A local initialised to
     // its form's fallback (0.0, 0u, false, a zero vector) costs nothing: the
     // register's declaration already holds that value, and the register is
@@ -5365,8 +5388,8 @@ mod tests {
     /// in the item loop), so no barrier follows it; every thread still
     /// reaches the next iteration. The blocked kernel with a continue in its
     /// item loop reads, renders and validates; the shipped kernel with a
-    /// barrier after a continue is refused by name (a barrier some threads
-    /// skip).
+    /// barrier after a continue reads, and the checker refuses it when the
+    /// continue's condition is a thread's own (a barrier some threads skip).
     #[test]
     fn a_continue_in_a_loop_reads_unless_a_barrier_follows_it() {
         let k = WgslKingdom::load_safe();
@@ -5380,14 +5403,25 @@ mod tests {
         assert!(text.contains("== 7u)) { continue; }"), "{text}");
         let barrier = format!("// grid 16 16 1 1\n{SHIPPED}").replacen("    for (var t: u32 = 0u; t < cfg.m; t = t + 1u) {\n", "    for (var t: u32 = 0u; t < cfg.m; t = t + 1u) {\n        if (t == 7u) { continue; }\n        workgroupBarrier();\n", 1);
         assert!(barrier.contains("workgroupBarrier"));
-        let Err(e) = read_safe(&barrier, &k) else { panic!("a barrier after a continue read") };
-        assert!(e.contains("where only conditional statements are spelled"), "{e}");
+        // A barrier after a continue reads since 2026-10-12 (the continue's
+        // block, then the barrier at the loop's rung: the same text); the
+        // checker decides it. Under a uniform condition (the item counter)
+        // every thread skips the barrier together: legal. Under a thread's
+        // own value some threads reach it: refused by the uniformity layer.
+        let checker = crate::wgsl::check::Checker::new(&k, &role, &crate::wgsl::target::Target::recorded());
+        let uniform = read_safe(&barrier, &k).unwrap_or_else(|e| panic!("{e}")).tree;
+        checker.check(&uniform).unwrap_or_else(|e| panic!("a uniform continue before a barrier: {e}"));
+        let divergent = barrier.replacen("if (t == 7u) { continue; }", "if (gid.x == 7u) { continue; }", 1);
+        let tree = read_safe(&divergent, &k).unwrap_or_else(|e| panic!("{e}")).tree;
+        let e = checker.check(&tree).unwrap_err();
+        assert_eq!((e.layer, e.reason), (crate::wgsl::check::Layer::Uniformity, "barrier_in_nonuniform_control_flow"), "{e}");
     }
 
     /// The counts of [`random_sampler_trees_read_back_to_their_own_text`]
-    /// reached so far: to their own text, and read back at all.
-    const READ_BACK_FLOOR: usize = 108;
-    const READ_AT_ALL_FLOOR: usize = 976;
+    /// reached so far: to their own text, and to a fixpoint after the first
+    /// read. Every tree reads back (1,000 of 1,000, asserted exactly).
+    const READ_BACK_FLOOR: usize = 110;
+    const FIXPOINT_FLOOR: usize = 141;
 
     /// THE KINGDOM'S COMPLETENESS BAR (2026-10-12): 1,000 random trees of
     /// the kingdom's typed sampler (the safe root, depth 7, seeds 0..1000)
@@ -5454,6 +5488,7 @@ mod tests {
         // A ratchet while the groups are fixed one commit at a time (2026-10-12):
         // the count only rises, to 1,000 of 1,000.
         assert!(passed >= READ_BACK_FLOOR, "random trees that read back to their own text: {passed}, fewer than the {READ_BACK_FLOOR} already reached");
-        assert!(read_back >= READ_AT_ALL_FLOOR, "random trees that read back: {read_back}, fewer than the {READ_AT_ALL_FLOOR} already reached");
+        assert_eq!(read_back as u64, n, "random trees that read back: {read_back} of {n}");
+        assert!(fixpoint >= FIXPOINT_FLOOR, "random trees that read back to a fixpoint: {fixpoint}, fewer than the {FIXPOINT_FLOOR} already reached");
     }
 }

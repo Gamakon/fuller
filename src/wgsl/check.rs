@@ -717,6 +717,16 @@ impl<'a> Checker<'a> {
                 }
                 self.value(&k[0], cx);
                 let c = self.uniform(&k[0], cx);
+                // A continue under a non-uniform condition: the threads leave
+                // this pass of the loop at different points, so every later
+                // statement of the loop's body runs in some threads only (a
+                // continue in a conditional block nested in a loop body that
+                // goes on to a barrier; 2026-10-12, the reader refused it).
+                if cx.mode == Mode::Uniform && !(ctrl && c && !cx.tainted) {
+                    if let Some(e) = cx.exits.last_mut() {
+                        *e = true;
+                    }
+                }
                 self.walk_block_given(&k[1], &k[0], false, cx, ctrl && c);
             }
             _ => {

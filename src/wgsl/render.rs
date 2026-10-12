@@ -533,7 +533,9 @@ fn cont_below_top(t: &Tree, top: bool) -> bool {
 /// (The fixed-point, hash and sign conversions were written inline until
 /// 2026-10-12: their forms have no literal and their text read back as other
 /// forms' rows, 25 of 1,000 random trees.)
-pub const COMPOSITE_ROWS: [(&str, &str); 21] = [
+pub const COMPOSITE_ROWS: [(&str, &str); 23] = [
+    ("bits.insert_lo", "insert_lo"),
+    ("bits.insert_hi", "insert_hi"),
     ("bits.pack_sign", "pack_sign"),
     ("bits.unpack_sign", "unpack_sign"),
     ("convert.q15_16_to_f32", "fx_to_f32"),
@@ -1962,8 +1964,6 @@ impl Renderer<'_> {
             "quantise.pack4_code8" => Some(format!("(({} & 255u) | (({} & 255u) << 8u) | (({} & 255u) << 16u))", a[0], a[1], a[2])),
             "quantise.pack4_code8_hi" => Some(format!("(({} & 16777215u) | (({} & 255u) << 24u))", a[0], a[1])),
             "quantise.unpack_code8" => Some(format!("(({} >> (({} & 3u) * 8u)) & 255u)", a[0], a[1])),
-            "bits.insert_lo" => Some(format!("insertBits({}, {}, ({2}) & 31u, 32u - (({2}) & 31u))", a[0], a[1], a[2])),
-            "bits.insert_hi" => Some(format!("select({0} & ((1u << ({1} & 31u)) - 1u), {0}, {1} >= 32u)", a[0], a[1])),
             "index.shl" => Some(format!("(({}) << (({}) & 31u))", a[0], a[1])),
             "index.shr" => Some(format!("(({}) >> (({}) & 31u))", a[0], a[1])),
             "index.and" => Some(format!("(({}) & ({}))", a[0], a[1])),
@@ -2507,6 +2507,8 @@ pub const COMPOSITES: &[(&str, &str)] = &[
     ("fx_from_f32", "fn fx_from_f32(x: f32) -> i32 { return i32(clamp(round(x * 65536.0), -2147483648.0, 2147483520.0)); }"),
     ("sign_to_real", "fn sign_to_real(s: bool) -> f32 { return select(-1.0, 1.0, s); }"),
     ("pack_sign", "fn pack_sign(s: bool) -> u32 { return select(0u, 1u, s); }"),
+    ("insert_lo", "fn insert_lo(e: u32, n: u32, o: u32) -> u32 { return insertBits(e, n, o & 31u, 32u - (o & 31u)); }"),
+    ("insert_hi", "fn insert_hi(e: u32, o: u32) -> u32 { return select(e & ((1u << (o & 31u)) - 1u), e, o >= 32u); }"),
     ("unpack_sign", "fn unpack_sign(b: u32, i: u32) -> bool { return ((b >> (i & 31u)) & 1u) == 1u; }"),
     ("hash_to_bits", "fn hash_to_bits(h: u32) -> u32 { return h; }"),
     ("hash_to_unit", "fn hash_to_unit(h: u32) -> f32 { return f32(h >> 8u) * (1.0 / 16777216.0); }"),

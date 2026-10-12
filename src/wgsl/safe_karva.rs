@@ -525,6 +525,34 @@ fn conform_at(t: &Tree, demand: Ty, kingdom: &WgslKingdom, per_kernel: &[PerKern
             return Ok(Tree::fallback(demand));
         }
     }
+    // A count used as an index (index.of_count) where the count is demanded:
+    // the count itself (the conversion writes nothing; 2026-10-12).
+    if let ("index.of_count", [x]) = (t.name.as_str(), t.kids.as_slice()) {
+        if dual(demand) == "u32.count" {
+            return conform_at(x, demand, kingdom, per_kernel, convert);
+        }
+    }
+    // `select(-(x), x, s)` over a sign: select.negate_if, which the renderer
+    // writes so (its condition is a sign, not a flag; 2026-10-12).
+    if let ("select.scalar_cond" | "select.lane_cond", [x, n, c]) = (t.name.as_str(), t.kids.as_slice()) {
+        // (naga folds the negation of a literal.)
+        fn neg_of(n: &Tree, x: &Tree) -> bool {
+            if n.name.starts_with("arith.neg") && n.kids.first() == Some(x) {
+                return true;
+            }
+            if x.name.starts_with("literal.") && n.name.starts_with("literal.") {
+                return n.konst == -x.konst;
+            }
+            // A splat of a folded negation (naga writes it as the lanes composed).
+            x.name.starts_with("shape.splat") && x.kids.len() == 1 && ((n.name == x.name && n.kids.len() == 1 && neg_of(&n.kids[0], &x.kids[0])) || (n.name.starts_with("shape.compose") && !n.kids.is_empty() && n.kids.iter().all(|l| neg_of(l, &x.kids[0]))))
+        }
+        let negated = neg_of(n, x);
+        if negated {
+            if let Ok(r) = conform_at(&Tree::new("select.negate_if", t.ty, vec![x.clone(), c.clone()]), demand, kingdom, per_kernel, convert) {
+                return Ok(r);
+            }
+        }
+    }
     // A bit operation the reader named by naga's node, used on an index:
     // the index row of the same operation.
     if let Some(op) = t.name.strip_prefix("bits.").filter(|op| matches!(*op, "shl" | "shr" | "and" | "or")) {
@@ -657,7 +685,10 @@ pub fn fallbacks(t: &Tree) -> usize {
 /// The candidate signatures of a name under a demand: the kingdom's rows
 /// and the per-kernel rows, each as its input duals.
 fn signatures<'a>(name: &'a str, demand: Ty, arity: usize, kingdom: &'a WgslKingdom, per_kernel: &'a [(String, Vec<Ty>, Ty)]) -> impl Iterator<Item = &'a [Ty]> + 'a {
-    let rows = kingdom.rows.iter().filter(move |r| r.name == name && r.output == demand && r.inputs.len() == arity).map(|r| r.inputs.as_slice());
+    // (No f16 input: naga 0.20 has no f16, so no such row renders; a
+    // conversion to f16 chosen here failed to render, 2026-10-12.)
+    let f16 = move |t: &Ty| kingdom.dual(*t).is_some_and(|d| d.scalar() == Some("f16"));
+    let rows = kingdom.rows.iter().filter(move |r| r.name == name && r.output == demand && r.inputs.len() == arity && !r.inputs.iter().any(f16)).map(|r| r.inputs.as_slice());
     let pk = per_kernel.iter().filter(move |(n, i, o)| n == name && *o == demand && i.len() == arity).map(|(_, i, _)| i.as_slice());
     rows.chain(pk)
 }
