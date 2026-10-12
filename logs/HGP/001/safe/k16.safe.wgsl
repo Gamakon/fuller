@@ -42,7 +42,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation
     var pv: array<vec4<f32>, 16>; var pw: array<vec4<f32>, 16>; var px: array<vec4<f32>, 16>; var py: array<vec4<f32>, 16>; var pi: array<u32, 16>; var pj: array<u32, 16>; var pk: array<u32, 16>; var pm: array<bool, 16>; var pn: array<bool, 16>; var pq: array<vec2<f32>, 16>; var pr: array<vec2<f32>, 16>;
     i0 = (cfg.r_off + gid.y);
     i1 = gid.x;
-    for (t = 0u; t < (((cfg.m) - ((cfg.m) % 4u))); t = t + 4u) {
+    for (t = 0u; t < ((cfg.m) - ((cfg.m) % max(4u, 1u))); t = t + 4u) {
     f0 = fma(phi[((t * cfg.d) + (cfg.r_off + gid.y))], phi[((t * cfg.d) + gid.x)], f0);
     f1 = fma(phi[(((t * cfg.d) + cfg.d) + (cfg.r_off + gid.y))], phi[(((t * cfg.d) + cfg.d) + gid.x)], f1);
     f2 = fma(phi[((((t * cfg.d) + cfg.d) + cfg.d) + (cfg.r_off + gid.y))], phi[((((t * cfg.d) + cfg.d) + cfg.d) + gid.x)], f2);

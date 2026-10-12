@@ -50,7 +50,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation
     for (k = 0u; k < 16u; k = k + 1u) {
     pa[((k) & 63u)] = 0.0f;
     }
-    for (t = 0u; t < (((cfg.m) - ((cfg.m) % 4u))); t = t + 4u) {
+    for (t = 0u; t < ((cfg.m) - ((cfg.m) % max(4u, 1u))); t = t + 4u) {
     i0 = 0u;
     for (k = 0u; k < 4u; k = k + 1u) {
     i1 = 0u;
