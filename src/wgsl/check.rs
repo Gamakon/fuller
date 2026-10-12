@@ -475,7 +475,7 @@ impl<'a> Checker<'a> {
     /// the features the tree's rows need present.
     pub fn adapter(&self, tree: &Tree) -> Result<(), Illegal> {
         let fail = |reason: &'static str, detail: String| Err(illegal(Layer::Adapter, reason, detail));
-        let (grid, plan) = self.grid_and_plan(tree)?;
+        let (grid, plan) = self.grid_and_plan(&self.resolved(tree)?)?;
         let t = &self.target;
         if grid.x > t.max_size[0] || grid.y > t.max_size[1] || u64::from(grid.x) * u64::from(grid.y) > u64::from(t.max_invocations) {
             return fail("workgroup_size_over_limit", format!("@workgroup_size({}, {}, 1) against the target's {:?} per axis and {} invocations", grid.x, grid.y, t.max_size, t.max_invocations));
@@ -598,6 +598,12 @@ impl<'a> Checker<'a> {
 
     // ------------------------------------------------------------ the walker
 
+    /// The tree with every knob reference written as the value its kernel's
+    /// declarations give (`params::resolve`), as the renderer reads it.
+    fn resolved(&self, tree: &Tree) -> Result<Tree, Illegal> {
+        crate::wgsl::params::resolve(tree).map_err(|e| illegal(Layer::Grammar, "knob_reference_unresolved", e))
+    }
+
     /// The kernel's grid and workgroup arrays as the renderer plans them.
     fn grid_and_plan(&self, tree: &Tree) -> Result<(Grid, WgPlan), Illegal> {
         match (tree.name.as_str(), tree.kids.first()) {
@@ -612,7 +618,8 @@ impl<'a> Checker<'a> {
 
     /// Walk the kernel's body, then its epilogue, in `mode`.
     fn walk_root(&self, tree: &Tree, mode: Mode, nonuniform: &NonUniform) -> Cx {
-        let (grid, plan) = match self.grid_and_plan(tree) {
+        let resolved = self.resolved(tree);
+        let (grid, plan) = match resolved.as_ref().map_err(Clone::clone).and_then(|t| self.grid_and_plan(t)) {
             Ok(gp) => gp,
             Err(e) => {
                 let mut cx = Cx::new(mode, Grid { x: 16, y: 16, bx: 1, by: 1, rows_x: false }, BTreeMap::new());
@@ -623,6 +630,7 @@ impl<'a> Checker<'a> {
         let mut cx = Cx::new(mode, grid, plan);
         cx.nonuniform_regs = nonuniform.registers.clone();
         cx.nonuniform_parrs = nonuniform.private_arrays.clone();
+        let Ok(tree) = resolved else { return cx };
         if tree.name == "kernel.entry_safe" {
             for k in tree.kids.iter().skip(1) {
                 self.walk_block(k, &mut cx, true);
