@@ -4759,6 +4759,21 @@ mod tests {
         assert_eq!(Renderer::new(&k, &t, &role).kernel(&twin).unwrap().grid.dispatch(1000, 300), (38, 8));
     }
 
+    /// A BARRIER IN A UNIFORM-BOUNDED LOOP READS (legality item 5's own
+    /// rule, 2026-10-12): reserve2's g003 r12 holds barriers inside
+    /// `for (k = 0u; k < (min(1024u, (cfg.m - t))); k = k + 32u)`, bounded by
+    /// cfg.m, the item counter and literals; the loop reads with a uniform
+    /// bound, not as conditional statements.
+    #[test]
+    fn a_barrier_in_a_uniform_bounded_loop_reads() {
+        let k = WgslKingdom::load_safe();
+        let src = include_str!("../../tests/corpus/safewgsl/reserve2_g003_r12_uniform_bound.wgsl");
+        assert!(src.contains("k < (min(1024u, (cfg.m - t)))"));
+        let sx = read_safe(src, &k).unwrap_or_else(|e| panic!("{e}")).tree.to_sexpr();
+        assert!(sx.contains("(bound.of_uniform (uniform.min") && sx.contains("uniform.sub"), "{sx}");
+        assert!(sx.contains("stmt.barrier_"), "{sx}");
+    }
+
     /// A kernel with a helper function reads: the helper is inlined at its
     /// calls (the complete kingdom, step 6; `load4`, with a local, an
     /// if-else and lane stores, as statements since run A). The blocked
