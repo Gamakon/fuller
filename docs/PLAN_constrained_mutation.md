@@ -82,10 +82,12 @@ in the rule (counted, the rule's record lowered), never sent to the GPU:
    (`functions.tsv` store and loop rows, `loader.rs` barrier duals);
 3. range proofs: every index in its buffer's or array's range, the binding
    range inside the buffer, every loop bound uniform or capped at the declared
-   maximum trip count. `u32` overflow is NOT illegal (decision 2026-10-12):
-   WGSL defines it as wrapping, and with every access masked or owned and
-   every loop bounded, a wrapped value can only give wrong values, which
-   selection removes; the checker reports it as a diagnostic;
+   maximum trip count. `u32` overflow (revised 2026-10-12): ILLEGAL in a store's
+   cell index (a wrapped cell can be another thread's: a data race, and
+   fitness turns non-deterministic) and in a loop bound (a wrapped bound runs
+   to the cap and holds the GPU); a diagnostic elsewhere (WGSL wraps by
+   definition, and a wrapped value read through a masked or bounds-checked
+   index can only give wrong values, which selection removes);
 4. barrier uniformity by control dependence, not by position alone;
 5. adapter checks: workgroup size, workgroup memory, subgroup and other
    features against the selected adapter's limits and features (today
