@@ -278,10 +278,10 @@ F276	parr	d	composite	-	parr<f32>.real	0	private array pd of 64 f32
 F277	parr	v	composite	-	parr<vec4<f32>>.real	0	private array pv of 16 vec4<f32>
 F278	parr	i	composite	-	parr<u32>.index	0	private array pi of 16 u32
 F279	safe	pidx64	composite	u32.index	u32.pindex	1	i & 63u
-F280	safe	pidx16	composite	u32.index	u32.pindex	1	i & 15u
+F280	safe	pidx16	composite	u32.index	u32.pindex16	1	i & 15u
 F281	parr	get_f	composite	parr<f32>.real u32.pindex	f32.real	2	pa[i]
-F282	parr	get_v	composite	parr<vec4<f32>>.real u32.pindex	vec4<f32>.real	2	pv[i]
-F283	parr	get_i	composite	parr<u32>.index u32.pindex	u32.index	2	pi[i]
+F282	parr	get_v	composite	parr<vec4<f32>>.real u32.pindex16	vec4<f32>.real	2	pv[i]
+F283	parr	get_i	composite	parr<u32>.index u32.pindex16	u32.index	2	pi[i]
 F284	parr	m	composite	-	parr<bool>.flag	0	private array pm of 16 bool
 F285	parr	n	composite	-	parr<bool>.flag	0	private array pn of 16 bool
 F286	parr	e	composite	-	parr<f32>.real	0	private array pe of 64 f32
@@ -296,7 +296,7 @@ F294	index	shl	composite	u32.index u32.index	u32.index	2	i << (s & 31u)
 F295	index	shr	composite	u32.index u32.index	u32.index	2	i >> (s & 31u)
 F296	index	and	composite	u32.index u32.index	u32.index	2	i & j
 F297	index	or	composite	u32.index u32.index	u32.index	2	i | j
-F298	parr	get_b	composite	parr<bool>.flag u32.pindex	bool.flag	2	pm[i]
+F298	parr	get_b	composite	parr<bool>.flag u32.pindex16	bool.flag	2	pm[i]
 F299	bound	m	composite	-	u32.boundm	0	cfg.m
 F300	bound	d	composite	-	u32.boundd	0	cfg.d
 F301	bound	rows	composite	-	u32.boundrows	0	cfg.r_rows
@@ -355,9 +355,9 @@ F353	reg	set_b_L0	composite	reg<bool>.flag bool.flag	stmt.L0	2
 F354	wg	set_L0	composite	wgmem<f32>.real u32.wgindex f32.real	stmt.L0	3	arity 3; the index is in range by its type
 F355	wg	set_v_L0	composite	wgmem<vec4<f32>>.real u32.wgvindex vec4<f32>.real	stmt.L0	3	arity 3: va[i] = v
 F356	parr	set_f_L0	composite	parr<f32>.real u32.pindex f32.real	stmt.L0	3	arity 3: pa[i] = v
-F357	parr	set_v_L0	composite	parr<vec4<f32>>.real u32.pindex vec4<f32>.real	stmt.L0	3	arity 3: pv[i] = v
-F358	parr	set_i_L0	composite	parr<u32>.index u32.pindex u32.index	stmt.L0	3	arity 3: pi[i] = v
-F359	parr	set_b_L0	composite	parr<bool>.flag u32.pindex bool.flag	stmt.L0	3	arity 3: pm[i] = v
+F357	parr	set_v_L0	composite	parr<vec4<f32>>.real u32.pindex16 vec4<f32>.real	stmt.L0	3	arity 3: pv[i] = v
+F358	parr	set_i_L0	composite	parr<u32>.index u32.pindex16 u32.index	stmt.L0	3	arity 3: pi[i] = v
+F359	parr	set_b_L0	composite	parr<bool>.flag u32.pindex16 bool.flag	stmt.L0	3	arity 3: pm[i] = v
 F360	store	h_L0	composite	u32.cell f32.real	stmt.L0	2	h[cell] = h[cell] + v: read-add-write of a cell this thread owns
 F361	stmt	if_L0	composite	bool.flag block.C0	stmt.L0	2	if (c) { ... }: the body is a conditional context
 F362	stmt	if_else_L0	composite	bool.flag block.C0 block.C0	stmt.L0	3	arity 3
@@ -374,9 +374,9 @@ F372	reg	set_b_L1	composite	reg<bool>.flag bool.flag	stmt.L1	2
 F373	wg	set_L1	composite	wgmem<f32>.real u32.wgindex f32.real	stmt.L1	3	arity 3; the index is in range by its type
 F374	wg	set_v_L1	composite	wgmem<vec4<f32>>.real u32.wgvindex vec4<f32>.real	stmt.L1	3	arity 3: va[i] = v
 F375	parr	set_f_L1	composite	parr<f32>.real u32.pindex f32.real	stmt.L1	3	arity 3: pa[i] = v
-F376	parr	set_v_L1	composite	parr<vec4<f32>>.real u32.pindex vec4<f32>.real	stmt.L1	3	arity 3: pv[i] = v
-F377	parr	set_i_L1	composite	parr<u32>.index u32.pindex u32.index	stmt.L1	3	arity 3: pi[i] = v
-F378	parr	set_b_L1	composite	parr<bool>.flag u32.pindex bool.flag	stmt.L1	3	arity 3: pm[i] = v
+F376	parr	set_v_L1	composite	parr<vec4<f32>>.real u32.pindex16 vec4<f32>.real	stmt.L1	3	arity 3: pv[i] = v
+F377	parr	set_i_L1	composite	parr<u32>.index u32.pindex16 u32.index	stmt.L1	3	arity 3: pi[i] = v
+F378	parr	set_b_L1	composite	parr<bool>.flag u32.pindex16 bool.flag	stmt.L1	3	arity 3: pm[i] = v
 F379	store	h_L1	composite	u32.cell f32.real	stmt.L1	2	h[cell] = h[cell] + v: read-add-write of a cell this thread owns
 F380	stmt	if_L1	composite	bool.flag block.C1	stmt.L1	2	if (c) { ... }: the body is a conditional context
 F381	stmt	if_else_L1	composite	bool.flag block.C1 block.C1	stmt.L1	3	arity 3
@@ -393,9 +393,9 @@ F391	reg	set_b_L2	composite	reg<bool>.flag bool.flag	stmt.L2	2
 F392	wg	set_L2	composite	wgmem<f32>.real u32.wgindex f32.real	stmt.L2	3	arity 3; the index is in range by its type
 F393	wg	set_v_L2	composite	wgmem<vec4<f32>>.real u32.wgvindex vec4<f32>.real	stmt.L2	3	arity 3: va[i] = v
 F394	parr	set_f_L2	composite	parr<f32>.real u32.pindex f32.real	stmt.L2	3	arity 3: pa[i] = v
-F395	parr	set_v_L2	composite	parr<vec4<f32>>.real u32.pindex vec4<f32>.real	stmt.L2	3	arity 3: pv[i] = v
-F396	parr	set_i_L2	composite	parr<u32>.index u32.pindex u32.index	stmt.L2	3	arity 3: pi[i] = v
-F397	parr	set_b_L2	composite	parr<bool>.flag u32.pindex bool.flag	stmt.L2	3	arity 3: pm[i] = v
+F395	parr	set_v_L2	composite	parr<vec4<f32>>.real u32.pindex16 vec4<f32>.real	stmt.L2	3	arity 3: pv[i] = v
+F396	parr	set_i_L2	composite	parr<u32>.index u32.pindex16 u32.index	stmt.L2	3	arity 3: pi[i] = v
+F397	parr	set_b_L2	composite	parr<bool>.flag u32.pindex16 bool.flag	stmt.L2	3	arity 3: pm[i] = v
 F398	store	h_L2	composite	u32.cell f32.real	stmt.L2	2	h[cell] = h[cell] + v: read-add-write of a cell this thread owns
 F399	stmt	if_L2	composite	bool.flag block.C2	stmt.L2	2	if (c) { ... }: the body is a conditional context
 F400	stmt	if_else_L2	composite	bool.flag block.C2 block.C2	stmt.L2	3	arity 3
@@ -411,9 +411,9 @@ F409	reg	set_b_L3	composite	reg<bool>.flag bool.flag	stmt.L3	2
 F410	wg	set_L3	composite	wgmem<f32>.real u32.wgindex f32.real	stmt.L3	3	arity 3; the index is in range by its type
 F411	wg	set_v_L3	composite	wgmem<vec4<f32>>.real u32.wgvindex vec4<f32>.real	stmt.L3	3	arity 3: va[i] = v
 F412	parr	set_f_L3	composite	parr<f32>.real u32.pindex f32.real	stmt.L3	3	arity 3: pa[i] = v
-F413	parr	set_v_L3	composite	parr<vec4<f32>>.real u32.pindex vec4<f32>.real	stmt.L3	3	arity 3: pv[i] = v
-F414	parr	set_i_L3	composite	parr<u32>.index u32.pindex u32.index	stmt.L3	3	arity 3: pi[i] = v
-F415	parr	set_b_L3	composite	parr<bool>.flag u32.pindex bool.flag	stmt.L3	3	arity 3: pm[i] = v
+F413	parr	set_v_L3	composite	parr<vec4<f32>>.real u32.pindex16 vec4<f32>.real	stmt.L3	3	arity 3: pv[i] = v
+F414	parr	set_i_L3	composite	parr<u32>.index u32.pindex16 u32.index	stmt.L3	3	arity 3: pi[i] = v
+F415	parr	set_b_L3	composite	parr<bool>.flag u32.pindex16 bool.flag	stmt.L3	3	arity 3: pm[i] = v
 F416	store	h_L3	composite	u32.cell f32.real	stmt.L3	2	h[cell] = h[cell] + v: read-add-write of a cell this thread owns
 F417	stmt	if_L3	composite	bool.flag block.C3	stmt.L3	2	if (c) { ... }: the body is a conditional context
 F418	stmt	if_else_L3	composite	bool.flag block.C3 block.C3	stmt.L3	3	arity 3
@@ -429,9 +429,9 @@ F427	reg	set_b_L4	composite	reg<bool>.flag bool.flag	stmt.L4	2
 F428	wg	set_L4	composite	wgmem<f32>.real u32.wgindex f32.real	stmt.L4	3	arity 3; the index is in range by its type
 F429	wg	set_v_L4	composite	wgmem<vec4<f32>>.real u32.wgvindex vec4<f32>.real	stmt.L4	3	arity 3: va[i] = v
 F430	parr	set_f_L4	composite	parr<f32>.real u32.pindex f32.real	stmt.L4	3	arity 3: pa[i] = v
-F431	parr	set_v_L4	composite	parr<vec4<f32>>.real u32.pindex vec4<f32>.real	stmt.L4	3	arity 3: pv[i] = v
-F432	parr	set_i_L4	composite	parr<u32>.index u32.pindex u32.index	stmt.L4	3	arity 3: pi[i] = v
-F433	parr	set_b_L4	composite	parr<bool>.flag u32.pindex bool.flag	stmt.L4	3	arity 3: pm[i] = v
+F431	parr	set_v_L4	composite	parr<vec4<f32>>.real u32.pindex16 vec4<f32>.real	stmt.L4	3	arity 3: pv[i] = v
+F432	parr	set_i_L4	composite	parr<u32>.index u32.pindex16 u32.index	stmt.L4	3	arity 3: pi[i] = v
+F433	parr	set_b_L4	composite	parr<bool>.flag u32.pindex16 bool.flag	stmt.L4	3	arity 3: pm[i] = v
 F434	store	h_L4	composite	u32.cell f32.real	stmt.L4	2	h[cell] = h[cell] + v: read-add-write of a cell this thread owns
 F435	stmt	if_L4	composite	bool.flag block.C4	stmt.L4	2	if (c) { ... }: the body is a conditional context
 F436	stmt	if_else_L4	composite	bool.flag block.C4 block.C4	stmt.L4	3	arity 3
@@ -447,9 +447,9 @@ F445	reg	set_b_C0	composite	reg<bool>.flag bool.flag	stmt.C0	2
 F446	wg	set_C0	composite	wgmem<f32>.real u32.wgindex f32.real	stmt.C0	3	arity 3; the index is in range by its type
 F447	wg	set_v_C0	composite	wgmem<vec4<f32>>.real u32.wgvindex vec4<f32>.real	stmt.C0	3	arity 3: va[i] = v
 F448	parr	set_f_C0	composite	parr<f32>.real u32.pindex f32.real	stmt.C0	3	arity 3: pa[i] = v
-F449	parr	set_v_C0	composite	parr<vec4<f32>>.real u32.pindex vec4<f32>.real	stmt.C0	3	arity 3: pv[i] = v
-F450	parr	set_i_C0	composite	parr<u32>.index u32.pindex u32.index	stmt.C0	3	arity 3: pi[i] = v
-F451	parr	set_b_C0	composite	parr<bool>.flag u32.pindex bool.flag	stmt.C0	3	arity 3: pm[i] = v
+F449	parr	set_v_C0	composite	parr<vec4<f32>>.real u32.pindex16 vec4<f32>.real	stmt.C0	3	arity 3: pv[i] = v
+F450	parr	set_i_C0	composite	parr<u32>.index u32.pindex16 u32.index	stmt.C0	3	arity 3: pi[i] = v
+F451	parr	set_b_C0	composite	parr<bool>.flag u32.pindex16 bool.flag	stmt.C0	3	arity 3: pm[i] = v
 F452	store	h_C0	composite	u32.cell f32.real	stmt.C0	2	h[cell] = h[cell] + v: read-add-write of a cell this thread owns
 F453	stmt	if_C0	composite	bool.flag block.C0	stmt.C0	2	if (c) { ... }: the body is a conditional context
 F454	stmt	if_else_C0	composite	bool.flag block.C0 block.C0	stmt.C0	3	arity 3
@@ -465,9 +465,9 @@ F463	reg	set_b_C1	composite	reg<bool>.flag bool.flag	stmt.C1	2
 F464	wg	set_C1	composite	wgmem<f32>.real u32.wgindex f32.real	stmt.C1	3	arity 3; the index is in range by its type
 F465	wg	set_v_C1	composite	wgmem<vec4<f32>>.real u32.wgvindex vec4<f32>.real	stmt.C1	3	arity 3: va[i] = v
 F466	parr	set_f_C1	composite	parr<f32>.real u32.pindex f32.real	stmt.C1	3	arity 3: pa[i] = v
-F467	parr	set_v_C1	composite	parr<vec4<f32>>.real u32.pindex vec4<f32>.real	stmt.C1	3	arity 3: pv[i] = v
-F468	parr	set_i_C1	composite	parr<u32>.index u32.pindex u32.index	stmt.C1	3	arity 3: pi[i] = v
-F469	parr	set_b_C1	composite	parr<bool>.flag u32.pindex bool.flag	stmt.C1	3	arity 3: pm[i] = v
+F467	parr	set_v_C1	composite	parr<vec4<f32>>.real u32.pindex16 vec4<f32>.real	stmt.C1	3	arity 3: pv[i] = v
+F468	parr	set_i_C1	composite	parr<u32>.index u32.pindex16 u32.index	stmt.C1	3	arity 3: pi[i] = v
+F469	parr	set_b_C1	composite	parr<bool>.flag u32.pindex16 bool.flag	stmt.C1	3	arity 3: pm[i] = v
 F470	store	h_C1	composite	u32.cell f32.real	stmt.C1	2	h[cell] = h[cell] + v: read-add-write of a cell this thread owns
 F471	stmt	if_C1	composite	bool.flag block.C1	stmt.C1	2	if (c) { ... }: the body is a conditional context
 F472	stmt	if_else_C1	composite	bool.flag block.C1 block.C1	stmt.C1	3	arity 3
@@ -483,9 +483,9 @@ F481	reg	set_b_C2	composite	reg<bool>.flag bool.flag	stmt.C2	2
 F482	wg	set_C2	composite	wgmem<f32>.real u32.wgindex f32.real	stmt.C2	3	arity 3; the index is in range by its type
 F483	wg	set_v_C2	composite	wgmem<vec4<f32>>.real u32.wgvindex vec4<f32>.real	stmt.C2	3	arity 3: va[i] = v
 F484	parr	set_f_C2	composite	parr<f32>.real u32.pindex f32.real	stmt.C2	3	arity 3: pa[i] = v
-F485	parr	set_v_C2	composite	parr<vec4<f32>>.real u32.pindex vec4<f32>.real	stmt.C2	3	arity 3: pv[i] = v
-F486	parr	set_i_C2	composite	parr<u32>.index u32.pindex u32.index	stmt.C2	3	arity 3: pi[i] = v
-F487	parr	set_b_C2	composite	parr<bool>.flag u32.pindex bool.flag	stmt.C2	3	arity 3: pm[i] = v
+F485	parr	set_v_C2	composite	parr<vec4<f32>>.real u32.pindex16 vec4<f32>.real	stmt.C2	3	arity 3: pv[i] = v
+F486	parr	set_i_C2	composite	parr<u32>.index u32.pindex16 u32.index	stmt.C2	3	arity 3: pi[i] = v
+F487	parr	set_b_C2	composite	parr<bool>.flag u32.pindex16 bool.flag	stmt.C2	3	arity 3: pm[i] = v
 F488	store	h_C2	composite	u32.cell f32.real	stmt.C2	2	h[cell] = h[cell] + v: read-add-write of a cell this thread owns
 F489	stmt	if_C2	composite	bool.flag block.C2	stmt.C2	2	if (c) { ... }: the body is a conditional context
 F490	stmt	if_else_C2	composite	bool.flag block.C2 block.C2	stmt.C2	3	arity 3
@@ -501,9 +501,9 @@ F499	reg	set_b_C3	composite	reg<bool>.flag bool.flag	stmt.C3	2
 F500	wg	set_C3	composite	wgmem<f32>.real u32.wgindex f32.real	stmt.C3	3	arity 3; the index is in range by its type
 F501	wg	set_v_C3	composite	wgmem<vec4<f32>>.real u32.wgvindex vec4<f32>.real	stmt.C3	3	arity 3: va[i] = v
 F502	parr	set_f_C3	composite	parr<f32>.real u32.pindex f32.real	stmt.C3	3	arity 3: pa[i] = v
-F503	parr	set_v_C3	composite	parr<vec4<f32>>.real u32.pindex vec4<f32>.real	stmt.C3	3	arity 3: pv[i] = v
-F504	parr	set_i_C3	composite	parr<u32>.index u32.pindex u32.index	stmt.C3	3	arity 3: pi[i] = v
-F505	parr	set_b_C3	composite	parr<bool>.flag u32.pindex bool.flag	stmt.C3	3	arity 3: pm[i] = v
+F503	parr	set_v_C3	composite	parr<vec4<f32>>.real u32.pindex16 vec4<f32>.real	stmt.C3	3	arity 3: pv[i] = v
+F504	parr	set_i_C3	composite	parr<u32>.index u32.pindex16 u32.index	stmt.C3	3	arity 3: pi[i] = v
+F505	parr	set_b_C3	composite	parr<bool>.flag u32.pindex16 bool.flag	stmt.C3	3	arity 3: pm[i] = v
 F506	store	h_C3	composite	u32.cell f32.real	stmt.C3	2	h[cell] = h[cell] + v: read-add-write of a cell this thread owns
 F507	stmt	if_C3	composite	bool.flag block.C3	stmt.C3	2	if (c) { ... }: the body is a conditional context
 F508	stmt	if_else_C3	composite	bool.flag block.C3 block.C3	stmt.C3	3	arity 3
@@ -519,9 +519,9 @@ F517	reg	set_b_C4	composite	reg<bool>.flag bool.flag	stmt.C4	2
 F518	wg	set_C4	composite	wgmem<f32>.real u32.wgindex f32.real	stmt.C4	3	arity 3; the index is in range by its type
 F519	wg	set_v_C4	composite	wgmem<vec4<f32>>.real u32.wgvindex vec4<f32>.real	stmt.C4	3	arity 3: va[i] = v
 F520	parr	set_f_C4	composite	parr<f32>.real u32.pindex f32.real	stmt.C4	3	arity 3: pa[i] = v
-F521	parr	set_v_C4	composite	parr<vec4<f32>>.real u32.pindex vec4<f32>.real	stmt.C4	3	arity 3: pv[i] = v
-F522	parr	set_i_C4	composite	parr<u32>.index u32.pindex u32.index	stmt.C4	3	arity 3: pi[i] = v
-F523	parr	set_b_C4	composite	parr<bool>.flag u32.pindex bool.flag	stmt.C4	3	arity 3: pm[i] = v
+F521	parr	set_v_C4	composite	parr<vec4<f32>>.real u32.pindex16 vec4<f32>.real	stmt.C4	3	arity 3: pv[i] = v
+F522	parr	set_i_C4	composite	parr<u32>.index u32.pindex16 u32.index	stmt.C4	3	arity 3: pi[i] = v
+F523	parr	set_b_C4	composite	parr<bool>.flag u32.pindex16 bool.flag	stmt.C4	3	arity 3: pm[i] = v
 F524	store	h_C4	composite	u32.cell f32.real	stmt.C4	2	h[cell] = h[cell] + v: read-add-write of a cell this thread owns
 F525	stmt	if_C4	composite	bool.flag block.C4	stmt.C4	2	if (c) { ... }: the body is a conditional context
 F526	stmt	if_else_C4	composite	bool.flag block.C4 block.C4	stmt.C4	3	arity 3
@@ -736,27 +736,27 @@ F734	reg	b13	composite	-	reg<bool>.flag	0	a register
 F735	reg	b14	composite	-	reg<bool>.flag	0	a register
 F736	reg	b15	composite	-	reg<bool>.flag	0	a register
 F737	wg	get_v_lane	composite	wgmem<vec4<f32>>.real u32.wgvindex u32.index	f32.real	3	arity 3: va[i][j & 3u]
-F738	parr	get_v_lane	composite	parr<vec4<f32>>.real u32.pindex u32.index	f32.real	3	arity 3: pv[i][j & 3u]
+F738	parr	get_v_lane	composite	parr<vec4<f32>>.real u32.pindex16 u32.index	f32.real	3	arity 3: pv[i][j & 3u]
 F739	wg	set_v_lane_L0	composite	wgmem<vec4<f32>>.real u32.wgvindex u32.index f32.real	stmt.L0	4	arity 4: va[i][j & 3u] = x;
-F740	parr	set_v_lane_L0	composite	parr<vec4<f32>>.real u32.pindex u32.index f32.real	stmt.L0	4	arity 4: pv[i][j & 3u] = x;
+F740	parr	set_v_lane_L0	composite	parr<vec4<f32>>.real u32.pindex16 u32.index f32.real	stmt.L0	4	arity 4: pv[i][j & 3u] = x;
 F741	wg	set_v_lane_L1	composite	wgmem<vec4<f32>>.real u32.wgvindex u32.index f32.real	stmt.L1	4	arity 4: va[i][j & 3u] = x;
-F742	parr	set_v_lane_L1	composite	parr<vec4<f32>>.real u32.pindex u32.index f32.real	stmt.L1	4	arity 4: pv[i][j & 3u] = x;
+F742	parr	set_v_lane_L1	composite	parr<vec4<f32>>.real u32.pindex16 u32.index f32.real	stmt.L1	4	arity 4: pv[i][j & 3u] = x;
 F743	wg	set_v_lane_L2	composite	wgmem<vec4<f32>>.real u32.wgvindex u32.index f32.real	stmt.L2	4	arity 4: va[i][j & 3u] = x;
-F744	parr	set_v_lane_L2	composite	parr<vec4<f32>>.real u32.pindex u32.index f32.real	stmt.L2	4	arity 4: pv[i][j & 3u] = x;
+F744	parr	set_v_lane_L2	composite	parr<vec4<f32>>.real u32.pindex16 u32.index f32.real	stmt.L2	4	arity 4: pv[i][j & 3u] = x;
 F745	wg	set_v_lane_L3	composite	wgmem<vec4<f32>>.real u32.wgvindex u32.index f32.real	stmt.L3	4	arity 4: va[i][j & 3u] = x;
-F746	parr	set_v_lane_L3	composite	parr<vec4<f32>>.real u32.pindex u32.index f32.real	stmt.L3	4	arity 4: pv[i][j & 3u] = x;
+F746	parr	set_v_lane_L3	composite	parr<vec4<f32>>.real u32.pindex16 u32.index f32.real	stmt.L3	4	arity 4: pv[i][j & 3u] = x;
 F747	wg	set_v_lane_L4	composite	wgmem<vec4<f32>>.real u32.wgvindex u32.index f32.real	stmt.L4	4	arity 4: va[i][j & 3u] = x;
-F748	parr	set_v_lane_L4	composite	parr<vec4<f32>>.real u32.pindex u32.index f32.real	stmt.L4	4	arity 4: pv[i][j & 3u] = x;
+F748	parr	set_v_lane_L4	composite	parr<vec4<f32>>.real u32.pindex16 u32.index f32.real	stmt.L4	4	arity 4: pv[i][j & 3u] = x;
 F749	wg	set_v_lane_C0	composite	wgmem<vec4<f32>>.real u32.wgvindex u32.index f32.real	stmt.C0	4	arity 4: va[i][j & 3u] = x;
-F750	parr	set_v_lane_C0	composite	parr<vec4<f32>>.real u32.pindex u32.index f32.real	stmt.C0	4	arity 4: pv[i][j & 3u] = x;
+F750	parr	set_v_lane_C0	composite	parr<vec4<f32>>.real u32.pindex16 u32.index f32.real	stmt.C0	4	arity 4: pv[i][j & 3u] = x;
 F751	wg	set_v_lane_C1	composite	wgmem<vec4<f32>>.real u32.wgvindex u32.index f32.real	stmt.C1	4	arity 4: va[i][j & 3u] = x;
-F752	parr	set_v_lane_C1	composite	parr<vec4<f32>>.real u32.pindex u32.index f32.real	stmt.C1	4	arity 4: pv[i][j & 3u] = x;
+F752	parr	set_v_lane_C1	composite	parr<vec4<f32>>.real u32.pindex16 u32.index f32.real	stmt.C1	4	arity 4: pv[i][j & 3u] = x;
 F753	wg	set_v_lane_C2	composite	wgmem<vec4<f32>>.real u32.wgvindex u32.index f32.real	stmt.C2	4	arity 4: va[i][j & 3u] = x;
-F754	parr	set_v_lane_C2	composite	parr<vec4<f32>>.real u32.pindex u32.index f32.real	stmt.C2	4	arity 4: pv[i][j & 3u] = x;
+F754	parr	set_v_lane_C2	composite	parr<vec4<f32>>.real u32.pindex16 u32.index f32.real	stmt.C2	4	arity 4: pv[i][j & 3u] = x;
 F755	wg	set_v_lane_C3	composite	wgmem<vec4<f32>>.real u32.wgvindex u32.index f32.real	stmt.C3	4	arity 4: va[i][j & 3u] = x;
-F756	parr	set_v_lane_C3	composite	parr<vec4<f32>>.real u32.pindex u32.index f32.real	stmt.C3	4	arity 4: pv[i][j & 3u] = x;
+F756	parr	set_v_lane_C3	composite	parr<vec4<f32>>.real u32.pindex16 u32.index f32.real	stmt.C3	4	arity 4: pv[i][j & 3u] = x;
 F757	wg	set_v_lane_C4	composite	wgmem<vec4<f32>>.real u32.wgvindex u32.index f32.real	stmt.C4	4	arity 4: va[i][j & 3u] = x;
-F758	parr	set_v_lane_C4	composite	parr<vec4<f32>>.real u32.pindex u32.index f32.real	stmt.C4	4	arity 4: pv[i][j & 3u] = x;
+F758	parr	set_v_lane_C4	composite	parr<vec4<f32>>.real u32.pindex16 u32.index f32.real	stmt.C4	4	arity 4: pv[i][j & 3u] = x;
 F759	safe	lt_lit64_4	Binary::Less	u32.tcounter4 u32.lit64	bool.bound	2	a fourth nested tile loop's condition
 F760	safe	tile_counter4	composite	-	u32.tcounter4	0	the fourth nested tile loop's counter k4 (0u outside it)
 F761	safe	tile_index4	composite	u32.tcounter4	u32.index	1	the fourth tile counter as a plain index
@@ -776,15 +776,15 @@ F774	reg	set_b_L5	composite	reg<bool>.flag bool.flag	stmt.L5	2
 F775	wg	set_L5	composite	wgmem<f32>.real u32.wgindex f32.real	stmt.L5	3	arity 3; the index is in range by its type
 F776	wg	set_v_L5	composite	wgmem<vec4<f32>>.real u32.wgvindex vec4<f32>.real	stmt.L5	3	arity 3: va[i] = v
 F777	parr	set_f_L5	composite	parr<f32>.real u32.pindex f32.real	stmt.L5	3	arity 3: pa[i] = v
-F778	parr	set_v_L5	composite	parr<vec4<f32>>.real u32.pindex vec4<f32>.real	stmt.L5	3	arity 3: pv[i] = v
-F779	parr	set_i_L5	composite	parr<u32>.index u32.pindex u32.index	stmt.L5	3	arity 3: pi[i] = v
-F780	parr	set_b_L5	composite	parr<bool>.flag u32.pindex bool.flag	stmt.L5	3	arity 3: pm[i] = v
+F778	parr	set_v_L5	composite	parr<vec4<f32>>.real u32.pindex16 vec4<f32>.real	stmt.L5	3	arity 3: pv[i] = v
+F779	parr	set_i_L5	composite	parr<u32>.index u32.pindex16 u32.index	stmt.L5	3	arity 3: pi[i] = v
+F780	parr	set_b_L5	composite	parr<bool>.flag u32.pindex16 bool.flag	stmt.L5	3	arity 3: pm[i] = v
 F781	store	h_L5	composite	u32.cell f32.real	stmt.L5	2	h[cell] = h[cell] + v: read-add-write of a cell this thread owns
 F782	stmt	if_L5	composite	bool.flag block.C5	stmt.L5	2	if (c) { ... }: the body is a conditional context
 F783	stmt	if_else_L5	composite	bool.flag block.C5 block.C5	stmt.L5	3	arity 3
 F784	reg	set_v_lane_L5	composite	reg<vec4<f32>>.real u32.index f32.real	stmt.L5	3	arity 3: v[i & 3u] = x;
 F785	wg	set_v_lane_L5	composite	wgmem<vec4<f32>>.real u32.wgvindex u32.index f32.real	stmt.L5	4	arity 4: va[i][j & 3u] = x;
-F786	parr	set_v_lane_L5	composite	parr<vec4<f32>>.real u32.pindex u32.index f32.real	stmt.L5	4	arity 4: pv[i][j & 3u] = x;
+F786	parr	set_v_lane_L5	composite	parr<vec4<f32>>.real u32.pindex16 u32.index f32.real	stmt.L5	4	arity 4: pv[i][j & 3u] = x;
 F787	block	one_C5	composite	stmt.C5	block.C5	1	
 F788	block	seq2_C5	composite	stmt.C5 stmt.C5	block.C5	2	
 F789	block	seq3_C5	composite	stmt.C5 stmt.C5 stmt.C5	block.C5	3	arity 3
@@ -797,15 +797,15 @@ F795	reg	set_b_C5	composite	reg<bool>.flag bool.flag	stmt.C5	2
 F796	wg	set_C5	composite	wgmem<f32>.real u32.wgindex f32.real	stmt.C5	3	arity 3; the index is in range by its type
 F797	wg	set_v_C5	composite	wgmem<vec4<f32>>.real u32.wgvindex vec4<f32>.real	stmt.C5	3	arity 3: va[i] = v
 F798	parr	set_f_C5	composite	parr<f32>.real u32.pindex f32.real	stmt.C5	3	arity 3: pa[i] = v
-F799	parr	set_v_C5	composite	parr<vec4<f32>>.real u32.pindex vec4<f32>.real	stmt.C5	3	arity 3: pv[i] = v
-F800	parr	set_i_C5	composite	parr<u32>.index u32.pindex u32.index	stmt.C5	3	arity 3: pi[i] = v
-F801	parr	set_b_C5	composite	parr<bool>.flag u32.pindex bool.flag	stmt.C5	3	arity 3: pm[i] = v
+F799	parr	set_v_C5	composite	parr<vec4<f32>>.real u32.pindex16 vec4<f32>.real	stmt.C5	3	arity 3: pv[i] = v
+F800	parr	set_i_C5	composite	parr<u32>.index u32.pindex16 u32.index	stmt.C5	3	arity 3: pi[i] = v
+F801	parr	set_b_C5	composite	parr<bool>.flag u32.pindex16 bool.flag	stmt.C5	3	arity 3: pm[i] = v
 F802	store	h_C5	composite	u32.cell f32.real	stmt.C5	2	h[cell] = h[cell] + v: read-add-write of a cell this thread owns
 F803	stmt	if_C5	composite	bool.flag block.C5	stmt.C5	2	if (c) { ... }: the body is a conditional context
 F804	stmt	if_else_C5	composite	bool.flag block.C5 block.C5	stmt.C5	3	arity 3
 F805	reg	set_v_lane_C5	composite	reg<vec4<f32>>.real u32.index f32.real	stmt.C5	3	arity 3: v[i & 3u] = x;
 F806	wg	set_v_lane_C5	composite	wgmem<vec4<f32>>.real u32.wgvindex u32.index f32.real	stmt.C5	4	arity 4: va[i][j & 3u] = x;
-F807	parr	set_v_lane_C5	composite	parr<vec4<f32>>.real u32.pindex u32.index f32.real	stmt.C5	4	arity 4: pv[i][j & 3u] = x;
+F807	parr	set_v_lane_C5	composite	parr<vec4<f32>>.real u32.pindex16 u32.index f32.real	stmt.C5	4	arity 4: pv[i][j & 3u] = x;
 F808	stmt	barrier_L5	composite	-	stmt.L5	0	workgroupBarrier(); never in a conditional context
 F809	loop	tile_L4	composite	u32.lit64 block.L5	stmt.L4	2	a fourth nested short loop (counter k4); nothing produces a loop at L5
 F810	loop	tile_C4	composite	u32.lit64 block.C5	stmt.C4	2	a fourth nested short loop (counter k4) under a condition
@@ -1304,19 +1304,19 @@ F1302	reg	set_u_C5	composite	reg<vec4<u32>>.bits vec4<u32>.bits	stmt.C5	2
 F1303	subgroup	ballot	SubgroupBallot	bool.flag	vec4<u32>.bits	1	subgroupBallot(b): a bit per active lane where b holds
 F1304	parr	q	composite	-	parr<vec2<f32>>.real	0	private array pq of 16 vec2<f32>
 F1305	parr	r	composite	-	parr<vec2<f32>>.real	0	private array pr of 16 vec2<f32>
-F1306	parr	get_t	composite	parr<vec2<f32>>.real u32.pindex	vec2<f32>.real	2	pq[i]
-F1307	parr	set_t_L0	composite	parr<vec2<f32>>.real u32.pindex vec2<f32>.real	stmt.L0	3	arity 3: pq[i] = v;
-F1308	parr	set_t_L1	composite	parr<vec2<f32>>.real u32.pindex vec2<f32>.real	stmt.L1	3	arity 3: pq[i] = v;
-F1309	parr	set_t_L2	composite	parr<vec2<f32>>.real u32.pindex vec2<f32>.real	stmt.L2	3	arity 3: pq[i] = v;
-F1310	parr	set_t_L3	composite	parr<vec2<f32>>.real u32.pindex vec2<f32>.real	stmt.L3	3	arity 3: pq[i] = v;
-F1311	parr	set_t_L4	composite	parr<vec2<f32>>.real u32.pindex vec2<f32>.real	stmt.L4	3	arity 3: pq[i] = v;
-F1312	parr	set_t_C0	composite	parr<vec2<f32>>.real u32.pindex vec2<f32>.real	stmt.C0	3	arity 3: pq[i] = v;
-F1313	parr	set_t_C1	composite	parr<vec2<f32>>.real u32.pindex vec2<f32>.real	stmt.C1	3	arity 3: pq[i] = v;
-F1314	parr	set_t_C2	composite	parr<vec2<f32>>.real u32.pindex vec2<f32>.real	stmt.C2	3	arity 3: pq[i] = v;
-F1315	parr	set_t_C3	composite	parr<vec2<f32>>.real u32.pindex vec2<f32>.real	stmt.C3	3	arity 3: pq[i] = v;
-F1316	parr	set_t_C4	composite	parr<vec2<f32>>.real u32.pindex vec2<f32>.real	stmt.C4	3	arity 3: pq[i] = v;
-F1317	parr	set_t_L5	composite	parr<vec2<f32>>.real u32.pindex vec2<f32>.real	stmt.L5	3	arity 3: pq[i] = v;
-F1318	parr	set_t_C5	composite	parr<vec2<f32>>.real u32.pindex vec2<f32>.real	stmt.C5	3	arity 3: pq[i] = v;
+F1306	parr	get_t	composite	parr<vec2<f32>>.real u32.pindex16	vec2<f32>.real	2	pq[i]
+F1307	parr	set_t_L0	composite	parr<vec2<f32>>.real u32.pindex16 vec2<f32>.real	stmt.L0	3	arity 3: pq[i] = v;
+F1308	parr	set_t_L1	composite	parr<vec2<f32>>.real u32.pindex16 vec2<f32>.real	stmt.L1	3	arity 3: pq[i] = v;
+F1309	parr	set_t_L2	composite	parr<vec2<f32>>.real u32.pindex16 vec2<f32>.real	stmt.L2	3	arity 3: pq[i] = v;
+F1310	parr	set_t_L3	composite	parr<vec2<f32>>.real u32.pindex16 vec2<f32>.real	stmt.L3	3	arity 3: pq[i] = v;
+F1311	parr	set_t_L4	composite	parr<vec2<f32>>.real u32.pindex16 vec2<f32>.real	stmt.L4	3	arity 3: pq[i] = v;
+F1312	parr	set_t_C0	composite	parr<vec2<f32>>.real u32.pindex16 vec2<f32>.real	stmt.C0	3	arity 3: pq[i] = v;
+F1313	parr	set_t_C1	composite	parr<vec2<f32>>.real u32.pindex16 vec2<f32>.real	stmt.C1	3	arity 3: pq[i] = v;
+F1314	parr	set_t_C2	composite	parr<vec2<f32>>.real u32.pindex16 vec2<f32>.real	stmt.C2	3	arity 3: pq[i] = v;
+F1315	parr	set_t_C3	composite	parr<vec2<f32>>.real u32.pindex16 vec2<f32>.real	stmt.C3	3	arity 3: pq[i] = v;
+F1316	parr	set_t_C4	composite	parr<vec2<f32>>.real u32.pindex16 vec2<f32>.real	stmt.C4	3	arity 3: pq[i] = v;
+F1317	parr	set_t_L5	composite	parr<vec2<f32>>.real u32.pindex16 vec2<f32>.real	stmt.L5	3	arity 3: pq[i] = v;
+F1318	parr	set_t_C5	composite	parr<vec2<f32>>.real u32.pindex16 vec2<f32>.real	stmt.C5	3	arity 3: pq[i] = v;
 F1319	shape	compose_mat3	Compose	<vecR<f32>.real> <vecR<f32>.real> <vecR<f32>.real>	<mat3xR<f32>.real>	3	arity 3: three columns
 F1320	shape	compose_mat4	Compose	<vecR<f32>.real> <vecR<f32>.real> <vecR<f32>.real> <vecR<f32>.real>	<mat4xR<f32>.real>	4	arity 4: four columns
 F1321	shape	col_0	AccessIndex	mat2x2<f32>.real	vec2<f32>.real	1	m[0]: a column

@@ -84,6 +84,7 @@ FORMS = {
     "C4": ("a statement or block under a condition inside a third nested tile loop: no barrier", []),
     "safe": ("the safeWGSL kernel: the root dual of this kingdom, produced only by kernel.entry_safe", []),
     "pindex": ("a private-array index, masked to the array by its row", ["u32"]),
+    "pindex16": ("an index into a private array of 16 elements (i & 15u)", ["u32"]),
     "boundx": ("a loop bound that is any index expression (cfg.m & ~3u, (cfg.d + 63u) / 64u, a register): rendered as written, never capped; costed at the worst shape", ["u32"]),
     # A fourth nested tile loop (r2x_union_g9 and _g10 of run A: item loop, then g, j, r, c).
     "tcounter4": ("a fourth nested tile loop's counter k4, stepped by the loop row itself", ["u32"]),
@@ -134,7 +135,7 @@ FORMS = {
     "B5": ("a loop body that breaks, five deep: no barrier", []),
 }
 
-SAFE_FORMS = ["wgaindex", "wgv2index", "wglen", "decl", "decls", "lidx", "threadrows", "threadcols", "threadrowg", "threadcolg", "gid", "lid", "wid", "rowid", "colid", "O0", "O1", "O2", "O3", "O4", "tcounter4", "L5", "C5", "safe", "pindex", "boundx", "boundm", "boundd", "boundrows", "lit64", "lit4096", "counter", "tcounter", "tcounter2", "L3", "C3", "tcounter3", "L4", "C4", "wgvindex", "bound", "threadrow", "threadcol", "cell", "phi", "wgindex", "L0", "L1", "L2", "C0", "C1", "C2"]
+SAFE_FORMS = ["pindex16", "wgaindex", "wgv2index", "wglen", "decl", "decls", "lidx", "threadrows", "threadcols", "threadrowg", "threadcolg", "gid", "lid", "wid", "rowid", "colid", "O0", "O1", "O2", "O3", "O4", "tcounter4", "L5", "C5", "safe", "pindex", "boundx", "boundm", "boundd", "boundrows", "lit64", "lit4096", "counter", "tcounter", "tcounter2", "L3", "C3", "tcounter3", "L4", "C4", "wgvindex", "bound", "threadrow", "threadcol", "cell", "phi", "wgindex", "L0", "L1", "L2", "C0", "C1", "C2"]
 RUNGS = ["L0", "L1", "L2", "L3", "L4", "C0", "C1", "C2", "C3", "C4"]
 # The fifth rung came after every other row (run A, 2026-10-11); its rows are appended at the end so
 # every earlier ref stands, and it is kept out of RUNGS for that reason.
@@ -155,7 +156,7 @@ FALLBACK = {
     "boundm": "cfg.m", "boundd": "cfg.d", "boundrows": "cfg.r_rows", "lit64": "1u", "lit4096": "1u",
     "counter": "0u", "tcounter": "0u", "tcounter2": "0u", "bound": "false", "threadrow": "the thread's own first row", "threadcol": "the thread's own first column", "cell": "the thread's own first cell", "phi": "0u", "wgindex": "0u",
     "L0": "empty", "L1": "empty", "L2": "empty", "L3": "empty", "C0": "empty", "C1": "empty", "C2": "empty", "C3": "empty",
-    "safe": "an empty kernel", "pindex": "0u",
+    "safe": "an empty kernel", "pindex": "0u", "pindex16": "0u",
     "tcounter3": "0u", "L4": "empty", "C4": "empty", "wgvindex": "0u",
     "boundx": "1u",
     "tcounter4": "0u", "L5": "empty", "C5": "empty",
@@ -180,7 +181,7 @@ FALLBACK_BITS = {
     "kernel": 0, "grid": 0, "block": 0, "stmt": 0, "wgdim": 0, "blk": 0, "unroll": 0,
     "boundm": 0, "boundd": 0, "boundrows": 0, "lit64": 0, "lit4096": 0,
     "counter": 0, "tcounter": 0, "tcounter2": 0, "bound": 0, "threadrow": 0, "threadcol": 0, "cell": 0, "phi": 0, "wgindex": 0,
-    "L0": 0, "L1": 0, "L2": 0, "L3": 0, "C0": 0, "C1": 0, "C2": 0, "C3": 0, "safe": 0, "pindex": 0,
+    "L0": 0, "L1": 0, "L2": 0, "L3": 0, "C0": 0, "C1": 0, "C2": 0, "C3": 0, "safe": 0, "pindex": 0, "pindex16": 0,
     "tcounter3": 0, "L4": 0, "C4": 0, "wgvindex": 0,
     "boundx": 0,
     "tcounter4": 0, "L5": 0, "C5": 0,
@@ -300,6 +301,8 @@ def build_types():
     # ---- matrix registers (2026-10-12, gap 9) ----
     for n in (2, 3, 4):
         add(f"reg<mat{n}x{n}<f32>>", "real", n * n, f"a named mat{n}x{n}<f32> register")
+    # ---- the index of a 16-element private array (2026-10-12, legality item 4) ----
+    add("u32", "pindex16", 1, FORMS["pindex16"][0])
     return rows
 
 
@@ -309,7 +312,17 @@ def build_types():
 FUNCTIONS = []
 
 
+# The private arrays of 16 elements (vec4, u32, bool, vec2) take an index of their own dual,
+# u32.pindex16 (i & 15u); the f32 arrays of 64 take u32.pindex (i & 63u). One shared dual let
+# safe.pidx64 index a 16-element array (the legality checker: 369 of 1,000 random genes, 2026-10-12).
+SIXTEEN = ("parr<vec4<f32>>.real", "parr<u32>.index", "parr<bool>.flag", "parr<vec2<f32>>.real")
+
+
 def f(cls, inst, naga, ins, out, note=""):
+    if ins and ins[0] in SIXTEEN:
+        ins = ["u32.pindex16" if x == "u32.pindex" else x for x in ins]
+    if (cls, inst) == ("safe", "pidx16"):
+        out = "u32.pindex16"
     FUNCTIONS.append((cls, inst, naga, ins, out, note))
 
 

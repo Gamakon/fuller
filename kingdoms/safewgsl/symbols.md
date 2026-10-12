@@ -445,15 +445,15 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
 | F279 | `safe.pidx64` | `composite` | `u32.index` | `u32.pindex` | 1 | i & 63u |
-| F280 | `safe.pidx16` | `composite` | `u32.index` | `u32.pindex` | 1 | i & 15u |
+| F280 | `safe.pidx16` | `composite` | `u32.index` | `u32.pindex16` | 1 | i & 15u |
 
 ## class `parr`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
 | F281 | `parr.get_f` | `composite` | `parr<f32>.real u32.pindex` | `f32.real` | 2 | pa[i] |
-| F282 | `parr.get_v` | `composite` | `parr<vec4<f32>>.real u32.pindex` | `vec4<f32>.real` | 2 | pv[i] |
-| F283 | `parr.get_i` | `composite` | `parr<u32>.index u32.pindex` | `u32.index` | 2 | pi[i] |
+| F282 | `parr.get_v` | `composite` | `parr<vec4<f32>>.real u32.pindex16` | `vec4<f32>.real` | 2 | pv[i] |
+| F283 | `parr.get_i` | `composite` | `parr<u32>.index u32.pindex16` | `u32.index` | 2 | pi[i] |
 | F284 | `parr.m` | `composite` | `-` | `parr<bool>.flag` | 0 | private array pm of 16 bool |
 | F285 | `parr.n` | `composite` | `-` | `parr<bool>.flag` | 0 | private array pn of 16 bool |
 | F286 | `parr.e` | `composite` | `-` | `parr<f32>.real` | 0 | private array pe of 64 f32 |
@@ -493,7 +493,7 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F298 | `parr.get_b` | `composite` | `parr<bool>.flag u32.pindex` | `bool.flag` | 2 | pm[i] |
+| F298 | `parr.get_b` | `composite` | `parr<bool>.flag u32.pindex16` | `bool.flag` | 2 | pm[i] |
 
 ## class `bound`
 
@@ -592,9 +592,9 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
 | F356 | `parr.set_f_L0` | `composite` | `parr<f32>.real u32.pindex f32.real` | `stmt.L0` | 3 | arity 3: pa[i] = v |
-| F357 | `parr.set_v_L0` | `composite` | `parr<vec4<f32>>.real u32.pindex vec4<f32>.real` | `stmt.L0` | 3 | arity 3: pv[i] = v |
-| F358 | `parr.set_i_L0` | `composite` | `parr<u32>.index u32.pindex u32.index` | `stmt.L0` | 3 | arity 3: pi[i] = v |
-| F359 | `parr.set_b_L0` | `composite` | `parr<bool>.flag u32.pindex bool.flag` | `stmt.L0` | 3 | arity 3: pm[i] = v |
+| F357 | `parr.set_v_L0` | `composite` | `parr<vec4<f32>>.real u32.pindex16 vec4<f32>.real` | `stmt.L0` | 3 | arity 3: pv[i] = v |
+| F358 | `parr.set_i_L0` | `composite` | `parr<u32>.index u32.pindex16 u32.index` | `stmt.L0` | 3 | arity 3: pi[i] = v |
+| F359 | `parr.set_b_L0` | `composite` | `parr<bool>.flag u32.pindex16 bool.flag` | `stmt.L0` | 3 | arity 3: pm[i] = v |
 
 ## class `store`
 
@@ -646,9 +646,9 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
 | F375 | `parr.set_f_L1` | `composite` | `parr<f32>.real u32.pindex f32.real` | `stmt.L1` | 3 | arity 3: pa[i] = v |
-| F376 | `parr.set_v_L1` | `composite` | `parr<vec4<f32>>.real u32.pindex vec4<f32>.real` | `stmt.L1` | 3 | arity 3: pv[i] = v |
-| F377 | `parr.set_i_L1` | `composite` | `parr<u32>.index u32.pindex u32.index` | `stmt.L1` | 3 | arity 3: pi[i] = v |
-| F378 | `parr.set_b_L1` | `composite` | `parr<bool>.flag u32.pindex bool.flag` | `stmt.L1` | 3 | arity 3: pm[i] = v |
+| F376 | `parr.set_v_L1` | `composite` | `parr<vec4<f32>>.real u32.pindex16 vec4<f32>.real` | `stmt.L1` | 3 | arity 3: pv[i] = v |
+| F377 | `parr.set_i_L1` | `composite` | `parr<u32>.index u32.pindex16 u32.index` | `stmt.L1` | 3 | arity 3: pi[i] = v |
+| F378 | `parr.set_b_L1` | `composite` | `parr<bool>.flag u32.pindex16 bool.flag` | `stmt.L1` | 3 | arity 3: pm[i] = v |
 
 ## class `store`
 
@@ -700,9 +700,9 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
 | F394 | `parr.set_f_L2` | `composite` | `parr<f32>.real u32.pindex f32.real` | `stmt.L2` | 3 | arity 3: pa[i] = v |
-| F395 | `parr.set_v_L2` | `composite` | `parr<vec4<f32>>.real u32.pindex vec4<f32>.real` | `stmt.L2` | 3 | arity 3: pv[i] = v |
-| F396 | `parr.set_i_L2` | `composite` | `parr<u32>.index u32.pindex u32.index` | `stmt.L2` | 3 | arity 3: pi[i] = v |
-| F397 | `parr.set_b_L2` | `composite` | `parr<bool>.flag u32.pindex bool.flag` | `stmt.L2` | 3 | arity 3: pm[i] = v |
+| F395 | `parr.set_v_L2` | `composite` | `parr<vec4<f32>>.real u32.pindex16 vec4<f32>.real` | `stmt.L2` | 3 | arity 3: pv[i] = v |
+| F396 | `parr.set_i_L2` | `composite` | `parr<u32>.index u32.pindex16 u32.index` | `stmt.L2` | 3 | arity 3: pi[i] = v |
+| F397 | `parr.set_b_L2` | `composite` | `parr<bool>.flag u32.pindex16 bool.flag` | `stmt.L2` | 3 | arity 3: pm[i] = v |
 
 ## class `store`
 
@@ -753,9 +753,9 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
 | F412 | `parr.set_f_L3` | `composite` | `parr<f32>.real u32.pindex f32.real` | `stmt.L3` | 3 | arity 3: pa[i] = v |
-| F413 | `parr.set_v_L3` | `composite` | `parr<vec4<f32>>.real u32.pindex vec4<f32>.real` | `stmt.L3` | 3 | arity 3: pv[i] = v |
-| F414 | `parr.set_i_L3` | `composite` | `parr<u32>.index u32.pindex u32.index` | `stmt.L3` | 3 | arity 3: pi[i] = v |
-| F415 | `parr.set_b_L3` | `composite` | `parr<bool>.flag u32.pindex bool.flag` | `stmt.L3` | 3 | arity 3: pm[i] = v |
+| F413 | `parr.set_v_L3` | `composite` | `parr<vec4<f32>>.real u32.pindex16 vec4<f32>.real` | `stmt.L3` | 3 | arity 3: pv[i] = v |
+| F414 | `parr.set_i_L3` | `composite` | `parr<u32>.index u32.pindex16 u32.index` | `stmt.L3` | 3 | arity 3: pi[i] = v |
+| F415 | `parr.set_b_L3` | `composite` | `parr<bool>.flag u32.pindex16 bool.flag` | `stmt.L3` | 3 | arity 3: pm[i] = v |
 
 ## class `store`
 
@@ -806,9 +806,9 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
 | F430 | `parr.set_f_L4` | `composite` | `parr<f32>.real u32.pindex f32.real` | `stmt.L4` | 3 | arity 3: pa[i] = v |
-| F431 | `parr.set_v_L4` | `composite` | `parr<vec4<f32>>.real u32.pindex vec4<f32>.real` | `stmt.L4` | 3 | arity 3: pv[i] = v |
-| F432 | `parr.set_i_L4` | `composite` | `parr<u32>.index u32.pindex u32.index` | `stmt.L4` | 3 | arity 3: pi[i] = v |
-| F433 | `parr.set_b_L4` | `composite` | `parr<bool>.flag u32.pindex bool.flag` | `stmt.L4` | 3 | arity 3: pm[i] = v |
+| F431 | `parr.set_v_L4` | `composite` | `parr<vec4<f32>>.real u32.pindex16 vec4<f32>.real` | `stmt.L4` | 3 | arity 3: pv[i] = v |
+| F432 | `parr.set_i_L4` | `composite` | `parr<u32>.index u32.pindex16 u32.index` | `stmt.L4` | 3 | arity 3: pi[i] = v |
+| F433 | `parr.set_b_L4` | `composite` | `parr<bool>.flag u32.pindex16 bool.flag` | `stmt.L4` | 3 | arity 3: pm[i] = v |
 
 ## class `store`
 
@@ -859,9 +859,9 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
 | F448 | `parr.set_f_C0` | `composite` | `parr<f32>.real u32.pindex f32.real` | `stmt.C0` | 3 | arity 3: pa[i] = v |
-| F449 | `parr.set_v_C0` | `composite` | `parr<vec4<f32>>.real u32.pindex vec4<f32>.real` | `stmt.C0` | 3 | arity 3: pv[i] = v |
-| F450 | `parr.set_i_C0` | `composite` | `parr<u32>.index u32.pindex u32.index` | `stmt.C0` | 3 | arity 3: pi[i] = v |
-| F451 | `parr.set_b_C0` | `composite` | `parr<bool>.flag u32.pindex bool.flag` | `stmt.C0` | 3 | arity 3: pm[i] = v |
+| F449 | `parr.set_v_C0` | `composite` | `parr<vec4<f32>>.real u32.pindex16 vec4<f32>.real` | `stmt.C0` | 3 | arity 3: pv[i] = v |
+| F450 | `parr.set_i_C0` | `composite` | `parr<u32>.index u32.pindex16 u32.index` | `stmt.C0` | 3 | arity 3: pi[i] = v |
+| F451 | `parr.set_b_C0` | `composite` | `parr<bool>.flag u32.pindex16 bool.flag` | `stmt.C0` | 3 | arity 3: pm[i] = v |
 
 ## class `store`
 
@@ -912,9 +912,9 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
 | F466 | `parr.set_f_C1` | `composite` | `parr<f32>.real u32.pindex f32.real` | `stmt.C1` | 3 | arity 3: pa[i] = v |
-| F467 | `parr.set_v_C1` | `composite` | `parr<vec4<f32>>.real u32.pindex vec4<f32>.real` | `stmt.C1` | 3 | arity 3: pv[i] = v |
-| F468 | `parr.set_i_C1` | `composite` | `parr<u32>.index u32.pindex u32.index` | `stmt.C1` | 3 | arity 3: pi[i] = v |
-| F469 | `parr.set_b_C1` | `composite` | `parr<bool>.flag u32.pindex bool.flag` | `stmt.C1` | 3 | arity 3: pm[i] = v |
+| F467 | `parr.set_v_C1` | `composite` | `parr<vec4<f32>>.real u32.pindex16 vec4<f32>.real` | `stmt.C1` | 3 | arity 3: pv[i] = v |
+| F468 | `parr.set_i_C1` | `composite` | `parr<u32>.index u32.pindex16 u32.index` | `stmt.C1` | 3 | arity 3: pi[i] = v |
+| F469 | `parr.set_b_C1` | `composite` | `parr<bool>.flag u32.pindex16 bool.flag` | `stmt.C1` | 3 | arity 3: pm[i] = v |
 
 ## class `store`
 
@@ -965,9 +965,9 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
 | F484 | `parr.set_f_C2` | `composite` | `parr<f32>.real u32.pindex f32.real` | `stmt.C2` | 3 | arity 3: pa[i] = v |
-| F485 | `parr.set_v_C2` | `composite` | `parr<vec4<f32>>.real u32.pindex vec4<f32>.real` | `stmt.C2` | 3 | arity 3: pv[i] = v |
-| F486 | `parr.set_i_C2` | `composite` | `parr<u32>.index u32.pindex u32.index` | `stmt.C2` | 3 | arity 3: pi[i] = v |
-| F487 | `parr.set_b_C2` | `composite` | `parr<bool>.flag u32.pindex bool.flag` | `stmt.C2` | 3 | arity 3: pm[i] = v |
+| F485 | `parr.set_v_C2` | `composite` | `parr<vec4<f32>>.real u32.pindex16 vec4<f32>.real` | `stmt.C2` | 3 | arity 3: pv[i] = v |
+| F486 | `parr.set_i_C2` | `composite` | `parr<u32>.index u32.pindex16 u32.index` | `stmt.C2` | 3 | arity 3: pi[i] = v |
+| F487 | `parr.set_b_C2` | `composite` | `parr<bool>.flag u32.pindex16 bool.flag` | `stmt.C2` | 3 | arity 3: pm[i] = v |
 
 ## class `store`
 
@@ -1018,9 +1018,9 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
 | F502 | `parr.set_f_C3` | `composite` | `parr<f32>.real u32.pindex f32.real` | `stmt.C3` | 3 | arity 3: pa[i] = v |
-| F503 | `parr.set_v_C3` | `composite` | `parr<vec4<f32>>.real u32.pindex vec4<f32>.real` | `stmt.C3` | 3 | arity 3: pv[i] = v |
-| F504 | `parr.set_i_C3` | `composite` | `parr<u32>.index u32.pindex u32.index` | `stmt.C3` | 3 | arity 3: pi[i] = v |
-| F505 | `parr.set_b_C3` | `composite` | `parr<bool>.flag u32.pindex bool.flag` | `stmt.C3` | 3 | arity 3: pm[i] = v |
+| F503 | `parr.set_v_C3` | `composite` | `parr<vec4<f32>>.real u32.pindex16 vec4<f32>.real` | `stmt.C3` | 3 | arity 3: pv[i] = v |
+| F504 | `parr.set_i_C3` | `composite` | `parr<u32>.index u32.pindex16 u32.index` | `stmt.C3` | 3 | arity 3: pi[i] = v |
+| F505 | `parr.set_b_C3` | `composite` | `parr<bool>.flag u32.pindex16 bool.flag` | `stmt.C3` | 3 | arity 3: pm[i] = v |
 
 ## class `store`
 
@@ -1071,9 +1071,9 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
 | F520 | `parr.set_f_C4` | `composite` | `parr<f32>.real u32.pindex f32.real` | `stmt.C4` | 3 | arity 3: pa[i] = v |
-| F521 | `parr.set_v_C4` | `composite` | `parr<vec4<f32>>.real u32.pindex vec4<f32>.real` | `stmt.C4` | 3 | arity 3: pv[i] = v |
-| F522 | `parr.set_i_C4` | `composite` | `parr<u32>.index u32.pindex u32.index` | `stmt.C4` | 3 | arity 3: pi[i] = v |
-| F523 | `parr.set_b_C4` | `composite` | `parr<bool>.flag u32.pindex bool.flag` | `stmt.C4` | 3 | arity 3: pm[i] = v |
+| F521 | `parr.set_v_C4` | `composite` | `parr<vec4<f32>>.real u32.pindex16 vec4<f32>.real` | `stmt.C4` | 3 | arity 3: pv[i] = v |
+| F522 | `parr.set_i_C4` | `composite` | `parr<u32>.index u32.pindex16 u32.index` | `stmt.C4` | 3 | arity 3: pi[i] = v |
+| F523 | `parr.set_b_C4` | `composite` | `parr<bool>.flag u32.pindex16 bool.flag` | `stmt.C4` | 3 | arity 3: pm[i] = v |
 
 ## class `store`
 
@@ -1378,7 +1378,7 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F738 | `parr.get_v_lane` | `composite` | `parr<vec4<f32>>.real u32.pindex u32.index` | `f32.real` | 3 | arity 3: pv[i][j & 3u] |
+| F738 | `parr.get_v_lane` | `composite` | `parr<vec4<f32>>.real u32.pindex16 u32.index` | `f32.real` | 3 | arity 3: pv[i][j & 3u] |
 
 ## class `wg`
 
@@ -1390,7 +1390,7 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F740 | `parr.set_v_lane_L0` | `composite` | `parr<vec4<f32>>.real u32.pindex u32.index f32.real` | `stmt.L0` | 4 | arity 4: pv[i][j & 3u] = x; |
+| F740 | `parr.set_v_lane_L0` | `composite` | `parr<vec4<f32>>.real u32.pindex16 u32.index f32.real` | `stmt.L0` | 4 | arity 4: pv[i][j & 3u] = x; |
 
 ## class `wg`
 
@@ -1402,7 +1402,7 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F742 | `parr.set_v_lane_L1` | `composite` | `parr<vec4<f32>>.real u32.pindex u32.index f32.real` | `stmt.L1` | 4 | arity 4: pv[i][j & 3u] = x; |
+| F742 | `parr.set_v_lane_L1` | `composite` | `parr<vec4<f32>>.real u32.pindex16 u32.index f32.real` | `stmt.L1` | 4 | arity 4: pv[i][j & 3u] = x; |
 
 ## class `wg`
 
@@ -1414,7 +1414,7 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F744 | `parr.set_v_lane_L2` | `composite` | `parr<vec4<f32>>.real u32.pindex u32.index f32.real` | `stmt.L2` | 4 | arity 4: pv[i][j & 3u] = x; |
+| F744 | `parr.set_v_lane_L2` | `composite` | `parr<vec4<f32>>.real u32.pindex16 u32.index f32.real` | `stmt.L2` | 4 | arity 4: pv[i][j & 3u] = x; |
 
 ## class `wg`
 
@@ -1426,7 +1426,7 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F746 | `parr.set_v_lane_L3` | `composite` | `parr<vec4<f32>>.real u32.pindex u32.index f32.real` | `stmt.L3` | 4 | arity 4: pv[i][j & 3u] = x; |
+| F746 | `parr.set_v_lane_L3` | `composite` | `parr<vec4<f32>>.real u32.pindex16 u32.index f32.real` | `stmt.L3` | 4 | arity 4: pv[i][j & 3u] = x; |
 
 ## class `wg`
 
@@ -1438,7 +1438,7 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F748 | `parr.set_v_lane_L4` | `composite` | `parr<vec4<f32>>.real u32.pindex u32.index f32.real` | `stmt.L4` | 4 | arity 4: pv[i][j & 3u] = x; |
+| F748 | `parr.set_v_lane_L4` | `composite` | `parr<vec4<f32>>.real u32.pindex16 u32.index f32.real` | `stmt.L4` | 4 | arity 4: pv[i][j & 3u] = x; |
 
 ## class `wg`
 
@@ -1450,7 +1450,7 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F750 | `parr.set_v_lane_C0` | `composite` | `parr<vec4<f32>>.real u32.pindex u32.index f32.real` | `stmt.C0` | 4 | arity 4: pv[i][j & 3u] = x; |
+| F750 | `parr.set_v_lane_C0` | `composite` | `parr<vec4<f32>>.real u32.pindex16 u32.index f32.real` | `stmt.C0` | 4 | arity 4: pv[i][j & 3u] = x; |
 
 ## class `wg`
 
@@ -1462,7 +1462,7 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F752 | `parr.set_v_lane_C1` | `composite` | `parr<vec4<f32>>.real u32.pindex u32.index f32.real` | `stmt.C1` | 4 | arity 4: pv[i][j & 3u] = x; |
+| F752 | `parr.set_v_lane_C1` | `composite` | `parr<vec4<f32>>.real u32.pindex16 u32.index f32.real` | `stmt.C1` | 4 | arity 4: pv[i][j & 3u] = x; |
 
 ## class `wg`
 
@@ -1474,7 +1474,7 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F754 | `parr.set_v_lane_C2` | `composite` | `parr<vec4<f32>>.real u32.pindex u32.index f32.real` | `stmt.C2` | 4 | arity 4: pv[i][j & 3u] = x; |
+| F754 | `parr.set_v_lane_C2` | `composite` | `parr<vec4<f32>>.real u32.pindex16 u32.index f32.real` | `stmt.C2` | 4 | arity 4: pv[i][j & 3u] = x; |
 
 ## class `wg`
 
@@ -1486,7 +1486,7 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F756 | `parr.set_v_lane_C3` | `composite` | `parr<vec4<f32>>.real u32.pindex u32.index f32.real` | `stmt.C3` | 4 | arity 4: pv[i][j & 3u] = x; |
+| F756 | `parr.set_v_lane_C3` | `composite` | `parr<vec4<f32>>.real u32.pindex16 u32.index f32.real` | `stmt.C3` | 4 | arity 4: pv[i][j & 3u] = x; |
 
 ## class `wg`
 
@@ -1498,7 +1498,7 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F758 | `parr.set_v_lane_C4` | `composite` | `parr<vec4<f32>>.real u32.pindex u32.index f32.real` | `stmt.C4` | 4 | arity 4: pv[i][j & 3u] = x; |
+| F758 | `parr.set_v_lane_C4` | `composite` | `parr<vec4<f32>>.real u32.pindex16 u32.index f32.real` | `stmt.C4` | 4 | arity 4: pv[i][j & 3u] = x; |
 
 ## class `safe`
 
@@ -1548,9 +1548,9 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
 | F777 | `parr.set_f_L5` | `composite` | `parr<f32>.real u32.pindex f32.real` | `stmt.L5` | 3 | arity 3: pa[i] = v |
-| F778 | `parr.set_v_L5` | `composite` | `parr<vec4<f32>>.real u32.pindex vec4<f32>.real` | `stmt.L5` | 3 | arity 3: pv[i] = v |
-| F779 | `parr.set_i_L5` | `composite` | `parr<u32>.index u32.pindex u32.index` | `stmt.L5` | 3 | arity 3: pi[i] = v |
-| F780 | `parr.set_b_L5` | `composite` | `parr<bool>.flag u32.pindex bool.flag` | `stmt.L5` | 3 | arity 3: pm[i] = v |
+| F778 | `parr.set_v_L5` | `composite` | `parr<vec4<f32>>.real u32.pindex16 vec4<f32>.real` | `stmt.L5` | 3 | arity 3: pv[i] = v |
+| F779 | `parr.set_i_L5` | `composite` | `parr<u32>.index u32.pindex16 u32.index` | `stmt.L5` | 3 | arity 3: pi[i] = v |
+| F780 | `parr.set_b_L5` | `composite` | `parr<bool>.flag u32.pindex16 bool.flag` | `stmt.L5` | 3 | arity 3: pm[i] = v |
 
 ## class `store`
 
@@ -1581,7 +1581,7 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F786 | `parr.set_v_lane_L5` | `composite` | `parr<vec4<f32>>.real u32.pindex u32.index f32.real` | `stmt.L5` | 4 | arity 4: pv[i][j & 3u] = x; |
+| F786 | `parr.set_v_lane_L5` | `composite` | `parr<vec4<f32>>.real u32.pindex16 u32.index f32.real` | `stmt.L5` | 4 | arity 4: pv[i][j & 3u] = x; |
 
 ## class `block`
 
@@ -1619,9 +1619,9 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
 | F798 | `parr.set_f_C5` | `composite` | `parr<f32>.real u32.pindex f32.real` | `stmt.C5` | 3 | arity 3: pa[i] = v |
-| F799 | `parr.set_v_C5` | `composite` | `parr<vec4<f32>>.real u32.pindex vec4<f32>.real` | `stmt.C5` | 3 | arity 3: pv[i] = v |
-| F800 | `parr.set_i_C5` | `composite` | `parr<u32>.index u32.pindex u32.index` | `stmt.C5` | 3 | arity 3: pi[i] = v |
-| F801 | `parr.set_b_C5` | `composite` | `parr<bool>.flag u32.pindex bool.flag` | `stmt.C5` | 3 | arity 3: pm[i] = v |
+| F799 | `parr.set_v_C5` | `composite` | `parr<vec4<f32>>.real u32.pindex16 vec4<f32>.real` | `stmt.C5` | 3 | arity 3: pv[i] = v |
+| F800 | `parr.set_i_C5` | `composite` | `parr<u32>.index u32.pindex16 u32.index` | `stmt.C5` | 3 | arity 3: pi[i] = v |
+| F801 | `parr.set_b_C5` | `composite` | `parr<bool>.flag u32.pindex16 bool.flag` | `stmt.C5` | 3 | arity 3: pm[i] = v |
 
 ## class `store`
 
@@ -1652,7 +1652,7 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F807 | `parr.set_v_lane_C5` | `composite` | `parr<vec4<f32>>.real u32.pindex u32.index f32.real` | `stmt.C5` | 4 | arity 4: pv[i][j & 3u] = x; |
+| F807 | `parr.set_v_lane_C5` | `composite` | `parr<vec4<f32>>.real u32.pindex16 u32.index f32.real` | `stmt.C5` | 4 | arity 4: pv[i][j & 3u] = x; |
 
 ## class `stmt`
 
@@ -2621,19 +2621,19 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 |---|---|---|---|---|---|---|
 | F1304 | `parr.q` | `composite` | `-` | `parr<vec2<f32>>.real` | 0 | private array pq of 16 vec2<f32> |
 | F1305 | `parr.r` | `composite` | `-` | `parr<vec2<f32>>.real` | 0 | private array pr of 16 vec2<f32> |
-| F1306 | `parr.get_t` | `composite` | `parr<vec2<f32>>.real u32.pindex` | `vec2<f32>.real` | 2 | pq[i] |
-| F1307 | `parr.set_t_L0` | `composite` | `parr<vec2<f32>>.real u32.pindex vec2<f32>.real` | `stmt.L0` | 3 | arity 3: pq[i] = v; |
-| F1308 | `parr.set_t_L1` | `composite` | `parr<vec2<f32>>.real u32.pindex vec2<f32>.real` | `stmt.L1` | 3 | arity 3: pq[i] = v; |
-| F1309 | `parr.set_t_L2` | `composite` | `parr<vec2<f32>>.real u32.pindex vec2<f32>.real` | `stmt.L2` | 3 | arity 3: pq[i] = v; |
-| F1310 | `parr.set_t_L3` | `composite` | `parr<vec2<f32>>.real u32.pindex vec2<f32>.real` | `stmt.L3` | 3 | arity 3: pq[i] = v; |
-| F1311 | `parr.set_t_L4` | `composite` | `parr<vec2<f32>>.real u32.pindex vec2<f32>.real` | `stmt.L4` | 3 | arity 3: pq[i] = v; |
-| F1312 | `parr.set_t_C0` | `composite` | `parr<vec2<f32>>.real u32.pindex vec2<f32>.real` | `stmt.C0` | 3 | arity 3: pq[i] = v; |
-| F1313 | `parr.set_t_C1` | `composite` | `parr<vec2<f32>>.real u32.pindex vec2<f32>.real` | `stmt.C1` | 3 | arity 3: pq[i] = v; |
-| F1314 | `parr.set_t_C2` | `composite` | `parr<vec2<f32>>.real u32.pindex vec2<f32>.real` | `stmt.C2` | 3 | arity 3: pq[i] = v; |
-| F1315 | `parr.set_t_C3` | `composite` | `parr<vec2<f32>>.real u32.pindex vec2<f32>.real` | `stmt.C3` | 3 | arity 3: pq[i] = v; |
-| F1316 | `parr.set_t_C4` | `composite` | `parr<vec2<f32>>.real u32.pindex vec2<f32>.real` | `stmt.C4` | 3 | arity 3: pq[i] = v; |
-| F1317 | `parr.set_t_L5` | `composite` | `parr<vec2<f32>>.real u32.pindex vec2<f32>.real` | `stmt.L5` | 3 | arity 3: pq[i] = v; |
-| F1318 | `parr.set_t_C5` | `composite` | `parr<vec2<f32>>.real u32.pindex vec2<f32>.real` | `stmt.C5` | 3 | arity 3: pq[i] = v; |
+| F1306 | `parr.get_t` | `composite` | `parr<vec2<f32>>.real u32.pindex16` | `vec2<f32>.real` | 2 | pq[i] |
+| F1307 | `parr.set_t_L0` | `composite` | `parr<vec2<f32>>.real u32.pindex16 vec2<f32>.real` | `stmt.L0` | 3 | arity 3: pq[i] = v; |
+| F1308 | `parr.set_t_L1` | `composite` | `parr<vec2<f32>>.real u32.pindex16 vec2<f32>.real` | `stmt.L1` | 3 | arity 3: pq[i] = v; |
+| F1309 | `parr.set_t_L2` | `composite` | `parr<vec2<f32>>.real u32.pindex16 vec2<f32>.real` | `stmt.L2` | 3 | arity 3: pq[i] = v; |
+| F1310 | `parr.set_t_L3` | `composite` | `parr<vec2<f32>>.real u32.pindex16 vec2<f32>.real` | `stmt.L3` | 3 | arity 3: pq[i] = v; |
+| F1311 | `parr.set_t_L4` | `composite` | `parr<vec2<f32>>.real u32.pindex16 vec2<f32>.real` | `stmt.L4` | 3 | arity 3: pq[i] = v; |
+| F1312 | `parr.set_t_C0` | `composite` | `parr<vec2<f32>>.real u32.pindex16 vec2<f32>.real` | `stmt.C0` | 3 | arity 3: pq[i] = v; |
+| F1313 | `parr.set_t_C1` | `composite` | `parr<vec2<f32>>.real u32.pindex16 vec2<f32>.real` | `stmt.C1` | 3 | arity 3: pq[i] = v; |
+| F1314 | `parr.set_t_C2` | `composite` | `parr<vec2<f32>>.real u32.pindex16 vec2<f32>.real` | `stmt.C2` | 3 | arity 3: pq[i] = v; |
+| F1315 | `parr.set_t_C3` | `composite` | `parr<vec2<f32>>.real u32.pindex16 vec2<f32>.real` | `stmt.C3` | 3 | arity 3: pq[i] = v; |
+| F1316 | `parr.set_t_C4` | `composite` | `parr<vec2<f32>>.real u32.pindex16 vec2<f32>.real` | `stmt.C4` | 3 | arity 3: pq[i] = v; |
+| F1317 | `parr.set_t_L5` | `composite` | `parr<vec2<f32>>.real u32.pindex16 vec2<f32>.real` | `stmt.L5` | 3 | arity 3: pq[i] = v; |
+| F1318 | `parr.set_t_C5` | `composite` | `parr<vec2<f32>>.real u32.pindex16 vec2<f32>.real` | `stmt.C5` | 3 | arity 3: pq[i] = v; |
 
 ## class `shape`
 

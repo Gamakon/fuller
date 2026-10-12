@@ -635,8 +635,8 @@ mod tests {
         // 160 with the workgroup atomics (atomic<u32> and atomic<i32> arrays, their index);
         // 161 with the i32 register (WGSL_COVERAGE.md gap 6); 166 with the loop bodies that break (gap 7);
         // 168 with the vec4<u32> register and the vec2 private array (gap 8); 171 with the matrix
-        // registers (gap 9).
-        assert_eq!(s.len(), 171);
+        // registers (gap 9); 172 with the 16-element private array's index (legality item 4).
+        assert_eq!(s.len(), 172);
         for (a, b) in w.iter().zip(&s) {
             assert_eq!((a.reference.as_str(), a.dual.as_str()), (b.reference.as_str(), b.dual.as_str()));
         }

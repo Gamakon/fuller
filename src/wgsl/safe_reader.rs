@@ -467,6 +467,12 @@ fn local_name(name: &str) -> Option<String> {
     Some(format!("local.{}", rest.split('@').take(2).collect::<Vec<_>>().join("@")))
 }
 
+/// The index dual of a private array's mask row: a 16-element array's
+/// (safe.pidx16) is u32.pindex16, a 64-element array's u32.pindex.
+fn pindex_dual(mask: &str) -> &'static str {
+    if mask == "safe.pidx16" { "u32.pindex16" } else { "u32.pindex" }
+}
+
 /// The private array dual of a kind letter.
 fn parr_dual(kind: char) -> &'static str {
     match kind {
@@ -1640,7 +1646,7 @@ impl<'a> Ctx<'a> {
                     let (arr, kind, mask) = self.private_array(&format!("{base}.#"), elem)?;
                     if kind == 't' {
                         let i = self.value(unmasked(i, 15.0))?;
-                        let pidx = Tree::new(mask, ty(self, "u32.pindex")?, vec![i]);
+                        let pidx = Tree::new(mask, ty(self, pindex_dual(mask))?, vec![i]);
                         let whole = Tree::new("parr.get_t", ty(self, "vec2<f32>.real")?, vec![Tree::new(arr, ty(self, parr_dual(kind))?, vec![]), pidx]);
                         if let Some(lane) = literal_value(unmasked(j, 1.0)).filter(|l| (0.0..=1.0).contains(l)) {
                             return Ok(Tree::new(&format!("shape.access_{}", lane as u32), t.ty, vec![whole]));
@@ -1652,7 +1658,7 @@ impl<'a> Ctx<'a> {
                         return Err(format!("a lane of an element of {base}, which is not a vec4 array"));
                     }
                     let i = self.value(unmasked(i, 15.0))?;
-                    let pidx = Tree::new(mask, ty(self, "u32.pindex")?, vec![i]);
+                    let pidx = Tree::new(mask, ty(self, pindex_dual(mask))?, vec![i]);
                     let array = Tree::new(arr, ty(self, parr_dual(kind))?, vec![]);
                     if let Some(lane) = literal_value(unmasked(j, 3.0)).filter(|l| (0.0..=3.0).contains(l)) {
                         let whole = Tree::new("parr.get_v", ty(self, "vec4<f32>.real")?, vec![array, pidx]);
@@ -1680,7 +1686,7 @@ impl<'a> Ctx<'a> {
                 // A private array: `load.local.acc@0.#@v3 (idx)`.
                 let (arr, kind, mask) = self.private_array(&local, &d)?;
                 let idx = self.value(unmasked(&t.kids[0], if mask == "safe.pidx64" { 63.0 } else { 15.0 }))?;
-                let pidx = Tree::new(mask, ty(self, "u32.pindex")?, vec![idx]);
+                let pidx = Tree::new(mask, ty(self, pindex_dual(mask))?, vec![idx]);
                 let arr_dual = parr_dual(kind);
                 return Ok(Tree::new(&format!("parr.get_{kind}"), t.ty, vec![Tree::new(arr, ty(self, arr_dual)?, vec![]), pidx]));
             }
@@ -2830,7 +2836,7 @@ impl<'a> Ctx<'a> {
                     for (i, v) in values.iter().enumerate() {
                         let v = self.value(v)?;
                         let idx = Tree::literal("literal.index", ty(self, "u32.index")?, i as f32);
-                        let pidx = Tree::new(mask, ty(self, "u32.pindex")?, vec![idx]);
+                        let pidx = Tree::new(mask, ty(self, pindex_dual(mask))?, vec![idx]);
                         out.push(Tree::new(&format!("parr.set_{kind}_{rung}"), st, vec![Tree::new(arr, ty(self, parr_dual(kind))?, vec![]), pidx, v]));
                     }
                     return Ok(out);
@@ -2943,7 +2949,7 @@ impl<'a> Ctx<'a> {
                     let i = self.value(unmasked(i, 15.0))?;
                     let j = self.value(unmasked(j, 3.0))?;
                     let v = self.value(value)?;
-                    let pidx = Tree::new(mask, ty(self, "u32.pindex")?, vec![i]);
+                    let pidx = Tree::new(mask, ty(self, pindex_dual(mask))?, vec![i]);
                     return Ok(Some(Tree::new(&format!("parr.set_v_lane_{rung}"), st, vec![Tree::new(arr, ty(self, parr_dual(kind))?, vec![]), pidx, j, v])));
                 }
                 if self.local_lanes.get(&base) == Some(&4) && self.local_vec_uint(&base) {
@@ -2978,7 +2984,7 @@ impl<'a> Ctx<'a> {
                 let (arr, kind, mask) = self.private_array(&local, &d)?;
                 let i = self.value(unmasked(idx, if mask == "safe.pidx64" { 63.0 } else { 15.0 }))?;
                 let v = self.value(value)?;
-                let pidx = Tree::new(mask, ty(self, "u32.pindex")?, vec![i]);
+                let pidx = Tree::new(mask, ty(self, pindex_dual(mask))?, vec![i]);
                 let arr_dual = parr_dual(kind);
                 return Ok(Some(Tree::new(&format!("parr.set_{kind}_{rung}"), st, vec![Tree::new(arr, ty(self, arr_dual)?, vec![]), pidx, v])));
             }

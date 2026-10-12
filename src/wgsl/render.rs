@@ -2295,6 +2295,30 @@ mod tests {
         assert!(over_d.base >= 8192.0 * 2.0 && over_d.per_item == 0.0, "{over_d:?}");
     }
 
+    /// A 16-ELEMENT PRIVATE ARRAY TAKES ITS OWN INDEX (2026-10-12; 369 of
+    /// 1,000 random genes indexed one through safe.pidx64, i & 63u): every
+    /// row on a vec4, u32, bool or vec2 private array takes u32.pindex16,
+    /// which only safe.pidx16 makes, and 2,000 random safe kernels never
+    /// index such an array through safe.pidx64.
+    #[test]
+    fn a_sixteen_element_private_array_takes_its_own_index() {
+        let k = WgslKingdom::load_safe();
+        let dual = |t: Ty| k.dual(t).map(|d| d.dual.clone()).unwrap_or_default();
+        let sixteen = ["parr<vec4<f32>>.real", "parr<u32>.index", "parr<bool>.flag", "parr<vec2<f32>>.real"];
+        for r in k.rows.iter().filter(|r| r.inputs.first().is_some_and(|&t| sixteen.contains(&dual(t).as_str()))) {
+            assert_eq!(r.inputs.get(1).map(|&t| dual(t)).as_deref(), Some("u32.pindex16"), "{}", r.name);
+        }
+        let makers: Vec<&str> = k.rows.iter().filter(|r| dual(r.output) == "u32.pindex16").map(|r| r.name.as_str()).collect();
+        assert_eq!(makers, vec!["safe.pidx16"]);
+        fn wide(t: &Tree, k: &WgslKingdom, sixteen: &[&str]) -> bool {
+            let on_sixteen = t.kids.first().and_then(|a| k.dual(a.ty)).is_some_and(|d| sixteen.contains(&d.dual.as_str()));
+            (on_sixteen && t.kids.get(1).is_some_and(|i| i.name == "safe.pidx64")) || t.kids.iter().any(|c| wide(c, k, sixteen))
+        }
+        let (role, root) = (gram_role(), dual_ty(&k, "kernel.safe").unwrap());
+        let bad = (0..2000).filter(|&seed| wide(&sample(&k, &role, root, 7, seed).unwrap(), &k, &sixteen)).count();
+        assert_eq!(bad, 0);
+    }
+
     /// THE SAFE SAMPLER NEVER READS h AT ANY INDEX (2026-10-12; 25 of 1,000
     /// random safe genes reached the role's load.h): 2,000 random safe
     /// kernels hold no load.h (h is read through load.h_safe only).
@@ -2524,7 +2548,7 @@ mod tests {
             ("set_v at the last register", Tree::new("reg.set_v", stmt, vec![Tree::new("reg.v31", ty("reg<vec4<f32>>.real"), vec![]), Tree::new("reg.get_v", ty("vec4<f32>.real"), vec![Tree::new("reg.v16", ty("reg<vec4<f32>>.real"), vec![])])])),
             ("set_b at the last register", Tree::new("reg.set_b", stmt, vec![Tree::new("reg.b15", ty("reg<bool>.flag"), vec![]), Tree::new("reg.get_b", flag, vec![Tree::new("reg.b8", ty("reg<bool>.flag"), vec![])])])),
             ("wg.set_v_lane", Tree::new("wg.set_v_lane_L0", ty("stmt.L0"), vec![Tree::new("wg.va", ty("wgmem<vec4<f32>>.real"), vec![]), Tree::new("safe.wgv_of", ty("u32.wgvindex"), vec![lit_i(3.0)]), lit_i(2.0), Tree::new("wg.get_v_lane", real, vec![Tree::new("wg.vb", ty("wgmem<vec4<f32>>.real"), vec![]), Tree::new("safe.wgv_of", ty("u32.wgvindex"), vec![lit_i(5.0)]), lit_i(1.0)])])),
-            ("parr.set_v_lane", Tree::new("parr.set_v_lane_L0", ty("stmt.L0"), vec![Tree::new("parr.v", ty("parr<vec4<f32>>.real"), vec![]), Tree::new("safe.pidx16", ty("u32.pindex"), vec![lit_i(3.0)]), lit_i(2.0), Tree::new("parr.get_v_lane", real, vec![Tree::new("parr.w", ty("parr<vec4<f32>>.real"), vec![]), Tree::new("safe.pidx16", ty("u32.pindex"), vec![lit_i(5.0)]), lit_i(1.0)])])),
+            ("parr.set_v_lane", Tree::new("parr.set_v_lane_L0", ty("stmt.L0"), vec![Tree::new("parr.v", ty("parr<vec4<f32>>.real"), vec![]), Tree::new("safe.pidx16", ty("u32.pindex16"), vec![lit_i(3.0)]), lit_i(2.0), Tree::new("parr.get_v_lane", real, vec![Tree::new("parr.w", ty("parr<vec4<f32>>.real"), vec![]), Tree::new("safe.pidx16", ty("u32.pindex"), vec![lit_i(5.0)]), lit_i(1.0)])])),
         ];
         let rr = Renderer::new(&k, &t, &r);
         let grid = Tree::fallback(ty("grid.grid"));

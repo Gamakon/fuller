@@ -170,3 +170,4 @@ T168	parr<vec2<f32>>.real	parr<vec2<f32>>	real	0	0.0	0	0	0	a private array of 16
 T169	reg<mat2x2<f32>>.real	reg<mat2x2<f32>>	real	4	0.0	0	0	0	a named mat2x2<f32> register
 T170	reg<mat3x3<f32>>.real	reg<mat3x3<f32>>	real	9	0.0	0	0	0	a named mat3x3<f32> register
 T171	reg<mat4x4<f32>>.real	reg<mat4x4<f32>>	real	16	0.0	0	0	0	a named mat4x4<f32> register
+T172	u32.pindex16	u32	pindex16	1	0u	0	0	0	an index into a private array of 16 elements (i & 15u)
