@@ -8,6 +8,8 @@
 
 **Status, 2026-10-12.** At fuller 0203bb7, 92 of 184 probes read, render and validate. After the twelve fills below, 180 of 184 do; the four left are three constructs naga 0.20 cannot parse and a storage atomic, which needs a binding the Gram role does not have. Each fill is its own commit with a corpus row, checked on the GPU (128 of 128 cases as written and rebuilt).
 
+**The model replies.** 430 of the 441 replies in `logs/HGP/001/library_ep_texts` read. Ten of the eleven left are not WGSL: naga 0.20 cannot parse them (cut-off texts, one undefined identifier). The eleventh (`fit_A2_stopped_1729Z__g002_r5p1.codex`) is valid WGSL whose `// grid` header says a block of 4 x 8 per thread while its indexing writes 4 x 1. Under the dispatch its header asks for, threads would not own their cells, so it stays unread. It is flagged for Andrew's decision rather than read under another grid, which would change what it computes.
+
 **Why.** Evolution can only find what the kingdom can spell. A construct the reader cannot read is a kernel, from a model or from a person, that the population cannot take in.
 
 ### Status keys
