@@ -2191,7 +2191,12 @@ pub const COMPOSITES: &[(&str, &str)] = &[
 pub fn sample(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, seed: u64) -> Result<Tree, String> {
     let f16 = |t: &Ty| kingdom.dual(*t).is_some_and(|d| d.scalar() == Some("f16"));
     let mut rows: Vec<WgslRow> = kingdom.rows.iter().filter(|r| !f16(&r.output) && !r.inputs.iter().any(f16)).cloned().collect();
-    rows.extend(role.rows(kingdom)?);
+    // The safe kingdom reads h only at the thread's own cell (load.h_safe):
+    // the role's load.h, h at any index, is the plain kingdom's (the
+    // legality checker: 25 of 1,000 random safe genes read another thread's
+    // cell through it). The reader's per-kernel rows leave it out the same way.
+    let safe = kingdom.dual(root).is_some_and(|d| d.dual == "kernel.safe");
+    rows.extend(role.rows(kingdom)?.into_iter().filter(|r| !(safe && r.name == "load.h")));
     let mut by_out: BTreeMap<Ty, (Vec<usize>, Vec<usize>)> = BTreeMap::new();
     for (i, r) in rows.iter().enumerate() {
         let e = by_out.entry(r.output).or_default();
@@ -2288,6 +2293,21 @@ mod tests {
         assert!(c.per_item >= p.per_item && c.per_item <= p.per_item + 8.0 && c.base < 10.0, "{c:?} vs the item loop {p:?}");
         let over_d = cost(&Tree::new("loop.tilex_L0", t("stmt.L0"), vec![bound(d()), tile_body()]));
         assert!(over_d.base >= 8192.0 * 2.0 && over_d.per_item == 0.0, "{over_d:?}");
+    }
+
+    /// THE SAFE SAMPLER NEVER READS h AT ANY INDEX (2026-10-12; 25 of 1,000
+    /// random safe genes reached the role's load.h): 2,000 random safe
+    /// kernels hold no load.h (h is read through load.h_safe only).
+    #[test]
+    fn the_safe_sampler_never_reads_h_at_any_index() {
+        let k = WgslKingdom::load_safe();
+        let role = gram_role();
+        let root = dual_ty(&k, "kernel.safe").unwrap();
+        fn has(t: &Tree, name: &str) -> bool {
+            t.name == name || t.kids.iter().any(|c| has(c, name))
+        }
+        let reads = (0..2000).filter(|&seed| has(&sample(&k, &role, root, 7, seed).unwrap(), "load.h")).count();
+        assert_eq!(reads, 0, "random safe kernels reading h at any index");
     }
 
     /// A FALLBACK CELL IS THE THREAD'S OWN (2026-10-12; the legality checker
