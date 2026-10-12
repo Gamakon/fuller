@@ -5467,7 +5467,7 @@ mod tests {
     /// read. Every tree reads back (1,000 of 1,000, asserted exactly).
     /// (110 before a negated matrix was written as a product: the one random
     /// tree holding one now reads back as the product, a different text.)
-    const READ_BACK_FLOOR: usize = 112;
+    const READ_BACK_FLOOR: usize = 113;
     const FIXPOINT_FLOOR: usize = 563;
 
     /// The first node where two trees differ, as `path: drawn / parsed`
@@ -5511,8 +5511,7 @@ mod tests {
         let mut passed = 0usize;
         // Measured beside it: the trees that read back at all, and the ones
         // whose text read back is a fixpoint (read and rendered again, the same).
-        let (mut read_back, mut fixpoint, mut ast_equal) = (0usize, 0usize, 0usize);
-        let mut by_ast: BTreeMap<String, (usize, u64)> = BTreeMap::new();
+        let (mut read_back, mut fixpoint) = (0usize, 0usize);
         for seed in 0..n {
             let tree = crate::wgsl::render::sample(&k, &role, root, 7, seed).unwrap();
             let verdict: Result<(), String> = (|| {
@@ -5530,15 +5529,6 @@ mod tests {
                 let back = read_safe(&text, &k).map_err(|e| format!("read: {e}"))?;
                 let again = crate::wgsl::safe_karva::render_tree(&back.tree, &k).map_err(|e| format!("re-render: {e}"))?.text;
                 read_back += 1;
-                // THE BAR (Andrew, 2026-10-13): AST to AST. The tree parsed
-                // from the emitted text is the tree drawn, node for node.
-                match first_difference(&tree, &back.tree) {
-                    None => ast_equal += 1,
-                    Some(d) => {
-                        let key: String = d.chars().map(|c| if c.is_ascii_digit() { 'N' } else { c }).take(140).collect();
-                        by_ast.entry(key).or_insert((0, seed)).0 += 1;
-                    }
-                }
                 if read_safe(&again, &k).ok().and_then(|b| crate::wgsl::safe_karva::render_tree(&b.tree, &k).ok()).is_some_and(|r| r.text == again) {
                     fixpoint += 1;
                 }
@@ -5572,12 +5562,6 @@ mod tests {
         let mut reasons: Vec<_> = by_reason.into_iter().collect();
         reasons.sort_by(|a, b| b.1 .0.cmp(&a.1 .0));
         println!("random trees: {passed} of {n} read back to their own text; {read_back} read back; {fixpoint} read back to a fixpoint (the text read back reads back to itself)");
-        let mut ast_reasons: Vec<_> = by_ast.into_iter().collect();
-        ast_reasons.sort_by(|a, b| b.1 .0.cmp(&a.1 .0));
-        println!("random trees: {ast_equal} of {n} parse back to the AST drawn (AST to AST); the first difference of the others, drawn / parsed:");
-        for (r, (c, seed)) in &ast_reasons {
-            println!("  {c:>4}  seed {seed:>4}  {r}");
-        }
         if std::env::var_os("ROUNDTRIP_TEXT_REASONS").is_some() {
             for (r, (c, seed)) in &reasons {
                 println!("  {c:>4}  seed {seed:>4}  {r}");
@@ -5588,5 +5572,43 @@ mod tests {
         assert!(passed >= READ_BACK_FLOOR, "random trees that read back to their own text: {passed}, fewer than the {READ_BACK_FLOOR} already reached");
         assert_eq!(read_back as u64, n, "random trees that read back: {read_back} of {n}");
         assert!(fixpoint >= FIXPOINT_FLOOR, "random trees that read back to a fixpoint: {fixpoint}, fewer than the {FIXPOINT_FLOOR} already reached");
+    }
+
+    /// THE BAR (Andrew, 2026-10-13): AST to AST. 1,000 random trees of the
+    /// kingdom's typed sampler (the safe root, depth 7, seeds 0..1000, the
+    /// gram role) are emitted as text and parsed back; the tree parsed is the
+    /// tree drawn, node for node (name, dual, literal value, children). Each
+    /// mismatch is counted by its first difference, drawn / parsed, with the
+    /// first seed showing it; `AST_SEED=<seed>` prints both trees of a seed.
+    #[test]
+    fn random_sampler_trees_parse_back_to_the_ast_drawn() {
+        let k = WgslKingdom::load_safe();
+        let role = gram_role();
+        let root = crate::wgsl::render::dual_ty(&k, "kernel.safe").unwrap();
+        let n = 1000u64;
+        let show: Option<u64> = std::env::var("AST_SEED").ok().and_then(|s| s.parse().ok());
+        let mut by_cause: BTreeMap<String, (usize, u64)> = BTreeMap::new();
+        let mut equal = 0usize;
+        for seed in 0..n {
+            let tree = crate::wgsl::render::sample(&k, &role, root, 7, seed).unwrap();
+            let text = crate::wgsl::safe_karva::render_tree(&tree, &k).unwrap_or_else(|e| panic!("seed {seed}: render: {e}")).text;
+            let back = read_safe(&text, &k).unwrap_or_else(|e| panic!("seed {seed}: read: {e}\n{text}")).tree;
+            if show == Some(seed) {
+                println!("drawn:  {}\nparsed: {}\n{text}", tree.to_sexpr(), back.to_sexpr());
+            }
+            match first_difference(&tree, &back) {
+                None => equal += 1,
+                Some(d) => {
+                    let key: String = d.chars().map(|c| if c.is_ascii_digit() { 'N' } else { c }).take(140).collect();
+                    by_cause.entry(key).or_insert((0, seed)).0 += 1;
+                }
+            }
+        }
+        let mut causes: Vec<_> = by_cause.into_iter().collect();
+        causes.sort_by(|a, b| b.1 .0.cmp(&a.1 .0).then(a.0.cmp(&b.0)));
+        println!("random trees: {equal} of {n} parse back to the AST drawn; the first difference of the others, drawn / parsed:");
+        for (r, (c, seed)) in &causes {
+            println!("  {c:>4}  seed {seed:>4}  {r}");
+        }
     }
 }

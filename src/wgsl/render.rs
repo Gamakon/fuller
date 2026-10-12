@@ -1433,22 +1433,7 @@ fn workgroup_plan_requested_of(kingdom: &WgslKingdom, grid: &Tree, root: &Tree, 
             at = rest;
         }
     }
-    let mut used: BTreeSet<String> = BTreeSet::new();
-    fn uses(kingdom: &WgslKingdom, t: &Tree, out: &mut BTreeSet<String>) {
-        let array = t.kids.is_empty() && (t.name.starts_with("wg.") || (t.name == "fallback" && kingdom.dual(t.ty).is_some_and(|d| d.dual.starts_with("wgmem<"))));
-        if array {
-            if let Ok(v) = wgmem_var(kingdom, t) {
-                out.insert(v.to_string());
-            }
-        }
-        t.kids.iter().for_each(|k| uses(kingdom, k, out));
-    }
-    // The statements' uses, not the grid's own declarations.
-    if root.name == "kernel.entry_safe" {
-        root.kids.iter().skip(1).for_each(|k| uses(kingdom, k, &mut used));
-    } else {
-        uses(kingdom, root, &mut used);
-    }
+    let mut used = arrays_used(kingdom, root);
     if let Some(only) = only {
         used.retain(|v| only.contains(v));
     }
@@ -1464,6 +1449,27 @@ fn workgroup_plan_requested_of(kingdom: &WgslKingdom, grid: &Tree, root: &Tree, 
         plan.entry(v.clone()).or_insert_with(|| (elem_of(&v).to_string(), default_len(&v)));
     }
     Ok(plan)
+}
+
+/// The workgroup arrays a kernel's statements use (not its grid's own
+/// declarations), by variable name (`wg_a`).
+pub fn arrays_used(kingdom: &WgslKingdom, root: &Tree) -> BTreeSet<String> {
+    fn uses(kingdom: &WgslKingdom, t: &Tree, out: &mut BTreeSet<String>) {
+        let array = t.kids.is_empty() && (t.name.starts_with("wg.") || (t.name == "fallback" && kingdom.dual(t.ty).is_some_and(|d| d.dual.starts_with("wgmem<"))));
+        if array {
+            if let Ok(v) = wgmem_var(kingdom, t) {
+                out.insert(v.to_string());
+            }
+        }
+        t.kids.iter().for_each(|k| uses(kingdom, k, out));
+    }
+    let mut used = BTreeSet::new();
+    if root.name == "kernel.entry_safe" {
+        root.kids.iter().skip(1).for_each(|k| uses(kingdom, k, &mut used));
+    } else {
+        uses(kingdom, root, &mut used);
+    }
+    used
 }
 
 impl Renderer<'_> {
@@ -2632,7 +2638,126 @@ pub fn sample(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, se
         let kids = r.inputs.iter().map(|&t| grow(rows, by_out, kingdom, t, depth + 1, max_depth, state)).collect();
         Tree::new(&r.name, demand, kids)
     }
-    Ok(grow(&rows, &by_out, kingdom, root, 0, max_depth, &mut state))
+    canonical_grid(kingdom, live_kernel(grow(&rows, &by_out, kingdom, root, 0, max_depth, &mut state)))
+}
+
+/// A safe kernel without the statements no text holds: the renderer stops a
+/// block at a statement that returns on every path and writes nothing after
+/// it, nor the epilogue after a body that returns (the parser reads the
+/// epilogue as a fallback). A block cut short is the block of that many
+/// statements (`block.seq4_L0` cut after its second is `block.seq2_L0`).
+fn live_kernel(mut root: Tree) -> Tree {
+    /// The tree with each block cut after its first statement that returns
+    /// on every path, and whether this node returns on every path (as the
+    /// renderer's `block_t` and `stmt_t` decide it).
+    fn live(t: &Tree) -> (Tree, bool) {
+        let base = safe_base(&t.name);
+        let mut out = t.clone();
+        match base {
+            "block.one" | "block.seq2" | "block.seq3" | "block.seq4" => {
+                let mut kids = Vec::new();
+                let mut ends = false;
+                for k in &t.kids {
+                    let (k, e) = live(k);
+                    kids.push(k);
+                    if e {
+                        ends = true;
+                        break;
+                    }
+                }
+                if kids.len() != t.kids.len() {
+                    let suffix = &t.name[base.len()..];
+                    out.name = if kids.len() == 1 { format!("block.one{suffix}") } else { format!("block.seq{}{suffix}", kids.len()) };
+                }
+                out.kids = kids;
+                (out, ends)
+            }
+            "stmt.return" => (out, true),
+            "stmt.block" | "loop.unroll" | "block.cont" if !t.kids.is_empty() => {
+                // The last child is the block that decides (the body, the rest).
+                let last = t.kids.len() - 1;
+                let (body, e) = live(&t.kids[last]);
+                out.kids[last] = body;
+                (out, e)
+            }
+            "stmt.if_else" if t.kids.len() == 3 => {
+                let (a, ea) = live(&t.kids[1]);
+                let (b, eb) = live(&t.kids[2]);
+                out.kids[1] = a;
+                out.kids[2] = b;
+                (out, ea && eb)
+            }
+            _ => {
+                out.kids = t.kids.iter().map(|k| live(k).0).collect();
+                (out, false)
+            }
+        }
+    }
+    if root.name != "kernel.entry_safe" || root.kids.len() != 3 {
+        return root;
+    }
+    let (body, ends) = live(&root.kids[1]);
+    root.kids[1] = body;
+    root.kids[2] = if ends { Tree::fallback(root.kids[2].ty) } else { live(&root.kids[2]).0 };
+    root
+}
+
+/// A safe kernel's grid in the one form text can spell (AST to AST,
+/// 2026-10-13: 0 of 1,000 random trees parsed back to the tree drawn, every
+/// one first differing at its grid): the grid row under at most one tile
+/// depth (`grid.with_ktile`, the first one drawn), then, when the statements
+/// use a workgroup array, `grid.with_wg` declaring each array they use at the
+/// length the renderer writes, in the order of the arrays' names. A nested
+/// or repeated wrapper, or a declaration of an array no statement uses, has
+/// no text of its own: the renderer writes the arrays the statements use.
+fn canonical_grid(kingdom: &WgslKingdom, mut root: Tree) -> Result<Tree, String> {
+    if root.name != "kernel.entry_safe" || root.kids.len() != 3 {
+        return Ok(root);
+    }
+    let drawn = &root.kids[0];
+    let mut row = drawn;
+    let mut ktile: Option<&Tree> = None;
+    while (row.name == "grid.with_wg" || row.name == "grid.with_ktile") && row.kids.len() == 2 {
+        if row.name == "grid.with_ktile" && ktile.is_none() {
+            ktile = Some(&row.kids[1]);
+        }
+        row = &row.kids[0];
+    }
+    let mut grid = match ktile {
+        Some(t) => Tree::new("grid.with_ktile", drawn.ty, vec![row.clone(), t.clone()]),
+        None => row.clone(),
+    };
+    // The lengths the renderer writes: the plan's (the drawn declarations of
+    // the arrays used, the rest at their defaults, halved to fit), or, for a
+    // kernel using only the original four arrays, their original lengths.
+    let plan = workgroup_plan(kingdom, drawn, &root)?;
+    let lens: Vec<(String, u32)> = if plan.is_empty() { arrays_used(kingdom, &root).into_iter().map(|v| { let l = array_len(&v); (v, l) }).collect() } else { plan.into_iter().map(|(v, (_, l))| (v, l)).collect() };
+    let mut list: Option<Tree> = None;
+    for (var, len) in lens.into_iter().rev() {
+        let (row, arr_dual) = if var.starts_with("wg_au") {
+            ("wg.decl_au", "wgmem<atomic<u32>>.index")
+        } else if var.starts_with("wg_ai") {
+            ("wg.decl_ai", "wgmem<atomic<i32>>.int")
+        } else if var.starts_with("wg_v2") {
+            ("wg.decl_v2", "wgmem<vec2<f32>>.real")
+        } else if var.starts_with("wg_v") {
+            ("wg.decl_v4", "wgmem<vec4<f32>>.real")
+        } else {
+            ("wg.decl_f", "wgmem<f32>.real")
+        };
+        let array = Tree::new(&var.replacen("wg_", "wg.", 1), dual_ty(kingdom, arr_dual)?, vec![]);
+        let decl = Tree::new(row, dual_ty(kingdom, "wg.decl")?, vec![array, Tree::literal("literal.wglen", dual_ty(kingdom, "u32.wglen")?, len as f32)]);
+        let decls_ty = dual_ty(kingdom, "wg.decls")?;
+        list = Some(match list {
+            None => Tree::new("wg.decls_one", decls_ty, vec![decl]),
+            Some(rest) => Tree::new("wg.decls_cons", decls_ty, vec![decl, rest]),
+        });
+    }
+    if let Some(decls) = list {
+        grid = Tree::new("grid.with_wg", drawn.ty, vec![grid, decls]);
+    }
+    root.kids[0] = grid;
+    Ok(root)
 }
 
 /// Parse text with naga and validate it for the device in use
