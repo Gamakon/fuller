@@ -32,6 +32,9 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation
     var n0: i32 = 0; var n1: i32 = 0; var n2: i32 = 0; var n3: i32 = 0; var n4: i32 = 0; var n5: i32 = 0; var n6: i32 = 0; var n7: i32 = 0; 
     var n8: i32 = 0; var n9: i32 = 0; var n10: i32 = 0; var n11: i32 = 0; var n12: i32 = 0; var n13: i32 = 0; var n14: i32 = 0; var n15: i32 = 0; 
     var u0: vec4<u32> = vec4<u32>(0u); var u1: vec4<u32> = vec4<u32>(0u); var u2: vec4<u32> = vec4<u32>(0u); var u3: vec4<u32> = vec4<u32>(0u); var u4: vec4<u32> = vec4<u32>(0u); var u5: vec4<u32> = vec4<u32>(0u); var u6: vec4<u32> = vec4<u32>(0u); var u7: vec4<u32> = vec4<u32>(0u); 
+    var x0: mat2x2<f32> = mat2x2<f32>(); var x1: mat2x2<f32> = mat2x2<f32>(); 
+    var y0: mat3x3<f32> = mat3x3<f32>(); var y1: mat3x3<f32> = mat3x3<f32>(); 
+    var z0: mat4x4<f32> = mat4x4<f32>(); var z1: mat4x4<f32> = mat4x4<f32>(); 
     var t: u32 = 0u; var k: u32 = 0u; var k2: u32 = 0u; var k3: u32 = 0u; var k4: u32 = 0u;
     var pa: array<f32, 64>; var pb: array<f32, 64>; var pc: array<f32, 64>; var pd: array<f32, 64>; var pe: array<f32, 64>; var pf: array<f32, 64>;
     var pv: array<vec4<f32>, 16>; var pw: array<vec4<f32>, 16>; var px: array<vec4<f32>, 16>; var py: array<vec4<f32>, 16>; var pi: array<u32, 16>; var pj: array<u32, 16>; var pk: array<u32, 16>; var pm: array<bool, 16>; var pn: array<bool, 16>; var pq: array<vec2<f32>, 16>; var pr: array<vec2<f32>, 16>;
