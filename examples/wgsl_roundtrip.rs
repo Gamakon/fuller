@@ -23,6 +23,9 @@ fn main() -> Result<(), String> {
     }
     let text = render_tree(&tree, &k)?.text;
     println!("{text}");
+    if let Some(dir) = args.iter().position(|a| a == "--write").and_then(|i| args.get(i + 1)) {
+        std::fs::write(format!("{dir}/{seed}.drawn.wgsl"), &text).map_err(|e| e.to_string())?;
+    }
     let checker = fuller::wgsl::check::Checker::new(&k, &role, &fuller::wgsl::target::Target::recorded());
     println!("// check: {:?}", checker.check(&tree).map_err(|e| e.to_string()));
     match read_safe(&text, &k) {
@@ -34,7 +37,6 @@ fn main() -> Result<(), String> {
             }
             let again = render_tree(&back.tree, &k)?.text;
             if let Some(dir) = args.iter().position(|a| a == "--write").and_then(|i| args.get(i + 1)) {
-                std::fs::write(format!("{dir}/{seed}.drawn.wgsl"), &text).map_err(|e| e.to_string())?;
                 std::fs::write(format!("{dir}/{seed}.again.wgsl"), &again).map_err(|e| e.to_string())?;
             }
             if again == text {

@@ -408,6 +408,17 @@ fn tree_of(ctx: &mut Ctx, n: &Node) -> Result<Tree, String> {
                 let b = kids[1].kids[0].clone();
                 kids[1] = b;
             }
+            // The kingdom's floored difference over pass-through literals
+            // (`select((lit_u32(23u)) - (lit_u32(4u)), 0u, (lit_u32(4u)) > ...)`):
+            // each `lit_u32` is its own call, so the node pattern (floor_differences)
+            // cannot see the sides are equal; the trees can.
+            if name == "select.scalar_cond" && kids.len() == 3 && literal_value(&kids[0]) == Some(0.0) && kids[1].name == "index.sub_floor" && kids[1].kids.len() == 2 && kids[2].kids.len() == 2 {
+                let (dk, ck) = (&kids[1].kids, &kids[2].kids);
+                let same = |a: &Tree, b: &Tree| a == b || (literal_value(a).is_some() && literal_value(a) == literal_value(b));
+                if (kids[2].name == "compare.gt" && same(&ck[0], &dk[1]) && same(&ck[1], &dk[0])) || (kids[2].name == "compare.lt" && same(&ck[0], &dk[0]) && same(&ck[1], &dk[1])) {
+                    return Ok(kids[1].clone());
+                }
+            }
             // `x << (s & 31u)` (a vector's count splatted, `vecN<u32>((s) & 31u)`):
             // how the kingdom writes a shift's count, masked below the width;
             // read back as the count (2026-10-12: 36 of 1,000 random trees).
@@ -733,7 +744,15 @@ fn floor_differences(n: &Node) -> Node {
     if name == "select.scalar_cond" {
         if let [Node::Literal { value, .. }, diff @ Node::App { name: d, kids: dk, .. }, Node::App { name: c, kids: ck, .. }] = kids.as_slice() {
             let floored = *value == 0.0 && d == "index.sub_floor" && dk.len() == 2 && ck.len() == 2;
-            if floored && ((c == "compare.gt" && ck[0] == dk[1] && ck[1] == dk[0]) || (c == "compare.lt" && ck[0] == dk[0] && ck[1] == dk[1])) {
+            // (Equal up to a literal's form: the inference may type `4u` a
+            // count on one side and an index on the other.)
+            fn same(a: &Node, b: &Node) -> bool {
+                match (a, b) {
+                    (Node::Literal { value: x, .. }, Node::Literal { value: y, .. }) => x == y,
+                    _ => a == b,
+                }
+            }
+            if floored && ((c == "compare.gt" && same(&ck[0], &dk[1]) && same(&ck[1], &dk[0])) || (c == "compare.lt" && same(&ck[0], &dk[0]) && same(&ck[1], &dk[1]))) {
                 return diff.clone();
             }
         }
@@ -2599,6 +2618,20 @@ impl<'a> Ctx<'a> {
         if stem == "stmt.barrier" || stem == "stmt.storage_barrier" || stem == "stmt.subgroup_barrier" || stem == "stmt.return" || stem.starts_with("loop.items") {
             return Err(format!("{} where only conditional statements are spelled (after a loop's continue guard, or before the epilogue's last store of h)", t.name));
         }
+        // A loop that breaks: its body, the break block B<d+1> (conditional
+        // statements of the next depth, the guard, conditional statements),
+        // moved with it (it kept its old depth's B and C before; 2026-10-12).
+        if matches!(stem, "loop.tile_brk" | "loop.tilex_brk") {
+            if d + 1 > 5 {
+                return Err("a loop that breaks six deep".into());
+            }
+            let [bound, body] = t.kids.as_slice() else { return Err(format!("{} with {} children", t.name, t.kids.len())) };
+            let [before, cond, after] = body.kids.as_slice() else { return Err(format!("{} with {} children", body.name, body.kids.len())) };
+            let b = format!("B{}", d + 1);
+            let brk = Tree::new(&format!("block.brk_{b}"), ty(self, &format!("block.{b}"))?, vec![self.rerung(before, d + 1)?, cond.clone(), self.rerung(after, d + 1)?]);
+            let c = format!("C{d}");
+            return Ok(Tree::new(&format!("{stem}_{c}"), ty(self, &format!("stmt.{c}"))?, vec![self.any_bound(bound)?, brk]));
+        }
         let tile = matches!(stem, "loop.tile" | "loop.tile_strided" | "loop.tilex" | "loop.tilex_strided");
         if tile && d + 1 > 5 {
             return Err("a tile loop six deep inside the kernel's epilogue".into());
@@ -2625,7 +2658,10 @@ impl<'a> Ctx<'a> {
         // A continue whose rest stores h is the epilogue's (epilogue_block
         // reads it into block.cont_O<d>).
         if looped_rung && !stmts.iter().any(has_store) {
-            if let Some(at) = stmts.iter().position(is_continue_guard) {
+            // (Not over a break guard after it: the loop's body splits at the
+            // break first, then each side's continue folds; 2026-10-12.)
+            let breaks_after = |at: usize| stmts[at + 1..].iter().any(|t| break_guard(t, self).is_some());
+            if let Some(at) = stmts.iter().position(is_continue_guard).filter(|&at| !breaks_after(at)) {
                 let mut before = stmts;
                 let rest: Vec<Tree> = before.split_off(at + 1);
                 let guard = before.pop().expect("the guard at `at`");
@@ -5246,7 +5282,7 @@ mod tests {
     /// The counts of [`random_sampler_trees_read_back_to_their_own_text`]
     /// reached so far: to their own text, and read back at all.
     const READ_BACK_FLOOR: usize = 108;
-    const READ_AT_ALL_FLOOR: usize = 768;
+    const READ_AT_ALL_FLOOR: usize = 832;
 
     /// THE KINGDOM'S COMPLETENESS BAR (2026-10-12): 1,000 random trees of
     /// the kingdom's typed sampler (the safe root, depth 7, seeds 0..1000)
