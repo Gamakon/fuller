@@ -303,8 +303,15 @@ pub mod device {
             let instance = wgpu::Instance::default();
             let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default())).ok_or("no adapter")?;
             let name = format!("{} ({:?})", adapter.get_info().name, adapter.get_info().backend);
+            // Subgroups when the adapter has them (the M3 Max does): a kernel
+            // that uses a subgroup built-in compiles only on a device that
+            // asked for the feature (2026-10-12). Every later validation is
+            // for this device's features and limits.
+            let features = adapter.features() & (wgpu::Features::TIMESTAMP_QUERY | wgpu::Features::SUBGROUP | wgpu::Features::SUBGROUP_BARRIER);
+            let limits = adapter.limits();
+            crate::wgsl::target::install(crate::wgsl::target::Target::of_device(&adapter, features, &limits));
             let (device, queue) = pollster::block_on(adapter.request_device(
-                &wgpu::DeviceDescriptor { label: Some("wgsl-oracle"), required_features: adapter.features() & wgpu::Features::TIMESTAMP_QUERY, required_limits: adapter.limits() },
+                &wgpu::DeviceDescriptor { label: Some("wgsl-oracle"), required_features: features, required_limits: limits },
                 None,
             ))
             .map_err(|e| format!("request_device: {e}"))?;
@@ -383,7 +390,7 @@ pub mod device {
         /// buffers (binding, buffer, words).
         fn prepare(&self, source: &str, entry: &str, memory: &Memory, original: &[Binding]) -> Result<Prepared, String> {
             let module = naga::front::wgsl::parse_str(source).map_err(|e| e.emit_to_string(source))?;
-            let info = naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::all()).validate(&module).map_err(|e| format!("validation: {}", e.emit_to_string(source)))?;
+            let info = crate::wgsl::target::Target::current().validate(&module, source).map_err(|e| format!("validation: {e}"))?;
             let own: Vec<Binding> = bindings(&module)?;
             if own.len() != original.len() {
                 return Err(format!("oracle: {} bindings, the original has {}", own.len(), original.len()));

@@ -356,10 +356,31 @@ impl<'a> Renderer<'a> {
             text.push_str(body);
             text.push('\n');
         }
-        text.push_str(&format!("@compute @workgroup_size({}, {}, 1)\nfn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_index) lidx: u32, @builtin(num_workgroups) nwg: vec3<u32>) {{\n", grid.x, grid.y));
+        // The subgroup values a kernel reads (they need the device's subgroup
+        // feature, so a kernel that reads none does not declare them). naga
+        // refuses @builtin(subgroup_invocation_id) and @builtin(subgroup_id)
+        // on a 2-D workgroup (InvalidMultiDimensionalSubgroupBuiltIn), so
+        // there the lane is the count of active lanes below it at entry (every
+        // lane is active there, so it is the lane's number) and the subgroup's
+        // number is the flat local index over the subgroup size (Metal's
+        // numbering; a device numbering otherwise gives other values, which
+        // selection judges).
+        let flat = grid.y == 1;
+        let lets: String = [("sg_lane", "subgroupExclusiveAdd(1u)"), ("sg_index", "lidx / sg_size")]
+            .iter()
+            .filter(|(var, _)| !flat && body.contains(var))
+            .map(|(var, e)| format!("    let {var}: u32 = {e};\n"))
+            .collect();
+        let subgroup_args: String = [("sg_lane", "subgroup_invocation_id"), ("sg_size", "subgroup_size"), ("sg_count", "num_subgroups"), ("sg_index", "subgroup_id")]
+            .iter()
+            .filter(|(var, _)| if *var == "sg_lane" || *var == "sg_index" { flat && body.contains(var) } else { body.contains(var) || (*var == "sg_size" && lets.contains(var)) })
+            .map(|(var, b)| format!(", @builtin({b}) {var}: u32"))
+            .collect();
+        text.push_str(&format!("@compute @workgroup_size({}, {}, 1)\nfn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_index) lidx: u32, @builtin(num_workgroups) nwg: vec3<u32>{subgroup_args}) {{\n", grid.x, grid.y));
         // The registers, counters and private arrays of the kingdom's rows:
         // 32 f32, 16 vec4, 32 u32, 8 bool registers; six f32, two vec4, three
         // u32 and two bool private arrays.
+        text.push_str(&lets);
         text.push_str(&register_declarations());
         text.push_str(&body);
         text.push_str("}\n");
@@ -741,6 +762,14 @@ impl<'a> Renderer<'a> {
                 }
                 Ok(out)
             }
+            "stmt.subgroup_barrier" => {
+                n(0)?;
+                if scope.in_cond > 0 || scope.returned {
+                    scope.masked.push("stmt.subgroup_barrier in non-uniform control flow".into());
+                    return Ok("    // subgroup barrier masked: non-uniform control flow\n".into());
+                }
+                Ok("    subgroupBarrier();\n".into())
+            }
             "stmt.barrier" => {
                 n(0)?;
                 // WGSL's uniformity rule: a barrier only in uniform control
@@ -996,6 +1025,33 @@ impl<'a> Renderer<'a> {
             }
             "wg.get" => return Ok(format!("{}[({}) & {}u]", self.wgmem(&v.kids[0])?, self.value(&v.kids[1], scope)?, WGMEM_LEN - 1)),
             // The safe read: the index is in range by its type (safe.wg_of masks it).
+            // The subgroup operations.
+            n if n.starts_with("subgroup.") => {
+                let f = match n.trim_start_matches("subgroup.") {
+                    "add" => "subgroupAdd",
+                    "mul" => "subgroupMul",
+                    "min" => "subgroupMin",
+                    "max" => "subgroupMax",
+                    "and" => "subgroupAnd",
+                    "or" => "subgroupOr",
+                    "xor" => "subgroupXor",
+                    "all" => "subgroupAll",
+                    "any" => "subgroupAny",
+                    "inclusive_add" => "subgroupInclusiveAdd",
+                    "inclusive_mul" => "subgroupInclusiveMul",
+                    "exclusive_add" => "subgroupExclusiveAdd",
+                    "exclusive_mul" => "subgroupExclusiveMul",
+                    "broadcast_first" => "subgroupBroadcastFirst",
+                    "broadcast" => "subgroupBroadcast",
+                    "shuffle" => "subgroupShuffle",
+                    "shuffle_down" => "subgroupShuffleDown",
+                    "shuffle_up" => "subgroupShuffleUp",
+                    "shuffle_xor" => "subgroupShuffleXor",
+                    other => return Err(format!("subgroup.{other} is not a subgroup built-in")),
+                };
+                let args: Vec<String> = v.kids.iter().map(|k| self.value(k, scope)).collect::<Result<_, _>>()?;
+                return Ok(format!("{f}({})", args.join(", ")));
+            }
             // The atomic built-ins on a workgroup array (their old value).
             n if n.starts_with("atomic.") => {
                 let a = self.wgmem(&v.kids[0])?;
@@ -1144,6 +1200,11 @@ impl<'a> Renderer<'a> {
             "builtin.workgroup_id" => return Ok("wid".into()),
             "builtin.local_invocation_index" => return Ok("lidx".into()),
             "builtin.num_workgroups" => return Ok("nwg".into()),
+            // The subgroup values, declared on main only when a kernel reads them.
+            "builtin.subgroup_invocation_id" => return Ok("sg_lane".into()),
+            "builtin.subgroup_size" => return Ok("sg_size".into()),
+            "builtin.num_subgroups" => return Ok("sg_count".into()),
+            "builtin.subgroup_id" => return Ok("sg_index".into()),
             "builtin.item" => return Ok("t".into()),
             "builtin.tile" => return Ok(scope.unrolled.get("k").map_or_else(|| "k".to_string(), |i| format!("lit_u32({i}u)"))),
             _ => {}
@@ -1457,6 +1518,9 @@ pub fn cost(t: &Tree) -> Cost {
             n if n.starts_with("load.") || n.starts_with("store.") || n.starts_with("wg.") => 4.0,
             // An atomic read-modify-write on workgroup memory.
             n if n.starts_with("atomic.") => 8.0,
+            // A subgroup operation (a few SIMD lane exchanges) and its barrier.
+            n if n.starts_with("subgroup.") => 4.0,
+            n if n.starts_with("stmt.subgroup_barrier") => 10.0,
             "geom.inverse" | "hash.mix64" | "fixed.wide_mul" | "fixed.mul" => 40.0,
             n if n.starts_with("trig.") || n.starts_with("arith.exp") || n.starts_with("arith.log") || n.starts_with("arith.pow") => 8.0,
             "stmt.barrier" => 50.0,
@@ -1918,10 +1982,11 @@ pub fn sample(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, se
     Ok(grow(&rows, &by_out, kingdom, root, 0, max_depth, &mut state))
 }
 
-/// Parse text with naga and validate it; the error names the line.
+/// Parse text with naga and validate it for the device in use
+/// ([`super::target::Target::current`]); the error names the line.
 pub fn validate_text(text: &str) -> Result<(), String> {
     let module = naga::front::wgsl::parse_str(text).map_err(|e| e.emit_to_string(text))?;
-    naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::all()).validate(&module).map(|_| ()).map_err(|e| e.emit_to_string(text))
+    super::target::Target::current().validate(&module, text).map(|_| ())
 }
 
 impl Tree {

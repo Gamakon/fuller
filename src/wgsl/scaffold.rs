@@ -124,9 +124,7 @@ fn rebuild_programs(kernel: &Kernel, programs: &[Program]) -> Result<Rebuilt, St
 }
 
 pub fn validate(module: &Module) -> Result<naga::valid::ModuleInfo, String> {
-    naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::all())
-        .validate(module)
-        .map_err(|e| format!("validation: {}", e.emit_to_string("")))
+    super::target::Target::current().validate(module, "").map_err(|e| format!("validation: {e}"))
 }
 
 /// The structural gate: rebuild from `roots`, write, parse and validate the
@@ -238,6 +236,7 @@ fn kind_key(kind: &super::reader::RootKind, module: &Module, f: &Function) -> Re
         RootKind::Argument { callee, position } => format!("arg:{}:{position}", canonical(&format!("(call.{callee})"), module, f)?),
         RootKind::Let { name } => format!("let:{}", canonical(&format!("(x.let.{name})"), module, f)?),
         RootKind::Atomic { target, fun } => format!("atomic:{fun}:{}", canonical(&format!("(x.{target})"), module, f)?),
+        RootKind::Subgroup { fun } => format!("subgroup:{fun}"),
     };
     Ok(name)
 }

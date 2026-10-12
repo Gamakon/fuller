@@ -516,7 +516,7 @@ impl<'a> Gram<'a> {
     /// dispatches `ceil(d / x) × ceil(r_rows / y)`.
     pub fn compile(dev: &'a Device, source: &str) -> Result<Gram<'a>, String> {
         let module = naga::front::wgsl::parse_str(source).map_err(|e| e.emit_to_string(source))?;
-        naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::all()).validate(&module).map_err(|e| format!("validation: {}", e.emit_to_string(source)))?;
+        super::target::Target::current().validate(&module, source).map_err(|e| format!("validation: {e}"))?;
         let ep = module.entry_points.iter().find(|e| e.name == ENTRY).ok_or_else(|| format!("no entry point {ENTRY}"))?;
         let (x, y) = (ep.workgroup_size[0], ep.workgroup_size[1]);
         // The optional header `// grid x y bx by`: x and y must agree with
@@ -539,7 +539,7 @@ impl<'a> Gram<'a> {
 
     /// A rendered kernel: its text and the grid it asked for.
     pub fn compile_rendered(dev: &'a Device, r: &Rendered) -> Result<Gram<'a>, String> {
-        naga::front::wgsl::parse_str(&r.text).map_err(|e| e.emit_to_string(&r.text)).and_then(|m| naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::all()).validate(&m).map(|_| ()).map_err(|e| format!("validation: {}", e.emit_to_string(&r.text))))?;
+        naga::front::wgsl::parse_str(&r.text).map_err(|e| e.emit_to_string(&r.text)).and_then(|m| super::target::Target::current().validate(&m, &r.text).map(|_| ()).map_err(|e| format!("validation: {e}")))?;
         Self::compile_with(dev, &r.text, r.grid)
     }
 
@@ -1471,7 +1471,7 @@ mod tests {
     fn the_slow_test_kernel_is_valid_wgsl() {
         let slow = slow_shipped();
         let module = naga::front::wgsl::parse_str(&slow).unwrap_or_else(|e| panic!("{}", e.emit_to_string(&slow)));
-        naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::all()).validate(&module).unwrap_or_else(|e| panic!("{}", e.emit_to_string(&slow)));
+        crate::wgsl::target::Target::current().validate(&module, &slow).unwrap_or_else(|e| panic!("{e}"));
         assert!(slow.contains("k < 64u") && slow.contains("(k * cfg.d) / (64u * cfg.d)"));
     }
 

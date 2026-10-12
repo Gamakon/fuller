@@ -148,6 +148,12 @@ pub enum RootKind {
     /// exchange); the tree's kids are the index (when indexed), the value and,
     /// for `cas`, the compared value. Its result is the leaf `atomic@<h>`.
     Atomic { target: String, fun: String },
+    /// A subgroup operation (2026-10-12), naga's SubgroupCollectiveOperation,
+    /// SubgroupGather or SubgroupBallot: `fun` the operation (`add`,
+    /// `inclusive_add`, `broadcast`, `shuffle_down`, `ballot`, ...), the
+    /// tree's kids its argument and the gather's lane or delta. Its result
+    /// is the leaf `subgroup@<h>`.
+    Subgroup { fun: String },
 }
 
 /// One root: a hole in the scaffold and the tree that fills it.
@@ -268,7 +274,7 @@ fn is_index_must_be_constant(e: &naga::valid::ValidationError) -> bool {
 pub fn read(source: &str) -> Result<Kernel, String> {
     let module = naga::front::wgsl::parse_str(source).map_err(|e| e.emit_to_string(source))?;
     let mut lenient = false;
-    let info = match naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::all()).validate(&module) {
+    let info = match super::target::Target::current().validator(naga::valid::ValidationFlags::all()).validate(&module) {
         Ok(info) => info,
         // A vector VALUE indexed at run time (`accs[i][j]` on a `let` array,
         // r3x_reinvent of the smoke run): the one expression fault the
@@ -277,12 +283,13 @@ pub fn read(source: &str) -> Result<Kernel, String> {
         // is the only thing skipped.
         Err(e) if is_index_must_be_constant(e.as_inner()) => {
             lenient = true;
-            naga::valid::Validator::new(naga::valid::ValidationFlags::all() - naga::valid::ValidationFlags::EXPRESSIONS, naga::valid::Capabilities::all())
+            super::target::Target::current().validator(naga::valid::ValidationFlags::all() - naga::valid::ValidationFlags::EXPRESSIONS)
                 .validate(&module)
                 .map_err(|e| format!("validation: {e:?}"))?
         }
         Err(e) => return Err(format!("validation: {e:?}")),
     };
+    super::target::Target::current().check_limits(&module).map_err(|e| format!("validation: {e}"))?;
     let table = FunctionTable::shipped();
     let effects = versions::module_effects(&module);
     let mut functions = Vec::new();
@@ -646,6 +653,48 @@ fn walk_block(
                 let loc = ctx.location(*pointer);
                 ctx.bump(&loc);
             }
+            Statement::SubgroupCollectiveOperation { op, collective_op, argument, result } => {
+                let o = match op {
+                    naga::SubgroupOperation::All => "all",
+                    naga::SubgroupOperation::Any => "any",
+                    naga::SubgroupOperation::Add => "add",
+                    naga::SubgroupOperation::Mul => "mul",
+                    naga::SubgroupOperation::Min => "min",
+                    naga::SubgroupOperation::Max => "max",
+                    naga::SubgroupOperation::And => "and",
+                    naga::SubgroupOperation::Or => "or",
+                    naga::SubgroupOperation::Xor => "xor",
+                };
+                let fun = match collective_op {
+                    naga::CollectiveOperation::Reduce => o.to_string(),
+                    naga::CollectiveOperation::InclusiveScan => format!("inclusive_{o}"),
+                    naga::CollectiveOperation::ExclusiveScan => format!("exclusive_{o}"),
+                };
+                let kids = vec![expand(ctx, *argument, true)];
+                ctx.calls.insert(result.index() as u32, path.clone());
+                roots.push(Root { kind: RootKind::Subgroup { fun: fun.clone() }, path: path.clone(), point: path.clone(), tree: Node::App { name: format!("subgroup.{fun}"), slot: "store".into(), known: true, kids } });
+            }
+            Statement::SubgroupGather { mode, argument, result } => {
+                let (fun, lane) = match mode {
+                    naga::GatherMode::BroadcastFirst => ("broadcast_first", None),
+                    naga::GatherMode::Broadcast(l) => ("broadcast", Some(*l)),
+                    naga::GatherMode::Shuffle(l) => ("shuffle", Some(*l)),
+                    naga::GatherMode::ShuffleDown(l) => ("shuffle_down", Some(*l)),
+                    naga::GatherMode::ShuffleUp(l) => ("shuffle_up", Some(*l)),
+                    naga::GatherMode::ShuffleXor(l) => ("shuffle_xor", Some(*l)),
+                };
+                let mut kids = vec![expand(ctx, *argument, true)];
+                if let Some(l) = lane {
+                    kids.push(expand(ctx, l, true));
+                }
+                ctx.calls.insert(result.index() as u32, path.clone());
+                roots.push(Root { kind: RootKind::Subgroup { fun: fun.to_string() }, path: path.clone(), point: path.clone(), tree: Node::App { name: format!("subgroup.{fun}"), slot: "store".into(), known: true, kids } });
+            }
+            Statement::SubgroupBallot { result, predicate } => {
+                let kids: Vec<Node> = predicate.iter().map(|p| expand(ctx, *p, true)).collect();
+                ctx.calls.insert(result.index() as u32, path.clone());
+                roots.push(Root { kind: RootKind::Subgroup { fun: "ballot".into() }, path: path.clone(), point: path.clone(), tree: Node::App { name: "subgroup.ballot".into(), slot: "store".into(), known: true, kids } });
+            }
             Statement::Call { function, arguments, result } => {
                 let callee = ctx.module.functions[*function].name.clone().unwrap_or_else(|| format!("fn{}", function.index()));
                 if let Some(r) = result {
@@ -949,6 +998,8 @@ fn expand(ctx: &mut Ctx, h: Handle<Expression>, count: bool) -> Node {
         // An atomic's result (the old value, or for a compare-exchange its
         // result struct): the leaf the Atomic root names.
         Expression::AtomicResult { .. } => Node::Leaf { name: format!("atomic@{}", h.index()), slot },
+        // A subgroup operation's result: the leaf its Subgroup root names.
+        Expression::SubgroupOperationResult { .. } | Expression::SubgroupBallotResult => Node::Leaf { name: format!("subgroup@{}", h.index()), slot },
         Expression::CallResult(f) => {
             // Named by the RESULT's handle index too: a function called twice
             // has two live results, and the rebuild must put each leaf on the

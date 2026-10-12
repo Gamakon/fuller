@@ -2269,4 +2269,62 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 | F1081 | `stmt.discard_u_C5` | `composite` | `u32.index` | `stmt.C5` | 1 | _ = e: an atomic's effect, its old value unused |
 | F1082 | `stmt.discard_i_C5` | `composite` | `i32.int` | `stmt.C5` | 1 | _ = e: an atomic's effect, its old value unused |
 
-1082 function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Deliberately absent: atomics, images, derivatives, subgroup operations, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.
+## class `builtin`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F1083 | `builtin.subgroup_invocation_id` | `FunctionArgument(builtin)` | `-` | `u32.index` | 0 | the thread's lane in its subgroup |
+| F1084 | `builtin.subgroup_size` | `FunctionArgument(builtin)` | `-` | `u32.count` | 0 | the subgroup's width (4..64 on the M3 Max) |
+| F1085 | `builtin.num_subgroups` | `FunctionArgument(builtin)` | `-` | `u32.count` | 0 | the subgroups in the workgroup |
+| F1086 | `builtin.subgroup_id` | `FunctionArgument(builtin)` | `-` | `u32.index` | 0 | the thread's subgroup in its workgroup |
+
+## class `subgroup`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F1087 | `subgroup.add` | `SubgroupCollectiveOperation` | `<S.real>` | `<S.real>` | 1 | subgroupAdd(x) over the subgroup's active lanes |
+| F1088 | `subgroup.add` | `SubgroupCollectiveOperation` | `u32.index` | `u32.index` | 1 | subgroupAdd(x) over the subgroup's active lanes |
+| F1089 | `subgroup.mul` | `SubgroupCollectiveOperation` | `<S.real>` | `<S.real>` | 1 | subgroupMul(x) over the subgroup's active lanes |
+| F1090 | `subgroup.mul` | `SubgroupCollectiveOperation` | `u32.index` | `u32.index` | 1 | subgroupMul(x) over the subgroup's active lanes |
+| F1091 | `subgroup.min` | `SubgroupCollectiveOperation` | `<S.real>` | `<S.real>` | 1 | subgroupMin(x) over the subgroup's active lanes |
+| F1092 | `subgroup.min` | `SubgroupCollectiveOperation` | `u32.index` | `u32.index` | 1 | subgroupMin(x) over the subgroup's active lanes |
+| F1093 | `subgroup.max` | `SubgroupCollectiveOperation` | `<S.real>` | `<S.real>` | 1 | subgroupMax(x) over the subgroup's active lanes |
+| F1094 | `subgroup.max` | `SubgroupCollectiveOperation` | `u32.index` | `u32.index` | 1 | subgroupMax(x) over the subgroup's active lanes |
+| F1095 | `subgroup.inclusive_add` | `SubgroupCollectiveOperation` | `<S.real>` | `<S.real>` | 1 | subgroupInclusiveAdd(x) over the subgroup's active lanes |
+| F1096 | `subgroup.inclusive_add` | `SubgroupCollectiveOperation` | `u32.index` | `u32.index` | 1 | subgroupInclusiveAdd(x) over the subgroup's active lanes |
+| F1097 | `subgroup.inclusive_mul` | `SubgroupCollectiveOperation` | `<S.real>` | `<S.real>` | 1 | subgroupInclusiveMul(x) over the subgroup's active lanes |
+| F1098 | `subgroup.inclusive_mul` | `SubgroupCollectiveOperation` | `u32.index` | `u32.index` | 1 | subgroupInclusiveMul(x) over the subgroup's active lanes |
+| F1099 | `subgroup.exclusive_add` | `SubgroupCollectiveOperation` | `<S.real>` | `<S.real>` | 1 | subgroupExclusiveAdd(x) over the subgroup's active lanes |
+| F1100 | `subgroup.exclusive_add` | `SubgroupCollectiveOperation` | `u32.index` | `u32.index` | 1 | subgroupExclusiveAdd(x) over the subgroup's active lanes |
+| F1101 | `subgroup.exclusive_mul` | `SubgroupCollectiveOperation` | `<S.real>` | `<S.real>` | 1 | subgroupExclusiveMul(x) over the subgroup's active lanes |
+| F1102 | `subgroup.exclusive_mul` | `SubgroupCollectiveOperation` | `u32.index` | `u32.index` | 1 | subgroupExclusiveMul(x) over the subgroup's active lanes |
+| F1103 | `subgroup.and` | `SubgroupCollectiveOperation` | `u32.bits` | `u32.bits` | 1 | subgroupAnd(x) |
+| F1104 | `subgroup.or` | `SubgroupCollectiveOperation` | `u32.bits` | `u32.bits` | 1 | subgroupOr(x) |
+| F1105 | `subgroup.xor` | `SubgroupCollectiveOperation` | `u32.bits` | `u32.bits` | 1 | subgroupXor(x) |
+| F1106 | `subgroup.all` | `SubgroupCollectiveOperation` | `bool.flag` | `bool.flag` | 1 | subgroupAll(b) |
+| F1107 | `subgroup.any` | `SubgroupCollectiveOperation` | `bool.flag` | `bool.flag` | 1 | subgroupAny(b) |
+| F1108 | `subgroup.broadcast_first` | `SubgroupGather` | `<S.real>` | `<S.real>` | 1 | subgroupBroadcastFirst(x) |
+| F1109 | `subgroup.broadcast` | `SubgroupGather` | `<S.real> u32.lit64` | `<S.real>` | 2 | subgroupBroadcast(x, lane): the lane a literal |
+| F1110 | `subgroup.shuffle` | `SubgroupGather` | `<S.real> u32.index` | `<S.real>` | 2 | subgroupShuffle(x, i) |
+| F1111 | `subgroup.shuffle_down` | `SubgroupGather` | `<S.real> u32.index` | `<S.real>` | 2 | subgroupShuffleDown(x, i) |
+| F1112 | `subgroup.shuffle_up` | `SubgroupGather` | `<S.real> u32.index` | `<S.real>` | 2 | subgroupShuffleUp(x, i) |
+| F1113 | `subgroup.shuffle_xor` | `SubgroupGather` | `<S.real> u32.index` | `<S.real>` | 2 | subgroupShuffleXor(x, i) |
+| F1114 | `subgroup.broadcast_first` | `SubgroupGather` | `u32.index` | `u32.index` | 1 | subgroupBroadcastFirst(x) |
+| F1115 | `subgroup.broadcast` | `SubgroupGather` | `u32.index u32.lit64` | `u32.index` | 2 | subgroupBroadcast(x, lane): the lane a literal |
+| F1116 | `subgroup.shuffle` | `SubgroupGather` | `u32.index u32.index` | `u32.index` | 2 | subgroupShuffle(x, i) |
+| F1117 | `subgroup.shuffle_down` | `SubgroupGather` | `u32.index u32.index` | `u32.index` | 2 | subgroupShuffleDown(x, i) |
+| F1118 | `subgroup.shuffle_up` | `SubgroupGather` | `u32.index u32.index` | `u32.index` | 2 | subgroupShuffleUp(x, i) |
+| F1119 | `subgroup.shuffle_xor` | `SubgroupGather` | `u32.index u32.index` | `u32.index` | 2 | subgroupShuffleXor(x, i) |
+
+## class `stmt`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F1120 | `stmt.subgroup_barrier_L0` | `composite` | `-` | `stmt.L0` | 0 | subgroupBarrier() |
+| F1121 | `stmt.subgroup_barrier_L1` | `composite` | `-` | `stmt.L1` | 0 | subgroupBarrier() |
+| F1122 | `stmt.subgroup_barrier_L2` | `composite` | `-` | `stmt.L2` | 0 | subgroupBarrier() |
+| F1123 | `stmt.subgroup_barrier_L3` | `composite` | `-` | `stmt.L3` | 0 | subgroupBarrier() |
+| F1124 | `stmt.subgroup_barrier_L4` | `composite` | `-` | `stmt.L4` | 0 | subgroupBarrier() |
+| F1125 | `stmt.subgroup_barrier_L5` | `composite` | `-` | `stmt.L5` | 0 | subgroupBarrier() |
+
+1125 function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Deliberately absent: atomics, images, derivatives, subgroup operations, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.

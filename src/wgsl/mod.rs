@@ -35,6 +35,7 @@ pub mod safe_karva;
 pub mod safe_reader;
 pub mod scaffold;
 pub mod table;
+pub mod target;
 pub mod versions;
 
 pub use chromosome::{chromosome, chromosome_typed, chromosome_with_roots, ChromosomeOptions, WgslChromosome};

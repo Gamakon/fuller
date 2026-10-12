@@ -16,9 +16,7 @@ fn main() -> Result<(), String> {
         src.push_str(&std::fs::read_to_string(part).map_err(|e| format!("read {part}: {e}"))?);
     }
     let module = naga::front::wgsl::parse_str(&src).map_err(|e| e.emit_to_string(&src))?;
-    let info = naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::all())
-        .validate(&module)
-        .map_err(|e| format!("validation: {}", e.emit_to_string(&src)))?;
+    let info = fuller::wgsl::target::Target::current().validate(&module, &src).map_err(|e| format!("validation: {e}"))?;
     let text = naga::back::wgsl::write_string(&module, &info, naga::back::wgsl::WriterFlags::empty()).map_err(|e| format!("write: {e}"))?;
     std::fs::write(output, &text).map_err(|e| format!("write {output}: {e}"))?;
     println!("{output}: {} bytes, {} functions, {} entry points", text.len(), module.functions.len(), module.entry_points.len());

@@ -195,6 +195,18 @@ fn tree_of(ctx: &mut Ctx, n: &Node) -> Result<Tree, String> {
                 }
                 return Ok(bound);
             }
+            // A subgroup operation's result: the register its statement wrote.
+            if let Some(idx) = name.strip_prefix("subgroup@") {
+                let local = format!("local.subgroup@{idx}");
+                let row = ctx.registers.get(&local).cloned().ok_or_else(|| format!("{name} read before its subgroup operation"))?;
+                let d = match row.chars().nth(4) {
+                    Some('f') => "f32.real",
+                    Some('v') => "vec4<f32>.real",
+                    Some('b') => "bool.flag",
+                    _ => "u32.index",
+                };
+                return Ok(Tree::new(&format!("load.{local}"), ty(ctx, d)?, vec![]));
+            }
             // An atomic's old value: the register its statement wrote.
             if let Some(idx) = name.strip_prefix("atomic@") {
                 return Ok(Tree::new(&format!("load.local.atomic@{idx}"), ty(ctx, "u32.index")?, vec![]));
@@ -1328,6 +1340,42 @@ impl<'a> Ctx<'a> {
         Ok(which)
     }
 
+    /// A subgroup operation: `subgroup.<fun>(x[, lane])` into a register of
+    /// its result's dual, at the statement's own point (a collective runs
+    /// where the kernel runs it). A ballot (vec4<u32>, no register), a
+    /// broadcast whose lane is not a literal, and a result no register holds
+    /// are refused by name.
+    fn subgroup_statement(&mut self, root: &Root, result: u32, rung: &str) -> Result<Tree, String> {
+        let RootKind::Subgroup { fun } = &root.kind else { return Err("not a subgroup root".into()) };
+        if fun == "ballot" {
+            return Err("subgroupBallot has no safe spelling: its vec4<u32> result has no register".into());
+        }
+        let Node::App { kids, .. } = &root.tree else { return Err("a subgroup root without its argument".into()) };
+        let trees = kids.iter().map(|k| tree_of(self, k)).collect::<Result<Vec<_>, _>>()?;
+        let x = self.value(&trees[0])?;
+        let mut args = vec![x.clone()];
+        if let Some(l) = trees.get(1) {
+            if fun == "broadcast" {
+                let lane = literal_value(l).ok_or("subgroupBroadcast's lane is not a literal (WGSL demands a constant)")?;
+                args.push(Tree::literal("literal.lit64", ty(self, "u32.lit64")?, lane));
+            } else {
+                args.push(self.value(l)?);
+            }
+        }
+        let d = self.kingdom.dual(x.ty).map(|d| d.dual.clone()).unwrap_or_default();
+        let kind = match d.as_str() {
+            "f32.real" => 'f',
+            "vec4<f32>.real" => 'v',
+            "u32.index" | "u32.bits" | "u32.count" => 'i',
+            "bool.flag" => 'b',
+            other => return Err(format!("a subgroup {fun} of {other}: no register holds its result")),
+        };
+        let expr = Tree::new(&format!("subgroup.{fun}"), x.ty, args);
+        let row = self.register(&format!("local.subgroup@{result}"), &d)?;
+        let st = self.stmt_ty(rung)?;
+        Ok(Tree::new(&format!("reg.set_{kind}_{rung}"), st, vec![Tree::new(&row, ty(self, Self::reg_dual(kind))?, vec![]), expr]))
+    }
+
     /// An atomic read-modify-write statement: `atomic.<fun>_<u|i>(array,
     /// index, value)` (a compare-exchange `atomic.cas_<u|i>(array, index,
     /// compare, value)`); its old value to a register when a later expression
@@ -1905,6 +1953,10 @@ impl<'a> Ctx<'a> {
                             _ => Some(Tree::new(&format!("stmt.block_{rung}"), st, vec![self.block(stmts, rung)?])),
                         })
                     }
+                    Statement::SubgroupCollectiveOperation { result, .. } | Statement::SubgroupGather { result, .. } | Statement::SubgroupBallot { result, .. } => {
+                        let root = self.root_at(&here, |k| matches!(k, RootKind::Subgroup { .. })).ok_or("no subgroup root at this statement")?;
+                        self.subgroup_statement(root, result.index() as u32, rung).map(Some)
+                    }
                     Statement::Atomic { result, .. } => {
                         let root = self.root_at(&here, |k| matches!(k, RootKind::Atomic { .. })).ok_or("no atomic root at this statement")?;
                         self.atomic_statement(root, result.index() as u32, rung).map(Some)
@@ -1990,9 +2042,13 @@ impl<'a> Ctx<'a> {
                         self.tail = block_tail;
                         looped
                     }
-                    Statement::Barrier(_) => {
+                    Statement::Barrier(flags) => {
                         if cond {
                             return Err("a barrier under a condition".into());
+                        }
+                        // subgroupBarrier() is the subgroup flag alone.
+                        if *flags == naga::Barrier::SUB_GROUP {
+                            return Ok(Some(Tree::new(&format!("stmt.subgroup_barrier_{rung}"), st, vec![])));
                         }
                         Ok(Some(Tree::new(&format!("stmt.barrier_{rung}"), st, vec![])))
                     }
@@ -3342,6 +3398,62 @@ mod tests {
         assert_ne!(cas, src);
         let Err(e) = read_safe(&cas, &k) else { panic!("a compare-exchange read") };
         assert!(e.contains("atomicCompareExchangeWeak has no safe spelling"), "{e}");
+    }
+
+    /// SUBGROUPS (2026-10-12): the built-in values, a reduction, the scans,
+    /// the gathers and subgroupBarrier read, render (the values declared on
+    /// main only when read), validate and read back.
+    #[test]
+    fn subgroups_render_validate_and_read_back() {
+        let k = WgslKingdom::load_safe();
+        let (t, role) = (FunctionTable::safe(), gram_role());
+        let rr = Renderer::new(&k, &t, &role);
+        let src = include_str!("../../tests/corpus/safewgsl/draft_subgroups.wgsl");
+        let tree = read_safe(src, &k).unwrap_or_else(|e| panic!("{e}")).tree;
+        let out = rr.kernel(&tree).unwrap();
+        for want in [
+            "@builtin(subgroup_invocation_id) sg_lane: u32",
+            "@builtin(subgroup_size) sg_size: u32",
+            "@builtin(num_subgroups) sg_count: u32",
+            "@builtin(subgroup_id) sg_index: u32",
+            "subgroupAdd(",
+            "subgroupInclusiveAdd(",
+            "subgroupExclusiveAdd(",
+            "subgroupMax(",
+            "subgroupMin(",
+            "subgroupBroadcastFirst(",
+            "subgroupBroadcast(",
+            "subgroupShuffle(",
+            "subgroupShuffleXor(",
+            "subgroupShuffleDown(",
+            "subgroupShuffleUp(",
+            "subgroupBarrier();",
+        ] {
+            assert!(out.text.contains(want), "{want}\n{}", out.text);
+        }
+        validate_text(&out.text).unwrap_or_else(|e| panic!("{e}\n{}", out.text));
+        read_safe(&format!("// grid 256 1 1 1\n{}", out.text), &k).unwrap_or_else(|e| panic!("read back: {e}"));
+        // On a 2-D workgroup naga refuses the lane and subgroup-number
+        // built-ins: they are computed at entry instead, and the kernel
+        // validates and reads back.
+        fn widen(t: &mut Tree) {
+            if t.name == "grid.of" {
+                t.kids[0].konst = 16.0;
+                t.kids[1].konst = 16.0;
+            }
+            t.kids.iter_mut().for_each(widen);
+        }
+        let mut square = tree.clone();
+        widen(&mut square);
+        let out2 = rr.kernel(&square).unwrap();
+        assert!(out2.text.contains("@workgroup_size(16, 16, 1)"), "{}", out2.text);
+        assert!(out2.text.contains("let sg_lane: u32 = subgroupExclusiveAdd(1u);") && out2.text.contains("let sg_index: u32 = lidx / sg_size;"), "{}", out2.text);
+        assert!(!out2.text.contains("subgroup_invocation_id") && !out2.text.contains("@builtin(subgroup_id)"), "{}", out2.text);
+        validate_text(&out2.text).unwrap_or_else(|e| panic!("{e}\n{}", out2.text));
+        read_safe(&format!("// grid 16 16 1 1\n{}", out2.text), &k).unwrap_or_else(|e| panic!("read back 2-D: {e}"));
+        // A kernel that reads no subgroup value declares none.
+        let plain = rr.kernel(&read_safe(include_str!("../../tests/corpus/safewgsl/draft_atomics.wgsl"), &k).unwrap().tree).unwrap().text;
+        assert!(!plain.contains("subgroup"), "{plain}");
     }
 
     /// A kernel with a helper function reads: the helper is inlined at its

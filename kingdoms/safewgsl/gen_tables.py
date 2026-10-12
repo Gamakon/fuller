@@ -846,6 +846,31 @@ for r in RUNGS + RUNGS5:
     f("stmt", "discard_u_" + r, "composite", ["u32.index"], "stmt." + r, "_ = e: an atomic's effect, its old value unused")
     f("stmt", "discard_i_" + r, "composite", ["i32.int"], "stmt." + r, "_ = e: an atomic's effect, its old value unused")
 
+# ---- subgroups (2026-10-12; the M3 Max grants SUBGROUP and SUBGROUP_BARRIER, sizes 4..64) ----
+# The built-in values, the collective operations (reduce, inclusive and exclusive scan), the gathers
+# (broadcast with a literal lane, broadcast-first, shuffle, shuffle up / down / xor) and subgroupBarrier (at
+# the L rungs). naga 0.20 reads them WITHOUT `enable subgroups;` (it cannot parse an enable directive); the
+# device must ask for the feature (fuller's oracle device does). subgroupBallot is not spelled: its
+# vec4<u32> result has no register.
+f("builtin", "subgroup_invocation_id", "FunctionArgument(builtin)", [], "u32.index", "the thread's lane in its subgroup")
+f("builtin", "subgroup_size", "FunctionArgument(builtin)", [], "u32.count", "the subgroup's width (4..64 on the M3 Max)")
+f("builtin", "num_subgroups", "FunctionArgument(builtin)", [], "u32.count", "the subgroups in the workgroup")
+f("builtin", "subgroup_id", "FunctionArgument(builtin)", [], "u32.index", "the thread's subgroup in its workgroup")
+for op, wgsl in (("add", "subgroupAdd"), ("mul", "subgroupMul"), ("min", "subgroupMin"), ("max", "subgroupMax"), ("inclusive_add", "subgroupInclusiveAdd"), ("inclusive_mul", "subgroupInclusiveMul"), ("exclusive_add", "subgroupExclusiveAdd"), ("exclusive_mul", "subgroupExclusiveMul")):
+    f("subgroup", op, "SubgroupCollectiveOperation", ["<S.real>"], "<S.real>", f"{wgsl}(x) over the subgroup's active lanes")
+    f("subgroup", op, "SubgroupCollectiveOperation", ["u32.index"], "u32.index", f"{wgsl}(x) over the subgroup's active lanes")
+for op, wgsl in (("and", "subgroupAnd"), ("or", "subgroupOr"), ("xor", "subgroupXor")):
+    f("subgroup", op, "SubgroupCollectiveOperation", ["u32.bits"], "u32.bits", f"{wgsl}(x)")
+for op, wgsl in (("all", "subgroupAll"), ("any", "subgroupAny")):
+    f("subgroup", op, "SubgroupCollectiveOperation", ["bool.flag"], "bool.flag", f"{wgsl}(b)")
+for value in ("<S.real>", "u32.index"):
+    f("subgroup", "broadcast_first", "SubgroupGather", [value], value, "subgroupBroadcastFirst(x)")
+    f("subgroup", "broadcast", "SubgroupGather", [value, "u32.lit64"], value, "subgroupBroadcast(x, lane): the lane a literal")
+    for op, wgsl in (("shuffle", "subgroupShuffle"), ("shuffle_down", "subgroupShuffleDown"), ("shuffle_up", "subgroupShuffleUp"), ("shuffle_xor", "subgroupShuffleXor")):
+        f("subgroup", op, "SubgroupGather", [value, "u32.index"], value, f"{wgsl}(x, i)")
+for r in ("L0", "L1", "L2", "L3", "L4", "L5"):
+    f("stmt", "subgroup_barrier_" + r, "composite", [], "stmt." + r, "subgroupBarrier()")
+
 
 def write_tsv(path, header, rows):
     with open(path, "w") as out:
