@@ -1151,6 +1151,7 @@ for op in ("sub_floor", "div", "mod", "shr", "and", "round_down", "min"):
     f("index", op, "composite", ["u32.xbound", "u32.index"], "u32.xbound", f"index.{op}: at most its first operand, whatever the second")
 f("index", "min", "composite", ["u32.index", "u32.xbound"], "u32.xbound", "min(a, b): at most b, whatever a")
 f("index", "clamp_to", "composite", ["u32.xbound", "u32.count"], "u32.xbound", "i < n: at most i")
+f("literal", "index", "Literal", [], "u32.xbound", "a literal bound value, any u32 (2026-10-12: a uniform literal is 1..=4096)")
 for op in ("min", "max"):
     f("subgroup", op, "SubgroupCollectiveOperation", ["u32.xbound"], "u32.xbound", f"subgroup{op.capitalize()}(x) of a bound value")
 f("subgroup", "broadcast_first", "SubgroupGather", ["u32.xbound"], "u32.xbound", "subgroupBroadcastFirst(x) of a bound value")

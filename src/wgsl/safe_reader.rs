@@ -1616,10 +1616,12 @@ impl<'a> Ctx<'a> {
                     "index.div" => "div",
                     "index.min" | "count.min" => "min",
                     "index.max" | "count.max" => "max",
-                    "index.shl" => "shl",
-                    "index.shr" => "shr",
-                    "index.and" => "and",
-                    "index.or" => "or",
+                    // The reader names u32 bit operations bits.*: the kingdom's
+                    // index and uniform rows render the same operators.
+                    "index.shl" | "bits.shl" => "shl",
+                    "index.shr" | "bits.shr" => "shr",
+                    "index.and" | "bits.and" => "and",
+                    "index.or" | "bits.or" => "or",
                     _ => return Ok(None),
                 };
                 match (self.uniform_of(a)?, self.uniform_of(b)?) {
@@ -1657,8 +1659,13 @@ impl<'a> Ctx<'a> {
         let at = |name: &str, kids: Vec<Tree>| Tree::new(name, xb, kids);
         Ok(match (t.name.as_str(), t.kids.as_slice()) {
             ("reg.get_i", [r]) => at("reg.get_i", vec![r.clone()]),
+            // A literal of any value (a uniform literal is 1..=4096).
+            (n, []) if n.starts_with("literal.") => Tree::literal("literal.index", xb, t.konst),
             ("index.add" | "index.max" | "index.or", [a, b]) => at(&t.name, vec![self.xbound_of(a)?, self.xbound_of(b)?]),
+            ("bits.or", [a, b]) => at("index.or", vec![self.xbound_of(a)?, self.xbound_of(b)?]),
             ("index.sub_floor" | "index.div" | "index.mod" | "index.shr" | "index.and" | "index.round_down", [a, b]) if b.ty == index => at(&t.name, vec![self.xbound_of(a)?, b.clone()]),
+            // The reader names `>>` and `&` on u32 bits.*: the index rows render them.
+            ("bits.shr" | "bits.and", [a, b]) if b.name.starts_with("literal.") => at(&t.name.replacen("bits.", "index.", 1), vec![self.xbound_of(a)?, Tree::literal("literal.index", index, b.konst)]),
             ("index.min", [a, b]) => match self.xbound_of(a) {
                 Ok(a) if b.ty == index => at("index.min", vec![a, b.clone()]),
                 _ if a.ty == index => at("index.min", vec![a.clone(), self.xbound_of(b)?]),
@@ -3530,6 +3537,11 @@ impl<'a> Ctx<'a> {
                 ("index.min", [x, c]) | ("index.min", [c, x]) if literal_value(c) == Some(cap) => x.clone(),
                 _ => expr,
             };
+            // A bound of 0 (an expression bound's fallback renders `min((0u), cap)`):
+            // the loop never runs, and the counter keeps its value.
+            if literal_value(&expr) == Some(0.0) && !do_while {
+                return Ok(None);
+            }
             let expr = Tree { ty: index_ty, ..expr };
             (Tree::new("bound.of_index", ty(self, "u32.boundx")?, vec![expr]), "boundx")
         };

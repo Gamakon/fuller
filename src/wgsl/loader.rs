@@ -668,7 +668,8 @@ mod tests {
         // 1,497 with bound.x_of_uniform; 1,496 with the uniform values, the uniform bound and the in-place conditional block (legality item 5).
         // 1,522 with no wrap in a loop bound (the wrap-free rows of u32.xbound, the clamped min of a
         // uniform value that may wrap; 2026-10-12).
-        assert_eq!(fs.rows.len(), 1522);
+        // 1,523 with a literal bound value (literal.index at u32.xbound; a random kernel's bound of 0).
+        assert_eq!(fs.rows.len(), 1523);
         let dual = |t: Ty| k.dual(t).unwrap().dual.clone();
         let producers = |d: &str| -> Vec<String> { k.rows.iter().filter(|r| dual(r.output) == d).map(|r| r.name.clone()).collect() };
         assert_eq!(producers("kernel.safe"), vec!["kernel.entry_safe"]);

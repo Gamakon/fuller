@@ -2911,17 +2911,23 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 | F1513 | `index.min` | `composite` | `u32.index u32.xbound` | `u32.xbound` | 2 | min(a, b): at most b, whatever a |
 | F1514 | `index.clamp_to` | `composite` | `u32.xbound u32.count` | `u32.xbound` | 2 | i < n: at most i |
 
+## class `literal`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F1515 | `literal.index` | `Literal` | `-` | `u32.xbound` | 0 | a literal bound value, any u32 (2026-10-12: a uniform literal is 1..=4096) |
+
 ## class `subgroup`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F1515 | `subgroup.min` | `SubgroupCollectiveOperation` | `u32.xbound` | `u32.xbound` | 1 | subgroupMin(x) of a bound value |
-| F1516 | `subgroup.max` | `SubgroupCollectiveOperation` | `u32.xbound` | `u32.xbound` | 1 | subgroupMax(x) of a bound value |
-| F1517 | `subgroup.broadcast_first` | `SubgroupGather` | `u32.xbound` | `u32.xbound` | 1 | subgroupBroadcastFirst(x) of a bound value |
-| F1518 | `subgroup.broadcast` | `SubgroupGather` | `u32.xbound u32.lit64` | `u32.xbound` | 2 | subgroupBroadcast(x, lane) of a bound value |
-| F1519 | `subgroup.shuffle` | `SubgroupGather` | `u32.xbound u32.index` | `u32.xbound` | 2 | shuffle(x, i) of a bound value |
-| F1520 | `subgroup.shuffle_down` | `SubgroupGather` | `u32.xbound u32.index` | `u32.xbound` | 2 | shuffle_down(x, i) of a bound value |
-| F1521 | `subgroup.shuffle_up` | `SubgroupGather` | `u32.xbound u32.index` | `u32.xbound` | 2 | shuffle_up(x, i) of a bound value |
-| F1522 | `subgroup.shuffle_xor` | `SubgroupGather` | `u32.xbound u32.index` | `u32.xbound` | 2 | shuffle_xor(x, i) of a bound value |
+| F1516 | `subgroup.min` | `SubgroupCollectiveOperation` | `u32.xbound` | `u32.xbound` | 1 | subgroupMin(x) of a bound value |
+| F1517 | `subgroup.max` | `SubgroupCollectiveOperation` | `u32.xbound` | `u32.xbound` | 1 | subgroupMax(x) of a bound value |
+| F1518 | `subgroup.broadcast_first` | `SubgroupGather` | `u32.xbound` | `u32.xbound` | 1 | subgroupBroadcastFirst(x) of a bound value |
+| F1519 | `subgroup.broadcast` | `SubgroupGather` | `u32.xbound u32.lit64` | `u32.xbound` | 2 | subgroupBroadcast(x, lane) of a bound value |
+| F1520 | `subgroup.shuffle` | `SubgroupGather` | `u32.xbound u32.index` | `u32.xbound` | 2 | shuffle(x, i) of a bound value |
+| F1521 | `subgroup.shuffle_down` | `SubgroupGather` | `u32.xbound u32.index` | `u32.xbound` | 2 | shuffle_down(x, i) of a bound value |
+| F1522 | `subgroup.shuffle_up` | `SubgroupGather` | `u32.xbound u32.index` | `u32.xbound` | 2 | shuffle_up(x, i) of a bound value |
+| F1523 | `subgroup.shuffle_xor` | `SubgroupGather` | `u32.xbound u32.index` | `u32.xbound` | 2 | shuffle_xor(x, i) of a bound value |
 
-1522 function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Deliberately absent: storage-buffer atomics, atomic compare-exchange (naga 0.20's Metal backend lacks it), subgroupBallot, images, derivatives, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.
+1523 function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Deliberately absent: storage-buffer atomics, atomic compare-exchange (naga 0.20's Metal backend lacks it), subgroupBallot, images, derivatives, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.
