@@ -530,7 +530,18 @@ fn cont_below_top(t: &Tree, top: bool) -> bool {
 /// `uniform.add` is `index.add`, `uniform.cfg_d` is `load.cfg_d`.
 /// The rows written as a call of a kingdom helper (`COMPOSITES`), by row and
 /// helper; the reader reads a call of one back as its row.
-pub const COMPOSITE_ROWS: [(&str, &str); 11] = [
+/// (The fixed-point, hash and sign conversions were written inline until
+/// 2026-10-12: their forms have no literal and their text read back as other
+/// forms' rows, 25 of 1,000 random trees.)
+pub const COMPOSITE_ROWS: [(&str, &str); 19] = [
+    ("convert.q15_16_to_f32", "fx_to_f32"),
+    ("convert.f32_to_q15_16", "fx_from_f32"),
+    ("convert.sign_to_real", "sign_to_real"),
+    ("convert.hash32_to_bits", "hash_to_bits"),
+    ("convert.hash32_to_unit", "hash_to_unit"),
+    ("hash.combine", "hash_combine"),
+    ("hash.split_lo", "hash_lo"),
+    ("hash.split_hi", "hash_hi"),
     ("fixed.add_sat", "fx_add_sat"),
     ("fixed.sub_sat", "fx_sub_sat"),
     ("fixed.mul", "fx_mul"),
@@ -1945,11 +1956,6 @@ impl Renderer<'_> {
             "index.clamp_to" => Some(format!("min({}, max({}, 1u) - 1u)", a[0], a[1])),
             "index.band_of" => Some(format!("({} / max({}, 1u))", a[0], a[1])),
             "count.sub_floor" => Some(format!("select({0} - {1}, 0u, {1} > {0})", a[0], a[1])),
-            "convert.q15_16_to_f32" => Some(format!("(f32({}) * (1.0 / 65536.0))", a[0])),
-            "convert.f32_to_q15_16" => Some(format!("i32(clamp(round({} * 65536.0), -2147483648.0, 2147483520.0))", a[0])),
-            "convert.sign_to_real" => Some(format!("select(-1.0, 1.0, {})", a[0])),
-            "convert.hash32_to_bits" => Some(a[0].clone()),
-            "convert.hash32_to_unit" => Some(format!("(f32({} >> 8u) * (1.0 / 16777216.0))", a[0])),
             "select.negate_if" => Some(format!("select(-({0}), {0}, {1})", a[0], a[1])),
             "quantise.pack4_code8" => Some(format!("(({} & 255u) | (({} & 255u) << 8u) | (({} & 255u) << 16u))", a[0], a[1], a[2])),
             "quantise.pack4_code8_hi" => Some(format!("(({} & 16777215u) | (({} & 255u) << 24u))", a[0], a[1])),
@@ -1958,15 +1964,12 @@ impl Renderer<'_> {
             "bits.insert_hi" => Some(format!("select({0} & ((1u << ({1} & 31u)) - 1u), {0}, {1} >= 32u)", a[0], a[1])),
             "bits.pack_sign" => Some(format!("select(0u, 1u, {})", a[0])),
             "bits.unpack_sign" => Some(format!("((({} >> ({} & 31u)) & 1u) == 1u)", a[0], a[1])),
-            "hash.combine" => Some(format!("({} ^ {})", a[0], a[1])),
             "index.shl" => Some(format!("(({}) << (({}) & 31u))", a[0], a[1])),
             "index.shr" => Some(format!("(({}) >> (({}) & 31u))", a[0], a[1])),
             "index.and" => Some(format!("(({}) & ({}))", a[0], a[1])),
             "index.sub_floor" => Some(format!("select(({0}) - ({1}), 0u, ({1}) > ({0}))", a[0], a[1])),
             "index.round_down" => Some(format!("(({0}) - (({0}) % max({1}, 1u)))", a[0], a[1])),
             "index.or" => Some(format!("(({}) | ({}))", a[0], a[1])),
-            "hash.split_lo" => Some(format!("{}.x", a[0])),
-            "hash.split_hi" => Some(format!("{}.y", a[0])),
             _ => None,
         };
         if let Some(text) = inline {
@@ -1976,7 +1979,7 @@ impl Renderer<'_> {
             let levels: f32 = k.parse::<f32>().map_err(|_| format!("{name}: codebook size"))?;
             return Ok(format!("u32(clamp(round((clamp({}, -1.0, 1.0) + 1.0) * {:?}), 0.0, {:?}))", a[0], (levels - 1.0) / 2.0, levels - 1.0));
         }
-        if let Some(k) = instance.strip_suffix("_to_real") {
+        if let Some(k) = instance.strip_suffix("_to_real").filter(|k| k.starts_with("code")) {
             let levels: f32 = k.strip_prefix("code").and_then(|n| n.parse().ok()).ok_or_else(|| format!("{name}: codebook size"))?;
             return Ok(format!("(f32(min({}, {}u)) * {:?} - 1.0)", a[0], levels as u32 - 1, 2.0 / (levels - 1.0)));
         }
@@ -2500,6 +2503,14 @@ fn slot_ctor(slot: &str) -> Result<String, String> {
 /// a one-line expression. Q15.16 arithmetic is on 32-bit two's complement
 /// with explicit saturation; the 64-bit products use 16-bit limbs.
 pub const COMPOSITES: &[(&str, &str)] = &[
+    ("fx_to_f32", "fn fx_to_f32(a: i32) -> f32 { return f32(a) * (1.0 / 65536.0); }"),
+    ("fx_from_f32", "fn fx_from_f32(x: f32) -> i32 { return i32(clamp(round(x * 65536.0), -2147483648.0, 2147483520.0)); }"),
+    ("sign_to_real", "fn sign_to_real(s: bool) -> f32 { return select(-1.0, 1.0, s); }"),
+    ("hash_to_bits", "fn hash_to_bits(h: u32) -> u32 { return h; }"),
+    ("hash_to_unit", "fn hash_to_unit(h: u32) -> f32 { return f32(h >> 8u) * (1.0 / 16777216.0); }"),
+    ("hash_combine", "fn hash_combine(h: u32, b: u32) -> u32 { return h ^ b; }"),
+    ("hash_lo", "fn hash_lo(h: vec2<u32>) -> u32 { return h.x; }"),
+    ("hash_hi", "fn hash_hi(h: vec2<u32>) -> u32 { return h.y; }"),
     ("at_vec2f", "fn at_vec2f(v: vec2<f32>, i: u32) -> f32 { var t = v; return t[i & 1u]; }"),
     ("at_vec3f", "fn at_vec3f(v: vec3<f32>, i: u32) -> f32 { var t = v; return t[min(i, 2u)]; }"),
     ("at_vec4f", "fn at_vec4f(v: vec4<f32>, i: u32) -> f32 { var t = v; return t[i & 3u]; }"),

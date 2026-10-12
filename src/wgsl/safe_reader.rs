@@ -423,12 +423,21 @@ fn tree_of(ctx: &mut Ctx, n: &Node) -> Result<Tree, String> {
             // how the kingdom writes a shift's count, masked below the width;
             // read back as the count (2026-10-12: 36 of 1,000 random trees).
             if (name.ends_with(".shl") || name.ends_with(".shr")) && kids.len() == 2 {
-                let masked = |t: &Tree| -> Option<Tree> {
-                    let t = if t.name.starts_with("shape.splat") && t.kids.len() == 1 { &t.kids[0] } else { t };
+                let strip = |t: &Tree| -> Option<Tree> {
                     match (t.name.as_str(), t.kids.as_slice()) {
                         ("bits.and" | "index.and", [x, m]) if m.name.starts_with("literal.") && m.konst == 31.0 => Some(x.clone()),
                         _ => None,
                     }
+                };
+                // (A vector's count is splatted by the renderer; the row's
+                // count is the scalar.)
+                let masked = |t: &Tree| -> Option<Tree> {
+                    if t.name.starts_with("shape.splat") && t.kids.len() == 1 {
+                        // naga folds a literal count's mask (`(40u) & 31u` is 8u).
+                        let x = &t.kids[0];
+                        return strip(x).or_else(|| literal_value(x).map(|_| x.clone()));
+                    }
+                    strip(t)
                 };
                 if let Some(x) = masked(&kids[1]) {
                     kids[1] = x;
@@ -758,6 +767,21 @@ fn floor_differences(n: &Node) -> Node {
         }
     }
     Node::App { name: name.clone(), slot: slot.clone(), known: *known, kids }
+}
+
+/// A loop bound without the kingdom's cap (`min(e, MAX_LOOP_TRIP)`, which
+/// the renderer writes on every computed bound), wherever it stands in it.
+fn strip_cap(t: &Tree) -> Tree {
+    let cap = crate::wgsl::render::MAX_LOOP_TRIP as f32;
+    if let ("index.min", [a, b]) = (t.name.as_str(), t.kids.as_slice()) {
+        if literal_value(b) == Some(cap) {
+            return strip_cap(a);
+        }
+        if literal_value(a) == Some(cap) {
+            return strip_cap(b);
+        }
+    }
+    Tree { name: t.name.clone(), ty: t.ty, konst: t.konst, kids: t.kids.iter().map(strip_cap).collect() }
 }
 
 /// The marker of a tree already in the safe grammar inside a raw one.
@@ -1720,6 +1744,9 @@ impl<'a> Ctx<'a> {
             ("index.sub_floor" | "index.div" | "index.mod" | "index.shr" | "index.and" | "index.round_down", [a, b]) if b.ty == index => at(&t.name, vec![self.xbound_of(a)?, b.clone()]),
             // The reader names `>>` and `&` on u32 bits.*: the index rows render them.
             ("bits.shr" | "bits.and", [a, b]) if b.name.starts_with("literal.") => at(&t.name.replacen("bits.", "index.", 1), vec![self.xbound_of(a)?, Tree::literal("literal.index", index, b.konst)]),
+            // Any other second operand: an index (conform takes a bit row's
+            // index twin, 2026-10-12).
+            ("bits.shr" | "bits.and", [a, b]) => at(&t.name.replacen("bits.", "index.", 1), vec![self.xbound_of(a)?, b.clone()]),
             ("index.min", [a, b]) => match self.xbound_of(a) {
                 Ok(a) if b.ty == index => at("index.min", vec![a, b.clone()]),
                 _ if a.ty == index => at("index.min", vec![a.clone(), self.xbound_of(b)?]),
@@ -2651,6 +2678,13 @@ impl<'a> Ctx<'a> {
         let Some(stem) = rung_stem(&t.name) else { return Ok(t.clone()) };
         if stem == "stmt.barrier" || stem == "stmt.storage_barrier" || stem == "stmt.subgroup_barrier" || stem == "stmt.return" || stem.starts_with("loop.items") {
             return Err(format!("{} where only conditional statements are spelled (after a loop's continue guard, or before the epilogue's last store of h)", t.name));
+        }
+        // Conditional statements written in place at an L rung are, at a
+        // conditional rung, a block like any (stmt.cblock has L rows only).
+        if stem == "stmt.cblock" {
+            let [b] = t.kids.as_slice() else { return Err(format!("{} with {} children", t.name, t.kids.len())) };
+            let c = format!("C{d}");
+            return Ok(Tree::new(&format!("stmt.block_{c}"), ty(self, &format!("stmt.{c}"))?, vec![self.rerung(b, d)?]));
         }
         // A loop that breaks: its body, the break block B<d+1> (conditional
         // statements of the next depth, the guard, conditional statements),
@@ -3678,11 +3712,9 @@ impl<'a> Ctx<'a> {
             let expr = self.value(bound)?;
             // The kingdom's own cap (bound.of_index renders min(e, MAX_LOOP_TRIP)),
             // read back: the bound is e.
-            let cap = crate::wgsl::render::MAX_LOOP_TRIP as f32;
-            let expr = match (expr.name.as_str(), expr.kids.as_slice()) {
-                ("index.min", [x, c]) | ("index.min", [c, x]) if literal_value(c) == Some(cap) => x.clone(),
-                _ => expr,
-            };
+            // Anywhere in it: an unrolled item loop's test `t + u <= min(e, cap)`
+            // is the floored bound over the capped one (2026-10-12).
+            let expr = strip_cap(&expr);
             // A bound of 0 (an expression bound's fallback renders `min((0u), cap)`):
             // the loop never runs, and the counter keeps its value.
             if literal_value(&expr) == Some(0.0) && !do_while {
@@ -3853,7 +3885,9 @@ impl<'a> Ctx<'a> {
         // leaves its exit value); a tile loop that starts at a reads its
         // counter as a + k and runs bound - a times.
         let entry = if !self.stored_seen.contains(&counter) { Some(0.0) } else { self.axis_memo.get(&counter).and_then(|(t, _)| literal_value(t)) };
-        let item_loop = !(kind == "lit64" || kind == "boundx");
+        // The item loop is the one whose body is at L1 (an expression-bounded
+        // loop over t at the top level is one: loop.items_boundx, 2026-10-12).
+        let item_loop = body_rung == "L1";
         let start = match entry {
             Some(v) => v,
             None if item_loop => 0.0,
@@ -5317,7 +5351,7 @@ mod tests {
     /// The counts of [`random_sampler_trees_read_back_to_their_own_text`]
     /// reached so far: to their own text, and read back at all.
     const READ_BACK_FLOOR: usize = 108;
-    const READ_AT_ALL_FLOOR: usize = 903;
+    const READ_AT_ALL_FLOOR: usize = 964;
 
     /// THE KINGDOM'S COMPLETENESS BAR (2026-10-12): 1,000 random trees of
     /// the kingdom's typed sampler (the safe root, depth 7, seeds 0..1000)

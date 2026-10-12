@@ -517,6 +517,14 @@ fn conform_at(t: &Tree, demand: Ty, kingdom: &WgslKingdom, per_kernel: &[PerKern
     if t.name == FALLBACK {
         return Ok(Tree::fallback(demand));
     }
+    // A splat of a literal where a vector dual with no splat row is demanded
+    // (a 64-bit hash state, a wide fixed-point value): its fallback, which
+    // the renderer writes as that splat of zero (2026-10-12).
+    if let (true, [x]) = (t.name.starts_with("shape.splat"), t.kids.as_slice()) {
+        if x.name.starts_with("literal.") && !kingdom.rows.iter().any(|r| r.output == demand && (r.name.starts_with("shape.splat") || r.name.starts_with("literal."))) && kingdom.dual(demand).is_some_and(|d| f64::from(d.fallback_bits) == f64::from(x.konst)) {
+            return Ok(Tree::fallback(demand));
+        }
+    }
     // A bit operation the reader named by naga's node, used on an index:
     // the index row of the same operation.
     if let Some(op) = t.name.strip_prefix("bits.").filter(|op| matches!(*op, "shl" | "shr" | "and" | "or")) {
@@ -610,6 +618,17 @@ fn conform_at(t: &Tree, demand: Ty, kingdom: &WgslKingdom, per_kernel: &[PerKern
         }
         if let Some(e) = errors.into_iter().next() {
             return Err(e);
+        }
+    }
+    // The same operation in the demanded form's class (`max` read as
+    // index.max where a count is demanded is count.max: the inference chose
+    // the other form; 2026-10-12).
+    if let (Some((class, op)), Some(d)) = (t.name.split_once('.'), kingdom.dual(demand)) {
+        let twin = format!("{}.{op}", d.form);
+        if class != d.form && !t.kids.is_empty() && kingdom.rows.iter().any(|r| r.name == twin && r.output == demand && r.inputs.len() == t.kids.len()) {
+            if let Ok(x) = conform_at(&Tree { name: twin, ty: t.ty, konst: t.konst, kids: t.kids.clone() }, demand, kingdom, per_kernel, convert) {
+                return Ok(x);
+            }
         }
     }
     // No row under the demand: a one-input row that converts the node's
