@@ -176,6 +176,25 @@ pub fn columns(per_case: &[Option<[f64; N]>], passed: usize, outputs: &[Option<(
     out
 }
 
+/// The columns out of the angle, logged only: `scale` pointed the wrong way
+/// on all three saved runs (2026-10-12: kernels one rule-step from correct
+/// had the larger error after the best constant multiple; AUC 0.32, 0.22,
+/// 0.25), a known defect until understood.
+pub const LOGGED_ONLY: [&str; 1] = ["scale"];
+
+/// The HFF angle (`gram::truenorth`'s `acos(1 − mean(x²))`) over the columns
+/// but [`LOGGED_ONLY`]: an infeasible kernel's place in the band.
+pub fn angle(c: &[f64; N]) -> f64 {
+    let kept: Vec<f64> = c.iter().zip(COLUMNS).filter(|(_, name)| !LOGGED_ONLY.contains(name)).map(|(x, _)| *x).collect();
+    let energy = kept.iter().map(|v| v.clamp(0.0, 1.0).powi(2)).sum::<f64>() / kept.len().max(1) as f64;
+    let cos = (1.0 - energy.min(1.0)).clamp(-1.0, 1.0);
+    if cos > 1.0 - 1.1920929e-7 {
+        0.0
+    } else {
+        cos.acos()
+    }
+}
+
 /// Every column 1: a kernel with no output to compare (it did not compile,
 /// render, or run).
 pub const WORST: [f64; N] = [1.0; N];
@@ -250,5 +269,19 @@ mod tests {
         let seeing = columns(&[Some(one), Some(one)], 2, &[Some((1, 10, 8)), Some((2, 11, 8))]);
         assert_eq!(seeing, [0.0; N]);
         assert_eq!(columns(&[None], 0, &[None]), WORST);
+    }
+
+    /// The angle leaves `scale` out: changing it alone moves nothing, any
+    /// other column moves it; all 0 is 0, all 1 is π/2.
+    #[test]
+    fn the_angle_leaves_scale_out() {
+        let mut c = [0.2; N];
+        let base = angle(&c);
+        c[2] = 0.9;
+        assert_eq!(angle(&c), base);
+        c[1] = 0.9;
+        assert!(angle(&c) > base);
+        assert_eq!(angle(&[0.0; N]), 0.0);
+        assert!((angle(&WORST) - std::f64::consts::FRAC_PI_2).abs() < 1e-12);
     }
 }

@@ -1059,7 +1059,8 @@ pub struct Fitness {
     /// cases' outputs and a failing pair's; all 0 when feasible, all 1 with
     /// no output to compare.
     pub closeness: [f64; crate::wgsl::closeness::N],
-    /// The HFF angle of `closeness` (`truenorth`), in [0, π/2]: the
+    /// The HFF angle of `closeness` but its logged-only columns
+    /// (`closeness::angle`; `scale` is logged, not in it), in [0, π/2]: the
     /// infeasible kernel's place within the infeasible band (phylu
     /// `wgsl_fit`); 0 when feasible.
     pub closeness_hff: f64,
@@ -1199,7 +1200,7 @@ impl FitnessContext {
         let t = Instant::now();
         let mut meter = Meter::default();
         let mut split = Split::default();
-        let infeasible = |passed: usize, distance: f64, closeness: [f64; crate::wgsl::closeness::N], detail: String, t: Instant, meter: &Meter, split: &Split| Fitness { feasible: false, passed, distance, closeness, closeness_hff: truenorth(&closeness), columns: [1.0; 6], speedups: [0.0; 3], hff: f64::INFINITY, detail, seconds: t.elapsed().as_secs_f64(), predicted_ms: [0.0; 3], rate_per_g: meter.rate_per_g(), floor_ms: meter.floor_ms, measured_ms: [0.0; 3], split: Split { total: t.elapsed().as_secs_f64() * 1e3, ..*split } };
+        let infeasible = |passed: usize, distance: f64, closeness: [f64; crate::wgsl::closeness::N], detail: String, t: Instant, meter: &Meter, split: &Split| Fitness { feasible: false, passed, distance, closeness, closeness_hff: crate::wgsl::closeness::angle(&closeness), columns: [1.0; 6], speedups: [0.0; 3], hff: f64::INFINITY, detail, seconds: t.elapsed().as_secs_f64(), predicted_ms: [0.0; 3], rate_per_g: meter.rate_per_g(), floor_ms: meter.floor_ms, measured_ms: [0.0; 3], split: Split { total: t.elapsed().as_secs_f64() * 1e3, ..*split } };
         let elapsed_ms = |t: Instant| t.elapsed().as_secs_f64() * 1e3;
         let compiled = Gram::compile(dev, source);
         split.compile = elapsed_ms(t);
