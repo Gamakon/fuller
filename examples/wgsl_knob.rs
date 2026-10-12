@@ -197,7 +197,7 @@ fn rule_all(files: &[PathBuf], rule: rules::Rule, n: usize, seed: u64, out: &Pat
         let mut sites = rule.sites(&r.tree, kingdom);
         if sites.is_empty() {
             let why = rule.why_not(&r.tree, kingdom).unwrap_or_default();
-            *not_fired.entry(why.chars().take(90).collect()).or_default() += 1;
+            *not_fired.entry(why.chars().take(300).collect()).or_default() += 1;
             continue;
         }
         lit += 1;
@@ -254,6 +254,7 @@ fn fires(files: &[PathBuf], kingdom: &WgslKingdom) -> Result<(), String> {
     println!();
     let (mut read, mut checked, mut climbs, mut climbs_again) = (0usize, 0usize, 0usize, 0usize);
     let mut fired: BTreeMap<&str, usize> = BTreeMap::new();
+    let mut depths: BTreeMap<usize, usize> = BTreeMap::new();
     for f in files {
         let name = f.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
         let text = std::fs::read_to_string(f).map_err(|e| format!("{}: {e}", f.display()))?;
@@ -305,12 +306,37 @@ fn fires(files: &[PathBuf], kingdom: &WgslKingdom) -> Result<(), String> {
         }
         climbs += usize::from(climbed);
         climbs_again += usize::from(again);
-        println!();
+        let depth = chain_depth(&r.tree, kingdom, 3);
+        *depths.entry(depth).or_default() += 1;
+        println!("\tchain {depth}");
     }
     println!("\nmembers {}: read {read}, read with the same text and passing the check {checked}", files.len());
     println!("members a rule fires on, by rule: {fired:?}");
     println!("members with a climbing step: {climbs}; whose child a climbing rule (vec4-tile or grow-rows) fires on again: {climbs_again}");
+    let at_least = |n: usize| depths.iter().filter(|(d, _)| **d >= n).map(|(_, c)| c).sum::<usize>();
+    println!("members by their longest chain of climbing steps (up to 3): {depths:?}; 1 or more {}, 2 or more {}, 3 or more {}", at_least(1), at_least(2), at_least(3));
     Ok(())
+}
+
+/// The longest chain of climbing steps (vec4-tile, grow-rows; every site
+/// tried) from a kernel, up to `limit`, each child passing the layered
+/// check and read back before the next step.
+fn chain_depth(t: &fuller::wgsl::render::Tree, kingdom: &WgslKingdom, limit: usize) -> usize {
+    if limit == 0 {
+        return 0;
+    }
+    let mut best = 0;
+    for rule in [rules::Rule::VecTile, rules::Rule::GrowRows] {
+        for site in rule.sites(t, kingdom) {
+            let Ok(child) = rule.apply(t, &site, kingdom) else { continue };
+            let Ok((_, back)) = knob::check_text(&child, kingdom) else { continue };
+            best = best.max(1 + chain_depth(&back.tree, kingdom, limit - 1));
+            if best == limit {
+                return best;
+            }
+        }
+    }
+    best
 }
 
 /// A knob's class for the table (a workgroup array's length as one class).

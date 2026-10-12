@@ -464,11 +464,28 @@ impl Assigner<'_> {
             return Tree { name: t.name.clone(), ty: t.ty, konst: t.konst, kids: vec![t.kids[0].clone(), self.walk(&t.kids[1], inner, epi_depth)] };
         }
         let mut kids: Vec<Tree> = t.kids.iter().map(|k| self.walk(k, env, epi_depth)).collect();
-        // A block loop's counter masked to the block (`pv[k & 3u]` in a 4-row epilogue).
-        if let ("index.and", [e, m]) = (base, kids.as_mut_slice()) {
+        // A block loop's counter masked or clamped to the block (`pv[k & 3u]`,
+        // `min(k, 3u)` in a 4-row epilogue), and stepping the workgroup's
+        // extent on its axis (`16u * k`: the rows a thread owns 16 apart).
+        if let ("index.and" | "index.min", [e, m]) = (base, kids.as_mut_slice()) {
             let knob = self.block_counters.iter().rev().find(|(c, _)| any(e, &|n| n.name == *c)).map(|&(_, k)| k);
             if let Some(r) = knob.and_then(|k| self.try_ref(m, k, Form::Minus1, Q)) {
                 *m = r;
+            }
+        }
+        if let ("index.mul", [a, b]) = (base, kids.as_mut_slice()) {
+            for (x, l) in [(0usize, 1usize), (1, 0)] {
+                let side = if x == 0 { &*a } else { &*b };
+                let knob = self.block_counters.iter().rev().find(|(c, _)| any(side, &|n| n.name == *c)).map(|&(_, k)| k);
+                let extent = match knob {
+                    Some(Knob::Brow) => Some(Knob::Wrow),
+                    Some(Knob::Bcol) => Some(Knob::Wcol),
+                    _ => None,
+                };
+                let target = if l == 0 { &mut *a } else { &mut *b };
+                if let Some(r) = extent.and_then(|k| self.try_ref(target, k, Form::Plain, Q)) {
+                    *target = r;
+                }
             }
         }
         match (base, kids.as_mut_slice()) {
