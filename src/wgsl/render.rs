@@ -354,6 +354,13 @@ fn cont_below_top(t: &Tree, top: bool) -> bool {
     }
 }
 
+/// An index masked into an array of `len` elements: `&` for a power of two,
+/// `min` otherwise.
+fn masked_to(x: &str, len: u32) -> String {
+    let last = len.max(1) - 1;
+    if len.is_power_of_two() { format!("(({x}) & {last}u)") } else { format!("min(({x}), {last}u)") }
+}
+
 /// A loop counter read outside its loop: 0, through `lit_u32` so naga folds
 /// no constant expression it would refuse (`0u - 18u`).
 const OUT_OF_LOOP: &str = "lit_u32(0u)";
@@ -980,7 +987,9 @@ impl<'a> Renderer<'a> {
             }
             "wg.set" => {
                 n(3)?;
-                Ok(format!("    {}[({}) & {}u] = {};\n", self.wgmem(&kids[0])?, self.value(&kids[1], scope)?, WGMEM_LEN - 1, self.value(&kids[2], scope)?))
+                let a = self.wgmem(&kids[0])?;
+                let len = self.wg_len(a, scope);
+                Ok(format!("    {a}[{}] = {};\n", masked_to(&self.value(&kids[1], scope)?, len), self.value(&kids[2], scope)?))
             }
             other => {
                 if let Some(p) = self.per_kernel.get(other) {
@@ -1201,7 +1210,13 @@ impl<'a> Renderer<'a> {
                 let a = self.parr_name(&v.kids[0])?;
                 return Ok(format!("{a}[{}][({}) & 3u]", self.index_text(&v.kids[1], array_len(a), scope)?, self.value(&v.kids[2], scope)?));
             }
-            "wg.get" => return Ok(format!("{}[({}) & {}u]", self.wgmem(&v.kids[0])?, self.value(&v.kids[1], scope)?, WGMEM_LEN - 1)),
+            // Masked into the array's declared length (its knob), not 2,048:
+            // an array of 256 indexed `& 2047u` read past its end.
+            "wg.get" => {
+                let a = self.wgmem(&v.kids[0])?;
+                let len = self.wg_len(a, scope);
+                return Ok(format!("{a}[{}]", masked_to(&self.value(&v.kids[1], scope)?, len)));
+            }
             // The safe read: the index is in range by its type (safe.wg_of masks it).
             // The subgroup operations.
             n if n.starts_with("subgroup.") => {
@@ -2293,6 +2308,31 @@ mod tests {
         assert!(c.per_item >= p.per_item && c.per_item <= p.per_item + 8.0 && c.base < 10.0, "{c:?} vs the item loop {p:?}");
         let over_d = cost(&Tree::new("loop.tilex_L0", t("stmt.L0"), vec![bound(d()), tile_body()]));
         assert!(over_d.base >= 8192.0 * 2.0 && over_d.per_item == 0.0, "{over_d:?}");
+    }
+
+    /// THE OLD wg.get / wg.set MASK TO THE ARRAY'S DECLARED LENGTH
+    /// (2026-10-12; they masked to 2,047 whatever the array's length, the
+    /// legality checker's item 6): an array declared with 256 elements read
+    /// and written at a run-time index masks it `& 255u`, one of 1,056 by
+    /// `min(i, 1055u)`.
+    #[test]
+    fn the_old_workgroup_rows_mask_to_the_declared_length() {
+        let k = WgslKingdom::load_safe();
+        let (t, role) = (FunctionTable::safe(), gram_role());
+        let rr = Renderer::new(&k, &t, &role);
+        let ty = |n: &str| dual_ty(&k, n).unwrap();
+        for (len, want) in [(256.0, "& 255u)"), (1056.0, ", 1055u)")] {
+            let decl = Tree::new("wg.decls_one", ty("wg.decls"), vec![Tree::new("wg.decl_f", ty("wg.decl"), vec![Tree::new("wg.a", ty("wgmem<f32>.real"), vec![]), Tree::literal("literal.wglen", ty("u32.wglen"), len)])]);
+            let grid = Tree::new("grid.with_wg", ty("grid.grid"), vec![Tree::fallback(ty("grid.grid")), decl]);
+            let i = || Tree::new("safe.counter_index", ty("u32.index"), vec![Tree::new("safe.counter", ty("u32.counter"), vec![])]);
+            let get = Tree::new("wg.get", ty("f32.real"), vec![Tree::new("wg.a", ty("wgmem<f32>.real"), vec![]), i()]);
+            let set = Tree::new("reg.set_f_L1", ty("stmt.L1"), vec![Tree::new("reg.f1", ty("reg<f32>.real"), vec![]), get]);
+            let body = Tree::new("block.one_L0", ty("block.L0"), vec![Tree::new("loop.items_boundm", ty("stmt.L0"), vec![Tree::new("bound.m", ty("u32.boundm"), vec![]), Tree::new("block.one_L1", ty("block.L1"), vec![set])])]);
+            let kernel = Tree::new("kernel.entry_safe", ty("kernel.safe"), vec![grid, body, Tree::fallback(ty("block.O0"))]);
+            let text = rr.kernel(&kernel).unwrap().text;
+            assert!(text.contains(want) && !text.contains("& 2047u"), "{text}");
+            validate_text(&text).unwrap_or_else(|e| panic!("{e}\n{text}"));
+        }
     }
 
     /// A 16-ELEMENT PRIVATE ARRAY TAKES ITS OWN INDEX (2026-10-12; 369 of
