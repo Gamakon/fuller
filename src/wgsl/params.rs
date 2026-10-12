@@ -237,9 +237,18 @@ fn is_wg_read(name: &str) -> bool {
     name.starts_with("wg.get")
 }
 
-/// A tile loop of the safe grammar with a literal count as its first child.
+/// A tile loop of the safe grammar with a literal count as its first child
+/// (`for (k = 0u; k < n; k = k + 1u)`, its unrolled form, and the stepped
+/// form `k = k + s`); its body is its last child.
 fn is_tile_loop(name: &str) -> bool {
-    matches!(safe_base(name), "loop.tile_bounded" | "loop.unroll")
+    matches!(safe_base(name), "loop.tile_bounded" | "loop.unroll" | "loop.tile_strided_bounded")
+}
+
+/// Any loop inside the item loop (a tile loop, an expression-bounded one):
+/// its body runs under its own counter.
+fn is_inner_loop(name: &str) -> bool {
+    let b = safe_base(name);
+    b.starts_with("loop.") && !b.starts_with("loop.items")
 }
 
 fn is_strided_items(name: &str) -> bool {
@@ -251,11 +260,12 @@ fn any(t: &Tree, p: &dyn Fn(&Tree) -> bool) -> bool {
     p(t) || t.kids.iter().any(|k| any(k, p))
 }
 
-/// The workgroup arrays written in `t` outside any loop nested in it.
-fn direct_writes(t: &Tree, out: &mut BTreeSet<String>) {
-    if is_wg_write(&t.name) {
+/// The workgroup array writes in `t` outside any loop nested in it: the
+/// array leaf's name and the write's index.
+fn direct_writes<'t>(t: &'t Tree, out: &mut Vec<(String, &'t Tree)>) {
+    if is_wg_write(&t.name) && t.kids.len() >= 2 {
         if let Some(a) = t.kids.first().filter(|a| a.kids.is_empty() && a.name.starts_with("wg.")) {
-            out.insert(a.name.clone());
+            out.push((a.name.clone(), &t.kids[1]));
         }
     }
     for k in &t.kids {
@@ -288,8 +298,13 @@ struct Assigner<'a> {
     kingdom: &'a WgslKingdom,
     /// The tile depth's references made (the grid then declares it).
     ktile_refs: usize,
-    /// Workgroup arrays a tile-depth loop writes directly: their lengths scale with T.
+    /// Workgroup arrays a tile-depth loop writes directly at an index of its
+    /// counter: they hold the whole tile, their lengths scale with T.
     tiles: BTreeSet<String>,
+    /// A tile-depth loop writes an array at an index held in a register:
+    /// whether the array holds the tile or one pass of the loop is unknown,
+    /// so T is not a knob of this kernel.
+    t_unknown: bool,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -358,24 +373,35 @@ impl Assigner<'_> {
             let inner = Env { in_t_items: t_here, in_tile: false, ..env };
             return Tree { name: t.name.clone(), ty: t.ty, konst: t.konst, kids: vec![self.walk(&t.kids[0], env, epi_depth), stride, self.walk(&t.kids[2], inner, epi_depth)] };
         }
-        if is_tile_loop(&t.name) && t.kids.len() == 2 {
-            let mut writes = BTreeSet::new();
-            direct_writes(&t.kids[1], &mut writes);
-            let lanes: BTreeSet<u32> = writes.iter().map(|a| wg_lanes(a)).collect();
+        if is_inner_loop(&t.name) && !t.kids.is_empty() {
+            let last = t.kids.len() - 1;
+            let counted = is_tile_loop(&t.name) && last >= 1;
+            let mut writes = Vec::new();
+            direct_writes(&t.kids[last], &mut writes);
+            let lanes: BTreeSet<u32> = writes.iter().map(|(a, _)| wg_lanes(a)).collect();
             let write_lanes = if lanes.len() == 1 { lanes.into_iter().next() } else { env.write_lanes };
             let mut bound = t.kids[0].clone();
             // The outermost tile loops of a tile-depth item loop that touch the
             // workgroup tile, or step through the tile's items, run T-proportionally.
-            if env.in_t_items && !env.in_tile {
+            if counted && env.in_t_items && !env.in_tile {
                 let counter = tile_counter(0);
-                let touches = any(&t.kids[1], &|n| is_wg_write(&n.name) || is_wg_read(&n.name));
-                let items = any(&t.kids[1], &|n| n.name == "index.add" && n.kids.iter().any(|k| k.name == "safe.counter_index") && n.kids.iter().any(|k| any(k, &|m| m.name == counter)));
+                let touches = any(&t.kids[last], &|n| is_wg_write(&n.name) || is_wg_read(&n.name));
+                let items = any(&t.kids[last], &|n| n.name == "index.add" && n.kids.iter().any(|k| k.name == "safe.counter_index") && n.kids.iter().any(|k| any(k, &|m| m.name == counter)));
                 if touches || items {
                     if let Some(v) = lit(&bound) {
                         if let Some(q) = self.payload(Knob::Ktile, Form::Plain, v) {
                             if let Some(r) = self.try_ref(&bound, Knob::Ktile, Form::Plain, q) {
                                 bound = r;
-                                self.tiles.extend(writes.iter().cloned());
+                                // An array written at an index of this loop's counter holds the
+                                // whole tile (its length scales with T); at an index without it,
+                                // one pass of the loop (p120's chunk loop rewrites wg_vb[lidx]).
+                                for (a, idx) in &writes {
+                                    if any(idx, &|n| n.name == counter) {
+                                        self.tiles.insert(a.clone());
+                                    } else if any(idx, &|n| n.name.starts_with("reg.") || n.name.starts_with("parr.")) {
+                                        self.t_unknown = true;
+                                    }
+                                }
                             }
                         }
                     }
@@ -383,16 +409,24 @@ impl Assigner<'_> {
             }
             // The epilogue's block loops: a loop whose counter offsets the
             // thread's row (column) runs over the row (column) block.
-            if let Some(d) = epi_depth {
+            if let Some(d) = epi_depth.filter(|_| counted) {
                 let counter = tile_counter(d);
-                let offsets = |prefix: &str| any(&t.kids[1], &|n| n.name.starts_with(prefix) && n.kids.iter().any(|k| any(k, &|m| m.name == counter)));
+                let offsets = |prefix: &str| any(&t.kids[last], &|n| n.name.starts_with(prefix) && n.kids.iter().any(|k| any(k, &|m| m.name == counter)));
                 let knob = if offsets("safe.row_plus") { Some(Knob::Brow) } else if offsets("safe.col_plus") { Some(Knob::Bcol) } else { None };
                 if let Some(r) = knob.and_then(|k| self.try_ref(&bound, k, Form::Plain, Q)) {
                     bound = r;
                 }
             }
             let inner = Env { in_tile: env.in_t_items || env.in_tile, write_lanes, ..env };
-            return Tree { name: t.name.clone(), ty: t.ty, konst: t.konst, kids: vec![bound, self.walk(&t.kids[1], inner, epi_depth.map(|d| d + 1))] };
+            let mut kids: Vec<Tree> = Vec::with_capacity(t.kids.len());
+            for (i, k) in t.kids.iter().enumerate() {
+                kids.push(match i {
+                    0 if counted => bound.clone(),
+                    i if i == last => self.walk(k, inner, epi_depth.map(|d| d + 1)),
+                    _ => self.walk(k, env, epi_depth),
+                });
+            }
+            return Tree { name: t.name.clone(), ty: t.ty, konst: t.konst, kids };
         }
         // The index of a workgroup array read: its lanes are the read's.
         if is_wg_read(&t.name) && t.kids.len() == 2 {
@@ -486,6 +520,27 @@ impl Assigner<'_> {
     }
 }
 
+/// Whether every workgroup access of the tile-depth item loops' bodies sits
+/// inside a tile loop whose count references T: a write outside one (a
+/// single pass of the threads loading the tile, p290 of the saved
+/// populations: 256 threads, 16 rows of 16) covers T rows only because the
+/// thread count equals T times the row's width, and a read outside one
+/// walks a tile whose depth the loop around it does not follow (p270's
+/// compute loop `k < 32u; k = k + 2u` before stepped loops took their
+/// reference): T is not a knob there.
+fn tile_depth_coherent(t: &Tree) -> bool {
+    fn writes_outside_t_loops(t: &Tree) -> bool {
+        if is_tile_loop(&t.name) && t.kids.first().is_some_and(|b| parse_ref(&b.name).is_some_and(|(k, _)| k == Knob::Ktile)) {
+            return false;
+        }
+        is_wg_write(&t.name) || is_wg_read(&t.name) || t.kids.iter().any(writes_outside_t_loops)
+    }
+    if is_strided_items(&t.name) && t.kids.len() == 3 && t.kids[1].name == ref_name(Knob::Ktile, Form::Plain) {
+        return !writes_outside_t_loops(&t.kids[2]);
+    }
+    t.kids.iter().all(tile_depth_coherent)
+}
+
 /// The first strided item loop's stride: the kernel's tile depth T.
 fn first_stride(t: &Tree) -> Option<u32> {
     if is_strided_items(&t.name) && t.kids.len() == 3 {
@@ -504,9 +559,16 @@ pub fn assign(tree: &Tree, kingdom: &WgslKingdom) -> Result<Tree, String> {
         return Ok(tree.clone());
     }
     let grid = grid_of(&tree.kids[0])?;
-    let ktile = first_stride(&tree.kids[1]);
-    let mut a = Assigner { knobs: Knobs { grid, ktile }, kingdom, ktile_refs: 0, tiles: BTreeSet::new() };
-    let body = a.walk(&tree.kids[1], Env::default(), None);
+    let mut ktile = first_stride(&tree.kids[1]);
+    let mut a = Assigner { knobs: Knobs { grid, ktile }, kingdom, ktile_refs: 0, tiles: BTreeSet::new(), t_unknown: false };
+    let mut body = a.walk(&tree.kids[1], Env::default(), None);
+    // The tile depth is a knob only when the tile's loads scale with it;
+    // otherwise the kernel is read without it.
+    if ktile.is_some() && (a.t_unknown || !tile_depth_coherent(&body)) {
+        ktile = None;
+        a = Assigner { knobs: Knobs { grid, ktile }, kingdom, ktile_refs: 0, tiles: BTreeSet::new(), t_unknown: false };
+        body = a.walk(&tree.kids[1], Env::default(), None);
+    }
     let epilogue = a.walk(&tree.kids[2], Env::default(), Some(0));
     let mut g = a.decls(&tree.kids[0]);
     if a.ktile_refs > 0 {
@@ -564,6 +626,32 @@ mod tests {
         println!("{read} of {} kernels read; {with_t} declare a tile depth", files.len());
         assert!(read >= 100, "{read}");
         assert!(with_t > 0);
+    }
+
+    /// THE TILE DEPTH IS A KNOB ONLY WHERE THE TILE SCALES WITH IT: three
+    /// saved kernels of reserve2 whose tile-depth children computed wrong
+    /// values on the device (2026-10-12) before the reader learned why.
+    #[test]
+    fn the_tile_depth_is_declared_only_where_the_tile_scales_with_it() {
+        use crate::wgsl::knob::{set, Site};
+        use crate::wgsl::safe_karva::render_tree;
+        use crate::wgsl::safe_reader::read_safe;
+        let k = WgslKingdom::load_safe();
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("logs/HGP/001/reserve2/texts");
+        let read = |name: &str| std::fs::read_to_string(dir.join(name)).ok().map(|src| read_safe(&src, &k).unwrap().tree);
+        // wg_vb loaded by one unlooped pass of 256 threads, 16 rows of 16: no tile depth.
+        let Some(single_pass) = read("0.1692_fit_A2_stopped_1554Z_g000_r9_5825fe.wgsl") else { return };
+        assert_eq!(ktile_of(&single_pass.kids[0]), None);
+        // The compute loop `k < 32u; k = k + 2u` follows T; the loop nested in it does not.
+        let stepped = read("0.1607_fit_A2_stopped_1400Z_g001_r4_9a65d4.wgsl").unwrap();
+        assert_eq!(ktile_of(&stepped.kids[0]), Some(32));
+        let text = render_tree(&set(&stepped, &Site::Ktile, 8), &k).unwrap().text;
+        assert!(text.contains("for (k = 0u; k < 8u; k = k + 2u)") && text.contains("for (k2 = 0u; k2 < 4u; k2 = k2 + 1u)"), "{text}");
+        // A chunk loop rewriting wg_vb[lidx] on every pass: wg_vb holds one pass, its length stays.
+        let chunked = read("0.1208_fit_A2_g001_r9_2ddca4.wgsl").unwrap();
+        assert_eq!(ktile_of(&chunked.kids[0]), Some(128));
+        let text = render_tree(&set(&chunked, &Site::Ktile, 256), &k).unwrap().text;
+        assert!(text.contains("var<workgroup> wg_vb: array<vec4<f32>, 512>;") && text.contains("t = t + 256u"), "{text}");
     }
 
     #[test]

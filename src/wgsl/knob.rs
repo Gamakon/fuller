@@ -200,9 +200,14 @@ pub fn joins(child: &Tree, kingdom: &WgslKingdom, target: &Target) -> Result<(),
     Ok(())
 }
 
-/// The values of `site` other than its current one whose child passes the joins.
+/// The values of `site` other than its current one whose child passes the
+/// joins. A workgroup array's literal length only grows: without a range
+/// proof of its indices (checker layer 3, not built) the length the kernel
+/// declares is the only bound known to cover them (48 of 50 shortened
+/// arrays of the saved populations computed wrong values on the device).
 pub fn legal_values(root: &Tree, site: &Site, current: u32, kingdom: &WgslKingdom, target: &Target) -> Vec<u32> {
-    site.values(target).into_iter().filter(|&v| v != current && joins(&set(root, site, v), kingdom, target).is_ok()).collect()
+    let covers = |v: u32| !matches!(site, Site::Len(_)) || v >= current;
+    site.values(target).into_iter().filter(|&v| v != current && covers(v) && joins(&set(root, site, v), kingdom, target).is_ok()).collect()
 }
 
 /// A knob child: the tree and the change.
@@ -307,6 +312,23 @@ mod tests {
         assert!(joins(&set(&t, &Site::Wx, 128), &k, &small).is_err());
         // A tile depth of 1 leaves a load loop of a fraction of a pass.
         assert!(legal_values(&t, &Site::Ktile, ktile_of(&t.kids[0]).unwrap(), &k, &target).iter().all(|&v| joins(&set(&t, &Site::Ktile, v), &k, &target).is_ok()));
+    }
+
+    #[test]
+    fn a_literal_array_length_only_grows() {
+        let k = WgslKingdom::load_safe();
+        let target = Target::recorded();
+        let dir = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/corpus/safewgsl"));
+        let mut checked = 0usize;
+        for f in std::fs::read_dir(dir).unwrap().flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "wgsl")) {
+            let Ok(r) = read_safe(&std::fs::read_to_string(&f).unwrap(), &k) else { continue };
+            for (site, cur) in sites(&r.tree).into_iter().filter(|(s, _)| matches!(s, Site::Len(_))) {
+                let legal = legal_values(&r.tree, &site, cur, &k, &target);
+                assert!(legal.iter().all(|&v| v > cur), "{}: {} {cur} -> {legal:?}", f.display(), site.name());
+                checked += 1;
+            }
+        }
+        assert!(checked > 0, "no corpus kernel declares a literal array length");
     }
 
     #[test]
