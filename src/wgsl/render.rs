@@ -1864,6 +1864,13 @@ impl Renderer<'_> {
                 "BitwiseNot" => "~",
                 other => return Err(format!("{name}: unary operator {other} has no text")),
             };
+            // A matrix negated is the matrix times -1.0, the same value:
+            // naga 0.20 writes `-m` to Metal as a unary minus on a
+            // metal::floatCxR, which Metal does not define (six random
+            // kernels of fit_SF_random failed to compile, 2026-10-12).
+            if op == "Negate" && d.slot.starts_with("mat") {
+                return Ok(format!("({} * -1.0)", a[0]));
+            }
             return Ok(format!("({sym}{})", a[0]));
         }
         if let Some(f) = col.strip_prefix("Relational::") {
@@ -1906,6 +1913,14 @@ impl Renderer<'_> {
                     scope.helpers.push(helper.clone());
                     return Ok(format!("{helper}({})", a.join(", ")));
                 }
+                // degrees and radians as the products naga writes for them,
+                // without naga's bare parentheses: naga 0.20 writes
+                // `((x) * 57.29..)` to Metal, and when x is a column of a
+                // matrix composed in place, `(metal::float2x3(metal::float3(_e1),
+                // ..)[0])` parses as a cast and the `*` as an indirection (Metal
+                // refused random seed 673 to compile, 2026-10-13). The same value.
+                "degrees" => return Ok(format!("({} * 57.29577951308232)", a[0])),
+                "radians" => return Ok(format!("({} * 0.017453292519943295)", a[0])),
                 "mix_scalar_weight" => "mix",
                 other => other,
             };

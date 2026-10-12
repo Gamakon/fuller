@@ -5417,10 +5417,43 @@ mod tests {
         assert_eq!((e.layer, e.reason), (crate::wgsl::check::Layer::Uniformity, "barrier_in_nonuniform_control_flow"), "{e}");
     }
 
+    /// Whether a module's text negates a matrix with a unary minus anywhere
+    /// (a helper or the entry point): naga 0.20 writes it to Metal as a unary
+    /// minus on a `metal::floatCxR`, which Metal does not define.
+    fn negates_a_matrix(text: &str) -> bool {
+        let m = naga::front::wgsl::parse_str(text).unwrap_or_else(|e| panic!("{}", e.emit_to_string(text)));
+        let info = crate::wgsl::target::Target::recorded().validate(&m, text).unwrap_or_else(|e| panic!("{e}"));
+        let hits = |f: &naga::Function, fi: &naga::valid::FunctionInfo| {
+            f.expressions.iter().any(|(_, e)| matches!(e, naga::Expression::Unary { op: naga::UnaryOperator::Negate, expr } if matches!(fi[*expr].ty.inner_with(&m.types), naga::TypeInner::Matrix { .. })))
+        };
+        m.functions.iter().any(|(h, f)| hits(f, &info[h])) || m.entry_points.iter().enumerate().any(|(i, ep)| hits(&ep.function, info.get_entry_point(i)))
+    }
+
+    /// A MATRIX NEGATED (2026-10-12, fit_SF_random: six random kernels failed
+    /// Metal compilation, "invalid argument type 'metal::float4x4' to unary
+    /// expression"): the renderer writes it as the matrix times -1.0, the
+    /// same value, which reads back as that product; no later pass negates one.
+    #[test]
+    fn a_negated_matrix_renders_as_a_product_metal_compiles() {
+        let k = WgslKingdom::load_safe();
+        let src = include_str!("../../tests/corpus/safewgsl/draft_matrices.wgsl");
+        assert!(negates_a_matrix(src), "the draft negates a matrix");
+        let tree = read_safe(src, &k).unwrap_or_else(|e| panic!("{e}")).tree;
+        assert!(tree.to_sexpr().contains("arith.neg_mat"), "the draft's -m2 reads as arith.neg_mat");
+        let text = crate::wgsl::safe_karva::render_tree(&tree, &k).unwrap_or_else(|e| panic!("{e}")).text;
+        assert!(!negates_a_matrix(&text), "{text}");
+        assert!(text.contains(" * -1.0)"), "{text}");
+        let again = crate::wgsl::safe_karva::render_tree(&read_safe(&text, &k).unwrap_or_else(|e| panic!("{e}")).tree, &k).unwrap_or_else(|e| panic!("{e}")).text;
+        let third = crate::wgsl::safe_karva::render_tree(&read_safe(&again, &k).unwrap_or_else(|e| panic!("{e}")).tree, &k).unwrap_or_else(|e| panic!("{e}")).text;
+        assert!(!negates_a_matrix(&again) && !negates_a_matrix(&third), "{again}\n{third}");
+    }
+
     /// The counts of [`random_sampler_trees_read_back_to_their_own_text`]
     /// reached so far: to their own text, and to a fixpoint after the first
     /// read. Every tree reads back (1,000 of 1,000, asserted exactly).
-    const READ_BACK_FLOOR: usize = 110;
+    /// (110 before a negated matrix was written as a product: the one random
+    /// tree holding one now reads back as the product, a different text.)
+    const READ_BACK_FLOOR: usize = 109;
     const FIXPOINT_FLOOR: usize = 141;
 
     /// THE KINGDOM'S COMPLETENESS BAR (2026-10-12): 1,000 random trees of
@@ -5446,6 +5479,15 @@ mod tests {
             let verdict: Result<(), String> = (|| {
                 let text = crate::wgsl::safe_karva::render_tree(&tree, &k).map_err(|e| format!("render: {e}"))?.text;
                 checker.check(&tree).map_err(|e| format!("check: {} {}", e.layer.number(), e.reason))?;
+                if negates_a_matrix(&text) {
+                    return Err("render: a unary minus on a matrix (Metal does not compile it)".to_string());
+                }
+                // naga 0.20 writes degrees and radians to Metal in bare
+                // parentheses that can parse as a cast; the renderer writes
+                // the products instead (random seed 673, 2026-10-13).
+                if text.contains("degrees(") || text.contains("radians(") {
+                    return Err("render: degrees or radians as a call (Metal can misparse naga's text)".to_string());
+                }
                 let back = read_safe(&text, &k).map_err(|e| format!("read: {e}"))?;
                 let again = crate::wgsl::safe_karva::render_tree(&back.tree, &k).map_err(|e| format!("re-render: {e}"))?.text;
                 read_back += 1;

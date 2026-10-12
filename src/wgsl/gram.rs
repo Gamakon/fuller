@@ -1780,6 +1780,37 @@ mod tests {
         assert_eq!(compiled, ran);
     }
 
+    /// THE SAFE KINGDOM ON THE DEVICE: the 1,000 seeded sampler trees of
+    /// the reader's completeness test, rendered, passed by the checker and
+    /// compiled by Metal, every failure named. naga can accept a module
+    /// whose Metal text Metal refuses to compile (a unary minus on a matrix,
+    /// fit_SF_random 2026-10-12), so validation alone is not the gate.
+    #[test]
+    fn random_safe_kernels_compile_on_the_device() {
+        use crate::wgsl::render::{dual_ty, gram_role, sample};
+        use crate::wgsl::{check::Checker, loader::WgslKingdom, safe_karva::render_tree, target::Target};
+        let (k, r) = (WgslKingdom::load_safe(), gram_role());
+        let checker = Checker::new(&k, &r, &Target::recorded());
+        let root = dual_ty(&k, "kernel.safe").unwrap();
+        let dev = Device::new().expect("device");
+        let n = 1000u64;
+        let mut compiled = 0usize;
+        let mut failed: Vec<String> = Vec::new();
+        for seed in 0..n {
+            let tree = sample(&k, &r, root, 7, seed).unwrap();
+            let verdict = render_tree(&tree, &k).and_then(|out| {
+                checker.check(&tree).map_err(|e| format!("check: {} {}", e.layer.number(), e.reason))?;
+                Gram::compile_rendered(&dev, &out).map(|_| ()).map_err(|e| format!("compile: {}", e.lines().next().unwrap_or("")))
+            });
+            match verdict {
+                Ok(()) => compiled += 1,
+                Err(e) => failed.push(format!("seed {seed} {e}")),
+            }
+        }
+        println!("{n} random safe kernels: {compiled} compiled on the device");
+        assert!(failed.is_empty(), "{} failures:\n{}", failed.len(), failed.join("\n"));
+    }
+
     /// Every build reports a compute time, build after build, shape after
     /// shape; the timestamp sum is printed beside it (it reads 0 for short
     /// passes on Apple silicon, which is why the search uses compute_ms).
