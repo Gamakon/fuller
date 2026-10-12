@@ -6,7 +6,7 @@
 
 **Approach.** This page lists the WGSL compute language from the W3C specification, area by area. Each construct gets one status, measured by a probe kernel rather than judged from the code. `kingdoms/safewgsl/coverage_probes.py` writes one Gram-role kernel per construct, and `wgsl_safe_convert` reads, renders and validates it. The rows that cover each construct are named.
 
-**Status, 2026-10-12 (fuller 0203bb7).** 92 of 184 probes read, render and validate. The other 92 fail; their root causes are listed under "Gaps, in the order they are filled". Each fill is its own commit with a corpus row, and this page is updated as gaps close.
+**Status, 2026-10-12.** At fuller 0203bb7, 92 of 184 probes read, render and validate. After the twelve fills below, 180 of 184 do; the four left are three constructs naga 0.20 cannot parse and a storage atomic, which needs a binding the Gram role does not have. Each fill is its own commit with a corpus row, checked on the GPU (128 of 128 cases as written and rebuilt).
 
 **Why.** Evolution can only find what the kingdom can spell. A construct the reader cannot read is a kernel, from a model or from a person, that the population cannot take in.
 
@@ -47,8 +47,8 @@
 | textures, samplers, `textureLoad` / `textureStore` / `textureDimensions` / `textureSampleLevel` / `textureGather` | binding | compute-legal, no texture binding in the Gram role |
 | `textureSample`, `textureSampleBias`, derivatives | not compute | implicit derivatives |
 | helper functions, one return | covered | inlined at the call (`stmt_call_value_helper`, `stmt_helper_with_loop`) |
-| helper with an early return | missing | "helper clip returns twice (not inlined)" |
-| helper with a pointer argument | missing | `bump(&g)`: "untyped leaf local.g@1" |
+| helper with an early return | covered | guards `if (c) { return a; }` before the last return (or a last if-else of two returns) are a select chain |
+| helper with a pointer argument | covered for a local held in a register | `*p` reads and `*p = v` sets the caller's register for the local |
 | `@must_use` | naga 0.20 | "unknown attribute" |
 
 ## Statements
@@ -103,7 +103,7 @@
 | runtime-sized arrays, `arrayLength` | covered for the Gram role's bindings | `load.phi_len`, `load.h_len`; other runtime-sized bindings wait for the generic interface |
 | `atomic<u32>`, `atomic<i32>` in workgroup memory | covered | |
 | `ptr<function, T>` lets, `*p` | covered | `decl_ptr_local`, `decl_ptr_array_elem` |
-| `ptr` as a helper argument | missing | see helpers |
+| `ptr` as a helper argument | covered | see helpers |
 | structs as values (`modf`, `frexp` results) | covered | each field its own row: `arith.modf_fract`, `modf_whole`, `frexp_fract`, `frexp_exp` |
 
 ## Expressions and operators
@@ -188,6 +188,6 @@ Each fill is its own commit with a corpus row and the full checklist. The order 
 9. Done: matrices (composition from scalars and 2 to 4 columns, products with vectors, scalars and matrices, sums, negation, columns by literal and at run time, square matrix locals with column stores). 170 of 184 read.
 10. Done: `modf` / `frexp` results, `arrayLength` of phi and h. 173 of 184 read.
 11. Done: module `const` and `override`, `var<private>`, workgroup scalars and `workgroupUniformLoad`. 178 of 184 read.
-12. Helpers with an early return or a pointer argument.
+12. Done: helpers with early returns (as guards) or a pointer argument. 180 of 184 read; the 4 left are naga 0.20's (`@must_use`, an override in `@workgroup_size`, a function-scope `const`) and a binding (a storage atomic).
 
 Not built here: the Gram role's bindings (h, phi, cfg) are the largest gap. Other storage buffers, uniforms, storage atomics, textures and samplers all wait for the generic interface in `docs/PLAN_constrained_mutation.md`, which is awaiting Andrew's review.

@@ -92,6 +92,9 @@ struct Ctx<'a> {
     /// 2 + k, the loop runs bound - 2 times).
     stored_seen: std::collections::BTreeSet<String>,
     counter_offsets: HashMap<String, f32>,
+    /// A statement-inlined helper's pointer parameters: `arg.p` to the
+    /// caller's register for the local `&x` it was given (row, kind).
+    pointer_args: HashMap<String, (String, char)>,
     /// While a helper body is being inlined: its arguments by `arg.<name>`,
     /// already resolved and typed in the caller.
     inline_args: Option<HashMap<String, Tree>>,
@@ -574,6 +577,60 @@ fn private_as_local(t: &Tree) -> Option<Tree> {
     let cut = rest.find(['.', '@']).unwrap_or(rest.len());
     let (var, tail) = rest.split_at(cut);
     Some(Tree { name: format!("{op}.local.private_{var}@g{tail}"), ty: t.ty, konst: t.konst, kids: t.kids.clone() })
+}
+
+/// A helper body of guards `if (c) { return a; }` and a last `return b;` (or
+/// a last `if (c) { return a; } else { return b; }`) as one value,
+/// select(select(b, a2, c2), a1, c1) built from the last return up; the
+/// guards' condition roots are taken out of `roots` (they are read into the
+/// value). None for any other body.
+fn guard_chain<'r>(body: &naga::Block, returns: &[&'r Root], roots: &mut HashMap<Vec<usize>, Vec<&'r Root>>) -> Option<Node> {
+    let stmts: Vec<&Statement> = body.iter().filter(|s| !matches!(s, Statement::Emit(_))).collect();
+    let value_at = |path: &[usize]| -> Option<Node> {
+        returns.iter().find(|r| r.path == path).and_then(|r| match &r.tree {
+            Node::App { kids, .. } => kids.first().cloned(),
+            _ => None,
+        })
+    };
+    let only_return = |b: &naga::Block| b.iter().filter(|s| !matches!(s, Statement::Emit(_))).count() == 1 && b.iter().any(|s| matches!(s, Statement::Return { value: Some(_) }));
+    let empty = |b: &naga::Block| b.iter().all(|s| matches!(s, Statement::Emit(_)));
+    let cond_at = |path: Vec<usize>, roots: &mut HashMap<Vec<usize>, Vec<&'r Root>>| -> Option<Node> {
+        let rs = roots.remove(&path)?;
+        let c = rs.iter().find(|r| matches!(r.kind, RootKind::Condition { .. })).and_then(|r| match &r.tree {
+            Node::App { kids, .. } => kids.first().cloned(),
+            _ => None,
+        });
+        let others: Vec<&Root> = rs.into_iter().filter(|r| !matches!(r.kind, RootKind::Condition { .. })).collect();
+        if !others.is_empty() {
+            roots.insert(path, others);
+        }
+        c
+    };
+    let select = |accept: Node, reject: Node, c: Node| {
+        let slot = match &accept {
+            Node::Leaf { slot, .. } | Node::Literal { slot, .. } | Node::App { slot, .. } => slot.clone(),
+        };
+        Node::App { name: "select.scalar_cond".into(), slot, known: true, kids: vec![accept, reject, c] }
+    };
+    let last = stmts.len().checked_sub(1)?;
+    let mut rest = match stmts[last] {
+        Statement::Return { value: Some(_) } => value_at(&[last])?,
+        Statement::If { accept, reject, .. } if only_return(accept) && only_return(reject) => {
+            let a = value_at(&[last, 0, 0])?;
+            let b = value_at(&[last, 1, 0])?;
+            select(a, b, cond_at(vec![last], roots)?)
+        }
+        _ => return None,
+    };
+    for i in (0..last).rev() {
+        let Statement::If { accept, reject, .. } = stmts[i] else { return None };
+        if !only_return(accept) || !empty(reject) {
+            return None;
+        }
+        let a = value_at(&[i, 0, 0])?;
+        rest = select(a, rest, cond_at(vec![i], roots)?);
+    }
+    Some(rest)
 }
 
 /// The marker of a tree already in the safe grammar inside a raw one.
@@ -1442,6 +1499,10 @@ impl<'a> Ctx<'a> {
         if let Some(local) = private_as_local(t) {
             return self.value(&local);
         }
+        // `*p` for a pointer parameter: the caller's register.
+        if let Some((row, kind)) = t.name.strip_prefix("load.").and_then(|r| r.split('@').next()).and_then(|a| self.pointer_args.get(a)).cloned() {
+            return Ok(Tree::new(&format!("reg.get_{kind}"), t.ty, vec![Tree::new(&row, ty(self, Self::reg_dual(kind))?, vec![])]));
+        }
         // An expression already in the safe grammar (a subgroup or atomic
         // result inlined into a loop's bound): as it is.
         if t.name == INLINED && t.kids.len() == 1 {
@@ -2302,11 +2363,26 @@ impl<'a> Ctx<'a> {
         }
         let mut bound = HashMap::new();
         let mut values = HashMap::new();
-        for ((_, node), arg) in args.into_iter().zip(&helper.args) {
+        let mut pointers = HashMap::new();
+        for (i, ((_, node), arg)) in args.into_iter().zip(&helper.args).enumerate() {
+            // A pointer parameter given `&x`: the helper reads and writes the
+            // caller's register for x.
+            if let naga::TypeInner::Pointer { base, .. } = self.module.types[helper.naga_fn.arguments[i].ty].inner {
+                let Node::Leaf { name: local, .. } = &node else { return Err(format!("{callee}: pointer argument {i} is not a local (&x)")) };
+                if !local.starts_with("local.") || local.contains(".#") {
+                    return Err(format!("{callee}: pointer argument {i} is {local}, not a local held in a register"));
+                }
+                let dual = dual_of_type(self.module, base).ok_or_else(|| format!("{callee}: pointer argument {i} to a type no register holds"))?;
+                let row = self.register(local, &dual)?;
+                let kind = row.chars().nth(4).unwrap_or('f');
+                pointers.insert(arg.clone(), (row, kind));
+                continue;
+            }
             let raw = tree_of(self, &node)?;
             values.insert(arg.clone(), self.value(&raw)?);
             bound.insert(arg.clone(), raw);
         }
+        let saved_pointers = std::mem::replace(&mut self.pointer_args, pointers);
         let result_reg = match result {
             Some(idx) => {
                 let d = helper.ret_dual.as_deref().ok_or_else(|| format!("{callee} returns a value no register holds"))?;
@@ -2334,6 +2410,7 @@ impl<'a> Ctx<'a> {
         self.local_prefix = format!("{callee}/");
         let out = self.inline_body(helper, rung);
         self.local_prefix = String::new();
+        self.pointer_args = saved_pointers;
         self.inline_result = saved_result;
         self.tail = saved_tail;
         self.inline_args = saved_args;
@@ -2767,6 +2844,12 @@ impl<'a> Ctx<'a> {
     fn store(&mut self, tree: &Tree, rung: &str) -> Result<Option<Tree>, String> {
         if let Some(local) = private_as_local(tree) {
             return self.store(&local, rung);
+        }
+        // `*p = v` for a pointer parameter: the caller's register set.
+        if let (Some((row, kind)), [v]) = (tree.name.strip_prefix("store.").and_then(|a| self.pointer_args.get(a)).cloned(), tree.kids.as_slice()) {
+            let v = self.value(v)?;
+            let st = self.stmt_ty(rung)?;
+            return Ok(Some(Tree::new(&format!("reg.set_{kind}_{rung}"), st, vec![Tree::new(&row, ty(self, Self::reg_dual(kind))?, vec![]), v])));
         }
         let st = self.stmt_ty(rung)?;
         let name = tree.name.as_str();
@@ -3701,21 +3784,37 @@ pub fn read_safe(source: &str, kingdom: &WgslKingdom) -> Result<SafeRead, String
         let mut roots: HashMap<Vec<usize>, Vec<&Root>> = HashMap::new();
         let mut inits: Vec<&Root> = Vec::new();
         let mut arg_roots: HashMap<Vec<usize>, Vec<(usize, Node)>> = HashMap::new();
+        let mut returns: Vec<&Root> = Vec::new();
         for r in &hf.roots {
             match (&r.kind, &r.tree) {
                 (RootKind::Let { name }, Node::App { kids, .. }) => {
                     lets.insert(name.clone(), kids[0].clone());
                 }
-                (RootKind::Return, Node::App { kids, .. }) if body.is_none() => {
-                    body = Some(kids[0].clone());
-                    roots.entry(r.path.clone()).or_default().push(r);
-                }
-                (RootKind::Return, _) => return Err(format!("helper {name} returns twice (not inlined)")),
+                (RootKind::Return, Node::App { .. }) => returns.push(r),
                 (RootKind::Init { .. }, _) => inits.push(r),
                 (RootKind::Argument { position, .. }, Node::App { kids, .. }) => arg_roots.entry(r.path.clone()).or_default().push((*position, kids[0].clone())),
                 _ => {
                     roots.entry(r.path.clone()).or_default().push(r);
                 }
+            }
+        }
+        // One return: the helper's value. Several: `if (c) { return a; }` ...
+        // `return b;` (or a last if-else of two returns) is the select chain
+        // select(.., a, c), its guards' conditions read into it.
+        match returns.as_slice() {
+            [] => {}
+            [r] => {
+                if let Node::App { kids, .. } = &r.tree {
+                    body = Some(kids[0].clone());
+                }
+                roots.entry(r.path.clone()).or_default().push(r);
+            }
+            several => {
+                let chain = guard_chain(&nf.body, several, &mut roots).ok_or_else(|| format!("helper {name} returns twice, not as guards `if (c) {{ return a; }}` before its last return (not inlined)"))?;
+                for r in several {
+                    roots.entry(r.path.clone()).or_default().push(r);
+                }
+                body = Some(chain);
             }
         }
         let pure = inits.is_empty() && arg_roots.is_empty() && roots.values().all(|rs| rs.iter().all(|r| matches!(r.kind, RootKind::Return)));
@@ -3776,7 +3875,7 @@ pub fn read_safe(source: &str, kingdom: &WgslKingdom) -> Result<SafeRead, String
         }
     }
     let bound_lets = lets_used_in_deeper_loops(&f.roots, &naga_fn.body);
-    let mut ctx = Ctx { kingdom, duals: &duals, lets: &lets, roots: &roots, item_counter: None, tile_counter: None, tile_counter2: None, tile_counter3: None, tile_counter4: None, registers: BTreeMap::new(), next_reg: BTreeMap::new(), guard: None, tail: true, arrays: BTreeMap::new(), array_lens: BTreeMap::new(), parrs: BTreeMap::new(), grid, rows_x: grid_rows_x(source).then_some(true), notes: Vec::new(), helpers: &helpers, calls: &calls, arg_roots: &arg_roots, inline_args: None, row_arrays: BTreeMap::new(), used_counters: std::collections::BTreeSet::new(), local_lanes, axis_memo: BTreeMap::new(), loop_depth: 0, tile_bounds: BTreeMap::new(), naga_fn, module: &kernel.module, local_prefix: String::new(), inline_result: None, inline_values: None, bound_lets, let_regs: HashMap::new(), inlined: HashMap::new(), stored_seen: std::collections::BTreeSet::new(), counter_offsets: HashMap::new() };
+    let mut ctx = Ctx { kingdom, duals: &duals, lets: &lets, roots: &roots, item_counter: None, tile_counter: None, tile_counter2: None, tile_counter3: None, tile_counter4: None, registers: BTreeMap::new(), next_reg: BTreeMap::new(), guard: None, tail: true, arrays: BTreeMap::new(), array_lens: BTreeMap::new(), parrs: BTreeMap::new(), grid, rows_x: grid_rows_x(source).then_some(true), notes: Vec::new(), helpers: &helpers, calls: &calls, arg_roots: &arg_roots, inline_args: None, row_arrays: BTreeMap::new(), used_counters: std::collections::BTreeSet::new(), local_lanes, axis_memo: BTreeMap::new(), loop_depth: 0, tile_bounds: BTreeMap::new(), naga_fn, module: &kernel.module, local_prefix: String::new(), inline_result: None, inline_values: None, bound_lets, let_regs: HashMap::new(), inlined: HashMap::new(), stored_seen: std::collections::BTreeSet::new(), counter_offsets: HashMap::new(), pointer_args: HashMap::new() };
     // Register initialisations first, in root order. A local initialised to
     // its form's fallback (0.0, 0u, false, a zero vector) costs nothing: the
     // register's declaration already holds that value, and the register is
