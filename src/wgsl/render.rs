@@ -354,6 +354,10 @@ fn cont_below_top(t: &Tree, top: bool) -> bool {
     }
 }
 
+/// A loop counter read outside its loop: 0, through `lit_u32` so naga folds
+/// no constant expression it would refuse (`0u - 18u`).
+const OUT_OF_LOOP: &str = "lit_u32(0u)";
+
 /// The most copies of a body nested full unrolls write out (one unroll of up
 /// to 64 always is). Past it an unroll is written as its loop, the same
 /// computation: a random gene of three nested unrolls (57 x 38 x 38 copies of
@@ -1261,14 +1265,20 @@ impl<'a> Renderer<'a> {
             "bound.m" => return Ok("cfg.m".into()),
             "bound.d" => return Ok("cfg.d".into()),
             "bound.rows" => return Ok("cfg.r_rows".into()),
-            "safe.counter" => return Ok("t".into()),
+            // A loop's counter is its loop's: outside the loop it is 0u, as
+            // the rows say (written `t` it read the last loop's exit value,
+            // 852 of 1,000 random genes, 2026-10-12).
+            "safe.counter" => return Ok(if scope.in_items { "t".into() } else { OUT_OF_LOOP.into() }),
             "safe.tile_counter" | "safe.tile_counter2" | "safe.tile_counter3" | "safe.tile_counter4" => {
-                let var = match name {
-                    "safe.tile_counter2" => "k2",
-                    "safe.tile_counter3" => "k3",
-                    "safe.tile_counter4" => "k4",
-                    _ => "k",
+                let (var, depth) = match name {
+                    "safe.tile_counter2" => ("k2", 2),
+                    "safe.tile_counter3" => ("k3", 3),
+                    "safe.tile_counter4" => ("k4", 4),
+                    _ => ("k", 1),
                 };
+                if scope.tile_depth < depth {
+                    return Ok(OUT_OF_LOOP.into());
+                }
                 // In a copy of a fully unrolled body the counter is that copy's
                 // literal, through lit_u32 so naga folds no constant expression.
                 return Ok(scope.unrolled.get(var).map_or_else(|| var.to_string(), |i| format!("lit_u32({i}u)")));
@@ -1389,7 +1399,8 @@ impl<'a> Renderer<'a> {
             "builtin.subgroup_size" => return Ok("sg_size".into()),
             "builtin.num_subgroups" => return Ok("sg_count".into()),
             "builtin.subgroup_id" => return Ok("sg_index".into()),
-            "builtin.item" => return Ok("t".into()),
+            "builtin.item" => return Ok(if scope.in_items { "t".into() } else { OUT_OF_LOOP.into() }),
+            "builtin.tile" if !scope.in_tile => return Ok(OUT_OF_LOOP.into()),
             "builtin.tile" => return Ok(scope.unrolled.get("k").map_or_else(|| "k".to_string(), |i| format!("lit_u32({i}u)"))),
             _ => {}
         }
@@ -2250,6 +2261,33 @@ mod tests {
         assert!(c.per_item >= p.per_item && c.per_item <= p.per_item + 8.0 && c.base < 10.0, "{c:?} vs the item loop {p:?}");
         let over_d = cost(&Tree::new("loop.tilex_L0", t("stmt.L0"), vec![bound(d()), tile_body()]));
         assert!(over_d.base >= 8192.0 * 2.0 && over_d.per_item == 0.0, "{over_d:?}");
+    }
+
+    /// A LOOP COUNTER OUTSIDE ITS LOOP IS 0 (2026-10-12; the legality
+    /// checker found 852 of 1,000 random genes reading `t` or `k` outside
+    /// their loop, which read the last loop's exit value): the item counter
+    /// and a tile counter read at the top level render `lit_u32(0u)`; inside
+    /// their loops, `t` and `k`.
+    #[test]
+    fn a_loop_counter_outside_its_loop_renders_zero() {
+        let k = WgslKingdom::load_safe();
+        let (t, role) = (FunctionTable::safe(), gram_role());
+        let rr = Renderer::new(&k, &t, &role);
+        let ty = |n: &str| dual_ty(&k, n).unwrap();
+        let index = ty("u32.index");
+        let set_i = |rung: &str, v: Tree| Tree::new(&format!("reg.set_i_{rung}"), ty(&format!("stmt.{rung}")), vec![Tree::new("reg.i0", ty("reg<u32>.index"), vec![]), v]);
+        let item = || Tree::new("safe.counter_index", index, vec![Tree::new("safe.counter", ty("u32.counter"), vec![])]);
+        let tile = || Tree::new("safe.tile_index", index, vec![Tree::new("safe.tile_counter", ty("u32.tcounter"), vec![])]);
+        let outside = Tree::new("block.seq2_L0", ty("block.L0"), vec![set_i("L0", item()), set_i("L0", tile())]);
+        let items = Tree::new("loop.items_boundm", ty("stmt.L0"), vec![Tree::new("bound.m", ty("u32.boundm"), vec![]), Tree::new("block.one_L1", ty("block.L1"), vec![set_i("L1", item())])]);
+        let tiled = Tree::new("loop.tile_L0", ty("stmt.L0"), vec![Tree::literal("literal.lit64", ty("u32.lit64"), 4.0), Tree::new("block.one_L2", ty("block.L2"), vec![set_i("L2", tile())])]);
+        let inside = Tree::new("block.seq2_L0", ty("block.L0"), vec![items, tiled]);
+        let kernel = |body: Tree| Tree::new("kernel.entry_safe", ty("kernel.safe"), vec![Tree::fallback(ty("grid.grid")), body, Tree::fallback(ty("block.O0"))]);
+        let out = rr.kernel(&kernel(outside)).unwrap().text;
+        assert_eq!(out.matches("i0 = lit_u32(0u);").count(), 2, "{out}");
+        validate_text(&out).unwrap_or_else(|e| panic!("{e}\n{out}"));
+        let inn = rr.kernel(&kernel(inside)).unwrap().text;
+        assert!(inn.contains("i0 = t;") && inn.contains("i0 = k;"), "{inn}");
     }
 
     /// NESTED FULL UNROLLS ARE BOUNDED (2026-10-12): an unroll of 8 inside
