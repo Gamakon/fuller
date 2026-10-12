@@ -129,6 +129,10 @@ name = "wgsl_safe_convert"
 required-features = ["wgsl"]
 
 [[example]]
+name = "wgsl_knob"
+required-features = ["wgsl"]
+
+[[example]]
 name = "wgsl_adapter"
 required-features = ["gpu", "wgsl"]
 

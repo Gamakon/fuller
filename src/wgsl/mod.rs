@@ -24,6 +24,7 @@ pub mod pairs;
 pub mod probes;
 pub mod infer;
 pub mod interp;
+pub mod knob;
 pub mod legality;
 pub mod loader;
 pub mod mutate;
