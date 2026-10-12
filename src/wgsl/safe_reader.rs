@@ -4905,6 +4905,39 @@ mod tests {
         assert!(e.contains("not read-add-write of the same cell"), "{e}");
     }
 
+    /// A SECOND INTERFACE (PLAN_constrained_mutation.md section 2.4,
+    /// 2026-10-12): UltraDim's exact re-score, a dense batched cosine score of
+    /// queries against candidates with a Kahan-summed dot product, each thread
+    /// owning one (query, candidate) cell. It reads under its declared
+    /// interface (`// interface cosine`), its second input through `load.qry`;
+    /// it renders with its own names, validates, reads back under the same
+    /// interface and renders valid again, and every layer of the checker
+    /// passes it.
+    #[test]
+    fn the_cosine_interface_reads_and_renders_a_rescore_kernel() {
+        let k = WgslKingdom::load_safe();
+        let src = include_str!("../../tests/corpus/interfaces/cosine_rescore.wgsl");
+        let r = read_safe(src, &k).unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(r.role.name, "cosine");
+        let sx = r.tree.to_sexpr();
+        assert!(sx.contains("load.qry") && sx.contains("load.phi_safe") && sx.contains("store.h_O0"), "{sx}");
+        let out = crate::wgsl::safe_karva::render_tree_with(&r.tree, &k, &r.role).unwrap_or_else(|e| panic!("{e}"));
+        for want in ["// interface cosine", "struct Params { nc: u32, dim: u32, nq: u32, q_off: u32, };", "var<storage, read> qry: array<f32>;", "t < p.dim", "< p.nq && ", "score[", "qry[", "cand["] {
+            assert!(out.text.contains(want), "{want}:\n{}", out.text);
+        }
+        for gram in ["phi[", "h[", "cfg."] {
+            assert!(!out.text.contains(gram), "{gram}:\n{}", out.text);
+        }
+        validate_text(&out.text).unwrap_or_else(|e| panic!("{e}\n{}", out.text));
+        let back = read_safe(&out.text, &k).unwrap_or_else(|e| panic!("read back: {e}\n{}", out.text));
+        assert_eq!(back.role.name, "cosine");
+        // (Not the same text: a re-read numbers registers by first use and
+        // reads the store's own guard as an if, as for a Gram kernel.)
+        let again = crate::wgsl::safe_karva::render_tree_with(&back.tree, &k, &back.role).unwrap().text;
+        validate_text(&again).unwrap_or_else(|e| panic!("{e}\n{again}"));
+        crate::wgsl::check::check(&r.tree, &k, &r.role, &crate::wgsl::target::Target::recorded()).unwrap_or_else(|e| panic!("{e}"));
+    }
+
     /// A LET STALE AT ITS USE (2026-10-12, found reading the cosine
     /// re-score): Kahan's `let s = sum + y; c = (s - sum) - y; sum = s;`.
     /// Inlined at `sum = s`, `s` read the compensation after its store; the

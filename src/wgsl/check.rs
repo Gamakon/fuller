@@ -1563,10 +1563,22 @@ mod tests {
     /// Every tree that passes renders.
     #[test]
     fn random_genes_from_the_sampler_by_layer() {
-        let (k, role) = setup();
-        let checker = Checker::new(&k, &role, &Target::recorded());
+        random_genes(&gram_role(), false);
+    }
+
+    /// The same 1,000 seeds under the second interface (the cosine
+    /// re-score, 2026-10-12): its own bindings and its second input's row
+    /// in the sampler; every gene legal, rendered and valid by naga.
+    #[test]
+    fn random_genes_under_the_cosine_interface() {
+        random_genes(&crate::wgsl::render::cosine_role(), true);
+    }
+
+    fn random_genes(role: &Role, validate: bool) {
+        let k = WgslKingdom::load_safe();
+        let checker = Checker::new(&k, role, &Target::recorded());
         let table = FunctionTable::safe();
-        let rr = Renderer::new(&k, &table, &role);
+        let rr = Renderer::new(&k, &table, role);
         let root = ty(&k, "kernel.safe");
         let n = 1000u64;
         let mut passed = 0usize;
@@ -1576,7 +1588,7 @@ mod tests {
         // faults are counted even where an earlier layer fails first.
         let mut alone: BTreeMap<(Layer, &'static str), (usize, u64, String)> = BTreeMap::new();
         for seed in 0..n {
-            let tree = sample(&k, &role, root, 7, seed).unwrap();
+            let tree = sample(&k, role, root, 7, seed).unwrap();
             let (nonuniform, uniformity) = checker.uniform_fixpoint(&tree);
             let each = [checker.typed(&tree).err(), checker.grammar(&tree).err(), checker.range(&tree).err(), uniformity, checker.adapter(&tree).err(), checker.bounded(&tree, &nonuniform).err()];
             for e in each.into_iter().flatten() {
@@ -1588,7 +1600,10 @@ mod tests {
             match checker.check(&tree) {
                 Ok(()) => {
                     passed += 1;
-                    rr.kernel(&tree).unwrap_or_else(|e| panic!("seed {seed} passes the checker but does not render: {e}"));
+                    let text = rr.kernel(&tree).unwrap_or_else(|e| panic!("seed {seed} passes the checker but does not render: {e}")).text;
+                    if validate {
+                        crate::wgsl::render::validate_text(&text).unwrap_or_else(|e| panic!("seed {seed} under {}: {e}\n{text}", role.name));
+                    }
                 }
                 Err(e) => {
                     let entry = by_reason.entry((e.layer, e.reason)).or_insert((0, seed, e.detail.clone()));
@@ -1596,7 +1611,8 @@ mod tests {
                 }
             }
         }
-        println!("random genes: {n} sampled, {passed} pass every layer, {} fail; diagnostic: {wrapping} hold a u32 wrap in index arithmetic outside a store's cell and a loop's bound", n as usize - passed);
+        let (name, failed) = (&role.name, n as usize - passed);
+        println!("random genes under {name}: {n} sampled, {passed} pass every layer, {failed} fail; diagnostic: {wrapping} hold a u32 wrap in index arithmetic outside a store's cell and a loop's bound");
         for layer in Layer::ALL {
             let count: usize = by_reason.iter().filter(|((l, _), _)| *l == layer).map(|(_, (c, _, _))| c).sum();
             println!("  layer {} {:<22} {count:>4}", layer.number(), layer.name());

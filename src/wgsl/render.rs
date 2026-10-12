@@ -214,12 +214,38 @@ pub fn gram_role() -> Role {
     })
 }
 
+/// A second interface (2026-10-12), UltraDim's exact re-score: a dense
+/// batched cosine score of `nq` queries against `nc` candidates over `dim`
+/// features. `cand` (nc x dim, row-major) is the input the kingdom's `phi`
+/// rows read, `qry` (nq x dim) a second input read through its own row
+/// `load.qry`, and `score` (nq x nc) the output; a thread owns one
+/// (query, candidate) cell. The uniform's fields take the kingdom's roles:
+/// `nc` the output's columns (d), `dim` the items the loop runs over (m),
+/// `nq` the band's rows (r_rows), `q_off` the band's first query (r_off).
+pub fn cosine_role() -> Role {
+    let b = |name: &str, binding: u32, space: &str, ty: &str| Binding { name: name.into(), group: 0, binding, space: space.into(), ty: ty.into() };
+    let f = |name: &str, role: &str| Field { name: name.into(), role: role.into() };
+    Role::interface(Interface {
+        name: "cosine".into(),
+        bindings: vec![b("cand", 0, "storage, read", "array<f32>"), b("score", 1, "storage, read_write", "array<f32>"), b("p", 2, "uniform", "Params"), b("qry", 3, "storage, read", "array<f32>")],
+        uniform_var: "p".into(),
+        uniform_struct: "Params".into(),
+        fields: vec![f("nc", "d"), f("dim", "m"), f("nq", "r_rows"), f("q_off", "r_off")],
+        input: "cand".into(),
+        output: "score".into(),
+        // The band's query and the candidate (the output is nq x nc).
+        guard: "({row}) < p.nq && ({col}) < p.nc".into(),
+        extra: vec![PerKernel { name: "load.qry".into(), inputs: vec!["u32.index".into()], output: "f32.real".into(), template: "qry[{0}]".into() }],
+    })
+}
+
 /// The declared interfaces by name (a kernel names its own in a
 /// `// interface <name>` header line; none is the Gram's).
 pub fn role_named(name: &str) -> Result<Role, String> {
     match name {
         "gram" => Ok(gram_role()),
-        other => Err(format!("no interface {other} (declared: gram)")),
+        "cosine" => Ok(cosine_role()),
+        other => Err(format!("no interface {other} (declared: gram, cosine)")),
     }
 }
 
