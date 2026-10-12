@@ -390,6 +390,10 @@ fn masked_to(x: &str, len: u32) -> String {
     if len.is_power_of_two() { format!("(({x}) & {last}u)") } else { format!("min(({x}), {last}u)") }
 }
 
+/// The cap of an expression loop bound (`bound.of_index`): the largest item
+/// count the fitness runs, so a bound in range computes the same.
+pub const BOUND_CAP: u32 = 65536;
+
 /// A loop counter read outside its loop: 0, through `lit_u32` so naga folds
 /// no constant expression it would refuse (`0u - 18u`).
 const OUT_OF_LOOP: &str = "lit_u32(0u)";
@@ -1358,7 +1362,11 @@ impl Renderer<'_> {
         let a = kids?;
         match safe_base(name) {
             // ---- safeWGSL values ----
-            "bound.of_index" => return Ok(format!("({})", self.value(&v.kids[0], scope)?)),
+            // Any expression bound carries its cap: a loop bounded by a register,
+            // an atomic or a load cannot run past the largest m the fitness runs
+            // (the legality checker's bounded loops, 177 of 1,000 random genes).
+            "bound.of_index" => return Ok(format!("min(({}), {BOUND_CAP}u)", self.value(&v.kids[0], scope)?)),
+            "bound.x_of_uniform" => return self.value(&v.kids[0], scope),
             "bound.m" => return Ok("cfg.m".into()),
             "bound.d" => return Ok("cfg.d".into()),
             "bound.rows" => return Ok("cfg.r_rows".into()),
@@ -1985,12 +1993,13 @@ fn bound_at(t: &Tree, m: f64) -> (f64, bool) {
             }
         };
         match uniform_as_index(&t.name).unwrap_or(safe_base(&t.name)) {
-            "bound.of_uniform" | "index.of_uniform" | "uniform.of_lit" | "uniform.of_counter" | "uniform.of_tcounter" | "uniform.of_tcounter2" | "uniform.of_tcounter3" | "uniform.of_tcounter4" => k(0),
+            "bound.of_uniform" | "bound.x_of_uniform" | "index.of_uniform" | "uniform.of_lit" | "uniform.of_counter" | "uniform.of_tcounter" | "uniform.of_tcounter2" | "uniform.of_tcounter3" | "uniform.of_tcounter4" => k(0),
+            "bound.of_index" => k(0).min(f64::from(BOUND_CAP)),
             "load.cfg_d" | "bound.d" => WORST_D,
             "load.cfg_r_rows" | "bound.rows" => WORST_ROWS,
             "load.cfg_m" | "bound.m" => m,
             "load.cfg_r_off" => 0.0,
-            "bound.of_index" | "index.of_count" | "safe.counter_index" | "safe.tile_index" | "safe.tile_index2" | "safe.tile_index3" => k(0),
+            "index.of_count" | "safe.counter_index" | "safe.tile_index" | "safe.tile_index2" | "safe.tile_index3" => k(0),
             "index.add" | "count.add" => k(0) + k(1),
             "index.sub" => (k(0) - k(1)).max(0.0),
             "index.sub_floor" | "count.sub_floor" => (k(0) - k(1)).max(0.0),
@@ -2371,13 +2380,15 @@ mod tests {
     fn an_expression_bound_is_costed_at_the_worst_shape() {
         let k = crate::wgsl::loader::WgslKingdom::load_safe();
         let t = |n: &str| dual_ty(&k, n).unwrap();
-        let (index, count) = (t("u32.index"), t("u32.count"));
-        let m = || Tree::new("index.of_count", index, vec![Tree::new("load.cfg_m", count, vec![])]);
-        let d = || Tree::new("index.of_count", index, vec![Tree::new("load.cfg_d", count, vec![])]);
+        // (Uniform bounds since legality item 5: the loops may hold barriers.)
+        let u = t("u32.uniform");
+        let m = || Tree::new("uniform.cfg_m", u, vec![]);
+        let d = || Tree::new("uniform.cfg_d", u, vec![]);
+        let lit = |v: f32| Tree::new("uniform.of_lit", u, vec![Tree::literal("literal.lit4096", t("u32.lit4096"), v)]);
         let body = || Tree::new("block.one_L1", t("block.L1"), vec![Tree::new("stmt.barrier_L1", t("stmt.L1"), vec![])]);
-        let bound = |e: Tree| Tree::new("bound.of_index", t("u32.boundx"), vec![e]);
-        let quadratic = Tree::new("loop.items_boundx", t("stmt.L0"), vec![bound(Tree::new("index.mul", index, vec![m(), d()])), body()]);
-        let linear = Tree::new("loop.items_boundx", t("stmt.L0"), vec![bound(Tree::new("index.div", index, vec![Tree::new("index.add", index, vec![d(), Tree::literal("literal.index", index, 63.0)]), Tree::literal("literal.index", index, 64.0)])), body()]);
+        let bound = |e: Tree| Tree::new("bound.of_uniform", t("u32.boundu"), vec![e]);
+        let quadratic = Tree::new("loop.items_boundx", t("stmt.L0"), vec![bound(Tree::new("uniform.mul", u, vec![m(), d()])), body()]);
+        let linear = Tree::new("loop.items_boundx", t("stmt.L0"), vec![bound(Tree::new("uniform.div", u, vec![Tree::new("uniform.add", u, vec![d(), lit(63.0)]), lit(64.0)])), body()]);
         let plain = Tree::new("loop.items_boundm", t("stmt.L0"), vec![Tree::new("bound.m", t("u32.boundm"), vec![]), body()]);
         let (q, l, p) = (cost(&quadratic).per_item, cost(&linear).per_item, cost(&plain).per_item);
         // The bound's own nodes are costed with the body, so the ratio is

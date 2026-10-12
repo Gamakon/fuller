@@ -663,8 +663,8 @@ mod tests {
         // vec2 private arrays; 1,399 with the matrices (gap 9); 1,405 with modf / frexp's fields and
         // the bindings' lengths (gap 10); 1,454 with the kernel parameters (the knob references
         // literal.p_* and grid.with_ktile; PLAN_constrained_mutation.md task 0).
-        // 1,496 with the uniform values, the uniform bound and the in-place conditional block (legality item 5).
-        assert_eq!(fs.rows.len(), 1496);
+        // 1,497 with bound.x_of_uniform; 1,496 with the uniform values, the uniform bound and the in-place conditional block (legality item 5).
+        assert_eq!(fs.rows.len(), 1497);
         let dual = |t: Ty| k.dual(t).unwrap().dual.clone();
         let producers = |d: &str| -> Vec<String> { k.rows.iter().filter(|r| dual(r.output) == d).map(|r| r.name.clone()).collect() };
         assert_eq!(producers("kernel.safe"), vec!["kernel.entry_safe"]);
@@ -738,7 +738,7 @@ mod tests {
         assert_eq!(producers("u32.wgvindex"), vec!["safe.wgv_of"]);
         assert!(k.rows.iter().filter(|r| r.name.starts_with("loop.items_strided")).all(|r| dual(r.inputs[1]) == "u32.lit4096"));
         // An expression-bounded loop takes the bound dual only `bound.of_index` produces.
-        assert_eq!(producers("u32.boundx"), vec!["bound.of_index"]);
+        assert_eq!(producers("u32.boundx"), vec!["bound.of_index", "bound.x_of_uniform"]);
         // A loop that may hold a barrier (an expression-bounded loop at an L rung that does not break)
         // takes the uniform bound only `bound.of_uniform` produces; every other expression-bounded
         // loop (C and O rungs, loops that break) takes `u32.boundx` (legality item 5).

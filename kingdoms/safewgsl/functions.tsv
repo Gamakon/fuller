@@ -605,7 +605,7 @@ F603	reg	b5	composite	-	reg<bool>.flag	0	a register
 F604	reg	b6	composite	-	reg<bool>.flag	0	a register
 F605	reg	b7	composite	-	reg<bool>.flag	0	a register
 F606	parr	w	composite	-	parr<vec4<f32>>.real	0	private array pw of 16 vec4<f32> (a second vec4 array)
-F607	bound	of_index	composite	u32.index	u32.boundx	1	any index expression as a loop bound
+F607	bound	of_index	composite	u32.index	u32.boundx	1	any index expression as a loop bound, capped at 65,536 (the largest m the fitness runs; legality, 2026-10-12): min(e, 65536u)
 F608	shape	at	composite	<vecL.c> u32.index	<S.c>	2	lane (i masked to the lanes) of a vector, through a helper
 F609	index	round_down	composite	u32.index u32.index	u32.index	2	i rounded down to a multiple of k (k16's `m & ~3u` is round_down(m, 4))
 F610	reg	get_v_lane	composite	reg<vec4<f32>>.real u32.index	f32.real	2	v[i & 3u]
@@ -1495,3 +1495,4 @@ F1493	stmt	cblock_L2	composite	block.C2	stmt.L2	1	conditional statements (no bar
 F1494	stmt	cblock_L3	composite	block.C3	stmt.L3	1	conditional statements (no barrier) written in place
 F1495	stmt	cblock_L4	composite	block.C4	stmt.L4	1	conditional statements (no barrier) written in place
 F1496	stmt	cblock_L5	composite	block.C5	stmt.L5	1	conditional statements (no barrier) written in place
+F1497	bound	x_of_uniform	composite	u32.uniform	u32.boundx	1	a uniform loop bound, uncapped

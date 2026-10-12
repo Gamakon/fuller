@@ -3320,6 +3320,13 @@ impl<'a> Ctx<'a> {
             // Any other expression: the bound as written (the complete kingdom,
             // step 6); the cost estimator values it at the worst shape.
             let expr = self.value(bound)?;
+            // The kingdom's own cap (bound.of_index renders min(e, 65536u)),
+            // read back: the bound is e.
+            let cap = f32::from(u16::MAX) + 1.0;
+            let expr = match (expr.name.as_str(), expr.kids.as_slice()) {
+                ("index.min", [x, c]) | ("index.min", [c, x]) if literal_value(c) == Some(cap) => x.clone(),
+                _ => expr,
+            };
             let expr = Tree { ty: index_ty, ..expr };
             (Tree::new("bound.of_index", ty(self, "u32.boundx")?, vec![expr]), "boundx")
         };
@@ -3343,6 +3350,12 @@ impl<'a> Ctx<'a> {
                         None => Ok(None),
                     };
                 }
+            }
+        } else if kind == "boundx" {
+            // A loop without barriers (C and O rungs, a loop that breaks): a
+            // uniform bound uncapped, any other with bound.of_index's cap.
+            if let Some(u) = self.uniform_of(&bound_tree.kids[0])? {
+                bound_tree = Tree::new("bound.x_of_uniform", bound_tree.ty, vec![u]);
             }
         }
         let mut step: Option<u32> = None;
@@ -3485,7 +3498,7 @@ impl<'a> Ctx<'a> {
                 return Ok(None);
             }
             (Tree::literal("literal.lit64", ty(self, "u32.lit64")?, n - start), start)
-        } else if bound_tree.name == "bound.of_uniform" {
+        } else if bound_tree.name == "bound.of_uniform" || bound_tree.name == "bound.x_of_uniform" {
             // A uniform bound stays uniform: bound - start.
             let u = ty(self, "u32.uniform")?;
             if !(1.0..=4096.0).contains(&start) {
@@ -4422,7 +4435,8 @@ mod tests {
         assert!(src.contains("for (var tt: u32 = 0u; tt < cfg.m; tt = tt + 1u)"));
         let tree = read_safe(src, &k).unwrap_or_else(|e| panic!("{e}")).tree;
         let sx = tree.to_sexpr();
-        assert!(sx.contains("(loop.tilex_C0 (bound.of_index (index.of_count load.cfg_m))"), "{sx}");
+        // (A uniform bound at a C rung is uncapped: bound.x_of_uniform.)
+        assert!(sx.contains("(loop.tilex_C0 (bound.x_of_uniform uniform.cfg_m)"), "{sx}");
         let c = crate::wgsl::render::cost(&tree);
         let shipped = crate::wgsl::render::cost(&crate::wgsl::render::gram_shipped_safe_tree(&k).unwrap());
         assert!(c.per_item < 2.0 * shipped.per_item && c.base < 1000.0, "per item {} (shipped {}), base {}", c.per_item, shipped.per_item, c.base);

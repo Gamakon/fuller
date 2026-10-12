@@ -1202,7 +1202,7 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F607 | `bound.of_index` | `composite` | `u32.index` | `u32.boundx` | 1 | any index expression as a loop bound |
+| F607 | `bound.of_index` | `composite` | `u32.index` | `u32.boundx` | 1 | any index expression as a loop bound, capped at 65,536 (the largest m the fitness runs; legality, 2026-10-12): min(e, 65536u) |
 
 ## class `shape`
 
@@ -2868,4 +2868,10 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 | F1495 | `stmt.cblock_L4` | `composite` | `block.C4` | `stmt.L4` | 1 | conditional statements (no barrier) written in place |
 | F1496 | `stmt.cblock_L5` | `composite` | `block.C5` | `stmt.L5` | 1 | conditional statements (no barrier) written in place |
 
-1496 function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Deliberately absent: storage-buffer atomics, atomic compare-exchange (naga 0.20's Metal backend lacks it), subgroupBallot, images, derivatives, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.
+## class `bound`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F1497 | `bound.x_of_uniform` | `composite` | `u32.uniform` | `u32.boundx` | 1 | a uniform loop bound, uncapped |
+
+1497 function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Deliberately absent: storage-buffer atomics, atomic compare-exchange (naga 0.20's Metal backend lacks it), subgroupBallot, images, derivatives, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.

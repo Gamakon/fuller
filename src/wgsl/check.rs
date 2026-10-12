@@ -1081,8 +1081,13 @@ impl<'a> Checker<'a> {
                     None => k(0),
                 }
             }
-            "safe.counter_index" | "safe.tile_index" | "safe.tile_index2" | "safe.tile_index3" | "safe.tile_index4" | "safe.row_as_index" | "safe.col_as_index" | "bound.of_index" | "index.of_count" | "index.of_row" | "index.of_col" | "index.of_lidx" if d.slot == "u32" => k(0),
-            "bound.of_uniform" | "index.of_uniform" | "uniform.of_lit" | "uniform.of_counter" | "uniform.of_tcounter" | "uniform.of_tcounter2" | "uniform.of_tcounter3" | "uniform.of_tcounter4" => k(0),
+            // An expression bound carries its cap (min(e, 65536u)): known even when e is not.
+            "bound.of_index" => {
+                let cap = u128::from(crate::wgsl::render::BOUND_CAP);
+                Some(k(0).map_or(Iv { lo: 0, hi: cap }, |iv| Iv { lo: iv.lo.min(cap), hi: iv.hi.min(cap) }))
+            }
+            "safe.counter_index" | "safe.tile_index" | "safe.tile_index2" | "safe.tile_index3" | "safe.tile_index4" | "safe.row_as_index" | "safe.col_as_index" | "index.of_count" | "index.of_row" | "index.of_col" | "index.of_lidx" if d.slot == "u32" => k(0),
+            "bound.of_uniform" | "bound.x_of_uniform" | "index.of_uniform" | "uniform.of_lit" | "uniform.of_counter" | "uniform.of_tcounter" | "uniform.of_tcounter2" | "uniform.of_tcounter3" | "uniform.of_tcounter4" => k(0),
             "uniform.wid_x" | "uniform.wid_y" | "uniform.wid_z" | "uniform.nwg_x" | "uniform.nwg_y" | "uniform.nwg_z" => {
                 let id = if base.starts_with("uniform.wid") { "wid" } else { "nwg" };
                 cx.comp(id, "xyz".find(base.chars().last()?)?)
@@ -1376,16 +1381,17 @@ mod tests {
         let in_place = |l: Tree| Tree::new("stmt.cblock_L0", ty(&k, "stmt.L0"), vec![Tree::new("block.one_C0", ty(&k, "block.C0"), vec![l])]);
         let bump = Tree::new("reg.set_i_C1", ty(&k, "stmt.C1"), vec![Tree::new("reg.i1", ty(&k, "reg<u32>.index"), vec![]), Tree::new("index.add", ty(&k, "u32.index"), vec![reg_i(&k, "reg.i1"), lit_i(1.0)])]);
         let unbounded = with_body(&k, one_l0(in_place(Tree::new("loop.tilex_C0", ty(&k, "stmt.C0"), vec![bound, Tree::new("block.one_C1", ty(&k, "block.C1"), vec![bump])]))));
-        let e = layer_of(&checker, &unbounded);
-        assert_eq!((e.layer, e.reason), (Layer::Bounded, "loop_bound_changes_in_body"), "{e}");
+        // Since the expression bound carries its cap (min(e, 65536u)), the loop
+        // is bounded whatever its body does to the register: it passes.
+        checker.check(&unbounded).unwrap_or_else(|e| panic!("a capped loop bound: {e}"));
 
         // A loop bounded by a thread-dependent register: not uniform, not known.
         let set_i5 = Tree::new("reg.set_i_L0", ty(&k, "stmt.L0"), vec![Tree::new("reg.i5", ty(&k, "reg<u32>.index"), vec![]), thread_col(&k)]);
         let bound = Tree::new("bound.of_index", ty(&k, "u32.boundx"), vec![reg_i(&k, "reg.i5")]);
         let set_f = Tree::new("reg.set_f_C1", ty(&k, "stmt.C1"), vec![Tree::new("reg.f1", ty(&k, "reg<f32>.real"), vec![]), Tree::literal("literal.real", ty(&k, "f32.real"), 1.0)]);
         let thread_bound = with_body(&k, Tree::new("block.seq2_L0", ty(&k, "block.L0"), vec![set_i5, in_place(Tree::new("loop.tilex_C0", ty(&k, "stmt.C0"), vec![bound, Tree::new("block.one_C1", ty(&k, "block.C1"), vec![set_f])]))]));
-        let e = layer_of(&checker, &thread_bound);
-        assert_eq!((e.layer, e.reason), (Layer::Bounded, "loop_bound_not_uniform"), "{e}");
+        // Bounded by the cap too (a thread's register, no barrier in the loop).
+        checker.check(&thread_bound).unwrap_or_else(|e| panic!("a capped loop bound: {e}"));
 
         // A workgroup over the adapter's limit: 32 x 32 on a device of 256 invocations.
         let mut wide = gram_shipped_safe_tree(&k).unwrap();

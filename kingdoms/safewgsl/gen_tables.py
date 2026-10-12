@@ -669,7 +669,7 @@ f("parr", "w", "composite", [], "parr<vec4<f32>>.real", "private array pw of 16 
 # Expression-bounded loops (k16, k26: `cfg.m & ~3u`; the pump's `cfg.m / 4u`; k06: a test `t + 4u > m`,
 # normalised to t < m - 4). The bound is any index expression; the loop is finite because every u32 is;
 # the cost estimator evaluates the bound at the worst shape, so a slow kernel is refused before dispatch.
-f("bound", "of_index", "composite", ["u32.index"], "u32.boundx", "any index expression as a loop bound")
+f("bound", "of_index", "composite", ["u32.index"], "u32.boundx", "any index expression as a loop bound, capped at 65,536 (the largest m the fitness runs; legality, 2026-10-12): min(e, 65536u)")
 # A vector component chosen at run time (k08's `v[j]`, a model child's): read through a helper, since naga
 # demands a constant index on a vector VALUE; the index is masked to the lanes.
 f("shape", "at", "composite", ["<vecL.c>", "u32.index"], "<S.c>", "lane (i masked to the lanes) of a vector, through a helper")
@@ -1105,6 +1105,9 @@ f("index", "of_uniform", "composite", ["u32.uniform"], "u32.index", "a uniform v
 f("bound", "of_uniform", "composite", ["u32.uniform"], "u32.boundu", "a uniform loop bound")
 for d in (0, 1, 2, 3, 4, 5):
     f("stmt", f"cblock_L{d}", "composite", [f"block.C{d}"], f"stmt.L{d}", "conditional statements (no barrier) written in place")
+# A uniform bound where any bound is taken (a loop at a C or O rung, a loop that breaks): uncapped, the
+# uniform values are known (2026-10-12, the checker's bounded loops: bound.of_index carries its cap).
+f("bound", "x_of_uniform", "composite", ["u32.uniform"], "u32.boundx", "a uniform loop bound, uncapped")
 
 
 def write_tsv(path, header, rows):
