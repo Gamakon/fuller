@@ -154,6 +154,10 @@ pub enum RootKind {
     /// tree's kids its argument and the gather's lane or delta. Its result
     /// is the leaf `subgroup@<h>`.
     Subgroup { fun: String },
+    /// `workgroupUniformLoad(&p)` (2026-10-12): the tree is the load of the
+    /// workgroup location p (its index when indexed); its result is the leaf
+    /// `uniformload@<h>`.
+    UniformLoad { target: String },
 }
 
 /// One root: a hole in the scaffold and the tree that fills it.
@@ -690,6 +694,15 @@ fn walk_block(
                 ctx.calls.insert(result.index() as u32, path.clone());
                 roots.push(Root { kind: RootKind::Subgroup { fun: fun.to_string() }, path: path.clone(), point: path.clone(), tree: Node::App { name: format!("subgroup.{fun}"), slot: "store".into(), known: true, kids } });
             }
+            Statement::WorkGroupUniformLoad { pointer, result } => {
+                let (target, index) = pointer_target(ctx, *pointer);
+                let tree = match index {
+                    Some(ix) => Node::App { name: format!("load.{target}"), slot: "store".into(), known: true, kids: vec![ix] },
+                    None => Node::Leaf { name: format!("load.{target}"), slot: "store".into() },
+                };
+                ctx.calls.insert(result.index() as u32, path.clone());
+                roots.push(Root { kind: RootKind::UniformLoad { target }, path: path.clone(), point: path.clone(), tree });
+            }
             Statement::SubgroupBallot { result, predicate } => {
                 let kids: Vec<Node> = predicate.iter().map(|p| expand(ctx, *p, true)).collect();
                 ctx.calls.insert(result.index() as u32, path.clone());
@@ -1000,6 +1013,8 @@ fn expand(ctx: &mut Ctx, h: Handle<Expression>, count: bool) -> Node {
         Expression::AtomicResult { .. } => Node::Leaf { name: format!("atomic@{}", h.index()), slot },
         // A subgroup operation's result: the leaf its Subgroup root names.
         Expression::SubgroupOperationResult { .. } | Expression::SubgroupBallotResult => Node::Leaf { name: format!("subgroup@{}", h.index()), slot },
+        // workgroupUniformLoad's result: the leaf its UniformLoad root names.
+        Expression::WorkGroupUniformLoadResult { .. } => Node::Leaf { name: format!("uniformload@{}", h.index()), slot },
         Expression::CallResult(f) => {
             // Named by the RESULT's handle index too: a function called twice
             // has two live results, and the rebuild must put each leaf on the

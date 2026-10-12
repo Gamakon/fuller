@@ -237,6 +237,7 @@ fn kind_key(kind: &super::reader::RootKind, module: &Module, f: &Function) -> Re
         RootKind::Let { name } => format!("let:{}", canonical(&format!("(x.let.{name})"), module, f)?),
         RootKind::Atomic { target, fun } => format!("atomic:{fun}:{}", canonical(&format!("(x.{target})"), module, f)?),
         RootKind::Subgroup { fun } => format!("subgroup:{fun}"),
+        RootKind::UniformLoad { target } => format!("uniformload:{target}"),
     };
     Ok(name)
 }

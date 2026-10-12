@@ -80,7 +80,7 @@ fn main() -> Result<(), String> {
                     RootKind::Return => 3,
                     RootKind::Argument { .. } => 4,
                     RootKind::Let { .. } => 5,
-                    RootKind::Atomic { .. } | RootKind::Subgroup { .. } => 6,
+                    RootKind::Atomic { .. } | RootKind::Subgroup { .. } | RootKind::UniformLoad { .. } => 6,
                 };
                 by_kind[k] += 1;
                 sizes.push(r.tree.size());

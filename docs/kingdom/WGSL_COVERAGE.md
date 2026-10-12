@@ -28,19 +28,19 @@
 | `enable f16;` | naga 0.20 | naga 0.20 cannot parse an `enable` directive; the f16 duals exist (`f16.real`, `convert.f32_to_f16`) |
 | `enable subgroups;` | naga 0.20 | same; naga 0.20 reads subgroup built-ins without it, the device asks for the feature |
 | `requires`, `diagnostic` | naga 0.20 | not parsed |
-| `const` at module scope, typed | missing | `const SCALE: f32 = 0.5;` read as leaf `const.SCALE`, no spelling |
+| `const` at module scope, typed | covered | its literal value |
 | `const` at module scope, abstract | covered | `const N = 4;` folds into its uses |
 | `const` in a function | naga 0.20 | "expected assignment or increment/decrement" |
 | `const_assert` | naga 0.20 | not parsed |
-| `override` | missing | leaf `override.SCALE`, no spelling (also needs pipeline constants at compile) |
+| `override` | covered at its default | its default's literal (no pipeline of the kingdom sets an override); one without a default is named |
 | `override` in `@workgroup_size` | naga 0.20 | "Unexpected override-expression" |
 | `alias` | covered | resolved by naga |
 | `struct` (locals of struct type) | covered | members to registers |
 | `@align`, `@size` on members | covered | resolved by naga |
-| `var<private>` scalar | missing | `store.private.pg` has no spelling |
-| `var<private>` array | missing | `store.private.pa.#` has no spelling |
+| `var<private>` scalar | covered | the thread's own for the invocation: a local (register), its initializer stored at the start |
+| `var<private>` array | covered | a private array (`parr.*`) |
 | `var<workgroup>` arrays | covered | `wg.a`..`wg.d`, `wg.va`..`wg.vd`, `wg.v2a`..`wg.v2d`, `wg.decl_*` |
-| `var<workgroup>` scalar | missing | `workgroupUniformLoad(&wv)` probe: "store to a workgroup array without an index" |
+| `var<workgroup>` scalar | covered | element 0 of a workgroup array of one |
 | `var<workgroup>` atomics | covered | `wg.au_*`, `wg.ai_*`, `atomic.*` |
 | `var<storage>` / `var<uniform>` | binding | the Gram role's phi, h, cfg are rows (`load.phi_safe`, `load.h_safe`, `store.h_*`, `load.cfg_*`); other bindings need the generic interface |
 | storage atomics | binding | `atomic<u32>` in a storage buffer |
@@ -74,7 +74,7 @@
 | `workgroupBarrier()` | covered | `stmt.barrier_*` |
 | `storageBarrier()` | covered | `stmt.storage_barrier_L*` (F1158-F1163); read as `workgroupBarrier()` before |
 | `subgroupBarrier()` | covered | `stmt.subgroup_barrier_*` |
-| `workgroupUniformLoad` | missing | needs a workgroup scalar |
+| `workgroupUniformLoad` | covered | naga's lowering: a barrier, the load to a register, a barrier |
 | `textureBarrier()` | naga 0.20 | not parsed |
 | `discard` | not compute | |
 
@@ -170,7 +170,7 @@
 | subgroup operations on i32 | covered | `subgroup.*` on `i32.int` |
 | `subgroupBallot` | covered | `subgroup.ballot` into a `reg.u*` register |
 | `subgroupElect`, `quadBroadcast`, `quadSwap*` | naga 0.20 | not parsed |
-| `workgroupUniformLoad` | missing | workgroup scalar |
+| `workgroupUniformLoad` | covered | barrier, load, barrier |
 | derivatives (`dpdx` ...), `textureSample` | not compute | |
 
 ## Gaps, in the order they are filled
@@ -187,7 +187,7 @@ Each fill is its own commit with a corpus row and the full checklist. The order 
 8. Partly done: swizzles and vec3 values (`cross`, 3-lane swizzles), 159 of 184 read; two conform bugs found on the way (an exponential search over overloads, and a 3-lane compose rebuilt without end). Then done: the thread id as a vector operand, `vec4<u32>` registers and `subgroupBallot`, vec2 private arrays, `select` on a vector condition, `bitcast` of a whole vector. 164 of 184 read.
 9. Done: matrices (composition from scalars and 2 to 4 columns, products with vectors, scalars and matrices, sums, negation, columns by literal and at run time, square matrix locals with column stores). 170 of 184 read.
 10. Done: `modf` / `frexp` results, `arrayLength` of phi and h. 173 of 184 read.
-11. Module `const` and `override`, `var<private>`, workgroup scalars and `workgroupUniformLoad`.
+11. Done: module `const` and `override`, `var<private>`, workgroup scalars and `workgroupUniformLoad`. 178 of 184 read.
 12. Helpers with an early return or a pointer argument.
 
 Not built here: the Gram role's bindings (h, phi, cfg) are the largest gap. Other storage buffers, uniforms, storage atomics, textures and samplers all wait for the generic interface in `docs/PLAN_constrained_mutation.md`, which is awaiting Andrew's review.

@@ -213,8 +213,10 @@ fn tree_of(ctx: &mut Ctx, n: &Node) -> Result<Tree, String> {
             if let Some(t) = ctx.inlined.get(name.as_str()) {
                 return Ok(Tree::new(INLINED, t.ty, vec![t.clone()]));
             }
-            if let Some(idx) = name.strip_prefix("subgroup@") {
-                let local = format!("local.subgroup@{idx}");
+            // A subgroup operation's or a workgroupUniformLoad's result: the
+            // register its statement wrote.
+            if let Some((what, idx)) = name.strip_prefix("subgroup@").map(|i| ("subgroup", i)).or_else(|| name.strip_prefix("uniformload@").map(|i| ("uniformload", i))) {
+                let local = format!("local.{what}@{idx}");
                 let row = ctx.registers.get(&local).cloned().ok_or_else(|| format!("{name} read before its subgroup operation"))?;
                 let d = match row.chars().nth(4) {
                     Some('f') => "f32.real",
@@ -560,6 +562,18 @@ fn break_guard(t: &Tree, ctx: &Ctx) -> Option<Result<Tree, String>> {
 /// Whether a statement tree holds a break anywhere in it.
 fn has_break(t: &Tree) -> bool {
     t.name == "stmt.break" || t.kids.iter().any(has_break)
+}
+
+/// A `var<private>` load or store as a function local's: a private variable
+/// is the thread's own for the whole invocation, as a local of the entry
+/// point is (`load.private.pg@v1` is `load.local.private_pg@g@v1`,
+/// `store.private.pa.#` is `store.local.private_pa@g.#`). None for any
+/// other node.
+fn private_as_local(t: &Tree) -> Option<Tree> {
+    let (op, rest) = t.name.strip_prefix("load.private.").map(|r| ("load", r)).or_else(|| t.name.strip_prefix("store.private.").map(|r| ("store", r)))?;
+    let cut = rest.find(['.', '@']).unwrap_or(rest.len());
+    let (var, tail) = rest.split_at(cut);
+    Some(Tree { name: format!("{op}.local.private_{var}@g{tail}"), ty: t.ty, konst: t.konst, kids: t.kids.clone() })
 }
 
 /// The marker of a tree already in the safe grammar inside a raw one.
@@ -1303,6 +1317,52 @@ impl<'a> Ctx<'a> {
         Ok(row)
     }
 
+    /// The scalar value of a module `const.NAME` or `override.NAME` leaf
+    /// (an override at its default); None for any other leaf.
+    fn module_constant(&self, leaf: &str) -> Result<Option<f64>, String> {
+        let init = if let Some(name) = leaf.strip_prefix("const.") {
+            self.module.constants.iter().find(|(_, c)| c.name.as_deref() == Some(name)).map(|(_, c)| c.init)
+        } else if let Some(name) = leaf.strip_prefix("override.") {
+            let o = self.module.overrides.iter().find(|(_, o)| o.name.as_deref() == Some(name)).map(|(_, o)| o);
+            match o {
+                Some(o) => Some(o.init.ok_or_else(|| format!("the override {name} has no default (its value is the pipeline's)"))?),
+                None => None,
+            }
+        } else {
+            return Ok(None);
+        };
+        let Some(init) = init else { return Err(format!("{leaf}: no such module constant")) };
+        let v = match self.module.global_expressions[init] {
+            Expression::Literal(l) => match l {
+                naga::Literal::F32(x) => f64::from(x),
+                naga::Literal::U32(x) => f64::from(x),
+                naga::Literal::I32(x) => f64::from(x),
+                naga::Literal::Bool(b) => f64::from(u8::from(b)),
+                naga::Literal::AbstractInt(x) => x as f64,
+                naga::Literal::AbstractFloat(x) => x,
+                other => return Err(format!("{leaf} = {other:?}: no literal of that kind")),
+            },
+            ref other => return Err(format!("{leaf} is not a scalar literal ({other:?})")),
+        };
+        Ok(Some(v))
+    }
+
+    /// The dual of a workgroup variable's element (the variable itself for
+    /// a scalar or a vector): f32, vec2 and vec4 of f32, u32.
+    fn workgroup_elem_dual(&self, var: &str) -> Result<String, String> {
+        let (_, g) = self.module.global_variables.iter().find(|(_, g)| g.name.as_deref() == Some(var) && g.space == naga::AddressSpace::WorkGroup).ok_or_else(|| format!("no workgroup variable {var}"))?;
+        let inner = match &self.module.types[g.ty].inner {
+            naga::TypeInner::Array { base, .. } => &self.module.types[*base].inner,
+            other => other,
+        };
+        Ok(match inner {
+            naga::TypeInner::Scalar(naga::Scalar { kind: naga::ScalarKind::Float, .. }) => "f32.real".into(),
+            naga::TypeInner::Scalar(naga::Scalar { kind: naga::ScalarKind::Uint, .. }) => "u32.index".into(),
+            naga::TypeInner::Vector { size, scalar: naga::Scalar { kind: naga::ScalarKind::Float, .. } } => format!("vec{}<f32>.real", *size as u32),
+            other => return Err(format!("the workgroup variable {var} of {other:?}: no dual reads it")),
+        })
+    }
+
     /// A matrix local's columns and rows (`local.<name>@<h>`), from naga.
     fn local_mat(&self, local: &str) -> Option<(u32, u32)> {
         let h: usize = local.rsplit_once('@')?.1.parse().ok()?;
@@ -1379,6 +1439,9 @@ impl<'a> Ctx<'a> {
 
     /// A value tree in the safe grammar.
     fn value(&mut self, t: &Tree) -> Result<Tree, String> {
+        if let Some(local) = private_as_local(t) {
+            return self.value(&local);
+        }
         // An expression already in the safe grammar (a subgroup or atomic
         // result inlined into a loop's bound): as it is.
         if t.name == INLINED && t.kids.len() == 1 {
@@ -1431,6 +1494,22 @@ impl<'a> Ctx<'a> {
             }
             if t.name.starts_with("builtin.") || t.name.starts_with("literal.") || t.name == "load.phi_len" || t.name == "load.h_len" {
                 return Ok(t.clone());
+            }
+            // A workgroup scalar: element 0 of a workgroup array of one.
+            if let Some(rest) = t.name.strip_prefix("load.workgroup.") {
+                let var = rest.split('@').next().unwrap_or(rest);
+                let zero = Tree::literal("literal.index", ty(self, "u32.index")?, 0.0);
+                return self.value(&Tree::new(&format!("load.workgroup.{var}.#"), t.ty, vec![zero]));
+            }
+            // A module `const`, and an `override` at its default (no pipeline
+            // of the kingdom sets one): its literal value.
+            if let Some(v) = self.module_constant(&t.name)? {
+                let form = self.kingdom.dual(t.ty).map(|d| d.form.clone()).unwrap_or_default();
+                let row = format!("literal.{form}");
+                if !self.kingdom.rows.iter().any(|r| r.name == row) {
+                    return Err(format!("{} = {v}: a literal of form {form} has no row", t.name));
+                }
+                return Ok(Tree::literal(&row, t.ty, v as f32));
             }
             return Err(format!("leaf {} has no safe spelling", t.name));
         }
@@ -1687,6 +1766,8 @@ impl<'a> Ctx<'a> {
             .find(|(_, g)| g.name.as_deref() == Some(name) && g.space == naga::AddressSpace::WorkGroup)
             .and_then(|(_, g)| match self.module.types[g.ty].inner {
                 naga::TypeInner::Array { size: naga::ArraySize::Constant(n), .. } => Some(n.get()),
+                // A workgroup scalar or vector: an array of one.
+                naga::TypeInner::Scalar(_) | naga::TypeInner::Vector { .. } => Some(1),
                 _ => None,
             })
             .ok_or_else(|| format!("the workgroup array {name} has no constant length"))?;
@@ -2385,6 +2466,36 @@ impl<'a> Ctx<'a> {
                         let root = self.root_at(&here, |k| matches!(k, RootKind::Subgroup { .. })).ok_or("no subgroup root at this statement")?;
                         self.subgroup_statement(root, result.index() as u32, rung).map(Some)
                     }
+                    Statement::WorkGroupUniformLoad { result, .. } => {
+                        // naga's lowering of workgroupUniformLoad(&p): a barrier,
+                        // the load (to a register), a barrier; in uniform control
+                        // flow, as a barrier is.
+                        if cond {
+                            return Err("a workgroupUniformLoad under a condition".into());
+                        }
+                        let root = self.root_at(&here, |k| matches!(k, RootKind::UniformLoad { .. })).ok_or("no uniform-load root at this statement")?;
+                        // Typed by the workgroup variable's element (the inference
+                        // does not see this load).
+                        let RootKind::UniformLoad { target } = &root.kind else { return Err("not a uniform-load root".into()) };
+                        let var = target.strip_prefix("workgroup.").and_then(|r| r.split('.').next()).ok_or_else(|| format!("workgroupUniformLoad of {target}, not a workgroup variable"))?;
+                        let elem = self.workgroup_elem_dual(var)?;
+                        let lty = ty(self, &elem)?;
+                        let loaded = match &root.tree {
+                            Node::App { name, kids, .. } => {
+                                let idx = kids.first().map(|k| tree_of(self, k)).transpose()?.ok_or("an indexed uniform load without its index")?;
+                                Tree::new(name, lty, vec![idx])
+                            }
+                            Node::Leaf { name, .. } => Tree::new(name, lty, vec![]),
+                            Node::Literal { .. } => return Err("a uniform load of a literal".into()),
+                        };
+                        let v = self.value(&loaded)?;
+                        let d = self.kingdom.dual(v.ty).map(|d| d.dual.clone()).unwrap_or_default();
+                        let row = self.register(&format!("local.uniformload@{}", result.index()), &d)?;
+                        let kind = row.chars().nth(4).unwrap_or('f');
+                        let barrier = || Tree::new(&format!("stmt.barrier_{rung}"), st, vec![]);
+                        let set = Tree::new(&format!("reg.set_{kind}_{rung}"), st, vec![Tree::new(&row, ty(self, Self::reg_dual(kind))?, vec![]), v]);
+                        Ok(Some(Tree::new(&format!("stmt.block_{rung}"), st, vec![self.block(vec![barrier(), set, barrier()], rung)?])))
+                    }
                     Statement::Atomic { result, .. } => {
                         let root = self.root_at(&here, |k| matches!(k, RootKind::Atomic { .. })).ok_or("no atomic root at this statement")?;
                         self.atomic_statement(root, result.index() as u32, rung).map(Some)
@@ -2654,6 +2765,9 @@ impl<'a> Ctx<'a> {
     }
 
     fn store(&mut self, tree: &Tree, rung: &str) -> Result<Option<Tree>, String> {
+        if let Some(local) = private_as_local(tree) {
+            return self.store(&local, rung);
+        }
         let st = self.stmt_ty(rung)?;
         let name = tree.name.as_str();
         if name.starts_with("store.buffer.h.#") {
@@ -2685,6 +2799,11 @@ impl<'a> Ctx<'a> {
                 }
                 _ => Ok(Some(stores(self, rung)?)),
             };
+        }
+        if let (Some(rest), [value]) = (name.strip_prefix("store.workgroup."), tree.kids.as_slice()) {
+            // A workgroup scalar: element 0 of a workgroup array of one.
+            let zero = Tree::literal("literal.index", ty(self, "u32.index")?, 0.0);
+            return self.store(&Tree::new(&format!("store.workgroup.{rest}.#"), tree.ty, vec![zero, value.clone()]), rung);
         }
         if let Some(rest) = name.strip_prefix("store.workgroup.") {
             let arr = rest.split('.').next().unwrap_or("");
@@ -3673,6 +3792,32 @@ pub fn read_safe(source: &str, kingdom: &WgslKingdom) -> Result<SafeRead, String
         }
         let node = r.tree.clone();
         stmts.extend(ctx.store_root(&node, "L0").map_err(|e| format!("at init {}: {e}", r.tree.to_sexpr()))?);
+    }
+    // A `var<private>` with an initializer: its value stored at the start.
+    for (_, gv) in kernel.module.global_variables.iter().filter(|(_, g)| g.space == naga::AddressSpace::Private) {
+        let Some(init) = gv.init else { continue };
+        let name = gv.name.clone().unwrap_or_default();
+        let (form, dual) = match kernel.module.types[gv.ty].inner {
+            naga::TypeInner::Scalar(naga::Scalar { kind: naga::ScalarKind::Float, .. }) => ("real", "f32.real"),
+            naga::TypeInner::Scalar(naga::Scalar { kind: naga::ScalarKind::Uint, .. }) => ("index", "u32.index"),
+            naga::TypeInner::Scalar(naga::Scalar { kind: naga::ScalarKind::Sint, .. }) => ("int", "i32.int"),
+            naga::TypeInner::Scalar(naga::Scalar { kind: naga::ScalarKind::Bool, .. }) => ("flag", "bool.flag"),
+            ref other => return Err(format!("the private variable {name} of {other:?} with an initializer (a scalar's has a spelling)")),
+        };
+        let v = match kernel.module.global_expressions[init] {
+            Expression::Literal(naga::Literal::F32(x)) => f64::from(x),
+            Expression::Literal(naga::Literal::U32(x)) => f64::from(x),
+            Expression::Literal(naga::Literal::I32(x)) => f64::from(x),
+            Expression::Literal(naga::Literal::Bool(b)) => f64::from(u8::from(b)),
+            Expression::ZeroValue(_) => 0.0,
+            ref other => return Err(format!("the private variable {name}'s initializer {other:?} is not a literal")),
+        };
+        if v == 0.0 {
+            continue;
+        }
+        let t = dual_ty(kingdom, dual)?;
+        let lit = Tree::literal(&format!("literal.{form}"), t, v as f32);
+        stmts.extend(ctx.store(&Tree::new(&format!("store.private.{name}"), t, vec![lit]), "L0")?);
     }
     let body = ctx.walk(&naga_fn.body, &mut Vec::new(), "L0", 0)?;
     stmts.extend(body);
