@@ -258,6 +258,17 @@ impl Stage {
     }
 }
 
+/// THE LAYERED CHECK of any child tree, as far as it exists today: its
+/// text rendered (with its `// grid` header), validated by naga for the
+/// adapter, and read back by the safe reader (the ownership proof). The
+/// text and the tree read back, or the stage and what failed.
+pub fn check_text(child: &Tree, kingdom: &WgslKingdom) -> Result<(String, crate::wgsl::safe_reader::SafeRead), (Stage, String)> {
+    let text = crate::wgsl::safe_karva::render_tree(child, kingdom).map_err(|e| (Stage::Render, e))?.text;
+    validate_text(&text).map_err(|e| (Stage::Validate, e.lines().next().unwrap_or("").to_string()))?;
+    let back = read_safe(&text, kingdom).map_err(|e| (Stage::ReadBack, e))?;
+    Ok((text, back))
+}
+
 /// THE LAYERED CHECK of a knob child, as far as it exists today: rendered
 /// (with its `// grid` header), validated by naga for the adapter
 /// (`target.rs`: features, workgroup size and memory), and read back by the
@@ -265,9 +276,7 @@ impl Stage {
 /// with the grid and tile depth the child declares. The text, or the stage
 /// and what failed.
 pub fn check(child: &Tree, kingdom: &WgslKingdom) -> Result<String, (Stage, String)> {
-    let text = crate::wgsl::safe_karva::render_tree(child, kingdom).map_err(|e| (Stage::Render, e))?.text;
-    validate_text(&text).map_err(|e| (Stage::Validate, e.lines().next().unwrap_or("").to_string()))?;
-    let back = read_safe(&text, kingdom).map_err(|e| (Stage::ReadBack, e))?;
+    let (text, back) = check_text(child, kingdom)?;
     let (want, got) = (Knobs::of_root(child).map_err(|e| (Stage::ReadBack, e))?, Knobs::of_root(&back.tree).map_err(|e| (Stage::ReadBack, e))?);
     // A tile depth of 1 is the items stepped one at a time: read back, it is
     // a kernel that declares none, whose tile depth is 1.

@@ -20,7 +20,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use fuller::wgsl::knob;
+use fuller::wgsl::{knob, rules};
 use fuller::wgsl::loader::WgslKingdom;
 use fuller::wgsl::params::parse_ref;
 use fuller::wgsl::render::Tree;
@@ -169,6 +169,74 @@ fn mutate_all(files: &[PathBuf], n: usize, seed: u64, out: &Path, kingdom: &Wgsl
     Ok(())
 }
 
+/// RULE CHILDREN (task 2): for every kernel, up to `n` of the sites where
+/// `rule` fires (all of them when fewer, else a seeded sample), each child
+/// through the layered check; files and table as `mutate_all` writes them.
+fn rule_all(files: &[PathBuf], rule: rules::Rule, n: usize, seed: u64, out: &Path, kingdom: &WgslKingdom) -> Result<(), String> {
+    use std::io::Write as _;
+    for d in ["parents", "children"] {
+        std::fs::create_dir_all(out.join(d)).map_err(|e| format!("{}: {e}", out.join(d).display()))?;
+    }
+    let mut tsv = std::fs::File::create(out.join("children.tsv")).map_err(|e| e.to_string())?;
+    writeln!(tsv, "parent\tchild\tknob\told\tnew\tcheck").map_err(|e| e.to_string())?;
+    let mut errors = std::fs::File::create(out.join("errors.tsv")).map_err(|e| e.to_string())?;
+    writeln!(errors, "origin\tparent\trule\tsite\tstage\terror").map_err(|e| e.to_string())?;
+    let (mut parents, mut unread, mut lit, mut made, mut passed) = (0usize, 0usize, 0usize, 0usize, 0usize);
+    let mut by_stage: BTreeMap<&str, usize> = BTreeMap::new();
+    let mut not_fired: BTreeMap<String, usize> = BTreeMap::new();
+    let started = std::time::Instant::now();
+    for (pi, f) in files.iter().enumerate() {
+        let text = std::fs::read_to_string(f).map_err(|e| format!("{}: {e}", f.display()))?;
+        let Ok(r) = read_safe(&text, kingdom) else {
+            unread += 1;
+            continue;
+        };
+        parents += 1;
+        let id = format!("p{pi:03}");
+        std::fs::write(out.join("parents").join(format!("{id}.wgsl")), render_tree(&r.tree, kingdom)?.text).map_err(|e| e.to_string())?;
+        let mut sites = rule.sites(&r.tree, kingdom);
+        if sites.is_empty() {
+            let why = rule.why_not(&r.tree, kingdom).unwrap_or_default();
+            *not_fired.entry(why.chars().take(90).collect()).or_default() += 1;
+            continue;
+        }
+        lit += 1;
+        let mut rng = seed ^ (pi as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+        while sites.len() > n {
+            rng = rng.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            sites.remove(((rng >> 33) % sites.len() as u64) as usize);
+        }
+        for (i, site) in sites.iter().enumerate() {
+            made += 1;
+            let child = format!("{id}__{i:02}");
+            let outcome = rule.apply(&r.tree, site, kingdom).map_err(|e| (knob::Stage::Render, e)).and_then(|t| knob::check_text(&t, kingdom));
+            match outcome {
+                Ok((t, _)) => {
+                    passed += 1;
+                    std::fs::write(out.join("children").join(format!("{child}.wgsl")), &t).map_err(|e| e.to_string())?;
+                    writeln!(tsv, "{id}\t{child}\t{}\t-\t{}\tpass", rule.name(), site.what).map_err(|e| e.to_string())?;
+                }
+                Err((stage, e)) => {
+                    *by_stage.entry(stage.name()).or_default() += 1;
+                    writeln!(tsv, "{id}\t{child}\t{}\t-\t{}\t{}", rule.name(), site.what, stage.name()).map_err(|e| e.to_string())?;
+                    writeln!(errors, "rule mutation\t{}\t{}\t{}\t{}\t{}", f.display(), rule.name(), site.what, stage.name(), e.replace(['\t', '\n'], " ")).map_err(|e| e.to_string())?;
+                }
+            }
+        }
+    }
+    let (lo, hi) = wilson(passed, made);
+    println!("kernels {}: read {parents}, not read {unread}; rule {} fires in {lit}; up to {n} sites a kernel, seed {seed}; {:.1} s", files.len(), rule.name(), started.elapsed().as_secs_f64());
+    println!("| rule | children | render, validate, read back | share | 95 % interval |\n|---|---|---|---|---|\n| {} | {made} | {passed} | {:.1} % | {lo:.1} to {hi:.1} % |", rule.name(), 100.0 * passed as f64 / made.max(1) as f64);
+    println!("failures by checker stage: {by_stage:?}");
+    println!("kernels where the rule does not fire, by reason:");
+    let mut why: Vec<(&String, &usize)> = not_fired.iter().collect();
+    why.sort_by(|a, b| b.1.cmp(a.1));
+    for (w, n) in why {
+        println!("  {n}\t{w}");
+    }
+    Ok(())
+}
+
 /// A knob's class for the table (a workgroup array's length as one class).
 fn knob_class(s: &knob::Site) -> String {
     match s {
@@ -199,6 +267,25 @@ fn main() -> Result<(), String> {
             let out = PathBuf::from(take("--out")?.ok_or("--out <dir> is required")?);
             mutate_all(&kernels(&rest)?, n, seed, &out, &kingdom)
         }
-        _ => Err("usage: wgsl_knob --survey <dir|file>... | --mutate N [--seed S] --out <dir> <dir|file>...".into()),
+        Some("--rule") => {
+            let name = args.get(1).ok_or("--rule needs a rule name")?;
+            let rule = rules::Rule::ALL.into_iter().find(|r| r.name() == name).ok_or_else(|| format!("no rule {name}; rules: {}", rules::Rule::ALL.map(|r| r.name()).join(", ")))?;
+            let n: usize = args.get(2).ok_or("--rule needs N")?.parse().map_err(|e| format!("N: {e}"))?;
+            let mut rest: Vec<String> = args[3..].to_vec();
+            let mut take = |flag: &str| -> Result<Option<String>, String> {
+                match rest.iter().position(|a| a == flag) {
+                    Some(i) => {
+                        let v = rest.get(i + 1).ok_or(format!("{flag} needs a value"))?.clone();
+                        rest.drain(i..i + 2);
+                        Ok(Some(v))
+                    }
+                    None => Ok(None),
+                }
+            };
+            let seed: u64 = take("--seed")?.unwrap_or_else(|| "1".into()).parse().map_err(|e| format!("--seed: {e}"))?;
+            let out = PathBuf::from(take("--out")?.ok_or("--out <dir> is required")?);
+            rule_all(&kernels(&rest)?, rule, n, seed, &out, &kingdom)
+        }
+        _ => Err("usage: wgsl_knob --survey <dir|file>... | --mutate N [--seed S] --out <dir> <dir|file>... | --rule NAME N [--seed S] --out <dir> <dir|file>...".into()),
     }
 }

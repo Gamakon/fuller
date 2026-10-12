@@ -305,6 +305,8 @@ struct Assigner<'a> {
     /// whether the array holds the tile or one pass of the loop is unknown,
     /// so T is not a knob of this kernel.
     t_unknown: bool,
+    /// The epilogue's block loops open around the walk: counter leaf, knob.
+    block_counters: Vec<(&'static str, Knob)>,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -409,12 +411,15 @@ impl Assigner<'_> {
             }
             // The epilogue's block loops: a loop whose counter offsets the
             // thread's row (column) runs over the row (column) block.
+            let mut pushed = false;
             if let Some(d) = epi_depth.filter(|_| counted) {
                 let counter = tile_counter(d);
                 let offsets = |prefix: &str| any(&t.kids[last], &|n| n.name.starts_with(prefix) && n.kids.iter().any(|k| any(k, &|m| m.name == counter)));
                 let knob = if offsets("safe.row_plus") { Some(Knob::Brow) } else if offsets("safe.col_plus") { Some(Knob::Bcol) } else { None };
-                if let Some(r) = knob.and_then(|k| self.try_ref(&bound, k, Form::Plain, Q)) {
+                if let Some((k, r)) = knob.and_then(|k| self.try_ref(&bound, k, Form::Plain, Q).map(|r| (k, r))) {
                     bound = r;
+                    self.block_counters.push((counter, k));
+                    pushed = true;
                 }
             }
             let inner = Env { in_tile: env.in_t_items || env.in_tile, write_lanes, ..env };
@@ -426,6 +431,9 @@ impl Assigner<'_> {
                     _ => self.walk(k, env, epi_depth),
                 });
             }
+            if pushed {
+                self.block_counters.pop();
+            }
             return Tree { name: t.name.clone(), ty: t.ty, konst: t.konst, kids };
         }
         // The index of a workgroup array read: its lanes are the read's.
@@ -435,6 +443,13 @@ impl Assigner<'_> {
             return Tree { name: t.name.clone(), ty: t.ty, konst: t.konst, kids: vec![t.kids[0].clone(), self.walk(&t.kids[1], inner, epi_depth)] };
         }
         let mut kids: Vec<Tree> = t.kids.iter().map(|k| self.walk(k, env, epi_depth)).collect();
+        // A block loop's counter masked to the block (`pv[k & 3u]` in a 4-row epilogue).
+        if let ("index.and", [e, m]) = (base, kids.as_mut_slice()) {
+            let knob = self.block_counters.iter().rev().find(|(c, _)| any(e, &|n| n.name == *c)).map(|&(_, k)| k);
+            if let Some(r) = knob.and_then(|k| self.try_ref(m, k, Form::Minus1, Q)) {
+                *m = r;
+            }
+        }
         match (base, kids.as_mut_slice()) {
             // Strides of the thread ids: wid by the span, lid and gid by the block.
             ("index.mul", [a, b]) => {
@@ -560,13 +575,13 @@ pub fn assign(tree: &Tree, kingdom: &WgslKingdom) -> Result<Tree, String> {
     }
     let grid = grid_of(&tree.kids[0])?;
     let mut ktile = first_stride(&tree.kids[1]);
-    let mut a = Assigner { knobs: Knobs { grid, ktile }, kingdom, ktile_refs: 0, tiles: BTreeSet::new(), t_unknown: false };
+    let mut a = Assigner { knobs: Knobs { grid, ktile }, kingdom, ktile_refs: 0, tiles: BTreeSet::new(), t_unknown: false, block_counters: Vec::new() };
     let mut body = a.walk(&tree.kids[1], Env::default(), None);
     // The tile depth is a knob only when the tile's loads scale with it;
     // otherwise the kernel is read without it.
     if ktile.is_some() && (a.t_unknown || !tile_depth_coherent(&body)) {
         ktile = None;
-        a = Assigner { knobs: Knobs { grid, ktile }, kingdom, ktile_refs: 0, tiles: BTreeSet::new(), t_unknown: false };
+        a = Assigner { knobs: Knobs { grid, ktile }, kingdom, ktile_refs: 0, tiles: BTreeSet::new(), t_unknown: false, block_counters: Vec::new() };
         body = a.walk(&tree.kids[1], Env::default(), None);
     }
     let epilogue = a.walk(&tree.kids[2], Env::default(), Some(0));
