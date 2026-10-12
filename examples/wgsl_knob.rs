@@ -237,6 +237,82 @@ fn rule_all(files: &[PathBuf], rule: rules::Rule, n: usize, seed: u64, out: &Pat
     Ok(())
 }
 
+/// THE RULES THAT FIRE on every kernel given: whether it reads, renders
+/// the same text with its parameters, and passes the layered check
+/// (`knob::check_text`, the legality checker first); the sites of every rule;
+/// and, after one step of each climbing rule (vec4-tile, grow-rows; its
+/// first site), the rules that fire on that child.
+fn fires(files: &[PathBuf], kingdom: &WgslKingdom) -> Result<(), String> {
+    let climbing = [rules::Rule::VecTile, rules::Rule::GrowRows];
+    print!("member\treads\tchecks");
+    for r in rules::Rule::ALL {
+        print!("\t{}", r.name());
+    }
+    for c in climbing {
+        print!("\tafter {}", c.name());
+    }
+    println!();
+    let (mut read, mut checked, mut climbs, mut climbs_again) = (0usize, 0usize, 0usize, 0usize);
+    let mut fired: BTreeMap<&str, usize> = BTreeMap::new();
+    for f in files {
+        let name = f.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+        let text = std::fs::read_to_string(f).map_err(|e| format!("{}: {e}", f.display()))?;
+        let (Ok(lit), Ok(r)) = (read_safe_literal(&text, kingdom), read_safe(&text, kingdom)) else {
+            println!("{name}\tno");
+            continue;
+        };
+        read += 1;
+        let same = render_tree(&lit.tree, kingdom)?.text == render_tree(&r.tree, kingdom)?.text;
+        let check = knob::check_text(&r.tree, kingdom);
+        if same && check.is_ok() {
+            checked += 1;
+        }
+        print!("{name}\tyes\t{}", match (&check, same) {
+            (Ok(_), true) => "pass".to_string(),
+            (Ok(_), false) => "our software has a bug: the parameters change the text".to_string(),
+            (Err((s, e)), _) => format!("{}: {}", s.name(), e.chars().take(80).collect::<String>()),
+        });
+        for rule in rules::Rule::ALL {
+            let n = rule.sites(&r.tree, kingdom).len();
+            if n > 0 {
+                *fired.entry(rule.name()).or_default() += 1;
+            }
+            print!("\t{n}");
+        }
+        let mut climbed = false;
+        let mut again = false;
+        for c in climbing {
+            let sites = c.sites(&r.tree, kingdom);
+            let after: Vec<String> = match sites.first().map(|site| c.apply(&r.tree, site, kingdom)) {
+                Some(Ok(child)) => {
+                    climbed = true;
+                    let back = knob::check_text(&child, kingdom).map(|(_, b)| b.tree);
+                    match back {
+                        Ok(t) => {
+                            let fire: Vec<String> = rules::Rule::ALL.iter().filter(|r| !r.sites(&t, kingdom).is_empty()).map(|r| r.name().to_string()).collect();
+                            if fire.iter().any(|n| n == "vec4-tile" || n == "grow-rows") {
+                                again = true;
+                            }
+                            fire
+                        }
+                        Err((s, e)) => vec![format!("our software has a bug: the child fails {}: {}", s.name(), e.chars().take(60).collect::<String>())],
+                    }
+                }
+                Some(Err(e)) => vec![format!("our software has a bug: {e}")],
+                None => vec!["-".to_string()],
+            };
+            print!("\t{}", after.join(","));
+        }
+        climbs += usize::from(climbed);
+        climbs_again += usize::from(again);
+        println!();
+    }
+    println!("\nmembers {}: read {read}, read with the same text and passing the check {checked}", files.len());
+    println!("members a rule fires on, by rule: {fired:?}");
+    println!("members with a climbing step: {climbs}; whose child a climbing rule (vec4-tile or grow-rows) fires on again: {climbs_again}");
+    Ok(())
+}
+
 /// A knob's class for the table (a workgroup array's length as one class).
 fn knob_class(s: &knob::Site) -> String {
     match s {
@@ -250,6 +326,7 @@ fn main() -> Result<(), String> {
     let kingdom = WgslKingdom::load_safe();
     match args.first().map(String::as_str) {
         Some("--survey") => survey(&kernels(&args[1..])?, &kingdom),
+        Some("--fires") => fires(&kernels(&args[1..])?, &kingdom),
         Some("--mutate") => {
             let n: usize = args.get(1).ok_or("--mutate needs N")?.parse().map_err(|e| format!("--mutate: {e}"))?;
             let mut rest: Vec<String> = args[2..].to_vec();
