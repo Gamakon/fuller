@@ -899,6 +899,11 @@ f("geom", "dot", "Math::Dot", ["<vecL<i32>.int>", "<vecL<i32>.int>"], "i32.int",
 f("arith", "mod", "Binary::Modulo", ["<S.real>", "<S.real>"], "<S.real>", "WGSL's % on reals: x - y * trunc(x / y)")
 
 
+# ---- storageBarrier (2026-10-12, WGSL_COVERAGE.md gap 4): its own statement, read as workgroupBarrier before ----
+for r in ("L0", "L1", "L2", "L3", "L4", "L5"):
+    f("stmt", "storage_barrier_" + r, "composite", [], "stmt." + r, "storageBarrier(): storage-buffer writes visible to the workgroup")
+
+
 def write_tsv(path, header, rows):
     with open(path, "w") as out:
         out.write("\t".join(header) + "\n")

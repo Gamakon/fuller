@@ -2409,4 +2409,15 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 |---|---|---|---|---|---|---|
 | F1157 | `arith.mod` | `Binary::Modulo` | `<S.real> <S.real>` | `<S.real>` | 2 | WGSL's % on reals: x - y * trunc(x / y) |
 
-1157 function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Deliberately absent: storage-buffer atomics, atomic compare-exchange (naga 0.20's Metal backend lacks it), subgroupBallot, images, derivatives, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.
+## class `stmt`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F1158 | `stmt.storage_barrier_L0` | `composite` | `-` | `stmt.L0` | 0 | storageBarrier(): storage-buffer writes visible to the workgroup |
+| F1159 | `stmt.storage_barrier_L1` | `composite` | `-` | `stmt.L1` | 0 | storageBarrier(): storage-buffer writes visible to the workgroup |
+| F1160 | `stmt.storage_barrier_L2` | `composite` | `-` | `stmt.L2` | 0 | storageBarrier(): storage-buffer writes visible to the workgroup |
+| F1161 | `stmt.storage_barrier_L3` | `composite` | `-` | `stmt.L3` | 0 | storageBarrier(): storage-buffer writes visible to the workgroup |
+| F1162 | `stmt.storage_barrier_L4` | `composite` | `-` | `stmt.L4` | 0 | storageBarrier(): storage-buffer writes visible to the workgroup |
+| F1163 | `stmt.storage_barrier_L5` | `composite` | `-` | `stmt.L5` | 0 | storageBarrier(): storage-buffer writes visible to the workgroup |
+
+1163 function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Deliberately absent: storage-buffer atomics, atomic compare-exchange (naga 0.20's Metal backend lacks it), subgroupBallot, images, derivatives, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.

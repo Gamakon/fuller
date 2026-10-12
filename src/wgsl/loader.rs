@@ -652,8 +652,8 @@ mod tests {
         // 941 with the workgroup arrays as knobs; 955 with full unrolling; 1,009 with the tree reductions;
         // 1,082 with the workgroup atomics; 1,125 with the subgroup values, operations and barrier;
         // 1,126 with the layout knob (grid.of_rows_x); 1,157 with the u32 form crossings and the bit,
-        // dot and modulo overloads (WGSL_COVERAGE.md gaps 2 and 3).
-        assert_eq!(fs.rows.len(), 1157);
+        // dot and modulo overloads (WGSL_COVERAGE.md gaps 2 and 3); 1,163 with storageBarrier.
+        assert_eq!(fs.rows.len(), 1163);
         let dual = |t: Ty| k.dual(t).unwrap().dual.clone();
         let producers = |d: &str| -> Vec<String> { k.rows.iter().filter(|r| dual(r.output) == d).map(|r| r.name.clone()).collect() };
         assert_eq!(producers("kernel.safe"), vec!["kernel.entry_safe"]);

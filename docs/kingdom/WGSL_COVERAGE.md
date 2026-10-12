@@ -72,7 +72,7 @@
 | function call statement | covered for pure helpers | see helpers |
 | block `{ }` | covered | `stmt.block_*` |
 | `workgroupBarrier()` | covered | `stmt.barrier_*` |
-| `storageBarrier()` | missing (bug) | read as `stmt.barrier_*`, rendered `workgroupBarrier()`: the meaning changes |
+| `storageBarrier()` | covered | `stmt.storage_barrier_L*` (F1158-F1163); read as `workgroupBarrier()` before |
 | `subgroupBarrier()` | covered | `stmt.subgroup_barrier_*` |
 | `workgroupUniformLoad` | missing | needs a workgroup scalar |
 | `textureBarrier()` | naga 0.20 | not parsed |
@@ -134,7 +134,7 @@
 | value | status | rows |
 |---|---|---|
 | `global_invocation_id`, `local_invocation_id`, `workgroup_id`, `local_invocation_index` | covered | `builtin.*`, `axis.*` |
-| `num_workgroups` | missing | read as `builtin.num_work_groups` (naga's name), no row by that name; the row is `builtin.num_workgroups` |
+| `num_workgroups` | covered | `builtin.num_workgroups` (naga names it `num_work_groups`) |
 | `subgroup_invocation_id`, `subgroup_size`, `num_subgroups`, `subgroup_id` | covered | `builtin.subgroup_*` (bdca29a) |
 
 ## Built-in functions
@@ -178,8 +178,8 @@ Each fill is its own commit with a corpus row and the full checklist. The order 
 1. Done: an f32-to-f32 `As` (naga's lowering of an abstract float literal) read as its operand: 16 probes (108 of 184 read).
 2. Done: conversions between the u32 forms (`index`, `bits`, `count`), and vector overloads of the bit functions.
 3. Done: the `unpack*` naga names, `insertBits`, `dot` on integer vectors, `%` on f32; a naga node the WGSL table has no row for is resolved in the safe table. Gaps 2 and 3 read 26 probes more (134 of 184).
-4. `storageBarrier()` as its own statement row (today it is misread as `workgroupBarrier()`).
-5. `num_workgroups`: naga's name `num_work_groups` mapped to the row.
+4. Done: `storageBarrier()` as its own statement row (it was misread as `workgroupBarrier()`).
+5. Done: `num_workgroups`, naga's name `num_work_groups` mapped to the row. 136 of 184 read. Also read now: a kernel that never writes h (`draft_no_store`; a mutant's top-level return).
 6. i32 registers, `i32(u32)`, `u32(i32)`, `i32(f32)`, `bitcast<i32>`, and with them `++` / `--`, i32 `abs/min/max/clamp/sign`, i32 subgroup operations and vecN<i32>.
 7. `switch`, `break`, `break if`, `while` with its step in the body, and `continue` in a loop without a barrier.
 8. vec3 values (`cross`, 3-lane swizzles, the thread id as an operand), `vec4<u32>` registers (then `subgroupBallot`), and vec2 private arrays.

@@ -1241,6 +1241,10 @@ impl<'a> Ctx<'a> {
                 // naga's name for the builtin; the table's row is `builtin.workgroup_id`.
                 return Ok(Tree::new("builtin.workgroup_id", t.ty, vec![]));
             }
+            if t.name == "builtin.num_work_groups" {
+                // naga's name; the table's row is `builtin.num_workgroups`.
+                return Ok(Tree::new("builtin.num_workgroups", t.ty, vec![]));
+            }
             if t.name.starts_with("builtin.") || t.name.starts_with("literal.") {
                 return Ok(t.clone());
             }
@@ -1686,6 +1690,17 @@ impl<'a> Ctx<'a> {
             flatten_stmts(s, &mut flat);
         }
         let mut stmts = flat;
+        // A kernel that never writes h (a gene whose body returns at the
+        // top level, rendered without its epilogue; the reader drops the
+        // trailing return as main's implicit one): the body, an explicit
+        // return, and the epilogue's fallback, which the renderer does not
+        // write after a body that returns.
+        if !stmts.iter().any(has_store) {
+            if stmts.last().is_none_or(|s| rung_stem(&s.name) != Some("stmt.return")) {
+                stmts.push(Tree::new("stmt.return_L0", self.stmt_ty("L0")?, vec![]));
+            }
+            return Ok((stmts, Tree::fallback(ty(self, "block.O0")?)));
+        }
         let p = stmts.iter().rposition(has_store).ok_or("the kernel never writes h: the kingdom's root ends every kernel in the store of its thread's cell")?;
         let after: Vec<Tree> = stmts.split_off(p + 1);
         if !after.is_empty() {
@@ -1794,7 +1809,7 @@ impl<'a> Ctx<'a> {
             return Err("a continue in the kernel's epilogue that is not a guard `if (c) { continue; }` ahead of the store".into());
         }
         let Some(stem) = rung_stem(&t.name) else { return Ok(t.clone()) };
-        if stem == "stmt.barrier" || stem == "stmt.return" || stem.starts_with("loop.items") {
+        if stem == "stmt.barrier" || stem == "stmt.storage_barrier" || stem == "stmt.subgroup_barrier" || stem == "stmt.return" || stem.starts_with("loop.items") {
             return Err(format!("{} before the last store of h, inside the kernel's epilogue (conditional statements only)", t.name));
         }
         let tile = matches!(stem, "loop.tile" | "loop.tile_strided" | "loop.tilex" | "loop.tilex_strided");
@@ -2147,11 +2162,15 @@ impl<'a> Ctx<'a> {
                         if cond {
                             return Err("a barrier under a condition".into());
                         }
-                        // subgroupBarrier() is the subgroup flag alone.
-                        if *flags == naga::Barrier::SUB_GROUP {
-                            return Ok(Some(Tree::new(&format!("stmt.subgroup_barrier_{rung}"), st, vec![])));
-                        }
-                        Ok(Some(Tree::new(&format!("stmt.barrier_{rung}"), st, vec![])))
+                        // subgroupBarrier() is the subgroup flag alone, storageBarrier()
+                        // the storage flag alone, workgroupBarrier() the workgroup flag.
+                        let row = match *flags {
+                            naga::Barrier::SUB_GROUP => "stmt.subgroup_barrier",
+                            naga::Barrier::STORAGE => "stmt.storage_barrier",
+                            naga::Barrier::WORK_GROUP => "stmt.barrier",
+                            other => return Err(format!("a barrier with the flags {other:?}, which no WGSL barrier writes")),
+                        };
+                        Ok(Some(Tree::new(&format!("{row}_{rung}"), st, vec![])))
                     }
                     Statement::Return { value: None } => {
                         if stmt_tail {

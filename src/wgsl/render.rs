@@ -801,6 +801,14 @@ impl<'a> Renderer<'a> {
                 }
                 Ok("    subgroupBarrier();\n".into())
             }
+            "stmt.storage_barrier" => {
+                n(0)?;
+                if scope.in_cond > 0 || scope.returned {
+                    scope.masked.push("stmt.storage_barrier in non-uniform control flow".into());
+                    return Ok("    // storage barrier masked: non-uniform control flow\n".into());
+                }
+                Ok("    storageBarrier();\n".into())
+            }
             "stmt.barrier" => {
                 n(0)?;
                 // WGSL's uniformity rule: a barrier only in uniform control
@@ -1565,6 +1573,7 @@ pub fn cost(t: &Tree) -> Cost {
             "geom.inverse" | "hash.mix64" | "fixed.wide_mul" | "fixed.mul" => 40.0,
             n if n.starts_with("trig.") || n.starts_with("arith.exp") || n.starts_with("arith.log") || n.starts_with("arith.pow") => 8.0,
             "stmt.barrier" => 50.0,
+            n if n.starts_with("stmt.storage_barrier") => 50.0,
             "fallback" => 0.0,
             _ => 1.0,
         }

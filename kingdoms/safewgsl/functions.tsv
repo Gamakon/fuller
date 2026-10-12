@@ -1156,3 +1156,9 @@ F1154	bits	insert	Math::InsertBits	<u32.bits> <u32.bits> u32.index u32.count	<u3
 F1155	geom	dot	Math::Dot	<vecL<u32>.index> <vecL<u32>.index>	u32.index	2	integer dot product (wraps)
 F1156	geom	dot	Math::Dot	<vecL<i32>.int> <vecL<i32>.int>	i32.int	2	integer dot product (wraps)
 F1157	arith	mod	Binary::Modulo	<S.real> <S.real>	<S.real>	2	WGSL's % on reals: x - y * trunc(x / y)
+F1158	stmt	storage_barrier_L0	composite	-	stmt.L0	0	storageBarrier(): storage-buffer writes visible to the workgroup
+F1159	stmt	storage_barrier_L1	composite	-	stmt.L1	0	storageBarrier(): storage-buffer writes visible to the workgroup
+F1160	stmt	storage_barrier_L2	composite	-	stmt.L2	0	storageBarrier(): storage-buffer writes visible to the workgroup
+F1161	stmt	storage_barrier_L3	composite	-	stmt.L3	0	storageBarrier(): storage-buffer writes visible to the workgroup
+F1162	stmt	storage_barrier_L4	composite	-	stmt.L4	0	storageBarrier(): storage-buffer writes visible to the workgroup
+F1163	stmt	storage_barrier_L5	composite	-	stmt.L5	0	storageBarrier(): storage-buffer writes visible to the workgroup

@@ -1128,6 +1128,8 @@ mod tests {
         let thread_id = |t: &Tree| ids.contains(&t.name.as_str()) || t.name.starts_with("axis.") || (t.name.starts_with("shape.access_") && t.kids.first().is_some_and(|k| ids.contains(&k.name.as_str())));
         let (mut valid, mut owned, mut lost, mut other, mut unrendered, mut axis_swaps, mut draws) = (0usize, 0usize, 0usize, 0usize, 0usize, 0usize, 0usize);
         let mut made = 0usize;
+        // The first failures, named in the assertion with the mutant's text.
+        let mut failures: Vec<String> = Vec::new();
         while made < N {
             draws += 1;
             assert!(draws < 100 * N, "only {made} mutable nodes found in {draws} draws");
@@ -1151,22 +1153,27 @@ mod tests {
             made += 1;
             let text = match render_tree(&mutant, &k) {
                 Ok(r) => r.text,
-                Err(_) => {
+                Err(e) => {
                     unrendered += 1;
+                    failures.push(format!("does not render: {e}\n{}", mutant.to_sexpr()));
                     continue;
                 }
             };
-            if validate_text(&text).is_err() {
+            if let Err(e) = validate_text(&text) {
+                failures.push(format!("invalid: {e}\n{text}"));
                 continue;
             }
             valid += 1;
             match read_safe(&text, &k) {
                 Ok(_) => owned += 1,
                 Err(e) if e.contains("not at this thread's cell") => lost += 1,
-                Err(_) => other += 1,
+                Err(e) => {
+                    other += 1;
+                    failures.push(format!("does not read back: {e}\n{text}"));
+                }
             }
         }
         println!("{N} single-symbol mutants of {} corpus kernels: {valid} validate, {owned} read back with the store at the thread's own cell, {lost} lose the thread's cell, {other} do not read back for another reason, {unrendered} do not render; {axis_swaps} change a thread id or its axis", trees.len());
-        assert_eq!((valid, owned, axis_swaps), (N, N, 0), "every mutant validates, keeps the thread's cell and keeps its thread ids and axes");
+        assert_eq!((valid, owned, axis_swaps), (N, N, 0), "every mutant validates, keeps the thread's cell and keeps its thread ids and axes; the first failures:\n{}", failures.iter().take(3).cloned().collect::<Vec<_>>().join("\n----\n"));
     }
 }
