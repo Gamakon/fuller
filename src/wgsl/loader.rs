@@ -632,8 +632,9 @@ mod tests {
         // 142 with the epilogue (stmt and block at O0..O4: every kernel ends in its thread's store);
         // 152 with the thread's axes (gid, lid, wid, rowid, colid, lidx; strided and grouped rows and columns);
         // 157 with the workgroup arrays as knobs (vec2 arrays, their index, a length, a declaration and the list);
-        // 160 with the workgroup atomics (atomic<u32> and atomic<i32> arrays, their index).
-        assert_eq!(s.len(), 160);
+        // 160 with the workgroup atomics (atomic<u32> and atomic<i32> arrays, their index);
+        // 161 with the i32 register (WGSL_COVERAGE.md gap 6).
+        assert_eq!(s.len(), 161);
         for (a, b) in w.iter().zip(&s) {
             assert_eq!((a.reference.as_str(), a.dual.as_str()), (b.reference.as_str(), b.dual.as_str()));
         }
@@ -652,8 +653,9 @@ mod tests {
         // 941 with the workgroup arrays as knobs; 955 with full unrolling; 1,009 with the tree reductions;
         // 1,082 with the workgroup atomics; 1,125 with the subgroup values, operations and barrier;
         // 1,126 with the layout knob (grid.of_rows_x); 1,157 with the u32 form crossings and the bit,
-        // dot and modulo overloads (WGSL_COVERAGE.md gaps 2 and 3); 1,163 with storageBarrier.
-        assert_eq!(fs.rows.len(), 1163);
+        // dot and modulo overloads (WGSL_COVERAGE.md gaps 2 and 3); 1,163 with storageBarrier;
+        // 1,237 with i32 (registers, crossings, integer rows, subgroup operations; gap 6).
+        assert_eq!(fs.rows.len(), 1237);
         let dual = |t: Ty| k.dual(t).unwrap().dual.clone();
         let producers = |d: &str| -> Vec<String> { k.rows.iter().filter(|r| dual(r.output) == d).map(|r| r.name.clone()).collect() };
         assert_eq!(producers("kernel.safe"), vec!["kernel.entry_safe"]);

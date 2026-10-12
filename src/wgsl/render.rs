@@ -281,10 +281,21 @@ pub struct Renderer<'a> {
 /// The tile loops' counters by depth (a fourth since run A, 2026-10-11).
 const TILE_COUNTERS: [&str; 4] = ["k", "k2", "k3", "k4"];
 
+/// The most copies of a body nested full unrolls write out (one unroll of up
+/// to 64 always is). Past it an unroll is written as its loop, the same
+/// computation: a random gene of three nested unrolls (57 x 38 x 38 copies of
+/// its epilogue store, 2026-10-12) rendered 17 MB of WGSL that naga took
+/// 336 s to validate.
+pub const UNROLL_COPIES_MAX: u32 = 64;
+
 struct Scope {
     /// The tile counters a fully unrolled loop has made literals, by name
     /// (`k` is `lit_u32(2u)` in the third copy of an unrolled body).
     unrolled: BTreeMap<&'static str, u32>,
+    /// The copies the enclosing fully unrolled loops write (their counts
+    /// multiplied; 1 outside any): an unroll whose copies would take the
+    /// product past [`UNROLL_COPIES_MAX`] is written as its loop.
+    unroll_copies: u32,
     /// Whether the innermost loop around the statement being written is a
     /// fully unrolled one (no loop in the text): a `continue` there is the
     /// rest of the copy guarded instead.
@@ -334,7 +345,7 @@ impl<'a> Renderer<'a> {
         if d.dual != "kernel.kernel" && d.dual != "kernel.safe" {
             return Err(format!("the root is {} ({}), not kernel.kernel or kernel.safe", root.name, d.dual));
         }
-        let mut scope = Scope { unrolled: BTreeMap::new(), in_unrolled_copy: false, wg: BTreeMap::new(), in_items: false, in_tile: false, tile_depth: 0, grid: Grid { x: 16, y: 16, bx: 1, by: 1, rows_x: false }, in_cond: 0, returned: false, helpers: Vec::new(), masked: Vec::new(), const_depth: 0 };
+        let mut scope = Scope { unrolled: BTreeMap::new(), unroll_copies: 1, in_unrolled_copy: false, wg: BTreeMap::new(), in_items: false, in_tile: false, tile_depth: 0, grid: Grid { x: 16, y: 16, bx: 1, by: 1, rows_x: false }, in_cond: 0, returned: false, helpers: Vec::new(), masked: Vec::new(), const_depth: 0 };
         let (grid, body) = match root.name.as_str() {
             "kernel.entry" => {
                 let [g, b] = root.kids.as_slice() else { return Err(format!("{} with {} children", root.name, root.kids.len())) };
@@ -543,6 +554,23 @@ impl<'a> Renderer<'a> {
         let Some(&var) = TILE_COUNTERS.get(scope.tile_depth) else {
             return Err("a fifth nested tile loop (the safe grammar does not produce this)".into());
         };
+        let copies = scope.unroll_copies.saturating_mul(count);
+        if copies > UNROLL_COPIES_MAX {
+            // Written as its loop: the counter a variable again, a continue
+            // in the body continues the loop.
+            let (was, copy_was) = (scope.in_tile, scope.in_unrolled_copy);
+            scope.in_tile = true;
+            scope.in_unrolled_copy = false;
+            scope.tile_depth += 1;
+            let body = self.block_t(&s.kids[1], scope);
+            scope.tile_depth -= 1;
+            scope.in_tile = was;
+            scope.in_unrolled_copy = copy_was;
+            let (body, terminated) = body?;
+            return Ok((format!("    for ({var} = 0u; {var} < {count}u; {var} = {var} + 1u) {{\n{body}    }}\n"), terminated));
+        }
+        let outer_copies = scope.unroll_copies;
+        scope.unroll_copies = copies;
         let (was_tile, was_copy) = (scope.in_tile, scope.in_unrolled_copy);
         scope.in_tile = true;
         scope.in_unrolled_copy = true;
@@ -569,6 +597,7 @@ impl<'a> Renderer<'a> {
         scope.tile_depth -= 1;
         scope.in_tile = was_tile;
         scope.in_unrolled_copy = was_copy;
+        scope.unroll_copies = outer_copies;
         result.map(|terminated| (out, terminated))
     }
 
@@ -867,7 +896,7 @@ impl<'a> Renderer<'a> {
                 scope.in_tile = false;
                 Ok(format!("    for (k = 0u; k < {count}u; k = k + 1u) {{\n{}    }}\n", body?))
             }
-            "reg.set_f" | "reg.set_v" | "reg.set_i" | "reg.set_b" => {
+            "reg.set_f" | "reg.set_v" | "reg.set_i" | "reg.set_b" | "reg.set_n" => {
                 n(2)?;
                 Ok(format!("    {} = {};\n", self.register(&kids[0])?, self.value(&kids[1], scope)?))
             }
@@ -896,9 +925,10 @@ impl<'a> Renderer<'a> {
             ("fallback", "reg<vec4<f32>>.real") => "v0".to_string(),
             ("fallback", "reg<u32>.index") => "i0".to_string(),
             ("fallback", "reg<bool>.flag") => "b0".to_string(),
+            ("fallback", "reg<i32>.int") => "n0".to_string(),
             (name, _) => {
                 let n = name.strip_prefix("reg.").unwrap_or("");
-                if ok(n, 'f', 64) || ok(n, 'v', 32) || ok(n, 'i', 64) || ok(n, 'b', 16) {
+                if ok(n, 'f', 64) || ok(n, 'v', 32) || ok(n, 'i', 64) || ok(n, 'b', 16) || ok(n, 'n', 16) {
                     let k: usize = n[1..].parse().unwrap_or(0);
                     register_var(&n[..1], k)
                 } else {
@@ -1050,7 +1080,7 @@ impl<'a> Renderer<'a> {
             return self.fill(p, v, scope);
         }
         match name {
-            "reg.get_f" | "reg.get_v" | "reg.get_i" | "reg.get_b" => return self.register(&v.kids[0]),
+            "reg.get_f" | "reg.get_v" | "reg.get_i" | "reg.get_b" | "reg.get_n" => return self.register(&v.kids[0]),
             "reg.get_v_lane" => return Ok(format!("{}[({}) & 3u]", self.register(&v.kids[0])?, self.value(&v.kids[1], scope)?)),
             // A lane of a vec4 element of a workgroup or private array (seed08 of run A): the
             // element is a reference, so the lane index may be a run-time value.
@@ -1498,8 +1528,14 @@ impl<'a> Renderer<'a> {
             "blk" => u(snap(&BLK, v)),
             "unroll" => u(snap(&UNROLL, v)),
             "int" | "q15_16" => {
+                // Concrete i32 (`-49i`): an abstract integer literal shifted or
+                // multiplied by a runtime u32 or i32 is refused by naga 0.20
+                // ("Cannot cast scalar components ... to type i32", random
+                // kernels with the i32 rows, 2026-10-12). i32::MIN has no
+                // literal (2147483648i is out of range).
                 let x = v.clamp(-2_147_483_648.0, 2_147_483_520.0) as i32;
-                if wrap { format!("lit_i32({x})") } else { format!("{x}") }
+                let text = if x == i32::MIN { "(-2147483647i - 1i)".to_string() } else { format!("{x}i") };
+                if wrap { format!("lit_i32({text})") } else { text }
             }
             // A bool in a literal-only expression passes through `lit_bool`
             // too: `log(f32(false))` was folded by naga to log(0) = -inf and
@@ -1879,7 +1915,7 @@ pub fn register_var(prefix: &str, k: usize) -> String {
 /// to their form's fallback, the loop counters, the private arrays).
 pub fn register_declarations() -> String {
     let mut out = String::new();
-    for (prefix, n, ty, init) in [("f", 64, "f32", "0.0"), ("v", 32, "vec4<f32>", "vec4<f32>(0.0)"), ("i", 64, "u32", "0u"), ("b", 16, "bool", "false")] {
+    for (prefix, n, ty, init) in [("f", 64, "f32", "0.0"), ("v", 32, "vec4<f32>", "vec4<f32>(0.0)"), ("i", 64, "u32", "0u"), ("b", 16, "bool", "false"), ("n", 16, "i32", "0")] {
         for k in 0..n {
             if k % 8 == 0 {
                 out.push_str("    ");
@@ -2085,6 +2121,32 @@ mod tests {
         assert!(c.per_item >= p.per_item && c.per_item <= p.per_item + 8.0 && c.base < 10.0, "{c:?} vs the item loop {p:?}");
         let over_d = cost(&Tree::new("loop.tilex_L0", t("stmt.L0"), vec![bound(d()), tile_body()]));
         assert!(over_d.base >= 8192.0 * 2.0 && over_d.per_item == 0.0, "{over_d:?}");
+    }
+
+    /// NESTED FULL UNROLLS ARE BOUNDED (2026-10-12): an unroll of 8 inside
+    /// an unroll of 8 is written out (64 copies); an unroll of 38 inside an
+    /// unroll of 57 is written as its loop inside the 57 copies, the same
+    /// computation (the 57 x 38 x 38 gene of the random kernels was 17 MB).
+    #[test]
+    fn nested_full_unrolls_write_at_most_the_bound_in_copies() {
+        let k = WgslKingdom::load_safe();
+        let (t, role) = (FunctionTable::safe(), gram_role());
+        let rr = Renderer::new(&k, &t, &role);
+        let ty = |n: &str| dual_ty(&k, n).unwrap();
+        let lit = |v: f32| Tree::literal("literal.lit64", ty("u32.lit64"), v);
+        let set = Tree::new("reg.set_f_L2", ty("stmt.L2"), vec![Tree::new("reg.f1", ty("reg<f32>.real"), vec![]), Tree::literal("literal.real", ty("f32.real"), 0.5)]);
+        let nested = |outer: f32, inner: f32| {
+            let inner = Tree::new("loop.unroll_L1", ty("stmt.L1"), vec![lit(inner), Tree::new("block.one_L2", ty("block.L2"), vec![set.clone()])]);
+            let outer = Tree::new("loop.unroll_L0", ty("stmt.L0"), vec![lit(outer), Tree::new("block.one_L1", ty("block.L1"), vec![inner])]);
+            Tree::new("kernel.entry_safe", ty("kernel.safe"), vec![Tree::fallback(ty("grid.grid")), Tree::new("block.one_L0", ty("block.L0"), vec![outer]), Tree::fallback(ty("block.O0"))])
+        };
+        let small = rr.kernel(&nested(8.0, 8.0)).unwrap().text;
+        assert_eq!(small.matches("f1 = 0.5f;").count(), 64, "{small}");
+        assert!(!small.contains("for (k2 = 0u"), "{small}");
+        let big = rr.kernel(&nested(57.0, 38.0)).unwrap().text;
+        assert_eq!(big.matches("f1 = 0.5f;").count(), 57, "the inner unroll is its loop, once per outer copy");
+        assert_eq!(big.matches("for (k2 = 0u; k2 < 38u; k2 = k2 + 1u)").count(), 57);
+        validate_text(&big).unwrap_or_else(|e| panic!("{e}"));
     }
 
     fn setup() -> (WgslKingdom, FunctionTable, Role) {

@@ -59,7 +59,7 @@
 | assignment, `_ = e` | covered | `reg.set_*`, `stmt.discard_*` (atomics) |
 | compound assignment on f32 | covered | lowered by naga |
 | compound assignment on u32 (`^=` and the bit ops) | covered | `convert.index_to_bits`, `convert.bits_to_index` (the u32 form crossings) |
-| `++` / `--` | missing | the probe's i32 local has no register (see i32) |
+| `++` / `--` | covered | lowered by naga to `+ 1` / `- 1` |
 | `if` / `else if` / `else` | covered | `stmt.if_*`, `stmt.if_else_*` |
 | `switch` / `case` / `default` | missing | "statement Switch has no safe spelling" |
 | `for` | covered | `loop.items*`, `loop.tile*`, `loop.tilex*`, `loop.unroll_*` |
@@ -83,7 +83,7 @@
 | construct | status | rows / reason |
 |---|---|---|
 | `bool`, `u32`, `f32` scalars | covered | duals `bool.flag`, `u32.index/count/bits`, `f32.real` |
-| `i32` scalar values | partial | `literal.int`, `int.*` rows exist; an i32 local has no register, and u32 to i32 (`i32(n)`) has no row |
+| `i32` scalar values | covered | `reg.n0`..`n15`, `int.*`, literals written `-49i` |
 | `f16` | naga 0.20 | needs `enable f16;` |
 | abstract int / float literals | covered | `ty_abstract_literals`, hex and suffixed literals |
 | `vec2<f32>`, `vec4<f32>` | covered | `shape.compose2/4`, `reg.v*` (vec4) |
@@ -91,7 +91,7 @@
 | `vec2<u32>` | covered | |
 | `vec3<u32>` as a value | missing | `gid + vec3<u32>(1u)`: the thread id cannot be an operand |
 | `vec4<u32>` | partial | as a value (`ty_vec4_u32`) covered; no `vec4<u32>` register (blocks `subgroupBallot`) |
-| `vecN<i32>` | missing | the i32 register gap |
+| `vecN<i32>` | covered as values | `int.*` per lane; no vector i32 register |
 | `vecN<bool>` | partial | from comparisons with `any` / `all` covered; `vec2<bool>` built by a constructor in `select` missing |
 | matrices `mat2x2<f32>` | missing | constructed from four scalars: no `shape.compose_mat` from scalars |
 | matrices from columns (`mat3x3`, `mat4x4`, `mat3x4`) | missing | "naga.Compose.type6 has no row" |
@@ -123,10 +123,10 @@
 | `select` scalar | covered | `select.scalar_cond` |
 | `select` with a `vec2<bool>` built by a constructor | missing | |
 | `bitcast<f32>(u32)`, `bitcast<u32>(f32)` | covered | `convert.bitcast_*` |
-| `bitcast<i32>(u32)` | missing | "naga.As.uint_to_sint.bitcast has no row" |
+| `bitcast<i32>(u32)`, `bitcast<u32>(i32)`, `bitcast<i32>(f32)`, `bitcast<f32>(i32)` | covered | `convert.bitcast_*` |
 | `bitcast` on vectors | missing | |
 | conversions `f32(u32)`, `u32(f32)`, `f32(bool)`, `u32(bool)` | covered | `convert.*` |
-| `i32(u32)`, `u32(i32)`, `i32(f32)` | missing | "naga.As.uint_to_sint.convert has no row" |
+| `i32(u32)`, `u32(i32)`, `i32(f32)` | covered | `convert.index_to_int`, `int_to_index`, `f32_to_int` |
 | a literal written as `2.0` beside an f32 in `max`, `clamp`, `mix`, `pow`, `step`, `smoothstep`, `fma`, `ldexp`, `atan2`, `dot`, `distance`, `reflect`, `faceForward`, `length`, `normalize` | covered | naga 0.20 lowers the abstract literal through `As { convert: Some(4) }` f32 to f32; the reader reads a conversion to the operand's own kind and width as the operand (`draft_float_literals`) |
 
 ## Built-in values (compute)
@@ -149,7 +149,8 @@
 | `mix` with a scalar weight | covered | `arith.mix_scalar_weight` |
 | `modf`, `frexp` | missing | struct results |
 | `quantizeToF16` | naga 0.20 | not parsed |
-| integer abs, min, max, clamp, sign on i32 | missing | the i32 register gap |
+| integer abs, min, max, clamp, sign on i32 | covered | `int.*` |
+| bit functions and shifts on i32 | covered | `int.and/or/xor/not/shl/shr`, `int.count_ones` ... `int.insert` |
 | min, max, clamp on u32 | covered | `index.min/max/clamp` |
 | `dot` on integer vectors | covered | `geom.dot` (F1155, F1156) |
 | countOneBits, countLeadingZeros, countTrailingZeros, firstLeadingBit, firstTrailingBit, reverseBits on u32 | covered | `bits.*` |
@@ -165,7 +166,7 @@
 | atomics (workgroup): load, store, add, sub, max, min, and, or, xor, exchange | covered | `atomic.*` |
 | `atomicCompareExchangeWeak` | naga 0.20 | Metal backend: "FeatureNotImplemented(atomic CompareExchange)" |
 | subgroup reductions and scans on f32, u32 and vec4 | covered | `subgroup.*` |
-| subgroup operations on i32 | missing | the i32 register gap |
+| subgroup operations on i32 | covered | `subgroup.*` on `i32.int` |
 | `subgroupBallot` | missing | its `vec4<u32>` result has no register |
 | `subgroupElect`, `quadBroadcast`, `quadSwap*` | naga 0.20 | not parsed |
 | `workgroupUniformLoad` | missing | workgroup scalar |
@@ -180,7 +181,7 @@ Each fill is its own commit with a corpus row and the full checklist. The order 
 3. Done: the `unpack*` naga names, `insertBits`, `dot` on integer vectors, `%` on f32; a naga node the WGSL table has no row for is resolved in the safe table. Gaps 2 and 3 read 26 probes more (134 of 184).
 4. Done: `storageBarrier()` as its own statement row (it was misread as `workgroupBarrier()`).
 5. Done: `num_workgroups`, naga's name `num_work_groups` mapped to the row. 136 of 184 read. Also read now: a kernel that never writes h (`draft_no_store`; a mutant's top-level return).
-6. i32 registers, `i32(u32)`, `u32(i32)`, `i32(f32)`, `bitcast<i32>`, and with them `++` / `--`, i32 `abs/min/max/clamp/sign`, i32 subgroup operations and vecN<i32>.
+6. Done: i32 registers, `i32(u32)`, `u32(i32)`, `i32(f32)`, `bitcast<i32>`, and with them `++` / `--`, i32 `abs/min/max/clamp/sign`, i32 subgroup operations and vecN<i32>; an atomic<i32>'s old value read later. 147 of 184 read.
 7. `switch`, `break`, `break if`, `while` with its step in the body, and `continue` in a loop without a barrier.
 8. vec3 values (`cross`, 3-lane swizzles, the thread id as an operand), `vec4<u32>` registers (then `subgroupBallot`), and vec2 private arrays.
 9. Matrices: construction from scalars and columns, matrix locals, column access.

@@ -2354,8 +2354,8 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 | F1131 | `bits.count_ones` | `Math::CountOneBits` | `vec2<u32>.bits` | `vec2<u32>.count` | 1 | per lane |
 | F1132 | `bits.leading_zeros` | `Math::CountLeadingZeros` | `vec2<u32>.bits` | `vec2<u32>.count` | 1 | per lane |
 | F1133 | `bits.trailing_zeros` | `Math::CountTrailingZeros` | `vec2<u32>.bits` | `vec2<u32>.count` | 1 | per lane |
-| F1134 | `bits.find_lsb` | `Math::FirstTrailingBit` | `vec2<u32>.bits` | `vec2<u32>.count` | 1 | per lane |
-| F1135 | `bits.find_msb` | `Math::FirstLeadingBit` | `vec2<u32>.bits` | `vec2<u32>.count` | 1 | per lane |
+| F1134 | `bits.find_lsb` | `Math::FindLsb` | `vec2<u32>.bits` | `vec2<u32>.count` | 1 | per lane |
+| F1135 | `bits.find_msb` | `Math::FindMsb` | `vec2<u32>.bits` | `vec2<u32>.count` | 1 | per lane |
 | F1136 | `bits.reverse` | `Math::ReverseBits` | `vec2<u32>.bits` | `vec2<u32>.bits` | 1 | per lane |
 | F1137 | `bits.extract` | `Math::ExtractBits` | `vec2<u32>.bits u32.index u32.count` | `vec2<u32>.bits` | 3 | arity 3, per lane |
 
@@ -2372,8 +2372,8 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 | F1139 | `bits.count_ones` | `Math::CountOneBits` | `vec3<u32>.bits` | `vec3<u32>.count` | 1 | per lane |
 | F1140 | `bits.leading_zeros` | `Math::CountLeadingZeros` | `vec3<u32>.bits` | `vec3<u32>.count` | 1 | per lane |
 | F1141 | `bits.trailing_zeros` | `Math::CountTrailingZeros` | `vec3<u32>.bits` | `vec3<u32>.count` | 1 | per lane |
-| F1142 | `bits.find_lsb` | `Math::FirstTrailingBit` | `vec3<u32>.bits` | `vec3<u32>.count` | 1 | per lane |
-| F1143 | `bits.find_msb` | `Math::FirstLeadingBit` | `vec3<u32>.bits` | `vec3<u32>.count` | 1 | per lane |
+| F1142 | `bits.find_lsb` | `Math::FindLsb` | `vec3<u32>.bits` | `vec3<u32>.count` | 1 | per lane |
+| F1143 | `bits.find_msb` | `Math::FindMsb` | `vec3<u32>.bits` | `vec3<u32>.count` | 1 | per lane |
 | F1144 | `bits.reverse` | `Math::ReverseBits` | `vec3<u32>.bits` | `vec3<u32>.bits` | 1 | per lane |
 | F1145 | `bits.extract` | `Math::ExtractBits` | `vec3<u32>.bits u32.index u32.count` | `vec3<u32>.bits` | 3 | arity 3, per lane |
 
@@ -2390,8 +2390,8 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 | F1147 | `bits.count_ones` | `Math::CountOneBits` | `vec4<u32>.bits` | `vec4<u32>.count` | 1 | per lane |
 | F1148 | `bits.leading_zeros` | `Math::CountLeadingZeros` | `vec4<u32>.bits` | `vec4<u32>.count` | 1 | per lane |
 | F1149 | `bits.trailing_zeros` | `Math::CountTrailingZeros` | `vec4<u32>.bits` | `vec4<u32>.count` | 1 | per lane |
-| F1150 | `bits.find_lsb` | `Math::FirstTrailingBit` | `vec4<u32>.bits` | `vec4<u32>.count` | 1 | per lane |
-| F1151 | `bits.find_msb` | `Math::FirstLeadingBit` | `vec4<u32>.bits` | `vec4<u32>.count` | 1 | per lane |
+| F1150 | `bits.find_lsb` | `Math::FindLsb` | `vec4<u32>.bits` | `vec4<u32>.count` | 1 | per lane |
+| F1151 | `bits.find_msb` | `Math::FindMsb` | `vec4<u32>.bits` | `vec4<u32>.count` | 1 | per lane |
 | F1152 | `bits.reverse` | `Math::ReverseBits` | `vec4<u32>.bits` | `vec4<u32>.bits` | 1 | per lane |
 | F1153 | `bits.extract` | `Math::ExtractBits` | `vec4<u32>.bits u32.index u32.count` | `vec4<u32>.bits` | 3 | arity 3, per lane |
 | F1154 | `bits.insert` | `Math::InsertBits` | `<u32.bits> <u32.bits> u32.index u32.count` | `<u32.bits>` | 4 | arity 4: insertBits(e, newbits, offset, count) |
@@ -2420,4 +2420,98 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 | F1162 | `stmt.storage_barrier_L4` | `composite` | `-` | `stmt.L4` | 0 | storageBarrier(): storage-buffer writes visible to the workgroup |
 | F1163 | `stmt.storage_barrier_L5` | `composite` | `-` | `stmt.L5` | 0 | storageBarrier(): storage-buffer writes visible to the workgroup |
 
-1163 function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Deliberately absent: storage-buffer atomics, atomic compare-exchange (naga 0.20's Metal backend lacks it), subgroupBallot, images, derivatives, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.
+## class `reg`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F1164 | `reg.n0` | `composite` | `-` | `reg<i32>.int` | 0 | an i32 register |
+| F1165 | `reg.n1` | `composite` | `-` | `reg<i32>.int` | 0 | an i32 register |
+| F1166 | `reg.n2` | `composite` | `-` | `reg<i32>.int` | 0 | an i32 register |
+| F1167 | `reg.n3` | `composite` | `-` | `reg<i32>.int` | 0 | an i32 register |
+| F1168 | `reg.n4` | `composite` | `-` | `reg<i32>.int` | 0 | an i32 register |
+| F1169 | `reg.n5` | `composite` | `-` | `reg<i32>.int` | 0 | an i32 register |
+| F1170 | `reg.n6` | `composite` | `-` | `reg<i32>.int` | 0 | an i32 register |
+| F1171 | `reg.n7` | `composite` | `-` | `reg<i32>.int` | 0 | an i32 register |
+| F1172 | `reg.n8` | `composite` | `-` | `reg<i32>.int` | 0 | an i32 register |
+| F1173 | `reg.n9` | `composite` | `-` | `reg<i32>.int` | 0 | an i32 register |
+| F1174 | `reg.n10` | `composite` | `-` | `reg<i32>.int` | 0 | an i32 register |
+| F1175 | `reg.n11` | `composite` | `-` | `reg<i32>.int` | 0 | an i32 register |
+| F1176 | `reg.n12` | `composite` | `-` | `reg<i32>.int` | 0 | an i32 register |
+| F1177 | `reg.n13` | `composite` | `-` | `reg<i32>.int` | 0 | an i32 register |
+| F1178 | `reg.n14` | `composite` | `-` | `reg<i32>.int` | 0 | an i32 register |
+| F1179 | `reg.n15` | `composite` | `-` | `reg<i32>.int` | 0 | an i32 register |
+| F1180 | `reg.get_n` | `composite` | `reg<i32>.int` | `i32.int` | 1 | the register's value |
+| F1181 | `reg.set_n_L0` | `composite` | `reg<i32>.int i32.int` | `stmt.L0` | 2 |  |
+| F1182 | `reg.set_n_L1` | `composite` | `reg<i32>.int i32.int` | `stmt.L1` | 2 |  |
+| F1183 | `reg.set_n_L2` | `composite` | `reg<i32>.int i32.int` | `stmt.L2` | 2 |  |
+| F1184 | `reg.set_n_L3` | `composite` | `reg<i32>.int i32.int` | `stmt.L3` | 2 |  |
+| F1185 | `reg.set_n_L4` | `composite` | `reg<i32>.int i32.int` | `stmt.L4` | 2 |  |
+| F1186 | `reg.set_n_C0` | `composite` | `reg<i32>.int i32.int` | `stmt.C0` | 2 |  |
+| F1187 | `reg.set_n_C1` | `composite` | `reg<i32>.int i32.int` | `stmt.C1` | 2 |  |
+| F1188 | `reg.set_n_C2` | `composite` | `reg<i32>.int i32.int` | `stmt.C2` | 2 |  |
+| F1189 | `reg.set_n_C3` | `composite` | `reg<i32>.int i32.int` | `stmt.C3` | 2 |  |
+| F1190 | `reg.set_n_C4` | `composite` | `reg<i32>.int i32.int` | `stmt.C4` | 2 |  |
+| F1191 | `reg.set_n_L5` | `composite` | `reg<i32>.int i32.int` | `stmt.L5` | 2 |  |
+| F1192 | `reg.set_n_C5` | `composite` | `reg<i32>.int i32.int` | `stmt.C5` | 2 |  |
+
+## class `convert`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F1193 | `convert.index_to_int` | `As` | `<u32.index>` | `<i32.int>` | 1 | i32(u): the same bits read as two's complement |
+| F1194 | `convert.int_to_index` | `As` | `<i32.int>` | `<u32.index>` | 1 | u32(i): the same bits read unsigned (index.of_int floors at zero instead) |
+| F1195 | `convert.bitcast_int_bits` | `As(bitcast)` | `<i32.int>` | `<u32.bits>` | 1 |  |
+| F1196 | `convert.bitcast_bits_int` | `As(bitcast)` | `<u32.bits>` | `<i32.int>` | 1 |  |
+| F1197 | `convert.bitcast_real_int` | `As(bitcast)` | `<f32.real>` | `<i32.int>` | 1 |  |
+| F1198 | `convert.bitcast_int_real` | `As(bitcast)` | `<i32.int>` | `<f32.real>` | 1 |  |
+| F1199 | `convert.f32_to_int` | `As` | `vec2<f32>.real` | `vec2<i32>.int` | 1 | truncating, per lane |
+| F1200 | `convert.int_to_f32` | `As` | `vec2<i32>.int` | `vec2<f32>.real` | 1 | per lane |
+| F1201 | `convert.f32_to_int` | `As` | `vec3<f32>.real` | `vec3<i32>.int` | 1 | truncating, per lane |
+| F1202 | `convert.int_to_f32` | `As` | `vec3<i32>.int` | `vec3<f32>.real` | 1 | per lane |
+| F1203 | `convert.f32_to_int` | `As` | `vec4<f32>.real` | `vec4<i32>.int` | 1 | truncating, per lane |
+| F1204 | `convert.int_to_f32` | `As` | `vec4<i32>.int` | `vec4<f32>.real` | 1 | per lane |
+
+## class `int`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F1205 | `int.clamp` | `Math::Clamp` | `<i32.int> <i32.int> <i32.int>` | `<i32.int>` | 3 | arity 3 |
+| F1206 | `int.sign` | `Math::Sign` | `<i32.int>` | `<i32.int>` | 1 |  |
+| F1207 | `int.and` | `Binary::And` | `<i32.int> <i32.int>` | `<i32.int>` | 2 | lanes equal |
+| F1208 | `int.or` | `Binary::InclusiveOr` | `<i32.int> <i32.int>` | `<i32.int>` | 2 | lanes equal |
+| F1209 | `int.xor` | `Binary::ExclusiveOr` | `<i32.int> <i32.int>` | `<i32.int>` | 2 | lanes equal |
+| F1210 | `int.not` | `Unary::BitwiseNot` | `<i32.int>` | `<i32.int>` | 1 |  |
+| F1211 | `int.shl` | `Binary::ShiftLeft` | `i32.int u32.count` | `i32.int` | 2 |  |
+| F1212 | `int.shr` | `Binary::ShiftRight` | `i32.int u32.count` | `i32.int` | 2 | arithmetic: the sign bit fills |
+| F1213 | `int.count_ones` | `Math::CountOneBits` | `<i32.int>` | `<i32.int>` | 1 | WGSL returns i32 for i32 |
+| F1214 | `int.leading_zeros` | `Math::CountLeadingZeros` | `<i32.int>` | `<i32.int>` | 1 | WGSL returns i32 for i32 |
+| F1215 | `int.trailing_zeros` | `Math::CountTrailingZeros` | `<i32.int>` | `<i32.int>` | 1 | WGSL returns i32 for i32 |
+| F1216 | `int.find_lsb` | `Math::FindLsb` | `<i32.int>` | `<i32.int>` | 1 | WGSL returns i32 for i32 |
+| F1217 | `int.find_msb` | `Math::FindMsb` | `<i32.int>` | `<i32.int>` | 1 | WGSL returns i32 for i32 |
+| F1218 | `int.reverse` | `Math::ReverseBits` | `<i32.int>` | `<i32.int>` | 1 |  |
+| F1219 | `int.extract` | `Math::ExtractBits` | `<i32.int> u32.index u32.count` | `<i32.int>` | 3 | arity 3, sign-extending |
+| F1220 | `int.insert` | `Math::InsertBits` | `<i32.int> <i32.int> u32.index u32.count` | `<i32.int>` | 4 | arity 4 |
+
+## class `subgroup`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F1221 | `subgroup.add` | `SubgroupCollectiveOperation` | `i32.int` | `i32.int` | 1 | subgroupAdd(x) on i32 |
+| F1222 | `subgroup.mul` | `SubgroupCollectiveOperation` | `i32.int` | `i32.int` | 1 | subgroupMul(x) on i32 |
+| F1223 | `subgroup.min` | `SubgroupCollectiveOperation` | `i32.int` | `i32.int` | 1 | subgroupMin(x) on i32 |
+| F1224 | `subgroup.max` | `SubgroupCollectiveOperation` | `i32.int` | `i32.int` | 1 | subgroupMax(x) on i32 |
+| F1225 | `subgroup.inclusive_add` | `SubgroupCollectiveOperation` | `i32.int` | `i32.int` | 1 | subgroupInclusiveAdd(x) on i32 |
+| F1226 | `subgroup.inclusive_mul` | `SubgroupCollectiveOperation` | `i32.int` | `i32.int` | 1 | subgroupInclusiveMul(x) on i32 |
+| F1227 | `subgroup.exclusive_add` | `SubgroupCollectiveOperation` | `i32.int` | `i32.int` | 1 | subgroupExclusiveAdd(x) on i32 |
+| F1228 | `subgroup.exclusive_mul` | `SubgroupCollectiveOperation` | `i32.int` | `i32.int` | 1 | subgroupExclusiveMul(x) on i32 |
+| F1229 | `subgroup.and` | `SubgroupCollectiveOperation` | `i32.int` | `i32.int` | 1 | subgroupAnd(x) on i32 |
+| F1230 | `subgroup.or` | `SubgroupCollectiveOperation` | `i32.int` | `i32.int` | 1 | subgroupOr(x) on i32 |
+| F1231 | `subgroup.xor` | `SubgroupCollectiveOperation` | `i32.int` | `i32.int` | 1 | subgroupXor(x) on i32 |
+| F1232 | `subgroup.broadcast_first` | `SubgroupGather` | `i32.int` | `i32.int` | 1 | subgroupBroadcastFirst(x) |
+| F1233 | `subgroup.broadcast` | `SubgroupGather` | `i32.int u32.lit64` | `i32.int` | 2 | subgroupBroadcast(x, lane): the lane a literal |
+| F1234 | `subgroup.shuffle` | `SubgroupGather` | `i32.int u32.index` | `i32.int` | 2 | subgroupShuffle(x, i) |
+| F1235 | `subgroup.shuffle_down` | `SubgroupGather` | `i32.int u32.index` | `i32.int` | 2 | subgroupShuffleDown(x, i) |
+| F1236 | `subgroup.shuffle_up` | `SubgroupGather` | `i32.int u32.index` | `i32.int` | 2 | subgroupShuffleUp(x, i) |
+| F1237 | `subgroup.shuffle_xor` | `SubgroupGather` | `i32.int u32.index` | `i32.int` | 2 | subgroupShuffleXor(x, i) |
+
+1237 function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Deliberately absent: storage-buffer atomics, atomic compare-exchange (naga 0.20's Metal backend lacks it), subgroupBallot, images, derivatives, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.

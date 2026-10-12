@@ -159,3 +159,4 @@ T157	wg.decls	wg	decls	0	none (the arrays the kernel uses, at their default leng
 T158	wgmem<atomic<u32>>.index	wgmem<atomic<u32>>	index	0	0u	0	0	0	a workgroup-memory array of atomic<u32>: au_a, au_b
 T159	wgmem<atomic<i32>>.int	wgmem<atomic<i32>>	int	0	0	0	0	0	a workgroup-memory array of atomic<i32>: ai_a, ai_b
 T160	u32.wgaindex	u32	wgaindex	1	0u	0	0	0	an index into an atomic workgroup array, masked to the array by its row
+T161	reg<i32>.int	reg<i32>	int	1	0	0	0	0	a named i32 register: n0..n15

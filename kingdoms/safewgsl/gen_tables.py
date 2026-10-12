@@ -279,6 +279,8 @@ def build_types():
     add("wgmem<atomic<u32>>", "index", 0, "a workgroup-memory array of atomic<u32>: au_a, au_b")
     add("wgmem<atomic<i32>>", "int", 0, "a workgroup-memory array of atomic<i32>: ai_a, ai_b")
     add("u32", "wgaindex", 1, FORMS["wgaindex"][0])
+    # ---- i32 registers (2026-10-12, WGSL_COVERAGE.md gap 6) ----
+    add("reg<i32>", "int", 1, "a named i32 register: n0..n15")
     return rows
 
 
@@ -889,7 +891,7 @@ f("convert", "bits_to_index", "As", ["<u32.bits>"], "<u32.index>", "the same u32
 f("convert", "count_to_bits", "As", ["<u32.count>"], "<u32.bits>", "the same u32 lanes read as a bit field")
 for L in (2, 3, 4):
     f("index", "of_count", "composite", [f"vec{L}<u32>.count"], f"vec{L}<u32>.index", "per lane")
-    for op, naga in (("count_ones", "CountOneBits"), ("leading_zeros", "CountLeadingZeros"), ("trailing_zeros", "CountTrailingZeros"), ("find_lsb", "FirstTrailingBit"), ("find_msb", "FirstLeadingBit")):
+    for op, naga in (("count_ones", "CountOneBits"), ("leading_zeros", "CountLeadingZeros"), ("trailing_zeros", "CountTrailingZeros"), ("find_lsb", "FindLsb"), ("find_msb", "FindMsb")):
         f("bits", op, f"Math::{naga}", [f"vec{L}<u32>.bits"], f"vec{L}<u32>.count", "per lane")
     f("bits", "reverse", "Math::ReverseBits", [f"vec{L}<u32>.bits"], f"vec{L}<u32>.bits", "per lane")
     f("bits", "extract", "Math::ExtractBits", [f"vec{L}<u32>.bits", "u32.index", "u32.count"], f"vec{L}<u32>.bits", "arity 3, per lane")
@@ -902,6 +904,42 @@ f("arith", "mod", "Binary::Modulo", ["<S.real>", "<S.real>"], "<S.real>", "WGSL'
 # ---- storageBarrier (2026-10-12, WGSL_COVERAGE.md gap 4): its own statement, read as workgroupBarrier before ----
 for r in ("L0", "L1", "L2", "L3", "L4", "L5"):
     f("stmt", "storage_barrier_" + r, "composite", [], "stmt." + r, "storageBarrier(): storage-buffer writes visible to the workgroup")
+
+
+# ---- i32 (2026-10-12, WGSL_COVERAGE.md gap 6): registers, the crossings to u32 and f32, and the integer
+# rows WGSL has on i32 (clamp, sign, the bit operations and counts, shifts, subgroup operations) ----
+for i in range(16):
+    f("reg", f"n{i}", "composite", [], "reg<i32>.int", "an i32 register")
+f("reg", "get_n", "composite", ["reg<i32>.int"], "i32.int", "the register's value")
+for r in RUNGS + RUNGS5:
+    f("reg", "set_n_" + r, "composite", ["reg<i32>.int", "i32.int"], "stmt." + r, "")
+f("convert", "index_to_int", "As", ["<u32.index>"], "<i32.int>", "i32(u): the same bits read as two's complement")
+f("convert", "int_to_index", "As", ["<i32.int>"], "<u32.index>", "u32(i): the same bits read unsigned (index.of_int floors at zero instead)")
+f("convert", "bitcast_int_bits", "As(bitcast)", ["<i32.int>"], "<u32.bits>", "")
+f("convert", "bitcast_bits_int", "As(bitcast)", ["<u32.bits>"], "<i32.int>", "")
+f("convert", "bitcast_real_int", "As(bitcast)", ["<f32.real>"], "<i32.int>", "")
+f("convert", "bitcast_int_real", "As(bitcast)", ["<i32.int>"], "<f32.real>", "")
+for L in (2, 3, 4):
+    f("convert", "f32_to_int", "As", [f"vec{L}<f32>.real"], f"vec{L}<i32>.int", "truncating, per lane")
+    f("convert", "int_to_f32", "As", [f"vec{L}<i32>.int"], f"vec{L}<f32>.real", "per lane")
+f("int", "clamp", "Math::Clamp", ["<i32.int>", "<i32.int>", "<i32.int>"], "<i32.int>", "arity 3")
+f("int", "sign", "Math::Sign", ["<i32.int>"], "<i32.int>", "")
+for op, naga in (("and", "Binary::And"), ("or", "Binary::InclusiveOr"), ("xor", "Binary::ExclusiveOr")):
+    f("int", op, naga, ["<i32.int>", "<i32.int>"], "<i32.int>", "lanes equal")
+f("int", "not", "Unary::BitwiseNot", ["<i32.int>"], "<i32.int>", "")
+f("int", "shl", "Binary::ShiftLeft", ["i32.int", "u32.count"], "i32.int", "")
+f("int", "shr", "Binary::ShiftRight", ["i32.int", "u32.count"], "i32.int", "arithmetic: the sign bit fills")
+for op, naga in (("count_ones", "CountOneBits"), ("leading_zeros", "CountLeadingZeros"), ("trailing_zeros", "CountTrailingZeros"), ("find_lsb", "FindLsb"), ("find_msb", "FindMsb")):
+    f("int", op, f"Math::{naga}", ["<i32.int>"], "<i32.int>", "WGSL returns i32 for i32")
+f("int", "reverse", "Math::ReverseBits", ["<i32.int>"], "<i32.int>", "")
+f("int", "extract", "Math::ExtractBits", ["<i32.int>", "u32.index", "u32.count"], "<i32.int>", "arity 3, sign-extending")
+f("int", "insert", "Math::InsertBits", ["<i32.int>", "<i32.int>", "u32.index", "u32.count"], "<i32.int>", "arity 4")
+for op, wgsl in (("add", "subgroupAdd"), ("mul", "subgroupMul"), ("min", "subgroupMin"), ("max", "subgroupMax"), ("inclusive_add", "subgroupInclusiveAdd"), ("inclusive_mul", "subgroupInclusiveMul"), ("exclusive_add", "subgroupExclusiveAdd"), ("exclusive_mul", "subgroupExclusiveMul"), ("and", "subgroupAnd"), ("or", "subgroupOr"), ("xor", "subgroupXor")):
+    f("subgroup", op, "SubgroupCollectiveOperation", ["i32.int"], "i32.int", f"{wgsl}(x) on i32")
+f("subgroup", "broadcast_first", "SubgroupGather", ["i32.int"], "i32.int", "subgroupBroadcastFirst(x)")
+f("subgroup", "broadcast", "SubgroupGather", ["i32.int", "u32.lit64"], "i32.int", "subgroupBroadcast(x, lane): the lane a literal")
+for op, wgsl in (("shuffle", "subgroupShuffle"), ("shuffle_down", "subgroupShuffleDown"), ("shuffle_up", "subgroupShuffleUp"), ("shuffle_xor", "subgroupShuffleXor")):
+    f("subgroup", op, "SubgroupGather", ["i32.int", "u32.index"], "i32.int", f"{wgsl}(x, i)")
 
 
 def write_tsv(path, header, rows):

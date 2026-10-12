@@ -214,13 +214,17 @@ fn tree_of(ctx: &mut Ctx, n: &Node) -> Result<Tree, String> {
                     Some('f') => "f32.real",
                     Some('v') => "vec4<f32>.real",
                     Some('b') => "bool.flag",
+                    Some('n') => "i32.int",
                     _ => "u32.index",
                 };
                 return Ok(Tree::new(&format!("load.{local}"), ty(ctx, d)?, vec![]));
             }
             // An atomic's old value: the register its statement wrote.
             if let Some(idx) = name.strip_prefix("atomic@") {
-                return Ok(Tree::new(&format!("load.local.atomic@{idx}"), ty(ctx, "u32.index")?, vec![]));
+                // An atomic<i32>'s old value is in an i32 register.
+                let local = format!("local.atomic@{idx}");
+                let d = if ctx.registers.get(&local).is_some_and(|r| r.starts_with("reg.n")) { "i32.int" } else { "u32.index" };
+                return Ok(Tree::new(&format!("load.{local}"), ty(ctx, d)?, vec![]));
             }
             // A helper's result: the helper's return expression with its
             // arguments substituted (its lets inlined on the way); the
@@ -433,6 +437,19 @@ fn literal_value(t: &Tree) -> Option<f32> {
 /// The safe table's row for an unresolved `naga.<Node>.<Variant>` node, by
 /// the scalar kind of its first operand and its arity.
 fn safe_row_for(name: &str, kids: &[Node]) -> Option<String> {
+    // The i32 crossings the WGSL table has no row for (naga's As by kinds).
+    let cast = match name {
+        "naga.As.uint_to_sint.convert" => Some("convert.index_to_int"),
+        "naga.As.sint_to_uint.convert" => Some("convert.int_to_index"),
+        "naga.As.sint_to_uint.bitcast" => Some("convert.bitcast_int_bits"),
+        "naga.As.uint_to_sint.bitcast" => Some("convert.bitcast_bits_int"),
+        "naga.As.float_to_sint.bitcast" => Some("convert.bitcast_real_int"),
+        "naga.As.sint_to_float.bitcast" => Some("convert.bitcast_int_real"),
+        _ => None,
+    };
+    if let Some(row) = cast {
+        return Some(row.to_string());
+    }
     static TABLE: std::sync::OnceLock<crate::wgsl::table::FunctionTable> = std::sync::OnceLock::new();
     let (node, variant) = name.strip_prefix("naga.")?.split_once('.')?;
     let kind = match slot_of(kids.first()?) {
@@ -1176,6 +1193,7 @@ impl<'a> Ctx<'a> {
             "vec4<f32>.real" => ('v', 32),
             "u32.index" | "u32.bits" | "u32.count" => ('i', 64),
             "bool.flag" => ('b', 16),
+            "i32.int" => ('n', 16),
             other => return Err(format!("local {local} has dual {other}, which has no register kind"),)
         };
         let n = *self.next_reg.get(&kind).unwrap_or(&0);
@@ -1193,6 +1211,7 @@ impl<'a> Ctx<'a> {
             'f' => "reg<f32>.real",
             'v' => "reg<vec4<f32>>.real",
             'i' => "reg<u32>.index",
+            'n' => "reg<i32>.int",
             _ => "reg<bool>.flag",
         }
     }
@@ -1431,6 +1450,7 @@ impl<'a> Ctx<'a> {
             "vec4<f32>.real" => 'v',
             "u32.index" | "u32.bits" | "u32.count" => 'i',
             "bool.flag" => 'b',
+            "i32.int" => 'n',
             other => return Err(format!("a subgroup {} of {other}: no register holds its result", expr.name)),
         };
         let row = self.register(&format!("local.subgroup@{result}"), &d)?;
@@ -1481,11 +1501,10 @@ impl<'a> Ctx<'a> {
         if !used {
             return Ok(Tree::new(&format!("stmt.discard_{suffix}_{rung}"), st, vec![expr]));
         }
-        if !unsigned {
-            return Err("the old value of an atomic<i32> is read; the kingdom has no i32 register".into());
-        }
-        let row = self.register(&format!("local.atomic@{result}"), "u32.index")?;
-        Ok(Tree::new(&format!("reg.set_i_{rung}"), st, vec![Tree::new(&row, ty(self, Self::reg_dual('i'))?, vec![]), expr]))
+        // The old value read later: to a u32 register, or for an atomic<i32> an i32 one.
+        let (dual, kind) = if unsigned { ("u32.index", 'i') } else { ("i32.int", 'n') };
+        let row = self.register(&format!("local.atomic@{result}"), dual)?;
+        Ok(Tree::new(&format!("reg.set_{kind}_{rung}"), st, vec![Tree::new(&row, ty(self, Self::reg_dual(kind))?, vec![]), expr]))
     }
 
     /// An atomic's expression `atomic.<fun>_<u|i>(array, index, value)` and
