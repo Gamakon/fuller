@@ -1296,7 +1296,10 @@ fn rung_stem(name: &str) -> Option<&str> {
 /// in place (the reader nests the fifth statement on as a block statement).
 fn flatten_stmts(s: Tree, out: &mut Vec<Tree>) {
     let open = |n: &str| rung_stem(n).is_some_and(|b| matches!(b, "stmt.block" | "block.one" | "block.seq2" | "block.seq3" | "block.seq4"));
-    if open(&s.name) {
+    // A block holding a continue guard (block.cont, block.brk) stays one
+    // statement: opened, its guard would be a block among statements.
+    let guarded = |t: &Tree| t.kids.first().and_then(|b| rung_stem(&b.name)).is_some_and(|b| b == "block.cont" || b == "block.brk");
+    if open(&s.name) && !(rung_stem(&s.name) == Some("stmt.block") && guarded(&s)) {
         for k in s.kids {
             flatten_stmts(k, out);
         }
@@ -2563,7 +2566,9 @@ impl<'a> Ctx<'a> {
                 let rest: Vec<Tree> = before.split_off(at + 1);
                 let guard = before.pop().expect("the guard at `at`");
                 let d: usize = rung[1..].parse().unwrap_or(1);
-                let rest = rest.iter().map(|t| self.rerung(t, d)).collect::<Result<Vec<_>, _>>()?;
+                // A later continue guard in the rest is the rest's own (the
+                // conditional rung's block reads it: block.cont_C<d>).
+                let rest = rest.iter().map(|t| if is_continue_guard(t) { Ok(t.clone()) } else { self.rerung(t, d) }).collect::<Result<Vec<_>, _>>()?;
                 let cont = Tree::new(&format!("block.cont_{rung}"), bt, vec![guard.kids[0].clone(), self.block(rest, &format!("C{d}"))?]);
                 if before.is_empty() {
                     return Ok(cont);
@@ -5157,9 +5162,10 @@ mod tests {
         assert!(e.contains("where only conditional statements are spelled"), "{e}");
     }
 
-    /// The count of [`random_sampler_trees_read_back_to_their_own_text`]
-    /// reached so far.
+    /// The counts of [`random_sampler_trees_read_back_to_their_own_text`]
+    /// reached so far: to their own text, and read back at all.
     const READ_BACK_FLOOR: usize = 108;
+    const READ_AT_ALL_FLOOR: usize = 436;
 
     /// THE KINGDOM'S COMPLETENESS BAR (2026-10-12): 1,000 random trees of
     /// the kingdom's typed sampler (the safe root, depth 7, seeds 0..1000)
@@ -5176,6 +5182,9 @@ mod tests {
         let n = 1000u64;
         let mut by_reason: BTreeMap<String, (usize, u64)> = BTreeMap::new();
         let mut passed = 0usize;
+        // Measured beside it: the trees that read back at all, and the ones
+        // whose text read back is a fixpoint (read and rendered again, the same).
+        let (mut read_back, mut fixpoint) = (0usize, 0usize);
         for seed in 0..n {
             let tree = crate::wgsl::render::sample(&k, &role, root, 7, seed).unwrap();
             let verdict: Result<(), String> = (|| {
@@ -5183,9 +5192,20 @@ mod tests {
                 checker.check(&tree).map_err(|e| format!("check: {} {}", e.layer.number(), e.reason))?;
                 let back = read_safe(&text, &k).map_err(|e| format!("read: {e}"))?;
                 let again = crate::wgsl::safe_karva::render_tree(&back.tree, &k).map_err(|e| format!("re-render: {e}"))?.text;
+                read_back += 1;
+                if read_safe(&again, &k).ok().and_then(|b| crate::wgsl::safe_karva::render_tree(&b.tree, &k).ok()).is_some_and(|r| r.text == again) {
+                    fixpoint += 1;
+                }
                 if again != text {
-                    let line = text.lines().zip(again.lines()).position(|(a, b)| a != b).unwrap_or(0);
-                    return Err(format!("differs: {}", again.lines().nth(line).unwrap_or("(shorter)").trim().chars().take(60).collect::<String>()));
+                    // The first differing statement (declarations and helpers set aside), as drawn.
+                    let body = |t: &str| -> Vec<String> { t.lines().map(str::trim).filter(|l| !(l.starts_with("var") || l.starts_with("fn ") || l.starts_with("let ") || l.starts_with('@') || l.starts_with("//") || l.starts_with("struct "))).map(String::from).collect() };
+                    let (a, b) = (body(&text), body(&again));
+                    let at = a.iter().zip(&b).position(|(x, y)| x != y);
+                    let what = match at {
+                        Some(i) => format!("{} / {}", a[i].chars().take(40).collect::<String>(), b[i].chars().take(40).collect::<String>()),
+                        None => format!("declarations or length ({} / {} statements)", a.len(), b.len()),
+                    };
+                    return Err(format!("differs: {what}"));
                 }
                 Ok(())
             })();
@@ -5205,12 +5225,13 @@ mod tests {
         }
         let mut reasons: Vec<_> = by_reason.into_iter().collect();
         reasons.sort_by(|a, b| b.1 .0.cmp(&a.1 .0));
-        println!("random trees: {passed} of {n} read back to their own text");
+        println!("random trees: {passed} of {n} read back to their own text; {read_back} read back; {fixpoint} read back to a fixpoint (the text read back reads back to itself)");
         for (r, (c, seed)) in &reasons {
             println!("  {c:>4}  seed {seed:>4}  {r}");
         }
         // A ratchet while the groups are fixed one commit at a time (2026-10-12):
         // the count only rises, to 1,000 of 1,000.
         assert!(passed >= READ_BACK_FLOOR, "random trees that read back to their own text: {passed}, fewer than the {READ_BACK_FLOOR} already reached");
+        assert!(read_back >= READ_AT_ALL_FLOOR, "random trees that read back: {read_back}, fewer than the {READ_AT_ALL_FLOOR} already reached");
     }
 }

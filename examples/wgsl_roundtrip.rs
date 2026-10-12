@@ -4,7 +4,8 @@
 //! its text, the checker's verdict, the reader's error or the text read back
 //! with the first differing lines.
 //!
-//! `cargo run --release --features wgsl --example wgsl_roundtrip -- <seed> [--tree]`
+//! `cargo run --release --features wgsl --example wgsl_roundtrip -- <seed> [--tree] [--write <dir>]`
+//! (`--write`: both texts, `<seed>.drawn.wgsl` and `<seed>.again.wgsl`, for a diff)
 
 use fuller::wgsl::loader::WgslKingdom;
 use fuller::wgsl::render::{dual_ty, gram_role, sample};
@@ -28,6 +29,10 @@ fn main() -> Result<(), String> {
         Err(e) => println!("// read: {e}"),
         Ok(back) => {
             let again = render_tree(&back.tree, &k)?.text;
+            if let Some(dir) = args.iter().position(|a| a == "--write").and_then(|i| args.get(i + 1)) {
+                std::fs::write(format!("{dir}/{seed}.drawn.wgsl"), &text).map_err(|e| e.to_string())?;
+                std::fs::write(format!("{dir}/{seed}.again.wgsl"), &again).map_err(|e| e.to_string())?;
+            }
             if again == text {
                 println!("// read back to the same text");
             } else {
