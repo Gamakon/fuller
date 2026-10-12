@@ -44,8 +44,8 @@
 | `var<workgroup>` arrays | covered | `wg.a`..`wg.d`, `wg.va`..`wg.vd`, `wg.v2a`..`wg.v2d`, `wg.decl_*` |
 | `var<workgroup>` scalar | covered | element 0 of a workgroup array of one |
 | `var<workgroup>` atomics | covered | `wg.au_*`, `wg.ai_*`, `atomic.*` |
-| `var<storage>` / `var<uniform>` | binding | the Gram role's phi, h, cfg are rows (`load.phi_safe`, `load.h_safe`, `store.h_*`, `load.cfg_*`); other bindings need the generic interface |
-| storage atomics | binding | `atomic<u32>` in a storage buffer |
+| `var<storage>` / `var<uniform>` | covered | a kernel's declared interface (`// interface <name>`, the Gram's by default; `render::role_named`): its input, output and uniform fields read as the rows `load.phi_safe`, `load.h_safe`, `store.h_*`, `load.cfg_*`, a second input through its own row (`load.qry` of the cosine re-score) |
+| storage atomics | covered | an `atomic<u32>` or `atomic<i32>` binding the interface declares: its read-modify-writes as rows `atomic.<name>_<fun>` (`gram_counter`, 2026-10-12) |
 | textures, samplers, `textureLoad` / `textureStore` / `textureDimensions` / `textureSampleLevel` / `textureGather` | binding | compute-legal, no texture binding in the Gram role |
 | `textureSample`, `textureSampleBias`, derivatives | not compute | implicit derivatives |
 | helper functions, one return | covered | inlined at the call (`stmt_call_value_helper`, `stmt_helper_with_loop`) |
@@ -191,5 +191,6 @@ Each fill is its own commit with a corpus row and the full checklist. The order 
 10. Done: `modf` / `frexp` results, `arrayLength` of phi and h. 173 of 184 read.
 11. Done: module `const` and `override`, `var<private>`, workgroup scalars and `workgroupUniformLoad`. 178 of 184 read.
 12. Done: helpers with early returns (as guards) or a pointer argument. 180 of 184 read; the 4 left are naga 0.20's (`@must_use`, an override in `@workgroup_size`, a function-scope `const`) and a binding (a storage atomic).
+13. Done (2026-10-12, generic bindings, `docs/PLAN_constrained_mutation.md` section 2.4): a storage atomic the kernel's interface declares; the probe names `// interface gram_counter`. 181 of 184 read; the 3 left are naga 0.20's.
 
-Not built here: the Gram role's bindings (h, phi, cfg) are the largest gap. Other storage buffers, uniforms, storage atomics, textures and samplers all wait for the generic interface in `docs/PLAN_constrained_mutation.md`, which is awaiting Andrew's review.
+Not built here: textures and samplers. Bindings are declared per interface (`render::role_named`: `gram`, `cosine`, `gram_counter`); a kernel with a binding no declared interface holds needs that interface declared first.

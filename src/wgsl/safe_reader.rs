@@ -2172,8 +2172,20 @@ impl<'a> Ctx<'a> {
     fn atomic_expr(&mut self, root: &Root) -> Result<(Tree, bool), String> {
         let RootKind::Atomic { target, fun } = &root.kind else { return Err("not an atomic root".into()) };
         let Node::App { kids, .. } = &root.tree else { return Err("an atomic root without operands".into()) };
-        let arr = target.strip_prefix("workgroup.").and_then(|r| r.strip_suffix(".#")).ok_or_else(|| format!("an atomic on {target}: the safe kingdom's atomics are workgroup arrays (a storage atomic needs a binding the Gram role does not have)"))?;
         let trees = kids.iter().map(|k| tree_of(self, k)).collect::<Result<Vec<_>, _>>()?;
+        // A storage atomic the interface declares: its per-kernel row
+        // `atomic.<name>_<fun>` over the operand.
+        if let Some(name) = target.strip_prefix("buffer.").filter(|n| !n.contains('.')) {
+            let row = format!("atomic.{name}_{fun}");
+            let Some((_, _, out)) = self.per_kernel_rows.iter().find(|p| p.0 == row).cloned() else {
+                return Err(format!("an atomic {fun} on the storage buffer {name}: the kernel's interface declares no atomic {name}"));
+            };
+            let value = trees.last().ok_or("a storage atomic without an operand")?;
+            let value = self.value(value)?;
+            let unsigned = self.kingdom.dual(out).is_some_and(|d| d.slot == "u32");
+            return Ok((Tree::new(&row, out, vec![value]), unsigned));
+        }
+        let arr = target.strip_prefix("workgroup.").and_then(|r| r.strip_suffix(".#")).ok_or_else(|| format!("an atomic on {target}: the safe kingdom's atomics are workgroup arrays or a storage atomic the interface declares"))?;
         let which = self.array(arr, "atomic")?;
         let (of, idx_dual, arr_dual, _, _) = Self::wg_rows(which);
         let unsigned = which.starts_with("wg.au");
@@ -4936,6 +4948,26 @@ mod tests {
         let again = crate::wgsl::safe_karva::render_tree_with(&back.tree, &k, &back.role).unwrap().text;
         validate_text(&again).unwrap_or_else(|e| panic!("{e}\n{again}"));
         crate::wgsl::check::check(&r.tree, &k, &r.role, &crate::wgsl::target::Target::recorded()).unwrap_or_else(|e| panic!("{e}"));
+    }
+
+    /// A STORAGE ATOMIC (the coverage probe `atomic_storage`, 2026-10-12):
+    /// the Gram's interface with `counter: atomic<u32>` declared
+    /// (`// interface gram_counter`); `atomicAdd(&counter, 1u)` reads as its
+    /// per-kernel row, renders, validates and passes every layer.
+    #[test]
+    fn a_storage_atomic_the_interface_declares_reads() {
+        let k = WgslKingdom::load_safe();
+        let src = include_str!("../../tests/corpus/interfaces/atomic_storage.wgsl");
+        let r = read_safe(src, &k).unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(r.role.name, "gram_counter");
+        assert!(r.tree.to_sexpr().contains("(atomic.counter_add (literal.index 1))"), "{}", r.tree.to_sexpr());
+        let out = crate::wgsl::safe_karva::render_tree_with(&r.tree, &k, &r.role).unwrap_or_else(|e| panic!("{e}"));
+        assert!(out.text.contains("var<storage, read_write> counter: atomic<u32>;") && out.text.contains("atomicAdd(&counter, (1u))"), "{}", out.text);
+        validate_text(&out.text).unwrap_or_else(|e| panic!("{e}\n{}", out.text));
+        crate::wgsl::check::check(&r.tree, &k, &r.role, &crate::wgsl::target::Target::recorded()).unwrap_or_else(|e| panic!("{e}"));
+        // Under the Gram's interface, which declares no atomic: a bug report naming the binding.
+        let e = read_safe(&src.replace("// interface gram_counter\n", ""), &k).err().unwrap_or_default();
+        assert!(e.contains("declares no atomic counter"), "{e}");
     }
 
     /// A LET STALE AT ITS USE (2026-10-12, found reading the cosine

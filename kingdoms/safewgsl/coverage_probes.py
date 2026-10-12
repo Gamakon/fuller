@@ -162,6 +162,8 @@ for name, body, mod in P:
     if name == "decl_workgroup_size_override":
         text = text.replace("@workgroup_size(16, 16, 1)", "@workgroup_size(WG, 16, 1)")
     if name == "atomic_storage":
+        # The Gram's interface with the storage atomic declared (2026-10-12, generic bindings).
+        text = text.replace("// probe: atomic_storage", "// interface gram_counter\n// probe: atomic_storage")
         text = text.replace("var<uniform> cfg: Cfg;", "var<uniform> cfg: Cfg;\n@group(0) @binding(3) var<storage, read_write> counter: atomic<u32>;").replace("    g = 1.0;", "    g = f32(atomicAdd(&counter, 1u)) * 0.0;")
     open(os.path.join(OUT, name + ".wgsl"), "w").write(text)
 print(len(P), "probes")

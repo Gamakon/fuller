@@ -159,6 +159,19 @@ impl Role {
             pk("load.cfg_r_rows", &[], "u32.count", role.field("r_rows")),
             pk("load.cfg_r_off", &[], "u32.index", role.field("r_off")),
         ];
+        // A storage atomic the interface declares (`atomic<u32>` or
+        // `atomic<i32>` in a read_write buffer): its read-modify-writes, each
+        // returning the old value, as per-kernel rows `atomic.<name>_<fun>`.
+        for b in &role.bindings {
+            let value = match b.ty.as_str() {
+                "atomic<u32>" => "u32.index",
+                "atomic<i32>" => "i32.int",
+                _ => continue,
+            };
+            for (fun, wgsl) in [("add", "atomicAdd"), ("sub", "atomicSub"), ("max", "atomicMax"), ("min", "atomicMin"), ("and", "atomicAnd"), ("or", "atomicOr"), ("xor", "atomicXor"), ("exchange", "atomicExchange")] {
+                role.per_kernel.push(pk(&format!("atomic.{}_{fun}", b.name), &[value], value, format!("{wgsl}(&{}, {{0}})", b.name)));
+            }
+        }
         role.per_kernel.extend(extra);
         role
     }
@@ -198,9 +211,14 @@ pub fn dual_ty(kingdom: &WgslKingdom, name: &str) -> Result<Ty, String> {
 /// of `H_GRAM_ACCUM_WGSL`, the item loop bounded by `cfg.m`, and the
 /// per-kernel rows that read and write them.
 pub fn gram_role() -> Role {
+    Role::interface(gram_interface())
+}
+
+/// The Gram's interface as declared.
+fn gram_interface() -> Interface {
     let b = |name: &str, binding: u32, space: &str, ty: &str| Binding { name: name.into(), group: 0, binding, space: space.into(), ty: ty.into() };
     let f = |name: &str, role: &str| Field { name: name.into(), role: role.into() };
-    Role::interface(Interface {
+    Interface {
         name: "gram".into(),
         bindings: vec![b("phi", 0, "storage, read", "array<f32>"), b("h", 1, "storage, read_write", "array<f32>"), b("cfg", 2, "uniform", "Cfg")],
         uniform_var: "cfg".into(),
@@ -211,7 +229,17 @@ pub fn gram_role() -> Role {
         // The band's row, the column, and the global row (square output: d x d).
         guard: "({row}) < cfg.r_rows && ({col}) < cfg.d && (cfg.r_off + ({row})) < cfg.d".into(),
         extra: Vec::new(),
-    })
+    }
+}
+
+/// The Gram's interface with a storage atomic (2026-10-12, the coverage
+/// probe `atomic_storage`): `counter: atomic<u32>` at binding 3, its
+/// read-modify-writes as per-kernel rows.
+pub fn gram_counter_role() -> Role {
+    let mut decl = gram_interface();
+    decl.name = "gram_counter".into();
+    decl.bindings.push(Binding { name: "counter".into(), group: 0, binding: 3, space: "storage, read_write".into(), ty: "atomic<u32>".into() });
+    Role::interface(decl)
 }
 
 /// A second interface (2026-10-12), UltraDim's exact re-score: a dense
@@ -245,7 +273,8 @@ pub fn role_named(name: &str) -> Result<Role, String> {
     match name {
         "gram" => Ok(gram_role()),
         "cosine" => Ok(cosine_role()),
-        other => Err(format!("no interface {other} (declared: gram, cosine)")),
+        "gram_counter" => Ok(gram_counter_role()),
+        other => Err(format!("no interface {other} (declared: gram, cosine, gram_counter)")),
     }
 }
 
