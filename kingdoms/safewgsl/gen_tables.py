@@ -669,7 +669,7 @@ f("parr", "w", "composite", [], "parr<vec4<f32>>.real", "private array pw of 16 
 # Expression-bounded loops (k16, k26: `cfg.m & ~3u`; the pump's `cfg.m / 4u`; k06: a test `t + 4u > m`,
 # normalised to t < m - 4). The bound is any index expression; the loop is finite because every u32 is;
 # the cost estimator evaluates the bound at the worst shape, so a slow kernel is refused before dispatch.
-f("bound", "of_index", "composite", ["u32.index"], "u32.boundx", "any index expression as a loop bound, capped at 65,536 (the largest m the fitness runs; legality, 2026-10-12): min(e, 65536u)")
+f("bound", "of_index", "composite", ["u32.index"], "u32.boundx", "any index expression as a loop bound, capped at MAX_LOOP_TRIP = 2^24 = 16,777,216 (the kingdom's declared maximum trip count; legality, 2026-10-12): min(e, 16777216u)")
 # A vector component chosen at run time (k08's `v[j]`, a model child's): read through a helper, since naga
 # demands a constant index on a vector VALUE; the index is masked to the lanes.
 f("shape", "at", "composite", ["<vecL.c>", "u32.index"], "<S.c>", "lane (i masked to the lanes) of a vector, through a helper")
@@ -1135,6 +1135,7 @@ def main():
             md.write(f"| {ref} | `{dual}` | `{slot}` | `{form}` | {lanes} | `{fb}` | {bits} | {noop} | {elem} |\n")
         md.write(f"\n{len(types)} duals. The fallback is what Design C's projection substitutes for a codon whose dual does not match the demand; the codon is counted as masked.\n")
         md.write("\nThe three machine columns (`fallback_bits`, `fallback_noop`, `fallback_elem` in `types.tsv`) are what the loader builds the fallback leaf from, never the prose: `bits` is the lane's 32-bit pattern as an unsigned integer, repeated across the lanes of a vector or matrix (only `bool.sign` is non-zero, true = +1); `noop` is 1 for `store.store`, which substitutes no value at all; `elem` is 1 for `array<T>`, whose fallback is its element's. The loader tests `noop` and `elem` before reading `bits`; for those two rows `bits` is a placeholder 0. Every substitution, whichever column decides it, counts the codon as masked.\n")
+        md.write("\n## Loop trip counts\n\nMAX_LOOP_TRIP = 2^24 = 16,777,216 is the kingdom's declared maximum trip count of a loop (`render::MAX_LOOP_TRIP`): no real workload exceeds it (production builds run m ~ 420,000 items, d up to 8,192). A loop at an L rung, which may hold a barrier, takes a uniform bound (`u32.boundu`); any other expression bound (`bound.of_index`, a loop with no barrier) renders `min(e, 16777216u)`, so a bound in range computes the same and no loop runs past it. The checker's range layer ranges such a bound up to it, and proves index arithmetic over it.\n")
         md.write("\n## Not in the table\n\nStorage-buffer atomics, images, samplers, ray queries, binding arrays, pointers as values, non-square `f16` matrices.\n")
 
     with open(os.path.join(HERE, "symbols.md"), "w") as md:

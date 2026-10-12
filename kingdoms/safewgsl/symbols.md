@@ -1202,7 +1202,7 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F607 | `bound.of_index` | `composite` | `u32.index` | `u32.boundx` | 1 | any index expression as a loop bound, capped at 65,536 (the largest m the fitness runs; legality, 2026-10-12): min(e, 65536u) |
+| F607 | `bound.of_index` | `composite` | `u32.index` | `u32.boundx` | 1 | any index expression as a loop bound, capped at MAX_LOOP_TRIP = 2^24 = 16,777,216 (the kingdom's declared maximum trip count; legality, 2026-10-12): min(e, 16777216u) |
 
 ## class `shape`
 

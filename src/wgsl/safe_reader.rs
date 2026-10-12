@@ -3320,9 +3320,9 @@ impl<'a> Ctx<'a> {
             // Any other expression: the bound as written (the complete kingdom,
             // step 6); the cost estimator values it at the worst shape.
             let expr = self.value(bound)?;
-            // The kingdom's own cap (bound.of_index renders min(e, 65536u)),
+            // The kingdom's own cap (bound.of_index renders min(e, MAX_LOOP_TRIP)),
             // read back: the bound is e.
-            let cap = f32::from(u16::MAX) + 1.0;
+            let cap = crate::wgsl::render::MAX_LOOP_TRIP as f32;
             let expr = match (expr.name.as_str(), expr.kids.as_slice()) {
                 ("index.min", [x, c]) | ("index.min", [c, x]) if literal_value(c) == Some(cap) => x.clone(),
                 _ => expr,

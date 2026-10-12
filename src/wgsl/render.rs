@@ -390,9 +390,13 @@ fn masked_to(x: &str, len: u32) -> String {
     if len.is_power_of_two() { format!("(({x}) & {last}u)") } else { format!("min(({x}), {last}u)") }
 }
 
-/// The cap of an expression loop bound (`bound.of_index`): the largest item
-/// count the fitness runs, so a bound in range computes the same.
-pub const BOUND_CAP: u32 = 65536;
+/// The kingdom's declared maximum trip count of a loop, MAX_LOOP_TRIP =
+/// 2^24 = 16,777,216: no real workload exceeds it (production builds run
+/// m ~ 420,000 items, d up to 8,192; the test shapes' 65,536 truncated them,
+/// 2026-10-12). An expression bound (`bound.of_index`) renders capped at it,
+/// so a bound in range computes the same; the checker ranges such a bound up
+/// to it. Exact as an f32 literal (2^24), so a gene carries it whole.
+pub const MAX_LOOP_TRIP: u32 = 1 << 24;
 
 /// A loop counter read outside its loop: 0, through `lit_u32` so naga folds
 /// no constant expression it would refuse (`0u - 18u`).
@@ -1365,7 +1369,7 @@ impl Renderer<'_> {
             // Any expression bound carries its cap: a loop bounded by a register,
             // an atomic or a load cannot run past the largest m the fitness runs
             // (the legality checker's bounded loops, 177 of 1,000 random genes).
-            "bound.of_index" => return Ok(format!("min(({}), {BOUND_CAP}u)", self.value(&v.kids[0], scope)?)),
+            "bound.of_index" => return Ok(format!("min(({}), {MAX_LOOP_TRIP}u)", self.value(&v.kids[0], scope)?)),
             "bound.x_of_uniform" => return self.value(&v.kids[0], scope),
             "bound.m" => return Ok("cfg.m".into()),
             "bound.d" => return Ok("cfg.d".into()),
@@ -1994,7 +1998,7 @@ fn bound_at(t: &Tree, m: f64) -> (f64, bool) {
         };
         match uniform_as_index(&t.name).unwrap_or(safe_base(&t.name)) {
             "bound.of_uniform" | "bound.x_of_uniform" | "index.of_uniform" | "uniform.of_lit" | "uniform.of_counter" | "uniform.of_tcounter" | "uniform.of_tcounter2" | "uniform.of_tcounter3" | "uniform.of_tcounter4" => k(0),
-            "bound.of_index" => k(0).min(f64::from(BOUND_CAP)),
+            "bound.of_index" => k(0).min(f64::from(MAX_LOOP_TRIP)),
             "load.cfg_d" | "bound.d" => WORST_D,
             "load.cfg_r_rows" | "bound.rows" => WORST_ROWS,
             "load.cfg_m" | "bound.m" => m,

@@ -1081,9 +1081,9 @@ impl<'a> Checker<'a> {
                     None => k(0),
                 }
             }
-            // An expression bound carries its cap (min(e, 65536u)): known even when e is not.
+            // An expression bound carries its cap (min(e, MAX_LOOP_TRIP)): known even when e is not.
             "bound.of_index" => {
-                let cap = u128::from(crate::wgsl::render::BOUND_CAP);
+                let cap = u128::from(crate::wgsl::render::MAX_LOOP_TRIP);
                 Some(k(0).map_or(Iv { lo: 0, hi: cap }, |iv| Iv { lo: iv.lo.min(cap), hi: iv.hi.min(cap) }))
             }
             "safe.counter_index" | "safe.tile_index" | "safe.tile_index2" | "safe.tile_index3" | "safe.tile_index4" | "safe.row_as_index" | "safe.col_as_index" | "index.of_count" | "index.of_row" | "index.of_col" | "index.of_lidx" if d.slot == "u32" => k(0),
@@ -1381,7 +1381,7 @@ mod tests {
         let in_place = |l: Tree| Tree::new("stmt.cblock_L0", ty(&k, "stmt.L0"), vec![Tree::new("block.one_C0", ty(&k, "block.C0"), vec![l])]);
         let bump = Tree::new("reg.set_i_C1", ty(&k, "stmt.C1"), vec![Tree::new("reg.i1", ty(&k, "reg<u32>.index"), vec![]), Tree::new("index.add", ty(&k, "u32.index"), vec![reg_i(&k, "reg.i1"), lit_i(1.0)])]);
         let unbounded = with_body(&k, one_l0(in_place(Tree::new("loop.tilex_C0", ty(&k, "stmt.C0"), vec![bound, Tree::new("block.one_C1", ty(&k, "block.C1"), vec![bump])]))));
-        // Since the expression bound carries its cap (min(e, 65536u)), the loop
+        // Since the expression bound carries its cap (min(e, MAX_LOOP_TRIP)), the loop
         // is bounded whatever its body does to the register: it passes.
         checker.check(&unbounded).unwrap_or_else(|e| panic!("a capped loop bound: {e}"));
 
