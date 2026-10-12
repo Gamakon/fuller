@@ -133,6 +133,10 @@ name = "wgsl_knob"
 required-features = ["wgsl"]
 
 [[example]]
+name = "wgsl_mine_rewrites"
+required-features = ["wgsl"]
+
+[[example]]
 name = "wgsl_adapter"
 required-features = ["gpu", "wgsl"]
 

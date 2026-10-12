@@ -37,6 +37,7 @@ pub mod safe_karva;
 pub mod safe_reader;
 pub mod scaffold;
 pub mod table;
+pub mod tree_diff;
 pub mod target;
 pub mod versions;
 
