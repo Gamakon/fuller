@@ -1492,6 +1492,289 @@ fn vec_tile_why(root: &Tree, kingdom: &WgslKingdom) -> Option<String> {
     (why.len() == loops.len()).then(|| why.join("; "))
 }
 
+// ---- RULES: UNROLL K BY TWO, AND UNDO IT ----
+
+/// A workgroup tile read's K step, its index over a counted loop's counter
+/// `c`: `(m * k) * S + j S + rest` (m = 2 in an unrolled loop, 1 not), the
+/// K row being `m k + j`. Returns (m, S, j) when every term with the counter
+/// is that product and the constant's K part is j S.
+fn k_step(index: &Tree, counter: &str) -> Option<(u32, u32, u32)> {
+    let mut terms = Vec::new();
+    add_terms(index, &mut terms);
+    let (mut step, mut constant) = (None, 0u32);
+    for t in &terms {
+        if let Some(v) = plain_value(t) {
+            constant += v;
+            continue;
+        }
+        if !any_node(t, &|n| n.name == counter) {
+            continue;
+        }
+        // (m * k) * S, or k * S.
+        if t.name != "index.mul" || t.kids.len() != 2 || step.is_some() {
+            return None;
+        }
+        let (inner, s) = match (plain_value(&t.kids[0]), plain_value(&t.kids[1])) {
+            (_, Some(s)) => (&t.kids[0], s),
+            (Some(s), None) => (&t.kids[1], s),
+            _ => return None,
+        };
+        let m = if inner.name.starts_with("safe.tile_index") && any_node(inner, &|n| n.name == counter) {
+            1
+        } else if inner.name == "index.mul" && inner.kids.len() == 2 {
+            let (a, b) = (&inner.kids[0], &inner.kids[1]);
+            match (plain_value(a), plain_value(b)) {
+                (Some(m), None) if b.name.starts_with("safe.tile_index") => m,
+                (None, Some(m)) if a.name.starts_with("safe.tile_index") => m,
+                _ => return None,
+            }
+        } else {
+            return None;
+        };
+        step = Some((m, s));
+    }
+    let (m, s) = step?;
+    // The K part of the constant: whole K rows, below the unroll.
+    let j = constant / s;
+    (s > 0 && j < m.max(1) + u32::from(m == 1)).then_some((m, s, j))
+}
+
+/// The K steps of the workgroup tile reads in a statement, over the counter.
+fn k_steps(t: &Tree, counter: &str, out: &mut BTreeSet<(u32, u32, u32)>, bad: &mut bool) {
+    if let Some((_, _)) = wg_read(t) {
+        match t.kids[1].kids.first().and_then(|x| k_step(x, counter)) {
+            Some(k) => {
+                out.insert(k);
+            }
+            None => *bad = true,
+        }
+        return;
+    }
+    t.kids.iter().for_each(|k| k_steps(k, counter, out, bad));
+}
+
+/// The counted loops that step K through the workgroup tiles: (pre-order
+/// node, tile depth, the loop), each body's tile reads all K steps of its counter.
+fn k_loops(root: &Tree) -> Vec<(usize, usize, Tree)> {
+    fn walk(t: &Tree, counter: &mut usize, depth: usize, out: &mut Vec<(usize, usize, Tree)>) {
+        let me = *counter;
+        *counter += 1;
+        let base = safe_base(&t.name);
+        let looped = base.starts_with("loop.") && !base.starts_with("loop.items");
+        if matches!(base, "loop.tile_bounded") && t.kids.len() == 2 && any_node(&t.kids[1], &|n| wg_read(n).is_some()) && !any_node(&t.kids[1], &|n| is_wg_write(&n.name)) {
+            out.push((me, depth, t.clone()));
+        }
+        for k in &t.kids {
+            walk(k, counter, depth + usize::from(looped), out);
+        }
+    }
+    let mut out = Vec::new();
+    walk(root, &mut 0, 0, &mut out);
+    out
+}
+
+/// A workgroup array write (any `wg.set`).
+fn is_wg_write(name: &str) -> bool {
+    name.starts_with("wg.set")
+}
+
+/// What un-unrolling or unrolling a K loop needs.
+#[derive(Clone, Debug)]
+pub struct KPlan {
+    pub node: usize,
+    pub depth: usize,
+    pub stride: u32,
+    /// Un-unroll: the statements of K row 2 k + 1 to drop (their indices in the body).
+    pub drop: BTreeSet<usize>,
+}
+
+/// THE PRECONDITIONS of undoing a K unroll by two in the loop at `node`:
+/// every statement of its body is an accumulation reading the tiles at one
+/// K row, `2 k` or `2 k + 1` (in the same stride); a statement of row
+/// `2 k + 1` writes a register nothing else writes but zero stores (it
+/// stays zero once its statements are gone, so every sum reading it is
+/// unchanged); the loop's count is a literal or a reference that doubles.
+pub fn ununroll_plan(plain: &Tree, node: usize, depth: usize, lp: &Tree) -> Result<KPlan, String> {
+    let counter = tile_counter_name(depth);
+    let body = statements(&lp.kids[1]);
+    let (mut drop, mut stride) = (BTreeSet::new(), None);
+    for (i, st) in body.iter().enumerate() {
+        let (mut ks, mut bad) = (BTreeSet::new(), false);
+        k_steps(st, counter, &mut ks, &mut bad);
+        if bad || is_compound(st) {
+            return Err(format!("{} in the K loop is not an accumulation over K steps of its counter", st.name));
+        }
+        let steps: Vec<(u32, u32, u32)> = ks.into_iter().collect();
+        match steps.as_slice() {
+            [] => return Err(format!("{} in the K loop reads no tile", st.name)),
+            [(2, s, j)] if *j < 2 && stride.is_none_or(|x| x == *s) => {
+                stride = Some(*s);
+                if *j == 1 {
+                    drop.insert(i);
+                }
+            }
+            other => return Err(format!("{} reads K steps {other:?}, not one row of an unroll by two", st.name)),
+        }
+        if target_key(st).filter(|k| k.starts_with("reg.")).is_none() {
+            return Err(format!("{} in the K loop assigns no register", st.name));
+        }
+    }
+    if drop.is_empty() || drop.len() * 2 != body.len() {
+        return Err(format!("{} of {} statements read row 2 k + 1, not half", drop.len(), body.len()));
+    }
+    // The dropped registers: written elsewhere only by zero stores.
+    let dropped: BTreeSet<String> = drop.iter().filter_map(|&i| target_key(&body[i])).collect();
+    let loop_end = node + lp.size();
+    for s in kernel_statements(plain) {
+        if s.node > node && s.node < loop_end {
+            continue;
+        }
+        if let Some(k) = target_key(&s.tree).filter(|k| dropped.contains(k)) {
+            if zero_store(&s.tree).is_none() {
+                return Err(format!("{k} is written outside the K loop other than with zero"));
+            }
+        }
+    }
+    Ok(KPlan { node, depth, stride: stride.unwrap_or(1), drop })
+}
+
+/// THE PRECONDITIONS of unrolling a K loop by two: every statement of its
+/// body is an accumulation `r = r + E` reading the tiles at K row `k`; the
+/// loop's count is even.
+pub fn unroll_plan(node: usize, depth: usize, lp: &Tree) -> Result<KPlan, String> {
+    let counter = tile_counter_name(depth);
+    let count = plain_value(&lp.kids[0]).ok_or("the K loop's count is not a literal")?;
+    if count % 2 != 0 || count < 2 {
+        return Err(format!("the K loop's count {count} is not even"));
+    }
+    let mut stride = None;
+    for st in statements(&lp.kids[1]) {
+        let (mut ks, mut bad) = (BTreeSet::new(), false);
+        k_steps(&st, counter, &mut ks, &mut bad);
+        let steps: Vec<(u32, u32, u32)> = ks.into_iter().collect();
+        match (bad, steps.as_slice()) {
+            (false, [(1, s, 0)]) if stride.is_none_or(|x| x == *s) => stride = Some(*s),
+            _ => return Err(format!("{} in the K loop is not an accumulation at K row k", st.name)),
+        }
+        let key = target_key(&st).filter(|k| k.starts_with("reg.")).ok_or_else(|| format!("{} in the K loop assigns no register", st.name))?;
+        let mut reads = BTreeSet::new();
+        assigned_values(&st).iter().for_each(|v| read_keys(v, &mut reads));
+        if !(st.name.starts_with("reg.set_") && st.kids.len() == 2 && st.kids[1].name == "arith.add" && st.kids[1].kids.iter().any(|k| k.name.starts_with("reg.get") && k.kids.first().is_some_and(|l| l.name == key))) {
+            return Err(format!("{key} is not accumulated as {key} + E"));
+        }
+    }
+    Ok(KPlan { node, depth, stride: stride.ok_or("an empty K loop")?, drop: BTreeSet::new() })
+}
+
+/// `t` with the counter `c`'s K step rewritten: `(m * k) * S` to
+/// `(to_m * k) * S` (to_m 1: `k * S`), plus `extra` K rows.
+fn re_k(t: &Tree, counter: &str, to_m: u32, extra: u32, kingdom_index: crate::geneframe::Ty) -> Tree {
+    if t.name == "index.mul" && t.kids.len() == 2 && any_node(t, &|n| n.name == counter) {
+        let (inner_i, s) = match (plain_value(&t.kids[0]), plain_value(&t.kids[1])) {
+            (_, Some(s)) => (0usize, s),
+            (Some(s), None) => (1usize, s),
+            _ => return t.clone(),
+        };
+        let inner = &t.kids[inner_i];
+        let tile_index = if inner.name.starts_with("safe.tile_index") { inner.clone() } else { inner.kids.iter().find(|k| k.name.starts_with("safe.tile_index")).cloned().unwrap_or_else(|| inner.clone()) };
+        let k = if to_m == 1 { tile_index } else { Tree::new("index.mul", kingdom_index, vec![Tree::literal("literal.index", kingdom_index, to_m as f32), tile_index]) };
+        let base = Tree::new("index.mul", kingdom_index, vec![k, Tree::literal("literal.index", kingdom_index, s as f32)]);
+        return if extra > 0 { Tree::new("index.add", kingdom_index, vec![base, Tree::literal("literal.index", kingdom_index, (extra * s) as f32)]) } else { base };
+    }
+    Tree { name: t.name.clone(), ty: t.ty, konst: t.konst, kids: t.kids.iter().map(|k| re_k(k, counter, to_m, extra, kingdom_index)).collect() }
+}
+
+/// `t` with the reads' constant K rows (`j S` in an index) removed: what
+/// is left of a row-2k+1 statement's indices once re_k adds the K row back.
+fn strip_k_constant(t: &Tree, s: u32) -> Tree {
+    if wg_read(t).is_some() {
+        let mut kids = t.kids.clone();
+        if let Some(x) = kids[1].kids.first().cloned() {
+            let mut terms = Vec::new();
+            add_terms(&x, &mut terms);
+            let constant: u32 = terms.iter().filter_map(|t| plain_value(t)).sum();
+            let keep = constant % s;
+            let rest: Vec<Tree> = terms.iter().filter(|t| plain_value(t).is_none()).map(|t| (*t).clone()).collect();
+            let mut acc = rest.into_iter().reduce(|a, b| Tree::new("index.add", a.ty, vec![a, b])).expect("a term with the counter");
+            if keep > 0 {
+                acc = Tree::new("index.add", acc.ty, vec![acc.clone(), Tree::literal("literal.index", acc.ty, keep as f32)]);
+            }
+            kids[1].kids[0] = acc;
+        }
+        return Tree { name: t.name.clone(), ty: t.ty, konst: t.konst, kids };
+    }
+    Tree { name: t.name.clone(), ty: t.ty, konst: t.konst, kids: t.kids.iter().map(|k| strip_k_constant(k, s)).collect() }
+}
+
+/// The kernel with the K loop at `node` rewritten by `body` and its count scaled.
+fn rewrite_k_loop(plain: &Tree, node: usize, body: Vec<Tree>, count: u32, kingdom: &WgslKingdom) -> Result<Tree, String> {
+    fn walk(t: &Tree, counter: &mut usize, node: usize, f: &dyn Fn(&Tree) -> Result<Tree, String>) -> Result<Tree, String> {
+        let me = *counter;
+        *counter += 1;
+        if me == node {
+            *counter += t.size() - 1;
+            return f(t);
+        }
+        Ok(Tree { name: t.name.clone(), ty: t.ty, konst: t.konst, kids: t.kids.iter().map(|k| walk(k, counter, node, f)).collect::<Result<_, _>>()? })
+    }
+    let f = |lp: &Tree| -> Result<Tree, String> {
+        let r = rung(&lp.kids[1].name).ok_or("the K loop's body has no rung")?;
+        Ok(Tree { name: lp.name.clone(), ty: lp.ty, konst: lp.konst, kids: vec![Tree::literal(&lp.kids[0].name, lp.kids[0].ty, count as f32), rebuild(body.clone(), r, kingdom)?] })
+    };
+    walk(plain, &mut 0, node, &f)
+}
+
+/// UN-UNROLL K: the loop at `node` steps one K row a pass, its statements
+/// of row 2 k + 1 gone (their registers stay zero), twice the passes.
+pub fn ununroll_k(root: &Tree, node: usize, kingdom: &WgslKingdom) -> Result<Tree, String> {
+    let plain = crate::wgsl::params::to_literals(root, kingdom)?;
+    let (n, depth, lp) = k_loops(&plain).into_iter().find(|(n, _, _)| *n == node).ok_or("our software has a bug: the K loop is gone")?;
+    let plan = ununroll_plan(&plain, n, depth, &lp)?;
+    let index = dual_ty(kingdom, "u32.index")?;
+    let counter = tile_counter_name(depth);
+    let body: Vec<Tree> = statements(&lp.kids[1]).iter().enumerate().filter(|(i, _)| !plan.drop.contains(i)).map(|(_, st)| re_k(st, counter, 1, 0, index)).collect();
+    let count = plain_value(&lp.kids[0]).ok_or("the K loop's count is not a literal")? * 2;
+    rewrite_k_loop(&plain, n, body, count, kingdom)
+}
+
+/// UNROLL K: the loop at `node` steps two K rows a pass: each accumulation
+/// reads row 2 k, then again row 2 k + 1 into the same register; half the passes.
+pub fn unroll_k(root: &Tree, node: usize, kingdom: &WgslKingdom) -> Result<Tree, String> {
+    let plain = crate::wgsl::params::to_literals(root, kingdom)?;
+    let (n, depth, lp) = k_loops(&plain).into_iter().find(|(n, _, _)| *n == node).ok_or("our software has a bug: the K loop is gone")?;
+    let plan = unroll_plan(n, depth, &lp)?;
+    let index = dual_ty(kingdom, "u32.index")?;
+    let counter = tile_counter_name(depth);
+    let mut body = Vec::new();
+    for st in statements(&lp.kids[1]) {
+        body.push(re_k(&st, counter, 2, 0, index));
+        body.push(re_k(&strip_k_constant(&st, plan.stride), counter, 2, 1, index));
+    }
+    let count = plain_value(&lp.kids[0]).ok_or("the K loop's count is not a literal")? / 2;
+    rewrite_k_loop(&plain, n, body, count, kingdom)
+}
+
+/// RULES: UN-UNROLL K / UNROLL K (one site per K loop whose plan holds).
+pub fn ununroll_k_sites(root: &Tree, kingdom: &WgslKingdom) -> Vec<Site> {
+    let Ok(plain) = crate::wgsl::params::to_literals(root, kingdom) else { return Vec::new() };
+    k_loops(&plain).into_iter().filter_map(|(n, d, lp)| ununroll_plan(&plain, n, d, &lp).ok().map(|p| Site { index: n, what: format!("K loop of {} statements, {} dropped", p.drop.len() * 2, p.drop.len()) })).collect()
+}
+
+pub fn unroll_k_sites(root: &Tree, kingdom: &WgslKingdom) -> Vec<Site> {
+    let Ok(plain) = crate::wgsl::params::to_literals(root, kingdom) else { return Vec::new() };
+    k_loops(&plain).into_iter().filter_map(|(n, d, lp)| unroll_plan(n, d, &lp).ok().map(|_| Site { index: n, what: format!("K loop of {} statements", statements(&lp.kids[1]).len()) })).collect()
+}
+
+fn k_why(root: &Tree, kingdom: &WgslKingdom, unroll: bool) -> Option<String> {
+    let plain = crate::wgsl::params::to_literals(root, kingdom).ok()?;
+    let loops = k_loops(&plain);
+    if loops.is_empty() {
+        return Some("no counted loop reads the tiles".into());
+    }
+    let why: Vec<String> = loops.iter().filter_map(|(n, d, lp)| if unroll { unroll_plan(*n, *d, lp).err() } else { ununroll_plan(&plain, *n, *d, lp).err() }).collect();
+    (why.len() == loops.len()).then(|| why.join("; "))
+}
+
 /// A rule of the catalogue.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Rule {
@@ -1499,10 +1782,12 @@ pub enum Rule {
     GrowRows,
     VecTile,
     ShrinkRows,
+    UnunrollK,
+    UnrollK,
 }
 
 impl Rule {
-    pub const ALL: [Rule; 4] = [Rule::DropZeroFill, Rule::GrowRows, Rule::VecTile, Rule::ShrinkRows];
+    pub const ALL: [Rule; 6] = [Rule::DropZeroFill, Rule::GrowRows, Rule::VecTile, Rule::ShrinkRows, Rule::UnunrollK, Rule::UnrollK];
 
     pub fn name(self) -> &'static str {
         match self {
@@ -1510,6 +1795,8 @@ impl Rule {
             Rule::GrowRows => "grow-rows",
             Rule::VecTile => "vec4-tile",
             Rule::ShrinkRows => "shrink-rows",
+            Rule::UnunrollK => "un-unroll-k",
+            Rule::UnrollK => "unroll-k",
         }
     }
 
@@ -1519,6 +1806,8 @@ impl Rule {
             Rule::GrowRows => grow_rows_sites(root, kingdom),
             Rule::VecTile => vec_tile_sites(root, kingdom),
             Rule::ShrinkRows => shrink_rows_sites(root, kingdom),
+            Rule::UnunrollK => ununroll_k_sites(root, kingdom),
+            Rule::UnrollK => unroll_k_sites(root, kingdom),
         }
     }
 
@@ -1532,6 +1821,8 @@ impl Rule {
             },
             Rule::VecTile => vec_tile_why(root, kingdom),
             Rule::ShrinkRows => shrink_rows_plan(root, kingdom).err(),
+            Rule::UnunrollK => k_why(root, kingdom, false),
+            Rule::UnrollK => k_why(root, kingdom, true),
         }
     }
 
@@ -1547,6 +1838,8 @@ impl Rule {
             }
             Rule::VecTile => vec_tile(root, site.index, kingdom),
             Rule::ShrinkRows => shrink_rows(root, kingdom),
+            Rule::UnunrollK => ununroll_k(root, site.index, kingdom),
+            Rule::UnrollK => unroll_k(root, site.index, kingdom),
         }
     }
 }
@@ -1724,6 +2017,29 @@ mod tests {
             assert!(text.contains("var<workgroup> wg_va: array<vec4<f32>,") && !text.contains("wg_a["), "{text}");
             assert!(text.contains("lidx + (128u * k)"), "{text}");
         }
+    }
+
+    /// UNROLL K AND UNDO IT, on two saved kernels of reserve2 (2026-10-12):
+    /// one stepping K two rows a pass into two sets of accumulators (r01 of
+    /// popR24) steps one row a pass, twice the passes, and then grows its
+    /// rows; one stepping one row (r00 of popR24) steps two, half the
+    /// passes. Every child checks; each was correct on the device.
+    #[test]
+    fn a_k_unroll_by_two_is_undone_and_redone() {
+        let k = WgslKingdom::load_safe();
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("logs/HGP/001/reserve2/texts");
+        let read = |name: &str| std::fs::read_to_string(dir.join(name)).ok().map(|src| read_safe(&src, &k).unwrap().tree);
+        let Some(unrolled) = read("0.1209_fit_A2_stopped_1729Z_g001_r16_c65da8.wgsl") else { return };
+        let site = Rule::UnunrollK.sites(&unrolled, &k).into_iter().next().unwrap_or_else(|| panic!("{:?}", Rule::UnunrollK.why_not(&unrolled, &k)));
+        let child = crate::wgsl::knob::check_text(&Rule::UnunrollK.apply(&unrolled, &site, &k).unwrap(), &k).unwrap_or_else(|(s, e)| panic!("{}: {e}", s.name())).1.tree;
+        let text = crate::wgsl::safe_karva::render_tree(&child, &k).unwrap().text;
+        assert!(text.contains("for (k = 0u; k < 32u; k = k + 1u)") && text.contains("(k * 16u) + lid.y") && !text.contains("(2u * k)"), "{text}");
+        assert!(!Rule::GrowRows.sites(&child, &k).is_empty(), "grow-rows fires after un-unroll-K");
+        let one = read("0.1208_fit_A2_stopped_1702Z_g000_r19_6d34a7.wgsl").unwrap();
+        let site = Rule::UnrollK.sites(&one, &k).into_iter().next().unwrap_or_else(|| panic!("{:?}", Rule::UnrollK.why_not(&one, &k)));
+        let child = crate::wgsl::knob::check_text(&Rule::UnrollK.apply(&one, &site, &k).unwrap(), &k).unwrap_or_else(|(s, e)| panic!("{}: {e}", s.name())).1.tree;
+        let text = crate::wgsl::safe_karva::render_tree(&child, &k).unwrap().text;
+        assert!(text.contains("for (k = 0u; k < 16u; k = k + 1u)") && text.contains("((2u * k) * 16u) + 16u)"), "{text}");
     }
 
     /// Never a zero store inside a loop, nor one whose storage was touched
