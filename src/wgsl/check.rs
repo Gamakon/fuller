@@ -8,7 +8,7 @@
 //! |---|---|
 //! | 1 typed tree | every node is a row of the kingdom (or the role) at its signature (a loop counter read outside its loop is the constant 0, as the rows say and the renderer writes) |
 //! | 2 structural grammar | the root is the safe kernel; a store to `h`, and a read of `h`, only at the thread's owned cell (a fallback row, column or cell renders the thread's own); a barrier never inside an `if`; loops only from the bounded constructors, no item loop in an item loop, at most four tile loops deep |
-//! | 3 range | every workgroup and private array index in its array's range (by the mask its row writes, or by its value at the worst shape); no `u32` overflow in index arithmetic at the worst shape (d 8,192, m 65,536, the band 8,192 rows) |
+//! | 3 range | every workgroup and private array index in its array's range (by the mask its row writes, or by its value at the worst shape, d 8,192, m 65,536, the band 8,192 rows); a `u32` wrap in index arithmetic is a diagnostic (`Checker::overflows`), not a failure: wrap is defined WGSL and every access is masked or owned (Andrew, 2026-10-12) |
 //! | 4 barrier uniformity | a barrier only where every condition it depends on (an `if`, a loop's trip count, a `break` or `continue` guard, an earlier conditional `return`) is workgroup-uniform |
 //! | 5 adapter | the workgroup's shape and its workgroup memory within the target's limits; subgroup and float features the target has |
 //! | 6 bounded loops | every loop's trip count bounded: a literal, a binding, a value known at the worst shape that cannot wrap, or a uniform value its body does not change |
@@ -155,6 +155,12 @@ struct Counter {
 
 /// The walker's state.
 struct Cx {
+    /// u32 wraps in index arithmetic at the worst shape: a diagnostic, not a
+    /// failure (Andrew's decision, 2026-10-12: u32 wrap is defined WGSL, and in
+    /// the safe kingdom every array and h access is masked or owned and every
+    /// loop bound uniform or capped, so a wrap can only give wrong values,
+    /// which selection removes).
+    overflows: Vec<String>,
     mode: Mode,
     grid: Grid,
     plan: WgPlan,
@@ -193,6 +199,7 @@ impl Cx {
             exits: Vec::new(),
             facts: Vec::new(),
             err: None,
+            overflows: Vec::new(),
         }
     }
 
@@ -442,6 +449,12 @@ impl<'a> Checker<'a> {
     /// the worst shape.
     pub fn range(&self, tree: &Tree) -> Result<(), Illegal> {
         self.walk_root(tree, Mode::Range, &NonUniform::default()).err.map_or(Ok(()), Err)
+    }
+
+    /// The u32 wraps of index arithmetic at the worst shape: a diagnostic,
+    /// counted and reported, never a failing layer.
+    pub fn overflows(&self, tree: &Tree) -> Vec<String> {
+        self.walk_root(tree, Mode::Range, &NonUniform::default()).overflows
     }
 
     // ---------------------------------------------------------------- layer 4
@@ -971,10 +984,10 @@ impl<'a> Checker<'a> {
         }))
     }
 
-    /// Record an overflow (layer 3 only).
+    /// Record an overflow (in the range walk): a diagnostic, not a failure.
     fn overflow(&self, v: &Tree, cx: &mut Cx, what: String) {
         if cx.mode == Mode::Range {
-            cx.fail(Layer::Range, "index_overflow", format!("{}: {what} at the worst shape (d {WORST_D}, m {WORST_M}, {WORST_ROWS} rows)", brief(v)));
+            cx.overflows.push(format!("{}: {what} at the worst shape (d {WORST_D}, m {WORST_M}, {WORST_ROWS} rows)", brief(v)));
         }
     }
 
@@ -1372,8 +1385,9 @@ mod tests {
         let mul = |a: Tree, b: Tree| Tree::new("index.mul", ty(&k, "u32.index"), vec![a, b]);
         let big = mul(mul(cnt("load.cfg_m"), cnt("load.cfg_d")), cnt("load.cfg_d"));
         let overflow = with_body(&k, one_l0(Tree::new("reg.set_i_L0", ty(&k, "stmt.L0"), vec![Tree::new("reg.i0", ty(&k, "reg<u32>.index"), vec![]), big])));
-        let e = layer_of(&checker, &overflow);
-        assert_eq!((e.layer, e.reason), (Layer::Range, "index_overflow"), "{e}");
+        // A u32 wrap is defined and memory-safe here: legal, reported as a diagnostic.
+        checker.check(&overflow).unwrap_or_else(|e| panic!("a wrapping product is legal: {e}"));
+        assert!(checker.overflows(&overflow).iter().any(|o| o.contains("product")), "{:?}", checker.overflows(&overflow));
 
         // An unbounded loop: its bound is a register its body increments.
         let bound = Tree::new("bound.of_index", ty(&k, "u32.boundx"), vec![reg_i(&k, "reg.i1")]);
@@ -1453,6 +1467,7 @@ mod tests {
         let root = ty(&k, "kernel.safe");
         let n = 1000u64;
         let mut passed = 0usize;
+        let mut wrapping = 0usize;
         let mut by_reason: BTreeMap<(Layer, &'static str), (usize, u64, String)> = BTreeMap::new();
         // Each layer on its own (every tree through every layer), so a layer's
         // faults are counted even where an earlier layer fails first.
@@ -1463,6 +1478,9 @@ mod tests {
             let each = [checker.typed(&tree).err(), checker.grammar(&tree).err(), checker.range(&tree).err(), uniformity, checker.adapter(&tree).err(), checker.bounded(&tree, &nonuniform).err()];
             for e in each.into_iter().flatten() {
                 alone.entry((e.layer, e.reason)).or_insert((0, seed, e.detail.clone())).0 += 1;
+            }
+            if !checker.overflows(&tree).is_empty() {
+                wrapping += 1;
             }
             match checker.check(&tree) {
                 Ok(()) => {
@@ -1475,7 +1493,7 @@ mod tests {
                 }
             }
         }
-        println!("random genes: {n} sampled, {passed} pass every layer, {} fail", n as usize - passed);
+        println!("random genes: {n} sampled, {passed} pass every layer, {} fail; diagnostic: {wrapping} hold a u32 wrap in index arithmetic", n as usize - passed);
         for layer in Layer::ALL {
             let count: usize = by_reason.iter().filter(|((l, _), _)| *l == layer).map(|(_, (c, _, _))| c).sum();
             println!("  layer {} {:<22} {count:>4}", layer.number(), layer.name());
@@ -1488,5 +1506,8 @@ mod tests {
             println!("  layer {} {reason:<36} {count:>4}  first: seed {seed}: {}", layer.number(), detail.chars().take(240).collect::<String>());
         }
         assert_eq!(passed + by_reason.values().map(|(c, _, _)| c).sum::<usize>(), n as usize);
+        // The kingdom admits only legal genes (Andrew's rule: an illegal gene it
+        // admits is a kingdom bug): 1,000 of 1,000 since 2026-10-12.
+        assert_eq!(passed, n as usize, "random genes the kingdom admits that are not legal");
     }
 }
