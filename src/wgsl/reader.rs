@@ -1049,6 +1049,13 @@ fn expand(ctx: &mut Ctx, h: Handle<Expression>, count: bool) -> Node {
         }
         Expression::As { expr, kind: to_kind, convert } => {
             let kid = expand(ctx, expr, count);
+            // A conversion to the operand's own kind and width is the
+            // operand: naga 0.20 lowers an abstract float literal beside an
+            // f32 (`max(f0, 1.0)`) as `As { convert: Some(4) }` f32 to f32.
+            let same = ctx.info[expr].ty.inner_with(&ctx.module.types).scalar().is_some_and(|s| s.kind == to_kind && convert == Some(s.width));
+            if same {
+                return kid;
+            }
             let from = kind_of(ctx.info[expr].ty.inner_with(&ctx.module.types));
             let name = convert_name(from, to_kind, convert.is_some());
             match name {

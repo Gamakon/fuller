@@ -127,7 +127,7 @@
 | `bitcast` on vectors | missing | |
 | conversions `f32(u32)`, `u32(f32)`, `f32(bool)`, `u32(bool)` | covered | `convert.*` |
 | `i32(u32)`, `u32(i32)`, `i32(f32)` | missing | "naga.As.uint_to_sint.convert has no row" |
-| a literal written as `2.0` beside an f32 in `max`, `clamp`, `mix`, `pow`, `step`, `smoothstep`, `fma`, `ldexp`, `atan2`, `dot`, `distance`, `reflect`, `faceForward`, `length`, `normalize` | missing (bug) | naga 0.20 lowers the abstract literal through `As { convert: Some(4) }` f32 to f32; "naga.As.float_to_float.convert has no row". One fix covers these 15 probes |
+| a literal written as `2.0` beside an f32 in `max`, `clamp`, `mix`, `pow`, `step`, `smoothstep`, `fma`, `ldexp`, `atan2`, `dot`, `distance`, `reflect`, `faceForward`, `length`, `normalize` | covered | naga 0.20 lowers the abstract literal through `As { convert: Some(4) }` f32 to f32; the reader reads a conversion to the operand's own kind and width as the operand (`draft_float_literals`) |
 
 ## Built-in values (compute)
 
@@ -142,10 +142,10 @@
 | group | status | rows / reason |
 |---|---|---|
 | float, one argument, f32 and vec4 (abs, acos, acosh, asin, asinh, atan, atanh, ceil, cos, cosh, degrees, exp, exp2, floor, fract, inverseSqrt, log, log2, radians, round, saturate, sign, sin, sinh, sqrt, tan, tanh, trunc) | covered | `arith.*`, `trig.*` (60 probes) |
-| `length`, `normalize`, `distance`, `dot`, `reflect`, `faceForward` | covered as rows; probes missing | blocked by the f32-to-f32 literal bug above |
+| `length`, `normalize`, `distance`, `dot`, `reflect`, `faceForward` | covered | `geom.*` |
 | `cross` | missing | the vec3 gap |
 | `refract` | covered | `geom.refract` |
-| two and three arguments (atan2, clamp, fma, ldexp, max, min, mix, pow, smoothstep, step) | covered as rows; probes missing | the literal bug |
+| two and three arguments (atan2, clamp, fma, ldexp, max, min, mix, pow, smoothstep, step) | covered | `arith.*` |
 | `mix` with a scalar weight | covered | `arith.mix_scalar_weight` |
 | `modf`, `frexp` | missing | struct results |
 | `quantizeToF16` | naga 0.20 | not parsed |
@@ -174,7 +174,7 @@
 
 Each fill is its own commit with a corpus row and the full checklist. The order is by how many probes a fix reads.
 
-1. An f32-to-f32 `As` (naga's lowering of an abstract float literal) read as its operand: 15 probes.
+1. Done: an f32-to-f32 `As` (naga's lowering of an abstract float literal) read as its operand: 16 probes (108 of 184 read).
 2. Conversions between the u32 forms (`index`, `bits`, `count`), and vector overloads of the bit functions: about 20 probes.
 3. The reader's naga name map for `unpack*` and `insertBits`; `dot` on integer vectors; `%` on f32.
 4. `storageBarrier()` as its own statement row (today it is misread as `workgroupBarrier()`).
