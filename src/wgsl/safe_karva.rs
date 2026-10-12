@@ -61,17 +61,57 @@ pub struct SafeChromosome {
     pub roots: Vec<Option<Ty>>,
 }
 
+/// A token with its dual, `name@T061`: the row's name and the dual of its
+/// output by the dual's stable reference in types.tsv (`T001` is
+/// `Ty::Wgsl(0)`). The gene text carries every token's dual: an untyped
+/// name left the projection to break a tie among a row's signatures on the
+/// first, so `select(vec4<i32>(0), ..)` came back as the vec4<f32> row (5
+/// of 80 random rows of a phylu run) and a polymorphic row under a
+/// polymorphic parent (`trig.acos` under `geom.length`) as its first
+/// shape (237 of 1,000 random trees, 2026-10-13).
+pub fn typed_token(name: &str, ty: Ty) -> String {
+    match ty {
+        Ty::Wgsl(i) => format!("{name}@T{:03}", u32::from(i) + 1),
+        _ => name.to_string(),
+    }
+}
+
+/// A fallback leaf's token: `fallback@T061`, its dual named.
+pub fn fallback_token(ty: Ty) -> String {
+    typed_token(FALLBACK, ty)
+}
+
+/// A token's name and the dual it names, if typed (`name@T061`).
+pub fn split_token(token: &str) -> (&str, Option<Ty>) {
+    if let Some((name, r)) = token.rsplit_once("@T") {
+        if let Some(i) = r.parse::<u16>().ok().and_then(|n| n.checked_sub(1)) {
+            return (name, Some(Ty::Wgsl(i)));
+        }
+    }
+    (token, None)
+}
+
+/// A node's token in the Karva text: its name with its dual (a reference
+/// to a shared gene stays as it is: the slot's definition carries its dual).
+fn token(t: &Tree) -> String {
+    if is_href(t) {
+        t.name.clone()
+    } else {
+        typed_token(&t.name, t.ty)
+    }
+}
+
 /// The tree in the Karva text form the encoder and the decoder share: a
-/// terminal as `(Var "name")`, a literal as `(literal.x (Num v))`, an
-/// application as `(name kids…)`.
+/// terminal as `(Var "name@T…")`, a literal as `(literal.x@T… (Num v))`, an
+/// application as `(name@T… kids…)`; each token typed ([`typed_token`]).
 pub fn karva_text(t: &Tree) -> String {
     if t.kids.is_empty() {
         if t.name.starts_with("literal.") {
-            return format!("({} (Num {:?}))", t.name, f64::from(t.konst));
+            return format!("({} (Num {:?}))", token(t), f64::from(t.konst));
         }
-        return format!("(Var {:?})", t.name);
+        return format!("(Var {:?})", token(t));
     }
-    format!("({} {})", t.name, t.kids.iter().map(karva_text).collect::<Vec<_>>().join(" "))
+    format!("({} {})", token(t), t.kids.iter().map(karva_text).collect::<Vec<_>>().join(" "))
 }
 
 /// The level-order token stream of the tree, as the encoder emits it: a
@@ -168,16 +208,16 @@ pub fn encode_folded(head: &Tree, tail: &[Option<Tree>], head_length: usize, rng
     fn collect(t: &Tree, variables: &mut Vec<String>, functions: &mut BTreeMap<String, usize>) -> Result<(), String> {
         if t.kids.is_empty() {
             if t.name.starts_with("literal.") {
-                functions.insert(t.name.clone(), 1);
-            } else if !is_href(t) && !variables.contains(&t.name) {
-                variables.push(t.name.clone());
+                functions.insert(token(t), 1);
+            } else if !variables.contains(&token(t)) && !is_href(t) {
+                variables.push(token(t));
             }
             return Ok(());
         }
         if t.kids.len() > K {
             return Err(format!("{} has {} children, past K = {K}", t.name, t.kids.len()));
         }
-        match functions.insert(t.name.clone(), t.kids.len()) {
+        match functions.insert(token(t), t.kids.len()) {
             Some(a) if a != t.kids.len() => return Err(format!("{} appears with arity {a} and {}", t.name, t.kids.len())),
             _ => {}
         }
@@ -694,38 +734,61 @@ fn signatures<'a>(name: &'a str, demand: Ty, arity: usize, kingdom: &'a WgslKing
 }
 
 fn project(n: &MathNode, demand: Ty, kingdom: &WgslKingdom, per_kernel: &[(String, Vec<Ty>, Ty)]) -> Tree {
+    project_scored(n, demand, kingdom, per_kernel).0
+}
+
+/// [`project`] with its cost: the nodes the gene did not ask to be
+/// fallbacks that became one. A typed fallback under its own dual costs
+/// nothing, under another dual one, so a row's signatures are told apart by
+/// the duals its fallback leaves name.
+fn project_scored(n: &MathNode, demand: Ty, kingdom: &WgslKingdom, per_kernel: &[(String, Vec<Ty>, Ty)]) -> (Tree, usize) {
+    // A typed token under another dual than its position demands costs one.
+    let off = |t: Option<Ty>| usize::from(t.is_some_and(|t| t != demand));
     match n {
-        MathNode::Num(_) => Tree::fallback(demand),
-        MathNode::Var(name) => {
-            if signatures(name, demand, 0, kingdom, per_kernel).next().is_some() {
-                Tree::new(name, demand, vec![])
+        MathNode::Num(_) => (Tree::fallback(demand), 1),
+        MathNode::Var(token) => {
+            let (name, t) = split_token(token);
+            if name == FALLBACK {
+                // A fallback asked for: free under its own dual (untyped, as
+                // before the duals were written, it costs one).
+                (Tree::fallback(demand), t.map_or(1, |_| off(t)))
+            } else if signatures(name, demand, 0, kingdom, per_kernel).next().is_some() {
+                (Tree::new(name, demand, vec![]), off(t))
             } else {
-                Tree::fallback(demand)
+                (Tree::fallback(demand), 1)
             }
         }
-        MathNode::App(ctor, kids) => {
+        MathNode::App(token, kids) => {
+            let (ctor, t) = split_token(token);
             if ctor.starts_with("literal.") {
                 let v = match kids.as_slice() {
                     [MathNode::Num(v)] => *v as f32,
                     _ => 0.0,
                 };
-                return if kingdom.rows.iter().any(|r| r.name == *ctor && r.output == demand) { Tree::literal(ctor, demand, v) } else { Tree::fallback(demand) };
+                return if kingdom.rows.iter().any(|r| r.name == ctor && r.output == demand) { (Tree::literal(ctor, demand, v), off(t)) } else { (Tree::fallback(demand), 1) };
             }
             // Every row of the name under the demand with this arity; the
-            // one whose inputs leave the fewest fallbacks wins.
+            // one whose inputs cost least wins (the first on a tie).
             let mut best: Option<(usize, Tree)> = None;
             for inputs in signatures(ctor, demand, kids.len(), kingdom, per_kernel) {
-                let kids: Vec<Tree> = kids.iter().zip(inputs).map(|(k, &d)| project(k, d, kingdom, per_kernel)).collect();
-                let t = Tree::new(ctor, demand, kids);
-                let f = fallbacks(&t);
-                if best.as_ref().is_none_or(|(bf, _)| f < *bf) {
-                    best = Some((f, t));
+                let mut cost = off(t);
+                let kids: Vec<Tree> = kids
+                    .iter()
+                    .zip(inputs)
+                    .map(|(k, &d)| {
+                        let (t, c) = project_scored(k, d, kingdom, per_kernel);
+                        cost += c;
+                        t
+                    })
+                    .collect();
+                if best.as_ref().is_none_or(|(bc, _)| cost < *bc) {
+                    best = Some((cost, Tree::new(ctor, demand, kids)));
                 }
-                if f == 0 {
+                if cost == 0 {
                     break;
                 }
             }
-            best.map_or_else(|| Tree::fallback(demand), |(_, t)| t)
+            best.map_or_else(|| (Tree::fallback(demand), 1), |(c, t)| (t, c))
         }
     }
 }
@@ -1264,5 +1327,34 @@ mod tests {
         }
         println!("{N} single-symbol mutants of {} corpus kernels: {valid} validate, {owned} read back with the store at the thread's own cell, {lost} lose the thread's cell, {other} do not read back for another reason, {unrendered} do not render; {axis_swaps} change a thread id or its axis", trees.len());
         assert_eq!((valid, owned, axis_swaps), (N, N, 0), "every mutant validates, keeps the thread's cell and keeps its thread ids and axes; the first failures:\n{}", failures.iter().take(3).cloned().collect::<Vec<_>>().join("\n----\n"));
+    }
+
+    /// AST TO GENOME TO AST (Andrew, 2026-10-13): the 1,000 seeded sampler
+    /// trees of the reader's completeness test, each encoded into a
+    /// chromosome (head 128, 128 tail slots, the dumps' layout), every gene
+    /// decoded, unfolded and projected: the tree drawn, node for node.
+    #[test]
+    fn random_trees_survive_the_genome() {
+        let (k, role) = (WgslKingdom::load_safe(), gram_role());
+        let root = dual_ty(&k, "kernel.safe").unwrap();
+        let (h, slots) = (128usize, 128usize);
+        let n = 1000u64;
+        let mut equal = 0usize;
+        let mut failed: Vec<String> = Vec::new();
+        for seed in 0..n {
+            let tree = crate::wgsl::render::sample(&k, &role, root, 7, seed).unwrap();
+            let back: Result<Tree, String> = encode(&tree, h, slots, seed).and_then(|c| {
+                let pset = homeotic::pset_with_hrefs(&c.pset, slots);
+                let decoded: Vec<String> = c.genes.iter().map(|(hd, tl)| karva_to_terms_generic(hd, tl, &pset)).collect::<Result<_, _>>()?;
+                build(&unfold_decoded(&decoded, c.folded.filled)?, &k, &role)
+            });
+            match back {
+                Ok(t) if t == tree => equal += 1,
+                Ok(t) => failed.push(format!("seed {seed}: {}", crate::wgsl::render::first_difference(&tree, &t).unwrap_or_default())),
+                Err(e) => failed.push(format!("seed {seed}: {}", &e[..e.len().min(160)])),
+            }
+        }
+        println!("random trees through the genome: {equal} of {n} the tree drawn");
+        assert!(failed.is_empty(), "{} of {n}:\n{}", failed.len(), failed.iter().take(10).cloned().collect::<Vec<_>>().join("\n"));
     }
 }

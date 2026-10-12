@@ -5470,29 +5470,6 @@ mod tests {
     const READ_BACK_FLOOR: usize = 112;
     const FIXPOINT_FLOOR: usize = 563;
 
-    /// The first node where two trees differ, as `path: drawn / parsed`
-    /// (name, type and literal value; a different count of children is a
-    /// difference at the parent). `None` when they are the same tree.
-    fn first_difference(a: &Tree, b: &Tree) -> Option<String> {
-        fn at(a: &Tree, b: &Tree, path: &mut Vec<String>) -> Option<String> {
-            let same = a.name == b.name && a.ty == b.ty && a.konst.to_bits() == b.konst.to_bits() && a.kids.len() == b.kids.len();
-            if !same {
-                let show = |t: &Tree| if t.name.starts_with("literal.") { format!("{} {}", t.name, t.konst) } else { format!("{}{}", t.name, if t.kids.is_empty() { String::new() } else { format!("/{}", t.kids.len()) }) };
-                let tail: Vec<&String> = path.iter().rev().take(2).collect();
-                return Some(format!("{}: {} / {}", tail.into_iter().rev().map(String::as_str).collect::<Vec<_>>().join(" > "), show(a), show(b)));
-            }
-            for (i, (x, y)) in a.kids.iter().zip(&b.kids).enumerate() {
-                path.push(format!("{}[{i}]", a.name));
-                let d = at(x, y, path);
-                path.pop();
-                if d.is_some() {
-                    return d;
-                }
-            }
-            None
-        }
-        at(a, b, &mut Vec::new())
-    }
 
     /// THE KINGDOM'S COMPLETENESS BAR (2026-10-12): 1,000 random trees of
     /// the kingdom's typed sampler (the safe root, depth 7, seeds 0..1000)
@@ -5532,7 +5509,7 @@ mod tests {
                 read_back += 1;
                 // THE BAR (Andrew, 2026-10-13): AST to AST. The tree parsed
                 // from the emitted text is the tree drawn, node for node.
-                match first_difference(&tree, &back.tree) {
+                match crate::wgsl::render::first_difference(&tree, &back.tree) {
                     None => ast_equal += 1,
                     Some(d) => {
                         let key: String = d.chars().map(|c| if c.is_ascii_digit() { 'N' } else { c }).take(140).collect();
