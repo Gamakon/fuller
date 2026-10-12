@@ -1031,6 +1031,26 @@ f("arith", "frexp_exp", "composite", ["<f32.real>"], "<i32.int>", "frexp(x).exp"
 f("load", "phi_len", "ArrayLength", [], "u32.count", "arrayLength(&phi)")
 f("load", "h_len", "ArrayLength", [], "u32.count", "arrayLength(&h)")
 
+# ---- kernel parameters (2026-10-12, docs/PLAN_constrained_mutation.md task 0, sections 2.3 and 3.1) ----
+# A knob is a first-class, closed parameter of the kernel: the grid's x, y, bx, by, the tile depth T
+# (declared by grid.with_ktile) and each workgroup array's declared length. A position that depends on a
+# knob is a REFERENCE leaf, `literal.p_<knob>`, whose payload is an integer multiplier of the knob in
+# units of 1/256 (Q8: 256 is the knob itself, 16 is a sixteenth of it); the renderer writes the value the
+# kernel's own declarations give (src/wgsl/params.rs resolves it), so one change of a knob rewrites every
+# reference coherently, and a reference grafted into another kernel reads that kernel's knob. `_log2` is the
+# base-2 logarithm of the scaled knob (a shift), `_m1` the scaled knob minus one (a mask). The knobs by the
+# output's axes (the layout knob swaps x and y): wcol, wrow the workgroup's extent along the columns and
+# rows; bcol, brow the block factors; colspan = wcol * bcol and rowspan = wrow * brow the cells a workgroup
+# covers; threads = wcol * wrow; ktile the tile depth. A reference never names a counter, register, binding
+# or local.
+KNOBS = ("wcol", "wrow", "bcol", "brow", "colspan", "rowspan", "threads", "ktile")
+for k in KNOBS:
+    for out in ("u32.index", "u32.lit64", "u32.lit4096", "u32.wglen"):
+        f("literal", "p_" + k, "Literal", [], out, f"the knob {k} times the payload / 256")
+    f("literal", "p_" + k + "_log2", "Literal", [], "u32.index", f"log2 of the knob {k} times the payload / 256 (a shift)")
+    f("literal", "p_" + k + "_m1", "Literal", [], "u32.index", f"the knob {k} times the payload / 256, minus one (a mask)")
+f("grid", "with_ktile", "composite", ["grid.grid", "u32.lit4096"], "grid.grid", "a grid and the kernel's tile depth T (the item loop's step), the knob literal.p_ktile references")
+
 
 def write_tsv(path, header, rows):
     with open(path, "w") as out:

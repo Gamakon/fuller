@@ -2747,4 +2747,63 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 | F1404 | `load.phi_len` | `ArrayLength` | `-` | `u32.count` | 0 | arrayLength(&phi) |
 | F1405 | `load.h_len` | `ArrayLength` | `-` | `u32.count` | 0 | arrayLength(&h) |
 
-1405 function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Deliberately absent: storage-buffer atomics, atomic compare-exchange (naga 0.20's Metal backend lacks it), subgroupBallot, images, derivatives, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.
+## class `literal`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F1406 | `literal.p_wcol` | `Literal` | `-` | `u32.index` | 0 | the knob wcol times the payload / 256 |
+| F1407 | `literal.p_wcol` | `Literal` | `-` | `u32.lit64` | 0 | the knob wcol times the payload / 256 |
+| F1408 | `literal.p_wcol` | `Literal` | `-` | `u32.lit4096` | 0 | the knob wcol times the payload / 256 |
+| F1409 | `literal.p_wcol` | `Literal` | `-` | `u32.wglen` | 0 | the knob wcol times the payload / 256 |
+| F1410 | `literal.p_wcol_log2` | `Literal` | `-` | `u32.index` | 0 | log2 of the knob wcol times the payload / 256 (a shift) |
+| F1411 | `literal.p_wcol_m1` | `Literal` | `-` | `u32.index` | 0 | the knob wcol times the payload / 256, minus one (a mask) |
+| F1412 | `literal.p_wrow` | `Literal` | `-` | `u32.index` | 0 | the knob wrow times the payload / 256 |
+| F1413 | `literal.p_wrow` | `Literal` | `-` | `u32.lit64` | 0 | the knob wrow times the payload / 256 |
+| F1414 | `literal.p_wrow` | `Literal` | `-` | `u32.lit4096` | 0 | the knob wrow times the payload / 256 |
+| F1415 | `literal.p_wrow` | `Literal` | `-` | `u32.wglen` | 0 | the knob wrow times the payload / 256 |
+| F1416 | `literal.p_wrow_log2` | `Literal` | `-` | `u32.index` | 0 | log2 of the knob wrow times the payload / 256 (a shift) |
+| F1417 | `literal.p_wrow_m1` | `Literal` | `-` | `u32.index` | 0 | the knob wrow times the payload / 256, minus one (a mask) |
+| F1418 | `literal.p_bcol` | `Literal` | `-` | `u32.index` | 0 | the knob bcol times the payload / 256 |
+| F1419 | `literal.p_bcol` | `Literal` | `-` | `u32.lit64` | 0 | the knob bcol times the payload / 256 |
+| F1420 | `literal.p_bcol` | `Literal` | `-` | `u32.lit4096` | 0 | the knob bcol times the payload / 256 |
+| F1421 | `literal.p_bcol` | `Literal` | `-` | `u32.wglen` | 0 | the knob bcol times the payload / 256 |
+| F1422 | `literal.p_bcol_log2` | `Literal` | `-` | `u32.index` | 0 | log2 of the knob bcol times the payload / 256 (a shift) |
+| F1423 | `literal.p_bcol_m1` | `Literal` | `-` | `u32.index` | 0 | the knob bcol times the payload / 256, minus one (a mask) |
+| F1424 | `literal.p_brow` | `Literal` | `-` | `u32.index` | 0 | the knob brow times the payload / 256 |
+| F1425 | `literal.p_brow` | `Literal` | `-` | `u32.lit64` | 0 | the knob brow times the payload / 256 |
+| F1426 | `literal.p_brow` | `Literal` | `-` | `u32.lit4096` | 0 | the knob brow times the payload / 256 |
+| F1427 | `literal.p_brow` | `Literal` | `-` | `u32.wglen` | 0 | the knob brow times the payload / 256 |
+| F1428 | `literal.p_brow_log2` | `Literal` | `-` | `u32.index` | 0 | log2 of the knob brow times the payload / 256 (a shift) |
+| F1429 | `literal.p_brow_m1` | `Literal` | `-` | `u32.index` | 0 | the knob brow times the payload / 256, minus one (a mask) |
+| F1430 | `literal.p_colspan` | `Literal` | `-` | `u32.index` | 0 | the knob colspan times the payload / 256 |
+| F1431 | `literal.p_colspan` | `Literal` | `-` | `u32.lit64` | 0 | the knob colspan times the payload / 256 |
+| F1432 | `literal.p_colspan` | `Literal` | `-` | `u32.lit4096` | 0 | the knob colspan times the payload / 256 |
+| F1433 | `literal.p_colspan` | `Literal` | `-` | `u32.wglen` | 0 | the knob colspan times the payload / 256 |
+| F1434 | `literal.p_colspan_log2` | `Literal` | `-` | `u32.index` | 0 | log2 of the knob colspan times the payload / 256 (a shift) |
+| F1435 | `literal.p_colspan_m1` | `Literal` | `-` | `u32.index` | 0 | the knob colspan times the payload / 256, minus one (a mask) |
+| F1436 | `literal.p_rowspan` | `Literal` | `-` | `u32.index` | 0 | the knob rowspan times the payload / 256 |
+| F1437 | `literal.p_rowspan` | `Literal` | `-` | `u32.lit64` | 0 | the knob rowspan times the payload / 256 |
+| F1438 | `literal.p_rowspan` | `Literal` | `-` | `u32.lit4096` | 0 | the knob rowspan times the payload / 256 |
+| F1439 | `literal.p_rowspan` | `Literal` | `-` | `u32.wglen` | 0 | the knob rowspan times the payload / 256 |
+| F1440 | `literal.p_rowspan_log2` | `Literal` | `-` | `u32.index` | 0 | log2 of the knob rowspan times the payload / 256 (a shift) |
+| F1441 | `literal.p_rowspan_m1` | `Literal` | `-` | `u32.index` | 0 | the knob rowspan times the payload / 256, minus one (a mask) |
+| F1442 | `literal.p_threads` | `Literal` | `-` | `u32.index` | 0 | the knob threads times the payload / 256 |
+| F1443 | `literal.p_threads` | `Literal` | `-` | `u32.lit64` | 0 | the knob threads times the payload / 256 |
+| F1444 | `literal.p_threads` | `Literal` | `-` | `u32.lit4096` | 0 | the knob threads times the payload / 256 |
+| F1445 | `literal.p_threads` | `Literal` | `-` | `u32.wglen` | 0 | the knob threads times the payload / 256 |
+| F1446 | `literal.p_threads_log2` | `Literal` | `-` | `u32.index` | 0 | log2 of the knob threads times the payload / 256 (a shift) |
+| F1447 | `literal.p_threads_m1` | `Literal` | `-` | `u32.index` | 0 | the knob threads times the payload / 256, minus one (a mask) |
+| F1448 | `literal.p_ktile` | `Literal` | `-` | `u32.index` | 0 | the knob ktile times the payload / 256 |
+| F1449 | `literal.p_ktile` | `Literal` | `-` | `u32.lit64` | 0 | the knob ktile times the payload / 256 |
+| F1450 | `literal.p_ktile` | `Literal` | `-` | `u32.lit4096` | 0 | the knob ktile times the payload / 256 |
+| F1451 | `literal.p_ktile` | `Literal` | `-` | `u32.wglen` | 0 | the knob ktile times the payload / 256 |
+| F1452 | `literal.p_ktile_log2` | `Literal` | `-` | `u32.index` | 0 | log2 of the knob ktile times the payload / 256 (a shift) |
+| F1453 | `literal.p_ktile_m1` | `Literal` | `-` | `u32.index` | 0 | the knob ktile times the payload / 256, minus one (a mask) |
+
+## class `grid`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F1454 | `grid.with_ktile` | `composite` | `grid.grid u32.lit4096` | `grid.grid` | 2 | a grid and the kernel's tile depth T (the item loop's step), the knob literal.p_ktile references |
+
+1454 function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Deliberately absent: storage-buffer atomics, atomic compare-exchange (naga 0.20's Metal backend lacks it), subgroupBallot, images, derivatives, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.

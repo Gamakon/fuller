@@ -29,6 +29,7 @@ pub mod loader;
 pub mod mutate;
 pub mod naga_names;
 pub mod oracle;
+pub mod params;
 pub mod reader;
 pub mod render;
 pub mod safe_karva;

@@ -264,6 +264,56 @@ pub fn workgroup_shape(x: u32, y: u32) -> (u32, u32) {
     (x, y.min(MAX_THREADS / x.max(1)).max(1))
 }
 
+/// The grid a grid row asks the driver for, as the renderer writes it: the
+/// workgroup dimensions rounded and cut to the device's invocations, the
+/// block factors snapped to {1, 2, 4, 8}; a fallback is 16 x 16 at 1 x 1.
+/// The workgroup arrays (`grid.with_wg`) and the tile depth
+/// (`grid.with_ktile`) wrap a grid without changing it.
+pub fn grid_of(g: &Tree) -> Result<Grid, String> {
+    let code = |t: &Tree| -> Result<u32, String> {
+        match t.name.as_str() {
+            "fallback" => Ok(BLK[0]),
+            n if n.starts_with("literal.") => Ok(snap(&BLK, t.konst)),
+            other => Err(format!("{other} is not a literal code")),
+        }
+    };
+    match g.name.as_str() {
+        "grid.of" | "grid.of_rows_x" => {
+            let [x, y, bx, by] = g.kids.as_slice() else { return Err(format!("{} with {} children", g.name, g.kids.len())) };
+            let dim = |t: &Tree| -> Result<u32, String> {
+                match t.name.as_str() {
+                    "fallback" => Ok(16),
+                    n if n.starts_with("literal.") => Ok(workgroup_dim(t.konst)),
+                    other => Err(format!("{other} is not a workgroup dimension")),
+                }
+            };
+            let (gx, gy) = workgroup_shape(dim(x)?, dim(y)?);
+            Ok(Grid { x: gx, y: gy, bx: code(bx)?, by: code(by)?, rows_x: g.name == "grid.of_rows_x" })
+        }
+        "fallback" => Ok(Grid { x: 16, y: 16, bx: 1, by: 1, rows_x: false }),
+        // A grid and the kernel's workgroup arrays: the arrays are the plan's;
+        // a grid and its tile depth: the depth is the references' (params.rs).
+        "grid.with_wg" | "grid.with_ktile" if g.kids.len() == 2 => grid_of(&g.kids[0]),
+        other => Err(format!("{other} is not a grid row")),
+    }
+}
+
+/// Bytes of one element of a workgroup array's element type.
+fn elem_bytes(e: &str) -> u64 {
+    if e == "vec2<f32>" {
+        8
+    } else if e == "vec4<f32>" {
+        16
+    } else {
+        4
+    }
+}
+
+/// Bytes a workgroup plan (array -> (element type, length)) takes.
+fn plan_bytes(plan: &BTreeMap<String, (String, u32)>) -> u64 {
+    plan.values().map(|(e, l)| elem_bytes(e) * u64::from(*l)).sum()
+}
+
 fn snap(set: &[u32], v: f32) -> u32 {
     let v = if v.is_finite() { v } else { 0.0 };
     *set.iter().min_by(|a, b| (f64::from(**a) - f64::from(v)).abs().partial_cmp(&(f64::from(**b) - f64::from(v)).abs()).expect("finite")).expect("a non-empty set")
@@ -364,6 +414,9 @@ impl<'a> Renderer<'a> {
     /// Render a whole kernel: the root must be `kernel.entry` or a
     /// `fallback` of the kernel dual (an empty kernel).
     pub fn kernel(&self, root: &Tree) -> Result<Rendered, String> {
+        // Every knob reference written as the value its kernel's knobs give.
+        let resolved = crate::wgsl::params::resolve(root)?;
+        let root = &resolved;
         let d = self.dual(root.ty)?;
         if d.dual != "kernel.kernel" && d.dual != "kernel.safe" {
             return Err(format!("the root is {} ({}), not kernel.kernel or kernel.safe", root.name, d.dual));
@@ -453,24 +506,7 @@ impl<'a> Renderer<'a> {
     }
 
     fn grid(&self, g: &Tree) -> Result<Grid, String> {
-        match g.name.as_str() {
-            "grid.of" | "grid.of_rows_x" => {
-                let [x, y, bx, by] = g.kids.as_slice() else { return Err(format!("{} with {} children", g.name, g.kids.len())) };
-                let dim = |t: &Tree| -> Result<u32, String> {
-                    match t.name.as_str() {
-                        "fallback" => Ok(16),
-                        n if n.starts_with("literal.") => Ok(workgroup_dim(t.konst)),
-                        other => Err(format!("{other} is not a workgroup dimension")),
-                    }
-                };
-                let (gx, gy) = workgroup_shape(dim(x)?, dim(y)?);
-                Ok(Grid { x: gx, y: gy, bx: self.code(bx, &BLK)?, by: self.code(by, &BLK)?, rows_x: g.name == "grid.of_rows_x" })
-            }
-            "fallback" => Ok(Grid { x: 16, y: 16, bx: 1, by: 1, rows_x: false }),
-            // A grid and the kernel's workgroup arrays: the arrays are the plan's.
-            "grid.with_wg" if g.kids.len() == 2 => self.grid(&g.kids[0]),
-            other => Err(format!("{other} is not a grid row")),
-        }
+        grid_of(g)
     }
 
     /// A bounded literal (`literal.lit64`, `literal.lit4096`) or its fallback, clamped into 1..=max.
@@ -1025,7 +1061,28 @@ impl<'a> Renderer<'a> {
     /// then the largest halved until the total fits the device's 32 KB. Empty
     /// (the original four declarations) for a kernel that declares none and
     /// uses only `wg_a`, `wg_b`, `wg_va`, `wg_vb`, whose text is unchanged.
+    /// The workgroup memory a kernel asks for, in bytes, before the renderer
+    /// halves any array to fit 32 KB (knob references resolved): the knob
+    /// mutation's join keeps it within the device's limit, so a child is
+    /// never silently given shorter arrays than its references assume.
+    pub fn workgroup_request(&self, root: &Tree) -> Result<u64, String> {
+        let root = crate::wgsl::params::resolve(root)?;
+        let Some(grid) = root.kids.first().filter(|_| root.name == "kernel.entry_safe") else { return Ok(0) };
+        Ok(plan_bytes(&self.workgroup_plan_requested(grid, &root)?))
+    }
+
     fn workgroup_plan(&self, grid: &Tree, root: &Tree) -> Result<BTreeMap<String, (String, u32)>, String> {
+        let mut plan = self.workgroup_plan_requested(grid, root)?;
+        while plan_bytes(&plan) > 32768 {
+            let largest = plan.iter().max_by_key(|(v, (e, l))| (elem_bytes(e) * u64::from(*l), std::cmp::Reverse((*v).clone()))).map(|(v, _)| v.clone()).expect("a non-empty plan");
+            let entry = plan.get_mut(&largest).expect("present");
+            entry.1 = (entry.1 / 2).max(1);
+        }
+        Ok(plan)
+    }
+
+    /// [`Self::workgroup_plan`] before any array is halved.
+    fn workgroup_plan_requested(&self, grid: &Tree, root: &Tree) -> Result<BTreeMap<String, (String, u32)>, String> {
         let elem_of = |var: &str| if var.starts_with("wg_au") { "atomic<u32>" } else if var.starts_with("wg_ai") { "atomic<i32>" } else if var.starts_with("wg_v2") { "vec2<f32>" } else if var.starts_with("wg_v") { "vec4<f32>" } else { "f32" };
         let default_len = |var: &str| if var.starts_with("wg_au") || var.starts_with("wg_ai") || var.starts_with("wg_v2") { 1024 } else if var.starts_with("wg_v") { WGVEC_LEN } else { WGMEM_LEN };
         let mut declared: Vec<(String, u32)> = Vec::new();
@@ -1069,12 +1126,6 @@ impl<'a> Renderer<'a> {
         for v in used {
             plan.entry(v.clone()).or_insert_with(|| (elem_of(&v).to_string(), default_len(&v)));
         }
-        let bytes = |e: &str, l: u32| u64::from(l) * if e == "vec2<f32>" { 8 } else if e == "vec4<f32>" { 16 } else { 4 };
-        while plan.values().map(|(e, l)| bytes(e, *l)).sum::<u64>() > 32768 {
-            let largest = plan.iter().max_by_key(|(v, (e, l))| (bytes(e, *l), std::cmp::Reverse((*v).clone()))).map(|(v, _)| v.clone()).expect("a non-empty plan");
-            let entry = plan.get_mut(&largest).expect("present");
-            entry.1 = (entry.1 / 2).max(1);
-        }
         Ok(plan)
     }
 
@@ -1115,6 +1166,9 @@ impl<'a> Renderer<'a> {
             return self.fallback_value(d, wrap);
         }
         if let Some(form) = name.strip_prefix("literal.") {
+            // A knob reference (resolved before rendering) is written as a
+            // literal of its dual's form.
+            let form = if form.starts_with("p_") { d.form.as_str() } else { form };
             return self.literal(form, v.konst, d, wrap);
         }
         if let Some(p) = self.per_kernel.get(name) {
@@ -1773,7 +1827,10 @@ pub fn cost(t: &Tree) -> Cost {
         }
         (base, per_item)
     }
-    let (base, per_item) = walk(t, 1.0, false);
+    // Knob references priced at their values; a grid the renderer cannot
+    // read prices them as their payloads (the render names that grid).
+    let resolved = crate::wgsl::params::resolve(t).unwrap_or_else(|_| t.clone());
+    let (base, per_item) = walk(&resolved, 1.0, false);
     Cost { base, per_item }
 }
 

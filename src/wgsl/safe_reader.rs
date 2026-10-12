@@ -3755,8 +3755,19 @@ pub fn statement_outline(source: &str) -> Result<Vec<String>, String> {
     Ok(out)
 }
 
-/// Read `source` into the safe grammar, or say why not.
+/// Read `source` into the safe grammar, or say why not: the tree with its
+/// knobs as parameters (`params::assign`: every position that depends on a
+/// block factor, the workgroup's extent or the tile depth written as a
+/// reference to it); it renders the same text as [`read_safe_literal`]'s.
 pub fn read_safe(source: &str, kingdom: &WgslKingdom) -> Result<SafeRead, String> {
+    let r = read_safe_literal(source, kingdom)?;
+    let tree = crate::wgsl::params::assign(&r.tree, kingdom)?;
+    Ok(SafeRead { tree, ..r })
+}
+
+/// Read `source` into the safe grammar with every knob-dependent position
+/// left as the literal the kernel wrote.
+pub fn read_safe_literal(source: &str, kingdom: &WgslKingdom) -> Result<SafeRead, String> {
     let grid = grid_header(source).ok_or("no `// grid x y bx by` header")?;
     let kernel = read(source)?;
     // The workgroup the header names is the one the kernel declares: x and y

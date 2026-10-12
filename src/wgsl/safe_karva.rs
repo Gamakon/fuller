@@ -725,6 +725,8 @@ pub fn default_bound(kingdom: &WgslKingdom) -> Result<Cost, String> {
 pub fn rebuild_bounded(decoded: &[String], filled: usize, kingdom: &WgslKingdom, bound: Option<&Cost>) -> Result<(Rendered, usize, Cost), String> {
     let text = unfold_decoded(decoded, filled)?;
     let tree = build(&text, kingdom, &gram_role())?;
+    // A grid the knob references cannot be resolved against is named before the cost.
+    crate::wgsl::params::resolve(&tree)?;
     let f = fallbacks(&tree);
     let c = cost(&tree);
     if let Some(b) = bound {
