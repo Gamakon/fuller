@@ -803,6 +803,16 @@ for r, body in (("L0", "L2"), ("L1", "L2"), ("L2", "L3"), ("L3", "L4"), ("L4", "
 for d in range(len(EPILOGUE) - 1):
     f("loop", "unroll_" + EPILOGUE[d], "composite", ["u32.lit64", "block." + EPILOGUE[d + 1]], "stmt." + EPILOGUE[d], "the epilogue's loop body n times, straight-line")
 
+# ---- tree reduction in workgroup memory (2026-10-12) ----
+# One block: a[0..n) reduced into a[0] by stride halving, a barrier before and after every step, in uniform
+# control flow (so only at the L rungs, where a barrier stands); knobs: the array (its element type), n and
+# the operation. Written as its log2(n) steps (`if (lidx < s) { a[lidx] = a[lidx] op a[lidx + s]; }`), each
+# index masked into the array.
+for op in ("add", "max", "min"):
+    for r in ("L0", "L1", "L2", "L3", "L4", "L5"):
+        for arr in ("wgmem<f32>.real", "wgmem<vec2<f32>>.real", "wgmem<vec4<f32>>.real"):
+            f("wg", f"reduce_{op}_{r}", "composite", [arr, "u32.lit4096"], "stmt." + r, f"a[0..n) reduced into a[0] by {op}: stride halving, barriers in uniform control flow")
+
 
 def write_tsv(path, header, rows):
     with open(path, "w") as out:

@@ -3208,6 +3208,36 @@ mod tests {
         assert!((c0.per_item - c1.per_item).abs() < 1.0 && (c0.base - c1.base).abs() < 1.0, "{c0:?} vs {c1:?}");
     }
 
+    /// TREE REDUCTION IN WORKGROUP MEMORY (2026-10-12): one statement row
+    /// (array, n, add/max/min) renders as the leading barrier and log2(n)
+    /// halving steps `if (lidx < s) { a[lidx] = a[lidx] + a[lidx + s]; }`,
+    /// each followed by a barrier, in uniform control flow (its rows are L
+    /// statements only; after a return the renderer masks it as it masks a
+    /// barrier); the shipped
+    /// kernel with a reduction of 256 f32 renders, validates and reads back,
+    /// and the reduction costs its steps.
+    #[test]
+    fn a_tree_reduction_renders_its_halving_steps_and_reads_back() {
+        let k = WgslKingdom::load_safe();
+        let (t, role) = (FunctionTable::safe(), gram_role());
+        let rr = Renderer::new(&k, &t, &role);
+        let ty = |n: &str| crate::wgsl::render::dual_ty(&k, n).unwrap();
+        let mut tree = read_safe(&format!("// grid 16 16 1 1\n{SHIPPED}"), &k).unwrap().tree;
+        let reduce = Tree::new("wg.reduce_add_L0", ty("stmt.L0"), vec![Tree::new("wg.a", ty("wgmem<f32>.real"), vec![]), Tree::literal("literal.lit4096", ty("u32.lit4096"), 256.0)]);
+        let body = tree.kids[1].clone();
+        tree.kids[1] = Tree::new("block.seq2_L0", ty("block.L0"), vec![Tree::new("stmt.block_L0", ty("stmt.L0"), vec![body]), reduce]);
+        let out = rr.kernel(&tree).unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(out.text.matches("workgroupBarrier();").count(), 9, "{}", out.text);
+        assert!(out.text.contains("if (lidx < 128u) { wg_a[((lidx) & 2047u)] = (wg_a[((lidx) & 2047u)] + wg_a[((lidx + 128u) & 2047u)]); }"), "{}", out.text);
+        assert!(out.text.contains("if (lidx < 1u)"), "{}", out.text);
+        validate_text(&out.text).unwrap_or_else(|e| panic!("{e}\n{}", out.text));
+        read_safe(&format!("// grid 16 16 1 1\n{}", out.text), &k).unwrap_or_else(|e| panic!("read back: {e}"));
+        let plain = read_safe(&format!("// grid 16 16 1 1\n{SHIPPED}"), &k).unwrap().tree;
+        assert!(crate::wgsl::render::cost(&tree).base > crate::wgsl::render::cost(&plain).base + 8.0 * 50.0);
+        // Only where a barrier stands: every reduction row is an L statement (none under a condition).
+        assert!(k.rows.iter().filter(|r| r.name.starts_with("wg.reduce_")).all(|r| k.dual(r.output).is_some_and(|d| d.dual.starts_with("stmt.L"))));
+    }
+
     /// A kernel with a helper function reads: the helper is inlined at its
     /// calls (the complete kingdom, step 6; `load4`, with a local, an
     /// if-else and lane stores, as statements since run A). The blocked

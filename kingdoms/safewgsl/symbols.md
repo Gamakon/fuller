@@ -2007,4 +2007,63 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 | F954 | `loop.unroll_O2` | `composite` | `u32.lit64 block.O3` | `stmt.O2` | 2 | the epilogue's loop body n times, straight-line |
 | F955 | `loop.unroll_O3` | `composite` | `u32.lit64 block.O4` | `stmt.O3` | 2 | the epilogue's loop body n times, straight-line |
 
-955 function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Deliberately absent: atomics, images, derivatives, subgroup operations, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.
+## class `wg`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F956 | `wg.reduce_add_L0` | `composite` | `wgmem<f32>.real u32.lit4096` | `stmt.L0` | 2 | a[0..n) reduced into a[0] by add: stride halving, barriers in uniform control flow |
+| F957 | `wg.reduce_add_L0` | `composite` | `wgmem<vec2<f32>>.real u32.lit4096` | `stmt.L0` | 2 | a[0..n) reduced into a[0] by add: stride halving, barriers in uniform control flow |
+| F958 | `wg.reduce_add_L0` | `composite` | `wgmem<vec4<f32>>.real u32.lit4096` | `stmt.L0` | 2 | a[0..n) reduced into a[0] by add: stride halving, barriers in uniform control flow |
+| F959 | `wg.reduce_add_L1` | `composite` | `wgmem<f32>.real u32.lit4096` | `stmt.L1` | 2 | a[0..n) reduced into a[0] by add: stride halving, barriers in uniform control flow |
+| F960 | `wg.reduce_add_L1` | `composite` | `wgmem<vec2<f32>>.real u32.lit4096` | `stmt.L1` | 2 | a[0..n) reduced into a[0] by add: stride halving, barriers in uniform control flow |
+| F961 | `wg.reduce_add_L1` | `composite` | `wgmem<vec4<f32>>.real u32.lit4096` | `stmt.L1` | 2 | a[0..n) reduced into a[0] by add: stride halving, barriers in uniform control flow |
+| F962 | `wg.reduce_add_L2` | `composite` | `wgmem<f32>.real u32.lit4096` | `stmt.L2` | 2 | a[0..n) reduced into a[0] by add: stride halving, barriers in uniform control flow |
+| F963 | `wg.reduce_add_L2` | `composite` | `wgmem<vec2<f32>>.real u32.lit4096` | `stmt.L2` | 2 | a[0..n) reduced into a[0] by add: stride halving, barriers in uniform control flow |
+| F964 | `wg.reduce_add_L2` | `composite` | `wgmem<vec4<f32>>.real u32.lit4096` | `stmt.L2` | 2 | a[0..n) reduced into a[0] by add: stride halving, barriers in uniform control flow |
+| F965 | `wg.reduce_add_L3` | `composite` | `wgmem<f32>.real u32.lit4096` | `stmt.L3` | 2 | a[0..n) reduced into a[0] by add: stride halving, barriers in uniform control flow |
+| F966 | `wg.reduce_add_L3` | `composite` | `wgmem<vec2<f32>>.real u32.lit4096` | `stmt.L3` | 2 | a[0..n) reduced into a[0] by add: stride halving, barriers in uniform control flow |
+| F967 | `wg.reduce_add_L3` | `composite` | `wgmem<vec4<f32>>.real u32.lit4096` | `stmt.L3` | 2 | a[0..n) reduced into a[0] by add: stride halving, barriers in uniform control flow |
+| F968 | `wg.reduce_add_L4` | `composite` | `wgmem<f32>.real u32.lit4096` | `stmt.L4` | 2 | a[0..n) reduced into a[0] by add: stride halving, barriers in uniform control flow |
+| F969 | `wg.reduce_add_L4` | `composite` | `wgmem<vec2<f32>>.real u32.lit4096` | `stmt.L4` | 2 | a[0..n) reduced into a[0] by add: stride halving, barriers in uniform control flow |
+| F970 | `wg.reduce_add_L4` | `composite` | `wgmem<vec4<f32>>.real u32.lit4096` | `stmt.L4` | 2 | a[0..n) reduced into a[0] by add: stride halving, barriers in uniform control flow |
+| F971 | `wg.reduce_add_L5` | `composite` | `wgmem<f32>.real u32.lit4096` | `stmt.L5` | 2 | a[0..n) reduced into a[0] by add: stride halving, barriers in uniform control flow |
+| F972 | `wg.reduce_add_L5` | `composite` | `wgmem<vec2<f32>>.real u32.lit4096` | `stmt.L5` | 2 | a[0..n) reduced into a[0] by add: stride halving, barriers in uniform control flow |
+| F973 | `wg.reduce_add_L5` | `composite` | `wgmem<vec4<f32>>.real u32.lit4096` | `stmt.L5` | 2 | a[0..n) reduced into a[0] by add: stride halving, barriers in uniform control flow |
+| F974 | `wg.reduce_max_L0` | `composite` | `wgmem<f32>.real u32.lit4096` | `stmt.L0` | 2 | a[0..n) reduced into a[0] by max: stride halving, barriers in uniform control flow |
+| F975 | `wg.reduce_max_L0` | `composite` | `wgmem<vec2<f32>>.real u32.lit4096` | `stmt.L0` | 2 | a[0..n) reduced into a[0] by max: stride halving, barriers in uniform control flow |
+| F976 | `wg.reduce_max_L0` | `composite` | `wgmem<vec4<f32>>.real u32.lit4096` | `stmt.L0` | 2 | a[0..n) reduced into a[0] by max: stride halving, barriers in uniform control flow |
+| F977 | `wg.reduce_max_L1` | `composite` | `wgmem<f32>.real u32.lit4096` | `stmt.L1` | 2 | a[0..n) reduced into a[0] by max: stride halving, barriers in uniform control flow |
+| F978 | `wg.reduce_max_L1` | `composite` | `wgmem<vec2<f32>>.real u32.lit4096` | `stmt.L1` | 2 | a[0..n) reduced into a[0] by max: stride halving, barriers in uniform control flow |
+| F979 | `wg.reduce_max_L1` | `composite` | `wgmem<vec4<f32>>.real u32.lit4096` | `stmt.L1` | 2 | a[0..n) reduced into a[0] by max: stride halving, barriers in uniform control flow |
+| F980 | `wg.reduce_max_L2` | `composite` | `wgmem<f32>.real u32.lit4096` | `stmt.L2` | 2 | a[0..n) reduced into a[0] by max: stride halving, barriers in uniform control flow |
+| F981 | `wg.reduce_max_L2` | `composite` | `wgmem<vec2<f32>>.real u32.lit4096` | `stmt.L2` | 2 | a[0..n) reduced into a[0] by max: stride halving, barriers in uniform control flow |
+| F982 | `wg.reduce_max_L2` | `composite` | `wgmem<vec4<f32>>.real u32.lit4096` | `stmt.L2` | 2 | a[0..n) reduced into a[0] by max: stride halving, barriers in uniform control flow |
+| F983 | `wg.reduce_max_L3` | `composite` | `wgmem<f32>.real u32.lit4096` | `stmt.L3` | 2 | a[0..n) reduced into a[0] by max: stride halving, barriers in uniform control flow |
+| F984 | `wg.reduce_max_L3` | `composite` | `wgmem<vec2<f32>>.real u32.lit4096` | `stmt.L3` | 2 | a[0..n) reduced into a[0] by max: stride halving, barriers in uniform control flow |
+| F985 | `wg.reduce_max_L3` | `composite` | `wgmem<vec4<f32>>.real u32.lit4096` | `stmt.L3` | 2 | a[0..n) reduced into a[0] by max: stride halving, barriers in uniform control flow |
+| F986 | `wg.reduce_max_L4` | `composite` | `wgmem<f32>.real u32.lit4096` | `stmt.L4` | 2 | a[0..n) reduced into a[0] by max: stride halving, barriers in uniform control flow |
+| F987 | `wg.reduce_max_L4` | `composite` | `wgmem<vec2<f32>>.real u32.lit4096` | `stmt.L4` | 2 | a[0..n) reduced into a[0] by max: stride halving, barriers in uniform control flow |
+| F988 | `wg.reduce_max_L4` | `composite` | `wgmem<vec4<f32>>.real u32.lit4096` | `stmt.L4` | 2 | a[0..n) reduced into a[0] by max: stride halving, barriers in uniform control flow |
+| F989 | `wg.reduce_max_L5` | `composite` | `wgmem<f32>.real u32.lit4096` | `stmt.L5` | 2 | a[0..n) reduced into a[0] by max: stride halving, barriers in uniform control flow |
+| F990 | `wg.reduce_max_L5` | `composite` | `wgmem<vec2<f32>>.real u32.lit4096` | `stmt.L5` | 2 | a[0..n) reduced into a[0] by max: stride halving, barriers in uniform control flow |
+| F991 | `wg.reduce_max_L5` | `composite` | `wgmem<vec4<f32>>.real u32.lit4096` | `stmt.L5` | 2 | a[0..n) reduced into a[0] by max: stride halving, barriers in uniform control flow |
+| F992 | `wg.reduce_min_L0` | `composite` | `wgmem<f32>.real u32.lit4096` | `stmt.L0` | 2 | a[0..n) reduced into a[0] by min: stride halving, barriers in uniform control flow |
+| F993 | `wg.reduce_min_L0` | `composite` | `wgmem<vec2<f32>>.real u32.lit4096` | `stmt.L0` | 2 | a[0..n) reduced into a[0] by min: stride halving, barriers in uniform control flow |
+| F994 | `wg.reduce_min_L0` | `composite` | `wgmem<vec4<f32>>.real u32.lit4096` | `stmt.L0` | 2 | a[0..n) reduced into a[0] by min: stride halving, barriers in uniform control flow |
+| F995 | `wg.reduce_min_L1` | `composite` | `wgmem<f32>.real u32.lit4096` | `stmt.L1` | 2 | a[0..n) reduced into a[0] by min: stride halving, barriers in uniform control flow |
+| F996 | `wg.reduce_min_L1` | `composite` | `wgmem<vec2<f32>>.real u32.lit4096` | `stmt.L1` | 2 | a[0..n) reduced into a[0] by min: stride halving, barriers in uniform control flow |
+| F997 | `wg.reduce_min_L1` | `composite` | `wgmem<vec4<f32>>.real u32.lit4096` | `stmt.L1` | 2 | a[0..n) reduced into a[0] by min: stride halving, barriers in uniform control flow |
+| F998 | `wg.reduce_min_L2` | `composite` | `wgmem<f32>.real u32.lit4096` | `stmt.L2` | 2 | a[0..n) reduced into a[0] by min: stride halving, barriers in uniform control flow |
+| F999 | `wg.reduce_min_L2` | `composite` | `wgmem<vec2<f32>>.real u32.lit4096` | `stmt.L2` | 2 | a[0..n) reduced into a[0] by min: stride halving, barriers in uniform control flow |
+| F1000 | `wg.reduce_min_L2` | `composite` | `wgmem<vec4<f32>>.real u32.lit4096` | `stmt.L2` | 2 | a[0..n) reduced into a[0] by min: stride halving, barriers in uniform control flow |
+| F1001 | `wg.reduce_min_L3` | `composite` | `wgmem<f32>.real u32.lit4096` | `stmt.L3` | 2 | a[0..n) reduced into a[0] by min: stride halving, barriers in uniform control flow |
+| F1002 | `wg.reduce_min_L3` | `composite` | `wgmem<vec2<f32>>.real u32.lit4096` | `stmt.L3` | 2 | a[0..n) reduced into a[0] by min: stride halving, barriers in uniform control flow |
+| F1003 | `wg.reduce_min_L3` | `composite` | `wgmem<vec4<f32>>.real u32.lit4096` | `stmt.L3` | 2 | a[0..n) reduced into a[0] by min: stride halving, barriers in uniform control flow |
+| F1004 | `wg.reduce_min_L4` | `composite` | `wgmem<f32>.real u32.lit4096` | `stmt.L4` | 2 | a[0..n) reduced into a[0] by min: stride halving, barriers in uniform control flow |
+| F1005 | `wg.reduce_min_L4` | `composite` | `wgmem<vec2<f32>>.real u32.lit4096` | `stmt.L4` | 2 | a[0..n) reduced into a[0] by min: stride halving, barriers in uniform control flow |
+| F1006 | `wg.reduce_min_L4` | `composite` | `wgmem<vec4<f32>>.real u32.lit4096` | `stmt.L4` | 2 | a[0..n) reduced into a[0] by min: stride halving, barriers in uniform control flow |
+| F1007 | `wg.reduce_min_L5` | `composite` | `wgmem<f32>.real u32.lit4096` | `stmt.L5` | 2 | a[0..n) reduced into a[0] by min: stride halving, barriers in uniform control flow |
+| F1008 | `wg.reduce_min_L5` | `composite` | `wgmem<vec2<f32>>.real u32.lit4096` | `stmt.L5` | 2 | a[0..n) reduced into a[0] by min: stride halving, barriers in uniform control flow |
+| F1009 | `wg.reduce_min_L5` | `composite` | `wgmem<vec4<f32>>.real u32.lit4096` | `stmt.L5` | 2 | a[0..n) reduced into a[0] by min: stride halving, barriers in uniform control flow |
+
+1009 function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Deliberately absent: atomics, images, derivatives, subgroup operations, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.

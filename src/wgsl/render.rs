@@ -702,6 +702,35 @@ impl<'a> Renderer<'a> {
                 }
                 Ok("    return;\n".into())
             }
+            "wg.reduce_add" | "wg.reduce_max" | "wg.reduce_min" => {
+                // a[0..n) into a[0]: a barrier, then for s = n/2, n/4, .., 1
+                // `if (lidx < s) { a[lidx] = a[lidx] op a[lidx + s]; }` and a
+                // barrier; n rounded down to a power of two. Masked, as a
+                // barrier is, in non-uniform control flow.
+                n(2)?;
+                if scope.in_cond > 0 || scope.returned {
+                    scope.masked.push(format!("{} in non-uniform control flow", safe_base(&s.name)));
+                    return Ok("    // reduction masked: non-uniform control flow\n".into());
+                }
+                let a = self.wgmem(&kids[0])?;
+                let len = self.wg_len(a, scope).max(1);
+                let count = self.lit(&kids[1], 4096)?;
+                let count = 1u32 << (31 - count.leading_zeros());
+                let mask = |x: String| if len.is_power_of_two() { format!("(({x}) & {}u)", len - 1) } else { format!("min(({x}), {}u)", len - 1) };
+                let combine = |x: String, y: String| match safe_base(&s.name) {
+                    "wg.reduce_max" => format!("max({x}, {y})"),
+                    "wg.reduce_min" => format!("min({x}, {y})"),
+                    _ => format!("({x} + {y})"),
+                };
+                let mut out = String::from("    workgroupBarrier();\n");
+                let mut stride = count / 2;
+                while stride > 0 {
+                    let (i, j) = (mask("lidx".into()), mask(format!("lidx + {stride}u")));
+                    out.push_str(&format!("    if (lidx < {stride}u) {{ {a}[{i}] = {}; }}\n    workgroupBarrier();\n", combine(format!("{a}[{i}]"), format!("{a}[{j}]"))));
+                    stride /= 2;
+                }
+                Ok(out)
+            }
             "stmt.barrier" => {
                 n(0)?;
                 // WGSL's uniformity rule: a barrier only in uniform control
@@ -1451,6 +1480,24 @@ pub fn cost(t: &Tree) -> Cost {
                 let n = (count / step).ceil();
                 for k in &t.kids {
                     let (b, p) = walk(k, tile * n, in_items);
+                    base += b;
+                    per_item += p;
+                }
+            }
+            "wg.reduce_add" | "wg.reduce_max" | "wg.reduce_min" => {
+                // A tree reduction over n (rounded down to a power of two): the
+                // leading barrier, then log2(n) steps of a guard, two loads, the
+                // operation, a store and a barrier.
+                let n = lit(t.kids.get(1), 4096.0);
+                let steps = n.log2().floor();
+                let extra = (50.0 + steps * (1.0 + 4.0 + 4.0 + 1.0 + 4.0 + 50.0)) * tile;
+                if in_items {
+                    per_item += extra;
+                } else {
+                    base += extra;
+                }
+                for k in &t.kids {
+                    let (b, p) = walk(k, tile, in_items);
                     base += b;
                     per_item += p;
                 }
