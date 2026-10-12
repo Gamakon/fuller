@@ -52,10 +52,10 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation
     wg_a[(((((((((lid.y * 8u) + lid.x) + (k * 64u))) >> ((6u) & 31u)) * 32u) + (((((lid.y * 8u) + lid.x) + (k * 64u))) & (63u)))) & 255u)] = f0;
     } else {
     f1 = 0.0f;
-    if (((((t + (((((lid.y * 8u) + lid.x) + (k * 64u))) >> ((6u) & 31u))) < cfg.m) && (((wid.y * 32u) + ((((((lid.y * 8u) + lid.x) + (k * 64u))) & (63u)) - 32u)) < cfg.r_rows)) && ((cfg.r_off + ((wid.y * 32u) + ((((((lid.y * 8u) + lid.x) + (k * 64u))) & (63u)) - 32u))) < cfg.d))) {
-    f1 = phi[(((t + (((((lid.y * 8u) + lid.x) + (k * 64u))) >> ((6u) & 31u))) * cfg.d) + (cfg.r_off + ((wid.y * 32u) + ((((((lid.y * 8u) + lid.x) + (k * 64u))) & (63u)) - 32u))))];
+    if (((((t + (((((lid.y * 8u) + lid.x) + (k * 64u))) >> ((6u) & 31u))) < cfg.m) && (((wid.y * 32u) + select(((((((lid.y * 8u) + lid.x) + (k * 64u))) & (63u))) - (32u), 0u, (32u) > ((((((lid.y * 8u) + lid.x) + (k * 64u))) & (63u))))) < cfg.r_rows)) && ((cfg.r_off + ((wid.y * 32u) + select(((((((lid.y * 8u) + lid.x) + (k * 64u))) & (63u))) - (32u), 0u, (32u) > ((((((lid.y * 8u) + lid.x) + (k * 64u))) & (63u)))))) < cfg.d))) {
+    f1 = phi[(((t + (((((lid.y * 8u) + lid.x) + (k * 64u))) >> ((6u) & 31u))) * cfg.d) + (cfg.r_off + ((wid.y * 32u) + select(((((((lid.y * 8u) + lid.x) + (k * 64u))) & (63u))) - (32u), 0u, (32u) > ((((((lid.y * 8u) + lid.x) + (k * 64u))) & (63u)))))))];
     }
-    wg_b[(((((((((lid.y * 8u) + lid.x) + (k * 64u))) >> ((6u) & 31u)) * 32u) + ((((((lid.y * 8u) + lid.x) + (k * 64u))) & (63u)) - 32u))) & 255u)] = f1;
+    wg_b[(((((((((lid.y * 8u) + lid.x) + (k * 64u))) >> ((6u) & 31u)) * 32u) + select(((((((lid.y * 8u) + lid.x) + (k * 64u))) & (63u))) - (32u), 0u, (32u) > ((((((lid.y * 8u) + lid.x) + (k * 64u))) & (63u)))))) & 255u)] = f1;
     }
     }
     workgroupBarrier();
