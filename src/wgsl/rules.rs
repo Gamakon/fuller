@@ -1061,7 +1061,7 @@ pub fn vec_tile(root: &Tree, loader: usize, kingdom: &WgslKingdom) -> Result<Tre
             }
         }
         // Lane c's cell of vec4 F: (F / S) * R + F % S + c * S.
-        let cell = op("index.add", op("index.add", op("index.shl", op("index.shr", f.clone(), lit(s.trailing_zeros())), lit(r.trailing_zeros())), op("index.and", f.clone(), lit(s - 1))), lit(c * s));
+        let cell = op("index.add", op("index.add", op("index.mul", op("index.shr", f.clone(), lit(s.trailing_zeros())), lit(r)), op("index.and", f.clone(), lit(s - 1))), lit(c * s));
         for st in &body {
             let moved = rename(&substitute(st, &fs, &cell), &map);
             match f32_store(st) {
