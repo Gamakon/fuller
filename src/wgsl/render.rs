@@ -9,7 +9,7 @@
 //! statement rows render structurally. Nothing is checked twice: the text
 //! goes to naga, which validates it, and a refusal names its reason.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
 
 use crate::geneframe::Ty;
@@ -251,6 +251,11 @@ pub struct Renderer<'a> {
 const TILE_COUNTERS: [&str; 4] = ["k", "k2", "k3", "k4"];
 
 struct Scope {
+    /// The kernel's workgroup arrays by variable name: element type and
+    /// length (2026-10-12: the arrays and their lengths are the gene's);
+    /// empty for a kernel that declares none and uses only the original
+    /// four (`wg_a`, `wg_b` of 2,048 f32, `wg_va`, `wg_vb` of 512 vec4).
+    wg: BTreeMap<String, (String, u32)>,
     in_items: bool,
     in_tile: bool,
     tile_depth: usize,
@@ -291,7 +296,7 @@ impl<'a> Renderer<'a> {
         if d.dual != "kernel.kernel" && d.dual != "kernel.safe" {
             return Err(format!("the root is {} ({}), not kernel.kernel or kernel.safe", root.name, d.dual));
         }
-        let mut scope = Scope { in_items: false, in_tile: false, tile_depth: 0, grid: Grid { x: 16, y: 16, bx: 1, by: 1 }, in_cond: 0, returned: false, helpers: Vec::new(), masked: Vec::new(), const_depth: 0 };
+        let mut scope = Scope { wg: BTreeMap::new(), in_items: false, in_tile: false, tile_depth: 0, grid: Grid { x: 16, y: 16, bx: 1, by: 1 }, in_cond: 0, returned: false, helpers: Vec::new(), masked: Vec::new(), const_depth: 0 };
         let (grid, body) = match root.name.as_str() {
             "kernel.entry" => {
                 let [g, b] = root.kids.as_slice() else { return Err(format!("{} with {} children", root.name, root.kids.len())) };
@@ -305,6 +310,7 @@ impl<'a> Renderer<'a> {
                 let [g, b, e] = root.kids.as_slice() else { return Err(format!("{} with {} children, 3 expected (grid, body, epilogue)", root.name, root.kids.len())) };
                 let grid = self.grid(g)?;
                 scope.grid = grid;
+                scope.wg = self.workgroup_plan(g, root)?;
                 let (mut text, terminated) = self.block_t(b, &mut scope)?;
                 if !terminated {
                     text.push_str(&self.block(e, &mut scope)?);
@@ -322,7 +328,13 @@ impl<'a> Renderer<'a> {
         let mut text = String::new();
         text.push_str(&self.role.prologue);
         text.push('\n');
-        text.push_str(&format!("var<workgroup> wg_a: array<f32, {WGMEM_LEN}>;\nvar<workgroup> wg_b: array<f32, {WGMEM_LEN}>;\nvar<workgroup> wg_va: array<vec4<f32>, {WGVEC_LEN}>;\nvar<workgroup> wg_vb: array<vec4<f32>, {WGVEC_LEN}>;\n"));
+        if scope.wg.is_empty() {
+            text.push_str(&format!("var<workgroup> wg_a: array<f32, {WGMEM_LEN}>;\nvar<workgroup> wg_b: array<f32, {WGMEM_LEN}>;\nvar<workgroup> wg_va: array<vec4<f32>, {WGVEC_LEN}>;\nvar<workgroup> wg_vb: array<vec4<f32>, {WGVEC_LEN}>;\n"));
+        } else {
+            for (var, (elem, len)) in &scope.wg {
+                text.push_str(&format!("var<workgroup> {var}: array<{elem}, {len}>;\n"));
+            }
+        }
         // The pass-through functions a literal-only expression needs (see
         // `Scope::const_depth`), declared only when the body uses them.
         for (name, ty) in [("lit_f32", "f32"), ("lit_u32", "u32"), ("lit_i32", "i32"), ("lit_bool", "bool")] {
@@ -362,6 +374,8 @@ impl<'a> Renderer<'a> {
                 Ok(Grid { x: gx, y: gy, bx: self.code(bx, &BLK)?, by: self.code(by, &BLK)? })
             }
             "fallback" => Ok(Grid { x: 16, y: 16, bx: 1, by: 1 }),
+            // A grid and the kernel's workgroup arrays: the arrays are the plan's.
+            "grid.with_wg" if g.kids.len() == 2 => self.grid(&g.kids[0]),
             other => Err(format!("{other} is not a grid row")),
         }
     }
@@ -585,12 +599,14 @@ impl<'a> Renderer<'a> {
             "wg.set_safe" => {
                 n(3)?;
                 let a = self.wgmem(&kids[0])?;
-                Ok(format!("    {a}[{}] = {};\n", self.index_text(&kids[1], array_len(a), scope)?, self.value(&kids[2], scope)?))
+                let len = self.wg_len(a, scope);
+                Ok(format!("    {a}[{}] = {};\n", self.index_text(&kids[1], len, scope)?, self.value(&kids[2], scope)?))
             }
             "wg.set_v_lane" => {
                 n(4)?;
                 let a = self.wgmem(&kids[0])?;
-                Ok(format!("    {a}[{}][({}) & 3u] = {};\n", self.index_text(&kids[1], array_len(a), scope)?, self.value(&kids[2], scope)?, self.value(&kids[3], scope)?))
+                let len = self.wg_len(a, scope);
+                Ok(format!("    {a}[{}][({}) & 3u] = {};\n", self.index_text(&kids[1], len, scope)?, self.value(&kids[2], scope)?, self.value(&kids[3], scope)?))
             }
             "parr.set_v_lane" => {
                 n(4)?;
@@ -735,15 +751,89 @@ impl<'a> Renderer<'a> {
     /// error the kingdom's types had not made (fit_safe18_v2, 2026-10-10).
     fn wgmem(&self, w: &Tree) -> Result<&'static str, String> {
         if w.name == "fallback" {
-            return Ok(if self.dual(w.ty).is_ok_and(|d| d.dual.starts_with("wgmem<vec")) { "wg_va" } else { "wg_a" });
+            let d = self.dual(w.ty).map(|d| d.dual.clone()).unwrap_or_default();
+            return Ok(if d.starts_with("wgmem<vec4") { "wg_va" } else if d.starts_with("wgmem<vec2") { "wg_v2a" } else { "wg_a" });
         }
         Ok(match w.name.as_str() {
             "wg.a" => "wg_a",
             "wg.b" => "wg_b",
+            "wg.c" => "wg_c",
+            "wg.d" => "wg_d",
             "wg.va" => "wg_va",
             "wg.vb" => "wg_vb",
+            "wg.vc" => "wg_vc",
+            "wg.vd" => "wg_vd",
+            "wg.v2a" => "wg_v2a",
+            "wg.v2b" => "wg_v2b",
+            "wg.v2c" => "wg_v2c",
+            "wg.v2d" => "wg_v2d",
             other => return Err(format!("{other} is not a workgroup array")),
         })
+    }
+
+    /// The kernel's workgroup arrays (2026-10-12): every array it declares on
+    /// its grid (`grid.with_wg`) at its length, every array it uses but does
+    /// not declare at its default length (f32 2,048, vec2 1,024, vec4 512),
+    /// then the largest halved until the total fits the device's 32 KB. Empty
+    /// (the original four declarations) for a kernel that declares none and
+    /// uses only `wg_a`, `wg_b`, `wg_va`, `wg_vb`, whose text is unchanged.
+    fn workgroup_plan(&self, grid: &Tree, root: &Tree) -> Result<BTreeMap<String, (String, u32)>, String> {
+        let elem_of = |var: &str| if var.starts_with("wg_v2") { "vec2<f32>" } else if var.starts_with("wg_v") { "vec4<f32>" } else { "f32" };
+        let default_len = |var: &str| if var.starts_with("wg_v2") { 1024 } else if var.starts_with("wg_v") { WGVEC_LEN } else { WGMEM_LEN };
+        let mut declared: Vec<(String, u32)> = Vec::new();
+        if grid.name == "grid.with_wg" && grid.kids.len() == 2 {
+            let mut at = Some(&grid.kids[1]);
+            while let Some(d) = at {
+                let (decl, rest) = match (d.name.as_str(), d.kids.as_slice()) {
+                    ("wg.decls_one", [x]) => (Some(x), None),
+                    ("wg.decls_cons", [x, r]) => (Some(x), Some(r)),
+                    _ => (None, None),
+                };
+                if let Some(x) = decl.filter(|x| x.kids.len() == 2 && x.name.starts_with("wg.decl_")) {
+                    let var = self.wgmem(&x.kids[0])?.to_string();
+                    let len = match x.kids[1].name.as_str() {
+                        n if n.starts_with("literal.") && x.kids[1].konst.is_finite() => (x.kids[1].konst.round() as i64).clamp(1, 8192) as u32,
+                        _ => default_len(&var),
+                    };
+                    if !declared.iter().any(|(v, _)| *v == var) {
+                        declared.push((var, len));
+                    }
+                }
+                at = rest;
+            }
+        }
+        let mut used: BTreeSet<String> = BTreeSet::new();
+        fn uses(r: &Renderer, t: &Tree, out: &mut BTreeSet<String>) {
+            let array = t.kids.is_empty() && (t.name.starts_with("wg.") || (t.name == "fallback" && r.dual(t.ty).is_ok_and(|d| d.dual.starts_with("wgmem<"))));
+            if array {
+                if let Ok(v) = r.wgmem(t) {
+                    out.insert(v.to_string());
+                }
+            }
+            t.kids.iter().for_each(|k| uses(r, k, out));
+        }
+        uses(self, root, &mut used);
+        let legacy = ["wg_a", "wg_b", "wg_va", "wg_vb"];
+        if declared.is_empty() && used.iter().all(|v| legacy.contains(&v.as_str())) {
+            return Ok(BTreeMap::new());
+        }
+        let mut plan: BTreeMap<String, (String, u32)> = declared.into_iter().map(|(v, l)| { let e = elem_of(&v).to_string(); (v, (e, l)) }).collect();
+        for v in used {
+            plan.entry(v.clone()).or_insert_with(|| (elem_of(&v).to_string(), default_len(&v)));
+        }
+        let bytes = |e: &str, l: u32| u64::from(l) * if e == "f32" { 4 } else if e == "vec2<f32>" { 8 } else { 16 };
+        while plan.values().map(|(e, l)| bytes(e, *l)).sum::<u64>() > 32768 {
+            let largest = plan.iter().max_by_key(|(v, (e, l))| (bytes(e, *l), std::cmp::Reverse((*v).clone()))).map(|(v, _)| v.clone()).expect("a non-empty plan");
+            let entry = plan.get_mut(&largest).expect("present");
+            entry.1 = (entry.1 / 2).max(1);
+        }
+        Ok(plan)
+    }
+
+    /// A workgroup array's length in this kernel (its plan's, or the
+    /// original four's).
+    fn wg_len(&self, var: &str, scope: &Scope) -> u32 {
+        scope.wg.get(var).map_or_else(|| array_len(var), |(_, l)| *l)
     }
 
     fn fill(&self, p: &PerKernel, t: &Tree, scope: &mut Scope) -> Result<String, String> {
@@ -789,7 +879,7 @@ impl<'a> Renderer<'a> {
             // element is a reference, so the lane index may be a run-time value.
             "wg.get_v_lane" => {
                 let a = self.wgmem(&v.kids[0])?;
-                return Ok(format!("{a}[{}][({}) & 3u]", self.index_text(&v.kids[1], array_len(a), scope)?, self.value(&v.kids[2], scope)?));
+                return Ok(format!("{a}[{}][({}) & 3u]", self.index_text(&v.kids[1], self.wg_len(a, scope), scope)?, self.value(&v.kids[2], scope)?));
             }
             "parr.get_v_lane" => {
                 let a = self.parr_name(&v.kids[0])?;
@@ -797,9 +887,10 @@ impl<'a> Renderer<'a> {
             }
             "wg.get" => return Ok(format!("{}[({}) & {}u]", self.wgmem(&v.kids[0])?, self.value(&v.kids[1], scope)?, WGMEM_LEN - 1)),
             // The safe read: the index is in range by its type (safe.wg_of masks it).
-            "wg.get_safe" | "wg.get_v_safe" => {
+            "wg.get_safe" | "wg.get_v_safe" | "wg.get_v2_safe" => {
                 let a = self.wgmem(&v.kids[0])?;
-                return Ok(format!("{a}[{}]", self.index_text(&v.kids[1], array_len(a), scope)?));
+                let len = self.wg_len(a, scope);
+                return Ok(format!("{a}[{}]", self.index_text(&v.kids[1], len, scope)?));
             }
             "parr.get_f" | "parr.get_v" | "parr.get_i" | "parr.get_b" => {
                 let a = self.parr_name(&v.kids[0])?;
@@ -879,6 +970,7 @@ impl<'a> Renderer<'a> {
             }
             "safe.wg_of" => return Ok(format!("(({}) & {}u)", self.value(&v.kids[0], scope)?, WGMEM_LEN - 1)),
             "safe.wgv_of" => return Ok(format!("(({}) & {}u)", self.value(&v.kids[0], scope)?, WGVEC_LEN - 1)),
+            "safe.wgv2_of" => return Ok(format!("(({}) & 1023u)", self.value(&v.kids[0], scope)?)),
             "safe.pidx64" => return Ok(format!("(({}) & 63u)", self.value(&v.kids[0], scope)?)),
             "safe.pidx16" => return Ok(format!("(({}) & 15u)", self.value(&v.kids[0], scope)?)),
             "safe.row_as_index" | "safe.col_as_index" => return self.value(&v.kids[0], scope),
@@ -1407,7 +1499,7 @@ pub fn safe_base(name: &str) -> &str {
         if let Some(stem) = name.strip_suffix(rung) {
             return match stem {
                 "store.h" => "store.h_safe",
-                "wg.set" | "wg.set_v" => "wg.set_safe",
+                "wg.set" | "wg.set_v" | "wg.set_v2" => "wg.set_safe",
                 "parr.set_f" | "parr.set_v" | "parr.set_i" | "parr.set_b" => "parr.set_safe",
                 "reg.set_v_lane" => "reg.set_v_lane",
                 "wg.set_v_lane" => "wg.set_v_lane",
@@ -1446,15 +1538,21 @@ impl Renderer<'_> {
     /// the array, `pv[0u]`, so the text a model copies is plain; any other
     /// index is written as its row renders it.
     fn index_text(&self, idx: &Tree, len: u32, scope: &mut Scope) -> Result<String, String> {
-        if let ["safe.wg_of" | "safe.wgv_of" | "safe.pidx64" | "safe.pidx16"] = [safe_base(&idx.name)] {
+        // A workgroup array's index masked into ITS length (the plan's): `&`
+        // for a power of two, `min` otherwise (an array padded to 1,056).
+        if let ("safe.wg_of" | "safe.wgv_of" | "safe.wgv2_of", [k]) = (safe_base(&idx.name), idx.kids.as_slice()) {
+            let last = len.max(1) - 1;
+            if k.name.starts_with("literal.") && k.konst.is_finite() {
+                let v = k.konst.max(0.0) as u32;
+                return Ok(format!("{}u", if len.is_power_of_two() { v & last } else { v.min(last) }));
+            }
+            let x = self.value(k, scope)?;
+            return Ok(if len.is_power_of_two() { format!("(({x}) & {last}u)") } else { format!("min(({x}), {last}u)") });
+        }
+        if let ["safe.pidx64" | "safe.pidx16"] = [safe_base(&idx.name)] {
             if let [k] = idx.kids.as_slice() {
                 if k.name.starts_with("literal.") && k.konst.is_finite() {
-                    let mask = match safe_base(&idx.name) {
-                        "safe.wg_of" => WGMEM_LEN - 1,
-                        "safe.wgv_of" => WGVEC_LEN - 1,
-                        "safe.pidx64" => 63,
-                        _ => 15,
-                    };
+                    let mask = if safe_base(&idx.name) == "safe.pidx64" { 63 } else { 15 };
                     let v = (k.konst.max(0.0) as u32 & mask).min(len.saturating_sub(1));
                     return Ok(format!("{v}u"));
                 }
@@ -1525,8 +1623,9 @@ pub fn register_declarations() -> String {
 /// The length of a workgroup or private array by its variable name.
 fn array_len(name: &str) -> u32 {
     match name {
-        "wg_a" | "wg_b" => WGMEM_LEN,
-        "wg_va" | "wg_vb" => WGVEC_LEN,
+        "wg_a" | "wg_b" | "wg_c" | "wg_d" => WGMEM_LEN,
+        n if n.starts_with("wg_v2") => 1024,
+        n if n.starts_with("wg_v") => WGVEC_LEN,
         "pa" | "pb" | "pc" | "pd" | "pe" | "pf" => 64,
         _ => 16,
     }

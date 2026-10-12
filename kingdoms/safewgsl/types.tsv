@@ -151,3 +151,8 @@ T149	u32.threadrows	u32	threadrows	1	0u	0	0	0	a row of a thread's STRIDED block 
 T150	u32.threadcols	u32	threadcols	1	0u	0	0	0	a column of a thread's STRIDED block (columns X apart)
 T151	u32.threadrowg	u32	threadrowg	1	0u	0	0	0	a row of a thread's GROUPED block
 T152	u32.threadcolg	u32	threadcolg	1	0u	0	0	0	a column of a thread's GROUPED block
+T153	wgmem<vec2<f32>>.real	wgmem<vec2<f32>>	real	0	0.0	0	0	0	a workgroup-memory array of vec2<f32>: v2a..v2d
+T154	u32.wgv2index	u32	wgv2index	1	0u	0	0	0	an index into a vec2 workgroup array, masked to the array by its row
+T155	u32.wglen	u32	wglen	1	the array's default length	0	0	0	a workgroup array's length, 1..=8,192 elements (the renderer halves the largest array until all fit 32 KB)
+T156	wg.decl	wg	decl	0	none	0	0	0	one workgroup array declaration: the array and its length
+T157	wg.decls	wg	decls	0	none (the arrays the kernel uses, at their default lengths)	0	0	0	the kernel's workgroup array declarations

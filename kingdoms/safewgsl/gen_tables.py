@@ -115,9 +115,15 @@ FORMS = {
     "threadcols": ("a column of a thread's STRIDED block (columns X apart)", ["u32"]),
     "threadrowg": ("a row of a thread's GROUPED block", ["u32"]),
     "threadcolg": ("a column of a thread's GROUPED block", ["u32"]),
+    # WORKGROUP ARRAYS AS KNOBS (2026-10-12): which arrays a kernel declares, their element type (f32, vec2,
+    # vec4) and their length, within the device's 32 KB; four fixed arrays of 2,048 f32 / 512 vec4 before.
+    "wgv2index": ("an index into a vec2 workgroup array, masked to the array by its row", ["u32"]),
+    "wglen": ("a workgroup array's length, 1..=8,192 elements (the renderer halves the largest array until all fit 32 KB)", ["u32"]),
+    "decl": ("one workgroup array declaration: the array and its length", []),
+    "decls": ("the kernel's workgroup array declarations", []),
 }
 
-SAFE_FORMS = ["lidx", "threadrows", "threadcols", "threadrowg", "threadcolg", "gid", "lid", "wid", "rowid", "colid", "O0", "O1", "O2", "O3", "O4", "tcounter4", "L5", "C5", "safe", "pindex", "boundx", "boundm", "boundd", "boundrows", "lit64", "lit4096", "counter", "tcounter", "tcounter2", "L3", "C3", "tcounter3", "L4", "C4", "wgvindex", "bound", "threadrow", "threadcol", "cell", "phi", "wgindex", "L0", "L1", "L2", "C0", "C1", "C2"]
+SAFE_FORMS = ["wgv2index", "wglen", "decl", "decls", "lidx", "threadrows", "threadcols", "threadrowg", "threadcolg", "gid", "lid", "wid", "rowid", "colid", "O0", "O1", "O2", "O3", "O4", "tcounter4", "L5", "C5", "safe", "pindex", "boundx", "boundm", "boundd", "boundrows", "lit64", "lit4096", "counter", "tcounter", "tcounter2", "L3", "C3", "tcounter3", "L4", "C4", "wgvindex", "bound", "threadrow", "threadcol", "cell", "phi", "wgindex", "L0", "L1", "L2", "C0", "C1", "C2"]
 RUNGS = ["L0", "L1", "L2", "L3", "L4", "C0", "C1", "C2", "C3", "C4"]
 # The fifth rung came after every other row (run A, 2026-10-11); its rows are appended at the end so
 # every earlier ref stands, and it is kept out of RUNGS for that reason.
@@ -147,6 +153,7 @@ FALLBACK = {
     "O0": "the thread's own store", "O1": "the thread's own store", "O2": "the thread's own store", "O3": "the thread's own store", "O4": "the thread's own store",
     "gid": "0u", "lid": "0u", "wid": "0u", "rowid": "0u", "colid": "0u",
     "lidx": "0u", "threadrows": "0u", "threadcols": "0u", "threadrowg": "0u", "threadcolg": "0u",
+    "wgv2index": "0u", "wglen": "the array's default length", "decl": "none", "decls": "none (the arrays the kernel uses, at their default lengths)",
 }
 
 # The fallback by machine: the lane's 32-bit pattern as an unsigned integer. Vectors and matrices
@@ -168,6 +175,7 @@ FALLBACK_BITS = {
     "O0": 0, "O1": 0, "O2": 0, "O3": 0, "O4": 0,
     "gid": 0, "lid": 0, "wid": 0, "rowid": 0, "colid": 0,
     "lidx": 0, "threadrows": 0, "threadcols": 0, "threadrowg": 0, "threadcolg": 0,
+    "wgv2index": 0, "wglen": 0, "decl": 0, "decls": 0,
 }
 assert set(FALLBACK_BITS) == set(FALLBACK), "every form with a fallback needs its bits, and no more"
 
@@ -258,6 +266,12 @@ def build_types():
     add("u32", "colid", 1, FORMS["colid"][0])
     for form in ("lidx", "threadrows", "threadcols", "threadrowg", "threadcolg"):
         add("u32", form, 1, FORMS[form][0])
+    # ---- workgroup arrays as knobs (2026-10-12) ----
+    add("wgmem<vec2<f32>>", "real", 0, "a workgroup-memory array of vec2<f32>: v2a..v2d")
+    add("u32", "wgv2index", 1, FORMS["wgv2index"][0])
+    add("u32", "wglen", 1, FORMS["wglen"][0])
+    add("wg", "decl", 0, FORMS["decl"][0])
+    add("wg", "decls", 0, FORMS["decls"][0])
     return rows
 
 
@@ -418,11 +432,11 @@ f("store", "branch", "If/Loop condition", ["bool.flag"], "store", "a branch-cond
 
 # ---- statements: the multityped kingdom (PLAN_wgsl_gram_superopt §2). ----
 # Every row is rendered to text by src/wgsl/render.rs; naga validates the text.
-f("literal", "wgdim", "Literal", [], "u32.wgdim", "a workgroup dimension from {4, 8, 16, 32}; the renderer snaps the constant to the set")
+f("literal", "wgdim", "Literal", [], "u32.wgdim", "a workgroup dimension, any integer 1..=1,024 (from {4, 8, 16, 32} until 2026-10-12)")
 f("literal", "blk", "Literal", [], "u32.blk", "a block factor from {1, 2, 4, 8} (8 since 2026-10-11: a model child's 4 x 8 block)")
 f("literal", "unroll", "Literal", [], "u32.unroll", "an unroll factor from {2, 4, 8}")
 f("kernel", "entry", "composite", ["grid.grid", "block.block"], "kernel.kernel", "the module: bindings, registers, workgroup arrays, @workgroup_size(x, y, 1) fn main")
-f("grid", "of", "composite", ["u32.wgdim", "u32.wgdim", "u32.blk", "u32.blk"], "grid.grid", "arity 4: workgroup x, y and the cells per thread bx, by; the driver dispatches ceil(d / (x bx)) x ceil(rows / (y by)); x y > 1,024 threads is refused")
+f("grid", "of", "composite", ["u32.wgdim", "u32.wgdim", "u32.blk", "u32.blk"], "grid.grid", "arity 4: workgroup x, y and the cells per thread bx, by; the driver dispatches ceil(d / (x bx)) x ceil(rows / (y by)); y is cut so x y <= 1,024 threads")
 f("block", "one", "composite", ["stmt.stmt"], "block.block", "")
 f("block", "seq2", "composite", ["stmt.stmt", "stmt.stmt"], "block.block", "the statements in order")
 f("block", "seq3", "composite", ["stmt.stmt"] * 3, "block.block", "arity 3")
@@ -757,6 +771,28 @@ for c in ("threadcols", "threadcolg"):
 for d in range(1, len(EPILOGUE)):
     r = EPILOGUE[d]
     f("block", "cont_" + r, "composite", ["bool.flag", "block." + r], "block." + r, "if (c) { continue; } then the rest of the epilogue block: skip this pass of the epilogue's tile loop")
+
+# ---- workgroup arrays as knobs (2026-10-12) ----
+# Four arrays of each element type (f32 a..d, vec2 v2a..v2d, vec4 va..vd); a kernel's declarations name the
+# arrays it has and their lengths (a cons list on the grid); an array used but not declared gets its default
+# length (f32 2,048, vec2 1,024, vec4 512); the renderer halves the largest array until the total fits 32 KB.
+for n in ("c", "d"):
+    f("wg", n, "composite", [], "wgmem<f32>.real", f"workgroup array wg_{n} of f32")
+for n in ("vc", "vd"):
+    f("wg", n, "composite", [], "wgmem<vec4<f32>>.real", f"workgroup array wg_{n} of vec4<f32>")
+for n in ("v2a", "v2b", "v2c", "v2d"):
+    f("wg", n, "composite", [], "wgmem<vec2<f32>>.real", f"workgroup array wg_{n} of vec2<f32>")
+f("safe", "wgv2_of", "composite", ["u32.index"], "u32.wgv2index", "i masked into its vec2 array, in range by construction")
+f("wg", "get_v2_safe", "composite", ["wgmem<vec2<f32>>.real", "u32.wgv2index"], "vec2<f32>.real", "a[i], in range by its type")
+for r in RUNGS + RUNGS5:
+    f("wg", "set_v2_" + r, "composite", ["wgmem<vec2<f32>>.real", "u32.wgv2index", "vec2<f32>.real"], "stmt." + r, "arity 3: a[i] = v")
+f("literal", "wglen", "Literal", [], "u32.wglen", "a workgroup array's length, 1..=8,192 elements")
+f("wg", "decl_f", "composite", ["wgmem<f32>.real", "u32.wglen"], "wg.decl", "var<workgroup> a: array<f32, n>")
+f("wg", "decl_v2", "composite", ["wgmem<vec2<f32>>.real", "u32.wglen"], "wg.decl", "var<workgroup> a: array<vec2<f32>, n>")
+f("wg", "decl_v4", "composite", ["wgmem<vec4<f32>>.real", "u32.wglen"], "wg.decl", "var<workgroup> a: array<vec4<f32>, n>")
+f("wg", "decls_one", "composite", ["wg.decl"], "wg.decls", "one declaration")
+f("wg", "decls_cons", "composite", ["wg.decl", "wg.decls"], "wg.decls", "a declaration, then the rest")
+f("grid", "with_wg", "composite", ["grid.grid", "wg.decls"], "grid.grid", "a grid and the kernel's workgroup arrays (the arrays it declares and their lengths)")
 
 
 def write_tsv(path, header, rows):

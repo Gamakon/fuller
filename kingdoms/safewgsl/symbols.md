@@ -308,7 +308,7 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F198 | `literal.wgdim` | `Literal` | `-` | `u32.wgdim` | 0 | a workgroup dimension from {4, 8, 16, 32}; the renderer snaps the constant to the set |
+| F198 | `literal.wgdim` | `Literal` | `-` | `u32.wgdim` | 0 | a workgroup dimension, any integer 1..=1,024 (from {4, 8, 16, 32} until 2026-10-12) |
 | F199 | `literal.blk` | `Literal` | `-` | `u32.blk` | 0 | a block factor from {1, 2, 4, 8} (8 since 2026-10-11: a model child's 4 x 8 block) |
 | F200 | `literal.unroll` | `Literal` | `-` | `u32.unroll` | 0 | an unroll factor from {2, 4, 8} |
 
@@ -322,7 +322,7 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F202 | `grid.of` | `composite` | `u32.wgdim u32.wgdim u32.blk u32.blk` | `grid.grid` | 4 | arity 4: workgroup x, y and the cells per thread bx, by; the driver dispatches ceil(d / (x bx)) x ceil(rows / (y by)); x y > 1,024 threads is refused |
+| F202 | `grid.of` | `composite` | `u32.wgdim u32.wgdim u32.blk u32.blk` | `grid.grid` | 4 | arity 4: workgroup x, y and the cells per thread bx, by; the driver dispatches ceil(d / (x bx)) x ceil(rows / (y by)); y is cut so x y <= 1,024 threads |
 
 ## class `block`
 
@@ -1929,4 +1929,63 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 | F911 | `block.cont_O3` | `composite` | `bool.flag block.O3` | `block.O3` | 2 | if (c) { continue; } then the rest of the epilogue block: skip this pass of the epilogue's tile loop |
 | F912 | `block.cont_O4` | `composite` | `bool.flag block.O4` | `block.O4` | 2 | if (c) { continue; } then the rest of the epilogue block: skip this pass of the epilogue's tile loop |
 
-912 function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Deliberately absent: atomics, images, derivatives, subgroup operations, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.
+## class `wg`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F913 | `wg.c` | `composite` | `-` | `wgmem<f32>.real` | 0 | workgroup array wg_c of f32 |
+| F914 | `wg.d` | `composite` | `-` | `wgmem<f32>.real` | 0 | workgroup array wg_d of f32 |
+| F915 | `wg.vc` | `composite` | `-` | `wgmem<vec4<f32>>.real` | 0 | workgroup array wg_vc of vec4<f32> |
+| F916 | `wg.vd` | `composite` | `-` | `wgmem<vec4<f32>>.real` | 0 | workgroup array wg_vd of vec4<f32> |
+| F917 | `wg.v2a` | `composite` | `-` | `wgmem<vec2<f32>>.real` | 0 | workgroup array wg_v2a of vec2<f32> |
+| F918 | `wg.v2b` | `composite` | `-` | `wgmem<vec2<f32>>.real` | 0 | workgroup array wg_v2b of vec2<f32> |
+| F919 | `wg.v2c` | `composite` | `-` | `wgmem<vec2<f32>>.real` | 0 | workgroup array wg_v2c of vec2<f32> |
+| F920 | `wg.v2d` | `composite` | `-` | `wgmem<vec2<f32>>.real` | 0 | workgroup array wg_v2d of vec2<f32> |
+
+## class `safe`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F921 | `safe.wgv2_of` | `composite` | `u32.index` | `u32.wgv2index` | 1 | i masked into its vec2 array, in range by construction |
+
+## class `wg`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F922 | `wg.get_v2_safe` | `composite` | `wgmem<vec2<f32>>.real u32.wgv2index` | `vec2<f32>.real` | 2 | a[i], in range by its type |
+| F923 | `wg.set_v2_L0` | `composite` | `wgmem<vec2<f32>>.real u32.wgv2index vec2<f32>.real` | `stmt.L0` | 3 | arity 3: a[i] = v |
+| F924 | `wg.set_v2_L1` | `composite` | `wgmem<vec2<f32>>.real u32.wgv2index vec2<f32>.real` | `stmt.L1` | 3 | arity 3: a[i] = v |
+| F925 | `wg.set_v2_L2` | `composite` | `wgmem<vec2<f32>>.real u32.wgv2index vec2<f32>.real` | `stmt.L2` | 3 | arity 3: a[i] = v |
+| F926 | `wg.set_v2_L3` | `composite` | `wgmem<vec2<f32>>.real u32.wgv2index vec2<f32>.real` | `stmt.L3` | 3 | arity 3: a[i] = v |
+| F927 | `wg.set_v2_L4` | `composite` | `wgmem<vec2<f32>>.real u32.wgv2index vec2<f32>.real` | `stmt.L4` | 3 | arity 3: a[i] = v |
+| F928 | `wg.set_v2_C0` | `composite` | `wgmem<vec2<f32>>.real u32.wgv2index vec2<f32>.real` | `stmt.C0` | 3 | arity 3: a[i] = v |
+| F929 | `wg.set_v2_C1` | `composite` | `wgmem<vec2<f32>>.real u32.wgv2index vec2<f32>.real` | `stmt.C1` | 3 | arity 3: a[i] = v |
+| F930 | `wg.set_v2_C2` | `composite` | `wgmem<vec2<f32>>.real u32.wgv2index vec2<f32>.real` | `stmt.C2` | 3 | arity 3: a[i] = v |
+| F931 | `wg.set_v2_C3` | `composite` | `wgmem<vec2<f32>>.real u32.wgv2index vec2<f32>.real` | `stmt.C3` | 3 | arity 3: a[i] = v |
+| F932 | `wg.set_v2_C4` | `composite` | `wgmem<vec2<f32>>.real u32.wgv2index vec2<f32>.real` | `stmt.C4` | 3 | arity 3: a[i] = v |
+| F933 | `wg.set_v2_L5` | `composite` | `wgmem<vec2<f32>>.real u32.wgv2index vec2<f32>.real` | `stmt.L5` | 3 | arity 3: a[i] = v |
+| F934 | `wg.set_v2_C5` | `composite` | `wgmem<vec2<f32>>.real u32.wgv2index vec2<f32>.real` | `stmt.C5` | 3 | arity 3: a[i] = v |
+
+## class `literal`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F935 | `literal.wglen` | `Literal` | `-` | `u32.wglen` | 0 | a workgroup array's length, 1..=8,192 elements |
+
+## class `wg`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F936 | `wg.decl_f` | `composite` | `wgmem<f32>.real u32.wglen` | `wg.decl` | 2 | var<workgroup> a: array<f32, n> |
+| F937 | `wg.decl_v2` | `composite` | `wgmem<vec2<f32>>.real u32.wglen` | `wg.decl` | 2 | var<workgroup> a: array<vec2<f32>, n> |
+| F938 | `wg.decl_v4` | `composite` | `wgmem<vec4<f32>>.real u32.wglen` | `wg.decl` | 2 | var<workgroup> a: array<vec4<f32>, n> |
+| F939 | `wg.decls_one` | `composite` | `wg.decl` | `wg.decls` | 1 | one declaration |
+| F940 | `wg.decls_cons` | `composite` | `wg.decl wg.decls` | `wg.decls` | 2 | a declaration, then the rest |
+
+## class `grid`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F941 | `grid.with_wg` | `composite` | `grid.grid wg.decls` | `grid.grid` | 2 | a grid and the kernel's workgroup arrays (the arrays it declares and their lengths) |
+
+941 function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Deliberately absent: atomics, images, derivatives, subgroup operations, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.

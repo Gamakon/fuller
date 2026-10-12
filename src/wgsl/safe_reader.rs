@@ -49,6 +49,8 @@ struct Ctx<'a> {
     tail: bool,
     /// Workgroup arrays by name → `wg.a` / `wg.b`.
     arrays: BTreeMap<String, &'static str>,
+    /// Each mapped workgroup array's declared length, by its kingdom row.
+    array_lens: BTreeMap<&'static str, u32>,
     /// Local arrays by name → a private array row, its kind and its mask row.
     parrs: BTreeMap<String, (&'static str, char, &'static str)>,
     grid: (u32, u32, u32, u32),
@@ -1171,7 +1173,7 @@ impl<'a> Ctx<'a> {
                 // loaded element) is the element loaded whole, then its lane.
                 let which = self.array(arr, "vec4<f32>.real")?;
                 let (of, idx_dual, arr_dual, get, _) = Self::wg_rows(which);
-                let i = self.value(unmasked(i, 511.0))?;
+                let i = self.value(self.wg_unmasked(i, which))?;
                 let wg = Tree::new(of, ty(self, idx_dual)?, vec![i]);
                 let element = Tree::new(which, ty(self, arr_dual)?, vec![]);
                 if let Some(lane) = literal_value(unmasked(j, 3.0)).filter(|l| (0.0..=3.0).contains(l)) {
@@ -1183,7 +1185,7 @@ impl<'a> Ctx<'a> {
             }
             let which = self.array(arr, &d)?;
             let (of, idx_dual, arr_dual, get, _) = Self::wg_rows(which);
-            let idx = self.value(unmasked(&t.kids[0], if which.starts_with("wg.v") { 511.0 } else { 2047.0 }))?;
+            let idx = self.value(self.wg_unmasked(&t.kids[0], which))?;
             let wg = Tree::new(of, ty(self, idx_dual)?, vec![idx]);
             return Ok(Tree::new(get, t.ty, vec![Tree::new(which, ty(self, arr_dual)?, vec![]), wg]));
         }
@@ -1272,25 +1274,63 @@ impl<'a> Ctx<'a> {
         Ok((arr, kind, mask))
     }
 
-    /// A workgroup array by name and element dual: `wg.a`/`wg.b` hold f32,
-    /// `wg.va`/`wg.vb` hold vec4<f32>.
+    /// A workgroup array by name and element dual: four arrays of f32
+    /// (`wg.a`..`wg.d`), of vec2<f32> (`wg.v2a`..`wg.v2d`) and of vec4<f32>
+    /// (`wg.va`..`wg.vd`); its declared length is recorded (the kernel's
+    /// declaration on the grid, 2026-10-12).
     fn array(&mut self, name: &str, elem_dual: &str) -> Result<&'static str, String> {
         if let Some(w) = self.arrays.get(name) {
             return Ok(w);
         }
         let candidates: &[&'static str] = match elem_dual {
-            "f32.real" => &["wg.a", "wg.b"],
-            "vec4<f32>.real" => &["wg.va", "wg.vb"],
+            "f32.real" => &["wg.a", "wg.b", "wg.c", "wg.d"],
+            "vec2<f32>.real" => &["wg.v2a", "wg.v2b", "wg.v2c", "wg.v2d"],
+            "vec4<f32>.real" => &["wg.va", "wg.vb", "wg.vc", "wg.vd"],
             other => return Err(format!("a workgroup array {name} of {other} has no safe spelling")),
         };
         let used: Vec<&'static str> = self.arrays.values().copied().collect();
-        let which = candidates.iter().copied().find(|c| !used.contains(c)).ok_or_else(|| format!("a third workgroup array {name} of {elem_dual}; the grammar has two"))?;
+        let which = candidates.iter().copied().find(|c| !used.contains(c)).ok_or_else(|| format!("a fifth workgroup array {name} of {elem_dual}; the grammar has four"))?;
+        let len = self
+            .module
+            .global_variables
+            .iter()
+            .find(|(_, g)| g.name.as_deref() == Some(name) && g.space == naga::AddressSpace::WorkGroup)
+            .and_then(|(_, g)| match self.module.types[g.ty].inner {
+                naga::TypeInner::Array { size: naga::ArraySize::Constant(n), .. } => Some(n.get()),
+                _ => None,
+            })
+            .ok_or_else(|| format!("the workgroup array {name} has no constant length"))?;
+        if len > 8192 {
+            return Err(format!("the workgroup array {name} of {len} elements is past the kingdom's 8,192"));
+        }
         self.arrays.insert(name.to_string(), which);
+        self.array_lens.insert(which, len);
         Ok(which)
+    }
+
+    /// A workgroup array's index without its mask into the array: `i & (n - 1)`
+    /// for a length n that is a power of two, `min(i, n - 1)` otherwise.
+    fn wg_unmasked<'t>(&self, idx: &'t Tree, which: &str) -> &'t Tree {
+        let n = self.array_lens.get(which).copied().unwrap_or(2048);
+        let last = n.saturating_sub(1) as f32;
+        if n.is_power_of_two() {
+            return unmasked(idx, last);
+        }
+        if idx.name == "index.min" && idx.kids.len() == 2 {
+            for (x, m) in [(&idx.kids[0], &idx.kids[1]), (&idx.kids[1], &idx.kids[0])] {
+                if literal_value(m) == Some(last) {
+                    return x;
+                }
+            }
+        }
+        idx
     }
 
     /// The index and array duals, the get row and the set stem of a workgroup array row.
     fn wg_rows(which: &str) -> (&'static str, &'static str, &'static str, &'static str, &'static str) {
+        if which.starts_with("wg.v2") {
+            return ("safe.wgv2_of", "u32.wgv2index", "wgmem<vec2<f32>>.real", "wg.get_v2_safe", "wg.set_v2");
+        }
         if which.starts_with("wg.v") {
             ("safe.wgv_of", "u32.wgvindex", "wgmem<vec4<f32>>.real", "wg.get_v_safe", "wg.set_v")
         } else {
@@ -1978,7 +2018,7 @@ impl<'a> Ctx<'a> {
                 // A lane of a vec4 element: `sa[si][comp] = x` (seed08).
                 let which = self.array(arr, "vec4<f32>.real")?;
                 let (of, idx_dual, arr_dual, _, _) = Self::wg_rows(which);
-                let i = self.value(unmasked(i, 511.0))?;
+                let i = self.value(self.wg_unmasked(i, which))?;
                 let j = self.value(unmasked(j, 3.0))?;
                 let v = self.value(value)?;
                 let wg = Tree::new(of, ty(self, idx_dual)?, vec![i]);
@@ -1987,7 +2027,7 @@ impl<'a> Ctx<'a> {
             let d = self.kingdom.dual(value.ty).map(|d| d.dual.clone()).unwrap_or_default();
             let which = self.array(arr, &d)?;
             let (of, idx_dual, arr_dual, _, set) = Self::wg_rows(which);
-            let i = self.value(unmasked(idx, if which.starts_with("wg.v") { 511.0 } else { 2047.0 }))?;
+            let i = self.value(self.wg_unmasked(idx, which))?;
             let v = self.value(value)?;
             let wg = Tree::new(of, ty(self, idx_dual)?, vec![i]);
             return Ok(Some(Tree::new(&format!("{set}_{rung}"), st, vec![Tree::new(which, ty(self, arr_dual)?, vec![]), wg, v])));
@@ -2658,7 +2698,7 @@ pub fn read_safe(source: &str, kingdom: &WgslKingdom) -> Result<SafeRead, String
         }
     }
     let bound_lets = lets_used_in_deeper_loops(&f.roots, &naga_fn.body);
-    let mut ctx = Ctx { kingdom, duals: &duals, lets: &lets, roots: &roots, item_counter: None, tile_counter: None, tile_counter2: None, tile_counter3: None, tile_counter4: None, registers: BTreeMap::new(), next_reg: BTreeMap::new(), guard: None, tail: true, arrays: BTreeMap::new(), parrs: BTreeMap::new(), grid, notes: Vec::new(), helpers: &helpers, calls: &calls, arg_roots: &arg_roots, inline_args: None, row_arrays: BTreeMap::new(), used_counters: std::collections::BTreeSet::new(), local_lanes, axis_memo: BTreeMap::new(), loop_depth: 0, tile_bounds: BTreeMap::new(), naga_fn, module: &kernel.module, local_prefix: String::new(), inline_result: None, inline_values: None, bound_lets, let_regs: HashMap::new() };
+    let mut ctx = Ctx { kingdom, duals: &duals, lets: &lets, roots: &roots, item_counter: None, tile_counter: None, tile_counter2: None, tile_counter3: None, tile_counter4: None, registers: BTreeMap::new(), next_reg: BTreeMap::new(), guard: None, tail: true, arrays: BTreeMap::new(), array_lens: BTreeMap::new(), parrs: BTreeMap::new(), grid, notes: Vec::new(), helpers: &helpers, calls: &calls, arg_roots: &arg_roots, inline_args: None, row_arrays: BTreeMap::new(), used_counters: std::collections::BTreeSet::new(), local_lanes, axis_memo: BTreeMap::new(), loop_depth: 0, tile_bounds: BTreeMap::new(), naga_fn, module: &kernel.module, local_prefix: String::new(), inline_result: None, inline_values: None, bound_lets, let_regs: HashMap::new() };
     // Register initialisations first, in root order. A local initialised to
     // its form's fallback (0.0, 0u, false, a zero vector) costs nothing: the
     // register's declaration already holds that value, and the register is
@@ -2683,6 +2723,30 @@ pub fn read_safe(source: &str, kingdom: &WgslKingdom) -> Result<SafeRead, String
     let block = ctx.block(stmts, "L0")?;
     let g = |n: &str, v: u32| Tree::literal(n, dual_ty(kingdom, if n == "literal.wgdim" { "u32.wgdim" } else { "u32.blk" }).expect("dual"), v as f32);
     let grid_tree = Tree::new("grid.of", dual_ty(kingdom, "grid.grid")?, vec![g("literal.wgdim", grid.0), g("literal.wgdim", grid.1), g("literal.blk", grid.2), g("literal.blk", grid.3)]);
+    // The kernel's workgroup arrays, each at its declared length (2026-10-12):
+    // the grid carries them as a list of declarations.
+    let grid_tree = if ctx.array_lens.is_empty() {
+        grid_tree
+    } else {
+        let decl_ty = dual_ty(kingdom, "wg.decl")?;
+        let decls_ty = dual_ty(kingdom, "wg.decls")?;
+        let decls: Vec<Tree> = ctx
+            .array_lens
+            .iter()
+            .map(|(which, len)| -> Result<Tree, String> {
+                let (row, arr_dual) = if which.starts_with("wg.v2") { ("wg.decl_v2", "wgmem<vec2<f32>>.real") } else if which.starts_with("wg.v") { ("wg.decl_v4", "wgmem<vec4<f32>>.real") } else { ("wg.decl_f", "wgmem<f32>.real") };
+                Ok(Tree::new(row, decl_ty, vec![Tree::new(which, dual_ty(kingdom, arr_dual)?, vec![]), Tree::literal("literal.wglen", dual_ty(kingdom, "u32.wglen")?, *len as f32)]))
+            })
+            .collect::<Result<_, _>>()?;
+        let mut list: Option<Tree> = None;
+        for d in decls.into_iter().rev() {
+            list = Some(match list {
+                None => Tree::new("wg.decls_one", decls_ty, vec![d]),
+                Some(rest) => Tree::new("wg.decls_cons", decls_ty, vec![d, rest]),
+            });
+        }
+        Tree::new("grid.with_wg", dual_ty(kingdom, "grid.grid")?, vec![grid_tree, list.expect("one declaration at least")])
+    };
     let tree = Tree::new("kernel.entry_safe", dual_ty(kingdom, "kernel.safe")?, vec![grid_tree, block, epilogue]);
     // The thread's axes: a component of a thread id is the axis row it is
     // (`lid.y` is `axis.y_lid`, a row-axis index); renamed here, after the
@@ -2985,7 +3049,8 @@ mod tests {
         let fma = text.lines().find(|l| l.contains("pb[") && l.contains(" * ")).unwrap_or_else(|| panic!("no multiply-add\n{text}"));
         assert!(!fma.contains("wg_a[") && !fma.contains("wg_b["), "the multiply-add reads registers: {fma}");
         assert_eq!(text.matches("wg_a[((((k * 32u)").count(), 1, "a's first read once, before the inner loops\n{text}");
-        assert!(text.contains("wg_a[(((lidx + (128u * k))) & 2047u)]"), "idx, used in its own loop body, is inlined\n{text}");
+        // (the mask is the source's own array length, 1,024, since the workgroup arrays are the kernel's)
+        assert!(text.contains("wg_a[(((lidx + (128u * k))) & 1023u)]"), "idx, used in its own loop body, is inlined\n{text}");
         let c = crate::wgsl::render::cost(&tree);
         assert!(c.per_item < 1000.0, "per item {}", c.per_item);
     }
@@ -3069,6 +3134,43 @@ mod tests {
         wide.kids[0].kids[1] = Tree::literal("literal.wgdim", ty("u32.wgdim"), 32.0);
         let out = rr.kernel(&wide).unwrap();
         assert_eq!((out.grid.x, out.grid.y), (64, 16));
+        validate_text(&out.text).unwrap();
+    }
+
+    /// WORKGROUP ARRAYS AS KNOBS (2026-10-12): a kernel's arrays, their
+    /// element types and lengths are its own: a vec2 array of 1,056 (masked
+    /// by `min`, the length not a power of two) and an f32 array of 256 read,
+    /// render at those lengths and read back the same; a declaration over the
+    /// device's 32 KB (8,192 vec2) renders halved until the arrays fit.
+    #[test]
+    fn workgroup_arrays_are_declared_at_the_kernels_own_lengths_within_32_kb() {
+        let k = WgslKingdom::load_safe();
+        let (t, role) = (FunctionTable::safe(), gram_role());
+        let rr = Renderer::new(&k, &t, &role);
+        let src = include_str!("../../tests/corpus/safewgsl/draft_wg_knobs.wgsl");
+        let tree = read_safe(src, &k).unwrap_or_else(|e| panic!("{e}")).tree;
+        let out = rr.kernel(&tree).unwrap();
+        assert!(out.text.contains("var<workgroup> wg_v2a: array<vec2<f32>, 1056>;") && out.text.contains("var<workgroup> wg_a: array<f32, 256>;"), "{}", out.text);
+        assert!(!out.text.contains("wg_va") && out.text.contains("min((lidx), 1055u)"), "{}", out.text);
+        validate_text(&out.text).unwrap_or_else(|e| panic!("{e}\n{}", out.text));
+        let again = read_safe(&format!("// grid 16 16 1 1\n{}", out.text), &k).unwrap_or_else(|e| panic!("{e}"));
+        // Read back (a second reading inlines what the first rendered, so the text
+        // need not be the same): the same declarations, valid.
+        let back = rr.kernel(&again.tree).unwrap().text;
+        assert!(back.contains("var<workgroup> wg_v2a: array<vec2<f32>, 1056>;") && back.contains("var<workgroup> wg_a: array<f32, 256>;"), "{back}");
+        validate_text(&back).unwrap_or_else(|e| panic!("{e}\n{back}"));
+        // 8,192 vec2 (64 KB) beside 256 f32: the vec2 array halves to 2,048 (16 KB + 1 KB).
+        fn set_len(t: &mut Tree, to: f32) {
+            if t.name == "wg.decl_v2" {
+                t.kids[1].konst = to;
+            }
+            t.kids.iter_mut().for_each(|c| set_len(c, to));
+        }
+        let mut big = tree.clone();
+        set_len(&mut big, 8192.0);
+        let out = rr.kernel(&big).unwrap();
+        assert!(out.text.contains("var<workgroup> wg_v2a: array<vec2<f32>, 2048>;"), "{}", out.text);
+        assert!(out.text.contains("& 2047u)]"), "the mask follows the halved length: {}", out.text);
         validate_text(&out.text).unwrap();
     }
 
