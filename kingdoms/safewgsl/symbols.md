@@ -1988,4 +1988,23 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 |---|---|---|---|---|---|---|
 | F941 | `grid.with_wg` | `composite` | `grid.grid wg.decls` | `grid.grid` | 2 | a grid and the kernel's workgroup arrays (the arrays it declares and their lengths) |
 
-941 function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Deliberately absent: atomics, images, derivatives, subgroup operations, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.
+## class `loop`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F942 | `loop.unroll_L0` | `composite` | `u32.lit64 block.L2` | `stmt.L0` | 2 | the body n times, straight-line, its counter a literal in each copy |
+| F943 | `loop.unroll_L1` | `composite` | `u32.lit64 block.L2` | `stmt.L1` | 2 | the body n times, straight-line, its counter a literal in each copy |
+| F944 | `loop.unroll_L2` | `composite` | `u32.lit64 block.L3` | `stmt.L2` | 2 | the body n times, straight-line, its counter a literal in each copy |
+| F945 | `loop.unroll_L3` | `composite` | `u32.lit64 block.L4` | `stmt.L3` | 2 | the body n times, straight-line, its counter a literal in each copy |
+| F946 | `loop.unroll_L4` | `composite` | `u32.lit64 block.L5` | `stmt.L4` | 2 | the body n times, straight-line, its counter a literal in each copy |
+| F947 | `loop.unroll_C0` | `composite` | `u32.lit64 block.C1` | `stmt.C0` | 2 | the body n times, straight-line, its counter a literal in each copy |
+| F948 | `loop.unroll_C1` | `composite` | `u32.lit64 block.C2` | `stmt.C1` | 2 | the body n times, straight-line, its counter a literal in each copy |
+| F949 | `loop.unroll_C2` | `composite` | `u32.lit64 block.C3` | `stmt.C2` | 2 | the body n times, straight-line, its counter a literal in each copy |
+| F950 | `loop.unroll_C3` | `composite` | `u32.lit64 block.C4` | `stmt.C3` | 2 | the body n times, straight-line, its counter a literal in each copy |
+| F951 | `loop.unroll_C4` | `composite` | `u32.lit64 block.C5` | `stmt.C4` | 2 | the body n times, straight-line, its counter a literal in each copy |
+| F952 | `loop.unroll_O0` | `composite` | `u32.lit64 block.O1` | `stmt.O0` | 2 | the epilogue's loop body n times, straight-line |
+| F953 | `loop.unroll_O1` | `composite` | `u32.lit64 block.O2` | `stmt.O1` | 2 | the epilogue's loop body n times, straight-line |
+| F954 | `loop.unroll_O2` | `composite` | `u32.lit64 block.O3` | `stmt.O2` | 2 | the epilogue's loop body n times, straight-line |
+| F955 | `loop.unroll_O3` | `composite` | `u32.lit64 block.O4` | `stmt.O3` | 2 | the epilogue's loop body n times, straight-line |
+
+955 function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Deliberately absent: atomics, images, derivatives, subgroup operations, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.

@@ -251,6 +251,13 @@ pub struct Renderer<'a> {
 const TILE_COUNTERS: [&str; 4] = ["k", "k2", "k3", "k4"];
 
 struct Scope {
+    /// The tile counters a fully unrolled loop has made literals, by name
+    /// (`k` is `lit_u32(2u)` in the third copy of an unrolled body).
+    unrolled: BTreeMap<&'static str, u32>,
+    /// Whether the innermost loop around the statement being written is a
+    /// fully unrolled one (no loop in the text): a `continue` there is the
+    /// rest of the copy guarded instead.
+    in_unrolled_copy: bool,
     /// The kernel's workgroup arrays by variable name: element type and
     /// length (2026-10-12: the arrays and their lengths are the gene's);
     /// empty for a kernel that declares none and uses only the original
@@ -296,7 +303,7 @@ impl<'a> Renderer<'a> {
         if d.dual != "kernel.kernel" && d.dual != "kernel.safe" {
             return Err(format!("the root is {} ({}), not kernel.kernel or kernel.safe", root.name, d.dual));
         }
-        let mut scope = Scope { wg: BTreeMap::new(), in_items: false, in_tile: false, tile_depth: 0, grid: Grid { x: 16, y: 16, bx: 1, by: 1 }, in_cond: 0, returned: false, helpers: Vec::new(), masked: Vec::new(), const_depth: 0 };
+        let mut scope = Scope { unrolled: BTreeMap::new(), in_unrolled_copy: false, wg: BTreeMap::new(), in_items: false, in_tile: false, tile_depth: 0, grid: Grid { x: 16, y: 16, bx: 1, by: 1 }, in_cond: 0, returned: false, helpers: Vec::new(), masked: Vec::new(), const_depth: 0 };
         let (grid, body) = match root.name.as_str() {
             "kernel.entry" => {
                 let [g, b] = root.kids.as_slice() else { return Err(format!("{} with {} children", root.name, root.kids.len())) };
@@ -433,6 +440,11 @@ impl<'a> Renderer<'a> {
             "block.cont" if b.kids.len() == 2 => {
                 let c = self.value(&b.kids[0], scope)?;
                 let (rest, terminated) = self.block_t(&b.kids[1], scope)?;
+                if scope.in_unrolled_copy {
+                    // A copy of an unrolled body has no loop to continue: the
+                    // rest of the copy runs when the guard does not hold.
+                    return Ok((format!("    if (!({c})) {{\n{rest}    }}\n"), false));
+                }
                 Ok((format!("    if ({c}) {{ continue; }}\n{rest}"), terminated))
             }
             "block.one" | "block.seq2" | "block.seq3" | "block.seq4" => {
@@ -456,6 +468,7 @@ impl<'a> Renderer<'a> {
     fn stmt_t(&self, s: &Tree, scope: &mut Scope) -> Result<(String, bool), String> {
         let kids = s.kids.as_slice();
         match safe_base(&s.name) {
+            "loop.unroll" if kids.len() == 2 => self.unrolled(s, scope),
             "stmt.return" => Ok((self.stmt(s, scope)?, true)),
             "stmt.block" if kids.len() == 1 => self.block_t(&kids[0], scope),
             "stmt.if_else" if kids.len() == 3 => {
@@ -468,6 +481,43 @@ impl<'a> Renderer<'a> {
             }
             _ => Ok((self.stmt(s, scope)?, false)),
         }
+    }
+
+    /// A fully unrolled loop (lit64, block): the body n times, straight-line,
+    /// the counter of the depth a literal in each copy (lit_u32(i)); a copy
+    /// that returns on every path ends the text (and the statement).
+    fn unrolled(&self, s: &Tree, scope: &mut Scope) -> Result<(String, bool), String> {
+        let count = self.lit(&s.kids[0], 64)?;
+        let Some(&var) = TILE_COUNTERS.get(scope.tile_depth) else {
+            return Err("a fifth nested tile loop (the safe grammar does not produce this)".into());
+        };
+        let (was_tile, was_copy) = (scope.in_tile, scope.in_unrolled_copy);
+        scope.in_tile = true;
+        scope.in_unrolled_copy = true;
+        scope.tile_depth += 1;
+        let mut out = String::new();
+        let mut result = Ok(false);
+        for i in 0..count {
+            scope.unrolled.insert(var, i);
+            match self.block_t(&s.kids[1], scope) {
+                Ok((b, terminated)) => {
+                    out.push_str(&b);
+                    if terminated {
+                        result = Ok(true);
+                        break;
+                    }
+                }
+                Err(e) => {
+                    result = Err(e);
+                    break;
+                }
+            }
+        }
+        scope.unrolled.remove(var);
+        scope.tile_depth -= 1;
+        scope.in_tile = was_tile;
+        scope.in_unrolled_copy = was_copy;
+        result.map(|terminated| (out, terminated))
     }
 
     fn stmt(&self, s: &Tree, scope: &mut Scope) -> Result<String, String> {
@@ -551,12 +601,15 @@ impl<'a> Renderer<'a> {
                 let Some(var) = TILE_COUNTERS.get(scope.tile_depth) else {
                     return Err("a fifth nested tile loop (the safe grammar does not produce this)".into());
                 };
-                let was = scope.in_tile;
+                let (was, copy_was) = (scope.in_tile, scope.in_unrolled_copy);
                 scope.in_tile = true;
+                // A loop in the text: a continue in its body continues it.
+                scope.in_unrolled_copy = false;
                 scope.tile_depth += 1;
                 let body = self.block(&kids[if strided { 2 } else { 1 }], scope);
                 scope.tile_depth -= 1;
                 scope.in_tile = was;
+                scope.in_unrolled_copy = copy_was;
                 Ok(format!("    for ({var} = 0u; {var} < {bound}; {var} = {var} + {step}u) {{\n{}    }}\n", body?))
             }
             "loop.tile_bounded" | "loop.tile_strided_bounded" => {
@@ -569,12 +622,15 @@ impl<'a> Renderer<'a> {
                 let Some(var) = TILE_COUNTERS.get(scope.tile_depth) else {
                     return Err("a fifth nested tile loop (the safe grammar does not produce this)".into());
                 };
-                let was = scope.in_tile;
+                let (was, copy_was) = (scope.in_tile, scope.in_unrolled_copy);
                 scope.in_tile = true;
+                // A loop in the text: a continue in its body continues it.
+                scope.in_unrolled_copy = false;
                 scope.tile_depth += 1;
                 let body = self.block(&kids[if strided { 2 } else { 1 }], scope);
                 scope.tile_depth -= 1;
                 scope.in_tile = was;
+                scope.in_unrolled_copy = copy_was;
                 Ok(format!("    for ({var} = 0u; {var} < {count}u; {var} = {var} + {step}u) {{\n{}    }}\n", body?))
             }
             "store.h_safe" => {
@@ -907,10 +963,17 @@ impl<'a> Renderer<'a> {
             "bound.d" => return Ok("cfg.d".into()),
             "bound.rows" => return Ok("cfg.r_rows".into()),
             "safe.counter" => return Ok("t".into()),
-            "safe.tile_counter" => return Ok("k".into()),
-            "safe.tile_counter2" => return Ok("k2".into()),
-            "safe.tile_counter3" => return Ok("k3".into()),
-            "safe.tile_counter4" => return Ok("k4".into()),
+            "safe.tile_counter" | "safe.tile_counter2" | "safe.tile_counter3" | "safe.tile_counter4" => {
+                let var = match name {
+                    "safe.tile_counter2" => "k2",
+                    "safe.tile_counter3" => "k3",
+                    "safe.tile_counter4" => "k4",
+                    _ => "k",
+                };
+                // In a copy of a fully unrolled body the counter is that copy's
+                // literal, through lit_u32 so naga folds no constant expression.
+                return Ok(scope.unrolled.get(var).map_or_else(|| var.to_string(), |i| format!("lit_u32({i}u)")));
+            }
             "safe.counter_index" | "safe.tile_index" | "safe.tile_index2" | "safe.tile_index3" | "safe.tile_index4" => return self.value(&v.kids[0], scope),
             "safe.row_plus_tile" | "safe.row_plus_tile2" | "safe.row_plus_tile3" | "safe.row_plus_tile4" | "safe.col_plus_tile" | "safe.col_plus_tile2" | "safe.col_plus_tile3" | "safe.col_plus_tile4" => {
                 let blk = if safe_base(name).starts_with("safe.row") { scope.grid.by } else { scope.grid.bx };
@@ -1004,7 +1067,7 @@ impl<'a> Renderer<'a> {
             "builtin.local_invocation_index" => return Ok("lidx".into()),
             "builtin.num_workgroups" => return Ok("nwg".into()),
             "builtin.item" => return Ok("t".into()),
-            "builtin.tile" => return Ok("k".into()),
+            "builtin.tile" => return Ok(scope.unrolled.get("k").map_or_else(|| "k".to_string(), |i| format!("lit_u32({i}u)"))),
             _ => {}
         }
         if name == "wg.a" || name == "wg.b" {
@@ -1380,8 +1443,9 @@ pub fn cost(t: &Tree) -> Cost {
                     per_item += p;
                 }
             }
-            "loop.tile_bounded" | "loop.tile_strided_bounded" => {
-                // (count, [step,] body): the body runs ceil(count / step) times, nested tile loops multiply.
+            "loop.tile_bounded" | "loop.tile_strided_bounded" | "loop.unroll" => {
+                // (count, [step,] body): the body runs ceil(count / step) times, nested tile loops multiply
+                // (an unrolled loop as many times, written out).
                 let count = lit(t.kids.first(), 64.0);
                 let step = if safe_base(&t.name) == "loop.tile_strided_bounded" { lit(t.kids.get(1), 64.0) } else { 1.0 };
                 let n = (count / step).ceil();

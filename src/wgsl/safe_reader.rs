@@ -3174,6 +3174,40 @@ mod tests {
         validate_text(&out.text).unwrap();
     }
 
+    /// FULL UNROLLING (2026-10-12): every tile loop of the draft k07 turned
+    /// into the unroll row of its signature (one symbol each) renders as
+    /// straight-line copies, the counter a literal in each, validates and
+    /// reads back; the cost is the tile loop's.
+    #[test]
+    fn a_tile_loop_unrolled_in_full_renders_straight_line_and_reads_back() {
+        let k = WgslKingdom::load_safe();
+        let (t, role) = (FunctionTable::safe(), gram_role());
+        let rr = Renderer::new(&k, &t, &role);
+        let dir = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/logs/HGP/001/gen0/k07.wgsl"));
+        let Ok(src) = std::fs::read_to_string(dir) else { return };
+        let tree = read_safe(&src, &k).unwrap_or_else(|e| panic!("{e}")).tree;
+        fn unroll(t: &mut Tree, n: &mut usize) {
+            if let Some(r) = t.name.strip_prefix("loop.tile_") {
+                if !r.contains("strided") && t.kids.len() == 2 {
+                    t.name = format!("loop.unroll_{r}");
+                    *n += 1;
+                }
+            }
+            t.kids.iter_mut().for_each(|c| unroll(c, n));
+        }
+        let mut unrolled = tree.clone();
+        let mut n = 0;
+        unroll(&mut unrolled, &mut n);
+        assert!(n > 0, "k07 has tile loops");
+        let before = rr.kernel(&tree).unwrap();
+        let out = rr.kernel(&unrolled).unwrap_or_else(|e| panic!("{e}"));
+        assert!(before.text.contains("for (k = 0u;") && !out.text.contains("for (k = 0u;") && out.text.contains("lit_u32(0u)"), "{}", out.text);
+        validate_text(&out.text).unwrap_or_else(|e| panic!("{e}\n{}", out.text));
+        read_safe(&format!("// grid {} {} {} {}\n{}", out.grid.x, out.grid.y, out.grid.bx, out.grid.by, out.text), &k).unwrap_or_else(|e| panic!("read back: {e}"));
+        let (c0, c1) = (crate::wgsl::render::cost(&tree), crate::wgsl::render::cost(&unrolled));
+        assert!((c0.per_item - c1.per_item).abs() < 1.0 && (c0.base - c1.base).abs() < 1.0, "{c0:?} vs {c1:?}");
+    }
+
     /// A kernel with a helper function reads: the helper is inlined at its
     /// calls (the complete kingdom, step 6; `load4`, with a local, an
     /// if-else and lane stores, as statements since run A). The blocked

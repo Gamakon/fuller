@@ -794,6 +794,15 @@ f("wg", "decls_one", "composite", ["wg.decl"], "wg.decls", "one declaration")
 f("wg", "decls_cons", "composite", ["wg.decl", "wg.decls"], "wg.decls", "a declaration, then the rest")
 f("grid", "with_wg", "composite", ["grid.grid", "wg.decls"], "grid.grid", "a grid and the kernel's workgroup arrays (the arrays it declares and their lengths)")
 
+# ---- full unrolling (2026-10-12) ----
+# A literal-count loop written out as straight-line code: n copies of the body, the loop's counter a
+# literal in each (the matmul article's fully unrolled 8 x 8); the same signature as the tile loop it
+# unrolls, so tile or unroll is one symbol of the gene.
+for r, body in (("L0", "L2"), ("L1", "L2"), ("L2", "L3"), ("L3", "L4"), ("L4", "L5"), ("C0", "C1"), ("C1", "C2"), ("C2", "C3"), ("C3", "C4"), ("C4", "C5")):
+    f("loop", "unroll_" + r, "composite", ["u32.lit64", "block." + body], "stmt." + r, "the body n times, straight-line, its counter a literal in each copy")
+for d in range(len(EPILOGUE) - 1):
+    f("loop", "unroll_" + EPILOGUE[d], "composite", ["u32.lit64", "block." + EPILOGUE[d + 1]], "stmt." + EPILOGUE[d], "the epilogue's loop body n times, straight-line")
+
 
 def write_tsv(path, header, rows):
     with open(path, "w") as out:
