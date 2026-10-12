@@ -92,6 +92,12 @@ A type is a dual `slot.form`: the slot is what the hardware stores, the form is 
 | `B4` | a loop body that breaks, four deep: no barrier | see duals |
 | `B5` | a loop body that breaks, five deep: no barrier | see duals |
 | `uniformw` | a uniform u32 whose arithmetic may wrap (a difference, a product, a shift of uniform values): no row takes it (a wrap is illegal everywhere) | u32 |
+| `rowbase` | the ORIGIN of a thread's row: the only row an offset row takes (an offset of an offset leaves the block, another thread's cell) | u32 |
+| `colbase` | the ORIGIN of a thread's column: the only row an offset row takes (an offset of an offset leaves the block, another thread's cell) | u32 |
+| `rowbases` | the ORIGIN of a thread's row of a strided block: the only row an offset row takes (an offset of an offset leaves the block, another thread's cell) | u32 |
+| `colbases` | the ORIGIN of a thread's column of a strided block: the only row an offset row takes (an offset of an offset leaves the block, another thread's cell) | u32 |
+| `rowbaseg` | the ORIGIN of a thread's row of a grouped block: the only row an offset row takes (an offset of an offset leaves the block, another thread's cell) | u32 |
+| `colbaseg` | the ORIGIN of a thread's column of a grouped block: the only row an offset row takes (an offset of an offset leaves the block, another thread's cell) | u32 |
 | `indexw` | an index that may wrap (a raw difference index.sub, a left shift index.shl): no row takes it; the kingdom's difference is index.sub_floor, its shift by k a product by 2^k | u32 |
 | `xbound` | the value of an expression loop bound: a register, a uniform value, the arithmetic of them that cannot wrap (no difference but the floored one, no product, no shift), or a min with any index | u32 |
 
@@ -276,8 +282,14 @@ A type is a dual `slot.form`: the slot is what the hardware stores, the form is 
 | T175 | `u32.uniformw` | `u32` | `uniformw` | 1 | `0u` | 0 | 0 | 0 |
 | T176 | `u32.xbound` | `u32` | `xbound` | 1 | `1u` | 0 | 0 | 0 |
 | T177 | `u32.indexw` | `u32` | `indexw` | 1 | `0u` | 0 | 0 | 0 |
+| T178 | `u32.rowbase` | `u32` | `rowbase` | 1 | `the thread's own first row` | 0 | 0 | 0 |
+| T179 | `u32.colbase` | `u32` | `colbase` | 1 | `the thread's own first column` | 0 | 0 | 0 |
+| T180 | `u32.rowbases` | `u32` | `rowbases` | 1 | `the thread's own first row` | 0 | 0 | 0 |
+| T181 | `u32.colbases` | `u32` | `colbases` | 1 | `the thread's own first column` | 0 | 0 | 0 |
+| T182 | `u32.rowbaseg` | `u32` | `rowbaseg` | 1 | `the thread's own first row` | 0 | 0 | 0 |
+| T183 | `u32.colbaseg` | `u32` | `colbaseg` | 1 | `the thread's own first column` | 0 | 0 | 0 |
 
-177 duals. The fallback is what Design C's projection substitutes for a codon whose dual does not match the demand; the codon is counted as masked.
+183 duals. The fallback is what Design C's projection substitutes for a codon whose dual does not match the demand; the codon is counted as masked.
 
 The three machine columns (`fallback_bits`, `fallback_noop`, `fallback_elem` in `types.tsv`) are what the loader builds the fallback leaf from, never the prose: `bits` is the lane's 32-bit pattern as an unsigned integer, repeated across the lanes of a vector or matrix (only `bool.sign` is non-zero, true = +1); `noop` is 1 for `store.store`, which substitutes no value at all; `elem` is 1 for `array<T>`, whose fallback is its element's. The loader tests `noop` and `elem` before reading `bits`; for those two rows `bits` is a placeholder 0. Every substitution, whichever column decides it, counts the codon as masked.
 

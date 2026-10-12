@@ -292,8 +292,10 @@ fn owned_axis(t: &Tree, axis: &str) -> bool {
     if base == "fallback" || base.starts_with(&format!("safe.thread_{axis}")) {
         return true;
     }
+    // An offset of the thread's origin (or of a fallback, which renders it);
+    // an offset of an offset leaves the block (2026-10-12).
     if base.starts_with(&format!("safe.{axis}_plus")) {
-        return t.kids.first().is_some_and(|k| owned_axis(k, axis));
+        return t.kids.first().is_some_and(|k| k.name == "fallback" || safe_base(&k.name).starts_with(&format!("safe.thread_{axis}")));
     }
     false
 }
@@ -1106,10 +1108,10 @@ impl<'a> Checker<'a> {
         if v.name == "fallback" {
             // A thread's row, column or cell renders the thread's own origin.
             return match d.form.as_str() {
-                "threadrow" => self.iv_raw(&Tree::new("safe.thread_row", v.ty, Vec::new()), cx),
-                "threadcol" => self.iv_raw(&Tree::new("safe.thread_col", v.ty, Vec::new()), cx),
-                "threadrows" | "threadrowg" => self.iv_raw(&Tree::new("safe.thread_row_s", v.ty, Vec::new()), cx),
-                "threadcols" | "threadcolg" => self.iv_raw(&Tree::new("safe.thread_col_s", v.ty, Vec::new()), cx),
+                "threadrow" | "rowbase" => self.iv_raw(&Tree::new("safe.thread_row", v.ty, Vec::new()), cx),
+                "threadcol" | "colbase" => self.iv_raw(&Tree::new("safe.thread_col", v.ty, Vec::new()), cx),
+                "threadrows" | "threadrowg" | "rowbases" | "rowbaseg" => self.iv_raw(&Tree::new("safe.thread_row_s", v.ty, Vec::new()), cx),
+                "threadcols" | "threadcolg" | "colbases" | "colbaseg" => self.iv_raw(&Tree::new("safe.thread_col_s", v.ty, Vec::new()), cx),
                 "cell" => {
                     let row = self.iv_raw(&Tree::new("safe.thread_row", v.ty, Vec::new()), cx);
                     let col = self.iv_raw(&Tree::new("safe.thread_col", v.ty, Vec::new()), cx);

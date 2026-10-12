@@ -140,11 +140,20 @@ FORMS = {
     # a product, a shift) are their own dual, an index only; a loop bound's value is built from registers,
     # uniform values and arithmetic that does not grow past its operands, or clamped by a min.
     "uniformw": ("a uniform u32 whose arithmetic may wrap (a difference, a product, a shift of uniform values): no row takes it (a wrap is illegal everywhere)", ["u32"]),
+    # THE ORIGINS (2026-10-12): an offset row (safe.row_plus*) takes the thread's origin only, never another
+    # offset row: nested, each offset clamped to the block, the sum left it (the reader's ownership proof
+    # refused 50 of 1,000 random trees; the cell was another thread's).
+    "rowbase": ("the ORIGIN of a thread's row: the only row an offset row takes (an offset of an offset leaves the block, another thread's cell)", ["u32"]),
+    "colbase": ("the ORIGIN of a thread's column: the only row an offset row takes (an offset of an offset leaves the block, another thread's cell)", ["u32"]),
+    "rowbases": ("the ORIGIN of a thread's row of a strided block: the only row an offset row takes (an offset of an offset leaves the block, another thread's cell)", ["u32"]),
+    "colbases": ("the ORIGIN of a thread's column of a strided block: the only row an offset row takes (an offset of an offset leaves the block, another thread's cell)", ["u32"]),
+    "rowbaseg": ("the ORIGIN of a thread's row of a grouped block: the only row an offset row takes (an offset of an offset leaves the block, another thread's cell)", ["u32"]),
+    "colbaseg": ("the ORIGIN of a thread's column of a grouped block: the only row an offset row takes (an offset of an offset leaves the block, another thread's cell)", ["u32"]),
     "indexw": ("an index that may wrap (a raw difference index.sub, a left shift index.shl): no row takes it; the kingdom's difference is index.sub_floor, its shift by k a product by 2^k", ["u32"]),
     "xbound": ("the value of an expression loop bound: a register, a uniform value, the arithmetic of them that cannot wrap (no difference but the floored one, no product, no shift), or a min with any index", ["u32"]),
 }
 
-SAFE_FORMS = ["indexw", "uniformw", "xbound", "uniform", "boundu", "pindex16", "wgaindex", "wgv2index", "wglen", "decl", "decls", "lidx", "threadrows", "threadcols", "threadrowg", "threadcolg", "gid", "lid", "wid", "rowid", "colid", "O0", "O1", "O2", "O3", "O4", "tcounter4", "L5", "C5", "safe", "pindex", "boundx", "boundm", "boundd", "boundrows", "lit64", "lit4096", "counter", "tcounter", "tcounter2", "L3", "C3", "tcounter3", "L4", "C4", "wgvindex", "bound", "threadrow", "threadcol", "cell", "phi", "wgindex", "L0", "L1", "L2", "C0", "C1", "C2"]
+SAFE_FORMS = ["rowbase", "colbase", "rowbases", "colbases", "rowbaseg", "colbaseg", "indexw", "uniformw", "xbound", "uniform", "boundu", "pindex16", "wgaindex", "wgv2index", "wglen", "decl", "decls", "lidx", "threadrows", "threadcols", "threadrowg", "threadcolg", "gid", "lid", "wid", "rowid", "colid", "O0", "O1", "O2", "O3", "O4", "tcounter4", "L5", "C5", "safe", "pindex", "boundx", "boundm", "boundd", "boundrows", "lit64", "lit4096", "counter", "tcounter", "tcounter2", "L3", "C3", "tcounter3", "L4", "C4", "wgvindex", "bound", "threadrow", "threadcol", "cell", "phi", "wgindex", "L0", "L1", "L2", "C0", "C1", "C2"]
 RUNGS = ["L0", "L1", "L2", "L3", "L4", "C0", "C1", "C2", "C3", "C4"]
 # The fifth rung came after every other row (run A, 2026-10-11); its rows are appended at the end so
 # every earlier ref stands, and it is kept out of RUNGS for that reason.
@@ -177,6 +186,7 @@ FALLBACK = {
     "wgaindex": "0u", "wgv2index": "0u", "wglen": "the array's default length", "decl": "none", "decls": "none (the arrays the kernel uses, at their default lengths)",
     "B1": "empty", "B2": "empty", "B3": "empty", "B4": "empty", "B5": "empty",
     "uniformw": "0u", "xbound": "1u", "indexw": "0u",
+    "rowbase": "the thread's own first row", "colbase": "the thread's own first column", "rowbases": "the thread's own first row", "colbases": "the thread's own first column", "rowbaseg": "the thread's own first row", "colbaseg": "the thread's own first column",
 }
 
 # The fallback by machine: the lane's 32-bit pattern as an unsigned integer. Vectors and matrices
@@ -201,6 +211,7 @@ FALLBACK_BITS = {
     "wgaindex": 0, "wgv2index": 0, "wglen": 0, "decl": 0, "decls": 0,
     "B1": 0, "B2": 0, "B3": 0, "B4": 0, "B5": 0,
     "uniformw": 0, "xbound": 0, "indexw": 0,
+    "rowbase": 0, "colbase": 0, "rowbases": 0, "colbases": 0, "rowbaseg": 0, "colbaseg": 0,
 }
 assert set(FALLBACK_BITS) == set(FALLBACK), "every form with a fallback needs its bits, and no more"
 
@@ -322,6 +333,9 @@ def build_types():
     add("u32", "xbound", 1, FORMS["xbound"][0])
     # ---- no wrap anywhere (2026-10-12, Codex's review) ----
     add("u32", "indexw", 1, FORMS["indexw"][0])
+    # ---- the origins an offset row takes (2026-10-12) ----
+    for form in ("rowbase", "colbase", "rowbases", "colbases", "rowbaseg", "colbaseg"):
+        add("u32", form, 1, FORMS[form][0])
     return rows
 
 
@@ -337,6 +351,9 @@ FUNCTIONS = []
 SIXTEEN = ("parr<vec4<f32>>.real", "parr<u32>.index", "parr<bool>.flag", "parr<vec2<f32>>.real")
 
 
+ORIGIN_OF = {"u32.threadrow": "u32.rowbase", "u32.threadcol": "u32.colbase", "u32.threadrows": "u32.rowbases", "u32.threadcols": "u32.colbases", "u32.threadrowg": "u32.rowbaseg", "u32.threadcolg": "u32.colbaseg"}
+
+
 def f(cls, inst, naga, ins, out, note=""):
     if ins and ins[0] in SIXTEEN:
         ins = ["u32.pindex16" if x == "u32.pindex" else x for x in ins]
@@ -347,6 +364,9 @@ def f(cls, inst, naga, ins, out, note=""):
     # every thread reaches its barriers (the legality checker: 87 of 1,000 random genes had a barrier in a
     # loop bounded by a thread's or a subgroup's value, 2026-10-12). Loops that break and loops at C and O
     # rungs hold no barrier and keep any bound.
+    # An offset row takes an origin (2026-10-12): u32.threadrow* as its first input is the origin's dual.
+    if cls == "safe" and (inst.startswith("row_plus") or inst.startswith("col_plus")) and ins:
+        ins = [ORIGIN_OF.get(ins[0], ins[0])] + ins[1:]
     if cls == "loop" and out.startswith("stmt.L") and "u32.boundx" in ins and "_brk_" not in inst:
         ins = ["u32.boundu" if x == "u32.boundx" else x for x in ins]
     FUNCTIONS.append((cls, inst, naga, ins, out, note))
@@ -1158,6 +1178,13 @@ f("subgroup", "broadcast_first", "SubgroupGather", ["u32.xbound"], "u32.xbound",
 f("subgroup", "broadcast", "SubgroupGather", ["u32.xbound", "u32.lit64"], "u32.xbound", "subgroupBroadcast(x, lane) of a bound value")
 for op in ("shuffle", "shuffle_down", "shuffle_up", "shuffle_xor"):
     f("subgroup", op, "SubgroupGather", ["u32.xbound", "u32.index"], "u32.xbound", f"{op}(x, i) of a bound value")
+# THE ORIGINS (2026-10-12): the thread's origin rows at the origins' duals, the only first input an offset row takes.
+f("safe", "thread_row", "composite", ["vec3<u32>.gid", "u32.blk"], "u32.rowbase", "gid.y * blk: the thread's first row, as an offset row's origin")
+f("safe", "thread_col", "composite", ["vec3<u32>.gid", "u32.blk"], "u32.colbase", "gid.x * blk: the thread's first column, as an offset column's origin")
+f("safe", "thread_row_s", "composite", ["vec3<u32>.wid", "vec3<u32>.lid", "u32.blk"], "u32.rowbases", "arity 3: the first row of a strided block, as an offset row's origin")
+f("safe", "thread_col_s", "composite", ["vec3<u32>.wid", "vec3<u32>.lid", "u32.blk"], "u32.colbases", "arity 3: the first column of a strided block, as an offset column's origin")
+f("safe", "thread_row_g", "composite", ["vec3<u32>.wid", "vec3<u32>.lid", "u32.blk", "u32.lit64"], "u32.rowbaseg", "arity 4: the first row of a grouped block, as an offset row's origin")
+f("safe", "thread_col_g", "composite", ["vec3<u32>.wid", "vec3<u32>.lid", "u32.blk", "u32.lit64"], "u32.colbaseg", "arity 4: the first column of a grouped block, as an offset column's origin")
 
 
 def write_tsv(path, header, rows):

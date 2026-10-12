@@ -639,7 +639,8 @@ mod tests {
         // 174 with the uniform values and the uniform loop bound (legality item 5); 176 with the
         // uniform values that may wrap (u32.uniformw) and an expression bound's value (u32.xbound).
         // 177 with u32.indexw (a raw difference, which no row takes: no wrap anywhere).
-        assert_eq!(s.len(), 177);
+        // 183 with the origins an offset row takes (rowbase, colbase, strided, grouped).
+        assert_eq!(s.len(), 183);
         for (a, b) in w.iter().zip(&s) {
             assert_eq!((a.reference.as_str(), a.dual.as_str()), (b.reference.as_str(), b.dual.as_str()));
         }
@@ -669,7 +670,8 @@ mod tests {
         // 1,522 with no wrap in a loop bound (the wrap-free rows of u32.xbound, the clamped min of a
         // uniform value that may wrap; 2026-10-12).
         // 1,523 with a literal bound value (literal.index at u32.xbound; a random kernel's bound of 0).
-        assert_eq!(fs.rows.len(), 1523);
+        // 1,529 with the thread's origin rows at the origins' duals.
+        assert_eq!(fs.rows.len(), 1529);
         let dual = |t: Ty| k.dual(t).unwrap().dual.clone();
         let producers = |d: &str| -> Vec<String> { k.rows.iter().filter(|r| dual(r.output) == d).map(|r| r.name.clone()).collect() };
         assert_eq!(producers("kernel.safe"), vec!["kernel.entry_safe"]);

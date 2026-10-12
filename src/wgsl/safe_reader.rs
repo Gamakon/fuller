@@ -3694,7 +3694,13 @@ impl<'a> Ctx<'a> {
             }
             Ok(format!("loop.{t}_{rung}"))
         };
+        // At the top level an expression-bounded loop over the kingdom's tile
+        // counter `k` is a tile loop (loop.tilex_L0, the renderer's spelling),
+        // not the item loop (2026-10-12: 45 of 1,000 random trees, a tilex_brk_L0
+        // read as an item loop that breaks).
+        let tile_named = counter.strip_prefix("local.").and_then(|r| r.split('@').next()) == Some("k");
         let (body_rung, row_name, out_rung) = match (kind, rung) {
+            ("boundx", "L0") if tile_named => ("L2".to_string(), short(tilex, "L0")?, "L0"),
             ("lit64", "L0" | "L1") => ("L2".to_string(), short(tile, rung)?, rung),
             ("lit64", "L2") => ("L3".to_string(), short(tile, "L2")?, "L2"),
             ("lit64", "L3") => ("L4".to_string(), short(tile, "L3")?, "L3"),
@@ -5192,7 +5198,7 @@ mod tests {
     /// The counts of [`random_sampler_trees_read_back_to_their_own_text`]
     /// reached so far: to their own text, and read back at all.
     const READ_BACK_FLOOR: usize = 108;
-    const READ_AT_ALL_FLOOR: usize = 514;
+    const READ_AT_ALL_FLOOR: usize = 538;
 
     /// THE KINGDOM'S COMPLETENESS BAR (2026-10-12): 1,000 random trees of
     /// the kingdom's typed sampler (the safe root, depth 7, seeds 0..1000)

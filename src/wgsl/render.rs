@@ -2356,10 +2356,10 @@ impl Renderer<'_> {
         let ty = |n: &str| dual_ty(self.kingdom, n);
         let row = |name: &str, d: &str| -> Result<Tree, String> { Ok(Tree::new(name, ty(d)?, vec![])) };
         let tree = match dual {
-            "u32.threadrow" => row("safe.thread_row", "u32.threadrow")?,
-            "u32.threadcol" => row("safe.thread_col", "u32.threadcol")?,
-            "u32.threadrows" | "u32.threadrowg" => row("safe.thread_row_s", "u32.threadrows")?,
-            "u32.threadcols" | "u32.threadcolg" => row("safe.thread_col_s", "u32.threadcols")?,
+            "u32.threadrow" | "u32.rowbase" => row("safe.thread_row", "u32.threadrow")?,
+            "u32.threadcol" | "u32.colbase" => row("safe.thread_col", "u32.threadcol")?,
+            "u32.threadrows" | "u32.threadrowg" | "u32.rowbases" | "u32.rowbaseg" => row("safe.thread_row_s", "u32.threadrows")?,
+            "u32.threadcols" | "u32.threadcolg" | "u32.colbases" | "u32.colbaseg" => row("safe.thread_col_s", "u32.threadcols")?,
             "u32.cell" => Tree::new("safe.cell_of", ty("u32.cell")?, vec![row("safe.thread_row", "u32.threadrow")?, row("safe.thread_col", "u32.threadcol")?]),
             _ => return Ok(None),
         };
