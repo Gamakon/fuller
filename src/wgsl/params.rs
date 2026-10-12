@@ -213,6 +213,27 @@ pub fn resolve(root: &Tree) -> Result<Tree, String> {
     Ok(walk(root, &knobs))
 }
 
+/// The tree with every reference written as the plain literal of its
+/// dual's form at the value its kernel's knobs give (`literal.index 64` for
+/// a column span of 64): what a structural rule rewrites, since its
+/// rewrite changes what the references are relative to. The child's
+/// read-back assigns them again.
+pub fn to_literals(root: &Tree, kingdom: &WgslKingdom) -> Result<Tree, String> {
+    let resolved = resolve(root)?;
+    fn walk(t: &Tree, kingdom: &WgslKingdom) -> Result<Tree, String> {
+        if parse_ref(&t.name).is_some() {
+            let form = kingdom.dual(t.ty).map(|d| d.form.clone()).ok_or_else(|| format!("{} has no dual", t.name))?;
+            let name = format!("literal.{form}");
+            if !kingdom.rows.iter().any(|r| r.name == name && r.output == t.ty) {
+                return Err(format!("our software has a bug: no literal row {name} for {}", t.name));
+            }
+            return Ok(Tree::literal(&name, t.ty, t.konst));
+        }
+        Ok(Tree { name: t.name.clone(), ty: t.ty, konst: t.konst, kids: t.kids.iter().map(|k| walk(k, kingdom)).collect::<Result<_, _>>()? })
+    }
+    walk(&resolved, kingdom)
+}
+
 /// A plain literal's whole value (not a reference).
 fn lit(t: &Tree) -> Option<u32> {
     (t.kids.is_empty() && t.name.starts_with("literal.") && parse_ref(&t.name).is_none() && t.konst.is_finite() && t.konst >= 0.0 && t.konst.fract() == 0.0).then_some(t.konst as u32)
@@ -667,6 +688,21 @@ mod tests {
         assert_eq!(ktile_of(&chunked.kids[0]), Some(128));
         let text = render_tree(&set(&chunked, &Site::Ktile, 256), &k).unwrap().text;
         assert!(text.contains("var<workgroup> wg_vb: array<vec4<f32>, 512>;") && text.contains("t = t + 256u"), "{text}");
+    }
+
+    #[test]
+    fn a_kernel_written_with_plain_literals_renders_its_text() {
+        use crate::wgsl::safe_karva::render_tree;
+        use crate::wgsl::safe_reader::read_safe;
+        let k = WgslKingdom::load_safe();
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("logs/HGP/001/popB_g080/texts");
+        let Ok(rd) = std::fs::read_dir(&dir) else { return };
+        for f in rd.flatten().map(|e| e.path()) {
+            let t = read_safe(&std::fs::read_to_string(&f).unwrap(), &k).unwrap().tree;
+            let plain = to_literals(&t, &k).unwrap();
+            assert!(!has_refs(&plain), "{}", f.display());
+            assert_eq!(render_tree(&t, &k).unwrap().text, render_tree(&plain, &k).unwrap().text, "{}", f.display());
+        }
     }
 
     #[test]

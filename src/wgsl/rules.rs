@@ -596,20 +596,397 @@ pub fn grow_rows_sites(root: &Tree, kingdom: &WgslKingdom) -> Vec<Site> {
     }
 }
 
+// ---- RULE: A STRIDED f32 TILE AS A vec4 TILE, INTERLEAVED ----
+
+/// The terms of a sum, however it is nested.
+fn add_terms<'t>(t: &'t Tree, out: &mut Vec<&'t Tree>) {
+    if t.name == "index.add" && t.kids.len() == 2 {
+        add_terms(&t.kids[0], out);
+        add_terms(&t.kids[1], out);
+    } else {
+        out.push(t);
+    }
+}
+
+fn plain_value(t: &Tree) -> Option<u32> {
+    (t.kids.is_empty() && t.name.starts_with("literal.") && !t.name.starts_with("literal.p_") && t.konst >= 0.0 && t.konst.fract() == 0.0).then_some(t.konst as u32)
+}
+
+/// A read index of a strided tile decomposed: `row * R + lid + c * S`:
+/// the row terms (each `e * m`, m a multiple of R), the thread's id on the
+/// tile's axis, the literal rows and the lane c.
+struct StridedIndex<'t> {
+    rows: Vec<(&'t Tree, u32)>,
+    lid: &'t Tree,
+    literal_rows: u32,
+    lane: u32,
+    col: bool,
+}
+
+/// `x` as a strided read index, when it is one (R = 4 S).
+fn strided_index(x: &Tree, r: [u32; 2], s: [u32; 2]) -> Option<StridedIndex<'_>> {
+    let mut terms = Vec::new();
+    add_terms(x, &mut terms);
+    let (mut rows, mut lid, mut constant) = (Vec::new(), None, 0u32);
+    for t in terms {
+        if let Some(v) = plain_value(t) {
+            constant += v;
+        } else if t.name == "index.mul" && t.kids.len() == 2 {
+            let (e, m) = match (plain_value(&t.kids[0]), plain_value(&t.kids[1])) {
+                (_, Some(m)) => (&t.kids[0], m),
+                (Some(m), None) => (&t.kids[1], m),
+                (None, None) => return None,
+            };
+            rows.push((e, m));
+        } else if is_row_lid(t) || (t.name == "index.of_col" && t.kids.first().is_some_and(|a| a.name.starts_with("axis.") && a.name.ends_with("_lid"))) {
+            if lid.replace(t).is_some() {
+                return None;
+            }
+        } else {
+            return None;
+        }
+    }
+    let lid = lid?;
+    let col = lid.name == "index.of_col";
+    let (r, s) = if col { (r[0], s[0]) } else { (r[1], s[1]) };
+    if rows.iter().any(|&(_, m)| m % r != 0) {
+        return None;
+    }
+    let (literal_rows, rem) = (constant / r, constant % r);
+    (rem % s == 0 && rem / s < 4).then_some(StridedIndex { rows, lid, literal_rows, lane: rem / s, col })
+}
+
+/// What vectorising one f32 tile needs.
+#[derive(Clone, Debug)]
+pub struct VecTilePlan {
+    pub array: String,
+    pub len: u32,
+    /// The row width R and the thread stride S (R = 4 S) on the tile's axis.
+    pub r: u32,
+    pub s: u32,
+    pub col: bool,
+}
+
+/// THE READ PRECONDITIONS of interleaving the f32 tile `array` into a vec4
+/// tile: the kernel's block on the tile's axis is 4 (a thread owns 4 cells,
+/// S apart, S the workgroup's extent on that axis, R = 4 S the tile's row);
+/// every read of the array is `row * R + lid + c * S` (c < 4) over the
+/// thread's id on one axis; every other use is a scalar store; R, S and
+/// the length are powers of two.
+pub fn vec_tile_plan(plain: &Tree, array: &str) -> Result<VecTilePlan, String> {
+    use crate::wgsl::params::{Knob, Knobs};
+    let knobs = Knobs::of_root(plain)?;
+    let (rc, sc, rr, sr) = (knobs.value(Knob::ColSpan), knobs.value(Knob::Wcol), knobs.value(Knob::RowSpan), knobs.value(Knob::Wrow));
+    let (mut reads, mut col_axis, mut bad) = (0usize, BTreeSet::new(), None::<String>);
+    fn walk(t: &Tree, array: &str, r: [u32; 2], s: [u32; 2], reads: &mut usize, axes: &mut BTreeSet<bool>, bad: &mut Option<String>) {
+        let is_array = |k: &Tree| k.kids.is_empty() && k.name == array;
+        if t.name == "wg.get_safe" && t.kids.len() == 2 && is_array(&t.kids[0]) {
+            let idx = t.kids[1].kids.first().filter(|_| t.kids[1].name == "safe.wg_of");
+            match idx.and_then(|x| strided_index(x, r, s)) {
+                Some(si) => {
+                    *reads += 1;
+                    axes.insert(si.col);
+                }
+                None => *bad = Some(format!("a read of {array} is not row * R + lid + c * S: {}", t.kids[1].to_sexpr())),
+            }
+            return;
+        }
+        if safe_base(&t.name) == "wg.set_safe" && t.name.starts_with("wg.set_") && !t.name.starts_with("wg.set_v") && t.kids.first().is_some_and(is_array) {
+            if t.kids.get(1).is_none_or(|i| i.name != "safe.wg_of") {
+                *bad = Some(format!("a store to {array} not through its index row"));
+            }
+            for k in &t.kids[1..] {
+                walk(k, array, r, s, reads, axes, bad);
+            }
+            return;
+        }
+        if t.name.starts_with("wg.decl_") {
+            return;
+        }
+        if t.kids.iter().any(is_array) {
+            *bad = Some(format!("{} uses {array}", t.name));
+            return;
+        }
+        t.kids.iter().for_each(|k| walk(k, array, r, s, reads, axes, bad));
+    }
+    walk(plain, array, [rc, rr], [sc, sr], &mut reads, &mut col_axis, &mut bad);
+    if let Some(b) = bad {
+        return Err(b);
+    }
+    if reads == 0 {
+        return Err(format!("{array} is never read"));
+    }
+    let col = match col_axis.into_iter().collect::<Vec<_>>().as_slice() {
+        [c] => *c,
+        _ => return Err(format!("{array} is read on both axes")),
+    };
+    let (block, r, s) = if col { (knobs.grid.bx, rc, sc) } else { (knobs.grid.by, rr, sr) };
+    if block != 4 || r != 4 * s || !r.is_power_of_two() || !s.is_power_of_two() {
+        return Err(format!("the block on the tile's axis is {block} (R {r}, S {s}), not 4 cells S apart"));
+    }
+    // The array's length: declared, or the default of an f32 array.
+    let mut len = 2048u32;
+    fn decl_len(t: &Tree, array: &str, len: &mut u32) {
+        if t.name == "wg.decl_f" && t.kids.len() == 2 && t.kids[0].name == array {
+            if let Some(v) = plain_value(&t.kids[1]) {
+                *len = v;
+            }
+        }
+        t.kids.iter().for_each(|k| decl_len(k, array, len));
+    }
+    decl_len(&plain.kids[0], array, &mut len);
+    if !len.is_power_of_two() || len < 4 * r {
+        return Err(format!("{array}'s length {len} is not a power of two of whole rows"));
+    }
+    Ok(VecTilePlan { array: array.to_string(), len, r, s, col })
+}
+
+/// A scalar store into an f32 workgroup array: the array leaf, the flat
+/// index F under its index row, the value.
+fn f32_store(t: &Tree) -> Option<(&str, &Tree, &Tree)> {
+    let is = t.name.starts_with("wg.set_") && !t.name.starts_with("wg.set_v") && t.kids.len() == 3 && t.kids[0].kids.is_empty() && ["wg.a", "wg.b", "wg.c", "wg.d"].contains(&t.kids[0].name.as_str()) && t.kids[1].name == "safe.wg_of" && t.kids[1].kids.len() == 1;
+    is.then(|| (t.kids[0].name.as_str(), &t.kids[1].kids[0], &t.kids[2]))
+}
+
+/// `t` with every subtree equal to `from` replaced by `to`.
+fn substitute(t: &Tree, from: &str, to: &Tree) -> Tree {
+    if t.to_sexpr() == from {
+        return to.clone();
+    }
+    Tree { name: t.name.clone(), ty: t.ty, konst: t.konst, kids: t.kids.iter().map(|k| substitute(k, from, to)).collect() }
+}
+
+/// A loop that fills f32 tiles, found in the kernel (plain literals): its
+/// pre-order node, its tile depth, its arrays, R and S of their reads.
+#[derive(Clone, Debug)]
+pub struct LoaderPlan {
+    pub node: usize,
+    pub depth: usize,
+    pub arrays: Vec<(String, String)>,
+    pub r: u32,
+    pub s: u32,
+    pub passes: u32,
+}
+
+/// Every counted loop (tile or unroll) whose body stores f32 tiles, with
+/// its pre-order node and tile depth.
+fn loader_loops(t: &Tree) -> Vec<(usize, usize, Tree)> {
+    fn walk(t: &Tree, counter: &mut usize, depth: usize, out: &mut Vec<(usize, usize, Tree)>) {
+        let me = *counter;
+        *counter += 1;
+        let base = safe_base(&t.name);
+        let looped = base.starts_with("loop.") && !base.starts_with("loop.items");
+        if matches!(base, "loop.tile_bounded" | "loop.unroll") && t.kids.len() == 2 && statements(&t.kids[1]).iter().any(|s| f32_store(s).is_some()) {
+            out.push((me, depth, t.clone()));
+        }
+        for k in &t.kids {
+            walk(k, counter, depth + usize::from(looped), out);
+        }
+    }
+    let mut out = Vec::new();
+    walk(t, &mut 0, 0, &mut out);
+    out
+}
+
+/// THE PRECONDITIONS of vectorising the f32 tiles a loader loop fills:
+/// the tiles' stores end the loop's body, at one flat index F = G +
+/// threads * k (k the loop's counter, used nowhere else in the body); the
+/// passes divide by 4; every tile is read only as `row * R + lid + c * S`
+/// with one R = 4 S for all; a vec4 array is free for each; the registers
+/// the body writes are used nowhere outside the loop.
+pub fn loader_plan(plain: &Tree, node: usize, depth: usize, lp: &Tree) -> Result<LoaderPlan, String> {
+    let body = statements(&lp.kids[1]);
+    let first = body.iter().position(|s| f32_store(s).is_some()).ok_or("no store")?;
+    if body[first..].iter().any(|s| f32_store(s).is_none()) {
+        return Err("the tile stores do not end the loader's body".into());
+    }
+    let f = f32_store(&body[first]).map(|(_, f, _)| f.to_sexpr()).ok_or("no store")?;
+    if body[first..].iter().any(|s| f32_store(s).map(|(_, x, _)| x.to_sexpr()) != Some(f.clone())) {
+        return Err("the tile stores are at different flat indices".into());
+    }
+    let counter = tile_counter_name(depth);
+    let threads = crate::wgsl::params::Knobs::of_root(plain)?.value(crate::wgsl::params::Knob::Threads);
+    let fx = f32_store(&body[first]).map(|(_, x, _)| x.clone()).ok_or("no store")?;
+    let mut terms = Vec::new();
+    add_terms(&fx, &mut terms);
+    let strides = terms.iter().filter(|t| t.name == "index.mul" && t.kids.len() == 2 && (0..2).any(|i| plain_value(&t.kids[i]) == Some(threads) && any_node(&t.kids[1 - i], &|m| m.name == counter))).count();
+    if strides != 1 || terms.iter().filter(|t| any_node(t, &|m| m.name == counter)).count() != 1 {
+        return Err("the flat index is not G + threads * k".into());
+    }
+    let marker = Tree::new("fallback", fx.ty, vec![]);
+    if body.iter().any(|s| any_node(&substitute(s, &f, &marker), &|m| m.name == counter)) {
+        return Err("the loader's counter is used outside its flat index".into());
+    }
+    let passes = plain_value(&lp.kids[0]).ok_or("the loader's count is not a literal")?;
+    if passes % 4 != 0 {
+        return Err(format!("{passes} passes do not divide by 4"));
+    }
+    let mut arrays = Vec::new();
+    let (mut rs, mut used) = (BTreeSet::new(), leaf_positions(plain));
+    for s in &body[first..] {
+        let a = f32_store(s).map(|(a, _, _)| a.to_string()).ok_or("no store")?;
+        if arrays.iter().any(|(x, _)| *x == a) {
+            return Err(format!("{a} is stored twice in the loader"));
+        }
+        let p = vec_tile_plan(plain, &a)?;
+        rs.insert((p.r, p.s));
+        let vec = ["wg.va", "wg.vb", "wg.vc", "wg.vd"].into_iter().find(|v| !used.contains_key(*v)).ok_or("no free vec4 workgroup array")?;
+        used.insert(vec.to_string(), Vec::new());
+        arrays.push((a, vec.to_string()));
+    }
+    let (r, s) = match rs.into_iter().collect::<Vec<_>>().as_slice() {
+        [x] => *x,
+        _ => return Err("the tiles' rows differ".into()),
+    };
+    // The body's registers live only in the loop.
+    let size = lp.size();
+    let positions = leaf_positions(plain);
+    for st in &body {
+        if let Some(k) = target_key(st).filter(|k| k.starts_with("reg.")) {
+            if positions.get(&k).is_some_and(|ps| ps.iter().any(|&p| p < node || p >= node + size)) {
+                return Err(format!("{k} is used outside the loader"));
+            }
+        }
+    }
+    Ok(LoaderPlan { node, depth, arrays, r, s, passes })
+}
+
+/// The kernel with the f32 tiles of one loader loop stored as interleaved
+/// vec4 tiles: cell j of a row at vec4 `j % S`, lane `j / S`, so a
+/// thread's 4 cells (S apart) are one vec4. The loader counts vec4s (a
+/// quarter of the passes): its body runs once per lane c with the flat
+/// index replaced by lane c's cell of vec4 F and fresh registers, and one
+/// thread stores each vec4 whole (lane stores by four threads raced: all 62
+/// children of the lane-store version computed wrong values). Every read
+/// is a lane of the vec4 at `row * S + lid` (one index for the thread's
+/// four cells, which the compiler loads once).
+pub fn vec_tile(root: &Tree, loader: usize, kingdom: &WgslKingdom) -> Result<Tree, String> {
+    let plain = crate::wgsl::params::to_literals(root, kingdom)?;
+    let (node, depth, lp) = loader_loops(&plain).into_iter().find(|(n, _, _)| *n == loader).ok_or("our software has a bug: the loader is gone")?;
+    let plan = loader_plan(&plain, node, depth, &lp)?;
+    let index = dual_ty(kingdom, "u32.index")?;
+    let real = dual_ty(kingdom, "f32.real")?;
+    let vindex = dual_ty(kingdom, "u32.wgvindex")?;
+    let varr = dual_ty(kingdom, "wgmem<vec4<f32>>.real")?;
+    let (v2, v3, v4) = (dual_ty(kingdom, "vec2<f32>.real")?, dual_ty(kingdom, "vec3<f32>.real")?, dual_ty(kingdom, "vec4<f32>.real")?);
+    let lit = |v: u32| Tree::literal("literal.index", index, v as f32);
+    let op = |name: &str, a: Tree, b: Tree| Tree::new(name, index, vec![a, b]);
+    let (r, s) = (plan.r, plan.s);
+    let vec_of = |a: &str| plan.arrays.iter().find(|(x, _)| x == a).map(|(_, v)| v.clone());
+    // The new loader.
+    let body = statements(&lp.kids[1]);
+    let first = body.iter().position(|x| f32_store(x).is_some()).ok_or("no store")?;
+    let f = f32_store(&body[first]).map(|(_, x, _)| x.clone()).ok_or("no store")?;
+    let fs = f.to_sexpr();
+    let mut used: BTreeSet<String> = leaf_positions(&plain).keys().cloned().collect();
+    let written: BTreeSet<String> = body.iter().filter_map(target_key).filter(|k| k.starts_with("reg.")).collect();
+    let mut new_body = Vec::new();
+    let mut lanes: BTreeMap<String, Vec<Tree>> = BTreeMap::new();
+    for c in 0..4u32 {
+        let mut map = BTreeMap::new();
+        if c > 0 {
+            for w in &written {
+                let stem = w.trim_end_matches(|ch: char| ch.is_ascii_digit());
+                let fresh = (0..64).map(|n| format!("{stem}{n}")).find(|x| !used.contains(x) && kingdom.rows.iter().any(|row| row.name == *x)).ok_or_else(|| format!("no free register like {w}"))?;
+                used.insert(fresh.clone());
+                map.insert(w.clone(), fresh);
+            }
+        }
+        // Lane c's cell of vec4 F: (F / S) * R + F % S + c * S.
+        let cell = op("index.add", op("index.add", op("index.shl", op("index.shr", f.clone(), lit(s.trailing_zeros())), lit(r.trailing_zeros())), op("index.and", f.clone(), lit(s - 1))), lit(c * s));
+        for st in &body {
+            let moved = rename(&substitute(st, &fs, &cell), &map);
+            match f32_store(st) {
+                Some((a, _, _)) => {
+                    let v = rename(&substitute(&st.kids[2], &fs, &cell), &map);
+                    lanes.entry(a.to_string()).or_default().push(v);
+                }
+                None => new_body.push(moved),
+            }
+        }
+    }
+    let body_rung = rung(&lp.kids[1].name).ok_or("the loader's body has no rung")?.to_string();
+    for (a, vals) in &lanes {
+        let [x, y, z, w] = vals.as_slice() else { return Err("our software has a bug: not four lanes".into()) };
+        let vec = vec_of(a).ok_or("our software has a bug: no vec4 tile")?;
+        let composed = Tree::new("shape.compose4", v4, vec![Tree::new("shape.compose3", v3, vec![Tree::new("shape.compose2", v2, vec![x.clone(), y.clone()]), z.clone()]), w.clone()]);
+        let st_ty = dual_ty(kingdom, &format!("stmt.{body_rung}"))?;
+        new_body.push(Tree::new(&format!("wg.set_v_{body_rung}"), st_ty, vec![Tree::new(&vec, varr, vec![]), Tree::new("safe.wgv_of", vindex, vec![f.clone()]), composed]));
+    }
+    let new_loop = Tree { name: lp.name.clone(), ty: lp.ty, konst: lp.konst, kids: vec![Tree::literal(&lp.kids[0].name, lp.kids[0].ty, (plan.passes / 4) as f32), rebuild(new_body, &body_rung, kingdom)?] };
+    // The loader replaced, the reads and declarations rewritten.
+    fn walk(t: &Tree, counter: &mut usize, plan: &LoaderPlan, new_loop: &Tree, f: &dyn Fn(&Tree) -> Option<Tree>) -> Tree {
+        let me = *counter;
+        *counter += 1;
+        if me == plan.node {
+            *counter += t.size() - 1;
+            return new_loop.clone();
+        }
+        if let Some(n) = f(t) {
+            *counter += t.size() - 1;
+            return n;
+        }
+        Tree { name: t.name.clone(), ty: t.ty, konst: t.konst, kids: t.kids.iter().map(|k| walk(k, counter, plan, new_loop, f)).collect() }
+    }
+    let rewrite = |t: &Tree| -> Option<Tree> {
+        let is_tile = |k: &Tree| k.kids.is_empty() && vec_of(&k.name).is_some();
+        if t.name == "wg.get_safe" && t.kids.len() == 2 && is_tile(&t.kids[0]) {
+            let si = strided_index(&t.kids[1].kids[0], [r, r], [s, s])?;
+            let mut y = si.lid.clone();
+            for (e, m) in &si.rows {
+                y = op("index.add", op("index.mul", (*e).clone(), lit(m / 4)), y);
+            }
+            if si.literal_rows > 0 {
+                y = op("index.add", y, lit(si.literal_rows * s));
+            }
+            let read = Tree::new("wg.get_v_safe", v4, vec![Tree::new(&vec_of(&t.kids[0].name)?, varr, vec![]), Tree::new("safe.wgv_of", vindex, vec![y])]);
+            return Some(Tree::new(&format!("shape.access_{}", si.lane), real, vec![read]));
+        }
+        if t.name == "wg.decl_f" && t.kids.len() == 2 && is_tile(&t.kids[0]) {
+            let len = plain_value(&t.kids[1])?;
+            return Some(Tree::new("wg.decl_v4", t.ty, vec![Tree::new(&vec_of(&t.kids[0].name)?, varr, vec![]), Tree::literal("literal.wglen", t.kids[1].ty, (len / 4) as f32)]));
+        }
+        None
+    };
+    Ok(walk(&plain, &mut 0, &plan, &new_loop, &rewrite))
+}
+
+/// RULE: VECTORISE THE STRIDED f32 TILES OF A LOADER (one site per loader loop).
+pub fn vec_tile_sites(root: &Tree, kingdom: &WgslKingdom) -> Vec<Site> {
+    let Ok(plain) = crate::wgsl::params::to_literals(root, kingdom) else { return Vec::new() };
+    loader_loops(&plain)
+        .into_iter()
+        .filter_map(|(n, d, lp)| loader_plan(&plain, n, d, &lp).ok().map(|p| Site { index: n, what: format!("{} as vec4 (R {}, S {}, {} passes)", p.arrays.iter().map(|(a, v)| format!("{a}->{v}")).collect::<Vec<_>>().join(" "), p.r, p.s, p.passes) }))
+        .collect()
+}
+
+/// Why no loader's tiles vectorise.
+fn vec_tile_why(root: &Tree, kingdom: &WgslKingdom) -> Option<String> {
+    let plain = crate::wgsl::params::to_literals(root, kingdom).ok()?;
+    let loops = loader_loops(&plain);
+    if loops.is_empty() {
+        return Some("no counted loop stores an f32 tile".into());
+    }
+    let why: Vec<String> = loops.iter().filter_map(|(n, d, lp)| loader_plan(&plain, *n, *d, lp).err()).collect();
+    (why.len() == loops.len()).then(|| why.join("; "))
+}
+
 /// A rule of the catalogue.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Rule {
     DropZeroFill,
     GrowRows,
+    VecTile,
 }
 
 impl Rule {
-    pub const ALL: [Rule; 2] = [Rule::DropZeroFill, Rule::GrowRows];
+    pub const ALL: [Rule; 3] = [Rule::DropZeroFill, Rule::GrowRows, Rule::VecTile];
 
     pub fn name(self) -> &'static str {
         match self {
             Rule::DropZeroFill => "drop-zero-fill",
             Rule::GrowRows => "grow-rows",
+            Rule::VecTile => "vec4-tile",
         }
     }
 
@@ -617,6 +994,7 @@ impl Rule {
         match self {
             Rule::DropZeroFill => drop_zero_fill_sites(root),
             Rule::GrowRows => grow_rows_sites(root, kingdom),
+            Rule::VecTile => vec_tile_sites(root, kingdom),
         }
     }
 
@@ -625,6 +1003,7 @@ impl Rule {
         match self {
             Rule::DropZeroFill => drop_zero_fill_sites(root).is_empty().then(|| "no dead zero store outside a loop".to_string()),
             Rule::GrowRows => grow_rows_plan(root, kingdom).err(),
+            Rule::VecTile => vec_tile_why(root, kingdom),
         }
     }
 
@@ -632,6 +1011,7 @@ impl Rule {
         match self {
             Rule::DropZeroFill => drop_zero_fill(root, site, kingdom),
             Rule::GrowRows => grow_rows(root, kingdom),
+            Rule::VecTile => vec_tile(root, site.index, kingdom),
         }
     }
 }
@@ -741,6 +1121,28 @@ mod tests {
         assert!(grow_rows_plan(&eight, &k).unwrap_err().contains("row block is 8"));
         let row_strided = read("0.1222_fit_A2_paused_1912Z_g000_r5_13236c.wgsl").unwrap();
         assert!(grow_rows_plan(&row_strided, &k).unwrap_err().contains("flat thread index"));
+    }
+
+    /// VECTORISE THE STRIDED f32 TILES of a saved kernel (popC_rand20's
+    /// r01, 16 x 16 workgroup, 4 x 4 blocks, a thread's four columns 16
+    /// apart): the loader counts vec4s, stores each whole from one thread,
+    /// and the 16 products read lanes of two vec4s (its child was correct
+    /// on all 128 device cases, 2026-10-12).
+    #[test]
+    fn the_strided_tiles_of_a_loader_become_interleaved_vec4_tiles() {
+        let k = WgslKingdom::load_safe();
+        let f = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("logs/HGP/001/popC_rand20/texts/r01_0.1954_fit_A_g001_r12_86aa44.wgsl");
+        let Ok(src) = std::fs::read_to_string(&f) else { return };
+        let t = read_safe(&src, &k).unwrap().tree;
+        let sites = vec_tile_sites(&t, &k);
+        assert_eq!(sites.len(), 1, "{sites:?}");
+        let child = vec_tile(&t, sites[0].index, &k).unwrap();
+        let (text, _) = crate::wgsl::knob::check_text(&child, &k).unwrap_or_else(|(s, e)| panic!("{}: {e}", s.name()));
+        assert!(!text.contains("wg_a[") && !text.contains("wg_b["), "{text}");
+        assert!(text.contains("var<workgroup> wg_va: array<vec4<f32>, 512>;") && text.contains("for (k = 0u; k < 1u; k = k + 1u)"), "{text}");
+        assert!(text.contains("wg_va[((((k * 16u) + lid.x)) & 511u)].w"), "{text}");
+        // No lane is stored into a workgroup vec4 (four threads would race on it).
+        assert!(!text.lines().any(|l| l.contains("wg_v") && l.contains("][") && l.contains("] = ")), "{text}");
     }
 
     /// Never a zero store inside a loop, nor one whose storage was touched
