@@ -1236,3 +1236,38 @@ F1234	subgroup	shuffle	SubgroupGather	i32.int u32.index	i32.int	2	subgroupShuffl
 F1235	subgroup	shuffle_down	SubgroupGather	i32.int u32.index	i32.int	2	subgroupShuffleDown(x, i)
 F1236	subgroup	shuffle_up	SubgroupGather	i32.int u32.index	i32.int	2	subgroupShuffleUp(x, i)
 F1237	subgroup	shuffle_xor	SubgroupGather	i32.int u32.index	i32.int	2	subgroupShuffleXor(x, i)
+F1238	block	brk_B1	composite	block.C1 bool.flag block.C1	block.B1	3	arity 3: before; if (c) { break; }; after
+F1239	block	brk_B2	composite	block.C2 bool.flag block.C2	block.B2	3	arity 3: before; if (c) { break; }; after
+F1240	block	brk_B3	composite	block.C3 bool.flag block.C3	block.B3	3	arity 3: before; if (c) { break; }; after
+F1241	block	brk_B4	composite	block.C4 bool.flag block.C4	block.B4	3	arity 3: before; if (c) { break; }; after
+F1242	block	brk_B5	composite	block.C5 bool.flag block.C5	block.B5	3	arity 3: before; if (c) { break; }; after
+F1243	loop	tile_brk_L0	composite	u32.lit64 block.B2	stmt.L0	2	for (k = 0u; k < n; k++) { body that breaks }
+F1244	loop	tilex_brk_L0	composite	u32.boundx block.B2	stmt.L0	2	for (k = 0u; k < (expr); k++) { body that breaks }
+F1245	loop	tile_brk_L1	composite	u32.lit64 block.B2	stmt.L1	2	for (k = 0u; k < n; k++) { body that breaks }
+F1246	loop	tilex_brk_L1	composite	u32.boundx block.B2	stmt.L1	2	for (k = 0u; k < (expr); k++) { body that breaks }
+F1247	loop	tile_brk_L2	composite	u32.lit64 block.B3	stmt.L2	2	for (k = 0u; k < n; k++) { body that breaks }
+F1248	loop	tilex_brk_L2	composite	u32.boundx block.B3	stmt.L2	2	for (k = 0u; k < (expr); k++) { body that breaks }
+F1249	loop	tile_brk_L3	composite	u32.lit64 block.B4	stmt.L3	2	for (k = 0u; k < n; k++) { body that breaks }
+F1250	loop	tilex_brk_L3	composite	u32.boundx block.B4	stmt.L3	2	for (k = 0u; k < (expr); k++) { body that breaks }
+F1251	loop	tile_brk_L4	composite	u32.lit64 block.B5	stmt.L4	2	for (k = 0u; k < n; k++) { body that breaks }
+F1252	loop	tilex_brk_L4	composite	u32.boundx block.B5	stmt.L4	2	for (k = 0u; k < (expr); k++) { body that breaks }
+F1253	loop	tile_brk_C0	composite	u32.lit64 block.B1	stmt.C0	2	for (k = 0u; k < n; k++) { body that breaks }
+F1254	loop	tilex_brk_C0	composite	u32.boundx block.B1	stmt.C0	2	for (k = 0u; k < (expr); k++) { body that breaks }
+F1255	loop	tile_brk_C1	composite	u32.lit64 block.B2	stmt.C1	2	for (k = 0u; k < n; k++) { body that breaks }
+F1256	loop	tilex_brk_C1	composite	u32.boundx block.B2	stmt.C1	2	for (k = 0u; k < (expr); k++) { body that breaks }
+F1257	loop	tile_brk_C2	composite	u32.lit64 block.B3	stmt.C2	2	for (k = 0u; k < n; k++) { body that breaks }
+F1258	loop	tilex_brk_C2	composite	u32.boundx block.B3	stmt.C2	2	for (k = 0u; k < (expr); k++) { body that breaks }
+F1259	loop	tile_brk_C3	composite	u32.lit64 block.B4	stmt.C3	2	for (k = 0u; k < n; k++) { body that breaks }
+F1260	loop	tilex_brk_C3	composite	u32.boundx block.B4	stmt.C3	2	for (k = 0u; k < (expr); k++) { body that breaks }
+F1261	loop	tile_brk_C4	composite	u32.lit64 block.B5	stmt.C4	2	for (k = 0u; k < n; k++) { body that breaks }
+F1262	loop	tilex_brk_C4	composite	u32.boundx block.B5	stmt.C4	2	for (k = 0u; k < (expr); k++) { body that breaks }
+F1263	block	cont_L1	composite	bool.flag block.C1	block.L1	2	if (c) { continue; } then the rest, conditional
+F1264	block	cont_L2	composite	bool.flag block.C2	block.L2	2	if (c) { continue; } then the rest, conditional
+F1265	block	cont_L3	composite	bool.flag block.C3	block.L3	2	if (c) { continue; } then the rest, conditional
+F1266	block	cont_L4	composite	bool.flag block.C4	block.L4	2	if (c) { continue; } then the rest, conditional
+F1267	block	cont_L5	composite	bool.flag block.C5	block.L5	2	if (c) { continue; } then the rest, conditional
+F1268	block	cont_C1	composite	bool.flag block.C1	block.C1	2	if (c) { continue; } then the rest, conditional
+F1269	block	cont_C2	composite	bool.flag block.C2	block.C2	2	if (c) { continue; } then the rest, conditional
+F1270	block	cont_C3	composite	bool.flag block.C3	block.C3	2	if (c) { continue; } then the rest, conditional
+F1271	block	cont_C4	composite	bool.flag block.C4	block.C4	2	if (c) { continue; } then the rest, conditional
+F1272	block	cont_C5	composite	bool.flag block.C5	block.C5	2	if (c) { continue; } then the rest, conditional

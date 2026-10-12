@@ -160,3 +160,8 @@ T158	wgmem<atomic<u32>>.index	wgmem<atomic<u32>>	index	0	0u	0	0	0	a workgroup-me
 T159	wgmem<atomic<i32>>.int	wgmem<atomic<i32>>	int	0	0	0	0	0	a workgroup-memory array of atomic<i32>: ai_a, ai_b
 T160	u32.wgaindex	u32	wgaindex	1	0u	0	0	0	an index into an atomic workgroup array, masked to the array by its row
 T161	reg<i32>.int	reg<i32>	int	1	0	0	0	0	a named i32 register: n0..n15
+T162	block.B1	block	B1	0	empty	0	0	0	a loop body that breaks, one tile deep: no barrier
+T163	block.B2	block	B2	0	empty	0	0	0	a loop body that breaks, two tile loops deep (or a tile loop in the item loop): no barrier
+T164	block.B3	block	B3	0	empty	0	0	0	a loop body that breaks, three deep: no barrier
+T165	block.B4	block	B4	0	empty	0	0	0	a loop body that breaks, four deep: no barrier
+T166	block.B5	block	B5	0	empty	0	0	0	a loop body that breaks, five deep: no barrier

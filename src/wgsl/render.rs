@@ -281,6 +281,30 @@ pub struct Renderer<'a> {
 /// The tile loops' counters by depth (a fourth since run A, 2026-10-11).
 const TILE_COUNTERS: [&str; 4] = ["k", "k2", "k3", "k4"];
 
+/// Whether a block holds a `block.cont` other than one that runs to the end
+/// of the block (`top`: the block itself, or the last statement's block of a
+/// sequence); a continue inside a loop of the body belongs to that loop.
+fn cont_below_top(t: &Tree, top: bool) -> bool {
+    let base = safe_base(&t.name);
+    if base.starts_with("loop.") {
+        return false;
+    }
+    match base {
+        "block.cont" => !top || t.kids.get(1).is_some_and(|rest| cont_below_top(rest, true)),
+        "block.one" | "block.seq2" | "block.seq3" | "block.seq4" => {
+            let last = t.kids.len().saturating_sub(1);
+            t.kids.iter().enumerate().any(|(i, k)| {
+                if i == last && safe_base(&k.name) == "stmt.block" && k.kids.len() == 1 {
+                    cont_below_top(&k.kids[0], top)
+                } else {
+                    cont_below_top(k, false)
+                }
+            })
+        }
+        _ => t.kids.iter().any(|k| cont_below_top(k, false)),
+    }
+}
+
 /// The most copies of a body nested full unrolls write out (one unroll of up
 /// to 64 always is). Past it an unroll is written as its loop, the same
 /// computation: a random gene of three nested unrolls (57 x 38 x 38 copies of
@@ -499,7 +523,18 @@ impl<'a> Renderer<'a> {
         match safe_base(&b.name) {
             "fallback" if self.is_epilogue(b.ty) => Ok((self.epilogue_fallback(scope)?, false)),
             "fallback" => Ok((String::new(), false)),
-            // The epilogue's `if (c) { continue; }`, then the rest of its block.
+            // A loop body that breaks: before, `if (c) { break; }`, after.
+            "block.brk" if b.kids.len() == 3 => {
+                let (before, terminated) = self.block_t(&b.kids[0], scope)?;
+                if terminated {
+                    return Ok((before, true));
+                }
+                let c = self.value(&b.kids[1], scope)?;
+                let (after, terminated) = self.block_t(&b.kids[2], scope)?;
+                Ok((format!("{before}    if ({c}) {{ break; }}\n{after}"), terminated))
+            }
+            // `if (c) { continue; }`, then the rest of its block (the epilogue's,
+            // and a loop body's at an L or C rung, the rest conditional).
             "block.cont" if b.kids.len() == 2 => {
                 let c = self.value(&b.kids[0], scope)?;
                 let (rest, terminated) = self.block_t(&b.kids[1], scope)?;
@@ -555,7 +590,10 @@ impl<'a> Renderer<'a> {
             return Err("a fifth nested tile loop (the safe grammar does not produce this)".into());
         };
         let copies = scope.unroll_copies.saturating_mul(count);
-        if copies > UNROLL_COPIES_MAX {
+        // A continue below the top of the body (inside an if or a block of a
+        // copy) would skip the rest of the copy, which straight-line copies
+        // cannot say: such a body is written as its loop too.
+        if copies > UNROLL_COPIES_MAX || cont_below_top(&s.kids[1], true) {
             // Written as its loop: the counter a variable again, a continue
             // in the body continues the loop.
             let (was, copy_was) = (scope.in_tile, scope.in_unrolled_copy);
@@ -1807,7 +1845,7 @@ fn items_passes(bound: Option<&Tree>) -> f64 {
 /// `store.h_safe`, a rung-specific wg set to `wg.set_safe`. A WGSL kingdom
 /// name passes through unchanged.
 pub fn safe_base(name: &str) -> &str {
-    for rung in ["_L0", "_L1", "_L2", "_L3", "_L4", "_L5", "_C0", "_C1", "_C2", "_C3", "_C4", "_C5", "_O0", "_O1", "_O2", "_O3", "_O4"] {
+    for rung in ["_L0", "_L1", "_L2", "_L3", "_L4", "_L5", "_C0", "_C1", "_C2", "_C3", "_C4", "_C5", "_O0", "_O1", "_O2", "_O3", "_O4", "_B1", "_B2", "_B3", "_B4", "_B5"] {
         if let Some(stem) = name.strip_suffix(rung) {
             return match stem {
                 "store.h" => "store.h_safe",
@@ -1820,6 +1858,9 @@ pub fn safe_base(name: &str) -> &str {
                 "loop.tile_strided" => "loop.tile_strided_bounded",
                 "loop.tilex" => "loop.tilex_bounded",
                 "loop.tilex_strided" => "loop.tilex_strided_bounded",
+                // A loop that breaks is its tile loop; its body (block.brk) holds the break.
+                "loop.tile_brk" => "loop.tile_bounded",
+                "loop.tilex_brk" => "loop.tilex_bounded",
                 other => other,
             };
         }

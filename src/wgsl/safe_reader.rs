@@ -86,6 +86,12 @@ struct Ctx<'a> {
     /// `atomic@<h>` to its expression): naga runs it as a statement ahead of
     /// the loop's test, the bound re-evaluates it every pass.
     inlined: HashMap<String, Tree>,
+    /// The locals stored so far in reading order (a counter never stored
+    /// enters its loop at WGSL's zero), and a tile loop's counter offset
+    /// while its body is read (`for (var w = 2u; ...)`: the counter is
+    /// 2 + k, the loop runs bound - 2 times).
+    stored_seen: std::collections::BTreeSet<String>,
+    counter_offsets: HashMap<String, f32>,
     /// While a helper body is being inlined: its arguments by `arg.<name>`,
     /// already resolved and typed in the caller.
     inline_args: Option<HashMap<String, Tree>>,
@@ -467,6 +473,44 @@ fn slot_of(n: &Node) -> &str {
     match n {
         Node::Leaf { slot, .. } | Node::Literal { slot, .. } | Node::App { slot, .. } => slot,
     }
+}
+
+/// Whether a loop body (after its test; through the block naga makes of a
+/// `for` body) has `if (c) { break; }` at its top level.
+fn has_break_guard(stmts: &[Statement]) -> bool {
+    let only_break = |b: &naga::Block| b.iter().filter(|s| !matches!(s, Statement::Emit(_))).count() == 1 && b.iter().any(|s| matches!(s, Statement::Break));
+    let empty = |b: &naga::Block| b.iter().all(|s| matches!(s, Statement::Emit(_)));
+    stmts.iter().any(|s| match s {
+        Statement::Block(b) => has_break_guard(b),
+        Statement::If { accept, reject, .. } => (only_break(accept) && empty(reject)) || (only_break(reject) && empty(accept)),
+        _ => false,
+    })
+}
+
+/// The break condition of a guard statement: `if (c) { break; }` is c,
+/// `if (c) { } else { break; }` is !c; None for any other statement.
+fn break_guard(t: &Tree, ctx: &Ctx) -> Option<Result<Tree, String>> {
+    let only_break = |b: &Tree| {
+        let mut inner = Vec::new();
+        flatten_stmts(b.clone(), &mut inner);
+        matches!(inner.as_slice(), [s] if s.name == "stmt.break")
+    };
+    let empty = |b: &Tree| b.name == "fallback" || {
+        let mut inner = Vec::new();
+        flatten_stmts(b.clone(), &mut inner);
+        inner.is_empty()
+    };
+    match (rung_stem(&t.name), t.kids.as_slice()) {
+        (Some("stmt.if"), [c, b]) if only_break(b) => Some(Ok(c.clone())),
+        (Some("stmt.if_else"), [c, a, b]) if only_break(b) && empty(a) => Some(ty(ctx, "bool.flag").map(|f| Tree::new("logic.not", f, vec![c.clone()]))),
+        (Some("stmt.if_else"), [c, a, b]) if only_break(a) && empty(b) => Some(Ok(c.clone())),
+        _ => None,
+    }
+}
+
+/// Whether a statement tree holds a break anywhere in it.
+fn has_break(t: &Tree) -> bool {
+    t.name == "stmt.break" || t.kids.iter().any(has_break)
 }
 
 /// The marker of a tree already in the safe grammar inside a raw one.
@@ -1206,6 +1250,18 @@ impl<'a> Ctx<'a> {
         Ok(row)
     }
 
+    /// A tile counter's read: its index, plus the loop's entry value when
+    /// the loop did not start at zero.
+    fn offset_counter(&self, local: &str, k: Tree) -> Result<Tree, String> {
+        match self.counter_offsets.get(local) {
+            Some(&a) if a != 0.0 => {
+                let index = ty(self, "u32.index")?;
+                Ok(Tree::new("index.add", index, vec![Tree::literal("literal.index", index, a), k]))
+            }
+            _ => Ok(k),
+        }
+    }
+
     fn reg_dual(kind: char) -> &'static str {
         match kind {
             'f' => "reg<f32>.real",
@@ -1234,16 +1290,20 @@ impl<'a> Ctx<'a> {
                     return Ok(Tree::new("safe.counter_index", ty(self, "u32.index")?, vec![Tree::new("safe.counter", ty(self, "u32.counter")?, vec![])]));
                 }
                 if self.tile_counter.as_deref() == Some(local.as_str()) {
-                    return Ok(Tree::new("safe.tile_index", ty(self, "u32.index")?, vec![Tree::new("safe.tile_counter", ty(self, "u32.tcounter")?, vec![])]));
+                    let k = Tree::new("safe.tile_index", ty(self, "u32.index")?, vec![Tree::new("safe.tile_counter", ty(self, "u32.tcounter")?, vec![])]);
+                    return self.offset_counter(&local, k);
                 }
                 if self.tile_counter2.as_deref() == Some(local.as_str()) {
-                    return Ok(Tree::new("safe.tile_index2", ty(self, "u32.index")?, vec![Tree::new("safe.tile_counter2", ty(self, "u32.tcounter2")?, vec![])]));
+                    let k = Tree::new("safe.tile_index2", ty(self, "u32.index")?, vec![Tree::new("safe.tile_counter2", ty(self, "u32.tcounter2")?, vec![])]);
+                    return self.offset_counter(&local, k);
                 }
                 if self.tile_counter3.as_deref() == Some(local.as_str()) {
-                    return Ok(Tree::new("safe.tile_index3", ty(self, "u32.index")?, vec![Tree::new("safe.tile_counter3", ty(self, "u32.tcounter3")?, vec![])]));
+                    let k = Tree::new("safe.tile_index3", ty(self, "u32.index")?, vec![Tree::new("safe.tile_counter3", ty(self, "u32.tcounter3")?, vec![])]);
+                    return self.offset_counter(&local, k);
                 }
                 if self.tile_counter4.as_deref() == Some(local.as_str()) {
-                    return Ok(Tree::new("safe.tile_index4", ty(self, "u32.index")?, vec![Tree::new("safe.tile_counter4", ty(self, "u32.tcounter4")?, vec![])]));
+                    let k = Tree::new("safe.tile_index4", ty(self, "u32.index")?, vec![Tree::new("safe.tile_counter4", ty(self, "u32.tcounter4")?, vec![])]);
+                    return self.offset_counter(&local, k);
                 }
                 let row = self.register(&local, &d)?;
                 let kind = row.chars().nth(4).unwrap_or('f');
@@ -1825,11 +1885,11 @@ impl<'a> Ctx<'a> {
     /// a return or an item loop has no conditional spelling.
     fn rerung(&self, t: &Tree, d: usize) -> Result<Tree, String> {
         if t.name == "stmt.continue" {
-            return Err("a continue in the kernel's epilogue that is not a guard `if (c) { continue; }` ahead of the store".into());
+            return Err("a continue that is not a guard `if (c) { continue; }` where only conditional statements are spelled (the rest of a loop body after a continue, or the epilogue before its store)".into());
         }
         let Some(stem) = rung_stem(&t.name) else { return Ok(t.clone()) };
         if stem == "stmt.barrier" || stem == "stmt.storage_barrier" || stem == "stmt.subgroup_barrier" || stem == "stmt.return" || stem.starts_with("loop.items") {
-            return Err(format!("{} before the last store of h, inside the kernel's epilogue (conditional statements only)", t.name));
+            return Err(format!("{} where only conditional statements are spelled (after a loop's continue guard, or before the epilogue's last store of h)", t.name));
         }
         let tile = matches!(stem, "loop.tile" | "loop.tile_strided" | "loop.tilex" | "loop.tilex_strided");
         if tile && d + 1 > 5 {
@@ -1848,6 +1908,28 @@ impl<'a> Ctx<'a> {
         let st = self.stmt_ty(rung)?;
         if stmts.is_empty() {
             return Ok(Tree::fallback(bt));
+        }
+        // `if (c) { continue; }` inside a loop (an L or C rung below the top):
+        // the guard, then the rest of the block at the conditional rung of its
+        // depth (no barrier after a continue; every thread still reaches the
+        // next iteration).
+        let looped_rung = matches!(rung.as_bytes(), [b'L' | b'C', d] if (b'1'..=b'5').contains(d));
+        // A continue whose rest stores h is the epilogue's (epilogue_block
+        // reads it into block.cont_O<d>).
+        if looped_rung && !stmts.iter().any(has_store) {
+            if let Some(at) = stmts.iter().position(is_continue_guard) {
+                let mut before = stmts;
+                let rest: Vec<Tree> = before.split_off(at + 1);
+                let guard = before.pop().expect("the guard at `at`");
+                let d: usize = rung[1..].parse().unwrap_or(1);
+                let rest = rest.iter().map(|t| self.rerung(t, d)).collect::<Result<Vec<_>, _>>()?;
+                let cont = Tree::new(&format!("block.cont_{rung}"), bt, vec![guard.kids[0].clone(), self.block(rest, &format!("C{d}"))?]);
+                if before.is_empty() {
+                    return Ok(cont);
+                }
+                before.push(Tree::new(&format!("stmt.block_{rung}"), st, vec![cont]));
+                return self.block(before, rung);
+            }
         }
         let mut items = stmts;
         // More than four: the tail nested as a `stmt.block`.
@@ -2171,6 +2253,115 @@ impl<'a> Ctx<'a> {
                             Ok(Some(Tree::new(&format!("stmt.if_else_{rung}"), st, vec![c, self.block(a, &crung)?, self.block(r, &crung)?])))
                         }
                     }
+                    Statement::Switch { cases, .. } => {
+                        // A switch is its if-else chain (WGSL has no fallthrough
+                        // and a selector is a value): each case group tests its
+                        // values in order, the group with `default` is the last
+                        // else. A case list (`case 1u, 2u:`) is naga's
+                        // fall-through cases with empty bodies.
+                        let root = self.root_at(&here, |k| matches!(k, RootKind::Condition { .. })).ok_or("no condition root at this switch")?;
+                        let sel_tree = tree_of(self, &root.tree)?;
+                        let sel = self.value(&sel_tree.kids[0])?;
+                        let flag = ty(self, "bool.flag")?;
+                        let mut groups: Vec<(Vec<Tree>, usize)> = Vec::new();
+                        let mut default_at: Option<usize> = None;
+                        let mut values: Vec<Tree> = Vec::new();
+                        let mut has_default = false;
+                        for (ci, case) in cases.iter().enumerate() {
+                            match case.value {
+                                naga::SwitchValue::I32(v) => values.push(Tree::literal("literal.int", ty(self, "i32.int")?, v as f32)),
+                                naga::SwitchValue::U32(v) => values.push(Tree::literal("literal.index", ty(self, "u32.index")?, v as f32)),
+                                naga::SwitchValue::Default => has_default = true,
+                            }
+                            if case.fall_through {
+                                if case.body.iter().any(|s| !matches!(s, Statement::Emit(_))) {
+                                    return Err("a switch case that falls through after statements (WGSL has no fallthrough)".into());
+                                }
+                                continue;
+                            }
+                            if has_default {
+                                default_at = Some(ci);
+                            } else {
+                                let eqs: Vec<Tree> = values.iter().map(|v| Tree::new("compare.eq", flag, vec![sel.clone(), v.clone()])).collect();
+                                let cond = eqs.into_iter().reduce(|a, b| Tree::new("logic.or", flag, vec![a, b])).ok_or("a switch case with no value")?;
+                                groups.push((vec![cond], ci));
+                            }
+                            values.clear();
+                            has_default = false;
+                        }
+                        // A case's body without its trailing break (it ends the case
+                        // anyway); a break anywhere else in a case leaves the switch,
+                        // which an if-else chain cannot say.
+                        let body_of = |ci: usize| -> Result<naga::Block, String> {
+                            let mut stmts: Vec<Statement> = cases[ci].body.iter().cloned().collect();
+                            if let Some(at) = stmts.iter().rposition(|s| !matches!(s, Statement::Emit(_))) {
+                                if matches!(stmts[at], Statement::Break) {
+                                    stmts.remove(at);
+                                }
+                            }
+                            fn has_break(b: &[Statement]) -> bool {
+                                b.iter().any(|s| match s {
+                                    Statement::Break => true,
+                                    Statement::Block(b) => has_break(b),
+                                    Statement::If { accept, reject, .. } => has_break(accept) || has_break(reject),
+                                    _ => false,
+                                })
+                            }
+                            if has_break(&stmts) {
+                                return Err("a break inside a switch case before its end (it leaves the switch; the kingdom spells a switch as its if-else chain)".into());
+                            }
+                            Ok(naga::Block::from_vec(stmts))
+                        };
+                        let crung = format!("C{level}");
+                        let walk_case = |ctx: &mut Self, ci: usize, path: &mut Vec<usize>, r: &str| -> Result<Vec<Tree>, String> {
+                            let b = body_of(ci)?;
+                            path.push(ci);
+                            let out = ctx.nested(|ctx, path| ctx.walk(&b, path, r, 0), path);
+                            path.pop();
+                            out
+                        };
+                        self.tail = stmt_tail;
+                        if groups.is_empty() {
+                            // Only a default: its statements, unconditionally.
+                            let d = match default_at {
+                                Some(ci) => walk_case(self, ci, path, rung),
+                                None => Ok(Vec::new()),
+                            };
+                            self.tail = block_tail;
+                            let d = d?;
+                            return Ok(if d.is_empty() { None } else { Some(Tree::new(&format!("stmt.block_{rung}"), st, vec![self.block(d, rung)?])) });
+                        }
+                        let mut bodies = Vec::new();
+                        for (_, ci) in &groups {
+                            match walk_case(self, *ci, path, &crung) {
+                                Ok(b) => bodies.push(b),
+                                Err(e) => {
+                                    self.tail = block_tail;
+                                    return Err(e);
+                                }
+                            }
+                        }
+                        let default = match default_at {
+                            Some(ci) => walk_case(self, ci, path, &crung),
+                            None => Ok(Vec::new()),
+                        };
+                        self.tail = block_tail;
+                        let default = default?;
+                        // The chain from its last test up: each else holds the next if.
+                        let cst = self.stmt_ty(&crung)?;
+                        let mut rest: Vec<Tree> = default;
+                        for (i, ((conds, _), body)) in groups.iter().zip(bodies).enumerate().rev() {
+                            let (r, t) = if i == 0 { (rung.to_string(), st) } else { (crung.clone(), cst) };
+                            let then = self.block(body, &crung)?;
+                            let stmt = if rest.is_empty() {
+                                Tree::new(&format!("stmt.if_{r}"), t, vec![conds[0].clone(), then])
+                            } else {
+                                Tree::new(&format!("stmt.if_else_{r}"), t, vec![conds[0].clone(), then, self.block(rest, &crung)?])
+                            };
+                            rest = vec![stmt];
+                        }
+                        Ok(rest.pop())
+                    }
                     Statement::Loop { body, continuing, break_if } => {
                         self.tail = false;
                         let looped = self.looped(body, continuing, *break_if, path, rung, cond);
@@ -2206,6 +2397,9 @@ impl<'a> Ctx<'a> {
                     // then the rest of an epilogue tile loop's body); anywhere else
                     // it is refused by name when the kernel is split.
                     Statement::Continue => Ok(Some(Tree::new("stmt.continue", st, vec![]))),
+                    // A break: the guard `if (c) { break; }` of a loop that breaks
+                    // (looped reads it into block.brk_B<d>); anywhere else it is named.
+                    Statement::Break => Ok(Some(Tree::new("stmt.break", st, vec![]))),
                     other => Err(format!("statement {} has no safe spelling", stmt_name(other))),
                 }
             })();
@@ -2365,11 +2559,16 @@ impl<'a> Ctx<'a> {
                 return match literal_value(&tree.kids[0]) {
                     Some(v) if v.to_bits() == 0 => {
                         self.used_counters.remove(&local);
+                        // Its value is known again: 0, for the loop that follows.
+                        self.stored_seen.insert(local.clone());
+                        let index = ty(self, "u32.index")?;
+                        self.axis_memo.insert(local.clone(), (Tree::literal("literal.index", index, 0.0), self.loop_depth));
                         Ok(None)
                     }
                     _ => Err(format!("the item counter {local} set to {} between loops (only 0 has a spelling)", tree.kids[0].to_sexpr())),
                 };
             }
+            self.stored_seen.insert(local.clone());
             let d = self.kingdom.dual(tree.kids[0].ty).map(|d| d.dual.clone()).unwrap_or_default();
             let row = self.register(&local, &d)?;
             let kind = row.chars().nth(4).unwrap_or('f');
@@ -2500,16 +2699,16 @@ impl<'a> Ctx<'a> {
     }
 
     fn looped(&mut self, body: &naga::Block, continuing: &naga::Block, break_if: Option<Handle<Expression>>, path: &mut Vec<usize>, rung: &str, cond: bool) -> Result<Option<Tree>, String> {
-        if break_if.is_some() {
-            return Err("a loop with a break_if (not a `for`)".into());
-        }
         // The condition: the first non-Emit statement of the body is an If
         // whose one arm is a Break; calls of pure helpers may precede it (the
         // kingdom's own `lit_u32` in a rendered bound, which naga calls at
         // the top of the body).
         let body_stmts_all: Vec<&Statement> = body.iter().filter(|s| !matches!(s, Statement::Emit(_))).collect();
-        let test_pos = body_stmts_all.iter().position(|s| matches!(s, Statement::If { .. })).ok_or("a loop without a test")?;
-        for (i, s) in body_stmts_all[..test_pos].iter().enumerate() {
+        // `loop { ...; continuing { step; break if c; } }` (a do-while): no
+        // test at the top; the break condition is the root at the loop's path.
+        let do_while = break_if.is_some();
+        let test_pos = if do_while { 0 } else { body_stmts_all.iter().position(|s| matches!(s, Statement::If { .. })).ok_or("a loop without a test")? };
+        for (i, s) in body_stmts_all[..test_pos].iter().enumerate().filter(|_| !do_while) {
             // A subgroup operation or an atomic in the bound: naga runs it
             // ahead of the test; the bound holds its expression inline.
             if let Statement::SubgroupCollectiveOperation { result, .. } | Statement::SubgroupGather { result, .. } | Statement::Atomic { result, .. } = s {
@@ -2527,16 +2726,20 @@ impl<'a> Ctx<'a> {
                 return Err(format!("a loop whose test calls {callee}, a helper with statements"));
             }
         }
-        let Statement::If { accept, reject, .. } = body_stmts_all[test_pos] else { return Err("a loop whose first statement is not its test".into()) };
-        let is_break = |b: &naga::Block| b.iter().filter(|s| !matches!(s, Statement::Emit(_))).count() == 1 && b.iter().any(|s| matches!(s, Statement::Break));
-        let is_empty = |b: &naga::Block| b.iter().all(|s| matches!(s, Statement::Emit(_)));
-        let negated = if is_break(reject) && is_empty(accept) { false } else if is_break(accept) && is_empty(reject) { true } else { return Err("a loop whose test does not break".into()) };
-        path.push(0);
-        path.push(test_pos);
-        let root = self.root_at(path, |k| matches!(k, RootKind::Condition { .. }));
-        path.pop();
-        path.pop();
-        let root = root.ok_or("no condition root at the loop's test")?;
+        let (negated, root) = if do_while {
+            (true, self.root_at(path, |k| matches!(k, RootKind::Condition { .. })).ok_or("no condition root at the loop's break if")?)
+        } else {
+            let Statement::If { accept, reject, .. } = body_stmts_all[test_pos] else { return Err("a loop whose first statement is not its test".into()) };
+            let is_break = |b: &naga::Block| b.iter().filter(|s| !matches!(s, Statement::Emit(_))).count() == 1 && b.iter().any(|s| matches!(s, Statement::Break));
+            let is_empty = |b: &naga::Block| b.iter().all(|s| matches!(s, Statement::Emit(_)));
+            let negated = if is_break(reject) && is_empty(accept) { false } else if is_break(accept) && is_empty(reject) { true } else { return Err("a loop whose test does not break".into()) };
+            path.push(0);
+            path.push(test_pos);
+            let root = self.root_at(path, |k| matches!(k, RootKind::Condition { .. }));
+            path.pop();
+            path.pop();
+            (negated, root.ok_or("no condition root at the loop's test")?)
+        };
         // The test is the loop's header: a let it reads is its value, inlined
         // (a let never changes in its scope), so the bound stays an expression
         // the cost estimator can value, not a register it cannot see.
@@ -2563,7 +2766,7 @@ impl<'a> Ctx<'a> {
             }
         }
         // A tree reduction written as a halving loop is the reduction row.
-        if let Some(t) = self.halving(&c, continuing, &body_stmts_all, path, rung, cond)? {
+        if let Some(t) = if do_while { None } else { self.halving(&c, continuing, &body_stmts_all, path, rung, cond)? } {
             return Ok(Some(t));
         }
         // The test normalised to `counter < bound`: `bound > counter`,
@@ -2649,6 +2852,28 @@ impl<'a> Ctx<'a> {
                 }
             }
         }
+        // A `while (t < n) { ...; t = t + s; }`: naga writes the body after
+        // the test as one block, so the step is that block's last statement.
+        let mut block_last_is_step = false;
+        if step.is_none() {
+            if let Some(Statement::Block(b)) = body_stmts_all.last() {
+                let inner: Vec<&Statement> = b.iter().filter(|s| !matches!(s, Statement::Emit(_))).collect();
+                if let Some(Statement::Store { .. }) = inner.last() {
+                    let lpath = [&path[..], &[0, body_stmts_all.len() - 1, inner.len() - 1]].concat();
+                    if let Some(r) = self.root_at(&lpath, |k| matches!(k, RootKind::Store { .. })) {
+                        let t = tree_of(self, &r.tree)?;
+                        if local_name(&t.name).as_deref() == Some(counter.as_str()) {
+                            let v = &t.kids[0];
+                            let lit = if v.name == "index.add" && v.kids.len() == 2 && v.kids.iter().any(|k| local_name(&k.name).as_deref() == Some(counter.as_str())) { v.kids.iter().find_map(literal_value) } else { None };
+                            if let Some(x) = lit.filter(|x| (1.0..=4096.0).contains(x)) {
+                                step = Some(x as u32);
+                                block_last_is_step = true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
         let step = step.ok_or_else(|| format!("a loop whose continuing block or last statement does not step its counter {counter} by a literal in 1..=4096"))?;
         // The rung of the body and the loop row.
         // A tile loop's depth is the number of tile counters already in effect;
@@ -2697,6 +2922,45 @@ impl<'a> Ctx<'a> {
         if (kind == "lit64" || kind == "boundx") && depth > 4 && body_rung != "L1" {
             return Err("a fifth nested tile loop".into());
         }
+        // The counter's value as the loop starts: WGSL's zero for a local not
+        // stored yet, else the literal last stored (a finished tile loop
+        // leaves its exit value); a tile loop that starts at a reads its
+        // counter as a + k and runs bound - a times.
+        let entry = if !self.stored_seen.contains(&counter) { Some(0.0) } else { self.axis_memo.get(&counter).and_then(|(t, _)| literal_value(t)) };
+        let item_loop = !(kind == "lit64" || kind == "boundx");
+        let start = match entry {
+            Some(v) => v,
+            None if item_loop => 0.0,
+            None => return Err(format!("a loop whose counter {counter} enters with a value our reader does not know (only a literal or zero has a spelling)")),
+        };
+        let (bound_tree, start) = if start == 0.0 || item_loop {
+            (bound_tree, 0.0)
+        } else if kind == "lit64" {
+            let n = literal_value(bound).unwrap_or(0.0);
+            if n <= start {
+                if do_while {
+                    return Err(format!("a loop with `break if` entered at {start}, at or past its bound {n} (it runs once; the counted loop would not)"));
+                }
+                // It never runs: the counter keeps its value.
+                return Ok(None);
+            }
+            (Tree::literal("literal.lit64", ty(self, "u32.lit64")?, n - start), start)
+        } else {
+            let index = ty(self, "u32.index")?;
+            let expr = Tree::new("index.sub_floor", index, vec![bound_tree.kids[0].clone(), Tree::literal("literal.index", index, start)]);
+            (Tree::new("bound.of_index", bound_tree.ty, vec![expr]), start)
+        };
+        if item_loop && entry.is_some_and(|v| v != 0.0) && !self.used_counters.contains(&counter) {
+            return Err(format!("the item loop's counter {counter} starts at {} (an item loop starts at 0)", entry.unwrap_or_default()));
+        }
+        // A do-while runs its body once before its first test: it is the
+        // counted loop when it enters below a literal bound (a loop entered
+        // at or past its bound returned above, which a do-while may not).
+        if do_while && (kind != "lit64" || entry.is_none()) {
+            return Err(format!("a loop with `break if` whose bound is not a literal or whose counter's entry value our reader does not know ({counter})"));
+        }
+        let exit = (kind == "lit64").then(|| literal_value(bound).map(|n| start + ((n - start) / step as f32).ceil() * step as f32)).flatten();
+        self.counter_offsets.insert(counter.clone(), start);
         let saved = (self.item_counter.clone(), self.tile_counter.clone(), self.tile_counter2.clone(), self.tile_counter3.clone(), self.tile_counter4.clone());
         self.axis_memo.remove(&counter);
         if kind == "lit64" {
@@ -2716,16 +2980,40 @@ impl<'a> Ctx<'a> {
         }
         // The body after its test, at the body rung: the test is statement
         // `test_pos` of the body block (path + [0]); the rest follow it.
-        let mut rest: Vec<Statement> = body_stmts_all.iter().skip(test_pos + 1).map(|s| (*s).clone()).collect();
+        let first = if do_while { 0 } else { test_pos + 1 };
+        let mut rest: Vec<Statement> = body_stmts_all.iter().skip(first).map(|s| (*s).clone()).collect();
+        // A loop that breaks (`if (c) { break; }` at the top of its body): its
+        // body is read at the conditional rung of its depth, no barrier in it.
+        let breaks = has_break_guard(&rest);
+        if breaks && (body_rung == "L1" || step != 1) {
+            self.item_counter = saved.0.clone();
+            self.tile_counter = saved.1.clone();
+            self.tile_counter2 = saved.2.clone();
+            self.tile_counter3 = saved.3.clone();
+            self.tile_counter4 = saved.4.clone();
+            return Err(if body_rung == "L1" { "the item loop breaks (a loop that breaks is a tile loop: its body holds no barrier)".into() } else { format!("a loop stepped by {step} that breaks (a loop that breaks steps by 1)") });
+        }
+        let walk_rung = if breaks { format!("C{}", &body_rung[1..]) } else { body_rung.clone() };
         if last_is_step {
             rest.pop();
+        }
+        if block_last_is_step {
+            // The step out of the body's block (its last statement; the
+            // block keeps its place, so every earlier path is unchanged).
+            if let Some(Statement::Block(b)) = rest.pop() {
+                let mut inner: Vec<Statement> = b.iter().cloned().collect();
+                if let Some(at) = inner.iter().rposition(|s| !matches!(s, Statement::Emit(_))) {
+                    inner.remove(at);
+                }
+                rest.push(Statement::Block(naga::Block::from_vec(inner)));
+            }
         }
         let rest = naga::Block::from_vec(rest);
         path.push(0);
         for local in stored_locals(self.naga_fn, body).into_iter().chain(stored_locals(self.naga_fn, continuing)) {
             self.axis_memo.remove(&prefixed(&self.local_prefix, &local));
         }
-        let body_stmts = self.nested(|ctx, path| ctx.walk(&rest, path, &body_rung, test_pos + 1), path);
+        let body_stmts = self.nested(|ctx, path| ctx.walk(&rest, path, &walk_rung, first), path);
         path.pop();
         self.item_counter = saved.0;
         self.tile_counter = saved.1;
@@ -2733,12 +3021,43 @@ impl<'a> Ctx<'a> {
         self.tile_counter3 = saved.3;
         self.tile_counter4 = saved.4;
         self.tile_bounds.remove(&counter);
+        // The counter's value after the loop: its literal exit, for a later
+        // loop that does not set it again.
+        self.counter_offsets.remove(&counter);
+        self.stored_seen.insert(counter.clone());
+        match exit.filter(|_| !breaks) {
+            Some(x) => {
+                let index = ty(self, "u32.index")?;
+                self.axis_memo.insert(counter.clone(), (Tree::literal("literal.index", index, x), self.loop_depth));
+            }
+            None => {
+                self.axis_memo.remove(&counter);
+            }
+        }
         if body_rung == "L1" {
             self.used_counters.insert(counter.clone());
         }
         let body_stmts = body_stmts?;
-        let block = self.block(body_stmts, &body_rung)?;
         let st = self.stmt_ty(out_rung)?;
+        if breaks {
+            // before; if (c) { break; }; after, each conditional.
+            let mut flat = Vec::new();
+            for t in body_stmts {
+                flatten_stmts(t, &mut flat);
+            }
+            let at = flat.iter().position(|t| break_guard(t, self).is_some()).ok_or("a loop that breaks, its guard not at the top of its body")?;
+            let c = break_guard(&flat[at], self).expect("the guard at `at`")?;
+            let after: Vec<Tree> = flat.split_off(at + 1);
+            flat.pop();
+            if flat.iter().chain(&after).any(has_break) {
+                return Err("a second break in one loop body, or a break below the top of its body".into());
+            }
+            let d = &body_rung[1..];
+            let brk = Tree::new(&format!("block.brk_B{d}"), ty(self, &format!("block.B{d}"))?, vec![self.block(flat, &walk_rung)?, c, self.block(after, &walk_rung)?]);
+            let row = format!("loop.{}_brk_{out_rung}", if kind == "lit64" { "tile" } else { "tilex" });
+            return Ok(Some(Tree::new(&row, st, vec![bound_tree, brk])));
+        }
+        let block = self.block(body_stmts, &body_rung)?;
         let step_lit = if body_rung == "L1" { Tree::literal("literal.lit4096", ty(self, "u32.lit4096")?, step as f32) } else { Tree::literal("literal.lit64", ty(self, "u32.lit64")?, step as f32) };
         let kids = if step != 1 { vec![bound_tree, step_lit, block] } else { vec![bound_tree, block] };
         Ok(Some(Tree::new(&row_name, st, kids)))
@@ -3106,7 +3425,7 @@ pub fn read_safe(source: &str, kingdom: &WgslKingdom) -> Result<SafeRead, String
         }
     }
     let bound_lets = lets_used_in_deeper_loops(&f.roots, &naga_fn.body);
-    let mut ctx = Ctx { kingdom, duals: &duals, lets: &lets, roots: &roots, item_counter: None, tile_counter: None, tile_counter2: None, tile_counter3: None, tile_counter4: None, registers: BTreeMap::new(), next_reg: BTreeMap::new(), guard: None, tail: true, arrays: BTreeMap::new(), array_lens: BTreeMap::new(), parrs: BTreeMap::new(), grid, rows_x: grid_rows_x(source).then_some(true), notes: Vec::new(), helpers: &helpers, calls: &calls, arg_roots: &arg_roots, inline_args: None, row_arrays: BTreeMap::new(), used_counters: std::collections::BTreeSet::new(), local_lanes, axis_memo: BTreeMap::new(), loop_depth: 0, tile_bounds: BTreeMap::new(), naga_fn, module: &kernel.module, local_prefix: String::new(), inline_result: None, inline_values: None, bound_lets, let_regs: HashMap::new(), inlined: HashMap::new() };
+    let mut ctx = Ctx { kingdom, duals: &duals, lets: &lets, roots: &roots, item_counter: None, tile_counter: None, tile_counter2: None, tile_counter3: None, tile_counter4: None, registers: BTreeMap::new(), next_reg: BTreeMap::new(), guard: None, tail: true, arrays: BTreeMap::new(), array_lens: BTreeMap::new(), parrs: BTreeMap::new(), grid, rows_x: grid_rows_x(source).then_some(true), notes: Vec::new(), helpers: &helpers, calls: &calls, arg_roots: &arg_roots, inline_args: None, row_arrays: BTreeMap::new(), used_counters: std::collections::BTreeSet::new(), local_lanes, axis_memo: BTreeMap::new(), loop_depth: 0, tile_bounds: BTreeMap::new(), naga_fn, module: &kernel.module, local_prefix: String::new(), inline_result: None, inline_values: None, bound_lets, let_regs: HashMap::new(), inlined: HashMap::new(), stored_seen: std::collections::BTreeSet::new(), counter_offsets: HashMap::new() };
     // Register initialisations first, in root order. A local initialised to
     // its form's fallback (0.0, 0u, false, a zero vector) costs nothing: the
     // register's declaration already holds that value, and the register is
@@ -3853,15 +4172,49 @@ mod tests {
         assert!(text.contains(") >= cfg.r_rows)) { continue; }"), "{text}");
     }
 
-    /// A CONTINUE OUTSIDE THE EPILOGUE IS REFUSED BY NAME: a later barrier of
-    /// its loop would be reached by some threads only. The blocked kernel
-    /// with its continue moved into the item loop is refused with the reason.
+    /// A LOOP THAT BREAKS (2026-10-12, WGSL_COVERAGE.md gap 7): a thread that
+    /// breaks skips every barrier the others reach in later passes, so a
+    /// loop that breaks holds no barrier: draft_control_flow's breaking loop
+    /// reads as loop.tile_brk with block.brk_B<d>, renders the guard and
+    /// validates; the same loop with a barrier in it is refused by name.
     #[test]
-    fn a_continue_outside_the_epilogue_is_refused_by_name() {
+    fn a_loop_that_breaks_reads_and_holds_no_barrier() {
+        let k = WgslKingdom::load_safe();
+        let (t, role) = (FunctionTable::safe(), gram_role());
+        let src = include_str!("../../tests/corpus/safewgsl/draft_control_flow.wgsl");
+        let tree = read_safe(src, &k).unwrap_or_else(|e| panic!("{e}")).tree;
+        let sx = tree.to_sexpr();
+        assert!(sx.contains("(loop.tile_brk_L0 ") && sx.contains("(block.brk_B2 "), "{sx}");
+        let text = Renderer::new(&k, &t, &role).kernel(&tree).unwrap().text;
+        validate_text(&text).unwrap_or_else(|e| panic!("{e}\n{text}"));
+        assert!(text.contains("{ break; }"), "{text}");
+        let barrier = src.replacen("{ break; } g = g + 1.0; }", "{ break; } g = g + 1.0; workgroupBarrier(); }", 1);
+        assert_ne!(barrier, src);
+        let Err(e) = read_safe(&barrier, &k) else { panic!("a barrier in a loop that breaks read") };
+        assert!(e.contains("a barrier under a condition"), "{e}");
+    }
+
+    /// A CONTINUE IN A LOOP (2026-10-12, WGSL_COVERAGE.md gap 7): the guard,
+    /// then the rest of the loop body at the conditional rung (block.cont_L1
+    /// in the item loop), so no barrier follows it; every thread still
+    /// reaches the next iteration. The blocked kernel with a continue in its
+    /// item loop reads, renders and validates; the shipped kernel with a
+    /// barrier after a continue is refused by name (a barrier some threads
+    /// skip).
+    #[test]
+    fn a_continue_in_a_loop_reads_unless_a_barrier_follows_it() {
         let k = WgslKingdom::load_safe();
         let moved = BLOCKED.replacen("        let rv = load4(", "        if (t == 7u) { continue; }\n        let rv = load4(", 1);
         assert_ne!(moved, BLOCKED);
-        let Err(e) = read_safe(&moved, &k) else { panic!("a continue in the item loop read") };
-        assert!(e.contains("a continue outside the kernel's epilogue"), "{e}");
+        let tree = read_safe(&moved, &k).unwrap_or_else(|e| panic!("{e}")).tree;
+        assert!(tree.to_sexpr().contains("(block.cont_L1 "), "{}", tree.to_sexpr());
+        let (t, role) = (FunctionTable::safe(), gram_role());
+        let text = Renderer::new(&k, &t, &role).kernel(&tree).unwrap().text;
+        validate_text(&text).unwrap_or_else(|e| panic!("{e}\n{text}"));
+        assert!(text.contains("== 7u)) { continue; }"), "{text}");
+        let barrier = format!("// grid 16 16 1 1\n{SHIPPED}").replacen("    for (var t: u32 = 0u; t < cfg.m; t = t + 1u) {\n", "    for (var t: u32 = 0u; t < cfg.m; t = t + 1u) {\n        if (t == 7u) { continue; }\n        workgroupBarrier();\n", 1);
+        assert!(barrier.contains("workgroupBarrier"));
+        let Err(e) = read_safe(&barrier, &k) else { panic!("a barrier after a continue read") };
+        assert!(e.contains("where only conditional statements are spelled"), "{e}");
     }
 }

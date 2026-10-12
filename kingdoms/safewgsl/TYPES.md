@@ -83,6 +83,11 @@ A type is a dual `slot.form`: the slot is what the hardware stores, the form is 
 | `decl` | one workgroup array declaration: the array and its length | see duals |
 | `decls` | the kernel's workgroup array declarations | see duals |
 | `wgaindex` | an index into an atomic workgroup array, masked to the array by its row | u32 |
+| `B1` | a loop body that breaks, one tile deep: no barrier | see duals |
+| `B2` | a loop body that breaks, two tile loops deep (or a tile loop in the item loop): no barrier | see duals |
+| `B3` | a loop body that breaks, three deep: no barrier | see duals |
+| `B4` | a loop body that breaks, four deep: no barrier | see duals |
+| `B5` | a loop body that breaks, five deep: no barrier | see duals |
 
 ## Duals
 
@@ -249,8 +254,13 @@ A type is a dual `slot.form`: the slot is what the hardware stores, the form is 
 | T159 | `wgmem<atomic<i32>>.int` | `wgmem<atomic<i32>>` | `int` | 0 | `0` | 0 | 0 | 0 |
 | T160 | `u32.wgaindex` | `u32` | `wgaindex` | 1 | `0u` | 0 | 0 | 0 |
 | T161 | `reg<i32>.int` | `reg<i32>` | `int` | 1 | `0` | 0 | 0 | 0 |
+| T162 | `block.B1` | `block` | `B1` | 0 | `empty` | 0 | 0 | 0 |
+| T163 | `block.B2` | `block` | `B2` | 0 | `empty` | 0 | 0 | 0 |
+| T164 | `block.B3` | `block` | `B3` | 0 | `empty` | 0 | 0 | 0 |
+| T165 | `block.B4` | `block` | `B4` | 0 | `empty` | 0 | 0 | 0 |
+| T166 | `block.B5` | `block` | `B5` | 0 | `empty` | 0 | 0 | 0 |
 
-161 duals. The fallback is what Design C's projection substitutes for a codon whose dual does not match the demand; the codon is counted as masked.
+166 duals. The fallback is what Design C's projection substitutes for a codon whose dual does not match the demand; the codon is counted as masked.
 
 The three machine columns (`fallback_bits`, `fallback_noop`, `fallback_elem` in `types.tsv`) are what the loader builds the fallback leaf from, never the prose: `bits` is the lane's 32-bit pattern as an unsigned integer, repeated across the lanes of a vector or matrix (only `bool.sign` is non-zero, true = +1); `noop` is 1 for `store.store`, which substitutes no value at all; `elem` is 1 for `array<T>`, whose fallback is its element's. The loader tests `noop` and `elem` before reading `bits`; for those two rows `bits` is a placeholder 0. Every substitution, whichever column decides it, counts the codon as masked.
 

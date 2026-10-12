@@ -61,13 +61,13 @@
 | compound assignment on u32 (`^=` and the bit ops) | covered | `convert.index_to_bits`, `convert.bits_to_index` (the u32 form crossings) |
 | `++` / `--` | covered | lowered by naga to `+ 1` / `- 1` |
 | `if` / `else if` / `else` | covered | `stmt.if_*`, `stmt.if_else_*` |
-| `switch` / `case` / `default` | missing | "statement Switch has no safe spelling" |
-| `for` | covered | `loop.items*`, `loop.tile*`, `loop.tilex*`, `loop.unroll_*` |
-| `while` | missing | a while whose counter steps inside the body is not read |
+| `switch` / `case` / `default` | covered as its if-else chain | WGSL has no fallthrough and a selector is a value; a `break` that ends a case is dropped, one earlier in a case is named. No switch row of its own |
+| `for` | covered | `loop.items*`, `loop.tile*`, `loop.tilex*`, `loop.unroll_*`; a loop that starts at a literal a reads its counter as a + k (it was read as starting at 0, a bug that changed the meaning) |
+| `while` | covered (bounded) | a while whose counter steps by a literal reads as its counted loop; an unbounded `while (c)` is outside the safe kingdom (a kernel must terminate) |
 | `loop` + `continuing` | covered | as a for |
-| `break if` | missing | "a loop with a break_if" |
-| `break` | missing | "statement Break has no safe spelling" |
-| `continue` | partial | the epilogue's guard `if (c) { continue; }` (`block.cont_O*`); elsewhere refused because a later barrier would be non-uniform. A loop without a barrier should take it |
+| `break if` | covered (bounded) | a do-while entered below its literal bound reads as its counted loop |
+| `break` | covered | `loop.tile_brk_*`, `loop.tilex_brk_*` with body `block.brk_B<d>` (statements, `if (c) { break; }`, statements, all conditional: a loop that breaks holds no barrier, since a thread that breaks would skip the barriers the others reach). One break per loop body, at its top level |
+| `continue` | covered | `block.cont_<rung>` at every loop rung: the guard, then the rest of the block at the conditional rung (no barrier after a continue). A barrier after a continue is refused by name |
 | `return` | covered | `stmt.return_*` |
 | function call statement | covered for pure helpers | see helpers |
 | block `{ }` | covered | `stmt.block_*` |
@@ -182,7 +182,7 @@ Each fill is its own commit with a corpus row and the full checklist. The order 
 4. Done: `storageBarrier()` as its own statement row (it was misread as `workgroupBarrier()`).
 5. Done: `num_workgroups`, naga's name `num_work_groups` mapped to the row. 136 of 184 read. Also read now: a kernel that never writes h (`draft_no_store`; a mutant's top-level return).
 6. Done: i32 registers, `i32(u32)`, `u32(i32)`, `i32(f32)`, `bitcast<i32>`, and with them `++` / `--`, i32 `abs/min/max/clamp/sign`, i32 subgroup operations and vecN<i32>; an atomic<i32>'s old value read later. 147 of 184 read.
-7. `switch`, `break`, `break if`, `while` with its step in the body, and `continue` in a loop without a barrier.
+7. Done: `switch`, `break`, `break if`, `while` with its step in the body, `continue` in any loop; loops entered at a non-zero literal. 153 of 184 read.
 8. vec3 values (`cross`, 3-lane swizzles, the thread id as an operand), `vec4<u32>` registers (then `subgroupBallot`), and vec2 private arrays.
 9. Matrices: construction from scalars and columns, matrix locals, column access.
 10. `modf` / `frexp` results, `arrayLength`.

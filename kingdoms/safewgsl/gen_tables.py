@@ -124,6 +124,14 @@ FORMS = {
     # INTEGER ATOMICS (2026-10-12) in workgroup memory: arrays of atomic<u32> and atomic<i32>, an index masked
     # into them, and the atomic built-ins as rows.
     "wgaindex": ("an index into an atomic workgroup array, masked to the array by its row", ["u32"]),
+    # A loop body that breaks (2026-10-12, WGSL_COVERAGE.md gap 7): conditional statements, the guard
+    # `if (c) { break; }`, conditional statements. No barrier anywhere in it, so a thread that breaks
+    # never skips a barrier the others reach. The digit is the body's rung (its tile depth).
+    "B1": ("a loop body that breaks, one tile deep: no barrier", []),
+    "B2": ("a loop body that breaks, two tile loops deep (or a tile loop in the item loop): no barrier", []),
+    "B3": ("a loop body that breaks, three deep: no barrier", []),
+    "B4": ("a loop body that breaks, four deep: no barrier", []),
+    "B5": ("a loop body that breaks, five deep: no barrier", []),
 }
 
 SAFE_FORMS = ["wgaindex", "wgv2index", "wglen", "decl", "decls", "lidx", "threadrows", "threadcols", "threadrowg", "threadcolg", "gid", "lid", "wid", "rowid", "colid", "O0", "O1", "O2", "O3", "O4", "tcounter4", "L5", "C5", "safe", "pindex", "boundx", "boundm", "boundd", "boundrows", "lit64", "lit4096", "counter", "tcounter", "tcounter2", "L3", "C3", "tcounter3", "L4", "C4", "wgvindex", "bound", "threadrow", "threadcol", "cell", "phi", "wgindex", "L0", "L1", "L2", "C0", "C1", "C2"]
@@ -157,6 +165,7 @@ FALLBACK = {
     "gid": "0u", "lid": "0u", "wid": "0u", "rowid": "0u", "colid": "0u",
     "lidx": "0u", "threadrows": "0u", "threadcols": "0u", "threadrowg": "0u", "threadcolg": "0u",
     "wgaindex": "0u", "wgv2index": "0u", "wglen": "the array's default length", "decl": "none", "decls": "none (the arrays the kernel uses, at their default lengths)",
+    "B1": "empty", "B2": "empty", "B3": "empty", "B4": "empty", "B5": "empty",
 }
 
 # The fallback by machine: the lane's 32-bit pattern as an unsigned integer. Vectors and matrices
@@ -179,6 +188,7 @@ FALLBACK_BITS = {
     "gid": 0, "lid": 0, "wid": 0, "rowid": 0, "colid": 0,
     "lidx": 0, "threadrows": 0, "threadcols": 0, "threadrowg": 0, "threadcolg": 0,
     "wgaindex": 0, "wgv2index": 0, "wglen": 0, "decl": 0, "decls": 0,
+    "B1": 0, "B2": 0, "B3": 0, "B4": 0, "B5": 0,
 }
 assert set(FALLBACK_BITS) == set(FALLBACK), "every form with a fallback needs its bits, and no more"
 
@@ -281,6 +291,9 @@ def build_types():
     add("u32", "wgaindex", 1, FORMS["wgaindex"][0])
     # ---- i32 registers (2026-10-12, WGSL_COVERAGE.md gap 6) ----
     add("reg<i32>", "int", 1, "a named i32 register: n0..n15")
+    # ---- loop bodies that break (2026-10-12, gap 7) ----
+    for d in (1, 2, 3, 4, 5):
+        add("block", f"B{d}", 0, FORMS[f"B{d}"][0])
     return rows
 
 
@@ -940,6 +953,20 @@ f("subgroup", "broadcast_first", "SubgroupGather", ["i32.int"], "i32.int", "subg
 f("subgroup", "broadcast", "SubgroupGather", ["i32.int", "u32.lit64"], "i32.int", "subgroupBroadcast(x, lane): the lane a literal")
 for op, wgsl in (("shuffle", "subgroupShuffle"), ("shuffle_down", "subgroupShuffleDown"), ("shuffle_up", "subgroupShuffleUp"), ("shuffle_xor", "subgroupShuffleXor")):
     f("subgroup", op, "SubgroupGather", ["i32.int", "u32.index"], "i32.int", f"{wgsl}(x, i)")
+
+
+# ---- break and continue in loops (2026-10-12, WGSL_COVERAGE.md gap 7) ----
+# A loop that breaks: a tile loop whose body is a B block (conditional statements, the guard, conditional
+# statements), at every rung a tile loop has; its body holds no barrier, so the loop is safe at an L rung.
+# A continue at an L or C rung inside a loop: the guard, then the rest of the block at the conditional
+# rung of its depth (no barrier after it; every thread still reaches the next iteration).
+for d in (1, 2, 3, 4, 5):
+    f("block", f"brk_B{d}", "composite", [f"block.C{d}", "bool.flag", f"block.C{d}"], f"block.B{d}", "arity 3: before; if (c) { break; }; after")
+for r, b in (("L0", 2), ("L1", 2), ("L2", 3), ("L3", 4), ("L4", 5), ("C0", 1), ("C1", 2), ("C2", 3), ("C3", 4), ("C4", 5)):
+    f("loop", "tile_brk_" + r, "composite", ["u32.lit64", f"block.B{b}"], "stmt." + r, "for (k = 0u; k < n; k++) { body that breaks }")
+    f("loop", "tilex_brk_" + r, "composite", ["u32.boundx", f"block.B{b}"], "stmt." + r, "for (k = 0u; k < (expr); k++) { body that breaks }")
+for r in ("L1", "L2", "L3", "L4", "L5", "C1", "C2", "C3", "C4", "C5"):
+    f("block", "cont_" + r, "composite", ["bool.flag", "block.C" + r[1]], "block." + r, "if (c) { continue; } then the rest, conditional")
 
 
 def write_tsv(path, header, rows):
