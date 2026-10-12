@@ -573,6 +573,12 @@ fn conform_at(t: &Tree, demand: Ty, kingdom: &WgslKingdom, per_kernel: &[PerKern
         if let Some(r) = kingdom.rows.iter().find(|r| r.name.starts_with("literal.") && r.inputs.is_empty() && r.output == demand && matches!(r.name.as_str(), "literal.index" | "literal.count" | "literal.bits") && whole && t.konst >= 0.0 && matches!(t.name.as_str(), "literal.index" | "literal.count" | "literal.bits")) {
             return Ok(Tree::literal(&r.name, demand, t.konst));
         }
+        // A dual with no literal row (a hash state, a fixed-point value): its
+        // fallback, the zero the renderer writes for it, when the literal is it
+        // (2026-10-12: 48 of 1,000 random trees).
+        if !kingdom.rows.iter().any(|r| r.name.starts_with("literal.") && r.output == demand) && kingdom.dual(demand).is_some_and(|d| d.lanes <= 1 && f64::from(d.fallback_bits) == f64::from(t.konst)) {
+            return Ok(Tree::fallback(demand));
+        }
     } else {
         // Every row of the name under the demand; the one that needs the
         // fewest conversions inserted below it wins (a comparison of two
@@ -596,7 +602,7 @@ fn conform_at(t: &Tree, demand: Ty, kingdom: &WgslKingdom, per_kernel: &[PerKern
                         break;
                     }
                 }
-                Err(e) => errors.push(e),
+                Err(e) => errors.push(format!("{} > {e}", t.name)),
             }
         }
         if let Some((_, kids)) = best {

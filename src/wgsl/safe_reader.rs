@@ -408,6 +408,21 @@ fn tree_of(ctx: &mut Ctx, n: &Node) -> Result<Tree, String> {
                 let b = kids[1].kids[0].clone();
                 kids[1] = b;
             }
+            // `x << (s & 31u)` (a vector's count splatted, `vecN<u32>((s) & 31u)`):
+            // how the kingdom writes a shift's count, masked below the width;
+            // read back as the count (2026-10-12: 36 of 1,000 random trees).
+            if (name.ends_with(".shl") || name.ends_with(".shr")) && kids.len() == 2 {
+                let masked = |t: &Tree| -> Option<Tree> {
+                    let t = if t.name.starts_with("shape.splat") && t.kids.len() == 1 { &t.kids[0] } else { t };
+                    match (t.name.as_str(), t.kids.as_slice()) {
+                        ("bits.and" | "index.and", [x, m]) if m.name.starts_with("literal.") && m.konst == 31.0 => Some(x.clone()),
+                        _ => None,
+                    }
+                };
+                if let Some(x) = masked(&kids[1]) {
+                    kids[1] = x;
+                }
+            }
             // A lane of a vector chosen at run time has no type from the
             // inference when naga refused the module for it: the vector's scalar.
             let lane_of_vector = || -> Option<Ty> {
@@ -5217,7 +5232,7 @@ mod tests {
     /// The counts of [`random_sampler_trees_read_back_to_their_own_text`]
     /// reached so far: to their own text, and read back at all.
     const READ_BACK_FLOOR: usize = 108;
-    const READ_AT_ALL_FLOOR: usize = 676;
+    const READ_AT_ALL_FLOOR: usize = 757;
 
     /// THE KINGDOM'S COMPLETENESS BAR (2026-10-12): 1,000 random trees of
     /// the kingdom's typed sampler (the safe root, depth 7, seeds 0..1000)
