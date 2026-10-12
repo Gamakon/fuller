@@ -580,6 +580,7 @@ const OUT_OF_LOOP: &str = "lit_u32(0u)";
 /// 336 s to validate.
 pub const UNROLL_COPIES_MAX: u32 = 64;
 
+#[derive(Clone)]
 struct Scope {
     /// The tile counters a fully unrolled loop has made literals, by name
     /// (`k` is `lit_u32(2u)` in the third copy of an unrolled body).
@@ -654,10 +655,26 @@ impl<'a> Renderer<'a> {
                 let [g, b, e] = root.kids.as_slice() else { return Err(format!("{} with {} children, 3 expected (grid, body, epilogue)", root.name, root.kids.len())) };
                 let grid = self.grid(g)?;
                 scope.grid = grid;
+                let fresh = scope.clone();
                 scope.wg = self.workgroup_plan(g, root)?;
                 let (mut text, terminated) = self.block_t(b, &mut scope)?;
                 if !terminated {
                     text.push_str(&self.block(e, &mut scope)?);
+                }
+                // The arrays the text uses: a statement after a body that
+                // returns is not written, nor its arrays' declarations (the
+                // reader reads the arrays a kernel uses; 2026-10-12). Written
+                // again over those, so a halving the unwritten ones forced is undone.
+                let written: BTreeSet<String> = scope.wg.keys().filter(|v| text.contains(&format!("{v}["))).cloned().collect();
+                if written.len() != scope.wg.len() {
+                    scope = fresh;
+                    scope.grid = grid;
+                    scope.wg = workgroup_plan_of(self.kingdom, g, root, Some(&written))?;
+                    let (again, terminated) = self.block_t(b, &mut scope)?;
+                    text = again;
+                    if !terminated {
+                        text.push_str(&self.block(e, &mut scope)?);
+                    }
                 }
                 (grid, text)
             }
@@ -1324,7 +1341,13 @@ pub fn wgmem_var(kingdom: &WgslKingdom, w: &Tree) -> Result<&'static str, String
 /// (the original four declarations) for a kernel that declares none and
 /// uses only `wg_a`, `wg_b`, `wg_va`, `wg_vb`, whose text is unchanged.
 pub fn workgroup_plan(kingdom: &WgslKingdom, grid: &Tree, root: &Tree) -> Result<BTreeMap<String, (String, u32)>, String> {
-    let mut plan = workgroup_plan_requested(kingdom, grid, root)?;
+    workgroup_plan_of(kingdom, grid, root, None)
+}
+
+/// [`workgroup_plan`] over the arrays `only` names when given (the arrays a
+/// first rendering's text uses: a statement after a return is not written).
+pub fn workgroup_plan_of(kingdom: &WgslKingdom, grid: &Tree, root: &Tree, only: Option<&BTreeSet<String>>) -> Result<BTreeMap<String, (String, u32)>, String> {
+    let mut plan = workgroup_plan_requested_of(kingdom, grid, root, only)?;
     while plan_bytes(&plan) > 32768 {
         let largest = plan.iter().max_by_key(|(v, (e, l))| (elem_bytes(e) * u64::from(*l), std::cmp::Reverse((*v).clone()))).map(|(v, _)| v.clone()).expect("a non-empty plan");
         let entry = plan.get_mut(&largest).expect("present");
@@ -1335,6 +1358,11 @@ pub fn workgroup_plan(kingdom: &WgslKingdom, grid: &Tree, root: &Tree) -> Result
 
 /// [`workgroup_plan`] before any array is halved.
 pub fn workgroup_plan_requested(kingdom: &WgslKingdom, grid: &Tree, root: &Tree) -> Result<BTreeMap<String, (String, u32)>, String> {
+    workgroup_plan_requested_of(kingdom, grid, root, None)
+}
+
+/// [`workgroup_plan_requested`] over the arrays `only` names when given.
+fn workgroup_plan_requested_of(kingdom: &WgslKingdom, grid: &Tree, root: &Tree, only: Option<&BTreeSet<String>>) -> Result<BTreeMap<String, (String, u32)>, String> {
     let elem_of = |var: &str| if var.starts_with("wg_au") { "atomic<u32>" } else if var.starts_with("wg_ai") { "atomic<i32>" } else if var.starts_with("wg_v2") { "vec2<f32>" } else if var.starts_with("wg_v") { "vec4<f32>" } else { "f32" };
     let default_len = |var: &str| if var.starts_with("wg_au") || var.starts_with("wg_ai") || var.starts_with("wg_v2") { 1024 } else if var.starts_with("wg_v") { WGVEC_LEN } else { WGMEM_LEN };
     let mut declared: Vec<(String, u32)> = Vec::new();
@@ -1369,12 +1397,23 @@ pub fn workgroup_plan_requested(kingdom: &WgslKingdom, grid: &Tree, root: &Tree)
         }
         t.kids.iter().for_each(|k| uses(kingdom, k, out));
     }
-    uses(kingdom, root, &mut used);
+    // The statements' uses, not the grid's own declarations.
+    if root.name == "kernel.entry_safe" {
+        root.kids.iter().skip(1).for_each(|k| uses(kingdom, k, &mut used));
+    } else {
+        uses(kingdom, root, &mut used);
+    }
+    if let Some(only) = only {
+        used.retain(|v| only.contains(v));
+    }
     let legacy = ["wg_a", "wg_b", "wg_va", "wg_vb"];
     if declared.is_empty() && used.iter().all(|v| legacy.contains(&v.as_str())) {
         return Ok(BTreeMap::new());
     }
-    let mut plan: BTreeMap<String, (String, u32)> = declared.into_iter().map(|(v, l)| { let e = elem_of(&v).to_string(); (v, (e, l)) }).collect();
+    // A declared array no statement uses is not written (2026-10-12): the
+    // reader reads the arrays a kernel uses, so an unused declaration did not
+    // read back (163 of 1,000 random trees).
+    let mut plan: BTreeMap<String, (String, u32)> = declared.into_iter().filter(|(v, _)| used.contains(v)).map(|(v, l)| { let e = elem_of(&v).to_string(); (v, (e, l)) }).collect();
     for v in used {
         plan.entry(v.clone()).or_insert_with(|| (elem_of(&v).to_string(), default_len(&v)));
     }

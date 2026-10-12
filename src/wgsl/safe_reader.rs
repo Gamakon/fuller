@@ -2086,7 +2086,10 @@ impl<'a> Ctx<'a> {
             other => return Err(format!("a workgroup array {name} of {other} has no safe spelling")),
         };
         let used: Vec<&'static str> = self.arrays.values().copied().collect();
-        let which = candidates.iter().copied().find(|c| !used.contains(c)).ok_or_else(|| format!("one more workgroup array {name} of {elem_dual} than the grammar's {}", candidates.len()))?;
+        // A kernel the kingdom wrote names its arrays as the rows do
+        // (`wg_d` is wg.d): that row, when free; any other name, the first free.
+        let own = format!("wg.{}", name.strip_prefix("wg_").unwrap_or(""));
+        let which = candidates.iter().copied().find(|c| **c == own && !used.contains(c)).or_else(|| candidates.iter().copied().find(|c| !used.contains(c))).ok_or_else(|| format!("one more workgroup array {name} of {elem_dual} than the grammar's {}", candidates.len()))?;
         let len = self
             .module
             .global_variables
@@ -5152,5 +5155,62 @@ mod tests {
         assert!(barrier.contains("workgroupBarrier"));
         let Err(e) = read_safe(&barrier, &k) else { panic!("a barrier after a continue read") };
         assert!(e.contains("where only conditional statements are spelled"), "{e}");
+    }
+
+    /// The count of [`random_sampler_trees_read_back_to_their_own_text`]
+    /// reached so far.
+    const READ_BACK_FLOOR: usize = 108;
+
+    /// THE KINGDOM'S COMPLETENESS BAR (2026-10-12): 1,000 random trees of
+    /// the kingdom's typed sampler (the safe root, depth 7, seeds 0..1000)
+    /// render, pass every layer of the legality checker, read back, and the
+    /// tree read back renders the same text. A kernel the kingdom writes that
+    /// the reader cannot read is a bug in our software (fit_random1: 64 of
+    /// 104 random kernels did not read back). Failures are counted by reason.
+    #[test]
+    fn random_sampler_trees_read_back_to_their_own_text() {
+        let k = WgslKingdom::load_safe();
+        let role = gram_role();
+        let checker = crate::wgsl::check::Checker::new(&k, &role, &crate::wgsl::target::Target::recorded());
+        let root = crate::wgsl::render::dual_ty(&k, "kernel.safe").unwrap();
+        let n = 1000u64;
+        let mut by_reason: BTreeMap<String, (usize, u64)> = BTreeMap::new();
+        let mut passed = 0usize;
+        for seed in 0..n {
+            let tree = crate::wgsl::render::sample(&k, &role, root, 7, seed).unwrap();
+            let verdict: Result<(), String> = (|| {
+                let text = crate::wgsl::safe_karva::render_tree(&tree, &k).map_err(|e| format!("render: {e}"))?.text;
+                checker.check(&tree).map_err(|e| format!("check: {} {}", e.layer.number(), e.reason))?;
+                let back = read_safe(&text, &k).map_err(|e| format!("read: {e}"))?;
+                let again = crate::wgsl::safe_karva::render_tree(&back.tree, &k).map_err(|e| format!("re-render: {e}"))?.text;
+                if again != text {
+                    let line = text.lines().zip(again.lines()).position(|(a, b)| a != b).unwrap_or(0);
+                    return Err(format!("differs: {}", again.lines().nth(line).unwrap_or("(shorter)").trim().chars().take(60).collect::<String>()));
+                }
+                Ok(())
+            })();
+            match verdict {
+                Ok(()) => passed += 1,
+                Err(e) => {
+                    // The reason without its statement path and numbers.
+                    let mut r = e.clone();
+                    while let Some(i) = r.find("at statement [") {
+                        let j = r[i..].find("]: ").map_or(r.len(), |j| i + j + 3);
+                        r.replace_range(i..j, "");
+                    }
+                    let r: String = r.chars().map(|c| if c.is_ascii_digit() { 'N' } else { c }).take(110).collect();
+                    by_reason.entry(r).or_insert((0, seed)).0 += 1;
+                }
+            }
+        }
+        let mut reasons: Vec<_> = by_reason.into_iter().collect();
+        reasons.sort_by(|a, b| b.1 .0.cmp(&a.1 .0));
+        println!("random trees: {passed} of {n} read back to their own text");
+        for (r, (c, seed)) in &reasons {
+            println!("  {c:>4}  seed {seed:>4}  {r}");
+        }
+        // A ratchet while the groups are fixed one commit at a time (2026-10-12):
+        // the count only rises, to 1,000 of 1,000.
+        assert!(passed >= READ_BACK_FLOOR, "random trees that read back to their own text: {passed}, fewer than the {READ_BACK_FLOOR} already reached");
     }
 }
