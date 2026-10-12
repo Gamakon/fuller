@@ -314,7 +314,8 @@ fn plan_bytes(plan: &BTreeMap<String, (String, u32)>) -> u64 {
     plan.values().map(|(e, l)| elem_bytes(e) * u64::from(*l)).sum()
 }
 
-fn snap(set: &[u32], v: f32) -> u32 {
+/// The member of `set` nearest `v` (the first on a tie; a non-finite `v` is taken as 0).
+pub fn snap(set: &[u32], v: f32) -> u32 {
     let v = if v.is_finite() { v } else { 0.0 };
     *set.iter().min_by(|a, b| (f64::from(**a) - f64::from(v)).abs().partial_cmp(&(f64::from(**b) - f64::from(v)).abs()).expect("finite")).expect("a non-empty set")
 }
@@ -1005,76 +1006,14 @@ impl<'a> Renderer<'a> {
     }
 
     fn register(&self, r: &Tree) -> Result<String, String> {
-        let d = self.dual(r.ty)?;
-        let ok = |n: &str, kind: char, max: usize| n.strip_prefix(kind).and_then(|k| k.parse::<usize>().ok()).is_some_and(|k| k < max);
-        Ok(match (r.name.as_str(), d.dual.as_str()) {
-            ("fallback", "reg<f32>.real") => "f0".to_string(),
-            ("fallback", "reg<vec4<f32>>.real") => "v0".to_string(),
-            ("fallback", "reg<u32>.index") => "i0".to_string(),
-            ("fallback", "reg<bool>.flag") => "b0".to_string(),
-            ("fallback", "reg<i32>.int") => "n0".to_string(),
-            ("fallback", "reg<vec4<u32>>.bits") => "u0".to_string(),
-            ("fallback", "reg<mat2x2<f32>>.real") => "x0".to_string(),
-            ("fallback", "reg<mat3x3<f32>>.real") => "y0".to_string(),
-            ("fallback", "reg<mat4x4<f32>>.real") => "z0".to_string(),
-            (name, _) => {
-                let n = name.strip_prefix("reg.").unwrap_or("");
-                if ok(n, 'f', 64) || ok(n, 'v', 32) || ok(n, 'i', 64) || ok(n, 'b', 16) || ok(n, 'n', 16) || ok(n, 'u', 8) || ok(n, 'x', 2) || ok(n, 'y', 2) || ok(n, 'z', 2) {
-                    let k: usize = n[1..].parse().unwrap_or(0);
-                    register_var(&n[..1], k)
-                } else {
-                    return Err(format!("{name} ({}) is not a register", d.dual));
-                }
-            }
-        })
+        register_name(self.kingdom, r)
     }
 
-    /// A workgroup array leaf's variable name; a fallback leaf names the
-    /// array of ITS DUAL (the vec4 array for a vec4 demand), never `wg_a`
-    /// regardless — a vec4 value stored into the f32 array was a compile
-    /// error the kingdom's types had not made (fit_safe18_v2, 2026-10-10).
+    /// A workgroup array leaf's variable name ([`wgmem_var`]).
     fn wgmem(&self, w: &Tree) -> Result<&'static str, String> {
-        if w.name == "fallback" {
-            let d = self.dual(w.ty).map(|d| d.dual.clone()).unwrap_or_default();
-            return Ok(if d.starts_with("wgmem<vec4") {
-                "wg_va"
-            } else if d.starts_with("wgmem<vec2") {
-                "wg_v2a"
-            } else if d.starts_with("wgmem<atomic<u32>") {
-                "wg_au_a"
-            } else if d.starts_with("wgmem<atomic<i32>") {
-                "wg_ai_a"
-            } else {
-                "wg_a"
-            });
-        }
-        Ok(match w.name.as_str() {
-            "wg.a" => "wg_a",
-            "wg.b" => "wg_b",
-            "wg.c" => "wg_c",
-            "wg.d" => "wg_d",
-            "wg.va" => "wg_va",
-            "wg.vb" => "wg_vb",
-            "wg.vc" => "wg_vc",
-            "wg.vd" => "wg_vd",
-            "wg.v2a" => "wg_v2a",
-            "wg.v2b" => "wg_v2b",
-            "wg.v2c" => "wg_v2c",
-            "wg.v2d" => "wg_v2d",
-            "wg.au_a" => "wg_au_a",
-            "wg.au_b" => "wg_au_b",
-            "wg.ai_a" => "wg_ai_a",
-            "wg.ai_b" => "wg_ai_b",
-            other => return Err(format!("{other} is not a workgroup array")),
-        })
+        wgmem_var(self.kingdom, w)
     }
 
-    /// The kernel's workgroup arrays (2026-10-12): every array it declares on
-    /// its grid (`grid.with_wg`) at its length, every array it uses but does
-    /// not declare at its default length (f32 2,048, vec2 1,024, vec4 512),
-    /// then the largest halved until the total fits the device's 32 KB. Empty
-    /// (the original four declarations) for a kernel that declares none and
-    /// uses only `wg_a`, `wg_b`, `wg_va`, `wg_vb`, whose text is unchanged.
     /// The workgroup memory a kernel asks for, in bytes, before the renderer
     /// halves any array to fit 32 KB (knob references resolved): the knob
     /// mutation's join keeps it within the device's limit, so a child is
@@ -1085,64 +1024,150 @@ impl<'a> Renderer<'a> {
         Ok(plan_bytes(&self.workgroup_plan_requested(grid, &root)?))
     }
 
+    /// The kernel's workgroup arrays ([`workgroup_plan`]).
     fn workgroup_plan(&self, grid: &Tree, root: &Tree) -> Result<BTreeMap<String, (String, u32)>, String> {
-        let mut plan = self.workgroup_plan_requested(grid, root)?;
-        while plan_bytes(&plan) > 32768 {
-            let largest = plan.iter().max_by_key(|(v, (e, l))| (elem_bytes(e) * u64::from(*l), std::cmp::Reverse((*v).clone()))).map(|(v, _)| v.clone()).expect("a non-empty plan");
-            let entry = plan.get_mut(&largest).expect("present");
-            entry.1 = (entry.1 / 2).max(1);
-        }
-        Ok(plan)
+        workgroup_plan(self.kingdom, grid, root)
     }
 
-    /// [`Self::workgroup_plan`] before any array is halved.
+    /// [`workgroup_plan_requested`].
     fn workgroup_plan_requested(&self, grid: &Tree, root: &Tree) -> Result<BTreeMap<String, (String, u32)>, String> {
-        let elem_of = |var: &str| if var.starts_with("wg_au") { "atomic<u32>" } else if var.starts_with("wg_ai") { "atomic<i32>" } else if var.starts_with("wg_v2") { "vec2<f32>" } else if var.starts_with("wg_v") { "vec4<f32>" } else { "f32" };
-        let default_len = |var: &str| if var.starts_with("wg_au") || var.starts_with("wg_ai") || var.starts_with("wg_v2") { 1024 } else if var.starts_with("wg_v") { WGVEC_LEN } else { WGMEM_LEN };
-        let mut declared: Vec<(String, u32)> = Vec::new();
-        if grid.name == "grid.with_wg" && grid.kids.len() == 2 {
-            let mut at = Some(&grid.kids[1]);
-            while let Some(d) = at {
-                let (decl, rest) = match (d.name.as_str(), d.kids.as_slice()) {
-                    ("wg.decls_one", [x]) => (Some(x), None),
-                    ("wg.decls_cons", [x, r]) => (Some(x), Some(r)),
-                    _ => (None, None),
-                };
-                if let Some(x) = decl.filter(|x| x.kids.len() == 2 && x.name.starts_with("wg.decl_")) {
-                    let var = self.wgmem(&x.kids[0])?.to_string();
-                    let len = match x.kids[1].name.as_str() {
-                        n if n.starts_with("literal.") && x.kids[1].konst.is_finite() => (x.kids[1].konst.round() as i64).clamp(1, 8192) as u32,
-                        _ => default_len(&var),
-                    };
-                    if !declared.iter().any(|(v, _)| *v == var) {
-                        declared.push((var, len));
-                    }
-                }
-                at = rest;
-            }
-        }
-        let mut used: BTreeSet<String> = BTreeSet::new();
-        fn uses(r: &Renderer, t: &Tree, out: &mut BTreeSet<String>) {
-            let array = t.kids.is_empty() && (t.name.starts_with("wg.") || (t.name == "fallback" && r.dual(t.ty).is_ok_and(|d| d.dual.starts_with("wgmem<"))));
-            if array {
-                if let Ok(v) = r.wgmem(t) {
-                    out.insert(v.to_string());
-                }
-            }
-            t.kids.iter().for_each(|k| uses(r, k, out));
-        }
-        uses(self, root, &mut used);
-        let legacy = ["wg_a", "wg_b", "wg_va", "wg_vb"];
-        if declared.is_empty() && used.iter().all(|v| legacy.contains(&v.as_str())) {
-            return Ok(BTreeMap::new());
-        }
-        let mut plan: BTreeMap<String, (String, u32)> = declared.into_iter().map(|(v, l)| { let e = elem_of(&v).to_string(); (v, (e, l)) }).collect();
-        for v in used {
-            plan.entry(v.clone()).or_insert_with(|| (elem_of(&v).to_string(), default_len(&v)));
-        }
-        Ok(plan)
+        workgroup_plan_requested(self.kingdom, grid, root)
     }
+}
 
+/// A register leaf's WGSL variable name (`f3`, `i32r`); a fallback leaf
+/// names the first register of ITS DUAL.
+pub fn register_name(kingdom: &WgslKingdom, r: &Tree) -> Result<String, String> {
+    let d = kingdom.dual(r.ty).ok_or_else(|| format!("{:?} is not a dual of the kingdom", r.ty))?;
+    let ok = |n: &str, kind: char, max: usize| n.strip_prefix(kind).and_then(|k| k.parse::<usize>().ok()).is_some_and(|k| k < max);
+    Ok(match (r.name.as_str(), d.dual.as_str()) {
+        ("fallback", "reg<f32>.real") => "f0".to_string(),
+        ("fallback", "reg<vec4<f32>>.real") => "v0".to_string(),
+        ("fallback", "reg<u32>.index") => "i0".to_string(),
+        ("fallback", "reg<bool>.flag") => "b0".to_string(),
+        ("fallback", "reg<i32>.int") => "n0".to_string(),
+        ("fallback", "reg<vec4<u32>>.bits") => "u0".to_string(),
+        ("fallback", "reg<mat2x2<f32>>.real") => "x0".to_string(),
+        ("fallback", "reg<mat3x3<f32>>.real") => "y0".to_string(),
+        ("fallback", "reg<mat4x4<f32>>.real") => "z0".to_string(),
+        (name, _) => {
+            let n = name.strip_prefix("reg.").unwrap_or("");
+            if ok(n, 'f', 64) || ok(n, 'v', 32) || ok(n, 'i', 64) || ok(n, 'b', 16) || ok(n, 'n', 16) || ok(n, 'u', 8) || ok(n, 'x', 2) || ok(n, 'y', 2) || ok(n, 'z', 2) {
+                let k: usize = n[1..].parse().unwrap_or(0);
+                register_var(&n[..1], k)
+            } else {
+                return Err(format!("{name} ({}) is not a register", d.dual));
+            }
+        }
+    })
+}
+
+
+/// A workgroup array leaf's variable name; a fallback leaf names the
+/// array of ITS DUAL (the vec4 array for a vec4 demand), never `wg_a`
+/// regardless — a vec4 value stored into the f32 array was a compile
+/// error the kingdom's types had not made (fit_safe18_v2, 2026-10-10).
+pub fn wgmem_var(kingdom: &WgslKingdom, w: &Tree) -> Result<&'static str, String> {
+    if w.name == "fallback" {
+        let d = kingdom.dual(w.ty).map(|d| d.dual.clone()).unwrap_or_default();
+        return Ok(if d.starts_with("wgmem<vec4") {
+            "wg_va"
+        } else if d.starts_with("wgmem<vec2") {
+            "wg_v2a"
+        } else if d.starts_with("wgmem<atomic<u32>") {
+            "wg_au_a"
+        } else if d.starts_with("wgmem<atomic<i32>") {
+            "wg_ai_a"
+        } else {
+            "wg_a"
+        });
+    }
+    Ok(match w.name.as_str() {
+        "wg.a" => "wg_a",
+        "wg.b" => "wg_b",
+        "wg.c" => "wg_c",
+        "wg.d" => "wg_d",
+        "wg.va" => "wg_va",
+        "wg.vb" => "wg_vb",
+        "wg.vc" => "wg_vc",
+        "wg.vd" => "wg_vd",
+        "wg.v2a" => "wg_v2a",
+        "wg.v2b" => "wg_v2b",
+        "wg.v2c" => "wg_v2c",
+        "wg.v2d" => "wg_v2d",
+        "wg.au_a" => "wg_au_a",
+        "wg.au_b" => "wg_au_b",
+        "wg.ai_a" => "wg_ai_a",
+        "wg.ai_b" => "wg_ai_b",
+        other => return Err(format!("{other} is not a workgroup array")),
+    })
+}
+
+/// The kernel's workgroup arrays (2026-10-12): every array it declares on
+/// its grid (`grid.with_wg`) at its length, every array it uses but does
+/// not declare at its default length (f32 2,048, vec2 1,024, vec4 512),
+/// then the largest halved until the total fits the device's 32 KB. Empty
+/// (the original four declarations) for a kernel that declares none and
+/// uses only `wg_a`, `wg_b`, `wg_va`, `wg_vb`, whose text is unchanged.
+pub fn workgroup_plan(kingdom: &WgslKingdom, grid: &Tree, root: &Tree) -> Result<BTreeMap<String, (String, u32)>, String> {
+    let mut plan = workgroup_plan_requested(kingdom, grid, root)?;
+    while plan_bytes(&plan) > 32768 {
+        let largest = plan.iter().max_by_key(|(v, (e, l))| (elem_bytes(e) * u64::from(*l), std::cmp::Reverse((*v).clone()))).map(|(v, _)| v.clone()).expect("a non-empty plan");
+        let entry = plan.get_mut(&largest).expect("present");
+        entry.1 = (entry.1 / 2).max(1);
+    }
+    Ok(plan)
+}
+
+/// [`workgroup_plan`] before any array is halved.
+pub fn workgroup_plan_requested(kingdom: &WgslKingdom, grid: &Tree, root: &Tree) -> Result<BTreeMap<String, (String, u32)>, String> {
+    let elem_of = |var: &str| if var.starts_with("wg_au") { "atomic<u32>" } else if var.starts_with("wg_ai") { "atomic<i32>" } else if var.starts_with("wg_v2") { "vec2<f32>" } else if var.starts_with("wg_v") { "vec4<f32>" } else { "f32" };
+    let default_len = |var: &str| if var.starts_with("wg_au") || var.starts_with("wg_ai") || var.starts_with("wg_v2") { 1024 } else if var.starts_with("wg_v") { WGVEC_LEN } else { WGMEM_LEN };
+    let mut declared: Vec<(String, u32)> = Vec::new();
+    if grid.name == "grid.with_wg" && grid.kids.len() == 2 {
+        let mut at = Some(&grid.kids[1]);
+        while let Some(d) = at {
+            let (decl, rest) = match (d.name.as_str(), d.kids.as_slice()) {
+                ("wg.decls_one", [x]) => (Some(x), None),
+                ("wg.decls_cons", [x, r]) => (Some(x), Some(r)),
+                _ => (None, None),
+            };
+            if let Some(x) = decl.filter(|x| x.kids.len() == 2 && x.name.starts_with("wg.decl_")) {
+                let var = wgmem_var(kingdom, &x.kids[0])?.to_string();
+                let len = match x.kids[1].name.as_str() {
+                    n if n.starts_with("literal.") && x.kids[1].konst.is_finite() => (x.kids[1].konst.round() as i64).clamp(1, 8192) as u32,
+                    _ => default_len(&var),
+                };
+                if !declared.iter().any(|(v, _)| *v == var) {
+                    declared.push((var, len));
+                }
+            }
+            at = rest;
+        }
+    }
+    let mut used: BTreeSet<String> = BTreeSet::new();
+    fn uses(kingdom: &WgslKingdom, t: &Tree, out: &mut BTreeSet<String>) {
+        let array = t.kids.is_empty() && (t.name.starts_with("wg.") || (t.name == "fallback" && kingdom.dual(t.ty).is_some_and(|d| d.dual.starts_with("wgmem<"))));
+        if array {
+            if let Ok(v) = wgmem_var(kingdom, t) {
+                out.insert(v.to_string());
+            }
+        }
+        t.kids.iter().for_each(|k| uses(kingdom, k, out));
+    }
+    uses(kingdom, root, &mut used);
+    let legacy = ["wg_a", "wg_b", "wg_va", "wg_vb"];
+    if declared.is_empty() && used.iter().all(|v| legacy.contains(&v.as_str())) {
+        return Ok(BTreeMap::new());
+    }
+    let mut plan: BTreeMap<String, (String, u32)> = declared.into_iter().map(|(v, l)| { let e = elem_of(&v).to_string(); (v, (e, l)) }).collect();
+    for v in used {
+        plan.entry(v.clone()).or_insert_with(|| (elem_of(&v).to_string(), default_len(&v)));
+    }
+    Ok(plan)
+}
+
+impl Renderer<'_> {
     /// A workgroup array's length in this kernel (its plan's, or the
     /// original four's).
     fn wg_len(&self, var: &str, scope: &Scope) -> u32 {
@@ -1870,6 +1895,13 @@ pub fn cost(t: &Tree) -> Cost {
     Cost { base, per_item }
 }
 
+/// The worst shape the fitness times: the width d, the item count m and the
+/// band's rows (r_off is 0). The legality checker (`check.rs`) proves its
+/// ranges at the same shape.
+pub const WORST_D: f64 = 8192.0;
+pub const WORST_M: f64 = 65536.0;
+pub const WORST_ROWS: f64 = 8192.0;
+
 /// An index expression evaluated at the worst shape the fitness times
 /// (d 8192, m 65536, r_rows 8192, r_off 0), for the cost of a loop it
 /// bounds; a value the estimator cannot see (a register, a load) is 8192.
@@ -1881,15 +1913,15 @@ pub fn worst_bound(t: &Tree) -> f64 {
 /// Whether a loop bound grows with the item count m: valued fully (every
 /// leaf seen) at the worst shape and again with m doubled, it is larger.
 fn grows_with_m(t: &Tree) -> bool {
-    let (at, seen) = bound_at(t, 65536.0);
-    seen && bound_at(t, 131072.0).0 > at
+    let (at, seen) = bound_at(t, WORST_M);
+    seen && bound_at(t, 2.0 * WORST_M).0 > at
 }
 
 /// [`worst_bound`] and whether every value in the expression was seen: a
 /// register, a load or a row the estimator has no case for is taken as
 /// 8192 and makes the value unseen.
 fn bound_at_worst(t: &Tree) -> (f64, bool) {
-    bound_at(t, 65536.0)
+    bound_at(t, WORST_M)
 }
 
 /// [`bound_at_worst`] with the item count m given.
@@ -1906,7 +1938,8 @@ fn bound_at(t: &Tree, m: f64) -> (f64, bool) {
             }
         };
         match safe_base(&t.name) {
-            "load.cfg_d" | "load.cfg_r_rows" | "bound.d" | "bound.rows" => 8192.0,
+            "load.cfg_d" | "bound.d" => WORST_D,
+            "load.cfg_r_rows" | "bound.rows" => WORST_ROWS,
             "load.cfg_m" | "bound.m" => m,
             "load.cfg_r_off" => 0.0,
             "bound.of_index" | "index.of_count" | "safe.counter_index" | "safe.tile_index" | "safe.tile_index2" | "safe.tile_index3" => k(0),
@@ -2047,12 +2080,18 @@ impl Renderer<'_> {
     }
 
     fn parr_name(&self, t: &Tree) -> Result<&'static str, String> {
-        if t.name == "fallback" {
-            let d = self.dual(t.ty).map(|d| d.dual.clone()).unwrap_or_default();
-            return Ok(if d.starts_with("parr<vec2") { "pq" } else if d.starts_with("parr<vec") { "pv" } else if d.starts_with("parr<u32>") { "pi" } else if d.starts_with("parr<bool>") { "pm" } else { "pa" });
-        }
-        parr_name(t)
+        parr_var(self.kingdom, t)
     }
+}
+
+/// A private array leaf's variable name; a fallback leaf names the array
+/// of ITS DUAL (`pv` for a vec4 demand, `pi` for u32, `pm` for bool).
+pub fn parr_var(kingdom: &WgslKingdom, t: &Tree) -> Result<&'static str, String> {
+    if t.name == "fallback" {
+        let d = kingdom.dual(t.ty).map(|d| d.dual.clone()).unwrap_or_default();
+        return Ok(if d.starts_with("parr<vec2") { "pq" } else if d.starts_with("parr<vec") { "pv" } else if d.starts_with("parr<u32>") { "pi" } else if d.starts_with("parr<bool>") { "pm" } else { "pa" });
+    }
+    parr_name(t)
 }
 
 /// Whether a row is an operation naga's constant evaluator can refuse on
@@ -2106,7 +2145,7 @@ pub fn register_declarations() -> String {
 }
 
 /// The length of a workgroup or private array by its variable name.
-fn array_len(name: &str) -> u32 {
+pub fn array_len(name: &str) -> u32 {
     match name {
         "wg_a" | "wg_b" | "wg_c" | "wg_d" => WGMEM_LEN,
         n if n.starts_with("wg_v2") => 1024,
