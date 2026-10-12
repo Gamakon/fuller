@@ -10,7 +10,6 @@
 //! goes to naga, which validates it, and a refusal names its reason.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::fmt::Write;
 
 use crate::geneframe::Ty;
 use crate::wgsl::loader::{WgslDual, WgslKingdom, WgslRow};
@@ -1302,8 +1301,7 @@ impl<'a> Renderer<'a> {
             }
             _ => {}
         }
-        if let Some(bound) = name.strip_prefix("safe.lt_") {
-            let _ = bound;
+        if name.starts_with("safe.lt_") {
             let a: Vec<String> = v.kids.iter().map(|k| self.value(k, scope)).collect::<Result<_, _>>()?;
             return Ok(format!("({} < {})", a[0], a[1]));
         }
@@ -2148,9 +2146,7 @@ pub fn validate_text(text: &str) -> Result<(), String> {
 impl Tree {
     /// A short description for a refusal ledger.
     pub fn head(&self) -> String {
-        let mut s = String::new();
-        let _ = write!(s, "{} ({} nodes, depth {})", self.name, self.size(), self.depth());
-        s
+        format!("{} ({} nodes, depth {})", self.name, self.size(), self.depth())
     }
 }
 
@@ -2436,7 +2432,7 @@ mod tests {
                     if let Err(e) = validate_text(&out.text) {
                         if invalid.len() < 8 {
                             let dir = std::env::var("CARGO_TARGET_TMPDIR").unwrap_or_else(|_| std::env::temp_dir().to_string_lossy().to_string());
-                            let _ = std::fs::write(format!("{dir}/wgsl_random_invalid_{seed}.wgsl"), format!("// {e}\n{}", out.text));
+                            std::fs::write(format!("{dir}/wgsl_random_invalid_{seed}.wgsl"), format!("// {e}\n{}", out.text)).unwrap_or_else(|err| panic!("writing the invalid kernel of seed {seed}: {err}"));
                         }
                         let brief: String = e.lines().filter(|l| !l.trim().is_empty()).take(6).collect::<Vec<_>>().join(" | ");
                         invalid.push(format!("seed {seed} {}: {}", tree.head(), &brief[..brief.len().min(400)]));

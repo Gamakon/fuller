@@ -638,9 +638,9 @@ impl<'a> Gram<'a> {
             queue.submit(Some(enc.finish()));
             let (tx, rx) = std::sync::mpsc::channel();
             if let Some(st) = &staging {
-                st.slice(..).map_async(wgpu::MapMode::Read, { let tx = tx.clone(); move |r| { let _ = tx.send(r); } });
+                st.slice(..).map_async(wgpu::MapMode::Read, { let tx = tx.clone(); move |r| { tx.send(r).expect("the receiver waits for the mapping"); } });
             }
-            stamps_read.slice(..).map_async(wgpu::MapMode::Read, move |r| { let _ = tx.send(r); });
+            stamps_read.slice(..).map_async(wgpu::MapMode::Read, move |r| { tx.send(r).expect("the receiver waits for the mapping"); });
             device.poll(wgpu::Maintain::Wait);
             for _ in 0..(1 + usize::from(staging.is_some())) {
                 rx.recv().map_err(|e| format!("map: {e}"))?.map_err(|e| format!("map: {e}"))?;
@@ -750,8 +750,8 @@ impl Gram<'_> {
         }
         queue.submit(Some(enc.finish()));
         let (tx, rx) = std::sync::mpsc::channel();
-        staging.slice(..).map_async(wgpu::MapMode::Read, { let tx = tx.clone(); move |r| { let _ = tx.send(r); } });
-        stamps_read.slice(..).map_async(wgpu::MapMode::Read, move |r| { let _ = tx.send(r); });
+        staging.slice(..).map_async(wgpu::MapMode::Read, { let tx = tx.clone(); move |r| { tx.send(r).expect("the receiver waits for the mapping"); } });
+        stamps_read.slice(..).map_async(wgpu::MapMode::Read, move |r| { tx.send(r).expect("the receiver waits for the mapping"); });
         device.poll(wgpu::Maintain::Wait);
         for _ in 0..2 {
             rx.recv().map_err(|e| format!("map: {e}"))?.map_err(|e| format!("map: {e}"))?;

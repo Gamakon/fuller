@@ -3123,7 +3123,6 @@ impl<'a> Ctx<'a> {
             ("boundx", _) => return Err(format!("an expression-bounded loop at rung {rung} (too deep)")),
             (_, _) => return Err(format!("a long loop bounded by a binding at rung {rung} (only at the top level; spell the bound as an expression to nest it)")),
         };
-        let _ = cond;
         if (kind == "lit64" || kind == "boundx") && depth > 4 && body_rung != "L1" {
             return Err("a fifth nested tile loop".into());
         }

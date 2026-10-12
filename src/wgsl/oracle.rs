@@ -494,7 +494,7 @@ pub mod device {
                 let slice = read.slice(..);
                 let (tx, rx) = std::sync::mpsc::channel();
                 slice.map_async(wgpu::MapMode::Read, move |r| {
-                    let _ = tx.send(r);
+                    tx.send(r).expect("the receiver waits for the mapping");
                 });
                 self.device.poll(wgpu::Maintain::Wait);
                 rx.recv().map_err(|e| format!("map_async channel: {e}"))?.map_err(|e| format!("map_async: {e}"))?;

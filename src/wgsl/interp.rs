@@ -458,7 +458,7 @@ impl<'a> Interp<'a> {
                     };
                     let v = self.eval(frame, value_tree)?;
                     let place = self.place(frame, &target, index_tree)?;
-                    self.store(frame, &place, v)?;
+                    self.store(&place, v)?;
                     Flow::Next
                 }
                 Statement::If { accept, reject, .. } => {
@@ -551,8 +551,8 @@ impl<'a> Interp<'a> {
                     let callee = function.index();
                     let callee_fn = self.function(callee);
                     let mut args = Vec::with_capacity(arguments.len());
-                    for (p, a) in arguments.iter().enumerate() {
-                        let tree = self.programs[frame.fi].head[own[p]].clone();
+                    for (p, &slot) in own.iter().enumerate().take(arguments.len()) {
+                        let tree = self.programs[frame.fi].head[slot].clone();
                         let (ctor, kids) = store_parts(&tree)?;
                         if !ctor.starts_with("store.callarg.") || kids.len() != 1 {
                             return Err(format!("interp: root is {ctor}, expected call argument {p}"));
@@ -575,7 +575,6 @@ impl<'a> Interp<'a> {
                         }
                         // The reader expands pointer arguments through
                         // `pointer_target`: `&x` is `(Var "local.x@i")`, fine.
-                        let _ = a;
                     }
                     let r = self.call(callee, args)?;
                     if let (Some(h), Some(v)) = (result, r) {
@@ -651,12 +650,11 @@ impl<'a> Interp<'a> {
         Ok(Place { base, steps })
     }
 
-    fn load(&self, frame: &Frame, place: &Place) -> Result<Value, String> {
+    fn load(&self, place: &Place) -> Result<Value, String> {
         let mut cur = match &place.base {
             Base::Cell(c) => &self.cells[*c],
             Base::Memory(loc) => self.memory.get(loc).ok_or_else(|| format!("interp: memory has no {loc}"))?,
         };
-        let _ = frame;
         for &i in &place.steps {
             cur = match cur {
                 Value::Vec(items) => match items.get(i) {
@@ -670,8 +668,7 @@ impl<'a> Interp<'a> {
         Ok(cur.clone())
     }
 
-    fn store(&mut self, frame: &Frame, place: &Place, value: Value) -> Result<(), String> {
-        let _ = frame;
+    fn store(&mut self, place: &Place, value: Value) -> Result<(), String> {
         let cell: &mut Value = match &place.base {
             Base::Cell(c) => &mut self.cells[*c],
             Base::Memory(loc) => self.memory.cells.get_mut(loc).ok_or_else(|| format!("interp: memory has no {loc}"))?,
@@ -715,7 +712,7 @@ impl<'a> Interp<'a> {
                         _ => return Err(format!("interp: {ctor} with {} children", kids.len())),
                     };
                     let place = self.place(frame, target, Some(ix))?;
-                    return self.load(frame, &place);
+                    return self.load(&place);
                 }
                 let args: Vec<Value> = kids.iter().map(|k| self.eval(frame, k)).collect::<Result<_, _>>()?;
                 if let Some(rest) = ctor.strip_prefix("shape.") {
@@ -744,7 +741,7 @@ impl<'a> Interp<'a> {
         let (base, _) = versions::split_version(name);
         if let Some(target) = base.strip_prefix("load.") {
             let place = self.place(frame, target, None)?;
-            return self.load(frame, &place);
+            return self.load(&place);
         }
         if let Some(slot) = homeotic::href_slot(name) {
             return frame.defs.get(slot).and_then(|d| d.clone()).ok_or_else(|| format!("interp: {name} read before its definition was evaluated at its placement"));

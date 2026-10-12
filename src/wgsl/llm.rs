@@ -173,7 +173,7 @@ fn call_codex(system: &str, prompt: &str) -> Result<(String, String, f64), Strin
         return Err(format!("codex exited {}: {:?}", out.status, &err[..err.len().min(400)]));
     }
     let result = std::fs::read_to_string(&last).map_err(|e| format!("codex last message {}: {e}", last.display()))?;
-    let _ = std::fs::remove_file(&last);
+    std::fs::remove_file(&last).map_err(|e| format!("removing codex's last message {}: {e}", last.display()))?;
     Ok((result, stdout, t.elapsed().as_secs_f64()))
 }
 
