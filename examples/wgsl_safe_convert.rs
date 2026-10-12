@@ -16,7 +16,7 @@ use std::path::PathBuf;
 
 use fuller::wgsl::loader::WgslKingdom;
 use fuller::wgsl::render::{cost, gram_shipped_safe_tree, validate_text, Tree};
-use fuller::wgsl::safe_karva::{dump_file, encode, head_needed, render_tree, split};
+use fuller::wgsl::safe_karva::{dump_file, encode, head_needed, render_tree_with, split};
 use fuller::wgsl::safe_reader::{read_safe, statement_outline};
 
 fn main() -> Result<(), String> {
@@ -73,7 +73,7 @@ fn main() -> Result<(), String> {
             }
             Ok(r) => {
                 converted += 1;
-                let (text, ok) = match render_tree(&r.tree, &kingdom) {
+                let (text, ok) = match render_tree_with(&r.tree, &kingdom, &r.role) {
                     Ok(o) => match validate_text(&o.text) {
                         Ok(()) => (o.text, "yes".to_string()),
                         Err(e) => {

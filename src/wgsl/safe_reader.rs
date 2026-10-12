@@ -24,10 +24,14 @@ pub struct SafeRead {
     pub tree: Tree,
     pub notes: Vec<String>,
     pub registers: BTreeMap<String, String>,
+    /// The interface the kernel declared (`// interface <name>`; the Gram's by default).
+    pub role: crate::wgsl::render::Role,
 }
 
 struct Ctx<'a> {
     kingdom: &'a WgslKingdom,
+    /// The interface's per-kernel rows (a second input's load among them).
+    per_kernel_rows: Vec<crate::wgsl::safe_karva::PerKernelRow>,
     duals: &'a BTreeMap<String, Option<Ty>>,
     lets: &'a HashMap<String, Node>,
     roots: &'a HashMap<Vec<usize>, Vec<&'a Root>>,
@@ -637,6 +641,41 @@ fn guard_chain<'r>(body: &naga::Block, returns: &[&'r Root], roots: &mut HashMap
         rest = select(a, rest, cond_at(vec![i], roots)?);
     }
     Some(rest)
+}
+
+/// A name of the base reader with the interface's buffers, uniform and
+/// fields as the kingdom's canonical roles: `load.buffer.<input>` is
+/// `load.buffer.phi`, `<output>` is `h`, `load.uniform.<var>.<field>` is
+/// `load.uniform.cfg.<role>`, `global.<input>` is `global.phi`.
+fn canonical_name(name: &str, role: &crate::wgsl::render::Role) -> String {
+    let swap = |name: &str, from: &str, to: &str| -> Option<String> {
+        let rest = name.strip_prefix(from)?;
+        (rest.is_empty() || rest.starts_with(['.', '@'])).then(|| format!("{to}{rest}"))
+    };
+    let prefixes = ["load.buffer.", "store.buffer.", "buffer.", "global."];
+    for p in prefixes {
+        if let Some(n) = swap(name, &format!("{p}{}", role.input), &format!("{p}phi")) {
+            return n;
+        }
+        if let Some(n) = swap(name, &format!("{p}{}", role.output), &format!("{p}h")) {
+            return n;
+        }
+    }
+    if let Some(rest) = name.strip_prefix(&format!("load.uniform.{}.", role.uniform_var)) {
+        let (field, tail) = rest.split_at(rest.find(['.', '@']).unwrap_or(rest.len()));
+        let canon = role.fields.iter().find(|f| f.name == field && !f.role.is_empty()).map_or(field, |f| f.role.as_str());
+        return format!("load.uniform.cfg.{canon}{tail}");
+    }
+    name.to_string()
+}
+
+/// [`canonical_name`] over a whole node.
+fn canonical_node(n: &Node, role: &crate::wgsl::render::Role) -> Node {
+    match n {
+        Node::Leaf { name, slot } => Node::Leaf { name: canonical_name(name, role), slot: slot.clone() },
+        Node::Literal { .. } => n.clone(),
+        Node::App { name, slot, known, kids } => Node::App { name: canonical_name(name, role), slot: slot.clone(), known: *known, kids: kids.iter().map(|k| canonical_node(k, role)).collect() },
+    }
 }
 
 /// The marker of a tree already in the safe grammar inside a raw one.
@@ -1721,6 +1760,15 @@ impl<'a> Ctx<'a> {
             // Any index: a read past the buffer is zero by WGSL's rule.
             let idx = self.value(&t.kids[0])?;
             return Ok(Tree::new("load.phi_safe", ty(self, "f32.real")?, vec![idx]));
+        }
+        // A read of the interface's other inputs: its per-kernel row
+        // (`load.<buffer>`), at any index (a read past it is zero).
+        if let Some(buf) = t.name.strip_prefix("load.buffer.").and_then(|r| r.split(['.', '@']).next()).filter(|b| *b != "phi" && *b != "h") {
+            if let (Some(p), [i]) = (self.per_kernel_rows.iter().find(|p| p.0 == format!("load.{buf}")), t.kids.as_slice()) {
+                let (name, out) = (p.0.clone(), p.2);
+                let idx = self.value(i)?;
+                return Ok(Tree::new(&name, out, vec![idx]));
+            }
         }
         if t.name.starts_with("load.buffer.h.#") {
             let cell = self.cell(&t.kids[0])?;
@@ -3958,7 +4006,20 @@ pub fn read_safe(source: &str, kingdom: &WgslKingdom) -> Result<SafeRead, String
 /// left as the literal the kernel wrote.
 pub fn read_safe_literal(source: &str, kingdom: &WgslKingdom) -> Result<SafeRead, String> {
     let grid = grid_header(source).ok_or("no `// grid x y bx by` header")?;
-    let kernel = read(source)?;
+    let role = crate::wgsl::render::interface_of(source)?;
+    let mut kernel = read(source)?;
+    // The interface's names as the kingdom's canonical roles (its input is
+    // phi, its output h, its uniform cfg with the fields d, m, r_rows, r_off),
+    // so the ownership proof and the safe rows read every interface alike.
+    for f in &mut kernel.functions {
+        for r in &mut f.roots {
+            r.tree = canonical_node(&r.tree, &role);
+            match &mut r.kind {
+                RootKind::Store { target } | RootKind::Atomic { target, .. } => *target = canonical_name(target, &role),
+                _ => {}
+            }
+        }
+    }
     // The workgroup the header names is the one the kernel declares: x and y
     // each 1..=1,024 with x * y <= 1,024 (the M3 Max's limits), z 1 (a thread
     // owns cells by x and y; two threads differing only in z would share them).
@@ -4075,7 +4136,7 @@ pub fn read_safe_literal(source: &str, kingdom: &WgslKingdom) -> Result<SafeRead
         }
     }
     let bound_lets = lets_used_in_deeper_loops(&f.roots, &naga_fn.body);
-    let mut ctx = Ctx { kingdom, duals: &duals, lets: &lets, roots: &roots, item_counter: None, tile_counter: None, tile_counter2: None, tile_counter3: None, tile_counter4: None, registers: BTreeMap::new(), next_reg: BTreeMap::new(), guard: None, tail: true, arrays: BTreeMap::new(), array_lens: BTreeMap::new(), parrs: BTreeMap::new(), grid, rows_x: grid_rows_x(source).then_some(true), notes: Vec::new(), helpers: &helpers, calls: &calls, arg_roots: &arg_roots, inline_args: None, row_arrays: BTreeMap::new(), used_counters: std::collections::BTreeSet::new(), local_lanes, axis_memo: BTreeMap::new(), loop_depth: 0, tile_bounds: BTreeMap::new(), naga_fn, module: &kernel.module, local_prefix: String::new(), inline_result: None, inline_values: None, bound_lets, let_regs: HashMap::new(), inlined: HashMap::new(), stored_seen: std::collections::BTreeSet::new(), counter_offsets: HashMap::new(), pointer_args: HashMap::new() };
+    let mut ctx = Ctx { kingdom, per_kernel_rows: crate::wgsl::safe_karva::per_kernel_rows(kingdom, &role), duals: &duals, lets: &lets, roots: &roots, item_counter: None, tile_counter: None, tile_counter2: None, tile_counter3: None, tile_counter4: None, registers: BTreeMap::new(), next_reg: BTreeMap::new(), guard: None, tail: true, arrays: BTreeMap::new(), array_lens: BTreeMap::new(), parrs: BTreeMap::new(), grid, rows_x: grid_rows_x(source).then_some(true), notes: Vec::new(), helpers: &helpers, calls: &calls, arg_roots: &arg_roots, inline_args: None, row_arrays: BTreeMap::new(), used_counters: std::collections::BTreeSet::new(), local_lanes, axis_memo: BTreeMap::new(), loop_depth: 0, tile_bounds: BTreeMap::new(), naga_fn, module: &kernel.module, local_prefix: String::new(), inline_result: None, inline_values: None, bound_lets, let_regs: HashMap::new(), inlined: HashMap::new(), stored_seen: std::collections::BTreeSet::new(), counter_offsets: HashMap::new(), pointer_args: HashMap::new() };
     // Register initialisations first, in root order. A local initialised to
     // its form's fallback (0.0, 0u, false, a zero vector) costs nothing: the
     // register's declaration already holds that value, and the register is
@@ -4167,9 +4228,8 @@ pub fn read_safe_literal(source: &str, kingdom: &WgslKingdom) -> Result<SafeRead
     // ownership proof, which reads the components as naga wrote them.
     let tree = by_axis(&tree, rows_x);
     // Row-consistent: every node under the dual its parent's row demands.
-    let per_kernel = crate::wgsl::safe_karva::per_kernel_rows(kingdom, &crate::wgsl::render::gram_role());
-    let tree = crate::wgsl::safe_karva::conform(&tree, tree.ty, kingdom, &per_kernel)?;
-    Ok(SafeRead { tree, notes: ctx.notes, registers: ctx.registers })
+    let tree = crate::wgsl::safe_karva::conform(&tree, tree.ty, kingdom, &ctx.per_kernel_rows)?;
+    Ok(SafeRead { tree, notes: ctx.notes, registers: ctx.registers, role })
 }
 
 #[cfg(test)]

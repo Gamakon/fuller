@@ -214,6 +214,30 @@ pub fn gram_role() -> Role {
     })
 }
 
+/// The declared interfaces by name (a kernel names its own in a
+/// `// interface <name>` header line; none is the Gram's).
+pub fn role_named(name: &str) -> Result<Role, String> {
+    match name {
+        "gram" => Ok(gram_role()),
+        other => Err(format!("no interface {other} (declared: gram)")),
+    }
+}
+
+/// The interface a kernel text declares (`// interface <name>`), the Gram's
+/// when it declares none.
+pub fn interface_of(source: &str) -> Result<Role, String> {
+    match source.lines().map(str::trim).find_map(|l| l.strip_prefix("// interface ")) {
+        Some(name) => role_named(name.trim()),
+        None => Ok(gram_role()),
+    }
+}
+
+/// The header line naming a kernel's interface (none for the Gram's, so a
+/// Gram kernel's text is what it was before interfaces were declared).
+pub fn interface_header(role: &Role) -> String {
+    if role.name == "gram" { String::new() } else { format!("// interface {}\n", role.name) }
+}
+
 /// The shipped Gram kernel as a typed tree: the seed of the population and
 /// the proof that the representation holds a real kernel.
 pub fn gram_shipped_tree(kingdom: &WgslKingdom) -> Result<Tree, String> {

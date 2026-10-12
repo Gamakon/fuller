@@ -680,10 +680,16 @@ fn project(n: &MathNode, demand: Ty, kingdom: &WgslKingdom, per_kernel: &[(Strin
 /// dispatched at 1 × 1 blocks, sixteen times the workgroups for a 4 × 4
 /// block, and runs at a fraction of its speed.
 pub fn render_tree(tree: &Tree, kingdom: &WgslKingdom) -> Result<Rendered, String> {
-    let (t, role) = (FunctionTable::safe(), gram_role());
-    let mut r = Renderer::new(kingdom, &t, &role).kernel(tree)?;
+    render_tree_with(tree, kingdom, &gram_role())
+}
+
+/// [`render_tree`] under an interface: the grid header, the interface's
+/// header (none for the Gram's), the kernel.
+pub fn render_tree_with(tree: &Tree, kingdom: &WgslKingdom, role: &crate::wgsl::render::Role) -> Result<Rendered, String> {
+    let t = FunctionTable::safe();
+    let mut r = Renderer::new(kingdom, &t, role).kernel(tree)?;
     let g = r.grid;
-    r.text = format!("{}\n{}", g.header(), r.text);
+    r.text = format!("{}\n{}{}", g.header(), crate::wgsl::render::interface_header(role), r.text);
     Ok(r)
 }
 
