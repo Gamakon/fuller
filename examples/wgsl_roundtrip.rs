@@ -28,6 +28,10 @@ fn main() -> Result<(), String> {
     match read_safe(&text, &k) {
         Err(e) => println!("// read: {e}"),
         Ok(back) => {
+            println!("// read back: {} nodes (drawn {})", back.tree.size(), tree.size());
+            if let Some(dir) = args.iter().position(|a| a == "--write").and_then(|i| args.get(i + 1)) {
+                std::fs::write(format!("{dir}/{seed}.back.sexpr"), back.tree.to_sexpr()).map_err(|e| e.to_string())?;
+            }
             let again = render_tree(&back.tree, &k)?.text;
             if let Some(dir) = args.iter().position(|a| a == "--write").and_then(|i| args.get(i + 1)) {
                 std::fs::write(format!("{dir}/{seed}.drawn.wgsl"), &text).map_err(|e| e.to_string())?;

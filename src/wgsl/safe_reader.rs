@@ -2531,11 +2531,14 @@ impl<'a> Ctx<'a> {
                 Ok(Tree::new(&format!("stmt.if_else_{o}"), st, vec![c.clone(), self.epilogue_block(vec![a.clone()], d)?, self.epilogue_block(vec![b.clone()], d)?]))
             }
             ("stmt.block", [b]) => Ok(Tree::new(&format!("stmt.block_{o}"), st, vec![self.epilogue_block(vec![b.clone()], d)?])),
+            // Conditional statements written in place (a loop with no barrier
+            // read at the conditional rung): in the epilogue, a block like any.
+            ("stmt.cblock", [b]) => Ok(Tree::new(&format!("stmt.block_{o}"), st, vec![self.epilogue_block(vec![b.clone()], d)?])),
             ("loop.tile" | "loop.tile_strided" | "loop.tilex" | "loop.tilex_strided", [lead @ .., body]) => {
                 if d + 1 > 4 {
                     return Err("the last store of h is inside five nested tile loops (the epilogue has four)".into());
                 }
-                let mut k: Vec<Tree> = lead.to_vec();
+                let mut k: Vec<Tree> = lead.iter().map(|b| self.any_bound(b)).collect::<Result<_, _>>()?;
                 k.push(self.epilogue_block(vec![body.clone()], d + 1)?);
                 Ok(Tree::new(&format!("{stem}_{o}"), st, k))
             }
@@ -2546,7 +2549,20 @@ impl<'a> Ctx<'a> {
     /// A statement before the epilogue's last, moved to the conditional rung
     /// of its tile depth (`C<d>`; a tile loop's body one deeper). A barrier,
     /// a return or an item loop has no conditional spelling.
+    /// A loop's bound where any bound is taken (a C or O rung): a uniform
+    /// bound read at an L rung (`bound.of_uniform`, u32.boundu) is its
+    /// uncapped twin there (`bound.x_of_uniform`, u32.boundx); the same text.
+    fn any_bound(&self, b: &Tree) -> Result<Tree, String> {
+        if b.name == "bound.of_uniform" {
+            return Ok(Tree::new("bound.x_of_uniform", ty(self, "u32.boundx")?, b.kids.clone()));
+        }
+        Ok(b.clone())
+    }
+
     fn rerung(&self, t: &Tree, d: usize) -> Result<Tree, String> {
+        if t.name == "bound.of_uniform" {
+            return self.any_bound(t);
+        }
         if t.name == "stmt.continue" {
             return Err("a continue that is not a guard `if (c) { continue; }` where only conditional statements are spelled (the rest of a loop body after a continue, or the epilogue before its store)".into());
         }
@@ -3694,11 +3710,13 @@ impl<'a> Ctx<'a> {
             }
             Ok(format!("loop.{t}_{rung}"))
         };
-        // At the top level an expression-bounded loop over the kingdom's tile
+        // At the top level an expression-bounded loop over a kingdom's tile
         // counter `k` is a tile loop (loop.tilex_L0, the renderer's spelling),
         // not the item loop (2026-10-12: 45 of 1,000 random trees, a tilex_brk_L0
         // read as an item loop that breaks).
-        let tile_named = counter.strip_prefix("local.").and_then(|r| r.split('@').next()) == Some("k");
+        // (k2, k3, k4 too: a loop inside a fully unrolled one is written on the
+        // next counter, the unrolled loop being no loop in the text.)
+        let tile_named = counter.strip_prefix("local.").and_then(|r| r.split('@').next()).is_some_and(|n| matches!(n, "k" | "k2" | "k3" | "k4"));
         let (body_rung, row_name, out_rung) = match (kind, rung) {
             ("boundx", "L0") if tile_named => ("L2".to_string(), short(tilex, "L0")?, "L0"),
             ("lit64", "L0" | "L1") => ("L2".to_string(), short(tile, rung)?, rung),
@@ -3761,7 +3779,7 @@ impl<'a> Ctx<'a> {
             }
             let lit = Tree::new("uniform.of_lit", u, vec![Tree::literal("literal.lit4096", ty(self, "u32.lit4096")?, start)]);
             let expr = Tree::new("uniform.sub_floor", u, vec![bound_tree.kids[0].clone(), lit]);
-            (Tree::new("bound.of_uniform", bound_tree.ty, vec![expr]), start)
+            (Tree::new(&bound_tree.name, bound_tree.ty, vec![expr]), start)
         } else {
             let index = ty(self, "u32.index")?;
             let expr = Tree::new("index.sub_floor", ty(self, "u32.xbound")?, vec![bound_tree.kids[0].clone(), Tree::literal("literal.index", index, start)]);
@@ -4207,8 +4225,9 @@ pub fn read_safe_literal(source: &str, kingdom: &WgslKingdom) -> Result<SafeRead
         }
         // A kingdom helper, written verbatim: its row (a call is the row), its
         // body not read (2026-10-12: hash32_to_index returns twice, fx_add_sat
-        // holds literals past 2^24; 100 of 1,000 random trees).
-        let row = crate::wgsl::render::COMPOSITE_ROWS.iter().find(|(_, h)| *h == name).filter(|_| COMPOSITES.iter().any(|(n, text)| *n == name && source.contains(text))).map(|(r, _)| *r);
+        // holds literals past 2^24; 100 of 1,000 random trees; inverse_4 of
+        // inverse_4, inlined, was a million nodes).
+        let row = crate::wgsl::render::helper_row(&name).filter(|_| COMPOSITES.iter().any(|(n, text)| *n == name && source.contains(text)));
         // One return: the helper's value. Several: `if (c) { return a; }` ...
         // `return b;` (or a last if-else of two returns) is the select chain
         // select(.., a, c), its guards' conditions read into it.
@@ -5198,7 +5217,7 @@ mod tests {
     /// The counts of [`random_sampler_trees_read_back_to_their_own_text`]
     /// reached so far: to their own text, and read back at all.
     const READ_BACK_FLOOR: usize = 108;
-    const READ_AT_ALL_FLOOR: usize = 538;
+    const READ_AT_ALL_FLOOR: usize = 676;
 
     /// THE KINGDOM'S COMPLETENESS BAR (2026-10-12): 1,000 random trees of
     /// the kingdom's typed sampler (the safe root, depth 7, seeds 0..1000)

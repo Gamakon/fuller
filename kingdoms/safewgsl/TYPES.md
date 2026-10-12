@@ -231,7 +231,7 @@ A type is a dual `slot.form`: the slot is what the hardware stores, the form is 
 | T124 | `parr<bool>.flag` | `parr<bool>` | `flag` | 0 | `false` | 0 | 0 | 0 |
 | T125 | `wgmem<vec4<f32>>.real` | `wgmem<vec4<f32>>` | `real` | 0 | `0.0` | 0 | 0 | 0 |
 | T126 | `u32.wgvindex` | `u32` | `wgvindex` | 1 | `0u` | 0 | 0 | 0 |
-| T127 | `u32.boundx` | `u32` | `boundx` | 1 | `1u` | 0 | 0 | 0 |
+| T127 | `u32.boundx` | `u32` | `boundx` | 1 | `1u` | 1 | 0 | 0 |
 | T128 | `u32.tcounter4` | `u32` | `tcounter4` | 1 | `0u` | 0 | 0 | 0 |
 | T129 | `stmt.L5` | `stmt` | `L5` | 0 | `empty` | 0 | 0 | 0 |
 | T130 | `block.L5` | `block` | `L5` | 0 | `empty` | 0 | 0 | 0 |
@@ -278,9 +278,9 @@ A type is a dual `slot.form`: the slot is what the hardware stores, the form is 
 | T171 | `reg<mat4x4<f32>>.real` | `reg<mat4x4<f32>>` | `real` | 16 | `0.0` | 0 | 0 | 0 |
 | T172 | `u32.pindex16` | `u32` | `pindex16` | 1 | `0u` | 0 | 0 | 0 |
 | T173 | `u32.uniform` | `u32` | `uniform` | 1 | `0u` | 0 | 0 | 0 |
-| T174 | `u32.boundu` | `u32` | `boundu` | 1 | `1u` | 0 | 0 | 0 |
+| T174 | `u32.boundu` | `u32` | `boundu` | 1 | `1u` | 1 | 0 | 0 |
 | T175 | `u32.uniformw` | `u32` | `uniformw` | 1 | `0u` | 0 | 0 | 0 |
-| T176 | `u32.xbound` | `u32` | `xbound` | 1 | `1u` | 0 | 0 | 0 |
+| T176 | `u32.xbound` | `u32` | `xbound` | 1 | `1u` | 1 | 0 | 0 |
 | T177 | `u32.indexw` | `u32` | `indexw` | 1 | `0u` | 0 | 0 | 0 |
 | T178 | `u32.rowbase` | `u32` | `rowbase` | 1 | `the thread's own first row` | 0 | 0 | 0 |
 | T179 | `u32.colbase` | `u32` | `colbase` | 1 | `the thread's own first column` | 0 | 0 | 0 |

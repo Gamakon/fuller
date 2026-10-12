@@ -201,16 +201,18 @@ FALLBACK_BITS = {
     "kernel": 0, "grid": 0, "block": 0, "stmt": 0, "wgdim": 0, "blk": 0, "unroll": 0,
     "boundm": 0, "boundd": 0, "boundrows": 0, "lit64": 0, "lit4096": 0,
     "counter": 0, "tcounter": 0, "tcounter2": 0, "bound": 0, "threadrow": 0, "threadcol": 0, "cell": 0, "phi": 0, "wgindex": 0,
-    "L0": 0, "L1": 0, "L2": 0, "L3": 0, "C0": 0, "C1": 0, "C2": 0, "C3": 0, "safe": 0, "pindex": 0, "pindex16": 0, "uniform": 0, "boundu": 0,
+    "L0": 0, "L1": 0, "L2": 0, "L3": 0, "C0": 0, "C1": 0, "C2": 0, "C3": 0, "safe": 0, "pindex": 0, "pindex16": 0, "uniform": 0, "boundu": 1,
     "tcounter3": 0, "L4": 0, "C4": 0, "wgvindex": 0,
-    "boundx": 0,
+    # A loop bound's fallback is one pass, as its text says (1u; 0 before, 2026-10-12: a loop that never
+    # ran, and an epilogue whose store sat in it never stored).
+    "boundx": 1,
     "tcounter4": 0, "L5": 0, "C5": 0,
     "O0": 0, "O1": 0, "O2": 0, "O3": 0, "O4": 0,
     "gid": 0, "lid": 0, "wid": 0, "rowid": 0, "colid": 0,
     "lidx": 0, "threadrows": 0, "threadcols": 0, "threadrowg": 0, "threadcolg": 0,
     "wgaindex": 0, "wgv2index": 0, "wglen": 0, "decl": 0, "decls": 0,
     "B1": 0, "B2": 0, "B3": 0, "B4": 0, "B5": 0,
-    "uniformw": 0, "xbound": 0, "indexw": 0,
+    "uniformw": 0, "xbound": 1, "indexw": 0,
     "rowbase": 0, "colbase": 0, "rowbases": 0, "colbases": 0, "rowbaseg": 0, "colbaseg": 0,
 }
 assert set(FALLBACK_BITS) == set(FALLBACK), "every form with a fallback needs its bits, and no more"

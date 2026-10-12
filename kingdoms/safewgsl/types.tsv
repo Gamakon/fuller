@@ -125,7 +125,7 @@ T123	block.C4	block	C4	0	empty	0	0	0	a block under a condition inside a third ne
 T124	parr<bool>.flag	parr<bool>	flag	0	false	0	0	0	a private array of 16 bool: pm, pn
 T125	wgmem<vec4<f32>>.real	wgmem<vec4<f32>>	real	0	0.0	0	0	0	a workgroup-memory array of 512 vec4<f32>: va, vb (256 until 2026-10-11; two f32 arrays of 2,048 and two vec4 arrays of 512 are Apple's 32 KB)
 T126	u32.wgvindex	u32	wgvindex	1	0u	0	0	0	an index into a vec4 workgroup array, masked to the array by its row
-T127	u32.boundx	u32	boundx	1	1u	0	0	0	a loop bound that is any index expression (cfg.m & ~3u, (cfg.d + 63u) / 64u, a register): rendered as written, never capped; costed at the worst shape
+T127	u32.boundx	u32	boundx	1	1u	1	0	0	a loop bound that is any index expression (cfg.m & ~3u, (cfg.d + 63u) / 64u, a register): rendered as written, never capped; costed at the worst shape
 T128	u32.tcounter4	u32	tcounter4	1	0u	0	0	0	a fourth nested tile loop's counter k4, stepped by the loop row itself
 T129	stmt.L5	stmt	L5	0	empty	0	0	0	a statement inside a fourth nested tile loop
 T130	block.L5	block	L5	0	empty	0	0	0	a block inside a fourth nested tile loop
@@ -172,9 +172,9 @@ T170	reg<mat3x3<f32>>.real	reg<mat3x3<f32>>	real	9	0.0	0	0	0	a named mat3x3<f32>
 T171	reg<mat4x4<f32>>.real	reg<mat4x4<f32>>	real	16	0.0	0	0	0	a named mat4x4<f32> register
 T172	u32.pindex16	u32	pindex16	1	0u	0	0	0	an index into a private array of 16 elements (i & 15u)
 T173	u32.uniform	u32	uniform	1	0u	0	0	0	a u32 the same for every thread of the workgroup: a binding's field, a literal, the workgroup's id, the grid's size, the subgroup size, and arithmetic of them
-T174	u32.boundu	u32	boundu	1	1u	0	0	0	a loop bound the same for every thread of the workgroup (a loop that may hold a barrier)
+T174	u32.boundu	u32	boundu	1	1u	1	0	0	a loop bound the same for every thread of the workgroup (a loop that may hold a barrier)
 T175	u32.uniformw	u32	uniformw	1	0u	0	0	0	a uniform u32 whose arithmetic may wrap (a difference, a product, a shift of uniform values): no row takes it (a wrap is illegal everywhere)
-T176	u32.xbound	u32	xbound	1	1u	0	0	0	the value of an expression loop bound: a register, a uniform value, the arithmetic of them that cannot wrap (no difference but the floored one, no product, no shift), or a min with any index
+T176	u32.xbound	u32	xbound	1	1u	1	0	0	the value of an expression loop bound: a register, a uniform value, the arithmetic of them that cannot wrap (no difference but the floored one, no product, no shift), or a min with any index
 T177	u32.indexw	u32	indexw	1	0u	0	0	0	an index that may wrap (a raw difference index.sub, a left shift index.shl): no row takes it; the kingdom's difference is index.sub_floor, its shift by k a product by 2^k
 T178	u32.rowbase	u32	rowbase	1	the thread's own first row	0	0	0	the ORIGIN of a thread's row: the only row an offset row takes (an offset of an offset leaves the block, another thread's cell)
 T179	u32.colbase	u32	colbase	1	the thread's own first column	0	0	0	the ORIGIN of a thread's column: the only row an offset row takes (an offset of an offset leaves the block, another thread's cell)

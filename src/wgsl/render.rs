@@ -544,6 +544,21 @@ pub const COMPOSITE_ROWS: [(&str, &str); 11] = [
     ("convert.hash32_to_index", "hash32_to_index"),
 ];
 
+/// The row a kingdom helper's call is (`COMPOSITE_ROWS`, and the matrix
+/// helpers per shape: `inverse_N` is geom.inverse, `outer_R_C` geom.outer).
+pub fn helper_row(helper: &str) -> Option<&'static str> {
+    if let Some((row, _)) = COMPOSITE_ROWS.iter().find(|(_, h)| *h == helper) {
+        return Some(row);
+    }
+    if helper.starts_with("inverse_") {
+        return Some("geom.inverse");
+    }
+    if helper.starts_with("outer_") {
+        return Some("geom.outer");
+    }
+    None
+}
+
 pub fn uniform_as_index(name: &str) -> Option<&'static str> {
     Some(match name {
         "uniform.cfg_m" => "load.cfg_m",
