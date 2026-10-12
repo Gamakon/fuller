@@ -2248,6 +2248,115 @@ impl<'a> Ctx<'a> {
     /// continuing block steps the counter by one, the bound is a binding's
     /// count or a literal at most 64.
     #[allow(clippy::too_many_arguments)]
+    /// A TREE REDUCTION WRITTEN AS A HALVING LOOP (2026-10-12, a reader bug
+    /// by Andrew's rule: models write it so): `for (var s = n / 2; s > 0u;
+    /// s = s >> 1u) { if (lidx < s) { a[lidx] = a[lidx] op a[lidx + s]; }
+    /// workgroupBarrier(); }`, s starting at a power of two (its declaration's
+    /// literal), stepped by `>> 1u` or `/ 2u`, op `+`, max or min, is
+    /// `wg.reduce_<op>(a, n)`. `None` when the test is not `s > 0` (the loop
+    /// is some other loop); an error when it is and the rest does not match.
+    fn halving(&mut self, c: &Tree, continuing: &naga::Block, stmts: &[&Statement], path: &[usize], rung: &str, cond: bool) -> Result<Option<Tree>, String> {
+        let zero = |t: &Tree| literal_value(t) == Some(0.0);
+        let one = |t: &Tree| literal_value(t) == Some(1.0);
+        let counter = match (c.name.as_str(), c.kids.as_slice()) {
+            ("compare.gt" | "compare.ne", [x, z]) if zero(z) => local_name(&x.name),
+            ("compare.ge", [x, o]) if one(o) => local_name(&x.name),
+            ("compare.lt" | "compare.ne", [z, x]) if zero(z) => local_name(&x.name),
+            _ => None,
+        };
+        let Some(counter) = counter.filter(|_| c.kids.iter().all(|k| k.kids.is_empty())) else { return Ok(None) };
+        let fail = |why: &str| Err(format!("a halving loop over {counter} that is not a tree reduction: {why}"));
+        if cond || !rung.starts_with('L') {
+            return fail("under a condition (a reduction's barriers need uniform control flow)");
+        }
+        // The start: the counter's declaration's literal, a power of two.
+        let index: Option<usize> = counter.rsplit('@').next().and_then(|i| i.parse().ok());
+        let start = self.naga_fn.local_variables.iter().find(|(h, _)| Some(h.index()) == index).and_then(|(_, lv)| lv.init).and_then(|e| match self.naga_fn.expressions[e] {
+            Expression::Literal(naga::Literal::U32(v)) => Some(v),
+            Expression::Literal(naga::Literal::I32(v)) => u32::try_from(v).ok(),
+            _ => None,
+        });
+        let Some(start) = start.filter(|v| v.is_power_of_two() && *v <= 2048) else { return fail("its start is not a literal power of two in its declaration (at most 2,048)") };
+        // The step: `s = s >> 1u` or `s = s / 2u`, in the continuing block or
+        // as the body's last statement.
+        let halves = |t: &Tree| -> bool {
+            local_name(&t.name).as_deref() == Some(counter.as_str())
+                && t.kids.len() == 1
+                && matches!((t.kids[0].name.as_str(), t.kids[0].kids.as_slice()), (n, [x, k]) if local_name(&x.name).as_deref() == Some(counter.as_str()) && ((n.ends_with(".shr") && literal_value(k) == Some(1.0)) || (n.ends_with(".div") && literal_value(k) == Some(2.0))))
+        };
+        let step_at = |ctx: &mut Self, p: Vec<usize>| -> Result<bool, String> {
+            match ctx.root_at(&p, |k| matches!(k, RootKind::Store { .. })) {
+                Some(r) => Ok(halves(&tree_of(ctx, &r.tree)?)),
+                None => Ok(false),
+            }
+        };
+        let cont: Vec<&Statement> = continuing.iter().filter(|s| !matches!(s, Statement::Emit(_))).collect();
+        let test_pos = stmts.iter().position(|s| matches!(s, Statement::If { .. })).ok_or("a halving loop without a test")?;
+        let mut rest: Vec<(usize, &Statement)> = stmts.iter().copied().enumerate().skip(test_pos + 1).collect();
+        let stepped = if cont.len() == 1 {
+            step_at(self, [path, &[1, 0]].concat())?
+        } else if cont.is_empty() && matches!(rest.last(), Some((_, Statement::Store { .. }))) {
+            let at = rest.last().map(|(i, _)| *i).unwrap_or_default();
+            let ok = step_at(self, [path, &[0, at]].concat())?;
+            if ok {
+                rest.pop();
+            }
+            ok
+        } else {
+            false
+        };
+        if !stepped {
+            return fail("its step is not `s >> 1u` or `s / 2u`");
+        }
+        // The body: `if (lidx < s) { a[lidx] = a[lidx] op a[lidx + s]; }` then
+        // a workgroup barrier (in the block naga makes of a `for` body).
+        let mut prefix = [path, &[0]].concat();
+        if let [(at, Statement::Block(b))] = rest.as_slice() {
+            prefix.push(*at);
+            rest = b.iter().filter(|s| !matches!(s, Statement::Emit(_))).enumerate().collect();
+        }
+        let [(if_at, Statement::If { accept, reject, .. }), (_, Statement::Barrier(flags))] = rest.as_slice() else { return fail("its body is not one `if` and a barrier") };
+        if !flags.contains(naga::Barrier::WORK_GROUP) || !reject.iter().all(|s| matches!(s, Statement::Emit(_))) || accept.iter().filter(|s| !matches!(s, Statement::Emit(_))).count() != 1 {
+            return fail("its body is not `if (lidx < s) { one store }` then workgroupBarrier()");
+        }
+        let flat = self.grid.1 == 1;
+        let lane = |t: &Tree| t.name == "builtin.local_invocation_index" || (flat && t.name == "shape.access_0" && t.kids.len() == 1 && t.kids[0].name == "builtin.local_invocation_id");
+        let is_counter = |t: &Tree| local_name(&t.name).as_deref() == Some(counter.as_str());
+        let test = self.root_at(&[&prefix[..], &[*if_at]].concat(), |k| matches!(k, RootKind::Condition { .. })).ok_or("no condition root at the halving loop's step")?;
+        let test = tree_of(self, &test.tree)?;
+        let guard = &test.kids[0];
+        let guarded = match (guard.name.as_str(), guard.kids.as_slice()) {
+            ("compare.lt", [l, s]) | ("compare.gt", [s, l]) => lane(l) && is_counter(s),
+            _ => false,
+        };
+        if !guarded {
+            return fail(&format!("its step is not under `lidx < s`: {}", guard.to_sexpr()));
+        }
+        let store = self.root_at(&[&prefix[..], &[*if_at, 0, 0]].concat(), |k| matches!(k, RootKind::Store { .. })).ok_or("no store under the halving loop's test")?;
+        let store = tree_of(self, &store.tree)?;
+        let Some(arr) = store.name.strip_prefix("store.workgroup.").and_then(|r| r.strip_suffix(".#")) else { return fail("its step does not store a workgroup array") };
+        let [at, value] = store.kids.as_slice() else { return fail("its store has no index") };
+        let load = |t: &Tree, i: &dyn Fn(&Tree) -> bool| t.name.starts_with(&format!("load.workgroup.{arr}.#")) && t.kids.len() == 1 && i(&t.kids[0]);
+        let partner = |t: &Tree| t.name == "index.add" && t.kids.len() == 2 && ((lane(&t.kids[0]) && is_counter(&t.kids[1])) || (is_counter(&t.kids[0]) && lane(&t.kids[1])));
+        let op = match (value.name.as_str(), value.kids.as_slice()) {
+            (n, [x, y]) if (load(x, &lane) && load(y, &partner)) || (load(y, &lane) && load(x, &partner)) => match n {
+                "arith.add" => "add",
+                "arith.max" => "max",
+                "arith.min" => "min",
+                _ => return fail(&format!("it combines by {n}, not +, max or min")),
+            },
+            _ => return fail(&format!("its step is not a[lidx] op a[lidx + s]: {}", value.to_sexpr())),
+        };
+        if !lane(at) {
+            return fail("its store is not at a[lidx]");
+        }
+        let d = self.kingdom.dual(value.ty).map(|d| d.dual.clone()).unwrap_or_default();
+        let which = self.array(arr, &d)?;
+        let (_, _, arr_dual, _, _) = Self::wg_rows(which);
+        let n = Tree::literal("literal.lit4096", ty(self, "u32.lit4096")?, (start * 2) as f32);
+        Ok(Some(Tree::new(&format!("wg.reduce_{op}_{rung}"), self.stmt_ty(rung)?, vec![Tree::new(which, ty(self, arr_dual)?, vec![]), n])))
+    }
+
     fn looped(&mut self, body: &naga::Block, continuing: &naga::Block, break_if: Option<Handle<Expression>>, path: &mut Vec<usize>, rung: &str, cond: bool) -> Result<Option<Tree>, String> {
         if break_if.is_some() {
             return Err("a loop with a break_if (not a `for`)".into());
@@ -2299,6 +2408,10 @@ impl<'a> Ctx<'a> {
                 };
                 c = Tree::new(flipped, c.ty, c.kids.clone());
             }
+        }
+        // A tree reduction written as a halving loop is the reduction row.
+        if let Some(t) = self.halving(&c, continuing, &body_stmts_all, path, rung, cond)? {
+            return Ok(Some(t));
         }
         // The test normalised to `counter < bound`: `bound > counter`,
         // `counter <= bound` (bound + 1), `counter + k < bound` and
@@ -3344,6 +3457,31 @@ mod tests {
         read_safe(&format!("// grid {} {} {} {}\n{}", out.grid.x, out.grid.y, out.grid.bx, out.grid.by, out.text), &k).unwrap_or_else(|e| panic!("read back: {e}"));
         let (c0, c1) = (crate::wgsl::render::cost(&tree), crate::wgsl::render::cost(&unrolled));
         assert!((c0.per_item - c1.per_item).abs() < 1.0 && (c0.base - c1.base).abs() < 1.0, "{c0:?} vs {c1:?}");
+    }
+
+    /// A TREE REDUCTION WRITTEN AS A HALVING LOOP reads as the reduction row
+    /// (2026-10-12): `>> 1u` or `/ 2u`, `+` or max, the start's power of two
+    /// times two the element count; it renders, validates and reads back, and
+    /// a halving loop that is not a reduction is refused by name.
+    #[test]
+    fn a_halving_loop_reads_as_the_tree_reduction_row() {
+        let k = WgslKingdom::load_safe();
+        let (t, role) = (FunctionTable::safe(), gram_role());
+        let rr = Renderer::new(&k, &t, &role);
+        let src = include_str!("../../tests/corpus/safewgsl/draft_halving_loop.wgsl");
+        for (from, to, row) in [("", "", "wg.reduce_add_L0"), ("s = s >> 1u", "s = s / 2u", "wg.reduce_add_L0"), ("part[lidx] + part[lidx + s]", "max(part[lidx], part[lidx + s])", "wg.reduce_max_L0")] {
+            let text = if from.is_empty() { src.to_string() } else { src.replacen(from, to, 1) };
+            assert!(from.is_empty() || text != src, "{from} not in the draft");
+            let tree = read_safe(&text, &k).unwrap_or_else(|e| panic!("{to}: {e}")).tree;
+            let sx = tree.to_sexpr();
+            assert!(sx.contains(&format!("({row} wg.a (literal.lit4096 256))")), "{to}: {sx}");
+            assert_eq!(sx.matches("(loop.").count(), 1, "{to}: the halving loop read as a loop: {sx}");
+            let out = rr.kernel(&tree).unwrap();
+            validate_text(&out.text).unwrap_or_else(|e| panic!("{e}\n{}", out.text));
+            read_safe(&format!("// grid 256 1 1 1\n{}", out.text), &k).unwrap_or_else(|e| panic!("read back: {e}"));
+        }
+        let Err(e) = read_safe(&src.replacen("if (lidx < s)", "if (lidx <= s)", 1), &k) else { panic!("lidx <= s read as a reduction") };
+        assert!(e.contains("halving loop over local.s@") && e.contains("not under `lidx < s`"), "{e}");
     }
 
     /// TREE REDUCTION IN WORKGROUP MEMORY (2026-10-12): one statement row
