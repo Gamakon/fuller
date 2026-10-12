@@ -1664,7 +1664,14 @@ impl Renderer<'_> {
             "safe.row_plus_g" | "safe.col_plus_g" => {
                 // A cell of the grouped block by group and lane, both clamped.
                 let (blk, w) = if safe_base(name) == "safe.row_plus_g" { (scope.grid.by, scope.grid.row_axis().1) } else { (scope.grid.bx, scope.grid.col_axis().1) };
-                let g = self.lit(&v.kids[1], 64)?.clamp(1, blk.max(1));
+                // The groups are the ORIGIN's (2026-10-12): an offset over
+                // another count of groups than its origin's left the thread's
+                // block (lid scaled by B / G for one G, offsets up to B / G' - 1
+                // for another: two threads' cells). A fallback origin is the
+                // strided one, B groups of one cell.
+                let origin = &v.kids[0];
+                let g = if matches!(safe_base(&origin.name), "safe.thread_row_g" | "safe.thread_col_g") && origin.kids.len() == 4 { self.lit(&origin.kids[3], 64)? } else { blk.max(1) };
+                let g = g.clamp(1, blk.max(1));
                 let s = blk / g;
                 return Ok(format!("({} + min({}, {}u) * {}u + min({}, {}u))", self.value(&v.kids[0], scope)?, self.value(&v.kids[2], scope)?, g - 1, w * s, self.value(&v.kids[3], scope)?, s.saturating_sub(1)));
             }

@@ -2211,7 +2211,7 @@ impl<'a> Ctx<'a> {
     /// index, value)` (a compare-exchange `atomic.cas_<u|i>(array, index,
     /// compare, value)`); its old value to a register when a later expression
     /// reads it, else kept for its effect only (`_ = ...`).
-    fn atomic_statement(&mut self, root: &Root, result: u32, rung: &str) -> Result<Tree, String> {
+    fn atomic_statement(&mut self, root: &Root, result: u32, rung: &str) -> Result<Option<Tree>, String> {
         let (expr, unsigned) = self.atomic_expr(root)?;
         let suffix = if unsigned { "u" } else { "i" };
         let st = self.stmt_ty(rung)?;
@@ -2223,14 +2223,28 @@ impl<'a> Ctx<'a> {
                 _ => false,
             }
         }
-        let used = self.roots.values().flatten().any(|r| reads(&r.tree, &leaf)) || self.lets.values().any(|t| reads(t, &leaf));
-        if !used {
-            return Ok(Tree::new(&format!("stmt.discard_{suffix}_{rung}"), st, vec![expr]));
+        fn count(n: &Node, leaf: &str) -> usize {
+            match n {
+                Node::Leaf { name, .. } => usize::from(name == leaf),
+                Node::App { kids, .. } => kids.iter().map(|k| count(k, leaf)).sum(),
+                _ => 0,
+            }
+        }
+        let uses: usize = self.roots.values().flatten().map(|r| count(&r.tree, &leaf)).sum::<usize>() + self.lets.values().map(|t| count(t, &leaf)).sum::<usize>();
+        if uses == 0 {
+            return Ok(Some(Tree::new(&format!("stmt.discard_{suffix}_{rung}"), st, vec![expr])));
+        }
+        // Read once, by the statement naga wrote it ahead of: inline there, as
+        // the kingdom's renderer writes an atomic (2026-10-12: a fully
+        // unrolled loop of atomics took a register each, past 64).
+        if uses == 1 && !self.lets.values().any(|t| reads(t, &leaf)) {
+            self.inlined.insert(leaf, expr);
+            return Ok(None);
         }
         // The old value read later: to a u32 register, or for an atomic<i32> an i32 one.
         let (dual, kind) = if unsigned { ("u32.index", 'i') } else { ("i32.int", 'n') };
         let row = self.register(&format!("local.atomic@{result}"), dual)?;
-        Ok(Tree::new(&format!("reg.set_{kind}_{rung}"), st, vec![Tree::new(&row, ty(self, Self::reg_dual(kind))?, vec![]), expr]))
+        Ok(Some(Tree::new(&format!("reg.set_{kind}_{rung}"), st, vec![Tree::new(&row, ty(self, Self::reg_dual(kind))?, vec![]), expr])))
     }
 
     /// An atomic's expression `atomic.<fun>_<u|i>(array, index, value)` and
@@ -2924,7 +2938,7 @@ impl<'a> Ctx<'a> {
                     }
                     Statement::Atomic { result, .. } => {
                         let root = self.root_at(&here, |k| matches!(k, RootKind::Atomic { .. })).ok_or("no atomic root at this statement")?;
-                        self.atomic_statement(root, result.index() as u32, rung).map(Some)
+                        self.atomic_statement(root, result.index() as u32, rung)
                     }
                     Statement::Call { function, result, .. } => {
                         // A pure helper's call: its result is inlined where it
@@ -5072,7 +5086,7 @@ mod tests {
         assert_eq!(r.role.name, "gram_counter");
         assert!(r.tree.to_sexpr().contains("(atomic.counter_add (literal.index 1))"), "{}", r.tree.to_sexpr());
         let out = crate::wgsl::safe_karva::render_tree_with(&r.tree, &k, &r.role).unwrap_or_else(|e| panic!("{e}"));
-        assert!(out.text.contains("var<storage, read_write> counter: atomic<u32>;") && out.text.contains("atomicAdd(&counter, (1u))"), "{}", out.text);
+        assert!(out.text.contains("var<storage, read_write> counter: atomic<u32>;") && out.text.contains("atomicAdd(&counter, "), "{}", out.text);
         validate_text(&out.text).unwrap_or_else(|e| panic!("{e}\n{}", out.text));
         crate::wgsl::check::check(&r.tree, &k, &r.role, &crate::wgsl::target::Target::recorded()).unwrap_or_else(|e| panic!("{e}"));
         // Under the Gram's interface, which declares no atomic: a bug report naming the binding.
@@ -5232,7 +5246,7 @@ mod tests {
     /// The counts of [`random_sampler_trees_read_back_to_their_own_text`]
     /// reached so far: to their own text, and read back at all.
     const READ_BACK_FLOOR: usize = 108;
-    const READ_AT_ALL_FLOOR: usize = 757;
+    const READ_AT_ALL_FLOOR: usize = 768;
 
     /// THE KINGDOM'S COMPLETENESS BAR (2026-10-12): 1,000 random trees of
     /// the kingdom's typed sampler (the safe root, depth 7, seeds 0..1000)

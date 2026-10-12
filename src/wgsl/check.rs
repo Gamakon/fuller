@@ -1268,7 +1268,10 @@ impl<'a> Checker<'a> {
                 let offset = if rest.starts_with("_tile") || rest.starts_with("_x") {
                     min_c(k(1), last)
                 } else if rest == "_g" {
-                    let groups = v.kids.get(1).map_or(1, |t| lit_count(t, 64)).clamp(1, blk.max(1));
+                    // The origin's groups, as the renderer writes them.
+                    let origin = &v.kids[0];
+                    let groups = if matches!(safe_base(&origin.name), "safe.thread_row_g" | "safe.thread_col_g") { origin.kids.get(3).map_or(1, |t| lit_count(t, 64)) } else { blk.max(1) };
+                    let groups = groups.clamp(1, blk.max(1));
                     let s = blk.max(1) / groups;
                     let g_off = self.mul(Some(min_c(k(2), groups - 1)), Some(pt(w * s)), v, cx);
                     let e_off = min_c(k(3), s.max(1) - 1);
