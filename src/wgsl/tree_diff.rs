@@ -406,7 +406,8 @@ impl Differ<'_, '_> {
     /// Whether `i` and `j` may be diffed as one node (an update at most).
     fn updatable(&self, i: usize, j: usize) -> bool {
         let (x, y) = (self.fa.nodes[i], self.fb.nodes[j]);
-        x.ty == y.ty && class_of(&x.name) == class_of(&y.name) && !x.kids.is_empty() && !y.kids.is_empty() && (x.name == y.name || self.m.a_to_b[i] == Some(j) || dice(self.fa, self.fb, self.m, i, j) > 0.0)
+        let arity = x.kids.len() == y.kids.len() || class_of(&x.name) == "block";
+        x.ty == y.ty && class_of(&x.name) == class_of(&y.name) && arity && !x.kids.is_empty() && !y.kids.is_empty() && (x.name == y.name || self.m.a_to_b[i] == Some(j) || dice(self.fa, self.fb, self.m, i, j) > 0.0)
     }
 
     fn edit(&mut self, kind: EditKind, path_a: Vec<usize>, slot: usize, before: Option<&Tree>, after: Option<&Tree>) {
@@ -428,7 +429,10 @@ impl Differ<'_, '_> {
             }
         }
         let (ka, kb) = (&fa.kids[i], &fb.kids[j]);
-        let pairs = self.align(ka, kb);
+        // A statement list aligns its children; a fixed-arity row pairs
+        // them by position (its arity is its row's; an update never
+        // changes it).
+        let pairs = if class_of(&x.name) == "block" || ka.len() != kb.len() { self.align(ka, kb) } else { (0..ka.len()).map(|u| (u, u)).collect() };
         self.ctx.push(x.name.clone());
         let (mut pa, mut pb) = (0usize, 0usize);
         for (u, v) in pairs.into_iter().chain(std::iter::once((ka.len(), kb.len()))) {
@@ -539,33 +543,44 @@ pub fn at<'t>(t: &'t Tree, path: &[usize]) -> &'t Tree {
 pub fn site(a: &Tree, e: &Edit) -> Option<(Tree, Tree)> {
     let before = e.before.as_ref();
     let after = e.after.as_ref();
+    // In a statement list the site is a window, the changed statement and
+    // its neighbours, so a rule does not depend on the list's length.
+    let window = |p: &Tree, lo: usize, hi: usize| Tree { name: p.name.clone(), ty: p.ty, konst: p.konst, kids: p.kids[lo..hi].to_vec() };
     match e.kind {
         EditKind::Update => Some((before?.clone(), after?.clone())),
         EditKind::Replace => {
             let (x, y) = (before?, after?);
-            if !(x.kids.is_empty() && y.kids.is_empty()) || e.path_a.is_empty() {
+            // A leaf on either side (a literal, a register, a builtin) means
+            // nothing without where it stands: the site is its parent.
+            if !(x.kids.is_empty() || y.kids.is_empty()) || e.path_a.is_empty() {
                 return Some((x.clone(), y.clone()));
             }
-            let parent_path = &e.path_a[..e.path_a.len() - 1];
-            let p = at(a, parent_path);
-            let mut q = p.clone();
-            q.kids[e.slot] = y.clone();
-            Some((p.clone(), q))
+            let p = at(a, &e.path_a[..e.path_a.len() - 1]);
+            let (lo, hi) = if class_of(&p.name) == "block" { (e.slot.saturating_sub(1), (e.slot + 2).min(p.kids.len())) } else { (0, p.kids.len()) };
+            let f = window(p, lo, hi);
+            let mut r = f.clone();
+            r.kids[e.slot - lo] = y.clone();
+            Some((f, r))
         }
         EditKind::Insert => {
             let p = at(a, &e.path_a);
-            let mut q = p.clone();
-            q.kids.insert(e.slot.min(q.kids.len()), after?.clone());
-            Some((p.clone(), q))
+            let at_slot = e.slot.min(p.kids.len());
+            let (lo, hi) = if class_of(&p.name) == "block" { (at_slot.saturating_sub(1), (at_slot + 1).min(p.kids.len())) } else { (0, p.kids.len()) };
+            let f = window(p, lo, hi);
+            let mut r = f.clone();
+            r.kids.insert(at_slot - lo, after?.clone());
+            Some((f, r))
         }
         EditKind::Delete => {
-            let parent_path = e.path_a.get(..e.path_a.len().checked_sub(1)?)?;
-            let p = at(a, parent_path);
-            let mut q = p.clone();
-            if e.slot < q.kids.len() {
-                q.kids.remove(e.slot);
+            let p = at(a, e.path_a.get(..e.path_a.len().checked_sub(1)?)?);
+            if e.slot >= p.kids.len() {
+                return None;
             }
-            Some((p.clone(), q))
+            let (lo, hi) = if class_of(&p.name) == "block" { (e.slot.saturating_sub(1), (e.slot + 2).min(p.kids.len())) } else { (0, p.kids.len()) };
+            let f = window(p, lo, hi);
+            let mut r = f.clone();
+            r.kids.remove(e.slot - lo);
+            Some((f, r))
         }
     }
 }
@@ -640,9 +655,8 @@ pub fn anti_unify(instances: &[(Tree, Tree)]) -> Option<(Tree, Tree)> {
             let kids = (0..t0.kids.len()).map(|k| go(&ts.iter().map(|t| &t.kids[k]).collect::<Vec<_>>(), store)).collect();
             return Tree { name: t0.name.clone(), ty: t0.ty, konst: t0.konst, kids };
         }
-        if ts.iter().all(|t| t.to_sexpr() == t0.to_sexpr()) {
-            return t0.clone();
-        }
+        // A disagreement, or a hole of the instances: one hole of the
+        // result per distinct tuple, numbered afresh.
         let key: Vec<String> = ts.iter().map(|t| t.to_sexpr()).collect();
         let n = store.len();
         let id = *store.entry(key).or_insert(n);
@@ -733,6 +747,9 @@ mod tests {
         assert_eq!(e[1].after.as_ref().unwrap(), &s3);
         let (f, r) = site(&a, &e[1]).unwrap();
         assert_eq!(f.kids.len() + 1, r.kids.len());
+        // the window: the neighbours either side of the insertion.
+        assert_eq!(f.kids.len(), 2);
+        assert_eq!(r.kids[1], s3);
     }
 
     #[test]
@@ -815,6 +832,44 @@ mod tests {
         let (gf, gr) = generalise(&cf, &cr);
         assert_eq!(gf.to_sexpr(), "(loop.items ?0 ?1)");
         assert_eq!(gr.to_sexpr(), "(loop.items_unrolled ?0 ?1)");
+    }
+
+    /// A fixed-arity row pairs its children by position: an operand
+    /// replaced is one replacement, not an insertion and a deletion.
+    #[test]
+    fn fixed_arity_children_pair_by_position() {
+        let x = mul(reg("i3"), lit(2.0));
+        let a = add(x.clone(), reg("i1"));
+        let b = add(Tree::new("load.cfg_r_off", Ty::Wgsl(1), vec![]), x);
+        let e = diff(&a, &b);
+        assert!(e.iter().all(|x| x.kind == EditKind::Replace), "{e:?}");
+        for x in &e {
+            let (f, r) = site(&a, x).unwrap();
+            assert_eq!(f.kids.len(), r.kids.len());
+        }
+    }
+
+    /// A node replaced by one of another arity is a replacement, never an
+    /// update with children inserted into a fixed-arity row.
+    #[test]
+    fn a_change_of_arity_is_a_replacement() {
+        let a = stmt("a", vec![Tree::new("index.of_row", Ty::Wgsl(1), vec![reg("i0")])]);
+        let b = stmt("a", vec![Tree::new("index.mul", Ty::Wgsl(1), vec![Tree::new("index.of_row", Ty::Wgsl(1), vec![reg("i0")]), lit(4.0)])]);
+        let e = diff(&a, &b);
+        assert_eq!(e.len(), 1, "{e:?}");
+        assert_eq!(e[0].kind, EditKind::Replace);
+    }
+
+    /// Holes of the instances are renumbered with the disagreements, so no
+    /// two different holes share a number.
+    #[test]
+    fn anti_unification_renumbers_instance_holes() {
+        let h = |n: usize| Tree::new(&format!("?{n}"), Ty::Wgsl(2), vec![]);
+        let i1 = (add(h(0), lit(4.0)), add(h(0), add(reg("i1"), lit(8.0))));
+        let i2 = (add(h(0), lit(4.0)), add(h(0), add(reg("i2"), lit(8.0))));
+        let (f, r) = anti_unify(&[i1, i2]).unwrap();
+        assert_eq!(f.to_sexpr(), "(index.add ?0 (literal.index 4))");
+        assert_eq!(r.to_sexpr(), "(index.add ?0 (index.add ?1 (literal.index 8)))");
     }
 
     #[test]

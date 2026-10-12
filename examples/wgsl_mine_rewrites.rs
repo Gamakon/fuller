@@ -203,6 +203,23 @@ fn leaves(t: &Tree, out: &mut Vec<String>) {
     }
 }
 
+/// A run's name and a generation.
+type RunGen = (String, u32);
+
+/// A kernel a run wrote: its register-canonical tree, its HFF and the
+/// tree's text.
+type Measured = (Tree, f64, String);
+
+/// The literal values of a tree in preorder.
+fn literals(t: &Tree, out: &mut Vec<f32>) {
+    if t.name.starts_with("literal.") {
+        out.push(t.konst);
+    }
+    for k in &t.kids {
+        literals(k, out);
+    }
+}
+
 /// THE EDIT CLASSES. One edit and its site in the parent (`find`).
 fn classify(e: &Edit, find: &Tree) -> &'static str {
     let (b, a) = (e.before.as_ref(), e.after.as_ref());
@@ -368,7 +385,7 @@ fn main() -> Result<(), String> {
     // evaluations, `.e0`, at HFF pi/2); for the runs with saved calls, the
     // canonical trees by (run, generation) for the similarity match.
     let mut index: HashMap<String, Vec<(String, f64)>> = HashMap::new();
-    let mut by_gen: HashMap<(String, u32), Vec<(Tree, f64, String)>> = HashMap::new();
+    let mut by_gen: HashMap<RunGen, Vec<Measured>> = HashMap::new();
     let (mut kernels_read, mut kernels_unread, mut kernels_unscored) = (0usize, 0usize, 0usize);
     for run in &runs {
         let run_name = run.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
@@ -548,14 +565,13 @@ fn main() -> Result<(), String> {
         }
     }
     let gain = |pi: usize| pairs[pi].parent_hff - pairs[pi].child.hff.unwrap_or(0.0);
-    let only = |pi: usize, class: &str| pairs[pi].edits.iter().all(|(_, c, _, _)| *c == class);
     let mut class_rows: Vec<(&'static str, &ClassStat, f64, usize, f64)> = classes
         .iter()
         .map(|(k, s)| {
             let mean = s.pairs.iter().map(|&p| gain(p)).sum::<f64>() / s.pairs.len() as f64;
-            let solo: Vec<usize> = s.pairs.iter().copied().filter(|&p| only(p, k)).collect();
-            let solo_mean = if solo.is_empty() { f64::NAN } else { solo.iter().map(|&p| gain(p)).sum::<f64>() / solo.len() as f64 };
-            (*k, s, mean, solo.len(), solo_mean)
+            let without: Vec<usize> = (0..pairs.len()).filter(|p| !s.pairs.contains(p)).collect();
+            let without_mean = if without.is_empty() { f64::NAN } else { without.iter().map(|&p| gain(p)).sum::<f64>() / without.len() as f64 };
+            (*k, s, mean, without.len(), without_mean)
         })
         .collect();
     class_rows.sort_by(|a, b| b.1.pairs.len().cmp(&a.1.pairs.len()).then(b.1.edits.cmp(&a.1.edits)).then(a.0.cmp(b.0)));
@@ -564,6 +580,7 @@ fn main() -> Result<(), String> {
     // of the group's concrete (context-holed) instances.
     struct RuleGroup {
         class: &'static str,
+        place: String,
         instances: Vec<(Tree, Tree)>,
         pairs: BTreeSet<usize>,
         children: BTreeSet<String>,
@@ -571,14 +588,17 @@ fn main() -> Result<(), String> {
     }
     let mut groups: BTreeMap<String, RuleGroup> = BTreeMap::new();
     for (pi, p) in pairs.iter().enumerate() {
-        for (_, class, f, r) in &p.edits {
+        for (e, class, f, r) in &p.edits {
             let (cf, cr) = rule_of(f, r);
             if cf.size() + cr.size() > 120 {
                 continue;
             }
             let (gf, gr) = generalise(&cf, &cr);
-            let key = format!("{} => {}", gf.to_sexpr(), gr.to_sexpr());
-            let g = groups.entry(key).or_insert_with(|| RuleGroup { class, instances: Vec::new(), pairs: BTreeSet::new(), children: BTreeSet::new(), shape: (gf, gr) });
+            // Where: the nearest enclosing row that is not a statement list
+            // (for a site that is a list window, the loop or branch it is in).
+            let place = if f.name.starts_with("block.") { e.context.iter().rev().find(|n| !n.starts_with("block.")).cloned().unwrap_or_default() } else { String::new() };
+            let key = format!("{place} | {} => {}", gf.to_sexpr(), gr.to_sexpr());
+            let g = groups.entry(key).or_insert_with(|| RuleGroup { class, place, instances: Vec::new(), pairs: BTreeSet::new(), children: BTreeSet::new(), shape: (gf, gr) });
             g.instances.push((cf, cr));
             g.pairs.insert(pi);
             g.children.insert(format!("{}/{}", p.child.run, p.child.call));
@@ -590,6 +610,24 @@ fn main() -> Result<(), String> {
         .map(|g| {
             let mean = g.pairs.iter().map(|&p| gain(p)).sum::<f64>() / g.pairs.len() as f64;
             let text = anti_unify(&g.instances).map_or_else(|| rule_text(&g.shape.0, &g.shape.1, &type_name), |(f, r)| rule_text(&f, &r, &type_name));
+            // The literal values the instances changed, most frequent first
+            // (where a literal hole hides them).
+            let mut seen: BTreeMap<String, usize> = BTreeMap::new();
+            for (f, r) in &g.instances {
+                let (mut lf, mut lr) = (Vec::new(), Vec::new());
+                literals(f, &mut lf);
+                literals(r, &mut lr);
+                if lf.len() == lr.len() {
+                    let changed: Vec<String> = lf.iter().zip(&lr).filter(|(x, y)| x != y).map(|(x, y)| format!("{x}→{y}")).collect();
+                    if !changed.is_empty() {
+                        *seen.entry(changed.join(",")).or_default() += 1;
+                    }
+                }
+            }
+            let mut seen: Vec<(String, usize)> = seen.into_iter().collect();
+            seen.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+            let observed = seen.iter().take(4).map(|(k, n)| format!("{k} ×{n}")).collect::<Vec<_>>().join("; ");
+            let text = if observed.is_empty() { text } else { format!("{text}  [values: {observed}]") };
             (g, mean, text)
         })
         .collect();
@@ -605,9 +643,9 @@ fn main() -> Result<(), String> {
             writeln!(t, "{}\t{}\t{}\t{}\t{}\t{:.3}\t{}\t{:.4}\t{:.4}\t{:.4}\t{}\t{}\t{}\t{}", p.child.run, p.child.call, p.child.model, p.child.kind, p.child.how, p.child.sim, p.parent_label, p.parent_hff, p.child.hff.unwrap_or(f64::NAN), p.parent_hff - p.child.hff.unwrap_or(0.0), pn, p.child.tree.size(), p.edits.len(), cls.into_iter().collect::<Vec<_>>().join("; ")).map_err(|e| e.to_string())?;
         }
         std::fs::write(d.join("pairs.tsv"), t).map_err(|e| e.to_string())?;
-        let mut t = String::from("children\tpairs\tinstances\tmean_gain\tclass\trule\n");
+        let mut t = String::from("children\tpairs\tinstances\tmean_gain\tclass\tin\trule\n");
         for (g, mean, text) in &rules {
-            writeln!(t, "{}\t{}\t{}\t{:.4}\t{}\t{}", g.children.len(), g.pairs.len(), g.instances.len(), mean, g.class, text).map_err(|e| e.to_string())?;
+            writeln!(t, "{}\t{}\t{}\t{:.4}\t{}\t{}\t{}", g.children.len(), g.pairs.len(), g.instances.len(), mean, g.class, g.place, text).map_err(|e| e.to_string())?;
         }
         std::fs::write(d.join("rules.tsv"), t).map_err(|e| e.to_string())?;
         let mut t = String::from("pair\tclass\tkind\tcontext\tbefore\tafter\n");
@@ -659,11 +697,13 @@ fn main() -> Result<(), String> {
     }
     writeln!(s, "\nA child is paired with every parent in its prompt that it beats (a crossover child with both parents when it beats both). Kernels the run wrote were re-read by the same reader to match a reply to its measured HFF; a reply whose kernel was varied before scoring (deduplication), or replaced after an infeasible first evaluation, has no match and is left out. The gain of a pair is parent HFF minus child HFF (higher is better).\n").map_err(|e| e.to_string())?;
     writeln!(s, "## Edit classes\n").map_err(|e| e.to_string())?;
-    writeln!(s, "Each edit is the smallest pair of differing sub-trees with everything around them identical (GumTree matching, then an aligned top-down walk). Most replies rewrite the whole kernel, so a pair carries many edits of many classes; the mean gain of a class is over the pairs that show it and is confounded by the other edits in those pairs. The last two columns restrict to pairs whose every edit is of that class.\n").map_err(|e| e.to_string())?;
-    writeln!(s, "| class | pairs | edits | mean gain (pairs showing it) | pairs with only this class | mean gain (only this class) |\n|---|---|---|---|---|---|").map_err(|e| e.to_string())?;
-    for (k, st, mean, solo, solo_mean) in &class_rows {
-        let sm = if solo_mean.is_nan() { "-".to_string() } else { format!("{solo_mean:.4}") };
-        writeln!(s, "| {k} | {} | {} | {mean:.4} | {solo} | {sm} |", st.pairs.len(), st.edits).map_err(|e| e.to_string())?;
+    writeln!(s, "Each edit is the smallest pair of differing sub-trees with everything around them identical (GumTree matching, then an aligned top-down walk). Most replies rewrite the whole kernel, so a pair carries many edits of many classes; the mean gain of a class is over the pairs that show it and is confounded by the other edits in those pairs. No pair here has edits of one class only, so the last two columns give the mean gain of the pairs that do not show the class, for comparison. Register initialisation and register renaming are bookkeeping of the grammar (every register a kernel uses is set to zero at the top of its block; allocation order differs between kernels), not changes of the computation.\n").map_err(|e| e.to_string())?;
+    let all_mean = (0..pairs.len()).map(gain).sum::<f64>() / pairs.len().max(1) as f64;
+    writeln!(s, "| class | pairs | edits | mean gain (pairs showing it) | pairs without it | mean gain (pairs without it) |\n|---|---|---|---|---|---|").map_err(|e| e.to_string())?;
+    writeln!(s, "| (all pairs) | {} | {edits_total} | {all_mean:.4} | - | - |", pairs.len()).map_err(|e| e.to_string())?;
+    for (k, st, mean, without, without_mean) in &class_rows {
+        let wm = if without_mean.is_nan() { "-".to_string() } else { format!("{without_mean:.4}") };
+        writeln!(s, "| {k} | {} | {} | {mean:.4} | {without} | {wm} |", st.pairs.len(), st.edits).map_err(|e| e.to_string())?;
     }
     writeln!(s, "\n## Three examples per class\n").map_err(|e| e.to_string())?;
     writeln!(s, "Before and after are the edit's site in the parent's typed tree and the same site with only this edit applied (s-expressions over the kingdom's rows; long sites cut at 400 characters). Examples are the edits of the class with the smallest sites, from different children.\n").map_err(|e| e.to_string())?;
@@ -705,13 +745,22 @@ fn main() -> Result<(), String> {
         writeln!(s).map_err(|e| e.to_string())?;
     }
     writeln!(s, "## Candidate rules\n").map_err(|e| e.to_string())?;
-    writeln!(s, "An edit's site becomes `find ==> replace`: sub-trees common to both sides become shared holes, then literals and variables (registers, private arrays) become typed holes (the magic symbol table's generalisation). Edits with the same generalised shape form one candidate; the rule shown is the anti-unification of its concrete instances, so what every instance agrees on (a literal 4 → 8, a row name) stays concrete. `?n:type` is a hole of that kingdom type. Ranked by support (distinct children, two or more), then mean gain. Sites over 120 nodes are left out.\n").map_err(|e| e.to_string())?;
-    writeln!(s, "| rank | children | pairs | instances | mean gain | class | rule |\n|---|---|---|---|---|---|---|").map_err(|e| e.to_string())?;
-    for (i, (g, mean, text)) in rules.iter().take(60).enumerate() {
-        let t: String = text.replace('|', "\\|");
-        let t = if t.chars().count() > 600 { t.chars().take(600).collect::<String>() + " …" } else { t };
-        writeln!(s, "| {} | {} | {} | {} | {mean:.4} | {} | `{t}` |", i + 1, g.children.len(), g.pairs.len(), g.instances.len(), g.class).map_err(|e| e.to_string())?;
-    }
+    writeln!(s, "An edit's site becomes `find ==> replace`: sub-trees common to both sides become shared holes, then literals and variables (registers, private arrays) become typed holes (the magic symbol table's generalisation). Edits with the same generalised shape form one candidate; the rule shown is the anti-unification of its concrete instances, so what every instance agrees on (a literal 4 → 8, a row name) stays concrete. `?n:type` is a hole of that kingdom type. A site inside a statement list is a window (the changed statement and its neighbours) and the rule records the enclosing row it applies in (`in`). Ranked by support (distinct children, two or more), then mean gain; the mean gain is over the pairs showing the rule, which carry many other edits (see the classes). Sites over 120 nodes are left out.\n").map_err(|e| e.to_string())?;
+    let bookkeeping = |c: &str| c.starts_with("register initialisation") || c == "register renamed";
+    let table = |s: &mut String, rows: &[&(&RuleGroup, f64, String)]| -> Result<(), String> {
+        writeln!(s, "| rank | children | pairs | instances | mean gain | class | in | rule |\n|---|---|---|---|---|---|---|---|").map_err(|e| e.to_string())?;
+        for (i, (g, mean, text)) in rows.iter().enumerate() {
+            let t: String = text.replace('|', "\\|");
+            let t = if t.chars().count() > 600 { t.chars().take(600).collect::<String>() + " …" } else { t };
+            writeln!(s, "| {} | {} | {} | {} | {mean:.4} | {} | {} | `{t}` |", i + 1, g.children.len(), g.pairs.len(), g.instances.len(), g.class, g.place).map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    };
+    let work: Vec<&(&RuleGroup, f64, String)> = rules.iter().filter(|r| !bookkeeping(r.0.class)).take(40).collect();
+    table(&mut s, &work)?;
+    writeln!(s, "\n### Bookkeeping rules (register initialisation and renaming)\n\nThe same mining over the bookkeeping classes, top ten; these change no computation and are listed so their support is visible, not as candidates.\n").map_err(|e| e.to_string())?;
+    let books: Vec<&(&RuleGroup, f64, String)> = rules.iter().filter(|r| bookkeeping(r.0.class)).take(10).collect();
+    table(&mut s, &books)?;
     writeln!(s, "\n{} candidate rules have support from two children or more; the full list is `docs/mined_rewrites/rules.tsv`, the pairs `pairs.tsv`, every edit `edits.tsv`.", rules.len()).map_err(|e| e.to_string())?;
     std::fs::write(&md, s).map_err(|e| e.to_string())?;
     eprintln!("{:.0} s\twrote {}", t0.elapsed().as_secs_f64(), md.display());
