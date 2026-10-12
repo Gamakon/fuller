@@ -6,8 +6,8 @@
 //!
 //! | layer | what is proved |
 //! |---|---|
-//! | 1 typed tree and scope | every node is a row of the kingdom (or the role) at its signature; every loop counter is read inside its loop |
-//! | 2 structural grammar | the root is the safe kernel; a store to `h`, and a read of `h`, only at the thread's owned cell; a barrier never inside an `if`; loops only from the bounded constructors, no item loop in an item loop, at most four tile loops deep |
+//! | 1 typed tree | every node is a row of the kingdom (or the role) at its signature (a loop counter read outside its loop is the constant 0, as the rows say and the renderer writes) |
+//! | 2 structural grammar | the root is the safe kernel; a store to `h`, and a read of `h`, only at the thread's owned cell (a fallback row, column or cell renders the thread's own); a barrier never inside an `if`; loops only from the bounded constructors, no item loop in an item loop, at most four tile loops deep |
 //! | 3 range | every workgroup and private array index in its array's range (by the mask its row writes, or by its value at the worst shape); no `u32` overflow in index arithmetic at the worst shape (d 8,192, m 65,536, the band 8,192 rows) |
 //! | 4 barrier uniformity | a barrier only where every condition it depends on (an `if`, a loop's trip count, a `break` or `continue` guard, an earlier conditional `return`) is workgroup-uniform |
 //! | 5 adapter | the workgroup's shape and its workgroup memory within the target's limits; subgroup and float features the target has |
@@ -60,7 +60,7 @@ impl Layer {
 
     pub fn name(self) -> &'static str {
         match self {
-            Layer::Typed => "typed tree and scope",
+            Layer::Typed => "typed tree",
             Layer::Grammar => "structural grammar",
             Layer::Range => "range",
             Layer::Uniformity => "barrier uniformity",
@@ -123,7 +123,6 @@ fn pt(v: u128) -> Iv {
 /// A statement's walk mode: which layer the shared walker is checking.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Mode {
-    Scope,
     Grammar,
     Range,
     Uniform,
@@ -258,11 +257,11 @@ fn tile_counter_depth(base: &str) -> Option<usize> {
 
 /// Whether a subtree is a row or a cell the thread owns along `axis` (`row`
 /// or `col`): built from the thread's own block origin by the clamped
-/// offsets of the safe rows. A fallback renders a constant (every thread the
-/// same cell), so it owns nothing.
+/// offsets of the safe rows. A fallback renders the thread's own origin
+/// (`render.rs`, 2cd3c98), so it is owned.
 fn owned_axis(t: &Tree, axis: &str) -> bool {
     let base = safe_base(&t.name);
-    if base.starts_with(&format!("safe.thread_{axis}")) {
+    if base == "fallback" || base.starts_with(&format!("safe.thread_{axis}")) {
         return true;
     }
     if base.starts_with(&format!("safe.{axis}_plus")) {
@@ -272,7 +271,7 @@ fn owned_axis(t: &Tree, axis: &str) -> bool {
 }
 
 fn owned_cell(t: &Tree) -> bool {
-    safe_base(&t.name) == "safe.cell_of" && t.kids.len() == 2 && owned_axis(&t.kids[0], "row") && owned_axis(&t.kids[1], "col")
+    t.name == "fallback" || (safe_base(&t.name) == "safe.cell_of" && t.kids.len() == 2 && owned_axis(&t.kids[0], "row") && owned_axis(&t.kids[1], "col"))
 }
 
 /// The parts of a loop row, or None for a statement that is not a loop.
@@ -365,7 +364,6 @@ impl<'a> Checker<'a> {
     /// Every layer in order; the first failure.
     pub fn check(&self, tree: &Tree) -> Result<(), Illegal> {
         self.typed(tree)?;
-        self.scope(tree)?;
         self.grammar(tree)?;
         self.range(tree)?;
         let nonuniform = self.uniformity(tree)?;
@@ -375,6 +373,11 @@ impl<'a> Checker<'a> {
 
     fn dual_name(&self, ty: Ty) -> String {
         self.kingdom.dual(ty).map_or_else(|| format!("{ty:?}"), |d| d.dual.clone())
+    }
+
+    /// A dual holding a thread's row, column or cell (thread-dependent).
+    fn is_thread_dual(&self, t: &Tree) -> bool {
+        self.kingdom.dual(t.ty).is_some_and(|d| d.form.starts_with("thread") || d.form == "cell")
     }
 
     fn is_stmt_level(&self, t: &Tree) -> bool {
@@ -418,11 +421,6 @@ impl<'a> Checker<'a> {
             return fail("signature_mismatch", format!("{} as ({}) -> {}; the row's signatures: {}", t.name, have.join(", "), self.dual_name(t.ty), want.join("; ")));
         }
         t.kids.iter().try_for_each(|k| self.typed(k))
-    }
-
-    /// Layer 1, scope: every loop counter read inside its loop.
-    pub fn scope(&self, tree: &Tree) -> Result<(), Illegal> {
-        self.walk_root(tree, Mode::Scope, &NonUniform::default()).err.map_or(Ok(()), Err)
     }
 
     // ---------------------------------------------------------------- layer 2
@@ -904,26 +902,12 @@ impl<'a> Checker<'a> {
 
     fn value(&self, v: &Tree, cx: &mut Cx) {
         match cx.mode {
-            Mode::Scope => self.scope_value(v, cx),
             Mode::Grammar => self.grammar_value(v, cx),
             Mode::Range => {
                 self.iv(v, cx);
             }
             Mode::Uniform | Mode::Bounded => {}
         }
-    }
-
-    fn scope_value(&self, v: &Tree, cx: &mut Cx) {
-        let base = safe_base(&v.name);
-        if matches!(base, "safe.counter" | "builtin.item") && !cx.in_items {
-            cx.fail(Layer::Typed, "counter_out_of_scope", format!("{} (the item loop's counter t) is read outside the item loop", v.name));
-        }
-        if let Some(d) = tile_counter_depth(base) {
-            if cx.tiles.len() < d {
-                cx.fail(Layer::Typed, "counter_out_of_scope", format!("{} (the counter of the tile loop at depth {d}) is read at tile depth {}", v.name, cx.tiles.len()));
-            }
-        }
-        v.kids.iter().for_each(|k| self.scope_value(k, cx));
     }
 
     fn grammar_value(&self, v: &Tree, cx: &mut Cx) {
@@ -947,12 +931,13 @@ impl<'a> Checker<'a> {
         }
         let base = safe_base(&v.name);
         match base {
-            "fallback" => true,
+            "fallback" => !self.is_thread_dual(v),
             b if b.starts_with("literal.") => true,
             "builtin.workgroup_id" | "builtin.num_workgroups" | "builtin.subgroup_size" | "builtin.num_subgroups" => true,
             "builtin.global_invocation_id" | "builtin.local_invocation_id" | "builtin.local_invocation_index" | "builtin.subgroup_invocation_id" | "builtin.subgroup_id" => false,
-            "safe.counter" | "builtin.item" => cx.in_items && cx.t.uniform,
-            b if tile_counter_depth(b).is_some() => tile_counter_depth(b).and_then(|d| cx.tiles.get(d - 1)).is_some_and(|c| c.uniform),
+            // Outside its loop a counter is the constant 0.
+            "safe.counter" | "builtin.item" => !cx.in_items || cx.t.uniform,
+            b if tile_counter_depth(b).is_some() => tile_counter_depth(b).and_then(|d| cx.tiles.get(d - 1)).is_none_or(|c| c.uniform),
             b if b.starts_with("safe.thread_") => false,
             b if b.starts_with("axis.") => b.ends_with("_wid"),
             // h is read-write storage: not uniform. phi is read-only: uniform at a uniform index.
@@ -1037,7 +1022,20 @@ impl<'a> Checker<'a> {
         let k = |i: usize| kids.get(i).copied().flatten();
         let d = self.kingdom.dual(v.ty)?;
         if v.name == "fallback" {
-            return (d.slot == "u32").then(|| pt(u128::from(d.fallback_bits)));
+            // A thread's row, column or cell renders the thread's own origin.
+            return match d.form.as_str() {
+                "threadrow" => self.iv_raw(&Tree::new("safe.thread_row", v.ty, Vec::new()), cx),
+                "threadcol" => self.iv_raw(&Tree::new("safe.thread_col", v.ty, Vec::new()), cx),
+                "threadrows" | "threadrowg" => self.iv_raw(&Tree::new("safe.thread_row_s", v.ty, Vec::new()), cx),
+                "threadcols" | "threadcolg" => self.iv_raw(&Tree::new("safe.thread_col_s", v.ty, Vec::new()), cx),
+                "cell" => {
+                    let row = self.iv_raw(&Tree::new("safe.thread_row", v.ty, Vec::new()), cx);
+                    let col = self.iv_raw(&Tree::new("safe.thread_col", v.ty, Vec::new()), cx);
+                    let r = self.mul(row, Some(pt(WORST_D as u128)), v, cx);
+                    self.add(r, col, v, cx)
+                }
+                _ => (d.slot == "u32").then(|| pt(u128::from(d.fallback_bits))),
+            };
         }
         if v.name.starts_with("literal.") {
             return self.lit_u32(v);
@@ -1053,8 +1051,11 @@ impl<'a> Checker<'a> {
             "load.cfg_m" | "bound.m" => Some(pt(WORST_M as u128)),
             "load.cfg_r_rows" | "bound.rows" => Some(pt(WORST_ROWS as u128)),
             "load.cfg_r_off" => Some(pt(0)),
-            "safe.counter" | "builtin.item" => cx.t.iv.filter(|_| cx.in_items),
-            b if tile_counter_depth(b).is_some() => tile_counter_depth(b).and_then(|n| cx.tiles.get(n - 1)).and_then(|c| c.iv),
+            "safe.counter" | "builtin.item" => if cx.in_items { cx.t.iv } else { Some(pt(0)) },
+            b if tile_counter_depth(b).is_some() => match tile_counter_depth(b).and_then(|n| cx.tiles.get(n - 1)) {
+                Some(c) => c.iv,
+                None => Some(pt(0)),
+            },
             "builtin.local_invocation_index" => Some(Iv { lo: 0, hi: wdims[0] * wdims[1] - 1 }),
             // WGSL bounds a subgroup to 4..=128 lanes.
             "builtin.subgroup_invocation_id" => Some(Iv { lo: 0, hi: 127 }),
@@ -1391,20 +1392,35 @@ mod tests {
         let e = Checker::new(&k, &role, &bare).check(&sg).unwrap_err();
         assert_eq!((e.layer, e.reason), (Layer::Adapter, "feature_missing"), "{e}");
 
-        // A store to a cell the thread does not own: the cell is a fallback
-        // (a constant: every thread writes the same cell).
-        let mut shared = gram_shipped_safe_tree(&k).unwrap();
-        let store = &mut shared.kids[2].kids[0].kids[1].kids[0];
+        // A fallback cell is the thread's own (it renders the thread's
+        // block origin): legal.
+        let mut own = gram_shipped_safe_tree(&k).unwrap();
+        let store = &mut own.kids[2].kids[0].kids[1].kids[0];
         assert_eq!(store.name, "store.h_O0");
         store.kids[0] = Tree::fallback(ty(&k, "u32.cell"));
+        checker.check(&own).unwrap_or_else(|e| panic!("a fallback cell: {e}"));
+
+        // A store to a cell the thread does not own: the role's `store.h`
+        // at any index. Its type is the unsafe kingdom's statement, so
+        // layer 1 refuses it; the grammar names the store on its own.
+        let mut shared = gram_shipped_safe_tree(&k).unwrap();
+        shared.kids[2].kids[0].kids[1].kids[0] = Tree::new("store.h", ty(&k, "stmt.stmt"), vec![lit_i(0.0), Tree::literal("literal.real", ty(&k, "f32.real"), 1.0)]);
         let e = layer_of(&checker, &shared);
+        assert_eq!((e.layer, e.reason), (Layer::Typed, "signature_mismatch"), "{e}");
+        let e = checker.grammar(&shared).unwrap_err();
         assert_eq!((e.layer, e.reason), (Layer::Grammar, "store_not_owned_cell"), "{e}");
 
-        // A symbol out of scope: the item counter read before the item loop.
+        // A read of another thread's cell: the role's `load.h` at any index
+        // is typed in the safe kingdom (the sampler reaches it).
+        let other = with_body(&k, one_l0(Tree::new("reg.set_f_L0", ty(&k, "stmt.L0"), vec![Tree::new("reg.f1", ty(&k, "reg<f32>.real"), vec![]), Tree::new("load.h", ty(&k, "f32.real"), vec![lit_i(0.0)])])));
+        let e = layer_of(&checker, &other);
+        assert_eq!((e.layer, e.reason), (Layer::Grammar, "read_of_unowned_cell"), "{e}");
+
+        // The item counter read before the item loop is the constant 0, as
+        // the rows say and the renderer writes: legal.
         let counter = Tree::new("safe.counter_index", ty(&k, "u32.index"), vec![Tree::new("safe.counter", ty(&k, "u32.counter"), vec![])]);
         let early = with_body(&k, one_l0(Tree::new("reg.set_i_L0", ty(&k, "stmt.L0"), vec![Tree::new("reg.i0", ty(&k, "reg<u32>.index"), vec![]), counter])));
-        let e = layer_of(&checker, &early);
-        assert_eq!((e.layer, e.reason), (Layer::Typed, "counter_out_of_scope"), "{e}");
+        checker.check(&early).unwrap_or_else(|e| panic!("a counter outside its loop: {e}"));
     }
 
     /// THE FINDING: 1,000 random genes from the kingdom's sampler (the safe
@@ -1428,7 +1444,7 @@ mod tests {
         for seed in 0..n {
             let tree = sample(&k, &role, root, 7, seed).unwrap();
             let (nonuniform, uniformity) = checker.uniform_fixpoint(&tree);
-            let each = [checker.typed(&tree).and_then(|()| checker.scope(&tree)).err(), checker.grammar(&tree).err(), checker.range(&tree).err(), uniformity, checker.adapter(&tree).err(), checker.bounded(&tree, &nonuniform).err()];
+            let each = [checker.typed(&tree).err(), checker.grammar(&tree).err(), checker.range(&tree).err(), uniformity, checker.adapter(&tree).err(), checker.bounded(&tree, &nonuniform).err()];
             for e in each.into_iter().flatten() {
                 alone.entry((e.layer, e.reason)).or_insert((0, seed, e.detail.clone())).0 += 1;
             }
