@@ -1401,6 +1401,29 @@ impl<'a> Ctx<'a> {
         if t.name.starts_with("load.") {
             return Err(format!("load {} has no safe spelling", t.name));
         }
+        // A swizzle (`v.zyx`, `v.xy`): its lanes composed, `vec3(v.z, v.y,
+        // v.x)` (the kingdom has no row per pattern; the value is the same).
+        if let Some(pat) = t.name.strip_prefix("shape.swizzle.") {
+            if t.kids.len() == 1 && (1..=4).contains(&pat.len()) {
+                let v = self.value(&t.kids[0])?;
+                let d = self.kingdom.dual(v.ty).ok_or("a swizzle of an untyped vector")?;
+                let lane = ty(self, &format!("{}.{}", d.scalar().ok_or("a swizzle of a non-vector")?, d.form))?;
+                let lanes = pat
+                    .chars()
+                    .map(|c| {
+                        let i = "xyzw".find(c).ok_or_else(|| format!("swizzle lane {c}"))?;
+                        Ok(Tree::new(&format!("shape.access_{i}"), lane, vec![v.clone()]))
+                    })
+                    .collect::<Result<Vec<_>, String>>()?;
+                if lanes.len() == 1 {
+                    return Ok(lanes.into_iter().next().expect("one lane"));
+                }
+                // Typed by the pattern's width over the source's lanes (the
+                // inference can give the swizzle another width).
+                let out = ty(self, &format!("vec{}<{}>.{}", lanes.len(), d.scalar().unwrap_or("f32"), d.form))?;
+                return Ok(Tree::new(&format!("shape.compose{}", lanes.len()), out, lanes));
+            }
+        }
         // A vector component chosen at run time (`v[j]`): the kingdom's `shape.at`.
         if t.name == "shape.access_dyn" && t.kids.len() == 2 && self.kingdom.dual(t.kids[0].ty).is_some_and(|d| d.lanes > 1 && d.slot.starts_with("vec")) {
             let v = self.value(&t.kids[0])?;

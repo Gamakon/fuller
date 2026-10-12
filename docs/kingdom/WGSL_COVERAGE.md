@@ -87,7 +87,7 @@
 | `f16` | naga 0.20 | needs `enable f16;` |
 | abstract int / float literals | covered | `ty_abstract_literals`, hex and suffixed literals |
 | `vec2<f32>`, `vec4<f32>` | covered | `shape.compose2/4`, `reg.v*` (vec4) |
-| `vec3<f32>` | partial | `vec3` from `cross` and 3-lane swizzles: "geom.cross (vec3) where vec2 is demanded" |
+| `vec3<f32>` | covered | `cross`, 3-lane swizzles, `length` of a vec3 |
 | `vec2<u32>` | covered | |
 | `vec3<u32>` as a value | missing | `gid + vec3<u32>(1u)`: the thread id cannot be an operand |
 | `vec4<u32>` | partial | as a value (`ty_vec4_u32`) covered; no `vec4<u32>` register (blocks `subgroupBallot`) |
@@ -118,7 +118,7 @@
 | `& \| ^ << >>` on u32 | covered | `bits.*`, `index.*`, with the u32 form crossings |
 | `~` | covered | `bits.not` |
 | swizzles, 1, 2 and 4 lanes | covered | `shape.access_*`, `shape.swizzle` |
-| swizzles, 3 lanes | missing | `shape.swizzle.zyx` where vec2 is demanded |
+| swizzles, 2 to 4 lanes | covered | its lanes composed (`v.zyx` is `vec3(v.z, v.y, v.x)`); the kingdom has no row per pattern |
 | swizzle assignment | covered | `reg.set_v_lane_*` |
 | `select` scalar | covered | `select.scalar_cond` |
 | `select` with a `vec2<bool>` built by a constructor | missing | |
@@ -143,7 +143,7 @@
 |---|---|---|
 | float, one argument, f32 and vec4 (abs, acos, acosh, asin, asinh, atan, atanh, ceil, cos, cosh, degrees, exp, exp2, floor, fract, inverseSqrt, log, log2, radians, round, saturate, sign, sin, sinh, sqrt, tan, tanh, trunc) | covered | `arith.*`, `trig.*` (60 probes) |
 | `length`, `normalize`, `distance`, `dot`, `reflect`, `faceForward` | covered | `geom.*` |
-| `cross` | missing | the vec3 gap |
+| `cross` | covered | `geom.cross` |
 | `refract` | covered | `geom.refract` |
 | two and three arguments (atan2, clamp, fma, ldexp, max, min, mix, pow, smoothstep, step) | covered | `arith.*` |
 | `mix` with a scalar weight | covered | `arith.mix_scalar_weight` |
@@ -158,7 +158,7 @@
 | `extractBits` (u32, vecN<u32>) | covered | `bits.extract` |
 | `insertBits` | covered | `bits.insert` (F1154, arity 4) |
 | pack4x8snorm/unorm | covered | `bits.pack*` |
-| pack2x16snorm/unorm/float | partial | rows covered; the probes' `v.xy` argument fails (the swizzle gap) |
+| pack2x16snorm/unorm/float | covered | `bits.pack2x16*` |
 | unpack4x8snorm/unorm, unpack2x16snorm/unorm/float | covered | `bits.unpack*` (their naga column was `UnPack…`; naga writes `Unpack…`) |
 | pack4xI8, pack4xU8, unpack4xI8, unpack4xU8, dot4I8Packed, dot4U8Packed | naga 0.20 | not parsed |
 | `select`, `all`, `any` | covered | |
@@ -183,7 +183,7 @@ Each fill is its own commit with a corpus row and the full checklist. The order 
 5. Done: `num_workgroups`, naga's name `num_work_groups` mapped to the row. 136 of 184 read. Also read now: a kernel that never writes h (`draft_no_store`; a mutant's top-level return).
 6. Done: i32 registers, `i32(u32)`, `u32(i32)`, `i32(f32)`, `bitcast<i32>`, and with them `++` / `--`, i32 `abs/min/max/clamp/sign`, i32 subgroup operations and vecN<i32>; an atomic<i32>'s old value read later. 147 of 184 read.
 7. Done: `switch`, `break`, `break if`, `while` with its step in the body, `continue` in any loop; loops entered at a non-zero literal. 153 of 184 read.
-8. vec3 values (`cross`, 3-lane swizzles, the thread id as an operand), `vec4<u32>` registers (then `subgroupBallot`), and vec2 private arrays.
+8. Partly done: swizzles and vec3 values (`cross`, 3-lane swizzles), 159 of 184 read; two conform bugs found on the way (an exponential search over overloads, and a 3-lane compose rebuilt without end). Still open: the thread id as a vector operand, `vec4<u32>` registers (then `subgroupBallot`), vec2 private arrays, a `vec2<bool>` built by a constructor, `bitcast` of a whole vector.
 9. Matrices: construction from scalars and columns, matrix locals, column access.
 10. `modf` / `frexp` results, `arrayLength`.
 11. Module `const` and `override`, `var<private>`, workgroup scalars and `workgroupUniformLoad`.

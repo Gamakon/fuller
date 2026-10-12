@@ -505,6 +505,14 @@ fn lanes(k: &Tree, kingdom: &WgslKingdom) -> Vec<Tree> {
 }
 
 pub fn conform(t: &Tree, demand: Ty, kingdom: &WgslKingdom, per_kernel: &[PerKernelRow]) -> Result<Tree, String> {
+    conform_at(t, demand, kingdom, per_kernel, true)
+}
+
+/// [`conform`]; `convert` false when the node is already being converted:
+/// one conversion per node, never a chain (the conversions between f32 and
+/// i32, or an index and a bit field, go both ways, and a node with no row
+/// under either dual bounced between them without end, 2026-10-12).
+fn conform_at(t: &Tree, demand: Ty, kingdom: &WgslKingdom, per_kernel: &[PerKernelRow], convert: bool) -> Result<Tree, String> {
     let dual = |ty: Ty| kingdom.dual(ty).map(|d| d.dual.clone()).unwrap_or_else(|| format!("{ty:?}"));
     if t.name == FALLBACK {
         return Ok(Tree::fallback(demand));
@@ -513,7 +521,7 @@ pub fn conform(t: &Tree, demand: Ty, kingdom: &WgslKingdom, per_kernel: &[PerKer
     // the index row of the same operation.
     if let Some(op) = t.name.strip_prefix("bits.").filter(|op| matches!(*op, "shl" | "shr" | "and" | "or")) {
         if signatures(&t.name, demand, t.kids.len(), kingdom, per_kernel).next().is_none() && signatures(&format!("index.{op}"), demand, t.kids.len(), kingdom, per_kernel).next().is_some() {
-            return conform(&Tree { name: format!("index.{op}"), ty: t.ty, konst: t.konst, kids: t.kids.clone() }, demand, kingdom, per_kernel);
+            return conform_at(&Tree { name: format!("index.{op}"), ty: t.ty, konst: t.konst, kids: t.kids.clone() }, demand, kingdom, per_kernel, convert);
         }
     }
     // A vector composed from vector parts (`vec4<f32>(a: vec2, b: vec2)`,
@@ -528,20 +536,29 @@ pub fn conform(t: &Tree, demand: Ty, kingdom: &WgslKingdom, per_kernel: &[PerKer
         let lanes_of = |k: &Tree| kingdom.dual(k.ty).map_or(1, |d| if d.slot.starts_with("vec") { d.lanes as usize } else { 1 });
         let want = kingdom.dual(demand).map_or(0, |d| if d.slot.starts_with("vec") { d.lanes as usize } else { 0 });
         let total: usize = t.kids.iter().map(lanes_of).sum();
-        if want > 0 && total == want && t.kids.iter().any(|k| lanes_of(k) > 1) {
+        // The step form the rule below builds (`compose<n>(compose<n-1>, s)`)
+        // is left as it is: flattening it again would undo that rule forever.
+        let step_form = t.name == format!("shape.compose{want}") && t.kids.len() == 2 && lanes_of(&t.kids[1]) == 1 && t.kids[0].name.starts_with("shape.compose") && lanes_of(&t.kids[0]) + 1 == want;
+        if want > 0 && total == want && !step_form && t.kids.iter().any(|k| lanes_of(k) > 1) {
             let flat = t.kids.iter().flat_map(|k| lanes(k, kingdom)).collect::<Vec<_>>();
-            return conform(&Tree { name: format!("shape.compose{want}"), ty: t.ty, konst: t.konst, kids: flat }, demand, kingdom, per_kernel);
+            return conform_at(&Tree { name: format!("shape.compose{want}"), ty: t.ty, konst: t.konst, kids: flat }, demand, kingdom, per_kernel, convert);
         }
     }
     // A vector written from all its lanes at once (naga's Compose): the
     // table composes in steps, a vector of n − 1 lanes and a scalar.
     if let Some(n) = t.name.strip_prefix("shape.compose").and_then(|n| n.parse::<usize>().ok()) {
         if t.kids.len() == n && n > 2 {
-            let mut acc = Tree::new("shape.compose2", t.ty, vec![t.kids[0].clone(), t.kids[1].clone()]);
+            // Each step typed by its own width (a vec2 typed as the vec3 it
+            // builds was taken apart as three lanes, rebuilt, and grew
+            // without end: a 3-lane swizzle hung the reader, 2026-10-12).
+            let width = |w: usize| -> Ty {
+                kingdom.dual(demand).or_else(|| kingdom.dual(t.ty)).and_then(|d| d.scalar().map(|s| format!("vec{w}<{s}>.{}", d.form))).and_then(|name| crate::wgsl::render::dual_ty(kingdom, &name).ok()).unwrap_or(t.ty)
+            };
+            let mut acc = Tree::new("shape.compose2", width(2), vec![t.kids[0].clone(), t.kids[1].clone()]);
             for (i, k) in t.kids.iter().enumerate().skip(2) {
-                acc = Tree::new(&format!("shape.compose{}", i + 1), t.ty, vec![acc, k.clone()]);
+                acc = Tree::new(&format!("shape.compose{}", i + 1), width(i + 1), vec![acc, k.clone()]);
             }
-            return conform(&acc, demand, kingdom, per_kernel);
+            return conform_at(&acc, demand, kingdom, per_kernel, convert);
         }
     }
     if t.kids.is_empty() && t.name.starts_with("literal.") {
@@ -570,6 +587,14 @@ pub fn conform(t: &Tree, demand: Ty, kingdom: &WgslKingdom, per_kernel: &[PerKer
                     if best.as_ref().is_none_or(|(b, _)| inserted < *b) {
                         best = Some((inserted, kids));
                     }
+                    // No conversion inserted: none can do better (the table's
+                    // first such signature wins, as on a tie). Trying every
+                    // signature of every node beneath was exponential in the
+                    // overloads (a swizzle's composed lanes inside a call hung
+                    // the reader, 2026-10-12).
+                    if inserted == 0 {
+                        break;
+                    }
                 }
                 Err(e) => errors.push(e),
             }
@@ -589,10 +614,10 @@ pub fn conform(t: &Tree, demand: Ty, kingdom: &WgslKingdom, per_kernel: &[PerKer
         v.dedup();
         v
     };
-    for o in &own {
+    for o in own.iter().filter(|_| convert) {
         // A conversion between forms, or a splat of a scalar where a vector is demanded (WGSL's scalar-vector arithmetic).
         if let Some(conv) = kingdom.rows.iter().find(|r| r.inputs.len() == 1 && r.inputs[0] == *o && r.output == demand && (r.name.starts_with("index.of_") || r.name.starts_with("convert.") || r.name.starts_with("shape.splat"))) {
-            let inner = conform(t, *o, kingdom, per_kernel)?;
+            let inner = conform_at(t, *o, kingdom, per_kernel, false)?;
             return Ok(Tree::new(&conv.name, demand, vec![inner]));
         }
     }
