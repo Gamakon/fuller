@@ -3538,6 +3538,20 @@ impl<'a> Ctx<'a> {
                     _ => Err(format!("the item counter {local} set to {} between loops (only 0 has a spelling)", tree.kids[0].to_sexpr())),
                 };
             }
+            // A literal stored to a loop counter of the kingdom's (t, k, k2,
+            // k3, k4: no register row spells them) is where its next loop
+            // starts, as `for (k = 0u; ..)` writes it, not a register: the
+            // loop reads its entry from here (2026-10-13, AST to AST: every
+            // tile loop read back with an extra `i0 = 0u` before it).
+            let counter_named = local.strip_prefix("local.").and_then(|r| r.split('@').next()).is_some_and(|n| matches!(n, "t" | "k" | "k2" | "k3" | "k4"));
+            if counter_named {
+                if let Some(v) = literal_value(&tree.kids[0]) {
+                    self.stored_seen.insert(local.clone());
+                    let index = ty(self, "u32.index")?;
+                    self.axis_memo.insert(local.clone(), (Tree::literal("literal.index", index, v), self.loop_depth));
+                    return Ok(None);
+                }
+            }
             self.stored_seen.insert(local.clone());
             let d = self.kingdom.dual(tree.kids[0].ty).map(|d| d.dual.clone()).unwrap_or_default();
             let row = self.register(&local, &d)?;
@@ -5453,8 +5467,32 @@ mod tests {
     /// read. Every tree reads back (1,000 of 1,000, asserted exactly).
     /// (110 before a negated matrix was written as a product: the one random
     /// tree holding one now reads back as the product, a different text.)
-    const READ_BACK_FLOOR: usize = 109;
-    const FIXPOINT_FLOOR: usize = 141;
+    const READ_BACK_FLOOR: usize = 112;
+    const FIXPOINT_FLOOR: usize = 563;
+
+    /// The first node where two trees differ, as `path: drawn / parsed`
+    /// (name, type and literal value; a different count of children is a
+    /// difference at the parent). `None` when they are the same tree.
+    fn first_difference(a: &Tree, b: &Tree) -> Option<String> {
+        fn at(a: &Tree, b: &Tree, path: &mut Vec<String>) -> Option<String> {
+            let same = a.name == b.name && a.ty == b.ty && a.konst.to_bits() == b.konst.to_bits() && a.kids.len() == b.kids.len();
+            if !same {
+                let show = |t: &Tree| if t.name.starts_with("literal.") { format!("{} {}", t.name, t.konst) } else { format!("{}{}", t.name, if t.kids.is_empty() { String::new() } else { format!("/{}", t.kids.len()) }) };
+                let tail: Vec<&String> = path.iter().rev().take(2).collect();
+                return Some(format!("{}: {} / {}", tail.into_iter().rev().map(String::as_str).collect::<Vec<_>>().join(" > "), show(a), show(b)));
+            }
+            for (i, (x, y)) in a.kids.iter().zip(&b.kids).enumerate() {
+                path.push(format!("{}[{i}]", a.name));
+                let d = at(x, y, path);
+                path.pop();
+                if d.is_some() {
+                    return d;
+                }
+            }
+            None
+        }
+        at(a, b, &mut Vec::new())
+    }
 
     /// THE KINGDOM'S COMPLETENESS BAR (2026-10-12): 1,000 random trees of
     /// the kingdom's typed sampler (the safe root, depth 7, seeds 0..1000)
@@ -5473,7 +5511,8 @@ mod tests {
         let mut passed = 0usize;
         // Measured beside it: the trees that read back at all, and the ones
         // whose text read back is a fixpoint (read and rendered again, the same).
-        let (mut read_back, mut fixpoint) = (0usize, 0usize);
+        let (mut read_back, mut fixpoint, mut ast_equal) = (0usize, 0usize, 0usize);
+        let mut by_ast: BTreeMap<String, (usize, u64)> = BTreeMap::new();
         for seed in 0..n {
             let tree = crate::wgsl::render::sample(&k, &role, root, 7, seed).unwrap();
             let verdict: Result<(), String> = (|| {
@@ -5491,6 +5530,15 @@ mod tests {
                 let back = read_safe(&text, &k).map_err(|e| format!("read: {e}"))?;
                 let again = crate::wgsl::safe_karva::render_tree(&back.tree, &k).map_err(|e| format!("re-render: {e}"))?.text;
                 read_back += 1;
+                // THE BAR (Andrew, 2026-10-13): AST to AST. The tree parsed
+                // from the emitted text is the tree drawn, node for node.
+                match first_difference(&tree, &back.tree) {
+                    None => ast_equal += 1,
+                    Some(d) => {
+                        let key: String = d.chars().map(|c| if c.is_ascii_digit() { 'N' } else { c }).take(140).collect();
+                        by_ast.entry(key).or_insert((0, seed)).0 += 1;
+                    }
+                }
                 if read_safe(&again, &k).ok().and_then(|b| crate::wgsl::safe_karva::render_tree(&b.tree, &k).ok()).is_some_and(|r| r.text == again) {
                     fixpoint += 1;
                 }
@@ -5524,8 +5572,16 @@ mod tests {
         let mut reasons: Vec<_> = by_reason.into_iter().collect();
         reasons.sort_by(|a, b| b.1 .0.cmp(&a.1 .0));
         println!("random trees: {passed} of {n} read back to their own text; {read_back} read back; {fixpoint} read back to a fixpoint (the text read back reads back to itself)");
-        for (r, (c, seed)) in &reasons {
+        let mut ast_reasons: Vec<_> = by_ast.into_iter().collect();
+        ast_reasons.sort_by(|a, b| b.1 .0.cmp(&a.1 .0));
+        println!("random trees: {ast_equal} of {n} parse back to the AST drawn (AST to AST); the first difference of the others, drawn / parsed:");
+        for (r, (c, seed)) in &ast_reasons {
             println!("  {c:>4}  seed {seed:>4}  {r}");
+        }
+        if std::env::var_os("ROUNDTRIP_TEXT_REASONS").is_some() {
+            for (r, (c, seed)) in &reasons {
+                println!("  {c:>4}  seed {seed:>4}  {r}");
+            }
         }
         // A ratchet while the groups are fixed one commit at a time (2026-10-12):
         // the count only rises, to 1,000 of 1,000.
