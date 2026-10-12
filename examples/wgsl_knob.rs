@@ -159,7 +159,7 @@ fn mutate_all(files: &[PathBuf], n: usize, seed: u64, out: &Path, kingdom: &Wgsl
     let (att, pass): (usize, usize) = by_knob.values().fold((0, 0), |(a, p), (x, y)| (a + x, p + y));
     println!("kernels {}: read {parents}, not read {unread}; {n} knob mutations a kernel, seed {seed}; {:.1} s", files.len(), started.elapsed().as_secs_f64());
     println!("parents with no knob to change: {no_knob}");
-    println!("| knob | children | render, validate, read back | share | 95 % interval |");
+    println!("| knob | children | legal, render, validate, read back | share | 95 % interval |");
     println!("|---|---|---|---|---|");
     for (k, (a, p)) in by_knob.iter().chain(std::iter::once((&"all".to_string(), &(att, pass)))) {
         let (lo, hi) = wilson(*p, *a);
@@ -226,7 +226,7 @@ fn rule_all(files: &[PathBuf], rule: rules::Rule, n: usize, seed: u64, out: &Pat
     }
     let (lo, hi) = wilson(passed, made);
     println!("kernels {}: read {parents}, not read {unread}; rule {} fires in {lit}; up to {n} sites a kernel, seed {seed}; {:.1} s", files.len(), rule.name(), started.elapsed().as_secs_f64());
-    println!("| rule | children | render, validate, read back | share | 95 % interval |\n|---|---|---|---|---|\n| {} | {made} | {passed} | {:.1} % | {lo:.1} to {hi:.1} % |", rule.name(), 100.0 * passed as f64 / made.max(1) as f64);
+    println!("| rule | children | legal, render, validate, read back | share | 95 % interval |\n|---|---|---|---|---|\n| {} | {made} | {passed} | {:.1} % | {lo:.1} to {hi:.1} % |", rule.name(), 100.0 * passed as f64 / made.max(1) as f64);
     println!("failures by checker stage: {by_stage:?}");
     println!("kernels where the rule does not fire, by reason:");
     let mut why: Vec<(&String, &usize)> = not_fired.iter().collect();

@@ -243,6 +243,9 @@ pub fn mutate(root: &Tree, kingdom: &WgslKingdom, target: &Target, rng: &mut u64
 /// The checker layer a child failed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Stage {
+    /// The legality checker (`check.rs`: typed tree, grammar, range,
+    /// barrier uniformity, adapter, bounded loops).
+    Legal,
     Render,
     Validate,
     ReadBack,
@@ -251,6 +254,7 @@ pub enum Stage {
 impl Stage {
     pub fn name(self) -> &'static str {
         match self {
+            Stage::Legal => "legality",
             Stage::Render => "render",
             Stage::Validate => "validate",
             Stage::ReadBack => "read back",
@@ -258,11 +262,15 @@ impl Stage {
     }
 }
 
-/// THE LAYERED CHECK of any child tree, as far as it exists today: its
-/// text rendered (with its `// grid` header), validated by naga for the
-/// adapter, and read back by the safe reader (the ownership proof). The
-/// text and the tree read back, or the stage and what failed.
+/// THE LAYERED CHECK of any child tree: the legality checker's six layers
+/// (`check.rs`), then its text rendered (with its `// grid` header),
+/// validated by naga for the adapter, and read back by the safe reader (the
+/// ownership proof). The text and the tree read back, or the stage and what
+/// failed.
 pub fn check_text(child: &Tree, kingdom: &WgslKingdom) -> Result<(String, crate::wgsl::safe_reader::SafeRead), (Stage, String)> {
+    // The legality checker reads values: the references written as their literals.
+    let plain = crate::wgsl::params::to_literals(child, kingdom).map_err(|e| (Stage::Legal, e))?;
+    crate::wgsl::check::check(&plain, kingdom, &gram_role(), &Target::current()).map_err(|e| (Stage::Legal, e.to_string()))?;
     let text = crate::wgsl::safe_karva::render_tree(child, kingdom).map_err(|e| (Stage::Render, e))?.text;
     validate_text(&text).map_err(|e| (Stage::Validate, e.lines().next().unwrap_or("").to_string()))?;
     let back = read_safe(&text, kingdom).map_err(|e| (Stage::ReadBack, e))?;

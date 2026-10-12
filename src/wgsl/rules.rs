@@ -274,21 +274,6 @@ fn assigned_values(s: &Tree) -> &[Tree] {
     }
 }
 
-/// The lanes of the row tile a statement reads (`shape.access_j` of a read of `tile`).
-fn row_lanes(t: &Tree, tile: &str, out: &mut BTreeSet<usize>, bare: &mut bool) {
-    for k in &t.kids {
-        if wg_vec4_read(k) == Some(tile) {
-            match t.name.strip_prefix("shape.access_").and_then(|j| j.parse::<usize>().ok()) {
-                Some(j) => {
-                    out.insert(j);
-                }
-                None => *bare = true,
-            }
-        }
-        row_lanes(k, tile, out, bare);
-    }
-}
-
 /// What growing the row block of a kernel needs, found in it.
 #[derive(Clone, Debug)]
 pub struct GrowPlan {
@@ -319,83 +304,8 @@ pub fn grow_rows_plan(root: &Tree, kingdom: &WgslKingdom) -> Result<GrowPlan, St
     if wrow < 2 || wrow % 2 != 0 {
         return Err(format!("the workgroup's row extent {wrow} does not halve"));
     }
-    // The row tile: the vec4 array read at the thread's row id.
-    let mut tiles = BTreeSet::new();
-    fn find_tiles(t: &Tree, out: &mut BTreeSet<String>) {
-        if let Some(a) = wg_vec4_read(t) {
-            if any_node(&t.kids[1], &is_row_lid) {
-                out.insert(a.to_string());
-            }
-        }
-        t.kids.iter().for_each(|k| find_tiles(k, out));
-    }
-    find_tiles(root, &mut tiles);
-    let tile = match tiles.into_iter().collect::<Vec<_>>().as_slice() {
-        [t] => t.clone(),
-        other => return Err(format!("{} vec4 arrays are read at the thread's row id, not one", other.len())),
-    };
-    // Every row-id use inside a read of the tile.
-    fn row_lid_outside(t: &Tree, tile: &str) -> bool {
-        if wg_vec4_read(t) == Some(tile) {
-            return false;
-        }
-        is_row_lid(t) || t.kids.iter().any(|k| row_lid_outside(k, tile))
-    }
-    if row_lid_outside(root, &tile) {
-        return Err("the thread's row id is used outside the row tile's reads".into());
-    }
+    let RowFamilies { tile, family } = row_families(root, false)?;
     let stmts = kernel_statements(root);
-    // Seeds: the statements reading the tile, one lane each.
-    let mut family: BTreeMap<String, usize> = BTreeMap::new();
-    for s in stmts.iter().filter(|s| !is_compound(&s.tree)) {
-        let (mut lanes, mut bare) = (BTreeSet::new(), false);
-        row_lanes(&s.tree, &tile, &mut lanes, &mut bare);
-        if lanes.is_empty() && !bare {
-            continue;
-        }
-        if bare || lanes.len() != 1 {
-            return Err(format!("{} reads the row tile other than as one lane", s.tree.name));
-        }
-        let key = target_key(&s.tree).filter(|k| k.starts_with("reg.")).ok_or_else(|| format!("{} reads the row tile and assigns no register", s.tree.name))?;
-        let row = *lanes.iter().next().expect("one lane");
-        if family.insert(key.clone(), row).is_some_and(|r| r != row) {
-            return Err(format!("{key} accumulates two rows"));
-        }
-    }
-    if family.is_empty() {
-        return Err("no accumulation reads the row tile".into());
-    }
-    // The flow of the rows' sums, to a fixed point.
-    loop {
-        let mut grew = false;
-        for s in stmts.iter().filter(|s| !is_compound(&s.tree)) {
-            if !(s.tree.name.starts_with("reg.set_") || safe_base(&s.tree.name) == "parr.set_safe" || s.tree.name.starts_with("store.") || s.tree.name.starts_with("wg.set")) {
-                continue;
-            }
-            let mut reads = BTreeSet::new();
-            assigned_values(&s.tree).iter().for_each(|v| read_keys(v, &mut reads));
-            let rows: BTreeSet<usize> = reads.iter().filter_map(|k| family.get(k).copied()).collect();
-            if rows.is_empty() {
-                continue;
-            }
-            if rows.len() > 1 {
-                return Err(format!("{} mixes rows {rows:?}", s.tree.name));
-            }
-            let row = *rows.iter().next().expect("one row");
-            let key = target_key(&s.tree).ok_or_else(|| format!("{} reads a row's sum and assigns no whole storage", s.tree.name))?;
-            match family.get(&key) {
-                Some(&r) if r != row => return Err(format!("{key} holds rows {r} and {row}")),
-                Some(_) => {}
-                None => {
-                    family.insert(key, row);
-                    grew = true;
-                }
-            }
-        }
-        if !grew {
-            break;
-        }
-    }
     // A private array element of the flow at its row's index, its row + 4 free.
     let positions = leaf_positions(root);
     let mut map = BTreeMap::new();
@@ -441,6 +351,264 @@ pub fn grow_rows_plan(root: &Tree, kingdom: &WgslKingdom) -> Result<GrowPlan, St
 /// A statement holding blocks (a loop, an if): its work is its nested statements.
 fn is_compound(t: &Tree) -> bool {
     t.kids.iter().any(|k| any_node(k, &|n| is_plain_block(&n.name) || n.name.starts_with("block.")))
+}
+
+/// The row tile (the one vec4 array read at the thread's row id), and the
+/// storages of the rows' accumulation flow with their rows: a seed is an
+/// assignment reading the tile at one row (the lane, plus 4 for a read at
+/// `2 y + 1` when `spread`), the flow closed over assignments reading one
+/// row's storages. With every use of the row id inside the tile's reads.
+/// A kernel's row tile and the storages of its rows' accumulation flow.
+struct RowFamilies {
+    tile: String,
+    family: BTreeMap<String, usize>,
+}
+
+fn row_families(root: &Tree, spread: bool) -> Result<RowFamilies, String> {
+    let mut tiles = BTreeSet::new();
+    fn find_tiles(t: &Tree, out: &mut BTreeSet<String>) {
+        if let Some(a) = wg_vec4_read(t) {
+            if any_node(&t.kids[1], &is_row_lid) {
+                out.insert(a.to_string());
+            }
+        }
+        t.kids.iter().for_each(|k| find_tiles(k, out));
+    }
+    find_tiles(root, &mut tiles);
+    let tile = match tiles.into_iter().collect::<Vec<_>>().as_slice() {
+        [t] => t.clone(),
+        other => return Err(format!("{} vec4 arrays are read at the thread's row id, not one", other.len())),
+    };
+    fn row_lid_outside(t: &Tree, tile: &str) -> bool {
+        if wg_vec4_read(t) == Some(tile) {
+            return false;
+        }
+        is_row_lid(t) || t.kids.iter().any(|k| row_lid_outside(k, tile))
+    }
+    if row_lid_outside(root, &tile) {
+        return Err("the thread's row id is used outside the row tile's reads".into());
+    }
+    let stmts = kernel_statements(root);
+    let mut family: BTreeMap<String, usize> = BTreeMap::new();
+    for s in stmts.iter().filter(|s| !is_compound(&s.tree)) {
+        let (mut rows, mut bad) = (BTreeSet::new(), None);
+        tile_read_rows(&s.tree, &tile, spread, &mut rows, &mut bad);
+        if let Some(b) = bad {
+            return Err(format!("{}: {b}", s.tree.name));
+        }
+        if rows.is_empty() {
+            continue;
+        }
+        if rows.len() != 1 {
+            return Err(format!("{} reads the row tile at rows {rows:?}, not one", s.tree.name));
+        }
+        let key = target_key(&s.tree).filter(|k| k.starts_with("reg.")).ok_or_else(|| format!("{} reads the row tile and assigns no register", s.tree.name))?;
+        let row = *rows.iter().next().expect("one row");
+        if family.insert(key.clone(), row).is_some_and(|r| r != row) {
+            return Err(format!("{key} accumulates two rows"));
+        }
+    }
+    if family.is_empty() {
+        return Err("no accumulation reads the row tile".into());
+    }
+    loop {
+        let mut grew = false;
+        for s in stmts.iter().filter(|s| !is_compound(&s.tree)) {
+            if !(s.tree.name.starts_with("reg.set_") || safe_base(&s.tree.name) == "parr.set_safe" || s.tree.name.starts_with("store.") || s.tree.name.starts_with("wg.set")) {
+                continue;
+            }
+            let mut reads = BTreeSet::new();
+            assigned_values(&s.tree).iter().for_each(|v| read_keys(v, &mut reads));
+            let rows: BTreeSet<usize> = reads.iter().filter_map(|k| family.get(k).copied()).collect();
+            if rows.is_empty() {
+                continue;
+            }
+            if rows.len() > 1 {
+                return Err(format!("{} mixes rows {rows:?}", s.tree.name));
+            }
+            let row = *rows.iter().next().expect("one row");
+            let key = target_key(&s.tree).ok_or_else(|| format!("{} reads a row's sum and assigns no whole storage", s.tree.name))?;
+            match family.get(&key) {
+                Some(&r) if r != row => return Err(format!("{key} holds rows {r} and {row}")),
+                Some(_) => {}
+                None => {
+                    family.insert(key, row);
+                    grew = true;
+                }
+            }
+        }
+        if !grew {
+            break;
+        }
+    }
+    Ok(RowFamilies { tile, family })
+}
+
+/// The rows a statement's reads of the row tile hold: lane j of the vec4
+/// at the thread's row id is row j; with `spread`, the read is at `2 y + c`
+/// over terms of even factors and c's parity adds 4 (`2 y + 1` holds rows 4..7).
+fn tile_read_rows(t: &Tree, tile: &str, spread: bool, out: &mut BTreeSet<usize>, bad: &mut Option<String>) {
+    for k in &t.kids {
+        if wg_vec4_read(k) == Some(tile) {
+            let Some(j) = t.name.strip_prefix("shape.access_").and_then(|j| j.parse::<usize>().ok()) else {
+                *bad = Some("reads the row tile other than as one lane".into());
+                return;
+            };
+            if !spread {
+                out.insert(j);
+                continue;
+            }
+            let Some(idx) = k.kids[1].kids.first() else {
+                *bad = Some("a row tile read without an index".into());
+                return;
+            };
+            let mut terms = Vec::new();
+            add_terms(idx, &mut terms);
+            let (mut doubled, mut constant, mut odd) = (0usize, 0u32, false);
+            for term in terms {
+                if let Some(v) = plain_value(term) {
+                    constant += v;
+                } else if term.name == "index.mul" && term.kids.len() == 2 {
+                    let (e, m) = match (plain_value(&term.kids[0]), plain_value(&term.kids[1])) {
+                        (_, Some(m)) => (&term.kids[0], m),
+                        (Some(m), None) => (&term.kids[1], m),
+                        (None, None) => {
+                            odd = true;
+                            continue;
+                        }
+                    };
+                    if is_row_lid(e) && m == 2 {
+                        doubled += 1;
+                    } else if m % 2 != 0 || any_node(e, &is_row_lid) {
+                        odd = true;
+                    }
+                } else {
+                    odd = true;
+                }
+            }
+            if doubled != 1 || odd {
+                *bad = Some("a row tile read is not 2 y + c over even terms".into());
+                return;
+            }
+            out.insert(j + 4 * (constant % 2) as usize);
+            continue;
+        }
+        tile_read_rows(k, tile, spread, out, bad);
+        if bad.is_some() {
+            return;
+        }
+    }
+}
+
+/// `t` with the row tile's reads at `2 y + c` read at `y + c - c % 2`.
+fn unspread_rows(t: &Tree, tile: &str, in_tile: bool) -> Tree {
+    if in_tile && t.name == "index.mul" && t.kids.len() == 2 {
+        for i in 0..2 {
+            if is_row_lid(&t.kids[i]) && plain_value(&t.kids[1 - i]) == Some(2) {
+                return t.kids[i].clone();
+            }
+        }
+    }
+    // A row-group-0 read's constant is even (the K steps a tile row apart):
+    // it stays where it is.
+    let inside = in_tile || wg_vec4_read(t) == Some(tile);
+    Tree { name: t.name.clone(), ty: t.ty, konst: t.konst, kids: t.kids.iter().map(|k| unspread_rows(k, tile, inside)).collect() }
+}
+
+/// THE PRECONDITIONS of shrinking the row block 8 -> 4 at a constant
+/// workgroup tile (the row extent doubled): the tile is read at `2 y + c`
+/// (lane j of row j + 4 (c % 2)); every row's flow is its own; the threads
+/// double within the adapter; every loop striding the flat thread index by
+/// the threads has an even number of passes.
+pub fn shrink_rows_plan(root: &Tree, kingdom: &WgslKingdom) -> Result<(String, BTreeMap<String, usize>), String> {
+    use crate::wgsl::params::{Knob, Knobs};
+    let plain = crate::wgsl::params::to_literals(root, kingdom)?;
+    let knobs = Knobs::of_root(&plain)?;
+    if knobs.grid.by != 8 {
+        return Err(format!("the row block is {}, not 8", knobs.grid.by));
+    }
+    let target = crate::wgsl::target::Target::current();
+    let threads = knobs.value(Knob::Threads);
+    let wrow = knobs.value(Knob::Wrow);
+    if threads * 2 > target.max_invocations || wrow * 2 > target.max_size[if knobs.grid.rows_x { 0 } else { 1 }] {
+        return Err(format!("{threads} threads do not double within the adapter"));
+    }
+    let RowFamilies { tile, family } = row_families(&plain, true)?;
+    if !family.values().any(|&r| r >= 4) {
+        return Err("no row of the second group".into());
+    }
+    let mut outside = false;
+    lidx_outside_thread_loops(&plain, threads, 0, false, &mut outside);
+    if outside {
+        return Err("the flat thread index is used outside a loop striding by the threads, or such a loop's counter strides something else".into());
+    }
+    fn odd_thread_loop(t: &Tree, threads: u32, depth: usize) -> bool {
+        let base = safe_base(&t.name);
+        let looped = base.starts_with("loop.") && !base.starts_with("loop.items");
+        if is_counted_loop(&t.name) && t.kids.len() >= 2 && strides_by_threads(t.kids.last().expect("a body"), depth, threads) && plain_value(&t.kids[0]).is_none_or(|v| v % 2 != 0) {
+            return true;
+        }
+        t.kids.iter().any(|k| odd_thread_loop(k, threads, depth + usize::from(looped)))
+    }
+    if odd_thread_loop(&plain, threads, 0) {
+        return Err("a loop striding by the threads has an odd or unknown number of passes".into());
+    }
+    Ok((tile, family))
+}
+
+/// The kernel with its row block shrunk 8 -> 4 and its workgroup's row
+/// extent doubled: rows 4..7 and every storage of their flow dropped, the
+/// tile read at `y` where it was read at `2 y`, the loops striding the flat
+/// thread index by the threads run half the passes.
+pub fn shrink_rows(root: &Tree, kingdom: &WgslKingdom) -> Result<Tree, String> {
+    use crate::wgsl::knob::{set, Site as KnobSite};
+    use crate::wgsl::params::{Knob, Knobs};
+    // Planned on the plain values; rewritten on the kernel with its
+    // references, so every reference to the row block, the row extent and
+    // the threads follows the grid (on the plain tree the threads' stride
+    // and the guards kept the old values: all 5 children computed wrong
+    // values on the device).
+    let (tile, family) = shrink_rows_plan(root, kingdom)?;
+    let knobs = Knobs::of_root(root)?;
+    let threads = knobs.value(Knob::Threads);
+    fn walk(t: &Tree, tile: &str, family: &BTreeMap<String, usize>, threads: u32, depth: usize, kingdom: &WgslKingdom) -> Result<Tree, String> {
+        if is_plain_block(&t.name) {
+            let mut out = Vec::new();
+            for s in statements(t) {
+                match target_key(&s).and_then(|k| family.get(&k).copied()) {
+                    Some(r) if r >= 4 => {}
+                    Some(_) => out.push(unspread_rows(&s, tile, false)),
+                    None => out.push(walk(&s, tile, family, threads, depth, kingdom)?),
+                }
+            }
+            return rebuild(out, rung(&t.name).ok_or_else(|| format!("{} has no rung", t.name))?, kingdom);
+        }
+        let base = safe_base(&t.name);
+        let looped = base.starts_with("loop.") && !base.starts_with("loop.items");
+        let mut kids = Vec::with_capacity(t.kids.len());
+        for (i, k) in t.kids.iter().enumerate() {
+            kids.push(walk(k, tile, family, threads, depth + usize::from(looped), kingdom)?);
+            if i == 0 && is_counted_loop(&t.name) && t.kids.len() >= 2 && strides_by_threads(t.kids.last().expect("a body"), depth, threads) {
+                kids[0].konst /= 2.0;
+            }
+        }
+        Ok(Tree { name: t.name.clone(), ty: t.ty, konst: t.konst, kids })
+    }
+    let mut kids = root.kids.clone();
+    kids[1] = walk(&root.kids[1], &tile, &family, threads, 0, kingdom)?;
+    kids[2] = walk(&root.kids[2], &tile, &family, threads, 0, kingdom)?;
+    let t = Tree { name: root.name.clone(), ty: root.ty, konst: root.konst, kids };
+    let row_site = if knobs.grid.rows_x { KnobSite::Wx } else { KnobSite::Wy };
+    let t = set(&t, &row_site, knobs.value(Knob::Wrow) * 2);
+    Ok(set(&t, &KnobSite::By, 4))
+}
+
+/// RULE: SHRINK THE ROW BLOCK (one site: the kernel).
+pub fn shrink_rows_sites(root: &Tree, kingdom: &WgslKingdom) -> Vec<Site> {
+    match shrink_rows_plan(root, kingdom) {
+        Ok((tile, family)) => vec![Site { index: 0, what: format!("rows 8 -> 4 over {tile}, {} storages dropped", family.values().filter(|&&r| r >= 4).count()) }],
+        Err(_) => Vec::new(),
+    }
 }
 
 /// Any node of `t` satisfying `p`.
@@ -977,16 +1145,18 @@ pub enum Rule {
     DropZeroFill,
     GrowRows,
     VecTile,
+    ShrinkRows,
 }
 
 impl Rule {
-    pub const ALL: [Rule; 3] = [Rule::DropZeroFill, Rule::GrowRows, Rule::VecTile];
+    pub const ALL: [Rule; 4] = [Rule::DropZeroFill, Rule::GrowRows, Rule::VecTile, Rule::ShrinkRows];
 
     pub fn name(self) -> &'static str {
         match self {
             Rule::DropZeroFill => "drop-zero-fill",
             Rule::GrowRows => "grow-rows",
             Rule::VecTile => "vec4-tile",
+            Rule::ShrinkRows => "shrink-rows",
         }
     }
 
@@ -995,6 +1165,7 @@ impl Rule {
             Rule::DropZeroFill => drop_zero_fill_sites(root),
             Rule::GrowRows => grow_rows_sites(root, kingdom),
             Rule::VecTile => vec_tile_sites(root, kingdom),
+            Rule::ShrinkRows => shrink_rows_sites(root, kingdom),
         }
     }
 
@@ -1004,6 +1175,7 @@ impl Rule {
             Rule::DropZeroFill => drop_zero_fill_sites(root).is_empty().then(|| "no dead zero store outside a loop".to_string()),
             Rule::GrowRows => grow_rows_plan(root, kingdom).err(),
             Rule::VecTile => vec_tile_why(root, kingdom),
+            Rule::ShrinkRows => shrink_rows_plan(root, kingdom).err(),
         }
     }
 
@@ -1012,6 +1184,7 @@ impl Rule {
             Rule::DropZeroFill => drop_zero_fill(root, site, kingdom),
             Rule::GrowRows => grow_rows(root, kingdom),
             Rule::VecTile => vec_tile(root, site.index, kingdom),
+            Rule::ShrinkRows => shrink_rows(root, kingdom),
         }
     }
 }
@@ -1143,6 +1316,27 @@ mod tests {
         assert!(text.contains("wg_va[((((k * 16u) + lid.x)) & 511u)].w"), "{text}");
         // No lane is stored into a workgroup vec4 (four threads would race on it).
         assert!(!text.lines().any(|l| l.contains("wg_v") && l.contains("][") && l.contains("] = ")), "{text}");
+    }
+
+    /// SHRINK THE ROW BLOCK, the inverse of growing it: reserve2's 16 x 8
+    /// kernel of 4 x 8 blocks (rows 4..7 read at 2 y + 1) becomes 16 x 16 of
+    /// 4 x 4, its threads' stride and guards following the grid (rewritten
+    /// on the plain tree they did not: 5 of 5 children were wrong on the
+    /// device; now 5 of 5 correct).
+    #[test]
+    fn the_row_block_shrinks_back_with_every_reference_following_the_grid() {
+        let k = WgslKingdom::load_safe();
+        let f = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("logs/HGP/001/reserve2/texts/0.1066_fit_A2_stopped_1702Z_g001_r12_d93a44.wgsl");
+        let Ok(src) = std::fs::read_to_string(&f) else { return };
+        let t = read_safe(&src, &k).unwrap().tree;
+        let (tile, family) = shrink_rows_plan(&t, &k).unwrap();
+        assert_eq!(tile, "wg.vb");
+        assert!(family.values().any(|&r| r >= 4));
+        let child = shrink_rows(&t, &k).unwrap();
+        let (text, _) = crate::wgsl::knob::check_text(&child, &k).unwrap_or_else(|(s, e)| panic!("{}: {e}", s.name()));
+        assert!(text.starts_with("// grid 16 16 4 4"), "{}", &text[..40]);
+        assert!(text.contains("256u * k2") && !text.contains("128u * k2") && !text.contains("lid.y * 2u") && !text.contains("gid.y * 8u"), "{text}");
+        assert!(grow_rows_plan(&t, &k).is_err() && shrink_rows_plan(&grow_rows(&read_safe(&text, &k).unwrap().tree, &k).unwrap(), &k).is_ok());
     }
 
     /// Never a zero store inside a loop, nor one whose storage was touched
