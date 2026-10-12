@@ -11,6 +11,7 @@
 //!
 //! Compiled only under the `wgsl` feature (naga in and out).
 
+pub mod check;
 pub mod chromosome;
 pub mod generator;
 #[cfg(feature = "gpu")]
