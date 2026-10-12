@@ -195,6 +195,10 @@ fn tree_of(ctx: &mut Ctx, n: &Node) -> Result<Tree, String> {
                 }
                 return Ok(bound);
             }
+            // An atomic's old value: the register its statement wrote.
+            if let Some(idx) = name.strip_prefix("atomic@") {
+                return Ok(Tree::new(&format!("load.local.atomic@{idx}"), ty(ctx, "u32.index")?, vec![]));
+            }
             // A helper's result: the helper's return expression with its
             // arguments substituted (its lets inlined on the way); the
             // kingdom's own `at_vecNx` as `shape.at`; a helper inlined as
@@ -1282,14 +1286,30 @@ impl<'a> Ctx<'a> {
         if let Some(w) = self.arrays.get(name) {
             return Ok(w);
         }
+        // An atomic array is one by its declared type, whatever a use of it reads.
+        let atomic = self.module.global_variables.iter().find(|(_, g)| g.name.as_deref() == Some(name) && g.space == naga::AddressSpace::WorkGroup).and_then(|(_, g)| match &self.module.types[g.ty].inner {
+            naga::TypeInner::Array { base, .. } => match self.module.types[*base].inner {
+                naga::TypeInner::Atomic(sc) => Some(sc.kind),
+                _ => None,
+            },
+            _ => None,
+        });
+        let elem_dual = match atomic {
+            Some(naga::ScalarKind::Uint) => "atomic<u32>",
+            Some(naga::ScalarKind::Sint) => "atomic<i32>",
+            Some(other) => return Err(format!("a workgroup array {name} of atomic {other:?} has no safe spelling")),
+            None => elem_dual,
+        };
         let candidates: &[&'static str] = match elem_dual {
+            "atomic<u32>" => &["wg.au_a", "wg.au_b"],
+            "atomic<i32>" => &["wg.ai_a", "wg.ai_b"],
             "f32.real" => &["wg.a", "wg.b", "wg.c", "wg.d"],
             "vec2<f32>.real" => &["wg.v2a", "wg.v2b", "wg.v2c", "wg.v2d"],
             "vec4<f32>.real" => &["wg.va", "wg.vb", "wg.vc", "wg.vd"],
             other => return Err(format!("a workgroup array {name} of {other} has no safe spelling")),
         };
         let used: Vec<&'static str> = self.arrays.values().copied().collect();
-        let which = candidates.iter().copied().find(|c| !used.contains(c)).ok_or_else(|| format!("a fifth workgroup array {name} of {elem_dual}; the grammar has four"))?;
+        let which = candidates.iter().copied().find(|c| !used.contains(c)).ok_or_else(|| format!("one more workgroup array {name} of {elem_dual} than the grammar's {}", candidates.len()))?;
         let len = self
             .module
             .global_variables
@@ -1306,6 +1326,48 @@ impl<'a> Ctx<'a> {
         self.arrays.insert(name.to_string(), which);
         self.array_lens.insert(which, len);
         Ok(which)
+    }
+
+    /// An atomic read-modify-write statement: `atomic.<fun>_<u|i>(array,
+    /// index, value)` (a compare-exchange `atomic.cas_<u|i>(array, index,
+    /// compare, value)`); its old value to a register when a later expression
+    /// reads it, else kept for its effect only (`_ = ...`).
+    fn atomic_statement(&mut self, root: &Root, result: u32, rung: &str) -> Result<Tree, String> {
+        let RootKind::Atomic { target, fun } = &root.kind else { return Err("not an atomic root".into()) };
+        let Node::App { kids, .. } = &root.tree else { return Err("an atomic root without operands".into()) };
+        let arr = target.strip_prefix("workgroup.").and_then(|r| r.strip_suffix(".#")).ok_or_else(|| format!("an atomic on {target}: the safe kingdom's atomics are workgroup arrays (a storage atomic needs a binding the Gram role does not have)"))?;
+        let trees = kids.iter().map(|k| tree_of(self, k)).collect::<Result<Vec<_>, _>>()?;
+        let which = self.array(arr, "atomic")?;
+        let (of, idx_dual, arr_dual, _, _) = Self::wg_rows(which);
+        let unsigned = which.starts_with("wg.au");
+        let suffix = if unsigned { "u" } else { "i" };
+        let idx = self.value(self.wg_unmasked(&trees[0], which))?;
+        let at = Tree::new(of, ty(self, idx_dual)?, vec![idx]);
+        let array = Tree::new(which, ty(self, arr_dual)?, vec![]);
+        let out_ty = ty(self, if unsigned { "u32.index" } else { "i32.int" })?;
+        if fun == "cas" {
+            return Err("atomicCompareExchangeWeak has no safe spelling: naga 0.20's Metal backend does not implement it (MSL: FeatureNotImplemented)".into());
+        }
+        let value = self.value(&trees[1])?;
+        let expr = Tree::new(&format!("atomic.{fun}_{suffix}"), out_ty, vec![array, at, value]);
+        let st = self.stmt_ty(rung)?;
+        let leaf = format!("atomic@{result}");
+        fn reads(n: &Node, leaf: &str) -> bool {
+            match n {
+                Node::Leaf { name, .. } => name == leaf,
+                Node::App { kids, .. } => kids.iter().any(|k| reads(k, leaf)),
+                _ => false,
+            }
+        }
+        let used = self.roots.values().flatten().any(|r| reads(&r.tree, &leaf)) || self.lets.values().any(|t| reads(t, &leaf));
+        if !used {
+            return Ok(Tree::new(&format!("stmt.discard_{suffix}_{rung}"), st, vec![expr]));
+        }
+        if !unsigned {
+            return Err("the old value of an atomic<i32> is read; the kingdom has no i32 register".into());
+        }
+        let row = self.register(&format!("local.atomic@{result}"), "u32.index")?;
+        Ok(Tree::new(&format!("reg.set_i_{rung}"), st, vec![Tree::new(&row, ty(self, Self::reg_dual('i'))?, vec![]), expr]))
     }
 
     /// A workgroup array's index without its mask into the array: `i & (n - 1)`
@@ -1328,6 +1390,12 @@ impl<'a> Ctx<'a> {
 
     /// The index and array duals, the get row and the set stem of a workgroup array row.
     fn wg_rows(which: &str) -> (&'static str, &'static str, &'static str, &'static str, &'static str) {
+        if which.starts_with("wg.au") {
+            return ("safe.wga_of", "u32.wgaindex", "wgmem<atomic<u32>>.index", "atomic.load_u", "atomic.store_u");
+        }
+        if which.starts_with("wg.ai") {
+            return ("safe.wga_of", "u32.wgaindex", "wgmem<atomic<i32>>.int", "atomic.load_i", "atomic.store_i");
+        }
         if which.starts_with("wg.v2") {
             return ("safe.wgv2_of", "u32.wgv2index", "wgmem<vec2<f32>>.real", "wg.get_v2_safe", "wg.set_v2");
         }
@@ -1836,6 +1904,10 @@ impl<'a> Ctx<'a> {
                             1 => stmts.pop(),
                             _ => Some(Tree::new(&format!("stmt.block_{rung}"), st, vec![self.block(stmts, rung)?])),
                         })
+                    }
+                    Statement::Atomic { result, .. } => {
+                        let root = self.root_at(&here, |k| matches!(k, RootKind::Atomic { .. })).ok_or("no atomic root at this statement")?;
+                        self.atomic_statement(root, result.index() as u32, rung).map(Some)
                     }
                     Statement::Call { function, result, .. } => {
                         // A pure helper's call: its result is inlined where it
@@ -2734,7 +2806,17 @@ pub fn read_safe(source: &str, kingdom: &WgslKingdom) -> Result<SafeRead, String
             .array_lens
             .iter()
             .map(|(which, len)| -> Result<Tree, String> {
-                let (row, arr_dual) = if which.starts_with("wg.v2") { ("wg.decl_v2", "wgmem<vec2<f32>>.real") } else if which.starts_with("wg.v") { ("wg.decl_v4", "wgmem<vec4<f32>>.real") } else { ("wg.decl_f", "wgmem<f32>.real") };
+                let (row, arr_dual) = if which.starts_with("wg.au") {
+                    ("wg.decl_au", "wgmem<atomic<u32>>.index")
+                } else if which.starts_with("wg.ai") {
+                    ("wg.decl_ai", "wgmem<atomic<i32>>.int")
+                } else if which.starts_with("wg.v2") {
+                    ("wg.decl_v2", "wgmem<vec2<f32>>.real")
+                } else if which.starts_with("wg.v") {
+                    ("wg.decl_v4", "wgmem<vec4<f32>>.real")
+                } else {
+                    ("wg.decl_f", "wgmem<f32>.real")
+                };
                 Ok(Tree::new(row, decl_ty, vec![Tree::new(which, dual_ty(kingdom, arr_dual)?, vec![]), Tree::literal("literal.wglen", dual_ty(kingdom, "u32.wglen")?, *len as f32)]))
             })
             .collect::<Result<_, _>>()?;
@@ -3236,6 +3318,30 @@ mod tests {
         assert!(crate::wgsl::render::cost(&tree).base > crate::wgsl::render::cost(&plain).base + 8.0 * 50.0);
         // Only where a barrier stands: every reduction row is an L statement (none under a condition).
         assert!(k.rows.iter().filter(|r| r.name.starts_with("wg.reduce_")).all(|r| k.dual(r.output).is_some_and(|d| d.dual.starts_with("stmt.L"))));
+    }
+
+    /// INTEGER ATOMICS IN WORKGROUP MEMORY (2026-10-12): the draft's every
+    /// form reads, renders (atomicStore, an atomicAdd whose old value is read
+    /// into a register, `_ = atomicOr(..)`, the i32 add, atomicLoad),
+    /// validates and reads back. A compare-exchange is refused by name: naga
+    /// 0.20's Metal backend does not implement it, so no gene could compile it.
+    #[test]
+    fn workgroup_atomics_render_validate_and_read_back() {
+        let k = WgslKingdom::load_safe();
+        let (t, role) = (FunctionTable::safe(), gram_role());
+        let rr = Renderer::new(&k, &t, &role);
+        let src = include_str!("../../tests/corpus/safewgsl/draft_atomics.wgsl");
+        let tree = read_safe(src, &k).unwrap_or_else(|e| panic!("{e}")).tree;
+        let out = rr.kernel(&tree).unwrap();
+        for want in ["var<workgroup> wg_au_a: array<atomic<u32>, 256>;", "var<workgroup> wg_ai_a: array<atomic<i32>, 64>;", "atomicStore(&wg_au_a[", "= atomicAdd(&wg_au_a[", "_ = atomicOr(&wg_au_a[", "_ = atomicAdd(&wg_ai_a[", "atomicLoad(&wg_au_a["] {
+            assert!(out.text.contains(want), "{want}\n{}", out.text);
+        }
+        validate_text(&out.text).unwrap_or_else(|e| panic!("{e}\n{}", out.text));
+        read_safe(&format!("// grid 16 16 1 1\n{}", out.text), &k).unwrap_or_else(|e| panic!("read back: {e}"));
+        let cas = src.replacen("    n = atomicLoad(&hits[lidx]) + n - n;", "    n = atomicCompareExchangeWeak(&hits[lidx], n, n + 1u).old_value;", 1);
+        assert_ne!(cas, src);
+        let Err(e) = read_safe(&cas, &k) else { panic!("a compare-exchange read") };
+        assert!(e.contains("atomicCompareExchangeWeak has no safe spelling"), "{e}");
     }
 
     /// A kernel with a helper function reads: the helper is inlined at its

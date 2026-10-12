@@ -631,8 +631,9 @@ mod tests {
         // 132 with the fourth nested tile loop (tcounter4, L5, C5; run A's declines);
         // 142 with the epilogue (stmt and block at O0..O4: every kernel ends in its thread's store);
         // 152 with the thread's axes (gid, lid, wid, rowid, colid, lidx; strided and grouped rows and columns);
-        // 157 with the workgroup arrays as knobs (vec2 arrays, their index, a length, a declaration and the list).
-        assert_eq!(s.len(), 157);
+        // 157 with the workgroup arrays as knobs (vec2 arrays, their index, a length, a declaration and the list);
+        // 160 with the workgroup atomics (atomic<u32> and atomic<i32> arrays, their index).
+        assert_eq!(s.len(), 160);
         for (a, b) in w.iter().zip(&s) {
             assert_eq!((a.reference.as_str(), a.dual.as_str()), (b.reference.as_str(), b.dual.as_str()));
         }
@@ -648,8 +649,9 @@ mod tests {
         // 826 with the grouped block (fit_A2's r6x_reinvent).
         // 828 with the third and fourth vec4 private arrays (fit_A2 gen 2's r2x_reinvent);
         // 884 with the epilogue's rows (O0..O4); 908 with the thread's axes; 912 with the epilogue's continue;
-        // 941 with the workgroup arrays as knobs; 955 with full unrolling; 1,009 with the tree reductions.
-        assert_eq!(fs.rows.len(), 1009);
+        // 941 with the workgroup arrays as knobs; 955 with full unrolling; 1,009 with the tree reductions;
+        // 1,082 with the workgroup atomics.
+        assert_eq!(fs.rows.len(), 1082);
         let dual = |t: Ty| k.dual(t).unwrap().dual.clone();
         let producers = |d: &str| -> Vec<String> { k.rows.iter().filter(|r| dual(r.output) == d).map(|r| r.name.clone()).collect() };
         assert_eq!(producers("kernel.safe"), vec!["kernel.entry_safe"]);

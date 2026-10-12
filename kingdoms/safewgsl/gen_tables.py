@@ -121,9 +121,12 @@ FORMS = {
     "wglen": ("a workgroup array's length, 1..=8,192 elements (the renderer halves the largest array until all fit 32 KB)", ["u32"]),
     "decl": ("one workgroup array declaration: the array and its length", []),
     "decls": ("the kernel's workgroup array declarations", []),
+    # INTEGER ATOMICS (2026-10-12) in workgroup memory: arrays of atomic<u32> and atomic<i32>, an index masked
+    # into them, and the atomic built-ins as rows.
+    "wgaindex": ("an index into an atomic workgroup array, masked to the array by its row", ["u32"]),
 }
 
-SAFE_FORMS = ["wgv2index", "wglen", "decl", "decls", "lidx", "threadrows", "threadcols", "threadrowg", "threadcolg", "gid", "lid", "wid", "rowid", "colid", "O0", "O1", "O2", "O3", "O4", "tcounter4", "L5", "C5", "safe", "pindex", "boundx", "boundm", "boundd", "boundrows", "lit64", "lit4096", "counter", "tcounter", "tcounter2", "L3", "C3", "tcounter3", "L4", "C4", "wgvindex", "bound", "threadrow", "threadcol", "cell", "phi", "wgindex", "L0", "L1", "L2", "C0", "C1", "C2"]
+SAFE_FORMS = ["wgaindex", "wgv2index", "wglen", "decl", "decls", "lidx", "threadrows", "threadcols", "threadrowg", "threadcolg", "gid", "lid", "wid", "rowid", "colid", "O0", "O1", "O2", "O3", "O4", "tcounter4", "L5", "C5", "safe", "pindex", "boundx", "boundm", "boundd", "boundrows", "lit64", "lit4096", "counter", "tcounter", "tcounter2", "L3", "C3", "tcounter3", "L4", "C4", "wgvindex", "bound", "threadrow", "threadcol", "cell", "phi", "wgindex", "L0", "L1", "L2", "C0", "C1", "C2"]
 RUNGS = ["L0", "L1", "L2", "L3", "L4", "C0", "C1", "C2", "C3", "C4"]
 # The fifth rung came after every other row (run A, 2026-10-11); its rows are appended at the end so
 # every earlier ref stands, and it is kept out of RUNGS for that reason.
@@ -153,7 +156,7 @@ FALLBACK = {
     "O0": "the thread's own store", "O1": "the thread's own store", "O2": "the thread's own store", "O3": "the thread's own store", "O4": "the thread's own store",
     "gid": "0u", "lid": "0u", "wid": "0u", "rowid": "0u", "colid": "0u",
     "lidx": "0u", "threadrows": "0u", "threadcols": "0u", "threadrowg": "0u", "threadcolg": "0u",
-    "wgv2index": "0u", "wglen": "the array's default length", "decl": "none", "decls": "none (the arrays the kernel uses, at their default lengths)",
+    "wgaindex": "0u", "wgv2index": "0u", "wglen": "the array's default length", "decl": "none", "decls": "none (the arrays the kernel uses, at their default lengths)",
 }
 
 # The fallback by machine: the lane's 32-bit pattern as an unsigned integer. Vectors and matrices
@@ -175,7 +178,7 @@ FALLBACK_BITS = {
     "O0": 0, "O1": 0, "O2": 0, "O3": 0, "O4": 0,
     "gid": 0, "lid": 0, "wid": 0, "rowid": 0, "colid": 0,
     "lidx": 0, "threadrows": 0, "threadcols": 0, "threadrowg": 0, "threadcolg": 0,
-    "wgv2index": 0, "wglen": 0, "decl": 0, "decls": 0,
+    "wgaindex": 0, "wgv2index": 0, "wglen": 0, "decl": 0, "decls": 0,
 }
 assert set(FALLBACK_BITS) == set(FALLBACK), "every form with a fallback needs its bits, and no more"
 
@@ -272,6 +275,10 @@ def build_types():
     add("u32", "wglen", 1, FORMS["wglen"][0])
     add("wg", "decl", 0, FORMS["decl"][0])
     add("wg", "decls", 0, FORMS["decls"][0])
+    # ---- integer atomics (2026-10-12) ----
+    add("wgmem<atomic<u32>>", "index", 0, "a workgroup-memory array of atomic<u32>: au_a, au_b")
+    add("wgmem<atomic<i32>>", "int", 0, "a workgroup-memory array of atomic<i32>: ai_a, ai_b")
+    add("u32", "wgaindex", 1, FORMS["wgaindex"][0])
     return rows
 
 
@@ -812,6 +819,32 @@ for op in ("add", "max", "min"):
     for r in ("L0", "L1", "L2", "L3", "L4", "L5"):
         for arr in ("wgmem<f32>.real", "wgmem<vec2<f32>>.real", "wgmem<vec4<f32>>.real"):
             f("wg", f"reduce_{op}_{r}", "composite", [arr, "u32.lit4096"], "stmt." + r, f"a[0..n) reduced into a[0] by {op}: stride halving, barriers in uniform control flow")
+
+# ---- integer atomics in workgroup memory (2026-10-12) ----
+# Arrays of atomic<u32> (au_a, au_b) and atomic<i32> (ai_a, ai_b), declared on the grid like the others; the
+# read-modify-write built-ins return the old value, atomicLoad reads, atomicStore writes, `_ = atomicX(...)`
+# keeps the effect only. NOT spelled: atomicCompareExchangeWeak, and the float add built on it (the
+# compare-exchange loop on the value's bits): naga 0.20's Metal backend refuses it ("MSL:
+# FeatureNotImplemented(atomic CompareExchange)", measured on the M3 Max 2026-10-12), so no gene with it would
+# compile. Storage atomics need an atomic binding the Gram role does not have (its h is array<f32>): the
+# bindings are the design document's.
+for n in ("au_a", "au_b"):
+    f("wg", n, "composite", [], "wgmem<atomic<u32>>.index", f"workgroup array wg_{n} of atomic<u32>")
+for n in ("ai_a", "ai_b"):
+    f("wg", n, "composite", [], "wgmem<atomic<i32>>.int", f"workgroup array wg_{n} of atomic<i32>")
+f("safe", "wga_of", "composite", ["u32.index"], "u32.wgaindex", "i masked into its atomic array, in range by construction")
+f("wg", "decl_au", "composite", ["wgmem<atomic<u32>>.index", "u32.wglen"], "wg.decl", "var<workgroup> a: array<atomic<u32>, n>")
+f("wg", "decl_ai", "composite", ["wgmem<atomic<i32>>.int", "u32.wglen"], "wg.decl", "var<workgroup> a: array<atomic<i32>, n>")
+for op, wgsl in (("add", "atomicAdd"), ("sub", "atomicSub"), ("max", "atomicMax"), ("min", "atomicMin"), ("and", "atomicAnd"), ("or", "atomicOr"), ("xor", "atomicXor"), ("exchange", "atomicExchange")):
+    f("atomic", op + "_u", "composite", ["wgmem<atomic<u32>>.index", "u32.wgaindex", "u32.index"], "u32.index", f"{wgsl}(&a[i], v): the old value")
+    f("atomic", op + "_i", "composite", ["wgmem<atomic<i32>>.int", "u32.wgaindex", "i32.int"], "i32.int", f"{wgsl}(&a[i], v): the old value")
+f("atomic", "load_u", "composite", ["wgmem<atomic<u32>>.index", "u32.wgaindex"], "u32.index", "atomicLoad(&a[i])")
+f("atomic", "load_i", "composite", ["wgmem<atomic<i32>>.int", "u32.wgaindex"], "i32.int", "atomicLoad(&a[i])")
+for r in RUNGS + RUNGS5:
+    f("atomic", "store_u_" + r, "composite", ["wgmem<atomic<u32>>.index", "u32.wgaindex", "u32.index"], "stmt." + r, "arity 3: atomicStore(&a[i], v)")
+    f("atomic", "store_i_" + r, "composite", ["wgmem<atomic<i32>>.int", "u32.wgaindex", "i32.int"], "stmt." + r, "arity 3: atomicStore(&a[i], v)")
+    f("stmt", "discard_u_" + r, "composite", ["u32.index"], "stmt." + r, "_ = e: an atomic's effect, its old value unused")
+    f("stmt", "discard_i_" + r, "composite", ["i32.int"], "stmt." + r, "_ = e: an atomic's effect, its old value unused")
 
 
 def write_tsv(path, header, rows):

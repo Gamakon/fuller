@@ -702,6 +702,16 @@ impl<'a> Renderer<'a> {
                 }
                 Ok("    return;\n".into())
             }
+            "atomic.store_u" | "atomic.store_i" => {
+                n(3)?;
+                let a = self.wgmem(&kids[0])?;
+                let len = self.wg_len(a, scope);
+                Ok(format!("    atomicStore(&{a}[{}], {});\n", self.index_text(&kids[1], len, scope)?, self.value(&kids[2], scope)?))
+            }
+            "stmt.discard_u" | "stmt.discard_i" => {
+                n(1)?;
+                Ok(format!("    _ = {};\n", self.value(&kids[0], scope)?))
+            }
             "wg.reduce_add" | "wg.reduce_max" | "wg.reduce_min" => {
                 // a[0..n) into a[0]: a barrier, then for s = n/2, n/4, .., 1
                 // `if (lidx < s) { a[lidx] = a[lidx] op a[lidx + s]; }` and a
@@ -837,7 +847,17 @@ impl<'a> Renderer<'a> {
     fn wgmem(&self, w: &Tree) -> Result<&'static str, String> {
         if w.name == "fallback" {
             let d = self.dual(w.ty).map(|d| d.dual.clone()).unwrap_or_default();
-            return Ok(if d.starts_with("wgmem<vec4") { "wg_va" } else if d.starts_with("wgmem<vec2") { "wg_v2a" } else { "wg_a" });
+            return Ok(if d.starts_with("wgmem<vec4") {
+                "wg_va"
+            } else if d.starts_with("wgmem<vec2") {
+                "wg_v2a"
+            } else if d.starts_with("wgmem<atomic<u32>") {
+                "wg_au_a"
+            } else if d.starts_with("wgmem<atomic<i32>") {
+                "wg_ai_a"
+            } else {
+                "wg_a"
+            });
         }
         Ok(match w.name.as_str() {
             "wg.a" => "wg_a",
@@ -852,6 +872,10 @@ impl<'a> Renderer<'a> {
             "wg.v2b" => "wg_v2b",
             "wg.v2c" => "wg_v2c",
             "wg.v2d" => "wg_v2d",
+            "wg.au_a" => "wg_au_a",
+            "wg.au_b" => "wg_au_b",
+            "wg.ai_a" => "wg_ai_a",
+            "wg.ai_b" => "wg_ai_b",
             other => return Err(format!("{other} is not a workgroup array")),
         })
     }
@@ -863,8 +887,8 @@ impl<'a> Renderer<'a> {
     /// (the original four declarations) for a kernel that declares none and
     /// uses only `wg_a`, `wg_b`, `wg_va`, `wg_vb`, whose text is unchanged.
     fn workgroup_plan(&self, grid: &Tree, root: &Tree) -> Result<BTreeMap<String, (String, u32)>, String> {
-        let elem_of = |var: &str| if var.starts_with("wg_v2") { "vec2<f32>" } else if var.starts_with("wg_v") { "vec4<f32>" } else { "f32" };
-        let default_len = |var: &str| if var.starts_with("wg_v2") { 1024 } else if var.starts_with("wg_v") { WGVEC_LEN } else { WGMEM_LEN };
+        let elem_of = |var: &str| if var.starts_with("wg_au") { "atomic<u32>" } else if var.starts_with("wg_ai") { "atomic<i32>" } else if var.starts_with("wg_v2") { "vec2<f32>" } else if var.starts_with("wg_v") { "vec4<f32>" } else { "f32" };
+        let default_len = |var: &str| if var.starts_with("wg_au") || var.starts_with("wg_ai") || var.starts_with("wg_v2") { 1024 } else if var.starts_with("wg_v") { WGVEC_LEN } else { WGMEM_LEN };
         let mut declared: Vec<(String, u32)> = Vec::new();
         if grid.name == "grid.with_wg" && grid.kids.len() == 2 {
             let mut at = Some(&grid.kids[1]);
@@ -906,7 +930,7 @@ impl<'a> Renderer<'a> {
         for v in used {
             plan.entry(v.clone()).or_insert_with(|| (elem_of(&v).to_string(), default_len(&v)));
         }
-        let bytes = |e: &str, l: u32| u64::from(l) * if e == "f32" { 4 } else if e == "vec2<f32>" { 8 } else { 16 };
+        let bytes = |e: &str, l: u32| u64::from(l) * if e == "vec2<f32>" { 8 } else if e == "vec4<f32>" { 16 } else { 4 };
         while plan.values().map(|(e, l)| bytes(e, *l)).sum::<u64>() > 32768 {
             let largest = plan.iter().max_by_key(|(v, (e, l))| (bytes(e, *l), std::cmp::Reverse((*v).clone()))).map(|(v, _)| v.clone()).expect("a non-empty plan");
             let entry = plan.get_mut(&largest).expect("present");
@@ -972,6 +996,31 @@ impl<'a> Renderer<'a> {
             }
             "wg.get" => return Ok(format!("{}[({}) & {}u]", self.wgmem(&v.kids[0])?, self.value(&v.kids[1], scope)?, WGMEM_LEN - 1)),
             // The safe read: the index is in range by its type (safe.wg_of masks it).
+            // The atomic built-ins on a workgroup array (their old value).
+            n if n.starts_with("atomic.") => {
+                let a = self.wgmem(&v.kids[0])?;
+                let len = self.wg_len(a, scope);
+                let i = self.index_text(&v.kids[1], len, scope)?;
+                let op = n.trim_start_matches("atomic.").trim_end_matches("_u").trim_end_matches("_i");
+                return Ok(match (op, v.kids.len()) {
+                    ("load", 2) => format!("atomicLoad(&{a}[{i}])"),
+                    (op, 3) => {
+                        let f = match op {
+                            "add" => "atomicAdd",
+                            "sub" => "atomicSub",
+                            "max" => "atomicMax",
+                            "min" => "atomicMin",
+                            "and" => "atomicAnd",
+                            "or" => "atomicOr",
+                            "xor" => "atomicXor",
+                            "exchange" => "atomicExchange",
+                            other => return Err(format!("atomic.{other} is not an atomic built-in")),
+                        };
+                        format!("{f}(&{a}[{i}], {})", self.value(&v.kids[2], scope)?)
+                    }
+                    (other, k) => return Err(format!("atomic.{other} with {k} children")),
+                });
+            }
             "wg.get_safe" | "wg.get_v_safe" | "wg.get_v2_safe" => {
                 let a = self.wgmem(&v.kids[0])?;
                 let len = self.wg_len(a, scope);
@@ -1406,6 +1455,8 @@ pub fn cost(t: &Tree) -> Cost {
     fn node_cost(name: &str) -> f64 {
         match name {
             n if n.starts_with("load.") || n.starts_with("store.") || n.starts_with("wg.") => 4.0,
+            // An atomic read-modify-write on workgroup memory.
+            n if n.starts_with("atomic.") => 8.0,
             "geom.inverse" | "hash.mix64" | "fixed.wide_mul" | "fixed.mul" => 40.0,
             n if n.starts_with("trig.") || n.starts_with("arith.exp") || n.starts_with("arith.log") || n.starts_with("arith.pow") => 8.0,
             "stmt.barrier" => 50.0,
@@ -1651,7 +1702,7 @@ impl Renderer<'_> {
     fn index_text(&self, idx: &Tree, len: u32, scope: &mut Scope) -> Result<String, String> {
         // A workgroup array's index masked into ITS length (the plan's): `&`
         // for a power of two, `min` otherwise (an array padded to 1,056).
-        if let ("safe.wg_of" | "safe.wgv_of" | "safe.wgv2_of", [k]) = (safe_base(&idx.name), idx.kids.as_slice()) {
+        if let ("safe.wg_of" | "safe.wgv_of" | "safe.wgv2_of" | "safe.wga_of", [k]) = (safe_base(&idx.name), idx.kids.as_slice()) {
             let last = len.max(1) - 1;
             if k.name.starts_with("literal.") && k.konst.is_finite() {
                 let v = k.konst.max(0.0) as u32;

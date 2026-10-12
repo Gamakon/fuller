@@ -2065,5 +2065,208 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 | F1007 | `wg.reduce_min_L5` | `composite` | `wgmem<f32>.real u32.lit4096` | `stmt.L5` | 2 | a[0..n) reduced into a[0] by min: stride halving, barriers in uniform control flow |
 | F1008 | `wg.reduce_min_L5` | `composite` | `wgmem<vec2<f32>>.real u32.lit4096` | `stmt.L5` | 2 | a[0..n) reduced into a[0] by min: stride halving, barriers in uniform control flow |
 | F1009 | `wg.reduce_min_L5` | `composite` | `wgmem<vec4<f32>>.real u32.lit4096` | `stmt.L5` | 2 | a[0..n) reduced into a[0] by min: stride halving, barriers in uniform control flow |
+| F1010 | `wg.au_a` | `composite` | `-` | `wgmem<atomic<u32>>.index` | 0 | workgroup array wg_au_a of atomic<u32> |
+| F1011 | `wg.au_b` | `composite` | `-` | `wgmem<atomic<u32>>.index` | 0 | workgroup array wg_au_b of atomic<u32> |
+| F1012 | `wg.ai_a` | `composite` | `-` | `wgmem<atomic<i32>>.int` | 0 | workgroup array wg_ai_a of atomic<i32> |
+| F1013 | `wg.ai_b` | `composite` | `-` | `wgmem<atomic<i32>>.int` | 0 | workgroup array wg_ai_b of atomic<i32> |
 
-1009 function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Deliberately absent: atomics, images, derivatives, subgroup operations, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.
+## class `safe`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F1014 | `safe.wga_of` | `composite` | `u32.index` | `u32.wgaindex` | 1 | i masked into its atomic array, in range by construction |
+
+## class `wg`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F1015 | `wg.decl_au` | `composite` | `wgmem<atomic<u32>>.index u32.wglen` | `wg.decl` | 2 | var<workgroup> a: array<atomic<u32>, n> |
+| F1016 | `wg.decl_ai` | `composite` | `wgmem<atomic<i32>>.int u32.wglen` | `wg.decl` | 2 | var<workgroup> a: array<atomic<i32>, n> |
+
+## class `atomic`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F1017 | `atomic.add_u` | `composite` | `wgmem<atomic<u32>>.index u32.wgaindex u32.index` | `u32.index` | 3 | atomicAdd(&a[i], v): the old value |
+| F1018 | `atomic.add_i` | `composite` | `wgmem<atomic<i32>>.int u32.wgaindex i32.int` | `i32.int` | 3 | atomicAdd(&a[i], v): the old value |
+| F1019 | `atomic.sub_u` | `composite` | `wgmem<atomic<u32>>.index u32.wgaindex u32.index` | `u32.index` | 3 | atomicSub(&a[i], v): the old value |
+| F1020 | `atomic.sub_i` | `composite` | `wgmem<atomic<i32>>.int u32.wgaindex i32.int` | `i32.int` | 3 | atomicSub(&a[i], v): the old value |
+| F1021 | `atomic.max_u` | `composite` | `wgmem<atomic<u32>>.index u32.wgaindex u32.index` | `u32.index` | 3 | atomicMax(&a[i], v): the old value |
+| F1022 | `atomic.max_i` | `composite` | `wgmem<atomic<i32>>.int u32.wgaindex i32.int` | `i32.int` | 3 | atomicMax(&a[i], v): the old value |
+| F1023 | `atomic.min_u` | `composite` | `wgmem<atomic<u32>>.index u32.wgaindex u32.index` | `u32.index` | 3 | atomicMin(&a[i], v): the old value |
+| F1024 | `atomic.min_i` | `composite` | `wgmem<atomic<i32>>.int u32.wgaindex i32.int` | `i32.int` | 3 | atomicMin(&a[i], v): the old value |
+| F1025 | `atomic.and_u` | `composite` | `wgmem<atomic<u32>>.index u32.wgaindex u32.index` | `u32.index` | 3 | atomicAnd(&a[i], v): the old value |
+| F1026 | `atomic.and_i` | `composite` | `wgmem<atomic<i32>>.int u32.wgaindex i32.int` | `i32.int` | 3 | atomicAnd(&a[i], v): the old value |
+| F1027 | `atomic.or_u` | `composite` | `wgmem<atomic<u32>>.index u32.wgaindex u32.index` | `u32.index` | 3 | atomicOr(&a[i], v): the old value |
+| F1028 | `atomic.or_i` | `composite` | `wgmem<atomic<i32>>.int u32.wgaindex i32.int` | `i32.int` | 3 | atomicOr(&a[i], v): the old value |
+| F1029 | `atomic.xor_u` | `composite` | `wgmem<atomic<u32>>.index u32.wgaindex u32.index` | `u32.index` | 3 | atomicXor(&a[i], v): the old value |
+| F1030 | `atomic.xor_i` | `composite` | `wgmem<atomic<i32>>.int u32.wgaindex i32.int` | `i32.int` | 3 | atomicXor(&a[i], v): the old value |
+| F1031 | `atomic.exchange_u` | `composite` | `wgmem<atomic<u32>>.index u32.wgaindex u32.index` | `u32.index` | 3 | atomicExchange(&a[i], v): the old value |
+| F1032 | `atomic.exchange_i` | `composite` | `wgmem<atomic<i32>>.int u32.wgaindex i32.int` | `i32.int` | 3 | atomicExchange(&a[i], v): the old value |
+| F1033 | `atomic.load_u` | `composite` | `wgmem<atomic<u32>>.index u32.wgaindex` | `u32.index` | 2 | atomicLoad(&a[i]) |
+| F1034 | `atomic.load_i` | `composite` | `wgmem<atomic<i32>>.int u32.wgaindex` | `i32.int` | 2 | atomicLoad(&a[i]) |
+| F1035 | `atomic.store_u_L0` | `composite` | `wgmem<atomic<u32>>.index u32.wgaindex u32.index` | `stmt.L0` | 3 | arity 3: atomicStore(&a[i], v) |
+| F1036 | `atomic.store_i_L0` | `composite` | `wgmem<atomic<i32>>.int u32.wgaindex i32.int` | `stmt.L0` | 3 | arity 3: atomicStore(&a[i], v) |
+
+## class `stmt`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F1037 | `stmt.discard_u_L0` | `composite` | `u32.index` | `stmt.L0` | 1 | _ = e: an atomic's effect, its old value unused |
+| F1038 | `stmt.discard_i_L0` | `composite` | `i32.int` | `stmt.L0` | 1 | _ = e: an atomic's effect, its old value unused |
+
+## class `atomic`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F1039 | `atomic.store_u_L1` | `composite` | `wgmem<atomic<u32>>.index u32.wgaindex u32.index` | `stmt.L1` | 3 | arity 3: atomicStore(&a[i], v) |
+| F1040 | `atomic.store_i_L1` | `composite` | `wgmem<atomic<i32>>.int u32.wgaindex i32.int` | `stmt.L1` | 3 | arity 3: atomicStore(&a[i], v) |
+
+## class `stmt`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F1041 | `stmt.discard_u_L1` | `composite` | `u32.index` | `stmt.L1` | 1 | _ = e: an atomic's effect, its old value unused |
+| F1042 | `stmt.discard_i_L1` | `composite` | `i32.int` | `stmt.L1` | 1 | _ = e: an atomic's effect, its old value unused |
+
+## class `atomic`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F1043 | `atomic.store_u_L2` | `composite` | `wgmem<atomic<u32>>.index u32.wgaindex u32.index` | `stmt.L2` | 3 | arity 3: atomicStore(&a[i], v) |
+| F1044 | `atomic.store_i_L2` | `composite` | `wgmem<atomic<i32>>.int u32.wgaindex i32.int` | `stmt.L2` | 3 | arity 3: atomicStore(&a[i], v) |
+
+## class `stmt`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F1045 | `stmt.discard_u_L2` | `composite` | `u32.index` | `stmt.L2` | 1 | _ = e: an atomic's effect, its old value unused |
+| F1046 | `stmt.discard_i_L2` | `composite` | `i32.int` | `stmt.L2` | 1 | _ = e: an atomic's effect, its old value unused |
+
+## class `atomic`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F1047 | `atomic.store_u_L3` | `composite` | `wgmem<atomic<u32>>.index u32.wgaindex u32.index` | `stmt.L3` | 3 | arity 3: atomicStore(&a[i], v) |
+| F1048 | `atomic.store_i_L3` | `composite` | `wgmem<atomic<i32>>.int u32.wgaindex i32.int` | `stmt.L3` | 3 | arity 3: atomicStore(&a[i], v) |
+
+## class `stmt`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F1049 | `stmt.discard_u_L3` | `composite` | `u32.index` | `stmt.L3` | 1 | _ = e: an atomic's effect, its old value unused |
+| F1050 | `stmt.discard_i_L3` | `composite` | `i32.int` | `stmt.L3` | 1 | _ = e: an atomic's effect, its old value unused |
+
+## class `atomic`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F1051 | `atomic.store_u_L4` | `composite` | `wgmem<atomic<u32>>.index u32.wgaindex u32.index` | `stmt.L4` | 3 | arity 3: atomicStore(&a[i], v) |
+| F1052 | `atomic.store_i_L4` | `composite` | `wgmem<atomic<i32>>.int u32.wgaindex i32.int` | `stmt.L4` | 3 | arity 3: atomicStore(&a[i], v) |
+
+## class `stmt`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F1053 | `stmt.discard_u_L4` | `composite` | `u32.index` | `stmt.L4` | 1 | _ = e: an atomic's effect, its old value unused |
+| F1054 | `stmt.discard_i_L4` | `composite` | `i32.int` | `stmt.L4` | 1 | _ = e: an atomic's effect, its old value unused |
+
+## class `atomic`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F1055 | `atomic.store_u_C0` | `composite` | `wgmem<atomic<u32>>.index u32.wgaindex u32.index` | `stmt.C0` | 3 | arity 3: atomicStore(&a[i], v) |
+| F1056 | `atomic.store_i_C0` | `composite` | `wgmem<atomic<i32>>.int u32.wgaindex i32.int` | `stmt.C0` | 3 | arity 3: atomicStore(&a[i], v) |
+
+## class `stmt`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F1057 | `stmt.discard_u_C0` | `composite` | `u32.index` | `stmt.C0` | 1 | _ = e: an atomic's effect, its old value unused |
+| F1058 | `stmt.discard_i_C0` | `composite` | `i32.int` | `stmt.C0` | 1 | _ = e: an atomic's effect, its old value unused |
+
+## class `atomic`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F1059 | `atomic.store_u_C1` | `composite` | `wgmem<atomic<u32>>.index u32.wgaindex u32.index` | `stmt.C1` | 3 | arity 3: atomicStore(&a[i], v) |
+| F1060 | `atomic.store_i_C1` | `composite` | `wgmem<atomic<i32>>.int u32.wgaindex i32.int` | `stmt.C1` | 3 | arity 3: atomicStore(&a[i], v) |
+
+## class `stmt`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F1061 | `stmt.discard_u_C1` | `composite` | `u32.index` | `stmt.C1` | 1 | _ = e: an atomic's effect, its old value unused |
+| F1062 | `stmt.discard_i_C1` | `composite` | `i32.int` | `stmt.C1` | 1 | _ = e: an atomic's effect, its old value unused |
+
+## class `atomic`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F1063 | `atomic.store_u_C2` | `composite` | `wgmem<atomic<u32>>.index u32.wgaindex u32.index` | `stmt.C2` | 3 | arity 3: atomicStore(&a[i], v) |
+| F1064 | `atomic.store_i_C2` | `composite` | `wgmem<atomic<i32>>.int u32.wgaindex i32.int` | `stmt.C2` | 3 | arity 3: atomicStore(&a[i], v) |
+
+## class `stmt`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F1065 | `stmt.discard_u_C2` | `composite` | `u32.index` | `stmt.C2` | 1 | _ = e: an atomic's effect, its old value unused |
+| F1066 | `stmt.discard_i_C2` | `composite` | `i32.int` | `stmt.C2` | 1 | _ = e: an atomic's effect, its old value unused |
+
+## class `atomic`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F1067 | `atomic.store_u_C3` | `composite` | `wgmem<atomic<u32>>.index u32.wgaindex u32.index` | `stmt.C3` | 3 | arity 3: atomicStore(&a[i], v) |
+| F1068 | `atomic.store_i_C3` | `composite` | `wgmem<atomic<i32>>.int u32.wgaindex i32.int` | `stmt.C3` | 3 | arity 3: atomicStore(&a[i], v) |
+
+## class `stmt`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F1069 | `stmt.discard_u_C3` | `composite` | `u32.index` | `stmt.C3` | 1 | _ = e: an atomic's effect, its old value unused |
+| F1070 | `stmt.discard_i_C3` | `composite` | `i32.int` | `stmt.C3` | 1 | _ = e: an atomic's effect, its old value unused |
+
+## class `atomic`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F1071 | `atomic.store_u_C4` | `composite` | `wgmem<atomic<u32>>.index u32.wgaindex u32.index` | `stmt.C4` | 3 | arity 3: atomicStore(&a[i], v) |
+| F1072 | `atomic.store_i_C4` | `composite` | `wgmem<atomic<i32>>.int u32.wgaindex i32.int` | `stmt.C4` | 3 | arity 3: atomicStore(&a[i], v) |
+
+## class `stmt`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F1073 | `stmt.discard_u_C4` | `composite` | `u32.index` | `stmt.C4` | 1 | _ = e: an atomic's effect, its old value unused |
+| F1074 | `stmt.discard_i_C4` | `composite` | `i32.int` | `stmt.C4` | 1 | _ = e: an atomic's effect, its old value unused |
+
+## class `atomic`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F1075 | `atomic.store_u_L5` | `composite` | `wgmem<atomic<u32>>.index u32.wgaindex u32.index` | `stmt.L5` | 3 | arity 3: atomicStore(&a[i], v) |
+| F1076 | `atomic.store_i_L5` | `composite` | `wgmem<atomic<i32>>.int u32.wgaindex i32.int` | `stmt.L5` | 3 | arity 3: atomicStore(&a[i], v) |
+
+## class `stmt`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F1077 | `stmt.discard_u_L5` | `composite` | `u32.index` | `stmt.L5` | 1 | _ = e: an atomic's effect, its old value unused |
+| F1078 | `stmt.discard_i_L5` | `composite` | `i32.int` | `stmt.L5` | 1 | _ = e: an atomic's effect, its old value unused |
+
+## class `atomic`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F1079 | `atomic.store_u_C5` | `composite` | `wgmem<atomic<u32>>.index u32.wgaindex u32.index` | `stmt.C5` | 3 | arity 3: atomicStore(&a[i], v) |
+| F1080 | `atomic.store_i_C5` | `composite` | `wgmem<atomic<i32>>.int u32.wgaindex i32.int` | `stmt.C5` | 3 | arity 3: atomicStore(&a[i], v) |
+
+## class `stmt`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F1081 | `stmt.discard_u_C5` | `composite` | `u32.index` | `stmt.C5` | 1 | _ = e: an atomic's effect, its old value unused |
+| F1082 | `stmt.discard_i_C5` | `composite` | `i32.int` | `stmt.C5` | 1 | _ = e: an atomic's effect, its old value unused |
+
+1082 function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Deliberately absent: atomics, images, derivatives, subgroup operations, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.

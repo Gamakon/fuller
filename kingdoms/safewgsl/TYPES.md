@@ -82,6 +82,7 @@ A type is a dual `slot.form`: the slot is what the hardware stores, the form is 
 | `wglen` | a workgroup array's length, 1..=8,192 elements (the renderer halves the largest array until all fit 32 KB) | u32 |
 | `decl` | one workgroup array declaration: the array and its length | see duals |
 | `decls` | the kernel's workgroup array declarations | see duals |
+| `wgaindex` | an index into an atomic workgroup array, masked to the array by its row | u32 |
 
 ## Duals
 
@@ -244,8 +245,11 @@ A type is a dual `slot.form`: the slot is what the hardware stores, the form is 
 | T155 | `u32.wglen` | `u32` | `wglen` | 1 | `the array's default length` | 0 | 0 | 0 |
 | T156 | `wg.decl` | `wg` | `decl` | 0 | `none` | 0 | 0 | 0 |
 | T157 | `wg.decls` | `wg` | `decls` | 0 | `none (the arrays the kernel uses, at their default lengths)` | 0 | 0 | 0 |
+| T158 | `wgmem<atomic<u32>>.index` | `wgmem<atomic<u32>>` | `index` | 0 | `0u` | 0 | 0 | 0 |
+| T159 | `wgmem<atomic<i32>>.int` | `wgmem<atomic<i32>>` | `int` | 0 | `0` | 0 | 0 | 0 |
+| T160 | `u32.wgaindex` | `u32` | `wgaindex` | 1 | `0u` | 0 | 0 | 0 |
 
-157 duals. The fallback is what Design C's projection substitutes for a codon whose dual does not match the demand; the codon is counted as masked.
+160 duals. The fallback is what Design C's projection substitutes for a codon whose dual does not match the demand; the codon is counted as masked.
 
 The three machine columns (`fallback_bits`, `fallback_noop`, `fallback_elem` in `types.tsv`) are what the loader builds the fallback leaf from, never the prose: `bits` is the lane's 32-bit pattern as an unsigned integer, repeated across the lanes of a vector or matrix (only `bool.sign` is non-zero, true = +1); `noop` is 1 for `store.store`, which substitutes no value at all; `elem` is 1 for `array<T>`, whose fallback is its element's. The loader tests `noop` and `elem` before reading `bits`; for those two rows `bits` is a placeholder 0. Every substitution, whichever column decides it, counts the codon as masked.
 

@@ -237,6 +237,7 @@ fn kind_key(kind: &super::reader::RootKind, module: &Module, f: &Function) -> Re
         RootKind::Return => "return".to_string(),
         RootKind::Argument { callee, position } => format!("arg:{}:{position}", canonical(&format!("(call.{callee})"), module, f)?),
         RootKind::Let { name } => format!("let:{}", canonical(&format!("(x.let.{name})"), module, f)?),
+        RootKind::Atomic { target, fun } => format!("atomic:{fun}:{}", canonical(&format!("(x.{target})"), module, f)?),
     };
     Ok(name)
 }

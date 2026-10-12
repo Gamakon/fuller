@@ -142,6 +142,12 @@ pub enum RootKind {
     /// would re-read after the store; the rebuilt decode kernel refused 19
     /// of 27 sample genes that way (2026-10-08). `name` is `<name>@<idx>`.
     Let { name: String },
+    /// `Statement::Atomic`, an atomic read-modify-write (2026-10-12):
+    /// `target` is the pointer's base name, `fun` the built-in (`add`, `sub`,
+    /// `and`, `or`, `xor`, `min`, `max`, `exchange`, `cas` for a compare-
+    /// exchange); the tree's kids are the index (when indexed), the value and,
+    /// for `cas`, the compared value. Its result is the leaf `atomic@<h>`.
+    Atomic { target: String, fun: String },
 }
 
 /// One root: a hole in the scaffold and the tree that fills it.
@@ -611,6 +617,35 @@ fn walk_block(
                 }
                 ctx.state.live = false;
             }
+            Statement::Atomic { pointer, fun, value, result } => {
+                let (target, index) = pointer_target(ctx, *pointer);
+                let (name, compare) = match fun {
+                    naga::AtomicFunction::Add => ("add", None),
+                    naga::AtomicFunction::Subtract => ("sub", None),
+                    naga::AtomicFunction::And => ("and", None),
+                    naga::AtomicFunction::ExclusiveOr => ("xor", None),
+                    naga::AtomicFunction::InclusiveOr => ("or", None),
+                    naga::AtomicFunction::Min => ("min", None),
+                    naga::AtomicFunction::Max => ("max", None),
+                    naga::AtomicFunction::Exchange { compare: None } => ("exchange", None),
+                    naga::AtomicFunction::Exchange { compare: Some(c) } => ("cas", Some(*c)),
+                };
+                let mut kids: Vec<Node> = index.into_iter().collect();
+                kids.push(expand(ctx, *value, true));
+                if let Some(c) = compare {
+                    kids.push(expand(ctx, c, true));
+                }
+                // The result leaf names the statement: its path, as a call's.
+                ctx.calls.insert(result.index() as u32, path.clone());
+                roots.push(Root {
+                    kind: RootKind::Atomic { target: target.clone(), fun: name.to_string() },
+                    path: path.clone(),
+                    point: path.clone(),
+                    tree: Node::App { name: format!("atomic.{name}.{target}"), slot: "store".into(), known: true, kids },
+                });
+                let loc = ctx.location(*pointer);
+                ctx.bump(&loc);
+            }
             Statement::Call { function, arguments, result } => {
                 let callee = ctx.module.functions[*function].name.clone().unwrap_or_else(|| format!("fn{}", function.index()));
                 if let Some(r) = result {
@@ -635,7 +670,7 @@ fn walk_block(
                 match other {
                     Statement::Barrier(flags) => ctx.barrier(*flags),
                     Statement::WorkGroupUniformLoad { .. } => ctx.barrier(naga::Barrier::WORK_GROUP),
-                    Statement::Atomic { pointer, .. } | Statement::ImageStore { image: pointer, .. } => {
+                    Statement::ImageStore { image: pointer, .. } => {
                         let loc = ctx.location(*pointer);
                         ctx.bump(&loc);
                     }
@@ -911,6 +946,9 @@ fn expand(ctx: &mut Ctx, h: Handle<Expression>, count: bool) -> Node {
                 None => Node::Leaf { name: format!("load.{target}{version}"), slot },
             }
         }
+        // An atomic's result (the old value, or for a compare-exchange its
+        // result struct): the leaf the Atomic root names.
+        Expression::AtomicResult { .. } => Node::Leaf { name: format!("atomic@{}", h.index()), slot },
         Expression::CallResult(f) => {
             // Named by the RESULT's handle index too: a function called twice
             // has two live results, and the rebuild must put each leaf on the
@@ -1340,7 +1378,8 @@ fn main(@builtin(local_invocation_id) lid: vec3<u32>) {
         assert_eq!(f.versions.get("workgroup.w"), Some(&3));
         assert_eq!(f.versions.get("buffer.cnt"), Some(&1));
         assert_eq!(f.unread_statements.get("Barrier"), Some(&2));
-        assert_eq!(f.unread_statements.get("Atomic"), Some(&1));
+        assert_eq!(f.unread_statements.get("Atomic"), None, "an atomic is a root (2026-10-12)");
+        assert!(f.roots.iter().any(|r| matches!(&r.kind, RootKind::Atomic { target, fun } if target == "buffer.cnt" && fun == "add")));
     }
 
     #[test]
