@@ -1304,11 +1304,6 @@ fn by_axis(t: &Tree, rows_x: bool) -> Tree {
 /// Why a continue outside the epilogue has no spelling.
 const CONTINUE_OUTSIDE: &str = "a continue outside the kernel's epilogue: a later barrier of its loop would be reached by some threads only; the epilogue's tile loops, which hold no barrier, spell `if (c) { continue; }`";
 
-/// Whether a statement tree holds a continue anywhere in it.
-fn has_continue(t: &Tree) -> bool {
-    t.name == "stmt.continue" || t.kids.iter().any(has_continue)
-}
-
 /// `if (c) { continue; }`: an if whose block is one continue.
 fn is_continue_guard(t: &Tree) -> bool {
     if rung_stem(&t.name) != Some("stmt.if") || t.kids.len() != 2 {
@@ -1412,7 +1407,9 @@ fn axis_terms(t: &Tree, axis: usize, workgroup: u32, tiles: Tiles, bounds: &Boun
     }
     // A grouped block: lid scaled by s = B / G with G > 1 groups (the kernel
     // writes col = wid.x * 64u + hf * 32u + lid.x * 4u + e: W 8, B 8, s 4, G 2).
-    if kl > 1 && kw.is_multiple_of(workgroup) && (kw / workgroup).is_multiple_of(kl) && kw / workgroup / kl > 1 {
+    // (s = 1 too: B groups of one cell, the lane offset clamped to 0; a
+    // grouped row the kingdom writes with G = B, 2026-10-12.)
+    if kl >= 1 && kw.is_multiple_of(workgroup) && (kw / workgroup).is_multiple_of(kl) && kw / workgroup / kl > 1 {
         let (b, s) = (kw / workgroup, kl);
         let g_count = b / s;
         let stride = workgroup * s;
@@ -1425,12 +1422,19 @@ fn axis_terms(t: &Tree, axis: usize, workgroup: u32, tiles: Tiles, bounds: &Boun
         }
         let index_ty = t.ty;
         let zero = || Tree::literal("literal.index", index_ty, 0.0);
+        // With one-cell groups and no lane term it is the strided block, read below.
+        let strided_after = kl == 1 && lanes.is_empty();
+        if strided_after {
+            groups.clear();
+        }
+        if !strided_after {
         let g = if groups.is_empty() { zero() } else { sum_of(&groups.iter().collect::<Vec<_>>())? };
         let e = if lanes.is_empty() { zero() } else { sum_of(&lanes.iter().collect::<Vec<_>>())? };
         if offset_max(&g, tiles, bounds)? < f64::from(g_count) && offset_max(&e, tiles, bounds)? < f64::from(s) {
             return Some((b, Off::Grouped(g_count, unclamped(&g, g_count).clone(), unclamped(&e, s).clone())));
         }
         return None;
+        }
     }
     if kl == 1 && kw.is_multiple_of(workgroup) && kw / workgroup > 1 {
         // A strided block of B rows W apart: offsets are multiples of W.
@@ -1639,6 +1643,10 @@ impl<'a> Ctx<'a> {
             }
             (n, []) if n.starts_with("literal.") => {
                 let v = t.konst;
+                // 0 is the uniform dual's fallback, which renders `0u` (2026-10-12).
+                if v == 0.0 {
+                    return Ok(Some(Tree::fallback(u)));
+                }
                 (v.fract() == 0.0 && (1.0..=4096.0).contains(&v)).then(|| Tree::new("uniform.of_lit", u, vec![Tree::literal("literal.lit4096", ty(self, "u32.lit4096").expect("dual"), v)]))
             }
             (n, [k]) if n.starts_with("shape.access_") => match (k.name.as_str(), comp(k)) {
@@ -2497,7 +2505,11 @@ impl<'a> Ctx<'a> {
             return Err(format!("{} top-level statement(s) after the last store of h (the first: {}); the kernel's epilogue ends in that store", after.len(), after[0].name));
         }
         let last = stmts.pop().expect("the statement at p");
-        if stmts.iter().any(has_continue) {
+        // A continue at the top level has no loop. One inside a body loop is
+        // the loop's own guard, read at its block (block.cont: the rest at the
+        // conditional rung, no barrier after it); an epilogue loop's continue
+        // before an earlier store is such a loop's (2026-10-12: 14 of 1,000).
+        if stmts.iter().any(|s| s.name == "stmt.continue" || is_continue_guard(s)) {
             return Err(CONTINUE_OUTSIDE.into());
         }
         Ok((stmts, self.epilogue_block(vec![last], 0)?))
@@ -2511,6 +2523,19 @@ impl<'a> Ctx<'a> {
         let mut list = Vec::new();
         for s in items {
             flatten_stmts(s, &mut list);
+        }
+        // A continue its loop's block folded (block.cont, kept whole by the
+        // flattening) that holds the store: the epilogue's own continue block,
+        // as the unfolded guard reads (2026-10-12).
+        let list: Vec<Tree> = list.into_iter().map(|t| if rung_stem(&t.name) == Some("stmt.block") && t.kids.first().is_some_and(|b| rung_stem(&b.name) == Some("block.cont")) { t.kids[0].clone() } else { t }).collect();
+        if let [only] = list.as_slice() {
+            if rung_stem(&only.name) == Some("block.cont") && has_store(only) {
+                if d == 0 {
+                    return Err("a continue in the kernel's epilogue outside its tile loops".into());
+                }
+                let o = format!("O{d}");
+                return Ok(Tree::new(&format!("block.cont_{o}"), ty(self, &format!("block.{o}"))?, vec![only.kids[0].clone(), self.epilogue_block(vec![only.kids[1].clone()], d)?]));
+            }
         }
         let p = list.iter().rposition(has_store).ok_or("an epilogue block without a store of h")?;
         if p + 1 < list.len() {
@@ -2579,6 +2604,15 @@ impl<'a> Ctx<'a> {
                 Ok(Tree::new(&format!("stmt.if_else_{o}"), st, vec![c.clone(), self.epilogue_block(vec![a.clone()], d)?, self.epilogue_block(vec![b.clone()], d)?]))
             }
             ("stmt.block", [b]) => Ok(Tree::new(&format!("stmt.block_{o}"), st, vec![self.epilogue_block(vec![b.clone()], d)?])),
+            // A continue guard folded at its loop's block: the guard, then the
+            // rest as an epilogue block (only inside an epilogue tile loop).
+            ("block.cont", [c, rest]) => {
+                if d == 0 {
+                    return Err("a continue in the kernel's epilogue outside its tile loops".into());
+                }
+                let cont = Tree::new(&format!("block.cont_{o}"), ty(self, &format!("block.{o}"))?, vec![c.clone(), self.epilogue_block(vec![rest.clone()], d)?]);
+                Ok(Tree::new(&format!("stmt.block_{o}"), st, vec![cont]))
+            }
             // Conditional statements written in place (a loop with no barrier
             // read at the conditional rung): in the epilogue, a block like any.
             ("stmt.cblock", [b]) => Ok(Tree::new(&format!("stmt.block_{o}"), st, vec![self.epilogue_block(vec![b.clone()], d)?])),
@@ -2655,9 +2689,10 @@ impl<'a> Ctx<'a> {
         // depth (no barrier after a continue; every thread still reaches the
         // next iteration).
         let looped_rung = matches!(rung.as_bytes(), [b'L' | b'C', d] if (b'1'..=b'5').contains(d));
-        // A continue whose rest stores h is the epilogue's (epilogue_block
-        // reads it into block.cont_O<d>).
-        if looped_rung && !stmts.iter().any(has_store) {
+        // (A continue whose rest stores h too: a body loop's store is a
+        // conditional statement after it; the epilogue reads the folded block
+        // into block.cont_O<d>, 2026-10-12.)
+        if looped_rung {
             // (Not over a break guard after it: the loop's body splits at the
             // break first, then each side's continue folds; 2026-10-12.)
             let breaks_after = |at: usize| stmts[at + 1..].iter().any(|t| break_guard(t, self).is_some());
@@ -5282,7 +5317,7 @@ mod tests {
     /// The counts of [`random_sampler_trees_read_back_to_their_own_text`]
     /// reached so far: to their own text, and read back at all.
     const READ_BACK_FLOOR: usize = 108;
-    const READ_AT_ALL_FLOOR: usize = 832;
+    const READ_AT_ALL_FLOOR: usize = 903;
 
     /// THE KINGDOM'S COMPLETENESS BAR (2026-10-12): 1,000 random trees of
     /// the kingdom's typed sampler (the safe root, depth 7, seeds 0..1000)
