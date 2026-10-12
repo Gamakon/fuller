@@ -80,9 +80,12 @@ in the rule (counted, the rule's record lowered), never sent to the GPU:
    output only through the owned-cell type, barriers only in non-conditional
    statement positions, loops only from the bounded loop constructors
    (`functions.tsv` store and loop rows, `loader.rs` barrier duals);
-3. range proofs: every index in its buffer's or array's range, no `u32`
-   overflow at the largest shape of the shape set, the binding range inside
-   the buffer;
+3. range proofs: every index in its buffer's or array's range, the binding
+   range inside the buffer, every loop bound uniform or capped at the declared
+   maximum trip count. `u32` overflow is NOT illegal (decision 2026-10-12):
+   WGSL defines it as wrapping, and with every access masked or owned and
+   every loop bounded, a wrapped value can only give wrong values, which
+   selection removes; the checker reports it as a diagnostic;
 4. barrier uniformity by control dependence, not by position alone;
 5. adapter checks: workgroup size, workgroup memory, subgroup and other
    features against the selected adapter's limits and features (today
