@@ -1353,6 +1353,7 @@ impl<'a> Renderer<'a> {
                 "find_msb" => "firstLeadingBit",
                 "reverse" => "reverseBits",
                 "extract" => "extractBits",
+                "insert" => "insertBits",
                 "outer" => {
                     // WGSL has no outer product builtin: a helper per shape.
                     let (c, r) = d.matrix_shape().ok_or_else(|| format!("{name}: output {} is not a matrix", d.dual))?;

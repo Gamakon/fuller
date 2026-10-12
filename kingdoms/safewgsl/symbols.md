@@ -227,15 +227,15 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 | F149 | `bits.pack_sign` | `composite` | `bool.sign` | `u32.bits` | 1 |  |
 | F150 | `bits.unpack_sign` | `composite` | `u32.bits u32.index` | `bool.sign` | 2 |  |
 | F151 | `bits.pack4x8snorm` | `Math::Pack4x8snorm` | `vec4<f32>.real` | `u32.bits` | 1 |  |
-| F152 | `bits.unpack4x8snorm` | `Math::UnPack4x8snorm` | `u32.bits` | `vec4<f32>.real` | 1 |  |
+| F152 | `bits.unpack4x8snorm` | `Math::Unpack4x8snorm` | `u32.bits` | `vec4<f32>.real` | 1 |  |
 | F153 | `bits.pack4x8unorm` | `Math::Pack4x8unorm` | `vec4<f32>.real` | `u32.bits` | 1 |  |
-| F154 | `bits.unpack4x8unorm` | `Math::UnPack4x8unorm` | `u32.bits` | `vec4<f32>.real` | 1 |  |
+| F154 | `bits.unpack4x8unorm` | `Math::Unpack4x8unorm` | `u32.bits` | `vec4<f32>.real` | 1 |  |
 | F155 | `bits.pack2x16snorm` | `Math::Pack2x16snorm` | `vec2<f32>.real` | `u32.bits` | 1 |  |
-| F156 | `bits.unpack2x16snorm` | `Math::UnPack2x16snorm` | `u32.bits` | `vec2<f32>.real` | 1 |  |
+| F156 | `bits.unpack2x16snorm` | `Math::Unpack2x16snorm` | `u32.bits` | `vec2<f32>.real` | 1 |  |
 | F157 | `bits.pack2x16unorm` | `Math::Pack2x16unorm` | `vec2<f32>.real` | `u32.bits` | 1 |  |
-| F158 | `bits.unpack2x16unorm` | `Math::UnPack2x16unorm` | `u32.bits` | `vec2<f32>.real` | 1 |  |
+| F158 | `bits.unpack2x16unorm` | `Math::Unpack2x16unorm` | `u32.bits` | `vec2<f32>.real` | 1 |  |
 | F159 | `bits.pack2x16float` | `Math::Pack2x16float` | `vec2<f32>.real` | `u32.bits` | 1 |  |
-| F160 | `bits.unpack2x16float` | `Math::UnPack2x16float` | `u32.bits` | `vec2<f32>.real` | 1 |  |
+| F160 | `bits.unpack2x16float` | `Math::Unpack2x16float` | `u32.bits` | `vec2<f32>.real` | 1 |  |
 
 ## class `hash`
 
@@ -2333,4 +2333,80 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 |---|---|---|---|---|---|---|
 | F1126 | `grid.of_rows_x` | `composite` | `u32.wgdim u32.wgdim u32.blk u32.blk` | `grid.grid` | 4 | arity 4: grid.of with the output's rows on thread x (the fast index) and its columns on y; the header says `rows-x` |
 
-1126 function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Deliberately absent: storage-buffer atomics, atomic compare-exchange (naga 0.20's Metal backend lacks it), subgroupBallot, images, derivatives, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.
+## class `convert`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F1127 | `convert.index_to_bits` | `As` | `<u32.index>` | `<u32.bits>` | 1 | the same u32 lanes read as a bit field |
+| F1128 | `convert.bits_to_index` | `As` | `<u32.bits>` | `<u32.index>` | 1 | the same u32 lanes read as an index |
+| F1129 | `convert.count_to_bits` | `As` | `<u32.count>` | `<u32.bits>` | 1 | the same u32 lanes read as a bit field |
+
+## class `index`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F1130 | `index.of_count` | `composite` | `vec2<u32>.count` | `vec2<u32>.index` | 1 | per lane |
+
+## class `bits`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F1131 | `bits.count_ones` | `Math::CountOneBits` | `vec2<u32>.bits` | `vec2<u32>.count` | 1 | per lane |
+| F1132 | `bits.leading_zeros` | `Math::CountLeadingZeros` | `vec2<u32>.bits` | `vec2<u32>.count` | 1 | per lane |
+| F1133 | `bits.trailing_zeros` | `Math::CountTrailingZeros` | `vec2<u32>.bits` | `vec2<u32>.count` | 1 | per lane |
+| F1134 | `bits.find_lsb` | `Math::FirstTrailingBit` | `vec2<u32>.bits` | `vec2<u32>.count` | 1 | per lane |
+| F1135 | `bits.find_msb` | `Math::FirstLeadingBit` | `vec2<u32>.bits` | `vec2<u32>.count` | 1 | per lane |
+| F1136 | `bits.reverse` | `Math::ReverseBits` | `vec2<u32>.bits` | `vec2<u32>.bits` | 1 | per lane |
+| F1137 | `bits.extract` | `Math::ExtractBits` | `vec2<u32>.bits u32.index u32.count` | `vec2<u32>.bits` | 3 | arity 3, per lane |
+
+## class `index`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F1138 | `index.of_count` | `composite` | `vec3<u32>.count` | `vec3<u32>.index` | 1 | per lane |
+
+## class `bits`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F1139 | `bits.count_ones` | `Math::CountOneBits` | `vec3<u32>.bits` | `vec3<u32>.count` | 1 | per lane |
+| F1140 | `bits.leading_zeros` | `Math::CountLeadingZeros` | `vec3<u32>.bits` | `vec3<u32>.count` | 1 | per lane |
+| F1141 | `bits.trailing_zeros` | `Math::CountTrailingZeros` | `vec3<u32>.bits` | `vec3<u32>.count` | 1 | per lane |
+| F1142 | `bits.find_lsb` | `Math::FirstTrailingBit` | `vec3<u32>.bits` | `vec3<u32>.count` | 1 | per lane |
+| F1143 | `bits.find_msb` | `Math::FirstLeadingBit` | `vec3<u32>.bits` | `vec3<u32>.count` | 1 | per lane |
+| F1144 | `bits.reverse` | `Math::ReverseBits` | `vec3<u32>.bits` | `vec3<u32>.bits` | 1 | per lane |
+| F1145 | `bits.extract` | `Math::ExtractBits` | `vec3<u32>.bits u32.index u32.count` | `vec3<u32>.bits` | 3 | arity 3, per lane |
+
+## class `index`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F1146 | `index.of_count` | `composite` | `vec4<u32>.count` | `vec4<u32>.index` | 1 | per lane |
+
+## class `bits`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F1147 | `bits.count_ones` | `Math::CountOneBits` | `vec4<u32>.bits` | `vec4<u32>.count` | 1 | per lane |
+| F1148 | `bits.leading_zeros` | `Math::CountLeadingZeros` | `vec4<u32>.bits` | `vec4<u32>.count` | 1 | per lane |
+| F1149 | `bits.trailing_zeros` | `Math::CountTrailingZeros` | `vec4<u32>.bits` | `vec4<u32>.count` | 1 | per lane |
+| F1150 | `bits.find_lsb` | `Math::FirstTrailingBit` | `vec4<u32>.bits` | `vec4<u32>.count` | 1 | per lane |
+| F1151 | `bits.find_msb` | `Math::FirstLeadingBit` | `vec4<u32>.bits` | `vec4<u32>.count` | 1 | per lane |
+| F1152 | `bits.reverse` | `Math::ReverseBits` | `vec4<u32>.bits` | `vec4<u32>.bits` | 1 | per lane |
+| F1153 | `bits.extract` | `Math::ExtractBits` | `vec4<u32>.bits u32.index u32.count` | `vec4<u32>.bits` | 3 | arity 3, per lane |
+| F1154 | `bits.insert` | `Math::InsertBits` | `<u32.bits> <u32.bits> u32.index u32.count` | `<u32.bits>` | 4 | arity 4: insertBits(e, newbits, offset, count) |
+
+## class `geom`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F1155 | `geom.dot` | `Math::Dot` | `<vecL<u32>.index> <vecL<u32>.index>` | `u32.index` | 2 | integer dot product (wraps) |
+| F1156 | `geom.dot` | `Math::Dot` | `<vecL<i32>.int> <vecL<i32>.int>` | `i32.int` | 2 | integer dot product (wraps) |
+
+## class `arith`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F1157 | `arith.mod` | `Binary::Modulo` | `<S.real> <S.real>` | `<S.real>` | 2 | WGSL's % on reals: x - y * trunc(x / y) |
+
+1157 function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Deliberately absent: storage-buffer atomics, atomic compare-exchange (naga 0.20's Metal backend lacks it), subgroupBallot, images, derivatives, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.

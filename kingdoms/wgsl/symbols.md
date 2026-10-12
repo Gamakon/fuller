@@ -227,15 +227,15 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 | F149 | `bits.pack_sign` | `composite` | `bool.sign` | `u32.bits` | 1 |  |
 | F150 | `bits.unpack_sign` | `composite` | `u32.bits u32.index` | `bool.sign` | 2 |  |
 | F151 | `bits.pack4x8snorm` | `Math::Pack4x8snorm` | `vec4<f32>.real` | `u32.bits` | 1 |  |
-| F152 | `bits.unpack4x8snorm` | `Math::UnPack4x8snorm` | `u32.bits` | `vec4<f32>.real` | 1 |  |
+| F152 | `bits.unpack4x8snorm` | `Math::Unpack4x8snorm` | `u32.bits` | `vec4<f32>.real` | 1 |  |
 | F153 | `bits.pack4x8unorm` | `Math::Pack4x8unorm` | `vec4<f32>.real` | `u32.bits` | 1 |  |
-| F154 | `bits.unpack4x8unorm` | `Math::UnPack4x8unorm` | `u32.bits` | `vec4<f32>.real` | 1 |  |
+| F154 | `bits.unpack4x8unorm` | `Math::Unpack4x8unorm` | `u32.bits` | `vec4<f32>.real` | 1 |  |
 | F155 | `bits.pack2x16snorm` | `Math::Pack2x16snorm` | `vec2<f32>.real` | `u32.bits` | 1 |  |
-| F156 | `bits.unpack2x16snorm` | `Math::UnPack2x16snorm` | `u32.bits` | `vec2<f32>.real` | 1 |  |
+| F156 | `bits.unpack2x16snorm` | `Math::Unpack2x16snorm` | `u32.bits` | `vec2<f32>.real` | 1 |  |
 | F157 | `bits.pack2x16unorm` | `Math::Pack2x16unorm` | `vec2<f32>.real` | `u32.bits` | 1 |  |
-| F158 | `bits.unpack2x16unorm` | `Math::UnPack2x16unorm` | `u32.bits` | `vec2<f32>.real` | 1 |  |
+| F158 | `bits.unpack2x16unorm` | `Math::Unpack2x16unorm` | `u32.bits` | `vec2<f32>.real` | 1 |  |
 | F159 | `bits.pack2x16float` | `Math::Pack2x16float` | `vec2<f32>.real` | `u32.bits` | 1 |  |
-| F160 | `bits.unpack2x16float` | `Math::UnPack2x16float` | `u32.bits` | `vec2<f32>.real` | 1 |  |
+| F160 | `bits.unpack2x16float` | `Math::Unpack2x16float` | `u32.bits` | `vec2<f32>.real` | 1 |  |
 
 ## class `hash`
 

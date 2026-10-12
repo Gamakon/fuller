@@ -548,6 +548,14 @@ pub fn conform(t: &Tree, demand: Ty, kingdom: &WgslKingdom, per_kernel: &[PerKer
         if kingdom.rows.iter().any(|r| r.name == t.name && r.output == demand) {
             return Ok(Tree::literal(&t.name, demand, t.konst));
         }
+        // A literal's form is the inference's guess (an index where a count
+        // is demanded, `extractBits(n, 2u, 3u)`): the literal row of the
+        // demanded dual, when its value is that form's (an integer form
+        // takes a whole number, never a negative one for u32).
+        let whole = t.konst.fract() == 0.0;
+        if let Some(r) = kingdom.rows.iter().find(|r| r.name.starts_with("literal.") && r.inputs.is_empty() && r.output == demand && matches!(r.name.as_str(), "literal.index" | "literal.count" | "literal.bits") && whole && t.konst >= 0.0 && matches!(t.name.as_str(), "literal.index" | "literal.count" | "literal.bits")) {
+            return Ok(Tree::literal(&r.name, demand, t.konst));
+        }
     } else {
         // Every row of the name under the demand; the one that needs the
         // fewest conversions inserted below it wins (a comparison of two

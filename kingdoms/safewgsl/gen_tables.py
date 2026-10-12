@@ -401,7 +401,7 @@ f("bits", "unpack_sign", "composite", ["u32.bits", "u32.index"], "bool.sign", ""
 for op in ["pack4x8snorm", "pack4x8unorm", "pack2x16snorm", "pack2x16unorm", "pack2x16float"]:
     lanes = "vec4<f32>.real" if "4x8" in op else "vec2<f32>.real"
     f("bits", op, f"Math::{op[0].upper() + op[1:]}", [lanes], "u32.bits", "")
-    f("bits", "un" + op, f"Math::Un{op[0].upper() + op[1:]}", ["u32.bits"], lanes, "")
+    f("bits", "un" + op, f"Math::Un{op}", ["u32.bits"], lanes, "")
 # hash
 f("hash", "mix64", "composite", ["vec2<u32>.hash64"], "vec2<u32>.hash64", "SplitMix64 finaliser, two limbs")
 f("hash", "fmix32", "composite", ["u32.hash32"], "u32.hash32", "MurmurHash3 finaliser")
@@ -877,6 +877,26 @@ for r in ("L0", "L1", "L2", "L3", "L4", "L5"):
 # same workgroup and block, the driver dispatches ceil(rows / (x by)) x ceil(d / (y bx)), and every row
 # and column of the gene renders on the other thread axis. One symbol of the gene chooses the coalescing.
 f("grid", "of_rows_x", "composite", ["u32.wgdim", "u32.wgdim", "u32.blk", "u32.blk"], "grid.grid", "arity 4: grid.of with the output's rows on thread x (the fast index) and its columns on y; the header says `rows-x`")
+
+
+# ---- the u32 forms and the bit, dot and modulo overloads (2026-10-12, WGSL_COVERAGE.md gaps 2 and 3) ----
+# A u32 is an index, a count or a bit field by its meaning; WGSL has one u32. The crossings are explicit
+# rows (the convert class holds the only crossings): an index or a count read as a bit field and a bit
+# field read as an index, per lane. The bit-count functions, reverseBits and extractBits over vectors;
+# insertBits as naga's one call (arity 4); dot over integer vectors; % over reals (x - y * trunc(x / y)).
+f("convert", "index_to_bits", "As", ["<u32.index>"], "<u32.bits>", "the same u32 lanes read as a bit field")
+f("convert", "bits_to_index", "As", ["<u32.bits>"], "<u32.index>", "the same u32 lanes read as an index")
+f("convert", "count_to_bits", "As", ["<u32.count>"], "<u32.bits>", "the same u32 lanes read as a bit field")
+for L in (2, 3, 4):
+    f("index", "of_count", "composite", [f"vec{L}<u32>.count"], f"vec{L}<u32>.index", "per lane")
+    for op, naga in (("count_ones", "CountOneBits"), ("leading_zeros", "CountLeadingZeros"), ("trailing_zeros", "CountTrailingZeros"), ("find_lsb", "FirstTrailingBit"), ("find_msb", "FirstLeadingBit")):
+        f("bits", op, f"Math::{naga}", [f"vec{L}<u32>.bits"], f"vec{L}<u32>.count", "per lane")
+    f("bits", "reverse", "Math::ReverseBits", [f"vec{L}<u32>.bits"], f"vec{L}<u32>.bits", "per lane")
+    f("bits", "extract", "Math::ExtractBits", [f"vec{L}<u32>.bits", "u32.index", "u32.count"], f"vec{L}<u32>.bits", "arity 3, per lane")
+f("bits", "insert", "Math::InsertBits", ["<u32.bits>", "<u32.bits>", "u32.index", "u32.count"], "<u32.bits>", "arity 4: insertBits(e, newbits, offset, count)")
+f("geom", "dot", "Math::Dot", ["<vecL<u32>.index>", "<vecL<u32>.index>"], "u32.index", "integer dot product (wraps)")
+f("geom", "dot", "Math::Dot", ["<vecL<i32>.int>", "<vecL<i32>.int>"], "i32.int", "integer dot product (wraps)")
+f("arith", "mod", "Binary::Modulo", ["<S.real>", "<S.real>"], "<S.real>", "WGSL's % on reals: x - y * trunc(x / y)")
 
 
 def write_tsv(path, header, rows):

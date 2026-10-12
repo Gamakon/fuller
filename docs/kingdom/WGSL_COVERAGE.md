@@ -58,7 +58,7 @@
 | `var` / `let` (typed and inferred) | covered | registers `reg.f*`, `reg.v*`, `reg.i*`, `reg.b*`; lets inline or register |
 | assignment, `_ = e` | covered | `reg.set_*`, `stmt.discard_*` (atomics) |
 | compound assignment on f32 | covered | lowered by naga |
-| compound assignment on u32 (`^=` and the bit ops) | missing | `bits.xor` (u32.bits) where u32.index is demanded: no conversion between the u32 forms |
+| compound assignment on u32 (`^=` and the bit ops) | covered | `convert.index_to_bits`, `convert.bits_to_index` (the u32 form crossings) |
 | `++` / `--` | missing | the probe's i32 local has no register (see i32) |
 | `if` / `else if` / `else` | covered | `stmt.if_*`, `stmt.if_else_*` |
 | `switch` / `case` / `default` | missing | "statement Switch has no safe spelling" |
@@ -90,7 +90,7 @@
 | `vec3<f32>` | partial | `vec3` from `cross` and 3-lane swizzles: "geom.cross (vec3) where vec2 is demanded" |
 | `vec2<u32>` | covered | |
 | `vec3<u32>` as a value | missing | `gid + vec3<u32>(1u)`: the thread id cannot be an operand |
-| `vec4<u32>` | missing | `bits.and` (bits) where `vec2<u32>.index` is demanded; no `vec4<u32>` register (blocks `subgroupBallot`) |
+| `vec4<u32>` | partial | as a value (`ty_vec4_u32`) covered; no `vec4<u32>` register (blocks `subgroupBallot`) |
 | `vecN<i32>` | missing | the i32 register gap |
 | `vecN<bool>` | partial | from comparisons with `any` / `all` covered; `vec2<bool>` built by a constructor in `select` missing |
 | matrices `mat2x2<f32>` | missing | constructed from four scalars: no `shape.compose_mat` from scalars |
@@ -111,12 +111,12 @@
 | construct | status | rows / reason |
 |---|---|---|
 | `+ - * /` on f32 and vectors | covered | `arith.*` |
-| `%` on f32 | missing | "naga.Binary.Modulo has no row" |
+| `%` on f32 | covered | `arith.mod` (F1157) |
 | `%` on u32 | covered | `index.mod` |
 | unary `-` on vectors | covered | |
 | comparisons, `&&`, `\|\|`, `!` | covered | `compare.*`, `logic.*` |
-| `& \| ^ << >>` on u32 | partial | rows exist on `u32.bits` and `u32.index`, but there is no conversion between the two forms, so `n ^ 2u` on an index fails |
-| `~` | missing | `bits.not` (bits) where index is demanded |
+| `& \| ^ << >>` on u32 | covered | `bits.*`, `index.*`, with the u32 form crossings |
+| `~` | covered | `bits.not` |
 | swizzles, 1, 2 and 4 lanes | covered | `shape.access_*`, `shape.swizzle` |
 | swizzles, 3 lanes | missing | `shape.swizzle.zyx` where vec2 is demanded |
 | swizzle assignment | covered | `reg.set_v_lane_*` |
@@ -151,13 +151,14 @@
 | `quantizeToF16` | naga 0.20 | not parsed |
 | integer abs, min, max, clamp, sign on i32 | missing | the i32 register gap |
 | min, max, clamp on u32 | covered | `index.min/max/clamp` |
-| `dot` on integer vectors | missing | "naga.Math.Dot has no row" |
-| countOneBits, countLeadingZeros, countTrailingZeros, firstLeadingBit, firstTrailingBit, reverseBits on u32 | missing | rows exist on `u32.bits`; an index argument needs the u32 form conversion |
-| the same on vecN<u32> | missing | scalar rows only |
-| `extractBits` (u32) | missing | its `u32.bits` result where index is demanded |
-| `insertBits` | missing | "naga.Math.InsertBits has no row" (the kingdom has `bits.insert_lo/hi`, other shapes) |
-| pack4x8snorm/unorm, pack2x16snorm/unorm/float | missing | rows exist; the result is bits where index is demanded |
-| unpack4x8snorm/unorm, unpack2x16snorm/unorm/float | missing | "naga.Math.Unpack* has no row": the reader's naga name map lacks them, the rows exist |
+| `dot` on integer vectors | covered | `geom.dot` (F1155, F1156) |
+| countOneBits, countLeadingZeros, countTrailingZeros, firstLeadingBit, firstTrailingBit, reverseBits on u32 | covered | `bits.*` |
+| the same on vecN<u32> | covered | `bits.*` per lane (F1130-F1153) |
+| `extractBits` (u32, vecN<u32>) | covered | `bits.extract` |
+| `insertBits` | covered | `bits.insert` (F1154, arity 4) |
+| pack4x8snorm/unorm | covered | `bits.pack*` |
+| pack2x16snorm/unorm/float | partial | rows covered; the probes' `v.xy` argument fails (the swizzle gap) |
+| unpack4x8snorm/unorm, unpack2x16snorm/unorm/float | covered | `bits.unpack*` (their naga column was `UnPack…`; naga writes `Unpack…`) |
 | pack4xI8, pack4xU8, unpack4xI8, unpack4xU8, dot4I8Packed, dot4U8Packed | naga 0.20 | not parsed |
 | `select`, `all`, `any` | covered | |
 | `arrayLength` | missing | |
@@ -175,8 +176,8 @@
 Each fill is its own commit with a corpus row and the full checklist. The order is by how many probes a fix reads.
 
 1. Done: an f32-to-f32 `As` (naga's lowering of an abstract float literal) read as its operand: 16 probes (108 of 184 read).
-2. Conversions between the u32 forms (`index`, `bits`, `count`), and vector overloads of the bit functions: about 20 probes.
-3. The reader's naga name map for `unpack*` and `insertBits`; `dot` on integer vectors; `%` on f32.
+2. Done: conversions between the u32 forms (`index`, `bits`, `count`), and vector overloads of the bit functions.
+3. Done: the `unpack*` naga names, `insertBits`, `dot` on integer vectors, `%` on f32; a naga node the WGSL table has no row for is resolved in the safe table. Gaps 2 and 3 read 26 probes more (134 of 184).
 4. `storageBarrier()` as its own statement row (today it is misread as `workgroupBarrier()`).
 5. `num_workgroups`: naga's name `num_work_groups` mapped to the row.
 6. i32 registers, `i32(u32)`, `u32(i32)`, `i32(f32)`, `bitcast<i32>`, and with them `++` / `--`, i32 `abs/min/max/clamp/sign`, i32 subgroup operations and vecN<i32>.

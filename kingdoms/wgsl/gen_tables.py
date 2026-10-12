@@ -235,7 +235,7 @@ f("bits", "unpack_sign", "composite", ["u32.bits", "u32.index"], "bool.sign", ""
 for op in ["pack4x8snorm", "pack4x8unorm", "pack2x16snorm", "pack2x16unorm", "pack2x16float"]:
     lanes = "vec4<f32>.real" if "4x8" in op else "vec2<f32>.real"
     f("bits", op, f"Math::{op[0].upper() + op[1:]}", [lanes], "u32.bits", "")
-    f("bits", "un" + op, f"Math::Un{op[0].upper() + op[1:]}", ["u32.bits"], lanes, "")
+    f("bits", "un" + op, f"Math::Un{op}", ["u32.bits"], lanes, "")
 # hash
 f("hash", "mix64", "composite", ["vec2<u32>.hash64"], "vec2<u32>.hash64", "SplitMix64 finaliser, two limbs")
 f("hash", "fmix32", "composite", ["u32.hash32"], "u32.hash32", "MurmurHash3 finaliser")

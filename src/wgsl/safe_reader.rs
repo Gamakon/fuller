@@ -299,6 +299,13 @@ fn tree_of(ctx: &mut Ctx, n: &Node) -> Result<Tree, String> {
                 }
             }
             if !known {
+                // A naga node the WGSL table has no row for may have one in
+                // the safe table (rows the safe kingdom added: insertBits,
+                // dot on integer vectors, % on reals): resolved there by its
+                // operand's scalar kind and arity.
+                if let Some(row) = safe_row_for(name, kids) {
+                    return tree_of(ctx, &Node::App { name: row, slot: slot_of(n).to_string(), known: true, kids: kids.clone() });
+                }
                 return Err(format!("{name} has no row in the table"));
             }
             // `x & ~(k - 1)` with k a power of two (k16's `m & ~3u`): the mask
@@ -324,7 +331,14 @@ fn tree_of(ctx: &mut Ctx, n: &Node) -> Result<Tree, String> {
                 let d = ctx.kingdom.dual(kids.first()?.ty)?;
                 (name == "shape.access_dyn" && d.lanes > 1 && d.slot.starts_with("vec")).then(|| ty(ctx, &format!("{}.{}", d.scalar()?, d.form)).ok()).flatten()
             };
-            let t = ctx.duals.get(&text).copied().flatten().or_else(lane_of_vector).ok_or_else(|| format!("untyped node {}", &text[..text.len().min(80)]))?;
+            // A row the inference does not know (one the safe table added):
+            // its output with the node's own slot, among the rows of its name
+            // and arity.
+            let by_row = || -> Option<Ty> {
+                let slot = slot_of(n);
+                ctx.kingdom.rows.iter().filter(|r| r.name == *name && r.inputs.len() == kids.len()).map(|r| r.output).find(|&o| ctx.kingdom.dual(o).is_some_and(|d| d.slot == slot))
+            };
+            let t = ctx.duals.get(&text).copied().flatten().or_else(lane_of_vector).or_else(by_row).ok_or_else(|| format!("untyped node {}", &text[..text.len().min(80)]))?;
             let name = &prefixed(&ctx.local_prefix, name);
             // A lane of a vector built in place (`vec2<f32>(a, b).x`): naga
             // flattens `vec3<f32>(vec2<f32>(a, b), c)` into the lanes of the
@@ -414,6 +428,28 @@ fn nested_index<'t>(rest: &str, kids: &'t [Tree]) -> Option<(&'t Tree, &'t Tree)
 
 fn literal_value(t: &Tree) -> Option<f32> {
     t.name.starts_with("literal.").then_some(t.konst)
+}
+
+/// The safe table's row for an unresolved `naga.<Node>.<Variant>` node, by
+/// the scalar kind of its first operand and its arity.
+fn safe_row_for(name: &str, kids: &[Node]) -> Option<String> {
+    static TABLE: std::sync::OnceLock<crate::wgsl::table::FunctionTable> = std::sync::OnceLock::new();
+    let (node, variant) = name.strip_prefix("naga.")?.split_once('.')?;
+    let kind = match slot_of(kids.first()?) {
+        s if s.contains("f32") || s.contains("f16") => crate::wgsl::table::ScalarKind::Float,
+        s if s.contains("i32") => crate::wgsl::table::ScalarKind::Sint,
+        s if s.contains("u32") => crate::wgsl::table::ScalarKind::Uint,
+        s if s.contains("bool") => crate::wgsl::table::ScalarKind::Bool,
+        _ => return None,
+    };
+    TABLE.get_or_init(crate::wgsl::table::FunctionTable::safe).resolve(&format!("{node}::{variant}"), kind, kids.len()).map(|t| t.name())
+}
+
+/// A reader node's WGSL slot.
+fn slot_of(n: &Node) -> &str {
+    match n {
+        Node::Leaf { slot, .. } | Node::Literal { slot, .. } | Node::App { slot, .. } => slot,
+    }
 }
 
 /// The marker of a tree already in the safe grammar inside a raw one.
