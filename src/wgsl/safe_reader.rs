@@ -5576,7 +5576,7 @@ mod tests {
 
     /// The count of [`random_sampler_trees_parse_back_to_the_ast_drawn`]
     /// reached so far (a ratchet: it only rises, to 1,000 of 1,000).
-    const AST_EQUAL_FLOOR: usize = 74;
+    const AST_EQUAL_FLOOR: usize = 103;
 
     /// THE BAR (Andrew, 2026-10-13): AST to AST. 1,000 random trees of the
     /// kingdom's typed sampler (the safe root, depth 7, seeds 0..1000, the

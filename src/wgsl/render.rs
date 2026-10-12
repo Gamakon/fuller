@@ -486,6 +486,33 @@ fn plan_bytes(plan: &BTreeMap<String, (String, u32)>) -> u64 {
 }
 
 /// The member of `set` nearest `v` (the first on a tie; a non-finite `v` is taken as 0).
+/// The value a u32 literal of `form` is written at: an index, count or code
+/// clamped into the u32 range, a workgroup dimension rounded into 1..=1,024,
+/// lit64 and lit4096 rounded into 1..=64 and 1..=4096, a block or unroll
+/// factor snapped to its set. `None` for a form that is not a u32 literal's.
+pub fn written_u32(form: &str, v: f32) -> Option<u32> {
+    Some(match form {
+        "index" | "count" | "bits" | "hash32" | "code4" | "code8" | "code16" | "code1024" => {
+            if v.is_finite() {
+                v.clamp(0.0, 4_294_967_040.0) as u32
+            } else {
+                0
+            }
+        }
+        "wgdim" => workgroup_dim(v),
+        "lit64" => if v.is_finite() { (v.round() as i64).clamp(1, 64) as u32 } else { 1 },
+        "lit4096" => if v.is_finite() { (v.round() as i64).clamp(1, 4096) as u32 } else { 1 },
+        "blk" => snap(&BLK, v),
+        "unroll" => snap(&UNROLL, v),
+        _ => return None,
+    })
+}
+
+/// The value an i32 literal (`literal.int`, `literal.q15_16`) is written at.
+pub fn written_i32(v: f32) -> i32 {
+    v.clamp(-2_147_483_648.0, 2_147_483_520.0) as i32
+}
+
 pub fn snap(set: &[u32], v: f32) -> u32 {
     let v = if v.is_finite() { v } else { 0.0 };
     *set.iter().min_by(|a, b| (f64::from(**a) - f64::from(v)).abs().partial_cmp(&(f64::from(**b) - f64::from(v)).abs()).expect("finite")).expect("a non-empty set")
@@ -2027,19 +2054,14 @@ impl Renderer<'_> {
                 }
                 if wrap { format!("lit_f32({v:?}f)") } else { format!("{v:?}f") }
             }
-            "index" | "count" | "bits" | "hash32" | "code4" | "code8" | "code16" | "code1024" => u(if v.is_finite() { v.clamp(0.0, 4_294_967_040.0) as u32 } else { 0 }),
-            "wgdim" => u(workgroup_dim(v)),
-            "lit64" => u(if v.is_finite() { (v.round() as i64).clamp(1, 64) as u32 } else { 1 }),
-            "lit4096" => u(if v.is_finite() { (v.round() as i64).clamp(1, 4096) as u32 } else { 1 }),
-            "blk" => u(snap(&BLK, v)),
-            "unroll" => u(snap(&UNROLL, v)),
+            "index" | "count" | "bits" | "hash32" | "code4" | "code8" | "code16" | "code1024" | "wgdim" | "lit64" | "lit4096" | "blk" | "unroll" => u(written_u32(form, v).ok_or_else(|| format!("literal.{form} has no u32 text"))?),
             "int" | "q15_16" => {
                 // Concrete i32 (`-49i`): an abstract integer literal shifted or
                 // multiplied by a runtime u32 or i32 is refused by naga 0.20
                 // ("Cannot cast scalar components ... to type i32", random
                 // kernels with the i32 rows, 2026-10-12). i32::MIN has no
                 // literal (2147483648i is out of range).
-                let x = v.clamp(-2_147_483_648.0, 2_147_483_520.0) as i32;
+                let x = written_i32(v);
                 let text = if x == i32::MIN { "(-2147483647i - 1i)".to_string() } else { format!("{x}i") };
                 if wrap { format!("lit_i32({text})") } else { text }
             }
@@ -2638,7 +2660,29 @@ pub fn sample(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, se
         let kids = r.inputs.iter().map(|&t| grow(rows, by_out, kingdom, t, depth + 1, max_depth, state)).collect();
         Tree::new(&r.name, demand, kids)
     }
-    canonical_grid(kingdom, live_kernel(grow(&rows, &by_out, kingdom, root, 0, max_depth, &mut state)))
+    let drawn = live_kernel(grow(&rows, &by_out, kingdom, root, 0, max_depth, &mut state));
+    // The knobs as the parser reads them (AST to AST group 3): every knob
+    // reference written as the literal its kernel's knobs give (at the value
+    // the renderer writes), the grid without its tile depth, then the
+    // references the parser assigns (`params::assign`: a literal at a
+    // position that depends on a knob and equal to its value, and the tile
+    // depth declared on the grid when a reference names it). A reference
+    // the parser cannot see in text (one whose value a plain literal also
+    // writes, at a position that depends on no knob) is drawn as that literal.
+    let literal = written_literals(&crate::wgsl::params::to_literals(&drawn, kingdom)?);
+    crate::wgsl::params::assign(&canonical_grid(kingdom, literal)?, kingdom)
+}
+
+/// Every plain literal at the value the renderer writes ([`written_u32`],
+/// [`written_i32`]; a flag or sign is 0 or 1).
+fn written_literals(t: &Tree) -> Tree {
+    let konst = match t.name.strip_prefix("literal.") {
+        Some("int" | "q15_16") => written_i32(t.konst) as f32,
+        Some("flag" | "sign") => f32::from(u8::from(t.konst != 0.0)),
+        Some(form) => written_u32(form, t.konst).map_or(t.konst, |x| x as f32),
+        None => t.konst,
+    };
+    Tree { name: t.name.clone(), ty: t.ty, konst, kids: t.kids.iter().map(written_literals).collect() }
 }
 
 /// A safe kernel without the statements no text holds: the renderer stops a
@@ -2704,9 +2748,9 @@ fn live_kernel(mut root: Tree) -> Tree {
 
 /// A safe kernel's grid in the one form text can spell (AST to AST,
 /// 2026-10-13: 0 of 1,000 random trees parsed back to the tree drawn, every
-/// one first differing at its grid): the grid row under at most one tile
-/// depth (`grid.with_ktile`, the first one drawn), then, when the statements
-/// use a workgroup array, `grid.with_wg` declaring each array they use at the
+/// one first differing at its grid): the grid row (without a tile depth:
+/// `params::assign` declares one where a reference names it), then, when
+/// the statements use a workgroup array, `grid.with_wg` declaring each array they use at the
 /// length the renderer writes, in the order of the arrays' names. A nested
 /// or repeated wrapper, or a declaration of an array no statement uses, has
 /// no text of its own: the renderer writes the arrays the statements use.
@@ -2716,11 +2760,7 @@ fn canonical_grid(kingdom: &WgslKingdom, mut root: Tree) -> Result<Tree, String>
     }
     let drawn = &root.kids[0];
     let mut row = drawn;
-    let mut ktile: Option<&Tree> = None;
     while (row.name == "grid.with_wg" || row.name == "grid.with_ktile") && row.kids.len() == 2 {
-        if row.name == "grid.with_ktile" && ktile.is_none() {
-            ktile = Some(&row.kids[1]);
-        }
         row = &row.kids[0];
     }
     // The grid row at the values the renderer writes in the header: the
@@ -2730,10 +2770,7 @@ fn canonical_grid(kingdom: &WgslKingdom, mut root: Tree) -> Result<Tree, String>
     let dim = |v: u32| -> Result<Tree, String> { Ok(Tree::literal("literal.wgdim", dual_ty(kingdom, "u32.wgdim")?, v as f32)) };
     let blk = |v: u32| -> Result<Tree, String> { Ok(Tree::literal("literal.blk", dual_ty(kingdom, "u32.blk")?, v as f32)) };
     let row = Tree::new(if g.rows_x { "grid.of_rows_x" } else { "grid.of" }, drawn.ty, vec![dim(g.x)?, dim(g.y)?, blk(g.bx)?, blk(g.by)?]);
-    let mut grid = match ktile {
-        Some(t) => Tree::new("grid.with_ktile", drawn.ty, vec![row, t.clone()]),
-        None => row,
-    };
+    let mut grid = row;
     // The lengths the renderer writes: the plan's (the drawn declarations of
     // the arrays used, the rest at their defaults, halved to fit), or, for a
     // kernel using only the original four arrays, their original lengths.
