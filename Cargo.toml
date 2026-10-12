@@ -113,6 +113,10 @@ name = "wgsl_gram_gate"
 required-features = ["gpu", "wgsl"]
 
 [[example]]
+name = "wgsl_closeness"
+required-features = ["gpu", "wgsl"]
+
+[[example]]
 name = "wgsl_gram_evolve"
 required-features = ["gpu", "wgsl"]
 

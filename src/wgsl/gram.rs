@@ -1044,6 +1044,25 @@ pub struct Fitness {
     pub feasible: bool,
     /// Test cases of the constraint passed, of 128.
     pub passed: usize,
+    /// The error the evaluation stopped on, for a graded infeasible fitness
+    /// (2026-10-12, Andrew: evolution climbs toward correctness), 0 a match:
+    /// at the constraint, the mean `probes::distance` over the cases run; at
+    /// a pair, its worst error over the tolerance (`max / max(2 shipped, 1)`,
+    /// above 1 when it fails), infinite with a non-finite output; infinite
+    /// where no output was compared (compile, the timing gate, a run error
+    /// after the cases); 0 when feasible.
+    pub distance: f64,
+    /// HOW CLOSE an infeasible kernel's output is to the reference, column by
+    /// column in [0, 1], 0 the reference (`closeness::COLUMNS`: the cases
+    /// failed, correlation, scale, shift, transpose, sorted values, sums,
+    /// cells written, cells within tolerance, input sensitivity), from the
+    /// cases' outputs and a failing pair's; all 0 when feasible, all 1 with
+    /// no output to compare.
+    pub closeness: [f64; crate::wgsl::closeness::N],
+    /// The HFF angle of `closeness` (`truenorth`), in [0, π/2]: the
+    /// infeasible kernel's place within the infeasible band (phylu
+    /// `wgsl_fit`); 0 when feasible.
+    pub closeness_hff: f64,
     /// The six columns in [0, 1], 0 best, when feasible.
     pub columns: [f64; 6],
     /// Speed-up per timing shape (shipped / candidate), when feasible.
@@ -1180,13 +1199,13 @@ impl FitnessContext {
         let t = Instant::now();
         let mut meter = Meter::default();
         let mut split = Split::default();
-        let infeasible = |passed: usize, detail: String, t: Instant, meter: &Meter, split: &Split| Fitness { feasible: false, passed, columns: [1.0; 6], speedups: [0.0; 3], hff: f64::INFINITY, detail, seconds: t.elapsed().as_secs_f64(), predicted_ms: [0.0; 3], rate_per_g: meter.rate_per_g(), floor_ms: meter.floor_ms, measured_ms: [0.0; 3], split: Split { total: t.elapsed().as_secs_f64() * 1e3, ..*split } };
+        let infeasible = |passed: usize, distance: f64, closeness: [f64; crate::wgsl::closeness::N], detail: String, t: Instant, meter: &Meter, split: &Split| Fitness { feasible: false, passed, distance, closeness, closeness_hff: truenorth(&closeness), columns: [1.0; 6], speedups: [0.0; 3], hff: f64::INFINITY, detail, seconds: t.elapsed().as_secs_f64(), predicted_ms: [0.0; 3], rate_per_g: meter.rate_per_g(), floor_ms: meter.floor_ms, measured_ms: [0.0; 3], split: Split { total: t.elapsed().as_secs_f64() * 1e3, ..*split } };
         let elapsed_ms = |t: Instant| t.elapsed().as_secs_f64() * 1e3;
         let compiled = Gram::compile(dev, source);
         split.compile = elapsed_ms(t);
         let gram = match compiled {
             Ok(g) => g,
-            Err(e) => return infeasible(0, format!("compile: {}", e.lines().find(|l| l.contains("error") || l.contains("header")).unwrap_or(e.lines().next().unwrap_or(""))), t, &meter, &split),
+            Err(e) => return infeasible(0, f64::INFINITY, crate::wgsl::closeness::WORST, format!("compile: {}", e.lines().find(|l| l.contains("error") || l.contains("header")).unwrap_or(e.lines().next().unwrap_or(""))), t, &meter, &split),
         };
         // The correctness cases, run in chunks of `CASE_CHUNK`, one
         // submission a chunk (one submission a case cost 16 ms of
@@ -1197,7 +1216,15 @@ impl FitnessContext {
         // between two chunks (one chunk cannot be cancelled, the rest can).
         let mut passed = 0;
         let mut first_fail = String::new();
+        // The mean distance over the cases run (infinite before any ran).
+        let (mut sum_distance, mut ran) = (0.0f64, 0usize);
+        let mean_distance = |sum: f64, ran: usize| if ran == 0 { f64::INFINITY } else { sum / ran as f64 };
+        // Every case's closeness columns and its output's and reference's
+        // hashes, in the admission's order (None for a case never run).
+
         let cases = self.admission.len();
+        let mut per_case: Vec<Option<[f64; crate::wgsl::closeness::N]>> = vec![None; cases];
+        let mut outs: Vec<Option<(u64, u64, usize)>> = vec![None; cases];
         // The projection is over the cases alone: the pipeline compile
         // (50-300 ms on Metal) before them would be multiplied by 128.
         let t_cases = Instant::now();
@@ -1207,12 +1234,16 @@ impl FitnessContext {
             let rs: Vec<&Resident> = res.iter().collect();
             let Batch { h: hs, compute_ms, .. } = match gram.run_batch(&rs) {
                 Ok(x) => x,
-                Err(e) => return infeasible(passed, format!("run: {e}"), t, &meter, &split),
+                Err(e) => return infeasible(passed, mean_distance(sum_distance, ran), crate::wgsl::closeness::columns(&per_case, passed, &outs), format!("run: {e}"), t, &meter, &split),
             };
             for (&i, h) in idx.iter().zip(&hs) {
                 let p = &self.probes[i];
                 meter.push(work(p.d, p.m), compute_ms / idx.len() as f64);
                 let d = crate::wgsl::probes::distance(h, p);
+                sum_distance += if d.is_nan() { f64::INFINITY } else { d };
+                per_case[ran] = Some(crate::wgsl::closeness::case_columns(h, &p.h_ref, p.d));
+                outs[ran] = Some((crate::wgsl::closeness::hash_bits(h, |v: f32| u64::from(v.to_bits())), crate::wgsl::closeness::hash_bits(&p.h_ref, f64::to_bits), p.d));
+                ran += 1;
                 if d <= crate::wgsl::probes::PASS {
                     passed += 1;
                 } else if first_fail.is_empty() {
@@ -1222,12 +1253,12 @@ impl FitnessContext {
             done += idx.len();
             let projected = elapsed_ms(t_cases) * cases as f64 / done as f64;
             if done < cases && projected > self.base_budget_ms / 3.0 {
-                return infeasible(passed, format!("slow: the correctness cases are projected at {:.1} s ({:.1} s for the first {done}), over a third of the {:.1} s budget; the rest not dispatched", projected / 1e3, elapsed_ms(t_cases) / 1e3, self.base_budget_ms / 1e3), t, &meter, &split);
+                return infeasible(passed, mean_distance(sum_distance, ran), crate::wgsl::closeness::columns(&per_case, passed, &outs), format!("slow: the correctness cases are projected at {:.1} s ({:.1} s for the first {done}), over a third of the {:.1} s budget; the rest not dispatched", projected / 1e3, elapsed_ms(t_cases) / 1e3, self.base_budget_ms / 1e3), t, &meter, &split);
             }
         }
         split.cases = elapsed_ms(t_cases);
         if passed < cases {
-            return infeasible(passed, format!("constraint {passed}/{cases} cases: {first_fail}"), t, &meter, &split);
+            return infeasible(passed, mean_distance(sum_distance, ran), crate::wgsl::closeness::columns(&per_case, passed, &outs), format!("constraint {passed}/{cases} cases: {first_fail}"), t, &meter, &split);
         }
         meter.fix_floor();
         let limit_ms = self.slow_limit_ms();
@@ -1235,14 +1266,14 @@ impl FitnessContext {
         let t_rungs = Instant::now();
         for ((d, m, _), res) in self.rungs.iter().zip(&self.resident_rungs) {
             if let Err(e) = gate(&meter, &format!("the timing rung d {d} m {m}"), work(*d, *m), elapsed_ms(t), limit_ms, self.base_budget_ms) {
-                return infeasible(passed, e, t, &meter, &split);
+                return infeasible(passed, f64::INFINITY, crate::wgsl::closeness::columns(&per_case, passed, &outs), e, t, &meter, &split);
             }
             match gram.run(res, false) {
                 Ok(b) => {
                     meter.push(work(*d, *m), b.compute_ms);
                     split.build(&b);
                 }
-                Err(e) => return infeasible(passed, format!("run: {e}"), t, &meter, &split),
+                Err(e) => return infeasible(passed, f64::INFINITY, crate::wgsl::closeness::columns(&per_case, passed, &outs), format!("run: {e}"), t, &meter, &split),
             }
         }
         split.rungs = elapsed_ms(t_rungs);
@@ -1254,12 +1285,12 @@ impl FitnessContext {
         let mut worst = [0.0f64; 3];
         for (k, (name, d, m, _, h_ref, smax), res) in order {
             if let Err(e) = gate(&meter, &format!("pair {name} (d {d} m {m})"), work(*d, *m), elapsed_ms(t), limit_ms, self.base_budget_ms) {
-                return infeasible(passed, e, t, &meter, &split);
+                return infeasible(passed, f64::INFINITY, crate::wgsl::closeness::columns(&per_case, passed, &outs), e, t, &meter, &split);
             }
             let t_pb = Instant::now();
             let b = match gram.run(res, true) {
                 Ok(b) => b,
-                Err(e) => return infeasible(passed, format!("run: {e}"), t, &meter, &split),
+                Err(e) => return infeasible(passed, f64::INFINITY, crate::wgsl::closeness::columns(&per_case, passed, &outs), format!("run: {e}"), t, &meter, &split),
             };
             split.pairs_build += elapsed_ms(t_pb);
             split.build(&b);
@@ -1268,7 +1299,15 @@ impl FitnessContext {
             let (max_ratio, non_finite) = check_max(&b.h, h_ref, *d, *m);
             split.pairs_check += elapsed_ms(t_pc);
             if non_finite > 0 || max_ratio > (2.0 * smax).max(1.0) {
-                return infeasible(passed, format!("pair {name}: max {max_ratio:.3} tau (shipped {smax:.3}), non-finite {non_finite}"), t, &meter, &split);
+                let over = if non_finite > 0 { f64::INFINITY } else { max_ratio / (2.0 * smax).max(1.0) };
+                // The cases' columns, each error column the mean of theirs and
+                // the failing pair's own (a pair is wrong where the cases were not).
+                let mut pair_closeness = crate::wgsl::closeness::columns(&per_case, passed, &outs);
+                let pair = crate::wgsl::closeness::case_columns(&b.h, h_ref, *d);
+                for (c, x) in pair_closeness.iter_mut().zip(pair).take(9).skip(1) {
+                    *c = (*c + x) / 2.0;
+                }
+                return infeasible(passed, over, pair_closeness, format!("pair {name}: max {max_ratio:.3} tau (shipped {smax:.3}), non-finite {non_finite}"), t, &meter, &split);
             }
             worst[k] = worst[k].max(if *smax > 0.0 { max_ratio / smax } else { max_ratio });
         }
@@ -1279,7 +1318,7 @@ impl FitnessContext {
         for (k, (d, m, _)) in self.timing.iter().enumerate() {
             match gate(&meter, &format!("the timing shape d {d} m {m}"), work(*d, *m), 0.0, limit_ms, f64::INFINITY) {
                 Ok(p) => predicted_ms[k] = p,
-                Err(e) => return Fitness { predicted_ms, ..infeasible(passed, e, t, &meter, &split) },
+                Err(e) => return Fitness { predicted_ms, ..infeasible(passed, f64::INFINITY, crate::wgsl::closeness::columns(&per_case, passed, &outs), e, t, &meter, &split) },
             }
         }
         // Speed columns: `timing_rounds` candidate builds per shape, the
@@ -1297,13 +1336,13 @@ impl FitnessContext {
                 let tb = Instant::now();
                 let b = match gram.run(res, false) {
                     Ok(b) => b,
-                    Err(e) => return Fitness { predicted_ms, ..infeasible(passed, e, t, &meter, &split) },
+                    Err(e) => return Fitness { predicted_ms, ..infeasible(passed, f64::INFINITY, crate::wgsl::closeness::columns(&per_case, passed, &outs), e, t, &meter, &split) },
                 };
                 split.timing_cand += elapsed_ms(tb);
                 split.build(&b);
                 match speedup(shipped_gpu[k], b.gpu_ms) {
                     Ok(r) => ratios.push(r),
-                    Err(e) => return Fitness { predicted_ms, ..infeasible(passed, format!("{e} at d {d} m {m}"), t, &meter, &split) },
+                    Err(e) => return Fitness { predicted_ms, ..infeasible(passed, f64::INFINITY, crate::wgsl::closeness::columns(&per_case, passed, &outs), format!("{e} at d {d} m {m}"), t, &meter, &split) },
                 }
                 walls.push(b.compute_ms);
             }
@@ -1311,7 +1350,7 @@ impl FitnessContext {
             measured_ms[k] = median(&mut walls);
         }
         let columns = fitness_columns(speedups, [(et / 2.0).clamp(0.0, 1.0), (ev / 2.0).clamp(0.0, 1.0), (ex / 2.0).clamp(0.0, 1.0)]);
-        Fitness { feasible: true, passed, columns, speedups, hff: truenorth(&columns), detail: String::new(), seconds: t.elapsed().as_secs_f64(), predicted_ms, rate_per_g: meter.rate_per_g(), floor_ms: meter.floor_ms, measured_ms, split: Split { total: t.elapsed().as_secs_f64() * 1e3, ..split } }
+        Fitness { feasible: true, passed, distance: 0.0, closeness: [0.0; crate::wgsl::closeness::N], closeness_hff: 0.0, columns, speedups, hff: truenorth(&columns), detail: String::new(), seconds: t.elapsed().as_secs_f64(), predicted_ms, rate_per_g: meter.rate_per_g(), floor_ms: meter.floor_ms, measured_ms, split: Split { total: t.elapsed().as_secs_f64() * 1e3, ..split } }
     }
 }
 
