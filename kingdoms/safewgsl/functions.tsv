@@ -1124,3 +1124,4 @@ F1122	stmt	subgroup_barrier_L2	composite	-	stmt.L2	0	subgroupBarrier()
 F1123	stmt	subgroup_barrier_L3	composite	-	stmt.L3	0	subgroupBarrier()
 F1124	stmt	subgroup_barrier_L4	composite	-	stmt.L4	0	subgroupBarrier()
 F1125	stmt	subgroup_barrier_L5	composite	-	stmt.L5	0	subgroupBarrier()
+F1126	grid	of_rows_x	composite	u32.wgdim u32.wgdim u32.blk u32.blk	grid.grid	4	arity 4: grid.of with the output's rows on thread x (the fast index) and its columns on y; the header says `rows-x`

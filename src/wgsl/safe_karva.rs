@@ -650,7 +650,7 @@ pub fn render_tree(tree: &Tree, kingdom: &WgslKingdom) -> Result<Rendered, Strin
     let (t, role) = (FunctionTable::safe(), gram_role());
     let mut r = Renderer::new(kingdom, &t, &role).kernel(tree)?;
     let g = r.grid;
-    r.text = format!("// grid {} {} {} {}\n{}", g.x, g.y, g.bx, g.by, r.text);
+    r.text = format!("{}\n{}", g.header(), r.text);
     Ok(r)
 }
 

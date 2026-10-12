@@ -2327,4 +2327,10 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 | F1124 | `stmt.subgroup_barrier_L4` | `composite` | `-` | `stmt.L4` | 0 | subgroupBarrier() |
 | F1125 | `stmt.subgroup_barrier_L5` | `composite` | `-` | `stmt.L5` | 0 | subgroupBarrier() |
 
-1125 function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Deliberately absent: atomics, images, derivatives, subgroup operations, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.
+## class `grid`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F1126 | `grid.of_rows_x` | `composite` | `u32.wgdim u32.wgdim u32.blk u32.blk` | `grid.grid` | 4 | arity 4: grid.of with the output's rows on thread x (the fast index) and its columns on y; the header says `rows-x` |
+
+1126 function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Deliberately absent: storage-buffer atomics, atomic compare-exchange (naga 0.20's Metal backend lacks it), subgroupBallot, images, derivatives, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.

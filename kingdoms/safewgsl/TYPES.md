@@ -255,4 +255,4 @@ The three machine columns (`fallback_bits`, `fallback_noop`, `fallback_elem` in 
 
 ## Not in the table
 
-Atomics, images, samplers, ray queries, binding arrays, pointers as values, non-square `f16` matrices.
+Storage-buffer atomics, images, samplers, ray queries, binding arrays, pointers as values, non-square `f16` matrices.

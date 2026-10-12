@@ -54,6 +54,10 @@ struct Ctx<'a> {
     /// Local arrays by name → a private array row, its kind and its mask row.
     parrs: BTreeMap<String, (&'static str, char, &'static str)>,
     grid: (u32, u32, u32, u32),
+    /// The layout (2026-10-12): Some(true) when the output's rows are on
+    /// thread x (the header's `rows-x`, or the first store's proof found
+    /// them there), Some(false) on y, None until a store decides it.
+    rows_x: Option<bool>,
     notes: Vec<String>,
     /// Helper functions (see `Helper`); the function being walked's call
     /// results by handle → statement path, and its call arguments by
@@ -875,9 +879,10 @@ fn lets_used_in_deeper_loops(roots: &[Root], body: &naga::Block) -> HashMap<Stri
 /// A tree with every component of a thread id (`shape.access_k` of
 /// `builtin.global_invocation_id`, `local_invocation_id`, `workgroup_id`)
 /// spelled as the axis row it is: x the column axis, y the row axis, z a
-/// plain index.
-fn by_axis(t: &Tree) -> Tree {
-    let kids: Vec<Tree> = t.kids.iter().map(by_axis).collect();
+/// plain index; with the rows on x (`rows_x`), x the row axis and y the
+/// column axis.
+fn by_axis(t: &Tree, rows_x: bool) -> Tree {
+    let kids: Vec<Tree> = t.kids.iter().map(|k| by_axis(k, rows_x)).collect();
     if let (Some(k), [b]) = (t.name.strip_prefix("shape.access_"), kids.as_slice()) {
         let id = match b.name.as_str() {
             "builtin.global_invocation_id" => Some("gid"),
@@ -885,10 +890,10 @@ fn by_axis(t: &Tree) -> Tree {
             "builtin.workgroup_id" => Some("wid"),
             _ => None,
         };
-        let component = match k {
-            "0" => Some("x"),
-            "1" => Some("y"),
-            "2" => Some("z"),
+        let component = match (k, rows_x) {
+            ("0", false) | ("1", true) => Some("x"),
+            ("1", false) | ("0", true) => Some("y"),
+            ("2", _) => Some("z"),
             _ => None,
         };
         if let (Some(id), Some(component)) = (id, component) {
@@ -1557,7 +1562,20 @@ impl<'a> Ctx<'a> {
                     // The row and column with literal factors distributed, so
                     // `(wid * W + lid) * B + k` is proved as `wid * (W * B) + lid * B + k`.
                     let (r, col) = (&distribute_literals(r), &distribute_literals(col));
-                    let (Some((by, i)), Some((bx, j))) = (thread_axis_off_in(r, 1, self.grid.1, tiles, &self.row_arrays, &self.tile_bounds), thread_axis_off_in(col, 0, self.grid.0, tiles, &self.row_arrays, &self.tile_bounds)) else { continue };
+                    // The rows on thread y (grid.of) or on x (grid.of_rows_x):
+                    // the layout the header or an earlier store fixed, else
+                    // the one this store proves, y first.
+                    let layouts: &[bool] = match self.rows_x {
+                        Some(true) => &[true],
+                        Some(false) => &[false],
+                        None => &[false, true],
+                    };
+                    let proved = layouts.iter().find_map(|&rows_x| {
+                        let ((ra, rw), (ca, cw)) = if rows_x { ((0, self.grid.0), (1, self.grid.1)) } else { ((1, self.grid.1), (0, self.grid.0)) };
+                        Some((rows_x, thread_axis_off_in(r, ra, rw, tiles, &self.row_arrays, &self.tile_bounds)?, thread_axis_off_in(col, ca, cw, tiles, &self.row_arrays, &self.tile_bounds)?))
+                    });
+                    let Some((rows_x, (by, i), (bx, j))) = proved else { continue };
+                    self.rows_x = Some(rows_x);
                     if by != self.grid.3 || bx != self.grid.2 {
                         return fail(&format!("block {bx} x {by} in the index, the grid says {} x {}", self.grid.2, self.grid.3));
                     }
@@ -2846,12 +2864,26 @@ fn choose_dual(set: &std::collections::BTreeSet<Option<Ty>>, kingdom: &WgslKingd
     candidates.first().copied()
 }
 
-/// The `// grid x y bx by` header.
+/// The `// grid x y bx by [rows-x]` header's four numbers.
 pub(crate) fn grid_header(source: &str) -> Option<(u32, u32, u32, u32)> {
+    header_fields(source).map(|(g, _)| g)
+}
+
+/// Whether the header says `rows-x` (the layout knob, `grid.of_rows_x`).
+pub(crate) fn grid_rows_x(source: &str) -> bool {
+    header_fields(source).is_some_and(|(_, r)| r)
+}
+
+fn header_fields(source: &str) -> Option<((u32, u32, u32, u32), bool)> {
     source.lines().map(str::trim).find_map(|l| {
         let rest = l.strip_prefix("// grid ")?;
-        let v: Vec<u32> = rest.split_whitespace().map(|t| t.parse().ok()).collect::<Option<Vec<u32>>>()?;
-        (v.len() == 4).then_some((v[0], v[1], v[2], v[3]))
+        let mut tokens: Vec<&str> = rest.split_whitespace().collect();
+        let rows_x = tokens.last() == Some(&"rows-x");
+        if rows_x {
+            tokens.pop();
+        }
+        let v: Vec<u32> = tokens.iter().map(|t| t.parse().ok()).collect::<Option<Vec<u32>>>()?;
+        (v.len() == 4).then_some(((v[0], v[1], v[2], v[3]), rows_x))
     })
 }
 
@@ -3000,7 +3032,7 @@ pub fn read_safe(source: &str, kingdom: &WgslKingdom) -> Result<SafeRead, String
         }
     }
     let bound_lets = lets_used_in_deeper_loops(&f.roots, &naga_fn.body);
-    let mut ctx = Ctx { kingdom, duals: &duals, lets: &lets, roots: &roots, item_counter: None, tile_counter: None, tile_counter2: None, tile_counter3: None, tile_counter4: None, registers: BTreeMap::new(), next_reg: BTreeMap::new(), guard: None, tail: true, arrays: BTreeMap::new(), array_lens: BTreeMap::new(), parrs: BTreeMap::new(), grid, notes: Vec::new(), helpers: &helpers, calls: &calls, arg_roots: &arg_roots, inline_args: None, row_arrays: BTreeMap::new(), used_counters: std::collections::BTreeSet::new(), local_lanes, axis_memo: BTreeMap::new(), loop_depth: 0, tile_bounds: BTreeMap::new(), naga_fn, module: &kernel.module, local_prefix: String::new(), inline_result: None, inline_values: None, bound_lets, let_regs: HashMap::new(), inlined: HashMap::new() };
+    let mut ctx = Ctx { kingdom, duals: &duals, lets: &lets, roots: &roots, item_counter: None, tile_counter: None, tile_counter2: None, tile_counter3: None, tile_counter4: None, registers: BTreeMap::new(), next_reg: BTreeMap::new(), guard: None, tail: true, arrays: BTreeMap::new(), array_lens: BTreeMap::new(), parrs: BTreeMap::new(), grid, rows_x: grid_rows_x(source).then_some(true), notes: Vec::new(), helpers: &helpers, calls: &calls, arg_roots: &arg_roots, inline_args: None, row_arrays: BTreeMap::new(), used_counters: std::collections::BTreeSet::new(), local_lanes, axis_memo: BTreeMap::new(), loop_depth: 0, tile_bounds: BTreeMap::new(), naga_fn, module: &kernel.module, local_prefix: String::new(), inline_result: None, inline_values: None, bound_lets, let_regs: HashMap::new(), inlined: HashMap::new() };
     // Register initialisations first, in root order. A local initialised to
     // its form's fallback (0.0, 0u, false, a zero vector) costs nothing: the
     // register's declaration already holds that value, and the register is
@@ -3024,7 +3056,8 @@ pub fn read_safe(source: &str, kingdom: &WgslKingdom) -> Result<SafeRead, String
     let (stmts, epilogue) = ctx.split_epilogue(stmts)?;
     let block = ctx.block(stmts, "L0")?;
     let g = |n: &str, v: u32| Tree::literal(n, dual_ty(kingdom, if n == "literal.wgdim" { "u32.wgdim" } else { "u32.blk" }).expect("dual"), v as f32);
-    let grid_tree = Tree::new("grid.of", dual_ty(kingdom, "grid.grid")?, vec![g("literal.wgdim", grid.0), g("literal.wgdim", grid.1), g("literal.blk", grid.2), g("literal.blk", grid.3)]);
+    let rows_x = ctx.rows_x == Some(true);
+    let grid_tree = Tree::new(if rows_x { "grid.of_rows_x" } else { "grid.of" }, dual_ty(kingdom, "grid.grid")?, vec![g("literal.wgdim", grid.0), g("literal.wgdim", grid.1), g("literal.blk", grid.2), g("literal.blk", grid.3)]);
     // The kernel's workgroup arrays, each at its declared length (2026-10-12):
     // the grid carries them as a list of declarations.
     let grid_tree = if ctx.array_lens.is_empty() {
@@ -3063,7 +3096,7 @@ pub fn read_safe(source: &str, kingdom: &WgslKingdom) -> Result<SafeRead, String
     // The thread's axes: a component of a thread id is the axis row it is
     // (`lid.y` is `axis.y_lid`, a row-axis index); renamed here, after the
     // ownership proof, which reads the components as naga wrote them.
-    let tree = by_axis(&tree);
+    let tree = by_axis(&tree, rows_x);
     // Row-consistent: every node under the dual its parent's row demands.
     let per_kernel = crate::wgsl::safe_karva::per_kernel_rows(kingdom, &crate::wgsl::render::gram_role());
     let tree = crate::wgsl::safe_karva::conform(&tree, tree.ty, kingdom, &per_kernel)?;
@@ -3173,7 +3206,7 @@ mod tests {
                 }
             };
             let text = match rr.kernel(&first.tree) {
-                Ok(o) => format!("// grid {} {} {} {}\n{}", o.grid.x, o.grid.y, o.grid.bx, o.grid.by, o.text),
+                Ok(o) => format!("{}\n{}", o.grid.header(), o.text),
                 Err(e) => {
                     failures.push(format!("{name}: does not render: {e}"));
                     continue;
@@ -3233,7 +3266,7 @@ mod tests {
                     failures.push(format!("{name}: cost {:.0} per item, {:.0} base exceeds the bound {:.0}, {:.0}", c.per_item, c.base, bound.per_item, bound.base));
                 }
                 let text = match rr.kernel(&tree) {
-                    Ok(o) => format!("// grid {} {} {} {}\n{}", o.grid.x, o.grid.y, o.grid.bx, o.grid.by, o.text),
+                    Ok(o) => format!("{}\n{}", o.grid.header(), o.text),
                     Err(e) => {
                         failures.push(format!("{name}: does not render: {e}"));
                         continue;
@@ -3515,7 +3548,7 @@ mod tests {
         let out = rr.kernel(&unrolled).unwrap_or_else(|e| panic!("{e}"));
         assert!(before.text.contains("for (k = 0u;") && !out.text.contains("for (k = 0u;") && out.text.contains("lit_u32(0u)"), "{}", out.text);
         validate_text(&out.text).unwrap_or_else(|e| panic!("{e}\n{}", out.text));
-        read_safe(&format!("// grid {} {} {} {}\n{}", out.grid.x, out.grid.y, out.grid.bx, out.grid.by, out.text), &k).unwrap_or_else(|e| panic!("read back: {e}"));
+        read_safe(&format!("{}\n{}", out.grid.header(), out.text), &k).unwrap_or_else(|e| panic!("read back: {e}"));
         let (c0, c1) = (crate::wgsl::render::cost(&tree), crate::wgsl::render::cost(&unrolled));
         assert!((c0.per_item - c1.per_item).abs() < 1.0 && (c0.base - c1.base).abs() < 1.0, "{c0:?} vs {c1:?}");
     }
@@ -3695,7 +3728,39 @@ mod tests {
         assert!(text.contains("subgroupMax(cfg.m)"), "{text}");
         validate_text(&text).unwrap_or_else(|e| panic!("{e}\n{text}"));
         let g = r.grid;
-        read_safe(&format!("// grid {} {} {} {}\n{text}", g.x, g.y, g.bx, g.by), &k).unwrap_or_else(|e| panic!("read back: {e}"));
+        read_safe(&format!("{}\n{text}", g.header()), &k).unwrap_or_else(|e| panic!("read back: {e}"));
+    }
+
+    /// THE LAYOUT KNOB (2026-10-12): a kernel with the output's rows on
+    /// thread x reads as grid.of_rows_x, with or without the header's
+    /// `rows-x` (the store's proof finds the rows on x), to the same tree as
+    /// its rows-on-y twin but for the grid row; it renders with the rows on
+    /// gid.x and the header `rows-x`, validates and reads back with its rows still on x; the
+    /// dispatch swaps its two counts.
+    #[test]
+    fn the_rows_on_thread_x_read_render_and_read_back() {
+        let k = WgslKingdom::load_safe();
+        let (t, role) = (FunctionTable::safe(), gram_role());
+        let src = include_str!("../../tests/corpus/safewgsl/draft_rows_x.wgsl");
+        let tree = read_safe(src, &k).unwrap_or_else(|e| panic!("{e}")).tree;
+        assert!(tree.to_sexpr().starts_with("(kernel.entry_safe (grid.of_rows_x "), "{}", tree.to_sexpr());
+        let untagged = read_safe(&src.replacen(" rows-x\n", "\n", 1), &k).unwrap_or_else(|e| panic!("untagged: {e}")).tree;
+        assert_eq!(untagged.to_sexpr(), tree.to_sexpr());
+        let twin = src.replacen("// grid 64 4 2 2 rows-x", "// grid 4 64 2 2", 1).replacen("@workgroup_size(64, 4, 1)", "@workgroup_size(4, 64, 1)", 1).replacen("let r0 = gid.x * 2u;", "let r0 = gid.y * 2u;", 1).replacen("let c0 = gid.y * 2u;", "let c0 = gid.x * 2u;", 1);
+        let twin = read_safe(&twin, &k).unwrap_or_else(|e| panic!("twin: {e}")).tree;
+        let body = |t: &Tree| t.kids[1..].iter().map(Tree::to_sexpr).collect::<Vec<_>>();
+        assert_eq!(body(&twin), body(&tree), "the same gene but for its grid");
+        let out = Renderer::new(&k, &t, &role).kernel(&tree).unwrap();
+        assert!(out.grid.rows_x && out.grid.header() == "// grid 64 4 2 2 rows-x", "{:?}", out.grid);
+        assert!(out.text.contains("(gid.x * 2u)") && out.text.contains("(gid.y * 2u)") && out.text.contains("@workgroup_size(64, 4, 1)"), "{}", out.text);
+        validate_text(&out.text).unwrap_or_else(|e| panic!("{e}\n{}", out.text));
+        let back = read_safe(&format!("{}\n{}", out.grid.header(), out.text), &k).unwrap_or_else(|e| panic!("read back: {e}")).tree;
+        assert!(back.to_sexpr().starts_with("(kernel.entry_safe (grid.of_rows_x "), "{}", back.to_sexpr());
+        let again = Renderer::new(&k, &t, &role).kernel(&back).unwrap();
+        assert!(again.grid == out.grid && again.text.contains("(gid.x * 2u)"), "{}", again.text);
+        // 1,000 rows of 300 columns: rows over x (64 threads x 2), columns over y (4 x 2).
+        assert_eq!(out.grid.dispatch(1000, 300), (8, 38));
+        assert_eq!(Renderer::new(&k, &t, &role).kernel(&twin).unwrap().grid.dispatch(1000, 300), (38, 8));
     }
 
     /// A kernel with a helper function reads: the helper is inlined at its

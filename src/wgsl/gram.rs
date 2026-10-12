@@ -490,21 +490,23 @@ pub struct Build {
     pub row_bands: usize,
 }
 
-/// The `// grid x y bx by` header of a kernel text, if present on any line.
+/// The `// grid x y bx by [rows-x]` header of a kernel text, if present on any line.
 pub fn grid_header(source: &str) -> Option<(u32, u32, u32, u32)> {
-    source.lines().map(str::trim).find_map(|l| {
-        let rest = l.strip_prefix("// grid ")?;
-        let v: Vec<u32> = rest.split_whitespace().map(|t| t.parse().ok()).collect::<Option<Vec<u32>>>()?;
-        (v.len() == 4).then_some((v[0], v[1], v[2], v[3]))
-    })
+    super::safe_reader::grid_header(source)
+}
+
+/// Whether the header says `rows-x`: the output's rows on thread x.
+pub fn grid_rows_x(source: &str) -> bool {
+    super::safe_reader::grid_rows_x(source)
 }
 
 /// A compiled Gram kernel on the oracle's device.
 pub struct Gram<'a> {
     dev: &'a Device,
     pipeline: wgpu::ComputePipeline,
-    /// Workgroup size and the cells per thread; the driver dispatches
-    /// `ceil(d / (x bx)) × ceil(r_rows / (y by))`.
+    /// Workgroup size, the cells per thread and the layout; the driver
+    /// dispatches [`Grid::dispatch`] (`ceil(d / (x bx)) × ceil(r_rows / (y by))`,
+    /// the two swapped with the rows on x).
     pub grid: Grid,
     period_ns: f32,
 }
@@ -522,6 +524,7 @@ impl<'a> Gram<'a> {
         // The optional header `// grid x y bx by`: x and y must agree with
         // naga's workgroup size (the header is never trusted for them); bx
         // and by, the cells per thread, come only from the header.
+        let rows_x = grid_rows_x(source);
         let (bx, by) = match grid_header(source) {
             Some((hx, hy, bx, by)) => {
                 if (hx, hy) != (x, y) {
@@ -534,7 +537,7 @@ impl<'a> Gram<'a> {
             }
             None => (1, 1),
         };
-        Self::compile_with(dev, source, Grid { x, y, bx, by })
+        Self::compile_with(dev, source, Grid { x, y, bx, by, rows_x })
     }
 
     /// A rendered kernel: its text and the grid it asked for.
@@ -609,8 +612,7 @@ impl<'a> Gram<'a> {
                 .zip(&cfgs)
                 .map(|((pb, _), cfg)| device.create_bind_group(&wgpu::BindGroupDescriptor { label: Some("gram bind"), layout: &layout, entries: &[wgpu::BindGroupEntry { binding: 0, resource: pb.as_entire_binding() }, wgpu::BindGroupEntry { binding: 1, resource: h_buffer.as_entire_binding() }, wgpu::BindGroupEntry { binding: 2, resource: cfg.as_entire_binding() }] }))
                 .collect();
-            let wg_x = (d as u32).div_ceil(self.grid.x * self.grid.bx);
-            let wg_y = (r_rows as u32).div_ceil(self.grid.y * self.grid.by);
+            let (wg_x, wg_y) = self.grid.dispatch(r_rows as u32, d as u32);
             let staging = read_h.then(|| device.create_buffer(&wgpu::BufferDescriptor { label: Some("gram staging"), size: band_bytes, usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false }));
             let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("gram output band") });
             enc.clear_buffer(&h_buffer, 0, None);
@@ -724,8 +726,7 @@ impl Gram<'_> {
         for b in &bands {
             let d = rs[b.case].d;
             enc.clear_buffer(&b.h, 0, None);
-            let wg_x = (d as u32).div_ceil(self.grid.x * self.grid.bx);
-            let wg_y = (b.r_rows as u32).div_ceil(self.grid.y * self.grid.by);
+            let (wg_x, wg_y) = self.grid.dispatch(b.r_rows as u32, d as u32);
             for (i, bind) in b.binds.iter().enumerate() {
                 let q = b.first_query + 2 * i as u32;
                 let timestamp_writes = Some(wgpu::ComputePassTimestampWrites { query_set: &query_set, beginning_of_pass_write_index: Some(q), end_of_pass_write_index: Some(q + 1) });
@@ -1763,7 +1764,7 @@ mod tests {
         assert_eq!(grid_header(TILED), Some((16, 16, 4, 4)));
         assert_eq!(grid_header(SHIPPED), None);
         let dev = Device::new().expect("device");
-        assert_eq!(Gram::compile(&dev, TILED).unwrap().grid, Grid { x: 16, y: 16, bx: 4, by: 4 });
+        assert_eq!(Gram::compile(&dev, TILED).unwrap().grid, Grid { x: 16, y: 16, bx: 4, by: 4, rows_x: false });
         let wrong = TILED.replace("// grid 16 16 4 4", "// grid 8 8 4 4");
         let err = match Gram::compile(&dev, &wrong) { Ok(_) => panic!("a mismatched header compiled"), Err(e) => e };
         assert!(err.contains("the grid header says workgroup 8 x 8"), "{err}");
@@ -1776,7 +1777,7 @@ mod tests {
         let dev = Device::new().expect("device");
         for (name, text) in [("tiled", TILED), ("blocked", BLOCKED)] {
             let gram = Gram::compile(&dev, text).expect("compile");
-            assert_eq!(gram.grid, Grid { x: 16, y: 16, bx: 4, by: 4 });
+            assert_eq!(gram.grid, Grid { x: 16, y: 16, bx: 4, by: 4, rows_x: false });
             for (d, m, limit) in [(64usize, 1000usize, 4096u64), (130, 77, 8192), (200, 33, u64::MAX), (64, 1000, u64::MAX), (33, 5, 1024)] {
                 let p = phi(d, m, 11);
                 let h_ref = reference(&p, d, m);

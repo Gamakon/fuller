@@ -197,6 +197,37 @@ pub struct Grid {
     pub y: u32,
     pub bx: u32,
     pub by: u32,
+    /// The layout knob (2026-10-12): the output's rows on thread x, the fast
+    /// index, and its columns on y (`grid.of_rows_x`); false is `grid.of`,
+    /// columns on x. `x`, `y` stay the `@workgroup_size`; `bx` is always the
+    /// column block and `by` the row block.
+    pub rows_x: bool,
+}
+
+impl Grid {
+    /// The thread-id component that carries the output's rows and the
+    /// workgroup's extent along it.
+    pub fn row_axis(&self) -> (&'static str, u32) {
+        if self.rows_x { ("x", self.x) } else { ("y", self.y) }
+    }
+
+    /// The thread-id component that carries the output's columns and the
+    /// workgroup's extent along it.
+    pub fn col_axis(&self) -> (&'static str, u32) {
+        if self.rows_x { ("y", self.y) } else { ("x", self.x) }
+    }
+
+    /// The workgroups to dispatch for `rows` output rows of `d` columns:
+    /// `(along x, along y)`.
+    pub fn dispatch(&self, rows: u32, d: u32) -> (u32, u32) {
+        let (r, c) = (rows.div_ceil(self.row_axis().1 * self.by), d.div_ceil(self.col_axis().1 * self.bx));
+        if self.rows_x { (r, c) } else { (c, r) }
+    }
+
+    /// The `// grid x y bx by` header line (`rows-x` appended for the knob).
+    pub fn header(&self) -> String {
+        format!("// grid {} {} {} {}{}", self.x, self.y, self.bx, self.by, if self.rows_x { " rows-x" } else { "" })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -303,7 +334,7 @@ impl<'a> Renderer<'a> {
         if d.dual != "kernel.kernel" && d.dual != "kernel.safe" {
             return Err(format!("the root is {} ({}), not kernel.kernel or kernel.safe", root.name, d.dual));
         }
-        let mut scope = Scope { unrolled: BTreeMap::new(), in_unrolled_copy: false, wg: BTreeMap::new(), in_items: false, in_tile: false, tile_depth: 0, grid: Grid { x: 16, y: 16, bx: 1, by: 1 }, in_cond: 0, returned: false, helpers: Vec::new(), masked: Vec::new(), const_depth: 0 };
+        let mut scope = Scope { unrolled: BTreeMap::new(), in_unrolled_copy: false, wg: BTreeMap::new(), in_items: false, in_tile: false, tile_depth: 0, grid: Grid { x: 16, y: 16, bx: 1, by: 1, rows_x: false }, in_cond: 0, returned: false, helpers: Vec::new(), masked: Vec::new(), const_depth: 0 };
         let (grid, body) = match root.name.as_str() {
             "kernel.entry" => {
                 let [g, b] = root.kids.as_slice() else { return Err(format!("{} with {} children", root.name, root.kids.len())) };
@@ -325,8 +356,8 @@ impl<'a> Renderer<'a> {
                 (grid, text)
             }
             // An empty kernel of the safe root still ends in its thread's store.
-            "fallback" if d.dual == "kernel.safe" => (Grid { x: 16, y: 16, bx: 1, by: 1 }, self.epilogue_fallback(&mut scope)?),
-            "fallback" => (Grid { x: 16, y: 16, bx: 1, by: 1 }, String::new()),
+            "fallback" if d.dual == "kernel.safe" => (Grid { x: 16, y: 16, bx: 1, by: 1, rows_x: false }, self.epilogue_fallback(&mut scope)?),
+            "fallback" => (Grid { x: 16, y: 16, bx: 1, by: 1, rows_x: false }, String::new()),
             other => return Err(format!("{other} is not a kernel row")),
         };
         if grid.x * grid.y > MAX_THREADS {
@@ -389,8 +420,8 @@ impl<'a> Renderer<'a> {
 
     fn grid(&self, g: &Tree) -> Result<Grid, String> {
         match g.name.as_str() {
-            "grid.of" => {
-                let [x, y, bx, by] = g.kids.as_slice() else { return Err(format!("grid.of with {} children", g.kids.len())) };
+            "grid.of" | "grid.of_rows_x" => {
+                let [x, y, bx, by] = g.kids.as_slice() else { return Err(format!("{} with {} children", g.name, g.kids.len())) };
                 let dim = |t: &Tree| -> Result<u32, String> {
                     match t.name.as_str() {
                         "fallback" => Ok(16),
@@ -399,9 +430,9 @@ impl<'a> Renderer<'a> {
                     }
                 };
                 let (gx, gy) = workgroup_shape(dim(x)?, dim(y)?);
-                Ok(Grid { x: gx, y: gy, bx: self.code(bx, &BLK)?, by: self.code(by, &BLK)? })
+                Ok(Grid { x: gx, y: gy, bx: self.code(bx, &BLK)?, by: self.code(by, &BLK)?, rows_x: g.name == "grid.of_rows_x" })
             }
-            "fallback" => Ok(Grid { x: 16, y: 16, bx: 1, by: 1 }),
+            "fallback" => Ok(Grid { x: 16, y: 16, bx: 1, by: 1, rows_x: false }),
             // A grid and the kernel's workgroup arrays: the arrays are the plan's.
             "grid.with_wg" if g.kids.len() == 2 => self.grid(&g.kids[0]),
             other => Err(format!("{other} is not a grid row")),
@@ -1115,7 +1146,7 @@ impl<'a> Renderer<'a> {
             }
             "safe.row_plus_tile_s" | "safe.row_plus_tile2_s" | "safe.row_plus_tile3_s" | "safe.row_plus_tile4_s" | "safe.col_plus_tile_s" | "safe.col_plus_tile2_s" | "safe.col_plus_tile3_s" | "safe.col_plus_tile4_s" => {
                 // The k-th row of a strided block: rows W apart, k snapped below the block factor.
-                let (blk, w) = if safe_base(name).starts_with("safe.row") { (scope.grid.by, scope.grid.y) } else { (scope.grid.bx, scope.grid.x) };
+                let (blk, w) = if safe_base(name).starts_with("safe.row") { (scope.grid.by, scope.grid.row_axis().1) } else { (scope.grid.bx, scope.grid.col_axis().1) };
                 return Ok(format!("({} + min({}, {}u) * {w}u)", self.value(&v.kids[0], scope)?, self.value(&v.kids[1], scope)?, blk.saturating_sub(1)));
             }
             "safe.row_plus_x" | "safe.col_plus_x" => {
@@ -1124,28 +1155,30 @@ impl<'a> Renderer<'a> {
                 return Ok(format!("({} + min({}, {}u))", self.value(&v.kids[0], scope)?, self.value(&v.kids[1], scope)?, blk.saturating_sub(1)));
             }
             "safe.row_plus_x_s" | "safe.col_plus_x_s" => {
-                let (blk, w) = if safe_base(name) == "safe.row_plus_x_s" { (scope.grid.by, scope.grid.y) } else { (scope.grid.bx, scope.grid.x) };
+                let (blk, w) = if safe_base(name) == "safe.row_plus_x_s" { (scope.grid.by, scope.grid.row_axis().1) } else { (scope.grid.bx, scope.grid.col_axis().1) };
                 return Ok(format!("({} + min({}, {}u) * {w}u)", self.value(&v.kids[0], scope)?, self.value(&v.kids[1], scope)?, blk.saturating_sub(1)));
             }
             "safe.thread_row_g" | "safe.thread_col_g" => {
                 // The first cell of a thread's block of G groups: wid * (W * B) + lid * (B / G).
-                let (axis, blk, w) = if safe_base(name) == "safe.thread_row_g" { ("y", scope.grid.by, scope.grid.y) } else { ("x", scope.grid.bx, scope.grid.x) };
+                let ((axis, w), blk) = if safe_base(name) == "safe.thread_row_g" { (scope.grid.row_axis(), scope.grid.by) } else { (scope.grid.col_axis(), scope.grid.bx) };
                 let g = self.lit(&v.kids[3], 64)?.clamp(1, blk.max(1));
                 return Ok(format!("(wid.{axis} * {}u + lid.{axis} * {}u)", w * blk, blk / g));
             }
             "safe.row_plus_g" | "safe.col_plus_g" => {
                 // A cell of the grouped block by group and lane, both clamped.
-                let (blk, w) = if safe_base(name) == "safe.row_plus_g" { (scope.grid.by, scope.grid.y) } else { (scope.grid.bx, scope.grid.x) };
+                let (blk, w) = if safe_base(name) == "safe.row_plus_g" { (scope.grid.by, scope.grid.row_axis().1) } else { (scope.grid.bx, scope.grid.col_axis().1) };
                 let g = self.lit(&v.kids[1], 64)?.clamp(1, blk.max(1));
                 let s = blk / g;
                 return Ok(format!("({} + min({}, {}u) * {}u + min({}, {}u))", self.value(&v.kids[0], scope)?, self.value(&v.kids[2], scope)?, g - 1, w * s, self.value(&v.kids[3], scope)?, s.saturating_sub(1)));
             }
-            "safe.thread_row" => return Ok(format!("(gid.y * {}u)", scope.grid.by)),
-            "safe.thread_col" => return Ok(format!("(gid.x * {}u)", scope.grid.bx)),
-            "safe.thread_row_s" => return Ok(format!("(wid.y * {}u + lid.y)", scope.grid.y * scope.grid.by)),
-            "safe.thread_col_s" => return Ok(format!("(wid.x * {}u + lid.x)", scope.grid.x * scope.grid.bx)),
+            "safe.thread_row" => return Ok(format!("(gid.{} * {}u)", scope.grid.row_axis().0, scope.grid.by)),
+            "safe.thread_col" => return Ok(format!("(gid.{} * {}u)", scope.grid.col_axis().0, scope.grid.bx)),
+            "safe.thread_row_s" | "safe.thread_col_s" => {
+                let ((a, w), blk) = if safe_base(name) == "safe.thread_row_s" { (scope.grid.row_axis(), scope.grid.by) } else { (scope.grid.col_axis(), scope.grid.bx) };
+                return Ok(format!("(wid.{a} * {}u + lid.{a})", w * blk));
+            }
             "safe.row_plus_s" | "safe.col_plus_s" => {
-                let (blk, w) = if safe_base(name) == "safe.row_plus_s" { (scope.grid.by, scope.grid.y) } else { (scope.grid.bx, scope.grid.x) };
+                let (blk, w) = if safe_base(name) == "safe.row_plus_s" { (scope.grid.by, scope.grid.row_axis().1) } else { (scope.grid.bx, scope.grid.col_axis().1) };
                 let off = self.lit(&v.kids[1], 64)?.min(blk.saturating_sub(1));
                 return Ok(format!("({} + {}u)", self.value(&v.kids[0], scope)?, off * w));
             }
@@ -1186,8 +1219,15 @@ impl<'a> Renderer<'a> {
         }
         // A thread id's component by axis (`axis.y_lid` is `lid.y`), and an
         // axis index used as a plain index (its own text).
+        // The axis is the output's (y rows, x columns); the component is the
+        // grid's layout (rows on x under grid.of_rows_x).
         if let Some((component, id)) = name.strip_prefix("axis.").and_then(|r| r.split_once('_')) {
             if v.kids.len() == 1 {
+                let component = match component {
+                    "y" => scope.grid.row_axis().0,
+                    "x" => scope.grid.col_axis().0,
+                    other => other,
+                };
                 return Ok(format!("{id}.{component}"));
             }
         }
@@ -2047,7 +2087,7 @@ mod tests {
         let tree = gram_shipped_tree(&k).unwrap();
         assert_eq!(tree.size(), 82, "{}", tree.to_sexpr());
         let out = Renderer::new(&k, &t, &r).kernel(&tree).unwrap();
-        assert_eq!(out.grid, Grid { x: 16, y: 16, bx: 1, by: 1 });
+        assert_eq!(out.grid, Grid { x: 16, y: 16, bx: 1, by: 1, rows_x: false });
         assert!(out.text.contains("for (t = 0u; t < cfg.m; t = t + 1u)"), "{}", out.text);
         assert!(out.text.contains("h[(((i1 * cfg.d) + i2))] = ((h[(((i1 * cfg.d) + i2))] + f0));"), "{}", out.text);
         validate_text(&out.text).unwrap_or_else(|e| panic!("{e}\n{}", out.text));
@@ -2116,7 +2156,7 @@ mod tests {
         // A grid over 1,024 threads is cut to the device's limit: x as written, y the largest that fits
         // (64 x 64 runs as 64 x 16; until 2026-10-12 each axis snapped to {4, 8, 16, 32}).
         let big = Tree::new("kernel.entry", ty("kernel.kernel"), vec![Tree::new("grid.of", ty("grid.grid"), vec![Tree::literal("literal.wgdim", ty("u32.wgdim"), 64.0), Tree::literal("literal.wgdim", ty("u32.wgdim"), 64.0), Tree::fallback(ty("u32.blk")), Tree::fallback(ty("u32.blk"))]), one(set_f())]);
-        assert_eq!(rr.kernel(&big).unwrap().grid, Grid { x: 64, y: 16, bx: 1, by: 1 });
+        assert_eq!(rr.kernel(&big).unwrap().grid, Grid { x: 64, y: 16, bx: 1, by: 1, rows_x: false });
         // An empty kernel (the root's fallback) is a kernel.
         let empty = rr.kernel(&Tree::fallback(ty("kernel.kernel"))).unwrap();
         validate_text(&empty.text).unwrap();

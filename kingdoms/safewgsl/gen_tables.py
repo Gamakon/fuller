@@ -871,6 +871,13 @@ for value in ("<S.real>", "u32.index"):
 for r in ("L0", "L1", "L2", "L3", "L4", "L5"):
     f("stmt", "subgroup_barrier_" + r, "composite", [], "stmt." + r, "subgroupBarrier()")
 
+# ---- the layout knob (2026-10-12): which output axis runs on the fast thread index ----
+# grid.of puts the output's columns on thread x (the fast index: neighbouring lanes read and write
+# neighbouring columns) and its rows on y. grid.of_rows_x puts the rows on x and the columns on y: the
+# same workgroup and block, the driver dispatches ceil(rows / (x by)) x ceil(d / (y bx)), and every row
+# and column of the gene renders on the other thread axis. One symbol of the gene chooses the coalescing.
+f("grid", "of_rows_x", "composite", ["u32.wgdim", "u32.wgdim", "u32.blk", "u32.blk"], "grid.grid", "arity 4: grid.of with the output's rows on thread x (the fast index) and its columns on y; the header says `rows-x`")
+
 
 def write_tsv(path, header, rows):
     with open(path, "w") as out:
@@ -897,7 +904,7 @@ def main():
             md.write(f"| {ref} | `{dual}` | `{slot}` | `{form}` | {lanes} | `{fb}` | {bits} | {noop} | {elem} |\n")
         md.write(f"\n{len(types)} duals. The fallback is what Design C's projection substitutes for a codon whose dual does not match the demand; the codon is counted as masked.\n")
         md.write("\nThe three machine columns (`fallback_bits`, `fallback_noop`, `fallback_elem` in `types.tsv`) are what the loader builds the fallback leaf from, never the prose: `bits` is the lane's 32-bit pattern as an unsigned integer, repeated across the lanes of a vector or matrix (only `bool.sign` is non-zero, true = +1); `noop` is 1 for `store.store`, which substitutes no value at all; `elem` is 1 for `array<T>`, whose fallback is its element's. The loader tests `noop` and `elem` before reading `bits`; for those two rows `bits` is a placeholder 0. Every substitution, whichever column decides it, counts the codon as masked.\n")
-        md.write("\n## Not in the table\n\nAtomics, images, samplers, ray queries, binding arrays, pointers as values, non-square `f16` matrices.\n")
+        md.write("\n## Not in the table\n\nStorage-buffer atomics, images, samplers, ray queries, binding arrays, pointers as values, non-square `f16` matrices.\n")
 
     with open(os.path.join(HERE, "symbols.md"), "w") as md:
         md.write("# safeWGSL kingdom — the function table\n\n")
@@ -910,7 +917,7 @@ def main():
                 cur = c
                 md.write(f"\n## class `{c}`\n\n| ref | instance | naga | in | out | n | note |\n|---|---|---|---|---|---|---|\n")
             md.write(f"| {ref} | `{c}.{inst}` | `{naga}` | `{ins}` | `{out}` | {arity} | {note} |\n")
-        md.write(f"\n{len(frows)} function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Deliberately absent: atomics, images, derivatives, subgroup operations, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.\n")
+        md.write(f"\n{len(frows)} function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Deliberately absent: storage-buffer atomics, atomic compare-exchange (naga 0.20's Metal backend lacks it), subgroupBallot, images, derivatives, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.\n")
     print(f"{len(types)} duals, {len(frows)} functions (safeWGSL)")
 
 

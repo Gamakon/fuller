@@ -650,8 +650,9 @@ mod tests {
         // 828 with the third and fourth vec4 private arrays (fit_A2 gen 2's r2x_reinvent);
         // 884 with the epilogue's rows (O0..O4); 908 with the thread's axes; 912 with the epilogue's continue;
         // 941 with the workgroup arrays as knobs; 955 with full unrolling; 1,009 with the tree reductions;
-        // 1,082 with the workgroup atomics; 1,125 with the subgroup values, operations and barrier.
-        assert_eq!(fs.rows.len(), 1125);
+        // 1,082 with the workgroup atomics; 1,125 with the subgroup values, operations and barrier;
+        // 1,126 with the layout knob (grid.of_rows_x).
+        assert_eq!(fs.rows.len(), 1126);
         let dual = |t: Ty| k.dual(t).unwrap().dual.clone();
         let producers = |d: &str| -> Vec<String> { k.rows.iter().filter(|r| dual(r.output) == d).map(|r| r.name.clone()).collect() };
         assert_eq!(producers("kernel.safe"), vec!["kernel.entry_safe"]);
