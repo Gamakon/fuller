@@ -85,6 +85,8 @@ FORMS = {
     "safe": ("the safeWGSL kernel: the root dual of this kingdom, produced only by kernel.entry_safe", []),
     "pindex": ("a private-array index, masked to the array by its row", ["u32"]),
     "pindex16": ("an index into a private array of 16 elements (i & 15u)", ["u32"]),
+    "uniform": ("a u32 the same for every thread of the workgroup: a binding's field, a literal, the workgroup's id, the grid's size, the subgroup size, and arithmetic of them", ["u32"]),
+    "boundu": ("a loop bound the same for every thread of the workgroup (a loop that may hold a barrier)", ["u32"]),
     "boundx": ("a loop bound that is any index expression (cfg.m & ~3u, (cfg.d + 63u) / 64u, a register): rendered as written, never capped; costed at the worst shape", ["u32"]),
     # A fourth nested tile loop (r2x_union_g9 and _g10 of run A: item loop, then g, j, r, c).
     "tcounter4": ("a fourth nested tile loop's counter k4, stepped by the loop row itself", ["u32"]),
@@ -135,7 +137,7 @@ FORMS = {
     "B5": ("a loop body that breaks, five deep: no barrier", []),
 }
 
-SAFE_FORMS = ["pindex16", "wgaindex", "wgv2index", "wglen", "decl", "decls", "lidx", "threadrows", "threadcols", "threadrowg", "threadcolg", "gid", "lid", "wid", "rowid", "colid", "O0", "O1", "O2", "O3", "O4", "tcounter4", "L5", "C5", "safe", "pindex", "boundx", "boundm", "boundd", "boundrows", "lit64", "lit4096", "counter", "tcounter", "tcounter2", "L3", "C3", "tcounter3", "L4", "C4", "wgvindex", "bound", "threadrow", "threadcol", "cell", "phi", "wgindex", "L0", "L1", "L2", "C0", "C1", "C2"]
+SAFE_FORMS = ["uniform", "boundu", "pindex16", "wgaindex", "wgv2index", "wglen", "decl", "decls", "lidx", "threadrows", "threadcols", "threadrowg", "threadcolg", "gid", "lid", "wid", "rowid", "colid", "O0", "O1", "O2", "O3", "O4", "tcounter4", "L5", "C5", "safe", "pindex", "boundx", "boundm", "boundd", "boundrows", "lit64", "lit4096", "counter", "tcounter", "tcounter2", "L3", "C3", "tcounter3", "L4", "C4", "wgvindex", "bound", "threadrow", "threadcol", "cell", "phi", "wgindex", "L0", "L1", "L2", "C0", "C1", "C2"]
 RUNGS = ["L0", "L1", "L2", "L3", "L4", "C0", "C1", "C2", "C3", "C4"]
 # The fifth rung came after every other row (run A, 2026-10-11); its rows are appended at the end so
 # every earlier ref stands, and it is kept out of RUNGS for that reason.
@@ -156,7 +158,7 @@ FALLBACK = {
     "boundm": "cfg.m", "boundd": "cfg.d", "boundrows": "cfg.r_rows", "lit64": "1u", "lit4096": "1u",
     "counter": "0u", "tcounter": "0u", "tcounter2": "0u", "bound": "false", "threadrow": "the thread's own first row", "threadcol": "the thread's own first column", "cell": "the thread's own first cell", "phi": "0u", "wgindex": "0u",
     "L0": "empty", "L1": "empty", "L2": "empty", "L3": "empty", "C0": "empty", "C1": "empty", "C2": "empty", "C3": "empty",
-    "safe": "an empty kernel", "pindex": "0u", "pindex16": "0u",
+    "safe": "an empty kernel", "pindex": "0u", "pindex16": "0u", "uniform": "0u", "boundu": "1u",
     "tcounter3": "0u", "L4": "empty", "C4": "empty", "wgvindex": "0u",
     "boundx": "1u",
     "tcounter4": "0u", "L5": "empty", "C5": "empty",
@@ -181,7 +183,7 @@ FALLBACK_BITS = {
     "kernel": 0, "grid": 0, "block": 0, "stmt": 0, "wgdim": 0, "blk": 0, "unroll": 0,
     "boundm": 0, "boundd": 0, "boundrows": 0, "lit64": 0, "lit4096": 0,
     "counter": 0, "tcounter": 0, "tcounter2": 0, "bound": 0, "threadrow": 0, "threadcol": 0, "cell": 0, "phi": 0, "wgindex": 0,
-    "L0": 0, "L1": 0, "L2": 0, "L3": 0, "C0": 0, "C1": 0, "C2": 0, "C3": 0, "safe": 0, "pindex": 0, "pindex16": 0,
+    "L0": 0, "L1": 0, "L2": 0, "L3": 0, "C0": 0, "C1": 0, "C2": 0, "C3": 0, "safe": 0, "pindex": 0, "pindex16": 0, "uniform": 0, "boundu": 0,
     "tcounter3": 0, "L4": 0, "C4": 0, "wgvindex": 0,
     "boundx": 0,
     "tcounter4": 0, "L5": 0, "C5": 0,
@@ -303,6 +305,9 @@ def build_types():
         add(f"reg<mat{n}x{n}<f32>>", "real", n * n, f"a named mat{n}x{n}<f32> register")
     # ---- the index of a 16-element private array (2026-10-12, legality item 4) ----
     add("u32", "pindex16", 1, FORMS["pindex16"][0])
+    # ---- uniform values and the bound of a loop that may hold a barrier (2026-10-12, legality item 5) ----
+    add("u32", "uniform", 1, FORMS["uniform"][0])
+    add("u32", "boundu", 1, FORMS["boundu"][0])
     return rows
 
 
@@ -323,6 +328,13 @@ def f(cls, inst, naga, ins, out, note=""):
         ins = ["u32.pindex16" if x == "u32.pindex" else x for x in ins]
     if (cls, inst) == ("safe", "pidx16"):
         out = "u32.pindex16"
+    # A loop whose body may hold a barrier (an expression-bounded tile loop at an L rung, an item loop
+    # bounded by an expression) takes a uniform bound: every thread runs it the same number of times, so
+    # every thread reaches its barriers (the legality checker: 87 of 1,000 random genes had a barrier in a
+    # loop bounded by a thread's or a subgroup's value, 2026-10-12). Loops that break and loops at C and O
+    # rungs hold no barrier and keep any bound.
+    if cls == "loop" and out.startswith("stmt.L") and "u32.boundx" in ins and "_brk_" not in inst:
+        ins = ["u32.boundu" if x == "u32.boundx" else x for x in ins]
     FUNCTIONS.append((cls, inst, naga, ins, out, note))
 
 
@@ -1063,6 +1075,36 @@ for k in KNOBS:
     f("literal", "p_" + k + "_log2", "Literal", [], "u32.index", f"log2 of the knob {k} times the payload / 256 (a shift)")
     f("literal", "p_" + k + "_m1", "Literal", [], "u32.index", f"the knob {k} times the payload / 256, minus one (a mask)")
 f("grid", "with_ktile", "composite", ["grid.grid", "u32.lit4096"], "grid.grid", "a grid and the kernel's tile depth T (the item loop's step), the knob literal.p_ktile references")
+
+
+# ---- uniform values (2026-10-12, legality item 5) ----
+# The values every thread of a workgroup holds alike, and the arithmetic of them: the bound of a loop that
+# may hold a barrier. index.of_uniform uses one anywhere an index is wanted. A loop with any other bound at
+# an L rung is written as a conditional statement in place (stmt.cblock_L<d>): its body holds no barrier.
+for fld, wgsl in (("cfg_m", "cfg.m"), ("cfg_d", "cfg.d"), ("cfg_r_rows", "cfg.r_rows"), ("cfg_r_off", "cfg.r_off")):
+    f("uniform", fld, "composite", [], "u32.uniform", wgsl)
+f("uniform", "of_lit", "composite", ["u32.lit4096"], "u32.uniform", "a literal")
+for c in ("x", "y", "z"):
+    f("uniform", "wid_" + c, "composite", ["vec3<u32>.wid"], "u32.uniform", f"wid.{c}: the workgroup's id")
+    f("uniform", "nwg_" + c, "composite", ["vec3<u32>.count"], "u32.uniform", f"nwg.{c}: the grid's size")
+f("uniform", "subgroup_size", "composite", [], "u32.uniform", "the subgroup size")
+f("uniform", "num_subgroups", "composite", [], "u32.uniform", "the subgroups in the workgroup")
+for op in ("add", "sub_floor", "mul", "div", "min", "max", "shl", "shr", "and", "or"):
+    f("uniform", op, "composite", ["u32.uniform", "u32.uniform"], "u32.uniform", f"as index.{op}, of uniform values")
+for op in ("sub", "mod", "round_down", "band_of", "clamp_to"):
+    f("uniform", op, "composite", ["u32.uniform", "u32.uniform"], "u32.uniform", f"as index.{op}, of uniform values")
+f("uniform", "clamp", "composite", ["u32.uniform", "u32.uniform", "u32.uniform"], "u32.uniform", "as index.clamp, of uniform values (arity 3)")
+# A loop counter is uniform wherever a loop that may hold a barrier can read it: every loop at an L rung has
+# a uniform bound (a literal, a binding, a uniform value), and a loop with any other bound is at a C rung.
+f("uniform", "of_counter", "composite", ["u32.counter"], "u32.uniform", "the item loop's counter t")
+f("uniform", "of_tcounter", "composite", ["u32.tcounter"], "u32.uniform", "the tile counter k")
+f("uniform", "of_tcounter2", "composite", ["u32.tcounter2"], "u32.uniform", "the tile counter k2")
+f("uniform", "of_tcounter3", "composite", ["u32.tcounter3"], "u32.uniform", "the tile counter k3")
+f("uniform", "of_tcounter4", "composite", ["u32.tcounter4"], "u32.uniform", "the tile counter k4")
+f("index", "of_uniform", "composite", ["u32.uniform"], "u32.index", "a uniform value used as an index")
+f("bound", "of_uniform", "composite", ["u32.uniform"], "u32.boundu", "a uniform loop bound")
+for d in (0, 1, 2, 3, 4, 5):
+    f("stmt", f"cblock_L{d}", "composite", [f"block.C{d}"], f"stmt.L{d}", "conditional statements (no barrier) written in place")
 
 
 def write_tsv(path, header, rows):

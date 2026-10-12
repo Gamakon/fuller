@@ -688,7 +688,8 @@ impl<'a> Checker<'a> {
         let live = ctrl && !cx.tainted;
         match base {
             "fallback" => {}
-            "stmt.block" if k.len() == 1 => self.walk_block(&k[0], cx, ctrl),
+            // stmt.cblock (legality item 5): conditional statements written in place.
+            "stmt.block" | "stmt.cblock" if k.len() == 1 => self.walk_block(&k[0], cx, ctrl),
             "stmt.if" | "stmt.if_else" if k.len() >= 2 => {
                 self.value(&k[0], cx);
                 let c = self.uniform(&k[0], cx);
@@ -1040,7 +1041,8 @@ impl<'a> Checker<'a> {
         if v.name.starts_with("literal.") {
             return self.lit_u32(v);
         }
-        let base = safe_base(&v.name);
+        // A uniform row (legality item 5) computes as its index row or load.
+        let base = crate::wgsl::render::uniform_as_index(&v.name).unwrap_or_else(|| safe_base(&v.name));
         let g = cx.grid;
         let (rc, cc) = (cx.row_comp(), cx.col_comp());
         let wdims = [u128::from(g.x), u128::from(g.y)];
@@ -1080,6 +1082,13 @@ impl<'a> Checker<'a> {
                 }
             }
             "safe.counter_index" | "safe.tile_index" | "safe.tile_index2" | "safe.tile_index3" | "safe.tile_index4" | "safe.row_as_index" | "safe.col_as_index" | "bound.of_index" | "index.of_count" | "index.of_row" | "index.of_col" | "index.of_lidx" if d.slot == "u32" => k(0),
+            "bound.of_uniform" | "index.of_uniform" | "uniform.of_lit" | "uniform.of_counter" | "uniform.of_tcounter" | "uniform.of_tcounter2" | "uniform.of_tcounter3" | "uniform.of_tcounter4" => k(0),
+            "uniform.wid_x" | "uniform.wid_y" | "uniform.wid_z" | "uniform.nwg_x" | "uniform.nwg_y" | "uniform.nwg_z" => {
+                let id = if base.starts_with("uniform.wid") { "wid" } else { "nwg" };
+                cx.comp(id, "xyz".find(base.chars().last()?)?)
+            }
+            "uniform.subgroup_size" => Some(Iv { lo: 4, hi: 128 }),
+            "uniform.num_subgroups" => Some(Iv { lo: 1, hi: wdims[0] * wdims[1] }),
             "index.add" | "count.add" => self.add(k(0), k(1), v, cx),
             "index.mul" | "count.mul" => self.mul(k(0), k(1), v, cx),
             "index.sub" | "count.sub" => {
@@ -1220,10 +1229,7 @@ impl<'a> Checker<'a> {
         // The unsafe kingdom's workgroup rows mask every index to 2,047,
         // whatever the array's length in this kernel's plan.
         if matches!(base, "wg.get" | "wg.set") {
-            if len <= 2047 {
-                cx.fail(Layer::Range, "index_out_of_range", format!("{}: the row masks its index to 2,047 but {var} has {len} elements", n.name));
-            }
-            return;
+            return; // masked into the array's declared length by the renderer (a1d6614, legality item 6)
         }
         let ibase = safe_base(&idx.name);
         if matches!(ibase, "safe.wg_of" | "safe.wgv_of" | "safe.wgv2_of" | "safe.wga_of") && idx.kids.len() == 1 {
@@ -1341,18 +1347,20 @@ mod tests {
         let e = checker.grammar(&under_if).unwrap_err();
         assert_eq!((e.layer, e.reason), (Layer::Grammar, "barrier_under_condition"), "{e}");
 
-        // A barrier in a loop whose trip count is the thread's column: typed,
-        // in a barrier position, but under non-uniform control.
+        // A barrier in a loop whose trip count is the thread's column: since
+        // legality item 5 a loop that may hold a barrier takes a uniform bound
+        // (u32.boundu), so the tree is not even typed.
         let bound = Tree::new("bound.of_index", ty(&k, "u32.boundx"), vec![thread_col(&k)]);
         let looped = with_body(&k, one_l0(Tree::new("loop.tilex_L0", ty(&k, "stmt.L0"), vec![bound, Tree::new("block.one_L2", ty(&k, "block.L2"), vec![Tree::new("stmt.barrier_L2", ty(&k, "stmt.L2"), vec![])])])));
         let e = layer_of(&checker, &looped);
-        assert_eq!((e.layer, e.reason), (Layer::Uniformity, "barrier_in_nonuniform_control_flow"), "{e}");
+        assert_eq!((e.layer, e.reason), (Layer::Typed, "signature_mismatch"), "{e}");
 
-        // An index out of range: a 64-mask into a private array of 16.
+        // A 64-mask into a private array of 16: since legality item 4 the
+        // array takes u32.pindex16, so the tree is not typed.
         let parr = Tree::new("parr.get_v", ty(&k, "vec4<f32>.real"), vec![Tree::new("parr.v", ty(&k, "parr<vec4<f32>>.real"), vec![]), Tree::new("safe.pidx64", ty(&k, "u32.pindex"), vec![reg_i(&k, "reg.i0")])]);
         let out_of_range = with_body(&k, one_l0(Tree::new("reg.set_v_L0", ty(&k, "stmt.L0"), vec![Tree::new("reg.v0", ty(&k, "reg<vec4<f32>>.real"), vec![]), parr])));
         let e = layer_of(&checker, &out_of_range);
-        assert_eq!((e.layer, e.reason), (Layer::Range, "index_out_of_range"), "{e}");
+        assert_eq!((e.layer, e.reason), (Layer::Typed, "signature_mismatch"), "{e}");
 
         // An index product that overflows u32 at the worst shape: m * d * d.
         let cnt = |n: &str| Tree::new("index.of_count", ty(&k, "u32.index"), vec![Tree::new(n, ty(&k, "u32.count"), vec![])]);
@@ -1364,16 +1372,18 @@ mod tests {
 
         // An unbounded loop: its bound is a register its body increments.
         let bound = Tree::new("bound.of_index", ty(&k, "u32.boundx"), vec![reg_i(&k, "reg.i1")]);
-        let bump = Tree::new("reg.set_i_L2", ty(&k, "stmt.L2"), vec![Tree::new("reg.i1", ty(&k, "reg<u32>.index"), vec![]), Tree::new("index.add", ty(&k, "u32.index"), vec![reg_i(&k, "reg.i1"), lit_i(1.0)])]);
-        let unbounded = with_body(&k, one_l0(Tree::new("loop.tilex_L0", ty(&k, "stmt.L0"), vec![bound, Tree::new("block.one_L2", ty(&k, "block.L2"), vec![bump])])));
+        // (At the conditional rung, written in place: a loop with any bound.)
+        let in_place = |l: Tree| Tree::new("stmt.cblock_L0", ty(&k, "stmt.L0"), vec![Tree::new("block.one_C0", ty(&k, "block.C0"), vec![l])]);
+        let bump = Tree::new("reg.set_i_C1", ty(&k, "stmt.C1"), vec![Tree::new("reg.i1", ty(&k, "reg<u32>.index"), vec![]), Tree::new("index.add", ty(&k, "u32.index"), vec![reg_i(&k, "reg.i1"), lit_i(1.0)])]);
+        let unbounded = with_body(&k, one_l0(in_place(Tree::new("loop.tilex_C0", ty(&k, "stmt.C0"), vec![bound, Tree::new("block.one_C1", ty(&k, "block.C1"), vec![bump])]))));
         let e = layer_of(&checker, &unbounded);
         assert_eq!((e.layer, e.reason), (Layer::Bounded, "loop_bound_changes_in_body"), "{e}");
 
         // A loop bounded by a thread-dependent register: not uniform, not known.
         let set_i5 = Tree::new("reg.set_i_L0", ty(&k, "stmt.L0"), vec![Tree::new("reg.i5", ty(&k, "reg<u32>.index"), vec![]), thread_col(&k)]);
         let bound = Tree::new("bound.of_index", ty(&k, "u32.boundx"), vec![reg_i(&k, "reg.i5")]);
-        let set_f = Tree::new("reg.set_f_L2", ty(&k, "stmt.L2"), vec![Tree::new("reg.f1", ty(&k, "reg<f32>.real"), vec![]), Tree::literal("literal.real", ty(&k, "f32.real"), 1.0)]);
-        let thread_bound = with_body(&k, Tree::new("block.seq2_L0", ty(&k, "block.L0"), vec![set_i5, Tree::new("loop.tilex_L0", ty(&k, "stmt.L0"), vec![bound, Tree::new("block.one_L2", ty(&k, "block.L2"), vec![set_f])])]));
+        let set_f = Tree::new("reg.set_f_C1", ty(&k, "stmt.C1"), vec![Tree::new("reg.f1", ty(&k, "reg<f32>.real"), vec![]), Tree::literal("literal.real", ty(&k, "f32.real"), 1.0)]);
+        let thread_bound = with_body(&k, Tree::new("block.seq2_L0", ty(&k, "block.L0"), vec![set_i5, in_place(Tree::new("loop.tilex_C0", ty(&k, "stmt.C0"), vec![bound, Tree::new("block.one_C1", ty(&k, "block.C1"), vec![set_f])]))]));
         let e = layer_of(&checker, &thread_bound);
         assert_eq!((e.layer, e.reason), (Layer::Bounded, "loop_bound_not_uniform"), "{e}");
 

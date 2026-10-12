@@ -355,6 +355,34 @@ fn cont_below_top(t: &Tree, top: bool) -> bool {
     }
 }
 
+/// A uniform row as the index row (or the role's load) it computes alike:
+/// `uniform.add` is `index.add`, `uniform.cfg_d` is `load.cfg_d`.
+pub fn uniform_as_index(name: &str) -> Option<&'static str> {
+    Some(match name {
+        "uniform.cfg_m" => "load.cfg_m",
+        "uniform.cfg_d" => "load.cfg_d",
+        "uniform.cfg_r_rows" => "load.cfg_r_rows",
+        "uniform.cfg_r_off" => "load.cfg_r_off",
+        "uniform.add" => "index.add",
+        "uniform.sub_floor" => "index.sub_floor",
+        "uniform.mul" => "index.mul",
+        "uniform.div" => "index.div",
+        "uniform.min" => "index.min",
+        "uniform.max" => "index.max",
+        "uniform.shl" => "index.shl",
+        "uniform.shr" => "index.shr",
+        "uniform.and" => "index.and",
+        "uniform.or" => "index.or",
+        "uniform.sub" => "index.sub",
+        "uniform.mod" => "index.mod",
+        "uniform.round_down" => "index.round_down",
+        "uniform.band_of" => "index.band_of",
+        "uniform.clamp_to" => "index.clamp_to",
+        "uniform.clamp" => "index.clamp",
+        _ => return None,
+    })
+}
+
 /// An index masked into an array of `len` elements: `&` for a power of two,
 /// `min` otherwise.
 fn masked_to(x: &str, len: u32) -> String {
@@ -841,6 +869,12 @@ impl<'a> Renderer<'a> {
                 let a = self.parr_name(&kids[0])?;
                 Ok(format!("    {a}[{}] = {};\n", self.index_text(&kids[1], array_len(a), scope)?, self.value(&kids[2], scope)?))
             }
+            // Conditional statements (no barrier) written in place: a loop whose
+            // bound is not uniform, read at its conditional rung.
+            "stmt.cblock" => {
+                n(1)?;
+                self.block(&kids[0], scope)
+            }
             "stmt.block" => {
                 n(1)?;
                 Ok(format!("    {{\n{}    }}\n", self.block(&kids[0], scope)?))
@@ -1221,6 +1255,19 @@ impl Renderer<'_> {
         }
         if let Some(p) = self.per_kernel.get(name) {
             return self.fill(p, v, scope);
+        }
+        // The uniform values: as the index rows and loads they compute alike.
+        if let Some(ix) = uniform_as_index(name) {
+            let index = dual_ty(self.kingdom, if ix.starts_with("load.cfg_r_off") { "u32.index" } else if ix.starts_with("load.") { "u32.count" } else { "u32.index" })?;
+            return self.value(&Tree { name: ix.into(), ty: index, konst: v.konst, kids: v.kids.clone() }, scope);
+        }
+        match name {
+            "uniform.of_lit" | "index.of_uniform" | "bound.of_uniform" | "uniform.of_counter" | "uniform.of_tcounter" | "uniform.of_tcounter2" | "uniform.of_tcounter3" | "uniform.of_tcounter4" => return self.value(&v.kids[0], scope),
+            "uniform.wid_x" | "uniform.wid_y" | "uniform.wid_z" => return Ok(format!("wid.{}", &name[name.len() - 1..])),
+            "uniform.nwg_x" | "uniform.nwg_y" | "uniform.nwg_z" => return Ok(format!("nwg.{}", &name[name.len() - 1..])),
+            "uniform.subgroup_size" => return Ok("sg_size".into()),
+            "uniform.num_subgroups" => return Ok("sg_count".into()),
+            _ => {}
         }
         match name {
             "reg.get_f" | "reg.get_v" | "reg.get_i" | "reg.get_b" | "reg.get_n" | "reg.get_u" | "reg.get_x" | "reg.get_y" | "reg.get_z" => return self.register(&v.kids[0]),
@@ -1937,7 +1984,8 @@ fn bound_at(t: &Tree, m: f64) -> (f64, bool) {
                 8192.0
             }
         };
-        match safe_base(&t.name) {
+        match uniform_as_index(&t.name).unwrap_or(safe_base(&t.name)) {
+            "bound.of_uniform" | "index.of_uniform" | "uniform.of_lit" | "uniform.of_counter" | "uniform.of_tcounter" | "uniform.of_tcounter2" | "uniform.of_tcounter3" | "uniform.of_tcounter4" => k(0),
             "load.cfg_d" | "bound.d" => WORST_D,
             "load.cfg_r_rows" | "bound.rows" => WORST_ROWS,
             "load.cfg_m" | "bound.m" => m,
@@ -1975,7 +2023,7 @@ fn bound_at(t: &Tree, m: f64) -> (f64, bool) {
 /// is at least one pass.
 fn items_passes(bound: Option<&Tree>) -> f64 {
     match bound {
-        Some(b) if safe_base(&b.name) == "bound.of_index" => {
+        Some(b) if matches!(safe_base(&b.name), "bound.of_index" | "bound.of_uniform") => {
             let (v, seen) = bound_at_worst(b);
             if seen {
                 v / 65536.0

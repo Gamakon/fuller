@@ -171,3 +171,5 @@ T169	reg<mat2x2<f32>>.real	reg<mat2x2<f32>>	real	4	0.0	0	0	0	a named mat2x2<f32>
 T170	reg<mat3x3<f32>>.real	reg<mat3x3<f32>>	real	9	0.0	0	0	0	a named mat3x3<f32> register
 T171	reg<mat4x4<f32>>.real	reg<mat4x4<f32>>	real	16	0.0	0	0	0	a named mat4x4<f32> register
 T172	u32.pindex16	u32	pindex16	1	0u	0	0	0	an index into a private array of 16 elements (i & 15u)
+T173	u32.uniform	u32	uniform	1	0u	0	0	0	a u32 the same for every thread of the workgroup: a binding's field, a literal, the workgroup's id, the grid's size, the subgroup size, and arithmetic of them
+T174	u32.boundu	u32	boundu	1	1u	0	0	0	a loop bound the same for every thread of the workgroup (a loop that may hold a barrier)

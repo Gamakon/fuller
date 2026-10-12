@@ -636,7 +636,8 @@ mod tests {
         // 161 with the i32 register (WGSL_COVERAGE.md gap 6); 166 with the loop bodies that break (gap 7);
         // 168 with the vec4<u32> register and the vec2 private array (gap 8); 171 with the matrix
         // registers (gap 9); 172 with the 16-element private array's index (legality item 4).
-        assert_eq!(s.len(), 172);
+        // 174 with the uniform values and the uniform loop bound (legality item 5).
+        assert_eq!(s.len(), 174);
         for (a, b) in w.iter().zip(&s) {
             assert_eq!((a.reference.as_str(), a.dual.as_str()), (b.reference.as_str(), b.dual.as_str()));
         }
@@ -662,7 +663,8 @@ mod tests {
         // vec2 private arrays; 1,399 with the matrices (gap 9); 1,405 with modf / frexp's fields and
         // the bindings' lengths (gap 10); 1,454 with the kernel parameters (the knob references
         // literal.p_* and grid.with_ktile; PLAN_constrained_mutation.md task 0).
-        assert_eq!(fs.rows.len(), 1454);
+        // 1,496 with the uniform values, the uniform bound and the in-place conditional block (legality item 5).
+        assert_eq!(fs.rows.len(), 1496);
         let dual = |t: Ty| k.dual(t).unwrap().dual.clone();
         let producers = |d: &str| -> Vec<String> { k.rows.iter().filter(|r| dual(r.output) == d).map(|r| r.name.clone()).collect() };
         assert_eq!(producers("kernel.safe"), vec!["kernel.entry_safe"]);
@@ -737,7 +739,15 @@ mod tests {
         assert!(k.rows.iter().filter(|r| r.name.starts_with("loop.items_strided")).all(|r| dual(r.inputs[1]) == "u32.lit4096"));
         // An expression-bounded loop takes the bound dual only `bound.of_index` produces.
         assert_eq!(producers("u32.boundx"), vec!["bound.of_index"]);
-        assert!(k.rows.iter().filter(|r| r.name.starts_with("loop.tilex_") || r.name.ends_with("_boundx")).all(|r| r.inputs.iter().any(|i| dual(*i) == "u32.boundx")));
+        // A loop that may hold a barrier (an expression-bounded loop at an L rung that does not break)
+        // takes the uniform bound only `bound.of_uniform` produces; every other expression-bounded
+        // loop (C and O rungs, loops that break) takes `u32.boundx` (legality item 5).
+        assert_eq!(producers("u32.boundu"), vec!["bound.of_uniform"]);
+        for r in k.rows.iter().filter(|r| r.name.starts_with("loop.tilex_") || r.name.ends_with("_boundx")) {
+            let barrier_capable = dual(r.output).starts_with("stmt.L") && !r.name.contains("_brk_");
+            let want = if barrier_capable { "u32.boundu" } else { "u32.boundx" };
+            assert!(r.inputs.iter().any(|i| dual(*i) == want), "{} takes {want}", r.name);
+        }
     }
 
     #[test]

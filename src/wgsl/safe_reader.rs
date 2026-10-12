@@ -1426,6 +1426,85 @@ impl<'a> Ctx<'a> {
         })
     }
 
+    /// A bound expression (in the safe grammar) as the uniform values, or
+    /// None when it reads anything a thread or a subgroup holds alone (a
+    /// thread id, a register, a load): the cfg fields, literals, the
+    /// workgroup's id, the grid's size, the subgroup size and count, and the
+    /// index arithmetic of them.
+    fn uniform_of(&self, t: &Tree) -> Result<Option<Tree>, String> {
+        let u = ty(self, "u32.uniform")?;
+        let leaf = |name: &str| Tree::new(name, u, vec![]);
+        let comp = |k: &Tree| -> Option<char> { t.name.strip_prefix("shape.access_").and_then(|i| i.parse::<usize>().ok()).and_then(|i| "xyz".chars().nth(i)).filter(|_| k.kids.is_empty()) };
+        Ok(match (t.name.as_str(), t.kids.as_slice()) {
+            ("load.cfg_m", []) => Some(leaf("uniform.cfg_m")),
+            ("load.cfg_d", []) => Some(leaf("uniform.cfg_d")),
+            ("load.cfg_r_rows", []) => Some(leaf("uniform.cfg_r_rows")),
+            ("load.cfg_r_off", []) => Some(leaf("uniform.cfg_r_off")),
+            ("builtin.subgroup_size", []) => Some(leaf("uniform.subgroup_size")),
+            ("builtin.num_subgroups", []) => Some(leaf("uniform.num_subgroups")),
+            ("index.of_count", [k]) | ("index.of_uniform", [k]) => self.uniform_of(k)?,
+            // A loop counter (its loop's bound is uniform wherever an L-rung loop reads it).
+            ("safe.counter_index" | "safe.tile_index" | "safe.tile_index2" | "safe.tile_index3" | "safe.tile_index4", [c]) => {
+                let row = match c.name.as_str() {
+                    "safe.counter" => "uniform.of_counter",
+                    "safe.tile_counter" => "uniform.of_tcounter",
+                    "safe.tile_counter2" => "uniform.of_tcounter2",
+                    "safe.tile_counter3" => "uniform.of_tcounter3",
+                    "safe.tile_counter4" => "uniform.of_tcounter4",
+                    _ => return Ok(None),
+                };
+                Some(Tree::new(row, u, vec![c.clone()]))
+            }
+            (n, []) if n.starts_with("literal.") => {
+                let v = t.konst;
+                (v.fract() == 0.0 && (1.0..=4096.0).contains(&v)).then(|| Tree::new("uniform.of_lit", u, vec![Tree::literal("literal.lit4096", ty(self, "u32.lit4096").expect("dual"), v)]))
+            }
+            (n, [k]) if n.starts_with("shape.access_") => match (k.name.as_str(), comp(k)) {
+                ("builtin.workgroup_id" | "builtin.work_group_id", Some(c)) => Some(Tree::new(&format!("uniform.wid_{c}"), u, vec![Tree::new("builtin.workgroup_id", ty(self, "vec3<u32>.wid")?, vec![])])),
+                ("builtin.num_workgroups" | "builtin.num_work_groups", Some(c)) => Some(Tree::new(&format!("uniform.nwg_{c}"), u, vec![Tree::new("builtin.num_workgroups", ty(self, "vec3<u32>.count")?, vec![])])),
+                _ => None,
+            },
+            // `select(x - y, 0u, y > x)`: how the kingdom writes x - y floored
+            // at 0 (index.sub_floor), read back as a select.
+            ("select.scalar_cond", [zero, diff, cond]) if literal_value(zero) == Some(0.0) => match (diff.name.as_str(), diff.kids.as_slice(), cond.name.as_str(), cond.kids.as_slice()) {
+                ("index.sub", [x, y], "compare.gt", [y2, x2]) | ("index.sub", [x, y], "compare.lt", [x2, y2]) if x == x2 && y == y2 => match (self.uniform_of(x)?, self.uniform_of(y)?) {
+                    (Some(x), Some(y)) => Some(Tree::new("uniform.sub_floor", u, vec![x, y])),
+                    _ => None,
+                },
+                _ => None,
+            },
+            ("index.clamp", [a, b, c]) => match (self.uniform_of(a)?, self.uniform_of(b)?, self.uniform_of(c)?) {
+                (Some(a), Some(b), Some(c)) => Some(Tree::new("uniform.clamp", u, vec![a, b, c])),
+                _ => None,
+            },
+            (n, [a, b]) => {
+                let op = match n {
+                    "index.sub" => "sub",
+                    "index.mod" => "mod",
+                    "index.round_down" => "round_down",
+                    "index.band_of" => "band_of",
+                    "index.clamp_to" => "clamp_to",
+                    "index.add" | "count.add" => "add",
+                    "index.sub_floor" | "count.sub_floor" => "sub_floor",
+                    "index.mul" => "mul",
+                    "index.div" => "div",
+                    "index.min" | "count.min" => "min",
+                    "index.max" | "count.max" => "max",
+                    "index.shl" => "shl",
+                    "index.shr" => "shr",
+                    "index.and" => "and",
+                    "index.or" => "or",
+                    _ => return Ok(None),
+                };
+                match (self.uniform_of(a)?, self.uniform_of(b)?) {
+                    (Some(a), Some(b)) => Some(Tree::new(&format!("uniform.{op}"), u, vec![a, b])),
+                    _ => None,
+                }
+            }
+            _ => None,
+        })
+    }
+
     /// A matrix local's columns and rows (`local.<name>@<h>`), from naga.
     fn local_mat(&self, local: &str) -> Option<(u32, u32)> {
         let h: usize = local.rsplit_once('@')?.1.parse().ok()?;
@@ -3245,6 +3324,27 @@ impl<'a> Ctx<'a> {
             (Tree::new("bound.of_index", ty(self, "u32.boundx")?, vec![expr]), "boundx")
         };
         // The step: the continuing block's store to the counter is counter + s, s a literal in 1..=64.
+        // A loop that may hold a barrier (at an L rung, not one that breaks)
+        // has a uniform bound: written as the uniform values when it is one;
+        // otherwise the loop is read at the conditional rung of its depth (no
+        // barrier in it) and written in place (stmt.cblock_L<d>).
+        let mut bound_tree = bound_tree;
+        let first0 = if do_while { 0 } else { test_pos + 1 };
+        let breaks0 = has_break_guard(&body_stmts_all.iter().skip(first0).map(|s| (*s).clone()).collect::<Vec<_>>());
+        if kind == "boundx" && rung.starts_with('L') && !breaks0 {
+            match self.uniform_of(&bound_tree.kids[0])? {
+                Some(u) => bound_tree = Tree::new("bound.of_uniform", ty(self, "u32.boundu")?, vec![u]),
+                None => {
+                    let crung = format!("C{}", &rung[1..]);
+                    let st = self.stmt_ty(rung)?;
+                    let inner = self.looped(body, continuing, break_if, path, &crung, true)?;
+                    return match inner {
+                        Some(t) => Ok(Some(Tree::new(&format!("stmt.cblock_{rung}"), st, vec![self.block(vec![t], &crung)?]))),
+                        None => Ok(None),
+                    };
+                }
+            }
+        }
         let mut step: Option<u32> = None;
         let mut cpath = path.clone();
         cpath.push(1);
@@ -3385,6 +3485,15 @@ impl<'a> Ctx<'a> {
                 return Ok(None);
             }
             (Tree::literal("literal.lit64", ty(self, "u32.lit64")?, n - start), start)
+        } else if bound_tree.name == "bound.of_uniform" {
+            // A uniform bound stays uniform: bound - start.
+            let u = ty(self, "u32.uniform")?;
+            if !(1.0..=4096.0).contains(&start) {
+                return Err(format!("a loop entered at {start} with a uniform bound (a uniform literal is 1..=4096)"));
+            }
+            let lit = Tree::new("uniform.of_lit", u, vec![Tree::literal("literal.lit4096", ty(self, "u32.lit4096")?, start)]);
+            let expr = Tree::new("uniform.sub_floor", u, vec![bound_tree.kids[0].clone(), lit]);
+            (Tree::new("bound.of_uniform", bound_tree.ty, vec![expr]), start)
         } else {
             let index = ty(self, "u32.index")?;
             let expr = Tree::new("index.sub_floor", index, vec![bound_tree.kids[0].clone(), Tree::literal("literal.index", index, start)]);
@@ -4256,7 +4365,8 @@ mod tests {
         let test = "b < 16u && (t0 + b * 64u) < m";
         assert!(src.contains(test));
         let sx = read_safe(src, &k).unwrap_or_else(|e| panic!("{e}")).tree.to_sexpr();
-        assert!(sx.contains("(bound.of_index (index.min (literal.index 16) (index.div (index.add (index.sub_floor"), "{sx}");
+        // (A uniform bound since legality item 5: the loop may hold a barrier.)
+        assert!(sx.contains("(bound.of_uniform (uniform.min (uniform.of_lit (literal.lit4096 16)) (uniform.div (uniform.add (uniform.sub_floor"), "{sx}");
         // The bound read once must not change in the body: t0 stored inside the b loop is refused by name.
         let moved = src.replacen("var q0 = vec4<f32>(0.0);", "t0 = t0 + 0u; var q0 = vec4<f32>(0.0);", 1);
         let Err(e) = read_safe(&moved, &k) else { panic!("t0 changes in the body, and the kernel read") };
