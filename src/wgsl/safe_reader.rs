@@ -32,6 +32,9 @@ struct Ctx<'a> {
     kingdom: &'a WgslKingdom,
     /// The interface's per-kernel rows (a second input's load among them).
     per_kernel_rows: Vec<crate::wgsl::safe_karva::PerKernelRow>,
+    /// Whether main's last statement is a `return` (a body that returns, the
+    /// epilogue not written after it).
+    main_returns: bool,
     duals: &'a BTreeMap<String, Option<Ty>>,
     lets: &'a HashMap<String, Node>,
     roots: &'a HashMap<Vec<usize>, Vec<&'a Root>>,
@@ -2204,9 +2207,36 @@ impl<'a> Ctx<'a> {
         // renderer writes the operation inline at its use): read inline at
         // its use, where naga's statement for it stands (2026-10-12: 80 of
         // 1,000 random trees did not read back).
-        if matches!(d.as_str(), "vec2<f32>.real" | "vec3<f32>.real" | "vec2<u32>.index" | "vec3<u32>.index" | "vec2<i32>.int" | "vec3<i32>.int") {
-            self.inlined.insert(format!("subgroup@{result}"), expr);
+        // So too a result one statement reads (the kingdom writes every
+        // subgroup operation inline at its use; a register each ran out of
+        // registers in a fully unrolled loop, 2026-10-12).
+        let leaf = format!("subgroup@{result}");
+        fn count(n: &Node, leaf: &str) -> usize {
+            match n {
+                Node::Leaf { name, .. } => usize::from(name == leaf),
+                Node::App { kids, .. } => kids.iter().map(|k| count(k, leaf)).sum(),
+                _ => 0,
+            }
+        }
+        // (Read by one statement, however often: a subgroup operation of the
+        // same operands in one statement is one value, as a store's guard
+        // and its cell read it.)
+        // (A call's arguments are roots of their own, by the call's statement.)
+        let readers = self.roots.values().flatten().filter(|r| count(&r.tree, &leaf) > 0).count() + self.arg_roots.values().filter(|args| args.iter().any(|(_, n)| count(n, &leaf) > 0)).count();
+        let in_let = self.lets.values().any(|t| count(t, &leaf) > 0);
+        if matches!(d.as_str(), "vec2<f32>.real" | "vec3<f32>.real" | "vec2<u32>.index" | "vec3<u32>.index" | "vec2<i32>.int" | "vec3<i32>.int") || (readers == 1 && !in_let) {
+            self.inlined.insert(leaf, expr);
             return Ok(None);
+        }
+        // Read by nothing (`_ = subgroupBroadcast(x, 1u) >> s`: naga keeps the
+        // collective, drops the rest): the collective, discarded.
+        if readers == 0 && !in_let {
+            let st = self.stmt_ty(rung)?;
+            match d.as_str() {
+                "u32.index" | "u32.bits" | "u32.count" => return Ok(Some(Tree::new(&format!("stmt.discard_u_{rung}"), st, vec![Tree { ty: ty(self, "u32.index")?, ..expr }]))),
+                "i32.int" => return Ok(Some(Tree::new(&format!("stmt.discard_i_{rung}"), st, vec![expr]))),
+                _ => {}
+            }
         }
         let kind = match d.as_str() {
             "f32.real" => 'f',
@@ -2284,7 +2314,7 @@ impl<'a> Ctx<'a> {
                 _ => 0,
             }
         }
-        let uses: usize = self.roots.values().flatten().map(|r| count(&r.tree, &leaf)).sum::<usize>() + self.lets.values().map(|t| count(t, &leaf)).sum::<usize>();
+        let uses: usize = self.roots.values().flatten().map(|r| count(&r.tree, &leaf)).sum::<usize>() + self.lets.values().map(|t| count(t, &leaf)).sum::<usize>() + self.arg_roots.values().flatten().map(|(_, n)| count(n, &leaf)).sum::<usize>();
         if uses == 0 {
             return Ok(Some(Tree::new(&format!("stmt.discard_{suffix}_{rung}"), st, vec![expr])));
         }
@@ -2524,6 +2554,12 @@ impl<'a> Ctx<'a> {
             if stmts.last().is_none_or(|s| rung_stem(&s.name) != Some("stmt.return")) {
                 stmts.push(Tree::new("stmt.return_L0", self.stmt_ty("L0")?, vec![]));
             }
+            return Ok((stmts, Tree::fallback(ty(self, "block.O0")?)));
+        }
+        // A body that returns, with statements after its last store: the
+        // epilogue was not written (the renderer stops at the return).
+        if self.main_returns && stmts.iter().rposition(has_store).is_some_and(|p| p + 1 < stmts.len()) {
+            stmts.push(Tree::new("stmt.return_L0", self.stmt_ty("L0")?, vec![]));
             return Ok((stmts, Tree::fallback(ty(self, "block.O0")?)));
         }
         let p = stmts.iter().rposition(has_store).ok_or("the kernel never writes h: the kingdom's root ends every kernel in the store of its thread's cell")?;
@@ -3252,7 +3288,12 @@ impl<'a> Ctx<'a> {
                     Statement::Return { value: None } => {
                         if stmt_tail {
                             // The function's implicit return (naga writes one at
-                            // the end of each branch of a trailing `if`).
+                            // the end of each branch of a trailing `if`). Written
+                            // at the end of main itself, it is a body's return
+                            // (the renderer writes no epilogue after it).
+                            if here.len() == 1 && self.local_prefix.is_empty() {
+                                self.main_returns = true;
+                            }
                             return Ok(None);
                         }
                         if cond {
@@ -3715,11 +3756,6 @@ impl<'a> Ctx<'a> {
             // Anywhere in it: an unrolled item loop's test `t + u <= min(e, cap)`
             // is the floored bound over the capped one (2026-10-12).
             let expr = strip_cap(&expr);
-            // A bound of 0 (an expression bound's fallback renders `min((0u), cap)`):
-            // the loop never runs, and the counter keeps its value.
-            if literal_value(&expr) == Some(0.0) && !do_while {
-                return Ok(None);
-            }
             let expr = Tree { ty: index_ty, ..expr };
             (Tree::new("bound.of_index", ty(self, "u32.boundx")?, vec![expr]), "boundx")
         };
@@ -4440,7 +4476,7 @@ pub fn read_safe_literal(source: &str, kingdom: &WgslKingdom) -> Result<SafeRead
         }
     }
     let (bound_lets, stale_lets) = lets_used_in_deeper_loops(&f.roots, &naga_fn.body, &f.points);
-    let mut ctx = Ctx { kingdom, per_kernel_rows: crate::wgsl::safe_karva::per_kernel_rows(kingdom, &role), duals: &duals, lets: &lets, roots: &roots, item_counter: None, tile_counter: None, tile_counter2: None, tile_counter3: None, tile_counter4: None, registers: BTreeMap::new(), next_reg: BTreeMap::new(), guard: None, tail: true, arrays: BTreeMap::new(), array_lens: BTreeMap::new(), parrs: BTreeMap::new(), grid, rows_x: grid_rows_x(source).then_some(true), notes: Vec::new(), helpers: &helpers, calls: &calls, arg_roots: &arg_roots, inline_args: None, row_arrays: BTreeMap::new(), used_counters: std::collections::BTreeSet::new(), local_lanes, axis_memo: BTreeMap::new(), loop_depth: 0, tile_bounds: BTreeMap::new(), naga_fn, module: &kernel.module, local_prefix: String::new(), inline_result: None, inline_values: None, bound_lets, stale_lets, let_regs: HashMap::new(), inlined: HashMap::new(), stored_seen: std::collections::BTreeSet::new(), counter_offsets: HashMap::new(), pointer_args: HashMap::new() };
+    let mut ctx = Ctx { kingdom, main_returns: false, per_kernel_rows: crate::wgsl::safe_karva::per_kernel_rows(kingdom, &role), duals: &duals, lets: &lets, roots: &roots, item_counter: None, tile_counter: None, tile_counter2: None, tile_counter3: None, tile_counter4: None, registers: BTreeMap::new(), next_reg: BTreeMap::new(), guard: None, tail: true, arrays: BTreeMap::new(), array_lens: BTreeMap::new(), parrs: BTreeMap::new(), grid, rows_x: grid_rows_x(source).then_some(true), notes: Vec::new(), helpers: &helpers, calls: &calls, arg_roots: &arg_roots, inline_args: None, row_arrays: BTreeMap::new(), used_counters: std::collections::BTreeSet::new(), local_lanes, axis_memo: BTreeMap::new(), loop_depth: 0, tile_bounds: BTreeMap::new(), naga_fn, module: &kernel.module, local_prefix: String::new(), inline_result: None, inline_values: None, bound_lets, stale_lets, let_regs: HashMap::new(), inlined: HashMap::new(), stored_seen: std::collections::BTreeSet::new(), counter_offsets: HashMap::new(), pointer_args: HashMap::new() };
     // Register initialisations first, in root order. A local initialised to
     // its form's fallback (0.0, 0u, false, a zero vector) costs nothing: the
     // register's declaration already holds that value, and the register is
@@ -5351,7 +5387,7 @@ mod tests {
     /// The counts of [`random_sampler_trees_read_back_to_their_own_text`]
     /// reached so far: to their own text, and read back at all.
     const READ_BACK_FLOOR: usize = 108;
-    const READ_AT_ALL_FLOOR: usize = 964;
+    const READ_AT_ALL_FLOOR: usize = 976;
 
     /// THE KINGDOM'S COMPLETENESS BAR (2026-10-12): 1,000 random trees of
     /// the kingdom's typed sampler (the safe root, depth 7, seeds 0..1000)
