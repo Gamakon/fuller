@@ -221,6 +221,7 @@ fn tree_of(ctx: &mut Ctx, n: &Node) -> Result<Tree, String> {
                     Some('v') => "vec4<f32>.real",
                     Some('b') => "bool.flag",
                     Some('n') => "i32.int",
+                    Some('u') => "vec4<u32>.bits",
                     _ => "u32.index",
                 };
                 return Ok(Tree::new(&format!("load.{local}"), ty(ctx, d)?, vec![]));
@@ -420,6 +421,7 @@ fn parr_dual(kind: char) -> &'static str {
         'v' => "parr<vec4<f32>>.real",
         'i' => "parr<u32>.index",
         'b' => "parr<bool>.flag",
+        't' => "parr<vec2<f32>>.real",
         _ => "parr<f32>.real",
     }
 }
@@ -1238,6 +1240,7 @@ impl<'a> Ctx<'a> {
             "u32.index" | "u32.bits" | "u32.count" => ('i', 64),
             "bool.flag" => ('b', 16),
             "i32.int" => ('n', 16),
+            "vec4<u32>.bits" | "vec4<u32>.index" | "vec4<u32>.count" => ('u', 8),
             other => return Err(format!("local {local} has dual {other}, which has no register kind"),)
         };
         let n = *self.next_reg.get(&kind).unwrap_or(&0);
@@ -1248,6 +1251,26 @@ impl<'a> Ctx<'a> {
         let row = format!("reg.{kind}{n}");
         self.registers.insert(local.to_string(), row.clone());
         Ok(row)
+    }
+
+    /// Whether a local (`local.<name>@<h>`) is a vector of u32.
+    fn local_vec_uint(&self, local: &str) -> bool {
+        let Some(h) = local.rsplit_once('@').and_then(|(_, h)| h.parse::<usize>().ok()) else { return false };
+        self.naga_fn.local_variables.iter().nth(h).is_some_and(|(_, lv)| matches!(self.module.types[lv.ty].inner, naga::TypeInner::Vector { scalar: naga::Scalar { kind: naga::ScalarKind::Uint, .. }, .. }))
+    }
+
+    /// The lanes of a local array's element vector (`var a: array<vec2<f32>, 4>`
+    /// is 2), from naga's declaration of the local named `local.<name>@<h>`.
+    fn local_elem_lanes(&self, local: &str) -> Option<u32> {
+        let h: usize = local.rsplit_once('@')?.1.parse().ok()?;
+        let (_, lv) = self.naga_fn.local_variables.iter().nth(h)?;
+        match &self.module.types[lv.ty].inner {
+            naga::TypeInner::Array { base, .. } => match &self.module.types[*base].inner {
+                naga::TypeInner::Vector { size, .. } => Some(*size as u32),
+                _ => None,
+            },
+            _ => None,
+        }
     }
 
     /// A tile counter's read: its index, plus the loop's entry value when
@@ -1268,6 +1291,7 @@ impl<'a> Ctx<'a> {
             'v' => "reg<vec4<f32>>.real",
             'i' => "reg<u32>.index",
             'n' => "reg<i32>.int",
+            'u' => "reg<vec4<u32>>.bits",
             _ => "reg<bool>.flag",
         }
     }
@@ -1370,8 +1394,19 @@ impl<'a> Ctx<'a> {
                 // register is the local's own (named without the `.#`).
                 let base = local.trim_end_matches(".#").to_string();
                 if let Some((i, j)) = nested_index(rest, &t.kids) {
-                    // A lane of a vec4 element of a private array: `accs[i][j]`.
-                    let (arr, kind, mask) = self.private_array(&format!("{base}.#"), "vec4<f32>.real")?;
+                    // A lane of a vec4 (or vec2) element of a private array: `accs[i][j]`.
+                    let elem = if self.local_elem_lanes(&base) == Some(2) { "vec2<f32>.real" } else { "vec4<f32>.real" };
+                    let (arr, kind, mask) = self.private_array(&format!("{base}.#"), elem)?;
+                    if kind == 't' {
+                        let i = self.value(unmasked(i, 15.0))?;
+                        let pidx = Tree::new(mask, ty(self, "u32.pindex")?, vec![i]);
+                        let whole = Tree::new("parr.get_t", ty(self, "vec2<f32>.real")?, vec![Tree::new(arr, ty(self, parr_dual(kind))?, vec![]), pidx]);
+                        if let Some(lane) = literal_value(unmasked(j, 1.0)).filter(|l| (0.0..=1.0).contains(l)) {
+                            return Ok(Tree::new(&format!("shape.access_{}", lane as u32), t.ty, vec![whole]));
+                        }
+                        let j = self.value(unmasked(j, 1.0))?;
+                        return Ok(Tree::new("shape.at", t.ty, vec![whole, j]));
+                    }
                     if kind != 'v' {
                         return Err(format!("a lane of an element of {base}, which is not a vec4 array"));
                     }
@@ -1384,6 +1419,17 @@ impl<'a> Ctx<'a> {
                     }
                     let j = self.value(unmasked(j, 3.0))?;
                     return Ok(Tree::new("parr.get_v_lane", t.ty, vec![array, pidx, j]));
+                }
+                if self.local_lanes.get(&base) == Some(&4) && self.local_vec_uint(&base) {
+                    // A lane of a vec4<u32> register (subgroupBallot's): the
+                    // register's value, then its lane.
+                    let row = self.register(&base, "vec4<u32>.bits")?;
+                    let whole = Tree::new("reg.get_u", ty(self, "vec4<u32>.bits")?, vec![Tree::new(&row, ty(self, Self::reg_dual('u'))?, vec![])]);
+                    if let Some(lane) = literal_value(unmasked(&t.kids[0], 3.0)).filter(|l| (0.0..=3.0).contains(l)) {
+                        return Ok(Tree::new(&format!("shape.access_{}", lane as u32), t.ty, vec![whole]));
+                    }
+                    let idx = self.value(unmasked(&t.kids[0], 3.0))?;
+                    return Ok(Tree::new("shape.at", t.ty, vec![whole, idx]));
                 }
                 if self.local_lanes.get(&base) == Some(&4) {
                     let row = self.register(&base, "vec4<f32>.real")?;
@@ -1424,6 +1470,12 @@ impl<'a> Ctx<'a> {
                 return Ok(Tree::new(&format!("shape.compose{}", lanes.len()), out, lanes));
             }
         }
+        // `select(a, b, c)` with a vector of bools for c chooses per lane: the
+        // kingdom's select.lane_cond (naga's Select resolves by kind alone).
+        if t.name == "select.scalar_cond" && t.kids.len() == 3 && self.kingdom.dual(t.kids[2].ty).is_some_and(|d| d.lanes > 1 && d.slot.starts_with("vec")) {
+            let kids = t.kids.iter().map(|k| self.value(k)).collect::<Result<Vec<_>, _>>()?;
+            return Ok(Tree { name: "select.lane_cond".into(), ty: t.ty, konst: t.konst, kids });
+        }
         // A vector component chosen at run time (`v[j]`): the kingdom's `shape.at`.
         if t.name == "shape.access_dyn" && t.kids.len() == 2 && self.kingdom.dual(t.kids[0].ty).is_some_and(|d| d.lanes > 1 && d.slot.starts_with("vec")) {
             let v = self.value(&t.kids[0])?;
@@ -1458,6 +1510,7 @@ impl<'a> Ctx<'a> {
             "vec4<f32>.real" => ('v', "safe.pidx16"),
             "u32.index" => ('i', "safe.pidx16"),
             "bool.flag" => ('b', "safe.pidx16"),
+            "vec2<f32>.real" => ('t', "safe.pidx16"),
             other => return Err(format!("a local array {local} of {other} has no private array")),
         };
         let used: Vec<&'static str> = self.parrs.values().map(|a| a.0).collect();
@@ -1465,6 +1518,7 @@ impl<'a> Ctx<'a> {
             'f' => ["parr.a", "parr.b", "parr.c", "parr.d", "parr.e", "parr.f"].iter().copied().find(|a| !used.contains(a)).ok_or_else(|| format!("a seventh f32 local array {local}"))?,
             'v' => ["parr.v", "parr.w", "parr.x", "parr.y"].iter().copied().find(|a| !used.contains(a)).ok_or_else(|| format!("a fifth vec4 local array {local}"))?,
             'b' => ["parr.m", "parr.n"].iter().copied().find(|a| !used.contains(a)).ok_or_else(|| format!("a third bool local array {local}"))?,
+            't' => ["parr.q", "parr.r"].iter().copied().find(|a| !used.contains(a)).ok_or_else(|| format!("a third vec2 local array {local}"))?,
             _ => ["parr.i", "parr.j", "parr.k"].iter().copied().find(|a| !used.contains(a)).ok_or_else(|| format!("a fourth u32 local array {local}"))?,
         };
         self.parrs.insert(local.to_string(), (arr, kind, mask));
@@ -1534,6 +1588,7 @@ impl<'a> Ctx<'a> {
             "u32.index" | "u32.bits" | "u32.count" => 'i',
             "bool.flag" => 'b',
             "i32.int" => 'n',
+            "vec4<u32>.bits" => 'u',
             other => return Err(format!("a subgroup {} of {other}: no register holds its result", expr.name)),
         };
         let row = self.register(&format!("local.subgroup@{result}"), &d)?;
@@ -1546,7 +1601,17 @@ impl<'a> Ctx<'a> {
     fn subgroup_expr(&mut self, root: &Root) -> Result<(Tree, String), String> {
         let RootKind::Subgroup { fun } = &root.kind else { return Err("not a subgroup root".into()) };
         if fun == "ballot" {
-            return Err("subgroupBallot has no safe spelling: its vec4<u32> result has no register".into());
+            // subgroupBallot(b) (no argument: every active lane): a vec4<u32> of lane bits.
+            let Node::App { kids, .. } = &root.tree else { return Err("a subgroup root without its argument".into()) };
+            let flag = ty(self, "bool.flag")?;
+            let b = match kids.first() {
+                Some(k) => {
+                    let t = tree_of(self, k)?;
+                    self.value(&t)?
+                }
+                None => Tree::literal("literal.flag", flag, 1.0),
+            };
+            return Ok((Tree::new("subgroup.ballot", ty(self, "vec4<u32>.bits")?, vec![b]), "vec4<u32>.bits".to_string()));
         }
         let Node::App { kids, .. } = &root.tree else { return Err("a subgroup root without its argument".into()) };
         let trees = kids.iter().map(|k| tree_of(self, k)).collect::<Result<Vec<_>, _>>()?;
@@ -2536,6 +2601,9 @@ impl<'a> Ctx<'a> {
                     let v = self.value(value)?;
                     let pidx = Tree::new(mask, ty(self, "u32.pindex")?, vec![i]);
                     return Ok(Some(Tree::new(&format!("parr.set_v_lane_{rung}"), st, vec![Tree::new(arr, ty(self, parr_dual(kind))?, vec![]), pidx, j, v])));
+                }
+                if self.local_lanes.get(&base) == Some(&4) && self.local_vec_uint(&base) {
+                    return Err(format!("a store to one lane of the vec4<u32> local {base} (the kingdom writes a vec4<u32> register whole)"));
                 }
                 if self.local_lanes.get(&base) == Some(&4) {
                     let row = self.register(&base, "vec4<f32>.real")?;

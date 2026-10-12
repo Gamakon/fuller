@@ -89,15 +89,15 @@
 | `vec2<f32>`, `vec4<f32>` | covered | `shape.compose2/4`, `reg.v*` (vec4) |
 | `vec3<f32>` | covered | `cross`, 3-lane swizzles, `length` of a vec3 |
 | `vec2<u32>` | covered | |
-| `vec3<u32>` as a value | missing | `gid + vec3<u32>(1u)`: the thread id cannot be an operand |
-| `vec4<u32>` | partial | as a value (`ty_vec4_u32`) covered; no `vec4<u32>` register (blocks `subgroupBallot`) |
+| `vec3<u32>` as a value | covered | `index.of_gid`, `of_lid`, `of_wid`: a thread id as a plain vector operand |
+| `vec4<u32>` | covered | as a value, and the registers `reg.u0`..`u7` |
 | `vecN<i32>` | covered as values | `int.*` per lane; no vector i32 register |
-| `vecN<bool>` | partial | from comparisons with `any` / `all` covered; `vec2<bool>` built by a constructor in `select` missing |
+| `vecN<bool>` | covered | comparisons, `any` / `all`, a constructor, `select.lane_cond` |
 | matrices `mat2x2<f32>` | missing | constructed from four scalars: no `shape.compose_mat` from scalars |
 | matrices from columns (`mat3x3`, `mat4x4`, `mat3x4`) | missing | "naga.Compose.type6 has no row" |
 | matrix locals, column access `m[i]`, `m[i][j]` | missing | no matrix register; `AccessIndex` on a matrix |
 | `array<T, N>` locals of f32, u32, bool, vec4 | covered | private arrays `parr.*` |
-| `array<vec2<f32>, N>` local | missing | "has no private array" |
+| `array<vec2<f32>, N>` local | covered | `parr.q`, `parr.r` (16 vec2 each) |
 | `array<S, N>` of structs | covered | |
 | array constructors | covered | |
 | runtime-sized arrays, `arrayLength` | missing | "naga.ArrayLength has no row" (phi is runtime-sized; its length is a binding fact) |
@@ -121,10 +121,10 @@
 | swizzles, 2 to 4 lanes | covered | its lanes composed (`v.zyx` is `vec3(v.z, v.y, v.x)`); the kingdom has no row per pattern |
 | swizzle assignment | covered | `reg.set_v_lane_*` |
 | `select` scalar | covered | `select.scalar_cond` |
-| `select` with a `vec2<bool>` built by a constructor | missing | |
+| `select` with a vector condition | covered | `select.lane_cond` |
 | `bitcast<f32>(u32)`, `bitcast<u32>(f32)` | covered | `convert.bitcast_*` |
 | `bitcast<i32>(u32)`, `bitcast<u32>(i32)`, `bitcast<i32>(f32)`, `bitcast<f32>(i32)` | covered | `convert.bitcast_*` |
-| `bitcast` on vectors | missing | |
+| `bitcast` on vectors | covered | `convert.bitcast_f32_bits`, `bitcast_bits_f32` per lane |
 | conversions `f32(u32)`, `u32(f32)`, `f32(bool)`, `u32(bool)` | covered | `convert.*` |
 | `i32(u32)`, `u32(i32)`, `i32(f32)` | covered | `convert.index_to_int`, `int_to_index`, `f32_to_int` |
 | a literal written as `2.0` beside an f32 in `max`, `clamp`, `mix`, `pow`, `step`, `smoothstep`, `fma`, `ldexp`, `atan2`, `dot`, `distance`, `reflect`, `faceForward`, `length`, `normalize` | covered | naga 0.20 lowers the abstract literal through `As { convert: Some(4) }` f32 to f32; the reader reads a conversion to the operand's own kind and width as the operand (`draft_float_literals`) |
@@ -167,7 +167,7 @@
 | `atomicCompareExchangeWeak` | naga 0.20 | Metal backend: "FeatureNotImplemented(atomic CompareExchange)" |
 | subgroup reductions and scans on f32, u32 and vec4 | covered | `subgroup.*` |
 | subgroup operations on i32 | covered | `subgroup.*` on `i32.int` |
-| `subgroupBallot` | missing | its `vec4<u32>` result has no register |
+| `subgroupBallot` | covered | `subgroup.ballot` into a `reg.u*` register |
 | `subgroupElect`, `quadBroadcast`, `quadSwap*` | naga 0.20 | not parsed |
 | `workgroupUniformLoad` | missing | workgroup scalar |
 | derivatives (`dpdx` ...), `textureSample` | not compute | |
@@ -183,7 +183,7 @@ Each fill is its own commit with a corpus row and the full checklist. The order 
 5. Done: `num_workgroups`, naga's name `num_work_groups` mapped to the row. 136 of 184 read. Also read now: a kernel that never writes h (`draft_no_store`; a mutant's top-level return).
 6. Done: i32 registers, `i32(u32)`, `u32(i32)`, `i32(f32)`, `bitcast<i32>`, and with them `++` / `--`, i32 `abs/min/max/clamp/sign`, i32 subgroup operations and vecN<i32>; an atomic<i32>'s old value read later. 147 of 184 read.
 7. Done: `switch`, `break`, `break if`, `while` with its step in the body, `continue` in any loop; loops entered at a non-zero literal. 153 of 184 read.
-8. Partly done: swizzles and vec3 values (`cross`, 3-lane swizzles), 159 of 184 read; two conform bugs found on the way (an exponential search over overloads, and a 3-lane compose rebuilt without end). Still open: the thread id as a vector operand, `vec4<u32>` registers (then `subgroupBallot`), vec2 private arrays, a `vec2<bool>` built by a constructor, `bitcast` of a whole vector.
+8. Partly done: swizzles and vec3 values (`cross`, 3-lane swizzles), 159 of 184 read; two conform bugs found on the way (an exponential search over overloads, and a 3-lane compose rebuilt without end). Then done: the thread id as a vector operand, `vec4<u32>` registers and `subgroupBallot`, vec2 private arrays, `select` on a vector condition, `bitcast` of a whole vector. 164 of 184 read.
 9. Matrices: construction from scalars and columns, matrix locals, column access.
 10. `modf` / `frexp` results, `arrayLength`.
 11. Module `const` and `override`, `var<private>`, workgroup scalars and `workgroupUniformLoad`.

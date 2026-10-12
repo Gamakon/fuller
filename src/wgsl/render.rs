@@ -934,7 +934,7 @@ impl<'a> Renderer<'a> {
                 scope.in_tile = false;
                 Ok(format!("    for (k = 0u; k < {count}u; k = k + 1u) {{\n{}    }}\n", body?))
             }
-            "reg.set_f" | "reg.set_v" | "reg.set_i" | "reg.set_b" | "reg.set_n" => {
+            "reg.set_f" | "reg.set_v" | "reg.set_i" | "reg.set_b" | "reg.set_n" | "reg.set_u" => {
                 n(2)?;
                 Ok(format!("    {} = {};\n", self.register(&kids[0])?, self.value(&kids[1], scope)?))
             }
@@ -964,9 +964,10 @@ impl<'a> Renderer<'a> {
             ("fallback", "reg<u32>.index") => "i0".to_string(),
             ("fallback", "reg<bool>.flag") => "b0".to_string(),
             ("fallback", "reg<i32>.int") => "n0".to_string(),
+            ("fallback", "reg<vec4<u32>>.bits") => "u0".to_string(),
             (name, _) => {
                 let n = name.strip_prefix("reg.").unwrap_or("");
-                if ok(n, 'f', 64) || ok(n, 'v', 32) || ok(n, 'i', 64) || ok(n, 'b', 16) || ok(n, 'n', 16) {
+                if ok(n, 'f', 64) || ok(n, 'v', 32) || ok(n, 'i', 64) || ok(n, 'b', 16) || ok(n, 'n', 16) || ok(n, 'u', 8) {
                     let k: usize = n[1..].parse().unwrap_or(0);
                     register_var(&n[..1], k)
                 } else {
@@ -1118,7 +1119,7 @@ impl<'a> Renderer<'a> {
             return self.fill(p, v, scope);
         }
         match name {
-            "reg.get_f" | "reg.get_v" | "reg.get_i" | "reg.get_b" | "reg.get_n" => return self.register(&v.kids[0]),
+            "reg.get_f" | "reg.get_v" | "reg.get_i" | "reg.get_b" | "reg.get_n" | "reg.get_u" => return self.register(&v.kids[0]),
             "reg.get_v_lane" => return Ok(format!("{}[({}) & 3u]", self.register(&v.kids[0])?, self.value(&v.kids[1], scope)?)),
             // A lane of a vec4 element of a workgroup or private array (seed08 of run A): the
             // element is a reference, so the lane index may be a run-time value.
@@ -1154,6 +1155,7 @@ impl<'a> Renderer<'a> {
                     "shuffle_down" => "subgroupShuffleDown",
                     "shuffle_up" => "subgroupShuffleUp",
                     "shuffle_xor" => "subgroupShuffleXor",
+                    "ballot" => "subgroupBallot",
                     other => return Err(format!("subgroup.{other} is not a subgroup built-in")),
                 };
                 let args: Vec<String> = v.kids.iter().map(|k| self.value(k, scope)).collect::<Result<_, _>>()?;
@@ -1189,7 +1191,7 @@ impl<'a> Renderer<'a> {
                 let len = self.wg_len(a, scope);
                 return Ok(format!("{a}[{}]", self.index_text(&v.kids[1], len, scope)?));
             }
-            "parr.get_f" | "parr.get_v" | "parr.get_i" | "parr.get_b" => {
+            "parr.get_f" | "parr.get_v" | "parr.get_i" | "parr.get_b" | "parr.get_t" => {
                 let a = self.parr_name(&v.kids[0])?;
                 return Ok(format!("{a}[{}]", self.index_text(&v.kids[1], array_len(a), scope)?));
             }
@@ -1307,7 +1309,7 @@ impl<'a> Renderer<'a> {
                 return Ok(format!("{id}.{component}"));
             }
         }
-        if (name == "index.of_row" || name == "index.of_col" || name == "index.of_lidx") && v.kids.len() == 1 {
+        if matches!(name, "index.of_row" | "index.of_col" | "index.of_lidx" | "index.of_gid" | "index.of_lid" | "index.of_wid") && v.kids.len() == 1 {
             return self.value(&v.kids[0], scope);
         }
         match name {
@@ -1850,7 +1852,7 @@ pub fn safe_base(name: &str) -> &str {
             return match stem {
                 "store.h" => "store.h_safe",
                 "wg.set" | "wg.set_v" | "wg.set_v2" => "wg.set_safe",
-                "parr.set_f" | "parr.set_v" | "parr.set_i" | "parr.set_b" => "parr.set_safe",
+                "parr.set_f" | "parr.set_v" | "parr.set_i" | "parr.set_b" | "parr.set_t" => "parr.set_safe",
                 "reg.set_v_lane" => "reg.set_v_lane",
                 "wg.set_v_lane" => "wg.set_v_lane",
                 "parr.set_v_lane" => "parr.set_v_lane",
@@ -1917,7 +1919,7 @@ impl Renderer<'_> {
     fn parr_name(&self, t: &Tree) -> Result<&'static str, String> {
         if t.name == "fallback" {
             let d = self.dual(t.ty).map(|d| d.dual.clone()).unwrap_or_default();
-            return Ok(if d.starts_with("parr<vec") { "pv" } else if d.starts_with("parr<u32>") { "pi" } else if d.starts_with("parr<bool>") { "pm" } else { "pa" });
+            return Ok(if d.starts_with("parr<vec2") { "pq" } else if d.starts_with("parr<vec") { "pv" } else if d.starts_with("parr<u32>") { "pi" } else if d.starts_with("parr<bool>") { "pm" } else { "pa" });
         }
         parr_name(t)
     }
@@ -1956,7 +1958,7 @@ pub fn register_var(prefix: &str, k: usize) -> String {
 /// to their form's fallback, the loop counters, the private arrays).
 pub fn register_declarations() -> String {
     let mut out = String::new();
-    for (prefix, n, ty, init) in [("f", 64, "f32", "0.0"), ("v", 32, "vec4<f32>", "vec4<f32>(0.0)"), ("i", 64, "u32", "0u"), ("b", 16, "bool", "false"), ("n", 16, "i32", "0")] {
+    for (prefix, n, ty, init) in [("f", 64, "f32", "0.0"), ("v", 32, "vec4<f32>", "vec4<f32>(0.0)"), ("i", 64, "u32", "0u"), ("b", 16, "bool", "false"), ("n", 16, "i32", "0"), ("u", 8, "vec4<u32>", "vec4<u32>(0u)")] {
         for k in 0..n {
             if k % 8 == 0 {
                 out.push_str("    ");
@@ -1969,7 +1971,7 @@ pub fn register_declarations() -> String {
     }
     out.push_str("    var t: u32 = 0u; var k: u32 = 0u; var k2: u32 = 0u; var k3: u32 = 0u; var k4: u32 = 0u;\n");
     out.push_str("    var pa: array<f32, 64>; var pb: array<f32, 64>; var pc: array<f32, 64>; var pd: array<f32, 64>; var pe: array<f32, 64>; var pf: array<f32, 64>;\n");
-    out.push_str("    var pv: array<vec4<f32>, 16>; var pw: array<vec4<f32>, 16>; var px: array<vec4<f32>, 16>; var py: array<vec4<f32>, 16>; var pi: array<u32, 16>; var pj: array<u32, 16>; var pk: array<u32, 16>; var pm: array<bool, 16>; var pn: array<bool, 16>;\n");
+    out.push_str("    var pv: array<vec4<f32>, 16>; var pw: array<vec4<f32>, 16>; var px: array<vec4<f32>, 16>; var py: array<vec4<f32>, 16>; var pi: array<u32, 16>; var pj: array<u32, 16>; var pk: array<u32, 16>; var pm: array<bool, 16>; var pn: array<bool, 16>; var pq: array<vec2<f32>, 16>; var pr: array<vec2<f32>, 16>;\n");
     out
 }
 
@@ -2002,6 +2004,8 @@ fn parr_name(t: &Tree) -> Result<&'static str, String> {
         "parr.k" => "pk",
         "parr.m" => "pm",
         "parr.n" => "pn",
+        "parr.q" => "pq",
+        "parr.r" => "pr",
         other => return Err(format!("{other} is not a private array")),
     })
 }

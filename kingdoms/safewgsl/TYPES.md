@@ -259,8 +259,10 @@ A type is a dual `slot.form`: the slot is what the hardware stores, the form is 
 | T164 | `block.B3` | `block` | `B3` | 0 | `empty` | 0 | 0 | 0 |
 | T165 | `block.B4` | `block` | `B4` | 0 | `empty` | 0 | 0 | 0 |
 | T166 | `block.B5` | `block` | `B5` | 0 | `empty` | 0 | 0 | 0 |
+| T167 | `reg<vec4<u32>>.bits` | `reg<vec4<u32>>` | `bits` | 4 | `0u` | 0 | 0 | 0 |
+| T168 | `parr<vec2<f32>>.real` | `parr<vec2<f32>>` | `real` | 0 | `0.0` | 0 | 0 | 0 |
 
-166 duals. The fallback is what Design C's projection substitutes for a codon whose dual does not match the demand; the codon is counted as masked.
+168 duals. The fallback is what Design C's projection substitutes for a codon whose dual does not match the demand; the codon is counted as masked.
 
 The three machine columns (`fallback_bits`, `fallback_noop`, `fallback_elem` in `types.tsv`) are what the loader builds the fallback leaf from, never the prose: `bits` is the lane's 32-bit pattern as an unsigned integer, repeated across the lanes of a vector or matrix (only `bool.sign` is non-zero, true = +1); `noop` is 1 for `store.store`, which substitutes no value at all; `elem` is 1 for `array<T>`, whose fallback is its element's. The loader tests `noop` and `elem` before reading `bits`; for those two rows `bits` is a placeholder 0. Every substitution, whichever column decides it, counts the codon as masked.
 

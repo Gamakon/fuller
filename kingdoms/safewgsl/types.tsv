@@ -165,3 +165,5 @@ T163	block.B2	block	B2	0	empty	0	0	0	a loop body that breaks, two tile loops dee
 T164	block.B3	block	B3	0	empty	0	0	0	a loop body that breaks, three deep: no barrier
 T165	block.B4	block	B4	0	empty	0	0	0	a loop body that breaks, four deep: no barrier
 T166	block.B5	block	B5	0	empty	0	0	0	a loop body that breaks, five deep: no barrier
+T167	reg<vec4<u32>>.bits	reg<vec4<u32>>	bits	4	0u	0	0	0	a named vec4<u32> register: u0..u7 (subgroupBallot's result)
+T168	parr<vec2<f32>>.real	parr<vec2<f32>>	real	0	0.0	0	0	0	a private array of 16 vec2<f32>: pq, pr

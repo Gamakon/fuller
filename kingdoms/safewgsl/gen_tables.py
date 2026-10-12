@@ -294,6 +294,9 @@ def build_types():
     # ---- loop bodies that break (2026-10-12, gap 7) ----
     for d in (1, 2, 3, 4, 5):
         add("block", f"B{d}", 0, FORMS[f"B{d}"][0])
+    # ---- vec4<u32> registers and vec2 private arrays (2026-10-12, gap 8) ----
+    add("reg<vec4<u32>>", "bits", 4, "a named vec4<u32> register: u0..u7 (subgroupBallot's result)")
+    add("parr<vec2<f32>>", "real", 0, "a private array of 16 vec2<f32>: pq, pr")
     return rows
 
 
@@ -967,6 +970,29 @@ for r, b in (("L0", 2), ("L1", 2), ("L2", 3), ("L3", 4), ("L4", 5), ("C0", 1), (
     f("loop", "tilex_brk_" + r, "composite", ["u32.boundx", f"block.B{b}"], "stmt." + r, "for (k = 0u; k < (expr); k++) { body that breaks }")
 for r in ("L1", "L2", "L3", "L4", "L5", "C1", "C2", "C3", "C4", "C5"):
     f("block", "cont_" + r, "composite", ["bool.flag", "block.C" + r[1]], "block." + r, "if (c) { continue; } then the rest, conditional")
+
+
+# ---- vectors (2026-10-12, WGSL_COVERAGE.md gap 8): a thread id as a vector operand, and bitcasts of whole
+# vectors ----
+for b in ("gid", "lid", "wid"):
+    f("index", "of_" + b, "composite", [f"vec3<u32>.{b}"], "vec3<u32>.index", f"the thread id {b} used as a plain vector of indices")
+for L in (2, 3, 4):
+    f("convert", "bitcast_f32_bits", "As(bitcast)", [f"vec{L}<f32>.real"], f"vec{L}<u32>.bits", "per lane")
+    f("convert", "bitcast_bits_f32", "As(bitcast)", [f"vec{L}<u32>.bits"], f"vec{L}<f32>.real", "per lane")
+
+
+# ---- vec4<u32> registers (subgroupBallot) and vec2 private arrays (2026-10-12, gap 8) ----
+for i in range(8):
+    f("reg", f"u{i}", "composite", [], "reg<vec4<u32>>.bits", "a vec4<u32> register")
+f("reg", "get_u", "composite", ["reg<vec4<u32>>.bits"], "vec4<u32>.bits", "the register's value")
+for r in RUNGS + RUNGS5:
+    f("reg", "set_u_" + r, "composite", ["reg<vec4<u32>>.bits", "vec4<u32>.bits"], "stmt." + r, "")
+f("subgroup", "ballot", "SubgroupBallot", ["bool.flag"], "vec4<u32>.bits", "subgroupBallot(b): a bit per active lane where b holds")
+f("parr", "q", "composite", [], "parr<vec2<f32>>.real", "private array pq of 16 vec2<f32>")
+f("parr", "r", "composite", [], "parr<vec2<f32>>.real", "private array pr of 16 vec2<f32>")
+f("parr", "get_t", "composite", ["parr<vec2<f32>>.real", "u32.pindex"], "vec2<f32>.real", "pq[i]")
+for r in RUNGS + RUNGS5:
+    f("parr", "set_t_" + r, "composite", ["parr<vec2<f32>>.real", "u32.pindex", "vec2<f32>.real"], "stmt." + r, "arity 3: pq[i] = v;")
 
 
 def write_tsv(path, header, rows):

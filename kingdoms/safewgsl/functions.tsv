@@ -1271,3 +1271,49 @@ F1269	block	cont_C2	composite	bool.flag block.C2	block.C2	2	if (c) { continue; }
 F1270	block	cont_C3	composite	bool.flag block.C3	block.C3	2	if (c) { continue; } then the rest, conditional
 F1271	block	cont_C4	composite	bool.flag block.C4	block.C4	2	if (c) { continue; } then the rest, conditional
 F1272	block	cont_C5	composite	bool.flag block.C5	block.C5	2	if (c) { continue; } then the rest, conditional
+F1273	index	of_gid	composite	vec3<u32>.gid	vec3<u32>.index	1	the thread id gid used as a plain vector of indices
+F1274	index	of_lid	composite	vec3<u32>.lid	vec3<u32>.index	1	the thread id lid used as a plain vector of indices
+F1275	index	of_wid	composite	vec3<u32>.wid	vec3<u32>.index	1	the thread id wid used as a plain vector of indices
+F1276	convert	bitcast_f32_bits	As(bitcast)	vec2<f32>.real	vec2<u32>.bits	1	per lane
+F1277	convert	bitcast_bits_f32	As(bitcast)	vec2<u32>.bits	vec2<f32>.real	1	per lane
+F1278	convert	bitcast_f32_bits	As(bitcast)	vec3<f32>.real	vec3<u32>.bits	1	per lane
+F1279	convert	bitcast_bits_f32	As(bitcast)	vec3<u32>.bits	vec3<f32>.real	1	per lane
+F1280	convert	bitcast_f32_bits	As(bitcast)	vec4<f32>.real	vec4<u32>.bits	1	per lane
+F1281	convert	bitcast_bits_f32	As(bitcast)	vec4<u32>.bits	vec4<f32>.real	1	per lane
+F1282	reg	u0	composite	-	reg<vec4<u32>>.bits	0	a vec4<u32> register
+F1283	reg	u1	composite	-	reg<vec4<u32>>.bits	0	a vec4<u32> register
+F1284	reg	u2	composite	-	reg<vec4<u32>>.bits	0	a vec4<u32> register
+F1285	reg	u3	composite	-	reg<vec4<u32>>.bits	0	a vec4<u32> register
+F1286	reg	u4	composite	-	reg<vec4<u32>>.bits	0	a vec4<u32> register
+F1287	reg	u5	composite	-	reg<vec4<u32>>.bits	0	a vec4<u32> register
+F1288	reg	u6	composite	-	reg<vec4<u32>>.bits	0	a vec4<u32> register
+F1289	reg	u7	composite	-	reg<vec4<u32>>.bits	0	a vec4<u32> register
+F1290	reg	get_u	composite	reg<vec4<u32>>.bits	vec4<u32>.bits	1	the register's value
+F1291	reg	set_u_L0	composite	reg<vec4<u32>>.bits vec4<u32>.bits	stmt.L0	2	
+F1292	reg	set_u_L1	composite	reg<vec4<u32>>.bits vec4<u32>.bits	stmt.L1	2	
+F1293	reg	set_u_L2	composite	reg<vec4<u32>>.bits vec4<u32>.bits	stmt.L2	2	
+F1294	reg	set_u_L3	composite	reg<vec4<u32>>.bits vec4<u32>.bits	stmt.L3	2	
+F1295	reg	set_u_L4	composite	reg<vec4<u32>>.bits vec4<u32>.bits	stmt.L4	2	
+F1296	reg	set_u_C0	composite	reg<vec4<u32>>.bits vec4<u32>.bits	stmt.C0	2	
+F1297	reg	set_u_C1	composite	reg<vec4<u32>>.bits vec4<u32>.bits	stmt.C1	2	
+F1298	reg	set_u_C2	composite	reg<vec4<u32>>.bits vec4<u32>.bits	stmt.C2	2	
+F1299	reg	set_u_C3	composite	reg<vec4<u32>>.bits vec4<u32>.bits	stmt.C3	2	
+F1300	reg	set_u_C4	composite	reg<vec4<u32>>.bits vec4<u32>.bits	stmt.C4	2	
+F1301	reg	set_u_L5	composite	reg<vec4<u32>>.bits vec4<u32>.bits	stmt.L5	2	
+F1302	reg	set_u_C5	composite	reg<vec4<u32>>.bits vec4<u32>.bits	stmt.C5	2	
+F1303	subgroup	ballot	SubgroupBallot	bool.flag	vec4<u32>.bits	1	subgroupBallot(b): a bit per active lane where b holds
+F1304	parr	q	composite	-	parr<vec2<f32>>.real	0	private array pq of 16 vec2<f32>
+F1305	parr	r	composite	-	parr<vec2<f32>>.real	0	private array pr of 16 vec2<f32>
+F1306	parr	get_t	composite	parr<vec2<f32>>.real u32.pindex	vec2<f32>.real	2	pq[i]
+F1307	parr	set_t_L0	composite	parr<vec2<f32>>.real u32.pindex vec2<f32>.real	stmt.L0	3	arity 3: pq[i] = v;
+F1308	parr	set_t_L1	composite	parr<vec2<f32>>.real u32.pindex vec2<f32>.real	stmt.L1	3	arity 3: pq[i] = v;
+F1309	parr	set_t_L2	composite	parr<vec2<f32>>.real u32.pindex vec2<f32>.real	stmt.L2	3	arity 3: pq[i] = v;
+F1310	parr	set_t_L3	composite	parr<vec2<f32>>.real u32.pindex vec2<f32>.real	stmt.L3	3	arity 3: pq[i] = v;
+F1311	parr	set_t_L4	composite	parr<vec2<f32>>.real u32.pindex vec2<f32>.real	stmt.L4	3	arity 3: pq[i] = v;
+F1312	parr	set_t_C0	composite	parr<vec2<f32>>.real u32.pindex vec2<f32>.real	stmt.C0	3	arity 3: pq[i] = v;
+F1313	parr	set_t_C1	composite	parr<vec2<f32>>.real u32.pindex vec2<f32>.real	stmt.C1	3	arity 3: pq[i] = v;
+F1314	parr	set_t_C2	composite	parr<vec2<f32>>.real u32.pindex vec2<f32>.real	stmt.C2	3	arity 3: pq[i] = v;
+F1315	parr	set_t_C3	composite	parr<vec2<f32>>.real u32.pindex vec2<f32>.real	stmt.C3	3	arity 3: pq[i] = v;
+F1316	parr	set_t_C4	composite	parr<vec2<f32>>.real u32.pindex vec2<f32>.real	stmt.C4	3	arity 3: pq[i] = v;
+F1317	parr	set_t_L5	composite	parr<vec2<f32>>.real u32.pindex vec2<f32>.real	stmt.L5	3	arity 3: pq[i] = v;
+F1318	parr	set_t_C5	composite	parr<vec2<f32>>.real u32.pindex vec2<f32>.real	stmt.C5	3	arity 3: pq[i] = v;
