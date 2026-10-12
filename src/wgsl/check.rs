@@ -8,10 +8,10 @@
 //! |---|---|
 //! | 1 typed tree | every node is a row of the kingdom (or the role) at its signature (a loop counter read outside its loop is the constant 0, as the rows say and the renderer writes) |
 //! | 2 structural grammar | the root is the safe kernel; a store to `h`, and a read of `h`, only at the thread's owned cell (a fallback row, column or cell renders the thread's own); a barrier never inside an `if`; loops only from the bounded constructors, no item loop in an item loop, at most four tile loops deep |
-//! | 3 range | every workgroup and private array index in its array's range (by the mask its row writes, or by its value at the worst shape, d 8,192, m 65,536, the band 8,192 rows); a `u32` wrap in index arithmetic is a diagnostic (`Checker::overflows`), not a failure: wrap is defined WGSL and every access is masked or owned (Andrew, 2026-10-12) |
+//! | 3 range | every workgroup and private array index in its array's range (by the mask its row writes, or by its value at the worst shape, d 8,192, m 65,536, the band 8,192 rows); no `u32` wrap in a store's cell index (a wrapped cell can be another thread's: a data race); a wrap anywhere else in index arithmetic is a diagnostic (`Checker::overflows`), not a failure: wrap is defined WGSL and every access is masked or owned (Andrew, 2026-10-12) |
 //! | 4 barrier uniformity | a barrier only where every condition it depends on (an `if`, a loop's trip count, a `break` or `continue` guard, an earlier conditional `return`) is workgroup-uniform |
 //! | 5 adapter | the workgroup's shape and its workgroup memory within the target's limits; subgroup and float features the target has |
-//! | 6 bounded loops | every loop's trip count bounded: a literal, a binding, a value known at the worst shape that cannot wrap, or a uniform value its body does not change |
+//! | 6 bounded loops | every loop's trip count bounded: a literal, a binding, a value known at the worst shape that cannot wrap, or a uniform value its body does not change; no `u32` wrap in the arithmetic of a loop's bound (a wrapped bound runs the loop to its cap) |
 //!
 //! Uniform values (layer 4) follow WGSL's rule, conservatively: literals, the
 //! uniform buffer `cfg`, `workgroup_id`, `num_workgroups`, the subgroup size
@@ -29,6 +29,18 @@
 //! the u32 comparisons of the enclosing branch conditions over stateless
 //! expressions. A register or a load is not known; arithmetic over it is not
 //! judged for overflow, and an array index over it is judged by its mask.
+//!
+//! Where a wrap lands decides the rule (Andrew, 2026-10-12): a wrap flows up
+//! through arithmetic rows to the value they make, and stops at a load, an
+//! access, a register, a conversion, or a clamped operand (either side of a
+//! `min` or an `&`; the value of `clamp_to`, `clamp` and `%`; a row's or
+//! column's offset, clamped to the block). Landing in a store's cell index
+//! it is illegal (layer 3), in a loop's bound illegal (layer 6), anywhere else
+//! a diagnostic. The kingdom cannot spell either illegal case: a cell is the
+//! thread's row and column with clamped offsets, and a bound's value is a
+//! uniform value without a difference, a product or a shift
+//! (`u32.uniformw` holds those) or a `u32.xbound`, whose rows cannot pass
+//! their operands.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
@@ -153,12 +165,25 @@ struct Counter {
     uniform: bool,
 }
 
+/// Where a value lands: the u32 wrap rule depends on it (Andrew, 2026-10-12).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Site {
+    /// A store's cell index: a wrapped cell can be another thread's (a data race).
+    StoreCell,
+    /// A loop's bound: a wrapped bound runs the loop to its cap.
+    LoopBound,
+    /// Anywhere else: every access is masked or bounds-checked, so a wrap only gives wrong values.
+    Other,
+}
+
 /// The walker's state.
 struct Cx {
-    /// u32 wraps in index arithmetic at the worst shape: a diagnostic, not a
-    /// failure (Andrew's decision, 2026-10-12: u32 wrap is defined WGSL, and in
-    /// the safe kingdom every array and h access is masked or owned and every
-    /// loop bound uniform or capped, so a wrap can only give wrong values,
+    /// Where the value being ranged lands (its arithmetic flows into it).
+    site: Site,
+    /// u32 wraps in index arithmetic at the worst shape, outside a store's
+    /// cell and a loop's bound: a diagnostic, not a failure (Andrew's
+    /// decision, 2026-10-12: u32 wrap is defined WGSL and every array and h
+    /// access is masked or owned, so a wrap there can only give wrong values,
     /// which selection removes).
     overflows: Vec<String>,
     mode: Mode,
@@ -200,6 +225,7 @@ impl Cx {
             facts: Vec::new(),
             err: None,
             overflows: Vec::new(),
+            site: Site::Other,
         }
     }
 
@@ -275,6 +301,25 @@ fn owned_axis(t: &Tree, axis: &str) -> bool {
         return t.kids.first().is_some_and(|k| owned_axis(k, axis));
     }
     false
+}
+
+/// Whether a row's value is arithmetic over its children (a wrap in a
+/// child lands where the row's value lands), not a load, an array access, a
+/// register or a conversion.
+fn carries_value(name: &str) -> bool {
+    let base = safe_base(name);
+    name == "fallback" || ["index.", "count.", "bound.", "uniform.", "subgroup.", "safe.", "shape.", "axis.", "literal."].iter().any(|p| base.starts_with(p))
+}
+
+/// Whether a row clamps its child `i` to a bound of its own: either side
+/// of `min` and `and`, the value of `clamp_to`, `clamp` and `mod`, and a row's or column's offset, which
+/// the renderer clamps to the block (`min(o, blk - 1)`). A wrap in that child
+/// gives a value no larger than the clamp: it does not reach the parent.
+fn clamps_child(name: &str, i: usize) -> bool {
+    let base = safe_base(name);
+    let op = base.split_once('.').map_or(base, |(_, op)| op);
+    let arith = ["index.", "count.", "uniform."].iter().any(|p| base.starts_with(p));
+    (arith && (matches!(op, "min" | "and") || (matches!(op, "clamp_to" | "clamp" | "mod") && i == 0))) || ((base.starts_with("safe.row_plus") || base.starts_with("safe.col_plus")) && i >= 1)
 }
 
 fn owned_cell(t: &Tree) -> bool {
@@ -736,7 +781,12 @@ impl<'a> Checker<'a> {
                 if cx.mode == Mode::Grammar && !k.first().is_some_and(owned_cell) {
                     cx.fail(Layer::Grammar, "store_not_owned_cell", format!("{} at {}: not a cell the thread owns", s.name, k.first().map(brief).unwrap_or_default()));
                 }
-                self.values(s, cx);
+                if let Some(cell) = k.first() {
+                    cx.site = Site::StoreCell;
+                    self.value(cell, cx);
+                    cx.site = Site::Other;
+                }
+                k.iter().skip(1).filter(|v| !self.is_stmt_level(v)).for_each(|v| self.value(v, cx));
             }
             "reg.set_f" | "reg.set_v" | "reg.set_i" | "reg.set_b" | "reg.set_n" | "reg.set_u" | "reg.set_x" | "reg.set_y" | "reg.set_z" | "reg.set_v_lane" => {
                 self.values(s, cx);
@@ -792,14 +842,23 @@ impl<'a> Checker<'a> {
         // The header is evaluated outside the loop's scope.
         for kid in &s.kids {
             if !std::ptr::eq(kid, lp.body) && !self.is_stmt_level(kid) {
+                if lp.bound.is_some_and(|b| std::ptr::eq(kid, b)) {
+                    cx.site = Site::LoopBound;
+                }
                 self.value(kid, cx);
+                cx.site = Site::Other;
             }
         }
         let bound_iv = match (lp.legacy, lp.literal_count, lp.bound) {
             // `loop.items`: the role's item count, cfg.m.
             (true, false, _) => Some(pt(WORST_M as u128)),
             (_, true, Some(b)) => Some(pt(lit_count(b, if lp.legacy { 32 } else { 64 }))),
-            (_, false, Some(b)) => self.iv(b, cx),
+            (_, false, Some(b)) => {
+                cx.site = Site::LoopBound;
+                let iv = self.iv(b, cx);
+                cx.site = Site::Other;
+                iv
+            }
             _ => None,
         };
         let bound_uniform = lp.literal_count || lp.bound.is_none_or(|b| self.uniform(b, cx));
@@ -984,10 +1043,15 @@ impl<'a> Checker<'a> {
         }))
     }
 
-    /// Record an overflow (in the range walk): a diagnostic, not a failure.
+    /// Record an overflow: illegal where it lands in a store's cell index
+    /// (layer 3) or a loop's bound (layer 6), a diagnostic anywhere else.
     fn overflow(&self, v: &Tree, cx: &mut Cx, what: String) {
-        if cx.mode == Mode::Range {
-            cx.overflows.push(format!("{}: {what} at the worst shape (d {WORST_D}, m {WORST_M}, {WORST_ROWS} rows)", brief(v)));
+        let detail = format!("{}: {what} at the worst shape (d {WORST_D}, m {WORST_M}, {WORST_ROWS} rows)", brief(v));
+        match (cx.site, cx.mode) {
+            (Site::StoreCell, Mode::Range) => cx.fail(Layer::Range, "store_cell_wraps", detail),
+            (Site::LoopBound, Mode::Bounded) => cx.fail(Layer::Bounded, "loop_bound_wraps", detail),
+            (Site::Other, Mode::Range) => cx.overflows.push(detail),
+            _ => {}
         }
     }
 
@@ -1031,7 +1095,22 @@ impl<'a> Checker<'a> {
     }
 
     fn iv_raw(&self, v: &Tree, cx: &mut Cx) -> Option<Iv> {
-        let kids: Vec<Option<Iv>> = v.kids.iter().map(|k| self.iv(k, cx)).collect();
+        // A load, an access or a conversion ends the flow: its children's
+        // arithmetic lands in an index (masked or bounds-checked), not here.
+        let site = cx.site;
+        let carries = carries_value(&v.name);
+        let kids: Vec<Option<Iv>> = v
+            .kids
+            .iter()
+            .enumerate()
+            .map(|(i, k)| {
+                // A clamped child (a min, a mask, a row's clamped offset)
+                // cannot carry a wrap past its clamp.
+                cx.site = if carries && !clamps_child(&v.name, i) { site } else { Site::Other };
+                self.iv(k, cx)
+            })
+            .collect();
+        cx.site = site;
         self.access(v, cx);
         let k = |i: usize| kids.get(i).copied().flatten();
         let d = self.kingdom.dual(v.ty)?;
@@ -1389,8 +1468,32 @@ mod tests {
         checker.check(&overflow).unwrap_or_else(|e| panic!("a wrapping product is legal: {e}"));
         assert!(checker.overflows(&overflow).iter().any(|o| o.contains("product")), "{:?}", checker.overflows(&overflow));
 
+        // A wrap in a loop bound is illegal (it runs the loop to its cap), and
+        // the kingdom cannot spell it: a product of uniform values may wrap,
+        // so it is u32.uniformw, which no bound row takes (layer 1); the
+        // bounded-loops layer names the wrap on its own. m * m = 2^32 at the
+        // worst shape.
+        let u = |n: &str| Tree::new(n, ty(&k, "u32.uniform"), vec![]);
+        let mm = Tree::new("uniform.mul", ty(&k, "u32.uniformw"), vec![u("uniform.cfg_m"), u("uniform.cfg_m")]);
+        let wrapped = Tree::new("bound.x_of_uniform", ty(&k, "u32.boundx"), vec![mm.clone()]);
+        let set_f1 = Tree::new("reg.set_f_C1", ty(&k, "stmt.C1"), vec![Tree::new("reg.f1", ty(&k, "reg<f32>.real"), vec![]), Tree::literal("literal.real", ty(&k, "f32.real"), 1.0)]);
+        let wraps = with_body(&k, one_l0(Tree::new("stmt.cblock_L0", ty(&k, "stmt.L0"), vec![Tree::new("block.one_C0", ty(&k, "block.C0"), vec![Tree::new("loop.tilex_C0", ty(&k, "stmt.C0"), vec![wrapped, Tree::new("block.one_C1", ty(&k, "block.C1"), vec![set_f1.clone()])])])])));
+        let e = layer_of(&checker, &wraps);
+        assert_eq!((e.layer, e.reason), (Layer::Typed, "signature_mismatch"), "{e}");
+        let (nonuniform, _) = checker.uniform_fixpoint(&wraps);
+        let e = checker.bounded(&wraps, &nonuniform).unwrap_err();
+        assert_eq!((e.layer, e.reason), (Layer::Bounded, "loop_bound_wraps"), "{e}");
+        // Clamped by a min it cannot pass its other operand: typed and legal.
+        let clamped = Tree::new("uniform.min", ty(&k, "u32.uniform"), vec![Tree::new("uniform.of_lit", ty(&k, "u32.uniform"), vec![Tree::literal("literal.lit4096", ty(&k, "u32.lit4096"), 1024.0)]), mm]);
+        let mut safe = wraps.clone();
+        let lp = &mut safe.kids[1].kids[0].kids[0].kids[0];
+        assert_eq!(lp.name, "loop.tilex_C0");
+        lp.kids[0].kids[0] = clamped;
+        checker.check(&safe).unwrap_or_else(|e| panic!("a clamped bound: {e}"));
+
         // An unbounded loop: its bound is a register its body increments.
-        let bound = Tree::new("bound.of_index", ty(&k, "u32.boundx"), vec![reg_i(&k, "reg.i1")]);
+        let xreg = |n: &str| Tree::new("reg.get_i", ty(&k, "u32.xbound"), vec![Tree::new(n, ty(&k, "reg<u32>.index"), vec![])]);
+        let bound = Tree::new("bound.of_index", ty(&k, "u32.boundx"), vec![xreg("reg.i1")]);
         // (At the conditional rung, written in place: a loop with any bound.)
         let in_place = |l: Tree| Tree::new("stmt.cblock_L0", ty(&k, "stmt.L0"), vec![Tree::new("block.one_C0", ty(&k, "block.C0"), vec![l])]);
         let bump = Tree::new("reg.set_i_C1", ty(&k, "stmt.C1"), vec![Tree::new("reg.i1", ty(&k, "reg<u32>.index"), vec![]), Tree::new("index.add", ty(&k, "u32.index"), vec![reg_i(&k, "reg.i1"), lit_i(1.0)])]);
@@ -1401,7 +1504,7 @@ mod tests {
 
         // A loop bounded by a thread-dependent register: not uniform, not known.
         let set_i5 = Tree::new("reg.set_i_L0", ty(&k, "stmt.L0"), vec![Tree::new("reg.i5", ty(&k, "reg<u32>.index"), vec![]), thread_col(&k)]);
-        let bound = Tree::new("bound.of_index", ty(&k, "u32.boundx"), vec![reg_i(&k, "reg.i5")]);
+        let bound = Tree::new("bound.of_index", ty(&k, "u32.boundx"), vec![xreg("reg.i5")]);
         let set_f = Tree::new("reg.set_f_C1", ty(&k, "stmt.C1"), vec![Tree::new("reg.f1", ty(&k, "reg<f32>.real"), vec![]), Tree::literal("literal.real", ty(&k, "f32.real"), 1.0)]);
         let thread_bound = with_body(&k, Tree::new("block.seq2_L0", ty(&k, "block.L0"), vec![set_i5, in_place(Tree::new("loop.tilex_C0", ty(&k, "stmt.C0"), vec![bound, Tree::new("block.one_C1", ty(&k, "block.C1"), vec![set_f])]))]));
         // Bounded by the cap too (a thread's register, no barrier in the loop).
@@ -1493,7 +1596,7 @@ mod tests {
                 }
             }
         }
-        println!("random genes: {n} sampled, {passed} pass every layer, {} fail; diagnostic: {wrapping} hold a u32 wrap in index arithmetic", n as usize - passed);
+        println!("random genes: {n} sampled, {passed} pass every layer, {} fail; diagnostic: {wrapping} hold a u32 wrap in index arithmetic outside a store's cell and a loop's bound", n as usize - passed);
         for layer in Layer::ALL {
             let count: usize = by_reason.iter().filter(|((l, _), _)| *l == layer).map(|(_, (c, _, _))| c).sum();
             println!("  layer {} {:<22} {count:>4}", layer.number(), layer.name());

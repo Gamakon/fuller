@@ -173,3 +173,5 @@ T171	reg<mat4x4<f32>>.real	reg<mat4x4<f32>>	real	16	0.0	0	0	0	a named mat4x4<f32
 T172	u32.pindex16	u32	pindex16	1	0u	0	0	0	an index into a private array of 16 elements (i & 15u)
 T173	u32.uniform	u32	uniform	1	0u	0	0	0	a u32 the same for every thread of the workgroup: a binding's field, a literal, the workgroup's id, the grid's size, the subgroup size, and arithmetic of them
 T174	u32.boundu	u32	boundu	1	1u	0	0	0	a loop bound the same for every thread of the workgroup (a loop that may hold a barrier)
+T175	u32.uniformw	u32	uniformw	1	0u	0	0	0	a uniform u32 whose arithmetic may wrap (a difference, a product, a shift of uniform values): an index, never a loop bound
+T176	u32.xbound	u32	xbound	1	1u	0	0	0	the value of an expression loop bound: a register, a uniform value, the arithmetic of them that cannot wrap (no difference but the floored one, no product, no shift), or a min with any index

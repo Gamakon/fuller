@@ -1433,6 +1433,10 @@ impl<'a> Ctx<'a> {
     /// index arithmetic of them.
     fn uniform_of(&self, t: &Tree) -> Result<Option<Tree>, String> {
         let u = ty(self, "u32.uniform")?;
+        // A difference, a product or a shift may wrap (u32.uniformw, an index
+        // only): no row takes it but a min, which clamps it (2026-10-12).
+        let uw = ty(self, "u32.uniformw")?;
+        let plain = |x: &Option<Tree>| x.as_ref().is_some_and(|x| x.ty == u);
         let leaf = |name: &str| Tree::new(name, u, vec![]);
         let comp = |k: &Tree| -> Option<char> { t.name.strip_prefix("shape.access_").and_then(|i| i.parse::<usize>().ok()).and_then(|i| "xyz".chars().nth(i)).filter(|_| k.kids.is_empty()) };
         Ok(match (t.name.as_str(), t.kids.as_slice()) {
@@ -1468,13 +1472,13 @@ impl<'a> Ctx<'a> {
             // at 0 (index.sub_floor), read back as a select.
             ("select.scalar_cond", [zero, diff, cond]) if literal_value(zero) == Some(0.0) => match (diff.name.as_str(), diff.kids.as_slice(), cond.name.as_str(), cond.kids.as_slice()) {
                 ("index.sub", [x, y], "compare.gt", [y2, x2]) | ("index.sub", [x, y], "compare.lt", [x2, y2]) if x == x2 && y == y2 => match (self.uniform_of(x)?, self.uniform_of(y)?) {
-                    (Some(x), Some(y)) => Some(Tree::new("uniform.sub_floor", u, vec![x, y])),
+                    (Some(x), Some(y)) if x.ty == u && y.ty == u => Some(Tree::new("uniform.sub_floor", u, vec![x, y])),
                     _ => None,
                 },
                 _ => None,
             },
             ("index.clamp", [a, b, c]) => match (self.uniform_of(a)?, self.uniform_of(b)?, self.uniform_of(c)?) {
-                (Some(a), Some(b), Some(c)) => Some(Tree::new("uniform.clamp", u, vec![a, b, c])),
+                (a, b, c) if plain(&a) && plain(&b) && plain(&c) => Some(Tree::new("uniform.clamp", u, vec![a.expect("plain"), b.expect("plain"), c.expect("plain")])),
                 _ => None,
             },
             (n, [a, b]) => {
@@ -1497,11 +1501,64 @@ impl<'a> Ctx<'a> {
                     _ => return Ok(None),
                 };
                 match (self.uniform_of(a)?, self.uniform_of(b)?) {
-                    (Some(a), Some(b)) => Some(Tree::new(&format!("uniform.{op}"), u, vec![a, b])),
+                    (Some(a), Some(b)) => match (op, a.ty == uw, b.ty == uw) {
+                        ("min", false, true) | ("min", true, false) => Some(Tree::new("uniform.min", u, vec![a, b])),
+                        (_, true, _) | (_, _, true) => None,
+                        ("sub" | "mul" | "shl", _, _) => Some(Tree::new(&format!("uniform.{op}"), uw, vec![a, b])),
+                        _ => Some(Tree::new(&format!("uniform.{op}"), u, vec![a, b])),
+                    },
                     _ => None,
                 }
             }
             _ => None,
+        })
+    }
+
+    /// A loop bound as uniform values that cannot wrap (`u32.uniform`), or
+    /// None. A bound that is a raw difference `x - y` is read as its floored
+    /// difference: the same value wherever it does not wrap, and a wrapped
+    /// loop bound is illegal (2026-10-12).
+    fn uniform_bound_of(&self, t: &Tree) -> Result<Option<Tree>, String> {
+        let u = ty(self, "u32.uniform")?;
+        Ok(match self.uniform_of(t)? {
+            Some(x) if x.ty == u => Some(x),
+            Some(x) if x.name == "uniform.sub" && x.kids.iter().all(|k| k.ty == u) => Some(Tree::new("uniform.sub_floor", u, x.kids)),
+            _ => None,
+        })
+    }
+
+    /// An expression loop bound's value in the rows that cannot wrap
+    /// (`u32.xbound`, 2026-10-12): a register, a uniform value, the
+    /// arithmetic of them that does not grow past its operands, or a min with
+    /// any index.
+    fn xbound_of(&self, t: &Tree) -> Result<Tree, String> {
+        let xb = ty(self, "u32.xbound")?;
+        let index = ty(self, "u32.index")?;
+        let count = ty(self, "u32.count")?;
+        if let Some(u) = self.uniform_bound_of(t)? {
+            return Ok(Tree::new("index.of_uniform", xb, vec![u]));
+        }
+        let no_row = || format!("a loop bound {} with a product, a shift or a sum over lanes that may wrap: no row of u32.xbound spells it", t.to_sexpr());
+        let at = |name: &str, kids: Vec<Tree>| Tree::new(name, xb, kids);
+        Ok(match (t.name.as_str(), t.kids.as_slice()) {
+            ("reg.get_i", [r]) => at("reg.get_i", vec![r.clone()]),
+            // A raw difference in a loop bound: its floored difference, as above.
+            ("index.sub", [x, y]) if y.ty == index => at("index.sub_floor", vec![self.xbound_of(x)?, y.clone()]),
+            ("select.scalar_cond", [zero, diff, cond]) if literal_value(zero) == Some(0.0) => match (diff.name.as_str(), diff.kids.as_slice(), cond.name.as_str(), cond.kids.as_slice()) {
+                ("index.sub", [x, y], "compare.gt", [y2, x2]) | ("index.sub", [x, y], "compare.lt", [x2, y2]) if x == x2 && y == y2 && y.ty == index => at("index.sub_floor", vec![self.xbound_of(x)?, y.clone()]),
+                _ => return Err(no_row()),
+            },
+            ("index.add" | "index.max" | "index.or", [a, b]) => at(&t.name, vec![self.xbound_of(a)?, self.xbound_of(b)?]),
+            ("index.sub_floor" | "index.div" | "index.mod" | "index.shr" | "index.and" | "index.round_down", [a, b]) if b.ty == index => at(&t.name, vec![self.xbound_of(a)?, b.clone()]),
+            ("index.min", [a, b]) => match self.xbound_of(a) {
+                Ok(a) if b.ty == index => at("index.min", vec![a, b.clone()]),
+                _ if a.ty == index => at("index.min", vec![a.clone(), self.xbound_of(b)?]),
+                _ => return Err(no_row()),
+            },
+            ("index.clamp_to", [a, n]) if n.ty == count => at("index.clamp_to", vec![self.xbound_of(a)?, n.clone()]),
+            ("subgroup.min" | "subgroup.max" | "subgroup.broadcast_first", [x]) => at(&t.name, vec![self.xbound_of(x)?]),
+            ("subgroup.broadcast" | "subgroup.shuffle" | "subgroup.shuffle_down" | "subgroup.shuffle_up" | "subgroup.shuffle_xor", [x, i]) => at(&t.name, vec![self.xbound_of(x)?, i.clone()]),
+            _ => return Err(no_row()),
         })
     }
 
@@ -3339,7 +3396,7 @@ impl<'a> Ctx<'a> {
         let first0 = if do_while { 0 } else { test_pos + 1 };
         let breaks0 = has_break_guard(&body_stmts_all.iter().skip(first0).map(|s| (*s).clone()).collect::<Vec<_>>());
         if kind == "boundx" && rung.starts_with('L') && !breaks0 {
-            match self.uniform_of(&bound_tree.kids[0])? {
+            match self.uniform_bound_of(&bound_tree.kids[0])? {
                 Some(u) => bound_tree = Tree::new("bound.of_uniform", ty(self, "u32.boundu")?, vec![u]),
                 None => {
                     let crung = format!("C{}", &rung[1..]);
@@ -3354,9 +3411,13 @@ impl<'a> Ctx<'a> {
         } else if kind == "boundx" {
             // A loop without barriers (C and O rungs, a loop that breaks): a
             // uniform bound uncapped, any other with bound.of_index's cap.
-            if let Some(u) = self.uniform_of(&bound_tree.kids[0])? {
+            if let Some(u) = self.uniform_bound_of(&bound_tree.kids[0])? {
                 bound_tree = Tree::new("bound.x_of_uniform", bound_tree.ty, vec![u]);
             }
+        }
+        // Any other expression bound: its value in the rows that cannot wrap.
+        if bound_tree.name == "bound.of_index" {
+            bound_tree.kids[0] = self.xbound_of(&bound_tree.kids[0])?;
         }
         let mut step: Option<u32> = None;
         let mut cpath = path.clone();
@@ -3509,7 +3570,7 @@ impl<'a> Ctx<'a> {
             (Tree::new("bound.of_uniform", bound_tree.ty, vec![expr]), start)
         } else {
             let index = ty(self, "u32.index")?;
-            let expr = Tree::new("index.sub_floor", index, vec![bound_tree.kids[0].clone(), Tree::literal("literal.index", index, start)]);
+            let expr = Tree::new("index.sub_floor", ty(self, "u32.xbound")?, vec![bound_tree.kids[0].clone(), Tree::literal("literal.index", index, start)]);
             (Tree::new("bound.of_index", bound_tree.ty, vec![expr]), start)
         };
         if item_loop && entry.is_some_and(|v| v != 0.0) && !self.used_counters.contains(&counter) {
@@ -4732,7 +4793,8 @@ mod tests {
         let src = include_str!("../../tests/corpus/safewgsl/draft_subgroups.wgsl").replacen("t < cfg.m;", "t < subgroupMax(cfg.m);", 1);
         assert!(src.contains("subgroupMax(cfg.m)"));
         let tree = read_safe(&src, &k).unwrap_or_else(|e| panic!("{e}")).tree;
-        assert!(tree.to_sexpr().contains("(subgroup.max (index.of_count load.cfg_m))"), "{}", tree.to_sexpr());
+        // (An expression bound's value is u32.xbound since 2026-10-12: cfg.m as its uniform value.)
+        assert!(tree.to_sexpr().contains("(subgroup.max (index.of_uniform uniform.cfg_m))"), "{}", tree.to_sexpr());
         let r = Renderer::new(&k, &t, &role).kernel(&tree).unwrap();
         let text = r.text;
         assert!(text.contains("subgroupMax(cfg.m)"), "{text}");

@@ -636,8 +636,9 @@ mod tests {
         // 161 with the i32 register (WGSL_COVERAGE.md gap 6); 166 with the loop bodies that break (gap 7);
         // 168 with the vec4<u32> register and the vec2 private array (gap 8); 171 with the matrix
         // registers (gap 9); 172 with the 16-element private array's index (legality item 4).
-        // 174 with the uniform values and the uniform loop bound (legality item 5).
-        assert_eq!(s.len(), 174);
+        // 174 with the uniform values and the uniform loop bound (legality item 5); 176 with the
+        // uniform values that may wrap (u32.uniformw) and an expression bound's value (u32.xbound).
+        assert_eq!(s.len(), 176);
         for (a, b) in w.iter().zip(&s) {
             assert_eq!((a.reference.as_str(), a.dual.as_str()), (b.reference.as_str(), b.dual.as_str()));
         }
@@ -664,7 +665,9 @@ mod tests {
         // the bindings' lengths (gap 10); 1,454 with the kernel parameters (the knob references
         // literal.p_* and grid.with_ktile; PLAN_constrained_mutation.md task 0).
         // 1,497 with bound.x_of_uniform; 1,496 with the uniform values, the uniform bound and the in-place conditional block (legality item 5).
-        assert_eq!(fs.rows.len(), 1497);
+        // 1,522 with no wrap in a loop bound (the wrap-free rows of u32.xbound, the clamped min of a
+        // uniform value that may wrap; 2026-10-12).
+        assert_eq!(fs.rows.len(), 1522);
         let dual = |t: Ty| k.dual(t).unwrap().dual.clone();
         let producers = |d: &str| -> Vec<String> { k.rows.iter().filter(|r| dual(r.output) == d).map(|r| r.name.clone()).collect() };
         assert_eq!(producers("kernel.safe"), vec!["kernel.entry_safe"]);

@@ -1202,7 +1202,7 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F607 | `bound.of_index` | `composite` | `u32.index` | `u32.boundx` | 1 | any index expression as a loop bound, capped at MAX_LOOP_TRIP = 2^24 = 16,777,216 (the kingdom's declared maximum trip count; legality, 2026-10-12): min(e, 16777216u) |
+| F607 | `bound.of_index` | `composite` | `u32.xbound` | `u32.boundx` | 1 | an expression loop bound (no wrapping arithmetic, 2026-10-12; any index expression before), capped at MAX_LOOP_TRIP = 2^24 = 16,777,216 (the kingdom's declared maximum trip count; legality, 2026-10-12): min(e, 16777216u) |
 
 ## class `shape`
 
@@ -2825,15 +2825,15 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 | F1467 | `uniform.num_subgroups` | `composite` | `-` | `u32.uniform` | 0 | the subgroups in the workgroup |
 | F1468 | `uniform.add` | `composite` | `u32.uniform u32.uniform` | `u32.uniform` | 2 | as index.add, of uniform values |
 | F1469 | `uniform.sub_floor` | `composite` | `u32.uniform u32.uniform` | `u32.uniform` | 2 | as index.sub_floor, of uniform values |
-| F1470 | `uniform.mul` | `composite` | `u32.uniform u32.uniform` | `u32.uniform` | 2 | as index.mul, of uniform values |
+| F1470 | `uniform.mul` | `composite` | `u32.uniform u32.uniform` | `u32.uniformw` | 2 | as index.mul, of uniform values |
 | F1471 | `uniform.div` | `composite` | `u32.uniform u32.uniform` | `u32.uniform` | 2 | as index.div, of uniform values |
 | F1472 | `uniform.min` | `composite` | `u32.uniform u32.uniform` | `u32.uniform` | 2 | as index.min, of uniform values |
 | F1473 | `uniform.max` | `composite` | `u32.uniform u32.uniform` | `u32.uniform` | 2 | as index.max, of uniform values |
-| F1474 | `uniform.shl` | `composite` | `u32.uniform u32.uniform` | `u32.uniform` | 2 | as index.shl, of uniform values |
+| F1474 | `uniform.shl` | `composite` | `u32.uniform u32.uniform` | `u32.uniformw` | 2 | as index.shl, of uniform values |
 | F1475 | `uniform.shr` | `composite` | `u32.uniform u32.uniform` | `u32.uniform` | 2 | as index.shr, of uniform values |
 | F1476 | `uniform.and` | `composite` | `u32.uniform u32.uniform` | `u32.uniform` | 2 | as index.and, of uniform values |
 | F1477 | `uniform.or` | `composite` | `u32.uniform u32.uniform` | `u32.uniform` | 2 | as index.or, of uniform values |
-| F1478 | `uniform.sub` | `composite` | `u32.uniform u32.uniform` | `u32.uniform` | 2 | as index.sub, of uniform values |
+| F1478 | `uniform.sub` | `composite` | `u32.uniform u32.uniform` | `u32.uniformw` | 2 | as index.sub, of uniform values |
 | F1479 | `uniform.mod` | `composite` | `u32.uniform u32.uniform` | `u32.uniform` | 2 | as index.mod, of uniform values |
 | F1480 | `uniform.round_down` | `composite` | `u32.uniform u32.uniform` | `u32.uniform` | 2 | as index.round_down, of uniform values |
 | F1481 | `uniform.band_of` | `composite` | `u32.uniform u32.uniform` | `u32.uniform` | 2 | as index.band_of, of uniform values |
@@ -2874,4 +2874,54 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 |---|---|---|---|---|---|---|
 | F1497 | `bound.x_of_uniform` | `composite` | `u32.uniform` | `u32.boundx` | 1 | a uniform loop bound, uncapped |
 
-1497 function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Deliberately absent: storage-buffer atomics, atomic compare-exchange (naga 0.20's Metal backend lacks it), subgroupBallot, images, derivatives, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.
+## class `index`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F1498 | `index.of_uniform` | `composite` | `u32.uniformw` | `u32.index` | 1 | a uniform value that may wrap, used as an index |
+
+## class `uniform`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F1499 | `uniform.min` | `composite` | `u32.uniform u32.uniformw` | `u32.uniform` | 2 | min(a, b): b may wrap, the min cannot pass a |
+| F1500 | `uniform.min` | `composite` | `u32.uniformw u32.uniform` | `u32.uniform` | 2 | min(a, b): a may wrap, the min cannot pass b |
+
+## class `reg`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F1501 | `reg.get_i` | `composite` | `reg<u32>.index` | `u32.xbound` | 1 | a u32 register's value as a loop bound |
+
+## class `index`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F1502 | `index.of_uniform` | `composite` | `u32.uniform` | `u32.xbound` | 1 | a uniform value as a loop bound |
+| F1503 | `index.add` | `composite` | `u32.xbound u32.xbound` | `u32.xbound` | 2 | index.add of bound values |
+| F1504 | `index.max` | `composite` | `u32.xbound u32.xbound` | `u32.xbound` | 2 | index.max of bound values |
+| F1505 | `index.or` | `composite` | `u32.xbound u32.xbound` | `u32.xbound` | 2 | index.or of bound values |
+| F1506 | `index.sub_floor` | `composite` | `u32.xbound u32.index` | `u32.xbound` | 2 | index.sub_floor: at most its first operand, whatever the second |
+| F1507 | `index.div` | `composite` | `u32.xbound u32.index` | `u32.xbound` | 2 | index.div: at most its first operand, whatever the second |
+| F1508 | `index.mod` | `composite` | `u32.xbound u32.index` | `u32.xbound` | 2 | index.mod: at most its first operand, whatever the second |
+| F1509 | `index.shr` | `composite` | `u32.xbound u32.index` | `u32.xbound` | 2 | index.shr: at most its first operand, whatever the second |
+| F1510 | `index.and` | `composite` | `u32.xbound u32.index` | `u32.xbound` | 2 | index.and: at most its first operand, whatever the second |
+| F1511 | `index.round_down` | `composite` | `u32.xbound u32.index` | `u32.xbound` | 2 | index.round_down: at most its first operand, whatever the second |
+| F1512 | `index.min` | `composite` | `u32.xbound u32.index` | `u32.xbound` | 2 | index.min: at most its first operand, whatever the second |
+| F1513 | `index.min` | `composite` | `u32.index u32.xbound` | `u32.xbound` | 2 | min(a, b): at most b, whatever a |
+| F1514 | `index.clamp_to` | `composite` | `u32.xbound u32.count` | `u32.xbound` | 2 | i < n: at most i |
+
+## class `subgroup`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F1515 | `subgroup.min` | `SubgroupCollectiveOperation` | `u32.xbound` | `u32.xbound` | 1 | subgroupMin(x) of a bound value |
+| F1516 | `subgroup.max` | `SubgroupCollectiveOperation` | `u32.xbound` | `u32.xbound` | 1 | subgroupMax(x) of a bound value |
+| F1517 | `subgroup.broadcast_first` | `SubgroupGather` | `u32.xbound` | `u32.xbound` | 1 | subgroupBroadcastFirst(x) of a bound value |
+| F1518 | `subgroup.broadcast` | `SubgroupGather` | `u32.xbound u32.lit64` | `u32.xbound` | 2 | subgroupBroadcast(x, lane) of a bound value |
+| F1519 | `subgroup.shuffle` | `SubgroupGather` | `u32.xbound u32.index` | `u32.xbound` | 2 | shuffle(x, i) of a bound value |
+| F1520 | `subgroup.shuffle_down` | `SubgroupGather` | `u32.xbound u32.index` | `u32.xbound` | 2 | shuffle_down(x, i) of a bound value |
+| F1521 | `subgroup.shuffle_up` | `SubgroupGather` | `u32.xbound u32.index` | `u32.xbound` | 2 | shuffle_up(x, i) of a bound value |
+| F1522 | `subgroup.shuffle_xor` | `SubgroupGather` | `u32.xbound u32.index` | `u32.xbound` | 2 | shuffle_xor(x, i) of a bound value |
+
+1522 function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Deliberately absent: storage-buffer atomics, atomic compare-exchange (naga 0.20's Metal backend lacks it), subgroupBallot, images, derivatives, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.

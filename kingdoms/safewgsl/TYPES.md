@@ -91,6 +91,8 @@ A type is a dual `slot.form`: the slot is what the hardware stores, the form is 
 | `B3` | a loop body that breaks, three deep: no barrier | see duals |
 | `B4` | a loop body that breaks, four deep: no barrier | see duals |
 | `B5` | a loop body that breaks, five deep: no barrier | see duals |
+| `uniformw` | a uniform u32 whose arithmetic may wrap (a difference, a product, a shift of uniform values): an index, never a loop bound | u32 |
+| `xbound` | the value of an expression loop bound: a register, a uniform value, the arithmetic of them that cannot wrap (no difference but the floored one, no product, no shift), or a min with any index | u32 |
 
 ## Duals
 
@@ -270,14 +272,20 @@ A type is a dual `slot.form`: the slot is what the hardware stores, the form is 
 | T172 | `u32.pindex16` | `u32` | `pindex16` | 1 | `0u` | 0 | 0 | 0 |
 | T173 | `u32.uniform` | `u32` | `uniform` | 1 | `0u` | 0 | 0 | 0 |
 | T174 | `u32.boundu` | `u32` | `boundu` | 1 | `1u` | 0 | 0 | 0 |
+| T175 | `u32.uniformw` | `u32` | `uniformw` | 1 | `0u` | 0 | 0 | 0 |
+| T176 | `u32.xbound` | `u32` | `xbound` | 1 | `1u` | 0 | 0 | 0 |
 
-174 duals. The fallback is what Design C's projection substitutes for a codon whose dual does not match the demand; the codon is counted as masked.
+176 duals. The fallback is what Design C's projection substitutes for a codon whose dual does not match the demand; the codon is counted as masked.
 
 The three machine columns (`fallback_bits`, `fallback_noop`, `fallback_elem` in `types.tsv`) are what the loader builds the fallback leaf from, never the prose: `bits` is the lane's 32-bit pattern as an unsigned integer, repeated across the lanes of a vector or matrix (only `bool.sign` is non-zero, true = +1); `noop` is 1 for `store.store`, which substitutes no value at all; `elem` is 1 for `array<T>`, whose fallback is its element's. The loader tests `noop` and `elem` before reading `bits`; for those two rows `bits` is a placeholder 0. Every substitution, whichever column decides it, counts the codon as masked.
 
 ## Loop trip counts
 
 MAX_LOOP_TRIP = 2^24 = 16,777,216 is the kingdom's declared maximum trip count of a loop (`render::MAX_LOOP_TRIP`): no real workload exceeds it (production builds run m ~ 420,000 items, d up to 8,192). A loop at an L rung, which may hold a barrier, takes a uniform bound (`u32.boundu`); any other expression bound (`bound.of_index`, a loop with no barrier) renders `min(e, 16777216u)`, so a bound in range computes the same and no loop runs past it. The checker's range layer ranges such a bound up to it, and proves index arithmetic over it.
+
+## No wrap in a loop bound or a store's cell
+
+A u32 wrap is illegal where it lands in a loop's bound (the loop runs to its cap) or in a store's cell index (a wrapped cell can be another thread's: a data race); anywhere else it is a diagnostic (Andrew, 2026-10-12). The kingdom cannot spell either: a store's cell is the thread's row and column with offsets clamped to its block; a uniform difference, product or shift is `u32.uniformw`, an index only (a `min` with a `u32.uniform` clamps it back); and an expression bound takes `u32.xbound`, the registers, uniform values and the index rows that cannot pass their operands (a sum, a max, an or of bound values; a floored difference, a quotient, a remainder, a right shift, an and, a round-down or a min of a bound value by any index; the subgroup min, max, broadcasts and shuffles of a bound value). A raw difference in a loop bound reads as its floored difference.
 
 ## Not in the table
 
