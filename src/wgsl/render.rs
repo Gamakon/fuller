@@ -802,7 +802,8 @@ impl<'a> Renderer<'a> {
                 let (row, col) = if safe_base(&kids[0].name) == "safe.cell_of" && kids[0].kids.len() == 2 {
                     (self.value(&kids[0].kids[0], scope)?, self.value(&kids[0].kids[1], scope)?)
                 } else {
-                    ("0u".to_string(), "0u".to_string())
+                    // A fallback cell is the thread's own first cell.
+                    (self.own_fallback("u32.threadrow", scope)?.unwrap_or_default(), self.own_fallback("u32.threadcol", scope)?.unwrap_or_default())
                 };
                 Ok(format!("    if (({row}) < cfg.r_rows && ({col}) < cfg.d && (cfg.r_off + ({row})) < cfg.d) {{ h[{cell}] = h[{cell}] + {}; }}\n", self.value(&kids[1], scope)?))
             }
@@ -1166,6 +1167,15 @@ impl<'a> Renderer<'a> {
         let name = v.name.as_str();
         // The leaves of a literal-only operation pass through `lit_*`.
         let wrap = scope.const_depth > 0;
+        // A fallback where a thread's row, column or cell is demanded is the
+        // thread's own (its block's origin): a constant would make every
+        // thread store to one cell, a data race (the legality checker: 415
+        // of 1,000 random genes, 2026-10-12).
+        if name == "fallback" {
+            if let Some(own) = self.own_fallback(&d.dual, scope)? {
+                return Ok(own);
+            }
+        }
         if name == "fallback" {
             return self.fallback_value(d, wrap);
         }
@@ -2004,6 +2014,23 @@ impl Renderer<'_> {
         self.value(idx, scope)
     }
 
+    /// The thread's own row, column or cell for a fallback of those duals
+    /// (the origin of its block: `gid * blk`, or for a strided or grouped
+    /// block `wid * (W * blk) + lid`); None for any other dual.
+    fn own_fallback(&self, dual: &str, scope: &mut Scope) -> Result<Option<String>, String> {
+        let ty = |n: &str| dual_ty(self.kingdom, n);
+        let row = |name: &str, d: &str| -> Result<Tree, String> { Ok(Tree::new(name, ty(d)?, vec![])) };
+        let tree = match dual {
+            "u32.threadrow" => row("safe.thread_row", "u32.threadrow")?,
+            "u32.threadcol" => row("safe.thread_col", "u32.threadcol")?,
+            "u32.threadrows" | "u32.threadrowg" => row("safe.thread_row_s", "u32.threadrows")?,
+            "u32.threadcols" | "u32.threadcolg" => row("safe.thread_col_s", "u32.threadcols")?,
+            "u32.cell" => Tree::new("safe.cell_of", ty("u32.cell")?, vec![row("safe.thread_row", "u32.threadrow")?, row("safe.thread_col", "u32.threadcol")?]),
+            _ => return Ok(None),
+        };
+        self.value(&tree, scope).map(Some)
+    }
+
     fn parr_name(&self, t: &Tree) -> Result<&'static str, String> {
         if t.name == "fallback" {
             let d = self.dual(t.ty).map(|d| d.dual.clone()).unwrap_or_default();
@@ -2261,6 +2288,30 @@ mod tests {
         assert!(c.per_item >= p.per_item && c.per_item <= p.per_item + 8.0 && c.base < 10.0, "{c:?} vs the item loop {p:?}");
         let over_d = cost(&Tree::new("loop.tilex_L0", t("stmt.L0"), vec![bound(d()), tile_body()]));
         assert!(over_d.base >= 8192.0 * 2.0 && over_d.per_item == 0.0, "{over_d:?}");
+    }
+
+    /// A FALLBACK CELL IS THE THREAD'S OWN (2026-10-12; the legality checker
+    /// found 415 of 1,000 random genes storing every thread to cell 0, a
+    /// data race): a fallback of u32.cell, u32.threadrow or u32.threadcol
+    /// renders the thread's own first row, column and cell, the store's
+    /// guard included.
+    #[test]
+    fn a_fallback_cell_is_the_threads_own() {
+        let k = WgslKingdom::load_safe();
+        let (t, role) = (FunctionTable::safe(), gram_role());
+        let rr = Renderer::new(&k, &t, &role);
+        let ty = |n: &str| dual_ty(&k, n).unwrap();
+        let store = |cell: Tree| Tree::new("block.one_O0", ty("block.O0"), vec![Tree::new("store.h_O0", ty("stmt.O0"), vec![cell, Tree::literal("literal.real", ty("f32.real"), 1.0)])]);
+        let kernel = |e: Tree| Tree::new("kernel.entry_safe", ty("kernel.safe"), vec![Tree::fallback(ty("grid.grid")), Tree::fallback(ty("block.L0")), e]);
+        let own = "h[(((gid.y * 1u)) * cfg.d + ((gid.x * 1u)))]";
+        let whole = rr.kernel(&kernel(store(Tree::fallback(ty("u32.cell"))))).unwrap().text;
+        assert!(whole.contains(own) && whole.contains("if (((gid.y * 1u)) < cfg.r_rows"), "{whole}");
+        let parts = rr.kernel(&kernel(store(Tree::new("safe.cell_of", ty("u32.cell"), vec![Tree::fallback(ty("u32.threadrow")), Tree::fallback(ty("u32.threadcol"))])))).unwrap().text;
+        assert!(parts.contains(own), "{parts}");
+        for text in [&whole, &parts] {
+            validate_text(text).unwrap_or_else(|e| panic!("{e}\n{text}"));
+            assert!(!text.contains("h[(0u"), "{text}");
+        }
     }
 
     /// A LOOP COUNTER OUTSIDE ITS LOOP IS 0 (2026-10-12; the legality

@@ -88,9 +88,9 @@ T086	u32.boundrows	u32	boundrows	1	cfg.r_rows	0	0	0	a loop bound that is the ban
 T087	u32.lit64	u32	lit64	1	1u	0	0	0	a loop bound that is a literal at most 64
 T088	u32.lit4096	u32	lit4096	1	1u	0	0	0	a loop bound that is a literal at most 4,096
 T089	u32.counter	u32	counter	1	0u	0	0	0	the item loop's counter, stepped by the loop row itself
-T090	u32.threadrow	u32	threadrow	1	0u	0	0	0	a row index derived from the thread's own ids and block factor
-T091	u32.threadcol	u32	threadcol	1	0u	0	0	0	a column index derived from the thread's own ids and block factor
-T092	u32.cell	u32	cell	1	0u	0	0	0	an output cell index row*d + col owned by this thread; the only index a store to h accepts
+T090	u32.threadrow	u32	threadrow	1	the thread's own first row	0	0	0	a row index derived from the thread's own ids and block factor
+T091	u32.threadcol	u32	threadcol	1	the thread's own first column	0	0	0	a column index derived from the thread's own ids and block factor
+T092	u32.cell	u32	cell	1	the thread's own first cell	0	0	0	an output cell index row*d + col owned by this thread; the only index a store to h accepts
 T093	u32.phi	u32	phi	1	0u	0	0	0	unused: a load of phi takes any index, since a read past the buffer is zero by WGSL's rule; kept so earlier refs stand
 T094	u32.wgindex	u32	wgindex	1	0u	0	0	0	a workgroup-array index, masked to the array by its row
 T095	bool.bound	bool	bound	1	false	0	0	0	a loop condition: counter < bound, produced by nothing else
@@ -147,10 +147,10 @@ T145	vec3<u32>.wid	vec3<u32>	wid	3	0u	0	0	0	the workgroup's id (workgroup_id), i
 T146	u32.rowid	u32	rowid	1	0u	0	0	0	the y component of a thread id: an index on the output's ROW axis
 T147	u32.colid	u32	colid	1	0u	0	0	0	the x component of a thread id: an index on the output's COLUMN axis
 T148	u32.lidx	u32	lidx	1	0u	0	0	0	the thread's index within its workgroup (local_invocation_index), its own dual
-T149	u32.threadrows	u32	threadrows	1	0u	0	0	0	a row of a thread's STRIDED block (rows Y apart)
-T150	u32.threadcols	u32	threadcols	1	0u	0	0	0	a column of a thread's STRIDED block (columns X apart)
-T151	u32.threadrowg	u32	threadrowg	1	0u	0	0	0	a row of a thread's GROUPED block
-T152	u32.threadcolg	u32	threadcolg	1	0u	0	0	0	a column of a thread's GROUPED block
+T149	u32.threadrows	u32	threadrows	1	the thread's own first row	0	0	0	a row of a thread's STRIDED block (rows Y apart)
+T150	u32.threadcols	u32	threadcols	1	the thread's own first column	0	0	0	a column of a thread's STRIDED block (columns X apart)
+T151	u32.threadrowg	u32	threadrowg	1	the thread's own first row	0	0	0	a row of a thread's GROUPED block
+T152	u32.threadcolg	u32	threadcolg	1	the thread's own first column	0	0	0	a column of a thread's GROUPED block
 T153	wgmem<vec2<f32>>.real	wgmem<vec2<f32>>	real	0	0.0	0	0	0	a workgroup-memory array of vec2<f32>: v2a..v2d
 T154	u32.wgv2index	u32	wgv2index	1	0u	0	0	0	an index into a vec2 workgroup array, masked to the array by its row
 T155	u32.wglen	u32	wglen	1	the array's default length	0	0	0	a workgroup array's length, 1..=8,192 elements (the renderer halves the largest array until all fit 32 KB)

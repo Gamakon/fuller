@@ -182,9 +182,9 @@ A type is a dual `slot.form`: the slot is what the hardware stores, the form is 
 | T087 | `u32.lit64` | `u32` | `lit64` | 1 | `1u` | 0 | 0 | 0 |
 | T088 | `u32.lit4096` | `u32` | `lit4096` | 1 | `1u` | 0 | 0 | 0 |
 | T089 | `u32.counter` | `u32` | `counter` | 1 | `0u` | 0 | 0 | 0 |
-| T090 | `u32.threadrow` | `u32` | `threadrow` | 1 | `0u` | 0 | 0 | 0 |
-| T091 | `u32.threadcol` | `u32` | `threadcol` | 1 | `0u` | 0 | 0 | 0 |
-| T092 | `u32.cell` | `u32` | `cell` | 1 | `0u` | 0 | 0 | 0 |
+| T090 | `u32.threadrow` | `u32` | `threadrow` | 1 | `the thread's own first row` | 0 | 0 | 0 |
+| T091 | `u32.threadcol` | `u32` | `threadcol` | 1 | `the thread's own first column` | 0 | 0 | 0 |
+| T092 | `u32.cell` | `u32` | `cell` | 1 | `the thread's own first cell` | 0 | 0 | 0 |
 | T093 | `u32.phi` | `u32` | `phi` | 1 | `0u` | 0 | 0 | 0 |
 | T094 | `u32.wgindex` | `u32` | `wgindex` | 1 | `0u` | 0 | 0 | 0 |
 | T095 | `bool.bound` | `bool` | `bound` | 1 | `false` | 0 | 0 | 0 |
@@ -241,10 +241,10 @@ A type is a dual `slot.form`: the slot is what the hardware stores, the form is 
 | T146 | `u32.rowid` | `u32` | `rowid` | 1 | `0u` | 0 | 0 | 0 |
 | T147 | `u32.colid` | `u32` | `colid` | 1 | `0u` | 0 | 0 | 0 |
 | T148 | `u32.lidx` | `u32` | `lidx` | 1 | `0u` | 0 | 0 | 0 |
-| T149 | `u32.threadrows` | `u32` | `threadrows` | 1 | `0u` | 0 | 0 | 0 |
-| T150 | `u32.threadcols` | `u32` | `threadcols` | 1 | `0u` | 0 | 0 | 0 |
-| T151 | `u32.threadrowg` | `u32` | `threadrowg` | 1 | `0u` | 0 | 0 | 0 |
-| T152 | `u32.threadcolg` | `u32` | `threadcolg` | 1 | `0u` | 0 | 0 | 0 |
+| T149 | `u32.threadrows` | `u32` | `threadrows` | 1 | `the thread's own first row` | 0 | 0 | 0 |
+| T150 | `u32.threadcols` | `u32` | `threadcols` | 1 | `the thread's own first column` | 0 | 0 | 0 |
+| T151 | `u32.threadrowg` | `u32` | `threadrowg` | 1 | `the thread's own first row` | 0 | 0 | 0 |
+| T152 | `u32.threadcolg` | `u32` | `threadcolg` | 1 | `the thread's own first column` | 0 | 0 | 0 |
 | T153 | `wgmem<vec2<f32>>.real` | `wgmem<vec2<f32>>` | `real` | 0 | `0.0` | 0 | 0 | 0 |
 | T154 | `u32.wgv2index` | `u32` | `wgv2index` | 1 | `0u` | 0 | 0 | 0 |
 | T155 | `u32.wglen` | `u32` | `wglen` | 1 | `the array's default length` | 0 | 0 | 0 |

@@ -153,7 +153,7 @@ FALLBACK = {
     "kernel": "an empty kernel", "grid": "16 x 16, 1 x 1", "block": "empty", "stmt": "empty",
     "wgdim": "4u", "blk": "1u", "unroll": "2u",
     "boundm": "cfg.m", "boundd": "cfg.d", "boundrows": "cfg.r_rows", "lit64": "1u", "lit4096": "1u",
-    "counter": "0u", "tcounter": "0u", "tcounter2": "0u", "bound": "false", "threadrow": "0u", "threadcol": "0u", "cell": "0u", "phi": "0u", "wgindex": "0u",
+    "counter": "0u", "tcounter": "0u", "tcounter2": "0u", "bound": "false", "threadrow": "the thread's own first row", "threadcol": "the thread's own first column", "cell": "the thread's own first cell", "phi": "0u", "wgindex": "0u",
     "L0": "empty", "L1": "empty", "L2": "empty", "L3": "empty", "C0": "empty", "C1": "empty", "C2": "empty", "C3": "empty",
     "safe": "an empty kernel", "pindex": "0u",
     "tcounter3": "0u", "L4": "empty", "C4": "empty", "wgvindex": "0u",
@@ -163,7 +163,7 @@ FALLBACK = {
     # (gid.y * by, gid.x * bx), under the store's own bounds check.
     "O0": "the thread's own store", "O1": "the thread's own store", "O2": "the thread's own store", "O3": "the thread's own store", "O4": "the thread's own store",
     "gid": "0u", "lid": "0u", "wid": "0u", "rowid": "0u", "colid": "0u",
-    "lidx": "0u", "threadrows": "0u", "threadcols": "0u", "threadrowg": "0u", "threadcolg": "0u",
+    "lidx": "0u", "threadrows": "the thread's own first row", "threadcols": "the thread's own first column", "threadrowg": "the thread's own first row", "threadcolg": "the thread's own first column",
     "wgaindex": "0u", "wgv2index": "0u", "wglen": "the array's default length", "decl": "none", "decls": "none (the arrays the kernel uses, at their default lengths)",
     "B1": "empty", "B2": "empty", "B3": "empty", "B4": "empty", "B5": "empty",
 }
