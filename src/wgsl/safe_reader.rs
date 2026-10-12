@@ -78,6 +78,10 @@ struct Ctx<'a> {
     bound_lets: HashMap<String, Vec<usize>>,
     /// The bound lets already set, with their register row.
     let_regs: HashMap<String, String>,
+    /// A subgroup or atomic result inlined into a loop's bound (`subgroup@<h>`,
+    /// `atomic@<h>` to its expression): naga runs it as a statement ahead of
+    /// the loop's test, the bound re-evaluates it every pass.
+    inlined: HashMap<String, Tree>,
     /// While a helper body is being inlined: its arguments by `arg.<name>`,
     /// already resolved and typed in the caller.
     inline_args: Option<HashMap<String, Tree>>,
@@ -196,6 +200,9 @@ fn tree_of(ctx: &mut Ctx, n: &Node) -> Result<Tree, String> {
                 return Ok(bound);
             }
             // A subgroup operation's result: the register its statement wrote.
+            if let Some(t) = ctx.inlined.get(name.as_str()) {
+                return Ok(Tree::new(INLINED, t.ty, vec![t.clone()]));
+            }
             if let Some(idx) = name.strip_prefix("subgroup@") {
                 let local = format!("local.subgroup@{idx}");
                 let row = ctx.registers.get(&local).cloned().ok_or_else(|| format!("{name} read before its subgroup operation"))?;
@@ -403,6 +410,28 @@ fn nested_index<'t>(rest: &str, kids: &'t [Tree]) -> Option<(&'t Tree, &'t Tree)
 
 fn literal_value(t: &Tree) -> Option<f32> {
     t.name.starts_with("literal.").then_some(t.konst)
+}
+
+/// The marker of a tree already in the safe grammar inside a raw one.
+const INLINED: &str = "safe.inlined";
+
+/// The increments of a read-add-write of h at the cell `idx`: `value` a sum
+/// (arith.add, any nesting) with the cell's load as one term; the other
+/// terms in the order the kernel's adds apply them to the load. None when
+/// the load is not a term of the sum.
+fn h_increments<'t>(value: &'t Tree, idx: &str) -> Option<Vec<&'t Tree>> {
+    if value.name.starts_with("load.buffer.h.#") && value.kids.len() == 1 && value.kids[0].to_sexpr() == idx {
+        return Some(Vec::new());
+    }
+    if value.name == "arith.add" && value.kids.len() == 2 {
+        for (inner, other) in [(&value.kids[0], &value.kids[1]), (&value.kids[1], &value.kids[0])] {
+            if let Some(mut xs) = h_increments(inner, idx) {
+                xs.push(other);
+                return Some(xs);
+            }
+        }
+    }
+    None
 }
 
 /// `gid.y` / `gid.x` as a tree: `(shape.access_1 builtin.global_invocation_id)`.
@@ -1129,6 +1158,11 @@ impl<'a> Ctx<'a> {
 
     /// A value tree in the safe grammar.
     fn value(&mut self, t: &Tree) -> Result<Tree, String> {
+        // An expression already in the safe grammar (a subgroup or atomic
+        // result inlined into a loop's bound): as it is.
+        if t.name == INLINED && t.kids.len() == 1 {
+            return Ok(t.kids[0].clone());
+        }
         let d = self.kingdom.dual(t.ty).map(|d| d.dual.clone()).unwrap_or_default();
         // Leaves.
         if t.kids.is_empty() {
@@ -1346,6 +1380,22 @@ impl<'a> Ctx<'a> {
     /// broadcast whose lane is not a literal, and a result no register holds
     /// are refused by name.
     fn subgroup_statement(&mut self, root: &Root, result: u32, rung: &str) -> Result<Tree, String> {
+        let (expr, d) = self.subgroup_expr(root)?;
+        let kind = match d.as_str() {
+            "f32.real" => 'f',
+            "vec4<f32>.real" => 'v',
+            "u32.index" | "u32.bits" | "u32.count" => 'i',
+            "bool.flag" => 'b',
+            other => return Err(format!("a subgroup {} of {other}: no register holds its result", expr.name)),
+        };
+        let row = self.register(&format!("local.subgroup@{result}"), &d)?;
+        let st = self.stmt_ty(rung)?;
+        Ok(Tree::new(&format!("reg.set_{kind}_{rung}"), st, vec![Tree::new(&row, ty(self, Self::reg_dual(kind))?, vec![]), expr]))
+    }
+
+    /// A subgroup operation's expression `subgroup.<fun>(x[, lane])` and its
+    /// argument's dual.
+    fn subgroup_expr(&mut self, root: &Root) -> Result<(Tree, String), String> {
         let RootKind::Subgroup { fun } = &root.kind else { return Err("not a subgroup root".into()) };
         if fun == "ballot" {
             return Err("subgroupBallot has no safe spelling: its vec4<u32> result has no register".into());
@@ -1363,17 +1413,7 @@ impl<'a> Ctx<'a> {
             }
         }
         let d = self.kingdom.dual(x.ty).map(|d| d.dual.clone()).unwrap_or_default();
-        let kind = match d.as_str() {
-            "f32.real" => 'f',
-            "vec4<f32>.real" => 'v',
-            "u32.index" | "u32.bits" | "u32.count" => 'i',
-            "bool.flag" => 'b',
-            other => return Err(format!("a subgroup {fun} of {other}: no register holds its result")),
-        };
-        let expr = Tree::new(&format!("subgroup.{fun}"), x.ty, args);
-        let row = self.register(&format!("local.subgroup@{result}"), &d)?;
-        let st = self.stmt_ty(rung)?;
-        Ok(Tree::new(&format!("reg.set_{kind}_{rung}"), st, vec![Tree::new(&row, ty(self, Self::reg_dual(kind))?, vec![]), expr]))
+        Ok((Tree::new(&format!("subgroup.{fun}"), x.ty, args), d))
     }
 
     /// An atomic read-modify-write statement: `atomic.<fun>_<u|i>(array,
@@ -1381,23 +1421,8 @@ impl<'a> Ctx<'a> {
     /// compare, value)`); its old value to a register when a later expression
     /// reads it, else kept for its effect only (`_ = ...`).
     fn atomic_statement(&mut self, root: &Root, result: u32, rung: &str) -> Result<Tree, String> {
-        let RootKind::Atomic { target, fun } = &root.kind else { return Err("not an atomic root".into()) };
-        let Node::App { kids, .. } = &root.tree else { return Err("an atomic root without operands".into()) };
-        let arr = target.strip_prefix("workgroup.").and_then(|r| r.strip_suffix(".#")).ok_or_else(|| format!("an atomic on {target}: the safe kingdom's atomics are workgroup arrays (a storage atomic needs a binding the Gram role does not have)"))?;
-        let trees = kids.iter().map(|k| tree_of(self, k)).collect::<Result<Vec<_>, _>>()?;
-        let which = self.array(arr, "atomic")?;
-        let (of, idx_dual, arr_dual, _, _) = Self::wg_rows(which);
-        let unsigned = which.starts_with("wg.au");
+        let (expr, unsigned) = self.atomic_expr(root)?;
         let suffix = if unsigned { "u" } else { "i" };
-        let idx = self.value(self.wg_unmasked(&trees[0], which))?;
-        let at = Tree::new(of, ty(self, idx_dual)?, vec![idx]);
-        let array = Tree::new(which, ty(self, arr_dual)?, vec![]);
-        let out_ty = ty(self, if unsigned { "u32.index" } else { "i32.int" })?;
-        if fun == "cas" {
-            return Err("atomicCompareExchangeWeak has no safe spelling: naga 0.20's Metal backend does not implement it (MSL: FeatureNotImplemented)".into());
-        }
-        let value = self.value(&trees[1])?;
-        let expr = Tree::new(&format!("atomic.{fun}_{suffix}"), out_ty, vec![array, at, value]);
         let st = self.stmt_ty(rung)?;
         let leaf = format!("atomic@{result}");
         fn reads(n: &Node, leaf: &str) -> bool {
@@ -1416,6 +1441,28 @@ impl<'a> Ctx<'a> {
         }
         let row = self.register(&format!("local.atomic@{result}"), "u32.index")?;
         Ok(Tree::new(&format!("reg.set_i_{rung}"), st, vec![Tree::new(&row, ty(self, Self::reg_dual('i'))?, vec![]), expr]))
+    }
+
+    /// An atomic's expression `atomic.<fun>_<u|i>(array, index, value)` and
+    /// whether its array is atomic<u32>.
+    fn atomic_expr(&mut self, root: &Root) -> Result<(Tree, bool), String> {
+        let RootKind::Atomic { target, fun } = &root.kind else { return Err("not an atomic root".into()) };
+        let Node::App { kids, .. } = &root.tree else { return Err("an atomic root without operands".into()) };
+        let arr = target.strip_prefix("workgroup.").and_then(|r| r.strip_suffix(".#")).ok_or_else(|| format!("an atomic on {target}: the safe kingdom's atomics are workgroup arrays (a storage atomic needs a binding the Gram role does not have)"))?;
+        let trees = kids.iter().map(|k| tree_of(self, k)).collect::<Result<Vec<_>, _>>()?;
+        let which = self.array(arr, "atomic")?;
+        let (of, idx_dual, arr_dual, _, _) = Self::wg_rows(which);
+        let unsigned = which.starts_with("wg.au");
+        let suffix = if unsigned { "u" } else { "i" };
+        let idx = self.value(self.wg_unmasked(&trees[0], which))?;
+        let at = Tree::new(of, ty(self, idx_dual)?, vec![idx]);
+        let array = Tree::new(which, ty(self, arr_dual)?, vec![]);
+        let out_ty = ty(self, if unsigned { "u32.index" } else { "i32.int" })?;
+        if fun == "cas" {
+            return Err("atomicCompareExchangeWeak has no safe spelling: naga 0.20's Metal backend does not implement it (MSL: FeatureNotImplemented)".into());
+        }
+        let value = self.value(&trees[1])?;
+        Ok((Tree::new(&format!("atomic.{fun}_{suffix}"), out_ty, vec![array, at, value]), unsigned))
     }
 
     /// A workgroup array's index without its mask into the array: `i & (n - 1)`
@@ -2114,29 +2161,32 @@ impl<'a> Ctx<'a> {
         let name = tree.name.as_str();
         if name.starts_with("store.buffer.h.#") {
             let [idx, value] = tree.kids.as_slice() else { return Err("store to h without an index".into()) };
-            // read-add-write: value = (arith.add (load.buffer.h.# idx) x) in either order
-            let x = (|| {
-                if value.name == "arith.add" && value.kids.len() == 2 {
-                    for (l, x) in [(&value.kids[0], &value.kids[1]), (&value.kids[1], &value.kids[0])] {
-                        if l.name.starts_with("load.buffer.h.#") && l.kids.len() == 1 && l.kids[0].to_sexpr() == idx.to_sexpr() {
-                            return Some(x);
-                        }
-                    }
-                }
-                None
-            })()
-            .ok_or("a store to h is not read-add-write of the same cell")?;
+            // read-add-write: value is a sum with the cell's own load as one
+            // term, `h[c] + x`, `h[c] + a + b` (left-nested), `a + (h[c] + b)`.
+            // Each add is commutative bit for bit, so `(h[c] + a) + b` is
+            // `h[c] += a; h[c] += b` exactly: one store.h per increment, in
+            // the order the kernel's own adds apply them.
+            let xs = h_increments(value, &idx.to_sexpr()).ok_or("a store to h is not read-add-write of the same cell")?;
+            if xs.is_empty() {
+                return Err("a store of h[c] to itself (no increment)".into());
+            }
             let cell = self.cell(idx)?;
-            let v = self.value(x)?;
-            let store = |ctx: &Self, r: &str| -> Result<Tree, String> { Ok(Tree::new(&format!("store.h_{r}"), ctx.stmt_ty(r)?, vec![cell.clone(), v.clone()])) };
+            let vs = xs.into_iter().map(|x| self.value(x)).collect::<Result<Vec<_>, _>>()?;
+            let stores = |ctx: &Self, r: &str| -> Result<Tree, String> {
+                let list = vs.iter().map(|v| Ok(Tree::new(&format!("store.h_{r}"), ctx.stmt_ty(r)?, vec![cell.clone(), v.clone()]))).collect::<Result<Vec<_>, String>>()?;
+                if list.len() == 1 {
+                    return Ok(list.into_iter().next().expect("one store"));
+                }
+                Ok(Tree::new(&format!("stmt.block_{r}"), ctx.stmt_ty(r)?, vec![ctx.block(list, r)?]))
+            };
             return match self.guard.clone() {
                 Some(g) if !rung.starts_with('C') => {
                     let level = &rung[1..];
                     let crung = format!("C{level}");
-                    let inner = self.block(vec![store(self, &crung)?], &crung)?;
+                    let inner = self.block(vec![stores(self, &crung)?], &crung)?;
                     Ok(Some(Tree::new(&format!("stmt.if_{rung}"), st, vec![g, inner])))
                 }
-                _ => Ok(Some(store(self, rung)?)),
+                _ => Ok(Some(stores(self, rung)?)),
             };
         }
         if let Some(rest) = name.strip_prefix("store.workgroup.") {
@@ -2367,7 +2417,18 @@ impl<'a> Ctx<'a> {
         // the top of the body).
         let body_stmts_all: Vec<&Statement> = body.iter().filter(|s| !matches!(s, Statement::Emit(_))).collect();
         let test_pos = body_stmts_all.iter().position(|s| matches!(s, Statement::If { .. })).ok_or("a loop without a test")?;
-        for s in &body_stmts_all[..test_pos] {
+        for (i, s) in body_stmts_all[..test_pos].iter().enumerate() {
+            // A subgroup operation or an atomic in the bound: naga runs it
+            // ahead of the test; the bound holds its expression inline.
+            if let Statement::SubgroupCollectiveOperation { result, .. } | Statement::SubgroupGather { result, .. } | Statement::Atomic { result, .. } = s {
+                let at = [&path[..], &[0, i]].concat();
+                let subgroup = !matches!(s, Statement::Atomic { .. });
+                let root = if subgroup { self.root_at(&at, |k| matches!(k, RootKind::Subgroup { .. })) } else { self.root_at(&at, |k| matches!(k, RootKind::Atomic { .. })) };
+                let root = root.ok_or("no root at a statement ahead of the loop's test")?;
+                let (expr, leaf) = if subgroup { (self.subgroup_expr(root)?.0, format!("subgroup@{}", result.index())) } else { (self.atomic_expr(root)?.0, format!("atomic@{}", result.index())) };
+                self.inlined.insert(leaf, expr);
+                continue;
+            }
             let Statement::Call { function, .. } = s else { return Err("a loop whose first statement is not its test".into()) };
             let callee = self.module.functions[*function].name.clone().unwrap_or_else(|| format!("fn{}", function.index()));
             if !self.helpers.get(&callee).is_some_and(|h| h.pure || h.composite) {
@@ -2939,7 +3000,7 @@ pub fn read_safe(source: &str, kingdom: &WgslKingdom) -> Result<SafeRead, String
         }
     }
     let bound_lets = lets_used_in_deeper_loops(&f.roots, &naga_fn.body);
-    let mut ctx = Ctx { kingdom, duals: &duals, lets: &lets, roots: &roots, item_counter: None, tile_counter: None, tile_counter2: None, tile_counter3: None, tile_counter4: None, registers: BTreeMap::new(), next_reg: BTreeMap::new(), guard: None, tail: true, arrays: BTreeMap::new(), array_lens: BTreeMap::new(), parrs: BTreeMap::new(), grid, notes: Vec::new(), helpers: &helpers, calls: &calls, arg_roots: &arg_roots, inline_args: None, row_arrays: BTreeMap::new(), used_counters: std::collections::BTreeSet::new(), local_lanes, axis_memo: BTreeMap::new(), loop_depth: 0, tile_bounds: BTreeMap::new(), naga_fn, module: &kernel.module, local_prefix: String::new(), inline_result: None, inline_values: None, bound_lets, let_regs: HashMap::new() };
+    let mut ctx = Ctx { kingdom, duals: &duals, lets: &lets, roots: &roots, item_counter: None, tile_counter: None, tile_counter2: None, tile_counter3: None, tile_counter4: None, registers: BTreeMap::new(), next_reg: BTreeMap::new(), guard: None, tail: true, arrays: BTreeMap::new(), array_lens: BTreeMap::new(), parrs: BTreeMap::new(), grid, notes: Vec::new(), helpers: &helpers, calls: &calls, arg_roots: &arg_roots, inline_args: None, row_arrays: BTreeMap::new(), used_counters: std::collections::BTreeSet::new(), local_lanes, axis_memo: BTreeMap::new(), loop_depth: 0, tile_bounds: BTreeMap::new(), naga_fn, module: &kernel.module, local_prefix: String::new(), inline_result: None, inline_values: None, bound_lets, let_regs: HashMap::new(), inlined: HashMap::new() };
     // Register initialisations first, in root order. A local initialised to
     // its form's fallback (0.0, 0u, false, a zero vector) costs nothing: the
     // register's declaration already holds that value, and the register is
@@ -3592,6 +3653,49 @@ mod tests {
         // A kernel that reads no subgroup value declares none.
         let plain = rr.kernel(&read_safe(include_str!("../../tests/corpus/safewgsl/draft_atomics.wgsl"), &k).unwrap().tree).unwrap().text;
         assert!(!plain.contains("subgroup"), "{plain}");
+    }
+
+    /// A STORE TO H AS AN ADD CHAIN (2026-10-12): `h[c] = h[c] + a + b` is
+    /// `h[c] += a; h[c] += b`, two stores in that order; the kernel renders,
+    /// validates and reads back. A store whose sum holds no load of its own
+    /// cell is still not a read-add-write.
+    #[test]
+    fn a_store_to_h_as_an_add_chain_is_one_store_per_increment() {
+        let k = WgslKingdom::load_safe();
+        let (t, role) = (FunctionTable::safe(), gram_role());
+        let src = include_str!("../../tests/corpus/safewgsl/draft_add_chain.wgsl");
+        let tree = read_safe(src, &k).unwrap_or_else(|e| panic!("{e}")).tree;
+        let sx = tree.to_sexpr();
+        assert_eq!(sx.matches("(store.h_").count(), 2, "{sx}");
+        let first = sx.find("(store.h_").unwrap();
+        assert!(sx[first..].find("arith.mul").unwrap() > sx[first..][1..].find("(store.h_").unwrap(), "f0 is added before f1 * 0.0: {sx}");
+        let text = Renderer::new(&k, &t, &role).kernel(&tree).unwrap().text;
+        validate_text(&text).unwrap_or_else(|e| panic!("{e}\n{text}"));
+        read_safe(&format!("// grid 16 16 1 1\n{text}"), &k).unwrap_or_else(|e| panic!("read back: {e}"));
+        let other = src.replacen("= h[gid.y * cfg.d + gid.x] + f0 + f1 * 0.0;", "= h[gid.y * cfg.d + gid.x + 1u] + f0 + f1 * 0.0;", 1);
+        assert_ne!(other, src);
+        let Err(e) = read_safe(&other, &k) else { panic!("a store of another cell's sum read") };
+        assert!(e.contains("not read-add-write of the same cell"), "{e}");
+    }
+
+    /// A SUBGROUP OPERATION IN A LOOP'S BOUND (2026-10-12; a single-symbol
+    /// mutant wrote `t < subgroupShuffleUp(cfg.m, 2u)`): naga runs it as a
+    /// statement ahead of the loop's test; the bound holds it inline, renders,
+    /// validates and reads back.
+    #[test]
+    fn a_subgroup_operation_in_a_loop_bound_reads_inline() {
+        let k = WgslKingdom::load_safe();
+        let (t, role) = (FunctionTable::safe(), gram_role());
+        let src = include_str!("../../tests/corpus/safewgsl/draft_subgroups.wgsl").replacen("t < cfg.m;", "t < subgroupMax(cfg.m);", 1);
+        assert!(src.contains("subgroupMax(cfg.m)"));
+        let tree = read_safe(&src, &k).unwrap_or_else(|e| panic!("{e}")).tree;
+        assert!(tree.to_sexpr().contains("(subgroup.max (index.of_count load.cfg_m))"), "{}", tree.to_sexpr());
+        let r = Renderer::new(&k, &t, &role).kernel(&tree).unwrap();
+        let text = r.text;
+        assert!(text.contains("subgroupMax(cfg.m)"), "{text}");
+        validate_text(&text).unwrap_or_else(|e| panic!("{e}\n{text}"));
+        let g = r.grid;
+        read_safe(&format!("// grid {} {} {} {}\n{text}", g.x, g.y, g.bx, g.by), &k).unwrap_or_else(|e| panic!("read back: {e}"));
     }
 
     /// A kernel with a helper function reads: the helper is inlined at its
