@@ -68,8 +68,37 @@ pub struct PerKernel {
     pub template: String,
 }
 
-/// The fixed part of a kernel: its bindings (the prologue text), the
-/// expression bounding the item loop, and its per-kernel rows.
+/// One binding of a kernel's interface: `@group(g) @binding(b) var<space> name: ty;`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Binding {
+    pub name: String,
+    pub group: u32,
+    pub binding: u32,
+    /// `storage, read`, `storage, read_write` or `uniform`.
+    pub space: String,
+    /// `array<f32>`, `atomic<u32>`, the uniform struct's name.
+    pub ty: String,
+}
+
+/// A field of the interface's uniform struct, and the role the kingdom gives
+/// it: `d` the output's columns (the row stride of its cells), `m` the items
+/// (the item loop's bound), `r_rows` the band's rows, `r_off` the band's first
+/// row; empty for a field the kingdom does not read.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Field {
+    pub name: String,
+    pub role: String,
+}
+
+/// The fixed part of a kernel, its declared INTERFACE (docs/PLAN_constrained_mutation.md
+/// section 2.4, 2026-10-12): its bindings, the uniform struct's fields and
+/// their roles, the read-only input the kingdom's `phi` rows read, the output
+/// whose cells the threads own and the guard that bounds a thread's cell,
+/// plus the per-kernel rows over them. The prologue and every name the
+/// renderer writes come from it; the safe reader renames the interface's
+/// names to the kingdom's canonical roles (`phi`, `h`, `cfg.d` ...), so the
+/// ownership proof, the guarded store and the checker read the interface,
+/// not fixed names. The Gram kernel's h / phi / cfg are one interface.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Role {
     pub name: String,
@@ -77,9 +106,74 @@ pub struct Role {
     /// The item loop's bound, a `u32` expression over the bindings (`cfg.m`).
     pub items: String,
     pub per_kernel: Vec<PerKernel>,
+    pub bindings: Vec<Binding>,
+    /// The uniform struct: its variable, its type's name and its fields.
+    pub uniform_var: String,
+    pub uniform_struct: String,
+    pub fields: Vec<Field>,
+    /// The read-only input the kingdom's `phi` rows read.
+    pub input: String,
+    /// The output whose cells the threads own (the kingdom's `h`).
+    pub output: String,
+    /// The bound check of a thread's own cell, over `{row}` and `{col}`.
+    pub guard: String,
+}
+
+/// A kernel interface as declared: what [`Role::interface`] builds a role from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Interface {
+    pub name: String,
+    pub bindings: Vec<Binding>,
+    pub uniform_var: String,
+    pub uniform_struct: String,
+    pub fields: Vec<Field>,
+    pub input: String,
+    pub output: String,
+    pub guard: String,
+    /// Per-kernel rows beyond the standard ones (a second input's load).
+    pub extra: Vec<PerKernel>,
 }
 
 impl Role {
+    /// An interface from its declarations: the prologue (the uniform struct,
+    /// then the bindings), the item bound and the per-kernel rows over the
+    /// input, the output and the fields, plus the declaration's extra rows.
+    pub fn interface(decl: Interface) -> Role {
+        let Interface { name, bindings, uniform_var, uniform_struct, fields, input, output, guard, extra } = decl;
+        let (name, uniform_var, uniform_struct, input, output, guard) = (name.as_str(), uniform_var.as_str(), uniform_struct.as_str(), input.as_str(), output.as_str(), guard.as_str());
+        let mut prologue = format!("struct {uniform_struct} {{ {} }};", fields.iter().map(|f| format!("{}: u32,", f.name)).collect::<Vec<_>>().join(" "));
+        for b in &bindings {
+            prologue.push_str(&format!("\n@group({}) @binding({}) var<{}> {}: {};", b.group, b.binding, b.space, b.name, b.ty));
+        }
+        let mut role = Role { name: name.into(), prologue, items: String::new(), per_kernel: Vec::new(), bindings, uniform_var: uniform_var.into(), uniform_struct: uniform_struct.into(), fields, input: input.into(), output: output.into(), guard: guard.into() };
+        role.items = role.field("m");
+        let pk = |name: &str, inputs: &[&str], output: &str, template: String| PerKernel { name: name.into(), inputs: inputs.iter().map(|s| s.to_string()).collect(), output: output.into(), template };
+        let (i, o) = (input, output);
+        role.per_kernel = vec![
+            pk("load.phi", &["u32.index"], "f32.real", format!("{i}[{{0}}]")),
+            pk("load.phi4", &["u32.index"], "vec4<f32>.real", format!("vec4<f32>({i}[{{0}}], {i}[{{0}} + 1u], {i}[{{0}} + 2u], {i}[{{0}} + 3u])")),
+            pk("load.h", &["u32.index"], "f32.real", format!("{o}[{{0}}]")),
+            pk("store.h", &["u32.index", "f32.real"], "stmt.stmt", format!("{o}[{{0}}] = {{1}};")),
+            pk("load.cfg_d", &[], "u32.count", role.field("d")),
+            pk("load.cfg_m", &[], "u32.count", role.field("m")),
+            pk("load.cfg_r_rows", &[], "u32.count", role.field("r_rows")),
+            pk("load.cfg_r_off", &[], "u32.index", role.field("r_off")),
+        ];
+        role.per_kernel.extend(extra);
+        role
+    }
+
+    /// The text of the uniform field with the kingdom's role `role` (`d`,
+    /// `m`, `r_rows`, `r_off`): `cfg.d`, `p.nc`.
+    pub fn field(&self, role: &str) -> String {
+        let name = self.fields.iter().find(|f| f.role == role).map_or(role, |f| f.name.as_str());
+        format!("{}.{name}", self.uniform_var)
+    }
+
+    /// The bound check of a thread's own cell (row, column).
+    pub fn guard_text(&self, row: &str, col: &str) -> String {
+        self.guard.replace("{row}", row).replace("{col}", col)
+    }
     /// The per-kernel rows typed over the kingdom's duals, for the symbol
     /// table and the sampler.
     pub fn rows(&self, kingdom: &WgslKingdom) -> Result<Vec<WgslRow>, String> {
@@ -104,22 +198,20 @@ pub fn dual_ty(kingdom: &WgslKingdom, name: &str) -> Result<Ty, String> {
 /// of `H_GRAM_ACCUM_WGSL`, the item loop bounded by `cfg.m`, and the
 /// per-kernel rows that read and write them.
 pub fn gram_role() -> Role {
-    let pk = |name: &str, inputs: &[&str], output: &str, template: &str| PerKernel { name: name.into(), inputs: inputs.iter().map(|s| s.to_string()).collect(), output: output.into(), template: template.into() };
-    Role {
+    let b = |name: &str, binding: u32, space: &str, ty: &str| Binding { name: name.into(), group: 0, binding, space: space.into(), ty: ty.into() };
+    let f = |name: &str, role: &str| Field { name: name.into(), role: role.into() };
+    Role::interface(Interface {
         name: "gram".into(),
-        prologue: "struct Cfg { d: u32, m: u32, r_rows: u32, r_off: u32, };\n@group(0) @binding(0) var<storage, read> phi: array<f32>;\n@group(0) @binding(1) var<storage, read_write> h: array<f32>;\n@group(0) @binding(2) var<uniform> cfg: Cfg;".into(),
-        items: "cfg.m".into(),
-        per_kernel: vec![
-            pk("load.phi", &["u32.index"], "f32.real", "phi[{0}]"),
-            pk("load.phi4", &["u32.index"], "vec4<f32>.real", "vec4<f32>(phi[{0}], phi[{0} + 1u], phi[{0} + 2u], phi[{0} + 3u])"),
-            pk("load.h", &["u32.index"], "f32.real", "h[{0}]"),
-            pk("store.h", &["u32.index", "f32.real"], "stmt.stmt", "h[{0}] = {1};"),
-            pk("load.cfg_d", &[], "u32.count", "cfg.d"),
-            pk("load.cfg_m", &[], "u32.count", "cfg.m"),
-            pk("load.cfg_r_rows", &[], "u32.count", "cfg.r_rows"),
-            pk("load.cfg_r_off", &[], "u32.index", "cfg.r_off"),
-        ],
-    }
+        bindings: vec![b("phi", 0, "storage, read", "array<f32>"), b("h", 1, "storage, read_write", "array<f32>"), b("cfg", 2, "uniform", "Cfg")],
+        uniform_var: "cfg".into(),
+        uniform_struct: "Cfg".into(),
+        fields: vec![f("d", "d"), f("m", "m"), f("r_rows", "r_rows"), f("r_off", "r_off")],
+        input: "phi".into(),
+        output: "h".into(),
+        // The band's row, the column, and the global row (square output: d x d).
+        guard: "({row}) < cfg.r_rows && ({col}) < cfg.d && (cfg.r_off + ({row})) < cfg.d".into(),
+        extra: Vec::new(),
+    })
 }
 
 /// The shipped Gram kernel as a typed tree: the seed of the population and
@@ -849,7 +941,8 @@ impl<'a> Renderer<'a> {
                     // A fallback cell is the thread's own first cell.
                     (self.own_fallback("u32.threadrow", scope)?.unwrap_or_default(), self.own_fallback("u32.threadcol", scope)?.unwrap_or_default())
                 };
-                Ok(format!("    if (({row}) < cfg.r_rows && ({col}) < cfg.d && (cfg.r_off + ({row})) < cfg.d) {{ h[{cell}] = h[{cell}] + {}; }}\n", self.value(&kids[1], scope)?))
+                let (guard, h) = (self.role.guard_text(&row, &col), &self.role.output);
+                Ok(format!("    if ({guard}) {{ {h}[{cell}] = {h}[{cell}] + {}; }}\n", self.value(&kids[1], scope)?))
             }
             "reg.set_v_lane" => {
                 n(3)?;
@@ -1371,9 +1464,9 @@ impl Renderer<'_> {
             // (the legality checker's bounded loops, 177 of 1,000 random genes).
             "bound.of_index" => return Ok(format!("min(({}), {MAX_LOOP_TRIP}u)", self.value(&v.kids[0], scope)?)),
             "bound.x_of_uniform" => return self.value(&v.kids[0], scope),
-            "bound.m" => return Ok("cfg.m".into()),
-            "bound.d" => return Ok("cfg.d".into()),
-            "bound.rows" => return Ok("cfg.r_rows".into()),
+            "bound.m" => return Ok(self.role.field("m")),
+            "bound.d" => return Ok(self.role.field("d")),
+            "bound.rows" => return Ok(self.role.field("r_rows")),
             // A loop's counter is its loop's: outside the loop it is 0u, as
             // the rows say (written `t` it read the last loop's exit value,
             // 852 of 1,000 random genes, 2026-10-12).
@@ -1444,12 +1537,12 @@ impl Renderer<'_> {
             "safe.cell_of" => {
                 let r = self.value(&v.kids[0], scope)?;
                 let c = self.value(&v.kids[1], scope)?;
-                return Ok(format!("(({r}) * cfg.d + ({c}))"));
+                return Ok(format!("(({r}) * {} + ({c}))", self.role.field("d")));
             }
             "safe.phi_of" => {
                 let t = self.value(&v.kids[0], scope)?;
                 let c = self.value(&v.kids[1], scope)?;
-                return Ok(format!("(({t}) * cfg.d + ({c}))"));
+                return Ok(format!("(({t}) * {} + ({c}))", self.role.field("d")));
             }
             "safe.wg_of" => return Ok(format!("(({}) & {}u)", self.value(&v.kids[0], scope)?, WGMEM_LEN - 1)),
             "safe.wgv_of" => return Ok(format!("(({}) & {}u)", self.value(&v.kids[0], scope)?, WGVEC_LEN - 1)),
@@ -1457,14 +1550,15 @@ impl Renderer<'_> {
             "safe.pidx64" => return Ok(format!("(({}) & 63u)", self.value(&v.kids[0], scope)?)),
             "safe.pidx16" => return Ok(format!("(({}) & 15u)", self.value(&v.kids[0], scope)?)),
             "safe.row_as_index" | "safe.col_as_index" => return self.value(&v.kids[0], scope),
-            "load.phi_safe" => return Ok(format!("phi[{}]", self.value(&v.kids[0], scope)?)),
+            "load.phi_safe" => return Ok(format!("{}[{}]", self.role.input, self.value(&v.kids[0], scope)?)),
             "load.phi4_safe" => {
                 let i = self.value(&v.kids[0], scope)?;
-                return Ok(format!("vec4<f32>(phi[{i}], phi[{i} + 1u], phi[{i} + 2u], phi[{i} + 3u])"));
+                let p = &self.role.input;
+                return Ok(format!("vec4<f32>({p}[{i}], {p}[{i} + 1u], {p}[{i} + 2u], {p}[{i} + 3u])"));
             }
-            "load.h_safe" => return Ok(format!("h[{}]", self.value(&v.kids[0], scope)?)),
-            "load.phi_len" => return Ok("arrayLength(&phi)".into()),
-            "load.h_len" => return Ok("arrayLength(&h)".into()),
+            "load.h_safe" => return Ok(format!("{}[{}]", self.role.output, self.value(&v.kids[0], scope)?)),
+            "load.phi_len" => return Ok(format!("arrayLength(&{})", self.role.input)),
+            "load.h_len" => return Ok(format!("arrayLength(&{})", self.role.output)),
             // A matrix's column chosen at run time, clamped to its columns,
             // through a helper's local copy (naga 0.20 indexes a matrix value
             // by a constant only).
