@@ -91,7 +91,8 @@ A type is a dual `slot.form`: the slot is what the hardware stores, the form is 
 | `B3` | a loop body that breaks, three deep: no barrier | see duals |
 | `B4` | a loop body that breaks, four deep: no barrier | see duals |
 | `B5` | a loop body that breaks, five deep: no barrier | see duals |
-| `uniformw` | a uniform u32 whose arithmetic may wrap (a difference, a product, a shift of uniform values): an index, never a loop bound | u32 |
+| `uniformw` | a uniform u32 whose arithmetic may wrap (a difference, a product, a shift of uniform values): no row takes it (a wrap is illegal everywhere) | u32 |
+| `indexw` | an index that may wrap (a raw difference index.sub, a left shift index.shl): no row takes it; the kingdom's difference is index.sub_floor, its shift by k a product by 2^k | u32 |
 | `xbound` | the value of an expression loop bound: a register, a uniform value, the arithmetic of them that cannot wrap (no difference but the floored one, no product, no shift), or a min with any index | u32 |
 
 ## Duals
@@ -274,18 +275,19 @@ A type is a dual `slot.form`: the slot is what the hardware stores, the form is 
 | T174 | `u32.boundu` | `u32` | `boundu` | 1 | `1u` | 0 | 0 | 0 |
 | T175 | `u32.uniformw` | `u32` | `uniformw` | 1 | `0u` | 0 | 0 | 0 |
 | T176 | `u32.xbound` | `u32` | `xbound` | 1 | `1u` | 0 | 0 | 0 |
+| T177 | `u32.indexw` | `u32` | `indexw` | 1 | `0u` | 0 | 0 | 0 |
 
-176 duals. The fallback is what Design C's projection substitutes for a codon whose dual does not match the demand; the codon is counted as masked.
+177 duals. The fallback is what Design C's projection substitutes for a codon whose dual does not match the demand; the codon is counted as masked.
 
 The three machine columns (`fallback_bits`, `fallback_noop`, `fallback_elem` in `types.tsv`) are what the loader builds the fallback leaf from, never the prose: `bits` is the lane's 32-bit pattern as an unsigned integer, repeated across the lanes of a vector or matrix (only `bool.sign` is non-zero, true = +1); `noop` is 1 for `store.store`, which substitutes no value at all; `elem` is 1 for `array<T>`, whose fallback is its element's. The loader tests `noop` and `elem` before reading `bits`; for those two rows `bits` is a placeholder 0. Every substitution, whichever column decides it, counts the codon as masked.
 
 ## Loop trip counts
 
-MAX_LOOP_TRIP = 2^24 = 16,777,216 is the kingdom's declared maximum trip count of a loop (`render::MAX_LOOP_TRIP`): no real workload exceeds it (production builds run m ~ 420,000 items, d up to 8,192). A loop at an L rung, which may hold a barrier, takes a uniform bound (`u32.boundu`); any other expression bound (`bound.of_index`, a loop with no barrier) renders `min(e, 16777216u)`, so a bound in range computes the same and no loop runs past it. The checker's range layer ranges such a bound up to it, and proves index arithmetic over it.
+MAX_LOOP_TRIP = 2^24 = 16,777,216 is the kingdom's declared maximum trip count of a loop (`render::MAX_LOOP_TRIP`): no real workload exceeds it (production builds run m ~ 420,000 items, d up to 8,192). A loop at an L rung, which may hold a barrier, takes a uniform bound (`u32.boundu`); a loop with no barrier takes any expression bound. Every bound a gene computes, uniform or not (`bound.of_index`, `bound.of_uniform`, `bound.x_of_uniform`), renders `min(e, 16777216u)`, so a bound in range computes the same and no loop runs past it. The checker's range layer ranges such a bound up to it, and proves index arithmetic over it.
 
-## No wrap in a loop bound or a store's cell
+## No wrap, no zero divisor, every computed bound capped
 
-A u32 wrap is illegal where it lands in a loop's bound (the loop runs to its cap) or in a store's cell index (a wrapped cell can be another thread's: a data race); anywhere else it is a diagnostic (Andrew, 2026-10-12). The kingdom cannot spell either: a store's cell is the thread's row and column with offsets clamped to its block; a uniform difference, product or shift is `u32.uniformw`, an index only (a `min` with a `u32.uniform` clamps it back); and an expression bound takes `u32.xbound`, the registers, uniform values and the index rows that cannot pass their operands (a sum, a max, an or of bound values; a floored difference, a quotient, a remainder, a right shift, an and, a round-down or a min of a bound value by any index; the subgroup min, max, broadcasts and shuffles of a bound value). A raw difference in a loop bound reads as its floored difference.
+A u32 wrap in index arithmetic at the worst shape is illegal everywhere (Codex's review of Andrew's decision, 2026-10-12): the checker's range layer fails it. The kingdom cannot spell a difference that wraps: a raw difference is `u32.indexw` and a uniform difference, product or shift `u32.uniformw`, which no row takes; the kingdom's difference is the floored one (`index.sub_floor`, `uniform.sub_floor`), and the reader reads `x - y` as it (the same value wherever it does not wrap). A sum, product or left shift of index values is not typed by range: the checker fails one that wraps at the worst shape. An expression bound takes `u32.xbound` (registers, uniform values, the rows that cannot pass their operands). Every loop bound a gene computes renders `min(e, 16777216u)` (`bound.of_index`, `bound.of_uniform`, `bound.x_of_uniform`); a binding's bound (`cfg.m`, `cfg.d`, `cfg.r_rows`) is the host's data size and a literal is at most 64. A divisor that is not a literal of at least 1 renders `max(b, 1u)` (WGSL's `x / 0u` is x, as is `x / max(0u, 1u)`).
 
 ## Not in the table
 

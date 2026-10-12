@@ -638,7 +638,8 @@ mod tests {
         // registers (gap 9); 172 with the 16-element private array's index (legality item 4).
         // 174 with the uniform values and the uniform loop bound (legality item 5); 176 with the
         // uniform values that may wrap (u32.uniformw) and an expression bound's value (u32.xbound).
-        assert_eq!(s.len(), 176);
+        // 177 with u32.indexw (a raw difference, which no row takes: no wrap anywhere).
+        assert_eq!(s.len(), 177);
         for (a, b) in w.iter().zip(&s) {
             assert_eq!((a.reference.as_str(), a.dual.as_str()), (b.reference.as_str(), b.dual.as_str()));
         }

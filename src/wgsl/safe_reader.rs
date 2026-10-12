@@ -392,7 +392,13 @@ fn tree_of(ctx: &mut Ctx, n: &Node) -> Result<Tree, String> {
                     }
                 }
             }
-            let kids = kids.iter().map(|k| tree_of(ctx, k)).collect::<Result<Vec<_>, _>>()?;
+            let mut kids = kids.iter().map(|k| tree_of(ctx, k)).collect::<Result<Vec<_>, _>>()?;
+            // `x / max(b, 1u)`: how the kingdom writes a divisor that is not a
+            // literal (no zero divisor, 2026-10-12), read back as x / b.
+            if name == "index.div" && kids.len() == 2 && kids[1].name == "index.max" && kids[1].kids.len() == 2 && kids[1].kids[1].name.starts_with("literal.") && kids[1].kids[1].konst == 1.0 {
+                let b = kids[1].kids[0].clone();
+                kids[1] = b;
+            }
             // A lane of a vector chosen at run time has no type from the
             // inference when naga refused the module for it: the vector's scalar.
             let lane_of_vector = || -> Option<Ty> {
@@ -681,6 +687,36 @@ fn canonical_node(n: &Node, role: &crate::wgsl::render::Role) -> Node {
     }
 }
 
+/// Every raw u32 difference `x - y` as the kingdom's floored difference, and a
+/// left shift by a literal k as a product by 2^k,
+/// (`index.sub_floor`, 2026-10-12, Codex's review: a wrap is illegal
+/// everywhere, and a raw difference is `u32.indexw`, which no row takes): the
+/// same value wherever it does not wrap. The kingdom's own floored difference,
+/// `select(x - y, 0u, y > x)`, reads back as itself.
+fn floor_differences(n: &Node) -> Node {
+    let Node::App { name, slot, known, kids } = n else { return n.clone() };
+    let kids: Vec<Node> = kids.iter().map(floor_differences).collect();
+    if name == "index.sub" && kids.len() == 2 && slot == "u32" {
+        return Node::App { name: "index.sub_floor".into(), slot: slot.clone(), known: true, kids };
+    }
+    // `x << k`, k a literal: `x * 2^k` (a left shift is u32.indexw too).
+    if let ("index.shl", "u32", [x, Node::Literal { form, slot: ks, value }]) = (name.as_str(), slot.as_str(), kids.as_slice()) {
+        if (0.0..32.0).contains(value) && value.fract() == 0.0 {
+            let k = Node::Literal { form: form.clone(), slot: ks.clone(), value: 2f64.powi(*value as i32) };
+            return Node::App { name: "index.mul".into(), slot: slot.clone(), known: true, kids: vec![x.clone(), k] };
+        }
+    }
+    if name == "select.scalar_cond" {
+        if let [Node::Literal { value, .. }, diff @ Node::App { name: d, kids: dk, .. }, Node::App { name: c, kids: ck, .. }] = kids.as_slice() {
+            let floored = *value == 0.0 && d == "index.sub_floor" && dk.len() == 2 && ck.len() == 2;
+            if floored && ((c == "compare.gt" && ck[0] == dk[1] && ck[1] == dk[0]) || (c == "compare.lt" && ck[0] == dk[0] && ck[1] == dk[1])) {
+                return diff.clone();
+            }
+        }
+    }
+    Node::App { name: name.clone(), slot: slot.clone(), known: *known, kids }
+}
+
 /// The marker of a tree already in the safe grammar inside a raw one.
 const INLINED: &str = "safe.inlined";
 
@@ -688,13 +724,13 @@ const INLINED: &str = "safe.inlined";
 /// (arith.add, any nesting) with the cell's load as one term; the other
 /// terms in the order the kernel's adds apply them to the load. None when
 /// the load is not a term of the sum.
-fn h_increments<'t>(value: &'t Tree, idx: &str) -> Option<Vec<&'t Tree>> {
-    if value.name.starts_with("load.buffer.h.#") && value.kids.len() == 1 && value.kids[0].to_sexpr() == idx {
+fn h_increments<'t>(value: &'t Tree, idx: &str, key: &dyn Fn(&Tree) -> String) -> Option<Vec<&'t Tree>> {
+    if value.name.starts_with("load.buffer.h.#") && value.kids.len() == 1 && key(&value.kids[0]) == idx {
         return Some(Vec::new());
     }
     if value.name == "arith.add" && value.kids.len() == 2 {
         for (inner, other) in [(&value.kids[0], &value.kids[1]), (&value.kids[1], &value.kids[0])] {
-            if let Some(mut xs) = h_increments(inner, idx) {
+            if let Some(mut xs) = h_increments(inner, idx, key) {
                 xs.push(other);
                 return Some(xs);
             }
@@ -1529,8 +1565,8 @@ impl<'a> Ctx<'a> {
     /// index arithmetic of them.
     fn uniform_of(&self, t: &Tree) -> Result<Option<Tree>, String> {
         let u = ty(self, "u32.uniform")?;
-        // A difference, a product or a shift may wrap (u32.uniformw, an index
-        // only): no row takes it but a min, which clamps it (2026-10-12).
+        // A product or a shift may wrap (u32.uniformw): no row takes it, so a
+        // uniform value that holds one is not a uniform bound (2026-10-12).
         let uw = ty(self, "u32.uniformw")?;
         let plain = |x: &Option<Tree>| x.as_ref().is_some_and(|x| x.ty == u);
         let leaf = |name: &str| Tree::new(name, u, vec![]);
@@ -1561,16 +1597,7 @@ impl<'a> Ctx<'a> {
             }
             (n, [k]) if n.starts_with("shape.access_") => match (k.name.as_str(), comp(k)) {
                 ("builtin.workgroup_id" | "builtin.work_group_id", Some(c)) => Some(Tree::new(&format!("uniform.wid_{c}"), u, vec![Tree::new("builtin.workgroup_id", ty(self, "vec3<u32>.wid")?, vec![])])),
-                ("builtin.num_workgroups" | "builtin.num_work_groups", Some(c)) => Some(Tree::new(&format!("uniform.nwg_{c}"), u, vec![Tree::new("builtin.num_workgroups", ty(self, "vec3<u32>.count")?, vec![])])),
-                _ => None,
-            },
-            // `select(x - y, 0u, y > x)`: how the kingdom writes x - y floored
-            // at 0 (index.sub_floor), read back as a select.
-            ("select.scalar_cond", [zero, diff, cond]) if literal_value(zero) == Some(0.0) => match (diff.name.as_str(), diff.kids.as_slice(), cond.name.as_str(), cond.kids.as_slice()) {
-                ("index.sub", [x, y], "compare.gt", [y2, x2]) | ("index.sub", [x, y], "compare.lt", [x2, y2]) if x == x2 && y == y2 => match (self.uniform_of(x)?, self.uniform_of(y)?) {
-                    (Some(x), Some(y)) if x.ty == u && y.ty == u => Some(Tree::new("uniform.sub_floor", u, vec![x, y])),
-                    _ => None,
-                },
+                ("builtin.num_workgroups" | "builtin.num_work_groups", Some(c)) => Some(Tree::new(&format!("uniform.nwg_{c}"), u, vec![])),
                 _ => None,
             },
             ("index.clamp", [a, b, c]) => match (self.uniform_of(a)?, self.uniform_of(b)?, self.uniform_of(c)?) {
@@ -1579,7 +1606,6 @@ impl<'a> Ctx<'a> {
             },
             (n, [a, b]) => {
                 let op = match n {
-                    "index.sub" => "sub",
                     "index.mod" => "mod",
                     "index.round_down" => "round_down",
                     "index.band_of" => "band_of",
@@ -1597,10 +1623,9 @@ impl<'a> Ctx<'a> {
                     _ => return Ok(None),
                 };
                 match (self.uniform_of(a)?, self.uniform_of(b)?) {
-                    (Some(a), Some(b)) => match (op, a.ty == uw, b.ty == uw) {
-                        ("min", false, true) | ("min", true, false) => Some(Tree::new("uniform.min", u, vec![a, b])),
-                        (_, true, _) | (_, _, true) => None,
-                        ("sub" | "mul" | "shl", _, _) => Some(Tree::new(&format!("uniform.{op}"), uw, vec![a, b])),
+                    (Some(a), Some(b)) => match (op, a.ty == uw || b.ty == uw) {
+                        (_, true) => None,
+                        ("mul" | "shl", _) => Some(Tree::new(&format!("uniform.{op}"), uw, vec![a, b])),
                         _ => Some(Tree::new(&format!("uniform.{op}"), u, vec![a, b])),
                     },
                     _ => None,
@@ -1611,16 +1636,10 @@ impl<'a> Ctx<'a> {
     }
 
     /// A loop bound as uniform values that cannot wrap (`u32.uniform`), or
-    /// None. A bound that is a raw difference `x - y` is read as its floored
-    /// difference: the same value wherever it does not wrap, and a wrapped
-    /// loop bound is illegal (2026-10-12).
+    /// None.
     fn uniform_bound_of(&self, t: &Tree) -> Result<Option<Tree>, String> {
         let u = ty(self, "u32.uniform")?;
-        Ok(match self.uniform_of(t)? {
-            Some(x) if x.ty == u => Some(x),
-            Some(x) if x.name == "uniform.sub" && x.kids.iter().all(|k| k.ty == u) => Some(Tree::new("uniform.sub_floor", u, x.kids)),
-            _ => None,
-        })
+        Ok(self.uniform_of(t)?.filter(|x| x.ty == u))
     }
 
     /// An expression loop bound's value in the rows that cannot wrap
@@ -1638,12 +1657,6 @@ impl<'a> Ctx<'a> {
         let at = |name: &str, kids: Vec<Tree>| Tree::new(name, xb, kids);
         Ok(match (t.name.as_str(), t.kids.as_slice()) {
             ("reg.get_i", [r]) => at("reg.get_i", vec![r.clone()]),
-            // A raw difference in a loop bound: its floored difference, as above.
-            ("index.sub", [x, y]) if y.ty == index => at("index.sub_floor", vec![self.xbound_of(x)?, y.clone()]),
-            ("select.scalar_cond", [zero, diff, cond]) if literal_value(zero) == Some(0.0) => match (diff.name.as_str(), diff.kids.as_slice(), cond.name.as_str(), cond.kids.as_slice()) {
-                ("index.sub", [x, y], "compare.gt", [y2, x2]) | ("index.sub", [x, y], "compare.lt", [x2, y2]) if x == x2 && y == y2 && y.ty == index => at("index.sub_floor", vec![self.xbound_of(x)?, y.clone()]),
-                _ => return Err(no_row()),
-            },
             ("index.add" | "index.max" | "index.or", [a, b]) => at(&t.name, vec![self.xbound_of(a)?, self.xbound_of(b)?]),
             ("index.sub_floor" | "index.div" | "index.mod" | "index.shr" | "index.and" | "index.round_down", [a, b]) if b.ty == index => at(&t.name, vec![self.xbound_of(a)?, b.clone()]),
             ("index.min", [a, b]) => match self.xbound_of(a) {
@@ -2104,6 +2117,12 @@ impl<'a> Ctx<'a> {
             other => return Err(format!("a subgroup {} of {other}: no register holds its result", expr.name)),
         };
         let row = self.register(&format!("local.subgroup@{result}"), &d)?;
+        // What the register holds, for the cell proof (as for a let): the
+        // same operation of the same operands is the same value.
+        let held = self.expand_memo(&expr);
+        if held.size() <= 512 {
+            self.axis_memo.insert(format!("local.subgroup@{result}"), (held, self.loop_depth));
+        }
         let st = self.stmt_ty(rung)?;
         Ok(Tree::new(&format!("reg.set_{kind}_{rung}"), st, vec![Tree::new(&row, ty(self, Self::reg_dual(kind))?, vec![]), expr]))
     }
@@ -3125,7 +3144,11 @@ impl<'a> Ctx<'a> {
             // Each add is commutative bit for bit, so `(h[c] + a) + b` is
             // `h[c] += a; h[c] += b` exactly: one store.h per increment, in
             // the order the kernel's own adds apply them.
-            let xs = h_increments(value, &idx.to_sexpr()).ok_or("a store to h is not read-add-write of the same cell")?;
+            // The cell compared as what it computes: two subgroup results of
+            // the same operation (a store's index and its load's, each its own
+            // statement) are the same cell.
+            let key = |t: &Tree| self.expand_memo(t).to_sexpr();
+            let xs = h_increments(value, &key(idx), &key).ok_or("a store to h is not read-add-write of the same cell")?;
             if xs.is_empty() {
                 return Err("a store of h[c] to itself (no increment)".into());
             }
@@ -4088,7 +4111,7 @@ pub fn read_safe_literal(source: &str, kingdom: &WgslKingdom) -> Result<SafeRead
     // so the ownership proof and the safe rows read every interface alike.
     for f in &mut kernel.functions {
         for r in &mut f.roots {
-            r.tree = canonical_node(&r.tree, &role);
+            r.tree = floor_differences(&canonical_node(&r.tree, &role));
             match &mut r.kind {
                 RootKind::Store { target } | RootKind::Atomic { target, .. } => *target = canonical_name(target, &role),
                 _ => {}

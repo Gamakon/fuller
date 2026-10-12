@@ -139,11 +139,12 @@ FORMS = {
     # cap, and in a store's cell index; a diagnostic elsewhere). The uniform values that may wrap (a difference,
     # a product, a shift) are their own dual, an index only; a loop bound's value is built from registers,
     # uniform values and arithmetic that does not grow past its operands, or clamped by a min.
-    "uniformw": ("a uniform u32 whose arithmetic may wrap (a difference, a product, a shift of uniform values): an index, never a loop bound", ["u32"]),
+    "uniformw": ("a uniform u32 whose arithmetic may wrap (a difference, a product, a shift of uniform values): no row takes it (a wrap is illegal everywhere)", ["u32"]),
+    "indexw": ("an index that may wrap (a raw difference index.sub, a left shift index.shl): no row takes it; the kingdom's difference is index.sub_floor, its shift by k a product by 2^k", ["u32"]),
     "xbound": ("the value of an expression loop bound: a register, a uniform value, the arithmetic of them that cannot wrap (no difference but the floored one, no product, no shift), or a min with any index", ["u32"]),
 }
 
-SAFE_FORMS = ["uniformw", "xbound", "uniform", "boundu", "pindex16", "wgaindex", "wgv2index", "wglen", "decl", "decls", "lidx", "threadrows", "threadcols", "threadrowg", "threadcolg", "gid", "lid", "wid", "rowid", "colid", "O0", "O1", "O2", "O3", "O4", "tcounter4", "L5", "C5", "safe", "pindex", "boundx", "boundm", "boundd", "boundrows", "lit64", "lit4096", "counter", "tcounter", "tcounter2", "L3", "C3", "tcounter3", "L4", "C4", "wgvindex", "bound", "threadrow", "threadcol", "cell", "phi", "wgindex", "L0", "L1", "L2", "C0", "C1", "C2"]
+SAFE_FORMS = ["indexw", "uniformw", "xbound", "uniform", "boundu", "pindex16", "wgaindex", "wgv2index", "wglen", "decl", "decls", "lidx", "threadrows", "threadcols", "threadrowg", "threadcolg", "gid", "lid", "wid", "rowid", "colid", "O0", "O1", "O2", "O3", "O4", "tcounter4", "L5", "C5", "safe", "pindex", "boundx", "boundm", "boundd", "boundrows", "lit64", "lit4096", "counter", "tcounter", "tcounter2", "L3", "C3", "tcounter3", "L4", "C4", "wgvindex", "bound", "threadrow", "threadcol", "cell", "phi", "wgindex", "L0", "L1", "L2", "C0", "C1", "C2"]
 RUNGS = ["L0", "L1", "L2", "L3", "L4", "C0", "C1", "C2", "C3", "C4"]
 # The fifth rung came after every other row (run A, 2026-10-11); its rows are appended at the end so
 # every earlier ref stands, and it is kept out of RUNGS for that reason.
@@ -175,7 +176,7 @@ FALLBACK = {
     "lidx": "0u", "threadrows": "the thread's own first row", "threadcols": "the thread's own first column", "threadrowg": "the thread's own first row", "threadcolg": "the thread's own first column",
     "wgaindex": "0u", "wgv2index": "0u", "wglen": "the array's default length", "decl": "none", "decls": "none (the arrays the kernel uses, at their default lengths)",
     "B1": "empty", "B2": "empty", "B3": "empty", "B4": "empty", "B5": "empty",
-    "uniformw": "0u", "xbound": "1u",
+    "uniformw": "0u", "xbound": "1u", "indexw": "0u",
 }
 
 # The fallback by machine: the lane's 32-bit pattern as an unsigned integer. Vectors and matrices
@@ -199,7 +200,7 @@ FALLBACK_BITS = {
     "lidx": 0, "threadrows": 0, "threadcols": 0, "threadrowg": 0, "threadcolg": 0,
     "wgaindex": 0, "wgv2index": 0, "wglen": 0, "decl": 0, "decls": 0,
     "B1": 0, "B2": 0, "B3": 0, "B4": 0, "B5": 0,
-    "uniformw": 0, "xbound": 0,
+    "uniformw": 0, "xbound": 0, "indexw": 0,
 }
 assert set(FALLBACK_BITS) == set(FALLBACK), "every form with a fallback needs its bits, and no more"
 
@@ -319,6 +320,8 @@ def build_types():
     # ---- no wrap in a loop bound (2026-10-12) ----
     add("u32", "uniformw", 1, FORMS["uniformw"][0])
     add("u32", "xbound", 1, FORMS["xbound"][0])
+    # ---- no wrap anywhere (2026-10-12, Codex's review) ----
+    add("u32", "indexw", 1, FORMS["indexw"][0])
     return rows
 
 
@@ -398,6 +401,11 @@ f("geom", "refract", "Math::Refract", ["<vecL<f32>.real>", "<vecL<f32>.real>", "
 f("geom", "face_forward", "Math::FaceForward", ["<vecL<f32>.real>", "<vecL<f32>.real>", "<vecL<f32>.real>"], "<vecL<f32>.real>", "arity 3")
 # intarith: index, count, int
 for op, naga in [("add", "Binary::Add"), ("sub", "Binary::Subtract"), ("mul", "Binary::Multiply"), ("div", "Binary::Divide"), ("mod", "Binary::Modulo"), ("min", "Math::Min"), ("max", "Math::Max")]:
+    if op == "sub":
+        # NO WRAP ANYWHERE (2026-10-12, Codex's review): a raw difference may wrap below zero, so its value is
+        # u32.indexw, which no row takes; a difference is index.sub_floor (the reader reads x - y as it).
+        f("index", op, naga, ["u32.index", "u32.index"], "u32.indexw", "a raw difference: it may wrap, no row takes it (index.sub_floor is the kingdom's difference)")
+        continue
     f("index", op, naga, ["<u32.index>", "<u32.index>"], "<u32.index>", "lanes equal")
 f("index", "clamp", "Math::Clamp", ["<u32.index>", "<u32.index>", "<u32.index>"], "<u32.index>", "arity 3")
 f("index", "of_int", "composite", ["i32.int"], "u32.index", "floor at zero")
@@ -558,7 +566,9 @@ f("wg", "vb", "composite", [], "wgmem<vec4<f32>>.real", "workgroup array vb of 5
 f("safe", "wgv_of", "composite", ["u32.index"], "u32.wgvindex", "i & 511u, in range by construction")
 f("wg", "get_v_safe", "composite", ["wgmem<vec4<f32>>.real", "u32.wgvindex"], "vec4<f32>.real", "va[i], in range by its type")
 # Index arithmetic the drafted kernels use on addresses: shifts (the count masked to 0..31) and masks.
-f("index", "shl", "composite", ["u32.index", "u32.index"], "u32.index", "i << (s & 31u)")
+# A left shift may wrap (2026-10-12, Codex's review: no wrap anywhere): u32.indexw, which no row takes; the
+# reader reads x << k (a literal k) as x * 2^k.
+f("index", "shl", "composite", ["u32.index", "u32.index"], "u32.indexw", "i << (s & 31u): it may wrap, no row takes it")
 f("index", "shr", "composite", ["u32.index", "u32.index"], "u32.index", "i >> (s & 31u)")
 f("index", "and", "composite", ["u32.index", "u32.index"], "u32.index", "i & j")
 f("index", "or", "composite", ["u32.index", "u32.index"], "u32.index", "i | j")
@@ -1097,7 +1107,10 @@ for fld, wgsl in (("cfg_m", "cfg.m"), ("cfg_d", "cfg.d"), ("cfg_r_rows", "cfg.r_
 f("uniform", "of_lit", "composite", ["u32.lit4096"], "u32.uniform", "a literal")
 for c in ("x", "y", "z"):
     f("uniform", "wid_" + c, "composite", ["vec3<u32>.wid"], "u32.uniform", f"wid.{c}: the workgroup's id")
-    f("uniform", "nwg_" + c, "composite", ["vec3<u32>.count"], "u32.uniform", f"nwg.{c}: the grid's size")
+    # A leaf (2026-10-12): its input was any vec3<u32>.count, which a splat of a thread's value also is, while
+    # the text is nwg.<c> whatever it holds (seed 523 of the random genes: a barrier the checker saw in a loop
+    # bounded by a thread's value).
+    f("uniform", "nwg_" + c, "composite", [], "u32.uniform", f"nwg.{c}: the grid's size")
 f("uniform", "subgroup_size", "composite", [], "u32.uniform", "the subgroup size")
 f("uniform", "num_subgroups", "composite", [], "u32.uniform", "the subgroups in the workgroup")
 # A difference, a product and a shift may wrap: their value is u32.uniformw, an index only (2026-10-12).
@@ -1123,9 +1136,11 @@ for d in (0, 1, 2, 3, 4, 5):
 f("bound", "x_of_uniform", "composite", ["u32.uniform"], "u32.boundx", "a uniform loop bound, uncapped")
 # NO WRAP IN A LOOP BOUND (2026-10-12): a uniform value that may wrap is an index; a min clamps it to a value
 # that cannot (min(1024u, cfg.m - t), reserve2 g003 r12); an expression bound's value is u32.xbound.
-f("index", "of_uniform", "composite", ["u32.uniformw"], "u32.index", "a uniform value that may wrap, used as an index")
-f("uniform", "min", "composite", ["u32.uniform", "u32.uniformw"], "u32.uniform", "min(a, b): b may wrap, the min cannot pass a")
-f("uniform", "min", "composite", ["u32.uniformw", "u32.uniform"], "u32.uniform", "min(a, b): a may wrap, the min cannot pass b")
+# Retired the same day (Codex's review: a wrap is illegal everywhere, a clamped one too): these took a
+# u32.uniformw; their output is u32.uniformw now, so no demand reaches them. Kept so later refs stand.
+f("index", "of_uniform", "composite", ["u32.uniformw"], "u32.uniformw", "retired: no row takes u32.uniformw")
+f("uniform", "min", "composite", ["u32.uniform", "u32.uniformw"], "u32.uniformw", "retired: no row takes u32.uniformw")
+f("uniform", "min", "composite", ["u32.uniformw", "u32.uniform"], "u32.uniformw", "retired: no row takes u32.uniformw")
 # An expression bound's value (u32.xbound): the rows of u32.index that cannot pass their operands, at
 # signatures of their own (the same rows, so the renderer and the checker read them as the index rows).
 f("reg", "get_i", "composite", ["reg<u32>.index"], "u32.xbound", "a u32 register's value as a loop bound")
@@ -1169,8 +1184,8 @@ def main():
             md.write(f"| {ref} | `{dual}` | `{slot}` | `{form}` | {lanes} | `{fb}` | {bits} | {noop} | {elem} |\n")
         md.write(f"\n{len(types)} duals. The fallback is what Design C's projection substitutes for a codon whose dual does not match the demand; the codon is counted as masked.\n")
         md.write("\nThe three machine columns (`fallback_bits`, `fallback_noop`, `fallback_elem` in `types.tsv`) are what the loader builds the fallback leaf from, never the prose: `bits` is the lane's 32-bit pattern as an unsigned integer, repeated across the lanes of a vector or matrix (only `bool.sign` is non-zero, true = +1); `noop` is 1 for `store.store`, which substitutes no value at all; `elem` is 1 for `array<T>`, whose fallback is its element's. The loader tests `noop` and `elem` before reading `bits`; for those two rows `bits` is a placeholder 0. Every substitution, whichever column decides it, counts the codon as masked.\n")
-        md.write("\n## Loop trip counts\n\nMAX_LOOP_TRIP = 2^24 = 16,777,216 is the kingdom's declared maximum trip count of a loop (`render::MAX_LOOP_TRIP`): no real workload exceeds it (production builds run m ~ 420,000 items, d up to 8,192). A loop at an L rung, which may hold a barrier, takes a uniform bound (`u32.boundu`); any other expression bound (`bound.of_index`, a loop with no barrier) renders `min(e, 16777216u)`, so a bound in range computes the same and no loop runs past it. The checker's range layer ranges such a bound up to it, and proves index arithmetic over it.\n")
-        md.write("\n## No wrap in a loop bound or a store's cell\n\nA u32 wrap is illegal where it lands in a loop's bound (the loop runs to its cap) or in a store's cell index (a wrapped cell can be another thread's: a data race); anywhere else it is a diagnostic (Andrew, 2026-10-12). The kingdom cannot spell either: a store's cell is the thread's row and column with offsets clamped to its block; a uniform difference, product or shift is `u32.uniformw`, an index only (a `min` with a `u32.uniform` clamps it back); and an expression bound takes `u32.xbound`, the registers, uniform values and the index rows that cannot pass their operands (a sum, a max, an or of bound values; a floored difference, a quotient, a remainder, a right shift, an and, a round-down or a min of a bound value by any index; the subgroup min, max, broadcasts and shuffles of a bound value). A raw difference in a loop bound reads as its floored difference.\n")
+        md.write("\n## Loop trip counts\n\nMAX_LOOP_TRIP = 2^24 = 16,777,216 is the kingdom's declared maximum trip count of a loop (`render::MAX_LOOP_TRIP`): no real workload exceeds it (production builds run m ~ 420,000 items, d up to 8,192). A loop at an L rung, which may hold a barrier, takes a uniform bound (`u32.boundu`); a loop with no barrier takes any expression bound. Every bound a gene computes, uniform or not (`bound.of_index`, `bound.of_uniform`, `bound.x_of_uniform`), renders `min(e, 16777216u)`, so a bound in range computes the same and no loop runs past it. The checker's range layer ranges such a bound up to it, and proves index arithmetic over it.\n")
+        md.write("\n## No wrap, no zero divisor, every computed bound capped\n\nA u32 wrap in index arithmetic at the worst shape is illegal everywhere (Codex's review of Andrew's decision, 2026-10-12): the checker's range layer fails it. The kingdom cannot spell a difference that wraps: a raw difference is `u32.indexw` and a uniform difference, product or shift `u32.uniformw`, which no row takes; the kingdom's difference is the floored one (`index.sub_floor`, `uniform.sub_floor`), and the reader reads `x - y` as it (the same value wherever it does not wrap). A sum, product or left shift of index values is not typed by range: the checker fails one that wraps at the worst shape. An expression bound takes `u32.xbound` (registers, uniform values, the rows that cannot pass their operands). Every loop bound a gene computes renders `min(e, 16777216u)` (`bound.of_index`, `bound.of_uniform`, `bound.x_of_uniform`); a binding's bound (`cfg.m`, `cfg.d`, `cfg.r_rows`) is the host's data size and a literal is at most 64. A divisor that is not a literal of at least 1 renders `max(b, 1u)` (WGSL's `x / 0u` is x, as is `x / max(0u, 1u)`).\n")
         md.write("\n## Not in the table\n\nStorage-buffer atomics, images, samplers, ray queries, binding arrays, pointers as values, non-square `f16` matrices.\n")
 
     with open(os.path.join(HERE, "symbols.md"), "w") as md:

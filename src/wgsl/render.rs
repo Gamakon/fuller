@@ -1442,7 +1442,7 @@ impl Renderer<'_> {
             return self.value(&Tree { name: ix.into(), ty: index, konst: v.konst, kids: v.kids.clone() }, scope);
         }
         match name {
-            "uniform.of_lit" | "index.of_uniform" | "bound.of_uniform" | "uniform.of_counter" | "uniform.of_tcounter" | "uniform.of_tcounter2" | "uniform.of_tcounter3" | "uniform.of_tcounter4" => return self.value(&v.kids[0], scope),
+            "uniform.of_lit" | "index.of_uniform" | "uniform.of_counter" | "uniform.of_tcounter" | "uniform.of_tcounter2" | "uniform.of_tcounter3" | "uniform.of_tcounter4" => return self.value(&v.kids[0], scope),
             "uniform.wid_x" | "uniform.wid_y" | "uniform.wid_z" => return Ok(format!("wid.{}", &name[name.len() - 1..])),
             "uniform.nwg_x" | "uniform.nwg_y" | "uniform.nwg_z" => return Ok(format!("nwg.{}", &name[name.len() - 1..])),
             "uniform.subgroup_size" => return Ok("sg_size".into()),
@@ -1542,7 +1542,9 @@ impl Renderer<'_> {
             // an atomic or a load cannot run past the largest m the fitness runs
             // (the legality checker's bounded loops, 177 of 1,000 random genes).
             "bound.of_index" => return Ok(format!("min(({}), {MAX_LOOP_TRIP}u)", self.value(&v.kids[0], scope)?)),
-            "bound.x_of_uniform" => return self.value(&v.kids[0], scope),
+            // Every loop bound a gene computes is capped (2026-10-12, Codex's
+            // review): a uniform one too, so no loop runs past MAX_LOOP_TRIP.
+            "bound.of_uniform" | "bound.x_of_uniform" => return Ok(format!("min(({}), {MAX_LOOP_TRIP}u)", self.value(&v.kids[0], scope)?)),
             "bound.m" => return Ok(self.role.field("m")),
             "bound.d" => return Ok(self.role.field("d")),
             "bound.rows" => return Ok(self.role.field("r_rows")),
@@ -1695,6 +1697,13 @@ impl Renderer<'_> {
             if let Some(k) = v.kids.get(1).filter(|k| k.name.starts_with("literal.") && k.konst >= 1.0) {
                 return Ok(format!("(({0}) - (({0}) % {1}u))", a[0], k.konst as u32));
             }
+        }
+        // No zero divisor (2026-10-12, Codex's review): a divisor that is not
+        // a literal of at least 1 is written max(b, 1u). WGSL's x / 0u is x,
+        // and x / max(0u, 1u) is x too, so the value is the same everywhere.
+        if name == "index.div" && a.len() == 2 && !v.kids.get(1).is_some_and(|k| k.name.starts_with("literal.") && k.konst >= 1.0) {
+            let one = if d.lanes > 1 { format!("vec{}<u32>(1u)", d.lanes) } else { "1u".to_string() };
+            return Ok(format!("({} / max({}, {one}))", a[0], a[1]));
         }
         // A run-time vector component: a helper copies the value into a `var`
         // and indexes it, which naga allows; the index is masked to the lanes.
@@ -2170,8 +2179,8 @@ fn bound_at(t: &Tree, m: f64) -> (f64, bool) {
             }
         };
         match uniform_as_index(&t.name).unwrap_or(safe_base(&t.name)) {
-            "bound.of_uniform" | "bound.x_of_uniform" | "index.of_uniform" | "uniform.of_lit" | "uniform.of_counter" | "uniform.of_tcounter" | "uniform.of_tcounter2" | "uniform.of_tcounter3" | "uniform.of_tcounter4" => k(0),
-            "bound.of_index" => k(0).min(f64::from(MAX_LOOP_TRIP)),
+            "index.of_uniform" | "uniform.of_lit" | "uniform.of_counter" | "uniform.of_tcounter" | "uniform.of_tcounter2" | "uniform.of_tcounter3" | "uniform.of_tcounter4" => k(0),
+            "bound.of_index" | "bound.of_uniform" | "bound.x_of_uniform" => k(0).min(f64::from(MAX_LOOP_TRIP)),
             "load.cfg_d" | "bound.d" => WORST_D,
             "load.cfg_r_rows" | "bound.rows" => WORST_ROWS,
             "load.cfg_m" | "bound.m" => m,
@@ -2568,9 +2577,10 @@ mod tests {
         let linear = Tree::new("loop.items_boundx", t("stmt.L0"), vec![bound(Tree::new("uniform.div", u, vec![Tree::new("uniform.add", u, vec![d(), lit(63.0)]), lit(64.0)])), body()]);
         let plain = Tree::new("loop.items_boundm", t("stmt.L0"), vec![Tree::new("bound.m", t("u32.boundm"), vec![]), body()]);
         let (q, l, p) = (cost(&quadratic).per_item, cost(&linear).per_item, cost(&plain).per_item);
-        // The bound's own nodes are costed with the body, so the ratio is
-        // 8,192 times (bound nodes + body) / (1 + body): between 8,192 and 65,536.
-        assert!(q / p > 8192.0 && q / p < 65536.0, "quadratic {q} vs plain {p}");
+        // Capped at MAX_LOOP_TRIP (every computed bound, 2026-10-12): 2^24
+        // trips, 256 passes of m; the bound's own nodes are costed with the
+        // body, so the ratio is 256 times (bound nodes + body) / (1 + body).
+        assert!(q / p > 256.0 && q / p < 2048.0, "quadratic {q} vs plain {p}");
         assert!(l < 8.0 * p, "a bound below m is one pass (its nodes aside): {l} vs {p}");
         // A tilex loop outside the item loop bounded by cfg.m is item work
         // (fit_A2 gen 6's r12p1, 2026-10-11): one body per item, as the item

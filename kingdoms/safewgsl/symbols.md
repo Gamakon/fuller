@@ -121,7 +121,7 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
 | F075 | `index.add` | `Binary::Add` | `<u32.index> <u32.index>` | `<u32.index>` | 2 | lanes equal |
-| F076 | `index.sub` | `Binary::Subtract` | `<u32.index> <u32.index>` | `<u32.index>` | 2 | lanes equal |
+| F076 | `index.sub` | `Binary::Subtract` | `u32.index u32.index` | `u32.indexw` | 2 | a raw difference: it may wrap, no row takes it (index.sub_floor is the kingdom's difference) |
 | F077 | `index.mul` | `Binary::Multiply` | `<u32.index> <u32.index>` | `<u32.index>` | 2 | lanes equal |
 | F078 | `index.div` | `Binary::Divide` | `<u32.index> <u32.index>` | `<u32.index>` | 2 | lanes equal |
 | F079 | `index.mod` | `Binary::Modulo` | `<u32.index> <u32.index>` | `<u32.index>` | 2 | lanes equal |
@@ -484,7 +484,7 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F294 | `index.shl` | `composite` | `u32.index u32.index` | `u32.index` | 2 | i << (s & 31u) |
+| F294 | `index.shl` | `composite` | `u32.index u32.index` | `u32.indexw` | 2 | i << (s & 31u): it may wrap, no row takes it |
 | F295 | `index.shr` | `composite` | `u32.index u32.index` | `u32.index` | 2 | i >> (s & 31u) |
 | F296 | `index.and` | `composite` | `u32.index u32.index` | `u32.index` | 2 | i & j |
 | F297 | `index.or` | `composite` | `u32.index u32.index` | `u32.index` | 2 | i | j |
@@ -2816,11 +2816,11 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 | F1458 | `uniform.cfg_r_off` | `composite` | `-` | `u32.uniform` | 0 | cfg.r_off |
 | F1459 | `uniform.of_lit` | `composite` | `u32.lit4096` | `u32.uniform` | 1 | a literal |
 | F1460 | `uniform.wid_x` | `composite` | `vec3<u32>.wid` | `u32.uniform` | 1 | wid.x: the workgroup's id |
-| F1461 | `uniform.nwg_x` | `composite` | `vec3<u32>.count` | `u32.uniform` | 1 | nwg.x: the grid's size |
+| F1461 | `uniform.nwg_x` | `composite` | `-` | `u32.uniform` | 0 | nwg.x: the grid's size |
 | F1462 | `uniform.wid_y` | `composite` | `vec3<u32>.wid` | `u32.uniform` | 1 | wid.y: the workgroup's id |
-| F1463 | `uniform.nwg_y` | `composite` | `vec3<u32>.count` | `u32.uniform` | 1 | nwg.y: the grid's size |
+| F1463 | `uniform.nwg_y` | `composite` | `-` | `u32.uniform` | 0 | nwg.y: the grid's size |
 | F1464 | `uniform.wid_z` | `composite` | `vec3<u32>.wid` | `u32.uniform` | 1 | wid.z: the workgroup's id |
-| F1465 | `uniform.nwg_z` | `composite` | `vec3<u32>.count` | `u32.uniform` | 1 | nwg.z: the grid's size |
+| F1465 | `uniform.nwg_z` | `composite` | `-` | `u32.uniform` | 0 | nwg.z: the grid's size |
 | F1466 | `uniform.subgroup_size` | `composite` | `-` | `u32.uniform` | 0 | the subgroup size |
 | F1467 | `uniform.num_subgroups` | `composite` | `-` | `u32.uniform` | 0 | the subgroups in the workgroup |
 | F1468 | `uniform.add` | `composite` | `u32.uniform u32.uniform` | `u32.uniform` | 2 | as index.add, of uniform values |
@@ -2878,14 +2878,14 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F1498 | `index.of_uniform` | `composite` | `u32.uniformw` | `u32.index` | 1 | a uniform value that may wrap, used as an index |
+| F1498 | `index.of_uniform` | `composite` | `u32.uniformw` | `u32.uniformw` | 1 | retired: no row takes u32.uniformw |
 
 ## class `uniform`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F1499 | `uniform.min` | `composite` | `u32.uniform u32.uniformw` | `u32.uniform` | 2 | min(a, b): b may wrap, the min cannot pass a |
-| F1500 | `uniform.min` | `composite` | `u32.uniformw u32.uniform` | `u32.uniform` | 2 | min(a, b): a may wrap, the min cannot pass b |
+| F1499 | `uniform.min` | `composite` | `u32.uniform u32.uniformw` | `u32.uniformw` | 2 | retired: no row takes u32.uniformw |
+| F1500 | `uniform.min` | `composite` | `u32.uniformw u32.uniform` | `u32.uniformw` | 2 | retired: no row takes u32.uniformw |
 
 ## class `reg`
 
