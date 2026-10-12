@@ -11,6 +11,7 @@
 //!
 //! Compiled only under the `wgsl` feature (naga in and out).
 
+pub mod canonical;
 pub mod check;
 pub mod closeness;
 pub mod chromosome;

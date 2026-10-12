@@ -47,7 +47,6 @@ struct Ctx<'a> {
     tile_counter4: Option<String>,
     /// Register allocation: local name (`local.acc@0`) → register row (`reg.f0`).
     registers: BTreeMap<String, String>,
-    next_reg: BTreeMap<char, usize>,
     /// The thread guard from a leading `if (c) { return; }`: every later
     /// store to h is wrapped in `if (!c)`.
     guard: Option<Tree>,
@@ -1579,12 +1578,19 @@ impl<'a> Ctx<'a> {
             "mat4x4<f32>.real" => ('z', 2),
             other => return Err(format!("local {local} has dual {other}, which has no register kind"),)
         };
-        let n = *self.next_reg.get(&kind).unwrap_or(&0);
-        if n >= max {
-            return Err(format!("more than {max} {kind} registers (local {local})"));
-        }
-        self.next_reg.insert(kind, n + 1);
-        let row = format!("reg.{kind}{n}");
+        // A kernel the kingdom wrote names its registers as the rows do
+        // (`f17` is reg.f17; the renderer writes reg.f16, reg.f32 and
+        // reg.i32 as f16r, f32r and i32r): that row, when free; any other
+        // name, the lowest free (2026-10-13, AST to AST: registers were
+        // numbered by first use, so a tree read back named them anew).
+        let taken: std::collections::BTreeSet<&String> = self.registers.values().collect();
+        let base = local.strip_prefix("local.").and_then(|r| r.split('@').next()).unwrap_or("");
+        let base = base.strip_suffix('r').filter(|b| matches!(*b, "f16" | "f32" | "i32")).unwrap_or(base);
+        let own = base.strip_prefix(kind).and_then(|n| n.parse::<u32>().ok()).filter(|n| *n < max && base == format!("{kind}{n}")).map(|n| format!("reg.{kind}{n}")).filter(|r| !taken.contains(r));
+        let row = match own {
+            Some(r) => r,
+            None => (0..max).map(|n| format!("reg.{kind}{n}")).find(|r| !taken.contains(r)).ok_or_else(|| format!("more than {max} {kind} registers (local {local})"))?,
+        };
         self.registers.insert(local.to_string(), row.clone());
         Ok(row)
     }
@@ -2130,6 +2136,20 @@ impl<'a> Ctx<'a> {
             other => return Err(format!("a local array {local} of {other} has no private array")),
         };
         let used: Vec<&'static str> = self.parrs.values().map(|a| a.0).collect();
+        // A kernel the kingdom wrote names its private arrays as the rows do
+        // (`pk` is parr.k): that row, when free and of the kind.
+        let own = format!("parr.{}", local.strip_prefix("local.").and_then(|r| r.split('@').next()).and_then(|n| n.strip_prefix('p')).unwrap_or(""));
+        let rows: &[&'static str] = match kind {
+            'f' => &["parr.a", "parr.b", "parr.c", "parr.d", "parr.e", "parr.f"],
+            'v' => &["parr.v", "parr.w", "parr.x", "parr.y"],
+            'b' => &["parr.m", "parr.n"],
+            't' => &["parr.q", "parr.r"],
+            _ => &["parr.i", "parr.j", "parr.k"],
+        };
+        if let Some(arr) = rows.iter().copied().find(|a| **a == own && !used.contains(a)) {
+            self.parrs.insert(local.to_string(), (arr, kind, mask));
+            return Ok((arr, kind, mask));
+        }
         let arr = match kind {
             'f' => ["parr.a", "parr.b", "parr.c", "parr.d", "parr.e", "parr.f"].iter().copied().find(|a| !used.contains(a)).ok_or_else(|| format!("a seventh f32 local array {local}"))?,
             'v' => ["parr.v", "parr.w", "parr.x", "parr.y"].iter().copied().find(|a| !used.contains(a)).ok_or_else(|| format!("a fifth vec4 local array {local}"))?,
@@ -4513,7 +4533,7 @@ pub fn read_safe_literal(source: &str, kingdom: &WgslKingdom) -> Result<SafeRead
     // that returns, with no epilogue after it (naga's own trailing return is
     // in every kernel's IR, so the text decides).
     let main_returns = source.find("fn main(").map(|i| &source[i..]).and_then(|m| m.rfind('}').map(|j| &m[..j])).is_some_and(|m| m.trim_end().ends_with("return;"));
-    let mut ctx = Ctx { kingdom, main_returns, per_kernel_rows: crate::wgsl::safe_karva::per_kernel_rows(kingdom, &role), duals: &duals, lets: &lets, roots: &roots, item_counter: None, tile_counter: None, tile_counter2: None, tile_counter3: None, tile_counter4: None, registers: BTreeMap::new(), next_reg: BTreeMap::new(), guard: None, tail: true, arrays: BTreeMap::new(), array_lens: BTreeMap::new(), parrs: BTreeMap::new(), grid, rows_x: grid_rows_x(source).then_some(true), notes: Vec::new(), helpers: &helpers, calls: &calls, arg_roots: &arg_roots, inline_args: None, row_arrays: BTreeMap::new(), used_counters: std::collections::BTreeSet::new(), local_lanes, axis_memo: BTreeMap::new(), loop_depth: 0, tile_bounds: BTreeMap::new(), naga_fn, module: &kernel.module, local_prefix: String::new(), inline_result: None, inline_values: None, bound_lets, stale_lets, let_regs: HashMap::new(), inlined: HashMap::new(), stored_seen: std::collections::BTreeSet::new(), counter_offsets: HashMap::new(), pointer_args: HashMap::new() };
+    let mut ctx = Ctx { kingdom, main_returns, per_kernel_rows: crate::wgsl::safe_karva::per_kernel_rows(kingdom, &role), duals: &duals, lets: &lets, roots: &roots, item_counter: None, tile_counter: None, tile_counter2: None, tile_counter3: None, tile_counter4: None, registers: BTreeMap::new(), guard: None, tail: true, arrays: BTreeMap::new(), array_lens: BTreeMap::new(), parrs: BTreeMap::new(), grid, rows_x: grid_rows_x(source).then_some(true), notes: Vec::new(), helpers: &helpers, calls: &calls, arg_roots: &arg_roots, inline_args: None, row_arrays: BTreeMap::new(), used_counters: std::collections::BTreeSet::new(), local_lanes, axis_memo: BTreeMap::new(), loop_depth: 0, tile_bounds: BTreeMap::new(), naga_fn, module: &kernel.module, local_prefix: String::new(), inline_result: None, inline_values: None, bound_lets, stale_lets, let_regs: HashMap::new(), inlined: HashMap::new(), stored_seen: std::collections::BTreeSet::new(), counter_offsets: HashMap::new(), pointer_args: HashMap::new() };
     // Register initialisations first, in root order. A local initialised to
     // its form's fallback (0.0, 0u, false, a zero vector) costs nothing: the
     // register's declaration already holds that value, and the register is
@@ -4898,7 +4918,8 @@ mod tests {
         let tree = read_safe(src, &k).unwrap_or_else(|e| panic!("{e}")).tree;
         let (t, role) = (FunctionTable::safe(), gram_role());
         let text = Renderer::new(&k, &t, &role).kernel(&tree).unwrap().text;
-        let fma = text.lines().find(|l| l.contains("pb[") && l.contains(" * ")).unwrap_or_else(|| panic!("no multiply-add\n{text}"));
+        // (The source's `pc` keeps its own name, parr.c, since 2026-10-13.)
+        let fma = text.lines().find(|l| l.contains("pc[") && l.contains(" * ")).unwrap_or_else(|| panic!("no multiply-add\n{text}"));
         assert!(!fma.contains("wg_a[") && !fma.contains("wg_b["), "the multiply-add reads registers: {fma}");
         assert_eq!(text.matches("wg_a[((((k * 32u)").count(), 1, "a's first read once, before the inner loops\n{text}");
         // (the mask is the source's own array length, 1,024, since the workgroup arrays are the kernel's)
@@ -5467,8 +5488,9 @@ mod tests {
     /// read. Every tree reads back (1,000 of 1,000, asserted exactly).
     /// (110 before a negated matrix was written as a product: the one random
     /// tree holding one now reads back as the product, a different text.)
-    const READ_BACK_FLOOR: usize = 112;
+    const READ_BACK_FLOOR: usize = 127;
     const FIXPOINT_FLOOR: usize = 563;
+    const AST_FLOOR: usize = 104;
 
 
     /// THE KINGDOM'S COMPLETENESS BAR (2026-10-12): 1,000 random trees of
@@ -5507,9 +5529,16 @@ mod tests {
                 let back = read_safe(&text, &k).map_err(|e| format!("read: {e}"))?;
                 let again = crate::wgsl::safe_karva::render_tree(&back.tree, &k).map_err(|e| format!("re-render: {e}"))?.text;
                 read_back += 1;
+                let canon = crate::wgsl::canonical::canonical(&tree, &k);
+                // ROUNDTRIP_SHOW=<seed>: that tree's canonical and parsed ASTs.
+                if std::env::var("ROUNDTRIP_SHOW").ok().and_then(|v| v.parse::<u64>().ok()) == Some(seed) {
+                    println!("SHOW canonical: {}\nSHOW parsed:    {}", canon.to_sexpr(), back.tree.to_sexpr());
+                }
                 // THE BAR (Andrew, 2026-10-13): AST to AST. The tree parsed
-                // from the emitted text is the tree drawn, node for node.
-                match crate::wgsl::render::first_difference(&tree, &back.tree) {
+                // from the emitted text is the tree drawn, node for node, in
+                // its canonical spelling (wgsl::canonical: the spellings the
+                // text cannot tell apart, as the parser reads them).
+                match crate::wgsl::render::first_difference(&canon, &back.tree) {
                     None => ast_equal += 1,
                     Some(d) => {
                         let key: String = d.chars().map(|c| if c.is_ascii_digit() { 'N' } else { c }).take(140).collect();
@@ -5551,7 +5580,7 @@ mod tests {
         println!("random trees: {passed} of {n} read back to their own text; {read_back} read back; {fixpoint} read back to a fixpoint (the text read back reads back to itself)");
         let mut ast_reasons: Vec<_> = by_ast.into_iter().collect();
         ast_reasons.sort_by(|a, b| b.1 .0.cmp(&a.1 .0));
-        println!("random trees: {ast_equal} of {n} parse back to the AST drawn (AST to AST); the first difference of the others, drawn / parsed:");
+        println!("random trees: {ast_equal} of {n} parse back to the AST drawn, in its canonical spelling (AST to AST); the first difference of the others, canonical / parsed:");
         for (r, (c, seed)) in &ast_reasons {
             println!("  {c:>4}  seed {seed:>4}  {r}");
         }
@@ -5564,6 +5593,7 @@ mod tests {
         // the count only rises, to 1,000 of 1,000.
         assert!(passed >= READ_BACK_FLOOR, "random trees that read back to their own text: {passed}, fewer than the {READ_BACK_FLOOR} already reached");
         assert_eq!(read_back as u64, n, "random trees that read back: {read_back} of {n}");
+        assert!(ast_equal >= AST_FLOOR, "random trees that parse back to the AST drawn: {ast_equal}, fewer than the {AST_FLOOR} already reached");
         assert!(fixpoint >= FIXPOINT_FLOOR, "random trees that read back to a fixpoint: {fixpoint}, fewer than the {FIXPOINT_FLOOR} already reached");
     }
 }
