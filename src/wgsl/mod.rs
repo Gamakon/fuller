@@ -14,7 +14,6 @@
 pub mod canonical;
 pub mod check;
 pub mod closeness;
-pub mod fix_edits;
 pub mod chromosome;
 pub mod generator;
 #[cfg(feature = "gpu")]
@@ -36,6 +35,7 @@ pub mod naga_names;
 pub mod oracle;
 pub mod params;
 pub mod reader;
+pub mod rewrites;
 pub mod rules;
 pub mod rules_more;
 pub mod render;
