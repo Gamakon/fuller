@@ -1808,7 +1808,10 @@ pub enum Rule {
 }
 
 impl Rule {
-    pub const ALL: [Rule; 16] = [
+    /// The pool. wg-shape is out (2026-10-13, run 3: all 10 children wrong on
+    /// the device; the reader's references cannot tell equal knobs apart);
+    /// its rule stays for the table and the tests.
+    pub const ALL: [Rule; 15] = [
         Rule::DropZeroFill,
         Rule::GrowRows,
         Rule::VecTile,
@@ -1819,13 +1822,20 @@ impl Rule {
         Rule::UnrollK4,
         Rule::RollK,
         Rule::SplitAccumulator,
-        Rule::WgShape,
         Rule::HoistLoad,
         Rule::PadShared,
         Rule::GrowCols,
         Rule::ShrinkCols,
         Rule::DoubleBuffer,
     ];
+
+    /// Rules kept out of the pool until they are fixed, still measurable by name.
+    pub const OUT_OF_POOL: [Rule; 1] = [Rule::WgShape];
+
+    /// A rule of the pool or out of it, by name.
+    pub fn by_name(name: &str) -> Option<Rule> {
+        Rule::ALL.into_iter().chain(Rule::OUT_OF_POOL).find(|r| r.name() == name)
+    }
 
     pub fn name(self) -> &'static str {
         match self {

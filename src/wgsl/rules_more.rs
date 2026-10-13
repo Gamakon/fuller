@@ -454,6 +454,23 @@ pub fn wg_shape_plan(root: &Tree, to: (u32, u32), kingdom: &WgslKingdom, target:
         return Err(format!("{why} would not follow the workgroup"));
     }
     let child = knob::set(&knob::set(root, &knob::Site::Wx, to.0), &knob::Site::Wy, to.1);
+    // Two knobs of one value in the parent cannot be told apart by the
+    // reader's references (`params::assign` takes the column span where the
+    // row span fits as well): a reshape that separates them leaves some
+    // position following the wrong one. Run 3 of 2026-10-13: 10 of 10
+    // children of 16 x 16 kernels wrong on the device, the row tile's loader
+    // masked by the column span (`& 31u`, `>> 5u`), and its one loop writing
+    // both tiles at one index, a layout that holds only while the spans are
+    // equal.
+    use crate::wgsl::params::{Knob, Knobs};
+    let (pk, ck) = (Knobs::of_root(root)?, Knobs::of_root(&child)?);
+    for (i, &a) in Knob::ALL.iter().enumerate() {
+        for &b in &Knob::ALL[i + 1..] {
+            if pk.value(a) == pk.value(b) && ck.value(a) != ck.value(b) {
+                return Err(format!("{} and {} are both {} in the kernel, so its references cannot tell them apart, and {} x {} separates them", a.name(), b.name(), pk.value(a), to.0, to.1));
+            }
+        }
+    }
     knob::joins(&child, kingdom, target)?;
     Ok(child)
 }
@@ -1623,6 +1640,41 @@ mod tests {
                 assert!(fired.get(r.name()).is_some_and(|(n, _)| *n > 0), "{} fires on no kernel of popR_rules", r.name());
             }
         }
+    }
+
+    /// WG-SHAPE NEVER SEPARATES KNOBS THE REFERENCES CANNOT TELL APART
+    /// (run 3, 2026-10-13: 10 of 10 children of 16 x 16 kernels wrong on the
+    /// device). On every kernel, each shape it offers keeps every two knobs
+    /// equal in the parent equal in the child; a square 16 x 16 kernel of
+    /// popR_rules (column span = row span) gets no non-square shape, and the
+    /// reason names the two spans. Device-free: the values themselves are the
+    /// device table's (the reference interpreter runs one invocation alone and
+    /// has no workgroup memory shared between invocations).
+    #[test]
+    fn wg_shape_never_separates_knobs_the_references_cannot_tell_apart() {
+        use crate::wgsl::params::{Knob, Knobs};
+        let k = WgslKingdom::load_safe();
+        let target = Target::current();
+        let mut square = 0usize;
+        for (name, t) in kernels(&k) {
+            let Ok(pk) = Knobs::of_root(&t) else { continue };
+            for site in wg_shape_sites(&t, &k) {
+                let child = wg_shape(&t, &site, &k).unwrap();
+                let ck = Knobs::of_root(&child).unwrap();
+                for a in Knob::ALL {
+                    for b in Knob::ALL {
+                        assert!(pk.value(a) != pk.value(b) || ck.value(a) == ck.value(b), "{name} {}: {} and {} separated", site.what, a.name(), b.name());
+                    }
+                }
+            }
+            if name.starts_with("r00_") {
+                assert_eq!(pk.value(Knob::ColSpan), pk.value(Knob::RowSpan));
+                let why = wg_shape_plan(&t, (32, 8), &k, &target).unwrap_err();
+                assert!(why.contains("cannot tell them apart"), "{why}");
+                square += 1;
+            }
+        }
+        assert!(square > 0 || kernels(&k).len() < 40, "r00 of popR_rules not read");
     }
 
     /// The inverses: rolling an unroll by two or four gives back the

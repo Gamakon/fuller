@@ -93,7 +93,7 @@ fn main() -> Result<(), String> {
     let rounds: usize = take("--rounds")?.unwrap_or_else(|| "6".into()).parse().map_err(|e| format!("--rounds: {e}"))?;
     let rules: Vec<Rule> = match take("--rules")? {
         None => Rule::ALL.to_vec(),
-        Some(list) => list.split(',').map(|n| Rule::ALL.into_iter().find(|r| r.name() == n.trim()).ok_or_else(|| format!("no rule {n}"))).collect::<Result<_, _>>()?,
+        Some(list) => list.split(',').map(|n| Rule::by_name(n.trim()).ok_or_else(|| format!("no rule {n}"))).collect::<Result<_, _>>()?,
     };
     let files = kernels(&args)?;
     std::fs::create_dir_all(out.join("children")).map_err(|e| format!("{}: {e}", out.display()))?;
