@@ -14,6 +14,7 @@
 pub mod canonical;
 pub mod check;
 pub mod closeness;
+pub mod fix_edits;
 pub mod chromosome;
 pub mod generator;
 #[cfg(feature = "gpu")]
