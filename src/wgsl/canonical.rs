@@ -49,7 +49,8 @@
 //!    literal tile loop over the fallback's value.
 //! 9. A negated matrix is written as the matrix times -1.0. A literal index
 //!    into a private array is written masked to the array (`v & 15u`,
-//!    below its length). An `if` with an empty else is written as the if;
+//!    below its length); a literal lane of a vector, masked (`v & 3u`). An
+//!    `if` with an empty else is written as the if;
 //!    a breaking loop whose body is empty, as the loop; an unrolled item
 //!    loop whose body returns or continues, as the item loop.
 //!    A fully unrolled loop (`loop.unroll`) is written as its copies, each
@@ -146,6 +147,12 @@ fn convert(t: &Tree, demand: Ty, kingdom: &WgslKingdom) -> Option<Tree> {
     if t.name == "fallback" {
         return Some(Tree::fallback(demand));
     }
+    // A uniform bound under either bound dual (a conditional loop's, a
+    // body loop's): the same uniform.
+    if t.name == "bound.x_of_uniform" || t.name == "bound.of_uniform" {
+        let name = if kingdom.dual(demand)?.dual == "u32.boundu" { "bound.of_uniform" } else { "bound.x_of_uniform" };
+        return kingdom.rows.iter().any(|r| r.name == name && r.output == demand).then(|| Tree::new(name, demand, t.kids.clone()));
+    }
     let rung = kingdom.dual(demand)?.dual.split_once('.')?.1.to_string();
     let old = rung_of(&t.name)?;
     let stem = t.name.strip_suffix(old)?.strip_suffix('_')?;
@@ -180,12 +187,28 @@ fn split_epilogue(grid: Tree, body: &Tree, epilogue: &Tree, kingdom: &WgslKingdo
     let mut epi = Vec::new();
     statements(epilogue, &mut epi);
     let Some(last) = epi.pop() else { return like.clone() };
+    // A conditional statement with no body-rung spelling (a loop over a
+    // bound that is not uniform) is written in place, read as one block of
+    // conditional statements at the body's rung (stmt.cblock), consecutive
+    // ones together.
+    let (Ok(c0), Ok(cb)) = (dual_ty(kingdom, "stmt.C0"), dual_ty(kingdom, "block.C0")) else { return like.clone() };
+    let mut run: Vec<Tree> = Vec::new();
+    let flush = |run: &mut Vec<Tree>, items: &mut Vec<Tree>| {
+        if !run.is_empty() {
+            items.push(Tree::new("stmt.cblock_L0", l0, vec![grouped(std::mem::take(run), "C0", &Tree::fallback(cb), Some(c0))]));
+        }
+    };
     for s in epi {
         match convert(&s, l0, kingdom) {
-            Some(x) => items.push(x),
+            Some(x) => {
+                flush(&mut run, &mut items);
+                items.push(x);
+            }
+            None if s.ty == c0 => run.push(s),
             None => return like.clone(),
         }
     }
+    flush(&mut run, &mut items);
     let epilogue = grouped(vec![last], "O0", &Tree::fallback(o0), dual_ty(kingdom, "stmt.O0").ok());
     Tree::new(&like.name, like.ty, vec![grid, body_block(items), epilogue])
 }
@@ -618,6 +641,15 @@ fn canonical_bound(t: &Tree, kingdom: &WgslKingdom) -> Option<Tree> {
 
 /// Rule 1 at `t` itself (its children already canonical).
 fn canonical_block(t: &Tree, kingdom: &WgslKingdom) -> Tree {
+    // A literal lane of a vector, masked as written (`(v) & 3u`).
+    if t.name.contains("_v_lane") {
+        let at = if t.name.starts_with("reg.") { 1 } else { 2 };
+        if let Some(k) = t.kids.get(at).filter(|k| k.name.starts_with("literal.") && k.kids.is_empty() && k.konst.is_finite()) {
+            let mut kids = t.kids.clone();
+            kids[at] = Tree::literal(&k.name, k.ty, (k.konst.max(0.0) as u32 & 3) as f32);
+            return Tree { kids, ..t.clone() };
+        }
+    }
     // A literal private index, masked as written.
     if let (true, [arr, idx, rest @ ..]) = (t.name.starts_with("parr.get_") || t.name.starts_with("parr.set_"), t.kids.as_slice()) {
         if let ([k], Ok(var)) = (idx.kids.as_slice(), parr_var(kingdom, arr)) {
