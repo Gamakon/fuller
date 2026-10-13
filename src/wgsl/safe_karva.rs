@@ -1213,6 +1213,35 @@ mod tests {
         assert_eq!(carriers, d.referrers, "{}", d.text);
     }
 
+    /// THE POPULATION FOLD KEEPS EVERY KERNEL on fit_SF_r4's generation 24
+    /// (2026-10-13: the fit stopped, "the fold rewrote row 24 into another
+    /// kernel"): the 80 rows of that generation (tests/fold_g24), folded as
+    /// the fit folds them (head 32, 128 slots, the shared band the last
+    /// eight, seed 4 * 7 + 24), each rebuild to its own text.
+    #[test]
+    fn the_population_fold_keeps_every_kernel_of_fit_sf_r4_generation_24() {
+        let k = WgslKingdom::load_safe();
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fold_g24");
+        let mut files: Vec<_> = std::fs::read_dir(&dir).unwrap().flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "wgsl")).collect();
+        files.sort();
+        let trees: Vec<Tree> = files.iter().map(|f| read_safe(&std::fs::read_to_string(f).unwrap(), &k).unwrap_or_else(|e| panic!("{}: {e}", f.display())).tree).collect();
+        let direct: Vec<String> = trees.iter().map(|t| render_tree(t, &k).unwrap().text).collect();
+        let f = fold_population(&trees, 32, 128, 120, 3, 4 * 7 + 24);
+        println!("shared {}, own aligned {}, unaligned {}", f.shared.len(), f.own_aligned, f.own_unaligned);
+        let mut wrong = Vec::new();
+        for (i, c) in f.chromosomes.iter().enumerate() {
+            let Ok(c) = c else { continue };
+            let pset = homeotic::pset_with_hrefs(&c.pset, 128);
+            let decoded: Vec<String> = c.genes.iter().map(|(hd, tl)| karva_to_terms_generic(hd, tl, &pset).unwrap()).collect();
+            let (r, _) = rebuild(&decoded, c.folded.filled, &k).unwrap_or_else(|e| panic!("{}: {e}", files[i].display()));
+            if r.text != direct[i] {
+                let first = r.text.lines().zip(direct[i].lines()).find(|(a, b)| a != b).map(|(a, b)| format!("\n  folded: {a}\n  kernel: {b}")).unwrap_or_default();
+                wrong.push(format!("{}{first}", files[i].file_name().unwrap().to_string_lossy()));
+            }
+        }
+        assert!(wrong.is_empty(), "{} kernels folded into others:\n{}", wrong.len(), wrong.join("\n"));
+    }
+
     /// A gene text with a token of the wrong dual projects to a fallback
     /// leaf rather than failing.
     #[test]
