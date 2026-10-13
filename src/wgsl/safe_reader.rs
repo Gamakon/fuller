@@ -208,6 +208,19 @@ fn tree_of(ctx: &mut Ctx, n: &Node) -> Result<Tree, String> {
             let name = &prefixed(&ctx.local_prefix, name);
             if let Some(def) = name.strip_prefix("let.").and_then(|k| ctx.lets.get(k)) {
                 let def = def.clone();
+                // The kingdom's subgroup lane and index on a 2-D workgroup
+                // (`let sg_lane: u32 = subgroupExclusiveAdd(1u);`, `let
+                // sg_index: u32 = lidx / sg_size;`): the builtins they stand
+                // for (2026-10-13, AST to AST: read as their definitions).
+                let base = name.strip_prefix("let.").and_then(|k| k.split('@').next()).unwrap_or("");
+                let builtin = match (base, &def) {
+                    ("sg_lane", Node::App { name: d, .. }) if d.contains("Subgroup") || d.starts_with("subgroup.") => Some("builtin.subgroup_invocation_id"),
+                    ("sg_index", Node::App { name: d, .. }) if d.contains("Divide") || d.ends_with(".div") => Some("builtin.subgroup_id"),
+                    _ => None,
+                };
+                if let Some(row) = builtin.and_then(|b| ctx.kingdom.rows.iter().find(|r| r.name == b)) {
+                    return Ok(Tree::new(&row.name, row.output, vec![]));
+                }
                 // A let bound to a register at its definition reads the register.
                 // (spelled as a load of the local `let.<name>`, which the value
                 // step reads as the register that local holds).
