@@ -2673,7 +2673,7 @@ enum Need {
 }
 
 pub fn sample(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, seed: u64) -> Result<Tree, String> {
-    sample_with(kingdom, role, root, max_depth, seed, None)
+    sample_with(kingdom, role, root, max_depth, seed, None, Shape::Free)
 }
 
 /// [`sample`] within a cost bound (2026-10-13: 522 of 1,000 random kernels
@@ -2684,10 +2684,41 @@ pub fn sample(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, se
 /// fallback; the epilogue's last statement is drawn again at the depth cap,
 /// so the kernel keeps its store. Nothing the kingdom allows is forbidden.
 pub fn sample_within(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, seed: u64, bound: &Cost) -> Result<Tree, String> {
-    sample_with(kingdom, role, root, max_depth, seed, Some(bound))
+    sample_with(kingdom, role, root, max_depth, seed, Some(bound), Shape::Free)
 }
 
-fn sample_with(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, seed: u64, bound: Option<&Cost>) -> Result<Tree, String> {
+/// THE SKETCH START (docs/PLAN_experiments_2026-10-13.md, E1b): a random
+/// safe kernel whose OUTLINE is the one the Gram problem fixes, every other
+/// subtree a hole drawn by this sampler under its own rules and `bound`.
+/// The outline ([`super::sketch`] recognises it): each thread owns its cell
+/// (`safe.cell_of` of `safe.thread_row` and `safe.thread_col`); the item
+/// loop `loop.items_boundm` over `bound.m`; in its body an f32 register `R`
+/// (one of the kingdom's, drawn) updated as `R = R + <hole>`; the
+/// epilogue's last statement the kingdom's guarded read-add-write store
+/// `h[cell] = h[cell] + R` (`store.h_O0`). The holes: the grid; zero to two
+/// statements before the item loop and zero or one after it; zero or one
+/// statement before and after the update in the loop body; zero or one
+/// statement before the store; the update's value; the two block factors.
+/// A statement hole is drawn at the depth a free draw reaches it; the value
+/// hole with the sampler's whole depth (a free draw reaches a value in the
+/// item loop at depth 5 of 7, too shallow for a product of two indexed
+/// loads) and under the rule a stored value has, that it reads an input.
+/// Over `bound`, the hole whose removal lowers the cost most is drawn
+/// again, as [`sample_within`] does with statements; the outline is never
+/// drawn again. Deterministic in `seed`.
+pub fn sample_sketch(kingdom: &WgslKingdom, role: &Role, max_depth: usize, seed: u64, bound: &Cost) -> Result<Tree, String> {
+    let root = dual_ty(kingdom, "kernel.safe")?;
+    sample_with(kingdom, role, root, max_depth, seed, Some(bound), Shape::Sketch)
+}
+
+/// What [`sample_with`] draws: a free tree of the root dual, or the sketch.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Shape {
+    Free,
+    Sketch,
+}
+
+fn sample_with(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, seed: u64, bound: Option<&Cost>, shape: Shape) -> Result<Tree, String> {
     let f16 = |t: &Ty| kingdom.dual(*t).is_some_and(|d| d.scalar() == Some("f16"));
     // (No return: a return before the epilogue ends the thread before it
     // stores its output, so the kernel writes nothing: 187 of 1,000 random
@@ -2980,7 +3011,63 @@ fn sample_with(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, s
         }
     }
     let draw = Draw { rows: &rows, by_out: &by_out, kingdom, max_depth, input_reach: &input_reach, store_reach: &store_reach, var_reach: &var_reach, varying_reach: &varying_reach, flags: &flags };
-    let mut tree = draw.grow(root, 0, Need::Nothing, false, 0, &mut state);
+    /// A hole of the sketch: where it is, the depth it is drawn at and what it must read.
+    struct Hole {
+        path: Vec<usize>,
+        depth: usize,
+        need: Need,
+    }
+    /// The sketch's outline with its holes drawn ([`sample_sketch`]).
+    fn sketch(draw: &Draw<'_>, kingdom: &WgslKingdom, state: &mut u64) -> Result<(Tree, Vec<Hole>), String> {
+        let t = |n: &str| dual_ty(kingdom, n);
+        let (l0, l1, c0, real, rf) = (t("stmt.L0")?, t("stmt.L1")?, t("stmt.C0")?, t("f32.real")?, t("reg<f32>.real")?);
+        const SEQ: [&str; 4] = ["one", "seq2", "seq3", "seq4"];
+        let block = |rung: &str, kids: Vec<Tree>| -> Result<Tree, String> { Ok(Tree::new(&format!("block.{}_{rung}", SEQ[kids.len() - 1]), t(&format!("block.{rung}"))?, kids)) };
+        let mut holes: Vec<Hole> = Vec::new();
+        let mut hole = |demand: Ty, path: Vec<usize>, depth: usize, need: Need, state: &mut u64| -> Tree {
+            holes.push(Hole { path, depth, need });
+            draw.grow(demand, depth, need, false, 0, state)
+        };
+        let grid = hole(t("grid.grid")?, vec![0], 1, Need::Nothing, state);
+        // The accumulator: one of the kingdom's f32 registers.
+        let registers: Vec<&str> = kingdom.rows.iter().filter(|r| r.terminal && r.output == rf).map(|r| r.name.as_str()).collect();
+        if registers.is_empty() {
+            return Err("the kingdom has no f32 register for the sketch's accumulator".into());
+        }
+        let acc = registers[(next(state) % registers.len() as u64) as usize].to_string();
+        let get = || Tree::new("reg.get_f", real, vec![Tree::new(&acc, rf, vec![])]);
+        let (pre, post) = ((next(state) % 3) as usize, (next(state) % 2) as usize);
+        let (lpre, lpost) = ((next(state) % 2) as usize, (next(state) % 2) as usize);
+        let mut body: Vec<Tree> = (0..pre).map(|k| hole(l0, vec![1, k], 2, Need::Nothing, state)).collect();
+        let mut inner: Vec<Tree> = (0..lpre).map(|k| hole(l1, vec![1, pre, 1, k], 4, Need::Nothing, state)).collect();
+        let value = hole(real, vec![1, pre, 1, lpre, 1, 1], 0, Need::Input, state);
+        inner.push(Tree::new("reg.set_f_L1", l1, vec![Tree::new(&acc, rf, vec![]), Tree::new("arith.add", real, vec![get(), value])]));
+        for k in 0..lpost {
+            inner.push(hole(l1, vec![1, pre, 1, lpre + 1 + k], 4, Need::Nothing, state));
+        }
+        body.push(Tree::new("loop.items_boundm", l0, vec![Tree::new("bound.m", t("u32.boundm")?, vec![]), block("L1", inner)?]));
+        for k in 0..post {
+            body.push(hole(l0, vec![1, pre + 1 + k], 2, Need::Nothing, state));
+        }
+        // The epilogue: a C0 statement before the store or none (block.seq2_O0 is (C0, O0)).
+        let epre = (next(state) % 2) as usize;
+        let mut epilogue: Vec<Tree> = (0..epre).map(|k| hole(c0, vec![2, k], 2, Need::Nothing, state)).collect();
+        let gid = || -> Result<Tree, String> { Ok(Tree::new("builtin.global_invocation_id", t("vec3<u32>.gid")?, vec![])) };
+        let blk_row = hole(t("u32.blk")?, vec![2, epre, 0, 0, 1], 5, Need::Nothing, state);
+        let blk_col = hole(t("u32.blk")?, vec![2, epre, 0, 1, 1], 5, Need::Nothing, state);
+        let cell = Tree::new("safe.cell_of", t("u32.cell")?, vec![Tree::new("safe.thread_row", t("u32.threadrow")?, vec![gid()?, blk_row]), Tree::new("safe.thread_col", t("u32.threadcol")?, vec![gid()?, blk_col])]);
+        epilogue.push(Tree::new("store.h_O0", t("stmt.O0")?, vec![cell, get()]));
+        let epilogue = block("O0", epilogue)?;
+        let body = block("L0", body)?;
+        Ok((Tree::new("kernel.entry_safe", t("kernel.safe")?, vec![grid, body, epilogue]), holes))
+    }
+    let (mut tree, holes) = match shape {
+        Shape::Free => (draw.grow(root, 0, Need::Nothing, false, 0, &mut state), None),
+        Shape::Sketch => {
+            let (t, h) = sketch(&draw, kingdom, &mut state)?;
+            (t, Some(h))
+        }
+    };
     let Some(bound) = bound else { return Ok(tree) };
     let over = |c: &Cost| c.per_item > bound.per_item || c.base > bound.base;
     // The top-level statements of the body (kid 1) and the epilogue (kid 2),
@@ -3017,18 +3104,28 @@ fn sample_with(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, s
         if !over(&c) || tree.kids.len() != 3 {
             return Ok(tree);
         }
-        let mut paths = Vec::new();
-        statements(&tree.kids[1], vec![1], &mut paths);
-        let mut epi = Vec::new();
-        statements(&tree.kids[2], vec![2], &mut epi);
-        let last = epi.last().cloned();
-        paths.extend(epi);
-        // The statement whose removal lowers the cost most.
+        // The sites drawn again: the sketch's holes (each at its own depth,
+        // under its own need), or the top-level statements (at their depth).
+        // A site: its path, the depth it is drawn at, what it must read.
+        type Site = (Vec<usize>, usize, Need);
+        let (paths, last): (Vec<Site>, Option<Vec<usize>>) = match &holes {
+            Some(h) => (h.iter().map(|h| (h.path.clone(), h.depth, h.need)).collect(), None),
+            None => {
+                let mut paths = Vec::new();
+                statements(&tree.kids[1], vec![1], &mut paths);
+                let mut epi = Vec::new();
+                statements(&tree.kids[2], vec![2], &mut epi);
+                let last = epi.last().cloned();
+                paths.extend(epi);
+                (paths.into_iter().map(|p| { let d = p.len(); (p, d, Need::Nothing) }).collect(), last)
+            }
+        };
+        // The statement (the hole) whose removal lowers the cost most.
         let gain = |p: &Vec<usize>| {
             let without = cost(&put(&tree, p, Tree::fallback(at(&tree, p).ty)));
             (c.per_item - without.per_item) / bound.per_item.max(1.0) + (c.base - without.base) / bound.base.max(1.0)
         };
-        let Some(worst) = paths.iter().max_by(|a, b| gain(a).partial_cmp(&gain(b)).unwrap_or(std::cmp::Ordering::Equal)).cloned() else { return Ok(tree) };
+        let Some((worst, depth, need)) = paths.iter().max_by(|a, b| gain(&a.0).partial_cmp(&gain(&b.0)).unwrap_or(std::cmp::Ordering::Equal)).cloned() else { return Ok(tree) };
         let node = at(&tree, &worst).clone();
         let is_last = last.as_ref() == Some(&worst);
         let n = tries.entry(worst.clone()).or_insert(0);
@@ -3039,7 +3136,7 @@ fn sample_with(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, s
         } else if *n > 16 {
             Tree::fallback(node.ty)
         } else {
-            draw.grow(node.ty, worst.len(), Need::Nothing, false, 0, &mut state)
+            draw.grow(node.ty, depth, need, false, 0, &mut state)
         };
         tree = put(&tree, &worst, again);
     }
@@ -3206,7 +3303,8 @@ mod tests {
                 };
                 // A call's result: the function called and its arguments
                 // (a literal written through lit_u32 or lit_i32 is a call).
-                fn calls(b: &naga::Block, out: &mut Vec<(naga::Handle<Expression>, naga::Handle<naga::Function>, Vec<naga::Handle<Expression>>)>) {
+                type Call = (naga::Handle<Expression>, naga::Handle<naga::Function>, Vec<naga::Handle<Expression>>);
+                fn calls(b: &naga::Block, out: &mut Vec<Call>) {
                     for s in b.iter() {
                         match s {
                             naga::Statement::Call { function, arguments, result: Some(r) } => out.push((*r, *function, arguments.clone())),

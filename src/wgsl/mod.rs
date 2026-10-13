@@ -42,6 +42,7 @@ pub mod render;
 pub mod safe_karva;
 pub mod safe_reader;
 pub mod scaffold;
+pub mod sketch;
 pub mod table;
 pub mod tree_diff;
 pub mod target;
