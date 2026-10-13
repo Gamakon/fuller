@@ -427,8 +427,8 @@ fn loops(t: &Tree, depth: usize, copies: u32, fixed: &[(String, u32)], items: bo
 }
 
 /// Rule 7: every thread origin in `t` as the grid writes it.
-fn origins(t: &Tree, g: &crate::wgsl::render::Grid) -> Tree {
-    let kids: Vec<Tree> = t.kids.iter().map(|k| origins(k, g)).collect();
+fn origins(t: &Tree, g: &crate::wgsl::render::Grid, kingdom: &WgslKingdom) -> Tree {
+    let kids: Vec<Tree> = t.kids.iter().map(|k| origins(k, g, kingdom)).collect();
     let b = |name: &str, k: &Tree| Tree::new(name, k.ty, vec![]);
     let blk = |k: &Tree, v: u32| Tree::literal("literal.blk", k.ty, v as f32);
     let (row, by, bx) = (t.name.contains("_row"), g.by, g.bx);
@@ -436,7 +436,39 @@ fn origins(t: &Tree, g: &crate::wgsl::render::Grid) -> Tree {
     let kids = match (t.name.as_str(), kids.as_slice()) {
         ("safe.thread_row" | "safe.thread_col", [gid, k]) => vec![b("builtin.global_invocation_id", gid), blk(k, f)],
         ("safe.thread_row_s" | "safe.thread_col_s", [wid, lid, k]) => vec![b("builtin.workgroup_id", wid), b("builtin.local_invocation_id", lid), blk(k, f)],
-        ("safe.thread_row_g" | "safe.thread_col_g", [wid, lid, k, n]) => vec![b("builtin.workgroup_id", wid), b("builtin.local_invocation_id", lid), blk(k, f), n.clone()],
+        ("safe.thread_row_g" | "safe.thread_col_g", [wid, lid, k, n]) => {
+            // G clamped into 1..=B: one group is the plain origin
+            // (`wid * W B + lid * B` is `gid * B`), B groups the strided one.
+            let g = if n.name.starts_with("literal.") { (n.konst.round().max(1.0) as u32).min(f.max(1)) } else { f.max(1) };
+            let (plain, strided) = if row { ("safe.thread_row", "safe.thread_row_s") } else { ("safe.thread_col", "safe.thread_col_s") };
+            // (Under its own row's dual; the conform of the whole tree places it.)
+            let own = |name: &str| kingdom.rows.iter().find(|r| r.name == name).map(|r| r.output);
+            if let (1, Some(ty), Ok(gid)) = (g, own(plain), dual_ty(kingdom, "vec3<u32>.gid")) {
+                return Tree::new(plain, ty, vec![Tree::new("builtin.global_invocation_id", gid, vec![]), blk(k, f)]);
+            }
+            if let (true, Some(ty)) = (g == f, own(strided)) {
+                return Tree::new(strided, ty, vec![b("builtin.workgroup_id", wid), b("builtin.local_invocation_id", lid), blk(k, f)]);
+            }
+            vec![b("builtin.workgroup_id", wid), b("builtin.local_invocation_id", lid), blk(k, f), Tree::literal(&n.name, n.ty, g as f32)]
+        }
+        // A grouped offset: its groups are its origin's (the emitter reads
+        // them there), the origin read in its grouped form (a strided origin
+        // is B groups of one cell).
+        ("safe.row_plus_g" | "safe.col_plus_g", [origin, n, grp, e]) => {
+            let grouped = if row { "safe.thread_row_g" } else { "safe.thread_col_g" };
+            let groups = match (origin.name.as_str(), origin.kids.as_slice()) {
+                (x, [.., gk]) if x == grouped => gk.konst as u32,
+                _ => f.max(1),
+            };
+            let origin = match (origin.name.as_str(), origin.kids.as_slice()) {
+                (x, [wid, lid, k]) if x.ends_with("_s") => match kingdom.rows.iter().find(|r| r.name == grouped && r.output == origin.ty).or_else(|| kingdom.rows.iter().find(|r| r.name == grouped)) {
+                    Some(r) => Tree::new(grouped, r.output, vec![wid.clone(), lid.clone(), k.clone(), Tree::literal(&n.name, n.ty, groups as f32)]),
+                    None => origin.clone(),
+                },
+                _ => origin.clone(),
+            };
+            vec![origin, Tree::literal(&n.name, n.ty, groups as f32), grp.clone(), e.clone()]
+        }
         _ => kids,
     };
     Tree { kids, ..t.clone() }
@@ -484,7 +516,7 @@ fn structural(t: &Tree, kingdom: &WgslKingdom) -> Tree {
             }
             if let Ok(g) = grid_of(&grid) {
                 for k in kids.iter_mut().skip(1) {
-                    *k = origins(k, &g);
+                    *k = origins(k, &g, kingdom);
                 }
             }
             kids[0] = grid;
