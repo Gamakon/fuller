@@ -543,7 +543,7 @@ pub fn cont_below_top(t: &Tree, top: bool) -> bool {
 /// (The fixed-point, hash and sign conversions were written inline until
 /// 2026-10-12: their forms have no literal and their text read back as other
 /// forms' rows, 25 of 1,000 random trees.)
-pub const COMPOSITE_ROWS: [(&str, &str); 23] = [
+pub const COMPOSITE_ROWS: [(&str, &str); 34] = [
     ("bits.insert_lo", "insert_lo"),
     ("bits.insert_hi", "insert_hi"),
     ("bits.pack_sign", "pack_sign"),
@@ -567,6 +567,19 @@ pub const COMPOSITE_ROWS: [(&str, &str); 23] = [
     ("hash.mix64", "hash_mix64"),
     ("hash.fmix32", "hash_fmix32"),
     ("convert.hash32_to_index", "hash32_to_index"),
+    // The quantise conversions (2026-10-13, AST to AST: written inline,
+    // their arithmetic read back as other rows).
+    ("quantise.real_to_code4", "q_real_to_code4"),
+    ("quantise.code4_to_real", "q_code4_to_real"),
+    ("quantise.real_to_code8", "q_real_to_code8"),
+    ("quantise.code8_to_real", "q_code8_to_real"),
+    ("quantise.real_to_code16", "q_real_to_code16"),
+    ("quantise.code16_to_real", "q_code16_to_real"),
+    ("quantise.real_to_code1024", "q_real_to_code1024"),
+    ("quantise.code1024_to_real", "q_code1024_to_real"),
+    ("quantise.pack4_code8", "q_pack4_code8"),
+    ("quantise.pack4_code8_hi", "q_pack4_code8_hi"),
+    ("quantise.unpack_code8", "q_unpack_code8"),
 ];
 
 /// The row a kingdom helper's call is (`COMPOSITE_ROWS`, and the matrix
@@ -1994,12 +2007,12 @@ impl Renderer<'_> {
                 let i: usize = template.instance.strip_prefix("access_").and_then(|n| n.parse().ok()).ok_or_else(|| format!("{name}: not an access"))?;
                 Ok(format!("{}.{}", a[0], ["x", "y", "z", "w"][i]))
             }
-            "composite" => self.composite(name, template.instance.as_str(), &a, d, scope),
+            "composite" => self.composite(name, &a, d, scope),
             other => Err(format!("{name}: naga column {other} has no text")),
         }
     }
 
-    fn composite(&self, name: &str, instance: &str, a: &[String], out: &WgslDual, scope: &mut Scope) -> Result<String, String> {
+    fn composite(&self, name: &str, a: &[String], out: &WgslDual, scope: &mut Scope) -> Result<String, String> {
         // Inline composites first; the rest call a helper from the library.
         let inline = match name {
             "index.of_int" => Some(format!("u32(max({}, 0))", a[0])),
@@ -2012,9 +2025,6 @@ impl Renderer<'_> {
             "index.band_of" => Some(format!("({} / max({}, 1u))", a[0], a[1])),
             "count.sub_floor" => Some(format!("select({0} - {1}, 0u, {1} > {0})", a[0], a[1])),
             "select.negate_if" => Some(format!("select(-({0}), {0}, {1})", a[0], a[1])),
-            "quantise.pack4_code8" => Some(format!("(({} & 255u) | (({} & 255u) << 8u) | (({} & 255u) << 16u))", a[0], a[1], a[2])),
-            "quantise.pack4_code8_hi" => Some(format!("(({} & 16777215u) | (({} & 255u) << 24u))", a[0], a[1])),
-            "quantise.unpack_code8" => Some(format!("(({} >> (({} & 3u) * 8u)) & 255u)", a[0], a[1])),
             "index.shl" => Some(format!("(({}) << (({}) & 31u))", a[0], a[1])),
             "index.shr" => Some(format!("(({}) >> (({}) & 31u))", a[0], a[1])),
             "index.and" => Some(format!("(({}) & ({}))", a[0], a[1])),
@@ -2025,14 +2035,6 @@ impl Renderer<'_> {
         };
         if let Some(text) = inline {
             return Ok(text);
-        }
-        if let Some(k) = instance.strip_prefix("real_to_code") {
-            let levels: f32 = k.parse::<f32>().map_err(|_| format!("{name}: codebook size"))?;
-            return Ok(format!("u32(clamp(round((clamp({}, -1.0, 1.0) + 1.0) * {:?}), 0.0, {:?}))", a[0], (levels - 1.0) / 2.0, levels - 1.0));
-        }
-        if let Some(k) = instance.strip_suffix("_to_real").filter(|k| k.starts_with("code")) {
-            let levels: f32 = k.strip_prefix("code").and_then(|n| n.parse().ok()).ok_or_else(|| format!("{name}: codebook size"))?;
-            return Ok(format!("(f32(min({}, {}u)) * {:?} - 1.0)", a[0], levels as u32 - 1, 2.0 / (levels - 1.0)));
         }
         let Some(&(_, helper)) = COMPOSITE_ROWS.iter().find(|(row, _)| *row == name) else {
             return Err(format!("{name}: composite with no WGSL body (out {})", out.dual));
@@ -2547,6 +2549,17 @@ fn slot_ctor(slot: &str) -> Result<String, String> {
 /// a one-line expression. Q15.16 arithmetic is on 32-bit two's complement
 /// with explicit saturation; the 64-bit products use 16-bit limbs.
 pub const COMPOSITES: &[(&str, &str)] = &[
+    ("q_real_to_code4", "fn q_real_to_code4(x: f32) -> u32 { return u32(clamp(round((clamp(x, -1.0, 1.0) + 1.0) * 1.5), 0.0, 3.0)); }"),
+    ("q_code4_to_real", "fn q_code4_to_real(c: u32) -> f32 { return f32(min(c, 3u)) * 0.6666667 - 1.0; }"),
+    ("q_real_to_code8", "fn q_real_to_code8(x: f32) -> u32 { return u32(clamp(round((clamp(x, -1.0, 1.0) + 1.0) * 3.5), 0.0, 7.0)); }"),
+    ("q_code8_to_real", "fn q_code8_to_real(c: u32) -> f32 { return f32(min(c, 7u)) * 0.2857143 - 1.0; }"),
+    ("q_real_to_code16", "fn q_real_to_code16(x: f32) -> u32 { return u32(clamp(round((clamp(x, -1.0, 1.0) + 1.0) * 7.5), 0.0, 15.0)); }"),
+    ("q_code16_to_real", "fn q_code16_to_real(c: u32) -> f32 { return f32(min(c, 15u)) * 0.13333334 - 1.0; }"),
+    ("q_real_to_code1024", "fn q_real_to_code1024(x: f32) -> u32 { return u32(clamp(round((clamp(x, -1.0, 1.0) + 1.0) * 511.5), 0.0, 1023.0)); }"),
+    ("q_code1024_to_real", "fn q_code1024_to_real(c: u32) -> f32 { return f32(min(c, 1023u)) * 0.0019550342 - 1.0; }"),
+    ("q_pack4_code8", "fn q_pack4_code8(a: u32, b: u32, c: u32) -> u32 { return (a & 255u) | ((b & 255u) << 8u) | ((c & 255u) << 16u); }"),
+    ("q_pack4_code8_hi", "fn q_pack4_code8_hi(p: u32, d: u32) -> u32 { return (p & 16777215u) | ((d & 255u) << 24u); }"),
+    ("q_unpack_code8", "fn q_unpack_code8(p: u32, i: u32) -> u32 { return (p >> ((i & 3u) * 8u)) & 255u; }"),
     ("fx_to_f32", "fn fx_to_f32(a: i32) -> f32 { return f32(a) * (1.0 / 65536.0); }"),
     ("fx_from_f32", "fn fx_from_f32(x: f32) -> i32 { return i32(clamp(round(x * 65536.0), -2147483648.0, 2147483520.0)); }"),
     ("sign_to_real", "fn sign_to_real(s: bool) -> f32 { return select(-1.0, 1.0, s); }"),
