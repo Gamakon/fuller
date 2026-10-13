@@ -80,3 +80,32 @@ Codex's findings are accepted; the designs above are superseded by these.
 **E4. Runaways.** Prevalence and recovery measured separately: 30,000 i.i.d. random legal kernels (bounds an observed-zero rate below 10⁻⁴ at 95 %); a fault suite (r62 unguarded plus pathological bounded loops), 20 trials each on the Mac and on a Linux/Vulkan pod, recording detection, drain or reset, and time lost. Decide by expected loss (rate × recovery time × run length) against the pod's cost. The Mac fault trials that are expected to hang run only on the pod.
 
 **Revised order.** r62 confirmation → E0 → E3's CPU gate → E1a → E1b pilot (3 seeds × 3 arms) → E1b full if the pilot shows a difference → E2 build only if still worthwhile → E4's i.i.d. sample accumulated alongside.
+
+---
+
+## Revision 2: fitted to a 5-GPU-hour budget, 1 hour flex (Andrew, 2026-10-13)
+
+Cost basis, measured: a generation of 80 takes about 40 s, so one scored offspring is about 0.5 GPU s; a 4,000-offspring seed (50 generations × 80) is about 33 min. Everything that can run on the CPU does, and costs nothing from the budget.
+
+| # | Experiment | GPU | What is cut from revision 1, and why |
+|---|---|---|---|
+| 1 | r62 confirmation (bisect a, c, d, e) | 5 min | — |
+| 2 | E0 timing calibration, 20 ABBA shipped/shipped | 5 min | — |
+| 3 | E1a Sonnet audit: 40 kernels, correctness only, no evolution | 5 min | the model calls cost money, not GPU |
+| 4 | E1b sketch arm: 4 seeds × 4,000 offspring | 132 min | 12 seeds × 16,000 → 4 × 4,000; the mutable-sketch control dropped |
+| 5 | E1b random arm: 2 paired seeds × 4,000 offspring | 66 min | 12 → 2 new seeds; runs 1, 4, 5, 6 (≥ 4,000 offspring each, 0 successes) reported beside them as unpaired history |
+| 6 | E2 symmetric-half speed: 15 representatives × 20 ABBA rounds | 15 min | runs only if its CPU build and ownership proof are done in time |
+| 7 | E4 prevalence: 5,000 i.i.d. random kernels, correctness only | 10 min | 30,000 → 5,000 (bounds a zero rate below 6 × 10⁻⁴); every E1b evaluation also counts its runaways |
+| | **Total** | **238 min** | |
+| | Flex, up to 60 min | | first: extend any sketch seed that is improving when its budget ends; then a 5th sketch seed |
+
+CPU only, no GPU cost: E3's crossover gate (10 populations × 1,000 offspring per operator); E2's build, ownership proof and held-out correctness; the paper's open questions. E3's run arms and E4's pod fault suite are out of this budget: the CPU gate decides whether stable section ids are worth building, and the pod suite is a separate spend.
+
+**What this budget can and cannot decide.**
+- E1b with 4 against 2 (+4 historical) seeds is a pilot. If the sketch succeeds in ≥ 3 of 4 seeds and random in 0 of 6, the Wilson 95 % intervals separate (sketch ≥ 30 %, random ≤ 39 % — they overlap slightly, so it is strong evidence, not proof); 4 of 4 against 0 of 6 separates them cleanly. A null result (both 0) is decisive in the other direction: the sketch does not help at this budget.
+- E2 decides on the lower 95 % bound of the speed-up, as in revision 1; 15 kernels × 20 rounds is enough for that.
+- E4 can bound the runaway rate below 6 × 10⁻⁴, not 10⁻⁴.
+
+**Order.** 1 → 2 → 3 → 4 (seed 1 first; if it fails all 4,000 offspring and its closeness is no better than random's, run seed 2 before committing the rest) → 5 → 7 → 6 if ready → flex.
+
+**Stop rules.** Any runaway or bug stops the experiment it occurs in (the dump is kept) and the budget clock stops with it; a GPU probe slower than 1.5 s a shape stops all GPU work.
