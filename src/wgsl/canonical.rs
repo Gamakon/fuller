@@ -16,28 +16,37 @@
 //!    only the last statement (the one that stores h) as the epilogue and
 //!    reads the ones before it as the body's, at the body's rung. After a
 //!    body that returns at the top level no epilogue is written: it is the
-//!    fallback.
+//!    fallback. The first item loop that continues the item counter
+//!    (`loop.items_cont_*`, written `for (; t < ..)`) continues it from 0:
+//!    it is the item loop that starts it.
 //! 3. The grid. The header writes the grid the driver dispatches (the
 //!    workgroup cut to the device, the block factors snapped) and the
 //!    declarations the workgroup plan (the arrays the statements use, at
 //!    their declared or default lengths, halved to fit); the tile depth
 //!    wrapper (`grid.with_ktile`) writes nothing. The parser reads one grid
-//!    row and one list of the declared arrays, by row name.
+//!    row and one list of the arrays the statements use, by row name (a
+//!    kernel using only the original four arrays declares them at their
+//!    original lengths: the plan is empty, the list is not).
 //! 4. A literal's value. The emitter writes the value of the literal's form
 //!    (a block factor snapped to {1, 2, 4, 8}, a count rounded and clamped,
 //!    a flag 0 or 1); a knob reference (`literal.p_bcol`) as the value its
 //!    kernel's knobs give it ([`params::to_literals`]), so it reads back as
-//!    its dual's plain literal row.
-//! 5. A workgroup reduction's count. The emitter rounds it down to a power
+//!    its dual's plain literal row; a vector literal as its scalar
+//!    splatted (`vec2<f32>(x)` is shape.splat2 of x).
+//! 5. A fallback value. The emitter writes it as its zero (a literal 0, a
+//!    vector splatted from 0, a matrix of such columns), which the parser
+//!    reads as those rows, conformed to the demanded dual as it conforms
+//!    any literal (a dual with no literal row keeps its fallback).
+//! 6. A workgroup reduction's count. The emitter rounds it down to a power
 //!    of two, and one of 1 writes only its barrier: a barrier.
-//! 6. Then the parameters, as the parser assigns them ([`params::assign`]):
+//! 7. Then the parameters, as the parser assigns them ([`params::assign`]):
 //!    every literal whose value a knob writes exactly, a reference to that
 //!    knob, the tile depth declared on the grid when one is referenced.
 
 use crate::wgsl::loader::WgslKingdom;
 use crate::geneframe::Ty;
 use crate::wgsl::params;
-use crate::wgsl::render::{dual_ty, grid_of, snap, workgroup_dim, workgroup_plan, workgroup_shape, Tree, BLK, UNROLL};
+use crate::wgsl::render::{array_len, dual_ty, grid_of, snap, wgmem_var, workgroup_dim, workgroup_plan, workgroup_shape, Tree, BLK, UNROLL};
 
 /// The rung suffix of a row name (`_L1`, `_C2`, `_O0`, ...), if it has one.
 fn rung_of(name: &str) -> Option<&str> {
@@ -118,6 +127,19 @@ fn split_epilogue(grid: Tree, body: &Tree, epilogue: &Tree, kingdom: &WgslKingdo
     let (Ok(l0), Ok(b0), Ok(o0)) = (dual_ty(kingdom, "stmt.L0"), dual_ty(kingdom, "block.L0"), dual_ty(kingdom, "block.O0")) else { return like.clone() };
     let mut items = Vec::new();
     let returns = statements(body, &mut items);
+    // The first item loop that continues the counter starts it.
+    let mut seen = false;
+    for s in items.iter_mut() {
+        if !seen {
+            if let Some(rest) = s.name.strip_prefix("loop.items_cont_") {
+                let plain = format!("loop.items_{rest}");
+                if kingdom.rows.iter().any(|r| r.name == plain && r.output == s.ty && r.inputs.len() == s.kids.len()) {
+                    s.name = plain;
+                }
+            }
+        }
+        seen |= s.name.starts_with("loop.items");
+    }
     let body_block = |items: Vec<Tree>| grouped(items, "L0", &Tree::fallback(b0), Some(l0));
     if returns {
         return Tree::new(&like.name, like.ty, vec![grid, body_block(items), Tree::fallback(o0)]);
@@ -173,7 +195,18 @@ fn canonical_literal(t: &Tree, kingdom: &WgslKingdom) -> Tree {
         t.name.clone()
     };
     let form = name.strip_prefix("literal.").filter(|f| !f.starts_with("p_")).unwrap_or(form);
-    Tree::literal(&name, t.ty, literal_value(form, t.konst))
+    let v = literal_value(form, t.konst);
+    // A vector literal is written as its scalar splatted (`vec2<f32>(x)`).
+    if d.lanes > 1 && d.slot.starts_with("vec") {
+        let splat = format!("shape.splat{}", d.lanes);
+        if let Some(r) = kingdom.rows.iter().find(|r| r.name == splat && r.output == t.ty && r.inputs.len() == 1) {
+            let s = r.inputs[0];
+            if kingdom.rows.iter().any(|r| r.name == name && r.output == s) {
+                return Tree::new(&splat, t.ty, vec![Tree::literal(&name, s, v)]);
+            }
+        }
+    }
+    Tree::literal(&name, t.ty, v)
 }
 
 /// The grid canonical (rule 3), for the kernel `root` (its statements
@@ -184,9 +217,21 @@ fn canonical_grid(grid: &Tree, root: &Tree, kingdom: &WgslKingdom) -> Option<Tre
     let (x, y) = workgroup_shape(g.x, g.y);
     let gt = dual_ty(kingdom, "grid.grid").ok()?;
     let base = Tree::new(if g.rows_x { "grid.of_rows_x" } else { "grid.of" }, gt, vec![lit("literal.wgdim", "u32.wgdim", x)?, lit("literal.wgdim", "u32.wgdim", y)?, lit("literal.blk", "u32.blk", g.bx)?, lit("literal.blk", "u32.blk", g.by)?]);
-    let plan = workgroup_plan(kingdom, grid, root).ok()?;
+    let mut plan = workgroup_plan(kingdom, grid, root).ok()?;
     if plan.is_empty() {
-        return Some(base);
+        // The original four arrays, declared as they always were: the ones
+        // the statements use, at their original lengths.
+        fn uses(t: &Tree, kingdom: &WgslKingdom, out: &mut std::collections::BTreeMap<String, (String, u32)>) {
+            let array = t.kids.is_empty() && (t.name.starts_with("wg.") || (t.name == "fallback" && kingdom.dual(t.ty).is_some_and(|d| d.dual.starts_with("wgmem<"))));
+            if let Some(v) = array.then(|| wgmem_var(kingdom, t).ok()).flatten() {
+                out.insert(v.to_string(), (String::new(), array_len(v)));
+            }
+            t.kids.iter().for_each(|k| uses(k, kingdom, out));
+        }
+        root.kids.iter().skip(1).for_each(|k| uses(k, kingdom, &mut plan));
+        if plan.is_empty() {
+            return Some(base);
+        }
     }
     let (decl_ty, decls_ty) = (dual_ty(kingdom, "wg.decl").ok()?, dual_ty(kingdom, "wg.decls").ok()?);
     let mut decls: Vec<(String, Tree)> = Vec::new();
@@ -230,6 +275,11 @@ fn structural(t: &Tree, kingdom: &WgslKingdom) -> Tree {
     if t.kids.is_empty() && t.name.starts_with("literal.") {
         return canonical_literal(t, kingdom);
     }
+    if t.name == "fallback" {
+        if let Some(z) = canonical_fallback(t, kingdom) {
+            return z;
+        }
+    }
     let kids: Vec<Tree> = t.kids.iter().map(|k| structural(k, kingdom)).collect();
     let t = Tree { kids, ..t.clone() };
     if t.name == "kernel.entry_safe" {
@@ -247,7 +297,43 @@ fn structural(t: &Tree, kingdom: &WgslKingdom) -> Tree {
     canonical_block(&t, kingdom)
 }
 
-/// Rule 5 at a reduction (its children already canonical).
+/// Rule 5: a fallback value leaf as the parser reads the zero written for it.
+fn canonical_fallback(t: &Tree, kingdom: &WgslKingdom) -> Option<Tree> {
+    let d = kingdom.dual(t.ty)?;
+    if d.is_statement_level() {
+        return None;
+    }
+    let scalar = |s: &str| -> Option<Tree> {
+        let (lit, dual) = match s {
+            "f32" => ("literal.real", "f32.real"),
+            "u32" => ("literal.index", "u32.index"),
+            "i32" => ("literal.int", "i32.int"),
+            "bool" => ("literal.flag", "bool.flag"),
+            _ => return None,
+        };
+        Some(Tree::literal(lit, dual_ty(kingdom, dual).ok()?, 0.0))
+    };
+    let splat = |lanes: u32, s: &str| -> Option<Tree> {
+        let z = scalar(s)?;
+        let out = dual_ty(kingdom, &format!("vec{lanes}<{s}>.{}", kingdom.dual(z.ty)?.form)).ok()?;
+        Some(Tree::new(&format!("shape.splat{lanes}"), out, vec![z]))
+    };
+    let zero = if let Some((c, r)) = d.matrix_shape() {
+        let cols = (0..c).map(|_| splat(r, "f32")).collect::<Option<Vec<_>>>()?;
+        let name = if c == 2 { "shape.compose_mat".to_string() } else { format!("shape.compose_mat{c}") };
+        Tree::new(&name, t.ty, cols)
+    } else if d.lanes > 1 && d.slot.starts_with("vec") {
+        splat(d.lanes, d.scalar()?)?
+    } else if d.lanes <= 1 {
+        scalar(d.scalar()?)?
+    } else {
+        return None;
+    };
+    let per_kernel = crate::wgsl::safe_karva::per_kernel_rows(kingdom, &crate::wgsl::render::gram_role());
+    crate::wgsl::safe_karva::conform(&zero, t.ty, kingdom, &per_kernel).ok()
+}
+
+/// Rule 6 at a reduction (its children already canonical).
 fn canonical_reduction(t: &Tree, kingdom: &WgslKingdom) -> Option<Tree> {
     let stem = t.name.strip_prefix("wg.reduce_")?;
     let rung = rung_of(stem)?;

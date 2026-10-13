@@ -2652,10 +2652,47 @@ impl Tree {
 /// The first node where two trees differ, as `path: drawn / parsed`
 /// (name, type and literal value; a different count of children is a
 /// difference at the parent). `None` when they are the same tree.
+/// Every node where two trees differ (not below a differing node), as
+/// `parent: a / b` keys with the digits of literals kept out; a block of a
+/// different length compared statement by statement first.
+#[cfg(test)]
+pub(crate) fn all_differences(a: &Tree, b: &Tree) -> Vec<String> {
+    fn at(a: &Tree, b: &Tree, parent: &str, out: &mut Vec<String>) {
+        let same = a.name == b.name && a.ty == b.ty && a.konst.to_bits() == b.konst.to_bits() && a.kids.len() == b.kids.len();
+        if same || (a.ty == b.ty && a.name.starts_with("block.") && b.name.starts_with("block.")) {
+            let before = out.len();
+            for (x, y) in a.kids.iter().zip(&b.kids) {
+                at(x, y, &a.name, out);
+            }
+            if same || out.len() > before {
+                return;
+            }
+        }
+        let show = |t: &Tree| if t.name.starts_with("literal.") { t.name.clone() } else { t.name.clone() };
+        out.push(format!("{parent}: {} / {}", show(a), show(b)));
+    }
+    let mut out = Vec::new();
+    at(a, b, "root", &mut out);
+    out
+}
+
 #[cfg(test)]
 pub(crate) fn first_difference(a: &Tree, b: &Tree) -> Option<String> {
     fn at(a: &Tree, b: &Tree, path: &mut Vec<String>) -> Option<String> {
         let same = a.name == b.name && a.ty == b.ty && a.konst.to_bits() == b.konst.to_bits() && a.kids.len() == b.kids.len();
+        // Two blocks of a different length: their first different statement,
+        // if one is, before the lengths.
+        let blocks = !same && a.ty == b.ty && a.name.starts_with("block.") && b.name.starts_with("block.");
+        if blocks {
+            for (i, (x, y)) in a.kids.iter().zip(&b.kids).enumerate() {
+                path.push(format!("{}[{i}]", a.name));
+                let d = at(x, y, path);
+                path.pop();
+                if d.is_some() {
+                    return d;
+                }
+            }
+        }
         if !same {
             let show = |t: &Tree| if t.name.starts_with("literal.") { format!("{} {}", t.name, t.konst) } else { format!("{}{}", t.name, if t.kids.is_empty() { String::new() } else { format!("/{}", t.kids.len()) }) };
             let tail: Vec<&String> = path.iter().rev().take(2).collect();

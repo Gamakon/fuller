@@ -5557,7 +5557,7 @@ mod tests {
     /// tree holding one now reads back as the product, a different text.)
     const READ_BACK_FLOOR: usize = 132;
     const FIXPOINT_FLOOR: usize = 563;
-    const AST_FLOOR: usize = 111;
+    const AST_FLOOR: usize = 119;
 
 
     /// THE KINGDOM'S COMPLETENESS BAR (2026-10-12): 1,000 random trees of
@@ -5612,6 +5612,14 @@ mod tests {
                     // block does not hide the first difference of substance.)
                     Some(d) => {
                         let d = crate::wgsl::render::first_difference(&canon, &crate::wgsl::canonical::canonical(&back.tree, &k)).unwrap_or(d);
+                        if std::env::var_os("ROUNDTRIP_ALL").is_some() {
+                            let mut keys: Vec<String> = crate::wgsl::render::all_differences(&canon, &crate::wgsl::canonical::canonical(&back.tree, &k)).into_iter().map(|k| k.chars().map(|c| if c.is_ascii_digit() { 'N' } else { c }).collect()).collect();
+                            keys.sort();
+                            keys.dedup();
+                            for key in keys {
+                                println!("ALL {key}");
+                            }
+                        }
                         let key: String = d.chars().map(|c| if c.is_ascii_digit() { 'N' } else { c }).take(140).collect();
                         by_ast.entry(key).or_insert((0, seed)).0 += 1;
                     }
