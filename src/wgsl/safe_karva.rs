@@ -327,6 +327,11 @@ pub struct PopulationFold {
     pub distinct_subtrees: usize,
     pub occurrences: usize,
     pub repeated_occurrences: usize,
+    /// The individuals' own definitions held by two or more of them: those
+    /// placed at one common slot in every holder, and those left at slots of
+    /// each holder's own (no common slot free above their references).
+    pub own_aligned: usize,
+    pub own_unaligned: usize,
 }
 
 /// SHARE-EQUIVALENCE OVER THE POPULATION (step 4 of the experiment): every
@@ -396,27 +401,156 @@ pub fn fold_population(trees: &[Tree], head_length: usize, tail_slots: usize, re
         Tree { name: t.name.clone(), ty: t.ty, konst: t.konst, kids: t.kids.iter().map(|k| replace(k, by_text)).collect() }
     }
     let defs: Vec<Tree> = shared.iter().map(|d| seen[&d.text].example.clone()).collect();
-    let chromosomes = trees
+    let splits: Vec<Result<SafeSplit, String>> = trees
         .iter()
         .enumerate()
         .map(|(i, t)| {
-            let folded = replace(t, &by_text);
-            let s = split(&folded, head_length)?;
+            let s = split(&replace(t, &by_text), head_length)?;
             if s.tail.len() > reserved_from {
                 return Err(format!("individual {i}: {} own definitions, {reserved_from} slots below the shared band", s.tail.len()));
             }
-            let mut tail: Vec<Option<Tree>> = s.tail.into_iter().map(Some).collect();
-            tail.resize(tail_slots, None);
+            Ok(s)
+        })
+        .collect();
+    let (own_slots, own_aligned, own_unaligned) = align_own(&splits, reserved_from);
+    let chromosomes = splits
+        .into_iter()
+        .zip(own_slots)
+        .enumerate()
+        .map(|(i, (s, slots))| {
+            let s = s?;
+            let slots = slots?;
+            // Every own reference renumbered: head and definitions.
+            let renamed = |t: &Tree| rename_own(t, &slots, reserved_from);
+            let head = renamed(&s.head);
+            let mut tail: Vec<Option<Tree>> = vec![None; tail_slots];
+            for (j, def) in s.tail.iter().enumerate() {
+                tail[slots[j]] = Some(renamed(def));
+            }
             for (d, def) in shared.iter().zip(&defs) {
                 // Only the individuals that reference the slot hold the definition.
-                if karva_text(&s.head).contains(&format!("(Var \"{}\")", href_name(d.slot))) || tail.iter().flatten().any(|t| karva_text(t).contains(&format!("(Var \"{}\")", href_name(d.slot)))) {
+                if karva_text(&head).contains(&format!("(Var \"{}\")", href_name(d.slot))) || tail.iter().flatten().any(|t| karva_text(t).contains(&format!("(Var \"{}\")", href_name(d.slot)))) {
                     tail[d.slot] = Some(def.clone());
                 }
             }
-            encode_folded(&s.head, &tail, head_length, rng_seed.wrapping_add(i as u64))
+            encode_folded(&head, &tail, head_length, rng_seed.wrapping_add(i as u64))
         })
         .collect();
-    PopulationFold { chromosomes, shared, distinct_subtrees, occurrences, repeated_occurrences }
+    PopulationFold { chromosomes, shared, distinct_subtrees, occurrences, repeated_occurrences, own_aligned, own_unaligned }
+}
+
+/// `t` with every reference to an own slot (below `reserved_from`) moved
+/// to its new slot.
+fn rename_own(t: &Tree, slots: &[usize], reserved_from: usize) -> Tree {
+    if let Some(j) = href_slot(&t.name).filter(|j| t.kids.is_empty() && *j < reserved_from) {
+        if let Some(&n) = slots.get(j) {
+            return Tree { name: href_name(n), ty: t.ty, konst: t.konst, kids: Vec::new() };
+        }
+    }
+    Tree { name: t.name.clone(), ty: t.ty, konst: t.konst, kids: t.kids.iter().map(|k| rename_own(k, slots, reserved_from)).collect() }
+}
+
+/// Per individual, the new slot of each own definition, or why they no longer fit.
+type OwnSlots = Result<Vec<usize>, String>;
+
+/// SLOT ALIGNMENT of the individuals' own definitions (2026-10-13, the
+/// engine's Karva crossovers swap genes by position, and each kernel
+/// numbered its own definitions from 0: slot N of two kernels were
+/// unrelated, and a crossover gave a head a reference to a definition of
+/// another dual, a fallback). A definition is keyed by its content, its own
+/// references expanded; the keys are placed in order of reference depth,
+/// then by how many individuals hold them, each at the lowest slot above
+/// its references that is free in every holder, the same slot in all of
+/// them; a key with no such slot is placed in each holder at the lowest
+/// free slot above its references there. Per individual, the new slot of
+/// each old one (or why its definitions no longer fit), and the counts of
+/// keys held by two or more individuals aligned and not.
+fn align_own(splits: &[Result<SafeSplit, String>], reserved_from: usize) -> (Vec<OwnSlots>, usize, usize) {
+    // Each individual's own definitions as content keys, and their references.
+    fn expand(t: &Tree, tail: &[Tree], reserved_from: usize) -> Tree {
+        if let Some(j) = href_slot(&t.name).filter(|j| t.kids.is_empty() && *j < reserved_from) {
+            if let Some(def) = tail.get(j) {
+                return Tree { name: "@def".into(), ty: t.ty, konst: 0.0, kids: vec![expand(def, tail, reserved_from)] };
+            }
+        }
+        Tree { name: t.name.clone(), ty: t.ty, konst: t.konst, kids: t.kids.iter().map(|k| expand(k, tail, reserved_from)).collect() }
+    }
+    fn refs(t: &Tree, reserved_from: usize, out: &mut BTreeSet<usize>) {
+        if let Some(j) = href_slot(&t.name).filter(|j| t.kids.is_empty() && *j < reserved_from) {
+            out.insert(j);
+        }
+        t.kids.iter().for_each(|k| refs(k, reserved_from, out));
+    }
+    let mut keys: Vec<Vec<String>> = Vec::new();
+    let mut deps: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    let mut holders: BTreeMap<String, BTreeSet<usize>> = BTreeMap::new();
+    for (i, s) in splits.iter().enumerate() {
+        let Ok(s) = s else {
+            keys.push(Vec::new());
+            continue;
+        };
+        let k: Vec<String> = s.tail.iter().map(|d| karva_text(&expand(d, &s.tail, reserved_from))).collect();
+        for (j, d) in s.tail.iter().enumerate() {
+            let mut r = BTreeSet::new();
+            refs(d, reserved_from, &mut r);
+            deps.entry(k[j].clone()).or_default().extend(r.into_iter().filter_map(|x| k.get(x).cloned()));
+            holders.entry(k[j].clone()).or_default().insert(i);
+        }
+        keys.push(k);
+    }
+    // Reference depth: a key above every key it references.
+    fn depth(k: &str, deps: &BTreeMap<String, BTreeSet<String>>, memo: &mut BTreeMap<String, usize>) -> usize {
+        if let Some(&d) = memo.get(k) {
+            return d;
+        }
+        let d = deps.get(k).map_or(0, |ds| ds.iter().map(|x| 1 + depth(x, deps, memo)).max().unwrap_or(0));
+        memo.insert(k.to_string(), d);
+        d
+    }
+    let mut memo = BTreeMap::new();
+    let mut order: Vec<(usize, usize, String)> = holders.iter().map(|(k, h)| (depth(k, &deps, &mut memo), h.len(), k.clone())).collect();
+    order.sort_by(|a, b| a.0.cmp(&b.0).then(b.1.cmp(&a.1)).then(a.2.cmp(&b.2)));
+    let n = splits.len();
+    let mut occupied: Vec<BTreeSet<usize>> = vec![BTreeSet::new(); n];
+    let mut slot_in: Vec<BTreeMap<String, usize>> = vec![BTreeMap::new(); n];
+    let mut failed: Vec<Option<String>> = vec![None; n];
+    let (mut aligned, mut unaligned) = (0usize, 0usize);
+    for (_, _, k) in &order {
+        let hs: Vec<usize> = holders[k].iter().copied().filter(|h| failed[*h].is_none()).collect();
+        // Each holder's lowest slot above this key's references there.
+        let los: Vec<usize> = hs.iter().map(|&h| deps.get(k).map_or(0, |ds| ds.iter().filter_map(|d| slot_in[h].get(d)).map(|s| s + 1).max().unwrap_or(0))).collect();
+        let common_lo = los.iter().copied().max().unwrap_or(0);
+        let common = (common_lo..reserved_from).find(|s| hs.iter().all(|&h| !occupied[h].contains(s)));
+        match common {
+            Some(s) => {
+                for &h in &hs {
+                    occupied[h].insert(s);
+                    slot_in[h].insert(k.clone(), s);
+                }
+                aligned += usize::from(hs.len() >= 2);
+            }
+            None => {
+                unaligned += usize::from(hs.len() >= 2);
+                for (&h, &lo) in hs.iter().zip(&los) {
+                    match (lo..reserved_from).find(|s| !occupied[h].contains(s)) {
+                        Some(s) => {
+                            occupied[h].insert(s);
+                            slot_in[h].insert(k.clone(), s);
+                        }
+                        None => failed[h] = Some(format!("individual {h}: its own definitions do not fit below the shared band once aligned")),
+                    }
+                }
+            }
+        }
+    }
+    let out = (0..n)
+        .map(|i| match (&splits[i], &failed[i]) {
+            (Err(e), _) => Err(e.clone()),
+            (_, Some(e)) => Err(e.clone()),
+            (Ok(_), None) => keys[i].iter().map(|k| slot_in[i].get(k).copied().ok_or_else(|| format!("our software has a bug: individual {i}'s definition has no slot"))).collect(),
+        })
+        .collect();
+    (out, aligned, unaligned)
 }
 
 /// The live token count of a gene: the GEP decode walk's reach.
@@ -1064,6 +1198,10 @@ mod tests {
             assert_eq!(fb, 0);
             assert_eq!(r.text, direct[i], "individual {i} rebuilds to its own text after the fold");
         }
+        // Own definitions several kernels hold sit at one slot in each (the
+        // engine's crossovers then swap like with like).
+        println!("own definitions held by two or more kernels: {} at one common slot, {} not", f.own_aligned, f.own_unaligned);
+        assert!(f.own_aligned > 0 && f.own_aligned >= f.own_unaligned);
         // The first component sits at the same slot in every carrier.
         let d = &f.shared[0];
         let carriers = f.chromosomes.iter().filter(|c| c.as_ref().is_ok_and(|c| c.folded.tail[d.slot] == d.text)).count();
