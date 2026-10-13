@@ -39,14 +39,17 @@
 //!    any literal (a dual with no literal row keeps its fallback).
 //! 6. A workgroup reduction's count. The emitter rounds it down to a power
 //!    of two, and one of 1 writes only its barrier: a barrier.
-//! 7. Then the parameters, as the parser assigns them ([`params::assign`]):
+//! 7. A thread's origin. The emitter writes `gid.x * bx`, `wid.x * W bx +
+//!    lid.x` from the grid: the builtins and block factor the row carries
+//!    are not written, the grid's are.
+//! 8. Then the parameters, as the parser assigns them ([`params::assign`]):
 //!    every literal whose value a knob writes exactly, a reference to that
 //!    knob, the tile depth declared on the grid when one is referenced.
 
 use crate::wgsl::loader::WgslKingdom;
 use crate::geneframe::Ty;
 use crate::wgsl::params;
-use crate::wgsl::render::{array_len, dual_ty, grid_of, snap, wgmem_var, workgroup_dim, workgroup_plan, workgroup_shape, Tree, BLK, UNROLL};
+use crate::wgsl::render::{array_len, dual_ty, grid_of, parr_var, snap, wgmem_var, workgroup_dim, workgroup_plan, workgroup_shape, Tree, BLK, UNROLL};
 
 /// The rung suffix of a row name (`_L1`, `_C2`, `_O0`, ...), if it has one.
 fn rung_of(name: &str) -> Option<&str> {
@@ -262,6 +265,22 @@ fn canonical_grid(grid: &Tree, root: &Tree, kingdom: &WgslKingdom) -> Option<Tre
     Some(Tree::new("grid.with_wg", gt, vec![base, list?]))
 }
 
+/// Rule 7: every thread origin in `t` as the grid writes it.
+fn origins(t: &Tree, g: &crate::wgsl::render::Grid) -> Tree {
+    let kids: Vec<Tree> = t.kids.iter().map(|k| origins(k, g)).collect();
+    let b = |name: &str, k: &Tree| Tree::new(name, k.ty, vec![]);
+    let blk = |k: &Tree, v: u32| Tree::literal("literal.blk", k.ty, v as f32);
+    let (row, by, bx) = (t.name.contains("_row"), g.by, g.bx);
+    let f = if row { by } else { bx };
+    let kids = match (t.name.as_str(), kids.as_slice()) {
+        ("safe.thread_row" | "safe.thread_col", [gid, k]) => vec![b("builtin.global_invocation_id", gid), blk(k, f)],
+        ("safe.thread_row_s" | "safe.thread_col_s", [wid, lid, k]) => vec![b("builtin.workgroup_id", wid), b("builtin.local_invocation_id", lid), blk(k, f)],
+        ("safe.thread_row_g" | "safe.thread_col_g", [wid, lid, k, n]) => vec![b("builtin.workgroup_id", wid), b("builtin.local_invocation_id", lid), blk(k, f), n.clone()],
+        _ => kids,
+    };
+    Tree { kids, ..t.clone() }
+}
+
 /// The canonical spelling of `t` (see the module header for the rules).
 pub fn canonical(t: &Tree, kingdom: &WgslKingdom) -> Tree {
     // Knob references first, at the drawn grid's knobs (rule 4).
@@ -290,6 +309,11 @@ fn structural(t: &Tree, kingdom: &WgslKingdom) -> Tree {
             let root = Tree { kids, ..split };
             let grid = canonical_grid(&root.kids[0], &root, kingdom).unwrap_or_else(|| root.kids[0].clone());
             let mut kids = root.kids.clone();
+            if let Ok(g) = grid_of(&grid) {
+                for k in kids.iter_mut().skip(1) {
+                    *k = origins(k, &g);
+                }
+            }
             kids[0] = grid;
             return Tree { kids, ..root };
         }
@@ -300,8 +324,40 @@ fn structural(t: &Tree, kingdom: &WgslKingdom) -> Tree {
 /// Rule 5: a fallback value leaf as the parser reads the zero written for it.
 fn canonical_fallback(t: &Tree, kingdom: &WgslKingdom) -> Option<Tree> {
     let d = kingdom.dual(t.ty)?;
+    let ty = |n: &str| dual_ty(kingdom, n).ok();
+    let gid = || -> Option<Tree> { Some(Tree::new("builtin.global_invocation_id", ty("vec3<u32>.gid")?, vec![])) };
+    let blk = || -> Option<Tree> { Some(Tree::literal("literal.blk", ty("u32.blk")?, 1.0)) };
+    let origin = |name: &str, dual: &str| -> Option<Tree> {
+        let kids = if name.ends_with("_s") { vec![Tree::new("builtin.workgroup_id", ty("vec3<u32>.wid")?, vec![]), Tree::new("builtin.local_invocation_id", ty("vec3<u32>.lid")?, vec![]), blk()?] } else { vec![gid()?, blk()?] };
+        Some(Tree::new(name, ty(dual)?, kids))
+    };
+    let cell = || -> Option<Tree> { Some(Tree::new("safe.cell_of", ty("u32.cell")?, vec![origin("safe.thread_row", "u32.threadrow")?, origin("safe.thread_col", "u32.threadcol")?])) };
+    // An epilogue block: the store of f0 to the thread's first cell.
+    if let Some(level) = d.dual.strip_prefix("block.O") {
+        let f0 = Tree::new("reg.get_f", ty("f32.real")?, vec![Tree::new("reg.f0", ty("reg<f32>.real")?, vec![])]);
+        let store = Tree::new(&format!("store.h_O{level}"), ty(&format!("stmt.O{level}"))?, vec![cell()?, f0]);
+        return Some(Tree::new(&format!("block.one_O{level}"), t.ty, vec![store]));
+    }
     if d.is_statement_level() {
         return None;
+    }
+    // A thread's origin or cell: the thread's own (the emitter's own_fallback).
+    match d.dual.as_str() {
+        "u32.threadrow" | "u32.rowbase" => return origin("safe.thread_row", "u32.threadrow"),
+        "u32.threadcol" | "u32.colbase" => return origin("safe.thread_col", "u32.threadcol"),
+        "u32.threadrows" | "u32.threadrowg" | "u32.rowbases" | "u32.rowbaseg" => return origin("safe.thread_row_s", "u32.threadrows"),
+        "u32.threadcols" | "u32.threadcolg" | "u32.colbases" | "u32.colbaseg" => return origin("safe.thread_col_s", "u32.threadcols"),
+        "u32.cell" => return cell(),
+        _ => {}
+    }
+    // An array: the one the emitter names for the dual.
+    if d.dual.starts_with("parr<") {
+        let name = format!("parr.{}", parr_var(kingdom, t).ok()?.strip_prefix('p')?);
+        return Some(Tree::new(&name, t.ty, vec![]));
+    }
+    if d.dual.starts_with("wgmem<") {
+        let name = format!("wg.{}", wgmem_var(kingdom, t).ok()?.strip_prefix("wg_")?);
+        return Some(Tree::new(&name, t.ty, vec![]));
     }
     let scalar = |s: &str| -> Option<Tree> {
         let (lit, dual) = match s {
@@ -330,7 +386,12 @@ fn canonical_fallback(t: &Tree, kingdom: &WgslKingdom) -> Option<Tree> {
         return None;
     };
     let per_kernel = crate::wgsl::safe_karva::per_kernel_rows(kingdom, &crate::wgsl::render::gram_role());
-    crate::wgsl::safe_karva::conform(&zero, t.ty, kingdom, &per_kernel).ok()
+    crate::wgsl::safe_karva::conform(&zero, t.ty, kingdom, &per_kernel).ok().filter(|z| z.name != "fallback").or_else(|| {
+        // A safe index (a workgroup or private array's): the zero through
+        // the safe row the parser reads it with (`safe.wga_of(0u)`).
+        let r = kingdom.rows.iter().find(|r| r.name.starts_with("safe.") && r.output == t.ty && r.inputs.as_slice() == [zero.ty])?;
+        Some(Tree::new(&r.name, t.ty, vec![zero]))
+    })
 }
 
 /// Rule 6 at a reduction (its children already canonical).

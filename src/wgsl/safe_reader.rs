@@ -2913,16 +2913,52 @@ impl<'a> Ctx<'a> {
     /// of that store's cell: `row < cfg.r_rows && col < cfg.d && cfg.r_off +
     /// row < cfg.d` over the row and column of `h[row * cfg.d + col]`.
     fn is_own_guard(&mut self, c: &Tree, accept: &naga::Block, reject: &naga::Block, here: &[usize]) -> Result<bool, String> {
-        let stmts: Vec<&Statement> = accept.iter().filter(|s| !matches!(s, Statement::Emit(_))).collect();
-        if stmts.len() != 1 || !matches!(stmts[0], Statement::Store { .. }) || reject.iter().any(|s| !matches!(s, Statement::Emit(_))) {
+        // One store, after the calls and subgroup operations its value reads
+        // (naga writes each as a statement of its own: the kingdom's helpers,
+        // lit_f32 and the rest, and a subgroup operation; the emitter writes
+        // the store's value inside the guard, and the parser reads a result
+        // one statement reads inline in it, so it stays there), and the
+        // `return` naga writes at the end of a kernel's last branch
+        // (2026-10-13, AST to AST: 170 of 1,000 random trees).
+        let mut stmts: Vec<&Statement> = accept.iter().filter(|s| !matches!(s, Statement::Emit(_))).collect();
+        if matches!(stmts.last(), Some(Statement::Return { value: None })) {
+            stmts.pop();
+        }
+        let Some((last, before)) = stmts.split_last() else { return Ok(false) };
+        let read_inline = |s: &Statement| matches!(s, Statement::Call { result: Some(_), .. } | Statement::SubgroupCollectiveOperation { .. } | Statement::SubgroupBallot { .. } | Statement::SubgroupGather { .. });
+        // (The else branch empty, or only that `return`.)
+        let reject_empty = reject.iter().all(|s| matches!(s, Statement::Emit(_) | Statement::Return { value: None }));
+        if !matches!(last, Statement::Store { .. }) || !before.iter().all(|s| read_inline(s)) || !reject_empty {
             return Ok(false);
         }
         let mut p = here.to_vec();
         p.push(0);
-        p.push(0);
+        p.push(before.len());
         let Some(root) = self.root_at(&p, |k| matches!(k, RootKind::Store { .. })) else { return Ok(false) };
         let Node::App { name, kids, .. } = &root.tree else { return Ok(false) };
         if !name.starts_with("store.buffer.h.#") || kids.len() != 2 {
+            return Ok(false);
+        }
+        // A cell that reads a result made inside the guard (a subgroup
+        // operation's, or a call's over one) is not the cell the guard tests
+        // (naga made it again there): an if.
+        let collective = before.iter().any(|s| matches!(s, Statement::SubgroupCollectiveOperation { .. } | Statement::SubgroupBallot { .. } | Statement::SubgroupGather { .. }));
+        let inside: Vec<usize> = before
+            .iter()
+            .filter_map(|s| match s {
+                Statement::SubgroupCollectiveOperation { result, .. } | Statement::SubgroupGather { result, .. } | Statement::SubgroupBallot { result, .. } => Some(result.index()),
+                Statement::Call { result: Some(r), .. } => Some(r.index()),
+                _ => None,
+            })
+            .collect();
+        fn mentions(n: &Node, inside: &[usize]) -> bool {
+            match n {
+                Node::Leaf { name, .. } => (name.starts_with("subgroup@") || name.starts_with("call.")) && name.rsplit_once('@').and_then(|(_, i)| i.parse::<usize>().ok()).is_some_and(|i| inside.contains(&i)),
+                Node::Literal { .. } => false,
+                Node::App { kids, .. } => kids.iter().any(|k| mentions(k, inside)),
+            }
+        }
+        if collective && mentions(&kids[0], &inside) {
             return Ok(false);
         }
         let idx = tree_of(self, &kids[0])?;
@@ -5555,9 +5591,9 @@ mod tests {
     /// read. Every tree reads back (1,000 of 1,000, asserted exactly).
     /// (110 before a negated matrix was written as a product: the one random
     /// tree holding one now reads back as the product, a different text.)
-    const READ_BACK_FLOOR: usize = 132;
-    const FIXPOINT_FLOOR: usize = 563;
-    const AST_FLOOR: usize = 119;
+    const READ_BACK_FLOOR: usize = 134;
+    const FIXPOINT_FLOOR: usize = 680;
+    const AST_FLOOR: usize = 123;
 
 
     /// THE KINGDOM'S COMPLETENESS BAR (2026-10-12): 1,000 random trees of
@@ -5617,7 +5653,7 @@ mod tests {
                             keys.sort();
                             keys.dedup();
                             for key in keys {
-                                println!("ALL {key}");
+                                println!("ALL {key} @{seed}");
                             }
                         }
                         let key: String = d.chars().map(|c| if c.is_ascii_digit() { 'N' } else { c }).take(140).collect();

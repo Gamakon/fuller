@@ -2668,8 +2668,7 @@ pub(crate) fn all_differences(a: &Tree, b: &Tree) -> Vec<String> {
                 return;
             }
         }
-        let show = |t: &Tree| if t.name.starts_with("literal.") { t.name.clone() } else { t.name.clone() };
-        out.push(format!("{parent}: {} / {}", show(a), show(b)));
+        out.push(format!("{parent}: {} / {}", a.name, b.name));
     }
     let mut out = Vec::new();
     at(a, b, "root", &mut out);
