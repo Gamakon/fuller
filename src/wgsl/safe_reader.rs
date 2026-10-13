@@ -5694,7 +5694,7 @@ mod tests {
     /// reached so far: to a fixpoint after the first read, and to the AST
     /// drawn (canonical). Every tree reads back (1,000 of 1,000, asserted
     /// exactly). Their own text is printed, not a bar (Andrew, 2026-10-13).
-    const FIXPOINT_FLOOR: usize = 928;
+    const FIXPOINT_FLOOR: usize = 930;
     const AST_FLOOR: usize = 123;
 
 

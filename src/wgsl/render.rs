@@ -1844,7 +1844,14 @@ impl Renderer<'_> {
         // and x / max(0u, 1u) is x too, so the value is the same everywhere.
         if name == "index.div" && a.len() == 2 && !v.kids.get(1).is_some_and(|k| k.name.starts_with("literal.") && k.konst >= 1.0) {
             let one = if d.lanes > 1 { format!("vec{}<u32>(1u)", d.lanes) } else { "1u".to_string() };
-            return Ok(format!("({} / max({}, {one}))", a[0], a[1]));
+            // (A divisor of literal 0 through lit_*: naga folds max(0u, 1u)
+            // to 1u, read back as a division by 1, 2026-10-13. Any other
+            // literal folds to itself, read back the same.)
+            fn zero(t: &Tree) -> bool {
+                (t.kids.is_empty() && t.name.starts_with("literal.") && t.konst == 0.0) || (t.kids.len() == 1 && !t.name.starts_with("literal.") && zero(&t.kids[0]))
+            }
+            let b = if zero(&v.kids[1]) { self.unfolded(&v.kids[1], scope)? } else { a[1].clone() };
+            return Ok(format!("({} / max({b}, {one}))", a[0]));
         }
         // A run-time vector component: a helper copies the value into a `var`
         // and indexes it, which naga allows; the index is masked to the lanes.
