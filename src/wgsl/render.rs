@@ -1486,7 +1486,16 @@ impl Renderer<'_> {
 
     /// A value expression, parenthesised where an operator could bind.
     fn value(&self, v: &Tree, scope: &mut Scope) -> Result<String, String> {
-        if scope.const_depth == 0 && !v.kids.is_empty() && const_fragile(&v.name) && literal_only(v) {
+        // Any expression of literals only writes them through lit_*, so naga
+        // folds none of it (2026-10-13, AST to AST: a loop bound, a
+        // comparison, a select or an access of literals was folded to a
+        // literal, and read back as another row; 135 of 1,000 random trees).
+        // The exceptions: a constructor of literals (naga folds it to a
+        // constant the reader reads back as the same splat or compose), and
+        // a row written as its one child (`uniform.of_lit` is its literal).
+        let constructor = v.name.starts_with("shape.splat") || v.name.starts_with("shape.compose");
+        let as_child = matches!(v.name.as_str(), "uniform.of_lit" | "index.of_uniform" | "uniform.of_counter" | "uniform.of_tcounter" | "uniform.of_tcounter2" | "uniform.of_tcounter3" | "uniform.of_tcounter4");
+        if scope.const_depth == 0 && !v.kids.is_empty() && !constructor && !as_child && literal_only(v) {
             scope.const_depth = 1;
             let out = self.value_inner(v, scope);
             scope.const_depth = 0;
@@ -2054,7 +2063,9 @@ impl Renderer<'_> {
             return Err(format!("a {} fallback where a value is needed", d.dual));
         }
         // The zero-value constructor for a vector or matrix; a scalar through
-        // lit_* only inside a literal-only expression.
+        // lit_* only inside a literal-only expression. An i32 zero is the
+        // concrete `0i`, as a literal is written (an abstract `0` read back
+        // as another value than the literal 0i wrote; 2026-10-13).
         let f = |x: String, lit: &str| if wrap { format!("{lit}({x})") } else { x };
         if d.slot.starts_with("vec") || d.slot.starts_with("mat") {
             if d.scalar() == Some("f16") {
@@ -2062,7 +2073,7 @@ impl Renderer<'_> {
             }
             let lane = match d.scalar() {
                 Some("f32") => f("0.0f".to_string(), "lit_f32"),
-                Some("i32") => f("0".to_string(), "lit_i32"),
+                Some("i32") => f("0i".to_string(), "lit_i32"),
                 Some("u32") => f(format!("{}u", d.fallback_bits), "lit_u32"),
                 Some("bool") => f((d.fallback_bits != 0).to_string(), "lit_bool"),
                 _ => return Err(format!("{}: no value fallback", d.dual)),
@@ -2076,7 +2087,7 @@ impl Renderer<'_> {
         Ok(match d.scalar() {
             Some("f32") => f("0.0f".to_string(), "lit_f32"),
             Some("f16") => return Err("f16 fallback: the prologue does not enable f16".into()),
-            Some("i32") => f("0".to_string(), "lit_i32"),
+            Some("i32") => f("0i".to_string(), "lit_i32"),
             Some("u32") => f(format!("{}u", d.fallback_bits), "lit_u32"),
             Some("bool") => f((d.fallback_bits != 0).to_string(), "lit_bool"),
             _ => return Err(format!("{}: no value fallback", d.dual)),
@@ -2419,15 +2430,6 @@ pub fn parr_var(kingdom: &WgslKingdom, t: &Tree) -> Result<&'static str, String>
         return Ok(if d.starts_with("parr<vec2") { "pq" } else if d.starts_with("parr<vec") { "pv" } else if d.starts_with("parr<u32>") { "pi" } else if d.starts_with("parr<bool>") { "pm" } else { "pa" });
     }
     parr_name(t)
-}
-
-/// Whether a row is an operation naga's constant evaluator can refuse on
-/// literal operands (arithmetic, conversions, bit operations, hashes), or
-/// an array index naga would bounds-check as a constant (the `safe.` masks:
-/// a random kernel may mask a literal 22 to 63 on an array of 16), as
-/// opposed to a compose, a select or a comparison.
-fn const_fragile(name: &str) -> bool {
-    ["arith.", "trig.", "geom.", "index.", "count.", "int.", "fixed.", "convert.", "quantise.", "bits.", "hash.", "safe."].iter().any(|p| name.starts_with(p))
 }
 
 /// Whether every leaf of `t` is a literal or a fallback (a constant expression to naga).

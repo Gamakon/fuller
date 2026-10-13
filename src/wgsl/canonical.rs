@@ -8,7 +8,8 @@
 //! not record:
 //!
 //! 1. A block's grouping. The emitter writes a nested block's statements in
-//!    place (no braces) and nothing after a `return`; the parser groups a
+//!    place (no braces), nothing for a statement's fallback and nothing
+//!    after a `return`; the parser groups a
 //!    statement list as one block of up to four, more than four as the
 //!    first three and a `stmt.block` of the rest.
 //! 2. The split between the body and the epilogue. The emitter writes the
@@ -42,7 +43,9 @@
 //! 7. A thread's origin. The emitter writes `gid.x * bx`, `wid.x * W bx +
 //!    lid.x` from the grid: the builtins and block factor the row carries
 //!    are not written, the grid's are.
-//! 8. Then the parameters, as the parser assigns them ([`params::assign`]):
+//! 8. A strided loop stepping by 1 is written as the loop that steps by 1;
+//!    a literal index bound (1 to 4,096) as the uniform literal it is.
+//! 9. Then the parameters, as the parser assigns them ([`params::assign`]):
 //!    every literal whose value a knob writes exactly, a reference to that
 //!    knob, the tile depth declared on the grid when one is referenced.
 
@@ -70,6 +73,10 @@ fn statements(block: &Tree, out: &mut Vec<Tree>) -> bool {
         return false;
     }
     for s in &block.kids {
+        // A statement's fallback writes nothing.
+        if s.name == "fallback" {
+            continue;
+        }
         let nested = s.name.starts_with("stmt.block_") && s.kids.len() == 1 && (is_plain_block(&s.kids[0].name) || s.kids[0].name == "fallback");
         if nested {
             if statements(&s.kids[0], out) {
@@ -408,8 +415,33 @@ fn canonical_reduction(t: &Tree, kingdom: &WgslKingdom) -> Option<Tree> {
     Some(Tree::new(&t.name, t.ty, vec![a.clone(), lit]))
 }
 
+/// Rule 8 at a strided tile loop (its children already canonical).
+fn canonical_stride(t: &Tree, kingdom: &WgslKingdom) -> Option<Tree> {
+    let (stem, rung) = t.name.rsplit_once('_').filter(|(_, r)| rung_of(&format!("x_{r}")).is_some())?;
+    let plain = stem.strip_suffix("_strided").filter(|s| matches!(*s, "loop.tile" | "loop.tilex"))?;
+    let [bound, step, body] = t.kids.as_slice() else { return None };
+    if step.name != "literal.lit64" || step.konst != 1.0 {
+        return None;
+    }
+    let name = format!("{plain}_{rung}");
+    kingdom.rows.iter().any(|r| r.name == name && r.output == t.ty).then(|| Tree::new(&name, t.ty, vec![bound.clone(), body.clone()]))
+}
+
+/// Rule 8 at a literal index bound.
+fn canonical_bound(t: &Tree, kingdom: &WgslKingdom) -> Option<Tree> {
+    let [x] = t.kids.as_slice() else { return None };
+    if t.name != "bound.of_index" || x.name != "literal.index" || !(1.0..=4096.0).contains(&x.konst) {
+        return None;
+    }
+    let u = Tree::new("uniform.of_lit", dual_ty(kingdom, "u32.uniform").ok()?, vec![Tree::literal("literal.lit4096", dual_ty(kingdom, "u32.lit4096").ok()?, x.konst)]);
+    kingdom.rows.iter().any(|r| r.name == "bound.x_of_uniform" && r.output == t.ty).then(|| Tree::new("bound.x_of_uniform", t.ty, vec![u]))
+}
+
 /// Rule 1 at `t` itself (its children already canonical).
 fn canonical_block(t: &Tree, kingdom: &WgslKingdom) -> Tree {
+    if let Some(r) = canonical_stride(t, kingdom).or_else(|| canonical_bound(t, kingdom)) {
+        return r;
+    }
     if let Some(r) = canonical_reduction(t, kingdom) {
         return r;
     }

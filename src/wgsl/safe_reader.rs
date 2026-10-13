@@ -5587,12 +5587,10 @@ mod tests {
     }
 
     /// The counts of [`random_sampler_trees_read_back_to_their_own_text`]
-    /// reached so far: to their own text, and to a fixpoint after the first
-    /// read. Every tree reads back (1,000 of 1,000, asserted exactly).
-    /// (110 before a negated matrix was written as a product: the one random
-    /// tree holding one now reads back as the product, a different text.)
-    const READ_BACK_FLOOR: usize = 134;
-    const FIXPOINT_FLOOR: usize = 680;
+    /// reached so far: to a fixpoint after the first read, and to the AST
+    /// drawn (canonical). Every tree reads back (1,000 of 1,000, asserted
+    /// exactly). Their own text is printed, not a bar (Andrew, 2026-10-13).
+    const FIXPOINT_FLOOR: usize = 701;
     const AST_FLOOR: usize = 123;
 
 
@@ -5660,8 +5658,15 @@ mod tests {
                         by_ast.entry(key).or_insert((0, seed)).0 += 1;
                     }
                 }
-                if read_safe(&again, &k).ok().and_then(|b| crate::wgsl::safe_karva::render_tree(&b.tree, &k).ok()).is_some_and(|r| r.text == again) {
+                let third = read_safe(&again, &k).map_err(|e| e.chars().take(200).collect::<String>()).and_then(|b| crate::wgsl::safe_karva::render_tree(&b.tree, &k).map(|r| r.text));
+                if third.as_ref().is_ok_and(|r| *r == again) {
                     fixpoint += 1;
+                } else if std::env::var_os("ROUNDTRIP_FIXPOINT").is_some() {
+                    let why = match &third {
+                        Err(e) => format!("read again: {e}"),
+                        Ok(r) => r.lines().zip(again.lines()).find(|(a, b)| a != b).map(|(a, b)| format!("{} / {}", b.trim().chars().take(90).collect::<String>(), a.trim().chars().take(90).collect::<String>())).unwrap_or_else(|| "length".into()),
+                    };
+                    println!("FIX seed {seed}: {why}");
                 }
                 if again != text {
                     // The first differing statement (declarations and helpers set aside), as drawn.
@@ -5706,7 +5711,6 @@ mod tests {
         }
         // A ratchet while the groups are fixed one commit at a time (2026-10-12):
         // the count only rises, to 1,000 of 1,000.
-        assert!(passed >= READ_BACK_FLOOR, "random trees that read back to their own text: {passed}, fewer than the {READ_BACK_FLOOR} already reached");
         assert_eq!(read_back as u64, n, "random trees that read back: {read_back} of {n}");
         assert!(ast_equal >= AST_FLOOR, "random trees that parse back to the AST drawn: {ast_equal}, fewer than the {AST_FLOOR} already reached");
         assert!(fixpoint >= FIXPOINT_FLOOR, "random trees that read back to a fixpoint: {fixpoint}, fewer than the {FIXPOINT_FLOOR} already reached");
