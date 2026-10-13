@@ -2988,18 +2988,18 @@ impl<'a> Ctx<'a> {
         if !name.starts_with("store.buffer.h.#") || kids.len() != 2 {
             return Ok(false);
         }
-        // A cell that reads a result made inside the guard (a subgroup
-        // operation's, or a call's over one) is not the cell the guard tests
-        // (naga made it again there): an if.
-        let collective = before.iter().any(|s| matches!(s, Statement::SubgroupCollectiveOperation { .. } | Statement::SubgroupBallot { .. } | Statement::SubgroupGather { .. }));
-        let inside: Vec<usize> = before
-            .iter()
-            .filter_map(|s| match s {
-                Statement::SubgroupCollectiveOperation { result, .. } | Statement::SubgroupGather { result, .. } | Statement::SubgroupBallot { result, .. } => Some(result.index()),
-                Statement::Call { result: Some(r), .. } => Some(r.index()),
-                _ => None,
-            })
-            .collect();
+        // A cell that reads a subgroup result made inside the guard (or a
+        // call made there over one, as an argument) is not the cell the
+        // guard tests (naga made it again there): an if. Calls over other
+        // values are pure and read the same inside as before.
+        let mut inside: Vec<usize> = Vec::new();
+        for s in before {
+            match s {
+                Statement::SubgroupCollectiveOperation { result, .. } | Statement::SubgroupGather { result, .. } | Statement::SubgroupBallot { result, .. } => inside.push(result.index()),
+                Statement::Call { result: Some(r), arguments, .. } if arguments.iter().any(|a| inside.contains(&a.index())) => inside.push(r.index()),
+                _ => {}
+            }
+        }
         fn mentions(n: &Node, inside: &[usize]) -> bool {
             match n {
                 Node::Leaf { name, .. } => (name.starts_with("subgroup@") || name.starts_with("call.")) && name.rsplit_once('@').and_then(|(_, i)| i.parse::<usize>().ok()).is_some_and(|i| inside.contains(&i)),
@@ -3007,7 +3007,7 @@ impl<'a> Ctx<'a> {
                 Node::App { kids, .. } => kids.iter().any(|k| mentions(k, inside)),
             }
         }
-        if collective && mentions(&kids[0], &inside) {
+        if mentions(&kids[0], &inside) {
             return Ok(false);
         }
         let idx = tree_of(self, &kids[0])?;
@@ -5676,7 +5676,7 @@ mod tests {
     /// reached so far: to a fixpoint after the first read, and to the AST
     /// drawn (canonical). Every tree reads back (1,000 of 1,000, asserted
     /// exactly). Their own text is printed, not a bar (Andrew, 2026-10-13).
-    const FIXPOINT_FLOOR: usize = 750;
+    const FIXPOINT_FLOOR: usize = 753;
     const AST_FLOOR: usize = 123;
 
 
