@@ -26,10 +26,25 @@ pub enum Rewrite {
     SwapAdjacent,
     WrapUnary,
     UnwrapUnary,
+    LoopEnd,
+    InsertAccumulate,
 }
 
 impl Rewrite {
-    pub const ALL: [Rewrite; 10] = [Rewrite::SwapOperands, Rewrite::SwapLeaves, Rewrite::IndexLiteral, Rewrite::ReplaceLeaf, Rewrite::SwapOp, Rewrite::DeleteStatement, Rewrite::DuplicateStatement, Rewrite::SwapAdjacent, Rewrite::WrapUnary, Rewrite::UnwrapUnary];
+    pub const ALL: [Rewrite; 12] = [
+        Rewrite::SwapOperands,
+        Rewrite::SwapLeaves,
+        Rewrite::IndexLiteral,
+        Rewrite::ReplaceLeaf,
+        Rewrite::SwapOp,
+        Rewrite::DeleteStatement,
+        Rewrite::DuplicateStatement,
+        Rewrite::SwapAdjacent,
+        Rewrite::WrapUnary,
+        Rewrite::UnwrapUnary,
+        Rewrite::LoopEnd,
+        Rewrite::InsertAccumulate,
+    ];
 
     pub fn name(self) -> &'static str {
         match self {
@@ -43,6 +58,8 @@ impl Rewrite {
             Rewrite::SwapAdjacent => "swap-adjacent",
             Rewrite::WrapUnary => "wrap-unary",
             Rewrite::UnwrapUnary => "unwrap-unary",
+            Rewrite::LoopEnd => "loop-end",
+            Rewrite::InsertAccumulate => "insert-accumulate",
         }
     }
 }
@@ -123,14 +140,52 @@ pub fn apply(rw: Rewrite, root: &Tree, kingdom: &WgslKingdom, rng: &mut u64) -> 
                 (format!("{} <-> {}", la.name, lb.name), replace_at(&replace_at(root, &a, lb.clone()), &b, la.clone()))
             })
         }
-        // An integer literal of an index dual: plus or minus one.
+        // An integer literal of an index dual: plus or minus one or two.
         Rewrite::IndexLiteral => {
             let index = crate::wgsl::render::dual_ty(kingdom, "u32.index")?;
-            pick(&matches(root, &|n| n.kids.is_empty() && n.name.starts_with("literal.") && n.ty == index), rng).map(|p| {
+            pick(&matches(root, &|n| n.kids.is_empty() && n.name.starts_with("literal.") && n.ty == index), rng).and_then(|p| {
                 let n = at(root, &p);
-                let v = if n.konst >= 1.0 && next(rng).is_multiple_of(2) { n.konst - 1.0 } else { n.konst + 1.0 };
-                (format!("{} {} -> {v}", n.name, n.konst), replace_at(root, &p, Tree { konst: v, ..n.clone() }))
+                let d = [-2.0f32, -1.0, 1.0, 2.0][(next(rng) % 4) as usize];
+                let v = n.konst + d;
+                (v >= 0.0).then(|| (format!("{} {} -> {v}", n.name, n.konst), replace_at(root, &p, Tree { konst: v, ..n.clone() })))
             })
+        }
+        // A counted loop's trip count (its first child, a literal) plus or minus one.
+        Rewrite::LoopEnd => pick(&matches(root, &|n| n.name.starts_with("loop.") && n.kids.len() >= 2 && n.kids[0].kids.is_empty() && n.kids[0].name.starts_with("literal.") && n.kids[0].konst >= 1.0), rng).map(|p| {
+            let n = at(root, &p);
+            let c = &n.kids[0];
+            let v = if c.konst >= 2.0 && next(rng).is_multiple_of(2) { c.konst - 1.0 } else { c.konst + 1.0 };
+            let mut kids = n.kids.clone();
+            kids[0] = Tree { konst: v, ..c.clone() };
+            (format!("{} count {} -> {v}", n.name, c.konst), replace_at(root, &p, Tree { name: n.name.clone(), ty: n.ty, konst: n.konst, kids }))
+        }),
+        // `r = r + a * b` after a statement: r a register leaf of the kernel
+        // whose dual has a setter at the statement's rung, a getter, an add
+        // and a multiply; a and b values of that dual in the statement.
+        Rewrite::InsertAccumulate => {
+            let stmts: Vec<_> = kernel_statements(root).into_iter().filter(|s| !s.tree.kids.iter().any(|k| k.name.starts_with("block."))).collect();
+            let Some(s) = pick(&stmts, rng) else { return Ok(None) };
+            let Some(r) = rung(&s.tree.name) else { return Ok(None) };
+            let regs = matches(root, &|n| is_variable(n) && n.name.starts_with("reg."));
+            let Some(rp) = pick(&regs, rng) else { return Ok(None) };
+            let reg = at(root, &rp).clone();
+            let suffix = format!("_{r}");
+            let Some(set) = kingdom.rows.iter().find(|x| x.name.starts_with("reg.set_") && x.name.ends_with(&suffix) && x.inputs.len() == 2 && x.inputs[0] == reg.ty) else { return Ok(None) };
+            let v = set.inputs[1];
+            let row = |pred: &dyn Fn(&crate::wgsl::loader::WgslRow) -> bool| kingdom.rows.iter().find(|x| pred(x)).map(|x| x.name.clone());
+            let (Some(get), Some(add), Some(mul)) = (
+                row(&|x| x.name.starts_with("reg.get") && x.inputs == [reg.ty] && x.output == v),
+                row(&|x| x.name.ends_with(".add") && x.inputs == [v, v] && x.output == v),
+                row(&|x| x.name.ends_with(".mul") && x.inputs == [v, v] && x.output == v),
+            ) else {
+                return Ok(None);
+            };
+            let values = matches(&s.tree, &|n| n.ty == v);
+            let (Some(a), Some(b)) = (pick(&values, rng), pick(&values, rng)) else { return Ok(None) };
+            let (a, b) = (at(&s.tree, &a).clone(), at(&s.tree, &b).clone());
+            let sum = Tree::new(&add, v, vec![Tree::new(&get, v, vec![reg.clone()]), Tree::new(&mul, v, vec![a, b])]);
+            let new = Tree::new(&set.name, set.output, vec![reg.clone(), sum]);
+            Some((format!("{} = {} + a * b after statement {}", reg.name, reg.name, s.index), replace_statement(root, s.index, vec![s.tree.clone(), new], kingdom)?))
         }
         // A variable leaf replaced by another terminal row of its dual.
         Rewrite::ReplaceLeaf => pick(&matches(root, &is_variable), rng).and_then(|p| {
