@@ -125,6 +125,14 @@ name = "wgsl_roundtrip"
 required-features = ["wgsl"]
 
 [[example]]
+name = "wgsl_cost_census"
+required-features = ["wgsl"]
+
+[[example]]
+name = "wgsl_msl"
+required-features = ["gpu", "wgsl"]
+
+[[example]]
 name = "wgsl_gram_evolve"
 required-features = ["gpu", "wgsl"]
 

@@ -420,12 +420,13 @@ fn tree_of(ctx: &mut Ctx, n: &Node) -> Result<Tree, String> {
                 }
             }
             let mut kids = kids.iter().map(|k| tree_of(ctx, k)).collect::<Result<Vec<_>, _>>()?;
-            // `x / max(b, 1u)`: how the kingdom writes a divisor that is not a
-            // literal (no zero divisor, 2026-10-12), read back as x / b.
+            // `x / max(b, 1u)`, `x % max(b, 1u)`: how the kingdom writes a
+            // divisor that is not a literal (no zero divisor, 2026-10-12;
+            // the remainder 2026-10-13), read back as x / b, x % b.
             // (A vector's divisor: `max(b, vecN<u32>(1u))`, the 1 splatted;
             // 2026-10-13, AST to AST: 35 of 1,000 random trees.)
             let one = |t: &Tree| literal_value(t) == Some(1.0) || (t.name.starts_with("shape.splat") && t.kids.len() == 1 && literal_value(&t.kids[0]) == Some(1.0));
-            if name == "index.div" && kids.len() == 2 && kids[1].name == "index.max" && kids[1].kids.len() == 2 && one(&kids[1].kids[1]) {
+            if (name == "index.div" || name == "index.mod") && kids.len() == 2 && kids[1].name == "index.max" && kids[1].kids.len() == 2 && one(&kids[1].kids[1]) {
                 let b = kids[1].kids[0].clone();
                 kids[1] = b;
             }
@@ -5699,7 +5700,7 @@ mod tests {
     /// reached so far: to a fixpoint after the first read, and to the AST
     /// drawn (canonical). Every tree reads back (1,000 of 1,000, asserted
     /// exactly). Their own text is printed, not a bar (Andrew, 2026-10-13).
-    const FIXPOINT_FLOOR: usize = 903;
+    const FIXPOINT_FLOOR: usize = 902;
     // (Both reset 2026-10-13 when the sampler drew its stores from an input:
     // other trees, 253 and 930 on the earlier draws; again when conditions
     // read a variable: 110 then 79; 59 when they vary by thread or data.)

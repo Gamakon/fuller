@@ -594,6 +594,12 @@ pub fn helper_row(helper: &str) -> Option<&'static str> {
     if helper.starts_with("outer_") {
         return Some("geom.outer");
     }
+    if helper.starts_with("int_div") {
+        return Some("int.div");
+    }
+    if helper.starts_with("int_mod") {
+        return Some("int.mod");
+    }
     None
 }
 
@@ -1842,7 +1848,10 @@ impl Renderer<'_> {
         // No zero divisor (2026-10-12, Codex's review): a divisor that is not
         // a literal of at least 1 is written max(b, 1u). WGSL's x / 0u is x,
         // and x / max(0u, 1u) is x too, so the value is the same everywhere.
-        if name == "index.div" && a.len() == 2 && !v.kids.get(1).is_some_and(|k| k.name.starts_with("literal.") && k.konst >= 1.0) {
+        // (The same for a u32 remainder, 2026-10-13: naga writes `%` to Metal
+        // raw, and Metal leaves x % 0 undefined; a random kernel's left the
+        // GPU running. WGSL's x % 0u is 0, and x % max(0u, 1u) is x % 1u, 0.)
+        if (name == "index.div" || name == "index.mod") && a.len() == 2 && !v.kids.get(1).is_some_and(|k| k.name.starts_with("literal.") && k.konst >= 1.0) {
             let one = if d.lanes > 1 { format!("vec{}<u32>(1u)", d.lanes) } else { "1u".to_string() };
             // (A divisor of literal 0 through lit_*: naga folds max(0u, 1u)
             // to 1u, read back as a division by 1, 2026-10-13. Any other
@@ -1851,7 +1860,17 @@ impl Renderer<'_> {
                 (t.kids.is_empty() && t.name.starts_with("literal.") && t.konst == 0.0) || (t.kids.len() == 1 && !t.name.starts_with("literal.") && zero(&t.kids[0]))
             }
             let b = if zero(&v.kids[1]) { self.unfolded(&v.kids[1], scope)? } else { a[1].clone() };
-            return Ok(format!("({} / max({b}, {one}))", a[0]));
+            let op = if name == "index.div" { "/" } else { "%" };
+            return Ok(format!("({} {op} max({b}, {one}))", a[0]));
+        }
+        // An i32 division or remainder whose divisor is not a literal other
+        // than 0 and -1: a kingdom helper with WGSL's value where Metal has
+        // none (x / 0 is x, x % 0 is 0, i32::MIN / -1 is i32::MIN, i32::MIN
+        // % -1 is 0), each operand evaluated once.
+        if (name == "int.div" || name == "int.mod") && a.len() == 2 && !v.kids.get(1).is_some_and(|k| k.name.starts_with("literal.") && k.konst != 0.0 && k.konst != -1.0) {
+            let helper = format!("{}{}", if name == "int.div" { "int_div" } else { "int_mod" }, if d.lanes > 1 { d.lanes.to_string() } else { String::new() });
+            scope.helpers.push(helper.clone());
+            return Ok(format!("{helper}({}, {})", a[0], a[1]));
         }
         // A run-time vector component: a helper copies the value into a `var`
         // and indexes it, which naga allows; the index is masked to the lanes.
@@ -2556,6 +2575,16 @@ fn slot_ctor(slot: &str) -> Result<String, String> {
 /// a one-line expression. Q15.16 arithmetic is on 32-bit two's complement
 /// with explicit saturation; the 64-bit products use 16-bit limbs.
 pub const COMPOSITES: &[(&str, &str)] = &[
+    // The i32 division and remainder with WGSL's values where Metal has
+    // none (a divisor of 0 or -1), 2026-10-13.
+    ("int_div", "fn int_div(x: i32, b: i32) -> i32 { return select(x / select(select(b, 1i, b == 0i), 1i, b == -1i), bitcast<i32>(0u - bitcast<u32>(x)), b == -1i); }"),
+    ("int_mod", "fn int_mod(x: i32, b: i32) -> i32 { return x % select(select(b, 1i, b == 0i), 1i, b == -1i); }"),
+    ("int_div2", "fn int_div2(x: vec2<i32>, b: vec2<i32>) -> vec2<i32> { return select(x / select(select(b, vec2<i32>(1i), b == vec2<i32>(0i)), vec2<i32>(1i), b == vec2<i32>(-1i)), bitcast<vec2<i32>>(vec2<u32>(0u) - bitcast<vec2<u32>>(x)), b == vec2<i32>(-1i)); }"),
+    ("int_mod2", "fn int_mod2(x: vec2<i32>, b: vec2<i32>) -> vec2<i32> { return x % select(select(b, vec2<i32>(1i), b == vec2<i32>(0i)), vec2<i32>(1i), b == vec2<i32>(-1i)); }"),
+    ("int_div3", "fn int_div3(x: vec3<i32>, b: vec3<i32>) -> vec3<i32> { return select(x / select(select(b, vec3<i32>(1i), b == vec3<i32>(0i)), vec3<i32>(1i), b == vec3<i32>(-1i)), bitcast<vec3<i32>>(vec3<u32>(0u) - bitcast<vec3<u32>>(x)), b == vec3<i32>(-1i)); }"),
+    ("int_mod3", "fn int_mod3(x: vec3<i32>, b: vec3<i32>) -> vec3<i32> { return x % select(select(b, vec3<i32>(1i), b == vec3<i32>(0i)), vec3<i32>(1i), b == vec3<i32>(-1i)); }"),
+    ("int_div4", "fn int_div4(x: vec4<i32>, b: vec4<i32>) -> vec4<i32> { return select(x / select(select(b, vec4<i32>(1i), b == vec4<i32>(0i)), vec4<i32>(1i), b == vec4<i32>(-1i)), bitcast<vec4<i32>>(vec4<u32>(0u) - bitcast<vec4<u32>>(x)), b == vec4<i32>(-1i)); }"),
+    ("int_mod4", "fn int_mod4(x: vec4<i32>, b: vec4<i32>) -> vec4<i32> { return x % select(select(b, vec4<i32>(1i), b == vec4<i32>(0i)), vec4<i32>(1i), b == vec4<i32>(-1i)); }"),
     ("q_real_to_code4", "fn q_real_to_code4(x: f32) -> u32 { return u32(clamp(round((clamp(x, -1.0, 1.0) + 1.0) * 1.5), 0.0, 3.0)); }"),
     ("q_code4_to_real", "fn q_code4_to_real(c: u32) -> f32 { return f32(min(c, 3u)) * 0.6666667 - 1.0; }"),
     ("q_real_to_code8", "fn q_real_to_code8(x: f32) -> u32 { return u32(clamp(round((clamp(x, -1.0, 1.0) + 1.0) * 3.5), 0.0, 7.0)); }"),
@@ -3095,6 +3124,140 @@ pub(crate) fn first_difference(a: &Tree, b: &Tree) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// THE GUARDED INTEGER DIVISION AND REMAINDER (2026-10-13: naga 0.20
+    /// writes `/` and `%` to Metal raw, where x / 0, x % 0 and i32::MIN / -1
+    /// are undefined; a random kernel's `x % 0` left the GPU running): run
+    /// by the interpreter, the kingdom's helpers and the u32 remainder's
+    /// guard give WGSL's values at b = 0, b = -1 and i32::MIN.
+    #[test]
+    fn the_guarded_division_and_remainder_give_wgsl_values() {
+        use crate::wgsl::chromosome::{chromosome, ChromosomeOptions};
+        use crate::wgsl::interp::{Interp, Invocation, Memory, Value};
+        let body = |name: &str| COMPOSITES.iter().find(|(n, _)| *n == name).map(|(_, b)| b.to_string()).unwrap();
+        let cases: [(i32, i32); 7] = [(7, 0), (-7, 0), (i32::MIN, -1), (7, -1), (7, 2), (-7, 2), (i32::MIN, 0)];
+        let n = cases.len();
+        let source = format!(
+            "@group(0) @binding(0) var<storage, read> xs: array<i32, {n}>;\n@group(0) @binding(1) var<storage, read> bs: array<i32, {n}>;\n@group(0) @binding(2) var<storage, read> us: array<u32, {n}>;\n@group(0) @binding(3) var<storage, read_write> out: array<i32, {m}>;\n@group(0) @binding(4) var<storage, read_write> uout: array<u32, {n}>;\n{}\n{}\n@compute @workgroup_size(1)\nfn main() {{\n    for (var i = 0u; i < {n}u; i = i + 1u) {{\n        out[2u * i] = int_div(xs[i], bs[i]);\n        out[2u * i + 1u] = int_mod(xs[i], bs[i]);\n        uout[i] = us[i] % max(bitcast<u32>(bs[i]) * select(0u, 1u, bs[i] > 0i), 1u);\n    }}\n}}\n",
+            body("int_div"),
+            body("int_mod"),
+            m = 2 * n
+        );
+        let kernel = crate::wgsl::reader::read(&source).unwrap_or_else(|e| panic!("{e}\n{source}"));
+        let chromosomes = kernel.functions.iter().map(|f| chromosome(f, &ChromosomeOptions::default())).collect::<Result<Vec<_>, _>>().unwrap();
+        let mut memory = Memory::default();
+        memory.set("buffer.xs", Value::Vec(cases.iter().map(|c| Value::I32(c.0)).collect()));
+        memory.set("buffer.bs", Value::Vec(cases.iter().map(|c| Value::I32(c.1)).collect()));
+        memory.set("buffer.us", Value::Vec(cases.iter().map(|c| Value::U32(c.0.unsigned_abs())).collect()));
+        memory.set("buffer.out", Value::Vec(vec![Value::I32(0); 2 * n]));
+        memory.set("buffer.uout", Value::Vec(vec![Value::U32(0); n]));
+        let mut it = Interp::new(&kernel, &chromosomes, memory, Invocation::default()).unwrap();
+        it.run("main").unwrap();
+        let got = |loc: &str| match it.memory.get(loc) {
+            Some(Value::Vec(v)) => v.clone(),
+            other => panic!("{loc}: {other:?}"),
+        };
+        let out = got("buffer.out");
+        let uout = got("buffer.uout");
+        for (i, &(x, b)) in cases.iter().enumerate() {
+            // WGSL: x / 0 is x, x % 0 is 0, i32::MIN / -1 is i32::MIN, i32::MIN % -1 is 0.
+            let want_div = if b == 0 || (x == i32::MIN && b == -1) { x } else { x / b };
+            let want_mod = if b == 0 || (x == i32::MIN && b == -1) { 0 } else { x % b };
+            assert_eq!(out[2 * i], Value::I32(want_div), "{x} / {b}");
+            assert_eq!(out[2 * i + 1], Value::I32(want_mod), "{x} % {b}");
+            // The u32 remainder's guard: x % max(b, 1u), b = 0 gives 0.
+            let ub = if b > 0 { b as u32 } else { 0 };
+            let want_u = if ub == 0 { 0 } else { x.unsigned_abs() % ub };
+            assert_eq!(uout[i], Value::U32(want_u), "{} % {ub}", x.unsigned_abs());
+        }
+    }
+
+    /// NO RAW INTEGER DIVISION OR REMAINDER REACHES METAL (2026-10-13): in
+    /// the module naga translates for 1,000 random safe kernels, every
+    /// integer `/` and `%` has a divisor that is a nonzero literal (not -1
+    /// for i32), a `max(b, 1)`, a subgroup size, or sits in the kingdom's
+    /// guarded helpers (int_div, int_mod), whose divisor is never 0 or -1.
+    /// naga writes these to Metal as they are (examples/wgsl_msl).
+    #[test]
+    fn no_random_kernel_divides_by_a_value_that_may_be_zero() {
+        use naga::{BinaryOperator, Expression, Literal, MathFunction, ScalarKind};
+        let k = crate::wgsl::loader::WgslKingdom::load_safe();
+        let role = gram_role();
+        let root = dual_ty(&k, "kernel.safe").unwrap();
+        let mut raw: Vec<String> = Vec::new();
+        let (mut divisions, mut kernels) = (0usize, 0usize);
+        for seed in 0..1000 {
+            let tree = sample(&k, &role, root, 7, seed).unwrap();
+            let text = crate::wgsl::safe_karva::render_tree(&tree, &k).unwrap().text;
+            let module = naga::front::wgsl::parse_str(&text).unwrap_or_else(|e| panic!("{}", e.emit_to_string(&text)));
+            let info = crate::wgsl::target::Target::recorded().validate(&module, &text).unwrap_or_else(|e| panic!("{e}"));
+            kernels += 1;
+            let mut check = |name: &str, f: &naga::Function, fi: &naga::valid::FunctionInfo, entry: bool| {
+                let guarded_helper = name.starts_with("int_div") || name.starts_with("int_mod");
+                let literal_ok = |e: &Expression| match e {
+                    Expression::Literal(Literal::U32(v)) => *v != 0,
+                    Expression::Literal(Literal::I32(v)) => *v != 0 && *v != -1,
+                    _ => false,
+                };
+                let one = |h: naga::Handle<Expression>| match &f.expressions[h] {
+                    Expression::Literal(Literal::U32(1) | Literal::I32(1)) => true,
+                    Expression::Splat { value, .. } => matches!(f.expressions[*value], Expression::Literal(Literal::U32(1) | Literal::I32(1))),
+                    _ => false,
+                };
+                // A call's result: the function called and its arguments
+                // (a literal written through lit_u32 or lit_i32 is a call).
+                fn calls(b: &naga::Block, out: &mut Vec<(naga::Handle<Expression>, naga::Handle<naga::Function>, Vec<naga::Handle<Expression>>)>) {
+                    for s in b.iter() {
+                        match s {
+                            naga::Statement::Call { function, arguments, result: Some(r) } => out.push((*r, *function, arguments.clone())),
+                            naga::Statement::Block(b) => calls(b, out),
+                            naga::Statement::If { accept, reject, .. } => {
+                                calls(accept, out);
+                                calls(reject, out);
+                            }
+                            naga::Statement::Loop { body, continuing, .. } => {
+                                calls(body, out);
+                                calls(continuing, out);
+                            }
+                            naga::Statement::Switch { cases, .. } => cases.iter().for_each(|c| calls(&c.body, out)),
+                            _ => {}
+                        }
+                    }
+                }
+                let mut results = Vec::new();
+                calls(&f.body, &mut results);
+                let lit_call = |h: naga::Handle<Expression>| {
+                    results.iter().any(|(r, func, args)| *r == h && module.functions[*func].name.as_deref().is_some_and(|n| n.starts_with("lit_")) && args.first().is_some_and(|a| literal_ok(&f.expressions[*a])))
+                };
+                for (_, e) in f.expressions.iter() {
+                    let Expression::Binary { op: BinaryOperator::Divide | BinaryOperator::Modulo, left, right } = e else { continue };
+                    let integer = fi[*left].ty.inner_with(&module.types).scalar_kind().is_some_and(|s| matches!(s, ScalarKind::Sint | ScalarKind::Uint));
+                    if !integer {
+                        continue;
+                    }
+                    divisions += 1;
+                    let d = &f.expressions[*right];
+                    let ok = guarded_helper
+                        || literal_ok(d)
+                        || lit_call(*right)
+                        || matches!(d, Expression::Math { fun: MathFunction::Max, arg1: Some(a), .. } if one(*a))
+                        // (The subgroup size, a builtin argument of the entry point: at least 1.)
+                        || (entry && matches!(d, Expression::FunctionArgument(_)));
+                    if !ok && raw.len() < 8 {
+                        raw.push(format!("seed {seed}, fn {name}: {d:?}"));
+                    }
+                }
+            };
+            for (h, f) in module.functions.iter() {
+                check(f.name.as_deref().unwrap_or(""), f, &info[h], false);
+            }
+            for (i, ep) in module.entry_points.iter().enumerate() {
+                check(&ep.name, &ep.function, info.get_entry_point(i), true);
+            }
+        }
+        println!("{kernels} random kernels, {divisions} integer divisions and remainders, {} raw", raw.len());
+        assert!(raw.is_empty(), "{}", raw.join("\n"));
+    }
 
     /// THE SAMPLER WITHIN THE BOUND (2026-10-13): 1,000 random safe kernels
     /// drawn by `sample_within` under the fitness's static cost bound are
