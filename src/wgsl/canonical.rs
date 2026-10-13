@@ -480,7 +480,7 @@ fn origins(t: &Tree, g: &crate::wgsl::render::Grid, kingdom: &WgslKingdom) -> Tr
 pub fn canonical(t: &Tree, kingdom: &WgslKingdom) -> Tree {
     // Knob references first, at the drawn grid's knobs (rule 4).
     let t = params::to_literals(t, kingdom).unwrap_or_else(|_| t.clone());
-    let c = structural(&t, kingdom);
+    let c = degrees(&structural(&t, kingdom), kingdom);
     // Every node under the dual its parent's row demands, the rows chosen as
     // the parser chooses them (it conforms the tree it reads, last).
     let per_kernel = crate::wgsl::safe_karva::per_kernel_rows(kingdom, &crate::wgsl::render::gram_role());
@@ -641,15 +641,23 @@ fn canonical_stride(t: &Tree, kingdom: &WgslKingdom) -> Option<Tree> {
 /// Rule 9 at degrees, radians and a band: the rows their text reads as.
 fn canonical_written_as(t: &Tree, kingdom: &WgslKingdom) -> Option<Tree> {
     match (t.name.as_str(), t.kids.as_slice()) {
-        ("trig.degrees" | "trig.radians", [x]) => {
-            let k = if t.name == "trig.degrees" { 57.295_78_f32 } else { 0.017_453_292_f32 };
-            let real = dual_ty(kingdom, "f32.real").ok()?;
-            let mul = kingdom.rows.iter().find(|r| r.name.starts_with("arith.mul") && r.output == t.ty && r.inputs.as_slice() == [t.ty, real]).map(|r| r.name.clone())?;
-            Some(Tree::new(&mul, t.ty, vec![x.clone(), Tree::literal("literal.real", real, k)]))
-        }
         ("index.band_of", [x, y]) => kingdom.rows.iter().any(|r| r.name == "index.div" && r.output == t.ty).then(|| Tree::new("index.div", t.ty, vec![x.clone(), y.clone()])),
         _ => None,
     }
+}
+
+/// Rule 9 at degrees and radians, after the structural rules (their
+/// constant is a scalar in the text, `x * 57.29..`, under the value's dual,
+/// which a vector literal's rule would splat).
+fn degrees(t: &Tree, kingdom: &WgslKingdom) -> Tree {
+    let kids: Vec<Tree> = t.kids.iter().map(|k| degrees(k, kingdom)).collect();
+    if let ("trig.degrees" | "trig.radians", [x]) = (t.name.as_str(), kids.as_slice()) {
+        let k = if t.name == "trig.degrees" { 57.295_78_f32 } else { 0.017_453_292_f32 };
+        if kingdom.rows.iter().any(|r| r.name == "arith.mul" && r.output == t.ty && r.inputs.as_slice() == [t.ty, t.ty]) {
+            return Tree::new("arith.mul", t.ty, vec![x.clone(), Tree::literal("literal.real", t.ty, k)]);
+        }
+    }
+    Tree { kids, ..t.clone() }
 }
 
 /// Rule 9 at a negated matrix.
