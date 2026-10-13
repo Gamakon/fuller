@@ -424,6 +424,10 @@ pub fn canonical(t: &Tree, kingdom: &WgslKingdom) -> Tree {
     // Knob references first, at the drawn grid's knobs (rule 4).
     let t = params::to_literals(t, kingdom).unwrap_or_else(|_| t.clone());
     let c = structural(&t, kingdom);
+    // Every node under the dual its parent's row demands, the rows chosen as
+    // the parser chooses them (it conforms the tree it reads, last).
+    let per_kernel = crate::wgsl::safe_karva::per_kernel_rows(kingdom, &crate::wgsl::render::gram_role());
+    let c = crate::wgsl::safe_karva::conform(&c, c.ty, kingdom, &per_kernel).unwrap_or(c);
     params::assign(&c, kingdom).unwrap_or(c)
 }
 
@@ -484,7 +488,8 @@ fn canonical_fallback(t: &Tree, kingdom: &WgslKingdom) -> Option<Tree> {
         let store = Tree::new(&format!("store.h_O{level}"), ty(&format!("stmt.O{level}"))?, vec![cell()?, f0]);
         return Some(Tree::new(&format!("block.one_O{level}"), t.ty, vec![store]));
     }
-    if d.is_statement_level() {
+    // A loop bound's fallback is the loop rule's (rule 8).
+    if d.is_statement_level() || d.dual.starts_with("u32.bound") {
         return None;
     }
     // A thread's origin or cell: the thread's own (the emitter's own_fallback).
@@ -505,6 +510,12 @@ fn canonical_fallback(t: &Tree, kingdom: &WgslKingdom) -> Option<Tree> {
         let name = format!("wg.{}", wgmem_var(kingdom, t).ok()?.strip_prefix("wg_")?);
         return Some(Tree::new(&name, t.ty, vec![]));
     }
+    // The value written: a u32 or bool dual's fallback value, else 0.
+    let written = match d.scalar() {
+        Some("u32") => d.fallback_bits as f32,
+        Some("bool") => f32::from(u8::from(d.fallback_bits != 0)),
+        _ => 0.0,
+    };
     let scalar = |s: &str| -> Option<Tree> {
         let (lit, dual) = match s {
             "f32" => ("literal.real", "f32.real"),
@@ -513,7 +524,7 @@ fn canonical_fallback(t: &Tree, kingdom: &WgslKingdom) -> Option<Tree> {
             "bool" => ("literal.flag", "bool.flag"),
             _ => return None,
         };
-        Some(Tree::literal(lit, dual_ty(kingdom, dual).ok()?, 0.0))
+        Some(Tree::literal(lit, dual_ty(kingdom, dual).ok()?, written))
     };
     let splat = |lanes: u32, s: &str| -> Option<Tree> {
         let z = scalar(s)?;
@@ -535,8 +546,12 @@ fn canonical_fallback(t: &Tree, kingdom: &WgslKingdom) -> Option<Tree> {
     crate::wgsl::safe_karva::conform(&zero, t.ty, kingdom, &per_kernel).ok().filter(|z| z.name != "fallback").or_else(|| {
         // A safe index (a workgroup or private array's): the zero through
         // the safe row the parser reads it with (`safe.wga_of(0u)`).
-        let r = kingdom.rows.iter().find(|r| r.name.starts_with("safe.") && r.output == t.ty && r.inputs.as_slice() == [zero.ty])?;
-        Some(Tree::new(&r.name, t.ty, vec![zero]))
+        match kingdom.rows.iter().find(|r| r.name.starts_with("safe.") && r.output == t.ty && r.inputs.as_slice() == [zero.ty]) {
+            Some(r) => Some(Tree::new(&r.name, t.ty, vec![zero])),
+            // Otherwise the zero as written: the conform of the whole tree
+            // reads it under the row its parent takes, as the parser does.
+            None => Some(zero),
+        }
     })
 }
 
