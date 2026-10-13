@@ -520,6 +520,32 @@ fn is_leaf(t: &Tree, name: &str) -> bool {
     t.kids.is_empty() && t.name == name
 }
 
+/// One step of a workgroup reduction as the emitter unrolls it, read back:
+/// `if (lidx < s) { a[lidx] = op(a[lidx], a[lidx + s]); }` as
+/// (the array, the op, s).
+fn reduction_step(t: &Tree) -> Option<(Tree, &'static str, f32)> {
+    let [c, b] = t.kids.as_slice() else { return None };
+    if rung_stem(&t.name) != Some("stmt.if") || c.name != "compare.lt" || rung_stem(&b.name) != Some("block.one") {
+        return None;
+    }
+    let [lidx, s] = c.kids.as_slice() else { return None };
+    // (Read before conform, the index is the builtin itself; after, its conversion.)
+    let s = literal_value(s).filter(|_| matches!(lidx.name.as_str(), "builtin.local_invocation_index" | "index.of_lidx"))?;
+    let set = b.kids.first()?;
+    let [arr, idx, val] = set.kids.as_slice() else { return None };
+    // (Compared by their rows: read before conform, a node's dual may not
+    // be its final one yet.)
+    let sx = |t: &Tree| t.to_sexpr();
+    if !set.name.starts_with("wg.set") || !arr.name.starts_with("wg.") || !arr.kids.is_empty() || idx.kids.first().map(sx) != Some(sx(lidx)) {
+        return None;
+    }
+    let op = ["add", "min", "max"].into_iter().find(|op| val.name == format!("arith.{op}"))?;
+    let [x, y] = val.kids.as_slice() else { return None };
+    let at = |g: &Tree, i: String| g.name.starts_with("wg.get") && g.kids.first().map(sx) == Some(sx(arr)) && g.kids.get(1).map(sx) == Some(i);
+    let plus = format!("({} (index.add {} {}))", idx.name, sx(lidx), sx(&c.kids[1]));
+    (at(x, sx(idx)) && at(y, plus)).then(|| (arr.clone(), op, s))
+}
+
 fn local_name(name: &str) -> Option<String> {
     let rest = name.strip_prefix("load.").or_else(|| name.strip_prefix("store."))?;
     let rest = rest.strip_prefix("local.")?;
@@ -2739,7 +2765,8 @@ impl<'a> Ctx<'a> {
             return Err("a continue that is not a guard `if (c) { continue; }` where only conditional statements are spelled (the rest of a loop body after a continue, or the epilogue before its store)".into());
         }
         let Some(stem) = rung_stem(&t.name) else { return Ok(t.clone()) };
-        if stem == "stmt.barrier" || stem == "stmt.storage_barrier" || stem == "stmt.subgroup_barrier" || stem == "stmt.return" || stem.starts_with("loop.items") {
+        // (A reduction holds barriers: it is never conditional either.)
+        if stem == "stmt.barrier" || stem == "stmt.storage_barrier" || stem == "stmt.subgroup_barrier" || stem == "stmt.return" || stem.starts_with("loop.items") || stem.starts_with("wg.reduce_") {
             return Err(format!("{} where only conditional statements are spelled (after a loop's continue guard, or before the epilogue's last store of h)", t.name));
         }
         // Conditional statements written in place at an L rung are, at a
@@ -2775,9 +2802,49 @@ impl<'a> Ctx<'a> {
     }
 
     /// A list of statements as a block of the rung.
+    /// The emitter's unrolled workgroup reductions read back as the rows
+    /// (2026-10-13, AST to AST: 47 of 1,000 random trees read a reduction
+    /// back as a barrier and its steps): a barrier, then `if (lidx < s)
+    /// { a[lidx] = op(a[lidx], a[lidx + s]); }` and a barrier for s halving
+    /// to 1, over one array and one op, is wg.reduce_<op>(a, 2 s).
+    fn fold_reductions(&self, stmts: Vec<Tree>, rung: &str) -> Result<Vec<Tree>, String> {
+        let barrier = format!("stmt.barrier_{rung}");
+        let mut out = Vec::new();
+        let mut i = 0;
+        while i < stmts.len() {
+            let mut steps: Vec<(Tree, &str, f32)> = Vec::new();
+            if stmts[i].name == barrier {
+                let mut j = i + 1;
+                while let (Some(step), Some(b)) = (stmts.get(j).and_then(reduction_step), stmts.get(j + 1)) {
+                    let follows = steps.last().is_none_or(|(a, op, s)| a.name == step.0.name && *op == step.1 && step.2 * 2.0 == *s);
+                    if b.name != barrier || !follows {
+                        break;
+                    }
+                    steps.push(step);
+                    j += 2;
+                }
+            }
+            let row = steps.first().map(|(a, op, _)| (format!("wg.reduce_{op}_{rung}"), a.clone()));
+            let ok = steps.last().is_some_and(|(_, _, s)| *s == 1.0) && row.as_ref().is_some_and(|(r, _)| self.kingdom.rows.iter().any(|x| x.name == *r));
+            match row.filter(|_| ok) {
+                Some((r, a)) => {
+                    let n = Tree::literal("literal.lit4096", ty(self, "u32.lit4096")?, steps[0].2 * 2.0);
+                    out.push(Tree::new(&r, self.stmt_ty(rung)?, vec![a, n]));
+                    i += 1 + 2 * steps.len();
+                }
+                None => {
+                    out.push(stmts[i].clone());
+                    i += 1;
+                }
+            }
+        }
+        Ok(out)
+    }
+
     fn block(&self, stmts: Vec<Tree>, rung: &str) -> Result<Tree, String> {
         let bt = ty(self, &format!("block.{rung}"))?;
         let st = self.stmt_ty(rung)?;
+        let stmts = if rung.starts_with('L') { self.fold_reductions(stmts, rung)? } else { stmts };
         if stmts.is_empty() {
             return Ok(Tree::fallback(bt));
         }
@@ -5488,9 +5555,9 @@ mod tests {
     /// read. Every tree reads back (1,000 of 1,000, asserted exactly).
     /// (110 before a negated matrix was written as a product: the one random
     /// tree holding one now reads back as the product, a different text.)
-    const READ_BACK_FLOOR: usize = 127;
+    const READ_BACK_FLOOR: usize = 132;
     const FIXPOINT_FLOOR: usize = 563;
-    const AST_FLOOR: usize = 104;
+    const AST_FLOOR: usize = 111;
 
 
     /// THE KINGDOM'S COMPLETENESS BAR (2026-10-12): 1,000 random trees of
@@ -5540,7 +5607,11 @@ mod tests {
                 // text cannot tell apart, as the parser reads them).
                 match crate::wgsl::render::first_difference(&canon, &back.tree) {
                     None => ast_equal += 1,
+                    // (Tallied against the parsed tree in its canonical
+                    // spelling too, so a difference of grouping early in a
+                    // block does not hide the first difference of substance.)
                     Some(d) => {
+                        let d = crate::wgsl::render::first_difference(&canon, &crate::wgsl::canonical::canonical(&back.tree, &k)).unwrap_or(d);
                         let key: String = d.chars().map(|c| if c.is_ascii_digit() { 'N' } else { c }).take(140).collect();
                         by_ast.entry(key).or_insert((0, seed)).0 += 1;
                     }

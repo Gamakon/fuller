@@ -25,9 +25,12 @@
 //!    row and one list of the declared arrays, by row name.
 //! 4. A literal's value. The emitter writes the value of the literal's form
 //!    (a block factor snapped to {1, 2, 4, 8}, a count rounded and clamped,
-//!    a flag 0 or 1); a knob reference (`literal.p_bcol`) as that value, so
-//!    it reads back as its dual's plain literal row.
-//! 5. Then the parameters, as the parser assigns them ([`params::assign`]):
+//!    a flag 0 or 1); a knob reference (`literal.p_bcol`) as the value its
+//!    kernel's knobs give it ([`params::to_literals`]), so it reads back as
+//!    its dual's plain literal row.
+//! 5. A workgroup reduction's count. The emitter rounds it down to a power
+//!    of two, and one of 1 writes only its barrier: a barrier.
+//! 6. Then the parameters, as the parser assigns them ([`params::assign`]):
 //!    every literal whose value a knob writes exactly, a reference to that
 //!    knob, the tile depth declared on the grid when one is referenced.
 
@@ -216,7 +219,9 @@ fn canonical_grid(grid: &Tree, root: &Tree, kingdom: &WgslKingdom) -> Option<Tre
 
 /// The canonical spelling of `t` (see the module header for the rules).
 pub fn canonical(t: &Tree, kingdom: &WgslKingdom) -> Tree {
-    let c = structural(t, kingdom);
+    // Knob references first, at the drawn grid's knobs (rule 4).
+    let t = params::to_literals(t, kingdom).unwrap_or_else(|_| t.clone());
+    let c = structural(&t, kingdom);
     params::assign(&c, kingdom).unwrap_or(c)
 }
 
@@ -242,8 +247,25 @@ fn structural(t: &Tree, kingdom: &WgslKingdom) -> Tree {
     canonical_block(&t, kingdom)
 }
 
+/// Rule 5 at a reduction (its children already canonical).
+fn canonical_reduction(t: &Tree, kingdom: &WgslKingdom) -> Option<Tree> {
+    let stem = t.name.strip_prefix("wg.reduce_")?;
+    let rung = rung_of(stem)?;
+    let [a, n] = t.kids.as_slice() else { return None };
+    let v = if n.name == "fallback" { 1 } else { n.konst.max(1.0) as u32 };
+    let p = 1u32 << (31 - v.leading_zeros());
+    if p == 1 {
+        return Some(Tree::new(&format!("stmt.barrier_{rung}"), t.ty, vec![]));
+    }
+    let lit = Tree::literal("literal.lit4096", dual_ty(kingdom, "u32.lit4096").ok()?, p as f32);
+    Some(Tree::new(&t.name, t.ty, vec![a.clone(), lit]))
+}
+
 /// Rule 1 at `t` itself (its children already canonical).
 fn canonical_block(t: &Tree, kingdom: &WgslKingdom) -> Tree {
+    if let Some(r) = canonical_reduction(t, kingdom) {
+        return r;
+    }
     if is_plain_block(&t.name) {
         if let Some(rung) = rung_of(&t.name) {
             let mut items = Vec::new();
