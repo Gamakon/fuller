@@ -2704,6 +2704,11 @@ impl<'a> Ctx<'a> {
             prefix = std::iter::once(lead).chain(keep).collect();
         }
         let o = format!("O{d}");
+        // One statement that is a block of this rung is that block (as in
+        // `block`; 2026-10-13, AST to AST).
+        if prefix.is_empty() && last.name == format!("stmt.block_{o}") && last.kids.len() == 1 && last.kids[0].ty == ty(self, &format!("block.{o}"))? {
+            return Ok(last.kids[0].clone());
+        }
         let name = match prefix.len() {
             0 => "one",
             1 => "seq2",

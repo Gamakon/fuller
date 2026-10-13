@@ -112,6 +112,23 @@ fn statements(block: &Tree, out: &mut Vec<Tree>) -> bool {
     false
 }
 
+/// An epilogue block's statements as the parser groups them: at most
+/// three conditional statements before its last, the leading ones nested
+/// as one block statement of the conditional rung, the two before the last
+/// kept.
+fn epilogue_items(mut items: Vec<Tree>, rung: &str, kingdom: &WgslKingdom) -> Vec<Tree> {
+    let Some(level) = rung.strip_prefix('O') else { return items };
+    if items.len() <= 4 {
+        return items;
+    }
+    let c = format!("C{level}");
+    let (Ok(cst), Ok(cbt)) = (dual_ty(kingdom, &format!("stmt.{c}")), dual_ty(kingdom, &format!("block.{c}"))) else { return items };
+    let last = items.pop().expect("more than four");
+    let keep = items.split_off(items.len() - 2);
+    let lead = grouped(items, &c, &Tree::fallback(cbt), Some(cst));
+    [vec![Tree::new(&format!("stmt.block_{c}"), cst, vec![lead])], keep, vec![last]].concat()
+}
+
 /// A statement list as the parser groups it at `rung`.
 fn grouped(mut items: Vec<Tree>, rung: &str, like: &Tree, stmt_ty: Option<Ty>) -> Tree {
     if items.is_empty() {
@@ -387,6 +404,19 @@ fn loops(t: &Tree, depth: usize, copies: u32, fixed: &[(String, u32)], items: bo
                     let mut f = fixed.to_vec();
                     f.push((counter.to_string(), i));
                     let copy = loops(body, depth + 1, total, &f, items, kingdom);
+                    // A continue at the top of a copy: the rest runs when its
+                    // guard does not hold (`if (!(c)) { rest }`).
+                    let copy = match (copy.name.strip_prefix("block.cont_"), copy.kids.as_slice()) {
+                        (Some(r), [c, rest]) => match (dual_ty(kingdom, "bool.flag"), dual_ty(kingdom, &format!("stmt.{r}"))) {
+                            (Ok(b), Ok(sr)) => {
+                                let not = Tree::new("logic.not", b, vec![c.clone()]);
+                                let iff = Tree::new(&format!("stmt.if_{r}"), sr, vec![not, rest.clone()]);
+                                Tree::new(&format!("block.one_{r}"), copy.ty, vec![iff])
+                            }
+                            _ => copy,
+                        },
+                        _ => copy,
+                    };
                     if statements(&copy, &mut raw) {
                         break;
                     }
@@ -406,7 +436,7 @@ fn loops(t: &Tree, depth: usize, copies: u32, fixed: &[(String, u32)], items: bo
                         None => return t.clone(),
                     }
                 }
-                return Tree::new(&format!("stmt.block_{rung}"), st, vec![grouped(items, rung, &Tree::fallback(bt), Some(st))]);
+                return Tree::new(&format!("stmt.block_{rung}"), st, vec![grouped(epilogue_items(items, rung, kingdom), rung, &Tree::fallback(bt), Some(st))]);
             }
         }
     }
@@ -626,8 +656,16 @@ fn canonical_reduction(t: &Tree, kingdom: &WgslKingdom) -> Option<Tree> {
     Some(Tree::new(&t.name, t.ty, vec![a.clone(), lit]))
 }
 
-/// Rule 8 at a strided tile loop (its children already canonical).
+/// Rule 8 at a strided tile or item loop (its children already canonical).
 fn canonical_stride(t: &Tree, kingdom: &WgslKingdom) -> Option<Tree> {
+    // An item loop stepping by 1 (`loop.items_strided_boundd`, `_cont_`).
+    if let (true, [bound, step, body]) = (t.name.starts_with("loop.items_") && t.name.contains("strided_"), t.kids.as_slice()) {
+        let name = t.name.replacen("strided_", "", 1);
+        if step.name.starts_with("literal.") && step.konst == 1.0 && kingdom.rows.iter().any(|r| r.name == name && r.output == t.ty) {
+            return Some(Tree::new(&name, t.ty, vec![bound.clone(), body.clone()]));
+        }
+        return None;
+    }
     let (stem, rung) = t.name.rsplit_once('_').filter(|(_, r)| rung_of(&format!("x_{r}")).is_some())?;
     let plain = stem.strip_suffix("_strided").filter(|s| matches!(*s, "loop.tile" | "loop.tilex"))?;
     let [bound, step, body] = t.kids.as_slice() else { return None };
@@ -764,7 +802,7 @@ fn canonical_block(t: &Tree, kingdom: &WgslKingdom) -> Tree {
             let mut items = Vec::new();
             statements(t, &mut items);
             let stmt_ty = dual_ty(kingdom, &format!("stmt.{rung}")).ok();
-            return grouped(items, rung, t, stmt_ty);
+            return grouped(epilogue_items(items, rung, kingdom), rung, t, stmt_ty);
         }
     }
     t.clone()
