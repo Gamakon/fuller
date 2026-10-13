@@ -52,7 +52,6 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation
     wg_a[((((((((lid.y * 16u) + lid.x)) >> ((5u) & 31u)) * 32u) + ((((lid.y * 16u) + lid.x)) & (31u)))) & 255u)] = f0;
     wg_b[((((((((lid.y * 16u) + lid.x)) >> ((5u) & 31u)) * 32u) + ((((lid.y * 16u) + lid.x)) & (31u)))) & 255u)] = f1;
     workgroupBarrier();
-    i0 = 0u;
     for (k = 0u; k < 8u; k = k + 1u) {
     f2 = (f2 + (wg_a[((((k * 32u) + lid.y)) & 255u)] * wg_b[((((k * 32u) + lid.x)) & 255u)]));
     f3 = (f3 + (wg_a[((((k * 32u) + lid.y)) & 255u)] * wg_b[(((((k * 32u) + lid.x) + 16u)) & 255u)]));
@@ -63,7 +62,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation
     }
     for (k = 0u; k < 2u; k = k + 1u) {
     if ((((((wid.y * 32u) + lid.y) + (16u * k)) < cfg.r_rows) && ((cfg.r_off + (((wid.y * 32u) + lid.y) + (16u * k))) < cfg.d))) {
-    i1 = 0u;
+    i0 = 0u;
     for (k2 = 0u; k2 < 2u; k2 = k2 + 1u) {
     if (((((wid.x * 32u) + lid.x) + (16u * k2)) < cfg.d)) {
     if ((k == 0u)) {

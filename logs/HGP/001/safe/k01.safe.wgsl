@@ -39,7 +39,6 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation
     var pa: array<f32, 64>; var pb: array<f32, 64>; var pc: array<f32, 64>; var pd: array<f32, 64>; var pe: array<f32, 64>; var pf: array<f32, 64>;
     var pv: array<vec4<f32>, 16>; var pw: array<vec4<f32>, 16>; var px: array<vec4<f32>, 16>; var py: array<vec4<f32>, 16>; var pi: array<u32, 16>; var pj: array<u32, 16>; var pk: array<u32, 16>; var pm: array<bool, 16>; var pn: array<bool, 16>; var pq: array<vec2<f32>, 16>; var pr: array<vec2<f32>, 16>;
     for (t = 0u; t < cfg.m; t = t + 16u) {
-    i0 = 0u;
     for (k = 0u; k < 2u; k = k + 1u) {
     f0 = 0.0f;
     f1 = 0.0f;
@@ -55,7 +54,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation
     wg_b[(((((lid.y * 16u) + lid.x) + (256u * k))) & 511u)] = f1;
     }
     workgroupBarrier();
-    i1 = 0u;
+    i0 = 0u;
     for (k = 0u; k < 16u; k = k + 1u) {
     f2 = (f2 + (wg_a[((((k * 32u) + lid.y)) & 511u)] * wg_b[((((k * 32u) + lid.x)) & 511u)]));
     f3 = (f3 + (wg_a[((((k * 32u) + lid.y)) & 511u)] * wg_b[(((((k * 32u) + lid.x) + 16u)) & 511u)]));

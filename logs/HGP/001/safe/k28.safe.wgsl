@@ -55,7 +55,6 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation
     wg_b[(((((lid.y * 16u) + lid.x) + (k * 256u))) & 1023u)] = f1;
     }
     workgroupBarrier();
-    i1 = 0u;
     for (k = 0u; k < 16u; k = k + 1u) {
     v0 = (v0 + (vec4<f32>(wg_a[((((k * 64u) + (lid.y * 4u))) & 1023u)]) * vec4<f32>(vec3<f32>(vec2<f32>(wg_b[((((k * 64u) + (lid.x * 4u))) & 1023u)], wg_b[(((((k * 64u) + (lid.x * 4u)) + 1u)) & 1023u)]), wg_b[(((((k * 64u) + (lid.x * 4u)) + 2u)) & 1023u)]), wg_b[(((((k * 64u) + (lid.x * 4u)) + 3u)) & 1023u)])));
     v1 = (v1 + (vec4<f32>(wg_a[(((((k * 64u) + (lid.y * 4u)) + 1u)) & 1023u)]) * vec4<f32>(vec3<f32>(vec2<f32>(wg_b[((((k * 64u) + (lid.x * 4u))) & 1023u)], wg_b[(((((k * 64u) + (lid.x * 4u)) + 1u)) & 1023u)]), wg_b[(((((k * 64u) + (lid.x * 4u)) + 2u)) & 1023u)]), wg_b[(((((k * 64u) + (lid.x * 4u)) + 3u)) & 1023u)])));
@@ -76,7 +75,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation
     v4 = v3;
     }
     if ((((((wid.y * 64u) + (lid.y * 4u)) + k) < cfg.r_rows) && ((cfg.r_off + (((wid.y * 64u) + (lid.y * 4u)) + k)) < cfg.d))) {
-    i2 = 0u;
+    i1 = 0u;
     for (k2 = 0u; k2 < 4u; k2 = k2 + 1u) {
     if (((((wid.x * 64u) + (lid.x * 4u)) + k2) < cfg.d)) {
     f2 = v4[(0u) & 3u];

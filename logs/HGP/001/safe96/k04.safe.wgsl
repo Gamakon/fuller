@@ -71,7 +71,6 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation
     wg_va[((((lid.y * 16u) + lid.x)) & 255u)] = v0;
     wg_vb[((((lid.y * 16u) + lid.x)) & 255u)] = v1;
     workgroupBarrier();
-    i0 = 0u;
     for (k = 0u; k < 16u; k = k + 1u) {
     v2 = (v2 + (vec4<f32>(wg_vb[((((k * 16u) + lid.y)) & 255u)].x) * wg_va[((((k * 16u) + lid.x)) & 255u)]));
     v3 = (v3 + (vec4<f32>(wg_vb[((((k * 16u) + lid.y)) & 255u)].y) * wg_va[((((k * 16u) + lid.x)) & 255u)]));

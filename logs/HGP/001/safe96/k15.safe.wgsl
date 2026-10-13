@@ -43,7 +43,6 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation
     pb[((k) & 63u)] = 0.0f;
     }
     for (t = 0u; t < cfg.m; t = t + 16u) {
-    i0 = 0u;
     for (k = 0u; k < 4u; k = k + 1u) {
     f0 = 0.0f;
     f1 = 0.0f;
@@ -59,18 +58,18 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation
     wg_b[(((((lid.y * 16u) + lid.x) + (k * 256u))) & 1023u)] = f1;
     }
     workgroupBarrier();
-    i1 = 0u;
+    i0 = 0u;
     for (k = 0u; k < 16u; k = k + 2u) {
-    i2 = 0u;
+    i1 = 0u;
     for (k2 = 0u; k2 < 4u; k2 = k2 + 1u) {
     pc[((k2) & 63u)] = wg_a[(((((k * 64u) + lid.y) + (16u * k2))) & 1023u)];
     pd[((k2) & 63u)] = wg_b[(((((k * 64u) + lid.x) + (16u * k2))) & 1023u)];
     pe[((k2) & 63u)] = wg_a[((((((k * 64u) + 64u) + lid.y) + (16u * k2))) & 1023u)];
     pf[((k2) & 63u)] = wg_b[((((((k * 64u) + 64u) + lid.x) + (16u * k2))) & 1023u)];
     }
-    i3 = 0u;
+    i2 = 0u;
     for (k2 = 0u; k2 < 4u; k2 = k2 + 1u) {
-    i4 = 0u;
+    i3 = 0u;
     for (k3 = 0u; k3 < 4u; k3 = k3 + 1u) {
     pa[((((k2 * 4u) + k3)) & 63u)] = (pa[((((k2 * 4u) + k3)) & 63u)] + (pc[((k2) & 63u)] * pd[((k3) & 63u)]));
     pb[((((k2 * 4u) + k3)) & 63u)] = (pb[((((k2 * 4u) + k3)) & 63u)] + (pe[((k2) & 63u)] * pf[((k3) & 63u)]));
@@ -81,7 +80,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation
     }
     for (k = 0u; k < 4u; k = k + 1u) {
     if ((((((wid.y * 64u) + lid.y) + (16u * k)) < cfg.r_rows) && ((cfg.r_off + (((wid.y * 64u) + lid.y) + (16u * k))) < cfg.d))) {
-    i5 = 0u;
+    i4 = 0u;
     for (k2 = 0u; k2 < 4u; k2 = k2 + 1u) {
     if (((((wid.x * 64u) + lid.x) + (16u * k2)) < cfg.d)) {
     if ((((wid.y * 64u + lid.y) + min(k, 3u) * 16u)) < cfg.r_rows && (((wid.x * 64u + lid.x) + min(k2, 3u) * 16u)) < cfg.d && (cfg.r_off + (((wid.y * 64u + lid.y) + min(k, 3u) * 16u))) < cfg.d) { h[((((wid.y * 64u + lid.y) + min(k, 3u) * 16u)) * cfg.d + (((wid.x * 64u + lid.x) + min(k2, 3u) * 16u)))] = h[((((wid.y * 64u + lid.y) + min(k, 3u) * 16u)) * cfg.d + (((wid.x * 64u + lid.x) + min(k2, 3u) * 16u)))] + (pa[((((k * 4u) + k2)) & 63u)] + pb[((((k * 4u) + k2)) & 63u)]); }

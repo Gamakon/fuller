@@ -52,7 +52,6 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation
     wg_a[((((lid.y * 16u) + lid.x)) & 511u)] = f0;
     wg_b[((((lid.y * 16u) + lid.x)) & 511u)] = f1;
     workgroupBarrier();
-    i0 = 0u;
     for (k = 0u; k < 16u; k = k + 1u) {
     f2 = (f2 + (wg_a[((((k * 16u) + lid.y)) & 511u)] * wg_b[((((k * 16u) + lid.x)) & 511u)]));
     }

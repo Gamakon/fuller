@@ -58,7 +58,6 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation
     wg_b[(((((lid.y * 8u) + lid.x) + (k * 64u))) & 511u)] = f1;
     }
     workgroupBarrier();
-    i1 = 0u;
     for (k = 0u; k < 16u; k = k + 1u) {
     pv[0u] = (pv[0u] + (vec4<f32>(wg_b[((((k * 32u) + (lid.y * 4u))) & 511u)]) * vec4<f32>(vec3<f32>(vec2<f32>(wg_a[((((k * 32u) + (lid.x * 4u))) & 511u)], wg_a[(((((k * 32u) + (lid.x * 4u)) + 1u)) & 511u)]), wg_a[(((((k * 32u) + (lid.x * 4u)) + 2u)) & 511u)]), wg_a[(((((k * 32u) + (lid.x * 4u)) + 3u)) & 511u)])));
     pv[1u] = (pv[1u] + (vec4<f32>(wg_b[(((((k * 32u) + (lid.y * 4u)) + 1u)) & 511u)]) * vec4<f32>(vec3<f32>(vec2<f32>(wg_a[((((k * 32u) + (lid.x * 4u))) & 511u)], wg_a[(((((k * 32u) + (lid.x * 4u)) + 1u)) & 511u)]), wg_a[(((((k * 32u) + (lid.x * 4u)) + 2u)) & 511u)]), wg_a[(((((k * 32u) + (lid.x * 4u)) + 3u)) & 511u)])));
