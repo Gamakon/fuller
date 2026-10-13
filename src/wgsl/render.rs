@@ -2641,6 +2641,21 @@ enum Need {
 }
 
 pub fn sample(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, seed: u64) -> Result<Tree, String> {
+    sample_with(kingdom, role, root, max_depth, seed, None)
+}
+
+/// [`sample`] within a cost bound (2026-10-13: 522 of 1,000 random kernels
+/// were over the fitness's static bound, a loop over an expression bound
+/// priced at its worst shape): while the kernel's [`cost`] is over `bound`,
+/// the top-level statement whose removal lowers the cost most is drawn
+/// again in place (its dual and depth), up to 16 times, then left as its
+/// fallback; the epilogue's last statement is drawn again at the depth cap,
+/// so the kernel keeps its store. Nothing the kingdom allows is forbidden.
+pub fn sample_within(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, seed: u64, bound: &Cost) -> Result<Tree, String> {
+    sample_with(kingdom, role, root, max_depth, seed, Some(bound))
+}
+
+fn sample_with(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, seed: u64, bound: Option<&Cost>) -> Result<Tree, String> {
     let f16 = |t: &Ty| kingdom.dual(*t).is_some_and(|d| d.scalar() == Some("f16"));
     // (No return: a return before the epilogue ends the thread before it
     // stores its output, so the kernel writes nothing: 187 of 1,000 random
@@ -2694,7 +2709,10 @@ pub fn sample(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, se
     };
     // A variable: a terminal that is not a literal (a builtin, a load, a
     // register or array read, a counter): what a control condition reads.
-    let reads_variable = |r: &WgslRow| r.terminal && !r.name.starts_with("literal.");
+    // (Not a counter: outside its loop the emitter writes it 0, and a
+    // condition over counters alone was a constant in the text; 392 of
+    // 2,398 conditions, 2026-10-13.)
+    let reads_variable = |r: &WgslRow| r.terminal && !r.name.starts_with("literal.") && !matches!(r.name.as_str(), "safe.counter" | "safe.tile_counter" | "safe.tile_counter2" | "safe.tile_counter3" | "safe.tile_counter4" | "builtin.item" | "builtin.tile");
     let input_reach = reach(&reads_input);
     let store_reach = reach(&stores_output);
     let var_reach = reach(&reads_variable);
@@ -2870,7 +2888,70 @@ pub fn sample(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, se
         }
     }
     let draw = Draw { rows: &rows, by_out: &by_out, kingdom, max_depth, input_reach: &input_reach, store_reach: &store_reach, var_reach: &var_reach, flags: &flags };
-    Ok(draw.grow(root, 0, Need::Nothing, false, 0, &mut state))
+    let mut tree = draw.grow(root, 0, Need::Nothing, false, 0, &mut state);
+    let Some(bound) = bound else { return Ok(tree) };
+    let over = |c: &Cost| c.per_item > bound.per_item || c.base > bound.base;
+    // The top-level statements of the body (kid 1) and the epilogue (kid 2),
+    // nested plain blocks opened, by path; whether each is the epilogue's last.
+    fn statements(b: &Tree, path: Vec<usize>, out: &mut Vec<Vec<usize>>) {
+        for (i, s) in b.kids.iter().enumerate() {
+            let mut p = path.clone();
+            p.push(i);
+            let plain = s.kids.len() == 1 && s.name.starts_with("stmt.block_") && ["block.one_", "block.seq2_", "block.seq3_", "block.seq4_"].iter().any(|x| s.kids[0].name.starts_with(x));
+            if plain {
+                p.push(0);
+                statements(&s.kids[0], p, out);
+            } else {
+                out.push(p);
+            }
+        }
+    }
+    fn at<'t>(t: &'t Tree, path: &[usize]) -> &'t Tree {
+        path.iter().fold(t, |n, &i| &n.kids[i])
+    }
+    fn put(t: &Tree, path: &[usize], with: Tree) -> Tree {
+        match path.split_first() {
+            None => with,
+            Some((&i, rest)) => {
+                let mut kids = t.kids.clone();
+                kids[i] = put(&kids[i], rest, with);
+                Tree { kids, ..t.clone() }
+            }
+        }
+    }
+    let mut tries: BTreeMap<Vec<usize>, usize> = BTreeMap::new();
+    for _ in 0..256 {
+        let c = cost(&tree);
+        if !over(&c) || tree.kids.len() != 3 {
+            return Ok(tree);
+        }
+        let mut paths = Vec::new();
+        statements(&tree.kids[1], vec![1], &mut paths);
+        let mut epi = Vec::new();
+        statements(&tree.kids[2], vec![2], &mut epi);
+        let last = epi.last().cloned();
+        paths.extend(epi);
+        // The statement whose removal lowers the cost most.
+        let gain = |p: &Vec<usize>| {
+            let without = cost(&put(&tree, p, Tree::fallback(at(&tree, p).ty)));
+            (c.per_item - without.per_item) / bound.per_item.max(1.0) + (c.base - without.base) / bound.base.max(1.0)
+        };
+        let Some(worst) = paths.iter().max_by(|a, b| gain(a).partial_cmp(&gain(b)).unwrap_or(std::cmp::Ordering::Equal)).cloned() else { return Ok(tree) };
+        let node = at(&tree, &worst).clone();
+        let is_last = last.as_ref() == Some(&worst);
+        let n = tries.entry(worst.clone()).or_insert(0);
+        *n += 1;
+        let again = if is_last {
+            // The epilogue's store, its shortest way.
+            draw.grow(node.ty, max_depth, Need::Nothing, false, 0, &mut state)
+        } else if *n > 16 {
+            Tree::fallback(node.ty)
+        } else {
+            draw.grow(node.ty, worst.len(), Need::Nothing, false, 0, &mut state)
+        };
+        tree = put(&tree, &worst, again);
+    }
+    Ok(tree)
 }
 
 /// Parse text with naga and validate it for the device in use
@@ -2951,6 +3032,29 @@ pub(crate) fn first_difference(a: &Tree, b: &Tree) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// THE SAMPLER WITHIN THE BOUND (2026-10-13): 1,000 random safe kernels
+    /// drawn by `sample_within` under the fitness's static cost bound are
+    /// all within it (524 of 1,000 drawn by `sample` were over), and each
+    /// still ends in a store.
+    #[test]
+    fn the_sampler_within_the_bound_draws_no_kernel_over_it() {
+        let k = crate::wgsl::loader::WgslKingdom::load_safe();
+        let role = gram_role();
+        let root = dual_ty(&k, "kernel.safe").unwrap();
+        let bound = crate::wgsl::safe_karva::default_bound(&k).unwrap();
+        let mut over = 0;
+        for seed in 0..1000 {
+            let t = sample_within(&k, &role, root, 7, seed, &bound).unwrap();
+            let c = cost(&t);
+            over += usize::from(c.per_item > bound.per_item || c.base > bound.base);
+            fn stores(t: &Tree) -> bool {
+                t.name.starts_with("store.h") || t.kids.iter().any(stores)
+            }
+            assert!(stores(&t.kids[2]), "seed {seed}: an epilogue with no store: {}", t.kids[2].to_sexpr());
+        }
+        assert_eq!(over, 0, "random kernels over the cost bound");
+    }
 
     /// An expression-bounded item loop is costed by its bound at the worst
     /// shape: `cfg.m * cfg.d` is 8,192 passes over the items and is refused

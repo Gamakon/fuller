@@ -196,6 +196,10 @@ struct Cx {
     changed: bool,
     tainted: bool,
     exits: Vec<bool>,
+    /// Per enclosing loop: whether a continue under a non-uniform condition
+    /// leaves the pass in some threads (the body's later statements then
+    /// run in some threads only; the loop still ends at its bound in all).
+    conts: Vec<bool>,
     /// What the enclosing branch conditions prove: an expression (by its
     /// s-expression) and the range it holds in this branch.
     facts: Vec<(String, Iv)>,
@@ -218,6 +222,7 @@ impl Cx {
             changed: false,
             tainted: false,
             exits: Vec::new(),
+            conts: Vec::new(),
             facts: Vec::new(),
             err: None,
             site: Site::Other,
@@ -723,7 +728,7 @@ impl<'a> Checker<'a> {
                 // continue in a conditional block nested in a loop body that
                 // goes on to a barrier; 2026-10-12, the reader refused it).
                 if cx.mode == Mode::Uniform && !(ctrl && c && !cx.tainted) {
-                    if let Some(e) = cx.exits.last_mut() {
+                    if let Some(e) = cx.conts.last_mut() {
                         *e = true;
                     }
                 }
@@ -887,14 +892,18 @@ impl<'a> Checker<'a> {
             cx.tiles.push(counter);
         }
         cx.exits.push(false);
+        cx.conts.push(false);
         self.walk_block(lp.body, cx, body_ctrl);
         let exit = cx.exits.pop().unwrap_or(false);
-        if exit && cx.mode == Mode::Uniform {
-            // A thread may leave the loop while others iterate: every
-            // statement of the body is under non-uniform control.
+        let cont = cx.conts.pop().unwrap_or(false);
+        if (exit || cont) && cx.mode == Mode::Uniform {
+            // A thread may leave the loop, or a pass of it, while others go
+            // on: every statement of the body is under non-uniform control.
             cx.exits.push(false);
+            cx.conts.push(false);
             self.walk_block(lp.body, cx, false);
             cx.exits.pop();
+            cx.conts.pop();
         }
         if lp.items {
             (cx.in_items, cx.t) = saved;
