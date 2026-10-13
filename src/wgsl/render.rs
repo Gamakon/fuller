@@ -1499,6 +1499,18 @@ impl Renderer<'_> {
         Ok(out)
     }
 
+    /// A value whose literals are written through lit_*, so naga folds none
+    /// of them: a cell's offset clamped into its block (`min(off, B - 1)`
+    /// over a literal offset was folded, and an offset of 0 then read back
+    /// as no offset; 2026-10-13, the commonest text that was not a fixpoint).
+    fn unfolded(&self, v: &Tree, scope: &mut Scope) -> Result<String, String> {
+        let was = scope.const_depth;
+        scope.const_depth = 1;
+        let out = self.value_inner(v, scope);
+        scope.const_depth = was;
+        out
+    }
+
     /// A value expression, parenthesised where an operator could bind.
     fn value(&self, v: &Tree, scope: &mut Scope) -> Result<String, String> {
         // Any expression of literals only writes them through lit_*, so naga
@@ -1678,21 +1690,21 @@ impl Renderer<'_> {
             "safe.counter_index" | "safe.tile_index" | "safe.tile_index2" | "safe.tile_index3" | "safe.tile_index4" => return self.value(&v.kids[0], scope),
             "safe.row_plus_tile" | "safe.row_plus_tile2" | "safe.row_plus_tile3" | "safe.row_plus_tile4" | "safe.col_plus_tile" | "safe.col_plus_tile2" | "safe.col_plus_tile3" | "safe.col_plus_tile4" => {
                 let blk = if safe_base(name).starts_with("safe.row") { scope.grid.by } else { scope.grid.bx };
-                return Ok(format!("({} + min({}, {}u))", self.value(&v.kids[0], scope)?, self.value(&v.kids[1], scope)?, blk.saturating_sub(1)));
+                return Ok(format!("({} + min({}, {}u))", self.value(&v.kids[0], scope)?, self.unfolded(&v.kids[1], scope)?, blk.saturating_sub(1)));
             }
             "safe.row_plus_tile_s" | "safe.row_plus_tile2_s" | "safe.row_plus_tile3_s" | "safe.row_plus_tile4_s" | "safe.col_plus_tile_s" | "safe.col_plus_tile2_s" | "safe.col_plus_tile3_s" | "safe.col_plus_tile4_s" => {
                 // The k-th row of a strided block: rows W apart, k snapped below the block factor.
                 let (blk, w) = if safe_base(name).starts_with("safe.row") { (scope.grid.by, scope.grid.row_axis().1) } else { (scope.grid.bx, scope.grid.col_axis().1) };
-                return Ok(format!("({} + min({}, {}u) * {w}u)", self.value(&v.kids[0], scope)?, self.value(&v.kids[1], scope)?, blk.saturating_sub(1)));
+                return Ok(format!("({} + min({}, {}u) * {w}u)", self.value(&v.kids[0], scope)?, self.unfolded(&v.kids[1], scope)?, blk.saturating_sub(1)));
             }
             "safe.row_plus_x" | "safe.col_plus_x" => {
                 // Any offset expression, clamped into the block.
                 let blk = if safe_base(name) == "safe.row_plus_x" { scope.grid.by } else { scope.grid.bx };
-                return Ok(format!("({} + min({}, {}u))", self.value(&v.kids[0], scope)?, self.value(&v.kids[1], scope)?, blk.saturating_sub(1)));
+                return Ok(format!("({} + min({}, {}u))", self.value(&v.kids[0], scope)?, self.unfolded(&v.kids[1], scope)?, blk.saturating_sub(1)));
             }
             "safe.row_plus_x_s" | "safe.col_plus_x_s" => {
                 let (blk, w) = if safe_base(name) == "safe.row_plus_x_s" { (scope.grid.by, scope.grid.row_axis().1) } else { (scope.grid.bx, scope.grid.col_axis().1) };
-                return Ok(format!("({} + min({}, {}u) * {w}u)", self.value(&v.kids[0], scope)?, self.value(&v.kids[1], scope)?, blk.saturating_sub(1)));
+                return Ok(format!("({} + min({}, {}u) * {w}u)", self.value(&v.kids[0], scope)?, self.unfolded(&v.kids[1], scope)?, blk.saturating_sub(1)));
             }
             "safe.thread_row_g" | "safe.thread_col_g" => {
                 // The first cell of a thread's block of G groups: wid * (W * B) + lid * (B / G).
@@ -1712,7 +1724,7 @@ impl Renderer<'_> {
                 let g = if matches!(safe_base(&origin.name), "safe.thread_row_g" | "safe.thread_col_g") && origin.kids.len() == 4 { self.lit(&origin.kids[3], 64)? } else { blk.max(1) };
                 let g = g.clamp(1, blk.max(1));
                 let s = blk / g;
-                return Ok(format!("({} + min({}, {}u) * {}u + min({}, {}u))", self.value(&v.kids[0], scope)?, self.value(&v.kids[2], scope)?, g - 1, w * s, self.value(&v.kids[3], scope)?, s.saturating_sub(1)));
+                return Ok(format!("({} + min({}, {}u) * {}u + min({}, {}u))", self.value(&v.kids[0], scope)?, self.unfolded(&v.kids[2], scope)?, g - 1, w * s, self.unfolded(&v.kids[3], scope)?, s.saturating_sub(1)));
             }
             "safe.thread_row" => return Ok(format!("(gid.{} * {}u)", scope.grid.row_axis().0, scope.grid.by)),
             "safe.thread_col" => return Ok(format!("(gid.{} * {}u)", scope.grid.col_axis().0, scope.grid.bx)),
