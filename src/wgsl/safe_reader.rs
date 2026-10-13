@@ -485,7 +485,7 @@ fn tree_of(ctx: &mut Ctx, n: &Node) -> Result<Tree, String> {
 /// Lane `lane` of a vector built by a compose or a splat, as the expression
 /// that lane holds (the parts of a compose may be scalars or vectors in any
 /// order; their widths are their duals' lanes); `None` for anything else.
-fn component(v: &Tree, lane: usize, kingdom: &WgslKingdom) -> Option<Tree> {
+pub(crate) fn component(v: &Tree, lane: usize, kingdom: &WgslKingdom) -> Option<Tree> {
     let stem = v.name.split('.').take(2).collect::<Vec<_>>().join(".");
     let lanes = |t: &Tree| kingdom.dual(t.ty).map(|d| d.lanes.max(1) as usize);
     match stem.as_str() {

@@ -505,7 +505,7 @@ const TILE_COUNTERS: [&str; 4] = ["k", "k2", "k3", "k4"];
 /// Whether a block holds a `block.cont` other than one that runs to the end
 /// of the block (`top`: the block itself, or the last statement's block of a
 /// sequence); a continue inside a loop of the body belongs to that loop.
-fn cont_below_top(t: &Tree, top: bool) -> bool {
+pub fn cont_below_top(t: &Tree, top: bool) -> bool {
     let base = safe_base(&t.name);
     if base.starts_with("loop.") {
         return false;

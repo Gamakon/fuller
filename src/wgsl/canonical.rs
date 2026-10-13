@@ -46,6 +46,15 @@
 //! 8. A strided loop stepping by 1 is written as the loop that steps by 1;
 //!    a literal index bound (1 to 4,096) as the uniform literal it is.
 //! 9. A negated matrix is written as the matrix times -1.0.
+//!    A fully unrolled loop (`loop.unroll`) is written as its copies, each
+//!    with its counter a literal (the copy's), unless the copies would pass
+//!    64 or a continue sits below the top of the body (then as its loop); a
+//!    tile counter outside its loop is written 0. A counter written as a
+//!    literal v is read by its parent's row: an offset by it as the offset
+//!    by v, its index as v, its uniform as the uniform literal v (none for
+//!    0). A lane of a vector built in place (a compose or a splat) is that
+//!    lane's expression: naga flattens the constructors, and the parser
+//!    folds the lane the same way.
 //! 10. Then the parameters, as the parser assigns them ([`params::assign`]):
 //!     every literal whose value a knob writes exactly, a reference to that
 //!     knob, the tile depth declared on the grid when one is referenced.
@@ -53,7 +62,7 @@
 use crate::wgsl::loader::WgslKingdom;
 use crate::geneframe::Ty;
 use crate::wgsl::params;
-use crate::wgsl::render::{array_len, dual_ty, grid_of, parr_var, snap, wgmem_var, workgroup_dim, workgroup_plan, workgroup_shape, Tree, BLK, UNROLL};
+use crate::wgsl::render::{array_len, cont_below_top, dual_ty, grid_of, parr_var, snap, wgmem_var, workgroup_dim, workgroup_plan, workgroup_shape, Tree, BLK, UNROLL};
 
 /// The rung suffix of a row name (`_L1`, `_C2`, `_O0`, ...), if it has one.
 fn rung_of(name: &str) -> Option<&str> {
@@ -279,6 +288,101 @@ fn canonical_grid(grid: &Tree, root: &Tree, kingdom: &WgslKingdom) -> Option<Tre
     Some(Tree::new("grid.with_wg", gt, vec![base, list?]))
 }
 
+/// The tile counter row a loop at `depth` (enclosing tile loops) counts on.
+fn counter_at(depth: usize) -> Option<&'static str> {
+    ["safe.tile_counter", "safe.tile_counter2", "safe.tile_counter3", "safe.tile_counter4"].get(depth).copied()
+}
+
+/// Rule 9: unrolled loops written as their copies, counters as the text has
+/// them. `depth` counts the enclosing tile loops, `copies` the copies the
+/// enclosing unrolled loops make, `fixed` the counters a copy fixed.
+fn loops(t: &Tree, depth: usize, copies: u32, fixed: &[(String, u32)], kingdom: &WgslKingdom) -> Tree {
+    // A counter: the copy's literal, 0 outside its loop, else itself.
+    let value = |c: &Tree| -> Option<u32> {
+        if c.name == "fallback" {
+            return Some(0);
+        }
+        if let Some((_, v)) = fixed.iter().find(|(n, _)| *n == c.name) {
+            return Some(*v);
+        }
+        let need = ["safe.tile_counter", "safe.tile_counter2", "safe.tile_counter3", "safe.tile_counter4"].iter().position(|n| *n == c.name)?;
+        (depth <= need).then_some(0)
+    };
+    let index = || dual_ty(kingdom, "u32.index").ok();
+    let stem = t.name.rsplit_once('_').filter(|(_, r)| rung_of(&format!("x_{r}")).is_some()).map_or(t.name.as_str(), |(s, _)| s);
+    // A parent of a counter written as a literal.
+    if let [c] = t.kids.as_slice() {
+        if let Some(v) = value(c) {
+            if t.name.starts_with("safe.tile_index") {
+                if let Some(ix) = index() {
+                    return Tree::literal("literal.index", ix, v as f32);
+                }
+            }
+            if t.name.starts_with("uniform.of_tcounter") {
+                if v == 0 {
+                    return Tree::fallback(t.ty);
+                }
+                if let Ok(l) = dual_ty(kingdom, "u32.lit4096") {
+                    return Tree::new("uniform.of_lit", t.ty, vec![Tree::literal("literal.lit4096", l, v as f32)]);
+                }
+            }
+        }
+    }
+    if let [origin, c] = t.kids.as_slice() {
+        let offset = if t.name.starts_with("safe.row_plus_tile") { Some("safe.row_plus_x") } else if t.name.starts_with("safe.col_plus_tile") { Some("safe.col_plus_x") } else { None };
+        if let (Some(base), Some(v), Some(ix)) = (offset, value(c), index()) {
+            let name = if t.name.ends_with("_s") { format!("{base}_s") } else { base.to_string() };
+            if let Some(r) = kingdom.rows.iter().find(|r| r.name == name && r.output == t.ty && r.inputs.len() == 2) {
+                // The origin under the offset row's own dual for it.
+                let o = Tree { ty: r.inputs[0], ..loops(origin, depth, copies, fixed, kingdom) };
+                return Tree::new(&name, t.ty, vec![o, Tree::literal("literal.index", ix, v as f32)]);
+            }
+        }
+    }
+    let is_loop = stem.starts_with("loop.tile") || stem == "loop.unroll";
+    if stem == "loop.unroll" {
+        if let ([n, body], Some(rung)) = (t.kids.as_slice(), rung_of(&t.name)) {
+            let count = if n.name.starts_with("literal.") { n.konst.round().clamp(1.0, 64.0) as u32 } else { 1 };
+            let total = copies.saturating_mul(count);
+            let tile = format!("loop.tile_{rung}");
+            if total > crate::wgsl::render::UNROLL_COPIES_MAX || cont_below_top(body, true) {
+                if kingdom.rows.iter().any(|r| r.name == tile && r.output == t.ty) {
+                    return Tree::new(&tile, t.ty, vec![n.clone(), loops(body, depth + 1, copies, fixed, kingdom)]);
+                }
+            } else if let (Some(counter), Ok(st), Ok(bt)) = (counter_at(depth), dual_ty(kingdom, &format!("stmt.{rung}")), dual_ty(kingdom, &format!("block.{rung}"))) {
+                let mut raw = Vec::new();
+                for i in 0..count {
+                    let mut f = fixed.to_vec();
+                    f.push((counter.to_string(), i));
+                    let copy = loops(body, depth + 1, total, &f, kingdom);
+                    if statements(&copy, &mut raw) {
+                        break;
+                    }
+                }
+                // At an epilogue rung only the last statement is the
+                // epilogue's; those before it are conditional statements.
+                let cond = rung.strip_prefix('O').map(|l| format!("stmt.C{l}"));
+                let last = raw.len().saturating_sub(1);
+                let mut items = Vec::new();
+                for (i, s) in raw.iter().enumerate() {
+                    let target = match &cond {
+                        Some(c) if i < last => dual_ty(kingdom, c).ok(),
+                        _ => Some(st),
+                    };
+                    match target.and_then(|d| convert(s, d, kingdom)) {
+                        Some(x) => items.push(x),
+                        None => return t.clone(),
+                    }
+                }
+                return Tree::new(&format!("stmt.block_{rung}"), st, vec![grouped(items, rung, &Tree::fallback(bt), Some(st))]);
+            }
+        }
+    }
+    let last = t.kids.len().saturating_sub(1);
+    let kids = t.kids.iter().enumerate().map(|(i, k)| loops(k, if is_loop && i == last { depth + 1 } else { depth }, copies, fixed, kingdom)).collect();
+    Tree { kids, ..t.clone() }
+}
+
 /// Rule 7: every thread origin in `t` as the grid writes it.
 fn origins(t: &Tree, g: &crate::wgsl::render::Grid) -> Tree {
     let kids: Vec<Tree> = t.kids.iter().map(|k| origins(k, g)).collect();
@@ -323,6 +427,14 @@ fn structural(t: &Tree, kingdom: &WgslKingdom) -> Tree {
             let root = Tree { kids, ..split };
             let grid = canonical_grid(&root.kids[0], &root, kingdom).unwrap_or_else(|| root.kids[0].clone());
             let mut kids = root.kids.clone();
+            for k in kids.iter_mut().skip(1) {
+                // (Unrolled loops spliced, then the blocks regrouped; an
+                // epilogue that is the fallback after a body that returns
+                // is not written, and stays so.)
+                if k.name != "fallback" {
+                    *k = structural(&loops(k, 0, 1, &[], kingdom), kingdom);
+                }
+            }
             if let Ok(g) = grid_of(&grid) {
                 for k in kids.iter_mut().skip(1) {
                     *k = origins(k, &g);
@@ -456,6 +568,11 @@ fn canonical_bound(t: &Tree, kingdom: &WgslKingdom) -> Option<Tree> {
 
 /// Rule 1 at `t` itself (its children already canonical).
 fn canonical_block(t: &Tree, kingdom: &WgslKingdom) -> Tree {
+    if let (Some(lane), [v]) = (t.name.strip_prefix("shape.access_").and_then(|i| i.parse::<usize>().ok()), t.kids.as_slice()) {
+        if let Some(c) = crate::wgsl::safe_reader::component(v, lane, kingdom) {
+            return c;
+        }
+    }
     if let Some(r) = canonical_stride(t, kingdom).or_else(|| canonical_bound(t, kingdom)).or_else(|| canonical_neg_mat(t, kingdom)) {
         return r;
     }
