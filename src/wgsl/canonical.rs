@@ -44,8 +44,13 @@
 //!    lid.x` from the grid: the builtins and block factor the row carries
 //!    are not written, the grid's are.
 //! 8. A strided loop stepping by 1 is written as the loop that steps by 1;
-//!    a literal index bound (1 to 4,096) as the uniform literal it is.
-//! 9. A negated matrix is written as the matrix times -1.0.
+//!    a literal index bound (1 to 4,096) as the uniform literal it is; a
+//!    loop over an expression bound that is the bound's fallback, as the
+//!    literal tile loop over the fallback's value.
+//! 9. A negated matrix is written as the matrix times -1.0. A literal index
+//!    into a private array is written masked to the array (`v & 15u`,
+//!    below its length). An `if` with an empty else is written as the if;
+//!    a breaking loop whose body is empty, as the loop.
 //!    A fully unrolled loop (`loop.unroll`) is written as its copies, each
 //!    with its counter a literal (the copy's), unless the copies would pass
 //!    64 or a continue sits below the top of the body (then as its loop); a
@@ -54,7 +59,8 @@
 //!    by v, its index as v, its uniform as the uniform literal v (none for
 //!    0). A lane of a vector built in place (a compose or a splat) is that
 //!    lane's expression: naga flattens the constructors, and the parser
-//!    folds the lane the same way.
+//!    folds the lane the same way. The item index is `t` in an
+//!    item loop's body (the loop's counter) and 0 outside one.
 //! 10. Then the parameters, as the parser assigns them ([`params::assign`]):
 //!     every literal whose value a knob writes exactly, a reference to that
 //!     knob, the tile depth declared on the grid when one is referenced.
@@ -296,7 +302,7 @@ fn counter_at(depth: usize) -> Option<&'static str> {
 /// Rule 9: unrolled loops written as their copies, counters as the text has
 /// them. `depth` counts the enclosing tile loops, `copies` the copies the
 /// enclosing unrolled loops make, `fixed` the counters a copy fixed.
-fn loops(t: &Tree, depth: usize, copies: u32, fixed: &[(String, u32)], kingdom: &WgslKingdom) -> Tree {
+fn loops(t: &Tree, depth: usize, copies: u32, fixed: &[(String, u32)], items: bool, kingdom: &WgslKingdom) -> Tree {
     // A counter: the copy's literal, 0 outside its loop, else itself.
     let value = |c: &Tree| -> Option<u32> {
         if c.name == "fallback" {
@@ -334,7 +340,7 @@ fn loops(t: &Tree, depth: usize, copies: u32, fixed: &[(String, u32)], kingdom: 
             let name = if t.name.ends_with("_s") { format!("{base}_s") } else { base.to_string() };
             if let Some(r) = kingdom.rows.iter().find(|r| r.name == name && r.output == t.ty && r.inputs.len() == 2) {
                 // The origin under the offset row's own dual for it.
-                let o = Tree { ty: r.inputs[0], ..loops(origin, depth, copies, fixed, kingdom) };
+                let o = Tree { ty: r.inputs[0], ..loops(origin, depth, copies, fixed, items, kingdom) };
                 return Tree::new(&name, t.ty, vec![o, Tree::literal("literal.index", ix, v as f32)]);
             }
         }
@@ -347,14 +353,14 @@ fn loops(t: &Tree, depth: usize, copies: u32, fixed: &[(String, u32)], kingdom: 
             let tile = format!("loop.tile_{rung}");
             if total > crate::wgsl::render::UNROLL_COPIES_MAX || cont_below_top(body, true) {
                 if kingdom.rows.iter().any(|r| r.name == tile && r.output == t.ty) {
-                    return Tree::new(&tile, t.ty, vec![n.clone(), loops(body, depth + 1, copies, fixed, kingdom)]);
+                    return Tree::new(&tile, t.ty, vec![n.clone(), loops(body, depth + 1, copies, fixed, items, kingdom)]);
                 }
             } else if let (Some(counter), Ok(st), Ok(bt)) = (counter_at(depth), dual_ty(kingdom, &format!("stmt.{rung}")), dual_ty(kingdom, &format!("block.{rung}"))) {
                 let mut raw = Vec::new();
                 for i in 0..count {
                     let mut f = fixed.to_vec();
                     f.push((counter.to_string(), i));
-                    let copy = loops(body, depth + 1, total, &f, kingdom);
+                    let copy = loops(body, depth + 1, total, &f, items, kingdom);
                     if statements(&copy, &mut raw) {
                         break;
                     }
@@ -378,8 +384,21 @@ fn loops(t: &Tree, depth: usize, copies: u32, fixed: &[(String, u32)], kingdom: 
             }
         }
     }
+    // The item counter: `t` in an item loop's body, 0 outside it.
+    if t.name == "builtin.item" || (t.name == "safe.counter_index" && t.kids.first().is_some_and(|c| c.name == "safe.counter")) {
+        let counter = dual_ty(kingdom, "u32.counter").ok().map(|c| Tree::new("safe.counter", c, vec![]));
+        return match (items, index(), counter) {
+            (true, _, Some(c)) => Tree::new("safe.counter_index", t.ty, vec![c]),
+            (false, Some(ix), _) => Tree::literal("literal.index", ix, 0.0),
+            _ => t.clone(),
+        };
+    }
+    if t.name == "uniform.of_counter" && !items {
+        return Tree::fallback(t.ty);
+    }
+    let in_items = items || stem.starts_with("loop.items");
     let last = t.kids.len().saturating_sub(1);
-    let kids = t.kids.iter().enumerate().map(|(i, k)| loops(k, if is_loop && i == last { depth + 1 } else { depth }, copies, fixed, kingdom)).collect();
+    let kids = t.kids.iter().enumerate().map(|(i, k)| loops(k, if is_loop && i == last { depth + 1 } else { depth }, copies, fixed, in_items && (i == last || items), kingdom)).collect();
     Tree { kids, ..t.clone() }
 }
 
@@ -432,7 +451,7 @@ fn structural(t: &Tree, kingdom: &WgslKingdom) -> Tree {
                 // epilogue that is the fallback after a body that returns
                 // is not written, and stays so.)
                 if k.name != "fallback" {
-                    *k = structural(&loops(k, 0, 1, &[], kingdom), kingdom);
+                    *k = structural(&loops(k, 0, 1, &[], false, kingdom), kingdom);
                 }
             }
             if let Ok(g) = grid_of(&grid) {
@@ -556,6 +575,21 @@ fn canonical_neg_mat(t: &Tree, kingdom: &WgslKingdom) -> Option<Tree> {
     kingdom.rows.iter().any(|r| r.name == "arith.mul_mat_scalar" && r.output == t.ty).then(|| Tree::new("arith.mul_mat_scalar", t.ty, vec![m.clone(), Tree::literal("literal.real", real, -1.0)]))
 }
 
+/// Rule 8 at a loop over a fallback expression bound.
+fn canonical_fallback_bound(t: &Tree, kingdom: &WgslKingdom) -> Option<Tree> {
+    let (stem, rung) = t.name.rsplit_once('_').filter(|(_, r)| rung_of(&format!("x_{r}")).is_some())?;
+    let tile = stem.strip_prefix("loop.tilex").map(|rest| format!("loop.tile{rest}_{rung}"))?;
+    let bound = t.kids.first().filter(|b| b.name == "fallback")?;
+    let v = kingdom.dual(bound.ty)?.fallback_bits as f32;
+    if !(1.0..=64.0).contains(&v) {
+        return None;
+    }
+    let row = kingdom.rows.iter().find(|r| r.name == tile && r.output == t.ty && r.inputs.len() == t.kids.len())?;
+    let mut kids = t.kids.clone();
+    kids[0] = Tree::literal("literal.lit64", row.inputs[0], v);
+    Some(Tree::new(&tile, t.ty, kids))
+}
+
 /// Rule 8 at a literal index bound.
 fn canonical_bound(t: &Tree, kingdom: &WgslKingdom) -> Option<Tree> {
     let [x] = t.kids.as_slice() else { return None };
@@ -568,12 +602,46 @@ fn canonical_bound(t: &Tree, kingdom: &WgslKingdom) -> Option<Tree> {
 
 /// Rule 1 at `t` itself (its children already canonical).
 fn canonical_block(t: &Tree, kingdom: &WgslKingdom) -> Tree {
+    // A literal private index, masked as written.
+    if let (true, [arr, idx, rest @ ..]) = (t.name.starts_with("parr.get_") || t.name.starts_with("parr.set_"), t.kids.as_slice()) {
+        if let ([k], Ok(var)) = (idx.kids.as_slice(), parr_var(kingdom, arr)) {
+            let mask = match idx.name.as_str() {
+                "safe.pidx64" => Some(63u32),
+                "safe.pidx16" => Some(15u32),
+                _ => None,
+            };
+            if let (Some(mask), true) = (mask, k.name.starts_with("literal.") && k.konst.is_finite()) {
+                let v = (k.konst.max(0.0) as u32 & mask).min(array_len(var).saturating_sub(1));
+                let idx = Tree::new(&idx.name, idx.ty, vec![Tree::literal(&k.name, k.ty, v as f32)]);
+                let kids = [vec![arr.clone(), idx], rest.to_vec()].concat();
+                return Tree { kids, ..t.clone() };
+            }
+        }
+    }
+    // A breaking loop with an empty body (no break written) is the loop.
+    if let (Some(rest), Some(body)) = (t.name.strip_prefix("loop.tile_brk_").map(|r| format!("loop.tile_{r}")).or_else(|| t.name.strip_prefix("loop.tilex_brk_").map(|r| format!("loop.tilex_{r}"))), t.kids.last()) {
+        if body.name == "fallback" {
+            if let Some(r) = kingdom.rows.iter().find(|r| r.name == rest && r.output == t.ty && r.inputs.len() == t.kids.len()) {
+                let mut kids = t.kids.clone();
+                let last = kids.len() - 1;
+                kids[last] = Tree::fallback(r.inputs[last]);
+                return Tree::new(&rest, t.ty, kids);
+            }
+        }
+    }
+    // An if with an empty else is the if.
+    if let (Some(rung), [c, then, other]) = (t.name.strip_prefix("stmt.if_else_"), t.kids.as_slice()) {
+        let name = format!("stmt.if_{rung}");
+        if other.name == "fallback" && kingdom.rows.iter().any(|r| r.name == name && r.output == t.ty) {
+            return Tree::new(&name, t.ty, vec![c.clone(), then.clone()]);
+        }
+    }
     if let (Some(lane), [v]) = (t.name.strip_prefix("shape.access_").and_then(|i| i.parse::<usize>().ok()), t.kids.as_slice()) {
         if let Some(c) = crate::wgsl::safe_reader::component(v, lane, kingdom) {
             return c;
         }
     }
-    if let Some(r) = canonical_stride(t, kingdom).or_else(|| canonical_bound(t, kingdom)).or_else(|| canonical_neg_mat(t, kingdom)) {
+    if let Some(r) = canonical_stride(t, kingdom).or_else(|| canonical_bound(t, kingdom)).or_else(|| canonical_neg_mat(t, kingdom)).or_else(|| canonical_fallback_bound(t, kingdom)) {
         return r;
     }
     if let Some(r) = canonical_reduction(t, kingdom) {
