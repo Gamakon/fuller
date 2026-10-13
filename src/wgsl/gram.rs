@@ -40,6 +40,45 @@ pub const BLOCKED: &str = include_str!("../../kingdoms/wgsl/gram/blocked.wgsl");
 /// The shipped kernel, verbatim from `H_GRAM_ACCUM_WGSL`.
 pub const SHIPPED: &str = include_str!("../../kingdoms/wgsl/gram/shipped.wgsl");
 
+/// The longest a blocking wait of ours trusts wgpu: wgpu-core 0.21 waits
+/// at most 5 s (`CLEANUP_WAIT_MS`), then marks the submission done whether
+/// or not the GPU has finished it (run 6, 2026-10-13: a kernel still running
+/// after 10 s was read, the next kernel queued behind it read as slow, and
+/// the shipped kernel's timestamps after it read zero). A wait that returns
+/// at or past this gave up; its work is still on the GPU.
+pub const WAIT_GAVE_UP_MS: f64 = 4_900.0;
+
+/// The longest the host drains a runaway before naming it undrained.
+pub const DRAIN_LIMIT_MS: f64 = 120_000.0;
+
+/// Wait until the GPU has really finished everything submitted. A wait
+/// that gave up (`WAIT_GAVE_UP_MS`) is a runaway: the host then submits an
+/// empty submission and waits again, until a wait returns early (the fence
+/// reached, so the GPU has passed the runaway), and returns the runaway as
+/// an error, so nothing the GPU was still writing is read; a GPU that does
+/// not drain within `DRAIN_LIMIT_MS` is named (the fit's watchdog exits
+/// sooner, naming the kernel).
+pub fn wait_gpu(device: &wgpu::Device, queue: &wgpu::Queue) -> Result<(), String> {
+    let ms_since = |t: Instant| t.elapsed().as_secs_f64() * 1e3;
+    let t = Instant::now();
+    device.poll(wgpu::Maintain::Wait);
+    let first = ms_since(t);
+    if first < WAIT_GAVE_UP_MS {
+        return Ok(());
+    }
+    loop {
+        let tw = Instant::now();
+        queue.submit(None);
+        device.poll(wgpu::Maintain::Wait);
+        if ms_since(tw) < WAIT_GAVE_UP_MS {
+            return Err(format!("runaway: the GPU still ran after {:.1} s; drained after {:.1} s, nothing read", first / 1e3, ms_since(t) / 1e3));
+        }
+        if ms_since(t) > DRAIN_LIMIT_MS {
+            return Err(format!("runaway: the GPU still ran after {:.1} s and had not drained after {:.1} s", first / 1e3, ms_since(t) / 1e3));
+        }
+    }
+}
+
 /// The entry point every Gram kernel exposes; the bindings are fixed by
 /// the driver: `phi` at 0, `h` at 1, `cfg` at 2.
 pub const ENTRY: &str = "main";
@@ -626,7 +665,7 @@ impl<'a> Gram<'a> {
             // The compute alone: submit, wait, the wall clock around it.
             let t_compute = Instant::now();
             queue.submit(Some(enc.finish()));
-            device.poll(wgpu::Maintain::Wait);
+            wait_gpu(device, queue)?;
             compute_ms += t_compute.elapsed().as_secs_f64() * 1e3;
             // Then the timestamps and (when asked) the band, read back.
             let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("gram read-back") });
@@ -641,7 +680,7 @@ impl<'a> Gram<'a> {
                 st.slice(..).map_async(wgpu::MapMode::Read, { let tx = tx.clone(); move |r| { tx.send(r).expect("the receiver waits for the mapping"); } });
             }
             stamps_read.slice(..).map_async(wgpu::MapMode::Read, move |r| { tx.send(r).expect("the receiver waits for the mapping"); });
-            device.poll(wgpu::Maintain::Wait);
+            wait_gpu(device, queue)?;
             for _ in 0..(1 + usize::from(staging.is_some())) {
                 rx.recv().map_err(|e| format!("map: {e}"))?.map_err(|e| format!("map: {e}"))?;
             }
@@ -738,7 +777,7 @@ impl Gram<'_> {
         }
         let t_compute = Instant::now();
         queue.submit(Some(enc.finish()));
-        device.poll(wgpu::Maintain::Wait);
+        wait_gpu(device, queue)?;
         let compute_ms = t_compute.elapsed().as_secs_f64() * 1e3;
         // The timestamps resolved after the passes completed (resolved in the
         // same submission, short passes read 0 on Metal), and every band read back.
@@ -752,7 +791,7 @@ impl Gram<'_> {
         let (tx, rx) = std::sync::mpsc::channel();
         staging.slice(..).map_async(wgpu::MapMode::Read, { let tx = tx.clone(); move |r| { tx.send(r).expect("the receiver waits for the mapping"); } });
         stamps_read.slice(..).map_async(wgpu::MapMode::Read, move |r| { tx.send(r).expect("the receiver waits for the mapping"); });
-        device.poll(wgpu::Maintain::Wait);
+        wait_gpu(device, queue)?;
         for _ in 0..2 {
             rx.recv().map_err(|e| format!("map: {e}"))?.map_err(|e| format!("map: {e}"))?;
         }
@@ -817,7 +856,7 @@ impl Resident {
             })
             .collect();
         dev.queue.submit(None);
-        dev.device.poll(wgpu::Maintain::Wait);
+        wait_gpu(&dev.device, &dev.queue)?;
         Ok(Resident { d, m, limit, bands, upload_ms: t0.elapsed().as_secs_f64() * 1e3 })
     }
 
@@ -1828,6 +1867,42 @@ mod tests {
         }
         println!("compute ms and timestamp ms per build: {times:?}");
         assert!(times.iter().all(|t| t.0 > 0.0 && t.1 > 0.0 && t.1 < t.0), "{times:?}");
+    }
+
+    /// A RUNAWAY IS NAMED AND NOTHING OF IT IS READ (run 6, 2026-10-13: a
+    /// kernel still running after wgpu's 5 s wait was read, and the shipped
+    /// kernel's timestamps after it read zero). A kernel that spins past the
+    /// wait (the shipped kernel behind a dependent chain of 3e9 multiply-adds
+    /// a thread, its result written so it is kept) is an error naming the
+    /// runaway, returned only after the GPU drained; the shipped kernel timed
+    /// right after it times above zero. On the device: about 30 s.
+    #[test]
+    fn a_runaway_is_named_and_the_next_timing_is_not_zero_on_the_device() {
+        let dev = Device::new().expect("device");
+        let limit = effective_buffer_limit(&dev.device);
+        let (d, m) = (32usize, 64usize);
+        let p = phi(d, m, 3);
+        let spin = SHIPPED.replacen(
+            "    let lr = gid.y;",
+            "    var spin_acc: f32 = f32(gid.x) * 1e-9;\n    for (var i: u32 = 0u; i < 3000000000u; i = i + 1u) { spin_acc = spin_acc * 1.0000001 + 1e-9; }\n    if (spin_acc == 12345.0) { h[0] = spin_acc; }\n    let lr = gid.y;",
+            1,
+        );
+        assert_ne!(spin, SHIPPED, "the spin was not inserted");
+        let gram = Gram::compile(&dev, &spin).expect("the spinning kernel compiles");
+        let t = Instant::now();
+        let r = gram.build(&p, d, m, limit);
+        let secs = t.elapsed().as_secs_f64();
+        println!("the spinning kernel: {:.1} s, {}", secs, match &r { Ok(_) => "read".to_string(), Err(e) => e.clone() });
+        assert!(secs * 1e3 >= WAIT_GAVE_UP_MS, "the spin ran {secs:.1} s, under the wait it is meant to outlast: lengthen it");
+        let e = match r {
+            Ok(_) => panic!("a kernel the wait gave up on was read"),
+            Err(e) => e,
+        };
+        assert!(e.contains("runaway"), "{e}");
+        let shipped = Gram::compile(&dev, SHIPPED).expect("compile");
+        let b = shipped.build(&phi(64, 1000, 1), 64, 1000, limit).expect("the shipped kernel after the runaway");
+        println!("the shipped kernel after it: {:.3} ms on the GPU", b.gpu_ms);
+        assert!(b.gpu_ms > 0.0, "the shipped kernel timed at zero after the runaway");
     }
 
     #[test]
