@@ -139,7 +139,7 @@ fn mutate_all(files: &[PathBuf], n: usize, seed: u64, out: &Path, kingdom: &Wgsl
             let entry = by_knob.entry(knob_class(&c.site)).or_default();
             entry.0 += 1;
             let child = format!("{id}__{i:02}");
-            match knob::check(&c.tree, kingdom) {
+            match knob::check_read_back(&c.tree, kingdom) {
                 Ok(t) => {
                     entry.1 += 1;
                     if seen.insert(t.clone()) {

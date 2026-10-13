@@ -262,28 +262,40 @@ impl Stage {
     }
 }
 
-/// THE LAYERED CHECK of any child tree: the legality checker's six layers
-/// (`check.rs`), then its text rendered (with its `// grid` header),
-/// validated by naga for the adapter, and read back by the safe reader (the
-/// ownership proof). The text and the tree read back, or the stage and what
-/// failed.
-pub fn check_text(child: &Tree, kingdom: &WgslKingdom) -> Result<(String, crate::wgsl::safe_reader::SafeRead), (Stage, String)> {
+/// THE LAYERED CHECK on the run path (2026-10-13: the evolution path is
+/// genes, tree, text, run; nothing is parsed back): the legality checker's
+/// six layers (`check.rs`, the ownership proof among them), then the text
+/// rendered (with its `// grid` header, from the child's own grid) and
+/// validated by naga for the adapter. The text, or the stage and what failed.
+pub fn check_legal(child: &Tree, kingdom: &WgslKingdom) -> Result<String, (Stage, String)> {
     // The legality checker reads values: the references written as their literals.
     let plain = crate::wgsl::params::to_literals(child, kingdom).map_err(|e| (Stage::Legal, e))?;
     crate::wgsl::check::check(&plain, kingdom, &gram_role(), &Target::current()).map_err(|e| (Stage::Legal, e.to_string()))?;
     let text = crate::wgsl::safe_karva::render_tree(child, kingdom).map_err(|e| (Stage::Render, e))?.text;
     validate_text(&text).map_err(|e| (Stage::Validate, e.lines().next().unwrap_or("").to_string()))?;
+    Ok(text)
+}
+
+/// [`check_legal`], then the text read back by the safe reader: a second,
+/// independent ownership proof, kept for the tests and the tools (it once
+/// found a race the checker passed, 2698df7), off the run path. The text
+/// and the tree read back, or the stage and what failed.
+pub fn check_text(child: &Tree, kingdom: &WgslKingdom) -> Result<(String, crate::wgsl::safe_reader::SafeRead), (Stage, String)> {
+    let text = check_legal(child, kingdom)?;
     let back = read_safe(&text, kingdom).map_err(|e| (Stage::ReadBack, e))?;
     Ok((text, back))
 }
 
-/// THE LAYERED CHECK of a knob child, as far as it exists today: rendered
-/// (with its `// grid` header), validated by naga for the adapter
-/// (`target.rs`: features, workgroup size and memory), and read back by the
-/// safe reader (its ownership proof: every store at the thread's own cell)
-/// with the grid and tile depth the child declares. The text, or the stage
-/// and what failed.
+/// THE CHECK of a knob child on the run path: [`check_legal`]. Its grid and
+/// tile depth are the child's own (the text is rendered from them), so no
+/// read-back compares them.
 pub fn check(child: &Tree, kingdom: &WgslKingdom) -> Result<String, (Stage, String)> {
+    check_legal(child, kingdom)
+}
+
+/// [`check`] with the read-back: the text read back declares the grid and
+/// tile depth the child does. For the tests and the tools.
+pub fn check_read_back(child: &Tree, kingdom: &WgslKingdom) -> Result<String, (Stage, String)> {
     let (text, back) = check_text(child, kingdom)?;
     let (want, got) = (Knobs::of_root(child).map_err(|e| (Stage::ReadBack, e))?, Knobs::of_root(&back.tree).map_err(|e| (Stage::ReadBack, e))?);
     // A tile depth of 1 is the items stepped one at a time: read back, it is
@@ -358,7 +370,7 @@ mod tests {
         assert!(!legal.is_empty(), "no legal tile depth beside {old}");
         let new = legal[0];
         let child = set(&t, &Site::Ktile, new);
-        let text = check(&child, &k).unwrap_or_else(|(s, e)| panic!("{}: {e}", s.name()));
+        let text = check_read_back(&child, &k).unwrap_or_else(|(s, e)| panic!("{}: {e}", s.name()));
         assert!(text.contains(&format!("t = t + {new}u")), "{text}");
     }
 
@@ -371,7 +383,7 @@ mod tests {
         for _ in 0..8 {
             let (x, y) = (mutate(&t, &k, &target, &mut a).unwrap(), mutate(&t, &k, &target, &mut b).unwrap());
             assert_eq!((x.site.clone(), x.old, x.new), (y.site, y.old, y.new));
-            check(&x.tree, &k).unwrap_or_else(|(s, e)| panic!("{} {} -> {}: {}: {e}", x.site.name(), x.old, x.new, s.name()));
+            check_read_back(&x.tree, &k).unwrap_or_else(|(s, e)| panic!("{} {} -> {}: {}: {e}", x.site.name(), x.old, x.new, s.name()));
         }
     }
 }
