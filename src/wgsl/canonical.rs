@@ -45,9 +45,10 @@
 //!    are not written, the grid's are.
 //! 8. A strided loop stepping by 1 is written as the loop that steps by 1;
 //!    a literal index bound (1 to 4,096) as the uniform literal it is.
-//! 9. Then the parameters, as the parser assigns them ([`params::assign`]):
-//!    every literal whose value a knob writes exactly, a reference to that
-//!    knob, the tile depth declared on the grid when one is referenced.
+//! 9. A negated matrix is written as the matrix times -1.0.
+//! 10. Then the parameters, as the parser assigns them ([`params::assign`]):
+//!     every literal whose value a knob writes exactly, a reference to that
+//!     knob, the tile depth declared on the grid when one is referenced.
 
 use crate::wgsl::loader::WgslKingdom;
 use crate::geneframe::Ty;
@@ -96,6 +97,12 @@ fn statements(block: &Tree, out: &mut Vec<Tree>) -> bool {
 fn grouped(mut items: Vec<Tree>, rung: &str, like: &Tree, stmt_ty: Option<Ty>) -> Tree {
     if items.is_empty() {
         return Tree::fallback(like.ty);
+    }
+    // One statement that is a block of this rung (a continue's) is that block.
+    if let [one] = items.as_slice() {
+        if one.name == format!("stmt.block_{rung}") && one.kids.len() == 1 && one.kids[0].ty == like.ty {
+            return one.kids[0].clone();
+        }
     }
     if items.len() > 4 {
         let rest = items.split_off(3);
@@ -427,6 +434,16 @@ fn canonical_stride(t: &Tree, kingdom: &WgslKingdom) -> Option<Tree> {
     kingdom.rows.iter().any(|r| r.name == name && r.output == t.ty).then(|| Tree::new(&name, t.ty, vec![bound.clone(), body.clone()]))
 }
 
+/// Rule 9 at a negated matrix.
+fn canonical_neg_mat(t: &Tree, kingdom: &WgslKingdom) -> Option<Tree> {
+    let [m] = t.kids.as_slice() else { return None };
+    if t.name != "arith.neg_mat" {
+        return None;
+    }
+    let real = dual_ty(kingdom, "f32.real").ok()?;
+    kingdom.rows.iter().any(|r| r.name == "arith.mul_mat_scalar" && r.output == t.ty).then(|| Tree::new("arith.mul_mat_scalar", t.ty, vec![m.clone(), Tree::literal("literal.real", real, -1.0)]))
+}
+
 /// Rule 8 at a literal index bound.
 fn canonical_bound(t: &Tree, kingdom: &WgslKingdom) -> Option<Tree> {
     let [x] = t.kids.as_slice() else { return None };
@@ -439,7 +456,7 @@ fn canonical_bound(t: &Tree, kingdom: &WgslKingdom) -> Option<Tree> {
 
 /// Rule 1 at `t` itself (its children already canonical).
 fn canonical_block(t: &Tree, kingdom: &WgslKingdom) -> Tree {
-    if let Some(r) = canonical_stride(t, kingdom).or_else(|| canonical_bound(t, kingdom)) {
+    if let Some(r) = canonical_stride(t, kingdom).or_else(|| canonical_bound(t, kingdom)).or_else(|| canonical_neg_mat(t, kingdom)) {
         return r;
     }
     if let Some(r) = canonical_reduction(t, kingdom) {
