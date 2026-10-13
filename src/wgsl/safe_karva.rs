@@ -717,6 +717,11 @@ fn conform_at(t: &Tree, demand: Ty, kingdom: &WgslKingdom, per_kernel: &[PerKern
             if x.name.starts_with("literal.") && n.name.starts_with("literal.") {
                 return n.konst == -x.konst;
             }
+            // A compose of folded negations, part by part (a constant vector
+            // negated: naga folds it into the composed negations, 2026-10-13).
+            if x.name.starts_with("shape.compose") && n.name == x.name && n.kids.len() == x.kids.len() && !x.kids.is_empty() {
+                return n.kids.iter().zip(&x.kids).all(|(a, b)| neg_of(a, b));
+            }
             // A splat of a folded negation (naga writes it as the lanes composed).
             x.name.starts_with("shape.splat") && x.kids.len() == 1 && ((n.name == x.name && n.kids.len() == 1 && neg_of(&n.kids[0], &x.kids[0])) || (n.name.starts_with("shape.compose") && !n.kids.is_empty() && n.kids.iter().all(|l| neg_of(l, &x.kids[0]))))
         }

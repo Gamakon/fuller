@@ -2630,6 +2630,16 @@ pub const COMPOSITES: &[(&str, &str)] = &[
 /// is met by a row whose output is the dual, functions while depth allows,
 /// terminals at the limit; a dual with no terminal row gets a `fallback`
 /// leaf, as the typed projection would substitute. Deterministic in `seed`.
+/// What a subtree the sampler draws must read.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Need {
+    Nothing,
+    /// A declared input (an output store's value).
+    Input,
+    /// Anything not a literal (a control row's condition).
+    Variable,
+}
+
 pub fn sample(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, seed: u64) -> Result<Tree, String> {
     let f16 = |t: &Ty| kingdom.dual(*t).is_some_and(|d| d.scalar() == Some("f16"));
     // (No return: a return before the epilogue ends the thread before it
@@ -2682,9 +2692,13 @@ pub fn sample(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, se
             }
         }
     };
+    // A variable: a terminal that is not a literal (a builtin, a load, a
+    // register or array read, a counter): what a control condition reads.
+    let reads_variable = |r: &WgslRow| r.terminal && !r.name.starts_with("literal.");
     let input_reach = reach(&reads_input);
     let store_reach = reach(&stores_output);
-    let flags: Vec<(bool, bool)> = rows.iter().map(|r| (reads_input(r), stores_output(r))).collect();
+    let var_reach = reach(&reads_variable);
+    let flags: Vec<(bool, bool, bool)> = rows.iter().map(|r| (reads_input(r), stores_output(r), reads_variable(r))).collect();
     let mut state = seed ^ 0x5DEE_CE66_D1CE_4E5B;
     fn next(state: &mut u64) -> u64 {
         *state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
@@ -2700,9 +2714,33 @@ pub fn sample(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, se
         max_depth: usize,
         input_reach: &'a BTreeMap<Ty, usize>,
         store_reach: &'a BTreeMap<Ty, usize>,
-        flags: &'a [(bool, bool)],
+        var_reach: &'a BTreeMap<Ty, usize>,
+        flags: &'a [(bool, bool, bool)],
     }
     impl Draw<'_> {
+        /// Whether row `i` would nest a long loop in one of its kind.
+        fn nests(&self, i: usize, inside: u8) -> bool {
+            let name = self.rows[i].name.as_str();
+            (inside & 1 != 0 && matches!(name, "loop.items" | "loop.items_unrolled")) || (inside & 2 != 0 && name == "loop.tile")
+        }
+
+        /// What kid `k` of row `i` must read: an output store's value an
+        /// input; a control row's condition (an if's, a continue's, a
+        /// break's) a variable, so no literal decides it (2026-10-13: 93 of
+        /// 1,000 random kernels had every store under a literal condition
+        /// that never held; 1,931 of 2,381 conditions were constants).
+        fn kid_need(&self, i: usize, k: usize) -> Need {
+            let r = &self.rows[i];
+            if self.flags[i].1 && k + 1 == r.inputs.len() {
+                return Need::Input;
+            }
+            let condition = if r.name.starts_with("stmt.if") || r.name.starts_with("block.cont") { 0 } else if r.name.starts_with("block.brk") { 1 } else { usize::MAX };
+            if k == condition {
+                return Need::Variable;
+            }
+            Need::Nothing
+        }
+
         /// The long loops kid `k` of row `i` is inside: bit 1 an item loop,
         /// bit 2 a tile loop (the plain kingdom's rows, which the renderer
         /// does not nest).
@@ -2723,7 +2761,11 @@ pub fn sample(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, se
                 return false;
             }
             let form = |t: Ty| self.kingdom.dual(t).map(|d| (d.slot.clone(), d.form.clone()));
-            let opens = matches!(form(r.output), Some((slot, f)) if slot == "stmt" && f.starts_with('L')) && matches!(r.inputs.get(k).copied().and_then(form), Some((slot, f)) if slot == "block" && f.starts_with('C'));
+            // (Any block a statement holds at an L rung: an if's conditional
+            // block, and a block statement's own, whose continue would skip
+            // the statements after it, a barrier among them: the legality
+            // checker's layer 4. A continue is then a loop body's own.)
+            let opens = matches!(form(r.output), Some((slot, f)) if slot == "stmt" && f.starts_with('L')) && matches!(r.inputs.get(k).copied().and_then(form), Some((slot, _)) if slot == "block");
             no_cont || opens
         }
 
@@ -2738,7 +2780,7 @@ pub fn sample(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, se
         /// A tree of `demand`. `need_input`: it must read an input (the
         /// value an output store writes). An epilogue block or statement at
         /// the depth cap draws its way to an output store, not its fallback.
-        fn grow(&self, demand: Ty, depth: usize, need_input: bool, no_cont: bool, inside: u8, state: &mut u64) -> Tree {
+        fn grow(&self, demand: Ty, depth: usize, need: Need, no_cont: bool, inside: u8, state: &mut u64) -> Tree {
             let Some((functions_all, terminals)) = self.by_out.get(&demand) else { return Tree::fallback(demand) };
             // A continue inside a conditional block of a loop body's statement
             // (an if at an L rung) would skip the rest of the body in some
@@ -2748,22 +2790,28 @@ pub fn sample(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, se
             // kingdom's grammar admits an item loop in an item loop and a
             // tile loop in a tile loop; the renderer refuses them, m² or
             // more iterations: 60 of 500 random plain kernels, 2026-10-13).
-            let nests = |name: &str| (inside & 1 != 0 && matches!(name, "loop.items" | "loop.items_unrolled")) || (inside & 2 != 0 && name == "loop.tile");
-            let functions_kept: Vec<usize> = functions_all.iter().copied().filter(|&i| !((no_cont && self.rows[i].name.starts_with("block.cont")) || nests(&self.rows[i].name))).collect();
+            let functions_kept: Vec<usize> = functions_all.iter().copied().filter(|&i| !((no_cont && self.rows[i].name.starts_with("block.cont")) || self.nests(i, inside))).collect();
             let functions = &functions_kept;
             let epilogue = self.kingdom.dual(demand).is_some_and(|d| (d.slot == "stmt" || d.slot == "block") && d.form.starts_with('O'));
             // A required path (to an input, or at the cap to an output store):
             // the rows on it, the nearest at or past the cap.
-            let required = if need_input && self.input_reach.contains_key(&demand) {
+            let required = if need == Need::Input && self.input_reach.contains_key(&demand) {
                 Some((self.input_reach, 0usize))
+            } else if need == Need::Variable && self.var_reach.contains_key(&demand) {
+                Some((self.var_reach, 2usize))
             } else if epilogue && depth >= self.max_depth && self.store_reach.contains_key(&demand) {
                 Some((self.store_reach, 1usize))
             } else {
                 None
             };
+            let own_of = |i: usize, which: usize| match which {
+                0 => self.flags[i].0,
+                1 => self.flags[i].1,
+                _ => self.flags[i].2,
+            };
             if let Some((reach, which)) = required {
                 let all: Vec<usize> = functions.iter().chain(terminals.iter()).copied().collect();
-                let scored: Vec<(usize, usize)> = all.iter().filter_map(|&i| self.row_reach(i, reach, if which == 0 { self.flags[i].0 } else { self.flags[i].1 }).map(|d| (i, d))).collect();
+                let scored: Vec<(usize, usize)> = all.iter().filter(|&&i| !((no_cont && self.rows[i].name.starts_with("block.cont")) || self.nests(i, inside))).filter_map(|&i| self.row_reach(i, reach, own_of(i, which)).map(|d| (i, d))).collect();
                 // The shortest way there (a load of the input, a block holding
                 // the store): the path adds no structure of its own; every
                 // other child is drawn as any is.
@@ -2771,29 +2819,25 @@ pub fn sample(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, se
                 let pool: Vec<usize> = scored.iter().filter(|(_, d)| *d == best).map(|(i, _)| *i).collect();
                 let i = pool[(next(state) % pool.len() as u64) as usize];
                 let r = &self.rows[i];
-                let own = if which == 0 { self.flags[i].0 } else { self.flags[i].1 };
+                let own = own_of(i, which);
                 // The path goes on through one child that reaches it (none
                 // when the row is it: its children are drawn freely, an
                 // output store's value then reading an input).
                 let carriers: Vec<usize> = if own { Vec::new() } else { r.inputs.iter().enumerate().filter(|(_, t)| reach.contains_key(t)).map(|(k, _)| k).collect() };
                 let carry = (!carriers.is_empty()).then(|| carriers[(next(state) % carriers.len() as u64) as usize]);
-                let last = r.inputs.len().saturating_sub(1);
                 let kids = r
                     .inputs
                     .iter()
                     .enumerate()
                     .map(|(k, &t)| {
                         let on_path = carry == Some(k);
-                        // An output store's value reads an input.
-                        let value_of_store = self.flags[i].1 && k == last;
                         let (nc, ins) = (self.kid_no_cont(i, k, no_cont), self.kid_inside(i, inside));
-                        if which == 0 {
-                            self.grow(t, depth + 1, on_path, nc, ins, state)
-                        } else if on_path {
-                            self.grow(t, depth + 1, false, nc, ins, state)
-                        } else {
-                            self.grow(t, depth + 1, value_of_store, nc, ins, state)
-                        }
+                        let need = match (which, on_path) {
+                            (0, true) => Need::Input,
+                            (2, true) => Need::Variable,
+                            _ => self.kid_need(i, k),
+                        };
+                        self.grow(t, depth + 1, need, nc, ins, state)
                     })
                     .collect();
                 return Tree::new(&r.name, demand, kids);
@@ -2819,14 +2863,14 @@ pub fn sample(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, se
             }
             let i = functions[(next(state) % functions.len() as u64) as usize];
             let r = &self.rows[i];
-            let last = r.inputs.len().saturating_sub(1);
-            // An output store's value reads an input, wherever it is drawn.
-            let kids = r.inputs.iter().enumerate().map(|(k, &t)| self.grow(t, depth + 1, self.flags[i].1 && k == last, self.kid_no_cont(i, k, no_cont), self.kid_inside(i, inside), state)).collect();
+            // An output store's value reads an input, a condition a
+            // variable, wherever they are drawn.
+            let kids = r.inputs.iter().enumerate().map(|(k, &t)| self.grow(t, depth + 1, self.kid_need(i, k), self.kid_no_cont(i, k, no_cont), self.kid_inside(i, inside), state)).collect();
             Tree::new(&r.name, demand, kids)
         }
     }
-    let draw = Draw { rows: &rows, by_out: &by_out, kingdom, max_depth, input_reach: &input_reach, store_reach: &store_reach, flags: &flags };
-    Ok(draw.grow(root, 0, false, false, 0, &mut state))
+    let draw = Draw { rows: &rows, by_out: &by_out, kingdom, max_depth, input_reach: &input_reach, store_reach: &store_reach, var_reach: &var_reach, flags: &flags };
+    Ok(draw.grow(root, 0, Need::Nothing, false, 0, &mut state))
 }
 
 /// Parse text with naga and validate it for the device in use

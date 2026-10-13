@@ -5698,8 +5698,9 @@ mod tests {
     /// exactly). Their own text is printed, not a bar (Andrew, 2026-10-13).
     const FIXPOINT_FLOOR: usize = 903;
     // (Both reset 2026-10-13 when the sampler drew its stores from an input:
-    // other trees, 253 and 930 on the earlier draws.)
-    const AST_FLOOR: usize = 110;
+    // other trees, 253 and 930 on the earlier draws; again when conditions
+    // read a variable: 110 then 79.)
+    const AST_FLOOR: usize = 79;
 
 
     /// THE KINGDOM'S COMPLETENESS BAR (2026-10-12): 1,000 random trees of
