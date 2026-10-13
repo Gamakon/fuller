@@ -47,7 +47,9 @@
 //!    a literal index bound (1 to 4,096) as the uniform literal it is; a
 //!    loop over an expression bound that is the bound's fallback, as the
 //!    literal tile loop over the fallback's value.
-//! 9. A negated matrix is written as the matrix times -1.0. A literal index
+//! 9. A negated matrix is written as the matrix times -1.0; degrees and
+//!    radians as the products by their constants; a band (`x / max(y, 1u)`)
+//!    as the division it reads back as. A literal index
 //!    into a private array is written masked to the array (`v & 15u`,
 //!    below its length); a literal lane of a vector, masked (`v & 3u`). An
 //!    `if` with an empty else is written as the if;
@@ -636,6 +638,20 @@ fn canonical_stride(t: &Tree, kingdom: &WgslKingdom) -> Option<Tree> {
     kingdom.rows.iter().any(|r| r.name == name && r.output == t.ty).then(|| Tree::new(&name, t.ty, vec![bound.clone(), body.clone()]))
 }
 
+/// Rule 9 at degrees, radians and a band: the rows their text reads as.
+fn canonical_written_as(t: &Tree, kingdom: &WgslKingdom) -> Option<Tree> {
+    match (t.name.as_str(), t.kids.as_slice()) {
+        ("trig.degrees" | "trig.radians", [x]) => {
+            let k = if t.name == "trig.degrees" { 57.295_78_f32 } else { 0.017_453_292_f32 };
+            let real = dual_ty(kingdom, "f32.real").ok()?;
+            let mul = kingdom.rows.iter().find(|r| r.name.starts_with("arith.mul") && r.output == t.ty && r.inputs.as_slice() == [t.ty, real]).map(|r| r.name.clone())?;
+            Some(Tree::new(&mul, t.ty, vec![x.clone(), Tree::literal("literal.real", real, k)]))
+        }
+        ("index.band_of", [x, y]) => kingdom.rows.iter().any(|r| r.name == "index.div" && r.output == t.ty).then(|| Tree::new("index.div", t.ty, vec![x.clone(), y.clone()])),
+        _ => None,
+    }
+}
+
 /// Rule 9 at a negated matrix.
 fn canonical_neg_mat(t: &Tree, kingdom: &WgslKingdom) -> Option<Tree> {
     let [m] = t.kids.as_slice() else { return None };
@@ -729,7 +745,7 @@ fn canonical_block(t: &Tree, kingdom: &WgslKingdom) -> Tree {
             return c;
         }
     }
-    if let Some(r) = canonical_stride(t, kingdom).or_else(|| canonical_bound(t, kingdom)).or_else(|| canonical_neg_mat(t, kingdom)).or_else(|| canonical_fallback_bound(t, kingdom)) {
+    if let Some(r) = canonical_stride(t, kingdom).or_else(|| canonical_bound(t, kingdom)).or_else(|| canonical_neg_mat(t, kingdom)).or_else(|| canonical_fallback_bound(t, kingdom)).or_else(|| canonical_written_as(t, kingdom)) {
         return r;
     }
     if let Some(r) = canonical_reduction(t, kingdom) {
