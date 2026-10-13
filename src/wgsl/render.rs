@@ -2703,6 +2703,17 @@ pub fn sample(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, se
         flags: &'a [(bool, bool)],
     }
     impl Draw<'_> {
+        /// The long loops kid `k` of row `i` is inside: bit 1 an item loop,
+        /// bit 2 a tile loop (the plain kingdom's rows, which the renderer
+        /// does not nest).
+        fn kid_inside(&self, i: usize, inside: u8) -> u8 {
+            match self.rows[i].name.as_str() {
+                "loop.items" | "loop.items_unrolled" => inside | 1,
+                "loop.tile" => inside | 2,
+                _ => inside,
+            }
+        }
+
         /// Whether kid `k` of row `i` is drawn under the no-continue rule: a
         /// conditional block of an L-rung statement, and anything under one
         /// up to a nested loop (whose continues are its own).
@@ -2727,13 +2738,18 @@ pub fn sample(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, se
         /// A tree of `demand`. `need_input`: it must read an input (the
         /// value an output store writes). An epilogue block or statement at
         /// the depth cap draws its way to an output store, not its fallback.
-        fn grow(&self, demand: Ty, depth: usize, need_input: bool, no_cont: bool, state: &mut u64) -> Tree {
+        fn grow(&self, demand: Ty, depth: usize, need_input: bool, no_cont: bool, inside: u8, state: &mut u64) -> Tree {
             let Some((functions_all, terminals)) = self.by_out.get(&demand) else { return Tree::fallback(demand) };
             // A continue inside a conditional block of a loop body's statement
             // (an if at an L rung) would skip the rest of the body in some
             // threads, a barrier after it among them: not drawn there
             // (2026-10-13, the legality checker's layer 4).
-            let functions_kept: Vec<usize> = functions_all.iter().copied().filter(|&i| !(no_cont && self.rows[i].name.starts_with("block.cont"))).collect();
+            // No long loop inside a long loop of its kind (the plain
+            // kingdom's grammar admits an item loop in an item loop and a
+            // tile loop in a tile loop; the renderer refuses them, m² or
+            // more iterations: 60 of 500 random plain kernels, 2026-10-13).
+            let nests = |name: &str| (inside & 1 != 0 && matches!(name, "loop.items" | "loop.items_unrolled")) || (inside & 2 != 0 && name == "loop.tile");
+            let functions_kept: Vec<usize> = functions_all.iter().copied().filter(|&i| !((no_cont && self.rows[i].name.starts_with("block.cont")) || nests(&self.rows[i].name))).collect();
             let functions = &functions_kept;
             let epilogue = self.kingdom.dual(demand).is_some_and(|d| (d.slot == "stmt" || d.slot == "block") && d.form.starts_with('O'));
             // A required path (to an input, or at the cap to an output store):
@@ -2770,13 +2786,13 @@ pub fn sample(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, se
                         let on_path = carry == Some(k);
                         // An output store's value reads an input.
                         let value_of_store = self.flags[i].1 && k == last;
-                        let nc = self.kid_no_cont(i, k, no_cont);
+                        let (nc, ins) = (self.kid_no_cont(i, k, no_cont), self.kid_inside(i, inside));
                         if which == 0 {
-                            self.grow(t, depth + 1, on_path, nc, state)
+                            self.grow(t, depth + 1, on_path, nc, ins, state)
                         } else if on_path {
-                            self.grow(t, depth + 1, false, nc, state)
+                            self.grow(t, depth + 1, false, nc, ins, state)
                         } else {
-                            self.grow(t, depth + 1, value_of_store, nc, state)
+                            self.grow(t, depth + 1, value_of_store, nc, ins, state)
                         }
                     })
                     .collect();
@@ -2805,12 +2821,12 @@ pub fn sample(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, se
             let r = &self.rows[i];
             let last = r.inputs.len().saturating_sub(1);
             // An output store's value reads an input, wherever it is drawn.
-            let kids = r.inputs.iter().enumerate().map(|(k, &t)| self.grow(t, depth + 1, self.flags[i].1 && k == last, self.kid_no_cont(i, k, no_cont), state)).collect();
+            let kids = r.inputs.iter().enumerate().map(|(k, &t)| self.grow(t, depth + 1, self.flags[i].1 && k == last, self.kid_no_cont(i, k, no_cont), self.kid_inside(i, inside), state)).collect();
             Tree::new(&r.name, demand, kids)
         }
     }
     let draw = Draw { rows: &rows, by_out: &by_out, kingdom, max_depth, input_reach: &input_reach, store_reach: &store_reach, flags: &flags };
-    Ok(draw.grow(root, 0, false, false, &mut state))
+    Ok(draw.grow(root, 0, false, false, 0, &mut state))
 }
 
 /// Parse text with naga and validate it for the device in use
@@ -3298,10 +3314,8 @@ mod tests {
         }
         println!("{n} random kernels, mean {} nodes: {rendered} rendered ({masked} barriers masked), {} refused by construction {refused:?}, {} invalid", sizes / n as usize, n as usize - rendered, invalid.len());
         assert!(invalid.is_empty(), "{} of {rendered} rendered kernels fail naga:\n{}", invalid.len(), invalid.join("\n"));
-        // The only refusal by construction is a nested long loop (m² iterations).
-        assert!(refused.keys().all(|k| k.contains("nested")), "{refused:?}");
-        // (80 %: since the sampler draws no return, 2026-10-13, more random
-        // kernels run long enough to nest a long loop: 412 of 500.)
-        assert!(rendered >= n as usize * 80 / 100, "only {rendered} of {n} rendered: {refused:?}");
+        // N of N (2026-10-13: the sampler nests no long loop in one of its
+        // kind, the renderer's only refusal; 440 of 500 before).
+        assert!(refused.is_empty() && rendered == n as usize, "only {rendered} of {n} rendered: {refused:?}");
     }
 }
