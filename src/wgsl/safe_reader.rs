@@ -1810,10 +1810,13 @@ impl<'a> Ctx<'a> {
             // Any other second operand: an index (conform takes a bit row's
             // index twin, 2026-10-12).
             ("bits.shr" | "bits.and", [a, b]) => at(&t.name.replacen("bits.", "index.", 1), vec![self.xbound_of(a)?, b.clone()]),
+            // A min with any index: one side a bound that cannot wrap, the
+            // other any value (conform makes it an index; read before conform,
+            // its dual may still be the inference's, a bit field's:
+            // 2026-10-13, a random kernel).
             ("index.min", [a, b]) => match self.xbound_of(a) {
-                Ok(a) if b.ty == index => at("index.min", vec![a, b.clone()]),
-                _ if a.ty == index => at("index.min", vec![a.clone(), self.xbound_of(b)?]),
-                _ => return Err(no_row()),
+                Ok(a) => at("index.min", vec![a, b.clone()]),
+                Err(_) => at("index.min", vec![a.clone(), self.xbound_of(b)?]),
             },
             ("index.clamp_to", [a, n]) if n.ty == count => at("index.clamp_to", vec![self.xbound_of(a)?, n.clone()]),
             ("subgroup.min" | "subgroup.max" | "subgroup.broadcast_first", [x]) => at(&t.name, vec![self.xbound_of(x)?]),
@@ -5699,8 +5702,8 @@ mod tests {
     const FIXPOINT_FLOOR: usize = 903;
     // (Both reset 2026-10-13 when the sampler drew its stores from an input:
     // other trees, 253 and 930 on the earlier draws; again when conditions
-    // read a variable: 110 then 79.)
-    const AST_FLOOR: usize = 79;
+    // read a variable: 110 then 79; 59 when they vary by thread or data.)
+    const AST_FLOOR: usize = 59;
 
 
     /// THE KINGDOM'S COMPLETENESS BAR (2026-10-12): 1,000 random trees of

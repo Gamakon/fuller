@@ -2638,6 +2638,9 @@ enum Need {
     Input,
     /// Anything not a literal (a control row's condition).
     Variable,
+    /// A value that varies by thread or data (a condition on the output
+    /// store's path).
+    Varying,
 }
 
 pub fn sample(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, seed: u64) -> Result<Tree, String> {
@@ -2713,10 +2716,17 @@ fn sample_with(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, s
     // condition over counters alone was a constant in the text; 392 of
     // 2,398 conditions, 2026-10-13.)
     let reads_variable = |r: &WgslRow| r.terminal && !r.name.starts_with("literal.") && !matches!(r.name.as_str(), "safe.counter" | "safe.tile_counter" | "safe.tile_counter2" | "safe.tile_counter3" | "safe.tile_counter4" | "builtin.item" | "builtin.tile");
+    // A value that varies by thread or data: a variable that is not the
+    // same in every thread (a uniform field, a buffer's length, the
+    // workgroup count, the subgroup size): what a condition on the output
+    // store's path reads (2026-10-13: 144 of 1,000 kernels had every store
+    // under a condition of such values alone, fixed for a whole dispatch).
+    let reads_varying = |r: &WgslRow| reads_variable(r) && !(r.name.starts_with("load.cfg") || r.name.ends_with("_len") || r.name.starts_with("uniform.") || r.name.starts_with("bound.") || matches!(r.name.as_str(), "builtin.num_workgroups" | "builtin.subgroup_size" | "builtin.num_subgroups"));
     let input_reach = reach(&reads_input);
     let store_reach = reach(&stores_output);
     let var_reach = reach(&reads_variable);
-    let flags: Vec<(bool, bool, bool)> = rows.iter().map(|r| (reads_input(r), stores_output(r), reads_variable(r))).collect();
+    let varying_reach = reach(&reads_varying);
+    let flags: Vec<(bool, bool, bool, bool)> = rows.iter().map(|r| (reads_input(r), stores_output(r), reads_variable(r), reads_varying(r))).collect();
     let mut state = seed ^ 0x5DEE_CE66_D1CE_4E5B;
     fn next(state: &mut u64) -> u64 {
         *state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
@@ -2733,13 +2743,37 @@ fn sample_with(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, s
         input_reach: &'a BTreeMap<Ty, usize>,
         store_reach: &'a BTreeMap<Ty, usize>,
         var_reach: &'a BTreeMap<Ty, usize>,
-        flags: &'a [(bool, bool, bool)],
+        varying_reach: &'a BTreeMap<Ty, usize>,
+        flags: &'a [(bool, bool, bool, bool)],
     }
     impl Draw<'_> {
         /// Whether row `i` would nest a long loop in one of its kind.
         fn nests(&self, i: usize, inside: u8) -> bool {
             let name = self.rows[i].name.as_str();
             (inside & 1 != 0 && matches!(name, "loop.items" | "loop.items_unrolled")) || (inside & 2 != 0 && name == "loop.tile")
+        }
+
+        /// The depth a comparison's second operand is drawn again at: its
+        /// own, then (after four draws equal to the first, a leaf at the cap
+        /// with no other: a fallback, the workgroup count) two levels up, so
+        /// it can be an expression.
+        fn redraw_depth(&self, depth: usize, attempt: usize) -> usize {
+            if attempt < 4 {
+                depth + 1
+            } else {
+                depth.min(self.max_depth).saturating_sub(2)
+            }
+        }
+
+        /// What kid `k` of row `i` must read on a required path: the path's
+        /// own need where it goes on through the kid, else the kid's own.
+        fn path_need(&self, which: usize, on_path: bool, i: usize, k: usize) -> Need {
+            match (which, on_path) {
+                (0, true) => Need::Input,
+                (2, true) => Need::Variable,
+                (3, true) => Need::Varying,
+                _ => self.kid_need(i, k),
+            }
         }
 
         /// What kid `k` of row `i` must read: an output store's value an
@@ -2754,7 +2788,10 @@ fn sample_with(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, s
             }
             let condition = if r.name.starts_with("stmt.if") || r.name.starts_with("block.cont") { 0 } else if r.name.starts_with("block.brk") { 1 } else { usize::MAX };
             if k == condition {
-                return Need::Variable;
+                // On the output store's path (a row of the epilogue's): a
+                // value that varies by thread or data.
+                let epilogue = self.kingdom.dual(r.output).is_some_and(|d| (d.slot == "stmt" || d.slot == "block") && d.form.starts_with('O'));
+                return if epilogue { Need::Varying } else { Need::Variable };
             }
             Need::Nothing
         }
@@ -2817,6 +2854,8 @@ fn sample_with(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, s
                 Some((self.input_reach, 0usize))
             } else if need == Need::Variable && self.var_reach.contains_key(&demand) {
                 Some((self.var_reach, 2usize))
+            } else if need == Need::Varying && self.varying_reach.contains_key(&demand) {
+                Some((self.varying_reach, 3usize))
             } else if epilogue && depth >= self.max_depth && self.store_reach.contains_key(&demand) {
                 Some((self.store_reach, 1usize))
             } else {
@@ -2825,7 +2864,8 @@ fn sample_with(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, s
             let own_of = |i: usize, which: usize| match which {
                 0 => self.flags[i].0,
                 1 => self.flags[i].1,
-                _ => self.flags[i].2,
+                2 => self.flags[i].2,
+                _ => self.flags[i].3,
             };
             if let Some((reach, which)) = required {
                 let all: Vec<usize> = functions.iter().chain(terminals.iter()).copied().collect();
@@ -2848,16 +2888,23 @@ fn sample_with(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, s
                     .iter()
                     .enumerate()
                     .map(|(k, &t)| {
-                        let on_path = carry == Some(k);
                         let (nc, ins) = (self.kid_no_cont(i, k, no_cont), self.kid_inside(i, inside));
-                        let need = match (which, on_path) {
-                            (0, true) => Need::Input,
-                            (2, true) => Need::Variable,
-                            _ => self.kid_need(i, k),
-                        };
-                        self.grow(t, depth + 1, need, nc, ins, state)
+                        self.grow(t, depth + 1, self.path_need(which, carry == Some(k), i, k), nc, ins, state)
                     })
-                    .collect();
+                    .collect::<Vec<Tree>>();
+                let mut kids = kids;
+                if r.name.starts_with("compare.") && kids.len() == 2 {
+                    for attempt in 0..8 {
+                        if kids[0] != kids[1] {
+                            break;
+                        }
+                        kids[1] = self.grow(r.inputs[1], self.redraw_depth(depth, attempt), self.path_need(which, carry == Some(1), i, 1), self.kid_no_cont(i, 1, no_cont), self.kid_inside(i, inside), state);
+                    }
+                    // Operands of a dual with one value only: the node drawn again.
+                    if kids[0] == kids[1] {
+                        return self.grow(demand, depth, need, no_cont, inside, state);
+                    }
+                }
                 return Tree::new(&r.name, demand, kids);
             }
             let pick_terminal = depth >= self.max_depth || functions.is_empty() || (!terminals.is_empty() && next(state).is_multiple_of(3));
@@ -2883,11 +2930,27 @@ fn sample_with(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, s
             let r = &self.rows[i];
             // An output store's value reads an input, a condition a
             // variable, wherever they are drawn.
-            let kids = r.inputs.iter().enumerate().map(|(k, &t)| self.grow(t, depth + 1, self.kid_need(i, k), self.kid_no_cont(i, k, no_cont), self.kid_inside(i, inside), state)).collect();
+            let mut kids: Vec<Tree> = r.inputs.iter().enumerate().map(|(k, &t)| self.grow(t, depth + 1, self.kid_need(i, k), self.kid_no_cont(i, k, no_cont), self.kid_inside(i, inside), state)).collect();
+            // A comparison of a value with itself decides nothing (`nwg <=
+            // nwg`: 111 of 1,560 conditions, 2026-10-13): its second operand
+            // drawn again, a few times.
+            if r.name.starts_with("compare.") && kids.len() == 2 {
+                for attempt in 0..8 {
+                    if kids[0] != kids[1] {
+                        break;
+                    }
+                    kids[1] = self.grow(r.inputs[1], self.redraw_depth(depth, attempt), self.kid_need(i, 1), self.kid_no_cont(i, 1, no_cont), self.kid_inside(i, inside), state);
+                }
+                // Operands of a dual with one value only (the workgroup
+                // count): the node drawn again, another row.
+                if kids[0] == kids[1] {
+                    return self.grow(demand, depth, need, no_cont, inside, state);
+                }
+            }
             Tree::new(&r.name, demand, kids)
         }
     }
-    let draw = Draw { rows: &rows, by_out: &by_out, kingdom, max_depth, input_reach: &input_reach, store_reach: &store_reach, var_reach: &var_reach, flags: &flags };
+    let draw = Draw { rows: &rows, by_out: &by_out, kingdom, max_depth, input_reach: &input_reach, store_reach: &store_reach, var_reach: &var_reach, varying_reach: &varying_reach, flags: &flags };
     let mut tree = draw.grow(root, 0, Need::Nothing, false, 0, &mut state);
     let Some(bound) = bound else { return Ok(tree) };
     let over = |c: &Cost| c.per_item > bound.per_item || c.base > bound.base;
