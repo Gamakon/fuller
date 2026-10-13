@@ -1624,7 +1624,9 @@ impl<'a> Ctx<'a> {
             "u32.index" | "u32.bits" | "u32.count" => ('i', 64),
             "bool.flag" => ('b', 16),
             "i32.int" => ('n', 16),
-            "vec4<u32>.bits" | "vec4<u32>.index" | "vec4<u32>.count" => ('u', 8),
+            // (Any form of vec4<u32>, opaque too: insertBits over a vector,
+            // 2026-10-13, a random kernel.)
+            "vec4<u32>.bits" | "vec4<u32>.index" | "vec4<u32>.count" | "vec4<u32>.opaque" => ('u', 8),
             "mat2x2<f32>.real" => ('x', 2),
             "mat3x3<f32>.real" => ('y', 2),
             "mat4x4<f32>.real" => ('z', 2),
@@ -5694,8 +5696,10 @@ mod tests {
     /// reached so far: to a fixpoint after the first read, and to the AST
     /// drawn (canonical). Every tree reads back (1,000 of 1,000, asserted
     /// exactly). Their own text is printed, not a bar (Andrew, 2026-10-13).
-    const FIXPOINT_FLOOR: usize = 930;
-    const AST_FLOOR: usize = 123;
+    const FIXPOINT_FLOOR: usize = 903;
+    // (Both reset 2026-10-13 when the sampler drew its stores from an input:
+    // other trees, 253 and 930 on the earlier draws.)
+    const AST_FLOOR: usize = 110;
 
 
     /// THE KINGDOM'S COMPLETENESS BAR (2026-10-12): 1,000 random trees of

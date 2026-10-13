@@ -49,7 +49,8 @@
 //!    literal tile loop over the fallback's value.
 //! 9. A negated matrix is written as the matrix times -1.0; degrees and
 //!    radians as the products by their constants; a band (`x / max(y, 1u)`)
-//!    as the division it reads back as. A literal index
+//!    as the division it reads back as; the role's input load (`load.phi`,
+//!    `load.phi4`, `phi[i]`) as the kingdom's load it reads back as. A literal index
 //!    into a private array is written masked to the array (`v & 15u`,
 //!    below its length); a literal lane of a vector, masked (`v & 3u`). An
 //!    `if` with an empty else is written as the if;
@@ -777,6 +778,16 @@ fn canonical_block(t: &Tree, kingdom: &WgslKingdom) -> Tree {
         let plain = format!("loop.items_{kind}");
         if (statements(body, &mut items) || holds_continue(body)) && kingdom.rows.iter().any(|r| r.name == plain && r.output == t.ty) {
             return Tree::new(&plain, t.ty, vec![bound.clone(), body.clone()]);
+        }
+    }
+    // The role's input load: the kingdom's safe load the parser reads.
+    if let Some(safe) = match t.name.as_str() {
+        "load.phi" => Some("load.phi_safe"),
+        "load.phi4" => Some("load.phi4_safe"),
+        _ => None,
+    } {
+        if kingdom.rows.iter().any(|r| r.name == safe && r.output == t.ty) {
+            return Tree::new(safe, t.ty, t.kids.clone());
         }
     }
     // An if with an empty else is the if.

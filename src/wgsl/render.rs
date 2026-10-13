@@ -2632,7 +2632,10 @@ pub const COMPOSITES: &[(&str, &str)] = &[
 /// leaf, as the typed projection would substitute. Deterministic in `seed`.
 pub fn sample(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, seed: u64) -> Result<Tree, String> {
     let f16 = |t: &Ty| kingdom.dual(*t).is_some_and(|d| d.scalar() == Some("f16"));
-    let mut rows: Vec<WgslRow> = kingdom.rows.iter().filter(|r| !f16(&r.output) && !r.inputs.iter().any(f16)).cloned().collect();
+    // (No return: a return before the epilogue ends the thread before it
+    // stores its output, so the kernel writes nothing: 187 of 1,000 random
+    // kernels, 2026-10-13. The kingdom keeps the rows for text it reads.)
+    let mut rows: Vec<WgslRow> = kingdom.rows.iter().filter(|r| !f16(&r.output) && !r.inputs.iter().any(f16) && !r.name.starts_with("stmt.return")).cloned().collect();
     // The safe kingdom reads h only at the thread's own cell (load.h_safe):
     // the role's load.h, h at any index, is the plain kingdom's (the
     // legality checker: 25 of 1,000 random safe genes read another thread's
@@ -2648,6 +2651,40 @@ pub fn sample(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, se
             e.0.push(i);
         }
     }
+    // THE INPUT AND THE OUTPUT (2026-10-13: 5 of 1,000 random kernels stored
+    // a value that read an input; 524 ended in the fallback store of f0,
+    // never written). An input read is a row that indexes a read-only
+    // storage binding of the role (its per-kernel load, or the kingdom's
+    // `load.<binding>` rows); an output store a row that stores to the role's
+    // output. For each dual, the least depth to each.
+    let inputs: Vec<String> = role.bindings.iter().filter(|b| b.space.starts_with("storage") && !b.space.contains("write")).map(|b| b.name.clone()).collect();
+    let reads_input = |r: &WgslRow| -> bool {
+        !r.inputs.is_empty()
+            && (inputs.iter().any(|b| r.name.starts_with(&format!("load.{b}")) && !r.name.ends_with("_len"))
+                || role.per_kernel.iter().any(|p| p.name == r.name && inputs.iter().any(|b| p.template.contains(&format!("{b}[")))))
+    };
+    let stores_output = |r: &WgslRow| r.name.starts_with(&format!("store.{}", role.output)) && !r.inputs.is_empty();
+    let reach = |base: &dyn Fn(&WgslRow) -> bool| -> BTreeMap<Ty, usize> {
+        let mut d: BTreeMap<Ty, usize> = BTreeMap::new();
+        loop {
+            let mut changed = false;
+            for r in &rows {
+                let via = if base(r) { Some(1) } else { r.inputs.iter().filter_map(|t| d.get(t)).min().map(|x| x + 1) };
+                if let Some(v) = via {
+                    if d.get(&r.output).is_none_or(|&old| v < old) {
+                        d.insert(r.output, v);
+                        changed = true;
+                    }
+                }
+            }
+            if !changed {
+                return d;
+            }
+        }
+    };
+    let input_reach = reach(&reads_input);
+    let store_reach = reach(&stores_output);
+    let flags: Vec<(bool, bool)> = rows.iter().map(|r| (reads_input(r), stores_output(r))).collect();
     let mut state = seed ^ 0x5DEE_CE66_D1CE_4E5B;
     fn next(state: &mut u64) -> u64 {
         *state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
@@ -2656,32 +2693,124 @@ pub fn sample(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, se
         z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
         z ^ (z >> 31)
     }
-    fn grow(rows: &[WgslRow], by_out: &BTreeMap<Ty, (Vec<usize>, Vec<usize>)>, kingdom: &WgslKingdom, demand: Ty, depth: usize, max_depth: usize, state: &mut u64) -> Tree {
-        let Some((functions, terminals)) = by_out.get(&demand) else { return Tree::fallback(demand) };
-        let pick_terminal = depth >= max_depth || functions.is_empty() || (!terminals.is_empty() && next(state).is_multiple_of(3));
-        if pick_terminal {
-            if terminals.is_empty() {
-                return Tree::fallback(demand);
-            }
-            let r = &rows[terminals[(next(state) % terminals.len() as u64) as usize]];
-            if r.name.starts_with("literal.") {
-                let form = kingdom.dual(demand).map(|d| d.form.as_str()).unwrap_or("");
-                let u = (next(state) >> 11) as f64 / (1u64 << 53) as f64;
-                let konst = match form {
-                    "real" => ((u * 8.0) - 4.0) as f32,
-                    "flag" | "sign" => f32::from(u8::from(u >= 0.5)),
-                    "int" | "q15_16" => ((u * 200.0) - 100.0).round() as f32,
-                    _ => (u * 64.0).floor() as f32,
-                };
-                return Tree::literal(&r.name, demand, konst);
-            }
-            return Tree::new(&r.name, demand, Vec::new());
-        }
-        let r = &rows[functions[(next(state) % functions.len() as u64) as usize]];
-        let kids = r.inputs.iter().map(|&t| grow(rows, by_out, kingdom, t, depth + 1, max_depth, state)).collect();
-        Tree::new(&r.name, demand, kids)
+    struct Draw<'a> {
+        rows: &'a [WgslRow],
+        by_out: &'a BTreeMap<Ty, (Vec<usize>, Vec<usize>)>,
+        kingdom: &'a WgslKingdom,
+        max_depth: usize,
+        input_reach: &'a BTreeMap<Ty, usize>,
+        store_reach: &'a BTreeMap<Ty, usize>,
+        flags: &'a [(bool, bool)],
     }
-    Ok(grow(&rows, &by_out, kingdom, root, 0, max_depth, &mut state))
+    impl Draw<'_> {
+        /// Whether kid `k` of row `i` is drawn under the no-continue rule: a
+        /// conditional block of an L-rung statement, and anything under one
+        /// up to a nested loop (whose continues are its own).
+        fn kid_no_cont(&self, i: usize, k: usize, no_cont: bool) -> bool {
+            let r = &self.rows[i];
+            if r.name.starts_with("loop.") {
+                return false;
+            }
+            let form = |t: Ty| self.kingdom.dual(t).map(|d| (d.slot.clone(), d.form.clone()));
+            let opens = matches!(form(r.output), Some((slot, f)) if slot == "stmt" && f.starts_with('L')) && matches!(r.inputs.get(k).copied().and_then(form), Some((slot, f)) if slot == "block" && f.starts_with('C'));
+            no_cont || opens
+        }
+
+        /// The least depth from row `i` to what `reach` measures (`own`: the
+        /// row is it itself).
+        fn row_reach(&self, i: usize, reach: &BTreeMap<Ty, usize>, own: bool) -> Option<usize> {
+            if own {
+                return Some(1);
+            }
+            self.rows[i].inputs.iter().filter_map(|t| reach.get(t)).min().map(|x| x + 1)
+        }
+        /// A tree of `demand`. `need_input`: it must read an input (the
+        /// value an output store writes). An epilogue block or statement at
+        /// the depth cap draws its way to an output store, not its fallback.
+        fn grow(&self, demand: Ty, depth: usize, need_input: bool, no_cont: bool, state: &mut u64) -> Tree {
+            let Some((functions_all, terminals)) = self.by_out.get(&demand) else { return Tree::fallback(demand) };
+            // A continue inside a conditional block of a loop body's statement
+            // (an if at an L rung) would skip the rest of the body in some
+            // threads, a barrier after it among them: not drawn there
+            // (2026-10-13, the legality checker's layer 4).
+            let functions_kept: Vec<usize> = functions_all.iter().copied().filter(|&i| !(no_cont && self.rows[i].name.starts_with("block.cont"))).collect();
+            let functions = &functions_kept;
+            let epilogue = self.kingdom.dual(demand).is_some_and(|d| (d.slot == "stmt" || d.slot == "block") && d.form.starts_with('O'));
+            // A required path (to an input, or at the cap to an output store):
+            // the rows on it, the nearest at or past the cap.
+            let required = if need_input && self.input_reach.contains_key(&demand) {
+                Some((self.input_reach, 0usize))
+            } else if epilogue && depth >= self.max_depth && self.store_reach.contains_key(&demand) {
+                Some((self.store_reach, 1usize))
+            } else {
+                None
+            };
+            if let Some((reach, which)) = required {
+                let all: Vec<usize> = functions.iter().chain(terminals.iter()).copied().collect();
+                let scored: Vec<(usize, usize)> = all.iter().filter_map(|&i| self.row_reach(i, reach, if which == 0 { self.flags[i].0 } else { self.flags[i].1 }).map(|d| (i, d))).collect();
+                // The shortest way there (a load of the input, a block holding
+                // the store): the path adds no structure of its own; every
+                // other child is drawn as any is.
+                let best = scored.iter().map(|(_, d)| *d).min().unwrap_or(1);
+                let pool: Vec<usize> = scored.iter().filter(|(_, d)| *d == best).map(|(i, _)| *i).collect();
+                let i = pool[(next(state) % pool.len() as u64) as usize];
+                let r = &self.rows[i];
+                let own = if which == 0 { self.flags[i].0 } else { self.flags[i].1 };
+                // The path goes on through one child that reaches it (none
+                // when the row is it: its children are drawn freely, an
+                // output store's value then reading an input).
+                let carriers: Vec<usize> = if own { Vec::new() } else { r.inputs.iter().enumerate().filter(|(_, t)| reach.contains_key(t)).map(|(k, _)| k).collect() };
+                let carry = (!carriers.is_empty()).then(|| carriers[(next(state) % carriers.len() as u64) as usize]);
+                let last = r.inputs.len().saturating_sub(1);
+                let kids = r
+                    .inputs
+                    .iter()
+                    .enumerate()
+                    .map(|(k, &t)| {
+                        let on_path = carry == Some(k);
+                        // An output store's value reads an input.
+                        let value_of_store = self.flags[i].1 && k == last;
+                        let nc = self.kid_no_cont(i, k, no_cont);
+                        if which == 0 {
+                            self.grow(t, depth + 1, on_path, nc, state)
+                        } else if on_path {
+                            self.grow(t, depth + 1, false, nc, state)
+                        } else {
+                            self.grow(t, depth + 1, value_of_store, nc, state)
+                        }
+                    })
+                    .collect();
+                return Tree::new(&r.name, demand, kids);
+            }
+            let pick_terminal = depth >= self.max_depth || functions.is_empty() || (!terminals.is_empty() && next(state).is_multiple_of(3));
+            if pick_terminal {
+                if terminals.is_empty() {
+                    return Tree::fallback(demand);
+                }
+                let r = &self.rows[terminals[(next(state) % terminals.len() as u64) as usize]];
+                if r.name.starts_with("literal.") {
+                    let form = self.kingdom.dual(demand).map(|d| d.form.as_str()).unwrap_or("");
+                    let u = (next(state) >> 11) as f64 / (1u64 << 53) as f64;
+                    let konst = match form {
+                        "real" => ((u * 8.0) - 4.0) as f32,
+                        "flag" | "sign" => f32::from(u8::from(u >= 0.5)),
+                        "int" | "q15_16" => ((u * 200.0) - 100.0).round() as f32,
+                        _ => (u * 64.0).floor() as f32,
+                    };
+                    return Tree::literal(&r.name, demand, konst);
+                }
+                return Tree::new(&r.name, demand, Vec::new());
+            }
+            let i = functions[(next(state) % functions.len() as u64) as usize];
+            let r = &self.rows[i];
+            let last = r.inputs.len().saturating_sub(1);
+            // An output store's value reads an input, wherever it is drawn.
+            let kids = r.inputs.iter().enumerate().map(|(k, &t)| self.grow(t, depth + 1, self.flags[i].1 && k == last, self.kid_no_cont(i, k, no_cont), state)).collect();
+            Tree::new(&r.name, demand, kids)
+        }
+    }
+    let draw = Draw { rows: &rows, by_out: &by_out, kingdom, max_depth, input_reach: &input_reach, store_reach: &store_reach, flags: &flags };
+    Ok(draw.grow(root, 0, false, false, &mut state))
 }
 
 /// Parse text with naga and validate it for the device in use
@@ -3171,6 +3300,8 @@ mod tests {
         assert!(invalid.is_empty(), "{} of {rendered} rendered kernels fail naga:\n{}", invalid.len(), invalid.join("\n"));
         // The only refusal by construction is a nested long loop (m² iterations).
         assert!(refused.keys().all(|k| k.contains("nested")), "{refused:?}");
-        assert!(rendered >= n as usize * 85 / 100, "only {rendered} of {n} rendered: {refused:?}");
+        // (80 %: since the sampler draws no return, 2026-10-13, more random
+        // kernels run long enough to nest a long loop: 412 of 500.)
+        assert!(rendered >= n as usize * 80 / 100, "only {rendered} of {n} rendered: {refused:?}");
     }
 }
