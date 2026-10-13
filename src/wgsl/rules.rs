@@ -16,15 +16,16 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::wgsl::loader::WgslKingdom;
 use crate::wgsl::render::{dual_ty, safe_base, Tree};
+use crate::wgsl::rules_more as more;
 
 /// The rung of a block or statement row (`block.seq4_L2` -> `L2`).
-fn rung(name: &str) -> Option<&str> {
+pub(crate) fn rung(name: &str) -> Option<&str> {
     let (_, r) = name.rsplit_once('_')?;
     (r.len() == 2 && matches!(r.as_bytes()[0], b'L' | b'C' | b'O' | b'B') && r.as_bytes()[1].is_ascii_digit()).then_some(r)
 }
 
 /// A block row of the plain spellings (`block.one`, `block.seq2..4`).
-fn is_plain_block(name: &str) -> bool {
+pub(crate) fn is_plain_block(name: &str) -> bool {
     matches!(name.rsplit_once('_').map(|(s, _)| s), Some("block.one" | "block.seq2" | "block.seq3" | "block.seq4")) && rung(name).is_some()
 }
 
@@ -78,7 +79,7 @@ pub struct Stmt {
 }
 
 /// A `stmt.block` row that only links a block to the rest of its statements.
-fn is_chain_link(t: &Tree) -> bool {
+pub(crate) fn is_chain_link(t: &Tree) -> bool {
     t.name.rsplit_once('_').map(|(s, _)| s) == Some("stmt.block") && t.kids.len() == 1 && is_plain_block(&t.kids[0].name)
 }
 
@@ -103,7 +104,7 @@ pub fn kernel_statements(root: &Tree) -> Vec<Stmt> {
 }
 
 /// The pre-order node numbers at which each leaf name occurs in the kernel.
-fn leaf_positions(root: &Tree) -> std::collections::HashMap<String, Vec<usize>> {
+pub(crate) fn leaf_positions(root: &Tree) -> std::collections::HashMap<String, Vec<usize>> {
     fn walk(t: &Tree, counter: &mut usize, out: &mut std::collections::HashMap<String, Vec<usize>>) {
         if t.kids.is_empty() {
             out.entry(t.name.clone()).or_default().push(*counter);
@@ -160,13 +161,13 @@ pub fn replace_statement(root: &Tree, index: usize, with: Vec<Tree>, kingdom: &W
 }
 
 /// A zero value: a literal 0 or false, a fallback value, or a zero splat.
-fn is_zero(t: &Tree) -> bool {
+pub(crate) fn is_zero(t: &Tree) -> bool {
     (t.kids.is_empty() && t.name.starts_with("literal.") && t.konst == 0.0) || t.name == "fallback" || (t.name.starts_with("shape.splat") && t.kids.len() == 1 && is_zero(&t.kids[0]))
 }
 
 /// The storage a zero store writes (`parr.a`, `reg.i3`), when `s` is one:
 /// a private array element or a whole register set to zero.
-fn zero_store(s: &Tree) -> Option<&str> {
+pub(crate) fn zero_store(s: &Tree) -> Option<&str> {
     let base = safe_base(&s.name);
     let whole_register = s.name.starts_with("reg.set_") && !s.name.starts_with("reg.set_v_lane") && s.kids.len() == 2;
     if (base == "parr.set_safe" && s.kids.len() == 3 && is_zero(&s.kids[2])) || (whole_register && is_zero(&s.kids[1])) {
@@ -231,13 +232,13 @@ fn is_row_lid(t: &Tree) -> bool {
 }
 
 /// A workgroup vec4 read (`wg.get_v_safe`) and its array leaf.
-fn wg_vec4_read(t: &Tree) -> Option<&str> {
+pub(crate) fn wg_vec4_read(t: &Tree) -> Option<&str> {
     (t.name == "wg.get_v_safe" && t.kids.len() == 2 && t.kids[0].kids.is_empty()).then(|| t.kids[0].name.as_str())
 }
 
 /// The storage key a statement assigns whole: a register (`reg.v6`) or a
 /// private array element at a literal index (`parr.v[2]`).
-fn target_key(s: &Tree) -> Option<String> {
+pub(crate) fn target_key(s: &Tree) -> Option<String> {
     if s.name.starts_with("reg.set_") && !s.name.starts_with("reg.set_v_lane") && s.kids.len() == 2 && s.kids[0].kids.is_empty() {
         return Some(s.kids[0].name.clone());
     }
@@ -250,7 +251,7 @@ fn target_key(s: &Tree) -> Option<String> {
 
 /// The storage keys a value expression reads: registers, private array
 /// elements at literal indices; `arr[*]` for one at any other index.
-fn read_keys(t: &Tree, out: &mut BTreeSet<String>) {
+pub(crate) fn read_keys(t: &Tree, out: &mut BTreeSet<String>) {
     if t.name.starts_with("reg.get_") && t.kids.first().is_some_and(|l| l.kids.is_empty()) {
         out.insert(t.kids[0].name.clone());
     }
@@ -264,7 +265,7 @@ fn read_keys(t: &Tree, out: &mut BTreeSet<String>) {
 }
 
 /// The value read by an assignment (every child but the target's).
-fn assigned_values(s: &Tree) -> &[Tree] {
+pub(crate) fn assigned_values(s: &Tree) -> &[Tree] {
     if s.name.starts_with("reg.set_") {
         &s.kids[1..]
     } else if safe_base(&s.name) == "parr.set_safe" {
@@ -349,14 +350,14 @@ pub fn grow_rows_plan(root: &Tree, kingdom: &WgslKingdom) -> Result<GrowPlan, St
 }
 
 /// A statement holding blocks (a loop, an if): its work is its nested statements.
-fn is_compound(t: &Tree) -> bool {
+pub(crate) fn is_compound(t: &Tree) -> bool {
     t.kids.iter().any(|k| any_node(k, &|n| is_plain_block(&n.name) || n.name.starts_with("block.")))
 }
 
 /// The storages of the rows' accumulation flow closed to a fixed point:
 /// an assignment reading one row's storages joins that row; one reading two
 /// rows, or reading a row's sum and assigning no whole storage, is an error.
-fn close_flow(stmts: &[Stmt], family: &mut BTreeMap<String, usize>) -> Result<(), String> {
+pub(crate) fn close_flow(stmts: &[Stmt], family: &mut BTreeMap<String, usize>) -> Result<(), String> {
     loop {
         let mut grew = false;
         for s in stmts.iter().filter(|s| !is_compound(&s.tree)) {
@@ -620,18 +621,18 @@ pub fn shrink_rows_sites(root: &Tree, kingdom: &WgslKingdom) -> Vec<Site> {
 }
 
 /// Any node of `t` satisfying `p`.
-fn any_node(t: &Tree, p: &dyn Fn(&Tree) -> bool) -> bool {
+pub(crate) fn any_node(t: &Tree, p: &dyn Fn(&Tree) -> bool) -> bool {
     p(t) || t.kids.iter().any(|k| any_node(k, p))
 }
 
 /// The threads as a value: a reference to them or the literal.
-fn is_threads(t: &Tree, threads: u32) -> bool {
+pub(crate) fn is_threads(t: &Tree, threads: u32) -> bool {
     t.name == "literal.p_threads" || (t.kids.is_empty() && t.name.starts_with("literal.") && !t.name.starts_with("literal.p_") && t.konst == threads as f32)
 }
 
 /// Whether a counted loop at tile depth `d` strides its body by the threads
 /// (`lidx + threads * k`, k its counter).
-fn strides_by_threads(body: &Tree, d: usize, threads: u32) -> bool {
+pub(crate) fn strides_by_threads(body: &Tree, d: usize, threads: u32) -> bool {
     let counter = tile_counter_name(d);
     any_node(body, &|n| n.name == "index.mul" && n.kids.len() == 2 && (0..2).any(|i| is_threads(&n.kids[i], threads) && any_node(&n.kids[1 - i], &|m| m.name == counter)))
 }
@@ -640,7 +641,7 @@ fn strides_by_threads(body: &Tree, d: usize, threads: u32) -> bool {
 /// body strides the threads (`threads * k`): a counter also used another
 /// way (`t + (lidx >> 4) + 16u * k`, 16 rows a pass of 256 threads) covers
 /// the tile only at this thread count.
-fn counter_only_strides_threads(body: &Tree, d: usize, threads: u32) -> bool {
+pub(crate) fn counter_only_strides_threads(body: &Tree, d: usize, threads: u32) -> bool {
     let counter = tile_counter_name(d);
     fn walk(t: &Tree, counter: &str, threads: u32) -> bool {
         if t.name == "index.mul" && t.kids.len() == 2 && (0..2).any(|i| is_threads(&t.kids[i], threads)) {
@@ -654,15 +655,15 @@ fn counter_only_strides_threads(body: &Tree, d: usize, threads: u32) -> bool {
     walk(body, counter, threads)
 }
 
-fn tile_counter_name(d: usize) -> &'static str {
+pub(crate) fn tile_counter_name(d: usize) -> &'static str {
     ["safe.tile_counter", "safe.tile_counter2", "safe.tile_counter3", "safe.tile_counter4"][d.min(3)]
 }
 
-fn is_counted_loop(name: &str) -> bool {
+pub(crate) fn is_counted_loop(name: &str) -> bool {
     matches!(safe_base(name), "loop.tile_bounded" | "loop.unroll" | "loop.tile_strided_bounded")
 }
 
-fn lidx_outside_thread_loops(t: &Tree, threads: u32, depth: usize, inside: bool, outside: &mut bool) {
+pub(crate) fn lidx_outside_thread_loops(t: &Tree, threads: u32, depth: usize, inside: bool, outside: &mut bool) {
     if t.name == "index.of_lidx" && !inside {
         *outside = true;
     }
@@ -696,7 +697,7 @@ fn spread_rows(t: &Tree, tile: &str, extra: Option<u32>, in_tile: bool) -> Tree 
 }
 
 /// `t` with the family's storages renamed to the new row's.
-fn rename(t: &Tree, map: &BTreeMap<String, String>) -> Tree {
+pub(crate) fn rename(t: &Tree, map: &BTreeMap<String, String>) -> Tree {
     if t.kids.is_empty() {
         if let Some(n) = map.get(&t.name) {
             return Tree { name: n.clone(), ty: t.ty, konst: t.konst, kids: Vec::new() };
@@ -811,7 +812,7 @@ fn owns_rows_strided(root: &Tree) -> bool {
 }
 
 /// A workgroup array read and its array leaf: f32 (`wg.get_safe`) or vec4 (`wg.get_v_safe`).
-fn wg_read(t: &Tree) -> Option<(&str, bool)> {
+pub(crate) fn wg_read(t: &Tree) -> Option<(&str, bool)> {
     match t.name.as_str() {
         "wg.get_safe" | "wg.get_v_safe" if t.kids.len() == 2 && t.kids[0].kids.is_empty() => Some((t.kids[0].name.as_str(), t.name == "wg.get_v_safe")),
         _ => None,
@@ -1109,7 +1110,7 @@ pub fn grow_rows_sites(root: &Tree, kingdom: &WgslKingdom) -> Vec<Site> {
 // ---- RULE: A STRIDED f32 TILE AS A vec4 TILE, INTERLEAVED ----
 
 /// The terms of a sum, however it is nested.
-fn add_terms<'t>(t: &'t Tree, out: &mut Vec<&'t Tree>) {
+pub(crate) fn add_terms<'t>(t: &'t Tree, out: &mut Vec<&'t Tree>) {
     if t.name == "index.add" && t.kids.len() == 2 {
         add_terms(&t.kids[0], out);
         add_terms(&t.kids[1], out);
@@ -1118,7 +1119,7 @@ fn add_terms<'t>(t: &'t Tree, out: &mut Vec<&'t Tree>) {
     }
 }
 
-fn plain_value(t: &Tree) -> Option<u32> {
+pub(crate) fn plain_value(t: &Tree) -> Option<u32> {
     (t.kids.is_empty() && t.name.starts_with("literal.") && !t.name.starts_with("literal.p_") && t.konst >= 0.0 && t.konst.fract() == 0.0).then_some(t.konst as u32)
 }
 
@@ -1498,7 +1499,7 @@ fn vec_tile_why(root: &Tree, kingdom: &WgslKingdom) -> Option<String> {
 /// `c`: `(m * k) * S + j S + rest` (m = 2 in an unrolled loop, 1 not), the
 /// K row being `m k + j`. Returns (m, S, j) when every term with the counter
 /// is that product and the constant's K part is j S.
-fn k_step(index: &Tree, counter: &str) -> Option<(u32, u32, u32)> {
+pub(crate) fn k_step(index: &Tree, counter: &str) -> Option<(u32, u32, u32)> {
     let mut terms = Vec::new();
     add_terms(index, &mut terms);
     let (mut step, mut constant) = (None, 0u32);
@@ -1540,7 +1541,7 @@ fn k_step(index: &Tree, counter: &str) -> Option<(u32, u32, u32)> {
 }
 
 /// The K steps of the workgroup tile reads in a statement, over the counter.
-fn k_steps(t: &Tree, counter: &str, out: &mut BTreeSet<(u32, u32, u32)>, bad: &mut bool) {
+pub(crate) fn k_steps(t: &Tree, counter: &str, out: &mut BTreeSet<(u32, u32, u32)>, bad: &mut bool) {
     if let Some((_, _)) = wg_read(t) {
         match t.kids[1].kids.first().and_then(|x| k_step(x, counter)) {
             Some(k) => {
@@ -1555,7 +1556,7 @@ fn k_steps(t: &Tree, counter: &str, out: &mut BTreeSet<(u32, u32, u32)>, bad: &m
 
 /// The counted loops that step K through the workgroup tiles: (pre-order
 /// node, tile depth, the loop), each body's tile reads all K steps of its counter.
-fn k_loops(root: &Tree) -> Vec<(usize, usize, Tree)> {
+pub(crate) fn k_loops(root: &Tree) -> Vec<(usize, usize, Tree)> {
     fn walk(t: &Tree, counter: &mut usize, depth: usize, out: &mut Vec<(usize, usize, Tree)>) {
         let me = *counter;
         *counter += 1;
@@ -1574,7 +1575,7 @@ fn k_loops(root: &Tree) -> Vec<(usize, usize, Tree)> {
 }
 
 /// A workgroup array write (any `wg.set`).
-fn is_wg_write(name: &str) -> bool {
+pub(crate) fn is_wg_write(name: &str) -> bool {
     name.starts_with("wg.set")
 }
 
@@ -1638,14 +1639,14 @@ pub fn ununroll_plan(plain: &Tree, node: usize, depth: usize, lp: &Tree) -> Resu
     Ok(KPlan { node, depth, stride: stride.unwrap_or(1), drop })
 }
 
-/// THE PRECONDITIONS of unrolling a K loop by two: every statement of its
-/// body is an accumulation `r = r + E` reading the tiles at K row `k`; the
-/// loop's count is even.
-pub fn unroll_plan(node: usize, depth: usize, lp: &Tree) -> Result<KPlan, String> {
+/// THE PRECONDITIONS of unrolling a K loop by `factor` (2 or 4): every
+/// statement of its body is an accumulation `r = r + E` reading the tiles
+/// at K row `k`; the loop's count is a multiple of the factor.
+pub fn unroll_plan(node: usize, depth: usize, lp: &Tree, factor: u32) -> Result<KPlan, String> {
     let counter = tile_counter_name(depth);
     let count = plain_value(&lp.kids[0]).ok_or("the K loop's count is not a literal")?;
-    if count % 2 != 0 || count < 2 {
-        return Err(format!("the K loop's count {count} is not even"));
+    if count % factor != 0 || count < factor {
+        return Err(format!("the K loop's count {count} is not a multiple of {factor}"));
     }
     let mut stride = None;
     for st in statements(&lp.kids[1]) {
@@ -1668,7 +1669,7 @@ pub fn unroll_plan(node: usize, depth: usize, lp: &Tree) -> Result<KPlan, String
 
 /// `t` with the counter `c`'s K step rewritten: `(m * k) * S` to
 /// `(to_m * k) * S` (to_m 1: `k * S`), plus `extra` K rows.
-fn re_k(t: &Tree, counter: &str, to_m: u32, extra: u32, kingdom_index: crate::geneframe::Ty) -> Tree {
+pub(crate) fn re_k(t: &Tree, counter: &str, to_m: u32, extra: u32, kingdom_index: crate::geneframe::Ty) -> Tree {
     if t.name == "index.mul" && t.kids.len() == 2 && any_node(t, &|n| n.name == counter) {
         let (inner_i, s) = match (plain_value(&t.kids[0]), plain_value(&t.kids[1])) {
             (_, Some(s)) => (0usize, s),
@@ -1686,7 +1687,7 @@ fn re_k(t: &Tree, counter: &str, to_m: u32, extra: u32, kingdom_index: crate::ge
 
 /// `t` with the reads' constant K rows (`j S` in an index) removed: what
 /// is left of a row-2k+1 statement's indices once re_k adds the K row back.
-fn strip_k_constant(t: &Tree, s: u32) -> Tree {
+pub(crate) fn strip_k_constant(t: &Tree, s: u32) -> Tree {
     if wg_read(t).is_some() {
         let mut kids = t.kids.clone();
         if let Some(x) = kids[1].kids.first().cloned() {
@@ -1707,7 +1708,7 @@ fn strip_k_constant(t: &Tree, s: u32) -> Tree {
 }
 
 /// The kernel with the K loop at `node` rewritten by `body` and its count scaled.
-fn rewrite_k_loop(plain: &Tree, node: usize, body: Vec<Tree>, count: u32, kingdom: &WgslKingdom) -> Result<Tree, String> {
+pub(crate) fn rewrite_k_loop(plain: &Tree, node: usize, body: Vec<Tree>, count: u32, kingdom: &WgslKingdom) -> Result<Tree, String> {
     fn walk(t: &Tree, counter: &mut usize, node: usize, f: &dyn Fn(&Tree) -> Result<Tree, String>) -> Result<Tree, String> {
         let me = *counter;
         *counter += 1;
@@ -1740,17 +1741,27 @@ pub fn ununroll_k(root: &Tree, node: usize, kingdom: &WgslKingdom) -> Result<Tre
 /// UNROLL K: the loop at `node` steps two K rows a pass: each accumulation
 /// reads row 2 k, then again row 2 k + 1 into the same register; half the passes.
 pub fn unroll_k(root: &Tree, node: usize, kingdom: &WgslKingdom) -> Result<Tree, String> {
+    unroll_k_by(root, node, 2, kingdom)
+}
+
+/// UNROLL K BY `factor`: the loop at `node` steps `factor` K rows a pass:
+/// each accumulation reads row f k, then rows f k + 1 .. f k + f - 1 into
+/// the same register, in that order (each register's sum is added in the
+/// order the rolled loop adds it); 1 / factor of the passes.
+pub fn unroll_k_by(root: &Tree, node: usize, factor: u32, kingdom: &WgslKingdom) -> Result<Tree, String> {
     let plain = crate::wgsl::params::to_literals(root, kingdom)?;
     let (n, depth, lp) = k_loops(&plain).into_iter().find(|(n, _, _)| *n == node).ok_or("our software has a bug: the K loop is gone")?;
-    let plan = unroll_plan(n, depth, &lp)?;
+    let plan = unroll_plan(n, depth, &lp, factor)?;
     let index = dual_ty(kingdom, "u32.index")?;
     let counter = tile_counter_name(depth);
     let mut body = Vec::new();
     for st in statements(&lp.kids[1]) {
-        body.push(re_k(&st, counter, 2, 0, index));
-        body.push(re_k(&strip_k_constant(&st, plan.stride), counter, 2, 1, index));
+        body.push(re_k(&st, counter, factor, 0, index));
+        for j in 1..factor {
+            body.push(re_k(&strip_k_constant(&st, plan.stride), counter, factor, j, index));
+        }
     }
-    let count = plain_value(&lp.kids[0]).ok_or("the K loop's count is not a literal")? / 2;
+    let count = plain_value(&lp.kids[0]).ok_or("the K loop's count is not a literal")? / factor;
     rewrite_k_loop(&plain, n, body, count, kingdom)
 }
 
@@ -1762,7 +1773,7 @@ pub fn ununroll_k_sites(root: &Tree, kingdom: &WgslKingdom) -> Vec<Site> {
 
 pub fn unroll_k_sites(root: &Tree, kingdom: &WgslKingdom) -> Vec<Site> {
     let Ok(plain) = crate::wgsl::params::to_literals(root, kingdom) else { return Vec::new() };
-    k_loops(&plain).into_iter().filter_map(|(n, d, lp)| unroll_plan(n, d, &lp).ok().map(|_| Site { index: n, what: format!("K loop of {} statements", statements(&lp.kids[1]).len()) })).collect()
+    k_loops(&plain).into_iter().filter_map(|(n, d, lp)| unroll_plan(n, d, &lp, 2).ok().map(|_| Site { index: n, what: format!("K loop of {} statements", statements(&lp.kids[1]).len()) })).collect()
 }
 
 fn k_why(root: &Tree, kingdom: &WgslKingdom, unroll: bool) -> Option<String> {
@@ -1771,7 +1782,7 @@ fn k_why(root: &Tree, kingdom: &WgslKingdom, unroll: bool) -> Option<String> {
     if loops.is_empty() {
         return Some("no counted loop reads the tiles".into());
     }
-    let why: Vec<String> = loops.iter().filter_map(|(n, d, lp)| if unroll { unroll_plan(*n, *d, lp).err() } else { ununroll_plan(&plain, *n, *d, lp).err() }).collect();
+    let why: Vec<String> = loops.iter().filter_map(|(n, d, lp)| if unroll { unroll_plan(*n, *d, lp, 2).err() } else { ununroll_plan(&plain, *n, *d, lp).err() }).collect();
     (why.len() == loops.len()).then(|| why.join("; "))
 }
 
@@ -1784,10 +1795,37 @@ pub enum Rule {
     ShrinkRows,
     UnunrollK,
     UnrollK,
+    DropDeadStore,
+    UnrollK4,
+    RollK,
+    SplitAccumulator,
+    WgShape,
+    HoistLoad,
+    PadShared,
+    GrowCols,
+    ShrinkCols,
+    DoubleBuffer,
 }
 
 impl Rule {
-    pub const ALL: [Rule; 6] = [Rule::DropZeroFill, Rule::GrowRows, Rule::VecTile, Rule::ShrinkRows, Rule::UnunrollK, Rule::UnrollK];
+    pub const ALL: [Rule; 16] = [
+        Rule::DropZeroFill,
+        Rule::GrowRows,
+        Rule::VecTile,
+        Rule::ShrinkRows,
+        Rule::UnunrollK,
+        Rule::UnrollK,
+        Rule::DropDeadStore,
+        Rule::UnrollK4,
+        Rule::RollK,
+        Rule::SplitAccumulator,
+        Rule::WgShape,
+        Rule::HoistLoad,
+        Rule::PadShared,
+        Rule::GrowCols,
+        Rule::ShrinkCols,
+        Rule::DoubleBuffer,
+    ];
 
     pub fn name(self) -> &'static str {
         match self {
@@ -1797,6 +1835,16 @@ impl Rule {
             Rule::ShrinkRows => "shrink-rows",
             Rule::UnunrollK => "un-unroll-k",
             Rule::UnrollK => "unroll-k",
+            Rule::DropDeadStore => "drop-dead-store",
+            Rule::UnrollK4 => "unroll-k4",
+            Rule::RollK => "roll-k",
+            Rule::SplitAccumulator => "split-accumulator",
+            Rule::WgShape => "wg-shape",
+            Rule::HoistLoad => "hoist-load",
+            Rule::PadShared => "pad-shared",
+            Rule::GrowCols => "grow-cols",
+            Rule::ShrinkCols => "shrink-cols",
+            Rule::DoubleBuffer => "double-buffer",
         }
     }
 
@@ -1808,6 +1856,16 @@ impl Rule {
             Rule::ShrinkRows => shrink_rows_sites(root, kingdom),
             Rule::UnunrollK => ununroll_k_sites(root, kingdom),
             Rule::UnrollK => unroll_k_sites(root, kingdom),
+            Rule::DropDeadStore => more::drop_dead_store_sites(root),
+            Rule::UnrollK4 => more::unroll_k4_sites(root, kingdom),
+            Rule::RollK => more::roll_k_sites(root, kingdom),
+            Rule::SplitAccumulator => more::split_accumulator_sites(root, kingdom),
+            Rule::WgShape => more::wg_shape_sites(root, kingdom),
+            Rule::HoistLoad => more::hoist_load_sites(root, kingdom),
+            Rule::PadShared => more::pad_shared_sites(root, kingdom),
+            Rule::GrowCols => more::grow_cols_sites(root, kingdom),
+            Rule::ShrinkCols => more::shrink_cols_sites(root, kingdom),
+            Rule::DoubleBuffer => more::double_buffer_sites(root, kingdom),
         }
     }
 
@@ -1823,6 +1881,7 @@ impl Rule {
             Rule::ShrinkRows => shrink_rows_plan(root, kingdom).err(),
             Rule::UnunrollK => k_why(root, kingdom, false),
             Rule::UnrollK => k_why(root, kingdom, true),
+            other => more::why_not(other, root, kingdom),
         }
     }
 
@@ -1840,6 +1899,16 @@ impl Rule {
             Rule::ShrinkRows => shrink_rows(root, kingdom),
             Rule::UnunrollK => ununroll_k(root, site.index, kingdom),
             Rule::UnrollK => unroll_k(root, site.index, kingdom),
+            Rule::DropDeadStore => more::drop_dead_store(root, site, kingdom),
+            Rule::UnrollK4 => more::unroll_k4(root, site, kingdom),
+            Rule::RollK => more::roll_k(root, site, kingdom),
+            Rule::SplitAccumulator => more::split_accumulator(root, site, kingdom),
+            Rule::WgShape => more::wg_shape(root, site, kingdom),
+            Rule::HoistLoad => more::hoist_load(root, site, kingdom),
+            Rule::PadShared => more::pad_shared(root, site, kingdom),
+            Rule::GrowCols => more::grow_cols(root, kingdom),
+            Rule::ShrinkCols => more::shrink_cols(root, kingdom),
+            Rule::DoubleBuffer => more::double_buffer(root, site, kingdom),
         }
     }
 }

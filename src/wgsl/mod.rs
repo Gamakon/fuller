@@ -36,6 +36,7 @@ pub mod oracle;
 pub mod params;
 pub mod reader;
 pub mod rules;
+pub mod rules_more;
 pub mod render;
 pub mod safe_karva;
 pub mod safe_reader;
