@@ -50,7 +50,8 @@
 //! 9. A negated matrix is written as the matrix times -1.0. A literal index
 //!    into a private array is written masked to the array (`v & 15u`,
 //!    below its length). An `if` with an empty else is written as the if;
-//!    a breaking loop whose body is empty, as the loop.
+//!    a breaking loop whose body is empty, as the loop; an unrolled item
+//!    loop whose body returns or continues, as the item loop.
 //!    A fully unrolled loop (`loop.unroll`) is written as its copies, each
 //!    with its counter a literal (the copy's), unless the copies would pass
 //!    64 or a continue sits below the top of the body (then as its loop); a
@@ -68,7 +69,7 @@
 use crate::wgsl::loader::WgslKingdom;
 use crate::geneframe::Ty;
 use crate::wgsl::params;
-use crate::wgsl::render::{array_len, cont_below_top, dual_ty, grid_of, parr_var, snap, wgmem_var, workgroup_dim, workgroup_plan, workgroup_shape, Tree, BLK, UNROLL};
+use crate::wgsl::render::{array_len, cont_below_top, dual_ty, holds_continue, grid_of, parr_var, snap, wgmem_var, workgroup_dim, workgroup_plan, workgroup_shape, Tree, BLK, UNROLL};
 
 /// The rung suffix of a row name (`_L1`, `_C2`, `_O0`, ...), if it has one.
 fn rung_of(name: &str) -> Option<&str> {
@@ -627,6 +628,14 @@ fn canonical_block(t: &Tree, kingdom: &WgslKingdom) -> Tree {
                 kids[last] = Tree::fallback(r.inputs[last]);
                 return Tree::new(&rest, t.ty, kids);
             }
+        }
+    }
+    // An unrolled item loop whose body returns or continues: the item loop.
+    if let (Some(kind), [_, bound, body]) = (t.name.strip_prefix("loop.items_unrolled_"), t.kids.as_slice()) {
+        let mut items = Vec::new();
+        let plain = format!("loop.items_{kind}");
+        if (statements(body, &mut items) || holds_continue(body)) && kingdom.rows.iter().any(|r| r.name == plain && r.output == t.ty) {
+            return Tree::new(&plain, t.ty, vec![bound.clone(), body.clone()]);
         }
     }
     // An if with an empty else is the if.

@@ -505,6 +505,16 @@ const TILE_COUNTERS: [&str; 4] = ["k", "k2", "k3", "k4"];
 /// Whether a block holds a `block.cont` other than one that runs to the end
 /// of the block (`top`: the block itself, or the last statement's block of a
 /// sequence); a continue inside a loop of the body belongs to that loop.
+/// Whether a loop body holds a continue of its own loop (one inside a
+/// nested loop is that loop's).
+pub fn holds_continue(t: &Tree) -> bool {
+    let base = safe_base(&t.name);
+    if base.starts_with("loop.") {
+        return false;
+    }
+    base == "block.cont" || base == "stmt.continue" || t.kids.iter().any(holds_continue)
+}
+
 pub fn cont_below_top(t: &Tree, top: bool) -> bool {
     let base = safe_base(&t.name);
     if base.starts_with("loop.") {
@@ -986,7 +996,11 @@ impl<'a> Renderer<'a> {
                 let body = self.block_t(&kids[2], scope);
                 scope.in_items = false;
                 let (body, terminated) = body?;
-                if terminated {
+                // A body that returns runs once; one that continues would
+                // skip the later copies and the counter's reset (the
+                // continue goes to the step by u): each is written as its
+                // loop (2026-10-13, AST to AST: the copies stepped t wrongly).
+                if terminated || holds_continue(&kids[2]) {
                     return Ok(format!("    for (t = 0u; t < {bound}; t = t + 1u) {{\n{body}    }}\n"));
                 }
                 let mut out = format!("    for (t = 0u; t + {u}u <= {bound}; t = t + {u}u) {{\n");
@@ -1232,9 +1246,10 @@ impl<'a> Renderer<'a> {
                 let body = self.block_t(&kids[1], scope);
                 scope.in_items = false;
                 let (body, terminated) = body?;
-                if terminated {
+                if terminated || holds_continue(&kids[1]) {
                     // A body that returns runs once; unrolling it would put
-                    // the step after the return.
+                    // the step after the return. One that continues would
+                    // skip the later copies and the counter's reset.
                     return Ok(format!("    for (t = 0u; t < {}; t = t + 1u) {{\n{body}    }}\n", self.role.items));
                 }
                 // The body repeated with `t` stepped inside the iteration, then the remainder.

@@ -47,6 +47,9 @@ struct Ctx<'a> {
     tile_counter4: Option<String>,
     /// Register allocation: local name (`local.acc@0`) → register row (`reg.f0`).
     registers: BTreeMap<String, String>,
+    /// Stores to a loop's counter inside its body (not its step), as
+    /// (counter, value): the loop that owns the counter reads them.
+    counter_stores: Vec<CounterStore>,
     /// The thread guard from a leading `if (c) { return; }`: every later
     /// store to h is wrapped in `if (!c)`.
     guard: Option<Tree>,
@@ -548,6 +551,13 @@ fn reduction_step(t: &Tree) -> Option<(Tree, &'static str, f32)> {
     let plus = format!("({} (index.add {} {}))", idx.name, sx(lidx), sx(&c.kids[1]));
     (at(x, sx(idx)) && at(y, plus)).then(|| (arr.clone(), op, s))
 }
+
+/// A store to a loop's counter inside its body: (counter, value).
+type CounterStore = (String, Tree);
+
+/// The unrolled item loop's main loop, read, before the loop after it
+/// that finishes the items joins it into loop.items_unrolled_<bound>.
+const UNROLLED_MAIN: &str = "read.items_unrolled_main";
 
 fn local_name(name: &str) -> Option<String> {
     let rest = name.strip_prefix("load.").or_else(|| name.strip_prefix("store."))?;
@@ -2844,10 +2854,37 @@ impl<'a> Ctx<'a> {
         Ok(out)
     }
 
+    /// An unrolled item loop's main loop and the loop after it that
+    /// finishes the items (`for (; t < bound; t = t + 1u)`, the same body)
+    /// as loop.items_unrolled_<bound> (2026-10-13: the parser dropped the
+    /// counter's steps between the copies and read the copies all at t).
+    fn fold_unrolled(&self, stmts: Vec<Tree>) -> Result<Vec<Tree>, String> {
+        let mut out = Vec::new();
+        let mut it = stmts.into_iter().peekable();
+        while let Some(t) = it.next() {
+            if t.name != UNROLLED_MAIN {
+                out.push(t);
+                continue;
+            }
+            let rest = it.next().ok_or("an unrolled item loop without the loop that finishes its items")?;
+            let kind = rest.name.strip_prefix("loop.items_cont_").filter(|k| k.starts_with("bound")).ok_or_else(|| format!("an unrolled item loop followed by {}, not the loop that finishes its items", rest.name))?;
+            let ([unroll, main_body], [bound, body]) = (t.kids.as_slice(), rest.kids.as_slice()) else { return Err("an unrolled item loop of the wrong shape".into()) };
+            let (mut a, mut b) = (Vec::new(), Vec::new());
+            flatten_stmts(main_body.clone(), &mut a);
+            flatten_stmts(body.clone(), &mut b);
+            if !a.iter().map(Tree::to_sexpr).eq(b.iter().map(Tree::to_sexpr)) {
+                return Err("an unrolled item loop whose copies are not the body of the loop that finishes its items".into());
+            }
+            out.push(Tree::new(&format!("loop.items_unrolled_{kind}"), t.ty, vec![unroll.clone(), bound.clone(), body.clone()]));
+        }
+        Ok(out)
+    }
+
     fn block(&self, stmts: Vec<Tree>, rung: &str) -> Result<Tree, String> {
         let bt = ty(self, &format!("block.{rung}"))?;
         let st = self.stmt_ty(rung)?;
         let stmts = if rung.starts_with('L') { self.fold_reductions(stmts, rung)? } else { stmts };
+        let stmts = self.fold_unrolled(stmts)?;
         if stmts.is_empty() {
             return Ok(Tree::fallback(bt));
         }
@@ -3654,8 +3691,11 @@ impl<'a> Ctx<'a> {
             }
         }
         if let Some(local) = local_name(name) {
-            // A store to the loop counter inside its loop is the loop's own step.
+            // A store to a loop's counter inside its body: the loop reads it
+            // (the unrolled item loop's copies step it; anything else has no
+            // spelling, 2026-10-13).
             if [&self.item_counter, &self.tile_counter, &self.tile_counter2, &self.tile_counter3, &self.tile_counter4].iter().any(|c| c.as_deref() == Some(local.as_str())) {
+                self.counter_stores.push((local.clone(), tree.kids[0].clone()));
                 return Ok(None);
             }
             // A finished item loop's counter set back to 0: the next item loop
@@ -4186,7 +4226,10 @@ impl<'a> Ctx<'a> {
         for local in stored_locals(self.naga_fn, body).into_iter().chain(stored_locals(self.naga_fn, continuing)) {
             self.axis_memo.remove(&prefixed(&self.local_prefix, &local));
         }
+        let outer_stores = std::mem::take(&mut self.counter_stores);
         let body_stmts = self.nested(|ctx, path| ctx.walk(&rest, path, &walk_rung, first), path);
+        let (own, others): (Vec<CounterStore>, Vec<CounterStore>) = std::mem::replace(&mut self.counter_stores, outer_stores).into_iter().partition(|(c, _)| *c == counter);
+        self.counter_stores.extend(others);
         path.pop();
         self.item_counter = saved.0;
         self.tile_counter = saved.1;
@@ -4229,6 +4272,37 @@ impl<'a> Ctx<'a> {
             let brk = Tree::new(&format!("block.brk_B{d}"), ty(self, &format!("block.B{d}"))?, vec![self.block(flat, &walk_rung)?, c, self.block(after, &walk_rung)?]);
             let row = format!("loop.{}_brk_{out_rung}", if kind == "lit64" { "tile" } else { "tilex" });
             return Ok(Some(Tree::new(&row, st, vec![bound_tree, brk])));
+        }
+        // The unrolled item loop's main loop (the emitter's loop.items_unrolled):
+        // u copies of the body, the counter stepped by 1 between them and set
+        // back by u - 1 after the last, the loop stepping by u. Read as one
+        // copy, to be joined with the loop after it that finishes the items.
+        if !own.is_empty() {
+            let delta = |v: &Tree| -> Option<i64> {
+                let [x, k] = v.kids.as_slice() else { return None };
+                let k = literal_value(k)? as i64;
+                (local_name(&x.name).as_deref() == Some(counter.as_str())).then_some(())?;
+                match v.name.as_str() {
+                    n if n.ends_with(".add") => Some(k),
+                    n if n.ends_with(".sub") || n.ends_with(".sub_floor") => Some(-k),
+                    _ => None,
+                }
+            };
+            let u = step as usize;
+            let deltas: Vec<Option<i64>> = own.iter().map(|(_, v)| delta(v)).collect();
+            let pattern = body_rung == "L1" && u >= 2 && deltas.len() == u && deltas[..u - 1].iter().all(|d| *d == Some(1)) && deltas[u - 1] == Some(-(u as i64 - 1));
+            let mut flat = Vec::new();
+            for t in body_stmts {
+                flatten_stmts(t, &mut flat);
+            }
+            let n = flat.len() / u.max(1);
+            let copies_equal = pattern && flat.len() == n * u && (1..u).all(|j| flat[j * n..(j + 1) * n].iter().map(Tree::to_sexpr).eq(flat[..n].iter().map(Tree::to_sexpr)));
+            if !copies_equal {
+                return Err(format!("a store to the loop counter {counter} inside its loop's body ({}): only the loop's step steps it", own[0].1.to_sexpr()));
+            }
+            flat.truncate(n);
+            let unroll = Tree::literal("literal.unroll", ty(self, "u32.unroll")?, step as f32);
+            return Ok(Some(Tree::new(UNROLLED_MAIN, st, vec![unroll, self.block(flat, &body_rung)?])));
         }
         let block = self.block(body_stmts, &body_rung)?;
         let step_lit = if body_rung == "L1" { Tree::literal("literal.lit4096", ty(self, "u32.lit4096")?, step as f32) } else { Tree::literal("literal.lit64", ty(self, "u32.lit64")?, step as f32) };
@@ -4648,7 +4722,7 @@ pub fn read_safe_literal(source: &str, kingdom: &WgslKingdom) -> Result<SafeRead
     // that returns, with no epilogue after it (naga's own trailing return is
     // in every kernel's IR, so the text decides).
     let main_returns = source.find("fn main(").map(|i| &source[i..]).and_then(|m| m.rfind('}').map(|j| &m[..j])).is_some_and(|m| m.trim_end().ends_with("return;"));
-    let mut ctx = Ctx { kingdom, main_returns, per_kernel_rows: crate::wgsl::safe_karva::per_kernel_rows(kingdom, &role), duals: &duals, lets: &lets, roots: &roots, item_counter: None, tile_counter: None, tile_counter2: None, tile_counter3: None, tile_counter4: None, registers: BTreeMap::new(), guard: None, tail: true, arrays: BTreeMap::new(), array_lens: BTreeMap::new(), parrs: BTreeMap::new(), grid, rows_x: grid_rows_x(source).then_some(true), notes: Vec::new(), helpers: &helpers, calls: &calls, arg_roots: &arg_roots, inline_args: None, row_arrays: BTreeMap::new(), used_counters: std::collections::BTreeSet::new(), local_lanes, axis_memo: BTreeMap::new(), loop_depth: 0, tile_bounds: BTreeMap::new(), naga_fn, module: &kernel.module, local_prefix: String::new(), inline_result: None, inline_values: None, bound_lets, stale_lets, let_regs: HashMap::new(), inlined: HashMap::new(), stored_seen: std::collections::BTreeSet::new(), counter_offsets: HashMap::new(), pointer_args: HashMap::new() };
+    let mut ctx = Ctx { kingdom, main_returns, per_kernel_rows: crate::wgsl::safe_karva::per_kernel_rows(kingdom, &role), duals: &duals, lets: &lets, roots: &roots, item_counter: None, tile_counter: None, tile_counter2: None, tile_counter3: None, tile_counter4: None, registers: BTreeMap::new(), counter_stores: Vec::new(), guard: None, tail: true, arrays: BTreeMap::new(), array_lens: BTreeMap::new(), parrs: BTreeMap::new(), grid, rows_x: grid_rows_x(source).then_some(true), notes: Vec::new(), helpers: &helpers, calls: &calls, arg_roots: &arg_roots, inline_args: None, row_arrays: BTreeMap::new(), used_counters: std::collections::BTreeSet::new(), local_lanes, axis_memo: BTreeMap::new(), loop_depth: 0, tile_bounds: BTreeMap::new(), naga_fn, module: &kernel.module, local_prefix: String::new(), inline_result: None, inline_values: None, bound_lets, stale_lets, let_regs: HashMap::new(), inlined: HashMap::new(), stored_seen: std::collections::BTreeSet::new(), counter_offsets: HashMap::new(), pointer_args: HashMap::new() };
     // Register initialisations first, in root order. A local initialised to
     // its form's fallback (0.0, 0u, false, a zero vector) costs nothing: the
     // register's declaration already holds that value, and the register is
