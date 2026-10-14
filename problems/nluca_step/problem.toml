@@ -20,6 +20,9 @@ name = "nluca_step"
 description = "nluca generated_step: the reservoir state over 64 steps, compared at steps 1, 8 and 64"
 work = "width * degree * steps"
 alias = "distinct"
+# Every speed-up ranks (nluca_s2: all 97 feasible kernels were slower than the
+# reference and the clamped reciprocal scored every one HFF pi/3).
+speed_column = "ranked"
 
 [kernel]
 entry = "generated_step"

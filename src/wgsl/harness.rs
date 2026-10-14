@@ -23,6 +23,7 @@
 //! | `name`, `description` | the problem's name and one line |
 //! | `work` | the work of one case (the cost model's unit, `gram::Meter`), e.g. `"d * d * m"` |
 //! | `alias` | `"distinct"`: no buffer at two bindings of one dispatch (the only policy) |
+//! | `speed_column` | how a speed-up becomes a fitness column: `"reciprocal"` (default, `gram.rs`'s `1 / s` clamped to 1: kernels at or below the reference's speed tie) or `"ranked"` (`1 / (1 + s)`: the reference 0.5, every speed-up ranks) |
 //! | `derive` | `["name = expr", ...]`, evaluated in order after the parameters |
 //! | `[params]` | `name = "expr"`: a parameter's default when a case does not give it (`limit = "binding_limit"`) |
 //! | `[kernel]` | `entry` (the entry point), `grid_header` (read `// grid x y bx by [rows-x]` as `gram.rs` does; default false), `reference` (the shipped kernel's path, relative to the problem: the speed-ups' denominator and the accuracy baseline), `modes` (the modes a kernel may declare with a `// mode <name>` line; the program reads `mode_<name>`, 1 or 0) |
@@ -693,6 +694,31 @@ fn one_round() -> usize {
     1
 }
 
+/// HOW A SPEED-UP BECOMES A FITNESS COLUMN (in [0, 1], 0 best).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SpeedColumn {
+    /// `1 / speed-up` clamped to [0, 1], `gram.rs`'s: every kernel at or
+    /// below the reference's speed scores 1, so slower kernels tie (the
+    /// Gram's candidates were faster than shipped; nluca_s2's 97 feasible
+    /// kernels, all slower, all scored HFF π/3).
+    #[default]
+    Reciprocal,
+    /// `1 / (1 + speed-up)`: the reference's speed 0.5, faster toward 0,
+    /// slower toward 1, smooth and strictly decreasing, so every speed-up
+    /// ranks.
+    Ranked,
+}
+
+impl SpeedColumn {
+    pub fn column(self, speedup: f64) -> f64 {
+        match self {
+            SpeedColumn::Reciprocal => (1.0 / speedup).clamp(0.0, 1.0),
+            SpeedColumn::Ranked => (1.0 / (1.0 + speedup.max(0.0))).clamp(0.0, 1.0),
+        }
+    }
+}
+
 /// `problem.toml`.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -718,6 +744,9 @@ pub struct ProblemSpec {
     pub run: Vec<Step>,
     pub suite: Vec<SuiteSpec>,
     pub budget: Budget,
+    /// How a speed-up becomes a fitness column (`speed_column`).
+    #[serde(default)]
+    pub speed_column: SpeedColumn,
 }
 
 /// One case of a manifest.
@@ -2224,6 +2253,15 @@ impl<'e, E: Executor> Harness<'e, E> {
         Some((factor * self.reference_eval_ms?).max(floor).max(self.gated_ms()))
     }
 
+    /// The six columns: the three speed-ups under the problem's
+    /// `speed_column`, then the three accuracy columns as given.
+    pub fn columns(&self, speedups: [f64; 3], accuracy: [f64; 3]) -> [f64; 6] {
+        match self.problem.spec.speed_column {
+            SpeedColumn::Reciprocal => fitness_columns(speedups, accuracy),
+            s => [s.column(speedups[0]), s.column(speedups[1]), s.column(speedups[2]), accuracy[0], accuracy[1], accuracy[2]],
+        }
+    }
+
     /// The longest an evaluation's gates let it run: the correctness cases
     /// (and rungs and pairs) within the base budget, then the timing rounds,
     /// each shape at most the slow limit.
@@ -2278,7 +2316,7 @@ impl<'e, E: Executor> Harness<'e, E> {
             }
             speedups[i] = median(&mut v);
         }
-        let c = fitness_columns(speedups, [columns[3], columns[4], columns[5]]);
+        let c = self.columns(speedups, [columns[3], columns[4], columns[5]]);
         Ok((speedups, c, truenorth(&c)))
     }
 
@@ -2459,7 +2497,7 @@ impl<'e, E: Executor> Harness<'e, E> {
             measured_ms[i] = median(&mut walls);
         }
         let [et, ev, ex] = worst;
-        let columns = fitness_columns(speedups, [(et / slacks[0]).clamp(0.0, 1.0), (ev / slacks[1]).clamp(0.0, 1.0), (ex / slacks[2]).clamp(0.0, 1.0)]);
+        let columns = self.columns(speedups, [(et / slacks[0]).clamp(0.0, 1.0), (ev / slacks[1]).clamp(0.0, 1.0), (ex / slacks[2]).clamp(0.0, 1.0)]);
         Fitness { feasible: true, passed, distance: 0.0, closeness: [0.0; closeness::N], closeness_hff: 0.0, columns, speedups, hff: truenorth(&columns), detail: String::new(), seconds: t.elapsed().as_secs_f64(), predicted_ms, rate_per_g: meter.rate_per_g(), floor_ms: meter.floor_ms, measured_ms, split: Split { total: t.elapsed().as_secs_f64() * 1e3, ..split } }
     }
 }
@@ -3215,6 +3253,28 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
             }
         }
         assert_eq!(n, 16 + 3);
+    }
+
+    /// EVERY SPEED-UP RANKS under `speed_column = "ranked"` (nluca's): the
+    /// reference's speed is 0.5, the column strictly decreasing in the
+    /// speed-up on both sides of 1; nluca_s2's r0 (0.192 / 0.706 / 0.864)
+    /// and r3 (0.164 / 0.701 / 0.865), both HFF π/3 under the Gram's clamp,
+    /// now differ and r0 ranks better. The Gram's rule is unchanged.
+    #[test]
+    fn a_ranked_speed_column_orders_slower_kernels() {
+        assert_eq!(nluca().spec.speed_column, SpeedColumn::Ranked);
+        assert_eq!(gram_problem().spec.speed_column, SpeedColumn::Reciprocal);
+        let r = SpeedColumn::Ranked;
+        assert_eq!(r.column(1.0), 0.5);
+        let xs = [0.01, 0.1, 0.5, 0.9, 1.0, 1.1, 2.0, 8.0, 100.0];
+        assert!(xs.windows(2).all(|w| r.column(w[0]) > r.column(w[1])), "not strictly decreasing");
+        let hff = |s: [f64; 3], rule: SpeedColumn| truenorth(&[rule.column(s[0]), rule.column(s[1]), rule.column(s[2]), 0.0, 0.0, 0.0]);
+        let (r0, r3) = ([0.192, 0.706, 0.864], [0.164, 0.701, 0.865]);
+        assert_eq!(hff(r0, SpeedColumn::Reciprocal), hff(r3, SpeedColumn::Reciprocal), "the clamp ties them");
+        assert!((hff(r0, SpeedColumn::Reciprocal) - std::f64::consts::FRAC_PI_3).abs() < 1e-9);
+        assert!(hff(r0, r) < hff(r3, r), "r0 is faster on the first shape and ranks better: {} {}", hff(r0, r), hff(r3, r));
+        assert!(hff([1.0; 3], r) < hff(r0, r) && hff([2.0; 3], r) < hff([1.0; 3], r));
+        assert_eq!(fitness_columns([8.0, 0.5, 1.0], [0.1, 0.2, 0.3]), [0.125, 1.0, 1.0, 0.1, 0.2, 0.3]);
     }
 
     /// F16 STATE MUST FAIL THIS ORACLE (Noctiluca's design): the expected
