@@ -33,7 +33,7 @@
 //! | `setup` | steps run once per case when the context is built: the resident buffers (inputs no kernel may write) |
 //! | `run` | steps run per evaluation of a kernel |
 //! | `[[suite]]` | the cases and how they are judged (below) |
-//! | `[budget]` | `base_ms`, `round_ms`, `timing_rounds` (`gram::BASE_BUDGET_MS`, `gram::ROUND_BUDGET_MS`, the paired re-timing rounds) |
+//! | `[budget]` | `base_ms`, `round_ms`, `timing_rounds` (`gram::BASE_BUDGET_MS`, `gram::ROUND_BUDGET_MS`, the paired re-timing rounds); optional `deadline_factor` and `deadline_floor_ms` together: the fit watchdog's deadline, the factor times the reference kernel's measured evaluation, at least the floor and the gates' own maximum (`Harness::deadline_ms`) |
 //!
 //! ## Steps (the dispatch program)
 //!
@@ -66,7 +66,7 @@
 //!
 //! | role | judged | keys |
 //! |---|---|---|
-//! | `constraint` | every case must pass: the norm at every comparison point within `pass`; run in chunks of `chunk` cases, one submission a chunk | `norm`, `pass` (expression), `chunk` |
+//! | `constraint` | every case must pass: the norm at every comparison point within `pass`; run in chunks of `chunk` cases, one submission a chunk; `staged = true`: cheapest work first, each later chunk gated by the rate measured so far against `base_ms`, stopped at the first failing chunk, a timing build measured over the slow limit scored slow | `norm`, `pass` (expression), `chunk`, `staged` |
 //! | `rung` | timed, gated, not judged (a step of the cost model between the cases and the pairs) | |
 //! | `accuracy` | the norm against the reference kernel's own value: fails over `max(slack * reference, 1)`; the split's column is `min(1, worst / reference / slack)` | `split` (0 train, 1 validation, 2 extrapolation), `norm`, `tau`, `slack` |
 //! | `timing` | three cases in all: the speed-up against the reference kernel's least time, the median of `timing_rounds` paired rounds | |
@@ -664,6 +664,14 @@ pub struct SuiteSpec {
     pub slack: Option<f64>,
     pub chunk: Option<usize>,
     pub output: Option<String>,
+    /// A constraint suite run STAGED: its cases cheapest work first, every
+    /// chunk after the first predicted from the rate measured so far and
+    /// not dispatched when it would carry the cases past the base budget
+    /// (a "slow" outcome, `gram::gate`), and the suite stopped at the first
+    /// chunk with a failing case. Absent: the manifest's order, every chunk
+    /// run (the Gram's constraint as `gram.rs` runs it).
+    #[serde(default)]
+    pub staged: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -673,6 +681,12 @@ pub struct Budget {
     pub round_ms: f64,
     #[serde(default = "one_round")]
     pub timing_rounds: usize,
+    /// THE EVALUATION'S DEADLINE (the fit's watchdog, for a true runaway
+    /// only): `deadline_factor` times the reference kernel's measured
+    /// evaluation, at least `deadline_floor_ms`. Both or neither; absent,
+    /// the caller's own rule (`Harness::deadline_ms` is None).
+    pub deadline_factor: Option<f64>,
+    pub deadline_floor_ms: Option<f64>,
 }
 
 fn one_round() -> usize {
@@ -839,6 +853,14 @@ impl Problem {
         }
         if count(Role::Timing) != 3 {
             return Err(format!("{name}: the timing suites hold {} cases; the fitness has three timing columns", count(Role::Timing)));
+        }
+        match (s.budget.deadline_factor, s.budget.deadline_floor_ms) {
+            (None, None) => {}
+            (Some(f), Some(m)) if f >= 1.0 && m > 0.0 => {}
+            (f, m) => return Err(format!("{name}: [budget] deadline_factor ({f:?}, at least 1) and deadline_floor_ms ({m:?}, above 0) go together")),
+        }
+        if self.suites.iter().any(|x| x.spec.staged && x.spec.role != Role::Constraint) {
+            return Err(format!("{name}: only the constraint suite can be staged"));
         }
         for su in &self.suites {
             let need = |what: &str, ok: bool| if ok { Ok(()) } else { Err(format!("{name}: suite {} needs {what}", su.spec.name)) };
@@ -2081,6 +2103,11 @@ pub struct Harness<'e, E: Executor> {
     pub shipped_ms: [f64; 3],
     pub shipped_gpu_ms: std::cell::Cell<[f64; 3]>,
     pub shipped_min_gpu_ms: std::cell::Cell<[f64; 3]>,
+    /// The constraint suite is staged (`SuiteSpec::staged`).
+    pub staged: bool,
+    /// One whole evaluation of the reference kernel, measured when the
+    /// problem's budget names a deadline.
+    pub reference_eval_ms: Option<f64>,
 }
 
 impl<'e, E: Executor> Harness<'e, E> {
@@ -2146,7 +2173,13 @@ impl<'e, E: Executor> Harness<'e, E> {
         if slow_limit_ms(round_budget_ms, &shipped_ms) < worst {
             return Err(format!("the reference kernel takes {shipped_ms:?} ms at the timing shapes: a timing round of {round_budget_ms} ms cannot hold it and a kernel at its speed"));
         }
-        let h = Harness {
+        // A staged constraint runs its cheapest cases first (a stable sort:
+        // equal work keeps the manifest's order).
+        let staged = problem.suites.iter().any(|s| s.spec.role == Role::Constraint && s.spec.staged);
+        if staged {
+            constraint.sort_by(|a, b| a.work.total_cmp(&b.work));
+        }
+        let mut h = Harness {
             timing_rounds: problem.spec.budget.timing_rounds,
             base_budget_ms: problem.spec.budget.base_ms,
             round_budget_ms,
@@ -2155,15 +2188,47 @@ impl<'e, E: Executor> Harness<'e, E> {
             constraint,
             constraint_norm,
             chunk,
+            staged,
             rungs,
             accuracy,
             timing,
             shipped_ms,
             shipped_gpu_ms: std::cell::Cell::new([0.0; 3]),
             shipped_min_gpu_ms: std::cell::Cell::new([f64::INFINITY; 3]),
+            reference_eval_ms: None,
         };
         h.time_shipped()?;
+        // The deadline's base: one whole evaluation of the reference kernel,
+        // which must be feasible on its own problem.
+        if h.problem.spec.budget.deadline_factor.is_some() {
+            let reference = h.problem.reference.clone();
+            let t = Instant::now();
+            let f = h.evaluate(&reference);
+            if !f.feasible {
+                return Err(format!("the reference kernel is not feasible on its own problem: {}", f.detail));
+            }
+            h.reference_eval_ms = Some(t.elapsed().as_secs_f64() * 1e3);
+        }
         Ok(h)
+    }
+
+    /// THE EVALUATION'S DEADLINE, the fit's watchdog for a true runaway:
+    /// `deadline_factor` times the reference kernel's measured evaluation,
+    /// at least `deadline_floor_ms` and never under what the evaluation's
+    /// own budgets allow a kernel (the cases' base budget, then every timing
+    /// round of the three shapes at the slow limit), so a slow kernel is
+    /// scored "slow" by the gates before the watchdog could fire. None when
+    /// the problem's budget names no deadline.
+    pub fn deadline_ms(&self) -> Option<f64> {
+        let (factor, floor) = (self.problem.spec.budget.deadline_factor?, self.problem.spec.budget.deadline_floor_ms?);
+        Some((factor * self.reference_eval_ms?).max(floor).max(self.gated_ms()))
+    }
+
+    /// The longest an evaluation's gates let it run: the correctness cases
+    /// (and rungs and pairs) within the base budget, then the timing rounds,
+    /// each shape at most the slow limit.
+    pub fn gated_ms(&self) -> f64 {
+        self.base_budget_ms + 3.0 * self.timing_rounds.max(1) as f64 * self.slow_limit_ms()
     }
 
     /// The reference kernel at the timing shapes: one warm-up, then the
@@ -2249,8 +2314,22 @@ impl<'e, E: Executor> Harness<'e, E> {
         let mut per_case: Vec<Option<[f64; closeness::N]>> = vec![None; cases];
         let mut outs: Vec<Option<(u64, u64, usize)>> = vec![None; cases];
         let t_cases = Instant::now();
-        let mut done = 0usize;
+        let (mut done, mut cases_ms) = (0usize, 0.0f64);
         for chunk in self.constraint.chunks(self.chunk) {
+            // STAGED: a failing chunk ends the cases; a chunk the rate measured
+            // so far predicts past the base budget is not dispatched.
+            if self.staged && done > 0 {
+                if passed < done {
+                    return infeasible(passed, mean_distance(sum_distance, ran), closeness::columns(&per_case, passed, &outs), format!("constraint {passed}/{cases} cases: {first_fail}; the {} costlier cases not dispatched", cases - done), t, &meter, &split);
+                }
+                let work: f64 = chunk.iter().map(|s| s.work).sum();
+                let what = format!("the correctness cases {}..{} ({})", done + 1, done + chunk.len(), chunk.iter().map(|s| s.case.label.as_str()).collect::<Vec<_>>().join(", "));
+                // The time spent is the executor's own measure of the chunks
+                // run (the meter's unit), not the host's wall clock.
+                if let Err(e) = gate(&meter, &what, work, cases_ms, self.base_budget_ms, self.base_budget_ms) {
+                    return infeasible(passed, mean_distance(sum_distance, ran), closeness::columns(&per_case, passed, &outs), e, t, &meter, &split);
+                }
+            }
             let plans = match chunk.iter().map(plan_of).collect::<Result<Vec<_>, _>>() {
                 Ok(p) => p,
                 Err(e) => return infeasible(passed, mean_distance(sum_distance, ran), closeness::columns(&per_case, passed, &outs), format!("run: {e}"), t, &meter, &split),
@@ -2260,6 +2339,7 @@ impl<'e, E: Executor> Harness<'e, E> {
                 Ok(x) => x,
                 Err(e) => return infeasible(passed, mean_distance(sum_distance, ran), closeness::columns(&per_case, passed, &outs), format!("run: {e}"), t, &meter, &split),
             };
+            cases_ms += compute_ms;
             for (s, r) in chunk.iter().zip(&runs) {
                 meter.push(s.work, compute_ms / chunk.len() as f64);
                 let h: Vec<f32> = bytemuck_f32(&r.outputs[out_index]);
@@ -2277,7 +2357,9 @@ impl<'e, E: Executor> Harness<'e, E> {
             }
             done += chunk.len();
             let projected = elapsed_ms(t_cases) * cases as f64 / done as f64;
-            if done < cases && projected > self.base_budget_ms / 3.0 {
+            // (A staged suite is gated by work before each chunk instead: its
+            // cases grow, so a projection by count would undercount the rest.)
+            if !self.staged && done < cases && projected > self.base_budget_ms / 3.0 {
                 return infeasible(passed, mean_distance(sum_distance, ran), closeness::columns(&per_case, passed, &outs), format!("slow: the correctness cases are projected at {:.1} s ({:.1} s for the first {done}), over a third of the {:.1} s budget; the rest not dispatched", projected / 1e3, elapsed_ms(t_cases) / 1e3, self.base_budget_ms / 1e3), t, &meter, &split);
             }
         }
@@ -2362,6 +2444,11 @@ impl<'e, E: Executor> Harness<'e, E> {
                 };
                 split.timing_cand += elapsed_ms(tb);
                 split.build(&r.build());
+                // STAGED: a build measured over the slow limit ends the
+                // evaluation as slow (its next round would take as long).
+                if self.staged && r.compute_ms > limit_ms {
+                    return Fitness { predicted_ms, ..infeasible(passed, f64::INFINITY, closeness::columns(&per_case, passed, &outs), format!("slow: measured {:.1} s at the timing shape {}, over the limit of {:.1} s a build (predicted {:.1} s)", r.compute_ms / 1e3, s.case.label, limit_ms / 1e3, predicted_ms[i] / 1e3), t, &meter, &split) };
+                }
                 match speedup(shipped_gpu[i], r.gpu_ms) {
                     Ok(x) => ratios.push(x),
                     Err(e) => return Fitness { predicted_ms, ..infeasible(passed, f64::INFINITY, closeness::columns(&per_case, passed, &outs), format!("{e} at {}", s.case.label), t, &meter, &split) },

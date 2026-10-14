@@ -216,7 +216,12 @@ role = "constraint"
 cases = "cases/constraint.toml"
 norm = "max_abs_over_rms"
 pass = "tol"
-chunk = 16
+# Staged (nluca_s1 died at generation 0 on the fit watchdog: all 16 cases,
+# two of them 1,048,576 wide, ran as one submission): one case a submission,
+# the cheapest first (4,096, 65,536, then 1,048,576 rows), each predicted
+# from the rate measured so far against base_ms, stopped at the first failure.
+chunk = 1
+staged = true
 
 [[suite]]
 name = "timing"
@@ -227,3 +232,7 @@ cases = "cases/timing.toml"
 base_ms = 30000.0
 round_ms = 20000.0
 timing_rounds = 1
+# The fit watchdog (a true runaway only): ten times the reference kernel's
+# measured evaluation, at least 60 s and the gates' own maximum.
+deadline_factor = 10.0
+deadline_floor_ms = 60000.0
