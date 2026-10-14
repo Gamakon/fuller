@@ -37,7 +37,7 @@ fn main() -> Result<(), String> {
         }
     }
     std::fs::create_dir_all(out.join("calls")).map_err(|e| e.to_string())?;
-    let system = contract();
+    let system = contract(None)?.system;
     std::fs::write(out.join("contract.txt"), &system).map_err(|e| e.to_string())?;
     println!("[{}] gen0: {n} calls to {model}, seed {seed}, out {}", stamp(), out.display());
     let mut index = std::fs::File::create(out.join("index.tsv")).map_err(|e| e.to_string())?;

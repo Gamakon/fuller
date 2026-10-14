@@ -24,7 +24,89 @@ pub const STRATEGIES: [&str; 10] = [
     "combine register blocking with vec4 loads and an unrolled item loop",
     "a structure unlike the reference kernel: choose any correct organisation of the work you believe is fastest on an Apple M3 Max GPU under Metal",
 ];
-pub fn contract() -> String {
+
+/// WHAT A MODEL WRITES TO: the system text of every call, the output rule
+/// each task restates, and the strategies generation 0 draws from. The
+/// Gram's when no problem is given (the text as it always was); a problem
+/// directory's from its `contract.md` (the problem statement, the bindings,
+/// the semantics, the constraints) and its reference kernel.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Contract {
+    pub system: String,
+    /// The sentence a task ends with: the first line a kernel must have, or
+    /// its entry point, and "only the kernel text".
+    pub output_rule: String,
+    pub strategies: Vec<String>,
+}
+
+/// The output rule of the Gram's kernels (the `// grid` header first).
+pub const GRID_OUTPUT_RULE: &str = "Remember: first line `// grid X Y BX BY`, only the kernel text.";
+
+/// The strategies of a problem whose `contract.md` lists none: generic,
+/// nothing of any one kernel in them.
+pub const GENERIC_STRATEGIES: [&str; 6] = [
+    "the reference kernel's organisation of the work, with any improvement you see",
+    "more output elements per thread, each input value read once per block of outputs",
+    "reused input values staged in var<workgroup> memory between workgroupBarrier calls",
+    "vector loads and vector arithmetic where consecutive elements are read",
+    "the same work with fewer instructions: repeated loads, recomputed values and branches removed",
+    "a structure unlike the reference kernel: choose any correct organisation of the work you believe is fastest on an Apple M3 Max GPU under Metal",
+];
+
+impl Contract {
+    /// The task of one fresh kernel: the strategy, the variation key and
+    /// the output rule.
+    pub fn task(&self, strategy: &str, seed_phrase: &str) -> String {
+        format!("Write the kernel. Strategy to use: {strategy}. Variation key: {seed_phrase}. {}", self.output_rule)
+    }
+
+    /// The `i`-th strategy, cycling.
+    pub fn strategy(&self, i: usize) -> &str {
+        &self.strategies[i % self.strategies.len()]
+    }
+}
+
+/// THE CONTRACT for `problem`, or the Gram's (`None`: the text as it was
+/// before problems existed). A problem's system text is the device line,
+/// its `contract.md`, its reference kernel and the output instruction; its
+/// output rule is the `// grid` line when its kernel spec reads one, else
+/// its entry point; its strategies are the `- ` lines under a
+/// `## Strategies` heading of `contract.md`, the generic ones when it has
+/// none. A problem without a `contract.md` is an error naming the file.
+pub fn contract(problem: Option<&crate::wgsl::harness::Problem>) -> Result<Contract, String> {
+    let Some(p) = problem else {
+        return Ok(Contract { system: gram_contract(), output_rule: GRID_OUTPUT_RULE.to_string(), strategies: STRATEGIES.iter().map(|s| s.to_string()).collect() });
+    };
+    let path = p.dir.join("contract.md");
+    let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e} (a problem's model contract: the problem statement, the bindings, the semantics, the constraints)", path.display()))?;
+    let entry = &p.spec.kernel.entry;
+    let grid = p.spec.kernel.grid_header;
+    let output_rule = if grid { GRID_OUTPUT_RULE.to_string() } else { format!("Remember: the entry point is `fn {entry}`, only the kernel text.") };
+    let mut strategies: Vec<String> = Vec::new();
+    let mut in_strategies = false;
+    for l in text.lines() {
+        if l.starts_with("## ") {
+            in_strategies = l.trim() == "## Strategies";
+            continue;
+        }
+        if let (true, Some(s)) = (in_strategies, l.trim().strip_prefix("- ")) {
+            strategies.push(s.trim().to_string());
+        }
+    }
+    if strategies.is_empty() {
+        strategies = GENERIC_STRATEGIES.iter().map(|s| s.to_string()).collect();
+    }
+    let first = if grid { ", starting with the `// grid` line" } else { "" };
+    let system = format!(
+        "You write WGSL compute kernels for wgpu on an Apple M3 Max (Metal, naga 0.20 front end; WGSL as of 2024, no f16, no subgroup operations, no atomics on f32).\n\n{}\n\nREFERENCE KERNEL (correct, the one to beat; entry point `{entry}`):\n```wgsl\n{}```\n\nOUTPUT. Return ONLY the complete WGSL kernel text{first}, with no explanation, no markdown fences, no prose before or after.",
+        text.trim_end(),
+        p.reference
+    );
+    Ok(Contract { system, output_rule, strategies })
+}
+
+/// The Gram's contract text.
+fn gram_contract() -> String {
     format!(
         "You write WGSL compute kernels for wgpu on an Apple M3 Max (Metal, naga 0.20 front end; WGSL as of 2024, no f16, no subgroup operations, no atomics on f32).\n\n\
 TASK. Write a compute kernel that computes the weighted Gram matrix H = Phi^T Phi over a band of items, accumulating into a resident output band, exactly as the reference kernel below does, but faster.\n\n\
@@ -38,8 +120,9 @@ REFERENCE KERNEL (correct, one thread per cell, the one to beat):\n```wgsl\n{SHI
 OUTPUT. Return ONLY the complete WGSL kernel text, starting with the `// grid` line, with no explanation, no markdown fences, no prose before or after.")
 }
 
+/// The Gram's task of one fresh kernel (`Contract::task` of `contract(None)`).
 pub fn task(strategy: &str, seed_phrase: &str) -> String {
-    format!("Write the kernel. Strategy to use: {strategy}. Variation key: {seed_phrase}. Remember: first line `// grid X Y BX BY`, only the kernel text.")
+    format!("Write the kernel. Strategy to use: {strategy}. Variation key: {seed_phrase}. {GRID_OUTPUT_RULE}")
 }
 
 pub fn strip(reply: &str) -> String {
@@ -350,8 +433,45 @@ mod tests {
     /// The contract tells the models the measured masking rule (item 8,
     /// 2026-10-11: masked indices let Metal drop bounds checks, 1.7x).
     #[test]
+    fn the_gram_contract_and_task_are_as_before_problems() {
+        let c = contract(None).expect("the Gram's contract");
+        assert_eq!(c.system, gram_contract());
+        assert!(c.system.starts_with("You write WGSL compute kernels") && c.system.contains("H = Phi^T Phi") && c.system.contains(SHIPPED) && c.system.ends_with("starting with the `// grid` line, with no explanation, no markdown fences, no prose before or after."));
+        assert_eq!(c.task("s", "k"), "Write the kernel. Strategy to use: s. Variation key: k. Remember: first line `// grid X Y BX BY`, only the kernel text.");
+        assert_eq!(task("s", "k"), c.task("s", "k"));
+        assert_eq!(c.strategies, STRATEGIES.map(String::from).to_vec());
+    }
+
+    /// A PROBLEM'S CONTRACT is its `contract.md`, its reference kernel and
+    /// its entry point's output rule; its strategies are the ones it lists.
+    /// A problem without `contract.md` is an error naming the file.
+    #[test]
+    fn a_problems_contract_comes_from_its_directory() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("problems/nluca_step");
+        let p = crate::wgsl::harness::Problem::load(&dir).expect("problems/nluca_step");
+        let c = contract(Some(&p)).expect("nluca's contract");
+        let md = std::fs::read_to_string(dir.join("contract.md")).expect("contract.md");
+        assert!(c.system.contains(md.trim_end()) && c.system.contains(&p.reference) && c.system.contains("entry point `generated_step`"), "{}", c.system);
+        assert!(!c.system.contains("Phi^T") && !c.system.contains("// grid"), "the Gram's text in nluca's contract");
+        assert_eq!(c.output_rule, "Remember: the entry point is `fn generated_step`, only the kernel text.");
+        assert_eq!(c.strategies.len(), 6);
+        assert!(c.strategies[3].starts_with("the codebook (4 KiB) staged"), "{:?}", c.strategies);
+        assert_eq!(c.strategy(7), c.strategies[1]);
+        // The same problem without its contract.md.
+        let bare = std::env::temp_dir().join(format!("llm_contract_bare_{}", std::process::id()));
+        std::fs::create_dir_all(bare.join("cases")).expect("dir");
+        for f in ["problem.toml", "shipped.wgsl", "cases/constraint.toml", "cases/timing.toml"] {
+            std::fs::copy(dir.join(f), bare.join(f)).expect(f);
+        }
+        let p = crate::wgsl::harness::Problem::load(&bare).expect("the bare problem");
+        let e = contract(Some(&p)).expect_err("no contract.md");
+        assert!(e.contains(&bare.join("contract.md").display().to_string()), "{e}");
+        std::fs::remove_dir_all(&bare).expect("remove");
+    }
+
+    #[test]
     fn the_contract_states_the_masking_rule() {
-        let c = contract();
+        let c = contract(None).expect("the Gram's contract").system;
         assert!(c.contains("SPEED NOTE") && c.contains("& 2047u") && c.contains("1.7x"), "{c}");
     }
 
