@@ -5,7 +5,7 @@
 //! instead draws random sampler gene n (Gram role) and proves its rendering.
 //! The contract is the Gram problem's (`--contract <file>` for another).
 //!
-//!   cargo run --release --features wgsl --example wgsl_safety -- [--safe] [--print] [--contract <file>] <file.wgsl>... | --seed <n>
+//!   cargo run --release --features wgsl --example wgsl_safety -- [--safe] [--print] [--contract <file>] <file.wgsl>... | --seed <n> | --seeds <a..b>
 
 use fuller::wgsl::loader::WgslKingdom;
 use fuller::wgsl::render::{gram_role, sample, Renderer};
@@ -26,6 +26,11 @@ fn main() -> Result<(), String> {
             "--print" => print = true,
             "--contract" => contract = Some(Contract::parse(&std::fs::read_to_string(args.next().ok_or("--contract needs a file")?).map_err(|e| e.to_string())?)?),
             "--seed" => seeds.push(args.next().ok_or("--seed needs a number")?.parse::<u64>().map_err(|e| e.to_string())?),
+            "--seeds" => {
+                let r = args.next().ok_or("--seeds needs a..b")?;
+                let (a, b) = r.split_once("..").ok_or("--seeds a..b")?;
+                seeds.extend(a.parse::<u64>().map_err(|e| e.to_string())?..b.parse::<u64>().map_err(|e| e.to_string())?);
+            }
             _ => files.push(a),
         }
     }

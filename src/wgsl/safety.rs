@@ -1212,6 +1212,16 @@ impl<'m> An<'m> {
         }
     }
 
+    /// Whether a global holds atomics (an `atomic<T>`, an array of them):
+    /// its loads and stores are atomic accesses, no data race among them.
+    fn atomic_global(&self, g: Handle<naga::GlobalVariable>) -> bool {
+        match &self.module.types[self.module.global_variables[g].ty].inner {
+            TypeInner::Atomic(_) => true,
+            TypeInner::Array { base, .. } => matches!(self.module.types[*base].inner, TypeInner::Atomic(_)),
+            _ => false,
+        }
+    }
+
     /// The flat element index of a pointer path into a global (scalar units):
     /// `[i]` on an array, `[i][lane]` on an array of vectors; a whole vector
     /// element is its lanes as a digit.
@@ -1338,13 +1348,16 @@ impl<'m> An<'m> {
                             return self.other(iinv, iuni, false);
                         }
                         let key = format!("{}:{}", self.frames[fr].ctx, h.index());
-                        self.site(key, &alloc, Kind::Read, idx, false);
+                        let kind = if self.atomic_global(g) { Kind::Atomic } else { Kind::Read };
+                        self.site(key, &alloc, kind, idx, false);
                         self.other(false, false, false)
                     }
                     AddressSpace::WorkGroup => {
+                        // (atomicLoad is a Load of an atomic: an atomic access.)
+                        let kind = if self.atomic_global(g) { Kind::Atomic } else { Kind::Read };
                         let (alloc, idx) = self.flat_index(g, &p.path);
                         let key = format!("{}:{}", self.frames[fr].ctx, h.index());
-                        self.site(key, &alloc, Kind::Read, idx, true);
+                        self.site(key, &alloc, kind, idx, true);
                         self.other(false, false, false)
                     }
                     _ => self.other(false, false, false),
@@ -1370,7 +1383,7 @@ impl<'m> An<'m> {
     }
 
     fn site(&mut self, key: String, alloc: &str, kind: Kind, idx: Abs, workgroup: bool) {
-        if !self.record {
+        if !self.record || self.dead(&self.facts) {
             return;
         }
         let (buf, off) = if workgroup { (alloc.to_string(), 0) } else { self.contract.buffer_of(alloc) };
@@ -1745,10 +1758,13 @@ impl<'m> An<'m> {
                         self.privates.insert(g, new);
                     }
                     AddressSpace::Storage { .. } => {
+                        let kind = if self.atomic_global(g) { Kind::Atomic } else { kind };
                         let (alloc, idx) = self.flat_index(g, &p.path);
                         self.site(ctx.to_string(), &alloc, kind, idx, false);
                     }
                     AddressSpace::WorkGroup => {
+                        // (atomicStore is a Store to an atomic: an atomic access.)
+                        let kind = if self.atomic_global(g) { Kind::Atomic } else { kind };
                         let (alloc, idx) = self.flat_index(g, &p.path);
                         self.site(ctx.to_string(), &alloc, kind, idx, true);
                     }
@@ -2128,6 +2144,25 @@ impl<'m> An<'m> {
             a.insert((*v, copy), c.as_const()?);
         }
         Some(Ineq { a, k: f.k.clone() })
+    }
+
+    /// Whether the guards on a path contradict each other over every
+    /// variable's range (Fourier–Motzkin): the code under them never runs,
+    /// and an access there is none (seed 18, 2026-10-14: a store of
+    /// wg_v2d[lidx + 2160u] under `lidx + 2160u < 1024u`).
+    fn dead(&self, facts: &[Lin]) -> bool {
+        let mut sys: Vec<Ineq> = facts.iter().filter_map(|f| Self::ineq(f, 0)).collect();
+        if sys.is_empty() {
+            return false;
+        }
+        let vars: BTreeSet<(Var, u8)> = sys.iter().flat_map(|i| i.a.keys().copied()).collect();
+        for (v, copy) in vars {
+            sys.push(Ineq { a: BTreeMap::from([((v, copy), -1)]), k: Poly::default() });
+            if let Some(hi) = self.var_hi_poly(v) {
+                sys.push(Ineq { a: BTreeMap::from([((v, copy), 1)]), k: hi.scale(-1) });
+            }
+        }
+        self.infeasible(sys)
     }
 
     /// Whether A (in one invocation) and B (in another, or any when

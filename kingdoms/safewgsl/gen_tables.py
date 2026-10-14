@@ -150,11 +150,12 @@ FORMS = {
     "rowbaseg": ("the ORIGIN of a thread's row of a grouped block: the only row an offset row takes (an offset of an offset leaves the block, another thread's cell)", ["u32"]),
     "colbaseg": ("the ORIGIN of a thread's column of a grouped block: the only row an offset row takes (an offset of an offset leaves the block, another thread's cell)", ["u32"]),
     "indexw": ("an index that may wrap (a raw difference index.sub, a left shift index.shl): no row takes it; the kingdom's difference is index.sub_floor, its shift by k a product by 2^k", ["u32"]),
+    "wgown": ("a workgroup-array element this thread owns, lidx + k * the workgroup's threads (k a literal or a tile counter; 2026-10-14): a put writes it only below the array's length, so no two threads of a workgroup write one element", ["u32"]),
     "mirror": ("the MIRROR of a cell this thread owns, col * cfg.d + row (the symmetric half's second write, 2026-10-14): a kernel that writes one runs with the whole H (`// mode full`); no sampler draws it, the symmetric-half rule writes it under its triangle guard and the checker's layer 7 proves it", ["u32"]),
     "xbound": ("the value of an expression loop bound: a register, a uniform value, the arithmetic of them that cannot wrap (no difference but the floored one, no product, no shift), or a min with any index", ["u32"]),
 }
 
-SAFE_FORMS = ["mirror", "rowbase", "colbase", "rowbases", "colbases", "rowbaseg", "colbaseg", "indexw", "uniformw", "xbound", "uniform", "boundu", "pindex16", "wgaindex", "wgv2index", "wglen", "decl", "decls", "lidx", "threadrows", "threadcols", "threadrowg", "threadcolg", "gid", "lid", "wid", "rowid", "colid", "O0", "O1", "O2", "O3", "O4", "tcounter4", "L5", "C5", "safe", "pindex", "boundx", "boundm", "boundd", "boundrows", "lit64", "lit4096", "counter", "tcounter", "tcounter2", "L3", "C3", "tcounter3", "L4", "C4", "wgvindex", "bound", "threadrow", "threadcol", "cell", "phi", "wgindex", "L0", "L1", "L2", "C0", "C1", "C2"]
+SAFE_FORMS = ["wgown", "mirror", "rowbase", "colbase", "rowbases", "colbases", "rowbaseg", "colbaseg", "indexw", "uniformw", "xbound", "uniform", "boundu", "pindex16", "wgaindex", "wgv2index", "wglen", "decl", "decls", "lidx", "threadrows", "threadcols", "threadrowg", "threadcolg", "gid", "lid", "wid", "rowid", "colid", "O0", "O1", "O2", "O3", "O4", "tcounter4", "L5", "C5", "safe", "pindex", "boundx", "boundm", "boundd", "boundrows", "lit64", "lit4096", "counter", "tcounter", "tcounter2", "L3", "C3", "tcounter3", "L4", "C4", "wgvindex", "bound", "threadrow", "threadcol", "cell", "phi", "wgindex", "L0", "L1", "L2", "C0", "C1", "C2"]
 RUNGS = ["L0", "L1", "L2", "L3", "L4", "C0", "C1", "C2", "C3", "C4"]
 # The fifth rung came after every other row (run A, 2026-10-11); its rows are appended at the end so
 # every earlier ref stands, and it is kept out of RUNGS for that reason.
@@ -186,7 +187,7 @@ FALLBACK = {
     "lidx": "0u", "threadrows": "the thread's own first row", "threadcols": "the thread's own first column", "threadrowg": "the thread's own first row", "threadcolg": "the thread's own first column",
     "wgaindex": "0u", "wgv2index": "0u", "wglen": "the array's default length", "decl": "none", "decls": "none (the arrays the kernel uses, at their default lengths)",
     "B1": "empty", "B2": "empty", "B3": "empty", "B4": "empty", "B5": "empty",
-    "uniformw": "0u", "xbound": "1u", "indexw": "0u", "mirror": "the mirror of the thread's own first cell",
+    "uniformw": "0u", "xbound": "1u", "indexw": "0u", "mirror": "the mirror of the thread's own first cell", "wgown": "the thread's own first element (lidx)",
     "rowbase": "the thread's own first row", "colbase": "the thread's own first column", "rowbases": "the thread's own first row", "colbases": "the thread's own first column", "rowbaseg": "the thread's own first row", "colbaseg": "the thread's own first column",
 }
 
@@ -213,7 +214,7 @@ FALLBACK_BITS = {
     "lidx": 0, "threadrows": 0, "threadcols": 0, "threadrowg": 0, "threadcolg": 0,
     "wgaindex": 0, "wgv2index": 0, "wglen": 0, "decl": 0, "decls": 0,
     "B1": 0, "B2": 0, "B3": 0, "B4": 0, "B5": 0,
-    "uniformw": 0, "xbound": 1, "indexw": 0, "mirror": 0,
+    "uniformw": 0, "xbound": 1, "indexw": 0, "mirror": 0, "wgown": 0,
     "rowbase": 0, "colbase": 0, "rowbases": 0, "colbases": 0, "rowbaseg": 0, "colbaseg": 0,
 }
 assert set(FALLBACK_BITS) == set(FALLBACK), "every form with a fallback needs its bits, and no more"
@@ -341,6 +342,8 @@ def build_types():
         add("u32", form, 1, FORMS[form][0])
     # ---- the symmetric half (2026-10-14) ----
     add("u32", "mirror", 1, FORMS["mirror"][0])
+    # ---- the workgroup put (2026-10-14) ----
+    add("u32", "wgown", 1, FORMS["wgown"][0])
     return rows
 
 
@@ -1205,6 +1208,18 @@ for r in ("L0", "L1", "L2", "L3", "L4", "L5"):
 # (Not an epilogue statement: the epilogue still ends in the store of the thread's own cell.)
 for r in RUNGS + RUNGS5:
     f("store", "h_mirror_" + r, "composite", ["u32.mirror", "f32.real"], "stmt." + r, "h[mirror] = h[mirror] + v under the bounds check of the thread's own cell: the symmetric half's second write")
+# THE WORKGROUP PUT (2026-10-14, the checker's layer 7: 458 of 1,000 random kernels had two threads of a
+# workgroup write one element, the old rows taking any masked index): a thread writes its own element,
+# lidx + k * threads, below the array's length, between two workgroup barriers, so every read of the
+# array is ordered against every write and no two threads write one element. At the barrier rungs (L)
+# only. The sampler draws these and no longer the old writes (wg.set*, which the reader keeps).
+f("safe", "wg_own", "composite", ["u32.lit64"], "u32.wgown", "lidx + k * threads: this thread's k-th element of a workgroup array")
+f("safe", "wg_own_tile", "composite", ["u32.tcounter"], "u32.wgown", "lidx + k * threads over the tile loop's counter k")
+f("safe", "wg_own_tile2", "composite", ["u32.tcounter2"], "u32.wgown", "lidx + k2 * threads over the inner tile loop's counter k2")
+for r in ("L0", "L1", "L2", "L3", "L4", "L5"):
+    f("wg", "put_" + r, "composite", ["wgmem<f32>.real", "u32.wgown", "f32.real"], "stmt." + r, "arity 3: barrier; if (i < len) { a[i] = v; } barrier")
+    f("wg", "put_v_" + r, "composite", ["wgmem<vec4<f32>>.real", "u32.wgown", "vec4<f32>.real"], "stmt." + r, "arity 3: barrier; if (i < len) { va[i] = v; } barrier")
+    f("wg", "put_v2_" + r, "composite", ["wgmem<vec2<f32>>.real", "u32.wgown", "vec2<f32>.real"], "stmt." + r, "arity 3: barrier; if (i < len) { v2a[i] = v; } barrier")
 
 
 def write_tsv(path, header, rows):

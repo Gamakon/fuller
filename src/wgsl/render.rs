@@ -778,6 +778,10 @@ struct Scope {
     /// empty for a kernel that declares none and uses only the original
     /// four (`wg_a`, `wg_b` of 2,048 f32, `wg_va`, `wg_vb` of 512 vec4).
     wg: BTreeMap<String, (String, u32)>,
+    /// The arrays the first writing of the kernel did not write (a
+    /// reduction over one element writes none), so the second does not
+    /// declare them: a reduction over one writes no step either.
+    unwritten: BTreeSet<String>,
     in_items: bool,
     in_tile: bool,
     tile_depth: usize,
@@ -821,7 +825,7 @@ impl<'a> Renderer<'a> {
         if d.dual != "kernel.kernel" && d.dual != "kernel.safe" {
             return Err(format!("the root is {} ({}), not kernel.kernel or kernel.safe", root.name, d.dual));
         }
-        let mut scope = Scope { unrolled: BTreeMap::new(), unroll_copies: 1, in_unrolled_copy: false, wg: BTreeMap::new(), in_items: false, in_tile: false, tile_depth: 0, grid: Grid { x: 16, y: 16, bx: 1, by: 1, rows_x: false }, in_cond: 0, returned: false, helpers: Vec::new(), masked: Vec::new(), const_depth: 0 };
+        let mut scope = Scope { unrolled: BTreeMap::new(), unroll_copies: 1, in_unrolled_copy: false, wg: BTreeMap::new(), unwritten: BTreeSet::new(), in_items: false, in_tile: false, tile_depth: 0, grid: Grid { x: 16, y: 16, bx: 1, by: 1, rows_x: false }, in_cond: 0, returned: false, helpers: Vec::new(), masked: Vec::new(), const_depth: 0 };
         let (grid, body) = match root.name.as_str() {
             "kernel.entry" => {
                 let [g, b] = root.kids.as_slice() else { return Err(format!("{} with {} children", root.name, root.kids.len())) };
@@ -847,8 +851,10 @@ impl<'a> Renderer<'a> {
                 // again over those, so a halving the unwritten ones forced is undone.
                 let written: BTreeSet<String> = scope.wg.keys().filter(|v| text.contains(&format!("{v}["))).cloned().collect();
                 if written.len() != scope.wg.len() {
+                    let unwritten = scope.wg.keys().filter(|v| !written.contains(*v)).cloned().collect();
                     scope = fresh;
                     scope.grid = grid;
+                    scope.unwritten = unwritten;
                     scope.wg = workgroup_plan_of(self.kingdom, g, root, Some(&written))?;
                     let (again, terminated) = self.block_t(b, &mut scope)?;
                     text = again;
@@ -1249,6 +1255,20 @@ impl<'a> Renderer<'a> {
                 let len = self.wg_len(a, scope);
                 Ok(format!("    {a}[{}] = {};\n", self.index_text(&kids[1], len, scope)?, self.value(&kids[2], scope)?))
             }
+            // THE WORKGROUP PUT: this thread's own element, below the array's
+            // length, between two workgroup barriers (masked, as a barrier is,
+            // in non-uniform control flow, which the kingdom does not draw).
+            "wg.put" => {
+                n(3)?;
+                let a = self.wgmem(&kids[0])?;
+                let len = self.wg_len(a, scope);
+                let (i, v) = (self.wg_own(&kids[1], len, scope)?, self.value(&kids[2], scope)?);
+                if scope.in_cond > 0 || scope.returned {
+                    scope.masked.push("wg.put in non-uniform control flow".into());
+                    return Ok(format!("    if (({i}) < {len}u) {{ {a}[{i}] = {v}; }}\n"));
+                }
+                Ok(format!("    workgroupBarrier();\n    if (({i}) < {len}u) {{ {a}[{i}] = {v}; }}\n    workgroupBarrier();\n"))
+            }
             "wg.set_v_lane" => {
                 n(4)?;
                 let a = self.wgmem(&kids[0])?;
@@ -1320,17 +1340,20 @@ impl<'a> Renderer<'a> {
             "wg.reduce_add" | "wg.reduce_max" | "wg.reduce_min" => {
                 // a[0..n) into a[0]: a barrier, then for s = n/2, n/4, .., 1
                 // `if (lidx < s) { a[lidx] = a[lidx] op a[lidx + s]; }` and a
-                // barrier; n rounded down to a power of two. Masked, as a
-                // barrier is, in non-uniform control flow.
+                // barrier; n rounded down to a power of two and to at most the
+                // array's elements (a reduction wider than its array had two
+                // threads write one element through the mask: 2026-10-14, the
+                // checker's layer 7). Masked, as a barrier is, in non-uniform
+                // control flow.
                 n(2)?;
                 if scope.in_cond > 0 || scope.returned {
                     scope.masked.push(format!("{} in non-uniform control flow", safe_base(&s.name)));
                     return Ok("    // reduction masked: non-uniform control flow\n".into());
                 }
                 let a = self.wgmem(&kids[0])?;
-                let len = self.wg_len(a, scope).max(1);
+                let len = if scope.unwritten.contains(a) { 1 } else { self.wg_len(a, scope).max(1) };
                 let count = self.lit(&kids[1], 4096)?;
-                let count = 1u32 << (31 - count.leading_zeros());
+                let count = (1u32 << (31 - count.leading_zeros())).min(1u32 << (31 - len.leading_zeros()));
                 let mask = |x: String| if len.is_power_of_two() { format!("(({x}) & {}u)", len - 1) } else { format!("min(({x}), {}u)", len - 1) };
                 let combine = |x: String, y: String| match safe_base(&s.name) {
                     "wg.reduce_max" => format!("max({x}, {y})"),
@@ -1636,6 +1659,22 @@ impl Renderer<'_> {
         scope.wg.get(var).map_or_else(|| array_len(var), |(_, l)| *l)
     }
 
+    /// A put's element of an array of `len`: a literal k taken modulo the
+    /// elements each thread owns there, ceil(len / threads), so the put is
+    /// never one no thread executes (seed 18, 2026-10-14: lidx + 2160 into
+    /// 1,024 elements, a dead store layer 7 could not place); a tile
+    /// counter's as `value` writes it.
+    fn wg_own(&self, i: &Tree, len: u32, scope: &mut Scope) -> Result<String, String> {
+        let threads = scope.grid.x * scope.grid.y;
+        match (safe_base(&i.name), i.kids.first()) {
+            ("safe.wg_own", Some(t)) if t.name.starts_with("literal.") && t.konst.is_finite() => {
+                let k = t.konst.round().clamp(0.0, 63.0) as u32 % len.div_ceil(threads.max(1)).max(1);
+                Ok(format!("(lidx + {}u)", k * threads))
+            }
+            _ => self.value(i, scope),
+        }
+    }
+
     fn fill(&self, p: &PerKernel, t: &Tree, scope: &mut Scope) -> Result<String, String> {
         if t.kids.len() != p.inputs.len() {
             return Err(format!("{} with {} children, {} expected", p.name, t.kids.len(), p.inputs.len()));
@@ -1908,6 +1947,13 @@ impl Renderer<'_> {
                 return Ok(format!("(({t}) * {} + ({c}))", self.role.field("d")));
             }
             "safe.wg_of" => return Ok(format!("(({}) & {}u)", self.value(&v.kids[0], scope)?, WGMEM_LEN - 1)),
+            // This thread's k-th element of a workgroup array: lidx + k * threads
+            // (a put writes k modulo the array's elements a thread owns: `wg_own`).
+            "safe.wg_own" => {
+                let k = v.kids.first().filter(|t| t.name.starts_with("literal.") && t.konst.is_finite()).map_or(0, |t| t.konst.round().clamp(0.0, 63.0) as u32);
+                return Ok(format!("(lidx + {}u)", k * scope.grid.x * scope.grid.y));
+            }
+            "safe.wg_own_tile" | "safe.wg_own_tile2" => return Ok(format!("(lidx + {} * {}u)", self.value(&v.kids[0], scope)?, scope.grid.x * scope.grid.y)),
             "safe.wgv_of" => return Ok(format!("(({}) & {}u)", self.value(&v.kids[0], scope)?, WGVEC_LEN - 1)),
             "safe.wgv2_of" => return Ok(format!("(({}) & 1023u)", self.value(&v.kids[0], scope)?)),
             "safe.pidx64" => return Ok(format!("(({}) & 63u)", self.value(&v.kids[0], scope)?)),
@@ -2532,6 +2578,7 @@ pub fn safe_base(name: &str) -> &str {
             return match stem {
                 "store.h" => "store.h_safe",
                 "wg.set" | "wg.set_v" | "wg.set_v2" => "wg.set_safe",
+                "wg.put" | "wg.put_v" | "wg.put_v2" => "wg.put",
                 "parr.set_f" | "parr.set_v" | "parr.set_i" | "parr.set_b" | "parr.set_t" => "parr.set_safe",
                 "reg.set_v_lane" => "reg.set_v_lane",
                 "wg.set_v_lane" => "wg.set_v_lane",
@@ -2609,6 +2656,7 @@ impl Renderer<'_> {
             "u32.threadcols" | "u32.threadcolg" | "u32.colbases" | "u32.colbaseg" => row("safe.thread_col_s", "u32.threadcols")?,
             "u32.cell" => Tree::new("safe.cell_of", ty("u32.cell")?, vec![row("safe.thread_row", "u32.threadrow")?, row("safe.thread_col", "u32.threadcol")?]),
             "u32.mirror" => Tree::new("safe.mirror_of", ty("u32.mirror")?, vec![row("safe.thread_row", "u32.threadrow")?, row("safe.thread_col", "u32.threadcol")?]),
+            "u32.wgown" => return Ok(Some("lidx".into())),
             _ => return Ok(None),
         };
         self.value(&tree, scope).map(Some)
@@ -2867,7 +2915,7 @@ fn sample_with(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, s
     // kernels, 2026-10-13. The kingdom keeps the rows for text it reads.)
     // (Nor a mirror: the symmetric-half rule writes it, under its triangle
     // guard, in a kernel that runs with the whole H; 2026-10-14.)
-    let mut rows: Vec<WgslRow> = kingdom.rows.iter().filter(|r| !f16(&r.output) && !r.inputs.iter().any(f16) && !r.name.starts_with("stmt.return") && !r.name.starts_with("safe.mirror_of") && !r.name.starts_with("store.h_mirror") && !r.name.starts_with("stmt.if_ule")).cloned().collect();
+    let mut rows: Vec<WgslRow> = kingdom.rows.iter().filter(|r| !f16(&r.output) && !r.inputs.iter().any(f16) && !r.name.starts_with("stmt.return") && !r.name.starts_with("safe.mirror_of") && !r.name.starts_with("store.h_mirror") && !r.name.starts_with("stmt.if_ule") && !r.name.starts_with("wg.set")).cloned().collect();
     // The safe kingdom reads h only at the thread's own cell (load.h_safe):
     // the role's load.h, h at any index, is the plain kingdom's (the
     // legality checker: 25 of 1,000 random safe genes read another thread's

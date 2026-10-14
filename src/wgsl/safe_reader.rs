@@ -2919,6 +2919,76 @@ impl<'a> Ctx<'a> {
         Ok(out)
     }
 
+    /// The emitter's workgroup puts read back as the rows (2026-10-14): a
+    /// barrier, `if (i < len) { a[i] = v; }` with i this thread's element
+    /// (lidx + k * threads, k a literal or a tile counter) and len the
+    /// array's, then a barrier, is wg.put<kind>(a, own, v).
+    fn fold_puts(&self, stmts: Vec<Tree>, rung: &str) -> Result<Vec<Tree>, String> {
+        let barrier = format!("stmt.barrier_{rung}");
+        let threads = self.grid.0 * self.grid.1;
+        let lidx = |t: &Tree| t.name == "index.of_lidx" && t.kids.len() == 1;
+        // The own element an index is, or None.
+        let own = |ctx: &Self, i: &Tree| -> Option<Tree> {
+            let ([l, k], "index.add") = (i.kids.as_slice(), i.name.as_str()) else { return None };
+            let k = if lidx(l) { k } else if lidx(k) { l } else { return None };
+            let wgown = ty(ctx, "u32.wgown").ok()?;
+            if let Some(c) = literal_value(k) {
+                let c = c as u32;
+                if threads == 0 || !c.is_multiple_of(threads) || c / threads >= 64 {
+                    return None;
+                }
+                return Some(Tree::new("safe.wg_own", wgown, vec![Tree::literal("literal.lit64", ty(ctx, "u32.lit64").ok()?, (c / threads) as f32)]));
+            }
+            let ("index.mul", [a, b]) = (k.name.as_str(), k.kids.as_slice()) else { return None };
+            let (counter, t) = if literal_value(b).is_some() { (a, b) } else { (b, a) };
+            if literal_value(t) != Some(threads as f32) || counter.kids.len() != 1 {
+                return None;
+            }
+            let row = match (counter.name.as_str(), counter.kids[0].name.as_str()) {
+                ("safe.tile_index", "safe.tile_counter") => "safe.wg_own_tile",
+                ("safe.tile_index2", "safe.tile_counter2") => "safe.wg_own_tile2",
+                _ => return None,
+            };
+            Some(Tree::new(row, wgown, vec![counter.kids[0].clone()]))
+        };
+        let put = |ctx: &Self, s: &Tree| -> Option<Tree> {
+            let [c, b] = s.kids.as_slice() else { return None };
+            if rung_stem(&s.name) != Some("stmt.if") || c.name != "compare.lt" || c.kids.len() != 2 {
+                return None;
+            }
+            let mut inner = Vec::new();
+            flatten_stmts(b.clone(), &mut inner);
+            let [set] = inner.as_slice() else { return None };
+            let row = match rung_stem(&set.name)? {
+                "wg.set" => "wg.put",
+                "wg.set_v" => "wg.put_v",
+                "wg.set_v2" => "wg.put_v2",
+                _ => return None,
+            };
+            let [arr, idx, v] = set.kids.as_slice() else { return None };
+            let i = idx.kids.first()?;
+            if *i != c.kids[0] || literal_value(&c.kids[1])? as u32 != self.array_lens.get(arr.name.as_str()).copied().unwrap_or_else(|| crate::wgsl::render::array_len(&arr.name.replace('.', "_"))) {
+                return None;
+            }
+            let own = own(ctx, i)?;
+            Some(Tree::new(&format!("{row}_{rung}"), ctx.stmt_ty(rung).ok()?, vec![arr.clone(), own, v.clone()]))
+        };
+        let mut out = Vec::new();
+        let mut i = 0;
+        while i < stmts.len() {
+            if stmts[i].name == barrier && stmts.get(i + 2).is_some_and(|b| b.name == barrier) {
+                if let Some(p) = put(self, &stmts[i + 1]) {
+                    out.push(p);
+                    i += 3;
+                    continue;
+                }
+            }
+            out.push(stmts[i].clone());
+            i += 1;
+        }
+        Ok(out)
+    }
+
     /// An unrolled item loop's main loop and the loop after it that
     /// finishes the items (`for (; t < bound; t = t + 1u)`, the same body)
     /// as loop.items_unrolled_<bound> (2026-10-13: the parser dropped the
@@ -2948,7 +3018,7 @@ impl<'a> Ctx<'a> {
     fn block(&self, stmts: Vec<Tree>, rung: &str) -> Result<Tree, String> {
         let bt = ty(self, &format!("block.{rung}"))?;
         let st = self.stmt_ty(rung)?;
-        let stmts = if rung.starts_with('L') { self.fold_reductions(stmts, rung)? } else { stmts };
+        let stmts = if rung.starts_with('L') { self.fold_puts(self.fold_reductions(stmts, rung)?, rung)? } else { stmts };
         let stmts = self.fold_unrolled(stmts)?;
         if stmts.is_empty() {
             return Ok(Tree::fallback(bt));

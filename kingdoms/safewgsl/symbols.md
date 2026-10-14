@@ -2978,4 +2978,35 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 | F1555 | `store.h_mirror_L5` | `composite` | `u32.mirror f32.real` | `stmt.L5` | 2 | h[mirror] = h[mirror] + v under the bounds check of the thread's own cell: the symmetric half's second write |
 | F1556 | `store.h_mirror_C5` | `composite` | `u32.mirror f32.real` | `stmt.C5` | 2 | h[mirror] = h[mirror] + v under the bounds check of the thread's own cell: the symmetric half's second write |
 
-1556 function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Deliberately absent: storage-buffer atomics, atomic compare-exchange (naga 0.20's Metal backend lacks it), subgroupBallot, images, derivatives, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.
+## class `safe`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F1557 | `safe.wg_own` | `composite` | `u32.lit64` | `u32.wgown` | 1 | lidx + k * threads: this thread's k-th element of a workgroup array |
+| F1558 | `safe.wg_own_tile` | `composite` | `u32.tcounter` | `u32.wgown` | 1 | lidx + k * threads over the tile loop's counter k |
+| F1559 | `safe.wg_own_tile2` | `composite` | `u32.tcounter2` | `u32.wgown` | 1 | lidx + k2 * threads over the inner tile loop's counter k2 |
+
+## class `wg`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F1560 | `wg.put_L0` | `composite` | `wgmem<f32>.real u32.wgown f32.real` | `stmt.L0` | 3 | arity 3: barrier; if (i < len) { a[i] = v; } barrier |
+| F1561 | `wg.put_v_L0` | `composite` | `wgmem<vec4<f32>>.real u32.wgown vec4<f32>.real` | `stmt.L0` | 3 | arity 3: barrier; if (i < len) { va[i] = v; } barrier |
+| F1562 | `wg.put_v2_L0` | `composite` | `wgmem<vec2<f32>>.real u32.wgown vec2<f32>.real` | `stmt.L0` | 3 | arity 3: barrier; if (i < len) { v2a[i] = v; } barrier |
+| F1563 | `wg.put_L1` | `composite` | `wgmem<f32>.real u32.wgown f32.real` | `stmt.L1` | 3 | arity 3: barrier; if (i < len) { a[i] = v; } barrier |
+| F1564 | `wg.put_v_L1` | `composite` | `wgmem<vec4<f32>>.real u32.wgown vec4<f32>.real` | `stmt.L1` | 3 | arity 3: barrier; if (i < len) { va[i] = v; } barrier |
+| F1565 | `wg.put_v2_L1` | `composite` | `wgmem<vec2<f32>>.real u32.wgown vec2<f32>.real` | `stmt.L1` | 3 | arity 3: barrier; if (i < len) { v2a[i] = v; } barrier |
+| F1566 | `wg.put_L2` | `composite` | `wgmem<f32>.real u32.wgown f32.real` | `stmt.L2` | 3 | arity 3: barrier; if (i < len) { a[i] = v; } barrier |
+| F1567 | `wg.put_v_L2` | `composite` | `wgmem<vec4<f32>>.real u32.wgown vec4<f32>.real` | `stmt.L2` | 3 | arity 3: barrier; if (i < len) { va[i] = v; } barrier |
+| F1568 | `wg.put_v2_L2` | `composite` | `wgmem<vec2<f32>>.real u32.wgown vec2<f32>.real` | `stmt.L2` | 3 | arity 3: barrier; if (i < len) { v2a[i] = v; } barrier |
+| F1569 | `wg.put_L3` | `composite` | `wgmem<f32>.real u32.wgown f32.real` | `stmt.L3` | 3 | arity 3: barrier; if (i < len) { a[i] = v; } barrier |
+| F1570 | `wg.put_v_L3` | `composite` | `wgmem<vec4<f32>>.real u32.wgown vec4<f32>.real` | `stmt.L3` | 3 | arity 3: barrier; if (i < len) { va[i] = v; } barrier |
+| F1571 | `wg.put_v2_L3` | `composite` | `wgmem<vec2<f32>>.real u32.wgown vec2<f32>.real` | `stmt.L3` | 3 | arity 3: barrier; if (i < len) { v2a[i] = v; } barrier |
+| F1572 | `wg.put_L4` | `composite` | `wgmem<f32>.real u32.wgown f32.real` | `stmt.L4` | 3 | arity 3: barrier; if (i < len) { a[i] = v; } barrier |
+| F1573 | `wg.put_v_L4` | `composite` | `wgmem<vec4<f32>>.real u32.wgown vec4<f32>.real` | `stmt.L4` | 3 | arity 3: barrier; if (i < len) { va[i] = v; } barrier |
+| F1574 | `wg.put_v2_L4` | `composite` | `wgmem<vec2<f32>>.real u32.wgown vec2<f32>.real` | `stmt.L4` | 3 | arity 3: barrier; if (i < len) { v2a[i] = v; } barrier |
+| F1575 | `wg.put_L5` | `composite` | `wgmem<f32>.real u32.wgown f32.real` | `stmt.L5` | 3 | arity 3: barrier; if (i < len) { a[i] = v; } barrier |
+| F1576 | `wg.put_v_L5` | `composite` | `wgmem<vec4<f32>>.real u32.wgown vec4<f32>.real` | `stmt.L5` | 3 | arity 3: barrier; if (i < len) { va[i] = v; } barrier |
+| F1577 | `wg.put_v2_L5` | `composite` | `wgmem<vec2<f32>>.real u32.wgown vec2<f32>.real` | `stmt.L5` | 3 | arity 3: barrier; if (i < len) { v2a[i] = v; } barrier |
+
+1577 function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Deliberately absent: storage-buffer atomics, atomic compare-exchange (naga 0.20's Metal backend lacks it), subgroupBallot, images, derivatives, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.
