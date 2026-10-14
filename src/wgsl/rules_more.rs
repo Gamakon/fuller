@@ -25,9 +25,10 @@
 //! - double-buffer: the item loop's loader moved one pass ahead into the
 //!   other half of each tile, one barrier a pass instead of two.
 //!
-//! Symmetric-half is not here: the kingdom lets a thread store only its own
-//! cell of h (checker layer 2, `store_not_owned_cell`) and the fitness
-//! dispatches h in row bands, so a mirrored write is outside both.
+//! - symmetric-half (2026-10-14): the upper triangle and its mirror; the
+//!   mirror's write set is proved by the checker's layer 7 (no longer the
+//!   cell-only grammar rule) and the child runs with the whole H in one band
+//!   (`// mode full`, the harness's single-band program).
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -1562,6 +1563,103 @@ fn buffer_why(root: &Tree, kingdom: &WgslKingdom) -> Option<String> {
     (why.len() == c.len()).then(|| why.join("; "))
 }
 
+// ---- RULE: THE SYMMETRIC HALF (2026-10-14) ----
+
+/// THE SYMMETRIC HALF's precondition: a Gram kernel whose every store of h
+/// is at the thread's own cell (`safe.cell_of`), on a workgroup whose row and
+/// column spans are equal (a workgroup is then wholly above, on or below the
+/// diagonal), that writes no mirror yet. The plan is the row and column axes
+/// of the workgroup id.
+pub fn symmetric_half_plan(root: &Tree, kingdom: &WgslKingdom) -> Result<(char, char), String> {
+    if root.name != "kernel.entry_safe" || root.kids.len() != 3 {
+        return Err("not a safe kernel".into());
+    }
+    if crate::wgsl::render::writes_mirror(root) {
+        return Err("the kernel writes the mirror already".into());
+    }
+    let plain = to_literals(root, kingdom)?;
+    let grid = crate::wgsl::render::grid_of(&plain.kids[0])?;
+    let (span_r, span_c) = (grid.row_axis().1 * grid.by, grid.col_axis().1 * grid.bx);
+    if span_r != span_c {
+        return Err(format!("the workgroup spans {span_r} rows and {span_c} columns: it would straddle the diagonal"));
+    }
+    let mut stores = 0usize;
+    let mut bad: Option<String> = None;
+    fn walk(t: &Tree, stores: &mut usize, bad: &mut Option<String>) {
+        if safe_base(&t.name) == "store.h_safe" {
+            *stores += 1;
+            if t.kids.first().is_none_or(|c| c.name != "safe.cell_of" || c.kids.len() != 2) && bad.is_none() {
+                *bad = Some(format!("{} at {}: not an explicit cell of the thread", t.name, t.kids.first().map_or_else(String::new, |c| c.name.clone())));
+            }
+        }
+        t.kids.iter().for_each(|k| walk(k, stores, bad));
+    }
+    walk(root, &mut stores, &mut bad);
+    if let Some(b) = bad {
+        return Err(b);
+    }
+    if stores == 0 {
+        return Err("no store of h".into());
+    }
+    Ok(if grid.rows_x { ('x', 'y') } else { ('y', 'x') })
+}
+
+pub fn symmetric_half_sites(root: &Tree, kingdom: &WgslKingdom) -> Vec<Site> {
+    match symmetric_half_plan(root, kingdom) {
+        Ok(_) => vec![Site { index: 0, what: "the upper triangle and its mirror".into() }],
+        Err(_) => Vec::new(),
+    }
+}
+
+/// SYMMETRIC HALF: H is symmetric, so a thread computes only cells on or
+/// above the diagonal and writes each off-diagonal one twice, at (i, j) and
+/// at its mirror (j, i). A workgroup wholly below the diagonal (its row id
+/// above its column id: equal spans) skips the body, a test of uniform
+/// values around it (`stmt.if_ule_L0`, its barriers in uniform control);
+/// every store of h at cell (row, col) becomes
+/// `if (row <= col) { if (row < col) { h[mirror] += v; } h[cell] += v; }`,
+/// so a diagonal block writes its lower half once, as mirrors. The values
+/// are the parent's: cell (j, i) gets the sum the parent's thread at (i, j)
+/// made, which for a Gram kernel is the same sum. The child runs with the
+/// whole H in one band (`// mode full`); layer 7 proves the two write sets
+/// disjoint under the triangle guards.
+pub fn symmetric_half(root: &Tree, kingdom: &WgslKingdom) -> Result<Tree, String> {
+    let (ra, ca) = symmetric_half_plan(root, kingdom)?;
+    let t = |n: &str| dual_ty(kingdom, n);
+    let (flag, uniform) = (t("bool.flag")?, t("u32.uniform")?);
+    let wid = Tree::new("builtin.workgroup_id", t("vec3<u32>.wid")?, vec![]);
+    let uwid = |c: char| Tree::new(&format!("uniform.wid_{c}"), uniform, vec![wid.clone()]);
+    fn guarded(s: &Tree, kingdom: &WgslKingdom, flag: crate::geneframe::Ty) -> Result<Tree, String> {
+        let t = |n: &str| dual_ty(kingdom, n);
+        let r = crate::wgsl::rules::rung(&s.name).ok_or_else(|| format!("{} has no rung", s.name))?;
+        let level = &r[1..];
+        let c = format!("C{level}");
+        let (cell, v) = (&s.kids[0], &s.kids[1]);
+        let (row, col) = (&cell.kids[0], &cell.kids[1]);
+        let index = t("u32.index")?;
+        let ri = Tree::new("safe.row_as_index", index, vec![row.clone()]);
+        let ci = Tree::new("safe.col_as_index", index, vec![col.clone()]);
+        let mirror = Tree::new("safe.mirror_of", t("u32.mirror")?, vec![row.clone(), col.clone()]);
+        let mstore = Tree::new(&format!("store.h_mirror_{c}"), t(&format!("stmt.{c}"))?, vec![mirror, v.clone()]);
+        let inner = Tree::new(&format!("stmt.if_{c}"), t(&format!("stmt.{c}"))?, vec![Tree::new("compare.lt", flag, vec![ri.clone(), ci.clone()]), Tree::new(&format!("block.one_{c}"), t(&format!("block.{c}"))?, vec![mstore])]);
+        // The own store keeps its rung inside an epilogue block (O), a C block otherwise.
+        let (body_rung, own) = if r.starts_with('O') { (r.to_string(), s.clone()) } else { (c.clone(), Tree::new(&format!("store.h_{c}"), t(&format!("stmt.{c}"))?, s.kids.clone())) };
+        let body = Tree::new(&format!("block.seq2_{body_rung}"), t(&format!("block.{body_rung}"))?, vec![inner, own]);
+        Ok(Tree::new(&format!("stmt.if_{r}"), t(&format!("stmt.{r}"))?, vec![Tree::new("compare.le", flag, vec![ri, ci]), body]))
+    }
+    fn walk(t: &Tree, kingdom: &WgslKingdom, flag: crate::geneframe::Ty) -> Result<Tree, String> {
+        if safe_base(&t.name) == "store.h_safe" {
+            return guarded(t, kingdom, flag);
+        }
+        Ok(Tree { name: t.name.clone(), ty: t.ty, konst: t.konst, kids: t.kids.iter().map(|k| walk(k, kingdom, flag)).collect::<Result<_, _>>()? })
+    }
+    let mut kids = root.kids.clone();
+    let skip = Tree::new("stmt.if_ule_L0", t("stmt.L0")?, vec![uwid(ra), uwid(ca), walk(&root.kids[1], kingdom, flag)?]);
+    kids[1] = Tree::new("block.one_L0", t("block.L0")?, vec![skip]);
+    kids[2] = walk(&root.kids[2], kingdom, flag)?;
+    Ok(Tree { kids, ..root.clone() })
+}
+
 /// Why each rule of this module does not fire (None when it fires).
 pub fn why_not(rule: crate::wgsl::rules::Rule, root: &Tree, kingdom: &WgslKingdom) -> Option<String> {
     use crate::wgsl::rules::Rule;
@@ -1581,6 +1679,7 @@ pub fn why_not(rule: crate::wgsl::rules::Rule, root: &Tree, kingdom: &WgslKingdo
         Rule::GrowCols => grow_cols_plan(root, kingdom).err(),
         Rule::ShrinkCols => shrink_cols_plan(root, kingdom).err(),
         Rule::DoubleBuffer => buffer_why(root, kingdom),
+        Rule::SymmetricHalf => symmetric_half_plan(root, kingdom).err(),
         _ => None,
     }
 }
@@ -1606,7 +1705,92 @@ mod tests {
         files.into_iter().filter_map(|f| Some((f.file_name()?.to_string_lossy().into_owned(), read_safe(&std::fs::read_to_string(&f).ok()?, k).ok()?.tree))).collect()
     }
 
-    const NEW: [Rule; 10] = [Rule::DropDeadStore, Rule::UnrollK4, Rule::RollK, Rule::SplitAccumulator, Rule::WgShape, Rule::HoistLoad, Rule::PadShared, Rule::GrowCols, Rule::ShrinkCols, Rule::DoubleBuffer];
+    const NEW: [Rule; 11] = [Rule::DropDeadStore, Rule::UnrollK4, Rule::RollK, Rule::SplitAccumulator, Rule::WgShape, Rule::HoistLoad, Rule::PadShared, Rule::GrowCols, Rule::ShrinkCols, Rule::DoubleBuffer, Rule::SymmetricHalf];
+
+    /// THE SYMMETRIC HALF COMPUTES H EXACTLY (2026-10-14). On every kernel
+    /// of the corpus and popR_rules where it fires, the child passes every
+    /// layer of the checker (layer 7 proving its mirror writes disjoint
+    /// under the full-H contract), renders `// mode full` and reads back; on
+    /// the CPU executor (every workgroup, its invocations in lockstep
+    /// between barriers) at d 37 and 70, m 9, one band over the whole H, the
+    /// child's H equals the parent's bit for bit, every cell and every
+    /// mirror, and the child writes each cell exactly once.
+    #[test]
+    fn the_symmetric_half_computes_h_exactly_and_passes_the_checker() {
+        use crate::wgsl::cpu::{run_text, Val};
+        let k = WgslKingdom::load_safe();
+        let (mut fired, mut ran, mut not_run, mut parents_refused) = (0usize, 0usize, Vec::new(), Vec::new());
+        for (name, t) in kernels(&k) {
+            if symmetric_half_sites(&t, &k).is_empty() {
+                continue;
+            }
+            // A parent the checker refuses (a race of its own, k08) gives a child that inherits it.
+            if knob::check(&t, &k).is_err() {
+                parents_refused.push(name.clone());
+                continue;
+            }
+            fired += 1;
+            let child = symmetric_half(&t, &k).unwrap_or_else(|e| panic!("{name}: {e}"));
+            if let Ok(dir) = std::env::var("SYMMETRIC_DUMP") {
+                let _ = std::fs::write(format!("{dir}/{name}"), render_tree(&child, &k).map(|r| r.text).unwrap_or_default());
+            }
+            let (text, back) = knob::check_text(&child, &k).unwrap_or_else(|(s, e)| panic!("{name}: {}: {e}", s.name()));
+            assert!(text.contains("// mode full"), "{name}: the child does not say mode full");
+            assert!(crate::wgsl::render::writes_mirror(&back.tree), "{name}: read back without its mirror");
+            let parent = render_tree(&t, &k).unwrap().text;
+            let grid = crate::wgsl::render::grid_of(&to_literals(&t, &k).unwrap().kids[0]).unwrap();
+            let mut all_run = true;
+            for d in [37u32, 70] {
+                let m = 9u32;
+                let phi: Vec<Val> = (0..d * m).map(|i| Val::F(((i * 7919 % 97) as f32) / 31.0 - 1.5)).collect();
+                let buffers = || {
+                    let mut b = std::collections::HashMap::new();
+                    b.insert("phi".to_string(), Val::V(phi.clone()));
+                    b.insert("h".to_string(), Val::V(vec![Val::F(0.0); (d * d) as usize]));
+                    b.insert("cfg".to_string(), Val::V(vec![Val::U(d), Val::U(m), Val::U(d), Val::U(0)]));
+                    b
+                };
+                let (x, y) = grid.dispatch(d, d);
+                let (p, c) = match (run_text(&parent, buffers(), [x, y, 1], 400_000_000), run_text(&text, buffers(), [x, y, 1], 400_000_000)) {
+                    (Ok(p), Ok(c)) => (p, c),
+                    (Err(e), _) | (_, Err(e)) => {
+                        not_run.push(format!("{name}: {e}"));
+                        all_run = false;
+                        break;
+                    }
+                };
+                let words = |v: &Val| {
+                    let mut w = Vec::new();
+                    v.words(&mut w);
+                    w
+                };
+                let (hp, hc) = (words(&p.buffers["h"]), words(&c.buffers["h"]));
+                let differ: Vec<usize> = (0..hp.len()).filter(|&i| hp[i] != hc[i]).collect();
+                assert!(differ.is_empty(), "{name} at d {d}: {} of {} cells differ from the parent's (first {:?}: parent {} child {})", differ.len(), hp.len(), differ[0], f32::from_bits(hp[differ[0]]), f32::from_bits(hc[differ[0]]));
+                // Every cell of H written as many times as the parent writes it
+                // (an accumulation doubled would show once more), by one invocation.
+                let count = |out: &crate::wgsl::cpu::Dispatch| {
+                    let mut seen: std::collections::BTreeMap<Vec<u32>, (usize, std::collections::BTreeSet<[u32; 3]>)> = std::collections::BTreeMap::new();
+                    for w in out.writes.iter().filter(|w| w.binding == "h") {
+                        let e = seen.entry(w.path.clone()).or_default();
+                        e.0 += 1;
+                        e.1.insert(w.gid);
+                    }
+                    seen
+                };
+                let (wp, wc) = (count(&p), count(&c));
+                let times = |m: &std::collections::BTreeMap<Vec<u32>, (usize, std::collections::BTreeSet<[u32; 3]>)>| m.iter().map(|(k, v)| (k.clone(), v.0)).collect::<Vec<_>>();
+                assert!(times(&wp) == times(&wc), "{name} at d {d}: the child writes the cells of H other numbers of times than the parent");
+                assert!(wc.values().all(|(_, g)| g.len() == 1), "{name} at d {d}: a cell written by two invocations");
+            }
+            if all_run {
+                ran += 1;
+            }
+        }
+        println!("symmetric half: fires on {fired} legal kernels, {ran} run on the CPU at d 37 and 70 with H equal to the parent's; not run: {not_run:?}; parents the checker refuses: {parents_refused:?}");
+        assert!(fired > 0, "the symmetric half fires on no kernel");
+        assert!(not_run.is_empty(), "kernels the CPU executor did not run: {not_run:?}");
+    }
 
     /// EVERY CHILD OF EVERY NEW RULE PASSES THE LAYERED CHECK (legality,
     /// render, naga validation, read back) on every kernel where the rule

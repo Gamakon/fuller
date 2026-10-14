@@ -1197,6 +1197,11 @@ f("safe", "thread_col_g", "composite", ["vec3<u32>.wid", "vec3<u32>.lid", "u32.b
 for r in ("threadrow", "threadrows", "threadrowg"):
     for c in ("threadcol", "threadcols", "threadcolg"):
         f("safe", "mirror_of", "composite", ["u32." + r, "u32." + c], "u32.mirror", "col * cfg.d + row: the mirror of the cell this thread owns")
+# A test of two workgroup-uniform values whose body keeps its rung (it may hold a barrier): the symmetric
+# half's `if (wid_row <= wid_col)`, which skips the workgroups strictly below the diagonal. Uniform by its
+# operands' dual; no sampler draws it either.
+for r in ("L0", "L1", "L2", "L3", "L4", "L5"):
+    f("stmt", "if_ule_" + r, "composite", ["u32.uniform", "u32.uniform", "block." + r], "stmt." + r, "arity 3: if (a <= b) { ... } over workgroup-uniform values: the body keeps the rung")
 # (Not an epilogue statement: the epilogue still ends in the store of the thread's own cell.)
 for r in RUNGS + RUNGS5:
     f("store", "h_mirror_" + r, "composite", ["u32.mirror", "f32.real"], "stmt." + r, "h[mirror] = h[mirror] + v under the bounds check of the thread's own cell: the symmetric half's second write")

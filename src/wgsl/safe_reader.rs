@@ -138,6 +138,8 @@ struct Ctx<'a> {
     /// The function whose body is being walked (its pointers resolve the
     /// locals a loop stores).
     naga_fn: &'a Function,
+    /// The text says it writes the whole H (a mirror store reads as one).
+    mode_full: bool,
 }
 
 /// A helper function the grammar inlines. One of lets and one `return expr`
@@ -2588,6 +2590,32 @@ impl<'a> Ctx<'a> {
         fail(&format!("row or column is not this thread's (tile counters {:?} / {:?} / {:?} / {:?})", self.tile_counter, self.tile_counter2, self.tile_counter3, self.tile_counter4))
     }
 
+    /// `C * cfg.d + R` with R and C this thread's row and column: the mirror
+    /// of its cell (`safe.mirror_of(row, col)`), proved as the cell R * d + C.
+    fn mirror(&mut self, idx: &Tree) -> Option<Tree> {
+        let expanded = self.expand_memo(idx);
+        let mut terms = Vec::new();
+        flatten_add(&expanded, &mut terms);
+        let is_prod = |t: &Tree| t.name == "index.mul" && t.kids.len() == 2 && t.kids.iter().any(|k| is_leaf(k, "load.uniform.cfg.d"));
+        let p = terms.iter().position(|t| is_prod(t))?;
+        if terms.len() < 2 {
+            return None;
+        }
+        let prod = terms[p];
+        let (factor, d) = if is_leaf(&prod.kids[1], "load.uniform.cfg.d") { (&prod.kids[0], &prod.kids[1]) } else { (&prod.kids[1], &prod.kids[0]) };
+        let rest: Vec<Tree> = terms.iter().enumerate().filter(|(i, _)| *i != p).map(|(_, t)| (*t).clone()).collect();
+        let row = rest.into_iter().reduce(|acc, t| Tree::new("index.add", idx.ty, vec![acc, t]))?;
+        let swapped = Tree::new("index.add", idx.ty, vec![Tree::new("index.mul", prod.ty, vec![row, d.clone()]), factor.clone()]);
+        let saved = self.rows_x;
+        match self.cell(&swapped) {
+            Ok(c) if c.name == "safe.cell_of" => Some(Tree { name: "safe.mirror_of".into(), ty: ty(self, "u32.mirror").ok()?, konst: 0.0, kids: c.kids }),
+            _ => {
+                self.rows_x = saved;
+                None
+            }
+        }
+    }
+
     /// A thread's row or column plus an offset within its block, as the row that proves it.
     fn plus(&mut self, base: Tree, off: Off, axis: &str) -> Result<Tree, String> {
         let dual = ty(self, if axis == "row" { "u32.threadrow" } else { "u32.threadcol" })?;
@@ -3072,7 +3100,9 @@ impl<'a> Ctx<'a> {
         }
         let (a, b, g) = (&c.kids[0].kids[0], &c.kids[0].kids[1], &c.kids[1]);
         let off_row = (g.name == "compare.lt" && g.kids.len() == 2 && is_leaf(&g.kids[1], "load.uniform.cfg.d") && g.kids[0].name == "index.add" && g.kids[0].kids.len() == 2 && is_leaf(&g.kids[0].kids[0], "load.uniform.cfg.r_off")).then(|| g.kids[0].kids[1].to_sexpr());
-        let own = lt(a, "load.uniform.cfg.r_rows") == Some(row.clone()) && lt(b, "load.uniform.cfg.d") == Some(col) && off_row == Some(row);
+        let own = lt(a, "load.uniform.cfg.r_rows") == Some(row.clone()) && lt(b, "load.uniform.cfg.d") == Some(col.clone()) && off_row == Some(row.clone());
+        // The mirror's store (h[C * d + R]) under its own cell's guard.
+        let own = own || (lt(a, "load.uniform.cfg.r_rows") == Some(col.clone()) && lt(b, "load.uniform.cfg.d") == Some(row) && off_row == Some(col));
         if own {
             self.notes.push("the kingdom's own guard on a store to h was read as the store alone".into());
         }
@@ -3372,6 +3402,25 @@ impl<'a> Ctx<'a> {
                                 _ => Some(Tree::new(&format!("stmt.block_{rung}"), st, vec![self.block(a, rung)?])),
                             });
                         }
+                        // A test of two workgroup-uniform values at an L rung (the
+                        // symmetric half's `if (wid_row <= wid_col)`): its body keeps
+                        // the rung, a barrier in it in uniform control.
+                        let uniform_le = match (c.name.as_str(), c.kids.as_slice()) {
+                            ("compare.le", [x, y]) => Some((x, y)),
+                            ("compare.ge", [x, y]) => Some((y, x)),
+                            _ => None,
+                        };
+                        if let Some((x, y)) = uniform_le.filter(|_| rung.starts_with('L') && reject.iter().all(|s| matches!(s, Statement::Emit(_)))) {
+                            if let (Some(ux), Some(uy)) = (self.uniform_bound_of(x)?, self.uniform_bound_of(y)?) {
+                                self.tail = stmt_tail;
+                                path.push(0);
+                                let a = self.nested(|ctx, path| ctx.walk(accept, path, rung, 0), path);
+                                path.pop();
+                                self.tail = block_tail;
+                                let a = a?;
+                                return Ok(Some(Tree::new(&format!("stmt.if_ule_{rung}"), st, vec![ux, uy, self.block(a, rung)?])));
+                            }
+                        }
                         let crung = format!("C{level}");
                         self.tail = stmt_tail;
                         path.push(0);
@@ -3608,10 +3657,40 @@ impl<'a> Ctx<'a> {
             if xs.is_empty() {
                 return Err("a store of h[c] to itself (no increment)".into());
             }
-            let cell = self.cell(idx)?;
+            // The thread's own cell, or (in a kernel that says `// mode full`)
+            // its mirror, col * d + row: the symmetric half's second write.
+            // There, with the layout still open, rows on y first for both
+            // readings: a mirror read as a cell would turn the layout.
+            let (cell, row_name) = if !self.mode_full {
+                (self.cell(idx)?, "store.h")
+            } else {
+                let open = self.rows_x.is_none();
+                if open {
+                    self.rows_x = Some(false);
+                }
+                let first = match self.cell(idx) {
+                    Ok(c) => Some((c, "store.h")),
+                    Err(_) => self.mirror(idx).map(|m| (m, "store.h_mirror")),
+                };
+                match first {
+                    Some(x) => x,
+                    None => {
+                        if open {
+                            self.rows_x = None;
+                        }
+                        match self.cell(idx) {
+                            Ok(c) => (c, "store.h"),
+                            Err(e) => match self.mirror(idx) {
+                                Some(m) => (m, "store.h_mirror"),
+                                None => return Err(e),
+                            },
+                        }
+                    }
+                }
+            };
             let vs = xs.into_iter().map(|x| self.value(x)).collect::<Result<Vec<_>, _>>()?;
             let stores = |ctx: &Self, r: &str| -> Result<Tree, String> {
-                let list = vs.iter().map(|v| Ok(Tree::new(&format!("store.h_{r}"), ctx.stmt_ty(r)?, vec![cell.clone(), v.clone()]))).collect::<Result<Vec<_>, String>>()?;
+                let list = vs.iter().map(|v| Ok(Tree::new(&format!("{row_name}_{r}"), ctx.stmt_ty(r)?, vec![cell.clone(), v.clone()]))).collect::<Result<Vec<_>, String>>()?;
                 if list.len() == 1 {
                     return Ok(list.into_iter().next().expect("one store"));
                 }
@@ -4834,7 +4913,7 @@ pub fn read_safe_literal(source: &str, kingdom: &WgslKingdom) -> Result<SafeRead
     // that returns, with no epilogue after it (naga's own trailing return is
     // in every kernel's IR, so the text decides).
     let main_returns = source.find(&format!("fn {}(", role.entry)).map(|i| &source[i..]).and_then(|m| m.rfind('}').map(|j| &m[..j])).is_some_and(|m| m.trim_end().ends_with("return;"));
-    let mut ctx = Ctx { kingdom, main_returns, per_kernel_rows: crate::wgsl::safe_karva::per_kernel_rows(kingdom, &role), duals: &duals, lets: &lets, roots: &roots, item_counter: None, tile_counter: None, tile_counter2: None, tile_counter3: None, tile_counter4: None, registers: BTreeMap::new(), counter_stores: Vec::new(), guard: None, tail: true, arrays: BTreeMap::new(), array_lens: BTreeMap::new(), parrs: BTreeMap::new(), grid, rows_x: grid_rows_x(source).then_some(true), notes: Vec::new(), helpers: &helpers, calls: &calls, arg_roots: &arg_roots, inline_args: None, row_arrays: BTreeMap::new(), used_counters: std::collections::BTreeSet::new(), local_lanes, axis_memo: BTreeMap::new(), loop_depth: 0, tile_bounds: BTreeMap::new(), naga_fn, module: &kernel.module, local_prefix: String::new(), inline_result: None, inline_values: None, bound_lets, stale_lets, let_regs: HashMap::new(), inlined: HashMap::new(), stored_seen: std::collections::BTreeSet::new(), counter_offsets: HashMap::new(), pointer_args: HashMap::new() };
+    let mut ctx = Ctx { kingdom, main_returns, per_kernel_rows: crate::wgsl::safe_karva::per_kernel_rows(kingdom, &role), duals: &duals, lets: &lets, roots: &roots, item_counter: None, tile_counter: None, tile_counter2: None, tile_counter3: None, tile_counter4: None, registers: BTreeMap::new(), counter_stores: Vec::new(), guard: None, tail: true, arrays: BTreeMap::new(), array_lens: BTreeMap::new(), parrs: BTreeMap::new(), grid, rows_x: grid_rows_x(source).then_some(true), notes: Vec::new(), helpers: &helpers, calls: &calls, arg_roots: &arg_roots, inline_args: None, row_arrays: BTreeMap::new(), used_counters: std::collections::BTreeSet::new(), local_lanes, axis_memo: BTreeMap::new(), loop_depth: 0, tile_bounds: BTreeMap::new(), naga_fn, module: &kernel.module, local_prefix: String::new(), inline_result: None, inline_values: None, bound_lets, stale_lets, let_regs: HashMap::new(), inlined: HashMap::new(), stored_seen: std::collections::BTreeSet::new(), counter_offsets: HashMap::new(), pointer_args: HashMap::new(), mode_full: source.lines().any(|l| l.trim() == "// mode full") };
     // Register initialisations first, in root order. A local initialised to
     // its form's fallback (0.0, 0u, false, a zero vector) costs nothing: the
     // register's declaration already holds that value, and the register is

@@ -789,6 +789,14 @@ impl<'a> Checker<'a> {
                 }
                 cx.in_if -= 1;
             }
+            // A test of two uniform values: its body keeps the enclosing control
+            // (the operands' dual is the workgroup's uniform values).
+            "stmt.if_ule" if k.len() == 3 => {
+                self.value(&k[0], cx);
+                self.value(&k[1], cx);
+                let c = self.uniform(&k[0], cx) && self.uniform(&k[1], cx);
+                self.walk_block(&k[2], cx, ctrl && c);
+            }
             "stmt.return" => {
                 // A return under a non-uniform condition: every later
                 // statement, and every statement of an enclosing loop, runs

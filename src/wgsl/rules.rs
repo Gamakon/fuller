@@ -1805,13 +1805,14 @@ pub enum Rule {
     GrowCols,
     ShrinkCols,
     DoubleBuffer,
+    SymmetricHalf,
 }
 
 impl Rule {
     /// The pool. wg-shape is out (2026-10-13, run 3: all 10 children wrong on
     /// the device; the reader's references cannot tell equal knobs apart);
     /// its rule stays for the table and the tests.
-    pub const ALL: [Rule; 15] = [
+    pub const ALL: [Rule; 16] = [
         Rule::DropZeroFill,
         Rule::GrowRows,
         Rule::VecTile,
@@ -1827,6 +1828,7 @@ impl Rule {
         Rule::GrowCols,
         Rule::ShrinkCols,
         Rule::DoubleBuffer,
+        Rule::SymmetricHalf,
     ];
 
     /// Rules kept out of the pool until they are fixed, still measurable by name.
@@ -1855,6 +1857,7 @@ impl Rule {
             Rule::GrowCols => "grow-cols",
             Rule::ShrinkCols => "shrink-cols",
             Rule::DoubleBuffer => "double-buffer",
+            Rule::SymmetricHalf => "symmetric-half",
         }
     }
 
@@ -1876,6 +1879,7 @@ impl Rule {
             Rule::GrowCols => more::grow_cols_sites(root, kingdom),
             Rule::ShrinkCols => more::shrink_cols_sites(root, kingdom),
             Rule::DoubleBuffer => more::double_buffer_sites(root, kingdom),
+            Rule::SymmetricHalf => more::symmetric_half_sites(root, kingdom),
         }
     }
 
@@ -1919,6 +1923,7 @@ impl Rule {
             Rule::GrowCols => more::grow_cols(root, kingdom),
             Rule::ShrinkCols => more::shrink_cols(root, kingdom),
             Rule::DoubleBuffer => more::double_buffer(root, site, kingdom),
+            Rule::SymmetricHalf => more::symmetric_half(root, kingdom),
         }
     }
 }

@@ -171,9 +171,33 @@ struct Inv<'m> {
     locals: HashMap<(usize, Handle<naga::LocalVariable>), Val>,
     privates: HashMap<Handle<naga::GlobalVariable>, Val>,
     done: bool,
+    /// A subgroup operation this invocation waits at: its operation, its
+    /// value, a lane argument, and the expression its result goes to.
+    pending: Option<(Pend, Val, Option<u32>, Handle<Expression>)>,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum Pend {
+    Ballot,
+    Collective(naga::SubgroupOperation, naga::CollectiveOperation),
+    BroadcastFirst,
+    Broadcast,
+    Shuffle,
+    ShuffleDown,
+    ShuffleUp,
+    ShuffleXor,
+}
+
+/// The subgroup width the executor runs (lanes by local invocation index).
+pub const SUBGROUP: u32 = 32;
+
+fn lidx(inv: &Inv, wg: [u32; 3]) -> u32 {
+    inv.lid[0] + wg[0] * (inv.lid[1] + wg[1] * inv.lid[2])
 }
 
 enum Status {
+    /// At a subgroup operation: the workgroup's invocations meet there.
+    Collective,
     Barrier,
     Done,
 }
@@ -337,8 +361,116 @@ fn round_even(x: f32) -> f32 {
     if (x - x.trunc()).abs() == 0.5 { 2.0 * (x / 2.0).round() } else { r }
 }
 
+/// f32 to the bits of the nearest f16 (ties to even), as WGSL's pack2x16float.
+fn f16_bits(x: f32) -> u32 {
+    let b = x.to_bits();
+    let sign = (b >> 16) & 0x8000;
+    let exp = ((b >> 23) & 0xff) as i32;
+    let man = b & 0x7f_ffff;
+    if exp == 0xff {
+        return sign | 0x7c00 | if man != 0 { 0x200 } else { 0 };
+    }
+    let e = exp - 127 + 15;
+    if e >= 0x1f {
+        return sign | 0x7c00;
+    }
+    if e <= 0 {
+        if e < -10 {
+            return sign;
+        }
+        let m = man | 0x80_0000;
+        let shift = (14 - e) as u32;
+        let half = 1u32 << (shift - 1);
+        let rem = m & ((1 << shift) - 1);
+        let mut r = m >> shift;
+        if rem > half || (rem == half && r & 1 == 1) {
+            r += 1;
+        }
+        return sign | r;
+    }
+    let rem = man & 0x1fff;
+    let mut r = ((e as u32) << 10) | (man >> 13);
+    if rem > 0x1000 || (rem == 0x1000 && r & 1 == 1) {
+        r += 1;
+    }
+    sign | r
+}
+
+/// The f32 an f16's bits stand for.
+fn f16_value(h: u32) -> f32 {
+    let sign = if h & 0x8000 != 0 { -1.0f32 } else { 1.0 };
+    let exp = (h >> 10) & 0x1f;
+    let man = (h & 0x3ff) as f32;
+    match exp {
+        0 => sign * man * 2f32.powi(-24),
+        0x1f => if man == 0.0 { sign * f32::INFINITY } else { f32::NAN },
+        e => sign * (1.0 + man / 1024.0) * 2f32.powi(e as i32 - 15),
+    }
+}
+
+fn floats(v: &[Val]) -> Result<Vec<f32>, String> {
+    v.iter().map(Val::f).collect()
+}
+
+fn det(m: &[Vec<f32>]) -> f32 {
+    match m.len() {
+        1 => m[0][0],
+        2 => m[0][0] * m[1][1] - m[1][0] * m[0][1],
+        n => (0..n)
+            .map(|c| {
+                let minor: Vec<Vec<f32>> = (0..n).filter(|&k| k != c).map(|k| m[k][1..].to_vec()).collect();
+                let s = if c % 2 == 0 { 1.0 } else { -1.0 };
+                s * m[c][0] * det(&minor)
+            })
+            .sum(),
+    }
+}
+
 fn math1(fun: MathFunction, a: &Val) -> Result<Val, String> {
     use MathFunction as M;
+    let unorm = |x: f32, s: f32| (x.clamp(0.0, 1.0) * s).round_ties_even() as u32;
+    let snorm = |x: f32, s: f32| ((x.clamp(-1.0, 1.0) * s).round_ties_even() as i32) as u32;
+    match (fun, a) {
+        (M::Pack4x8unorm, Val::V(v)) => return Ok(Val::U(floats(v)?.iter().enumerate().fold(0, |acc, (i, x)| acc | (unorm(*x, 255.0) << (8 * i))))),
+        (M::Pack4x8snorm, Val::V(v)) => return Ok(Val::U(floats(v)?.iter().enumerate().fold(0, |acc, (i, x)| acc | ((snorm(*x, 127.0) & 0xff) << (8 * i))))),
+        (M::Pack2x16unorm, Val::V(v)) => return Ok(Val::U(floats(v)?.iter().enumerate().fold(0, |acc, (i, x)| acc | (unorm(*x, 65535.0) << (16 * i))))),
+        (M::Pack2x16snorm, Val::V(v)) => return Ok(Val::U(floats(v)?.iter().enumerate().fold(0, |acc, (i, x)| acc | ((snorm(*x, 32767.0) & 0xffff) << (16 * i))))),
+        (M::Pack2x16float, Val::V(v)) => return Ok(Val::U(floats(v)?.iter().enumerate().fold(0, |acc, (i, x)| acc | (f16_bits(*x) << (16 * i))))),
+        (M::Unpack4x8unorm, Val::U(x)) => return Ok(Val::V((0..4).map(|i| Val::F(((x >> (8 * i)) & 0xff) as f32 / 255.0)).collect())),
+        (M::Unpack4x8snorm, Val::U(x)) => return Ok(Val::V((0..4).map(|i| Val::F(((((x >> (8 * i)) & 0xff) as u8 as i8) as f32 / 127.0).max(-1.0))).collect())),
+        (M::Unpack2x16unorm, Val::U(x)) => return Ok(Val::V((0..2).map(|i| Val::F(((x >> (16 * i)) & 0xffff) as f32 / 65535.0)).collect())),
+        (M::Unpack2x16snorm, Val::U(x)) => return Ok(Val::V((0..2).map(|i| Val::F(((((x >> (16 * i)) & 0xffff) as u16 as i16) as f32 / 32767.0).max(-1.0))).collect())),
+        (M::Unpack2x16float, Val::U(x)) => return Ok(Val::V((0..2).map(|i| Val::F(f16_value((x >> (16 * i)) & 0xffff))).collect())),
+        (M::Determinant, Val::M(m)) => return Ok(Val::F(det(m))),
+        (M::Transpose, Val::M(m)) => {
+            let rows = m.first().map_or(0, Vec::len);
+            return Ok(Val::M((0..rows).map(|r| m.iter().map(|c| c[r]).collect()).collect()));
+        }
+        (M::Modf, Val::F(x)) => return Ok(Val::V(vec![Val::F(x.fract()), Val::F(x.trunc())])),
+        (M::Frexp, Val::F(x)) => {
+            if *x == 0.0 || !x.is_finite() {
+                return Ok(Val::V(vec![Val::F(*x), Val::I(0)]));
+            }
+            let e = x.abs().log2().floor() as i32 + 1;
+            let mut f = x / 2f32.powi(e);
+            let mut e = e;
+            if f.abs() >= 1.0 {
+                f /= 2.0;
+                e += 1;
+            }
+            if f.abs() < 0.5 {
+                f *= 2.0;
+                e -= 1;
+            }
+            return Ok(Val::V(vec![Val::F(f), Val::I(e)]));
+        }
+        (M::Modf | M::Frexp, Val::V(v)) => {
+            let parts: Vec<Val> = v.iter().map(|x| math1(fun, x)).collect::<Result<_, _>>()?;
+            let pick = |i: usize| Val::V(parts.iter().map(|p| get_path_val(p, &[i as u32]).unwrap_or(Val::F(0.0))).collect());
+            return Ok(Val::V(vec![pick(0), pick(1)]));
+        }
+        _ => {}
+    }
     if let Val::V(v) = a {
         match fun {
             M::Length => return Ok(Val::F(v.iter().map(|x| x.f().map(|f| f * f)).sum::<Result<f32, _>>()?.sqrt())),
@@ -355,6 +487,16 @@ fn math1(fun: MathFunction, a: &Val) -> Result<Val, String> {
         (M::Abs, Val::U(x)) => Val::U(*x),
         (M::Sign, Val::F(x)) => Val::F(if *x > 0.0 { 1.0 } else if *x < 0.0 { -1.0 } else { 0.0 }),
         (M::Sign, Val::I(x)) => Val::I(x.signum()),
+        (M::CountOneBits, Val::I(x)) => Val::I(x.count_ones() as i32),
+        (M::CountLeadingZeros, Val::I(x)) => Val::I(x.leading_zeros() as i32),
+        (M::CountTrailingZeros, Val::I(x)) => Val::I(x.trailing_zeros() as i32),
+        (M::ReverseBits, Val::I(x)) => Val::I(x.reverse_bits()),
+        (M::FindLsb, Val::I(x)) => Val::I(if *x == 0 { -1 } else { x.trailing_zeros() as i32 }),
+        // firstLeadingBit of an i32: the most significant bit that differs from the sign.
+        (M::FindMsb, Val::I(x)) => {
+            let y = if *x < 0 { !*x } else { *x };
+            Val::I(if y == 0 { -1 } else { 31 - y.leading_zeros() as i32 })
+        }
         (M::CountOneBits, x) => Val::U(x.u()?.count_ones()),
         (M::CountLeadingZeros, x) => Val::U(x.u()?.leading_zeros()),
         (M::CountTrailingZeros, x) => Val::U(x.u()?.trailing_zeros()),
@@ -428,6 +570,29 @@ fn math(fun: MathFunction, args: &[Val]) -> Result<Val, String> {
             Ok(acc)
         }
         (M::Distance, [a, b]) => math1(M::Length, &binary(BinaryOperator::Subtract, a, b)?),
+        (M::Reflect, [e1, e2]) => {
+            let d = math(M::Dot, &[e2.clone(), e1.clone()])?;
+            let two_d = binary(BinaryOperator::Multiply, &Val::F(2.0), &d)?;
+            binary(BinaryOperator::Subtract, e1, &binary(BinaryOperator::Multiply, &two_d, e2)?)
+        }
+        (M::FaceForward, [n, i, r]) => {
+            let d = math(M::Dot, &[r.clone(), i.clone()])?.f()?;
+            Ok(if d < 0.0 { n.clone() } else { unary(naga::UnaryOperator::Negate, n)? })
+        }
+        (M::Refract, [i, n, Val::F(eta)]) => {
+            let d = math(M::Dot, &[n.clone(), i.clone()])?.f()?;
+            let k = 1.0 - eta * eta * (1.0 - d * d);
+            if k < 0.0 {
+                return Ok(Val::V(vec![Val::F(0.0); match i { Val::V(v) => v.len(), _ => 1 }]));
+            }
+            let a = binary(BinaryOperator::Multiply, &Val::F(*eta), i)?;
+            let b = binary(BinaryOperator::Multiply, &Val::F(eta * d + k.sqrt()), n)?;
+            binary(BinaryOperator::Subtract, &a, &b)
+        }
+        (M::Outer, [Val::V(a), Val::V(b)]) => {
+            let (a, b) = (floats(a)?, floats(b)?);
+            Ok(Val::M(b.iter().map(|y| a.iter().map(|x| x * y).collect()).collect()))
+        }
         (M::Cross, [Val::V(a), Val::V(b)]) if a.len() == 3 => {
             let (a, b): (Vec<f32>, Vec<f32>) = (a.iter().map(Val::f).collect::<Result<_, _>>()?, b.iter().map(Val::f).collect::<Result<_, _>>()?);
             Ok(Val::V(vec![Val::F(a[1] * b[2] - a[2] * b[1]), Val::F(a[2] * b[0] - a[0] * b[2]), Val::F(a[0] * b[1] - a[1] * b[0])]))
@@ -555,7 +720,7 @@ impl<'m> Machine<'m> {
                 for lx in 0..wx {
                     let lid = [lx, ly, lz];
                     let gid = [wid[0] * wx + lx, wid[1] * wy + ly, wid[2] * wz + lz];
-                    let mut inv = Inv { gid, lid, wid, frames: Vec::new(), locals: HashMap::new(), privates: HashMap::new(), done: false };
+                    let mut inv = Inv { gid, lid, wid, frames: Vec::new(), locals: HashMap::new(), privates: HashMap::new(), done: false, pending: None };
                     for (h, g) in self.module.global_variables.iter() {
                         if g.space == AddressSpace::Private {
                             let v = match g.init {
@@ -571,14 +736,24 @@ impl<'m> Machine<'m> {
                 }
             }
         }
-        // Each invocation to its next barrier (or its end), then all again.
+        // Each invocation to its next barrier or subgroup operation (or its
+        // end), then all again; a subgroup operation is computed over its
+        // subgroup's lanes once every invocation waits at one.
         loop {
-            let mut at_barrier = 0usize;
+            let (mut at_barrier, mut at_collective) = (0usize, 0usize);
             for inv in invs.iter_mut().filter(|i| !i.done) {
                 match self.step_until_barrier(inv)? {
                     Status::Barrier => at_barrier += 1,
+                    Status::Collective => at_collective += 1,
                     Status::Done => inv.done = true,
                 }
+            }
+            if at_collective > 0 {
+                if at_barrier > 0 {
+                    return Err("cpu: a subgroup operation and a barrier met in one pass (non-uniform control)".into());
+                }
+                Self::collective(&mut invs, self.wg)?;
+                continue;
             }
             if at_barrier == 0 {
                 return Ok(());
@@ -597,8 +772,13 @@ impl<'m> Machine<'m> {
                     naga::BuiltIn::WorkGroupId => v3(inv.wid),
                     naga::BuiltIn::NumWorkGroups => v3(self.nwg),
                     naga::BuiltIn::WorkGroupSize => v3(self.wg),
-                    naga::BuiltIn::LocalInvocationIndex => Val::U(inv.lid[0] + self.wg[0] * (inv.lid[1] + self.wg[1] * inv.lid[2])),
-                    other => return Err(format!("cpu: the builtin {other:?} (subgroups are not run here)")),
+                    naga::BuiltIn::LocalInvocationIndex => Val::U(lidx(inv, self.wg)),
+                    // Subgroups of 32 by local index (the M3 Max's SIMD width).
+                    naga::BuiltIn::SubgroupSize => Val::U(SUBGROUP),
+                    naga::BuiltIn::SubgroupInvocationId => Val::U(lidx(inv, self.wg) % SUBGROUP),
+                    naga::BuiltIn::SubgroupId => Val::U(lidx(inv, self.wg) / SUBGROUP),
+                    naga::BuiltIn::NumSubgroups => Val::U((self.wg[0] * self.wg[1] * self.wg[2]).div_ceil(SUBGROUP)),
+                    other => return Err(format!("cpu: the builtin {other:?}")),
                 }),
                 _ => Err("cpu: an entry argument that is not a builtin".into()),
             })
@@ -879,6 +1059,117 @@ impl<'m> Machine<'m> {
         }
     }
 
+    /// Every invocation waits at a subgroup operation: each subgroup's
+    /// results, written to the invocations' frames.
+    fn collective(invs: &mut [Inv<'m>], wg: [u32; 3]) -> Result<(), String> {
+        use naga::{CollectiveOperation as C, SubgroupOperation as S};
+        let mut groups: std::collections::BTreeMap<u32, Vec<usize>> = std::collections::BTreeMap::new();
+        for (i, inv) in invs.iter().enumerate().filter(|(_, i)| i.pending.is_some()) {
+            groups.entry(lidx(inv, wg) / SUBGROUP).or_default().push(i);
+        }
+        for members in groups.values() {
+            let pend: Vec<(Pend, Val, Option<u32>, Handle<Expression>)> = members.iter().map(|&i| invs[i].pending.clone().expect("pending")).collect();
+            let kind = pend[0].0;
+            if pend.iter().any(|p| p.0 != kind) {
+                return Err("cpu: two subgroup operations met in one subgroup (non-uniform control)".into());
+            }
+            let vals: Vec<&Val> = pend.iter().map(|p| &p.1).collect();
+            let lane_of = |i: usize| (lidx(&invs[members[i]], wg) % SUBGROUP) as usize;
+            let at = |lane: usize, own: usize| -> Val { members.iter().position(|&m| lidx(&invs[m], wg) % SUBGROUP == lane as u32).map_or_else(|| vals[own].clone(), |p| vals[p].clone()) };
+            let fold = |op: S, a: &Val, b: &Val| -> Result<Val, String> {
+                match op {
+                    S::Add => binary(BinaryOperator::Add, a, b),
+                    S::Mul => binary(BinaryOperator::Multiply, a, b),
+                    S::Min => min_max(MathFunction::Min, a, b),
+                    S::Max => min_max(MathFunction::Max, a, b),
+                    S::And | S::All => binary(BinaryOperator::And, a, b),
+                    S::Or | S::Any => binary(BinaryOperator::InclusiveOr, a, b),
+                    S::Xor => binary(BinaryOperator::ExclusiveOr, a, b),
+                }
+            };
+            let identity = |op: S, like: &Val| -> Val {
+                fn go(op: S, like: &Val) -> Val {
+                    match like {
+                        Val::V(v) => Val::V(v.iter().map(|x| go(op, x)).collect()),
+                        Val::F(_) => Val::F(match op {
+                            S::Mul => 1.0,
+                            S::Min => f32::INFINITY,
+                            S::Max => f32::NEG_INFINITY,
+                            _ => 0.0,
+                        }),
+                        Val::U(_) => Val::U(match op {
+                            S::Mul => 1,
+                            S::Min | S::And => u32::MAX,
+                            _ => 0,
+                        }),
+                        Val::I(_) => Val::I(match op {
+                            S::Mul => 1,
+                            S::Min => i32::MAX,
+                            S::Max => i32::MIN,
+                            S::And => -1,
+                            _ => 0,
+                        }),
+                        Val::B(_) => Val::B(matches!(op, S::And | S::All)),
+                        other => other.clone(),
+                    }
+                }
+                go(op, like)
+            };
+            let mut order: Vec<usize> = (0..members.len()).collect();
+            order.sort_by_key(|&i| lane_of(i));
+            let mut results: Vec<Val> = vec![Val::U(0); members.len()];
+            match kind {
+                Pend::Ballot => {
+                    let mut mask = [0u32; 4];
+                    for (i, v) in vals.iter().enumerate() {
+                        if v.b()? {
+                            let l = lane_of(i);
+                            mask[l / 32] |= 1 << (l % 32);
+                        }
+                    }
+                    let m = Val::V(mask.iter().map(|x| Val::U(*x)).collect());
+                    results.iter_mut().for_each(|r| *r = m.clone());
+                }
+                Pend::Collective(op, coll) => {
+                    let mut acc = identity(op, vals[0]);
+                    for &i in &order {
+                        let before = acc.clone();
+                        acc = fold(op, &acc, vals[i])?;
+                        results[i] = match coll {
+                            C::ExclusiveScan => before,
+                            _ => acc.clone(),
+                        };
+                    }
+                    if coll == C::Reduce {
+                        results.iter_mut().for_each(|r| *r = acc.clone());
+                    }
+                }
+                Pend::BroadcastFirst => {
+                    let first = vals[order[0]].clone();
+                    results.iter_mut().for_each(|r| *r = first.clone());
+                }
+                g => {
+                    for i in 0..members.len() {
+                        let k = pend[i].2.unwrap_or(0) as usize;
+                        let me = lane_of(i);
+                        let src = match g {
+                            Pend::Broadcast | Pend::Shuffle => k,
+                            Pend::ShuffleDown => me + k,
+                            Pend::ShuffleUp => me.wrapping_sub(k),
+                            _ => me ^ k,
+                        };
+                        results[i] = at(src, i);
+                    }
+                }
+            }
+            for (i, &m) in members.iter().enumerate() {
+                let (_, _, _, h) = invs[m].pending.take().expect("pending");
+                invs[m].frames.last_mut().ok_or("cpu: a subgroup operation with no frame")?.vals.insert(h, results[i].clone());
+            }
+        }
+        Ok(())
+    }
+
     fn ret(&mut self, inv: &mut Inv<'m>, value: Option<Val>) -> Result<(), String> {
         let frame = inv.frames.pop().ok_or("cpu: a return with no frame")?;
         inv.locals.retain(|(id, _), _| *id != frame.id);
@@ -900,6 +1191,7 @@ impl<'m> Machine<'m> {
         match out? {
             Flow::Next | Flow::Called => Ok(None),
             Flow::Barrier => Ok(Some(Status::Barrier)),
+            Flow::Collective => Ok(Some(Status::Collective)),
             Flow::Return(v) => {
                 self.ret(inv, v)?;
                 Ok(if inv.frames.is_empty() { Some(Status::Done) } else { None })
@@ -1015,7 +1307,36 @@ impl<'m> Machine<'m> {
                 self.push_frame(inv, callee, args, *result)?;
                 return Ok(Flow::Called);
             }
-            Statement::SubgroupBallot { .. } | Statement::SubgroupGather { .. } | Statement::SubgroupCollectiveOperation { .. } => return Err("cpu: a subgroup operation (not run here)".into()),
+            Statement::SubgroupBallot { result, predicate } => {
+                let p = match predicate {
+                    Some(e) => self.eval(inv, fr, *e)?,
+                    None => Val::B(true),
+                };
+                inv.pending = Some((Pend::Ballot, p, None, *result));
+                return Ok(Flow::Collective);
+            }
+            Statement::SubgroupCollectiveOperation { op, collective_op, argument, result } => {
+                let v = self.eval(inv, fr, *argument)?;
+                inv.pending = Some((Pend::Collective(*op, *collective_op), v, None, *result));
+                return Ok(Flow::Collective);
+            }
+            Statement::SubgroupGather { mode, argument, result } => {
+                let v = self.eval(inv, fr, *argument)?;
+                let (p, i) = match mode {
+                    naga::GatherMode::BroadcastFirst => (Pend::BroadcastFirst, None),
+                    naga::GatherMode::Broadcast(e) => (Pend::Broadcast, Some(*e)),
+                    naga::GatherMode::Shuffle(e) => (Pend::Shuffle, Some(*e)),
+                    naga::GatherMode::ShuffleDown(e) => (Pend::ShuffleDown, Some(*e)),
+                    naga::GatherMode::ShuffleUp(e) => (Pend::ShuffleUp, Some(*e)),
+                    naga::GatherMode::ShuffleXor(e) => (Pend::ShuffleXor, Some(*e)),
+                };
+                let lane = match i {
+                    Some(e) => Some(self.eval(inv, fr, e)?.u()?),
+                    None => None,
+                };
+                inv.pending = Some((p, v, lane, *result));
+                return Ok(Flow::Collective);
+            }
             Statement::ImageStore { .. } | Statement::RayQuery { .. } => return Err("cpu: an image store or a ray query".into()),
         }
         Ok(Flow::Next)
@@ -1026,6 +1347,7 @@ enum Flow {
     Next,
     Called,
     Barrier,
+    Collective,
     Return(Option<Val>),
 }
 

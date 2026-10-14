@@ -672,8 +672,9 @@ mod tests {
         // uniform value that may wrap; 2026-10-12).
         // 1,523 with a literal bound value (literal.index at u32.xbound; a random kernel's bound of 0).
         // 1,529 with the thread's origin rows at the origins' duals.
-        // 1,550 with the mirror of a thread's cell (9 safe.mirror_of, 12 store.h_mirror; 2026-10-14).
-        assert_eq!(fs.rows.len(), 1550);
+        // 1,556 with the mirror of a thread's cell (9 safe.mirror_of, 12 store.h_mirror) and the
+        // uniform test whose body keeps its rung (6 stmt.if_ule; the symmetric half, 2026-10-14).
+        assert_eq!(fs.rows.len(), 1556);
         let dual = |t: Ty| k.dual(t).unwrap().dual.clone();
         let producers = |d: &str| -> Vec<String> { k.rows.iter().filter(|r| dual(r.output) == d).map(|r| r.name.clone()).collect() };
         assert_eq!(producers("kernel.safe"), vec!["kernel.entry_safe"]);
@@ -738,7 +739,9 @@ mod tests {
         // No return in a conditional context (a later barrier would be non-uniform).
         assert!(k.rows.iter().filter(|r| r.name.starts_with("stmt.return_")).all(|r| !dual(r.output).starts_with("stmt.C")));
         // A conditional block's statements are C statements, which no loop or barrier produces.
-        assert!(k.rows.iter().filter(|r| r.name.starts_with("stmt.if_") && (dual(r.output).starts_with("stmt.L") || dual(r.output).starts_with("stmt.C"))).all(|r| dual(r.inputs[1]).starts_with("block.C")));
+        // (stmt.if_ule tests two uniform values: its body keeps the rung, 2026-10-14.)
+        assert!(k.rows.iter().filter(|r| r.name.starts_with("stmt.if_ule_")).all(|r| dual(r.inputs[0]) == "u32.uniform" && dual(r.inputs[1]) == "u32.uniform" && dual(r.inputs[2]).replace("block.", "stmt.") == dual(r.output)));
+        assert!(k.rows.iter().filter(|r| r.name.starts_with("stmt.if_") && !r.name.starts_with("stmt.if_ule_") && (dual(r.output).starts_with("stmt.L") || dual(r.output).starts_with("stmt.C"))).all(|r| dual(r.inputs[1]).starts_with("block.C")));
         // store.h only at an owned cell; load.phi only at a phi index; both produced by one row each.
         assert!(k.rows.iter().filter(|r| r.name.starts_with("store.h_") && !r.name.starts_with("store.h_mirror_")).all(|r| dual(r.inputs[0]) == "u32.cell"));
         // (and the symmetric half's mirror store at the mirror of one, 2026-10-14)

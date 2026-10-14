@@ -1537,15 +1537,21 @@ F1535	safe	mirror_of	composite	u32.threadrows u32.threadcolg	u32.mirror	2	col * 
 F1536	safe	mirror_of	composite	u32.threadrowg u32.threadcol	u32.mirror	2	col * cfg.d + row: the mirror of the cell this thread owns
 F1537	safe	mirror_of	composite	u32.threadrowg u32.threadcols	u32.mirror	2	col * cfg.d + row: the mirror of the cell this thread owns
 F1538	safe	mirror_of	composite	u32.threadrowg u32.threadcolg	u32.mirror	2	col * cfg.d + row: the mirror of the cell this thread owns
-F1539	store	h_mirror_L0	composite	u32.mirror f32.real	stmt.L0	2	h[mirror] = h[mirror] + v under the bounds check of the thread's own cell: the symmetric half's second write
-F1540	store	h_mirror_L1	composite	u32.mirror f32.real	stmt.L1	2	h[mirror] = h[mirror] + v under the bounds check of the thread's own cell: the symmetric half's second write
-F1541	store	h_mirror_L2	composite	u32.mirror f32.real	stmt.L2	2	h[mirror] = h[mirror] + v under the bounds check of the thread's own cell: the symmetric half's second write
-F1542	store	h_mirror_L3	composite	u32.mirror f32.real	stmt.L3	2	h[mirror] = h[mirror] + v under the bounds check of the thread's own cell: the symmetric half's second write
-F1543	store	h_mirror_L4	composite	u32.mirror f32.real	stmt.L4	2	h[mirror] = h[mirror] + v under the bounds check of the thread's own cell: the symmetric half's second write
-F1544	store	h_mirror_C0	composite	u32.mirror f32.real	stmt.C0	2	h[mirror] = h[mirror] + v under the bounds check of the thread's own cell: the symmetric half's second write
-F1545	store	h_mirror_C1	composite	u32.mirror f32.real	stmt.C1	2	h[mirror] = h[mirror] + v under the bounds check of the thread's own cell: the symmetric half's second write
-F1546	store	h_mirror_C2	composite	u32.mirror f32.real	stmt.C2	2	h[mirror] = h[mirror] + v under the bounds check of the thread's own cell: the symmetric half's second write
-F1547	store	h_mirror_C3	composite	u32.mirror f32.real	stmt.C3	2	h[mirror] = h[mirror] + v under the bounds check of the thread's own cell: the symmetric half's second write
-F1548	store	h_mirror_C4	composite	u32.mirror f32.real	stmt.C4	2	h[mirror] = h[mirror] + v under the bounds check of the thread's own cell: the symmetric half's second write
-F1549	store	h_mirror_L5	composite	u32.mirror f32.real	stmt.L5	2	h[mirror] = h[mirror] + v under the bounds check of the thread's own cell: the symmetric half's second write
-F1550	store	h_mirror_C5	composite	u32.mirror f32.real	stmt.C5	2	h[mirror] = h[mirror] + v under the bounds check of the thread's own cell: the symmetric half's second write
+F1539	stmt	if_ule_L0	composite	u32.uniform u32.uniform block.L0	stmt.L0	3	arity 3: if (a <= b) { ... } over workgroup-uniform values: the body keeps the rung
+F1540	stmt	if_ule_L1	composite	u32.uniform u32.uniform block.L1	stmt.L1	3	arity 3: if (a <= b) { ... } over workgroup-uniform values: the body keeps the rung
+F1541	stmt	if_ule_L2	composite	u32.uniform u32.uniform block.L2	stmt.L2	3	arity 3: if (a <= b) { ... } over workgroup-uniform values: the body keeps the rung
+F1542	stmt	if_ule_L3	composite	u32.uniform u32.uniform block.L3	stmt.L3	3	arity 3: if (a <= b) { ... } over workgroup-uniform values: the body keeps the rung
+F1543	stmt	if_ule_L4	composite	u32.uniform u32.uniform block.L4	stmt.L4	3	arity 3: if (a <= b) { ... } over workgroup-uniform values: the body keeps the rung
+F1544	stmt	if_ule_L5	composite	u32.uniform u32.uniform block.L5	stmt.L5	3	arity 3: if (a <= b) { ... } over workgroup-uniform values: the body keeps the rung
+F1545	store	h_mirror_L0	composite	u32.mirror f32.real	stmt.L0	2	h[mirror] = h[mirror] + v under the bounds check of the thread's own cell: the symmetric half's second write
+F1546	store	h_mirror_L1	composite	u32.mirror f32.real	stmt.L1	2	h[mirror] = h[mirror] + v under the bounds check of the thread's own cell: the symmetric half's second write
+F1547	store	h_mirror_L2	composite	u32.mirror f32.real	stmt.L2	2	h[mirror] = h[mirror] + v under the bounds check of the thread's own cell: the symmetric half's second write
+F1548	store	h_mirror_L3	composite	u32.mirror f32.real	stmt.L3	2	h[mirror] = h[mirror] + v under the bounds check of the thread's own cell: the symmetric half's second write
+F1549	store	h_mirror_L4	composite	u32.mirror f32.real	stmt.L4	2	h[mirror] = h[mirror] + v under the bounds check of the thread's own cell: the symmetric half's second write
+F1550	store	h_mirror_C0	composite	u32.mirror f32.real	stmt.C0	2	h[mirror] = h[mirror] + v under the bounds check of the thread's own cell: the symmetric half's second write
+F1551	store	h_mirror_C1	composite	u32.mirror f32.real	stmt.C1	2	h[mirror] = h[mirror] + v under the bounds check of the thread's own cell: the symmetric half's second write
+F1552	store	h_mirror_C2	composite	u32.mirror f32.real	stmt.C2	2	h[mirror] = h[mirror] + v under the bounds check of the thread's own cell: the symmetric half's second write
+F1553	store	h_mirror_C3	composite	u32.mirror f32.real	stmt.C3	2	h[mirror] = h[mirror] + v under the bounds check of the thread's own cell: the symmetric half's second write
+F1554	store	h_mirror_C4	composite	u32.mirror f32.real	stmt.C4	2	h[mirror] = h[mirror] + v under the bounds check of the thread's own cell: the symmetric half's second write
+F1555	store	h_mirror_L5	composite	u32.mirror f32.real	stmt.L5	2	h[mirror] = h[mirror] + v under the bounds check of the thread's own cell: the symmetric half's second write
+F1556	store	h_mirror_C5	composite	u32.mirror f32.real	stmt.C5	2	h[mirror] = h[mirror] + v under the bounds check of the thread's own cell: the symmetric half's second write

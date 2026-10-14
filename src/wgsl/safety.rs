@@ -615,23 +615,22 @@ impl<'m> An<'m> {
         let (mut lo, mut hi) = self.static_range(v);
         for f in facts {
             let Some(a) = f.t.get(&v).and_then(Poly::as_const) else { continue };
-            // a v + rest + k <= 0, rest at its least: a v <= -(k + min rest)
+            // a v + rest + k <= 0 for the actual rest + k, which is at least
+            // its least: a > 0 gives a v <= -(rest + k) <= -min(rest + k);
+            // a < 0 gives |a| v >= rest + k >= min(rest + k).
             let mut rest_lo = f.k.range(&self.syms).0;
-            let mut rest_hi = f.k.range(&self.syms).1;
             for (w, c) in &f.t {
                 if *w == v {
                     continue;
                 }
-                let (x, y) = Self::iv_mul(c.range(&self.syms), self.static_range(*w));
+                let (x, _) = Self::iv_mul(c.range(&self.syms), self.static_range(*w));
                 rest_lo = sat(rest_lo + x);
-                rest_hi = sat(rest_hi + y);
             }
             if a > 0 {
                 hi = hi.min((-rest_lo).div_euclid(a));
             } else if a < 0 {
-                // |a| v >= rest + k
                 let b = -a;
-                lo = lo.max((rest_hi + b - 1).div_euclid(b));
+                lo = lo.max((rest_lo + b - 1).div_euclid(b));
             }
         }
         (lo, hi)
@@ -2230,6 +2229,30 @@ impl<'m> An<'m> {
     /// Fourier–Motzkin: whether `sys` (each `a . x + k <= 0`) has no rational solution.
     fn infeasible(&self, sys: Vec<Ineq>) -> bool {
         let mut set: BTreeSet<Ineq> = sys.into_iter().map(Ineq::tightened).collect();
+        // Equations first (an inequality and its negation both present): one
+        // with a variable of coefficient +-1 eliminates that variable from
+        // every other constraint exactly, so Fourier-Motzkin starts small.
+        loop {
+            let eq = set.iter().find_map(|i| {
+                if !set.contains(&i.neg()) {
+                    return None;
+                }
+                i.a.iter().find(|(_, c)| c.abs() == 1).map(|(v, c)| (i.clone(), *v, *c))
+            });
+            let Some((e, v, c)) = eq else { break };
+            let mut next = BTreeSet::new();
+            for i in &set {
+                let Some(&ci) = i.a.get(&v) else {
+                    next.insert(i.clone());
+                    continue;
+                };
+                // i - (ci / c) e: v's coefficient cancels (c is +-1).
+                let mut r = i.add(&e.scale(-ci * c));
+                r.a.remove(&v);
+                next.insert(r.tightened());
+            }
+            set = next;
+        }
         loop {
             let mut rest = BTreeSet::new();
             for i in set {
@@ -2262,7 +2285,19 @@ impl<'m> An<'m> {
                     next.insert(c.tightened());
                 }
             }
-            if next.len() > 6000 {
+            // Of the constraints on one combination of variables, only the
+            // strongest (the largest constant: a . x <= -k) is kept.
+            let mut by_a: BTreeMap<BTreeMap<(Var, u8), i128>, Vec<Poly>> = BTreeMap::new();
+            for i in next {
+                let ks = by_a.entry(i.a).or_default();
+                if ks.iter().any(|k| k.sub(&i.k).nonneg(&self.syms)) {
+                    continue;
+                }
+                ks.retain(|k| !i.k.sub(k).nonneg(&self.syms));
+                ks.push(i.k);
+            }
+            let next: BTreeSet<Ineq> = by_a.into_iter().flat_map(|(a, ks)| ks.into_iter().map(move |k| Ineq { a: a.clone(), k })).collect();
+            if next.len() > 20_000 {
                 return false;
             }
             set = next;

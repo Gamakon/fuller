@@ -1275,6 +1275,14 @@ impl<'a> Renderer<'a> {
                 n(1)?;
                 Ok(format!("    {{\n{}    }}\n", self.block(&kids[0], scope)?))
             }
+            // A test of two workgroup-uniform values: its body keeps its rung
+            // (a barrier there is in uniform control), so it is no condition
+            // the renderer masks a barrier under.
+            "stmt.if_ule" => {
+                n(3)?;
+                let (a, b) = (self.value(&kids[0], scope)?, self.value(&kids[1], scope)?);
+                Ok(format!("    if (({a}) <= ({b})) {{\n{}    }}\n", self.block(&kids[2], scope)?))
+            }
             "stmt.if" => {
                 n(2)?;
                 let c = self.value(&kids[0], scope)?;
@@ -2859,7 +2867,7 @@ fn sample_with(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, s
     // kernels, 2026-10-13. The kingdom keeps the rows for text it reads.)
     // (Nor a mirror: the symmetric-half rule writes it, under its triangle
     // guard, in a kernel that runs with the whole H; 2026-10-14.)
-    let mut rows: Vec<WgslRow> = kingdom.rows.iter().filter(|r| !f16(&r.output) && !r.inputs.iter().any(f16) && !r.name.starts_with("stmt.return") && !r.name.starts_with("safe.mirror_of") && !r.name.starts_with("store.h_mirror")).cloned().collect();
+    let mut rows: Vec<WgslRow> = kingdom.rows.iter().filter(|r| !f16(&r.output) && !r.inputs.iter().any(f16) && !r.name.starts_with("stmt.return") && !r.name.starts_with("safe.mirror_of") && !r.name.starts_with("store.h_mirror") && !r.name.starts_with("stmt.if_ule")).cloned().collect();
     // The safe kingdom reads h only at the thread's own cell (load.h_safe):
     // the role's load.h, h at any index, is the plain kingdom's (the
     // legality checker: 25 of 1,000 random safe genes read another thread's
