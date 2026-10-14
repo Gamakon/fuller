@@ -35,7 +35,7 @@
 //! | `setup` | steps run once per case when the context is built: the resident buffers (inputs no kernel may write) |
 //! | `run` | steps run per evaluation of a kernel |
 //! | `[[suite]]` | the cases and how they are judged (below) |
-//! | `[budget]` | `base_ms`, `round_ms`, `timing_rounds` (`gram::BASE_BUDGET_MS`, `gram::ROUND_BUDGET_MS`, the paired re-timing rounds); optional `deadline_factor` and `deadline_floor_ms` together: the fit watchdog's deadline, the factor times the reference kernel's measured evaluation, at least the floor and the gates' own maximum (`Harness::deadline_ms`) |
+//! | `[budget]` | `base_ms`, `round_ms`, `timing_rounds` (`gram::BASE_BUDGET_MS`, `gram::ROUND_BUDGET_MS`, the paired timing rounds); optional `min_sample_ms` (100: a timing sample repeats the run until the reference kernel's GPU time reaches it); optional `deadline_factor` and `deadline_floor_ms` together: the fit watchdog's deadline, the factor times the reference kernel's measured evaluation, at least the floor and the gates' own maximum (`Harness::deadline_ms`) |
 //!
 //! ## Steps (the dispatch program)
 //!
@@ -71,7 +71,7 @@
 //! | `constraint` | every case must pass: the norm at every comparison point within `pass`; run in chunks of `chunk` cases, one submission a chunk; `staged = true`: cheapest work first, each later chunk predicted as the kernel's time so far over the shipped kernel's on the same chunks times the shipped kernel's on it, not dispatched past `base_ms`, stopped at the first failing chunk, a timing build measured over the slow limit scored slow | `norm`, `pass` (expression), `chunk`, `staged` |
 //! | `rung` | timed, gated, not judged (a step of the cost model between the cases and the pairs) | |
 //! | `accuracy` | the norm against the reference kernel's own value: fails over `max(slack * reference, 1)`; the split's column is `min(1, worst / reference / slack)` | `split` (0 train, 1 validation, 2 extrapolation), `norm`, `tau`, `slack` |
-//! | `timing` | three cases in all: the speed-up against the reference kernel's least time, the median of `timing_rounds` paired rounds | |
+//! | `timing` | three cases in all: the speed-up against the reference kernel timed beside the kernel, the median of `timing_rounds` rounds, each the two kernels' samples in ABBA order (`Harness::paired_speedup`) | |
 //!
 //! Norms (the tolerance and its norm): `mean_abs_over_max` (the mean over
 //! cells of the error over the reference's largest finite magnitude, a
@@ -884,6 +884,13 @@ pub struct Budget {
     pub round_ms: f64,
     #[serde(default = "one_round")]
     pub timing_rounds: usize,
+    /// The least GPU ms of one timing sample: a sample repeats the run
+    /// until the reference kernel's time reaches it (a 64-step run of
+    /// 1,000 rows is about 1 ms, mostly per-dispatch overhead). Measured,
+    /// nluca at 100,000 rows, the shipped kernel scored against itself:
+    /// HFF 0.474 to 0.542 with 20 ms samples, 0.497 to 0.508 with 100.
+    #[serde(default = "hundred_ms")]
+    pub min_sample_ms: f64,
     /// THE EVALUATION'S DEADLINE (the fit's watchdog, for a true runaway
     /// only): `deadline_factor` times the reference kernel's measured
     /// evaluation, at least `deadline_floor_ms`. Both or neither; absent,
@@ -894,6 +901,10 @@ pub struct Budget {
 
 fn one_round() -> usize {
     1
+}
+
+fn hundred_ms() -> f64 {
+    100.0
 }
 
 /// HOW A SPEED-UP BECOMES A FITNESS COLUMN (in [0, 1], 0 best).
@@ -2656,6 +2667,12 @@ pub struct Harness<'e, E: Executor> {
     pub shipped_ms: [f64; 3],
     pub shipped_gpu_ms: std::cell::Cell<[f64; 3]>,
     pub shipped_min_gpu_ms: std::cell::Cell<[f64; 3]>,
+    /// The reference kernel, compiled once: every timing round runs it
+    /// beside the candidate.
+    pub reference_kernel: (E::Kernel, KernelInfo),
+    /// Runs a timing sample a shape: the least count whose reference GPU
+    /// time reaches `min_sample_ms` (`time_shipped`).
+    pub sample_runs: std::cell::Cell<[usize; 3]>,
     /// The constraint suite is staged (`SuiteSpec::staged`).
     pub staged: bool,
     /// One whole evaluation of the reference kernel, measured when the
@@ -2756,6 +2773,8 @@ impl<'e, E: Executor> Harness<'e, E> {
             shipped_ms,
             shipped_gpu_ms: std::cell::Cell::new([0.0; 3]),
             shipped_min_gpu_ms: std::cell::Cell::new([f64::INFINITY; 3]),
+            reference_kernel: (shipped, info),
+            sample_runs: std::cell::Cell::new([1; 3]),
             reference_eval_ms: None,
             reference_chunk_ms: Vec::new(),
         };
@@ -2764,9 +2783,9 @@ impl<'e, E: Executor> Harness<'e, E> {
         if staged {
             let mut v = Vec::new();
             for chunk in h.constraint.chunks(h.chunk) {
-                let plans = chunk.iter().map(|s| h.problem.plan(&s.case, limit, Some(&info))).collect::<Result<Vec<_>, _>>()?;
+                let plans = chunk.iter().map(|s| h.problem.plan(&s.case, limit, Some(&h.reference_kernel.1))).collect::<Result<Vec<_>, _>>()?;
                 let items: Vec<(&Plan, &CaseData, &E::Staged)> = chunk.iter().zip(&plans).map(|(s, p)| (p, &s.data, &s.staged)).collect();
-                v.push(exec.run_batch(&shipped, &items)?.1);
+                v.push(exec.run_batch(&h.reference_kernel.0, &items)?.1);
             }
             h.reference_chunk_ms = v;
         }
@@ -2810,16 +2829,20 @@ impl<'e, E: Executor> Harness<'e, E> {
     /// (and rungs and pairs) within the base budget, then the timing rounds,
     /// each shape at most the slow limit.
     pub fn gated_ms(&self) -> f64 {
-        self.base_budget_ms + 3.0 * self.timing_rounds.max(1) as f64 * self.slow_limit_ms()
+        // A round is two samples of each kernel, a sample `sample_runs` runs.
+        let runs = self.sample_runs.get().iter().copied().max().unwrap_or(1) as f64;
+        let shipped = self.shipped_ms.iter().copied().fold(0.0, f64::max);
+        self.base_budget_ms + 3.0 * self.timing_rounds.max(1) as f64 * 2.0 * runs * (self.slow_limit_ms() + shipped)
     }
 
     /// The reference kernel at the timing shapes: one warm-up, then the
     /// median of `timing_rounds` GPU times a shape; the least so far per
-    /// shape is the speed-ups' denominator (`gram::FitnessContext::time_shipped`).
+    /// shape is reported (`gram::FitnessContext::time_shipped`), and the
+    /// median sets the runs a timing sample takes (`sample_runs`).
     pub fn time_shipped(&self) -> Result<[f64; 3], String> {
         let limit = self.exec.binding_limit();
-        let (k, info) = self.exec.compile(&self.problem, &self.problem.reference)?;
-        let run = |s: &Staged<E::Staged>| -> Result<RunOut, String> { self.exec.run(&k, &self.problem.plan(&s.case, limit, Some(&info))?, &s.data, &s.staged, false) };
+        let (k, info) = &self.reference_kernel;
+        let run = |s: &Staged<E::Staged>| -> Result<RunOut, String> { self.exec.run(k, &self.problem.plan(&s.case, limit, Some(info))?, &s.data, &s.staged, false) };
         run(&self.timing[0])?;
         let mut out = [0.0f64; 3];
         for (i, s) in self.timing.iter().enumerate() {
@@ -2834,7 +2857,60 @@ impl<'e, E: Executor> Harness<'e, E> {
         }
         self.shipped_gpu_ms.set(out);
         self.shipped_min_gpu_ms.set(shipped_min(self.shipped_min_gpu_ms.get(), out));
+        let least = self.problem.spec.budget.min_sample_ms;
+        self.sample_runs.set(out.map(|ms| ((least / ms).ceil() as usize).max(1)));
         Ok(out)
+    }
+
+    /// One timing sample of a kernel at timing shape `i`: `sample_runs`
+    /// runs, their GPU ms summed, and the longest run's compute ms (the
+    /// staged slow gate's measure).
+    fn sample(&self, k: &E::Kernel, plan: &Plan, i: usize) -> Result<(f64, f64), String> {
+        let s = &self.timing[i];
+        let (mut gpu, mut longest) = (0.0f64, 0.0f64);
+        for _ in 0..self.sample_runs.get()[i] {
+            let r = self.exec.run(k, plan, &s.data, &s.staged, false)?;
+            gpu += r.gpu_ms;
+            longest = longest.max(r.compute_ms);
+        }
+        Ok((gpu, longest))
+    }
+
+    /// THE PAIRED SPEED-UP of a kernel at timing shape `i`: `timing_rounds`
+    /// rounds, each the reference and the kernel twice in ABBA order (R K K R
+    /// on even rounds, K R R K on odd), the round's ratio the reference's two
+    /// samples over the kernel's; the median ratio, and the kernel's median
+    /// sample compute ms. The GPU's speed drifts up to 2x between minutes
+    /// (nluca, 2026-10-14: the shipped kernel 0.65 then 1.45 ms at 1,000
+    /// rows), so a ratio against a time taken earlier ranks noise; timed
+    /// side by side, the drift divides out. `slow` is the staged gate: a
+    /// kernel run whose compute ms passes it ends the timing as slow.
+    fn paired_speedup(&self, k: &E::Kernel, plan: &Plan, ref_plan: &Plan, i: usize, slow: Option<f64>) -> Result<(f64, f64, f64), String> {
+        let rounds = self.timing_rounds.max(1);
+        let (mut ratios, mut walls) = (Vec::with_capacity(rounds), Vec::with_capacity(rounds));
+        let mut cand_ms = 0.0f64;
+        for round in 0..rounds {
+            let (mut r_ms, mut k_ms) = (0.0f64, 0.0f64);
+            for slot in 0..4 {
+                let reference = (slot == 0 || slot == 3) == (round % 2 == 0);
+                if reference {
+                    r_ms += self.sample(&self.reference_kernel.0, ref_plan, i)?.0;
+                } else {
+                    let t = Instant::now();
+                    let (gpu, longest) = self.sample(k, plan, i)?;
+                    cand_ms += t.elapsed().as_secs_f64() * 1e3;
+                    if let Some(limit) = slow {
+                        if longest > limit {
+                            return Err(format!("slow: measured {:.1} s at the timing shape {}, over the limit of {:.1} s a build", longest / 1e3, self.timing[i].case.label, limit / 1e3));
+                        }
+                    }
+                    k_ms += gpu;
+                    walls.push(longest);
+                }
+            }
+            ratios.push(speedup(r_ms, k_ms)?);
+        }
+        Ok((median(&mut ratios), median(&mut walls), cand_ms))
     }
 
     pub fn shipped_reference(&self) -> [f64; 3] {
@@ -2850,15 +2926,11 @@ impl<'e, E: Executor> Harness<'e, E> {
     pub fn retime(&self, source: &str, columns: &[f64; 6]) -> Result<([f64; 3], [f64; 6], f64), String> {
         let limit = self.exec.binding_limit();
         let (k, info) = self.exec.compile(&self.problem, source)?;
-        let reference = self.shipped_reference();
         let mut speedups = [0.0f64; 3];
         for (i, s) in self.timing.iter().enumerate() {
             let plan = self.problem.plan(&s.case, limit, Some(&info))?;
-            let mut v = Vec::with_capacity(self.timing_rounds.max(1));
-            for _ in 0..self.timing_rounds.max(1) {
-                v.push(speedup(reference[i], self.exec.run(&k, &plan, &s.data, &s.staged, false)?.gpu_ms)?);
-            }
-            speedups[i] = median(&mut v);
+            let ref_plan = self.problem.plan(&s.case, limit, Some(&self.reference_kernel.1))?;
+            speedups[i] = self.paired_speedup(&k, &plan, &ref_plan, i, None)?.0;
         }
         let c = self.columns(speedups, [columns[3], columns[4], columns[5]]);
         Ok((speedups, c, truenorth(&c)))
@@ -3017,38 +3089,28 @@ impl<'e, E: Executor> Harness<'e, E> {
                 Err(e) => return Fitness { predicted_ms, ..infeasible(passed, f64::INFINITY, closeness::columns(&per_case, passed, &outs), e, t, &meter, &split) },
             }
         }
-        let shipped_gpu = self.shipped_reference();
         let mut speedups = [0.0f64; 3];
         let mut measured_ms = [0.0f64; 3];
-        let rounds = self.timing_rounds.max(1);
+        let slow = if self.staged { Some(limit_ms) } else { None };
         for (i, s) in self.timing.iter().enumerate() {
+            let fail = |e: String| Fitness { predicted_ms, ..infeasible(passed, f64::INFINITY, closeness::columns(&per_case, passed, &outs), e, t, &meter, &split) };
             let plan = match plan_of(s) {
                 Ok(p) => p,
-                Err(e) => return Fitness { predicted_ms, ..infeasible(passed, f64::INFINITY, closeness::columns(&per_case, passed, &outs), e, t, &meter, &split) },
+                Err(e) => return fail(e),
             };
-            let mut ratios = Vec::with_capacity(rounds);
-            let mut walls = Vec::with_capacity(rounds);
-            for _ in 0..rounds {
-                let tb = Instant::now();
-                let r = match self.exec.run(&k, &plan, &s.data, &s.staged, false) {
-                    Ok(r) => r,
-                    Err(e) => return Fitness { predicted_ms, ..infeasible(passed, f64::INFINITY, closeness::columns(&per_case, passed, &outs), e, t, &meter, &split) },
-                };
-                split.timing_cand += elapsed_ms(tb);
-                split.build(&r.build());
-                // STAGED: a build measured over the slow limit ends the
-                // evaluation as slow (its next round would take as long).
-                if self.staged && r.compute_ms > limit_ms {
-                    return Fitness { predicted_ms, ..infeasible(passed, f64::INFINITY, closeness::columns(&per_case, passed, &outs), format!("slow: measured {:.1} s at the timing shape {}, over the limit of {:.1} s a build (predicted {:.1} s)", r.compute_ms / 1e3, s.case.label, limit_ms / 1e3, predicted_ms[i] / 1e3), t, &meter, &split) };
+            let ref_plan = match self.problem.plan(&s.case, limit, Some(&self.reference_kernel.1)) {
+                Ok(p) => p,
+                Err(e) => return fail(e),
+            };
+            match self.paired_speedup(&k, &plan, &ref_plan, i, slow) {
+                Ok((x, wall, cand_ms)) => {
+                    speedups[i] = x;
+                    measured_ms[i] = wall;
+                    split.timing_cand += cand_ms;
                 }
-                match speedup(shipped_gpu[i], r.gpu_ms) {
-                    Ok(x) => ratios.push(x),
-                    Err(e) => return Fitness { predicted_ms, ..infeasible(passed, f64::INFINITY, closeness::columns(&per_case, passed, &outs), format!("{e} at {}", s.case.label), t, &meter, &split) },
-                }
-                walls.push(r.compute_ms);
+                Err(e) if e.starts_with("slow:") => return fail(format!("{e} (predicted {:.1} s)", predicted_ms[i] / 1e3)),
+                Err(e) => return fail(format!("{e} at {}", s.case.label)),
             }
-            speedups[i] = median(&mut ratios);
-            measured_ms[i] = median(&mut walls);
         }
         let [et, ev, ex] = worst;
         let columns = self.columns(speedups, [(et / slacks[0]).clamp(0.0, 1.0), (ev / slacks[1]).clamp(0.0, 1.0), (ex / slacks[2]).clamp(0.0, 1.0)]);
