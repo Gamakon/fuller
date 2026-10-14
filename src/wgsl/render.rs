@@ -3100,17 +3100,30 @@ fn sample_with(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, s
             let loops = if offset { loops | 8 } else { loops };
             // Bit 16: inside a cell, where no offset is a tile counter (a
             // store through r + k in a tile loop and one through r elsewhere
-            // write one cell at k = 0: 4 of 1,000 random kernels).
-            if Some(r.output) == self.cell_ty { loops | 16 } else { loops }
+            // write one cell at k = 0: 4 of 1,000 random kernels). Bit 32: a
+            // store's value, the one place a read of h is drawn (under the
+            // store's own bounds check, at the store's own cell: unguarded,
+            // a read at a column past d is another row's, another thread's
+            // cell: 17 of 1,000 random kernels).
+            let loops = if Some(r.output) == self.cell_ty { loops | 16 } else { loops };
+            if safe_base(&r.name) == "store.h_safe" && k == 1 { loops | 32 } else { loops }
         }
 
         /// Whether row `i` may be drawn where control may not be uniform
         /// (`inside` bit 4): not a subgroup operation; at a cell's offset
         /// (bit 8): a literal only; in a cell (bit 16): no tile counter's
-        /// offset.
+        /// offset; outside a store's value (bit 32): no read of h.
         fn allowed(&self, i: usize, inside: u8) -> bool {
             let name = self.rows[i].name.as_str();
-            (inside & 4 == 0 || !name.starts_with("subgroup.")) && (inside & 8 == 0 || name.starts_with("literal.")) && (inside & 16 == 0 || !name.contains("_plus_tile"))
+            (inside & 4 == 0 || !name.starts_with("subgroup.")) && (inside & 8 == 0 || name.starts_with("literal.")) && (inside & 16 == 0 || !name.contains("_plus_tile")) && (inside & 32 != 0 || !name.starts_with("load.h_safe"))
+        }
+
+        /// A store's value with every read of h at the store's own cell.
+        fn reads_at(t: &mut Tree, cell: &Tree) {
+            if t.name.starts_with("load.h_safe") && t.kids.len() == 1 {
+                t.kids[0] = cell.clone();
+            }
+            t.kids.iter_mut().for_each(|k| Self::reads_at(k, cell));
         }
 
         /// Whether `kids` of row `i` are a put whose value reads the array
@@ -3294,6 +3307,10 @@ fn sample_with(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, s
                 if self.put_reads_its_array(i, &kids) {
                     return self.grow(demand, depth, need, no_cont, inside, state);
                 }
+                if safe_base(&r.name) == "store.h_safe" && kids.len() == 2 {
+                    let cell = kids[0].clone();
+                    Self::reads_at(&mut kids[1], &cell);
+                }
                 return Tree::new(&r.name, demand, kids);
             }
             let pick_terminal = depth >= self.max_depth || functions.is_empty() || (!terminals.is_empty() && next(state).is_multiple_of(3));
@@ -3344,6 +3361,10 @@ fn sample_with(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, s
             }
             if self.put_reads_its_array(i, &kids) {
                 return self.grow(demand, depth, need, no_cont, inside, state);
+            }
+            if safe_base(&r.name) == "store.h_safe" && kids.len() == 2 {
+                let cell = kids[0].clone();
+                Self::reads_at(&mut kids[1], &cell);
             }
             Tree::new(&r.name, demand, kids)
         }
