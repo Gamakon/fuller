@@ -2612,10 +2612,14 @@ impl<'m> An<'m> {
             }
             set = rest;
             let vars: BTreeSet<(Var, u8)> = set.iter().flat_map(|i| i.a.keys().copied()).collect();
+            // (A variable every coefficient of which is +-1 first: its shadow
+            // is exact over the integers, so the tightened constraints it
+            // leaves keep their integer content; then the fewest pairs.)
             let Some(v) = vars.into_iter().min_by_key(|v| {
                 let p = set.iter().filter(|i| i.a.get(v).is_some_and(|c| *c > 0)).count();
                 let n = set.iter().filter(|i| i.a.get(v).is_some_and(|c| *c < 0)).count();
-                p * n
+                let exact = set.iter().all(|i| i.a.get(v).is_none_or(|c| c.abs() == 1));
+                (!exact, p * n)
             }) else {
                 return false;
             };

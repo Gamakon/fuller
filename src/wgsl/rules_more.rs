@@ -1696,7 +1696,9 @@ mod tests {
     fn kernels(k: &WgslKingdom) -> Vec<(String, Tree)> {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let mut files: Vec<std::path::PathBuf> = Vec::new();
-        for dir in ["tests/corpus/safewgsl", "logs/HGP/001/popR_rules/texts"] {
+        // (And the Sonnet-written Gram kernels of gram_p1 and E1a, 2026-10-14,
+        // where they are on disk.)
+        for dir in ["tests/corpus/safewgsl", "logs/HGP/001/popR_rules/texts", "logs/HGP/001/gram_p1/kernels", "logs/HGP/001/E1a_sonnet", "logs/HGP/001/E1a_sonnet/kernels"] {
             if let Ok(rd) = std::fs::read_dir(root.join(dir)) {
                 files.extend(rd.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "wgsl")));
             }
@@ -1766,7 +1768,18 @@ mod tests {
                 };
                 let (hp, hc) = (words(&p.buffers["h"]), words(&c.buffers["h"]));
                 let differ: Vec<usize> = (0..hp.len()).filter(|&i| hp[i] != hc[i]).collect();
-                assert!(differ.is_empty(), "{name} at d {d}: {} of {} cells differ from the parent's (first {:?}: parent {} child {})", differ.len(), hp.len(), differ[0], f32::from_bits(hp[differ[0]]), f32::from_bits(hc[differ[0]]));
+                // (Where the parent's own H is not symmetric, the mirror cannot be its value.)
+                let mirror = |i: usize| (i % d as usize) * d as usize + i / d as usize;
+                let asym = differ.iter().filter(|&&i| hp[i] != hp[mirror(i)]).count();
+                let reference = |i: usize| -> f64 {
+                    let (r, c) = (i / d as usize, i % d as usize);
+                    (0..m as usize).map(|t| match (&phi[t * d as usize + r], &phi[t * d as usize + c]) { (Val::F(a), Val::F(b)) => f64::from(*a) * f64::from(*b), _ => 0.0 }).sum()
+                };
+                if let Some(&i) = differ.first() {
+                    let wrong: Vec<(usize, usize)> = (0..hp.len()).filter(|&j| (f64::from(f32::from_bits(hp[j])) - reference(j)).abs() > 1e-3).map(|j| (j / d as usize, j % d as usize)).collect();
+                    println!("{name} at d {d}: cell {i}: the Gram's value {}; the parent's cells off the Gram: {} {:?}", reference(i), wrong.len(), &wrong[..wrong.len().min(40)]);
+                }
+                assert!(differ.is_empty(), "{name} at d {d}: {} of {} cells differ from the parent's, {asym} of them where the parent's H is not symmetric (first {:?}: parent {} child {}, the parent's mirror {})", differ.len(), hp.len(), differ[0], f32::from_bits(hp[differ[0]]), f32::from_bits(hc[differ[0]]), f32::from_bits(hp[mirror(differ[0])]));
                 // Every cell of H written as many times as the parent writes it
                 // (an accumulation doubled would show once more), by one invocation.
                 let count = |out: &crate::wgsl::cpu::Dispatch| {
