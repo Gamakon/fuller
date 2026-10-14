@@ -809,6 +809,84 @@ struct Scope {
     /// ordinary WGSL (run A: two replies copied the wrapped style and lost
     /// a brace).
     const_depth: usize,
+    /// THE SHARED LOADS of the statements being written (2026-10-14, the
+    /// emitter's speed): a load the tree repeats where its value cannot have
+    /// changed, written once as `let ld<n> = ...;` and named at every use
+    /// ([`Renderer::shared_loads`]): each load's key ([`Renderer::share_key`])
+    /// and its name. nluca's generated_step read `state[sources[i]]` three
+    /// times and the codebook twice an iteration; its rendering ran 1.52x
+    /// the original at 65,536 rows, 1.15x at 1,048,576.
+    shared: Vec<(String, String)>,
+    /// The `let`s written so far: the next one's number.
+    lets: usize,
+}
+
+/// A load written once for the statements of a run where its value holds:
+/// its tree, the first and last statement (by position in the run) it is
+/// named in.
+struct SharedLoad<'t> {
+    tree: &'t Tree,
+    key: String,
+    first: usize,
+    last: usize,
+}
+
+/// What a statement of a run writes, for the loads read before it: one
+/// register, or anything (a store to a binding, a statement with control
+/// flow, a barrier, a write to workgroup or private memory).
+enum Writes {
+    Register(String),
+    All,
+}
+
+/// A block's statements as one straight-line run: a nested block of
+/// statements (`stmt.block` over a sequence) is written in place, so its
+/// statements are the run's.
+fn run_items<'t>(b: &'t Tree, out: &mut Vec<&'t Tree>) {
+    for k in &b.kids {
+        match k.kids.first() {
+            Some(inner) if safe_base(&k.name) == "stmt.block" && k.kids.len() == 1 && matches!(safe_base(&inner.name), "block.one" | "block.seq2" | "block.seq3" | "block.seq4") => run_items(inner, out),
+            _ => out.push(k),
+        }
+    }
+}
+
+/// The `j`th copy of a body written `u` times in one block: its shared
+/// loads' `let`s renamed `ld<n>_<j>` (a name is declared once a block).
+fn copy_lets(body: &str, j: u32) -> String {
+    if j == 0 {
+        return body.to_string();
+    }
+    let ident = |c: char| c.is_ascii_alphanumeric() || c == '_';
+    let declared: BTreeSet<&str> = body.match_indices("let ld").filter_map(|(i, _)| body[i + 4..].split(|c: char| !ident(c)).next()).collect();
+    let mut out = String::with_capacity(body.len() + 16);
+    let mut word = String::new();
+    for c in body.chars().chain(std::iter::once('\n')) {
+        if ident(c) {
+            word.push(c);
+            continue;
+        }
+        out.push_str(&word);
+        if declared.contains(word.as_str()) {
+            out.push_str(&format!("_{j}"));
+        }
+        word.clear();
+        out.push(c);
+    }
+    out.pop();
+    out
+}
+
+/// Whether `t` is a load the renderer may write once and name: a read of a
+/// binding, of `phi` or `h`, or of a workgroup array, at an index, with no
+/// atomic and no subgroup operation anywhere below it (their values depend
+/// on when and by whom they run).
+fn shareable_load(t: &Tree) -> bool {
+    fn pure(t: &Tree) -> bool {
+        !t.name.starts_with("atomic.") && !t.name.starts_with("subgroup.") && t.kids.iter().all(pure)
+    }
+    let base = safe_base(&t.name);
+    !t.kids.is_empty() && (base.starts_with("load.") || base.starts_with("wg.get")) && pure(t)
 }
 
 impl<'a> Renderer<'a> {
@@ -830,7 +908,7 @@ impl<'a> Renderer<'a> {
         if d.dual != "kernel.kernel" && d.dual != "kernel.safe" {
             return Err(format!("the root is {} ({}), not kernel.kernel or kernel.safe", root.name, d.dual));
         }
-        let mut scope = Scope { unrolled: BTreeMap::new(), unroll_copies: 1, in_unrolled_copy: false, wg: BTreeMap::new(), unwritten: BTreeSet::new(), in_items: false, in_tile: false, tile_depth: 0, grid: Grid { x: 16, y: 16, bx: 1, by: 1, rows_x: false }, in_cond: 0, returned: false, helpers: Vec::new(), masked: Vec::new(), const_depth: 0 };
+        let mut scope = Scope { unrolled: BTreeMap::new(), unroll_copies: 1, in_unrolled_copy: false, wg: BTreeMap::new(), unwritten: BTreeSet::new(), in_items: false, in_tile: false, tile_depth: 0, grid: Grid { x: 16, y: 16, bx: 1, by: 1, rows_x: false }, in_cond: 0, returned: false, helpers: Vec::new(), masked: Vec::new(), const_depth: 0, shared: Vec::new(), lets: 0 };
         let (grid, body) = match root.name.as_str() {
             "kernel.entry" => {
                 let [g, b] = root.kids.as_slice() else { return Err(format!("{} with {} children", root.name, root.kids.len())) };
@@ -866,6 +944,9 @@ impl<'a> Renderer<'a> {
                     if !terminated {
                         text.push_str(&self.block(e, &mut scope)?);
                     }
+                }
+                if let Some(exit) = self.early_exit(&root.kids[1..], &mut scope.clone())? {
+                    text.insert_str(0, &format!("    if (!({exit})) {{ return; }}\n"));
                 }
                 (grid, text)
             }
@@ -1013,21 +1094,234 @@ impl<'a> Renderer<'a> {
                 Ok((format!("    if ({c}) {{ continue; }}\n{rest}"), terminated))
             }
             "block.one" | "block.seq2" | "block.seq3" | "block.seq4" => {
-                let mut out = String::new();
-                for k in &b.kids {
-                    // A nested block's statements are written in place: every
-                    // declaration is at the top of the kernel, so `{ }` would
-                    // scope nothing, and the braces misled a model (run A).
-                    let (text, terminated) = if safe_base(&k.name) == "stmt.block" && k.kids.len() == 1 { self.block_t(&k.kids[0], scope)? } else { self.stmt_t(k, scope)? };
-                    out.push_str(&text);
-                    if terminated {
-                        return Ok((out, true));
-                    }
-                }
-                Ok((out, false))
+                // A nested block's statements are written in place: every
+                // declaration is at the top of the kernel, so `{ }` would
+                // scope nothing, and the braces misled a model (run A).
+                let mut items = Vec::new();
+                run_items(b, &mut items);
+                let shared = self.shared_loads(&items)?;
+                let outer = std::mem::take(&mut scope.shared);
+                let out = self.run_t(&items, &shared, scope);
+                scope.shared = outer;
+                out
             }
             other => Err(format!("{other} is not a block row")),
         }
+    }
+
+    /// THE THREAD'S EARLY EXIT (2026-10-14, the emitter's speed): the bounds
+    /// check of the thread's first cell, `guard(row0, col0)`, when it decides
+    /// every store the thread can make. The shipped and blocked Gram kernels
+    /// return at their top when their block is outside the band; read into
+    /// the kingdom, that return becomes the store's own check, and without
+    /// it the renderings ran 1.04x the shipped kernel and 1.035x the blocked
+    /// one (every thread of a partial band ran the item loop). It holds
+    /// when the kernel's only writes are stores to h (no other binding, no
+    /// atomic, no workgroup memory, no barrier or subgroup operation: a
+    /// thread that returns takes no part in anything another thread sees),
+    /// each inside an `if` (so the reader, taking the return as the thread
+    /// guard, wraps none of them again: the tree reads back unchanged), each
+    /// at a cell of the same origin: every safe row is its origin plus a
+    /// nonnegative offset, and the guard bounds the row and the column from
+    /// above, so a thread whose origin fails it stores nothing. The text of
+    /// `guard(row0, col0)`, or None.
+    fn early_exit(&self, trees: &[Tree], scope: &mut Scope) -> Result<Option<String>, String> {
+        if self.role.guard.is_empty() {
+            return Ok(None);
+        }
+        // Every store to h with whether an `if` holds it; false at a write
+        // the exit would change.
+        fn stores<'t>(r: &Renderer<'_>, t: &'t Tree, in_if: bool, out: &mut Vec<&'t Tree>) -> Result<bool, String> {
+            let base = safe_base(&t.name);
+            let effect = base.starts_with("wg.") || base.starts_with("atomic.") || base.starts_with("subgroup.") || matches!(base, "stmt.barrier" | "stmt.storage_barrier" | "stmt.subgroup_barrier");
+            let per_kernel_store = r.per_kernel.get(t.name.as_str()).or_else(|| r.per_kernel.get(base)).is_some() && r.kingdom.dual(t.ty).is_some_and(|d| d.slot == "stmt");
+            if effect || per_kernel_store || (base == "fallback" && r.is_epilogue(t.ty)) {
+                return Ok(false);
+            }
+            if matches!(base, "store.h_safe" | "store.h_mirror") {
+                if !in_if {
+                    return Ok(false);
+                }
+                out.push(t);
+                return Ok(true);
+            }
+            let in_if = in_if || matches!(base, "stmt.if" | "stmt.if_else");
+            for k in &t.kids {
+                if !stores(r, k, in_if, out)? {
+                    return Ok(false);
+                }
+            }
+            Ok(true)
+        }
+        let mut found = Vec::new();
+        for t in trees {
+            if !stores(self, t, false, &mut found)? {
+                return Ok(None);
+            }
+        }
+        // A row's or column's origin: through every offset to the thread's
+        // first row or column (a fallback row or column is the thread's
+        // own first one).
+        fn origin(t: &Tree) -> Option<&Tree> {
+            let base = safe_base(&t.name);
+            if base.starts_with("safe.row_plus") || base.starts_with("safe.col_plus") {
+                return t.kids.first().and_then(origin);
+            }
+            (base == "fallback" || base.starts_with("safe.thread_row") || base.starts_with("safe.thread_col")).then_some(t)
+        }
+        let mut first: Option<(String, String)> = None;
+        for st in found {
+            let Some(cell) = st.kids.first() else { return Ok(None) };
+            let (Some(row), Some(col)) = (cell.kids.first().and_then(origin), cell.kids.get(1).and_then(origin)) else { return Ok(None) };
+            if !matches!(safe_base(&cell.name), "safe.cell_of" | "safe.mirror_of") || cell.kids.len() != 2 {
+                return Ok(None);
+            }
+            let at = (self.value(row, scope)?, self.value(col, scope)?);
+            match &first {
+                None => first = Some(at),
+                Some(f) if *f == at => {}
+                Some(_) => return Ok(None),
+            }
+        }
+        Ok(first.map(|(row, col)| self.role.guard_text(&row, &col)))
+    }
+
+    /// A run's statements, each shared load's `let` written before the
+    /// first statement that names it.
+    fn run_t(&self, items: &[&Tree], shared: &[SharedLoad<'_>], scope: &mut Scope) -> Result<(String, bool), String> {
+        let mut out = String::new();
+        for (j, k) in items.iter().enumerate() {
+            scope.shared.retain(|(key, _)| shared.iter().any(|s| s.key == *key && s.first < j && j <= s.last));
+            // Smallest first: a load whose index holds a shared load names it.
+            for s in shared.iter().filter(|s| s.first == j) {
+                let text = self.value(s.tree, scope)?;
+                let name = format!("ld{}", scope.lets);
+                scope.lets += 1;
+                out.push_str(&format!("    let {name} = {text};\n"));
+                scope.shared.push((s.key.clone(), name));
+            }
+            let (text, terminated) = if safe_base(&k.name) == "stmt.block" && k.kids.len() == 1 { self.block_t(&k.kids[0], scope)? } else { self.stmt_t(k, scope)? };
+            out.push_str(&text);
+            if terminated {
+                return Ok((out, true));
+            }
+        }
+        scope.shared.clear();
+        Ok((out, false))
+    }
+
+    /// A run's statement as the loads it reads and what it writes: a register
+    /// set (anything when its value holds an atomic), or a store through a
+    /// per-kernel row (its index and value), read before it writes; any
+    /// other statement reads nothing shared and writes anything.
+    fn reads_writes<'t>(&self, s: &'t Tree) -> Result<(Vec<&'t Tree>, Writes), String> {
+        fn atomic(t: &Tree) -> bool {
+            t.name.starts_with("atomic.") || t.kids.iter().any(atomic)
+        }
+        let base = safe_base(&s.name);
+        if base.starts_with("reg.set_") && base != "reg.set_v_lane" && s.kids.len() == 2 {
+            let writes = if atomic(&s.kids[1]) { Writes::All } else { Writes::Register(self.register(&s.kids[0])?) };
+            return Ok((vec![&s.kids[1]], writes));
+        }
+        let store = self.per_kernel.get(s.name.as_str()).or_else(|| self.per_kernel.get(base));
+        if store.is_some() && self.dual(s.ty)?.slot == "stmt" {
+            return Ok((s.kids.iter().collect(), Writes::All));
+        }
+        Ok((Vec::new(), Writes::All))
+    }
+
+    /// THE SHARED LOADS OF A RUN: every load ([`shareable_load`]) the run's
+    /// statements read twice or more while its value holds, from the
+    /// statement of its first read until a statement writes a register it
+    /// reads, stores, or is not a register set or a store (control flow, a
+    /// barrier). A load inside a larger shared one is shared only where that
+    /// one is not. Smallest first, then by first statement.
+    fn shared_loads<'t>(&self, items: &[&'t Tree]) -> Result<Vec<SharedLoad<'t>>, String> {
+        fn registers(r: &Renderer<'_>, t: &Tree, out: &mut BTreeSet<String>) -> Result<(), String> {
+            if safe_base(&t.name).starts_with("reg.get_") {
+                if let Some(reg) = t.kids.first() {
+                    out.insert(r.register(reg)?);
+                }
+            }
+            t.kids.iter().try_for_each(|k| registers(r, k, out))
+        }
+        // Every load read: its tree, its statement, the shared-load
+        // candidates above it (by key).
+        fn walk<'t>(r: &Renderer<'_>, t: &'t Tree, j: usize, above: &mut Vec<String>, out: &mut Vec<(String, &'t Tree, usize, Vec<String>)>) {
+            let key = shareable_load(t).then(|| r.share_key(t));
+            if let Some(k) = &key {
+                out.push((k.clone(), t, j, above.clone()));
+                above.push(k.clone());
+            }
+            for c in &t.kids {
+                walk(r, c, j, above, out);
+            }
+            if key.is_some() {
+                above.pop();
+            }
+        }
+        let mut writes = Vec::with_capacity(items.len());
+        let mut reads = Vec::new();
+        for (j, s) in items.iter().enumerate() {
+            let (values, w) = self.reads_writes(s)?;
+            for v in values {
+                walk(self, v, j, &mut Vec::new(), &mut reads);
+            }
+            writes.push(w);
+        }
+        let mut keys: Vec<(&String, &'t Tree)> = Vec::new();
+        for (k, t, _, _) in &reads {
+            if !keys.iter().any(|(x, _)| *x == k) {
+                keys.push((k, t));
+            }
+        }
+        // Largest first, so a load inside a shared one sees it (equal sizes
+        // in the order first read).
+        keys.sort_by_key(|k| std::cmp::Reverse(k.1.size()));
+        let mut chosen: Vec<(String, SharedLoad<'t>)> = Vec::new();
+        for (key, tree) in keys {
+            let mut regs = BTreeSet::new();
+            registers(self, tree, &mut regs)?;
+            // Statement j's value of the load is the value at `from` when no
+            // statement in from..j writes what it reads.
+            let holds = |from: usize, j: usize| {
+                writes[from..j].iter().all(|w| match w {
+                    Writes::Register(r) => !regs.contains(r),
+                    Writes::All => false,
+                })
+            };
+            let mut uses: Vec<usize> = reads.iter().filter(|(k, _, j, above)| k == key && !above.iter().any(|a| chosen.iter().any(|(c, s)| c == a && s.first <= *j && *j <= s.last))).map(|(_, _, j, _)| *j).collect();
+            uses.sort_unstable();
+            let mut i = 0;
+            while i < uses.len() {
+                let from = uses[i];
+                let mut n = 1;
+                while i + n < uses.len() && holds(from, uses[i + n]) {
+                    n += 1;
+                }
+                if n >= 2 {
+                    chosen.push((key.clone(), SharedLoad { tree, key: key.clone(), first: from, last: uses[i + n - 1] }));
+                }
+                i += n;
+            }
+        }
+        let mut out: Vec<SharedLoad<'t>> = chosen.into_iter().map(|(_, s)| s).collect();
+        out.sort_by(|a, b| a.tree.size().cmp(&b.tree.size()).then(a.first.cmp(&b.first)));
+        Ok(out)
+    }
+
+    /// A load's identity for sharing: its s-expression with every literal
+    /// leaf named by the form it is written in (a knob reference is written
+    /// as a literal of its dual's form), so two loads written alike share.
+    fn share_key(&self, t: &Tree) -> String {
+        if t.kids.is_empty() {
+            if let Some(form) = t.name.strip_prefix("literal.") {
+                let form = if form.starts_with("p_") { self.kingdom.dual(t.ty).map_or(form, |d| d.form.as_str()) } else { form };
+                return format!("(literal.{form} {:?} {})", t.ty, t.konst);
+            }
+            return t.name.clone();
+        }
+        format!("({} {})", t.name, t.kids.iter().map(|k| self.share_key(k)).collect::<Vec<_>>().join(" "))
     }
 
     fn stmt_t(&self, s: &Tree, scope: &mut Scope) -> Result<(String, bool), String> {
@@ -1148,7 +1442,7 @@ impl<'a> Renderer<'a> {
                     if j > 0 {
                         out.push_str("        t = t + 1u;\n");
                     }
-                    out.push_str(&body);
+                    out.push_str(&copy_lets(&body, j));
                 }
                 out.push_str(&format!("        t = t - {}u;\n    }}\n    for (; t < {bound}; t = t + 1u) {{\n{body}    }}\n", u - 1));
                 Ok(out)
@@ -1438,7 +1732,7 @@ impl<'a> Renderer<'a> {
                     if j > 0 {
                         out.push_str("        t = t + 1u;\n");
                     }
-                    out.push_str(&body);
+                    out.push_str(&copy_lets(&body, j));
                 }
                 out.push_str(&format!("        t = t - {}u;\n    }}\n    for (; t < {m}; t = t + 1u) {{\n{body}    }}\n", u - 1, m = self.role.items));
                 Ok(out)
@@ -1710,6 +2004,12 @@ impl Renderer<'_> {
 
     /// A value expression, parenthesised where an operator could bind.
     fn value(&self, v: &Tree, scope: &mut Scope) -> Result<String, String> {
+        if !scope.shared.is_empty() && shareable_load(v) {
+            let key = self.share_key(v);
+            if let Some((_, name)) = scope.shared.iter().find(|(k, _)| *k == key) {
+                return Ok(name.clone());
+            }
+        }
         // Any expression of literals only writes them through lit_*, so naga
         // folds none of it (2026-10-13, AST to AST: a loop bound, a
         // comparison, a select or an access of literals was folded to a
@@ -4210,5 +4510,93 @@ mod tests {
         // N of N (2026-10-13: the sampler nests no long loop in one of its
         // kind, the renderer's only refusal; 440 of 500 before).
         assert!(refused.is_empty() && rendered == n as usize, "only {rendered} of {n} rendered: {refused:?}");
+    }
+
+    /// THE RENDERING RUNS AS THE SOURCE DOES (2026-10-14, the user flow's
+    /// step 2 speed gate): nluca's generated_step rendered reads the state
+    /// at a source and the codebook entry once an iteration (shared loads),
+    /// and the shipped and blocked Gram kernels return at the top when the
+    /// thread's block is outside the band (the early exit). Each rendering
+    /// reads back to the tree it was rendered from, nluca's and the shipped
+    /// Gram's to their own text, and computes the source's values.
+    #[test]
+    fn renderings_share_repeated_loads_and_exit_early_and_read_back() {
+        use crate::wgsl::roundtrip::{same_values, RoundTrip, Trial};
+        use crate::wgsl::safe_karva::render_tree_with;
+        use crate::wgsl::safe_reader::read_safe;
+        let k = WgslKingdom::load_safe();
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let render = |src: &str| {
+            let r = read_safe(src, &k).unwrap_or_else(|e| panic!("does not read: {e}"));
+            let text = render_tree_with(&r.tree, &k, &r.role).unwrap().text;
+            validate_text(&text).unwrap_or_else(|e| panic!("{e}\n{text}"));
+            (r.tree, text)
+        };
+        let nluca = std::fs::read_to_string(root.join("tests/corpus/nluca/k01.wgsl")).unwrap();
+        let (tree, text) = render(&nluca);
+        assert_eq!(text.matches("buffer_1_global[(buffer_0_global[").count(), 1, "{text}");
+        assert_eq!(text.matches("buffer_2_global[(((i2) >> ((22u) & 31u)))]").count(), 2, "{text}");
+        assert!(!text.contains("{ return; }"), "nluca's guard reads a register: no early exit\n{text}");
+        let (back, again) = render(&text);
+        assert!(back == tree, "nluca: {}", first_difference(&tree, &back).unwrap_or_default());
+        assert_eq!(again, text);
+        for (name, fixpoint) in [("shipped", true), ("blocked", false)] {
+            let src = std::fs::read_to_string(root.join(format!("kingdoms/wgsl/gram/{name}.wgsl"))).unwrap();
+            let (tree, text) = render(&src);
+            let body = &text[text.find("fn main(").unwrap()..];
+            let exit = body.find("{ return; }").unwrap_or_else(|| panic!("{name}: no early exit\n{text}"));
+            assert!(exit < body.find("for (t = 0u;").unwrap(), "{name}: the exit is after the item loop\n{text}");
+            let (back, again) = render(&text);
+            if fixpoint {
+                assert!(back == tree, "{name}: {}", first_difference(&tree, &back).unwrap_or_default());
+                assert_eq!(again, text);
+            }
+            assert!(again.contains("{ return; }"), "{name}: the read-back loses the exit");
+            assert_eq!(same_values(&src, &k, &Trial::default()).unwrap(), RoundTrip::Same, "{name}");
+        }
+        assert_eq!(same_values(&nluca, &k, &Trial::default()).unwrap(), RoundTrip::Same);
+    }
+
+    /// A SHARED LOAD HOLDS UNTIL A REGISTER IT READS IS WRITTEN: `a[i]` read
+    /// twice, `i` stepped, `a[i]` read twice more is two loads, each named
+    /// twice, and the rendering computes the source's values.
+    #[test]
+    fn a_shared_load_ends_where_its_index_register_is_written() {
+        use crate::wgsl::roundtrip::{same_values, RoundTrip, Trial};
+        let k = WgslKingdom::load_safe();
+        let src = "@group(0) @binding(0) var<storage, read> a: array<f32>;\n@group(0) @binding(1) var<storage, read_write> o: array<f32>;\n@compute @workgroup_size(64, 1, 1)\nfn main(@builtin(global_invocation_id) gid: vec3<u32>) {\n    var i = gid.x;\n    var s = a[i] * a[i];\n    i = i + 1u;\n    s = s + a[i];\n    s = s * a[i];\n    o[gid.x] = s;\n}\n";
+        let r = crate::wgsl::safe_reader::read_safe(src, &k).unwrap();
+        let text = crate::wgsl::safe_karva::render_tree_with(&r.tree, &k, &r.role).unwrap().text;
+        let lets: Vec<&str> = text.lines().filter(|l| l.trim_start().starts_with("let ld")).collect();
+        assert_eq!(lets, ["    let ld0 = a[(i0)];", "    let ld1 = a[(i0)];"], "{text}");
+        assert!(text.contains("f0 = (ld0 * ld0);") && text.contains("i0 = (i0 + 1u);\n    let ld1") && text.contains("f0 = (f0 * ld1);"), "{text}");
+        assert_eq!(same_values(src, &k, &Trial { elements: 256, ..Trial::default() }).unwrap(), RoundTrip::Same);
+    }
+}
+
+#[cfg(test)]
+mod scratch_random_text {
+    use super::*;
+    #[test]
+    fn scratch_random_genes_check_text() {
+        let k = WgslKingdom::load_safe();
+        let role = gram_role();
+        let root = dual_ty(&k, "kernel.safe").unwrap();
+        let (mut ok, mut lets, mut exits, mut fix) = (0, 0, 0, 0);
+        let mut bad = Vec::new();
+        for seed in 0..1000u64 {
+            let tree = sample(&k, &role, root, 7, seed).unwrap();
+            match crate::wgsl::knob::check_text(&tree, &k) {
+                Ok((text, back)) => {
+                    ok += 1;
+                    lets += usize::from(text.contains("let ld"));
+                    exits += usize::from(text.contains("{ return; }"));
+                    let again = crate::wgsl::safe_karva::render_tree(&back.tree, &k).unwrap().text;
+                    fix += usize::from(again == text);
+                }
+                Err((s, e)) => bad.push(format!("{seed}: {}: {}", s.name(), e.chars().take(200).collect::<String>())),
+            }
+        }
+        println!("SCRATCH ok {ok} lets {lets} exits {exits} fixpoint {fix}\n{}", bad.iter().take(10).cloned().collect::<Vec<_>>().join("\n"));
     }
 }
