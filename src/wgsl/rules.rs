@@ -2061,7 +2061,8 @@ mod tests {
         let (text, _) = crate::wgsl::knob::check_text(&child, &k).unwrap_or_else(|(s, e)| panic!("{}: {e}", s.name()));
         assert!(!text.contains("wg_a[") && !text.contains("wg_b["), "{text}");
         assert!(text.contains("var<workgroup> wg_va: array<vec4<f32>, 512>;") && text.contains("for (k = 0u; k < 1u; k = k + 1u)"), "{text}");
-        assert!(text.contains("wg_va[((((k * 16u) + lid.x)) & 511u)].w"), "{text}");
+        // The column tile's vec4 read once (a shared load) and its lanes named.
+        assert!(text.contains("let ld1 = wg_va[((((k * 16u) + lid.x)) & 511u)];") && text.contains("ld1.w"), "{text}");
         // No lane is stored into a workgroup vec4 (four threads would race on it).
         assert!(!text.lines().any(|l| l.contains("wg_v") && l.contains("][") && l.contains("] = ")), "{text}");
     }
