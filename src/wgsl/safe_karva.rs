@@ -947,7 +947,10 @@ pub fn render_tree_with(tree: &Tree, kingdom: &WgslKingdom, role: &crate::wgsl::
     let t = FunctionTable::safe();
     let mut r = Renderer::new(kingdom, &t, role).kernel(tree)?;
     let g = r.grid;
-    r.text = format!("{}\n{}{}", g.header(), crate::wgsl::render::interface_header(role), r.text);
+    // A kernel that writes a mirror says so (`// mode full`): the harness then
+    // gives it the whole H in one row band (agreed 2026-10-14).
+    let mode = if crate::wgsl::render::writes_mirror(tree) { "// mode full\n" } else { "" };
+    r.text = format!("{}\n{mode}{}{}", g.header(), crate::wgsl::render::interface_header(role), r.text);
     Ok(r)
 }
 
@@ -955,6 +958,11 @@ pub fn render_tree_with(tree: &Tree, kingdom: &WgslKingdom, role: &crate::wgsl::
 /// fallback leaves the projection made.
 pub fn rebuild(decoded: &[String], filled: usize, kingdom: &WgslKingdom) -> Result<(Rendered, usize), String> {
     rebuild_bounded(decoded, filled, kingdom, None).map(|(r, f, _)| (r, f))
+}
+
+/// [`rebuild`] under a role (an inferred interface's, nluca's).
+pub fn rebuild_with(decoded: &[String], filled: usize, kingdom: &WgslKingdom, role: &crate::wgsl::render::Role) -> Result<(Rendered, usize), String> {
+    rebuild_bounded_with(decoded, filled, kingdom, None, role).map(|(r, f, _)| (r, f))
 }
 
 /// The static cost bound a kernel must stay under BEFORE it is dispatched:
@@ -987,8 +995,13 @@ pub fn default_bound(kingdom: &WgslKingdom) -> Result<Cost, String> {
 /// `bound` (the per-item or the base figure); the kernel's cost is
 /// returned with the text.
 pub fn rebuild_bounded(decoded: &[String], filled: usize, kingdom: &WgslKingdom, bound: Option<&Cost>) -> Result<(Rendered, usize, Cost), String> {
+    rebuild_bounded_with(decoded, filled, kingdom, bound, &gram_role())
+}
+
+/// [`rebuild_bounded`] under a role (an inferred interface's, nluca's).
+pub fn rebuild_bounded_with(decoded: &[String], filled: usize, kingdom: &WgslKingdom, bound: Option<&Cost>, role: &crate::wgsl::render::Role) -> Result<(Rendered, usize, Cost), String> {
     let text = unfold_decoded(decoded, filled)?;
-    let tree = build(&text, kingdom, &gram_role())?;
+    let tree = build(&text, kingdom, role)?;
     // A grid the knob references cannot be resolved against is named before the cost.
     crate::wgsl::params::resolve(&tree)?;
     let f = fallbacks(&tree);
@@ -998,7 +1011,7 @@ pub fn rebuild_bounded(decoded: &[String], filled: usize, kingdom: &WgslKingdom,
             return Err(format!("cost: {:.0} per item, {:.0} base exceeds the bound {:.0}, {:.0}; not dispatched", c.per_item, c.base, b.per_item, b.base));
         }
     }
-    Ok((render_tree(&tree, kingdom)?, f, c))
+    Ok((render_tree_with(&tree, kingdom, role)?, f, c))
 }
 
 #[cfg(test)]
@@ -1527,6 +1540,8 @@ mod tests {
             assert!(back == tree, "{name}: the genome decodes to another tree: {}", crate::wgsl::render::first_difference(&tree, &back).unwrap_or_default());
             let text = render_tree_with(&tree, &k, &r.role).unwrap_or_else(|e| panic!("{name} does not render: {e}")).text;
             validate_text(&text).unwrap_or_else(|e| panic!("{name}: {e}\n{text}"));
+            // The entry point keeps the module's name (the harness binds it by name).
+            assert!(r.role.entry.starts_with("generated_") && text.contains(&format!("fn {}(", r.role.entry)), "{name}: entry {}", r.role.entry);
             let checker = crate::wgsl::check::Checker::with_contract(&k, &r.role, &crate::wgsl::target::Target::recorded(), contract.clone());
             checker.check(&tree).unwrap_or_else(|e| panic!("{name}: {e}"));
             println!("{name}: {} nodes, {} genes, rendered, every layer passed", tree.size(), c.genes.len());

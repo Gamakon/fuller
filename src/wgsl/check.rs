@@ -1150,7 +1150,7 @@ impl<'a> Checker<'a> {
                 "threadcol" | "colbase" => self.iv_raw(&Tree::new("safe.thread_col", v.ty, Vec::new()), cx),
                 "threadrows" | "threadrowg" | "rowbases" | "rowbaseg" => self.iv_raw(&Tree::new("safe.thread_row_s", v.ty, Vec::new()), cx),
                 "threadcols" | "threadcolg" | "colbases" | "colbaseg" => self.iv_raw(&Tree::new("safe.thread_col_s", v.ty, Vec::new()), cx),
-                "cell" => {
+                "cell" | "mirror" => {
                     let row = self.iv_raw(&Tree::new("safe.thread_row", v.ty, Vec::new()), cx);
                     let col = self.iv_raw(&Tree::new("safe.thread_col", v.ty, Vec::new()), cx);
                     let r = self.mul(row, Some(pt(WORST_D as u128)), v, cx);
@@ -1324,6 +1324,10 @@ impl<'a> Checker<'a> {
             "safe.cell_of" | "safe.phi_of" => {
                 let row = self.mul(k(0), Some(pt(WORST_D as u128)), v, cx);
                 self.add(row, k(1), v, cx)
+            }
+            "safe.mirror_of" => {
+                let col = self.mul(k(1), Some(pt(WORST_D as u128)), v, cx);
+                self.add(col, k(0), v, cx)
             }
             "safe.wg_of" => Some(min_c(k(0), 2047)),
             "safe.wgv_of" => Some(min_c(k(0), 511)),

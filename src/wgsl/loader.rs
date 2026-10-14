@@ -640,7 +640,8 @@ mod tests {
         // uniform values that may wrap (u32.uniformw) and an expression bound's value (u32.xbound).
         // 177 with u32.indexw (a raw difference, which no row takes: no wrap anywhere).
         // 183 with the origins an offset row takes (rowbase, colbase, strided, grouped).
-        assert_eq!(s.len(), 183);
+        // 184 with the mirror of a thread's cell (u32.mirror, the symmetric half, 2026-10-14).
+        assert_eq!(s.len(), 184);
         for (a, b) in w.iter().zip(&s) {
             assert_eq!((a.reference.as_str(), a.dual.as_str()), (b.reference.as_str(), b.dual.as_str()));
         }
@@ -671,7 +672,8 @@ mod tests {
         // uniform value that may wrap; 2026-10-12).
         // 1,523 with a literal bound value (literal.index at u32.xbound; a random kernel's bound of 0).
         // 1,529 with the thread's origin rows at the origins' duals.
-        assert_eq!(fs.rows.len(), 1529);
+        // 1,550 with the mirror of a thread's cell (9 safe.mirror_of, 12 store.h_mirror; 2026-10-14).
+        assert_eq!(fs.rows.len(), 1550);
         let dual = |t: Ty| k.dual(t).unwrap().dual.clone();
         let producers = |d: &str| -> Vec<String> { k.rows.iter().filter(|r| dual(r.output) == d).map(|r| r.name.clone()).collect() };
         assert_eq!(producers("kernel.safe"), vec!["kernel.entry_safe"]);
@@ -692,7 +694,7 @@ mod tests {
         assert_eq!(consumers("u32.rowid"), vec!["index.of_row"]);
         assert_eq!(consumers("u32.colid"), vec!["index.of_col"]);
         for (kind, plus) in [("u32.threadrows", "_s"), ("u32.threadcols", "_s"), ("u32.threadrowg", "_g"), ("u32.threadcolg", "_g")] {
-            assert!(consumers(kind).iter().all(|n| n.ends_with(plus) || n == "safe.cell_of" || n.ends_with("_as_index")), "{kind}: {:?}", consumers(kind));
+            assert!(consumers(kind).iter().all(|n| n.ends_with(plus) || n == "safe.cell_of" || n == "safe.mirror_of" || n.ends_with("_as_index")), "{kind}: {:?}", consumers(kind));
         }
         let entry = k.rows.iter().find(|r| r.name == "kernel.entry_safe").unwrap();
         assert_eq!(entry.inputs.iter().map(|&t| dual(t)).collect::<Vec<_>>(), vec!["grid.grid", "block.L0", "block.O0"]);
@@ -738,7 +740,10 @@ mod tests {
         // A conditional block's statements are C statements, which no loop or barrier produces.
         assert!(k.rows.iter().filter(|r| r.name.starts_with("stmt.if_") && (dual(r.output).starts_with("stmt.L") || dual(r.output).starts_with("stmt.C"))).all(|r| dual(r.inputs[1]).starts_with("block.C")));
         // store.h only at an owned cell; load.phi only at a phi index; both produced by one row each.
-        assert!(k.rows.iter().filter(|r| r.name.starts_with("store.h_")).all(|r| dual(r.inputs[0]) == "u32.cell"));
+        assert!(k.rows.iter().filter(|r| r.name.starts_with("store.h_") && !r.name.starts_with("store.h_mirror_")).all(|r| dual(r.inputs[0]) == "u32.cell"));
+        // (and the symmetric half's mirror store at the mirror of one, 2026-10-14)
+        assert!(k.rows.iter().filter(|r| r.name.starts_with("store.h_mirror_")).all(|r| dual(r.inputs[0]) == "u32.mirror"));
+        assert!(producers("u32.mirror").iter().all(|n| n == "safe.mirror_of") && producers("u32.mirror").len() == 9);
         // (one cell_of per pair of block kinds, nine since the thread's axes)
         assert!(producers("u32.cell").iter().all(|n| n == "safe.cell_of") && producers("u32.cell").len() == 9);
         assert_eq!(producers("u32.wgindex"), vec!["safe.wg_of"]);

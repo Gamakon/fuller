@@ -117,6 +117,9 @@ pub struct Role {
     pub output: String,
     /// The bound check of a thread's own cell, over `{row}` and `{col}`.
     pub guard: String,
+    /// The entry point's name the renderer writes (`main`; an inferred
+    /// interface keeps its module's, nluca's `generated_step`).
+    pub entry: String,
 }
 
 /// A kernel interface as declared: what [`Role::interface`] builds a role from.
@@ -149,7 +152,7 @@ impl Role {
             }
             prologue.push_str(&format!("@group({}) @binding({}) var<{}> {}: {};", b.group, b.binding, b.space, b.name, b.ty));
         }
-        let mut role = Role { name: name.into(), prologue, items: String::new(), per_kernel: Vec::new(), bindings, uniform_var: uniform_var.into(), uniform_struct: uniform_struct.into(), fields, input: input.into(), output: output.into(), guard: guard.into() };
+        let mut role = Role { name: name.into(), prologue, items: String::new(), per_kernel: Vec::new(), bindings, uniform_var: uniform_var.into(), uniform_struct: uniform_struct.into(), fields, input: input.into(), output: output.into(), guard: guard.into(), entry: "main".into() };
         role.items = role.field("m");
         let pk = |name: &str, inputs: &[&str], output: &str, template: String| PerKernel { name: name.into(), inputs: inputs.iter().map(|s| s.to_string()).collect(), output: output.into(), template };
         let (i, o) = (input, output);
@@ -357,12 +360,14 @@ impl Role {
             }
         }
         let decl = Interface { name: INFERRED.into(), bindings, uniform_var, uniform_struct, fields, input, output, guard, extra };
+        let mut role = Role::interface(decl.clone());
         for known in [gram_interface(), gram_counter_interface()] {
             if (Interface { name: INFERRED.into(), ..known.clone() }) == decl {
-                return Role::interface(known);
+                role = Role::interface(known);
             }
         }
-        Role::interface(decl)
+        role.entry = i.entry.clone();
+        role
     }
 }
 
@@ -905,7 +910,7 @@ impl<'a> Renderer<'a> {
             .filter(|(var, _)| if *var == "sg_lane" || *var == "sg_index" { flat && body.contains(var) } else { body.contains(var) || (*var == "sg_size" && lets.contains(var)) })
             .map(|(var, b)| format!(", @builtin({b}) {var}: u32"))
             .collect();
-        text.push_str(&format!("@compute @workgroup_size({}, {}, 1)\nfn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_index) lidx: u32, @builtin(num_workgroups) nwg: vec3<u32>{subgroup_args}) {{\n", grid.x, grid.y));
+        text.push_str(&format!("@compute @workgroup_size({}, {}, 1)\nfn {}(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_index) lidx: u32, @builtin(num_workgroups) nwg: vec3<u32>{subgroup_args}) {{\n", grid.x, grid.y, self.role.entry));
         // The registers, counters and private arrays of the kingdom's rows:
         // 32 f32, 16 vec4, 32 u32, 8 bool registers; six f32, two vec4, three
         // u32 and two bool private arrays.
@@ -1214,6 +1219,21 @@ impl<'a> Renderer<'a> {
                     (self.value(&kids[0].kids[0], scope)?, self.value(&kids[0].kids[1], scope)?)
                 } else {
                     // A fallback cell is the thread's own first cell.
+                    (self.own_fallback("u32.threadrow", scope)?.unwrap_or_default(), self.own_fallback("u32.threadcol", scope)?.unwrap_or_default())
+                };
+                let (guard, h) = (self.role.guard_text(&row, &col), &self.role.output);
+                Ok(format!("    if ({guard}) {{ {h}[{cell}] = {h}[{cell}] + {}; }}\n", self.value(&kids[1], scope)?))
+            }
+            // THE MIRROR STORE (the symmetric half, 2026-10-14): h at the
+            // mirror of the thread's own cell, under that cell's own bounds
+            // check (in a full-H kernel, `// mode full`, the mirror of an
+            // in-range cell is in range).
+            "store.h_mirror" => {
+                n(2)?;
+                let cell = self.value(&kids[0], scope)?;
+                let (row, col) = if safe_base(&kids[0].name) == "safe.mirror_of" && kids[0].kids.len() == 2 {
+                    (self.value(&kids[0].kids[0], scope)?, self.value(&kids[0].kids[1], scope)?)
+                } else {
                     (self.own_fallback("u32.threadrow", scope)?.unwrap_or_default(), self.own_fallback("u32.threadcol", scope)?.unwrap_or_default())
                 };
                 let (guard, h) = (self.role.guard_text(&row, &col), &self.role.output);
@@ -1867,6 +1887,12 @@ impl Renderer<'_> {
                 let r = self.value(&v.kids[0], scope)?;
                 let c = self.value(&v.kids[1], scope)?;
                 return Ok(format!("(({r}) * {} + ({c}))", self.role.field("d")));
+            }
+            // The mirror of the thread's cell: column * d + row (the symmetric half).
+            "safe.mirror_of" => {
+                let r = self.value(&v.kids[0], scope)?;
+                let c = self.value(&v.kids[1], scope)?;
+                return Ok(format!("(({c}) * {} + ({r}))", self.role.field("d")));
             }
             "safe.phi_of" => {
                 let t = self.value(&v.kids[0], scope)?;
@@ -2574,6 +2600,7 @@ impl Renderer<'_> {
             "u32.threadrows" | "u32.threadrowg" | "u32.rowbases" | "u32.rowbaseg" => row("safe.thread_row_s", "u32.threadrows")?,
             "u32.threadcols" | "u32.threadcolg" | "u32.colbases" | "u32.colbaseg" => row("safe.thread_col_s", "u32.threadcols")?,
             "u32.cell" => Tree::new("safe.cell_of", ty("u32.cell")?, vec![row("safe.thread_row", "u32.threadrow")?, row("safe.thread_col", "u32.threadcol")?]),
+            "u32.mirror" => Tree::new("safe.mirror_of", ty("u32.mirror")?, vec![row("safe.thread_row", "u32.threadrow")?, row("safe.thread_col", "u32.threadcol")?]),
             _ => return Ok(None),
         };
         self.value(&tree, scope).map(Some)
@@ -2830,7 +2857,9 @@ fn sample_with(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, s
     // (No return: a return before the epilogue ends the thread before it
     // stores its output, so the kernel writes nothing: 187 of 1,000 random
     // kernels, 2026-10-13. The kingdom keeps the rows for text it reads.)
-    let mut rows: Vec<WgslRow> = kingdom.rows.iter().filter(|r| !f16(&r.output) && !r.inputs.iter().any(f16) && !r.name.starts_with("stmt.return")).cloned().collect();
+    // (Nor a mirror: the symmetric-half rule writes it, under its triangle
+    // guard, in a kernel that runs with the whole H; 2026-10-14.)
+    let mut rows: Vec<WgslRow> = kingdom.rows.iter().filter(|r| !f16(&r.output) && !r.inputs.iter().any(f16) && !r.name.starts_with("stmt.return") && !r.name.starts_with("safe.mirror_of") && !r.name.starts_with("store.h_mirror")).cloned().collect();
     // The safe kingdom reads h only at the thread's own cell (load.h_safe):
     // the role's load.h, h at any index, is the plain kingdom's (the
     // legality checker: 25 of 1,000 random safe genes read another thread's

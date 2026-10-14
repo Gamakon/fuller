@@ -2940,5 +2940,31 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 | F1527 | `safe.thread_col_s` | `composite` | `vec3<u32>.wid vec3<u32>.lid u32.blk` | `u32.colbases` | 3 | arity 3: the first column of a strided block, as an offset column's origin |
 | F1528 | `safe.thread_row_g` | `composite` | `vec3<u32>.wid vec3<u32>.lid u32.blk u32.lit64` | `u32.rowbaseg` | 4 | arity 4: the first row of a grouped block, as an offset row's origin |
 | F1529 | `safe.thread_col_g` | `composite` | `vec3<u32>.wid vec3<u32>.lid u32.blk u32.lit64` | `u32.colbaseg` | 4 | arity 4: the first column of a grouped block, as an offset column's origin |
+| F1530 | `safe.mirror_of` | `composite` | `u32.threadrow u32.threadcol` | `u32.mirror` | 2 | col * cfg.d + row: the mirror of the cell this thread owns |
+| F1531 | `safe.mirror_of` | `composite` | `u32.threadrow u32.threadcols` | `u32.mirror` | 2 | col * cfg.d + row: the mirror of the cell this thread owns |
+| F1532 | `safe.mirror_of` | `composite` | `u32.threadrow u32.threadcolg` | `u32.mirror` | 2 | col * cfg.d + row: the mirror of the cell this thread owns |
+| F1533 | `safe.mirror_of` | `composite` | `u32.threadrows u32.threadcol` | `u32.mirror` | 2 | col * cfg.d + row: the mirror of the cell this thread owns |
+| F1534 | `safe.mirror_of` | `composite` | `u32.threadrows u32.threadcols` | `u32.mirror` | 2 | col * cfg.d + row: the mirror of the cell this thread owns |
+| F1535 | `safe.mirror_of` | `composite` | `u32.threadrows u32.threadcolg` | `u32.mirror` | 2 | col * cfg.d + row: the mirror of the cell this thread owns |
+| F1536 | `safe.mirror_of` | `composite` | `u32.threadrowg u32.threadcol` | `u32.mirror` | 2 | col * cfg.d + row: the mirror of the cell this thread owns |
+| F1537 | `safe.mirror_of` | `composite` | `u32.threadrowg u32.threadcols` | `u32.mirror` | 2 | col * cfg.d + row: the mirror of the cell this thread owns |
+| F1538 | `safe.mirror_of` | `composite` | `u32.threadrowg u32.threadcolg` | `u32.mirror` | 2 | col * cfg.d + row: the mirror of the cell this thread owns |
 
-1529 function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Deliberately absent: storage-buffer atomics, atomic compare-exchange (naga 0.20's Metal backend lacks it), subgroupBallot, images, derivatives, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.
+## class `store`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F1539 | `store.h_mirror_L0` | `composite` | `u32.mirror f32.real` | `stmt.L0` | 2 | h[mirror] = h[mirror] + v under the bounds check of the thread's own cell: the symmetric half's second write |
+| F1540 | `store.h_mirror_L1` | `composite` | `u32.mirror f32.real` | `stmt.L1` | 2 | h[mirror] = h[mirror] + v under the bounds check of the thread's own cell: the symmetric half's second write |
+| F1541 | `store.h_mirror_L2` | `composite` | `u32.mirror f32.real` | `stmt.L2` | 2 | h[mirror] = h[mirror] + v under the bounds check of the thread's own cell: the symmetric half's second write |
+| F1542 | `store.h_mirror_L3` | `composite` | `u32.mirror f32.real` | `stmt.L3` | 2 | h[mirror] = h[mirror] + v under the bounds check of the thread's own cell: the symmetric half's second write |
+| F1543 | `store.h_mirror_L4` | `composite` | `u32.mirror f32.real` | `stmt.L4` | 2 | h[mirror] = h[mirror] + v under the bounds check of the thread's own cell: the symmetric half's second write |
+| F1544 | `store.h_mirror_C0` | `composite` | `u32.mirror f32.real` | `stmt.C0` | 2 | h[mirror] = h[mirror] + v under the bounds check of the thread's own cell: the symmetric half's second write |
+| F1545 | `store.h_mirror_C1` | `composite` | `u32.mirror f32.real` | `stmt.C1` | 2 | h[mirror] = h[mirror] + v under the bounds check of the thread's own cell: the symmetric half's second write |
+| F1546 | `store.h_mirror_C2` | `composite` | `u32.mirror f32.real` | `stmt.C2` | 2 | h[mirror] = h[mirror] + v under the bounds check of the thread's own cell: the symmetric half's second write |
+| F1547 | `store.h_mirror_C3` | `composite` | `u32.mirror f32.real` | `stmt.C3` | 2 | h[mirror] = h[mirror] + v under the bounds check of the thread's own cell: the symmetric half's second write |
+| F1548 | `store.h_mirror_C4` | `composite` | `u32.mirror f32.real` | `stmt.C4` | 2 | h[mirror] = h[mirror] + v under the bounds check of the thread's own cell: the symmetric half's second write |
+| F1549 | `store.h_mirror_L5` | `composite` | `u32.mirror f32.real` | `stmt.L5` | 2 | h[mirror] = h[mirror] + v under the bounds check of the thread's own cell: the symmetric half's second write |
+| F1550 | `store.h_mirror_C5` | `composite` | `u32.mirror f32.real` | `stmt.C5` | 2 | h[mirror] = h[mirror] + v under the bounds check of the thread's own cell: the symmetric half's second write |
+
+1550 function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Deliberately absent: storage-buffer atomics, atomic compare-exchange (naga 0.20's Metal backend lacks it), subgroupBallot, images, derivatives, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.
