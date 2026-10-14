@@ -311,6 +311,17 @@ fn tree_of(ctx: &mut Ctx, n: &Node) -> Result<Tree, String> {
         }
         Node::Literal { form, value, .. } => {
             // An integer literal is carried as an f32 value: exact only below 2^24.
+            // A u32 literal past 2^24 (a hash's multiplier or key, CubeCL's
+            // 2246822507u) as its halves, (hi << 16u) | lo, both exact: the
+            // same 32 bits.
+            if form != "real" && form != "int" && *value > 16_777_216.0 && *value <= 4_294_967_295.0 && value.fract() == 0.0 {
+                let v = *value as u64;
+                let (bits, count) = (ty(ctx, "u32.bits")?, ty(ctx, "u32.count")?);
+                let hi = Tree::literal("literal.bits", bits, (v >> 16) as f32);
+                let lo = Tree::literal("literal.bits", bits, (v & 0xffff) as f32);
+                let shl = Tree::new("bits.shl", bits, vec![hi, Tree::literal("literal.count", count, 16.0)]);
+                return Ok(Tree::new("bits.or", bits, vec![shl, lo]));
+            }
             if form != "real" && value.abs() > 16_777_216.0 {
                 return Err(format!("the literal {value} exceeds the exact range of an integer literal (2^24); spell the mask as a rounding or a shift"));
             }
@@ -1395,7 +1406,7 @@ fn is_continue_guard(t: &Tree) -> bool {
 
 /// Whether a statement tree stores h anywhere in it.
 fn has_store(t: &Tree) -> bool {
-    t.name.starts_with("store.h_") || t.kids.iter().any(has_store)
+    rung_stem(&t.name).is_some_and(|s| s.starts_with("store.")) || t.kids.iter().any(has_store)
 }
 
 /// A row name's stem without its statement rung (`stmt.if_L2` is `stmt.if`);
@@ -2749,6 +2760,8 @@ impl<'a> Ctx<'a> {
         let kids = s.kids.as_slice();
         match (stem, kids) {
             ("store.h", [cell, v]) => Ok(Tree::new(&format!("store.h_{o}"), st, vec![cell.clone(), v.clone()])),
+            // An output's store at any index (an inferred interface's row).
+            (store, [i, v]) if store.starts_with("store.") => Ok(Tree::new(&format!("{store}_{o}"), st, vec![i.clone(), v.clone()])),
             ("stmt.if", [c, b]) => Ok(Tree::new(&format!("stmt.if_{o}"), st, vec![c.clone(), self.epilogue_block(vec![b.clone()], d)?])),
             ("stmt.if_else", [c, a, b]) => {
                 if !has_store(a) || !has_store(b) {
@@ -3614,6 +3627,26 @@ impl<'a> Ctx<'a> {
                 _ => Ok(Some(stores(self, rung)?)),
             };
         }
+        // A store of an output at any index (an inferred interface's
+        // `store.<binding>_<rung>`; layer 7 of the checker proves its write
+        // set), under the thread guard of a leading return as h's is.
+        if let Some(b) = name.strip_prefix("store.buffer.").and_then(|r| r.split('.').next()) {
+            if self.per_kernel_rows.iter().any(|(n, _, _)| *n == format!("store.{b}_{rung}")) {
+                let [idx, value] = tree.kids.as_slice() else { return Err(format!("a store to {b} without an index")) };
+                let index = ty(self, "u32.index")?;
+                let i = Tree { ty: index, ..self.value(idx)? };
+                let v = self.value(value)?;
+                let store = |ctx: &Self, r: &str| -> Result<Tree, String> { Ok(Tree::new(&format!("store.{b}_{r}"), ctx.stmt_ty(r)?, vec![i.clone(), v.clone()])) };
+                return match self.guard.clone() {
+                    Some(g) if !rung.starts_with('C') => {
+                        let crung = format!("C{}", &rung[1..]);
+                        let inner = self.block(vec![store(self, &crung)?], &crung)?;
+                        Ok(Some(Tree::new(&format!("stmt.if_{rung}"), st, vec![g, inner])))
+                    }
+                    _ => Ok(Some(store(self, rung)?)),
+                };
+            }
+        }
         if let (Some(rest), [value]) = (name.strip_prefix("store.workgroup."), tree.kids.as_slice()) {
             // A workgroup scalar: element 0 of a workgroup array of one.
             let zero = Tree::literal("literal.index", ty(self, "u32.index")?, 0.0);
@@ -3955,6 +3988,13 @@ impl<'a> Ctx<'a> {
         // The test normalised to `counter < bound`: `bound > counter`,
         // `counter <= bound` (bound + 1), `counter + k < bound` and
         // `counter + k > bound` as `if (...) break` (bound - k, floored).
+        // `loop { if (!c) { break; } ... }` with no counter (CubeCL's
+        // rejection sampling: a hash redrawn until it lands in range): a loop
+        // that breaks, capped at the kingdom's MAX_LOOP_TRIP passes (every
+        // loop is bounded); the same computation wherever it ends sooner.
+        if normalise_test(&c).is_none() && !do_while && continuing.iter().all(|s| matches!(s, Statement::Emit(_))) {
+            return self.capped_loop(c, &body_stmts_all, test_pos, path, rung).map(Some);
+        }
         let (counter, bound) = normalise_test(&c).ok_or_else(|| format!("a loop test that is not a counter against a bound: {}", c.to_sexpr()))?;
         // The bound is evaluated once, so nothing it reads may change in the
         // loop's body (fresh28's `t0` is the enclosing loop's counter).
@@ -4334,6 +4374,51 @@ impl<'a> Ctx<'a> {
         Ok(Some(Tree::new(&row_name, st, kids)))
     }
 
+    /// A loop with no counter whose first statement is its break guard
+    /// (`c` the condition it goes on under): the tile loop of the next depth
+    /// bounded by MAX_LOOP_TRIP, its body the break block `if (!c) { break; }`
+    /// then the rest, conditional (no barrier in a loop that breaks).
+    fn capped_loop(&mut self, c: Tree, body: &[&Statement], test_pos: usize, path: &mut Vec<usize>, rung: &str) -> Result<Tree, String> {
+        let depth = [&self.tile_counter, &self.tile_counter2, &self.tile_counter3, &self.tile_counter4].iter().filter(|c| c.is_some()).count() + 1;
+        if depth > 4 {
+            return Err("a loop that breaks inside four tile loops (a fifth has no counter)".into());
+        }
+        let d: usize = rung[1..].parse().map_err(|_| format!("a loop at rung {rung}"))?;
+        // The break block's depth: an L0 or L1 loop's body opens at 2, any
+        // other one deeper than its rung (the table's loop.tilex_brk rows).
+        let b = if rung.starts_with('L') { (d + 1).max(2) } else { d + 1 };
+        if b > 5 {
+            return Err(format!("a loop that breaks at rung {rung} (too deep)"));
+        }
+        let body_rung = format!("C{b}");
+        let out_rung = if rung.starts_with('O') { return Err("a loop with no counter in the epilogue".into()) } else { rung.to_string() };
+        let cap = Tree::literal("literal.index", ty(self, "u32.xbound")?, crate::wgsl::render::MAX_LOOP_TRIP as f32);
+        let bound = Tree::new("bound.of_index", ty(self, "u32.boundx")?, vec![cap]);
+        let rest: Vec<Statement> = body.iter().skip(test_pos + 1).map(|s| (*s).clone()).collect();
+        let rest = naga::Block::from_vec(rest);
+        // The loop takes the tile counter of its depth (its body may hold tile loops).
+        let saved = (self.tile_counter.clone(), self.tile_counter2.clone(), self.tile_counter3.clone(), self.tile_counter4.clone());
+        let mine = Some(format!("local.capped@{}", path.iter().map(usize::to_string).collect::<Vec<_>>().join(".")));
+        match depth {
+            1 => self.tile_counter = mine,
+            2 => self.tile_counter2 = mine,
+            3 => self.tile_counter3 = mine,
+            _ => self.tile_counter4 = mine,
+        }
+        path.push(0);
+        let stmts = self.nested(|ctx, path| ctx.walk(&rest, path, &body_rung, test_pos + 1), path);
+        path.pop();
+        (self.tile_counter, self.tile_counter2, self.tile_counter3, self.tile_counter4) = saved;
+        let after = stmts?;
+        if after.iter().any(has_break) {
+            return Err("a second break in a loop with no counter".into());
+        }
+        let flag = ty(self, "bool.flag")?;
+        let stop = Tree::new("logic.not", flag, vec![self.value(&c)?]);
+        let brk = Tree::new(&format!("block.brk_B{b}"), ty(self, &format!("block.B{b}"))?, vec![self.block(Vec::new(), &body_rung)?, stop, self.block(after, &body_rung)?]);
+        Ok(Tree::new(&format!("loop.tilex_brk_{out_rung}"), self.stmt_ty(&out_rung)?, vec![bound, brk]))
+    }
+
 }
 
 /// A loop test as `(counter local, bound tree)`: `c < b`, `b > c`, `c <= b`
@@ -4605,9 +4690,12 @@ pub fn read_safe(source: &str, kingdom: &WgslKingdom) -> Result<SafeRead, String
 /// Read `source` into the safe grammar with every knob-dependent position
 /// left as the literal the kernel wrote.
 pub fn read_safe_literal(source: &str, kingdom: &WgslKingdom) -> Result<SafeRead, String> {
-    let grid = grid_header(source).ok_or("no `// grid x y bx by` header")?;
     let role = crate::wgsl::render::interface_of(source)?;
     let mut kernel = read(source)?;
+    // The grid: the `// grid x y bx by` header when the text has one (its
+    // block factors), else the module's own workgroup with 1 x 1 blocks.
+    let declared_wg = kernel.module.entry_points.first().ok_or("no entry point")?.workgroup_size;
+    let grid = grid_header(source).unwrap_or((declared_wg[0], declared_wg[1], 1, 1));
     // The interface's names as the kingdom's canonical roles (its input is
     // phi, its output h, its uniform cfg with the fields d, m, r_rows, r_off),
     // so the ownership proof and the safe rows read every interface alike.
@@ -5501,9 +5589,10 @@ mod tests {
         assert!(out.text.contains("var<storage, read_write> counter: atomic<u32>;") && out.text.contains("atomicAdd(&counter, "), "{}", out.text);
         validate_text(&out.text).unwrap_or_else(|e| panic!("{e}\n{}", out.text));
         crate::wgsl::check::check(&r.tree, &k, &r.role, &crate::wgsl::target::Target::recorded()).unwrap_or_else(|e| panic!("{e}"));
-        // Under the Gram's interface, which declares no atomic: a bug report naming the binding.
-        let e = read_safe(&src.replace("// interface gram_counter\n", ""), &k).err().unwrap_or_default();
-        assert!(e.contains("declares no atomic counter"), "{e}");
+        // Without the interface line the module's own interface is inferred:
+        // the same one (2026-10-14; it was a refusal under the Gram's assumed).
+        let inferred = read_safe(&src.replace("// interface gram_counter\n", ""), &k).unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!((inferred.role.name.as_str(), &inferred.tree), ("gram_counter", &r.tree));
     }
 
     /// A LET STALE AT ITS USE (2026-10-12, found reading the cosine

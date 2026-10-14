@@ -141,15 +141,22 @@ impl Role {
     pub fn interface(decl: Interface) -> Role {
         let Interface { name, bindings, uniform_var, uniform_struct, fields, input, output, guard, extra } = decl;
         let (name, uniform_var, uniform_struct, input, output, guard) = (name.as_str(), uniform_var.as_str(), uniform_struct.as_str(), input.as_str(), output.as_str(), guard.as_str());
-        let mut prologue = format!("struct {uniform_struct} {{ {} }};", fields.iter().map(|f| format!("{}: u32,", f.name)).collect::<Vec<_>>().join(" "));
+        // (A module with no uniform block has no struct line.)
+        let mut prologue = if uniform_struct.is_empty() { String::new() } else { format!("struct {uniform_struct} {{ {} }};", fields.iter().map(|f| format!("{}: u32,", f.name)).collect::<Vec<_>>().join(" ")) };
         for b in &bindings {
-            prologue.push_str(&format!("\n@group({}) @binding({}) var<{}> {}: {};", b.group, b.binding, b.space, b.name, b.ty));
+            if !prologue.is_empty() {
+                prologue.push('\n');
+            }
+            prologue.push_str(&format!("@group({}) @binding({}) var<{}> {}: {};", b.group, b.binding, b.space, b.name, b.ty));
         }
         let mut role = Role { name: name.into(), prologue, items: String::new(), per_kernel: Vec::new(), bindings, uniform_var: uniform_var.into(), uniform_struct: uniform_struct.into(), fields, input: input.into(), output: output.into(), guard: guard.into() };
         role.items = role.field("m");
         let pk = |name: &str, inputs: &[&str], output: &str, template: String| PerKernel { name: name.into(), inputs: inputs.iter().map(|s| s.to_string()).collect(), output: output.into(), template };
         let (i, o) = (input, output);
-        role.per_kernel = vec![
+        // The kingdom's Gram rows (phi, h, the fields' roles) for an interface
+        // that names an input and an output; an inferred interface without the
+        // Gram's field d has its generic rows only (`Role::inferred`).
+        role.per_kernel = if i.is_empty() && o.is_empty() { Vec::new() } else { vec![
             pk("load.phi", &["u32.index"], "f32.real", format!("{i}[{{0}}]")),
             pk("load.phi4", &["u32.index"], "vec4<f32>.real", format!("vec4<f32>({i}[{{0}}], {i}[{{0}} + 1u], {i}[{{0}} + 2u], {i}[{{0}} + 3u])")),
             pk("load.h", &["u32.index"], "f32.real", format!("{o}[{{0}}]")),
@@ -158,7 +165,7 @@ impl Role {
             pk("load.cfg_m", &[], "u32.count", role.field("m")),
             pk("load.cfg_r_rows", &[], "u32.count", role.field("r_rows")),
             pk("load.cfg_r_off", &[], "u32.index", role.field("r_off")),
-        ];
+        ] };
         // A storage atomic the interface declares (`atomic<u32>` or
         // `atomic<i32>` in a read_write buffer): its read-modify-writes, each
         // returning the old value, as per-kernel rows `atomic.<name>_<fun>`.
@@ -236,10 +243,14 @@ fn gram_interface() -> Interface {
 /// probe `atomic_storage`): `counter: atomic<u32>` at binding 3, its
 /// read-modify-writes as per-kernel rows.
 pub fn gram_counter_role() -> Role {
+    Role::interface(gram_counter_interface())
+}
+
+fn gram_counter_interface() -> Interface {
     let mut decl = gram_interface();
     decl.name = "gram_counter".into();
     decl.bindings.push(Binding { name: "counter".into(), group: 0, binding: 3, space: "storage, read_write".into(), ty: "atomic<u32>".into() });
-    Role::interface(decl)
+    decl
 }
 
 /// A second interface (2026-10-12), UltraDim's exact re-score: a dense
@@ -267,6 +278,94 @@ pub fn cosine_role() -> Role {
     })
 }
 
+/// The name of a role inferred from its module ([`Role::inferred`]).
+pub const INFERRED: &str = "inferred";
+
+/// The uniform fields' kingdom roles: a field of one of these names takes it.
+pub const FIELD_ROLES: [&str; 4] = ["d", "m", "r_rows", "r_off"];
+
+/// The statement rungs a store row is typed at.
+pub const STORE_RUNGS: [&str; 17] = ["L0", "L1", "L2", "L3", "L4", "L5", "C0", "C1", "C2", "C3", "C4", "C5", "O0", "O1", "O2", "O3", "O4"];
+
+/// The kingdom's value dual of an element type (`f32` → `f32.real`).
+pub fn elem_dual(elem: &str) -> Option<String> {
+    let form = |s: &str| match s {
+        "f32" => Some("real"),
+        "u32" => Some("index"),
+        "i32" => Some("int"),
+        _ => None,
+    };
+    if let Some(f) = form(elem) {
+        return Some(format!("{elem}.{f}"));
+    }
+    let inner = elem.strip_prefix("vec")?;
+    let (n, rest) = inner.split_at(1);
+    let s = rest.strip_prefix('<')?.strip_suffix('>')?;
+    (matches!(n, "2" | "3" | "4")).then(|| form(s).map(|f| format!("vec{n}<{s}>.{f}"))).flatten()
+}
+
+impl Role {
+    /// THE INTERFACE INFERRED FROM THE MODULE (docs/PLAN_general_safety_layer.md,
+    /// Revision 1, order (a)): the bindings as the module declares them, the
+    /// uniform block's fields (one named for a kingdom role takes it), and
+    /// the rows of each binding's use: a load of every storage binding at any
+    /// index, a store of every output at any index at every statement rung
+    /// (layer 7 of the checker proves its write set), a field's value. A
+    /// module with the Gram's field `d` gives its first read-only and first
+    /// written `array<f32>` the kingdom's phi and h rows. A module that
+    /// declares exactly a declared interface is that interface (the Gram's
+    /// kernels read as they did when the Gram's was assumed).
+    pub fn inferred(i: &crate::wgsl::interface::ModuleInterface) -> Role {
+        use crate::wgsl::interface::Use;
+        let bindings: Vec<Binding> = i.bindings.iter().map(|b| Binding { name: b.name.clone(), group: b.group, binding: b.binding, space: b.space.clone(), ty: b.ty.clone() }).collect();
+        let (uniform_var, uniform_struct, fields) = match &i.uniform {
+            Some(u) => (u.var.clone(), u.struct_name.clone(), u.fields.iter().map(|(f, _)| Field { name: f.clone(), role: if FIELD_ROLES.contains(&f.as_str()) { f.clone() } else { String::new() } }).collect::<Vec<_>>()),
+            None => (String::new(), String::new(), Vec::new()),
+        };
+        let field = |r: &str| fields.iter().find(|f| f.role == r).map(|f| format!("{uniform_var}.{}", f.name));
+        let gram_rows = field("d").is_some();
+        let f32_array = |b: &&crate::wgsl::interface::BindingUse| b.elem.as_deref() == Some("f32") && b.ty.starts_with("array<");
+        let input = if gram_rows { i.inputs().find(f32_array).map(|b| b.name.clone()).unwrap_or_default() } else { String::new() };
+        let output = if gram_rows { i.outputs().find(f32_array).map(|b| b.name.clone()).unwrap_or_default() } else { String::new() };
+        let guard = match (field("r_rows"), field("d"), field("r_off")) {
+            (Some(r), Some(d), Some(o)) => format!("({{row}}) < {r} && ({{col}}) < {d} && ({o} + ({{row}})) < {d}"),
+            (Some(r), Some(d), None) => format!("({{row}}) < {r} && ({{col}}) < {d}"),
+            (None, Some(d), _) => format!("({{col}}) < {d}"),
+            _ => String::new(),
+        };
+        let pk = |name: String, inputs: Vec<String>, output: String, template: String| PerKernel { name, inputs, output, template };
+        let mut extra = Vec::new();
+        for b in &i.bindings {
+            if b.role == Use::Parameter || b.name == input || b.name == output {
+                continue;
+            }
+            let Some(dual) = b.elem.as_deref().and_then(elem_dual) else { continue };
+            extra.push(pk(format!("load.{}", b.name), vec!["u32.index".into()], dual.clone(), format!("{}[{{0}}]", b.name)));
+            if b.role == Use::Output {
+                for r in STORE_RUNGS {
+                    extra.push(pk(format!("store.{}_{r}", b.name), vec!["u32.index".into(), dual.clone()], format!("stmt.{r}"), format!("{}[{{0}}] = {{1}};", b.name)));
+                }
+            }
+        }
+        if let Some(u) = &i.uniform {
+            for (f, ty) in &u.fields {
+                if FIELD_ROLES.contains(&f.as_str()) && gram_rows {
+                    continue;
+                }
+                let Some(dual) = elem_dual(ty).map(|d| if d == "u32.index" { "u32.count".to_string() } else { d }) else { continue };
+                extra.push(pk(format!("load.{}_{f}", u.var), Vec::new(), dual, format!("{}.{f}", u.var)));
+            }
+        }
+        let decl = Interface { name: INFERRED.into(), bindings, uniform_var, uniform_struct, fields, input, output, guard, extra };
+        for known in [gram_interface(), gram_counter_interface()] {
+            if (Interface { name: INFERRED.into(), ..known.clone() }) == decl {
+                return Role::interface(known);
+            }
+        }
+        Role::interface(decl)
+    }
+}
+
 /// The declared interfaces by name (a kernel names its own in a
 /// `// interface <name>` header line; none is the Gram's).
 pub fn role_named(name: &str) -> Result<Role, String> {
@@ -278,19 +377,20 @@ pub fn role_named(name: &str) -> Result<Role, String> {
     }
 }
 
-/// The interface a kernel text declares (`// interface <name>`), the Gram's
-/// when it declares none.
+/// The interface a kernel text declares (`// interface <name>`, kept for
+/// the texts written with one), else the one its module gives
+/// ([`Role::inferred`]).
 pub fn interface_of(source: &str) -> Result<Role, String> {
     match source.lines().map(str::trim).find_map(|l| l.strip_prefix("// interface ")) {
         Some(name) => role_named(name.trim()),
-        None => Ok(gram_role()),
+        None => Ok(Role::inferred(&crate::wgsl::interface::infer_text(source)?)),
     }
 }
 
 /// The header line naming a kernel's interface (none for the Gram's, so a
 /// Gram kernel's text is what it was before interfaces were declared).
 pub fn interface_header(role: &Role) -> String {
-    if role.name == "gram" { String::new() } else { format!("// interface {}\n", role.name) }
+    if role.name == "gram" || role.name == INFERRED { String::new() } else { format!("// interface {}\n", role.name) }
 }
 
 /// The shipped Gram kernel as a typed tree: the seed of the population and
@@ -1304,9 +1404,10 @@ impl<'a> Renderer<'a> {
                 Ok(format!("    {a}[{}] = {};\n", masked_to(&self.value(&kids[1], scope)?, len), self.value(&kids[2], scope)?))
             }
             other => {
-                if let Some(p) = self.per_kernel.get(other) {
+                // (A role's store at a statement rung is named with its rung.)
+                if let Some(p) = self.per_kernel.get(s.name.as_str()).or_else(|| self.per_kernel.get(other)) {
                     let d = self.dual(s.ty)?;
-                    if d.dual != "stmt.stmt" {
+                    if d.slot != "stmt" {
                         return Err(format!("{other} is a value row used as a statement"));
                     }
                     return Ok(format!("    {}\n", self.fill(p, s, scope)?));
@@ -2385,6 +2486,12 @@ fn items_passes(bound: Option<&Tree>) -> f64 {
 /// mapped to `loop.items_bounded`, a rung-specific store (`store.h_L1`) to
 /// `store.h_safe`, a rung-specific wg set to `wg.set_safe`. A WGSL kingdom
 /// name passes through unchanged.
+/// Whether a tree writes a mirror cell (the symmetric half, h[col * d + row]):
+/// its kernel runs with the whole H in one band (`// mode full`).
+pub fn writes_mirror(t: &Tree) -> bool {
+    t.name.starts_with("safe.mirror_of") || t.name.starts_with("store.h_mirror") || t.kids.iter().any(writes_mirror)
+}
+
 pub fn safe_base(name: &str) -> &str {
     for rung in ["_L0", "_L1", "_L2", "_L3", "_L4", "_L5", "_C0", "_C1", "_C2", "_C3", "_C4", "_C5", "_O0", "_O1", "_O2", "_O3", "_O4", "_B1", "_B2", "_B3", "_B4", "_B5"] {
         if let Some(stem) = name.strip_suffix(rung) {

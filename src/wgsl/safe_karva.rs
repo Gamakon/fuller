@@ -1501,6 +1501,38 @@ mod tests {
         assert_eq!((valid, owned, axis_swaps), (N, N, 0), "every mutant validates, keeps the thread's cell and keeps its thread ids and axes; the first failures:\n{}", failures.iter().take(3).cloned().collect::<Vec<_>>().join("\n----\n"));
     }
 
+    /// NLUCA'S SIX KERNELS, AS CUBECL EMITS THEM (2026-10-14): no `// interface`
+    /// or `// grid` line; each parses into the kingdom with the interface its
+    /// module gives (every binding read_write, the output the one it
+    /// stores), encodes into a chromosome, decodes back to the same tree,
+    /// renders to text naga validates, and passes every layer of the checker,
+    /// layer 7 (write sets) under nluca's dispatch contract.
+    #[test]
+    fn nlucas_six_kernels_parse_survive_the_genome_render_and_pass_every_layer() {
+        let k = WgslKingdom::load_safe();
+        let dir = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/corpus/nluca"));
+        let contract = crate::wgsl::safety::Contract::parse(&std::fs::read_to_string(dir.join("nluca.contract")).unwrap()).unwrap();
+        for i in 1..=6 {
+            let name = format!("k{i:02}");
+            let src = std::fs::read_to_string(dir.join(format!("{name}.wgsl"))).unwrap();
+            let r = read_safe(&src, &k).unwrap_or_else(|e| panic!("{name} does not read: {e}"));
+            assert_eq!(r.role.name, crate::wgsl::render::INFERRED, "{name}");
+            let tree = r.tree;
+            let h = 128usize;
+            let slots = split(&tree, h).unwrap().tail.len().div_ceil(8) * 8;
+            let c = encode(&tree, h, slots, 7013).unwrap_or_else(|e| panic!("{name} does not encode: {e}"));
+            let pset = homeotic::pset_with_hrefs(&c.pset, slots);
+            let decoded: Vec<String> = c.genes.iter().map(|(hd, tl)| karva_to_terms_generic(hd, tl, &pset)).collect::<Result<_, _>>().unwrap();
+            let back = build(&unfold_decoded(&decoded, c.folded.filled).unwrap(), &k, &r.role).unwrap();
+            assert!(back == tree, "{name}: the genome decodes to another tree: {}", crate::wgsl::render::first_difference(&tree, &back).unwrap_or_default());
+            let text = render_tree_with(&tree, &k, &r.role).unwrap_or_else(|e| panic!("{name} does not render: {e}")).text;
+            validate_text(&text).unwrap_or_else(|e| panic!("{name}: {e}\n{text}"));
+            let checker = crate::wgsl::check::Checker::with_contract(&k, &r.role, &crate::wgsl::target::Target::recorded(), contract.clone());
+            checker.check(&tree).unwrap_or_else(|e| panic!("{name}: {e}"));
+            println!("{name}: {} nodes, {} genes, rendered, every layer passed", tree.size(), c.genes.len());
+        }
+    }
+
     /// AST TO GENOME TO AST (Andrew, 2026-10-13): the 1,000 seeded sampler
     /// trees of the reader's completeness test, each encoded into a
     /// chromosome (head 128, 128 tail slots, the dumps' layout), every gene

@@ -1,0 +1,16 @@
+# The Gram problem's dispatch contract (docs/PLAN_general_safety_layer.md,
+# Revision 1 §1): what the band program dispatches. The workgroup size is the
+# kernel's own. The ranges are the checker's worst shape (render::WORST_D,
+# WORST_M, WORST_ROWS): d up to 8,192 columns, m up to 65,536 items, a band of
+# up to 8,192 rows starting at any row below d. Two-dimensional dispatch.
+workgroups x 1 65535
+workgroups y 1 65535
+workgroups z 1 1
+param cfg.d 1 8192
+param cfg.m 0 65536
+param cfg.r_rows 1 8192
+param cfg.r_off 0 8192
+# A kernel that writes the whole H (its text says `// mode full`; agreed with
+# the harness 2026-10-14): one row band, r_off 0, r_rows d, h the whole d x d
+# accumulator; only the item range is banded.
+full cfg.r_off 0 0

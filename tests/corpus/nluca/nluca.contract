@@ -1,0 +1,14 @@
+# The six kernels beside this file are nluca's step and pre-activation
+# kernels as CubeCL 0.6 emits them for wgpu (Metal), copied one a file from
+# noctiluca-dev/results/nluca/step_kernels_emitted.wgsl (its header maps every
+# binding). This is their dispatch contract (noctiluca-dev rust/nluca/src/gpu.rs):
+# one thread a row, a 1-D dispatch of 256-wide workgroups over a band of rows.
+# The width (ints[0]) and the band's first row (offset[0]) are at most 2^20;
+# ints and offset are buffer_5/buffer_6 in the tabled kernels and
+# buffer_4/buffer_5 in the wireless and windowed ones.
+workgroups x 1 4096
+workgroups y 1 1
+workgroups z 1 1
+param buffer_4_global[0] 0 1048576
+param buffer_5_global[0] 0 1048576
+param buffer_6_global[0] 0 1048576

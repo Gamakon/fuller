@@ -12,6 +12,13 @@
 //! | 4 barrier uniformity | a barrier only where every condition it depends on (an `if`, a loop's trip count, a `break` or `continue` guard, an earlier conditional `return`) is workgroup-uniform |
 //! | 5 adapter | the workgroup's shape and its workgroup memory within the target's limits; subgroup and float features the target has |
 //! | 6 bounded loops | every loop's trip count bounded: a literal, a binding, or a computed bound, which renders capped at MAX_LOOP_TRIP (2026-10-12: a uniform one too) and so is known; no `u32` wrap in the arithmetic of a loop's bound (a wrapped bound runs the loop to its cap) |
+//! | 7 write sets and ordering | the rendered kernel through the general safety layer (`safety.rs`, under the problem's dispatch contract): every output store's index affine and wrap-free, the write sets of every store site disjoint across invocations (the thread's owned cell is one instance), no read of another invocation's output cell, workgroup memory ordered by barriers, barriers and subgroup operations in uniform control |
+//!
+//! Since 2026-10-14 the grammar no longer requires a store's index to be the
+//! `cell` dual's owned cell, nor a read of h to be at it: layer 7 proves the
+//! write set of any store row from the kernel itself (Revision 1 of
+//! `docs/PLAN_general_safety_layer.md`); the `cell` rows remain the typed way
+//! to spell an owned cell, and their stores are proved like any other.
 //!
 //! Uniform values (layer 4) follow WGSL's rule, conservatively: literals, the
 //! uniform buffer `cfg`, `workgroup_id`, `num_workgroups`, the subgroup size
@@ -52,6 +59,7 @@ use naga::valid::Capabilities;
 use crate::geneframe::Ty;
 use crate::wgsl::loader::WgslKingdom;
 use crate::wgsl::render::{array_len, dual_ty, grid_of, parr_var, register_name, safe_base, snap, wgmem_var, workgroup_dim, workgroup_plan, Grid, Role, Tree, BLK, UNROLL, WORST_D, WORST_M, WORST_ROWS};
+use crate::wgsl::safety::Contract;
 use crate::wgsl::target::Target;
 
 /// The checker's layers, in the order they run.
@@ -63,10 +71,11 @@ pub enum Layer {
     Uniformity = 4,
     Adapter = 5,
     Bounded = 6,
+    Safety = 7,
 }
 
 impl Layer {
-    pub const ALL: [Layer; 6] = [Layer::Typed, Layer::Grammar, Layer::Range, Layer::Uniformity, Layer::Adapter, Layer::Bounded];
+    pub const ALL: [Layer; 7] = [Layer::Typed, Layer::Grammar, Layer::Range, Layer::Uniformity, Layer::Adapter, Layer::Bounded, Layer::Safety];
 
     pub fn number(self) -> u8 {
         self as u8
@@ -80,6 +89,7 @@ impl Layer {
             Layer::Uniformity => "barrier uniformity",
             Layer::Adapter => "adapter limits",
             Layer::Bounded => "bounded loops",
+            Layer::Safety => "write sets and ordering",
         }
     }
 }
@@ -114,6 +124,12 @@ pub struct Checker<'a> {
     target: Target,
     /// Every row's signatures by name: the kingdom's and the role's.
     rows: HashMap<String, Vec<(Vec<Ty>, Ty)>>,
+    role: Role,
+    table: crate::wgsl::table::FunctionTable,
+    /// The dispatch contract layer 7 proves under ([`Contract::for_role`] by default).
+    contract: Contract,
+    /// The role's per-kernel statement rows (an output's store).
+    role_stores: BTreeSet<String>,
 }
 
 /// A kernel's workgroup arrays: variable name to element type and length.
@@ -288,22 +304,6 @@ fn tile_counter_depth(base: &str) -> Option<usize> {
     })
 }
 
-/// Whether a subtree is a row or a cell the thread owns along `axis` (`row`
-/// or `col`): built from the thread's own block origin by the clamped
-/// offsets of the safe rows. A fallback renders the thread's own origin
-/// (`render.rs`, 2cd3c98), so it is owned.
-fn owned_axis(t: &Tree, axis: &str) -> bool {
-    let base = safe_base(&t.name);
-    if base == "fallback" || base.starts_with(&format!("safe.thread_{axis}")) {
-        return true;
-    }
-    // An offset of the thread's origin (or of a fallback, which renders it);
-    // an offset of an offset leaves the block (2026-10-12).
-    if base.starts_with(&format!("safe.{axis}_plus")) {
-        return t.kids.first().is_some_and(|k| k.name == "fallback" || safe_base(&k.name).starts_with(&format!("safe.thread_{axis}")));
-    }
-    false
-}
 
 /// Whether a row's value is arithmetic over its children (a wrap in a
 /// child lands where the row's value lands), not a load, an array access, a
@@ -324,9 +324,6 @@ fn clamps_child(name: &str, i: usize) -> bool {
     (arith && (matches!(op, "min" | "and") || (matches!(op, "clamp_to" | "clamp" | "mod") && i == 0))) || ((base.starts_with("safe.row_plus") || base.starts_with("safe.col_plus")) && i >= 1)
 }
 
-fn owned_cell(t: &Tree) -> bool {
-    t.name == "fallback" || (safe_base(&t.name) == "safe.cell_of" && t.kids.len() == 2 && owned_axis(&t.kids[0], "row") && owned_axis(&t.kids[1], "col"))
-}
 
 /// The parts of a loop row, or None for a statement that is not a loop.
 fn loop_parts(s: &Tree) -> Option<LoopParts<'_>> {
@@ -412,7 +409,13 @@ impl<'a> Checker<'a> {
                 rows.entry(p.name.clone()).or_default().push((ins, out));
             }
         }
-        Checker { kingdom, target: *target, rows }
+        let role_stores = role.per_kernel.iter().filter(|p| dual_ty(kingdom, &p.output).ok().and_then(|t| kingdom.dual(t)).is_some_and(|d| d.slot == "stmt")).map(|p| p.name.clone()).collect();
+        Checker { kingdom, target: *target, rows, role: role.clone(), table: crate::wgsl::table::FunctionTable::safe(), contract: Contract::for_role(role), role_stores }
+    }
+
+    /// The checker under a dispatch contract the problem's data gives.
+    pub fn with_contract(kingdom: &'a WgslKingdom, role: &Role, target: &Target, contract: Contract) -> Checker<'a> {
+        Checker { contract, ..Checker::new(kingdom, role, target) }
     }
 
     /// Every layer in order; the first failure.
@@ -422,7 +425,30 @@ impl<'a> Checker<'a> {
         self.range(tree)?;
         let nonuniform = self.uniformity(tree)?;
         self.adapter(tree)?;
-        self.bounded(tree, &nonuniform)
+        self.bounded(tree, &nonuniform)?;
+        self.safety(tree)
+    }
+
+    // ---------------------------------------------------------------- layer 7
+
+    /// Layer 7: the rendered kernel proved by the general safety layer under
+    /// the checker's contract (the full-H contract for a kernel that writes
+    /// mirrors, `// mode full`).
+    pub fn safety(&self, tree: &Tree) -> Result<(), Illegal> {
+        let fail = |reason: &'static str, detail: String| Err(illegal(Layer::Safety, reason, detail));
+        let rendered = match crate::wgsl::render::Renderer::new(self.kingdom, &self.table, &self.role).kernel(tree) {
+            Ok(r) => r,
+            Err(e) => return fail("kernel_does_not_render", e),
+        };
+        let module = match naga::front::wgsl::parse_str(&rendered.text) {
+            Ok(m) => m,
+            Err(e) => return fail("kernel_does_not_parse", e.emit_to_string(&rendered.text)),
+        };
+        let contract = if crate::wgsl::render::writes_mirror(tree) { self.contract.full() } else { self.contract.clone() };
+        match crate::wgsl::safety::check_module(&module, &contract) {
+            Ok(_) => Ok(()),
+            Err(e) => fail(e.rule, e.detail),
+        }
     }
 
     fn dual_name(&self, ty: Ty) -> String {
@@ -783,10 +809,8 @@ impl<'a> Checker<'a> {
                     _ => {}
                 }
             }
-            "store.h_safe" => {
-                if cx.mode == Mode::Grammar && !k.first().is_some_and(owned_cell) {
-                    cx.fail(Layer::Grammar, "store_not_owned_cell", format!("{} at {}: not a cell the thread owns", s.name, k.first().map(brief).unwrap_or_default()));
-                }
+            // A store of h at a cell (layer 7 proves its write set).
+            "store.h_safe" | "store.h_mirror" => {
                 if let Some(cell) = k.first() {
                     cx.site = Site::StoreCell;
                     self.value(cell, cx);
@@ -822,13 +846,18 @@ impl<'a> Checker<'a> {
                 self.values(s, cx);
             }
             "stmt.discard_u" | "stmt.discard_i" => self.values(s, cx),
+            // A role's store of an output at any index: layer 7 proves its write set.
+            _ if self.role_stores.contains(&s.name) => {
+                if let Some(idx) = k.first() {
+                    cx.site = Site::StoreCell;
+                    self.value(idx, cx);
+                    cx.site = Site::Other;
+                }
+                k.iter().skip(1).filter(|v| !self.is_stmt_level(v)).for_each(|v| self.value(v, cx));
+            }
             _ => {
                 if cx.mode == Mode::Grammar {
-                    if base.starts_with("store.") {
-                        cx.fail(Layer::Grammar, "store_not_owned_cell", format!("{}: a store outside the owned-cell row", s.name));
-                    } else {
-                        cx.fail(Layer::Grammar, "statement_not_in_safe_grammar", brief(s));
-                    }
+                    cx.fail(Layer::Grammar, "statement_not_in_safe_grammar", brief(s));
                 }
                 self.values(s, cx);
             }
@@ -983,23 +1012,13 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// A value in the walk's mode: ranged in layer 3. (The grammar no longer
+    /// judges a value: a read of h is layer 7's, no read of another
+    /// invocation's cell.)
     fn value(&self, v: &Tree, cx: &mut Cx) {
-        match cx.mode {
-            Mode::Grammar => self.grammar_value(v, cx),
-            Mode::Range => {
-                self.iv(v, cx);
-            }
-            Mode::Uniform | Mode::Bounded => {}
+        if cx.mode == Mode::Range {
+            self.iv(v, cx);
         }
-    }
-
-    fn grammar_value(&self, v: &Tree, cx: &mut Cx) {
-        match safe_base(&v.name) {
-            "load.h" => cx.fail(Layer::Grammar, "read_of_unowned_cell", format!("{}: h read at any index (another thread's cell)", brief(v))),
-            "load.h_safe" if !v.kids.first().is_some_and(owned_cell) => cx.fail(Layer::Grammar, "read_of_unowned_cell", format!("{}: h read at a cell the thread does not own", brief(v))),
-            _ => {}
-        }
-        v.kids.iter().for_each(|k| self.grammar_value(k, cx));
     }
 
     /// Whether a value is workgroup-uniform (WGSL's rule, conservatively).
@@ -1552,19 +1571,22 @@ mod tests {
 
         // A store to a cell the thread does not own: the role's `store.h`
         // at any index. Its type is the unsafe kingdom's statement, so
-        // layer 1 refuses it; the grammar names the store on its own.
+        // layer 1 refuses it; layer 7 names the race on its own (every
+        // thread writes h[0]; since 2026-10-14 the grammar no longer judges
+        // a store's index, the write-set proof does).
         let mut shared = gram_shipped_safe_tree(&k).unwrap();
         shared.kids[2].kids[0].kids[1].kids[0] = Tree::new("store.h", ty(&k, "stmt.stmt"), vec![lit_i(0.0), Tree::literal("literal.real", ty(&k, "f32.real"), 1.0)]);
         let e = layer_of(&checker, &shared);
         assert_eq!((e.layer, e.reason), (Layer::Typed, "signature_mismatch"), "{e}");
-        let e = checker.grammar(&shared).unwrap_err();
-        assert_eq!((e.layer, e.reason), (Layer::Grammar, "store_not_owned_cell"), "{e}");
+        let e = checker.safety(&shared).unwrap_err();
+        assert_eq!((e.layer, e.reason), (Layer::Safety, "write_sets_overlap"), "{e}");
 
         // A read of another thread's cell: the role's `load.h` at any index
-        // is typed in the safe kingdom (the sampler reaches it).
+        // is typed in the safe kingdom (the sampler reaches it); layer 7
+        // refuses it (cell 0 is thread 0's).
         let other = with_body(&k, one_l0(Tree::new("reg.set_f_L0", ty(&k, "stmt.L0"), vec![Tree::new("reg.f1", ty(&k, "reg<f32>.real"), vec![]), Tree::new("load.h", ty(&k, "f32.real"), vec![lit_i(0.0)])])));
         let e = layer_of(&checker, &other);
-        assert_eq!((e.layer, e.reason), (Layer::Grammar, "read_of_unowned_cell"), "{e}");
+        assert_eq!((e.layer, e.reason), (Layer::Safety, "output_read_of_another_invocations_cell"), "{e}");
 
         // The item counter read before the item loop is the constant 0, as
         // the rows say and the renderer writes: legal.
