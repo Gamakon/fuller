@@ -876,7 +876,12 @@ impl<'a> Renderer<'a> {
         text.push_str(&self.role.prologue);
         text.push('\n');
         if scope.wg.is_empty() {
-            text.push_str(&format!("var<workgroup> wg_a: array<f32, {WGMEM_LEN}>;\nvar<workgroup> wg_b: array<f32, {WGMEM_LEN}>;\nvar<workgroup> wg_va: array<vec4<f32>, {WGVEC_LEN}>;\nvar<workgroup> wg_vb: array<vec4<f32>, {WGVEC_LEN}>;\n"));
+            // The default workgroup arrays, each only when the body names it.
+            for (var, decl) in [("wg_a", format!("array<f32, {WGMEM_LEN}>")), ("wg_b", format!("array<f32, {WGMEM_LEN}>")), ("wg_va", format!("array<vec4<f32>, {WGVEC_LEN}>")), ("wg_vb", format!("array<vec4<f32>, {WGVEC_LEN}>"))] {
+                if names_word(&body, var) {
+                    text.push_str(&format!("var<workgroup> {var}: {decl};\n"));
+                }
+            }
         } else {
             for (var, (elem, len)) in &scope.wg {
                 text.push_str(&format!("var<workgroup> {var}: array<{elem}, {len}>;\n"));
@@ -921,7 +926,7 @@ impl<'a> Renderer<'a> {
         // 32 f32, 16 vec4, 32 u32, 8 bool registers; six f32, two vec4, three
         // u32 and two bool private arrays.
         text.push_str(&lets);
-        text.push_str(&register_declarations());
+        text.push_str(&register_declarations_for(&body));
         text.push_str(&body);
         text.push_str("}\n");
         Ok(Rendered { text, grid, helpers: scope.helpers, masked: scope.masked })
@@ -2715,6 +2720,40 @@ pub fn register_declarations() -> String {
     out.push_str("    var t: u32 = 0u; var k: u32 = 0u; var k2: u32 = 0u; var k3: u32 = 0u; var k4: u32 = 0u;\n");
     out.push_str("    var pa: array<f32, 64>; var pb: array<f32, 64>; var pc: array<f32, 64>; var pd: array<f32, 64>; var pe: array<f32, 64>; var pf: array<f32, 64>;\n");
     out.push_str("    var pv: array<vec4<f32>, 16>; var pw: array<vec4<f32>, 16>; var px: array<vec4<f32>, 16>; var py: array<vec4<f32>, 16>; var pi: array<u32, 16>; var pj: array<u32, 16>; var pk: array<u32, 16>; var pm: array<bool, 16>; var pn: array<bool, 16>; var pq: array<vec2<f32>, 16>; var pr: array<vec2<f32>, 16>;\n");
+    out
+}
+
+/// Whether `text` names the identifier `name` (a whole word: no identifier
+/// character on either side).
+pub fn names_word(text: &str, name: &str) -> bool {
+    let ident = |c: char| c.is_ascii_alphanumeric() || c == '_';
+    let mut from = 0;
+    while let Some(i) = text[from..].find(name) {
+        let at = from + i;
+        let before = text[..at].chars().next_back();
+        let after = text[at + name.len()..].chars().next();
+        if !before.is_some_and(ident) && !after.is_some_and(ident) {
+            return true;
+        }
+        from = at + name.len();
+    }
+    false
+}
+
+/// THE DECLARATIONS A KERNEL USES (2026-10-14: every kernel declared all 64
+/// f32, 32 vec4, 64 u32 registers, 16 bools, 16 i32s, 8 vec4<u32>s, six
+/// matrices, the counters and 17 private arrays, zero-initialised per
+/// thread): of [`register_declarations`], each variable `body` names. One
+/// the body never names is never read or written, so leaving it out
+/// changes no value.
+pub fn register_declarations_for(body: &str) -> String {
+    let mut out = String::new();
+    for decl in register_declarations().split(';').map(str::trim).filter(|d| !d.is_empty()) {
+        let Some(name) = decl.strip_prefix("var ").and_then(|r| r.split(':').next()).map(str::trim) else { continue };
+        if names_word(body, name) {
+            out.push_str(&format!("    {decl};\n"));
+        }
+    }
     out
 }
 
