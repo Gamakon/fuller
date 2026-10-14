@@ -3079,6 +3079,17 @@ fn sample_with(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, s
             inside & 4 == 0 || !self.rows[i].name.starts_with("subgroup.")
         }
 
+        /// Whether `kids` of row `i` are a put whose value reads the array
+        /// it writes: between the put's barriers a thread would read an
+        /// element another thread writes (2 of 1,000 random kernels, seeds
+        /// 79 and 545, 2026-10-14).
+        fn put_reads_its_array(&self, i: usize, kids: &[Tree]) -> bool {
+            fn holds(t: &Tree, a: &Tree) -> bool {
+                t == a || t.kids.iter().any(|k| holds(k, a))
+            }
+            safe_base(&self.rows[i].name) == "wg.put" && kids.len() == 3 && holds(&kids[2], &kids[0])
+        }
+
         /// Whether kid `k` of row `i` is drawn under the no-continue rule: a
         /// conditional block of an L-rung statement, and anything under one
         /// up to a nested loop (whose continues are its own).
@@ -3179,6 +3190,17 @@ fn sample_with(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, s
                         return self.grow(demand, depth, need, no_cont, inside, state);
                     }
                 }
+                // A put's value drawn again until it reads another array (or
+                // none), then the node.
+                for attempt in 0..8 {
+                    if !self.put_reads_its_array(i, &kids) {
+                        break;
+                    }
+                    kids[2] = self.grow(r.inputs[2], self.redraw_depth(depth, attempt), self.path_need(which, carry == Some(2), i, 2), self.kid_no_cont(i, 2, no_cont), self.kid_inside(i, 2, inside), state);
+                }
+                if self.put_reads_its_array(i, &kids) {
+                    return self.grow(demand, depth, need, no_cont, inside, state);
+                }
                 return Tree::new(&r.name, demand, kids);
             }
             let pick_terminal = depth >= self.max_depth || functions.is_empty() || (!terminals.is_empty() && next(state).is_multiple_of(3));
@@ -3220,6 +3242,15 @@ fn sample_with(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, s
                 if kids[0] == kids[1] {
                     return self.grow(demand, depth, need, no_cont, inside, state);
                 }
+            }
+            for attempt in 0..8 {
+                if !self.put_reads_its_array(i, &kids) {
+                    break;
+                }
+                kids[2] = self.grow(r.inputs[2], self.redraw_depth(depth, attempt), self.kid_need(i, 2), self.kid_no_cont(i, 2, no_cont), self.kid_inside(i, 2, inside), state);
+            }
+            if self.put_reads_its_array(i, &kids) {
+                return self.grow(demand, depth, need, no_cont, inside, state);
             }
             Tree::new(&r.name, demand, kids)
         }
