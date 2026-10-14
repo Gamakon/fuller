@@ -1992,13 +1992,21 @@ mod tests {
     }
 
     /// A dead zero-fill is dropped and nothing else changes: the child's
-    /// text is the parent's without those lines, and it passes the check.
+    /// text is the parent's without those lines, and it passes the check
+    /// when the parent does (a parent with a race of its own, popB_g080's
+    /// r19 writing wg_va[64u] from every thread, gives a child that
+    /// inherits it; those parents are counted, not used).
     #[test]
     fn a_dead_zero_fill_is_dropped_and_the_child_checks() {
         let k = WgslKingdom::load_safe();
-        let mut fired = 0usize;
+        let (mut fired, mut refused) = (0usize, Vec::new());
         for (name, t) in corpus(&k) {
-            for site in drop_zero_fill_sites(&t) {
+            let sites = drop_zero_fill_sites(&t);
+            if !sites.is_empty() && crate::wgsl::knob::check(&t, &k).is_err() {
+                refused.push(name);
+                continue;
+            }
+            for site in sites {
                 let child = drop_zero_fill(&t, &site, &k).unwrap();
                 let (a, b) = (render_tree(&t, &k).unwrap().text, render_tree(&child, &k).unwrap().text);
                 assert!(b.lines().count() < a.lines().count(), "{name} {}: nothing dropped", site.what);
@@ -2008,6 +2016,7 @@ mod tests {
                 fired += 1;
             }
         }
+        println!("dead zero-fills: {fired} dropped; parents the checker refuses: {refused:?}");
         assert!(fired > 0);
     }
 

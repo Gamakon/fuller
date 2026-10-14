@@ -520,6 +520,16 @@ struct An<'m> {
     wg_ix: HashMap<String, usize>,
     wg_open: BTreeSet<usize>,
     wg_pairs: BTreeSet<(usize, usize)>,
+    /// Per workgroup pair: the loop counters equal in both invocations (the
+    /// pair met in one pass of a uniform loop every pass of which crosses a
+    /// workgroup barrier: both invocations are in that pass).
+    wg_equal: BTreeMap<(usize, usize), BTreeSet<u32>>,
+    /// The enclosing loops (innermost last): their uniform counters, whether
+    /// every pass crosses a workgroup barrier, and, in the loop-carried walk
+    /// of the body before its first barrier, the accesses still open from the
+    /// pass before (a pair with one of them is two passes: counters one step
+    /// apart).
+    loops: Vec<(Vec<u32>, bool, BTreeSet<usize>)>,
     errors: Vec<Unsafe>,
     frames: Vec<Frame<'m>>,
     next_frame: usize,
@@ -887,6 +897,12 @@ impl<'m> An<'m> {
                     _ => k,
                 };
                 let facts = self.facts.clone();
+                // (A mask or a remainder that cannot change its operand, a
+                // negative coefficient among its terms: `(255u - lid.x) & 1023u`.)
+                let (xl, xh) = self.range(&x, &facts);
+                if matches!(op, B::And | B::Modulo) && xl >= 0 && xh < c {
+                    return Abs::Lin(x);
+                }
                 if x.t.values().all(|p| p.nonneg(&self.syms)) {
                     if let Some((h, l)) = self.split(&x, &[], c, &facts) {
                         return Abs::Lin(if matches!(op, B::Divide | B::ShiftRight) { h } else { l });
@@ -894,14 +910,18 @@ impl<'m> An<'m> {
                 }
                 // Else a digit of its own, with its definition: the
                 // quotient in [0, max x / c], the remainder in [0, c - 1].
+                // (Both made, the quotient and the remainder: the proof
+                // relates them, x = c * q + r, wherever either is read.)
                 let quotient = matches!(op, B::Divide | B::ShiftRight);
                 let (_, xh) = self.range(&x, &facts);
-                let hi = if quotient { xh.max(0) / c } else { c - 1 };
-                let d = self.digit(&format!("{}({x:?},{c})", if quotient { "div" } else { "mod" }), Some(Poly::konst(hi)), uni);
-                if let Var::Dig(i) = d {
-                    self.digits[i as usize].def = Some((x.clone(), c, quotient));
+                let q = self.digit(&format!("div({x:?},{c})"), Some(Poly::konst(xh.max(0) / c)), uni);
+                let r = self.digit(&format!("mod({x:?},{c})"), Some(Poly::konst(c - 1)), uni);
+                for (d, is_q) in [(q, true), (r, false)] {
+                    if let Var::Dig(i) = d {
+                        self.digits[i as usize].def = Some((x.clone(), c, is_q));
+                    }
                 }
-                Abs::Lin(Lin::var(d, Poly::konst(1)))
+                Abs::Lin(Lin::var(if quotient { q } else { r }, Poly::konst(1)))
             }
             B::And | B::Modulo => {
                 let facts = self.facts.clone();
@@ -1480,15 +1500,26 @@ impl<'m> An<'m> {
                 }
             };
             let open: Vec<usize> = self.wg_open.iter().copied().collect();
+            let pair = |an: &mut Self, key: (usize, usize)| {
+                let equal: BTreeSet<u32> = an.loops.iter().filter(|(_, barrier, before)| *barrier && !before.contains(&key.0) && !before.contains(&key.1)).flat_map(|(c, _, _)| c.iter().copied()).collect();
+                an.wg_pairs.insert(key);
+                // (A pair met more than once keeps the counters equal every time.)
+                match an.wg_equal.get_mut(&key) {
+                    Some(e) => e.retain(|d| equal.contains(d)),
+                    None => {
+                        an.wg_equal.insert(key, equal.clone());
+                    }
+                }
+            };
             for o in open {
                 let (a, b) = (self.wg_sites[o].kind, self.wg_sites[id].kind);
                 let conflict = !(a == b && a != Kind::Write) && self.wg_sites[o].alloc == self.wg_sites[id].alloc;
                 if conflict {
-                    self.wg_pairs.insert((o.min(id), o.max(id)));
+                    pair(self, (o.min(id), o.max(id)));
                 }
             }
             if self.wg_sites[id].kind == Kind::Write {
-                self.wg_pairs.insert((id, id));
+                pair(self, (id, id));
             }
             self.wg_open.insert(id);
         } else if !self.site_ix.contains_key(&key) {
@@ -1712,6 +1743,7 @@ impl<'m> An<'m> {
                 }
                 if flags.contains(naga::Barrier::WORK_GROUP) {
                     self.wg_open.clear();
+                    self.loops.iter_mut().for_each(|l| l.2.clear());
                 }
                 true
             }
@@ -1737,6 +1769,7 @@ impl<'m> An<'m> {
                 let p = self.eval(fr, *pointer);
                 let _ = self.load(fr, *result, p);
                 self.wg_open.clear();
+                self.loops.iter_mut().for_each(|l| l.2.clear());
                 let r = self.other(false, true, false);
                 self.frames[fr].vals.insert(*result, r);
                 true
@@ -1909,6 +1942,31 @@ impl<'m> An<'m> {
         }
     }
 
+    /// Whether every pass of a loop with this body crosses a workgroup
+    /// barrier: one at the body's top level (or in a plain block there), and
+    /// no continue that could skip it (a break leaves the loop; a
+    /// non-uniform one is a non-uniform exit).
+    fn barrier_every_pass(body: &Block) -> bool {
+        fn barrier(b: &Block) -> bool {
+            b.iter().any(|s| match s {
+                Statement::Barrier(f) => f.contains(naga::Barrier::WORK_GROUP),
+                Statement::WorkGroupUniformLoad { .. } => true,
+                Statement::Block(x) => barrier(x),
+                _ => false,
+            })
+        }
+        fn continues(b: &Block) -> bool {
+            b.iter().any(|s| match s {
+                Statement::Continue => true,
+                Statement::Block(x) => continues(x),
+                Statement::If { accept, reject, .. } => continues(accept) || continues(reject),
+                Statement::Switch { cases, .. } => cases.iter().any(|c| continues(&c.body)),
+                _ => false,
+            })
+        }
+        barrier(body) && !continues(body)
+    }
+
     /// A counter: stored once, in the continuing block, as `l = l + k` (k a
     /// literal of at least 1), and nowhere in the body.
     fn counter_step(f: &Function, continuing: &Block, l: Handle<naga::LocalVariable>) -> bool {
@@ -1954,8 +2012,10 @@ impl<'m> An<'m> {
         // makes the rest of its pass's body non-uniform (`skip_taint`), not
         // the continuing block, the next pass or the exit.
         type Sets = (BTreeSet<LocalKey>, BTreeSet<LocalKey>);
-        let run = |an: &mut An<'m>, head_uni: bool, assume: &Sets| -> (bool, Sets) {
+        let every_pass = Self::barrier_every_pass(body) && break_if.is_none();
+        let run = |an: &mut An<'m>, head_uni: bool, assume: &Sets, carried: bool| -> (bool, Sets) {
             an.loop_stores.push((BTreeSet::new(), BTreeSet::new()));
+            let mut uniform_counters = Vec::new();
             for l in &modified {
                 let key = an.local_key(fr, *l);
                 let (ei, eu) = entry_env.get(&(id, *l)).map_or((false, false), |e| an.info(e));
@@ -1967,6 +2027,9 @@ impl<'m> An<'m> {
                     // thread steps it together, in the continuing block: its
                     // value is its own, not the local's elsewhere.)
                     let d = an.digit(&format!("{loop_key}:ctr{}", l.index()), None, head_uni && entry_ok);
+                    if let (Var::Dig(i), true) = (d, head_uni && entry_ok) {
+                        uniform_counters.push(i);
+                    }
                     an.env.insert((id, *l), Abs::Lin(Lin::var(d, Poly::konst(1))));
                 } else {
                     let v = an.other(inv, uni, false);
@@ -1977,6 +2040,8 @@ impl<'m> An<'m> {
             let skip = std::mem::replace(&mut an.skip_taint, false);
             an.ctrl_uni = su && head_uni;
             an.loop_exits.push(false);
+            let before = if carried { an.wg_open.clone() } else { BTreeSet::new() };
+            an.loops.push((uniform_counters, every_pass && head_uni, before));
             let base = an.facts.len();
             an.block(fr, body);
             an.facts.truncate(base);
@@ -1997,6 +2062,7 @@ impl<'m> An<'m> {
             }
             an.facts.truncate(base);
             let exits = an.loop_exits.pop().unwrap_or(false);
+            an.loops.pop();
             an.skip_taint = skip;
             an.ctrl_uni = su;
             an.ctrl_inv = si;
@@ -2018,7 +2084,7 @@ impl<'m> An<'m> {
         let wg_open = self.wg_open.clone();
         let (mut nonuniform_exit, mut assume): (bool, Sets) = (false, (BTreeSet::new(), BTreeSet::new()));
         loop {
-            let (exit, sets) = run(self, entry_uni && !nonuniform_exit, &assume);
+            let (exit, sets) = run(self, entry_uni && !nonuniform_exit, &assume, false);
             self.env = entry_env.clone();
             let grown = exit != nonuniform_exit || !sets.0.is_subset(&assume.0) || !sets.1.is_subset(&assume.1);
             nonuniform_exit |= exit;
@@ -2032,12 +2098,12 @@ impl<'m> An<'m> {
         self.wg_open = wg_open;
         let head_uni = entry_uni && !nonuniform_exit;
         let wg_before = self.wg_sites.len();
-        run(self, head_uni, &assume);
+        run(self, head_uni, &assume, false);
         // Loop-carried workgroup conflicts: the accesses open at the end of a
         // pass meet the next pass's.
         if record && self.wg_sites.len() > wg_before {
             self.env = entry_env.clone();
-            run(self, head_uni, &assume);
+            run(self, head_uni, &assume, true);
         }
         // After the loop every local it stores is unknown: uniform when it
         // entered so, no store of the loop made it otherwise and every thread
@@ -2335,6 +2401,28 @@ impl<'m> An<'m> {
         Some(Ineq { a, k: f.k.clone() })
     }
 
+    /// A form that holds a whole x beside x's quotient by c, written
+    /// through the quotient and the remainder (x = c * q + r): the padded
+    /// index x + x / 32 is 33 * q + r, which splits at 33 (pad-shared,
+    /// 2026-10-14: 89 children refused).
+    fn by_quotients(&self, f: &Lin) -> Lin {
+        let mut f = f.clone();
+        let qs: Vec<u32> = f.t.keys().filter_map(|v| if let Var::Dig(d) = v { Some(*d) } else { None }).collect();
+        for q in qs {
+            let Some((x, c, true)) = self.digits[q as usize].def.clone() else { continue };
+            let Some(&r) = self.digit_ix.get(&format!("mod({x:?},{c})")) else { continue };
+            let Some((v, xc)) = x.t.iter().next().and_then(|(v, p)| Some((*v, p.as_const()?))) else { continue };
+            let Some(a) = f.t.get(&v).and_then(|p| p.as_const()).filter(|a| xc != 0 && a % xc == 0).map(|a| a / xc) else { continue };
+            // (x's every term in f at a times its coefficient.)
+            if a == 0 || !x.t.iter().all(|(w, p)| f.t.get(w).is_some_and(|fp| *fp == p.scale(a))) {
+                continue;
+            }
+            let qr = Lin::var(Var::Dig(q), Poly::konst(c)).add(&Lin::var(Var::Dig(r), Poly::konst(1)));
+            f = f.sub(&x.scale(&Poly::konst(a))).add(&qr.scale(&Poly::konst(a)));
+        }
+        f
+    }
+
     /// Whether the guards on a path contradict each other over every
     /// variable's range (Fourier–Motzkin): the code under them never runs,
     /// and an access there is none (seed 18, 2026-10-14: a store of
@@ -2357,7 +2445,13 @@ impl<'m> An<'m> {
     /// Whether A (in one invocation) and B (in another, or any when
     /// `distinct` is false) never write one cell.
     fn disjoint(&self, a: &Site, b: &Site, distinct: bool, same_wg: bool) -> bool {
+        self.disjoint_with(a, b, distinct, same_wg, &BTreeSet::new())
+    }
+
+    /// [`An::disjoint`] with the loop counters `equal` in both invocations.
+    fn disjoint_with(&self, a: &Site, b: &Site, distinct: bool, same_wg: bool, equal: &BTreeSet<u32>) -> bool {
         let (Ok(fa), Ok(fb)) = (&a.form, &b.form) else { return false };
+        let (fa, fb) = (&self.by_quotients(fa), &self.by_quotients(fb));
         let mut eqs = Vec::new();
         self.joint(fa, fb, &a.facts, &b.facts, &mut eqs, 0);
         // Equal quotients and remainders of one form: the forms are equal,
@@ -2405,6 +2499,30 @@ impl<'m> An<'m> {
                 sys.push(i);
             }
         }
+        // Every quotient and remainder digit read, in each copy, by its
+        // definition x = c * q + r (and the digits x reads, in turn): two
+        // remainders of x and x + 1 by 2 differ, the halves of a double
+        // buffer (2026-10-14: 104 double-buffer children refused).
+        let mut defined: BTreeSet<(u32, u8)> = BTreeSet::new();
+        loop {
+            let digits: Vec<(u32, u8)> = sys.iter().flat_map(|i| i.a.keys()).filter_map(|(v, c)| if let Var::Dig(d) = v { Some((*d, *c)) } else { None }).filter(|k| !defined.contains(k)).collect::<BTreeSet<_>>().into_iter().collect();
+            if digits.is_empty() {
+                break;
+            }
+            for (d, copy) in digits {
+                defined.insert((d, copy));
+                let Some((x, c, _)) = self.digits[d as usize].def.clone() else { continue };
+                let (Some(&q), Some(&r)) = (self.digit_ix.get(&format!("div({x:?},{c})")), self.digit_ix.get(&format!("mod({x:?},{c})"))) else { continue };
+                let Some(mut e) = Self::ineq(&x, copy) else { continue };
+                *e.a.entry((Var::Dig(q), copy)).or_default() -= c;
+                *e.a.entry((Var::Dig(r), copy)).or_default() -= 1;
+                e.a.retain(|_, v| *v != 0);
+                sys.push(e.neg());
+                sys.push(e);
+                defined.insert((q, copy));
+                defined.insert((r, copy));
+            }
+        }
         let mut coords: Vec<Var> = Vec::new();
         for c in 0..3u8 {
             if self.contract.workgroups[c as usize].1 > 1 {
@@ -2422,6 +2540,10 @@ impl<'m> An<'m> {
                 }
             }
             coords.retain(|v| matches!(v, Var::Lid(_)));
+            for d in equal {
+                let v = Lin::var(Var::Dig(*d), Poly::konst(1));
+                both(&mut sys, &v, &v);
+            }
         }
         // Every variable's range, in both copies.
         let mut vars: BTreeSet<(Var, u8)> = sys.iter().flat_map(|i| i.a.keys().copied()).collect();
@@ -2609,6 +2731,8 @@ pub fn check_module(module: &Module, contract: &Contract) -> Result<Report, Unsa
         wg_ix: HashMap::new(),
         wg_open: BTreeSet::new(),
         wg_pairs: BTreeSet::new(),
+        wg_equal: BTreeMap::new(),
+        loops: Vec::new(),
         errors: Vec::new(),
         frames: Vec::new(),
         next_frame: 0,
@@ -2669,7 +2793,8 @@ pub fn check_module(module: &Module, contract: &Contract) -> Result<Report, Unsa
     for (i, j) in pairs {
         let (a, b) = (&an.wg_sites[i], &an.wg_sites[j]);
         report.pairs += 1;
-        if !an.disjoint(a, b, true, true) {
+        let equal = an.wg_equal.get(&(i, j)).cloned().unwrap_or_default();
+        if !an.disjoint_with(a, b, true, true, &equal) {
             return Err(unsafe_("workgroup_memory_race", format!("{} and {} may touch one element in two invocations of a workgroup with no barrier between", a.what, b.what)));
         }
     }
@@ -2852,6 +2977,30 @@ mod tests {
         proved(&grouped("51u", "128u"), &c);
         // (Row r + 4 is the next thread's first row.)
         assert_eq!(rule(&grouped("4u", "64u"), &c), "write_sets_overlap");
+    }
+
+    /// The halves of a double buffer and a padded index (2026-10-14): a pass
+    /// writes half ((t >> 5) + 1) & 1 and reads half (t >> 5) & 1 (each
+    /// thread reading another's element, the transpose), then a barrier;
+    /// both invocations of a pair met in one pass of that uniform, barriered
+    /// loop have one t, and a quotient's remainder relates x and x plus one.
+    /// Refused: one half for both; the loop without its barrier (two
+    /// invocations a pass apart); a continue that may skip the barrier. The
+    /// padded index x + x / 32 of a thread's own x is proved, of a shared x
+    /// refused.
+    #[test]
+    fn double_buffer_halves_and_padded_indices() {
+        let c = one_d();
+        let k = |body: &str| format!("{PRE}var<workgroup> w: array<f32, 1100>;\n@compute @workgroup_size(16, 16, 1)\nfn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>, @builtin(local_invocation_index) lidx: u32) {{\n    var acc: f32 = 0.0;\n    var t: u32 = 0u;\n{body}\n    h[gid.x * 16u + lid.y] = h[gid.x * 16u + lid.y] + acc;\n}}\n");
+        let pass = |write_half: &str, tail: &str| k(&format!("    for (t = 0u; t < cfg.m; t = t + 32u) {{\n        w[(lidx + 512u * {write_half}) & 1023u] = phi[t + lidx];\n        acc = acc + w[(lid.y + 16u * lid.x + 512u * ((t >> 5u) & 1u)) & 1023u];\n{tail}    }}"));
+        let next = "(((t >> 5u) + 1u) & 1u)";
+        proved(&pass(next, "        workgroupBarrier();\n"), &c);
+        assert_eq!(rule(&pass("((t >> 5u) & 1u)", "        workgroupBarrier();\n"), &c), "workgroup_memory_race");
+        assert_eq!(rule(&pass(next, ""), &c), "workgroup_memory_race");
+        assert_eq!(rule(&pass(next, "        if (t == 64u) { continue; }\n        workgroupBarrier();\n"), &c), "workgroup_memory_race");
+        proved(&k("    let x = lidx;\n    w[x + (x >> 5u)] = 1.0;"), &c);
+        proved(&k("    for (var j = 0u; j < 2u; j = j + 1u) {\n        let x = lidx + 256u * j;\n        w[x + (x >> 5u)] = 1.0;\n    }"), &c);
+        assert_eq!(rule(&k("    let x = lidx >> 1u;\n    w[x + (x >> 5u)] = 1.0;"), &c), "workgroup_memory_race");
     }
 
     /// nluca's six kernels as CubeCL emits them, under their contract.

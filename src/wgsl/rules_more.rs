@@ -1793,17 +1793,26 @@ mod tests {
     }
 
     /// EVERY CHILD OF EVERY NEW RULE PASSES THE LAYERED CHECK (legality,
-    /// render, naga validation, read back) on every kernel where the rule
-    /// fires; a rule that fires and fails is a bug in the rule. The counts
-    /// by rule are printed; the rules this population should light are
-    /// asserted to fire.
+    /// render, naga validation, read back) on every legal kernel where the
+    /// rule fires; a rule that fires and fails is a bug in the rule. A
+    /// parent the checker refuses (a race of its own: k08, the drafts that
+    /// write a workgroup element from every thread) gives children that
+    /// inherit it; those parents are listed, not used. The counts by rule
+    /// are printed; the rules this population should light are asserted to
+    /// fire.
     #[test]
     fn every_child_of_the_new_rules_passes_the_layered_check() {
         let k = WgslKingdom::load_safe();
         let all = kernels(&k);
         let mut failures = Vec::new();
         let mut fired: BTreeMap<&str, (usize, usize)> = BTreeMap::new();
+        let mut refused: BTreeMap<String, usize> = BTreeMap::new();
         for (name, t) in &all {
+            if let Err((_, e)) = knob::check(t, &k) {
+                let rule: String = e.split(": ").nth(1).unwrap_or(&e).chars().take(60).collect();
+                *refused.entry(rule).or_default() += 1;
+                continue;
+            }
             for rule in NEW {
                 for site in rule.sites(t, &k) {
                     let e = fired.entry(rule.name()).or_default();
@@ -1818,6 +1827,7 @@ mod tests {
         for (r, (n, ok)) in &fired {
             println!("{r}: {n} children, {ok} pass the check");
         }
+        println!("{} of {} parents legal; refused by reason: {refused:?}", all.len() - refused.values().sum::<usize>(), all.len());
         assert!(failures.is_empty(), "{} children fail:\n{}", failures.len(), failures.iter().take(12).cloned().collect::<Vec<_>>().join("\n"));
         if all.len() > 40 {
             for r in [Rule::DropDeadStore, Rule::SplitAccumulator, Rule::GrowCols, Rule::DoubleBuffer, Rule::UnrollK4] {

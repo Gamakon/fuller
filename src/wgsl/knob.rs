@@ -201,13 +201,25 @@ pub fn joins(child: &Tree, kingdom: &WgslKingdom, target: &Target) -> Result<(),
 }
 
 /// The values of `site` other than its current one whose child passes the
-/// joins. A workgroup array's literal length only grows: without a range
-/// proof of its indices (checker layer 3, not built) the length the kernel
-/// declares is the only bound known to cover them (48 of 50 shortened
-/// arrays of the saved populations computed wrong values on the device).
+/// joins and the layered check ([`check`]: a wider workgroup over a
+/// workgroup array indexed `lid.x + 16u * lid.y` has two threads write one
+/// element, the checker's layer 7, 2026-10-14). A workgroup array's literal
+/// length only grows: without a range proof of its indices (checker layer
+/// 3, not built) the length the kernel declares is the only bound known to
+/// cover them (48 of 50 shortened arrays of the saved populations computed
+/// wrong values on the device).
 pub fn legal_values(root: &Tree, site: &Site, current: u32, kingdom: &WgslKingdom, target: &Target) -> Vec<u32> {
     let covers = |v: u32| !matches!(site, Site::Len(_)) || v >= current;
-    site.values(target).into_iter().filter(|&v| v != current && covers(v) && joins(&set(root, site, v), kingdom, target).is_ok()).collect()
+    site.values(target)
+        .into_iter()
+        .filter(|&v| {
+            if v == current || !covers(v) {
+                return false;
+            }
+            let child = set(root, site, v);
+            joins(&child, kingdom, target).is_ok() && check(&child, kingdom).is_ok()
+        })
+        .collect()
 }
 
 /// A knob child: the tree and the change.

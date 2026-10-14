@@ -1418,7 +1418,14 @@ mod tests {
         assert_eq!(worst_bound(&Tree::new("bound.rows", ty(&k, "u32.boundrows"), vec![])), WORST_ROWS);
     }
 
-    /// The shipped kernel and every corpus kernel that reads pass every layer.
+    /// The corpus kernels with a race of their own, which layer 7 refuses by
+    /// that reason (the fix is in the kernel, not the checker): k08 indexes
+    /// wg_va by (x >> 6) * 16 + ((x & 63) >> 2), which drops x's two low
+    /// bits, so four threads write one element.
+    const CORPUS_RACES: [(&str, &str); 1] = [("k08", "workgroup_memory_race")];
+
+    /// The shipped kernel and every corpus kernel that reads pass every
+    /// layer, but the races of [`CORPUS_RACES`], refused by their reason.
     #[test]
     fn the_shipped_kernel_and_every_corpus_kernel_pass() {
         let (k, role) = setup();
@@ -1435,8 +1442,12 @@ mod tests {
             let src = std::fs::read_to_string(dir.join(format!("{}.wgsl", cols[0]))).unwrap_or_else(|e| panic!("{}: {e}", cols[0]));
             let tree = read_safe(&src, &k).unwrap_or_else(|e| panic!("{}: does not read: {e}", cols[0])).tree;
             checked += 1;
-            if let Err(e) = checker.check(&tree) {
-                failures.push(format!("{}: {e}", cols[0]));
+            let race = CORPUS_RACES.iter().find(|(n, _)| *n == cols[0]).map(|(_, r)| *r);
+            match (checker.check(&tree), race) {
+                (Ok(()), None) => {}
+                (Err(e), Some(r)) if e.layer == Layer::Safety && e.reason == r => println!("{}: refused as expected, {e}", cols[0]),
+                (Err(e), _) => failures.push(format!("{}: {e}", cols[0])),
+                (Ok(()), Some(r)) => failures.push(format!("{}: passed, but it races ({r})", cols[0])),
             }
         }
         println!("corpus: {checked} kernels checked, {} fail", failures.len());
