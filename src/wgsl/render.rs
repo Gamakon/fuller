@@ -3702,8 +3702,18 @@ mod tests {
                     }
                     divisions += 1;
                     let d = &f.expressions[*right];
+                    // (A constant vector of such literals: naga's constant
+                    // evaluator folds max(vec3<u32>(vec2<u32>(0u), 3u),
+                    // vec3<u32>(1u)) into one; seeds 671 and 763, 2026-10-14.)
+                    fn nonzero(f: &naga::Function, e: &Expression, ok: &dyn Fn(&Expression) -> bool) -> bool {
+                        match e {
+                            Expression::Compose { components, .. } => !components.is_empty() && components.iter().all(|c| nonzero(f, &f.expressions[*c], ok)),
+                            Expression::Splat { value, .. } => nonzero(f, &f.expressions[*value], ok),
+                            other => ok(other),
+                        }
+                    }
                     let ok = guarded_helper
-                        || literal_ok(d)
+                        || nonzero(f, d, &literal_ok)
                         || lit_call(*right)
                         || matches!(d, Expression::Math { fun: MathFunction::Max, arg1: Some(a), .. } if one(*a))
                         // (The subgroup size, a builtin argument of the entry point: at least 1.)

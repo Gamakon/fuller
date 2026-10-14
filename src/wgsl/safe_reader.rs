@@ -1807,6 +1807,11 @@ impl<'a> Ctx<'a> {
         let xb = ty(self, "u32.xbound")?;
         let index = ty(self, "u32.index")?;
         let count = ty(self, "u32.count")?;
+        // (A second operand of any u32 dual the inference gave it,
+        // `x - u32(pack2x16unorm(..))`, u32 bits or an opaque u32: conform
+        // makes it the index the row takes. 3 of 1,000 random trees,
+        // 2026-10-14.)
+        let unsigned = |b: &Tree| self.kingdom.dual(b.ty).is_some_and(|d| d.slot == "u32");
         if let Some(u) = self.uniform_bound_of(t)? {
             return Ok(Tree::new("index.of_uniform", xb, vec![u]));
         }
@@ -1818,7 +1823,7 @@ impl<'a> Ctx<'a> {
             (n, []) if n.starts_with("literal.") => Tree::literal("literal.index", xb, t.konst),
             ("index.add" | "index.max" | "index.or", [a, b]) => at(&t.name, vec![self.xbound_of(a)?, self.xbound_of(b)?]),
             ("bits.or", [a, b]) => at("index.or", vec![self.xbound_of(a)?, self.xbound_of(b)?]),
-            ("index.sub_floor" | "index.div" | "index.mod" | "index.shr" | "index.and" | "index.round_down", [a, b]) if b.ty == index => at(&t.name, vec![self.xbound_of(a)?, b.clone()]),
+            ("index.sub_floor" | "index.div" | "index.mod" | "index.shr" | "index.and" | "index.round_down", [a, b]) if unsigned(b) => at(&t.name, vec![self.xbound_of(a)?, b.clone()]),
             // The reader names `>>` and `&` on u32 bits.*: the index rows render them.
             ("bits.shr" | "bits.and", [a, b]) if b.name.starts_with("literal.") => at(&t.name.replacen("bits.", "index.", 1), vec![self.xbound_of(a)?, Tree::literal("literal.index", index, b.konst)]),
             // Any other second operand: an index (conform takes a bit row's
@@ -2847,6 +2852,17 @@ impl<'a> Ctx<'a> {
         if stem == "stmt.barrier" || stem == "stmt.storage_barrier" || stem == "stmt.subgroup_barrier" || stem == "stmt.return" || stem.starts_with("loop.items") || stem.starts_with("wg.reduce_") {
             return Err(format!("{} where only conditional statements are spelled (after a loop's continue guard, or before the epilogue's last store of h)", t.name));
         }
+        // A test of two uniform values (stmt.if_ule has L rows only) is, at
+        // a conditional rung, the if of their comparison (the rest of a loop
+        // body after a continue guard, an epilogue loop's statements: 10 of
+        // 1,000 random trees, 2026-10-14).
+        if stem == "stmt.if_ule" {
+            let [x, y, b] = t.kids.as_slice() else { return Err(format!("{} with {} children", t.name, t.kids.len())) };
+            let index = |u: &Tree| -> Result<Tree, String> { Ok(Tree::new("index.of_uniform", ty(self, "u32.index")?, vec![u.clone()])) };
+            let le = Tree::new("compare.le", ty(self, "bool.flag")?, vec![index(x)?, index(y)?]);
+            let c = format!("C{d}");
+            return Ok(Tree::new(&format!("stmt.if_{c}"), ty(self, &format!("stmt.{c}"))?, vec![le, self.rerung(b, d)?]));
+        }
         // Conditional statements written in place at an L rung are, at a
         // conditional rung, a block like any (stmt.cblock has L rows only).
         if stem == "stmt.cblock" {
@@ -2926,18 +2942,33 @@ impl<'a> Ctx<'a> {
     fn fold_puts(&self, stmts: Vec<Tree>, rung: &str) -> Result<Vec<Tree>, String> {
         let barrier = format!("stmt.barrier_{rung}");
         let threads = self.grid.0 * self.grid.1;
-        let lidx = |t: &Tree| t.name == "index.of_lidx" && t.kids.len() == 1;
+        // (The builtin itself before the axes are renamed, index.of_lidx after.)
+        let lidx = |t: &Tree| (t.name == "builtin.local_invocation_index" && t.kids.is_empty()) || (t.name == "index.of_lidx" && t.kids.len() == 1);
+        // A constant: a literal, or a sum or product of constants (`lit_u32(0u)
+        // * 370u`, a tile counter written outside its loop).
+        fn constant(t: &Tree) -> Option<f32> {
+            match (t.name.as_str(), t.kids.as_slice()) {
+                ("index.add", [a, b]) => Some(constant(a)? + constant(b)?),
+                ("index.mul", [a, b]) => Some(constant(a)? * constant(b)?),
+                _ => literal_value(t),
+            }
+        }
         // The own element an index is, or None.
         let own = |ctx: &Self, i: &Tree| -> Option<Tree> {
+            let wgown = ty(ctx, "u32.wgown").ok()?;
+            let lit = |c: u32| -> Option<Tree> { Some(Tree::new("safe.wg_own", wgown, vec![Tree::literal("literal.lit64", ty(ctx, "u32.lit64").ok()?, c as f32)])) };
+            // (`lidx + 0u` read as lidx.)
+            if lidx(i) {
+                return lit(0);
+            }
             let ([l, k], "index.add") = (i.kids.as_slice(), i.name.as_str()) else { return None };
             let k = if lidx(l) { k } else if lidx(k) { l } else { return None };
-            let wgown = ty(ctx, "u32.wgown").ok()?;
-            if let Some(c) = literal_value(k) {
+            if let Some(c) = constant(k) {
                 let c = c as u32;
                 if threads == 0 || !c.is_multiple_of(threads) || c / threads >= 64 {
                     return None;
                 }
-                return Some(Tree::new("safe.wg_own", wgown, vec![Tree::literal("literal.lit64", ty(ctx, "u32.lit64").ok()?, (c / threads) as f32)]));
+                return lit(c / threads);
             }
             let ("index.mul", [a, b]) = (k.name.as_str(), k.kids.as_slice()) else { return None };
             let (counter, t) = if literal_value(b).is_some() { (a, b) } else { (b, a) };
@@ -3480,7 +3511,11 @@ impl<'a> Ctx<'a> {
                             ("compare.ge", [x, y]) => Some((y, x)),
                             _ => None,
                         };
-                        if let Some((x, y)) = uniform_le.filter(|_| rung.starts_with('L') && reject.iter().all(|s| matches!(s, Statement::Emit(_)))) {
+                        // (Not a continue's or a break's guard, `if (cfg.d >= nwg.x)
+                        // { continue; }`: no row continues at an L rung; read as the
+                        // conditional it is. A sketch draw, 2026-10-14.)
+                        let exits = accept.iter().any(|s| matches!(s, Statement::Continue | Statement::Break));
+                        if let Some((x, y)) = uniform_le.filter(|_| rung.starts_with('L') && !exits && reject.iter().all(|s| matches!(s, Statement::Emit(_)))) {
                             if let (Some(ux), Some(uy)) = (self.uniform_bound_of(x)?, self.uniform_bound_of(y)?) {
                                 self.tail = stmt_tail;
                                 path.push(0);
@@ -5938,11 +5973,15 @@ mod tests {
     /// reached so far: to a fixpoint after the first read, and to the AST
     /// drawn (canonical). Every tree reads back (1,000 of 1,000, asserted
     /// exactly). Their own text is printed, not a bar (Andrew, 2026-10-13).
-    const FIXPOINT_FLOOR: usize = 902;
+    const FIXPOINT_FLOOR: usize = 922;
     // (Both reset 2026-10-13 when the sampler drew its stores from an input:
     // other trees, 253 and 930 on the earlier draws; again when conditions
-    // read a variable: 110 then 79; 59 when they vary by thread or data.)
-    const AST_FLOOR: usize = 59;
+    // read a variable: 110 then 79; 59 when they vary by thread or data;
+    // 2026-10-14, 54 (fixpoint 922) when the kingdom drew only genes layer 7
+    // proves: the workgroup put, one cell kind a kernel, literal offsets,
+    // reads of h in a store's value; a put through a tile counter outside
+    // its loop reads back as the put of element 0, its value.)
+    const AST_FLOOR: usize = 54;
 
 
     /// THE KINGDOM'S COMPLETENESS BAR (2026-10-12): 1,000 random trees of
