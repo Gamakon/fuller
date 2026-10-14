@@ -3050,13 +3050,33 @@ fn sample_with(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, s
 
         /// The long loops kid `k` of row `i` is inside: bit 1 an item loop,
         /// bit 2 a tile loop (the plain kingdom's rows, which the renderer
-        /// does not nest).
-        fn kid_inside(&self, i: usize, inside: u8) -> u8 {
-            match self.rows[i].name.as_str() {
+        /// does not nest); bit 4 control that may not be uniform (2026-10-14:
+        /// a statement or block at a conditional, break or epilogue rung, a
+        /// store's value under its own bounds check), where no subgroup
+        /// operation is drawn (WGSL's subgroup uniformity; 320 of 1,000
+        /// random kernels drew one there, the checker's layer 7).
+        fn kid_inside(&self, i: usize, k: usize, inside: u8) -> u8 {
+            let r = &self.rows[i];
+            let loops = match r.name.as_str() {
                 "loop.items" | "loop.items_unrolled" => inside | 1,
                 "loop.tile" => inside | 2,
                 _ => inside,
-            }
+            };
+            let conditional = |t: Ty| self.kingdom.dual(t).is_some_and(|d| (d.slot == "stmt" || d.slot == "block") && (d.form.starts_with('C') || d.form.starts_with('B') || d.form.starts_with('O')));
+            // (A continue's or a break's guard: its condition decides an exit
+            // some threads may take, and is read again on the next pass.)
+            let store = matches!(safe_base(&r.name), "store.h_safe" | "store.h_mirror" | "wg.put") || r.name.starts_with("block.cont") || r.name.starts_with("block.brk");
+            // (A loop's bound or step: evaluated again on every pass, its value
+            // deciding when the loop ends; a subgroup result there is the same
+            // in a subgroup, not in the workgroup.)
+            let header = r.name.starts_with("loop.") && r.inputs.get(k).copied().is_some_and(|t| self.kingdom.dual(t).is_some_and(|d| d.slot != "stmt" && d.slot != "block"));
+            if conditional(r.output) || store || header || r.inputs.get(k).copied().is_some_and(conditional) { loops | 4 } else { loops }
+        }
+
+        /// Whether row `i` may be drawn where control may not be uniform
+        /// (`inside` bit 4): not a subgroup operation.
+        fn allowed(&self, i: usize, inside: u8) -> bool {
+            inside & 4 == 0 || !self.rows[i].name.starts_with("subgroup.")
         }
 
         /// Whether kid `k` of row `i` is drawn under the no-continue rule: a
@@ -3097,8 +3117,10 @@ fn sample_with(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, s
             // kingdom's grammar admits an item loop in an item loop and a
             // tile loop in a tile loop; the renderer refuses them, m² or
             // more iterations: 60 of 500 random plain kernels, 2026-10-13).
-            let functions_kept: Vec<usize> = functions_all.iter().copied().filter(|&i| !((no_cont && self.rows[i].name.starts_with("block.cont")) || self.nests(i, inside))).collect();
+            let functions_kept: Vec<usize> = functions_all.iter().copied().filter(|&i| !((no_cont && self.rows[i].name.starts_with("block.cont")) || self.nests(i, inside)) && self.allowed(i, inside)).collect();
             let functions = &functions_kept;
+            let terminals_kept: Vec<usize> = terminals.iter().copied().filter(|&i| self.allowed(i, inside)).collect();
+            let terminals = &terminals_kept;
             let epilogue = self.kingdom.dual(demand).is_some_and(|d| (d.slot == "stmt" || d.slot == "block") && d.form.starts_with('O'));
             // A required path (to an input, or at the cap to an output store):
             // the rows on it, the nearest at or past the cap.
@@ -3121,7 +3143,7 @@ fn sample_with(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, s
             };
             if let Some((reach, which)) = required {
                 let all: Vec<usize> = functions.iter().chain(terminals.iter()).copied().collect();
-                let scored: Vec<(usize, usize)> = all.iter().filter(|&&i| !((no_cont && self.rows[i].name.starts_with("block.cont")) || self.nests(i, inside))).filter_map(|&i| self.row_reach(i, reach, own_of(i, which)).map(|d| (i, d))).collect();
+                let scored: Vec<(usize, usize)> = all.iter().filter(|&&i| !((no_cont && self.rows[i].name.starts_with("block.cont")) || self.nests(i, inside)) && self.allowed(i, inside)).filter_map(|&i| self.row_reach(i, reach, own_of(i, which)).map(|d| (i, d))).collect();
                 // The shortest way there (a load of the input, a block holding
                 // the store): the path adds no structure of its own; every
                 // other child is drawn as any is.
@@ -3140,7 +3162,7 @@ fn sample_with(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, s
                     .iter()
                     .enumerate()
                     .map(|(k, &t)| {
-                        let (nc, ins) = (self.kid_no_cont(i, k, no_cont), self.kid_inside(i, inside));
+                        let (nc, ins) = (self.kid_no_cont(i, k, no_cont), self.kid_inside(i, k, inside));
                         self.grow(t, depth + 1, self.path_need(which, carry == Some(k), i, k), nc, ins, state)
                     })
                     .collect::<Vec<Tree>>();
@@ -3150,7 +3172,7 @@ fn sample_with(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, s
                         if kids[0] != kids[1] {
                             break;
                         }
-                        kids[1] = self.grow(r.inputs[1], self.redraw_depth(depth, attempt), self.path_need(which, carry == Some(1), i, 1), self.kid_no_cont(i, 1, no_cont), self.kid_inside(i, inside), state);
+                        kids[1] = self.grow(r.inputs[1], self.redraw_depth(depth, attempt), self.path_need(which, carry == Some(1), i, 1), self.kid_no_cont(i, 1, no_cont), self.kid_inside(i, 1, inside), state);
                     }
                     // Operands of a dual with one value only: the node drawn again.
                     if kids[0] == kids[1] {
@@ -3182,7 +3204,7 @@ fn sample_with(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, s
             let r = &self.rows[i];
             // An output store's value reads an input, a condition a
             // variable, wherever they are drawn.
-            let mut kids: Vec<Tree> = r.inputs.iter().enumerate().map(|(k, &t)| self.grow(t, depth + 1, self.kid_need(i, k), self.kid_no_cont(i, k, no_cont), self.kid_inside(i, inside), state)).collect();
+            let mut kids: Vec<Tree> = r.inputs.iter().enumerate().map(|(k, &t)| self.grow(t, depth + 1, self.kid_need(i, k), self.kid_no_cont(i, k, no_cont), self.kid_inside(i, k, inside), state)).collect();
             // A comparison of a value with itself decides nothing (`nwg <=
             // nwg`: 111 of 1,560 conditions, 2026-10-13): its second operand
             // drawn again, a few times.
@@ -3191,7 +3213,7 @@ fn sample_with(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, s
                     if kids[0] != kids[1] {
                         break;
                     }
-                    kids[1] = self.grow(r.inputs[1], self.redraw_depth(depth, attempt), self.kid_need(i, 1), self.kid_no_cont(i, 1, no_cont), self.kid_inside(i, inside), state);
+                    kids[1] = self.grow(r.inputs[1], self.redraw_depth(depth, attempt), self.kid_need(i, 1), self.kid_no_cont(i, 1, no_cont), self.kid_inside(i, 1, inside), state);
                 }
                 // Operands of a dual with one value only (the workgroup
                 // count): the node drawn again, another row.
