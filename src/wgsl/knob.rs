@@ -280,10 +280,38 @@ impl Stage {
 /// rendered (with its `// grid` header, from the child's own grid) and
 /// validated by naga for the adapter. The text, or the stage and what failed.
 pub fn check_legal(child: &Tree, kingdom: &WgslKingdom) -> Result<String, (Stage, String)> {
+    check_legal_under(child, kingdom, &Under::gram())
+}
+
+/// THE INTERFACE A KERNEL IS CHECKED AND RENDERED UNDER: the kingdom's role
+/// for it (the Gram's, a declared one, or the one inferred from a problem's
+/// kernel, `render::Role::inferred`) and the dispatch contract the legality
+/// checker's layer 7 proves under (`safety::Contract`; None: the role's
+/// default, `Contract::for_role`). A problem directory gives both.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Under {
+    pub role: crate::wgsl::render::Role,
+    pub contract: Option<crate::wgsl::safety::Contract>,
+}
+
+impl Under {
+    /// The Gram's interface under its default contract: every check as before interfaces.
+    pub fn gram() -> Under {
+        Under { role: gram_role(), contract: None }
+    }
+}
+
+/// [`check_legal`] under an interface: the checker under its role and
+/// contract, the text rendered under its role.
+pub fn check_legal_under(child: &Tree, kingdom: &WgslKingdom, under: &Under) -> Result<String, (Stage, String)> {
     // The legality checker reads values: the references written as their literals.
     let plain = crate::wgsl::params::to_literals(child, kingdom).map_err(|e| (Stage::Legal, e))?;
-    crate::wgsl::check::check(&plain, kingdom, &gram_role(), &Target::current()).map_err(|e| (Stage::Legal, e.to_string()))?;
-    let text = crate::wgsl::safe_karva::render_tree(child, kingdom).map_err(|e| (Stage::Render, e))?.text;
+    let checker = match &under.contract {
+        Some(c) => crate::wgsl::check::Checker::with_contract(kingdom, &under.role, &Target::current(), c.clone()),
+        None => crate::wgsl::check::Checker::new(kingdom, &under.role, &Target::current()),
+    };
+    checker.check(&plain).map_err(|e| (Stage::Legal, e.to_string()))?;
+    let text = crate::wgsl::safe_karva::render_tree_with(child, kingdom, &under.role).map_err(|e| (Stage::Render, e))?.text;
     validate_text(&text).map_err(|e| (Stage::Validate, e.lines().next().unwrap_or("").to_string()))?;
     Ok(text)
 }
@@ -295,6 +323,17 @@ pub fn check_legal(child: &Tree, kingdom: &WgslKingdom) -> Result<String, (Stage
 pub fn check_text(child: &Tree, kingdom: &WgslKingdom) -> Result<(String, crate::wgsl::safe_reader::SafeRead), (Stage, String)> {
     let text = check_legal(child, kingdom)?;
     let back = read_safe(&text, kingdom).map_err(|e| (Stage::ReadBack, e))?;
+    Ok((text, back))
+}
+
+/// [`check_text`] under an interface: the text read back must read under
+/// the same role.
+pub fn check_text_under(child: &Tree, kingdom: &WgslKingdom, under: &Under) -> Result<(String, crate::wgsl::safe_reader::SafeRead), (Stage, String)> {
+    let text = check_legal_under(child, kingdom, under)?;
+    let back = read_safe(&text, kingdom).map_err(|e| (Stage::ReadBack, e))?;
+    if back.role != under.role {
+        return Err((Stage::ReadBack, format!("the text reads back under the interface {}, written under {}", back.role.name, under.role.name)));
+    }
     Ok((text, back))
 }
 

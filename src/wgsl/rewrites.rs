@@ -252,6 +252,18 @@ pub struct Child {
 /// check; another draw when it is illegal, up to `tries`. None when no
 /// draw gives a legal child.
 pub fn mutate(root: &Tree, rules: &[Rule], kingdom: &WgslKingdom, rng: &mut u64, tries: usize) -> Result<Option<Child>, String> {
+    mutate_in(root, rules, kingdom, None, rng, tries)
+}
+
+/// [`mutate`] under an interface (`knob::Under`: a problem's role and
+/// dispatch contract): every child checked and rendered under it.
+pub fn mutate_under(root: &Tree, rules: &[Rule], kingdom: &WgslKingdom, under: &knob::Under, rng: &mut u64, tries: usize) -> Result<Option<Child>, String> {
+    mutate_in(root, rules, kingdom, Some(under), rng, tries)
+}
+
+/// The pool's draw: checked by `knob::check_text` (None, the Gram's, as before
+/// interfaces) or `knob::check_text_under`.
+fn mutate_in(root: &Tree, rules: &[Rule], kingdom: &WgslKingdom, under: Option<&knob::Under>, rng: &mut u64, tries: usize) -> Result<Option<Child>, String> {
     let lit: Vec<Rule> = rules.iter().copied().filter(|r| !r.sites(root, kingdom).is_empty()).collect();
     let n = lit.len() + Rewrite::ALL.len();
     for _ in 0..tries {
@@ -266,7 +278,11 @@ pub fn mutate(root: &Tree, rules: &[Rule], kingdom: &WgslKingdom, rng: &mut u64,
             apply(rw, root, kingdom, rng)?.map(|(what, t)| (rw.name(), what, t))
         };
         let Some((operator, what, tree)) = made else { continue };
-        if let Ok((text, _)) = knob::check_text(&tree, kingdom) {
+        let checked = match under {
+            Some(u) => knob::check_text_under(&tree, kingdom, u),
+            None => knob::check_text(&tree, kingdom),
+        };
+        if let Ok((text, _)) = checked {
             return Ok(Some(Child { tree, text, operator, what }));
         }
     }
