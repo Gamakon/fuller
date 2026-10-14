@@ -27,7 +27,7 @@ ENTRY POINT. `@compute @workgroup_size(X, 1, 1) fn generated_step(...)` with any
 
 HOW IT IS SCORED. The state after steps 1, 8 and 64 is compared with an f64 reference's: at every checkpoint the largest |got - expected| over the RMS of the expected state must be below the case's tolerance (ten times the shipping f32 kernel's own worst error, at least 1e-4); one failing checkpoint of one case and the kernel is infeasible. A state held in f16 fails every case. A feasible kernel is timed on three widths (65,536 and two of 1,048,576) against the reference kernel; faster is better.
 
-CONSTRAINTS. Only the nine bindings above. No other global variables except var<workgroup> arrays (at most 16 KiB in total). workgroupBarrier() only in uniform control flow. Every loop must terminate. f32 arithmetic for the state; the hash in wrapping u32.
+CONSTRAINTS. Declare exactly the nine bindings above, with these names, types and binding numbers, the unused `info` among them: a kernel that renames, retypes or drops one is not read into the population. No other global variables except var<workgroup> arrays (at most 16 KiB in total). workgroupBarrier() only in uniform control flow. Every loop must terminate. f32 arithmetic for the state; the hash in wrapping u32.
 
 ## Strategies
 - the reference kernel's organisation of the work (one thread a row), with any improvement you see
