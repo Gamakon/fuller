@@ -40,6 +40,7 @@ pub mod rules;
 pub mod rules_more;
 pub mod render;
 pub mod safe_karva;
+pub mod roundtrip;
 pub mod safe_reader;
 pub mod safety;
 pub mod scaffold;
