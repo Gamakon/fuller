@@ -4380,6 +4380,16 @@ impl<'a> Ctx<'a> {
         // The item loop is the one whose body is at L1 (an expression-bounded
         // loop over t at the top level is one: loop.items_boundx, 2026-10-12).
         let item_loop = body_rung == "L1";
+        // A loop whose counter enters with a value the reader cannot spell
+        // (`for (var i = lidx; i < 1024u; i += 128u)`, a thread-strided
+        // loop: nluca_s2's Sonnet seeds staged their codebook so) has no row:
+        // read from 0 it would be another kernel (each thread staging the
+        // same eight entries), so it is refused by name. Only an item loop
+        // that continues the items an earlier loop left counts on from where
+        // that loop stopped.
+        if entry.is_none() && !(item_loop && self.used_counters.contains(&counter)) {
+            return Err(format!("a loop whose counter {counter} enters with a value our reader does not know (only a literal or zero has a spelling: a loop over a thread's strided range is written `for (var i = 0u; i < n; i += s) {{ let j = i + lid; if (j < n) {{ ... }} }}`)"));
+        }
         let start = match entry {
             Some(v) => v,
             None if item_loop => 0.0,

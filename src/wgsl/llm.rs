@@ -98,7 +98,7 @@ pub fn contract(problem: Option<&crate::wgsl::harness::Problem>) -> Result<Contr
     }
     let first = if grid { ", starting with the `// grid` line" } else { "" };
     let system = format!(
-        "You write WGSL compute kernels for wgpu on an Apple M3 Max (Metal, naga 0.20 front end; WGSL as of 2024, no f16, no subgroup operations, no atomics on f32).\n\n{}\n\nREFERENCE KERNEL (correct, the one to beat; entry point `{entry}`):\n```wgsl\n{}```\n\nOUTPUT. Return ONLY the complete WGSL kernel text{first}, with no explanation, no markdown fences, no prose before or after.",
+        "You write WGSL compute kernels for wgpu on an Apple M3 Max (Metal, naga 0.20 front end; WGSL as of 2024, no f16, no subgroup operations, no atomics on f32).\n\n{}\n\nLOOPS. Every loop counts up from 0 (or a literal) by a constant step: a loop over a thread's strided range is written `for (var i = 0u; i < n; i += s) {{ let j = i + lid; if (j < n) {{ ... }} }}`, never `for (var i = lid; ...)`, which is not read into the population.\n\nREFERENCE KERNEL (correct, the one to beat; entry point `{entry}`):\n```wgsl\n{}```\n\nOUTPUT. Return ONLY the complete WGSL kernel text{first}, with no explanation, no markdown fences, no prose before or after.",
         text.trim_end(),
         p.reference
     );
