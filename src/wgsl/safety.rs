@@ -1424,6 +1424,22 @@ impl<'m> An<'m> {
                                 }
                             }
                         }
+                        // A vector block of u32 (`var<uniform> params: vec4<u32>`):
+                        // each lane its symbol, `params.x` .. `params.w`; the
+                        // whole vector the vector of them. A u32 block: itself.
+                        const LANES: [&str; 4] = ["x", "y", "z", "w"];
+                        match (&self.module.types[ty].inner, p.path.as_slice()) {
+                            (TypeInner::Vector { scalar, .. }, [Abs::Lin(m)]) if scalar.kind == ScalarKind::Uint => {
+                                if let Some(lane) = m.k.as_const().and_then(|i| LANES.get(i as usize)) {
+                                    return self.param(&format!("{name}.{lane}"));
+                                }
+                            }
+                            (TypeInner::Vector { size, scalar }, []) if scalar.kind == ScalarKind::Uint => {
+                                return Abs::Vec(LANES[..*size as usize].iter().map(|lane| self.param(&format!("{name}.{lane}"))).collect());
+                            }
+                            (TypeInner::Scalar(s), []) if s.kind == ScalarKind::Uint => return self.param(&name),
+                            _ => {}
+                        }
                         self.other(true, true, false)
                     }
                     AddressSpace::Storage { .. } => {

@@ -1,0 +1,19 @@
+# The dispatch contract of UltraDim's cosine assignment (fuller
+# safety::Contract, the format of problems/nluca_step/safety.contract), from
+# qdrant lib/projection-voting-kmeans/src/lib.rs: assign_cosine_resident_banded
+# (2042-2061) dispatches ceil(n_band / 256) x 1 x 1 workgroups per N-band with
+# params = (n_band, C, D_proj, row_off). A band's point keys are one binding of
+# n_band x D_proj f32 under the per-binding cap, at most 262,144 rows at
+# D_proj = 2,048 (lib.rs:1001, 3706: "N > 262144 at D_proj = 2048" splits), so
+# n_band <= 262,144 and D_proj <= 2,048 (n_band * D_proj <= 2^29: every read
+# index fits a u32); C <= 65,536 (lib.rs:2305, "C = 64k"); the bands cover
+# [0, N) in order with N * 4 bytes of assignments under the 2 GiB cap
+# (lib.rs:252), so row_off + n_band <= 2^29. The legality checker's layer 7
+# proves a kernel of this problem under it.
+workgroups x 1 1024
+workgroups y 1 1
+workgroups z 1 1
+param params.x 1 262144
+param params.y 1 65536
+param params.z 1 2048
+param params.w 0 536608768

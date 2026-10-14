@@ -32,6 +32,10 @@ struct Ctx<'a> {
     kingdom: &'a WgslKingdom,
     /// The interface's per-kernel rows (a second input's load among them).
     per_kernel_rows: Vec<crate::wgsl::safe_karva::PerKernelRow>,
+    /// The interface's uniform variable (its fields' rows are
+    /// `load.<var>_<field>`), and the lanes of a vector block (`x`..`w`).
+    uniform_var: String,
+    uniform_lanes: Vec<String>,
     /// Whether main's last statement is a `return` (a body that returns, the
     /// epilogue not written after it).
     main_returns: bool,
@@ -1727,6 +1731,9 @@ impl<'a> Ctx<'a> {
             ("load.cfg_d", []) => Some(leaf("uniform.cfg_d")),
             ("load.cfg_r_rows", []) => Some(leaf("uniform.cfg_r_rows")),
             ("load.cfg_r_off", []) => Some(leaf("uniform.cfg_r_off")),
+            // A field of the interface's uniform without a kingdom role: its
+            // uniform row (`Role::inferred`).
+            (n, []) if n.starts_with("load.") && self.per_kernel_rows.iter().any(|p| p.0 == format!("uniform.{}", &n[5..]) && p.2 == u) => Some(leaf(&format!("uniform.{}", &n[5..]))),
             ("builtin.subgroup_size", []) => Some(leaf("uniform.subgroup_size")),
             ("builtin.num_subgroups", []) => Some(leaf("uniform.num_subgroups")),
             ("index.of_count", [k]) | ("index.of_uniform", [k]) => self.uniform_of(k)?,
@@ -1966,7 +1973,7 @@ impl<'a> Ctx<'a> {
                 return match field {
                     "d" | "m" | "r_rows" => Ok(Tree::new(&format!("load.cfg_{field}"), ty(self, "u32.count")?, vec![])),
                     "r_off" => Ok(Tree::new("load.cfg_r_off", ty(self, "u32.index")?, vec![])),
-                    other => Err(format!("uniform field {other}")),
+                    other => self.uniform_field(other),
                 };
             }
             if t.name == "builtin.work_group_id" {
@@ -2117,6 +2124,16 @@ impl<'a> Ctx<'a> {
                 let arr_dual = parr_dual(kind);
                 return Ok(Tree::new(&format!("parr.get_{kind}"), t.ty, vec![Tree::new(arr, ty(self, arr_dual)?, vec![]), pidx]));
             }
+        }
+        // A lane of a vector uniform block (`params.x`, naga's constant
+        // index into the vector): the field of that lane.
+        if t.name == "load.uniform.cfg.#" && !self.uniform_lanes.is_empty() {
+            if let [k] = t.kids.as_slice() {
+                if let Some(lane) = literal_value(k).filter(|v| v.fract() == 0.0 && *v >= 0.0).and_then(|v| self.uniform_lanes.get(v as usize)).cloned() {
+                    return self.uniform_field(&lane);
+                }
+            }
+            return Err(format!("a lane of the uniform {} at an index that is not a literal lane", self.uniform_var));
         }
         if t.name.starts_with("load.") {
             return Err(format!("load {} has no safe spelling", t.name));
@@ -2425,6 +2442,16 @@ impl<'a> Ctx<'a> {
         let (dual, kind) = if unsigned { ("u32.index", 'i') } else { ("i32.int", 'n') };
         let row = self.register(&format!("local.atomic@{result}"), dual)?;
         Ok(Some(Tree::new(&format!("reg.set_{kind}_{rung}"), st, vec![Tree::new(&row, ty(self, Self::reg_dual(kind))?, vec![]), expr])))
+    }
+
+    /// A uniform field without a kingdom role: the interface's row of its
+    /// value, `load.<var>_<field>` (`Role::inferred`).
+    fn uniform_field(&self, field: &str) -> Result<Tree, String> {
+        let row = format!("load.{}_{field}", self.uniform_var);
+        match self.per_kernel_rows.iter().find(|p| p.0 == row && p.1.is_empty()) {
+            Some((name, _, out)) => Ok(Tree::new(name, *out, vec![])),
+            None => Err(format!("uniform field {field}: the interface has no row {row}")),
+        }
     }
 
     /// An atomic's expression `atomic.<fun>_<u|i>(array, index, value)` and
@@ -5028,7 +5055,8 @@ pub fn read_safe_literal(source: &str, kingdom: &WgslKingdom) -> Result<SafeRead
     // that returns, with no epilogue after it (naga's own trailing return is
     // in every kernel's IR, so the text decides).
     let main_returns = source.find(&format!("fn {}(", role.entry)).map(|i| &source[i..]).and_then(|m| m.rfind('}').map(|j| &m[..j])).is_some_and(|m| m.trim_end().ends_with("return;"));
-    let mut ctx = Ctx { kingdom, main_returns, per_kernel_rows: crate::wgsl::safe_karva::per_kernel_rows(kingdom, &role), duals: &duals, lets: &lets, roots: &roots, item_counter: None, tile_counter: None, tile_counter2: None, tile_counter3: None, tile_counter4: None, registers: BTreeMap::new(), counter_stores: Vec::new(), guard: None, tail: true, arrays: BTreeMap::new(), array_lens: BTreeMap::new(), parrs: BTreeMap::new(), grid, rows_x: grid_rows_x(source).then_some(true), notes: Vec::new(), helpers: &helpers, calls: &calls, arg_roots: &arg_roots, inline_args: None, row_arrays: BTreeMap::new(), used_counters: std::collections::BTreeSet::new(), local_lanes, axis_memo: BTreeMap::new(), loop_depth: 0, tile_bounds: BTreeMap::new(), naga_fn, module: &kernel.module, local_prefix: String::new(), inline_result: None, inline_values: None, bound_lets, stale_lets, let_regs: HashMap::new(), inlined: HashMap::new(), stored_seen: std::collections::BTreeSet::new(), counter_offsets: HashMap::new(), pointer_args: HashMap::new(), mode_full: source.lines().any(|l| l.trim() == "// mode full") };
+    let uniform_lanes = if role.uniform_struct.is_empty() { role.fields.iter().map(|f| f.name.clone()).collect() } else { Vec::new() };
+    let mut ctx = Ctx { kingdom, main_returns, per_kernel_rows: crate::wgsl::safe_karva::per_kernel_rows(kingdom, &role), uniform_var: role.uniform_var.clone(), uniform_lanes, duals: &duals, lets: &lets, roots: &roots, item_counter: None, tile_counter: None, tile_counter2: None, tile_counter3: None, tile_counter4: None, registers: BTreeMap::new(), counter_stores: Vec::new(), guard: None, tail: true, arrays: BTreeMap::new(), array_lens: BTreeMap::new(), parrs: BTreeMap::new(), grid, rows_x: grid_rows_x(source).then_some(true), notes: Vec::new(), helpers: &helpers, calls: &calls, arg_roots: &arg_roots, inline_args: None, row_arrays: BTreeMap::new(), used_counters: std::collections::BTreeSet::new(), local_lanes, axis_memo: BTreeMap::new(), loop_depth: 0, tile_bounds: BTreeMap::new(), naga_fn, module: &kernel.module, local_prefix: String::new(), inline_result: None, inline_values: None, bound_lets, stale_lets, let_regs: HashMap::new(), inlined: HashMap::new(), stored_seen: std::collections::BTreeSet::new(), counter_offsets: HashMap::new(), pointer_args: HashMap::new(), mode_full: source.lines().any(|l| l.trim() == "// mode full") };
     // Register initialisations first, in root order. A local initialised to
     // its form's fallback (0.0, 0u, false, a zero vector) costs nothing: the
     // register's declaration already holds that value, and the register is

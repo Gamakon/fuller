@@ -356,6 +356,11 @@ impl Role {
                     continue;
                 }
                 let Some(dual) = elem_dual(ty).map(|d| if d == "u32.index" { "u32.count".to_string() } else { d }) else { continue };
+                // A u32 field is also a uniform value (a loop bound, a
+                // uniform branch): its row of the uniform dual.
+                if dual == "u32.count" {
+                    extra.push(pk(format!("uniform.{}_{f}", u.var), Vec::new(), "u32.uniform".into(), format!("{}.{f}", u.var)));
+                }
                 extra.push(pk(format!("load.{}_{f}", u.var), Vec::new(), dual, format!("{}.{f}", u.var)));
             }
         }

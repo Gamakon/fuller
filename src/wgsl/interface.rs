@@ -84,20 +84,23 @@ impl ModuleInterface {
     }
 }
 
+/// A scalar type as WGSL writes it (`u32`, `f32`, `bool`).
+pub fn scalar_text(s: &naga::Scalar) -> String {
+    let k = match s.kind {
+        naga::ScalarKind::Float => "f",
+        naga::ScalarKind::Sint => "i",
+        naga::ScalarKind::Uint => "u",
+        naga::ScalarKind::Bool => return "bool".into(),
+        naga::ScalarKind::AbstractInt => return "abstract-int".into(),
+        naga::ScalarKind::AbstractFloat => return "abstract-float".into(),
+    };
+    format!("{k}{}", u32::from(s.width) * 8)
+}
+
 /// A type as WGSL writes it.
 pub fn type_text(module: &Module, ty: Handle<naga::Type>) -> String {
     let t = &module.types[ty];
-    let scalar = |s: &naga::Scalar| -> String {
-        let k = match s.kind {
-            naga::ScalarKind::Float => "f",
-            naga::ScalarKind::Sint => "i",
-            naga::ScalarKind::Uint => "u",
-            naga::ScalarKind::Bool => return "bool".into(),
-            naga::ScalarKind::AbstractInt => return "abstract-int".into(),
-            naga::ScalarKind::AbstractFloat => return "abstract-float".into(),
-        };
-        format!("{k}{}", u32::from(s.width) * 8)
-    };
+    let scalar = scalar_text;
     match &t.inner {
         TypeInner::Scalar(s) => scalar(s),
         TypeInner::Vector { size, scalar: s } => format!("vec{}<{}>", *size as u32, scalar(s)),
@@ -215,9 +218,20 @@ pub fn infer(module: &Module) -> Result<ModuleInterface, String> {
             }
             AddressSpace::Uniform => {
                 if uniform.is_none() {
-                    if let TypeInner::Struct { members, .. } = &module.types[g.ty].inner {
-                        let fields = members.iter().enumerate().map(|(i, m)| (m.name.clone().unwrap_or_else(|| format!("f{i}")), type_text(module, m.ty))).collect();
-                        uniform = Some(UniformBlock { var: name.clone(), struct_name: ty.clone(), fields });
+                    match &module.types[g.ty].inner {
+                        TypeInner::Struct { members, .. } => {
+                            let fields = members.iter().enumerate().map(|(i, m)| (m.name.clone().unwrap_or_else(|| format!("f{i}")), type_text(module, m.ty))).collect();
+                            uniform = Some(UniformBlock { var: name.clone(), struct_name: ty.clone(), fields });
+                        }
+                        // A vector block (`var<uniform> params: vec4<u32>`,
+                        // UltraDim's kernels): its lanes are its fields, read
+                        // `params.x` .. `params.w`; no struct is declared.
+                        TypeInner::Vector { size, scalar } => {
+                            let lane = scalar_text(scalar);
+                            let fields = ["x", "y", "z", "w"].iter().take(*size as usize).map(|l| (l.to_string(), lane.clone())).collect();
+                            uniform = Some(UniformBlock { var: name.clone(), struct_name: String::new(), fields });
+                        }
+                        _ => {}
                     }
                 }
                 ("uniform".to_string(), Use::Parameter)
@@ -278,6 +292,20 @@ fn step(@builtin(global_invocation_id) gid: vec3<u32>) {
         assert_eq!(i.workgroup_size, [256, 1, 1]);
         assert!(i.uniform.is_none());
         assert_eq!(i.binding("buffer_2_global").and_then(|b| b.elem.clone()).as_deref(), Some("f32"));
+    }
+
+    /// A vector uniform block (UltraDim's `params: vec4<u32>`) is a parameter
+    /// block whose fields are its lanes, with no struct.
+    #[test]
+    fn a_vector_uniform_is_a_block_of_its_lanes() {
+        let src = "
+@group(0) @binding(0) var<storage, read_write> out: array<u32>;
+@group(0) @binding(1) var<uniform> params: vec4<u32>;
+@compute @workgroup_size(64)
+fn main(@builtin(global_invocation_id) gid: vec3<u32>) { if (gid.x < params.x) { out[params.w + gid.x] = params.y; } }";
+        let u = infer_text(src).unwrap().uniform.expect("the vector block");
+        assert_eq!((u.var.as_str(), u.struct_name.as_str()), ("params", ""));
+        assert_eq!(u.fields, ["x", "y", "z", "w"].map(|l| (l.to_string(), "u32".to_string())).to_vec());
     }
 
     /// A store made in a function the entry point calls makes its binding an output.

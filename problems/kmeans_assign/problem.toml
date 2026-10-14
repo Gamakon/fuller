@@ -1,0 +1,158 @@
+# UltraDim's live k-means cosine assignment (qdrant
+# lib/projection-voting-kmeans/src/lib.rs, build_cosine_assign_pipeline at
+# line 4732, its WGSL at 4743-4766, fn main at 4748) as a dispatch program
+# for the generic harness (src/wgsl/harness.rs; the schema is in its header).
+# For each of N points the kernel finds the most similar of C centroid keys
+# over D_proj dimensions: a dot product per centroid (keys are unit vectors,
+# so the dot product is the cosine) and an argmax, ties to the first index
+# (`sim > best_sim`). The program is assign_cosine_resident_banded
+# (lib.rs:1996-2062): the point keys split along N into contiguous bands
+# (create_raw_bands, lib.rs:2863: rows_per_band = max(1, cap / (D_proj * 4))),
+# one dispatch per band of ceil(n_band / 256) workgroups with params =
+# (n_band, C, D_proj, row_off), every band writing the one whole
+# `assignments` buffer at row_off + local. The harness's cap is its
+# executor's binding limit, not qdrant's 2 GiB (lib.rs:252), so its bands may
+# be smaller than qdrant's at the same N.
+#
+# THE SHIPPED KERNEL IS THE ORACLE ([oracle], the default): no case carries
+# files. The inputs are generated from the schema below (unit-length rows of
+# normal draws, the keys' distribution); the expected assignments are the
+# shipped kernel's own on those inputs, computed when the harness starts on
+# the executor it runs on and cached under oracle/.
+
+name = "kmeans_assign"
+description = "UltraDim k-means cosine assignment: argmax over C unit centroid keys of the dot product with each of N unit point keys, D_proj dims, N-banded"
+work = "n * c * dp"
+alias = "distinct"
+speed_column = "ranked"
+derive = ["bands = ceil_div(n, band)"]
+
+[params]
+# qdrant's band rule at this executor's cap (create_raw_bands).
+band = "min(n, max(1, floor_div(binding_limit, dp * 4)))"
+
+[oracle]
+mode = "shipped"
+on = "executor"
+
+[kernel]
+entry = "main"
+reference = "shipped.wgsl"
+
+[[binding]]
+binding = 0
+name = "point_keys"
+kind = "storage_read"
+element = "f32"
+
+[[binding]]
+binding = 1
+name = "centroid_keys"
+kind = "storage_read"
+element = "f32"
+
+[[binding]]
+binding = 2
+name = "assignments"
+kind = "storage_read_write"
+element = "u32"
+
+# params: a = n_band, b = C, c = D_proj, d = row_off (lib.rs:2044-2049).
+[[binding]]
+binding = 3
+name = "params"
+kind = "uniform"
+fields = ["u32", "u32", "u32", "u32"]
+
+[[input]]
+name = "points"
+element = "f32"
+shape = ["n * dp"]
+generate = { dist = "unit_rows", row = "dp" }
+
+[[input]]
+name = "centroids"
+element = "f32"
+shape = ["c * dp"]
+generate = { dist = "unit_rows", row = "dp" }
+
+# The cluster of every point. An argmax: another index is right when its
+# cosine is within the f32 rounding of two dot products of unit vectors
+# over dp terms (each within dp * eps of its exact value) of the shipped
+# kernel's choice.
+[[output]]
+name = "assignments"
+element = "u32"
+shape = ["n"]
+kind = "argmax"
+tie = "margin"
+score = "sum(p, dp, points[i * dp + p] * centroids[j * dp + p])"
+margin = "2 * dp * eps_f32"
+classes = "c"
+
+# The resident keys: each band of the points its own buffer, the centroids
+# one, a uniform per band.
+[[setup]]
+buffer = "ck"
+element = "f32"
+elements = "c * dp"
+from = "centroids"
+
+[[setup]]
+for = "b"
+count = "bands"
+let = ["off = b * band", "rows = min(band, n - off)"]
+
+[[setup.body]]
+buffer = "pk{b}"
+element = "f32"
+elements = "rows * dp"
+from = "points"
+offset = "off * dp"
+
+[[setup.body]]
+uniform = "u{b}"
+of = "params"
+words = ["rows", "c", "dp", "off"]
+
+[[run]]
+buffer = "asg"
+element = "u32"
+elements = "n"
+fill = "zero"
+
+[[run]]
+for = "b"
+count = "bands"
+let = ["off = b * band", "rows = min(band, n - off)"]
+
+[[run.body]]
+dispatch = { point_keys = "pk{b}", centroid_keys = "ck", assignments = "asg", params = "u{b}" }
+workgroups = ["ceil_div(rows, wg_x)", "1", "1"]
+
+[[run]]
+sync = true
+
+[[run]]
+read = "asg"
+into = "assignments"
+elements = "n"
+
+[[suite]]
+name = "constraint"
+role = "constraint"
+cases = "cases/constraint.toml"
+chunk = 1
+staged = true
+
+[[suite]]
+name = "timing"
+role = "timing"
+cases = "cases/timing.toml"
+
+[budget]
+base_ms = 30000.0
+round_ms = 600000.0
+timing_rounds = 1
+deadline_factor = 10.0
+deadline_floor_ms = 120000.0

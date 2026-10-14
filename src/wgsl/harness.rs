@@ -29,8 +29,9 @@
 //! | `[kernel]` | `entry` (the entry point), `grid_header` (read `// grid x y bx by [rows-x]` as `gram.rs` does; default false), `reference` (the shipped kernel's path, relative to the problem: the speed-ups' denominator and the accuracy baseline), `modes` (the modes a kernel may declare with a `// mode <name>` line; the program reads `mode_<name>`, 1 or 0) |
 //! | `derive_run` | `["name = expr", ...]`, evaluated after the kernel is known, before the run steps |
 //! | `[[binding]]` | the typed binding schema, one per `@group(0) @binding(n)`: `binding`, `name`, `kind` (`storage_read`, `storage_read_write`, `uniform`), `element` (`f32`, `u32`, `i32`: the storage array's scalar) or `fields` (a uniform's scalars, in order) |
-//! | `[[input]]` | a host tensor every case provides: `name`, `element`, `shape` (expressions) |
-//! | `[[output]]` | a host tensor the program reads back and the suites compare: `name`, `element` (`f32`), `shape` (one or two expressions: the closeness columns read it as rows x cols), `expected_element` (`f32` or `f64`), `points` (comparison points: the tensor split into this many equal slices along its first axis, each judged by the norm; default `"1"`) |
+//! | `[[input]]` | a host tensor of every case: `name`, `element`, `shape` (expressions), and `generate` (below) for a case that gives no file for it |
+//! | `[[output]]` | a host tensor the program reads back and the suites compare: `name`, `element` (`f32`, `u32`, `i32`), `shape` (one or two expressions: the closeness columns read it as rows x cols), `expected_element` (an expected file's element, `f32` or `f64`; default the output's), `points` (comparison points: the tensor split into this many equal slices along its first axis, each judged by the norm; default `"1"`), `kind` and the tie rule (*Outputs* below) |
+//! | `[oracle]` | where expected outputs come from (*The shipped kernel is the oracle* below): `mode` (`shipped`, the default, or `reference`), `on` (`executor`, the default, or `cpu`), `cache` (a directory relative to the problem, default `oracle`) |
 //! | `setup` | steps run once per case when the context is built: the resident buffers (inputs no kernel may write) |
 //! | `run` | steps run per evaluation of a kernel |
 //! | `[[suite]]` | the cases and how they are judged (below) |
@@ -67,7 +68,7 @@
 //!
 //! | role | judged | keys |
 //! |---|---|---|
-//! | `constraint` | every case must pass: the norm at every comparison point within `pass`; run in chunks of `chunk` cases, one submission a chunk; `staged = true`: cheapest work first, each later chunk gated by the rate measured so far against `base_ms`, stopped at the first failing chunk, a timing build measured over the slow limit scored slow | `norm`, `pass` (expression), `chunk`, `staged` |
+//! | `constraint` | every case must pass: the norm at every comparison point within `pass`; run in chunks of `chunk` cases, one submission a chunk; `staged = true`: cheapest work first, each later chunk predicted as the kernel's time so far over the shipped kernel's on the same chunks times the shipped kernel's on it, not dispatched past `base_ms`, stopped at the first failing chunk, a timing build measured over the slow limit scored slow | `norm`, `pass` (expression), `chunk`, `staged` |
 //! | `rung` | timed, gated, not judged (a step of the cost model between the cases and the pairs) | |
 //! | `accuracy` | the norm against the reference kernel's own value: fails over `max(slack * reference, 1)`; the split's column is `min(1, worst / reference / slack)` | `split` (0 train, 1 validation, 2 extrapolation), `norm`, `tau`, `slack` |
 //! | `timing` | three cases in all: the speed-up against the reference kernel's least time, the median of `timing_rounds` paired rounds | |
@@ -80,6 +81,49 @@
 //! non-finite mismatch counted: `gram::check_max`), `max_abs_over_rms` (the
 //! largest `|out - ref|` over the RMS of the reference, infinite with a
 //! non-finite output where the reference is finite).
+//!
+//! # The shipped kernel is the oracle
+//!
+//! Differential testing against the program as shipped, so a new problem
+//! needs no hand-made reference: a case of a judged suite (constraint,
+//! accuracy) that gives no expected file for an output gets the reference
+//! (shipped) kernel's own output on the case's inputs. The harness computes
+//! it when it starts ([`Harness::new`]), on its own executor (the device the
+//! evaluation runs on) or, with `on = "cpu"`, on the CPU executor
+//! ([`CpuExecutor`], `cpu.rs`: an error naming why when it cannot run the
+//! kernel), and caches it as raw bytes in `cache/<key>.<output>.bin`, the key
+//! a hash over the shipped text, the executor ([`Executor::oracle_tag`]), the
+//! case's name, parameters and input bytes, and the binding limit. With
+//! `mode = "reference"` every judged case must carry its files (the Gram,
+//! nluca: their owners' f64 references); a case that does is never re-run.
+//!
+//! ## Generated inputs
+//!
+//! A case that gives no file for an input draws it from the input's
+//! `generate = { dist = ..., ... }`, deterministic in the case (its `seed`
+//! parameter, else its name) and the input's name; every value an
+//! expression over the case's parameters:
+//!
+//! | `dist` | keys | values |
+//! |---|---|---|
+//! | `uniform` | `lo`, `hi` | uniform in [lo, hi) |
+//! | `normal` | `mean`, `std` | normal |
+//! | `unit_rows` | `row` | rows of `row` normal draws scaled to unit length (f32) |
+//! | `index` | `lo`, `hi` | integers in [lo, hi) (an index buffer within its bounds) |
+//! | `constant` | `value` | one value |
+//!
+//! ## Outputs
+//!
+//! An output is compared by its `kind`: `float` (the default for f32) by the
+//! suite's norm and `pass`; `exact` (the default for u32 and i32) element
+//! for element, the suite's value the fraction that differ (pass 0 unless
+//! the suite says otherwise); `argmax` (an index of the best of `classes`
+//! scores) by its `tie` rule: `exact`, or `margin`: an index that differs is
+//! right when it lies in [0, classes) and its score is within `margin` of the
+//! expected index's, the scores the `score` expression over the case's
+//! inputs in f64 with `i` the element and `j` the index (a near tie: either
+//! index is the argmax under rounding). Norms and `pass` are for float
+//! outputs; an exact or argmax suite needs neither ([`judge`]).
 //!
 //! # Case manifests
 //!
@@ -100,7 +144,9 @@
 //! parentheses and `min`, `max`, `floor`, `ceil`, `sqrt`, `abs`,
 //! `floor_div`, `ceil_div` (exact on integers), `select(c, a, b)` (`a` when
 //! `c` is not 0). `eps_f32` is `f32::EPSILON`; `binding_limit` the
-//! device's per-binding byte limit (`gram::effective_buffer_limit`).
+//! device's per-binding byte limit (`gram::effective_buffer_limit`). An
+//! argmax output's score also reads the case's inputs: `t[e]` is element e
+//! of input t, and `sum(k, n, e)` the sum of e with k = 0..n.
 //!
 //! # What runs it
 //!
@@ -109,7 +155,8 @@
 //! runtime bounds checks on, every wait `gram::wait_gpu`), or
 //! [`HostExecutor`], which runs the same plans on the CPU with a Rust model
 //! of a kernel (the tests: the program, the scoring and the timing code
-//! paths without a device).
+//! paths without a device), or [`CpuExecutor`], which runs the kernel's own
+//! WGSL on the CPU executor (`cpu.rs`: no model, the CPU's wall clock).
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -132,6 +179,9 @@ pub enum Expr {
     Neg(Box<Expr>),
     Bin(Op, Box<Expr>, Box<Expr>),
     Call(String, Vec<Expr>),
+    /// An element of a host tensor, `points[i * dp + p]` (an output's tie
+    /// rule reads the case's inputs; see *Expressions*).
+    Index(String, Box<Expr>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -210,6 +260,8 @@ fn tokens(s: &str) -> Result<Vec<Tok>, String> {
                 '%' => "%",
                 '(' => "(",
                 ')' => ")",
+                '[' => "[",
+                ']' => "]",
                 ',' => ",",
                 '<' => "<",
                 '>' => ">",
@@ -321,6 +373,11 @@ impl Parser<'_> {
                     }
                     self.expect(")")?;
                     Ok(Expr::Call(n, args))
+                } else if self.peek_sym() == Some("[") {
+                    self.at += 1;
+                    let i = self.cmp()?;
+                    self.expect("]")?;
+                    Ok(Expr::Index(n, Box::new(i)))
                 } else {
                     Ok(Expr::Var(n))
                 }
@@ -355,17 +412,43 @@ fn integral(x: f64, what: &str) -> Result<u128, String> {
     }
 }
 
+/// Host tensors an expression may index, by name, as f64 values.
+pub type Tensors = BTreeMap<String, Vec<f64>>;
+
 impl Expr {
     pub fn eval(&self, env: &Env) -> Result<f64, String> {
+        self.eval_in(env, &Tensors::new())
+    }
+
+    /// [`Expr::eval`] with host tensors: `t[i]` reads element i of tensor t
+    /// (an error past its end), `sum(k, n, body)` is the sum of `body` with
+    /// `k` = 0..n.
+    pub fn eval_in(&self, env: &Env, tensors: &Tensors) -> Result<f64, String> {
         Ok(match self {
             Expr::Num(v) => *v,
             Expr::Var(n) => match n.as_str() {
                 "eps_f32" => f64::from(f32::EPSILON),
                 _ => *env.get(n).ok_or_else(|| format!("unknown name {n:?}"))?,
             },
-            Expr::Neg(a) => -a.eval(env)?,
+            Expr::Neg(a) => -a.eval_in(env, tensors)?,
+            Expr::Index(t, i) => {
+                let v = tensors.get(t).ok_or_else(|| format!("no tensor {t:?}"))?;
+                let i = integral(i.eval_in(env, tensors)?, t)?;
+                *usize::try_from(i).ok().and_then(|i| v.get(i)).ok_or_else(|| format!("{t}[{i}]: past its {} elements", v.len()))?
+            }
+            Expr::Call(f, args) if f == "sum" => {
+                let [Expr::Var(k), n, body] = args.as_slice() else { return Err("sum takes (name, count, body)".into()) };
+                let n = integral(n.eval_in(env, tensors)?, "sum")?;
+                let mut e = env.clone();
+                let mut acc = 0.0f64;
+                for j in 0..n {
+                    e.insert(k.clone(), j as f64);
+                    acc += body.eval_in(&e, tensors)?;
+                }
+                acc
+            }
             Expr::Bin(op, a, b) => {
-                let (x, y) = (a.eval(env)?, b.eval(env)?);
+                let (x, y) = (a.eval_in(env, tensors)?, b.eval_in(env, tensors)?);
                 let truth = |c: bool| if c { 1.0 } else { 0.0 };
                 match op {
                     Op::Add => x + y,
@@ -388,7 +471,7 @@ impl Expr {
                 }
             }
             Expr::Call(f, args) => {
-                let v: Vec<f64> = args.iter().map(|a| a.eval(env)).collect::<Result<_, _>>()?;
+                let v: Vec<f64> = args.iter().map(|a| a.eval_in(env, tensors)).collect::<Result<_, _>>()?;
                 let arity = |n: usize| if v.len() == n { Ok(()) } else { Err(format!("{f} takes {n} arguments, not {}", v.len())) };
                 match f.as_str() {
                     "min" => {
@@ -560,6 +643,59 @@ pub struct TensorSpec {
     pub name: String,
     pub element: Elem,
     pub shape: Vec<String>,
+    /// How a case that gives no file for this input generates it.
+    pub generate: Option<Generate>,
+}
+
+/// A distribution an input is drawn from (see *Generated inputs*).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Dist {
+    Uniform,
+    Normal,
+    UnitRows,
+    Index,
+    Constant,
+}
+
+/// `generate = { dist = ..., ... }` of an input: every value an expression
+/// over the case's parameters.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Generate {
+    pub dist: Dist,
+    pub lo: Option<String>,
+    pub hi: Option<String>,
+    pub mean: Option<String>,
+    pub std: Option<String>,
+    /// `unit_rows`: the length of a row.
+    pub row: Option<String>,
+    /// `constant`: the value.
+    pub value: Option<String>,
+}
+
+/// How an output is compared with its expected value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OutputKind {
+    /// f32 values under the suite's norm and tolerance.
+    Float,
+    /// Integers or indices: equal, element for element.
+    Exact,
+    /// The index of the best of `classes` scores, judged by the tie rule.
+    Argmax,
+}
+
+/// An argmax output's tie rule.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Tie {
+    /// The index must equal the expected one.
+    Exact,
+    /// Another index is a correct answer when its score is within `margin`
+    /// of the expected index's (a near tie, either one the argmax under
+    /// rounding); both scores from the `score` expression in f64.
+    Margin,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -568,9 +704,75 @@ pub struct OutputSpec {
     pub name: String,
     pub element: Elem,
     pub shape: Vec<String>,
-    pub expected_element: Elem,
+    /// The element of an expected file (default: the output's own).
+    pub expected_element: Option<Elem>,
     #[serde(default = "one")]
     pub points: String,
+    /// `float` (default for f32), `exact` (default for u32 and i32) or `argmax`.
+    pub kind: Option<OutputKind>,
+    /// An argmax output's tie rule, and for `margin` its score of index `j`
+    /// for element `i`, its margin and its number of classes (expressions).
+    pub tie: Option<Tie>,
+    pub score: Option<String>,
+    pub margin: Option<String>,
+    pub classes: Option<String>,
+}
+
+impl OutputSpec {
+    pub fn kind(&self) -> OutputKind {
+        self.kind.unwrap_or(if self.element == Elem::F32 { OutputKind::Float } else { OutputKind::Exact })
+    }
+
+    pub fn expected_elem(&self) -> Elem {
+        self.expected_element.unwrap_or(self.element)
+    }
+}
+
+/// Where a case's expected outputs come from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OracleMode {
+    /// THE SHIPPED KERNEL IS THE ORACLE (the default): a case that gives no
+    /// expected file gets the shipped kernel's own outputs on its inputs.
+    #[default]
+    Shipped,
+    /// Every judged case gives its expected files (a problem owner's reference).
+    Reference,
+}
+
+/// What runs the shipped kernel for the oracle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OracleOn {
+    /// The harness's own executor (the device, at evaluation start).
+    #[default]
+    Executor,
+    /// The CPU executor (`cpu.rs`, [`CpuExecutor`]); a kernel it cannot run
+    /// is an error naming why.
+    Cpu,
+}
+
+/// `[oracle]`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Oracle {
+    #[serde(default)]
+    pub mode: OracleMode,
+    #[serde(default)]
+    pub on: OracleOn,
+    /// The cache directory, relative to the problem (default `oracle`).
+    #[serde(default = "oracle_dir")]
+    pub cache: String,
+}
+
+impl Default for Oracle {
+    fn default() -> Oracle {
+        Oracle { mode: OracleMode::Shipped, on: OracleOn::Executor, cache: oracle_dir() }
+    }
+}
+
+fn oracle_dir() -> String {
+    "oracle".into()
 }
 
 fn one() -> String {
@@ -747,6 +949,9 @@ pub struct ProblemSpec {
     /// How a speed-up becomes a fitness column (`speed_column`).
     #[serde(default)]
     pub speed_column: SpeedColumn,
+    /// Where the expected outputs come from (`[oracle]`; default: the shipped kernel).
+    #[serde(default)]
+    pub oracle: Oracle,
 }
 
 /// One case of a manifest.
@@ -808,6 +1013,114 @@ pub struct Problem {
 pub struct CaseData {
     pub inputs: BTreeMap<String, Vec<u8>>,
     pub expected: BTreeMap<String, Vec<f64>>,
+}
+
+/// FNV-1a over bytes: the stable hash of the oracle's cache keys and seeds.
+pub fn fnv(bytes: &[u8], mut h: u64) -> u64 {
+    for b in bytes {
+        h ^= u64::from(*b);
+        h = h.wrapping_mul(0x0100_0000_01b3);
+    }
+    h
+}
+
+const FNV0: u64 = 0xcbf2_9ce4_8422_2325;
+
+/// A generated input's seed: the case's `seed` parameter, else its name,
+/// mixed with the input's name (two inputs of a case differ).
+pub fn case_seed(case: &Case, input: &str) -> u64 {
+    let base = match case.params.get("seed") {
+        Some(v) => fnv(&v.to_le_bytes(), FNV0),
+        None => fnv(case.name.as_bytes(), FNV0),
+    };
+    fnv(input.as_bytes(), base ^ 0x9e37_79b9_7f4a_7c15)
+}
+
+/// splitmix64.
+fn mix(state: &mut u64) -> u64 {
+    *state = state.wrapping_add(0x9e37_79b9_7f4a_7c15);
+    let mut z = *state;
+    z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    z ^ (z >> 31)
+}
+
+/// A uniform f64 in [0, 1).
+fn unit(state: &mut u64) -> f64 {
+    (mix(state) >> 11) as f64 / (1u64 << 53) as f64
+}
+
+/// A standard normal (Box-Muller).
+fn normal(state: &mut u64) -> f64 {
+    let u = 1.0 - unit(state);
+    let v = unit(state);
+    (-2.0 * u.ln()).sqrt() * (std::f64::consts::TAU * v).cos()
+}
+
+/// GENERATED INPUTS: `n` values of the input's element drawn from its
+/// declared distribution, deterministic in `seed`. `uniform` in [lo, hi);
+/// `normal` (mean, std); `unit_rows` normal rows of `row` values each scaled
+/// to unit length in f64 (a row of zeros stays zero); `index` integers in
+/// [lo, hi), within the bound an index input declares; `constant` one value.
+pub fn generate(i: &TensorSpec, g: &Generate, n: u64, seed: u64, env: &Env) -> Result<Vec<u8>, String> {
+    let ex = |e: &Option<String>| -> Result<f64, String> { eval(e.as_deref().ok_or("missing")?, env) };
+    let mut state = seed;
+    let n = usize::try_from(n).map_err(|_| format!("{n} values"))?;
+    // The values are encoded as they are drawn (a production-sized input is
+    // gigabytes: no f64 copy of it is held).
+    let mut out = Vec::with_capacity(n * i.element.size() as usize);
+    let put = |v: f64, out: &mut Vec<u8>| -> Result<(), String> {
+        out.extend(i.element.encode(v)?);
+        Ok(())
+    };
+    match g.dist {
+        Dist::Uniform => {
+            let (lo, hi) = (ex(&g.lo)?, ex(&g.hi)?);
+            if lo >= hi || !lo.is_finite() || !hi.is_finite() {
+                return Err(format!("uniform [{lo}, {hi}) is empty"));
+            }
+            for _ in 0..n {
+                put(lo + (hi - lo) * unit(&mut state), &mut out)?;
+            }
+        }
+        Dist::Normal => {
+            let (m, sd) = (ex(&g.mean)?, ex(&g.std)?);
+            for _ in 0..n {
+                put(m + sd * normal(&mut state), &mut out)?;
+            }
+        }
+        Dist::UnitRows => {
+            let row = usize::try_from(integral(ex(&g.row)?, "row")?).map_err(|e| e.to_string())?;
+            if row == 0 || !n.is_multiple_of(row) {
+                return Err(format!("{n} values are not whole rows of {row}"));
+            }
+            let mut r = vec![0.0f64; row];
+            for _ in 0..n / row {
+                r.iter_mut().for_each(|x| *x = normal(&mut state));
+                let norm = r.iter().map(|x| x * x).sum::<f64>().sqrt();
+                for x in &r {
+                    put(if norm > 0.0 { x / norm } else { *x }, &mut out)?;
+                }
+            }
+        }
+        Dist::Index => {
+            let (lo, hi) = (ex(&g.lo)?, ex(&g.hi)?);
+            if lo.fract() != 0.0 || hi.fract() != 0.0 || lo >= hi {
+                return Err(format!("index [{lo}, {hi}) is not a non-empty integer range"));
+            }
+            let span = (hi - lo) as u64;
+            for _ in 0..n {
+                put(lo + (mix(&mut state) % span) as f64, &mut out)?;
+            }
+        }
+        Dist::Constant => {
+            let v = ex(&g.value)?;
+            for _ in 0..n {
+                put(v, &mut out)?;
+            }
+        }
+    }
+    Ok(out)
 }
 
 fn read_toml<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T, String> {
@@ -873,8 +1186,36 @@ impl Problem {
                 _ => {}
             }
         }
-        if s.output.iter().any(|o| o.element != Elem::F32 || o.shape.is_empty() || o.shape.len() > 2) {
-            return Err(format!("{name}: an output must be f32 of one or two dimensions"));
+        for o in &s.output {
+            let what = |e: &str| Err(format!("{name}: output {}: {e}", o.name));
+            if o.element == Elem::F64 || o.shape.is_empty() || o.shape.len() > 2 {
+                return what("an output is f32, u32 or i32 of one or two dimensions");
+            }
+            match (o.kind(), o.tie) {
+                (OutputKind::Float, _) if o.element != Elem::F32 => return what("a float output is f32"),
+                (OutputKind::Exact | OutputKind::Argmax, _) if o.element == Elem::F32 => return what("an exact or argmax output is u32 or i32"),
+                (OutputKind::Argmax, None) => return what("an argmax output declares its tie rule (tie = \"exact\" or \"margin\")"),
+                (OutputKind::Argmax, Some(Tie::Margin)) if o.score.is_none() || o.margin.is_none() || o.classes.is_none() => return what("tie = \"margin\" needs score, margin and classes"),
+                (OutputKind::Float | OutputKind::Exact, Some(_)) => return what("a tie rule is an argmax output's"),
+                _ => {}
+            }
+            for e in [&o.score, &o.margin, &o.classes].into_iter().flatten() {
+                parse_expr(e).map_err(|e| format!("{name}: output {}: {e}", o.name))?;
+            }
+        }
+        for i in &s.input {
+            if let Some(g) = &i.generate {
+                let need = |ok: bool, what: &str| if ok { Ok(()) } else { Err(format!("{name}: input {}: dist {:?} needs {what}", i.name, g.dist)) };
+                match g.dist {
+                    Dist::Uniform | Dist::Index => need(g.lo.is_some() && g.hi.is_some(), "lo and hi")?,
+                    Dist::Normal => need(g.mean.is_some() && g.std.is_some(), "mean and std")?,
+                    Dist::UnitRows => need(g.row.is_some() && i.element == Elem::F32, "row, of an f32 input")?,
+                    Dist::Constant => need(g.value.is_some(), "value")?,
+                }
+                if g.dist == Dist::Index && i.element == Elem::F32 {
+                    return Err(format!("{name}: input {}: an index input is u32 or i32", i.name));
+                }
+            }
         }
         let count = |r: Role| self.suites.iter().filter(|x| x.spec.role == r).map(|x| x.cases.len()).sum::<usize>();
         if self.suites.iter().filter(|x| x.spec.role == Role::Constraint).count() != 1 {
@@ -895,11 +1236,11 @@ impl Problem {
             let need = |what: &str, ok: bool| if ok { Ok(()) } else { Err(format!("{name}: suite {} needs {what}", su.spec.name)) };
             match su.spec.role {
                 Role::Constraint => {
-                    need("a norm", su.spec.norm.is_some())?;
-                    need("pass", su.spec.pass.is_some())?;
+                    need("a norm", su.spec.norm.is_some() || self.output_of(su)?.kind() != OutputKind::Float)?;
+                    need("pass", su.spec.pass.is_some() || self.output_of(su)?.kind() != OutputKind::Float)?;
                 }
                 Role::Accuracy => {
-                    need("a norm", su.spec.norm.is_some())?;
+                    need("a norm", su.spec.norm.is_some() || self.output_of(su)?.kind() != OutputKind::Float)?;
                     need("a split of 0, 1 or 2", su.spec.split.is_some_and(|k| k < 3))?;
                     need("slack", su.spec.slack.is_some())?;
                 }
@@ -911,12 +1252,12 @@ impl Problem {
             self.output_of(su)?;
             for c in &su.cases {
                 for i in &s.input {
-                    if !c.inputs.contains_key(&i.name) {
-                        return Err(format!("{name}: case {} of suite {} has no input {}", c.name, su.spec.name, i.name));
+                    if !c.inputs.contains_key(&i.name) && i.generate.is_none() {
+                        return Err(format!("{name}: case {} of suite {} has no input {}, and the input declares no generate", c.name, su.spec.name, i.name));
                     }
                 }
-                if matches!(su.spec.role, Role::Constraint | Role::Accuracy) && !c.expected.contains_key(&self.output_of(su)?.name) {
-                    return Err(format!("{name}: case {} of suite {} has no expected {}", c.name, su.spec.name, self.output_of(su)?.name));
+                if matches!(su.spec.role, Role::Constraint | Role::Accuracy) && s.oracle.mode == OracleMode::Reference && !c.expected.contains_key(&self.output_of(su)?.name) {
+                    return Err(format!("{name}: case {} of suite {} has no expected {} (oracle mode reference)", c.name, su.spec.name, self.output_of(su)?.name));
                 }
             }
         }
@@ -952,9 +1293,13 @@ impl Problem {
         let env = self.env(case, binding_limit)?;
         let mut out = CaseData::default();
         for i in &self.spec.input {
-            let path = &case.inputs[&i.name];
-            let bytes = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
             let n = i.shape.iter().map(|s| eval_int(s, &env)).collect::<Result<Vec<_>, _>>()?.iter().product::<u64>();
+            let Some(path) = case.inputs.get(&i.name) else {
+                let g = i.generate.as_ref().ok_or_else(|| format!("case {}: no input {}", case.name, i.name))?;
+                out.inputs.insert(i.name.clone(), generate(i, g, n, case_seed(case, &i.name), &env).map_err(|e| format!("case {}: input {}: {e}", case.name, i.name))?);
+                continue;
+            };
+            let bytes = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
             if bytes.len() as u64 != n * i.element.size() {
                 return Err(format!("{}: {} bytes, the shape says {} {:?}", path.display(), bytes.len(), n, i.element));
             }
@@ -965,10 +1310,10 @@ impl Problem {
             let mut v = Vec::new();
             for f in files {
                 let bytes = std::fs::read(f).map_err(|e| format!("{}: {e}", f.display()))?;
-                if !(bytes.len() as u64).is_multiple_of(o.expected_element.size()) {
-                    return Err(format!("{}: {} bytes is not a whole number of {:?}", f.display(), bytes.len(), o.expected_element));
+                if !(bytes.len() as u64).is_multiple_of(o.expected_elem().size()) {
+                    return Err(format!("{}: {} bytes is not a whole number of {:?}", f.display(), bytes.len(), o.expected_elem()));
                 }
-                v.extend(o.expected_element.decode(&bytes));
+                v.extend(o.expected_elem().decode(&bytes));
             }
             let n = self.output_elems(o, &env)?;
             if v.len() as u64 != n {
@@ -979,12 +1324,12 @@ impl Problem {
         Ok(out)
     }
 
-    fn output_dims(&self, o: &OutputSpec, env: &Env) -> Result<(usize, usize), String> {
+    pub fn output_dims(&self, o: &OutputSpec, env: &Env) -> Result<(usize, usize), String> {
         let d: Vec<u64> = o.shape.iter().map(|s| eval_int(s, env)).collect::<Result<_, _>>()?;
         Ok(if d.len() == 1 { (1, d[0] as usize) } else { (d[0] as usize, d[1] as usize) })
     }
 
-    fn output_elems(&self, o: &OutputSpec, env: &Env) -> Result<u64, String> {
+    pub fn output_elems(&self, o: &OutputSpec, env: &Env) -> Result<u64, String> {
         let (r, c) = self.output_dims(o, env)?;
         Ok((r * c) as u64)
     }
@@ -1515,6 +1860,9 @@ pub trait Executor {
     type Staged;
     /// The per-binding byte limit (`binding_limit`).
     fn binding_limit(&self) -> u64;
+    /// What runs the kernels, as the oracle's cache key names it (two
+    /// executors may compute different bits).
+    fn oracle_tag(&self) -> String;
     /// Compile a kernel for the problem: [`kernel_info`], then the device's own.
     fn compile(&self, problem: &Problem, source: &str) -> Result<(Self::Kernel, KernelInfo), String>;
     /// Make a case's resident buffers; the milliseconds it took.
@@ -1734,6 +2082,10 @@ impl Executor for HostExecutor {
         self.binding_limit
     }
 
+    fn oracle_tag(&self) -> String {
+        "host".into()
+    }
+
     fn compile(&self, problem: &Problem, source: &str) -> Result<(HostCompiled, KernelInfo), String> {
         let info = kernel_info(&problem.spec, source)?;
         let model = self.models.iter().position(|(s, _)| s == source).ok_or("host executor: no model is registered for this kernel text")?;
@@ -1760,6 +2112,172 @@ impl Executor for HostExecutor {
         let mut its: Vec<HostItem> = items.iter().map(|(p, d, s)| self.item(p, d, s, &k.writable)).collect();
         let compute = self.exec(k.model, &k.info, &mut its, true, true)?;
         Ok((its.into_iter().map(|it| RunOut { outputs: it.outputs, gpu_ms: it.gpu_ms, compute_ms: compute, wall_ms: compute }).collect(), compute))
+    }
+}
+
+/// THE CPU EXECUTOR OF A PROBLEM: the plans run as the device runs them,
+/// every dispatch the kernel's own WGSL on `cpu.rs` (the whole dispatch,
+/// workgroup memory shared, WGSL's value semantics, wgpu's bounds policy),
+/// so no model of the kernel is written. Its times are the CPU's wall
+/// milliseconds (the speed-ups of a CPU run say nothing about a device).
+/// The oracle's executor when a problem says `[oracle] on = "cpu"`, and the
+/// harness's executor in the tests.
+pub struct CpuExecutor {
+    pub binding_limit: u64,
+    /// The cap on statements a dispatch executes (`cpu::run`).
+    pub max_steps: u64,
+}
+
+impl CpuExecutor {
+    pub fn new(binding_limit: u64) -> CpuExecutor {
+        CpuExecutor { binding_limit, max_steps: 1 << 40 }
+    }
+}
+
+/// How a binding's bytes become a `cpu::Val`.
+#[derive(Clone)]
+enum CpuShape {
+    /// A runtime-sized array of this element type.
+    Elements(naga::Handle<naga::Type>),
+    /// A value of this whole type (a fixed array, a uniform).
+    Whole(naga::Handle<naga::Type>),
+}
+
+/// A kernel on the CPU executor: its module and, per binding number, its
+/// global's name, its shape, and whether the schema lets it be written.
+pub struct CpuKernel {
+    module: naga::Module,
+    bindings: BTreeMap<u32, (String, CpuShape, bool)>,
+}
+
+/// A case's resident buffers on the CPU.
+pub struct CpuStaged {
+    bufs: Vec<(BufId, Vec<u8>)>,
+}
+
+fn words_of(b: &[u8]) -> Vec<u32> {
+    b.chunks(4).map(|c| {
+        let mut w = [0u8; 4];
+        w[..c.len()].copy_from_slice(c);
+        u32::from_le_bytes(w)
+    }).collect()
+}
+
+impl CpuExecutor {
+    fn value(k: &CpuKernel, shape: &CpuShape, bytes: &[u8]) -> Result<crate::wgsl::cpu::Val, String> {
+        let words = words_of(bytes);
+        match shape {
+            CpuShape::Elements(e) => crate::wgsl::cpu::from_words(&k.module, *e, &words),
+            CpuShape::Whole(t) => match crate::wgsl::cpu::from_words(&k.module, *t, &words)? {
+                crate::wgsl::cpu::Val::V(mut v) if !v.is_empty() => Ok(v.remove(0)),
+                _ => crate::wgsl::cpu::zero(&k.module, *t),
+            },
+        }
+    }
+
+    /// Run a plan's commands; reads are made when met (a plan's hazard rule
+    /// guarantees no later write in its segment spoils one). The milliseconds
+    /// of its dispatches.
+    fn exec(&self, k: &CpuKernel, plan: &Plan, data: &CaseData, staged: &CpuStaged, read: bool, outputs: &mut [Vec<u8>]) -> Result<f64, String> {
+        let mut bufs: Vec<Option<Vec<u8>>> = vec![None; plan.buffers.len()];
+        for (id, b) in &staged.bufs {
+            bufs[*id] = Some(b.clone());
+        }
+        let mut ms = 0.0f64;
+        for c in &plan.run {
+            match c {
+                Cmd::Create(id) => bufs[*id] = Some(initial_bytes(&plan.buffers[*id], data)?),
+                Cmd::Clear(id) => bufs[*id].as_mut().ok_or("a clear of a buffer never made")?.iter_mut().for_each(|x| *x = 0),
+                Cmd::Dispatch { bind, workgroups } => {
+                    let mut vals = std::collections::HashMap::new();
+                    for (b, id) in bind {
+                        let Some((name, shape, _)) = k.bindings.get(b) else { continue };
+                        let bytes = bufs[*id].as_ref().ok_or("a dispatch of a buffer never made")?;
+                        vals.insert(name.clone(), Self::value(k, shape, bytes)?);
+                    }
+                    let t = Instant::now();
+                    let d = crate::wgsl::cpu::run(&k.module, vals, *workgroups, self.max_steps)?;
+                    ms += t.elapsed().as_secs_f64() * 1e3;
+                    for (b, id) in bind {
+                        let Some((name, _, true)) = k.bindings.get(b) else { continue };
+                        let mut w = Vec::new();
+                        d.buffers.get(name).ok_or_else(|| format!("the dispatch returned no {name}"))?.words(&mut w);
+                        let buf = bufs[*id].as_mut().expect("bound above");
+                        if w.len() * 4 != buf.len() {
+                            return Err(format!("{name}: the dispatch returned {} words for {} bytes", w.len(), buf.len()));
+                        }
+                        buf.copy_from_slice(&w.iter().flat_map(|x| x.to_le_bytes()).collect::<Vec<u8>>());
+                    }
+                }
+                Cmd::Copy { src, src_offset, dst, dst_offset, bytes } => {
+                    let v = bufs[*src].as_ref().ok_or("a copy of a buffer never made")?[*src_offset as usize..(*src_offset + *bytes) as usize].to_vec();
+                    bufs[*dst].as_mut().ok_or("a copy into a buffer never made")?[*dst_offset as usize..(*dst_offset + *bytes) as usize].copy_from_slice(&v);
+                }
+                Cmd::Read { src, src_offset, output, dst_offset, bytes } => {
+                    if read {
+                        let v = &bufs[*src].as_ref().ok_or("a read of a buffer never made")?[*src_offset as usize..(*src_offset + *bytes) as usize];
+                        outputs[*output][*dst_offset as usize..(*dst_offset + *bytes) as usize].copy_from_slice(v);
+                    }
+                }
+                Cmd::Sync => {}
+            }
+        }
+        // A plan of no dispatch still takes time (a speed-up's denominator is never 0).
+        Ok(ms.max(1e-6))
+    }
+}
+
+impl Executor for CpuExecutor {
+    type Kernel = CpuKernel;
+    type Staged = CpuStaged;
+
+    fn binding_limit(&self) -> u64 {
+        self.binding_limit
+    }
+
+    fn oracle_tag(&self) -> String {
+        "cpu".into()
+    }
+
+    fn compile(&self, problem: &Problem, source: &str) -> Result<(CpuKernel, KernelInfo), String> {
+        let info = kernel_info(&problem.spec, source)?;
+        let module = naga::front::wgsl::parse_str(source).map_err(|e| e.emit_to_string(source))?;
+        let mut bindings = BTreeMap::new();
+        for (_, g) in module.global_variables.iter() {
+            let Some(rb) = &g.binding else { continue };
+            let shape = match &module.types[g.ty].inner {
+                naga::TypeInner::Array { base, size: naga::ArraySize::Dynamic, .. } => CpuShape::Elements(*base),
+                _ => CpuShape::Whole(g.ty),
+            };
+            let writable = problem.spec.binding.iter().any(|b| b.binding == rb.binding && b.kind == BindingKind::StorageReadWrite);
+            bindings.insert(rb.binding, (g.name.clone().unwrap_or_default(), shape, writable));
+        }
+        Ok((CpuKernel { module, bindings }, info))
+    }
+
+    fn stage(&self, plan: &Plan, data: &CaseData) -> Result<(CpuStaged, f64), String> {
+        let bufs = plan.setup.iter().map(|id| initial_bytes(&plan.buffers[*id], data).map(|b| (*id, b))).collect::<Result<_, _>>()?;
+        Ok((CpuStaged { bufs }, 0.0))
+    }
+
+    fn run(&self, k: &CpuKernel, plan: &Plan, data: &CaseData, staged: &CpuStaged, read: bool) -> Result<RunOut, String> {
+        let mut outputs: Vec<Vec<u8>> = plan.outputs.iter().map(|n| vec![0u8; *n as usize]).collect();
+        let ms = self.exec(k, plan, data, staged, read, &mut outputs)?;
+        Ok(RunOut { outputs: if read { outputs } else { Vec::new() }, gpu_ms: ms, compute_ms: ms, wall_ms: ms })
+    }
+
+    fn run_batch(&self, k: &CpuKernel, items: &[(&Plan, &CaseData, &CpuStaged)]) -> Result<(Vec<RunOut>, f64), String> {
+        let mut runs = Vec::with_capacity(items.len());
+        let mut total = 0.0;
+        for (p, d, s) in items {
+            if !p.batch_safe {
+                return Err(format!("a plan of {} commands is not batch-safe", p.run.len()));
+            }
+            let r = self.run(k, p, d, s, true)?;
+            total += r.compute_ms;
+            runs.push(r);
+        }
+        Ok((runs, total))
     }
 }
 
@@ -2027,6 +2545,10 @@ mod device {
             self.limit
         }
 
+        fn oracle_tag(&self) -> String {
+            format!("device {}", self.dev.name)
+        }
+
         fn compile(&self, problem: &Problem, source: &str) -> Result<(DeviceKernel, KernelInfo), String> {
             let info = kernel_info(&problem.spec, source)?;
             let dev = self.dev;
@@ -2108,6 +2630,8 @@ pub struct Staged<S> {
     pub reference: f64,
     /// The constraint's pass bound (constraint cases).
     pub pass: f64,
+    /// The case's environment (its parameters and derived values).
+    pub env: Env,
 }
 
 /// An accuracy case with its norm and slack.
@@ -2137,6 +2661,9 @@ pub struct Harness<'e, E: Executor> {
     /// One whole evaluation of the reference kernel, measured when the
     /// problem's budget names a deadline.
     pub reference_eval_ms: Option<f64>,
+    /// The reference kernel's compute ms on each chunk of a staged
+    /// constraint, in the order the chunks run.
+    pub reference_chunk_ms: Vec<f64>,
 }
 
 impl<'e, E: Executor> Harness<'e, E> {
@@ -2153,9 +2680,12 @@ impl<'e, E: Executor> Harness<'e, E> {
             let out = problem.output_of(su)?.clone();
             for c in &su.cases {
                 let env = problem.env(c, limit)?;
-                let data = problem.case_data(c, limit)?;
+                let mut data = problem.case_data(c, limit)?;
                 let plan = problem.plan(c, limit, None)?;
                 let (staged, _) = exec.stage(&plan, &data)?;
+                if matches!(su.spec.role, Role::Constraint | Role::Accuracy) {
+                    oracle_fill(&problem, exec, &shipped, &info, c, &mut data, &staged).map_err(|e| format!("the oracle, case {}: {e}", c.name))?;
+                }
                 let dims = problem.output_dims(&out, &env)?;
                 let points = eval_int(&out.points, &env)? as usize;
                 if points == 0 || dims.0 % points != 0 {
@@ -2169,17 +2699,19 @@ impl<'e, E: Executor> Harness<'e, E> {
                     Some(p) => eval(p, &env)?,
                     None => 0.0,
                 };
-                let s = Staged { case: c.clone(), data, staged, work: problem.work(c, limit)?, dims, points, tau, reference: 0.0, pass };
+                let s = Staged { case: c.clone(), data, staged, work: problem.work(c, limit)?, dims, points, tau, reference: 0.0, pass, env };
+                // (An exact or argmax output has no norm: its kind judges it.)
+                let norm_of = |su: &Suite| su.spec.norm.unwrap_or(Norm::MeanAbsOverMax);
                 match su.spec.role {
                     Role::Constraint => {
-                        constraint_norm = su.spec.norm.expect("checked at load");
+                        constraint_norm = norm_of(su);
                         chunk = su.spec.chunk.unwrap_or(16).max(1);
                         constraint.push(s);
                     }
                     Role::Rung => rungs.push(s),
                     Role::Timing => timing.push(s),
                     Role::Accuracy => {
-                        let norm = su.spec.norm.expect("checked at load");
+                        let norm = norm_of(su);
                         let mut s = s;
                         let plan = problem.plan(&s.case, limit, Some(&info))?;
                         let r = exec.run(&shipped, &plan, &s.data, &s.staged, true)?;
@@ -2225,7 +2757,19 @@ impl<'e, E: Executor> Harness<'e, E> {
             shipped_gpu_ms: std::cell::Cell::new([0.0; 3]),
             shipped_min_gpu_ms: std::cell::Cell::new([f64::INFINITY; 3]),
             reference_eval_ms: None,
+            reference_chunk_ms: Vec::new(),
         };
+        // STAGED: the shipped kernel's own time on every chunk of the
+        // constraint, as the evaluation runs them (the staged gate's scale).
+        if staged {
+            let mut v = Vec::new();
+            for chunk in h.constraint.chunks(h.chunk) {
+                let plans = chunk.iter().map(|s| h.problem.plan(&s.case, limit, Some(&info))).collect::<Result<Vec<_>, _>>()?;
+                let items: Vec<(&Plan, &CaseData, &E::Staged)> = chunk.iter().zip(&plans).map(|(s, p)| (p, &s.data, &s.staged)).collect();
+                v.push(exec.run_batch(&shipped, &items)?.1);
+            }
+            h.reference_chunk_ms = v;
+        }
         h.time_shipped()?;
         // The deadline's base: one whole evaluation of the reference kernel,
         // which must be feasible on its own problem.
@@ -2360,12 +2904,20 @@ impl<'e, E: Executor> Harness<'e, E> {
                 if passed < done {
                     return infeasible(passed, mean_distance(sum_distance, ran), closeness::columns(&per_case, passed, &outs), format!("constraint {passed}/{cases} cases: {first_fail}; the {} costlier cases not dispatched", cases - done), t, &meter, &split);
                 }
-                let work: f64 = chunk.iter().map(|s| s.work).sum();
                 let what = format!("the correctness cases {}..{} ({})", done + 1, done + chunk.len(), chunk.iter().map(|s| s.case.label.as_str()).collect::<Vec<_>>().join(", "));
-                // The time spent is the executor's own measure of the chunks
-                // run (the meter's unit), not the host's wall clock.
-                if let Err(e) = gate(&meter, &what, work, cases_ms, self.base_budget_ms, self.base_budget_ms) {
-                    return infeasible(passed, mean_distance(sum_distance, ran), closeness::columns(&per_case, passed, &outs), e, t, &meter, &split);
+                // The prediction is the kernel's time so far relative to the
+                // shipped kernel's on the same chunks, times the shipped
+                // kernel's time on this one: the shipped kernel's own cost
+                // curve, fixed overheads included (a rate per unit of work
+                // through zero, fitted on a tiny first case, put the whole
+                // dispatch overhead on its work: kmeans_assign's n 1 case
+                // predicted 481 s for a 0.5 s case). The time spent is the
+                // executor's own measure of the chunks run.
+                let k = done / self.chunk;
+                let (ref_done, ref_next) = (self.reference_chunk_ms[..k].iter().sum::<f64>(), self.reference_chunk_ms[k]);
+                let predicted = if ref_done > 0.0 { cases_ms / ref_done * ref_next } else { cases_ms };
+                if cases_ms + predicted > self.base_budget_ms {
+                    return infeasible(passed, mean_distance(sum_distance, ran), closeness::columns(&per_case, passed, &outs), format!("slow: predicted {:.1} s at {what}, {:.2}x the shipped kernel's {:.1} s there by the cases run so far ({:.1} s against its {:.1} s), over the cases' budget of {:.1} s; not dispatched", predicted / 1e3, if ref_done > 0.0 { cases_ms / ref_done } else { 1.0 }, ref_next / 1e3, cases_ms / 1e3, ref_done / 1e3, self.base_budget_ms / 1e3), t, &meter, &split);
                 }
             }
             let plans = match chunk.iter().map(plan_of).collect::<Result<Vec<_>, _>>() {
@@ -2380,9 +2932,11 @@ impl<'e, E: Executor> Harness<'e, E> {
             cases_ms += compute_ms;
             for (s, r) in chunk.iter().zip(&runs) {
                 meter.push(s.work, compute_ms / chunk.len() as f64);
-                let h: Vec<f32> = bytemuck_f32(&r.outputs[out_index]);
                 let want = &s.data.expected[&out_spec.name];
-                let (d, nf) = points_value(self.constraint_norm, &h, want, s.dims, s.points, s.tau);
+                let (d, nf, h) = match judge(&self.problem, &out_spec, self.constraint_norm, s, &r.outputs[out_index]) {
+                    Ok(x) => x,
+                    Err(e) => return infeasible(passed, mean_distance(sum_distance, ran), closeness::columns(&per_case, passed, &outs), format!("our software has a bug: {e}"), t, &meter, &split),
+                };
                 sum_distance += if d.is_nan() { f64::INFINITY } else { d };
                 per_case[ran] = Some(closeness::tensor_columns(&h, want, s.dims.0, s.dims.1));
                 outs[ran] = Some((closeness::hash_bits(&h, |v: f32| u64::from(v.to_bits())), closeness::hash_bits(want, f64::to_bits), s.dims.0 * s.dims.1));
@@ -2526,10 +3080,130 @@ pub fn points_value(norm: Norm, h: &[f32], want: &[f64], dims: (usize, usize), p
 
 fn compare<S>(problem: &Problem, out: &OutputSpec, norm: Norm, s: &Staged<S>, r: &RunOut) -> Result<(f64, usize, Vec<f32>), String> {
     let i = problem.spec.output.iter().position(|o| o.name == out.name).ok_or("no such output")?;
-    let h = bytemuck_f32(r.outputs.get(i).ok_or("the run read no output")?);
+    judge(problem, out, norm, s, r.outputs.get(i).ok_or("the run read no output")?)
+}
+
+/// THE COMPARISON BY THE OUTPUT'S KIND of a run's output bytes against the
+/// case's expected values: the value the suite's bound judges, the
+/// non-finite count, and the output as f32 (the closeness columns' input).
+/// `float`: the norm over the comparison points. `exact`: the fraction of
+/// elements that differ. `argmax`: the fraction of elements that differ and
+/// that the tie rule does not accept (`margin`: an index in [0, classes)
+/// whose score is within the margin of the expected index's, both scores
+/// the output's `score` expression in f64 over the case's inputs, with `i`
+/// the element and `j` the index).
+pub fn judge<S>(problem: &Problem, out: &OutputSpec, norm: Norm, s: &Staged<S>, bytes: &[u8]) -> Result<(f64, usize, Vec<f32>), String> {
     let want = s.data.expected.get(&out.name).ok_or_else(|| format!("case {}: no expected {}", s.case.name, out.name))?;
-    let (v, nf) = points_value(norm, &h, want, s.dims, s.points, s.tau);
-    Ok((v, nf, h))
+    if out.kind() == OutputKind::Float {
+        let h = bytemuck_f32(bytes);
+        let (v, nf) = points_value(norm, &h, want, s.dims, s.points, s.tau);
+        return Ok((v, nf, h));
+    }
+    let got = out.element.decode(bytes);
+    if got.len() != want.len() {
+        return Err(format!("case {}: {} holds {} values, expected {}", s.case.name, out.name, got.len(), want.len()));
+    }
+    let h: Vec<f32> = got.iter().map(|v| *v as f32).collect();
+    let n = got.len().max(1) as f64;
+    let mismatched: Vec<usize> = (0..got.len()).filter(|&i| got[i] != want[i]).collect();
+    if mismatched.is_empty() || out.kind() == OutputKind::Exact || out.tie == Some(Tie::Exact) {
+        return Ok((mismatched.len() as f64 / n, 0, h));
+    }
+    // The margin rule: the case's inputs as f64 tensors, the scores of both indices.
+    let mut tensors = Tensors::new();
+    for i in &problem.spec.input {
+        if let Some(b) = s.data.inputs.get(&i.name) {
+            tensors.insert(i.name.clone(), i.element.decode(b));
+        }
+    }
+    let ex = |e: &Option<String>| parse_expr(e.as_deref().ok_or("checked at load")?);
+    let (score, margin, classes) = (ex(&out.score)?, ex(&out.margin)?, ex(&out.classes)?);
+    let (margin, classes) = (margin.eval(&s.env)?, classes.eval(&s.env)?);
+    let mut env = s.env.clone();
+    let mut wrong = 0usize;
+    for i in mismatched {
+        let g = got[i];
+        if g.fract() != 0.0 || g < 0.0 || g >= classes {
+            wrong += 1;
+            continue;
+        }
+        env.insert("i".into(), i as f64);
+        env.insert("j".into(), g);
+        let sg = score.eval_in(&env, &tensors)?;
+        env.insert("j".into(), want[i]);
+        let sw = score.eval_in(&env, &tensors)?;
+        if sw - sg > margin {
+            wrong += 1;
+        }
+    }
+    Ok((wrong as f64 / n, 0, h))
+}
+
+/// The expected outputs of a judged case its manifest gives no file for:
+/// THE SHIPPED KERNEL'S OWN OUTPUTS on the case's inputs, run on the
+/// harness's executor (the stage already made) or on the CPU executor as
+/// `[oracle] on` says, and cached under `[oracle] cache` by a key over the
+/// shipped text, the executor, the case's name and parameters, its inputs'
+/// bytes and the binding limit.
+fn oracle_fill<E: Executor>(problem: &Problem, exec: &E, shipped: &E::Kernel, info: &KernelInfo, case: &Case, data: &mut CaseData, staged: &E::Staged) -> Result<(), String> {
+    let missing: Vec<usize> = problem.spec.output.iter().enumerate().filter(|(_, o)| !data.expected.contains_key(&o.name)).map(|(k, _)| k).collect();
+    if missing.is_empty() {
+        return Ok(());
+    }
+    let oracle = &problem.spec.oracle;
+    if oracle.mode == OracleMode::Reference {
+        return Err(format!("no expected {} and the oracle mode is reference", problem.spec.output[missing[0]].name));
+    }
+    let limit = exec.binding_limit();
+    let tag = match oracle.on {
+        OracleOn::Executor => exec.oracle_tag(),
+        OracleOn::Cpu => "cpu".to_string(),
+    };
+    let mut key = fnv(problem.reference.as_bytes(), FNV0);
+    key = fnv(tag.as_bytes(), key);
+    key = fnv(case.name.as_bytes(), key);
+    for (k, v) in &case.params {
+        key = fnv(&v.to_le_bytes(), fnv(k.as_bytes(), key));
+    }
+    for (k, b) in &data.inputs {
+        key = fnv(b, fnv(k.as_bytes(), key));
+    }
+    key = fnv(&limit.to_le_bytes(), key);
+    let dir = problem.dir.join(&oracle.cache);
+    let path = |o: &OutputSpec| dir.join(format!("{key:016x}.{}.bin", o.name));
+    let env = problem.env(case, limit)?;
+    let want_bytes = |o: &OutputSpec| -> Result<u64, String> { Ok(problem.output_elems(o, &env)? * o.element.size()) };
+    let cached: Option<Vec<Vec<u8>>> = missing.iter().map(|k| std::fs::read(path(&problem.spec.output[*k])).ok()).collect();
+    let outputs: Vec<Vec<u8>> = match cached {
+        Some(c) => c,
+        None => {
+            let r = match oracle.on {
+                OracleOn::Executor => exec.run(shipped, &problem.plan(case, limit, Some(info))?, data, staged, true)?,
+                OracleOn::Cpu => {
+                    let cpu = CpuExecutor::new(limit);
+                    let (k, i) = cpu.compile(problem, &problem.reference).map_err(|e| format!("the CPU executor cannot compile the shipped kernel: {e}"))?;
+                    let plan = problem.plan(case, limit, Some(&i))?;
+                    let (st, _) = cpu.stage(&plan, data)?;
+                    cpu.run(&k, &plan, data, &st, true).map_err(|e| format!("the CPU executor cannot run the shipped kernel: {e}"))?
+                }
+            };
+            let outs: Vec<Vec<u8>> = missing.iter().map(|k| r.outputs.get(*k).cloned().ok_or("the shipped run read no output")).collect::<Result<_, _>>()?;
+            std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+            for (k, b) in missing.iter().zip(&outs) {
+                let f = path(&problem.spec.output[*k]);
+                std::fs::write(&f, b).map_err(|e| format!("{}: {e}", f.display()))?;
+            }
+            outs
+        }
+    };
+    for (k, b) in missing.iter().zip(outputs) {
+        let o = &problem.spec.output[*k];
+        if b.len() as u64 != want_bytes(o)? {
+            return Err(format!("the oracle's {} holds {} bytes, the output {}", o.name, b.len(), want_bytes(o)?));
+        }
+        data.expected.insert(o.name.clone(), o.element.decode(&b));
+    }
+    Ok(())
 }
 
 // ------------------------------------------------------------------
@@ -3308,5 +3982,80 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
             }
         }
         assert_eq!(failing, su.cases.len(), "f16 state passes {} of {} cases", su.cases.len() - failing, su.cases.len());
+    }
+
+    /// Tensor indexing and `sum` (an argmax output's score), out-of-range named.
+    #[test]
+    fn expressions_index_host_tensors_and_sum() {
+        let mut env = Env::new();
+        env.insert("i".into(), 1.0);
+        env.insert("dp".into(), 3.0);
+        let mut t = Tensors::new();
+        t.insert("a".into(), vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
+        t.insert("b".into(), vec![1.0, 0.5, 0.25]);
+        assert_eq!(parse_expr("sum(p, dp, a[i * dp + p] * b[p])").unwrap().eval_in(&env, &t).unwrap(), 4.0 + 2.5 + 1.5);
+        assert!(parse_expr("a[i * 9]").unwrap().eval_in(&env, &t).unwrap_err().contains("past its 6 elements"));
+        assert!(parse_expr("c[0]").unwrap().eval_in(&env, &t).unwrap_err().contains("no tensor"));
+        assert!(parse_expr("a[0").is_err());
+    }
+
+    fn kmeans() -> Problem {
+        Problem::load(&root().join("problems/kmeans_assign")).expect("problems/kmeans_assign")
+    }
+
+    /// GENERATED INPUTS are deterministic in the case, differ between inputs
+    /// and cases, hold their declared shape, and unit rows are unit length;
+    /// an index input stays in its bounds.
+    #[test]
+    fn generated_inputs_follow_the_schema() {
+        let p = kmeans();
+        let su = p.suites.iter().find(|s| s.spec.role == Role::Constraint).unwrap();
+        let c = su.cases.iter().find(|c| c.name == "n300_c33_d256_band128").unwrap();
+        let (a, b) = (p.case_data(c, LIMIT).unwrap(), p.case_data(c, LIMIT).unwrap());
+        assert_eq!(a.inputs, b.inputs, "the same case generates the same inputs");
+        let pts = Elem::F32.decode(&a.inputs["points"]);
+        assert_eq!(pts.len(), 300 * 256);
+        for r in pts.chunks(256) {
+            let n: f64 = r.iter().map(|x| x * x).sum::<f64>().sqrt();
+            assert!((n - 1.0).abs() < 1e-5, "a row of norm {n}");
+        }
+        assert_ne!(a.inputs["points"][..1024], a.inputs["centroids"][..1024]);
+        let other = su.cases.iter().find(|c| c.name == "n64_c300_d64").unwrap();
+        assert_ne!(p.case_data(other, LIMIT).unwrap().inputs["points"][..256], a.inputs["points"][..256]);
+        let idx = TensorSpec { name: "ix".into(), element: Elem::U32, shape: vec!["1000".into()], generate: Some(Generate { dist: Dist::Index, lo: Some("3".into()), hi: Some("n".into()), mean: None, std: None, row: None, value: None }) };
+        let mut env = Env::new();
+        env.insert("n".into(), 10.0);
+        let v = Elem::U32.decode(&generate(&idx, idx.generate.as_ref().unwrap(), 1000, 7, &env).unwrap());
+        assert!(v.iter().all(|x| (3.0..10.0).contains(x)) && v.contains(&3.0) && v.contains(&9.0), "index values within [3, 10)");
+    }
+
+    /// THE ARGMAX TIE RULE: an index that differs from the expected one is
+    /// accepted when its score is within the margin of the expected index's,
+    /// refused past it or outside [0, classes); an exact output refuses any
+    /// difference.
+    #[test]
+    fn an_argmax_output_accepts_a_near_tie_and_nothing_else() {
+        let p = kmeans();
+        let out = p.spec.output[0].clone();
+        assert_eq!((out.kind(), out.tie), (OutputKind::Argmax, Some(Tie::Margin)));
+        let mut env = Env::new();
+        for (k, v) in [("n", 3.0), ("c", 3.0), ("dp", 1.0)] {
+            env.insert(k.into(), v);
+        }
+        // Point scores: c[j] * x. Centroids 0.5, 0.5 + 1e-7 (a near tie under
+        // the margin 2 * dp * eps = 2.4e-7) and 0.9.
+        let f = |v: &[f32]| v.iter().flat_map(|x| x.to_le_bytes()).collect::<Vec<u8>>();
+        let mut data = CaseData::default();
+        data.inputs.insert("points".into(), f(&[1.0, 1.0, 1.0]));
+        data.inputs.insert("centroids".into(), f(&[0.5, 0.5 + 1e-7, 0.9]));
+        data.expected.insert("assignments".into(), vec![1.0, 2.0, 2.0]);
+        let case = Case { name: "tie".into(), label: "tie".into(), params: BTreeMap::new(), inputs: BTreeMap::new(), expected: BTreeMap::new() };
+        let s = Staged { case, data, staged: (), work: 0.0, dims: (1, 3), points: 1, tau: 0.0, reference: 0.0, pass: 0.0, env };
+        let u = |v: &[u32]| v.iter().flat_map(|x| x.to_le_bytes()).collect::<Vec<u8>>();
+        assert_eq!(judge(&p, &out, Norm::MeanAbsOverMax, &s, &u(&[0, 2, 2])).unwrap().0, 0.0, "a near tie is accepted");
+        assert_eq!(judge(&p, &out, Norm::MeanAbsOverMax, &s, &u(&[1, 0, 2])).unwrap().0, 1.0 / 3.0, "0.5 against 0.9 is wrong");
+        assert_eq!(judge(&p, &out, Norm::MeanAbsOverMax, &s, &u(&[1, 2, 7])).unwrap().0, 1.0 / 3.0, "an index past the classes is wrong");
+        let exact = OutputSpec { kind: Some(OutputKind::Exact), tie: None, ..out.clone() };
+        assert_eq!(judge(&p, &exact, Norm::MeanAbsOverMax, &s, &u(&[0, 2, 2])).unwrap().0, 1.0 / 3.0, "an exact output refuses the tie");
     }
 }

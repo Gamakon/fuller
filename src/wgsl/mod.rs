@@ -17,6 +17,7 @@ pub mod closeness;
 pub mod cpu;
 pub mod chromosome;
 pub mod generator;
+pub mod flow;
 pub mod harness;
 pub mod gram;
 pub mod individual;

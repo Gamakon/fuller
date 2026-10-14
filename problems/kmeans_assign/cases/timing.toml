@@ -1,0 +1,20 @@
+# The timing shapes, at the sizes UltraDim runs (generated inputs; timing
+# cases are not judged, so no oracle run):
+# - N 50,000, C 20: the reviewer experiments' gate shape
+#   (qdrant docs/UltraDim_KMeans_ReviewerExperiments.md:201, 236);
+# - N 262,144, C 20: one full 2 GiB band of qdrant's at D_proj 2,048
+#   (lib.rs:1001, "N > 262144 at D_proj=2048" splits);
+# - N 18,000, C 9,000: the 2048D production regime of tests/parity.rs:839-859
+#   (C = 9,000, D_proj = 2,048, two points a cluster).
+
+[[case]]
+name = "n50000_c20_d2048"
+params = { n = 50000, c = 20, dp = 2048 }
+
+[[case]]
+name = "n262144_c20_d2048"
+params = { n = 262144, c = 20, dp = 2048 }
+
+[[case]]
+name = "n18000_c9000_d2048"
+params = { n = 18000, c = 9000, dp = 2048 }
