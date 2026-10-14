@@ -1363,7 +1363,14 @@ fn lets_used_in_deeper_loops(roots: &[Root], body: &naga::Block, points: &BTreeM
         if !loads.is_empty() && use_points(name, roots, &bound, 0).iter().any(|p| loads.iter().any(|(loc, v)| at(p, loc) != *v)) {
             stale.insert(name.clone());
             bound.insert(name.clone(), path.clone());
-        } else if reads_memory(tree, &defs) && uses(name, roots, body, &bound, 0).iter().any(|u| in_deeper_loop(body, def_block, u)) {
+        } else if reads_memory(tree, &defs) && {
+            let u = uses(name, roots, body, &bound, 0);
+            // Read more than once: inlined, each use reloads it (nluca's
+            // generated_step: a gathered state value read three times a slot,
+            // 1.91 ms against the original's 1.26 at 65,536 rows; bound, 1.27;
+            // 2026-10-14).
+            u.len() > 1 || u.iter().any(|u| in_deeper_loop(body, def_block, u))
+        } {
             bound.insert(name.clone(), path.clone());
         }
     }
