@@ -498,7 +498,13 @@ struct An<'m> {
     /// value that is not workgroup-uniform (or under such control), and not
     /// dispatch-invariant.
     loop_stores: Vec<(BTreeSet<LocalKey>, BTreeSet<LocalKey>)>,
+    /// Per enclosing loop or switch: whether a thread may leave it (a break
+    /// or a return under non-uniform control) while others go on.
     loop_exits: Vec<bool>,
+    /// A continue under non-uniform control in this pass of the innermost
+    /// loop: the rest of its body runs in some threads only (as after a
+    /// return, `ret_taint`); its continuing block and its exit in all.
+    skip_taint: bool,
     /// Whether each function called is pure (no global, no pointer
     /// argument, no barrier, atomic or subgroup statement, its calls pure),
     /// and the opaque value of each pure call by its arguments.
@@ -1664,11 +1670,18 @@ impl<'m> An<'m> {
                 self.walk_loop(fr, s, body, continuing, *break_if);
                 true
             }
-            Statement::Break | Statement::Continue => {
+            Statement::Break => {
                 if !self.ctrl_uni {
                     if let Some(e) = self.loop_exits.last_mut() {
                         *e = true;
                     }
+                }
+                false
+            }
+            // (A continue in a switch continues the loop around it.)
+            Statement::Continue => {
+                if !self.ctrl_uni {
+                    self.skip_taint = true;
                 }
                 false
             }
@@ -1770,7 +1783,7 @@ impl<'m> An<'m> {
     }
 
     fn taint_after(&mut self) {
-        if self.ret_taint {
+        if self.ret_taint || self.skip_taint {
             self.ctrl_uni = false;
             self.ctrl_inv = false;
         }
@@ -1936,20 +1949,24 @@ impl<'m> An<'m> {
         // One pass: the counters as digits, every other local the loop
         // stores as an unknown, uniform (invariant) when it enters so and no
         // store of the loop's (`assume`, from the passes before) makes it
-        // otherwise.
+        // otherwise. `head_uni`: every thread starts each pass together (no
+        // thread has left the loop); a continue under non-uniform control
+        // makes the rest of its pass's body non-uniform (`skip_taint`), not
+        // the continuing block, the next pass or the exit.
         type Sets = (BTreeSet<LocalKey>, BTreeSet<LocalKey>);
-        let run = |an: &mut An<'m>, body_uni: bool, assume: &Sets| -> (bool, Sets) {
+        let run = |an: &mut An<'m>, head_uni: bool, assume: &Sets| -> (bool, Sets) {
             an.loop_stores.push((BTreeSet::new(), BTreeSet::new()));
             for l in &modified {
                 let key = an.local_key(fr, *l);
                 let (ei, eu) = entry_env.get(&(id, *l)).map_or((false, false), |e| an.info(e));
-                let (inv, uni) = (ei && !assume.1.contains(&key), eu && body_uni && !assume.0.contains(&key));
+                let (inv, uni) = (ei && !assume.1.contains(&key), eu && head_uni && !assume.0.contains(&key));
                 if counters.contains(l) {
                     let entry = entry_env.get(&(id, *l)).cloned();
                     let entry_ok = entry.as_ref().is_some_and(|e| an.info(e).1);
-                    // (The counter is uniform when it enters uniform and the loop runs in
-                    // uniform control: its value is its own, not the local's elsewhere.)
-                    let d = an.digit(&format!("{loop_key}:ctr{}", l.index()), None, body_uni && entry_ok);
+                    // (The counter is uniform when it enters uniform and every
+                    // thread steps it together, in the continuing block: its
+                    // value is its own, not the local's elsewhere.)
+                    let d = an.digit(&format!("{loop_key}:ctr{}", l.index()), None, head_uni && entry_ok);
                     an.env.insert((id, *l), Abs::Lin(Lin::var(d, Poly::konst(1))));
                 } else {
                     let v = an.other(inv, uni, false);
@@ -1957,18 +1974,30 @@ impl<'m> An<'m> {
                 }
             }
             let (su, si) = (an.ctrl_uni, an.ctrl_inv);
-            an.ctrl_uni = su && body_uni;
+            let skip = std::mem::replace(&mut an.skip_taint, false);
+            an.ctrl_uni = su && head_uni;
             an.loop_exits.push(false);
             let base = an.facts.len();
-            let ft = an.block(fr, body);
-            if ft {
-                an.block(fr, continuing);
-                if let Some(b) = break_if {
-                    let _ = an.eval(fr, b);
+            an.block(fr, body);
+            an.facts.truncate(base);
+            an.skip_taint = false;
+            // (Walked whether or not the body falls through: a continue
+            // reaches the continuing block too.)
+            an.ctrl_uni = su && head_uni;
+            an.block(fr, continuing);
+            // (A `break if` on a value the threads may disagree on: they leave
+            // the loop at different passes.)
+            if let Some(b) = break_if {
+                let c = an.eval(fr, b);
+                if !(an.ctrl_uni && an.info(&c).1) {
+                    if let Some(e) = an.loop_exits.last_mut() {
+                        *e = true;
+                    }
                 }
             }
             an.facts.truncate(base);
             let exits = an.loop_exits.pop().unwrap_or(false);
+            an.skip_taint = skip;
             an.ctrl_uni = su;
             an.ctrl_inv = si;
             let sets = an.loop_stores.pop().unwrap_or_default();
@@ -1979,9 +2008,9 @@ impl<'m> An<'m> {
             }
             (exits, sets)
         };
-        // Whether a thread may leave the loop, or a pass of it, while others
-        // go on (then every statement of the body is in non-uniform control),
-        // and which locals the loop makes non-uniform: a fixpoint of passes
+        // Whether a thread may leave the loop while others go on (then every
+        // statement of the body is in non-uniform control), and which locals
+        // the loop makes non-uniform: a fixpoint of passes
         // that record nothing (each pass only adds, to finite sets, so it
         // ends; a pass cut short would leave a local uniform that is not).
         let record = self.record;
@@ -2001,14 +2030,14 @@ impl<'m> An<'m> {
         }
         self.record = record;
         self.wg_open = wg_open;
-        let body_uni = entry_uni && !nonuniform_exit;
+        let head_uni = entry_uni && !nonuniform_exit;
         let wg_before = self.wg_sites.len();
-        run(self, body_uni, &assume);
+        run(self, head_uni, &assume);
         // Loop-carried workgroup conflicts: the accesses open at the end of a
         // pass meet the next pass's.
         if record && self.wg_sites.len() > wg_before {
             self.env = entry_env.clone();
-            run(self, body_uni, &assume);
+            run(self, head_uni, &assume);
         }
         // After the loop every local it stores is unknown: uniform when it
         // entered so, no store of the loop made it otherwise and every thread
@@ -2016,7 +2045,7 @@ impl<'m> An<'m> {
         for l in &modified {
             let key = self.local_key(fr, *l);
             let (ei, eu) = entry_env.get(&(id, *l)).map_or((false, false), |e| self.info(e));
-            let (inv, uni) = (ei && !assume.1.contains(&key) && entry_uni, eu && !assume.0.contains(&key) && body_uni);
+            let (inv, uni) = (ei && !assume.1.contains(&key) && entry_uni, eu && !assume.0.contains(&key) && head_uni);
             let v = self.other(inv, uni, false);
             self.env.insert((id, *l), v);
         }
@@ -2047,6 +2076,7 @@ impl<'m> An<'m> {
         let saved_taint = self.ret_taint;
         // A return in the callee ends the callee, not the caller's loops.
         let saved_exits = std::mem::take(&mut self.loop_exits);
+        let saved_skip = std::mem::replace(&mut self.skip_taint, false);
         let (su, si) = (self.ctrl_uni, self.ctrl_inv);
         self.ret_taint = false;
         let facts = self.facts.len();
@@ -2054,6 +2084,7 @@ impl<'m> An<'m> {
         self.facts.truncate(facts);
         self.ret_taint = saved_taint;
         self.loop_exits = saved_exits;
+        self.skip_taint = saved_skip;
         self.ctrl_uni = su;
         self.ctrl_inv = si;
         let frame = self.frames.pop().expect("the frame");
@@ -2173,6 +2204,7 @@ impl<'m> An<'m> {
         self.ctrl_uni = true;
         self.ctrl_inv = true;
         self.ret_taint = false;
+        self.skip_taint = false;
         self.steps = 0;
         let args = self.entry_args(f);
         self.next_frame += 1;
@@ -2566,6 +2598,7 @@ pub fn check_module(module: &Module, contract: &Contract) -> Result<Report, Unsa
         record: false,
         loop_stores: Vec::new(),
         loop_exits: Vec::new(),
+        skip_taint: false,
         pure: HashMap::new(),
         call_ids: Vec::new(),
         value_ids: Vec::new(),
@@ -2777,12 +2810,18 @@ mod tests {
 
     /// Uniformity through loops (2026-10-14): a local is non-uniform at a
     /// loop's head when a pass of that loop stores a thread's value in it,
-    /// not because a later statement does. Atomic accesses do not race one
+    /// not because a later statement does; a continue under a thread's
+    /// condition makes the rest of its pass non-uniform, not the loop's
+    /// counter, its exit or a later loop. Atomic accesses do not race one
     /// another; an access under guards that contradict each other never runs.
     #[test]
     fn loops_atomics_and_dead_accesses() {
         let c = one_d();
         let k = |body: &str, decls: &str| format!("{PRE}{decls}@compute @workgroup_size(16, 1, 1)\nfn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>) {{\n    var t: u32 = 0u;\n    var x: u32 = 0u;\n{body}\n    h[gid.x] = h[gid.x] + phi[0];\n}}\n");
+        // The item loop's remainder after a main loop with a thread's
+        // continue (seed 141); a barrier after that continue in its pass.
+        proved(&k("    for (t = 0u; t < cfg.m; t = t + 4u) {\n        if (lid.x < 3u) { continue; }\n    }\n    for (; t < cfg.m; t = t + 1u) {\n        storageBarrier();\n    }", ""), &c);
+        assert_eq!(rule(&k("    for (t = 0u; t < cfg.m; t = t + 4u) {\n        if (lid.x < 3u) { continue; }\n        storageBarrier();\n    }", ""), &c), "barrier_in_nonuniform_control");
         // A thread's value stored after the loop, then in the loop's next pass.
         proved(&k("    for (t = 0u; t < x + 4u; t = t + 1u) {\n        workgroupBarrier();\n    }\n    x = lid.x;", ""), &c);
         assert_eq!(rule(&k("    for (t = 0u; t < 4u; t = t + 1u) {\n        if (x < 2u) { workgroupBarrier(); }\n        x = lid.x;\n    }", ""), &c), "barrier_in_nonuniform_control");
