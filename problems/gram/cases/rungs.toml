@@ -1,0 +1,27 @@
+root = "rungs"
+
+[[case]]
+name = "d 128 m 64"
+label = "d 128 m 64"
+
+[case.params]
+d = 128.0
+m = 64.0
+
+[case.inputs]
+phi = "0000.phi.bin"
+
+[case.expected]
+
+[[case]]
+name = "d 256 m 512"
+label = "d 256 m 512"
+
+[case.params]
+d = 256.0
+m = 512.0
+
+[case.inputs]
+phi = "0001.phi.bin"
+
+[case.expected]

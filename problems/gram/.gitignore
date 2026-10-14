@@ -1,0 +1,6 @@
+# Written by examples/wgsl_problem_gram_cases (about 1.5 GB); the manifests,
+# the constraint and the rung files are committed.
+cases/train/
+cases/val/
+cases/extrap/
+cases/timing/

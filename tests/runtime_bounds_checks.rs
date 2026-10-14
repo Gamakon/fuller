@@ -7,9 +7,9 @@
 //! wgpu-hal 0.21.1's Metal backend then sets naga's
 //! `BoundsCheckPolicy::ReadZeroSkipWrite` (metal/device.rs:81), and
 //! `Unchecked` only for a module made by `create_shader_module_unchecked`.
-//! The evolved kernels compile at `src/wgsl/gram.rs` (`Gram::compile_with`)
-//! and `src/wgsl/oracle.rs` (the oracle's device); phylu compiles them
-//! through `fuller::wgsl::gram`.
+//! The evolved kernels compile at `src/wgsl/gram.rs` (`Gram::compile_with`),
+//! `src/wgsl/oracle.rs` (the oracle's device) and `src/wgsl/harness.rs` (the
+//! generic problem harness); phylu compiles them through `fuller::wgsl::gram`.
 //!
 //! This test pins both facts: no source of the crate names a way to turn the
 //! checks off, and the wgpu the lock file resolves is the one read above (an
@@ -48,7 +48,7 @@ fn every_kernel_compiles_with_runtime_bounds_checks() {
         compiles += text.matches("create_shader_module(").count();
     }
     // The evolved kernels' two compile sites are among them.
-    for (file, site) in [("src/wgsl/gram.rs", "dev.device.create_shader_module(wgpu::ShaderModuleDescriptor"), ("src/wgsl/oracle.rs", "self.device.create_shader_module(wgpu::ShaderModuleDescriptor")] {
+    for (file, site) in [("src/wgsl/gram.rs", "dev.device.create_shader_module(wgpu::ShaderModuleDescriptor"), ("src/wgsl/oracle.rs", "self.device.create_shader_module(wgpu::ShaderModuleDescriptor"), ("src/wgsl/harness.rs", "dev.device.create_shader_module(wgpu::ShaderModuleDescriptor")] {
         let text = std::fs::read_to_string(root.join(file)).unwrap_or_else(|e| panic!("{file}: {e}"));
         assert!(text.contains(site), "{file}: the kernels' compile site moved; read it again");
     }

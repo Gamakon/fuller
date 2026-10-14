@@ -121,9 +121,15 @@ pub fn probes(seed: u64) -> Vec<Probe> {
 /// agree and 1 when they do not; the mean over cells, so a probe is in
 /// [0, ∞) and 0 exactly when the kernel wrote the right table.
 pub fn distance(h: &[f32], p: &Probe) -> f64 {
-    let scale = p.h_ref.iter().filter(|v| v.is_finite()).fold(0.0f64, |a, v| a.max(v.abs())).max(1.0);
+    distance_to(h, &p.h_ref)
+}
+
+/// [`distance`] against any reference tensor (the generic harness's
+/// `mean_abs_over_max` norm).
+pub fn distance_to(h: &[f32], h_ref: &[f64]) -> f64 {
+    let scale = h_ref.iter().filter(|v| v.is_finite()).fold(0.0f64, |a, v| a.max(v.abs())).max(1.0);
     let mut sum = 0.0;
-    for (g, want) in h.iter().zip(&p.h_ref) {
+    for (g, want) in h.iter().zip(h_ref) {
         let g = f64::from(*g);
         sum += if !want.is_finite() || !g.is_finite() {
             let same = (g.is_nan() && want.is_nan()) || g == *want;
@@ -132,7 +138,7 @@ pub fn distance(h: &[f32], p: &Probe) -> f64 {
             (g - want).abs() / scale
         };
     }
-    sum / p.h_ref.len() as f64
+    sum / h_ref.len() as f64
 }
 
 /// The constraint's stratified sample: every band-forcing case (family D, 100) and
@@ -158,6 +164,7 @@ pub const PASS: f64 = 1e-5;
 
 /// Every probe's distance for one compiled kernel, in probe order; the
 /// seconds it took.
+#[cfg(feature = "gpu")]
 pub fn run_probes(gram: &crate::wgsl::gram::Gram, probes: &[Probe]) -> Result<Vec<f64>, String> {
     let mut out = Vec::with_capacity(probes.len());
     for p in probes {
@@ -177,6 +184,7 @@ mod tests {
     /// the probes' independence shows only for local breaks, which the
     /// second broken kernel is: the item loop stopped one item early
     /// fails exactly the probes that touch the last item.
+    #[cfg(feature = "gpu")]
     #[test]
     fn the_shipped_kernel_passes_every_probe_and_a_broken_one_fails_some() {
         use crate::wgsl::gram::{Gram, SHIPPED};

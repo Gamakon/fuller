@@ -1,0 +1,27 @@
+# Written from noctiluca-dev/results/nluca/cases/manifest.jsonl (Noctiluca's
+# contract, its README.md): the case files are read where Noctiluca wrote
+# them, never copied into fuller.
+# Timing: the two 1,048,576-wide cases and, until Noctiluca writes a third
+# at that width or larger, w65536_k1. tol is the case's tolerance_max_rel_err.
+root = "/Users/andrewmorgan/Dev/gamakon/noctiluca-dev/results/nluca/cases"
+
+[[case]]
+name = "w65536_k1_leak03_u01"
+label = "w65536_k1_leak03_u01"
+dir = "w65536_k1_leak03_u01"
+params = { width = 65536, degree = 10, steps = 64, tol = 0.002006 }
+inputs = { sources = "sources.u32.bin", state = "state.f32.bin", codebook = "codebook.f32.bin", drive = "drive.f32.bin", ints = "ints.u32.bin", offset = "offset.u32.bin", reals = "reals.f32.bin" }
+
+[[case]]
+name = "w1048576_k1_leak03_u01"
+label = "w1048576_k1_leak03_u01"
+dir = "w1048576_k1_leak03_u01"
+params = { width = 1048576, degree = 10, steps = 64, tol = 0.0009211 }
+inputs = { sources = "sources.u32.bin", state = "state.f32.bin", codebook = "codebook.f32.bin", drive = "drive.f32.bin", ints = "ints.u32.bin", offset = "offset.u32.bin", reals = "reals.f32.bin" }
+
+[[case]]
+name = "w1048576_k2_leak03_u05"
+label = "w1048576_k2_leak03_u05"
+dir = "w1048576_k2_leak03_u05"
+params = { width = 1048576, degree = 10, steps = 64, tol = 0.0001487 }
+inputs = { sources = "sources.u32.bin", state = "state.f32.bin", codebook = "codebook.f32.bin", drive = "drive.f32.bin", ints = "ints.u32.bin", offset = "offset.u32.bin", reals = "reals.f32.bin" }

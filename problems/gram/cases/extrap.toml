@@ -1,0 +1,15 @@
+root = "extrap"
+
+[[case]]
+name = "gaussian_d8192_m1024_s2000"
+label = "d 8192 m 1024"
+
+[case.params]
+d = 8192.0
+m = 1024.0
+
+[case.inputs]
+phi = "0000.phi.bin"
+
+[case.expected]
+h = ["0000.h.expected.bin"]

@@ -1,0 +1,173 @@
+# The weighted Gram H = Phi^T Phi of Blue World (src/wgsl/gram.rs) as a
+# dispatch program for the generic harness (src/wgsl/harness.rs; the schema
+# is documented in its header). The program is gram.rs's banded driver:
+# Phi uploaded once in item bands (Resident::upload); per output-row band
+# the accumulator cleared (gram.rs clear_buffer), one dispatch per item band
+# with cfg = (d, items in the band, rows in the band, the band's first row),
+# then the band copied into H at its rows (Gram::run). A kernel declaring
+# `// mode full` (a symmetric-half kernel, whose mirror writes leave its
+# row band) gets one row band over all of H instead: r_off 0, r_rows d,
+# the item range still banded; it then requires H to fit one binding.
+# The cases are written by `cargo run --release --features wgsl --example
+# wgsl_problem_gram_cases -- problems/gram` from gram::reference, the
+# probes and the pairs' cache.
+
+name = "gram"
+description = "H = Phi^T Phi, d x d, from an item-major m x d Phi, in f32 against an f64 reference"
+work = "d * d * m"
+alias = "distinct"
+derive = [
+    "row_bytes = d * 4",
+    "band_items = min(max(floor_div(limit, row_bytes), 1), m)",
+    "item_bands = ceil_div(m, band_items)",
+]
+derive_run = [
+    "band_rows = select(mode_full, d, min(max(floor_div(limit, row_bytes), 1), d))",
+    "row_bands = ceil_div(d, band_rows)",
+    "row_wg = select(rows_x, wg_x, wg_y)",
+    "col_wg = select(rows_x, wg_y, wg_x)",
+]
+
+[params]
+limit = "binding_limit"
+
+[kernel]
+entry = "main"
+grid_header = true
+reference = "../../kingdoms/wgsl/gram/shipped.wgsl"
+modes = ["full"]
+
+[[binding]]
+binding = 0
+name = "phi"
+kind = "storage_read"
+element = "f32"
+
+[[binding]]
+binding = 1
+name = "h"
+kind = "storage_read_write"
+element = "f32"
+
+[[binding]]
+binding = 2
+name = "cfg"
+kind = "uniform"
+fields = ["u32", "u32", "u32", "u32"]
+
+[[input]]
+name = "phi"
+element = "f32"
+shape = ["m", "d"]
+
+[[output]]
+name = "h"
+element = "f32"
+shape = ["d", "d"]
+expected_element = "f64"
+
+# Phi in item bands, resident.
+[[setup]]
+for = "ib"
+count = "item_bands"
+let = ["start = ib * band_items", "end = min(start + band_items, m)"]
+
+[[setup.body]]
+buffer = "phi{ib}"
+element = "f32"
+elements = "(end - start) * d"
+from = "phi"
+offset = "start * d"
+
+[[run]]
+require = "(mode_full == 0) + (d * d * 4 <= binding_limit)"
+because = "a full-matrix kernel binds all of H, d x d f32, in one buffer of the device (a case's band-forcing limit splits only its items)"
+
+[[run]]
+for = "rb"
+count = "row_bands"
+let = [
+    "r_off = rb * band_rows",
+    "r_rows = min(band_rows, d - r_off)",
+    "g_rows = ceil_div(r_rows, row_wg * by)",
+    "g_cols = ceil_div(d, col_wg * bx)",
+]
+
+[[run.body]]
+buffer = "acc{rb}"
+element = "f32"
+elements = "r_rows * d"
+fill = "zero"
+
+[[run.body]]
+for = "ib"
+count = "item_bands"
+let = ["start = ib * band_items", "mb = min(start + band_items, m) - start"]
+
+[[run.body.body]]
+uniform = "cfg{rb}_{ib}"
+of = "cfg"
+words = ["d", "mb", "r_rows", "r_off"]
+
+[[run.body.body]]
+dispatch = { phi = "phi{ib}", h = "acc{rb}", cfg = "cfg{rb}_{ib}" }
+workgroups = ["select(rows_x, g_rows, g_cols)", "select(rows_x, g_cols, g_rows)", "1"]
+
+[[run.body]]
+sync = true
+
+[[run.body]]
+read = "acc{rb}"
+into = "h"
+offset = "r_off * d"
+elements = "r_rows * d"
+
+[[suite]]
+name = "constraint"
+role = "constraint"
+cases = "cases/constraint.toml"
+norm = "mean_abs_over_max"
+pass = "1e-5"
+chunk = 16
+
+[[suite]]
+name = "rungs"
+role = "rung"
+cases = "cases/rungs.toml"
+
+[[suite]]
+name = "train"
+role = "accuracy"
+split = 0
+cases = "cases/train.toml"
+norm = "cauchy_schwarz"
+tau = "4 * eps_f32 * sqrt(m)"
+slack = 2.0
+
+[[suite]]
+name = "val"
+role = "accuracy"
+split = 1
+cases = "cases/val.toml"
+norm = "cauchy_schwarz"
+tau = "4 * eps_f32 * sqrt(m)"
+slack = 2.0
+
+[[suite]]
+name = "extrap"
+role = "accuracy"
+split = 2
+cases = "cases/extrap.toml"
+norm = "cauchy_schwarz"
+tau = "4 * eps_f32 * sqrt(m)"
+slack = 2.0
+
+[[suite]]
+name = "timing"
+role = "timing"
+cases = "cases/timing.toml"
+
+[budget]
+base_ms = 30000.0
+round_ms = 20000.0
+timing_rounds = 1

@@ -1,0 +1,43 @@
+root = "train"
+
+[[case]]
+name = "gaussian_d512_m2048_s100"
+label = "d 512 m 2048"
+
+[case.params]
+d = 512.0
+m = 2048.0
+
+[case.inputs]
+phi = "0000.phi.bin"
+
+[case.expected]
+h = ["0000.h.expected.bin"]
+
+[[case]]
+name = "weighted_d512_m2048_s106"
+label = "d 512 m 2048"
+
+[case.params]
+d = 512.0
+m = 2048.0
+
+[case.inputs]
+phi = "0001.phi.bin"
+
+[case.expected]
+h = ["0001.h.expected.bin"]
+
+[[case]]
+name = "ragged_d520_m4097_s143"
+label = "d 520 m 4097"
+
+[case.params]
+d = 520.0
+m = 4097.0
+
+[case.inputs]
+phi = "0002.phi.bin"
+
+[case.expected]
+h = ["0002.h.expected.bin"]

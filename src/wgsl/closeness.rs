@@ -42,8 +42,17 @@ const SHIFT: i64 = 2;
 /// One case's columns but `cases` and `sensitivity` (0 there): `h` the
 /// kernel's output, `want` the reference, both `d × d` row-major.
 pub fn case_columns(h: &[f32], want: &[f64], d: usize) -> [f64; N] {
+    tensor_columns(h, want, d, d)
+}
+
+/// [`case_columns`] for any output tensor, read as `rows × cols`
+/// row-major (a vector is one row; the generic harness, `harness.rs`, reads
+/// a problem's output so). A square tensor gives [`case_columns`]' values
+/// bit for bit; on a non-square one `transpose` is the plain error and
+/// `sums` compares row sums with row sums and column sums with column sums.
+pub fn tensor_columns(h: &[f32], want: &[f64], rows: usize, cols: usize) -> [f64; N] {
     let mut out = [0.0; N];
-    let n = d * d;
+    let n = rows * cols;
     if h.len() != n || want.len() != n || n == 0 {
         out[1..9].iter_mut().for_each(|x| *x = 1.0);
         return out;
@@ -91,19 +100,19 @@ pub fn case_columns(h: &[f32], want: &[f64], d: usize) -> [f64; N] {
     out[2] = rel((0..n).map(|i| (o(i) - k * r(i)).powi(2)).sum());
     // Shifts: the output read at (row + dr, col + dc), outside the matrix 0.
     let at = |row: i64, col: i64| -> f64 {
-        if row < 0 || col < 0 || row >= d as i64 || col >= d as i64 {
+        if row < 0 || col < 0 || row >= rows as i64 || col >= cols as i64 {
             0.0
         } else {
-            o(row as usize * d + col as usize)
+            o(row as usize * cols + col as usize)
         }
     };
     let mut best_shift = f64::INFINITY;
     for dr in -SHIFT..=SHIFT {
         for dc in -SHIFT..=SHIFT {
             let mut e = 0.0;
-            for row in 0..d {
-                for col in 0..d {
-                    let x = at(row as i64 + dr, col as i64 + dc) - r(row * d + col);
+            for row in 0..rows {
+                for col in 0..cols {
+                    let x = at(row as i64 + dr, col as i64 + dc) - r(row * cols + col);
                     e += x * x;
                 }
             }
@@ -112,7 +121,8 @@ pub fn case_columns(h: &[f32], want: &[f64], d: usize) -> [f64; N] {
     }
     out[3] = rel(best_shift);
     let plain: f64 = (0..n).map(|i| (o(i) - r(i)).powi(2)).sum();
-    let transposed: f64 = (0..d).flat_map(|row| (0..d).map(move |col| (row, col))).map(|(row, col)| (o(col * d + row) - r(row * d + col)).powi(2)).sum();
+    let d = rows;
+    let transposed: f64 = if rows == cols { (0..d).flat_map(|row| (0..d).map(move |col| (row, col))).map(|(row, col)| (o(col * d + row) - r(row * d + col)).powi(2)).sum() } else { plain };
     out[4] = rel(plain.min(transposed));
     // Sorted values.
     let mut so: Vec<f64> = (0..n).map(o).collect();
@@ -123,12 +133,26 @@ pub fn case_columns(h: &[f32], want: &[f64], d: usize) -> [f64; N] {
     // Row and column sums, against the reference's (or against its column
     // and row sums, whichever is closer: a transpose keeps its totals).
     let (mut e_sums, mut e_swapped, mut n_sums) = (0.0, 0.0, 0.0);
-    for i in 0..d {
-        let (ro, rr_) = ((0..d).map(|c| o(i * d + c)).sum::<f64>(), (0..d).map(|c| r(i * d + c)).sum::<f64>());
-        let (co, cr) = ((0..d).map(|x| o(x * d + i)).sum::<f64>(), (0..d).map(|x| r(x * d + i)).sum::<f64>());
-        e_sums += (ro - rr_).powi(2) + (co - cr).powi(2);
-        e_swapped += (ro - cr).powi(2) + (co - rr_).powi(2);
-        n_sums += rr_ * rr_ + cr * cr;
+    if rows == cols {
+        for i in 0..d {
+            let (ro, rr_) = ((0..d).map(|c| o(i * d + c)).sum::<f64>(), (0..d).map(|c| r(i * d + c)).sum::<f64>());
+            let (co, cr) = ((0..d).map(|x| o(x * d + i)).sum::<f64>(), (0..d).map(|x| r(x * d + i)).sum::<f64>());
+            e_sums += (ro - rr_).powi(2) + (co - cr).powi(2);
+            e_swapped += (ro - cr).powi(2) + (co - rr_).powi(2);
+            n_sums += rr_ * rr_ + cr * cr;
+        }
+    } else {
+        for i in 0..rows {
+            let (ro, rr_) = ((0..cols).map(|c| o(i * cols + c)).sum::<f64>(), (0..cols).map(|c| r(i * cols + c)).sum::<f64>());
+            e_sums += (ro - rr_).powi(2);
+            n_sums += rr_ * rr_;
+        }
+        for j in 0..cols {
+            let (co, cr) = ((0..rows).map(|x| o(x * cols + j)).sum::<f64>(), (0..rows).map(|x| r(x * cols + j)).sum::<f64>());
+            e_sums += (co - cr).powi(2);
+            n_sums += cr * cr;
+        }
+        e_swapped = e_sums;
     }
     let e_sums = e_sums.min(e_swapped);
     out[6] = if n_sums > 0.0 { (e_sums.sqrt() / n_sums.sqrt()).min(1.0) } else if e_sums == 0.0 { 0.0 } else { 1.0 };

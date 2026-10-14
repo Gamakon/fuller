@@ -1,0 +1,40 @@
+root = "timing"
+
+[[case]]
+name = "d 2048 m 65536"
+label = "d 2048 m 65536"
+
+[case.params]
+d = 2048.0
+m = 65536.0
+
+[case.inputs]
+phi = "0000.phi.bin"
+
+[case.expected]
+
+[[case]]
+name = "d 4096 m 16384"
+label = "d 4096 m 16384"
+
+[case.params]
+d = 4096.0
+m = 16384.0
+
+[case.inputs]
+phi = "0001.phi.bin"
+
+[case.expected]
+
+[[case]]
+name = "d 8192 m 4096"
+label = "d 8192 m 4096"
+
+[case.params]
+d = 8192.0
+m = 4096.0
+
+[case.inputs]
+phi = "0002.phi.bin"
+
+[case.expected]

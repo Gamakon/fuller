@@ -16,14 +16,12 @@ pub mod check;
 pub mod closeness;
 pub mod chromosome;
 pub mod generator;
-#[cfg(feature = "gpu")]
+pub mod harness;
 pub mod gram;
 pub mod individual;
 #[cfg(feature = "gpu")]
 pub mod llm;
-#[cfg(feature = "gpu")]
 pub mod pairs;
-#[cfg(feature = "gpu")]
 pub mod probes;
 pub mod infer;
 pub mod interp;

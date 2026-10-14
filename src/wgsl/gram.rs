@@ -12,12 +12,23 @@
 //! The reference is `H` in f64 on the host and the criterion is the plan's:
 //! `|H_gpu − H_ref| ≤ τ ‖φ_·r‖ ‖φ_·c‖` with `τ = 4 ε_f32 √m`.
 
+//!
+//! The device parts (the driver, the residents, the fitness context)
+//! compile under `gpu`; the reference, the criterion, the cost model and
+//! the fitness procedure ([`fitness_with`], over any [`Driver`]) need only
+//! `wgsl`, so the generic harness (`harness.rs`) is compared with this
+//! procedure on the CPU.
+
 use std::time::Instant;
 
+#[cfg(feature = "gpu")]
 use wgpu::util::DeviceExt;
 
+#[cfg(feature = "gpu")]
 use crate::wgsl::oracle::device::Device;
-use crate::wgsl::render::{Grid, Rendered};
+use crate::wgsl::render::Grid;
+#[cfg(feature = "gpu")]
+use crate::wgsl::render::Rendered;
 
 /// The seed tree must be the one the tests proved bit-identical: 82 nodes
 /// with `kernel.entry` at the root.
@@ -46,9 +57,11 @@ pub const SHIPPED: &str = include_str!("../../kingdoms/wgsl/gram/shipped.wgsl");
 /// after 10 s was read, the next kernel queued behind it read as slow, and
 /// the shipped kernel's timestamps after it read zero). A wait that returns
 /// at or past this gave up; its work is still on the GPU.
+#[cfg(feature = "gpu")]
 pub const WAIT_GAVE_UP_MS: f64 = 4_900.0;
 
 /// The longest the host drains a runaway before naming it undrained.
+#[cfg(feature = "gpu")]
 pub const DRAIN_LIMIT_MS: f64 = 120_000.0;
 
 /// Wait until the GPU has really finished everything submitted. A wait
@@ -58,6 +71,7 @@ pub const DRAIN_LIMIT_MS: f64 = 120_000.0;
 /// an error, so nothing the GPU was still writing is read; a GPU that does
 /// not drain within `DRAIN_LIMIT_MS` is named (the fit's watchdog exits
 /// sooner, naming the kernel).
+#[cfg(feature = "gpu")]
 pub fn wait_gpu(device: &wgpu::Device, queue: &wgpu::Queue) -> Result<(), String> {
     let ms_since = |t: Instant| t.elapsed().as_secs_f64() * 1e3;
     let t = Instant::now();
@@ -86,6 +100,7 @@ pub const ENTRY: &str = "main";
 /// Blue World's per-binding ceiling (`gpu_limits::effective_buffer_limit`):
 /// the device's storage-binding limit capped by Metal's 256 MiB queue
 /// write limit, halved.
+#[cfg(feature = "gpu")]
 pub fn effective_buffer_limit(device: &wgpu::Device) -> u64 {
     const QUEUE_WRITE_BUFFER_LIMIT: u64 = 256 * 1024 * 1024;
     u64::from(device.limits().max_storage_buffer_binding_size).min(QUEUE_WRITE_BUFFER_LIMIT) / 2
@@ -463,9 +478,14 @@ pub fn check(h_gpu: &[f32], h_ref: &[f64], d: usize, m: usize) -> Verdict {
 /// a maximum and a count do not depend on the order, so the result is
 /// bit-identical to [`check`]'s (tested).
 pub fn check_max(h_gpu: &[f32], h_ref: &[f64], d: usize, m: usize) -> (f64, usize) {
+    check_max_tau(h_gpu, h_ref, d, 4.0 * f64::from(f32::EPSILON) * (m as f64).sqrt())
+}
+
+/// [`check_max`] at a given `tau` (the generic harness's `cauchy_schwarz`
+/// norm, its `tau` an expression of the case's shape).
+pub fn check_max_tau(h_gpu: &[f32], h_ref: &[f64], d: usize, tau: f64) -> (f64, usize) {
     assert_eq!(h_gpu.len(), d * d);
     assert_eq!(h_ref.len(), d * d);
-    let tau = 4.0 * f64::from(f32::EPSILON) * (m as f64).sqrt();
     let norms: Vec<f64> = (0..d).map(|r| h_ref[r * d + r].sqrt()).collect();
     let threads = std::thread::available_parallelism().map_or(1, usize::from).min(d.max(1));
     let rows_per = d.div_ceil(threads);
@@ -539,7 +559,95 @@ pub fn grid_rows_x(source: &str) -> bool {
     super::safe_reader::grid_rows_x(source)
 }
 
+/// The driver's bands for `d x d` output over `m` items under `limit`
+/// bytes per binding: item bands of `band_items` items (the last shorter),
+/// output-row bands of `band_rows` rows (the last shorter). The one place
+/// the formulas live; [`Resident::upload`], [`Gram::run`] and
+/// [`Gram::run_batch`] use it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BandLayout {
+    pub band_items: usize,
+    pub item_bands: usize,
+    pub band_rows: usize,
+    pub row_bands: usize,
+}
+
+pub fn band_layout(d: usize, m: usize, limit: u64) -> BandLayout {
+    let row_bytes = d as u64 * 4;
+    let band_items = ((limit / row_bytes).max(1) as usize).min(m);
+    let band_rows = ((limit / row_bytes).max(1) as usize).min(d);
+    BandLayout { band_items, item_bands: m.div_ceil(band_items), band_rows, row_bands: d.div_ceil(band_rows) }
+}
+
+/// One step of the driver's command sequence for one Phi, as
+/// [`Resident::upload`] and [`Gram::run`] issue it: what the generic
+/// harness's plan of `problems/gram` must equal (`harness` tests).
+/// `Upload` is the resident buffer of items `start..end`; per output-row
+/// band, `Clear` of the accumulator of `rows` rows, one `Dispatch` per
+/// item band with its `cfg` words and workgroups, then `Sync` (the compute
+/// submission) and `Read` of the band into `H` at row `r_off`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DriverStep {
+    Upload { band: usize, start: usize, end: usize },
+    Clear { rows: usize },
+    Dispatch { band: usize, cfg: [u32; 4], workgroups: (u32, u32) },
+    Sync,
+    Read { r_off: usize, rows: usize },
+}
+
+/// The driver's command sequence for `(d, m, limit)` under `grid`, the
+/// uploads first, from the same formulas [`Gram::run`] uses.
+pub fn driver_steps(d: usize, m: usize, limit: u64, grid: Grid) -> Vec<DriverStep> {
+    let b = band_layout(d, m, limit);
+    let mut out = Vec::new();
+    for i in 0..b.item_bands {
+        let start = i * b.band_items;
+        out.push(DriverStep::Upload { band: i, start, end: (start + b.band_items).min(m) });
+    }
+    let mut r_off = 0usize;
+    while r_off < d {
+        let r_rows = (r_off + b.band_rows).min(d) - r_off;
+        out.push(DriverStep::Clear { rows: r_rows });
+        for i in 0..b.item_bands {
+            let start = i * b.band_items;
+            let mb = ((start + b.band_items).min(m) - start) as u32;
+            out.push(DriverStep::Dispatch { band: i, cfg: [d as u32, mb, r_rows as u32, r_off as u32], workgroups: grid.dispatch(r_rows as u32, d as u32) });
+        }
+        out.push(DriverStep::Sync);
+        out.push(DriverStep::Read { r_off, rows: r_rows });
+        r_off += r_rows;
+    }
+    out
+}
+
+/// The host half of [`Gram::compile`]: naga parse and validation for the
+/// current target, the entry point, and the grid from the workgroup size
+/// and the optional `// grid x y bx by [rows-x]` header (x and y must agree
+/// with naga's workgroup size, the header is never trusted for them; bx and
+/// by, the cells per thread, come only from the header, in 1..=16).
+pub fn grid_of(source: &str) -> Result<Grid, String> {
+    let module = naga::front::wgsl::parse_str(source).map_err(|e| e.emit_to_string(source))?;
+    super::target::Target::current().validate(&module, source).map_err(|e| format!("validation: {e}"))?;
+    let ep = module.entry_points.iter().find(|e| e.name == ENTRY).ok_or_else(|| format!("no entry point {ENTRY}"))?;
+    let (x, y) = (ep.workgroup_size[0], ep.workgroup_size[1]);
+    let rows_x = grid_rows_x(source);
+    let (bx, by) = match grid_header(source) {
+        Some((hx, hy, bx, by)) => {
+            if (hx, hy) != (x, y) {
+                return Err(format!("the grid header says workgroup {hx} x {hy}, the shader says {x} x {y}"));
+            }
+            if !(1..=16).contains(&bx) || !(1..=16).contains(&by) {
+                return Err(format!("the grid header's block {bx} x {by} is outside 1..=16"));
+            }
+            (bx, by)
+        }
+        None => (1, 1),
+    };
+    Ok(Grid { x, y, bx, by, rows_x })
+}
+
 /// A compiled Gram kernel on the oracle's device.
+#[cfg(feature = "gpu")]
 pub struct Gram<'a> {
     dev: &'a Device,
     pipeline: wgpu::ComputePipeline,
@@ -550,33 +658,14 @@ pub struct Gram<'a> {
     period_ns: f32,
 }
 
+#[cfg(feature = "gpu")]
 impl<'a> Gram<'a> {
     /// Compile `source` (naga-validated first, so an ill-formed variant is
     /// refused with its message, not a device error). `workgroup` is the
     /// kernel's `@workgroup_size` in x (columns) and y (rows); the driver
     /// dispatches `ceil(d / x) × ceil(r_rows / y)`.
     pub fn compile(dev: &'a Device, source: &str) -> Result<Gram<'a>, String> {
-        let module = naga::front::wgsl::parse_str(source).map_err(|e| e.emit_to_string(source))?;
-        super::target::Target::current().validate(&module, source).map_err(|e| format!("validation: {e}"))?;
-        let ep = module.entry_points.iter().find(|e| e.name == ENTRY).ok_or_else(|| format!("no entry point {ENTRY}"))?;
-        let (x, y) = (ep.workgroup_size[0], ep.workgroup_size[1]);
-        // The optional header `// grid x y bx by`: x and y must agree with
-        // naga's workgroup size (the header is never trusted for them); bx
-        // and by, the cells per thread, come only from the header.
-        let rows_x = grid_rows_x(source);
-        let (bx, by) = match grid_header(source) {
-            Some((hx, hy, bx, by)) => {
-                if (hx, hy) != (x, y) {
-                    return Err(format!("the grid header says workgroup {hx} x {hy}, the shader says {x} x {y}"));
-                }
-                if !(1..=16).contains(&bx) || !(1..=16).contains(&by) {
-                    return Err(format!("the grid header's block {bx} x {by} is outside 1..=16"));
-                }
-                (bx, by)
-            }
-            None => (1, 1),
-        };
-        Self::compile_with(dev, source, Grid { x, y, bx, by, rows_x })
+        Self::compile_with(dev, source, grid_of(source)?)
     }
 
     /// A rendered kernel: its text and the grid it asked for.
@@ -621,10 +710,10 @@ impl<'a> Gram<'a> {
         let (d, limit) = (r.d, r.limit);
         let device = &self.dev.device;
         let queue = &self.dev.queue;
-        let row_bytes = d as u64 * 4;
-        let row_band_rows = ((limit / row_bytes).max(1) as usize).min(d);
+        let bands = band_layout(d, r.m, limit);
+        let row_band_rows = bands.band_rows;
         let item_bands = r.bands.len();
-        let row_bands = d.div_ceil(row_band_rows);
+        let row_bands = bands.row_bands;
         let phi_bands = &r.bands;
 
         let query_set = device.create_query_set(&wgpu::QuerySetDescriptor { label: Some("gram timestamps"), ty: wgpu::QueryType::Timestamp, count: 2 * item_bands as u32 });
@@ -712,12 +801,14 @@ impl<'a> Gram<'a> {
 
 /// The result of [`Gram::run_batch`]: each case's H and GPU milliseconds,
 /// and the one submission's wall milliseconds, submit to completion.
+#[derive(Debug, Clone, PartialEq)]
 pub struct Batch {
     pub h: Vec<Vec<f32>>,
     pub gpu_ms: Vec<f64>,
     pub compute_ms: f64,
 }
 
+#[cfg(feature = "gpu")]
 impl Gram<'_> {
     /// Run over several Φ already on the device in ONE compute submission
     /// and one read-back: every case's passes are those [`Gram::run`]
@@ -737,7 +828,7 @@ impl Gram<'_> {
         let (mut staging_bytes, mut queries) = (0u64, 0u32);
         for (case, r) in rs.iter().enumerate() {
             let d = r.d;
-            let row_band_rows = ((r.limit / (d as u64 * 4)).max(1) as usize).min(d);
+            let row_band_rows = band_layout(d, r.m, r.limit).band_rows;
             let mut r_off = 0usize;
             while r_off < d {
                 let r_rows = (r_off + row_band_rows).min(d) - r_off;
@@ -826,6 +917,7 @@ impl Gram<'_> {
 
 /// Φ on the device in the driver's item bands, uploaded once and run over
 /// by any number of kernels ([`Gram::run`]).
+#[cfg(feature = "gpu")]
 pub struct Resident {
     pub d: usize,
     pub m: usize,
@@ -834,6 +926,7 @@ pub struct Resident {
     pub upload_ms: f64,
 }
 
+#[cfg(feature = "gpu")]
 impl Resident {
     /// Upload `phi` (item-major `m × d`) in item bands sized from `limit`.
     pub fn upload(dev: &Device, phi: &[f32], d: usize, m: usize, limit: u64) -> Result<Resident, String> {
@@ -844,8 +937,7 @@ impl Resident {
         if row_bytes > limit {
             return Err(format!("one d-length row of {row_bytes} bytes exceeds the limit {limit}"));
         }
-        let band_items = ((limit / row_bytes).max(1) as usize).min(m);
-        let item_bands = m.div_ceil(band_items);
+        let BandLayout { band_items, item_bands, .. } = band_layout(d, m, limit);
         let t0 = Instant::now();
         let bands = (0..item_bands)
             .map(|i| {
@@ -887,6 +979,14 @@ pub const ROUND_BUDGET_MS: f64 = 20_000.0;
 /// item-cells) make every step from one measured build to the next at
 /// most 32x. Their output is not judged: the pairs judge accuracy.
 pub const RUNGS: [(usize, usize); 2] = [(128, 64), (256, 512)];
+
+/// The seed of the rungs' Phi ([`phi`]).
+pub const RUNG_SEED: u64 = 13;
+
+/// The three timing shapes (d, m), 2.75e11 item-cells each, and the seed
+/// of their Phi ([`phi`]).
+pub const TIMING: [(usize, usize); 3] = [(2048, 65536), (4096, 16384), (8192, 4096)];
+pub const TIMING_SEED: u64 = 7;
 
 /// The correctness cases run this many to a submission.
 pub const CASE_CHUNK: usize = 16;
@@ -1011,7 +1111,7 @@ impl Split {
         self.total += o.total;
     }
 
-    fn build(&mut self, b: &Build) {
+    pub fn build(&mut self, b: &Build) {
         self.upload += b.upload_ms;
         self.readback += (b.wall_ms - b.compute_ms).max(0.0);
     }
@@ -1034,6 +1134,7 @@ impl Split {
 /// An accuracy pair for the fast fitness: name, d, m, Φ, the f64 reference, the shipped kernel's largest ratio on it.
 pub type AccuracyPair = (String, usize, usize, Vec<f32>, Vec<f64>, f64);
 
+#[cfg(feature = "gpu")]
 pub struct FitnessContext {
     pub probes: Vec<crate::wgsl::probes::Probe>,
     pub admission: Vec<usize>,
@@ -1131,6 +1232,7 @@ pub fn truenorth(x: &[f64]) -> f64 {
     if cos > 1.0 - 1.1920929e-7 { 0.0 } else { cos.acos() }
 }
 
+#[cfg(feature = "gpu")]
 impl FitnessContext {
     /// Build the context once: the test cases, three training pairs, two
     /// validation pairs and one extrapolation pair from the splits, the
@@ -1153,10 +1255,10 @@ impl FitnessContext {
                 .collect()
         };
         // Three kinds on train (gaussian, weighted, ragged), two on validation, one production-width pair.
-        let train_idx: Vec<usize> = [Kind::Gaussian, Kind::Weighted, Kind::Ragged].iter().filter_map(|k| sp.train.iter().position(|p| p.kind == *k && (p.d * p.d * p.m) as f64 <= 4.5e9)).collect();
-        let val_idx: Vec<usize> = [Kind::LowRank, Kind::NonFinite].iter().filter_map(|k| sp.val.iter().position(|p| p.kind == *k && (p.d * p.d * p.m) as f64 <= 4.5e9)).collect();
-        let extrap_idx: Vec<usize> = vec![sp.extrap.iter().enumerate().min_by_key(|(_, p)| p.m).map(|(i, _)| i).ok_or("no extrapolation pair")?];
-        let timing: Vec<(usize, usize, Vec<f32>)> = [(2048usize, 65536usize), (4096, 16384), (8192, 4096)].iter().map(|&(d, m)| (d, m, phi(d, m, 7))).collect();
+        // (The selection lives in `pairs::fitness_pick`, which the problem
+        // directory's generator uses too.)
+        let [train_idx, val_idx, extrap_idx] = crate::wgsl::pairs::fitness_pick(&crate::wgsl::pairs::split_shapes())?;
+        let timing: Vec<(usize, usize, Vec<f32>)> = TIMING.iter().map(|&(d, m)| (d, m, phi(d, m, TIMING_SEED))).collect();
         // The shipped kernel's wall time at each timing shape, after one
         // warm-up build at the first, so the limit comes from this device.
         shipped.build(&timing[0].2, timing[0].0, timing[0].1, limit)?;
@@ -1168,7 +1270,7 @@ impl FitnessContext {
         if slow_limit_ms(ROUND_BUDGET_MS, &shipped_ms) < worst_shipped {
             return Err(format!("the shipped kernel takes {shipped_ms:?} ms at the timing shapes: a timing round of {ROUND_BUDGET_MS} ms cannot hold it and a kernel at its speed"));
         }
-        let rungs: Vec<(usize, usize, Vec<f32>)> = RUNGS.iter().map(|&(d, m)| (d, m, phi(d, m, 13))).collect();
+        let rungs: Vec<(usize, usize, Vec<f32>)> = RUNGS.iter().map(|&(d, m)| (d, m, phi(d, m, RUNG_SEED))).collect();
         let (train, val, extrap) = (pick(&sp.train, &train_idx)?, pick(&sp.val, &val_idx)?, pick(&sp.extrap, &extrap_idx)?);
         let up = |set: &[(usize, usize, &[f32])]| -> Result<Vec<Resident>, String> { set.iter().map(|(d, m, p)| Resident::upload(dev, p, *d, *m, limit)).collect() };
         let pairs_of = |set: &[AccuracyPair]| -> Result<Vec<Resident>, String> { up(&set.iter().map(|p| (p.1, p.2, p.3.as_slice())).collect::<Vec<_>>()) };
@@ -1236,162 +1338,306 @@ impl FitnessContext {
     }
 
     pub fn fitness(&self, dev: &Device, source: &str) -> Fitness {
-        let t = Instant::now();
-        let mut meter = Meter::default();
-        let mut split = Split::default();
-        let infeasible = |passed: usize, distance: f64, closeness: [f64; crate::wgsl::closeness::N], detail: String, t: Instant, meter: &Meter, split: &Split| Fitness { feasible: false, passed, distance, closeness, closeness_hff: crate::wgsl::closeness::angle(&closeness), columns: [1.0; 6], speedups: [0.0; 3], hff: f64::INFINITY, detail, seconds: t.elapsed().as_secs_f64(), predicted_ms: [0.0; 3], rate_per_g: meter.rate_per_g(), floor_ms: meter.floor_ms, measured_ms: [0.0; 3], split: Split { total: t.elapsed().as_secs_f64() * 1e3, ..*split } };
-        let elapsed_ms = |t: Instant| t.elapsed().as_secs_f64() * 1e3;
-        let compiled = Gram::compile(dev, source);
-        split.compile = elapsed_ms(t);
-        let gram = match compiled {
-            Ok(g) => g,
-            Err(e) => return infeasible(0, f64::INFINITY, crate::wgsl::closeness::WORST, format!("compile: {}", e.lines().find(|l| l.contains("error") || l.contains("header")).unwrap_or(e.lines().next().unwrap_or(""))), t, &meter, &split),
+        let spec = Spec {
+            probes: &self.probes,
+            admission: &self.admission,
+            pairs: [&self.train, &self.val, &self.extrap],
+            rungs: self.rungs.iter().map(|(d, m, _)| (*d, *m)).collect(),
+            timing: self.timing.iter().map(|(d, m, _)| (*d, *m)).collect(),
+            limit_ms: self.slow_limit_ms(),
+            base_budget_ms: self.base_budget_ms,
+            timing_rounds: self.timing_rounds,
+            shipped_reference: self.shipped_reference(),
         };
-        // The correctness cases, run in chunks of `CASE_CHUNK`, one
-        // submission a chunk (one submission a case cost 16 ms of
-        // synchronisation; 2026-10-11). Each case's sample for the meter is
-        // the chunk's wall time shared equally. They are the same size, so
-        // the projection over them is linear in the count: a kernel whose
-        // cases alone would spend a third of the base budget is stopped
-        // between two chunks (one chunk cannot be cancelled, the rest can).
-        let mut passed = 0;
-        let mut first_fail = String::new();
-        // The mean distance over the cases run (infinite before any ran).
-        let (mut sum_distance, mut ran) = (0.0f64, 0usize);
-        let mean_distance = |sum: f64, ran: usize| if ran == 0 { f64::INFINITY } else { sum / ran as f64 };
-        // Every case's closeness columns and its output's and reference's
-        // hashes, in the admission's order (None for a case never run).
-
-        let cases = self.admission.len();
-        let mut per_case: Vec<Option<[f64; crate::wgsl::closeness::N]>> = vec![None; cases];
-        let mut outs: Vec<Option<(u64, u64, usize)>> = vec![None; cases];
-        // The projection is over the cases alone: the pipeline compile
-        // (50-300 ms on Metal) before them would be multiplied by 128.
-        let t_cases = Instant::now();
-        let mut done = 0usize;
-        for chunk in self.admission.chunks(CASE_CHUNK).zip(self.resident_cases.chunks(CASE_CHUNK)) {
-            let (idx, res) = chunk;
-            let rs: Vec<&Resident> = res.iter().collect();
-            let Batch { h: hs, compute_ms, .. } = match gram.run_batch(&rs) {
-                Ok(x) => x,
-                Err(e) => return infeasible(passed, mean_distance(sum_distance, ran), crate::wgsl::closeness::columns(&per_case, passed, &outs), format!("run: {e}"), t, &meter, &split),
-            };
-            for (&i, h) in idx.iter().zip(&hs) {
-                let p = &self.probes[i];
-                meter.push(work(p.d, p.m), compute_ms / idx.len() as f64);
-                let d = crate::wgsl::probes::distance(h, p);
-                sum_distance += if d.is_nan() { f64::INFINITY } else { d };
-                per_case[ran] = Some(crate::wgsl::closeness::case_columns(h, &p.h_ref, p.d));
-                outs[ran] = Some((crate::wgsl::closeness::hash_bits(h, |v: f32| u64::from(v.to_bits())), crate::wgsl::closeness::hash_bits(&p.h_ref, f64::to_bits), p.d));
-                ran += 1;
-                if d <= crate::wgsl::probes::PASS {
-                    passed += 1;
-                } else if first_fail.is_empty() {
-                    first_fail = format!("{} ({d:.2e})", p.name);
-                }
-            }
-            done += idx.len();
-            let projected = elapsed_ms(t_cases) * cases as f64 / done as f64;
-            if done < cases && projected > self.base_budget_ms / 3.0 {
-                return infeasible(passed, mean_distance(sum_distance, ran), crate::wgsl::closeness::columns(&per_case, passed, &outs), format!("slow: the correctness cases are projected at {:.1} s ({:.1} s for the first {done}), over a third of the {:.1} s budget; the rest not dispatched", projected / 1e3, elapsed_ms(t_cases) / 1e3, self.base_budget_ms / 1e3), t, &meter, &split);
-            }
-        }
-        split.cases = elapsed_ms(t_cases);
-        if passed < cases {
-            return infeasible(passed, mean_distance(sum_distance, ran), crate::wgsl::closeness::columns(&per_case, passed, &outs), format!("constraint {passed}/{cases} cases: {first_fail}"), t, &meter, &split);
-        }
-        meter.fix_floor();
-        let limit_ms = self.slow_limit_ms();
-        // The rungs: timed, gated, not judged.
-        let t_rungs = Instant::now();
-        for ((d, m, _), res) in self.rungs.iter().zip(&self.resident_rungs) {
-            if let Err(e) = gate(&meter, &format!("the timing rung d {d} m {m}"), work(*d, *m), elapsed_ms(t), limit_ms, self.base_budget_ms) {
-                return infeasible(passed, f64::INFINITY, crate::wgsl::closeness::columns(&per_case, passed, &outs), e, t, &meter, &split);
-            }
-            match gram.run(res, false) {
-                Ok(b) => {
-                    meter.push(work(*d, *m), b.compute_ms);
-                    split.build(&b);
-                }
-                Err(e) => return infeasible(passed, f64::INFINITY, crate::wgsl::closeness::columns(&per_case, passed, &outs), format!("run: {e}"), t, &meter, &split),
-            }
-        }
-        split.rungs = elapsed_ms(t_rungs);
-        // Accuracy columns: the worst error relative to shipped's, min(1, e / 2),
-        // per set. The pairs run smallest work first across the three sets, so
-        // every pair is predicted from a measured build at most 32x smaller.
-        let mut order: Vec<(usize, &AccuracyPair, &Resident)> = [&self.train, &self.val, &self.extrap].iter().zip(&self.resident_pairs).enumerate().flat_map(|(k, (set, res))| set.iter().zip(res).map(move |(p, r)| (k, p, r))).collect();
-        order.sort_by(|a, b| work(a.1 .1, a.1 .2).total_cmp(&work(b.1 .1, b.1 .2)));
-        let mut worst = [0.0f64; 3];
-        for (k, (name, d, m, _, h_ref, smax), res) in order {
-            if let Err(e) = gate(&meter, &format!("pair {name} (d {d} m {m})"), work(*d, *m), elapsed_ms(t), limit_ms, self.base_budget_ms) {
-                return infeasible(passed, f64::INFINITY, crate::wgsl::closeness::columns(&per_case, passed, &outs), e, t, &meter, &split);
-            }
-            let t_pb = Instant::now();
-            let b = match gram.run(res, true) {
-                Ok(b) => b,
-                Err(e) => return infeasible(passed, f64::INFINITY, crate::wgsl::closeness::columns(&per_case, passed, &outs), format!("run: {e}"), t, &meter, &split),
-            };
-            split.pairs_build += elapsed_ms(t_pb);
-            split.build(&b);
-            meter.push(work(*d, *m), b.compute_ms);
-            let t_pc = Instant::now();
-            let (max_ratio, non_finite) = check_max(&b.h, h_ref, *d, *m);
-            split.pairs_check += elapsed_ms(t_pc);
-            if non_finite > 0 || max_ratio > (2.0 * smax).max(1.0) {
-                let over = if non_finite > 0 { f64::INFINITY } else { max_ratio / (2.0 * smax).max(1.0) };
-                // The cases' columns, each error column the mean of theirs and
-                // the failing pair's own (a pair is wrong where the cases were not).
-                let mut pair_closeness = crate::wgsl::closeness::columns(&per_case, passed, &outs);
-                let pair = crate::wgsl::closeness::case_columns(&b.h, h_ref, *d);
-                for (c, x) in pair_closeness.iter_mut().zip(pair).take(9).skip(1) {
-                    *c = (*c + x) / 2.0;
-                }
-                return infeasible(passed, over, pair_closeness, format!("pair {name}: max {max_ratio:.3} tau (shipped {smax:.3}), non-finite {non_finite}"), t, &meter, &split);
-            }
-            worst[k] = worst[k].max(if *smax > 0.0 { max_ratio / smax } else { max_ratio });
-        }
-        let [et, ev, ex] = worst;
-        // The timing shapes predicted before any is dispatched; a kernel
-        // predicted over the limit at any of them is stopped here.
-        let mut predicted_ms = [0.0f64; 3];
-        for (k, (d, m, _)) in self.timing.iter().enumerate() {
-            match gate(&meter, &format!("the timing shape d {d} m {m}"), work(*d, *m), 0.0, limit_ms, f64::INFINITY) {
-                Ok(p) => predicted_ms[k] = p,
-                Err(e) => return Fitness { predicted_ms, ..infeasible(passed, f64::INFINITY, crate::wgsl::closeness::columns(&per_case, passed, &outs), e, t, &meter, &split) },
-            }
-        }
-        // Speed columns: `timing_rounds` candidate builds per shape, the
-        // median of their ratios to the shipped kernel's times of this
-        // generation ([`FitnessContext::time_shipped`]; until 2026-10-11 the
-        // shipped kernel was built beside every candidate, 3.4 s of 6.4).
-        let shipped_gpu = self.shipped_reference();
-        let mut speedups = [0.0f64; 3];
-        let mut measured_ms = [0.0f64; 3];
-        let rounds = self.timing_rounds.max(1);
-        for (k, ((d, m, _), res)) in self.timing.iter().zip(&self.resident_timing).enumerate() {
-            let mut ratios = Vec::with_capacity(rounds);
-            let mut walls = Vec::with_capacity(rounds);
-            for _ in 0..rounds {
-                let tb = Instant::now();
-                let b = match gram.run(res, false) {
-                    Ok(b) => b,
-                    Err(e) => return Fitness { predicted_ms, ..infeasible(passed, f64::INFINITY, crate::wgsl::closeness::columns(&per_case, passed, &outs), e, t, &meter, &split) },
-                };
-                split.timing_cand += elapsed_ms(tb);
-                split.build(&b);
-                match speedup(shipped_gpu[k], b.gpu_ms) {
-                    Ok(r) => ratios.push(r),
-                    Err(e) => return Fitness { predicted_ms, ..infeasible(passed, f64::INFINITY, crate::wgsl::closeness::columns(&per_case, passed, &outs), format!("{e} at d {d} m {m}"), t, &meter, &split) },
-                }
-                walls.push(b.compute_ms);
-            }
-            speedups[k] = median(&mut ratios);
-            measured_ms[k] = median(&mut walls);
-        }
-        let columns = fitness_columns(speedups, [(et / 2.0).clamp(0.0, 1.0), (ev / 2.0).clamp(0.0, 1.0), (ex / 2.0).clamp(0.0, 1.0)]);
-        Fitness { feasible: true, passed, distance: 0.0, closeness: [0.0; crate::wgsl::closeness::N], closeness_hff: 0.0, columns, speedups, hff: truenorth(&columns), detail: String::new(), seconds: t.elapsed().as_secs_f64(), predicted_ms, rate_per_g: meter.rate_per_g(), floor_ms: meter.floor_ms, measured_ms, split: Split { total: t.elapsed().as_secs_f64() * 1e3, ..split } }
+        fitness_with(&spec, &DeviceDriver { dev, ctx: self }, source)
     }
+}
+
+/// The device [`Driver`]: [`Gram::compile`], [`Gram::run_batch`] over the
+/// resident cases and [`Gram::run`] over the resident rungs, pairs and
+/// timing shapes, exactly the calls the fitness made before it was
+/// written over a driver.
+#[cfg(feature = "gpu")]
+struct DeviceDriver<'a> {
+    dev: &'a Device,
+    ctx: &'a FitnessContext,
+}
+
+#[cfg(feature = "gpu")]
+impl<'a> Driver for DeviceDriver<'a> {
+    type Kernel = Gram<'a>;
+
+    fn compile(&self, source: &str) -> Result<Gram<'a>, String> {
+        Gram::compile(self.dev, source)
+    }
+
+    fn batch(&self, k: &Gram<'a>, cases: std::ops::Range<usize>) -> Result<Batch, String> {
+        let rs: Vec<&Resident> = self.ctx.resident_cases[cases].iter().collect();
+        k.run_batch(&rs)
+    }
+
+    fn run(&self, k: &Gram<'a>, which: Which, read_h: bool) -> Result<Build, String> {
+        let r = match which {
+            Which::Rung(i) => &self.ctx.resident_rungs[i],
+            Which::Pair(s, i) => &self.ctx.resident_pairs[s][i],
+            Which::Timing(i) => &self.ctx.resident_timing[i],
+        };
+        k.run(r, read_h)
+    }
+}
+
+/// Which resident Phi a single build runs over: a timing rung, a pair
+/// (split 0 train, 1 validation, 2 extrapolation; its index), a timing shape.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Which {
+    Rung(usize),
+    Pair(usize, usize),
+    Timing(usize),
+}
+
+/// What the fitness procedure runs a kernel with: the device driver in a
+/// fit, a host model of a kernel in the CPU tests.
+pub trait Driver {
+    type Kernel;
+    /// Compile; `Err` is the compile message.
+    fn compile(&self, source: &str) -> Result<Self::Kernel, String>;
+    /// The correctness cases at these positions of the admission order, in
+    /// one submission ([`Gram::run_batch`]).
+    fn batch(&self, k: &Self::Kernel, cases: std::ops::Range<usize>) -> Result<Batch, String>;
+    /// One build ([`Gram::run`]); `read_h` false leaves `Build::h` empty.
+    fn run(&self, k: &Self::Kernel, which: Which, read_h: bool) -> Result<Build, String>;
+}
+
+/// The data the fitness procedure reads, borrowed from a
+/// [`FitnessContext`] (or built on the host for a test).
+pub struct Spec<'a> {
+    pub probes: &'a [crate::wgsl::probes::Probe],
+    pub admission: &'a [usize],
+    /// The accuracy pairs by split: train, validation, extrapolation.
+    pub pairs: [&'a [AccuracyPair]; 3],
+    /// The rungs' and the timing shapes' (d, m).
+    pub rungs: Vec<(usize, usize)>,
+    pub timing: Vec<(usize, usize)>,
+    /// The limit of one build at a timing shape ([`slow_limit_ms`]).
+    pub limit_ms: f64,
+    pub base_budget_ms: f64,
+    pub timing_rounds: usize,
+    /// The speed-ups' denominators, the least shipped GPU ms per shape.
+    pub shipped_reference: [f64; 3],
+}
+
+/// THE FAST FITNESS of one kernel over `drv` (`FitnessContext::fitness`
+/// on the device): the constraint on the correctness cases, the rungs, the
+/// accuracy pairs, the timing shapes, as documented at [`FitnessContext`].
+pub fn fitness_with<D: Driver>(spec: &Spec, drv: &D, source: &str) -> Fitness {
+    let t = Instant::now();
+    let mut meter = Meter::default();
+    let mut split = Split::default();
+    let infeasible = |passed: usize, distance: f64, closeness: [f64; crate::wgsl::closeness::N], detail: String, t: Instant, meter: &Meter, split: &Split| Fitness { feasible: false, passed, distance, closeness, closeness_hff: crate::wgsl::closeness::angle(&closeness), columns: [1.0; 6], speedups: [0.0; 3], hff: f64::INFINITY, detail, seconds: t.elapsed().as_secs_f64(), predicted_ms: [0.0; 3], rate_per_g: meter.rate_per_g(), floor_ms: meter.floor_ms, measured_ms: [0.0; 3], split: Split { total: t.elapsed().as_secs_f64() * 1e3, ..*split } };
+    let elapsed_ms = |t: Instant| t.elapsed().as_secs_f64() * 1e3;
+    let compiled = drv.compile(source);
+    split.compile = elapsed_ms(t);
+    let gram = match compiled {
+        Ok(g) => g,
+        Err(e) => return infeasible(0, f64::INFINITY, crate::wgsl::closeness::WORST, format!("compile: {}", e.lines().find(|l| l.contains("error") || l.contains("header")).unwrap_or(e.lines().next().unwrap_or(""))), t, &meter, &split),
+    };
+    // The correctness cases, run in chunks of `CASE_CHUNK`, one
+    // submission a chunk (one submission a case cost 16 ms of
+    // synchronisation; 2026-10-11). Each case's sample for the meter is
+    // the chunk's wall time shared equally. They are the same size, so
+    // the projection over them is linear in the count: a kernel whose
+    // cases alone would spend a third of the base budget is stopped
+    // between two chunks (one chunk cannot be cancelled, the rest can).
+    let mut passed = 0;
+    let mut first_fail = String::new();
+    // The mean distance over the cases run (infinite before any ran).
+    let (mut sum_distance, mut ran) = (0.0f64, 0usize);
+    let mean_distance = |sum: f64, ran: usize| if ran == 0 { f64::INFINITY } else { sum / ran as f64 };
+    // Every case's closeness columns and its output's and reference's
+    // hashes, in the admission's order (None for a case never run).
+    let cases = spec.admission.len();
+    let mut per_case: Vec<Option<[f64; crate::wgsl::closeness::N]>> = vec![None; cases];
+    let mut outs: Vec<Option<(u64, u64, usize)>> = vec![None; cases];
+    // The projection is over the cases alone: the pipeline compile
+    // (50-300 ms on Metal) before them would be multiplied by 128.
+    let t_cases = Instant::now();
+    let mut done = 0usize;
+    for (c, idx) in spec.admission.chunks(CASE_CHUNK).enumerate() {
+        let Batch { h: hs, compute_ms, .. } = match drv.batch(&gram, c * CASE_CHUNK..c * CASE_CHUNK + idx.len()) {
+            Ok(x) => x,
+            Err(e) => return infeasible(passed, mean_distance(sum_distance, ran), crate::wgsl::closeness::columns(&per_case, passed, &outs), format!("run: {e}"), t, &meter, &split),
+        };
+        for (&i, h) in idx.iter().zip(&hs) {
+            let p = &spec.probes[i];
+            meter.push(work(p.d, p.m), compute_ms / idx.len() as f64);
+            let d = crate::wgsl::probes::distance(h, p);
+            sum_distance += if d.is_nan() { f64::INFINITY } else { d };
+            per_case[ran] = Some(crate::wgsl::closeness::case_columns(h, &p.h_ref, p.d));
+            outs[ran] = Some((crate::wgsl::closeness::hash_bits(h, |v: f32| u64::from(v.to_bits())), crate::wgsl::closeness::hash_bits(&p.h_ref, f64::to_bits), p.d));
+            ran += 1;
+            if d <= crate::wgsl::probes::PASS {
+                passed += 1;
+            } else if first_fail.is_empty() {
+                first_fail = format!("{} ({d:.2e})", p.name);
+            }
+        }
+        done += idx.len();
+        let projected = elapsed_ms(t_cases) * cases as f64 / done as f64;
+        if done < cases && projected > spec.base_budget_ms / 3.0 {
+            return infeasible(passed, mean_distance(sum_distance, ran), crate::wgsl::closeness::columns(&per_case, passed, &outs), format!("slow: the correctness cases are projected at {:.1} s ({:.1} s for the first {done}), over a third of the {:.1} s budget; the rest not dispatched", projected / 1e3, elapsed_ms(t_cases) / 1e3, spec.base_budget_ms / 1e3), t, &meter, &split);
+        }
+    }
+    split.cases = elapsed_ms(t_cases);
+    if passed < cases {
+        return infeasible(passed, mean_distance(sum_distance, ran), crate::wgsl::closeness::columns(&per_case, passed, &outs), format!("constraint {passed}/{cases} cases: {first_fail}"), t, &meter, &split);
+    }
+    meter.fix_floor();
+    let limit_ms = spec.limit_ms;
+    // The rungs: timed, gated, not judged.
+    let t_rungs = Instant::now();
+    for (i, (d, m)) in spec.rungs.iter().enumerate() {
+        if let Err(e) = gate(&meter, &format!("the timing rung d {d} m {m}"), work(*d, *m), elapsed_ms(t), limit_ms, spec.base_budget_ms) {
+            return infeasible(passed, f64::INFINITY, crate::wgsl::closeness::columns(&per_case, passed, &outs), e, t, &meter, &split);
+        }
+        match drv.run(&gram, Which::Rung(i), false) {
+            Ok(b) => {
+                meter.push(work(*d, *m), b.compute_ms);
+                split.build(&b);
+            }
+            Err(e) => return infeasible(passed, f64::INFINITY, crate::wgsl::closeness::columns(&per_case, passed, &outs), format!("run: {e}"), t, &meter, &split),
+        }
+    }
+    split.rungs = elapsed_ms(t_rungs);
+    // Accuracy columns: the worst error relative to shipped's, min(1, e / 2),
+    // per set. The pairs run smallest work first across the three sets, so
+    // every pair is predicted from a measured build at most 32x smaller.
+    let mut order: Vec<(usize, usize, &AccuracyPair)> = spec.pairs.iter().enumerate().flat_map(|(k, set)| set.iter().enumerate().map(move |(i, p)| (k, i, p))).collect();
+    order.sort_by(|a, b| work(a.2 .1, a.2 .2).total_cmp(&work(b.2 .1, b.2 .2)));
+    let mut worst = [0.0f64; 3];
+    for (k, i, (name, d, m, _, h_ref, smax)) in order {
+        if let Err(e) = gate(&meter, &format!("pair {name} (d {d} m {m})"), work(*d, *m), elapsed_ms(t), limit_ms, spec.base_budget_ms) {
+            return infeasible(passed, f64::INFINITY, crate::wgsl::closeness::columns(&per_case, passed, &outs), e, t, &meter, &split);
+        }
+        let t_pb = Instant::now();
+        let b = match drv.run(&gram, Which::Pair(k, i), true) {
+            Ok(b) => b,
+            Err(e) => return infeasible(passed, f64::INFINITY, crate::wgsl::closeness::columns(&per_case, passed, &outs), format!("run: {e}"), t, &meter, &split),
+        };
+        split.pairs_build += elapsed_ms(t_pb);
+        split.build(&b);
+        meter.push(work(*d, *m), b.compute_ms);
+        let t_pc = Instant::now();
+        let (max_ratio, non_finite) = check_max(&b.h, h_ref, *d, *m);
+        split.pairs_check += elapsed_ms(t_pc);
+        if non_finite > 0 || max_ratio > (2.0 * smax).max(1.0) {
+            let over = if non_finite > 0 { f64::INFINITY } else { max_ratio / (2.0 * smax).max(1.0) };
+            // The cases' columns, each error column the mean of theirs and
+            // the failing pair's own (a pair is wrong where the cases were not).
+            let mut pair_closeness = crate::wgsl::closeness::columns(&per_case, passed, &outs);
+            let pair = crate::wgsl::closeness::case_columns(&b.h, h_ref, *d);
+            for (c, x) in pair_closeness.iter_mut().zip(pair).take(9).skip(1) {
+                *c = (*c + x) / 2.0;
+            }
+            return infeasible(passed, over, pair_closeness, format!("pair {name}: max {max_ratio:.3} tau (shipped {smax:.3}), non-finite {non_finite}"), t, &meter, &split);
+        }
+        worst[k] = worst[k].max(if *smax > 0.0 { max_ratio / smax } else { max_ratio });
+    }
+    let [et, ev, ex] = worst;
+    // The timing shapes predicted before any is dispatched; a kernel
+    // predicted over the limit at any of them is stopped here.
+    let mut predicted_ms = [0.0f64; 3];
+    for (k, (d, m)) in spec.timing.iter().enumerate() {
+        match gate(&meter, &format!("the timing shape d {d} m {m}"), work(*d, *m), 0.0, limit_ms, f64::INFINITY) {
+            Ok(p) => predicted_ms[k] = p,
+            Err(e) => return Fitness { predicted_ms, ..infeasible(passed, f64::INFINITY, crate::wgsl::closeness::columns(&per_case, passed, &outs), e, t, &meter, &split) },
+        }
+    }
+    // Speed columns: `timing_rounds` candidate builds per shape, the
+    // median of their ratios to the shipped kernel's times of this
+    // generation ([`FitnessContext::time_shipped`]; until 2026-10-11 the
+    // shipped kernel was built beside every candidate, 3.4 s of 6.4).
+    let shipped_gpu = spec.shipped_reference;
+    let mut speedups = [0.0f64; 3];
+    let mut measured_ms = [0.0f64; 3];
+    let rounds = spec.timing_rounds.max(1);
+    for (k, (d, m)) in spec.timing.iter().enumerate() {
+        let mut ratios = Vec::with_capacity(rounds);
+        let mut walls = Vec::with_capacity(rounds);
+        for _ in 0..rounds {
+            let tb = Instant::now();
+            let b = match drv.run(&gram, Which::Timing(k), false) {
+                Ok(b) => b,
+                Err(e) => return Fitness { predicted_ms, ..infeasible(passed, f64::INFINITY, crate::wgsl::closeness::columns(&per_case, passed, &outs), e, t, &meter, &split) },
+            };
+            split.timing_cand += elapsed_ms(tb);
+            split.build(&b);
+            match speedup(shipped_gpu[k], b.gpu_ms) {
+                Ok(r) => ratios.push(r),
+                Err(e) => return Fitness { predicted_ms, ..infeasible(passed, f64::INFINITY, crate::wgsl::closeness::columns(&per_case, passed, &outs), format!("{e} at d {d} m {m}"), t, &meter, &split) },
+            }
+            walls.push(b.compute_ms);
+        }
+        speedups[k] = median(&mut ratios);
+        measured_ms[k] = median(&mut walls);
+    }
+    let columns = fitness_columns(speedups, [(et / 2.0).clamp(0.0, 1.0), (ev / 2.0).clamp(0.0, 1.0), (ex / 2.0).clamp(0.0, 1.0)]);
+    Fitness { feasible: true, passed, distance: 0.0, closeness: [0.0; crate::wgsl::closeness::N], closeness_hff: 0.0, columns, speedups, hff: truenorth(&columns), detail: String::new(), seconds: t.elapsed().as_secs_f64(), predicted_ms, rate_per_g: meter.rate_per_g(), floor_ms: meter.floor_ms, measured_ms, split: Split { total: t.elapsed().as_secs_f64() * 1e3, ..split } }
+}
+
+/// One pair to write into a problem directory: `(kind, d, m, seed)`.
+pub type PairShape = (Kind, usize, usize, u64);
+
+/// THE CASES OF `problems/gram` (the problem owner's reference, written as
+/// data for the generic harness): the constraint's 128 admission probes in
+/// admission order (their Phi, their per-binding limit, their f64 H), the
+/// rungs and the timing shapes (Phi only, from [`RUNG_SEED`] and
+/// [`TIMING_SEED`]), and the accuracy pairs of each split (Phi and the f64
+/// reference, read from `cache` when given, as `pairs::Pair::load` does,
+/// else computed). Returns the bytes written.
+pub fn write_problem_cases(dir: &std::path::Path, rungs: &[(usize, usize)], pairs: &[Vec<PairShape>; 3], timing: &[(usize, usize)], cache: Option<&std::path::Path>) -> Result<u64, String> {
+    use crate::wgsl::harness::{f32_bytes, f64_bytes, write_suite, CaseOut};
+    let shape = |d: usize, m: usize| vec![("d".to_string(), d as f64), ("m".to_string(), m as f64)];
+    let label = |d: usize, m: usize| Some(format!("d {d} m {m}"));
+    let probes = crate::wgsl::probes::probes(1);
+    let constraint: Vec<CaseOut> = crate::wgsl::probes::admission(&probes, 1)
+        .into_iter()
+        .map(|i| {
+            let p = &probes[i];
+            let mut params = shape(p.d, p.m);
+            params.push(("limit".into(), p.limit as f64));
+            CaseOut { name: p.name.clone(), label: None, params, inputs: vec![("phi".into(), f32_bytes(&p.phi))], expected: vec![("h".into(), vec![f64_bytes(&p.h_ref)])] }
+        })
+        .collect();
+    let mut total = write_suite(dir, "constraint", &constraint)?;
+    let phi_only = |set: &[(usize, usize)], seed: u64| -> Vec<CaseOut> { set.iter().map(|&(d, m)| CaseOut { name: format!("d {d} m {m}"), label: label(d, m), params: shape(d, m), inputs: vec![("phi".into(), f32_bytes(&phi(d, m, seed)))], expected: Vec::new() }).collect() };
+    total += write_suite(dir, "rungs", &phi_only(rungs, RUNG_SEED))?;
+    for (suite, set) in ["train", "val", "extrap"].iter().zip(pairs) {
+        let mut cases = Vec::new();
+        for &(kind, d, m, seed) in set {
+            let (name, p, h) = match cache {
+                Some(c) => {
+                    let pair = crate::wgsl::pairs::Pair::load(kind, d, m, seed, c)?;
+                    (pair.name(), pair.phi, pair.h_ref)
+                }
+                None => {
+                    let p = phi_of(kind, d, m, seed);
+                    let h = reference(&p, d, m);
+                    (format!("{}_d{d}_m{m}_s{seed}", kind.name()), p, h)
+                }
+            };
+            cases.push(CaseOut { name, label: label(d, m), params: shape(d, m), inputs: vec![("phi".into(), f32_bytes(&p))], expected: vec![("h".into(), vec![f64_bytes(&h)])] });
+        }
+        total += write_suite(dir, suite, &cases)?;
+    }
+    total += write_suite(dir, "timing", &phi_only(timing, TIMING_SEED))?;
+    Ok(total)
+}
+
+/// The pairs the fast fitness scores ([`crate::wgsl::pairs::fitness_pick`]), by split.
+pub fn fitness_pairs() -> Result<[Vec<PairShape>; 3], String> {
+    let shapes = crate::wgsl::pairs::split_shapes();
+    let pick = crate::wgsl::pairs::fitness_pick(&shapes)?;
+    Ok(std::array::from_fn(|k| pick[k].iter().map(|&i| shapes[k][i]).collect()))
 }
 
 /// The six columns: 1 / speed-up per timing shape, clamped to [0, 1], then
@@ -1421,7 +1667,7 @@ pub fn speedup(shipped_gpu_ms: f64, candidate_gpu_ms: f64) -> Result<f64, String
 }
 
 /// The median of a sample (the mean of the middle two for an even count).
-fn median(v: &mut [f64]) -> f64 {
+pub fn median(v: &mut [f64]) -> f64 {
     v.sort_by(|a, b| a.total_cmp(b));
     let n = v.len();
     if n == 0 {
@@ -1522,6 +1768,7 @@ mod tests {
     /// factor of two covers the spread of the shipped kernel's own times
     /// across the shapes (its memory access differs by d) and the run-to-
     /// run scatter of one round (15 %, 2026-10-11).
+    #[cfg(feature = "gpu")]
     #[test]
     fn the_shipped_kernel_predicts_its_own_time_at_the_timing_shapes() {
         let dev = Device::new().expect("device");
@@ -1569,6 +1816,7 @@ mod tests {
     /// the test kernel must be made slower another way, not that the gate
     /// failed. The detail names the shape and the prediction, and the
     /// evaluation takes well under the watchdog's base budget.
+    #[cfg(feature = "gpu")]
     #[test]
     fn a_deliberately_slow_kernel_is_stopped_before_the_timing_shapes() {
         let slow = slow_shipped();
@@ -1684,6 +1932,7 @@ mod tests {
     /// the shipped kernel scored as a candidate has speed-ups of 1 within
     /// one-round noise (15 %, 2026-10-11), and a second timing of the
     /// shipped kernel moves its times by less than that.
+    #[cfg(feature = "gpu")]
     #[test]
     fn the_generations_shipped_times_score_shipped_at_one() {
         let dev = Device::new().expect("device");
@@ -1702,6 +1951,7 @@ mod tests {
     /// GPU (run when the device is free): the 128 correctness cases run in
     /// chunks give each case the H a one-case run gives, bit for bit, for
     /// the shipped, tiled and blocked kernels.
+    #[cfg(feature = "gpu")]
     #[test]
     fn batched_cases_give_the_one_case_h_bit_for_bit() {
         let dev = Device::new().expect("device");
@@ -1760,6 +2010,7 @@ mod tests {
 
     /// The shipped kernel as a typed tree, rendered, on the device: the same
     /// H within the criterion as the shipped text.
+    #[cfg(feature = "gpu")]
     #[test]
     fn the_rendered_shipped_tree_passes_the_criterion_on_the_device() {
         use crate::wgsl::render::{gram_role, gram_shipped_tree, Renderer};
@@ -1781,6 +2032,7 @@ mod tests {
 
     /// The kingdom gate on the device: random typed kernels rendered,
     /// compiled by Metal and dispatched at a small size, every failure named.
+    #[cfg(feature = "gpu")]
     #[test]
     fn random_typed_kernels_compile_and_run_on_the_device() {
         use crate::wgsl::render::{dual_ty, gram_role, sample, Renderer};
@@ -1824,6 +2076,7 @@ mod tests {
     /// compiled by Metal, every failure named. naga can accept a module
     /// whose Metal text Metal refuses to compile (a unary minus on a matrix,
     /// fit_SF_random 2026-10-12), so validation alone is not the gate.
+    #[cfg(feature = "gpu")]
     #[test]
     fn random_safe_kernels_compile_on_the_device() {
         use crate::wgsl::render::{dual_ty, gram_role, sample};
@@ -1853,6 +2106,7 @@ mod tests {
     /// Every build reports a compute time, build after build, shape after
     /// shape; the timestamp sum is printed beside it (it reads 0 for short
     /// passes on Apple silicon, which is why the search uses compute_ms).
+    #[cfg(feature = "gpu")]
     #[test]
     fn every_build_in_a_sequence_has_a_compute_time() {
         let dev = Device::new().expect("device");
@@ -1876,6 +2130,7 @@ mod tests {
     /// a thread, its result written so it is kept) is an error naming the
     /// runaway, returned only after the GPU drained; the shipped kernel timed
     /// right after it times above zero. On the device: about 30 s.
+    #[cfg(feature = "gpu")]
     #[test]
     fn a_runaway_is_named_and_the_next_timing_is_not_zero_on_the_device() {
         let dev = Device::new().expect("device");
@@ -1905,6 +2160,7 @@ mod tests {
         assert!(b.gpu_ms > 0.0, "the shipped kernel timed at zero after the runaway");
     }
 
+    #[cfg(feature = "gpu")]
     #[test]
     fn the_grid_header_is_read_and_checked_against_the_shader() {
         assert_eq!(grid_header(TILED), Some((16, 16, 4, 4)));
@@ -1918,6 +2174,7 @@ mod tests {
 
     /// The hand-written kernels (plan step 0) agree with the reference
     /// under the criterion, banded and unbanded, at ragged shapes.
+    #[cfg(feature = "gpu")]
     #[test]
     fn the_tiled_and_blocked_kernels_pass_the_criterion_on_the_device() {
         let dev = Device::new().expect("device");
@@ -1938,6 +2195,7 @@ mod tests {
     /// acos(1 − (3·1 + 3·0.25)/6) = 1.186; the blocked kernel is feasible
     /// with a smaller θ; a kernel with its product broken is infeasible
     /// with the failing case named.
+    #[cfg(feature = "gpu")]
     #[test]
     fn the_fast_fitness_ranks_blocked_above_shipped_and_refuses_a_broken_kernel() {
         let dev = Device::new().expect("device");
@@ -1953,6 +2211,7 @@ mod tests {
         println!("shipped {:.3} in {:.1} s; blocked {:.3} in {:.1} s; broken in {:.1} s", s.hff, s.seconds, b.hff, b.seconds, w.seconds);
     }
 
+    #[cfg(feature = "gpu")]
     #[test]
     fn shipped_kernel_passes_the_criterion_on_the_device() {
         // Small enough to run in a test, large enough to band: d = 64 rows

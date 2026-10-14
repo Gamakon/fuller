@@ -52,6 +52,12 @@ version = "0.20"
 features = ["wgsl-in", "wgsl-out"]
 optional = true
 
+# The generic dispatch-program harness (src/wgsl/harness.rs) reads a
+# problem's `problem.toml` and its case manifests.
+[dependencies.toml]
+version = "0.8"
+optional = true
+
 [dev-dependencies]
 # TEST-ONLY oracle for the regex simplifier: render a Re AST to a regex string
 # and compare match results before/after simplify. Never a run path.
@@ -67,7 +73,7 @@ python = ["dep:pyo3"]
 gpu = ["dep:wgpu", "dep:pollster", "dep:bytemuck"]
 # `wgsl` adds the WGSL kingdom's reader and loader (naga in and out). Off by
 # default and independent of `gpu`: reading a kernel needs no adapter.
-wgsl = ["dep:naga"]
+wgsl = ["dep:naga", "dep:toml"]
 
 [[example]]
 name = "00_calibration"
@@ -119,6 +125,14 @@ required-features = ["gpu", "wgsl"]
 [[example]]
 name = "wgsl_closeness"
 required-features = ["gpu", "wgsl"]
+
+[[example]]
+name = "wgsl_problem"
+required-features = ["gpu", "wgsl"]
+
+[[example]]
+name = "wgsl_problem_gram_cases"
+required-features = ["wgsl"]
 
 [[example]]
 name = "wgsl_roundtrip"

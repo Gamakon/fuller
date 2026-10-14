@@ -1,0 +1,1793 @@
+root = "constraint"
+
+[[case]]
+name = "A t0 c14 v3"
+
+[case.params]
+d = 32.0
+limit = 18446744073709552000.0
+m = 16.0
+
+[case.inputs]
+phi = "0000.phi.bin"
+
+[case.expected]
+h = ["0000.h.expected.bin"]
+
+[[case]]
+name = "A t0 c31 v1"
+
+[case.params]
+d = 32.0
+limit = 18446744073709552000.0
+m = 16.0
+
+[case.inputs]
+phi = "0001.phi.bin"
+
+[case.expected]
+h = ["0001.h.expected.bin"]
+
+[[case]]
+name = "A t1 c7 v-1"
+
+[case.params]
+d = 32.0
+limit = 18446744073709552000.0
+m = 16.0
+
+[case.inputs]
+phi = "0002.phi.bin"
+
+[case.expected]
+h = ["0002.h.expected.bin"]
+
+[[case]]
+name = "A t1 c19 v-1"
+
+[case.params]
+d = 32.0
+limit = 18446744073709552000.0
+m = 16.0
+
+[case.inputs]
+phi = "0003.phi.bin"
+
+[case.expected]
+h = ["0003.h.expected.bin"]
+
+[[case]]
+name = "A t1 c26 v3"
+
+[case.params]
+d = 32.0
+limit = 18446744073709552000.0
+m = 16.0
+
+[case.inputs]
+phi = "0004.phi.bin"
+
+[case.expected]
+h = ["0004.h.expected.bin"]
+
+[[case]]
+name = "A t8 c26 v1"
+
+[case.params]
+d = 32.0
+limit = 18446744073709552000.0
+m = 16.0
+
+[case.inputs]
+phi = "0005.phi.bin"
+
+[case.expected]
+h = ["0005.h.expected.bin"]
+
+[[case]]
+name = "A t8 c26 v2.5"
+
+[case.params]
+d = 32.0
+limit = 18446744073709552000.0
+m = 16.0
+
+[case.inputs]
+phi = "0006.phi.bin"
+
+[case.expected]
+h = ["0006.h.expected.bin"]
+
+[[case]]
+name = "B t15 c26,23 v3,0.125"
+
+[case.params]
+d = 32.0
+limit = 18446744073709552000.0
+m = 16.0
+
+[case.inputs]
+phi = "0007.phi.bin"
+
+[case.expected]
+h = ["0007.h.expected.bin"]
+
+[[case]]
+name = "B t15 c2,3 v3,1"
+
+[case.params]
+d = 32.0
+limit = 18446744073709552000.0
+m = 16.0
+
+[case.inputs]
+phi = "0008.phi.bin"
+
+[case.expected]
+h = ["0008.h.expected.bin"]
+
+[[case]]
+name = "B t8 c19,29 v0.125,2.5"
+
+[case.params]
+d = 32.0
+limit = 18446744073709552000.0
+m = 16.0
+
+[case.inputs]
+phi = "0009.phi.bin"
+
+[case.expected]
+h = ["0009.h.expected.bin"]
+
+[[case]]
+name = "B t8 c7,11 v0.125,3"
+
+[case.params]
+d = 32.0
+limit = 18446744073709552000.0
+m = 16.0
+
+[case.inputs]
+phi = "0010.phi.bin"
+
+[case.expected]
+h = ["0010.h.expected.bin"]
+
+[[case]]
+name = "B t15 c23,29 v3,2.5"
+
+[case.params]
+d = 32.0
+limit = 18446744073709552000.0
+m = 16.0
+
+[case.inputs]
+phi = "0011.phi.bin"
+
+[case.expected]
+h = ["0011.h.expected.bin"]
+
+[[case]]
+name = "B t1 c31,4 v-1,0.125"
+
+[case.params]
+d = 32.0
+limit = 18446744073709552000.0
+m = 16.0
+
+[case.inputs]
+phi = "0012.phi.bin"
+
+[case.expected]
+h = ["0012.h.expected.bin"]
+
+[[case]]
+name = "B t2 c29,31 v2.5,-1"
+
+[case.params]
+d = 32.0
+limit = 18446744073709552000.0
+m = 16.0
+
+[case.inputs]
+phi = "0013.phi.bin"
+
+[case.expected]
+h = ["0013.h.expected.bin"]
+
+[[case]]
+name = "C t8,2 c13 v1,-1"
+
+[case.params]
+d = 32.0
+limit = 18446744073709552000.0
+m = 16.0
+
+[case.inputs]
+phi = "0014.phi.bin"
+
+[case.expected]
+h = ["0014.h.expected.bin"]
+
+[[case]]
+name = "C t2,0 c31 v0.125,-1"
+
+[case.params]
+d = 32.0
+limit = 18446744073709552000.0
+m = 16.0
+
+[case.inputs]
+phi = "0015.phi.bin"
+
+[case.expected]
+h = ["0015.h.expected.bin"]
+
+[[case]]
+name = "C t2,5 c19 v-1,0.125"
+
+[case.params]
+d = 32.0
+limit = 18446744073709552000.0
+m = 16.0
+
+[case.inputs]
+phi = "0016.phi.bin"
+
+[case.expected]
+h = ["0016.h.expected.bin"]
+
+[[case]]
+name = "C t1,0 c16 v2.5,1"
+
+[case.params]
+d = 32.0
+limit = 18446744073709552000.0
+m = 16.0
+
+[case.inputs]
+phi = "0017.phi.bin"
+
+[case.expected]
+h = ["0017.h.expected.bin"]
+
+[[case]]
+name = "C t2,1 c7 v2.5,-1"
+
+[case.params]
+d = 32.0
+limit = 18446744073709552000.0
+m = 16.0
+
+[case.inputs]
+phi = "0018.phi.bin"
+
+[case.expected]
+h = ["0018.h.expected.bin"]
+
+[[case]]
+name = "C t8,11 c19 v2.5,2.5"
+
+[case.params]
+d = 32.0
+limit = 18446744073709552000.0
+m = 16.0
+
+[case.inputs]
+phi = "0019.phi.bin"
+
+[case.expected]
+h = ["0019.h.expected.bin"]
+
+[[case]]
+name = "C t15,8 c13 v2.5,2.5"
+
+[case.params]
+d = 32.0
+limit = 18446744073709552000.0
+m = 16.0
+
+[case.inputs]
+phi = "0020.phi.bin"
+
+[case.expected]
+h = ["0020.h.expected.bin"]
+
+[[case]]
+name = "D d8 m3 bands3"
+
+[case.params]
+d = 8.0
+limit = 96.0
+m = 3.0
+
+[case.inputs]
+phi = "0021.phi.bin"
+
+[case.expected]
+h = ["0021.h.expected.bin"]
+
+[[case]]
+name = "D d16 m3 bands3"
+
+[case.params]
+d = 16.0
+limit = 192.0
+m = 3.0
+
+[case.inputs]
+phi = "0022.phi.bin"
+
+[case.expected]
+h = ["0022.h.expected.bin"]
+
+[[case]]
+name = "D d24 m3 bands3"
+
+[case.params]
+d = 24.0
+limit = 288.0
+m = 3.0
+
+[case.inputs]
+phi = "0023.phi.bin"
+
+[case.expected]
+h = ["0023.h.expected.bin"]
+
+[[case]]
+name = "D d33 m3 bands3"
+
+[case.params]
+d = 33.0
+limit = 396.0
+m = 3.0
+
+[case.inputs]
+phi = "0024.phi.bin"
+
+[case.expected]
+h = ["0024.h.expected.bin"]
+
+[[case]]
+name = "D d40 m3 bands3"
+
+[case.params]
+d = 40.0
+limit = 480.0
+m = 3.0
+
+[case.inputs]
+phi = "0025.phi.bin"
+
+[case.expected]
+h = ["0025.h.expected.bin"]
+
+[[case]]
+name = "D d8 m7 bands7"
+
+[case.params]
+d = 8.0
+limit = 224.0
+m = 7.0
+
+[case.inputs]
+phi = "0026.phi.bin"
+
+[case.expected]
+h = ["0026.h.expected.bin"]
+
+[[case]]
+name = "D d16 m7 bands7"
+
+[case.params]
+d = 16.0
+limit = 448.0
+m = 7.0
+
+[case.inputs]
+phi = "0027.phi.bin"
+
+[case.expected]
+h = ["0027.h.expected.bin"]
+
+[[case]]
+name = "D d24 m7 bands7"
+
+[case.params]
+d = 24.0
+limit = 672.0
+m = 7.0
+
+[case.inputs]
+phi = "0028.phi.bin"
+
+[case.expected]
+h = ["0028.h.expected.bin"]
+
+[[case]]
+name = "D d33 m7 bands7"
+
+[case.params]
+d = 33.0
+limit = 924.0
+m = 7.0
+
+[case.inputs]
+phi = "0029.phi.bin"
+
+[case.expected]
+h = ["0029.h.expected.bin"]
+
+[[case]]
+name = "D d40 m7 bands7"
+
+[case.params]
+d = 40.0
+limit = 1120.0
+m = 7.0
+
+[case.inputs]
+phi = "0030.phi.bin"
+
+[case.expected]
+h = ["0030.h.expected.bin"]
+
+[[case]]
+name = "D d8 m16 bands16"
+
+[case.params]
+d = 8.0
+limit = 512.0
+m = 16.0
+
+[case.inputs]
+phi = "0031.phi.bin"
+
+[case.expected]
+h = ["0031.h.expected.bin"]
+
+[[case]]
+name = "D d16 m16 bands16"
+
+[case.params]
+d = 16.0
+limit = 1024.0
+m = 16.0
+
+[case.inputs]
+phi = "0032.phi.bin"
+
+[case.expected]
+h = ["0032.h.expected.bin"]
+
+[[case]]
+name = "D d24 m16 bands16"
+
+[case.params]
+d = 24.0
+limit = 1536.0
+m = 16.0
+
+[case.inputs]
+phi = "0033.phi.bin"
+
+[case.expected]
+h = ["0033.h.expected.bin"]
+
+[[case]]
+name = "D d33 m16 bands16"
+
+[case.params]
+d = 33.0
+limit = 2112.0
+m = 16.0
+
+[case.inputs]
+phi = "0034.phi.bin"
+
+[case.expected]
+h = ["0034.h.expected.bin"]
+
+[[case]]
+name = "D d40 m16 bands16"
+
+[case.params]
+d = 40.0
+limit = 2560.0
+m = 16.0
+
+[case.inputs]
+phi = "0035.phi.bin"
+
+[case.expected]
+h = ["0035.h.expected.bin"]
+
+[[case]]
+name = "D d8 m31 bands31"
+
+[case.params]
+d = 8.0
+limit = 992.0
+m = 31.0
+
+[case.inputs]
+phi = "0036.phi.bin"
+
+[case.expected]
+h = ["0036.h.expected.bin"]
+
+[[case]]
+name = "D d16 m31 bands31"
+
+[case.params]
+d = 16.0
+limit = 1984.0
+m = 31.0
+
+[case.inputs]
+phi = "0037.phi.bin"
+
+[case.expected]
+h = ["0037.h.expected.bin"]
+
+[[case]]
+name = "D d24 m31 bands31"
+
+[case.params]
+d = 24.0
+limit = 2976.0
+m = 31.0
+
+[case.inputs]
+phi = "0038.phi.bin"
+
+[case.expected]
+h = ["0038.h.expected.bin"]
+
+[[case]]
+name = "D d33 m31 bands31"
+
+[case.params]
+d = 33.0
+limit = 4092.0
+m = 31.0
+
+[case.inputs]
+phi = "0039.phi.bin"
+
+[case.expected]
+h = ["0039.h.expected.bin"]
+
+[[case]]
+name = "D d40 m31 bands31"
+
+[case.params]
+d = 40.0
+limit = 4960.0
+m = 31.0
+
+[case.inputs]
+phi = "0040.phi.bin"
+
+[case.expected]
+h = ["0040.h.expected.bin"]
+
+[[case]]
+name = "D d8 m50 bands50"
+
+[case.params]
+d = 8.0
+limit = 1600.0
+m = 50.0
+
+[case.inputs]
+phi = "0041.phi.bin"
+
+[case.expected]
+h = ["0041.h.expected.bin"]
+
+[[case]]
+name = "D d16 m50 bands50"
+
+[case.params]
+d = 16.0
+limit = 3200.0
+m = 50.0
+
+[case.inputs]
+phi = "0042.phi.bin"
+
+[case.expected]
+h = ["0042.h.expected.bin"]
+
+[[case]]
+name = "D d24 m50 bands50"
+
+[case.params]
+d = 24.0
+limit = 4800.0
+m = 50.0
+
+[case.inputs]
+phi = "0043.phi.bin"
+
+[case.expected]
+h = ["0043.h.expected.bin"]
+
+[[case]]
+name = "D d33 m50 bands50"
+
+[case.params]
+d = 33.0
+limit = 6600.0
+m = 50.0
+
+[case.inputs]
+phi = "0044.phi.bin"
+
+[case.expected]
+h = ["0044.h.expected.bin"]
+
+[[case]]
+name = "D d40 m50 bands50"
+
+[case.params]
+d = 40.0
+limit = 8000.0
+m = 50.0
+
+[case.inputs]
+phi = "0045.phi.bin"
+
+[case.expected]
+h = ["0045.h.expected.bin"]
+
+[[case]]
+name = "D d8 m3 bands2"
+
+[case.params]
+d = 8.0
+limit = 64.0
+m = 3.0
+
+[case.inputs]
+phi = "0046.phi.bin"
+
+[case.expected]
+h = ["0046.h.expected.bin"]
+
+[[case]]
+name = "D d16 m3 bands2"
+
+[case.params]
+d = 16.0
+limit = 128.0
+m = 3.0
+
+[case.inputs]
+phi = "0047.phi.bin"
+
+[case.expected]
+h = ["0047.h.expected.bin"]
+
+[[case]]
+name = "D d24 m3 bands2"
+
+[case.params]
+d = 24.0
+limit = 192.0
+m = 3.0
+
+[case.inputs]
+phi = "0048.phi.bin"
+
+[case.expected]
+h = ["0048.h.expected.bin"]
+
+[[case]]
+name = "D d33 m3 bands2"
+
+[case.params]
+d = 33.0
+limit = 264.0
+m = 3.0
+
+[case.inputs]
+phi = "0049.phi.bin"
+
+[case.expected]
+h = ["0049.h.expected.bin"]
+
+[[case]]
+name = "D d40 m3 bands2"
+
+[case.params]
+d = 40.0
+limit = 320.0
+m = 3.0
+
+[case.inputs]
+phi = "0050.phi.bin"
+
+[case.expected]
+h = ["0050.h.expected.bin"]
+
+[[case]]
+name = "D d8 m7 bands4"
+
+[case.params]
+d = 8.0
+limit = 128.0
+m = 7.0
+
+[case.inputs]
+phi = "0051.phi.bin"
+
+[case.expected]
+h = ["0051.h.expected.bin"]
+
+[[case]]
+name = "D d16 m7 bands4"
+
+[case.params]
+d = 16.0
+limit = 256.0
+m = 7.0
+
+[case.inputs]
+phi = "0052.phi.bin"
+
+[case.expected]
+h = ["0052.h.expected.bin"]
+
+[[case]]
+name = "D d24 m7 bands4"
+
+[case.params]
+d = 24.0
+limit = 384.0
+m = 7.0
+
+[case.inputs]
+phi = "0053.phi.bin"
+
+[case.expected]
+h = ["0053.h.expected.bin"]
+
+[[case]]
+name = "D d33 m7 bands4"
+
+[case.params]
+d = 33.0
+limit = 528.0
+m = 7.0
+
+[case.inputs]
+phi = "0054.phi.bin"
+
+[case.expected]
+h = ["0054.h.expected.bin"]
+
+[[case]]
+name = "D d40 m7 bands4"
+
+[case.params]
+d = 40.0
+limit = 640.0
+m = 7.0
+
+[case.inputs]
+phi = "0055.phi.bin"
+
+[case.expected]
+h = ["0055.h.expected.bin"]
+
+[[case]]
+name = "D d8 m16 bands8"
+
+[case.params]
+d = 8.0
+limit = 256.0
+m = 16.0
+
+[case.inputs]
+phi = "0056.phi.bin"
+
+[case.expected]
+h = ["0056.h.expected.bin"]
+
+[[case]]
+name = "D d16 m16 bands8"
+
+[case.params]
+d = 16.0
+limit = 512.0
+m = 16.0
+
+[case.inputs]
+phi = "0057.phi.bin"
+
+[case.expected]
+h = ["0057.h.expected.bin"]
+
+[[case]]
+name = "D d24 m16 bands8"
+
+[case.params]
+d = 24.0
+limit = 768.0
+m = 16.0
+
+[case.inputs]
+phi = "0058.phi.bin"
+
+[case.expected]
+h = ["0058.h.expected.bin"]
+
+[[case]]
+name = "D d33 m16 bands8"
+
+[case.params]
+d = 33.0
+limit = 1056.0
+m = 16.0
+
+[case.inputs]
+phi = "0059.phi.bin"
+
+[case.expected]
+h = ["0059.h.expected.bin"]
+
+[[case]]
+name = "D d40 m16 bands8"
+
+[case.params]
+d = 40.0
+limit = 1280.0
+m = 16.0
+
+[case.inputs]
+phi = "0060.phi.bin"
+
+[case.expected]
+h = ["0060.h.expected.bin"]
+
+[[case]]
+name = "D d8 m31 bands16"
+
+[case.params]
+d = 8.0
+limit = 512.0
+m = 31.0
+
+[case.inputs]
+phi = "0061.phi.bin"
+
+[case.expected]
+h = ["0061.h.expected.bin"]
+
+[[case]]
+name = "D d16 m31 bands16"
+
+[case.params]
+d = 16.0
+limit = 1024.0
+m = 31.0
+
+[case.inputs]
+phi = "0062.phi.bin"
+
+[case.expected]
+h = ["0062.h.expected.bin"]
+
+[[case]]
+name = "D d24 m31 bands16"
+
+[case.params]
+d = 24.0
+limit = 1536.0
+m = 31.0
+
+[case.inputs]
+phi = "0063.phi.bin"
+
+[case.expected]
+h = ["0063.h.expected.bin"]
+
+[[case]]
+name = "D d33 m31 bands16"
+
+[case.params]
+d = 33.0
+limit = 2112.0
+m = 31.0
+
+[case.inputs]
+phi = "0064.phi.bin"
+
+[case.expected]
+h = ["0064.h.expected.bin"]
+
+[[case]]
+name = "D d40 m31 bands16"
+
+[case.params]
+d = 40.0
+limit = 2560.0
+m = 31.0
+
+[case.inputs]
+phi = "0065.phi.bin"
+
+[case.expected]
+h = ["0065.h.expected.bin"]
+
+[[case]]
+name = "D d8 m50 bands25"
+
+[case.params]
+d = 8.0
+limit = 800.0
+m = 50.0
+
+[case.inputs]
+phi = "0066.phi.bin"
+
+[case.expected]
+h = ["0066.h.expected.bin"]
+
+[[case]]
+name = "D d16 m50 bands25"
+
+[case.params]
+d = 16.0
+limit = 1600.0
+m = 50.0
+
+[case.inputs]
+phi = "0067.phi.bin"
+
+[case.expected]
+h = ["0067.h.expected.bin"]
+
+[[case]]
+name = "D d24 m50 bands25"
+
+[case.params]
+d = 24.0
+limit = 2400.0
+m = 50.0
+
+[case.inputs]
+phi = "0068.phi.bin"
+
+[case.expected]
+h = ["0068.h.expected.bin"]
+
+[[case]]
+name = "D d33 m50 bands25"
+
+[case.params]
+d = 33.0
+limit = 3300.0
+m = 50.0
+
+[case.inputs]
+phi = "0069.phi.bin"
+
+[case.expected]
+h = ["0069.h.expected.bin"]
+
+[[case]]
+name = "D d40 m50 bands25"
+
+[case.params]
+d = 40.0
+limit = 4000.0
+m = 50.0
+
+[case.inputs]
+phi = "0070.phi.bin"
+
+[case.expected]
+h = ["0070.h.expected.bin"]
+
+[[case]]
+name = "D d8 m3 bands1"
+
+[case.params]
+d = 8.0
+limit = 32.0
+m = 3.0
+
+[case.inputs]
+phi = "0071.phi.bin"
+
+[case.expected]
+h = ["0071.h.expected.bin"]
+
+[[case]]
+name = "D d16 m3 bands1"
+
+[case.params]
+d = 16.0
+limit = 64.0
+m = 3.0
+
+[case.inputs]
+phi = "0072.phi.bin"
+
+[case.expected]
+h = ["0072.h.expected.bin"]
+
+[[case]]
+name = "D d24 m3 bands1"
+
+[case.params]
+d = 24.0
+limit = 96.0
+m = 3.0
+
+[case.inputs]
+phi = "0073.phi.bin"
+
+[case.expected]
+h = ["0073.h.expected.bin"]
+
+[[case]]
+name = "D d33 m3 bands1"
+
+[case.params]
+d = 33.0
+limit = 132.0
+m = 3.0
+
+[case.inputs]
+phi = "0074.phi.bin"
+
+[case.expected]
+h = ["0074.h.expected.bin"]
+
+[[case]]
+name = "D d40 m3 bands1"
+
+[case.params]
+d = 40.0
+limit = 160.0
+m = 3.0
+
+[case.inputs]
+phi = "0075.phi.bin"
+
+[case.expected]
+h = ["0075.h.expected.bin"]
+
+[[case]]
+name = "D d8 m7 bands2"
+
+[case.params]
+d = 8.0
+limit = 64.0
+m = 7.0
+
+[case.inputs]
+phi = "0076.phi.bin"
+
+[case.expected]
+h = ["0076.h.expected.bin"]
+
+[[case]]
+name = "D d16 m7 bands2"
+
+[case.params]
+d = 16.0
+limit = 128.0
+m = 7.0
+
+[case.inputs]
+phi = "0077.phi.bin"
+
+[case.expected]
+h = ["0077.h.expected.bin"]
+
+[[case]]
+name = "D d24 m7 bands2"
+
+[case.params]
+d = 24.0
+limit = 192.0
+m = 7.0
+
+[case.inputs]
+phi = "0078.phi.bin"
+
+[case.expected]
+h = ["0078.h.expected.bin"]
+
+[[case]]
+name = "D d33 m7 bands2"
+
+[case.params]
+d = 33.0
+limit = 264.0
+m = 7.0
+
+[case.inputs]
+phi = "0079.phi.bin"
+
+[case.expected]
+h = ["0079.h.expected.bin"]
+
+[[case]]
+name = "D d40 m7 bands2"
+
+[case.params]
+d = 40.0
+limit = 320.0
+m = 7.0
+
+[case.inputs]
+phi = "0080.phi.bin"
+
+[case.expected]
+h = ["0080.h.expected.bin"]
+
+[[case]]
+name = "D d8 m16 bands4"
+
+[case.params]
+d = 8.0
+limit = 128.0
+m = 16.0
+
+[case.inputs]
+phi = "0081.phi.bin"
+
+[case.expected]
+h = ["0081.h.expected.bin"]
+
+[[case]]
+name = "D d16 m16 bands4"
+
+[case.params]
+d = 16.0
+limit = 256.0
+m = 16.0
+
+[case.inputs]
+phi = "0082.phi.bin"
+
+[case.expected]
+h = ["0082.h.expected.bin"]
+
+[[case]]
+name = "D d24 m16 bands4"
+
+[case.params]
+d = 24.0
+limit = 384.0
+m = 16.0
+
+[case.inputs]
+phi = "0083.phi.bin"
+
+[case.expected]
+h = ["0083.h.expected.bin"]
+
+[[case]]
+name = "D d33 m16 bands4"
+
+[case.params]
+d = 33.0
+limit = 528.0
+m = 16.0
+
+[case.inputs]
+phi = "0084.phi.bin"
+
+[case.expected]
+h = ["0084.h.expected.bin"]
+
+[[case]]
+name = "D d40 m16 bands4"
+
+[case.params]
+d = 40.0
+limit = 640.0
+m = 16.0
+
+[case.inputs]
+phi = "0085.phi.bin"
+
+[case.expected]
+h = ["0085.h.expected.bin"]
+
+[[case]]
+name = "D d8 m31 bands8"
+
+[case.params]
+d = 8.0
+limit = 256.0
+m = 31.0
+
+[case.inputs]
+phi = "0086.phi.bin"
+
+[case.expected]
+h = ["0086.h.expected.bin"]
+
+[[case]]
+name = "D d16 m31 bands8"
+
+[case.params]
+d = 16.0
+limit = 512.0
+m = 31.0
+
+[case.inputs]
+phi = "0087.phi.bin"
+
+[case.expected]
+h = ["0087.h.expected.bin"]
+
+[[case]]
+name = "D d24 m31 bands8"
+
+[case.params]
+d = 24.0
+limit = 768.0
+m = 31.0
+
+[case.inputs]
+phi = "0088.phi.bin"
+
+[case.expected]
+h = ["0088.h.expected.bin"]
+
+[[case]]
+name = "D d33 m31 bands8"
+
+[case.params]
+d = 33.0
+limit = 1056.0
+m = 31.0
+
+[case.inputs]
+phi = "0089.phi.bin"
+
+[case.expected]
+h = ["0089.h.expected.bin"]
+
+[[case]]
+name = "D d40 m31 bands8"
+
+[case.params]
+d = 40.0
+limit = 1280.0
+m = 31.0
+
+[case.inputs]
+phi = "0090.phi.bin"
+
+[case.expected]
+h = ["0090.h.expected.bin"]
+
+[[case]]
+name = "D d8 m50 bands13"
+
+[case.params]
+d = 8.0
+limit = 416.0
+m = 50.0
+
+[case.inputs]
+phi = "0091.phi.bin"
+
+[case.expected]
+h = ["0091.h.expected.bin"]
+
+[[case]]
+name = "D d16 m50 bands13"
+
+[case.params]
+d = 16.0
+limit = 832.0
+m = 50.0
+
+[case.inputs]
+phi = "0092.phi.bin"
+
+[case.expected]
+h = ["0092.h.expected.bin"]
+
+[[case]]
+name = "D d24 m50 bands13"
+
+[case.params]
+d = 24.0
+limit = 1248.0
+m = 50.0
+
+[case.inputs]
+phi = "0093.phi.bin"
+
+[case.expected]
+h = ["0093.h.expected.bin"]
+
+[[case]]
+name = "D d33 m50 bands13"
+
+[case.params]
+d = 33.0
+limit = 1716.0
+m = 50.0
+
+[case.inputs]
+phi = "0094.phi.bin"
+
+[case.expected]
+h = ["0094.h.expected.bin"]
+
+[[case]]
+name = "D d40 m50 bands13"
+
+[case.params]
+d = 40.0
+limit = 2080.0
+m = 50.0
+
+[case.inputs]
+phi = "0095.phi.bin"
+
+[case.expected]
+h = ["0095.h.expected.bin"]
+
+[[case]]
+name = "D d8 m3 bands4"
+
+[case.params]
+d = 8.0
+limit = 128.0
+m = 3.0
+
+[case.inputs]
+phi = "0096.phi.bin"
+
+[case.expected]
+h = ["0096.h.expected.bin"]
+
+[[case]]
+name = "D d16 m3 bands8"
+
+[case.params]
+d = 16.0
+limit = 512.0
+m = 3.0
+
+[case.inputs]
+phi = "0097.phi.bin"
+
+[case.expected]
+h = ["0097.h.expected.bin"]
+
+[[case]]
+name = "D d24 m3 bands12"
+
+[case.params]
+d = 24.0
+limit = 1152.0
+m = 3.0
+
+[case.inputs]
+phi = "0098.phi.bin"
+
+[case.expected]
+h = ["0098.h.expected.bin"]
+
+[[case]]
+name = "D d33 m3 bands17"
+
+[case.params]
+d = 33.0
+limit = 2244.0
+m = 3.0
+
+[case.inputs]
+phi = "0099.phi.bin"
+
+[case.expected]
+h = ["0099.h.expected.bin"]
+
+[[case]]
+name = "D d40 m3 bands20"
+
+[case.params]
+d = 40.0
+limit = 3200.0
+m = 3.0
+
+[case.inputs]
+phi = "0100.phi.bin"
+
+[case.expected]
+h = ["0100.h.expected.bin"]
+
+[[case]]
+name = "D d8 m7 bands4"
+
+[case.params]
+d = 8.0
+limit = 128.0
+m = 7.0
+
+[case.inputs]
+phi = "0101.phi.bin"
+
+[case.expected]
+h = ["0101.h.expected.bin"]
+
+[[case]]
+name = "D d16 m7 bands8"
+
+[case.params]
+d = 16.0
+limit = 512.0
+m = 7.0
+
+[case.inputs]
+phi = "0102.phi.bin"
+
+[case.expected]
+h = ["0102.h.expected.bin"]
+
+[[case]]
+name = "D d24 m7 bands12"
+
+[case.params]
+d = 24.0
+limit = 1152.0
+m = 7.0
+
+[case.inputs]
+phi = "0103.phi.bin"
+
+[case.expected]
+h = ["0103.h.expected.bin"]
+
+[[case]]
+name = "D d33 m7 bands17"
+
+[case.params]
+d = 33.0
+limit = 2244.0
+m = 7.0
+
+[case.inputs]
+phi = "0104.phi.bin"
+
+[case.expected]
+h = ["0104.h.expected.bin"]
+
+[[case]]
+name = "D d40 m7 bands20"
+
+[case.params]
+d = 40.0
+limit = 3200.0
+m = 7.0
+
+[case.inputs]
+phi = "0105.phi.bin"
+
+[case.expected]
+h = ["0105.h.expected.bin"]
+
+[[case]]
+name = "D d8 m16 bands4"
+
+[case.params]
+d = 8.0
+limit = 128.0
+m = 16.0
+
+[case.inputs]
+phi = "0106.phi.bin"
+
+[case.expected]
+h = ["0106.h.expected.bin"]
+
+[[case]]
+name = "D d16 m16 bands8"
+
+[case.params]
+d = 16.0
+limit = 512.0
+m = 16.0
+
+[case.inputs]
+phi = "0107.phi.bin"
+
+[case.expected]
+h = ["0107.h.expected.bin"]
+
+[[case]]
+name = "D d24 m16 bands12"
+
+[case.params]
+d = 24.0
+limit = 1152.0
+m = 16.0
+
+[case.inputs]
+phi = "0108.phi.bin"
+
+[case.expected]
+h = ["0108.h.expected.bin"]
+
+[[case]]
+name = "D d33 m16 bands17"
+
+[case.params]
+d = 33.0
+limit = 2244.0
+m = 16.0
+
+[case.inputs]
+phi = "0109.phi.bin"
+
+[case.expected]
+h = ["0109.h.expected.bin"]
+
+[[case]]
+name = "D d40 m16 bands20"
+
+[case.params]
+d = 40.0
+limit = 3200.0
+m = 16.0
+
+[case.inputs]
+phi = "0110.phi.bin"
+
+[case.expected]
+h = ["0110.h.expected.bin"]
+
+[[case]]
+name = "D d8 m31 bands4"
+
+[case.params]
+d = 8.0
+limit = 128.0
+m = 31.0
+
+[case.inputs]
+phi = "0111.phi.bin"
+
+[case.expected]
+h = ["0111.h.expected.bin"]
+
+[[case]]
+name = "D d16 m31 bands8"
+
+[case.params]
+d = 16.0
+limit = 512.0
+m = 31.0
+
+[case.inputs]
+phi = "0112.phi.bin"
+
+[case.expected]
+h = ["0112.h.expected.bin"]
+
+[[case]]
+name = "D d24 m31 bands12"
+
+[case.params]
+d = 24.0
+limit = 1152.0
+m = 31.0
+
+[case.inputs]
+phi = "0113.phi.bin"
+
+[case.expected]
+h = ["0113.h.expected.bin"]
+
+[[case]]
+name = "D d33 m31 bands17"
+
+[case.params]
+d = 33.0
+limit = 2244.0
+m = 31.0
+
+[case.inputs]
+phi = "0114.phi.bin"
+
+[case.expected]
+h = ["0114.h.expected.bin"]
+
+[[case]]
+name = "D d40 m31 bands20"
+
+[case.params]
+d = 40.0
+limit = 3200.0
+m = 31.0
+
+[case.inputs]
+phi = "0115.phi.bin"
+
+[case.expected]
+h = ["0115.h.expected.bin"]
+
+[[case]]
+name = "D d8 m50 bands4"
+
+[case.params]
+d = 8.0
+limit = 128.0
+m = 50.0
+
+[case.inputs]
+phi = "0116.phi.bin"
+
+[case.expected]
+h = ["0116.h.expected.bin"]
+
+[[case]]
+name = "D d16 m50 bands8"
+
+[case.params]
+d = 16.0
+limit = 512.0
+m = 50.0
+
+[case.inputs]
+phi = "0117.phi.bin"
+
+[case.expected]
+h = ["0117.h.expected.bin"]
+
+[[case]]
+name = "D d24 m50 bands12"
+
+[case.params]
+d = 24.0
+limit = 1152.0
+m = 50.0
+
+[case.inputs]
+phi = "0118.phi.bin"
+
+[case.expected]
+h = ["0118.h.expected.bin"]
+
+[[case]]
+name = "D d33 m50 bands17"
+
+[case.params]
+d = 33.0
+limit = 2244.0
+m = 50.0
+
+[case.inputs]
+phi = "0119.phi.bin"
+
+[case.expected]
+h = ["0119.h.expected.bin"]
+
+[[case]]
+name = "D d40 m50 bands20"
+
+[case.params]
+d = 40.0
+limit = 3200.0
+m = 50.0
+
+[case.inputs]
+phi = "0120.phi.bin"
+
+[case.expected]
+h = ["0120.h.expected.bin"]
+
+[[case]]
+name = "E t2 c0 v1e15"
+
+[case.params]
+d = 32.0
+limit = 18446744073709552000.0
+m = 16.0
+
+[case.inputs]
+phi = "0121.phi.bin"
+
+[case.expected]
+h = ["0121.h.expected.bin"]
+
+[[case]]
+name = "E t15,4 c0 vinf,1"
+
+[case.params]
+d = 32.0
+limit = 18446744073709552000.0
+m = 16.0
+
+[case.inputs]
+phi = "0122.phi.bin"
+
+[case.expected]
+h = ["0122.h.expected.bin"]
+
+[[case]]
+name = "E t1,6 c2 v-7,1"
+
+[case.params]
+d = 32.0
+limit = 18446744073709552000.0
+m = 16.0
+
+[case.inputs]
+phi = "0123.phi.bin"
+
+[case.expected]
+h = ["0123.h.expected.bin"]
+
+[[case]]
+name = "E t2 c2 vnan"
+
+[case.params]
+d = 32.0
+limit = 18446744073709552000.0
+m = 16.0
+
+[case.inputs]
+phi = "0124.phi.bin"
+
+[case.expected]
+h = ["0124.h.expected.bin"]
+
+[[case]]
+name = "E t1,6 c4 v1e-20,1"
+
+[case.params]
+d = 32.0
+limit = 18446744073709552000.0
+m = 16.0
+
+[case.inputs]
+phi = "0125.phi.bin"
+
+[case.expected]
+h = ["0125.h.expected.bin"]
+
+[[case]]
+name = "E t8 c4 v1e15"
+
+[case.params]
+d = 32.0
+limit = 18446744073709552000.0
+m = 16.0
+
+[case.inputs]
+phi = "0126.phi.bin"
+
+[case.expected]
+h = ["0126.h.expected.bin"]
+
+[[case]]
+name = "E t15,4 c4 vinf,1"
+
+[case.params]
+d = 32.0
+limit = 18446744073709552000.0
+m = 16.0
+
+[case.inputs]
+phi = "0127.phi.bin"
+
+[case.expected]
+h = ["0127.h.expected.bin"]

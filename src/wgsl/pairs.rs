@@ -54,29 +54,51 @@ pub struct Splits {
 
 pub const COUNTS: [(Kind, usize); 11] = [(Kind::Gaussian, 6), (Kind::Weighted, 6), (Kind::LowRank, 4), (Kind::Sparse, 4), (Kind::HeavyTailed, 4), (Kind::Cancelling, 4), (Kind::Integer, 4), (Kind::Extreme, 4), (Kind::NonFinite, 4), (Kind::Duplicate, 3), (Kind::Ragged, 4)];
 
-/// The three splits, references built on first use and read thereafter.
-pub fn splits(cache: &Path) -> Result<Splits, String> {
-    std::fs::create_dir_all(cache).map_err(|e| format!("{}: {e}", cache.display()))?;
-    let t = Instant::now();
+/// The three splits' pairs as `(kind, d, m, seed)`, in [`splits`]' order,
+/// without building a Phi or a reference.
+pub fn split_shapes() -> [Vec<(Kind, usize, usize, u64)>; 3] {
     let shapes = [(512, 2048), (1024, 4096), (2048, 8192), (1024, 16384)];
     let mut train = Vec::new();
     let mut seed = 100u64;
     for (kind, n) in COUNTS {
         for i in 0..n {
             let (d, m) = if kind == Kind::Ragged { [(520, 4097), (1000, 3001), (2040, 5000), (512, 6151)][i % 4] } else { shapes[i % shapes.len()] };
-            train.push(Pair::load(kind, d, m, seed, cache)?);
+            train.push((kind, d, m, seed));
             seed += 1;
         }
     }
     let mut val = Vec::new();
     for (i, (kind, _)) in COUNTS.iter().cycle().take(20).enumerate() {
         let (d, m) = if *kind == Kind::Ragged { (1032, 2049) } else { shapes[(i + 1) % shapes.len()] };
-        val.push(Pair::load(*kind, d, m, 1000 + i as u64, cache)?);
+        val.push((*kind, d, m, 1000 + i as u64));
     }
     let mut extrap = Vec::new();
     for (i, (kind, _)) in COUNTS.iter().cycle().take(20).enumerate() {
         let m = [1024, 2048, 3000, 4096][i % 4];
-        extrap.push(Pair::load(*kind, 8192, m, 2000 + i as u64, cache)?);
+        extrap.push((*kind, 8192, m, 2000 + i as u64));
     }
+    [train, val, extrap]
+}
+
+/// The pairs the fast fitness scores (`gram::FitnessContext::new`): three
+/// training kinds (gaussian, weighted, ragged), two validation kinds
+/// (lowrank, nonfinite), each the first of its kind at most 4.5e9
+/// item-cells, and the extrapolation pair of least m. Positions into
+/// [`split_shapes`]' three lists.
+pub fn fitness_pick(shapes: &[Vec<(Kind, usize, usize, u64)>; 3]) -> Result<[Vec<usize>; 3], String> {
+    let first = |set: &[(Kind, usize, usize, u64)], kinds: &[Kind]| -> Vec<usize> { kinds.iter().filter_map(|k| set.iter().position(|p| p.0 == *k && (p.1 * p.1 * p.2) as f64 <= 4.5e9)).collect() };
+    let train = first(&shapes[0], &[Kind::Gaussian, Kind::Weighted, Kind::Ragged]);
+    let val = first(&shapes[1], &[Kind::LowRank, Kind::NonFinite]);
+    let extrap = vec![shapes[2].iter().enumerate().min_by_key(|(_, p)| p.2).map(|(i, _)| i).ok_or("no extrapolation pair")?];
+    Ok([train, val, extrap])
+}
+
+/// The three splits, references built on first use and read thereafter.
+pub fn splits(cache: &Path) -> Result<Splits, String> {
+    std::fs::create_dir_all(cache).map_err(|e| format!("{}: {e}", cache.display()))?;
+    let t = Instant::now();
+    let [a, b, c] = split_shapes();
+    let load = |set: Vec<(Kind, usize, usize, u64)>| -> Result<Vec<Pair>, String> { set.into_iter().map(|(kind, d, m, seed)| Pair::load(kind, d, m, seed, cache)).collect() };
+    let (train, val, extrap) = (load(a)?, load(b)?, load(c)?);
     Ok(Splits { train, val, extrap, seconds: t.elapsed().as_secs_f64() })
 }

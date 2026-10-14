@@ -1,0 +1,15 @@
+root = "val"
+
+[[case]]
+name = "nonfinite_d1024_m4096_s1008"
+label = "d 1024 m 4096"
+
+[case.params]
+d = 1024.0
+m = 4096.0
+
+[case.inputs]
+phi = "0000.phi.bin"
+
+[case.expected]
+h = ["0000.h.expected.bin"]
