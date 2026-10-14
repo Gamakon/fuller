@@ -2943,7 +2943,10 @@ fn sample_with(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, s
             && (inputs.iter().any(|b| r.name.starts_with(&format!("load.{b}")) && !r.name.ends_with("_len"))
                 || role.per_kernel.iter().any(|p| p.name == r.name && inputs.iter().any(|b| p.template.contains(&format!("{b}[")))))
     };
-    let stores_output = |r: &WgslRow| r.name.starts_with(&format!("store.{}", role.output)) && !r.inputs.is_empty();
+    // (The safe kingdom's own stores, store.h_*, write the role's output
+    // whatever its name: under the cosine interface no row reached a store,
+    // and an epilogue at the depth cap fell back to the plain cell's.)
+    let stores_output = |r: &WgslRow| (r.name.starts_with(&format!("store.{}", role.output)) || safe_base(&r.name) == "store.h_safe") && !r.inputs.is_empty();
     let reach = |base: &dyn Fn(&WgslRow) -> bool| -> BTreeMap<Ty, usize> {
         let mut d: BTreeMap<Ty, usize> = BTreeMap::new();
         loop {
@@ -2997,6 +3000,18 @@ fn sample_with(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, s
         var_reach: &'a BTreeMap<Ty, usize>,
         varying_reach: &'a BTreeMap<Ty, usize>,
         flags: &'a [(bool, bool, bool, bool)],
+        /// THE KERNEL'S CELL (2026-10-14): u32.cell, and the cell row the
+        /// kernel's first cell was drawn with (its row kind and column kind:
+        /// plain, strided or grouped), which every later cell of the kernel
+        /// takes, and the grouped origins' group counts (row, column); the
+        /// plain cell's row, which a fallback cell renders. Two store sites
+        /// through a block of one kind and of another write one cell from
+        /// two threads (126 of 148 write_sets_overlap of 1,000 random
+        /// kernels, the checker's layer 7).
+        cell_ty: Option<Ty>,
+        cell_row: std::cell::Cell<Option<usize>>,
+        groups: std::cell::RefCell<[Option<Tree>; 2]>,
+        plain_cell: Option<usize>,
     }
     impl Draw<'_> {
         /// Whether row `i` would nest a long loop in one of its kind.
@@ -3070,13 +3085,32 @@ fn sample_with(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, s
             // deciding when the loop ends; a subgroup result there is the same
             // in a subgroup, not in the workgroup.)
             let header = r.name.starts_with("loop.") && r.inputs.get(k).copied().is_some_and(|t| self.kingdom.dual(t).is_some_and(|d| d.slot != "stmt" && d.slot != "block"));
-            if conditional(r.output) || store || header || r.inputs.get(k).copied().is_some_and(conditional) { loops | 4 } else { loops }
+            let loops = if conditional(r.output) || store || header || r.inputs.get(k).copied().is_some_and(conditional) { loops | 4 } else { loops };
+            // Bit 8: a cell's offset within the thread's block, drawn a
+            // literal (an offset any expression gives, clamped into the
+            // block, may equal another store's in the same thread, which
+            // then writes one cell twice; it reads memory another thread may
+            // change between the cell's guard and its store: 22 of 27
+            // write_sets_overlap of 1,000 random kernels, 2026-10-14).
+            let offset = match safe_base(&r.name) {
+                "safe.row_plus_x" | "safe.col_plus_x" | "safe.row_plus_x_s" | "safe.col_plus_x_s" => k == 1,
+                "safe.row_plus_g" | "safe.col_plus_g" => k >= 2,
+                _ => false,
+            };
+            let loops = if offset { loops | 8 } else { loops };
+            // Bit 16: inside a cell, where no offset is a tile counter (a
+            // store through r + k in a tile loop and one through r elsewhere
+            // write one cell at k = 0: 4 of 1,000 random kernels).
+            if Some(r.output) == self.cell_ty { loops | 16 } else { loops }
         }
 
         /// Whether row `i` may be drawn where control may not be uniform
-        /// (`inside` bit 4): not a subgroup operation.
+        /// (`inside` bit 4): not a subgroup operation; at a cell's offset
+        /// (bit 8): a literal only; in a cell (bit 16): no tile counter's
+        /// offset.
         fn allowed(&self, i: usize, inside: u8) -> bool {
-            inside & 4 == 0 || !self.rows[i].name.starts_with("subgroup.")
+            let name = self.rows[i].name.as_str();
+            (inside & 4 == 0 || !name.starts_with("subgroup.")) && (inside & 8 == 0 || name.starts_with("literal.")) && (inside & 16 == 0 || !name.contains("_plus_tile"))
         }
 
         /// Whether `kids` of row `i` are a put whose value reads the array
@@ -3115,10 +3149,69 @@ fn sample_with(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, s
             }
             self.rows[i].inputs.iter().filter_map(|t| reach.get(t)).min().map(|x| x + 1)
         }
-        /// A tree of `demand`. `need_input`: it must read an input (the
-        /// value an output store writes). An epilogue block or statement at
-        /// the depth cap draws its way to an output store, not its fallback.
+        /// A tree of `demand` under the kernel's cell ([`Draw::cell_row`]):
+        /// a cell is drawn with the kernel's cell row once there is one (at
+        /// the depth cap too, its kids then leaves), the first fixes it; a
+        /// grouped origin takes the kernel's group count on its axis, the
+        /// first fixes it (a fallback origin is the strided block, every
+        /// cell a group: the most groups).
         fn grow(&self, demand: Ty, depth: usize, need: Need, no_cont: bool, inside: u8, state: &mut u64) -> Tree {
+            if self.cell_ty == Some(demand) {
+                if let Some(i) = self.cell_row.get() {
+                    let r = &self.rows[i];
+                    let kids = r.inputs.iter().enumerate().map(|(k, &t)| self.grow(t, depth + 1, self.kid_need(i, k), self.kid_no_cont(i, k, no_cont), self.kid_inside(i, k, inside), state)).collect();
+                    return Tree::new(&r.name, demand, kids);
+                }
+                let t = self.grow_free(demand, depth, need, no_cont, inside, state);
+                let row = self.rows.iter().position(|r| r.name == t.name && r.output == demand && r.inputs.len() == t.kids.len() && r.inputs.iter().zip(&t.kids).all(|(a, k)| *a == k.ty));
+                self.cell_row.set(row.or(self.plain_cell));
+                return t;
+            }
+            let mut t = self.grow_free(demand, depth, need, no_cont, inside, state);
+            // An epilogue statement's or block's fallback is the store of the
+            // plain cell: the kernel's cell, or the store's path drawn instead.
+            let epilogue = self.kingdom.dual(demand).is_some_and(|d| (d.slot == "stmt" || d.slot == "block") && d.form.starts_with('O'));
+            if t.name == "fallback" && epilogue && self.cell_ty.is_some() {
+                match self.cell_row.get() {
+                    None => self.cell_row.set(self.plain_cell),
+                    Some(c) if Some(c) != self.plain_cell => t = self.grow_free(demand, depth.max(self.max_depth), need, no_cont, inside, state),
+                    _ => {}
+                }
+            }
+            let axis = match self.kingdom.dual(demand).map(|d| d.dual.as_str()) {
+                Some("u32.threadrowg" | "u32.rowbaseg") => 0,
+                Some("u32.threadcolg" | "u32.colbaseg") => 1,
+                _ => return t,
+            };
+            // (A fallback origin under a group count already drawn: the
+            // grouped origin itself, its kids leaves at the cap.)
+            let origin = if axis == 0 { "safe.thread_row_g" } else { "safe.thread_col_g" };
+            if t.name == "fallback" && self.groups.borrow()[axis].is_some() {
+                if let Some(i) = self.rows.iter().position(|r| r.name == origin && r.output == demand) {
+                    let kids = self.rows[i].inputs.iter().map(|&k| self.grow_free(k, depth + 1, Need::Nothing, no_cont, inside, state)).collect();
+                    t = Tree::new(origin, demand, kids);
+                }
+            }
+            let mut groups = self.groups.borrow_mut();
+            if safe_base(&t.name) == origin && t.kids.len() == 4 {
+                match &groups[axis] {
+                    Some(g) => t.kids[3] = g.clone(),
+                    None => groups[axis] = Some(t.kids[3].clone()),
+                }
+            } else if t.name == "fallback" && groups[axis].is_none() {
+                // (The strided block a fallback origin renders: every cell a group.)
+                let lit = self.rows.iter().find(|r| r.name == origin).and_then(|r| r.inputs.get(3).copied());
+                groups[axis] = lit.map(|ty| Tree::literal("literal.lit64", ty, 64.0));
+            }
+            drop(groups);
+            t
+        }
+
+        /// [`Draw::grow`] without the kernel's cell. `need_input`: it must
+        /// read an input (the value an output store writes). An epilogue
+        /// block or statement at the depth cap draws its way to an output
+        /// store, not its fallback.
+        fn grow_free(&self, demand: Ty, depth: usize, need: Need, no_cont: bool, inside: u8, state: &mut u64) -> Tree {
             let Some((functions_all, terminals)) = self.by_out.get(&demand) else { return Tree::fallback(demand) };
             // A continue inside a conditional block of a loop body's statement
             // (an if at an L rung) would skip the rest of the body in some
@@ -3255,7 +3348,12 @@ fn sample_with(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, s
             Tree::new(&r.name, demand, kids)
         }
     }
-    let draw = Draw { rows: &rows, by_out: &by_out, kingdom, max_depth, input_reach: &input_reach, store_reach: &store_reach, var_reach: &var_reach, varying_reach: &varying_reach, flags: &flags };
+    let cell_ty = dual_ty(kingdom, "u32.cell").ok();
+    let plain_cell = cell_ty.and_then(|c| {
+        let (row, col) = (dual_ty(kingdom, "u32.threadrow").ok()?, dual_ty(kingdom, "u32.threadcol").ok()?);
+        rows.iter().position(|r| r.name == "safe.cell_of" && r.output == c && r.inputs == [row, col])
+    });
+    let draw = Draw { rows: &rows, by_out: &by_out, kingdom, max_depth, input_reach: &input_reach, store_reach: &store_reach, var_reach: &var_reach, varying_reach: &varying_reach, flags: &flags, cell_ty, cell_row: std::cell::Cell::new(None), groups: std::cell::RefCell::new([None, None]), plain_cell };
     /// A hole of the sketch: where it is, the depth it is drawn at and what it must read.
     struct Hole {
         path: Vec<usize>,
@@ -3268,6 +3366,9 @@ fn sample_with(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, s
         let (l0, l1, c0, real, rf) = (t("stmt.L0")?, t("stmt.L1")?, t("stmt.C0")?, t("f32.real")?, t("reg<f32>.real")?);
         const SEQ: [&str; 4] = ["one", "seq2", "seq3", "seq4"];
         let block = |rung: &str, kids: Vec<Tree>| -> Result<Tree, String> { Ok(Tree::new(&format!("block.{}_{rung}", SEQ[kids.len() - 1]), t(&format!("block.{rung}"))?, kids)) };
+        // The outline's store is through the plain block: every cell a hole
+        // draws is too (the kernel's cell).
+        draw.cell_row.set(draw.plain_cell);
         let mut holes: Vec<Hole> = Vec::new();
         let mut hole = |demand: Ty, path: Vec<usize>, depth: usize, need: Need, state: &mut u64| -> Tree {
             holes.push(Hole { path, depth, need });

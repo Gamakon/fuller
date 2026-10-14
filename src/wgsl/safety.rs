@@ -499,6 +499,14 @@ struct An<'m> {
     /// dispatch-invariant.
     loop_stores: Vec<(BTreeSet<LocalKey>, BTreeSet<LocalKey>)>,
     loop_exits: Vec<bool>,
+    /// Whether each function called is pure (no global, no pointer
+    /// argument, no barrier, atomic or subgroup statement, its calls pure),
+    /// and the opaque value of each pure call by its arguments.
+    pure: HashMap<Handle<Function>, bool>,
+    call_ids: Vec<(Handle<Function>, Vec<Abs>, u64)>,
+    /// The opaque value of each pure operation by its operator and its
+    /// operands' values (`An::canonical`).
+    value_ids: Vec<(String, Vec<Abs>, u64)>,
     ret_taint: bool,
     sites: Vec<Site>,
     site_ix: HashMap<String, usize>,
@@ -961,10 +969,14 @@ impl<'m> An<'m> {
                 return Abs::Lin(Lin::var(d, Poly::konst(1)));
             }
         }
-        // The clamp of any value by an invariant: a digit in [0, c].
+        // The clamp of any value by an invariant: a digit in [0, c] (a u32
+        // clamped by 0 is 0: a grouped block of one group writes min(g, 0u)).
         if let (MathFunction::Min, [x, y]) = (fun, args.as_slice()) {
             for (v, c) in [(x, y), (y, x)] {
                 if let (Abs::Other(_, id), Abs::Lin(c)) = (v, c) {
+                    if c.invariant() && c.k.is_zero() {
+                        return Abs::Lin(Lin::default());
+                    }
                     if c.invariant() {
                         let d = self.digit(&format!("min(#{id},{:?})", c.k), Some(c.k.clone()), uni);
                         return Abs::Lin(Lin::var(d, Poly::konst(1)));
@@ -1062,9 +1074,63 @@ impl<'m> An<'m> {
         if let Some(v) = self.frames[fr].vals.get(&h) {
             return v.clone();
         }
+        let before = self.next_id;
         let v = self.compute(fr, h);
+        let v = self.canonical(fr, h, v, before);
         self.frames[fr].vals.insert(h, v.clone());
         v
+    }
+
+    /// An operation's operator and operands when its value is a function of
+    /// its operands' values alone (no memory, no call, no invocation state).
+    fn pure_parts(e: &Expression) -> Option<(String, Vec<Handle<Expression>>)> {
+        Some(match e {
+            Expression::Literal(l) => (format!("{l:?}"), vec![]),
+            Expression::ZeroValue(t) => (format!("zero {t:?}"), vec![]),
+            Expression::Binary { op, left, right } => (format!("{op:?}"), vec![*left, *right]),
+            Expression::Unary { op, expr } => (format!("{op:?}"), vec![*expr]),
+            Expression::Math { fun, arg, arg1, arg2, arg3 } => (format!("{fun:?}"), [Some(*arg), *arg1, *arg2, *arg3].into_iter().flatten().collect()),
+            Expression::As { expr, kind, convert } => (format!("as {kind:?} {convert:?}"), vec![*expr]),
+            Expression::Select { condition, accept, reject } => ("select".into(), vec![*condition, *accept, *reject]),
+            Expression::Relational { fun, argument } => (format!("{fun:?}"), vec![*argument]),
+            Expression::Splat { size, value } => (format!("splat {size:?}"), vec![*value]),
+            Expression::Swizzle { size, vector, pattern } => (format!("swizzle {size:?} {pattern:?}"), vec![*vector]),
+            Expression::Compose { ty, components } => (format!("compose {ty:?}"), components.clone()),
+            Expression::AccessIndex { base, index } => (format!("field {index}"), vec![*base]),
+            Expression::Access { base, index } => ("index".into(), vec![*base, *index]),
+            _ => return None,
+        })
+    }
+
+    /// A pure operation's new opaque values (ids above `before`) given the
+    /// identity of the first equal operation on equal operands: the same
+    /// expression written twice is one value (seed 99, 2026-10-14: a cell's
+    /// offset through u32(..) written in its guard and in its index, two
+    /// unknowns, so the guard bounded neither of the store's).
+    fn canonical(&mut self, fr: usize, h: Handle<Expression>, v: Abs, before: u64) -> Abs {
+        let fresh = |a: &Abs| matches!(a, Abs::Other(_, id) if *id > before);
+        let any = match &v {
+            Abs::Vec(parts) => parts.iter().any(fresh),
+            other => fresh(other),
+        };
+        if !any {
+            return v;
+        }
+        let Some((op, operands)) = Self::pure_parts(&self.frames[fr].func.expressions[h]) else { return v };
+        let Some(args) = operands.iter().map(|o| self.frames[fr].vals.get(o).cloned()).collect::<Option<Vec<Abs>>>() else { return v };
+        let id_of = |an: &mut Self, key: String| -> u64 {
+            if let Some((_, _, id)) = an.value_ids.iter().find(|(k, a, _)| *k == key && *a == args) {
+                return *id;
+            }
+            an.next_id += 1;
+            an.value_ids.push((key, args.clone(), an.next_id));
+            an.next_id
+        };
+        match v {
+            Abs::Other(info, _) => Abs::Other(info, id_of(self, op)),
+            Abs::Vec(parts) => Abs::Vec(parts.into_iter().enumerate().map(|(k, p)| if fresh(&p) { if let Abs::Other(info, _) = p { Abs::Other(info, id_of(self, format!("{op}#{k}"))) } else { p } } else { p }).collect()),
+            other => other,
+        }
     }
 
     fn element(&mut self, v: Abs, i: &Abs) -> Abs {
@@ -1500,7 +1566,9 @@ impl<'m> An<'m> {
         match s {
             Statement::Emit(range) => {
                 for h in range.clone() {
+                    let before = self.next_id;
                     let v = self.compute(fr, h);
+                    let v = self.canonical(fr, h, v, before);
                     self.frames[fr].vals.insert(h, v);
                 }
                 true
@@ -1673,7 +1741,16 @@ impl<'m> An<'m> {
             }
             Statement::Call { function, arguments, result } => {
                 let args: Vec<Abs> = arguments.iter().map(|a| self.eval(fr, *a)).collect();
-                let ret = self.call(*function, args, &ctx);
+                let ret = self.call(*function, args.clone(), &ctx);
+                // A pure function's opaque result is one value for one set of
+                // arguments: a cell's guard and its store then bound one value
+                // (seed 28, 2026-10-14: at_vec3u(..) in a cell's offset, each
+                // of its three calls its own unknown, so the guard c < d
+                // bounded none of the store's).
+                let ret = match ret {
+                    Some(Abs::Other(info, _)) if self.pure_fn(*function) => Some(Abs::Other(info, self.call_id(*function, &args))),
+                    other => other,
+                };
                 if let Some(r) = result {
                     let v = match ret {
                         Some(v) => v,
@@ -1984,6 +2061,42 @@ impl<'m> An<'m> {
         frame.ret
     }
 
+    /// [`An::pure`] of `f`, computed once.
+    fn pure_fn(&mut self, f: Handle<Function>) -> bool {
+        if let Some(&p) = self.pure.get(&f) {
+            return p;
+        }
+        // (A recursive call is not WGSL; seen first, it is impure.)
+        self.pure.insert(f, false);
+        let func = &self.module.functions[f];
+        let types = &self.module.types;
+        let p = !func.arguments.iter().any(|a| matches!(types[a.ty].inner, TypeInner::Pointer { .. } | TypeInner::ValuePointer { .. })) && !func.expressions.iter().any(|(_, e)| matches!(e, Expression::GlobalVariable(_))) && self.pure_block(&func.body);
+        self.pure.insert(f, p);
+        p
+    }
+
+    fn pure_block(&mut self, b: &'m Block) -> bool {
+        b.iter().all(|s| match s {
+            Statement::Emit(_) | Statement::Break | Statement::Continue | Statement::Return { .. } | Statement::Kill | Statement::Store { .. } => true,
+            Statement::Block(x) => self.pure_block(x),
+            Statement::If { accept, reject, .. } => self.pure_block(accept) && self.pure_block(reject),
+            Statement::Switch { cases, .. } => cases.iter().all(|c| self.pure_block(&c.body)),
+            Statement::Loop { body, continuing, .. } => self.pure_block(body) && self.pure_block(continuing),
+            Statement::Call { function, .. } => self.pure_fn(*function),
+            _ => false,
+        })
+    }
+
+    /// The identity of a pure call's opaque value by its arguments.
+    fn call_id(&mut self, f: Handle<Function>, args: &[Abs]) -> u64 {
+        if let Some((_, _, id)) = self.call_ids.iter().find(|(g, a, _)| *g == f && a.as_slice() == args) {
+            return *id;
+        }
+        self.next_id += 1;
+        self.call_ids.push((f, args.to_vec(), self.next_id));
+        self.next_id
+    }
+
     fn init_locals(&mut self, fr: usize) {
         let f = self.frames[fr].func;
         let id = self.frames[fr].id;
@@ -2151,6 +2264,17 @@ impl<'m> An<'m> {
                         continue;
                     }
                     cands.push((m, c));
+                }
+            }
+            // And every symbol monomial alone, as in a coefficient or the
+            // constant part (a row's offset beyond the thread's row stride:
+            // a grouped block's second group, `51 * nc` beside `4 * nc * lid.y`,
+            // splits only at `nc`: one of 1,000 random kernels, 2026-10-14).
+            for p in a.t.values().chain(b.t.values()).chain([&a.k, &b.k]) {
+                for m in p.0.keys().filter(|m| !m.is_empty()) {
+                    if !cands.contains(&(m.clone(), 1)) {
+                        cands.push((m.clone(), 1));
+                    }
                 }
             }
             // The largest strides first.
@@ -2442,6 +2566,9 @@ pub fn check_module(module: &Module, contract: &Contract) -> Result<Report, Unsa
         record: false,
         loop_stores: Vec::new(),
         loop_exits: Vec::new(),
+        pure: HashMap::new(),
+        call_ids: Vec::new(),
+        value_ids: Vec::new(),
         ret_taint: false,
         sites: Vec::new(),
         site_ix: HashMap::new(),
@@ -2665,6 +2792,27 @@ mod tests {
         proved(&k("    if (lid.x + 32u < 16u) { w[lid.x + 32u] = vec2<f32>(1.0); }", "var<workgroup> w: array<vec2<f32>, 16>;\n"), &c);
         proved(&k("    if (lid.x + 8u < 16u) { w[lid.x + 8u] = vec2<f32>(1.0); }", "var<workgroup> w: array<vec2<f32>, 16>;\n"), &c);
         assert_eq!(rule(&k("    if (lid.x + 8u < 16u) { w[lid.x + 8u] = w[(lid.x + 9u) & 15u]; }", "var<workgroup> w: array<vec2<f32>, 16>;\n"), &c), "workgroup_memory_race");
+    }
+
+    /// One value written twice is one value (2026-10-14): a cell's offset
+    /// through a pure helper, a conversion of a literal, or a clamp by 0,
+    /// written in its guard and in its index, is bounded by its guard; read
+    /// from an atomic twice it is two values, and the guard bounds neither.
+    /// A row offset past the thread's row stride (a grouped block's second
+    /// group) splits at the column count alone.
+    #[test]
+    fn equal_values_and_strides() {
+        let c = gram_contract();
+        let k = |off: &str, decls: &str| format!("{PRE}{decls}@compute @workgroup_size(16, 16, 1)\nfn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) wid: vec3<u32>) {{\n    if (gid.y < cfg.r_rows && gid.x * 8u + {off} < cfg.d) {{ h[gid.y * cfg.d + gid.x * 8u + {off}] = h[gid.y * cfg.d + gid.x * 8u + {off}] + phi[0]; }}\n}}\n");
+        let at = "fn at3(v: vec3<u32>, i: u32) -> u32 { var t = v; return t[min(i, 2u)]; }\n";
+        proved(&k("min(at3(vec3<u32>(1u, 2u, 3u), cfg.r_off), 7u)", at), &c);
+        proved(&k("min(u32(77i), 7u)", ""), &c);
+        proved(&k("min(u32(phi[1]), 0u)", ""), &c);
+        assert_eq!(rule(&k("min(atomicLoad(&a), 7u)", "var<workgroup> a: atomic<u32>;\n"), &c), "write_sets_overlap");
+        let grouped = |a: &str, b: &str| gram(&format!("    let r = wid.y * 96u + lid.y * 4u;\n    let q = wid.x * 256u + lid.x;\n    if (r + {a} < cfg.r_rows && q + 64u < cfg.d) {{ h[(r + {a}) * cfg.d + q + 64u] = 1.0; }}\n    if (r < cfg.r_rows && q + {b} < cfg.d) {{ h[r * cfg.d + q + {b}] = 2.0; }}"), "32, 12, 1");
+        proved(&grouped("51u", "128u"), &c);
+        // (Row r + 4 is the next thread's first row.)
+        assert_eq!(rule(&grouped("4u", "64u"), &c), "write_sets_overlap");
     }
 
     /// nluca's six kernels as CubeCL emits them, under their contract.
