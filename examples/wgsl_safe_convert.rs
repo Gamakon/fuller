@@ -10,18 +10,40 @@
 //! (default 32), the slot count is the largest any kernel needs, rounded up
 //! to a multiple of eight.
 //!
+//! With `--problem <dir>` (a problem directory of `fuller::wgsl::harness`)
+//! the kernels are the problem's own: its reference kernel (named by
+//! `problem.toml`) and every `.wgsl` under its `kernels/`, each read by the
+//! interface the safe reader takes from its text; the default `--out` is
+//! `<problem>/safe`.
+//!
 //!   cargo run --release --features wgsl --example wgsl_safe_convert -- <dir> [--out <dir>] [--karva <dir> [--head <n>] [--slots <n>]]
+//!   cargo run --release --features wgsl --example wgsl_safe_convert -- --problem <problem dir> [--out <dir>] [--karva <dir> ...]
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
+use fuller::wgsl::harness::Problem;
 use fuller::wgsl::loader::WgslKingdom;
 use fuller::wgsl::render::{cost, gram_shipped_safe_tree, validate_text, Tree};
 use fuller::wgsl::safe_karva::{dump_file, encode, head_needed, render_tree_with, split};
 use fuller::wgsl::safe_reader::{read_safe, statement_outline};
 
+/// The kernels of a problem directory: its reference kernel, then every
+/// `.wgsl` under `kernels/` in name order.
+fn problem_kernels(dir: &Path) -> Result<Vec<PathBuf>, String> {
+    let p = Problem::load(dir)?;
+    let mut files = vec![dir.join(&p.spec.kernel.reference)];
+    if let Ok(rd) = std::fs::read_dir(dir.join("kernels")) {
+        let mut more: Vec<PathBuf> = rd.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "wgsl")).collect();
+        more.sort();
+        files.extend(more);
+    }
+    Ok(files)
+}
+
 fn main() -> Result<(), String> {
     let mut args = std::env::args().skip(1);
-    let dir = PathBuf::from(args.next().ok_or("usage: wgsl_safe_convert <dir> [--out <dir>]")?);
+    let first = args.next().ok_or("usage: wgsl_safe_convert <dir> | --problem <dir> [--out <dir>]")?;
+    let (dir, problem) = if first == "--problem" { (PathBuf::from(args.next().ok_or("--problem needs a value")?), true) } else { (PathBuf::from(first), false) };
     let mut out = dir.join("safe");
     let mut outline: Option<String> = None;
     let mut karva: Option<PathBuf> = None;
@@ -56,8 +78,13 @@ fn main() -> Result<(), String> {
     }
     std::fs::create_dir_all(&out).map_err(|e| e.to_string())?;
     let kingdom = WgslKingdom::load_safe();
-    let mut files: Vec<PathBuf> = std::fs::read_dir(&dir).map_err(|e| format!("{}: {e}", dir.display()))?.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "wgsl")).collect();
-    files.sort();
+    let files: Vec<PathBuf> = if problem {
+        problem_kernels(&dir)?
+    } else {
+        let mut files: Vec<PathBuf> = std::fs::read_dir(&dir).map_err(|e| format!("{}: {e}", dir.display()))?.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "wgsl")).collect();
+        files.sort();
+        files
+    };
     let (mut converted, mut valid) = (0, 0);
     let mut reasons: std::collections::BTreeMap<String, usize> = Default::default();
     let mut trees: Vec<(String, Tree)> = Vec::new();
