@@ -121,22 +121,47 @@ Each kernel is evolved against the CAPTURED output of the stage before it, so th
 
 **Divergence policy (the g9 precedent).** Two gates per kernel: a LOGIC gate (the GPU-shaped algorithm, run with CPU arithmetic, reproduces the CPU bit for bit) and a QUALITY gate under GPU arithmetic (serving recall no more than 0.002 below the CPU's; near-tie flips are expected and allowed). End to end: recall@10 >= 0.9964 on chembl_500k_30m (500 held-out queries), and the R7 probe gate on every settled graph. Every evolution case sized to Andrew's 10-minute rule.
 
-## 5. What fuller and phylu need, beyond what exists
+## 5. The machinery to build, by repository (hand-written; the kernels are not)
 
-| change | where | why |
-|---|---|---|
-| a **recall norm** (set overlap of an id output against the captured ids, graded) | fuller `src/wgsl/harness.rs` `Norm` (today `mean_abs_over_max`, `cauchy_schwarz`, `max_abs_over_rms`, all numeric) | the slope that makes K2 and K4 evolvable; also feeds the graded closeness of infeasible kernels |
-| **reference-free problems** | harness: expected outputs from captured files (as nluca's `expected_*` files), the speed column against the best correct kernel so far until one exists | no shipped GPU kernel exists for K2, K3 (K4's dense arm has one: udv23-umap `calculate_cosine_similarities`) |
-| **kingdom: loops that run until a condition** | fuller safe grammar (`safe_reader.rs`, `kingdoms/safewgsl/functions.tsv`) | the walk and beam stop on the ef rule, not a count |
-| **kingdom: bounded heaps in workgroup memory, a global-memory hash set** | same, with the safety layer's proofs for cooperative workgroup access (layer 7) | the frontier, results and visited sets |
-| **kingdom: wider strided loops** | `tile_strided_*` rows take `u32.lit64` bound and step | tonight's kmeans seeds stepped by 128-256: about 25 of 49 refusals |
-| **kingdom: workgroup arrays of indices** | "a workgroup array of u32.index has no safe spelling" | 11 kmeans refusals; candidate lists in workgroup memory |
-| **a 64-bit hash in u32 pairs, proved bit-identical** | a WGSL helper the kingdom can name | `rand_exits` mixes in 64 bits; WGSL has no u64 |
-| **multi-kernel composition** | harness: a plan that dispatches several problems' winners in one submission | the end-to-end pipeline once each kernel is evolved |
-| **stateful streams as cases** | harness: a case that is a sequence of windows, the kernels' output state carried into the next window (nluca's ping-pong across 64 steps is the existing pattern), judged at checkpoints | ingest evolves over a stream, not a single call |
-| **kingdom: integer atomics** (`atomicAdd` on u32 counters) and the safety proof that appends to a shared array are disjoint by their returned index | safe grammar + safety layer | reverse-edge and leaf appends |
+Everything below is machinery: it lets evolution build the kernels. "Step" is the build-order step of section 7 at which it is first needed.
 
-Already in place and used as-is: paired fitness, timing bands for any number of timing cases, `budget.gpu_wait_ms`, the GPU test token, `wgsl_tune` (convert, step-2 gate, evolve, paired choice, report), section crossover (2.3x more correct children than typed), model seeding under a problem with the problem's own kernels kept and its own cost bound.
+### 5a. qdrant (with Andrew's approval, or ultradim-QandA)
+
+| # | change | why | step |
+|---|---|---|---|
+| Q1 | an opt-in capture field on the settle request (the `telemetry_stride` precedent, `template_ops.rs:349`): per window and seed, the frozen state at the window's start and each phase's output, written under `storage/udv23_trellis/{family}/`, their paths on the response | the ingest oracles | 1 |
+| Q2 | the same field on the search requests (`template_knn_batch_queries`): queries, knobs, each stage's output | the search oracles | 7 |
+| Q3 | a flattener for the resident structures in the GPU layouts of sections 2 and 2c (template field, proximity exits, seating, fixed-stride edges, keys, liveness) | cases a kernel can bind | 1 |
+
+### 5b. fuller
+
+| # | change | where | why | step |
+|---|---|---|---|---|
+| F1 | **overlap norms**: a list-overlap norm (per-row edge lists, per-slot holders) and a set-recall norm (ids against captured ids), graded | `src/wgsl/harness.rs` `Norm` (today `mean_abs_over_max`, `cauchy_schwarz`, `max_abs_over_rms`, all numeric) | the slope that makes the kernels evolvable; graded closeness for infeasible kernels | 2 |
+| F2 | **stream cases**: a case that is a sequence of windows, the kernels' output state carried into the next window (nluca's 64-step ping-pong is the existing pattern), judged at checkpoints | harness plan and suites | ingest evolves over a stream | 2 |
+| F3 | **reference-free problems**: expected outputs from captured files; speed against the best correct kernel so far until one exists | harness `[oracle]`, `[kernel] reference` | no shipped GPU kernel for any ingest kernel | 2 |
+| F4 | **the g9 two gates**: a logic gate (the problem's CPU-arithmetic form reproduces the captured output bit for bit) and the quality gate (within the recall tolerance) | harness suites | the precedent qdrant set for GPU re-implementations | 2 |
+| F5 | **integer atomics** (`atomicAdd` on u32 counters) in the safe grammar, with a layer-7 proof that appends at the returned index are disjoint | `safe_reader.rs`, `kingdoms/safewgsl/functions.tsv`, `src/wgsl/safety.rs` | reverse-edge and leaf appends (I3, I4) | 3 |
+| F6 | **wider strided loops** (`tile_strided_*` take `u32.lit64` for bound and step) and **workgroup arrays of indices** (no safe spelling today) | the same tables, `gen_tables.py` | kmeans' refusals tonight (about 25 and 11 of 49); candidate lists in workgroup memory | 3 |
+| F7 | **the 64-bit hash in u32 pairs**, proved bit-identical to `mix64` on random inputs | a WGSL helper the kingdom names | the seat slot picks, the random exits | 3 |
+| F8 | **loops that run until a condition**, **bounded heaps in workgroup memory**, **a global-memory hash set**, and the safety proofs for a workgroup cooperating on them | safe grammar + safety layer | the walk and beam (I1 = K2) | 4 |
+| F9 | **rules for the new constructs** (pattern -> action, never reading fitness) | `src/wgsl/rules.rs`, `rules_more.rs` | the rule operator over heaps, loops and atomics | 4 |
+| F10 | **multi-kernel composition**: a plan dispatching several problems' winners in one submission | harness | the ingest window end to end, then search | 6 |
+| F11 | **root-cause the batched-timing block** (reverted tonight, ca74049: the GPU wait blocked at 0 % CPU) | `DeviceExecutor` | small kernels' timing overhead (about 7 ms around 0.5 ms of GPU work) | before timing small kernels |
+| F12 | **a wgpu upgrade** (0.20 -> 25/27; qdrant is on 27) | `Cargo.toml`, the naga-IR reader | parity with qdrant's wgpu; f16 if ever needed | when it blocks |
+
+### 5c. phylu
+
+| # | change | where | why | step |
+|---|---|---|---|---|
+| P1 | **the model ladder**: Sonnet, then Opus on a plateau, then Fable, for every model operator | `wgsl_model_rewrite::MODEL`, the model-seeding block and the beat path in `examples/wgsl_fit.rs` (all fixed to "sonnet"); fuller `llm::call` takes any model name | Andrew's escalation rule | 3 |
+| P2 | **the plateau detector**: no best-fitness improvement in P generations (proposed P = 5) | the generation loop | triggers P1; also stops at the first proven gain | 3 |
+| P3 | **ancestry through the pump**: a kernel refilled from the library keeps its origin and parents | pump refill and library entries | tonight f1's lineage stopped at "founder 468 pump_refill" | 3 |
+| P4 | **the provenance report**: per handed-back kernel, its ancestry, the operator at each step, each mechanism's contribution | a tool over `ledger.tsv` and `genealogy.tsv` | the evidence for a new way of coding | 3 |
+| P5 | **rows wider than 4 inputs**, or every new row built within 4 | `K_MAX` (fuller `gpu_eval`) and the typed device tables | heap, hash-set and atomic-append rows | 4 |
+| P6 | **longer genomes** than head 32 x 128 slots | the converter's `--slots`, the device decoder's per-row budget | the walk and beam kernels are much larger than nluca's | 5 |
+| P7 | **stream-aware evaluation budgets** (the watchdog and per-generation timing over a sequence of windows; every case within the 10-minute rule) | `wgsl_fit` deadlines | ingest evaluations are longer | 2 |
+| P8 | **many problems in one run of the flow**: `wgsl_tune` over a list, each with its ladder and report, then composition | `examples/wgsl_tune.rs` | five ingest problems, then search | 6 |
 
 ## 6. The evolution, per problem
 
