@@ -169,6 +169,9 @@ mod gpu {
     const MAX_GROUPS_PER_DIM: u32 = crate::gpu_eval::MAX_GROUPS_PER_DIM;
 
     pub struct LintKernel {
+        /// The test binary's GPU turn (`gpu_test_lock`).
+        #[cfg(test)]
+        _gpu: crate::gpu_test_lock::Token,
         device: wgpu::Device,
         queue: wgpu::Queue,
         pipeline: wgpu::ComputePipeline,
@@ -185,6 +188,8 @@ mod gpu {
         }
 
         async fn new_async(tables: KernelTables) -> Result<Self, String> {
+            #[cfg(test)]
+            let gpu = crate::gpu_test_lock::acquire();
             let instance = wgpu::Instance::default();
             let adapter = instance
                 .request_adapter(&wgpu::RequestAdapterOptions::default())
@@ -250,7 +255,18 @@ mod gpu {
             let rules_buf = resident("lint-rules", &tables.rule_words);
             let bucket_buf = resident("lint-bucket", &tables.bucket);
             let guards_buf = resident("lint-guards", &tables.guard_words);
-            Ok(Self { device, queue, pipeline, layout, rules_buf, bucket_buf, guards_buf, tables })
+            Ok(Self {
+                #[cfg(test)]
+                _gpu: gpu,
+                device,
+                queue,
+                pipeline,
+                layout,
+                rules_buf,
+                bucket_buf,
+                guards_buf,
+                tables,
+            })
         }
 
         pub fn tables(&self) -> &KernelTables {

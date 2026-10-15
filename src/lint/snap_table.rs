@@ -682,7 +682,11 @@ mod gpu {
     /// wgpu buffers do not cross devices and a `Device` is not `Clone`: the
     /// kernel either owns its device or borrows the one its blocks live on.
     enum Gpu<'d> {
+        /// A device of its own (in the test binary with its GPU turn, `gpu_test_lock`).
+        #[cfg(not(test))]
         Own(wgpu::Device, wgpu::Queue),
+        #[cfg(test)]
+        Own(wgpu::Device, wgpu::Queue, crate::gpu_test_lock::Token),
         Shared(&'d wgpu::Device, &'d wgpu::Queue),
     }
 
@@ -770,6 +774,8 @@ mod gpu {
         }
 
         async fn new_async(table: SnapTable) -> Result<Self, String> {
+            #[cfg(test)]
+            let gpu = crate::gpu_test_lock::acquire();
             let instance = wgpu::Instance::default();
             let adapter = instance
                 .request_adapter(&wgpu::RequestAdapterOptions::default())
@@ -787,7 +793,11 @@ mod gpu {
                 .await
                 .map_err(|e| format!("request_device: {e}"))?;
             let r = resident(&device, &table);
-            Ok(Self::assemble(Gpu::Own(device, queue), r, table))
+            #[cfg(not(test))]
+            let own = Gpu::Own(device, queue);
+            #[cfg(test)]
+            let own = Gpu::Own(device, queue, gpu);
+            Ok(Self::assemble(own, r, table))
         }
     }
 
@@ -831,14 +841,14 @@ mod gpu {
         /// (the graft) has to be built on it.
         pub fn device(&self) -> &wgpu::Device {
             match &self.gpu {
-                Gpu::Own(device, _) => device,
+                Gpu::Own(device, ..) => device,
                 Gpu::Shared(device, _) => device,
             }
         }
 
         pub fn queue(&self) -> &wgpu::Queue {
             match &self.gpu {
-                Gpu::Own(_, queue) => queue,
+                Gpu::Own(_, queue, ..) => queue,
                 Gpu::Shared(_, queue) => queue,
             }
         }

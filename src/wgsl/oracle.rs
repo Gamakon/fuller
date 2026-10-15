@@ -296,10 +296,15 @@ pub mod device {
         pub device: wgpu::Device,
         pub queue: wgpu::Queue,
         pub name: String,
+        /// The test binary's GPU turn (`gpu_test_lock`).
+        #[cfg(test)]
+        _gpu: crate::gpu_test_lock::Token,
     }
 
     impl Device {
         pub fn new() -> Result<Device, String> {
+            #[cfg(test)]
+            let gpu = crate::gpu_test_lock::acquire();
             let instance = wgpu::Instance::default();
             let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default())).ok_or("no adapter")?;
             let name = format!("{} ({:?})", adapter.get_info().name, adapter.get_info().backend);
@@ -315,7 +320,13 @@ pub mod device {
                 None,
             ))
             .map_err(|e| format!("request_device: {e}"))?;
-            Ok(Device { device, queue, name })
+            Ok(Device {
+                device,
+                queue,
+                name,
+                #[cfg(test)]
+                _gpu: gpu,
+            })
         }
 
         /// Time `source`: compile and bind as [`Device::run`] does, then

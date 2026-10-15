@@ -854,6 +854,9 @@ mod device {
     /// Holds the device and the RESIDENT dataset. Built once per fit; every
     /// generation reuses it, uploading only tokens.
     pub struct GpuEvaluator {
+        /// The test binary's GPU turn (`gpu_test_lock`).
+        #[cfg(test)]
+        _gpu: crate::gpu_test_lock::Token,
         // ONE DEVICE for the whole fit. The evolution engine's own kernels
         // (phylu's decoder, sampler, variation, scorer, typer, HFF) run on this
         // device too, so a buffer one of them writes is a buffer the next one
@@ -895,6 +898,8 @@ mod device {
             }
             let n_rows = (rows.len() / n_vars) as u32;
 
+            #[cfg(test)]
+            let gpu = crate::gpu_test_lock::acquire();
             let instance = wgpu::Instance::default();
             let adapter = instance
                 .request_adapter(&wgpu::RequestAdapterOptions::default())
@@ -997,6 +1002,8 @@ mod device {
             });
 
             Ok(Self {
+                #[cfg(test)]
+                _gpu: gpu,
                 device,
                 queue,
                 pipeline,
