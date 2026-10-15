@@ -32,13 +32,25 @@ Both came the same way: a model rewrite made the leap (f1: Sonnet's "better memo
 ## Caveats
 
 - One seed a width. The 1,048,576 and 500,000-row runs scored with the least-time fitness and the old checker; their winners' speed is confirmed by the paired re-timing above. The 100,000-row run used the old checker, which dropped the strided Sonnet kernels the unrolled design comes from; it is being rerun with the fix.
-- Not yet measured: each winner at every other width (the size table, queued), so the choice of kernel by width is not yet made.
+- The E3 arms' best-kernel speeds were each checked right after their run, in different GPU states (shipped 25.4-28.6 ms at 1M rows); the section seed-3 winner measured 0.805-0.830 then and 0.868 in the size table. A paired ratio cancels drift that slows both kernels alike, not a clock state that changes them differently; the six winners are being timed back to back in one session.
+
+## The size table: each winner at every width (paired, 6 rounds, 03:31Z-03:43Z, the mean ratio of the three datasets)
+
+| kernel \ width | 1,048,576 | 500,000 | 100,000 | 10,000 | 1,000 |
+|---|---|---|---|---|---|
+| f1's design (the 1M winner) | **0.872** | 0.898 | 0.99 | 1.46 | 1.50 |
+| the 500,000-row winner | 0.873 | **0.894** | 0.97 | 1.39 | 1.50 |
+| E3 section seed 3's winner | **0.868** | 0.898 | 0.91 | 1.35 | 1.38 |
+| unrolled (the 10,000-row winner) | 0.944 | 0.950 | **0.86** | 0.844 | 0.887 |
+| unrolled (the 1,000-row winner) | 0.944 | 0.948 | 0.885 | **0.830** | **0.882** |
+
+**By size: f1's design at 500,000 rows and above (0.87-0.90), the unrolled design at 100,000 and below (0.83-0.89): faster than shipped at every width. One kernel for every size: the unrolled 1,000-row winner, never slower (0.83-0.95), 7 points behind f1's design at the largest widths.** The 100,000-row cells have wide intervals (up to [0.71, 0.92]); the rest are within about ±0.02.
 
 ## The open options, measured
 
 - **f16** (emulated by pack2x16float rounding; fuller's wgpu 0.20 front end has no f16): every variant fails nluca's oracle at the first case (tolerance 1.0e-4): the codebook stored in f16 2.24e-3, the sums in f16 8.13e-4, all arithmetic in f16 3.24e-2. The f16 codebook (real f16 storage) is 0.990 [0.988, 0.993] of f1's time at 1M rows: 1 %. f16 does not pay for nluca.
 - **Stable section ids (homologous section crossover, fuller `sections`)**: on nluca's 26 kernels, 1,000 children an operator, seeds 1-3, children new, clean and legal: section 994 / 994 / 982, Karva one-point 6 / 7 / 6, two-point 27 / 28 / 28, gene 15 / 13 / 7. Karva children are copies of a parent 61-82 % of the time.
-- **E3 in a run: section crossover against typed crossover** (nluca, 1,048,576 rows, 10 generations, seeds 1-3, everything else identical; 01:41Z to 03:03Z). **Section crossover made correct children 2.3x as often and the faster best kernel at every seed.**
+- **E3 in a run: section crossover against typed crossover** (nluca, 1,048,576 rows, 10 generations, seeds 1-3, everything else identical; 01:41Z to 03:03Z). **Section crossover made correct children 2.3x as often.** Its best kernel measured faster at every seed, but those checks ran in different GPU states (see Caveats); the same-session timing decides the speed comparison.
 
 | seed | typed: crossover children correct | typed: best, paired ratio (3 datasets) | section: crossover children correct | section: best, paired ratio |
 |---|---|---|---|---|
