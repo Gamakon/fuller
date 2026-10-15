@@ -144,6 +144,8 @@ Already in place and used as-is: paired fitness, timing bands for any number of 
 2. **Gate**: every seed through the safety layer (no races, no wrapping indices) and the recall norm.
 3. **Evolve** (`wgsl_tune`): section crossover, rules, rewrites, model rewrites and "beat both" calls; paired timing against the best correct kernel; the problem's timing shapes from real batches, split by regime where the work changes character (tonight's lesson from kmeans' 20 against 9,000 centroids).
 4. **Hand back**: a kernel only when it passes every captured case at the recall bar and is shown faster at every timing shape; otherwise the best correct one so far.
+5. **The model ladder (Andrew, 2026-10-15)**: every model operator (seeds, rewrites, "beat both") starts on Sonnet; when the best fitness has not improved for P generations (the plateau rule: recall or list overlap while correctness is the target, speed after), all model operators switch to Opus; on a second plateau, to Fable. Each switch is logged with its generation and the best fitness before and after, so the ledger shows whether the stronger model broke the plateau. Needs: a ladder option in phylu `wgsl_fit` (today `wgsl_model_rewrite::MODEL` and the model seeding are fixed to "sonnet"; fuller `llm::call` already takes any model name).
+6. **Built by evolution, never by hand**: no kernel's WGSL is written or patched by hand. When evolution cannot reach a correct kernel, the fix goes into the machinery (a grammar gap, a missing rule, a fitness without slope) and the run goes again. Every kernel keeps its genealogy (phylu's ledger and genealogy), and the report states how it was made and what each mechanism contributed.
 
 ## 7. Order and expectations (stated before any run) — ingest first
 
