@@ -135,24 +135,24 @@ Already in place and used as-is: paired fitness, timing bands for any number of 
 3. **Evolve** (`wgsl_tune`): section crossover, rules, rewrites, model rewrites and "beat both" calls; paired timing against the best correct kernel; the problem's timing shapes from real batches, split by regime where the work changes character (tonight's lesson from kmeans' 20 against 9,000 centroids).
 4. **Hand back**: a kernel only when it passes every captured case at the recall bar and is shown faster at every timing shape; otherwise the best correct one so far.
 
-## 7. Order and expectations (stated before any run)
+## 7. Order and expectations (stated before any run) — ingest first
+
+**Ingest is the primary problem: it is the first impression the system gives (Andrew, 2026-10-15).** Search follows, reusing what ingest builds (I1 is the search's walk and beam).
 
 | step | expectation | risk |
 |---|---|---|
-| 1. capture (CPU, no GPU) | cases for 3 family sizes x both substrates | the resident structures' GPU layout must match section 2 exactly |
-| 2. recall norm + reference-free problems in fuller | unit-tested on the harness's CPU executor | — |
-| 3. K1 projection and K4 rerank evolved | model seeds correct often (nluca-like data-parallel shapes); K4 seeded also from `calculate_cosine_similarities` | sparse K4's sorted merge may need a grammar addition |
-| 4. kingdom extensions for K2 | random genes and model seeds both read and pass the safety layer | proving cooperative heap access race-free is the hardest safety work |
-| 5. K2a beam, then K2b walk | the beam first: smaller, with a CPU lockstep already proved bit-identical (`trellis/tests/g9_gpu_correction_parity.rs`); recall climbs over generations | **the open risk: nobody has shown model + evolution produce a correct stateful search kernel this size** |
-| 6. compose, end-to-end recall@k | at the agreed bar on `MeasureRecall` | divergence compounding across stages |
-| 7. ingest: I2 prune, I5 advance, I3 seat, I4 commit (deterministic, exact oracles), then I1 propose (= the evolved K2) and I6 correction | the exact kernels evolve like nluca's; I1 reuses K2 | atomics and their safety proof |
-| 8. ingest end to end on a captured stream | the GPU-settled index's serving recall@10 at the CPU-settled index's on the same stream | quality drift over many windows |
-| 9. last: the CPU comparison | — | — |
+| 1. capture ingest streams (CPU, no GPU): consecutive windows of `ingest_window` per seed, from an empty index to a mature one, at the production window (default 10,000 rows, `template_ops.rs:344`), with every phase's output | streams for 3 family sizes x both substrates | the GPU layout of section 2c must match exactly |
+| 2. harness: stream cases (state carried across windows), list- and set-overlap norms, reference-free problems | unit-tested on the harness's CPU executor | — |
+| 3. the deterministic ingest kernels, exact oracles: I2 spread prune, I5 advance + resolve, I3 seat, I4 commit | data-parallel and exact: model seeds often correct, as on nluca | I3 and I4 need integer atomics and their safety proof |
+| 4. kingdom extensions: loops until a condition, workgroup heaps, a global hash set, atomics, wider strided loops, workgroup index arrays, the 64-bit hash in u32 pairs | random genes and model seeds read and pass the safety layer | the cooperative-heap race proof is the hardest safety work |
+| 5. I1 propose = K2a beam then K2b walk (insert posture) | recall of the captured candidates climbs over generations | **the open risk: a correct stateful search kernel this size from model + evolution is unproven** |
+| 6. I6 rolling correction, then ingest end to end on a captured stream | the GPU-settled index's serving recall@10 at the CPU-settled index's on the same stream | quality drift over many windows |
+| 7. search: K1 projection, K4 rerank + top-k, K3 pool, composed with K2 | end-to-end recall@k at the agreed bar on `MeasureRecall` | divergence compounding across stages |
+| 8. last: the CPU comparison | — | — |
 
 ## 8. Decisions needed from Andrew
 
 - The recall bar for the GPU path, or bit identity with the CPU.
 - Families and sizes to capture first (d_proj, rows, sparse or dense), and the production batch shapes for timing.
 - Where capture lives in `ultradimdb` (a feature flag or an RPC), since it touches the server's search and ingest paths.
-- Whether ingest or search goes first. The kernels are shared (I1 is K2), so the capture serves both; the deterministic ingest kernels (prune, seat, commit, advance) have exact oracles and are the likelier early wins.
 - Production microbatch (window) sizes and stream rates, for the ingest timing shapes.
