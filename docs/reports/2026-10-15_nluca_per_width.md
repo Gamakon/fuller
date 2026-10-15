@@ -60,3 +60,17 @@ Both came the same way: a model rewrite made the leap (f1: Sonnet's "better memo
 | all | 19 of 284 (6.7 %, Wilson 95 % [4.3, 10.2]) | mean 0.850 | 42 of 276 (15.2 %, [11.5, 19.9]) | mean 0.828 |
 
 Crossover children: the crossover pairs, champion mating and the duplicate re-cross, all three made by the arm's crossover. Section seed 1's best (0.82) is itself a section child (champion mating, gen 3). The best kernel of the night, section seed 3, is 0.805-0.830 of shipped's time at 1M rows, against f1's 0.866. Section crossover is now `wgsl_tune`'s default (phylu 5a469806).
+
+## kmeans_assign through the one-command flow (phylu wgsl_tune, 04:48Z to 05:18Z)
+
+The third problem, on the GPU for the first time, with no problem-specific code. **Step 2 passed: the emitted shipped kernel runs as fast as the original** (1.003 [1.000, 1.006], 1.002 [0.993, 1.007], 0.997 [0.993, 1.004]; the 18,000 x 9,000 x 2,048 case is 5.66 s a run). The flow kept the shipped kernel: the run's best is not faster at every shape. Timed alone (10 rounds, 05:13Z-05:18Z):
+
+| timing shape | best / shipped [95 %] |
+|---|---|
+| 50,000 points x 20 centroids x 2,048 | 1.083 [1.070, 1.084] |
+| 262,144 x 20 x 2,048 | 1.087 [1.081, 1.090] |
+| 18,000 x 9,000 x 2,048 | **0.679 [0.654, 0.690]** |
+
+The run was weak: 4 generations, and two bugs in the fit since fixed (phylu 66f417c4) kept its model seeds out (the cost bound was the Gram's, 25,600 a item against kmeans's shipped 327,705) and had cleared the shipped kernel from the population. 49 of 72 Sonnet seeds were refused by the safe grammar, mostly "a short loop stepped by 128 (at most 64)" (about 25) and "a workgroup array of u32.index has no safe spelling" (about 11): gaps in the kingdom to close before kmeans is rerun.
+
+Fixed on the way: a problem declares its longest legitimate submission (budget.gpu_wait_ms; kmeans 60 s; fuller c1900fd), and the step-2 gate stops on a copy shown slower, not on noise (phylu 926072ae).
