@@ -2135,6 +2135,22 @@ impl<'m> An<'m> {
                         let (lo, hi) = an.range(&form.add(&Lin::konst(Poly::konst(i128::from(*k)))), &all);
                         lo >= 0 && hi <= U32_MAX
                     });
+                    // The pass is bounded too: every reached pass has
+                    // e + k * d <= the counter's bound, so d <= (that - e's
+                    // least) / k (else every form of d would look as if it
+                    // might wrap).
+                    if held {
+                        for (l, d, k, form) in &strided {
+                            let hi_t = an.range(form, &all).1;
+                            let entry = match entry_env.get(&(id, *l)) {
+                                Some(Abs::Lin(e)) => an.range(e, &all).0,
+                                _ => 0,
+                            };
+                            if let Var::Dig(i) = d {
+                                an.digits[*i as usize].hi = Some(Poly::konst((hi_t - entry).max(0) / i128::from(*k)));
+                            }
+                        }
+                    }
                 }
                 if !held {
                     for (l, d, _, _) in &strided {
