@@ -73,6 +73,15 @@ pub const DRAIN_LIMIT_MS: f64 = 120_000.0;
 /// sooner, naming the kernel).
 #[cfg(feature = "gpu")]
 pub fn wait_gpu(device: &wgpu::Device, queue: &wgpu::Queue) -> Result<(), String> {
+    wait_gpu_within(device, queue, WAIT_GAVE_UP_MS)
+}
+
+/// [`wait_gpu`] for work that may run up to `limit_ms` (a problem's
+/// `budget.gpu_wait_ms`): the GPU finishing within it is done, not a
+/// runaway. kmeans_assign's 18,000 x 9,000 x 2,048 case is one dispatch of
+/// over 5 s, which the fixed limit named a runaway (2026-10-15).
+#[cfg(feature = "gpu")]
+pub fn wait_gpu_within(device: &wgpu::Device, queue: &wgpu::Queue, limit_ms: f64) -> Result<(), String> {
     let ms_since = |t: Instant| t.elapsed().as_secs_f64() * 1e3;
     let t = Instant::now();
     device.poll(wgpu::Maintain::Wait);
@@ -85,6 +94,9 @@ pub fn wait_gpu(device: &wgpu::Device, queue: &wgpu::Queue) -> Result<(), String
         queue.submit(None);
         device.poll(wgpu::Maintain::Wait);
         if ms_since(tw) < WAIT_GAVE_UP_MS {
+            if ms_since(t) <= limit_ms {
+                return Ok(());
+            }
             return Err(format!("runaway: the GPU still ran after {:.1} s; drained after {:.1} s, nothing read", first / 1e3, ms_since(t) / 1e3));
         }
         if ms_since(t) > DRAIN_LIMIT_MS {

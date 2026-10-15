@@ -891,6 +891,11 @@ pub struct Budget {
     /// HFF 0.474 to 0.542 with 20 ms samples, 0.497 to 0.508 with 100.
     #[serde(default = "hundred_ms")]
     pub min_sample_ms: f64,
+    /// The longest one submission of the problem's work may run before it is
+    /// named a runaway (default the wgpu wait's own 4.9 s): a problem whose
+    /// single dispatch is legitimately longer declares it.
+    #[serde(default = "gave_up_ms")]
+    pub gpu_wait_ms: f64,
     /// THE EVALUATION'S DEADLINE (the fit's watchdog, for a true runaway
     /// only): `deadline_factor` times the reference kernel's measured
     /// evaluation, at least `deadline_floor_ms`. Both or neither; absent,
@@ -905,6 +910,10 @@ fn one_round() -> usize {
 
 fn hundred_ms() -> f64 {
     100.0
+}
+
+fn gave_up_ms() -> f64 {
+    4_900.0
 }
 
 /// THE THREE SPEED BANDS of a problem's timing cases (by index): with three
@@ -1567,6 +1576,8 @@ pub struct Plan {
     pub outputs: Vec<u64>,
     /// Its reads are made right with the syncs dropped (it may be batched).
     pub batch_safe: bool,
+    /// The longest one of its submissions may run (`Budget::gpu_wait_ms`).
+    pub gpu_wait_ms: f64,
 }
 
 /// The first read that a later write in its segment would spoil, if any.
@@ -1814,7 +1825,7 @@ impl Problem {
             bind_lets(&self.spec.derive_run, &mut env).map_err(|e| format!("case {}: {e}", case.name))?;
             b.steps(&self.spec.run, &env, false).map_err(|e| format!("case {}: run: {e}", case.name))?;
         }
-        let mut plan = Plan { buffers: b.buffers, setup: b.setup, run: b.run, outputs: out_bytes, batch_safe: false };
+        let mut plan = Plan { buffers: b.buffers, setup: b.setup, run: b.run, outputs: out_bytes, batch_safe: false, gpu_wait_ms: self.spec.budget.gpu_wait_ms };
         let kinds = self.binding_kinds();
         if let Some(h) = hazard(&plan, &kinds, true) {
             return Err(format!("case {}: {h}", case.name));
@@ -2363,7 +2374,7 @@ mod device {
     use wgpu::util::DeviceExt;
 
     use super::{initial_bytes, kernel_info, BindingKind, BufId, CaseData, Cmd, Executor, KernelInfo, Plan, Problem, RunOut};
-    use crate::wgsl::gram::{effective_buffer_limit, wait_gpu};
+    use crate::wgsl::gram::{effective_buffer_limit, wait_gpu, wait_gpu_within};
     use crate::wgsl::oracle::device::Device;
 
     pub struct DeviceExecutor<'a> {
@@ -2481,13 +2492,16 @@ mod device {
             let resolve_buf = device.create_buffer(&wgpu::BufferDescriptor { label: Some("harness resolve"), size: stamps_bytes, usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC, mapped_at_creation: false });
             let stamps_read = device.create_buffer(&wgpu::BufferDescriptor { label: Some("harness stamps"), size: stamps_bytes, usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ, mapped_at_creation: false });
             let mut seg = new_seg();
+            // The longest a submission may run before it is a runaway: the
+            // largest any item's problem declares (`Budget::gpu_wait_ms`).
+            let wait_ms = live.iter().map(|l| l.plan.gpu_wait_ms).fold(0.0, f64::max);
             let flush = |seg: Seg, live: &mut [Live], compute_ms: &mut f64| -> Result<(), String> {
                 if !seg.any && seg.reads.is_empty() {
                     return Ok(());
                 }
                 let t = Instant::now();
                 queue.submit(Some(seg.enc.finish()));
-                wait_gpu(device, queue)?;
+                wait_gpu_within(device, queue, wait_ms)?;
                 if seg.any {
                     *compute_ms += t.elapsed().as_secs_f64() * 1e3;
                 }
@@ -2516,7 +2530,7 @@ mod device {
                     stamps_read.slice(..8 * u64::from(nq)).map_async(wgpu::MapMode::Read, move |r| { tx.send(r).expect("the receiver waits for the mapping"); });
                     waits += 1;
                 }
-                wait_gpu(device, queue)?;
+                wait_gpu_within(device, queue, wait_ms)?;
                 for _ in 0..waits {
                     rx.recv().map_err(|e| format!("map: {e}"))?.map_err(|e| format!("map: {e}"))?;
                 }
@@ -3734,7 +3748,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
                 DriverStep::Read { r_off, rows } => run.push(Cmd::Read { src: acc, src_offset: 0, output: 0, dst_offset: (r_off * d * 4) as u64, bytes: (rows * d * 4) as u64 }),
             }
         }
-        Plan { buffers, setup, run, outputs: vec![(d * d * 4) as u64], batch_safe: true }
+        Plan { buffers, setup, run, outputs: vec![(d * d * 4) as u64], batch_safe: true, gpu_wait_ms: gram::WAIT_GAVE_UP_MS }
     }
 
     /// gram.rs's fitness procedure (`gram::fitness_with`) on the host

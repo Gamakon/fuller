@@ -154,5 +154,9 @@ cases = "cases/timing.toml"
 base_ms = 30000.0
 round_ms = 600000.0
 timing_rounds = 1
+# The 18,000 x 9,000 x 2,048 case is one band (the binding limit holds it)
+# and so one dispatch of over 5 s: the longest submission the problem's work
+# may run before it is a runaway (the default 4.9 s named it one, 2026-10-15).
+gpu_wait_ms = 60000.0
 deadline_factor = 10.0
 deadline_floor_ms = 120000.0
