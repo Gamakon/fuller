@@ -1940,12 +1940,14 @@ pub trait Executor {
 }
 
 /// The runs of a plan one timing submission holds: every dispatch takes two
-/// of a query set's timestamps (wgpu's query set holds 8,192) and every run
-/// its own buffers (a budget of 512 MiB a submission).
+/// of a query set's timestamps (at most 4,096 a submission) and every run its
+/// own buffers (at most 256 MiB a submission). With 8,192 timestamps and
+/// 512 MiB, nluca's 100,000-row case batched 34 runs and the device failed to
+/// create a resource (ResourceCreationFailed, 2026-10-15).
 pub fn runs_a_submission(plan: &Plan) -> usize {
     let dispatches = plan.run.iter().filter(|c| matches!(c, Cmd::Dispatch { .. })).count().max(1);
     let bytes: u64 = plan.buffers.iter().filter(|b| !b.resident).map(|b| b.bytes).sum::<u64>() + plan.outputs.iter().sum::<u64>();
-    (4096 / dispatches).min((512u64 << 20).checked_div(bytes).unwrap_or(u64::MAX).min(u64::from(u32::MAX)) as usize).max(1)
+    (2048 / dispatches).min((256u64 << 20).checked_div(bytes).unwrap_or(u64::MAX).min(u64::from(u32::MAX)) as usize).max(1)
 }
 
 /// A host model of a kernel: one invocation over the bound buffers.
@@ -2678,7 +2680,11 @@ mod device {
         /// (nluca at 10,000 rows: 0.5 ms of GPU in about 7 ms of wall).
         fn run_repeat(&self, k: &DeviceKernel, plan: &Plan, data: &CaseData, staged: &DeviceStaged, n: usize) -> Result<(f64, f64), String> {
             let (mut gpu, mut longest) = (0.0f64, 0.0f64);
-            if !plan.batch_safe {
+            // A plan with a sync before its end splits its work into
+            // submissions on purpose (kmeans's bands keep each under the
+            // runaway guard); batching drops syncs, so it runs alone.
+            let inner_sync = plan.run.iter().rev().skip_while(|c| !matches!(c, Cmd::Sync)).skip(1).any(|c| matches!(c, Cmd::Sync));
+            if !plan.batch_safe || inner_sync || n <= 1 {
                 for _ in 0..n {
                     let r = self.run(k, plan, data, staged, false)?;
                     gpu += r.gpu_ms;
@@ -2686,8 +2692,13 @@ mod device {
                 }
                 return Ok((gpu, longest));
             }
-            let per = super::runs_a_submission(plan);
-            let mut left = n;
+            // The first run alone measures the run, so a submission holds
+            // about a second of work at most.
+            let first = self.run(k, plan, data, staged, false)?;
+            gpu += first.gpu_ms;
+            longest = longest.max(first.compute_ms);
+            let per = super::runs_a_submission(plan).min(((1000.0 / first.compute_ms.max(1e-3)) as usize).max(1));
+            let mut left = n - 1;
             while left > 0 {
                 let m = left.min(per);
                 let mut live: Vec<Live> = (0..m).map(|_| Live { plan, data, bufs: (0..plan.buffers.len()).map(|_| None).collect(), outputs: plan.outputs.iter().map(|n| vec![0u8; *n as usize]).collect(), gpu_ms: 0.0 }).collect();
