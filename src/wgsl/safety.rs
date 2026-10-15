@@ -1984,29 +1984,71 @@ impl<'m> An<'m> {
     }
 
     /// A counter: stored once, in the continuing block, as `l = l + k` (k a
-    /// literal of at least 1), and nowhere in the body.
-    fn counter_step(f: &Function, continuing: &Block, l: Handle<naga::LocalVariable>) -> bool {
-        let mut found = 0;
+    /// literal of at least 1), and nowhere in the body; its step k.
+    fn counter_step(f: &Function, continuing: &Block, l: Handle<naga::LocalVariable>) -> Option<u32> {
+        let (mut found, mut step) = (0, 0u32);
         for s in continuing.iter() {
             if let Statement::Store { pointer, value } = s {
                 if !matches!(f.expressions[*pointer], Expression::LocalVariable(x) if x == l) {
                     continue;
                 }
                 found += 1;
-                let ok = match &f.expressions[*value] {
+                let k = match &f.expressions[*value] {
                     Expression::Binary { op: BinaryOperator::Add, left, right } => {
                         let is_load = |e: Handle<Expression>| matches!(&f.expressions[e], Expression::Load { pointer } if matches!(f.expressions[*pointer], Expression::LocalVariable(x) if x == l));
-                        let is_step = |e: Handle<Expression>| matches!(&f.expressions[e], Expression::Literal(naga::Literal::U32(k)) if *k >= 1);
-                        (is_load(*left) && is_step(*right)) || (is_load(*right) && is_step(*left))
+                        let step_of = |e: Handle<Expression>| match &f.expressions[e] {
+                            Expression::Literal(naga::Literal::U32(k)) if *k >= 1 => Some(*k),
+                            _ => None,
+                        };
+                        if is_load(*left) {
+                            step_of(*right)
+                        } else if is_load(*right) {
+                            step_of(*left)
+                        } else {
+                            None
+                        }
                     }
-                    _ => false,
+                    _ => None,
                 };
-                if !ok {
-                    return false;
-                }
+                step = k?;
             }
         }
-        found == 1
+        (found == 1).then_some(step)
+    }
+
+    /// The exit test a loop's body opens with: its leading emits and calls
+    /// and the condition of an `if` one of whose branches is exactly `break`
+    /// and the other empty, with whether the loop goes on when the condition
+    /// holds. None when the body opens otherwise, or when an emitted
+    /// expression reads memory other than a local's (evaluating it early
+    /// must record nothing; a call must be pure, checked where it runs).
+    fn head_exit(f: &Function, body: &'m Block) -> Option<(Vec<&'m Statement>, Handle<Expression>, bool)> {
+        let mut emits = Vec::new();
+        for st in body.iter() {
+            match st {
+                Statement::Emit(range) => {
+                    for h in range.clone() {
+                        if let Expression::Load { pointer } = &f.expressions[h] {
+                            if !matches!(f.expressions[*pointer], Expression::LocalVariable(_)) {
+                                return None;
+                            }
+                        }
+                    }
+                    emits.push(st);
+                }
+                Statement::Call { .. } => emits.push(st),
+                Statement::If { condition, accept, reject } => {
+                    let is_break = |b: &Block| b.len() == 1 && matches!(b.iter().next(), Some(Statement::Break));
+                    return match (is_break(accept), accept.is_empty(), is_break(reject), reject.is_empty()) {
+                        (true, _, _, true) => Some((emits, *condition, false)),
+                        (_, true, true, _) => Some((emits, *condition, true)),
+                        _ => None,
+                    };
+                }
+                _ => return None,
+            }
+        }
+        None
     }
 
     fn walk_loop(&mut self, fr: usize, s: &'m Statement, body: &'m Block, continuing: &'m Block, break_if: Option<Handle<Expression>>) {
@@ -2016,7 +2058,8 @@ impl<'m> An<'m> {
         Self::stored_locals(f, body, &mut stored, false);
         Self::stored_locals(f, continuing, &mut stored, true);
         let modified: BTreeSet<Handle<naga::LocalVariable>> = stored.iter().map(|(l, _)| *l).collect();
-        let counters: BTreeSet<Handle<naga::LocalVariable>> = modified.iter().copied().filter(|l| !stored.iter().any(|(x, cont)| x == l && !cont) && Self::counter_step(f, continuing, *l)).collect();
+        let counters: BTreeMap<Handle<naga::LocalVariable>, u32> = modified.iter().copied().filter(|l| !stored.iter().any(|(x, cont)| x == l && !cont)).filter_map(|l| Self::counter_step(f, continuing, l).map(|k| (l, k))).collect();
+        let head = Self::head_exit(f, body);
         let loop_key = format!("{}:{:p}", self.frames[fr].ctx, s as *const Statement);
         let entry_uni = self.ctrl_uni;
         let entry_env = self.env.clone();
@@ -2032,11 +2075,12 @@ impl<'m> An<'m> {
         let run = |an: &mut An<'m>, head_uni: bool, assume: &Sets, carried: bool| -> (bool, Sets) {
             an.loop_stores.push((BTreeSet::new(), BTreeSet::new()));
             let mut uniform_counters = Vec::new();
+            let mut strided: Vec<(Handle<naga::LocalVariable>, Var, u32, Lin)> = Vec::new();
             for l in &modified {
                 let key = an.local_key(fr, *l);
                 let (ei, eu) = entry_env.get(&(id, *l)).map_or((false, false), |e| an.info(e));
                 let (inv, uni) = (ei && !assume.1.contains(&key), eu && head_uni && !assume.0.contains(&key));
-                if counters.contains(l) {
+                if let Some(&k) = counters.get(l) {
                     let entry = entry_env.get(&(id, *l)).cloned();
                     let entry_ok = entry.as_ref().is_some_and(|e| an.info(e).1);
                     // (The counter is uniform when it enters uniform and every
@@ -2046,10 +2090,56 @@ impl<'m> An<'m> {
                     if let (Var::Dig(i), true) = (d, head_uni && entry_ok) {
                         uniform_counters.push(i);
                     }
-                    an.env.insert((id, *l), Abs::Lin(Lin::var(d, Poly::konst(1))));
+                    // THE STRIDE: a counter that enters as a form e and steps
+                    // by k is e + k * d, d the pass, when the loop's exit test
+                    // bounds it so that no step wraps (checked below, once
+                    // every counter is in place); else d, any u32.
+                    let stride = match &entry {
+                        Some(Abs::Lin(e)) if head.is_some() => Some(e.add(&Lin::var(d, Poly::konst(i128::from(k))))),
+                        _ => None,
+                    };
+                    match stride {
+                        Some(form) => {
+                            strided.push((*l, d, k, form.clone()));
+                            an.env.insert((id, *l), Abs::Lin(form));
+                        }
+                        None => {
+                            an.env.insert((id, *l), Abs::Lin(Lin::var(d, Poly::konst(1))));
+                        }
+                    }
                 } else {
                     let v = an.other(inv, uni, false);
                     an.env.insert((id, *l), v);
+                }
+            }
+            // No step wraps: under the exit test's facts (the pass goes on),
+            // each strided counter plus its step stays within u32. The
+            // leading emits run first (they record nothing: `head_exit`);
+            // the walk of the body recomputes them.
+            if !strided.is_empty() {
+                let mut held = false;
+                let pure = head.as_ref().is_some_and(|(emits, _, _)| emits.iter().all(|st| match st {
+                    Statement::Call { function, .. } => an.pure_fn(*function),
+                    _ => true,
+                }));
+                if let (Some((emits, cond, goes_on)), true) = (&head, pure) {
+                    for st in emits {
+                        an.stmt(fr, st);
+                    }
+                    let facts = match an.eval(fr, *cond) {
+                        Abs::Cond(c) => Self::facts_of(&c, *goes_on),
+                        _ => Vec::new(),
+                    };
+                    let all = [an.facts.clone(), facts].concat();
+                    held = strided.iter().all(|(_, _, k, form)| {
+                        let (lo, hi) = an.range(&form.add(&Lin::konst(Poly::konst(i128::from(*k)))), &all);
+                        lo >= 0 && hi <= U32_MAX
+                    });
+                }
+                if !held {
+                    for (l, d, _, _) in &strided {
+                        an.env.insert((id, *l), Abs::Lin(Lin::var(*d, Poly::konst(1))));
+                    }
                 }
             }
             let (su, si) = (an.ctrl_uni, an.ctrl_inv);
@@ -2947,6 +3037,25 @@ mod tests {
         proved(&wg("    for (var k = 0u; k < 4u; k = k + 1u) {\n        t[lid.x] = phi[gid.x + k];\n        workgroupBarrier();\n        h[gid.x] = h[gid.x] + t[15u - lid.x];\n        workgroupBarrier();\n    }"), &c);
         let sg = format!("{PRE}@compute @workgroup_size(16, 1, 1)\nfn main(@builtin(global_invocation_id) gid: vec3<u32>) {{\n    var v = phi[gid.x];\n    if (gid.x < 3u) {{ v = subgroupAdd(v); }}\n    h[gid.x] = v;\n}}\n");
         assert_eq!(rule(&sg, &c), "subgroup_operation_in_nonuniform_control");
+    }
+
+    /// A strided preload (nluca's Sonnet kernels, 2026-10-15): `for (t = 0;
+    /// t < 64; t += 16) { w[t + lid.x] = ...; }` with 16 threads writes each
+    /// element once; the counter is its start plus 16 per pass, so the two
+    /// writes of two threads meet only at one thread and one pass. Proved,
+    /// with the bound behind a pure call as the kingdom renders it
+    /// (`min(lit_u32(64u), ...)`). Still races: a step of 1, a step of 8
+    /// (thread 8's pass 0 is thread 0's pass 1), and a step of 16 whose
+    /// bound lets the counter wrap (then it is any u32).
+    #[test]
+    fn a_strided_preload_is_proved_and_its_overlapping_twins_are_refused() {
+        let c = one_d();
+        let wg = |head: &str| format!("{PRE}var<workgroup> t: array<f32, 64>;\nfn lit_u32(x: u32) -> u32 {{ return x; }}\n@compute @workgroup_size(16, 1, 1)\nfn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>) {{\n    for (var k = 0u; {head}) {{\n        if ((k + lid.x) < 64u) {{ t[(k + lid.x) & 63u] = phi[k + lid.x]; }}\n    }}\n    workgroupBarrier();\n    h[gid.x] = t[(lid.x * 3u) & 63u];\n}}\n");
+        proved(&wg("k < 64u; k = k + 16u"), &c);
+        proved(&wg("k < min(lit_u32(64u), 16777216u); k = k + 16u"), &c);
+        assert_eq!(rule(&wg("k < 64u; k = k + 1u"), &c), "workgroup_memory_race");
+        assert_eq!(rule(&wg("k < 64u; k = k + 8u"), &c), "workgroup_memory_race");
+        assert_eq!(rule(&wg("k < 4294967295u; k = k + 16u"), &c), "workgroup_memory_race");
     }
 
     /// Uniformity through loops (2026-10-14): a local is non-uniform at a

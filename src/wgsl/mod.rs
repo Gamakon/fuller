@@ -38,6 +38,7 @@ pub mod params;
 pub mod reader;
 pub mod rewrites;
 pub mod rules;
+pub mod sections;
 pub mod rules_more;
 pub mod render;
 pub mod safe_karva;
