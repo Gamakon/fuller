@@ -4,14 +4,14 @@
 
 **Objective.** Two things, on the GPU, from one set of kernels: (1) UltraDim's UDV23 vector search for a batch of queries, only the top-k per query coming back; (2) **the trellis ingest optimisation ("settle")** on streamed microbatches — Andrew's biggest problem: data loaded through the trellis is queryable at once, but settling it (the HNSW-like edge building that follows) takes ages on the CPU. Both are today CPU code in `ultradimdb` and `lib/trellis`. The WGSL that does this does not exist. **The task is not to write it: it is to evolve it with our tools** — fuller (the kingdom, the harness, the safety layer, `wgsl_tune`) and phylu (the evolution engine, `wgsl_fit`).
 
-**Approach.** Capture the CPU search's inputs and the output of each of its stages on real query batches; turn each stage into a fuller problem whose oracle is the captured output; let the model write candidate kernels from each problem's contract, the harness judge them against the captured data, and phylu evolve the correct ones for speed. One problem per kernel, composed afterwards.
+**Approach.** Capture the CPU code's inputs and the output of each of its stages — ingest windows first, then search batches; turn each stage into a fuller problem whose oracle is the captured output; let the model write candidate kernels from each problem's contract (Sonnet, then Opus, then Fable as fitness plateaus), the harness judge them against the captured data, and phylu evolve the correct ones for speed. One problem per kernel, composed afterwards. Every kernel is built by evolution; only the machinery (section 5) is written by hand.
 
 **What makes this feasible (measured).**
 - Model-written seeds, judged by data and evolved: on nluca tonight every gain began with a model kernel or a model rewrite and was improved by rules and section crossover (0.83-0.89x the shipped kernel's time at four of five widths, paired). Sonnet-written Gram kernels were correct 38 times in 40.
 - Evolution from random genes with input/output data alone does not work: six random-start Gram runs (up to 180 generations) and the sketch start found no correct kernel, because the fitness had no slope (a near-miss scored like nonsense).
 - **Search has a slope where Gram had none**: recall@k against the CPU's answers is a number between 0 and 1, and every stage has a checkable intermediate output.
 
-**Status.** Design. Nothing built. The CPU code is the reference and the oracle; it is not a competitor, and its timing is the last step, not the first (Andrew, 2026-10-15).
+**Status (2026-10-15).** Design, to be discussed with Andrew before any build. Nothing built. The CPU code is the reference and the oracle; it is not a competitor, and its timing is the last step, not the first (Andrew). Priority: ingest first (section 7).
 
 ---
 
@@ -102,7 +102,7 @@ Each captured batch is a case directory, raw little-endian files named by type i
 
 ## 4. The problems: one per kernel, each against its captured stage
 
-Each kernel is evolved against the CAPTURED output of the stage before it, so the five evolve independently and in parallel, and compose afterwards.
+Each kernel is evolved against the CAPTURED output of the stage before it, so the ten problems evolve independently (one at a time on the one GPU) and compose afterwards.
 
 | problem | inputs (captured) | oracle (captured) | correctness test | fitness slope |
 |---|---|---|---|---|
@@ -178,7 +178,7 @@ Everything below is machinery: it lets evolution build the kernels. "Step" is th
 
 | step | expectation | risk |
 |---|---|---|
-| 1. capture ingest streams (CPU, no GPU): consecutive windows of `ingest_window` per seed, from an empty index to a mature one, at the production window (default 10,000 rows, `template_ops.rs:344`), with every phase's output | streams for 3 family sizes x both substrates | the GPU layout of section 2c must match exactly |
+| 1. capture ingest streams (CPU, no GPU): consecutive windows of `ingest_window` per seed, from an empty index to a mature one, at the production window (default 10,000 rows, `template_ops.rs:345`), with every phase's output | streams of `chembl_500k_30m` (sparse, D_proj 2,048) and `dbpedia_990k_wt_d128` (dense, D_proj 128), plus a small family (`dbpedia_50k_wt_d128`) whose cases fit the 10-minute rule | the GPU layout of section 2c must match exactly |
 | 2. harness: stream cases (state carried across windows), list- and set-overlap norms, reference-free problems | unit-tested on the harness's CPU executor | — |
 | 3. the deterministic ingest kernels, exact oracles: I2 spread prune, I5 advance + resolve, I3 seat, I4 commit | data-parallel and exact: model seeds often correct, as on nluca | I3 and I4 need integer atomics and their safety proof |
 | 4. kingdom extensions: loops until a condition, workgroup heaps, a global hash set, atomics, wider strided loops, workgroup index arrays, the 64-bit hash in u32 pairs | random genes and model seeds read and pass the safety layer | the cooperative-heap race proof is the hardest safety work |
@@ -187,9 +187,12 @@ Everything below is machinery: it lets evolution build the kernels. "Step" is th
 | 7. search: K1 projection, K4 rerank + top-k, K3 pool, composed with K2 | end-to-end recall@k at the agreed bar on `MeasureRecall` | divergence compounding across stages |
 | 8. last: the CPU comparison | — | — |
 
-## 8. Decisions needed from Andrew
+## 8. Decisions for the discussion with Andrew
 
-- The recall bar for the GPU path, or bit identity with the CPU.
-- Families and sizes to capture first (d_proj, rows, sparse or dense), and the production batch shapes for timing.
-- Where capture lives in `ultradimdb` (a feature flag or an RPC), since it touches the server's search and ingest paths.
-- Production microbatch (window) sizes and stream rates, for the ingest timing shapes.
+Answered from qdrant's code and docs (section 2d): the families to capture first, the window (10,000 by default), the quality bars (recall@10 >= 0.9964; the g9 rule of no more than 0.002 below the CPU's recall; the R7 probe gate), and where capture lives by precedent (an opt-in knob on the RPC). Open:
+
+- **Approve Q1 and Q3** (capture on the settle request and the GPU-layout flattener, both qdrant code), and who builds them: ultradim-QandA in qdrant, or the fuller session.
+- **Confirm the g9 tolerance** (0.002 recall below the CPU) as the bar for every GPU ingest kernel.
+- **The plateau length P** for the model ladder (proposed 5 generations).
+- **Production stream rates and microbatch sizes** (not documented in qdrant), for the ingest timing shapes.
+- **The first problem**: I2 spread prune (proposed: exact oracle, smallest, data-parallel).
