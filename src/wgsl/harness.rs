@@ -1941,13 +1941,15 @@ pub trait Executor {
 
 /// The runs of a plan one timing submission holds: every dispatch takes two
 /// of a query set's timestamps (at most 4,096 a submission) and every run its
-/// own buffers (at most 256 MiB a submission). With 8,192 timestamps and
-/// 512 MiB, nluca's 100,000-row case batched 34 runs and the device failed to
-/// create a resource (ResourceCreationFailed, 2026-10-15).
+/// own buffers (at most 32 MiB a submission). Measured on nluca, 2026-10-15:
+/// 34 batched runs at 100,000 rows (8,192 timestamps, 512 MiB) failed with
+/// ResourceCreationFailed; 28 (256 MiB) left the wait for the GPU blocked at
+/// 0 % CPU (killed after 180 s); 4 (32 MiB) ran; 32 runs at 10,000 rows
+/// (about 22 MB) ran. Why the larger submissions block is not yet known.
 pub fn runs_a_submission(plan: &Plan) -> usize {
     let dispatches = plan.run.iter().filter(|c| matches!(c, Cmd::Dispatch { .. })).count().max(1);
     let bytes: u64 = plan.buffers.iter().filter(|b| !b.resident).map(|b| b.bytes).sum::<u64>() + plan.outputs.iter().sum::<u64>();
-    (2048 / dispatches).min((256u64 << 20).checked_div(bytes).unwrap_or(u64::MAX).min(u64::from(u32::MAX)) as usize).max(1)
+    (2048 / dispatches).min((32u64 << 20).checked_div(bytes).unwrap_or(u64::MAX).min(u64::from(u32::MAX)) as usize).max(1)
 }
 
 /// A host model of a kernel: one invocation over the bound buffers.
