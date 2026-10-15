@@ -1883,6 +1883,27 @@ pub trait Executor {
     /// Run several cases in one submission and one read-back, every plan
     /// batch-safe; each case's run, and the submission's compute ms.
     fn run_batch(&self, k: &Self::Kernel, items: &[(&Plan, &CaseData, &Self::Staged)]) -> Result<(Vec<RunOut>, f64), String>;
+    /// One case run `n` times for timing, nothing read: the summed GPU ms
+    /// and the longest compute ms a run (the staged slow gate's measure).
+    /// One run after another unless the executor batches them.
+    fn run_repeat(&self, k: &Self::Kernel, plan: &Plan, data: &CaseData, staged: &Self::Staged, n: usize) -> Result<(f64, f64), String> {
+        let (mut gpu, mut longest) = (0.0f64, 0.0f64);
+        for _ in 0..n {
+            let r = self.run(k, plan, data, staged, false)?;
+            gpu += r.gpu_ms;
+            longest = longest.max(r.compute_ms);
+        }
+        Ok((gpu, longest))
+    }
+}
+
+/// The runs of a plan one timing submission holds: every dispatch takes two
+/// of a query set's timestamps (wgpu's query set holds 8,192) and every run
+/// its own buffers (a budget of 512 MiB a submission).
+pub fn runs_a_submission(plan: &Plan) -> usize {
+    let dispatches = plan.run.iter().filter(|c| matches!(c, Cmd::Dispatch { .. })).count().max(1);
+    let bytes: u64 = plan.buffers.iter().filter(|b| !b.resident).map(|b| b.bytes).sum::<u64>() + plan.outputs.iter().sum::<u64>();
+    (4096 / dispatches).min((512u64 << 20).checked_div(bytes).unwrap_or(u64::MAX).min(u64::from(u32::MAX)) as usize).max(1)
 }
 
 /// A host model of a kernel: one invocation over the bound buffers.
@@ -2608,6 +2629,35 @@ mod device {
             Ok(RunOut { outputs: if read { l.outputs } else { Vec::new() }, gpu_ms: l.gpu_ms, compute_ms, wall_ms: t.elapsed().as_secs_f64() * 1e3 })
         }
 
+        /// THE TIMING REPEAT IN ONE SUBMISSION: up to `runs_a_submission`
+        /// runs of a batch-safe plan encoded together and submitted once,
+        /// nothing read; each run's own dispatches timed as `run` times them.
+        /// A run alone pays its submission, wait and timestamp read-back
+        /// (nluca at 10,000 rows: 0.5 ms of GPU in about 7 ms of wall).
+        fn run_repeat(&self, k: &DeviceKernel, plan: &Plan, data: &CaseData, staged: &DeviceStaged, n: usize) -> Result<(f64, f64), String> {
+            let (mut gpu, mut longest) = (0.0f64, 0.0f64);
+            if !plan.batch_safe {
+                for _ in 0..n {
+                    let r = self.run(k, plan, data, staged, false)?;
+                    gpu += r.gpu_ms;
+                    longest = longest.max(r.compute_ms);
+                }
+                return Ok((gpu, longest));
+            }
+            let per = super::runs_a_submission(plan);
+            let mut left = n;
+            while left > 0 {
+                let m = left.min(per);
+                let mut live: Vec<Live> = (0..m).map(|_| Live { plan, data, bufs: (0..plan.buffers.len()).map(|_| None).collect(), outputs: plan.outputs.iter().map(|n| vec![0u8; *n as usize]).collect(), gpu_ms: 0.0 }).collect();
+                let staged_all: Vec<&DeviceStaged> = vec![staged; m];
+                let compute_ms = self.exec(k, &mut live, &staged_all, true, false)?;
+                gpu += live.iter().map(|l| l.gpu_ms).sum::<f64>();
+                longest = longest.max(compute_ms / m as f64);
+                left -= m;
+            }
+            Ok((gpu, longest))
+        }
+
         fn run_batch(&self, k: &DeviceKernel, items: &[(&Plan, &CaseData, &DeviceStaged)]) -> Result<(Vec<RunOut>, f64), String> {
             if items.iter().any(|(p, _, _)| !p.batch_safe) {
                 return Err("a plan in the batch is not batch-safe".into());
@@ -2867,13 +2917,7 @@ impl<'e, E: Executor> Harness<'e, E> {
     /// staged slow gate's measure).
     fn sample(&self, k: &E::Kernel, plan: &Plan, i: usize) -> Result<(f64, f64), String> {
         let s = &self.timing[i];
-        let (mut gpu, mut longest) = (0.0f64, 0.0f64);
-        for _ in 0..self.sample_runs.get()[i] {
-            let r = self.exec.run(k, plan, &s.data, &s.staged, false)?;
-            gpu += r.gpu_ms;
-            longest = longest.max(r.compute_ms);
-        }
-        Ok((gpu, longest))
+        self.exec.run_repeat(k, plan, &s.data, &s.staged, self.sample_runs.get()[i])
     }
 
     /// THE PAIRED SPEED-UP of a kernel at timing shape `i`: `timing_rounds`
