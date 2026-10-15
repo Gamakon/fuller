@@ -1,8 +1,8 @@
-# Design: evolving the GPU trellis search with fuller and phylu (2026-10-15)
+# Design: evolving the GPU trellis — search and streamed ingest — with fuller and phylu (2026-10-15)
 
 ## Context
 
-**Objective.** Run UltraDim's UDV23 vector search — today CPU code in `ultradimdb` and `lib/trellis` — entirely on the GPU for a batch of queries, with only the top-k results per query coming back. The WGSL that does this does not exist. **The task is not to write it: it is to evolve it with our tools** — fuller (the kingdom, the harness, the safety layer, `wgsl_tune`) and phylu (the evolution engine, `wgsl_fit`).
+**Objective.** Two things, on the GPU, from one set of kernels: (1) UltraDim's UDV23 vector search for a batch of queries, only the top-k per query coming back; (2) **the trellis ingest optimisation ("settle")** on streamed microbatches — Andrew's biggest problem: data loaded through the trellis is queryable at once, but settling it (the HNSW-like edge building that follows) takes ages on the CPU. Both are today CPU code in `ultradimdb` and `lib/trellis`. The WGSL that does this does not exist. **The task is not to write it: it is to evolve it with our tools** — fuller (the kingdom, the harness, the safety layer, `wgsl_tune`) and phylu (the evolution engine, `wgsl_fit`).
 
 **Approach.** Capture the CPU search's inputs and the output of each of its stages on real query batches; turn each stage into a fuller problem whose oracle is the captured output; let the model write candidate kernels from each problem's contract, the harness judge them against the captured data, and phylu evolve the correct ones for speed. One problem per kernel, composed afterwards.
 
@@ -14,6 +14,8 @@
 **Status.** Design. Nothing built. The CPU code is the reference and the oracle; it is not a competitor, and its timing is the last step, not the first (Andrew, 2026-10-15).
 
 ---
+
+**The finding that makes ingest a GPU problem, not a rewrite (read in the code).** Settle is already window-parallel by design: every row of a window proposes its edges against the state frozen at the window's start, in parallel; the streaming posture already commits with the order-independent deferred re-prune (`streaming_posture`, `deferred_reprune: true`); and a slot's contest is a maximum with ties by row id, so it is order-independent too. And a row's proposal IS a search (walk + beam, with its own key as the query). So the search kernels serve ingest, and the window is the microbatch.
 
 ## 1. The search, as it runs today (read in the code)
 
@@ -43,12 +45,48 @@ Resident per family: template field centres (shared), proximity exits (shared), 
 | K3 pool | query | merge S lists, max key cosine per row |
 | K4 rerank + top-k | query | exact cosine of the pooled rows (dense gather, or sparse sorted-merge one thread a candidate); top-k in the kernel, ties by id ascending |
 
+## 2b. Streamed ingest ("settle"), as it runs today (read in the code)
+
+Entry: the upsert path calls `trellis_template_stream_ingest` (`ultradimdb/src/template_ops.rs:255`) after rows and per-seed keys commit; under the engine's write lock, every full window that has accumulated is streamed through each seed's `SettleStream::ingest_window` (`lib/trellis/src/template.rs:1907`). Posture: `streaming_posture` (route ef 8, 48 expansions, row budget 64, frozen slots NOT skipped; beam ef 64, 128 expansions; m 13, m_max 16, the noise floor; 2 extra leaf homes; deferred re-prune; rolling correction at a lag when set).
+
+| phase | code | work | parallel today |
+|---|---|---|---|
+| propose | `ingest_window`, per row of the window | walk (`walk`, insert posture) with the row's key as the query; beam over the record edges from the walk's rows; drop self and sub-floor; `spread_prune` to m (greedy: keep a candidate only if it is closer to the row than to every kept one: a pairwise dot product per candidate pair) | yes (rayon), against the frozen state |
+| seat | `seat_record`, `plant_leaf` | the routed cell's floating slot picked by a hash of (row, seed); append the row to that slot's leaves and contenders; resolve the slot (best contest score, ties by row id); plant the row as a leaf in 2 runner-up cells | no: serial over the window |
+| commit edges | `commit_edges_batch` (deferred) | each row's forward list set; each chosen neighbour gets the reverse edge appended; every list grown past m_max re-pruned once by `spread_prune` | appends serial; re-prunes parallel |
+| advance | `advance_cell_window`, every one of the 55,900 cells | window counter + re-resolve every claimed slot's contest | no |
+| rolling correction | `correction_pass_inner`, the rows of window w - lag | re-propose and re-commit against the state as it now stands ("roughly doubles per-window ingest cost") | proposals yes |
+| telemetry (sampled, off in streaming) | `ingest_window` | brute top-10 over the arrived set for 1 row in 500 | — |
+
+The code's own measurements name the walls: correction 51 % of the settle wall, `commit_edges` 33 % before the deferred re-prune, an unclaimed formula slot 33.6 µs to materialise (the insert walk does not skip them).
+
+## 2c. The target architecture for ingest
+
+**The GPU holds the master copy of each seed's index while a family is resident; a microbatch (window) is one submission; the CPU reads back a serving snapshot only to persist** (`save_serving_state`'s content). Layouts chosen so every update is a parallel write, not a re-pack:
+
+- **edges**: fixed stride, n x (m_max + spill) slots per row with a per-row count (integer atomics exist in WGSL), so a reverse edge is an atomic append and no CSR is ever rebuilt;
+- **seating**: per-cell leaf arrays and per-slot contender arrays at fixed capacity with counts, a holder per slot, the claimed-slot list per cell;
+- **keys**: appended per window (the arrivals' per-seed keys are already computed on upsert);
+- **the template**: as in section 2, plus the rotated-disk master pattern (`master_disk`, `ARENA_SLOTS` x d), because the insert walk materialises unclaimed slots (a dot-and-add on the GPU).
+
+| kernel | workgroup per | does | reuses |
+|---|---|---|---|
+| I1 propose | (window row, seed) | walk (insert posture) + beam with the row's key, drop self and sub-floor | K2b + K2a of the search |
+| I2 spread prune | (window row, seed) | sort the scored candidates, the pairwise dots, the greedy keep to m, the fill rule | — (also I4) |
+| I3 seat | (window row, seed) | hashed slot pick (the 64-bit mix in u32 pairs), atomic appends to leaves and contenders, the 2 extra homes | the hash helper |
+| I4 commit | (dirty neighbour row, seed) | forward lists written; reverse edges atomically appended; every list past m_max re-pruned once | I2 |
+| I5 advance + resolve | cell, then claimed slot | window counter; each slot's contest as a max-reduction with ties by row id | — |
+| I6 rolling correction | (row of window w - lag, seed) | I1 + I2 + I4 against the current state | I1, I2, I4 |
+
+All seeds of a family run in the same submission (their streams are independent). Order independence is the contract: proposals read only the frozen state; appends land in any order and every consumer sorts or reduces by (score, row id) before use, exactly the CPU's tie rules.
+
 ## 3. The data: capture is the first build
 
 The CPU search becomes the oracle by recording it. In `template_knn_batch_queries`, behind a capture switch, for real query batches on small families (so a case fits a GPU binding and runs in seconds):
 
 - **inputs**: the queries (sparse pairs or dense rows), the knobs (`walk_ef`, `walk_expansions`, `walk_row_budget`, `beam_ef`, `beam_expansions`, `take_per_seed`, `cousin_cells`, `active_seeds`), and the resident structures flattened to the GPU layout of section 2 (template field, proximity exits, seating CSR, keys, edge CSR, liveness, substrate);
 - **every stage's output**: the projected keys per (query, seed); the walk's rows; the beam's scored rows; the taken rows; the pooled set per query; the final top-k with exact cosines.
+- **ingest, in `ingest_window`, per window and seed**: the frozen state at the window's start (seating, edges, keys, counters), the window's rows, and after each phase: each row's walk rows, scored candidates and chosen (pruned) list; the seating after seat; the edges after commit; the slot holders after advance; and for the rolling correction, the corrected rows' new lists. A stream of consecutive windows from an empty index to a mature one is the timing and quality case: microbatch sizes as production streams them.
 
 Each captured batch is a case directory, raw little-endian files named by type in binding order, as nluca's cases are (`noctiluca-dev/results/nluca/cases`, its README the model). Capture families at several sizes and both substrates; timing cases at production batch shapes (queries per batch, seeds, d_proj, rows).
 
@@ -63,6 +101,13 @@ Each kernel is evolved against the CAPTURED output of the stage before it, so th
 | `trellis_walk` (K2b) | keys, template field, prox exits, seating CSR, knobs | walk rows | recall of the captured rows | recall 0..1 |
 | `trellis_pool` (K3) | per-seed taken lists | pooled set | exact set and scores | small kernel |
 | `trellis_rerank` (K4) | pooled rows, substrate, queries | top-k ids and cosines | top-k recall, cosines within float tolerance | recall, then error |
+| `trellis_propose` (I1) | frozen state, window rows | each row's scored candidates | recall of the captured candidates | recall 0..1 |
+| `trellis_prune` (I2) | scored candidates, keys | chosen lists | exact (deterministic given the set) | list overlap |
+| `trellis_seat` (I3) | seating, routes | seating after seat | exact (hashes and appends, sorted) | per-cell overlap |
+| `trellis_commit` (I4) | edges, chosen lists, keys | edges after commit | exact given the set (the deferred form) | per-row list overlap |
+| `trellis_advance` (I5) | seating, counters | holders after advance | exact (max with ties by id) | per-slot agreement |
+
+**The end-to-end ingest fitness is the index's quality, not its bytes**: after streaming a captured sequence of windows through the composed kernels, serving recall@10 against the brute-force oracle (the engine's `MeasureRecall`), compared with the CPU-settled index on the same stream. The code itself already rules this way for its own changes ("an A/B quality gate decides, never an equivalence claim", `SettleParams::deferred_reprune`).
 
 **Divergence policy.** A GPU dot product sums in a different order, so a walk can take a different path and still be as good. The pass rule for K2 is recall at least the agreed bar against the captured rows (not bit identity); the end-to-end gate is recall@k of the composed pipeline against the oracles the engine already builds (`MeasureRecall`, `CreateSparseOracles`).
 
@@ -78,6 +123,8 @@ Each kernel is evolved against the CAPTURED output of the stage before it, so th
 | **kingdom: workgroup arrays of indices** | "a workgroup array of u32.index has no safe spelling" | 11 kmeans refusals; candidate lists in workgroup memory |
 | **a 64-bit hash in u32 pairs, proved bit-identical** | a WGSL helper the kingdom can name | `rand_exits` mixes in 64 bits; WGSL has no u64 |
 | **multi-kernel composition** | harness: a plan that dispatches several problems' winners in one submission | the end-to-end pipeline once each kernel is evolved |
+| **stateful streams as cases** | harness: a case that is a sequence of windows, the kernels' output state carried into the next window (nluca's ping-pong across 64 steps is the existing pattern), judged at checkpoints | ingest evolves over a stream, not a single call |
+| **kingdom: integer atomics** (`atomicAdd` on u32 counters) and the safety proof that appends to a shared array are disjoint by their returned index | safe grammar + safety layer | reverse-edge and leaf appends |
 
 Already in place and used as-is: paired fitness, timing bands for any number of timing cases, `budget.gpu_wait_ms`, the GPU test token, `wgsl_tune` (convert, step-2 gate, evolve, paired choice, report), section crossover (2.3x more correct children than typed), model seeding under a problem with the problem's own kernels kept and its own cost bound.
 
@@ -98,10 +145,14 @@ Already in place and used as-is: paired fitness, timing bands for any number of 
 | 4. kingdom extensions for K2 | random genes and model seeds both read and pass the safety layer | proving cooperative heap access race-free is the hardest safety work |
 | 5. K2a beam, then K2b walk | the beam first: smaller, with a CPU lockstep already proved bit-identical (`trellis/tests/g9_gpu_correction_parity.rs`); recall climbs over generations | **the open risk: nobody has shown model + evolution produce a correct stateful search kernel this size** |
 | 6. compose, end-to-end recall@k | at the agreed bar on `MeasureRecall` | divergence compounding across stages |
-| 7. last: the CPU comparison | — | — |
+| 7. ingest: I2 prune, I5 advance, I3 seat, I4 commit (deterministic, exact oracles), then I1 propose (= the evolved K2) and I6 correction | the exact kernels evolve like nluca's; I1 reuses K2 | atomics and their safety proof |
+| 8. ingest end to end on a captured stream | the GPU-settled index's serving recall@10 at the CPU-settled index's on the same stream | quality drift over many windows |
+| 9. last: the CPU comparison | — | — |
 
 ## 8. Decisions needed from Andrew
 
 - The recall bar for the GPU path, or bit identity with the CPU.
 - Families and sizes to capture first (d_proj, rows, sparse or dense), and the production batch shapes for timing.
-- Where capture lives in `ultradimdb` (a feature flag or an RPC), since it touches the server's search path.
+- Where capture lives in `ultradimdb` (a feature flag or an RPC), since it touches the server's search and ingest paths.
+- Whether ingest or search goes first. The kernels are shared (I1 is K2), so the capture serves both; the deterministic ingest kernels (prune, seat, commit, advance) have exact oracles and are the likelier early wins.
+- Production microbatch (window) sizes and stream rates, for the ingest timing shapes.
