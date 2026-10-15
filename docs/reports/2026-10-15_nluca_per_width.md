@@ -37,4 +37,14 @@ Both came the same way: a model rewrite made the leap (f1: Sonnet's "better memo
 ## The open options, measured
 
 - **f16** (emulated by pack2x16float rounding; fuller's wgpu 0.20 front end has no f16): every variant fails nluca's oracle at the first case (tolerance 1.0e-4): the codebook stored in f16 2.24e-3, the sums in f16 8.13e-4, all arithmetic in f16 3.24e-2. The f16 codebook (real f16 storage) is 0.990 [0.988, 0.993] of f1's time at 1M rows: 1 %. f16 does not pay for nluca.
-- **Stable section ids (homologous section crossover, fuller `sections`)**: on nluca's 26 kernels, 1,000 children an operator, seeds 1-3, children new, clean and legal: section 994 / 994 / 982, Karva one-point 6 / 7 / 6, two-point 27 / 28 / 28, gene 15 / 13 / 7. Karva children are copies of a parent 61-82 % of the time. Whether section children are correct, and whether runs with them beat runs without, is the E3 experiment running now (typed against section crossover, three seeds, 1M rows).
+- **Stable section ids (homologous section crossover, fuller `sections`)**: on nluca's 26 kernels, 1,000 children an operator, seeds 1-3, children new, clean and legal: section 994 / 994 / 982, Karva one-point 6 / 7 / 6, two-point 27 / 28 / 28, gene 15 / 13 / 7. Karva children are copies of a parent 61-82 % of the time.
+- **E3 in a run: section crossover against typed crossover** (nluca, 1,048,576 rows, 10 generations, seeds 1-3, everything else identical; 01:41Z to 03:03Z). **Section crossover made correct children 2.3x as often and the faster best kernel at every seed.**
+
+| seed | typed: crossover children correct | typed: best, paired ratio (3 datasets) | section: crossover children correct | section: best, paired ratio |
+|---|---|---|---|---|
+| 1 | 8 of 108 | 0.858 / 0.866 / 0.865 | 13 of 93 | 0.819 / 0.819 / 0.827 |
+| 2 | 3 of 92 | 0.859 / 0.864 / 0.843 | 14 of 87 | 0.855 / 0.839 / 0.834 |
+| 3 | 8 of 84 | 0.826 / 0.838 / 0.832 | 15 of 96 | 0.830 / 0.825 / 0.805 |
+| all | 19 of 284 (6.7 %, Wilson 95 % [4.3, 10.2]) | mean 0.850 | 42 of 276 (15.2 %, [11.5, 19.9]) | mean 0.828 |
+
+Crossover children: the crossover pairs, champion mating and the duplicate re-cross, all three made by the arm's crossover. Section seed 1's best (0.82) is itself a section child (champion mating, gen 3). The best kernel of the night, section seed 3, is 0.805-0.830 of shipped's time at 1M rows, against f1's 0.866. Section crossover is now `wgsl_tune`'s default (phylu 5a469806).
