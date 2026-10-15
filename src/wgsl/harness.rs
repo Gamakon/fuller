@@ -1927,7 +1927,10 @@ pub trait Executor {
     fn run_batch(&self, k: &Self::Kernel, items: &[(&Plan, &CaseData, &Self::Staged)]) -> Result<(Vec<RunOut>, f64), String>;
     /// One case run `n` times for timing, nothing read: the summed GPU ms
     /// and the longest compute ms a run (the staged slow gate's measure).
-    /// One run after another unless the executor batches them.
+    /// One run after another. (Batching the runs into one submission,
+    /// fuller 6c6179a-b2f119c, left the wait for the GPU blocked at 0 % CPU on
+    /// nluca at 10,000 and 100,000 rows, 2026-10-15, cause not found: taken
+    /// out until it is.)
     fn run_repeat(&self, k: &Self::Kernel, plan: &Plan, data: &CaseData, staged: &Self::Staged, n: usize) -> Result<(f64, f64), String> {
         let (mut gpu, mut longest) = (0.0f64, 0.0f64);
         for _ in 0..n {
@@ -1939,18 +1942,6 @@ pub trait Executor {
     }
 }
 
-/// The runs of a plan one timing submission holds: every dispatch takes two
-/// of a query set's timestamps (at most 4,096 a submission) and every run its
-/// own buffers (at most 32 MiB a submission). Measured on nluca, 2026-10-15:
-/// 34 batched runs at 100,000 rows (8,192 timestamps, 512 MiB) failed with
-/// ResourceCreationFailed; 28 (256 MiB) left the wait for the GPU blocked at
-/// 0 % CPU (killed after 180 s); 4 (32 MiB) ran; 32 runs at 10,000 rows
-/// (about 22 MB) ran. Why the larger submissions block is not yet known.
-pub fn runs_a_submission(plan: &Plan) -> usize {
-    let dispatches = plan.run.iter().filter(|c| matches!(c, Cmd::Dispatch { .. })).count().max(1);
-    let bytes: u64 = plan.buffers.iter().filter(|b| !b.resident).map(|b| b.bytes).sum::<u64>() + plan.outputs.iter().sum::<u64>();
-    (2048 / dispatches).min((32u64 << 20).checked_div(bytes).unwrap_or(u64::MAX).min(u64::from(u32::MAX)) as usize).max(1)
-}
 
 /// A host model of a kernel: one invocation over the bound buffers.
 pub trait HostKernel {
@@ -2673,44 +2664,6 @@ mod device {
             let compute_ms = self.exec(k, &mut live, &[staged], false, read)?;
             let l = live.pop().expect("one item");
             Ok(RunOut { outputs: if read { l.outputs } else { Vec::new() }, gpu_ms: l.gpu_ms, compute_ms, wall_ms: t.elapsed().as_secs_f64() * 1e3 })
-        }
-
-        /// THE TIMING REPEAT IN ONE SUBMISSION: up to `runs_a_submission`
-        /// runs of a batch-safe plan encoded together and submitted once,
-        /// nothing read; each run's own dispatches timed as `run` times them.
-        /// A run alone pays its submission, wait and timestamp read-back
-        /// (nluca at 10,000 rows: 0.5 ms of GPU in about 7 ms of wall).
-        fn run_repeat(&self, k: &DeviceKernel, plan: &Plan, data: &CaseData, staged: &DeviceStaged, n: usize) -> Result<(f64, f64), String> {
-            let (mut gpu, mut longest) = (0.0f64, 0.0f64);
-            // A plan with a sync before its end splits its work into
-            // submissions on purpose (kmeans's bands keep each under the
-            // runaway guard); batching drops syncs, so it runs alone.
-            let inner_sync = plan.run.iter().rev().skip_while(|c| !matches!(c, Cmd::Sync)).skip(1).any(|c| matches!(c, Cmd::Sync));
-            if !plan.batch_safe || inner_sync || n <= 1 {
-                for _ in 0..n {
-                    let r = self.run(k, plan, data, staged, false)?;
-                    gpu += r.gpu_ms;
-                    longest = longest.max(r.compute_ms);
-                }
-                return Ok((gpu, longest));
-            }
-            // The first run alone measures the run, so a submission holds
-            // about a second of work at most.
-            let first = self.run(k, plan, data, staged, false)?;
-            gpu += first.gpu_ms;
-            longest = longest.max(first.compute_ms);
-            let per = super::runs_a_submission(plan).min(((1000.0 / first.compute_ms.max(1e-3)) as usize).max(1));
-            let mut left = n - 1;
-            while left > 0 {
-                let m = left.min(per);
-                let mut live: Vec<Live> = (0..m).map(|_| Live { plan, data, bufs: (0..plan.buffers.len()).map(|_| None).collect(), outputs: plan.outputs.iter().map(|n| vec![0u8; *n as usize]).collect(), gpu_ms: 0.0 }).collect();
-                let staged_all: Vec<&DeviceStaged> = vec![staged; m];
-                let compute_ms = self.exec(k, &mut live, &staged_all, true, false)?;
-                gpu += live.iter().map(|l| l.gpu_ms).sum::<f64>();
-                longest = longest.max(compute_ms / m as f64);
-                left -= m;
-            }
-            Ok((gpu, longest))
         }
 
         fn run_batch(&self, k: &DeviceKernel, items: &[(&Plan, &CaseData, &DeviceStaged)]) -> Result<(Vec<RunOut>, f64), String> {
