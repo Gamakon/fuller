@@ -907,6 +907,48 @@ fn hundred_ms() -> f64 {
     100.0
 }
 
+/// THE THREE SPEED BANDS of a problem's timing cases (by index): with three
+/// or fewer the cases in their manifest order (a band with none takes the
+/// nearest: one case fills all three, two give the first, the first, the
+/// second); with more, the cases sorted by work (a stable sort) and cut into
+/// three runs of nearly equal size, smallest work first.
+pub fn timing_bands(works: &[f64]) -> [Vec<usize>; 3] {
+    let n = works.len();
+    let order: Vec<usize> = if n > 3 {
+        let mut o: Vec<usize> = (0..n).collect();
+        o.sort_by(|a, b| works[*a].total_cmp(&works[*b]));
+        o
+    } else {
+        (0..n).collect()
+    };
+    std::array::from_fn(|b| {
+        let (lo, hi) = (b * n / 3, (b + 1) * n / 3);
+        if lo < hi {
+            order[lo..hi].to_vec()
+        } else {
+            vec![order[lo.min(n.saturating_sub(1))]]
+        }
+    })
+}
+
+/// Each band's largest value of a per-case list.
+fn band_max(bands: &[Vec<usize>; 3], per: &[f64]) -> [f64; 3] {
+    std::array::from_fn(|b| bands[b].iter().filter_map(|&i| per.get(i)).copied().fold(0.0, f64::max))
+}
+
+/// Each band's geometric mean of a per-case list of speed-ups.
+fn band_geomean(bands: &[Vec<usize>; 3], per: &[f64]) -> [f64; 3] {
+    std::array::from_fn(|b| {
+        let v: Vec<f64> = bands[b].iter().filter_map(|&i| per.get(i)).copied().collect();
+        match v.as_slice() {
+            [] => 0.0,
+            // One case: its own value, bit for bit (three cases score as before).
+            [x] => *x,
+            _ => (v.iter().map(|x| x.ln()).sum::<f64>() / v.len() as f64).exp(),
+        }
+    })
+}
+
 /// HOW A SPEED-UP BECOMES A FITNESS COLUMN (in [0, 1], 0 best).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -1232,8 +1274,8 @@ impl Problem {
         if self.suites.iter().filter(|x| x.spec.role == Role::Constraint).count() != 1 {
             return Err(format!("{name}: exactly one constraint suite"));
         }
-        if count(Role::Timing) != 3 {
-            return Err(format!("{name}: the timing suites hold {} cases; the fitness has three timing columns", count(Role::Timing)));
+        if count(Role::Timing) == 0 {
+            return Err(format!("{name}: no timing case; the fitness's three speed columns are bands of the timing cases (`timing_bands`)"));
         }
         match (s.budget.deadline_factor, s.budget.deadline_floor_ms) {
             (None, None) => {}
@@ -2715,6 +2757,12 @@ pub struct Harness<'e, E: Executor> {
     /// The reference kernel's compute ms at the timing shapes, measured
     /// once (the slow limit).
     pub shipped_ms: [f64; 3],
+    /// THE THREE SPEED COLUMNS AS BANDS of the timing cases (`timing_bands`):
+    /// each column the geometric mean of its band's paired speed-ups; the
+    /// band arrays (`shipped_ms`, the shipped GPU ms) its largest shape's.
+    pub bands: [Vec<usize>; 3],
+    /// The reference kernel's compute ms at each timing case.
+    pub shape_ms: Vec<f64>,
     pub shipped_gpu_ms: std::cell::Cell<[f64; 3]>,
     pub shipped_min_gpu_ms: std::cell::Cell<[f64; 3]>,
     /// The reference kernel, compiled once: every timing round runs it
@@ -2722,7 +2770,7 @@ pub struct Harness<'e, E: Executor> {
     pub reference_kernel: (E::Kernel, KernelInfo),
     /// Runs a timing sample a shape: the least count whose reference GPU
     /// time reaches `min_sample_ms` (`time_shipped`).
-    pub sample_runs: std::cell::Cell<[usize; 3]>,
+    pub sample_runs: std::cell::RefCell<Vec<usize>>,
     /// The constraint suite is staged (`SuiteSpec::staged`).
     pub staged: bool,
     /// One whole evaluation of the reference kernel, measured when the
@@ -2792,10 +2840,12 @@ impl<'e, E: Executor> Harness<'e, E> {
         // one warm-up run at the first, so the limit comes from this device.
         let run_at = |s: &Staged<E::Staged>, read: bool| -> Result<RunOut, String> { exec.run(&shipped, &problem.plan(&s.case, limit, Some(&info))?, &s.data, &s.staged, read) };
         run_at(&timing[0], true)?;
-        let mut shipped_ms = [0.0f64; 3];
-        for (k, s) in timing.iter().enumerate() {
-            shipped_ms[k] = run_at(s, true)?.compute_ms;
+        let mut shape_ms = Vec::with_capacity(timing.len());
+        for s in &timing {
+            shape_ms.push(run_at(s, true)?.compute_ms);
         }
+        let bands = timing_bands(&timing.iter().map(|s| s.work).collect::<Vec<_>>());
+        let shipped_ms = band_max(&bands, &shape_ms);
         let round_budget_ms = problem.spec.budget.round_ms;
         let worst = shipped_ms.iter().copied().fold(0.0, f64::max);
         if slow_limit_ms(round_budget_ms, &shipped_ms) < worst {
@@ -2807,6 +2857,7 @@ impl<'e, E: Executor> Harness<'e, E> {
         if staged {
             constraint.sort_by(|a, b| a.work.total_cmp(&b.work));
         }
+        let timing_n = timing.len();
         let mut h = Harness {
             timing_rounds: problem.spec.budget.timing_rounds,
             base_budget_ms: problem.spec.budget.base_ms,
@@ -2821,10 +2872,12 @@ impl<'e, E: Executor> Harness<'e, E> {
             accuracy,
             timing,
             shipped_ms,
+            bands,
+            shape_ms,
             shipped_gpu_ms: std::cell::Cell::new([0.0; 3]),
             shipped_min_gpu_ms: std::cell::Cell::new([f64::INFINITY; 3]),
             reference_kernel: (shipped, info),
-            sample_runs: std::cell::Cell::new([1; 3]),
+            sample_runs: std::cell::RefCell::new(vec![1; timing_n]),
             reference_eval_ms: None,
             reference_chunk_ms: Vec::new(),
         };
@@ -2880,9 +2933,9 @@ impl<'e, E: Executor> Harness<'e, E> {
     /// each shape at most the slow limit.
     pub fn gated_ms(&self) -> f64 {
         // A round is two samples of each kernel, a sample `sample_runs` runs.
-        let runs = self.sample_runs.get().iter().copied().max().unwrap_or(1) as f64;
-        let shipped = self.shipped_ms.iter().copied().fold(0.0, f64::max);
-        self.base_budget_ms + 3.0 * self.timing_rounds.max(1) as f64 * 2.0 * runs * (self.slow_limit_ms() + shipped)
+        let runs = self.sample_runs.borrow().iter().copied().max().unwrap_or(1) as f64;
+        let shipped = self.shape_ms.iter().copied().fold(0.0, f64::max);
+        self.base_budget_ms + self.timing.len() as f64 * self.timing_rounds.max(1) as f64 * 2.0 * runs * (self.slow_limit_ms() + shipped)
     }
 
     /// The reference kernel at the timing shapes: one warm-up, then the
@@ -2894,21 +2947,23 @@ impl<'e, E: Executor> Harness<'e, E> {
         let (k, info) = &self.reference_kernel;
         let run = |s: &Staged<E::Staged>| -> Result<RunOut, String> { self.exec.run(k, &self.problem.plan(&s.case, limit, Some(info))?, &s.data, &s.staged, false) };
         run(&self.timing[0])?;
-        let mut out = [0.0f64; 3];
+        let mut per = Vec::with_capacity(self.timing.len());
         for (i, s) in self.timing.iter().enumerate() {
             let mut v = Vec::with_capacity(self.timing_rounds.max(1));
             for _ in 0..self.timing_rounds.max(1) {
                 v.push(run(s)?.gpu_ms);
             }
-            out[i] = median(&mut v);
-            if out[i] <= 0.0 {
+            let m = median(&mut v);
+            if m <= 0.0 {
                 return Err(format!("the reference kernel timed at zero at shape {i}"));
             }
+            per.push(m);
         }
+        let out = band_max(&self.bands, &per);
         self.shipped_gpu_ms.set(out);
         self.shipped_min_gpu_ms.set(shipped_min(self.shipped_min_gpu_ms.get(), out));
         let least = self.problem.spec.budget.min_sample_ms;
-        self.sample_runs.set(out.map(|ms| ((least / ms).ceil() as usize).max(1)));
+        *self.sample_runs.borrow_mut() = per.iter().map(|ms| ((least / ms).ceil() as usize).max(1)).collect();
         Ok(out)
     }
 
@@ -2917,7 +2972,8 @@ impl<'e, E: Executor> Harness<'e, E> {
     /// staged slow gate's measure).
     fn sample(&self, k: &E::Kernel, plan: &Plan, i: usize) -> Result<(f64, f64), String> {
         let s = &self.timing[i];
-        self.exec.run_repeat(k, plan, &s.data, &s.staged, self.sample_runs.get()[i])
+        let n = self.sample_runs.borrow()[i];
+        self.exec.run_repeat(k, plan, &s.data, &s.staged, n)
     }
 
     /// THE PAIRED SPEED-UP of a kernel at timing shape `i`: `timing_rounds`
@@ -2970,12 +3026,13 @@ impl<'e, E: Executor> Harness<'e, E> {
     pub fn retime(&self, source: &str, columns: &[f64; 6]) -> Result<([f64; 3], [f64; 6], f64), String> {
         let limit = self.exec.binding_limit();
         let (k, info) = self.exec.compile(&self.problem, source)?;
-        let mut speedups = [0.0f64; 3];
-        for (i, s) in self.timing.iter().enumerate() {
+        let mut per = Vec::with_capacity(self.timing.len());
+        for s in &self.timing {
             let plan = self.problem.plan(&s.case, limit, Some(&info))?;
             let ref_plan = self.problem.plan(&s.case, limit, Some(&self.reference_kernel.1))?;
-            speedups[i] = self.paired_speedup(&k, &plan, &ref_plan, i, None)?.0;
+            per.push(self.paired_speedup(&k, &plan, &ref_plan, per.len(), None)?.0);
         }
+        let speedups = band_geomean(&self.bands, &per);
         let c = self.columns(speedups, [columns[3], columns[4], columns[5]]);
         Ok((speedups, c, truenorth(&c)))
     }
@@ -3126,15 +3183,15 @@ impl<'e, E: Executor> Harness<'e, E> {
             worst[sp] = worst[sp].max(if smax > 0.0 { v / smax } else { v });
         }
         let slacks: [f64; 3] = std::array::from_fn(|k| self.accuracy[k].first().map_or(2.0, |x| x.2));
-        let mut predicted_ms = [0.0f64; 3];
-        for (i, s) in self.timing.iter().enumerate() {
+        let mut predicted_shape = Vec::with_capacity(self.timing.len());
+        for s in &self.timing {
             match gate(&meter, &format!("the timing shape {}", s.case.label), s.work, 0.0, limit_ms, f64::INFINITY) {
-                Ok(p) => predicted_ms[i] = p,
-                Err(e) => return Fitness { predicted_ms, ..infeasible(passed, f64::INFINITY, closeness::columns(&per_case, passed, &outs), e, t, &meter, &split) },
+                Ok(p) => predicted_shape.push(p),
+                Err(e) => return Fitness { predicted_ms: band_max(&self.bands, &predicted_shape), ..infeasible(passed, f64::INFINITY, closeness::columns(&per_case, passed, &outs), e, t, &meter, &split) },
             }
         }
-        let mut speedups = [0.0f64; 3];
-        let mut measured_ms = [0.0f64; 3];
+        let predicted_ms = band_max(&self.bands, &predicted_shape);
+        let (mut per, mut walls) = (Vec::with_capacity(self.timing.len()), Vec::with_capacity(self.timing.len()));
         let slow = if self.staged { Some(limit_ms) } else { None };
         for (i, s) in self.timing.iter().enumerate() {
             let fail = |e: String| Fitness { predicted_ms, ..infeasible(passed, f64::INFINITY, closeness::columns(&per_case, passed, &outs), e, t, &meter, &split) };
@@ -3148,14 +3205,15 @@ impl<'e, E: Executor> Harness<'e, E> {
             };
             match self.paired_speedup(&k, &plan, &ref_plan, i, slow) {
                 Ok((x, wall, cand_ms)) => {
-                    speedups[i] = x;
-                    measured_ms[i] = wall;
+                    per.push(x);
+                    walls.push(wall);
                     split.timing_cand += cand_ms;
                 }
-                Err(e) if e.starts_with("slow:") => return fail(format!("{e} (predicted {:.1} s)", predicted_ms[i] / 1e3)),
+                Err(e) if e.starts_with("slow:") => return fail(format!("{e} (predicted {:.1} s)", predicted_shape[i] / 1e3)),
                 Err(e) => return fail(format!("{e} at {}", s.case.label)),
             }
         }
+        let (speedups, measured_ms) = (band_geomean(&self.bands, &per), band_max(&self.bands, &walls));
         let [et, ev, ex] = worst;
         let columns = self.columns(speedups, [(et / slacks[0]).clamp(0.0, 1.0), (ev / slacks[1]).clamp(0.0, 1.0), (ex / slacks[2]).clamp(0.0, 1.0)]);
         Fitness { feasible: true, passed, distance: 0.0, closeness: [0.0; closeness::N], closeness_hff: 0.0, columns, speedups, hff: truenorth(&columns), detail: String::new(), seconds: t.elapsed().as_secs_f64(), predicted_ms, rate_per_g: meter.rate_per_g(), floor_ms: meter.floor_ms, measured_ms, split: Split { total: t.elapsed().as_secs_f64() * 1e3, ..split } }
@@ -3375,6 +3433,23 @@ pub fn f64_bytes(v: &[f64]) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The speed bands: three or fewer cases in manifest order (the nearest
+    /// filling an empty band), more sorted by work and cut into thirds; a
+    /// band's speed-up the geometric mean of its cases', one case exactly.
+    #[test]
+    fn timing_cases_fill_the_three_speed_bands() {
+        assert_eq!(timing_bands(&[5.0]), [vec![0], vec![0], vec![0]]);
+        assert_eq!(timing_bands(&[5.0, 1.0]), [vec![0], vec![0], vec![1]]);
+        assert_eq!(timing_bands(&[9.0, 1.0, 5.0]), [vec![0], vec![1], vec![2]]);
+        assert_eq!(timing_bands(&[9.0, 1.0, 5.0, 3.0, 7.0]), [vec![1], vec![3, 2], vec![4, 0]]);
+        assert_eq!(timing_bands(&[1.0; 7]), [vec![0, 1], vec![2, 3], vec![4, 5, 6]]);
+        let bands = timing_bands(&[9.0, 1.0, 5.0, 3.0, 7.0]);
+        let g = band_geomean(&bands, &[2.0, 1.1, 4.0, 1.0, 8.0]);
+        assert_eq!(g[0].to_bits(), 1.1f64.to_bits());
+        assert!((g[1] - 2.0).abs() < 1e-12 && (g[2] - 4.0).abs() < 1e-12, "{g:?}");
+        assert_eq!(band_max(&bands, &[2.0, 1.1, 4.0, 1.0, 8.0]), [1.1, 4.0, 8.0]);
+    }
     use crate::wgsl::gram::{self, AccuracyPair, Batch, DriverStep, Kind, Which, SHIPPED};
     use crate::wgsl::render::Grid;
 
