@@ -3,7 +3,7 @@
 ## Context
 
 **Objective.** A wgpu (WGSL) version of trellis's CPU settle, built by evolution:
-24 Opus kernels written from the CPU code, then evolved on correctness and speed,
+32 kernels written from the CPU code by four models (16 Sonnet, 8 Opus, 4 Codex, 4 Fable), then evolved on correctness and speed,
 as the nluca and k-means kernels were, until a GPU settle exists that matches the
 CPU's quality and beats its wall time.
 
@@ -14,7 +14,7 @@ compute: it runs once per row at arrival and again in the rolling correction, wh
 the code measured at 51 % of the settle wall. Problem 1 is that phase, `trellis_propose`.
 Problem 2 (seat, commit, advance) follows once problem 1 has a correct kernel.
 
-**Unique feature.** Nobody hand-writes the GPU kernel. The model writes 24 different
+**Unique feature.** Nobody hand-writes the GPU kernel. The models write 32 different
 first attempts from the CPU source; the harness judges them on recorded CPU output;
 phylu's crossover, rules and rewrites make the variation; the model only repairs.
 
@@ -76,44 +76,65 @@ claimed slots pushed and its leaves gathered on its first visit only.
 keys, 1,000-row windows, settle seed 42. Cases: windows 5, 25 and 49 (5,000, 25,000
 and 49,000 rows arrived: a thin, a middling and a mature index); timing on the same.
 
-## 2. The fitness
+## 2. The fitness (the HFF)
 
-- **Validity, every row, a constraint**: ids in the arrived set and not `r`, distinct,
-  similarity within 2·d·eps of the f64 dot of the two keys (the CPU's own f32 dot, four
-  lanes and a tail, is), at or above the floor, at most 13; the routed cell in range.
-- **The routed cell, a constraint**: equal to the CPU's for at least 0.95 of the rows
-  (bar set before measuring, like recall's). The route decides the seating, and a
-  kernel that skips the walk (brute-force nearest neighbours, a constant route) fails
-  here; the walk's 64 rows are also an output, their recall against the CPU's walk
-  rows reported (a column, not a gate, until T4's data sets one).
-- **Held-out cases**: a second settle seed (43) at the same windows, never used for
-  selection, judges the champion only (no case specialisation).
-- **Agreement with the CPU, the slope**: per row, the share of the CPU's chosen ids the
-  kernel chose; mean over the window's rows; and the routed cell's agreement. The g9
-  precedent: GPU rounding flips near ties and reroutes a search, so bit identity is
-  not the bar; a kernel passes at mean recall ≥ 0.95 of the CPU's lists (stated before
-  measuring; S1-T4 reports the distribution so the bar can be set from data).
-- **Speed** (M2 adds it; the harness's reference today is a WGSL kernel timed beside
-  the candidate): the kernel's GPU time for the window against the CPU's measured wall for
-  the same proposals on this machine (rayon, all cores, median of 5), recorded in the
-  case. There is no shipped GPU kernel, so the CPU time is the reference.
-- **The end-to-end gate (S1-T7)**: the best kernel's lists fed through the CPU's seat
-  and commit over a whole stream; serving recall@10 of that index against the
-  CPU-settled index on the same stream, at most 0.002 below it (the g9 rule).
+Recall against the exact answer is the measure, as the code's own oracle measures it:
+`ingest_window`'s sampled telemetry (`template.rs:1968-1997`) takes the brute-force
+top 10 by key cosine over the arrived set and grades the beam's 10 best-scored rows
+against it (`routing_recall10`). Here it is computed for EVERY row of the window, the
+truth written by M1. A kernel outputs, per row: the chosen list (13 ids and
+similarities, a count), the beam's 10 best-scored rows, and the routed cell with the
+next two.
 
-## 3. Seeding: 24 Opus kernels
+**Constraints (feasible or not):**
 
-`wgsl_fit --seed-from model --seed-model 24` with the seeding model named Opus (today
-fixed to Sonnet in phylu `examples/wgsl_fit.rs:2384`). Each call gets the contract
-(task, bindings, layouts, the CPU code verbatim) and one of 24 design strategies, plus
-a seed phrase and "be unlike the obvious kernel". The `claude` CLI has no temperature
-setting, so the spread comes from the strategies and the similarity filter (a seed
-whose shared sections with an accepted seed cover 80 % of the smaller is replaced).
-Strategies include: a thread per row with private heaps; a workgroup per row with
-workgroup heaps and a parallel frontier; a lock-step round of all rows (the g9
-lockstep form); a bitonic sort for the prune; a two-kernel-free single pass with the
-beam's frontier in workgroup memory; subgroup reductions for the dots; a bounded
-fixed-iteration beam; walk and beam fused or split by phase; dots vectorised by vec4.
+| # | constraint | bar |
+|---|---|---|
+| F1 | it compiles, runs inside the GPU wait budget, writes every row | all |
+| F2 | validity: chosen ids in the arrived set, not the row, distinct, similarity within 2·d·eps of the f64 dot, at or above the floor, at most 13 | every row |
+| F3 | recall@10 (the beam's 10 against the exact top 10), mean over rows | at least the CPU's on the same window minus 0.002 (the g9 rule), every case |
+| F4 | routed cell equal to the CPU's | at least 0.95 of the rows (a kernel that skips the walk fails here) |
+
+**The HFF columns of a feasible kernel**, each in [0, 1] with 0 best, the angle
+θ = acos(1 − mean(x²)) over them (phylu's `hff.wgsl`, as for every problem so far):
+
+| column | value |
+|---|---|
+| x1 recall | 1 − recall@10, mean over the three cases' rows |
+| x2 faithfulness | 1 − the mean share of the CPU's chosen ids the kernel chose |
+| x3 route | 1 − the share of rows routed to the CPU's cell |
+| x4, x5, x6 speed | `ranked`: 1 / (1 + s), s the CPU's wall over the kernel's GPU time, at the thin, middling and mature window (the CPU 0.5; ten times faster 0.09) |
+
+Recall enters both as a constraint (never worse than the CPU) and as a column (better
+recall ranks higher). Faithfulness is a column, not a gate: a kernel that finds the
+true neighbours better than the CPU's lists is not penalised beyond its share of θ.
+
+**An infeasible kernel** is ranked inside the infeasible band by the closeness angle
+over the same quantities where it has them (the share of valid rows, recall@10, the
+route share, the list share), so a kernel that is half right climbs toward feasible.
+
+**Held out**: settle seed 43 at the same windows judges the champion only.
+
+**The end-to-end gate (S1-T7)**: the champion's lists fed through the CPU's seat,
+commit and rolling correction over the whole 50,000-row stream; serving recall@10
+(500 held-out queries, exact truth, the engine's protocol) of that index at most
+0.002 below the CPU-settled index on the same stream.
+
+## 3. Seeding: 32 kernels from four models
+
+`wgsl_fit --seed-from model --seed-models sonnet:16,opus:8,codex:4,fable:4` (Andrew,
+2026-10-16): 32 calls, each with the contract (task, bindings, layouts, the CPU code
+verbatim, the exact semantics above) and one of 32 design strategies, plus a seed
+phrase and "be unlike the obvious kernel". A declined or duplicate seed is replaced
+by a call to the same model, so the mix holds. The `claude` CLI has no temperature
+setting, so the spread comes from the four models, the strategies and the similarity
+filter (a seed whose shared sections with an accepted seed cover 80 % of the smaller
+is replaced). Strategies include: a thread per row with private heaps; a workgroup per
+row with workgroup heaps and a parallel frontier; a lock-step round of all rows (the
+g9 lockstep form); a bitonic sort for the prune; the beam's frontier in workgroup
+memory; subgroup reductions for the dots; a bounded fixed-iteration beam; walk and
+beam fused or split; dots vectorised by vec4. The ledger records each seed's model, so
+the report can say which model's kernels survived.
 
 ## 4. Evolution
 
@@ -128,16 +149,16 @@ repairs (arm B, the fastest on both its seeds), three seeds. One GPU process at 
 | M1 | qdrant `ultradimdb/examples/settle_capture.rs` (approval: Andrew; there both `trellis` and `noise_floor` are reachable) | runs the reference shape through `SettleStream` in the production posture; at windows 5, 25, 49 writes the frozen state flattened, the window's rows, the CPU's outputs and its timed wall; no library change | T2 |
 | M2 | fuller harness | an output kind `neighbours` (validity and recall above) and a speed reference from the case (`reference_ms`) when the problem has no shipped kernel | T2 |
 | M3 | fuller `problems/trellis_propose` | `problem.toml`, `contract.md` (with the CPU code), `safety.contract` (dispatch bounds), the cases | T4 |
-| M4 | phylu `wgsl_fit` | the seeding model as a flag (`--seed-model-name opus`) | T4 |
-| M5 | fuller kingdom | whatever the 24 seeds show the safe reader lacks (each one our bug: helpers with conditional returns are known, 91 of the corpus) | T5 |
+| M4 | phylu `wgsl_fit` | the seeding models and their counts (`--seed-models sonnet:16,opus:8,codex:4,fable:4`) | T4 |
+| M5 | fuller kingdom | whatever the 32 seeds show the safe reader lacks (each one our bug: helpers with conditional returns are known, 91 of the corpus) | T5 |
 
 ## 6. Expectations, stated before any run
 
 | measurement | expected |
 |---|---|
-| of 24 Opus kernels: parse; validate and compile on Metal | 20–24; 16–22 |
-| read into the safe kingdom (the largest risk: heaps, hash emulation, nested helpers) | 2–10 before T5 |
-| valid on every row; mean recall ≥ 0.95 | 4–12; 2–8 |
+| of 32 kernels: parse; validate and compile on Metal | 26–32; 20–30 |
+| read into the safe kingdom (the largest risk: heaps, hash emulation, nested helpers) | 3–12 before T5 |
+| valid on every row (F2); feasible (F1–F4) | 5–16; 2–8 |
 | faster than the CPU's wall, generation 0 | 0–3 |
 | after 20 generations: best speed-up over the CPU at equal recall | 2–10x |
 | the CPU's propose wall for one 1,000-row window (all cores) | 0.1–1 s; measured by M1 before any budget is set |
@@ -150,7 +171,7 @@ repairs (arm B, the fastest on both its seeds), three seeds. One GPU process at 
 2. M2 and M3 with tests (the CPU's own lists pass at recall 1.0; a list with a wrong id
    fails validity; a shuffled list passes).
 3. M4.
-4. The 24 seeds, no evolution: the ladder counts against section 6.
+4. The 32 seeds, no evolution: the ladder counts against section 6.
 5. M5 until at least 8 seeds enter the kingdom.
 6. Evolution, three seeds; report against section 6.
 7. The end-to-end gate.
@@ -162,7 +183,7 @@ repairs (arm B, the fastest on both its seeds), three seeds. One GPU process at 
   k-means; a settle kernel has data-dependent loops, private heaps and 64-bit hash
   arithmetic in u32 pairs. Each refusal is our bug to fix (M5), and T5 may be long.
 - A thread-per-row walk keeps heaps and seen-sets of hundreds of entries: private memory
-  pressure on Metal; workgroup-per-row designs avoid it. The 24 strategies cover both.
+  pressure on Metal; workgroup-per-row designs avoid it. The 32 strategies cover both.
 - The fitness rewards agreement with one algorithm's output, and a different graph
   builder can serve as well: the end-to-end gate measures serving, the route and list
   agreement measure faithfulness; both are reported, and a faster kernel that serves
