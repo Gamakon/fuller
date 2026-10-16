@@ -108,6 +108,9 @@ struct Ctx<'a> {
     /// 2 + k, the loop runs bound - 2 times).
     stored_seen: std::collections::BTreeSet<String>,
     counter_offsets: HashMap<String, f32>,
+    /// A loop counter's EXPRESSION entry value (a grid-stride loop,
+    /// `for (var i = lid.x; i < n; i += s)`): its reads are `e + k`.
+    counter_exprs: HashMap<String, Tree>,
     /// A statement-inlined helper's pointer parameters: `arg.p` to the
     /// caller's register for the local `&x` it was given (row, kind).
     pointer_args: HashMap<String, (String, char)>,
@@ -1909,6 +1912,9 @@ impl<'a> Ctx<'a> {
     /// A tile counter's read: its index, plus the loop's entry value when
     /// the loop did not start at zero.
     fn offset_counter(&self, local: &str, k: Tree) -> Result<Tree, String> {
+        if let Some(e) = self.counter_exprs.get(local) {
+            return Ok(Tree::new("index.add", ty(self, "u32.index")?, vec![e.clone(), k]));
+        }
         match self.counter_offsets.get(local) {
             Some(&a) if a != 0.0 => {
                 let index = ty(self, "u32.index")?;
@@ -1954,7 +1960,8 @@ impl<'a> Ctx<'a> {
             }
             if let Some(local) = local_name(&t.name) {
                 if self.item_counter.as_deref() == Some(local.as_str()) {
-                    return Ok(Tree::new("safe.counter_index", ty(self, "u32.index")?, vec![Tree::new("safe.counter", ty(self, "u32.counter")?, vec![])]));
+                    let k = Tree::new("safe.counter_index", ty(self, "u32.index")?, vec![Tree::new("safe.counter", ty(self, "u32.counter")?, vec![])]);
+                    return self.offset_counter(&local, k);
                 }
                 if self.tile_counter.as_deref() == Some(local.as_str()) {
                     let k = Tree::new("safe.tile_index", ty(self, "u32.index")?, vec![Tree::new("safe.tile_counter", ty(self, "u32.tcounter")?, vec![])]);
@@ -4441,9 +4448,26 @@ impl<'a> Ctx<'a> {
         // same eight entries), so it is refused by name. Only an item loop
         // that continues the items an earlier loop left counts on from where
         // that loop stopped.
-        if entry.is_none() && !(item_loop && self.used_counters.contains(&counter)) {
-            return Err(format!("a loop whose counter {counter} enters with a value our reader does not know (only a literal or zero has a spelling: a loop over a thread's strided range is written `for (var i = 0u; i < n; i += s) {{ let j = i + lid; if (j < n) {{ ... }} }}`)"));
-        }
+        // THE GRID-STRIDE LOOP (2026-10-16: 68 of the 1,798 saved model
+        // kernels): `for (var i = e; i < n; i += s) { body(i) }` with e a
+        // thread's expression (its ids, uniforms, literals: nothing the loop
+        // could change) is read as `for (k = 0; k < n; k += s) { if (e + k
+        // < n) { body(e + k) } }` — the same values in the same order, since
+        // e >= 0 makes e + k < n imply k < n — over rows that already exist,
+        // the loop's trip count uniform, the thread's part in its guard.
+        let grid_stride: Option<Tree> = if entry.is_none() && !(item_loop && self.used_counters.contains(&counter)) {
+            let e = self.axis_memo.get(&counter).map(|(t, _)| t.clone());
+            fn fixed(t: &Tree) -> bool {
+                !(t.name.starts_with("reg.") || t.name.starts_with("parr.") || t.name.starts_with("wg.") || t.name.starts_with("load.") || t.name.starts_with("safe.counter") || t.name.starts_with("safe.tile_")) && t.kids.iter().all(fixed)
+            }
+            match e {
+                Some(e) if fixed(&e) && !do_while && e.ty == ty(self, "u32.index")? => Some(e),
+                _ => return Err(format!("a loop whose counter {counter} enters with a value our reader does not know (a literal, zero, or a thread's expression of its ids, uniforms and literals has a spelling)")),
+            }
+        } else {
+            None
+        };
+        let entry = if grid_stride.is_some() { Some(0.0) } else { entry };
         let start = match entry {
             Some(v) => v,
             None if item_loop => 0.0,
@@ -4484,8 +4508,12 @@ impl<'a> Ctx<'a> {
         if do_while && (kind != "lit64" || entry.is_none()) {
             return Err(format!("a loop with `break if` whose bound is not a literal or whose counter's entry value our reader does not know ({counter})"));
         }
-        let exit = (kind == "lit64").then(|| literal_value(bound).map(|n| start + ((n - start) / step as f32).ceil() * step as f32)).flatten();
+        // (A grid-stride loop's exit value is the thread's own: no literal.)
+        let exit = (kind == "lit64" && grid_stride.is_none()).then(|| literal_value(bound).map(|n| start + ((n - start) / step as f32).ceil() * step as f32)).flatten();
         self.counter_offsets.insert(counter.clone(), start);
+        if let Some(e) = &grid_stride {
+            self.counter_exprs.insert(counter.clone(), e.clone());
+        }
         let saved = (self.item_counter.clone(), self.tile_counter.clone(), self.tile_counter2.clone(), self.tile_counter3.clone(), self.tile_counter4.clone());
         self.axis_memo.remove(&counter);
         if kind == "lit64" {
@@ -4518,7 +4546,18 @@ impl<'a> Ctx<'a> {
             self.tile_counter4 = saved.4.clone();
             return Err(if body_rung == "L1" { "the item loop breaks (a loop that breaks is a tile loop: its body holds no barrier)".into() } else { format!("a loop stepped by {step} that breaks (a loop that breaks steps by 1)") });
         }
-        let walk_rung = if breaks { format!("C{}", &body_rung[1..]) } else { body_rung.clone() };
+        if breaks && grid_stride.is_some() {
+            self.counter_exprs.remove(&counter);
+            self.item_counter = saved.0.clone();
+            self.tile_counter = saved.1.clone();
+            self.tile_counter2 = saved.2.clone();
+            self.tile_counter3 = saved.3.clone();
+            self.tile_counter4 = saved.4.clone();
+            return Err(format!("a grid-stride loop over {counter} that breaks"));
+        }
+        // A grid-stride body is guarded by the thread's own test: read at
+        // the conditional rung of its depth (no barrier under the guard).
+        let walk_rung = if breaks || grid_stride.is_some() { format!("C{}", &body_rung[1..]) } else { body_rung.clone() };
         if last_is_step {
             rest.pop();
         }
@@ -4552,6 +4591,7 @@ impl<'a> Ctx<'a> {
         // The counter's value after the loop: its literal exit, for a later
         // loop that does not set it again.
         self.counter_offsets.remove(&counter);
+        self.counter_exprs.remove(&counter);
         self.stored_seen.insert(counter.clone());
         match exit.filter(|_| !breaks) {
             Some(x) => {
@@ -4616,7 +4656,39 @@ impl<'a> Ctx<'a> {
             let unroll = Tree::literal("literal.unroll", ty(self, "u32.unroll")?, step as f32);
             return Ok(Some(Tree::new(UNROLLED_MAIN, st, vec![unroll, self.block(flat, &body_rung)?])));
         }
-        let block = self.block(body_stmts, &body_rung)?;
+        let block = match &grid_stride {
+            None => self.block(body_stmts, &body_rung)?,
+            Some(e) => {
+                // The guard: e + k < n, the counter k of this loop's depth.
+                let index = ty(self, "u32.index")?;
+                let k = if item_loop {
+                    Tree::new("safe.counter_index", index, vec![Tree::new("safe.counter", ty(self, "u32.counter")?, vec![])])
+                } else {
+                    let (ix, c, cty) = match depth {
+                        1 => ("safe.tile_index", "safe.tile_counter", "u32.tcounter"),
+                        2 => ("safe.tile_index2", "safe.tile_counter2", "u32.tcounter2"),
+                        3 => ("safe.tile_index3", "safe.tile_counter3", "u32.tcounter3"),
+                        _ => ("safe.tile_index4", "safe.tile_counter4", "u32.tcounter4"),
+                    };
+                    Tree::new(ix, index, vec![Tree::new(c, ty(self, cty)?, vec![])])
+                };
+                let n = match (bound_tree.name.as_str(), bound_tree.kids.as_slice()) {
+                    ("literal.lit64", []) => Tree::literal("literal.index", index, bound_tree.konst),
+                    ("bound.of_index", [x]) => x.clone(),
+                    // (A literal uniform is the index literal its text reads as.)
+                    ("bound.of_uniform" | "bound.x_of_uniform", [u]) => match (u.name.as_str(), u.kids.as_slice()) {
+                        ("uniform.of_lit", [l]) if l.name.starts_with("literal.") => Tree::literal("literal.index", index, l.konst),
+                        _ => Tree::new("index.of_uniform", index, vec![u.clone()]),
+                    },
+                    (other, _) => return Err(format!("a grid-stride loop bounded by {other} (a literal, an expression or a uniform bound has a guard)")),
+                };
+                let cond = Tree::new("compare.lt", ty(self, "bool.flag")?, vec![Tree::new("index.add", index, vec![e.clone(), k]), n]);
+                let crung = format!("C{}", &body_rung[1..]);
+                let inner = self.block(body_stmts, &crung)?;
+                let guard = Tree::new(&format!("stmt.if_{body_rung}"), self.stmt_ty(&body_rung)?, vec![cond, inner]);
+                self.block(vec![guard], &body_rung)?
+            }
+        };
         let wide = body_rung == "L1" || row_name.starts_with("loop.tilex_strided");
         let step_lit = if wide { Tree::literal("literal.lit4096", ty(self, "u32.lit4096")?, step as f32) } else { Tree::literal("literal.lit64", ty(self, "u32.lit64")?, step as f32) };
         let kids = if step != 1 { vec![bound_tree, step_lit, block] } else { vec![bound_tree, block] };
@@ -5084,7 +5156,7 @@ pub fn read_safe_literal(source: &str, kingdom: &WgslKingdom) -> Result<SafeRead
     // in every kernel's IR, so the text decides).
     let main_returns = source.find(&format!("fn {}(", role.entry)).map(|i| &source[i..]).and_then(|m| m.rfind('}').map(|j| &m[..j])).is_some_and(|m| m.trim_end().ends_with("return;"));
     let uniform_lanes = if role.uniform_struct.is_empty() { role.fields.iter().map(|f| f.name.clone()).collect() } else { Vec::new() };
-    let mut ctx = Ctx { kingdom, main_returns, per_kernel_rows: crate::wgsl::safe_karva::per_kernel_rows(kingdom, &role), uniform_var: role.uniform_var.clone(), uniform_lanes, duals: &duals, lets: &lets, roots: &roots, item_counter: None, tile_counter: None, tile_counter2: None, tile_counter3: None, tile_counter4: None, registers: BTreeMap::new(), counter_stores: Vec::new(), guard: None, tail: true, arrays: BTreeMap::new(), array_lens: BTreeMap::new(), parrs: BTreeMap::new(), grid, rows_x: grid_rows_x(source).then_some(true), notes: Vec::new(), helpers: &helpers, calls: &calls, arg_roots: &arg_roots, inline_args: None, row_arrays: BTreeMap::new(), used_counters: std::collections::BTreeSet::new(), local_lanes, axis_memo: BTreeMap::new(), loop_depth: 0, tile_bounds: BTreeMap::new(), naga_fn, module: &kernel.module, local_prefix: String::new(), inline_result: None, inline_values: None, bound_lets, stale_lets, let_regs: HashMap::new(), inlined: HashMap::new(), stored_seen: std::collections::BTreeSet::new(), counter_offsets: HashMap::new(), pointer_args: HashMap::new(), mode_full: source.lines().any(|l| l.trim() == "// mode full") };
+    let mut ctx = Ctx { kingdom, main_returns, per_kernel_rows: crate::wgsl::safe_karva::per_kernel_rows(kingdom, &role), uniform_var: role.uniform_var.clone(), uniform_lanes, duals: &duals, lets: &lets, roots: &roots, item_counter: None, tile_counter: None, tile_counter2: None, tile_counter3: None, tile_counter4: None, registers: BTreeMap::new(), counter_stores: Vec::new(), guard: None, tail: true, arrays: BTreeMap::new(), array_lens: BTreeMap::new(), parrs: BTreeMap::new(), grid, rows_x: grid_rows_x(source).then_some(true), notes: Vec::new(), helpers: &helpers, calls: &calls, arg_roots: &arg_roots, inline_args: None, row_arrays: BTreeMap::new(), used_counters: std::collections::BTreeSet::new(), local_lanes, axis_memo: BTreeMap::new(), loop_depth: 0, tile_bounds: BTreeMap::new(), naga_fn, module: &kernel.module, local_prefix: String::new(), inline_result: None, inline_values: None, bound_lets, stale_lets, let_regs: HashMap::new(), inlined: HashMap::new(), stored_seen: std::collections::BTreeSet::new(), counter_offsets: HashMap::new(), counter_exprs: HashMap::new(), pointer_args: HashMap::new(), mode_full: source.lines().any(|l| l.trim() == "// mode full") };
     // Register initialisations first, in root order. A local initialised to
     // its form's fallback (0.0, 0u, false, a zero vector) costs nothing: the
     // register's declaration already holds that value, and the register is
@@ -6056,6 +6128,36 @@ mod tests {
     /// tree read back renders the same text. A kernel the kingdom writes that
     /// the reader cannot read is a bug in our software (fit_random1: 64 of
     /// 104 random kernels did not read back). Failures are counted by reason.
+    /// THE GRID-STRIDE LOOP (2026-10-16): nluca's tuned f1 with its codebook
+    /// preload written thread-strided, `for (k = lidx; k < 1024u; k += 256u)`,
+    /// reads (as `for (k = 0; k < 1024; k += 256) { if (lidx + k < 1024)
+    /// { .. } }`), renders, reads back to the same tree, and the safety layer
+    /// proves it race-free under nluca's contract; a start read from memory
+    /// is still refused.
+    #[test]
+    fn a_grid_stride_loop_reads_as_a_guarded_loop_and_is_proved_race_free() {
+        let k = WgslKingdom::load_safe();
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("problems/nluca_step");
+        let f1 = std::fs::read_to_string(dir.join("tuned_f1.wgsl")).expect("tuned_f1.wgsl");
+        let old = "    for (k = 0u; k < 4u; k = k + 1u) {\n    wg_a[((((k * 256u) + lidx)) & 1023u)] = buffer_2_global[(((k * 256u) + lidx))];\n    }";
+        assert!(f1.contains(old), "the preload as f1 writes it");
+        let strided = f1.replace(old, "    for (k = lidx; k < 1024u; k = k + 256u) {\n    wg_a[(k & 1023u)] = buffer_2_global[k];\n    }");
+        let read = read_safe(&strided, &k).expect("the grid-stride kernel reads");
+        let sx = read.tree.to_sexpr();
+        assert!(sx.contains("stmt.if_") && sx.contains("compare.lt"), "the body is guarded: {sx}");
+        let text = crate::wgsl::safe_karva::render_tree_with(&read.tree, &k, &read.role).expect("renders").text;
+        let back = read_safe(&text, &k).expect("its text reads back");
+        assert!(back.tree == read.tree, "the rendered text reads back to the same tree: {:?}", crate::wgsl::render::first_difference(&read.tree, &back.tree));
+        let contract = crate::wgsl::safety::Contract::parse(&std::fs::read_to_string(dir.join("safety.contract")).expect("contract")).expect("parses");
+        let under = crate::wgsl::knob::Under { role: read.role.clone(), contract: Some(contract) };
+        crate::wgsl::knob::check_legal_under(&read.tree, &k, &under).expect("proved race-free and legal");
+        // A start read from memory is not a fixed expression the guard may
+        // re-read: refused by name.
+        let loaded = f1.replace(old, "    for (k = buffer_6_global[0u]; k < 1024u; k = k + 256u) {\n    wg_a[(k & 1023u)] = buffer_2_global[k];\n    }");
+        let e = read_safe(&loaded, &k).err().expect("a start read from memory is refused");
+        assert!(e.contains("enters with a value our reader does not know"), "{e}");
+    }
+
     #[test]
     fn random_sampler_trees_read_back_to_their_own_text() {
         let k = WgslKingdom::load_safe();
