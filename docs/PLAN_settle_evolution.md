@@ -76,49 +76,38 @@ claimed slots pushed and its leaves gathered on its first visit only.
 keys, 1,000-row windows, settle seed 42. Cases: windows 5, 25 and 49 (5,000, 25,000
 and 49,000 rows arrived: a thin, a middling and a mature index); timing on the same.
 
-## 2. The fitness (the HFF)
+## 2. The fitness: HFF TrueNorth (agreed with Andrew, 2026-10-16)
 
-Recall against the exact answer is the measure, as the code's own oracle measures it:
-`ingest_window`'s sampled telemetry (`template.rs:1968-1997`) takes the brute-force
-top 10 by key cosine over the arrived set and grades the beam's 10 best-scored rows
-against it (`routing_recall10`). Here it is computed for EVERY row of the window, the
-truth written by M1. A kernel outputs, per row: the chosen list (13 ids and
-similarities, a count), the beam's 10 best-scored rows, and the routed cell with the
-next two.
+HFF is Andrew's published method (GECCO 2026, `hff/papers/hff-gecco2026-poster_Submitted.tex`
+lines 103-135, 221-240) and its library is the only implementation used: the angle is
+`hff_core::core_functions::calculate_single_hyperspherical_fitness_f64_with_method(&x, m,
+false, None, "truenorth")`, normalisation off (the population of 32 is too small to
+normalise against), the pole named "truenorth" explicitly. We map every input into
+[0, 1], 0 best, by a fixed range before the call. NOTHING IS AVERAGED: every
+measurement is its own input; the angle is the only aggregation.
 
-**Constraints (feasible or not):**
+**The unit is the window**: one window's settle is one experiment producing one edge
+set, measured by counts against the CPU's counts on the same window. Windows: train
+(seed 42, windows 1 and 2), validation (seed 137, windows 1 and 2), extrapolation
+(seed 911, window 4).
 
-| # | constraint | bar |
+| input, per window | count over the whole window | to [0, 1], 0 best |
 |---|---|---|
-| F1 | it compiles, runs inside the GPU wait budget, writes every row | all |
-| F2 | validity: chosen ids in the arrived set, not the row, distinct, similarity within 2·d·eps of the f64 dot, at or above the floor, at most 13 | every row |
-| F3 | recall@10 (the beam's 10 against the exact top 10), mean over rows | at least the CPU's on the same window minus 0.002 (the g9 rule), every case |
-| F4 | routed cell equal to the CPU's | at least 0.95 of the rows (a kernel that skips the walk fails here) |
+| recall | M: exact top-10 neighbours the kernel's beam missed, all rows | min(1, M / (2 M_cpu)): none 0, the CPU's 0.5 |
+| faithfulness | D: the CPU's chosen edges the kernel did not choose | min(1, D / (2 D_g9)), D_g9 the drift GPU rounding alone gives (the g9 precedent) |
+| route | W: rows routed to another cell than the CPU's | min(1, W / (2 W_tol)), W_tol from the same rounding drift |
+| validity | B: broken entries (an id not arrived, the row itself, a repeat, a similarity off the dot product by over 2·d·eps, under the floor) | min(1, B / 10) |
+| speed, one input per timing sample | s = the CPU's propose ms / the kernel's GPU ms, one sample of the whole window | clamp(0.5 - log10(s) / 4, 0, 1): equal 0.5, 10x 0.25, 100x 0 |
 
-**The HFF columns of a feasible kernel**, each in [0, 1] with 0 best, the angle
-θ = acos(1 − mean(x²)) over them (phylu's `hff.wgsl`, as for every problem so far):
-
-| column | value |
-|---|---|
-| x1 recall | 1 − recall@10, mean over the three cases' rows |
-| x2 faithfulness | 1 − the mean share of the CPU's chosen ids the kernel chose |
-| x3 route | 1 − the share of rows routed to the CPU's cell |
-| x4, x5, x6 speed | `ranked`: 1 / (1 + s), s the CPU's wall over the kernel's GPU time, at the thin, middling and mature window (the CPU 0.5; ten times faster 0.09) |
-
-Recall enters both as a constraint (never worse than the CPU) and as a column (better
-recall ranks higher). Faithfulness is a column, not a gate: a kernel that finds the
-true neighbours better than the CPU's lists is not penalised beyond its share of θ.
-
-**An infeasible kernel** is ranked inside the infeasible band by the closeness angle
-over the same quantities where it has them (the share of valid rows, recall@10, the
-route share, the list share), so a kernel that is half right climbs toward feasible.
-
-**Held out**: settle seed 43 at the same windows judges the champion only.
+Five windows, four quality inputs each and three timing samples each: 35 inputs; the
+number of timing samples sets speed's share. A kernel that does not compile or run is
+infeasible (no inputs). The CDF-corrected angle I_{sin²θ}((m-1)/2, 1/2) is reported
+beside θ. D_g9 and W_tol are measured before T4 (the CPU algorithm run with GPU-rounded
+dots, as `lib/trellis/tests/g9_gpu_correction_parity.rs` does).
 
 **The end-to-end gate (S1-T7)**: the champion's lists fed through the CPU's seat,
-commit and rolling correction over the whole 50,000-row stream; serving recall@10
-(500 held-out queries, exact truth, the engine's protocol) of that index at most
-0.002 below the CPU-settled index on the same stream.
+commit and rolling correction over the whole stream; serving recall@10 (held-out
+queries, exact truth) at most 0.002 below the CPU-settled index on the same stream.
 
 ## 3. Seeding: 32 kernels from four models
 
