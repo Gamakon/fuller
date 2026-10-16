@@ -169,11 +169,13 @@ mod tests {
         }
     }
 
-    /// The thread-strided loop of nluca_s2's seed01 is refused by name, not
-    /// read from 0; the same staging written from 0 with the thread's offset
-    /// reads, and its rendering computes the source's values.
+    /// The thread-strided loop of nluca_s2's seed01 is never read from 0:
+    /// before 24a209e it was refused by name; since, it reads as the guarded
+    /// loop `for (k = 0; k < n; k += s) { if (e + k < n) { body(e + k) } }`
+    /// (the grid-stride reading), and its rendering computes the source's
+    /// values, as the same staging written from 0 with the thread's offset does.
     #[test]
-    fn a_loop_entered_at_a_threads_index_is_refused_not_read_from_zero() {
+    fn a_loop_entered_at_a_threads_index_reads_with_its_own_values() {
         let k = WgslKingdom::load_safe();
         let kernel = |stage: &str| {
             format!(
@@ -181,11 +183,7 @@ mod tests {
             )
         };
         let strided = kernel("    for (var i: u32 = li; i < 256u; i += 64u) {\n        cb[i] = src[i];\n    }");
-        let e = match crate::wgsl::safe_reader::read_safe(&strided, &k) {
-            Ok(_) => panic!("a loop entered at the thread's index was read"),
-            Err(e) => e,
-        };
-        assert!(e.contains("enters with a value our reader does not know"), "{e}");
+        assert_eq!(same_values(&strided, &k, &Trial { elements: 512, ..Trial::default() }).expect("the round trip"), RoundTrip::Same);
         let from_zero = kernel("    for (var i: u32 = 0u; i < 256u; i += 64u) {\n        let j = i + li;\n        if (j < 256u) {\n            cb[j] = src[j];\n        }\n    }");
         assert_eq!(same_values(&from_zero, &k, &Trial { elements: 512, ..Trial::default() }).expect("the round trip"), RoundTrip::Same);
     }
