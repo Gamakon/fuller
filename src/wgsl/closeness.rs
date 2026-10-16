@@ -206,17 +206,12 @@ pub fn columns(per_case: &[Option<[f64; N]>], passed: usize, outputs: &[Option<(
 /// 0.25), a known defect until understood.
 pub const LOGGED_ONLY: [&str; 1] = ["scale"];
 
-/// The HFF angle (`gram::truenorth`'s `acos(1 − mean(x²))`) over the columns
-/// but [`LOGGED_ONLY`]: an infeasible kernel's place in the band.
+/// The HFF angle over the columns but [`LOGGED_ONLY`]: an infeasible
+/// kernel's place in the band. [`crate::wgsl::gram::truenorth`], the hff
+/// library's TrueNorth angle over the columns clamped into [0, 1].
 pub fn angle(c: &[f64; N]) -> f64 {
     let kept: Vec<f64> = c.iter().zip(COLUMNS).filter(|(_, name)| !LOGGED_ONLY.contains(name)).map(|(x, _)| *x).collect();
-    let energy = kept.iter().map(|v| v.clamp(0.0, 1.0).powi(2)).sum::<f64>() / kept.len().max(1) as f64;
-    let cos = (1.0 - energy.min(1.0)).clamp(-1.0, 1.0);
-    if cos > 1.0 - 1.1920929e-7 {
-        0.0
-    } else {
-        cos.acos()
-    }
+    crate::wgsl::gram::truenorth(&kept)
 }
 
 /// Every column 1: a kernel with no output to compare (it did not compile,
@@ -307,5 +302,38 @@ mod tests {
         assert!(angle(&c) > base);
         assert_eq!(angle(&[0.0; N]), 0.0);
         assert!((angle(&WORST) - std::f64::consts::FRAC_PI_2).abs() < 1e-12);
+    }
+
+    /// The angle before it called the hff library, kept here only as the
+    /// reference the library's angle is certified against.
+    fn hand_angle(c: &[f64; N]) -> f64 {
+        let kept: Vec<f64> = c.iter().zip(COLUMNS).filter(|(_, name)| !LOGGED_ONLY.contains(name)).map(|(x, _)| *x).collect();
+        let energy = kept.iter().map(|v| v.clamp(0.0, 1.0).powi(2)).sum::<f64>() / kept.len().max(1) as f64;
+        let cos = (1.0 - energy.min(1.0)).clamp(-1.0, 1.0);
+        if cos > 1.0 - 1.1920929e-7 {
+            0.0
+        } else {
+            cos.acos()
+        }
+    }
+
+    /// CERTIFIED BY IDENTICAL SELECTION: the library's angle ranks every
+    /// in-range column vector as the hand-written angle did, and every value
+    /// that moved by more than 1e-12 is one of the two explained cases
+    /// (`gram::truenorth_certification::explain`). The input is the ten
+    /// columns, nine of them in the angle, so m is 9 here.
+    #[test]
+    fn the_closeness_angle_from_the_hff_library_selects_as_the_hand_angle_did() {
+        use crate::wgsl::gram::truenorth_certification::{certify, vectors};
+        let kept: Vec<usize> = (0..N).filter(|&i| !LOGGED_ONLY.contains(&COLUMNS[i])).collect();
+        let as_array = |v: &[f64]| -> [f64; N] { v.try_into().expect("N columns") };
+        let report = certify(
+            "closeness::angle",
+            &vectors(N, 0xc105e),
+            |v| hand_angle(&as_array(v)),
+            |v| angle(&as_array(v)),
+            |v| kept.iter().map(|&i| v[i]).collect(),
+        );
+        assert!(report.in_range_ranking_identical);
     }
 }

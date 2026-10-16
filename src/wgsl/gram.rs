@@ -1237,11 +1237,14 @@ pub struct Fitness {
     pub split: Split,
 }
 
-/// θ over columns in [0, 1]: `acos(1 − mean(x²))`, 0 when every column is 0.
+/// θ over columns in [0, 1], 0 best: the hff library's TrueNorth angle
+/// (normalisation off, the all-zero pole, `crate::score::truenorth_angle`),
+/// each column clamped into [0, 1] first. The clamp is the caller's column
+/// scaling; the angle and its edge cases (the pole test at `f64::EPSILON`,
+/// π for a non-finite column) are the library's.
 pub fn truenorth(x: &[f64]) -> f64 {
-    let energy = x.iter().map(|v| { let c = v.clamp(0.0, 1.0); c * c }).sum::<f64>() / x.len().max(1) as f64;
-    let cos = (1.0 - energy.min(1.0)).clamp(-1.0, 1.0);
-    if cos > 1.0 - 1.1920929e-7 { 0.0 } else { cos.acos() }
+    let columns: Vec<f64> = x.iter().map(|v| v.clamp(0.0, 1.0)).collect();
+    crate::score::truenorth_angle(&columns)
 }
 
 #[cfg(feature = "gpu")]
@@ -2242,5 +2245,157 @@ mod tests {
         let one = gram.build(&p, d, m, effective_buffer_limit(&dev.device)).expect("build");
         assert_eq!((one.item_bands, one.row_bands), (1, 1));
         assert!(check(&one.h, &h_ref, d, m).passes());
+    }
+}
+
+/// THE CERTIFICATION OF THE LIBRARY'S TRUENORTH against the hand-written
+/// angle it replaced (`acos(1 − mean(x²))` over columns clamped into [0, 1],
+/// snapped to 0 for a cosine above 1 − `f32::EPSILON`). A fitness change is
+/// certified by identical selection: the two angles must rank every in-range
+/// vector the same, and every value that moved by more than 1e-12 must be one
+/// of the cases [`explain`] names from the code.
+#[cfg(test)]
+pub(crate) mod truenorth_certification {
+    /// splitmix64: a fixed stream of numbers for the random vectors.
+    fn next(state: &mut u64) -> u64 {
+        *state = state.wrapping_add(0x9e37_79b9_7f4a_7c15);
+        let mut z = *state;
+        z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+        z ^ (z >> 31)
+    }
+
+    fn unit(state: &mut u64) -> f64 {
+        (next(state) >> 11) as f64 / (1u64 << 53) as f64
+    }
+
+    /// The vectors of width `m`: 2,000 uniform in [0, 1]^m, 400 near the pole
+    /// (uniform times 10^-k, k = 1..=20), and the edge cases: all 0, all 1,
+    /// one column 1, all at 1e-4, 1e-8, `f64::EPSILON` and 1e-200, one column
+    /// NaN, +inf, -inf, 2 and -0.5.
+    pub(crate) fn vectors(m: usize, seed: u64) -> Vec<Vec<f64>> {
+        let mut s = seed;
+        let mut out: Vec<Vec<f64>> = (0..2000).map(|_| (0..m).map(|_| unit(&mut s)).collect()).collect();
+        for k in 1..=20 {
+            let scale = 10f64.powi(-k);
+            for _ in 0..20 {
+                out.push((0..m).map(|_| unit(&mut s) * scale).collect());
+            }
+        }
+        out.push(vec![0.0; m]);
+        out.push(vec![1.0; m]);
+        for i in 0..m {
+            let mut v = vec![0.0; m];
+            v[i] = 1.0;
+            out.push(v);
+        }
+        for x in [1e-4, 1e-8, f64::EPSILON, 1e-200] {
+            out.push(vec![x; m]);
+            let mut v = vec![0.0; m];
+            v[0] = x;
+            out.push(v);
+        }
+        for x in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, 2.0, -0.5] {
+            let mut v = vec![0.25; m];
+            v[0] = x;
+            out.push(v);
+        }
+        out
+    }
+
+    /// Why the two angles of one vector differ, from the code, or `None` when
+    /// nothing explains it.
+    pub(crate) fn explain(columns: &[f64], hand: f64, library: f64) -> Option<&'static str> {
+        if columns.iter().any(|x| x.is_nan()) && hand == std::f64::consts::FRAC_PI_2 && library == std::f64::consts::PI {
+            return Some("a NaN column: the hand angle's clamp passed NaN through and NaN.min(1.0) is 1.0, so cos 0 and π/2; the library returns π for any non-finite column");
+        }
+        let mean = columns.iter().map(|x| x.clamp(0.0, 1.0).powi(2)).sum::<f64>() / columns.len().max(1) as f64;
+        if hand == 0.0 && library > 0.0 && mean < 1.1920929e-7 {
+            return Some("the pole band: the hand angle snapped to 0 for a cosine above 1 - f32::EPSILON (mean x² below 1.19e-7); the library snaps only at f64::EPSILON and returns acos(1 - mean x²)");
+        }
+        None
+    }
+
+    pub(crate) struct Report {
+        pub largest_in_range: f64,
+        pub in_range_ranking_identical: bool,
+    }
+
+    /// Compare `hand` and `library` on `vectors`; `angle_columns` picks the
+    /// columns that enter the angle. Prints every vector whose values differ
+    /// by more than 1e-12 with its explanation, panics on one nothing
+    /// explains, and checks the ranking of the in-range vectors (every
+    /// angle column finite and in [0, 1]): no pair the hand angle ordered
+    /// strictly is reversed or tied by the library. Pairs the hand angle tied
+    /// and the library orders are counted; each is a vector
+    /// already explained as the pole band. Both are printed.
+    pub(crate) fn certify(
+        name: &str,
+        vectors: &[Vec<f64>],
+        hand: impl Fn(&[f64]) -> f64,
+        library: impl Fn(&[f64]) -> f64,
+        angle_columns: impl Fn(&[f64]) -> Vec<f64>,
+    ) -> Report {
+        let mut largest = 0.0f64;
+        let mut largest_in_range = 0.0f64;
+        let mut differing = 0usize;
+        let mut in_range: Vec<(f64, f64)> = Vec::new();
+        for v in vectors {
+            let (h, l) = (hand(v), library(v));
+            let cols = angle_columns(v);
+            let ok = cols.iter().all(|x| x.is_finite() && (0.0..=1.0).contains(x));
+            let d = (h - l).abs();
+            assert!(!d.is_nan(), "{name}: {v:?} hand {h} library {l}");
+            largest = largest.max(d);
+            if ok {
+                largest_in_range = largest_in_range.max(d);
+                in_range.push((h, l));
+            }
+            if d > 1e-12 {
+                differing += 1;
+                let why = explain(&cols, h, l).unwrap_or_else(|| panic!("{name}: our software has a bug: {cols:?} hand {h} library {l}, a difference nothing in the code explains"));
+                eprintln!("{name}: m {} {cols:?}: hand {h:e} library {l:e} (|d| {d:e}): {why}", cols.len());
+            }
+        }
+        // Sorted by the hand angle, then the library's: along that order the
+        // library must never fall, and must rise wherever the hand angle does.
+        in_range.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.total_cmp(&b.1)));
+        let mut identical = true;
+        let mut ties_broken = 0usize;
+        for w in in_range.windows(2) {
+            let ((h0, l0), (h1, l1)) = (w[0], w[1]);
+            if h0 < h1 && l0 >= l1 {
+                identical = false;
+                eprintln!("{name}: ORDER CHANGED: hand {h0:e} < {h1:e} but library {l0:e} >= {l1:e}");
+            }
+            if h0 == h1 && l0 != l1 {
+                ties_broken += 1;
+            }
+        }
+        eprintln!(
+            "{name}: {} vectors ({} in range): largest |hand - library| {largest:e} (in range {largest_in_range:e}), {differing} differ by more than 1e-12, in-range ranking identical: {identical}, adjacent hand ties the library orders: {ties_broken}",
+            vectors.len(),
+            in_range.len()
+        );
+        Report { largest_in_range, in_range_ranking_identical: identical }
+    }
+
+    /// `gram::truenorth` before it called the hff library.
+    fn hand_truenorth(x: &[f64]) -> f64 {
+        let energy = x.iter().map(|v| { let c = v.clamp(0.0, 1.0); c * c }).sum::<f64>() / x.len().max(1) as f64;
+        let cos = (1.0 - energy.min(1.0)).clamp(-1.0, 1.0);
+        if cos > 1.0 - 1.1920929e-7 { 0.0 } else { cos.acos() }
+    }
+
+    /// CERTIFIED BY IDENTICAL SELECTION, m = 1..=12: `gram::truenorth` (the
+    /// hff library) ranks every in-range vector as the hand angle did; the
+    /// values that moved are the explained NaN and pole-band cases.
+    #[test]
+    fn truenorth_from_the_hff_library_selects_as_the_hand_angle_did() {
+        for m in 1..=12 {
+            let report = certify(&format!("gram::truenorth m {m}"), &vectors(m, 0x7e57 + m as u64), hand_truenorth, super::truenorth, |v| v.to_vec());
+            assert!(report.in_range_ranking_identical, "m {m}");
+            assert!(report.largest_in_range < 1e-3, "m {m}: {}", report.largest_in_range);
+        }
     }
 }
