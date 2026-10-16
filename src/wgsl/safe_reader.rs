@@ -2284,10 +2284,18 @@ impl<'a> Ctx<'a> {
             },
             _ => None,
         });
+        // An array of u32 is an index array by its declared type too (a use
+        // may read its element as bits or an opaque value; the get row's
+        // index converts to what the use demands).
+        let declared_u32 = self.module.global_variables.iter().find(|(_, g)| g.name.as_deref() == Some(name) && g.space == naga::AddressSpace::WorkGroup).is_some_and(|(_, g)| match &self.module.types[g.ty].inner {
+            naga::TypeInner::Array { base, .. } => matches!(self.module.types[*base].inner, naga::TypeInner::Scalar(naga::Scalar { kind: naga::ScalarKind::Uint, width: 4 })),
+            _ => false,
+        });
         let elem_dual = match atomic {
             Some(naga::ScalarKind::Uint) => "atomic<u32>",
             Some(naga::ScalarKind::Sint) => "atomic<i32>",
             Some(other) => return Err(format!("a workgroup array {name} of atomic {other:?} has no safe spelling")),
+            None if declared_u32 => "u32.index",
             None => elem_dual,
         };
         let candidates: &[&'static str] = match elem_dual {
@@ -2295,6 +2303,7 @@ impl<'a> Ctx<'a> {
             "atomic<i32>" => &["wg.ai_a", "wg.ai_b"],
             "f32.real" => &["wg.a", "wg.b", "wg.c", "wg.d"],
             "vec2<f32>.real" => &["wg.v2a", "wg.v2b", "wg.v2c", "wg.v2d"],
+            "u32.index" => &["wg.ua", "wg.ub", "wg.uc", "wg.ud"],
             "vec4<f32>.real" => &["wg.va", "wg.vb", "wg.vc", "wg.vd"],
             other => return Err(format!("a workgroup array {name} of {other} has no safe spelling")),
         };
@@ -2530,6 +2539,9 @@ impl<'a> Ctx<'a> {
         }
         if which.starts_with("wg.v2") {
             return ("safe.wgv2_of", "u32.wgv2index", "wgmem<vec2<f32>>.real", "wg.get_v2_safe", "wg.set_v2");
+        }
+        if which.starts_with("wg.u") {
+            return ("safe.wg_of", "u32.wgindex", "wgmem<u32>.index", "wg.get_u_safe", "wg.set_u");
         }
         if which.starts_with("wg.v") {
             ("safe.wgv_of", "u32.wgvindex", "wgmem<vec4<f32>>.real", "wg.get_v_safe", "wg.set_v")
@@ -3035,6 +3047,7 @@ impl<'a> Ctx<'a> {
                 "wg.set" => "wg.put",
                 "wg.set_v" => "wg.put_v",
                 "wg.set_v2" => "wg.put_v2",
+                "wg.set_u" => "wg.put_u",
                 _ => return None,
             };
             let [arr, idx, v] = set.kids.as_slice() else { return None };
@@ -4953,7 +4966,13 @@ fn header_fields(source: &str) -> Option<((u32, u32, u32, u32), bool)> {
             tokens.pop();
         }
         let v: Vec<u32> = tokens.iter().map(|t| t.parse().ok()).collect::<Option<Vec<u32>>>()?;
-        (v.len() == 4).then_some(((v[0], v[1], v[2], v[3]), rows_x))
+        // (Checked before indexing: `then_some` builds its value first, and a
+        // model's three-number header, `// grid 256 1 1`, panicked the fit,
+        // CR_A_s3 2026-10-16.)
+        match v.as_slice() {
+            &[x, y, bx, by] => Some(((x, y, bx, by), rows_x)),
+            _ => None,
+        }
     })
 }
 
@@ -5225,6 +5244,8 @@ pub fn read_safe_literal(source: &str, kingdom: &WgslKingdom) -> Result<SafeRead
                     ("wg.decl_ai", "wgmem<atomic<i32>>.int")
                 } else if which.starts_with("wg.v2") {
                     ("wg.decl_v2", "wgmem<vec2<f32>>.real")
+                } else if which.starts_with("wg.u") {
+                    ("wg.decl_u", "wgmem<u32>.index")
                 } else if which.starts_with("wg.v") {
                     ("wg.decl_v4", "wgmem<vec4<f32>>.real")
                 } else {
@@ -5260,6 +5281,16 @@ mod tests {
 
     const SHIPPED: &str = include_str!("../../kingdoms/wgsl/gram/shipped.wgsl");
     const BLOCKED: &str = include_str!("../../kingdoms/wgsl/gram/blocked.wgsl");
+
+    /// A grid header of other than four numbers is no header (a model wrote
+    /// `// grid 256 1 1`; reading it panicked a fit, 2026-10-16).
+    #[test]
+    fn a_grid_header_of_three_numbers_is_no_header() {
+        assert_eq!(grid_header("// grid 256 1 1\nfn f() {}"), None);
+        assert!(!grid_rows_x("// grid 256 1 rows-x\n"));
+        assert_eq!(grid_header("// grid 7 17 8 8\n"), Some((7, 17, 8, 8)));
+        assert!(grid_rows_x("// grid 7 17 8 8 rows-x\n"));
+    }
 
     /// The shipped kernel reads into the safe grammar: its guard becomes a
     /// guard on the store, its loop is the bounded item loop, its loads are
@@ -6111,15 +6142,18 @@ mod tests {
     /// reached so far: to a fixpoint after the first read, and to the AST
     /// drawn (canonical). Every tree reads back (1,000 of 1,000, asserted
     /// exactly). Their own text is printed, not a bar (Andrew, 2026-10-13).
-    const FIXPOINT_FLOOR: usize = 922;
+    const FIXPOINT_FLOOR: usize = 914;
     // (Both reset 2026-10-13 when the sampler drew its stores from an input:
     // other trees, 253 and 930 on the earlier draws; again when conditions
     // read a variable: 110 then 79; 59 when they vary by thread or data;
     // 2026-10-14, 54 (fixpoint 922) when the kingdom drew only genes layer 7
     // proves: the workgroup put, one cell kind a kernel, literal offsets,
     // reads of h in a store's value; a put through a tile counter outside
-    // its loop reads back as the put of element 0, its value.)
-    const AST_FLOOR: usize = 54;
+    // its loop reads back as the put of element 0, its value; 2026-10-16,
+    // 42 (fixpoint 914) when the kingdom drew u32 workgroup arrays: the
+    // first differences fall in the classes of the earlier draws, the u32
+    // put's own the tile counter outside its loop that every put has.)
+    const AST_FLOOR: usize = 42;
 
 
     /// THE KINGDOM'S COMPLETENESS BAR (2026-10-12): 1,000 random trees of
@@ -6184,6 +6218,9 @@ mod tests {
                 // the products instead (random seed 673, 2026-10-13).
                 if text.contains("degrees(") || text.contains("radians(") {
                     return Err("render: degrees or radians as a call (Metal can misparse naga's text)".to_string());
+                }
+                if std::env::var("ROUNDTRIP_SHOW").ok().and_then(|v| v.parse::<u64>().ok()) == Some(seed) {
+                    println!("SHOW drawn: {}\nSHOW text:\n{text}", tree.to_sexpr());
                 }
                 let back = read_safe(&text, &k).map_err(|e| format!("read: {e}"))?;
                 let again = crate::wgsl::safe_karva::render_tree(&back.tree, &k).map_err(|e| format!("re-render: {e}"))?.text;

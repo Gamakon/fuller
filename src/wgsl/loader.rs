@@ -642,7 +642,8 @@ mod tests {
         // 183 with the origins an offset row takes (rowbase, colbase, strided, grouped).
         // 184 with the mirror of a thread's cell (u32.mirror, the symmetric half, 2026-10-14).
         // 185 with a workgroup element a thread owns (u32.wgown, the workgroup put, 2026-10-14).
-        assert_eq!(s.len(), 185);
+        // 186 with the workgroup arrays of indices (wgmem<u32>.index, 2026-10-16).
+        assert_eq!(s.len(), 186);
         for (a, b) in w.iter().zip(&s) {
             assert_eq!((a.reference.as_str(), a.dual.as_str()), (b.reference.as_str(), b.dual.as_str()));
         }
@@ -676,7 +677,9 @@ mod tests {
         // 1,556 with the mirror of a thread's cell (9 safe.mirror_of, 12 store.h_mirror) and the
         // uniform test whose body keeps its rung (6 stmt.if_ule; the symmetric half, 2026-10-14).
         // 1,577 with the workgroup put (3 safe.wg_own*, 18 wg.put* at the barrier rungs; 2026-10-14).
-        assert_eq!(fs.rows.len(), 1577);
+        // 1,601 with the u32 workgroup arrays (wg.ua-ud, wg.get_u_safe, 12 wg.set_u, wg.decl_u,
+        // 6 wg.put_u; 2026-10-16).
+        assert_eq!(fs.rows.len(), 1601);
         let dual = |t: Ty| k.dual(t).unwrap().dual.clone();
         let producers = |d: &str| -> Vec<String> { k.rows.iter().filter(|r| dual(r.output) == d).map(|r| r.name.clone()).collect() };
         assert_eq!(producers("kernel.safe"), vec!["kernel.entry_safe"]);

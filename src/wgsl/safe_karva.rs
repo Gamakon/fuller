@@ -679,14 +679,22 @@ fn lanes(k: &Tree, kingdom: &WgslKingdom) -> Vec<Tree> {
 }
 
 pub fn conform(t: &Tree, demand: Ty, kingdom: &WgslKingdom, per_kernel: &[PerKernelRow]) -> Result<Tree, String> {
-    conform_at(t, demand, kingdom, per_kernel, true)
+    // Two conversions at a leaf only when the tree conforms no other way:
+    // allowed everywhere, they took over three of 1,000 random trees that
+    // one conversion higher up reads to a fixpoint (2026-10-16).
+    conform_with(t, demand, kingdom, per_kernel, false).or_else(|e| conform_with(t, demand, kingdom, per_kernel, true).map_err(|_| e))
+}
+
+fn conform_with(t: &Tree, demand: Ty, kingdom: &WgslKingdom, per_kernel: &[PerKernelRow], chains: bool) -> Result<Tree, String> {
+    conform_at(t, demand, kingdom, per_kernel, true, chains)
 }
 
 /// [`conform`]; `convert` false when the node is already being converted:
-/// one conversion per node, never a chain (the conversions between f32 and
-/// i32, or an index and a bit field, go both ways, and a node with no row
-/// under either dual bounced between them without end, 2026-10-12).
-fn conform_at(t: &Tree, demand: Ty, kingdom: &WgslKingdom, per_kernel: &[PerKernelRow], convert: bool) -> Result<Tree, String> {
+/// one conversion per node (the conversions between f32 and i32, or an
+/// index and a bit field, go both ways, and a node with no row under either
+/// dual bounced between them without end, 2026-10-12); `chains` lets a leaf
+/// take two conversions, the inner one never converted further.
+fn conform_at(t: &Tree, demand: Ty, kingdom: &WgslKingdom, per_kernel: &[PerKernelRow], convert: bool, chains: bool) -> Result<Tree, String> {
     let dual = |ty: Ty| kingdom.dual(ty).map(|d| d.dual.clone()).unwrap_or_else(|| format!("{ty:?}"));
     if t.name == FALLBACK {
         return Ok(Tree::fallback(demand));
@@ -703,7 +711,7 @@ fn conform_at(t: &Tree, demand: Ty, kingdom: &WgslKingdom, per_kernel: &[PerKern
     // the count itself (the conversion writes nothing; 2026-10-12).
     if let ("index.of_count", [x]) = (t.name.as_str(), t.kids.as_slice()) {
         if dual(demand) == "u32.count" {
-            return conform_at(x, demand, kingdom, per_kernel, convert);
+            return conform_at(x, demand, kingdom, per_kernel, convert, chains);
         }
     }
     // `select(-(x), x, s)` over a sign: select.negate_if, which the renderer
@@ -727,7 +735,7 @@ fn conform_at(t: &Tree, demand: Ty, kingdom: &WgslKingdom, per_kernel: &[PerKern
         }
         let negated = neg_of(n, x);
         if negated {
-            if let Ok(r) = conform_at(&Tree::new("select.negate_if", t.ty, vec![x.clone(), c.clone()]), demand, kingdom, per_kernel, convert) {
+            if let Ok(r) = conform_at(&Tree::new("select.negate_if", t.ty, vec![x.clone(), c.clone()]), demand, kingdom, per_kernel, convert, chains) {
                 return Ok(r);
             }
         }
@@ -736,7 +744,7 @@ fn conform_at(t: &Tree, demand: Ty, kingdom: &WgslKingdom, per_kernel: &[PerKern
     // the index row of the same operation.
     if let Some(op) = t.name.strip_prefix("bits.").filter(|op| matches!(*op, "shl" | "shr" | "and" | "or")) {
         if signatures(&t.name, demand, t.kids.len(), kingdom, per_kernel).next().is_none() && signatures(&format!("index.{op}"), demand, t.kids.len(), kingdom, per_kernel).next().is_some() {
-            return conform_at(&Tree { name: format!("index.{op}"), ty: t.ty, konst: t.konst, kids: t.kids.clone() }, demand, kingdom, per_kernel, convert);
+            return conform_at(&Tree { name: format!("index.{op}"), ty: t.ty, konst: t.konst, kids: t.kids.clone() }, demand, kingdom, per_kernel, convert, chains);
         }
     }
     // A vector composed from vector parts (`vec4<f32>(a: vec2, b: vec2)`,
@@ -756,7 +764,7 @@ fn conform_at(t: &Tree, demand: Ty, kingdom: &WgslKingdom, per_kernel: &[PerKern
         let step_form = t.name == format!("shape.compose{want}") && t.kids.len() == 2 && lanes_of(&t.kids[1]) == 1 && t.kids[0].name.starts_with("shape.compose") && lanes_of(&t.kids[0]) + 1 == want;
         if want > 0 && total == want && !step_form && t.kids.iter().any(|k| lanes_of(k) > 1) {
             let flat = t.kids.iter().flat_map(|k| lanes(k, kingdom)).collect::<Vec<_>>();
-            return conform_at(&Tree { name: format!("shape.compose{want}"), ty: t.ty, konst: t.konst, kids: flat }, demand, kingdom, per_kernel, convert);
+            return conform_at(&Tree { name: format!("shape.compose{want}"), ty: t.ty, konst: t.konst, kids: flat }, demand, kingdom, per_kernel, convert, chains);
         }
     }
     // A vector written from all its lanes at once (naga's Compose): the
@@ -773,7 +781,7 @@ fn conform_at(t: &Tree, demand: Ty, kingdom: &WgslKingdom, per_kernel: &[PerKern
             for (i, k) in t.kids.iter().enumerate().skip(2) {
                 acc = Tree::new(&format!("shape.compose{}", i + 1), width(i + 1), vec![acc, k.clone()]);
             }
-            return conform_at(&acc, demand, kingdom, per_kernel, convert);
+            return conform_at(&acc, demand, kingdom, per_kernel, convert, chains);
         }
     }
     if t.kids.is_empty() && t.name.starts_with("literal.") {
@@ -802,7 +810,7 @@ fn conform_at(t: &Tree, demand: Ty, kingdom: &WgslKingdom, per_kernel: &[PerKern
         let mut errors = Vec::new();
         let mut best: Option<(usize, Vec<Tree>)> = None;
         for inputs in signatures(&t.name, demand, t.kids.len(), kingdom, per_kernel) {
-            match t.kids.iter().zip(inputs).map(|(k, &d)| conform(k, d, kingdom, per_kernel)).collect::<Result<Vec<_>, _>>() {
+            match t.kids.iter().zip(inputs).map(|(k, &d)| conform_with(k, d, kingdom, per_kernel, chains)).collect::<Result<Vec<_>, _>>() {
                 Ok(kids) => {
                     let inserted = kids.iter().map(Tree::size).sum::<usize>() - t.kids.iter().map(Tree::size).sum::<usize>();
                     if best.as_ref().is_none_or(|(b, _)| inserted < *b) {
@@ -833,7 +841,7 @@ fn conform_at(t: &Tree, demand: Ty, kingdom: &WgslKingdom, per_kernel: &[PerKern
     if let (Some((class, op)), Some(d)) = (t.name.split_once('.'), kingdom.dual(demand)) {
         let twin = format!("{}.{op}", d.form);
         if class != d.form && !t.kids.is_empty() && kingdom.rows.iter().any(|r| r.name == twin && r.output == demand && r.inputs.len() == t.kids.len()) {
-            if let Ok(x) = conform_at(&Tree { name: twin, ty: t.ty, konst: t.konst, kids: t.kids.clone() }, demand, kingdom, per_kernel, convert) {
+            if let Ok(x) = conform_at(&Tree { name: twin, ty: t.ty, konst: t.konst, kids: t.kids.clone() }, demand, kingdom, per_kernel, convert, chains) {
                 return Ok(x);
             }
         }
@@ -846,12 +854,35 @@ fn conform_at(t: &Tree, demand: Ty, kingdom: &WgslKingdom, per_kernel: &[PerKern
         v.dedup();
         v
     };
+    // Every output with a conversion is tried in turn: one output's failing
+    // to conform says nothing about the next one's.
+    let mut inner_errors = Vec::new();
     for o in own.iter().filter(|_| convert) {
         // A conversion between forms, or a splat of a scalar where a vector is demanded (WGSL's scalar-vector arithmetic).
         if let Some(conv) = kingdom.rows.iter().find(|r| r.inputs.len() == 1 && r.inputs[0] == *o && r.output == demand && (r.name.starts_with("index.of_") || r.name.starts_with("convert.") || r.name.starts_with("shape.splat"))) {
-            let inner = conform_at(t, *o, kingdom, per_kernel, false)?;
-            return Ok(Tree::new(&conv.name, demand, vec![inner]));
+            match conform_at(t, *o, kingdom, per_kernel, false, chains) {
+                Ok(inner) => return Ok(Tree::new(&conv.name, demand, vec![inner])),
+                Err(e) => inner_errors.push(e),
+            }
         }
+    }
+    // Two conversions, when no one converts: `bits.find_lsb(convert.index_to_bits(
+    // index.of_gid(gid)))` renders `firstTrailingBit(gid)` (neither conversion
+    // writes text) and reads back as find_lsb over the thread id, a gid where
+    // bits are demanded (random seeds 31 and 44, 2026-10-16).
+    let is_conv = |r: &&crate::wgsl::loader::WgslRow| r.inputs.len() == 1 && (r.name.starts_with("index.of_") || r.name.starts_with("convert.") || r.name.starts_with("shape.splat"));
+    for o in own.iter().filter(|_| convert && chains && t.kids.is_empty()) {
+        for first in kingdom.rows.iter().filter(is_conv).filter(|r| r.inputs[0] == *o && r.output != demand) {
+            if let Some(second) = kingdom.rows.iter().filter(is_conv).find(|r| r.inputs[0] == first.output && r.output == demand) {
+                match conform_at(t, *o, kingdom, per_kernel, false, chains) {
+                    Ok(inner) => return Ok(Tree::new(&second.name, demand, vec![Tree::new(&first.name, first.output, vec![inner])])),
+                    Err(e) => inner_errors.push(e),
+                }
+            }
+        }
+    }
+    if let Some(e) = inner_errors.into_iter().next() {
+        return Err(e);
     }
     Err(format!("{} (of {}) where {} is demanded: no row and no conversion", t.name, own.iter().map(|&o| dual(o)).collect::<Vec<_>>().join("/"), dual(demand)))
 }

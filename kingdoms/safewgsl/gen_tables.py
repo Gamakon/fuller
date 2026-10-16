@@ -308,6 +308,7 @@ def build_types():
         add("u32", form, 1, FORMS[form][0])
     # ---- workgroup arrays as knobs (2026-10-12) ----
     add("wgmem<vec2<f32>>", "real", 0, "a workgroup-memory array of vec2<f32>: v2a..v2d")
+    add("wgmem<u32>", "index", 0, "a workgroup-memory array of u32 indices: ua..ud (2026-10-16: 73 of 1,798 saved model kernels kept index lists in workgroup memory)")
     add("u32", "wgv2index", 1, FORMS["wgv2index"][0])
     add("u32", "wglen", 1, FORMS["wglen"][0])
     add("wg", "decl", 0, FORMS["decl"][0])
@@ -892,6 +893,14 @@ f("literal", "wglen", "Literal", [], "u32.wglen", "a workgroup array's length, 1
 f("wg", "decl_f", "composite", ["wgmem<f32>.real", "u32.wglen"], "wg.decl", "var<workgroup> a: array<f32, n>")
 f("wg", "decl_v2", "composite", ["wgmem<vec2<f32>>.real", "u32.wglen"], "wg.decl", "var<workgroup> a: array<vec2<f32>, n>")
 f("wg", "decl_v4", "composite", ["wgmem<vec4<f32>>.real", "u32.wglen"], "wg.decl", "var<workgroup> a: array<vec4<f32>, n>")
+# ---- workgroup arrays of indices (2026-10-16): u32 lists in workgroup memory (candidate lists,
+# bucket offsets, staged neighbour ids), four arrays ua..ud of 2,048 by default, indexed as the f32 arrays are ----
+for n in ("ua", "ub", "uc", "ud"):
+    f("wg", n, "composite", [], "wgmem<u32>.index", f"workgroup array wg_{n} of u32")
+f("wg", "get_u_safe", "composite", ["wgmem<u32>.index", "u32.wgindex"], "u32.index", "a[i], in range by its type")
+for r in RUNGS + RUNGS5:
+    f("wg", "set_u_" + r, "composite", ["wgmem<u32>.index", "u32.wgindex", "u32.index"], "stmt." + r, "arity 3: a[i] = v")
+f("wg", "decl_u", "composite", ["wgmem<u32>.index", "u32.wglen"], "wg.decl", "var<workgroup> a: array<u32, n>")
 f("wg", "decls_one", "composite", ["wg.decl"], "wg.decls", "one declaration")
 f("wg", "decls_cons", "composite", ["wg.decl", "wg.decls"], "wg.decls", "a declaration, then the rest")
 f("grid", "with_wg", "composite", ["grid.grid", "wg.decls"], "grid.grid", "a grid and the kernel's workgroup arrays (the arrays it declares and their lengths)")
@@ -1220,6 +1229,7 @@ for r in ("L0", "L1", "L2", "L3", "L4", "L5"):
     f("wg", "put_" + r, "composite", ["wgmem<f32>.real", "u32.wgown", "f32.real"], "stmt." + r, "arity 3: barrier; if (i < len) { a[i] = v; } barrier")
     f("wg", "put_v_" + r, "composite", ["wgmem<vec4<f32>>.real", "u32.wgown", "vec4<f32>.real"], "stmt." + r, "arity 3: barrier; if (i < len) { va[i] = v; } barrier")
     f("wg", "put_v2_" + r, "composite", ["wgmem<vec2<f32>>.real", "u32.wgown", "vec2<f32>.real"], "stmt." + r, "arity 3: barrier; if (i < len) { v2a[i] = v; } barrier")
+    f("wg", "put_u_" + r, "composite", ["wgmem<u32>.index", "u32.wgown", "u32.index"], "stmt." + r, "arity 3: barrier; if (i < len) { ua[i] = v; } barrier")
 
 
 def write_tsv(path, header, rows):

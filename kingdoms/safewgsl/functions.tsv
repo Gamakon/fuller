@@ -937,642 +937,666 @@ F935	literal	wglen	Literal	-	u32.wglen	0	a workgroup array's length, 1..=8,192 e
 F936	wg	decl_f	composite	wgmem<f32>.real u32.wglen	wg.decl	2	var<workgroup> a: array<f32, n>
 F937	wg	decl_v2	composite	wgmem<vec2<f32>>.real u32.wglen	wg.decl	2	var<workgroup> a: array<vec2<f32>, n>
 F938	wg	decl_v4	composite	wgmem<vec4<f32>>.real u32.wglen	wg.decl	2	var<workgroup> a: array<vec4<f32>, n>
-F939	wg	decls_one	composite	wg.decl	wg.decls	1	one declaration
-F940	wg	decls_cons	composite	wg.decl wg.decls	wg.decls	2	a declaration, then the rest
-F941	grid	with_wg	composite	grid.grid wg.decls	grid.grid	2	a grid and the kernel's workgroup arrays (the arrays it declares and their lengths)
-F942	loop	unroll_L0	composite	u32.lit64 block.L2	stmt.L0	2	the body n times, straight-line, its counter a literal in each copy
-F943	loop	unroll_L1	composite	u32.lit64 block.L2	stmt.L1	2	the body n times, straight-line, its counter a literal in each copy
-F944	loop	unroll_L2	composite	u32.lit64 block.L3	stmt.L2	2	the body n times, straight-line, its counter a literal in each copy
-F945	loop	unroll_L3	composite	u32.lit64 block.L4	stmt.L3	2	the body n times, straight-line, its counter a literal in each copy
-F946	loop	unroll_L4	composite	u32.lit64 block.L5	stmt.L4	2	the body n times, straight-line, its counter a literal in each copy
-F947	loop	unroll_C0	composite	u32.lit64 block.C1	stmt.C0	2	the body n times, straight-line, its counter a literal in each copy
-F948	loop	unroll_C1	composite	u32.lit64 block.C2	stmt.C1	2	the body n times, straight-line, its counter a literal in each copy
-F949	loop	unroll_C2	composite	u32.lit64 block.C3	stmt.C2	2	the body n times, straight-line, its counter a literal in each copy
-F950	loop	unroll_C3	composite	u32.lit64 block.C4	stmt.C3	2	the body n times, straight-line, its counter a literal in each copy
-F951	loop	unroll_C4	composite	u32.lit64 block.C5	stmt.C4	2	the body n times, straight-line, its counter a literal in each copy
-F952	loop	unroll_O0	composite	u32.lit64 block.O1	stmt.O0	2	the epilogue's loop body n times, straight-line
-F953	loop	unroll_O1	composite	u32.lit64 block.O2	stmt.O1	2	the epilogue's loop body n times, straight-line
-F954	loop	unroll_O2	composite	u32.lit64 block.O3	stmt.O2	2	the epilogue's loop body n times, straight-line
-F955	loop	unroll_O3	composite	u32.lit64 block.O4	stmt.O3	2	the epilogue's loop body n times, straight-line
-F956	wg	reduce_add_L0	composite	wgmem<f32>.real u32.lit4096	stmt.L0	2	a[0..n) reduced into a[0] by add: stride halving, barriers in uniform control flow
-F957	wg	reduce_add_L0	composite	wgmem<vec2<f32>>.real u32.lit4096	stmt.L0	2	a[0..n) reduced into a[0] by add: stride halving, barriers in uniform control flow
-F958	wg	reduce_add_L0	composite	wgmem<vec4<f32>>.real u32.lit4096	stmt.L0	2	a[0..n) reduced into a[0] by add: stride halving, barriers in uniform control flow
-F959	wg	reduce_add_L1	composite	wgmem<f32>.real u32.lit4096	stmt.L1	2	a[0..n) reduced into a[0] by add: stride halving, barriers in uniform control flow
-F960	wg	reduce_add_L1	composite	wgmem<vec2<f32>>.real u32.lit4096	stmt.L1	2	a[0..n) reduced into a[0] by add: stride halving, barriers in uniform control flow
-F961	wg	reduce_add_L1	composite	wgmem<vec4<f32>>.real u32.lit4096	stmt.L1	2	a[0..n) reduced into a[0] by add: stride halving, barriers in uniform control flow
-F962	wg	reduce_add_L2	composite	wgmem<f32>.real u32.lit4096	stmt.L2	2	a[0..n) reduced into a[0] by add: stride halving, barriers in uniform control flow
-F963	wg	reduce_add_L2	composite	wgmem<vec2<f32>>.real u32.lit4096	stmt.L2	2	a[0..n) reduced into a[0] by add: stride halving, barriers in uniform control flow
-F964	wg	reduce_add_L2	composite	wgmem<vec4<f32>>.real u32.lit4096	stmt.L2	2	a[0..n) reduced into a[0] by add: stride halving, barriers in uniform control flow
-F965	wg	reduce_add_L3	composite	wgmem<f32>.real u32.lit4096	stmt.L3	2	a[0..n) reduced into a[0] by add: stride halving, barriers in uniform control flow
-F966	wg	reduce_add_L3	composite	wgmem<vec2<f32>>.real u32.lit4096	stmt.L3	2	a[0..n) reduced into a[0] by add: stride halving, barriers in uniform control flow
-F967	wg	reduce_add_L3	composite	wgmem<vec4<f32>>.real u32.lit4096	stmt.L3	2	a[0..n) reduced into a[0] by add: stride halving, barriers in uniform control flow
-F968	wg	reduce_add_L4	composite	wgmem<f32>.real u32.lit4096	stmt.L4	2	a[0..n) reduced into a[0] by add: stride halving, barriers in uniform control flow
-F969	wg	reduce_add_L4	composite	wgmem<vec2<f32>>.real u32.lit4096	stmt.L4	2	a[0..n) reduced into a[0] by add: stride halving, barriers in uniform control flow
-F970	wg	reduce_add_L4	composite	wgmem<vec4<f32>>.real u32.lit4096	stmt.L4	2	a[0..n) reduced into a[0] by add: stride halving, barriers in uniform control flow
-F971	wg	reduce_add_L5	composite	wgmem<f32>.real u32.lit4096	stmt.L5	2	a[0..n) reduced into a[0] by add: stride halving, barriers in uniform control flow
-F972	wg	reduce_add_L5	composite	wgmem<vec2<f32>>.real u32.lit4096	stmt.L5	2	a[0..n) reduced into a[0] by add: stride halving, barriers in uniform control flow
-F973	wg	reduce_add_L5	composite	wgmem<vec4<f32>>.real u32.lit4096	stmt.L5	2	a[0..n) reduced into a[0] by add: stride halving, barriers in uniform control flow
-F974	wg	reduce_max_L0	composite	wgmem<f32>.real u32.lit4096	stmt.L0	2	a[0..n) reduced into a[0] by max: stride halving, barriers in uniform control flow
-F975	wg	reduce_max_L0	composite	wgmem<vec2<f32>>.real u32.lit4096	stmt.L0	2	a[0..n) reduced into a[0] by max: stride halving, barriers in uniform control flow
-F976	wg	reduce_max_L0	composite	wgmem<vec4<f32>>.real u32.lit4096	stmt.L0	2	a[0..n) reduced into a[0] by max: stride halving, barriers in uniform control flow
-F977	wg	reduce_max_L1	composite	wgmem<f32>.real u32.lit4096	stmt.L1	2	a[0..n) reduced into a[0] by max: stride halving, barriers in uniform control flow
-F978	wg	reduce_max_L1	composite	wgmem<vec2<f32>>.real u32.lit4096	stmt.L1	2	a[0..n) reduced into a[0] by max: stride halving, barriers in uniform control flow
-F979	wg	reduce_max_L1	composite	wgmem<vec4<f32>>.real u32.lit4096	stmt.L1	2	a[0..n) reduced into a[0] by max: stride halving, barriers in uniform control flow
-F980	wg	reduce_max_L2	composite	wgmem<f32>.real u32.lit4096	stmt.L2	2	a[0..n) reduced into a[0] by max: stride halving, barriers in uniform control flow
-F981	wg	reduce_max_L2	composite	wgmem<vec2<f32>>.real u32.lit4096	stmt.L2	2	a[0..n) reduced into a[0] by max: stride halving, barriers in uniform control flow
-F982	wg	reduce_max_L2	composite	wgmem<vec4<f32>>.real u32.lit4096	stmt.L2	2	a[0..n) reduced into a[0] by max: stride halving, barriers in uniform control flow
-F983	wg	reduce_max_L3	composite	wgmem<f32>.real u32.lit4096	stmt.L3	2	a[0..n) reduced into a[0] by max: stride halving, barriers in uniform control flow
-F984	wg	reduce_max_L3	composite	wgmem<vec2<f32>>.real u32.lit4096	stmt.L3	2	a[0..n) reduced into a[0] by max: stride halving, barriers in uniform control flow
-F985	wg	reduce_max_L3	composite	wgmem<vec4<f32>>.real u32.lit4096	stmt.L3	2	a[0..n) reduced into a[0] by max: stride halving, barriers in uniform control flow
-F986	wg	reduce_max_L4	composite	wgmem<f32>.real u32.lit4096	stmt.L4	2	a[0..n) reduced into a[0] by max: stride halving, barriers in uniform control flow
-F987	wg	reduce_max_L4	composite	wgmem<vec2<f32>>.real u32.lit4096	stmt.L4	2	a[0..n) reduced into a[0] by max: stride halving, barriers in uniform control flow
-F988	wg	reduce_max_L4	composite	wgmem<vec4<f32>>.real u32.lit4096	stmt.L4	2	a[0..n) reduced into a[0] by max: stride halving, barriers in uniform control flow
-F989	wg	reduce_max_L5	composite	wgmem<f32>.real u32.lit4096	stmt.L5	2	a[0..n) reduced into a[0] by max: stride halving, barriers in uniform control flow
-F990	wg	reduce_max_L5	composite	wgmem<vec2<f32>>.real u32.lit4096	stmt.L5	2	a[0..n) reduced into a[0] by max: stride halving, barriers in uniform control flow
-F991	wg	reduce_max_L5	composite	wgmem<vec4<f32>>.real u32.lit4096	stmt.L5	2	a[0..n) reduced into a[0] by max: stride halving, barriers in uniform control flow
-F992	wg	reduce_min_L0	composite	wgmem<f32>.real u32.lit4096	stmt.L0	2	a[0..n) reduced into a[0] by min: stride halving, barriers in uniform control flow
-F993	wg	reduce_min_L0	composite	wgmem<vec2<f32>>.real u32.lit4096	stmt.L0	2	a[0..n) reduced into a[0] by min: stride halving, barriers in uniform control flow
-F994	wg	reduce_min_L0	composite	wgmem<vec4<f32>>.real u32.lit4096	stmt.L0	2	a[0..n) reduced into a[0] by min: stride halving, barriers in uniform control flow
-F995	wg	reduce_min_L1	composite	wgmem<f32>.real u32.lit4096	stmt.L1	2	a[0..n) reduced into a[0] by min: stride halving, barriers in uniform control flow
-F996	wg	reduce_min_L1	composite	wgmem<vec2<f32>>.real u32.lit4096	stmt.L1	2	a[0..n) reduced into a[0] by min: stride halving, barriers in uniform control flow
-F997	wg	reduce_min_L1	composite	wgmem<vec4<f32>>.real u32.lit4096	stmt.L1	2	a[0..n) reduced into a[0] by min: stride halving, barriers in uniform control flow
-F998	wg	reduce_min_L2	composite	wgmem<f32>.real u32.lit4096	stmt.L2	2	a[0..n) reduced into a[0] by min: stride halving, barriers in uniform control flow
-F999	wg	reduce_min_L2	composite	wgmem<vec2<f32>>.real u32.lit4096	stmt.L2	2	a[0..n) reduced into a[0] by min: stride halving, barriers in uniform control flow
-F1000	wg	reduce_min_L2	composite	wgmem<vec4<f32>>.real u32.lit4096	stmt.L2	2	a[0..n) reduced into a[0] by min: stride halving, barriers in uniform control flow
-F1001	wg	reduce_min_L3	composite	wgmem<f32>.real u32.lit4096	stmt.L3	2	a[0..n) reduced into a[0] by min: stride halving, barriers in uniform control flow
-F1002	wg	reduce_min_L3	composite	wgmem<vec2<f32>>.real u32.lit4096	stmt.L3	2	a[0..n) reduced into a[0] by min: stride halving, barriers in uniform control flow
-F1003	wg	reduce_min_L3	composite	wgmem<vec4<f32>>.real u32.lit4096	stmt.L3	2	a[0..n) reduced into a[0] by min: stride halving, barriers in uniform control flow
-F1004	wg	reduce_min_L4	composite	wgmem<f32>.real u32.lit4096	stmt.L4	2	a[0..n) reduced into a[0] by min: stride halving, barriers in uniform control flow
-F1005	wg	reduce_min_L4	composite	wgmem<vec2<f32>>.real u32.lit4096	stmt.L4	2	a[0..n) reduced into a[0] by min: stride halving, barriers in uniform control flow
-F1006	wg	reduce_min_L4	composite	wgmem<vec4<f32>>.real u32.lit4096	stmt.L4	2	a[0..n) reduced into a[0] by min: stride halving, barriers in uniform control flow
-F1007	wg	reduce_min_L5	composite	wgmem<f32>.real u32.lit4096	stmt.L5	2	a[0..n) reduced into a[0] by min: stride halving, barriers in uniform control flow
-F1008	wg	reduce_min_L5	composite	wgmem<vec2<f32>>.real u32.lit4096	stmt.L5	2	a[0..n) reduced into a[0] by min: stride halving, barriers in uniform control flow
-F1009	wg	reduce_min_L5	composite	wgmem<vec4<f32>>.real u32.lit4096	stmt.L5	2	a[0..n) reduced into a[0] by min: stride halving, barriers in uniform control flow
-F1010	wg	au_a	composite	-	wgmem<atomic<u32>>.index	0	workgroup array wg_au_a of atomic<u32>
-F1011	wg	au_b	composite	-	wgmem<atomic<u32>>.index	0	workgroup array wg_au_b of atomic<u32>
-F1012	wg	ai_a	composite	-	wgmem<atomic<i32>>.int	0	workgroup array wg_ai_a of atomic<i32>
-F1013	wg	ai_b	composite	-	wgmem<atomic<i32>>.int	0	workgroup array wg_ai_b of atomic<i32>
-F1014	safe	wga_of	composite	u32.index	u32.wgaindex	1	i masked into its atomic array, in range by construction
-F1015	wg	decl_au	composite	wgmem<atomic<u32>>.index u32.wglen	wg.decl	2	var<workgroup> a: array<atomic<u32>, n>
-F1016	wg	decl_ai	composite	wgmem<atomic<i32>>.int u32.wglen	wg.decl	2	var<workgroup> a: array<atomic<i32>, n>
-F1017	atomic	add_u	composite	wgmem<atomic<u32>>.index u32.wgaindex u32.index	u32.index	3	atomicAdd(&a[i], v): the old value
-F1018	atomic	add_i	composite	wgmem<atomic<i32>>.int u32.wgaindex i32.int	i32.int	3	atomicAdd(&a[i], v): the old value
-F1019	atomic	sub_u	composite	wgmem<atomic<u32>>.index u32.wgaindex u32.index	u32.index	3	atomicSub(&a[i], v): the old value
-F1020	atomic	sub_i	composite	wgmem<atomic<i32>>.int u32.wgaindex i32.int	i32.int	3	atomicSub(&a[i], v): the old value
-F1021	atomic	max_u	composite	wgmem<atomic<u32>>.index u32.wgaindex u32.index	u32.index	3	atomicMax(&a[i], v): the old value
-F1022	atomic	max_i	composite	wgmem<atomic<i32>>.int u32.wgaindex i32.int	i32.int	3	atomicMax(&a[i], v): the old value
-F1023	atomic	min_u	composite	wgmem<atomic<u32>>.index u32.wgaindex u32.index	u32.index	3	atomicMin(&a[i], v): the old value
-F1024	atomic	min_i	composite	wgmem<atomic<i32>>.int u32.wgaindex i32.int	i32.int	3	atomicMin(&a[i], v): the old value
-F1025	atomic	and_u	composite	wgmem<atomic<u32>>.index u32.wgaindex u32.index	u32.index	3	atomicAnd(&a[i], v): the old value
-F1026	atomic	and_i	composite	wgmem<atomic<i32>>.int u32.wgaindex i32.int	i32.int	3	atomicAnd(&a[i], v): the old value
-F1027	atomic	or_u	composite	wgmem<atomic<u32>>.index u32.wgaindex u32.index	u32.index	3	atomicOr(&a[i], v): the old value
-F1028	atomic	or_i	composite	wgmem<atomic<i32>>.int u32.wgaindex i32.int	i32.int	3	atomicOr(&a[i], v): the old value
-F1029	atomic	xor_u	composite	wgmem<atomic<u32>>.index u32.wgaindex u32.index	u32.index	3	atomicXor(&a[i], v): the old value
-F1030	atomic	xor_i	composite	wgmem<atomic<i32>>.int u32.wgaindex i32.int	i32.int	3	atomicXor(&a[i], v): the old value
-F1031	atomic	exchange_u	composite	wgmem<atomic<u32>>.index u32.wgaindex u32.index	u32.index	3	atomicExchange(&a[i], v): the old value
-F1032	atomic	exchange_i	composite	wgmem<atomic<i32>>.int u32.wgaindex i32.int	i32.int	3	atomicExchange(&a[i], v): the old value
-F1033	atomic	load_u	composite	wgmem<atomic<u32>>.index u32.wgaindex	u32.index	2	atomicLoad(&a[i])
-F1034	atomic	load_i	composite	wgmem<atomic<i32>>.int u32.wgaindex	i32.int	2	atomicLoad(&a[i])
-F1035	atomic	store_u_L0	composite	wgmem<atomic<u32>>.index u32.wgaindex u32.index	stmt.L0	3	arity 3: atomicStore(&a[i], v)
-F1036	atomic	store_i_L0	composite	wgmem<atomic<i32>>.int u32.wgaindex i32.int	stmt.L0	3	arity 3: atomicStore(&a[i], v)
-F1037	stmt	discard_u_L0	composite	u32.index	stmt.L0	1	_ = e: an atomic's effect, its old value unused
-F1038	stmt	discard_i_L0	composite	i32.int	stmt.L0	1	_ = e: an atomic's effect, its old value unused
-F1039	atomic	store_u_L1	composite	wgmem<atomic<u32>>.index u32.wgaindex u32.index	stmt.L1	3	arity 3: atomicStore(&a[i], v)
-F1040	atomic	store_i_L1	composite	wgmem<atomic<i32>>.int u32.wgaindex i32.int	stmt.L1	3	arity 3: atomicStore(&a[i], v)
-F1041	stmt	discard_u_L1	composite	u32.index	stmt.L1	1	_ = e: an atomic's effect, its old value unused
-F1042	stmt	discard_i_L1	composite	i32.int	stmt.L1	1	_ = e: an atomic's effect, its old value unused
-F1043	atomic	store_u_L2	composite	wgmem<atomic<u32>>.index u32.wgaindex u32.index	stmt.L2	3	arity 3: atomicStore(&a[i], v)
-F1044	atomic	store_i_L2	composite	wgmem<atomic<i32>>.int u32.wgaindex i32.int	stmt.L2	3	arity 3: atomicStore(&a[i], v)
-F1045	stmt	discard_u_L2	composite	u32.index	stmt.L2	1	_ = e: an atomic's effect, its old value unused
-F1046	stmt	discard_i_L2	composite	i32.int	stmt.L2	1	_ = e: an atomic's effect, its old value unused
-F1047	atomic	store_u_L3	composite	wgmem<atomic<u32>>.index u32.wgaindex u32.index	stmt.L3	3	arity 3: atomicStore(&a[i], v)
-F1048	atomic	store_i_L3	composite	wgmem<atomic<i32>>.int u32.wgaindex i32.int	stmt.L3	3	arity 3: atomicStore(&a[i], v)
-F1049	stmt	discard_u_L3	composite	u32.index	stmt.L3	1	_ = e: an atomic's effect, its old value unused
-F1050	stmt	discard_i_L3	composite	i32.int	stmt.L3	1	_ = e: an atomic's effect, its old value unused
-F1051	atomic	store_u_L4	composite	wgmem<atomic<u32>>.index u32.wgaindex u32.index	stmt.L4	3	arity 3: atomicStore(&a[i], v)
-F1052	atomic	store_i_L4	composite	wgmem<atomic<i32>>.int u32.wgaindex i32.int	stmt.L4	3	arity 3: atomicStore(&a[i], v)
-F1053	stmt	discard_u_L4	composite	u32.index	stmt.L4	1	_ = e: an atomic's effect, its old value unused
-F1054	stmt	discard_i_L4	composite	i32.int	stmt.L4	1	_ = e: an atomic's effect, its old value unused
-F1055	atomic	store_u_C0	composite	wgmem<atomic<u32>>.index u32.wgaindex u32.index	stmt.C0	3	arity 3: atomicStore(&a[i], v)
-F1056	atomic	store_i_C0	composite	wgmem<atomic<i32>>.int u32.wgaindex i32.int	stmt.C0	3	arity 3: atomicStore(&a[i], v)
-F1057	stmt	discard_u_C0	composite	u32.index	stmt.C0	1	_ = e: an atomic's effect, its old value unused
-F1058	stmt	discard_i_C0	composite	i32.int	stmt.C0	1	_ = e: an atomic's effect, its old value unused
-F1059	atomic	store_u_C1	composite	wgmem<atomic<u32>>.index u32.wgaindex u32.index	stmt.C1	3	arity 3: atomicStore(&a[i], v)
-F1060	atomic	store_i_C1	composite	wgmem<atomic<i32>>.int u32.wgaindex i32.int	stmt.C1	3	arity 3: atomicStore(&a[i], v)
-F1061	stmt	discard_u_C1	composite	u32.index	stmt.C1	1	_ = e: an atomic's effect, its old value unused
-F1062	stmt	discard_i_C1	composite	i32.int	stmt.C1	1	_ = e: an atomic's effect, its old value unused
-F1063	atomic	store_u_C2	composite	wgmem<atomic<u32>>.index u32.wgaindex u32.index	stmt.C2	3	arity 3: atomicStore(&a[i], v)
-F1064	atomic	store_i_C2	composite	wgmem<atomic<i32>>.int u32.wgaindex i32.int	stmt.C2	3	arity 3: atomicStore(&a[i], v)
-F1065	stmt	discard_u_C2	composite	u32.index	stmt.C2	1	_ = e: an atomic's effect, its old value unused
-F1066	stmt	discard_i_C2	composite	i32.int	stmt.C2	1	_ = e: an atomic's effect, its old value unused
-F1067	atomic	store_u_C3	composite	wgmem<atomic<u32>>.index u32.wgaindex u32.index	stmt.C3	3	arity 3: atomicStore(&a[i], v)
-F1068	atomic	store_i_C3	composite	wgmem<atomic<i32>>.int u32.wgaindex i32.int	stmt.C3	3	arity 3: atomicStore(&a[i], v)
-F1069	stmt	discard_u_C3	composite	u32.index	stmt.C3	1	_ = e: an atomic's effect, its old value unused
-F1070	stmt	discard_i_C3	composite	i32.int	stmt.C3	1	_ = e: an atomic's effect, its old value unused
-F1071	atomic	store_u_C4	composite	wgmem<atomic<u32>>.index u32.wgaindex u32.index	stmt.C4	3	arity 3: atomicStore(&a[i], v)
-F1072	atomic	store_i_C4	composite	wgmem<atomic<i32>>.int u32.wgaindex i32.int	stmt.C4	3	arity 3: atomicStore(&a[i], v)
-F1073	stmt	discard_u_C4	composite	u32.index	stmt.C4	1	_ = e: an atomic's effect, its old value unused
-F1074	stmt	discard_i_C4	composite	i32.int	stmt.C4	1	_ = e: an atomic's effect, its old value unused
-F1075	atomic	store_u_L5	composite	wgmem<atomic<u32>>.index u32.wgaindex u32.index	stmt.L5	3	arity 3: atomicStore(&a[i], v)
-F1076	atomic	store_i_L5	composite	wgmem<atomic<i32>>.int u32.wgaindex i32.int	stmt.L5	3	arity 3: atomicStore(&a[i], v)
-F1077	stmt	discard_u_L5	composite	u32.index	stmt.L5	1	_ = e: an atomic's effect, its old value unused
-F1078	stmt	discard_i_L5	composite	i32.int	stmt.L5	1	_ = e: an atomic's effect, its old value unused
-F1079	atomic	store_u_C5	composite	wgmem<atomic<u32>>.index u32.wgaindex u32.index	stmt.C5	3	arity 3: atomicStore(&a[i], v)
-F1080	atomic	store_i_C5	composite	wgmem<atomic<i32>>.int u32.wgaindex i32.int	stmt.C5	3	arity 3: atomicStore(&a[i], v)
-F1081	stmt	discard_u_C5	composite	u32.index	stmt.C5	1	_ = e: an atomic's effect, its old value unused
-F1082	stmt	discard_i_C5	composite	i32.int	stmt.C5	1	_ = e: an atomic's effect, its old value unused
-F1083	builtin	subgroup_invocation_id	FunctionArgument(builtin)	-	u32.index	0	the thread's lane in its subgroup
-F1084	builtin	subgroup_size	FunctionArgument(builtin)	-	u32.count	0	the subgroup's width (4..64 on the M3 Max)
-F1085	builtin	num_subgroups	FunctionArgument(builtin)	-	u32.count	0	the subgroups in the workgroup
-F1086	builtin	subgroup_id	FunctionArgument(builtin)	-	u32.index	0	the thread's subgroup in its workgroup
-F1087	subgroup	add	SubgroupCollectiveOperation	<S.real>	<S.real>	1	subgroupAdd(x) over the subgroup's active lanes
-F1088	subgroup	add	SubgroupCollectiveOperation	u32.index	u32.index	1	subgroupAdd(x) over the subgroup's active lanes
-F1089	subgroup	mul	SubgroupCollectiveOperation	<S.real>	<S.real>	1	subgroupMul(x) over the subgroup's active lanes
-F1090	subgroup	mul	SubgroupCollectiveOperation	u32.index	u32.index	1	subgroupMul(x) over the subgroup's active lanes
-F1091	subgroup	min	SubgroupCollectiveOperation	<S.real>	<S.real>	1	subgroupMin(x) over the subgroup's active lanes
-F1092	subgroup	min	SubgroupCollectiveOperation	u32.index	u32.index	1	subgroupMin(x) over the subgroup's active lanes
-F1093	subgroup	max	SubgroupCollectiveOperation	<S.real>	<S.real>	1	subgroupMax(x) over the subgroup's active lanes
-F1094	subgroup	max	SubgroupCollectiveOperation	u32.index	u32.index	1	subgroupMax(x) over the subgroup's active lanes
-F1095	subgroup	inclusive_add	SubgroupCollectiveOperation	<S.real>	<S.real>	1	subgroupInclusiveAdd(x) over the subgroup's active lanes
-F1096	subgroup	inclusive_add	SubgroupCollectiveOperation	u32.index	u32.index	1	subgroupInclusiveAdd(x) over the subgroup's active lanes
-F1097	subgroup	inclusive_mul	SubgroupCollectiveOperation	<S.real>	<S.real>	1	subgroupInclusiveMul(x) over the subgroup's active lanes
-F1098	subgroup	inclusive_mul	SubgroupCollectiveOperation	u32.index	u32.index	1	subgroupInclusiveMul(x) over the subgroup's active lanes
-F1099	subgroup	exclusive_add	SubgroupCollectiveOperation	<S.real>	<S.real>	1	subgroupExclusiveAdd(x) over the subgroup's active lanes
-F1100	subgroup	exclusive_add	SubgroupCollectiveOperation	u32.index	u32.index	1	subgroupExclusiveAdd(x) over the subgroup's active lanes
-F1101	subgroup	exclusive_mul	SubgroupCollectiveOperation	<S.real>	<S.real>	1	subgroupExclusiveMul(x) over the subgroup's active lanes
-F1102	subgroup	exclusive_mul	SubgroupCollectiveOperation	u32.index	u32.index	1	subgroupExclusiveMul(x) over the subgroup's active lanes
-F1103	subgroup	and	SubgroupCollectiveOperation	u32.bits	u32.bits	1	subgroupAnd(x)
-F1104	subgroup	or	SubgroupCollectiveOperation	u32.bits	u32.bits	1	subgroupOr(x)
-F1105	subgroup	xor	SubgroupCollectiveOperation	u32.bits	u32.bits	1	subgroupXor(x)
-F1106	subgroup	all	SubgroupCollectiveOperation	bool.flag	bool.flag	1	subgroupAll(b)
-F1107	subgroup	any	SubgroupCollectiveOperation	bool.flag	bool.flag	1	subgroupAny(b)
-F1108	subgroup	broadcast_first	SubgroupGather	<S.real>	<S.real>	1	subgroupBroadcastFirst(x)
-F1109	subgroup	broadcast	SubgroupGather	<S.real> u32.lit64	<S.real>	2	subgroupBroadcast(x, lane): the lane a literal
-F1110	subgroup	shuffle	SubgroupGather	<S.real> u32.index	<S.real>	2	subgroupShuffle(x, i)
-F1111	subgroup	shuffle_down	SubgroupGather	<S.real> u32.index	<S.real>	2	subgroupShuffleDown(x, i)
-F1112	subgroup	shuffle_up	SubgroupGather	<S.real> u32.index	<S.real>	2	subgroupShuffleUp(x, i)
-F1113	subgroup	shuffle_xor	SubgroupGather	<S.real> u32.index	<S.real>	2	subgroupShuffleXor(x, i)
-F1114	subgroup	broadcast_first	SubgroupGather	u32.index	u32.index	1	subgroupBroadcastFirst(x)
-F1115	subgroup	broadcast	SubgroupGather	u32.index u32.lit64	u32.index	2	subgroupBroadcast(x, lane): the lane a literal
-F1116	subgroup	shuffle	SubgroupGather	u32.index u32.index	u32.index	2	subgroupShuffle(x, i)
-F1117	subgroup	shuffle_down	SubgroupGather	u32.index u32.index	u32.index	2	subgroupShuffleDown(x, i)
-F1118	subgroup	shuffle_up	SubgroupGather	u32.index u32.index	u32.index	2	subgroupShuffleUp(x, i)
-F1119	subgroup	shuffle_xor	SubgroupGather	u32.index u32.index	u32.index	2	subgroupShuffleXor(x, i)
-F1120	stmt	subgroup_barrier_L0	composite	-	stmt.L0	0	subgroupBarrier()
-F1121	stmt	subgroup_barrier_L1	composite	-	stmt.L1	0	subgroupBarrier()
-F1122	stmt	subgroup_barrier_L2	composite	-	stmt.L2	0	subgroupBarrier()
-F1123	stmt	subgroup_barrier_L3	composite	-	stmt.L3	0	subgroupBarrier()
-F1124	stmt	subgroup_barrier_L4	composite	-	stmt.L4	0	subgroupBarrier()
-F1125	stmt	subgroup_barrier_L5	composite	-	stmt.L5	0	subgroupBarrier()
-F1126	grid	of_rows_x	composite	u32.wgdim u32.wgdim u32.blk u32.blk	grid.grid	4	arity 4: grid.of with the output's rows on thread x (the fast index) and its columns on y; the header says `rows-x`
-F1127	convert	index_to_bits	As	<u32.index>	<u32.bits>	1	the same u32 lanes read as a bit field
-F1128	convert	bits_to_index	As	<u32.bits>	<u32.index>	1	the same u32 lanes read as an index
-F1129	convert	count_to_bits	As	<u32.count>	<u32.bits>	1	the same u32 lanes read as a bit field
-F1130	index	of_count	composite	vec2<u32>.count	vec2<u32>.index	1	per lane
-F1131	bits	count_ones	Math::CountOneBits	vec2<u32>.bits	vec2<u32>.count	1	per lane
-F1132	bits	leading_zeros	Math::CountLeadingZeros	vec2<u32>.bits	vec2<u32>.count	1	per lane
-F1133	bits	trailing_zeros	Math::CountTrailingZeros	vec2<u32>.bits	vec2<u32>.count	1	per lane
-F1134	bits	find_lsb	Math::FindLsb	vec2<u32>.bits	vec2<u32>.count	1	per lane
-F1135	bits	find_msb	Math::FindMsb	vec2<u32>.bits	vec2<u32>.count	1	per lane
-F1136	bits	reverse	Math::ReverseBits	vec2<u32>.bits	vec2<u32>.bits	1	per lane
-F1137	bits	extract	Math::ExtractBits	vec2<u32>.bits u32.index u32.count	vec2<u32>.bits	3	arity 3, per lane
-F1138	index	of_count	composite	vec3<u32>.count	vec3<u32>.index	1	per lane
-F1139	bits	count_ones	Math::CountOneBits	vec3<u32>.bits	vec3<u32>.count	1	per lane
-F1140	bits	leading_zeros	Math::CountLeadingZeros	vec3<u32>.bits	vec3<u32>.count	1	per lane
-F1141	bits	trailing_zeros	Math::CountTrailingZeros	vec3<u32>.bits	vec3<u32>.count	1	per lane
-F1142	bits	find_lsb	Math::FindLsb	vec3<u32>.bits	vec3<u32>.count	1	per lane
-F1143	bits	find_msb	Math::FindMsb	vec3<u32>.bits	vec3<u32>.count	1	per lane
-F1144	bits	reverse	Math::ReverseBits	vec3<u32>.bits	vec3<u32>.bits	1	per lane
-F1145	bits	extract	Math::ExtractBits	vec3<u32>.bits u32.index u32.count	vec3<u32>.bits	3	arity 3, per lane
-F1146	index	of_count	composite	vec4<u32>.count	vec4<u32>.index	1	per lane
-F1147	bits	count_ones	Math::CountOneBits	vec4<u32>.bits	vec4<u32>.count	1	per lane
-F1148	bits	leading_zeros	Math::CountLeadingZeros	vec4<u32>.bits	vec4<u32>.count	1	per lane
-F1149	bits	trailing_zeros	Math::CountTrailingZeros	vec4<u32>.bits	vec4<u32>.count	1	per lane
-F1150	bits	find_lsb	Math::FindLsb	vec4<u32>.bits	vec4<u32>.count	1	per lane
-F1151	bits	find_msb	Math::FindMsb	vec4<u32>.bits	vec4<u32>.count	1	per lane
-F1152	bits	reverse	Math::ReverseBits	vec4<u32>.bits	vec4<u32>.bits	1	per lane
-F1153	bits	extract	Math::ExtractBits	vec4<u32>.bits u32.index u32.count	vec4<u32>.bits	3	arity 3, per lane
-F1154	bits	insert	Math::InsertBits	<u32.bits> <u32.bits> u32.index u32.count	<u32.bits>	4	arity 4: insertBits(e, newbits, offset, count)
-F1155	geom	dot	Math::Dot	<vecL<u32>.index> <vecL<u32>.index>	u32.index	2	integer dot product (wraps)
-F1156	geom	dot	Math::Dot	<vecL<i32>.int> <vecL<i32>.int>	i32.int	2	integer dot product (wraps)
-F1157	arith	mod	Binary::Modulo	<S.real> <S.real>	<S.real>	2	WGSL's % on reals: x - y * trunc(x / y)
-F1158	stmt	storage_barrier_L0	composite	-	stmt.L0	0	storageBarrier(): storage-buffer writes visible to the workgroup
-F1159	stmt	storage_barrier_L1	composite	-	stmt.L1	0	storageBarrier(): storage-buffer writes visible to the workgroup
-F1160	stmt	storage_barrier_L2	composite	-	stmt.L2	0	storageBarrier(): storage-buffer writes visible to the workgroup
-F1161	stmt	storage_barrier_L3	composite	-	stmt.L3	0	storageBarrier(): storage-buffer writes visible to the workgroup
-F1162	stmt	storage_barrier_L4	composite	-	stmt.L4	0	storageBarrier(): storage-buffer writes visible to the workgroup
-F1163	stmt	storage_barrier_L5	composite	-	stmt.L5	0	storageBarrier(): storage-buffer writes visible to the workgroup
-F1164	reg	n0	composite	-	reg<i32>.int	0	an i32 register
-F1165	reg	n1	composite	-	reg<i32>.int	0	an i32 register
-F1166	reg	n2	composite	-	reg<i32>.int	0	an i32 register
-F1167	reg	n3	composite	-	reg<i32>.int	0	an i32 register
-F1168	reg	n4	composite	-	reg<i32>.int	0	an i32 register
-F1169	reg	n5	composite	-	reg<i32>.int	0	an i32 register
-F1170	reg	n6	composite	-	reg<i32>.int	0	an i32 register
-F1171	reg	n7	composite	-	reg<i32>.int	0	an i32 register
-F1172	reg	n8	composite	-	reg<i32>.int	0	an i32 register
-F1173	reg	n9	composite	-	reg<i32>.int	0	an i32 register
-F1174	reg	n10	composite	-	reg<i32>.int	0	an i32 register
-F1175	reg	n11	composite	-	reg<i32>.int	0	an i32 register
-F1176	reg	n12	composite	-	reg<i32>.int	0	an i32 register
-F1177	reg	n13	composite	-	reg<i32>.int	0	an i32 register
-F1178	reg	n14	composite	-	reg<i32>.int	0	an i32 register
-F1179	reg	n15	composite	-	reg<i32>.int	0	an i32 register
-F1180	reg	get_n	composite	reg<i32>.int	i32.int	1	the register's value
-F1181	reg	set_n_L0	composite	reg<i32>.int i32.int	stmt.L0	2	
-F1182	reg	set_n_L1	composite	reg<i32>.int i32.int	stmt.L1	2	
-F1183	reg	set_n_L2	composite	reg<i32>.int i32.int	stmt.L2	2	
-F1184	reg	set_n_L3	composite	reg<i32>.int i32.int	stmt.L3	2	
-F1185	reg	set_n_L4	composite	reg<i32>.int i32.int	stmt.L4	2	
-F1186	reg	set_n_C0	composite	reg<i32>.int i32.int	stmt.C0	2	
-F1187	reg	set_n_C1	composite	reg<i32>.int i32.int	stmt.C1	2	
-F1188	reg	set_n_C2	composite	reg<i32>.int i32.int	stmt.C2	2	
-F1189	reg	set_n_C3	composite	reg<i32>.int i32.int	stmt.C3	2	
-F1190	reg	set_n_C4	composite	reg<i32>.int i32.int	stmt.C4	2	
-F1191	reg	set_n_L5	composite	reg<i32>.int i32.int	stmt.L5	2	
-F1192	reg	set_n_C5	composite	reg<i32>.int i32.int	stmt.C5	2	
-F1193	convert	index_to_int	As	<u32.index>	<i32.int>	1	i32(u): the same bits read as two's complement
-F1194	convert	int_to_index	As	<i32.int>	<u32.index>	1	u32(i): the same bits read unsigned (index.of_int floors at zero instead)
-F1195	convert	bitcast_int_bits	As(bitcast)	<i32.int>	<u32.bits>	1	
-F1196	convert	bitcast_bits_int	As(bitcast)	<u32.bits>	<i32.int>	1	
-F1197	convert	bitcast_real_int	As(bitcast)	<f32.real>	<i32.int>	1	
-F1198	convert	bitcast_int_real	As(bitcast)	<i32.int>	<f32.real>	1	
-F1199	convert	f32_to_int	As	vec2<f32>.real	vec2<i32>.int	1	truncating, per lane
-F1200	convert	int_to_f32	As	vec2<i32>.int	vec2<f32>.real	1	per lane
-F1201	convert	f32_to_int	As	vec3<f32>.real	vec3<i32>.int	1	truncating, per lane
-F1202	convert	int_to_f32	As	vec3<i32>.int	vec3<f32>.real	1	per lane
-F1203	convert	f32_to_int	As	vec4<f32>.real	vec4<i32>.int	1	truncating, per lane
-F1204	convert	int_to_f32	As	vec4<i32>.int	vec4<f32>.real	1	per lane
-F1205	int	clamp	Math::Clamp	<i32.int> <i32.int> <i32.int>	<i32.int>	3	arity 3
-F1206	int	sign	Math::Sign	<i32.int>	<i32.int>	1	
-F1207	int	and	Binary::And	<i32.int> <i32.int>	<i32.int>	2	lanes equal
-F1208	int	or	Binary::InclusiveOr	<i32.int> <i32.int>	<i32.int>	2	lanes equal
-F1209	int	xor	Binary::ExclusiveOr	<i32.int> <i32.int>	<i32.int>	2	lanes equal
-F1210	int	not	Unary::BitwiseNot	<i32.int>	<i32.int>	1	
-F1211	int	shl	Binary::ShiftLeft	i32.int u32.count	i32.int	2	
-F1212	int	shr	Binary::ShiftRight	i32.int u32.count	i32.int	2	arithmetic: the sign bit fills
-F1213	int	count_ones	Math::CountOneBits	<i32.int>	<i32.int>	1	WGSL returns i32 for i32
-F1214	int	leading_zeros	Math::CountLeadingZeros	<i32.int>	<i32.int>	1	WGSL returns i32 for i32
-F1215	int	trailing_zeros	Math::CountTrailingZeros	<i32.int>	<i32.int>	1	WGSL returns i32 for i32
-F1216	int	find_lsb	Math::FindLsb	<i32.int>	<i32.int>	1	WGSL returns i32 for i32
-F1217	int	find_msb	Math::FindMsb	<i32.int>	<i32.int>	1	WGSL returns i32 for i32
-F1218	int	reverse	Math::ReverseBits	<i32.int>	<i32.int>	1	
-F1219	int	extract	Math::ExtractBits	<i32.int> u32.index u32.count	<i32.int>	3	arity 3, sign-extending
-F1220	int	insert	Math::InsertBits	<i32.int> <i32.int> u32.index u32.count	<i32.int>	4	arity 4
-F1221	subgroup	add	SubgroupCollectiveOperation	i32.int	i32.int	1	subgroupAdd(x) on i32
-F1222	subgroup	mul	SubgroupCollectiveOperation	i32.int	i32.int	1	subgroupMul(x) on i32
-F1223	subgroup	min	SubgroupCollectiveOperation	i32.int	i32.int	1	subgroupMin(x) on i32
-F1224	subgroup	max	SubgroupCollectiveOperation	i32.int	i32.int	1	subgroupMax(x) on i32
-F1225	subgroup	inclusive_add	SubgroupCollectiveOperation	i32.int	i32.int	1	subgroupInclusiveAdd(x) on i32
-F1226	subgroup	inclusive_mul	SubgroupCollectiveOperation	i32.int	i32.int	1	subgroupInclusiveMul(x) on i32
-F1227	subgroup	exclusive_add	SubgroupCollectiveOperation	i32.int	i32.int	1	subgroupExclusiveAdd(x) on i32
-F1228	subgroup	exclusive_mul	SubgroupCollectiveOperation	i32.int	i32.int	1	subgroupExclusiveMul(x) on i32
-F1229	subgroup	and	SubgroupCollectiveOperation	i32.int	i32.int	1	subgroupAnd(x) on i32
-F1230	subgroup	or	SubgroupCollectiveOperation	i32.int	i32.int	1	subgroupOr(x) on i32
-F1231	subgroup	xor	SubgroupCollectiveOperation	i32.int	i32.int	1	subgroupXor(x) on i32
-F1232	subgroup	broadcast_first	SubgroupGather	i32.int	i32.int	1	subgroupBroadcastFirst(x)
-F1233	subgroup	broadcast	SubgroupGather	i32.int u32.lit64	i32.int	2	subgroupBroadcast(x, lane): the lane a literal
-F1234	subgroup	shuffle	SubgroupGather	i32.int u32.index	i32.int	2	subgroupShuffle(x, i)
-F1235	subgroup	shuffle_down	SubgroupGather	i32.int u32.index	i32.int	2	subgroupShuffleDown(x, i)
-F1236	subgroup	shuffle_up	SubgroupGather	i32.int u32.index	i32.int	2	subgroupShuffleUp(x, i)
-F1237	subgroup	shuffle_xor	SubgroupGather	i32.int u32.index	i32.int	2	subgroupShuffleXor(x, i)
-F1238	block	brk_B1	composite	block.C1 bool.flag block.C1	block.B1	3	arity 3: before; if (c) { break; }; after
-F1239	block	brk_B2	composite	block.C2 bool.flag block.C2	block.B2	3	arity 3: before; if (c) { break; }; after
-F1240	block	brk_B3	composite	block.C3 bool.flag block.C3	block.B3	3	arity 3: before; if (c) { break; }; after
-F1241	block	brk_B4	composite	block.C4 bool.flag block.C4	block.B4	3	arity 3: before; if (c) { break; }; after
-F1242	block	brk_B5	composite	block.C5 bool.flag block.C5	block.B5	3	arity 3: before; if (c) { break; }; after
-F1243	loop	tile_brk_L0	composite	u32.lit64 block.B2	stmt.L0	2	for (k = 0u; k < n; k++) { body that breaks }
-F1244	loop	tilex_brk_L0	composite	u32.boundx block.B2	stmt.L0	2	for (k = 0u; k < (expr); k++) { body that breaks }
-F1245	loop	tile_brk_L1	composite	u32.lit64 block.B2	stmt.L1	2	for (k = 0u; k < n; k++) { body that breaks }
-F1246	loop	tilex_brk_L1	composite	u32.boundx block.B2	stmt.L1	2	for (k = 0u; k < (expr); k++) { body that breaks }
-F1247	loop	tile_brk_L2	composite	u32.lit64 block.B3	stmt.L2	2	for (k = 0u; k < n; k++) { body that breaks }
-F1248	loop	tilex_brk_L2	composite	u32.boundx block.B3	stmt.L2	2	for (k = 0u; k < (expr); k++) { body that breaks }
-F1249	loop	tile_brk_L3	composite	u32.lit64 block.B4	stmt.L3	2	for (k = 0u; k < n; k++) { body that breaks }
-F1250	loop	tilex_brk_L3	composite	u32.boundx block.B4	stmt.L3	2	for (k = 0u; k < (expr); k++) { body that breaks }
-F1251	loop	tile_brk_L4	composite	u32.lit64 block.B5	stmt.L4	2	for (k = 0u; k < n; k++) { body that breaks }
-F1252	loop	tilex_brk_L4	composite	u32.boundx block.B5	stmt.L4	2	for (k = 0u; k < (expr); k++) { body that breaks }
-F1253	loop	tile_brk_C0	composite	u32.lit64 block.B1	stmt.C0	2	for (k = 0u; k < n; k++) { body that breaks }
-F1254	loop	tilex_brk_C0	composite	u32.boundx block.B1	stmt.C0	2	for (k = 0u; k < (expr); k++) { body that breaks }
-F1255	loop	tile_brk_C1	composite	u32.lit64 block.B2	stmt.C1	2	for (k = 0u; k < n; k++) { body that breaks }
-F1256	loop	tilex_brk_C1	composite	u32.boundx block.B2	stmt.C1	2	for (k = 0u; k < (expr); k++) { body that breaks }
-F1257	loop	tile_brk_C2	composite	u32.lit64 block.B3	stmt.C2	2	for (k = 0u; k < n; k++) { body that breaks }
-F1258	loop	tilex_brk_C2	composite	u32.boundx block.B3	stmt.C2	2	for (k = 0u; k < (expr); k++) { body that breaks }
-F1259	loop	tile_brk_C3	composite	u32.lit64 block.B4	stmt.C3	2	for (k = 0u; k < n; k++) { body that breaks }
-F1260	loop	tilex_brk_C3	composite	u32.boundx block.B4	stmt.C3	2	for (k = 0u; k < (expr); k++) { body that breaks }
-F1261	loop	tile_brk_C4	composite	u32.lit64 block.B5	stmt.C4	2	for (k = 0u; k < n; k++) { body that breaks }
-F1262	loop	tilex_brk_C4	composite	u32.boundx block.B5	stmt.C4	2	for (k = 0u; k < (expr); k++) { body that breaks }
-F1263	block	cont_L1	composite	bool.flag block.C1	block.L1	2	if (c) { continue; } then the rest, conditional
-F1264	block	cont_L2	composite	bool.flag block.C2	block.L2	2	if (c) { continue; } then the rest, conditional
-F1265	block	cont_L3	composite	bool.flag block.C3	block.L3	2	if (c) { continue; } then the rest, conditional
-F1266	block	cont_L4	composite	bool.flag block.C4	block.L4	2	if (c) { continue; } then the rest, conditional
-F1267	block	cont_L5	composite	bool.flag block.C5	block.L5	2	if (c) { continue; } then the rest, conditional
-F1268	block	cont_C1	composite	bool.flag block.C1	block.C1	2	if (c) { continue; } then the rest, conditional
-F1269	block	cont_C2	composite	bool.flag block.C2	block.C2	2	if (c) { continue; } then the rest, conditional
-F1270	block	cont_C3	composite	bool.flag block.C3	block.C3	2	if (c) { continue; } then the rest, conditional
-F1271	block	cont_C4	composite	bool.flag block.C4	block.C4	2	if (c) { continue; } then the rest, conditional
-F1272	block	cont_C5	composite	bool.flag block.C5	block.C5	2	if (c) { continue; } then the rest, conditional
-F1273	index	of_gid	composite	vec3<u32>.gid	vec3<u32>.index	1	the thread id gid used as a plain vector of indices
-F1274	index	of_lid	composite	vec3<u32>.lid	vec3<u32>.index	1	the thread id lid used as a plain vector of indices
-F1275	index	of_wid	composite	vec3<u32>.wid	vec3<u32>.index	1	the thread id wid used as a plain vector of indices
-F1276	convert	bitcast_f32_bits	As(bitcast)	vec2<f32>.real	vec2<u32>.bits	1	per lane
-F1277	convert	bitcast_bits_f32	As(bitcast)	vec2<u32>.bits	vec2<f32>.real	1	per lane
-F1278	convert	bitcast_f32_bits	As(bitcast)	vec3<f32>.real	vec3<u32>.bits	1	per lane
-F1279	convert	bitcast_bits_f32	As(bitcast)	vec3<u32>.bits	vec3<f32>.real	1	per lane
-F1280	convert	bitcast_f32_bits	As(bitcast)	vec4<f32>.real	vec4<u32>.bits	1	per lane
-F1281	convert	bitcast_bits_f32	As(bitcast)	vec4<u32>.bits	vec4<f32>.real	1	per lane
-F1282	reg	u0	composite	-	reg<vec4<u32>>.bits	0	a vec4<u32> register
-F1283	reg	u1	composite	-	reg<vec4<u32>>.bits	0	a vec4<u32> register
-F1284	reg	u2	composite	-	reg<vec4<u32>>.bits	0	a vec4<u32> register
-F1285	reg	u3	composite	-	reg<vec4<u32>>.bits	0	a vec4<u32> register
-F1286	reg	u4	composite	-	reg<vec4<u32>>.bits	0	a vec4<u32> register
-F1287	reg	u5	composite	-	reg<vec4<u32>>.bits	0	a vec4<u32> register
-F1288	reg	u6	composite	-	reg<vec4<u32>>.bits	0	a vec4<u32> register
-F1289	reg	u7	composite	-	reg<vec4<u32>>.bits	0	a vec4<u32> register
-F1290	reg	get_u	composite	reg<vec4<u32>>.bits	vec4<u32>.bits	1	the register's value
-F1291	reg	set_u_L0	composite	reg<vec4<u32>>.bits vec4<u32>.bits	stmt.L0	2	
-F1292	reg	set_u_L1	composite	reg<vec4<u32>>.bits vec4<u32>.bits	stmt.L1	2	
-F1293	reg	set_u_L2	composite	reg<vec4<u32>>.bits vec4<u32>.bits	stmt.L2	2	
-F1294	reg	set_u_L3	composite	reg<vec4<u32>>.bits vec4<u32>.bits	stmt.L3	2	
-F1295	reg	set_u_L4	composite	reg<vec4<u32>>.bits vec4<u32>.bits	stmt.L4	2	
-F1296	reg	set_u_C0	composite	reg<vec4<u32>>.bits vec4<u32>.bits	stmt.C0	2	
-F1297	reg	set_u_C1	composite	reg<vec4<u32>>.bits vec4<u32>.bits	stmt.C1	2	
-F1298	reg	set_u_C2	composite	reg<vec4<u32>>.bits vec4<u32>.bits	stmt.C2	2	
-F1299	reg	set_u_C3	composite	reg<vec4<u32>>.bits vec4<u32>.bits	stmt.C3	2	
-F1300	reg	set_u_C4	composite	reg<vec4<u32>>.bits vec4<u32>.bits	stmt.C4	2	
-F1301	reg	set_u_L5	composite	reg<vec4<u32>>.bits vec4<u32>.bits	stmt.L5	2	
-F1302	reg	set_u_C5	composite	reg<vec4<u32>>.bits vec4<u32>.bits	stmt.C5	2	
-F1303	subgroup	ballot	SubgroupBallot	bool.flag	vec4<u32>.bits	1	subgroupBallot(b): a bit per active lane where b holds
-F1304	parr	q	composite	-	parr<vec2<f32>>.real	0	private array pq of 16 vec2<f32>
-F1305	parr	r	composite	-	parr<vec2<f32>>.real	0	private array pr of 16 vec2<f32>
-F1306	parr	get_t	composite	parr<vec2<f32>>.real u32.pindex16	vec2<f32>.real	2	pq[i]
-F1307	parr	set_t_L0	composite	parr<vec2<f32>>.real u32.pindex16 vec2<f32>.real	stmt.L0	3	arity 3: pq[i] = v;
-F1308	parr	set_t_L1	composite	parr<vec2<f32>>.real u32.pindex16 vec2<f32>.real	stmt.L1	3	arity 3: pq[i] = v;
-F1309	parr	set_t_L2	composite	parr<vec2<f32>>.real u32.pindex16 vec2<f32>.real	stmt.L2	3	arity 3: pq[i] = v;
-F1310	parr	set_t_L3	composite	parr<vec2<f32>>.real u32.pindex16 vec2<f32>.real	stmt.L3	3	arity 3: pq[i] = v;
-F1311	parr	set_t_L4	composite	parr<vec2<f32>>.real u32.pindex16 vec2<f32>.real	stmt.L4	3	arity 3: pq[i] = v;
-F1312	parr	set_t_C0	composite	parr<vec2<f32>>.real u32.pindex16 vec2<f32>.real	stmt.C0	3	arity 3: pq[i] = v;
-F1313	parr	set_t_C1	composite	parr<vec2<f32>>.real u32.pindex16 vec2<f32>.real	stmt.C1	3	arity 3: pq[i] = v;
-F1314	parr	set_t_C2	composite	parr<vec2<f32>>.real u32.pindex16 vec2<f32>.real	stmt.C2	3	arity 3: pq[i] = v;
-F1315	parr	set_t_C3	composite	parr<vec2<f32>>.real u32.pindex16 vec2<f32>.real	stmt.C3	3	arity 3: pq[i] = v;
-F1316	parr	set_t_C4	composite	parr<vec2<f32>>.real u32.pindex16 vec2<f32>.real	stmt.C4	3	arity 3: pq[i] = v;
-F1317	parr	set_t_L5	composite	parr<vec2<f32>>.real u32.pindex16 vec2<f32>.real	stmt.L5	3	arity 3: pq[i] = v;
-F1318	parr	set_t_C5	composite	parr<vec2<f32>>.real u32.pindex16 vec2<f32>.real	stmt.C5	3	arity 3: pq[i] = v;
-F1319	shape	compose_mat3	Compose	<vecR<f32>.real> <vecR<f32>.real> <vecR<f32>.real>	<mat3xR<f32>.real>	3	arity 3: three columns
-F1320	shape	compose_mat4	Compose	<vecR<f32>.real> <vecR<f32>.real> <vecR<f32>.real> <vecR<f32>.real>	<mat4xR<f32>.real>	4	arity 4: four columns
-F1321	shape	col_0	AccessIndex	mat2x2<f32>.real	vec2<f32>.real	1	m[0]: a column
-F1322	shape	col_1	AccessIndex	mat2x2<f32>.real	vec2<f32>.real	1	m[1]: a column
-F1323	shape	col_0	AccessIndex	mat2x3<f32>.real	vec3<f32>.real	1	m[0]: a column
-F1324	shape	col_1	AccessIndex	mat2x3<f32>.real	vec3<f32>.real	1	m[1]: a column
-F1325	shape	col_0	AccessIndex	mat2x4<f32>.real	vec4<f32>.real	1	m[0]: a column
-F1326	shape	col_1	AccessIndex	mat2x4<f32>.real	vec4<f32>.real	1	m[1]: a column
-F1327	shape	col_0	AccessIndex	mat3x2<f32>.real	vec2<f32>.real	1	m[0]: a column
-F1328	shape	col_1	AccessIndex	mat3x2<f32>.real	vec2<f32>.real	1	m[1]: a column
-F1329	shape	col_2	AccessIndex	mat3x2<f32>.real	vec2<f32>.real	1	m[2]: a column
-F1330	shape	col_0	AccessIndex	mat3x3<f32>.real	vec3<f32>.real	1	m[0]: a column
-F1331	shape	col_1	AccessIndex	mat3x3<f32>.real	vec3<f32>.real	1	m[1]: a column
-F1332	shape	col_2	AccessIndex	mat3x3<f32>.real	vec3<f32>.real	1	m[2]: a column
-F1333	shape	col_0	AccessIndex	mat3x4<f32>.real	vec4<f32>.real	1	m[0]: a column
-F1334	shape	col_1	AccessIndex	mat3x4<f32>.real	vec4<f32>.real	1	m[1]: a column
-F1335	shape	col_2	AccessIndex	mat3x4<f32>.real	vec4<f32>.real	1	m[2]: a column
-F1336	shape	col_0	AccessIndex	mat4x2<f32>.real	vec2<f32>.real	1	m[0]: a column
-F1337	shape	col_1	AccessIndex	mat4x2<f32>.real	vec2<f32>.real	1	m[1]: a column
-F1338	shape	col_2	AccessIndex	mat4x2<f32>.real	vec2<f32>.real	1	m[2]: a column
-F1339	shape	col_3	AccessIndex	mat4x2<f32>.real	vec2<f32>.real	1	m[3]: a column
-F1340	shape	col_0	AccessIndex	mat4x3<f32>.real	vec3<f32>.real	1	m[0]: a column
-F1341	shape	col_1	AccessIndex	mat4x3<f32>.real	vec3<f32>.real	1	m[1]: a column
-F1342	shape	col_2	AccessIndex	mat4x3<f32>.real	vec3<f32>.real	1	m[2]: a column
-F1343	shape	col_3	AccessIndex	mat4x3<f32>.real	vec3<f32>.real	1	m[3]: a column
-F1344	shape	col_0	AccessIndex	mat4x4<f32>.real	vec4<f32>.real	1	m[0]: a column
-F1345	shape	col_1	AccessIndex	mat4x4<f32>.real	vec4<f32>.real	1	m[1]: a column
-F1346	shape	col_2	AccessIndex	mat4x4<f32>.real	vec4<f32>.real	1	m[2]: a column
-F1347	shape	col_3	AccessIndex	mat4x4<f32>.real	vec4<f32>.real	1	m[3]: a column
-F1348	shape	col_at	composite	<matCxR<f32>.real> u32.index	<vecR<f32>.real>	2	m[min(i, C - 1)]: a column chosen at run time
-F1349	arith	mul_vec_mat	Binary::Multiply	<vecR<f32>.real> <matCxR<f32>.real>	<vecC<f32>.real>	2	v * m (a row vector)
-F1350	arith	mul_mat_scalar	Binary::Multiply	<matCxR<f32>.real> f32.real	<matCxR<f32>.real>	2	
-F1351	arith	mul_scalar_mat	Binary::Multiply	f32.real <matCxR<f32>.real>	<matCxR<f32>.real>	2	
-F1352	arith	add_mat	Binary::Add	<matCxR<f32>.real> <matCxR<f32>.real>	<matCxR<f32>.real>	2	
-F1353	arith	sub_mat	Binary::Subtract	<matCxR<f32>.real> <matCxR<f32>.real>	<matCxR<f32>.real>	2	
-F1354	arith	neg_mat	Unary::Negate	<matCxR<f32>.real>	<matCxR<f32>.real>	1	
-F1355	reg	x0	composite	-	reg<mat2x2<f32>>.real	0	a mat2x2<f32> register
-F1356	reg	x1	composite	-	reg<mat2x2<f32>>.real	0	a mat2x2<f32> register
-F1357	reg	get_x	composite	reg<mat2x2<f32>>.real	mat2x2<f32>.real	1	the register's value
-F1358	reg	set_x_L0	composite	reg<mat2x2<f32>>.real mat2x2<f32>.real	stmt.L0	2	
-F1359	reg	set_x_L1	composite	reg<mat2x2<f32>>.real mat2x2<f32>.real	stmt.L1	2	
-F1360	reg	set_x_L2	composite	reg<mat2x2<f32>>.real mat2x2<f32>.real	stmt.L2	2	
-F1361	reg	set_x_L3	composite	reg<mat2x2<f32>>.real mat2x2<f32>.real	stmt.L3	2	
-F1362	reg	set_x_L4	composite	reg<mat2x2<f32>>.real mat2x2<f32>.real	stmt.L4	2	
-F1363	reg	set_x_C0	composite	reg<mat2x2<f32>>.real mat2x2<f32>.real	stmt.C0	2	
-F1364	reg	set_x_C1	composite	reg<mat2x2<f32>>.real mat2x2<f32>.real	stmt.C1	2	
-F1365	reg	set_x_C2	composite	reg<mat2x2<f32>>.real mat2x2<f32>.real	stmt.C2	2	
-F1366	reg	set_x_C3	composite	reg<mat2x2<f32>>.real mat2x2<f32>.real	stmt.C3	2	
-F1367	reg	set_x_C4	composite	reg<mat2x2<f32>>.real mat2x2<f32>.real	stmt.C4	2	
-F1368	reg	set_x_L5	composite	reg<mat2x2<f32>>.real mat2x2<f32>.real	stmt.L5	2	
-F1369	reg	set_x_C5	composite	reg<mat2x2<f32>>.real mat2x2<f32>.real	stmt.C5	2	
-F1370	reg	y0	composite	-	reg<mat3x3<f32>>.real	0	a mat3x3<f32> register
-F1371	reg	y1	composite	-	reg<mat3x3<f32>>.real	0	a mat3x3<f32> register
-F1372	reg	get_y	composite	reg<mat3x3<f32>>.real	mat3x3<f32>.real	1	the register's value
-F1373	reg	set_y_L0	composite	reg<mat3x3<f32>>.real mat3x3<f32>.real	stmt.L0	2	
-F1374	reg	set_y_L1	composite	reg<mat3x3<f32>>.real mat3x3<f32>.real	stmt.L1	2	
-F1375	reg	set_y_L2	composite	reg<mat3x3<f32>>.real mat3x3<f32>.real	stmt.L2	2	
-F1376	reg	set_y_L3	composite	reg<mat3x3<f32>>.real mat3x3<f32>.real	stmt.L3	2	
-F1377	reg	set_y_L4	composite	reg<mat3x3<f32>>.real mat3x3<f32>.real	stmt.L4	2	
-F1378	reg	set_y_C0	composite	reg<mat3x3<f32>>.real mat3x3<f32>.real	stmt.C0	2	
-F1379	reg	set_y_C1	composite	reg<mat3x3<f32>>.real mat3x3<f32>.real	stmt.C1	2	
-F1380	reg	set_y_C2	composite	reg<mat3x3<f32>>.real mat3x3<f32>.real	stmt.C2	2	
-F1381	reg	set_y_C3	composite	reg<mat3x3<f32>>.real mat3x3<f32>.real	stmt.C3	2	
-F1382	reg	set_y_C4	composite	reg<mat3x3<f32>>.real mat3x3<f32>.real	stmt.C4	2	
-F1383	reg	set_y_L5	composite	reg<mat3x3<f32>>.real mat3x3<f32>.real	stmt.L5	2	
-F1384	reg	set_y_C5	composite	reg<mat3x3<f32>>.real mat3x3<f32>.real	stmt.C5	2	
-F1385	reg	z0	composite	-	reg<mat4x4<f32>>.real	0	a mat4x4<f32> register
-F1386	reg	z1	composite	-	reg<mat4x4<f32>>.real	0	a mat4x4<f32> register
-F1387	reg	get_z	composite	reg<mat4x4<f32>>.real	mat4x4<f32>.real	1	the register's value
-F1388	reg	set_z_L0	composite	reg<mat4x4<f32>>.real mat4x4<f32>.real	stmt.L0	2	
-F1389	reg	set_z_L1	composite	reg<mat4x4<f32>>.real mat4x4<f32>.real	stmt.L1	2	
-F1390	reg	set_z_L2	composite	reg<mat4x4<f32>>.real mat4x4<f32>.real	stmt.L2	2	
-F1391	reg	set_z_L3	composite	reg<mat4x4<f32>>.real mat4x4<f32>.real	stmt.L3	2	
-F1392	reg	set_z_L4	composite	reg<mat4x4<f32>>.real mat4x4<f32>.real	stmt.L4	2	
-F1393	reg	set_z_C0	composite	reg<mat4x4<f32>>.real mat4x4<f32>.real	stmt.C0	2	
-F1394	reg	set_z_C1	composite	reg<mat4x4<f32>>.real mat4x4<f32>.real	stmt.C1	2	
-F1395	reg	set_z_C2	composite	reg<mat4x4<f32>>.real mat4x4<f32>.real	stmt.C2	2	
-F1396	reg	set_z_C3	composite	reg<mat4x4<f32>>.real mat4x4<f32>.real	stmt.C3	2	
-F1397	reg	set_z_C4	composite	reg<mat4x4<f32>>.real mat4x4<f32>.real	stmt.C4	2	
-F1398	reg	set_z_L5	composite	reg<mat4x4<f32>>.real mat4x4<f32>.real	stmt.L5	2	
-F1399	reg	set_z_C5	composite	reg<mat4x4<f32>>.real mat4x4<f32>.real	stmt.C5	2	
-F1400	arith	modf_fract	composite	<S.real>	<S.real>	1	modf(x).fract
-F1401	arith	modf_whole	composite	<S.real>	<S.real>	1	modf(x).whole
-F1402	arith	frexp_fract	composite	<S.real>	<S.real>	1	frexp(x).fract
-F1403	arith	frexp_exp	composite	<f32.real>	<i32.int>	1	frexp(x).exp
-F1404	load	phi_len	ArrayLength	-	u32.count	0	arrayLength(&phi)
-F1405	load	h_len	ArrayLength	-	u32.count	0	arrayLength(&h)
-F1406	literal	p_wcol	Literal	-	u32.index	0	the knob wcol times the payload / 256
-F1407	literal	p_wcol	Literal	-	u32.lit64	0	the knob wcol times the payload / 256
-F1408	literal	p_wcol	Literal	-	u32.lit4096	0	the knob wcol times the payload / 256
-F1409	literal	p_wcol	Literal	-	u32.wglen	0	the knob wcol times the payload / 256
-F1410	literal	p_wcol_log2	Literal	-	u32.index	0	log2 of the knob wcol times the payload / 256 (a shift)
-F1411	literal	p_wcol_m1	Literal	-	u32.index	0	the knob wcol times the payload / 256, minus one (a mask)
-F1412	literal	p_wrow	Literal	-	u32.index	0	the knob wrow times the payload / 256
-F1413	literal	p_wrow	Literal	-	u32.lit64	0	the knob wrow times the payload / 256
-F1414	literal	p_wrow	Literal	-	u32.lit4096	0	the knob wrow times the payload / 256
-F1415	literal	p_wrow	Literal	-	u32.wglen	0	the knob wrow times the payload / 256
-F1416	literal	p_wrow_log2	Literal	-	u32.index	0	log2 of the knob wrow times the payload / 256 (a shift)
-F1417	literal	p_wrow_m1	Literal	-	u32.index	0	the knob wrow times the payload / 256, minus one (a mask)
-F1418	literal	p_bcol	Literal	-	u32.index	0	the knob bcol times the payload / 256
-F1419	literal	p_bcol	Literal	-	u32.lit64	0	the knob bcol times the payload / 256
-F1420	literal	p_bcol	Literal	-	u32.lit4096	0	the knob bcol times the payload / 256
-F1421	literal	p_bcol	Literal	-	u32.wglen	0	the knob bcol times the payload / 256
-F1422	literal	p_bcol_log2	Literal	-	u32.index	0	log2 of the knob bcol times the payload / 256 (a shift)
-F1423	literal	p_bcol_m1	Literal	-	u32.index	0	the knob bcol times the payload / 256, minus one (a mask)
-F1424	literal	p_brow	Literal	-	u32.index	0	the knob brow times the payload / 256
-F1425	literal	p_brow	Literal	-	u32.lit64	0	the knob brow times the payload / 256
-F1426	literal	p_brow	Literal	-	u32.lit4096	0	the knob brow times the payload / 256
-F1427	literal	p_brow	Literal	-	u32.wglen	0	the knob brow times the payload / 256
-F1428	literal	p_brow_log2	Literal	-	u32.index	0	log2 of the knob brow times the payload / 256 (a shift)
-F1429	literal	p_brow_m1	Literal	-	u32.index	0	the knob brow times the payload / 256, minus one (a mask)
-F1430	literal	p_colspan	Literal	-	u32.index	0	the knob colspan times the payload / 256
-F1431	literal	p_colspan	Literal	-	u32.lit64	0	the knob colspan times the payload / 256
-F1432	literal	p_colspan	Literal	-	u32.lit4096	0	the knob colspan times the payload / 256
-F1433	literal	p_colspan	Literal	-	u32.wglen	0	the knob colspan times the payload / 256
-F1434	literal	p_colspan_log2	Literal	-	u32.index	0	log2 of the knob colspan times the payload / 256 (a shift)
-F1435	literal	p_colspan_m1	Literal	-	u32.index	0	the knob colspan times the payload / 256, minus one (a mask)
-F1436	literal	p_rowspan	Literal	-	u32.index	0	the knob rowspan times the payload / 256
-F1437	literal	p_rowspan	Literal	-	u32.lit64	0	the knob rowspan times the payload / 256
-F1438	literal	p_rowspan	Literal	-	u32.lit4096	0	the knob rowspan times the payload / 256
-F1439	literal	p_rowspan	Literal	-	u32.wglen	0	the knob rowspan times the payload / 256
-F1440	literal	p_rowspan_log2	Literal	-	u32.index	0	log2 of the knob rowspan times the payload / 256 (a shift)
-F1441	literal	p_rowspan_m1	Literal	-	u32.index	0	the knob rowspan times the payload / 256, minus one (a mask)
-F1442	literal	p_threads	Literal	-	u32.index	0	the knob threads times the payload / 256
-F1443	literal	p_threads	Literal	-	u32.lit64	0	the knob threads times the payload / 256
-F1444	literal	p_threads	Literal	-	u32.lit4096	0	the knob threads times the payload / 256
-F1445	literal	p_threads	Literal	-	u32.wglen	0	the knob threads times the payload / 256
-F1446	literal	p_threads_log2	Literal	-	u32.index	0	log2 of the knob threads times the payload / 256 (a shift)
-F1447	literal	p_threads_m1	Literal	-	u32.index	0	the knob threads times the payload / 256, minus one (a mask)
-F1448	literal	p_ktile	Literal	-	u32.index	0	the knob ktile times the payload / 256
-F1449	literal	p_ktile	Literal	-	u32.lit64	0	the knob ktile times the payload / 256
-F1450	literal	p_ktile	Literal	-	u32.lit4096	0	the knob ktile times the payload / 256
-F1451	literal	p_ktile	Literal	-	u32.wglen	0	the knob ktile times the payload / 256
-F1452	literal	p_ktile_log2	Literal	-	u32.index	0	log2 of the knob ktile times the payload / 256 (a shift)
-F1453	literal	p_ktile_m1	Literal	-	u32.index	0	the knob ktile times the payload / 256, minus one (a mask)
-F1454	grid	with_ktile	composite	grid.grid u32.lit4096	grid.grid	2	a grid and the kernel's tile depth T (the item loop's step), the knob literal.p_ktile references
-F1455	uniform	cfg_m	composite	-	u32.uniform	0	cfg.m
-F1456	uniform	cfg_d	composite	-	u32.uniform	0	cfg.d
-F1457	uniform	cfg_r_rows	composite	-	u32.uniform	0	cfg.r_rows
-F1458	uniform	cfg_r_off	composite	-	u32.uniform	0	cfg.r_off
-F1459	uniform	of_lit	composite	u32.lit4096	u32.uniform	1	a literal
-F1460	uniform	wid_x	composite	vec3<u32>.wid	u32.uniform	1	wid.x: the workgroup's id
-F1461	uniform	nwg_x	composite	-	u32.uniform	0	nwg.x: the grid's size
-F1462	uniform	wid_y	composite	vec3<u32>.wid	u32.uniform	1	wid.y: the workgroup's id
-F1463	uniform	nwg_y	composite	-	u32.uniform	0	nwg.y: the grid's size
-F1464	uniform	wid_z	composite	vec3<u32>.wid	u32.uniform	1	wid.z: the workgroup's id
-F1465	uniform	nwg_z	composite	-	u32.uniform	0	nwg.z: the grid's size
-F1466	uniform	subgroup_size	composite	-	u32.uniform	0	the subgroup size
-F1467	uniform	num_subgroups	composite	-	u32.uniform	0	the subgroups in the workgroup
-F1468	uniform	add	composite	u32.uniform u32.uniform	u32.uniform	2	as index.add, of uniform values
-F1469	uniform	sub_floor	composite	u32.uniform u32.uniform	u32.uniform	2	as index.sub_floor, of uniform values
-F1470	uniform	mul	composite	u32.uniform u32.uniform	u32.uniformw	2	as index.mul, of uniform values
-F1471	uniform	div	composite	u32.uniform u32.uniform	u32.uniform	2	as index.div, of uniform values
-F1472	uniform	min	composite	u32.uniform u32.uniform	u32.uniform	2	as index.min, of uniform values
-F1473	uniform	max	composite	u32.uniform u32.uniform	u32.uniform	2	as index.max, of uniform values
-F1474	uniform	shl	composite	u32.uniform u32.uniform	u32.uniformw	2	as index.shl, of uniform values
-F1475	uniform	shr	composite	u32.uniform u32.uniform	u32.uniform	2	as index.shr, of uniform values
-F1476	uniform	and	composite	u32.uniform u32.uniform	u32.uniform	2	as index.and, of uniform values
-F1477	uniform	or	composite	u32.uniform u32.uniform	u32.uniform	2	as index.or, of uniform values
-F1478	uniform	sub	composite	u32.uniform u32.uniform	u32.uniformw	2	as index.sub, of uniform values
-F1479	uniform	mod	composite	u32.uniform u32.uniform	u32.uniform	2	as index.mod, of uniform values
-F1480	uniform	round_down	composite	u32.uniform u32.uniform	u32.uniform	2	as index.round_down, of uniform values
-F1481	uniform	band_of	composite	u32.uniform u32.uniform	u32.uniform	2	as index.band_of, of uniform values
-F1482	uniform	clamp_to	composite	u32.uniform u32.uniform	u32.uniform	2	as index.clamp_to, of uniform values
-F1483	uniform	clamp	composite	u32.uniform u32.uniform u32.uniform	u32.uniform	3	as index.clamp, of uniform values (arity 3)
-F1484	uniform	of_counter	composite	u32.counter	u32.uniform	1	the item loop's counter t
-F1485	uniform	of_tcounter	composite	u32.tcounter	u32.uniform	1	the tile counter k
-F1486	uniform	of_tcounter2	composite	u32.tcounter2	u32.uniform	1	the tile counter k2
-F1487	uniform	of_tcounter3	composite	u32.tcounter3	u32.uniform	1	the tile counter k3
-F1488	uniform	of_tcounter4	composite	u32.tcounter4	u32.uniform	1	the tile counter k4
-F1489	index	of_uniform	composite	u32.uniform	u32.index	1	a uniform value used as an index
-F1490	bound	of_uniform	composite	u32.uniform	u32.boundu	1	a uniform loop bound
-F1491	stmt	cblock_L0	composite	block.C0	stmt.L0	1	conditional statements (no barrier) written in place
-F1492	stmt	cblock_L1	composite	block.C1	stmt.L1	1	conditional statements (no barrier) written in place
-F1493	stmt	cblock_L2	composite	block.C2	stmt.L2	1	conditional statements (no barrier) written in place
-F1494	stmt	cblock_L3	composite	block.C3	stmt.L3	1	conditional statements (no barrier) written in place
-F1495	stmt	cblock_L4	composite	block.C4	stmt.L4	1	conditional statements (no barrier) written in place
-F1496	stmt	cblock_L5	composite	block.C5	stmt.L5	1	conditional statements (no barrier) written in place
-F1497	bound	x_of_uniform	composite	u32.uniform	u32.boundx	1	a uniform loop bound, uncapped
-F1498	index	of_uniform	composite	u32.uniformw	u32.uniformw	1	retired: no row takes u32.uniformw
-F1499	uniform	min	composite	u32.uniform u32.uniformw	u32.uniformw	2	retired: no row takes u32.uniformw
-F1500	uniform	min	composite	u32.uniformw u32.uniform	u32.uniformw	2	retired: no row takes u32.uniformw
-F1501	reg	get_i	composite	reg<u32>.index	u32.xbound	1	a u32 register's value as a loop bound
-F1502	index	of_uniform	composite	u32.uniform	u32.xbound	1	a uniform value as a loop bound
-F1503	index	add	composite	u32.xbound u32.xbound	u32.xbound	2	index.add of bound values
-F1504	index	max	composite	u32.xbound u32.xbound	u32.xbound	2	index.max of bound values
-F1505	index	or	composite	u32.xbound u32.xbound	u32.xbound	2	index.or of bound values
-F1506	index	sub_floor	composite	u32.xbound u32.index	u32.xbound	2	index.sub_floor: at most its first operand, whatever the second
-F1507	index	div	composite	u32.xbound u32.index	u32.xbound	2	index.div: at most its first operand, whatever the second
-F1508	index	mod	composite	u32.xbound u32.index	u32.xbound	2	index.mod: at most its first operand, whatever the second
-F1509	index	shr	composite	u32.xbound u32.index	u32.xbound	2	index.shr: at most its first operand, whatever the second
-F1510	index	and	composite	u32.xbound u32.index	u32.xbound	2	index.and: at most its first operand, whatever the second
-F1511	index	round_down	composite	u32.xbound u32.index	u32.xbound	2	index.round_down: at most its first operand, whatever the second
-F1512	index	min	composite	u32.xbound u32.index	u32.xbound	2	index.min: at most its first operand, whatever the second
-F1513	index	min	composite	u32.index u32.xbound	u32.xbound	2	min(a, b): at most b, whatever a
-F1514	index	clamp_to	composite	u32.xbound u32.count	u32.xbound	2	i < n: at most i
-F1515	literal	index	Literal	-	u32.xbound	0	a literal bound value, any u32 (2026-10-12: a uniform literal is 1..=4096)
-F1516	subgroup	min	SubgroupCollectiveOperation	u32.xbound	u32.xbound	1	subgroupMin(x) of a bound value
-F1517	subgroup	max	SubgroupCollectiveOperation	u32.xbound	u32.xbound	1	subgroupMax(x) of a bound value
-F1518	subgroup	broadcast_first	SubgroupGather	u32.xbound	u32.xbound	1	subgroupBroadcastFirst(x) of a bound value
-F1519	subgroup	broadcast	SubgroupGather	u32.xbound u32.lit64	u32.xbound	2	subgroupBroadcast(x, lane) of a bound value
-F1520	subgroup	shuffle	SubgroupGather	u32.xbound u32.index	u32.xbound	2	shuffle(x, i) of a bound value
-F1521	subgroup	shuffle_down	SubgroupGather	u32.xbound u32.index	u32.xbound	2	shuffle_down(x, i) of a bound value
-F1522	subgroup	shuffle_up	SubgroupGather	u32.xbound u32.index	u32.xbound	2	shuffle_up(x, i) of a bound value
-F1523	subgroup	shuffle_xor	SubgroupGather	u32.xbound u32.index	u32.xbound	2	shuffle_xor(x, i) of a bound value
-F1524	safe	thread_row	composite	vec3<u32>.gid u32.blk	u32.rowbase	2	gid.y * blk: the thread's first row, as an offset row's origin
-F1525	safe	thread_col	composite	vec3<u32>.gid u32.blk	u32.colbase	2	gid.x * blk: the thread's first column, as an offset column's origin
-F1526	safe	thread_row_s	composite	vec3<u32>.wid vec3<u32>.lid u32.blk	u32.rowbases	3	arity 3: the first row of a strided block, as an offset row's origin
-F1527	safe	thread_col_s	composite	vec3<u32>.wid vec3<u32>.lid u32.blk	u32.colbases	3	arity 3: the first column of a strided block, as an offset column's origin
-F1528	safe	thread_row_g	composite	vec3<u32>.wid vec3<u32>.lid u32.blk u32.lit64	u32.rowbaseg	4	arity 4: the first row of a grouped block, as an offset row's origin
-F1529	safe	thread_col_g	composite	vec3<u32>.wid vec3<u32>.lid u32.blk u32.lit64	u32.colbaseg	4	arity 4: the first column of a grouped block, as an offset column's origin
-F1530	safe	mirror_of	composite	u32.threadrow u32.threadcol	u32.mirror	2	col * cfg.d + row: the mirror of the cell this thread owns
-F1531	safe	mirror_of	composite	u32.threadrow u32.threadcols	u32.mirror	2	col * cfg.d + row: the mirror of the cell this thread owns
-F1532	safe	mirror_of	composite	u32.threadrow u32.threadcolg	u32.mirror	2	col * cfg.d + row: the mirror of the cell this thread owns
-F1533	safe	mirror_of	composite	u32.threadrows u32.threadcol	u32.mirror	2	col * cfg.d + row: the mirror of the cell this thread owns
-F1534	safe	mirror_of	composite	u32.threadrows u32.threadcols	u32.mirror	2	col * cfg.d + row: the mirror of the cell this thread owns
-F1535	safe	mirror_of	composite	u32.threadrows u32.threadcolg	u32.mirror	2	col * cfg.d + row: the mirror of the cell this thread owns
-F1536	safe	mirror_of	composite	u32.threadrowg u32.threadcol	u32.mirror	2	col * cfg.d + row: the mirror of the cell this thread owns
-F1537	safe	mirror_of	composite	u32.threadrowg u32.threadcols	u32.mirror	2	col * cfg.d + row: the mirror of the cell this thread owns
-F1538	safe	mirror_of	composite	u32.threadrowg u32.threadcolg	u32.mirror	2	col * cfg.d + row: the mirror of the cell this thread owns
-F1539	stmt	if_ule_L0	composite	u32.uniform u32.uniform block.L0	stmt.L0	3	arity 3: if (a <= b) { ... } over workgroup-uniform values: the body keeps the rung
-F1540	stmt	if_ule_L1	composite	u32.uniform u32.uniform block.L1	stmt.L1	3	arity 3: if (a <= b) { ... } over workgroup-uniform values: the body keeps the rung
-F1541	stmt	if_ule_L2	composite	u32.uniform u32.uniform block.L2	stmt.L2	3	arity 3: if (a <= b) { ... } over workgroup-uniform values: the body keeps the rung
-F1542	stmt	if_ule_L3	composite	u32.uniform u32.uniform block.L3	stmt.L3	3	arity 3: if (a <= b) { ... } over workgroup-uniform values: the body keeps the rung
-F1543	stmt	if_ule_L4	composite	u32.uniform u32.uniform block.L4	stmt.L4	3	arity 3: if (a <= b) { ... } over workgroup-uniform values: the body keeps the rung
-F1544	stmt	if_ule_L5	composite	u32.uniform u32.uniform block.L5	stmt.L5	3	arity 3: if (a <= b) { ... } over workgroup-uniform values: the body keeps the rung
-F1545	store	h_mirror_L0	composite	u32.mirror f32.real	stmt.L0	2	h[mirror] = h[mirror] + v under the bounds check of the thread's own cell: the symmetric half's second write
-F1546	store	h_mirror_L1	composite	u32.mirror f32.real	stmt.L1	2	h[mirror] = h[mirror] + v under the bounds check of the thread's own cell: the symmetric half's second write
-F1547	store	h_mirror_L2	composite	u32.mirror f32.real	stmt.L2	2	h[mirror] = h[mirror] + v under the bounds check of the thread's own cell: the symmetric half's second write
-F1548	store	h_mirror_L3	composite	u32.mirror f32.real	stmt.L3	2	h[mirror] = h[mirror] + v under the bounds check of the thread's own cell: the symmetric half's second write
-F1549	store	h_mirror_L4	composite	u32.mirror f32.real	stmt.L4	2	h[mirror] = h[mirror] + v under the bounds check of the thread's own cell: the symmetric half's second write
-F1550	store	h_mirror_C0	composite	u32.mirror f32.real	stmt.C0	2	h[mirror] = h[mirror] + v under the bounds check of the thread's own cell: the symmetric half's second write
-F1551	store	h_mirror_C1	composite	u32.mirror f32.real	stmt.C1	2	h[mirror] = h[mirror] + v under the bounds check of the thread's own cell: the symmetric half's second write
-F1552	store	h_mirror_C2	composite	u32.mirror f32.real	stmt.C2	2	h[mirror] = h[mirror] + v under the bounds check of the thread's own cell: the symmetric half's second write
-F1553	store	h_mirror_C3	composite	u32.mirror f32.real	stmt.C3	2	h[mirror] = h[mirror] + v under the bounds check of the thread's own cell: the symmetric half's second write
-F1554	store	h_mirror_C4	composite	u32.mirror f32.real	stmt.C4	2	h[mirror] = h[mirror] + v under the bounds check of the thread's own cell: the symmetric half's second write
-F1555	store	h_mirror_L5	composite	u32.mirror f32.real	stmt.L5	2	h[mirror] = h[mirror] + v under the bounds check of the thread's own cell: the symmetric half's second write
-F1556	store	h_mirror_C5	composite	u32.mirror f32.real	stmt.C5	2	h[mirror] = h[mirror] + v under the bounds check of the thread's own cell: the symmetric half's second write
-F1557	safe	wg_own	composite	u32.lit64	u32.wgown	1	lidx + k * threads: this thread's k-th element of a workgroup array
-F1558	safe	wg_own_tile	composite	u32.tcounter	u32.wgown	1	lidx + k * threads over the tile loop's counter k
-F1559	safe	wg_own_tile2	composite	u32.tcounter2	u32.wgown	1	lidx + k2 * threads over the inner tile loop's counter k2
-F1560	wg	put_L0	composite	wgmem<f32>.real u32.wgown f32.real	stmt.L0	3	arity 3: barrier; if (i < len) { a[i] = v; } barrier
-F1561	wg	put_v_L0	composite	wgmem<vec4<f32>>.real u32.wgown vec4<f32>.real	stmt.L0	3	arity 3: barrier; if (i < len) { va[i] = v; } barrier
-F1562	wg	put_v2_L0	composite	wgmem<vec2<f32>>.real u32.wgown vec2<f32>.real	stmt.L0	3	arity 3: barrier; if (i < len) { v2a[i] = v; } barrier
-F1563	wg	put_L1	composite	wgmem<f32>.real u32.wgown f32.real	stmt.L1	3	arity 3: barrier; if (i < len) { a[i] = v; } barrier
-F1564	wg	put_v_L1	composite	wgmem<vec4<f32>>.real u32.wgown vec4<f32>.real	stmt.L1	3	arity 3: barrier; if (i < len) { va[i] = v; } barrier
-F1565	wg	put_v2_L1	composite	wgmem<vec2<f32>>.real u32.wgown vec2<f32>.real	stmt.L1	3	arity 3: barrier; if (i < len) { v2a[i] = v; } barrier
-F1566	wg	put_L2	composite	wgmem<f32>.real u32.wgown f32.real	stmt.L2	3	arity 3: barrier; if (i < len) { a[i] = v; } barrier
-F1567	wg	put_v_L2	composite	wgmem<vec4<f32>>.real u32.wgown vec4<f32>.real	stmt.L2	3	arity 3: barrier; if (i < len) { va[i] = v; } barrier
-F1568	wg	put_v2_L2	composite	wgmem<vec2<f32>>.real u32.wgown vec2<f32>.real	stmt.L2	3	arity 3: barrier; if (i < len) { v2a[i] = v; } barrier
-F1569	wg	put_L3	composite	wgmem<f32>.real u32.wgown f32.real	stmt.L3	3	arity 3: barrier; if (i < len) { a[i] = v; } barrier
-F1570	wg	put_v_L3	composite	wgmem<vec4<f32>>.real u32.wgown vec4<f32>.real	stmt.L3	3	arity 3: barrier; if (i < len) { va[i] = v; } barrier
-F1571	wg	put_v2_L3	composite	wgmem<vec2<f32>>.real u32.wgown vec2<f32>.real	stmt.L3	3	arity 3: barrier; if (i < len) { v2a[i] = v; } barrier
-F1572	wg	put_L4	composite	wgmem<f32>.real u32.wgown f32.real	stmt.L4	3	arity 3: barrier; if (i < len) { a[i] = v; } barrier
-F1573	wg	put_v_L4	composite	wgmem<vec4<f32>>.real u32.wgown vec4<f32>.real	stmt.L4	3	arity 3: barrier; if (i < len) { va[i] = v; } barrier
-F1574	wg	put_v2_L4	composite	wgmem<vec2<f32>>.real u32.wgown vec2<f32>.real	stmt.L4	3	arity 3: barrier; if (i < len) { v2a[i] = v; } barrier
-F1575	wg	put_L5	composite	wgmem<f32>.real u32.wgown f32.real	stmt.L5	3	arity 3: barrier; if (i < len) { a[i] = v; } barrier
-F1576	wg	put_v_L5	composite	wgmem<vec4<f32>>.real u32.wgown vec4<f32>.real	stmt.L5	3	arity 3: barrier; if (i < len) { va[i] = v; } barrier
-F1577	wg	put_v2_L5	composite	wgmem<vec2<f32>>.real u32.wgown vec2<f32>.real	stmt.L5	3	arity 3: barrier; if (i < len) { v2a[i] = v; } barrier
+F939	wg	ua	composite	-	wgmem<u32>.index	0	workgroup array wg_ua of u32
+F940	wg	ub	composite	-	wgmem<u32>.index	0	workgroup array wg_ub of u32
+F941	wg	uc	composite	-	wgmem<u32>.index	0	workgroup array wg_uc of u32
+F942	wg	ud	composite	-	wgmem<u32>.index	0	workgroup array wg_ud of u32
+F943	wg	get_u_safe	composite	wgmem<u32>.index u32.wgindex	u32.index	2	a[i], in range by its type
+F944	wg	set_u_L0	composite	wgmem<u32>.index u32.wgindex u32.index	stmt.L0	3	arity 3: a[i] = v
+F945	wg	set_u_L1	composite	wgmem<u32>.index u32.wgindex u32.index	stmt.L1	3	arity 3: a[i] = v
+F946	wg	set_u_L2	composite	wgmem<u32>.index u32.wgindex u32.index	stmt.L2	3	arity 3: a[i] = v
+F947	wg	set_u_L3	composite	wgmem<u32>.index u32.wgindex u32.index	stmt.L3	3	arity 3: a[i] = v
+F948	wg	set_u_L4	composite	wgmem<u32>.index u32.wgindex u32.index	stmt.L4	3	arity 3: a[i] = v
+F949	wg	set_u_C0	composite	wgmem<u32>.index u32.wgindex u32.index	stmt.C0	3	arity 3: a[i] = v
+F950	wg	set_u_C1	composite	wgmem<u32>.index u32.wgindex u32.index	stmt.C1	3	arity 3: a[i] = v
+F951	wg	set_u_C2	composite	wgmem<u32>.index u32.wgindex u32.index	stmt.C2	3	arity 3: a[i] = v
+F952	wg	set_u_C3	composite	wgmem<u32>.index u32.wgindex u32.index	stmt.C3	3	arity 3: a[i] = v
+F953	wg	set_u_C4	composite	wgmem<u32>.index u32.wgindex u32.index	stmt.C4	3	arity 3: a[i] = v
+F954	wg	set_u_L5	composite	wgmem<u32>.index u32.wgindex u32.index	stmt.L5	3	arity 3: a[i] = v
+F955	wg	set_u_C5	composite	wgmem<u32>.index u32.wgindex u32.index	stmt.C5	3	arity 3: a[i] = v
+F956	wg	decl_u	composite	wgmem<u32>.index u32.wglen	wg.decl	2	var<workgroup> a: array<u32, n>
+F957	wg	decls_one	composite	wg.decl	wg.decls	1	one declaration
+F958	wg	decls_cons	composite	wg.decl wg.decls	wg.decls	2	a declaration, then the rest
+F959	grid	with_wg	composite	grid.grid wg.decls	grid.grid	2	a grid and the kernel's workgroup arrays (the arrays it declares and their lengths)
+F960	loop	unroll_L0	composite	u32.lit64 block.L2	stmt.L0	2	the body n times, straight-line, its counter a literal in each copy
+F961	loop	unroll_L1	composite	u32.lit64 block.L2	stmt.L1	2	the body n times, straight-line, its counter a literal in each copy
+F962	loop	unroll_L2	composite	u32.lit64 block.L3	stmt.L2	2	the body n times, straight-line, its counter a literal in each copy
+F963	loop	unroll_L3	composite	u32.lit64 block.L4	stmt.L3	2	the body n times, straight-line, its counter a literal in each copy
+F964	loop	unroll_L4	composite	u32.lit64 block.L5	stmt.L4	2	the body n times, straight-line, its counter a literal in each copy
+F965	loop	unroll_C0	composite	u32.lit64 block.C1	stmt.C0	2	the body n times, straight-line, its counter a literal in each copy
+F966	loop	unroll_C1	composite	u32.lit64 block.C2	stmt.C1	2	the body n times, straight-line, its counter a literal in each copy
+F967	loop	unroll_C2	composite	u32.lit64 block.C3	stmt.C2	2	the body n times, straight-line, its counter a literal in each copy
+F968	loop	unroll_C3	composite	u32.lit64 block.C4	stmt.C3	2	the body n times, straight-line, its counter a literal in each copy
+F969	loop	unroll_C4	composite	u32.lit64 block.C5	stmt.C4	2	the body n times, straight-line, its counter a literal in each copy
+F970	loop	unroll_O0	composite	u32.lit64 block.O1	stmt.O0	2	the epilogue's loop body n times, straight-line
+F971	loop	unroll_O1	composite	u32.lit64 block.O2	stmt.O1	2	the epilogue's loop body n times, straight-line
+F972	loop	unroll_O2	composite	u32.lit64 block.O3	stmt.O2	2	the epilogue's loop body n times, straight-line
+F973	loop	unroll_O3	composite	u32.lit64 block.O4	stmt.O3	2	the epilogue's loop body n times, straight-line
+F974	wg	reduce_add_L0	composite	wgmem<f32>.real u32.lit4096	stmt.L0	2	a[0..n) reduced into a[0] by add: stride halving, barriers in uniform control flow
+F975	wg	reduce_add_L0	composite	wgmem<vec2<f32>>.real u32.lit4096	stmt.L0	2	a[0..n) reduced into a[0] by add: stride halving, barriers in uniform control flow
+F976	wg	reduce_add_L0	composite	wgmem<vec4<f32>>.real u32.lit4096	stmt.L0	2	a[0..n) reduced into a[0] by add: stride halving, barriers in uniform control flow
+F977	wg	reduce_add_L1	composite	wgmem<f32>.real u32.lit4096	stmt.L1	2	a[0..n) reduced into a[0] by add: stride halving, barriers in uniform control flow
+F978	wg	reduce_add_L1	composite	wgmem<vec2<f32>>.real u32.lit4096	stmt.L1	2	a[0..n) reduced into a[0] by add: stride halving, barriers in uniform control flow
+F979	wg	reduce_add_L1	composite	wgmem<vec4<f32>>.real u32.lit4096	stmt.L1	2	a[0..n) reduced into a[0] by add: stride halving, barriers in uniform control flow
+F980	wg	reduce_add_L2	composite	wgmem<f32>.real u32.lit4096	stmt.L2	2	a[0..n) reduced into a[0] by add: stride halving, barriers in uniform control flow
+F981	wg	reduce_add_L2	composite	wgmem<vec2<f32>>.real u32.lit4096	stmt.L2	2	a[0..n) reduced into a[0] by add: stride halving, barriers in uniform control flow
+F982	wg	reduce_add_L2	composite	wgmem<vec4<f32>>.real u32.lit4096	stmt.L2	2	a[0..n) reduced into a[0] by add: stride halving, barriers in uniform control flow
+F983	wg	reduce_add_L3	composite	wgmem<f32>.real u32.lit4096	stmt.L3	2	a[0..n) reduced into a[0] by add: stride halving, barriers in uniform control flow
+F984	wg	reduce_add_L3	composite	wgmem<vec2<f32>>.real u32.lit4096	stmt.L3	2	a[0..n) reduced into a[0] by add: stride halving, barriers in uniform control flow
+F985	wg	reduce_add_L3	composite	wgmem<vec4<f32>>.real u32.lit4096	stmt.L3	2	a[0..n) reduced into a[0] by add: stride halving, barriers in uniform control flow
+F986	wg	reduce_add_L4	composite	wgmem<f32>.real u32.lit4096	stmt.L4	2	a[0..n) reduced into a[0] by add: stride halving, barriers in uniform control flow
+F987	wg	reduce_add_L4	composite	wgmem<vec2<f32>>.real u32.lit4096	stmt.L4	2	a[0..n) reduced into a[0] by add: stride halving, barriers in uniform control flow
+F988	wg	reduce_add_L4	composite	wgmem<vec4<f32>>.real u32.lit4096	stmt.L4	2	a[0..n) reduced into a[0] by add: stride halving, barriers in uniform control flow
+F989	wg	reduce_add_L5	composite	wgmem<f32>.real u32.lit4096	stmt.L5	2	a[0..n) reduced into a[0] by add: stride halving, barriers in uniform control flow
+F990	wg	reduce_add_L5	composite	wgmem<vec2<f32>>.real u32.lit4096	stmt.L5	2	a[0..n) reduced into a[0] by add: stride halving, barriers in uniform control flow
+F991	wg	reduce_add_L5	composite	wgmem<vec4<f32>>.real u32.lit4096	stmt.L5	2	a[0..n) reduced into a[0] by add: stride halving, barriers in uniform control flow
+F992	wg	reduce_max_L0	composite	wgmem<f32>.real u32.lit4096	stmt.L0	2	a[0..n) reduced into a[0] by max: stride halving, barriers in uniform control flow
+F993	wg	reduce_max_L0	composite	wgmem<vec2<f32>>.real u32.lit4096	stmt.L0	2	a[0..n) reduced into a[0] by max: stride halving, barriers in uniform control flow
+F994	wg	reduce_max_L0	composite	wgmem<vec4<f32>>.real u32.lit4096	stmt.L0	2	a[0..n) reduced into a[0] by max: stride halving, barriers in uniform control flow
+F995	wg	reduce_max_L1	composite	wgmem<f32>.real u32.lit4096	stmt.L1	2	a[0..n) reduced into a[0] by max: stride halving, barriers in uniform control flow
+F996	wg	reduce_max_L1	composite	wgmem<vec2<f32>>.real u32.lit4096	stmt.L1	2	a[0..n) reduced into a[0] by max: stride halving, barriers in uniform control flow
+F997	wg	reduce_max_L1	composite	wgmem<vec4<f32>>.real u32.lit4096	stmt.L1	2	a[0..n) reduced into a[0] by max: stride halving, barriers in uniform control flow
+F998	wg	reduce_max_L2	composite	wgmem<f32>.real u32.lit4096	stmt.L2	2	a[0..n) reduced into a[0] by max: stride halving, barriers in uniform control flow
+F999	wg	reduce_max_L2	composite	wgmem<vec2<f32>>.real u32.lit4096	stmt.L2	2	a[0..n) reduced into a[0] by max: stride halving, barriers in uniform control flow
+F1000	wg	reduce_max_L2	composite	wgmem<vec4<f32>>.real u32.lit4096	stmt.L2	2	a[0..n) reduced into a[0] by max: stride halving, barriers in uniform control flow
+F1001	wg	reduce_max_L3	composite	wgmem<f32>.real u32.lit4096	stmt.L3	2	a[0..n) reduced into a[0] by max: stride halving, barriers in uniform control flow
+F1002	wg	reduce_max_L3	composite	wgmem<vec2<f32>>.real u32.lit4096	stmt.L3	2	a[0..n) reduced into a[0] by max: stride halving, barriers in uniform control flow
+F1003	wg	reduce_max_L3	composite	wgmem<vec4<f32>>.real u32.lit4096	stmt.L3	2	a[0..n) reduced into a[0] by max: stride halving, barriers in uniform control flow
+F1004	wg	reduce_max_L4	composite	wgmem<f32>.real u32.lit4096	stmt.L4	2	a[0..n) reduced into a[0] by max: stride halving, barriers in uniform control flow
+F1005	wg	reduce_max_L4	composite	wgmem<vec2<f32>>.real u32.lit4096	stmt.L4	2	a[0..n) reduced into a[0] by max: stride halving, barriers in uniform control flow
+F1006	wg	reduce_max_L4	composite	wgmem<vec4<f32>>.real u32.lit4096	stmt.L4	2	a[0..n) reduced into a[0] by max: stride halving, barriers in uniform control flow
+F1007	wg	reduce_max_L5	composite	wgmem<f32>.real u32.lit4096	stmt.L5	2	a[0..n) reduced into a[0] by max: stride halving, barriers in uniform control flow
+F1008	wg	reduce_max_L5	composite	wgmem<vec2<f32>>.real u32.lit4096	stmt.L5	2	a[0..n) reduced into a[0] by max: stride halving, barriers in uniform control flow
+F1009	wg	reduce_max_L5	composite	wgmem<vec4<f32>>.real u32.lit4096	stmt.L5	2	a[0..n) reduced into a[0] by max: stride halving, barriers in uniform control flow
+F1010	wg	reduce_min_L0	composite	wgmem<f32>.real u32.lit4096	stmt.L0	2	a[0..n) reduced into a[0] by min: stride halving, barriers in uniform control flow
+F1011	wg	reduce_min_L0	composite	wgmem<vec2<f32>>.real u32.lit4096	stmt.L0	2	a[0..n) reduced into a[0] by min: stride halving, barriers in uniform control flow
+F1012	wg	reduce_min_L0	composite	wgmem<vec4<f32>>.real u32.lit4096	stmt.L0	2	a[0..n) reduced into a[0] by min: stride halving, barriers in uniform control flow
+F1013	wg	reduce_min_L1	composite	wgmem<f32>.real u32.lit4096	stmt.L1	2	a[0..n) reduced into a[0] by min: stride halving, barriers in uniform control flow
+F1014	wg	reduce_min_L1	composite	wgmem<vec2<f32>>.real u32.lit4096	stmt.L1	2	a[0..n) reduced into a[0] by min: stride halving, barriers in uniform control flow
+F1015	wg	reduce_min_L1	composite	wgmem<vec4<f32>>.real u32.lit4096	stmt.L1	2	a[0..n) reduced into a[0] by min: stride halving, barriers in uniform control flow
+F1016	wg	reduce_min_L2	composite	wgmem<f32>.real u32.lit4096	stmt.L2	2	a[0..n) reduced into a[0] by min: stride halving, barriers in uniform control flow
+F1017	wg	reduce_min_L2	composite	wgmem<vec2<f32>>.real u32.lit4096	stmt.L2	2	a[0..n) reduced into a[0] by min: stride halving, barriers in uniform control flow
+F1018	wg	reduce_min_L2	composite	wgmem<vec4<f32>>.real u32.lit4096	stmt.L2	2	a[0..n) reduced into a[0] by min: stride halving, barriers in uniform control flow
+F1019	wg	reduce_min_L3	composite	wgmem<f32>.real u32.lit4096	stmt.L3	2	a[0..n) reduced into a[0] by min: stride halving, barriers in uniform control flow
+F1020	wg	reduce_min_L3	composite	wgmem<vec2<f32>>.real u32.lit4096	stmt.L3	2	a[0..n) reduced into a[0] by min: stride halving, barriers in uniform control flow
+F1021	wg	reduce_min_L3	composite	wgmem<vec4<f32>>.real u32.lit4096	stmt.L3	2	a[0..n) reduced into a[0] by min: stride halving, barriers in uniform control flow
+F1022	wg	reduce_min_L4	composite	wgmem<f32>.real u32.lit4096	stmt.L4	2	a[0..n) reduced into a[0] by min: stride halving, barriers in uniform control flow
+F1023	wg	reduce_min_L4	composite	wgmem<vec2<f32>>.real u32.lit4096	stmt.L4	2	a[0..n) reduced into a[0] by min: stride halving, barriers in uniform control flow
+F1024	wg	reduce_min_L4	composite	wgmem<vec4<f32>>.real u32.lit4096	stmt.L4	2	a[0..n) reduced into a[0] by min: stride halving, barriers in uniform control flow
+F1025	wg	reduce_min_L5	composite	wgmem<f32>.real u32.lit4096	stmt.L5	2	a[0..n) reduced into a[0] by min: stride halving, barriers in uniform control flow
+F1026	wg	reduce_min_L5	composite	wgmem<vec2<f32>>.real u32.lit4096	stmt.L5	2	a[0..n) reduced into a[0] by min: stride halving, barriers in uniform control flow
+F1027	wg	reduce_min_L5	composite	wgmem<vec4<f32>>.real u32.lit4096	stmt.L5	2	a[0..n) reduced into a[0] by min: stride halving, barriers in uniform control flow
+F1028	wg	au_a	composite	-	wgmem<atomic<u32>>.index	0	workgroup array wg_au_a of atomic<u32>
+F1029	wg	au_b	composite	-	wgmem<atomic<u32>>.index	0	workgroup array wg_au_b of atomic<u32>
+F1030	wg	ai_a	composite	-	wgmem<atomic<i32>>.int	0	workgroup array wg_ai_a of atomic<i32>
+F1031	wg	ai_b	composite	-	wgmem<atomic<i32>>.int	0	workgroup array wg_ai_b of atomic<i32>
+F1032	safe	wga_of	composite	u32.index	u32.wgaindex	1	i masked into its atomic array, in range by construction
+F1033	wg	decl_au	composite	wgmem<atomic<u32>>.index u32.wglen	wg.decl	2	var<workgroup> a: array<atomic<u32>, n>
+F1034	wg	decl_ai	composite	wgmem<atomic<i32>>.int u32.wglen	wg.decl	2	var<workgroup> a: array<atomic<i32>, n>
+F1035	atomic	add_u	composite	wgmem<atomic<u32>>.index u32.wgaindex u32.index	u32.index	3	atomicAdd(&a[i], v): the old value
+F1036	atomic	add_i	composite	wgmem<atomic<i32>>.int u32.wgaindex i32.int	i32.int	3	atomicAdd(&a[i], v): the old value
+F1037	atomic	sub_u	composite	wgmem<atomic<u32>>.index u32.wgaindex u32.index	u32.index	3	atomicSub(&a[i], v): the old value
+F1038	atomic	sub_i	composite	wgmem<atomic<i32>>.int u32.wgaindex i32.int	i32.int	3	atomicSub(&a[i], v): the old value
+F1039	atomic	max_u	composite	wgmem<atomic<u32>>.index u32.wgaindex u32.index	u32.index	3	atomicMax(&a[i], v): the old value
+F1040	atomic	max_i	composite	wgmem<atomic<i32>>.int u32.wgaindex i32.int	i32.int	3	atomicMax(&a[i], v): the old value
+F1041	atomic	min_u	composite	wgmem<atomic<u32>>.index u32.wgaindex u32.index	u32.index	3	atomicMin(&a[i], v): the old value
+F1042	atomic	min_i	composite	wgmem<atomic<i32>>.int u32.wgaindex i32.int	i32.int	3	atomicMin(&a[i], v): the old value
+F1043	atomic	and_u	composite	wgmem<atomic<u32>>.index u32.wgaindex u32.index	u32.index	3	atomicAnd(&a[i], v): the old value
+F1044	atomic	and_i	composite	wgmem<atomic<i32>>.int u32.wgaindex i32.int	i32.int	3	atomicAnd(&a[i], v): the old value
+F1045	atomic	or_u	composite	wgmem<atomic<u32>>.index u32.wgaindex u32.index	u32.index	3	atomicOr(&a[i], v): the old value
+F1046	atomic	or_i	composite	wgmem<atomic<i32>>.int u32.wgaindex i32.int	i32.int	3	atomicOr(&a[i], v): the old value
+F1047	atomic	xor_u	composite	wgmem<atomic<u32>>.index u32.wgaindex u32.index	u32.index	3	atomicXor(&a[i], v): the old value
+F1048	atomic	xor_i	composite	wgmem<atomic<i32>>.int u32.wgaindex i32.int	i32.int	3	atomicXor(&a[i], v): the old value
+F1049	atomic	exchange_u	composite	wgmem<atomic<u32>>.index u32.wgaindex u32.index	u32.index	3	atomicExchange(&a[i], v): the old value
+F1050	atomic	exchange_i	composite	wgmem<atomic<i32>>.int u32.wgaindex i32.int	i32.int	3	atomicExchange(&a[i], v): the old value
+F1051	atomic	load_u	composite	wgmem<atomic<u32>>.index u32.wgaindex	u32.index	2	atomicLoad(&a[i])
+F1052	atomic	load_i	composite	wgmem<atomic<i32>>.int u32.wgaindex	i32.int	2	atomicLoad(&a[i])
+F1053	atomic	store_u_L0	composite	wgmem<atomic<u32>>.index u32.wgaindex u32.index	stmt.L0	3	arity 3: atomicStore(&a[i], v)
+F1054	atomic	store_i_L0	composite	wgmem<atomic<i32>>.int u32.wgaindex i32.int	stmt.L0	3	arity 3: atomicStore(&a[i], v)
+F1055	stmt	discard_u_L0	composite	u32.index	stmt.L0	1	_ = e: an atomic's effect, its old value unused
+F1056	stmt	discard_i_L0	composite	i32.int	stmt.L0	1	_ = e: an atomic's effect, its old value unused
+F1057	atomic	store_u_L1	composite	wgmem<atomic<u32>>.index u32.wgaindex u32.index	stmt.L1	3	arity 3: atomicStore(&a[i], v)
+F1058	atomic	store_i_L1	composite	wgmem<atomic<i32>>.int u32.wgaindex i32.int	stmt.L1	3	arity 3: atomicStore(&a[i], v)
+F1059	stmt	discard_u_L1	composite	u32.index	stmt.L1	1	_ = e: an atomic's effect, its old value unused
+F1060	stmt	discard_i_L1	composite	i32.int	stmt.L1	1	_ = e: an atomic's effect, its old value unused
+F1061	atomic	store_u_L2	composite	wgmem<atomic<u32>>.index u32.wgaindex u32.index	stmt.L2	3	arity 3: atomicStore(&a[i], v)
+F1062	atomic	store_i_L2	composite	wgmem<atomic<i32>>.int u32.wgaindex i32.int	stmt.L2	3	arity 3: atomicStore(&a[i], v)
+F1063	stmt	discard_u_L2	composite	u32.index	stmt.L2	1	_ = e: an atomic's effect, its old value unused
+F1064	stmt	discard_i_L2	composite	i32.int	stmt.L2	1	_ = e: an atomic's effect, its old value unused
+F1065	atomic	store_u_L3	composite	wgmem<atomic<u32>>.index u32.wgaindex u32.index	stmt.L3	3	arity 3: atomicStore(&a[i], v)
+F1066	atomic	store_i_L3	composite	wgmem<atomic<i32>>.int u32.wgaindex i32.int	stmt.L3	3	arity 3: atomicStore(&a[i], v)
+F1067	stmt	discard_u_L3	composite	u32.index	stmt.L3	1	_ = e: an atomic's effect, its old value unused
+F1068	stmt	discard_i_L3	composite	i32.int	stmt.L3	1	_ = e: an atomic's effect, its old value unused
+F1069	atomic	store_u_L4	composite	wgmem<atomic<u32>>.index u32.wgaindex u32.index	stmt.L4	3	arity 3: atomicStore(&a[i], v)
+F1070	atomic	store_i_L4	composite	wgmem<atomic<i32>>.int u32.wgaindex i32.int	stmt.L4	3	arity 3: atomicStore(&a[i], v)
+F1071	stmt	discard_u_L4	composite	u32.index	stmt.L4	1	_ = e: an atomic's effect, its old value unused
+F1072	stmt	discard_i_L4	composite	i32.int	stmt.L4	1	_ = e: an atomic's effect, its old value unused
+F1073	atomic	store_u_C0	composite	wgmem<atomic<u32>>.index u32.wgaindex u32.index	stmt.C0	3	arity 3: atomicStore(&a[i], v)
+F1074	atomic	store_i_C0	composite	wgmem<atomic<i32>>.int u32.wgaindex i32.int	stmt.C0	3	arity 3: atomicStore(&a[i], v)
+F1075	stmt	discard_u_C0	composite	u32.index	stmt.C0	1	_ = e: an atomic's effect, its old value unused
+F1076	stmt	discard_i_C0	composite	i32.int	stmt.C0	1	_ = e: an atomic's effect, its old value unused
+F1077	atomic	store_u_C1	composite	wgmem<atomic<u32>>.index u32.wgaindex u32.index	stmt.C1	3	arity 3: atomicStore(&a[i], v)
+F1078	atomic	store_i_C1	composite	wgmem<atomic<i32>>.int u32.wgaindex i32.int	stmt.C1	3	arity 3: atomicStore(&a[i], v)
+F1079	stmt	discard_u_C1	composite	u32.index	stmt.C1	1	_ = e: an atomic's effect, its old value unused
+F1080	stmt	discard_i_C1	composite	i32.int	stmt.C1	1	_ = e: an atomic's effect, its old value unused
+F1081	atomic	store_u_C2	composite	wgmem<atomic<u32>>.index u32.wgaindex u32.index	stmt.C2	3	arity 3: atomicStore(&a[i], v)
+F1082	atomic	store_i_C2	composite	wgmem<atomic<i32>>.int u32.wgaindex i32.int	stmt.C2	3	arity 3: atomicStore(&a[i], v)
+F1083	stmt	discard_u_C2	composite	u32.index	stmt.C2	1	_ = e: an atomic's effect, its old value unused
+F1084	stmt	discard_i_C2	composite	i32.int	stmt.C2	1	_ = e: an atomic's effect, its old value unused
+F1085	atomic	store_u_C3	composite	wgmem<atomic<u32>>.index u32.wgaindex u32.index	stmt.C3	3	arity 3: atomicStore(&a[i], v)
+F1086	atomic	store_i_C3	composite	wgmem<atomic<i32>>.int u32.wgaindex i32.int	stmt.C3	3	arity 3: atomicStore(&a[i], v)
+F1087	stmt	discard_u_C3	composite	u32.index	stmt.C3	1	_ = e: an atomic's effect, its old value unused
+F1088	stmt	discard_i_C3	composite	i32.int	stmt.C3	1	_ = e: an atomic's effect, its old value unused
+F1089	atomic	store_u_C4	composite	wgmem<atomic<u32>>.index u32.wgaindex u32.index	stmt.C4	3	arity 3: atomicStore(&a[i], v)
+F1090	atomic	store_i_C4	composite	wgmem<atomic<i32>>.int u32.wgaindex i32.int	stmt.C4	3	arity 3: atomicStore(&a[i], v)
+F1091	stmt	discard_u_C4	composite	u32.index	stmt.C4	1	_ = e: an atomic's effect, its old value unused
+F1092	stmt	discard_i_C4	composite	i32.int	stmt.C4	1	_ = e: an atomic's effect, its old value unused
+F1093	atomic	store_u_L5	composite	wgmem<atomic<u32>>.index u32.wgaindex u32.index	stmt.L5	3	arity 3: atomicStore(&a[i], v)
+F1094	atomic	store_i_L5	composite	wgmem<atomic<i32>>.int u32.wgaindex i32.int	stmt.L5	3	arity 3: atomicStore(&a[i], v)
+F1095	stmt	discard_u_L5	composite	u32.index	stmt.L5	1	_ = e: an atomic's effect, its old value unused
+F1096	stmt	discard_i_L5	composite	i32.int	stmt.L5	1	_ = e: an atomic's effect, its old value unused
+F1097	atomic	store_u_C5	composite	wgmem<atomic<u32>>.index u32.wgaindex u32.index	stmt.C5	3	arity 3: atomicStore(&a[i], v)
+F1098	atomic	store_i_C5	composite	wgmem<atomic<i32>>.int u32.wgaindex i32.int	stmt.C5	3	arity 3: atomicStore(&a[i], v)
+F1099	stmt	discard_u_C5	composite	u32.index	stmt.C5	1	_ = e: an atomic's effect, its old value unused
+F1100	stmt	discard_i_C5	composite	i32.int	stmt.C5	1	_ = e: an atomic's effect, its old value unused
+F1101	builtin	subgroup_invocation_id	FunctionArgument(builtin)	-	u32.index	0	the thread's lane in its subgroup
+F1102	builtin	subgroup_size	FunctionArgument(builtin)	-	u32.count	0	the subgroup's width (4..64 on the M3 Max)
+F1103	builtin	num_subgroups	FunctionArgument(builtin)	-	u32.count	0	the subgroups in the workgroup
+F1104	builtin	subgroup_id	FunctionArgument(builtin)	-	u32.index	0	the thread's subgroup in its workgroup
+F1105	subgroup	add	SubgroupCollectiveOperation	<S.real>	<S.real>	1	subgroupAdd(x) over the subgroup's active lanes
+F1106	subgroup	add	SubgroupCollectiveOperation	u32.index	u32.index	1	subgroupAdd(x) over the subgroup's active lanes
+F1107	subgroup	mul	SubgroupCollectiveOperation	<S.real>	<S.real>	1	subgroupMul(x) over the subgroup's active lanes
+F1108	subgroup	mul	SubgroupCollectiveOperation	u32.index	u32.index	1	subgroupMul(x) over the subgroup's active lanes
+F1109	subgroup	min	SubgroupCollectiveOperation	<S.real>	<S.real>	1	subgroupMin(x) over the subgroup's active lanes
+F1110	subgroup	min	SubgroupCollectiveOperation	u32.index	u32.index	1	subgroupMin(x) over the subgroup's active lanes
+F1111	subgroup	max	SubgroupCollectiveOperation	<S.real>	<S.real>	1	subgroupMax(x) over the subgroup's active lanes
+F1112	subgroup	max	SubgroupCollectiveOperation	u32.index	u32.index	1	subgroupMax(x) over the subgroup's active lanes
+F1113	subgroup	inclusive_add	SubgroupCollectiveOperation	<S.real>	<S.real>	1	subgroupInclusiveAdd(x) over the subgroup's active lanes
+F1114	subgroup	inclusive_add	SubgroupCollectiveOperation	u32.index	u32.index	1	subgroupInclusiveAdd(x) over the subgroup's active lanes
+F1115	subgroup	inclusive_mul	SubgroupCollectiveOperation	<S.real>	<S.real>	1	subgroupInclusiveMul(x) over the subgroup's active lanes
+F1116	subgroup	inclusive_mul	SubgroupCollectiveOperation	u32.index	u32.index	1	subgroupInclusiveMul(x) over the subgroup's active lanes
+F1117	subgroup	exclusive_add	SubgroupCollectiveOperation	<S.real>	<S.real>	1	subgroupExclusiveAdd(x) over the subgroup's active lanes
+F1118	subgroup	exclusive_add	SubgroupCollectiveOperation	u32.index	u32.index	1	subgroupExclusiveAdd(x) over the subgroup's active lanes
+F1119	subgroup	exclusive_mul	SubgroupCollectiveOperation	<S.real>	<S.real>	1	subgroupExclusiveMul(x) over the subgroup's active lanes
+F1120	subgroup	exclusive_mul	SubgroupCollectiveOperation	u32.index	u32.index	1	subgroupExclusiveMul(x) over the subgroup's active lanes
+F1121	subgroup	and	SubgroupCollectiveOperation	u32.bits	u32.bits	1	subgroupAnd(x)
+F1122	subgroup	or	SubgroupCollectiveOperation	u32.bits	u32.bits	1	subgroupOr(x)
+F1123	subgroup	xor	SubgroupCollectiveOperation	u32.bits	u32.bits	1	subgroupXor(x)
+F1124	subgroup	all	SubgroupCollectiveOperation	bool.flag	bool.flag	1	subgroupAll(b)
+F1125	subgroup	any	SubgroupCollectiveOperation	bool.flag	bool.flag	1	subgroupAny(b)
+F1126	subgroup	broadcast_first	SubgroupGather	<S.real>	<S.real>	1	subgroupBroadcastFirst(x)
+F1127	subgroup	broadcast	SubgroupGather	<S.real> u32.lit64	<S.real>	2	subgroupBroadcast(x, lane): the lane a literal
+F1128	subgroup	shuffle	SubgroupGather	<S.real> u32.index	<S.real>	2	subgroupShuffle(x, i)
+F1129	subgroup	shuffle_down	SubgroupGather	<S.real> u32.index	<S.real>	2	subgroupShuffleDown(x, i)
+F1130	subgroup	shuffle_up	SubgroupGather	<S.real> u32.index	<S.real>	2	subgroupShuffleUp(x, i)
+F1131	subgroup	shuffle_xor	SubgroupGather	<S.real> u32.index	<S.real>	2	subgroupShuffleXor(x, i)
+F1132	subgroup	broadcast_first	SubgroupGather	u32.index	u32.index	1	subgroupBroadcastFirst(x)
+F1133	subgroup	broadcast	SubgroupGather	u32.index u32.lit64	u32.index	2	subgroupBroadcast(x, lane): the lane a literal
+F1134	subgroup	shuffle	SubgroupGather	u32.index u32.index	u32.index	2	subgroupShuffle(x, i)
+F1135	subgroup	shuffle_down	SubgroupGather	u32.index u32.index	u32.index	2	subgroupShuffleDown(x, i)
+F1136	subgroup	shuffle_up	SubgroupGather	u32.index u32.index	u32.index	2	subgroupShuffleUp(x, i)
+F1137	subgroup	shuffle_xor	SubgroupGather	u32.index u32.index	u32.index	2	subgroupShuffleXor(x, i)
+F1138	stmt	subgroup_barrier_L0	composite	-	stmt.L0	0	subgroupBarrier()
+F1139	stmt	subgroup_barrier_L1	composite	-	stmt.L1	0	subgroupBarrier()
+F1140	stmt	subgroup_barrier_L2	composite	-	stmt.L2	0	subgroupBarrier()
+F1141	stmt	subgroup_barrier_L3	composite	-	stmt.L3	0	subgroupBarrier()
+F1142	stmt	subgroup_barrier_L4	composite	-	stmt.L4	0	subgroupBarrier()
+F1143	stmt	subgroup_barrier_L5	composite	-	stmt.L5	0	subgroupBarrier()
+F1144	grid	of_rows_x	composite	u32.wgdim u32.wgdim u32.blk u32.blk	grid.grid	4	arity 4: grid.of with the output's rows on thread x (the fast index) and its columns on y; the header says `rows-x`
+F1145	convert	index_to_bits	As	<u32.index>	<u32.bits>	1	the same u32 lanes read as a bit field
+F1146	convert	bits_to_index	As	<u32.bits>	<u32.index>	1	the same u32 lanes read as an index
+F1147	convert	count_to_bits	As	<u32.count>	<u32.bits>	1	the same u32 lanes read as a bit field
+F1148	index	of_count	composite	vec2<u32>.count	vec2<u32>.index	1	per lane
+F1149	bits	count_ones	Math::CountOneBits	vec2<u32>.bits	vec2<u32>.count	1	per lane
+F1150	bits	leading_zeros	Math::CountLeadingZeros	vec2<u32>.bits	vec2<u32>.count	1	per lane
+F1151	bits	trailing_zeros	Math::CountTrailingZeros	vec2<u32>.bits	vec2<u32>.count	1	per lane
+F1152	bits	find_lsb	Math::FindLsb	vec2<u32>.bits	vec2<u32>.count	1	per lane
+F1153	bits	find_msb	Math::FindMsb	vec2<u32>.bits	vec2<u32>.count	1	per lane
+F1154	bits	reverse	Math::ReverseBits	vec2<u32>.bits	vec2<u32>.bits	1	per lane
+F1155	bits	extract	Math::ExtractBits	vec2<u32>.bits u32.index u32.count	vec2<u32>.bits	3	arity 3, per lane
+F1156	index	of_count	composite	vec3<u32>.count	vec3<u32>.index	1	per lane
+F1157	bits	count_ones	Math::CountOneBits	vec3<u32>.bits	vec3<u32>.count	1	per lane
+F1158	bits	leading_zeros	Math::CountLeadingZeros	vec3<u32>.bits	vec3<u32>.count	1	per lane
+F1159	bits	trailing_zeros	Math::CountTrailingZeros	vec3<u32>.bits	vec3<u32>.count	1	per lane
+F1160	bits	find_lsb	Math::FindLsb	vec3<u32>.bits	vec3<u32>.count	1	per lane
+F1161	bits	find_msb	Math::FindMsb	vec3<u32>.bits	vec3<u32>.count	1	per lane
+F1162	bits	reverse	Math::ReverseBits	vec3<u32>.bits	vec3<u32>.bits	1	per lane
+F1163	bits	extract	Math::ExtractBits	vec3<u32>.bits u32.index u32.count	vec3<u32>.bits	3	arity 3, per lane
+F1164	index	of_count	composite	vec4<u32>.count	vec4<u32>.index	1	per lane
+F1165	bits	count_ones	Math::CountOneBits	vec4<u32>.bits	vec4<u32>.count	1	per lane
+F1166	bits	leading_zeros	Math::CountLeadingZeros	vec4<u32>.bits	vec4<u32>.count	1	per lane
+F1167	bits	trailing_zeros	Math::CountTrailingZeros	vec4<u32>.bits	vec4<u32>.count	1	per lane
+F1168	bits	find_lsb	Math::FindLsb	vec4<u32>.bits	vec4<u32>.count	1	per lane
+F1169	bits	find_msb	Math::FindMsb	vec4<u32>.bits	vec4<u32>.count	1	per lane
+F1170	bits	reverse	Math::ReverseBits	vec4<u32>.bits	vec4<u32>.bits	1	per lane
+F1171	bits	extract	Math::ExtractBits	vec4<u32>.bits u32.index u32.count	vec4<u32>.bits	3	arity 3, per lane
+F1172	bits	insert	Math::InsertBits	<u32.bits> <u32.bits> u32.index u32.count	<u32.bits>	4	arity 4: insertBits(e, newbits, offset, count)
+F1173	geom	dot	Math::Dot	<vecL<u32>.index> <vecL<u32>.index>	u32.index	2	integer dot product (wraps)
+F1174	geom	dot	Math::Dot	<vecL<i32>.int> <vecL<i32>.int>	i32.int	2	integer dot product (wraps)
+F1175	arith	mod	Binary::Modulo	<S.real> <S.real>	<S.real>	2	WGSL's % on reals: x - y * trunc(x / y)
+F1176	stmt	storage_barrier_L0	composite	-	stmt.L0	0	storageBarrier(): storage-buffer writes visible to the workgroup
+F1177	stmt	storage_barrier_L1	composite	-	stmt.L1	0	storageBarrier(): storage-buffer writes visible to the workgroup
+F1178	stmt	storage_barrier_L2	composite	-	stmt.L2	0	storageBarrier(): storage-buffer writes visible to the workgroup
+F1179	stmt	storage_barrier_L3	composite	-	stmt.L3	0	storageBarrier(): storage-buffer writes visible to the workgroup
+F1180	stmt	storage_barrier_L4	composite	-	stmt.L4	0	storageBarrier(): storage-buffer writes visible to the workgroup
+F1181	stmt	storage_barrier_L5	composite	-	stmt.L5	0	storageBarrier(): storage-buffer writes visible to the workgroup
+F1182	reg	n0	composite	-	reg<i32>.int	0	an i32 register
+F1183	reg	n1	composite	-	reg<i32>.int	0	an i32 register
+F1184	reg	n2	composite	-	reg<i32>.int	0	an i32 register
+F1185	reg	n3	composite	-	reg<i32>.int	0	an i32 register
+F1186	reg	n4	composite	-	reg<i32>.int	0	an i32 register
+F1187	reg	n5	composite	-	reg<i32>.int	0	an i32 register
+F1188	reg	n6	composite	-	reg<i32>.int	0	an i32 register
+F1189	reg	n7	composite	-	reg<i32>.int	0	an i32 register
+F1190	reg	n8	composite	-	reg<i32>.int	0	an i32 register
+F1191	reg	n9	composite	-	reg<i32>.int	0	an i32 register
+F1192	reg	n10	composite	-	reg<i32>.int	0	an i32 register
+F1193	reg	n11	composite	-	reg<i32>.int	0	an i32 register
+F1194	reg	n12	composite	-	reg<i32>.int	0	an i32 register
+F1195	reg	n13	composite	-	reg<i32>.int	0	an i32 register
+F1196	reg	n14	composite	-	reg<i32>.int	0	an i32 register
+F1197	reg	n15	composite	-	reg<i32>.int	0	an i32 register
+F1198	reg	get_n	composite	reg<i32>.int	i32.int	1	the register's value
+F1199	reg	set_n_L0	composite	reg<i32>.int i32.int	stmt.L0	2	
+F1200	reg	set_n_L1	composite	reg<i32>.int i32.int	stmt.L1	2	
+F1201	reg	set_n_L2	composite	reg<i32>.int i32.int	stmt.L2	2	
+F1202	reg	set_n_L3	composite	reg<i32>.int i32.int	stmt.L3	2	
+F1203	reg	set_n_L4	composite	reg<i32>.int i32.int	stmt.L4	2	
+F1204	reg	set_n_C0	composite	reg<i32>.int i32.int	stmt.C0	2	
+F1205	reg	set_n_C1	composite	reg<i32>.int i32.int	stmt.C1	2	
+F1206	reg	set_n_C2	composite	reg<i32>.int i32.int	stmt.C2	2	
+F1207	reg	set_n_C3	composite	reg<i32>.int i32.int	stmt.C3	2	
+F1208	reg	set_n_C4	composite	reg<i32>.int i32.int	stmt.C4	2	
+F1209	reg	set_n_L5	composite	reg<i32>.int i32.int	stmt.L5	2	
+F1210	reg	set_n_C5	composite	reg<i32>.int i32.int	stmt.C5	2	
+F1211	convert	index_to_int	As	<u32.index>	<i32.int>	1	i32(u): the same bits read as two's complement
+F1212	convert	int_to_index	As	<i32.int>	<u32.index>	1	u32(i): the same bits read unsigned (index.of_int floors at zero instead)
+F1213	convert	bitcast_int_bits	As(bitcast)	<i32.int>	<u32.bits>	1	
+F1214	convert	bitcast_bits_int	As(bitcast)	<u32.bits>	<i32.int>	1	
+F1215	convert	bitcast_real_int	As(bitcast)	<f32.real>	<i32.int>	1	
+F1216	convert	bitcast_int_real	As(bitcast)	<i32.int>	<f32.real>	1	
+F1217	convert	f32_to_int	As	vec2<f32>.real	vec2<i32>.int	1	truncating, per lane
+F1218	convert	int_to_f32	As	vec2<i32>.int	vec2<f32>.real	1	per lane
+F1219	convert	f32_to_int	As	vec3<f32>.real	vec3<i32>.int	1	truncating, per lane
+F1220	convert	int_to_f32	As	vec3<i32>.int	vec3<f32>.real	1	per lane
+F1221	convert	f32_to_int	As	vec4<f32>.real	vec4<i32>.int	1	truncating, per lane
+F1222	convert	int_to_f32	As	vec4<i32>.int	vec4<f32>.real	1	per lane
+F1223	int	clamp	Math::Clamp	<i32.int> <i32.int> <i32.int>	<i32.int>	3	arity 3
+F1224	int	sign	Math::Sign	<i32.int>	<i32.int>	1	
+F1225	int	and	Binary::And	<i32.int> <i32.int>	<i32.int>	2	lanes equal
+F1226	int	or	Binary::InclusiveOr	<i32.int> <i32.int>	<i32.int>	2	lanes equal
+F1227	int	xor	Binary::ExclusiveOr	<i32.int> <i32.int>	<i32.int>	2	lanes equal
+F1228	int	not	Unary::BitwiseNot	<i32.int>	<i32.int>	1	
+F1229	int	shl	Binary::ShiftLeft	i32.int u32.count	i32.int	2	
+F1230	int	shr	Binary::ShiftRight	i32.int u32.count	i32.int	2	arithmetic: the sign bit fills
+F1231	int	count_ones	Math::CountOneBits	<i32.int>	<i32.int>	1	WGSL returns i32 for i32
+F1232	int	leading_zeros	Math::CountLeadingZeros	<i32.int>	<i32.int>	1	WGSL returns i32 for i32
+F1233	int	trailing_zeros	Math::CountTrailingZeros	<i32.int>	<i32.int>	1	WGSL returns i32 for i32
+F1234	int	find_lsb	Math::FindLsb	<i32.int>	<i32.int>	1	WGSL returns i32 for i32
+F1235	int	find_msb	Math::FindMsb	<i32.int>	<i32.int>	1	WGSL returns i32 for i32
+F1236	int	reverse	Math::ReverseBits	<i32.int>	<i32.int>	1	
+F1237	int	extract	Math::ExtractBits	<i32.int> u32.index u32.count	<i32.int>	3	arity 3, sign-extending
+F1238	int	insert	Math::InsertBits	<i32.int> <i32.int> u32.index u32.count	<i32.int>	4	arity 4
+F1239	subgroup	add	SubgroupCollectiveOperation	i32.int	i32.int	1	subgroupAdd(x) on i32
+F1240	subgroup	mul	SubgroupCollectiveOperation	i32.int	i32.int	1	subgroupMul(x) on i32
+F1241	subgroup	min	SubgroupCollectiveOperation	i32.int	i32.int	1	subgroupMin(x) on i32
+F1242	subgroup	max	SubgroupCollectiveOperation	i32.int	i32.int	1	subgroupMax(x) on i32
+F1243	subgroup	inclusive_add	SubgroupCollectiveOperation	i32.int	i32.int	1	subgroupInclusiveAdd(x) on i32
+F1244	subgroup	inclusive_mul	SubgroupCollectiveOperation	i32.int	i32.int	1	subgroupInclusiveMul(x) on i32
+F1245	subgroup	exclusive_add	SubgroupCollectiveOperation	i32.int	i32.int	1	subgroupExclusiveAdd(x) on i32
+F1246	subgroup	exclusive_mul	SubgroupCollectiveOperation	i32.int	i32.int	1	subgroupExclusiveMul(x) on i32
+F1247	subgroup	and	SubgroupCollectiveOperation	i32.int	i32.int	1	subgroupAnd(x) on i32
+F1248	subgroup	or	SubgroupCollectiveOperation	i32.int	i32.int	1	subgroupOr(x) on i32
+F1249	subgroup	xor	SubgroupCollectiveOperation	i32.int	i32.int	1	subgroupXor(x) on i32
+F1250	subgroup	broadcast_first	SubgroupGather	i32.int	i32.int	1	subgroupBroadcastFirst(x)
+F1251	subgroup	broadcast	SubgroupGather	i32.int u32.lit64	i32.int	2	subgroupBroadcast(x, lane): the lane a literal
+F1252	subgroup	shuffle	SubgroupGather	i32.int u32.index	i32.int	2	subgroupShuffle(x, i)
+F1253	subgroup	shuffle_down	SubgroupGather	i32.int u32.index	i32.int	2	subgroupShuffleDown(x, i)
+F1254	subgroup	shuffle_up	SubgroupGather	i32.int u32.index	i32.int	2	subgroupShuffleUp(x, i)
+F1255	subgroup	shuffle_xor	SubgroupGather	i32.int u32.index	i32.int	2	subgroupShuffleXor(x, i)
+F1256	block	brk_B1	composite	block.C1 bool.flag block.C1	block.B1	3	arity 3: before; if (c) { break; }; after
+F1257	block	brk_B2	composite	block.C2 bool.flag block.C2	block.B2	3	arity 3: before; if (c) { break; }; after
+F1258	block	brk_B3	composite	block.C3 bool.flag block.C3	block.B3	3	arity 3: before; if (c) { break; }; after
+F1259	block	brk_B4	composite	block.C4 bool.flag block.C4	block.B4	3	arity 3: before; if (c) { break; }; after
+F1260	block	brk_B5	composite	block.C5 bool.flag block.C5	block.B5	3	arity 3: before; if (c) { break; }; after
+F1261	loop	tile_brk_L0	composite	u32.lit64 block.B2	stmt.L0	2	for (k = 0u; k < n; k++) { body that breaks }
+F1262	loop	tilex_brk_L0	composite	u32.boundx block.B2	stmt.L0	2	for (k = 0u; k < (expr); k++) { body that breaks }
+F1263	loop	tile_brk_L1	composite	u32.lit64 block.B2	stmt.L1	2	for (k = 0u; k < n; k++) { body that breaks }
+F1264	loop	tilex_brk_L1	composite	u32.boundx block.B2	stmt.L1	2	for (k = 0u; k < (expr); k++) { body that breaks }
+F1265	loop	tile_brk_L2	composite	u32.lit64 block.B3	stmt.L2	2	for (k = 0u; k < n; k++) { body that breaks }
+F1266	loop	tilex_brk_L2	composite	u32.boundx block.B3	stmt.L2	2	for (k = 0u; k < (expr); k++) { body that breaks }
+F1267	loop	tile_brk_L3	composite	u32.lit64 block.B4	stmt.L3	2	for (k = 0u; k < n; k++) { body that breaks }
+F1268	loop	tilex_brk_L3	composite	u32.boundx block.B4	stmt.L3	2	for (k = 0u; k < (expr); k++) { body that breaks }
+F1269	loop	tile_brk_L4	composite	u32.lit64 block.B5	stmt.L4	2	for (k = 0u; k < n; k++) { body that breaks }
+F1270	loop	tilex_brk_L4	composite	u32.boundx block.B5	stmt.L4	2	for (k = 0u; k < (expr); k++) { body that breaks }
+F1271	loop	tile_brk_C0	composite	u32.lit64 block.B1	stmt.C0	2	for (k = 0u; k < n; k++) { body that breaks }
+F1272	loop	tilex_brk_C0	composite	u32.boundx block.B1	stmt.C0	2	for (k = 0u; k < (expr); k++) { body that breaks }
+F1273	loop	tile_brk_C1	composite	u32.lit64 block.B2	stmt.C1	2	for (k = 0u; k < n; k++) { body that breaks }
+F1274	loop	tilex_brk_C1	composite	u32.boundx block.B2	stmt.C1	2	for (k = 0u; k < (expr); k++) { body that breaks }
+F1275	loop	tile_brk_C2	composite	u32.lit64 block.B3	stmt.C2	2	for (k = 0u; k < n; k++) { body that breaks }
+F1276	loop	tilex_brk_C2	composite	u32.boundx block.B3	stmt.C2	2	for (k = 0u; k < (expr); k++) { body that breaks }
+F1277	loop	tile_brk_C3	composite	u32.lit64 block.B4	stmt.C3	2	for (k = 0u; k < n; k++) { body that breaks }
+F1278	loop	tilex_brk_C3	composite	u32.boundx block.B4	stmt.C3	2	for (k = 0u; k < (expr); k++) { body that breaks }
+F1279	loop	tile_brk_C4	composite	u32.lit64 block.B5	stmt.C4	2	for (k = 0u; k < n; k++) { body that breaks }
+F1280	loop	tilex_brk_C4	composite	u32.boundx block.B5	stmt.C4	2	for (k = 0u; k < (expr); k++) { body that breaks }
+F1281	block	cont_L1	composite	bool.flag block.C1	block.L1	2	if (c) { continue; } then the rest, conditional
+F1282	block	cont_L2	composite	bool.flag block.C2	block.L2	2	if (c) { continue; } then the rest, conditional
+F1283	block	cont_L3	composite	bool.flag block.C3	block.L3	2	if (c) { continue; } then the rest, conditional
+F1284	block	cont_L4	composite	bool.flag block.C4	block.L4	2	if (c) { continue; } then the rest, conditional
+F1285	block	cont_L5	composite	bool.flag block.C5	block.L5	2	if (c) { continue; } then the rest, conditional
+F1286	block	cont_C1	composite	bool.flag block.C1	block.C1	2	if (c) { continue; } then the rest, conditional
+F1287	block	cont_C2	composite	bool.flag block.C2	block.C2	2	if (c) { continue; } then the rest, conditional
+F1288	block	cont_C3	composite	bool.flag block.C3	block.C3	2	if (c) { continue; } then the rest, conditional
+F1289	block	cont_C4	composite	bool.flag block.C4	block.C4	2	if (c) { continue; } then the rest, conditional
+F1290	block	cont_C5	composite	bool.flag block.C5	block.C5	2	if (c) { continue; } then the rest, conditional
+F1291	index	of_gid	composite	vec3<u32>.gid	vec3<u32>.index	1	the thread id gid used as a plain vector of indices
+F1292	index	of_lid	composite	vec3<u32>.lid	vec3<u32>.index	1	the thread id lid used as a plain vector of indices
+F1293	index	of_wid	composite	vec3<u32>.wid	vec3<u32>.index	1	the thread id wid used as a plain vector of indices
+F1294	convert	bitcast_f32_bits	As(bitcast)	vec2<f32>.real	vec2<u32>.bits	1	per lane
+F1295	convert	bitcast_bits_f32	As(bitcast)	vec2<u32>.bits	vec2<f32>.real	1	per lane
+F1296	convert	bitcast_f32_bits	As(bitcast)	vec3<f32>.real	vec3<u32>.bits	1	per lane
+F1297	convert	bitcast_bits_f32	As(bitcast)	vec3<u32>.bits	vec3<f32>.real	1	per lane
+F1298	convert	bitcast_f32_bits	As(bitcast)	vec4<f32>.real	vec4<u32>.bits	1	per lane
+F1299	convert	bitcast_bits_f32	As(bitcast)	vec4<u32>.bits	vec4<f32>.real	1	per lane
+F1300	reg	u0	composite	-	reg<vec4<u32>>.bits	0	a vec4<u32> register
+F1301	reg	u1	composite	-	reg<vec4<u32>>.bits	0	a vec4<u32> register
+F1302	reg	u2	composite	-	reg<vec4<u32>>.bits	0	a vec4<u32> register
+F1303	reg	u3	composite	-	reg<vec4<u32>>.bits	0	a vec4<u32> register
+F1304	reg	u4	composite	-	reg<vec4<u32>>.bits	0	a vec4<u32> register
+F1305	reg	u5	composite	-	reg<vec4<u32>>.bits	0	a vec4<u32> register
+F1306	reg	u6	composite	-	reg<vec4<u32>>.bits	0	a vec4<u32> register
+F1307	reg	u7	composite	-	reg<vec4<u32>>.bits	0	a vec4<u32> register
+F1308	reg	get_u	composite	reg<vec4<u32>>.bits	vec4<u32>.bits	1	the register's value
+F1309	reg	set_u_L0	composite	reg<vec4<u32>>.bits vec4<u32>.bits	stmt.L0	2	
+F1310	reg	set_u_L1	composite	reg<vec4<u32>>.bits vec4<u32>.bits	stmt.L1	2	
+F1311	reg	set_u_L2	composite	reg<vec4<u32>>.bits vec4<u32>.bits	stmt.L2	2	
+F1312	reg	set_u_L3	composite	reg<vec4<u32>>.bits vec4<u32>.bits	stmt.L3	2	
+F1313	reg	set_u_L4	composite	reg<vec4<u32>>.bits vec4<u32>.bits	stmt.L4	2	
+F1314	reg	set_u_C0	composite	reg<vec4<u32>>.bits vec4<u32>.bits	stmt.C0	2	
+F1315	reg	set_u_C1	composite	reg<vec4<u32>>.bits vec4<u32>.bits	stmt.C1	2	
+F1316	reg	set_u_C2	composite	reg<vec4<u32>>.bits vec4<u32>.bits	stmt.C2	2	
+F1317	reg	set_u_C3	composite	reg<vec4<u32>>.bits vec4<u32>.bits	stmt.C3	2	
+F1318	reg	set_u_C4	composite	reg<vec4<u32>>.bits vec4<u32>.bits	stmt.C4	2	
+F1319	reg	set_u_L5	composite	reg<vec4<u32>>.bits vec4<u32>.bits	stmt.L5	2	
+F1320	reg	set_u_C5	composite	reg<vec4<u32>>.bits vec4<u32>.bits	stmt.C5	2	
+F1321	subgroup	ballot	SubgroupBallot	bool.flag	vec4<u32>.bits	1	subgroupBallot(b): a bit per active lane where b holds
+F1322	parr	q	composite	-	parr<vec2<f32>>.real	0	private array pq of 16 vec2<f32>
+F1323	parr	r	composite	-	parr<vec2<f32>>.real	0	private array pr of 16 vec2<f32>
+F1324	parr	get_t	composite	parr<vec2<f32>>.real u32.pindex16	vec2<f32>.real	2	pq[i]
+F1325	parr	set_t_L0	composite	parr<vec2<f32>>.real u32.pindex16 vec2<f32>.real	stmt.L0	3	arity 3: pq[i] = v;
+F1326	parr	set_t_L1	composite	parr<vec2<f32>>.real u32.pindex16 vec2<f32>.real	stmt.L1	3	arity 3: pq[i] = v;
+F1327	parr	set_t_L2	composite	parr<vec2<f32>>.real u32.pindex16 vec2<f32>.real	stmt.L2	3	arity 3: pq[i] = v;
+F1328	parr	set_t_L3	composite	parr<vec2<f32>>.real u32.pindex16 vec2<f32>.real	stmt.L3	3	arity 3: pq[i] = v;
+F1329	parr	set_t_L4	composite	parr<vec2<f32>>.real u32.pindex16 vec2<f32>.real	stmt.L4	3	arity 3: pq[i] = v;
+F1330	parr	set_t_C0	composite	parr<vec2<f32>>.real u32.pindex16 vec2<f32>.real	stmt.C0	3	arity 3: pq[i] = v;
+F1331	parr	set_t_C1	composite	parr<vec2<f32>>.real u32.pindex16 vec2<f32>.real	stmt.C1	3	arity 3: pq[i] = v;
+F1332	parr	set_t_C2	composite	parr<vec2<f32>>.real u32.pindex16 vec2<f32>.real	stmt.C2	3	arity 3: pq[i] = v;
+F1333	parr	set_t_C3	composite	parr<vec2<f32>>.real u32.pindex16 vec2<f32>.real	stmt.C3	3	arity 3: pq[i] = v;
+F1334	parr	set_t_C4	composite	parr<vec2<f32>>.real u32.pindex16 vec2<f32>.real	stmt.C4	3	arity 3: pq[i] = v;
+F1335	parr	set_t_L5	composite	parr<vec2<f32>>.real u32.pindex16 vec2<f32>.real	stmt.L5	3	arity 3: pq[i] = v;
+F1336	parr	set_t_C5	composite	parr<vec2<f32>>.real u32.pindex16 vec2<f32>.real	stmt.C5	3	arity 3: pq[i] = v;
+F1337	shape	compose_mat3	Compose	<vecR<f32>.real> <vecR<f32>.real> <vecR<f32>.real>	<mat3xR<f32>.real>	3	arity 3: three columns
+F1338	shape	compose_mat4	Compose	<vecR<f32>.real> <vecR<f32>.real> <vecR<f32>.real> <vecR<f32>.real>	<mat4xR<f32>.real>	4	arity 4: four columns
+F1339	shape	col_0	AccessIndex	mat2x2<f32>.real	vec2<f32>.real	1	m[0]: a column
+F1340	shape	col_1	AccessIndex	mat2x2<f32>.real	vec2<f32>.real	1	m[1]: a column
+F1341	shape	col_0	AccessIndex	mat2x3<f32>.real	vec3<f32>.real	1	m[0]: a column
+F1342	shape	col_1	AccessIndex	mat2x3<f32>.real	vec3<f32>.real	1	m[1]: a column
+F1343	shape	col_0	AccessIndex	mat2x4<f32>.real	vec4<f32>.real	1	m[0]: a column
+F1344	shape	col_1	AccessIndex	mat2x4<f32>.real	vec4<f32>.real	1	m[1]: a column
+F1345	shape	col_0	AccessIndex	mat3x2<f32>.real	vec2<f32>.real	1	m[0]: a column
+F1346	shape	col_1	AccessIndex	mat3x2<f32>.real	vec2<f32>.real	1	m[1]: a column
+F1347	shape	col_2	AccessIndex	mat3x2<f32>.real	vec2<f32>.real	1	m[2]: a column
+F1348	shape	col_0	AccessIndex	mat3x3<f32>.real	vec3<f32>.real	1	m[0]: a column
+F1349	shape	col_1	AccessIndex	mat3x3<f32>.real	vec3<f32>.real	1	m[1]: a column
+F1350	shape	col_2	AccessIndex	mat3x3<f32>.real	vec3<f32>.real	1	m[2]: a column
+F1351	shape	col_0	AccessIndex	mat3x4<f32>.real	vec4<f32>.real	1	m[0]: a column
+F1352	shape	col_1	AccessIndex	mat3x4<f32>.real	vec4<f32>.real	1	m[1]: a column
+F1353	shape	col_2	AccessIndex	mat3x4<f32>.real	vec4<f32>.real	1	m[2]: a column
+F1354	shape	col_0	AccessIndex	mat4x2<f32>.real	vec2<f32>.real	1	m[0]: a column
+F1355	shape	col_1	AccessIndex	mat4x2<f32>.real	vec2<f32>.real	1	m[1]: a column
+F1356	shape	col_2	AccessIndex	mat4x2<f32>.real	vec2<f32>.real	1	m[2]: a column
+F1357	shape	col_3	AccessIndex	mat4x2<f32>.real	vec2<f32>.real	1	m[3]: a column
+F1358	shape	col_0	AccessIndex	mat4x3<f32>.real	vec3<f32>.real	1	m[0]: a column
+F1359	shape	col_1	AccessIndex	mat4x3<f32>.real	vec3<f32>.real	1	m[1]: a column
+F1360	shape	col_2	AccessIndex	mat4x3<f32>.real	vec3<f32>.real	1	m[2]: a column
+F1361	shape	col_3	AccessIndex	mat4x3<f32>.real	vec3<f32>.real	1	m[3]: a column
+F1362	shape	col_0	AccessIndex	mat4x4<f32>.real	vec4<f32>.real	1	m[0]: a column
+F1363	shape	col_1	AccessIndex	mat4x4<f32>.real	vec4<f32>.real	1	m[1]: a column
+F1364	shape	col_2	AccessIndex	mat4x4<f32>.real	vec4<f32>.real	1	m[2]: a column
+F1365	shape	col_3	AccessIndex	mat4x4<f32>.real	vec4<f32>.real	1	m[3]: a column
+F1366	shape	col_at	composite	<matCxR<f32>.real> u32.index	<vecR<f32>.real>	2	m[min(i, C - 1)]: a column chosen at run time
+F1367	arith	mul_vec_mat	Binary::Multiply	<vecR<f32>.real> <matCxR<f32>.real>	<vecC<f32>.real>	2	v * m (a row vector)
+F1368	arith	mul_mat_scalar	Binary::Multiply	<matCxR<f32>.real> f32.real	<matCxR<f32>.real>	2	
+F1369	arith	mul_scalar_mat	Binary::Multiply	f32.real <matCxR<f32>.real>	<matCxR<f32>.real>	2	
+F1370	arith	add_mat	Binary::Add	<matCxR<f32>.real> <matCxR<f32>.real>	<matCxR<f32>.real>	2	
+F1371	arith	sub_mat	Binary::Subtract	<matCxR<f32>.real> <matCxR<f32>.real>	<matCxR<f32>.real>	2	
+F1372	arith	neg_mat	Unary::Negate	<matCxR<f32>.real>	<matCxR<f32>.real>	1	
+F1373	reg	x0	composite	-	reg<mat2x2<f32>>.real	0	a mat2x2<f32> register
+F1374	reg	x1	composite	-	reg<mat2x2<f32>>.real	0	a mat2x2<f32> register
+F1375	reg	get_x	composite	reg<mat2x2<f32>>.real	mat2x2<f32>.real	1	the register's value
+F1376	reg	set_x_L0	composite	reg<mat2x2<f32>>.real mat2x2<f32>.real	stmt.L0	2	
+F1377	reg	set_x_L1	composite	reg<mat2x2<f32>>.real mat2x2<f32>.real	stmt.L1	2	
+F1378	reg	set_x_L2	composite	reg<mat2x2<f32>>.real mat2x2<f32>.real	stmt.L2	2	
+F1379	reg	set_x_L3	composite	reg<mat2x2<f32>>.real mat2x2<f32>.real	stmt.L3	2	
+F1380	reg	set_x_L4	composite	reg<mat2x2<f32>>.real mat2x2<f32>.real	stmt.L4	2	
+F1381	reg	set_x_C0	composite	reg<mat2x2<f32>>.real mat2x2<f32>.real	stmt.C0	2	
+F1382	reg	set_x_C1	composite	reg<mat2x2<f32>>.real mat2x2<f32>.real	stmt.C1	2	
+F1383	reg	set_x_C2	composite	reg<mat2x2<f32>>.real mat2x2<f32>.real	stmt.C2	2	
+F1384	reg	set_x_C3	composite	reg<mat2x2<f32>>.real mat2x2<f32>.real	stmt.C3	2	
+F1385	reg	set_x_C4	composite	reg<mat2x2<f32>>.real mat2x2<f32>.real	stmt.C4	2	
+F1386	reg	set_x_L5	composite	reg<mat2x2<f32>>.real mat2x2<f32>.real	stmt.L5	2	
+F1387	reg	set_x_C5	composite	reg<mat2x2<f32>>.real mat2x2<f32>.real	stmt.C5	2	
+F1388	reg	y0	composite	-	reg<mat3x3<f32>>.real	0	a mat3x3<f32> register
+F1389	reg	y1	composite	-	reg<mat3x3<f32>>.real	0	a mat3x3<f32> register
+F1390	reg	get_y	composite	reg<mat3x3<f32>>.real	mat3x3<f32>.real	1	the register's value
+F1391	reg	set_y_L0	composite	reg<mat3x3<f32>>.real mat3x3<f32>.real	stmt.L0	2	
+F1392	reg	set_y_L1	composite	reg<mat3x3<f32>>.real mat3x3<f32>.real	stmt.L1	2	
+F1393	reg	set_y_L2	composite	reg<mat3x3<f32>>.real mat3x3<f32>.real	stmt.L2	2	
+F1394	reg	set_y_L3	composite	reg<mat3x3<f32>>.real mat3x3<f32>.real	stmt.L3	2	
+F1395	reg	set_y_L4	composite	reg<mat3x3<f32>>.real mat3x3<f32>.real	stmt.L4	2	
+F1396	reg	set_y_C0	composite	reg<mat3x3<f32>>.real mat3x3<f32>.real	stmt.C0	2	
+F1397	reg	set_y_C1	composite	reg<mat3x3<f32>>.real mat3x3<f32>.real	stmt.C1	2	
+F1398	reg	set_y_C2	composite	reg<mat3x3<f32>>.real mat3x3<f32>.real	stmt.C2	2	
+F1399	reg	set_y_C3	composite	reg<mat3x3<f32>>.real mat3x3<f32>.real	stmt.C3	2	
+F1400	reg	set_y_C4	composite	reg<mat3x3<f32>>.real mat3x3<f32>.real	stmt.C4	2	
+F1401	reg	set_y_L5	composite	reg<mat3x3<f32>>.real mat3x3<f32>.real	stmt.L5	2	
+F1402	reg	set_y_C5	composite	reg<mat3x3<f32>>.real mat3x3<f32>.real	stmt.C5	2	
+F1403	reg	z0	composite	-	reg<mat4x4<f32>>.real	0	a mat4x4<f32> register
+F1404	reg	z1	composite	-	reg<mat4x4<f32>>.real	0	a mat4x4<f32> register
+F1405	reg	get_z	composite	reg<mat4x4<f32>>.real	mat4x4<f32>.real	1	the register's value
+F1406	reg	set_z_L0	composite	reg<mat4x4<f32>>.real mat4x4<f32>.real	stmt.L0	2	
+F1407	reg	set_z_L1	composite	reg<mat4x4<f32>>.real mat4x4<f32>.real	stmt.L1	2	
+F1408	reg	set_z_L2	composite	reg<mat4x4<f32>>.real mat4x4<f32>.real	stmt.L2	2	
+F1409	reg	set_z_L3	composite	reg<mat4x4<f32>>.real mat4x4<f32>.real	stmt.L3	2	
+F1410	reg	set_z_L4	composite	reg<mat4x4<f32>>.real mat4x4<f32>.real	stmt.L4	2	
+F1411	reg	set_z_C0	composite	reg<mat4x4<f32>>.real mat4x4<f32>.real	stmt.C0	2	
+F1412	reg	set_z_C1	composite	reg<mat4x4<f32>>.real mat4x4<f32>.real	stmt.C1	2	
+F1413	reg	set_z_C2	composite	reg<mat4x4<f32>>.real mat4x4<f32>.real	stmt.C2	2	
+F1414	reg	set_z_C3	composite	reg<mat4x4<f32>>.real mat4x4<f32>.real	stmt.C3	2	
+F1415	reg	set_z_C4	composite	reg<mat4x4<f32>>.real mat4x4<f32>.real	stmt.C4	2	
+F1416	reg	set_z_L5	composite	reg<mat4x4<f32>>.real mat4x4<f32>.real	stmt.L5	2	
+F1417	reg	set_z_C5	composite	reg<mat4x4<f32>>.real mat4x4<f32>.real	stmt.C5	2	
+F1418	arith	modf_fract	composite	<S.real>	<S.real>	1	modf(x).fract
+F1419	arith	modf_whole	composite	<S.real>	<S.real>	1	modf(x).whole
+F1420	arith	frexp_fract	composite	<S.real>	<S.real>	1	frexp(x).fract
+F1421	arith	frexp_exp	composite	<f32.real>	<i32.int>	1	frexp(x).exp
+F1422	load	phi_len	ArrayLength	-	u32.count	0	arrayLength(&phi)
+F1423	load	h_len	ArrayLength	-	u32.count	0	arrayLength(&h)
+F1424	literal	p_wcol	Literal	-	u32.index	0	the knob wcol times the payload / 256
+F1425	literal	p_wcol	Literal	-	u32.lit64	0	the knob wcol times the payload / 256
+F1426	literal	p_wcol	Literal	-	u32.lit4096	0	the knob wcol times the payload / 256
+F1427	literal	p_wcol	Literal	-	u32.wglen	0	the knob wcol times the payload / 256
+F1428	literal	p_wcol_log2	Literal	-	u32.index	0	log2 of the knob wcol times the payload / 256 (a shift)
+F1429	literal	p_wcol_m1	Literal	-	u32.index	0	the knob wcol times the payload / 256, minus one (a mask)
+F1430	literal	p_wrow	Literal	-	u32.index	0	the knob wrow times the payload / 256
+F1431	literal	p_wrow	Literal	-	u32.lit64	0	the knob wrow times the payload / 256
+F1432	literal	p_wrow	Literal	-	u32.lit4096	0	the knob wrow times the payload / 256
+F1433	literal	p_wrow	Literal	-	u32.wglen	0	the knob wrow times the payload / 256
+F1434	literal	p_wrow_log2	Literal	-	u32.index	0	log2 of the knob wrow times the payload / 256 (a shift)
+F1435	literal	p_wrow_m1	Literal	-	u32.index	0	the knob wrow times the payload / 256, minus one (a mask)
+F1436	literal	p_bcol	Literal	-	u32.index	0	the knob bcol times the payload / 256
+F1437	literal	p_bcol	Literal	-	u32.lit64	0	the knob bcol times the payload / 256
+F1438	literal	p_bcol	Literal	-	u32.lit4096	0	the knob bcol times the payload / 256
+F1439	literal	p_bcol	Literal	-	u32.wglen	0	the knob bcol times the payload / 256
+F1440	literal	p_bcol_log2	Literal	-	u32.index	0	log2 of the knob bcol times the payload / 256 (a shift)
+F1441	literal	p_bcol_m1	Literal	-	u32.index	0	the knob bcol times the payload / 256, minus one (a mask)
+F1442	literal	p_brow	Literal	-	u32.index	0	the knob brow times the payload / 256
+F1443	literal	p_brow	Literal	-	u32.lit64	0	the knob brow times the payload / 256
+F1444	literal	p_brow	Literal	-	u32.lit4096	0	the knob brow times the payload / 256
+F1445	literal	p_brow	Literal	-	u32.wglen	0	the knob brow times the payload / 256
+F1446	literal	p_brow_log2	Literal	-	u32.index	0	log2 of the knob brow times the payload / 256 (a shift)
+F1447	literal	p_brow_m1	Literal	-	u32.index	0	the knob brow times the payload / 256, minus one (a mask)
+F1448	literal	p_colspan	Literal	-	u32.index	0	the knob colspan times the payload / 256
+F1449	literal	p_colspan	Literal	-	u32.lit64	0	the knob colspan times the payload / 256
+F1450	literal	p_colspan	Literal	-	u32.lit4096	0	the knob colspan times the payload / 256
+F1451	literal	p_colspan	Literal	-	u32.wglen	0	the knob colspan times the payload / 256
+F1452	literal	p_colspan_log2	Literal	-	u32.index	0	log2 of the knob colspan times the payload / 256 (a shift)
+F1453	literal	p_colspan_m1	Literal	-	u32.index	0	the knob colspan times the payload / 256, minus one (a mask)
+F1454	literal	p_rowspan	Literal	-	u32.index	0	the knob rowspan times the payload / 256
+F1455	literal	p_rowspan	Literal	-	u32.lit64	0	the knob rowspan times the payload / 256
+F1456	literal	p_rowspan	Literal	-	u32.lit4096	0	the knob rowspan times the payload / 256
+F1457	literal	p_rowspan	Literal	-	u32.wglen	0	the knob rowspan times the payload / 256
+F1458	literal	p_rowspan_log2	Literal	-	u32.index	0	log2 of the knob rowspan times the payload / 256 (a shift)
+F1459	literal	p_rowspan_m1	Literal	-	u32.index	0	the knob rowspan times the payload / 256, minus one (a mask)
+F1460	literal	p_threads	Literal	-	u32.index	0	the knob threads times the payload / 256
+F1461	literal	p_threads	Literal	-	u32.lit64	0	the knob threads times the payload / 256
+F1462	literal	p_threads	Literal	-	u32.lit4096	0	the knob threads times the payload / 256
+F1463	literal	p_threads	Literal	-	u32.wglen	0	the knob threads times the payload / 256
+F1464	literal	p_threads_log2	Literal	-	u32.index	0	log2 of the knob threads times the payload / 256 (a shift)
+F1465	literal	p_threads_m1	Literal	-	u32.index	0	the knob threads times the payload / 256, minus one (a mask)
+F1466	literal	p_ktile	Literal	-	u32.index	0	the knob ktile times the payload / 256
+F1467	literal	p_ktile	Literal	-	u32.lit64	0	the knob ktile times the payload / 256
+F1468	literal	p_ktile	Literal	-	u32.lit4096	0	the knob ktile times the payload / 256
+F1469	literal	p_ktile	Literal	-	u32.wglen	0	the knob ktile times the payload / 256
+F1470	literal	p_ktile_log2	Literal	-	u32.index	0	log2 of the knob ktile times the payload / 256 (a shift)
+F1471	literal	p_ktile_m1	Literal	-	u32.index	0	the knob ktile times the payload / 256, minus one (a mask)
+F1472	grid	with_ktile	composite	grid.grid u32.lit4096	grid.grid	2	a grid and the kernel's tile depth T (the item loop's step), the knob literal.p_ktile references
+F1473	uniform	cfg_m	composite	-	u32.uniform	0	cfg.m
+F1474	uniform	cfg_d	composite	-	u32.uniform	0	cfg.d
+F1475	uniform	cfg_r_rows	composite	-	u32.uniform	0	cfg.r_rows
+F1476	uniform	cfg_r_off	composite	-	u32.uniform	0	cfg.r_off
+F1477	uniform	of_lit	composite	u32.lit4096	u32.uniform	1	a literal
+F1478	uniform	wid_x	composite	vec3<u32>.wid	u32.uniform	1	wid.x: the workgroup's id
+F1479	uniform	nwg_x	composite	-	u32.uniform	0	nwg.x: the grid's size
+F1480	uniform	wid_y	composite	vec3<u32>.wid	u32.uniform	1	wid.y: the workgroup's id
+F1481	uniform	nwg_y	composite	-	u32.uniform	0	nwg.y: the grid's size
+F1482	uniform	wid_z	composite	vec3<u32>.wid	u32.uniform	1	wid.z: the workgroup's id
+F1483	uniform	nwg_z	composite	-	u32.uniform	0	nwg.z: the grid's size
+F1484	uniform	subgroup_size	composite	-	u32.uniform	0	the subgroup size
+F1485	uniform	num_subgroups	composite	-	u32.uniform	0	the subgroups in the workgroup
+F1486	uniform	add	composite	u32.uniform u32.uniform	u32.uniform	2	as index.add, of uniform values
+F1487	uniform	sub_floor	composite	u32.uniform u32.uniform	u32.uniform	2	as index.sub_floor, of uniform values
+F1488	uniform	mul	composite	u32.uniform u32.uniform	u32.uniformw	2	as index.mul, of uniform values
+F1489	uniform	div	composite	u32.uniform u32.uniform	u32.uniform	2	as index.div, of uniform values
+F1490	uniform	min	composite	u32.uniform u32.uniform	u32.uniform	2	as index.min, of uniform values
+F1491	uniform	max	composite	u32.uniform u32.uniform	u32.uniform	2	as index.max, of uniform values
+F1492	uniform	shl	composite	u32.uniform u32.uniform	u32.uniformw	2	as index.shl, of uniform values
+F1493	uniform	shr	composite	u32.uniform u32.uniform	u32.uniform	2	as index.shr, of uniform values
+F1494	uniform	and	composite	u32.uniform u32.uniform	u32.uniform	2	as index.and, of uniform values
+F1495	uniform	or	composite	u32.uniform u32.uniform	u32.uniform	2	as index.or, of uniform values
+F1496	uniform	sub	composite	u32.uniform u32.uniform	u32.uniformw	2	as index.sub, of uniform values
+F1497	uniform	mod	composite	u32.uniform u32.uniform	u32.uniform	2	as index.mod, of uniform values
+F1498	uniform	round_down	composite	u32.uniform u32.uniform	u32.uniform	2	as index.round_down, of uniform values
+F1499	uniform	band_of	composite	u32.uniform u32.uniform	u32.uniform	2	as index.band_of, of uniform values
+F1500	uniform	clamp_to	composite	u32.uniform u32.uniform	u32.uniform	2	as index.clamp_to, of uniform values
+F1501	uniform	clamp	composite	u32.uniform u32.uniform u32.uniform	u32.uniform	3	as index.clamp, of uniform values (arity 3)
+F1502	uniform	of_counter	composite	u32.counter	u32.uniform	1	the item loop's counter t
+F1503	uniform	of_tcounter	composite	u32.tcounter	u32.uniform	1	the tile counter k
+F1504	uniform	of_tcounter2	composite	u32.tcounter2	u32.uniform	1	the tile counter k2
+F1505	uniform	of_tcounter3	composite	u32.tcounter3	u32.uniform	1	the tile counter k3
+F1506	uniform	of_tcounter4	composite	u32.tcounter4	u32.uniform	1	the tile counter k4
+F1507	index	of_uniform	composite	u32.uniform	u32.index	1	a uniform value used as an index
+F1508	bound	of_uniform	composite	u32.uniform	u32.boundu	1	a uniform loop bound
+F1509	stmt	cblock_L0	composite	block.C0	stmt.L0	1	conditional statements (no barrier) written in place
+F1510	stmt	cblock_L1	composite	block.C1	stmt.L1	1	conditional statements (no barrier) written in place
+F1511	stmt	cblock_L2	composite	block.C2	stmt.L2	1	conditional statements (no barrier) written in place
+F1512	stmt	cblock_L3	composite	block.C3	stmt.L3	1	conditional statements (no barrier) written in place
+F1513	stmt	cblock_L4	composite	block.C4	stmt.L4	1	conditional statements (no barrier) written in place
+F1514	stmt	cblock_L5	composite	block.C5	stmt.L5	1	conditional statements (no barrier) written in place
+F1515	bound	x_of_uniform	composite	u32.uniform	u32.boundx	1	a uniform loop bound, uncapped
+F1516	index	of_uniform	composite	u32.uniformw	u32.uniformw	1	retired: no row takes u32.uniformw
+F1517	uniform	min	composite	u32.uniform u32.uniformw	u32.uniformw	2	retired: no row takes u32.uniformw
+F1518	uniform	min	composite	u32.uniformw u32.uniform	u32.uniformw	2	retired: no row takes u32.uniformw
+F1519	reg	get_i	composite	reg<u32>.index	u32.xbound	1	a u32 register's value as a loop bound
+F1520	index	of_uniform	composite	u32.uniform	u32.xbound	1	a uniform value as a loop bound
+F1521	index	add	composite	u32.xbound u32.xbound	u32.xbound	2	index.add of bound values
+F1522	index	max	composite	u32.xbound u32.xbound	u32.xbound	2	index.max of bound values
+F1523	index	or	composite	u32.xbound u32.xbound	u32.xbound	2	index.or of bound values
+F1524	index	sub_floor	composite	u32.xbound u32.index	u32.xbound	2	index.sub_floor: at most its first operand, whatever the second
+F1525	index	div	composite	u32.xbound u32.index	u32.xbound	2	index.div: at most its first operand, whatever the second
+F1526	index	mod	composite	u32.xbound u32.index	u32.xbound	2	index.mod: at most its first operand, whatever the second
+F1527	index	shr	composite	u32.xbound u32.index	u32.xbound	2	index.shr: at most its first operand, whatever the second
+F1528	index	and	composite	u32.xbound u32.index	u32.xbound	2	index.and: at most its first operand, whatever the second
+F1529	index	round_down	composite	u32.xbound u32.index	u32.xbound	2	index.round_down: at most its first operand, whatever the second
+F1530	index	min	composite	u32.xbound u32.index	u32.xbound	2	index.min: at most its first operand, whatever the second
+F1531	index	min	composite	u32.index u32.xbound	u32.xbound	2	min(a, b): at most b, whatever a
+F1532	index	clamp_to	composite	u32.xbound u32.count	u32.xbound	2	i < n: at most i
+F1533	literal	index	Literal	-	u32.xbound	0	a literal bound value, any u32 (2026-10-12: a uniform literal is 1..=4096)
+F1534	subgroup	min	SubgroupCollectiveOperation	u32.xbound	u32.xbound	1	subgroupMin(x) of a bound value
+F1535	subgroup	max	SubgroupCollectiveOperation	u32.xbound	u32.xbound	1	subgroupMax(x) of a bound value
+F1536	subgroup	broadcast_first	SubgroupGather	u32.xbound	u32.xbound	1	subgroupBroadcastFirst(x) of a bound value
+F1537	subgroup	broadcast	SubgroupGather	u32.xbound u32.lit64	u32.xbound	2	subgroupBroadcast(x, lane) of a bound value
+F1538	subgroup	shuffle	SubgroupGather	u32.xbound u32.index	u32.xbound	2	shuffle(x, i) of a bound value
+F1539	subgroup	shuffle_down	SubgroupGather	u32.xbound u32.index	u32.xbound	2	shuffle_down(x, i) of a bound value
+F1540	subgroup	shuffle_up	SubgroupGather	u32.xbound u32.index	u32.xbound	2	shuffle_up(x, i) of a bound value
+F1541	subgroup	shuffle_xor	SubgroupGather	u32.xbound u32.index	u32.xbound	2	shuffle_xor(x, i) of a bound value
+F1542	safe	thread_row	composite	vec3<u32>.gid u32.blk	u32.rowbase	2	gid.y * blk: the thread's first row, as an offset row's origin
+F1543	safe	thread_col	composite	vec3<u32>.gid u32.blk	u32.colbase	2	gid.x * blk: the thread's first column, as an offset column's origin
+F1544	safe	thread_row_s	composite	vec3<u32>.wid vec3<u32>.lid u32.blk	u32.rowbases	3	arity 3: the first row of a strided block, as an offset row's origin
+F1545	safe	thread_col_s	composite	vec3<u32>.wid vec3<u32>.lid u32.blk	u32.colbases	3	arity 3: the first column of a strided block, as an offset column's origin
+F1546	safe	thread_row_g	composite	vec3<u32>.wid vec3<u32>.lid u32.blk u32.lit64	u32.rowbaseg	4	arity 4: the first row of a grouped block, as an offset row's origin
+F1547	safe	thread_col_g	composite	vec3<u32>.wid vec3<u32>.lid u32.blk u32.lit64	u32.colbaseg	4	arity 4: the first column of a grouped block, as an offset column's origin
+F1548	safe	mirror_of	composite	u32.threadrow u32.threadcol	u32.mirror	2	col * cfg.d + row: the mirror of the cell this thread owns
+F1549	safe	mirror_of	composite	u32.threadrow u32.threadcols	u32.mirror	2	col * cfg.d + row: the mirror of the cell this thread owns
+F1550	safe	mirror_of	composite	u32.threadrow u32.threadcolg	u32.mirror	2	col * cfg.d + row: the mirror of the cell this thread owns
+F1551	safe	mirror_of	composite	u32.threadrows u32.threadcol	u32.mirror	2	col * cfg.d + row: the mirror of the cell this thread owns
+F1552	safe	mirror_of	composite	u32.threadrows u32.threadcols	u32.mirror	2	col * cfg.d + row: the mirror of the cell this thread owns
+F1553	safe	mirror_of	composite	u32.threadrows u32.threadcolg	u32.mirror	2	col * cfg.d + row: the mirror of the cell this thread owns
+F1554	safe	mirror_of	composite	u32.threadrowg u32.threadcol	u32.mirror	2	col * cfg.d + row: the mirror of the cell this thread owns
+F1555	safe	mirror_of	composite	u32.threadrowg u32.threadcols	u32.mirror	2	col * cfg.d + row: the mirror of the cell this thread owns
+F1556	safe	mirror_of	composite	u32.threadrowg u32.threadcolg	u32.mirror	2	col * cfg.d + row: the mirror of the cell this thread owns
+F1557	stmt	if_ule_L0	composite	u32.uniform u32.uniform block.L0	stmt.L0	3	arity 3: if (a <= b) { ... } over workgroup-uniform values: the body keeps the rung
+F1558	stmt	if_ule_L1	composite	u32.uniform u32.uniform block.L1	stmt.L1	3	arity 3: if (a <= b) { ... } over workgroup-uniform values: the body keeps the rung
+F1559	stmt	if_ule_L2	composite	u32.uniform u32.uniform block.L2	stmt.L2	3	arity 3: if (a <= b) { ... } over workgroup-uniform values: the body keeps the rung
+F1560	stmt	if_ule_L3	composite	u32.uniform u32.uniform block.L3	stmt.L3	3	arity 3: if (a <= b) { ... } over workgroup-uniform values: the body keeps the rung
+F1561	stmt	if_ule_L4	composite	u32.uniform u32.uniform block.L4	stmt.L4	3	arity 3: if (a <= b) { ... } over workgroup-uniform values: the body keeps the rung
+F1562	stmt	if_ule_L5	composite	u32.uniform u32.uniform block.L5	stmt.L5	3	arity 3: if (a <= b) { ... } over workgroup-uniform values: the body keeps the rung
+F1563	store	h_mirror_L0	composite	u32.mirror f32.real	stmt.L0	2	h[mirror] = h[mirror] + v under the bounds check of the thread's own cell: the symmetric half's second write
+F1564	store	h_mirror_L1	composite	u32.mirror f32.real	stmt.L1	2	h[mirror] = h[mirror] + v under the bounds check of the thread's own cell: the symmetric half's second write
+F1565	store	h_mirror_L2	composite	u32.mirror f32.real	stmt.L2	2	h[mirror] = h[mirror] + v under the bounds check of the thread's own cell: the symmetric half's second write
+F1566	store	h_mirror_L3	composite	u32.mirror f32.real	stmt.L3	2	h[mirror] = h[mirror] + v under the bounds check of the thread's own cell: the symmetric half's second write
+F1567	store	h_mirror_L4	composite	u32.mirror f32.real	stmt.L4	2	h[mirror] = h[mirror] + v under the bounds check of the thread's own cell: the symmetric half's second write
+F1568	store	h_mirror_C0	composite	u32.mirror f32.real	stmt.C0	2	h[mirror] = h[mirror] + v under the bounds check of the thread's own cell: the symmetric half's second write
+F1569	store	h_mirror_C1	composite	u32.mirror f32.real	stmt.C1	2	h[mirror] = h[mirror] + v under the bounds check of the thread's own cell: the symmetric half's second write
+F1570	store	h_mirror_C2	composite	u32.mirror f32.real	stmt.C2	2	h[mirror] = h[mirror] + v under the bounds check of the thread's own cell: the symmetric half's second write
+F1571	store	h_mirror_C3	composite	u32.mirror f32.real	stmt.C3	2	h[mirror] = h[mirror] + v under the bounds check of the thread's own cell: the symmetric half's second write
+F1572	store	h_mirror_C4	composite	u32.mirror f32.real	stmt.C4	2	h[mirror] = h[mirror] + v under the bounds check of the thread's own cell: the symmetric half's second write
+F1573	store	h_mirror_L5	composite	u32.mirror f32.real	stmt.L5	2	h[mirror] = h[mirror] + v under the bounds check of the thread's own cell: the symmetric half's second write
+F1574	store	h_mirror_C5	composite	u32.mirror f32.real	stmt.C5	2	h[mirror] = h[mirror] + v under the bounds check of the thread's own cell: the symmetric half's second write
+F1575	safe	wg_own	composite	u32.lit64	u32.wgown	1	lidx + k * threads: this thread's k-th element of a workgroup array
+F1576	safe	wg_own_tile	composite	u32.tcounter	u32.wgown	1	lidx + k * threads over the tile loop's counter k
+F1577	safe	wg_own_tile2	composite	u32.tcounter2	u32.wgown	1	lidx + k2 * threads over the inner tile loop's counter k2
+F1578	wg	put_L0	composite	wgmem<f32>.real u32.wgown f32.real	stmt.L0	3	arity 3: barrier; if (i < len) { a[i] = v; } barrier
+F1579	wg	put_v_L0	composite	wgmem<vec4<f32>>.real u32.wgown vec4<f32>.real	stmt.L0	3	arity 3: barrier; if (i < len) { va[i] = v; } barrier
+F1580	wg	put_v2_L0	composite	wgmem<vec2<f32>>.real u32.wgown vec2<f32>.real	stmt.L0	3	arity 3: barrier; if (i < len) { v2a[i] = v; } barrier
+F1581	wg	put_u_L0	composite	wgmem<u32>.index u32.wgown u32.index	stmt.L0	3	arity 3: barrier; if (i < len) { ua[i] = v; } barrier
+F1582	wg	put_L1	composite	wgmem<f32>.real u32.wgown f32.real	stmt.L1	3	arity 3: barrier; if (i < len) { a[i] = v; } barrier
+F1583	wg	put_v_L1	composite	wgmem<vec4<f32>>.real u32.wgown vec4<f32>.real	stmt.L1	3	arity 3: barrier; if (i < len) { va[i] = v; } barrier
+F1584	wg	put_v2_L1	composite	wgmem<vec2<f32>>.real u32.wgown vec2<f32>.real	stmt.L1	3	arity 3: barrier; if (i < len) { v2a[i] = v; } barrier
+F1585	wg	put_u_L1	composite	wgmem<u32>.index u32.wgown u32.index	stmt.L1	3	arity 3: barrier; if (i < len) { ua[i] = v; } barrier
+F1586	wg	put_L2	composite	wgmem<f32>.real u32.wgown f32.real	stmt.L2	3	arity 3: barrier; if (i < len) { a[i] = v; } barrier
+F1587	wg	put_v_L2	composite	wgmem<vec4<f32>>.real u32.wgown vec4<f32>.real	stmt.L2	3	arity 3: barrier; if (i < len) { va[i] = v; } barrier
+F1588	wg	put_v2_L2	composite	wgmem<vec2<f32>>.real u32.wgown vec2<f32>.real	stmt.L2	3	arity 3: barrier; if (i < len) { v2a[i] = v; } barrier
+F1589	wg	put_u_L2	composite	wgmem<u32>.index u32.wgown u32.index	stmt.L2	3	arity 3: barrier; if (i < len) { ua[i] = v; } barrier
+F1590	wg	put_L3	composite	wgmem<f32>.real u32.wgown f32.real	stmt.L3	3	arity 3: barrier; if (i < len) { a[i] = v; } barrier
+F1591	wg	put_v_L3	composite	wgmem<vec4<f32>>.real u32.wgown vec4<f32>.real	stmt.L3	3	arity 3: barrier; if (i < len) { va[i] = v; } barrier
+F1592	wg	put_v2_L3	composite	wgmem<vec2<f32>>.real u32.wgown vec2<f32>.real	stmt.L3	3	arity 3: barrier; if (i < len) { v2a[i] = v; } barrier
+F1593	wg	put_u_L3	composite	wgmem<u32>.index u32.wgown u32.index	stmt.L3	3	arity 3: barrier; if (i < len) { ua[i] = v; } barrier
+F1594	wg	put_L4	composite	wgmem<f32>.real u32.wgown f32.real	stmt.L4	3	arity 3: barrier; if (i < len) { a[i] = v; } barrier
+F1595	wg	put_v_L4	composite	wgmem<vec4<f32>>.real u32.wgown vec4<f32>.real	stmt.L4	3	arity 3: barrier; if (i < len) { va[i] = v; } barrier
+F1596	wg	put_v2_L4	composite	wgmem<vec2<f32>>.real u32.wgown vec2<f32>.real	stmt.L4	3	arity 3: barrier; if (i < len) { v2a[i] = v; } barrier
+F1597	wg	put_u_L4	composite	wgmem<u32>.index u32.wgown u32.index	stmt.L4	3	arity 3: barrier; if (i < len) { ua[i] = v; } barrier
+F1598	wg	put_L5	composite	wgmem<f32>.real u32.wgown f32.real	stmt.L5	3	arity 3: barrier; if (i < len) { a[i] = v; } barrier
+F1599	wg	put_v_L5	composite	wgmem<vec4<f32>>.real u32.wgown vec4<f32>.real	stmt.L5	3	arity 3: barrier; if (i < len) { va[i] = v; } barrier
+F1600	wg	put_v2_L5	composite	wgmem<vec2<f32>>.real u32.wgown vec2<f32>.real	stmt.L5	3	arity 3: barrier; if (i < len) { v2a[i] = v; } barrier
+F1601	wg	put_u_L5	composite	wgmem<u32>.index u32.wgown u32.index	stmt.L5	3	arity 3: barrier; if (i < len) { ua[i] = v; } barrier

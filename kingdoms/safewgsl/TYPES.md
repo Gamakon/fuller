@@ -260,40 +260,41 @@ A type is a dual `slot.form`: the slot is what the hardware stores, the form is 
 | T151 | `u32.threadrowg` | `u32` | `threadrowg` | 1 | `the thread's own first row` | 0 | 0 | 0 |
 | T152 | `u32.threadcolg` | `u32` | `threadcolg` | 1 | `the thread's own first column` | 0 | 0 | 0 |
 | T153 | `wgmem<vec2<f32>>.real` | `wgmem<vec2<f32>>` | `real` | 0 | `0.0` | 0 | 0 | 0 |
-| T154 | `u32.wgv2index` | `u32` | `wgv2index` | 1 | `0u` | 0 | 0 | 0 |
-| T155 | `u32.wglen` | `u32` | `wglen` | 1 | `the array's default length` | 0 | 0 | 0 |
-| T156 | `wg.decl` | `wg` | `decl` | 0 | `none` | 0 | 0 | 0 |
-| T157 | `wg.decls` | `wg` | `decls` | 0 | `none (the arrays the kernel uses, at their default lengths)` | 0 | 0 | 0 |
-| T158 | `wgmem<atomic<u32>>.index` | `wgmem<atomic<u32>>` | `index` | 0 | `0u` | 0 | 0 | 0 |
-| T159 | `wgmem<atomic<i32>>.int` | `wgmem<atomic<i32>>` | `int` | 0 | `0` | 0 | 0 | 0 |
-| T160 | `u32.wgaindex` | `u32` | `wgaindex` | 1 | `0u` | 0 | 0 | 0 |
-| T161 | `reg<i32>.int` | `reg<i32>` | `int` | 1 | `0` | 0 | 0 | 0 |
-| T162 | `block.B1` | `block` | `B1` | 0 | `empty` | 0 | 0 | 0 |
-| T163 | `block.B2` | `block` | `B2` | 0 | `empty` | 0 | 0 | 0 |
-| T164 | `block.B3` | `block` | `B3` | 0 | `empty` | 0 | 0 | 0 |
-| T165 | `block.B4` | `block` | `B4` | 0 | `empty` | 0 | 0 | 0 |
-| T166 | `block.B5` | `block` | `B5` | 0 | `empty` | 0 | 0 | 0 |
-| T167 | `reg<vec4<u32>>.bits` | `reg<vec4<u32>>` | `bits` | 4 | `0u` | 0 | 0 | 0 |
-| T168 | `parr<vec2<f32>>.real` | `parr<vec2<f32>>` | `real` | 0 | `0.0` | 0 | 0 | 0 |
-| T169 | `reg<mat2x2<f32>>.real` | `reg<mat2x2<f32>>` | `real` | 4 | `0.0` | 0 | 0 | 0 |
-| T170 | `reg<mat3x3<f32>>.real` | `reg<mat3x3<f32>>` | `real` | 9 | `0.0` | 0 | 0 | 0 |
-| T171 | `reg<mat4x4<f32>>.real` | `reg<mat4x4<f32>>` | `real` | 16 | `0.0` | 0 | 0 | 0 |
-| T172 | `u32.pindex16` | `u32` | `pindex16` | 1 | `0u` | 0 | 0 | 0 |
-| T173 | `u32.uniform` | `u32` | `uniform` | 1 | `0u` | 0 | 0 | 0 |
-| T174 | `u32.boundu` | `u32` | `boundu` | 1 | `1u` | 1 | 0 | 0 |
-| T175 | `u32.uniformw` | `u32` | `uniformw` | 1 | `0u` | 0 | 0 | 0 |
-| T176 | `u32.xbound` | `u32` | `xbound` | 1 | `1u` | 1 | 0 | 0 |
-| T177 | `u32.indexw` | `u32` | `indexw` | 1 | `0u` | 0 | 0 | 0 |
-| T178 | `u32.rowbase` | `u32` | `rowbase` | 1 | `the thread's own first row` | 0 | 0 | 0 |
-| T179 | `u32.colbase` | `u32` | `colbase` | 1 | `the thread's own first column` | 0 | 0 | 0 |
-| T180 | `u32.rowbases` | `u32` | `rowbases` | 1 | `the thread's own first row` | 0 | 0 | 0 |
-| T181 | `u32.colbases` | `u32` | `colbases` | 1 | `the thread's own first column` | 0 | 0 | 0 |
-| T182 | `u32.rowbaseg` | `u32` | `rowbaseg` | 1 | `the thread's own first row` | 0 | 0 | 0 |
-| T183 | `u32.colbaseg` | `u32` | `colbaseg` | 1 | `the thread's own first column` | 0 | 0 | 0 |
-| T184 | `u32.mirror` | `u32` | `mirror` | 1 | `the mirror of the thread's own first cell` | 0 | 0 | 0 |
-| T185 | `u32.wgown` | `u32` | `wgown` | 1 | `the thread's own first element (lidx)` | 0 | 0 | 0 |
+| T154 | `wgmem<u32>.index` | `wgmem<u32>` | `index` | 0 | `0u` | 0 | 0 | 0 |
+| T155 | `u32.wgv2index` | `u32` | `wgv2index` | 1 | `0u` | 0 | 0 | 0 |
+| T156 | `u32.wglen` | `u32` | `wglen` | 1 | `the array's default length` | 0 | 0 | 0 |
+| T157 | `wg.decl` | `wg` | `decl` | 0 | `none` | 0 | 0 | 0 |
+| T158 | `wg.decls` | `wg` | `decls` | 0 | `none (the arrays the kernel uses, at their default lengths)` | 0 | 0 | 0 |
+| T159 | `wgmem<atomic<u32>>.index` | `wgmem<atomic<u32>>` | `index` | 0 | `0u` | 0 | 0 | 0 |
+| T160 | `wgmem<atomic<i32>>.int` | `wgmem<atomic<i32>>` | `int` | 0 | `0` | 0 | 0 | 0 |
+| T161 | `u32.wgaindex` | `u32` | `wgaindex` | 1 | `0u` | 0 | 0 | 0 |
+| T162 | `reg<i32>.int` | `reg<i32>` | `int` | 1 | `0` | 0 | 0 | 0 |
+| T163 | `block.B1` | `block` | `B1` | 0 | `empty` | 0 | 0 | 0 |
+| T164 | `block.B2` | `block` | `B2` | 0 | `empty` | 0 | 0 | 0 |
+| T165 | `block.B3` | `block` | `B3` | 0 | `empty` | 0 | 0 | 0 |
+| T166 | `block.B4` | `block` | `B4` | 0 | `empty` | 0 | 0 | 0 |
+| T167 | `block.B5` | `block` | `B5` | 0 | `empty` | 0 | 0 | 0 |
+| T168 | `reg<vec4<u32>>.bits` | `reg<vec4<u32>>` | `bits` | 4 | `0u` | 0 | 0 | 0 |
+| T169 | `parr<vec2<f32>>.real` | `parr<vec2<f32>>` | `real` | 0 | `0.0` | 0 | 0 | 0 |
+| T170 | `reg<mat2x2<f32>>.real` | `reg<mat2x2<f32>>` | `real` | 4 | `0.0` | 0 | 0 | 0 |
+| T171 | `reg<mat3x3<f32>>.real` | `reg<mat3x3<f32>>` | `real` | 9 | `0.0` | 0 | 0 | 0 |
+| T172 | `reg<mat4x4<f32>>.real` | `reg<mat4x4<f32>>` | `real` | 16 | `0.0` | 0 | 0 | 0 |
+| T173 | `u32.pindex16` | `u32` | `pindex16` | 1 | `0u` | 0 | 0 | 0 |
+| T174 | `u32.uniform` | `u32` | `uniform` | 1 | `0u` | 0 | 0 | 0 |
+| T175 | `u32.boundu` | `u32` | `boundu` | 1 | `1u` | 1 | 0 | 0 |
+| T176 | `u32.uniformw` | `u32` | `uniformw` | 1 | `0u` | 0 | 0 | 0 |
+| T177 | `u32.xbound` | `u32` | `xbound` | 1 | `1u` | 1 | 0 | 0 |
+| T178 | `u32.indexw` | `u32` | `indexw` | 1 | `0u` | 0 | 0 | 0 |
+| T179 | `u32.rowbase` | `u32` | `rowbase` | 1 | `the thread's own first row` | 0 | 0 | 0 |
+| T180 | `u32.colbase` | `u32` | `colbase` | 1 | `the thread's own first column` | 0 | 0 | 0 |
+| T181 | `u32.rowbases` | `u32` | `rowbases` | 1 | `the thread's own first row` | 0 | 0 | 0 |
+| T182 | `u32.colbases` | `u32` | `colbases` | 1 | `the thread's own first column` | 0 | 0 | 0 |
+| T183 | `u32.rowbaseg` | `u32` | `rowbaseg` | 1 | `the thread's own first row` | 0 | 0 | 0 |
+| T184 | `u32.colbaseg` | `u32` | `colbaseg` | 1 | `the thread's own first column` | 0 | 0 | 0 |
+| T185 | `u32.mirror` | `u32` | `mirror` | 1 | `the mirror of the thread's own first cell` | 0 | 0 | 0 |
+| T186 | `u32.wgown` | `u32` | `wgown` | 1 | `the thread's own first element (lidx)` | 0 | 0 | 0 |
 
-185 duals. The fallback is what Design C's projection substitutes for a codon whose dual does not match the demand; the codon is counted as masked.
+186 duals. The fallback is what Design C's projection substitutes for a codon whose dual does not match the demand; the codon is counted as masked.
 
 The three machine columns (`fallback_bits`, `fallback_noop`, `fallback_elem` in `types.tsv`) are what the loader builds the fallback leaf from, never the prose: `bits` is the lane's 32-bit pattern as an unsigned integer, repeated across the lanes of a vector or matrix (only `bool.sign` is non-zero, true = +1); `noop` is 1 for `store.store`, which substitutes no value at all; `elem` is 1 for `array<T>`, whose fallback is its element's. The loader tests `noop` and `elem` before reading `bits`; for those two rows `bits` is a placeholder 0. Every substitution, whichever column decides it, counts the codon as masked.
 

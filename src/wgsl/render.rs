@@ -1547,6 +1547,8 @@ pub fn wgmem_var(kingdom: &WgslKingdom, w: &Tree) -> Result<&'static str, String
             "wg_va"
         } else if d.starts_with("wgmem<vec2") {
             "wg_v2a"
+        } else if d.starts_with("wgmem<u32>") {
+            "wg_ua"
         } else if d.starts_with("wgmem<atomic<u32>") {
             "wg_au_a"
         } else if d.starts_with("wgmem<atomic<i32>") {
@@ -1568,6 +1570,10 @@ pub fn wgmem_var(kingdom: &WgslKingdom, w: &Tree) -> Result<&'static str, String
         "wg.v2b" => "wg_v2b",
         "wg.v2c" => "wg_v2c",
         "wg.v2d" => "wg_v2d",
+        "wg.ua" => "wg_ua",
+        "wg.ub" => "wg_ub",
+        "wg.uc" => "wg_uc",
+        "wg.ud" => "wg_ud",
         "wg.au_a" => "wg_au_a",
         "wg.au_b" => "wg_au_b",
         "wg.ai_a" => "wg_ai_a",
@@ -1605,7 +1611,7 @@ pub fn workgroup_plan_requested(kingdom: &WgslKingdom, grid: &Tree, root: &Tree)
 
 /// [`workgroup_plan_requested`] over the arrays `only` names when given.
 fn workgroup_plan_requested_of(kingdom: &WgslKingdom, grid: &Tree, root: &Tree, only: Option<&BTreeSet<String>>) -> Result<BTreeMap<String, (String, u32)>, String> {
-    let elem_of = |var: &str| if var.starts_with("wg_au") { "atomic<u32>" } else if var.starts_with("wg_ai") { "atomic<i32>" } else if var.starts_with("wg_v2") { "vec2<f32>" } else if var.starts_with("wg_v") { "vec4<f32>" } else { "f32" };
+    let elem_of = |var: &str| if var.starts_with("wg_au") { "atomic<u32>" } else if var.starts_with("wg_ai") { "atomic<i32>" } else if var.starts_with("wg_u") { "u32" } else if var.starts_with("wg_v2") { "vec2<f32>" } else if var.starts_with("wg_v") { "vec4<f32>" } else { "f32" };
     let default_len = |var: &str| if var.starts_with("wg_au") || var.starts_with("wg_ai") || var.starts_with("wg_v2") { 1024 } else if var.starts_with("wg_v") { WGVEC_LEN } else { WGMEM_LEN };
     let mut declared: Vec<(String, u32)> = Vec::new();
     if grid.name == "grid.with_wg" && grid.kids.len() == 2 {
@@ -1841,7 +1847,7 @@ impl Renderer<'_> {
                     (other, k) => return Err(format!("atomic.{other} with {k} children")),
                 });
             }
-            "wg.get_safe" | "wg.get_v_safe" | "wg.get_v2_safe" => {
+            "wg.get_safe" | "wg.get_v_safe" | "wg.get_v2_safe" | "wg.get_u_safe" => {
                 let a = self.wgmem(&v.kids[0])?;
                 let len = self.wg_len(a, scope);
                 return Ok(format!("{a}[{}]", self.index_text(&v.kids[1], len, scope)?));
@@ -2587,8 +2593,8 @@ pub fn safe_base(name: &str) -> &str {
         if let Some(stem) = name.strip_suffix(rung) {
             return match stem {
                 "store.h" => "store.h_safe",
-                "wg.set" | "wg.set_v" | "wg.set_v2" => "wg.set_safe",
-                "wg.put" | "wg.put_v" | "wg.put_v2" => "wg.put",
+                "wg.set" | "wg.set_v" | "wg.set_v2" | "wg.set_u" => "wg.set_safe",
+                "wg.put" | "wg.put_v" | "wg.put_v2" | "wg.put_u" => "wg.put",
                 "parr.set_f" | "parr.set_v" | "parr.set_i" | "parr.set_b" | "parr.set_t" => "parr.set_safe",
                 "reg.set_v_lane" => "reg.set_v_lane",
                 "wg.set_v_lane" => "wg.set_v_lane",
@@ -2765,7 +2771,7 @@ pub fn register_declarations_for(body: &str) -> String {
 /// The length of a workgroup or private array by its variable name.
 pub fn array_len(name: &str) -> u32 {
     match name {
-        "wg_a" | "wg_b" | "wg_c" | "wg_d" => WGMEM_LEN,
+        "wg_a" | "wg_b" | "wg_c" | "wg_d" | "wg_ua" | "wg_ub" | "wg_uc" | "wg_ud" => WGMEM_LEN,
         n if n.starts_with("wg_v2") => 1024,
         n if n.starts_with("wg_v") => WGVEC_LEN,
         "pa" | "pb" | "pc" | "pd" | "pe" | "pf" => 64,
