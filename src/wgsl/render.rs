@@ -1187,7 +1187,7 @@ impl<'a> Renderer<'a> {
                 let strided = safe_base(&s.name) == "loop.tilex_strided_bounded";
                 n(if strided { 3 } else { 2 })?;
                 let bound = self.value(&kids[0], scope)?;
-                let step = if strided { self.lit(&kids[1], 64)? } else { 1 };
+                let step = if strided { self.lit(&kids[1], 4096)? } else { 1 };
                 let Some(var) = TILE_COUNTERS.get(scope.tile_depth) else {
                     return Err("a fifth nested tile loop (the safe grammar does not produce this)".into());
                 };
@@ -2410,7 +2410,7 @@ pub fn cost(t: &Tree) -> Cost {
                 // (bound expression, [step,] body): the bound evaluated at the worst
                 // shape (d 8192, m 65536, r_rows 8192; a register unknown: 8192).
                 let count = t.kids.first().map_or(8192.0, worst_bound);
-                let step = if safe_base(&t.name) == "loop.tilex_strided_bounded" { lit(t.kids.get(1), 64.0) } else { 1.0 };
+                let step = if safe_base(&t.name) == "loop.tilex_strided_bounded" { lit(t.kids.get(1), 4096.0) } else { 1.0 };
                 let n = (count / step).ceil().max(1.0);
                 // A loop OUTSIDE the item loop whose trip count grows with m is
                 // item work (fit_A2 gen 6's r12p1: `for (tt < cfg.m)` under the

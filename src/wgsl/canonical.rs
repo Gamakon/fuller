@@ -670,7 +670,8 @@ fn canonical_stride(t: &Tree, kingdom: &WgslKingdom) -> Option<Tree> {
     let (stem, rung) = t.name.rsplit_once('_').filter(|(_, r)| rung_of(&format!("x_{r}")).is_some())?;
     let plain = stem.strip_suffix("_strided").filter(|s| matches!(*s, "loop.tile" | "loop.tilex"))?;
     let [bound, step, body] = t.kids.as_slice() else { return None };
-    if step.name != "literal.lit64" || step.konst != 1.0 {
+    // (The step is a lit64 on a tile loop, a lit4096 on a tilex loop since 2026-10-16.)
+    if !matches!(step.name.as_str(), "literal.lit64" | "literal.lit4096") || step.konst != 1.0 {
         return None;
     }
     let name = format!("{plain}_{rung}");
@@ -714,6 +715,10 @@ fn canonical_fallback_bound(t: &Tree, kingdom: &WgslKingdom) -> Option<Tree> {
     let (stem, rung) = t.name.rsplit_once('_').filter(|(_, r)| rung_of(&format!("x_{r}")).is_some())?;
     let tile = stem.strip_prefix("loop.tilex").map(|rest| format!("loop.tile{rest}_{rung}"))?;
     let bound = t.kids.first().filter(|b| b.name == "fallback")?;
+    // A step wider than the short loop's 64 stays expression-bounded.
+    if t.kids.len() == 3 && t.kids[1].konst > 64.0 {
+        return None;
+    }
     let v = kingdom.dual(bound.ty)?.fallback_bits as f32;
     if !(1.0..=64.0).contains(&v) {
         return None;

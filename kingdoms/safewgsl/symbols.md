@@ -1259,21 +1259,21 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 | F631 | `loop.items_strided_boundx` | `composite` | `u32.boundu u32.lit4096 block.L1` | `stmt.L0` | 3 | arity 3: for (t = 0u; t < expr; t = t + stride) |
 | F632 | `loop.items_unrolled_boundx` | `composite` | `u32.unroll u32.boundu block.L1` | `stmt.L0` | 3 | arity 3: the body k times, then the remainder |
 | F633 | `loop.tilex_L0` | `composite` | `u32.boundu block.L2` | `stmt.L0` | 2 | a short loop (the counter of its depth) bounded by an expression |
-| F634 | `loop.tilex_strided_L0` | `composite` | `u32.boundu u32.lit64 block.L2` | `stmt.L0` | 3 | arity 3: the same, stepped by a literal |
+| F634 | `loop.tilex_strided_L0` | `composite` | `u32.boundu u32.lit4096 block.L2` | `stmt.L0` | 3 | arity 3: the same, stepped by a literal in 1..=4096 (64 until 2026-10-16: 62 of the 1,798 saved model kernels stepped wider) |
 | F635 | `loop.tilex_L1` | `composite` | `u32.boundu block.L2` | `stmt.L1` | 2 | a short loop (the counter of its depth) bounded by an expression |
-| F636 | `loop.tilex_strided_L1` | `composite` | `u32.boundu u32.lit64 block.L2` | `stmt.L1` | 3 | arity 3: the same, stepped by a literal |
+| F636 | `loop.tilex_strided_L1` | `composite` | `u32.boundu u32.lit4096 block.L2` | `stmt.L1` | 3 | arity 3: the same, stepped by a literal in 1..=4096 (64 until 2026-10-16: 62 of the 1,798 saved model kernels stepped wider) |
 | F637 | `loop.tilex_L2` | `composite` | `u32.boundu block.L3` | `stmt.L2` | 2 | a short loop (the counter of its depth) bounded by an expression |
-| F638 | `loop.tilex_strided_L2` | `composite` | `u32.boundu u32.lit64 block.L3` | `stmt.L2` | 3 | arity 3: the same, stepped by a literal |
+| F638 | `loop.tilex_strided_L2` | `composite` | `u32.boundu u32.lit4096 block.L3` | `stmt.L2` | 3 | arity 3: the same, stepped by a literal in 1..=4096 (64 until 2026-10-16: 62 of the 1,798 saved model kernels stepped wider) |
 | F639 | `loop.tilex_L3` | `composite` | `u32.boundu block.L4` | `stmt.L3` | 2 | a short loop (the counter of its depth) bounded by an expression |
-| F640 | `loop.tilex_strided_L3` | `composite` | `u32.boundu u32.lit64 block.L4` | `stmt.L3` | 3 | arity 3: the same, stepped by a literal |
+| F640 | `loop.tilex_strided_L3` | `composite` | `u32.boundu u32.lit4096 block.L4` | `stmt.L3` | 3 | arity 3: the same, stepped by a literal in 1..=4096 (64 until 2026-10-16: 62 of the 1,798 saved model kernels stepped wider) |
 | F641 | `loop.tilex_C0` | `composite` | `u32.boundx block.C1` | `stmt.C0` | 2 | a short loop (the counter of its depth) bounded by an expression |
-| F642 | `loop.tilex_strided_C0` | `composite` | `u32.boundx u32.lit64 block.C1` | `stmt.C0` | 3 | arity 3: the same, stepped by a literal |
+| F642 | `loop.tilex_strided_C0` | `composite` | `u32.boundx u32.lit4096 block.C1` | `stmt.C0` | 3 | arity 3: the same, stepped by a literal in 1..=4096 (64 until 2026-10-16: 62 of the 1,798 saved model kernels stepped wider) |
 | F643 | `loop.tilex_C1` | `composite` | `u32.boundx block.C2` | `stmt.C1` | 2 | a short loop (the counter of its depth) bounded by an expression |
-| F644 | `loop.tilex_strided_C1` | `composite` | `u32.boundx u32.lit64 block.C2` | `stmt.C1` | 3 | arity 3: the same, stepped by a literal |
+| F644 | `loop.tilex_strided_C1` | `composite` | `u32.boundx u32.lit4096 block.C2` | `stmt.C1` | 3 | arity 3: the same, stepped by a literal in 1..=4096 (64 until 2026-10-16: 62 of the 1,798 saved model kernels stepped wider) |
 | F645 | `loop.tilex_C2` | `composite` | `u32.boundx block.C3` | `stmt.C2` | 2 | a short loop (the counter of its depth) bounded by an expression |
-| F646 | `loop.tilex_strided_C2` | `composite` | `u32.boundx u32.lit64 block.C3` | `stmt.C2` | 3 | arity 3: the same, stepped by a literal |
+| F646 | `loop.tilex_strided_C2` | `composite` | `u32.boundx u32.lit4096 block.C3` | `stmt.C2` | 3 | arity 3: the same, stepped by a literal in 1..=4096 (64 until 2026-10-16: 62 of the 1,798 saved model kernels stepped wider) |
 | F647 | `loop.tilex_C3` | `composite` | `u32.boundx block.C4` | `stmt.C3` | 2 | a short loop (the counter of its depth) bounded by an expression |
-| F648 | `loop.tilex_strided_C3` | `composite` | `u32.boundx u32.lit64 block.C4` | `stmt.C3` | 3 | arity 3: the same, stepped by a literal |
+| F648 | `loop.tilex_strided_C3` | `composite` | `u32.boundx u32.lit4096 block.C4` | `stmt.C3` | 3 | arity 3: the same, stepped by a literal in 1..=4096 (64 until 2026-10-16: 62 of the 1,798 saved model kernels stepped wider) |
 
 ## class `reg`
 
@@ -1668,10 +1668,10 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 | F810 | `loop.tile_C4` | `composite` | `u32.lit64 block.C5` | `stmt.C4` | 2 | a fourth nested short loop (counter k4) under a condition |
 | F811 | `loop.tile_strided_L4` | `composite` | `u32.lit64 u32.lit64 block.L5` | `stmt.L4` | 3 | arity 3: a short loop stepped by a literal (the counter of its depth) |
 | F812 | `loop.tilex_L4` | `composite` | `u32.boundu block.L5` | `stmt.L4` | 2 | a short loop (the counter of its depth) bounded by an expression |
-| F813 | `loop.tilex_strided_L4` | `composite` | `u32.boundu u32.lit64 block.L5` | `stmt.L4` | 3 | arity 3: the same, stepped by a literal |
+| F813 | `loop.tilex_strided_L4` | `composite` | `u32.boundu u32.lit4096 block.L5` | `stmt.L4` | 3 | arity 3: the same, stepped by a literal in 1..=4096 (64 until 2026-10-16: 62 of the 1,798 saved model kernels stepped wider) |
 | F814 | `loop.tile_strided_C4` | `composite` | `u32.lit64 u32.lit64 block.C5` | `stmt.C4` | 3 | arity 3: a short loop stepped by a literal (the counter of its depth) |
 | F815 | `loop.tilex_C4` | `composite` | `u32.boundx block.C5` | `stmt.C4` | 2 | a short loop (the counter of its depth) bounded by an expression |
-| F816 | `loop.tilex_strided_C4` | `composite` | `u32.boundx u32.lit64 block.C5` | `stmt.C4` | 3 | arity 3: the same, stepped by a literal |
+| F816 | `loop.tilex_strided_C4` | `composite` | `u32.boundx u32.lit4096 block.C5` | `stmt.C4` | 3 | arity 3: the same, stepped by a literal in 1..=4096 (64 until 2026-10-16: 62 of the 1,798 saved model kernels stepped wider) |
 
 ## class `safe`
 
@@ -1740,7 +1740,7 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 | F837 | `loop.tile_O0` | `composite` | `u32.lit64 block.O1` | `stmt.O0` | 2 | a short loop whose body ends in the store |
 | F838 | `loop.tile_strided_O0` | `composite` | `u32.lit64 u32.lit64 block.O1` | `stmt.O0` | 3 | arity 3: stepped by a literal |
 | F839 | `loop.tilex_O0` | `composite` | `u32.boundx block.O1` | `stmt.O0` | 2 | bounded by an expression |
-| F840 | `loop.tilex_strided_O0` | `composite` | `u32.boundx u32.lit64 block.O1` | `stmt.O0` | 3 | arity 3: bounded by an expression, stepped by a literal |
+| F840 | `loop.tilex_strided_O0` | `composite` | `u32.boundx u32.lit4096 block.O1` | `stmt.O0` | 3 | arity 3: bounded by an expression, stepped by a literal in 1..=4096 (64 until 2026-10-16) |
 
 ## class `block`
 
@@ -1777,7 +1777,7 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 | F849 | `loop.tile_O1` | `composite` | `u32.lit64 block.O2` | `stmt.O1` | 2 | a short loop whose body ends in the store |
 | F850 | `loop.tile_strided_O1` | `composite` | `u32.lit64 u32.lit64 block.O2` | `stmt.O1` | 3 | arity 3: stepped by a literal |
 | F851 | `loop.tilex_O1` | `composite` | `u32.boundx block.O2` | `stmt.O1` | 2 | bounded by an expression |
-| F852 | `loop.tilex_strided_O1` | `composite` | `u32.boundx u32.lit64 block.O2` | `stmt.O1` | 3 | arity 3: bounded by an expression, stepped by a literal |
+| F852 | `loop.tilex_strided_O1` | `composite` | `u32.boundx u32.lit4096 block.O2` | `stmt.O1` | 3 | arity 3: bounded by an expression, stepped by a literal in 1..=4096 (64 until 2026-10-16) |
 
 ## class `block`
 
@@ -1814,7 +1814,7 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 | F861 | `loop.tile_O2` | `composite` | `u32.lit64 block.O3` | `stmt.O2` | 2 | a short loop whose body ends in the store |
 | F862 | `loop.tile_strided_O2` | `composite` | `u32.lit64 u32.lit64 block.O3` | `stmt.O2` | 3 | arity 3: stepped by a literal |
 | F863 | `loop.tilex_O2` | `composite` | `u32.boundx block.O3` | `stmt.O2` | 2 | bounded by an expression |
-| F864 | `loop.tilex_strided_O2` | `composite` | `u32.boundx u32.lit64 block.O3` | `stmt.O2` | 3 | arity 3: bounded by an expression, stepped by a literal |
+| F864 | `loop.tilex_strided_O2` | `composite` | `u32.boundx u32.lit4096 block.O3` | `stmt.O2` | 3 | arity 3: bounded by an expression, stepped by a literal in 1..=4096 (64 until 2026-10-16) |
 
 ## class `block`
 
@@ -1851,7 +1851,7 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 | F873 | `loop.tile_O3` | `composite` | `u32.lit64 block.O4` | `stmt.O3` | 2 | a short loop whose body ends in the store |
 | F874 | `loop.tile_strided_O3` | `composite` | `u32.lit64 u32.lit64 block.O4` | `stmt.O3` | 3 | arity 3: stepped by a literal |
 | F875 | `loop.tilex_O3` | `composite` | `u32.boundx block.O4` | `stmt.O3` | 2 | bounded by an expression |
-| F876 | `loop.tilex_strided_O3` | `composite` | `u32.boundx u32.lit64 block.O4` | `stmt.O3` | 3 | arity 3: bounded by an expression, stepped by a literal |
+| F876 | `loop.tilex_strided_O3` | `composite` | `u32.boundx u32.lit4096 block.O4` | `stmt.O3` | 3 | arity 3: bounded by an expression, stepped by a literal in 1..=4096 (64 until 2026-10-16) |
 
 ## class `block`
 

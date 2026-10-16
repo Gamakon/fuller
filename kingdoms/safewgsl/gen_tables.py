@@ -742,7 +742,7 @@ f("loop", "items_strided_boundx", "composite", ["u32.boundx", "u32.lit4096", "bl
 f("loop", "items_unrolled_boundx", "composite", ["u32.unroll", "u32.boundx", "block.L1"], "stmt.L0", "arity 3: the body k times, then the remainder")
 for r, body in (("L0", "L2"), ("L1", "L2"), ("L2", "L3"), ("L3", "L4"), ("C0", "C1"), ("C1", "C2"), ("C2", "C3"), ("C3", "C4")):
     f("loop", "tilex_" + r, "composite", ["u32.boundx", "block." + body], "stmt." + r, "a short loop (the counter of its depth) bounded by an expression")
-    f("loop", "tilex_strided_" + r, "composite", ["u32.boundx", "u32.lit64", "block." + body], "stmt." + r, "arity 3: the same, stepped by a literal")
+    f("loop", "tilex_strided_" + r, "composite", ["u32.boundx", "u32.lit4096", "block." + body], "stmt." + r, "arity 3: the same, stepped by a literal in 1..=4096 (64 until 2026-10-16: 62 of the 1,798 saved model kernels stepped wider)")
 
 # ---- run A's declines (2026-10-11): rows the model kernels of fit_A needed ----
 # Registers again: 64 f32, 32 vec4, 64 u32, 16 bool. Five model kernels copied the kingdom's own
@@ -803,7 +803,7 @@ f("loop", "tile_C4", "composite", ["u32.lit64", "block.C5"], "stmt.C4", "a fourt
 for r, body in (("L4", "L5"), ("C4", "C5")):
     f("loop", "tile_strided_" + r, "composite", ["u32.lit64", "u32.lit64", "block." + body], "stmt." + r, "arity 3: a short loop stepped by a literal (the counter of its depth)")
     f("loop", "tilex_" + r, "composite", ["u32.boundx", "block." + body], "stmt." + r, "a short loop (the counter of its depth) bounded by an expression")
-    f("loop", "tilex_strided_" + r, "composite", ["u32.boundx", "u32.lit64", "block." + body], "stmt." + r, "arity 3: the same, stepped by a literal")
+    f("loop", "tilex_strided_" + r, "composite", ["u32.boundx", "u32.lit4096", "block." + body], "stmt." + r, "arity 3: the same, stepped by a literal in 1..=4096 (64 until 2026-10-16: 62 of the 1,798 saved model kernels stepped wider)")
 # A block offset that is any index expression, clamped into the block (fit_A2's r2x_reinvent: a row offset
 # 2 * q + s over two tile counters, which the reader proves below the block factor from the counters' bounds):
 # the clamp keeps the row this thread's whatever the expression.
@@ -844,7 +844,7 @@ for d, r in enumerate(EPILOGUE):
         f("loop", "tile_" + r, "composite", ["u32.lit64", body], "stmt." + r, "a short loop whose body ends in the store")
         f("loop", "tile_strided_" + r, "composite", ["u32.lit64", "u32.lit64", body], "stmt." + r, "arity 3: stepped by a literal")
         f("loop", "tilex_" + r, "composite", ["u32.boundx", body], "stmt." + r, "bounded by an expression")
-        f("loop", "tilex_strided_" + r, "composite", ["u32.boundx", "u32.lit64", body], "stmt." + r, "arity 3: bounded by an expression, stepped by a literal")
+        f("loop", "tilex_strided_" + r, "composite", ["u32.boundx", "u32.lit4096", body], "stmt." + r, "arity 3: bounded by an expression, stepped by a literal in 1..=4096 (64 until 2026-10-16)")
 
 # ---- the thread's axes (2026-10-11): a thread id's components by axis, after every other row ----
 # x is the column axis, y the row axis (the grid dispatches columns on x and rows on y); z is a plain index.

@@ -4352,6 +4352,22 @@ impl<'a> Ctx<'a> {
             }
         }
         let step = step.ok_or_else(|| format!("a loop whose continuing block or last statement does not step its counter {counter} by a literal in 1..=4096"))?;
+        // A literal bound of at most 64 stepped wider than 64 (it runs once)
+        // is the expression-bounded loop, whose step reaches 4,096.
+        // Its bound takes the forms an expression bound takes above: uniform
+        // (a literal is) at an L rung of a loop that may hold a barrier, else
+        // the uncapped uniform bound.
+        let (bound_tree, kind) = if kind == "lit64" && step > 64 {
+            let expr = self.value(bound)?;
+            let tree = match (self.uniform_bound_of(&expr)?, rung.starts_with('L') && !breaks0) {
+                (Some(u), true) => Tree::new("bound.of_uniform", ty(self, "u32.boundu")?, vec![u]),
+                (Some(u), false) => Tree::new("bound.x_of_uniform", ty(self, "u32.boundx")?, vec![u]),
+                (None, _) => Tree::new("bound.of_index", ty(self, "u32.boundx")?, vec![expr]),
+            };
+            (tree, "boundx")
+        } else {
+            (bound_tree, kind)
+        };
         // The rung of the body and the loop row.
         // A tile loop's depth is the number of tile counters already in effect;
         // its body is one rung deeper (L0 and L1 both open at L2).
@@ -4362,9 +4378,13 @@ impl<'a> Ctx<'a> {
         // the bound as written); a binding- or expression-bounded loop at the
         // top level is an item loop. A tile loop's step is at most 64.
         let tilex = if step == 1 { "tilex" } else { "tilex_strided" };
+        // A literal-bounded tile loop (bound at most 64) steps at most 64; an
+        // expression-bounded one (tilex) steps up to 4,096 (`u32.lit4096`,
+        // 2026-10-16: 62 of 1,798 saved model kernels stepped by 128 or 256).
         let short = |t: &str, rung: &str| -> Result<String, String> {
-            if step > 64 {
-                return Err(format!("a short loop stepped by {step} (at most 64)"));
+            let most = if t.starts_with("tilex") { 4096 } else { 64 };
+            if step > most {
+                return Err(format!("a short loop stepped by {step} (at most {most})"));
             }
             Ok(format!("loop.{t}_{rung}"))
         };
@@ -4597,7 +4617,8 @@ impl<'a> Ctx<'a> {
             return Ok(Some(Tree::new(UNROLLED_MAIN, st, vec![unroll, self.block(flat, &body_rung)?])));
         }
         let block = self.block(body_stmts, &body_rung)?;
-        let step_lit = if body_rung == "L1" { Tree::literal("literal.lit4096", ty(self, "u32.lit4096")?, step as f32) } else { Tree::literal("literal.lit64", ty(self, "u32.lit64")?, step as f32) };
+        let wide = body_rung == "L1" || row_name.starts_with("loop.tilex_strided");
+        let step_lit = if wide { Tree::literal("literal.lit4096", ty(self, "u32.lit4096")?, step as f32) } else { Tree::literal("literal.lit64", ty(self, "u32.lit64")?, step as f32) };
         let kids = if step != 1 { vec![bound_tree, step_lit, block] } else { vec![bound_tree, block] };
         Ok(Some(Tree::new(&row_name, st, kids)))
     }
@@ -6119,6 +6140,10 @@ mod tests {
             match verdict {
                 Ok(()) => passed += 1,
                 Err(e) => {
+                    // ROUNDTRIP_SHOW=<seed>: that tree's whole reason.
+                    if std::env::var("ROUNDTRIP_SHOW").ok().and_then(|v| v.parse::<u64>().ok()) == Some(seed) {
+                        println!("SHOW reason: {e}");
+                    }
                     // The reason without its statement path and numbers.
                     let mut r = e.clone();
                     while let Some(i) = r.find("at statement [") {
