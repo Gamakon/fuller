@@ -267,12 +267,14 @@ memory is strict in both modes), `arena_index_not_in_bounds` 225, `store_index_n
 168 (stores to `cands`, an output, strict in both modes), a barrier under non-uniform
 control 30, a subgroup operation under non-uniform control 8, `write_sets_overlap` 3.
 
-**What arena_index_not_in_bounds still misses at 8M** (the 225, grouped by the parent the
-child descends from). The index is affine in the thread's coordinates, the loop counters
-and cfg fields, each bounded by the contract (workgroups, the cfg ranges, the loop bounds),
-so its largest value is below the arena, but the proof asks for a mask or a clamp:
-`index_f32[(2048)*lid.x + (4)*k]` (seed12's line, 36 children), `index_f32[wid.x +
-cfg.arrived_begin]` (the write beside seed05's and seed03's masked reads, 53),
-`index_f32[(16)*wid.x + k + 16*cfg.arrived_begin]` (seed23's and seed30's, 58); and
-`index_f32[?]`, a non-affine index (seed09's, 25). Sent to v24-b6-kingdom (proof by the
-affine form's bounds, and the message to name the access it could not bound).
+**What arena_index_not_in_bounds still misses at 8M** (the 225, by the seed each child
+descends from; the message names the arena and not the access, so the forms below are the
+accesses the strict rules then report). seed05 39 and seed03 24: `index_f32[wid.x +
+cfg.arrived_begin]` beside their masked reads `index_f32[and(x, 1048575)]`; seed12 37:
+`index_f32[(2048)*lid.x + (4)*k]`; seed20 33: `index_f32[(1024)*wid.x + (4)*lid.x + k]`;
+seed23 32 and seed30 30: `index_f32[(16)*wid.x + k + 16*cfg.arrived_begin]`; seed09 25:
+`index_f32[?]`, an index not affine in the thread's coordinates; seeds 27, 15, 16: 5. Each
+affine form is a sum of the thread's coordinates, loop counters and cfg fields, all of which
+the contract and the loops bound; whether those bounds keep it inside the arena is not
+established here, and the proof asks for a mask or a clamp. Sent to v24-b6-kingdom (prove
+from the affine form's bounds; name the access in the message).
