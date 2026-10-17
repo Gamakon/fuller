@@ -3752,7 +3752,12 @@ impl<'a> Ctx<'a> {
             stmts.pop();
         }
         let Some((last, before)) = stmts.split_last() else { return Ok(false) };
-        let read_inline = |s: &Statement| matches!(s, Statement::Call { result: Some(_), .. } | Statement::SubgroupCollectiveOperation { .. } | Statement::SubgroupBallot { .. } | Statement::SubgroupGather { .. });
+        // (And an atomic whose result the store's value reads, `h[c] = h[c] +
+        // phi[atomicXor(&a[0], x)]`: the emitter writes it inside the guard
+        // too, and read as an if its guard was written again at every
+        // rendering, 2026-10-17: 20 of the 83 random trees that missed the
+        // fixpoint.)
+        let read_inline = |s: &Statement| matches!(s, Statement::Call { result: Some(_), .. } | Statement::SubgroupCollectiveOperation { .. } | Statement::SubgroupBallot { .. } | Statement::SubgroupGather { .. } | Statement::Atomic { .. });
         // (The else branch empty, or only that `return`.)
         let reject_empty = reject.iter().all(|s| matches!(s, Statement::Emit(_) | Statement::Return { value: None }));
         if !matches!(last, Statement::Store { .. }) || !before.iter().all(|s| read_inline(s)) || !reject_empty {
@@ -3773,7 +3778,7 @@ impl<'a> Ctx<'a> {
         let mut inside: Vec<usize> = Vec::new();
         for s in before {
             match s {
-                Statement::SubgroupCollectiveOperation { result, .. } | Statement::SubgroupGather { result, .. } | Statement::SubgroupBallot { result, .. } => inside.push(result.index()),
+                Statement::SubgroupCollectiveOperation { result, .. } | Statement::SubgroupGather { result, .. } | Statement::SubgroupBallot { result, .. } | Statement::Atomic { result, .. } => inside.push(result.index()),
                 Statement::Call { result: Some(r), arguments, .. } if arguments.iter().any(|a| inside.contains(&a.index())) => inside.push(r.index()),
                 _ => {}
             }
@@ -8271,8 +8276,9 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     /// exactly). Their own text is printed, not a bar (Andrew, 2026-10-13).
     /// 930 since 2026-10-17 12:35Z (the rows drawn then, AST_FLOOR's note);
     /// 928 since 15:30Z (the 64-element vec4 arrays, AST_FLOOR's note);
-    /// 917 since 16:05Z (the argmax reductions, AST_FLOOR's note).
-    const FIXPOINT_FLOOR: usize = 917;
+    /// 917 since 16:05Z (the argmax reductions, AST_FLOOR's note); 959
+    /// since 19:08Z (an atomic read inside a guarded store's value).
+    const FIXPOINT_FLOOR: usize = 959;
     // (Both reset 2026-10-13 when the sampler drew its stores from an input:
     // other trees, 253 and 930 on the earlier draws; again when conditions
     // read a variable: 110 then 79; 59 when they vary by thread or data;
