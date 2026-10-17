@@ -23,3 +23,6 @@ param cfg.c_max 64 64
 arena index_u32 index_f32
 param arrayLength(index_u32) 8388608 8388608
 param arrayLength(index_f32) 8388608 8388608
+# Each query's candidate row (C_MAX = 64 cells) belongs to the query; read only
+# when layer 7's rows mode is on (fuller 712af96), inert otherwise.
+rows cands 64
