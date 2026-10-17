@@ -37,12 +37,12 @@ Bindings (group 0), fixed:
 | 2 | `index_u32` | storage read_write, u32 | the design's own index state (buckets, levels, links, counts) — an arena of fixed size, zeroed once before the first microbatch, never cleared after |
 | 3 | `index_f32` | storage read_write, f32 | the design's own f32 state (centres, scores), same lifetime |
 | 4 | `cands` | storage read_write, u32 | the search's output: per query `C_MAX` candidate row ids, `0xFFFFFFFF` pads |
-| 5 | `cfg` | uniform | `seed_slot, stage, arrived_begin, arrived_end, n_queries, pass, n_passes, c_max` |
+| 5 | `cfg` | uniform | `seed_slot, stage, arrived_begin, arrived_end, n_queries, pass_index, n_passes` (C_MAX is a constant, section 1b; `pass` is a WGSL reserved word) |
 
-Entry points, fixed names: `ingest` (dispatched `n_passes` times per microbatch, `cfg.pass`
+Entry points, fixed names: `ingest` (dispatched `n_passes` times per microbatch, `cfg.pass_index`
 = 0..n_passes-1; the design declares `// passes N`, 1 ≤ N ≤ 16, and `// grid` its
 workgroups per pass from the batch size) and `search` (one dispatch per microbatch after
-ingest, one or more threads per query). Atomics on `index_u32` are allowed. Each seed has
+ingest, one or more threads per query). Atomics on `index_u32` are allowed (load, store, add, sub, min, max, and, or, xor, exchange; NOT atomicCompareExchangeWeak, which naga 0.20's Metal backend does not support). Each seed has
 its own `index_u32`/`index_f32`, so the four indexes are independent by construction. The
 exact re-rank is not the design's: the harness pools the four seeds' candidates and
 re-ranks them exactly against the raw sparse records.
