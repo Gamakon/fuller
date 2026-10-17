@@ -152,6 +152,7 @@ FORMS = {
     "indexw": ("an index that may wrap (a raw difference index.sub, a left shift index.shl): no row takes it; the kingdom's difference is index.sub_floor, its shift by k a product by 2^k", ["u32"]),
     "wgown": ("a workgroup-array element this thread owns, lidx + k * the workgroup's threads (k a literal or a tile counter; 2026-10-14): a put writes it only below the array's length, so no two threads of a workgroup write one element", ["u32"]),
     "mirror": ("the MIRROR of a cell this thread owns, col * cfg.d + row (the symmetric half's second write, 2026-10-14): a kernel that writes one runs with the whole H (`// mode full`); no sampler draws it, the symmetric-half rule writes it under its triangle guard and the checker's layer 7 proves it", ["u32"]),
+    "payload": ("a knob reference's payload (fuller params.rs): the constant of a literal.p_* row, the knob times payload / 256; its own dual so a point mutation cannot swap a knob reference for an index literal (seed01's mutant 616, 2026-10-17); no row outputs it", ["u32"]),
     "xbound": ("the value of an expression loop bound: a register, a uniform value, the arithmetic of them that cannot wrap (no difference but the floored one, no product, no shift), or a min with any index", ["u32"]),
     # SEVERAL ENTRY POINTS (2026-10-17, B6 of PLAN_v24_ingest_evolution: an index's `ingest` and `search` in one
     # module over shared bindings): the root of a gene whose interface names two to four entry points, one safe
@@ -161,7 +162,7 @@ FORMS = {
     "module": ("a module of two to four entry points over the interface's shared bindings, one safe kernel each, in the interface's order: a gene's root", []),
 }
 
-SAFE_FORMS = ["uflag", "module", "wgown", "mirror", "rowbase", "colbase", "rowbases", "colbases", "rowbaseg", "colbaseg", "indexw", "uniformw", "xbound", "uniform", "boundu", "pindex16", "wgaindex", "wgv2index", "wglen", "decl", "decls", "lidx", "threadrows", "threadcols", "threadrowg", "threadcolg", "gid", "lid", "wid", "rowid", "colid", "O0", "O1", "O2", "O3", "O4", "tcounter4", "L5", "C5", "safe", "pindex", "boundx", "boundm", "boundd", "boundrows", "lit64", "lit4096", "counter", "tcounter", "tcounter2", "L3", "C3", "tcounter3", "L4", "C4", "wgvindex", "bound", "threadrow", "threadcol", "cell", "phi", "wgindex", "L0", "L1", "L2", "C0", "C1", "C2"]
+SAFE_FORMS = ["payload", "uflag", "module", "wgown", "mirror", "rowbase", "colbase", "rowbases", "colbases", "rowbaseg", "colbaseg", "indexw", "uniformw", "xbound", "uniform", "boundu", "pindex16", "wgaindex", "wgv2index", "wglen", "decl", "decls", "lidx", "threadrows", "threadcols", "threadrowg", "threadcolg", "gid", "lid", "wid", "rowid", "colid", "O0", "O1", "O2", "O3", "O4", "tcounter4", "L5", "C5", "safe", "pindex", "boundx", "boundm", "boundd", "boundrows", "lit64", "lit4096", "counter", "tcounter", "tcounter2", "L3", "C3", "tcounter3", "L4", "C4", "wgvindex", "bound", "threadrow", "threadcol", "cell", "phi", "wgindex", "L0", "L1", "L2", "C0", "C1", "C2"]
 RUNGS = ["L0", "L1", "L2", "L3", "L4", "C0", "C1", "C2", "C3", "C4"]
 # The fifth rung came after every other row (run A, 2026-10-11); its rows are appended at the end so
 # every earlier ref stands, and it is kept out of RUNGS for that reason.
@@ -170,6 +171,7 @@ RUNGS5 = ["L5", "C5"]
 EPILOGUE = ["O0", "O1", "O2", "O3", "O4"]
 
 FALLBACK = {
+    "payload": "256 (the knob itself)",
     "real": "0.0", "int": "0", "q15_16": "0", "q15_16w": "vec2(0, 0)", "index": "0u", "count": "0u",
     "code4": "0u", "code8": "0u", "code16": "0u", "code1024": "0u", "bits": "0u", "hash32": "0u",
     "hash64": "vec2(0u, 0u)", "flag": "false", "sign": "true (+1)", "opaque": "the slot's zero", "store": "no-op, codon masked",
@@ -205,6 +207,7 @@ FALLBACK = {
 # reused here) and `array<T>` defers to its element (fallback_elem = 1); their bits are placeholders
 # the loader must not read before testing those two columns.
 FALLBACK_BITS = {
+    "payload": 256,
     "real": 0, "int": 0, "q15_16": 0, "q15_16w": 0, "index": 0, "count": 0,
     "code4": 0, "code8": 0, "code16": 0, "code1024": 0, "bits": 0, "hash32": 0,
     "hash64": 0, "flag": 0, "sign": 1, "opaque": 0, "store": 0, "<form of T>": 0,
@@ -256,6 +259,7 @@ LITERAL_DOMAIN = {
     "lit4096": "1..=4096",
     "wglen": "1..=8192",
     "xbound": "0..=16777216",
+    "payload": "1..=1048576",
 }
 
 
@@ -401,6 +405,8 @@ def build_types():
     add("reg<vec2<f32>>", "real", 2, "a named vec2<f32> register: w0..w7 (a helper's two sums returned together)")
     # ---- 64-element vec4<f32> private arrays (2026-10-17) ----
     add("parr64<vec4<f32>>", "real", 0, "a private array of 64 vec4<f32>: pvq, pvr (a query's 32 vec4 lanes held in registers)")
+    # A knob reference's payload (2026-10-17): the dual of a literal.p_* row's constant.
+    add("u32", "payload", 1, FORMS["payload"][0])
     return rows
 
 

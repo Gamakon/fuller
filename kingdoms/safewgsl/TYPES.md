@@ -101,6 +101,7 @@ A type is a dual `slot.form`: the slot is what the hardware stores, the form is 
 | `indexw` | an index that may wrap (a raw difference index.sub, a left shift index.shl): no row takes it; the kingdom's difference is index.sub_floor, its shift by k a product by 2^k | u32 |
 | `wgown` | a workgroup-array element this thread owns, lidx + k * the workgroup's threads (k a literal or a tile counter; 2026-10-14): a put writes it only below the array's length, so no two threads of a workgroup write one element | u32 |
 | `mirror` | the MIRROR of a cell this thread owns, col * cfg.d + row (the symmetric half's second write, 2026-10-14): a kernel that writes one runs with the whole H (`// mode full`); no sampler draws it, the symmetric-half rule writes it under its triangle guard and the checker's layer 7 proves it | u32 |
+| `payload` | a knob reference's payload (fuller params.rs): the constant of a literal.p_* row, the knob times payload / 256; its own dual so a point mutation cannot swap a knob reference for an index literal (seed01's mutant 616, 2026-10-17); no row outputs it | u32 |
 | `xbound` | the value of an expression loop bound: a register, a uniform value, the arithmetic of them that cannot wrap (no difference but the floored one, no product, no shift), or a min with any index | u32 |
 | `uflag` | a predicate the same for every thread of the workgroup: comparisons of uniform values and their logic (a test whose body keeps its rung) | bool |
 | `module` | a module of two to four entry points over the interface's shared bindings, one safe kernel each, in the interface's order: a gene's root | see duals |
@@ -300,8 +301,9 @@ A type is a dual `slot.form`: the slot is what the hardware stores, the form is 
 | T189 | `parr64<u32>.index` | `parr64<u32>` | `index` | 0 | `0u` | 0 | 0 | 0 | `-` |
 | T190 | `reg<vec2<f32>>.real` | `reg<vec2<f32>>` | `real` | 2 | `0.0` | 0 | 0 | 0 | `-` |
 | T191 | `parr64<vec4<f32>>.real` | `parr64<vec4<f32>>` | `real` | 0 | `0.0` | 0 | 0 | 0 | `-` |
+| T192 | `u32.payload` | `u32` | `payload` | 1 | `256 (the knob itself)` | 256 | 0 | 0 | `1..=1048576` |
 
-191 duals. The fallback is what Design C's projection substitutes for a codon whose dual does not match the demand; the codon is counted as masked.
+192 duals. The fallback is what Design C's projection substitutes for a codon whose dual does not match the demand; the codon is counted as masked.
 
 The three machine columns (`fallback_bits`, `fallback_noop`, `fallback_elem` in `types.tsv`) are what the loader builds the fallback leaf from, never the prose: `bits` is the lane's 32-bit pattern as an unsigned integer, repeated across the lanes of a vector or matrix (only `bool.sign` is non-zero, true = +1); `noop` is 1 for `store.store`, which substitutes no value at all; `elem` is 1 for `array<T>`, whose fallback is its element's. The loader tests `noop` and `elem` before reading `bits`; for those two rows `bits` is a placeholder 0. Every substitution, whichever column decides it, counts the codon as masked.
 

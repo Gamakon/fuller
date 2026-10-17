@@ -109,9 +109,21 @@ impl LiteralDomain {
     }
 }
 
-/// A knob reference's payload domain (`params.rs`: a payload in units of
-/// `Q`, 1 to 2^20): the domain of every `literal.p_*` row.
-pub const KNOB_PAYLOAD_DOMAIN: LiteralDomain = LiteralDomain::Int { lo: 1, hi: 1 << 20 };
+/// THE KNOB PAYLOAD'S DUAL (2026-10-17): the constant of a knob reference
+/// (`literal.p_*`, `params.rs`: a payload in units of `Q`, 1 to 2^20, the
+/// dual's `literal` column) is typed by its own dual, not by the row's
+/// output, so a reference and an index literal (both u32.index -> u32.index
+/// until then) have different signatures and a point mutation cannot swap
+/// one for the other (phylu 931ac044: seed01's mutant 616 turned
+/// literal.index 31153 into literal.p_wcol_m1, rendered 7787u).
+pub const PAYLOAD_DUAL: &str = "u32.payload";
+
+/// The payload dual of the safe kingdom, the only one with knob references
+/// (the encoder types a payload token by it without a kingdom at hand).
+pub fn payload_ty() -> Option<Ty> {
+    static TY: std::sync::OnceLock<Option<Ty>> = std::sync::OnceLock::new();
+    *TY.get_or_init(|| safe_duals().iter().find(|d| d.dual == PAYLOAD_DUAL).map(WgslDual::ty))
+}
 
 impl WgslDual {
     pub fn ty(&self) -> Ty {
@@ -351,18 +363,26 @@ impl WgslKingdom {
         }
     }
 
-    /// THE DOMAIN OF A LITERAL ROW's value: a knob reference (`literal.p_*`,
-    /// `params::parse_ref`) its payload's; any other `literal.*` row its output
-    /// dual's `literal` column. `None` for a row that is not a literal or a
-    /// dual no literal takes.
-    pub fn literal_domain(&self, row: &str, out: Ty) -> Option<LiteralDomain> {
+    /// THE DUAL OF A LITERAL ROW's constant: a knob reference's
+    /// (`literal.p_*`, `params::parse_ref`) the payload dual
+    /// ([`PAYLOAD_DUAL`]), any other `literal.*` row its output dual. `None`
+    /// for a row that is not a literal, or a knob reference in a kingdom
+    /// without the payload dual.
+    pub fn payload_dual(&self, row: &str, out: Ty) -> Option<Ty> {
         if !row.starts_with("literal.") {
             return None;
         }
         if super::params::parse_ref(row).is_some() {
-            return Some(KNOB_PAYLOAD_DOMAIN);
+            return self.duals.iter().find(|d| d.dual == PAYLOAD_DUAL).map(WgslDual::ty);
         }
-        self.dual(out)?.literal.clone()
+        Some(out)
+    }
+
+    /// THE DOMAIN OF A LITERAL ROW's value: its constant's dual's
+    /// ([`WgslKingdom::payload_dual`]) `literal` column. `None` for a row that
+    /// is not a literal or a dual no literal takes.
+    pub fn literal_domain(&self, row: &str, out: Ty) -> Option<LiteralDomain> {
+        self.dual(self.payload_dual(row, out)?)?.literal.clone()
     }
 }
 
@@ -688,6 +708,34 @@ mod tests {
     /// read back (a workgroup array's length at most it: the renderer halves
     /// arrays to fit 32 KB), but for a loop's trip count (lit64, lit4096),
     /// which the renderer unrolls or, at one trip, drops.
+    /// A KNOB REFERENCE CANNOT BECOME AN INDEX LITERAL (phylu 931ac044,
+    /// seed01's point mutant 616): phylu mints a literal row over its
+    /// constant's dual ([`WgslKingdom::payload_dual`]) and a point mutation
+    /// swaps a row only for one of the same signature, (constant's dual,
+    /// output); no knob reference shares that signature with a literal that
+    /// is not one. Every reference's constant is u32.payload, 1..=2^20.
+    #[test]
+    fn a_knob_reference_and_a_plain_literal_never_share_a_signature() {
+        let k = WgslKingdom::load_safe();
+        let payload = k.duals.iter().find(|d| d.dual == PAYLOAD_DUAL).expect("the payload dual").ty();
+        let sig = |r: &WgslRow| (k.payload_dual(&r.name, r.output).expect("a literal's constant dual"), r.output);
+        let literals: Vec<&WgslRow> = k.rows.iter().filter(|r| r.name.starts_with("literal.")).collect();
+        let (knobs, plain): (Vec<&WgslRow>, Vec<&WgslRow>) = literals.iter().partition(|r| crate::wgsl::params::parse_ref(&r.name).is_some());
+        assert!(knobs.len() >= 8 && !plain.is_empty(), "{} references, {} plain literals", knobs.len(), plain.len());
+        for r in &knobs {
+            assert_eq!(sig(r).0, payload, "{}", r.name);
+            assert_eq!(k.literal_domain(&r.name, r.output), Some(LiteralDomain::Int { lo: 1, hi: 1 << 20 }), "{}", r.name);
+            for o in &plain {
+                assert_ne!(sig(r), sig(o), "{} and {} share a signature", r.name, o.name);
+            }
+        }
+        for o in &plain {
+            assert_eq!(sig(o).0, o.output, "{}", o.name);
+        }
+        // No row outputs or takes the payload dual: it types a constant only.
+        assert!(k.rows.iter().all(|r| r.output != payload && !r.inputs.contains(&payload)));
+    }
+
     #[test]
     fn every_literal_domain_round_trips() {
         let kingdom = WgslKingdom::load_safe();
@@ -882,8 +930,9 @@ mod tests {
         // 186 with the workgroup arrays of indices (wgmem<u32>.index, 2026-10-16).
         // 187 with the module of several entry points (kernel.module, 2026-10-17); 188 with bool.uflag;
         // 189 with the 64-element u32 private array (parr64<u32>.index); 190 with the vec2<f32>
-        // register (reg<vec2<f32>>.real); 191 with the 64-element vec4 private array.
-        assert_eq!(s.len(), 191);
+        // register (reg<vec2<f32>>.real); 191 with the 64-element vec4 private array; 192
+        // with the knob payload (u32.payload, a literal.p_* row's constant).
+        assert_eq!(s.len(), 192);
         for (a, b) in w.iter().zip(&s) {
             assert_eq!((a.reference.as_str(), a.dual.as_str()), (b.reference.as_str(), b.dual.as_str()));
         }

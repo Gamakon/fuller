@@ -183,8 +183,11 @@ pub fn split(tree: &Tree, head_length: usize) -> Result<SafeSplit, String> {
 }
 
 /// The dual code of every live token of the gene in level order.
+/// A literal's payload token under its constant's dual: a knob reference's
+/// the payload dual ([`crate::wgsl::loader::PAYLOAD_DUAL`]), any other
+/// literal's the literal's own.
 fn codes_of(t: &Tree) -> Vec<u32> {
-    level_order(t).iter().map(|(n, _)| n.ty.code()).collect()
+    level_order(t).iter().map(|(n, payload)| if *payload && crate::wgsl::params::parse_ref(&n.name).is_some() { crate::wgsl::loader::payload_ty().expect("kingdoms/safewgsl/types.tsv declares u32.payload").code() } else { n.ty.code() }).collect()
 }
 
 /// Encode the kernel at `head_length` with `tail_slots` homeotic slots.
@@ -1152,6 +1155,23 @@ mod tests {
             }
         }
         c
+    }
+
+    /// A KNOB REFERENCE'S PAYLOAD TOKEN IS TYPED BY THE PAYLOAD DUAL (phylu
+    /// mints the reference's constant under it, so a point mutation cannot
+    /// swap the reference for an index literal): in a tree holding both, the
+    /// reference's payload token carries u32.payload, the index literal's
+    /// u32.index.
+    #[test]
+    fn a_knob_payload_token_is_typed_by_the_payload_dual() {
+        let k = WgslKingdom::load_safe();
+        let index = dual_ty(&k, "u32.index").unwrap();
+        let payload = dual_ty(&k, crate::wgsl::loader::PAYLOAD_DUAL).unwrap();
+        assert_eq!(crate::wgsl::loader::payload_ty(), Some(payload));
+        let tree = Tree::new("index.add", index, vec![Tree::literal("literal.p_wcol_m1", index, 31153.0), Tree::literal("literal.index", index, 31153.0)]);
+        let codes = codes_of(&tree);
+        // Level order: index.add, the reference, the literal, then their payloads.
+        assert_eq!(codes, vec![index.code(), index.code(), index.code(), payload.code(), index.code()]);
     }
 
     #[test]
