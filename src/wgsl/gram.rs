@@ -118,6 +118,16 @@ pub fn effective_buffer_limit(device: &wgpu::Device) -> u64 {
     u64::from(device.limits().max_storage_buffer_binding_size).min(QUEUE_WRITE_BUFFER_LIMIT) / 2
 }
 
+/// The device's own per-binding ceiling: its storage-binding limit and its
+/// largest buffer, the adapter's own (`oracle::Device::new` requests the
+/// adapter's limits); a problem that declares `binding_limit = "adapter"`
+/// plans by it (`harness::DeviceExecutor::for_problem`).
+#[cfg(feature = "gpu")]
+pub fn adapter_buffer_limit(device: &wgpu::Device) -> u64 {
+    let l = device.limits();
+    u64::from(l.max_storage_buffer_binding_size).min(l.max_buffer_size)
+}
+
 fn splitmix64(state: &mut u64) -> u64 {
     *state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
     let mut z = *state;

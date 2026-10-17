@@ -1,0 +1,14 @@
+# The v24_full_s1_5 case: the exporter's files where it wrote them (qdrant experiments/v24_ingest/
+# export_harness_case.py, case.json source /Users/andrewmorgan/data/arm/v24_test). Parameters read from its case.json:
+# sizes as given; accept_n<k> = accept_sizes.<k>.total; today_settle_ms_<k> = today.settle.stages.<k>.build_ms
+# (present); c_max = c_max (64).
+# Seed slots 0..3 = seeds [42, 137, 911, 4242].
+# The counting rule (case.json counting_rule; problem.toml's top = truth_k = 10): after the exact re-rank of the pooled candidates (the four seeds' lists, deduplicated), the returned top 10 are counted against accept_s<k>: found = |top 10 in the accept set|, capped at 10; misses = 10 - found. The accept set is every arrived stream row with exact cosine >= the 10th true cosine - tie: exactly the tie rule count_today_index.py credits (a returned row is found when it is a true neighbour or its exact score >= the 10th true cosine - tie), so M and M_today are one measure
+
+root = "/Users/andrewmorgan/data/arm/v24_case"
+
+[[case]]
+name = "v24_full_s1_5"
+label = "25000 + 2500, 5 stages"
+params = { n_stream = 25000, n_oracle = 2500, n_total = 27500, sections = 5, per_section = 5000, d = 2048, nnz = 215638, c_max = 64, accept_n1 = 148130, accept_n2 = 75211, accept_n3 = 73839, accept_n4 = 81767, accept_n5 = 85328, today_settle_ms_1 = 4494.355541, today_settle_ms_2 = 9506.905084, today_settle_ms_3 = 16411.35075, today_settle_ms_4 = 23697.139541999997, today_settle_ms_5 = 30596.428416 }
+inputs = { keys0 = "keys_s42.f32", queries0 = "queries_s42.f32", keys1 = "keys_s137.f32", queries1 = "queries_s137.f32", keys2 = "keys_s911.f32", queries2 = "queries_s911.f32", keys3 = "keys_s4242.f32", queries3 = "queries_s4242.f32", rec_offsets = "rec_offsets.u32", rec_indices = "rec_indices.u32", oracle_half = "oracle_half.u32", rec_values = "rec_values.f32", accept_s1_offsets = "accept_s1_offsets.u32", accept_s1_rows = "accept_s1_rows.u32", today_s1_misses = "today_s1_misses.u32", today_s1_pooled = "today_s1_pooled.u32", today_s1_search_ms = "today_s1_search_ms.f32", accept_s2_offsets = "accept_s2_offsets.u32", accept_s2_rows = "accept_s2_rows.u32", today_s2_misses = "today_s2_misses.u32", today_s2_pooled = "today_s2_pooled.u32", today_s2_search_ms = "today_s2_search_ms.f32", accept_s3_offsets = "accept_s3_offsets.u32", accept_s3_rows = "accept_s3_rows.u32", today_s3_misses = "today_s3_misses.u32", today_s3_pooled = "today_s3_pooled.u32", today_s3_search_ms = "today_s3_search_ms.f32", accept_s4_offsets = "accept_s4_offsets.u32", accept_s4_rows = "accept_s4_rows.u32", today_s4_misses = "today_s4_misses.u32", today_s4_pooled = "today_s4_pooled.u32", today_s4_search_ms = "today_s4_search_ms.f32", accept_s5_offsets = "accept_s5_offsets.u32", accept_s5_rows = "accept_s5_rows.u32", today_s5_misses = "today_s5_misses.u32", today_s5_pooled = "today_s5_pooled.u32", today_s5_search_ms = "today_s5_search_ms.f32" }

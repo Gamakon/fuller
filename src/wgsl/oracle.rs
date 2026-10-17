@@ -314,6 +314,9 @@ pub mod device {
             // for this device's features and limits.
             let features = adapter.features() & (wgpu::Features::TIMESTAMP_QUERY | wgpu::Features::SUBGROUP | wgpu::Features::SUBGROUP_BARRIER);
             let limits = adapter.limits();
+            // The adapter's own limits, requested whole below: the
+            // binding limit a problem may plan by (`gram::adapter_buffer_limit`).
+            eprintln!("device {name}: max_storage_buffer_binding_size {} bytes, max_buffer_size {} bytes (the adapter's)", limits.max_storage_buffer_binding_size, limits.max_buffer_size);
             crate::wgsl::target::install(crate::wgsl::target::Target::of_device(&adapter, features, &limits));
             let (device, queue) = pollster::block_on(adapter.request_device(
                 &wgpu::DeviceDescriptor { label: Some("wgsl-oracle"), required_features: features, required_limits: limits },

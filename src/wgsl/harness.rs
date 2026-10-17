@@ -1119,6 +1119,25 @@ pub struct ProblemSpec {
     /// Where the expected outputs come from (`[oracle]`; default: the shipped kernel).
     #[serde(default)]
     pub oracle: Oracle,
+    /// The per-binding byte limit the problem plans by (`binding_limit`):
+    /// `"effective"` (the default, `gram::effective_buffer_limit`: 128 MiB
+    /// on the M3 Max) or `"adapter"` (the adapter's own,
+    /// `gram::adapter_buffer_limit`); `DeviceExecutor::for_problem` applies it.
+    #[serde(default)]
+    pub binding_limit: LimitRule,
+}
+
+/// Which per-binding limit a problem plans by (`binding_limit`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LimitRule {
+    /// The device's storage-binding limit capped by Metal's 256 MiB queue
+    /// write, halved: the Gram's, nluca's and kmeans's plans.
+    #[default]
+    Effective,
+    /// The adapter's own storage-binding limit and largest buffer (the v24
+    /// full set's 205 MB keys a seed at stage 5).
+    Adapter,
 }
 
 /// One case of a manifest.
@@ -2594,7 +2613,7 @@ mod device {
     use wgpu::util::DeviceExt;
 
     use super::{initial_bytes, kernel_info, BindingKind, BufId, CaseData, Cmd, Executor, KernelInfo, Plan, Problem, RunOut};
-    use crate::wgsl::gram::{effective_buffer_limit, wait_gpu, wait_gpu_within};
+    use crate::wgsl::gram::{adapter_buffer_limit, effective_buffer_limit, wait_gpu, wait_gpu_within};
     use crate::wgsl::oracle::device::Device;
 
     pub struct DeviceExecutor<'a> {
@@ -2605,6 +2624,17 @@ mod device {
     impl<'a> DeviceExecutor<'a> {
         pub fn new(dev: &'a Device) -> DeviceExecutor<'a> {
             DeviceExecutor { dev, limit: effective_buffer_limit(&dev.device) }
+        }
+
+        /// The device executor at the binding limit `problem` plans by
+        /// (`ProblemSpec::binding_limit`: the effective limit, or the
+        /// adapter's own).
+        pub fn for_problem(dev: &'a Device, problem: &super::Problem) -> DeviceExecutor<'a> {
+            let limit = match problem.spec.binding_limit {
+                super::LimitRule::Effective => effective_buffer_limit(&dev.device),
+                super::LimitRule::Adapter => adapter_buffer_limit(&dev.device),
+            };
+            DeviceExecutor { dev, limit }
         }
     }
 
@@ -5398,6 +5428,62 @@ fn search() { cands[0] = cfg.stage; }
             let want: Vec<(String, u64)> = (0..4).map(|s| (format!("if{s}"), 4 * declared("arena_f32"))).chain((0..4).map(|s| (format!("iu{s}"), 4 * declared("arena_u32")))).collect::<std::collections::BTreeSet<_>>().into_iter().collect();
             assert_eq!(a, want, "{name}: the admission case's arenas");
             assert_eq!(a, arenas(&p.suites[0].cases[0]), "{name}: the admission and stream cases' arenas");
+        }
+    }
+
+    /// v24_ingest5 PLANS ALL FIVE STAGES BY THE ADAPTER'S LIMIT (plans only):
+    /// it declares binding_limit = "adapter", judges sections 1..5, and its
+    /// largest keys binding is stage 5's 25,000 rows, 204.8 MB; at a 256 MiB
+    /// limit it plans (5 stages x 4 seeds x 2 dispatches), at the
+    /// 128 MiB effective limit the setup's require names the binding limit.
+    /// v24_ingest (run 3's) keeps the effective limit and three stages.
+    #[test]
+    fn v24_ingest5_plans_five_stages_by_the_adapter_limit() {
+        let p = Problem::load(&root().join("problems/v24_ingest5")).expect("problems/v24_ingest5");
+        assert_eq!(p.spec.binding_limit, LimitRule::Adapter);
+        assert_eq!(Problem::load(&root().join("problems/v24_ingest")).unwrap().spec.binding_limit, LimitRule::Effective);
+        let c = &p.suites[0].cases[0];
+        assert!(!c.params.contains_key("stages"));
+        let info = kernel_info(&p.spec, &p.reference).unwrap();
+        let plan = p.plan(c, 256 << 20, Some(&info)).unwrap();
+        let most = plan.buffers.iter().filter(|b| b.resident).map(|b| b.bytes).max().unwrap();
+        assert_eq!(most, 25_000 * 2048 * 4);
+        assert_eq!(plan.outputs, vec![5 * 4 * 2500 * 64 * 4]);
+        assert_eq!(plan.run.iter().filter(|x| matches!(x, Cmd::Dispatch { .. })).count(), 5 * 4 * 2);
+        let e = p.plan(c, LIMIT, None).unwrap_err();
+        assert!(e.contains("the problem requires stages * per_section * d * 4 <= binding_limit"), "{e}");
+    }
+
+    /// v24_ingest5 ON THE DEVICE (GPU; run by the session that owns the
+    /// GPU): the executor at the adapter's limit (`for_problem`, at least
+    /// 204.8 MB), the stream case staged (each seed's stage-5 keys one
+    /// 204.8 MB buffer), the reference run once: every stage's windows have
+    /// candidates (P over 0) and no broken entries. The limits and windows
+    /// are printed.
+    #[cfg(feature = "gpu")]
+    #[test]
+    fn v24_ingest5_binds_205_mb_keys_on_the_device() {
+        let dev = crate::wgsl::oracle::device::Device::new().expect("device");
+        let p = Problem::load(&root().join("problems/v24_ingest5")).unwrap();
+        let exec = DeviceExecutor::for_problem(&dev, &p);
+        let limit = exec.binding_limit();
+        println!("v24_ingest5: binding limit {limit} bytes (the effective one {})", crate::wgsl::gram::effective_buffer_limit(&dev.device));
+        assert!(limit >= 25_000 * 2048 * 4, "the adapter's limit {limit} is under stage 5's keys");
+        let c = &p.suites[0].cases[0];
+        let t = Instant::now();
+        let (k, info) = exec.compile(&p, &p.reference).unwrap();
+        let data = p.case_data(c, limit).unwrap();
+        let plan = p.plan(c, limit, Some(&info)).unwrap();
+        assert!(plan.buffers.iter().any(|b| b.resident && b.bytes == 25_000 * 2048 * 4));
+        let (staged, stage_ms) = exec.stage(&plan, &data).unwrap();
+        let r = exec.run(&k, &plan, &data, &staged, true).unwrap();
+        let env = p.env(c, limit).unwrap();
+        let out = p.pooled_output().unwrap().clone();
+        let w = pooled_windows(&p, &out, &env, &data, &r.outputs[0]).unwrap();
+        println!("staged in {stage_ms:.0} ms, run {:.0} ms GPU, {:.1} s in all; {w:?}", r.gpu_ms, t.elapsed().as_secs_f64());
+        assert_eq!(w.len(), 10);
+        for x in &w {
+            assert!(x.pooled > 0 && x.broken == 0, "{x:?}");
         }
     }
 }
