@@ -1429,6 +1429,7 @@ impl<'a> Renderer<'a> {
                 scope.in_unrolled_copy = copy_was;
                 Ok(format!("    for ({var} = 0u; {var} < {count}u; {var} = {var} + {step}u) {{\n{}    }}\n", body?))
             }
+            "store.h_safe" if self.role.output.is_empty() => Err("our software has a bug: store.h_safe under an interface with no output cell (render::role_spells withholds it)".into()),
             "store.h_safe" => {
                 // THE GUARDED STORE (the proposals of 2026-10-10/11, class 1: a
                 // guard and its store built apart could disagree). Every store
@@ -1777,6 +1778,22 @@ impl<'a> Renderer<'a> {
     fn workgroup_plan_requested(&self, grid: &Tree, root: &Tree) -> Result<BTreeMap<String, (String, u32)>, String> {
         workgroup_plan_requested(self.kingdom, grid, root)
     }
+}
+
+/// Whether an interface can spell a kingdom row: under an interface without
+/// the Gram's input, output cell and fields (v24's), the rows that spell
+/// them (phi, h, a thread's cell, the bounds and uniform values of cfg.m,
+/// cfg.d, cfg.r_rows, cfg.r_off) have nothing to render. A mutation or a
+/// sampler draws only the rows this admits (a point mutation drew
+/// load.phi4_safe under v24's role and rendered `vec4<f32>([i], ...)`,
+/// 2026-10-17).
+pub fn role_spells(kingdom: &WgslKingdom, role: &Role, r: &WgslRow) -> bool {
+    if role.per_kernel.iter().any(|p| p.name == "store.h") {
+        return true;
+    }
+    let gram_dual = |t: &Ty| kingdom.dual(*t).is_some_and(|d| matches!(d.dual.as_str(), "u32.boundm" | "u32.boundd" | "u32.boundrows" | "u32.cell" | "u32.mirror"));
+    let gram_name = |n: &str| ["load.phi", "load.h", "store.h", "uniform.cfg_", "bound.m", "bound.d", "bound.rows"].iter().any(|p| n.starts_with(p));
+    !gram_name(&r.name) && !gram_dual(&r.output) && !r.inputs.iter().any(gram_dual)
 }
 
 /// A register leaf's WGSL variable name (`f3`, `i32r`); a fallback leaf
@@ -2279,6 +2296,10 @@ impl Renderer<'_> {
             "safe.pidx64" => return Ok(format!("(({}) & 63u)", self.value(&v.kids[0], scope)?)),
             "safe.pidx16" => return Ok(format!("(({}) & 15u)", self.value(&v.kids[0], scope)?)),
             "safe.row_as_index" | "safe.col_as_index" => return self.value(&v.kids[0], scope),
+            // (The Gram's input and output: an interface naming neither has no
+            // text for them, a bug in our software where one is asked for.)
+            "load.phi_safe" | "load.phi4_safe" | "load.phi_len" if self.role.input.is_empty() => return Err(format!("our software has a bug: {name} under an interface with no input (render::role_spells withholds it)")),
+            "load.h_safe" | "load.h_len" if self.role.output.is_empty() => return Err(format!("our software has a bug: {name} under an interface with no output cell (render::role_spells withholds it)")),
             "load.phi_safe" => return Ok(format!("{}[{}]", self.role.input, self.value(&v.kids[0], scope)?)),
             "load.phi4_safe" => {
                 let i = self.value(&v.kids[0], scope)?;
@@ -3323,11 +3344,7 @@ fn sample_with(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, s
     // 2026-10-17): the rows that spell them (phi, h, a thread's cell, the
     // bounds and uniform values of cfg.m, cfg.d, cfg.r_rows, cfg.r_off) have
     // nothing to render and are not drawn; its own bindings' rows are.
-    if !role.per_kernel.iter().any(|p| p.name == "store.h") {
-        let gram_dual = |t: &Ty| kingdom.dual(*t).is_some_and(|d| matches!(d.dual.as_str(), "u32.boundm" | "u32.boundd" | "u32.boundrows" | "u32.cell" | "u32.mirror"));
-        let gram_name = |n: &str| ["load.phi", "load.h", "store.h", "uniform.cfg_", "bound.m", "bound.d", "bound.rows"].iter().any(|p| n.starts_with(p));
-        rows.retain(|r| !gram_name(&r.name) && !gram_dual(&r.output) && !r.inputs.iter().any(gram_dual));
-    }
+    rows.retain(|r| role_spells(kingdom, role, r));
     let mut by_out: BTreeMap<Ty, (Vec<usize>, Vec<usize>)> = BTreeMap::new();
     for (i, r) in rows.iter().enumerate() {
         let e = by_out.entry(r.output).or_default();
@@ -4572,5 +4589,34 @@ mod tests {
         // N of N (2026-10-13: the sampler nests no long loop in one of its
         // kind, the renderer's only refusal; 440 of 500 before).
         assert!(refused.is_empty() && rendered == n as usize, "only {rendered} of {n} rendered: {refused:?}");
+    }
+
+    /// THE GRAM'S INPUT AND OUTPUT ROWS UNDER AN INTERFACE WITHOUT THEM
+    /// (2026-10-17, a point mutation under v24's role drew load.phi4_safe and
+    /// rendered `vec4<f32>([i], [i + 1u], ...)`): role_spells withholds every
+    /// such row under v24's interface (and none under the Gram's), and the
+    /// renderer names any it is asked for as our software's bug, never text.
+    #[test]
+    fn the_grams_input_and_output_rows_are_withheld_where_an_interface_has_none() {
+        let k = WgslKingdom::load_safe();
+        let src = "struct Cfg { n_queries: u32, };\n@group(0) @binding(0) var<storage, read> keys: array<f32>;\n@group(0) @binding(1) var<storage, read_write> cands: array<u32>;\n@group(0) @binding(2) var<uniform> cfg: Cfg;\n@compute @workgroup_size(32, 1, 1)\nfn search(@builtin(global_invocation_id) gid: vec3<u32>) { cands[gid.x] = u32(keys[gid.x]); }\n";
+        let v24 = interface_of(src).unwrap();
+        let gram = gram_role();
+        for name in ["load.phi_safe", "load.phi4_safe", "load.phi_len", "load.h_safe", "load.h_len", "store.h_safe"] {
+            let rows: Vec<&WgslRow> = k.rows.iter().filter(|r| safe_base(&r.name) == name).collect();
+            assert!(!rows.is_empty(), "{name}");
+            assert!(rows.iter().all(|r| !role_spells(&k, &v24, r)), "{name} offered under v24's role");
+            assert!(rows.iter().all(|r| role_spells(&k, &gram, r)), "{name} withheld under the Gram's role");
+        }
+        let t = |n: &str, d: &str| Tree::new(n, dual_ty(&k, d).unwrap(), vec![]);
+        let phi4 = Tree::new("load.phi4_safe", dual_ty(&k, "vec4<f32>.real").unwrap(), vec![Tree::literal("literal.index", dual_ty(&k, "u32.index").unwrap(), 0.0)]);
+        let table = FunctionTable::safe();
+        let r = Renderer::new(&k, &table, &v24);
+        let mut scope = Scope { unrolled: BTreeMap::new(), unroll_copies: 1, in_unrolled_copy: false, wg: BTreeMap::new(), unwritten: BTreeSet::new(), in_items: false, in_tile: false, tile_depth: 0, grid: Grid { x: 16, y: 16, bx: 1, by: 1, rows_x: false }, in_cond: 0, returned: false, helpers: Vec::new(), masked: Vec::new(), const_depth: 0 };
+        let e = r.value(&phi4, &mut scope).expect_err("load.phi4_safe rendered under v24's role");
+        assert!(e.starts_with("our software has a bug: load.phi4_safe"), "{e}");
+        let len = t("load.h_len", "u32.count");
+        let e = r.value(&len, &mut scope).expect_err("load.h_len rendered under v24's role");
+        assert!(e.starts_with("our software has a bug: load.h_len"), "{e}");
     }
 }
