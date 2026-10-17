@@ -509,6 +509,10 @@ struct Site {
     /// Arena mode: the affine form's greatest value at the contract's ranges
     /// is below the binding's least arrayLength.
     form_in_bounds: bool,
+    /// A workgroup access of a pair exchange: at the thread's own element or
+    /// its partner's, t ^ m, under a test that only the lower thread of each
+    /// pair passes; the value m by its identity.
+    partner: Option<String>,
 }
 
 // ------------------------------------------------------------------- frames
@@ -572,6 +576,11 @@ struct An<'m> {
     /// pair met in one pass of a uniform loop every pass of which crosses a
     /// workgroup barrier: both invocations are in that pass).
     wg_equal: BTreeMap<(usize, usize), BTreeSet<u32>>,
+    /// The workgroup pairs the pair-exchange lemma proves (both accesses of
+    /// one exchange, the same m, in one pass of a loop with a barrier).
+    wg_partner: BTreeSet<(usize, usize)>,
+    /// The conditions of the branches being walked (their accept sides).
+    guards: Vec<(usize, Handle<Expression>)>,
     /// The enclosing loops (innermost last): their uniform counters, whether
     /// every pass crosses a workgroup barrier, and, in the loop-carried walk
     /// of the body before its first barrier, the accesses still open from the
@@ -1546,6 +1555,147 @@ impl<'m> An<'m> {
         self.iface.outputs().any(|o| o.name != name && self.contract.buffer_of(&o.name).0 == buf)
     }
 
+    /// A workgroup access as one of a pair exchange (the butterfly over bit
+    /// k, the bitonic compare-exchange): its index the thread's own t, or
+    /// its partner t ^ m (`t ^ m`, `t + m` under a test of bit m clear, each
+    /// masked by W - 1 or with m below W), W the workgroup's threads, a power
+    /// of two, one axis; m a workgroup-uniform power of two (or zero) by its
+    /// form; under an enclosing test that only the lower thread of each pair
+    /// passes, `(t ^ m) > t` or `(t & m) == 0u`. Some(m's identity) then.
+    fn partner_of(&mut self, ptr: Handle<Expression>) -> Option<String> {
+        let fr = self.frames.len().checked_sub(1)?;
+        let f = self.frames[fr].func;
+        let w = i128::from(self.wg[0]) * i128::from(self.wg[1]) * i128::from(self.wg[2]);
+        if self.wg[1] != 1 || self.wg[2] != 1 || w < 2 || w & (w - 1) != 0 {
+            return None;
+        }
+        let Expression::Access { index, .. } = &f.expressions[ptr] else { return None };
+        let t_lin = Abs::Lin(Lin::var(Var::Lid(0), Poly::konst(1)));
+        let is_t = |an: &mut Self, e: Handle<Expression>| an.eval(fr, e) == t_lin;
+        let lit = |e: Handle<Expression>| match &f.expressions[e] {
+            Expression::Literal(naga::Literal::U32(v)) => Some(i128::from(*v)),
+            Expression::Literal(naga::Literal::I32(v)) => Some(i128::from(*v)),
+            _ => None,
+        };
+        // The index without a mask by W - 1.
+        let (inner, masked) = match &f.expressions[*index] {
+            Expression::Binary { op: BinaryOperator::And, left, right } if lit(*right) == Some(w - 1) => (*left, true),
+            Expression::Binary { op: BinaryOperator::And, left, right } if lit(*left) == Some(w - 1) => (*right, true),
+            _ => (*index, false),
+        };
+        // The guards: each one's m and whether it is the bit test.
+        let guards: Vec<(Handle<Expression>, bool)> = self.guards.iter().filter(|(g, _)| *g == fr).map(|(_, c)| *c).collect::<Vec<_>>().into_iter().filter_map(|c| {
+            match &f.expressions[c] {
+                Expression::Binary { op: BinaryOperator::Greater, left, right } | Expression::Binary { op: BinaryOperator::Less, left: right, right: left } => match &f.expressions[*left] {
+                    Expression::Binary { op: BinaryOperator::ExclusiveOr, left: a, right: b } if is_t(self, *right) => {
+                        if is_t(self, *a) { Some((*b, false)) } else if is_t(self, *b) { Some((*a, false)) } else { None }
+                    }
+                    _ => None,
+                },
+                Expression::Binary { op: BinaryOperator::Equal, left, right } => {
+                    let (bits, zero) = if lit(*right) == Some(0) { (*left, true) } else { (*right, lit(*left) == Some(0)) };
+                    match (&f.expressions[bits], zero) {
+                        (Expression::Binary { op: BinaryOperator::And, left: a, right: b }, true) => {
+                            if is_t(self, *a) { Some((*b, true)) } else if is_t(self, *b) { Some((*a, true)) } else { None }
+                        }
+                        _ => None,
+                    }
+                }
+                _ => None,
+            }
+        }).collect();
+        let key = |an: &mut Self, m: Handle<Expression>| -> Option<String> {
+            match an.eval(fr, m) {
+                Abs::Lin(l) if an.lin_uni(&l) => Some(format!("{l:?}")),
+                Abs::Other(i, id) if i.uni => Some(format!("#{id}")),
+                _ => None,
+            }
+        };
+        let m = if is_t(self, inner) {
+            // The thread's own element: under any exchange guard.
+            *guards.first().map(|(m, _)| m)?
+        } else {
+            let (m, needs_bit) = match &f.expressions[inner] {
+                Expression::Binary { op: BinaryOperator::ExclusiveOr, left, right } => (if is_t(self, *left) { *right } else if is_t(self, *right) { *left } else { return None }, false),
+                Expression::Binary { op: BinaryOperator::Add, left, right } => (if is_t(self, *left) { *right } else if is_t(self, *right) { *left } else { return None }, true),
+                _ => return None,
+            };
+            let mk = key(self, m)?;
+            let guarded = guards.iter().any(|(g, bit)| (!needs_bit || *bit) && key(self, *g).as_deref() == Some(mk.as_str()));
+            if !guarded {
+                return None;
+            }
+            if !masked {
+                let below = match self.eval(fr, m) {
+                    Abs::Lin(l) => self.range(&l, &self.facts.clone()).1 < w,
+                    _ => false,
+                };
+                if !below {
+                    return None;
+                }
+            }
+            m
+        };
+        if !Self::power_of_two(f, m, 0) {
+            return None;
+        }
+        key(self, m)
+    }
+
+    /// Whether an expression is a power of two or zero by its form: a
+    /// literal, `1u << x`, a power of two shifted right, and a local whose
+    /// initialiser and every store are so (a halving or doubling step).
+    fn power_of_two(f: &Function, e: Handle<Expression>, depth: usize) -> bool {
+        if depth > 8 {
+            return false;
+        }
+        let rec = |x: Handle<Expression>| Self::power_of_two(f, x, depth + 1);
+        match &f.expressions[e] {
+            Expression::Literal(naga::Literal::U32(v)) => v & v.wrapping_sub(1) == 0,
+            // (`u32(1u << k)`, the kingdom's rendering: a u32 kept a u32.)
+            Expression::As { expr, kind: ScalarKind::Uint, .. } => rec(*expr),
+            Expression::Binary { op: BinaryOperator::ShiftLeft | BinaryOperator::ShiftRight, left, .. } => rec(*left),
+            Expression::Binary { op: BinaryOperator::Multiply | BinaryOperator::Divide, left, right } => rec(*left) && matches!(&f.expressions[*right], Expression::Literal(naga::Literal::U32(2))),
+            Expression::Load { pointer } => {
+                let Expression::LocalVariable(l) = &f.expressions[*pointer] else { return false };
+                let init = f.local_variables[*l].init.is_none_or(&rec);
+                let mut stores = Vec::new();
+                fn walk(b: &Block, f: &Function, l: Handle<naga::LocalVariable>, out: &mut Vec<Handle<Expression>>) {
+                    for s in b.iter() {
+                        match s {
+                            Statement::Store { pointer, value } if matches!(f.expressions[*pointer], Expression::LocalVariable(x) if x == l) => out.push(*value),
+                            Statement::Block(x) => walk(x, f, l, out),
+                            Statement::If { accept, reject, .. } => {
+                                walk(accept, f, l, out);
+                                walk(reject, f, l, out);
+                            }
+                            Statement::Loop { body, continuing, .. } => {
+                                walk(body, f, l, out);
+                                walk(continuing, f, l, out);
+                            }
+                            Statement::Switch { cases, .. } => cases.iter().for_each(|c| walk(&c.body, f, l, out)),
+                            _ => {}
+                        }
+                    }
+                }
+                walk(&f.body, f, *l, &mut stores);
+                // (A store of the local shifted: its own power of two.)
+                let shifted_self = |v: Handle<Expression>| matches!(&f.expressions[v], Expression::Binary { op: BinaryOperator::ShiftLeft | BinaryOperator::ShiftRight | BinaryOperator::Multiply | BinaryOperator::Divide, left, .. } if matches!(&f.expressions[*left], Expression::Load { pointer: p } if matches!(f.expressions[*p], Expression::LocalVariable(x) if x == *l)));
+                init && stores.iter().all(|v| shifted_self(*v) && Self::power_of_two_step(f, *v) || (!shifted_self(*v) && rec(*v)))
+            }
+            _ => false,
+        }
+    }
+
+    /// A store `x << c`, `x >> c`, `x * 2u`, `x / 2u` of a local into itself.
+    fn power_of_two_step(f: &Function, v: Handle<Expression>) -> bool {
+        match &f.expressions[v] {
+            Expression::Binary { op: BinaryOperator::ShiftLeft | BinaryOperator::ShiftRight, .. } => true,
+            Expression::Binary { op: BinaryOperator::Multiply | BinaryOperator::Divide, right, .. } => matches!(&f.expressions[*right], Expression::Literal(naga::Literal::U32(2))),
+            _ => false,
+        }
+    }
+
     /// A load's pointer expression and its function, for arena mode.
     fn load_access(&self, fr: usize, h: Handle<Expression>) -> Option<(usize, Handle<Expression>)> {
         let f = self.frames[fr].func;
@@ -1635,7 +1785,8 @@ impl<'m> An<'m> {
                         let kind = if self.atomic_global(g) { Kind::Atomic } else { Kind::Read };
                         let (alloc, idx) = self.flat_index(g, &p.path);
                         let key = format!("{}:{}", self.frames[fr].ctx, h.index());
-                        self.site(key, &alloc, kind, idx, true, None);
+                        let access = self.load_access(fr, h);
+                        self.site(key, &alloc, kind, idx, true, access);
                         self.other(false, false, false)
                     }
                     _ => self.other(false, false, false),
@@ -1679,7 +1830,8 @@ impl<'m> An<'m> {
             (Ok(l), _) => format!("{kind:?} {alloc}[{}]", self.show_lin(l)),
             (Err(_), _) => format!("{kind:?} {alloc}[?]"),
         };
-        let s = Site { alloc: buf, kind, form, facts: self.facts.clone(), what, access, form_in_bounds };
+        let partner = if workgroup { access.and_then(|(_, ptr)| self.partner_of(ptr)) } else { None };
+        let s = Site { alloc: buf, kind, form, facts: self.facts.clone(), what, access, form_in_bounds, partner };
         if workgroup {
             let id = match self.wg_ix.get(&key) {
                 Some(&i) => i,
@@ -1692,6 +1844,22 @@ impl<'m> An<'m> {
             let open: Vec<usize> = self.wg_open.iter().copied().collect();
             let pair = |an: &mut Self, key: (usize, usize)| {
                 let equal: BTreeSet<u32> = an.loops.iter().filter(|(_, barrier, before)| *barrier && !before.contains(&key.0) && !before.contains(&key.1)).flat_map(|(c, _, _)| c.iter().copied()).collect();
+                // THE PAIR EXCHANGE: two accesses of one exchange (the same m)
+                // in one pass of the innermost loop, which has a barrier each
+                // pass: the pairs {t, t ^ m} partition the workgroup and only
+                // each pair's lower thread acts, so two threads never meet.
+                let same_pass = an.loops.last().is_some_and(|(_, barrier, before)| *barrier && !before.contains(&key.0) && !before.contains(&key.1));
+                let (pa, pb) = (an.wg_sites[key.0].partner.clone(), an.wg_sites[key.1].partner.clone());
+                let exchange = same_pass && pa.is_some() && pa == pb;
+                match (an.wg_pairs.contains(&key), exchange) {
+                    (false, true) => {
+                        an.wg_partner.insert(key);
+                    }
+                    (_, false) => {
+                        an.wg_partner.remove(&key);
+                    }
+                    (true, true) => {}
+                }
                 an.wg_pairs.insert(key);
                 // (A pair met more than once keeps the counters equal every time.)
                 match an.wg_equal.get_mut(&key) {
@@ -1830,7 +1998,9 @@ impl<'m> An<'m> {
                 // array, paired across the branches as a race, 2026-10-17).
                 // Under a test that is not uniform both branches run at once.
                 let open_before = self.wg_open.clone();
+                self.guards.push((fr, *condition));
                 let ft_a = self.block(fr, accept);
+                self.guards.pop();
                 let open_a = if cu { std::mem::replace(&mut self.wg_open, open_before) } else { BTreeSet::new() };
                 let (env_a, priv_a) = (std::mem::replace(&mut self.env, saved_env), std::mem::replace(&mut self.privates, saved_priv));
                 self.facts.truncate(base);
@@ -2100,7 +2270,8 @@ impl<'m> An<'m> {
                         // (atomicStore is a Store to an atomic: an atomic access.)
                         let kind = if self.atomic_global(g) { Kind::Atomic } else { kind };
                         let (alloc, idx) = self.flat_index(g, &p.path);
-                        self.site(ctx.to_string(), &alloc, kind, idx, true, None);
+                        let access = ptr.map(|h| (self.frames[fr].func as *const Function as usize, h));
+                        self.site(ctx.to_string(), &alloc, kind, idx, true, access);
                     }
                     _ => {}
                 }
@@ -3126,6 +3297,8 @@ fn check_entry(module: &Module, contract: &Contract, entry: &str) -> Result<Repo
         wg_open: BTreeSet::new(),
         wg_pairs: BTreeSet::new(),
         wg_equal: BTreeMap::new(),
+        wg_partner: BTreeSet::new(),
+        guards: Vec::new(),
         loops: Vec::new(),
         errors: Vec::new(),
         frames: Vec::new(),
@@ -3223,7 +3396,7 @@ fn check_entry(module: &Module, contract: &Contract, entry: &str) -> Result<Repo
         let (a, b) = (&an.wg_sites[i], &an.wg_sites[j]);
         report.pairs += 1;
         let equal = an.wg_equal.get(&(i, j)).cloned().unwrap_or_default();
-        if !an.disjoint_with(a, b, true, true, &equal) {
+        if !an.wg_partner.contains(&(i, j)) && !an.disjoint_with(a, b, true, true, &equal) {
             return Err(unsafe_("workgroup_memory_race", format!("{} and {} may touch one element in two invocations of a workgroup with no barrier between", a.what, b.what)));
         }
     }
@@ -3853,11 +4026,14 @@ mod tests {
     /// `s = s >> 1u`, a barrier each pass: s is a counter of the loop (the
     /// same in both invocations of a pair), t < s puts t in [0, s) and t + s
     /// in [s, 2s), and the mask keeps t + s (at most 63). The step off by one
-    /// (`t <= s`) races. (The butterfly over bit k and the bitonic
-    /// compare-exchange over i ^ j are still turned away: the proof has no
-    /// form for a bit test or an exclusive or yet; asserted so.)
+    /// (`t <= s`) races. THE PAIR EXCHANGES: the butterfly over bit k
+    /// (`if ((t & b) == 0u)` exchanging w[t] and w[(t + b) & 63u], b = 1u <<
+    /// k) and the bitonic compare-exchange (`p = t ^ j`, `if (p > t)`, j a
+    /// halving power of two) are proved by the pair lemma: {t, t ^ m}
+    /// partition the workgroup and only each pair's lower thread acts; a
+    /// test that lets both act, and a partner at t + 2b, race.
     #[test]
-    fn tree_reductions_are_proved_and_their_off_by_one_races() {
+    fn tree_reductions_and_pair_exchanges_are_proved_and_their_near_misses_race() {
         let k = |body: &str| format!("@group(0) @binding(0) var<storage, read> keys: array<f32>;\n@group(0) @binding(1) var<storage, read_write> out: array<f32>;\nvar<workgroup> w: array<f32, 64>;\n@compute @workgroup_size(64, 1, 1)\nfn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) wid: vec3<u32>) {{\n    let t = lid.x;\n    w[t] = keys[gid.x];\n    workgroupBarrier();\n{body}\n    if (t == 0u) {{ out[wid.x] = w[0u]; }}\n}}\n");
         let c = Contract::parse("workgroups x 1 64\nworkgroups y 1 1\nworkgroups z 1 1\n").unwrap();
         let shifted = "    for (var k = 0u; k < 6u; k = k + 1u) {\n        let s = 32u >> k;\n        if (t < s) { w[t] = w[t] + w[(t + s) & 63u]; }\n        workgroupBarrier();\n    }";
@@ -3868,8 +4044,18 @@ mod tests {
         proved(&k(halving), &c);
         assert_eq!(rule(&k(&shifted.replace("if (t < s)", "if (t <= s)")), &c), "workgroup_memory_race");
         assert_eq!(rule(&k(&halving.replace("if (t < s)", "if (t <= s)")), &c), "workgroup_memory_race");
-        assert_eq!(rule(&k(butterfly), &c), "workgroup_memory_race");
-        assert_eq!(rule(&k(bitonic), &c), "workgroup_memory_race");
+        // THE PAIR EXCHANGES: the butterfly over bit k and the bitonic
+        // compare-exchange over i ^ j are proved; a butterfly whose test
+        // lets both threads of a pair act (`!= 1u` for a bit above 1), and a
+        // compare-exchange every thread makes, race.
+        proved(&k(butterfly), &c);
+        proved(&k(bitonic), &c);
+        assert_eq!(rule(&k(&butterfly.replace("(t & b) == 0u", "(t & b) != 1u")), &c), "workgroup_memory_race");
+        assert_eq!(rule(&k(&bitonic.replace("if (p > t) {", "if (p != t) {")), &c), "workgroup_memory_race");
+        assert_eq!(rule(&k(&butterfly.replace("w[(t + b) & 63u]", "w[(t + b + b) & 63u]")), &c), "workgroup_memory_race");
+        // As the kingdom renders the butterfly (v24 seed19): u32(1u << (k & 31u)).
+        let rendered = "    for (var k = 0u; k < 6u; k = k + 1u) {\n        if (((lid.x) & (u32((1u << ((u32(k)) & 31u))))) == 0u) {\n            let x = w[((lid.x) & 63u)];\n            let y = w[(((lid.x + u32((1u << ((u32(k)) & 31u))))) & 63u)];\n            w[((lid.x) & 63u)] = (x + y);\n            w[(((lid.x + u32((1u << ((u32(k)) & 31u))))) & 63u)] = (x - y);\n        }\n        workgroupBarrier();\n    }";
+        proved(&k(rendered), &c);
     }
 
     /// ROWS MODE, OFF BY DEFAULT (2026-10-17, Andrew's rule: build both and
