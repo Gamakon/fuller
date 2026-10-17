@@ -1277,6 +1277,11 @@ f("convert", "index_to_count", "As", ["<u32.index>"], "<u32.count>", "the same u
 # counters in workgroup memory: a search's selected ids, counts, a slot) ----
 for n in ("ue", "uf", "ug", "uh"):
     f("wg", n, "composite", [], "wgmem<u32>.index", f"workgroup array wg_{n} of u32")
+# (and four more f32 arrays, wg.e..wg.h, for a search's score lists beside its staged rows; a u32 read from
+# workgroup memory as a loop bound's value: a loop over the candidates a thread staged)
+for n in ("e", "f", "g", "h"):
+    f("wg", n, "composite", [], "wgmem<f32>.real", f"workgroup array wg_{n} of f32")
+f("wg", "get_u_safe", "composite", ["wgmem<u32>.index", "u32.wgindex"], "u32.xbound", "a[i] as a loop bound's value")
 
 
 # ---- a workgroup-uniform predicate and its tests (2026-10-17, run 1's seeds: `if (cfg.stage == 1u && wid.x <

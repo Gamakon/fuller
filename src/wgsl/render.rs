@@ -1783,6 +1783,10 @@ pub fn wgmem_var(kingdom: &WgslKingdom, w: &Tree) -> Result<&'static str, String
         "wg.b" => "wg_b",
         "wg.c" => "wg_c",
         "wg.d" => "wg_d",
+        "wg.e" => "wg_e",
+        "wg.f" => "wg_f",
+        "wg.g" => "wg_g",
+        "wg.h" => "wg_h",
         "wg.va" => "wg_va",
         "wg.vb" => "wg_vb",
         "wg.vc" => "wg_vc",
@@ -3011,7 +3015,7 @@ pub fn register_declarations_for(body: &str) -> String {
 /// The length of a workgroup or private array by its variable name.
 pub fn array_len(name: &str) -> u32 {
     match name {
-        "wg_a" | "wg_b" | "wg_c" | "wg_d" | "wg_ua" | "wg_ub" | "wg_uc" | "wg_ud" | "wg_ue" | "wg_uf" | "wg_ug" | "wg_uh" => WGMEM_LEN,
+        "wg_a" | "wg_b" | "wg_c" | "wg_d" | "wg_e" | "wg_f" | "wg_g" | "wg_h" | "wg_ua" | "wg_ub" | "wg_uc" | "wg_ud" | "wg_ue" | "wg_uf" | "wg_ug" | "wg_uh" => WGMEM_LEN,
         n if n.starts_with("wg_v2") => 1024,
         n if n.starts_with("wg_v") => WGVEC_LEN,
         "pa" | "pb" | "pc" | "pd" | "pe" | "pf" => 64,
@@ -3224,7 +3228,7 @@ fn sample_with(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, s
     // inserts, `h >> (k * 4u)`; the sampler draws a count's own rows.)
     // (Nor the four u32 arrays past the first four, for kernels that keep
     // more lists: the draws stay those of the floors below.)
-    let not_drawn = |r: &WgslRow| uniform_test_op(safe_base(&r.name)).is_some() || matches!(safe_base(&r.name), "stmt.if_uflag" | "stmt.if_else_uflag") || matches!(r.name.as_str(), "convert.index_to_count" | "wg.ue" | "wg.uf" | "wg.ug" | "wg.uh");
+    let not_drawn = |r: &WgslRow| uniform_test_op(safe_base(&r.name)).is_some() || matches!(safe_base(&r.name), "stmt.if_uflag" | "stmt.if_else_uflag") || matches!(r.name.as_str(), "convert.index_to_count" | "wg.ue" | "wg.uf" | "wg.ug" | "wg.uh" | "wg.e" | "wg.f" | "wg.g" | "wg.h") || (r.name == "wg.get_u_safe" && kingdom.dual(r.output).is_some_and(|d| d.form == "xbound"));
     let mut rows: Vec<WgslRow> = kingdom.rows.iter().filter(|r| !f16(&r.output) && !r.inputs.iter().any(f16) && !r.name.starts_with("stmt.return") && !r.name.starts_with("safe.mirror_of") && !r.name.starts_with("store.h_mirror") && !not_drawn(r) && !r.name.starts_with("wg.set")).cloned().collect();
     // The safe kingdom reads h only at the thread's own cell (load.h_safe):
     // the role's load.h, h at any index, is the plain kingdom's (the

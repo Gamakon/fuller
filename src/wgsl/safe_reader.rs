@@ -2017,6 +2017,10 @@ impl<'a> Ctx<'a> {
                 Err(_) => at("index.min", vec![a.clone(), self.xbound_of(b)?]),
             },
             ("index.clamp_to", [a, n]) if n.ty == count => at("index.clamp_to", vec![self.xbound_of(a)?, n.clone()]),
+            // A u32 read from workgroup memory (a list's length a thread staged):
+            // its value (the loop that reads it is at a conditional rung or
+            // uniform by its own proof).
+            ("wg.get_u_safe", [a, i]) => at("wg.get_u_safe", vec![a.clone(), i.clone()]),
             // A u32 read from an input binding (the interface's load row at
             // u32.xbound): its value, `for (j < n[0u])`.
             (name, [i]) if self.per_kernel_rows.iter().any(|p| p.0 == name && p.2 == xb) => at(name, vec![i.clone()]),
@@ -2453,8 +2457,11 @@ impl<'a> Ctx<'a> {
         // An array of u32 is an index array by its declared type too (a use
         // may read its element as bits or an opaque value; the get row's
         // index converts to what the use demands).
+        // (A workgroup u32 scalar is an array of one of them, `var<workgroup>
+        // wcode: u32;` read as bits: a seed of run 1, 2026-10-17.)
         let declared_u32 = self.module.global_variables.iter().find(|(_, g)| g.name.as_deref() == Some(name) && g.space == naga::AddressSpace::WorkGroup).is_some_and(|(_, g)| match &self.module.types[g.ty].inner {
             naga::TypeInner::Array { base, .. } => matches!(self.module.types[*base].inner, naga::TypeInner::Scalar(naga::Scalar { kind: naga::ScalarKind::Uint, width: 4 })),
+            naga::TypeInner::Scalar(naga::Scalar { kind: naga::ScalarKind::Uint, width: 4 }) => true,
             _ => false,
         });
         let elem_dual = match atomic {
@@ -2467,7 +2474,7 @@ impl<'a> Ctx<'a> {
         let candidates: &[&'static str] = match elem_dual {
             "atomic<u32>" => &["wg.au_a", "wg.au_b"],
             "atomic<i32>" => &["wg.ai_a", "wg.ai_b"],
-            "f32.real" => &["wg.a", "wg.b", "wg.c", "wg.d"],
+            "f32.real" => &["wg.a", "wg.b", "wg.c", "wg.d", "wg.e", "wg.f", "wg.g", "wg.h"],
             "vec2<f32>.real" => &["wg.v2a", "wg.v2b", "wg.v2c", "wg.v2d"],
             "u32.index" => &["wg.ua", "wg.ub", "wg.uc", "wg.ud", "wg.ue", "wg.uf", "wg.ug", "wg.uh"],
             "vec4<f32>.real" => &["wg.va", "wg.vb", "wg.vc", "wg.vd"],
@@ -6613,6 +6620,54 @@ fn search(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocati
         println!("random modules: {read_back} of {n} read back; {same} to the tree drawn (canonical); {fixpoint} to a fixpoint; {legal} pass every layer under a 1-D contract");
         assert!(failures.is_empty(), "{} of {n}:\n{}", failures.len(), failures.iter().take(10).cloned().collect::<Vec<_>>().join("\n"));
         assert!(same >= MODULE_AST_FLOOR && fixpoint >= MODULE_FIXPOINT_FLOOR && legal >= MODULE_LEGAL_FLOOR, "below the floors reached: AST {same} (floor {MODULE_AST_FLOOR}), fixpoint {fixpoint} ({MODULE_FIXPOINT_FLOOR}), legal {legal} ({MODULE_LEGAL_FLOOR})");
+    }
+
+    /// A SEARCH'S WORKGROUP STATE (2026-10-17, 3 of run 1's seeds): five f32
+    /// score lists, a workgroup u32 scalar read as bits (`var<workgroup>
+    /// wcode: u32;`), and a loop over the candidates a thread staged, bounded
+    /// by a workgroup u32 (`for (var i = 0u; i < wn[0]; i++)`). The module
+    /// reads, renders, validates, reads back to the same tree and passes
+    /// every layer.
+    #[test]
+    fn a_searchs_workgroup_lists_and_a_staged_count_read() {
+        let k = WgslKingdom::load_safe();
+        let contract = crate::wgsl::safety::Contract::parse("workgroups x 1 1024\nworkgroups y 1 1\nworkgroups z 1 1\n").unwrap();
+        let src = format!(
+            "{V24_BINDINGS}var<workgroup> s1: array<f32, 32>;
+var<workgroup> s2: array<f32, 32>;
+var<workgroup> s3: array<f32, 32>;
+var<workgroup> s4: array<f32, 32>;
+var<workgroup> s5: array<f32, 32>;
+var<workgroup> wcode: u32;
+var<workgroup> wn: array<u32, 1>;
+@compute @workgroup_size(32, 1, 1)
+fn ingest(@builtin(local_invocation_id) lid: vec3<u32>) {{
+    _ = atomicAdd(&index_u32[lid.x], 1u);
+}}
+@compute @workgroup_size(32, 1, 1)
+fn search(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) wid: vec3<u32>) {{
+    s1[lid.x] = 1.0; s2[lid.x] = 2.0; s3[lid.x] = 3.0; s4[lid.x] = 4.0; s5[lid.x] = 5.0;
+    if (lid.x == 0u) {{ wcode = atomicLoad(&index_u32[wid.x]) & 255u; wn[0] = atomicLoad(&index_u32[wid.x + 1u]) & 31u; }}
+    workgroupBarrier();
+    if (lid.x == 0u) {{
+        var best = 0u;
+        for (var i = 0u; i < wn[0]; i++) {{
+            if (s1[i] + s2[i] + s3[i] + s4[i] + s5[i] > 10.0) {{ best = i ^ (wcode >> 4u); }}
+        }}
+        cands[wid.x] = best;
+    }}
+}}
+"
+        );
+        let r = read_safe(&src, &k).unwrap_or_else(|e| panic!("{e}"));
+        let sx = r.tree.to_sexpr();
+        assert!(sx.contains("wg.e") && sx.contains("(wg.get_u_safe wg.u"), "{sx}");
+        let out = crate::wgsl::safe_karva::render_tree_with(&r.tree, &k, &r.role).unwrap_or_else(|e| panic!("{e}"));
+        validate_text(&out.text).unwrap_or_else(|e| panic!("{e}\n{}", out.text));
+        let back = read_safe(&out.text, &k).unwrap_or_else(|e| panic!("read back: {e}\n{}", out.text));
+        assert!(back.tree == r.tree, "the rendered text reads back to the same tree: {:?}\n{}", crate::wgsl::render::first_difference(&r.tree, &back.tree), out.text);
+        let checker = crate::wgsl::check::Checker::with_contract(&k, &r.role, &crate::wgsl::target::Target::recorded(), contract);
+        checker.check(&r.tree).unwrap_or_else(|e| panic!("{e}\n{}", out.text));
     }
 
     /// A BRANCH THAT RETURNS EARLY, AND A HELPER'S GUARDED RETURN AFTER ITS
