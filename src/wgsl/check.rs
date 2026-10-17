@@ -816,6 +816,14 @@ impl<'a> Checker<'a> {
             }
             // A test of two uniform values: its body keeps the enclosing control
             // (the operands' dual is the workgroup's uniform values).
+            // A test of a workgroup-uniform predicate: its bodies keep the control.
+            "stmt.if_uflag" | "stmt.if_else_uflag" if k.len() >= 2 => {
+                self.value(&k[0], cx);
+                let c = self.uniform(&k[0], cx);
+                for body in &k[1..] {
+                    self.walk_block(body, cx, ctrl && c);
+                }
+            }
             b if crate::wgsl::render::uniform_test_op(b).is_some() && (k.len() == 3 || k.len() == 4) => {
                 self.value(&k[0], cx);
                 self.value(&k[1], cx);

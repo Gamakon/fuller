@@ -1511,6 +1511,18 @@ impl<'a> Renderer<'a> {
                 let op = uniform_test_op(safe_base(&s.name)).unwrap_or("<=");
                 Ok(format!("    if (({a}) {op} ({b})) {{\n{}    }}\n", self.block(&kids[2], scope)?))
             }
+            // A test of a workgroup-uniform predicate: its bodies keep the rung.
+            "stmt.if_uflag" => {
+                n(2)?;
+                let c = self.value(&kids[0], scope)?;
+                Ok(format!("    if ({c}) {{\n{}    }}\n", self.block(&kids[1], scope)?))
+            }
+            "stmt.if_else_uflag" => {
+                n(3)?;
+                let c = self.value(&kids[0], scope)?;
+                let then = self.block(&kids[1], scope)?;
+                Ok(format!("    if ({c}) {{\n{then}    }} else {{\n{}    }}\n", self.block(&kids[2], scope)?))
+            }
             "stmt.if_else_ule" | "stmt.if_else_ueq" | "stmt.if_else_une" | "stmt.if_else_ult" => {
                 n(4)?;
                 let (a, b) = (self.value(&kids[0], scope)?, self.value(&kids[1], scope)?);
@@ -1783,6 +1795,10 @@ pub fn wgmem_var(kingdom: &WgslKingdom, w: &Tree) -> Result<&'static str, String
         "wg.ub" => "wg_ub",
         "wg.uc" => "wg_uc",
         "wg.ud" => "wg_ud",
+        "wg.ue" => "wg_ue",
+        "wg.uf" => "wg_uf",
+        "wg.ug" => "wg_ug",
+        "wg.uh" => "wg_uh",
         "wg.au_a" => "wg_au_a",
         "wg.au_b" => "wg_au_b",
         "wg.ai_a" => "wg_ai_a",
@@ -1977,6 +1993,21 @@ impl Renderer<'_> {
         match name {
             "uniform.of_lit" | "index.of_uniform" | "uniform.of_counter" | "uniform.of_tcounter" | "uniform.of_tcounter2" | "uniform.of_tcounter3" | "uniform.of_tcounter4" => return self.value(&v.kids[0], scope),
             "uniform.wid_x" | "uniform.wid_y" | "uniform.wid_z" => return Ok(format!("wid.{}", &name[name.len() - 1..])),
+            // A workgroup-uniform predicate: its comparison or logic.
+            "uflag.eq" | "uflag.ne" | "uflag.lt" | "uflag.le" | "uflag.gt" | "uflag.ge" | "uflag.and" | "uflag.or" if v.kids.len() == 2 => {
+                let op = match &name[6..] {
+                    "eq" => "==",
+                    "ne" => "!=",
+                    "lt" => "<",
+                    "le" => "<=",
+                    "gt" => ">",
+                    "ge" => ">=",
+                    "and" => "&&",
+                    _ => "||",
+                };
+                return Ok(format!("(({}) {op} ({}))", self.value(&v.kids[0], scope)?, self.value(&v.kids[1], scope)?));
+            }
+            "uflag.not" if v.kids.len() == 1 => return Ok(format!("(!({}))", self.value(&v.kids[0], scope)?)),
             "uniform.nwg_x" | "uniform.nwg_y" | "uniform.nwg_z" => return Ok(format!("nwg.{}", &name[name.len() - 1..])),
             "uniform.subgroup_size" => return Ok("sg_size".into()),
             "uniform.num_subgroups" => return Ok("sg_count".into()),
@@ -2980,7 +3011,7 @@ pub fn register_declarations_for(body: &str) -> String {
 /// The length of a workgroup or private array by its variable name.
 pub fn array_len(name: &str) -> u32 {
     match name {
-        "wg_a" | "wg_b" | "wg_c" | "wg_d" | "wg_ua" | "wg_ub" | "wg_uc" | "wg_ud" => WGMEM_LEN,
+        "wg_a" | "wg_b" | "wg_c" | "wg_d" | "wg_ua" | "wg_ub" | "wg_uc" | "wg_ud" | "wg_ue" | "wg_uf" | "wg_ug" | "wg_uh" => WGMEM_LEN,
         n if n.starts_with("wg_v2") => 1024,
         n if n.starts_with("wg_v") => WGVEC_LEN,
         "pa" | "pb" | "pc" | "pd" | "pe" | "pf" => 64,
@@ -3189,8 +3220,12 @@ fn sample_with(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, s
     // guard, in a kernel that runs with the whole H; 2026-10-14.)
     // (Nor a uniform test whose body keeps its rung, stmt.if_ule and its kin:
     // their text is a plain if's; the rules that need one write it.)
-    let uniform_test = |r: &WgslRow| uniform_test_op(safe_base(&r.name)).is_some();
-    let mut rows: Vec<WgslRow> = kingdom.rows.iter().filter(|r| !f16(&r.output) && !r.inputs.iter().any(f16) && !r.name.starts_with("stmt.return") && !r.name.starts_with("safe.mirror_of") && !r.name.starts_with("store.h_mirror") && !uniform_test(r) && !r.name.starts_with("wg.set")).cloned().collect();
+    // (Nor the index read as a count: a conversion the reader's conform
+    // inserts, `h >> (k * 4u)`; the sampler draws a count's own rows.)
+    // (Nor the four u32 arrays past the first four, for kernels that keep
+    // more lists: the draws stay those of the floors below.)
+    let not_drawn = |r: &WgslRow| uniform_test_op(safe_base(&r.name)).is_some() || matches!(safe_base(&r.name), "stmt.if_uflag" | "stmt.if_else_uflag") || matches!(r.name.as_str(), "convert.index_to_count" | "wg.ue" | "wg.uf" | "wg.ug" | "wg.uh");
+    let mut rows: Vec<WgslRow> = kingdom.rows.iter().filter(|r| !f16(&r.output) && !r.inputs.iter().any(f16) && !r.name.starts_with("stmt.return") && !r.name.starts_with("safe.mirror_of") && !r.name.starts_with("store.h_mirror") && !not_drawn(r) && !r.name.starts_with("wg.set")).cloned().collect();
     // The safe kingdom reads h only at the thread's own cell (load.h_safe):
     // the role's load.h, h at any index, is the plain kingdom's (the
     // legality checker: 25 of 1,000 random safe genes read another thread's

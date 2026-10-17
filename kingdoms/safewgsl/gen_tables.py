@@ -157,10 +157,11 @@ FORMS = {
     # module over shared bindings): the root of a gene whose interface names two to four entry points, one safe
     # kernel each, in the interface's order. Nothing takes it, so a module never nests and a single-entry gene
     # (kernel.safe) is never mutated into one.
+    "uflag": ("a predicate the same for every thread of the workgroup: comparisons of uniform values and their logic (a test whose body keeps its rung)", ["bool"]),
     "module": ("a module of two to four entry points over the interface's shared bindings, one safe kernel each, in the interface's order: a gene's root", []),
 }
 
-SAFE_FORMS = ["module", "wgown", "mirror", "rowbase", "colbase", "rowbases", "colbases", "rowbaseg", "colbaseg", "indexw", "uniformw", "xbound", "uniform", "boundu", "pindex16", "wgaindex", "wgv2index", "wglen", "decl", "decls", "lidx", "threadrows", "threadcols", "threadrowg", "threadcolg", "gid", "lid", "wid", "rowid", "colid", "O0", "O1", "O2", "O3", "O4", "tcounter4", "L5", "C5", "safe", "pindex", "boundx", "boundm", "boundd", "boundrows", "lit64", "lit4096", "counter", "tcounter", "tcounter2", "L3", "C3", "tcounter3", "L4", "C4", "wgvindex", "bound", "threadrow", "threadcol", "cell", "phi", "wgindex", "L0", "L1", "L2", "C0", "C1", "C2"]
+SAFE_FORMS = ["uflag", "module", "wgown", "mirror", "rowbase", "colbase", "rowbases", "colbases", "rowbaseg", "colbaseg", "indexw", "uniformw", "xbound", "uniform", "boundu", "pindex16", "wgaindex", "wgv2index", "wglen", "decl", "decls", "lidx", "threadrows", "threadcols", "threadrowg", "threadcolg", "gid", "lid", "wid", "rowid", "colid", "O0", "O1", "O2", "O3", "O4", "tcounter4", "L5", "C5", "safe", "pindex", "boundx", "boundm", "boundd", "boundrows", "lit64", "lit4096", "counter", "tcounter", "tcounter2", "L3", "C3", "tcounter3", "L4", "C4", "wgvindex", "bound", "threadrow", "threadcol", "cell", "phi", "wgindex", "L0", "L1", "L2", "C0", "C1", "C2"]
 RUNGS = ["L0", "L1", "L2", "L3", "L4", "C0", "C1", "C2", "C3", "C4"]
 # The fifth rung came after every other row (run A, 2026-10-11); its rows are appended at the end so
 # every earlier ref stands, and it is kept out of RUNGS for that reason.
@@ -195,6 +196,7 @@ FALLBACK = {
     "uniformw": "0u", "xbound": "1u", "indexw": "0u", "mirror": "the mirror of the thread's own first cell", "wgown": "the thread's own first element (lidx)",
     "rowbase": "the thread's own first row", "colbase": "the thread's own first column", "rowbases": "the thread's own first row", "colbases": "the thread's own first column", "rowbaseg": "the thread's own first row", "colbaseg": "the thread's own first column",
     "module": "an empty kernel at each of the interface's entry points",
+    "uflag": "false",
 }
 
 # The fallback by machine: the lane's 32-bit pattern as an unsigned integer. Vectors and matrices
@@ -223,6 +225,7 @@ FALLBACK_BITS = {
     "uniformw": 0, "xbound": 1, "indexw": 0, "mirror": 0, "wgown": 0,
     "rowbase": 0, "colbase": 0, "rowbases": 0, "colbases": 0, "rowbaseg": 0, "colbaseg": 0,
     "module": 0,
+    "uflag": 0,
 }
 assert set(FALLBACK_BITS) == set(FALLBACK), "every form with a fallback needs its bits, and no more"
 
@@ -354,6 +357,8 @@ def build_types():
     add("u32", "wgown", 1, FORMS["wgown"][0])
     # ---- several entry points in one module (2026-10-17) ----
     add("kernel", "module", 0, FORMS["module"][0])
+    # ---- a workgroup-uniform predicate (2026-10-17) ----
+    add("bool", "uflag", 1, FORMS["uflag"][0])
     return rows
 
 
@@ -1263,6 +1268,28 @@ for op, wgsl in (("ueq", "=="), ("une", "!="), ("ult", "<")):
 for op, wgsl in (("ule", "<="), ("ueq", "=="), ("une", "!="), ("ult", "<")):
     for r in ("L0", "L1", "L2", "L3", "L4", "L5"):
         f("stmt", f"if_else_{op}_" + r, "composite", ["u32.uniform", "u32.uniform", "block." + r, "block." + r], "stmt." + r, f"arity 4: if (a {wgsl} b) {{ ... }} else {{ ... }} over workgroup-uniform values: both bodies keep the rung")
+
+
+# ---- an index read as a count (2026-10-17, 10 of run 1's 73 seeds: a shift by index arithmetic, `h >> (k * 4u)`,
+# whose count operand is u32.count): the same u32 lanes, the conversion conform inserts. ----
+f("convert", "index_to_count", "As", ["<u32.index>"], "<u32.count>", "the same u32 lanes read as a count (a shift's count computed as an index)")
+# ---- four more workgroup arrays of indices (2026-10-17, 3 of run 1's seeds keep six to eight u32 lists and
+# counters in workgroup memory: a search's selected ids, counts, a slot) ----
+for n in ("ue", "uf", "ug", "uh"):
+    f("wg", n, "composite", [], "wgmem<u32>.index", f"workgroup array wg_{n} of u32")
+
+
+# ---- a workgroup-uniform predicate and its tests (2026-10-17, run 1's seeds: `if (cfg.stage == 1u && wid.x <
+# NC) { ..barrier.. }`, `else if (p == 1u || p == 3u)`): comparisons of uniform values, their and, or and not,
+# and the if and if-else whose bodies keep their rung over one. No sampler draws them (as stmt.if_ule). ----
+for op, wgsl in (("eq", "=="), ("ne", "!="), ("lt", "<"), ("le", "<="), ("gt", ">"), ("ge", ">=")):
+    f("uflag", op, "composite", ["u32.uniform", "u32.uniform"], "bool.uflag", f"a {wgsl} b of workgroup-uniform values")
+f("uflag", "and", "composite", ["bool.uflag", "bool.uflag"], "bool.uflag", "a && b")
+f("uflag", "or", "composite", ["bool.uflag", "bool.uflag"], "bool.uflag", "a || b")
+f("uflag", "not", "composite", ["bool.uflag"], "bool.uflag", "!a")
+for r in ("L0", "L1", "L2", "L3", "L4", "L5"):
+    f("stmt", "if_uflag_" + r, "composite", ["bool.uflag", "block." + r], "stmt." + r, "if (c) { ... } over a workgroup-uniform predicate: the body keeps the rung")
+    f("stmt", "if_else_uflag_" + r, "composite", ["bool.uflag", "block." + r, "block." + r], "stmt." + r, "arity 3: if (c) { ... } else { ... } over a workgroup-uniform predicate: both bodies keep the rung")
 
 
 def write_tsv(path, header, rows):

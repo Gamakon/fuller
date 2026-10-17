@@ -3088,4 +3088,50 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 | F1645 | `stmt.if_else_ult_L4` | `composite` | `u32.uniform u32.uniform block.L4 block.L4` | `stmt.L4` | 4 | arity 4: if (a < b) { ... } else { ... } over workgroup-uniform values: both bodies keep the rung |
 | F1646 | `stmt.if_else_ult_L5` | `composite` | `u32.uniform u32.uniform block.L5 block.L5` | `stmt.L5` | 4 | arity 4: if (a < b) { ... } else { ... } over workgroup-uniform values: both bodies keep the rung |
 
-1646 function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Storage-buffer atomics are an interface's per-kernel rows, not rows of this table. Deliberately absent: atomic compare-exchange (naga 0.20's Metal backend lacks it), subgroupBallot, images, derivatives, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.
+## class `convert`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F1647 | `convert.index_to_count` | `As` | `<u32.index>` | `<u32.count>` | 1 | the same u32 lanes read as a count (a shift's count computed as an index) |
+
+## class `wg`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F1648 | `wg.ue` | `composite` | `-` | `wgmem<u32>.index` | 0 | workgroup array wg_ue of u32 |
+| F1649 | `wg.uf` | `composite` | `-` | `wgmem<u32>.index` | 0 | workgroup array wg_uf of u32 |
+| F1650 | `wg.ug` | `composite` | `-` | `wgmem<u32>.index` | 0 | workgroup array wg_ug of u32 |
+| F1651 | `wg.uh` | `composite` | `-` | `wgmem<u32>.index` | 0 | workgroup array wg_uh of u32 |
+
+## class `uflag`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F1652 | `uflag.eq` | `composite` | `u32.uniform u32.uniform` | `bool.uflag` | 2 | a == b of workgroup-uniform values |
+| F1653 | `uflag.ne` | `composite` | `u32.uniform u32.uniform` | `bool.uflag` | 2 | a != b of workgroup-uniform values |
+| F1654 | `uflag.lt` | `composite` | `u32.uniform u32.uniform` | `bool.uflag` | 2 | a < b of workgroup-uniform values |
+| F1655 | `uflag.le` | `composite` | `u32.uniform u32.uniform` | `bool.uflag` | 2 | a <= b of workgroup-uniform values |
+| F1656 | `uflag.gt` | `composite` | `u32.uniform u32.uniform` | `bool.uflag` | 2 | a > b of workgroup-uniform values |
+| F1657 | `uflag.ge` | `composite` | `u32.uniform u32.uniform` | `bool.uflag` | 2 | a >= b of workgroup-uniform values |
+| F1658 | `uflag.and` | `composite` | `bool.uflag bool.uflag` | `bool.uflag` | 2 | a && b |
+| F1659 | `uflag.or` | `composite` | `bool.uflag bool.uflag` | `bool.uflag` | 2 | a || b |
+| F1660 | `uflag.not` | `composite` | `bool.uflag` | `bool.uflag` | 1 | !a |
+
+## class `stmt`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F1661 | `stmt.if_uflag_L0` | `composite` | `bool.uflag block.L0` | `stmt.L0` | 2 | if (c) { ... } over a workgroup-uniform predicate: the body keeps the rung |
+| F1662 | `stmt.if_else_uflag_L0` | `composite` | `bool.uflag block.L0 block.L0` | `stmt.L0` | 3 | arity 3: if (c) { ... } else { ... } over a workgroup-uniform predicate: both bodies keep the rung |
+| F1663 | `stmt.if_uflag_L1` | `composite` | `bool.uflag block.L1` | `stmt.L1` | 2 | if (c) { ... } over a workgroup-uniform predicate: the body keeps the rung |
+| F1664 | `stmt.if_else_uflag_L1` | `composite` | `bool.uflag block.L1 block.L1` | `stmt.L1` | 3 | arity 3: if (c) { ... } else { ... } over a workgroup-uniform predicate: both bodies keep the rung |
+| F1665 | `stmt.if_uflag_L2` | `composite` | `bool.uflag block.L2` | `stmt.L2` | 2 | if (c) { ... } over a workgroup-uniform predicate: the body keeps the rung |
+| F1666 | `stmt.if_else_uflag_L2` | `composite` | `bool.uflag block.L2 block.L2` | `stmt.L2` | 3 | arity 3: if (c) { ... } else { ... } over a workgroup-uniform predicate: both bodies keep the rung |
+| F1667 | `stmt.if_uflag_L3` | `composite` | `bool.uflag block.L3` | `stmt.L3` | 2 | if (c) { ... } over a workgroup-uniform predicate: the body keeps the rung |
+| F1668 | `stmt.if_else_uflag_L3` | `composite` | `bool.uflag block.L3 block.L3` | `stmt.L3` | 3 | arity 3: if (c) { ... } else { ... } over a workgroup-uniform predicate: both bodies keep the rung |
+| F1669 | `stmt.if_uflag_L4` | `composite` | `bool.uflag block.L4` | `stmt.L4` | 2 | if (c) { ... } over a workgroup-uniform predicate: the body keeps the rung |
+| F1670 | `stmt.if_else_uflag_L4` | `composite` | `bool.uflag block.L4 block.L4` | `stmt.L4` | 3 | arity 3: if (c) { ... } else { ... } over a workgroup-uniform predicate: both bodies keep the rung |
+| F1671 | `stmt.if_uflag_L5` | `composite` | `bool.uflag block.L5` | `stmt.L5` | 2 | if (c) { ... } over a workgroup-uniform predicate: the body keeps the rung |
+| F1672 | `stmt.if_else_uflag_L5` | `composite` | `bool.uflag block.L5 block.L5` | `stmt.L5` | 3 | arity 3: if (c) { ... } else { ... } over a workgroup-uniform predicate: both bodies keep the rung |
+
+1672 function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Storage-buffer atomics are an interface's per-kernel rows, not rows of this table. Deliberately absent: atomic compare-exchange (naga 0.20's Metal backend lacks it), subgroupBallot, images, derivatives, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.

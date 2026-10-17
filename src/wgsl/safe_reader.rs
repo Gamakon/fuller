@@ -1786,6 +1786,38 @@ impl<'a> Ctx<'a> {
     /// thread id, a register, a load): the cfg fields, literals, the
     /// workgroup's id, the grid's size, the subgroup size and count, and the
     /// index arithmetic of them.
+    /// A condition as a workgroup-uniform predicate (`bool.uflag`): a
+    /// comparison of two uniform values, and the and, or and not of such;
+    /// None for anything a thread's value or memory can change.
+    fn uniform_flag(&self, c: &Tree) -> Result<Option<Tree>, String> {
+        let uf = ty(self, "bool.uflag")?;
+        Ok(match (c.name.as_str(), c.kids.as_slice()) {
+            (n, [a, b]) if n.starts_with("compare.") && ["eq", "ne", "lt", "le", "gt", "ge"].contains(&&n[8..]) => match (self.uniform_bound_of(a)?, self.uniform_bound_of(b)?) {
+                (Some(a), Some(b)) => Some(Tree::new(&format!("uflag.{}", &n[8..]), uf, vec![a, b])),
+                _ => None,
+            },
+            ("logic.and" | "logic.or", [a, b]) => match (self.uniform_flag(a)?, self.uniform_flag(b)?) {
+                (Some(a), Some(b)) => Some(Tree::new(&format!("uflag.{}", &c.name[6..]), uf, vec![a, b])),
+                _ => None,
+            },
+            ("logic.not", [a]) => self.uniform_flag(a)?.map(|a| Tree::new("uflag.not", uf, vec![a])),
+            _ => None,
+        })
+    }
+
+    /// A uniform predicate as the plain flag it computes (a test at a
+    /// conditional rung): comparisons of the uniform values as indices.
+    fn flag_of_uniform(&self, f: &Tree) -> Result<Tree, String> {
+        let flag = ty(self, "bool.flag")?;
+        let index = |u: &Tree| -> Result<Tree, String> { Ok(Tree::new("index.of_uniform", ty(self, "u32.index")?, vec![u.clone()])) };
+        match (f.name.as_str(), f.kids.as_slice()) {
+            ("uflag.and" | "uflag.or", [a, b]) => Ok(Tree::new(&format!("logic.{}", &f.name[6..]), flag, vec![self.flag_of_uniform(a)?, self.flag_of_uniform(b)?])),
+            ("uflag.not", [a]) => Ok(Tree::new("logic.not", flag, vec![self.flag_of_uniform(a)?])),
+            (n, [a, b]) if n.starts_with("uflag.") => Ok(Tree::new(&format!("compare.{}", &n[6..]), flag, vec![index(a)?, index(b)?])),
+            _ => Err(format!("{} is not a uniform predicate", f.name)),
+        }
+    }
+
     fn uniform_of(&self, t: &Tree) -> Result<Option<Tree>, String> {
         let u = ty(self, "u32.uniform")?;
         // A product or a shift may wrap (u32.uniformw): no row takes it, so a
@@ -2365,7 +2397,7 @@ impl<'a> Ctx<'a> {
             "atomic<i32>" => &["wg.ai_a", "wg.ai_b"],
             "f32.real" => &["wg.a", "wg.b", "wg.c", "wg.d"],
             "vec2<f32>.real" => &["wg.v2a", "wg.v2b", "wg.v2c", "wg.v2d"],
-            "u32.index" => &["wg.ua", "wg.ub", "wg.uc", "wg.ud"],
+            "u32.index" => &["wg.ua", "wg.ub", "wg.uc", "wg.ud", "wg.ue", "wg.uf", "wg.ug", "wg.uh"],
             "vec4<f32>.real" => &["wg.va", "wg.vb", "wg.vc", "wg.vd"],
             other => return Err(format!("a workgroup array {name} of {other} has no safe spelling")),
         };
@@ -3043,6 +3075,16 @@ impl<'a> Ctx<'a> {
         // a conditional rung, the if of their comparison (the rest of a loop
         // body after a continue guard, an epilogue loop's statements: 10 of
         // 1,000 random trees, 2026-10-14).
+        if stem == "stmt.if_uflag" || stem == "stmt.if_else_uflag" {
+            let [f, bodies @ ..] = t.kids.as_slice() else { return Err(format!("{} with no children", t.name)) };
+            let c = format!("C{d}");
+            let row = if bodies.len() == 2 { "if_else" } else { "if" };
+            let mut kids = vec![self.flag_of_uniform(f)?];
+            for b in bodies {
+                kids.push(self.rerung(b, d)?);
+            }
+            return Ok(Tree::new(&format!("stmt.{row}_{c}"), ty(self, &format!("stmt.{c}"))?, kids));
+        }
         if let Some(cmp) = crate::wgsl::render::uniform_test_compare(stem) {
             let [x, y, bodies @ ..] = t.kids.as_slice() else { return Err(format!("{} with {} children", t.name, t.kids.len())) };
             let index = |u: &Tree| -> Result<Tree, String> { Ok(Tree::new("index.of_uniform", ty(self, "u32.index")?, vec![u.clone()])) };
@@ -3757,6 +3799,31 @@ impl<'a> Ctx<'a> {
                                 return Ok(Some(match b {
                                     None => Tree::new(&format!("stmt.if_{op}_{rung}"), st, vec![ux, uy, self.block(a, rung)?]),
                                     Some(b) => Tree::new(&format!("stmt.if_else_{op}_{rung}"), st, vec![ux, uy, self.block(a, rung)?, self.block(b?, rung)?]),
+                                }));
+                            }
+                        }
+                        // Any other test of workgroup-uniform values (`cfg.stage == 1u &&
+                        // wid.x < NC`, `p == 1u || p == 3u`, run 1's seeds) over a body
+                        // that holds a barrier: the uniform predicate, its bodies at the rung.
+                        if rung.starts_with('L') && !exits && !exits_else && needed {
+                            if let Some(flag) = self.uniform_flag(&c)? {
+                                self.tail = stmt_tail;
+                                path.push(0);
+                                let a = self.nested(|ctx, path| ctx.walk(accept, path, rung, 0), path);
+                                path.pop();
+                                let b = if has_else {
+                                    path.push(1);
+                                    let b = self.nested(|ctx, path| ctx.walk(reject, path, rung, 0), path);
+                                    path.pop();
+                                    Some(b)
+                                } else {
+                                    None
+                                };
+                                self.tail = block_tail;
+                                let a = a?;
+                                return Ok(Some(match b {
+                                    None => Tree::new(&format!("stmt.if_uflag_{rung}"), st, vec![flag, self.block(a, rung)?]),
+                                    Some(b) => Tree::new(&format!("stmt.if_else_uflag_{rung}"), st, vec![flag, self.block(a, rung)?, self.block(b?, rung)?]),
                                 }));
                             }
                         }
@@ -4672,7 +4739,11 @@ impl<'a> Ctx<'a> {
             None if item_loop => 0.0,
             None => return Err(format!("a loop whose counter {counter} enters with a value our reader does not know (only a literal or zero has a spelling)")),
         };
-        let (bound_tree, start) = if start == 0.0 || item_loop {
+        // (An item loop bounded by an expression may start at a literal too, as
+        // a tile loop does: `for (var kk = 1u; kk < n; kk++)`, 8 of run 1's
+        // seeds, 2026-10-17; its bound is n - 1, its counter read as 1 + t.)
+        let offset_items = item_loop && kind == "boundx" && !self.used_counters.contains(&counter);
+        let (bound_tree, start) = if start == 0.0 || (item_loop && !offset_items) {
             (bound_tree, 0.0)
         } else if kind == "lit64" {
             let n = literal_value(bound).unwrap_or(0.0);
@@ -4698,7 +4769,7 @@ impl<'a> Ctx<'a> {
             let expr = Tree::new("index.sub_floor", ty(self, "u32.xbound")?, vec![bound_tree.kids[0].clone(), Tree::literal("literal.index", index, start)]);
             (Tree::new("bound.of_index", bound_tree.ty, vec![expr]), start)
         };
-        if item_loop && entry.is_some_and(|v| v != 0.0) && !self.used_counters.contains(&counter) {
+        if item_loop && !offset_items && entry.is_some_and(|v| v != 0.0) && !self.used_counters.contains(&counter) {
             return Err(format!("the item loop's counter {counter} starts at {} (an item loop starts at 0)", entry.unwrap_or_default()));
         }
         // A do-while runs its body once before its first test: it is the
@@ -5319,7 +5390,11 @@ pub fn read_safe_literal(source: &str, kingdom: &WgslKingdom) -> Result<SafeRead
     for name in &role.entries {
         let ep = position(name)?;
         let declared = kernel.module.entry_points[ep].workgroup_size;
-        let grid = entry_grid_header(source, name).unwrap_or(((declared[0], declared[1], 1, 1), false));
+        // (A grid line whose workgroup is not the entry point's own is no line of
+        // this kernel's: a model copied the kingdom's text, `// entry ingest grid
+        // 16 16 1 1` over @workgroup_size(64, 1, 1), 3 of run 1's seeds; the
+        // entry point's own workgroup at 1 x 1 blocks.)
+        let grid = entry_grid_header(source, name).filter(|((x, y, _, _), _)| [*x, *y, 1] == declared).unwrap_or(((declared[0], declared[1], 1, 1), false));
         let (tree, n, regs, after) = read_entry(&at, ep, grid, arrays).map_err(|e| format!("entry point {name}: {e}"))?;
         arrays = after;
         notes.extend(n.into_iter().map(|n| format!("{name}: {n}")));
@@ -6449,6 +6524,72 @@ fn search(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocati
         println!("random modules: {read_back} of {n} read back; {same} to the tree drawn (canonical); {fixpoint} to a fixpoint; {legal} pass every layer under a 1-D contract");
         assert!(failures.is_empty(), "{} of {n}:\n{}", failures.len(), failures.iter().take(10).cloned().collect::<Vec<_>>().join("\n"));
         assert!(same >= MODULE_AST_FLOOR && fixpoint >= MODULE_FIXPOINT_FLOOR && legal >= MODULE_LEGAL_FLOOR, "below the floors reached: AST {same} (floor {MODULE_AST_FLOOR}), fixpoint {fixpoint} ({MODULE_FIXPOINT_FLOOR}), legal {legal} ({MODULE_LEGAL_FLOOR})");
+    }
+
+    /// MORE OF RUN 1'S SEEDS (2026-10-17, logs/V24/run1/kingdom_gaps.tsv):
+    /// a uniform predicate over a barrier (`cfg.stage == 1u && wid.x < 4u`,
+    /// `else if (p == 1u || p == 3u)`); an item loop that starts at 1 (`for
+    /// (var kk = 1u; kk < n; kk++)`, its bound n - 1, its counter 1 + t); a
+    /// shift by a loop's counter (`b = b | (1u << i)`, an index read as a count);
+    /// six u32 workgroup arrays; a copied `// entry` grid line that is not the
+    /// entry point's workgroup (ignored). The module reads, renders, naga
+    /// validates it, reads back to the same tree and passes every layer.
+    #[test]
+    fn run_ones_seed_shapes_read_and_read_back() {
+        let k = WgslKingdom::load_safe();
+        let contract = crate::wgsl::safety::Contract::parse("workgroups x 1 1024\nworkgroups y 1 1\nworkgroups z 1 1\nparam cfg.arrived_begin 0 1000000\nparam cfg.n_queries 0 4096\n").unwrap();
+        let src = format!(
+            "// entry ingest grid 16 16 1 1
+{V24_BINDINGS}var<workgroup> red: array<f32, 64>;
+var<workgroup> w1: array<u32, 8>;
+var<workgroup> w2: array<u32, 8>;
+var<workgroup> w3: array<u32, 8>;
+var<workgroup> w4: array<u32, 8>;
+var<workgroup> w5: array<u32, 8>;
+var<workgroup> w6: array<u32, 8>;
+@compute @workgroup_size(64, 1, 1)
+fn ingest(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) wid: vec3<u32>) {{
+    let p = cfg.pass_index;
+    if (cfg.stage == 1u && wid.x < 4u) {{
+        red[lid.x] = keys[wid.x * 64u + lid.x];
+        workgroupBarrier();
+        if (lid.x == 0u) {{ _ = atomicAdd(&index_u32[wid.x], u32(red[1])); }}
+    }} else if (p == 1u || p == 3u) {{
+        workgroupBarrier();
+    }}
+    if (lid.x < 8u) {{
+        w1[lid.x] = 1u; w2[lid.x] = 2u; w3[lid.x] = 3u; w4[lid.x] = 4u; w5[lid.x] = 5u; w6[lid.x] = 6u;
+    }}
+    workgroupBarrier();
+    let h = w1[1] + w2[2] + w3[3] + w4[4] + w5[5] + w6[6] + bitcast<u32>(red[0]);
+    for (var kk = 1u; kk < cfg.n_queries; kk++) {{
+        if (lid.x == 0u) {{
+            var b = 0u;
+            for (var i = 0u; i < 4u; i++) {{
+                if (red[i] > 0.0) {{ b = b | (1u << i); }}
+            }}
+            _ = atomicOr(&index_u32[4096u + (kk & 1023u)], b & h);
+        }}
+    }}
+}}
+@compute @workgroup_size(32, 1, 1)
+fn search(@builtin(global_invocation_id) gid: vec3<u32>) {{
+    if (gid.x < cfg.n_queries) {{ cands[gid.x] = atomicLoad(&index_u32[gid.x & 1023u]); }}
+}}
+"
+        );
+        let r = read_safe(&src, &k).unwrap_or_else(|e| panic!("{e}"));
+        let sx = r.tree.to_sexpr();
+        for want in ["(stmt.if_else_uflag_L0 (uflag.and ", "(stmt.if_uflag_L0 (uflag.or ", "convert.index_to_count", "wg.uf", "loop.items_boundx"] {
+            assert!(sx.contains(want), "{want}: {sx}");
+        }
+        let out = crate::wgsl::safe_karva::render_tree_with(&r.tree, &k, &r.role).unwrap_or_else(|e| panic!("{e}"));
+        assert!(out.text.contains("// entry ingest grid 64 1 1 1"), "the entry point's own grid:\n{}", out.text);
+        validate_text(&out.text).unwrap_or_else(|e| panic!("{e}\n{}", out.text));
+        let back = read_safe(&out.text, &k).unwrap_or_else(|e| panic!("read back: {e}\n{}", out.text));
+        assert!(back.tree == r.tree, "the rendered text reads back to the same tree: {:?}\n{}", crate::wgsl::render::first_difference(&r.tree, &back.tree), out.text);
+        let checker = crate::wgsl::check::Checker::with_contract(&k, &r.role, &crate::wgsl::target::Target::recorded(), contract);
+        checker.check(&r.tree).unwrap_or_else(|e| panic!("{e}\n{}", out.text));
     }
 
     /// ONE PASS'S WORK UNDER A UNIFORM TEST (2026-10-17, 13 of the 29 model
