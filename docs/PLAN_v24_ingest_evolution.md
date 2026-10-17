@@ -183,3 +183,30 @@ affine ownership.
 largest need, rounded up to eight, is 152 tail slots, and run 2's 128 cannot hold them
 all. The counts of 18 (08:43Z), 25 (09:43Z) and 28 seeds needing 179 slots (11:00Z) were
 measured with v24-b6-kingdom's uncommitted fuller edits in the tree, not at a commit.
+
+### The strict arm (the baseline the arena arm is compared with)
+
+**Result.** Under strict layer 7, with every readable seed in the layout and 10 race runs,
+7.5 to 11.5 % of each operator's children pass every stage and none races.
+
+Run on the GPU 12:37–12:38Z: fuller 1fbdcbc (committed, no uncommitted edits in src/ or
+kingdoms/), phylu b68c08f3, `--measure-operators 200 --measure-races 10 --seed 1` on
+`problems/v24_ingest_small`, layout head 32 with 184 tail slots from the seeds' need; 28
+parents of 32 seeds under 10 roles; 86.3 s, of which 29.7 s on the device. Records:
+`logs/V24/gate/strict/gate.md`, `gate.tsv`.
+
+| operator | children | made | role | render | naga | safety | read back | values | no race (10 runs) | of which order-only | of which state-only |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| (parents) | 28 | 28 | 28 | 28 | 28 | 3 | 3 | 3 | 3 | 0 | 1 |
+| section crossover | 200 | 200 | 198 | 198 | 198 | 23 | 23 | 23 | 23 | 0 | 7 |
+| typed crossover | 200 | 200 | 192 | 192 | 192 | 21 | 21 | 21 | 21 | 0 | 5 |
+| rule | 200 | 200 | 200 | 200 | 200 | 18 | 18 | 18 | 18 | 0 | 6 |
+| generic rewrite | 200 | 168 | 168 | 168 | 168 | 15 | 15 | 15 | 15 | 0 | 6 |
+| point mutation | 200 | 200 | 198 | 198 | 197 | 23 | 23 | 23 | 23 | 0 | 10 |
+
+Of the 103 parents and children through every stage, 10 were run against their expressed
+text on the device and none computed different values; in 10 fresh runs none raced and
+none differed in candidate order; 1 parent and 34 children differed in arena state alone.
+The safety layers turn away 25 of the 28 seeds: layer 7 24 (write_sets_overlap 8,
+output_read_of_another_invocations 8, store_index_not_affine 5, workgroup_memory_race 3),
+layer 4 one (a barrier under a condition that is not workgroup-uniform).
