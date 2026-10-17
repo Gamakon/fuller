@@ -661,6 +661,10 @@ fn parr_dual_of(arr: &str, kind: char) -> &'static str {
     if arr == "parr.ua" || arr == "parr.uc" {
         return "parr64<u32>.index";
     }
+    // (And the 64-element vec4 arrays pvq, pvr: a query held in registers.)
+    if arr == "parr.vq" || arr == "parr.vr" {
+        return "parr64<vec4<f32>>.real";
+    }
     match kind {
         'v' => "parr<vec4<f32>>.real",
         'i' => "parr<u32>.index",
@@ -2522,8 +2526,10 @@ impl<'a> Ctx<'a> {
             _ => None,
         });
         let long_u32 = matches!(elem_dual, "u32.index" | "u32.bits" | "u32.count" | "u32.opaque") && declared.is_some_and(|n| n > 16);
+        let long_v4 = elem_dual == "vec4<f32>.real" && declared.is_some_and(|n| n > 16);
         let (kind, mask) = match elem_dual {
             _ if long_u32 => ('i', "safe.pidx64"),
+            _ if long_v4 => ('v', "safe.pidx64"),
             "f32.real" => ('f', "safe.pidx64"),
             "vec4<f32>.real" => ('v', "safe.pidx16"),
             // The kingdom's u32 private arrays (pi, pj, pk), whatever form the
@@ -2545,6 +2551,7 @@ impl<'a> Ctx<'a> {
         }
         let rows: &[&'static str] = match kind {
             _ if long_u32 => &["parr.ua", "parr.uc"],
+            _ if long_v4 => &["parr.vq", "parr.vr"],
             'f' => &["parr.a", "parr.b", "parr.c", "parr.d", "parr.e", "parr.f"],
             'v' => &["parr.v", "parr.w", "parr.x", "parr.y"],
             'b' => &["parr.m", "parr.n"],
@@ -2557,6 +2564,7 @@ impl<'a> Ctx<'a> {
         }
         let arr = match kind {
             _ if long_u32 => ["parr.ua", "parr.uc"].iter().copied().find(|a| !used.contains(a)).ok_or_else(|| format!("a third 64-element u32 local array {local}"))?,
+            _ if long_v4 => ["parr.vq", "parr.vr"].iter().copied().find(|a| !used.contains(a)).ok_or_else(|| format!("a third 64-element vec4 local array {local}"))?,
             'f' => ["parr.a", "parr.b", "parr.c", "parr.d", "parr.e", "parr.f"].iter().copied().find(|a| !used.contains(a)).ok_or_else(|| format!("a seventh f32 local array {local}"))?,
             'v' => ["parr.v", "parr.w", "parr.x", "parr.y"].iter().copied().find(|a| !used.contains(a)).ok_or_else(|| format!("a fifth vec4 local array {local}"))?,
             'b' => ["parr.m", "parr.n"].iter().copied().find(|a| !used.contains(a)).ok_or_else(|| format!("a third bool local array {local}"))?,
@@ -8041,8 +8049,9 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     /// reached so far: to a fixpoint after the first read, and to the AST
     /// drawn (canonical). Every tree reads back (1,000 of 1,000, asserted
     /// exactly). Their own text is printed, not a bar (Andrew, 2026-10-13).
-    /// 930 since 2026-10-17 12:35Z (the rows drawn then, AST_FLOOR's note).
-    const FIXPOINT_FLOOR: usize = 930;
+    /// 930 since 2026-10-17 12:35Z (the rows drawn then, AST_FLOOR's note);
+    /// 928 since 15:30Z (the 64-element vec4 arrays, AST_FLOOR's note).
+    const FIXPOINT_FLOOR: usize = 928;
     // (Both reset 2026-10-13 when the sampler drew its stores from an input:
     // other trees, 253 and 930 on the earlier draws; again when conditions
     // read a variable: 110 then 79; 59 when they vary by thread or data;
@@ -8070,8 +8079,11 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     // row but the uniform tests and the reader's two checked rows: the wider
     // workgroup arrays, the 64-element u32 arrays, an index as a count, a
     // workgroup u32 as a loop bound, the uniform loads; 1,000 of 1,000 read
-    // back.)
-    const AST_FLOOR: usize = 46;
+    // back.) (15:30Z, 37 and 928, when the kingdom gained the 64-element vec4
+    // private arrays: other draws, a table of other rows; with those arrays
+    // undrawn the same commit measures 34 and 934, so the drop is the draws,
+    // not the rows; 1,000 of 1,000 read back.)
+    const AST_FLOOR: usize = 37;
 
     /// The floors of [`random_module_trees_render_validate_and_read_back`]
     /// (1,000 v24 modules, depth 6; measured 2026-10-17 at its first run:
@@ -8104,9 +8116,10 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     /// 12:35Z, 5, 962 and 130, with every row drawn but the uniform tests and
     /// the reader's two checked rows (a module's workgroup arrays now at one
     /// length for all its entry points: one over 32 KB did not validate).
-    const MODULE_AST_FLOOR: usize = 5;
-    const MODULE_FIXPOINT_FLOOR: usize = 962;
-    const MODULE_LEGAL_FLOOR: usize = 130;
+    /// 15:30Z, 8, 968 and 139 with the 64-element vec4 arrays (risen).
+    const MODULE_AST_FLOOR: usize = 8;
+    const MODULE_FIXPOINT_FLOOR: usize = 968;
+    const MODULE_LEGAL_FLOOR: usize = 139;
 
 
     /// THE KINGDOM'S COMPLETENESS BAR (2026-10-12): 1,000 random trees of

@@ -645,8 +645,8 @@ mod tests {
         // 186 with the workgroup arrays of indices (wgmem<u32>.index, 2026-10-16).
         // 187 with the module of several entry points (kernel.module, 2026-10-17); 188 with bool.uflag;
         // 189 with the 64-element u32 private array (parr64<u32>.index); 190 with the vec2<f32>
-        // register (reg<vec2<f32>>.real).
-        assert_eq!(s.len(), 190);
+        // register (reg<vec2<f32>>.real); 191 with the 64-element vec4 private array.
+        assert_eq!(s.len(), 191);
         for (a, b) in w.iter().zip(&s) {
             assert_eq!((a.reference.as_str(), a.dual.as_str()), (b.reference.as_str(), b.dual.as_str()));
         }
@@ -691,8 +691,9 @@ mod tests {
         // the 64-element u32 private arrays (parr.ua, parr.uc, their get and 12 sets); 1,706 with
         // four more u32 workgroup arrays (wg.ui..ul, seed20 of v24 run 1); 1,727 with the vec2<f32>
         // registers (reg.w0..w7, reg.get_w and 12 reg.set_w, seed11); 1,728 with uflag.of_flag;
-        // 1,729 with uniform.of_checked; 1,741 with the uniform loads (wg.uload_i, wg.uload_f at L0..L5).
-        assert_eq!(fs.rows.len(), 1741);
+        // 1,729 with uniform.of_checked; 1,741 with the uniform loads (wg.uload_i, wg.uload_f at L0..L5);
+        // 1,756 with the 64-element vec4 private arrays (parr.vq, parr.vr, their get and 12 sets).
+        assert_eq!(fs.rows.len(), 1756);
         let dual = |t: Ty| k.dual(t).unwrap().dual.clone();
         let producers = |d: &str| -> Vec<String> { k.rows.iter().filter(|r| dual(r.output) == d).map(|r| r.name.clone()).collect() };
         assert_eq!(producers("kernel.safe"), vec!["kernel.entry_safe"]);

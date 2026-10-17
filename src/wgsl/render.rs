@@ -3030,7 +3030,7 @@ impl Renderer<'_> {
 pub fn parr_var(kingdom: &WgslKingdom, t: &Tree) -> Result<&'static str, String> {
     if t.name == "fallback" {
         let d = kingdom.dual(t.ty).map(|d| d.dual.clone()).unwrap_or_default();
-        return Ok(if d.starts_with("parr64<u32>") { "pua" } else if d.starts_with("parr<vec2") { "pq" } else if d.starts_with("parr<vec") { "pv" } else if d.starts_with("parr<u32>") { "pi" } else if d.starts_with("parr<bool>") { "pm" } else { "pa" });
+        return Ok(if d.starts_with("parr64<u32>") { "pua" } else if d.starts_with("parr64<vec4") { "pvq" } else if d.starts_with("parr<vec2") { "pq" } else if d.starts_with("parr<vec") { "pv" } else if d.starts_with("parr<u32>") { "pi" } else if d.starts_with("parr<bool>") { "pm" } else { "pa" });
     }
     parr_name(t)
 }
@@ -3072,7 +3072,7 @@ pub fn register_declarations() -> String {
     }
     out.push_str("    var t: u32 = 0u; var k: u32 = 0u; var k2: u32 = 0u; var k3: u32 = 0u; var k4: u32 = 0u;\n");
     out.push_str("    var pa: array<f32, 64>; var pb: array<f32, 64>; var pc: array<f32, 64>; var pd: array<f32, 64>; var pe: array<f32, 64>; var pf: array<f32, 64>;\n");
-    out.push_str("    var pv: array<vec4<f32>, 16>; var pw: array<vec4<f32>, 16>; var px: array<vec4<f32>, 16>; var py: array<vec4<f32>, 16>; var pi: array<u32, 16>; var pj: array<u32, 16>; var pk: array<u32, 16>; var pm: array<bool, 16>; var pn: array<bool, 16>; var pq: array<vec2<f32>, 16>; var pr: array<vec2<f32>, 16>; var pua: array<u32, 64>; var puc: array<u32, 64>;\n");
+    out.push_str("    var pv: array<vec4<f32>, 16>; var pw: array<vec4<f32>, 16>; var px: array<vec4<f32>, 16>; var py: array<vec4<f32>, 16>; var pi: array<u32, 16>; var pj: array<u32, 16>; var pk: array<u32, 16>; var pm: array<bool, 16>; var pn: array<bool, 16>; var pq: array<vec2<f32>, 16>; var pr: array<vec2<f32>, 16>; var pua: array<u32, 64>; var puc: array<u32, 64>; var pvq: array<vec4<f32>, 64>; var pvr: array<vec4<f32>, 64>;\n");
     out
 }
 
@@ -3116,7 +3116,7 @@ pub fn array_len(name: &str) -> u32 {
         "wg_a" | "wg_b" | "wg_c" | "wg_d" | "wg_e" | "wg_f" | "wg_g" | "wg_h" | "wg_ua" | "wg_ub" | "wg_uc" | "wg_ud" | "wg_ue" | "wg_uf" | "wg_ug" | "wg_uh" | "wg_ui" | "wg_uj" | "wg_uk" | "wg_ul" => WGMEM_LEN,
         n if n.starts_with("wg_v2") => 1024,
         n if n.starts_with("wg_v") => WGVEC_LEN,
-        "pa" | "pb" | "pc" | "pd" | "pe" | "pf" | "pua" | "puc" => 64,
+        "pa" | "pb" | "pc" | "pd" | "pe" | "pf" | "pua" | "puc" | "pvq" | "pvr" => 64,
         _ => 16,
     }
 }
@@ -3136,6 +3136,8 @@ fn parr_name(t: &Tree) -> Result<&'static str, String> {
         "parr.f" => "pf",
         "parr.i" => "pi",
         "parr.ua" => "pua",
+        "parr.vq" => "pvq",
+        "parr.vr" => "pvr",
         "parr.uc" => "puc",
         "parr.j" => "pj",
         "parr.k" => "pk",

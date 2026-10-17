@@ -3238,4 +3238,24 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 | F1740 | `wg.uload_i_L5` | `composite` | `reg<u32>.index wgmem<u32>.index u32.wgindex` | `stmt.L5` | 3 | arity 3: r = workgroupUniformLoad(&a[i]) |
 | F1741 | `wg.uload_f_L5` | `composite` | `reg<f32>.real wgmem<f32>.real u32.wgindex` | `stmt.L5` | 3 | arity 3: r = workgroupUniformLoad(&a[i]) |
 
-1741 function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Storage-buffer atomics are an interface's per-kernel rows, not rows of this table. Deliberately absent: atomic compare-exchange (naga 0.20's Metal backend lacks it), subgroupBallot, images, derivatives, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.
+## class `parr`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F1742 | `parr.vq` | `composite` | `-` | `parr64<vec4<f32>>.real` | 0 | private array pvq of 64 vec4<f32> |
+| F1743 | `parr.vr` | `composite` | `-` | `parr64<vec4<f32>>.real` | 0 | private array pvr of 64 vec4<f32> |
+| F1744 | `parr.get_v` | `composite` | `parr64<vec4<f32>>.real u32.pindex` | `vec4<f32>.real` | 2 | pvq[i] |
+| F1745 | `parr.set_v_L0` | `composite` | `parr64<vec4<f32>>.real u32.pindex vec4<f32>.real` | `stmt.L0` | 3 | arity 3: pvq[i] = v |
+| F1746 | `parr.set_v_L1` | `composite` | `parr64<vec4<f32>>.real u32.pindex vec4<f32>.real` | `stmt.L1` | 3 | arity 3: pvq[i] = v |
+| F1747 | `parr.set_v_L2` | `composite` | `parr64<vec4<f32>>.real u32.pindex vec4<f32>.real` | `stmt.L2` | 3 | arity 3: pvq[i] = v |
+| F1748 | `parr.set_v_L3` | `composite` | `parr64<vec4<f32>>.real u32.pindex vec4<f32>.real` | `stmt.L3` | 3 | arity 3: pvq[i] = v |
+| F1749 | `parr.set_v_L4` | `composite` | `parr64<vec4<f32>>.real u32.pindex vec4<f32>.real` | `stmt.L4` | 3 | arity 3: pvq[i] = v |
+| F1750 | `parr.set_v_C0` | `composite` | `parr64<vec4<f32>>.real u32.pindex vec4<f32>.real` | `stmt.C0` | 3 | arity 3: pvq[i] = v |
+| F1751 | `parr.set_v_C1` | `composite` | `parr64<vec4<f32>>.real u32.pindex vec4<f32>.real` | `stmt.C1` | 3 | arity 3: pvq[i] = v |
+| F1752 | `parr.set_v_C2` | `composite` | `parr64<vec4<f32>>.real u32.pindex vec4<f32>.real` | `stmt.C2` | 3 | arity 3: pvq[i] = v |
+| F1753 | `parr.set_v_C3` | `composite` | `parr64<vec4<f32>>.real u32.pindex vec4<f32>.real` | `stmt.C3` | 3 | arity 3: pvq[i] = v |
+| F1754 | `parr.set_v_C4` | `composite` | `parr64<vec4<f32>>.real u32.pindex vec4<f32>.real` | `stmt.C4` | 3 | arity 3: pvq[i] = v |
+| F1755 | `parr.set_v_L5` | `composite` | `parr64<vec4<f32>>.real u32.pindex vec4<f32>.real` | `stmt.L5` | 3 | arity 3: pvq[i] = v |
+| F1756 | `parr.set_v_C5` | `composite` | `parr64<vec4<f32>>.real u32.pindex vec4<f32>.real` | `stmt.C5` | 3 | arity 3: pvq[i] = v |
+
+1756 function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Storage-buffer atomics are an interface's per-kernel rows, not rows of this table. Deliberately absent: atomic compare-exchange (naga 0.20's Metal backend lacks it), subgroupBallot, images, derivatives, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.

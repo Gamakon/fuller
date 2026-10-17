@@ -363,6 +363,8 @@ def build_types():
     add("parr64<u32>", "index", 0, "a private array of 64 u32: pua, puc (a list of ids beside 64 scores)")
     # ---- vec2<f32> registers (2026-10-17) ----
     add("reg<vec2<f32>>", "real", 2, "a named vec2<f32> register: w0..w7 (a helper's two sums returned together)")
+    # ---- 64-element vec4<f32> private arrays (2026-10-17) ----
+    add("parr64<vec4<f32>>", "real", 0, "a private array of 64 vec4<f32>: pvq, pvr (a query's 32 vec4 lanes held in registers)")
     return rows
 
 
@@ -1338,6 +1340,13 @@ f("uniform", "of_checked", "composite", ["u32.index"], "u32.uniform", "the index
 for r in ("L0", "L1", "L2", "L3", "L4", "L5"):
     f("wg", "uload_i_" + r, "composite", ["reg<u32>.index", "wgmem<u32>.index", "u32.wgindex"], "stmt." + r, "arity 3: r = workgroupUniformLoad(&a[i])")
     f("wg", "uload_f_" + r, "composite", ["reg<f32>.real", "wgmem<f32>.real", "u32.wgindex"], "stmt." + r, "arity 3: r = workgroupUniformLoad(&a[i])")
+# ---- 64-element vec4<f32> private arrays (2026-10-17, v24 run 1's seed28: `var qreg: array<vec4<f32>, 32>`, a query
+# held in registers, read 16-wide before; indexed as the 64-element arrays are, u32.pindex, i & 63u) ----
+for n in ("vq", "vr"):
+    f("parr", n, "composite", [], "parr64<vec4<f32>>.real", f"private array p{n} of 64 vec4<f32>")
+f("parr", "get_v", "composite", ["parr64<vec4<f32>>.real", "u32.pindex"], "vec4<f32>.real", "pvq[i]")
+for r in RUNGS + RUNGS5:
+    f("parr", "set_v_" + r, "composite", ["parr64<vec4<f32>>.real", "u32.pindex", "vec4<f32>.real"], "stmt." + r, "arity 3: pvq[i] = v")
 
 def write_tsv(path, header, rows):
     with open(path, "w") as out:
