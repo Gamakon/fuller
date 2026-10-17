@@ -16,7 +16,8 @@
 //! ray queries, subgroup operations (a kernel using one is refused by name),
 //! f16, 64-bit values.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
 
 use naga::{AddressSpace, BinaryOperator, Block, Expression, Function, Handle, MathFunction, Module, ScalarKind, Statement, TypeInner};
 
@@ -161,6 +162,10 @@ struct Frame<'m> {
     conts: Vec<Cont<'m>>,
     /// The caller's expression the call's result goes to.
     result: Option<Handle<Expression>>,
+    /// The function's expressions only a short-circuit operator's right
+    /// operand uses (`short_circuit_only`): skipped at their Emit and
+    /// computed only when the operator needs its right side.
+    lazy: Rc<HashSet<Handle<Expression>>>,
 }
 
 struct Inv<'m> {
@@ -212,6 +217,8 @@ struct Machine<'m> {
     next_frame: usize,
     steps: u64,
     max_steps: u64,
+    /// `short_circuit_only` per function, computed once a dispatch.
+    lazy: HashMap<*const Function, Rc<HashSet<Handle<Expression>>>>,
 }
 
 /// Run `module`'s entry point over `workgroups` with the bindings' contents
@@ -241,7 +248,7 @@ fn run_on(module: &Module, ep: &naga::EntryPoint, buffers: HashMap<String, Val>,
             globals.insert(h, v);
         }
     }
-    let mut m = Machine { module, globals, shared: HashMap::new(), nwg: workgroups, wg: ep.workgroup_size, writes: Vec::new(), next_frame: 0, steps: 0, max_steps };
+    let mut m = Machine { module, globals, shared: HashMap::new(), nwg: workgroups, wg: ep.workgroup_size, writes: Vec::new(), next_frame: 0, steps: 0, max_steps, lazy: HashMap::new() };
     for wz in 0..workgroups[2] {
         for wy in 0..workgroups[1] {
             for wx in 0..workgroups[0] {
@@ -262,6 +269,127 @@ fn run_on(module: &Module, ep: &naga::EntryPoint, buffers: HashMap<String, Val>,
 pub fn run_text(source: &str, buffers: HashMap<String, Val>, workgroups: [u32; 3], max_steps: u64) -> Result<Dispatch, String> {
     let module = naga::front::wgsl::parse_str(source).map_err(|e| e.emit_to_string(source))?;
     run(&module, buffers, workgroups, max_steps)
+}
+
+/// An expression's operands; None for one this executor cannot list (it
+/// then defers nothing in the function).
+fn operands(e: &Expression) -> Option<Vec<Handle<Expression>>> {
+    use Expression as E;
+    Some(match e {
+        E::Literal(_) | E::Constant(_) | E::Override(_) | E::ZeroValue(_) | E::FunctionArgument(_) | E::GlobalVariable(_) | E::LocalVariable(_) | E::CallResult(_) | E::AtomicResult { .. } | E::WorkGroupUniformLoadResult { .. } | E::SubgroupBallotResult | E::SubgroupOperationResult { .. } => Vec::new(),
+        E::Compose { components, .. } => components.clone(),
+        E::Access { base, index } => vec![*base, *index],
+        E::AccessIndex { base, .. } => vec![*base],
+        E::Splat { value, .. } => vec![*value],
+        E::Swizzle { vector, .. } => vec![*vector],
+        E::Load { pointer } => vec![*pointer],
+        E::Unary { expr, .. } | E::Derivative { expr, .. } | E::As { expr, .. } | E::ArrayLength(expr) => vec![*expr],
+        E::Binary { left, right, .. } => vec![*left, *right],
+        E::Select { condition, accept, reject } => vec![*condition, *accept, *reject],
+        E::Relational { argument, .. } => vec![*argument],
+        E::Math { arg, arg1, arg2, arg3, .. } => [Some(*arg), *arg1, *arg2, *arg3].into_iter().flatten().collect(),
+        _ => return None,
+    })
+}
+
+/// The expressions a block's statements name directly (not through Emit);
+/// false when a statement is one this executor cannot list.
+fn statement_uses(block: &Block, out: &mut HashSet<Handle<Expression>>) -> bool {
+    for st in block.iter() {
+        let ok = match st {
+            Statement::Emit(_) | Statement::Break | Statement::Continue | Statement::Kill | Statement::Barrier(_) => true,
+            Statement::Block(b) => statement_uses(b, out),
+            Statement::If { condition, accept, reject } => {
+                out.insert(*condition);
+                statement_uses(accept, out) && statement_uses(reject, out)
+            }
+            Statement::Switch { selector, cases } => {
+                out.insert(*selector);
+                cases.iter().all(|c| statement_uses(&c.body, out))
+            }
+            Statement::Loop { body, continuing, break_if } => {
+                out.extend(break_if.iter().copied());
+                statement_uses(body, out) && statement_uses(continuing, out)
+            }
+            Statement::Return { value } => {
+                out.extend(value.iter().copied());
+                true
+            }
+            Statement::Store { pointer, value } => {
+                out.extend([*pointer, *value]);
+                true
+            }
+            Statement::Atomic { pointer, fun, value, result } => {
+                out.extend([*pointer, *value, *result]);
+                if let naga::AtomicFunction::Exchange { compare: Some(c) } = fun {
+                    out.insert(*c);
+                }
+                true
+            }
+            Statement::WorkGroupUniformLoad { pointer, result } => {
+                out.extend([*pointer, *result]);
+                true
+            }
+            Statement::Call { arguments, result, .. } => {
+                out.extend(arguments.iter().copied());
+                out.extend(result.iter().copied());
+                true
+            }
+            Statement::SubgroupBallot { result, predicate } => {
+                out.insert(*result);
+                out.extend(predicate.iter().copied());
+                true
+            }
+            Statement::SubgroupCollectiveOperation { argument, result, .. } => {
+                out.extend([*argument, *result]);
+                true
+            }
+            _ => false,
+        };
+        if !ok {
+            return false;
+        }
+    }
+    true
+}
+
+/// THE EXPRESSIONS ONLY A SHORT-CIRCUIT OPERATOR'S RIGHT SIDE USES: for
+/// every `||` and `&&` of the function, the expressions of its right
+/// operand's tree whose every user is in that tree or the operator, named
+/// by no `let` and used by no statement. naga emits them before the
+/// operator; the CPU executor skips them at their Emit and computes them
+/// only when the left side does not decide, as WGSL's short circuit does.
+/// Empty when the function holds an expression or statement it cannot list.
+fn short_circuit_only(func: &Function) -> HashSet<Handle<Expression>> {
+    let mut users: HashMap<Handle<Expression>, Vec<Handle<Expression>>> = HashMap::new();
+    for (h, e) in func.expressions.iter() {
+        let Some(ops) = operands(e) else { return HashSet::new() };
+        for o in ops {
+            users.entry(o).or_default().push(h);
+        }
+    }
+    let mut named_or_stated: HashSet<Handle<Expression>> = func.named_expressions.keys().copied().collect();
+    if !statement_uses(&func.body, &mut named_or_stated) {
+        return HashSet::new();
+    }
+    let mut lazy = HashSet::new();
+    for (b, e) in func.expressions.iter() {
+        let Expression::Binary { op: BinaryOperator::LogicalOr | BinaryOperator::LogicalAnd, right, .. } = e else { continue };
+        let mut tree = HashSet::new();
+        let mut stack = vec![*right];
+        while let Some(h) = stack.pop() {
+            if tree.insert(h) {
+                stack.extend(operands(&func.expressions[h]).unwrap_or_default());
+            }
+        }
+        for h in &tree {
+            let only_here = users.get(h).is_none_or(|us| us.iter().all(|u| *u == b || tree.contains(u)));
+            if only_here && !named_or_stated.contains(h) {
+                lazy.insert(*h);
+            }
+        }
+    }
+    lazy
 }
 
 fn bin_u(op: BinaryOperator, a: u32, b: u32) -> Result<Val, String> {
@@ -799,7 +927,8 @@ impl<'m> Machine<'m> {
     fn push_frame(&mut self, inv: &mut Inv<'m>, func: &'m Function, args: Vec<Val>, result: Option<Handle<Expression>>) -> Result<(), String> {
         self.next_frame += 1;
         let id = self.next_frame;
-        let mut frame = Frame { id, func, args, vals: HashMap::new(), conts: vec![Cont::Block { block: &func.body, pc: 0 }], result };
+        let lazy = self.lazy.entry(func as *const Function).or_insert_with(|| Rc::new(short_circuit_only(func))).clone();
+        let mut frame = Frame { id, func, args, vals: HashMap::new(), conts: vec![Cont::Block { block: &func.body, pc: 0 }], result, lazy };
         for (h, l) in func.local_variables.iter() {
             let v = match l.init {
                 Some(e) => self.eval(inv, &mut frame, e)?,
@@ -964,6 +1093,17 @@ impl<'m> Machine<'m> {
             Expression::Unary { op, expr } => {
                 let v = self.eval(inv, fr, *expr)?;
                 unary(*op, &v)?
+            }
+            // WGSL's `||` and `&&` short-circuit: the right side is
+            // evaluated only when the left does not decide (`j == 0u ||
+            // best[j - 1u] < s` reads no best[j - 1u] at j 0).
+            Expression::Binary { op: op @ (BinaryOperator::LogicalOr | BinaryOperator::LogicalAnd), left, right } => {
+                let a = self.eval(inv, fr, *left)?.b()?;
+                if a == (*op == BinaryOperator::LogicalOr) {
+                    Val::B(a)
+                } else {
+                    Val::B(self.eval(inv, fr, *right)?.b()?)
+                }
             }
             Expression::Binary { op, left, right } => {
                 let (a, b) = (self.eval(inv, fr, *left)?, self.eval(inv, fr, *right)?);
@@ -1214,6 +1354,13 @@ impl<'m> Machine<'m> {
         match s {
             Statement::Emit(range) => {
                 for h in range.clone() {
+                    // A short-circuit operator's right side waits for the
+                    // operator; a value from an earlier pass of a loop is
+                    // dropped so it is computed afresh.
+                    if fr.lazy.contains(&h) {
+                        fr.vals.remove(&h);
+                        continue;
+                    }
                     let v = self.compute(inv, fr, h)?;
                     fr.vals.insert(h, v);
                 }
@@ -1450,5 +1597,39 @@ mod tests {
         let got = h_of(&out);
         let worst = got.iter().zip(&want).map(|(a, b)| (a - b).abs() / b.abs().max(1.0)).fold(0.0f32, f32::max);
         assert!(worst < 1e-5, "tiled against the reference: {worst}");
+    }
+
+    /// WGSL'S SHORT CIRCUIT: `j == 0u || best[j - 1u] < 2.0` reads no
+    /// best[j - 1u] at j 0 (an index past the local array is an error here),
+    /// and its dual `j != 0u && best[j - 1u] < 2.0` neither; in a loop the
+    /// right side is computed afresh each pass. best = [1, 3, 1, 3]: the
+    /// `||` gives 1 1 0 1, the `&&` 0 1 0 1.
+    #[test]
+    fn logical_or_and_and_short_circuit() {
+        let text = "@group(0) @binding(0) var<storage, read_write> out: array<u32>;
+@compute @workgroup_size(1)
+fn main() {
+    var best: array<f32, 4> = array<f32, 4>(1.0, 3.0, 1.0, 3.0);
+    for (var j = 0u; j < 4u; j = j + 1u) {
+        out[j] = select(0u, 1u, j == 0u || best[j - 1u] < 2.0);
+        out[4u + j] = select(0u, 1u, j != 0u && best[j - 1u] < 2.0);
+    }
+}
+";
+        let mut bufs = HashMap::new();
+        bufs.insert("out".to_string(), Val::V(vec![Val::U(9); 8]));
+        let d = run_text(text, bufs, [1, 1, 1], 1_000_000).unwrap();
+        let mut w = Vec::new();
+        d.buffers["out"].words(&mut w);
+        assert_eq!(w, vec![1, 1, 0, 1, 0, 1, 0, 1]);
+        // The guard is what keeps the read in range: without it the same
+        // read at j 0 is the out-of-range error.
+        let unguarded = text.replace("j == 0u || ", "").replace("j != 0u && ", "");
+        let mut bufs = HashMap::new();
+        bufs.insert("out".to_string(), Val::V(vec![Val::U(9); 8]));
+        match run_text(&unguarded, bufs, [1, 1, 1], 1_000_000) {
+            Err(e) => assert!(e.contains("out of range"), "{e}"),
+            Ok(_) => panic!("the unguarded read at j 0 ran"),
+        }
     }
 }

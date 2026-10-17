@@ -714,6 +714,17 @@ impl<'a> Interp<'a> {
                     let place = self.place(frame, target, Some(ix))?;
                     return self.load(&place);
                 }
+                // WGSL's `||` and `&&` short-circuit: the right child is
+                // evaluated only when the left does not decide.
+                let or = self.table.named(ctor).and_then(|t| match t.naga.as_str() {
+                    "Binary::LogicalOr" => Some(true),
+                    "Binary::LogicalAnd" => Some(false),
+                    _ => None,
+                });
+                if let (Some(or), [l, r]) = (or, kids.as_slice()) {
+                    let a = self.eval(frame, l)?.as_bool()?;
+                    return Ok(Value::Bool(if a == or { a } else { self.eval(frame, r)?.as_bool()? }));
+                }
                 let args: Vec<Value> = kids.iter().map(|k| self.eval(frame, k)).collect::<Result<_, _>>()?;
                 if let Some(rest) = ctor.strip_prefix("shape.") {
                     return shape(rest, &args);
@@ -1440,6 +1451,33 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         assert_eq!(got[5], 1.0);
         assert_eq!(got[6], 2.0);
         assert_eq!(got[7], f32::INFINITY);
+    }
+
+    /// `||` and `&&` give WGSL's values with the guarded read
+    /// `j == 0u || xs[j - 1u] < 2.0` and its dual: xs = [1, 3, 1, 3], the
+    /// `||` 1 1 0 1, the `&&` 0 1 0 1. (This interpreter reads zero past
+    /// a buffer, so an unguarded read is no error here; the right side is
+    /// evaluated only when the left does not decide, as in the CPU
+    /// executor, where it is: cpu::tests::logical_or_and_and_short_circuit.)
+    #[test]
+    fn logical_or_and_and_follow_the_short_circuit() {
+        let src = r#"
+@group(0) @binding(0) var<storage, read> xs: array<f32>;
+@group(0) @binding(1) var<storage, read_write> out: array<f32>;
+@compute @workgroup_size(1)
+fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let j = gid.x;
+    out[j] = select(0.0, 1.0, j == 0u || xs[j - 1u] < 2.0);
+    out[4u + j] = select(0.0, 1.0, j != 0u && xs[j - 1u] < 2.0);
+}
+"#;
+        let mut m = Memory::default();
+        m.set("buffer.xs", f32s(&[1.0, 3.0, 1.0, 3.0]));
+        m.set("buffer.out", f32s(&[9.0; 8]));
+        for j in 0..4 {
+            m = run(src, m, j).unwrap();
+        }
+        assert_eq!(out_f32(&m, "buffer.out"), vec![1.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]);
     }
 
     #[test]
