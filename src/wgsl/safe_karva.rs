@@ -932,6 +932,25 @@ fn conform_at(t: &Tree, demand: Ty, kingdom: &WgslKingdom, per_kernel: &[PerKern
             }
         }
     }
+    // The same operation in another form's class, converted to the demand:
+    // `>>` read as bits.shr where a count is demanded (a uniform clamp's
+    // count, `max(cfg.d >> nwg.x, 1u) - 1u`, random seed 52, 2026-10-17)
+    // is index.shr under convert.index_to_count; no count row shifts. Only
+    // a conversion within one WGSL type, which writes no text (a seed's
+    // vector comparison took bitcasts to f32 otherwise).
+    let slot = |ty: Ty| kingdom.dual(ty).map(|d| d.slot.clone());
+    if let (Some((class, op)), true) = (t.name.split_once('.'), convert && !t.kids.is_empty()) {
+        for conv in kingdom.rows.iter().filter(is_conv).filter(|r| r.output == demand && slot(r.inputs[0]) == slot(demand)) {
+            let Some(form) = kingdom.dual(conv.inputs[0]).map(|d| d.form.clone()) else { continue };
+            let twin = format!("{form}.{op}");
+            if form != class && kingdom.rows.iter().any(|r| r.name == twin && r.output == conv.inputs[0] && r.inputs.len() == t.kids.len()) {
+                match conform_at(&Tree { name: twin, ty: t.ty, konst: t.konst, kids: t.kids.clone() }, conv.inputs[0], kingdom, per_kernel, false, chains) {
+                    Ok(inner) => return Ok(Tree::new(&conv.name, demand, vec![inner])),
+                    Err(e) => inner_errors.push(e),
+                }
+            }
+        }
+    }
     if let Some(e) = inner_errors.into_iter().next() {
         return Err(e);
     }

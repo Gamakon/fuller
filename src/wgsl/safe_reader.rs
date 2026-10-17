@@ -937,6 +937,20 @@ fn canonical_node(n: &Node, role: &crate::wgsl::render::Role) -> Node {
 /// `select(x - y, 0u, y > x)`, reads back as itself.
 fn floor_differences(n: &Node) -> Node {
     let Node::App { name, slot, known, kids } = n else { return n.clone() };
+    // `min(a, max(n, 1u) - 1u)`, the difference unfloored: how the kingdom
+    // writes a clamp below a count (index.clamp_to, and uniform.clamp_to
+    // written as it; a floored difference is written `select(..)`), read
+    // back as the clamp (2026-10-17: 45 of the 879 random trees that missed
+    // the AST drawn read a min of a difference).
+    if let ("index.min", "u32", [a, Node::App { name: sub, kids: sk, .. }]) = (name.as_str(), slot.as_str(), kids.as_slice()) {
+        if let ("index.sub", [Node::App { name: mx, kids: mk, .. }, Node::Literal { value: one, .. }]) = (sub.as_str(), sk.as_slice()) {
+            if let ("index.max", [m, Node::Literal { value: one2, .. }]) = (mx.as_str(), mk.as_slice()) {
+                if *one == 1.0 && *one2 == 1.0 {
+                    return Node::App { name: "index.clamp_to".into(), slot: slot.clone(), known: true, kids: vec![floor_differences(a), floor_differences(m)] };
+                }
+            }
+        }
+    }
     let kids: Vec<Node> = kids.iter().map(floor_differences).collect();
     if name == "index.sub" && kids.len() == 2 && slot == "u32" {
         return Node::App { name: "index.sub_floor".into(), slot: slot.clone(), known: true, kids };
@@ -2128,7 +2142,9 @@ impl<'a> Ctx<'a> {
                 Ok(a) => at("index.min", vec![a, b.clone()]),
                 Err(_) => at("index.min", vec![a.clone(), self.xbound_of(b)?]),
             },
-            ("index.clamp_to", [a, n]) if n.ty == count => at("index.clamp_to", vec![self.xbound_of(a)?, n.clone()]),
+            // (A count of any u32 dual the inference gave it: conform makes
+            // it the count the row takes.)
+            ("index.clamp_to", [a, n]) if n.ty == count || unsigned(n) => at("index.clamp_to", vec![self.xbound_of(a)?, n.clone()]),
             // A u32 read from workgroup memory (a list's length a thread staged):
             // its value (the loop that reads it is at a conditional rung or
             // uniform by its own proof).
@@ -8388,7 +8404,8 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     // canonical rule 8; the class went from 32 to 2.)
     // (21:30Z, 121: a literal offset in a thread's block snapped below the
     // block factor, as the emitter writes it.)
-    const AST_FLOOR: usize = 121;
+    // (22:11Z, 128: `min(a, max(n, 1u) - 1u)` read as index.clamp_to.)
+    const AST_FLOOR: usize = 128;
 
     /// The floors of [`random_module_trees_render_validate_and_read_back`]
     /// (1,000 v24 modules, depth 6; measured 2026-10-17 at its first run:
@@ -8425,8 +8442,8 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     /// 16:05Z, 1, 970 and 134 with the argmax reductions drawn (other draws).
     /// 17:40Z, AST 4 with the emitter's sg_lane read as the builtin.
     /// 19:54Z, AST 7 with a thread's row or column in an index read as the
-    /// row it is.
-    const MODULE_AST_FLOOR: usize = 7;
+    /// row it is. 22:11Z, AST 11 with the clamp below a count read as it.
+    const MODULE_AST_FLOOR: usize = 11;
     const MODULE_FIXPOINT_FLOOR: usize = 970;
     const MODULE_LEGAL_FLOOR: usize = 134;
 
@@ -8534,7 +8551,12 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
                 } else if std::env::var_os("ROUNDTRIP_FIXPOINT").is_some() {
                     let why = match &third {
                         Err(e) => format!("read again: {e}"),
-                        Ok(r) => r.lines().zip(again.lines()).find(|(a, b)| a != b).map(|(a, b)| format!("{} / {}", b.trim().chars().take(90).collect::<String>(), a.trim().chars().take(90).collect::<String>())).unwrap_or_else(|| "length".into()),
+                        // (Around the first character that differs: a long line's start
+                        // is often the same.)
+                        Ok(r) => r.lines().zip(again.lines()).find(|(a, b)| a != b).map(|(a, b)| {
+                            let at = a.chars().zip(b.chars()).position(|(x, y)| x != y).unwrap_or(0).saturating_sub(40);
+                            format!("{} / {}", b.chars().skip(at).take(120).collect::<String>(), a.chars().skip(at).take(120).collect::<String>())
+                        }).unwrap_or_else(|| "length".into()),
                     };
                     println!("FIX seed {seed}: {why}");
                 }

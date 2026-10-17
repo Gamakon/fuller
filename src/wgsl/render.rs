@@ -2614,7 +2614,12 @@ impl Renderer<'_> {
             "arith.modf_whole" => Some(format!("modf({}).whole", a[0])),
             "arith.frexp_fract" => Some(format!("frexp({}).fract", a[0])),
             "arith.frexp_exp" => Some(format!("frexp({}).exp", a[0])),
-            "index.clamp_to" => Some(format!("min({}, max({}, 1u) - 1u)", a[0], a[1])),
+            // (A literal count through lit_u32: naga folds `max(0u, 1u) - 1u`
+            // to 0u, read back as a min, 2026-10-17.)
+            "index.clamp_to" => {
+                let plain = a[1].strip_suffix('u').is_some_and(|d| !d.is_empty() && d.bytes().all(|c| c.is_ascii_digit()));
+                Some(format!("min({}, max({}, 1u) - 1u)", a[0], if plain { format!("lit_u32({})", a[1]) } else { a[1].clone() }))
+            }
             "index.band_of" => Some(format!("({} / max({}, 1u))", a[0], a[1])),
             "count.sub_floor" => Some(format!("select({0} - {1}, 0u, {1} > {0})", a[0], a[1])),
             "select.negate_if" => Some(format!("select(-({0}), {0}, {1})", a[0], a[1])),
