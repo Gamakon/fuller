@@ -1610,4 +1610,40 @@ mod tests {
         println!("random trees through the genome: {equal} of {n} the tree drawn");
         assert!(failed.is_empty(), "{} of {n}:\n{}", failed.len(), failed.iter().take(10).cloned().collect::<Vec<_>>().join("\n"));
     }
+
+    /// THE SAVED GENOMES ARE TODAY'S READING OF THEIR TEXTS (2026-10-17): the
+    /// dumps phylu launches from and tests against (`popA2_g006j/karva` and
+    /// `library_ep`, head 32, 128 slots, the converter's seed 7013) are each
+    /// the encoding of its text as the reader reads it now. They were written
+    /// on 2026-10-13 and the reader changed after: g007_r02's `x - x % max(y,
+    /// 1u)` was then a subtraction over `index.mod(x, index.max(y, 1))`, today
+    /// `index.round_down(x, y)`, so the old genome decoded to `% max(max(y,
+    /// 1u), 1u)` and phylu's launch-path test failed on 289 of 450 kernels
+    /// with a faithful decode. A reader change that alters a saved tree fails
+    /// here first: re-encode with `wgsl_safe_convert <texts> --karva <dir>
+    /// --head 32 --slots 128`, keeping the old dumps in a dated directory.
+    #[test]
+    fn the_saved_genomes_are_todays_reading_of_their_texts() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("logs/HGP/001");
+        let k = WgslKingdom::load_safe();
+        let (mut checked, mut stale) = (0usize, Vec::new());
+        for (dumps, texts) in [("popA2_g006j/karva", "popA2_g006j/texts"), ("library_ep", "library_ep_texts")] {
+            let Ok(entries) = std::fs::read_dir(root.join(dumps)) else { return };
+            let mut files: Vec<_> = entries.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "json")).collect();
+            files.sort();
+            for f in &files {
+                let id = f.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+                let saved: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(f).unwrap()).unwrap_or_else(|e| panic!("{dumps}/{id}: {e}"));
+                let text = std::fs::read_to_string(root.join(texts).join(format!("{id}.wgsl"))).unwrap_or_else(|e| panic!("{dumps}/{id}: its text: {e}"));
+                let tree = read_safe(&text, &k).unwrap_or_else(|e| panic!("{dumps}/{id}: its text no longer reads: {}", &e[..e.len().min(300)])).tree;
+                let now = dump_file(&format!("{id}.wgsl"), &k, &encode(&tree, 32, 128, 7013).unwrap_or_else(|e| panic!("{dumps}/{id}: {e}")));
+                if now != saved {
+                    stale.push(format!("{dumps}/{id}"));
+                }
+                checked += 1;
+            }
+        }
+        println!("saved genomes: {} of {checked} today's reading of their texts", checked - stale.len());
+        assert!(stale.is_empty(), "{} of {checked} saved genomes are not today's reading of their texts (re-encode them): {}", stale.len(), stale.iter().take(10).cloned().collect::<Vec<_>>().join(", "));
+    }
 }
