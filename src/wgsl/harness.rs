@@ -2266,6 +2266,12 @@ pub trait Executor {
     /// Run several cases in one submission and one read-back, every plan
     /// batch-safe; each case's run, and the submission's compute ms.
     fn run_batch(&self, k: &Self::Kernel, items: &[(&Plan, &CaseData, &Self::Staged)]) -> Result<(Vec<RunOut>, f64), String>;
+    /// THE POOLED JUDGE of one run's `pooled_recall` output (`bytes`): the
+    /// windows' counts (`PooledWindow`). The device re-ranks on the device
+    /// (`pooled_judge.wgsl`, the exact dot in fixed point); the host and CPU
+    /// test executors by [`pooled_windows`], the reference the device's is
+    /// tested against.
+    fn judge_pooled(&self, problem: &Problem, out: &OutputSpec, env: &Env, data: &CaseData, bytes: &[u8]) -> Result<Vec<PooledWindow>, String>;
     /// One case run `n` times for timing, nothing read: the summed GPU ms
     /// and the longest compute ms a run (the staged slow gate's measure).
     /// One run after another. (Batching the runs into one submission,
@@ -2500,6 +2506,10 @@ impl Executor for HostExecutor {
         "host".into()
     }
 
+    fn judge_pooled(&self, problem: &Problem, out: &OutputSpec, env: &Env, data: &CaseData, bytes: &[u8]) -> Result<Vec<PooledWindow>, String> {
+        pooled_windows(problem, out, env, data, bytes)
+    }
+
     fn compile(&self, problem: &Problem, source: &str) -> Result<(HostCompiled, KernelInfo), String> {
         let info = kernel_info(&problem.spec, source)?;
         let model = self.models.iter().position(|(s, _)| s == source).ok_or("host executor: no model is registered for this kernel text")?;
@@ -2661,6 +2671,10 @@ impl Executor for CpuExecutor {
         "cpu".into()
     }
 
+    fn judge_pooled(&self, problem: &Problem, out: &OutputSpec, env: &Env, data: &CaseData, bytes: &[u8]) -> Result<Vec<PooledWindow>, String> {
+        pooled_windows(problem, out, env, data, bytes)
+    }
+
     fn compile(&self, problem: &Problem, source: &str) -> Result<(CpuKernel, KernelInfo), String> {
         let info = kernel_info(&problem.spec, source)?;
         let module = naga::front::wgsl::parse_str(source).map_err(|e| e.emit_to_string(source))?;
@@ -2718,18 +2732,34 @@ mod device {
 
     use wgpu::util::DeviceExt;
 
-    use super::{initial_bytes, kernel_info, BindingKind, BufId, CaseData, Cmd, Executor, KernelInfo, Plan, Problem, RunOut};
+    use super::{initial_bytes, judge_inputs, kernel_info, windows_of_judged, BindingKind, BufId, CaseData, Cmd, Env, Executor, KernelInfo, OutputSpec, Plan, PooledWindow, Problem, RunOut};
     use crate::wgsl::gram::{adapter_buffer_limit, effective_buffer_limit, wait_gpu, wait_gpu_within};
     use crate::wgsl::oracle::device::Device;
 
     pub struct DeviceExecutor<'a> {
         pub dev: &'a Device,
         limit: u64,
+        /// The pooled judge's pipeline, made on first use, and each judged
+        /// case's resident tables (its records, accept sets, query rows),
+        /// uploaded once a case (keyed by the case data's address, which lives
+        /// as long as its stage) and reused by every individual.
+        judge: std::cell::RefCell<Option<Judge>>,
+    }
+
+    struct Judge {
+        bgl: wgpu::BindGroupLayout,
+        pipeline: wgpu::ComputePipeline,
+        resident: Vec<(usize, JudgeResident)>,
+    }
+
+    struct JudgeResident {
+        bufs: [wgpu::Buffer; 7],
+        params: [u32; 8],
     }
 
     impl<'a> DeviceExecutor<'a> {
         pub fn new(dev: &'a Device) -> DeviceExecutor<'a> {
-            DeviceExecutor { dev, limit: effective_buffer_limit(&dev.device) }
+            DeviceExecutor { dev, limit: effective_buffer_limit(&dev.device), judge: std::cell::RefCell::new(None) }
         }
 
         /// The device executor at the binding limit `problem` plans by
@@ -2740,7 +2770,7 @@ mod device {
                 super::LimitRule::Effective => effective_buffer_limit(&dev.device),
                 super::LimitRule::Adapter => adapter_buffer_limit(&dev.device),
             };
-            DeviceExecutor { dev, limit }
+            DeviceExecutor { dev, limit, judge: std::cell::RefCell::new(None) }
         }
     }
 
@@ -2982,9 +3012,82 @@ mod device {
         }
     }
 
+    impl DeviceExecutor<'_> {
+        /// THE POOLED JUDGE ON THE DEVICE (`pooled_judge.wgsl`): the case's
+        /// tables resident from its first judge, the run's candidates
+        /// uploaded, one invocation a (stage, query), its (found, pooled,
+        /// broken) read back and summed into windows.
+        fn judge_on_device(&self, problem: &Problem, out: &OutputSpec, env: &Env, data: &CaseData, bytes: &[u8]) -> Result<Vec<PooledWindow>, String> {
+            let device = &self.dev.device;
+            let mut judge = self.judge.borrow_mut();
+            if judge.is_none() {
+                device.push_error_scope(wgpu::ErrorFilter::Validation);
+                let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("pooled judge"), source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(include_str!("pooled_judge.wgsl"))) });
+                let entries: Vec<wgpu::BindGroupLayoutEntry> = (0..10u32)
+                    .map(|b| wgpu::BindGroupLayoutEntry {
+                        binding: b,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer { ty: if b == 0 { wgpu::BufferBindingType::Uniform } else { wgpu::BufferBindingType::Storage { read_only: b != 9 } }, has_dynamic_offset: false, min_binding_size: None },
+                        count: None,
+                    })
+                    .collect();
+                let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some("pooled judge"), entries: &entries });
+                let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: Some("pooled judge"), bind_group_layouts: &[&bgl], push_constant_ranges: &[] });
+                let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor { label: Some("judge_main"), layout: Some(&layout), module: &shader, entry_point: "judge_main", compilation_options: Default::default() });
+                if let Some(e) = pollster::block_on(device.pop_error_scope()) {
+                    return Err(format!("our software has a bug: the pooled judge does not compile: {e}"));
+                }
+                *judge = Some(Judge { bgl, pipeline, resident: Vec::new() });
+            }
+            let judge = judge.as_mut().expect("made above");
+            let key = data as *const CaseData as usize;
+            let inp = judge_inputs(problem, out, env, data, bytes.len())?;
+            if !judge.resident.iter().any(|(k, _)| *k == key) {
+                let buf = |label: &str, words: &[u32]| device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some(label), contents: bytemuck::cast_slice(if words.is_empty() { &[0u32][..] } else { words }), usage: wgpu::BufferUsages::STORAGE });
+                let bufs = [buf("rec_offsets", &inp.rec_offsets), buf("rec_indices", &inp.rec_indices), buf("rec_values", &inp.rec_values), buf("qrow", &inp.qrow), buf("arrived", &inp.arrived), buf("accept_offsets", &inp.accept_offsets), buf("accept_rows", &inp.accept_rows)];
+                judge.resident.push((key, JudgeResident { bufs, params: [inp.stages as u32, inp.seeds as u32, inp.queries as u32, inp.c_max as u32, inp.top as u32, 0, 0, 0] }));
+            }
+            let r = &judge.resident.iter().find(|(k, _)| *k == key).expect("resident above").1;
+            let params = device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some("judge params"), contents: bytemuck::cast_slice(&r.params), usage: wgpu::BufferUsages::UNIFORM });
+            let cands = device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some("judge cands"), contents: bytes, usage: wgpu::BufferUsages::STORAGE });
+            let n = inp.stages * inp.queries;
+            let size = (n * 3 * 4) as u64;
+            let judged = device.create_buffer(&wgpu::BufferDescriptor { label: Some("judged"), size, usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC, mapped_at_creation: false });
+            let staging = device.create_buffer(&wgpu::BufferDescriptor { label: Some("judged read"), size, usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ, mapped_at_creation: false });
+            let order: [&wgpu::Buffer; 10] = [&params, &cands, &r.bufs[0], &r.bufs[1], &r.bufs[2], &r.bufs[3], &r.bufs[4], &r.bufs[5], &r.bufs[6], &judged];
+            let entries: Vec<wgpu::BindGroupEntry> = order.iter().enumerate().map(|(i, b)| wgpu::BindGroupEntry { binding: i as u32, resource: b.as_entire_binding() }).collect();
+            let group = device.create_bind_group(&wgpu::BindGroupDescriptor { label: Some("pooled judge"), layout: &judge.bgl, entries: &entries });
+            let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("pooled judge") });
+            {
+                let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("pooled judge"), timestamp_writes: None });
+                pass.set_pipeline(&judge.pipeline);
+                pass.set_bind_group(0, &group, &[]);
+                pass.dispatch_workgroups((n as u32).div_ceil(64), 1, 1);
+            }
+            enc.copy_buffer_to_buffer(&judged, 0, &staging, 0, size);
+            self.dev.queue.submit(Some(enc.finish()));
+            let (tx, rx) = std::sync::mpsc::channel();
+            staging.slice(..).map_async(wgpu::MapMode::Read, move |r| {
+                tx.send(r).expect("the receiver waits for the mapping");
+            });
+            wait_gpu(device, &self.dev.queue)?;
+            rx.recv().map_err(|e| format!("map: {e}"))?.map_err(|e| format!("map: {e}"))?;
+            let words: Vec<u32> = bytemuck::cast_slice(&staging.slice(..).get_mapped_range()).to_vec();
+            staging.unmap();
+            for b in [params, cands, judged, staging] {
+                b.destroy();
+            }
+            windows_of_judged(&inp, &words)
+        }
+    }
+
     impl<'a> Executor for DeviceExecutor<'a> {
         type Kernel = DeviceKernel;
         type Staged = DeviceStaged;
+
+        fn judge_pooled(&self, problem: &Problem, out: &OutputSpec, env: &Env, data: &CaseData, bytes: &[u8]) -> Result<Vec<PooledWindow>, String> {
+            self.judge_on_device(problem, out, env, data, bytes)
+        }
 
         fn binding_limit(&self) -> u64 {
             self.limit
@@ -3630,10 +3733,13 @@ impl<'e, E: Executor> Harness<'e, E> {
 
     /// THE FITNESS OF A POOLED_RECALL PROBLEM (v24, fuller
     /// `docs/PLAN_v24_ingest_evolution.md`): compile (every entry point),
-    /// then per constraint case one run with its reads, judged per window
-    /// (`pooled_windows`: x_M, x_P, x_B), then `timing_rounds` fresh runs a
-    /// case without reads, each run's per-stage samples (`samples_by_label`,
-    /// `pooled_timing`) one input each against today's ms. Every run is a
+    /// then per constraint case one run with its reads, judged per window on
+    /// the executor (`Executor::judge_pooled`: the device's exact re-rank;
+    /// x_M, x_P, x_B) and its per-stage samples timing run 1, then
+    /// `timing_rounds - 1` fresh runs a case without reads; every timing
+    /// run's per-stage samples (`samples_by_label`, `pooled_timing`) one input
+    /// each against today's ms: `timing_rounds` runs a case in all, the
+    /// inputs as when the read run was not timed. Every run is a
     /// whole fresh run: its index arenas created and zeroed at its start, so
     /// no sample reuses a built index. θ is the hff library's TrueNorth over
     /// the inputs (`score::truenorth_angle`); nothing is averaged. A kernel
@@ -3654,6 +3760,7 @@ impl<'e, E: Executor> Harness<'e, E> {
         let oi = self.problem.spec.output.iter().position(|o| o.name == out.name).expect("the output is the problem's");
         let mut inputs = Vec::new();
         let mut details = Vec::new();
+        let mut first_samples = Vec::new();
         let t_cases = Instant::now();
         let mut passed = 0;
         for s in &self.constraint {
@@ -3665,17 +3772,30 @@ impl<'e, E: Executor> Harness<'e, E> {
                 Ok(r) => r,
                 Err(e) => return infeasible(passed, format!("run: {e} at {}", s.case.label), &split),
             };
-            let w = match r.outputs.get(oi).ok_or_else(|| "the run read no output".to_string()).and_then(|b| pooled_windows(&self.problem, &out, &s.env, &s.data, b)) {
+            let w = match r.outputs.get(oi).ok_or_else(|| "the run read no output".to_string()).and_then(|b| self.exec.judge_pooled(&self.problem, &out, &s.env, &s.data, b)) {
                 Ok(w) => w,
+                Err(e) => return infeasible(passed, format!("our software has a bug: {e}"), &split),
+            };
+            // THE READ RUN IS TIMING RUN 1: its dispatches' timestamps are
+            // taken in its compute submissions, before and apart from its
+            // read-back, so it is a fresh run's samples as a timing run's are.
+            let samples = match samples_by_label(&plan, &r).and_then(|m| pooled_timing(&self.problem, &out, &s.env, &s.data, &m)) {
+                Ok(x) => x,
                 Err(e) => return infeasible(passed, format!("our software has a bug: {e}"), &split),
             };
             inputs.extend(window_inputs(&w));
             details.push(window_detail(&s.case.label, &w));
+            first_samples.push(samples);
             passed += 1;
         }
         split.cases = t_cases.elapsed().as_secs_f64() * 1e3;
+        // Timing run 1's inputs, in the order the timing runs give theirs.
+        for samples in &first_samples {
+            details.push(samples.iter().map(|(l, ms, today)| format!("{l} {ms:.2} ms (today {today:.1})")).collect::<Vec<_>>().join(", "));
+            inputs.extend(samples.iter().map(|(_, ms, today)| time_input(*today, *ms)));
+        }
         let t_timing = Instant::now();
-        for rep in 0..self.timing_rounds.max(1) {
+        for rep in 1..self.timing_rounds.max(1) {
             for s in &self.constraint {
                 let plan = match self.problem.plan(&s.case, limit, Some(&info)) {
                     Ok(p) => p,
@@ -3689,9 +3809,6 @@ impl<'e, E: Executor> Harness<'e, E> {
                     Ok(x) => x,
                     Err(e) => return infeasible(passed, format!("our software has a bug: {e}"), &split),
                 };
-                if rep == 0 {
-                    details.push(samples.iter().map(|(l, ms, today)| format!("{l} {ms:.2} ms (today {today:.1})")).collect::<Vec<_>>().join(", "));
-                }
                 inputs.extend(samples.iter().map(|(_, ms, today)| time_input(*today, *ms)));
             }
         }
@@ -3825,6 +3942,119 @@ fn input_f64(problem: &Problem, data: &CaseData, name: &str) -> Result<Vec<f64>,
 /// An input tensor of non-negative integers as usize.
 fn input_usize(problem: &Problem, data: &CaseData, name: &str) -> Result<Vec<usize>, String> {
     input_f64(problem, data, name)?.into_iter().map(|v| integral(v, name).map(|x| x as usize)).collect()
+}
+
+/// THE POOLED JUDGE'S TABLES for the device (`pooled_judge.wgsl`): the
+/// output's layout, the CSR records (values as f32 bits), each query's record
+/// row, each stage's arrived rows, the accept sets of every stage
+/// concatenated (offsets absolute), the halves and today's counts per stage
+/// and query (for the windows' sums).
+#[derive(Debug)]
+pub struct JudgeInputs {
+    pub stages: usize,
+    pub seeds: usize,
+    pub queries: usize,
+    pub c_max: usize,
+    pub top: usize,
+    pub rec_offsets: Vec<u32>,
+    pub rec_indices: Vec<u32>,
+    pub rec_values: Vec<u32>,
+    pub qrow: Vec<u32>,
+    pub arrived: Vec<u32>,
+    pub accept_offsets: Vec<u32>,
+    pub accept_rows: Vec<u32>,
+    pub half: Vec<usize>,
+    pub today_misses: Vec<Vec<usize>>,
+    pub today_pooled: Vec<Vec<usize>>,
+}
+
+/// [`JudgeInputs`] of a case for an output of `bytes` bytes, every check
+/// [`pooled_windows`] makes.
+pub fn judge_inputs(problem: &Problem, out: &OutputSpec, env: &Env, data: &CaseData, bytes: usize) -> Result<JudgeInputs, String> {
+    let ps = out.pooled.as_ref().ok_or_else(|| format!("output {} has no [output.pooled]", out.name))?;
+    let int = |e: &str, env: &Env| eval_int(e, env).map(|v| v as usize);
+    let (seeds, stages, queries, top) = (int(&ps.seeds, env)?, int(&ps.stages, env)?, int(&ps.queries, env)?, int(&ps.top, env)?);
+    let c_max = int(&out.shape[1], env)?;
+    if !bytes.is_multiple_of(4) || bytes / 4 != stages * seeds * queries * c_max {
+        return Err(format!("{}: {bytes} bytes, the layout is {stages} stages x {seeds} seeds x {queries} queries x {c_max} u32", out.name));
+    }
+    if seeds * c_max > 256 || top == 0 || top > 16 {
+        return Err(format!("the pooled judge holds pools of at most 256 and a top of 1..=16: {seeds} seeds x {c_max}, top {top}"));
+    }
+    let u32s = |v: Vec<usize>, what: &str| v.into_iter().map(|x| u32::try_from(x).map_err(|_| format!("{what}: {x} past u32"))).collect::<Result<Vec<u32>, String>>();
+    let (offsets, indices) = (input_usize(problem, data, &ps.rec_offsets)?, input_usize(problem, data, &ps.rec_indices)?);
+    let values = input_f64(problem, data, &ps.rec_values)?;
+    let records = offsets.len().saturating_sub(1);
+    if offsets.last().copied() != Some(indices.len()) || indices.len() != values.len() || offsets.windows(2).any(|w| w[0] > w[1]) {
+        return Err(format!("the CSR records: {} offsets, {} indices, {} values, not a CSR", offsets.len(), indices.len(), values.len()));
+    }
+    // The values as the device reads them: f32 bits, each exactly the f64 the host reads.
+    let rec_values: Vec<u32> = values.iter().map(|&v| (v as f32).to_bits()).collect();
+    if values.iter().zip(&rec_values).any(|(&v, &b)| f64::from(f32::from_bits(b)) != v) {
+        return Err(format!("{}: a value that is not an f32: the pooled judge reads f32 records", ps.rec_values));
+    }
+    let half = input_usize(problem, data, &ps.half)?;
+    if half.len() < queries || half[..queries].iter().any(|&h| h > 1) {
+        return Err(format!("{}: {} values for {queries} queries, each a half (0 or 1)", ps.half, half.len()));
+    }
+    let mut qrow = Vec::with_capacity(queries);
+    let mut e = env.clone();
+    for q in 0..queries {
+        e.insert("q".into(), q as f64);
+        let r = int(&ps.query_row, &e)?;
+        if r >= records {
+            return Err(format!("query {q}: record row {r} of {records}"));
+        }
+        qrow.push(r as u32);
+    }
+    let (mut arrived, mut accept_offsets, mut accept_rows, mut today_misses, mut today_pooled) = (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    for stage in 1..=stages {
+        let mut e = env.clone();
+        e.insert("stage".into(), stage as f64);
+        let a = int(&ps.arrived, &e)?;
+        if a > records {
+            return Err(format!("stage {stage}: {a} arrived rows, the CSR holds {records} records"));
+        }
+        arrived.push(a as u32);
+        let (ao, ar) = (input_usize(problem, data, &template(&ps.accept_offsets, &e)?)?, input_usize(problem, data, &template(&ps.accept_rows, &e)?)?);
+        let (tm, tp) = (input_usize(problem, data, &template(&ps.today_misses, &e)?)?, input_usize(problem, data, &template(&ps.today_pooled, &e)?)?);
+        if ao.len() < queries + 1 || ao[queries] > ar.len() || tm.len() < queries || tp.len() < queries {
+            return Err(format!("stage {stage}: accept offsets {}, rows {}, today's lists {} and {}, for {queries} queries", ao.len(), ar.len(), tm.len(), tp.len()));
+        }
+        let base = accept_rows.len();
+        accept_offsets.extend(u32s(ao[..=queries].iter().map(|o| o + base).collect(), "an accept offset")?);
+        accept_rows.extend(u32s(ar, "an accept row")?);
+        today_misses.push(tm[..queries].to_vec());
+        today_pooled.push(tp[..queries].to_vec());
+    }
+    Ok(JudgeInputs { stages, seeds, queries, c_max, top, rec_offsets: u32s(offsets, "a record offset")?, rec_indices: u32s(indices, "a record index")?, rec_values, qrow, arrived, accept_offsets, accept_rows, half, today_misses, today_pooled })
+}
+
+/// The windows of the device's judged words (found, pooled, broken per
+/// stage and query), summed per stage and half as [`pooled_windows`] sums.
+pub fn windows_of_judged(inp: &JudgeInputs, words: &[u32]) -> Result<Vec<PooledWindow>, String> {
+    if words.len() != 3 * inp.stages * inp.queries {
+        return Err(format!("the pooled judge wrote {} words for {} stages x {} queries", words.len(), inp.stages, inp.queries));
+    }
+    let mut windows = Vec::with_capacity(2 * inp.stages);
+    for stage in 1..=inp.stages {
+        let mut w = [PooledWindow { stage, half: 0, ..Default::default() }, PooledWindow { stage, half: 1, ..Default::default() }];
+        for q in 0..inp.queries {
+            let at = 3 * ((stage - 1) * inp.queries + q);
+            let x = &mut w[inp.half[q]];
+            x.queries += 1;
+            x.found += u64::from(words[at]);
+            x.pooled += u64::from(words[at + 1]);
+            x.broken += u64::from(words[at + 2]);
+            x.misses_today += inp.today_misses[stage - 1][q] as u64;
+            x.pooled_today += inp.today_pooled[stage - 1][q] as u64;
+        }
+        for x in &mut w {
+            x.misses = inp.top as u64 * x.queries - x.found;
+        }
+        windows.extend(w);
+    }
+    Ok(windows)
 }
 
 /// THE POOLED-RECALL COUNTS of one run's output (`PooledSpec`): per stage
@@ -5265,6 +5495,96 @@ fn search() { cands[0] = cfg.stage; }
     /// per-query ms summed; θ is the hff library's TrueNorth over them,
     /// bit for bit. A kernel that does not compile is infeasible; the
     /// paired-timing paths name that a pooled problem has none.
+    /// THE DEVICE JUDGE'S TABLES AND SUMS on the hand-made case: the device's
+    /// per-query words as worked by hand above (found, pooled, broken: stage 1
+    /// q0 2 3 1, q1 1 1 0, q2 2 5 2; stage 2 q0 1 2 0, q1 2 6 2, q2 0 0 0)
+    /// sum to exactly the host's windows; the tables hold each stage's accept
+    /// offsets absolute into the concatenated rows, the query rows, the
+    /// arrived rows; a wrong layout, a pool past 256 or a top past 16 is named.
+    #[test]
+    fn the_device_judges_tables_and_sums_match_the_host() {
+        let spec: ProblemSpec = toml::from_str(&pooled_problem_text("none")).unwrap();
+        let p = Problem { dir: PathBuf::new(), spec, suites: Vec::new(), reference: String::new() };
+        let (data, env) = pooled_staged(&p);
+        let out = p.spec.output[0].clone();
+        let bytes: Vec<u8> = pooled_cands().iter().flat_map(|x| x.to_le_bytes()).collect();
+        let inp = judge_inputs(&p, &out, &env, &data, bytes.len()).unwrap();
+        assert_eq!((inp.stages, inp.seeds, inp.queries, inp.c_max, inp.top), (2, 2, 3, 4, 2));
+        assert_eq!(inp.accept_offsets.len(), 2 * (inp.queries + 1));
+        assert_eq!(inp.accept_offsets[inp.queries + 1], inp.accept_offsets[inp.queries], "stage 2's offsets start where stage 1's rows end");
+        assert_eq!(*inp.accept_offsets.last().unwrap() as usize, inp.accept_rows.len());
+        assert_eq!(inp.arrived.len(), 2);
+        let words: Vec<u32> = vec![2, 3, 1, 1, 1, 0, 2, 5, 2, 1, 2, 0, 2, 6, 2, 0, 0, 0];
+        assert_eq!(windows_of_judged(&inp, &words).unwrap(), pooled_windows(&p, &out, &env, &data, &bytes).unwrap());
+        assert!(windows_of_judged(&inp, &words[3..]).is_err(), "a short judge");
+        assert!(judge_inputs(&p, &out, &env, &data, bytes.len() - 4).unwrap_err().contains("the layout is 2 stages x 2 seeds x 3 queries x 4 u32"));
+    }
+
+    /// The pooled judge's WGSL validates on the host (naga, fuller's validator).
+    #[test]
+    fn the_pooled_judge_kernel_validates() {
+        crate::wgsl::render::validate_text(include_str!("pooled_judge.wgsl")).unwrap();
+    }
+
+    /// THE DEVICE JUDGE ON THE HAND-MADE CASE (GPU, built, not run): the
+    /// device's windows are the host's, every count worked by hand.
+    #[cfg(feature = "gpu")]
+    #[test]
+    fn the_device_judge_counts_the_hand_case_on_the_gpu() {
+        let dev = crate::wgsl::oracle::device::Device::new().expect("device");
+        let exec = DeviceExecutor::new(&dev);
+        let spec: ProblemSpec = toml::from_str(&pooled_problem_text("none")).unwrap();
+        let p = Problem { dir: PathBuf::new(), spec, suites: Vec::new(), reference: String::new() };
+        let (data, env) = pooled_staged(&p);
+        let out = p.spec.output[0].clone();
+        let bytes: Vec<u8> = pooled_cands().iter().flat_map(|x| x.to_le_bytes()).collect();
+        assert_eq!(exec.judge_pooled(&p, &out, &env, &data, &bytes).unwrap(), pooled_windows(&p, &out, &env, &data, &bytes).unwrap());
+        // Again, the case's tables resident: the same windows.
+        assert_eq!(exec.judge_pooled(&p, &out, &env, &data, &bytes).unwrap(), pooled_windows(&p, &out, &env, &data, &bytes).unwrap());
+    }
+
+    /// THE DEVICE JUDGE AGAINST THE HOST ON RUN 3'S KERNELS (GPU, built, not
+    /// run): problems/v24_ingest's stream case (25,000 + 2,500, stages 1..3),
+    /// eight feasible kernels of run 3's strict arm (tests/fixtures/v24_judge,
+    /// from logs/V24/run3_strict/kernels), each run once with its reads; the
+    /// device's exact re-rank gives every window's found, pooled and broken
+    /// counts exactly as the host's f64 re-rank (`pooled_windows`). The
+    /// seconds each judge takes are printed.
+    #[cfg(feature = "gpu")]
+    #[test]
+    fn the_device_judge_counts_as_the_host_on_run_3s_kernels_on_the_gpu() {
+        let dev = crate::wgsl::oracle::device::Device::new().expect("device");
+        let p = Problem::load(&root().join("problems/v24_ingest")).unwrap();
+        let exec = DeviceExecutor::for_problem(&dev, &p);
+        let limit = exec.binding_limit();
+        let c = &p.suites[0].cases[0];
+        let data = p.case_data(c, limit).unwrap();
+        let env = p.env(c, limit).unwrap();
+        let out = p.pooled_output().cloned().expect("pooled_recall");
+        let oi = p.spec.output.iter().position(|o| o.name == out.name).unwrap();
+        let (_, info0) = exec.compile(&p, &p.reference).unwrap();
+        let (staged, _) = exec.stage(&p.plan(c, limit, Some(&info0)).unwrap(), &data).unwrap();
+        let dir = root().join("tests/fixtures/v24_judge");
+        let mut files: Vec<PathBuf> = std::fs::read_dir(&dir).unwrap().flatten().map(|e| e.path()).filter(|f| f.extension().is_some_and(|x| x == "wgsl")).collect();
+        files.sort();
+        assert_eq!(files.len(), 8, "the fixtures");
+        for f in &files {
+            let text = std::fs::read_to_string(f).unwrap();
+            let (k, info) = exec.compile(&p, &text).unwrap();
+            let plan = p.plan(c, limit, Some(&info)).unwrap();
+            let r = exec.run(&k, &plan, &data, &staged, true).unwrap();
+            let bytes = &r.outputs[oi];
+            let t = Instant::now();
+            let device = exec.judge_pooled(&p, &out, &env, &data, bytes).unwrap();
+            let device_ms = t.elapsed().as_secs_f64() * 1e3;
+            let t = Instant::now();
+            let host = pooled_windows(&p, &out, &env, &data, bytes).unwrap();
+            let host_ms = t.elapsed().as_secs_f64() * 1e3;
+            println!("{}: device judge {device_ms:.1} ms, host {host_ms:.1} ms; windows {:?}", f.display(), device.iter().map(|w| (w.found, w.pooled, w.broken)).collect::<Vec<_>>());
+            assert_eq!(device, host, "{}: the device's counts are not the host's", f.display());
+        }
+    }
+
     #[test]
     fn the_pooled_fitness_is_truenorth_over_the_inputs() {
         let dir = std::env::temp_dir().join("fuller_harness_pooled");
