@@ -1724,6 +1724,16 @@ impl<'a> Ctx<'a> {
 
     /// The scalar value of a module `const.NAME` or `override.NAME` leaf
     /// (an override at its default); None for any other leaf.
+    /// The step of a loop's counter stored as `v`: `counter + k` with k a
+    /// literal, or a module `const` (its value: `r = r + THREADS`, the v24
+    /// reference's, 2026-10-17).
+    fn step_of(&self, v: &Tree, counter: &str) -> Option<f32> {
+        if v.name != "index.add" || v.kids.len() != 2 || !v.kids.iter().any(|k| local_name(&k.name).as_deref() == Some(counter)) {
+            return None;
+        }
+        v.kids.iter().find_map(|k| literal_value(k).or_else(|| if k.kids.is_empty() { self.module_constant(&k.name).ok().flatten().map(|x| x as f32) } else { None }))
+    }
+
     fn module_constant(&self, leaf: &str) -> Result<Option<f64>, String> {
         let init = if let Some(name) = leaf.strip_prefix("const.") {
             self.module.constants.iter().find(|(_, c)| c.name.as_deref() == Some(name)).map(|(_, c)| c.init)
@@ -4157,17 +4167,6 @@ impl<'a> Ctx<'a> {
         };
         let Some(counter) = counter.filter(|_| c.kids.iter().all(|k| k.kids.is_empty())) else { return Ok(None) };
         let fail = |why: &str| Err(format!("a halving loop over {counter} that is not a tree reduction: {why}"));
-        if cond || !rung.starts_with('L') {
-            return fail("under a condition (a reduction's barriers need uniform control flow)");
-        }
-        // The start: the counter's declaration's literal, a power of two.
-        let index: Option<usize> = counter.rsplit('@').next().and_then(|i| i.parse().ok());
-        let start = self.naga_fn.local_variables.iter().find(|(h, _)| Some(h.index()) == index).and_then(|(_, lv)| lv.init).and_then(|e| match self.naga_fn.expressions[e] {
-            Expression::Literal(naga::Literal::U32(v)) => Some(v),
-            Expression::Literal(naga::Literal::I32(v)) => u32::try_from(v).ok(),
-            _ => None,
-        });
-        let Some(start) = start.filter(|v| v.is_power_of_two() && *v <= 2048) else { return fail("its start is not a literal power of two in its declaration (at most 2,048)") };
         // The step: `s = s >> 1u` or `s = s / 2u`, in the continuing block or
         // as the body's last statement.
         let halves = |t: &Tree| -> bool {
@@ -4196,9 +4195,22 @@ impl<'a> Ctx<'a> {
         } else {
             false
         };
+        // A loop tested `s > 0` that does not halve its counter is some other
+        // loop (v24's insertion step counts down by one, 2026-10-17).
         if !stepped {
-            return fail("its step is not `s >> 1u` or `s / 2u`");
+            return Ok(None);
         }
+        if cond || !rung.starts_with('L') {
+            return fail("under a condition (a reduction's barriers need uniform control flow)");
+        }
+        // The start: the counter's declaration's literal, a power of two.
+        let index: Option<usize> = counter.rsplit('@').next().and_then(|i| i.parse().ok());
+        let start = self.naga_fn.local_variables.iter().find(|(h, _)| Some(h.index()) == index).and_then(|(_, lv)| lv.init).and_then(|e| match self.naga_fn.expressions[e] {
+            Expression::Literal(naga::Literal::U32(v)) => Some(v),
+            Expression::Literal(naga::Literal::I32(v)) => u32::try_from(v).ok(),
+            _ => None,
+        });
+        let Some(start) = start.filter(|v| v.is_power_of_two() && *v <= 2048) else { return fail("its start is not a literal power of two in its declaration (at most 2,048)") };
         // The body: `if (lidx < s) { a[lidx] = a[lidx] op a[lidx + s]; }` then
         // a workgroup barrier (in the block naga makes of a `for` body).
         let mut prefix = [path, &[0]].concat();
@@ -4305,14 +4317,18 @@ impl<'a> Ctx<'a> {
             if c.name == "logic.not" && c.kids.len() == 1 {
                 c = c.kids[0].clone();
             } else {
-                let flipped = match c.name.as_str() {
-                    "compare.ge" => "compare.lt",
-                    "compare.gt" => "compare.le",
-                    "compare.le" => "compare.gt",
-                    "compare.lt" => "compare.ge",
-                    _ => return Err(format!("a loop test `if (cond) break` that is not a comparison of the counter with a bound: {}", c.to_sexpr())),
+                // (Any other break condition is negated as it stands, `!(j ==
+                // 0u)`: a loop with no counter, v24's insertion step `loop {
+                // if (j == 0u) { break; } ... j = j - 1u; }`, 2026-10-17.)
+                c = match c.name.as_str() {
+                    "compare.ge" => Tree::new("compare.lt", c.ty, c.kids.clone()),
+                    "compare.gt" => Tree::new("compare.le", c.ty, c.kids.clone()),
+                    "compare.le" => Tree::new("compare.gt", c.ty, c.kids.clone()),
+                    "compare.lt" => Tree::new("compare.ge", c.ty, c.kids.clone()),
+                    "compare.eq" => Tree::new("compare.ne", c.ty, c.kids.clone()),
+                    "compare.ne" => Tree::new("compare.eq", c.ty, c.kids.clone()),
+                    _ => Tree::new("logic.not", c.ty, vec![c.clone()]),
                 };
-                c = Tree::new(flipped, c.ty, c.kids.clone());
             }
         }
         // A tree reduction written as a halving loop is the reduction row.
@@ -4412,7 +4428,7 @@ impl<'a> Ctx<'a> {
                     let t = tree_of(self, &r.tree)?;
                     if local_name(&t.name).as_deref() == Some(counter.as_str()) {
                         let v = &t.kids[0];
-                        let lit = if v.name == "index.add" && v.kids.len() == 2 && v.kids.iter().any(|k| local_name(&k.name).as_deref() == Some(counter.as_str())) { v.kids.iter().find_map(literal_value) } else { None };
+                        let lit = self.step_of(v, &counter);
                         match lit {
                             Some(x) if (1.0..=4096.0).contains(&x) => step = Some(x as u32),
                             _ => {
@@ -4436,7 +4452,7 @@ impl<'a> Ctx<'a> {
                     let t = tree_of(self, &r.tree)?;
                     if local_name(&t.name).as_deref() == Some(counter.as_str()) {
                         let v = &t.kids[0];
-                        let lit = if v.name == "index.add" && v.kids.len() == 2 && v.kids.iter().any(|k| local_name(&k.name).as_deref() == Some(counter.as_str())) { v.kids.iter().find_map(literal_value) } else { None };
+                        let lit = self.step_of(v, &counter);
                         if let Some(x) = lit.filter(|x| (1.0..=4096.0).contains(x)) {
                             step = Some(x as u32);
                             last_is_step = true;
@@ -4457,7 +4473,7 @@ impl<'a> Ctx<'a> {
                         let t = tree_of(self, &r.tree)?;
                         if local_name(&t.name).as_deref() == Some(counter.as_str()) {
                             let v = &t.kids[0];
-                            let lit = if v.name == "index.add" && v.kids.len() == 2 && v.kids.iter().any(|k| local_name(&k.name).as_deref() == Some(counter.as_str())) { v.kids.iter().find_map(literal_value) } else { None };
+                            let lit = self.step_of(v, &counter);
                             if let Some(x) = lit.filter(|x| (1.0..=4096.0).contains(x)) {
                                 step = Some(x as u32);
                                 block_last_is_step = true;
@@ -4824,7 +4840,20 @@ impl<'a> Ctx<'a> {
         let out_rung = if rung.starts_with('O') { return Err("a loop with no counter in the epilogue".into()) } else { rung.to_string() };
         let cap = Tree::literal("literal.index", ty(self, "u32.xbound")?, crate::wgsl::render::MAX_LOOP_TRIP as f32);
         let bound = Tree::new("bound.of_index", ty(self, "u32.boundx")?, vec![cap]);
-        let rest: Vec<Statement> = body.iter().skip(test_pos + 1).map(|s| (*s).clone()).collect();
+        // Further break guards straight after the test (`if (j == 0u) { break; }
+        // if (best[j - 1u] >= v) { break; }`, v24's insertion step): one stop
+        // condition, `a || b` evaluating them in order as the ifs do.
+        let is_break_guard = |s: &Statement| matches!(s, Statement::If { accept, reject, .. } if accept.iter().filter(|x| !matches!(x, Statement::Emit(_))).count() == 1 && accept.iter().any(|x| matches!(x, Statement::Break)) && reject.iter().all(|x| matches!(x, Statement::Emit(_))));
+        let guards = body.iter().skip(test_pos + 1).take_while(|s| is_break_guard(s)).count();
+        let mut more_stops = Vec::new();
+        for i in 0..guards {
+            let at = [&path[..], &[0, test_pos + 1 + i]].concat();
+            let root = self.root_at(&at, |k| matches!(k, RootKind::Condition { .. })).ok_or("no condition root at a loop's second break")?;
+            let t = tree_of(self, &root.tree)?;
+            more_stops.push(self.value(&t.kids[0])?);
+        }
+        let first = test_pos + 1 + guards;
+        let rest: Vec<Statement> = body.iter().skip(first).map(|s| (*s).clone()).collect();
         let rest = naga::Block::from_vec(rest);
         // The loop takes the tile counter of its depth (its body may hold tile loops).
         let saved = (self.tile_counter.clone(), self.tile_counter2.clone(), self.tile_counter3.clone(), self.tile_counter4.clone());
@@ -4836,7 +4865,7 @@ impl<'a> Ctx<'a> {
             _ => self.tile_counter4 = mine,
         }
         path.push(0);
-        let stmts = self.nested(|ctx, path| ctx.walk(&rest, path, &body_rung, test_pos + 1), path);
+        let stmts = self.nested(|ctx, path| ctx.walk(&rest, path, &body_rung, first), path);
         path.pop();
         (self.tile_counter, self.tile_counter2, self.tile_counter3, self.tile_counter4) = saved;
         let after = stmts?;
@@ -4844,7 +4873,7 @@ impl<'a> Ctx<'a> {
             return Err("a second break in a loop with no counter".into());
         }
         let flag = ty(self, "bool.flag")?;
-        let stop = Tree::new("logic.not", flag, vec![self.value(&c)?]);
+        let stop = more_stops.into_iter().fold(Tree::new("logic.not", flag, vec![self.value(&c)?]), |a, b| Tree::new("logic.or", flag, vec![a, b]));
         let brk = Tree::new(&format!("block.brk_B{b}"), ty(self, &format!("block.B{b}"))?, vec![self.block(Vec::new(), &body_rung)?, stop, self.block(after, &body_rung)?]);
         Ok(Tree::new(&format!("loop.tilex_brk_{out_rung}"), self.stmt_ty(&out_rung)?, vec![bound, brk]))
     }
@@ -6281,6 +6310,63 @@ fn search(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocati
         // The outline names each entry point's statements.
         let outline = statement_outline(&src).unwrap();
         assert!(outline.iter().any(|l| l.starts_with("ingest [")) && outline.iter().any(|l| l.starts_with("search [")), "{outline:?}");
+    }
+
+    /// TWO LOOPS OF THE V24 REFERENCE (2026-10-17, the harness agent's
+    /// `problems/v24_ingest_small/reference.wgsl` worked around both): a
+    /// thread-strided loop stepped by a module `const` (`r = r + THREADS`),
+    /// and an insertion step counting down with two breaks, `loop { if (j ==
+    /// 0u) { break; } if (best[j - 1u] >= v) { break; } ... j = j - 1u; }`
+    /// (a loop with no counter, its stop the two guards in order). Each reads,
+    /// renders, naga validates it, reads back to the same tree and passes
+    /// every layer.
+    #[test]
+    fn a_const_stepped_loop_and_a_downward_insertion_loop_read() {
+        let k = WgslKingdom::load_safe();
+        let contract = crate::wgsl::safety::Contract::parse("workgroups x 1 1024\nworkgroups y 1 1\nworkgroups z 1 1\n").unwrap();
+        for (what, src) in [
+            ("const step", "@group(0) @binding(0) var<storage, read> keys: array<f32>;
+@group(0) @binding(1) var<storage, read_write> out: array<f32>;
+const THREADS = 16u;
+var<workgroup> tile: array<f32, 256>;
+@compute @workgroup_size(16, 1, 1)
+fn main(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) wid: vec3<u32>) {
+    for (var r = lid.x; r < 256u; r = r + THREADS) {
+        tile[r] = keys[wid.x * 256u + r];
+    }
+    workgroupBarrier();
+    out[wid.x * 16u + lid.x] = tile[lid.x * 16u];
+}
+"),
+            ("insertion", "@group(0) @binding(0) var<storage, read> keys: array<f32>;
+@group(0) @binding(1) var<storage, read_write> out: array<f32>;
+@compute @workgroup_size(64, 1, 1)
+fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+    var best: array<f32, 8>;
+    let v = keys[gid.x];
+    var j = 7u;
+    loop {
+        if (j == 0u) { break; }
+        if (best[j - 1u] >= v) { break; }
+        best[j] = best[j - 1u];
+        j = j - 1u;
+    }
+    best[j] = v;
+    out[gid.x] = best[0];
+}
+"),
+        ] {
+            let r = read_safe(src, &k).unwrap_or_else(|e| panic!("{what}: {e}"));
+            let out = crate::wgsl::safe_karva::render_tree_with(&r.tree, &k, &r.role).unwrap_or_else(|e| panic!("{what}: {e}"));
+            validate_text(&out.text).unwrap_or_else(|e| panic!("{what}: {e}\n{}", out.text));
+            let back = read_safe(&out.text, &k).unwrap_or_else(|e| panic!("{what}: read back: {e}\n{}", out.text));
+            assert!(back.tree == r.tree, "{what}: the rendered text reads back to the same tree: {:?}\n{}", crate::wgsl::render::first_difference(&r.tree, &back.tree), out.text);
+            let checker = crate::wgsl::check::Checker::with_contract(&k, &r.role, &crate::wgsl::target::Target::recorded(), contract.clone());
+            checker.check(&r.tree).unwrap_or_else(|e| panic!("{what}: {e}\n{}", out.text));
+            if what == "insertion" {
+                assert!(out.text.contains(") || ("), "{what}: one stop of both guards, in order:\n{}", out.text);
+            }
+        }
     }
 
     /// HELPERS INLINED AS STATEMENTS, CALLED UNDER A CONDITION AND FROM EACH
