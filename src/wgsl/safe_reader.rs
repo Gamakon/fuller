@@ -1904,7 +1904,7 @@ impl<'a> Ctx<'a> {
         let c = self.value(&cond_tree.kids[0])?;
         let st = self.stmt_ty(rung)?;
         let level = &rung[1..];
-        let needed = holds_barrier(self.module, &trimmed) || holds_barrier(self.module, &rest);
+        let needed = holds_barrier(self.module, &trimmed) || holds_barrier(self.module, &rest) || holds_item_loop(self.naga_fn, &trimmed) || holds_item_loop(self.naga_fn, &rest);
         // As an if-else is read: a simple test of two uniform values first,
         // then any uniform predicate, so the text written reads back so.
         let simple = match self.simple_test(&c)?.filter(|_| rung.starts_with('L') && needed) {
@@ -4218,7 +4218,10 @@ impl<'a> Ctx<'a> {
                         // others only when a body needs its rung, a barrier in
                         // it: the text `if (a < b)` is otherwise the plain if,
                         // as the kingdom writes one: 2 of 1,000 random trees.)
-                        let needed = holds_barrier(self.module, accept) || holds_barrier(self.module, reject);
+                        // (Or an item loop, the kingdom's loop over t, which only the
+                        // top rung spells: drawn in a uniform test's body, it read at
+                        // the conditional rung as a store to its counter, 2026-10-17.)
+                        let needed = holds_barrier(self.module, accept) || holds_barrier(self.module, reject) || holds_item_loop(self.naga_fn, accept) || holds_item_loop(self.naga_fn, reject);
                         let was_le = matches!(c.name.as_str(), "compare.le" | "compare.ge");
                         let has_else = !reject.iter().all(|s| matches!(s, Statement::Emit(_)));
                         if let Some((op, x, y)) = uniform_le.filter(|(op, _, _)| rung.starts_with('L') && !exits && !exits_else && (needed || (*op == "ule" && was_le && !has_else))) {
@@ -5095,6 +5098,18 @@ impl<'a> Ctx<'a> {
         // otherwise the loop is read at the conditional rung of its depth (no
         // barrier in it) and written in place (stmt.cblock_L<d>).
         let mut bound_tree = bound_tree;
+        // The item counter t, after an item loop, against a literal at the top
+        // level (`for (; t < 1u; t = t + 1u)`, the items continued to a bound
+        // whose fallback writes 1u, drawn in a uniform test's body): the items
+        // continued, bounded by that literal as a uniform value, not a tile
+        // loop over t (whose counter is k), 2026-10-17.
+        let item_named = counter.strip_prefix("local.").and_then(|r| r.split('@').next()) == Some("t");
+        let kind = if kind == "lit64" && rung == "L0" && item_named && self.used_counters.contains(&counter) {
+            bound_tree = Tree::new("bound.of_index", ty(self, "u32.boundx")?, vec![Tree::literal("literal.index", index_ty, bound_tree.konst)]);
+            "boundx"
+        } else {
+            kind
+        };
         let first0 = if do_while { 0 } else { test_pos + 1 };
         let body0: Vec<Statement> = body_stmts_all.iter().skip(first0).map(|s| (*s).clone()).collect();
         let body0 = if do_while { body0 } else { without_guard(&body0, first0) };
@@ -5776,6 +5791,33 @@ fn stored_locals(f: &Function, block: &naga::Block) -> Vec<String> {
 
 /// Whether a block holds a barrier (workgroup, storage or subgroup, or a
 /// workgroupUniformLoad), in it or in a function it calls.
+/// Whether a block holds the kingdom's item loop: a loop over the local
+/// `t` (the emitter's item counter), at any depth of blocks and branches.
+fn holds_item_loop(f: &naga::Function, b: &naga::Block) -> bool {
+    let over_t = |body: &naga::Block| {
+        body.iter().any(|s| match s {
+            Statement::If { condition, .. } => {
+                fn reads_t(f: &naga::Function, e: Handle<Expression>, depth: usize) -> bool {
+                    depth < 8 && match &f.expressions[e] {
+                        Expression::Load { pointer } => matches!(&f.expressions[*pointer], Expression::LocalVariable(l) if f.local_variables[*l].name.as_deref() == Some("t")),
+                        Expression::Binary { left, right, .. } => reads_t(f, *left, depth + 1) || reads_t(f, *right, depth + 1),
+                        Expression::Unary { expr, .. } => reads_t(f, *expr, depth + 1),
+                        _ => false,
+                    }
+                }
+                reads_t(f, *condition, 0)
+            }
+            _ => false,
+        })
+    };
+    b.iter().any(|s| match s {
+        Statement::Loop { body, .. } => over_t(body),
+        Statement::Block(x) => holds_item_loop(f, x),
+        Statement::If { accept, reject, .. } => holds_item_loop(f, accept) || holds_item_loop(f, reject),
+        _ => false,
+    })
+}
+
 fn holds_barrier(module: &naga::Module, b: &naga::Block) -> bool {
     b.iter().any(|s| match s {
         Statement::Barrier(_) | Statement::WorkGroupUniformLoad { .. } => true,
@@ -7581,6 +7623,24 @@ fn search(@builtin(global_invocation_id) gid: vec3<u32>) {{
             assert!(back.tree == r.tree, "{cmp}: the rendered text reads back to the same tree: {:?}\n{}", crate::wgsl::render::first_difference(&r.tree, &back.tree), out.text);
             let checker = crate::wgsl::check::Checker::with_contract(&k, &r.role, &crate::wgsl::target::Target::recorded(), contract.clone());
             checker.check(&r.tree).unwrap_or_else(|e| panic!("{cmp}: {e}\n{}", out.text));
+        }
+    }
+
+    /// ITEM LOOPS IN A UNIFORM TEST'S BODY (2026-10-17, random trees drawn
+    /// with the uniform tests): the kingdom's renderings of an unrolled item
+    /// loop under `if (nwg.y != 0u)` (seed 24 of that draw) and of items
+    /// continued to a literal bound (`for (; t < 1u; ..)`, seed 11) read, the
+    /// reading reading back to the same tree; they read as a store to the
+    /// loop counter and as a counter of unknown entry before.
+    #[test]
+    fn item_loops_in_a_uniform_tests_body_read() {
+        let k = WgslKingdom::load_safe();
+        for (name, src) in [("unrolled", include_str!("../../tests/fixtures/uniform_test_unrolled_items.wgsl")), ("continued", include_str!("../../tests/fixtures/uniform_test_continued_items.wgsl"))] {
+            let r = read_safe(src, &k).unwrap_or_else(|e| panic!("{name}: {e}"));
+            let out = crate::wgsl::safe_karva::render_tree_with(&r.tree, &k, &r.role).unwrap_or_else(|e| panic!("{name}: {e}"));
+            validate_text(&out.text).unwrap_or_else(|e| panic!("{name}: {e}"));
+            let back = read_safe(&out.text, &k).unwrap_or_else(|e| panic!("{name}: read back: {e}"));
+            assert!(back.tree == r.tree, "{name}: {:?}", crate::wgsl::render::first_difference(&r.tree, &back.tree));
         }
     }
 

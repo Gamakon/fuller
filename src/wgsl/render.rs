@@ -3360,10 +3360,14 @@ fn sample_with(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, s
     // with uniform rows of its own they read back as those, over a product
     // as no bound at all; the sampler draws the uniform rows themselves.)
     // (Nor, for now, the uniform tests whose bodies keep their rung,
-    // stmt.if_ule and its kin and stmt.if_uflag: our software has a bug
-    // there. Drawn, an item loop that continues its counter inside such a
-    // body reads as entering with an unknown value, 10 of 1,000 random
-    // kernels, 2026-10-17 12:30Z; not fixed yet.)
+    // stmt.if_ule and its kin and stmt.if_uflag. Drawn, they read back 1,000
+    // of 1,000 since 2026-10-17 16:20Z (an item loop in such a body read at
+    // the conditional rung, and a continued item loop at a literal bound as
+    // a tile loop: both fixed), but a body with no barrier and no item loop
+    // is written as a plain if and read back as one, at the conditional
+    // rung, and the canonical spelling has no rule for that yet: drawn they
+    // cost the AST floor 43 -> 34 and the modules' legal 134 -> 125, as
+    // differences of spelling, not of reading.)
     let not_drawn = |r: &WgslRow| uniform_test_op(safe_base(&r.name)).is_some() || matches!(safe_base(&r.name), "stmt.if_uflag" | "stmt.if_else_uflag") || matches!(r.name.as_str(), "uflag.of_flag" | "uniform.of_checked");
     let mut rows: Vec<WgslRow> = kingdom.rows.iter().filter(|r| !f16(&r.output) && !r.inputs.iter().any(f16) && !r.name.starts_with("stmt.return") && !r.name.starts_with("safe.mirror_of") && !r.name.starts_with("store.h_mirror") && !not_drawn(r) && !r.name.starts_with("wg.set")).cloned().collect();
     // The safe kingdom reads h only at the thread's own cell (load.h_safe):
