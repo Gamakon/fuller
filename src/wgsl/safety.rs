@@ -76,11 +76,21 @@ pub struct Contract {
     /// data-dependent indexes, each index proved in bounds by a mask or a
     /// clamp; every other binding, and workgroup memory, as strict.
     pub arena_mode: bool,
+    /// Outputs written in rows (`rows cands 64`: per query 64 cells). Read
+    /// by layer 7 in rows mode only.
+    pub rows: BTreeMap<String, i128>,
+    /// THE ROWS SWITCH (off by default): on a `rows` binding, writes whose
+    /// every site is `width * R + d`, d in [0, width), one R for all, R a
+    /// function of the workgroup id that no two workgroups share, are owned
+    /// by row: two workgroups never write one cell; the cells within a row
+    /// are left to the design (its invocations of one workgroup may write
+    /// one cell; the GPU race check measures whether they do).
+    pub rows_mode: bool,
 }
 
 impl Default for Contract {
     fn default() -> Self {
-        Contract { workgroups: [(1, 65535); 3], params: BTreeMap::new(), aliases: BTreeMap::new(), full: BTreeMap::new(), arena: BTreeSet::new(), arena_mode: false }
+        Contract { workgroups: [(1, 65535); 3], params: BTreeMap::new(), aliases: BTreeMap::new(), full: BTreeMap::new(), arena: BTreeSet::new(), arena_mode: false, rows: BTreeMap::new(), rows_mode: false }
     }
 }
 
@@ -113,6 +123,9 @@ impl Contract {
                 ["arena", names @ ..] if !names.is_empty() => {
                     c.arena.extend(names.iter().map(|b| b.to_string()));
                 }
+                ["rows", b, width] => {
+                    c.rows.insert(b.to_string(), num(width)?);
+                }
                 _ => return Err(format!("contract line {}: {line}", n + 1)),
             }
         }
@@ -122,6 +135,11 @@ impl Contract {
     /// The same contract with layer 7 in arena mode (`on`) or strict.
     pub fn with_arena_mode(&self, on: bool) -> Contract {
         Contract { arena_mode: on, ..self.clone() }
+    }
+
+    /// The same contract with layer 7's rows mode on or off.
+    pub fn with_rows_mode(&self, on: bool) -> Contract {
+        Contract { rows_mode: on, ..self.clone() }
     }
 
     /// Whether layer 7 treats `binding` as an arena (arena mode, named).
@@ -578,6 +596,48 @@ impl<'m> An<'m> {
     fn other(&mut self, inv: bool, uni: bool, wrapped: bool) -> Abs {
         self.next_id += 1;
         Abs::Other(Info { inv, uni, wrapped }, self.next_id)
+    }
+
+    /// Rows mode: every write site of `binding` has a form `width * R + d`,
+    /// d in [0, width), with one R for every site, R in the workgroup id
+    /// alone (and invariants) and no two workgroups' R equal (one axis with a
+    /// coefficient at least 1, or axes whose coefficients outgrow the ones
+    /// below them at the contract's workgroup counts).
+    fn rows_owned(&self, binding: &str, width: i128) -> bool {
+        let writes: Vec<&Site> = self.sites.iter().filter(|s| s.alloc == binding && s.kind != Kind::Read).collect();
+        if writes.is_empty() || width < 1 {
+            return false;
+        }
+        let mut row: Option<Lin> = None;
+        for s in writes {
+            let Ok(f) = &s.form else { return false };
+            let Some((h, _)) = self.split(f, &[], width, &s.facts) else { return false };
+            if !h.t.keys().all(|v| matches!(v, Var::Wid(_))) {
+                return false;
+            }
+            match &row {
+                None => row = Some(h),
+                Some(r) if *r == h => {}
+                Some(_) => return false,
+            }
+        }
+        let Some(r) = row else { return false };
+        // Injective in the workgroup id: the axes by coefficient, each at
+        // least 1 and greater than the span of every axis below it.
+        let mut axes: Vec<(i128, i128)> = Vec::new();
+        for (v, c) in &r.t {
+            let (Var::Wid(a), Some(c)) = (v, c.as_const()) else { return false };
+            axes.push((c, self.contract.workgroups[usize::from(*a)].1 - 1));
+        }
+        axes.sort();
+        let mut span = 0i128;
+        for (c, most) in axes {
+            if c <= span {
+                return false;
+            }
+            span = span.saturating_add(c.saturating_mul(most));
+        }
+        true
     }
 
     /// The digit of an enclosing loop's uniform counter a form is (the form
@@ -3127,11 +3187,14 @@ fn check_entry(module: &Module, contract: &Contract, entry: &str) -> Result<Repo
             }
         }
     }
+    // ROWS MODE: a `rows` binding whose every write is in one row per
+    // workgroup, no row shared by two workgroups.
+    let owned_rows: BTreeSet<String> = if contract.rows_mode { contract.rows.iter().filter(|(b, w)| an.rows_owned(b, **w)).map(|(b, _)| b.clone()).collect() } else { BTreeSet::new() };
     let writes: Vec<usize> = (0..an.sites.len()).filter(|i| an.sites[*i].kind != Kind::Read && !arena(&an.sites[*i])).collect();
     for (x, &i) in writes.iter().enumerate() {
         for &j in &writes[x..] {
             let (a, b) = (&an.sites[i], &an.sites[j]);
-            if a.alloc != b.alloc || (a.kind == Kind::Atomic && b.kind == Kind::Atomic) {
+            if a.alloc != b.alloc || (a.kind == Kind::Atomic && b.kind == Kind::Atomic) || owned_rows.contains(&a.alloc) {
                 continue;
             }
             report.pairs += 1;
@@ -3695,11 +3758,13 @@ mod tests {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let base = std::fs::read_to_string(root.join("problems/v24_ingest/safety.contract")).unwrap();
         let plain = Contract::parse(&base).unwrap();
-        let lined = Contract::parse(&format!("{base}\narena index_u32 index_f32\nparam arrayLength(index_u32) 8388608 8388608\nparam arrayLength(index_f32) 8388608 8388608\n")).unwrap();
+        let lined = Contract::parse(&format!("{base}\narena index_u32 index_f32\nparam arrayLength(index_u32) 8388608 8388608\nparam arrayLength(index_f32) 8388608 8388608\nrows cands 64\n")).unwrap();
         let arena = lined.with_arena_mode(true);
+        let rows = arena.with_rows_mode(true);
         let dir = root.join("logs/V24/run1/raw");
         let mut files: Vec<_> = std::fs::read_dir(&dir).unwrap_or_else(|e| panic!("{}: {e}", dir.display())).flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "wgsl")).collect();
         files.sort();
+        let rows_ok = files.iter().filter(|f| check_text(&std::fs::read_to_string(f).unwrap(), &rows).is_ok()).count();
         let (mut strict_ok, mut arena_ok) = (0usize, 0usize);
         let mut why: BTreeMap<&'static str, usize> = BTreeMap::new();
         for f in &files {
@@ -3716,7 +3781,8 @@ mod tests {
                 Err(e) => *why.entry(e.rule).or_default() += 1,
             }
         }
-        println!("run 1's {} raw seeds at layer 7: strict proves {strict_ok}, arena {arena_ok}; arena's refusals by rule {why:?}", files.len());
+        println!("run 1's {} raw seeds at layer 7: strict proves {strict_ok}, arena {arena_ok}, arena with rows {rows_ok}; arena's refusals by rule {why:?}", files.len());
+        assert!(rows_ok >= arena_ok, "rows mode proves fewer than arena");
     }
 
     /// A SEARCH THREAD'S OWN ROW OF cands (2026-10-17, the arena gate's 139
@@ -3804,5 +3870,24 @@ mod tests {
         assert_eq!(rule(&k(&halving.replace("if (t < s)", "if (t <= s)")), &c), "workgroup_memory_race");
         assert_eq!(rule(&k(butterfly), &c), "workgroup_memory_race");
         assert_eq!(rule(&k(bitonic), &c), "workgroup_memory_race");
+    }
+
+    /// ROWS MODE, OFF BY DEFAULT (2026-10-17, Andrew's rule: build both and
+    /// measure): `rows cands 64` with the rows switch on accepts a search
+    /// whose workgroup writes its query's row at ranks the form cannot tell
+    /// apart; strict, and arena without the switch, refuse it; a row two
+    /// workgroups share (`wid.x / 2u`) and a write outside its row (`rank <
+    /// 65u`) are refused with it on.
+    #[test]
+    fn rows_mode_owns_a_row_per_workgroup_and_is_off_by_default() {
+        let pre = "struct Cfg { n_queries: u32, };\n@group(0) @binding(0) var<storage, read> keys: array<f32>;\n@group(0) @binding(4) var<storage, read_write> cands: array<u32>;\n@group(0) @binding(5) var<uniform> cfg: Cfg;\n";
+        let k = |q: &str, test: &str| format!("{pre}@compute @workgroup_size(64, 1, 1)\nfn search(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) wid: vec3<u32>) {{\n    let q = {q};\n    var rank = 0u;\n    for (var j = 0u; j < 256u; j = j + 1u) {{\n        if (keys[j] > keys[lid.x]) {{ rank = rank + 1u; }}\n    }}\n    if ({test}) {{\n        cands[q * 64u + rank] = lid.x;\n    }}\n}}\n");
+        let c = Contract::parse("workgroups x 1 2500\nworkgroups y 1 1\nworkgroups z 1 1\nrows cands 64\narena index_u32 index_f32\n").unwrap();
+        let rows = c.with_arena_mode(true).with_rows_mode(true);
+        assert_eq!(rule(&k("wid.x", "rank < 64u"), &c), "write_sets_overlap");
+        assert_eq!(rule(&k("wid.x", "rank < 64u"), &c.with_arena_mode(true)), "write_sets_overlap");
+        proved(&k("wid.x", "rank < 64u"), &rows);
+        assert_eq!(rule(&k("wid.x / 2u", "rank < 64u"), &rows), "write_sets_overlap");
+        assert_eq!(rule(&k("wid.x", "rank < 65u"), &rows), "write_sets_overlap");
     }
 }
