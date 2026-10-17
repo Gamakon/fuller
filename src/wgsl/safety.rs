@@ -3144,6 +3144,22 @@ mod tests {
         assert_eq!(rule(&k("    _ = atomicAdd(&idx[b], 1u);\n    plain[0u] = gid.x;"), &c), "write_sets_overlap");
     }
 
+    /// ONE WORKGROUP A QUERY (2026-10-17, every v24 search design):
+    /// `cands[64u * wid.x + lid.x]` in a 16-thread workgroup is disjoint
+    /// across workgroups and lanes (lid.x < 16 <= 64) under a 1-D dispatch;
+    /// a stride smaller than the workgroup's width (8) overlaps; and with y
+    /// and z dispatch free (the default contract) two workgroups differing in
+    /// wid.y write one cell, as they would.
+    #[test]
+    fn a_stride_at_least_the_workgroup_width_is_disjoint_across_workgroups() {
+        let one_d = Contract::parse("workgroups x 1 65535\nworkgroups y 1 1\nworkgroups z 1 1\n").unwrap();
+        let k = |stride: u32| format!("@group(0) @binding(0) var<storage, read_write> cands: array<u32>;\n@compute @workgroup_size(16, 1, 1)\nfn search(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) wid: vec3<u32>) {{\n    cands[{stride}u * wid.x + lid.x] = lid.x;\n}}\n");
+        proved(&k(64), &one_d);
+        proved(&k(16), &one_d);
+        assert_eq!(rule(&k(8), &one_d), "write_sets_overlap");
+        assert_eq!(rule(&k(64), &Contract::default()), "write_sets_overlap");
+    }
+
     /// TWO ENTRY POINTS (2026-10-17): each is proved as its own dispatch,
     /// under its own interface; a race in the second is named with it.
     #[test]

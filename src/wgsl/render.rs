@@ -1136,6 +1136,11 @@ impl<'a> Renderer<'a> {
     /// at the thread's first cell, `(gid.y * by, gid.x * bx)`, under the
     /// store's own bounds check.
     fn epilogue_fallback(&self, scope: &mut Scope) -> Result<String, String> {
+        // An interface with no output cell (no h: v24's) has no store of its
+        // own to end in: its epilogue's fallback is empty, as its body's is.
+        if !self.per_kernel.contains_key("store.h") {
+            return Ok(String::new());
+        }
         let t = |n: &str| dual_ty(self.kingdom, n);
         let gid = || -> Result<Tree, String> { Ok(Tree::new("builtin.global_invocation_id", t("vec3<u32>.gid")?, vec![])) };
         let blk = |v: u32| -> Result<Tree, String> { Ok(Tree::literal("literal.blk", t("u32.blk")?, v as f32)) };
@@ -3126,7 +3131,20 @@ enum Shape {
 }
 
 fn sample_with(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, seed: u64, bound: Option<&Cost>, shape: Shape) -> Result<Tree, String> {
-    let f16 = |t: &Ty| kingdom.dual(*t).is_some_and(|d| d.scalar() == Some("f16"));
+    // A MODULE (2026-10-17, v24's `ingest` and `search`): one safe kernel per
+    // entry point the interface names, each drawn as a kernel of its own (its
+    // own grid, body and epilogue) from a seed of its own, in the
+    // interface's order; the module row of that many.
+    if kingdom.dual(root).is_some_and(|d| d.dual == "kernel.module") {
+        let n = role.entries.len();
+        if !(2..=4).contains(&n) {
+            return Err(format!("our software has a bug: a module drawn under an interface of {n} entry points ({:?}); a module holds two to four", role.entries));
+        }
+        let safe = dual_ty(kingdom, "kernel.safe")?;
+        let kids = (0..n).map(|i| sample_with(kingdom, &role.at_entry(&role.entries[i]), safe, max_depth, seed ^ ((i as u64) << 48), bound, shape)).collect::<Result<Vec<_>, _>>()?;
+        return Ok(Tree::new(&format!("kernel.module_{n}"), root, kids));
+    }
+    let f16 =|t: &Ty| kingdom.dual(*t).is_some_and(|d| d.scalar() == Some("f16"));
     // (No return: a return before the epilogue ends the thread before it
     // stores its output, so the kernel writes nothing: 187 of 1,000 random
     // kernels, 2026-10-13. The kingdom keeps the rows for text it reads.)
@@ -3139,6 +3157,15 @@ fn sample_with(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, s
     // cell through it). The reader's per-kernel rows leave it out the same way.
     let safe = kingdom.dual(root).is_some_and(|d| d.dual == "kernel.safe");
     rows.extend(role.rows(kingdom)?.into_iter().filter(|r| !(safe && r.name == "load.h")));
+    // An interface without the Gram's input, output cell and fields (v24's,
+    // 2026-10-17): the rows that spell them (phi, h, a thread's cell, the
+    // bounds and uniform values of cfg.m, cfg.d, cfg.r_rows, cfg.r_off) have
+    // nothing to render and are not drawn; its own bindings' rows are.
+    if !role.per_kernel.iter().any(|p| p.name == "store.h") {
+        let gram_dual = |t: &Ty| kingdom.dual(*t).is_some_and(|d| matches!(d.dual.as_str(), "u32.boundm" | "u32.boundd" | "u32.boundrows" | "u32.cell" | "u32.mirror"));
+        let gram_name = |n: &str| ["load.phi", "load.h", "store.h", "uniform.cfg_", "bound.m", "bound.d", "bound.rows"].iter().any(|p| n.starts_with(p));
+        rows.retain(|r| !gram_name(&r.name) && !gram_dual(&r.output) && !r.inputs.iter().any(gram_dual));
+    }
     let mut by_out: BTreeMap<Ty, (Vec<usize>, Vec<usize>)> = BTreeMap::new();
     for (i, r) in rows.iter().enumerate() {
         let e = by_out.entry(r.output).or_default();

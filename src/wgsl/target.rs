@@ -119,16 +119,59 @@ impl Target {
                 return Err(format!("{}: @workgroup_size({x}, {y}, {z}) exceeds the device's {} invocations", ep.name, self.max_invocations));
             }
         }
-        let bytes: u64 = module
-            .global_variables
-            .iter()
-            .filter(|(_, g)| g.space == naga::AddressSpace::WorkGroup)
-            .map(|(_, g)| u64::from(module.types[g.ty].inner.size(module.to_ctx())).div_ceil(16) * 16)
-            .sum();
-        if bytes > u64::from(self.max_workgroup_storage) {
-            return Err(format!("workgroup memory {bytes} bytes exceeds the device's {}", self.max_workgroup_storage));
+        // Workgroup memory per compute entry point, as wgpu validates a
+        // pipeline and Metal allocates it: the workgroup variables that entry
+        // point (and every function it calls) uses (2026-10-17: a module of
+        // v24's `ingest` and `search` may each use most of the device's).
+        for ep in module.entry_points.iter().filter(|ep| ep.stage == naga::ShaderStage::Compute) {
+            let mut used = std::collections::BTreeSet::new();
+            globals_used(module, &ep.function, &mut used, &mut std::collections::BTreeSet::new());
+            let bytes: u64 = module
+                .global_variables
+                .iter()
+                .filter(|(h, g)| g.space == naga::AddressSpace::WorkGroup && used.contains(h))
+                .map(|(_, g)| u64::from(module.types[g.ty].inner.size(module.to_ctx())).div_ceil(16) * 16)
+                .sum();
+            if bytes > u64::from(self.max_workgroup_storage) {
+                return Err(format!("{}: workgroup memory {bytes} bytes exceeds the device's {}", ep.name, self.max_workgroup_storage));
+            }
         }
         Ok(())
+    }
+}
+
+/// The global variables a function's expressions name, with those of every
+/// function it calls.
+fn globals_used(module: &naga::Module, f: &naga::Function, out: &mut std::collections::BTreeSet<naga::Handle<naga::GlobalVariable>>, seen: &mut std::collections::BTreeSet<naga::Handle<naga::Function>>) {
+    for (_, e) in f.expressions.iter() {
+        if let naga::Expression::GlobalVariable(g) = e {
+            out.insert(*g);
+        }
+    }
+    fn calls(b: &naga::Block, out: &mut Vec<naga::Handle<naga::Function>>) {
+        for s in b.iter() {
+            match s {
+                naga::Statement::Call { function, .. } => out.push(*function),
+                naga::Statement::Block(x) => calls(x, out),
+                naga::Statement::If { accept, reject, .. } => {
+                    calls(accept, out);
+                    calls(reject, out);
+                }
+                naga::Statement::Switch { cases, .. } => cases.iter().for_each(|c| calls(&c.body, out)),
+                naga::Statement::Loop { body, continuing, .. } => {
+                    calls(body, out);
+                    calls(continuing, out);
+                }
+                _ => {}
+            }
+        }
+    }
+    let mut callees = Vec::new();
+    calls(&f.body, &mut callees);
+    for c in callees {
+        if seen.insert(c) {
+            globals_used(module, &module.functions[c], out, seen);
+        }
     }
 }
 
@@ -170,6 +213,16 @@ mod tests {
         let mem = |n: u32| format!("var<workgroup> a: array<f32, {n}>;\n{}", PLAIN.replace("+ 1.0", "+ a[gid.x & 63u]"));
         t.validate(&module(&mem(8192)), &mem(8192)).unwrap();
         assert!(t.validate(&module(&mem(8193)), &mem(8193)).unwrap_err().contains("workgroup memory"));
+        // Per entry point (2026-10-17): two entry points of 20 KB each pass, as
+        // wgpu validates each pipeline; one entry point using 36 KB fails,
+        // named; a variable no entry point uses counts for none.
+        let two = |second: &str| format!("var<workgroup> a: array<f32, 5120>;\nvar<workgroup> b: array<f32, 5120>;\nvar<workgroup> c: array<f32, 4096>;\n{}@compute @workgroup_size(64, 1, 1)\nfn other(@builtin(global_invocation_id) gid: vec3<u32>) {{ h[gid.x] = {second}; }}\n", PLAIN.replace("+ 1.0", "+ a[gid.x & 63u]"));
+        t.validate(&module(&two("b[gid.x & 63u]")), &two("b[gid.x & 63u]")).unwrap();
+        let both = two("b[gid.x & 63u] + c[gid.x & 63u]");
+        let e = t.validate(&module(&both), &both).unwrap_err();
+        assert!(e.contains("other: workgroup memory 36864 bytes exceeds the device's 32768"), "{e}");
+        let unused = format!("var<workgroup> z: array<f32, 8192>;\n{}", mem(8192));
+        t.validate(&module(&unused), &unused).unwrap();
         let Err(e) = crate::wgsl::reader::read(&square) else { panic!("the reader admitted 64 x 32 invocations") };
         assert!(e.contains("invocations"), "{e}");
     }

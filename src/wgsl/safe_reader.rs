@@ -6312,6 +6312,57 @@ fn search(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocati
         assert!(outline.iter().any(|l| l.starts_with("ingest [")) && outline.iter().any(|l| l.starts_with("search [")), "{outline:?}");
     }
 
+    /// RANDOM MODULES (2026-10-17, for phylu's v24 generation 0 and
+    /// mutation): the sampler draws a `kernel.module_2` under the v24
+    /// interface, one safe kernel per entry point; every drawn module of
+    /// 1,000 renders both entry points, naga validates it and it reads back
+    /// under the same interface, as a module of the same entry points (1,000
+    /// of 1,000, asserted). Measured beside it, with floors: the modules that
+    /// parse back to the tree drawn in its canonical spelling (AST to AST),
+    /// the ones whose text read back is a fixpoint, and the ones that pass
+    /// every layer under a 1-D contract (a drawn store at an arbitrary index
+    /// of `cands` is rightly refused by layer 7).
+    #[test]
+    fn random_module_trees_render_validate_and_read_back() {
+        let k = WgslKingdom::load_safe();
+        let src = format!("{V24_BINDINGS}@compute @workgroup_size(64, 1, 1)\nfn ingest(@builtin(global_invocation_id) gid: vec3<u32>) {{ _ = atomicAdd(&index_u32[gid.x], 1u); index_f32[gid.x] = keys[gid.x]; }}\n@compute @workgroup_size(32, 1, 1)\nfn search(@builtin(global_invocation_id) gid: vec3<u32>) {{ cands[gid.x] = atomicLoad(&index_u32[gid.x]) + u32(queries[gid.x] > 0.0); }}\n");
+        let role = crate::wgsl::render::interface_of(&src).unwrap();
+        assert_eq!(role.entries, ["ingest", "search"]);
+        let root = dual_ty(&k, "kernel.module").unwrap();
+        let contract = crate::wgsl::safety::Contract::parse("workgroups x 1 1024\nworkgroups y 1 1\nworkgroups z 1 1\n").unwrap();
+        let checker = crate::wgsl::check::Checker::with_contract(&k, &role, &crate::wgsl::target::Target::recorded(), contract);
+        let n = 1000u64;
+        let (mut read_back, mut same, mut fixpoint, mut legal) = (0usize, 0usize, 0usize, 0usize);
+        let mut failures = Vec::new();
+        for seed in 0..n {
+            let tree = crate::wgsl::render::sample(&k, &role, root, 6, seed).unwrap_or_else(|e| panic!("seed {seed}: {e}"));
+            assert_eq!((tree.name.as_str(), tree.kids.len()), ("kernel.module_2", 2), "seed {seed}");
+            let verdict = (|| -> Result<(Tree, bool), String> {
+                let out = crate::wgsl::safe_karva::render_tree_with(&tree, &k, &role).map_err(|e| format!("render: {e}"))?;
+                validate_text(&out.text).map_err(|e| format!("naga: {}", e.lines().next().unwrap_or("")))?;
+                let back = read_safe(&out.text, &k).map_err(|e| format!("read: {}", e.chars().take(200).collect::<String>()))?;
+                if back.role.entries != role.entries || back.tree.name != "kernel.module_2" {
+                    return Err(format!("read back as {} under {:?}", back.tree.name, back.role.entries));
+                }
+                let again = crate::wgsl::safe_karva::render_tree_with(&back.tree, &k, &role).map_err(|e| format!("re-render: {e}"))?.text;
+                let third = read_safe(&again, &k).ok().and_then(|b| crate::wgsl::safe_karva::render_tree_with(&b.tree, &k, &role).ok()).map(|r| r.text);
+                Ok((back.tree, third.as_deref() == Some(again.as_str())))
+            })();
+            match verdict {
+                Ok((back, fix)) => {
+                    read_back += 1;
+                    same += usize::from(back == crate::wgsl::canonical::canonical(&tree, &k));
+                    fixpoint += usize::from(fix);
+                    legal += usize::from(checker.check(&tree).is_ok());
+                }
+                Err(e) => failures.push(format!("seed {seed}: {e}")),
+            }
+        }
+        println!("random modules: {read_back} of {n} read back; {same} to the tree drawn (canonical); {fixpoint} to a fixpoint; {legal} pass every layer under a 1-D contract");
+        assert!(failures.is_empty(), "{} of {n}:\n{}", failures.len(), failures.iter().take(10).cloned().collect::<Vec<_>>().join("\n"));
+        assert!(same >= MODULE_AST_FLOOR && fixpoint >= MODULE_FIXPOINT_FLOOR && legal >= MODULE_LEGAL_FLOOR, "below the floors reached: AST {same} (floor {MODULE_AST_FLOOR}), fixpoint {fixpoint} ({MODULE_FIXPOINT_FLOOR}), legal {legal} ({MODULE_LEGAL_FLOOR})");
+    }
+
     /// TWO LOOPS OF THE V24 REFERENCE (2026-10-17, the harness agent's
     /// `problems/v24_ingest_small/reference.wgsl` worked around both): a
     /// thread-strided loop stepped by a module `const` (`r = r + THREADS`),
@@ -6670,6 +6721,16 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     // first differences fall in the classes of the earlier draws, the u32
     // put's own the tile counter outside its loop that every put has.)
     const AST_FLOOR: usize = 42;
+
+    /// The floors of [`random_module_trees_render_validate_and_read_back`]
+    /// (1,000 v24 modules, depth 6; measured 2026-10-17 at its first run:
+    /// 4 parse back to the tree drawn, canonical, 955 to a fixpoint, 151 pass
+    /// every layer under a 1-D contract; the canonical spelling is the Gram
+    /// role's, so few module trees meet it; a drawn store of `cands` at an
+    /// arbitrary index is refused by layer 7, as it must be).
+    const MODULE_AST_FLOOR: usize = 4;
+    const MODULE_FIXPOINT_FLOOR: usize = 955;
+    const MODULE_LEGAL_FLOOR: usize = 151;
 
 
     /// THE KINGDOM'S COMPLETENESS BAR (2026-10-12): 1,000 random trees of
