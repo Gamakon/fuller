@@ -117,12 +117,19 @@ struct Ctx<'a> {
     /// A statement-inlined helper's pointer parameters: `arg.p` to the
     /// caller's register for the local `&x` it was given (row, kind).
     pointer_args: HashMap<String, (String, char)>,
+    /// A pointer parameter to a local array, given `&a`: the caller's array
+    /// (`arg.p` is `local.a@0`), read and written as the caller's own.
+    array_args: HashMap<String, String>,
     /// While a helper body is being inlined: its arguments by `arg.<name>`,
     /// already resolved and typed in the caller.
     inline_args: Option<HashMap<String, Tree>>,
     /// The path of the return that ends a branch read as `if (c) { .. }
     /// else { rest }` ([`Ctx::early_return_branch`]), while its branch is read.
     early_return_at: Option<Vec<usize>>,
+    /// How many early-return branches the walk is inside (their bodies and
+    /// the rest of the block as their else): a lone `return` there ends a
+    /// branch, never the thread guard.
+    branch_depth: usize,
     /// Nodes the reader has built (trees read, expansions for the ownership
     /// proof): past [`READ_NODE_BOUND`] the read stops, named, instead of
     /// running on (run 1's 03:15Z hang, 2026-10-17: a helper argument
@@ -206,9 +213,12 @@ fn dual_of_type(module: &naga::Module, ty: Handle<naga::Type>) -> Option<String>
             (ScalarKind::Float, 4) => Some("f32.real".into()),
             (ScalarKind::Uint, 4) => Some("u32.index".into()),
             (ScalarKind::Bool, _) => Some("bool.flag".into()),
+            (ScalarKind::Sint, 4) => Some("i32.int".into()),
             _ => None,
         },
         TypeInner::Vector { size: VectorSize::Quad, scalar } if scalar.kind == ScalarKind::Float && scalar.width == 4 => Some("vec4<f32>.real".into()),
+        // (Two sums returned together, `vec2<f32>(s, n)`: v24 run 1's seed11.)
+        TypeInner::Vector { size: VectorSize::Bi, scalar } if scalar.kind == ScalarKind::Float && scalar.width == 4 => Some("vec2<f32>.real".into()),
         _ => None,
     }
 }
@@ -291,6 +301,7 @@ fn tree_of(ctx: &mut Ctx, n: &Node) -> Result<Tree, String> {
                     Some('b') => "bool.flag",
                     Some('n') => "i32.int",
                     Some('u') => "vec4<u32>.bits",
+                    Some('w') => "vec2<f32>.real",
                     _ => "u32.index",
                 };
                 return Ok(Tree::new(&format!("load.{local}"), ty(ctx, d)?, vec![]));
@@ -715,6 +726,18 @@ fn has_break_guard(stmts: &[Statement]) -> bool {
     stmts.iter().any(|s| match s {
         Statement::Block(b) => has_break_guard(b),
         Statement::If { accept, reject, .. } => (only_break(accept) && empty(reject)) || (only_break(reject) && empty(accept)),
+        _ => false,
+    })
+}
+
+/// Whether statements hold a break of their own loop: a break anywhere in
+/// them, in blocks and either branch of an if, not one inside a nested loop
+/// or switch (which ends that statement, not this loop).
+fn has_own_break(stmts: &[Statement]) -> bool {
+    stmts.iter().any(|s| match s {
+        Statement::Break => true,
+        Statement::Block(b) => has_own_break(b),
+        Statement::If { accept, reject, .. } => has_own_break(accept) || has_own_break(reject),
         _ => false,
     })
 }
@@ -1717,6 +1740,7 @@ impl<'a> Ctx<'a> {
             // (Any form of vec4<u32>, opaque too: insertBits over a vector,
             // 2026-10-13, a random kernel.)
             "vec4<u32>.bits" | "vec4<u32>.index" | "vec4<u32>.count" | "vec4<u32>.opaque" => ('u', 8),
+            "vec2<f32>.real" | "vec2<f32>.opaque" => ('w', 8),
             "mat2x2<f32>.real" => ('x', 2),
             "mat3x3<f32>.real" => ('y', 2),
             "mat4x4<f32>.real" => ('z', 2),
@@ -1807,9 +1831,11 @@ impl<'a> Ctx<'a> {
         let BlockAt { block, position, last, next } = *at;
         let Some(Statement::If { accept, reject, .. }) = block.get(position) else { return Ok(None) };
         let acc: Vec<&Statement> = accept.iter().filter(|s| !matches!(s, Statement::Emit(_))).collect();
-        // `return;` after statements (a return alone is the thread guard), or a
-        // helper's `return v;` (its value to the call's register, then the else).
-        let void = matches!(acc.last(), Some(Statement::Return { value: None })) && acc.len() >= 2;
+        // `return;` after statements (a return alone at the top level is the
+        // thread guard; below it, inside the else an earlier branch made, it is
+        // this branch too: v24 run 1's seed24), or a helper's `return v;` (its
+        // value to the call's register, then the else).
+        let void = matches!(acc.last(), Some(Statement::Return { value: None })) && (acc.len() >= 2 || !(rung == "L0" && here.len() == 1 && self.branch_depth == 0));
         let valued = matches!(acc.last(), Some(Statement::Return { value: Some(_) })) && self.inline_result.is_some();
         if !(void || valued) || !reject.iter().all(|s| matches!(s, Statement::Emit(_))) || Some(position) == last {
             return Ok(None);
@@ -1837,10 +1863,12 @@ impl<'a> Ctx<'a> {
         let mut p = here.to_vec();
         p.push(0);
         let saved = self.early_return_at.replace([&p[..], &[acc.len() - 1]].concat());
+        self.branch_depth += 1;
         let a = self.nested(|ctx, path| ctx.walk(&trimmed, path, &body_rung, 0), &mut p);
         self.early_return_at = saved;
         let mut parent = here[..here.len() - 1].to_vec();
         let b = self.nested(|ctx, path| ctx.walk(&rest, path, &body_rung, next), &mut parent);
+        self.branch_depth -= 1;
         let (a, b) = (a?, b?);
         Ok(Some(match (simple, flag) {
             (Some((op, ux, uy)), _) => Tree::new(&format!("stmt.if_else_{op}_{rung}"), st, vec![ux, uy, self.block(a, &body_rung)?, self.block(b, &body_rung)?]),
@@ -2070,6 +2098,18 @@ impl<'a> Ctx<'a> {
     }
 
     /// Whether a local (`local.<name>@<h>`) is a vector of u32.
+    /// Whether a local is a vector of f32 lanes.
+    fn local_vec_float(&self, local: &str) -> bool {
+        let Some(h) = local.rsplit_once('@').and_then(|(_, h)| h.parse::<usize>().ok()) else { return false };
+        self.naga_fn.local_variables.iter().nth(h).is_some_and(|(_, lv)| matches!(self.module.types[lv.ty].inner, naga::TypeInner::Vector { scalar: naga::Scalar { kind: naga::ScalarKind::Float, width: 4 }, .. }))
+    }
+
+    /// A vec2<f32> local's register value, `reg.get_w(w<n>)`.
+    fn vec2_register_value(&mut self, local: &str) -> Result<Tree, String> {
+        let row = self.register(local, "vec2<f32>.real")?;
+        Ok(Tree::new("reg.get_w", ty(self, "vec2<f32>.real")?, vec![Tree::new(&row, ty(self, Self::reg_dual('w'))?, vec![])]))
+    }
+
     fn local_vec_uint(&self, local: &str) -> bool {
         let Some(h) = local.rsplit_once('@').and_then(|(_, h)| h.parse::<usize>().ok()) else { return false };
         self.naga_fn.local_variables.iter().nth(h).is_some_and(|(_, lv)| matches!(self.module.types[lv.ty].inner, naga::TypeInner::Vector { scalar: naga::Scalar { kind: naga::ScalarKind::Uint, .. }, .. }))
@@ -2111,6 +2151,7 @@ impl<'a> Ctx<'a> {
             'i' => "reg<u32>.index",
             'n' => "reg<i32>.int",
             'u' => "reg<vec4<u32>>.bits",
+            'w' => "reg<vec2<f32>>.real",
             'x' => "reg<mat2x2<f32>>.real",
             'y' => "reg<mat3x3<f32>>.real",
             'z' => "reg<mat4x4<f32>>.real",
@@ -2118,10 +2159,22 @@ impl<'a> Ctx<'a> {
         }
     }
 
+    /// A load or store through a pointer parameter to a local array
+    /// (`load.arg.p.#`) as the caller's array's (`load.local.acc@0.#`); None
+    /// for any other node.
+    fn through_array_arg(&self, t: &Tree) -> Option<Tree> {
+        let (op, rest) = t.name.strip_prefix("load.").map(|r| ("load", r)).or_else(|| t.name.strip_prefix("store.").map(|r| ("store", r)))?;
+        let (arg, local) = self.array_args.iter().find(|(a, _)| rest.strip_prefix(a.as_str()).is_some_and(|tail| tail.is_empty() || tail.starts_with(['.', '@'])))?;
+        Some(Tree { name: format!("{op}.{local}{}", &rest[arg.len()..]), ty: t.ty, konst: t.konst, kids: t.kids.clone() })
+    }
+
     /// A value tree in the safe grammar.
     fn value(&mut self, t: &Tree) -> Result<Tree, String> {
         if let Some(local) = private_as_local(t) {
             return self.value(&local);
+        }
+        if let Some(own) = self.through_array_arg(t) {
+            return self.value(&own);
         }
         // `*p` for a pointer parameter: the caller's register.
         if let Some((row, kind)) = t.name.strip_prefix("load.").and_then(|r| r.split('@').next()).and_then(|a| self.pointer_args.get(a)).cloned() {
@@ -2225,6 +2278,13 @@ impl<'a> Ctx<'a> {
         if let Some(buf) = t.name.strip_prefix("load.buffer.").and_then(|r| r.split(['.', '@']).next()).filter(|b| *b != "phi" && *b != "h") {
             if let (Some(p), [i]) = (self.per_kernel_rows.iter().find(|p| p.0 == format!("load.{buf}")), t.kids.as_slice()) {
                 let (name, out) = (p.0.clone(), p.2);
+                // A lane of a vector element chosen at run time (`keys[r][d & 3u]`
+                // over `array<vec4<f32>>`, v24 run 1's seed02): the element
+                // loaded whole, then `shape.at` its lane.
+                if let Some((i, j)) = t.name.strip_prefix("load.buffer.").and_then(|rest| nested_index(rest, &t.kids)) {
+                    let whole = Tree::new(&name, out, vec![self.value(i)?]);
+                    return Ok(Tree::new("shape.at", t.ty, vec![whole, self.value(j)?]));
+                }
                 let idx = self.value(i)?;
                 return Ok(Tree::new(&name, out, vec![idx]));
             }
@@ -2325,6 +2385,16 @@ impl<'a> Ctx<'a> {
                     let row = self.register(&base, "vec4<f32>.real")?;
                     let idx = self.value(unmasked(&t.kids[0], 3.0))?;
                     return Ok(Tree::new("reg.get_v_lane", t.ty, vec![Tree::new(&row, ty(self, Self::reg_dual('v'))?, vec![]), idx]));
+                }
+                // A lane of a vec2<f32> local: its register (reg.w*, the one its
+                // whole value is written to), then the lane.
+                if self.local_lanes.get(&base) == Some(&2) && self.local_vec_float(&base) {
+                    let whole = self.vec2_register_value(&base)?;
+                    if let Some(lane) = literal_value(unmasked(&t.kids[0], 1.0)).filter(|l| (0.0..=1.0).contains(l)) {
+                        return Ok(Tree::new(&format!("shape.access_{}", lane as u32), t.ty, vec![whole]));
+                    }
+                    let idx = self.value(unmasked(&t.kids[0], 1.0))?;
+                    return Ok(Tree::new("shape.at", t.ty, vec![whole, idx]));
                 }
                 // A private array: `load.local.acc@0.#@v3 (idx)`.
                 let (arr, kind, mask) = self.private_array(&local, &d)?;
@@ -2494,6 +2564,9 @@ impl<'a> Ctx<'a> {
                 naga::TypeInner::Atomic(sc) => Some(sc.kind),
                 _ => None,
             },
+            // (A workgroup atomic scalar, `var<workgroup> wcnt: atomic<u32>;`, is
+            // an atomic array of one: v24 run 1's seed00 counting its candidates.)
+            naga::TypeInner::Atomic(sc) => Some(sc.kind),
             _ => None,
         });
         // An array of u32 is an index array by its declared type too (a use
@@ -2518,7 +2591,7 @@ impl<'a> Ctx<'a> {
             "atomic<i32>" => &["wg.ai_a", "wg.ai_b"],
             "f32.real" => &["wg.a", "wg.b", "wg.c", "wg.d", "wg.e", "wg.f", "wg.g", "wg.h"],
             "vec2<f32>.real" => &["wg.v2a", "wg.v2b", "wg.v2c", "wg.v2d"],
-            "u32.index" => &["wg.ua", "wg.ub", "wg.uc", "wg.ud", "wg.ue", "wg.uf", "wg.ug", "wg.uh"],
+            "u32.index" => &["wg.ua", "wg.ub", "wg.uc", "wg.ud", "wg.ue", "wg.uf", "wg.ug", "wg.uh", "wg.ui", "wg.uj", "wg.uk", "wg.ul"],
             "vec4<f32>.real" => &["wg.va", "wg.vb", "wg.vc", "wg.vd"],
             other => return Err(format!("a workgroup array {name} of {other} has no safe spelling")),
         };
@@ -2535,7 +2608,7 @@ impl<'a> Ctx<'a> {
             .and_then(|(_, g)| match self.module.types[g.ty].inner {
                 naga::TypeInner::Array { size: naga::ArraySize::Constant(n), .. } => Some(n.get()),
                 // A workgroup scalar or vector: an array of one.
-                naga::TypeInner::Scalar(_) | naga::TypeInner::Vector { .. } => Some(1),
+                naga::TypeInner::Scalar(_) | naga::TypeInner::Vector { .. } | naga::TypeInner::Atomic(_) => Some(1),
                 _ => None,
             })
             .ok_or_else(|| format!("the workgroup array {name} has no constant length"))?;
@@ -2746,7 +2819,13 @@ impl<'a> Ctx<'a> {
             let unsigned = self.kingdom.dual(out).is_some_and(|d| d.slot == "u32");
             return Ok((Tree::new(&row, out, vec![idx, value]), unsigned));
         }
-        let arr = target.strip_prefix("workgroup.").and_then(|r| r.strip_suffix(".#")).ok_or_else(|| format!("an atomic on {target}: the safe kingdom's atomics are workgroup arrays or a storage atomic the interface declares"))?;
+        // (A workgroup atomic scalar, `atomicAdd(&wcnt, 1u)`: element 0 of an
+        // atomic array of one, as a workgroup scalar's store is.)
+        let (arr, trees) = match target.strip_prefix("workgroup.") {
+            Some(r) if r.ends_with(".#") => (&r[..r.len() - 2], trees),
+            Some(r) if !r.contains('.') => (r, std::iter::once(Tree::literal("literal.index", ty(self, "u32.index")?, 0.0)).chain(trees).collect()),
+            _ => return Err(format!("an atomic on {target}: the safe kingdom's atomics are workgroup arrays or a storage atomic the interface declares")),
+        };
         let which = self.array(arr, "atomic")?;
         let (of, idx_dual, arr_dual, _, _) = Self::wg_rows(which);
         let unsigned = which.starts_with("wg.au");
@@ -2970,6 +3049,72 @@ impl<'a> Ctx<'a> {
                 Tree::new(&format!("safe.{axis}_plus_g"), dual, vec![base, Tree::literal("literal.lit64", ty(self, "u32.lit64")?, g_count as f32), g, e])
             }
         })
+    }
+
+    /// A loop body's breaks below its top level (in an if, after a store,
+    /// or more than one) as a stop flag: a bool register set false first,
+    /// each `break` setting it true, the statements after a statement that
+    /// may break run under `if (!stop)`; the flag is the body's break
+    /// condition, its guard the body's last statement. The same values:
+    /// nothing after a break runs, and the loop ends at the guard.
+    fn lower_breaks(&mut self, flat: Vec<Tree>, rung: &str, path: &[usize]) -> Result<(Vec<Tree>, Tree), String> {
+        let local = format!("local.break_stop@{}", path.iter().map(|p| p.to_string()).collect::<Vec<_>>().join("_"));
+        let row = self.register(&local, "bool.flag")?;
+        let reg = Tree::new(&row, ty(self, Self::reg_dual('b'))?, vec![]);
+        let flag = ty(self, "bool.flag")?;
+        let set_false = Tree::new(&format!("reg.set_b_{rung}"), self.stmt_ty(rung)?, vec![reg.clone(), Tree::literal("literal.flag", flag, 0.0)]);
+        let mut pre = vec![set_false];
+        pre.extend(self.lower_break_list(flat, rung, &reg)?);
+        Ok((pre, Tree::new("reg.get_b", flag, vec![reg])))
+    }
+
+    /// [`Ctx::lower_breaks`] over statements at `rung`.
+    fn lower_break_list(&self, list: Vec<Tree>, rung: &str, reg: &Tree) -> Result<Vec<Tree>, String> {
+        let mut flat = Vec::new();
+        for t in list {
+            flatten_stmts(t, &mut flat);
+        }
+        let mut out = Vec::new();
+        let mut it = flat.into_iter();
+        while let Some(t) = it.next() {
+            if !has_break(&t) {
+                out.push(t);
+                continue;
+            }
+            out.push(self.lower_break_stmt(t, rung, reg)?);
+            let rest: Vec<Tree> = it.collect();
+            if !rest.is_empty() {
+                let flag = ty(self, "bool.flag")?;
+                let go = Tree::new("logic.not", flag, vec![Tree::new("reg.get_b", flag, vec![reg.clone()])]);
+                let body = self.lower_break_list(rest, rung, reg)?;
+                out.push(Tree::new(&format!("stmt.if_{rung}"), self.stmt_ty(rung)?, vec![go, self.block(body, rung)?]));
+            }
+            break;
+        }
+        Ok(out)
+    }
+
+    /// One statement holding a break of the loop being lowered.
+    fn lower_break_stmt(&self, t: Tree, rung: &str, reg: &Tree) -> Result<Tree, String> {
+        if t.name == "stmt.break" {
+            let flag = ty(self, "bool.flag")?;
+            return Ok(Tree::new(&format!("reg.set_b_{rung}"), self.stmt_ty(rung)?, vec![reg.clone(), Tree::literal("literal.flag", flag, 1.0)]));
+        }
+        let inner = |b: Tree| -> Result<Tree, String> {
+            let r = b.name.rsplit_once('_').map(|(_, r)| r.to_string()).filter(|r| rung_stem(&format!("x_{r}")).is_some()).unwrap_or_else(|| rung.to_string());
+            self.block(self.lower_break_list(vec![b], &r, reg)?, &r)
+        };
+        match (rung_stem(&t.name), t.kids.len()) {
+            (Some("stmt.if"), 2) | (Some("stmt.if_else"), 3) => {
+                let mut kids = t.kids.into_iter();
+                let mut out = vec![kids.next().expect("the condition")];
+                for b in kids {
+                    out.push(inner(b)?);
+                }
+                Ok(Tree { kids: out, ..t })
+            }
+            _ => Err(format!("a break inside {}", t.name)),
+        }
     }
 
     fn stmt_ty(&self, rung: &str) -> Result<Ty, String> {
@@ -3604,6 +3749,7 @@ impl<'a> Ctx<'a> {
         let mut bound = HashMap::new();
         let mut values = HashMap::new();
         let mut pointers = HashMap::new();
+        let mut array_args = HashMap::new();
         for (i, ((_, node), arg)) in args.into_iter().zip(&helper.args).enumerate() {
             // A pointer parameter given `&x`: the helper reads and writes the
             // caller's register for x.
@@ -3611,6 +3757,12 @@ impl<'a> Ctx<'a> {
                 let Node::Leaf { name: local, .. } = &node else { return Err(format!("{callee}: pointer argument {i} is not a local (&x)")) };
                 if !local.starts_with("local.") || local.contains(".#") {
                     return Err(format!("{callee}: pointer argument {i} is {local}, not a local held in a register"));
+                }
+                // (To a local array, `ptr<function, array<f32, 16>>` given `&acc`:
+                // the caller's array itself, v24 run 1's seeds 00 and 31.)
+                if matches!(self.module.types[base].inner, naga::TypeInner::Array { .. }) {
+                    array_args.insert(arg.clone(), local.clone());
+                    continue;
                 }
                 let dual = dual_of_type(self.module, base).ok_or_else(|| format!("{callee}: pointer argument {i} to a type no register holds"))?;
                 let row = self.register(local, &dual)?;
@@ -3623,6 +3775,7 @@ impl<'a> Ctx<'a> {
             bound.insert(arg.clone(), raw);
         }
         let saved_pointers = std::mem::replace(&mut self.pointer_args, pointers);
+        let saved_array_args = std::mem::replace(&mut self.array_args, array_args);
         let result_reg = match result {
             Some(idx) => {
                 let d = helper.ret_dual.as_deref().ok_or_else(|| format!("{callee} returns a value no register holds"))?;
@@ -3656,6 +3809,7 @@ impl<'a> Ctx<'a> {
         let out = self.inline_body(helper, rung);
         self.local_prefix = saved_prefix;
         self.pointer_args = saved_pointers;
+        self.array_args = saved_array_args;
         self.inline_result = saved_result;
         self.tail = saved_tail;
         self.outer_args.pop();
@@ -3882,9 +4036,12 @@ impl<'a> Ctx<'a> {
                         let root = self.root_at(&here, |k| matches!(k, RootKind::Condition { .. })).ok_or("no condition root at this if")?;
                         let cond_tree = tree_of(self, &root.tree)?;
                         let c = self.value(&cond_tree.kids[0])?;
-                        // The thread guard: `if (c) { return; }` at L0 with nothing else.
+                        // The thread guard: `if (c) { return; }` at L0 with nothing else,
+                        // at the entry point's top level. (One inside a branch guards
+                        // that branch only: seed02 of v24 run 1 returned from its pass
+                        // 0 branch, read as a guard on the stores of pass 1 too.)
                         let is_return_only = |b: &naga::Block| b.iter().filter(|s| !matches!(s, Statement::Emit(_))).count() == 1 && b.iter().any(|s| matches!(s, Statement::Return { value: None }));
-                        if rung == "L0" && is_return_only(accept) && reject.iter().all(|s| matches!(s, Statement::Emit(_))) {
+                        if rung == "L0" && here.len() == 1 && self.branch_depth == 0 && is_return_only(accept) && reject.iter().all(|s| matches!(s, Statement::Emit(_))) {
                             let not = Tree::new("logic.not", ty(self, "bool.flag")?, vec![c]);
                             self.guard = Some(match self.guard.take() {
                                 Some(g) => Tree::new("logic.and", ty(self, "bool.flag")?, vec![g, not]),
@@ -4192,6 +4349,9 @@ impl<'a> Ctx<'a> {
         if let Some(local) = private_as_local(tree) {
             return self.store(&local, rung);
         }
+        if let Some(own) = self.through_array_arg(tree) {
+            return self.store(&own, rung);
+        }
         // `*p = v` for a pointer parameter: the caller's register set.
         if let (Some((row, kind)), [v]) = (tree.name.strip_prefix("store.").and_then(|a| self.pointer_args.get(a)).cloned(), tree.kids.as_slice()) {
             let v = self.value(v)?;
@@ -4357,6 +4517,17 @@ impl<'a> Ctx<'a> {
                     let i = self.value(unmasked(idx, 3.0))?;
                     let v = self.value(value)?;
                     return Ok(Some(Tree::new(&format!("reg.set_v_lane_{rung}"), st, vec![Tree::new(&row, ty(self, Self::reg_dual('v'))?, vec![]), i, v])));
+                }
+                // One lane of a vec2<f32> local (`v.x = a`): its register set
+                // whole, the new lane composed with the other's value.
+                if self.local_lanes.get(&base) == Some(&2) && self.local_vec_float(&base) {
+                    let lane = literal_value(unmasked(idx, 1.0)).filter(|l| (0.0..=1.0).contains(l)).ok_or_else(|| format!("a store to a lane of the vec2<f32> local {base} at an index that is not a literal lane"))? as usize;
+                    let whole = self.vec2_register_value(&base)?;
+                    let v = self.value(value)?;
+                    let f = ty(self, "f32.real")?;
+                    let lanes: Vec<Tree> = (0..2).map(|i| if i == lane { v.clone() } else { Tree::new(&format!("shape.access_{i}"), f, vec![whole.clone()]) }).collect();
+                    let row = self.register(&base, "vec2<f32>.real")?;
+                    return Ok(Some(Tree::new(&format!("reg.set_w_{rung}"), st, vec![Tree::new(&row, ty(self, Self::reg_dual('w'))?, vec![]), Tree::new("shape.compose2", ty(self, "vec2<f32>.real")?, lanes)])));
                 }
                 // `lrs[i] = <this thread's i-th block row>` with i a tile counter:
                 // the array holds the thread's rows; a later `lrs[k]` is a row.
@@ -4683,7 +4854,8 @@ impl<'a> Ctx<'a> {
         // barrier in it) and written in place (stmt.cblock_L<d>).
         let mut bound_tree = bound_tree;
         let first0 = if do_while { 0 } else { test_pos + 1 };
-        let breaks0 = has_break_guard(&body_stmts_all.iter().skip(first0).map(|s| (*s).clone()).collect::<Vec<_>>());
+        let body0: Vec<Statement> = body_stmts_all.iter().skip(first0).map(|s| (*s).clone()).collect();
+        let breaks0 = has_break_guard(&body0) || has_own_break(&body0);
         if kind == "boundx" && rung.starts_with('L') && !breaks0 {
             match self.uniform_bound_of(&bound_tree.kids[0])? {
                 Some(u) => bound_tree = Tree::new("bound.of_uniform", ty(self, "u32.boundu")?, vec![u]),
@@ -4961,7 +5133,9 @@ impl<'a> Ctx<'a> {
         let mut rest: Vec<Statement> = body_stmts_all.iter().skip(first).map(|s| (*s).clone()).collect();
         // A loop that breaks (`if (c) { break; }` at the top of its body): its
         // body is read at the conditional rung of its depth, no barrier in it.
-        let breaks = has_break_guard(&rest);
+        // (A break below the top, inside an if, or a second one: the same
+        // loop, its breaks lowered to a stop flag; v24 run 1's seeds 11, 17, 20.)
+        let breaks = has_break_guard(&rest) || has_own_break(&rest);
         if breaks && body_rung == "L1" {
             self.item_counter = saved.0.clone();
             self.tile_counter = saved.1.clone();
@@ -5037,13 +5211,22 @@ impl<'a> Ctx<'a> {
             for t in body_stmts {
                 flatten_stmts(t, &mut flat);
             }
-            let at = flat.iter().position(|t| break_guard(t, self).is_some()).ok_or("a loop that breaks, its guard not at the top of its body")?;
-            let c = break_guard(&flat[at], self).expect("the guard at `at`")?;
-            let after: Vec<Tree> = flat.split_off(at + 1);
-            flat.pop();
-            if flat.iter().chain(&after).any(has_break) {
-                return Err("a second break in one loop body, or a break below the top of its body".into());
-            }
+            // One guard at the top level and no other break: the guard
+            // splits the body. Any other breaks: lowered to a stop flag, the
+            // guard on it the body's last statement.
+            let single = flat.iter().position(|t| break_guard(t, self).is_some()).filter(|&at| !flat[..at].iter().chain(&flat[at + 1..]).any(has_break));
+            let (flat, c, after) = match single {
+                Some(at) => {
+                    let c = break_guard(&flat[at], self).expect("the guard at `at`")?;
+                    let after: Vec<Tree> = flat.split_off(at + 1);
+                    flat.pop();
+                    (flat, c, after)
+                }
+                None => {
+                    let (pre, c) = self.lower_breaks(flat, &walk_rung, path)?;
+                    (pre, c, Vec::new())
+                }
+            };
             let d = &body_rung[1..];
             let brk = Tree::new(&format!("block.brk_B{d}"), ty(self, &format!("block.B{d}"))?, vec![self.block(flat, &walk_rung)?, c, self.block(after, &walk_rung)?]);
             // (Stepped by a literal: the expression-bounded loop with its stride,
@@ -5734,7 +5917,7 @@ fn read_entry(at: &Reading, ep: usize, (grid, rows_x): ((u32, u32, u32, u32), bo
     let main_returns = source.find(&format!("fn {}(", entry.name)).map(|i| &source[i..]).and_then(|m| m.rfind('}').map(|j| &m[..j])).is_some_and(|m| m.trim_end().ends_with("return;"));
     let uniform_lanes = if role.uniform_struct.is_empty() { role.fields.iter().map(|f| f.name.clone()).collect() } else { Vec::new() };
     let (arrays, array_lens) = arrays;
-    let mut ctx = Ctx { kingdom, main_returns, per_kernel_rows: crate::wgsl::safe_karva::per_kernel_rows(kingdom, role), uniform_var: role.uniform_var.clone(), uniform_lanes, duals: &duals, lets: &lets, roots: &roots, item_counter: None, tile_counter: None, tile_counter2: None, tile_counter3: None, tile_counter4: None, registers: BTreeMap::new(), counter_stores: Vec::new(), guard: None, tail: true, arrays, array_lens, arrays_used: BTreeSet::new(), parrs: BTreeMap::new(), grid, rows_x: rows_x.then_some(true), notes: Vec::new(), helpers: &helpers, calls: &calls, arg_roots: &arg_roots, inline_args: None, built: std::cell::Cell::new(0), early_return_at: None, outer_args: Vec::new(), row_arrays: BTreeMap::new(), used_counters: std::collections::BTreeSet::new(), local_lanes, axis_memo: BTreeMap::new(), loop_depth: 0, tile_bounds: BTreeMap::new(), naga_fn, module: &kernel.module, local_prefix: String::new(), inline_result: None, inline_values: None, bound_lets, stale_lets, let_regs: HashMap::new(), inlined: HashMap::new(), stored_seen: std::collections::BTreeSet::new(), counter_offsets: HashMap::new(), counter_exprs: HashMap::new(), pointer_args: HashMap::new(), mode_full: source.lines().any(|l| l.trim() == "// mode full") };
+    let mut ctx = Ctx { kingdom, main_returns, per_kernel_rows: crate::wgsl::safe_karva::per_kernel_rows(kingdom, role), uniform_var: role.uniform_var.clone(), uniform_lanes, duals: &duals, lets: &lets, roots: &roots, item_counter: None, tile_counter: None, tile_counter2: None, tile_counter3: None, tile_counter4: None, registers: BTreeMap::new(), counter_stores: Vec::new(), guard: None, tail: true, arrays, array_lens, arrays_used: BTreeSet::new(), parrs: BTreeMap::new(), grid, rows_x: rows_x.then_some(true), notes: Vec::new(), helpers: &helpers, calls: &calls, arg_roots: &arg_roots, inline_args: None, built: std::cell::Cell::new(0), early_return_at: None, branch_depth: 0, outer_args: Vec::new(), row_arrays: BTreeMap::new(), used_counters: std::collections::BTreeSet::new(), local_lanes, axis_memo: BTreeMap::new(), loop_depth: 0, tile_bounds: BTreeMap::new(), naga_fn, module: &kernel.module, local_prefix: String::new(), inline_result: None, inline_values: None, bound_lets, stale_lets, let_regs: HashMap::new(), inlined: HashMap::new(), stored_seen: std::collections::BTreeSet::new(), counter_offsets: HashMap::new(), counter_exprs: HashMap::new(), pointer_args: HashMap::new(), array_args: HashMap::new(), mode_full: source.lines().any(|l| l.trim() == "// mode full") };
     // Register initialisations first, in root order. A local initialised to
     // its form's fallback (0.0, 0u, false, a zero vector) costs nothing: the
     // register's declaration already holds that value, and the register is
@@ -6886,6 +7069,139 @@ fn search(@builtin(global_invocation_id) gid: vec3<u32>) {{
         }
     }
 
+    /// BREAKS BELOW THE TOP OF A LOOP'S BODY (2026-10-17, v24 run 1's seeds
+    /// 11, 17 and 20: a break after a store inside an if, a second break
+    /// guard after statements, a rank counted until it is enough): the loop
+    /// reads with its breaks lowered to a stop flag, renders, validates,
+    /// reads back to the same tree, passes every layer and computes the
+    /// source's values on the CPU executor. Beside it the thread id used as
+    /// bits and as a shift count (`(lid.x >> 5u) << 5u`, `1u << lid.x`,
+    /// seeds 20, 26 and 30) and twelve u32 workgroup arrays (seed20's nine).
+    #[test]
+    fn breaks_below_the_top_of_a_loop_body_read() {
+        let k = WgslKingdom::load_safe();
+        let contract = crate::wgsl::safety::Contract::parse("workgroups x 1 1024\nworkgroups y 1 1\nworkgroups z 1 1\n").unwrap();
+        let arrays: String = (0..12).map(|i| format!("var<workgroup> w{i}: array<u32, 32>;\n")).collect();
+        let src = format!(
+            "{V24_BINDINGS}{arrays}@compute @workgroup_size(32, 1, 1)
+fn ingest(@builtin(local_invocation_id) lid: vec3<u32>) {{
+    _ = atomicAdd(&index_u32[lid.x], 1u);
+}}
+@compute @workgroup_size(32, 1, 1)
+fn search(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>) {{
+{fill}    workgroupBarrier();
+    var got = 0u;
+    var rank = 0u;
+    if (gid.x < 4096u) {{
+        for (var i = 0u; i < cfg.n_queries; i = i + 1u) {{
+            let v = atomicLoad(&index_u32[i & 1023u]);
+            if ((v & 1u) == 1u) {{
+                got = got + 1u;
+                if (got >= 3u) {{
+                    rank = rank + 7u;
+                    break;
+                }}
+            }}
+            rank = rank + 1u;
+            if (rank >= 40u) {{ break; }}
+            rank = rank + (w11[i & 31u] & 1u);
+        }}
+        cands[gid.x] = got + rank + (((lid.x >> 2u) << 2u) ^ lid.x) + (1u << lid.x);
+    }}
+}}
+",
+            fill = (0..12).map(|i| format!("    w{i}[lid.x] = lid.x + {i}u;\n")).collect::<String>()
+        );
+        let r = read_safe(&src, &k).unwrap_or_else(|e| panic!("{e}"));
+        let sx = r.tree.to_sexpr();
+        assert!(sx.contains("(loop.tilex_brk_C0 ") && sx.contains("(block.brk_B1 "), "{sx}");
+        assert!(sx.contains("(wg.ul)") || sx.contains("wg.ul"), "the twelfth u32 workgroup array: {sx}");
+        let out = crate::wgsl::safe_karva::render_tree_with(&r.tree, &k, &r.role).unwrap_or_else(|e| panic!("{e}"));
+        validate_text(&out.text).unwrap_or_else(|e| panic!("{e}\n{}", out.text));
+        let back = read_safe(&out.text, &k).unwrap_or_else(|e| panic!("read back: {e}\n{}", out.text));
+        assert!(back.tree == r.tree, "the rendered text reads back to the same tree: {:?}\n{}", crate::wgsl::render::first_difference(&r.tree, &back.tree), out.text);
+        let checker = crate::wgsl::check::Checker::with_contract(&k, &r.role, &crate::wgsl::target::Target::recorded(), contract);
+        checker.check(&r.tree).unwrap_or_else(|e| panic!("{e}\n{}", out.text));
+        assert_eq!(same_values_every_entry(&src, &k, [2, 1, 1]), Ok(true), "the rendering computes the source's values\n{}", out.text);
+    }
+
+    /// RUN 1'S OTHER GAPS (2026-10-17, v24 run 1's seeds 00, 02, 11, 24 and
+    /// 31): a helper given `&acc` of a local array, a helper returning
+    /// `vec2<f32>`, a workgroup atomic scalar, a lane of a storage vector
+    /// element chosen at run time, a pass-0 branch that returns from inside
+    /// it (its returns guard that branch, not the stores of the other pass)
+    /// and a lone return below the top. The module reads, renders, validates,
+    /// reads back to the same tree and computes the source's values on the
+    /// CPU executor, entry point by entry point.
+    #[test]
+    fn run_ones_other_gaps_read() {
+        let k = WgslKingdom::load_safe();
+        let src = "struct Cfg { seed_slot: u32, stage: u32, arrived_begin: u32, arrived_end: u32, n_queries: u32, pass_index: u32, n_passes: u32, c_max: u32, };
+@group(0) @binding(0) var<storage, read> keys: array<vec4<f32>>;
+@group(0) @binding(1) var<storage, read> queries: array<f32>;
+@group(0) @binding(2) var<storage, read_write> index_u32: array<atomic<u32>>;
+@group(0) @binding(3) var<storage, read_write> index_f32: array<f32>;
+@group(0) @binding(4) var<storage, read_write> cands: array<u32>;
+@group(0) @binding(5) var<uniform> cfg: Cfg;
+var<workgroup> wcnt: atomic<u32>;
+fn addp(p: ptr<function, array<f32, 16>>, x: f32) {
+    for (var i = 0u; i < 16u; i += 1u) {
+        (*p)[i] = (*p)[i] + x * f32(i);
+    }
+}
+fn two(r: u32) -> vec2<f32> {
+    var s = 0.0;
+    var n = 0.0;
+    for (var d = 0u; d < 4u; d = d + 1u) {
+        let x = keys[(r + d) & 63u][d & 3u];
+        s = s + x;
+        n = n + x * x;
+    }
+    return vec2<f32>(s, n);
+}
+@compute @workgroup_size(32, 1, 1)
+fn ingest(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) wid: vec3<u32>) {
+    if (cfg.pass_index == 0u) {
+        if (cfg.stage != 1u) {
+            return;
+        }
+        index_f32[(wid.x * 32u + lid.x) & 1023u] = keys[lid.x & 63u][lid.x & 3u];
+        return;
+    }
+    if (lid.x >= cfg.arrived_end) {
+        return;
+    }
+    _ = atomicAdd(&index_u32[lid.x & 1023u], 1u);
+}
+@compute @workgroup_size(32, 1, 1)
+fn search(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>) {
+    if (lid.x == 0u) {
+        atomicStore(&wcnt, 0u);
+    }
+    workgroupBarrier();
+    var acc: array<f32, 16>;
+    if (gid.x < 4096u) {
+        addp(&acc, queries[gid.x]);
+        addp(&acc, queries[gid.x + 1u]);
+        let v = two(gid.x);
+        var s = v.x + v.y;
+        for (var i = 0u; i < 16u; i += 1u) {
+            s = s + acc[i];
+        }
+        let slot = atomicAdd(&wcnt, 1u);
+        cands[gid.x] = u32(abs(s)) + slot;
+    }
+}
+";
+        let r = read_safe(src, &k).unwrap_or_else(|e| panic!("{e}"));
+        let out = crate::wgsl::safe_karva::render_tree_with(&r.tree, &k, &r.role).unwrap_or_else(|e| panic!("{e}"));
+        validate_text(&out.text).unwrap_or_else(|e| panic!("{e}\n{}", out.text));
+        let back = read_safe(&out.text, &k).unwrap_or_else(|e| panic!("read back: {e}\n{}", out.text));
+        assert!(back.tree == r.tree, "the rendered text reads back to the same tree: {:?}\n{}", crate::wgsl::render::first_difference(&r.tree, &back.tree), out.text);
+        assert!(!r.notes.iter().any(|n| n.contains("thread guard")) || out.text.matches("cfg.stage").count() <= 2, "a return inside the pass-0 branch guards the other pass's stores:\n{}", out.text);
+        assert_eq!(same_values_every_entry(src, &k, [2, 1, 1]), Ok(true), "the rendering computes the source's values\n{}", out.text);
+    }
+
     /// A SEARCH'S WORKGROUP STATE (2026-10-17, 3 of run 1's seeds): five f32
     /// score lists, a workgroup u32 scalar read as bits (`var<workgroup>
     /// wcode: u32;`), and a loop over the candidates a thread staged, bounded
@@ -7525,9 +7841,20 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     /// break and an opaque local took its slot's register: other draws; every
     /// module the checker turns away fails layer 7's write sets, 265
     /// store_index_not_affine and 616 write_sets_overlap, random stores).
-    const MODULE_AST_FLOOR: usize = 3;
-    const MODULE_FIXPOINT_FLOOR: usize = 948;
-    const MODULE_LEGAL_FLOOR: usize = 119;
+    /// Re-measured 2026-10-17 10:05Z, 1, 965 and 143, when the kingdom drew
+    /// the vec2<f32> registers (reg.w0..w7): other draws (with those rows
+    /// left undrawn the same commit measures 3, 948 and 119 exactly; 310 of
+    /// the 1,000 draw one, and 17 of those 310 miss the fixpoint, the rate
+    /// of the rest); the fixpoint gain is the divisor guard seeing through
+    /// `uniform.of_lit` and a fallback (`x / max(0u, 1u)`, which naga folds to
+    /// a division by 1, read back as `max(1u, 1u)`). The first AST
+    /// differences are the earlier classes: a subgroup operation the reader
+    /// sets into a register at its statement, a barrier against a register
+    /// set, a literal bound against its uniform spelling; 266
+    /// store_index_not_affine and 591 write_sets_overlap at layer 7.
+    const MODULE_AST_FLOOR: usize = 1;
+    const MODULE_FIXPOINT_FLOOR: usize = 965;
+    const MODULE_LEGAL_FLOOR: usize = 143;
 
 
     /// THE KINGDOM'S COMPLETENESS BAR (2026-10-12): 1,000 random trees of

@@ -361,6 +361,8 @@ def build_types():
     add("bool", "uflag", 1, FORMS["uflag"][0])
     # ---- 64-element u32 private arrays (2026-10-17) ----
     add("parr64<u32>", "index", 0, "a private array of 64 u32: pua, puc (a list of ids beside 64 scores)")
+    # ---- vec2<f32> registers (2026-10-17) ----
+    add("reg<vec2<f32>>", "real", 2, "a named vec2<f32> register: w0..w7 (a helper's two sums returned together)")
     return rows
 
 
@@ -1311,6 +1313,17 @@ f("parr", "get_i", "composite", ["parr64<u32>.index", "u32.pindex"], "u32.index"
 for r in RUNGS + RUNGS5:
     f("parr", "set_i_" + r, "composite", ["parr64<u32>.index", "u32.pindex", "u32.index"], "stmt." + r, "arity 3: pua[i] = v")
 
+# ---- four more workgroup arrays of indices (2026-10-17, v24 run 1's seed20 keeps nine u32 lists and counters in
+# workgroup memory: two top lists, a cell's count, order, selection and starts, two scalar counters, the rows) ----
+for n in ("ui", "uj", "uk", "ul"):
+    f("wg", n, "composite", [], "wgmem<u32>.index", f"workgroup array wg_{n} of u32")
+# ---- vec2<f32> registers (2026-10-17, v24 run 1's seed11: a statement helper returning `vec2<f32>(s, n)`, a dot
+# product and a norm, read into a register at its call) ----
+for i in range(8):
+    f("reg", f"w{i}", "composite", [], "reg<vec2<f32>>.real", "a vec2<f32> register")
+f("reg", "get_w", "composite", ["reg<vec2<f32>>.real"], "vec2<f32>.real", "the register's value")
+for r in RUNGS + RUNGS5:
+    f("reg", "set_w_" + r, "composite", ["reg<vec2<f32>>.real", "vec2<f32>.real"], "stmt." + r, "")
 
 def write_tsv(path, header, rows):
     with open(path, "w") as out:

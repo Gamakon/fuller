@@ -3174,4 +3174,39 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 | F1701 | `parr.set_i_L5` | `composite` | `parr64<u32>.index u32.pindex u32.index` | `stmt.L5` | 3 | arity 3: pua[i] = v |
 | F1702 | `parr.set_i_C5` | `composite` | `parr64<u32>.index u32.pindex u32.index` | `stmt.C5` | 3 | arity 3: pua[i] = v |
 
-1702 function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Storage-buffer atomics are an interface's per-kernel rows, not rows of this table. Deliberately absent: atomic compare-exchange (naga 0.20's Metal backend lacks it), subgroupBallot, images, derivatives, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.
+## class `wg`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F1703 | `wg.ui` | `composite` | `-` | `wgmem<u32>.index` | 0 | workgroup array wg_ui of u32 |
+| F1704 | `wg.uj` | `composite` | `-` | `wgmem<u32>.index` | 0 | workgroup array wg_uj of u32 |
+| F1705 | `wg.uk` | `composite` | `-` | `wgmem<u32>.index` | 0 | workgroup array wg_uk of u32 |
+| F1706 | `wg.ul` | `composite` | `-` | `wgmem<u32>.index` | 0 | workgroup array wg_ul of u32 |
+
+## class `reg`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F1707 | `reg.w0` | `composite` | `-` | `reg<vec2<f32>>.real` | 0 | a vec2<f32> register |
+| F1708 | `reg.w1` | `composite` | `-` | `reg<vec2<f32>>.real` | 0 | a vec2<f32> register |
+| F1709 | `reg.w2` | `composite` | `-` | `reg<vec2<f32>>.real` | 0 | a vec2<f32> register |
+| F1710 | `reg.w3` | `composite` | `-` | `reg<vec2<f32>>.real` | 0 | a vec2<f32> register |
+| F1711 | `reg.w4` | `composite` | `-` | `reg<vec2<f32>>.real` | 0 | a vec2<f32> register |
+| F1712 | `reg.w5` | `composite` | `-` | `reg<vec2<f32>>.real` | 0 | a vec2<f32> register |
+| F1713 | `reg.w6` | `composite` | `-` | `reg<vec2<f32>>.real` | 0 | a vec2<f32> register |
+| F1714 | `reg.w7` | `composite` | `-` | `reg<vec2<f32>>.real` | 0 | a vec2<f32> register |
+| F1715 | `reg.get_w` | `composite` | `reg<vec2<f32>>.real` | `vec2<f32>.real` | 1 | the register's value |
+| F1716 | `reg.set_w_L0` | `composite` | `reg<vec2<f32>>.real vec2<f32>.real` | `stmt.L0` | 2 |  |
+| F1717 | `reg.set_w_L1` | `composite` | `reg<vec2<f32>>.real vec2<f32>.real` | `stmt.L1` | 2 |  |
+| F1718 | `reg.set_w_L2` | `composite` | `reg<vec2<f32>>.real vec2<f32>.real` | `stmt.L2` | 2 |  |
+| F1719 | `reg.set_w_L3` | `composite` | `reg<vec2<f32>>.real vec2<f32>.real` | `stmt.L3` | 2 |  |
+| F1720 | `reg.set_w_L4` | `composite` | `reg<vec2<f32>>.real vec2<f32>.real` | `stmt.L4` | 2 |  |
+| F1721 | `reg.set_w_C0` | `composite` | `reg<vec2<f32>>.real vec2<f32>.real` | `stmt.C0` | 2 |  |
+| F1722 | `reg.set_w_C1` | `composite` | `reg<vec2<f32>>.real vec2<f32>.real` | `stmt.C1` | 2 |  |
+| F1723 | `reg.set_w_C2` | `composite` | `reg<vec2<f32>>.real vec2<f32>.real` | `stmt.C2` | 2 |  |
+| F1724 | `reg.set_w_C3` | `composite` | `reg<vec2<f32>>.real vec2<f32>.real` | `stmt.C3` | 2 |  |
+| F1725 | `reg.set_w_C4` | `composite` | `reg<vec2<f32>>.real vec2<f32>.real` | `stmt.C4` | 2 |  |
+| F1726 | `reg.set_w_L5` | `composite` | `reg<vec2<f32>>.real vec2<f32>.real` | `stmt.L5` | 2 |  |
+| F1727 | `reg.set_w_C5` | `composite` | `reg<vec2<f32>>.real vec2<f32>.real` | `stmt.C5` | 2 |  |
+
+1727 function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Storage-buffer atomics are an interface's per-kernel rows, not rows of this table. Deliberately absent: atomic compare-exchange (naga 0.20's Metal backend lacks it), subgroupBallot, images, derivatives, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.

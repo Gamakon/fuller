@@ -1670,7 +1670,7 @@ impl<'a> Renderer<'a> {
                 scope.in_tile = false;
                 Ok(format!("    for (k = 0u; k < {count}u; k = k + 1u) {{\n{}    }}\n", body?))
             }
-            "reg.set_f" | "reg.set_v" | "reg.set_i" | "reg.set_b" | "reg.set_n" | "reg.set_u" | "reg.set_x" | "reg.set_y" | "reg.set_z" => {
+            "reg.set_f" | "reg.set_v" | "reg.set_i" | "reg.set_b" | "reg.set_n" | "reg.set_u" | "reg.set_w" | "reg.set_x" | "reg.set_y" | "reg.set_z" => {
                 n(2)?;
                 Ok(format!("    {} = {};\n", self.register(&kids[0])?, self.value(&kids[1], scope)?))
             }
@@ -1740,12 +1740,13 @@ pub fn register_name(kingdom: &WgslKingdom, r: &Tree) -> Result<String, String> 
         ("fallback", "reg<bool>.flag") => "b0".to_string(),
         ("fallback", "reg<i32>.int") => "n0".to_string(),
         ("fallback", "reg<vec4<u32>>.bits") => "u0".to_string(),
+        ("fallback", "reg<vec2<f32>>.real") => "w0".to_string(),
         ("fallback", "reg<mat2x2<f32>>.real") => "x0".to_string(),
         ("fallback", "reg<mat3x3<f32>>.real") => "y0".to_string(),
         ("fallback", "reg<mat4x4<f32>>.real") => "z0".to_string(),
         (name, _) => {
             let n = name.strip_prefix("reg.").unwrap_or("");
-            if ok(n, 'f', 64) || ok(n, 'v', 32) || ok(n, 'i', 64) || ok(n, 'b', 16) || ok(n, 'n', 16) || ok(n, 'u', 8) || ok(n, 'x', 2) || ok(n, 'y', 2) || ok(n, 'z', 2) {
+            if ok(n, 'f', 64) || ok(n, 'v', 32) || ok(n, 'i', 64) || ok(n, 'b', 16) || ok(n, 'n', 16) || ok(n, 'u', 8) || ok(n, 'w', 8) || ok(n, 'x', 2) || ok(n, 'y', 2) || ok(n, 'z', 2) {
                 let k: usize = n[1..].parse().unwrap_or(0);
                 register_var(&n[..1], k)
             } else {
@@ -1802,6 +1803,10 @@ pub fn wgmem_var(kingdom: &WgslKingdom, w: &Tree) -> Result<&'static str, String
         "wg.uf" => "wg_uf",
         "wg.ug" => "wg_ug",
         "wg.uh" => "wg_uh",
+        "wg.ui" => "wg_ui",
+        "wg.uj" => "wg_uj",
+        "wg.uk" => "wg_uk",
+        "wg.ul" => "wg_ul",
         "wg.au_a" => "wg_au_a",
         "wg.au_b" => "wg_au_b",
         "wg.ai_a" => "wg_ai_a",
@@ -2021,7 +2026,7 @@ impl Renderer<'_> {
             _ => {}
         }
         match name {
-            "reg.get_f" | "reg.get_v" | "reg.get_i" | "reg.get_b" | "reg.get_n" | "reg.get_u" | "reg.get_x" | "reg.get_y" | "reg.get_z" => return self.register(&v.kids[0]),
+            "reg.get_f" | "reg.get_v" | "reg.get_i" | "reg.get_b" | "reg.get_n" | "reg.get_u" | "reg.get_w" | "reg.get_x" | "reg.get_y" | "reg.get_z" => return self.register(&v.kids[0]),
             "reg.get_v_lane" => return Ok(format!("{}[({}) & 3u]", self.register(&v.kids[0])?, self.value(&v.kids[1], scope)?)),
             // A lane of a vec4 element of a workgroup or private array (seed08 of run A): the
             // element is a reference, so the lane index may be a run-time value.
@@ -2295,13 +2300,29 @@ impl Renderer<'_> {
         // (The same for a u32 remainder, 2026-10-13: naga writes `%` to Metal
         // raw, and Metal leaves x % 0 undefined; a random kernel's left the
         // GPU running. WGSL's x % 0u is 0, and x % max(0u, 1u) is x % 1u, 0.)
-        if (name == "index.div" || name == "index.mod") && a.len() == 2 && !v.kids.get(1).is_some_and(|k| k.name.starts_with("literal.") && k.konst >= 1.0) {
+        // (A literal seen through the rows written as their one child, a
+        // uniform's `uniform.of_lit` and `index.of_uniform` (no other row: a
+        // conversion changes the value, `u32(max(-3, 0))` is 0), and the zero
+        // a fallback leaf writes:
+        // `wid.y / max(1u, 1u)` read back from naga's folded `max(0u, 1u)`
+        // was not a fixpoint, 5 of 1,000 random modules, 2026-10-17.)
+        fn literal_through(t: &Tree) -> Option<f32> {
+            match (t.name.as_str(), t.kids.as_slice()) {
+                (n, []) if n.starts_with("literal.") => Some(t.konst),
+                ("fallback", []) => Some(0.0),
+                ("uniform.of_lit" | "index.of_uniform", [k]) => literal_through(k),
+                _ => None,
+            }
+        }
+        if (name == "index.div" || name == "index.mod") && a.len() == 2 && !v.kids.get(1).and_then(literal_through).is_some_and(|k| k >= 1.0) {
             let one = if d.lanes > 1 { format!("vec{}<u32>(1u)", d.lanes) } else { "1u".to_string() };
             // (A divisor of literal 0 through lit_*: naga folds max(0u, 1u)
             // to 1u, read back as a division by 1, 2026-10-13. Any other
             // literal folds to itself, read back the same.)
+            // (A zero under any one-child rows, or a fallback's zero, written
+            // through lit_* so naga folds none of it.)
             fn zero(t: &Tree) -> bool {
-                (t.kids.is_empty() && t.name.starts_with("literal.") && t.konst == 0.0) || (t.kids.len() == 1 && !t.name.starts_with("literal.") && zero(&t.kids[0]))
+                (t.kids.is_empty() && ((t.name.starts_with("literal.") && t.konst == 0.0) || t.name == "fallback")) || (t.kids.len() == 1 && !t.name.starts_with("literal.") && zero(&t.kids[0]))
             }
             let b = if zero(&v.kids[1]) { self.unfolded(&v.kids[1], scope)? } else { a[1].clone() };
             let op = if name == "index.div" { "/" } else { "%" };
@@ -2965,7 +2986,7 @@ pub fn register_var(prefix: &str, k: usize) -> String {
 /// to their form's fallback, the loop counters, the private arrays).
 pub fn register_declarations() -> String {
     let mut out = String::new();
-    for (prefix, n, ty, init) in [("f", 64, "f32", "0.0"), ("v", 32, "vec4<f32>", "vec4<f32>(0.0)"), ("i", 64, "u32", "0u"), ("b", 16, "bool", "false"), ("n", 16, "i32", "0"), ("u", 8, "vec4<u32>", "vec4<u32>(0u)"), ("x", 2, "mat2x2<f32>", "mat2x2<f32>()"), ("y", 2, "mat3x3<f32>", "mat3x3<f32>()"), ("z", 2, "mat4x4<f32>", "mat4x4<f32>()")] {
+    for (prefix, n, ty, init) in [("f", 64, "f32", "0.0"), ("v", 32, "vec4<f32>", "vec4<f32>(0.0)"), ("i", 64, "u32", "0u"), ("b", 16, "bool", "false"), ("n", 16, "i32", "0"), ("u", 8, "vec4<u32>", "vec4<u32>(0u)"), ("w", 8, "vec2<f32>", "vec2<f32>(0.0)"), ("x", 2, "mat2x2<f32>", "mat2x2<f32>()"), ("y", 2, "mat3x3<f32>", "mat3x3<f32>()"), ("z", 2, "mat4x4<f32>", "mat4x4<f32>()")] {
         for k in 0..n {
             if k % 8 == 0 {
                 out.push_str("    ");
@@ -3019,7 +3040,7 @@ pub fn register_declarations_for(body: &str) -> String {
 /// The length of a workgroup or private array by its variable name.
 pub fn array_len(name: &str) -> u32 {
     match name {
-        "wg_a" | "wg_b" | "wg_c" | "wg_d" | "wg_e" | "wg_f" | "wg_g" | "wg_h" | "wg_ua" | "wg_ub" | "wg_uc" | "wg_ud" | "wg_ue" | "wg_uf" | "wg_ug" | "wg_uh" => WGMEM_LEN,
+        "wg_a" | "wg_b" | "wg_c" | "wg_d" | "wg_e" | "wg_f" | "wg_g" | "wg_h" | "wg_ua" | "wg_ub" | "wg_uc" | "wg_ud" | "wg_ue" | "wg_uf" | "wg_ug" | "wg_uh" | "wg_ui" | "wg_uj" | "wg_uk" | "wg_ul" => WGMEM_LEN,
         n if n.starts_with("wg_v2") => 1024,
         n if n.starts_with("wg_v") => WGVEC_LEN,
         "pa" | "pb" | "pc" | "pd" | "pe" | "pf" | "pua" | "puc" => 64,
@@ -3236,7 +3257,7 @@ fn sample_with(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, s
     // more lists: the draws stay those of the floors below.)
     // (Nor the 64-element u32 private arrays, read from kernels that keep one.)
     let long_u32 = |t: &Ty| kingdom.dual(*t).is_some_and(|d| d.dual == "parr64<u32>.index");
-    let not_drawn = |r: &WgslRow| uniform_test_op(safe_base(&r.name)).is_some() || long_u32(&r.output) || r.inputs.iter().any(long_u32) || matches!(safe_base(&r.name), "stmt.if_uflag" | "stmt.if_else_uflag") || matches!(r.name.as_str(), "convert.index_to_count" | "wg.ue" | "wg.uf" | "wg.ug" | "wg.uh" | "wg.e" | "wg.f" | "wg.g" | "wg.h") || (r.name == "wg.get_u_safe" && kingdom.dual(r.output).is_some_and(|d| d.form == "xbound"));
+    let not_drawn = |r: &WgslRow| uniform_test_op(safe_base(&r.name)).is_some() || long_u32(&r.output) || r.inputs.iter().any(long_u32) || matches!(safe_base(&r.name), "stmt.if_uflag" | "stmt.if_else_uflag") || matches!(r.name.as_str(), "convert.index_to_count" | "wg.ue" | "wg.uf" | "wg.ug" | "wg.uh" | "wg.ui" | "wg.uj" | "wg.uk" | "wg.ul" | "wg.e" | "wg.f" | "wg.g" | "wg.h") || (r.name == "wg.get_u_safe" && kingdom.dual(r.output).is_some_and(|d| d.form == "xbound"));
     let mut rows: Vec<WgslRow> = kingdom.rows.iter().filter(|r| !f16(&r.output) && !r.inputs.iter().any(f16) && !r.name.starts_with("stmt.return") && !r.name.starts_with("safe.mirror_of") && !r.name.starts_with("store.h_mirror") && !not_drawn(r) && !r.name.starts_with("wg.set")).cloned().collect();
     // The safe kingdom reads h only at the thread's own cell (load.h_safe):
     // the role's load.h, h at any index, is the plain kingdom's (the

@@ -869,9 +869,12 @@ fn conform_at(t: &Tree, demand: Ty, kingdom: &WgslKingdom, per_kernel: &[PerKern
     // Two conversions, when no one converts: `bits.find_lsb(convert.index_to_bits(
     // index.of_gid(gid)))` renders `firstTrailingBit(gid)` (neither conversion
     // writes text) and reads back as find_lsb over the thread id, a gid where
-    // bits are demanded (random seeds 31 and 44, 2026-10-16).
+    // bits are demanded (random seeds 31 and 44, 2026-10-16). A thread id's
+    // axis is such a node too (`lid.x` shifting or masked as bits, v24 run 1's
+    // seed26 and seed30: `axis.x_lid` is a column index, `index.of_col` then
+    // `convert.index_to_bits`): a node over leaves only.
     let is_conv = |r: &&crate::wgsl::loader::WgslRow| r.inputs.len() == 1 && (r.name.starts_with("index.of_") || r.name.starts_with("convert.") || r.name.starts_with("shape.splat"));
-    for o in own.iter().filter(|_| convert && chains && t.kids.is_empty()) {
+    for o in own.iter().filter(|_| convert && chains && t.kids.iter().all(|k| k.kids.is_empty())) {
         for first in kingdom.rows.iter().filter(is_conv).filter(|r| r.inputs[0] == *o && r.output != demand) {
             if let Some(second) = kingdom.rows.iter().filter(is_conv).find(|r| r.inputs[0] == first.output && r.output == demand) {
                 match conform_at(t, *o, kingdom, per_kernel, false, chains) {
@@ -1613,7 +1616,8 @@ mod tests {
 
     /// THE SAVED GENOMES ARE TODAY'S READING OF THEIR TEXTS (2026-10-17): the
     /// dumps phylu launches from and tests against (`popA2_g006j/karva` and
-    /// `library_ep`, head 32, 128 slots, the converter's seed 7013) are each
+    /// `library_ep` at head 32 and 128 slots, `safe96/karva` of gen0's drafts
+    /// at 96, the converter's seed 7013) are each
     /// the encoding of its text as the reader reads it now. They were written
     /// on 2026-10-13 and the reader changed after: g007_r02's `x - x % max(y,
     /// 1u)` was then a subtraction over `index.mod(x, index.max(y, 1))`, today
@@ -1627,7 +1631,7 @@ mod tests {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("logs/HGP/001");
         let k = WgslKingdom::load_safe();
         let (mut checked, mut stale) = (0usize, Vec::new());
-        for (dumps, texts) in [("popA2_g006j/karva", "popA2_g006j/texts"), ("library_ep", "library_ep_texts")] {
+        for (dumps, texts, slots) in [("popA2_g006j/karva", "popA2_g006j/texts", 128), ("library_ep", "library_ep_texts", 128), ("safe96/karva", "gen0", 96)] {
             let Ok(entries) = std::fs::read_dir(root.join(dumps)) else { return };
             let mut files: Vec<_> = entries.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "json")).collect();
             files.sort();
@@ -1636,8 +1640,10 @@ mod tests {
                 let saved: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(f).unwrap()).unwrap_or_else(|e| panic!("{dumps}/{id}: {e}"));
                 let text = std::fs::read_to_string(root.join(texts).join(format!("{id}.wgsl"))).unwrap_or_else(|e| panic!("{dumps}/{id}: its text: {e}"));
                 let tree = read_safe(&text, &k).unwrap_or_else(|e| panic!("{dumps}/{id}: its text no longer reads: {}", &e[..e.len().min(300)])).tree;
-                let now = dump_file(&format!("{id}.wgsl"), &k, &encode(&tree, 32, 128, 7013).unwrap_or_else(|e| panic!("{dumps}/{id}: {e}")));
-                if now != saved {
+                let now = dump_file(&format!("{id}.wgsl"), &k, &encode(&tree, 32, slots, 7013).unwrap_or_else(|e| panic!("{dumps}/{id}: {e}")));
+                // (The genes, not the kingdom's size the dump records beside them:
+                // a row appended changes no saved tree.)
+                if now["functions"] != saved["functions"] {
                     stale.push(format!("{dumps}/{id}"));
                 }
                 checked += 1;
