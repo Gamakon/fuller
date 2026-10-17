@@ -290,7 +290,8 @@ fn tree_of(ctx: &mut Ctx, n: &Node) -> Result<Tree, String> {
                 }
                 if !helper.pure && !helper.composite {
                     let d = helper.ret_dual.as_deref().ok_or_else(|| format!("{callee} returns a value no register holds"))?;
-                    return Ok(Tree::new(&format!("load.local.call.{callee}@{idx}"), ty(ctx, d)?, vec![]));
+                    // (Named under the helper being inlined, as its call's register is.)
+                    return Ok(Tree::new(&format!("load.local.call.{}{callee}@{idx}", ctx.local_prefix), ty(ctx, d)?, vec![]));
                 }
                 let bound = ctx.call_arguments(callee, helper, idx)?;
                 if helper.composite {
@@ -309,8 +310,15 @@ fn tree_of(ctx: &mut Ctx, n: &Node) -> Result<Tree, String> {
                 }
                 let saved_lets = std::mem::replace(&mut ctx.lets, &helper.lets);
                 let saved_args = ctx.inline_args.replace(bound);
+                // Its arguments are the caller's trees, substituted whole (a
+                // statement-inlined caller's own arguments in them stay its
+                // leaves, read in its scope): not the caller's argument values
+                // (`do_row` calling the pure `safe_tanh(x)`, k1119 of the saved
+                // model kernels: `arg.x` looked up among do_row's, 2026-10-17).
+                let saved_values = ctx.inline_values.take();
                 let body = helper.body.clone().ok_or_else(|| format!("{callee} returns nothing"))?;
                 let out = tree_of(ctx, &body);
+                ctx.inline_values = saved_values;
                 ctx.inline_args = saved_args;
                 ctx.lets = saved_lets;
                 return out.map_err(|e| format!("inlining {callee}: {e}"));
@@ -3269,9 +3277,10 @@ impl<'a> Ctx<'a> {
     /// the helper's name, its body walked at the caller's rung, its return
     /// value written to the call's own register.
     fn inline_call(&mut self, callee: &str, helper: &'a Helper<'a>, result: Option<u32>, here: &[usize], rung: &str) -> Result<Option<Tree>, String> {
-        if !self.local_prefix.is_empty() {
-            return Err(format!("{callee}: a helper with statements called from a helper (not inlined)"));
-        }
+        // A helper called from a helper being inlined (13 of the saved model
+        // kernels' `do_row` calling `fmix`, 2026-10-17): inlined in turn, its
+        // locals and its result named under both (`do_row/fmix/h@0`); WGSL
+        // has no recursion, so the nesting ends.
         let mut args: Vec<(usize, Node)> = self.arg_roots.get(here).cloned().unwrap_or_default();
         args.sort_by_key(|(p, _)| *p);
         if args.len() != helper.args.len() {
@@ -3302,7 +3311,7 @@ impl<'a> Ctx<'a> {
         let result_reg = match result {
             Some(idx) => {
                 let d = helper.ret_dual.as_deref().ok_or_else(|| format!("{callee} returns a value no register holds"))?;
-                let row = self.register(&format!("local.call.{callee}@{idx}"), d)?;
+                let row = self.register(&format!("local.call.{}{callee}@{idx}", self.local_prefix), d)?;
                 let kind = row.chars().nth(4).unwrap_or('f');
                 Some((row, kind))
             }
@@ -3323,9 +3332,10 @@ impl<'a> Ctx<'a> {
         let saved_values = self.inline_values.replace(values);
         let saved_tail = std::mem::replace(&mut self.tail, true);
         let saved_result = std::mem::replace(&mut self.inline_result, result_reg);
-        self.local_prefix = format!("{callee}/");
+        let nested = format!("{}{callee}/", self.local_prefix);
+        let saved_prefix = std::mem::replace(&mut self.local_prefix, nested);
         let out = self.inline_body(helper, rung);
-        self.local_prefix = String::new();
+        self.local_prefix = saved_prefix;
         self.pointer_args = saved_pointers;
         self.inline_result = saved_result;
         self.tail = saved_tail;
@@ -3513,11 +3523,14 @@ impl<'a> Ctx<'a> {
                     Statement::Return { value: Some(_) } => {
                         // A helper's return, inlined: its value to the call's register.
                         let (row, kind) = self.inline_result.clone().ok_or("a return of a value outside a helper")?;
-                        if cond {
-                            return Err("a return under a condition in a helper (not inlined)".into());
-                        }
+                        // The helper's own statements are walked from its body
+                        // (paths from there): a return at its top level ends it
+                        // on every path, however conditional the CALL is (78 of
+                        // the 1,798 saved model kernels called `fmix` under an
+                        // if and were refused it until 2026-10-17); one inside
+                        // the helper's own if, loop or block is not inlined.
                         if here.len() != 1 {
-                            return Err("a return inside a block of a helper (not inlined)".into());
+                            return Err(format!("a return {} of a helper (not inlined)", if cond { "under a condition" } else { "inside a block" }));
                         }
                         let root = self.root_at(&here, |k| matches!(k, RootKind::Return)).ok_or("no return root at this statement")?;
                         let Node::App { kids, .. } = &root.tree else { return Err("a return root without a value".into()) };
@@ -5946,6 +5959,81 @@ mod tests {
         // the same one (2026-10-14; it was a refusal under the Gram's assumed).
         let inferred = read_safe(&src.replace("// interface gram_counter\n", ""), &k).unwrap_or_else(|e| panic!("{e}"));
         assert_eq!((inferred.role.name.as_str(), &inferred.tree), ("gram_counter", &r.tree));
+    }
+
+    /// HELPERS INLINED AS STATEMENTS, CALLED UNDER A CONDITION AND FROM EACH
+    /// OTHER (B6, 2026-10-17; 78 and 13 of the 1,798 saved model kernels):
+    /// `jitter` (locals, two calls of `fmix`, a return) called under an `if`,
+    /// `fmix` (a local, a return) called from it, and the pure `capped` (a
+    /// guarded return, a select) over jitter's own argument. Their returns at their top
+    /// level end them on every path; each is inlined with its locals under
+    /// its own names; the kernel renders, naga validates it, it reads back to
+    /// the same tree and passes every layer.
+    #[test]
+    fn helpers_called_under_a_condition_and_from_a_helper_are_inlined() {
+        let k = WgslKingdom::load_safe();
+        let src = "// grid 16 16 1 1
+struct Cfg { d: u32, m: u32, r_rows: u32, r_off: u32, };
+@group(0) @binding(0) var<storage, read> phi: array<f32>;
+@group(0) @binding(1) var<storage, read_write> h: array<f32>;
+@group(0) @binding(2) var<uniform> cfg: Cfg;
+fn fmix(h0: u32) -> u32 {
+    var x = h0;
+    x = x ^ (x >> 16u);
+    x = x * 40503u;
+    x = x ^ (x >> 13u);
+    return x;
+}
+fn capped(x: f32) -> f32 {
+    if (x > 0.5) {
+        return 0.5;
+    }
+    return x;
+}
+fn jitter(i: u32, j: u32) -> f32 {
+    var s = fmix(i * 31u + j);
+    s = s ^ fmix(j);
+    return capped(f32(s & 255u) * 0.0001 + f32(j) * 0.001);
+}
+@compute @workgroup_size(16, 16, 1)
+fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let row = gid.y;
+    let col = gid.x;
+    var acc = 0.0;
+    for (var t = 0u; t < cfg.m; t = t + 1u) {
+        acc = acc + phi[t * cfg.d + cfg.r_off + row] * phi[t * cfg.d + col];
+    }
+    if (acc > 0.0) {
+        acc = acc + jitter(row, col);
+    }
+    if (row < cfg.r_rows && col < cfg.d && cfg.r_off + row < cfg.d) {
+        h[row * cfg.d + col] = h[row * cfg.d + col] + acc;
+    }
+}
+";
+        let r = read_safe(src, &k).unwrap_or_else(|e| panic!("{e}"));
+        // Three helper results, each its own register (the two calls of fmix and jitter's).
+        let calls: BTreeSet<&String> = r.registers.keys().filter(|l| l.starts_with("local.call.")).collect();
+        assert_eq!(calls.len(), 3, "{:?}", r.registers);
+        assert!(calls.iter().filter(|l| l.starts_with("local.call.jitter/fmix@")).count() == 2, "{calls:?}");
+        let out = crate::wgsl::safe_karva::render_tree_with(&r.tree, &k, &r.role).unwrap_or_else(|e| panic!("{e}"));
+        assert!(!out.text.contains("fn fmix") && !out.text.contains("fn jitter") && !out.text.contains("fn capped"), "inlined:\n{}", out.text);
+        validate_text(&out.text).unwrap_or_else(|e| panic!("{e}\n{}", out.text));
+        let back = read_safe(&out.text, &k).unwrap_or_else(|e| panic!("read back: {e}\n{}", out.text));
+        // The same tree in its canonical spelling: an inlined helper's
+        // statements are one block statement as read, written in place, and
+        // read back as the statements of the block around them (rule 1 of
+        // wgsl::canonical, a block's grouping); read again, the same tree.
+        let canon = crate::wgsl::canonical::canonical(&r.tree, &k);
+        assert!(canon == back.tree, "the rendered text reads back to the tree read, canonical: {:?}\n{}", crate::wgsl::render::first_difference(&canon, &back.tree), out.text);
+        let again = read_safe(&crate::wgsl::safe_karva::render_tree_with(&back.tree, &k, &back.role).unwrap().text, &k).unwrap();
+        assert!(again.tree == back.tree, "a fixpoint: {:?}", crate::wgsl::render::first_difference(&back.tree, &again.tree));
+        crate::wgsl::check::check(&r.tree, &k, &r.role, &crate::wgsl::target::Target::recorded()).unwrap_or_else(|e| panic!("{e}\n{}", out.text));
+        // A return inside the helper's own if is still not inlined, by name.
+        let inner = src.replace("    x = x ^ (x >> 13u);\n    return x;", "    if (x > 7u) { return x; }\n    return x + 1u;");
+        assert_ne!(inner, src);
+        let Err(e) = read_safe(&inner, &k) else { panic!("a helper's conditional return inlined as statements") };
+        assert!(e.contains("a return under a condition of a helper") || e.contains("returns twice"), "{e}");
     }
 
     /// A LET STALE AT ITS USE (2026-10-12, found reading the cosine
