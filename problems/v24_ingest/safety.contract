@@ -17,3 +17,9 @@ param cfg.n_queries 1 2500
 param cfg.pass_index 0 15
 param cfg.n_passes 1 16
 param cfg.c_max 64 64
+# The design's own state (fuller 9994fc8): index_u32 and index_f32 are arenas, read by
+# layer 7 in arena mode only (Contract::with_arena_mode; strict, the default, ignores
+# them). Their lengths are this problem's arena_u32 and arena_f32 (problem.toml), in words.
+arena index_u32 index_f32
+param arrayLength(index_u32) 8388608 8388608
+param arrayLength(index_f32) 8388608 8388608
