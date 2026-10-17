@@ -239,3 +239,40 @@ harness is changing the case), `workgroup_memory_race` 171, `store_index_not_aff
 (stores to `cands` in search: an output, not an arena, so strict rules), a barrier under
 non-uniform control 30. The arena arm at 8,388,608 follows once the admission case binds
 that length.
+
+### Strict against arena at 8,388,608 words (supersedes the 65,536 arm above)
+
+**Result.** With the admission case binding the problems' own 32 MiB arenas, arena mode
+lifts the children that pass every stage from 7.5–11.5 % to 13.5–16 % of each operator's
+200, admits 5 seeds of 28 (strict 3), and no child races in 10 runs under either mode.
+
+Run on the GPU 13:13–13:23Z: fuller 20d3a5c (committed, no uncommitted edits; the
+admission cases bind 8,388,608-word arenas), phylu 8c624d8c, `--measure-operators 200
+--measure-races 10 --seed 1`, 28 parents of 32 seeds, layout 184 slots. Strict 125.8 s
+(65.1 s on the device), arena 174.5 s (99.3 s). Records: `logs/V24/gate/strict8M/`,
+`logs/V24/gate/arena8M/`. The strict arm's table is the strict arm's above (fuller
+1fbdcbc), count for count.
+
+| operator | pass every stage, strict | pass every stage, arena | races (10 runs), both | order-only, arena | state-only, arena |
+|---|---:|---:|---:|---:|---:|
+| (parents) | 3 of 28 | 5 of 28 | 0 | 0 | 1 |
+| section crossover | 23 | 31 | 0 | 0 | 7 |
+| typed crossover | 21 | 32 | 0 | 0 | 5 |
+| rule | 18 | 29 | 0 | 0 | 6 |
+| generic rewrite | 15 | 27 | 0 | 0 | 6 |
+| point mutation | 23 | 30 | 0 | 0 | 10 |
+
+The arena arm's first failures (children and parents): `workgroup_memory_race` 395 (workgroup
+memory is strict in both modes), `arena_index_not_in_bounds` 225, `store_index_not_affine`
+168 (stores to `cands`, an output, strict in both modes), a barrier under non-uniform
+control 30, a subgroup operation under non-uniform control 8, `write_sets_overlap` 3.
+
+**What arena_index_not_in_bounds still misses at 8M** (the 225, grouped by the parent the
+child descends from). The index is affine in the thread's coordinates, the loop counters
+and cfg fields, each bounded by the contract (workgroups, the cfg ranges, the loop bounds),
+so its largest value is below the arena, but the proof asks for a mask or a clamp:
+`index_f32[(2048)*lid.x + (4)*k]` (seed12's line, 36 children), `index_f32[wid.x +
+cfg.arrived_begin]` (the write beside seed05's and seed03's masked reads, 53),
+`index_f32[(16)*wid.x + k + 16*cfg.arrived_begin]` (seed23's and seed30's, 58); and
+`index_f32[?]`, a non-affine index (seed09's, 25). Sent to v24-b6-kingdom (proof by the
+affine form's bounds, and the message to name the access it could not bound).
