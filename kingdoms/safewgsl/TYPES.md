@@ -308,4 +308,4 @@ A u32 wrap in index arithmetic at the worst shape is illegal everywhere (Codex's
 
 ## Not in the table
 
-Storage-buffer atomics, images, samplers, ray queries, binding arrays, pointers as values, non-square `f16` matrices.
+Images, samplers, ray queries, binding arrays, pointers as values, non-square `f16` matrices. Storage-buffer atomics are the per-kernel rows of an interface that declares an atomic binding (`render::Role::interface`: a scalar `atomic<u32>`, or an array of atomics whose every index is clamped to the binding), not rows of this table.

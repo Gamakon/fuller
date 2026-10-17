@@ -130,6 +130,9 @@ pub struct Checker<'a> {
     contract: Contract,
     /// The role's per-kernel statement rows (an output's store).
     role_stores: BTreeSet<String>,
+    /// The role's loads of a binding another invocation may write (an
+    /// output, an array of atomics): never uniform, whatever the index.
+    role_written_loads: BTreeSet<String>,
 }
 
 /// A kernel's workgroup arrays: variable name to element type and length.
@@ -409,8 +412,11 @@ impl<'a> Checker<'a> {
                 rows.entry(p.name.clone()).or_default().push((ins, out));
             }
         }
-        let role_stores = role.per_kernel.iter().filter(|p| dual_ty(kingdom, &p.output).ok().and_then(|t| kingdom.dual(t)).is_some_and(|d| d.slot == "stmt")).map(|p| p.name.clone()).collect();
-        Checker { kingdom, target: *target, rows, role: role.clone(), table: crate::wgsl::table::FunctionTable::safe(), contract: Contract::for_role(role), role_stores }
+        let role_stores: BTreeSet<String> = role.per_kernel.iter().filter(|p| dual_ty(kingdom, &p.output).ok().and_then(|t| kingdom.dual(t)).is_some_and(|d| d.slot == "stmt")).map(|p| p.name.clone()).collect();
+        // A binding is written when the role stores to it or updates it
+        // atomically (`store.<b>_<rung>`, `atomic.<b>_<fun>`).
+        let role_written_loads = role.bindings.iter().filter(|b| role.per_kernel.iter().any(|p| p.name.starts_with(&format!("store.{}_", b.name)) || p.name.starts_with(&format!("atomic.{}_", b.name)))).map(|b| format!("load.{}", b.name)).collect();
+        Checker { kingdom, target: *target, rows, role: role.clone(), table: crate::wgsl::table::FunctionTable::safe(), contract: Contract::for_role(role), role_stores, role_written_loads }
     }
 
     /// The checker under a dispatch contract the problem's data gives.
@@ -1052,6 +1058,9 @@ impl<'a> Checker<'a> {
             b if b.starts_with("axis.") => b.ends_with("_wid"),
             // h is read-write storage: not uniform. phi is read-only: uniform at a uniform index.
             "load.h_safe" | "load.h" => false,
+            // So is a role's load of a binding the kernel writes (atomicLoad
+            // of an index arena, a load of an output).
+            b if self.role_written_loads.contains(b) => false,
             b if b.starts_with("wg.") || b.starts_with("atomic.") || b.starts_with("subgroup.") => false,
             _ => v.kids.iter().all(|k| self.uniform(k, cx)),
         }

@@ -852,6 +852,40 @@ fn floor_differences(n: &Node) -> Node {
     Node::App { name: name.clone(), slot: slot.clone(), known: *known, kids }
 }
 
+/// An element index of a storage array of atomics without the clamp the
+/// kingdom writes on it (`min(i, arrayLength(&a) - 1u)`, `min(i, N - 1u)` for
+/// a fixed length N; `render::atomic_array_access`): the per-kernel row
+/// clamps again. `arrays` maps each such binding to its fixed length (None
+/// for a runtime-sized one). Only the index of an access to the array it
+/// names is unclamped; the same `min` anywhere else is kept.
+fn unclamp_atomic_indices(n: &Node, arrays: &BTreeMap<String, Option<u32>>) -> Node {
+    let Node::App { name, slot, known, kids } = n else { return n.clone() };
+    let mut kids: Vec<Node> = kids.iter().map(|k| unclamp_atomic_indices(k, arrays)).collect();
+    // The binding an access names: `load.buffer.a.#@v2`, `store.buffer.a.#`,
+    // `atomic.add.buffer.a.#`.
+    let target = name.split_once("buffer.").map(|(_, r)| r).and_then(|r| r.split_once(".#")).map(|(b, _)| b).filter(|_| name.starts_with("load.") || name.starts_with("store.") || name.starts_with("atomic."));
+    if let Some(len) = target.and_then(|b| arrays.get(b).map(|l| (b, *l))) {
+        let (b, len) = len;
+        let last_of = |m: &Node| -> bool {
+            match (len, m) {
+                (Some(n), Node::Literal { value, .. }) => n >= 1 && *value == f64::from(n - 1),
+                (None, Node::App { name: d, kids: dk, .. }) if d.starts_with("index.sub") && dk.len() == 2 => {
+                    let one = matches!(&dk[1], Node::Literal { value, .. } if *value == 1.0);
+                    let length = matches!(&dk[0], Node::App { name: l, kids: lk, .. } if l == "naga.ArrayLength" && matches!(lk.as_slice(), [Node::Leaf { name: g, .. }] if g == &format!("global.{b}")));
+                    one && length
+                }
+                _ => false,
+            }
+        };
+        if let Some(Node::App { name: m, kids: mk, .. }) = kids.first() {
+            if m.ends_with(".min") && mk.len() == 2 && last_of(&mk[1]) {
+                kids[0] = mk[0].clone();
+            }
+        }
+    }
+    Node::App { name: name.clone(), slot: slot.clone(), known: *known, kids }
+}
+
 /// A loop bound without the kingdom's cap (`min(e, MAX_LOOP_TRIP)`, which
 /// the renderer writes on every computed bound), wherever it stands in it.
 fn strip_cap(t: &Tree) -> Tree {
@@ -2440,6 +2474,23 @@ impl<'a> Ctx<'a> {
     /// compare, value)`); its old value to a register when a later expression
     /// reads it, else kept for its effect only (`_ = ...`).
     fn atomic_statement(&mut self, root: &Root, result: u32, rung: &str) -> Result<Option<Tree>, String> {
+        // A storage atomic after the thread guard (a leading `if (c) {
+        // return; }`, whose return the grammar drops): its effect reaches
+        // other invocations, so it runs only under the guard, as a store of
+        // an output does, its old value (when read) in a register set there.
+        let storage = matches!(&root.kind, RootKind::Atomic { target, .. } if target.starts_with("buffer."));
+        if let (true, Some(g), Some(level)) = (storage, self.guard.clone(), rung.strip_prefix('L')) {
+            let crung = format!("C{level}");
+            let Some(inner) = self.atomic_statement_at(root, result, &crung, false)? else { return Err("our software has a bug: a guarded atomic without its statement".into()) };
+            let st = self.stmt_ty(rung)?;
+            return Ok(Some(Tree::new(&format!("stmt.if_{rung}"), st, vec![g, self.block(vec![inner], &crung)?])));
+        }
+        self.atomic_statement_at(root, result, rung, true)
+    }
+
+    /// [`atomic_statement`] at `rung`; `inline` false keeps the old value in
+    /// a register even when one statement reads it.
+    fn atomic_statement_at(&mut self, root: &Root, result: u32, rung: &str, inline: bool) -> Result<Option<Tree>, String> {
         let (expr, unsigned) = self.atomic_expr(root)?;
         let suffix = if unsigned { "u" } else { "i" };
         let st = self.stmt_ty(rung)?;
@@ -2465,7 +2516,7 @@ impl<'a> Ctx<'a> {
         // Read once, by the statement naga wrote it ahead of: inline there, as
         // the kingdom's renderer writes an atomic (2026-10-12: a fully
         // unrolled loop of atomics took a register each, past 64).
-        if uses == 1 && !self.lets.values().any(|t| reads(t, &leaf)) {
+        if inline && uses == 1 && !self.lets.values().any(|t| reads(t, &leaf)) {
             self.inlined.insert(leaf, expr);
             return Ok(None);
         }
@@ -2502,6 +2553,24 @@ impl<'a> Ctx<'a> {
             let value = self.value(value)?;
             let unsigned = self.kingdom.dual(out).is_some_and(|d| d.slot == "u32");
             return Ok((Tree::new(&row, out, vec![value]), unsigned));
+        }
+        // An element of a storage array of atomics the interface declares
+        // (`atomicAdd(&a[i], v)`): its per-kernel row `atomic.<name>_<fun>`
+        // over the index (the row clamps it to the binding) and the operand.
+        if let Some(name) = target.strip_prefix("buffer.").and_then(|r| r.strip_suffix(".#")).filter(|n| !n.contains('.')) {
+            if fun == "cas" {
+                return Err("atomicCompareExchangeWeak has no safe spelling: naga 0.20's Metal backend does not implement it (MSL: FeatureNotImplemented)".into());
+            }
+            let row = format!("atomic.{name}_{fun}");
+            let Some((_, _, out)) = self.per_kernel_rows.iter().find(|p| p.0 == row && p.1.len() == 2).cloned() else {
+                return Err(format!("an atomic {fun} on an element of the storage buffer {name}: the kernel's interface declares no array of atomics {name}"));
+            };
+            let [idx, value] = trees.as_slice() else { return Err(format!("an atomic {fun} on {name} with {} operands, an index and a value expected", trees.len())) };
+            let index = ty(self, "u32.index")?;
+            let idx = Tree { ty: index, ..self.value(idx)? };
+            let value = self.value(value)?;
+            let unsigned = self.kingdom.dual(out).is_some_and(|d| d.slot == "u32");
+            return Ok((Tree::new(&row, out, vec![idx, value]), unsigned));
         }
         let arr = target.strip_prefix("workgroup.").and_then(|r| r.strip_suffix(".#")).ok_or_else(|| format!("an atomic on {target}: the safe kingdom's atomics are workgroup arrays or a storage atomic the interface declares"))?;
         let which = self.array(arr, "atomic")?;
@@ -2753,6 +2822,15 @@ impl<'a> Ctx<'a> {
             return Ok((stmts, Tree::fallback(ty(self, "block.O0")?)));
         }
         let p = stmts.iter().rposition(has_store).ok_or("the kernel never writes h: the kingdom's root ends every kernel in the store of its thread's cell")?;
+        // An interface with no output cell (no `h`: v24's index arena and
+        // candidate lists, 2026-10-17) does not end in one store: statements
+        // after its last store (atomics, more stores) are the body's, which
+        // ends in a return, the epilogue its fallback (not written after a
+        // body that returns), as for a kernel that writes no h at all.
+        if p + 1 < stmts.len() && !self.per_kernel_rows.iter().any(|r| r.0 == "store.h") {
+            stmts.push(Tree::new("stmt.return_L0", self.stmt_ty("L0")?, vec![]));
+            return Ok((stmts, Tree::fallback(ty(self, "block.O0")?)));
+        }
         let after: Vec<Tree> = stmts.split_off(p + 1);
         if !after.is_empty() {
             return Err(format!("{} top-level statement(s) after the last store of h (the first: {}); the kernel's epilogue ends in that store", after.len(), after[0].name));
@@ -5052,9 +5130,10 @@ pub fn read_safe_literal(source: &str, kingdom: &WgslKingdom) -> Result<SafeRead
     // The interface's names as the kingdom's canonical roles (its input is
     // phi, its output h, its uniform cfg with the fields d, m, r_rows, r_off),
     // so the ownership proof and the safe rows read every interface alike.
+    let atomic_arrays: BTreeMap<String, Option<u32>> = role.bindings.iter().filter(|b| crate::wgsl::render::atomic_array_access(b).is_some()).map(|b| (b.name.clone(), b.ty.rsplit_once(", ").and_then(|(_, n)| n.trim_end_matches('>').parse().ok()))).collect();
     for f in &mut kernel.functions {
         for r in &mut f.roots {
-            r.tree = floor_differences(&canonical_node(&r.tree, &role));
+            r.tree = unclamp_atomic_indices(&floor_differences(&canonical_node(&r.tree, &role)), &atomic_arrays);
             match &mut r.kind {
                 RootKind::Store { target } | RootKind::Atomic { target, .. } => *target = canonical_name(target, &role),
                 _ => {}
@@ -5961,6 +6040,68 @@ mod tests {
         assert_eq!((inferred.role.name.as_str(), &inferred.tree), ("gram_counter", &r.tree));
     }
 
+    /// The v24 contract's bindings (fuller docs/PLAN_v24_ingest_evolution.md
+    /// section 1), the index arena an array of atomics, and an i32 atomic
+    /// array beside it: the declarations of the storage-atomic fixtures.
+    const V24_BINDINGS: &str = "struct Cfg { seed_slot: u32, stage: u32, arrived_begin: u32, arrived_end: u32, n_queries: u32, pass_index: u32, n_passes: u32, c_max: u32, };
+@group(0) @binding(0) var<storage, read> keys: array<f32>;
+@group(0) @binding(1) var<storage, read> queries: array<f32>;
+@group(0) @binding(2) var<storage, read_write> index_u32: array<atomic<u32>>;
+@group(0) @binding(3) var<storage, read_write> index_f32: array<f32>;
+@group(0) @binding(4) var<storage, read_write> cands: array<u32>;
+@group(0) @binding(5) var<uniform> cfg: Cfg;
+@group(0) @binding(6) var<storage, read_write> score: array<atomic<i32>>;
+";
+
+    /// An ingest pass over the v24 bindings: a bucket from a key's bits,
+    /// a slot from atomicAdd, the slot stored with atomicStore, atomicMax,
+    /// atomicLoad, a discarded atomicOr and an i32 atomicAdd, after the
+    /// thread guard of the arrived rows.
+    const V24_INGEST: &str = "@compute @workgroup_size(64, 1, 1)
+fn ingest(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let row = cfg.arrived_begin + gid.x;
+    if (row >= cfg.arrived_end) { return; }
+    let bucket = bitcast<u32>(keys[row * 2048u]) & 1023u;
+    let slot = atomicAdd(&index_u32[bucket], 1u);
+    atomicStore(&index_u32[1024u + row], bucket * 64u + slot);
+    _ = atomicMax(&index_u32[2048u + bucket], row);
+    let seen = atomicLoad(&index_u32[3072u]);
+    _ = atomicOr(&index_u32[3073u], seen);
+    _ = atomicAdd(&score[bucket], -1);
+}
+";
+
+    /// STORAGE ATOMICS ON AN ARRAY (B6 of PLAN_v24_ingest_evolution,
+    /// 2026-10-17): an index arena declared `array<atomic<u32>>` (and an
+    /// `array<atomic<i32>>`) reads as the interface's per-kernel rows, every
+    /// atomic after the thread guard under it; the text renders each index
+    /// clamped to the binding, naga validates it, it reads back to the same
+    /// tree, and the checker passes every layer. A compare-exchange is named.
+    #[test]
+    fn storage_atomics_on_an_array_read_render_and_read_back_to_the_same_tree() {
+        let k = WgslKingdom::load_safe();
+        let src = format!("{V24_BINDINGS}{V24_INGEST}");
+        let r = read_safe(&src, &k).unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!((r.role.name.as_str(), r.role.entry.as_str()), (crate::wgsl::render::INFERRED, "ingest"));
+        let sx = r.tree.to_sexpr();
+        for want in ["(atomic.index_u32_add ", "(store.index_u32_C0 ", "(atomic.index_u32_max ", "(load.index_u32 ", "(atomic.index_u32_or ", "(atomic.score_add ", "(stmt.if_L0 (logic.not "] {
+            assert!(sx.contains(want), "{want}: {sx}");
+        }
+        let out = crate::wgsl::safe_karva::render_tree_with(&r.tree, &k, &r.role).unwrap_or_else(|e| panic!("{e}"));
+        for want in ["var<storage, read_write> index_u32: array<atomic<u32>>;", "atomicAdd(&index_u32[min(", ", arrayLength(&index_u32) - 1u)], ", "atomicStore(&index_u32[min(", "atomicLoad(&index_u32[min(", "atomicAdd(&score[min(", "fn ingest("] {
+            assert!(out.text.contains(want), "{want}:\n{}", out.text);
+        }
+        validate_text(&out.text).unwrap_or_else(|e| panic!("{e}\n{}", out.text));
+        let back = read_safe(&out.text, &k).unwrap_or_else(|e| panic!("read back: {e}\n{}", out.text));
+        assert!(back.tree == r.tree, "the rendered text reads back to the same tree: {:?}\n{}", crate::wgsl::render::first_difference(&r.tree, &back.tree), out.text);
+        crate::wgsl::check::check(&r.tree, &k, &r.role, &crate::wgsl::target::Target::recorded()).unwrap_or_else(|e| panic!("{e}\n{}", out.text));
+        // naga 0.20's Metal backend has no compare-exchange: no spelling.
+        let cas = src.replace("let slot = atomicAdd(&index_u32[bucket], 1u);", "let slot = atomicCompareExchangeWeak(&index_u32[bucket], 0u, 1u).old_value;");
+        assert_ne!(cas, src);
+        let Err(e) = read_safe(&cas, &k) else { panic!("a compare-exchange read") };
+        assert!(e.contains("atomicCompareExchangeWeak has no safe spelling"), "{e}");
+    }
+
     /// HELPERS INLINED AS STATEMENTS, CALLED UNDER A CONDITION AND FROM EACH
     /// OTHER (B6, 2026-10-17; 78 and 13 of the 1,798 saved model kernels):
     /// `jitter` (locals, two calls of `fmix`, a return) called under an `if`,
@@ -6034,6 +6175,26 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         assert_ne!(inner, src);
         let Err(e) = read_safe(&inner, &k) else { panic!("a helper's conditional return inlined as statements") };
         assert!(e.contains("a return under a condition of a helper") || e.contains("returns twice"), "{e}");
+    }
+
+    /// The claim the kingdom's missing compare-exchange rests on, measured
+    /// on the naga the kingdom builds with (0.20): its Metal backend writes
+    /// an atomicAdd on a storage array and refuses atomicCompareExchangeWeak.
+    #[cfg(all(feature = "gpu", target_os = "macos"))]
+    #[test]
+    fn nagas_metal_backend_writes_storage_atomics_and_not_compare_exchange() {
+        let msl = |text: &str| -> Result<String, String> {
+            let module = naga::front::wgsl::parse_str(text).map_err(|e| e.emit_to_string(text))?;
+            let info = naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::all()).validate(&module).map_err(|e| format!("{e:?}"))?;
+            let options = naga::back::msl::Options::default();
+            let pipeline = naga::back::msl::PipelineOptions::default();
+            naga::back::msl::write_string(&module, &info, &options, &pipeline).map(|(s, _)| s).map_err(|e| format!("{e:?}"))
+        };
+        let kernel = |body: &str| format!("@group(0) @binding(0) var<storage, read_write> a: array<atomic<u32>>;\n@compute @workgroup_size(64)\nfn main(@builtin(global_invocation_id) gid: vec3<u32>) {{ {body} }}\n");
+        let add = msl(&kernel("_ = atomicAdd(&a[min(gid.x, arrayLength(&a) - 1u)], 1u);")).unwrap_or_else(|e| panic!("{e}"));
+        assert!(add.contains("atomic_fetch_add_explicit"), "{add}");
+        let e = msl(&kernel("_ = atomicCompareExchangeWeak(&a[gid.x], 0u, 1u);")).expect_err("naga 0.20 writes no compare-exchange to Metal");
+        assert!(e.contains("atomic CompareExchange"), "{e}");
     }
 
     /// A LET STALE AT ITS USE (2026-10-12, found reading the cosine

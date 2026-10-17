@@ -930,8 +930,12 @@ for op in ("add", "max", "min"):
 # keeps the effect only. NOT spelled: atomicCompareExchangeWeak, and the float add built on it (the
 # compare-exchange loop on the value's bits): naga 0.20's Metal backend refuses it ("MSL:
 # FeatureNotImplemented(atomic CompareExchange)", measured on the M3 Max 2026-10-12), so no gene with it would
-# compile. Storage atomics need an atomic binding the Gram role does not have (its h is array<f32>): the
-# bindings are the design document's.
+# compile (verified again 2026-10-17 in naga 0.20.0's back/msl/mod.rs, AtomicFunction::to_msl). Storage
+# atomics are not rows of this table: they are the per-kernel rows of an interface that declares an atomic
+# binding (render.rs Role::interface): a scalar `atomic<u32>` its read-modify-writes `atomic.<name>_<fun>(v)`;
+# an array of atomics (`array<atomic<u32>>`, v24's index arena, 2026-10-17) `load.<name>(i)` (atomicLoad),
+# `store.<name>_<rung>(i, v)` (atomicStore) and `atomic.<name>_<fun>(i, v)`, every index clamped to the
+# binding (`min(i, arrayLength(&a) - 1u)`).
 for n in ("au_a", "au_b"):
     f("wg", n, "composite", [], "wgmem<atomic<u32>>.index", f"workgroup array wg_{n} of atomic<u32>")
 for n in ("ai_a", "ai_b"):
@@ -1259,7 +1263,7 @@ def main():
         md.write("\nThe three machine columns (`fallback_bits`, `fallback_noop`, `fallback_elem` in `types.tsv`) are what the loader builds the fallback leaf from, never the prose: `bits` is the lane's 32-bit pattern as an unsigned integer, repeated across the lanes of a vector or matrix (only `bool.sign` is non-zero, true = +1); `noop` is 1 for `store.store`, which substitutes no value at all; `elem` is 1 for `array<T>`, whose fallback is its element's. The loader tests `noop` and `elem` before reading `bits`; for those two rows `bits` is a placeholder 0. Every substitution, whichever column decides it, counts the codon as masked.\n")
         md.write("\n## Loop trip counts\n\nMAX_LOOP_TRIP = 2^24 = 16,777,216 is the kingdom's declared maximum trip count of a loop (`render::MAX_LOOP_TRIP`): no real workload exceeds it (production builds run m ~ 420,000 items, d up to 8,192). A loop at an L rung, which may hold a barrier, takes a uniform bound (`u32.boundu`); a loop with no barrier takes any expression bound. Every bound a gene computes, uniform or not (`bound.of_index`, `bound.of_uniform`, `bound.x_of_uniform`), renders `min(e, 16777216u)`, so a bound in range computes the same and no loop runs past it. The checker's range layer ranges such a bound up to it, and proves index arithmetic over it.\n")
         md.write("\n## No wrap, no zero divisor, every computed bound capped\n\nA u32 wrap in index arithmetic at the worst shape is illegal everywhere (Codex's review of Andrew's decision, 2026-10-12): the checker's range layer fails it. The kingdom cannot spell a difference that wraps: a raw difference is `u32.indexw` and a uniform difference, product or shift `u32.uniformw`, which no row takes; the kingdom's difference is the floored one (`index.sub_floor`, `uniform.sub_floor`), and the reader reads `x - y` as it (the same value wherever it does not wrap). A sum, product or left shift of index values is not typed by range: the checker fails one that wraps at the worst shape. An expression bound takes `u32.xbound` (registers, uniform values, the rows that cannot pass their operands). Every loop bound a gene computes renders `min(e, 16777216u)` (`bound.of_index`, `bound.of_uniform`, `bound.x_of_uniform`); a binding's bound (`cfg.m`, `cfg.d`, `cfg.r_rows`) is the host's data size and a literal is at most 64. A divisor that is not a literal of at least 1 renders `max(b, 1u)` (WGSL's `x / 0u` is x, as is `x / max(0u, 1u)`).\n")
-        md.write("\n## Not in the table\n\nStorage-buffer atomics, images, samplers, ray queries, binding arrays, pointers as values, non-square `f16` matrices.\n")
+        md.write("\n## Not in the table\n\nImages, samplers, ray queries, binding arrays, pointers as values, non-square `f16` matrices. Storage-buffer atomics are the per-kernel rows of an interface that declares an atomic binding (`render::Role::interface`: a scalar `atomic<u32>`, or an array of atomics whose every index is clamped to the binding), not rows of this table.\n")
 
     with open(os.path.join(HERE, "symbols.md"), "w") as md:
         md.write("# safeWGSL kingdom — the function table\n\n")
@@ -1272,7 +1276,7 @@ def main():
                 cur = c
                 md.write(f"\n## class `{c}`\n\n| ref | instance | naga | in | out | n | note |\n|---|---|---|---|---|---|---|\n")
             md.write(f"| {ref} | `{c}.{inst}` | `{naga}` | `{ins}` | `{out}` | {arity} | {note} |\n")
-        md.write(f"\n{len(frows)} function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Deliberately absent: storage-buffer atomics, atomic compare-exchange (naga 0.20's Metal backend lacks it), subgroupBallot, images, derivatives, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.\n")
+        md.write(f"\n{len(frows)} function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Storage-buffer atomics are an interface's per-kernel rows, not rows of this table. Deliberately absent: atomic compare-exchange (naga 0.20's Metal backend lacks it), subgroupBallot, images, derivatives, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.\n")
     print(f"{len(types)} duals, {len(frows)} functions (safeWGSL)")
 
 

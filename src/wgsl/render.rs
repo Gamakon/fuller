@@ -178,14 +178,68 @@ impl Role {
                 "atomic<i32>" => "i32.int",
                 _ => continue,
             };
-            for (fun, wgsl) in [("add", "atomicAdd"), ("sub", "atomicSub"), ("max", "atomicMax"), ("min", "atomicMin"), ("and", "atomicAnd"), ("or", "atomicOr"), ("xor", "atomicXor"), ("exchange", "atomicExchange")] {
+            for (fun, wgsl) in ATOMIC_FUNS {
                 role.per_kernel.push(pk(&format!("atomic.{}_{fun}", b.name), &[value], value, format!("{wgsl}(&{}, {{0}})", b.name)));
+            }
+        }
+        // A storage ARRAY of atomics (`array<atomic<u32>>`, v24's index arena,
+        // 2026-10-17): its element at an index proved in bounds, as the
+        // kingdom masks a workgroup array's (here clamped to the binding's
+        // last element, `min(i, arrayLength(&a) - 1u)`, the value wgpu's
+        // `Restrict` bounds check gives an index past it): atomicLoad
+        // (`load.<name>`), atomicStore at every statement rung
+        // (`store.<name>_<rung>`), and the read-modify-writes returning the
+        // old value (`atomic.<name>_<fun>`). Every access to such a binding
+        // is atomic, so no two of them race (layer 7).
+        for b in &role.bindings {
+            let Some((value, at)) = atomic_array_access(b) else { continue };
+            let name = &b.name;
+            role.per_kernel.push(pk(&format!("load.{name}"), &["u32.index"], value, format!("atomicLoad(&{name}[{at}])")));
+            for r in STORE_RUNGS {
+                role.per_kernel.push(pk(&format!("store.{name}_{r}"), &["u32.index", value], &format!("stmt.{r}"), format!("atomicStore(&{name}[{at}], {{1}});")));
+            }
+            for (fun, wgsl) in ATOMIC_FUNS {
+                role.per_kernel.push(pk(&format!("atomic.{name}_{fun}"), &["u32.index", value], value, format!("{wgsl}(&{name}[{at}], {{1}})")));
             }
         }
         role.per_kernel.extend(extra);
         role
     }
+}
 
+/// The atomic read-modify-writes the kingdom spells, by row suffix and
+/// WGSL built-in. atomicCompareExchangeWeak is not among them: naga 0.20's
+/// Metal backend does not implement it (`back::msl`, `AtomicFunction::to_msl`:
+/// `FeatureNotImplemented("atomic CompareExchange")`).
+pub const ATOMIC_FUNS: [(&str, &str); 8] = [("add", "atomicAdd"), ("sub", "atomicSub"), ("max", "atomicMax"), ("min", "atomicMin"), ("and", "atomicAnd"), ("or", "atomicOr"), ("xor", "atomicXor"), ("exchange", "atomicExchange")];
+
+/// A storage binding that is an array of atomics (`array<atomic<u32>>`,
+/// `array<atomic<i32>, 1024>` in a `read_write` buffer): its element's value
+/// dual and the text of an element index clamped to the binding, `{0}` the
+/// index (`min({0}, arrayLength(&a) - 1u)`, or `min({0}, 1023u)` for a fixed
+/// length). None for any other binding.
+pub fn atomic_array_access(b: &Binding) -> Option<(&'static str, String)> {
+    if b.space != "storage, read_write" {
+        return None;
+    }
+    let inner = b.ty.strip_prefix("array<")?.strip_suffix('>')?;
+    let (elem, len) = match inner.split_once(", ") {
+        Some((e, n)) => (e, Some(n.parse::<u32>().ok()?)),
+        None => (inner, None),
+    };
+    let value = match elem {
+        "atomic<u32>" => "u32.index",
+        "atomic<i32>" => "i32.int",
+        _ => return None,
+    };
+    let last = match len {
+        Some(n) => format!("{}u", n.checked_sub(1)?),
+        None => format!("arrayLength(&{}) - 1u", b.name),
+    };
+    Some((value, format!("min({{0}}, {last})")))
+}
+
+impl Role {
     /// The text of the uniform field with the kingdom's role `role` (`d`,
     /// `m`, `r_rows`, `r_off`): `cfg.d`, `p.nc`.
     pub fn field(&self, role: &str) -> String {

@@ -2870,8 +2870,12 @@ pub fn check_module(module: &Module, contract: &Contract) -> Result<Report, Unsa
         return Err(e.clone());
     }
     let mut report = Report { write_sites: an.sites.iter().filter(|s| s.kind != Kind::Read).count(), read_sites: an.sites.iter().filter(|s| s.kind == Kind::Read).count(), workgroup_sites: an.wg_sites.len(), pairs: 0 };
-    // Every write's index affine, every thread stride non-zero.
-    for s in an.sites.iter().filter(|s| s.kind != Kind::Read) {
+    // Every plain write's index affine, every thread stride non-zero. An
+    // atomic site needs neither: every access to an atomic global is atomic
+    // (Kind::Atomic, loads and stores included), and atomic accesses do not
+    // race one another (the pairs below), whatever their index (v24's
+    // `atomicAdd(&index_u32[hash & mask], 1u)`, 2026-10-17).
+    for s in an.sites.iter().filter(|s| s.kind == Kind::Write) {
         match &s.form {
             Err((rule, why)) => return Err(unsafe_(rule, format!("{}: {why}", s.what))),
             Ok(f) => {
@@ -3097,6 +3101,23 @@ mod tests {
         proved(&k("    if (lid.x + 32u < 16u) { w[lid.x + 32u] = vec2<f32>(1.0); }", "var<workgroup> w: array<vec2<f32>, 16>;\n"), &c);
         proved(&k("    if (lid.x + 8u < 16u) { w[lid.x + 8u] = vec2<f32>(1.0); }", "var<workgroup> w: array<vec2<f32>, 16>;\n"), &c);
         assert_eq!(rule(&k("    if (lid.x + 8u < 16u) { w[lid.x + 8u] = w[(lid.x + 9u) & 15u]; }", "var<workgroup> w: array<vec2<f32>, 16>;\n"), &c), "workgroup_memory_race");
+    }
+
+    /// A STORAGE ARRAY OF ATOMICS AT A HASHED INDEX (2026-10-17, v24's index
+    /// arena): an atomicAdd, atomicStore and atomicLoad at `hash & mask` are
+    /// atomic accesses, proved whatever their index; a PLAIN store at a
+    /// non-affine index still fails (not affine), one at the hash fails (two
+    /// invocations may share it), and so does a plain store beside the
+    /// atomics that two invocations may make to one cell.
+    #[test]
+    fn atomics_at_a_hashed_index_are_atomic_and_plain_writes_there_are_not() {
+        let c = one_d();
+        let k = |body: &str| format!("@group(0) @binding(0) var<storage, read> keys: array<f32>;\n@group(0) @binding(1) var<storage, read_write> idx: array<atomic<u32>>;\n@group(0) @binding(2) var<storage, read_write> plain: array<u32>;\n@compute @workgroup_size(16, 1, 1)\nfn main(@builtin(global_invocation_id) gid: vec3<u32>) {{\n    let b = bitcast<u32>(keys[gid.x]) & 1023u;\n{body}\n}}\n");
+        proved(&k("    let slot = atomicAdd(&idx[min(b, arrayLength(&idx) - 1u)], 1u);\n    atomicStore(&idx[min(1024u + slot, arrayLength(&idx) - 1u)], gid.x);\n    _ = atomicMax(&idx[b], atomicLoad(&idx[b + 1u]));"), &c);
+        assert_eq!(rule(&k("    plain[b * b] = gid.x;"), &c), "store_index_not_affine");
+        // (A masked hash is a bounded digit: affine, and shared by invocations.)
+        assert_eq!(rule(&k("    plain[b] = gid.x;"), &c), "write_sets_overlap");
+        assert_eq!(rule(&k("    _ = atomicAdd(&idx[b], 1u);\n    plain[0u] = gid.x;"), &c), "write_sets_overlap");
     }
 
     /// One value written twice is one value (2026-10-14): a cell's offset
