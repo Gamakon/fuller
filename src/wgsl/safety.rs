@@ -67,11 +67,20 @@ pub struct Contract {
     /// The ranges a kernel that writes the whole output (`// mode full`)
     /// runs under instead (the Gram's: one band, r_off 0).
     pub full: BTreeMap<String, (i128, i128)>,
+    /// The bindings that are the design's own state (`arena index_u32
+    /// index_f32`: v24's index arenas). Read by layer 7 in arena mode only.
+    pub arena: BTreeSet<String>,
+    /// THE SWITCH: layer 7's mode. False (strict, the default): every
+    /// binding under the ownership rules. True (arena): on the `arena`
+    /// bindings, atomic accesses at any index and plain loads and stores at
+    /// data-dependent indexes, each index proved in bounds by a mask or a
+    /// clamp; every other binding, and workgroup memory, as strict.
+    pub arena_mode: bool,
 }
 
 impl Default for Contract {
     fn default() -> Self {
-        Contract { workgroups: [(1, 65535); 3], params: BTreeMap::new(), aliases: BTreeMap::new(), full: BTreeMap::new() }
+        Contract { workgroups: [(1, 65535); 3], params: BTreeMap::new(), aliases: BTreeMap::new(), full: BTreeMap::new(), arena: BTreeSet::new(), arena_mode: false }
     }
 }
 
@@ -101,10 +110,23 @@ impl Contract {
                 ["full", name, lo, hi] => {
                     c.full.insert(name.to_string(), (num(lo)?, num(hi)?));
                 }
+                ["arena", names @ ..] if !names.is_empty() => {
+                    c.arena.extend(names.iter().map(|b| b.to_string()));
+                }
                 _ => return Err(format!("contract line {}: {line}", n + 1)),
             }
         }
         Ok(c)
+    }
+
+    /// The same contract with layer 7 in arena mode (`on`) or strict.
+    pub fn with_arena_mode(&self, on: bool) -> Contract {
+        Contract { arena_mode: on, ..self.clone() }
+    }
+
+    /// Whether layer 7 treats `binding` as an arena (arena mode, named).
+    fn is_arena(&self, binding: &str) -> bool {
+        self.arena_mode && self.arena.contains(binding)
     }
 
     /// The contract of a kernel that writes the whole output (`// mode full`).
@@ -2894,24 +2916,36 @@ fn check_entry(module: &Module, contract: &Contract, entry: &str) -> Result<Repo
         return Err(e.clone());
     }
     let mut report = Report { write_sites: an.sites.iter().filter(|s| s.kind != Kind::Read).count(), read_sites: an.sites.iter().filter(|s| s.kind == Kind::Read).count(), workgroup_sites: an.wg_sites.len(), pairs: 0 };
+    // ARENA MODE: an arena binding every access of which is in bounds, by a
+    // mask or a clamp of its index, is under no ownership rule; one with an
+    // access not so proved keeps the strict rules (arena mode proves all
+    // strict proves), and a strict refusal on it names that access.
+    let unbounded = if contract.arena_mode { arena_bounds(module, contract, entry)? } else { BTreeMap::new() };
+    let arena = |s: &Site| contract.is_arena(&s.alloc) && !unbounded.contains_key(&s.alloc);
+    let named = |e: Unsafe, sites: &[&Site]| -> Unsafe {
+        match sites.iter().find_map(|s| unbounded.get(&s.alloc)) {
+            Some(why) => unsafe_("arena_index_not_in_bounds", format!("{why} (so it keeps the strict rules: {}: {})", e.rule, e.detail)),
+            None => e,
+        }
+    };
     // Every plain write's index affine, every thread stride non-zero. An
     // atomic site needs neither: every access to an atomic global is atomic
     // (Kind::Atomic, loads and stores included), and atomic accesses do not
     // race one another (the pairs below), whatever their index (v24's
     // `atomicAdd(&index_u32[hash & mask], 1u)`, 2026-10-17).
-    for s in an.sites.iter().filter(|s| s.kind == Kind::Write) {
+    for s in an.sites.iter().filter(|s| s.kind == Kind::Write && !arena(s)) {
         match &s.form {
-            Err((rule, why)) => return Err(unsafe_(rule, format!("{}: {why}", s.what))),
+            Err((rule, why)) => return Err(named(unsafe_(rule, format!("{}: {why}", s.what)), &[s])),
             Ok(f) => {
                 for (v, c) in &f.t {
                     if v.thread() && !c.add(&Poly::konst(-1)).nonneg(&an.syms) {
-                        return Err(unsafe_("store_stride_may_be_zero", format!("{}: the stride {} of a thread coordinate is not proved at least 1", s.what, c.show(&an.syms))));
+                        return Err(named(unsafe_("store_stride_may_be_zero", format!("{}: the stride {} of a thread coordinate is not proved at least 1", s.what, c.show(&an.syms))), &[s]));
                     }
                 }
             }
         }
     }
-    let writes: Vec<usize> = (0..an.sites.len()).filter(|i| an.sites[*i].kind != Kind::Read).collect();
+    let writes: Vec<usize> = (0..an.sites.len()).filter(|i| an.sites[*i].kind != Kind::Read && !arena(&an.sites[*i])).collect();
     for (x, &i) in writes.iter().enumerate() {
         for &j in &writes[x..] {
             let (a, b) = (&an.sites[i], &an.sites[j]);
@@ -2923,11 +2957,11 @@ fn check_entry(module: &Module, contract: &Contract, entry: &str) -> Result<Repo
             let distinct = i == j || same_form || a.kind == Kind::Atomic || b.kind == Kind::Atomic;
             if !an.disjoint(a, b, distinct, false) {
                 let how = if distinct { "two invocations may write one cell" } else { "two store sites of different index forms may write one cell" };
-                return Err(unsafe_("write_sets_overlap", format!("{how}: {} and {}", a.what, b.what)));
+                return Err(named(unsafe_("write_sets_overlap", format!("{how}: {} and {}", a.what, b.what)), &[a, b]));
             }
         }
     }
-    for r in (0..an.sites.len()).filter(|i| an.sites[*i].kind == Kind::Read) {
+    for r in (0..an.sites.len()).filter(|i| an.sites[*i].kind == Kind::Read && !arena(&an.sites[*i])) {
         for &w in &writes {
             let (a, b) = (&an.sites[r], &an.sites[w]);
             if a.alloc != b.alloc {
@@ -2935,7 +2969,7 @@ fn check_entry(module: &Module, contract: &Contract, entry: &str) -> Result<Repo
             }
             report.pairs += 1;
             if !an.disjoint(a, b, true, false) {
-                return Err(unsafe_("output_read_of_another_invocations_cell", format!("{} may read a cell another invocation's {} writes", a.what, b.what)));
+                return Err(named(unsafe_("output_read_of_another_invocations_cell", format!("{} may read a cell another invocation's {} writes", a.what, b.what)), &[a, b]));
             }
         }
     }
@@ -2949,6 +2983,177 @@ fn check_entry(module: &Module, contract: &Contract, entry: &str) -> Result<Repo
         }
     }
     Ok(report)
+}
+
+/// The largest value an index expression can take, proved from its form
+/// alone: a literal or constant, a mask `x & c`, a clamp `min(x, c)` or
+/// `clamp(x, lo, c)`, a remainder `x % c`, a shift right of a bounded value,
+/// sums, products and selects of bounded values, a call whose every return
+/// is bounded; `min(x, arrayLength(&b) - 1u)` is in bounds of b by its own
+/// length (`Bound::Len`). None when the form proves no bound.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Bound {
+    Max(u128),
+    Len,
+}
+
+fn bound_of(module: &Module, f: &Function, e: Handle<Expression>, of: Handle<naga::GlobalVariable>, depth: usize) -> Option<Bound> {
+    use naga::Literal;
+    if depth > 64 {
+        return None;
+    }
+    let max = |b: Option<Bound>| match b {
+        Some(Bound::Max(m)) => Some(m),
+        _ => None,
+    };
+    let lit = |l: &Literal| -> Option<u128> {
+        match *l {
+            Literal::U32(v) => Some(u128::from(v)),
+            Literal::I32(v) => u128::try_from(v).ok(),
+            Literal::AbstractInt(v) => u128::try_from(v).ok(),
+            _ => None,
+        }
+    };
+    let global = |h: Handle<Expression>| -> Option<u128> {
+        match &module.global_expressions[h] {
+            Expression::Literal(l) => lit(l),
+            _ => None,
+        }
+    };
+    let rec = |x: Handle<Expression>| bound_of(module, f, x, of, depth + 1);
+    match &f.expressions[e] {
+        Expression::Literal(l) => lit(l).map(Bound::Max),
+        Expression::Constant(c) => global(module.constants[*c].init).map(Bound::Max),
+        Expression::ZeroValue(_) => Some(Bound::Max(0)),
+        Expression::Binary { op: BinaryOperator::And, left, right } => {
+            let (a, b) = (max(rec(*left)), max(rec(*right)));
+            a.into_iter().chain(b).min().map(Bound::Max)
+        }
+        Expression::Binary { op: BinaryOperator::Modulo, right, .. } => max(rec(*right)).filter(|c| *c >= 1).map(|c| Bound::Max(c - 1)),
+        Expression::Binary { op: BinaryOperator::ShiftRight, left, .. } => max(rec(*left)).map(Bound::Max),
+        Expression::Binary { op: BinaryOperator::Divide, left, .. } => max(rec(*left)).map(Bound::Max),
+        Expression::Binary { op: BinaryOperator::Add, left, right } => Some(Bound::Max(max(rec(*left))?.checked_add(max(rec(*right))?)?)),
+        Expression::Binary { op: BinaryOperator::Multiply, left, right } => Some(Bound::Max(max(rec(*left))?.checked_mul(max(rec(*right))?)?)),
+        Expression::Math { fun: MathFunction::Min, arg, arg1: Some(b), .. } => {
+            // A clamp to the binding's own last element.
+            let len_minus_one = |x: Handle<Expression>| -> bool {
+                let Expression::Binary { op: BinaryOperator::Subtract, left, right } = &f.expressions[x] else { return false };
+                let one = matches!(&f.expressions[*right], Expression::Literal(l) if lit(l) == Some(1));
+                let Expression::ArrayLength(p) = &f.expressions[*left] else { return false };
+                one && matches!(&f.expressions[*p], Expression::GlobalVariable(g) if *g == of)
+            };
+            if len_minus_one(*arg) || len_minus_one(*b) {
+                return Some(Bound::Len);
+            }
+            let (x, y) = (rec(*arg), rec(*b));
+            if x == Some(Bound::Len) || y == Some(Bound::Len) {
+                return Some(Bound::Len);
+            }
+            max(x).into_iter().chain(max(y)).min().map(Bound::Max)
+        }
+        Expression::Math { fun: MathFunction::Clamp, arg2: Some(hi), .. } => rec(*hi),
+        Expression::Math { fun: MathFunction::Max, arg, arg1: Some(b), .. } => Some(Bound::Max(max(rec(*arg))?.max(max(rec(*b))?))),
+        Expression::Select { accept, reject, .. } => Some(Bound::Max(max(rec(*accept))?.max(max(rec(*reject))?))),
+        Expression::CallResult(callee) => {
+            // Every return of the callee bounded (its arguments unknown).
+            let g = &module.functions[*callee];
+            let mut returns = Vec::new();
+            fn walk(b: &Block, out: &mut Vec<Handle<Expression>>) {
+                for s in b.iter() {
+                    match s {
+                        Statement::Return { value: Some(v) } => out.push(*v),
+                        Statement::Block(x) => walk(x, out),
+                        Statement::If { accept, reject, .. } => {
+                            walk(accept, out);
+                            walk(reject, out);
+                        }
+                        Statement::Loop { body, continuing, .. } => {
+                            walk(body, out);
+                            walk(continuing, out);
+                        }
+                        Statement::Switch { cases, .. } => cases.iter().for_each(|c| walk(&c.body, out)),
+                        _ => {}
+                    }
+                }
+            }
+            walk(&g.body, &mut returns);
+            let each: Option<Vec<u128>> = returns.iter().map(|r| max(bound_of(module, g, *r, of, depth + 1))).collect();
+            each.and_then(|v| v.into_iter().max()).map(Bound::Max)
+        }
+        _ => None,
+    }
+}
+
+/// Arena mode's bounds proof: every access (`Access` / `AccessIndex`) into
+/// an arena binding, in any function the entry point reaches, at an index
+/// proved below the binding's length (the contract's least
+/// `arrayLength(<binding>)`, or the binding's own length by a clamp to it).
+/// The arena bindings with an access not so proved, each with its first
+/// such access named (those bindings keep the strict rules).
+fn arena_bounds(module: &Module, contract: &Contract, entry: &str) -> Result<BTreeMap<String, String>, Unsafe> {
+    let mut unbounded: BTreeMap<String, String> = BTreeMap::new();
+    let ep = module.entry_points.iter().find(|e| e.name == entry).ok_or_else(|| unsafe_("interface", format!("no entry point {entry}")))?;
+    // The functions the entry point reaches, through its calls.
+    fn calls(b: &Block, out: &mut Vec<Handle<Function>>) {
+        for s in b.iter() {
+            match s {
+                Statement::Call { function, .. } => out.push(*function),
+                Statement::Block(x) => calls(x, out),
+                Statement::If { accept, reject, .. } => {
+                    calls(accept, out);
+                    calls(reject, out);
+                }
+                Statement::Loop { body, continuing, .. } => {
+                    calls(body, out);
+                    calls(continuing, out);
+                }
+                Statement::Switch { cases, .. } => cases.iter().for_each(|c| calls(&c.body, out)),
+                _ => {}
+            }
+        }
+    }
+    let mut reached: Vec<Handle<Function>> = Vec::new();
+    let mut todo = Vec::new();
+    calls(&ep.function.body, &mut todo);
+    while let Some(h) = todo.pop() {
+        if !reached.contains(&h) {
+            reached.push(h);
+            calls(&module.functions[h].body, &mut todo);
+        }
+    }
+    let mut fns: Vec<&Function> = vec![&ep.function];
+    fns.extend(reached.iter().map(|h| &module.functions[*h]));
+    for f in fns {
+        for (_, e) in f.expressions.iter() {
+            let (base, index) = match e {
+                Expression::Access { base, index } => (*base, Some(*index)),
+                Expression::AccessIndex { base, .. } => (*base, None),
+                _ => continue,
+            };
+            let Expression::GlobalVariable(g) = &f.expressions[base] else { continue };
+            let name = module.global_variables[*g].name.clone().unwrap_or_default();
+            if !contract.is_arena(&name) {
+                continue;
+            }
+            let least = contract.params.get(&format!("arrayLength({name})")).map(|(lo, _)| *lo);
+            let at = match (e, index) {
+                (Expression::AccessIndex { index, .. }, _) => Some(Bound::Max(u128::from(*index))),
+                (_, Some(i)) => bound_of(module, f, i, *g, 0),
+                (_, None) => None,
+            };
+            let why = match (at, least) {
+                (Some(Bound::Len), _) => None,
+                (Some(Bound::Max(m)), Some(n)) if i128::try_from(m).is_ok_and(|m| m < n) => None,
+                (Some(Bound::Max(m)), Some(n)) => Some(format!("its index may reach {m}, the arena holds {n}")),
+                (Some(Bound::Max(m)), None) => Some(format!("its index may reach {m}, and the contract gives no arrayLength({name})")),
+                (None, _) => Some("its index is proved below no bound (mask it or clamp it)".to_string()),
+            };
+            if let Some(why) = why {
+                unbounded.entry(name.clone()).or_insert_with(|| format!("an access to the arena {name} in {}: {why}", f.name.clone().unwrap_or_else(|| entry.to_string())));
+            }
+        }
+    }
+    Ok(unbounded)
 }
 
 /// [`check_module`] over WGSL text.
@@ -3234,5 +3439,87 @@ mod tests {
         open.params.remove("buffer_6_global[0]");
         let src = std::fs::read_to_string(dir.join("k01.wgsl")).unwrap();
         assert_eq!(rule(&src, &open), "store_index_may_wrap");
+    }
+
+    /// LAYER 7 IN ARENA MODE (2026-10-17, v24's index arenas): a kernel that
+    /// keeps its own state in `index_u32` / `index_f32` at data-dependent
+    /// indexes (a hashed bucket's count by atomicAdd, a plain store of a
+    /// centre at the slot it got, a plain load of it), every index masked
+    /// or clamped to the arena: strict turns it away, arena mode proves it.
+    /// The same store unmasked, a mask past the arena's length, and a
+    /// data-dependent store to `cands` (not an arena) are refused in both
+    /// modes; a workgroup race stays a race; the arena line changes nothing
+    /// in strict mode.
+    #[test]
+    fn arena_mode_proves_masked_state_and_keeps_every_other_binding_strict() {
+        let pre = "struct Cfg { n_queries: u32, };
+@group(0) @binding(0) var<storage, read> keys: array<f32>;
+@group(0) @binding(2) var<storage, read_write> index_u32: array<atomic<u32>>;
+@group(0) @binding(3) var<storage, read_write> index_f32: array<f32>;
+@group(0) @binding(4) var<storage, read_write> cands: array<u32>;
+@group(0) @binding(5) var<uniform> cfg: Cfg;
+";
+        let k = |body: &str| format!("{pre}fn slot_of(h: u32, j: u32) -> u32 {{ return (h * 64u + j) & 1048575u; }}\n@compute @workgroup_size(64, 1, 1)\nfn ingest(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>) {{\n    let h = bitcast<u32>(keys[gid.x]) & 1023u;\n{body}\n}}\n");
+        let strict = Contract::parse("workgroups x 1 5000\nworkgroups y 1 1\nworkgroups z 1 1\narena index_u32 index_f32\nparam arrayLength(index_u32) 1048576 1048576\nparam arrayLength(index_f32) 1048576 1048576\n").unwrap();
+        let arena = strict.with_arena_mode(true);
+        let state = "    let slot = atomicAdd(&index_u32[h], 1u);\n    index_f32[slot_of(h, slot & 63u)] = keys[gid.x];\n    let back = index_f32[min(h * 64u + slot, arrayLength(&index_f32) - 1u)];\n    atomicStore(&index_u32[(1024u + h) & 1048575u], bitcast<u32>(back));\n    cands[gid.x] = slot;";
+        assert_eq!(rule(&k(state), &strict), "write_sets_overlap");
+        proved(&k(state), &arena);
+        // The arena line alone changes nothing: strict without it, the same rule.
+        let mut no_line = strict.clone();
+        no_line.arena.clear();
+        assert_eq!(rule(&k(state), &no_line), "write_sets_overlap");
+        // Unmasked: no bound. Masked past the arena's length: out of bounds.
+        assert_eq!(rule(&k("    index_f32[bitcast<u32>(keys[gid.x])] = 1.0;"), &arena), "arena_index_not_in_bounds");
+        assert_eq!(rule(&k("    index_f32[bitcast<u32>(keys[gid.x])] = 1.0;"), &strict), "store_index_not_affine");
+        assert_eq!(rule(&k("    index_f32[bitcast<u32>(keys[gid.x]) & 2097151u] = 1.0;"), &arena), "arena_index_not_in_bounds");
+        // (An atomic at an unbounded index: strict proves it, so arena does
+        // too, the binding under the strict rules.)
+        proved(&k("    _ = atomicAdd(&index_u32[bitcast<u32>(keys[gid.x])], 1u);"), &strict);
+        proved(&k("    _ = atomicAdd(&index_u32[bitcast<u32>(keys[gid.x])], 1u);"), &arena);
+        // A binding the contract does not name stays strict.
+        assert_eq!(rule(&k("    cands[h] = gid.x;"), &arena), "write_sets_overlap");
+        // Workgroup memory stays strict.
+        let wg = format!("{pre}var<workgroup> t: array<u32, 64>;\n@compute @workgroup_size(64, 1, 1)\nfn ingest(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>) {{\n    t[lid.x] = gid.x;\n    cands[gid.x] = t[(lid.x + 1u) & 63u];\n}}\n");
+        assert_eq!(rule(&wg, &arena), "workgroup_memory_race");
+        // With no arrayLength in the contract a mask proves nothing; a clamp
+        // to the binding's own length still does.
+        let mut unsized_ = arena.clone();
+        unsized_.params.retain(|k, _| !k.starts_with("arrayLength"));
+        assert_eq!(rule(&k("    index_f32[slot_of(h, 0u)] = 1.0;"), &unsized_), "arena_index_not_in_bounds");
+        proved(&k("    index_f32[min(h * 4096u, arrayLength(&index_f32) - 1u)] = 1.0;"), &unsized_);
+    }
+
+    /// STRICT UNCHANGED ON THE EXISTING SEEDS (v24 run 1's 73 raw kernels
+    /// under the problem's contract with the arena line added): strict
+    /// gives every seed the verdict it gives without the line; arena mode
+    /// proves at least those strict proves. The counts are printed.
+    #[test]
+    fn strict_is_unchanged_by_the_arena_line_on_run_ones_seeds() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let base = std::fs::read_to_string(root.join("problems/v24_ingest/safety.contract")).unwrap();
+        let plain = Contract::parse(&base).unwrap();
+        let lined = Contract::parse(&format!("{base}\narena index_u32 index_f32\nparam arrayLength(index_u32) 8388608 8388608\nparam arrayLength(index_f32) 8388608 8388608\n")).unwrap();
+        let arena = lined.with_arena_mode(true);
+        let dir = root.join("logs/V24/run1/raw");
+        let mut files: Vec<_> = std::fs::read_dir(&dir).unwrap_or_else(|e| panic!("{}: {e}", dir.display())).flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "wgsl")).collect();
+        files.sort();
+        let (mut strict_ok, mut arena_ok) = (0usize, 0usize);
+        let mut why: BTreeMap<&'static str, usize> = BTreeMap::new();
+        for f in &files {
+            let src = std::fs::read_to_string(f).unwrap();
+            let (a, b) = (check_text(&src, &plain).map_err(|e| e.rule), check_text(&src, &lined).map_err(|e| e.rule));
+            assert_eq!(a.as_ref().err(), b.as_ref().err(), "{}: strict changed by the arena line", f.display());
+            let c = check_text(&src, &arena);
+            if a.is_ok() {
+                strict_ok += 1;
+                assert!(c.is_ok(), "{}: strict proves it, arena does not: {:?}", f.display(), c.err());
+            }
+            match c {
+                Ok(_) => arena_ok += 1,
+                Err(e) => *why.entry(e.rule).or_default() += 1,
+            }
+        }
+        println!("run 1's {} raw seeds at layer 7: strict proves {strict_ok}, arena {arena_ok}; arena's refusals by rule {why:?}", files.len());
     }
 }
