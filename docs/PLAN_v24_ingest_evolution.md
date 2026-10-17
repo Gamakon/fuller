@@ -278,3 +278,54 @@ affine form is a sum of the thread's coordinates, loop counters and cfg fields, 
 the contract and the loops bound; whether those bounds keep it inside the arena is not
 established here, and the proof asks for a mask or a clamp. Sent to v24-b6-kingdom (prove
 from the affine form's bounds; name the access in the message).
+
+### Three arms of layer 7: strict, arena, arena+rows (supersedes the 8,388,608 table above)
+
+**Result.** Arena+rows more than doubles the children that pass every stage over arena (85 to 107 of
+200 per operator, arena 35 to 46, strict 15 to 24) and admits 16 parents of 28 (arena 7,
+strict 3). It is the first arm with races: 5 children race in 10 runs, all of seed19's
+lineage.
+
+Run on the GPU, `--measure-operators 200 --measure-races 10 --seed 1` on
+`problems/v24_ingest_small`, 28 parents of 32 seeds, layout head 32 with 184 slots, arenas
+index_u32 and index_f32 each 8,388,608 words. Strict and arena: fuller bd56721, phylu
+192e2de2, 15:06–15:16Z (strict 136.9 s, 71.1 s on the device; arena 227.9 s, 143.3 s).
+Arena+rows (the arena rules, and each query's 64-cell `cands` row one workgroup's, the
+cells within it left to the race check): fuller 50e1bd7, phylu f7406a24, 15:24–15:33Z
+(531.6 s, 419.5 s on the device). All three clean worktrees, no uncommitted edits in src/
+or kingdoms/. Records: `logs/V24/gate/strict_bd/`, `arena_bd/`, `arenarows_50e/`
+(`gate.md`, `gate.tsv`, `failed/`).
+
+| operator | pass every stage, strict | arena | arena+rows | races (10 runs), arena+rows | values differ, arena+rows | order-only, arena+rows | state-only, arena+rows |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| (parents) | 3 of 28 | 7 of 28 | 16 of 28 | 0 | 0 | 1 | 4 |
+| section crossover | 24 | 41 | 97 | 1 | 2 | 0 | 31 |
+| typed crossover | 21 | 45 | 100 | 3 | 0 | 1 | 22 |
+| rule | 18 | 46 | 107 | 0 | 0 | 6 | 23 |
+| generic rewrite | 15 | 35 | 85 | 0 | 0 | 3 | 20 |
+| point mutation | 23 | 46 | 93 | 1 | 1 | 1 | 26 |
+
+Races: 0 under strict and arena. Under arena+rows, 5, every one a child of seed19: section
+crossover 93 (seed19 + seed23; run 2, stage-query 0, 10 rows against 12), typed crossover
+57 (seed19 + seed06; run 2, stage-query 1, 5 against 5, different rows), 100 (seed19 +
+seed17; run 2, stage-query 31, 31 against 30), 160 (seed19 + seed24; run 2, stage-query 0,
+16 against 15), point mutation 162 (seed19; run 3, stage-query 19, 30 against 29). Their
+texts are in `logs/V24/gate/arenarows_50e/failed/` (`section_cross_93.wgsl`,
+`typed_cross_57.wgsl`, `typed_cross_100.wgsl`, `typed_cross_160.wgsl`,
+`point_mutation_162.wgsl`). Rows mode leaves the cells within a row to the design, so these
+are races the proof does not see and the race check does, as designed.
+
+Values differ, 3 children, all of seed01, all on `cands` words 3520 to 3522: section
+crossover 91 (seed01 + seed26) and 112 (seed01 + seed30), point mutation 182 (seed01).
+Under rows mode a race in the child's own text and a rendering that computes otherwise look
+the same at this stage. phylu 97483df0 tells them apart: when the text and its rendering
+differ, the text runs against itself in fresh runs; a text whose own runs race is counted
+as a race (reached values), otherwise "our software has a bug: the rendering computes
+otherwise", with both texts kept in `failed/`. Not yet re-measured.
+
+Two read-back failures (past safety, before read back): generic rewrite 14 (seed02,
+`index-literal: literal.index 524287 -> 524285`) and 65 (seed10, `literal.index 62169 ->
+62167`), each "needs 1 symbols the table lacks: literal 7.3468e-40 : Wgsl(16)" (8.7115e-41
+for 65). Those numbers are 524285 and 62167 read as f32 bits: the rewritten index literal
+is minted as an f32 literal of another dual. Under strict and arena, layer 7 turned these
+two children away first, which hid the fault. Sent to v24-b6-kingdom.
