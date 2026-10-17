@@ -171,6 +171,10 @@ struct Ctx<'a> {
     naga_fn: &'a Function,
     /// The text says it writes the whole H (a mirror store reads as one).
     mode_full: bool,
+    /// An index read while the layout was open that is a thread's row or
+    /// column under one of the layouts ([`Ctx::thread_index`]): the entry
+    /// point is read again under the layout its stores decide.
+    open_thread_index: bool,
 }
 
 /// A helper function the grammar inlines. One of lets and one `return expr`
@@ -2255,6 +2259,14 @@ impl<'a> Ctx<'a> {
             return Ok(t.kids[0].clone());
         }
         let d = self.kingdom.dual(t.ty).map(|d| d.dual.clone()).unwrap_or_default();
+        // (Any scalar u32 the inference chose: the same text spelled as the
+        // emitter writes a strided row, `wid.y * 408u + lid.y`, was inferred
+        // a dual other than the index, 4 random trees.)
+        if self.kingdom.dual(t.ty).is_some_and(|x| x.slot == "u32" && x.lanes == 1) {
+            if let Some(x) = self.thread_index(t)? {
+                return Ok(x);
+            }
+        }
         // Leaves.
         if t.kids.is_empty() {
             if let Some(v) = self.inline_values.as_ref().and_then(|m| m.get(&t.name)) {
@@ -3062,22 +3074,8 @@ impl<'a> Ctx<'a> {
                     if by != self.grid.3 || bx != self.grid.2 {
                         return fail(&format!("block {bx} x {by} in the index, the grid says {} x {}", self.grid.2, self.grid.3));
                     }
-                    let gid = Tree::new("builtin.global_invocation_id", ty(self, "vec3<u32>.gid")?, vec![]);
-                    let blk = |v: u32| Tree::literal("literal.blk", ty(self, "u32.blk").expect("dual"), v as f32);
-                    let wid = Tree::new("builtin.workgroup_id", ty(self, "vec3<u32>.wid")?, vec![]);
-                    let lid = Tree::new("builtin.local_invocation_id", ty(self, "vec3<u32>.lid")?, vec![]);
-                    let strided = |o: &Off| matches!(o, Off::Strided(_) | Off::StridedTile(_) | Off::StridedExpr(_));
-                    let lit64 = |ctx: &Self, v: u32| Tree::literal("literal.lit64", ty(ctx, "u32.lit64").expect("dual"), v as f32);
-                    let base_row = match &i {
-                        Off::Grouped(g, _, _) => Tree::new("safe.thread_row_g", ty(self, "u32.threadrow")?, vec![wid.clone(), lid.clone(), blk(by), lit64(self, *g)]),
-                        o if strided(o) => Tree::new("safe.thread_row_s", ty(self, "u32.threadrow")?, vec![wid.clone(), lid.clone(), blk(by)]),
-                        _ => Tree::new("safe.thread_row", ty(self, "u32.threadrow")?, vec![gid.clone(), blk(by)]),
-                    };
-                    let base_col = match &j {
-                        Off::Grouped(g, _, _) => Tree::new("safe.thread_col_g", ty(self, "u32.threadcol")?, vec![wid, lid, blk(bx), lit64(self, *g)]),
-                        o if strided(o) => Tree::new("safe.thread_col_s", ty(self, "u32.threadcol")?, vec![wid, lid, blk(bx)]),
-                        _ => Tree::new("safe.thread_col", ty(self, "u32.threadcol")?, vec![gid, blk(bx)]),
-                    };
+                    let base_row = self.thread_base("row", &i, by)?;
+                    let base_col = self.thread_base("col", &j, bx)?;
                     let row = self.plus(base_row, i, "row")?;
                     let c = self.plus(base_col, j, "col")?;
                     return Ok(Tree::new("safe.cell_of", ty(self, "u32.cell")?, vec![row, c]));
@@ -3085,6 +3083,65 @@ impl<'a> Ctx<'a> {
             }
         }
         fail(&format!("row or column is not this thread's (tile counters {:?} / {:?} / {:?} / {:?})", self.tile_counter, self.tile_counter2, self.tile_counter3, self.tile_counter4))
+    }
+
+    /// The origin of this thread's row (or column) of block factor `b` that
+    /// the offset `off` was proved against: the strided or grouped origin
+    /// for a strided or grouped offset, else `gid * b`.
+    fn thread_base(&self, axis: &str, off: &Off, b: u32) -> Result<Tree, String> {
+        let dual = ty(self, if axis == "row" { "u32.threadrow" } else { "u32.threadcol" })?;
+        let gid = Tree::new("builtin.global_invocation_id", ty(self, "vec3<u32>.gid")?, vec![]);
+        let wid = Tree::new("builtin.workgroup_id", ty(self, "vec3<u32>.wid")?, vec![]);
+        let lid = Tree::new("builtin.local_invocation_id", ty(self, "vec3<u32>.lid")?, vec![]);
+        let blk = Tree::literal("literal.blk", ty(self, "u32.blk")?, b as f32);
+        Ok(match off {
+            Off::Grouped(g, _, _) => Tree::new(&format!("safe.thread_{axis}_g"), dual, vec![wid, lid, blk, Tree::literal("literal.lit64", ty(self, "u32.lit64")?, *g as f32)]),
+            Off::Strided(_) | Off::StridedTile(_) | Off::StridedExpr(_) => Tree::new(&format!("safe.thread_{axis}_s"), dual, vec![wid, lid, blk]),
+            _ => Tree::new(&format!("safe.thread_{axis}"), dual, vec![gid, blk]),
+        })
+    }
+
+    /// An index that is this thread's row or column, `gid.y * B + min(k, B -
+    /// 1u)` and the like, as the emitter writes `safe.row_as_index` and
+    /// `safe.col_as_index` (2026-10-17: read as index arithmetic, 74 of the
+    /// 915 random trees that missed the AST drawn): the row's axis is the
+    /// layout's (an open layout reads it again once decided, rows on y when
+    /// no store decides), the block factor the grid's, and a factor of 1 is
+    /// left as the arithmetic it is (`gid.y` itself).
+    fn thread_index(&mut self, t: &Tree) -> Result<Option<Tree>, String> {
+        if !matches!(t.name.as_str(), "index.add" | "index.mul") || t.kids.len() != 2 {
+            return Ok(None);
+        }
+        let t = distribute_literals(&self.expand_memo(t));
+        let tiles = (self.tile_counter.clone(), self.tile_counter2.clone(), self.tile_counter3.clone(), self.tile_counter4.clone());
+        let tiles: Tiles = [&tiles.0, &tiles.1, &tiles.2, &tiles.3];
+        let layouts: &[bool] = match self.rows_x {
+            Some(x) => if x { &[true] } else { &[false] },
+            None => &[false, true],
+        };
+        for &rows_x in layouts {
+            let (row, col) = if rows_x { ((0, self.grid.0, self.grid.3), (1, self.grid.1, self.grid.2)) } else { ((1, self.grid.1, self.grid.3), (0, self.grid.0, self.grid.2)) };
+            for (axis, (a, w, blk)) in [("row", row), ("col", col)] {
+                if blk < 2 {
+                    continue;
+                }
+                let Some((b, off)) = thread_axis_off_in(&t, a, w, tiles, &self.row_arrays, &self.tile_bounds) else { continue };
+                if b != blk {
+                    continue;
+                }
+                // Open: the axis is a row under one layout and a column
+                // under the other, so it waits for the read under the
+                // layout the stores decide.
+                if self.rows_x.is_none() {
+                    self.open_thread_index = true;
+                    return Ok(None);
+                }
+                let base = self.thread_base(axis, &off, b)?;
+                let x = self.plus(base, off, axis)?;
+                return Ok(Some(Tree::new(&format!("safe.{axis}_as_index"), ty(self, "u32.index")?, vec![x])));
+            }
+        }
+        Ok(None)
     }
 
     /// `C * cfg.d + R` with R and C this thread's row and column: the mirror
@@ -6097,6 +6154,17 @@ struct Reading<'a> {
 /// as a safe kernel tree, at its grid (and whether a header put the rows on
 /// x), its workgroup variables' rows starting from `arrays`.
 fn read_entry(at: &Reading, ep: usize, (grid, rows_x): ((u32, u32, u32, u32), bool), arrays: WgArrays) -> Result<EntryRead, String> {
+    let (read, open, rows_x) = read_entry_under(at, ep, grid, rows_x.then_some(true), arrays.clone())?;
+    if open {
+        return read_entry_under(at, ep, grid, Some(rows_x), arrays).map(|(r, _, _)| r);
+    }
+    Ok(read)
+}
+
+/// [`read_entry`] with the layout preset (`None`: open until a store
+/// decides it); with the read, whether a thread's row or column index was
+/// read while the layout was open, and the layout decided.
+fn read_entry_under(at: &Reading, ep: usize, grid: (u32, u32, u32, u32), preset: Option<bool>, arrays: WgArrays) -> Result<(EntryRead, bool, bool), String> {
     let Reading { source, kingdom, kernel, role } = *at;
     let entry = &kernel.module.entry_points[ep];
     // The workgroup the header names is the one the kernel declares: x and y
@@ -6243,7 +6311,7 @@ fn read_entry(at: &Reading, ep: usize, (grid, rows_x): ((u32, u32, u32, u32), bo
     let main_returns = source.find(&format!("fn {}(", entry.name)).map(|i| &source[i..]).and_then(|m| m.rfind('}').map(|j| &m[..j])).is_some_and(|m| m.trim_end().ends_with("return;"));
     let uniform_lanes = if role.uniform_struct.is_empty() { role.fields.iter().map(|f| f.name.clone()).collect() } else { Vec::new() };
     let (arrays, array_lens) = arrays;
-    let mut ctx = Ctx { kingdom, main_returns, per_kernel_rows: crate::wgsl::safe_karva::per_kernel_rows(kingdom, role), uniform_var: role.uniform_var.clone(), uniform_lanes, duals: &duals, lets: &lets, roots: &roots, item_counter: None, tile_counter: None, tile_counter2: None, tile_counter3: None, tile_counter4: None, registers: BTreeMap::new(), counter_stores: Vec::new(), guard: None, tail: true, arrays, array_lens, arrays_used: BTreeSet::new(), parrs: BTreeMap::new(), grid, rows_x: rows_x.then_some(true), notes: Vec::new(), helpers: &helpers, calls: &calls, arg_roots: &arg_roots, inline_args: None, built: std::cell::Cell::new(0), early_return_at: None, branch_depth: 0, skip_stmts: BTreeSet::new(), outer_args: Vec::new(), row_arrays: BTreeMap::new(), used_counters: std::collections::BTreeSet::new(), local_lanes, axis_memo: BTreeMap::new(), loop_depth: 0, tile_bounds: BTreeMap::new(), naga_fn, module: &kernel.module, local_prefix: String::new(), inline_result: None, inline_values: None, bound_lets, stale_lets, let_regs: HashMap::new(), inlined: HashMap::new(), stored_seen: std::collections::BTreeSet::new(), counter_offsets: HashMap::new(), counter_exprs: HashMap::new(), pointer_args: HashMap::new(), array_args: HashMap::new(), mode_full: source.lines().any(|l| l.trim() == "// mode full") };
+    let mut ctx = Ctx { kingdom, main_returns, per_kernel_rows: crate::wgsl::safe_karva::per_kernel_rows(kingdom, role), uniform_var: role.uniform_var.clone(), uniform_lanes, duals: &duals, lets: &lets, roots: &roots, item_counter: None, tile_counter: None, tile_counter2: None, tile_counter3: None, tile_counter4: None, registers: BTreeMap::new(), counter_stores: Vec::new(), guard: None, tail: true, arrays, array_lens, arrays_used: BTreeSet::new(), parrs: BTreeMap::new(), grid, rows_x: preset, notes: Vec::new(), helpers: &helpers, calls: &calls, arg_roots: &arg_roots, inline_args: None, built: std::cell::Cell::new(0), early_return_at: None, branch_depth: 0, skip_stmts: BTreeSet::new(), outer_args: Vec::new(), row_arrays: BTreeMap::new(), used_counters: std::collections::BTreeSet::new(), local_lanes, axis_memo: BTreeMap::new(), loop_depth: 0, tile_bounds: BTreeMap::new(), naga_fn, module: &kernel.module, local_prefix: String::new(), inline_result: None, inline_values: None, bound_lets, stale_lets, let_regs: HashMap::new(), inlined: HashMap::new(), stored_seen: std::collections::BTreeSet::new(), counter_offsets: HashMap::new(), counter_exprs: HashMap::new(), pointer_args: HashMap::new(), array_args: HashMap::new(), mode_full: source.lines().any(|l| l.trim() == "// mode full"), open_thread_index: false };
     // Register initialisations first, in root order. A local initialised to
     // its form's fallback (0.0, 0u, false, a zero vector) costs nothing: the
     // register's declaration already holds that value, and the register is
@@ -6340,7 +6408,7 @@ fn read_entry(at: &Reading, ep: usize, (grid, rows_x): ((u32, u32, u32, u32), bo
     let tree = by_axis(&tree, rows_x);
     // Row-consistent: every node under the dual its parent's row demands.
     let tree = crate::wgsl::safe_karva::conform(&tree, tree.ty, kingdom, &ctx.per_kernel_rows)?;
-    Ok((tree, ctx.notes, ctx.registers, (ctx.arrays, ctx.array_lens)))
+    Ok(((tree, ctx.notes, ctx.registers, (ctx.arrays, ctx.array_lens)), ctx.open_thread_index && preset.is_none(), rows_x))
 }
 
 #[cfg(test)]
@@ -8314,7 +8382,9 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     // the fixpoint none differs at a reduction, the earlier classes all.)
     // (17:40Z, 85: the emitter's sg_lane let read as the builtin, not a
     // register set at the kernel's top, the largest class.)
-    const AST_FLOOR: usize = 85;
+    // (19:54Z, 106: a thread's row or column in an index read as the row
+    // it is, safe.row_as_index / col_as_index, the largest class.)
+    const AST_FLOOR: usize = 106;
 
     /// The floors of [`random_module_trees_render_validate_and_read_back`]
     /// (1,000 v24 modules, depth 6; measured 2026-10-17 at its first run:
@@ -8350,7 +8420,9 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     /// 15:30Z, 8, 968 and 139 with the 64-element vec4 arrays (risen);
     /// 16:05Z, 1, 970 and 134 with the argmax reductions drawn (other draws).
     /// 17:40Z, AST 4 with the emitter's sg_lane read as the builtin.
-    const MODULE_AST_FLOOR: usize = 4;
+    /// 19:54Z, AST 7 with a thread's row or column in an index read as the
+    /// row it is.
+    const MODULE_AST_FLOOR: usize = 7;
     const MODULE_FIXPOINT_FLOOR: usize = 970;
     const MODULE_LEGAL_FLOOR: usize = 134;
 

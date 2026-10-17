@@ -1100,8 +1100,11 @@ pub fn rebuild_bounded_with(decoded: &[String], filled: usize, kingdom: &WgslKin
 mod tests {
     /// The two drafts k15 (split accumulators) and k07 (workgroup tile and a
     /// 4 x 4 register block) share their thread-to-cell geometry and store
-    /// guard: the largest shared section has over thirty nodes and occurs in
-    /// both; sections come largest first.
+    /// guard: a shared section holds the store's cell (`safe.cell_of`) and
+    /// one the guard's bounds test of the thread's row (`safe.row_as_index`
+    /// against `cfg.r_rows`); the largest has 23 nodes at least (the
+    /// thread-row reading of 2026-10-17; 30 when the guard read as index
+    /// arithmetic) and occurs in both; sections come largest first.
     #[test]
     fn two_drafts_share_their_geometry() {
         let dir = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/logs/HGP/001/gen0"));
@@ -1111,7 +1114,9 @@ mod tests {
         let tb = crate::wgsl::safe_reader::read_safe(&b, &kingdom).expect("k07 reads").tree;
         let shared = super::shared_sections(&ta, &tb, 5);
         assert!(shared.len() >= 3, "{} shared sections", shared.len());
-        assert!(shared[0].nodes >= 30, "largest has {} nodes", shared[0].nodes);
+        assert!(shared[0].nodes >= 23, "largest has {} nodes", shared[0].nodes);
+        assert!(shared.iter().any(|d| d.text.contains("safe.cell_of")), "no shared section holds the cell");
+        assert!(shared.iter().any(|d| d.text.contains("safe.row_as_index") && d.text.contains("load.cfg_r_rows")), "no shared section holds the guard's row test");
         assert!(shared.windows(2).all(|w| w[0].nodes >= w[1].nodes), "largest first");
         for d in shared.iter().take(3) {
             assert!(super::occurrences_of(&ta, &d.text) >= 1 && super::occurrences_of(&tb, &d.text) >= 1, "{} occurs in both", d.text);
