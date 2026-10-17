@@ -123,6 +123,11 @@ struct Ctx<'a> {
     /// The path of the return that ends a branch read as `if (c) { .. }
     /// else { rest }` ([`Ctx::early_return_branch`]), while its branch is read.
     early_return_at: Option<Vec<usize>>,
+    /// Nodes the reader has built (trees read, expansions for the ownership
+    /// proof): past [`READ_NODE_BOUND`] the read stops, named, instead of
+    /// running on (run 1's 03:15Z hang, 2026-10-17: a helper argument
+    /// expanded into itself without end).
+    built: std::cell::Cell<usize>,
     /// The arguments of the helpers being inlined around the one in
     /// `inline_args`, innermost last (a helper inlined inside another).
     outer_args: Vec<Option<HashMap<String, Tree>>>,
@@ -187,6 +192,10 @@ pub struct Helper<'a> {
     pub block: &'a naga::Block,
     pub naga_fn: &'a Function,
     pub ret_dual: Option<String>,
+    /// Its lets set in a register where they are defined (read after a store
+    /// or barrier that changes what they read, or in a deeper loop), as main's.
+    pub bound_lets: HashMap<String, Vec<usize>>,
+    pub stale_lets: BTreeSet<String>,
 }
 
 /// The register dual of a naga type: the four kinds a register holds.
@@ -219,7 +228,15 @@ fn prefixed(prefix: &str, name: &str) -> String {
     }
 }
 
+/// The most nodes one reading of a kernel builds (trees and expansions),
+/// far above any kernel the corpora hold (every corpus test reads under it).
+pub const READ_NODE_BOUND: usize = 20_000_000;
+
 fn tree_of(ctx: &mut Ctx, n: &Node) -> Result<Tree, String> {
+    ctx.built.set(ctx.built.get() + 1);
+    if ctx.built.get() > READ_NODE_BOUND {
+        return Err(format!("our software has a bug: reading this kernel built more than {READ_NODE_BOUND} nodes (an expansion without end); the read is stopped"));
+    }
     let text = n.to_sexpr();
     match n {
         Node::Leaf { name, .. } => {
@@ -242,8 +259,9 @@ fn tree_of(ctx: &mut Ctx, n: &Node) -> Result<Tree, String> {
                 // A let bound to a register at its definition reads the register.
                 // (spelled as a load of the local `let.<name>`, which the value
                 // step reads as the register that local holds).
-                if let Some(k) = name.strip_prefix("let.").filter(|k| ctx.local_prefix.is_empty() && ctx.let_regs.contains_key(*k)) {
-                    let local = format!("load.local.let.{k}");
+                if let Some(k) = name.strip_prefix("let.").filter(|k| ctx.let_regs.contains_key(*k)) {
+                    // (A helper's own, named under it.)
+                    let local = format!("load.local.{}let.{k}", ctx.local_prefix);
                     let t = tree_of(ctx, &def)?;
                     return Ok(Tree::new(&local, t.ty, vec![]));
                 }
@@ -623,7 +641,12 @@ fn pindex_dual(mask: &str) -> &'static str {
 }
 
 /// The private array dual of a kind letter.
-fn parr_dual(kind: char) -> &'static str {
+fn parr_dual_of(arr: &str, kind: char) -> &'static str {
+    // (The 64-element u32 arrays pua, puc: a list of row ids beside its 64
+    // scores, the v24 reference's `rows`, 2026-10-17.)
+    if arr == "parr.ua" || arr == "parr.uc" {
+        return "parr64<u32>.index";
+    }
     match kind {
         'v' => "parr<vec4<f32>>.real",
         'i' => "parr<u32>.index",
@@ -855,40 +878,6 @@ fn floor_differences(n: &Node) -> Node {
             }
             if floored && ((c == "compare.gt" && same(&ck[0], &dk[1]) && same(&ck[1], &dk[0])) || (c == "compare.lt" && same(&ck[0], &dk[0]) && same(&ck[1], &dk[1]))) {
                 return diff.clone();
-            }
-        }
-    }
-    Node::App { name: name.clone(), slot: slot.clone(), known: *known, kids }
-}
-
-/// An element index of a storage array of atomics without the clamp the
-/// kingdom writes on it (`min(i, arrayLength(&a) - 1u)`, `min(i, N - 1u)` for
-/// a fixed length N; `render::atomic_array_access`): the per-kernel row
-/// clamps again. `arrays` maps each such binding to its fixed length (None
-/// for a runtime-sized one). Only the index of an access to the array it
-/// names is unclamped; the same `min` anywhere else is kept.
-fn unclamp_atomic_indices(n: &Node, arrays: &BTreeMap<String, Option<u32>>) -> Node {
-    let Node::App { name, slot, known, kids } = n else { return n.clone() };
-    let mut kids: Vec<Node> = kids.iter().map(|k| unclamp_atomic_indices(k, arrays)).collect();
-    // The binding an access names: `load.buffer.a.#@v2`, `store.buffer.a.#`,
-    // `atomic.add.buffer.a.#`.
-    let target = name.split_once("buffer.").map(|(_, r)| r).and_then(|r| r.split_once(".#")).map(|(b, _)| b).filter(|_| name.starts_with("load.") || name.starts_with("store.") || name.starts_with("atomic."));
-    if let Some(len) = target.and_then(|b| arrays.get(b).map(|l| (b, *l))) {
-        let (b, len) = len;
-        let last_of = |m: &Node| -> bool {
-            match (len, m) {
-                (Some(n), Node::Literal { value, .. }) => n >= 1 && *value == f64::from(n - 1),
-                (None, Node::App { name: d, kids: dk, .. }) if d.starts_with("index.sub") && dk.len() == 2 => {
-                    let one = matches!(&dk[1], Node::Literal { value, .. } if *value == 1.0);
-                    let length = matches!(&dk[0], Node::App { name: l, kids: lk, .. } if l == "naga.ArrayLength" && matches!(lk.as_slice(), [Node::Leaf { name: g, .. }] if g == &format!("global.{b}")));
-                    one && length
-                }
-                _ => false,
-            }
-        };
-        if let Some(Node::App { name: m, kids: mk, .. }) = kids.first() {
-            if m.ends_with(".min") && mk.len() == 2 && last_of(&mk[1]) {
-                kids[0] = mk[0].clone();
             }
         }
     }
@@ -1351,24 +1340,34 @@ fn lets_used_in_deeper_loops(roots: &[Root], body: &naga::Block, points: &BTreeM
     // a builtin, a register and index arithmetic are not, and a let of only
     // those stays inlined (the ownership proof and shared sections see its
     // expression).
-    fn reads_memory(n: &Node, defs: &[(&String, &Vec<usize>, &Node)]) -> bool {
+    // (Both memoised by let: a chain of lets each read twice, `let a2 = a1 +
+    // a1`, was walked 2^n times; 2026-10-17.)
+    fn reads_memory(n: &Node, defs: &[(&String, &Vec<usize>, &Node)], memo: &mut HashMap<String, bool>) -> bool {
         match n {
             Node::Leaf { name, .. } => match name.strip_prefix("let.") {
-                Some(k) => defs.iter().find(|(m, _, _)| m.as_str() == k).is_some_and(|(_, _, t)| reads_memory(t, defs)),
+                Some(k) => {
+                    if let Some(&v) = memo.get(k) {
+                        return v;
+                    }
+                    memo.insert(k.to_string(), false);
+                    let v = defs.iter().find(|(m, _, _)| m.as_str() == k).is_some_and(|(_, _, t)| reads_memory(t, defs, memo));
+                    memo.insert(k.to_string(), v);
+                    v
+                }
                 None => false,
             },
             Node::App { name, kids, .. } => {
                 // A load other than a uniform's or a scalar local's (a register).
                 let register = name.starts_with("load.local.") && !name.contains(".#");
                 let memory = name.starts_with("load.") && !name.starts_with("load.uniform.") && !register;
-                memory || kids.iter().any(|k| reads_memory(k, defs))
+                memory || kids.iter().any(|k| reads_memory(k, defs, memo))
             }
             _ => false,
         }
     }
     // The versioned local loads a let's value reads (through the lets it
     // inlines): `load.local.<name>@<i>@v<n>` is the location `local.<name>@<i>` at version n.
-    fn local_loads(n: &Node, defs: &[(&String, &Vec<usize>, &Node)], out: &mut BTreeSet<(String, u32)>, depth: usize) {
+    fn local_loads(n: &Node, defs: &[(&String, &Vec<usize>, &Node)], out: &mut BTreeSet<(String, u32)>, depth: usize, memo: &mut HashMap<String, BTreeSet<(String, u32)>>) {
         if depth > 64 {
             return;
         }
@@ -1377,16 +1376,25 @@ fn lets_used_in_deeper_loops(roots: &[Root], body: &naga::Block, points: &BTreeM
             Node::Literal { .. } => return,
         };
         if let Some(k) = name.strip_prefix("let.") {
-            if let Some((_, _, t)) = defs.iter().find(|(m, _, _)| m.as_str() == k) {
-                local_loads(t, defs, out, depth + 1);
+            if let Some(set) = memo.get(k) {
+                out.extend(set.iter().cloned());
+            } else if let Some((_, _, t)) = defs.iter().find(|(m, _, _)| m.as_str() == k) {
+                let mut set = BTreeSet::new();
+                local_loads(t, defs, &mut set, depth + 1, memo);
+                out.extend(set.iter().cloned());
+                memo.insert(k.to_string(), set);
             }
-        } else if let Some((loc, v)) = name.strip_prefix("load.").filter(|l| l.starts_with("local.") && !l.contains(".#")).and_then(|l| l.rsplit_once("@v")) {
+        } else if let Some((loc, v)) = name.strip_prefix("load.").filter(|l| l.starts_with("local.") || l.starts_with("workgroup.")).and_then(|l| l.rsplit_once("@v")) {
+            // (An element of a local or workgroup array too, at the array's
+            // version, which every store to an element bumps: `let ts = best[j];
+            // best[j] = cs; cs = ts;`, the v24 reference's insertion, read ts
+            // after the store when inlined, 2026-10-17.)
             if let Ok(v) = v.parse::<u32>() {
-                out.insert((loc.to_string(), v));
+                out.insert((loc.replace(".#", ""), v));
             }
         }
         if let Node::App { kids, .. } = n {
-            kids.iter().for_each(|k| local_loads(k, defs, out, depth));
+            kids.iter().for_each(|k| local_loads(k, defs, out, depth, memo));
         }
     }
     // Where a let's value is evaluated: the points of the roots that read it,
@@ -1409,15 +1417,16 @@ fn lets_used_in_deeper_loops(roots: &[Root], body: &naga::Block, points: &BTreeM
     }
     let at = |p: &Vec<usize>, loc: &str| points.get(p).and_then(|m| m.get(loc)).copied().unwrap_or(0);
     let mut stale = BTreeSet::new();
+    let (mut loads_memo, mut memory_memo) = (HashMap::new(), HashMap::new());
     for i in order {
         let (name, path, tree) = defs[i];
         let def_block = &path[..path.len().saturating_sub(1)];
         let mut loads = BTreeSet::new();
-        local_loads(tree, &defs, &mut loads, 0);
+        local_loads(tree, &defs, &mut loads, 0, &mut loads_memo);
         if !loads.is_empty() && use_points(name, roots, &bound, 0).iter().any(|p| loads.iter().any(|(loc, v)| at(p, loc) != *v)) {
             stale.insert(name.clone());
             bound.insert(name.clone(), path.clone());
-        } else if reads_memory(tree, &defs) && {
+        } else if reads_memory(tree, &defs, &mut memory_memo) && {
             let u = uses(name, roots, body, &bound, 0);
             // Read more than once: inlined, each use reloads it (nluca's
             // generated_step: a gathered state value read three times a slot,
@@ -2180,6 +2189,21 @@ impl<'a> Ctx<'a> {
             // of the kingdom sets one): its literal value.
             if let Some(v) = self.module_constant(&t.name)? {
                 let form = self.kingdom.dual(t.ty).map(|d| d.form.clone()).unwrap_or_default();
+                // A u32 past 2^24 (`const PAD: u32 = 0xFFFFFFFFu`, the v24
+                // reference's pad) is not exact in a literal's f32: its halves,
+                // (hi << 16u) | lo, as a literal in the text is (it rendered 0u
+                // until 2026-10-17); past the exact range otherwise, named.
+                if form != "real" && form != "int" && v > 16_777_216.0 && v <= 4_294_967_295.0 && v.fract() == 0.0 {
+                    let x = v as u64;
+                    let (bits, count) = (ty(self, "u32.bits")?, ty(self, "u32.count")?);
+                    let hi = Tree::literal("literal.bits", bits, (x >> 16) as f32);
+                    let lo = Tree::literal("literal.bits", bits, (x & 0xffff) as f32);
+                    let shl = Tree::new("bits.shl", bits, vec![hi, Tree::literal("literal.count", count, 16.0)]);
+                    return Ok(Tree::new("bits.or", bits, vec![shl, lo]));
+                }
+                if form != "real" && v.abs() > 16_777_216.0 {
+                    return Err(format!("{} = {v} exceeds the exact range of an integer literal (2^24)", t.name));
+                }
                 let row = format!("literal.{form}");
                 if !self.kingdom.rows.iter().any(|r| r.name == row) {
                     return Err(format!("{} = {v}: a literal of form {form} has no row", t.name));
@@ -2264,7 +2288,7 @@ impl<'a> Ctx<'a> {
                     if kind == 't' {
                         let i = self.value(unmasked(i, 15.0))?;
                         let pidx = Tree::new(mask, ty(self, pindex_dual(mask))?, vec![i]);
-                        let whole = Tree::new("parr.get_t", ty(self, "vec2<f32>.real")?, vec![Tree::new(arr, ty(self, parr_dual(kind))?, vec![]), pidx]);
+                        let whole = Tree::new("parr.get_t", ty(self, "vec2<f32>.real")?, vec![Tree::new(arr, ty(self, parr_dual_of(arr, kind))?, vec![]), pidx]);
                         if let Some(lane) = literal_value(unmasked(j, 1.0)).filter(|l| (0.0..=1.0).contains(l)) {
                             return Ok(Tree::new(&format!("shape.access_{}", lane as u32), t.ty, vec![whole]));
                         }
@@ -2276,7 +2300,7 @@ impl<'a> Ctx<'a> {
                     }
                     let i = self.value(unmasked(i, 15.0))?;
                     let pidx = Tree::new(mask, ty(self, pindex_dual(mask))?, vec![i]);
-                    let array = Tree::new(arr, ty(self, parr_dual(kind))?, vec![]);
+                    let array = Tree::new(arr, ty(self, parr_dual_of(arr, kind))?, vec![]);
                     if let Some(lane) = literal_value(unmasked(j, 3.0)).filter(|l| (0.0..=3.0).contains(l)) {
                         let whole = Tree::new("parr.get_v", ty(self, "vec4<f32>.real")?, vec![array, pidx]);
                         return Ok(Tree::new(&format!("shape.access_{}", lane as u32), t.ty, vec![whole]));
@@ -2304,7 +2328,7 @@ impl<'a> Ctx<'a> {
                 let (arr, kind, mask) = self.private_array(&local, &d)?;
                 let idx = self.value(unmasked(&t.kids[0], if mask == "safe.pidx64" { 63.0 } else { 15.0 }))?;
                 let pidx = Tree::new(mask, ty(self, pindex_dual(mask))?, vec![idx]);
-                let arr_dual = parr_dual(kind);
+                let arr_dual = parr_dual_of(arr, kind);
                 return Ok(Tree::new(&format!("parr.get_{kind}"), t.ty, vec![Tree::new(arr, ty(self, arr_dual)?, vec![]), pidx]));
             }
         }
@@ -2401,7 +2425,17 @@ impl<'a> Ctx<'a> {
         if let Some(a) = self.parrs.get(local) {
             return Ok(*a);
         }
+        // The local's declared length: an array longer than the kingdom's
+        // private array of its kind has no spelling (it was masked into a
+        // 16-element one until 2026-10-17: the v24 reference's `var rows:
+        // array<u32, 64>` rendered `array<u32, 16>` indexed `& 15u`).
+        let declared: Option<u32> = local.rsplit('@').next().and_then(|h| h.parse::<usize>().ok()).and_then(|h| self.naga_fn.local_variables.iter().nth(h)).and_then(|(_, lv)| match self.module.types[lv.ty].inner {
+            naga::TypeInner::Array { size: naga::ArraySize::Constant(n), .. } => Some(n.get()),
+            _ => None,
+        });
+        let long_u32 = matches!(elem_dual, "u32.index" | "u32.bits" | "u32.count") && declared.is_some_and(|n| n > 16);
         let (kind, mask) = match elem_dual {
+            _ if long_u32 => ('i', "safe.pidx64"),
             "f32.real" => ('f', "safe.pidx64"),
             "vec4<f32>.real" => ('v', "safe.pidx16"),
             // The kingdom's u32 private arrays (pi, pj, pk), whatever form the
@@ -2415,7 +2449,12 @@ impl<'a> Ctx<'a> {
         // A kernel the kingdom wrote names its private arrays as the rows do
         // (`pk` is parr.k): that row, when free and of the kind.
         let own = format!("parr.{}", local.strip_prefix("local.").and_then(|r| r.split('@').next()).and_then(|n| n.strip_prefix('p')).unwrap_or(""));
+        let capacity = if mask == "safe.pidx64" { 64 } else { 16 };
+        if let Some(n) = declared.filter(|n| *n > capacity) {
+            return Err(format!("a local array {local} of {n} elements is longer than the kingdom's private arrays of its kind ({capacity})"));
+        }
         let rows: &[&'static str] = match kind {
+            _ if long_u32 => &["parr.ua", "parr.uc"],
             'f' => &["parr.a", "parr.b", "parr.c", "parr.d", "parr.e", "parr.f"],
             'v' => &["parr.v", "parr.w", "parr.x", "parr.y"],
             'b' => &["parr.m", "parr.n"],
@@ -2427,6 +2466,7 @@ impl<'a> Ctx<'a> {
             return Ok((arr, kind, mask));
         }
         let arr = match kind {
+            _ if long_u32 => ["parr.ua", "parr.uc"].iter().copied().find(|a| !used.contains(a)).ok_or_else(|| format!("a third 64-element u32 local array {local}"))?,
             'f' => ["parr.a", "parr.b", "parr.c", "parr.d", "parr.e", "parr.f"].iter().copied().find(|a| !used.contains(a)).ok_or_else(|| format!("a seventh f32 local array {local}"))?,
             'v' => ["parr.v", "parr.w", "parr.x", "parr.y"].iter().copied().find(|a| !used.contains(a)).ok_or_else(|| format!("a fifth vec4 local array {local}"))?,
             'b' => ["parr.m", "parr.n"].iter().copied().find(|a| !used.contains(a)).ok_or_else(|| format!("a third bool local array {local}"))?,
@@ -2611,7 +2651,7 @@ impl<'a> Ctx<'a> {
         // other invocations, so it runs only under the guard, as a store of
         // an output does, its old value (when read) in a register set there.
         let storage = matches!(&root.kind, RootKind::Atomic { target, .. } if target.starts_with("buffer."));
-        if let (true, Some(g), Some(level)) = (storage, self.guard.clone(), rung.strip_prefix('L')) {
+        if let (true, Some(g), Some(level)) = (storage, self.guard.clone(), rung.get(1..)) {
             let crung = format!("C{level}");
             let Some(inner) = self.atomic_statement_at(root, result, &crung, false)? else { return Err("our software has a bug: a guarded atomic without its statement".into()) };
             let st = self.stmt_ty(rung)?;
@@ -2771,6 +2811,11 @@ impl<'a> Ctx<'a> {
     /// outer's argument of the same name, `f(x)` calling `g(x)`, expanded
     /// `arg.x` into itself without end: two seeds of v24's run 1, 2026-10-17).
     fn expand_memo_at(&self, t: &Tree, depth: usize) -> Tree {
+        self.built.set(self.built.get() + 1);
+        if self.built.get() > READ_NODE_BOUND {
+            // (Stopped: the walk names it at the statement, see `walk`.)
+            return t.clone();
+        }
         if t.kids.is_empty() {
             // A statement-inlined helper's argument: the caller's expression
             // (fresh48 of run A: `wrow(r, c0)` storing to h[r * d + c0 + j]).
@@ -3576,6 +3621,9 @@ impl<'a> Ctx<'a> {
         // (fresh48's `wrow`) is proved over the caller's row.
         let saved_roots = std::mem::replace(&mut self.roots, &helper.roots);
         let saved_lets = std::mem::replace(&mut self.lets, &helper.lets);
+        let saved_bound = std::mem::replace(&mut self.bound_lets, helper.bound_lets.clone());
+        let saved_stale = std::mem::replace(&mut self.stale_lets, helper.stale_lets.clone());
+        let saved_let_regs = std::mem::take(&mut self.let_regs);
         let saved_calls = std::mem::replace(&mut self.calls, &helper.calls);
         let saved_arg_roots = std::mem::replace(&mut self.arg_roots, &helper.arg_roots);
         let saved_fn = std::mem::replace(&mut self.naga_fn, helper.naga_fn);
@@ -3600,6 +3648,9 @@ impl<'a> Ctx<'a> {
         self.arg_roots = saved_arg_roots;
         self.calls = saved_calls;
         self.lets = saved_lets;
+        self.bound_lets = saved_bound;
+        self.stale_lets = saved_stale;
+        self.let_regs = saved_let_regs;
         self.roots = saved_roots;
         let mut stmts = out.map_err(|e| format!("inlining {callee}: {e}"))?;
         let st = self.stmt_ty(rung)?;
@@ -3667,7 +3718,10 @@ impl<'a> Ctx<'a> {
             let here = path.clone();
             // The lets defined just before this statement whose uses sit in a
             // deeper loop: set once here, as the source computes them.
-            if self.local_prefix.is_empty() {
+            // (A helper inlined as statements binds its own, 2026-10-17: `let v =
+            // wred[0]; workgroupBarrier(); return v;` read wred[0] after the
+            // barrier when inlined at the return, run 1's seeds' reductions.)
+            {
                 let mut here_lets: Vec<String> = self.bound_lets.iter().filter(|(_, p)| **p == here).map(|(n, _)| n.clone()).collect();
                 here_lets.sort_by_key(|n| n.rsplit('@').next().and_then(|i| i.parse::<u32>().ok()).unwrap_or(0));
                 for n in here_lets {
@@ -3693,14 +3747,14 @@ impl<'a> Ctx<'a> {
                         continue;
                     }
                     let v = self.value(&t)?;
-                    let row = self.register(&format!("local.let.{n}"), &d).map_err(|e| format!("let {n}, used in a deeper loop, bound to a register: {e}"))?;
+                    let row = self.register(&format!("local.{}let.{n}", self.local_prefix), &d).map_err(|e| format!("let {n}, used in a deeper loop, bound to a register: {e}"))?;
                     let kind = row.chars().nth(4).unwrap_or('f');
                     out.push(Tree::new(&format!("reg.set_{kind}_{rung}"), st, vec![Tree::new(&row, ty(self, Self::reg_dual(kind))?, vec![]), v]));
                     // The ownership proof sees through the register to what it
                     // holds, as for a local (a let never changes in its scope).
                     let held = self.expand_memo(&t);
                     if held.size() <= 512 {
-                        self.axis_memo.insert(format!("local.let.{n}"), (held, self.loop_depth));
+                        self.axis_memo.insert(format!("local.{}let.{n}", self.local_prefix), (held, self.loop_depth));
                     }
                     self.let_regs.insert(n, row);
                 }
@@ -3715,6 +3769,9 @@ impl<'a> Ctx<'a> {
                 out.push(t);
                 path.pop();
                 return Ok(out);
+            }
+            if self.built.get() > READ_NODE_BOUND {
+                return Err(format!("our software has a bug: reading this kernel built more than {READ_NODE_BOUND} nodes (an expansion without end); the read is stopped"));
             }
             let result: Result<Option<Tree>, String> = (|| {
                 match stmt {
@@ -4103,7 +4160,7 @@ impl<'a> Ctx<'a> {
                         let v = self.value(v)?;
                         let idx = Tree::literal("literal.index", ty(self, "u32.index")?, i as f32);
                         let pidx = Tree::new(mask, ty(self, pindex_dual(mask))?, vec![idx]);
-                        out.push(Tree::new(&format!("parr.set_{kind}_{rung}"), st, vec![Tree::new(arr, ty(self, parr_dual(kind))?, vec![]), pidx, v]));
+                        out.push(Tree::new(&format!("parr.set_{kind}_{rung}"), st, vec![Tree::new(arr, ty(self, parr_dual_of(arr, kind))?, vec![]), pidx, v]));
                     }
                     return Ok(out);
                 }
@@ -4179,14 +4236,16 @@ impl<'a> Ctx<'a> {
                 }
                 Ok(Tree::new(&format!("stmt.block_{r}"), ctx.stmt_ty(r)?, vec![ctx.block(list, r)?]))
             };
+            // (Under a condition too: a store in `if (t == 0u) { .. }` after the
+            // guard ran in the threads the guard returned, 9 of run 1's seeds'
+            // renderings wrote rows not arrived, 2026-10-17.)
             return match self.guard.clone() {
-                Some(g) if !rung.starts_with('C') => {
-                    let level = &rung[1..];
-                    let crung = format!("C{level}");
+                Some(g) => {
+                    let crung = format!("C{}", &rung[1..]);
                     let inner = self.block(vec![stores(self, &crung)?], &crung)?;
                     Ok(Some(Tree::new(&format!("stmt.if_{rung}"), st, vec![g, inner])))
                 }
-                _ => Ok(Some(stores(self, rung)?)),
+                None => Ok(Some(stores(self, rung)?)),
             };
         }
         // A store of an output at any index (an inferred interface's
@@ -4200,12 +4259,12 @@ impl<'a> Ctx<'a> {
                 let v = self.value(value)?;
                 let store = |ctx: &Self, r: &str| -> Result<Tree, String> { Ok(Tree::new(&format!("store.{b}_{r}"), ctx.stmt_ty(r)?, vec![i.clone(), v.clone()])) };
                 return match self.guard.clone() {
-                    Some(g) if !rung.starts_with('C') => {
+                    Some(g) => {
                         let crung = format!("C{}", &rung[1..]);
                         let inner = self.block(vec![store(self, &crung)?], &crung)?;
                         Ok(Some(Tree::new(&format!("stmt.if_{rung}"), st, vec![g, inner])))
                     }
-                    _ => Ok(Some(store(self, rung)?)),
+                    None => Ok(Some(store(self, rung)?)),
                 };
             }
         }
@@ -4270,7 +4329,7 @@ impl<'a> Ctx<'a> {
                     let j = self.value(unmasked(j, 3.0))?;
                     let v = self.value(value)?;
                     let pidx = Tree::new(mask, ty(self, pindex_dual(mask))?, vec![i]);
-                    return Ok(Some(Tree::new(&format!("parr.set_v_lane_{rung}"), st, vec![Tree::new(arr, ty(self, parr_dual(kind))?, vec![]), pidx, j, v])));
+                    return Ok(Some(Tree::new(&format!("parr.set_v_lane_{rung}"), st, vec![Tree::new(arr, ty(self, parr_dual_of(arr, kind))?, vec![]), pidx, j, v])));
                 }
                 if self.local_lanes.get(&base) == Some(&4) && self.local_vec_uint(&base) {
                     return Err(format!("a store to one lane of the vec4<u32> local {base} (the kingdom writes a vec4<u32> register whole)"));
@@ -4305,7 +4364,7 @@ impl<'a> Ctx<'a> {
                 let i = self.value(unmasked(idx, if mask == "safe.pidx64" { 63.0 } else { 15.0 }))?;
                 let v = self.value(value)?;
                 let pidx = Tree::new(mask, ty(self, pindex_dual(mask))?, vec![i]);
-                let arr_dual = parr_dual(kind);
+                let arr_dual = parr_dual_of(arr, kind);
                 return Ok(Some(Tree::new(&format!("parr.set_{kind}_{rung}"), st, vec![Tree::new(arr, ty(self, arr_dual)?, vec![]), pidx, v])));
             }
         }
@@ -5449,10 +5508,9 @@ pub fn read_safe_literal(source: &str, kingdom: &WgslKingdom) -> Result<SafeRead
     // The interface's names as the kingdom's canonical roles (its input is
     // phi, its output h, its uniform cfg with the fields d, m, r_rows, r_off),
     // so the ownership proof and the safe rows read every interface alike.
-    let atomic_arrays: BTreeMap<String, Option<u32>> = role.bindings.iter().filter(|b| crate::wgsl::render::atomic_array_access(b).is_some()).map(|b| (b.name.clone(), b.ty.rsplit_once(", ").and_then(|(_, n)| n.trim_end_matches('>').parse().ok()))).collect();
     for f in &mut kernel.functions {
         for r in &mut f.roots {
-            r.tree = unclamp_atomic_indices(&floor_differences(&canonical_node(&r.tree, &role)), &atomic_arrays);
+            r.tree = floor_differences(&canonical_node(&r.tree, &role));
             match &mut r.kind {
                 RootKind::Store { target } | RootKind::Atomic { target, .. } => *target = canonical_name(target, &role),
                 _ => {}
@@ -5613,7 +5671,8 @@ fn read_entry(at: &Reading, ep: usize, (grid, rows_x): ((u32, u32, u32, u32), bo
         let ret_dual = nf.result.as_ref().and_then(|r| dual_of_type(&kernel.module, r.ty));
         let types = infer_function(hf, kingdom);
         helper_duals.extend(types.by_text.iter().map(|(text, set)| (text.clone(), choose_dual(set, kingdom))));
-        helpers.insert(name, Helper { args, body, lets, pure, composite, row, roots, inits, uninit, local_lanes, calls: hf.calls.clone(), arg_roots, block: &nf.body, naga_fn: nf, ret_dual });
+        let (bound_lets, stale_lets) = lets_used_in_deeper_loops(&hf.roots, &nf.body, &hf.points);
+        helpers.insert(name, Helper { args, body, lets, pure, composite, row, roots, inits, uninit, local_lanes, calls: hf.calls.clone(), arg_roots, block: &nf.body, naga_fn: nf, ret_dual, bound_lets, stale_lets });
     }
     // Roots by statement path; lets by name; duals by text (one form, else untyped).
     let mut roots: HashMap<Vec<usize>, Vec<&Root>> = HashMap::new();
@@ -5657,7 +5716,7 @@ fn read_entry(at: &Reading, ep: usize, (grid, rows_x): ((u32, u32, u32, u32), bo
     let main_returns = source.find(&format!("fn {}(", entry.name)).map(|i| &source[i..]).and_then(|m| m.rfind('}').map(|j| &m[..j])).is_some_and(|m| m.trim_end().ends_with("return;"));
     let uniform_lanes = if role.uniform_struct.is_empty() { role.fields.iter().map(|f| f.name.clone()).collect() } else { Vec::new() };
     let (arrays, array_lens) = arrays;
-    let mut ctx = Ctx { kingdom, main_returns, per_kernel_rows: crate::wgsl::safe_karva::per_kernel_rows(kingdom, role), uniform_var: role.uniform_var.clone(), uniform_lanes, duals: &duals, lets: &lets, roots: &roots, item_counter: None, tile_counter: None, tile_counter2: None, tile_counter3: None, tile_counter4: None, registers: BTreeMap::new(), counter_stores: Vec::new(), guard: None, tail: true, arrays, array_lens, arrays_used: BTreeSet::new(), parrs: BTreeMap::new(), grid, rows_x: rows_x.then_some(true), notes: Vec::new(), helpers: &helpers, calls: &calls, arg_roots: &arg_roots, inline_args: None, early_return_at: None, outer_args: Vec::new(), row_arrays: BTreeMap::new(), used_counters: std::collections::BTreeSet::new(), local_lanes, axis_memo: BTreeMap::new(), loop_depth: 0, tile_bounds: BTreeMap::new(), naga_fn, module: &kernel.module, local_prefix: String::new(), inline_result: None, inline_values: None, bound_lets, stale_lets, let_regs: HashMap::new(), inlined: HashMap::new(), stored_seen: std::collections::BTreeSet::new(), counter_offsets: HashMap::new(), counter_exprs: HashMap::new(), pointer_args: HashMap::new(), mode_full: source.lines().any(|l| l.trim() == "// mode full") };
+    let mut ctx = Ctx { kingdom, main_returns, per_kernel_rows: crate::wgsl::safe_karva::per_kernel_rows(kingdom, role), uniform_var: role.uniform_var.clone(), uniform_lanes, duals: &duals, lets: &lets, roots: &roots, item_counter: None, tile_counter: None, tile_counter2: None, tile_counter3: None, tile_counter4: None, registers: BTreeMap::new(), counter_stores: Vec::new(), guard: None, tail: true, arrays, array_lens, arrays_used: BTreeSet::new(), parrs: BTreeMap::new(), grid, rows_x: rows_x.then_some(true), notes: Vec::new(), helpers: &helpers, calls: &calls, arg_roots: &arg_roots, inline_args: None, built: std::cell::Cell::new(0), early_return_at: None, outer_args: Vec::new(), row_arrays: BTreeMap::new(), used_counters: std::collections::BTreeSet::new(), local_lanes, axis_memo: BTreeMap::new(), loop_depth: 0, tile_bounds: BTreeMap::new(), naga_fn, module: &kernel.module, local_prefix: String::new(), inline_result: None, inline_values: None, bound_lets, stale_lets, let_regs: HashMap::new(), inlined: HashMap::new(), stored_seen: std::collections::BTreeSet::new(), counter_offsets: HashMap::new(), counter_exprs: HashMap::new(), pointer_args: HashMap::new(), mode_full: source.lines().any(|l| l.trim() == "// mode full") };
     // Register initialisations first, in root order. A local initialised to
     // its form's fallback (0.0, 0u, false, a zero vector) costs nothing: the
     // register's declaration already holds that value, and the register is
@@ -6467,7 +6526,7 @@ fn ingest(@builtin(global_invocation_id) gid: vec3<u32>) {
     /// 2026-10-17): an index arena declared `array<atomic<u32>>` (and an
     /// `array<atomic<i32>>`) reads as the interface's per-kernel rows, every
     /// atomic after the thread guard under it; the text renders each index
-    /// clamped to the binding, naga validates it, it reads back to the same
+    /// as written, naga validates it, it reads back to the same
     /// tree, and the checker passes every layer. A compare-exchange is named.
     #[test]
     fn storage_atomics_on_an_array_read_render_and_read_back_to_the_same_tree() {
@@ -6480,7 +6539,7 @@ fn ingest(@builtin(global_invocation_id) gid: vec3<u32>) {
             assert!(sx.contains(want), "{want}: {sx}");
         }
         let out = crate::wgsl::safe_karva::render_tree_with(&r.tree, &k, &r.role).unwrap_or_else(|e| panic!("{e}"));
-        for want in ["var<storage, read_write> index_u32: array<atomic<u32>>;", "atomicAdd(&index_u32[min(", ", arrayLength(&index_u32) - 1u)], ", "atomicStore(&index_u32[min(", "atomicLoad(&index_u32[min(", "atomicAdd(&score[min(", "fn ingest("] {
+        for want in ["var<storage, read_write> index_u32: array<atomic<u32>>;", "atomicAdd(&index_u32[", "atomicStore(&index_u32[", "atomicLoad(&index_u32[", "atomicAdd(&score[", "fn ingest("] {
             assert!(out.text.contains(want), "{want}:\n{}", out.text);
         }
         validate_text(&out.text).unwrap_or_else(|e| panic!("{e}\n{}", out.text));
@@ -6555,7 +6614,7 @@ fn search(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocati
         assert_eq!(ds.len(), 2, "{ds:?}");
         assert_eq!(di.iter().filter(|d| ds.contains(d)).count(), 1, "one shared variable: {di:?} {ds:?}");
         let out = crate::wgsl::safe_karva::render_tree_with(&r.tree, &k, &r.role).unwrap_or_else(|e| panic!("{e}"));
-        for want in ["// entry ingest grid 64 1 1 1", "// entry search grid 32 1 1 1", "@workgroup_size(64, 1, 1)\nfn ingest(", "@workgroup_size(32, 1, 1)\nfn search(", "atomicAdd(&index_u32[min(", "atomicLoad(&index_u32[min(", "cands["] {
+        for want in ["// entry ingest grid 64 1 1 1", "// entry search grid 32 1 1 1", "@workgroup_size(64, 1, 1)\nfn ingest(", "@workgroup_size(32, 1, 1)\nfn search(", "atomicAdd(&index_u32[", "atomicLoad(&index_u32[", "cands["] {
             assert!(out.text.contains(want), "{want}:\n{}", out.text);
         }
         for once in ["struct Cfg", "var<storage, read_write> index_u32", "var<workgroup> wg_ua: array<u32, 64>;"] {
@@ -6633,6 +6692,136 @@ fn search(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocati
         println!("random modules: {read_back} of {n} read back; {same} to the tree drawn (canonical); {fixpoint} to a fixpoint; {legal} pass every layer under a 1-D contract");
         assert!(failures.is_empty(), "{} of {n}:\n{}", failures.len(), failures.iter().take(10).cloned().collect::<Vec<_>>().join("\n"));
         assert!(same >= MODULE_AST_FLOOR && fixpoint >= MODULE_FIXPOINT_FLOOR && legal >= MODULE_LEGAL_FLOOR, "below the floors reached: AST {same} (floor {MODULE_AST_FLOOR}), fixpoint {fixpoint} ({MODULE_FIXPOINT_FLOOR}), legal {legal} ({MODULE_LEGAL_FLOOR})");
+    }
+
+    /// A kernel's rendering run beside the kernel on the CPU executor, entry
+    /// point by entry point from the same inputs (`roundtrip::inputs`): Ok
+    /// when every storage buffer holds the same bits after each, else the
+    /// first entry point, buffer and word that differ; Ok(false) when the
+    /// CPU executor cannot run the source itself (nothing to compare).
+    /// (`roundtrip::same_values` runs a module's first entry point only.)
+    fn same_values_every_entry(src: &str, k: &WgslKingdom, workgroups: [u32; 3]) -> Result<bool, String> {
+        let read = read_safe(src, k)?;
+        let rendered = crate::wgsl::safe_karva::render_tree_with(&read.tree, k, &read.role)?.text;
+        let a = naga::front::wgsl::parse_str(src).map_err(|e| e.emit_to_string(src))?;
+        let b = naga::front::wgsl::parse_str(&rendered).map_err(|e| format!("{}\n{rendered}", e.emit_to_string(&rendered)))?;
+        let t = crate::wgsl::roundtrip::Trial::default();
+        let inputs = crate::wgsl::roundtrip::inputs(&a, &t)?;
+        let storage: Vec<String> = a.global_variables.iter().filter(|(_, g)| matches!(g.space, naga::AddressSpace::Storage { .. })).filter_map(|(_, g)| g.name.clone()).collect();
+        for entry in crate::wgsl::interface::compute_entries(&a) {
+            let Ok(ra) = crate::wgsl::cpu::run_entry(&a, &entry, inputs.clone(), workgroups, t.max_steps) else { return Ok(false) };
+            let rb = crate::wgsl::cpu::run_entry(&b, &entry, inputs.clone(), workgroups, t.max_steps).map_err(|e| format!("{entry}: the rendering does not run: {e}"))?;
+            for name in &storage {
+                let (mut wa, mut wb) = (Vec::new(), Vec::new());
+                if let Some(v) = ra.buffers.get(name) {
+                    v.words(&mut wa);
+                }
+                if let Some(v) = rb.buffers.get(name) {
+                    v.words(&mut wb);
+                }
+                if let Some(i) = (0..wa.len().max(wb.len())).find(|&i| wa.get(i) != wb.get(i)) {
+                    return Err(format!("{entry}: {name}[{i}] is {:?} in the source, {:?} in the rendering\n{rendered}", wa.get(i), wb.get(i)));
+                }
+            }
+        }
+        Ok(true)
+    }
+
+    /// THE EMITTER COMPUTES WHAT THE KERNEL COMPUTES (2026-10-17, the
+    /// harness agent's repro: run 1's rendering of the v24 reference gave ~2
+    /// candidates a query against the text's 100). Three faults, each in a
+    /// kernel run beside its rendering on the CPU executor: a 64-element u32
+    /// local array (it was read into a 16-element private array, `& 15u`); a
+    /// swap through lets of array elements stored before the lets' uses
+    /// (`let ts = best[j]; best[j] = cs; cs = ts;`: the lets were inlined
+    /// after the stores); a u32 constant past 2^24 (`const PAD: u32 =
+    /// 0xFFFFFFFFu`, rendered 0u). And the v24 reference itself.
+    #[test]
+    fn the_rendering_computes_the_kernels_values() {
+        let k = WgslKingdom::load_safe();
+        let src = "const PAD: u32 = 0xFFFFFFFFu;
+@group(0) @binding(0) var<storage, read> x: array<f32>;
+@group(0) @binding(1) var<storage, read_write> out_s: array<f32>;
+@group(0) @binding(2) var<storage, read_write> out_r: array<u32>;
+@compute @workgroup_size(4, 1, 1)
+fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+    var best: array<f32, 64>;
+    var rows: array<u32, 64>;
+    for (var j = 0u; j < 64u; j++) { best[j] = -1.0; rows[j] = PAD; }
+    for (var i = 0u; i < 40u; i++) {
+        var cs = x[(gid.x * 40u + i) & 63u];
+        var cr = i;
+        for (var j = 0u; j < 64u; j++) {
+            if (cs > best[j]) {
+                let ts = best[j];
+                let tr = rows[j];
+                best[j] = cs;
+                rows[j] = cr;
+                cs = ts;
+                cr = tr;
+            }
+        }
+    }
+    for (var j = 0u; j < 64u; j++) {
+        out_s[gid.x * 64u + j] = best[j];
+        out_r[gid.x * 64u + j] = select(rows[j], 7u, rows[j] == PAD);
+    }
+}
+";
+        assert!(same_values_every_entry(src, &k, [1, 1, 1]).unwrap_or_else(|e| panic!("{e}")), "the source runs on the CPU");
+        let reference = std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("problems/v24_ingest_small/reference.wgsl")).expect("the v24 reference");
+        assert!(same_values_every_entry(&reference, &k, [2, 1, 1]).unwrap_or_else(|e| panic!("the v24 reference: {e}")), "the reference runs on the CPU");
+    }
+
+    /// A READ NEVER RUNS UNBOUNDED (2026-10-17, after run 1's 03:15Z hang):
+    /// a kernel whose lets double at each step (`let a1 = c + c;`, then
+    /// `let a2 = a1 + a1;` and on, over a uniform, inlined: 2^40 nodes) is
+    /// stopped at READ_NODE_BOUND, by name, within a minute.
+    #[test]
+    fn a_read_that_would_expand_without_end_is_stopped_by_name() {
+        let k = WgslKingdom::load_safe();
+        let mut body = String::from("    let a0 = cfg.m + 1u;\n");
+        for i in 1..=40 {
+            body.push_str(&format!("    let a{i} = a{} + a{};\n", i - 1, i - 1));
+        }
+        let src = format!("struct Cfg {{ d: u32, m: u32, r_rows: u32, r_off: u32, }};\n@group(0) @binding(0) var<storage, read> phi: array<f32>;\n@group(0) @binding(1) var<storage, read_write> out: array<u32>;\n@group(0) @binding(2) var<uniform> cfg: Cfg;\n@compute @workgroup_size(64, 1, 1)\nfn main(@builtin(global_invocation_id) gid: vec3<u32>) {{\n{body}    out[gid.x] = a40;\n}}\n");
+        let t0 = std::time::Instant::now();
+        let Err(e) = read_safe(&src, &k) else { panic!("a 2^40-node read finished") };
+        assert!(e.contains("built more than") && e.contains("the read is stopped"), "{e}");
+        assert!(t0.elapsed().as_secs() < 60, "stopped after {:?}", t0.elapsed());
+        println!("stopped by name after {:?}", t0.elapsed());
+    }
+
+    /// RUN 1'S SEEDS RENDER TO THEIR OWN VALUES (2026-10-17): every raw model
+    /// seed of logs/V24/run1/raw that the reader reads is run beside its
+    /// rendering on the CPU executor, each entry point from the same inputs;
+    /// every one the CPU executor runs computes the same storage buffers.
+    /// (Run from the rendering, a seed is the kernel the evolution sees.)
+    #[test]
+    fn run_ones_readable_seeds_render_to_their_own_values() {
+        let k = WgslKingdom::load_safe();
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("logs/V24/run1/raw");
+        let mut files: Vec<_> = std::fs::read_dir(&dir).unwrap_or_else(|e| panic!("{}: {e}", dir.display())).flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "wgsl")).collect();
+        files.sort();
+        let (mut read, mut same, mut not_runnable) = (0usize, 0usize, 0usize);
+        let mut differ = Vec::new();
+        for f in &files {
+            let src = std::fs::read_to_string(f).unwrap();
+            if read_safe(&src, &k).is_err() {
+                continue;
+            }
+            read += 1;
+            match same_values_every_entry(&src, &k, [2, 1, 1]) {
+                Ok(true) => same += 1,
+                Ok(false) => {
+                    not_runnable += 1;
+                    println!("not runnable on the CPU: {}", f.file_name().unwrap().to_string_lossy());
+                }
+                Err(e) => differ.push(format!("{}: {}", f.file_name().unwrap().to_string_lossy(), e.lines().next().unwrap_or(""))),
+            }
+        }
+        println!("run 1's seeds: {} files, {read} read, {same} render to their own values, {not_runnable} not runnable on the CPU", files.len());
+        assert!(differ.is_empty(), "{} of {read} differ:\n{}", differ.len(), differ.join("\n"));
     }
 
     /// A LOOP THAT BREAKS, STEPPED BY A LITERAL (2026-10-17, 4 of run 1's

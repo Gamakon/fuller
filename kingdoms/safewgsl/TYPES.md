@@ -297,8 +297,9 @@ A type is a dual `slot.form`: the slot is what the hardware stores, the form is 
 | T186 | `u32.wgown` | `u32` | `wgown` | 1 | `the thread's own first element (lidx)` | 0 | 0 | 0 |
 | T187 | `kernel.module` | `kernel` | `module` | 0 | `an empty kernel at each of the interface's entry points` | 0 | 0 | 0 |
 | T188 | `bool.uflag` | `bool` | `uflag` | 1 | `false` | 0 | 0 | 0 |
+| T189 | `parr64<u32>.index` | `parr64<u32>` | `index` | 0 | `0u` | 0 | 0 | 0 |
 
-188 duals. The fallback is what Design C's projection substitutes for a codon whose dual does not match the demand; the codon is counted as masked.
+189 duals. The fallback is what Design C's projection substitutes for a codon whose dual does not match the demand; the codon is counted as masked.
 
 The three machine columns (`fallback_bits`, `fallback_noop`, `fallback_elem` in `types.tsv`) are what the loader builds the fallback leaf from, never the prose: `bits` is the lane's 32-bit pattern as an unsigned integer, repeated across the lanes of a vector or matrix (only `bool.sign` is non-zero, true = +1); `noop` is 1 for `store.store`, which substitutes no value at all; `elem` is 1 for `array<T>`, whose fallback is its element's. The loader tests `noop` and `elem` before reading `bits`; for those two rows `bits` is a placeholder 0. Every substitution, whichever column decides it, counts the codon as masked.
 
@@ -312,4 +313,4 @@ A u32 wrap in index arithmetic at the worst shape is illegal everywhere (Codex's
 
 ## Not in the table
 
-Images, samplers, ray queries, binding arrays, pointers as values, non-square `f16` matrices. Storage-buffer atomics are the per-kernel rows of an interface that declares an atomic binding (`render::Role::interface`: a scalar `atomic<u32>`, or an array of atomics whose every index is clamped to the binding), not rows of this table.
+Images, samplers, ray queries, binding arrays, pointers as values, non-square `f16` matrices. Storage-buffer atomics are the per-kernel rows of an interface that declares an atomic binding (`render::Role::interface`: a scalar `atomic<u32>`, or an array of atomics at any index, the bounds policy deciding an access past it), not rows of this table.

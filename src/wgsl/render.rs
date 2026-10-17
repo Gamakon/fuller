@@ -188,10 +188,8 @@ impl Role {
             }
         }
         // A storage ARRAY of atomics (`array<atomic<u32>>`, v24's index arena,
-        // 2026-10-17): its element at an index proved in bounds, as the
-        // kingdom masks a workgroup array's (here clamped to the binding's
-        // last element, `min(i, arrayLength(&a) - 1u)`, the value wgpu's
-        // `Restrict` bounds check gives an index past it): atomicLoad
+        // 2026-10-17): its element at the index as written (the bounds policy
+        // decides an access past the binding, as for any storage access): atomicLoad
         // (`load.<name>`), atomicStore at every statement rung
         // (`store.<name>_<rung>`), and the read-modify-writes returning the
         // old value (`atomic.<name>_<fun>`). Every access to such a binding
@@ -220,9 +218,8 @@ pub const ATOMIC_FUNS: [(&str, &str); 8] = [("add", "atomicAdd"), ("sub", "atomi
 
 /// A storage binding that is an array of atomics (`array<atomic<u32>>`,
 /// `array<atomic<i32>, 1024>` in a `read_write` buffer): its element's value
-/// dual and the text of an element index clamped to the binding, `{0}` the
-/// index (`min({0}, arrayLength(&a) - 1u)`, or `min({0}, 1023u)` for a fixed
-/// length). None for any other binding.
+/// dual and the text of an element index, `{0}` the index as written. None
+/// for any other binding.
 pub fn atomic_array_access(b: &Binding) -> Option<(&'static str, String)> {
     if b.space != "storage, read_write" {
         return None;
@@ -237,11 +234,13 @@ pub fn atomic_array_access(b: &Binding) -> Option<(&'static str, String)> {
         "atomic<i32>" => "i32.int",
         _ => return None,
     };
-    let last = match len {
-        Some(n) => format!("{}u", n.checked_sub(1)?),
-        None => format!("arrayLength(&{}) - 1u", b.name),
-    };
-    Some((value, format!("min({{0}}, {last})")))
+    // The index as written: an access past the binding is the bounds policy's
+    // (wgpu drops the write, reads zero), as for every other storage access.
+    // Clamped to the last element (2026-10-17, until the CPU round trip by
+    // value showed it moved 20 of run 1's seeds' dropped writes onto that
+    // element) it computed something else.
+    len.map_or(Some(()), |n| (n >= 1).then_some(()))?;
+    Some((value, "{0}".to_string()))
 }
 
 impl Role {
@@ -2933,7 +2932,7 @@ impl Renderer<'_> {
 pub fn parr_var(kingdom: &WgslKingdom, t: &Tree) -> Result<&'static str, String> {
     if t.name == "fallback" {
         let d = kingdom.dual(t.ty).map(|d| d.dual.clone()).unwrap_or_default();
-        return Ok(if d.starts_with("parr<vec2") { "pq" } else if d.starts_with("parr<vec") { "pv" } else if d.starts_with("parr<u32>") { "pi" } else if d.starts_with("parr<bool>") { "pm" } else { "pa" });
+        return Ok(if d.starts_with("parr64<u32>") { "pua" } else if d.starts_with("parr<vec2") { "pq" } else if d.starts_with("parr<vec") { "pv" } else if d.starts_with("parr<u32>") { "pi" } else if d.starts_with("parr<bool>") { "pm" } else { "pa" });
     }
     parr_name(t)
 }
@@ -2975,7 +2974,7 @@ pub fn register_declarations() -> String {
     }
     out.push_str("    var t: u32 = 0u; var k: u32 = 0u; var k2: u32 = 0u; var k3: u32 = 0u; var k4: u32 = 0u;\n");
     out.push_str("    var pa: array<f32, 64>; var pb: array<f32, 64>; var pc: array<f32, 64>; var pd: array<f32, 64>; var pe: array<f32, 64>; var pf: array<f32, 64>;\n");
-    out.push_str("    var pv: array<vec4<f32>, 16>; var pw: array<vec4<f32>, 16>; var px: array<vec4<f32>, 16>; var py: array<vec4<f32>, 16>; var pi: array<u32, 16>; var pj: array<u32, 16>; var pk: array<u32, 16>; var pm: array<bool, 16>; var pn: array<bool, 16>; var pq: array<vec2<f32>, 16>; var pr: array<vec2<f32>, 16>;\n");
+    out.push_str("    var pv: array<vec4<f32>, 16>; var pw: array<vec4<f32>, 16>; var px: array<vec4<f32>, 16>; var py: array<vec4<f32>, 16>; var pi: array<u32, 16>; var pj: array<u32, 16>; var pk: array<u32, 16>; var pm: array<bool, 16>; var pn: array<bool, 16>; var pq: array<vec2<f32>, 16>; var pr: array<vec2<f32>, 16>; var pua: array<u32, 64>; var puc: array<u32, 64>;\n");
     out
 }
 
@@ -3019,7 +3018,7 @@ pub fn array_len(name: &str) -> u32 {
         "wg_a" | "wg_b" | "wg_c" | "wg_d" | "wg_e" | "wg_f" | "wg_g" | "wg_h" | "wg_ua" | "wg_ub" | "wg_uc" | "wg_ud" | "wg_ue" | "wg_uf" | "wg_ug" | "wg_uh" => WGMEM_LEN,
         n if n.starts_with("wg_v2") => 1024,
         n if n.starts_with("wg_v") => WGVEC_LEN,
-        "pa" | "pb" | "pc" | "pd" | "pe" | "pf" => 64,
+        "pa" | "pb" | "pc" | "pd" | "pe" | "pf" | "pua" | "puc" => 64,
         _ => 16,
     }
 }
@@ -3038,6 +3037,8 @@ fn parr_name(t: &Tree) -> Result<&'static str, String> {
         "parr.e" => "pe",
         "parr.f" => "pf",
         "parr.i" => "pi",
+        "parr.ua" => "pua",
+        "parr.uc" => "puc",
         "parr.j" => "pj",
         "parr.k" => "pk",
         "parr.m" => "pm",
@@ -3231,7 +3232,9 @@ fn sample_with(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, s
     // more lists: the draws stay those of the floors below.)
     // (Nor, yet, the stepped loops that break, 2026-10-17, read from model
     // seeds: drawn, 14 of 1,000 random trees did not read back; open.)
-    let not_drawn = |r: &WgslRow| uniform_test_op(safe_base(&r.name)).is_some() || r.name.starts_with("loop.tilex_strided_brk_") || matches!(safe_base(&r.name), "stmt.if_uflag" | "stmt.if_else_uflag") || matches!(r.name.as_str(), "convert.index_to_count" | "wg.ue" | "wg.uf" | "wg.ug" | "wg.uh" | "wg.e" | "wg.f" | "wg.g" | "wg.h") || (r.name == "wg.get_u_safe" && kingdom.dual(r.output).is_some_and(|d| d.form == "xbound"));
+    // (Nor the 64-element u32 private arrays, read from kernels that keep one.)
+    let long_u32 = |t: &Ty| kingdom.dual(*t).is_some_and(|d| d.dual == "parr64<u32>.index");
+    let not_drawn = |r: &WgslRow| uniform_test_op(safe_base(&r.name)).is_some() || long_u32(&r.output) || r.inputs.iter().any(long_u32) || r.name.starts_with("loop.tilex_strided_brk_") || matches!(safe_base(&r.name), "stmt.if_uflag" | "stmt.if_else_uflag") || matches!(r.name.as_str(), "convert.index_to_count" | "wg.ue" | "wg.uf" | "wg.ug" | "wg.uh" | "wg.e" | "wg.f" | "wg.g" | "wg.h") || (r.name == "wg.get_u_safe" && kingdom.dual(r.output).is_some_and(|d| d.form == "xbound"));
     let mut rows: Vec<WgslRow> = kingdom.rows.iter().filter(|r| !f16(&r.output) && !r.inputs.iter().any(f16) && !r.name.starts_with("stmt.return") && !r.name.starts_with("safe.mirror_of") && !r.name.starts_with("store.h_mirror") && !not_drawn(r) && !r.name.starts_with("wg.set")).cloned().collect();
     // The safe kingdom reads h only at the thread's own cell (load.h_safe):
     // the role's load.h, h at any index, is the plain kingdom's (the

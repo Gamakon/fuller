@@ -643,8 +643,9 @@ mod tests {
         // 184 with the mirror of a thread's cell (u32.mirror, the symmetric half, 2026-10-14).
         // 185 with a workgroup element a thread owns (u32.wgown, the workgroup put, 2026-10-14).
         // 186 with the workgroup arrays of indices (wgmem<u32>.index, 2026-10-16).
-        // 187 with the module of several entry points (kernel.module, 2026-10-17); 188 with bool.uflag.
-        assert_eq!(s.len(), 188);
+        // 187 with the module of several entry points (kernel.module, 2026-10-17); 188 with bool.uflag;
+        // 189 with the 64-element u32 private array (parr64<u32>.index).
+        assert_eq!(s.len(), 189);
         for (a, b) in w.iter().zip(&s) {
             assert_eq!((a.reference.as_str(), a.dual.as_str()), (b.reference.as_str(), b.dual.as_str()));
         }
@@ -685,8 +686,9 @@ mod tests {
         // 1,646 with their else forms (24 stmt.if_else_ule/ueq/une/ult); 1,647 with an index read as a count;
         // 1,651 with four more u32 workgroup arrays (wg.ue..uh); 1,672 with the workgroup-uniform
         // predicate (9 uflag rows, 12 stmt.if_uflag / if_else_uflag); 1,677 with wg.e..h and a
-        // workgroup u32 as a loop bound's value; 1,687 with the stepped loops that break.
-        assert_eq!(fs.rows.len(), 1687);
+        // workgroup u32 as a loop bound's value; 1,687 with the stepped loops that break; 1,702 with
+        // the 64-element u32 private arrays (parr.ua, parr.uc, their get and 12 sets).
+        assert_eq!(fs.rows.len(), 1702);
         let dual = |t: Ty| k.dual(t).unwrap().dual.clone();
         let producers = |d: &str| -> Vec<String> { k.rows.iter().filter(|r| dual(r.output) == d).map(|r| r.name.clone()).collect() };
         assert_eq!(producers("kernel.safe"), vec!["kernel.entry_safe"]);

@@ -3154,4 +3154,24 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 | F1686 | `stmt.if_uflag_L5` | `composite` | `bool.uflag block.L5` | `stmt.L5` | 2 | if (c) { ... } over a workgroup-uniform predicate: the body keeps the rung |
 | F1687 | `stmt.if_else_uflag_L5` | `composite` | `bool.uflag block.L5 block.L5` | `stmt.L5` | 3 | arity 3: if (c) { ... } else { ... } over a workgroup-uniform predicate: both bodies keep the rung |
 
-1687 function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Storage-buffer atomics are an interface's per-kernel rows, not rows of this table. Deliberately absent: atomic compare-exchange (naga 0.20's Metal backend lacks it), subgroupBallot, images, derivatives, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.
+## class `parr`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F1688 | `parr.ua` | `composite` | `-` | `parr64<u32>.index` | 0 | private array pua of 64 u32 |
+| F1689 | `parr.uc` | `composite` | `-` | `parr64<u32>.index` | 0 | private array puc of 64 u32 |
+| F1690 | `parr.get_i` | `composite` | `parr64<u32>.index u32.pindex` | `u32.index` | 2 | pua[i] |
+| F1691 | `parr.set_i_L0` | `composite` | `parr64<u32>.index u32.pindex u32.index` | `stmt.L0` | 3 | arity 3: pua[i] = v |
+| F1692 | `parr.set_i_L1` | `composite` | `parr64<u32>.index u32.pindex u32.index` | `stmt.L1` | 3 | arity 3: pua[i] = v |
+| F1693 | `parr.set_i_L2` | `composite` | `parr64<u32>.index u32.pindex u32.index` | `stmt.L2` | 3 | arity 3: pua[i] = v |
+| F1694 | `parr.set_i_L3` | `composite` | `parr64<u32>.index u32.pindex u32.index` | `stmt.L3` | 3 | arity 3: pua[i] = v |
+| F1695 | `parr.set_i_L4` | `composite` | `parr64<u32>.index u32.pindex u32.index` | `stmt.L4` | 3 | arity 3: pua[i] = v |
+| F1696 | `parr.set_i_C0` | `composite` | `parr64<u32>.index u32.pindex u32.index` | `stmt.C0` | 3 | arity 3: pua[i] = v |
+| F1697 | `parr.set_i_C1` | `composite` | `parr64<u32>.index u32.pindex u32.index` | `stmt.C1` | 3 | arity 3: pua[i] = v |
+| F1698 | `parr.set_i_C2` | `composite` | `parr64<u32>.index u32.pindex u32.index` | `stmt.C2` | 3 | arity 3: pua[i] = v |
+| F1699 | `parr.set_i_C3` | `composite` | `parr64<u32>.index u32.pindex u32.index` | `stmt.C3` | 3 | arity 3: pua[i] = v |
+| F1700 | `parr.set_i_C4` | `composite` | `parr64<u32>.index u32.pindex u32.index` | `stmt.C4` | 3 | arity 3: pua[i] = v |
+| F1701 | `parr.set_i_L5` | `composite` | `parr64<u32>.index u32.pindex u32.index` | `stmt.L5` | 3 | arity 3: pua[i] = v |
+| F1702 | `parr.set_i_C5` | `composite` | `parr64<u32>.index u32.pindex u32.index` | `stmt.C5` | 3 | arity 3: pua[i] = v |
+
+1702 function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Storage-buffer atomics are an interface's per-kernel rows, not rows of this table. Deliberately absent: atomic compare-exchange (naga 0.20's Metal backend lacks it), subgroupBallot, images, derivatives, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.

@@ -359,6 +359,8 @@ def build_types():
     add("kernel", "module", 0, FORMS["module"][0])
     # ---- a workgroup-uniform predicate (2026-10-17) ----
     add("bool", "uflag", 1, FORMS["uflag"][0])
+    # ---- 64-element u32 private arrays (2026-10-17) ----
+    add("parr64<u32>", "index", 0, "a private array of 64 u32: pua, puc (a list of ids beside 64 scores)")
     return rows
 
 
@@ -948,8 +950,8 @@ for op in ("add", "max", "min"):
 # atomics are not rows of this table: they are the per-kernel rows of an interface that declares an atomic
 # binding (render.rs Role::interface): a scalar `atomic<u32>` its read-modify-writes `atomic.<name>_<fun>(v)`;
 # an array of atomics (`array<atomic<u32>>`, v24's index arena, 2026-10-17) `load.<name>(i)` (atomicLoad),
-# `store.<name>_<rung>(i, v)` (atomicStore) and `atomic.<name>_<fun>(i, v)`, every index clamped to the
-# binding (`min(i, arrayLength(&a) - 1u)`).
+# `store.<name>_<rung>(i, v)` (atomicStore) and `atomic.<name>_<fun>(i, v)`, every index as written (the bounds
+# policy decides an access past the binding; a clamp to its last element changed what kernels computed).
 for n in ("au_a", "au_b"):
     f("wg", n, "composite", [], "wgmem<atomic<u32>>.index", f"workgroup array wg_{n} of atomic<u32>")
 for n in ("ai_a", "ai_b"):
@@ -1300,6 +1302,15 @@ for r in ("L0", "L1", "L2", "L3", "L4", "L5"):
     f("stmt", "if_uflag_" + r, "composite", ["bool.uflag", "block." + r], "stmt." + r, "if (c) { ... } over a workgroup-uniform predicate: the body keeps the rung")
     f("stmt", "if_else_uflag_" + r, "composite", ["bool.uflag", "block." + r, "block." + r], "stmt." + r, "arity 3: if (c) { ... } else { ... } over a workgroup-uniform predicate: both bodies keep the rung")
 
+# ---- 64-element u32 private arrays (2026-10-17, the v24 reference's `var rows: array<u32, 64>` beside its 64 scores:
+# read into a 16-element array before, masked & 15u, which changed what it computed): pua, puc, indexed as the
+# 64-element f32 arrays are (u32.pindex, i & 63u), read and written by the u32 array rows' names ----
+for n in ("ua", "uc"):
+    f("parr", n, "composite", [], "parr64<u32>.index", f"private array p{n} of 64 u32")
+f("parr", "get_i", "composite", ["parr64<u32>.index", "u32.pindex"], "u32.index", "pua[i]")
+for r in RUNGS + RUNGS5:
+    f("parr", "set_i_" + r, "composite", ["parr64<u32>.index", "u32.pindex", "u32.index"], "stmt." + r, "arity 3: pua[i] = v")
+
 
 def write_tsv(path, header, rows):
     with open(path, "w") as out:
@@ -1328,7 +1339,7 @@ def main():
         md.write("\nThe three machine columns (`fallback_bits`, `fallback_noop`, `fallback_elem` in `types.tsv`) are what the loader builds the fallback leaf from, never the prose: `bits` is the lane's 32-bit pattern as an unsigned integer, repeated across the lanes of a vector or matrix (only `bool.sign` is non-zero, true = +1); `noop` is 1 for `store.store`, which substitutes no value at all; `elem` is 1 for `array<T>`, whose fallback is its element's. The loader tests `noop` and `elem` before reading `bits`; for those two rows `bits` is a placeholder 0. Every substitution, whichever column decides it, counts the codon as masked.\n")
         md.write("\n## Loop trip counts\n\nMAX_LOOP_TRIP = 2^24 = 16,777,216 is the kingdom's declared maximum trip count of a loop (`render::MAX_LOOP_TRIP`): no real workload exceeds it (production builds run m ~ 420,000 items, d up to 8,192). A loop at an L rung, which may hold a barrier, takes a uniform bound (`u32.boundu`); a loop with no barrier takes any expression bound. Every bound a gene computes, uniform or not (`bound.of_index`, `bound.of_uniform`, `bound.x_of_uniform`), renders `min(e, 16777216u)`, so a bound in range computes the same and no loop runs past it. The checker's range layer ranges such a bound up to it, and proves index arithmetic over it.\n")
         md.write("\n## No wrap, no zero divisor, every computed bound capped\n\nA u32 wrap in index arithmetic at the worst shape is illegal everywhere (Codex's review of Andrew's decision, 2026-10-12): the checker's range layer fails it. The kingdom cannot spell a difference that wraps: a raw difference is `u32.indexw` and a uniform difference, product or shift `u32.uniformw`, which no row takes; the kingdom's difference is the floored one (`index.sub_floor`, `uniform.sub_floor`), and the reader reads `x - y` as it (the same value wherever it does not wrap). A sum, product or left shift of index values is not typed by range: the checker fails one that wraps at the worst shape. An expression bound takes `u32.xbound` (registers, uniform values, the rows that cannot pass their operands). Every loop bound a gene computes renders `min(e, 16777216u)` (`bound.of_index`, `bound.of_uniform`, `bound.x_of_uniform`); a binding's bound (`cfg.m`, `cfg.d`, `cfg.r_rows`) is the host's data size and a literal is at most 64. A divisor that is not a literal of at least 1 renders `max(b, 1u)` (WGSL's `x / 0u` is x, as is `x / max(0u, 1u)`).\n")
-        md.write("\n## Not in the table\n\nImages, samplers, ray queries, binding arrays, pointers as values, non-square `f16` matrices. Storage-buffer atomics are the per-kernel rows of an interface that declares an atomic binding (`render::Role::interface`: a scalar `atomic<u32>`, or an array of atomics whose every index is clamped to the binding), not rows of this table.\n")
+        md.write("\n## Not in the table\n\nImages, samplers, ray queries, binding arrays, pointers as values, non-square `f16` matrices. Storage-buffer atomics are the per-kernel rows of an interface that declares an atomic binding (`render::Role::interface`: a scalar `atomic<u32>`, or an array of atomics at any index, the bounds policy deciding an access past it), not rows of this table.\n")
 
     with open(os.path.join(HERE, "symbols.md"), "w") as md:
         md.write("# safeWGSL kingdom — the function table\n\n")
