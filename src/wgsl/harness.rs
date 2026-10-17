@@ -810,6 +810,10 @@ pub struct PooledSpec {
 #[serde(deny_unknown_fields)]
 pub struct PooledTiming {
     pub sample: String,
+    /// The kernel's ms through the stage: the label's ms of stages 1..k
+    /// summed (an ingest against today's whole build of sections 1..k).
+    #[serde(default)]
+    pub cumulative: bool,
     pub today: Option<String>,
     pub today_input: Option<String>,
 }
@@ -3761,7 +3765,8 @@ pub fn samples_by_label(plan: &Plan, run: &RunOut) -> Result<BTreeMap<String, f6
 
 /// THE TIMING SAMPLES OF ONE RUN against today's: per stage, per
 /// `[[output.pooled.timing]]` in order, (label, the kernel's GPU ms, today's
-/// ms). Today's from `today` (an expression) or `today_input` (summed over
+/// ms); a `cumulative` sample's ms is its label's through the stage (stages
+/// 1..k summed: a measured total, not an average). Today's from `today` (an expression) or `today_input` (summed over
 /// the queries judged); a label no dispatch carries, or today's ms not a
 /// positive finite value, is an error.
 pub fn pooled_timing(problem: &Problem, out: &OutputSpec, env: &Env, data: &CaseData, samples: &BTreeMap<String, f64>) -> Result<Vec<(String, f64, f64)>, String> {
@@ -3774,7 +3779,13 @@ pub fn pooled_timing(problem: &Problem, out: &OutputSpec, env: &Env, data: &Case
         e.insert("stage".into(), stage as f64);
         for t in &ps.timing {
             let label = template(&t.sample, &e)?;
-            let ms = *samples.get(&label).ok_or_else(|| format!("no dispatch is labelled {label}"))?;
+            let mut ms = 0.0;
+            for k in if t.cumulative { 1..=stage } else { stage..=stage } {
+                let mut ek = env.clone();
+                ek.insert("stage".into(), k as f64);
+                let l = template(&t.sample, &ek)?;
+                ms += *samples.get(&l).ok_or_else(|| format!("no dispatch is labelled {l}"))?;
+            }
             let today = match (&t.today, &t.today_input) {
                 (Some(x), None) => eval(&template(x, &e)?, &e)?,
                 (None, Some(i)) => {
@@ -4901,7 +4912,7 @@ fn search(@builtin(global_invocation_id) g: vec3<u32>) {
              [output.pooled]\nseeds = \"2\"\nstages = \"2\"\nqueries = \"3\"\ntop = \"2\"\narrived = \"stage * 3\"\nquery_row = \"6 + q\"\n\
              rec_offsets = \"rec_offsets\"\nrec_indices = \"rec_indices\"\nrec_values = \"rec_values\"\nhalf = \"half\"\n\
              accept_offsets = \"ao{{stage}}\"\naccept_rows = \"ar{{stage}}\"\ntoday_misses = \"tm{{stage}}\"\ntoday_pooled = \"tp{{stage}}\"\n\
-             [[output.pooled.timing]]\nsample = \"ingest{{stage}}\"\ntoday = \"settle_{{stage}}\"\n\
+             [[output.pooled.timing]]\nsample = \"ingest{{stage}}\"\ncumulative = true\ntoday = \"settle_{{stage}}\"\n\
              [[output.pooled.timing]]\nsample = \"search{{stage}}\"\ntoday_input = \"ts{{stage}}\"\n\
              [[run]]\nfor = \"k0\"\ncount = \"2\"\nlet = [\"stage = k0 + 1\"]\n\
              [[run.body]]\nfor = \"s\"\ncount = \"2\"\n\
@@ -5043,8 +5054,9 @@ fn search() { cands[0] = cfg.stage; }
     /// THE POOLED FITNESS through `Harness::new` and `evaluate` on the host
     /// executor: a problem directory with the hand-made files; the inputs
     /// are the twelve window inputs above, then per timing run (two, each a
-    /// fresh run) and stage the ingest sample (two seeds' ingest, each
-    /// 0.01 ms and 5 ns) against `settle_<k>` and the search sample against today's
+    /// fresh run) and stage the ingest through the stage (two seeds' ingest
+    /// a stage, each 0.01 ms and 5 ns; stage 2's sample stages 1 and 2
+    /// summed) against `settle_<k>` and the search sample against today's
     /// per-query ms summed; θ is the hff library's TrueNorth over them,
     /// bit for bit. A kernel that does not compile is infeasible; the
     /// paired-timing paths name that a pooled problem has none.
@@ -5070,7 +5082,8 @@ fn search() { cands[0] = cfg.stage; }
         let search_ms = 2.0 * (exec.dispatch_ms + 50.0 * exec.ns_per_op / 1e6);
         let mut want = vec![0.0, 0.1, 0.3, 0.5, 0.025, 0.0, 1.0, 0.1, 0.0, 0.0, 0.6, 0.2];
         for _ in 0..2 {
-            want.extend([time_input(10.0, ingest_ms(1)), time_input(6.0, search_ms), time_input(20.0, ingest_ms(2)), time_input(12.0, search_ms)]);
+            // The ingest through stage 2 is stages 1 and 2's ingest summed.
+            want.extend([time_input(10.0, ingest_ms(1)), time_input(6.0, search_ms), time_input(20.0, ingest_ms(1) + ingest_ms(2)), time_input(12.0, search_ms)]);
         }
         assert_eq!(f.inputs, want);
         let library = hff_core::core_functions::calculate_single_hyperspherical_fitness_f64_with_method(&ndarray::Array1::from(want.clone()), want.len(), false, None, "truenorth");
@@ -5140,14 +5153,26 @@ fn search() { cands[0] = cfg.stage; }
         }
     }
 
-    /// THE FULL SET NAMES ITS LIMIT: problems/v24_ingest loads, and its
-    /// stage-5 keys (204.8 MB a seed) over the 128 MiB binding are a plan
-    /// error naming the requirement.
+    /// THE FULL SET, STAGES 1..3 (run 1): problems/v24_ingest judges three
+    /// stages; its largest keys binding is stage 3's 15,000 rows (122.9 MB,
+    /// under the 128 MiB binding) and its output 3 stages x 4 seeds x 2,500
+    /// queries x 64; four stages (163.8 MB a seed) are a plan error naming
+    /// the requirement.
     #[test]
-    fn the_full_v24_problem_names_its_binding_limit() {
+    fn the_full_v24_problem_judges_three_stages_under_the_binding_limit() {
         let p = Problem::load(&root().join("problems/v24_ingest")).expect("problems/v24_ingest");
-        let e = p.plan(&p.suites[0].cases[0], LIMIT, None).unwrap_err();
-        assert!(e.contains("the problem requires sections * per_section * d * 4 <= binding_limit"), "{e}");
+        let c = &p.suites[0].cases[0];
+        assert_eq!(c.params["stages"], 3.0);
+        let info = kernel_info(&p.spec, &p.reference).unwrap();
+        let plan = p.plan(c, LIMIT, Some(&info)).unwrap();
+        let most = plan.buffers.iter().filter(|b| b.resident).map(|b| b.bytes).max().unwrap();
+        assert_eq!(most, 15_000 * 2048 * 4);
+        assert_eq!(plan.outputs, vec![3 * 4 * 2500 * 64 * 4]);
+        assert_eq!(plan.run.iter().filter(|x| matches!(x, Cmd::Dispatch { .. })).count(), 3 * 4 * 2);
+        let mut four = c.clone();
+        four.params.insert("stages".into(), 4.0);
+        let e = p.plan(&four, LIMIT, None).unwrap_err();
+        assert!(e.contains("the problem requires stages * per_section * d * 4 <= binding_limit"), "{e}");
     }
 
     /// THE REFERENCE KERNEL END TO END ON THE CPU EXECUTOR (its own WGSL,
@@ -5173,7 +5198,7 @@ fn search() { cands[0] = cfg.stage; }
         assert!(text.contains("timing_rounds = 1") && !text.contains("deadline_factor"));
         std::fs::write(dir.join("problem.toml"), text).unwrap();
         let manifest = std::fs::read_to_string(src.join("cases/stream.toml")).unwrap();
-        let manifest = manifest.replacen("params = { ", "params = { n_queries = 2, arena_u32 = 1024, arena_f32 = 1024, ", 1).replace("sections = 5,", "sections = 2,");
+        let manifest = manifest.replacen("params = { ", "params = { stages = 2, n_queries = 2, arena_u32 = 1024, arena_f32 = 1024, ", 1);
         std::fs::write(dir.join("cases/stream.toml"), manifest).unwrap();
         let exec = CpuExecutor::new(LIMIT);
         let h = Harness::new(Problem::load(&dir).unwrap(), &exec).unwrap();

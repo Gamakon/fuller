@@ -1,0 +1,19 @@
+# The dispatch contract of v24_ingest (fuller safety::Contract, the format of
+# problems/kmeans_assign/safety.contract), from problem.toml's run program:
+# every dispatch is 1-D; ingest is per_section workgroups (5000), search
+# n_queries (2500). The cfg ranges are the program's words, the uniform
+# variable named cfg as contract.md gives it: seed_slot 0..3, stage
+# 1..stages, the arrived rows 0..stages * per_section, pass_index below
+# n_passes (at most 16), c_max always 64. The legality checker's layer 7
+# proves a kernel of this problem under it.
+workgroups x 1 5000
+workgroups y 1 1
+workgroups z 1 1
+param cfg.seed_slot 0 3
+param cfg.stage 1 3
+param cfg.arrived_begin 0 10000
+param cfg.arrived_end 5000 15000
+param cfg.n_queries 1 2500
+param cfg.pass_index 0 15
+param cfg.n_passes 1 16
+param cfg.c_max 64 64

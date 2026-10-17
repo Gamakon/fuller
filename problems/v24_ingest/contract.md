@@ -1,12 +1,7 @@
-# v24 ingestion index: the design contract (full set)
+# v24 ingestion index: the design contract (full set, stages 1 to 3)
 
-This problem, `v24_ingest`, is `v24_ingest_small`'s contract on the full set:
-25,000 stream rows in five sections of 5,000, and 2,500 queries. **It cannot
-run under this contract.** The arrived keys of stage 5 are 204.8 MB a seed,
-over the 128 MiB binding limit, and the problem's setup names the
-requirement. The full set needs the keys banded over two bindings, a contract
-change decided at run 2 (PLAN_v24 section 3). Until then this is the small
-set's contract, unchanged:
+This problem, `v24_ingest`, is the evolution target of run 1. It shares
+`v24_ingest_small`'s contract, given here in full:
 
 This is the contract a v24 design is written to. A design is one WGSL module
 with two entry points, `ingest` and `search`. fuller's harness grades it
@@ -17,6 +12,17 @@ evolution varies them and models only repair. The plan is fuller
 `docs/V24_Evolved_GPU_Streaming_Index.md`, sections 4 and 6.
 
 ## The task
+
+Two problems use this contract:
+
+- `v24_ingest` is the evolution target of run 1. It is the full set, judged
+  on stages 1 to 3 (15,000 arrived rows, 6 windows). One seed's stage-3 keys
+  are 123 MB, under the 128 MiB binding limit. Stages 4 and 5 (164 MB and
+  205 MB a seed) wait for keys banded over two bindings, a contract change
+  for run 2.
+- `v24_ingest_small` is the smoke test (compile, run, judge end to end).
+  Today's index misses nothing in 9 of its 10 windows, so its misses input
+  has no slope there.
 
 Four seeds (42, 137, 911, 4242) each give every record a 2,048-D f32 key. The
 records arrive in five microbatches, called sections, in time order. On the
@@ -49,13 +55,17 @@ Your index decides which rows reach the exact re-rank. Nothing else.
 `cfg` values:
 
 - `seed_slot`: 0 to 3, for seeds 42, 137, 911, 4242.
-- `stage`: 1 to 5.
+- `stage`: 1 to the problem's stages (3 on `v24_ingest`, 5 on `v24_ingest_small`).
 - The microbatch that just arrived is rows `arrived_begin .. arrived_end`, with
   `arrived_begin = (stage - 1) * per_section` and
   `arrived_end = stage * per_section`.
 - `pass_index`: 0 to `n_passes - 1` in `ingest`; always 0 in `search`. (The field cannot be named `pass`: it is a reserved word in WGSL.)
 - `n_passes`: the N of your `// passes N` header.
 - `c_max`: always 64, a contract constant.
+
+Name the uniform variable `cfg` and its fields as above. The safety
+contract (`safety.contract` beside this file) gives the legality checker
+the fields' ranges by these names, along with 1-D dispatches.
 
 A kernel may leave a binding undeclared. It may not declare one this table
 does not list.
@@ -66,7 +76,7 @@ does not list.
    `0 .. k * per_section` and nothing else. No future key is on the device, and
    reading past `arrived_end` reads zero.
 2. **The arenas live for one run.** `index_u32` and `index_f32` are created
-   and zeroed when a run starts. They persist across the run's five stages
+   and zeroed when a run starts. They persist across the run's stages
    and are discarded after it. They are never cleared between stages. Every
    timing run is a whole fresh run, so no measurement reuses a built index.
 3. **Each seed's arenas are its own.** Seed slot s never sees another seed's
@@ -133,11 +143,13 @@ counting rule: the re-ranked top 10 are counted against the accept set,
 which is every arrived row within 1e-6 of the 10th true cosine, so ties are
 found.
 
-There is one more input per timing sample. Each fresh run gives each stage's
-ingest GPU ms (all its passes and seeds, summed) and search GPU ms (all four
-seeds, summed). Each is scored against today's ms (today's settle of the
-stage, today's search of the same queries) as
-`clamp(0.5 - log10(today_ms / kernel_ms) / 4, 0, 1)`.
+There are two more inputs per stage for each fresh timing run (three runs).
+The first is the ingest through stage k: your ingest GPU ms for
+microbatches 1..k, every pass and seed summed. It is scored against today's
+whole build of sections 1..k, because today's index builds from scratch at
+every stage. The second is the stage's search GPU ms, four seeds summed,
+scored against the sum of today's per-query search ms for the same queries.
+Both use `clamp(0.5 - log10(today_ms / kernel_ms) / 4, 0, 1)`.
 
 A design that does not compile or does not run is infeasible.
 
@@ -148,122 +160,49 @@ reference: exact brute force over this seed's arrived keys, with `ingest`
 doing nothing. It shows the bindings and the entry points in working form.
 Do not copy it as a design.
 
-## 32 design strategies (one per seed design; each is a starting direction, not a recipe)
+## The design space
 
 Andrew's hypothesis is to index bottom-up. Find hotspots by counting hits.
 Splay the data into right-sized buckets. Promote a random sample of the
 existing points up through the levels. Build the levels from the bottom, all
 of a batch rising together, with a fixed ef per layer and each group's scope
-growing level by level. Strategies 1 to 14 explore it directly.
+growing level by level. The first fourteen strategies below explore it
+directly. The rest cover graphs and beams (15 to 17), hashing and
+projections (18 to 22), centres and clustering (23 to 26), and flat and
+hybrid designs (27 to 32). Each is a starting direction for one seed
+design, not a recipe.
 
-1. **Count-then-splay buckets.** Pass 0 hashes each new row to a coarse cell
-   (the sign bits of 8 fixed projections of the key) and counts its hits with
-   `atomicAdd`. Pass 1 splits every cell over a size threshold into
-   sub-buckets on further sign bits. Pass 2 appends the rows. Search probes the
-   query's cell and its 1-bit neighbours.
-2. **Hotspot-first splaying.** A count histogram over 4,096 cells finds the
-   dense cells before any row is placed. Only those cells get extra split
-   levels; sparse cells stay flat. Search goes deeper only where the data is
-   dense.
-3. **Right-sized buckets by density.** Each bucket holds at most B rows,
-   where B is a constant such as 32. An over-full bucket splits at the median
-   of its widest projected dimension, so the bucket count follows density.
-4. **Bottom-up random promotion, fixed ef.** Each new row is promoted to the
-   level above with probability 1/16, then 1/256, and so on. Each level links
-   a point to its nearest promoted points among the batch and the level's
-   existing points. Search descends greedily with ef 32 on every level.
-5. **Level-synchronous build.** One pass per level, bottom first. All the
-   batch's rows at a level find their links together. No invocation reads
-   another's writes within a pass, which makes the build order-independent.
-6. **Promotion by bucket centre.** Each bucket's medoid, its most central
-   member by key dot product, is promoted. The upper level is a sample drawn
-   from where the data actually is.
-7. **Several promotions per dense bucket.** A bucket promotes about
-   √(bucket size) members, so dense regions get more upper-level points.
-8. **Growing scope per level.** At level l a point links to the k nearest
-   points within a window of 2^l buckets. Search widens its scope as it
-   climbs down.
-9. **Upside-down HNSW beside a flat tail.** Batches already settled live in
-   a bottom-up graph. The microbatch that just arrived is scanned exactly in
-   search, so it is never missed.
-10. **Splay with re-promotion.** When a bucket splits, it re-promotes its new
-    centres and updates the upper links that pointed at it. Old links are kept
-    as second chances.
-11. **Count-min hotspot sketch.** A small count-min sketch over hashed cells
-    estimates density. Each row is placed at the depth its density calls for.
-12. **Two-level bucket tree with a fixed fan-out.** There are 64 top cells
-    chosen from the first microbatch's rows. Each cell holds up to 64 child
-    buckets of up to 64 rows. Search probes the top 4 cells and then the top 8
-    children in each.
-13. **Bottom-up merge of microbatch trees.** Each microbatch builds its own
-    small hierarchy. A pass then merges its top level into the global top
-    level by nearest-centre links.
-14. **Rank-preserving buckets.** Rows are bucketed by the rank of their
-    projection onto 16 fixed directions, in quantiles counted with atomics. A
-    bucket is a 16-digit rank code. Search probes nearby codes.
+## Strategies
 
-Graphs and beams:
-
-15. **Flat k-NN graph with beam search.** Each new row finds its 16 nearest
-    neighbours among the arrived rows by a beam from random entry points, and
-    adds reverse links into fixed-degree slots (replacing the farthest). Search
-    runs a beam of 64.
-16. **NSW with random long links.** Each row gets 8 near links and 2 random
-    far links. Search runs a greedy beam from 8 random entries per query.
-17. **Graph over bucket centres.** Buckets are linked by centre similarity.
-    Search beams over the centres, then scans the members of the best
-    buckets.
-
-Hashing and projections:
-
-18. **LSH tables.** There are 8 tables of 12-bit sign hashes on independent
-    projections, with fixed-capacity buckets in the arena. Search unions the
-    query's buckets across the tables.
-19. **Multi-probe LSH.** One table, probing the query's bucket and the
-    buckets that differ in its least-confident bits.
-20. **Sorted projections.** Rows are kept sorted along 4 fixed projection
-    directions; insertion merges each batch in. Search takes a window around
-    the query's position on each direction and intersects or unions the
-    windows.
-21. **Cross-polytope hashing.** A bucket is the argmax coordinate (with its
-    sign) of a key projected into 64 dimensions. Search probes the
-    second-best coordinates as well.
-22. **Product-quantised coarse cells.** Two 32-centroid codebooks over the
-    key's halves, trained on the first batch. A row's cell is its pair of
-    codes. Search probes the best cell pairs.
-
-Centres and clustering:
-
-23. **Hierarchical centres (k-means tree).** Centres are taken from the first
-    batch's rows. Each new row is assigned to its nearest centre. A centre
-    that grows past a cap splits in two, using two of its members as the new
-    centres.
-24. **Online k-means with drift.** There are 256 centres in `index_f32`,
-    updated as running means as rows arrive. Rows are assigned to buckets by
-    centre. Search scans the 8 best centres.
-25. **Spill assignment.** Each row is written into its 2 nearest buckets, so
-    a query near a border finds it either way.
-26. **Density-adaptive cell radius.** The first rows found cells. A new row
-    starts a new cell when no cell is within a radius; the radius shrinks
-    where the counts are high.
-
-Flat and hybrid:
-
-27. **Flat brute force within buckets.** A coarse bucketing, then search
-    scans every row of the query's best 4 buckets exactly in key space and
-    keeps the top 64.
-28. **Fresh-tail exact scan plus index.** Search always scans the newest
-    microbatch exactly. Older rows come through a bucket index. The 64 slots
-    are split between the two, for example 32 and 32.
-29. **Seed-aware candidate budget.** The design spends its 64 slots by the
-    seed slot's own confidence (score gaps), filling the rest with pads.
-    Remember that P is in the fitness.
-30. **Quantised keys.** Each key is quantised to 8 bits per dimension in the
-    arena, for faster bucket scans in search: a 2,048-byte code per row,
-    scored with integer dot products.
-31. **Score-gap early stop.** Search scans buckets in order of their centre
-    score and stops when the next centre cannot beat the 64th best found.
-32. **Learned split directions.** Each over-full bucket splits along the
-    principal direction of its members, estimated by a few power iterations
-    in a pass. It splits at the median, which keeps buckets balanced on the
-    Times-Square-shaped data.
+- **Count-then-splay buckets.** Pass 0 hashes each new row to a coarse cell
+- **Hotspot-first splaying.** A count histogram over 4,096 cells finds the
+- **Right-sized buckets by density.** Each bucket holds at most B rows,
+- **Bottom-up random promotion, fixed ef.** Each new row is promoted to the
+- **Level-synchronous build.** One pass per level, bottom first. All the
+- **Promotion by bucket centre.** Each bucket's medoid, its most central
+- **Several promotions per dense bucket.** A bucket promotes about
+- **Growing scope per level.** At level l a point links to the k nearest
+- **Upside-down HNSW beside a flat tail.** Batches already settled live in
+- **Splay with re-promotion.** When a bucket splits, it re-promotes its new centres and updates the upper links that pointed at it. Old links are kept as second chances.
+- **Count-min hotspot sketch.** A small count-min sketch over hashed cells estimates density. Each row is placed at the depth its density calls for.
+- **Two-level bucket tree with a fixed fan-out.** There are 64 top cells chosen from the first microbatch's rows. Each cell holds up to 64 child buckets of up to 64 rows. Search probes the top 4 cells and then the top 8 children in each.
+- **Bottom-up merge of microbatch trees.** Each microbatch builds its own small hierarchy. A pass then merges its top level into the global top level by nearest-centre links.
+- **Rank-preserving buckets.** Rows are bucketed by the rank of their projection onto 16 fixed directions, in quantiles counted with atomics. A bucket is a 16-digit rank code. Search probes nearby codes.
+- **Flat k-NN graph with beam search.** Each new row finds its 16 nearest neighbours among the arrived rows by a beam from random entry points, and adds reverse links into fixed-degree slots (replacing the farthest). Search runs a beam of 64.
+- **NSW with random long links.** Each row gets 8 near links and 2 random far links. Search runs a greedy beam from 8 random entries per query.
+- **Graph over bucket centres.** Buckets are linked by centre similarity. Search beams over the centres, then scans the members of the best buckets.
+- **LSH tables.** There are 8 tables of 12-bit sign hashes on independent projections, with fixed-capacity buckets in the arena. Search unions the query's buckets across the tables.
+- **Multi-probe LSH.** One table, probing the query's bucket and the buckets that differ in its least-confident bits.
+- **Sorted projections.** Rows are kept sorted along 4 fixed projection directions; insertion merges each batch in. Search takes a window around the query's position on each direction and intersects or unions the windows.
+- **Cross-polytope hashing.** A bucket is the argmax coordinate (with its sign) of a key projected into 64 dimensions. Search probes the second-best coordinates as well.
+- **Product-quantised coarse cells.** Two 32-centroid codebooks over the key's halves, trained on the first batch. A row's cell is its pair of codes. Search probes the best cell pairs.
+- **Hierarchical centres (k-means tree).** Centres are taken from the first batch's rows. Each new row is assigned to its nearest centre. A centre that grows past a cap splits in two, using two of its members as the new centres.
+- **Online k-means with drift.** There are 256 centres in `index_f32`, updated as running means as rows arrive. Rows are assigned to buckets by centre. Search scans the 8 best centres.
+- **Spill assignment.** Each row is written into its 2 nearest buckets, so a query near a border finds it either way.
+- **Density-adaptive cell radius.** The first rows found cells. A new row starts a new cell when no cell is within a radius; the radius shrinks where the counts are high.
+- **Flat brute force within buckets.** A coarse bucketing, then search scans every row of the query's best 4 buckets exactly in key space and keeps the top 64.
+- **Fresh-tail exact scan plus index.** Search always scans the newest microbatch exactly. Older rows come through a bucket index. The 64 slots are split between the two, for example 32 and 32.
+- **Seed-aware candidate budget.** The design spends its 64 slots by the seed slot's own confidence (score gaps), filling the rest with pads. Remember that P is in the fitness.
+- **Quantised keys.** Each key is quantised to 8 bits per dimension in the arena, for faster bucket scans in search: a 2,048-byte code per row, scored with integer dot products.
+- **Score-gap early stop.** Search scans buckets in order of their centre score and stops when the next centre cannot beat the 64th best found.
+- **Learned split directions.** Each over-full bucket splits along the principal direction of its members, estimated by a few power iterations in a pass. It splits at the median, which keeps buckets balanced on the Times-Square-shaped data.

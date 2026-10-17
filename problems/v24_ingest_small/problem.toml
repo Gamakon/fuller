@@ -22,6 +22,10 @@ work = "n_stream * n_queries"
 alias = "distinct"
 
 [params]
+# The stages judged: sections 1..stages arrive (every section by default;
+# the full set's run 1 judges three, its stage-3 keys 123 MB a seed under
+# the 128 MiB binding, stage 4's 164 MB over it).
+stages = "sections"
 # The queries judged (all the oracles; a test may judge fewer).
 n_queries = "n_oracle"
 # The contract constant: candidates per seed per query.
@@ -272,12 +276,12 @@ shape = ["n_oracle"]
 [[output]]
 name = "cands"
 element = "u32"
-shape = ["sections * seeds * n_queries", "c_max"]
+shape = ["stages * seeds * n_queries", "c_max"]
 kind = "pooled_recall"
 
 [output.pooled]
 seeds = "seeds"
-stages = "sections"
+stages = "stages"
 queries = "n_queries"
 top = "10"
 arrived = "stage * per_section"
@@ -291,10 +295,13 @@ accept_rows = "accept_s{stage}_rows"
 today_misses = "today_s{stage}_misses"
 today_pooled = "today_s{stage}_pooled"
 
-# A stage's ingest: every pass of every seed, against today's settle of the
-# stage (index_builds.json build_ms, the manifest's today_settle_ms_<k>).
+# The ingest through stage k: every pass of every seed of stages 1..k, summed
+# (the measured cost of having indexed everything arrived), against today's
+# build of sections 1..k (index_builds.json build_ms: one whole build, not
+# incremental; the manifest's today_settle_ms_<k>).
 [[output.pooled.timing]]
 sample = "ingest{stage}"
+cumulative = true
 today = "today_settle_ms_{stage}"
 
 # A stage's search: every seed's search dispatch, against today's search of
@@ -306,7 +313,7 @@ today_input = "today_s{stage}_search_ms"
 # The resident inputs: each seed's queries, and per stage each seed's keys
 # of the arrived rows only.
 [[setup]]
-require = "sections * per_section * d * 4 <= binding_limit"
+require = "stages * per_section * d * 4 <= binding_limit"
 because = "the arrived keys of the last stage are one binding; past the limit the keys need banding over two bindings (a contract change, PLAN_v24 section 3, run 2)"
 
 [[setup]]
@@ -325,7 +332,7 @@ from = "queries{s}"
 
 [[setup.body]]
 for = "k0"
-count = "sections"
+count = "stages"
 
 [[setup.body.body]]
 buffer = "keys{s}_{k0}"
@@ -352,7 +359,7 @@ fill = "zero"
 
 [[run]]
 for = "k0"
-count = "sections"
+count = "stages"
 let = ["stage = k0 + 1", "arrived_begin = k0 * per_section", "arrived_end = stage * per_section"]
 
 [[run.body]]
@@ -410,8 +417,8 @@ chunk = 1
 [budget]
 base_ms = 60000.0
 round_ms = 60000.0
-# Three fresh timing runs: each gives ten samples (five stages' ingest and
-# search), each its own HFF input.
+# Three fresh timing runs: each gives two samples a stage (the ingest
+# through it, its search), each its own HFF input.
 timing_rounds = 3
 gpu_wait_ms = 4900.0
 deadline_factor = 20.0

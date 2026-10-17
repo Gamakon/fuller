@@ -4,10 +4,13 @@
 # written to is contract.md beside this file; this problem is
 # v24_ingest_small's program and contract on the full set).
 #
-# IT CANNOT RUN UNDER TODAY'S CONTRACT: the arrived keys of stage 5 are
-# 25,000 x 2,048 f32 = 204.8 MB a seed, over the 128 MiB binding limit; the
-# setup's require names it. The full set needs the keys banded over two
-# bindings, a contract change decided at run 2 (PLAN_v24 section 3).
+# RUN 1 JUDGES STAGES 1..3 (the manifest's stages = 3, team lead 00:10Z):
+# 15,000 arrived rows, one seed's stage-3 keys 122.9 MB, under the 128 MiB
+# binding limit; stage 4 would be 163.8 MB. Stages 4 and 5 need the keys
+# banded over two bindings, a contract change decided at run 2 (PLAN_v24
+# section 3). This is the evolution target of run 1; v24_ingest_small is the
+# smoke test (today's index misses nothing in 9 of its 10 windows, so x_M
+# has no slope there).
 #
 # Four seeds' 2,048-D keys
 # stream in five microbatches (sections) into four independent per-seed
@@ -26,11 +29,15 @@
 # timing run is a whole fresh run.
 
 name = "v24_ingest"
-description = "v24 streaming ingestion, full set (25,000 + 2,500): four seeds' 2,048-D keys in five microbatches into four per-seed GPU indexes, searched after each, pooled and re-ranked exactly; HFF over per-window misses, pool size, broken entries and per-stage ingest and search GPU ms against today's index"
+description = "v24 streaming ingestion, full set (25,000 + 2,500), stages 1..3 for run 1: four seeds' 2,048-D keys in five microbatches into four per-seed GPU indexes, searched after each, pooled and re-ranked exactly; HFF over per-window misses, pool size, broken entries and per-stage ingest and search GPU ms against today's index"
 work = "n_stream * n_queries"
 alias = "distinct"
 
 [params]
+# The stages judged: sections 1..stages arrive (every section by default;
+# the full set's run 1 judges three, its stage-3 keys 123 MB a seed under
+# the 128 MiB binding, stage 4's 164 MB over it).
+stages = "sections"
 # The queries judged (all the oracles; a test may judge fewer).
 n_queries = "n_oracle"
 # The contract constant: candidates per seed per query.
@@ -281,12 +288,12 @@ shape = ["n_oracle"]
 [[output]]
 name = "cands"
 element = "u32"
-shape = ["sections * seeds * n_queries", "c_max"]
+shape = ["stages * seeds * n_queries", "c_max"]
 kind = "pooled_recall"
 
 [output.pooled]
 seeds = "seeds"
-stages = "sections"
+stages = "stages"
 queries = "n_queries"
 top = "10"
 arrived = "stage * per_section"
@@ -300,10 +307,13 @@ accept_rows = "accept_s{stage}_rows"
 today_misses = "today_s{stage}_misses"
 today_pooled = "today_s{stage}_pooled"
 
-# A stage's ingest: every pass of every seed, against today's settle of the
-# stage (index_builds.json build_ms, the manifest's today_settle_ms_<k>).
+# The ingest through stage k: every pass of every seed of stages 1..k, summed
+# (the measured cost of having indexed everything arrived), against today's
+# build of sections 1..k (index_builds.json build_ms: one whole build, not
+# incremental; the manifest's today_settle_ms_<k>).
 [[output.pooled.timing]]
 sample = "ingest{stage}"
+cumulative = true
 today = "today_settle_ms_{stage}"
 
 # A stage's search: every seed's search dispatch, against today's search of
@@ -315,7 +325,7 @@ today_input = "today_s{stage}_search_ms"
 # The resident inputs: each seed's queries, and per stage each seed's keys
 # of the arrived rows only.
 [[setup]]
-require = "sections * per_section * d * 4 <= binding_limit"
+require = "stages * per_section * d * 4 <= binding_limit"
 because = "the arrived keys of the last stage are one binding; past the limit the keys need banding over two bindings (a contract change, PLAN_v24 section 3, run 2)"
 
 [[setup]]
@@ -334,7 +344,7 @@ from = "queries{s}"
 
 [[setup.body]]
 for = "k0"
-count = "sections"
+count = "stages"
 
 [[setup.body.body]]
 buffer = "keys{s}_{k0}"
@@ -361,7 +371,7 @@ fill = "zero"
 
 [[run]]
 for = "k0"
-count = "sections"
+count = "stages"
 let = ["stage = k0 + 1", "arrived_begin = k0 * per_section", "arrived_end = stage * per_section"]
 
 [[run.body]]
@@ -419,9 +429,12 @@ chunk = 1
 [budget]
 base_ms = 60000.0
 round_ms = 60000.0
-# Three fresh timing runs: each gives ten samples (five stages' ingest and
-# search), each its own HFF input.
+# Three fresh timing runs: each gives two samples a stage (the ingest
+# through it, its search), each its own HFF input.
 timing_rounds = 3
-gpu_wait_ms = 4900.0
+# One stage's submission: the measurement reference's brute force at stage 3
+# reads every seed's 123 MB of keys once a query (2,500 queries, four seeds),
+# seconds on the device; 30 s bounds a runaway.
+gpu_wait_ms = 30000.0
 deadline_factor = 20.0
 deadline_floor_ms = 120000.0

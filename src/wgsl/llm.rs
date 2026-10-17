@@ -81,7 +81,14 @@ pub fn contract(problem: Option<&crate::wgsl::harness::Problem>) -> Result<Contr
     let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e} (a problem's model contract: the problem statement, the bindings, the semantics, the constraints)", path.display()))?;
     let entry = &p.spec.kernel.entry;
     let grid = p.spec.kernel.grid_header;
-    let output_rule = if grid { GRID_OUTPUT_RULE.to_string() } else { format!("Remember: the entry point is `fn {entry}`, only the kernel text.") };
+    let names = p.spec.kernel.entry_names();
+    let output_rule = if grid {
+        GRID_OUTPUT_RULE.to_string()
+    } else if names.len() > 1 {
+        format!("Remember: the entry points are {}, all in one module, only the kernel text.", names.iter().map(|n| format!("`fn {n}`")).collect::<Vec<_>>().join(" and "))
+    } else {
+        format!("Remember: the entry point is `fn {entry}`, only the kernel text.")
+    };
     let mut strategies: Vec<String> = Vec::new();
     let mut in_strategies = false;
     for l in text.lines() {

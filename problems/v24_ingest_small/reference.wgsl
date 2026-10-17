@@ -60,35 +60,38 @@ fn search(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) w
             let v = queries[q * D4 + d];
             qn = qn + dot(v, v);
         }
-        for (var r = t; r < cfg.arrived_end; r = r + 16u) {
-            var s = 0.0;
-            var kn = 0.0;
-            for (var d = 0u; d < D4; d = d + 1u) {
-                // The row masked under 2^19 (the full set has 25,000): the
-                // index provably fits 32 bits.
-                let k = keys[(r & 0x7FFFFu) * D4 + d];
-                s = s + dot(k, queries[q * D4 + d]);
-                kn = kn + dot(k, k);
-            }
-            let denom = sqrt(qn * kn);
-            var score = NONE;
-            if (denom > 0.0) {
-                score = s / denom;
-            }
-            if (score > best[C_MAX - 1u]) {
-                // A sorted insert: carry the new entry down the list,
-                // swapping it past every entry it beats (ties keep the
-                // earlier entry first).
-                var cs = score;
-                var cr = r;
-                for (var j = 0u; j < C_MAX; j = j + 1u) {
-                    if (cs > best[j]) {
-                        let ts = best[j];
-                        let tr = rows[j];
-                        best[j] = cs;
-                        rows[j] = cr;
-                        cs = ts;
-                        cr = tr;
+        for (var i = 0u; i < cfg.arrived_end; i = i + 16u) {
+            let r = i + t;
+            if (r < cfg.arrived_end) {
+                var s = 0.0;
+                var kn = 0.0;
+                for (var d = 0u; d < D4; d = d + 1u) {
+                    // The row masked under 2^19 (the full set has 25,000): the
+                    // index provably fits 32 bits.
+                    let k = keys[(r & 0x7FFFFu) * D4 + d];
+                    s = s + dot(k, queries[q * D4 + d]);
+                    kn = kn + dot(k, k);
+                }
+                let denom = sqrt(qn * kn);
+                var score = NONE;
+                if (denom > 0.0) {
+                    score = s / denom;
+                }
+                if (score > best[C_MAX - 1u]) {
+                    // A sorted insert: carry the new entry down the list,
+                    // swapping it past every entry it beats (ties keep the
+                    // earlier entry first).
+                    var cs = score;
+                    var cr = r;
+                    for (var j = 0u; j < C_MAX; j = j + 1u) {
+                        if (cs > best[j]) {
+                            let ts = best[j];
+                            let tr = rows[j];
+                            best[j] = cs;
+                            rows[j] = cr;
+                            cs = ts;
+                            cr = tr;
+                        }
                     }
                 }
             }
