@@ -109,51 +109,60 @@ subagent in fuller's kingdom files (safe_reader, render, check, gen_tables — n
 harness); B5 after B4 lands. This session reviews, runs every GPU job, and launches runs.
 One GPU process at a time; CPU tests only in subagents.
 
-## 6. The operators' gate on two-entry modules (measured 2026-10-17, CPU only)
+## 6. The operators' gate on two-entry modules (strict layer 7, measured on the GPU 2026-10-17 11:44Z)
 
-**Result.** On run 1's seeds, 5 to 13 % of each operator's children pass every stage. The
-safety checker's layer 7 is the wall: it turns away 23 of the 25 seeds the reader now
-reads, and the children that pass descend almost all from the two seeds it accepts.
-Every child that reached the value check computed its text's values.
+This replaces the CPU measurement of 09:48Z (fuller 29d7761): the value and race stages
+now run on the device.
 
-**How.** phylu `wgsl_fit --measure-operators 200` (phylu c6dcc6d7, fuller cf6c9cd with the
-kingdom's uncommitted edits of 09:43Z in the tree; no device made). Parents: the seeds of
-`logs/V24/run1/seeds` that read into the kingdom at head 32 and 160 tail slots, each under
-its own role. 200 children per operator, parents drawn under seed 1. Each child is taken
-through, in order: **role** (the receiving parent's, plus the donor's rows its tree uses,
-phylu `wgsl_model::child_role`), **render** under that role, **naga** validation,
-**safety** (`knob::check_legal_under`, layers 1 to 7 under `safety.contract`), **read
-back** into the fixed table and decoded, **values** (the child's text and the text its
-genome expresses give the same outputs on `cases/admission.toml`; byte-equal texts need
-no run, the rest ran on the CPU executor, 8 threads). Records: `gate.tsv` (every child,
-the stage it stopped at, the error) and `gate.md`.
+**Result.** Under strict layer 7, 7 to 13 % of each operator's children pass every stage,
+and one child of 1,000 races. Layer 7 is still the wall: it turns away 23 of the 26 seeds
+that read, and the children that pass descend almost all from the three it accepts (seeds
+24, 25, 26). Every child that reached the value check computed its own text's values.
 
-| operator | children | made | role | render | naga | safety | read back | same values |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|
-| (parents) | 25 | 25 | 25 | 25 | 25 | 2 | 2 | 2 |
-| section crossover | 200 | 200 | 196 | 196 | 196 | 26 | 26 | 26 |
-| typed crossover | 200 | 200 | 194 | 194 | 193 | 11 | 11 | 11 |
-| rule | 200 | 200 | 200 | 200 | 200 | 16 | 16 | 16 |
-| generic rewrite | 200 | 159 | 159 | 159 | 159 | 10 | 10 | 10 |
-| point mutation | 200 | 199 | 193 | 193 | 192 | 18 | 18 | 18 |
+**How.** phylu `wgsl_fit --measure-operators 200 --measure-races 3 --seed 1` on
+`problems/v24_ingest_small` (phylu 606c5843, fuller 69039be, clean worktrees; 60.8 s, of
+which 6.1 s on the device). Parents: the seeds of `logs/V24/run1/seeds` that read into the
+kingdom at head 32 and 160 tail slots, each under its own role (26 of 32, under 10 roles;
+three more need 179 or fewer slots, so a 184-slot layout reads them too). 200 children per
+operator. On the host, in order: **role** (the receiving parent's, plus the donor's rows
+its tree uses, phylu `wgsl_model::child_role`), **render** under that role, **naga**,
+**safety** (`knob::check_legal_under`, layers 1 to 7 under `safety.contract`, strict), **read
+back** into the fixed table and decoded. On the device (fuller's harness, one run at a
+time): **values** (the child's text and the text its genome expresses give the same
+outputs on `cases/admission.toml`; byte-equal texts need no run) and **no race** (three
+fresh runs, each with zeroed arenas: a race is a query's pooled candidate set, the four
+seeds' lists with pads dropped, that differs; candidates that differ only in order, and
+arena state that differs with the outputs the same, are counted and are not failures).
+Records: `logs/V24/gate/strict/gate.md`, `gate.tsv`.
 
-Of the 83 children that reached the value check, 72 express their text byte-equal and 11
-were run on the CPU (12.6 to 17.6 s a pair); none computed different values.
+| operator | children | made | role | render | naga | safety | read back | values | no race | of which order-only | of which state-only |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| (parents) | 26 | 26 | 26 | 26 | 26 | 3 | 3 | 3 | 3 | 0 | 1 |
+| section crossover | 200 | 200 | 197 | 197 | 197 | 18 | 18 | 18 | 18 | 0 | 5 |
+| typed crossover | 200 | 200 | 192 | 192 | 191 | 19 | 19 | 19 | 19 | 0 | 10 |
+| rule | 200 | 200 | 200 | 200 | 200 | 18 | 18 | 18 | 18 | 0 | 7 |
+| generic rewrite | 200 | 157 | 157 | 157 | 156 | 15 | 15 | 15 | 14 | 0 | 2 |
+| point mutation | 200 | 200 | 194 | 194 | 193 | 26 | 26 | 26 | 26 | 1 | 9 |
 
-**Failures, named.**
+Of the 99 parents and children that reached the race check, 86 express their text
+byte-equal and 12 were run against it on the device; none computed different values. The
+one race: rewrite child 23 of seed 26, whose third run's pooled candidates for one
+stage-query held 35 rows against the first's 34.
 
-| failure | count (children and parents) | owner | status |
+**Failures, named** (children, with the seeds that fail the same way in parentheses).
+
+| failure | count | owner | status |
 |---|---:|---|---|
-| layer 7 `write_sets_overlap`: two stores of different index forms, or a data-dependent index, may write one cell of `index_f32` / `index_u32` | 177 + 7 seeds | kingdom (check.rs) | open: the arena's data-dependent writes have no ownership proof |
-| layer 7 `output_read_of_another_invocations_cell`: a read of `index_f32` another invocation writes | 171 + 8 seeds | kingdom | open: index state read across invocations (and across passes) |
-| layer 7 `store_index_not_affine`: a write to `cands` or `index_f32` at an index not affine in the thread's coordinates | 105 + 5 seeds | kingdom | open |
-| layer 7 `workgroup_memory_race` | 90 + 3 seeds | kingdom | open: some may be real races in the seeds |
-| layer 7 `subgroup_operation_in_nonuniform_control`, layer 1 `signature_mismatch` | 6, 1 | operators (rewrites) | the rewrite's child is illegal, as it should be |
-| `kernel.entry_safe is not a grid row`: `params::resolve` took a module's first entry for its grid; every check of a two-entry kernel with a reference failed | 15 of 22 seeds, 131 to 143 per operator, before | kingdom | **fixed, fuller cf6c9cd** |
-| the parents' roles conflict: a donated row needs a binding the receiver declares with another element view (`array<f32>` and `array<vec4<f32>>` keys or queries; `array<u32>` and `array<atomic<u32>>` index) | 16 | phylu `child_role` | named, never skipped (the module header's rule); the same binding under another name is renamed, not a conflict (phylu c6dcc6d7) |
-| the rendering is not WGSL: `vec4<f32>([...], ...)` — kingdom rows `load.phi_safe`, `load.phi4_safe`, `load.h_safe`, `load.phi_len`, `load.h_len` render with the role's input and output, which a v24 role does not name, and the table offers them to point mutation | 1 | kingdom (render.rs) + phylu table | open: kept at `failed/point_mutation_44.wgsl` |
-| workgroup memory 34,816 bytes over the device's 32,768 | 1 | the child (typed crossover of seeds 22 and 08) | the child is illegal, as it should be |
-| generic rewrite with no site in the parent | 41 | operator | expected |
+| layer 7 `output_read_of_another_invocations_cell`: a read of `index_f32` another invocation writes | 291 (8 seeds) | kingdom (check.rs) | open: index state read across invocations and passes; the arena mode (v24-b6-kingdom) is the answer under test |
+| layer 7 `write_sets_overlap`: two stores of different index forms, or a data-dependent index, may write one cell of `index_f32` / `index_u32` | 261 (7) | kingdom | open: arena mode |
+| layer 7 `store_index_not_affine`: a store to `cands` or `index_f32` at an index not affine in the thread's coordinates | 179 (5) | kingdom | open: arena mode |
+| layer 7 `workgroup_memory_race` | 102 (3) | kingdom | open: some may be real races in the seeds |
+| layer 7 `subgroup_operation_in_nonuniform_control` | 8 | operators (rewrites) | the child is illegal, as it should be |
+| the parents' roles conflict: a donated row needs another element view of the same binding (`array<f32>` and `array<vec4<f32>>` keys or queries; `array<u32>` and `array<atomic<u32>>` index) | 17 | phylu `child_role` | named, never skipped; the same binding under another name is renamed (phylu c6dcc6d7) |
+| the rendering is not WGSL: `vec4<f32>([...], ...)`: kingdom rows `load.phi_safe`, `load.phi4_safe`, `load.h_safe`, `load.phi_len`, `load.h_len` render with the role's input and output, which a v24 role does not name, and the table offers them to point mutation | 2 | kingdom (render.rs) | open, with v24-b6-kingdom |
+| workgroup memory over the device's 32,768 bytes | 1 | the child | illegal, as it should be |
+| generic rewrite with no site in the parent | 43 | operator | expected |
+| `kernel.entry_safe is not a grid row` (`params::resolve` on a module root) | 0 | kingdom | fixed, fuller cf6c9cd |
 
 **What each operator needs next.** None of the operators is the bottleneck: each makes
 children whose roles, renderings and read-backs hold. Layer 7 is: the v24 arena
@@ -164,6 +173,6 @@ access; reads across passes as ordered by the dispatch program), or designs rest
 affine ownership.
 
 **Seeds and layout.** Run 1's readable seeds are trees under their own roles (phylu
-3baeafa2): 18 when measured at 08:43Z, 25 at 09:43Z with the kingdom's later fixes. Two of
-them need 145 and 146 tail slots, so run 2's 128-slot layout cannot hold them; a 160-slot
-reference dump can.
+3baeafa2): 18 when measured at 08:43Z, 25 at 09:43Z and 28 at 11:00Z with the kingdom's
+later fixes. The largest needs 179 tail slots, so run 2's 128-slot layout and the gate's
+160 cannot hold them all; a 184-slot reference dump can.
