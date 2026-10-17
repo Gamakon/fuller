@@ -649,15 +649,18 @@ impl<'m> An<'m> {
         true
     }
 
-    /// The digit of an enclosing loop's uniform counter a form is (the form
-    /// that counter alone).
-    fn loop_counter(&self, f: &Lin) -> Option<u32> {
-        if !f.k.is_zero() || f.t.len() != 1 {
-            return None;
+    /// A form of enclosing loops' uniform counters alone (and invariants,
+    /// `a - 1u - b`): the innermost of those loops, whose counters the
+    /// form's value joins. None for any other form.
+    fn loop_counter(&self, f: &Lin) -> Option<usize> {
+        let mut deepest: Option<usize> = None;
+        for (v, c) in &f.t {
+            let Var::Dig(i) = v else { return None };
+            c.as_const()?;
+            let at = self.loops.iter().rposition(|l| l.0.contains(i))?;
+            deepest = Some(deepest.map_or(at, |d| d.max(at)));
         }
-        let (v, c) = f.t.iter().next()?;
-        let Var::Dig(i) = v else { return None };
-        (c.as_const() == Some(1) && self.loops.iter().any(|l| l.0.contains(i))).then_some(*i)
+        f.k.as_const().and(deepest)
     }
 
     fn sym(&mut self, name: &str, lo: i128, hi: i128) -> u32 {
@@ -974,17 +977,15 @@ impl<'m> An<'m> {
             // value of that counter alone, so a counter of the same loop (the
             // same in both invocations of a pair the loop's barrier
             // separates), in [0, its greatest].
-            B::ShiftRight | B::ShiftLeft if x.invariant() && x.k.as_const().is_some() && self.loop_counter(&y).is_some() => {
+            B::ShiftRight | B::ShiftLeft if x.invariant() && x.k.as_const().is_some() && self.loop_counter(&y).is_some() && !y.t.is_empty() => {
                 let c = x.k.as_const().unwrap_or(0);
                 let facts = self.facts.clone();
                 let (yl, yh) = self.range(&y, &facts);
                 let hi = if op == B::ShiftRight { c >> yl.clamp(0, 31) } else { c.checked_shl(yh.clamp(0, 31) as u32).unwrap_or(i128::MAX).min(i128::from(u32::MAX)) };
                 let d = self.digit(&format!("{op:?}({c},{y:?})"), Some(Poly::konst(hi.max(0))), uni);
-                if let (Var::Dig(i), Some(ctr)) = (d, self.loop_counter(&y)) {
-                    for l in self.loops.iter_mut().filter(|l| l.0.contains(&ctr)) {
-                        if !l.0.contains(&i) {
-                            l.0.push(i);
-                        }
+                if let (Var::Dig(i), Some(at)) = (d, self.loop_counter(&y)) {
+                    if !self.loops[at].0.contains(&i) {
+                        self.loops[at].0.push(i);
                     }
                 }
                 Abs::Lin(Lin::var(d, Poly::konst(1)))
@@ -1604,13 +1605,47 @@ impl<'m> An<'m> {
                 _ => None,
             }
         }).collect();
+        // The counters of the loops inside the innermost loop with a barrier
+        // (no barrier between their passes): m may not vary with them.
+        let (inner_ctrs, outer_ctrs): (Vec<u32>, Vec<u32>) = match self.loops.iter().rposition(|(_, barrier, _)| *barrier) {
+            Some(at) => (self.loops[at + 1..].iter().flat_map(|(c, _, _)| c.iter().copied()).collect(), self.loops[..=at].iter().flat_map(|(c, _, _)| c.iter().copied()).collect()),
+            None => return None,
+        };
+        let no_inner_loop = inner_ctrs.is_empty() && self.loops.last().is_some_and(|l| l.1);
         let key = |an: &mut Self, m: Handle<Expression>| -> Option<String> {
             match an.eval(fr, m) {
-                Abs::Lin(l) if an.lin_uni(&l) => Some(format!("{l:?}")),
-                Abs::Other(i, id) if i.uni => Some(format!("#{id}")),
+                // (m the same in both invocations of a pair: a form of the
+                // counters of the barrier's loop and the loops around it.)
+                Abs::Lin(l) if an.lin_uni(&l) && l.t.keys().all(|v| matches!(v, Var::Dig(d) if outer_ctrs.contains(d) && !inner_ctrs.contains(d))) => Some(format!("{l:?}")),
+                Abs::Other(i, id) if i.uni && no_inner_loop => Some(format!("#{id}")),
                 _ => None,
             }
         };
+        // THE PAIR INDEX (a bitonic step over more elements than threads, v24
+        // seed18): `i = (p / m) * 2u * m + (p % m)` and `l = i + m`, p = t +
+        // W h (h the thread's own passes), masked by N - 1 with p below N / 2:
+        // each p its own pair {i, i + m}, the pairs partitioning [0, N), and
+        // two threads' p never equal.
+        if let Some(n) = lit_mask_plus_one(f, *index) {
+            let under = match &f.expressions[*index] {
+                Expression::Binary { op: BinaryOperator::And, left, right } => if lit(*right).is_some() { *left } else { *right },
+                _ => *index,
+            };
+            if let Some((m, p)) = Self::pair_index(f, under) {
+                let mk = key(self, m)?;
+                let Abs::Lin(pl) = self.eval(fr, p) else { return None };
+                let threads_apart = pl.t.iter().all(|(v, c)| match (v, c.as_const()) {
+                    (Var::Lid(0), Some(1)) => true,
+                    (Var::Dig(_) | Var::Wid(_), Some(c)) => c % w == 0,
+                    _ => false,
+                }) && pl.t.contains_key(&Var::Lid(0)) && pl.k.as_const().is_some_and(|k| k % w == 0);
+                let (_, phi) = self.range(&pl, &self.facts.clone());
+                if threads_apart && phi < n / 2 && Self::power_of_two(f, m, 0) {
+                    return Some(format!("pair:{mk}:{pl:?}"));
+                }
+                return None;
+            }
+        }
         let m = if is_t(self, inner) {
             // The thread's own element: under any exchange guard.
             *guards.first().map(|(m, _)| m)?
@@ -1640,6 +1675,98 @@ impl<'m> An<'m> {
             return None;
         }
         key(self, m)
+    }
+
+    /// A pair index's (m, p): `(p / m) * 2u * m + (p % m)` (its factors in
+    /// any order), or that plus m (the pair's upper element).
+    fn pair_index(f: &Function, e: Handle<Expression>) -> Option<(Handle<Expression>, Handle<Expression>)> {
+        let lower = |e: Handle<Expression>| -> Option<(Handle<Expression>, Handle<Expression>)> {
+            let Expression::Binary { op: BinaryOperator::Add, left, right } = &f.expressions[e] else { return None };
+            for (prod, rem) in [(*left, *right), (*right, *left)] {
+                let Expression::Binary { op: BinaryOperator::Modulo, left: p, right: m } = &f.expressions[rem] else { continue };
+                // The product's factors: (p / m), 2u and m.
+                let mut factors = Vec::new();
+                let mut stack = vec![prod];
+                while let Some(x) = stack.pop() {
+                    match &f.expressions[x] {
+                        Expression::Binary { op: BinaryOperator::Multiply, left, right } => {
+                            stack.push(*left);
+                            stack.push(*right);
+                        }
+                        _ => factors.push(x),
+                    }
+                }
+                let same = |a: Handle<Expression>, b: Handle<Expression>| Self::same_value(f, a, b, 0);
+                let div = factors.iter().any(|x| matches!(&f.expressions[*x], Expression::Binary { op: BinaryOperator::Divide, left, right } if same(*left, *p) && same(*right, *m)));
+                let two = factors.iter().any(|x| matches!(&f.expressions[*x], Expression::Literal(naga::Literal::U32(2))));
+                let mm = factors.iter().any(|x| same(*x, *m));
+                if factors.len() == 3 && div && two && mm {
+                    return Some((Self::seen_through(f, *m), *p));
+                }
+            }
+            None
+        };
+        if let Some(r) = lower(e) {
+            return Some(r);
+        }
+        let Expression::Binary { op: BinaryOperator::Add, left, right } = &f.expressions[e] else { return None };
+        for (i, m) in [(*left, *right), (*right, *left)] {
+            if let Some((m2, p)) = lower(i) {
+                let same = Self::same_value(f, m, m2, 0);
+                if same {
+                    return Some((m2, p));
+                }
+            }
+        }
+        None
+    }
+
+    /// An expression with a u32 conversion of a u32, and `max(x, 1u)` of `x =
+    /// 1u << s` (never 0, the kingdom's divisor guard), seen through.
+    fn seen_through(f: &Function, mut e: Handle<Expression>) -> Handle<Expression> {
+        for _ in 0..8 {
+            match &f.expressions[e] {
+                Expression::As { expr, kind: ScalarKind::Uint, .. } => e = *expr,
+                Expression::Math { fun: MathFunction::Max, arg, arg1: Some(one), .. } if matches!(&f.expressions[*one], Expression::Literal(naga::Literal::U32(1))) && matches!(&f.expressions[Self::seen_through(f, *arg)], Expression::Binary { op: BinaryOperator::ShiftLeft, left, .. } if matches!(&f.expressions[*left], Expression::Literal(naga::Literal::U32(1)))) => e = *arg,
+                _ => break,
+            }
+        }
+        e
+    }
+
+    /// Whether two expressions compute one value by their form: the same
+    /// handle, loads of one local, the same operation over operands that
+    /// are; a u32 conversion of a u32 and `max(x, 1u)` of `x = 1u << s` (never
+    /// 0) seen through, as the kingdom renders a divisor.
+    fn same_value(f: &Function, a: Handle<Expression>, b: Handle<Expression>, depth: usize) -> bool {
+        if a == b {
+            return true;
+        }
+        if depth > 16 {
+            return false;
+        }
+        let strip = |e: Handle<Expression>| Self::seen_through(f, e);
+        let (a, b) = (strip(a), strip(b));
+        if a == b {
+            return true;
+        }
+        let rec = |x: Handle<Expression>, y: Handle<Expression>| Self::same_value(f, x, y, depth + 1);
+        match (&f.expressions[a], &f.expressions[b]) {
+            (Expression::Load { pointer: x }, Expression::Load { pointer: y }) => x == y || rec(*x, *y),
+            (Expression::Literal(x), Expression::Literal(y)) => x == y,
+            (Expression::Binary { op: o1, left: l1, right: r1 }, Expression::Binary { op: o2, left: l2, right: r2 }) => o1 == o2 && rec(*l1, *l2) && rec(*r1, *r2),
+            (Expression::FunctionArgument(x), Expression::FunctionArgument(y)) => x == y,
+            (Expression::LocalVariable(x), Expression::LocalVariable(y)) => x == y,
+            (Expression::GlobalVariable(x), Expression::GlobalVariable(y)) => x == y,
+            (Expression::AccessIndex { base: b1, index: i1 }, Expression::AccessIndex { base: b2, index: i2 }) => i1 == i2 && rec(*b1, *b2),
+            (Expression::Math { fun: f1, arg: a1, arg1: x1, .. }, Expression::Math { fun: f2, arg: a2, arg1: x2, .. }) => f1 == f2 && rec(*a1, *a2) && match (x1, x2) {
+                (Some(x), Some(y)) => rec(*x, *y),
+                (None, None) => true,
+                _ => false,
+            },
+            (Expression::Select { condition: c1, accept: a1, reject: r1 }, Expression::Select { condition: c2, accept: a2, reject: r2 }) => rec(*c1, *c2) && rec(*a1, *a2) && rec(*r1, *r2),
+            _ => false,
+        }
     }
 
     /// Whether an expression is a power of two or zero by its form: a
@@ -1848,7 +1975,7 @@ impl<'m> An<'m> {
                 // in one pass of the innermost loop, which has a barrier each
                 // pass: the pairs {t, t ^ m} partition the workgroup and only
                 // each pair's lower thread acts, so two threads never meet.
-                let same_pass = an.loops.last().is_some_and(|(_, barrier, before)| *barrier && !before.contains(&key.0) && !before.contains(&key.1));
+                let same_pass = an.loops.iter().rev().find(|(_, barrier, _)| *barrier).is_some_and(|(_, _, before)| !before.contains(&key.0) && !before.contains(&key.1));
                 let (pa, pb) = (an.wg_sites[key.0].partner.clone(), an.wg_sites[key.1].partner.clone());
                 let exchange = same_pass && pa.is_some() && pa == pb;
                 match (an.wg_pairs.contains(&key), exchange) {
@@ -3403,6 +3530,17 @@ fn check_entry(module: &Module, contract: &Contract, entry: &str) -> Result<Repo
     Ok(report)
 }
 
+/// An index masked by a literal N - 1 (N a power of two): N.
+fn lit_mask_plus_one(f: &Function, e: Handle<Expression>) -> Option<i128> {
+    let Expression::Binary { op: BinaryOperator::And, left, right } = &f.expressions[e] else { return None };
+    let v = [*left, *right].iter().find_map(|x| match &f.expressions[*x] {
+        Expression::Literal(naga::Literal::U32(v)) => Some(i128::from(*v)),
+        _ => None,
+    })?;
+    let n = v + 1;
+    (n & v == 0).then_some(n)
+}
+
 /// The largest value an index expression can take, proved from its form
 /// alone: a literal or constant, a mask `x & c`, a clamp `min(x, c)` or
 /// `clamp(x, lo, c)`, a remainder `x % c`, a shift right of a bounded value,
@@ -4075,5 +4213,19 @@ mod tests {
         proved(&k("wid.x", "rank < 64u"), &rows);
         assert_eq!(rule(&k("wid.x / 2u", "rank < 64u"), &rows), "write_sets_overlap");
         assert_eq!(rule(&k("wid.x", "rank < 65u"), &rows), "write_sets_overlap");
+    }
+
+    /// A BITONIC SORT OVER MORE ELEMENTS THAN THREADS (2026-10-17, v24
+    /// seed18: 256 threads sorting 1,024 pairs of keys and rows): each
+    /// thread takes pair indexes p = t + 256 h, h < 2, its pair
+    /// i = 2 jj (p / jj) + (p % jj) and l = i + jj, every index masked by 1023: proved;
+    /// p = t + 128 h (two threads on one pair) and l = i + 2 jj race.
+    #[test]
+    fn a_bitonic_sort_over_pair_indexes_is_proved_and_its_near_misses_race() {
+        let k = |p: &str, l: &str| format!("@group(0) @binding(0) var<storage, read> keys: array<f32>;\n@group(0) @binding(1) var<storage, read_write> out: array<f32>;\nvar<workgroup> sk_s: array<f32, 1024>;\nvar<workgroup> sk_r: array<u32, 1024>;\n@compute @workgroup_size(256, 1, 1)\nfn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) wid: vec3<u32>) {{\n    let t = lid.x;\n    for (var a = 1u; a <= 10u; a = a + 1u) {{\n        let kk = 1u << a;\n        for (var b = 0u; b < a; b = b + 1u) {{\n            let jj = 1u << (a - 1u - b);\n            for (var h = 0u; h < 2u; h = h + 1u) {{\n                let p = {p};\n                let i = (p / jj) * 2u * jj + (p % jj);\n                let l = {l};\n                let asc = (i & kk) == 0u;\n                let si = sk_s[i & 1023u];\n                let sl = sk_s[l & 1023u];\n                let ri = sk_r[i & 1023u];\n                let rl = sk_r[l & 1023u];\n                if ((si > sl) == asc) {{\n                    sk_s[i & 1023u] = sl;\n                    sk_s[l & 1023u] = si;\n                    sk_r[i & 1023u] = rl;\n                    sk_r[l & 1023u] = ri;\n                }}\n            }}\n            workgroupBarrier();\n        }}\n    }}\n    out[gid.x] = sk_s[t];\n}}\n");
+        let c = Contract::parse("workgroups x 1 64\nworkgroups y 1 1\nworkgroups z 1 1\n").unwrap();
+        proved(&k("t + h * 256u", "i + jj"), &c);
+        assert_eq!(rule(&k("t + h * 128u", "i + jj"), &c), "workgroup_memory_race");
+        assert_eq!(rule(&k("t + h * 256u", "i + 2u * jj"), &c), "workgroup_memory_race");
     }
 }
