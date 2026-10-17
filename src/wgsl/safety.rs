@@ -1120,6 +1120,41 @@ impl<'m> An<'m> {
         }
     }
 
+    /// The locals a condition bounds where it holds: `x < c` (or `c > x`),
+    /// x a local whose value has no affine form and c an invariant constant,
+    /// through `&&`: each such local as a digit in [0, c - 1] (2026-10-17:
+    /// v24's searches store `cands[q * 64u + rank]` under `rank < 64u`).
+    fn bounded_by(&mut self, fr: usize, cond: Handle<Expression>) -> Vec<((usize, Handle<naga::LocalVariable>), Abs)> {
+        let f = self.frames[fr].func;
+        match &f.expressions[cond] {
+            Expression::Binary { op: BinaryOperator::LogicalAnd, left, right } => {
+                let (l, r) = (*left, *right);
+                let mut out = self.bounded_by(fr, l);
+                out.extend(self.bounded_by(fr, r));
+                out
+            }
+            Expression::Binary { op: op @ (BinaryOperator::Less | BinaryOperator::Greater), left, right } => {
+                let (x, c) = if *op == BinaryOperator::Less { (*left, *right) } else { (*right, *left) };
+                let Expression::Load { pointer } = &f.expressions[x] else { return Vec::new() };
+                let Expression::LocalVariable(l) = &f.expressions[*pointer] else { return Vec::new() };
+                let key = (self.frames[fr].id, *l);
+                let Some(Abs::Other(info, id)) = self.env.get(&key).cloned() else { return Vec::new() };
+                let k = match self.eval(fr, c) {
+                    Abs::Lin(cl) if cl.invariant() => cl.k.as_const(),
+                    _ => None,
+                };
+                match k {
+                    Some(k) if k >= 1 => {
+                        let d = self.digit(&format!("lt(#{id},{k})"), Some(Poly::konst(k - 1)), info.uni);
+                        vec![(key, Abs::Lin(Lin::var(d, Poly::konst(1))))]
+                    }
+                    _ => Vec::new(),
+                }
+            }
+            _ => Vec::new(),
+        }
+    }
+
     fn eval(&mut self, fr: usize, h: Handle<Expression>) -> Abs {
         if let Some(v) = self.frames[fr].vals.get(&h) {
             return v.clone();
@@ -1666,6 +1701,12 @@ impl<'m> An<'m> {
                 self.ctrl_uni = su && cu;
                 self.ctrl_inv = si && ci;
                 self.facts.extend(Self::facts_of(&c, true));
+                // A local of no affine form tested below an invariant
+                // (`if (rank < 64u && ..)`): in the branch, a digit below it,
+                // so `cands[q * 64u + rank]` is an affine form there.
+                for (key, v) in self.bounded_by(fr, *condition) {
+                    self.env.insert(key, v);
+                }
                 let ft_a = self.block(fr, accept);
                 let (env_a, priv_a) = (std::mem::replace(&mut self.env, saved_env), std::mem::replace(&mut self.privates, saved_priv));
                 self.facts.truncate(base);
@@ -3521,5 +3562,33 @@ mod tests {
             }
         }
         println!("run 1's {} raw seeds at layer 7: strict proves {strict_ok}, arena {arena_ok}; arena's refusals by rule {why:?}", files.len());
+    }
+
+    /// A SEARCH THREAD'S OWN ROW OF cands (2026-10-17, the arena gate's 139
+    /// store_index_not_affine, nearly all `cands[q * 64u + rank]`): a rank
+    /// counted per candidate and stored under `rank < 64u` is a digit in
+    /// [0, 63] there, so the cell is in the row of q; with q the thread's
+    /// own (a thread per query) the row is proved its own in both modes, and
+    /// with one thread of a workgroup per query too. Two threads of one
+    /// workgroup writing their query's row at ranks the form cannot tell
+    /// apart overlap (a limit of the proof, named), and a rank not tested
+    /// below 64 has no form.
+    #[test]
+    fn a_rank_tested_below_the_row_width_stores_in_the_threads_own_row() {
+        let pre = "struct Cfg { n_queries: u32, };
+@group(0) @binding(0) var<storage, read> keys: array<f32>;
+@group(0) @binding(4) var<storage, read_write> cands: array<u32>;
+@group(0) @binding(5) var<uniform> cfg: Cfg;
+";
+        let k = |q: &str, test: &str| format!("{pre}@compute @workgroup_size(64, 1, 1)\nfn search(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) wid: vec3<u32>) {{\n    let q = {q};\n    var rank = 0u;\n    for (var j = 0u; j < 256u; j = j + 1u) {{\n        if (keys[j] > keys[q]) {{ rank = rank + 1u; }}\n    }}\n    if ({test}) {{\n        cands[q * 64u + rank] = j0(q);\n    }}\n}}\nfn j0(q: u32) -> u32 {{ return q + 1u; }}\n");
+        let c = Contract::parse("workgroups x 1 2500\nworkgroups y 1 1\nworkgroups z 1 1\nparam cfg.n_queries 1 2500\n").unwrap();
+        let arena = c.with_arena_mode(true);
+        for m in [&c, &arena] {
+            proved(&k("gid.x", "rank < 64u && q < cfg.n_queries"), m);
+            proved(&k("wid.x", "lid.x == 0u && rank < 64u"), m);
+            assert_eq!(rule(&k("wid.x", "rank < 64u"), m), "write_sets_overlap");
+            assert_eq!(rule(&k("gid.x", "rank < 65u"), m), "write_sets_overlap");
+            assert_eq!(rule(&k("gid.x", "q < cfg.n_queries"), m), "store_index_not_affine");
+        }
     }
 }
