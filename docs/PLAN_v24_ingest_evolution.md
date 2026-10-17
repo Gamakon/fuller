@@ -6,7 +6,7 @@
 seeds' 2,048-D keys stream in, five microbatches in time order, into four independent
 per-seed indexes on the GPU; after every microbatch the 2,500 oracle queries search the
 four indexes and their pooled candidates go to the exact re-rank. Goal: recall@10 of
-0.996+ on first ingestion, as fast as it can be. The design questions and every decision
+0.996+ on first ingestion, as fast as it can be. The design questions (no answers) and the test-set decisions
 are in qdrant `docs/V24_Evolved_GPU_Streaming_Index.md` (sections 1–11).
 
 **Why this exists.** Today's index on the same data (qdrant 3eb43d194): recall@10 0.9984,
@@ -46,6 +46,31 @@ ingest, one or more threads per query). Atomics on `index_u32` are allowed. Each
 its own `index_u32`/`index_f32`, so the four indexes are independent by construction. The
 exact re-rank is not the design's: the harness pools the four seeds' candidates and
 re-ranks them exactly against the raw sparse records.
+
+## 1b. Decisions after Codex's review (2026-10-17 00:05Z)
+
+1. **No future keys exist for a design.** At stage k the harness binds a `keys` buffer
+   holding only the arrived rows (sections 1..k); nothing later is on the device.
+2. **A fixed candidate budget:** `C_MAX = 64` per seed, a contract constant (not a cfg
+   field); the pool is the union of the four seeds' lists, deduplicated, at most 256;
+   P counts the deduplicated pool. A design cannot buy recall by returning everything.
+3. **One counting rule, today's:** after the exact re-rank of the pool, the top 10 are
+   counted against the accept set (every arrived record within 1e-6 of the 10th true
+   cosine), found capped at 10 — the rule `count_today_index.py` used for today's
+   anchors, so M and M_today are the same measure.
+4. **Index state lives for one evaluation run:** `index_u32`/`index_f32` are created and
+   zeroed at the start of a run, persist across the five stages, and are discarded after;
+   every timing repetition is a whole fresh run, so no sample reuses a built index. Timing
+   samples are each stage's ingest and search GPU times inside a run (GPU timestamps).
+5. **Fitness carries `inputs: Vec<f64>`** beside the old six columns, and θ from the
+   library over `inputs` when it is non-empty; phylu reads `inputs` (persisted, compared,
+   briefed) for problems that fill it; the Gram and nluca problems are unchanged.
+6. **phylu gets a raw-WGSL population path:** a seed the safe reader cannot read yet is
+   admitted as raw text, evaluated by the harness (compile, run under the GPU wait
+   budget), varied only by model rewrites and repairs until B6 lets it be read; every
+   raw seed's reader failure is logged as a kingdom gap for B6.
+7. **Anchors per window = stage × half,** recomputed from per-oracle counts (B1 extends
+   `count_today_index.py`); `P_today` from the search's `candidates_pooled`.
 
 ## 2. The machinery to build (hand-written; designs are not)
 
