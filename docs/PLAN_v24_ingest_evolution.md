@@ -210,3 +210,32 @@ none differed in candidate order; 1 parent and 34 children differed in arena sta
 The safety layers turn away 25 of the 28 seeds: layer 7 24 (write_sets_overlap 8,
 output_read_of_another_invocations 8, store_index_not_affine 5, workgroup_memory_race 3),
 layer 4 one (a barrier under a condition that is not workgroup-uniform).
+
+### The arena arm at 65,536 words (compared with the strict arm above)
+
+**Result.** Arena mode at the admission case's arena length lifts every operator's
+children that pass every stage by 4 to 7 (to 11 to 14 % of 200), with no race in 10 runs;
+it admits one more seed (4 of 28, strict 3). Most children still fail because the designs
+mask for 8,388,608-word arenas while this case binds 65,536.
+
+Run on the GPU 13:06–13:08Z: fuller 9994fc8 (committed, no uncommitted edits), phylu
+8c624d8c, `--measure-operators 200 --measure-races 10` with layer 7 in arena mode,
+arenas index_u32 and index_f32 each arrayLength 65,536 (the length `cases/admission.toml`
+binds); 28 parents of 32 seeds, layout 184 slots; 97.8 s, of which 33.9 s on the device.
+Records: `logs/V24/gate/arena65536/gate.md`, `gate.tsv`.
+
+| operator | pass every stage, strict (fuller 1fbdcbc) | pass every stage, arena 65,536 (fuller 9994fc8) | order-only, arena | state-only, arena |
+|---|---:|---:|---:|---:|
+| (parents) | 3 of 28 | 4 of 28 | 0 | 1 |
+| section crossover | 23 | 28 | 0 | 7 |
+| typed crossover | 21 | 25 | 0 | 5 |
+| rule | 18 | 24 | 0 | 6 |
+| generic rewrite | 15 | 22 | 0 | 6 |
+| point mutation | 23 | 27 | 0 | 10 |
+
+Races: 0 in both arms. The arena arm's first failures (children and parents): layer 7
+`arena_index_not_in_bounds` 503 (the designs mask for 8M, the case binds 65,536: the
+harness is changing the case), `workgroup_memory_race` 171, `store_index_not_affine` 139
+(stores to `cands` in search: an output, not an arena, so strict rules), a barrier under
+non-uniform control 30. The arena arm at 8,388,608 follows once the admission case binds
+that length.
