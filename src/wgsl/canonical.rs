@@ -675,7 +675,9 @@ fn canonical_stride(t: &Tree, kingdom: &WgslKingdom) -> Option<Tree> {
         return None;
     }
     let (stem, rung) = t.name.rsplit_once('_').filter(|(_, r)| rung_of(&format!("x_{r}")).is_some())?;
-    let plain = stem.strip_suffix("_strided").filter(|s| matches!(*s, "loop.tile" | "loop.tilex"))?;
+    // (And a stepped loop that breaks, 2026-10-17: stepping by 1 it is the
+    // loop that breaks.)
+    let plain = if stem == "loop.tilex_strided_brk" { "loop.tilex_brk" } else { stem.strip_suffix("_strided").filter(|s| matches!(*s, "loop.tile" | "loop.tilex"))? };
     let [bound, step, body] = t.kids.as_slice() else { return None };
     // (The step is a lit64 on a tile loop, a lit4096 on a tilex loop since 2026-10-16.)
     if !matches!(step.name.as_str(), "literal.lit64" | "literal.lit4096") || step.konst != 1.0 {

@@ -1709,9 +1709,11 @@ impl<'a> Ctx<'a> {
         let (kind, max) = match dual {
             "f32.real" => ('f', 64),
             "vec4<f32>.real" => ('v', 32),
-            "u32.index" | "u32.bits" | "u32.count" => ('i', 64),
-            "bool.flag" => ('b', 16),
-            "i32.int" => ('n', 16),
+            // (An opaque value of a slot is that slot's register: a value
+            // carried through unchanged, a random module of 2026-10-17.)
+            "u32.index" | "u32.bits" | "u32.count" | "u32.opaque" => ('i', 64),
+            "bool.flag" | "bool.opaque" => ('b', 16),
+            "i32.int" | "i32.opaque" => ('n', 16),
             // (Any form of vec4<u32>, opaque too: insertBits over a vector,
             // 2026-10-13, a random kernel.)
             "vec4<u32>.bits" | "vec4<u32>.index" | "vec4<u32>.count" | "vec4<u32>.opaque" => ('u', 8),
@@ -3231,16 +3233,25 @@ impl<'a> Ctx<'a> {
         // A loop that breaks: its body, the break block B<d+1> (conditional
         // statements of the next depth, the guard, conditional statements),
         // moved with it (it kept its old depth's B and C before; 2026-10-12).
-        if matches!(stem, "loop.tile_brk" | "loop.tilex_brk") {
+        // (And the stepped one, its stride kept: 12 of 1,000 random trees, the
+        // first time the sampler drew it, kept the old depth's B, 2026-10-17.)
+        if matches!(stem, "loop.tile_brk" | "loop.tilex_brk" | "loop.tilex_strided_brk") {
             if d + 1 > 5 {
                 return Err("a loop that breaks six deep".into());
             }
-            let [bound, body] = t.kids.as_slice() else { return Err(format!("{} with {} children", t.name, t.kids.len())) };
+            let (bound, stride, body) = match t.kids.as_slice() {
+                [bound, body] => (bound, None, body),
+                [bound, stride, body] => (bound, Some(stride), body),
+                _ => return Err(format!("{} with {} children", t.name, t.kids.len())),
+            };
             let [before, cond, after] = body.kids.as_slice() else { return Err(format!("{} with {} children", body.name, body.kids.len())) };
             let b = format!("B{}", d + 1);
             let brk = Tree::new(&format!("block.brk_{b}"), ty(self, &format!("block.{b}"))?, vec![self.rerung(before, d + 1)?, cond.clone(), self.rerung(after, d + 1)?]);
             let c = format!("C{d}");
-            return Ok(Tree::new(&format!("{stem}_{c}"), ty(self, &format!("stmt.{c}"))?, vec![self.any_bound(bound)?, brk]));
+            let mut kids = vec![self.any_bound(bound)?];
+            kids.extend(stride.cloned());
+            kids.push(brk);
+            return Ok(Tree::new(&format!("{stem}_{c}"), ty(self, &format!("stmt.{c}"))?, kids));
         }
         let tile = matches!(stem, "loop.tile" | "loop.tile_strided" | "loop.tilex" | "loop.tilex_strided");
         if tile && d + 1 > 5 {
@@ -3312,7 +3323,7 @@ impl<'a> Ctx<'a> {
             }
         }
         // The own element an index is, or None.
-        let own = |ctx: &Self, i: &Tree| -> Option<Tree> {
+        let own = |ctx: &Self, i: &Tree, len: u32| -> Option<Tree> {
             let wgown = ty(ctx, "u32.wgown").ok()?;
             let lit = |c: u32| -> Option<Tree> { Some(Tree::new("safe.wg_own", wgown, vec![Tree::literal("literal.lit64", ty(ctx, "u32.lit64").ok()?, c as f32)])) };
             // (`lidx + 0u` read as lidx.)
@@ -3330,6 +3341,12 @@ impl<'a> Ctx<'a> {
             }
             let ("index.mul", [a, b]) = (k.name.as_str(), k.kids.as_slice()) else { return None };
             let (counter, t) = if literal_value(b).is_some() { (a, b) } else { (b, a) };
+            // (The emitter's min(k, ceil(len / threads)), which keeps the
+            // product from wrapping: the counter itself.)
+            let counter = match (counter.name.as_str(), counter.kids.as_slice()) {
+                ("index.min", [x, c]) if literal_value(c) == Some(len.div_ceil(threads.max(1)) as f32) => x,
+                _ => counter,
+            };
             if literal_value(t) != Some(threads as f32) || counter.kids.len() != 1 {
                 return None;
             }
@@ -3357,10 +3374,11 @@ impl<'a> Ctx<'a> {
             };
             let [arr, idx, v] = set.kids.as_slice() else { return None };
             let i = idx.kids.first()?;
-            if *i != c.kids[0] || literal_value(&c.kids[1])? as u32 != self.array_lens.get(arr.name.as_str()).copied().unwrap_or_else(|| crate::wgsl::render::array_len(&arr.name.replace('.', "_"))) {
+            let len = self.array_lens.get(arr.name.as_str()).copied().unwrap_or_else(|| crate::wgsl::render::array_len(&arr.name.replace('.', "_")));
+            if *i != c.kids[0] || literal_value(&c.kids[1])? as u32 != len {
                 return None;
             }
-            let own = own(ctx, i)?;
+            let own = own(ctx, i, len)?;
             Some(Tree::new(&format!("{row}_{rung}"), ctx.stmt_ty(rung).ok()?, vec![arr.clone(), own, v.clone()]))
         };
         let mut out = Vec::new();
@@ -6664,6 +6682,7 @@ fn search(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocati
         let checker = crate::wgsl::check::Checker::with_contract(&k, &role, &crate::wgsl::target::Target::recorded(), contract);
         let n = 1000u64;
         let (mut read_back, mut same, mut fixpoint, mut legal) = (0usize, 0usize, 0usize, 0usize);
+        let mut illegal: BTreeMap<String, usize> = BTreeMap::new();
         let mut failures = Vec::new();
         for seed in 0..n {
             let tree = crate::wgsl::render::sample(&k, &role, root, 6, seed).unwrap_or_else(|e| panic!("seed {seed}: {e}"));
@@ -6684,12 +6703,16 @@ fn search(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocati
                     read_back += 1;
                     same += usize::from(back == crate::wgsl::canonical::canonical(&tree, &k));
                     fixpoint += usize::from(fix);
-                    legal += usize::from(checker.check(&tree).is_ok());
+                    match checker.check(&tree) {
+                        Ok(()) => legal += 1,
+                        Err(e) => *illegal.entry(format!("{} {}", e.layer.number(), e.reason)).or_insert(0usize) += 1,
+                    }
                 }
                 Err(e) => failures.push(format!("seed {seed}: {e}")),
             }
         }
         println!("random modules: {read_back} of {n} read back; {same} to the tree drawn (canonical); {fixpoint} to a fixpoint; {legal} pass every layer under a 1-D contract");
+        println!("the layers the others fail (layer, reason): {illegal:?}");
         assert!(failures.is_empty(), "{} of {n}:\n{}", failures.len(), failures.iter().take(10).cloned().collect::<Vec<_>>().join("\n"));
         assert!(same >= MODULE_AST_FLOOR && fixpoint >= MODULE_FIXPOINT_FLOOR && legal >= MODULE_LEGAL_FLOOR, "below the floors reached: AST {same} (floor {MODULE_AST_FLOOR}), fixpoint {fixpoint} ({MODULE_FIXPOINT_FLOOR}), legal {legal} ({MODULE_LEGAL_FLOOR})");
     }
@@ -7470,7 +7493,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     /// reached so far: to a fixpoint after the first read, and to the AST
     /// drawn (canonical). Every tree reads back (1,000 of 1,000, asserted
     /// exactly). Their own text is printed, not a bar (Andrew, 2026-10-13).
-    const FIXPOINT_FLOOR: usize = 914;
+    const FIXPOINT_FLOOR: usize = 918;
     // (Both reset 2026-10-13 when the sampler drew its stores from an input:
     // other trees, 253 and 930 on the earlier draws; again when conditions
     // read a variable: 110 then 79; 59 when they vary by thread or data;
@@ -7480,18 +7503,31 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     // its loop reads back as the put of element 0, its value; 2026-10-16,
     // 42 (fixpoint 914) when the kingdom drew u32 workgroup arrays: the
     // first differences fall in the classes of the earlier draws, the u32
-    // put's own the tile counter outside its loop that every put has.)
-    const AST_FLOOR: usize = 42;
+    // put's own the tile counter outside its loop that every put has;
+    // 2026-10-17, 35 (fixpoint 918) when the kingdom drew the stepped loops
+    // that break (loop.tilex_strided_brk, read from v24 seeds; undrawable at
+    // first, 14 of 1,000 drawn trees did not read back: 12 kept the old
+    // depth's break block where an epilogue moved them, fixed in rerung; 2
+    // were workgroup puts through a tile counter of a loop bounded near 2^24,
+    // whose lidx + k * threads wrapped, fixed by min(k, ceil(len / threads))):
+    // the first differences fall in the earlier classes, a barrier or a loop
+    // grouped against a register set, a literal bound against its uniform
+    // spelling, which tilex_brk and tilex loops have too.)
+    const AST_FLOOR: usize = 35;
 
     /// The floors of [`random_module_trees_render_validate_and_read_back`]
     /// (1,000 v24 modules, depth 6; measured 2026-10-17 at its first run:
     /// 4 parse back to the tree drawn, canonical, 955 to a fixpoint, 151 pass
     /// every layer under a 1-D contract; the canonical spelling is the Gram
     /// role's, so few module trees meet it; a drawn store of `cands` at an
-    /// arbitrary index is refused by layer 7, as it must be).
-    const MODULE_AST_FLOOR: usize = 4;
-    const MODULE_FIXPOINT_FLOOR: usize = 955;
-    const MODULE_LEGAL_FLOOR: usize = 151;
+    /// arbitrary index is refused by layer 7, as it must be. Re-measured the
+    /// same day, 3, 948 and 119, when the kingdom drew the stepped loops that
+    /// break and an opaque local took its slot's register: other draws; every
+    /// module the checker turns away fails layer 7's write sets, 265
+    /// store_index_not_affine and 616 write_sets_overlap, random stores).
+    const MODULE_AST_FLOOR: usize = 3;
+    const MODULE_FIXPOINT_FLOOR: usize = 948;
+    const MODULE_LEGAL_FLOOR: usize = 119;
 
 
     /// THE KINGDOM'S COMPLETENESS BAR (2026-10-12): 1,000 random trees of

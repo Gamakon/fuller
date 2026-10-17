@@ -1907,7 +1907,10 @@ impl Renderer<'_> {
     /// elements each thread owns there, ceil(len / threads), so the put is
     /// never one no thread executes (seed 18, 2026-10-14: lidx + 2160 into
     /// 1,024 elements, a dead store layer 7 could not place); a tile
-    /// counter's as `value` writes it.
+    /// counter's k as min(k, ceil(len / threads)): at that k and past it the
+    /// put's guard `i < len` fails either way, and the product cannot wrap
+    /// (2026-10-17: a put in a loop bounded near 2^24 wrapped lidx + k * 780
+    /// back under the length, two writes of one element, layer 7 found it).
     fn wg_own(&self, i: &Tree, len: u32, scope: &mut Scope) -> Result<String, String> {
         let threads = scope.grid.x * scope.grid.y;
         match (safe_base(&i.name), i.kids.first()) {
@@ -1915,6 +1918,7 @@ impl Renderer<'_> {
                 let k = t.konst.round().clamp(0.0, 63.0) as u32 % len.div_ceil(threads.max(1)).max(1);
                 Ok(format!("(lidx + {}u)", k * threads))
             }
+            ("safe.wg_own_tile" | "safe.wg_own_tile2", Some(k)) => Ok(format!("(lidx + min({}, {}u) * {threads}u)", self.value(k, scope)?, len.div_ceil(threads.max(1)))),
             _ => self.value(i, scope),
         }
     }
@@ -3230,11 +3234,9 @@ fn sample_with(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, s
     // inserts, `h >> (k * 4u)`; the sampler draws a count's own rows.)
     // (Nor the four u32 arrays past the first four, for kernels that keep
     // more lists: the draws stay those of the floors below.)
-    // (Nor, yet, the stepped loops that break, 2026-10-17, read from model
-    // seeds: drawn, 14 of 1,000 random trees did not read back; open.)
     // (Nor the 64-element u32 private arrays, read from kernels that keep one.)
     let long_u32 = |t: &Ty| kingdom.dual(*t).is_some_and(|d| d.dual == "parr64<u32>.index");
-    let not_drawn = |r: &WgslRow| uniform_test_op(safe_base(&r.name)).is_some() || long_u32(&r.output) || r.inputs.iter().any(long_u32) || r.name.starts_with("loop.tilex_strided_brk_") || matches!(safe_base(&r.name), "stmt.if_uflag" | "stmt.if_else_uflag") || matches!(r.name.as_str(), "convert.index_to_count" | "wg.ue" | "wg.uf" | "wg.ug" | "wg.uh" | "wg.e" | "wg.f" | "wg.g" | "wg.h") || (r.name == "wg.get_u_safe" && kingdom.dual(r.output).is_some_and(|d| d.form == "xbound"));
+    let not_drawn = |r: &WgslRow| uniform_test_op(safe_base(&r.name)).is_some() || long_u32(&r.output) || r.inputs.iter().any(long_u32) || matches!(safe_base(&r.name), "stmt.if_uflag" | "stmt.if_else_uflag") || matches!(r.name.as_str(), "convert.index_to_count" | "wg.ue" | "wg.uf" | "wg.ug" | "wg.uh" | "wg.e" | "wg.f" | "wg.g" | "wg.h") || (r.name == "wg.get_u_safe" && kingdom.dual(r.output).is_some_and(|d| d.form == "xbound"));
     let mut rows: Vec<WgslRow> = kingdom.rows.iter().filter(|r| !f16(&r.output) && !r.inputs.iter().any(f16) && !r.name.starts_with("stmt.return") && !r.name.starts_with("safe.mirror_of") && !r.name.starts_with("store.h_mirror") && !not_drawn(r) && !r.name.starts_with("wg.set")).cloned().collect();
     // The safe kingdom reads h only at the thread's own cell (load.h_safe):
     // the role's load.h, h at any index, is the plain kingdom's (the
