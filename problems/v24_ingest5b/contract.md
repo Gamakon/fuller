@@ -200,7 +200,7 @@ design, not a recipe.
 
 ## Strategies
 
-- **Count-then-splay buckets.** Pass 0 hashes each new row to a coarse cell
+- **Andrew's bottom-up hypothesis, whole.** Count hits to find the hotspots before visiting their rows (pass 0: each new row's coarse cell by the sign bits of fixed projections, atomicAdd counts); splay the data into right-sized buckets (pass 1: a cell over the size threshold split by further sign bits until every bucket holds at most B rows); promote existing points upward at random (pass 2 and on: each bucket's rows promoted to the level above with a fixed probability, the upper levels a random sample drawn from where the data is); a fixed ef per layer; each group's scope growing level by level (a level-l point linked to its nearest promoted points within 2^l buckets); all of a microbatch rising together, level by level, one pass a level. Search descends the levels with that fixed ef from the top, then scans its bottom buckets by what the arenas keep of their rows (codes, not keys: search has none).
 - **Hotspot-first splaying.** A count histogram over 4,096 cells finds the
 - **Right-sized buckets by density.** Each bucket holds at most B rows,
 - **Bottom-up random promotion, fixed ef.** Each new row is promoted to the

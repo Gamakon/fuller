@@ -5789,4 +5789,24 @@ fn search() { cands[0] = cfg.stage; }
         assert_eq!(w.len(), 10);
         assert!(w.iter().all(|x| x.broken == 0), "{w:?}");
     }
+
+    /// v24_ingest5b's MODEL CONTRACT (what the seed calls are given,
+    /// `llm::contract`): 32 strategies, the first Andrew's bottom-up
+    /// hypothesis whole (count hits, splay into right-sized buckets, promote
+    /// at random, fixed ef per layer, scope growing level by level); the
+    /// system text carries the section "v24_ingest5b: what binding 0 holds";
+    /// the output rule names both entry points. Text only: nothing is called.
+    #[cfg(feature = "gpu")]
+    #[test]
+    fn v24_ingest5b_contract_gives_the_models_32_strategies() {
+        let p = Problem::load(&root().join("problems/v24_ingest5b")).unwrap();
+        let c = crate::wgsl::llm::contract(Some(&p)).unwrap();
+        assert_eq!(c.strategies.len(), 32);
+        let first = &c.strategies[0];
+        for part in ["bottom-up hypothesis", "Count hits", "splay", "right-sized buckets", "promote", "fixed ef per layer", "scope growing level by level"] {
+            assert!(first.contains(part), "the first strategy lacks {part:?}: {first}");
+        }
+        assert!(c.system.contains("v24_ingest5b: what binding 0 holds"));
+        assert!(c.output_rule.contains("`fn ingest`") && c.output_rule.contains("`fn search`"), "{}", c.output_rule);
+    }
 }
