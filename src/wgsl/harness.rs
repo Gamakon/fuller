@@ -922,6 +922,8 @@ pub struct Step {
     /// A dispatch's timing-sample label (a template): its GPU ms is a
     /// separate value of the run (`RunOut::dispatch_ms`), summed by label.
     pub sample: Option<String>,
+    /// A setup dispatch of the machinery kernel of this name (`[[machine]]`).
+    pub machine: Option<String>,
     pub copy: Option<String>,
     pub to: Option<String>,
     pub src_offset: Option<String>,
@@ -1125,6 +1127,24 @@ pub struct ProblemSpec {
     /// `gram::adapter_buffer_limit`); `DeviceExecutor::for_problem` applies it.
     #[serde(default)]
     pub binding_limit: LimitRule,
+    /// MACHINERY KERNELS (`[[machine]]`): hand-written kernels the setup
+    /// runs on the device to fill resident buffers (v24_ingest5's key
+    /// projection), each with its own binding schema; never the kernel
+    /// evaluated, never evolved.
+    #[serde(default)]
+    pub machine: Vec<MachineSpec>,
+}
+
+/// `[[machine]]`: a machinery kernel (its WGSL file relative to the problem,
+/// its entry point, its `[[machine.binding]]` schema). A setup step runs it
+/// with `dispatch = { ... }` and `machine = "<name>"`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MachineSpec {
+    pub name: String,
+    pub source: String,
+    pub entry: String,
+    pub binding: Vec<BindingSpec>,
 }
 
 /// Which per-binding limit a problem plans by (`binding_limit`).
@@ -1787,6 +1807,29 @@ pub struct Plan {
     pub batch_safe: bool,
     /// The longest one of its submissions may run (`Budget::gpu_wait_ms`).
     pub gpu_wait_ms: f64,
+    /// The machinery kernels the setup runs (`[[machine]]`, their text read),
+    /// and the setup's dispatches of them, in order, run on the device when
+    /// the case is staged.
+    pub machines: Vec<MachineCode>,
+    pub setup_dispatch: Vec<SetupDispatch>,
+}
+
+/// A machinery kernel as a plan carries it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MachineCode {
+    pub name: String,
+    pub source: String,
+    pub entry: String,
+    pub bindings: Vec<(u32, BindingKind)>,
+}
+
+/// One setup dispatch of a machinery kernel: its index in `Plan::machines`,
+/// its buffers by binding, its workgroups.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SetupDispatch {
+    pub machine: usize,
+    pub bind: Vec<(u32, BufId)>,
+    pub workgroups: [u32; 3],
 }
 
 /// The first read that a later write in its segment would spoil, if any.
@@ -1822,6 +1865,7 @@ struct Builder<'a> {
     setup: Vec<BufId>,
     run: Vec<Cmd>,
     out_bytes: Vec<u64>,
+    setup_dispatch: Vec<SetupDispatch>,
 }
 
 impl Builder<'_> {
@@ -1853,6 +1897,52 @@ impl Builder<'_> {
         Ok(())
     }
 
+    /// A setup dispatch of a machinery kernel: every binding of its schema
+    /// bound to a buffer made in the setup (a resident it may write: that is
+    /// what it is for), its workgroups.
+    fn machine_dispatch(&mut self, s: &Step, name: &str, env: &Env, resident: bool) -> Result<(), String> {
+        if !resident {
+            return Err(format!("machine {name}: a machinery kernel runs in the setup only"));
+        }
+        let machine = self.problem.machine.iter().position(|m| m.name == name).ok_or_else(|| format!("no machine {name}"))?;
+        let spec = &self.problem.machine[machine];
+        let map = s.dispatch.as_ref().ok_or_else(|| format!("machine {name}: give its bindings as dispatch = {{ ... }}"))?;
+        let mut bind = Vec::new();
+        for b in &spec.binding {
+            let t = map.get(&b.name).ok_or_else(|| format!("machine {name} leaves binding {} unbound", b.name))?;
+            let id = self.buffer(&template(t, env)?)?;
+            let buf = &self.buffers[id];
+            match b.kind {
+                BindingKind::Uniform => {
+                    let want = 4 * b.fields.as_ref().map_or(0, |f| f.len()) as u64;
+                    if !buf.uniform || buf.bytes != want {
+                        return Err(format!("machine {name}: binding {} wants a uniform of {want} bytes, {} is not one", b.name, buf.name));
+                    }
+                }
+                BindingKind::StorageRead | BindingKind::StorageReadWrite if buf.uniform => return Err(format!("machine {name}: binding {} is storage, {} is a uniform", b.name, buf.name)),
+                _ => {}
+            }
+            if bind.iter().any(|(_, x)| *x == id) {
+                return Err(format!("machine {name}: alias: {} is bound twice", buf.name));
+            }
+            bind.push((b.binding, id));
+        }
+        if let Some(extra) = map.keys().find(|k| !spec.binding.iter().any(|b| &b.name == *k)) {
+            return Err(format!("machine {name} binds {extra}, which is not in its schema"));
+        }
+        let wg = s.workgroups.as_deref().ok_or("a machine dispatch needs workgroups")?;
+        if wg.len() != 3 {
+            return Err("workgroups takes three expressions".into());
+        }
+        let mut workgroups = [0u32; 3];
+        for (w, e) in workgroups.iter_mut().zip(wg) {
+            let v = eval_int(e, env)?;
+            *w = u32::try_from(v).ok().filter(|v| *v <= 65_535).ok_or_else(|| format!("workgroups {e:?} = {v}, over 65,535"))?;
+        }
+        self.setup_dispatch.push(SetupDispatch { machine, bind, workgroups });
+        Ok(())
+    }
+
     fn declare(&mut self, d: BufferDecl) -> BufId {
         let id = self.buffers.len();
         self.names.insert(d.name.clone(), id);
@@ -1867,6 +1957,9 @@ impl Builder<'_> {
         }
         if s.sample.is_some() && s.dispatch.is_none() {
             return Err(format!("sample labels a dispatch, not this step: {s:?}"));
+        }
+        if let Some(name) = &s.machine {
+            return self.machine_dispatch(s, name, env, resident);
         }
         let int = |e: &Option<String>, default: u64| -> Result<u64, String> { e.as_deref().map_or(Ok(default), |x| eval_int(x, env)) };
         if let Some(r) = &s.require {
@@ -1921,7 +2014,8 @@ impl Builder<'_> {
         } else if let Some(u) = &s.uniform {
             let name = template(u, env)?;
             let of = s.of.as_deref().ok_or_else(|| format!("uniform {name} needs of"))?;
-            let spec = self.problem.binding.iter().find(|b| b.name == of && b.kind == BindingKind::Uniform).ok_or_else(|| format!("uniform {name}: no uniform binding {of}"))?;
+            let machine_binding = of.split_once('.').and_then(|(m, b)| self.problem.machine.iter().find(|x| x.name == m).and_then(|x| x.binding.iter().find(|y| y.name == b)));
+            let spec = self.problem.binding.iter().find(|b| b.name == of).or(machine_binding).filter(|b| b.kind == BindingKind::Uniform).ok_or_else(|| format!("uniform {name}: no uniform binding {of}"))?;
             let fields = spec.fields.as_deref().unwrap_or(&[]);
             let words = s.words.as_deref().ok_or_else(|| format!("uniform {name} needs words"))?;
             if words.len() != fields.len() {
@@ -2032,7 +2126,7 @@ impl Problem {
         for o in &self.spec.output {
             out_bytes.push(self.output_elems(o, &env)? * o.element.size());
         }
-        let mut b = Builder { problem: &self.spec, buffers: Vec::new(), names: BTreeMap::new(), setup: Vec::new(), run: Vec::new(), out_bytes: out_bytes.clone() };
+        let mut b = Builder { problem: &self.spec, buffers: Vec::new(), names: BTreeMap::new(), setup: Vec::new(), run: Vec::new(), out_bytes: out_bytes.clone(), setup_dispatch: Vec::new() };
         b.steps(&self.spec.setup, &env, true).map_err(|e| format!("case {}: setup: {e}", case.name))?;
         if let Some(k) = kernel {
             let mut env = env;
@@ -2051,7 +2145,13 @@ impl Problem {
             bind_lets(&self.spec.derive_run, &mut env).map_err(|e| format!("case {}: {e}", case.name))?;
             b.steps(&self.spec.run, &env, false).map_err(|e| format!("case {}: run: {e}", case.name))?;
         }
-        let mut plan = Plan { buffers: b.buffers, setup: b.setup, run: b.run, outputs: out_bytes, batch_safe: false, gpu_wait_ms: self.spec.budget.gpu_wait_ms };
+        let mut machines = Vec::new();
+        for m in &self.spec.machine {
+            let path = self.dir.join(&m.source);
+            let source = std::fs::read_to_string(&path).map_err(|e| format!("machine {}: {}: {e}", m.name, path.display()))?;
+            machines.push(MachineCode { name: m.name.clone(), source, entry: m.entry.clone(), bindings: m.binding.iter().map(|b| (b.binding, b.kind)).collect() });
+        }
+        let mut plan = Plan { buffers: b.buffers, setup: b.setup, run: b.run, outputs: out_bytes, batch_safe: false, gpu_wait_ms: self.spec.budget.gpu_wait_ms, machines, setup_dispatch: b.setup_dispatch };
         let kinds = self.binding_kinds();
         if let Some(h) = hazard(&plan, &kinds, true) {
             return Err(format!("case {}: {h}", case.name));
@@ -2408,6 +2508,9 @@ impl Executor for HostExecutor {
     }
 
     fn stage(&self, plan: &Plan, data: &CaseData) -> Result<(HostStaged, f64), String> {
+        if !plan.setup_dispatch.is_empty() {
+            return Err("our software has a bug: this problem's setup runs a machinery kernel ([[machine]]) on the device; the host executor does not run one".into());
+        }
         let bufs = plan.setup.iter().map(|id| initial_bytes(&plan.buffers[*id], data).map(|b| (*id, b))).collect::<Result<_, _>>()?;
         Ok((HostStaged { bufs }, 0.0))
     }
@@ -2575,6 +2678,9 @@ impl Executor for CpuExecutor {
     }
 
     fn stage(&self, plan: &Plan, data: &CaseData) -> Result<(CpuStaged, f64), String> {
+        if !plan.setup_dispatch.is_empty() {
+            return Err("our software has a bug: this problem's setup runs a machinery kernel ([[machine]]) on the device; the CPU executor does not run one".into());
+        }
         let bufs = plan.setup.iter().map(|id| initial_bytes(&plan.buffers[*id], data).map(|b| (*id, b))).collect::<Result<_, _>>()?;
         Ok((CpuStaged { bufs }, 0.0))
     }
@@ -2926,6 +3032,51 @@ mod device {
             let bufs = plan.setup.iter().map(|id| self.make(plan, *id, data).map(|b| (*id, b))).collect::<Result<Vec<_>, _>>()?;
             self.dev.queue.submit(None);
             wait_gpu(&self.dev.device, &self.dev.queue)?;
+            // MACHINERY: the setup's dispatches of its machinery kernels fill
+            // resident buffers on the device (one submission each, waited for
+            // within the problem's gpu_wait_ms), nothing read back.
+            if !plan.setup_dispatch.is_empty() {
+                let device = &self.dev.device;
+                let mut compiled = Vec::with_capacity(plan.machines.len());
+                for m in &plan.machines {
+                    device.push_error_scope(wgpu::ErrorFilter::Validation);
+                    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some(&m.name), source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(&m.source)) });
+                    let entries: Vec<wgpu::BindGroupLayoutEntry> = m
+                        .bindings
+                        .iter()
+                        .map(|(b, kind)| {
+                            let ty = match kind {
+                                BindingKind::StorageRead => wgpu::BufferBindingType::Storage { read_only: true },
+                                BindingKind::StorageReadWrite => wgpu::BufferBindingType::Storage { read_only: false },
+                                BindingKind::Uniform => wgpu::BufferBindingType::Uniform,
+                            };
+                            wgpu::BindGroupLayoutEntry { binding: *b, visibility: wgpu::ShaderStages::COMPUTE, ty: wgpu::BindingType::Buffer { ty, has_dynamic_offset: false, min_binding_size: None }, count: None }
+                        })
+                        .collect();
+                    let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some(&m.name), entries: &entries });
+                    let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: Some(&m.name), bind_group_layouts: &[&bgl], push_constant_ranges: &[] });
+                    let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor { label: Some(&m.name), layout: Some(&layout), module: &shader, entry_point: &m.entry, compilation_options: Default::default() });
+                    if let Some(e) = pollster::block_on(device.pop_error_scope()) {
+                        return Err(format!("our software has a bug: the machinery kernel {} does not compile: {e}", m.name));
+                    }
+                    compiled.push((pipeline, bgl));
+                }
+                let buf = |id: BufId| bufs.iter().find(|(b, _)| *b == id).map(|(_, b)| b).ok_or_else(|| format!("a machine dispatch of {}, not a setup buffer", plan.buffers[id].name));
+                for d in &plan.setup_dispatch {
+                    let (pipeline, bgl) = &compiled[d.machine];
+                    let entries: Vec<wgpu::BindGroupEntry> = d.bind.iter().map(|(b, id)| buf(*id).map(|x| wgpu::BindGroupEntry { binding: *b, resource: x.as_entire_binding() })).collect::<Result<_, _>>()?;
+                    let group = device.create_bind_group(&wgpu::BindGroupDescriptor { label: Some("harness machine"), layout: bgl, entries: &entries });
+                    let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("harness machine") });
+                    {
+                        let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("harness machine"), timestamp_writes: None });
+                        pass.set_pipeline(pipeline);
+                        pass.set_bind_group(0, &group, &[]);
+                        pass.dispatch_workgroups(d.workgroups[0], d.workgroups[1], d.workgroups[2]);
+                    }
+                    self.dev.queue.submit(Some(enc.finish()));
+                    wait_gpu_within(device, &self.dev.queue, plan.gpu_wait_ms)?;
+                }
+            }
             Ok((DeviceStaged { bufs }, t.elapsed().as_secs_f64() * 1e3))
         }
 
@@ -4323,7 +4474,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
                 DriverStep::Read { r_off, rows } => run.push(Cmd::Read { src: acc, src_offset: 0, output: 0, dst_offset: (r_off * d * 4) as u64, bytes: (rows * d * 4) as u64 }),
             }
         }
-        Plan { buffers, setup, run, outputs: vec![(d * d * 4) as u64], batch_safe: true, gpu_wait_ms: gram::WAIT_GAVE_UP_MS }
+        Plan { buffers, setup, run, outputs: vec![(d * d * 4) as u64], batch_safe: true, gpu_wait_ms: gram::WAIT_GAVE_UP_MS, machines: Vec::new(), setup_dispatch: Vec::new() }
     }
 
     /// gram.rs's fitness procedure (`gram::fitness_with`) on the host
@@ -5431,38 +5582,69 @@ fn search() { cands[0] = cfg.stage; }
         }
     }
 
-    /// v24_ingest5 PLANS ALL FIVE STAGES BY THE ADAPTER'S LIMIT (plans only):
-    /// it declares binding_limit = "adapter", judges sections 1..5, and its
-    /// largest keys binding is stage 5's 25,000 rows, 204.8 MB; at a 256 MiB
-    /// limit it plans (5 stages x 4 seeds x 2 dispatches), at the
-    /// 128 MiB effective limit the setup's require names the binding limit.
-    /// v24_ingest (run 3's) keeps the effective limit and three stages.
+    /// v24_ingest5 PLANS ALL FIVE STAGES BY THE ADAPTER'S LIMIT, ITS KEYS
+    /// PROJECTED ON THE DEVICE (plans only): it declares binding_limit =
+    /// "adapter" and judges sections 1..5; no key or query is an input (the
+    /// CSR records are the only resident inputs); its setup runs the
+    /// machinery kernel `project` 24 times (per seed its queries, then per
+    /// stage k its keys of rows 0..k * 5,000, one workgroup a row, cfg (seed,
+    /// 0, first row, rows)); every design dispatch binds the stage's
+    /// projected keys (stage 5: 204.8 MB). At a 256 MiB limit it plans; at the
+    /// 128 MiB effective limit the require names the binding limit. v24_ingest
+    /// (run 3's) keeps the effective limit, three stages and its key inputs.
     #[test]
     fn v24_ingest5_plans_five_stages_by_the_adapter_limit() {
         let p = Problem::load(&root().join("problems/v24_ingest5")).expect("problems/v24_ingest5");
         assert_eq!(p.spec.binding_limit, LimitRule::Adapter);
-        assert_eq!(Problem::load(&root().join("problems/v24_ingest")).unwrap().spec.binding_limit, LimitRule::Effective);
+        let old = Problem::load(&root().join("problems/v24_ingest")).unwrap();
+        assert!(old.spec.binding_limit == LimitRule::Effective && old.spec.machine.is_empty() && old.spec.input.iter().any(|i| i.name == "keys0"));
+        assert!(!p.spec.input.iter().any(|i| i.name.starts_with("keys") || i.name.starts_with("queries")), "a key is a host input");
         let c = &p.suites[0].cases[0];
-        assert!(!c.params.contains_key("stages"));
+        assert!(!c.params.contains_key("stages") && !c.inputs.keys().any(|k| k.starts_with("keys") || k.starts_with("queries")));
         let info = kernel_info(&p.spec, &p.reference).unwrap();
         let plan = p.plan(c, 256 << 20, Some(&info)).unwrap();
+        assert!(plan.buffers.iter().filter(|b| b.resident).all(|b| match &b.init { Init::Input { tensor, .. } => tensor.starts_with("rec_"), _ => true }), "a resident input that is not a record");
+        assert_eq!((plan.machines.len(), plan.setup_dispatch.len()), (1, 4 * 6));
+        let m = &plan.machines[0];
+        let module = naga::front::wgsl::parse_str(&m.source).unwrap_or_else(|e| panic!("project.wgsl: {}", e.emit_to_string(&m.source)));
+        crate::wgsl::target::Target::current().validate(&module, &m.source).unwrap_or_else(|e| panic!("project.wgsl: {e}"));
+        assert!(module.entry_points.iter().any(|e| e.name == m.entry && e.workgroup_size == [256, 1, 1]));
+        let seeds = [42u32, 137, 911, 4242];
+        for (n, d) in plan.setup_dispatch.iter().enumerate() {
+            let (s, k) = (n / 6, n % 6);
+            let buf = |b: u32| &plan.buffers[d.bind.iter().find(|x| x.0 == b).unwrap().1];
+            let Init::Words(w) = &buf(4).init else { panic!("pcfg") };
+            let (name, first, rows) = if k == 0 { (format!("queries{s}"), 25_000, 2_500) } else { (format!("keys{s}_{}", k - 1), 0, 5_000 * k as u32) };
+            assert_eq!((buf(3).name.clone(), buf(3).bytes, d.workgroups), (name, u64::from(rows) * 2048 * 4, [rows, 1, 1]));
+            assert_eq!(u32s(w), vec![seeds[s], 0, first, rows]);
+        }
         let most = plan.buffers.iter().filter(|b| b.resident).map(|b| b.bytes).max().unwrap();
         assert_eq!(most, 25_000 * 2048 * 4);
+        let ds: Vec<&Cmd> = plan.run.iter().filter(|x| matches!(x, Cmd::Dispatch { .. })).collect();
+        assert_eq!(ds.len(), 5 * 4 * 2);
+        for (n, c) in ds.iter().enumerate() {
+            let Cmd::Dispatch { bind, .. } = c else { unreachable!() };
+            let (stage, seed) = (n / 8, (n % 8) / 2);
+            assert_eq!(plan.buffers[bind.iter().find(|x| x.0 == 0).unwrap().1].name, format!("keys{seed}_{stage}"));
+        }
         assert_eq!(plan.outputs, vec![5 * 4 * 2500 * 64 * 4]);
-        assert_eq!(plan.run.iter().filter(|x| matches!(x, Cmd::Dispatch { .. })).count(), 5 * 4 * 2);
         let e = p.plan(c, LIMIT, None).unwrap_err();
         assert!(e.contains("the problem requires stages * per_section * d * 4 <= binding_limit"), "{e}");
     }
 
-    /// v24_ingest5 ON THE DEVICE (GPU; run by the session that owns the
-    /// GPU): the executor at the adapter's limit (`for_problem`, at least
-    /// 204.8 MB), the stream case staged (each seed's stage-5 keys one
-    /// 204.8 MB buffer), the reference run once: every stage's windows have
-    /// candidates (P over 0) and no broken entries. The limits and windows
-    /// are printed.
+    /// THE KEYS PROJECTED ON THE DEVICE ARE QDRANT'S (GPU; run by the session
+    /// that owns the GPU): v24_ingest5's stream case staged at the adapter's
+    /// limit (`for_problem`), its setup projecting every seed's keys from the
+    /// CSR records; each seed's stage-5 keys (rows 0..25,000, one 204.8 MB
+    /// buffer) and queries (rows 25,000..27,500) read back and compared with
+    /// qdrant's TRLKEYS1 keys of v24_main (the same rows): printed, the bits
+    /// that match exactly and the largest difference; every component within
+    /// 1e-6 (qdrant's norm is f64, this kernel's f32: see project.wgsl). Then
+    /// the reference run once on the device: every window has candidates and
+    /// no broken entry.
     #[cfg(feature = "gpu")]
     #[test]
-    fn v24_ingest5_binds_205_mb_keys_on_the_device() {
+    fn v24_ingest5_projects_its_keys_on_the_device() {
         let dev = crate::wgsl::oracle::device::Device::new().expect("device");
         let p = Problem::load(&root().join("problems/v24_ingest5")).unwrap();
         let exec = DeviceExecutor::for_problem(&dev, &p);
@@ -5474,13 +5656,39 @@ fn search() { cands[0] = cfg.stage; }
         let (k, info) = exec.compile(&p, &p.reference).unwrap();
         let data = p.case_data(c, limit).unwrap();
         let plan = p.plan(c, limit, Some(&info)).unwrap();
-        assert!(plan.buffers.iter().any(|b| b.resident && b.bytes == 25_000 * 2048 * 4));
         let (staged, stage_ms) = exec.stage(&plan, &data).unwrap();
+        println!("staged, the keys projected, in {stage_ms:.0} ms");
+        let dir = Path::new("/Users/andrewmorgan/Data/arm/v24_test/db/udv23_keys/v24_main");
+        let (mut exact, mut total, mut worst) = (0u64, 0u64, 0.0f64);
+        for (s, seed) in [42u64, 137, 911, 4242].iter().enumerate() {
+            let bytes = std::fs::read(dir.join(format!("s{seed}.trlkeys"))).unwrap();
+            assert_eq!(&bytes[..8], b"TRLKEYS1");
+            let n = u64::from_le_bytes(bytes[8..16].try_into().unwrap()) as usize;
+            let d = u64::from_le_bytes(bytes[16..24].try_into().unwrap()) as usize;
+            assert_eq!((n, d), (27_500, 2048));
+            let want: Vec<f32> = bytemuck_f32(&bytes[24..]);
+            for (name, first) in [(format!("keys{s}_4"), 0usize), (format!("queries{s}"), 25_000)] {
+                let id = plan.buffers.iter().position(|b| b.name == name).unwrap();
+                let n_bytes = plan.buffers[id].bytes;
+                let read = Plan { run: vec![Cmd::Read { src: id, src_offset: 0, output: 0, dst_offset: 0, bytes: n_bytes }], outputs: vec![n_bytes], ..plan.clone() };
+                let got = bytemuck_f32(&exec.run(&k, &read, &data, &staged, true).unwrap().outputs[0]);
+                let w = &want[first * 2048..first * 2048 + got.len()];
+                for (g, x) in got.iter().zip(w) {
+                    total += 1;
+                    if g.to_bits() == x.to_bits() {
+                        exact += 1;
+                    }
+                    worst = worst.max((f64::from(*g) - f64::from(*x)).abs());
+                }
+            }
+        }
+        println!("projected keys against qdrant's TRLKEYS1: {exact} of {total} components bit-exact ({:.4} %), largest difference {worst:.3e}", 100.0 * exact as f64 / total as f64);
+        assert!(worst <= 1e-6, "a projected component differs from qdrant's by {worst:e}");
         let r = exec.run(&k, &plan, &data, &staged, true).unwrap();
         let env = p.env(c, limit).unwrap();
         let out = p.pooled_output().unwrap().clone();
         let w = pooled_windows(&p, &out, &env, &data, &r.outputs[0]).unwrap();
-        println!("staged in {stage_ms:.0} ms, run {:.0} ms GPU, {:.1} s in all; {w:?}", r.gpu_ms, t.elapsed().as_secs_f64());
+        println!("the reference run: {:.0} ms GPU, {:.1} s in all; {w:?}", r.gpu_ms, t.elapsed().as_secs_f64());
         assert_eq!(w.len(), 10);
         for x in &w {
             assert!(x.pooled > 0 && x.broken == 0, "{x:?}");

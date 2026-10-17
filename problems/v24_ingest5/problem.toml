@@ -2,6 +2,9 @@
 # stream rows and 2,500 oracles (fuller docs/PLAN_v24_ingest_evolution.md;
 # the design contract is contract.md beside this file, v24_ingest's).
 #
+# THE KEYS ARE PROJECTED ON THE DEVICE from the raw records (see the setup):
+# nothing large crosses from the host.
+#
 # STAGES 1..5 PLAN BY THE ADAPTER'S BINDING LIMIT (binding_limit =
 # "adapter"; the team lead's 21:4xZ task): stage 5 binds 25,000 x 2,048 f32
 # = 204.8 MB of keys a seed, over the 128 MiB effective limit
@@ -54,6 +57,42 @@ entries = ["search"]
 passes_header = true
 reference = "../v24_ingest_small/reference.wgsl"
 
+# The key projection: harness machinery, hand-written, run by the setup only.
+[[machine]]
+name = "project"
+source = "project.wgsl"
+entry = "project"
+
+[[machine.binding]]
+binding = 0
+name = "rec_offsets"
+kind = "storage_read"
+element = "u32"
+
+[[machine.binding]]
+binding = 1
+name = "rec_indices"
+kind = "storage_read"
+element = "u32"
+
+[[machine.binding]]
+binding = 2
+name = "rec_values"
+kind = "storage_read"
+element = "f32"
+
+[[machine.binding]]
+binding = 3
+name = "keys"
+kind = "storage_read_write"
+element = "f32"
+
+[[machine.binding]]
+binding = 4
+name = "pcfg"
+kind = "uniform"
+fields = ["u32", "u32", "u32", "u32"]
+
 [[binding]]
 binding = 0
 name = "keys"
@@ -89,47 +128,6 @@ binding = 5
 name = "cfg"
 kind = "uniform"
 fields = ["u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32"]
-
-# The seeds in slot order: slot 0 seed 42, 1 seed 137, 2 seed 911, 3 seed 4242.
-[[input]]
-name = "keys0"
-element = "f32"
-shape = ["n_stream", "d"]
-
-[[input]]
-name = "keys1"
-element = "f32"
-shape = ["n_stream", "d"]
-
-[[input]]
-name = "keys2"
-element = "f32"
-shape = ["n_stream", "d"]
-
-[[input]]
-name = "keys3"
-element = "f32"
-shape = ["n_stream", "d"]
-
-[[input]]
-name = "queries0"
-element = "f32"
-shape = ["n_oracle", "d"]
-
-[[input]]
-name = "queries1"
-element = "f32"
-shape = ["n_oracle", "d"]
-
-[[input]]
-name = "queries2"
-element = "f32"
-shape = ["n_oracle", "d"]
-
-[[input]]
-name = "queries3"
-element = "f32"
-shape = ["n_oracle", "d"]
 
 # Every record's raw sparse unit vector, CSR, row id order (stream rows,
 # then the oracles: oracle q is row n_stream + q).
@@ -323,8 +321,12 @@ today = "today_settle_ms_{stage}"
 sample = "search{stage}"
 today_input = "today_s{stage}_search_ms"
 
-# The resident inputs: each seed's queries, and per stage each seed's keys
-# of the arrived rows only.
+# THE KEYS ARE PROJECTED ON THE DEVICE (the team lead's task, Andrew's design:
+# raw records in, the projection part of the GPU pipeline): the CSR records
+# are the only resident inputs; the machinery kernel project.wgsl ([[machine]]
+# project, qdrant's pinned Rademacher formula) fills each seed's queries (the
+# oracle records' keys) and, per stage k, a keys buffer of the arrived rows
+# 0..k * per_section only. No key crosses from the host.
 [[setup]]
 require = "stages * per_section * d * 4 <= binding_limit"
 because = "the arrived keys of the last stage are one binding; past the limit the keys need banding over two bindings (a contract change, PLAN_v24 section 3, run 2)"
@@ -334,15 +336,44 @@ require = "4 * max(arena_u32, arena_f32) <= binding_limit"
 because = "an index arena is one binding"
 
 [[setup]]
+buffer = "rec_off"
+element = "u32"
+elements = "n_total + 1"
+from = "rec_offsets"
+
+[[setup]]
+buffer = "rec_idx"
+element = "u32"
+elements = "nnz"
+from = "rec_indices"
+
+[[setup]]
+buffer = "rec_val"
+element = "f32"
+elements = "nnz"
+from = "rec_values"
+
+[[setup]]
 for = "s"
 count = "seeds"
+let = ["seed = select(s == 0, seed0, select(s == 1, seed1, select(s == 2, seed2, seed3)))"]
 
 [[setup.body]]
 buffer = "queries{s}"
 element = "f32"
 # The judged queries only (all the oracles unless a case judges fewer).
 elements = "n_queries * d"
-from = "queries{s}"
+fill = "zero"
+
+[[setup.body]]
+uniform = "pq{s}"
+of = "project.pcfg"
+words = ["seed", "0", "n_stream", "n_queries"]
+
+[[setup.body]]
+machine = "project"
+dispatch = { rec_offsets = "rec_off", rec_indices = "rec_idx", rec_values = "rec_val", keys = "queries{s}", pcfg = "pq{s}" }
+workgroups = ["n_queries", "1", "1"]
 
 [[setup.body]]
 for = "k0"
@@ -352,7 +383,17 @@ count = "stages"
 buffer = "keys{s}_{k0}"
 element = "f32"
 elements = "(k0 + 1) * per_section * d"
-from = "keys{s}"
+fill = "zero"
+
+[[setup.body.body]]
+uniform = "pk{s}_{k0}"
+of = "project.pcfg"
+words = ["seed", "0", "0", "(k0 + 1) * per_section"]
+
+[[setup.body.body]]
+machine = "project"
+dispatch = { rec_offsets = "rec_off", rec_indices = "rec_idx", rec_values = "rec_val", keys = "keys{s}_{k0}", pcfg = "pk{s}_{k0}" }
+workgroups = ["(k0 + 1) * per_section", "1", "1"]
 
 # A run: four zeroed arenas a kind, then the five stages.
 [[run]]
