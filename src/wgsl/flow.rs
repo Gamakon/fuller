@@ -138,6 +138,11 @@ mod tests {
         for d in dirs {
             let mut p = Problem::load(&d).expect("the problem loads");
             let judged = |r: Role| matches!(r, Role::Constraint | Role::Accuracy);
+            // A pooled_recall problem's expected values are its accept sets
+            // and today's counts, not the shipped kernel's outputs.
+            if p.pooled_output().is_some() {
+                continue;
+            }
             if !p.suites.iter().any(|s| judged(s.spec.role) && s.cases.iter().any(|c| c.expected.is_empty())) {
                 continue;
             }

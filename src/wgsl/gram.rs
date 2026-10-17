@@ -1220,8 +1220,16 @@ pub struct Fitness {
     pub columns: [f64; 6],
     /// Speed-up per timing shape (shipped / candidate), when feasible.
     pub speedups: [f64; 3],
-    /// θ, when feasible; `f64::INFINITY` otherwise.
+    /// θ, when feasible; `f64::INFINITY` otherwise. With `inputs`, θ over
+    /// them; else over `columns`.
     pub hff: f64,
+    /// THE HFF INPUTS of a problem that measures a vector (the v24
+    /// `pooled_recall`: per window x_M, x_P, x_B, then one per timing
+    /// sample; harness `pooled_inputs`), each in [0, 1], 0 best, θ the hff
+    /// library's TrueNorth over them (`score::truenorth_angle`); empty for
+    /// the six-column problems (the Gram, nluca, kmeans), whose θ is over
+    /// `columns`.
+    pub inputs: Vec<f64>,
     pub detail: String,
     pub seconds: f64,
     /// The predicted wall milliseconds at the three timing shapes, from the
@@ -1448,7 +1456,7 @@ pub fn fitness_with<D: Driver>(spec: &Spec, drv: &D, source: &str) -> Fitness {
     let t = Instant::now();
     let mut meter = Meter::default();
     let mut split = Split::default();
-    let infeasible = |passed: usize, distance: f64, closeness: [f64; crate::wgsl::closeness::N], detail: String, t: Instant, meter: &Meter, split: &Split| Fitness { feasible: false, passed, distance, closeness, closeness_hff: crate::wgsl::closeness::angle(&closeness), columns: [1.0; 6], speedups: [0.0; 3], hff: f64::INFINITY, detail, seconds: t.elapsed().as_secs_f64(), predicted_ms: [0.0; 3], rate_per_g: meter.rate_per_g(), floor_ms: meter.floor_ms, measured_ms: [0.0; 3], split: Split { total: t.elapsed().as_secs_f64() * 1e3, ..*split } };
+    let infeasible = |passed: usize, distance: f64, closeness: [f64; crate::wgsl::closeness::N], detail: String, t: Instant, meter: &Meter, split: &Split| Fitness { feasible: false, passed, distance, closeness, closeness_hff: crate::wgsl::closeness::angle(&closeness), columns: [1.0; 6], speedups: [0.0; 3], hff: f64::INFINITY, inputs: Vec::new(), detail, seconds: t.elapsed().as_secs_f64(), predicted_ms: [0.0; 3], rate_per_g: meter.rate_per_g(), floor_ms: meter.floor_ms, measured_ms: [0.0; 3], split: Split { total: t.elapsed().as_secs_f64() * 1e3, ..*split } };
     let elapsed_ms = |t: Instant| t.elapsed().as_secs_f64() * 1e3;
     let compiled = drv.compile(source);
     split.compile = elapsed_ms(t);
@@ -1596,7 +1604,7 @@ pub fn fitness_with<D: Driver>(spec: &Spec, drv: &D, source: &str) -> Fitness {
         measured_ms[k] = median(&mut walls);
     }
     let columns = fitness_columns(speedups, [(et / 2.0).clamp(0.0, 1.0), (ev / 2.0).clamp(0.0, 1.0), (ex / 2.0).clamp(0.0, 1.0)]);
-    Fitness { feasible: true, passed, distance: 0.0, closeness: [0.0; crate::wgsl::closeness::N], closeness_hff: 0.0, columns, speedups, hff: truenorth(&columns), detail: String::new(), seconds: t.elapsed().as_secs_f64(), predicted_ms, rate_per_g: meter.rate_per_g(), floor_ms: meter.floor_ms, measured_ms, split: Split { total: t.elapsed().as_secs_f64() * 1e3, ..split } }
+    Fitness { feasible: true, passed, distance: 0.0, closeness: [0.0; crate::wgsl::closeness::N], closeness_hff: 0.0, columns, speedups, hff: truenorth(&columns), inputs: Vec::new(), detail: String::new(), seconds: t.elapsed().as_secs_f64(), predicted_ms, rate_per_g: meter.rate_per_g(), floor_ms: meter.floor_ms, measured_ms, split: Split { total: t.elapsed().as_secs_f64() * 1e3, ..split } }
 }
 
 /// One pair to write into a problem directory: `(kind, d, m, seed)`.

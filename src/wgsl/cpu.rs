@@ -219,6 +219,17 @@ struct Machine<'m> {
 /// values). `max_steps` caps the statements executed.
 pub fn run(module: &Module, buffers: HashMap<String, Val>, workgroups: [u32; 3], max_steps: u64) -> Result<Dispatch, String> {
     let ep = module.entry_points.iter().find(|e| e.stage == naga::ShaderStage::Compute).ok_or("cpu: no compute entry point")?;
+    run_on(module, ep, buffers, workgroups, max_steps)
+}
+
+/// [`run`] of the compute entry point named `entry` (a module of several
+/// entry points: the harness's multi-entry dispatch).
+pub fn run_entry(module: &Module, entry: &str, buffers: HashMap<String, Val>, workgroups: [u32; 3], max_steps: u64) -> Result<Dispatch, String> {
+    let ep = module.entry_points.iter().find(|e| e.stage == naga::ShaderStage::Compute && e.name == entry).ok_or_else(|| format!("cpu: no compute entry point {entry}"))?;
+    run_on(module, ep, buffers, workgroups, max_steps)
+}
+
+fn run_on(module: &Module, ep: &naga::EntryPoint, buffers: HashMap<String, Val>, workgroups: [u32; 3], max_steps: u64) -> Result<Dispatch, String> {
     let mut globals = HashMap::new();
     for (h, g) in module.global_variables.iter() {
         if g.binding.is_some() {

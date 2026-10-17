@@ -1,0 +1,427 @@
+# THE v24 BOTTOM-UP GPU INGESTION INDEX, full set: 25,000 stream rows and
+# 2,500 oracles (fuller
+# docs/PLAN_v24_ingest_evolution.md, task B3; the design contract a kernel is
+# written to is contract.md beside this file; this problem is
+# v24_ingest_small's program and contract on the full set).
+#
+# IT CANNOT RUN UNDER TODAY'S CONTRACT: the arrived keys of stage 5 are
+# 25,000 x 2,048 f32 = 204.8 MB a seed, over the 128 MiB binding limit; the
+# setup's require names it. The full set needs the keys banded over two
+# bindings, a contract change decided at run 2 (PLAN_v24 section 3).
+#
+# Four seeds' 2,048-D keys
+# stream in five microbatches (sections) into four independent per-seed
+# indexes; after each microbatch the oracle queries search every seed's
+# index, the four candidate lists are pooled and re-ranked exactly against
+# the raw sparse records, and graded against exact truth (output kind
+# pooled_recall: src/wgsl/harness.rs, `PooledSpec`, `pooled_windows`).
+#
+# The case files are the exporter's (qdrant experiments/v24_ingest/
+# export_harness_case.py), read where it wrote them: the manifest's root.
+#
+# NO FUTURE KEY EXISTS ON THE DEVICE: at stage k each seed's `keys` binding
+# is its own resident buffer holding only the arrived rows 0..k*per_section
+# (sections 1..k). The index arenas are made and zeroed at the start of
+# every run, persist across its five stages, and are discarded after: every
+# timing run is a whole fresh run.
+
+name = "v24_ingest"
+description = "v24 streaming ingestion, full set (25,000 + 2,500): four seeds' 2,048-D keys in five microbatches into four per-seed GPU indexes, searched after each, pooled and re-ranked exactly; HFF over per-window misses, pool size, broken entries and per-stage ingest and search GPU ms against today's index"
+work = "n_stream * n_queries"
+alias = "distinct"
+
+[params]
+# The queries judged (all the oracles; a test may judge fewer).
+n_queries = "n_oracle"
+# The contract constant: candidates per seed per query.
+c_max = "64"
+seeds = "4"
+# Each index arena: 8,388,608 words, 32 MiB, under the 128 MiB binding limit.
+arena_u32 = "8388608"
+arena_f32 = "8388608"
+
+[kernel]
+entry = "ingest"
+entries = ["search"]
+passes_header = true
+reference = "../v24_ingest_small/reference.wgsl"
+
+[[binding]]
+binding = 0
+name = "keys"
+kind = "storage_read"
+element = "f32"
+
+[[binding]]
+binding = 1
+name = "queries"
+kind = "storage_read"
+element = "f32"
+
+[[binding]]
+binding = 2
+name = "index_u32"
+kind = "storage_read_write"
+element = "u32"
+
+[[binding]]
+binding = 3
+name = "index_f32"
+kind = "storage_read_write"
+element = "f32"
+
+[[binding]]
+binding = 4
+name = "cands"
+kind = "storage_read_write"
+element = "u32"
+
+[[binding]]
+binding = 5
+name = "cfg"
+kind = "uniform"
+fields = ["u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32"]
+
+# The seeds in slot order: slot 0 seed 42, 1 seed 137, 2 seed 911, 3 seed 4242.
+[[input]]
+name = "keys0"
+element = "f32"
+shape = ["n_stream", "d"]
+
+[[input]]
+name = "keys1"
+element = "f32"
+shape = ["n_stream", "d"]
+
+[[input]]
+name = "keys2"
+element = "f32"
+shape = ["n_stream", "d"]
+
+[[input]]
+name = "keys3"
+element = "f32"
+shape = ["n_stream", "d"]
+
+[[input]]
+name = "queries0"
+element = "f32"
+shape = ["n_oracle", "d"]
+
+[[input]]
+name = "queries1"
+element = "f32"
+shape = ["n_oracle", "d"]
+
+[[input]]
+name = "queries2"
+element = "f32"
+shape = ["n_oracle", "d"]
+
+[[input]]
+name = "queries3"
+element = "f32"
+shape = ["n_oracle", "d"]
+
+# Every record's raw sparse unit vector, CSR, row id order (stream rows,
+# then the oracles: oracle q is row n_stream + q).
+[[input]]
+name = "rec_offsets"
+element = "u32"
+shape = ["n_total + 1"]
+
+[[input]]
+name = "rec_indices"
+element = "u32"
+shape = ["nnz"]
+
+[[input]]
+name = "rec_values"
+element = "f32"
+shape = ["nnz"]
+
+[[input]]
+name = "oracle_half"
+element = "u32"
+shape = ["n_oracle"]
+
+# Per stage: each oracle's accept set (every arrived stream row within 1e-6
+# of its 10th true cosine), and today's index's misses, candidates pooled and
+# search ms, per oracle.
+[[input]]
+name = "accept_s1_offsets"
+element = "u32"
+shape = ["n_oracle + 1"]
+
+[[input]]
+name = "accept_s1_rows"
+element = "u32"
+shape = ["accept_n1"]
+
+[[input]]
+name = "accept_s2_offsets"
+element = "u32"
+shape = ["n_oracle + 1"]
+
+[[input]]
+name = "accept_s2_rows"
+element = "u32"
+shape = ["accept_n2"]
+
+[[input]]
+name = "accept_s3_offsets"
+element = "u32"
+shape = ["n_oracle + 1"]
+
+[[input]]
+name = "accept_s3_rows"
+element = "u32"
+shape = ["accept_n3"]
+
+[[input]]
+name = "accept_s4_offsets"
+element = "u32"
+shape = ["n_oracle + 1"]
+
+[[input]]
+name = "accept_s4_rows"
+element = "u32"
+shape = ["accept_n4"]
+
+[[input]]
+name = "accept_s5_offsets"
+element = "u32"
+shape = ["n_oracle + 1"]
+
+[[input]]
+name = "accept_s5_rows"
+element = "u32"
+shape = ["accept_n5"]
+
+[[input]]
+name = "today_s1_misses"
+element = "u32"
+shape = ["n_oracle"]
+
+[[input]]
+name = "today_s1_pooled"
+element = "u32"
+shape = ["n_oracle"]
+
+[[input]]
+name = "today_s1_search_ms"
+element = "f32"
+shape = ["n_oracle"]
+
+[[input]]
+name = "today_s2_misses"
+element = "u32"
+shape = ["n_oracle"]
+
+[[input]]
+name = "today_s2_pooled"
+element = "u32"
+shape = ["n_oracle"]
+
+[[input]]
+name = "today_s2_search_ms"
+element = "f32"
+shape = ["n_oracle"]
+
+[[input]]
+name = "today_s3_misses"
+element = "u32"
+shape = ["n_oracle"]
+
+[[input]]
+name = "today_s3_pooled"
+element = "u32"
+shape = ["n_oracle"]
+
+[[input]]
+name = "today_s3_search_ms"
+element = "f32"
+shape = ["n_oracle"]
+
+[[input]]
+name = "today_s4_misses"
+element = "u32"
+shape = ["n_oracle"]
+
+[[input]]
+name = "today_s4_pooled"
+element = "u32"
+shape = ["n_oracle"]
+
+[[input]]
+name = "today_s4_search_ms"
+element = "f32"
+shape = ["n_oracle"]
+
+[[input]]
+name = "today_s5_misses"
+element = "u32"
+shape = ["n_oracle"]
+
+[[input]]
+name = "today_s5_pooled"
+element = "u32"
+shape = ["n_oracle"]
+
+[[input]]
+name = "today_s5_search_ms"
+element = "f32"
+shape = ["n_oracle"]
+
+# The candidates: per stage, seed and query, C_MAX stream-row ids (pads
+# 0xFFFFFFFF), stage-major. Judged per window (stage x oracle half): the
+# four seeds' lists pooled (pads dropped, deduplicated), broken entries
+# (not arrived stream rows) counted, the rest re-ranked by exact cosine of
+# the records, the top 10 counted against the accept set.
+[[output]]
+name = "cands"
+element = "u32"
+shape = ["sections * seeds * n_queries", "c_max"]
+kind = "pooled_recall"
+
+[output.pooled]
+seeds = "seeds"
+stages = "sections"
+queries = "n_queries"
+top = "10"
+arrived = "stage * per_section"
+query_row = "n_stream + q"
+rec_offsets = "rec_offsets"
+rec_indices = "rec_indices"
+rec_values = "rec_values"
+half = "oracle_half"
+accept_offsets = "accept_s{stage}_offsets"
+accept_rows = "accept_s{stage}_rows"
+today_misses = "today_s{stage}_misses"
+today_pooled = "today_s{stage}_pooled"
+
+# A stage's ingest: every pass of every seed, against today's settle of the
+# stage (index_builds.json build_ms, the manifest's today_settle_ms_<k>).
+[[output.pooled.timing]]
+sample = "ingest{stage}"
+today = "today_settle_ms_{stage}"
+
+# A stage's search: every seed's search dispatch, against today's search of
+# the same queries (each oracle's total_ms, summed).
+[[output.pooled.timing]]
+sample = "search{stage}"
+today_input = "today_s{stage}_search_ms"
+
+# The resident inputs: each seed's queries, and per stage each seed's keys
+# of the arrived rows only.
+[[setup]]
+require = "sections * per_section * d * 4 <= binding_limit"
+because = "the arrived keys of the last stage are one binding; past the limit the keys need banding over two bindings (a contract change, PLAN_v24 section 3, run 2)"
+
+[[setup]]
+require = "4 * max(arena_u32, arena_f32) <= binding_limit"
+because = "an index arena is one binding"
+
+[[setup]]
+for = "s"
+count = "seeds"
+
+[[setup.body]]
+buffer = "queries{s}"
+element = "f32"
+elements = "n_oracle * d"
+from = "queries{s}"
+
+[[setup.body]]
+for = "k0"
+count = "sections"
+
+[[setup.body.body]]
+buffer = "keys{s}_{k0}"
+element = "f32"
+elements = "(k0 + 1) * per_section * d"
+from = "keys{s}"
+
+# A run: four zeroed arenas a kind, then the five stages.
+[[run]]
+for = "s"
+count = "seeds"
+
+[[run.body]]
+buffer = "iu{s}"
+element = "u32"
+elements = "arena_u32"
+fill = "zero"
+
+[[run.body]]
+buffer = "if{s}"
+element = "f32"
+elements = "arena_f32"
+fill = "zero"
+
+[[run]]
+for = "k0"
+count = "sections"
+let = ["stage = k0 + 1", "arrived_begin = k0 * per_section", "arrived_end = stage * per_section"]
+
+[[run.body]]
+for = "s"
+count = "seeds"
+
+[[run.body.body]]
+buffer = "cands{k0}_{s}"
+element = "u32"
+elements = "n_queries * c_max"
+fill = "pad"
+
+# ingest: `passes` dispatches, one workgroup per arriving row.
+[[run.body.body]]
+for = "p"
+count = "passes"
+
+[[run.body.body.body]]
+uniform = "cfg{k0}_{s}_{p}"
+of = "cfg"
+words = ["s", "stage", "arrived_begin", "arrived_end", "n_queries", "p", "passes", "c_max"]
+
+[[run.body.body.body]]
+dispatch = { entry = "ingest", keys = "keys{s}_{k0}", queries = "queries{s}", index_u32 = "iu{s}", index_f32 = "if{s}", cands = "cands{k0}_{s}", cfg = "cfg{k0}_{s}_{p}" }
+workgroups = ["per_section", "1", "1"]
+sample = "ingest{stage}"
+
+# search: one dispatch, one workgroup per query.
+[[run.body.body]]
+uniform = "cfgs{k0}_{s}"
+of = "cfg"
+words = ["s", "stage", "arrived_begin", "arrived_end", "n_queries", "0", "passes", "c_max"]
+
+[[run.body.body]]
+dispatch = { entry = "search", keys = "keys{s}_{k0}", queries = "queries{s}", index_u32 = "iu{s}", index_f32 = "if{s}", cands = "cands{k0}_{s}", cfg = "cfgs{k0}_{s}" }
+workgroups = ["n_queries", "1", "1"]
+sample = "search{stage}"
+
+[[run.body.body]]
+read = "cands{k0}_{s}"
+into = "cands"
+elements = "n_queries * c_max"
+offset = "(k0 * seeds + s) * n_queries * c_max"
+
+# One submission a stage (each bounded by gpu_wait_ms).
+[[run.body]]
+sync = true
+
+[[suite]]
+name = "stream"
+role = "constraint"
+cases = "cases/stream.toml"
+chunk = 1
+
+[budget]
+base_ms = 60000.0
+round_ms = 60000.0
+# Three fresh timing runs: each gives ten samples (five stages' ingest and
+# search), each its own HFF input.
+timing_rounds = 3
+gpu_wait_ms = 4900.0
+deadline_factor = 20.0
+deadline_floor_ms = 120000.0
