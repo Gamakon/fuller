@@ -8041,7 +8041,8 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     /// reached so far: to a fixpoint after the first read, and to the AST
     /// drawn (canonical). Every tree reads back (1,000 of 1,000, asserted
     /// exactly). Their own text is printed, not a bar (Andrew, 2026-10-13).
-    const FIXPOINT_FLOOR: usize = 918;
+    /// 930 since 2026-10-17 12:35Z (the rows drawn then, AST_FLOOR's note).
+    const FIXPOINT_FLOOR: usize = 930;
     // (Both reset 2026-10-13 when the sampler drew its stores from an input:
     // other trees, 253 and 930 on the earlier draws; again when conditions
     // read a variable: 110 then 79; 59 when they vary by thread or data;
@@ -8065,8 +8066,12 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     // loads wg.uload_i/f: other draws (40 the commit before, with them
     // undrawn); 4 of the 969 others differ first at a uniform load, the
     // subgroup operation set into a register at its statement, the earlier
-    // class; fixpoint 930.)
-    const AST_FLOOR: usize = 31;
+    // class; fixpoint 930.) (12:35Z, 46 and 930, when the kingdom drew every
+    // row but the uniform tests and the reader's two checked rows: the wider
+    // workgroup arrays, the 64-element u32 arrays, an index as a count, a
+    // workgroup u32 as a loop bound, the uniform loads; 1,000 of 1,000 read
+    // back.)
+    const AST_FLOOR: usize = 46;
 
     /// The floors of [`random_module_trees_render_validate_and_read_back`]
     /// (1,000 v24 modules, depth 6; measured 2026-10-17 at its first run:
@@ -8096,9 +8101,12 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     /// vector compared as f32, a select nested once more; 259
     /// store_index_not_affine and 614 write_sets_overlap at layer 7, no
     /// layer 4).
-    const MODULE_AST_FLOOR: usize = 1;
-    const MODULE_FIXPOINT_FLOOR: usize = 958;
-    const MODULE_LEGAL_FLOOR: usize = 127;
+    /// 12:35Z, 5, 962 and 130, with every row drawn but the uniform tests and
+    /// the reader's two checked rows (a module's workgroup arrays now at one
+    /// length for all its entry points: one over 32 KB did not validate).
+    const MODULE_AST_FLOOR: usize = 5;
+    const MODULE_FIXPOINT_FLOOR: usize = 962;
+    const MODULE_LEGAL_FLOOR: usize = 130;
 
 
     /// THE KINGDOM'S COMPLETENESS BAR (2026-10-12): 1,000 random trees of

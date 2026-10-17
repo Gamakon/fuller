@@ -746,6 +746,10 @@ pub struct Renderer<'a> {
     pub table: &'a FunctionTable,
     pub role: &'a Role,
     per_kernel: BTreeMap<&'a str, &'a PerKernel>,
+    /// A module's workgroup arrays at one length for every entry point (each
+    /// entry point's arrays within the device's 32 KB at those lengths),
+    /// while its entry points render; None for a single kernel.
+    joint_wg: std::cell::RefCell<Option<BTreeMap<String, (String, u32)>>>,
 }
 
 /// What the renderer is inside while walking statements.
@@ -953,7 +957,7 @@ struct Scope {
 
 impl<'a> Renderer<'a> {
     pub fn new(kingdom: &'a WgslKingdom, table: &'a FunctionTable, role: &'a Role) -> Renderer<'a> {
-        Renderer { kingdom, table, role, per_kernel: role.per_kernel.iter().map(|p| (p.name.as_str(), p)).collect() }
+        Renderer { kingdom, table, role, per_kernel: role.per_kernel.iter().map(|p| (p.name.as_str(), p)).collect(), joint_wg: std::cell::RefCell::new(None) }
     }
 
     fn dual(&self, ty: Ty) -> Result<&WgslDual, String> {
@@ -976,8 +980,14 @@ impl<'a> Renderer<'a> {
             if kids.len() != self.role.entries.len() || kids.len() < 2 {
                 return Err(format!("a module of {} entry points under an interface of {} ({:?})", kids.len(), self.role.entries.len(), self.role.entries));
             }
-            let parts = kids.iter().zip(&self.role.entries).map(|(k, e)| self.entry(k, e).map_err(|err| format!("entry point {e}: {err}"))).collect::<Result<Vec<_>, _>>()?;
-            return Ok(self.assemble(parts));
+            // One length per workgroup array for the whole module (a module
+            // declares each once; an entry point that halved an array another
+            // did not went past 32 KB at the larger, 2026-10-17, random modules).
+            let joint = self.joint_plan(&kids)?;
+            *self.joint_wg.borrow_mut() = Some(joint);
+            let parts = kids.iter().zip(&self.role.entries).map(|(k, e)| self.entry(k, e).map_err(|err| format!("entry point {e}: {err}"))).collect::<Result<Vec<_>, _>>();
+            *self.joint_wg.borrow_mut() = None;
+            return Ok(self.assemble(parts?));
         }
         let part = self.entry(root, &self.role.entry)?;
         Ok(self.assemble(vec![part]))
@@ -1068,7 +1078,7 @@ impl<'a> Renderer<'a> {
                     scope = fresh;
                     scope.grid = grid;
                     scope.unwritten = unwritten;
-                    scope.wg = workgroup_plan_of(self.kingdom, g, root, Some(&written))?;
+                    scope.wg = self.at_joint(workgroup_plan_of(self.kingdom, g, root, Some(&written))?)?;
                     let (again, terminated) = self.block_t(b, &mut scope)?;
                     text = again;
                     if !terminated {
@@ -1725,7 +1735,42 @@ impl<'a> Renderer<'a> {
 
     /// The kernel's workgroup arrays ([`workgroup_plan`]).
     fn workgroup_plan(&self, grid: &Tree, root: &Tree) -> Result<BTreeMap<String, (String, u32)>, String> {
-        workgroup_plan(self.kingdom, grid, root)
+        self.at_joint(workgroup_plan(self.kingdom, grid, root)?)
+    }
+
+    /// A plan's arrays at the module's joint lengths, when a module renders.
+    fn at_joint(&self, plan: BTreeMap<String, (String, u32)>) -> Result<BTreeMap<String, (String, u32)>, String> {
+        let joint = self.joint_wg.borrow();
+        let Some(j) = joint.as_ref() else { return Ok(plan) };
+        plan.into_keys().map(|v| j.get(&v).cloned().map(|e| (v.clone(), e)).ok_or_else(|| format!("our software has a bug: the workgroup array {v} is not in the module's joint plan"))).collect()
+    }
+
+    /// The module's joint plan: every entry point's requested arrays, each at
+    /// the largest length any requests, the largest array an entry point
+    /// over 32 KB uses halved until every entry point fits.
+    fn joint_plan(&self, kids: &[Tree]) -> Result<BTreeMap<String, (String, u32)>, String> {
+        let mut uses: Vec<BTreeSet<String>> = Vec::new();
+        let mut joint: BTreeMap<String, (String, u32)> = BTreeMap::new();
+        for k in kids {
+            let r = crate::wgsl::params::resolve(k)?;
+            let Some(grid) = r.kids.first().filter(|_| r.name == "kernel.entry_safe") else { continue };
+            let req = workgroup_plan_requested_of(self.kingdom, grid, &r, None)?;
+            uses.push(req.keys().cloned().collect());
+            for (v, (e, l)) in req {
+                let at = joint.entry(v).or_insert((e, l));
+                at.1 = at.1.max(l);
+            }
+        }
+        let bytes = |j: &BTreeMap<String, (String, u32)>, u: &BTreeSet<String>| -> u64 { u.iter().filter_map(|v| j.get(v)).map(|(e, l)| elem_bytes(e) * u64::from(*l)).sum() };
+        while let Some(over) = uses.iter().find(|u| bytes(&joint, u) > 32768) {
+            let largest = over.iter().filter_map(|v| joint.get(v).map(|(e, l)| (elem_bytes(e) * u64::from(*l), std::cmp::Reverse(v.clone())))).max().map(|(_, std::cmp::Reverse(v))| v).expect("an entry point over 32 KB uses an array");
+            let at = joint.get_mut(&largest).expect("present");
+            if at.1 == 1 {
+                return Err(format!("our software has a bug: an entry point's workgroup arrays exceed 32 KB at one element each ({largest})"));
+            }
+            at.1 = (at.1 / 2).max(1);
+        }
+        Ok(joint)
     }
 
     /// [`workgroup_plan_requested`].
@@ -3256,15 +3301,17 @@ fn sample_with(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, s
     // kernels, 2026-10-13. The kingdom keeps the rows for text it reads.)
     // (Nor a mirror: the symmetric-half rule writes it, under its triangle
     // guard, in a kernel that runs with the whole H; 2026-10-14.)
-    // (Nor a uniform test whose body keeps its rung, stmt.if_ule and its kin:
-    // their text is a plain if's; the rules that need one write it.)
-    // (Nor the index read as a count: a conversion the reader's conform
-    // inserts, `h >> (k * 4u)`; the sampler draws a count's own rows.)
-    // (Nor the four u32 arrays past the first four, for kernels that keep
-    // more lists: the draws stay those of the floors below.)
-    // (Nor the 64-element u32 private arrays, read from kernels that keep one.)
-    let long_u32 = |t: &Ty| kingdom.dual(*t).is_some_and(|d| d.dual == "parr64<u32>.index");
-    let not_drawn = |r: &WgslRow| uniform_test_op(safe_base(&r.name)).is_some() || long_u32(&r.output) || r.inputs.iter().any(long_u32) || matches!(safe_base(&r.name), "stmt.if_uflag" | "stmt.if_else_uflag") || matches!(r.name.as_str(), "uniform.of_checked" | "uflag.of_flag" | "convert.index_to_count" | "wg.ue" | "wg.uf" | "wg.ug" | "wg.uh" | "wg.ui" | "wg.uj" | "wg.uk" | "wg.ul" | "wg.e" | "wg.f" | "wg.g" | "wg.h") || (r.name == "wg.get_u_safe" && kingdom.dual(r.output).is_some_and(|d| d.form == "xbound"));
+    // (Nor the two rows the reader writes for a test or a bound over a
+    // barrier that it cannot see is uniform, uflag.of_flag and
+    // uniform.of_checked: the checker proves them, and drawn over a value
+    // with uniform rows of its own they read back as those, over a product
+    // as no bound at all; the sampler draws the uniform rows themselves.)
+    // (Nor, for now, the uniform tests whose bodies keep their rung,
+    // stmt.if_ule and its kin and stmt.if_uflag: our software has a bug
+    // there. Drawn, an item loop that continues its counter inside such a
+    // body reads as entering with an unknown value, 10 of 1,000 random
+    // kernels, 2026-10-17 12:30Z; not fixed yet.)
+    let not_drawn = |r: &WgslRow| uniform_test_op(safe_base(&r.name)).is_some() || matches!(safe_base(&r.name), "stmt.if_uflag" | "stmt.if_else_uflag") || matches!(r.name.as_str(), "uflag.of_flag" | "uniform.of_checked");
     let mut rows: Vec<WgslRow> = kingdom.rows.iter().filter(|r| !f16(&r.output) && !r.inputs.iter().any(f16) && !r.name.starts_with("stmt.return") && !r.name.starts_with("safe.mirror_of") && !r.name.starts_with("store.h_mirror") && !not_drawn(r) && !r.name.starts_with("wg.set")).cloned().collect();
     // The safe kingdom reads h only at the thread's own cell (load.h_safe):
     // the role's load.h, h at any index, is the plain kingdom's (the
