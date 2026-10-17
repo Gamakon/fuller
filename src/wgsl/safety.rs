@@ -580,6 +580,17 @@ impl<'m> An<'m> {
         Abs::Other(Info { inv, uni, wrapped }, self.next_id)
     }
 
+    /// The digit of an enclosing loop's uniform counter a form is (the form
+    /// that counter alone).
+    fn loop_counter(&self, f: &Lin) -> Option<u32> {
+        if !f.k.is_zero() || f.t.len() != 1 {
+            return None;
+        }
+        let (v, c) = f.t.iter().next()?;
+        let Var::Dig(i) = v else { return None };
+        (c.as_const() == Some(1) && self.loops.iter().any(|l| l.0.contains(i))).then_some(*i)
+    }
+
     fn sym(&mut self, name: &str, lo: i128, hi: i128) -> u32 {
         if let Some(&i) = self.sym_ix.get(name) {
             return i;
@@ -890,6 +901,25 @@ impl<'m> An<'m> {
         };
         let (x, y) = (x.clone(), y.clone());
         match op {
+            // A constant shifted by a loop's counter (`32u >> k`, `1u << k`): a
+            // value of that counter alone, so a counter of the same loop (the
+            // same in both invocations of a pair the loop's barrier
+            // separates), in [0, its greatest].
+            B::ShiftRight | B::ShiftLeft if x.invariant() && x.k.as_const().is_some() && self.loop_counter(&y).is_some() => {
+                let c = x.k.as_const().unwrap_or(0);
+                let facts = self.facts.clone();
+                let (yl, yh) = self.range(&y, &facts);
+                let hi = if op == B::ShiftRight { c >> yl.clamp(0, 31) } else { c.checked_shl(yh.clamp(0, 31) as u32).unwrap_or(i128::MAX).min(i128::from(u32::MAX)) };
+                let d = self.digit(&format!("{op:?}({c},{y:?})"), Some(Poly::konst(hi.max(0))), uni);
+                if let (Var::Dig(i), Some(ctr)) = (d, self.loop_counter(&y)) {
+                    for l in self.loops.iter_mut().filter(|l| l.0.contains(&ctr)) {
+                        if !l.0.contains(&i) {
+                            l.0.push(i);
+                        }
+                    }
+                }
+                Abs::Lin(Lin::var(d, Poly::konst(1)))
+            }
             B::Add | B::Subtract | B::Multiply => {
                 let facts = self.facts.clone();
                 let (ra, rb) = (self.range(&x, &facts), self.range(&y, &facts));
@@ -2086,6 +2116,22 @@ impl<'m> An<'m> {
 
     /// A counter: stored once, in the continuing block, as `l = l + k` (k a
     /// literal of at least 1), and nowhere in the body; its step k.
+    /// Whether a local's one store in the continuing block halves it (`s = s
+    /// >> 1u`, `s = s / 2u`: a tree reduction's step).
+    fn halving_step(f: &Function, continuing: &Block, l: Handle<naga::LocalVariable>) -> bool {
+        let is_load = |e: Handle<Expression>| matches!(&f.expressions[e], Expression::Load { pointer } if matches!(f.expressions[*pointer], Expression::LocalVariable(x) if x == l));
+        let one_or_two = |e: Handle<Expression>, v: u32| matches!(&f.expressions[e], Expression::Literal(naga::Literal::U32(k)) if *k == v);
+        let stores: Vec<Handle<Expression>> = continuing.iter().filter_map(|s| match s {
+            Statement::Store { pointer, value } if matches!(f.expressions[*pointer], Expression::LocalVariable(x) if x == l) => Some(*value),
+            _ => None,
+        }).collect();
+        matches!(stores.as_slice(), [v] if match &f.expressions[*v] {
+            Expression::Binary { op: BinaryOperator::ShiftRight, left, right } => is_load(*left) && one_or_two(*right, 1),
+            Expression::Binary { op: BinaryOperator::Divide, left, right } => is_load(*left) && one_or_two(*right, 2),
+            _ => false,
+        })
+    }
+
     fn counter_step(f: &Function, continuing: &Block, l: Handle<naga::LocalVariable>) -> Option<u32> {
         let (mut found, mut step) = (0, 0u32);
         for s in continuing.iter() {
@@ -2209,6 +2255,17 @@ impl<'m> An<'m> {
                             an.env.insert((id, *l), Abs::Lin(Lin::var(d, Poly::konst(1))));
                         }
                     }
+                } else if let (true, Some(Abs::Lin(e))) = (stored.iter().all(|(x, cont)| x != l || *cont) && Self::halving_step(f, continuing, *l), entry_env.get(&(id, *l))) {
+                    // A HALVING STEP (`for (var s = 32u; s > 0u; s = s >> 1u)`):
+                    // at most its entry, the same in every invocation of a
+                    // pass when it enters uniform, so it is a counter of the
+                    // loop for the pairs a barrier separates.
+                    let (_, hi) = an.range(e, &an.facts.clone());
+                    let d = an.digit(&format!("{loop_key}:half{}", l.index()), Some(Poly::konst(hi.max(0))), head_uni && uni);
+                    if let (Var::Dig(i), true) = (d, head_uni && uni) {
+                        uniform_counters.push(i);
+                    }
+                    an.env.insert((id, *l), Abs::Lin(Lin::var(d, Poly::konst(1))));
                 } else {
                     let v = an.other(inv, uni, false);
                     an.env.insert((id, *l), v);
@@ -3722,5 +3779,30 @@ mod tests {
         assert_eq!(a.detail, b.detail);
         assert!(!a.detail.contains("0x"), "an address in {}", a.detail);
         println!("{}", a.detail);
+    }
+
+    /// THE TREE REDUCTION IS PROVED (2026-10-17, the gate's workgroup
+    /// races: 6 of v24's seeds): `if (t < s) { w[t] = w[t] + w[(t + s) &
+    /// 63u]; }` with s = 32u >> k (k the loop's counter) or a halving counter
+    /// `s = s >> 1u`, a barrier each pass: s is a counter of the loop (the
+    /// same in both invocations of a pair), t < s puts t in [0, s) and t + s
+    /// in [s, 2s), and the mask keeps t + s (at most 63). The step off by one
+    /// (`t <= s`) races. (The butterfly over bit k and the bitonic
+    /// compare-exchange over i ^ j are still turned away: the proof has no
+    /// form for a bit test or an exclusive or yet; asserted so.)
+    #[test]
+    fn tree_reductions_are_proved_and_their_off_by_one_races() {
+        let k = |body: &str| format!("@group(0) @binding(0) var<storage, read> keys: array<f32>;\n@group(0) @binding(1) var<storage, read_write> out: array<f32>;\nvar<workgroup> w: array<f32, 64>;\n@compute @workgroup_size(64, 1, 1)\nfn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) wid: vec3<u32>) {{\n    let t = lid.x;\n    w[t] = keys[gid.x];\n    workgroupBarrier();\n{body}\n    if (t == 0u) {{ out[wid.x] = w[0u]; }}\n}}\n");
+        let c = Contract::parse("workgroups x 1 64\nworkgroups y 1 1\nworkgroups z 1 1\n").unwrap();
+        let shifted = "    for (var k = 0u; k < 6u; k = k + 1u) {\n        let s = 32u >> k;\n        if (t < s) { w[t] = w[t] + w[(t + s) & 63u]; }\n        workgroupBarrier();\n    }";
+        let halving = "    for (var s = 32u; s > 0u; s = s >> 1u) {\n        if (t < s) { w[t] = w[t] + w[t + s]; }\n        workgroupBarrier();\n    }";
+        let butterfly = "    for (var k = 0u; k < 6u; k = k + 1u) {\n        let b = 1u << k;\n        if ((t & b) == 0u) {\n            let x = w[t];\n            let y = w[(t + b) & 63u];\n            w[t] = x + y;\n            w[(t + b) & 63u] = x - y;\n        }\n        workgroupBarrier();\n    }";
+        let bitonic = "    for (var kk = 2u; kk <= 64u; kk = kk << 1u) {\n        for (var j = kk >> 1u; j > 0u; j = j >> 1u) {\n            let p = t ^ j;\n            if (p > t) {\n                let a = w[t];\n                let b = w[p & 63u];\n                if ((a > b) == ((t & kk) == 0u)) { w[t] = b; w[p & 63u] = a; }\n            }\n            workgroupBarrier();\n        }\n    }";
+        proved(&k(shifted), &c);
+        proved(&k(halving), &c);
+        assert_eq!(rule(&k(&shifted.replace("if (t < s)", "if (t <= s)")), &c), "workgroup_memory_race");
+        assert_eq!(rule(&k(&halving.replace("if (t < s)", "if (t <= s)")), &c), "workgroup_memory_race");
+        assert_eq!(rule(&k(butterfly), &c), "workgroup_memory_race");
+        assert_eq!(rule(&k(bitonic), &c), "workgroup_memory_race");
     }
 }
