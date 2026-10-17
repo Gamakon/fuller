@@ -1251,6 +1251,19 @@ for r in ("L0", "L1", "L2", "L3", "L4", "L5"):
 for n in (2, 3, 4):
     f("kernel", f"module_{n}", "composite", ["kernel.safe"] * n, "kernel.module", f"arity {n}: a module of {n} entry points, the interface's names in order, the shared declarations once")
 
+# ---- uniform tests whose body keeps its rung, beyond <= (2026-10-17, run 1 of v24: 13 of 21 model seeds
+# hold a barrier under `if (cfg.pass_index == 0u)`, one pass's work in one kernel): ==, != and < of two
+# workgroup-uniform values, as stmt.if_ule; > and >= are these with their operands swapped. After every
+# other row so every ref stands; no sampler draws them (as stmt.if_ule). ----
+for op, wgsl in (("ueq", "=="), ("une", "!="), ("ult", "<")):
+    for r in ("L0", "L1", "L2", "L3", "L4", "L5"):
+        f("stmt", f"if_{op}_" + r, "composite", ["u32.uniform", "u32.uniform", "block." + r], "stmt." + r, f"arity 3: if (a {wgsl} b) {{ ... }} over workgroup-uniform values: the body keeps the rung")
+# The same tests with an else (`if (cfg.pass_index == 0u) { ... } else { ... }`, 12 of the 29 seeds of run 1):
+# both bodies keep the rung; `else if` is an else whose block holds the next test.
+for op, wgsl in (("ule", "<="), ("ueq", "=="), ("une", "!="), ("ult", "<")):
+    for r in ("L0", "L1", "L2", "L3", "L4", "L5"):
+        f("stmt", f"if_else_{op}_" + r, "composite", ["u32.uniform", "u32.uniform", "block." + r, "block." + r], "stmt." + r, f"arity 4: if (a {wgsl} b) {{ ... }} else {{ ... }} over workgroup-uniform values: both bodies keep the rung")
+
 
 def write_tsv(path, header, rows):
     with open(path, "w") as out:

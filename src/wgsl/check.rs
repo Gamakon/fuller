@@ -816,11 +816,13 @@ impl<'a> Checker<'a> {
             }
             // A test of two uniform values: its body keeps the enclosing control
             // (the operands' dual is the workgroup's uniform values).
-            "stmt.if_ule" if k.len() == 3 => {
+            b if crate::wgsl::render::uniform_test_op(b).is_some() && (k.len() == 3 || k.len() == 4) => {
                 self.value(&k[0], cx);
                 self.value(&k[1], cx);
                 let c = self.uniform(&k[0], cx) && self.uniform(&k[1], cx);
-                self.walk_block(&k[2], cx, ctrl && c);
+                for body in &k[2..] {
+                    self.walk_block(body, cx, ctrl && c);
+                }
             }
             "stmt.return" => {
                 // A return under a non-uniform condition: every later

@@ -120,6 +120,9 @@ struct Ctx<'a> {
     /// While a helper body is being inlined: its arguments by `arg.<name>`,
     /// already resolved and typed in the caller.
     inline_args: Option<HashMap<String, Tree>>,
+    /// The arguments of the helpers being inlined around the one in
+    /// `inline_args`, innermost last (a helper inlined inside another).
+    outer_args: Vec<Option<HashMap<String, Tree>>>,
     /// Locals that are vectors (`var bv = vec4<f32>(0.0)`), by name with
     /// their arena index: a `.#` load or store on one is a lane of a vec4
     /// register, not a private array.
@@ -1910,6 +1913,9 @@ impl<'a> Ctx<'a> {
                 Err(_) => at("index.min", vec![a.clone(), self.xbound_of(b)?]),
             },
             ("index.clamp_to", [a, n]) if n.ty == count => at("index.clamp_to", vec![self.xbound_of(a)?, n.clone()]),
+            // A u32 read from an input binding (the interface's load row at
+            // u32.xbound): its value, `for (j < n[0u])`.
+            (name, [i]) if self.per_kernel_rows.iter().any(|p| p.0 == name && p.2 == xb) => at(name, vec![i.clone()]),
             ("subgroup.min" | "subgroup.max" | "subgroup.broadcast_first", [x]) => at(&t.name, vec![self.xbound_of(x)?]),
             ("subgroup.broadcast" | "subgroup.shuffle" | "subgroup.shuffle_down" | "subgroup.shuffle_up" | "subgroup.shuffle_xor", [x, i]) => at(&t.name, vec![self.xbound_of(x)?, i.clone()]),
             _ => return Err(no_row()),
@@ -2644,11 +2650,25 @@ impl<'a> Ctx<'a> {
 
     /// `t` with every scalar local the memo knows replaced by what it holds.
     fn expand_memo(&self, t: &Tree) -> Tree {
+        self.expand_memo_at(t, 0)
+    }
+
+    /// [`expand_memo`] with the arguments of the helper `depth` levels out
+    /// from the one being inlined (0: its own): an argument is the caller's
+    /// expression, expanded in the caller's scope, whose own arguments are
+    /// the next level out's (a helper inlined inside another and given the
+    /// outer's argument of the same name, `f(x)` calling `g(x)`, expanded
+    /// `arg.x` into itself without end: two seeds of v24's run 1, 2026-10-17).
+    fn expand_memo_at(&self, t: &Tree, depth: usize) -> Tree {
         if t.kids.is_empty() {
             // A statement-inlined helper's argument: the caller's expression
             // (fresh48 of run A: `wrow(r, c0)` storing to h[r * d + c0 + j]).
-            if let Some(raw) = self.inline_args.as_ref().and_then(|a| a.get(&t.name)).filter(|_| t.name.starts_with("arg.")) {
-                return self.expand_memo(raw);
+            if t.name.starts_with("arg.") {
+                let args = if depth == 0 { self.inline_args.as_ref() } else { self.outer_args.len().checked_sub(depth).and_then(|i| self.outer_args[i].as_ref()) };
+                if let Some(raw) = args.and_then(|a| a.get(&t.name)) {
+                    return self.expand_memo_at(raw, depth + 1);
+                }
+                return t.clone();
             }
             if let Some(local) = local_name(&t.name).filter(|_| !t.name.contains(".#")) {
                 // A loop's counter is the loop's own: its `k = 0u` before the
@@ -2660,7 +2680,7 @@ impl<'a> Ctx<'a> {
             }
             return t.clone();
         }
-        Tree { name: t.name.clone(), ty: t.ty, konst: t.konst, kids: t.kids.iter().map(|k| self.expand_memo(k)).collect() }
+        Tree { name: t.name.clone(), ty: t.ty, konst: t.konst, kids: t.kids.iter().map(|k| self.expand_memo_at(k, depth)).collect() }
     }
 
     /// `(index.add (index.mul R D) C)` with R and C this thread's row and
@@ -2858,7 +2878,20 @@ impl<'a> Ctx<'a> {
         if stmts.iter().any(|s| s.name == "stmt.continue" || is_continue_guard(s)) {
             return Err(CONTINUE_OUTSIDE.into());
         }
-        Ok((stmts, self.epilogue_block(vec![last], 0)?))
+        match self.epilogue_block(vec![last.clone()], 0) {
+            Ok(e) => Ok((stmts, e)),
+            // An interface with no output cell (no h) needs no epilogue: a last
+            // store the epilogue cannot spell (inside an item loop, a loop that
+            // breaks: five of the saved model kernels, 2026-10-17) stays in the
+            // body, which ends in a return, the epilogue its fallback.
+            Err(_) if !self.per_kernel_rows.iter().any(|r| r.0 == "store.h") => {
+                let mut stmts = stmts;
+                stmts.push(last);
+                stmts.push(Tree::new("stmt.return_L0", self.stmt_ty("L0")?, vec![]));
+                Ok((stmts, Tree::fallback(ty(self, "block.O0")?)))
+            }
+            Err(e) => Err(e),
+        }
     }
 
     /// An epilogue block at tile depth d: the statements (flattened through
@@ -3010,12 +3043,17 @@ impl<'a> Ctx<'a> {
         // a conditional rung, the if of their comparison (the rest of a loop
         // body after a continue guard, an epilogue loop's statements: 10 of
         // 1,000 random trees, 2026-10-14).
-        if stem == "stmt.if_ule" {
-            let [x, y, b] = t.kids.as_slice() else { return Err(format!("{} with {} children", t.name, t.kids.len())) };
+        if let Some(cmp) = crate::wgsl::render::uniform_test_compare(stem) {
+            let [x, y, bodies @ ..] = t.kids.as_slice() else { return Err(format!("{} with {} children", t.name, t.kids.len())) };
             let index = |u: &Tree| -> Result<Tree, String> { Ok(Tree::new("index.of_uniform", ty(self, "u32.index")?, vec![u.clone()])) };
-            let le = Tree::new("compare.le", ty(self, "bool.flag")?, vec![index(x)?, index(y)?]);
+            let le = Tree::new(cmp, ty(self, "bool.flag")?, vec![index(x)?, index(y)?]);
             let c = format!("C{d}");
-            return Ok(Tree::new(&format!("stmt.if_{c}"), ty(self, &format!("stmt.{c}"))?, vec![le, self.rerung(b, d)?]));
+            let row = if bodies.len() == 2 { "if_else" } else { "if" };
+            let mut kids = vec![le];
+            for b in bodies {
+                kids.push(self.rerung(b, d)?);
+            }
+            return Ok(Tree::new(&format!("stmt.{row}_{c}"), ty(self, &format!("stmt.{c}"))?, kids));
         }
         // Conditional statements written in place at an L rung are, at a
         // conditional rung, a block like any (stmt.cblock has L rows only).
@@ -3422,6 +3460,7 @@ impl<'a> Ctx<'a> {
         let saved_fn = std::mem::replace(&mut self.naga_fn, helper.naga_fn);
         let saved_lanes = std::mem::replace(&mut self.local_lanes, helper.local_lanes.clone());
         let saved_args = self.inline_args.replace(bound);
+        self.outer_args.push(saved_args.clone());
         let saved_values = self.inline_values.replace(values);
         let saved_tail = std::mem::replace(&mut self.tail, true);
         let saved_result = std::mem::replace(&mut self.inline_result, result_reg);
@@ -3432,6 +3471,7 @@ impl<'a> Ctx<'a> {
         self.pointer_args = saved_pointers;
         self.inline_result = saved_result;
         self.tail = saved_tail;
+        self.outer_args.pop();
         self.inline_args = saved_args;
         self.inline_values = saved_values;
         self.local_lanes = saved_lanes;
@@ -3666,24 +3706,58 @@ impl<'a> Ctx<'a> {
                         // A test of two workgroup-uniform values at an L rung (the
                         // symmetric half's `if (wid_row <= wid_col)`): its body keeps
                         // the rung, a barrier in it in uniform control.
-                        let uniform_le = match (c.name.as_str(), c.kids.as_slice()) {
-                            ("compare.le", [x, y]) => Some((x, y)),
-                            ("compare.ge", [x, y]) => Some((y, x)),
+                        // (And ==, != and <, > and >= by their operands swapped,
+                        // 2026-10-17: v24 seeds' `if (cfg.pass_index == 0u)`. A
+                        // literal 0 is no uniform value: `x == 0u` is `x < 1u`,
+                        // `x != 0u` and `x > 0u` are `1u <= x`.)
+                        let zero = |t: &Tree| literal_value(t) == Some(0.0);
+                        let one = Tree::literal("literal.index", ty(self, "u32.index")?, 1.0);
+                        let uniform_le: Option<(&str, Tree, Tree)> = match (c.name.as_str(), c.kids.as_slice()) {
+                            ("compare.eq", [x, z]) | ("compare.eq", [z, x]) if zero(z) => Some(("ult", x.clone(), one.clone())),
+                            ("compare.ne" | "compare.gt", [x, z]) if zero(z) => Some(("ule", one.clone(), x.clone())),
+                            ("compare.ne" | "compare.lt", [z, x]) if zero(z) => Some(("ule", one.clone(), x.clone())),
+                            ("compare.le", [x, y]) => Some(("ule", x.clone(), y.clone())),
+                            ("compare.ge", [x, y]) => Some(("ule", y.clone(), x.clone())),
+                            ("compare.eq", [x, y]) => Some(("ueq", x.clone(), y.clone())),
+                            ("compare.ne", [x, y]) => Some(("une", x.clone(), y.clone())),
+                            ("compare.lt", [x, y]) => Some(("ult", x.clone(), y.clone())),
+                            ("compare.gt", [x, y]) => Some(("ult", y.clone(), x.clone())),
                             _ => None,
                         };
                         // (Not a continue's or a break's guard, `if (cfg.d >= nwg.x)
                         // { continue; }`: no row continues at an L rung; read as the
                         // conditional it is. A sketch draw, 2026-10-14.)
                         let exits = accept.iter().any(|s| matches!(s, Statement::Continue | Statement::Break));
-                        if let Some((x, y)) = uniform_le.filter(|_| rung.starts_with('L') && !exits && reject.iter().all(|s| matches!(s, Statement::Emit(_)))) {
-                            if let (Some(ux), Some(uy)) = (self.uniform_bound_of(x)?, self.uniform_bound_of(y)?) {
+                        let exits_else = reject.iter().any(|s| matches!(s, Statement::Continue | Statement::Break));
+                        // (Only <= is read so without a barrier, as before; the
+                        // others only when a body needs its rung, a barrier in
+                        // it: the text `if (a < b)` is otherwise the plain if,
+                        // as the kingdom writes one: 2 of 1,000 random trees.)
+                        let needed = holds_barrier(self.module, accept) || holds_barrier(self.module, reject);
+                        let was_le = matches!(c.name.as_str(), "compare.le" | "compare.ge");
+                        let has_else = !reject.iter().all(|s| matches!(s, Statement::Emit(_)));
+                        if let Some((op, x, y)) = uniform_le.filter(|(op, _, _)| rung.starts_with('L') && !exits && !exits_else && (needed || (*op == "ule" && was_le && !has_else))) {
+                            if let (Some(ux), Some(uy)) = (self.uniform_bound_of(&x)?, self.uniform_bound_of(&y)?) {
                                 self.tail = stmt_tail;
                                 path.push(0);
                                 let a = self.nested(|ctx, path| ctx.walk(accept, path, rung, 0), path);
                                 path.pop();
+                                let b = if has_else {
+                                    path.push(1);
+                                    let b = self.nested(|ctx, path| ctx.walk(reject, path, rung, 0), path);
+                                    path.pop();
+                                    Some(b)
+                                } else {
+                                    None
+                                };
                                 self.tail = block_tail;
                                 let a = a?;
-                                return Ok(Some(Tree::new(&format!("stmt.if_ule_{rung}"), st, vec![ux, uy, self.block(a, rung)?])));
+                                // (An else: both bodies keep the rung, `if (cfg.pass_index ==
+                                // 0u) { .. } else { .. }`, 12 of run 1's 29 seeds, 2026-10-17.)
+                                return Ok(Some(match b {
+                                    None => Tree::new(&format!("stmt.if_{op}_{rung}"), st, vec![ux, uy, self.block(a, rung)?]),
+                                    Some(b) => Tree::new(&format!("stmt.if_else_{op}_{rung}"), st, vec![ux, uy, self.block(a, rung)?, self.block(b?, rung)?]),
+                                }));
                             }
                         }
                         let crung = format!("C{level}");
@@ -5022,6 +5096,20 @@ fn stored_locals(f: &Function, block: &naga::Block) -> Vec<String> {
     out
 }
 
+/// Whether a block holds a barrier (workgroup, storage or subgroup, or a
+/// workgroupUniformLoad), in it or in a function it calls.
+fn holds_barrier(module: &naga::Module, b: &naga::Block) -> bool {
+    b.iter().any(|s| match s {
+        Statement::Barrier(_) | Statement::WorkGroupUniformLoad { .. } => true,
+        Statement::Block(x) => holds_barrier(module, x),
+        Statement::If { accept, reject, .. } => holds_barrier(module, accept) || holds_barrier(module, reject),
+        Statement::Switch { cases, .. } => cases.iter().any(|c| holds_barrier(module, &c.body)),
+        Statement::Loop { body, continuing, .. } => holds_barrier(module, body) || holds_barrier(module, continuing),
+        Statement::Call { function, .. } => holds_barrier(module, &module.functions[*function].body),
+        _ => false,
+    })
+}
+
 /// A zero value: the literal 0 of any form, or a vector, matrix or array
 /// built from zeros (`vec4<f32>(0.0)`, `vec4<f32>()`).
 fn is_zero(n: &Node) -> bool {
@@ -5385,7 +5473,7 @@ fn read_entry(at: &Reading, ep: usize, (grid, rows_x): ((u32, u32, u32, u32), bo
     let main_returns = source.find(&format!("fn {}(", entry.name)).map(|i| &source[i..]).and_then(|m| m.rfind('}').map(|j| &m[..j])).is_some_and(|m| m.trim_end().ends_with("return;"));
     let uniform_lanes = if role.uniform_struct.is_empty() { role.fields.iter().map(|f| f.name.clone()).collect() } else { Vec::new() };
     let (arrays, array_lens) = arrays;
-    let mut ctx = Ctx { kingdom, main_returns, per_kernel_rows: crate::wgsl::safe_karva::per_kernel_rows(kingdom, role), uniform_var: role.uniform_var.clone(), uniform_lanes, duals: &duals, lets: &lets, roots: &roots, item_counter: None, tile_counter: None, tile_counter2: None, tile_counter3: None, tile_counter4: None, registers: BTreeMap::new(), counter_stores: Vec::new(), guard: None, tail: true, arrays, array_lens, arrays_used: BTreeSet::new(), parrs: BTreeMap::new(), grid, rows_x: rows_x.then_some(true), notes: Vec::new(), helpers: &helpers, calls: &calls, arg_roots: &arg_roots, inline_args: None, row_arrays: BTreeMap::new(), used_counters: std::collections::BTreeSet::new(), local_lanes, axis_memo: BTreeMap::new(), loop_depth: 0, tile_bounds: BTreeMap::new(), naga_fn, module: &kernel.module, local_prefix: String::new(), inline_result: None, inline_values: None, bound_lets, stale_lets, let_regs: HashMap::new(), inlined: HashMap::new(), stored_seen: std::collections::BTreeSet::new(), counter_offsets: HashMap::new(), counter_exprs: HashMap::new(), pointer_args: HashMap::new(), mode_full: source.lines().any(|l| l.trim() == "// mode full") };
+    let mut ctx = Ctx { kingdom, main_returns, per_kernel_rows: crate::wgsl::safe_karva::per_kernel_rows(kingdom, role), uniform_var: role.uniform_var.clone(), uniform_lanes, duals: &duals, lets: &lets, roots: &roots, item_counter: None, tile_counter: None, tile_counter2: None, tile_counter3: None, tile_counter4: None, registers: BTreeMap::new(), counter_stores: Vec::new(), guard: None, tail: true, arrays, array_lens, arrays_used: BTreeSet::new(), parrs: BTreeMap::new(), grid, rows_x: rows_x.then_some(true), notes: Vec::new(), helpers: &helpers, calls: &calls, arg_roots: &arg_roots, inline_args: None, outer_args: Vec::new(), row_arrays: BTreeMap::new(), used_counters: std::collections::BTreeSet::new(), local_lanes, axis_memo: BTreeMap::new(), loop_depth: 0, tile_bounds: BTreeMap::new(), naga_fn, module: &kernel.module, local_prefix: String::new(), inline_result: None, inline_values: None, bound_lets, stale_lets, let_regs: HashMap::new(), inlined: HashMap::new(), stored_seen: std::collections::BTreeSet::new(), counter_offsets: HashMap::new(), counter_exprs: HashMap::new(), pointer_args: HashMap::new(), mode_full: source.lines().any(|l| l.trim() == "// mode full") };
     // Register initialisations first, in root order. A local initialised to
     // its form's fallback (0.0, 0u, false, a zero vector) costs nothing: the
     // register's declaration already holds that value, and the register is
@@ -6361,6 +6449,93 @@ fn search(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocati
         println!("random modules: {read_back} of {n} read back; {same} to the tree drawn (canonical); {fixpoint} to a fixpoint; {legal} pass every layer under a 1-D contract");
         assert!(failures.is_empty(), "{} of {n}:\n{}", failures.len(), failures.iter().take(10).cloned().collect::<Vec<_>>().join("\n"));
         assert!(same >= MODULE_AST_FLOOR && fixpoint >= MODULE_FIXPOINT_FLOOR && legal >= MODULE_LEGAL_FLOOR, "below the floors reached: AST {same} (floor {MODULE_AST_FLOOR}), fixpoint {fixpoint} ({MODULE_FIXPOINT_FLOOR}), legal {legal} ({MODULE_LEGAL_FLOOR})");
+    }
+
+    /// ONE PASS'S WORK UNDER A UNIFORM TEST (2026-10-17, 13 of the 29 model
+    /// seeds of v24's run 1): `if (cfg.pass_index == 0u) { ..barrier.. } else
+    /// if (cfg.pass_index != 2u) { ..barrier.. } else { .. }` and `if
+    /// (cfg.stage > 1u)`: tests of workgroup-uniform values whose bodies keep
+    /// their rung, so a barrier in them is in uniform control (== 0u is < 1u).
+    /// And a helper inlined inside a helper that passes it an argument of the
+    /// same name (`norm(x)` calling `sq(x)`: two seeds never finished reading).
+    /// The kernel reads, renders, naga validates it, reads back to the tree
+    /// read (canonical), a fixpoint, and passes every layer; a test of a
+    /// thread's value still holds no barrier.
+    #[test]
+    fn uniform_tests_keep_their_rung_and_nested_helpers_share_an_argument_name() {
+        let k = WgslKingdom::load_safe();
+        let contract = crate::wgsl::safety::Contract::parse("workgroups x 1 1024\nworkgroups y 1 1\nworkgroups z 1 1\nparam cfg.arrived_begin 0 1000000\n").unwrap();
+        let src = format!(
+            "{V24_BINDINGS}var<workgroup> red: array<f32, 64>;
+fn sq(x: f32) -> f32 {{
+    var y = x;
+    y = y * x;
+    return y;
+}}
+fn norm(x: f32) -> f32 {{
+    var s = sq(x);
+    s = s + 1.0;
+    return s;
+}}
+@compute @workgroup_size(64, 1, 1)
+fn ingest(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) wid: vec3<u32>) {{
+    let row = cfg.arrived_begin + wid.x;
+    if (cfg.pass_index == 0u) {{
+        red[lid.x] = norm(keys[(row & 1023u) * 64u + lid.x]);
+        workgroupBarrier();
+        if (lid.x == 0u) {{ index_f32[row] = red[0]; }}
+    }} else if (cfg.pass_index != 2u) {{
+        workgroupBarrier();
+        if (lid.x == 0u && cfg.stage > 1u) {{ _ = atomicAdd(&index_u32[row & 1023u], 1u); }}
+    }} else {{
+        if (lid.x == 0u) {{ _ = atomicMax(&index_u32[2048u + (row & 1023u)], row); }}
+    }}
+}}
+"
+        );
+        let r = read_safe(&src, &k).unwrap_or_else(|e| panic!("{e}"));
+        let sx = r.tree.to_sexpr();
+        assert!(sx.contains("(stmt.if_else_ult_L0 ") && sx.contains("(stmt.if_else_une_L0 "), "{sx}");
+        let out = crate::wgsl::safe_karva::render_tree_with(&r.tree, &k, &r.role).unwrap_or_else(|e| panic!("{e}"));
+        validate_text(&out.text).unwrap_or_else(|e| panic!("{e}\n{}", out.text));
+        let back = read_safe(&out.text, &k).unwrap_or_else(|e| panic!("read back: {e}\n{}", out.text));
+        // (The inlined helpers' statements are one block statement as read,
+        // written in place: the same tree in its canonical spelling, then a fixpoint.)
+        let canon = crate::wgsl::canonical::canonical(&r.tree, &k);
+        assert!(canon == back.tree, "the rendered text reads back to the tree read, canonical: {:?}\n{}", crate::wgsl::render::first_difference(&canon, &back.tree), out.text);
+        let again = read_safe(&crate::wgsl::safe_karva::render_tree_with(&back.tree, &k, &back.role).unwrap().text, &k).unwrap();
+        assert!(again.tree == back.tree, "a fixpoint: {:?}", crate::wgsl::render::first_difference(&back.tree, &again.tree));
+        let checker = crate::wgsl::check::Checker::with_contract(&k, &r.role, &crate::wgsl::target::Target::recorded(), contract);
+        checker.check(&r.tree).unwrap_or_else(|e| panic!("{e}\n{}", out.text));
+        let thread = src.replace("if (cfg.pass_index == 0u) {", "if (lid.x == 0u) {");
+        let Err(e) = read_safe(&thread, &k) else { panic!("a barrier under a thread's test read") };
+        assert!(e.contains("a barrier under a condition"), "{e}");
+    }
+
+    /// A LAST STORE THE EPILOGUE CANNOT SPELL, UNDER AN INTERFACE WITH NO h
+    /// (2026-10-17; five saved model kernels, nluca's shape): the kernel's
+    /// last store inside a loop bounded by a binding, and inside a loop that
+    /// breaks. With no output cell there is no epilogue to end in: the store
+    /// stays in the body, which ends in a return. Each reads, renders, naga
+    /// validates it, reads back to the same tree and passes every layer.
+    #[test]
+    fn a_last_store_inside_a_loop_reads_under_an_interface_without_h() {
+        let k = WgslKingdom::load_safe();
+        let contract = crate::wgsl::safety::Contract::parse("workgroups x 1 1024\nworkgroups y 1 1\nworkgroups z 1 1\n").unwrap();
+        let pre = "@group(0) @binding(0) var<storage, read> n: array<u32>;\n@group(0) @binding(1) var<storage, read> x: array<f32>;\n@group(0) @binding(2) var<storage, read_write> y: array<f32>;\n@compute @workgroup_size(64, 1, 1)\nfn main(@builtin(global_invocation_id) gid: vec3<u32>) {\n";
+        for (what, body) in [
+            ("item loop", "    let rows = min(n[0u], 4u);\n    for (var j = 0u; j < rows; j += 1u) {\n        let r = gid.x * 4u + j;\n        if (r < n[1u]) { y[r] = x[r] * 2.0; }\n    }\n}\n"),
+            ("a loop that breaks", "    for (var j = 0u; j < 4u; j += 1u) {\n        let r = gid.x * 4u + j;\n        if (r >= n[0u]) { break; }\n        y[r] = x[r] + 1.0;\n    }\n}\n"),
+        ] {
+            let src = format!("{pre}{body}");
+            let r = read_safe(&src, &k).unwrap_or_else(|e| panic!("{what}: {e}"));
+            let out = crate::wgsl::safe_karva::render_tree_with(&r.tree, &k, &r.role).unwrap_or_else(|e| panic!("{what}: {e}"));
+            validate_text(&out.text).unwrap_or_else(|e| panic!("{what}: {e}\n{}", out.text));
+            let back = read_safe(&out.text, &k).unwrap_or_else(|e| panic!("{what}: read back: {e}\n{}", out.text));
+            assert!(back.tree == r.tree, "{what}: the rendered text reads back to the same tree: {:?}\n{}", crate::wgsl::render::first_difference(&r.tree, &back.tree), out.text);
+            let checker = crate::wgsl::check::Checker::with_contract(&k, &r.role, &crate::wgsl::target::Target::recorded(), contract.clone());
+            checker.check(&r.tree).unwrap_or_else(|e| panic!("{what}: {e}\n{}", out.text));
+        }
     }
 
     /// TWO LOOPS OF THE V24 REFERENCE (2026-10-17, the harness agent's

@@ -3041,4 +3041,51 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 | F1603 | `kernel.module_3` | `composite` | `kernel.safe kernel.safe kernel.safe` | `kernel.module` | 3 | arity 3: a module of 3 entry points, the interface's names in order, the shared declarations once |
 | F1604 | `kernel.module_4` | `composite` | `kernel.safe kernel.safe kernel.safe kernel.safe` | `kernel.module` | 4 | arity 4: a module of 4 entry points, the interface's names in order, the shared declarations once |
 
-1604 function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Storage-buffer atomics are an interface's per-kernel rows, not rows of this table. Deliberately absent: atomic compare-exchange (naga 0.20's Metal backend lacks it), subgroupBallot, images, derivatives, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.
+## class `stmt`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F1605 | `stmt.if_ueq_L0` | `composite` | `u32.uniform u32.uniform block.L0` | `stmt.L0` | 3 | arity 3: if (a == b) { ... } over workgroup-uniform values: the body keeps the rung |
+| F1606 | `stmt.if_ueq_L1` | `composite` | `u32.uniform u32.uniform block.L1` | `stmt.L1` | 3 | arity 3: if (a == b) { ... } over workgroup-uniform values: the body keeps the rung |
+| F1607 | `stmt.if_ueq_L2` | `composite` | `u32.uniform u32.uniform block.L2` | `stmt.L2` | 3 | arity 3: if (a == b) { ... } over workgroup-uniform values: the body keeps the rung |
+| F1608 | `stmt.if_ueq_L3` | `composite` | `u32.uniform u32.uniform block.L3` | `stmt.L3` | 3 | arity 3: if (a == b) { ... } over workgroup-uniform values: the body keeps the rung |
+| F1609 | `stmt.if_ueq_L4` | `composite` | `u32.uniform u32.uniform block.L4` | `stmt.L4` | 3 | arity 3: if (a == b) { ... } over workgroup-uniform values: the body keeps the rung |
+| F1610 | `stmt.if_ueq_L5` | `composite` | `u32.uniform u32.uniform block.L5` | `stmt.L5` | 3 | arity 3: if (a == b) { ... } over workgroup-uniform values: the body keeps the rung |
+| F1611 | `stmt.if_une_L0` | `composite` | `u32.uniform u32.uniform block.L0` | `stmt.L0` | 3 | arity 3: if (a != b) { ... } over workgroup-uniform values: the body keeps the rung |
+| F1612 | `stmt.if_une_L1` | `composite` | `u32.uniform u32.uniform block.L1` | `stmt.L1` | 3 | arity 3: if (a != b) { ... } over workgroup-uniform values: the body keeps the rung |
+| F1613 | `stmt.if_une_L2` | `composite` | `u32.uniform u32.uniform block.L2` | `stmt.L2` | 3 | arity 3: if (a != b) { ... } over workgroup-uniform values: the body keeps the rung |
+| F1614 | `stmt.if_une_L3` | `composite` | `u32.uniform u32.uniform block.L3` | `stmt.L3` | 3 | arity 3: if (a != b) { ... } over workgroup-uniform values: the body keeps the rung |
+| F1615 | `stmt.if_une_L4` | `composite` | `u32.uniform u32.uniform block.L4` | `stmt.L4` | 3 | arity 3: if (a != b) { ... } over workgroup-uniform values: the body keeps the rung |
+| F1616 | `stmt.if_une_L5` | `composite` | `u32.uniform u32.uniform block.L5` | `stmt.L5` | 3 | arity 3: if (a != b) { ... } over workgroup-uniform values: the body keeps the rung |
+| F1617 | `stmt.if_ult_L0` | `composite` | `u32.uniform u32.uniform block.L0` | `stmt.L0` | 3 | arity 3: if (a < b) { ... } over workgroup-uniform values: the body keeps the rung |
+| F1618 | `stmt.if_ult_L1` | `composite` | `u32.uniform u32.uniform block.L1` | `stmt.L1` | 3 | arity 3: if (a < b) { ... } over workgroup-uniform values: the body keeps the rung |
+| F1619 | `stmt.if_ult_L2` | `composite` | `u32.uniform u32.uniform block.L2` | `stmt.L2` | 3 | arity 3: if (a < b) { ... } over workgroup-uniform values: the body keeps the rung |
+| F1620 | `stmt.if_ult_L3` | `composite` | `u32.uniform u32.uniform block.L3` | `stmt.L3` | 3 | arity 3: if (a < b) { ... } over workgroup-uniform values: the body keeps the rung |
+| F1621 | `stmt.if_ult_L4` | `composite` | `u32.uniform u32.uniform block.L4` | `stmt.L4` | 3 | arity 3: if (a < b) { ... } over workgroup-uniform values: the body keeps the rung |
+| F1622 | `stmt.if_ult_L5` | `composite` | `u32.uniform u32.uniform block.L5` | `stmt.L5` | 3 | arity 3: if (a < b) { ... } over workgroup-uniform values: the body keeps the rung |
+| F1623 | `stmt.if_else_ule_L0` | `composite` | `u32.uniform u32.uniform block.L0 block.L0` | `stmt.L0` | 4 | arity 4: if (a <= b) { ... } else { ... } over workgroup-uniform values: both bodies keep the rung |
+| F1624 | `stmt.if_else_ule_L1` | `composite` | `u32.uniform u32.uniform block.L1 block.L1` | `stmt.L1` | 4 | arity 4: if (a <= b) { ... } else { ... } over workgroup-uniform values: both bodies keep the rung |
+| F1625 | `stmt.if_else_ule_L2` | `composite` | `u32.uniform u32.uniform block.L2 block.L2` | `stmt.L2` | 4 | arity 4: if (a <= b) { ... } else { ... } over workgroup-uniform values: both bodies keep the rung |
+| F1626 | `stmt.if_else_ule_L3` | `composite` | `u32.uniform u32.uniform block.L3 block.L3` | `stmt.L3` | 4 | arity 4: if (a <= b) { ... } else { ... } over workgroup-uniform values: both bodies keep the rung |
+| F1627 | `stmt.if_else_ule_L4` | `composite` | `u32.uniform u32.uniform block.L4 block.L4` | `stmt.L4` | 4 | arity 4: if (a <= b) { ... } else { ... } over workgroup-uniform values: both bodies keep the rung |
+| F1628 | `stmt.if_else_ule_L5` | `composite` | `u32.uniform u32.uniform block.L5 block.L5` | `stmt.L5` | 4 | arity 4: if (a <= b) { ... } else { ... } over workgroup-uniform values: both bodies keep the rung |
+| F1629 | `stmt.if_else_ueq_L0` | `composite` | `u32.uniform u32.uniform block.L0 block.L0` | `stmt.L0` | 4 | arity 4: if (a == b) { ... } else { ... } over workgroup-uniform values: both bodies keep the rung |
+| F1630 | `stmt.if_else_ueq_L1` | `composite` | `u32.uniform u32.uniform block.L1 block.L1` | `stmt.L1` | 4 | arity 4: if (a == b) { ... } else { ... } over workgroup-uniform values: both bodies keep the rung |
+| F1631 | `stmt.if_else_ueq_L2` | `composite` | `u32.uniform u32.uniform block.L2 block.L2` | `stmt.L2` | 4 | arity 4: if (a == b) { ... } else { ... } over workgroup-uniform values: both bodies keep the rung |
+| F1632 | `stmt.if_else_ueq_L3` | `composite` | `u32.uniform u32.uniform block.L3 block.L3` | `stmt.L3` | 4 | arity 4: if (a == b) { ... } else { ... } over workgroup-uniform values: both bodies keep the rung |
+| F1633 | `stmt.if_else_ueq_L4` | `composite` | `u32.uniform u32.uniform block.L4 block.L4` | `stmt.L4` | 4 | arity 4: if (a == b) { ... } else { ... } over workgroup-uniform values: both bodies keep the rung |
+| F1634 | `stmt.if_else_ueq_L5` | `composite` | `u32.uniform u32.uniform block.L5 block.L5` | `stmt.L5` | 4 | arity 4: if (a == b) { ... } else { ... } over workgroup-uniform values: both bodies keep the rung |
+| F1635 | `stmt.if_else_une_L0` | `composite` | `u32.uniform u32.uniform block.L0 block.L0` | `stmt.L0` | 4 | arity 4: if (a != b) { ... } else { ... } over workgroup-uniform values: both bodies keep the rung |
+| F1636 | `stmt.if_else_une_L1` | `composite` | `u32.uniform u32.uniform block.L1 block.L1` | `stmt.L1` | 4 | arity 4: if (a != b) { ... } else { ... } over workgroup-uniform values: both bodies keep the rung |
+| F1637 | `stmt.if_else_une_L2` | `composite` | `u32.uniform u32.uniform block.L2 block.L2` | `stmt.L2` | 4 | arity 4: if (a != b) { ... } else { ... } over workgroup-uniform values: both bodies keep the rung |
+| F1638 | `stmt.if_else_une_L3` | `composite` | `u32.uniform u32.uniform block.L3 block.L3` | `stmt.L3` | 4 | arity 4: if (a != b) { ... } else { ... } over workgroup-uniform values: both bodies keep the rung |
+| F1639 | `stmt.if_else_une_L4` | `composite` | `u32.uniform u32.uniform block.L4 block.L4` | `stmt.L4` | 4 | arity 4: if (a != b) { ... } else { ... } over workgroup-uniform values: both bodies keep the rung |
+| F1640 | `stmt.if_else_une_L5` | `composite` | `u32.uniform u32.uniform block.L5 block.L5` | `stmt.L5` | 4 | arity 4: if (a != b) { ... } else { ... } over workgroup-uniform values: both bodies keep the rung |
+| F1641 | `stmt.if_else_ult_L0` | `composite` | `u32.uniform u32.uniform block.L0 block.L0` | `stmt.L0` | 4 | arity 4: if (a < b) { ... } else { ... } over workgroup-uniform values: both bodies keep the rung |
+| F1642 | `stmt.if_else_ult_L1` | `composite` | `u32.uniform u32.uniform block.L1 block.L1` | `stmt.L1` | 4 | arity 4: if (a < b) { ... } else { ... } over workgroup-uniform values: both bodies keep the rung |
+| F1643 | `stmt.if_else_ult_L2` | `composite` | `u32.uniform u32.uniform block.L2 block.L2` | `stmt.L2` | 4 | arity 4: if (a < b) { ... } else { ... } over workgroup-uniform values: both bodies keep the rung |
+| F1644 | `stmt.if_else_ult_L3` | `composite` | `u32.uniform u32.uniform block.L3 block.L3` | `stmt.L3` | 4 | arity 4: if (a < b) { ... } else { ... } over workgroup-uniform values: both bodies keep the rung |
+| F1645 | `stmt.if_else_ult_L4` | `composite` | `u32.uniform u32.uniform block.L4 block.L4` | `stmt.L4` | 4 | arity 4: if (a < b) { ... } else { ... } over workgroup-uniform values: both bodies keep the rung |
+| F1646 | `stmt.if_else_ult_L5` | `composite` | `u32.uniform u32.uniform block.L5 block.L5` | `stmt.L5` | 4 | arity 4: if (a < b) { ... } else { ... } over workgroup-uniform values: both bodies keep the rung |
+
+1646 function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Storage-buffer atomics are an interface's per-kernel rows, not rows of this table. Deliberately absent: atomic compare-exchange (naga 0.20's Metal backend lacks it), subgroupBallot, images, derivatives, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.

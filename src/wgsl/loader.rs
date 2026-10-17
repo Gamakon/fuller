@@ -681,7 +681,9 @@ mod tests {
         // 1,601 with the u32 workgroup arrays (wg.ua-ud, wg.get_u_safe, 12 wg.set_u, wg.decl_u,
         // 6 wg.put_u; 2026-10-16).
         // 1,604 with the modules of two, three and four entry points (kernel.module_2..4, 2026-10-17).
-        assert_eq!(fs.rows.len(), 1604);
+        // 1,622 with the uniform tests ==, != and < (18 stmt.if_ueq/une/ult, v24 run 1's seeds, 2026-10-17);
+        // 1,646 with their else forms (24 stmt.if_else_ule/ueq/une/ult).
+        assert_eq!(fs.rows.len(), 1646);
         let dual = |t: Ty| k.dual(t).unwrap().dual.clone();
         let producers = |d: &str| -> Vec<String> { k.rows.iter().filter(|r| dual(r.output) == d).map(|r| r.name.clone()).collect() };
         assert_eq!(producers("kernel.safe"), vec!["kernel.entry_safe"]);
@@ -751,9 +753,10 @@ mod tests {
         // No return in a conditional context (a later barrier would be non-uniform).
         assert!(k.rows.iter().filter(|r| r.name.starts_with("stmt.return_")).all(|r| !dual(r.output).starts_with("stmt.C")));
         // A conditional block's statements are C statements, which no loop or barrier produces.
-        // (stmt.if_ule tests two uniform values: its body keeps the rung, 2026-10-14.)
-        assert!(k.rows.iter().filter(|r| r.name.starts_with("stmt.if_ule_")).all(|r| dual(r.inputs[0]) == "u32.uniform" && dual(r.inputs[1]) == "u32.uniform" && dual(r.inputs[2]).replace("block.", "stmt.") == dual(r.output)));
-        assert!(k.rows.iter().filter(|r| r.name.starts_with("stmt.if_") && !r.name.starts_with("stmt.if_ule_") && (dual(r.output).starts_with("stmt.L") || dual(r.output).starts_with("stmt.C"))).all(|r| dual(r.inputs[1]).starts_with("block.C")));
+        // (stmt.if_ule tests two uniform values: its body keeps the rung, 2026-10-14; ==, != and < too, 2026-10-17.)
+        let uniform_test = |n: &str| ["stmt.if_ule_", "stmt.if_ueq_", "stmt.if_une_", "stmt.if_ult_", "stmt.if_else_ule_", "stmt.if_else_ueq_", "stmt.if_else_une_", "stmt.if_else_ult_"].iter().any(|p| n.starts_with(p));
+        assert!(k.rows.iter().filter(|r| uniform_test(&r.name)).all(|r| dual(r.inputs[0]) == "u32.uniform" && dual(r.inputs[1]) == "u32.uniform" && dual(r.inputs[2]).replace("block.", "stmt.") == dual(r.output)));
+        assert!(k.rows.iter().filter(|r| r.name.starts_with("stmt.if_") && !uniform_test(&r.name) && (dual(r.output).starts_with("stmt.L") || dual(r.output).starts_with("stmt.C"))).all(|r| dual(r.inputs[1]).starts_with("block.C")));
         // store.h only at an owned cell; load.phi only at a phi index; both produced by one row each.
         assert!(k.rows.iter().filter(|r| r.name.starts_with("store.h_") && !r.name.starts_with("store.h_mirror_")).all(|r| dual(r.inputs[0]) == "u32.cell"));
         // (and the symmetric half's mirror store at the mirror of one, 2026-10-14)

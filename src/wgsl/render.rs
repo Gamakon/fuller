@@ -403,6 +403,11 @@ impl Role {
             }
             let Some(dual) = b.elem.as_deref().and_then(elem_dual) else { continue };
             extra.push(pk(format!("load.{}", b.name), vec!["u32.index".into()], dual.clone(), format!("{}[{{0}}]", b.name)));
+            // A u32 read from an input is also a loop bound's value (a load
+            // cannot wrap; the bound renders capped): `for (j < n[0u])`.
+            if dual == "u32.index" && b.role != Use::Output {
+                extra.push(pk(format!("load.{}", b.name), vec!["u32.index".into()], "u32.xbound".into(), format!("{}[{{0}}]", b.name)));
+            }
             if b.role == Use::Output {
                 for r in STORE_RUNGS {
                     extra.push(pk(format!("store.{}_{r}", b.name), vec!["u32.index".into(), dual.clone()], format!("stmt.{r}"), format!("{}[{{0}}] = {{1}};", b.name)));
@@ -556,6 +561,30 @@ pub fn gram_shipped_safe_tree(kingdom: &WgslKingdom) -> Result<Tree, String> {
     let store = Tree::new("stmt.if_O0", o0, vec![in_range, Tree::new("block.one_O0", bo0, vec![Tree::new("store.h_O0", o0, vec![Tree::new("safe.cell_of", t("u32.cell")?, vec![row(), col()]), f0()])])]);
     let grid = Tree::new("grid.of", t("grid.grid")?, vec![Tree::literal("literal.wgdim", t("u32.wgdim")?, 16.0), Tree::literal("literal.wgdim", t("u32.wgdim")?, 16.0), blk(), blk()]);
     Ok(Tree::new("kernel.entry_safe", t("kernel.safe")?, vec![grid, Tree::new("block.seq2_L0", b0, vec![gr, items]), Tree::new("block.one_O0", bo0, vec![store])]))
+}
+
+/// A uniform test's operator by its row's stem (`stmt.if_ule` is `<=`), and
+/// the comparison row it is (`compare.le`): the tests whose body keeps its
+/// rung, over two workgroup-uniform values.
+pub fn uniform_test_op(stem: &str) -> Option<&'static str> {
+    Some(match stem {
+        "stmt.if_ule" | "stmt.if_else_ule" => "<=",
+        "stmt.if_ueq" | "stmt.if_else_ueq" => "==",
+        "stmt.if_une" | "stmt.if_else_une" => "!=",
+        "stmt.if_ult" | "stmt.if_else_ult" => "<",
+        _ => return None,
+    })
+}
+
+/// [`uniform_test_op`]'s comparison row.
+pub fn uniform_test_compare(stem: &str) -> Option<&'static str> {
+    Some(match stem {
+        "stmt.if_ule" | "stmt.if_else_ule" => "compare.le",
+        "stmt.if_ueq" | "stmt.if_else_ueq" => "compare.eq",
+        "stmt.if_une" | "stmt.if_else_une" => "compare.ne",
+        "stmt.if_ult" | "stmt.if_else_ult" => "compare.lt",
+        _ => return None,
+    })
 }
 
 /// The grid a rendered kernel asks the driver for.
@@ -1476,10 +1505,18 @@ impl<'a> Renderer<'a> {
             // A test of two workgroup-uniform values: its body keeps its rung
             // (a barrier there is in uniform control), so it is no condition
             // the renderer masks a barrier under.
-            "stmt.if_ule" => {
+            "stmt.if_ule" | "stmt.if_ueq" | "stmt.if_une" | "stmt.if_ult" => {
                 n(3)?;
                 let (a, b) = (self.value(&kids[0], scope)?, self.value(&kids[1], scope)?);
-                Ok(format!("    if (({a}) <= ({b})) {{\n{}    }}\n", self.block(&kids[2], scope)?))
+                let op = uniform_test_op(safe_base(&s.name)).unwrap_or("<=");
+                Ok(format!("    if (({a}) {op} ({b})) {{\n{}    }}\n", self.block(&kids[2], scope)?))
+            }
+            "stmt.if_else_ule" | "stmt.if_else_ueq" | "stmt.if_else_une" | "stmt.if_else_ult" => {
+                n(4)?;
+                let (a, b) = (self.value(&kids[0], scope)?, self.value(&kids[1], scope)?);
+                let op = uniform_test_op(safe_base(&s.name)).unwrap_or("<=");
+                let then = self.block(&kids[2], scope)?;
+                Ok(format!("    if (({a}) {op} ({b})) {{\n{then}    }} else {{\n{}    }}\n", self.block(&kids[3], scope)?))
             }
             "stmt.if" => {
                 n(2)?;
@@ -3150,7 +3187,10 @@ fn sample_with(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, s
     // kernels, 2026-10-13. The kingdom keeps the rows for text it reads.)
     // (Nor a mirror: the symmetric-half rule writes it, under its triangle
     // guard, in a kernel that runs with the whole H; 2026-10-14.)
-    let mut rows: Vec<WgslRow> = kingdom.rows.iter().filter(|r| !f16(&r.output) && !r.inputs.iter().any(f16) && !r.name.starts_with("stmt.return") && !r.name.starts_with("safe.mirror_of") && !r.name.starts_with("store.h_mirror") && !r.name.starts_with("stmt.if_ule") && !r.name.starts_with("wg.set")).cloned().collect();
+    // (Nor a uniform test whose body keeps its rung, stmt.if_ule and its kin:
+    // their text is a plain if's; the rules that need one write it.)
+    let uniform_test = |r: &WgslRow| uniform_test_op(safe_base(&r.name)).is_some();
+    let mut rows: Vec<WgslRow> = kingdom.rows.iter().filter(|r| !f16(&r.output) && !r.inputs.iter().any(f16) && !r.name.starts_with("stmt.return") && !r.name.starts_with("safe.mirror_of") && !r.name.starts_with("store.h_mirror") && !uniform_test(r) && !r.name.starts_with("wg.set")).cloned().collect();
     // The safe kingdom reads h only at the thread's own cell (load.h_safe):
     // the role's load.h, h at any index, is the plain kingdom's (the
     // legality checker: 25 of 1,000 random safe genes read another thread's
