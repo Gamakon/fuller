@@ -42,7 +42,8 @@
 //!    of two, and one of 1 writes only its barrier: a barrier.
 //! 7. A thread's origin. The emitter writes `gid.x * bx`, `wid.x * W bx +
 //!    lid.x` from the grid: the builtins and block factor the row carries
-//!    are not written, the grid's are.
+//!    are not written, the grid's are. A literal offset within the block
+//!    is written snapped into 1..=64 and below the block factor, none at 0.
 //! 8. A strided loop stepping by 1 is written as the loop that steps by 1;
 //!    an index bound that is a uniform value (literals of 1 to 4,096, the
 //!    uniform's fields, the loop counters, under the uniform's operators) as
@@ -487,6 +488,19 @@ fn origins(t: &Tree, g: &crate::wgsl::render::Grid, kingdom: &WgslKingdom) -> Tr
                 return Tree::new(strided, ty, vec![b("builtin.workgroup_id", wid), b("builtin.local_invocation_id", lid), blk(k, f)]);
             }
             vec![b("builtin.workgroup_id", wid), b("builtin.local_invocation_id", lid), blk(k, f), Tree::literal(&n.name, n.ty, g as f32)]
+        }
+        // A literal offset within the block: written snapped into 1..=64 and
+        // below the block factor (`min(v, B - 1)`, the k-th row of a strided
+        // block at k * W), so read back as that offset, none at 0
+        // (2026-10-17: 45 of the 889 random trees that missed the AST drawn).
+        ("safe.row_plus_s" | "safe.col_plus_s" | "safe.row_plus" | "safe.col_plus", [origin, off]) if off.kids.is_empty() && (off.name == "fallback" || off.name.starts_with("literal.")) => {
+            let v = if off.name == "fallback" || !off.konst.is_finite() { 1 } else { (off.konst.round() as i64).clamp(1, 64) as u32 };
+            let v = v.min(f.saturating_sub(1));
+            if v == 0 {
+                return origin.clone();
+            }
+            let lit = if off.name == "fallback" { "literal.lit64" } else { off.name.as_str() };
+            vec![origin.clone(), Tree::literal(lit, off.ty, v as f32)]
         }
         // A grouped offset: its groups are its origin's (the emitter reads
         // them there), the origin read in its grouped form (a strided origin

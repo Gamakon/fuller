@@ -8386,7 +8386,9 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     // it is, safe.row_as_index / col_as_index, the largest class.)
     // (21:22Z, 111: an index bound that is a uniform value read as it,
     // canonical rule 8; the class went from 32 to 2.)
-    const AST_FLOOR: usize = 111;
+    // (21:30Z, 121: a literal offset in a thread's block snapped below the
+    // block factor, as the emitter writes it.)
+    const AST_FLOOR: usize = 121;
 
     /// The floors of [`random_module_trees_render_validate_and_read_back`]
     /// (1,000 v24 modules, depth 6; measured 2026-10-17 at its first run:
@@ -8492,15 +8494,15 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
                 if text.contains("degrees(") || text.contains("radians(") {
                     return Err("render: degrees or radians as a call (Metal can misparse naga's text)".to_string());
                 }
-                if std::env::var("ROUNDTRIP_SHOW").ok().and_then(|v| v.parse::<u64>().ok()) == Some(seed) {
+                if std::env::var("ROUNDTRIP_SHOW").ok().is_some_and(|v| v.split(',').any(|x| x.parse::<u64>().ok() == Some(seed))) {
                     println!("SHOW drawn: {}\nSHOW text:\n{text}", tree.to_sexpr());
                 }
                 let back = read_safe(&text, &k).map_err(|e| format!("read: {e}"))?;
                 let again = crate::wgsl::safe_karva::render_tree(&back.tree, &k).map_err(|e| format!("re-render: {e}"))?.text;
                 read_back += 1;
                 let canon = crate::wgsl::canonical::canonical(&tree, &k);
-                // ROUNDTRIP_SHOW=<seed>: that tree's canonical and parsed ASTs.
-                if std::env::var("ROUNDTRIP_SHOW").ok().and_then(|v| v.parse::<u64>().ok()) == Some(seed) {
+                // ROUNDTRIP_SHOW=<seed>[,<seed>...]: those trees' canonical and parsed ASTs.
+                if std::env::var("ROUNDTRIP_SHOW").ok().is_some_and(|v| v.split(',').any(|x| x.parse::<u64>().ok() == Some(seed))) {
                     println!("SHOW canonical: {}\nSHOW parsed:    {}", canon.to_sexpr(), back.tree.to_sexpr());
                 }
                 // THE BAR (Andrew, 2026-10-13): AST to AST. The tree parsed
@@ -8553,7 +8555,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
                 Ok(()) => passed += 1,
                 Err(e) => {
                     // ROUNDTRIP_SHOW=<seed>: that tree's whole reason.
-                    if std::env::var("ROUNDTRIP_SHOW").ok().and_then(|v| v.parse::<u64>().ok()) == Some(seed) {
+                    if std::env::var("ROUNDTRIP_SHOW").ok().is_some_and(|v| v.split(',').any(|x| x.parse::<u64>().ok() == Some(seed))) {
                         println!("SHOW reason: {e}");
                     }
                     // The reason without its statement path and numbers.
