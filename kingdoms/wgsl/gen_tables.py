@@ -80,15 +80,16 @@ def slot_name(scalar: str, lanes: int) -> str:
 # THE LITERAL DOMAINS (phylu docs/PLAN_wgsl_literals_as_constants.md, 2.3): the values
 # a literal of a scalar dual may take, by form; a literal row's value is drawn and
 # mutated inside its dual's domain, and every value of a domain renders and reads
-# back exactly. Integers to 2^24, the exact range of a literal's f32 konst (the
-# reader spells a u32 past 2^24 as its halves, (hi << 16u) | lo). A range "lo..=hi"
+# back as a valid literal. An integer form takes its scalar's whole range: this
+# kingdom's reader reads any u32 literal (hff.wgsl's mask 2139095040) and a gene
+# carries its bits exactly. A range "lo..=hi"
 # (a real range for an f32 slot: every finite f32, as a kernel's own constants are), a set "a,b,c", "-" for a dual no literal takes.
 LITERAL_DOMAIN = {
     "real": "-3.4028234663852886e38..=3.4028234663852886e38",
-    "int": "-16777216..=16777216",
-    "index": "0..=16777216",
-    "count": "0..=16777216",
-    "bits": "0..=16777216",
+    "int": "-2147483648..=2147483647",
+    "index": "0..=4294967295",
+    "count": "0..=4294967295",
+    "bits": "0..=4294967295",
     "flag": "0,1",
     "wgdim": "1..=1024",
     "blk": "1,2,4,8",
@@ -96,7 +97,7 @@ LITERAL_DOMAIN = {
     "lit64": "1..=64",
     "lit4096": "1..=4096",
     "wglen": "1..=8192",
-    "xbound": "0..=16777216",
+    "xbound": "0..=4294967295",
 }
 
 
@@ -362,7 +363,7 @@ def main():
             md.write(f"| {ref} | `{dual}` | `{slot}` | `{form}` | {lanes} | `{fb}` | {bits} | {noop} | {elem} | `{lit}` |\n")
         md.write(f"\n{len(types)} duals. The fallback is what Design C's projection substitutes for a codon whose dual does not match the demand; the codon is counted as masked.\n")
         md.write("\nThe three machine columns (`fallback_bits`, `fallback_noop`, `fallback_elem` in `types.tsv`) are what the loader builds the fallback leaf from, never the prose: `bits` is the lane's 32-bit pattern as an unsigned integer, repeated across the lanes of a vector or matrix (only `bool.sign` is non-zero, true = +1); `noop` is 1 for `store.store`, which substitutes no value at all; `elem` is 1 for `array<T>`, whose fallback is its element's. The loader tests `noop` and `elem` before reading `bits`; for those two rows `bits` is a placeholder 0. Every substitution, whichever column decides it, counts the codon as masked.\n")
-        md.write("\nThe `literal` column is a scalar dual's literal domain (`LITERAL_DOMAIN` in this script): the values a literal of the dual takes, a range `lo..=hi` (real for an f32 slot) or a set `a,b,c`; `-` where no literal is. A gene holds a literal's value in its Dc tail, never as a symbol (phylu `docs/PLAN_wgsl_literals_as_constants.md`); mutation draws inside the domain and every value is read into it before it becomes a tree. Integers stop at 2^24, the exact range of a literal's f32 konst.\n")
+        md.write("\nThe `literal` column is a scalar dual's literal domain (`LITERAL_DOMAIN` in this script): the values a literal of the dual takes, a range `lo..=hi` (real for an f32 slot) or a set `a,b,c`; `-` where no literal is. A gene holds a literal's value in its Dc tail, never as a symbol (phylu `docs/PLAN_wgsl_literals_as_constants.md`); mutation draws inside the domain and every value is read into it before it becomes a tree. An integer form takes its scalar's whole range: a gene carries a value's bits exactly.\n")
         md.write("\n## Not in the table\n\nAtomics, images, samplers, ray queries, binding arrays, pointers as values, non-square `f16` matrices.\n")
 
     with open(os.path.join(HERE, "symbols.md"), "w") as md:
