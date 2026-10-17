@@ -8384,7 +8384,9 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     // register set at the kernel's top, the largest class.)
     // (19:54Z, 106: a thread's row or column in an index read as the row
     // it is, safe.row_as_index / col_as_index, the largest class.)
-    const AST_FLOOR: usize = 106;
+    // (21:22Z, 111: an index bound that is a uniform value read as it,
+    // canonical rule 8; the class went from 32 to 2.)
+    const AST_FLOOR: usize = 111;
 
     /// The floors of [`random_module_trees_render_validate_and_read_back`]
     /// (1,000 v24 modules, depth 6; measured 2026-10-17 at its first run:

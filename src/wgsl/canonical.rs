@@ -44,7 +44,9 @@
 //!    lid.x` from the grid: the builtins and block factor the row carries
 //!    are not written, the grid's are.
 //! 8. A strided loop stepping by 1 is written as the loop that steps by 1;
-//!    a literal index bound (1 to 4,096) as the uniform literal it is; a
+//!    an index bound that is a uniform value (literals of 1 to 4,096, the
+//!    uniform's fields, the loop counters, under the uniform's operators) as
+//!    that uniform value; a
 //!    loop over an expression bound that is the bound's fallback, as the
 //!    literal tile loop over the fallback's value.
 //! 9. A negated matrix is written as the matrix times -1.0; degrees and
@@ -741,14 +743,85 @@ fn canonical_fallback_bound(t: &Tree, kingdom: &WgslKingdom) -> Option<Tree> {
     Some(Tree::new(&tile, t.ty, kids))
 }
 
-/// Rule 8 at a literal index bound.
+/// Rule 8 at an index bound that is a uniform value: a literal in 1..=4,096,
+/// or literals, the uniform's fields, the workgroup id and the loop counters
+/// under the operators the uniform rows have (`23u + 52u`, 2026-10-17: 32 of
+/// the 894 random trees that missed the AST drawn), as the parser reads it
+/// ([`uniform_value`]).
 fn canonical_bound(t: &Tree, kingdom: &WgslKingdom) -> Option<Tree> {
     let [x] = t.kids.as_slice() else { return None };
-    if t.name != "bound.of_index" || x.name != "literal.index" || !(1.0..=4096.0).contains(&x.konst) {
+    if t.name != "bound.of_index" {
         return None;
     }
-    let u = Tree::new("uniform.of_lit", dual_ty(kingdom, "u32.uniform").ok()?, vec![Tree::literal("literal.lit4096", dual_ty(kingdom, "u32.lit4096").ok()?, x.konst)]);
+    let u = uniform_value(x, kingdom).filter(|u| dual_ty(kingdom, "u32.uniform").is_ok_and(|d| u.ty == d))?;
     kingdom.rows.iter().any(|r| r.name == "bound.x_of_uniform" && r.output == t.ty).then(|| Tree::new("bound.x_of_uniform", t.ty, vec![u]))
+}
+
+/// An index as the uniform value the parser reads it as
+/// (`safe_reader`'s `uniform_of`, over the drawn tree's rows): a product or
+/// a shift under u32.uniformw, which no bound takes; None when any part is
+/// not uniform.
+fn uniform_value(t: &Tree, kingdom: &WgslKingdom) -> Option<Tree> {
+    let u = dual_ty(kingdom, "u32.uniform").ok()?;
+    let uw = dual_ty(kingdom, "u32.uniformw").ok()?;
+    let leaf = |name: &str| Some(Tree::new(name, u, vec![]));
+    match (t.name.as_str(), t.kids.as_slice()) {
+        ("load.cfg_m", []) => leaf("uniform.cfg_m"),
+        ("load.cfg_d", []) => leaf("uniform.cfg_d"),
+        ("load.cfg_r_rows", []) => leaf("uniform.cfg_r_rows"),
+        ("load.cfg_r_off", []) => leaf("uniform.cfg_r_off"),
+        ("builtin.subgroup_size", []) => leaf("uniform.subgroup_size"),
+        ("builtin.num_subgroups", []) => leaf("uniform.num_subgroups"),
+        ("index.of_count" | "index.of_uniform", [k]) => uniform_value(k, kingdom),
+        ("safe.counter_index" | "safe.tile_index" | "safe.tile_index2" | "safe.tile_index3" | "safe.tile_index4", [c]) => {
+            let row = match c.name.as_str() {
+                "safe.counter" => "uniform.of_counter",
+                "safe.tile_counter" => "uniform.of_tcounter",
+                "safe.tile_counter2" => "uniform.of_tcounter2",
+                "safe.tile_counter3" => "uniform.of_tcounter3",
+                "safe.tile_counter4" => "uniform.of_tcounter4",
+                _ => return None,
+            };
+            Some(Tree::new(row, u, vec![c.clone()]))
+        }
+        (n, []) if n.starts_with("literal.") && crate::wgsl::params::parse_ref(n).is_none() => {
+            let v = t.konst;
+            if v == 0.0 {
+                return Some(Tree::fallback(u));
+            }
+            let l = dual_ty(kingdom, "u32.lit4096").ok()?;
+            (v.fract() == 0.0 && (1.0..=4096.0).contains(&v)).then(|| Tree::new("uniform.of_lit", u, vec![Tree::literal("literal.lit4096", l, v)]))
+        }
+        ("index.clamp", [a, b, c]) => {
+            let (a, b, c) = (uniform_value(a, kingdom)?, uniform_value(b, kingdom)?, uniform_value(c, kingdom)?);
+            (a.ty == u && b.ty == u && c.ty == u).then(|| Tree::new("uniform.clamp", u, vec![a, b, c]))
+        }
+        (n, [a, b]) => {
+            let op = match n {
+                "index.mod" => "mod",
+                "index.round_down" => "round_down",
+                "index.band_of" => "band_of",
+                "index.clamp_to" => "clamp_to",
+                "index.add" | "count.add" => "add",
+                "index.sub_floor" | "count.sub_floor" => "sub_floor",
+                "index.mul" => "mul",
+                "index.div" => "div",
+                "index.min" | "count.min" => "min",
+                "index.max" | "count.max" => "max",
+                "index.shl" | "bits.shl" => "shl",
+                "index.shr" | "bits.shr" => "shr",
+                "index.and" | "bits.and" => "and",
+                "index.or" | "bits.or" => "or",
+                _ => return None,
+            };
+            let (a, b) = (uniform_value(a, kingdom)?, uniform_value(b, kingdom)?);
+            if a.ty == uw || b.ty == uw {
+                return None;
+            }
+            Some(Tree::new(&format!("uniform.{op}"), if matches!(op, "mul" | "shl") { uw } else { u }, vec![a, b]))
+        }
+        _ => None,
+    }
 }
 
 /// Rule 1 at `t` itself (its children already canonical).
