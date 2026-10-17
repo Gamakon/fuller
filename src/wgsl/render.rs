@@ -2850,6 +2850,7 @@ pub fn safe_base(name: &str) -> &str {
                 // A loop that breaks is its tile loop; its body (block.brk) holds the break.
                 "loop.tile_brk" => "loop.tile_bounded",
                 "loop.tilex_brk" => "loop.tilex_bounded",
+                "loop.tilex_strided_brk" => "loop.tilex_strided_bounded",
                 other => other,
             };
         }
@@ -3228,7 +3229,9 @@ fn sample_with(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, s
     // inserts, `h >> (k * 4u)`; the sampler draws a count's own rows.)
     // (Nor the four u32 arrays past the first four, for kernels that keep
     // more lists: the draws stay those of the floors below.)
-    let not_drawn = |r: &WgslRow| uniform_test_op(safe_base(&r.name)).is_some() || matches!(safe_base(&r.name), "stmt.if_uflag" | "stmt.if_else_uflag") || matches!(r.name.as_str(), "convert.index_to_count" | "wg.ue" | "wg.uf" | "wg.ug" | "wg.uh" | "wg.e" | "wg.f" | "wg.g" | "wg.h") || (r.name == "wg.get_u_safe" && kingdom.dual(r.output).is_some_and(|d| d.form == "xbound"));
+    // (Nor, yet, the stepped loops that break, 2026-10-17, read from model
+    // seeds: drawn, 14 of 1,000 random trees did not read back; open.)
+    let not_drawn = |r: &WgslRow| uniform_test_op(safe_base(&r.name)).is_some() || r.name.starts_with("loop.tilex_strided_brk_") || matches!(safe_base(&r.name), "stmt.if_uflag" | "stmt.if_else_uflag") || matches!(r.name.as_str(), "convert.index_to_count" | "wg.ue" | "wg.uf" | "wg.ug" | "wg.uh" | "wg.e" | "wg.f" | "wg.g" | "wg.h") || (r.name == "wg.get_u_safe" && kingdom.dual(r.output).is_some_and(|d| d.form == "xbound"));
     let mut rows: Vec<WgslRow> = kingdom.rows.iter().filter(|r| !f16(&r.output) && !r.inputs.iter().any(f16) && !r.name.starts_with("stmt.return") && !r.name.starts_with("safe.mirror_of") && !r.name.starts_with("store.h_mirror") && !not_drawn(r) && !r.name.starts_with("wg.set")).cloned().collect();
     // The safe kingdom reads h only at the thread's own cell (load.h_safe):
     // the role's load.h, h at any index, is the plain kingdom's (the

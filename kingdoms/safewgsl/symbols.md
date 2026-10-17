@@ -3108,35 +3108,50 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 | F1655 | `wg.h` | `composite` | `-` | `wgmem<f32>.real` | 0 | workgroup array wg_h of f32 |
 | F1656 | `wg.get_u_safe` | `composite` | `wgmem<u32>.index u32.wgindex` | `u32.xbound` | 2 | a[i] as a loop bound's value |
 
+## class `loop`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F1657 | `loop.tilex_strided_brk_L0` | `composite` | `u32.boundx u32.lit4096 block.B2` | `stmt.L0` | 3 | arity 3: for (k = 0u; k < (expr); k = k + s) { body that breaks } |
+| F1658 | `loop.tilex_strided_brk_L1` | `composite` | `u32.boundx u32.lit4096 block.B2` | `stmt.L1` | 3 | arity 3: for (k = 0u; k < (expr); k = k + s) { body that breaks } |
+| F1659 | `loop.tilex_strided_brk_L2` | `composite` | `u32.boundx u32.lit4096 block.B3` | `stmt.L2` | 3 | arity 3: for (k = 0u; k < (expr); k = k + s) { body that breaks } |
+| F1660 | `loop.tilex_strided_brk_L3` | `composite` | `u32.boundx u32.lit4096 block.B4` | `stmt.L3` | 3 | arity 3: for (k = 0u; k < (expr); k = k + s) { body that breaks } |
+| F1661 | `loop.tilex_strided_brk_L4` | `composite` | `u32.boundx u32.lit4096 block.B5` | `stmt.L4` | 3 | arity 3: for (k = 0u; k < (expr); k = k + s) { body that breaks } |
+| F1662 | `loop.tilex_strided_brk_C0` | `composite` | `u32.boundx u32.lit4096 block.B1` | `stmt.C0` | 3 | arity 3: for (k = 0u; k < (expr); k = k + s) { body that breaks } |
+| F1663 | `loop.tilex_strided_brk_C1` | `composite` | `u32.boundx u32.lit4096 block.B2` | `stmt.C1` | 3 | arity 3: for (k = 0u; k < (expr); k = k + s) { body that breaks } |
+| F1664 | `loop.tilex_strided_brk_C2` | `composite` | `u32.boundx u32.lit4096 block.B3` | `stmt.C2` | 3 | arity 3: for (k = 0u; k < (expr); k = k + s) { body that breaks } |
+| F1665 | `loop.tilex_strided_brk_C3` | `composite` | `u32.boundx u32.lit4096 block.B4` | `stmt.C3` | 3 | arity 3: for (k = 0u; k < (expr); k = k + s) { body that breaks } |
+| F1666 | `loop.tilex_strided_brk_C4` | `composite` | `u32.boundx u32.lit4096 block.B5` | `stmt.C4` | 3 | arity 3: for (k = 0u; k < (expr); k = k + s) { body that breaks } |
+
 ## class `uflag`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F1657 | `uflag.eq` | `composite` | `u32.uniform u32.uniform` | `bool.uflag` | 2 | a == b of workgroup-uniform values |
-| F1658 | `uflag.ne` | `composite` | `u32.uniform u32.uniform` | `bool.uflag` | 2 | a != b of workgroup-uniform values |
-| F1659 | `uflag.lt` | `composite` | `u32.uniform u32.uniform` | `bool.uflag` | 2 | a < b of workgroup-uniform values |
-| F1660 | `uflag.le` | `composite` | `u32.uniform u32.uniform` | `bool.uflag` | 2 | a <= b of workgroup-uniform values |
-| F1661 | `uflag.gt` | `composite` | `u32.uniform u32.uniform` | `bool.uflag` | 2 | a > b of workgroup-uniform values |
-| F1662 | `uflag.ge` | `composite` | `u32.uniform u32.uniform` | `bool.uflag` | 2 | a >= b of workgroup-uniform values |
-| F1663 | `uflag.and` | `composite` | `bool.uflag bool.uflag` | `bool.uflag` | 2 | a && b |
-| F1664 | `uflag.or` | `composite` | `bool.uflag bool.uflag` | `bool.uflag` | 2 | a || b |
-| F1665 | `uflag.not` | `composite` | `bool.uflag` | `bool.uflag` | 1 | !a |
+| F1667 | `uflag.eq` | `composite` | `u32.uniform u32.uniform` | `bool.uflag` | 2 | a == b of workgroup-uniform values |
+| F1668 | `uflag.ne` | `composite` | `u32.uniform u32.uniform` | `bool.uflag` | 2 | a != b of workgroup-uniform values |
+| F1669 | `uflag.lt` | `composite` | `u32.uniform u32.uniform` | `bool.uflag` | 2 | a < b of workgroup-uniform values |
+| F1670 | `uflag.le` | `composite` | `u32.uniform u32.uniform` | `bool.uflag` | 2 | a <= b of workgroup-uniform values |
+| F1671 | `uflag.gt` | `composite` | `u32.uniform u32.uniform` | `bool.uflag` | 2 | a > b of workgroup-uniform values |
+| F1672 | `uflag.ge` | `composite` | `u32.uniform u32.uniform` | `bool.uflag` | 2 | a >= b of workgroup-uniform values |
+| F1673 | `uflag.and` | `composite` | `bool.uflag bool.uflag` | `bool.uflag` | 2 | a && b |
+| F1674 | `uflag.or` | `composite` | `bool.uflag bool.uflag` | `bool.uflag` | 2 | a || b |
+| F1675 | `uflag.not` | `composite` | `bool.uflag` | `bool.uflag` | 1 | !a |
 
 ## class `stmt`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F1666 | `stmt.if_uflag_L0` | `composite` | `bool.uflag block.L0` | `stmt.L0` | 2 | if (c) { ... } over a workgroup-uniform predicate: the body keeps the rung |
-| F1667 | `stmt.if_else_uflag_L0` | `composite` | `bool.uflag block.L0 block.L0` | `stmt.L0` | 3 | arity 3: if (c) { ... } else { ... } over a workgroup-uniform predicate: both bodies keep the rung |
-| F1668 | `stmt.if_uflag_L1` | `composite` | `bool.uflag block.L1` | `stmt.L1` | 2 | if (c) { ... } over a workgroup-uniform predicate: the body keeps the rung |
-| F1669 | `stmt.if_else_uflag_L1` | `composite` | `bool.uflag block.L1 block.L1` | `stmt.L1` | 3 | arity 3: if (c) { ... } else { ... } over a workgroup-uniform predicate: both bodies keep the rung |
-| F1670 | `stmt.if_uflag_L2` | `composite` | `bool.uflag block.L2` | `stmt.L2` | 2 | if (c) { ... } over a workgroup-uniform predicate: the body keeps the rung |
-| F1671 | `stmt.if_else_uflag_L2` | `composite` | `bool.uflag block.L2 block.L2` | `stmt.L2` | 3 | arity 3: if (c) { ... } else { ... } over a workgroup-uniform predicate: both bodies keep the rung |
-| F1672 | `stmt.if_uflag_L3` | `composite` | `bool.uflag block.L3` | `stmt.L3` | 2 | if (c) { ... } over a workgroup-uniform predicate: the body keeps the rung |
-| F1673 | `stmt.if_else_uflag_L3` | `composite` | `bool.uflag block.L3 block.L3` | `stmt.L3` | 3 | arity 3: if (c) { ... } else { ... } over a workgroup-uniform predicate: both bodies keep the rung |
-| F1674 | `stmt.if_uflag_L4` | `composite` | `bool.uflag block.L4` | `stmt.L4` | 2 | if (c) { ... } over a workgroup-uniform predicate: the body keeps the rung |
-| F1675 | `stmt.if_else_uflag_L4` | `composite` | `bool.uflag block.L4 block.L4` | `stmt.L4` | 3 | arity 3: if (c) { ... } else { ... } over a workgroup-uniform predicate: both bodies keep the rung |
-| F1676 | `stmt.if_uflag_L5` | `composite` | `bool.uflag block.L5` | `stmt.L5` | 2 | if (c) { ... } over a workgroup-uniform predicate: the body keeps the rung |
-| F1677 | `stmt.if_else_uflag_L5` | `composite` | `bool.uflag block.L5 block.L5` | `stmt.L5` | 3 | arity 3: if (c) { ... } else { ... } over a workgroup-uniform predicate: both bodies keep the rung |
+| F1676 | `stmt.if_uflag_L0` | `composite` | `bool.uflag block.L0` | `stmt.L0` | 2 | if (c) { ... } over a workgroup-uniform predicate: the body keeps the rung |
+| F1677 | `stmt.if_else_uflag_L0` | `composite` | `bool.uflag block.L0 block.L0` | `stmt.L0` | 3 | arity 3: if (c) { ... } else { ... } over a workgroup-uniform predicate: both bodies keep the rung |
+| F1678 | `stmt.if_uflag_L1` | `composite` | `bool.uflag block.L1` | `stmt.L1` | 2 | if (c) { ... } over a workgroup-uniform predicate: the body keeps the rung |
+| F1679 | `stmt.if_else_uflag_L1` | `composite` | `bool.uflag block.L1 block.L1` | `stmt.L1` | 3 | arity 3: if (c) { ... } else { ... } over a workgroup-uniform predicate: both bodies keep the rung |
+| F1680 | `stmt.if_uflag_L2` | `composite` | `bool.uflag block.L2` | `stmt.L2` | 2 | if (c) { ... } over a workgroup-uniform predicate: the body keeps the rung |
+| F1681 | `stmt.if_else_uflag_L2` | `composite` | `bool.uflag block.L2 block.L2` | `stmt.L2` | 3 | arity 3: if (c) { ... } else { ... } over a workgroup-uniform predicate: both bodies keep the rung |
+| F1682 | `stmt.if_uflag_L3` | `composite` | `bool.uflag block.L3` | `stmt.L3` | 2 | if (c) { ... } over a workgroup-uniform predicate: the body keeps the rung |
+| F1683 | `stmt.if_else_uflag_L3` | `composite` | `bool.uflag block.L3 block.L3` | `stmt.L3` | 3 | arity 3: if (c) { ... } else { ... } over a workgroup-uniform predicate: both bodies keep the rung |
+| F1684 | `stmt.if_uflag_L4` | `composite` | `bool.uflag block.L4` | `stmt.L4` | 2 | if (c) { ... } over a workgroup-uniform predicate: the body keeps the rung |
+| F1685 | `stmt.if_else_uflag_L4` | `composite` | `bool.uflag block.L4 block.L4` | `stmt.L4` | 3 | arity 3: if (c) { ... } else { ... } over a workgroup-uniform predicate: both bodies keep the rung |
+| F1686 | `stmt.if_uflag_L5` | `composite` | `bool.uflag block.L5` | `stmt.L5` | 2 | if (c) { ... } over a workgroup-uniform predicate: the body keeps the rung |
+| F1687 | `stmt.if_else_uflag_L5` | `composite` | `bool.uflag block.L5 block.L5` | `stmt.L5` | 3 | arity 3: if (c) { ... } else { ... } over a workgroup-uniform predicate: both bodies keep the rung |
 
-1677 function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Storage-buffer atomics are an interface's per-kernel rows, not rows of this table. Deliberately absent: atomic compare-exchange (naga 0.20's Metal backend lacks it), subgroupBallot, images, derivatives, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.
+1687 function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Storage-buffer atomics are an interface's per-kernel rows, not rows of this table. Deliberately absent: atomic compare-exchange (naga 0.20's Metal backend lacks it), subgroupBallot, images, derivatives, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.

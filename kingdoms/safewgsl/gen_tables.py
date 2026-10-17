@@ -1282,6 +1282,10 @@ for n in ("ue", "uf", "ug", "uh"):
 for n in ("e", "f", "g", "h"):
     f("wg", n, "composite", [], "wgmem<f32>.real", f"workgroup array wg_{n} of f32")
 f("wg", "get_u_safe", "composite", ["wgmem<u32>.index", "u32.wgindex"], "u32.xbound", "a[i] as a loop bound's value")
+# ---- a loop that breaks, stepped by a literal (2026-10-17, 4 of run 1's seeds: a search scanning its candidates
+# 256 at a time until it has enough): the tile loop's stride beside the break block ----
+for r, b in (("L0", 2), ("L1", 2), ("L2", 3), ("L3", 4), ("L4", 5), ("C0", 1), ("C1", 2), ("C2", 3), ("C3", 4), ("C4", 5)):
+    f("loop", "tilex_strided_brk_" + r, "composite", ["u32.boundx", "u32.lit4096", f"block.B{b}"], "stmt." + r, "arity 3: for (k = 0u; k < (expr); k = k + s) { body that breaks }")
 
 
 # ---- a workgroup-uniform predicate and its tests (2026-10-17, run 1's seeds: `if (cfg.stage == 1u && wid.x <

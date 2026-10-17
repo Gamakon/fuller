@@ -4885,13 +4885,13 @@ impl<'a> Ctx<'a> {
         // A loop that breaks (`if (c) { break; }` at the top of its body): its
         // body is read at the conditional rung of its depth, no barrier in it.
         let breaks = has_break_guard(&rest);
-        if breaks && (body_rung == "L1" || step != 1) {
+        if breaks && body_rung == "L1" {
             self.item_counter = saved.0.clone();
             self.tile_counter = saved.1.clone();
             self.tile_counter2 = saved.2.clone();
             self.tile_counter3 = saved.3.clone();
             self.tile_counter4 = saved.4.clone();
-            return Err(if body_rung == "L1" { "the item loop breaks (a loop that breaks is a tile loop: its body holds no barrier)".into() } else { format!("a loop stepped by {step} that breaks (a loop that breaks steps by 1)") });
+            return Err("the item loop breaks (a loop that breaks is a tile loop: its body holds no barrier)".into());
         }
         if breaks && grid_stride.is_some() {
             self.counter_exprs.remove(&counter);
@@ -4969,6 +4969,19 @@ impl<'a> Ctx<'a> {
             }
             let d = &body_rung[1..];
             let brk = Tree::new(&format!("block.brk_B{d}"), ty(self, &format!("block.B{d}"))?, vec![self.block(flat, &walk_rung)?, c, self.block(after, &walk_rung)?]);
+            // (Stepped by a literal: the expression-bounded loop with its stride,
+            // run 1's search scanning candidates 256 at a time, 2026-10-17.)
+            if step != 1 {
+                // (A literal bound as the uniform value it is, as its text reads back.)
+                let bound = if kind == "lit64" {
+                    let u = ty(self, "u32.uniform")?;
+                    Tree::new("bound.x_of_uniform", ty(self, "u32.boundx")?, vec![Tree::new("uniform.of_lit", u, vec![Tree::literal("literal.lit4096", ty(self, "u32.lit4096")?, bound_tree.konst)])])
+                } else {
+                    bound_tree
+                };
+                let stride = Tree::literal("literal.lit4096", ty(self, "u32.lit4096")?, step as f32);
+                return Ok(Some(Tree::new(&format!("loop.tilex_strided_brk_{out_rung}"), st, vec![bound, stride, brk])));
+            }
             let row = format!("loop.{}_brk_{out_rung}", if kind == "lit64" { "tile" } else { "tilex" });
             return Ok(Some(Tree::new(&row, st, vec![bound_tree, brk])));
         }
@@ -6620,6 +6633,45 @@ fn search(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocati
         println!("random modules: {read_back} of {n} read back; {same} to the tree drawn (canonical); {fixpoint} to a fixpoint; {legal} pass every layer under a 1-D contract");
         assert!(failures.is_empty(), "{} of {n}:\n{}", failures.len(), failures.iter().take(10).cloned().collect::<Vec<_>>().join("\n"));
         assert!(same >= MODULE_AST_FLOOR && fixpoint >= MODULE_FIXPOINT_FLOOR && legal >= MODULE_LEGAL_FLOOR, "below the floors reached: AST {same} (floor {MODULE_AST_FLOOR}), fixpoint {fixpoint} ({MODULE_FIXPOINT_FLOOR}), legal {legal} ({MODULE_LEGAL_FLOOR})");
+    }
+
+    /// A LOOP THAT BREAKS, STEPPED BY A LITERAL (2026-10-17, 4 of run 1's
+    /// seeds: a search scanning candidates a stride at a time until a budget
+    /// is met): with a literal bound and with an expression bound, it reads
+    /// as the strided expression-bounded loop whose body breaks, renders,
+    /// validates, reads back to the same tree and passes every layer.
+    #[test]
+    fn a_stepped_loop_that_breaks_reads() {
+        let k = WgslKingdom::load_safe();
+        let contract = crate::wgsl::safety::Contract::parse("workgroups x 1 1024\nworkgroups y 1 1\nworkgroups z 1 1\n").unwrap();
+        for bound in ["64u", "cfg.n_queries"] {
+            let src = format!(
+                "{V24_BINDINGS}@compute @workgroup_size(32, 1, 1)
+fn ingest(@builtin(local_invocation_id) lid: vec3<u32>) {{
+    _ = atomicAdd(&index_u32[lid.x], 1u);
+}}
+@compute @workgroup_size(32, 1, 1)
+fn search(@builtin(global_invocation_id) gid: vec3<u32>) {{
+    var got = 0u;
+    if (gid.x < 4096u) {{
+        for (var i = 0u; i < {bound}; i += 4u) {{
+            if (got >= 3u) {{ break; }}
+            got = got + (atomicLoad(&index_u32[i & 1023u]) & 1u);
+        }}
+        cands[gid.x] = got;
+    }}
+}}
+"
+            );
+            let r = read_safe(&src, &k).unwrap_or_else(|e| panic!("{bound}: {e}"));
+            assert!(r.tree.to_sexpr().contains("(loop.tilex_strided_brk_C0 "), "{bound}: {}", r.tree.to_sexpr());
+            let out = crate::wgsl::safe_karva::render_tree_with(&r.tree, &k, &r.role).unwrap_or_else(|e| panic!("{bound}: {e}"));
+            validate_text(&out.text).unwrap_or_else(|e| panic!("{bound}: {e}\n{}", out.text));
+            let back = read_safe(&out.text, &k).unwrap_or_else(|e| panic!("{bound}: read back: {e}\n{}", out.text));
+            assert!(back.tree == r.tree, "{bound}: the rendered text reads back to the same tree: {:?}\n{}", crate::wgsl::render::first_difference(&r.tree, &back.tree), out.text);
+            let checker = crate::wgsl::check::Checker::with_contract(&k, &r.role, &crate::wgsl::target::Target::recorded(), contract.clone());
+            checker.check(&r.tree).unwrap_or_else(|e| panic!("{bound}: {e}\n{}", out.text));
+        }
     }
 
     /// A SEARCH'S WORKGROUP STATE (2026-10-17, 3 of run 1's seeds): five f32

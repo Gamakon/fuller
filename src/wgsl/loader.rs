@@ -685,8 +685,8 @@ mod tests {
         // 1,646 with their else forms (24 stmt.if_else_ule/ueq/une/ult); 1,647 with an index read as a count;
         // 1,651 with four more u32 workgroup arrays (wg.ue..uh); 1,672 with the workgroup-uniform
         // predicate (9 uflag rows, 12 stmt.if_uflag / if_else_uflag); 1,677 with wg.e..h and a
-        // workgroup u32 as a loop bound's value.
-        assert_eq!(fs.rows.len(), 1677);
+        // workgroup u32 as a loop bound's value; 1,687 with the stepped loops that break.
+        assert_eq!(fs.rows.len(), 1687);
         let dual = |t: Ty| k.dual(t).unwrap().dual.clone();
         let producers = |d: &str| -> Vec<String> { k.rows.iter().filter(|r| dual(r.output) == d).map(|r| r.name.clone()).collect() };
         assert_eq!(producers("kernel.safe"), vec!["kernel.entry_safe"]);
