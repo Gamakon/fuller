@@ -203,6 +203,11 @@ pub fn resolve(root: &Tree) -> Result<Tree, String> {
     if !has_refs(root) {
         return Ok(root.clone());
     }
+    // A module of entry points (`kernel.module_N`, v24's ingest and search):
+    // each entry's references are its own grid's; the module has no grid.
+    if root.name.starts_with("kernel.module") {
+        return Ok(Tree { kids: root.kids.iter().map(resolve).collect::<Result<_, _>>()?, ..root.clone() });
+    }
     let knobs = Knobs::of_root(root)?;
     fn walk(t: &Tree, knobs: &Knobs) -> Tree {
         if let Some((k, form)) = parse_ref(&t.name) {
@@ -643,6 +648,31 @@ pub fn assign(tree: &Tree, kingdom: &WgslKingdom) -> Result<Tree, String> {
 mod tests {
     use super::*;
     use crate::wgsl::render::dual_ty;
+
+    /// A MODULE'S REFERENCES RESOLVE ENTRY BY ENTRY: every v24 run-1 seed
+    /// that reads (a `kernel.module_2` of ingest and search, each entry its
+    /// own grid) is written as literals (`to_literals`, what the legality
+    /// checker and the rewrites take) with no reference left; before this,
+    /// a module root's first child, an entry, was taken for its grid ("is
+    /// not a grid row") and every check of such a kernel failed.
+    #[test]
+    fn a_modules_references_resolve_entry_by_entry() {
+        let k = WgslKingdom::load_safe();
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("logs/V24/run1/seeds");
+        let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(&dir).expect("logs/V24/run1/seeds").flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "wgsl")).collect();
+        files.sort();
+        let mut modules = 0;
+        for f in files {
+            let Ok(r) = crate::wgsl::safe_reader::read_safe(&std::fs::read_to_string(&f).expect("seed"), &k) else { continue };
+            if !r.tree.name.starts_with("kernel.module") || !has_refs(&r.tree) {
+                continue;
+            }
+            let plain = to_literals(&r.tree, &k).unwrap_or_else(|e| panic!("{}: {e}", f.display()));
+            assert!(!has_refs(&plain), "{}: a reference left", f.display());
+            modules += 1;
+        }
+        assert!(modules >= 10, "{modules} module seeds with references");
+    }
 
     /// THE READER'S PARAMETERS CHANGE NO TEXT: every corpus kernel and
     /// every kernel of the saved population popB_g080 that reads renders
