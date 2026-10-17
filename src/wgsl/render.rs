@@ -3367,7 +3367,9 @@ fn sample_with(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, s
     // is written as a plain if and read back as one, at the conditional
     // rung, and the canonical spelling has no rule for that yet: drawn they
     // cost the AST floor 43 -> 34 and the modules' legal 134 -> 125, as
-    // differences of spelling, not of reading.)
+    // differences of spelling, not of reading. With canonical's rule 9 for
+    // them (16:50Z), drawn: random trees AST 35, fixpoint 920; modules AST
+    // 2, fixpoint 967, legal 125: below the current floors, so not drawn yet.)
     let not_drawn = |r: &WgslRow| uniform_test_op(safe_base(&r.name)).is_some() || matches!(safe_base(&r.name), "stmt.if_uflag" | "stmt.if_else_uflag") || matches!(r.name.as_str(), "uflag.of_flag" | "uniform.of_checked");
     let mut rows: Vec<WgslRow> = kingdom.rows.iter().filter(|r| !f16(&r.output) && !r.inputs.iter().any(f16) && !r.name.starts_with("stmt.return") && !r.name.starts_with("safe.mirror_of") && !r.name.starts_with("store.h_mirror") && !not_drawn(r) && !r.name.starts_with("wg.set")).cloned().collect();
     // The safe kingdom reads h only at the thread's own cell (load.h_safe):

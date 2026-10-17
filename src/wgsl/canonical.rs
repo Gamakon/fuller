@@ -752,7 +752,109 @@ fn canonical_bound(t: &Tree, kingdom: &WgslKingdom) -> Option<Tree> {
 }
 
 /// Rule 1 at `t` itself (its children already canonical).
+/// Rule 9 at a uniform test whose body needs its rung (a barrier or an item
+/// loop in it): the test as the parser spells its comparison, simple_test's
+/// rows (`x == 0` is `x < 1`, `x != 0` and `x > 0` are `1 <= x`, `>` and `>=`
+/// their operands swapped), a workgroup-uniform predicate of one comparison
+/// as that test's row (2026-10-17: the uniform tests drawn).
+fn canonical_uniform_test(t: &Tree, kingdom: &WgslKingdom) -> Option<Tree> {
+    let rung = rung_of(&t.name)?;
+    let stem = &t.name[..t.name.len() - rung.len() - 1];
+    let (has_else, rest) = match stem.strip_prefix("stmt.if_else_") {
+        Some(r) => (true, r),
+        None => (false, stem.strip_prefix("stmt.if_")?),
+    };
+    let (op, x, y, bodies): (&str, Tree, Tree, &[Tree]) = match (rest, t.kids.as_slice()) {
+        ("uflag", [f, bodies @ ..]) => {
+            let op = f.name.strip_prefix("uflag.").filter(|o| matches!(*o, "eq" | "ne" | "lt" | "le" | "gt" | "ge"))?;
+            let [x, y] = f.kids.as_slice() else { return None };
+            (op, x.clone(), y.clone(), bodies)
+        }
+        ("ueq" | "une" | "ult" | "ule", [x, y, bodies @ ..]) => (&rest[1..], x.clone(), y.clone(), bodies),
+        _ => return None,
+    };
+    if bodies.len() != usize::from(has_else) + 1 {
+        return None;
+    }
+    // (The parser keeps the rung only when a body needs it; else the test is
+    // a plain if at the conditional rung, which this rule does not spell.)
+    fn needs_rung(t: &Tree) -> bool {
+        let n = t.name.as_str();
+        ["stmt.barrier", "stmt.storage_barrier", "stmt.subgroup_barrier", "wg.reduce_", "wg.put", "wg.uload_", "loop.items"].iter().any(|p| n.starts_with(p)) || t.kids.iter().any(needs_rung)
+    }
+    if !bodies.iter().any(needs_rung) {
+        // A body that does not need its rung: the plain if the parser reads,
+        // `if (a op b)` over the uniform values as indices, its bodies at the
+        // conditional rung (L0 is C0, L(d) is C(d - 1) below it). Except
+        // `<=` with no else, which the parser keeps as the uniform test.
+        if rest == "ule" && !has_else {
+            return None;
+        }
+        return plain_if(t, op, &x, &y, bodies, kingdom);
+    }
+    let u = dual_ty(kingdom, "u32.uniform").ok()?;
+    let zero = |t: &Tree| t.name == "fallback" || (t.name == "uniform.of_lit" && t.kids.first().is_some_and(|l| l.konst == 0.0));
+    let one = || Tree::new("uniform.of_lit", u, vec![Tree::literal("literal.lit4096", dual_ty(kingdom, "u32.lit4096").ok().unwrap_or(u), 1.0)]);
+    let (row, a, b) = match op {
+        "eq" if zero(&y) => ("ult", x, one()),
+        "eq" if zero(&x) => ("ult", y, one()),
+        "ne" | "gt" if zero(&y) => ("ule", one(), x),
+        "ne" | "lt" if zero(&x) => ("ule", one(), y),
+        "le" => ("ule", x, y),
+        "ge" => ("ule", y, x),
+        "eq" => ("ueq", x, y),
+        "ne" => ("une", x, y),
+        "lt" => ("ult", x, y),
+        _ => ("ult", y, x),
+    };
+    let name = format!("stmt.if{}_{row}_{rung}", if has_else { "_else" } else { "" });
+    kingdom.rows.iter().any(|r| r.name == name).then(|| Tree::new(&name, t.ty, [vec![a, b], bodies.to_vec()].concat()))
+}
+
+/// [`canonical_uniform_test`]'s plain if.
+fn plain_if(t: &Tree, op: &str, x: &Tree, y: &Tree, bodies: &[Tree], kingdom: &WgslKingdom) -> Option<Tree> {
+    let rung = rung_of(&t.name)?;
+    let (has_else, ty) = (bodies.len() == 2, t.ty);
+    if !rung.starts_with('L') {
+        return None;
+    }
+    let flag = dual_ty(kingdom, "bool.flag").ok()?;
+    let index = dual_ty(kingdom, "u32.index").ok()?;
+    let ix = |t: &Tree| Tree::new("index.of_uniform", index, vec![t.clone()]);
+    let cond = Tree::new(&format!("compare.{op}"), flag, vec![ix(x), ix(y)]);
+    // A row's rung moved down: L0 to C0, L(d) to C(d - 1); None where the
+    // kingdom has no such row.
+    fn down(t: &Tree, kingdom: &WgslKingdom) -> Option<Tree> {
+        let kids = t.kids.iter().map(|k| down(k, kingdom)).collect::<Option<Vec<_>>>()?;
+        let Some(r) = rung_of(&t.name) else { return Some(Tree { kids, ..t.clone() }) };
+        let d: u32 = r[1..].parse().ok()?;
+        let to = match (&r[..1], d) {
+            ("L", 0) => "C0".to_string(),
+            ("L", d) if d >= 2 => format!("C{}", d - 1),
+            ("C", d) => format!("C{d}"),
+            _ => return None,
+        };
+        let name = format!("{}_{to}", &t.name[..t.name.len() - r.len() - 1]);
+        let ty = if t.name == "fallback" { t.ty } else { kingdom.rows.iter().find(|row| row.name == name).map(|row| row.output)? };
+        Some(Tree { name, ty, konst: t.konst, kids })
+    }
+    // (A fallback body, the empty block, keeps its leaf under its new dual.)
+    let body = |b: &Tree| -> Option<Tree> {
+        if b.name == "fallback" {
+            let bt = dual_ty(kingdom, &format!("block.C{}", &rung[1..])).ok()?;
+            return Some(Tree::fallback(bt));
+        }
+        down(b, kingdom)
+    };
+    let bodies: Vec<Tree> = bodies.iter().map(body).collect::<Option<_>>()?;
+    let name = format!("stmt.if{}_{rung}", if has_else { "_else" } else { "" });
+    kingdom.rows.iter().any(|r| r.name == name).then(|| Tree::new(&name, ty, [vec![cond], bodies].concat()))
+}
+
 fn canonical_block(t: &Tree, kingdom: &WgslKingdom) -> Tree {
+    if let Some(u) = canonical_uniform_test(t, kingdom).filter(|u| u != t) {
+        return canonical_block(&u, kingdom);
+    }
     // A literal lane of a vector, masked as written (`(v) & 3u`).
     if t.name.contains("_v_lane") {
         let at = if t.name.starts_with("reg.") { 1 } else { 2 };
