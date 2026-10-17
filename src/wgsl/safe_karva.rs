@@ -598,12 +598,57 @@ pub fn dump_json(file: &str, c: &SafeChromosome) -> serde_json::Value {
     })
 }
 
-/// The whole dump file: the kingdom's header and one function.
+/// The whole dump file: the kingdom's header and one function. The header
+/// names every dual in table order (`dual_names`: T<n> is dual_names[n - 1]),
+/// so a dump read under a later kingdom whose duals moved is caught
+/// ([`check_dump_duals`]) instead of decoded to other types.
 pub fn dump_file(file: &str, kingdom: &WgslKingdom, c: &SafeChromosome) -> serde_json::Value {
     serde_json::json!({
-        "kingdom": { "name": "safeWGSL", "duals": kingdom.duals.len(), "instances": kingdom.rows.len(), "k_max": K, "tables": "kingdoms/safewgsl/{types,functions}.tsv; fuller WgslKingdom::load_safe()" },
+        "kingdom": { "name": "safeWGSL", "duals": kingdom.duals.len(), "dual_names": kingdom.duals.iter().map(|d| d.dual.clone()).collect::<Vec<_>>(), "instances": kingdom.rows.len(), "k_max": K, "tables": "kingdoms/safewgsl/{types,functions}.tsv; fuller WgslKingdom::load_safe()" },
         "functions": [dump_json(file, c)],
     })
+}
+
+/// A dump's dual numbers against today's kingdom (2026-10-17: since
+/// 2026-10-13 the duals grew from 183 to 190, and k01's
+/// `thread_col_s@T181`, then u32.colbases, decoded as today's T181,
+/// u32.rowbases): every `@T<n>` the dump uses must name, in its
+/// `kingdom.dual_names`, the dual today's kingdom has at T<n>. A dump that
+/// uses a T and names no duals is not checked, so it is not read either.
+pub fn check_dump_duals(file: &str, dump: &serde_json::Value, kingdom: &WgslKingdom) -> Result<(), String> {
+    fn used(v: &serde_json::Value, out: &mut std::collections::BTreeSet<usize>) {
+        match v {
+            serde_json::Value::String(s) => {
+                let mut rest = s.as_str();
+                while let Some(i) = rest.find("@T") {
+                    let digits: String = rest[i + 2..].chars().take_while(|c| c.is_ascii_digit()).collect();
+                    if let Ok(n) = digits.parse::<usize>() {
+                        out.insert(n);
+                    }
+                    rest = &rest[i + 2..];
+                }
+            }
+            serde_json::Value::Array(a) => a.iter().for_each(|x| used(x, out)),
+            serde_json::Value::Object(o) => o.values().for_each(|x| used(x, out)),
+            _ => {}
+        }
+    }
+    let mut ts = std::collections::BTreeSet::new();
+    used(&dump["functions"], &mut ts);
+    if ts.is_empty() {
+        return Ok(());
+    }
+    let Some(names) = dump["kingdom"]["dual_names"].as_array() else {
+        return Err(format!("our software has a bug: dump {file} uses dual numbers (T{}) and names no duals (no kingdom.dual_names; re-encode it)", ts.iter().next().copied().unwrap_or(0)));
+    };
+    for n in ts {
+        let theirs = n.checked_sub(1).and_then(|i| names.get(i)).and_then(|v| v.as_str()).unwrap_or("nothing");
+        let today = n.checked_sub(1).and_then(|i| kingdom.duals.get(i)).map_or("nothing", |d| d.dual.as_str());
+        if theirs != today {
+            return Err(format!("our software has a bug: dump {file} names {theirs} at T{n}, today {today}"));
+        }
+    }
+    Ok(())
 }
 
 /// Decoded gene texts (head gene first, then every tail slot) unfolded into
@@ -1638,6 +1683,7 @@ mod tests {
             for f in &files {
                 let id = f.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
                 let saved: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(f).unwrap()).unwrap_or_else(|e| panic!("{dumps}/{id}: {e}"));
+                check_dump_duals(&format!("{dumps}/{id}"), &saved, &k).unwrap_or_else(|e| panic!("{e}"));
                 let text = std::fs::read_to_string(root.join(texts).join(format!("{id}.wgsl"))).unwrap_or_else(|e| panic!("{dumps}/{id}: its text: {e}"));
                 let tree = read_safe(&text, &k).unwrap_or_else(|e| panic!("{dumps}/{id}: its text no longer reads: {}", &e[..e.len().min(300)])).tree;
                 let now = dump_file(&format!("{id}.wgsl"), &k, &encode(&tree, 32, slots, 7013).unwrap_or_else(|e| panic!("{dumps}/{id}: {e}")));
@@ -1651,5 +1697,29 @@ mod tests {
         }
         println!("saved genomes: {} of {checked} today's reading of their texts", checked - stale.len());
         assert!(stale.is_empty(), "{} of {checked} saved genomes are not today's reading of their texts (re-encode them): {}", stale.len(), stale.iter().take(10).cloned().collect::<Vec<_>>().join(", "));
+    }
+
+    /// A DUMP WHOSE DUALS MOVED IS CAUGHT (2026-10-17): a dump written today
+    /// passes check_dump_duals; the same dump with one used dual's name
+    /// shifted, and the same dump with no dual_names, are named as our
+    /// software's bug, the dual and its number given.
+    #[test]
+    fn a_dump_whose_duals_moved_is_caught() {
+        let k = WgslKingdom::load_safe();
+        let r = read_safe(&format!("// grid 16 16 1 1\n{SHIPPED}"), &k).unwrap();
+        let dump = dump_file("shipped.wgsl", &k, &encode(&r.tree, 32, 16, 7).unwrap());
+        check_dump_duals("shipped.wgsl", &dump, &k).unwrap();
+        let text = serde_json::to_string(&dump["functions"]).unwrap();
+        let at = text.find("@T").expect("a typed token");
+        let n: usize = text[at + 2..].chars().take_while(|c| c.is_ascii_digit()).collect::<String>().parse().unwrap();
+        let mut shifted = dump.clone();
+        let other = k.duals[n % k.duals.len()].dual.clone();
+        shifted["kingdom"]["dual_names"][n - 1] = serde_json::Value::String(other.clone());
+        let e = check_dump_duals("old.json", &shifted, &k).expect_err("a shifted dual name passed");
+        assert_eq!(e, format!("our software has a bug: dump old.json names {other} at T{n}, today {}", k.duals[n - 1].dual));
+        let mut bare = dump.clone();
+        bare["kingdom"].as_object_mut().unwrap().remove("dual_names");
+        let e = check_dump_duals("bare.json", &bare, &k).expect_err("a dump naming no duals passed");
+        assert!(e.starts_with("our software has a bug: dump bare.json uses dual numbers"), "{e}");
     }
 }
