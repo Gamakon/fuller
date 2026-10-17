@@ -22,7 +22,7 @@ use super::table::{FunctionTable, Template};
 pub const WGSL: &str = "WGSL";
 
 /// One dual `slot.form` of `types.tsv`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct WgslDual {
     /// The row index, `T001` → 0; `Ty::Wgsl(index)`.
     pub index: u16,
@@ -40,7 +40,78 @@ pub struct WgslDual {
     pub fallback_noop: bool,
     /// 1: the fallback is the element's (`array<T>`).
     pub fallback_elem: bool,
+    /// The values a literal of this dual takes (the `literal` column); `None`
+    /// for a dual no literal takes.
+    pub literal: Option<LiteralDomain>,
 }
+
+/// THE VALUES A LITERAL TAKES (the `literal` column of `types.tsv`; phylu
+/// `docs/PLAN_wgsl_literals_as_constants.md`, 2.3): an integer range, a real
+/// range, or a set. A gene holds a literal's value, never a symbol per value;
+/// mutation draws inside the domain and every value is read into it
+/// ([`LiteralDomain::canonical`]) before it becomes a tree.
+#[derive(Debug, Clone, PartialEq)]
+pub enum LiteralDomain {
+    Int { lo: i64, hi: i64 },
+    Real { lo: f64, hi: f64 },
+    Set(Vec<i64>),
+}
+
+impl LiteralDomain {
+    /// A `literal` cell: `-` (none), `lo..=hi` (real for an f32 slot or a
+    /// vector or matrix of f32), or `a,b,c`.
+    pub fn parse(cell: &str, slot: &str) -> Result<Option<LiteralDomain>, String> {
+        if cell == "-" {
+            return Ok(None);
+        }
+        let int = |t: &str| t.trim().parse::<i64>().map_err(|e| format!("literal domain {cell:?}: {t:?}: {e}"));
+        if let Some((lo, hi)) = cell.split_once("..=") {
+            if slot == "f32" || slot.ends_with("<f32>") {
+                let real = |t: &str| t.trim().parse::<f64>().map_err(|e| format!("literal domain {cell:?}: {t:?}: {e}"));
+                let (lo, hi) = (real(lo)?, real(hi)?);
+                if !(lo.is_finite() && hi.is_finite() && lo <= hi) {
+                    return Err(format!("literal domain {cell:?}: not a finite range"));
+                }
+                return Ok(Some(LiteralDomain::Real { lo, hi }));
+            }
+            let (lo, hi) = (int(lo)?, int(hi)?);
+            if lo > hi {
+                return Err(format!("literal domain {cell:?}: empty"));
+            }
+            return Ok(Some(LiteralDomain::Int { lo, hi }));
+        }
+        let mut set = cell.split(',').map(int).collect::<Result<Vec<i64>, String>>()?;
+        set.sort_unstable();
+        set.dedup();
+        Ok(Some(LiteralDomain::Set(set)))
+    }
+
+    /// The value nearest `v` inside the domain: an integer range rounds and
+    /// clamps, a set takes its nearest member (the smaller on a tie), a real
+    /// range clamps; a value that is not finite is `fallback`, read into the
+    /// domain likewise.
+    pub fn canonical(&self, v: f64, fallback: f64) -> f64 {
+        let v = if v.is_finite() { v } else { fallback };
+        let v = if v.is_finite() { v } else { 0.0 };
+        match self {
+            LiteralDomain::Int { lo, hi } => v.round().clamp(*lo as f64, *hi as f64),
+            LiteralDomain::Real { lo, hi } => v.clamp(*lo, *hi),
+            LiteralDomain::Set(set) => {
+                let mut best = set[0] as f64;
+                for &m in set {
+                    if ((m as f64) - v).abs() < (best - v).abs() {
+                        best = m as f64;
+                    }
+                }
+                best
+            }
+        }
+    }
+}
+
+/// A knob reference's payload domain (`params.rs`: a payload in units of
+/// `Q`, 1 to 2^20): the domain of every `literal.p_*` row.
+pub const KNOB_PAYLOAD_DOMAIN: LiteralDomain = LiteralDomain::Int { lo: 1, hi: 1 << 20 };
 
 impl WgslDual {
     pub fn ty(&self) -> Ty {
@@ -110,15 +181,15 @@ pub const SAFEWGSL: &str = "SAFEWGSL";
 pub fn parse_duals(tsv: &str) -> Result<Vec<WgslDual>, String> {
     let mut lines = tsv.lines();
     let header: Vec<&str> = lines.next().ok_or("empty types table")?.split('\t').collect();
-    let want = ["ref", "dual", "slot", "form", "lanes", "fallback", "fallback_bits", "fallback_noop", "fallback_elem", "meaning"];
+    let want = ["ref", "dual", "slot", "form", "lanes", "fallback", "fallback_bits", "fallback_noop", "fallback_elem", "meaning", "literal"];
     if header != want {
         return Err(format!("types.tsv header is {header:?}, want {want:?}"));
     }
     let mut out = Vec::new();
     for (n, line) in lines.enumerate() {
         let f: Vec<&str> = line.split('\t').collect();
-        if f.len() != 10 {
-            return Err(format!("line {}: {} fields, want 10", n + 2, f.len()));
+        if f.len() != 11 {
+            return Err(format!("line {}: {} fields, want 11", n + 2, f.len()));
         }
         let num = |i: usize| f[i].parse::<u32>().map_err(|e| format!("line {}: {:?}: {e}", n + 2, f[i]));
         out.push(WgslDual {
@@ -131,6 +202,7 @@ pub fn parse_duals(tsv: &str) -> Result<Vec<WgslDual>, String> {
             fallback_bits: num(6)?,
             fallback_noop: num(7)? == 1,
             fallback_elem: num(8)? == 1,
+            literal: LiteralDomain::parse(f[10], f[2]).map_err(|e| format!("line {}: {e}", n + 2))?,
         });
     }
     Ok(out)
@@ -277,6 +349,20 @@ impl WgslKingdom {
             Ty::Wgsl(i) => self.duals.get(i as usize),
             _ => None,
         }
+    }
+
+    /// THE DOMAIN OF A LITERAL ROW's value: a knob reference (`literal.p_*`,
+    /// `params::parse_ref`) its payload's; any other `literal.*` row its output
+    /// dual's `literal` column. `None` for a row that is not a literal or a
+    /// dual no literal takes.
+    pub fn literal_domain(&self, row: &str, out: Ty) -> Option<LiteralDomain> {
+        if !row.starts_with("literal.") {
+            return None;
+        }
+        if super::params::parse_ref(row).is_some() {
+            return Some(KNOB_PAYLOAD_DOMAIN);
+        }
+        self.dual(out)?.literal.clone()
     }
 }
 
@@ -568,6 +654,157 @@ pub fn instantiate(table: &FunctionTable, duals: Vec<WgslDual>) -> WgslKingdom {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::wgsl::render::Tree;
+
+    /// THE LITERAL COLUMN PARSES AND CANONICALISES: `-` is none, a range is an
+    /// integer range (a real range on f32), a set is sorted; canonical rounds
+    /// and clamps an integer, clamps a real, takes a set's nearest member (the
+    /// smaller on a tie), and reads a value that is not finite as the fallback.
+    #[test]
+    fn a_literal_domain_parses_and_reads_any_value_into_itself() {
+        assert_eq!(LiteralDomain::parse("-", "u32"), Ok(None));
+        let int = LiteralDomain::parse("0..=16777216", "u32").unwrap().unwrap();
+        assert_eq!(int, LiteralDomain::Int { lo: 0, hi: 16_777_216 });
+        assert_eq!(LiteralDomain::parse("-1024..=1024", "f32").unwrap(), Some(LiteralDomain::Real { lo: -1024.0, hi: 1024.0 }));
+        assert_eq!(LiteralDomain::parse("8,1,4,2", "u32").unwrap(), Some(LiteralDomain::Set(vec![1, 2, 4, 8])));
+        assert!(LiteralDomain::parse("5..=1", "u32").is_err() && LiteralDomain::parse("a,b", "u32").is_err());
+        assert_eq!((int.canonical(-3.0, 0.0), int.canonical(2.6, 0.0), int.canonical(1e12, 0.0), int.canonical(f64::NAN, 7.0)), (0.0, 3.0, 16_777_216.0, 7.0));
+        let set = LiteralDomain::Set(vec![1, 2, 4, 8]);
+        assert_eq!((set.canonical(3.0, 1.0), set.canonical(6.0, 1.0), set.canonical(100.0, 1.0), set.canonical(f64::INFINITY, 1.0)), (2.0, 4.0, 8.0, 1.0));
+        let real = LiteralDomain::Real { lo: -1024.0, hi: 1024.0 };
+        assert_eq!((real.canonical(0.25, 0.0), real.canonical(-5e9, 0.0), real.canonical(f64::NEG_INFINITY, f64::NAN)), (0.25, -1024.0, 0.0));
+    }
+
+    /// EVERY LITERAL ROW HAS A DOMAIN, AND ITS VALUES READ BACK: in the safe
+    /// kingdom every `literal.*` row's value has a domain (a knob reference's
+    /// payload, else its output dual's column) but a literal over an f16 dual
+    /// (the renderer writes no f16 literal). For every literal row and dual met
+    /// in the tracked safe kernels (logs/HGP/001/safe, v24's reference), knob
+    /// references aside (their payload renders the value it scales to), the
+    /// leaf is given its domain's bounds, the bounds one past (canonicalised),
+    /// every set member, 200 values drawn inside, and the raw words NaN, plus
+    /// and minus infinity, 0xFFFFFFFF and 0.5, each canonicalised; the kernel
+    /// is rendered and must read again; the value is among that row's literals
+    /// read back (a workgroup array's length at most it: the renderer halves
+    /// arrays to fit 32 KB), but for a loop's trip count (lit64, lit4096),
+    /// which the renderer unrolls or, at one trip, drops.
+    #[test]
+    fn every_literal_domain_round_trips() {
+        let kingdom = WgslKingdom::load_safe();
+        for r in kingdom.rows.iter().filter(|r| r.name.starts_with("literal.")) {
+            let d = kingdom.dual(r.output).expect("a dual");
+            let dom = kingdom.literal_domain(&r.name, r.output);
+            assert!(dom.is_some() || d.scalar() == Some("f16"), "{} over {}: no literal domain", r.name, d.dual);
+        }
+        let root = concat!(env!("CARGO_MANIFEST_DIR"), "/logs/HGP/001/safe");
+        let mut texts: Vec<(String, String)> = std::fs::read_dir(root).expect("the safe kernels").flatten().map(|e| e.path()).filter(|p| p.to_string_lossy().ends_with(".safe.wgsl")).map(|p| (p.display().to_string(), std::fs::read_to_string(&p).expect("a kernel"))).collect();
+        texts.sort();
+        texts.push(("v24 reference".into(), include_str!("../../problems/v24_ingest_small/reference.wgsl").to_string()));
+        fn sites(t: &Tree, at: &mut Vec<usize>, out: &mut Vec<(Vec<usize>, String, Ty)>) {
+            if t.kids.is_empty() && t.name.starts_with("literal.") {
+                out.push((at.clone(), t.name.clone(), t.ty));
+            }
+            for (i, k) in t.kids.iter().enumerate() {
+                at.push(i);
+                sites(k, at, out);
+                at.pop();
+            }
+        }
+        fn set_at(t: &Tree, at: &[usize], v: f32) -> Tree {
+            match at.split_first() {
+                None => Tree { konst: v, ..t.clone() },
+                Some((&i, rest)) => {
+                    let mut kids = t.kids.clone();
+                    kids[i] = set_at(&t.kids[i], rest, v);
+                    Tree { kids, ..t.clone() }
+                }
+            }
+        }
+        fn values_of(t: &Tree, name: &str, ty: Ty, out: &mut Vec<f32>) {
+            if t.kids.is_empty() && t.name == name && t.ty == ty {
+                out.push(t.konst);
+            }
+            for k in &t.kids {
+                values_of(k, name, ty, out);
+            }
+        }
+        let mut done: std::collections::BTreeSet<(String, Ty)> = std::collections::BTreeSet::new();
+        let mut failures: Vec<String> = Vec::new();
+        let mut rng = 0x9e37_79b9_7f4a_7c15u64;
+        let mut next = || {
+            rng ^= rng << 13;
+            rng ^= rng >> 7;
+            rng ^= rng << 17;
+            rng
+        };
+        for (file, text) in &texts {
+            let Ok(read) = crate::wgsl::safe_reader::read_safe(text, &kingdom) else { continue };
+            let mut found = Vec::new();
+            sites(&read.tree, &mut Vec::new(), &mut found);
+            for (at, name, ty) in found {
+                if crate::wgsl::params::parse_ref(&name).is_some() || !done.insert((name.clone(), ty)) {
+                    continue;
+                }
+                let dual = kingdom.dual(ty).expect("a dual");
+                let dom = kingdom.literal_domain(&name, ty).unwrap_or_else(|| panic!("{name} over {}: no domain", dual.dual));
+                let fallback = match dual.scalar() {
+                    Some("f32") => f64::from(f32::from_bits(dual.fallback_bits)),
+                    Some("i32") => f64::from(dual.fallback_bits as i32),
+                    _ => f64::from(dual.fallback_bits),
+                };
+                let mut raw: Vec<f64> = vec![f64::NAN, f64::INFINITY, f64::NEG_INFINITY, f64::from(f32::from_bits(0xFFFF_FFFF)), 0.5];
+                match &dom {
+                    LiteralDomain::Int { lo, hi } => {
+                        let (lo, hi) = (*lo as f64, *hi as f64);
+                        raw.extend([lo, hi, lo - 1.0, hi + 1.0]);
+                        raw.extend((0..200).map(|_| lo + (next() % 1_000_000) as f64 / 1_000_000.0 * (hi - lo)));
+                    }
+                    // Every finite f32: its bounds, past them, and values of every scale.
+                    LiteralDomain::Real { lo, hi } => {
+                        raw.extend([*lo, *hi, lo * 2.0, hi * 2.0]);
+                        raw.extend((0..200).map(|_| {
+                            let mantissa = (next() % 2_000_000) as f64 / 1_000_000.0 - 1.0;
+                            mantissa * 10f64.powi((next() % 76) as i32 - 38)
+                        }));
+                    }
+                    LiteralDomain::Set(set) => raw.extend(set.iter().map(|&m| m as f64)),
+                }
+                for v in raw {
+                    let c = dom.canonical(v, fallback) as f32;
+                    let child = set_at(&read.tree, &at, c);
+                    let back = crate::wgsl::safe_karva::render_tree_with(&child, &kingdom, &read.role).and_then(|r| crate::wgsl::safe_reader::read_safe(&r.text, &kingdom).map_err(|e| format!("does not read back: {e}")));
+                    match back {
+                        Err(e) => failures.push(format!("{file}: {name} over {} = {c}: {}", dual.dual, e.lines().next().unwrap_or(""))),
+                        Ok(b) => {
+                            let mut vals = Vec::new();
+                            values_of(&b.tree, &name, ty, &mut vals);
+                            // A loop's trip count (lit64, lit4096) is structure: the
+                            // renderer unrolls a counted loop and drops one of one trip,
+                            // so the kernel reads back valid with other literals; an
+                            // array's length may be halved to fit 32 KB.
+                            let ok = match dual.form.as_str() {
+                                "lit64" | "lit4096" => true,
+                                "wglen" => vals.iter().any(|&x| x <= c && x >= 1.0),
+                                _ => vals.contains(&c),
+                            };
+                            if !ok {
+                                failures.push(format!("{file}: {name} over {} = {c} (from {v}): read back as {vals:?}", dual.dual));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        println!("literal rows and duals tried: {}", done.len());
+        assert!(done.len() >= 4, "only {} literal kinds met in the tracked kernels", done.len());
+        // By literal row and dual: how many values, and the first.
+        let mut by_kind: BTreeMap<String, (usize, String)> = BTreeMap::new();
+        for f in &failures {
+            let kind = f.split(": ").nth(1).and_then(|r| r.split(" = ").next()).unwrap_or("?").to_string();
+            by_kind.entry(kind).or_insert((0, f.clone())).0 += 1;
+        }
+        assert!(failures.is_empty(), "{} literal values do not round-trip:\n{}", failures.len(), by_kind.values().map(|(n, first)| format!("{n} like {first}")).collect::<Vec<_>>().join("\n"));
+    }
 
     #[test]
     fn the_83_duals_load_with_their_machine_fallbacks() {

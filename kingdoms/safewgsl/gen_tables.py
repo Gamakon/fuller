@@ -234,13 +234,47 @@ def slot_name(scalar: str, lanes: int) -> str:
     return scalar if lanes == 1 else f"vec{lanes}<{scalar}>"
 
 
+# THE LITERAL DOMAINS (phylu docs/PLAN_wgsl_literals_as_constants.md, 2.3): the values
+# a literal of a scalar dual may take, by form; a literal row's value is drawn and
+# mutated inside its dual's domain, and every value of a domain renders and reads
+# back exactly. Integers to 2^24, the exact range of a literal's f32 konst (the
+# reader spells a u32 past 2^24 as its halves, (hi << 16u) | lo). A range "lo..=hi"
+# (a real range for an f32 slot: every finite f32, as a kernel's own constants are), a set "a,b,c", "-" for a dual no literal takes.
+LITERAL_DOMAIN = {
+    "real": "-3.4028234663852886e38..=3.4028234663852886e38",
+    "int": "-16777216..=16777216",
+    "index": "0..=16777216",
+    "count": "0..=16777216",
+    "bits": "0..=16777216",
+    "flag": "0,1",
+    "wgdim": "1..=1024",
+    "blk": "1,2,4,8",
+    "unroll": "2,4,8",
+    "lit64": "1..=64",
+    "lit4096": "1..=4096",
+    "wglen": "1..=8192",
+    "xbound": "0..=16777216",
+}
+
+
+def literal_domain(slot, form):
+    """A value slot's literal domain, a vector's or matrix's its scalar's (the renderer
+    splats a literal over the lanes); f16 has none: the renderer writes no f16 literal."""
+    scalar = slot
+    if slot.startswith("vec") or slot.startswith("mat"):
+        scalar = slot[slot.index("<") + 1:-1]
+    if scalar not in ("f32", "i32", "u32", "bool"):
+        return "-"
+    return LITERAL_DOMAIN.get(form, "-")
+
+
 def build_types():
-    rows = []  # (ref, dual, slot, form, lanes, fallback, fallback_bits, fallback_noop, fallback_elem, meaning)
+    rows = []  # (ref, dual, slot, form, lanes, fallback, fallback_bits, fallback_noop, fallback_elem, meaning, literal)
 
     def add(slot, form, lanes, meaning):
         noop = int(form == "store")
         elem = int(slot == "array<T>")
-        rows.append((f"T{len(rows) + 1:03d}", f"{slot}.{form}", slot, form, lanes, FALLBACK[form], FALLBACK_BITS[form], noop, elem, meaning))
+        rows.append((f"T{len(rows) + 1:03d}", f"{slot}.{form}", slot, form, lanes, FALLBACK[form], FALLBACK_BITS[form], noop, elem, meaning, literal_domain(slot, form)))
 
     for form, (meaning, scalars) in FORMS.items():
         if form in ("wgdim", "blk", "unroll") or form in SAFE_FORMS:
@@ -1363,7 +1397,7 @@ def write_tsv(path, header, rows):
 
 def main():
     types = build_types()
-    write_tsv(os.path.join(HERE, "types.tsv"), ["ref", "dual", "slot", "form", "lanes", "fallback", "fallback_bits", "fallback_noop", "fallback_elem", "meaning"], types)
+    write_tsv(os.path.join(HERE, "types.tsv"), ["ref", "dual", "slot", "form", "lanes", "fallback", "fallback_bits", "fallback_noop", "fallback_elem", "meaning", "literal"], types)
     frows = [(f"F{i + 1:03d}", c, inst, naga, " ".join(ins) if ins else "-", out, len(ins), note) for i, (c, inst, naga, ins, out, note) in enumerate(FUNCTIONS)]
     write_tsv(os.path.join(HERE, "functions.tsv"), ["ref", "class", "instance", "naga", "in", "out", "arity", "note"], frows)
 
@@ -1374,11 +1408,12 @@ def main():
         md.write("## Forms\n\n| form | meaning | legal scalar slots |\n|---|---|---|\n")
         for form, (meaning, scalars) in FORMS.items():
             md.write(f"| `{form}` | {meaning} | {', '.join(scalars) if scalars else 'see duals'} |\n")
-        md.write("\n## Duals\n\n| ref | dual | slot | form | lanes | fallback | bits | noop | elem |\n|---|---|---|---|---|---|---|---|---|\n")
-        for ref, dual, slot, form, lanes, fb, bits, noop, elem, _ in types:
-            md.write(f"| {ref} | `{dual}` | `{slot}` | `{form}` | {lanes} | `{fb}` | {bits} | {noop} | {elem} |\n")
+        md.write("\n## Duals\n\n| ref | dual | slot | form | lanes | fallback | bits | noop | elem | literal |\n|---|---|---|---|---|---|---|---|---|---|\n")
+        for ref, dual, slot, form, lanes, fb, bits, noop, elem, _, lit in types:
+            md.write(f"| {ref} | `{dual}` | `{slot}` | `{form}` | {lanes} | `{fb}` | {bits} | {noop} | {elem} | `{lit}` |\n")
         md.write(f"\n{len(types)} duals. The fallback is what Design C's projection substitutes for a codon whose dual does not match the demand; the codon is counted as masked.\n")
         md.write("\nThe three machine columns (`fallback_bits`, `fallback_noop`, `fallback_elem` in `types.tsv`) are what the loader builds the fallback leaf from, never the prose: `bits` is the lane's 32-bit pattern as an unsigned integer, repeated across the lanes of a vector or matrix (only `bool.sign` is non-zero, true = +1); `noop` is 1 for `store.store`, which substitutes no value at all; `elem` is 1 for `array<T>`, whose fallback is its element's. The loader tests `noop` and `elem` before reading `bits`; for those two rows `bits` is a placeholder 0. Every substitution, whichever column decides it, counts the codon as masked.\n")
+        md.write("\nThe `literal` column is a scalar dual's literal domain (`LITERAL_DOMAIN` in this script): the values a literal of the dual takes, a range `lo..=hi` (real for an f32 slot) or a set `a,b,c`; `-` where no literal is. A gene holds a literal's value in its Dc tail, never as a symbol (phylu `docs/PLAN_wgsl_literals_as_constants.md`); mutation draws inside the domain and every value is read into it before it becomes a tree. Integers stop at 2^24, the exact range of a literal's f32 konst.\n")
         md.write("\n## Loop trip counts\n\nMAX_LOOP_TRIP = 2^24 = 16,777,216 is the kingdom's declared maximum trip count of a loop (`render::MAX_LOOP_TRIP`): no real workload exceeds it (production builds run m ~ 420,000 items, d up to 8,192). A loop at an L rung, which may hold a barrier, takes a uniform bound (`u32.boundu`); a loop with no barrier takes any expression bound. Every bound a gene computes, uniform or not (`bound.of_index`, `bound.of_uniform`, `bound.x_of_uniform`), renders `min(e, 16777216u)`, so a bound in range computes the same and no loop runs past it. The checker's range layer ranges such a bound up to it, and proves index arithmetic over it.\n")
         md.write("\n## No wrap, no zero divisor, every computed bound capped\n\nA u32 wrap in index arithmetic at the worst shape is illegal everywhere (Codex's review of Andrew's decision, 2026-10-12): the checker's range layer fails it. The kingdom cannot spell a difference that wraps: a raw difference is `u32.indexw` and a uniform difference, product or shift `u32.uniformw`, which no row takes; the kingdom's difference is the floored one (`index.sub_floor`, `uniform.sub_floor`), and the reader reads `x - y` as it (the same value wherever it does not wrap). A sum, product or left shift of index values is not typed by range: the checker fails one that wraps at the worst shape. An expression bound takes `u32.xbound` (registers, uniform values, the rows that cannot pass their operands). Every loop bound a gene computes renders `min(e, 16777216u)` (`bound.of_index`, `bound.of_uniform`, `bound.x_of_uniform`); a binding's bound (`cfg.m`, `cfg.d`, `cfg.r_rows`) is the host's data size and a literal is at most 64. A divisor that is not a literal of at least 1 renders `max(b, 1u)` (WGSL's `x / 0u` is x, as is `x / max(0u, 1u)`).\n")
         md.write("\n## Not in the table\n\nImages, samplers, ray queries, binding arrays, pointers as values, non-square `f16` matrices. Storage-buffer atomics are the per-kernel rows of an interface that declares an atomic binding (`render::Role::interface`: a scalar `atomic<u32>`, or an array of atomics at any index, the bounds policy deciding an access past it), not rows of this table.\n")
