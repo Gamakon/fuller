@@ -1707,13 +1707,22 @@ impl<'m> An<'m> {
                 for (key, v) in self.bounded_by(fr, *condition) {
                     self.env.insert(key, v);
                 }
+                // A workgroup-uniform test: every invocation of a workgroup
+                // takes one branch, so an access of one branch never meets an
+                // access of the other (v24's `if (cfg.pass_index == 0u) { ..
+                // } else { .. }`: each pass wrote and read the same workgroup
+                // array, paired across the branches as a race, 2026-10-17).
+                // Under a test that is not uniform both branches run at once.
+                let open_before = self.wg_open.clone();
                 let ft_a = self.block(fr, accept);
+                let open_a = if cu { std::mem::replace(&mut self.wg_open, open_before) } else { BTreeSet::new() };
                 let (env_a, priv_a) = (std::mem::replace(&mut self.env, saved_env), std::mem::replace(&mut self.privates, saved_priv));
                 self.facts.truncate(base);
                 self.ctrl_uni = su && cu;
                 self.ctrl_inv = si && ci;
                 self.facts.extend(Self::facts_of(&c, false));
                 let ft_r = self.block(fr, reject);
+                self.wg_open.extend(open_a);
                 self.facts.truncate(base);
                 self.ctrl_uni = su;
                 self.ctrl_inv = si;
@@ -3590,5 +3599,23 @@ mod tests {
             assert_eq!(rule(&k("gid.x", "rank < 65u"), m), "write_sets_overlap");
             assert_eq!(rule(&k("gid.x", "q < cfg.n_queries"), m), "store_index_not_affine");
         }
+    }
+
+    /// THE BRANCHES OF A WORKGROUP-UNIFORM TEST NEVER MEET (2026-10-17, 4 of
+    /// v24's seeds, 160 of the arena gate's 171 workgroup races): `if
+    /// (cfg.pass_index == 0u) { w[lid.x] = ..; barrier; .. = w[k]; } else {
+    /// w[lid.x] = ..; barrier; .. }` is proved; the same branches under a
+    /// test of lid.x run at once in one workgroup and race.
+    #[test]
+    fn the_branches_of_a_uniform_test_do_not_race_each_other() {
+        let k = |test: &str| format!("struct Cfg {{ pass_index: u32, }};\n@group(0) @binding(0) var<storage, read> keys: array<f32>;\n@group(0) @binding(1) var<storage, read_write> out: array<f32>;\n@group(0) @binding(2) var<uniform> cfg: Cfg;\nvar<workgroup> w: array<f32, 64>;\n@compute @workgroup_size(64, 1, 1)\nfn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>) {{\n    if ({test}) {{\n        w[lid.x] = keys[gid.x];\n        workgroupBarrier();\n        if (lid.x == 0u) {{ out[gid.x] = w[7u]; }}\n    }} else {{\n        w[lid.x] = 2.0 * keys[gid.x];\n        workgroupBarrier();\n        if (lid.x == 0u) {{ out[gid.x] = w[9u]; }}\n    }}\n}}\n");
+        let c = Contract::parse("workgroups x 1 64\nworkgroups y 1 1\nworkgroups z 1 1\nparam cfg.pass_index 0 3\n").unwrap();
+        proved(&k("cfg.pass_index == 0u"), &c);
+        // (Under a thread's test the barriers diverge first; without them the
+        // branches' accesses meet.)
+        let plain = |test: &str| format!("struct Cfg {{ pass_index: u32, }};\n@group(0) @binding(0) var<storage, read> keys: array<f32>;\n@group(0) @binding(1) var<storage, read_write> out: array<f32>;\n@group(0) @binding(2) var<uniform> cfg: Cfg;\nvar<workgroup> w: array<f32, 64>;\n@compute @workgroup_size(64, 1, 1)\nfn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>) {{\n    if ({test}) {{\n        w[lid.x] = keys[gid.x];\n    }} else {{\n        out[gid.x] = w[(lid.x + 1u) & 63u];\n    }}\n}}\n");
+        proved(&plain("cfg.pass_index == 0u"), &c);
+        assert_eq!(rule(&plain("lid.x < 32u"), &c), "workgroup_memory_race");
+        assert_eq!(rule(&k("lid.x < 32u"), &c), "barrier_in_nonuniform_control");
     }
 }
