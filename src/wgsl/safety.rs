@@ -559,6 +559,10 @@ struct An<'m> {
     next_frame: usize,
     next_id: u64,
     steps: usize,
+    /// Per function (by its place in memory, a key only, never written):
+    /// each statement's number in the function's own order, so a place is
+    /// named `s<n>`, the same in every run.
+    stmt_numbers: HashMap<usize, HashMap<usize, usize>>,
 }
 
 /// The cap on statements walked (a kernel the layer would take too long over is not proved).
@@ -1674,7 +1678,8 @@ impl<'m> An<'m> {
         if self.steps > STEP_CAP {
             return false;
         }
-        let ctx = format!("{}:{:p}", self.frames[fr].ctx, s as *const Statement);
+        let n = self.stmt_no(fr, s);
+        let ctx = format!("{}:s{n}", self.frames[fr].ctx);
         match s {
             Statement::Emit(range) => {
                 for h in range.clone() {
@@ -2134,7 +2139,8 @@ impl<'m> An<'m> {
         let modified: BTreeSet<Handle<naga::LocalVariable>> = stored.iter().map(|(l, _)| *l).collect();
         let counters: BTreeMap<Handle<naga::LocalVariable>, u32> = modified.iter().copied().filter(|l| !stored.iter().any(|(x, cont)| x == l && !cont)).filter_map(|l| Self::counter_step(f, continuing, l).map(|k| (l, k))).collect();
         let head = Self::head_exit(f, body);
-        let loop_key = format!("{}:{:p}", self.frames[fr].ctx, s as *const Statement);
+        let n = self.stmt_no(fr, s);
+        let loop_key = format!("{}:s{n}", self.frames[fr].ctx);
         let entry_uni = self.ctrl_uni;
         let entry_env = self.env.clone();
         // One pass: the counters as digits, every other local the loop
@@ -2311,6 +2317,37 @@ impl<'m> An<'m> {
             let v = self.other(inv, uni, false);
             self.env.insert((id, *l), v);
         }
+    }
+
+    /// A statement's number in its function, in the order the function's
+    /// text gives its statements (nested blocks in place).
+    fn stmt_no(&mut self, fr: usize, s: &Statement) -> usize {
+        let f = self.frames[fr].func;
+        let numbers = self.stmt_numbers.entry(f as *const Function as usize).or_insert_with(|| {
+            fn walk(b: &Block, out: &mut HashMap<usize, usize>) {
+                for s in b.iter() {
+                    let n = out.len();
+                    out.insert(s as *const Statement as usize, n);
+                    match s {
+                        Statement::Block(x) => walk(x, out),
+                        Statement::If { accept, reject, .. } => {
+                            walk(accept, out);
+                            walk(reject, out);
+                        }
+                        Statement::Loop { body, continuing, .. } => {
+                            walk(body, out);
+                            walk(continuing, out);
+                        }
+                        Statement::Switch { cases, .. } => cases.iter().for_each(|c| walk(&c.body, out)),
+                        _ => {}
+                    }
+                }
+            }
+            let mut out = HashMap::new();
+            walk(&f.body, &mut out);
+            out
+        });
+        numbers.get(&(s as *const Statement as usize)).copied().unwrap_or(usize::MAX)
     }
 
     fn block(&mut self, fr: usize, b: &'m Block) -> bool {
@@ -2956,6 +2993,7 @@ fn check_entry(module: &Module, contract: &Contract, entry: &str) -> Result<Repo
         next_frame: 0,
         next_id: 0,
         steps: 0,
+        stmt_numbers: HashMap::new(),
     };
     an.record = true;
     an.walk_entry();
@@ -3617,5 +3655,21 @@ mod tests {
         proved(&plain("cfg.pass_index == 0u"), &c);
         assert_eq!(rule(&plain("lid.x < 32u"), &c), "workgroup_memory_race");
         assert_eq!(rule(&k("lid.x < 32u"), &c), "barrier_in_nonuniform_control");
+    }
+
+    /// A VERDICT'S TEXT IS THE SAME IN EVERY RUN (2026-10-17: layer 7 named
+    /// a loop counter by its statement's place in memory, `main:0x789d24068:
+    /// ctr13`): a refusal through a helper and a loop counter, checked on
+    /// two separately parsed copies of one source, gives the same detail,
+    /// with no address in it.
+    #[test]
+    fn a_verdicts_text_names_places_not_addresses() {
+        let src = "@group(0) @binding(0) var<storage, read> keys: array<f32>;\n@group(0) @binding(1) var<storage, read_write> out: array<f32>;\nvar<workgroup> t: array<f32, 64>;\nfn put(i: u32, k: u32) { t[(i + k) & 63u] = keys[k]; }\n@compute @workgroup_size(64, 1, 1)\nfn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>) {\n    for (var k = 0u; k < 4u; k = k + 1u) {\n        put(lid.x, k);\n        out[gid.x * 4u + k] = t[lid.x];\n    }\n}\n";
+        let c = Contract::default();
+        let a = check_text(src, &c).expect_err("a race");
+        let b = check_text(src, &c).expect_err("a race");
+        assert_eq!(a.detail, b.detail);
+        assert!(!a.detail.contains("0x"), "an address in {}", a.detail);
+        println!("{}", a.detail);
     }
 }
