@@ -5346,8 +5346,8 @@ fn search() { cands[0] = cfg.stage; }
     }
 
     /// THE ADMISSION CASE (an unjudged cut of the small set for phylu's
-    /// differential admission: 2 stages of 32 rows, 16 queries, 64 Ki-word
-    /// arenas): problems/v24_ingest_small/cases/admission.toml loads, its
+    /// differential admission: 2 stages of 32 rows, 16 queries, the
+    /// problem's own 32 MiB arenas): problems/v24_ingest_small/cases/admission.toml loads, its
     /// plan binds 32 then 64 arrived rows, and the reference's text run on it
     /// by `cpu_run` gives 64 arrived rows a query a seed (stage 1 holds 32
     /// rows: 32 and 32 pads). Timed, printed.
@@ -5371,6 +5371,33 @@ fn search() { cands[0] = cfg.stage; }
             let rows: Vec<u32> = list.iter().copied().filter(|&x| x != PAD).collect();
             assert_eq!(rows.len(), (32 * stage).min(64), "list {i}");
             assert!(rows.iter().all(|&x| (x as usize) < 32 * stage), "list {i}: {rows:?}");
+        }
+    }
+
+    /// THE ADMISSION CASE BINDS THE PROBLEM'S ARENAS: in both v24 problems
+    /// the admission case gives no arena size, and its plan's eight arenas
+    /// (iu0..iu3, if0..if3) are each `arena_u32` / `arena_f32` words of
+    /// problem.toml (8,388,608, 32 MiB), the stream case's, the size the
+    /// designs mask for. Plans only: nothing runs.
+    #[test]
+    fn the_admission_case_binds_the_problems_arenas() {
+        for name in ["v24_ingest_small", "v24_ingest"] {
+            let p = Problem::load(&root().join("problems").join(name)).unwrap();
+            let info = kernel_info(&p.spec, &p.reference).unwrap();
+            let admission = p.cases_of("cases/admission.toml").unwrap().remove(0);
+            assert!(!admission.params.contains_key("arena_u32") && !admission.params.contains_key("arena_f32"), "{name}: the admission case gives its own arena size");
+            let declared = |k: &str| eval_int(&p.spec.params[k], &Env::new()).unwrap();
+            assert_eq!((declared("arena_u32"), declared("arena_f32")), (8_388_608, 8_388_608), "{name}");
+            let arenas = |c: &Case| {
+                let plan = p.plan(c, LIMIT, Some(&info)).unwrap();
+                let mut v: Vec<(String, u64)> = plan.buffers.iter().filter(|b| (b.name.starts_with("iu") || b.name.starts_with("if")) && !b.resident).map(|b| (b.name.clone(), b.bytes)).collect();
+                v.sort();
+                v
+            };
+            let a = arenas(&admission);
+            let want: Vec<(String, u64)> = (0..4).map(|s| (format!("if{s}"), 4 * declared("arena_f32"))).chain((0..4).map(|s| (format!("iu{s}"), 4 * declared("arena_u32")))).collect::<std::collections::BTreeSet<_>>().into_iter().collect();
+            assert_eq!(a, want, "{name}: the admission case's arenas");
+            assert_eq!(a, arenas(&p.suites[0].cases[0]), "{name}: the admission and stream cases' arenas");
         }
     }
 }
