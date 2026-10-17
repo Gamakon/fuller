@@ -612,7 +612,7 @@ fn is_leaf(t: &Tree, name: &str) -> bool {
 /// One step of a workgroup reduction as the emitter unrolls it, read back:
 /// `if (lidx < s) { a[lidx] = op(a[lidx], a[lidx + s]); }` as
 /// (the array, the op, s).
-fn reduction_step(t: &Tree) -> Option<(Tree, &'static str, f32)> {
+fn reduction_step(t: &Tree) -> Option<(Tree, &'static str, f32, Option<Tree>)> {
     let [c, b] = t.kids.as_slice() else { return None };
     if rung_stem(&t.name) != Some("stmt.if") || c.name != "compare.lt" || rung_stem(&b.name) != Some("block.one") {
         return None;
@@ -621,6 +621,9 @@ fn reduction_step(t: &Tree) -> Option<(Tree, &'static str, f32)> {
     // (Read before conform, the index is the builtin itself; after, its conversion.)
     let s = literal_value(s).filter(|_| matches!(lidx.name.as_str(), "builtin.local_invocation_index" | "index.of_lidx"))?;
     let set = b.kids.first()?;
+    if let Some((a, op, i)) = argmax_step(set, lidx, &c.kids[1]) {
+        return Some((a, op, s, Some(i)));
+    }
     let [arr, idx, val] = set.kids.as_slice() else { return None };
     // (Compared by their rows: read before conform, a node's dual may not
     // be its final one yet.)
@@ -632,7 +635,53 @@ fn reduction_step(t: &Tree) -> Option<(Tree, &'static str, f32)> {
     let [x, y] = val.kids.as_slice() else { return None };
     let at = |g: &Tree, i: String| g.name.starts_with("wg.get") && g.kids.first().map(sx) == Some(sx(arr)) && g.kids.get(1).map(sx) == Some(i);
     let plus = format!("({} (index.add {} {}))", idx.name, sx(lidx), sx(&c.kids[1]));
-    (at(x, sx(idx)) && at(y, plus)).then(|| (arr.clone(), op, s))
+    (at(x, sx(idx)) && at(y, plus)).then(|| (arr.clone(), op, s, None))
+}
+
+/// A workgroup array row's element: f32, u32, vec2 or vec4.
+fn wg_elem(which: &str) -> &'static str {
+    if which.starts_with("wg.au") || which.starts_with("wg.ai") {
+        "atomic"
+    } else if which.starts_with("wg.v2") {
+        "vec2"
+    } else if which.starts_with("wg.u") {
+        "u32"
+    } else if which.starts_with("wg.v") {
+        "vec4"
+    } else {
+        "f32"
+    }
+}
+
+/// An argmax (argmin) reduction's step body: `if (v[lidx + s] > v[lidx]) {
+/// v[lidx] = v[lidx + s]; i[lidx] = i[lidx + s]; }` (`<` for argmin), the
+/// two arrays and the operation; None for any other statement.
+fn argmax_step(t: &Tree, lidx: &Tree, s: &Tree) -> Option<(Tree, &'static str, Tree)> {
+    let [c, b] = t.kids.as_slice() else { return None };
+    if rung_stem(&t.name) != Some("stmt.if") {
+        return None;
+    }
+    let op = match c.name.as_str() {
+        "compare.gt" => "argmax",
+        "compare.lt" => "argmin",
+        _ => return None,
+    };
+    let sx = |t: &Tree| t.to_sexpr();
+    let mut sets = Vec::new();
+    flatten_stmts(b.clone(), &mut sets);
+    let [sv, si] = sets.as_slice() else { return None };
+    let get = |g: &Tree, arr: &Tree, plus: bool| -> bool {
+        let Some(idx) = g.kids.get(1) else { return false };
+        let want = if plus { format!("({} (index.add {} {}))", idx.name, sx(lidx), sx(s)) } else { format!("({} {})", idx.name, sx(lidx)) };
+        g.name.starts_with("wg.get") && g.kids.first().map(sx) == Some(sx(arr)) && sx(idx) == want
+    };
+    let set_ok = |set: &Tree| -> Option<Tree> {
+        let [arr, idx, val] = set.kids.as_slice() else { return None };
+        (set.name.starts_with("wg.set") && arr.name.starts_with("wg.") && arr.kids.is_empty() && idx.kids.first().map(sx) == Some(sx(lidx)) && get(val, arr, true)).then(|| arr.clone())
+    };
+    let (v, i) = (set_ok(sv)?, set_ok(si)?);
+    let [x, y] = c.kids.as_slice() else { return None };
+    (get(x, &v, true) && get(y, &v, false)).then_some((v, op, i))
 }
 
 /// A store to a loop's counter inside its body: (counter, value).
@@ -3446,11 +3495,11 @@ impl<'a> Ctx<'a> {
         let mut out = Vec::new();
         let mut i = 0;
         while i < stmts.len() {
-            let mut steps: Vec<(Tree, &str, f32)> = Vec::new();
+            let mut steps: Vec<(Tree, &str, f32, Option<Tree>)> = Vec::new();
             if stmts[i].name == barrier {
                 let mut j = i + 1;
                 while let (Some(step), Some(b)) = (stmts.get(j).and_then(reduction_step), stmts.get(j + 1)) {
-                    let follows = steps.last().is_none_or(|(a, op, s)| a.name == step.0.name && *op == step.1 && step.2 * 2.0 == *s);
+                    let follows = steps.last().is_none_or(|(a, op, s, ix)| a.name == step.0.name && *op == step.1 && step.2 * 2.0 == *s && ix.as_ref().map(|x| &x.name) == step.3.as_ref().map(|x| &x.name));
                     if b.name != barrier || !follows {
                         break;
                     }
@@ -3458,12 +3507,12 @@ impl<'a> Ctx<'a> {
                     j += 2;
                 }
             }
-            let row = steps.first().map(|(a, op, _)| (format!("wg.reduce_{op}_{rung}"), a.clone()));
-            let ok = steps.last().is_some_and(|(_, _, s)| *s == 1.0) && row.as_ref().is_some_and(|(r, _)| self.kingdom.rows.iter().any(|x| x.name == *r));
+            let row = steps.first().map(|(a, op, _, ix)| (format!("wg.reduce_{op}_{rung}"), a.clone(), ix.clone()));
+            let ok = steps.last().is_some_and(|(_, _, s, _)| *s == 1.0) && row.as_ref().is_some_and(|(r, _, _)| self.kingdom.rows.iter().any(|x| x.name == *r));
             match row.filter(|_| ok) {
-                Some((r, a)) => {
+                Some((r, a, ix)) => {
                     let n = Tree::literal("literal.lit4096", ty(self, "u32.lit4096")?, steps[0].2 * 2.0);
-                    out.push(Tree::new(&r, self.stmt_ty(rung)?, vec![a, n]));
+                    out.push(Tree::new(&r, self.stmt_ty(rung)?, std::iter::once(a).chain(ix).chain(std::iter::once(n)).collect()));
                     i += 1 + 2 * steps.len();
                 }
                 None => {
@@ -4761,6 +4810,9 @@ impl<'a> Ctx<'a> {
             Expression::Literal(naga::Literal::I32(v)) => u32::try_from(v).ok(),
             _ => None,
         });
+        // (Or the literal stored just before the loop: a `for (var s = 32u; ..)`
+        // inside another loop is a store each pass, v24 run 1's seed04.)
+        let start = start.or_else(|| self.axis_memo.get(&counter).and_then(|(t, _)| literal_value(t)).filter(|v| v.fract() == 0.0 && *v >= 1.0).map(|v| v as u32));
         let Some(start) = start.filter(|v| v.is_power_of_two() && *v <= 2048) else { return fail("its start is not a literal power of two in its declaration (at most 2,048)") };
         // The body: `if (lidx < s) { a[lidx] = a[lidx] op a[lidx + s]; }` then
         // a workgroup barrier (in the block naga makes of a `for` body).
@@ -4785,6 +4837,52 @@ impl<'a> Ctx<'a> {
         };
         if !guarded {
             return fail(&format!("its step is not under `lidx < s`: {}", guard.to_sexpr()));
+        }
+        // AN ARGMAX (ARGMIN) STEP: `if (v[lidx + s] > v[lidx]) { v[lidx] =
+        // v[lidx + s]; i[lidx] = i[lidx + s]; }` under the test (v24 run 1's
+        // seed04): wg.reduce_argmax over v and i.
+        if let Some(Statement::If { accept: inner, reject: none, .. }) = accept.iter().find(|s| !matches!(s, Statement::Emit(_))) {
+            let at = [&prefix[..], &[*if_at, 0, 0]].concat();
+            let mut stores: Vec<Tree> = Vec::new();
+            for i in 0..inner.iter().filter(|s| !matches!(s, Statement::Emit(_))).count() {
+                if let Some(r) = self.root_at(&[&at[..], &[0, i]].concat(), |k| matches!(k, RootKind::Store { .. })) {
+                    let node = r.tree.clone();
+                    stores.push(tree_of(self, &node)?);
+                }
+            }
+            let cond = self.root_at(&at, |k| matches!(k, RootKind::Condition { .. })).ok_or("no condition root at the argmax step")?;
+            let cond = tree_of(self, &cond.tree)?.kids[0].clone();
+            let partner = |t: &Tree| t.name == "index.add" && t.kids.len() == 2 && ((lane(&t.kids[0]) && is_counter(&t.kids[1])) || (is_counter(&t.kids[0]) && lane(&t.kids[1])));
+            let load_of = |t: &Tree, arr: &str, i: &dyn Fn(&Tree) -> bool| t.name.starts_with(&format!("load.workgroup.{arr}.#")) && t.kids.len() == 1 && i(&t.kids[0]);
+            let moved = |st: &Tree| -> Option<String> {
+                let arr = st.name.strip_prefix("store.workgroup.").and_then(|r| r.strip_suffix(".#"))?;
+                let [at, v] = st.kids.as_slice() else { return None };
+                (lane(at) && load_of(v, arr, &partner)).then(|| arr.to_string())
+            };
+            let op = match cond.name.as_str() {
+                "compare.gt" => "argmax",
+                "compare.lt" => "argmin",
+                _ => return fail(&format!("its step compares by {}, not > or <", cond.name)),
+            };
+            match (stores.as_slice(), cond.kids.as_slice(), none.iter().all(|s| matches!(s, Statement::Emit(_)))) {
+                ([sv, si], [x, y], true) => {
+                    let (Some(v), Some(i)) = (moved(sv), moved(si)) else { return fail("its step does not move v[lidx + s] and i[lidx + s] down") };
+                    if !(load_of(x, &v, &partner) && load_of(y, &v, &lane)) {
+                        return fail(&format!("its step's test is not v[lidx + s] {op} v[lidx]: {}", cond.to_sexpr()));
+                    }
+                    let fd = self.kingdom.dual(x.ty).map(|d| d.dual.clone()).unwrap_or_default();
+                    let wv = self.array(&v, &fd)?;
+                    let wi = self.array(&i, "u32.index")?;
+                    if wg_elem(wv) != "f32" || wg_elem(wi) != "u32" {
+                        return fail("its arrays are not an f32 value array and a u32 index array");
+                    }
+                    let (_, _, vd, _, _) = Self::wg_rows(wv);
+                    let (_, _, id, _, _) = Self::wg_rows(wi);
+                    let n = Tree::literal("literal.lit4096", ty(self, "u32.lit4096")?, (start * 2) as f32);
+                    return Ok(Some(Tree::new(&format!("wg.reduce_{op}_{rung}"), self.stmt_ty(rung)?, vec![Tree::new(wv, ty(self, vd)?, vec![]), Tree::new(wi, ty(self, id)?, vec![]), n])));
+                }
+                _ => return fail("its step is not one test moving a value and its index"),
+            }
         }
         let store = self.root_at(&[&prefix[..], &[*if_at, 0, 0]].concat(), |k| matches!(k, RootKind::Store { .. })).ok_or("no store under the halving loop's test")?;
         let store = tree_of(self, &store.tree)?;
@@ -7439,6 +7537,53 @@ fn search(@builtin(global_invocation_id) gid: vec3<u32>) {{
         assert_eq!((e.layer.number(), e.reason), (4, "barrier_in_nonuniform_control_flow"), "{e}");
     }
 
+    /// AN ARGMAX REDUCTION (2026-10-17, v24 run 1's seed04): the best score
+    /// and its index in two workgroup arrays, reduced by a halving loop
+    /// whose step moves the larger value and its index down. It reads as
+    /// wg.reduce_argmax, renders, validates, reads back to the same tree and
+    /// passes every layer; the same with `<` reads as wg.reduce_argmin.
+    #[test]
+    fn an_argmax_reduction_reads_as_its_row() {
+        let k = WgslKingdom::load_safe();
+        let contract = crate::wgsl::safety::Contract::parse("workgroups x 1 1024\nworkgroups y 1 1\nworkgroups z 1 1\n").unwrap();
+        for (cmp, row) in [(">", "wg.reduce_argmax_L0"), ("<", "wg.reduce_argmin_L0")] {
+            let src = format!(
+                "{V24_BINDINGS}var<workgroup> wbest: array<f32, 64>;
+var<workgroup> widx: array<u32, 64>;
+@compute @workgroup_size(64, 1, 1)
+fn ingest(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) wid: vec3<u32>) {{
+    let t = lid.x;
+    wbest[t] = keys[wid.x * 64u + t];
+    widx[t] = t;
+    workgroupBarrier();
+    for (var st = 32u; st > 0u; st = st >> 1u) {{
+        if (t < st) {{
+            if (wbest[t + st] {cmp} wbest[t]) {{
+                wbest[t] = wbest[t + st];
+                widx[t] = widx[t + st];
+            }}
+        }}
+        workgroupBarrier();
+    }}
+    if (t == 0u) {{ cands[wid.x] = widx[0]; }}
+}}
+@compute @workgroup_size(32, 1, 1)
+fn search(@builtin(global_invocation_id) gid: vec3<u32>) {{
+    _ = atomicLoad(&index_u32[gid.x & 1023u]);
+}}
+"
+            );
+            let r = read_safe(&src, &k).unwrap_or_else(|e| panic!("{cmp}: {e}"));
+            assert!(r.tree.to_sexpr().contains(&format!("({row} ")), "{cmp}: {}", r.tree.to_sexpr());
+            let out = crate::wgsl::safe_karva::render_tree_with(&r.tree, &k, &r.role).unwrap_or_else(|e| panic!("{e}"));
+            validate_text(&out.text).unwrap_or_else(|e| panic!("{e}\n{}", out.text));
+            let back = read_safe(&out.text, &k).unwrap_or_else(|e| panic!("read back: {e}\n{}", out.text));
+            assert!(back.tree == r.tree, "{cmp}: the rendered text reads back to the same tree: {:?}\n{}", crate::wgsl::render::first_difference(&r.tree, &back.tree), out.text);
+            let checker = crate::wgsl::check::Checker::with_contract(&k, &r.role, &crate::wgsl::target::Target::recorded(), contract.clone());
+            checker.check(&r.tree).unwrap_or_else(|e| panic!("{cmp}: {e}\n{}", out.text));
+        }
+    }
+
     /// A SEARCH'S WORKGROUP STATE (2026-10-17, 3 of run 1's seeds): five f32
     /// score lists, a workgroup u32 scalar read as bits (`var<workgroup>
     /// wcode: u32;`), and a loop over the candidates a thread staged, bounded
@@ -8050,8 +8195,9 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     /// drawn (canonical). Every tree reads back (1,000 of 1,000, asserted
     /// exactly). Their own text is printed, not a bar (Andrew, 2026-10-13).
     /// 930 since 2026-10-17 12:35Z (the rows drawn then, AST_FLOOR's note);
-    /// 928 since 15:30Z (the 64-element vec4 arrays, AST_FLOOR's note).
-    const FIXPOINT_FLOOR: usize = 928;
+    /// 928 since 15:30Z (the 64-element vec4 arrays, AST_FLOOR's note);
+    /// 917 since 16:05Z (the argmax reductions, AST_FLOOR's note).
+    const FIXPOINT_FLOOR: usize = 917;
     // (Both reset 2026-10-13 when the sampler drew its stores from an input:
     // other trees, 253 and 930 on the earlier draws; again when conditions
     // read a variable: 110 then 79; 59 when they vary by thread or data;
@@ -8082,8 +8228,10 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     // back.) (15:30Z, 37 and 928, when the kingdom gained the 64-element vec4
     // private arrays: other draws, a table of other rows; with those arrays
     // undrawn the same commit measures 34 and 934, so the drop is the draws,
-    // not the rows; 1,000 of 1,000 read back.)
-    const AST_FLOOR: usize = 37;
+    // not the rows; 1,000 of 1,000 read back.) (16:05Z, 43 and 917 with the
+    // argmax and argmin reductions drawn: other draws; of the 83 that miss
+    // the fixpoint none differs at a reduction, the earlier classes all.)
+    const AST_FLOOR: usize = 43;
 
     /// The floors of [`random_module_trees_render_validate_and_read_back`]
     /// (1,000 v24 modules, depth 6; measured 2026-10-17 at its first run:
@@ -8116,10 +8264,11 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     /// 12:35Z, 5, 962 and 130, with every row drawn but the uniform tests and
     /// the reader's two checked rows (a module's workgroup arrays now at one
     /// length for all its entry points: one over 32 KB did not validate).
-    /// 15:30Z, 8, 968 and 139 with the 64-element vec4 arrays (risen).
-    const MODULE_AST_FLOOR: usize = 8;
-    const MODULE_FIXPOINT_FLOOR: usize = 968;
-    const MODULE_LEGAL_FLOOR: usize = 139;
+    /// 15:30Z, 8, 968 and 139 with the 64-element vec4 arrays (risen);
+    /// 16:05Z, 1, 970 and 134 with the argmax reductions drawn (other draws).
+    const MODULE_AST_FLOOR: usize = 1;
+    const MODULE_FIXPOINT_FLOOR: usize = 970;
+    const MODULE_LEGAL_FLOOR: usize = 134;
 
 
     /// THE KINGDOM'S COMPLETENESS BAR (2026-10-12): 1,000 random trees of

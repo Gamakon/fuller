@@ -293,7 +293,7 @@ fn builtin_id(name: &str) -> Option<&'static str> {
 
 /// The rows that put a barrier in the text (a reduction writes them too).
 fn is_barrier(base: &str) -> bool {
-    matches!(base, "stmt.barrier" | "stmt.storage_barrier" | "stmt.subgroup_barrier" | "wg.reduce_add" | "wg.reduce_max" | "wg.reduce_min" | "wg.put" | "wg.uload_i" | "wg.uload_f")
+    matches!(base, "stmt.barrier" | "stmt.storage_barrier" | "stmt.subgroup_barrier" | "wg.reduce_add" | "wg.reduce_max" | "wg.reduce_min" | "wg.reduce_argmax" | "wg.reduce_argmin" | "wg.put" | "wg.uload_i" | "wg.uload_f")
 }
 
 /// The tile counter a leaf reads (1-based depth), or None.

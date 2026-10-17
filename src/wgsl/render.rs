@@ -1574,6 +1574,35 @@ impl<'a> Renderer<'a> {
                 n(1)?;
                 Ok(format!("    _ = {};\n", self.value(&kids[0], scope)?))
             }
+            "wg.reduce_argmax" | "wg.reduce_argmin" => {
+                // v[0..n) and i[0..n) into element 0, i moving with v: a
+                // barrier, then for s = n/2, .., 1 `if (lidx < s) { if (v[lidx +
+                // s] > v[lidx]) { v[lidx] = v[lidx + s]; i[lidx] = i[lidx + s];
+                // } }` and a barrier (< for argmin); n at most both arrays'
+                // elements, rounded down to a power of two.
+                n(3)?;
+                if scope.in_cond > 0 || scope.returned {
+                    scope.masked.push(format!("{} in non-uniform control flow", safe_base(&s.name)));
+                    return Ok("    // reduction masked: non-uniform control flow\n".into());
+                }
+                let (a, b) = (self.wgmem(&kids[0])?, self.wgmem(&kids[1])?);
+                let len_of = |x: &str, scope: &Scope| if scope.unwritten.contains(x) { 1 } else { self.wg_len(x, scope).max(1) };
+                let (la, lb) = (len_of(a, scope), len_of(b, scope));
+                let len = la.min(lb);
+                let count = self.lit(&kids[2], 4096)?;
+                let count = (1u32 << (31 - count.leading_zeros())).min(1u32 << (31 - len.leading_zeros()));
+                let mask = |x: String, l: u32| if l.is_power_of_two() { format!("(({x}) & {}u)", l - 1) } else { format!("min(({x}), {}u)", l - 1) };
+                let cmp = if safe_base(&s.name) == "wg.reduce_argmax" { ">" } else { "<" };
+                let mut out = String::from("    workgroupBarrier();\n");
+                let mut stride = count / 2;
+                while stride > 0 {
+                    let (ai, aj) = (mask("lidx".into(), la), mask(format!("lidx + {stride}u"), la));
+                    let (bi, bj) = (mask("lidx".into(), lb), mask(format!("lidx + {stride}u"), lb));
+                    out.push_str(&format!("    if (lidx < {stride}u) {{ if ({a}[{aj}] {cmp} {a}[{ai}]) {{ {a}[{ai}] = {a}[{aj}]; {b}[{bi}] = {b}[{bj}]; }} }}\n    workgroupBarrier();\n"));
+                    stride /= 2;
+                }
+                Ok(out)
+            }
             "wg.reduce_add" | "wg.reduce_max" | "wg.reduce_min" => {
                 // a[0..n) into a[0]: a barrier, then for s = n/2, n/4, .., 1
                 // `if (lidx < s) { a[lidx] = a[lidx] op a[lidx + s]; }` and a
@@ -2789,11 +2818,12 @@ pub fn cost(t: &Tree) -> Cost {
                     per_item += p;
                 }
             }
-            "wg.reduce_add" | "wg.reduce_max" | "wg.reduce_min" => {
+            "wg.reduce_add" | "wg.reduce_max" | "wg.reduce_min" | "wg.reduce_argmax" | "wg.reduce_argmin" => {
                 // A tree reduction over n (rounded down to a power of two): the
                 // leading barrier, then log2(n) steps of a guard, two loads, the
-                // operation, a store and a barrier.
-                let n = lit(t.kids.get(1), 4096.0);
+                // operation, a store and a barrier (an argmax's two more loads
+                // and a store: counted alike, the steps dominate).
+                let n = lit(t.kids.last(), 4096.0);
                 let steps = n.log2().floor();
                 let extra = (50.0 + steps * (1.0 + 4.0 + 4.0 + 1.0 + 4.0 + 50.0)) * tile;
                 if in_items {

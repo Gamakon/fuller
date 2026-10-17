@@ -3258,4 +3258,21 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 | F1755 | `parr.set_v_L5` | `composite` | `parr64<vec4<f32>>.real u32.pindex vec4<f32>.real` | `stmt.L5` | 3 | arity 3: pvq[i] = v |
 | F1756 | `parr.set_v_C5` | `composite` | `parr64<vec4<f32>>.real u32.pindex vec4<f32>.real` | `stmt.C5` | 3 | arity 3: pvq[i] = v |
 
-1756 function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Storage-buffer atomics are an interface's per-kernel rows, not rows of this table. Deliberately absent: atomic compare-exchange (naga 0.20's Metal backend lacks it), subgroupBallot, images, derivatives, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.
+## class `wg`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F1757 | `wg.reduce_argmax_L0` | `composite` | `wgmem<f32>.real wgmem<u32>.index u32.lit4096` | `stmt.L0` | 3 | v[0..n) and i[0..n) reduced into element 0 by argmax of v, i moving with v: stride halving, barriers in uniform control flow |
+| F1758 | `wg.reduce_argmax_L1` | `composite` | `wgmem<f32>.real wgmem<u32>.index u32.lit4096` | `stmt.L1` | 3 | v[0..n) and i[0..n) reduced into element 0 by argmax of v, i moving with v: stride halving, barriers in uniform control flow |
+| F1759 | `wg.reduce_argmax_L2` | `composite` | `wgmem<f32>.real wgmem<u32>.index u32.lit4096` | `stmt.L2` | 3 | v[0..n) and i[0..n) reduced into element 0 by argmax of v, i moving with v: stride halving, barriers in uniform control flow |
+| F1760 | `wg.reduce_argmax_L3` | `composite` | `wgmem<f32>.real wgmem<u32>.index u32.lit4096` | `stmt.L3` | 3 | v[0..n) and i[0..n) reduced into element 0 by argmax of v, i moving with v: stride halving, barriers in uniform control flow |
+| F1761 | `wg.reduce_argmax_L4` | `composite` | `wgmem<f32>.real wgmem<u32>.index u32.lit4096` | `stmt.L4` | 3 | v[0..n) and i[0..n) reduced into element 0 by argmax of v, i moving with v: stride halving, barriers in uniform control flow |
+| F1762 | `wg.reduce_argmax_L5` | `composite` | `wgmem<f32>.real wgmem<u32>.index u32.lit4096` | `stmt.L5` | 3 | v[0..n) and i[0..n) reduced into element 0 by argmax of v, i moving with v: stride halving, barriers in uniform control flow |
+| F1763 | `wg.reduce_argmin_L0` | `composite` | `wgmem<f32>.real wgmem<u32>.index u32.lit4096` | `stmt.L0` | 3 | v[0..n) and i[0..n) reduced into element 0 by argmin of v, i moving with v: stride halving, barriers in uniform control flow |
+| F1764 | `wg.reduce_argmin_L1` | `composite` | `wgmem<f32>.real wgmem<u32>.index u32.lit4096` | `stmt.L1` | 3 | v[0..n) and i[0..n) reduced into element 0 by argmin of v, i moving with v: stride halving, barriers in uniform control flow |
+| F1765 | `wg.reduce_argmin_L2` | `composite` | `wgmem<f32>.real wgmem<u32>.index u32.lit4096` | `stmt.L2` | 3 | v[0..n) and i[0..n) reduced into element 0 by argmin of v, i moving with v: stride halving, barriers in uniform control flow |
+| F1766 | `wg.reduce_argmin_L3` | `composite` | `wgmem<f32>.real wgmem<u32>.index u32.lit4096` | `stmt.L3` | 3 | v[0..n) and i[0..n) reduced into element 0 by argmin of v, i moving with v: stride halving, barriers in uniform control flow |
+| F1767 | `wg.reduce_argmin_L4` | `composite` | `wgmem<f32>.real wgmem<u32>.index u32.lit4096` | `stmt.L4` | 3 | v[0..n) and i[0..n) reduced into element 0 by argmin of v, i moving with v: stride halving, barriers in uniform control flow |
+| F1768 | `wg.reduce_argmin_L5` | `composite` | `wgmem<f32>.real wgmem<u32>.index u32.lit4096` | `stmt.L5` | 3 | v[0..n) and i[0..n) reduced into element 0 by argmin of v, i moving with v: stride halving, barriers in uniform control flow |
+
+1768 function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Storage-buffer atomics are an interface's per-kernel rows, not rows of this table. Deliberately absent: atomic compare-exchange (naga 0.20's Metal backend lacks it), subgroupBallot, images, derivatives, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.

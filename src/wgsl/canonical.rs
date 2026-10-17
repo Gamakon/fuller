@@ -654,14 +654,17 @@ fn canonical_fallback(t: &Tree, kingdom: &WgslKingdom) -> Option<Tree> {
 fn canonical_reduction(t: &Tree, kingdom: &WgslKingdom) -> Option<Tree> {
     let stem = t.name.strip_prefix("wg.reduce_")?;
     let rung = rung_of(stem)?;
-    let [a, n] = t.kids.as_slice() else { return None };
+    let (n, arrays) = t.kids.split_last()?;
+    if !(1..=2).contains(&arrays.len()) {
+        return None;
+    }
     let v = if n.name == "fallback" { 1 } else { n.konst.max(1.0) as u32 };
     let p = 1u32 << (31 - v.leading_zeros());
     if p == 1 {
         return Some(Tree::new(&format!("stmt.barrier_{rung}"), t.ty, vec![]));
     }
     let lit = Tree::literal("literal.lit4096", dual_ty(kingdom, "u32.lit4096").ok()?, p as f32);
-    Some(Tree::new(&t.name, t.ty, vec![a.clone(), lit]))
+    Some(Tree::new(&t.name, t.ty, arrays.iter().cloned().chain(std::iter::once(lit)).collect()))
 }
 
 /// Rule 8 at a strided tile or item loop (its children already canonical).

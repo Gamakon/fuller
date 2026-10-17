@@ -1347,6 +1347,12 @@ for n in ("vq", "vr"):
 f("parr", "get_v", "composite", ["parr64<vec4<f32>>.real", "u32.pindex"], "vec4<f32>.real", "pvq[i]")
 for r in RUNGS + RUNGS5:
     f("parr", "set_v_" + r, "composite", ["parr64<vec4<f32>>.real", "u32.pindex", "vec4<f32>.real"], "stmt." + r, "arity 3: pvq[i] = v")
+# ---- an argmax or argmin tree reduction (2026-10-17, v24 run 1's seed04: the best centre's score and its index in two
+# workgroup arrays, `if (t < s) { if (v[t + s] > v[t]) { v[t] = v[t + s]; i[t] = i[t + s]; } }` halving s): the value
+# array and the index array reduced into element 0, a barrier before and after every step, L rungs only ----
+for op in ("argmax", "argmin"):
+    for r in ("L0", "L1", "L2", "L3", "L4", "L5"):
+        f("wg", f"reduce_{op}_{r}", "composite", ["wgmem<f32>.real", "wgmem<u32>.index", "u32.lit4096"], "stmt." + r, f"v[0..n) and i[0..n) reduced into element 0 by {op} of v, i moving with v: stride halving, barriers in uniform control flow")
 
 def write_tsv(path, header, rows):
     with open(path, "w") as out:
