@@ -219,6 +219,28 @@ struct Machine<'m> {
     max_steps: u64,
     /// `short_circuit_only` per function, computed once a dispatch.
     lazy: HashMap<*const Function, Rc<HashSet<Handle<Expression>>>>,
+    /// THE INVOCATION ORDER (`run_ordered`): None the fixed order (the
+    /// workgroups x fastest, then y, then z; each segment between barriers
+    /// its invocations in local order); Some the state of a splitmix64
+    /// stream that shuffles the workgroups and each segment's invocations.
+    order: Option<u64>,
+}
+
+/// splitmix64: the order's stream.
+fn order_next(state: &mut u64) -> u64 {
+    *state = state.wrapping_add(0x9e37_79b9_7f4a_7c15);
+    let mut z = *state;
+    z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    z ^ (z >> 31)
+}
+
+/// A Fisher-Yates shuffle of `v` from the order's stream.
+fn shuffle<T>(v: &mut [T], state: &mut u64) {
+    for i in (1..v.len()).rev() {
+        let j = (order_next(state) % (i as u64 + 1)) as usize;
+        v.swap(i, j);
+    }
 }
 
 /// Run `module`'s entry point over `workgroups` with the bindings' contents
@@ -226,17 +248,28 @@ struct Machine<'m> {
 /// values). `max_steps` caps the statements executed.
 pub fn run(module: &Module, buffers: HashMap<String, Val>, workgroups: [u32; 3], max_steps: u64) -> Result<Dispatch, String> {
     let ep = module.entry_points.iter().find(|e| e.stage == naga::ShaderStage::Compute).ok_or("cpu: no compute entry point")?;
-    run_on(module, ep, buffers, workgroups, max_steps)
+    run_on(module, ep, buffers, workgroups, max_steps, None)
 }
 
 /// [`run`] of the compute entry point named `entry` (a module of several
 /// entry points: the harness's multi-entry dispatch).
 pub fn run_entry(module: &Module, entry: &str, buffers: HashMap<String, Val>, workgroups: [u32; 3], max_steps: u64) -> Result<Dispatch, String> {
-    let ep = module.entry_points.iter().find(|e| e.stage == naga::ShaderStage::Compute && e.name == entry).ok_or_else(|| format!("cpu: no compute entry point {entry}"))?;
-    run_on(module, ep, buffers, workgroups, max_steps)
+    run_ordered(module, entry, buffers, workgroups, max_steps, None)
 }
 
-fn run_on(module: &Module, ep: &naga::EntryPoint, buffers: HashMap<String, Val>, workgroups: [u32; 3], max_steps: u64) -> Result<Dispatch, String> {
+/// [`run_entry`] in an ORDER that can show races: `None` the fixed order,
+/// bit for bit; `Some(seed)` the dispatch's workgroups in a shuffle seeded
+/// by `seed`, and within a workgroup each segment between barriers (a pass
+/// that runs every invocation to its next barrier) its invocations in their
+/// own seeded permutation. Two invocations storing different values to one
+/// cell can give different outputs under two seeds; a race-free kernel
+/// (atomics, disjoint writes) gives the same under every seed.
+pub fn run_ordered(module: &Module, entry: &str, buffers: HashMap<String, Val>, workgroups: [u32; 3], max_steps: u64, order: Option<u64>) -> Result<Dispatch, String> {
+    let ep = module.entry_points.iter().find(|e| e.stage == naga::ShaderStage::Compute && e.name == entry).ok_or_else(|| format!("cpu: no compute entry point {entry}"))?;
+    run_on(module, ep, buffers, workgroups, max_steps, order)
+}
+
+fn run_on(module: &Module, ep: &naga::EntryPoint, buffers: HashMap<String, Val>, workgroups: [u32; 3], max_steps: u64, order: Option<u64>) -> Result<Dispatch, String> {
     let mut globals = HashMap::new();
     for (h, g) in module.global_variables.iter() {
         if g.binding.is_some() {
@@ -248,13 +281,20 @@ fn run_on(module: &Module, ep: &naga::EntryPoint, buffers: HashMap<String, Val>,
             globals.insert(h, v);
         }
     }
-    let mut m = Machine { module, globals, shared: HashMap::new(), nwg: workgroups, wg: ep.workgroup_size, writes: Vec::new(), next_frame: 0, steps: 0, max_steps, lazy: HashMap::new() };
+    let mut m = Machine { module, globals, shared: HashMap::new(), nwg: workgroups, wg: ep.workgroup_size, writes: Vec::new(), next_frame: 0, steps: 0, max_steps, lazy: HashMap::new(), order };
+    let mut wids = Vec::new();
     for wz in 0..workgroups[2] {
         for wy in 0..workgroups[1] {
             for wx in 0..workgroups[0] {
-                m.workgroup([wx, wy, wz], &ep.function)?;
+                wids.push([wx, wy, wz]);
             }
         }
+    }
+    if let Some(state) = m.order.as_mut() {
+        shuffle(&mut wids, state);
+    }
+    for wid in wids {
+        m.workgroup(wid, &ep.function)?;
     }
     let mut out = HashMap::new();
     for (h, g) in module.global_variables.iter() {
@@ -878,9 +918,19 @@ impl<'m> Machine<'m> {
         // Each invocation to its next barrier or subgroup operation (or its
         // end), then all again; a subgroup operation is computed over its
         // subgroup's lanes once every invocation waits at one.
+        let mut turn: Vec<usize> = (0..invs.len()).collect();
         loop {
             let (mut at_barrier, mut at_collective) = (0usize, 0usize);
-            for inv in invs.iter_mut().filter(|i| !i.done) {
+            // A seeded order: this segment's invocations in a permutation of
+            // their own (each still run to its barrier).
+            if let Some(state) = self.order.as_mut() {
+                shuffle(&mut turn, state);
+            }
+            for &k in &turn {
+                let inv = &mut invs[k];
+                if inv.done {
+                    continue;
+                }
                 match self.step_until_barrier(inv)? {
                     Status::Barrier => at_barrier += 1,
                     Status::Collective => at_collective += 1,
@@ -1631,5 +1681,78 @@ fn main() {
             Err(e) => assert!(e.contains("out of range"), "{e}"),
             Ok(_) => panic!("the unguarded read at j 0 ran"),
         }
+    }
+
+    /// THE SEEDED ORDER SHOWS A RACE AND LEAVES ATOMICS ALONE: 4 workgroups
+    /// of 64 invocations each store their global id to cell 0 (a race: the
+    /// last writer wins) and add 1 to cell 1 with atomicAdd. Under the fixed
+    /// order the last writer is the last invocation (255); under seeds 1..16
+    /// the stored value differs between seeds; the counter is 256 under every
+    /// seed. A seed gives the same output twice.
+    #[test]
+    fn a_seeded_order_shows_a_race_and_keeps_an_atomic_total() {
+        let text = "@group(0) @binding(0) var<storage, read_write> arena: array<atomic<u32>>;
+@compute @workgroup_size(64)
+fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+    atomicStore(&arena[0], gid.x);
+    atomicAdd(&arena[1], 1u);
+}
+";
+        let module = naga::front::wgsl::parse_str(text).unwrap();
+        let go = |order: Option<u64>| {
+            let mut bufs = HashMap::new();
+            bufs.insert("arena".to_string(), Val::V(vec![Val::U(0); 2]));
+            let d = run_ordered(&module, "main", bufs, [4, 1, 1], 1_000_000, order).unwrap();
+            let mut w = Vec::new();
+            d.buffers["arena"].words(&mut w);
+            (w[0], w[1])
+        };
+        assert_eq!(go(None), (255, 256));
+        let seeded: Vec<(u32, u32)> = (1..=16).map(|s| go(Some(s))).collect();
+        assert!(seeded.iter().all(|x| x.1 == 256), "{seeded:?}");
+        let last: std::collections::BTreeSet<u32> = seeded.iter().map(|x| x.0).collect();
+        assert!(last.len() > 1, "the race shows no difference over 16 seeds: {seeded:?}");
+        assert_eq!(go(Some(3)), go(Some(3)));
+    }
+
+    /// The order within a workgroup is a permutation per barrier segment: a
+    /// kernel where every invocation writes cell lid then, after a barrier,
+    /// one invocation per cell reads a neighbour's cell gives the same output
+    /// under every seed (no race across the barrier), and a plain store to
+    /// one shared cell before the barrier (a race) differs between seeds.
+    #[test]
+    fn segments_between_barriers_keep_their_order_of_effects() {
+        let text = "@group(0) @binding(0) var<storage, read_write> out: array<u32>;
+var<workgroup> cells: array<u32, 32>;
+var<workgroup> last: u32;
+@compute @workgroup_size(32)
+fn main(@builtin(local_invocation_id) lid: vec3<u32>) {
+    cells[lid.x] = lid.x * 10u;
+    last = lid.x;
+    workgroupBarrier();
+    out[lid.x] = cells[(lid.x + 1u) % 32u];
+    out[32u + lid.x] = last;
+}
+";
+        let module = naga::front::wgsl::parse_str(text).unwrap();
+        let go = |order: Option<u64>| {
+            let mut bufs = HashMap::new();
+            bufs.insert("out".to_string(), Val::V(vec![Val::U(0); 64]));
+            let d = run_ordered(&module, "main", bufs, [1, 1, 1], 1_000_000, order).unwrap();
+            let mut w = Vec::new();
+            d.buffers["out"].words(&mut w);
+            w
+        };
+        let fixed = go(None);
+        assert_eq!(&fixed[..32], &(0..32u32).map(|l| ((l + 1) % 32) * 10).collect::<Vec<_>>()[..]);
+        assert!(fixed[32..].iter().all(|&x| x == 31));
+        let mut lasts = std::collections::BTreeSet::new();
+        for s in 1..=16 {
+            let w = go(Some(s));
+            assert_eq!(w[..32], fixed[..32], "seed {s}: the barrier's effects");
+            assert!(w[32..].iter().all(|&x| x == w[32]), "seed {s}: one value of last after the barrier");
+            lasts.insert(w[32]);
+        }
+        assert!(lasts.len() > 1, "the shared store's race shows no difference: {lasts:?}");
     }
 }

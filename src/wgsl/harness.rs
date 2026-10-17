@@ -1328,8 +1328,11 @@ fn read_cases(dir: &Path, manifest_path: &str) -> Result<Vec<Case>, String> {
 /// WGSL interpreted, `cpu.rs`): compile, the case's data, its plan, its
 /// resident buffers, one run with every read. A differential check (a
 /// design's text against its rendering) compares the outputs' bytes.
-pub fn cpu_run(problem: &Problem, case: &Case, source: &str, binding_limit: u64) -> Result<RunOut, String> {
-    let exec = CpuExecutor::new(binding_limit);
+/// `order`: None the fixed invocation order; Some(seed) a seeded shuffle of
+/// workgroups and of each barrier segment's invocations (`CpuExecutor::order`):
+/// a race shows as outputs that differ between seeds.
+pub fn cpu_run(problem: &Problem, case: &Case, source: &str, binding_limit: u64, order: Option<u64>) -> Result<RunOut, String> {
+    let exec = CpuExecutor { order, ..CpuExecutor::new(binding_limit) };
     let (k, info) = exec.compile(problem, source)?;
     let data = problem.case_data(case, binding_limit)?;
     let plan = problem.plan(case, binding_limit, Some(&info))?;
@@ -2421,11 +2424,17 @@ pub struct CpuExecutor {
     pub binding_limit: u64,
     /// The cap on statements a dispatch executes (`cpu::run`).
     pub max_steps: u64,
+    /// THE INVOCATION ORDER (`cpu::run_ordered`): None the fixed order, bit
+    /// for bit; Some(seed) every dispatch's workgroups and each barrier
+    /// segment's invocations shuffled, the k-th dispatch of a run seeded by
+    /// `seed` and k (so a race shows; a race-free kernel's output is the
+    /// same under every seed).
+    pub order: Option<u64>,
 }
 
 impl CpuExecutor {
     pub fn new(binding_limit: u64) -> CpuExecutor {
-        CpuExecutor { binding_limit, max_steps: 1 << 40 }
+        CpuExecutor { binding_limit, max_steps: 1 << 40, order: None }
     }
 }
 
@@ -2482,6 +2491,7 @@ impl CpuExecutor {
         }
         let mut ms = 0.0f64;
         let mut each = Vec::new();
+        let mut dispatch = 0u64;
         for c in &plan.run {
             match c {
                 Cmd::Create(id) => bufs[*id] = Some(initial_bytes(&plan.buffers[*id], data)?),
@@ -2494,7 +2504,9 @@ impl CpuExecutor {
                         vals.insert(name.clone(), Self::value(k, shape, bytes)?);
                     }
                     let t = Instant::now();
-                    let d = crate::wgsl::cpu::run_entry(&k.module, &k.entries[*entry], vals, *workgroups, self.max_steps)?;
+                    let order = self.order.map(|seed| seed ^ dispatch.wrapping_add(1).wrapping_mul(0x9e37_79b9_7f4a_7c15));
+                    dispatch += 1;
+                    let d = crate::wgsl::cpu::run_ordered(&k.module, &k.entries[*entry], vals, *workgroups, self.max_steps, order)?;
                     let one = t.elapsed().as_secs_f64() * 1e3;
                     ms += one;
                     each.push(one);
@@ -5362,7 +5374,7 @@ fn search() { cands[0] = cfg.stage; }
             return;
         }
         let t = Instant::now();
-        let r = cpu_run(&p, c, &p.reference, LIMIT).unwrap();
+        let r = cpu_run(&p, c, &p.reference, LIMIT, None).unwrap();
         println!("the reference on the admission case: {:.1} s", t.elapsed().as_secs_f64());
         let got = u32s(&r.outputs[0]);
         assert_eq!(got.len(), 2 * 4 * 16 * 64);
@@ -5371,6 +5383,39 @@ fn search() { cands[0] = cfg.stage; }
             let rows: Vec<u32> = list.iter().copied().filter(|&x| x != PAD).collect();
             assert_eq!(rows.len(), (32 * stage).min(64), "list {i}");
             assert!(rows.iter().all(|&x| (x as usize) < 32 * stage), "list {i}: {rows:?}");
+        }
+    }
+
+    /// THE SEEDED ORDER LEAVES RACE-FREE KERNELS UNCHANGED: the shipped
+    /// kernels of kmeans_assign and nluca_step on their cheapest constraint
+    /// case, and the v24 reference on the admission case, through
+    /// `cpu_run`: the fixed order (None) and seeds 7 and 8 give the same
+    /// output bytes. (None is today's order: the exact-value CPU tests, the
+    /// Gram's bit-for-bit H and the v24 end-to-end, run under it.)
+    #[test]
+    fn seeded_orders_leave_race_free_kernels_unchanged() {
+        let cheapest = |p: &Problem| {
+            let su = p.suites.iter().find(|s| s.spec.role == Role::Constraint).unwrap();
+            su.cases.iter().min_by(|a, b| p.work(a, LIMIT).unwrap().total_cmp(&p.work(b, LIMIT).unwrap())).unwrap().clone()
+        };
+        let mut runs: Vec<(String, Problem, Case)> = Vec::new();
+        for name in ["kmeans_assign", "nluca_step"] {
+            let p = Problem::load(&root().join("problems").join(name)).unwrap();
+            let c = cheapest(&p);
+            runs.push((name.to_string(), p, c));
+        }
+        let v = v24_small();
+        let admission = v.cases_of("cases/admission.toml").unwrap().remove(0);
+        if admission.inputs.values().all(|f| f.exists()) {
+            runs.push(("v24_ingest_small admission".to_string(), v, admission));
+        }
+        for (name, p, c) in &runs {
+            let t = Instant::now();
+            let fixed = cpu_run(p, c, &p.reference, LIMIT, None).unwrap().outputs;
+            for seed in [7, 8] {
+                assert_eq!(cpu_run(p, c, &p.reference, LIMIT, Some(seed)).unwrap().outputs, fixed, "{name}, seed {seed}");
+            }
+            println!("{name} ({}): the same bytes under None, 7 and 8 in {:.1} s", c.name, t.elapsed().as_secs_f64());
         }
     }
 }
