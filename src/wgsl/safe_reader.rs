@@ -120,6 +120,9 @@ struct Ctx<'a> {
     /// While a helper body is being inlined: its arguments by `arg.<name>`,
     /// already resolved and typed in the caller.
     inline_args: Option<HashMap<String, Tree>>,
+    /// The path of the return that ends a branch read as `if (c) { .. }
+    /// else { rest }` ([`Ctx::early_return_branch`]), while its branch is read.
+    early_return_at: Option<Vec<usize>>,
     /// The arguments of the helpers being inlined around the one in
     /// `inline_args`, innermost last (a helper inlined inside another).
     outer_args: Vec<Option<HashMap<String, Tree>>>,
@@ -1786,6 +1789,75 @@ impl<'a> Ctx<'a> {
     /// thread id, a register, a load): the cfg fields, literals, the
     /// workgroup's id, the grid's size, the subgroup size and count, and the
     /// index arithmetic of them.
+    /// [`Ctx::walk`]'s branch that ends in a return with statements after it:
+    /// `if (c) { a; return; } rest` as `if (c) { a } else { rest }` (None for
+    /// any other statement). `here` is the if's path.
+    fn early_return_branch(&mut self, at: &BlockAt, here: &[usize], rung: &str) -> Result<Option<Tree>, String> {
+        let BlockAt { block, position, last, next } = *at;
+        let Some(Statement::If { accept, reject, .. }) = block.get(position) else { return Ok(None) };
+        let acc: Vec<&Statement> = accept.iter().filter(|s| !matches!(s, Statement::Emit(_))).collect();
+        // `return;` after statements (a return alone is the thread guard), or a
+        // helper's `return v;` (its value to the call's register, then the else).
+        let void = matches!(acc.last(), Some(Statement::Return { value: None })) && acc.len() >= 2;
+        let valued = matches!(acc.last(), Some(Statement::Return { value: Some(_) })) && self.inline_result.is_some();
+        if !(void || valued) || !reject.iter().all(|s| matches!(s, Statement::Emit(_))) || Some(position) == last {
+            return Ok(None);
+        }
+        let ret = accept.iter().rposition(|s| matches!(s, Statement::Return { .. })).expect("a return");
+        let trimmed = naga::Block::from_vec(accept.iter().take(if valued { ret + 1 } else { ret }).cloned().collect());
+        let rest = naga::Block::from_vec(block.iter().skip(position + 1).cloned().collect());
+        let root = self.root_at(here, |k| matches!(k, RootKind::Condition { .. })).ok_or("no condition root at this if")?;
+        let cond_tree = tree_of(self, &root.tree)?;
+        let c = self.value(&cond_tree.kids[0])?;
+        let st = self.stmt_ty(rung)?;
+        let level = &rung[1..];
+        let needed = holds_barrier(self.module, &trimmed) || holds_barrier(self.module, &rest);
+        // As an if-else is read: a simple test of two uniform values first,
+        // then any uniform predicate, so the text written reads back so.
+        let simple = match self.simple_test(&c)?.filter(|_| rung.starts_with('L') && needed) {
+            Some((op, x, y)) => match (self.uniform_bound_of(&x)?, self.uniform_bound_of(&y)?) {
+                (Some(ux), Some(uy)) => Some((op, ux, uy)),
+                _ => None,
+            },
+            None => None,
+        };
+        let flag = if rung.starts_with('L') && needed && simple.is_none() { self.uniform_flag(&c)? } else { None };
+        let body_rung = if flag.is_some() || simple.is_some() { rung.to_string() } else { format!("C{level}") };
+        let mut p = here.to_vec();
+        p.push(0);
+        let saved = self.early_return_at.replace([&p[..], &[acc.len() - 1]].concat());
+        let a = self.nested(|ctx, path| ctx.walk(&trimmed, path, &body_rung, 0), &mut p);
+        self.early_return_at = saved;
+        let mut parent = here[..here.len() - 1].to_vec();
+        let b = self.nested(|ctx, path| ctx.walk(&rest, path, &body_rung, next), &mut parent);
+        let (a, b) = (a?, b?);
+        Ok(Some(match (simple, flag) {
+            (Some((op, ux, uy)), _) => Tree::new(&format!("stmt.if_else_{op}_{rung}"), st, vec![ux, uy, self.block(a, &body_rung)?, self.block(b, &body_rung)?]),
+            (None, Some(f)) => Tree::new(&format!("stmt.if_else_uflag_{rung}"), st, vec![f, self.block(a, &body_rung)?, self.block(b, &body_rung)?]),
+            (None, None) => Tree::new(&format!("stmt.if_else_{rung}"), st, vec![c, self.block(a, &body_rung)?, self.block(b, &body_rung)?]),
+        }))
+    }
+
+    /// A comparison as the operands of a simple uniform test row
+    /// (`stmt.if_ule` and its kin): the op and its two sides, before they are
+    /// checked uniform; None for anything else.
+    fn simple_test(&self, c: &Tree) -> Result<Option<(&'static str, Tree, Tree)>, String> {
+        let zero = |t: &Tree| literal_value(t) == Some(0.0);
+        let one = Tree::literal("literal.index", ty(self, "u32.index")?, 1.0);
+        Ok(match (c.name.as_str(), c.kids.as_slice()) {
+            ("compare.eq", [x, z]) | ("compare.eq", [z, x]) if zero(z) => Some(("ult", x.clone(), one)),
+            ("compare.ne" | "compare.gt", [x, z]) if zero(z) => Some(("ule", one, x.clone())),
+            ("compare.ne" | "compare.lt", [z, x]) if zero(z) => Some(("ule", one, x.clone())),
+            ("compare.le", [x, y]) => Some(("ule", x.clone(), y.clone())),
+            ("compare.ge", [x, y]) => Some(("ule", y.clone(), x.clone())),
+            ("compare.eq", [x, y]) => Some(("ueq", x.clone(), y.clone())),
+            ("compare.ne", [x, y]) => Some(("une", x.clone(), y.clone())),
+            ("compare.lt", [x, y]) => Some(("ult", x.clone(), y.clone())),
+            ("compare.gt", [x, y]) => Some(("ult", y.clone(), x.clone())),
+            _ => None,
+        })
+    }
+
     /// A condition as a workgroup-uniform predicate (`bool.uflag`): a
     /// comparison of two uniform values, and the and, or and not of such;
     /// None for anything a thread's value or memory can change.
@@ -3626,6 +3698,17 @@ impl<'a> Ctx<'a> {
                     self.let_regs.insert(n, row);
                 }
             }
+            // A branch that ends in a return, statements after it (`if (cfg.pass_index
+            // == 0u) { ..; return; } ..`, 6 of run 1's seeds, 2026-10-17): the rest
+            // of the block is its else, `if (c) { .. } else { .. }`, the same
+            // statements on every path. A workgroup-uniform test over a barrier
+            // keeps its rung (the uniform predicate); any other reads its bodies
+            // at the conditional rung. (A return alone is the thread guard.)
+            if let Some(t) = self.early_return_branch(&BlockAt { block, position, last, next: index }, &here, rung)? {
+                out.push(t);
+                path.pop();
+                return Ok(out);
+            }
             let result: Result<Option<Tree>, String> = (|| {
                 match stmt {
                     Statement::Emit(_) => Ok(None),
@@ -3704,7 +3787,7 @@ impl<'a> Ctx<'a> {
                         // the 1,798 saved model kernels called `fmix` under an
                         // if and were refused it until 2026-10-17); one inside
                         // the helper's own if, loop or block is not inlined.
-                        if here.len() != 1 {
+                        if here.len() != 1 && self.early_return_at.as_deref() != Some(here.as_slice()) {
                             return Err(format!("a return {} of a helper (not inlined)", if cond { "under a condition" } else { "inside a block" }));
                         }
                         let root = self.root_at(&here, |k| matches!(k, RootKind::Return)).ok_or("no return root at this statement")?;
@@ -3752,20 +3835,7 @@ impl<'a> Ctx<'a> {
                         // 2026-10-17: v24 seeds' `if (cfg.pass_index == 0u)`. A
                         // literal 0 is no uniform value: `x == 0u` is `x < 1u`,
                         // `x != 0u` and `x > 0u` are `1u <= x`.)
-                        let zero = |t: &Tree| literal_value(t) == Some(0.0);
-                        let one = Tree::literal("literal.index", ty(self, "u32.index")?, 1.0);
-                        let uniform_le: Option<(&str, Tree, Tree)> = match (c.name.as_str(), c.kids.as_slice()) {
-                            ("compare.eq", [x, z]) | ("compare.eq", [z, x]) if zero(z) => Some(("ult", x.clone(), one.clone())),
-                            ("compare.ne" | "compare.gt", [x, z]) if zero(z) => Some(("ule", one.clone(), x.clone())),
-                            ("compare.ne" | "compare.lt", [z, x]) if zero(z) => Some(("ule", one.clone(), x.clone())),
-                            ("compare.le", [x, y]) => Some(("ule", x.clone(), y.clone())),
-                            ("compare.ge", [x, y]) => Some(("ule", y.clone(), x.clone())),
-                            ("compare.eq", [x, y]) => Some(("ueq", x.clone(), y.clone())),
-                            ("compare.ne", [x, y]) => Some(("une", x.clone(), y.clone())),
-                            ("compare.lt", [x, y]) => Some(("ult", x.clone(), y.clone())),
-                            ("compare.gt", [x, y]) => Some(("ult", y.clone(), x.clone())),
-                            _ => None,
-                        };
+                        let uniform_le = self.simple_test(&c)?;
                         // (Not a continue's or a break's guard, `if (cfg.d >= nwg.x)
                         // { continue; }`: no row continues at an L rung; read as the
                         // conditional it is. A sketch draw, 2026-10-14.)
@@ -5405,6 +5475,17 @@ pub fn read_safe_literal(source: &str, kingdom: &WgslKingdom) -> Result<SafeRead
     Ok(SafeRead { tree, notes, registers, role })
 }
 
+/// A statement of a block being walked: the block, the statement's position
+/// in it (Emits counted), the last non-Emit position, and the number the
+/// next statement takes.
+#[derive(Clone, Copy)]
+struct BlockAt<'b> {
+    block: &'b naga::Block,
+    position: usize,
+    last: Option<usize>,
+    next: usize,
+}
+
 /// A kernel text being read: the text, the kingdom, naga's reading of it
 /// (its roots made canonical) and its interface.
 struct Reading<'a> {
@@ -5477,11 +5558,19 @@ fn read_entry(at: &Reading, ep: usize, (grid, rows_x): ((u32, u32, u32, u32), bo
                 roots.entry(r.path.clone()).or_default().push(r);
             }
             several => {
-                let chain = guard_chain(&nf.body, several, &mut roots).ok_or_else(|| format!("helper {name} returns twice, not as guards `if (c) {{ return a; }}` before its last return (not inlined)"))?;
+                // Guards over its returns alone: a select chain. Otherwise (a
+                // helper with statements before or between its guards, `sgn`'s
+                // hash then `if (c) { return 1.0; } return -1.0;`, 8 of run 1's
+                // seeds, 2026-10-17) it is inlined as statements, each guard's
+                // return ending its branch, the rest of the helper the else.
+                let mut tried = roots.clone();
+                if let Some(chain) = guard_chain(&nf.body, several, &mut tried) {
+                    roots = tried;
+                    body = Some(chain);
+                }
                 for r in several {
                     roots.entry(r.path.clone()).or_default().push(r);
                 }
-                body = Some(chain);
             }
         }
         let pure = inits.is_empty() && arg_roots.is_empty() && roots.values().all(|rs| rs.iter().all(|r| matches!(r.kind, RootKind::Return)));
@@ -5548,7 +5637,7 @@ fn read_entry(at: &Reading, ep: usize, (grid, rows_x): ((u32, u32, u32, u32), bo
     let main_returns = source.find(&format!("fn {}(", entry.name)).map(|i| &source[i..]).and_then(|m| m.rfind('}').map(|j| &m[..j])).is_some_and(|m| m.trim_end().ends_with("return;"));
     let uniform_lanes = if role.uniform_struct.is_empty() { role.fields.iter().map(|f| f.name.clone()).collect() } else { Vec::new() };
     let (arrays, array_lens) = arrays;
-    let mut ctx = Ctx { kingdom, main_returns, per_kernel_rows: crate::wgsl::safe_karva::per_kernel_rows(kingdom, role), uniform_var: role.uniform_var.clone(), uniform_lanes, duals: &duals, lets: &lets, roots: &roots, item_counter: None, tile_counter: None, tile_counter2: None, tile_counter3: None, tile_counter4: None, registers: BTreeMap::new(), counter_stores: Vec::new(), guard: None, tail: true, arrays, array_lens, arrays_used: BTreeSet::new(), parrs: BTreeMap::new(), grid, rows_x: rows_x.then_some(true), notes: Vec::new(), helpers: &helpers, calls: &calls, arg_roots: &arg_roots, inline_args: None, outer_args: Vec::new(), row_arrays: BTreeMap::new(), used_counters: std::collections::BTreeSet::new(), local_lanes, axis_memo: BTreeMap::new(), loop_depth: 0, tile_bounds: BTreeMap::new(), naga_fn, module: &kernel.module, local_prefix: String::new(), inline_result: None, inline_values: None, bound_lets, stale_lets, let_regs: HashMap::new(), inlined: HashMap::new(), stored_seen: std::collections::BTreeSet::new(), counter_offsets: HashMap::new(), counter_exprs: HashMap::new(), pointer_args: HashMap::new(), mode_full: source.lines().any(|l| l.trim() == "// mode full") };
+    let mut ctx = Ctx { kingdom, main_returns, per_kernel_rows: crate::wgsl::safe_karva::per_kernel_rows(kingdom, role), uniform_var: role.uniform_var.clone(), uniform_lanes, duals: &duals, lets: &lets, roots: &roots, item_counter: None, tile_counter: None, tile_counter2: None, tile_counter3: None, tile_counter4: None, registers: BTreeMap::new(), counter_stores: Vec::new(), guard: None, tail: true, arrays, array_lens, arrays_used: BTreeSet::new(), parrs: BTreeMap::new(), grid, rows_x: rows_x.then_some(true), notes: Vec::new(), helpers: &helpers, calls: &calls, arg_roots: &arg_roots, inline_args: None, early_return_at: None, outer_args: Vec::new(), row_arrays: BTreeMap::new(), used_counters: std::collections::BTreeSet::new(), local_lanes, axis_memo: BTreeMap::new(), loop_depth: 0, tile_bounds: BTreeMap::new(), naga_fn, module: &kernel.module, local_prefix: String::new(), inline_result: None, inline_values: None, bound_lets, stale_lets, let_regs: HashMap::new(), inlined: HashMap::new(), stored_seen: std::collections::BTreeSet::new(), counter_offsets: HashMap::new(), counter_exprs: HashMap::new(), pointer_args: HashMap::new(), mode_full: source.lines().any(|l| l.trim() == "// mode full") };
     // Register initialisations first, in root order. A local initialised to
     // its form's fallback (0.0, 0u, false, a zero vector) costs nothing: the
     // register's declaration already holds that value, and the register is
@@ -6526,6 +6615,58 @@ fn search(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocati
         assert!(same >= MODULE_AST_FLOOR && fixpoint >= MODULE_FIXPOINT_FLOOR && legal >= MODULE_LEGAL_FLOOR, "below the floors reached: AST {same} (floor {MODULE_AST_FLOOR}), fixpoint {fixpoint} ({MODULE_FIXPOINT_FLOOR}), legal {legal} ({MODULE_LEGAL_FLOOR})");
     }
 
+    /// A BRANCH THAT RETURNS EARLY, AND A HELPER'S GUARDED RETURN AFTER ITS
+    /// STATEMENTS (2026-10-17, 8 of run 1's seeds): `if (cfg.pass_index ==
+    /// 0u) { ..barrier..; return; } ..barrier..` is `if (..) { .. } else { ..
+    /// }`, a uniform test over its barriers; `sgn` hashes into a local,
+    /// then `if ((h & 1u) == 0u) { return 1.0; } return -1.0;` is inlined as
+    /// statements, the guard's return its branch, the rest the else. The
+    /// module reads, renders, validates, reads back to the tree read
+    /// (canonical), a fixpoint, and passes every layer.
+    #[test]
+    fn an_early_return_branch_and_a_guarded_helper_return_read() {
+        let k = WgslKingdom::load_safe();
+        let contract = crate::wgsl::safety::Contract::parse("workgroups x 1 1024\nworkgroups y 1 1\nworkgroups z 1 1\nparam cfg.arrived_begin 0 1000000\n").unwrap();
+        let src = format!(
+            "{V24_BINDINGS}var<workgroup> red: array<f32, 64>;
+fn sgn(j: u32) -> f32 {{
+    var h = j * 40503u;
+    h = h ^ (h >> 15u);
+    if ((h & 1u) == 0u) {{ return 1.0; }}
+    return -1.0;
+}}
+@compute @workgroup_size(64, 1, 1)
+fn ingest(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) wid: vec3<u32>) {{
+    let row = cfg.arrived_begin + wid.x;
+    if (cfg.pass_index == 0u) {{
+        red[lid.x] = keys[(row & 1023u) * 64u + lid.x] * sgn(lid.x);
+        workgroupBarrier();
+        if (lid.x == 0u) {{ index_f32[row] = red[0]; }}
+        return;
+    }}
+    workgroupBarrier();
+    if (lid.x == 0u) {{ _ = atomicAdd(&index_u32[row & 1023u], 1u); }}
+}}
+@compute @workgroup_size(32, 1, 1)
+fn search(@builtin(global_invocation_id) gid: vec3<u32>) {{
+    if (gid.x < 4096u) {{ cands[gid.x] = atomicLoad(&index_u32[gid.x & 1023u]); }}
+}}
+"
+        );
+        let r = read_safe(&src, &k).unwrap_or_else(|e| panic!("{e}"));
+        assert!(r.tree.to_sexpr().contains("(stmt.if_else_ult_L0 "), "{}", r.tree.to_sexpr());
+        let out = crate::wgsl::safe_karva::render_tree_with(&r.tree, &k, &r.role).unwrap_or_else(|e| panic!("{e}"));
+        assert!(!out.text.contains("fn sgn"), "inlined:\n{}", out.text);
+        validate_text(&out.text).unwrap_or_else(|e| panic!("{e}\n{}", out.text));
+        let back = read_safe(&out.text, &k).unwrap_or_else(|e| panic!("read back: {e}\n{}", out.text));
+        let canon = crate::wgsl::canonical::canonical(&r.tree, &k);
+        assert!(canon == back.tree || back.tree == r.tree, "the rendered text reads back to the tree read: {:?}\n{}", crate::wgsl::render::first_difference(&canon, &back.tree), out.text);
+        let again = read_safe(&crate::wgsl::safe_karva::render_tree_with(&back.tree, &k, &back.role).unwrap().text, &k).unwrap();
+        assert!(again.tree == back.tree, "a fixpoint: {:?}", crate::wgsl::render::first_difference(&back.tree, &again.tree));
+        let checker = crate::wgsl::check::Checker::with_contract(&k, &r.role, &crate::wgsl::target::Target::recorded(), contract);
+        checker.check(&r.tree).unwrap_or_else(|e| panic!("{e}\n{}", out.text));
+    }
+
     /// MORE OF RUN 1'S SEEDS (2026-10-17, logs/V24/run1/kingdom_gaps.tsv):
     /// a uniform predicate over a barrier (`cfg.stage == 1u && wid.x < 4u`,
     /// `else if (p == 1u || p == 3u)`); an item loop that starts at 1 (`for
@@ -6743,7 +6884,9 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     /// guarded return, a select) over jitter's own argument. Their returns at their top
     /// level end them on every path; each is inlined with its locals under
     /// its own names; the kernel renders, naga validates it, it reads back to
-    /// the same tree and passes every layer.
+    /// the same tree and passes every layer. A guarded return after the
+    /// helper's statements reads (its branch, the rest the else); one inside
+    /// a loop of the helper is named.
     #[test]
     fn helpers_called_under_a_condition_and_from_a_helper_are_inlined() {
         let k = WgslKingdom::load_safe();
@@ -6804,11 +6947,17 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         let again = read_safe(&crate::wgsl::safe_karva::render_tree_with(&back.tree, &k, &back.role).unwrap().text, &k).unwrap();
         assert!(again.tree == back.tree, "a fixpoint: {:?}", crate::wgsl::render::first_difference(&back.tree, &again.tree));
         crate::wgsl::check::check(&r.tree, &k, &r.role, &crate::wgsl::target::Target::recorded()).unwrap_or_else(|e| panic!("{e}\n{}", out.text));
-        // A return inside the helper's own if is still not inlined, by name.
+        // A guarded return after the helper's statements is its branch, the
+        // rest of the helper the else (2026-10-17): it reads and validates.
         let inner = src.replace("    x = x ^ (x >> 13u);\n    return x;", "    if (x > 7u) { return x; }\n    return x + 1u;");
         assert_ne!(inner, src);
-        let Err(e) = read_safe(&inner, &k) else { panic!("a helper's conditional return inlined as statements") };
-        assert!(e.contains("a return under a condition of a helper") || e.contains("returns twice"), "{e}");
+        let r2 = read_safe(&inner, &k).unwrap_or_else(|e| panic!("a guarded helper return: {e}"));
+        validate_text(&crate::wgsl::safe_karva::render_tree_with(&r2.tree, &k, &r2.role).unwrap().text).unwrap();
+        // A return inside a loop of the helper is still not inlined, by name.
+        let looped = src.replace("    x = x ^ (x >> 13u);\n    return x;", "    for (var i = 0u; i < 4u; i++) { if (x > i) { return x; } }\n    return x + 1u;");
+        assert_ne!(looped, src);
+        let Err(e) = read_safe(&looped, &k) else { panic!("a return inside a helper's loop inlined as statements") };
+        assert!(e.contains("of a helper (not inlined)"), "{e}");
     }
 
     /// The claim the kingdom's missing compare-exchange rests on, measured
