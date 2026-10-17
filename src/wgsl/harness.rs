@@ -5219,4 +5219,28 @@ fn search() { cands[0] = cfg.stage; }
         }
         println!("{w:?}");
     }
+
+    /// THE v24 REFERENCE ON THE DEVICE (GPU; run by the session that owns
+    /// the GPU): problems/v24_ingest_small whole (five stages, 250 queries,
+    /// 32 MiB arenas, three timing runs) through Harness::new and evaluate
+    /// on the device executor: every entry its own pipeline, every dispatch
+    /// timed. Feasible, B 0 in every window, 30 + 3 x 10 inputs, θ the
+    /// library's; the windows and the per-stage ms printed.
+    #[cfg(feature = "gpu")]
+    #[test]
+    fn the_v24_reference_runs_on_the_device() {
+        let dev = crate::wgsl::oracle::device::Device::new().expect("device");
+        let exec = DeviceExecutor::new(&dev);
+        let t0 = Instant::now();
+        let h = Harness::new(v24_small(), &exec).unwrap();
+        let f = h.evaluate(&h.problem.reference);
+        println!("v24 reference on the device: {:.1} s; θ {:.6}; {} inputs {:?}; {}", t0.elapsed().as_secs_f64(), f.hff, f.inputs.len(), f.inputs, f.detail);
+        assert!(f.feasible, "{f:?}");
+        assert_eq!(f.inputs.len(), 5 * 2 * 3 + 3 * 5 * 2);
+        for w in f.inputs.chunks(3).take(10) {
+            assert_eq!(w[2], 0.0, "brute force returns only arrived rows");
+        }
+        let library = hff_core::core_functions::calculate_single_hyperspherical_fitness_f64_with_method(&ndarray::Array1::from(f.inputs.clone()), f.inputs.len(), false, None, "truenorth");
+        assert_eq!(f.hff.to_bits(), library.to_bits());
+    }
 }
