@@ -339,7 +339,8 @@ count = "seeds"
 [[setup.body]]
 buffer = "queries{s}"
 element = "f32"
-elements = "n_oracle * d"
+# The judged queries only (all the oracles unless a case judges fewer).
+elements = "n_queries * d"
 from = "queries{s}"
 
 [[setup.body]]

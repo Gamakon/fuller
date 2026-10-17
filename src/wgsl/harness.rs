@@ -1295,7 +1295,56 @@ fn read_toml<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T, String> {
     toml::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))
 }
 
+/// A manifest's cases, its files resolved (`<problem>/<manifest>`).
+fn read_cases(dir: &Path, manifest_path: &str) -> Result<Vec<Case>, String> {
+    let mpath = dir.join(manifest_path);
+    let manifest: Manifest = read_toml(&mpath)?;
+    let mdir = mpath.parent().unwrap_or(dir).to_path_buf();
+    let root = match &manifest.root {
+        Some(r) if Path::new(r).is_absolute() => PathBuf::from(r),
+        Some(r) => mdir.join(r),
+        None => mdir,
+    };
+    Ok(manifest
+        .case
+        .into_iter()
+        .map(|c| {
+            let base = match &c.dir {
+                Some(d) => root.join(d),
+                None => root.clone(),
+            };
+            Case {
+                label: c.label.clone().unwrap_or_else(|| c.name.clone()),
+                name: c.name,
+                params: c.params,
+                inputs: c.inputs.into_iter().map(|(k, v)| (k, base.join(v))).collect(),
+                expected: c.expected.into_iter().map(|(k, v)| (k, v.into_iter().map(|f| base.join(f)).collect())).collect(),
+            }
+        })
+        .collect())
+}
+
+/// ONE RUN OF A KERNEL'S TEXT ON ONE CASE ON THE CPU EXECUTOR (its own
+/// WGSL interpreted, `cpu.rs`): compile, the case's data, its plan, its
+/// resident buffers, one run with every read. A differential check (a
+/// design's text against its rendering) compares the outputs' bytes.
+pub fn cpu_run(problem: &Problem, case: &Case, source: &str, binding_limit: u64) -> Result<RunOut, String> {
+    let exec = CpuExecutor::new(binding_limit);
+    let (k, info) = exec.compile(problem, source)?;
+    let data = problem.case_data(case, binding_limit)?;
+    let plan = problem.plan(case, binding_limit, Some(&info))?;
+    let (staged, _) = exec.stage(&plan, &data)?;
+    exec.run(&k, &plan, &data, &staged, true)
+}
+
 impl Problem {
+    /// The cases of a manifest that is no suite of the problem (a v24
+    /// problem's `cases/admission.toml`: a small unjudged case for a
+    /// differential check), its path relative to the problem.
+    pub fn cases_of(&self, manifest_path: &str) -> Result<Vec<Case>, String> {
+        read_cases(&self.dir, manifest_path)
+    }
+
     /// Read `dir/problem.toml` and every suite's manifest, and check the
     /// schema (no case data is read: [`Problem::case_data`] does).
     pub fn load(dir: &Path) -> Result<Problem, String> {
@@ -1304,32 +1353,7 @@ impl Problem {
         let reference = std::fs::read_to_string(&reference_path).map_err(|e| format!("{}: {e}", reference_path.display()))?;
         let mut suites = Vec::new();
         for s in &spec.suite {
-            let mpath = dir.join(&s.cases);
-            let manifest: Manifest = read_toml(&mpath)?;
-            let mdir = mpath.parent().unwrap_or(dir).to_path_buf();
-            let root = match &manifest.root {
-                Some(r) if Path::new(r).is_absolute() => PathBuf::from(r),
-                Some(r) => mdir.join(r),
-                None => mdir,
-            };
-            let cases = manifest
-                .case
-                .into_iter()
-                .map(|c| {
-                    let base = match &c.dir {
-                        Some(d) => root.join(d),
-                        None => root.clone(),
-                    };
-                    Case {
-                        label: c.label.clone().unwrap_or_else(|| c.name.clone()),
-                        name: c.name,
-                        params: c.params,
-                        inputs: c.inputs.into_iter().map(|(k, v)| (k, base.join(v))).collect(),
-                        expected: c.expected.into_iter().map(|(k, v)| (k, v.into_iter().map(|f| base.join(f)).collect())).collect(),
-                    }
-                })
-                .collect();
-            suites.push(Suite { spec: s.clone(), cases });
+            suites.push(Suite { spec: s.clone(), cases: read_cases(dir, &s.cases)? });
         }
         let p = Problem { dir: dir.to_path_buf(), spec, suites, reference };
         p.check()?;
@@ -5267,5 +5291,87 @@ fn search() { cands[0] = cfg.stage; }
         }
         let library = hff_core::core_functions::calculate_single_hyperspherical_fitness_f64_with_method(&ndarray::Array1::from(f.inputs.clone()), f.inputs.len(), false, None, "truenorth");
         assert_eq!(f.hff.to_bits(), library.to_bits());
+    }
+
+    /// THE FULL SET'S REFERENCE RETURNS CANDIDATES AT STAGE 1 (run 1's
+    /// gen-0 tree rows r0 and r33 judged P ~2 a query and x_M 1 on
+    /// problems/v24_ingest, 03:10Z): problems/v24_ingest cut to stage 1 and
+    /// its first 2 oracles, on the CPU executor (8 oracles took 443 s:
+    /// the text gave about 100 candidates a query and missed nothing, today
+    /// 0; the rendering 2 a query, 40 of 50 and 24 of 30 missed). Both the reference's own
+    /// text and the safe kingdom's rendering of it (what a `tree` row runs:
+    /// flow::shipped_gates) must give every query 64 arrived rows a seed (P
+    /// 64..256 a query, B 0) and miss no more than today's index on every
+    /// window, and the two must give the same candidates.
+    #[test]
+    #[ignore = "fails until the kingdom's rendering fix (B6): the rendering of the reference returns about 2 candidates a query"]
+    fn the_full_v24_reference_and_its_rendering_return_candidates_at_stage_1() {
+        let case_dir = Path::new("/Users/andrewmorgan/data/arm/v24_case");
+        if !case_dir.join("case.json").exists() {
+            println!("{} is not present: not run", case_dir.display());
+            return;
+        }
+        let src = root().join("problems/v24_ingest");
+        let dir = std::env::temp_dir().join("fuller_harness_v24_full_s1");
+        std::fs::create_dir_all(dir.join("cases")).unwrap();
+        let reference = root().join("problems/v24_ingest_small/reference.wgsl");
+        let text = std::fs::read_to_string(src.join("problem.toml")).unwrap().replace("reference = \"../v24_ingest_small/reference.wgsl\"", &format!("reference = {:?}", reference.display().to_string())).replace("timing_rounds = 3", "timing_rounds = 1").replace("deadline_factor = 20.0\ndeadline_floor_ms = 120000.0\n", "");
+        assert!(text.contains("timing_rounds = 1") && !text.contains("deadline_factor"));
+        std::fs::write(dir.join("problem.toml"), text).unwrap();
+        let manifest = std::fs::read_to_string(src.join("cases/stream.toml")).unwrap().replace("stages = 3,", "stages = 1,").replacen("params = { ", "params = { n_queries = 2, arena_u32 = 1024, arena_f32 = 1024, ", 1);
+        assert!(manifest.contains("stages = 1,"));
+        std::fs::write(dir.join("cases/stream.toml"), manifest).unwrap();
+        let exec = CpuExecutor::new(LIMIT);
+        let h = Harness::new(Problem::load(&dir).unwrap(), &exec).unwrap();
+        let kingdom = crate::wgsl::loader::WgslKingdom::load_safe();
+        let rendered = crate::wgsl::flow::shipped_gates(&src, &kingdom, &crate::wgsl::roundtrip::Trial::default()).unwrap().rendered;
+        let s = &h.constraint[0];
+        let out = h.problem.pooled_output().unwrap().clone();
+        let mut lists = Vec::new();
+        let mut bad = Vec::new();
+        for (form, kernel) in [("text", h.problem.reference.clone()), ("rendered", rendered)] {
+            let (k, info) = exec.compile(&h.problem, &kernel).unwrap_or_else(|e| panic!("{form}: {e}"));
+            let plan = h.problem.plan(&s.case, LIMIT, Some(&info)).unwrap();
+            let r = exec.run(&k, &plan, &s.data, &s.staged, true).unwrap_or_else(|e| panic!("{form}: {e}"));
+            let w = pooled_windows(&h.problem, &out, &s.env, &s.data, &r.outputs[0]).unwrap();
+            println!("{form}: {w:?}");
+            for x in &w {
+                if x.broken != 0 || x.pooled < 64 * x.queries || x.pooled > 256 * x.queries || x.misses > x.misses_today {
+                    bad.push(format!("{form}: {x:?}"));
+                }
+            }
+            lists.push(u32s(&r.outputs[0]));
+        }
+        assert!(bad.is_empty(), "{}", bad.join("\n"));
+        assert_eq!(lists[0], lists[1], "the rendering's candidates differ from the text's");
+    }
+
+    /// THE ADMISSION CASE (an unjudged cut of the small set for phylu's
+    /// differential admission: 2 stages of 32 rows, 16 queries, 64 Ki-word
+    /// arenas): problems/v24_ingest_small/cases/admission.toml loads, its
+    /// plan binds 32 then 64 arrived rows, and the reference's text run on it
+    /// by `cpu_run` gives 64 arrived rows a query a seed (stage 1 holds 32
+    /// rows: 32 and 32 pads). Timed, printed.
+    #[test]
+    fn the_v24_admission_case_runs_on_the_cpu_executor() {
+        let p = v24_small();
+        let cases = p.cases_of("cases/admission.toml").unwrap();
+        assert_eq!(cases.len(), 1);
+        let c = &cases[0];
+        if !c.inputs.values().all(|f| f.exists()) {
+            println!("the small case files are not present: not run");
+            return;
+        }
+        let t = Instant::now();
+        let r = cpu_run(&p, c, &p.reference, LIMIT).unwrap();
+        println!("the reference on the admission case: {:.1} s", t.elapsed().as_secs_f64());
+        let got = u32s(&r.outputs[0]);
+        assert_eq!(got.len(), 2 * 4 * 16 * 64);
+        for (i, list) in got.chunks(64).enumerate() {
+            let stage = i / (4 * 16) + 1;
+            let rows: Vec<u32> = list.iter().copied().filter(|&x| x != PAD).collect();
+            assert_eq!(rows.len(), (32 * stage).min(64), "list {i}");
+            assert!(rows.iter().all(|&x| (x as usize) < 32 * stage), "list {i}: {rows:?}");
+        }
     }
 }
