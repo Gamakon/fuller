@@ -3033,4 +3033,12 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 | F1600 | `wg.put_v2_L5` | `composite` | `wgmem<vec2<f32>>.real u32.wgown vec2<f32>.real` | `stmt.L5` | 3 | arity 3: barrier; if (i < len) { v2a[i] = v; } barrier |
 | F1601 | `wg.put_u_L5` | `composite` | `wgmem<u32>.index u32.wgown u32.index` | `stmt.L5` | 3 | arity 3: barrier; if (i < len) { ua[i] = v; } barrier |
 
-1601 function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Storage-buffer atomics are an interface's per-kernel rows, not rows of this table. Deliberately absent: atomic compare-exchange (naga 0.20's Metal backend lacks it), subgroupBallot, images, derivatives, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.
+## class `kernel`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F1602 | `kernel.module_2` | `composite` | `kernel.safe kernel.safe` | `kernel.module` | 2 | arity 2: a module of 2 entry points, the interface's names in order, the shared declarations once |
+| F1603 | `kernel.module_3` | `composite` | `kernel.safe kernel.safe kernel.safe` | `kernel.module` | 3 | arity 3: a module of 3 entry points, the interface's names in order, the shared declarations once |
+| F1604 | `kernel.module_4` | `composite` | `kernel.safe kernel.safe kernel.safe kernel.safe` | `kernel.module` | 4 | arity 4: a module of 4 entry points, the interface's names in order, the shared declarations once |
+
+1604 function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Storage-buffer atomics are an interface's per-kernel rows, not rows of this table. Deliberately absent: atomic compare-exchange (naga 0.20's Metal backend lacks it), subgroupBallot, images, derivatives, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.

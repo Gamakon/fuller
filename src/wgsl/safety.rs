@@ -43,7 +43,7 @@ use std::fmt;
 
 use naga::{AddressSpace, BinaryOperator, Block, Expression, Function, Handle, MathFunction, Module, ScalarKind, Statement, TypeInner};
 
-use crate::wgsl::interface::{infer, ModuleInterface, Use};
+use crate::wgsl::interface::{compute_entries, infer_entry, ModuleInterface, Use};
 
 pub const U32_MAX: i128 = u32::MAX as i128;
 const BIG: i128 = 1 << 100;
@@ -481,6 +481,8 @@ type LocalKey = (Option<Handle<Function>>, Handle<naga::LocalVariable>);
 
 struct An<'m> {
     module: &'m Module,
+    /// The compute entry point proved (one dispatch).
+    entry: String,
     contract: &'m Contract,
     iface: ModuleInterface,
     wg: [u32; 3],
@@ -2382,7 +2384,7 @@ impl<'m> An<'m> {
     }
 
     fn walk_entry(&mut self) {
-        let ep = self.module.entry_points.iter().find(|e| e.stage == naga::ShaderStage::Compute).expect("an entry point (checked)");
+        let ep = self.module.entry_points.iter().find(|e| e.stage == naga::ShaderStage::Compute && e.name == self.entry).expect("the entry point (checked)");
         let f = &ep.function;
         self.env.clear();
         self.privates.clear();
@@ -2823,10 +2825,32 @@ impl Ineq {
 
 /// Prove `module` safe under `contract`, or name the first rule it breaks.
 pub fn check_module(module: &Module, contract: &Contract) -> Result<Report, Unsafe> {
-    let iface = infer(module).map_err(|e| unsafe_("interface", e))?;
+    // Every compute entry point of the module, each its own dispatch under
+    // its own interface (v24's `ingest` and `search`, 2026-10-17); the first
+    // that fails, named; the reports summed.
+    let names = compute_entries(module);
+    if names.is_empty() {
+        return Err(unsafe_("interface", "no compute entry point".into()));
+    }
+    let several = names.len() > 1;
+    let mut total = Report { write_sites: 0, read_sites: 0, workgroup_sites: 0, pairs: 0 };
+    for name in &names {
+        let r = check_entry(module, contract, name).map_err(|e| if several { Unsafe { detail: format!("entry point {name}: {}", e.detail), ..e } } else { e })?;
+        total.write_sites += r.write_sites;
+        total.read_sites += r.read_sites;
+        total.workgroup_sites += r.workgroup_sites;
+        total.pairs += r.pairs;
+    }
+    Ok(total)
+}
+
+/// [`check_module`] for the compute entry point `entry` alone.
+fn check_entry(module: &Module, contract: &Contract, entry: &str) -> Result<Report, Unsafe> {
+    let iface = infer_entry(module, entry).map_err(|e| unsafe_("interface", e))?;
     let wg = iface.workgroup_size;
     let mut an = An {
         module,
+        entry: entry.to_string(),
         contract,
         iface,
         wg,
@@ -3118,6 +3142,19 @@ mod tests {
         // (A masked hash is a bounded digit: affine, and shared by invocations.)
         assert_eq!(rule(&k("    plain[b] = gid.x;"), &c), "write_sets_overlap");
         assert_eq!(rule(&k("    _ = atomicAdd(&idx[b], 1u);\n    plain[0u] = gid.x;"), &c), "write_sets_overlap");
+    }
+
+    /// TWO ENTRY POINTS (2026-10-17): each is proved as its own dispatch,
+    /// under its own interface; a race in the second is named with it.
+    #[test]
+    fn every_entry_point_of_a_module_is_proved() {
+        let c = one_d();
+        let m = |search: &str| format!("@group(0) @binding(0) var<storage, read> keys: array<f32>;\n@group(0) @binding(1) var<storage, read_write> idx: array<atomic<u32>>;\n@group(0) @binding(2) var<storage, read_write> out: array<u32>;\n@compute @workgroup_size(16, 1, 1)\nfn ingest(@builtin(global_invocation_id) gid: vec3<u32>) {{\n    _ = atomicAdd(&idx[bitcast<u32>(keys[gid.x]) & 63u], 1u);\n}}\n@compute @workgroup_size(16, 1, 1)\nfn search(@builtin(global_invocation_id) gid: vec3<u32>) {{\n{search}\n}}\n");
+        let both = proved(&m("    out[gid.x] = atomicLoad(&idx[gid.x & 63u]);"), &c);
+        assert_eq!(both.write_sites, 2, "the atomicAdd of ingest and the store of search: {both:?}");
+        let e = check_text(&m("    out[0u] = atomicLoad(&idx[gid.x & 63u]);"), &c).expect_err("every invocation of search writes out[0]");
+        assert_eq!(e.rule, "write_sets_overlap");
+        assert!(e.detail.starts_with("entry point search: "), "{e}");
     }
 
     /// One value written twice is one value (2026-10-14): a cell's offset

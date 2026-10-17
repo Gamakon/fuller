@@ -120,6 +120,11 @@ pub struct Role {
     /// The entry point's name the renderer writes (`main`; an inferred
     /// interface keeps its module's, nluca's `generated_step`).
     pub entry: String,
+    /// Every compute entry point of the module, in its order (`entry` the
+    /// first): one for a single kernel; two to four for a module whose
+    /// entry points share the bindings (v24's `ingest` and `search`, a gene
+    /// rooted at `kernel.module_N`).
+    pub entries: Vec<String>,
 }
 
 /// A kernel interface as declared: what [`Role::interface`] builds a role from.
@@ -152,7 +157,7 @@ impl Role {
             }
             prologue.push_str(&format!("@group({}) @binding({}) var<{}> {}: {};", b.group, b.binding, b.space, b.name, b.ty));
         }
-        let mut role = Role { name: name.into(), prologue, items: String::new(), per_kernel: Vec::new(), bindings, uniform_var: uniform_var.into(), uniform_struct: uniform_struct.into(), fields, input: input.into(), output: output.into(), guard: guard.into(), entry: "main".into() };
+        let mut role = Role { name: name.into(), prologue, items: String::new(), per_kernel: Vec::new(), bindings, uniform_var: uniform_var.into(), uniform_struct: uniform_struct.into(), fields, input: input.into(), output: output.into(), guard: guard.into(), entry: "main".into(), entries: vec!["main".into()] };
         role.items = role.field("m");
         let pk = |name: &str, inputs: &[&str], output: &str, template: String| PerKernel { name: name.into(), inputs: inputs.iter().map(|s| s.to_string()).collect(), output: output.into(), template };
         let (i, o) = (input, output);
@@ -426,8 +431,28 @@ impl Role {
             }
         }
         role.entry = i.entry.clone();
+        role.entries = vec![i.entry.clone()];
         role
     }
+
+    /// The root dual of a gene under this interface: `kernel.module` for a
+    /// module of several entry points, else `kernel.safe`.
+    pub fn root_dual(&self) -> &'static str {
+        if self.entries.len() > 1 { "kernel.module" } else { "kernel.safe" }
+    }
+
+    /// This interface at one of its entry points alone (the checker proves a
+    /// module entry by entry: each is its own dispatch).
+    pub fn at_entry(&self, entry: &str) -> Role {
+        Role { entry: entry.to_string(), entries: vec![entry.to_string()], ..self.clone() }
+    }
+}
+
+/// The interface of a module's compute entry points together
+/// ([`crate::wgsl::interface::infer`]: a binding any of them writes an
+/// output) and their names in the module's order.
+pub fn infer_entries(module: &naga::Module) -> Result<(crate::wgsl::interface::ModuleInterface, Vec<String>), String> {
+    Ok((crate::wgsl::interface::infer(module)?, crate::wgsl::interface::compute_entries(module)))
 }
 
 /// The declared interfaces by name (a kernel names its own in a
@@ -447,7 +472,16 @@ pub fn role_named(name: &str) -> Result<Role, String> {
 pub fn interface_of(source: &str) -> Result<Role, String> {
     match source.lines().map(str::trim).find_map(|l| l.strip_prefix("// interface ")) {
         Some(name) => role_named(name.trim()),
-        None => Ok(Role::inferred(&crate::wgsl::interface::infer_text(source)?)),
+        None => {
+            let module = naga::front::wgsl::parse_str(source).map_err(|e| e.emit_to_string(source))?;
+            let (i, entries) = infer_entries(&module)?;
+            if entries.len() > 4 {
+                return Err(format!("a module of {} entry points: the kingdom's module holds at most four (kernel.module_4)", entries.len()));
+            }
+            let mut role = Role::inferred(&i);
+            role.entries = entries;
+            Ok(role)
+        }
     }
 }
 
@@ -562,11 +596,33 @@ impl Grid {
     pub fn header(&self) -> String {
         format!("// grid {} {} {} {}{}", self.x, self.y, self.bx, self.by, if self.rows_x { " rows-x" } else { "" })
     }
+
+    /// The grid line of one entry point of a module (`// entry <name> grid
+    /// x y bx by [rows-x]`): the reader reads each entry point's from its own.
+    pub fn entry_header(&self, entry: &str) -> String {
+        format!("// entry {entry} grid {} {} {} {}{}", self.x, self.y, self.bx, self.by, if self.rows_x { " rows-x" } else { "" })
+    }
+}
+
+/// One entry point as the renderer writes it, before the module is
+/// assembled ([`Renderer::kernel`]).
+struct EntryText {
+    name: String,
+    grid: Grid,
+    /// The workgroup arrays it declares: variable, element type, length.
+    wg: BTreeMap<String, (String, u32)>,
+    helpers: Vec<String>,
+    masked: Vec<String>,
+    /// Its body's statements (what the pass-through functions are looked for in).
+    body: String,
+    /// Its whole function, `@compute ... fn <name>(...) { ... }`.
+    function: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Rendered {
     pub text: String,
+    /// The grid of the first entry point (of the only one, for a kernel).
     pub grid: Grid,
     /// Composite helpers the text uses, by name.
     pub helpers: Vec<String>,
@@ -574,6 +630,8 @@ pub struct Rendered {
     /// in non-uniform control flow), each named; the typed projection's
     /// masking, at the statement level.
     pub masked: Vec<String>,
+    /// Every entry point written, in order, with its grid.
+    pub entries: Vec<(String, Grid)>,
 }
 
 pub const WGDIM: [u32; 4] = [4, 8, 16, 32];
@@ -875,8 +933,76 @@ impl<'a> Renderer<'a> {
     }
 
     /// Render a whole kernel: the root must be `kernel.entry` or a
-    /// `fallback` of the kernel dual (an empty kernel).
+    /// `fallback` of the kernel dual (an empty kernel), or a module of
+    /// several entry points (`kernel.module_N`, or its fallback: an empty
+    /// kernel at each), one per entry point the interface names, in its
+    /// order; the bindings, the workgroup arrays and the helpers written
+    /// once for the module.
     pub fn kernel(&self, root: &Tree) -> Result<Rendered, String> {
+        if self.dual(root.ty)?.dual == "kernel.module" {
+            let kids: Vec<Tree> = match root.name.as_str() {
+                "fallback" => vec![Tree::fallback(dual_ty(self.kingdom, "kernel.safe")?); self.role.entries.len()],
+                n if n.starts_with("kernel.module_") => root.kids.clone(),
+                other => return Err(format!("{other} is not a module row")),
+            };
+            if kids.len() != self.role.entries.len() || kids.len() < 2 {
+                return Err(format!("a module of {} entry points under an interface of {} ({:?})", kids.len(), self.role.entries.len(), self.role.entries));
+            }
+            let parts = kids.iter().zip(&self.role.entries).map(|(k, e)| self.entry(k, e).map_err(|err| format!("entry point {e}: {err}"))).collect::<Result<Vec<_>, _>>()?;
+            return Ok(self.assemble(parts));
+        }
+        let part = self.entry(root, &self.role.entry)?;
+        Ok(self.assemble(vec![part]))
+    }
+
+    /// The module text of rendered entry points: the interface's prologue,
+    /// the workgroup arrays any of them declares (an array two declare at
+    /// different lengths at the larger; each indexes it within its own),
+    /// the pass-through functions and kingdom helpers any of them calls,
+    /// then each entry point's function.
+    fn assemble(&self, parts: Vec<EntryText>) -> Rendered {
+        let mut text = String::new();
+        text.push_str(&self.role.prologue);
+        text.push('\n');
+        let mut wg: BTreeMap<String, (String, u32)> = BTreeMap::new();
+        for p in &parts {
+            for (var, (elem, len)) in &p.wg {
+                let e = wg.entry(var.clone()).or_insert_with(|| (elem.clone(), *len));
+                e.1 = e.1.max(*len);
+            }
+        }
+        for (var, (elem, len)) in &wg {
+            text.push_str(&format!("var<workgroup> {var}: array<{elem}, {len}>;\n"));
+        }
+        // The pass-through functions a literal-only expression needs (see
+        // `Scope::const_depth`), declared only when a body uses them.
+        for (name, ty) in [("lit_f32", "f32"), ("lit_u32", "u32"), ("lit_i32", "i32"), ("lit_bool", "bool")] {
+            if parts.iter().any(|p| p.body.contains(&format!("{name}("))) {
+                text.push_str(&format!("fn {name}(x: {ty}) -> {ty} {{ return x; }}\n"));
+            }
+        }
+        let mut helpers: Vec<String> = parts.iter().flat_map(|p| p.helpers.iter().cloned()).collect();
+        helpers.sort();
+        helpers.dedup();
+        for h in &helpers {
+            // (Every helper an entry names has a body: `entry` checked it.)
+            if let Some((_, body)) = COMPOSITES.iter().find(|(n, _)| n == h) {
+                text.push_str(body);
+                text.push('\n');
+            }
+        }
+        for p in &parts {
+            text.push_str(&p.function);
+        }
+        let entries: Vec<(String, Grid)> = parts.iter().map(|p| (p.name.clone(), p.grid)).collect();
+        let grid = parts.first().map_or(Grid { x: 16, y: 16, bx: 1, by: 1, rows_x: false }, |p| p.grid);
+        Rendered { text, grid, helpers, masked: parts.into_iter().flat_map(|p| p.masked).collect(), entries }
+    }
+
+    /// One entry point named `name` from a safe kernel root (`kernel.entry`,
+    /// `kernel.entry_safe` or a fallback of either): its function's text,
+    /// the workgroup arrays it declares, the helpers it calls.
+    fn entry(&self, root: &Tree, name: &str) -> Result<EntryText, String> {
         // Every knob reference written as the value its kernel's knobs give.
         let resolved = crate::wgsl::params::resolve(root)?;
         let root = &resolved;
@@ -931,35 +1057,18 @@ impl<'a> Renderer<'a> {
         if grid.x * grid.y > MAX_THREADS {
             return Err(format!("workgroup {} x {} exceeds {MAX_THREADS} threads", grid.x, grid.y));
         }
-        let mut text = String::new();
-        text.push_str(&self.role.prologue);
-        text.push('\n');
-        if scope.wg.is_empty() {
+        let wg: BTreeMap<String, (String, u32)> = if scope.wg.is_empty() {
             // The default workgroup arrays, each only when the body names it.
-            for (var, decl) in [("wg_a", format!("array<f32, {WGMEM_LEN}>")), ("wg_b", format!("array<f32, {WGMEM_LEN}>")), ("wg_va", format!("array<vec4<f32>, {WGVEC_LEN}>")), ("wg_vb", format!("array<vec4<f32>, {WGVEC_LEN}>"))] {
-                if names_word(&body, var) {
-                    text.push_str(&format!("var<workgroup> {var}: {decl};\n"));
-                }
-            }
+            [("wg_a", "f32", WGMEM_LEN), ("wg_b", "f32", WGMEM_LEN), ("wg_va", "vec4<f32>", WGVEC_LEN), ("wg_vb", "vec4<f32>", WGVEC_LEN)].iter().filter(|(var, _, _)| names_word(&body, var)).map(|(var, elem, len)| (var.to_string(), (elem.to_string(), *len))).collect()
         } else {
-            for (var, (elem, len)) in &scope.wg {
-                text.push_str(&format!("var<workgroup> {var}: array<{elem}, {len}>;\n"));
-            }
-        }
-        // The pass-through functions a literal-only expression needs (see
-        // `Scope::const_depth`), declared only when the body uses them.
-        for (name, ty) in [("lit_f32", "f32"), ("lit_u32", "u32"), ("lit_i32", "i32"), ("lit_bool", "bool")] {
-            if body.contains(&format!("{name}(")) {
-                text.push_str(&format!("fn {name}(x: {ty}) -> {ty} {{ return x; }}\n"));
-            }
-        }
+            scope.wg.clone()
+        };
         scope.helpers.sort();
         scope.helpers.dedup();
-        for h in &scope.helpers {
-            let (_, body) = COMPOSITES.iter().find(|(n, _)| n == h).ok_or_else(|| format!("composite {h} has no body"))?;
-            text.push_str(body);
-            text.push('\n');
+        if let Some(h) = scope.helpers.iter().find(|h| !COMPOSITES.iter().any(|(n, _)| n == h)) {
+            return Err(format!("composite {h} has no body"));
         }
+        let mut text = String::new();
         // The subgroup values a kernel reads (they need the device's subgroup
         // feature, so a kernel that reads none does not declare them). naga
         // refuses @builtin(subgroup_invocation_id) and @builtin(subgroup_id)
@@ -980,7 +1089,7 @@ impl<'a> Renderer<'a> {
             .filter(|(var, _)| if *var == "sg_lane" || *var == "sg_index" { flat && body.contains(var) } else { body.contains(var) || (*var == "sg_size" && lets.contains(var)) })
             .map(|(var, b)| format!(", @builtin({b}) {var}: u32"))
             .collect();
-        text.push_str(&format!("@compute @workgroup_size({}, {}, 1)\nfn {}(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_index) lidx: u32, @builtin(num_workgroups) nwg: vec3<u32>{subgroup_args}) {{\n", grid.x, grid.y, self.role.entry));
+        text.push_str(&format!("@compute @workgroup_size({}, {}, 1)\nfn {name}(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_index) lidx: u32, @builtin(num_workgroups) nwg: vec3<u32>{subgroup_args}) {{\n", grid.x, grid.y));
         // The registers, counters and private arrays of the kingdom's rows:
         // 32 f32, 16 vec4, 32 u32, 8 bool registers; six f32, two vec4, three
         // u32 and two bool private arrays.
@@ -988,7 +1097,7 @@ impl<'a> Renderer<'a> {
         text.push_str(&register_declarations_for(&body));
         text.push_str(&body);
         text.push_str("}\n");
-        Ok(Rendered { text, grid, helpers: scope.helpers, masked: scope.masked })
+        Ok(EntryText { name: name.to_string(), grid, wg, helpers: scope.helpers, masked: scope.masked, body, function: text })
     }
 
     fn grid(&self, g: &Tree) -> Result<Grid, String> {
@@ -1546,6 +1655,10 @@ impl<'a> Renderer<'a> {
     /// mutation's join keeps it within the device's limit, so a child is
     /// never silently given shorter arrays than its references assume.
     pub fn workgroup_request(&self, root: &Tree) -> Result<u64, String> {
+        // A module: its most demanding entry point (each runs as its own pipeline).
+        if root.name.starts_with("kernel.module_") {
+            return root.kids.iter().map(|k| self.workgroup_request(k)).try_fold(0, |m, r| r.map(|r| m.max(r)));
+        }
         let root = crate::wgsl::params::resolve(root)?;
         let Some(grid) = root.kids.first().filter(|_| root.name == "kernel.entry_safe") else { return Ok(0) };
         Ok(plan_bytes(&self.workgroup_plan_requested(grid, &root)?))

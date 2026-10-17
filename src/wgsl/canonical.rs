@@ -511,6 +511,11 @@ fn origins(t: &Tree, g: &crate::wgsl::render::Grid, kingdom: &WgslKingdom) -> Tr
 
 /// The canonical spelling of `t` (see the module header for the rules).
 pub fn canonical(t: &Tree, kingdom: &WgslKingdom) -> Tree {
+    // A module of entry points: each entry point's own spelling (each is
+    // written and read as a kernel of its own; the module adds none).
+    if t.name.starts_with("kernel.module_") {
+        return Tree { kids: t.kids.iter().map(|k| canonical(k, kingdom)).collect(), ..t.clone() };
+    }
     // Knob references first, at the drawn grid's knobs (rule 4).
     let t = params::to_literals(t, kingdom).unwrap_or_else(|_| t.clone());
     let c = degrees(&structural(&t, kingdom), kingdom);

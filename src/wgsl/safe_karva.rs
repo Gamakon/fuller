@@ -639,11 +639,11 @@ pub fn per_kernel_rows(kingdom: &WgslKingdom, role: &Role) -> Vec<PerKernelRow> 
 }
 
 /// A gene text projected onto the kingdom's rows and the role's per-kernel
-/// rows under the root demand `kernel.safe`: the typed tree the renderer
-/// takes.
+/// rows under the root demand `kernel.safe` (`kernel.module` under an
+/// interface of several entry points): the typed tree the renderer takes.
 pub fn build(text: &str, kingdom: &WgslKingdom, role: &Role) -> Result<Tree, String> {
     let node = parse_math(text)?;
-    let root = dual_ty(kingdom, "kernel.safe")?;
+    let root = dual_ty(kingdom, role.root_dual())?;
     Ok(project(&node, root, kingdom, &per_kernel_rows(kingdom, role)))
 }
 
@@ -981,7 +981,10 @@ pub fn render_tree_with(tree: &Tree, kingdom: &WgslKingdom, role: &crate::wgsl::
     // A kernel that writes a mirror says so (`// mode full`): the harness then
     // gives it the whole H in one row band (agreed 2026-10-14).
     let mode = if crate::wgsl::render::writes_mirror(tree) { "// mode full\n" } else { "" };
-    r.text = format!("{}\n{mode}{}{}", g.header(), crate::wgsl::render::interface_header(role), r.text);
+    // A module of several entry points: each entry point's grid on a line of
+    // its own (`// entry search grid 64 1 1 1`), after the first's header.
+    let entries: String = if r.entries.len() > 1 { r.entries.iter().map(|(name, grid)| format!("{}\n", grid.entry_header(name))).collect() } else { String::new() };
+    r.text = format!("{}\n{entries}{mode}{}{}", g.header(), crate::wgsl::render::interface_header(role), r.text);
     Ok(r)
 }
 

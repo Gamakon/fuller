@@ -643,7 +643,8 @@ mod tests {
         // 184 with the mirror of a thread's cell (u32.mirror, the symmetric half, 2026-10-14).
         // 185 with a workgroup element a thread owns (u32.wgown, the workgroup put, 2026-10-14).
         // 186 with the workgroup arrays of indices (wgmem<u32>.index, 2026-10-16).
-        assert_eq!(s.len(), 186);
+        // 187 with the module of several entry points (kernel.module, 2026-10-17).
+        assert_eq!(s.len(), 187);
         for (a, b) in w.iter().zip(&s) {
             assert_eq!((a.reference.as_str(), a.dual.as_str()), (b.reference.as_str(), b.dual.as_str()));
         }
@@ -679,10 +680,16 @@ mod tests {
         // 1,577 with the workgroup put (3 safe.wg_own*, 18 wg.put* at the barrier rungs; 2026-10-14).
         // 1,601 with the u32 workgroup arrays (wg.ua-ud, wg.get_u_safe, 12 wg.set_u, wg.decl_u,
         // 6 wg.put_u; 2026-10-16).
-        assert_eq!(fs.rows.len(), 1601);
+        // 1,604 with the modules of two, three and four entry points (kernel.module_2..4, 2026-10-17).
+        assert_eq!(fs.rows.len(), 1604);
         let dual = |t: Ty| k.dual(t).unwrap().dual.clone();
         let producers = |d: &str| -> Vec<String> { k.rows.iter().filter(|r| dual(r.output) == d).map(|r| r.name.clone()).collect() };
         assert_eq!(producers("kernel.safe"), vec!["kernel.entry_safe"]);
+        // A module of entry points is a root only: its rows take safe kernels,
+        // and no row takes a module (none nests, none is a single kernel's mutation).
+        assert_eq!(producers("kernel.module"), vec!["kernel.module_2", "kernel.module_3", "kernel.module_4"]);
+        assert!(k.rows.iter().filter(|r| r.name.starts_with("kernel.module_")).all(|r| r.inputs.iter().all(|&t| dual(t) == "kernel.safe")));
+        assert!(k.rows.iter().all(|r| r.inputs.iter().all(|&t| dual(t) != "kernel.module")));
         // THE EPILOGUE: the root takes a body and an epilogue; every epilogue
         // block ends in an epilogue statement, and every epilogue statement is
         // the store of the thread's cell or holds an epilogue block (an if, an

@@ -196,9 +196,39 @@ fn uses_of(module: &Module, f: &Function, out: &mut Uses, seen: &mut BTreeSet<Ha
     walk(module, f, &f.body, out, seen);
 }
 
-/// The interface of `module`'s compute entry point (its first, when it has several).
+/// The names of `module`'s compute entry points, in its order.
+pub fn compute_entries(module: &Module) -> Vec<String> {
+    module.entry_points.iter().filter(|e| e.stage == naga::ShaderStage::Compute).map(|e| e.name.clone()).collect()
+}
+
+/// The interface of `module`'s compute entry points TOGETHER (2026-10-17,
+/// v24's `ingest` and `search` in one module): each entry point's inferred
+/// alone ([`infer_entry`]), a binding any of them writes an output, read
+/// or updated atomically by any of them so; the first entry point's name
+/// and workgroup size.
 pub fn infer(module: &Module) -> Result<ModuleInterface, String> {
-    let ep = module.entry_points.iter().find(|e| e.stage == naga::ShaderStage::Compute).ok_or("no compute entry point")?;
+    let names = compute_entries(module);
+    let (first, rest) = names.split_first().ok_or("no compute entry point")?;
+    let mut all = infer_entry(module, first)?;
+    for n in rest {
+        let i = infer_entry(module, n)?;
+        for (a, b) in all.bindings.iter_mut().zip(&i.bindings) {
+            a.written |= b.written;
+            a.read |= b.read;
+            a.atomic |= b.atomic;
+            if b.role == Use::Output {
+                a.role = Use::Output;
+            }
+        }
+    }
+    Ok(all)
+}
+
+/// The interface of the compute entry point `entry` alone: the bindings as
+/// it uses them (the safety layer proves each entry point, one dispatch,
+/// under its own).
+pub fn infer_entry(module: &Module, entry: &str) -> Result<ModuleInterface, String> {
+    let ep = module.entry_points.iter().find(|e| e.stage == naga::ShaderStage::Compute && e.name == entry).ok_or_else(|| format!("no compute entry point {entry}"))?;
     let mut uses = Uses::default();
     uses_of(module, &ep.function, &mut uses, &mut BTreeSet::new());
     let mut bindings = Vec::new();
@@ -306,6 +336,33 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) { if (gid.x < params.x) {
         let u = infer_text(src).unwrap().uniform.expect("the vector block");
         assert_eq!((u.var.as_str(), u.struct_name.as_str()), ("params", ""));
         assert_eq!(u.fields, ["x", "y", "z", "w"].map(|l| (l.to_string(), "u32".to_string())).to_vec());
+    }
+
+    /// TWO ENTRY POINTS (2026-10-17): `ingest` writes `idx` atomically,
+    /// `search` writes `out`; together both are outputs, each alone only its
+    /// own, and `keys`, which neither writes, is an input.
+    #[test]
+    fn a_two_entry_module_has_the_outputs_of_both() {
+        let src = "
+@group(0) @binding(0) var<storage, read> keys: array<f32>;
+@group(0) @binding(1) var<storage, read_write> idx: array<atomic<u32>>;
+@group(0) @binding(2) var<storage, read_write> out: array<u32>;
+@compute @workgroup_size(64)
+fn ingest(@builtin(global_invocation_id) gid: vec3<u32>) { _ = atomicAdd(&idx[u32(keys[gid.x]) & 63u], 1u); }
+@compute @workgroup_size(32)
+fn search(@builtin(global_invocation_id) gid: vec3<u32>) { out[gid.x] = atomicLoad(&idx[gid.x & 63u]); }";
+        let module = naga::front::wgsl::parse_str(src).unwrap();
+        assert_eq!(compute_entries(&module), ["ingest", "search"]);
+        let roles = |i: &ModuleInterface| i.bindings.iter().map(|b| (b.name.clone(), b.role)).collect::<Vec<_>>();
+        let both = infer(&module).unwrap();
+        assert_eq!((both.entry.as_str(), both.workgroup_size), ("ingest", [64, 1, 1]));
+        assert_eq!(roles(&both), [("keys".to_string(), Use::Input), ("idx".to_string(), Use::Output), ("out".to_string(), Use::Output)]);
+        assert!(both.binding("idx").is_some_and(|b| b.atomic && b.read));
+        let search = infer_entry(&module, "search").unwrap();
+        // (atomicLoad is a load: alone, `search` only reads idx.)
+        assert_eq!(roles(&search), [("keys".to_string(), Use::Input), ("idx".to_string(), Use::Input), ("out".to_string(), Use::Output)]);
+        let ingest = infer_entry(&module, "ingest").unwrap();
+        assert_eq!(roles(&ingest), [("keys".to_string(), Use::Input), ("idx".to_string(), Use::Output), ("out".to_string(), Use::Input)]);
     }
 
     /// A store made in a function the entry point calls makes its binding an output.

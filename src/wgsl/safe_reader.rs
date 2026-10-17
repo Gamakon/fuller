@@ -64,6 +64,9 @@ struct Ctx<'a> {
     arrays: BTreeMap<String, &'static str>,
     /// Each mapped workgroup array's declared length, by its kingdom row.
     array_lens: BTreeMap<&'static str, u32>,
+    /// The rows of the workgroup arrays this entry point uses (a module's
+    /// entry points share `arrays`; each declares its own).
+    arrays_used: BTreeSet<&'static str>,
     /// Local arrays by name → a private array row, its kind and its mask row.
     parrs: BTreeMap<String, (&'static str, char, &'static str)>,
     grid: (u32, u32, u32, u32),
@@ -2315,7 +2318,8 @@ impl<'a> Ctx<'a> {
     /// (`wg.va`..`wg.vd`); its declared length is recorded (the kernel's
     /// declaration on the grid, 2026-10-12).
     fn array(&mut self, name: &str, elem_dual: &str) -> Result<&'static str, String> {
-        if let Some(w) = self.arrays.get(name) {
+        if let Some(w) = self.arrays.get(name).copied() {
+            self.arrays_used.insert(w);
             return Ok(w);
         }
         // An atomic array is one by its declared type, whatever a use of it reads.
@@ -2371,6 +2375,7 @@ impl<'a> Ctx<'a> {
         }
         self.arrays.insert(name.to_string(), which);
         self.array_lens.insert(which, len);
+        self.arrays_used.insert(which);
         Ok(which)
     }
 
@@ -5067,10 +5072,14 @@ fn header_fields(source: &str) -> Option<((u32, u32, u32, u32), bool)> {
     })
 }
 
-/// The entry function's statements by path, one line each (for reading a refusal).
+/// The entry function's statements by path, one line each (for reading a
+/// refusal); in a module of several entry points every entry point's, each
+/// line led by its entry point's name.
 pub fn statement_outline(source: &str) -> Result<Vec<String>, String> {
     let kernel = read(source)?;
-    let f: &Function = &kernel.module.entry_points.first().ok_or("no entry point")?.function;
+    if kernel.module.entry_points.is_empty() {
+        return Err("no entry point".into());
+    }
     fn walk(b: &naga::Block, path: &mut Vec<usize>, out: &mut Vec<String>) {
         let mut i = 0;
         for s in b.iter() {
@@ -5103,8 +5112,13 @@ pub fn statement_outline(source: &str) -> Result<Vec<String>, String> {
             path.pop();
         }
     }
+    let several = kernel.module.entry_points.len() > 1;
     let mut out = Vec::new();
-    walk(&f.body, &mut Vec::new(), &mut out);
+    for ep in &kernel.module.entry_points {
+        let mut lines = Vec::new();
+        walk(&ep.function.body, &mut Vec::new(), &mut lines);
+        out.extend(lines.into_iter().map(|l| if several { format!("{} {l}", ep.name) } else { l }));
+    }
     Ok(out)
 }
 
@@ -5114,8 +5128,39 @@ pub fn statement_outline(source: &str) -> Result<Vec<String>, String> {
 /// reference to it); it renders the same text as [`read_safe_literal`]'s.
 pub fn read_safe(source: &str, kingdom: &WgslKingdom) -> Result<SafeRead, String> {
     let r = read_safe_literal(source, kingdom)?;
-    let tree = crate::wgsl::params::assign(&r.tree, kingdom)?;
+    // (A module's entry points each by its own knobs.)
+    let tree = if r.tree.name.starts_with("kernel.module_") {
+        Tree { kids: r.tree.kids.iter().map(|k| crate::wgsl::params::assign(k, kingdom)).collect::<Result<_, _>>()?, ..r.tree.clone() }
+    } else {
+        crate::wgsl::params::assign(&r.tree, kingdom)?
+    };
     Ok(SafeRead { tree, ..r })
+}
+
+/// The workgroup arrays read so far: a module variable's row (`wg_x` is
+/// `wg.ua`) and each row's declared length. A module's entry points share
+/// its variables, so each is read with the arrays of those before it: one
+/// variable is one row in every entry point that uses it.
+type WgArrays = (BTreeMap<String, &'static str>, BTreeMap<&'static str, u32>);
+
+/// One entry point read: its tree, notes, registers and the arrays after it.
+type EntryRead = (Tree, Vec<String>, BTreeMap<String, String>, WgArrays);
+
+/// An entry point's grid line in a module of several (`// entry <name>
+/// grid x y bx by [rows-x]`, [`crate::wgsl::render::Grid::entry_header`]).
+pub(crate) fn entry_grid_header(source: &str, entry: &str) -> Option<((u32, u32, u32, u32), bool)> {
+    source.lines().map(str::trim).find_map(|l| {
+        let rest = l.strip_prefix("// entry ")?.strip_prefix(entry)?.strip_prefix(" grid ")?;
+        let mut tokens: Vec<&str> = rest.split_whitespace().collect();
+        let rows_x = tokens.last() == Some(&"rows-x");
+        if rows_x {
+            tokens.pop();
+        }
+        match tokens.iter().map(|t| t.parse().ok()).collect::<Option<Vec<u32>>>()?.as_slice() {
+            &[x, y, bx, by] => Some(((x, y, bx, by), rows_x)),
+            _ => None,
+        }
+    })
 }
 
 /// Read `source` into the safe grammar with every knob-dependent position
@@ -5123,10 +5168,6 @@ pub fn read_safe(source: &str, kingdom: &WgslKingdom) -> Result<SafeRead, String
 pub fn read_safe_literal(source: &str, kingdom: &WgslKingdom) -> Result<SafeRead, String> {
     let role = crate::wgsl::render::interface_of(source)?;
     let mut kernel = read(source)?;
-    // The grid: the `// grid x y bx by` header when the text has one (its
-    // block factors), else the module's own workgroup with 1 x 1 blocks.
-    let declared_wg = kernel.module.entry_points.first().ok_or("no entry point")?.workgroup_size;
-    let grid = grid_header(source).unwrap_or((declared_wg[0], declared_wg[1], 1, 1));
     // The interface's names as the kingdom's canonical roles (its input is
     // phi, its output h, its uniform cfg with the fields d, m, r_rows, r_off),
     // so the ownership proof and the safe rows read every interface alike.
@@ -5140,18 +5181,65 @@ pub fn read_safe_literal(source: &str, kingdom: &WgslKingdom) -> Result<SafeRead
             }
         }
     }
+    let position = |name: &str| kernel.module.entry_points.iter().position(|e| e.name == name).ok_or_else(|| format!("no entry point {name}"));
+    if role.entries.len() <= 1 {
+        // The grid: the `// grid x y bx by` header when the text has one (its
+        // block factors), else the module's own workgroup with 1 x 1 blocks.
+        let ep = position(&role.entry)?;
+        let declared = kernel.module.entry_points[ep].workgroup_size;
+        let grid = grid_header(source).unwrap_or((declared[0], declared[1], 1, 1));
+        let at = Reading { source, kingdom, kernel: &kernel, role: &role };
+        let (tree, notes, registers, _) = read_entry(&at, ep, (grid, grid_rows_x(source)), (BTreeMap::new(), BTreeMap::new()))?;
+        return Ok(SafeRead { tree, notes, registers, role });
+    }
+    // SEVERAL ENTRY POINTS (2026-10-17, B6 of PLAN_v24_ingest_evolution): each
+    // read as a safe kernel in the interface's order, each grid from its own
+    // line (`// entry <name> grid ..`) else its workgroup at 1 x 1 blocks, the
+    // module's workgroup variables one row each across them.
+    let (mut kids, mut notes, mut registers) = (Vec::new(), Vec::new(), BTreeMap::new());
+    let mut arrays: WgArrays = (BTreeMap::new(), BTreeMap::new());
+    let at = Reading { source, kingdom, kernel: &kernel, role: &role };
+    for name in &role.entries {
+        let ep = position(name)?;
+        let declared = kernel.module.entry_points[ep].workgroup_size;
+        let grid = entry_grid_header(source, name).unwrap_or(((declared[0], declared[1], 1, 1), false));
+        let (tree, n, regs, after) = read_entry(&at, ep, grid, arrays).map_err(|e| format!("entry point {name}: {e}"))?;
+        arrays = after;
+        notes.extend(n.into_iter().map(|n| format!("{name}: {n}")));
+        registers.extend(regs.into_iter().map(|(k, v)| (format!("{name}/{k}"), v)));
+        kids.push(tree);
+    }
+    let tree = Tree::new(&format!("kernel.module_{}", kids.len()), dual_ty(kingdom, "kernel.module")?, kids);
+    Ok(SafeRead { tree, notes, registers, role })
+}
+
+/// A kernel text being read: the text, the kingdom, naga's reading of it
+/// (its roots made canonical) and its interface.
+struct Reading<'a> {
+    source: &'a str,
+    kingdom: &'a WgslKingdom,
+    kernel: &'a crate::wgsl::reader::Kernel,
+    role: &'a crate::wgsl::render::Role,
+}
+
+/// One entry point of a read kernel (`ep`, its index among the module's)
+/// as a safe kernel tree, at its grid (and whether a header put the rows on
+/// x), its workgroup variables' rows starting from `arrays`.
+fn read_entry(at: &Reading, ep: usize, (grid, rows_x): ((u32, u32, u32, u32), bool), arrays: WgArrays) -> Result<EntryRead, String> {
+    let Reading { source, kingdom, kernel, role } = *at;
+    let entry = &kernel.module.entry_points[ep];
     // The workgroup the header names is the one the kernel declares: x and y
     // each 1..=1,024 with x * y <= 1,024 (the M3 Max's limits), z 1 (a thread
     // owns cells by x and y; two threads differing only in z would share them).
-    let declared = kernel.module.entry_points.first().ok_or("no entry point")?.workgroup_size;
+    let declared = entry.workgroup_size;
     if declared != [grid.0, grid.1, 1] {
         return Err(format!("the header's workgroup {} x {} is not the kernel's @workgroup_size({}, {}, {})", grid.0, grid.1, declared[0], declared[1], declared[2]));
     }
     if grid.0 == 0 || grid.1 == 0 || grid.0 * grid.1 > crate::wgsl::render::MAX_THREADS {
         return Err(format!("workgroup {} x {} is outside 1..=1,024 invocations", grid.0, grid.1));
     }
-    let f = kernel.functions.iter().find(|f| f.entry_point).ok_or("no entry point")?;
-    let naga_fn: &Function = &kernel.module.entry_points.first().ok_or("no entry point")?.function;
+    let f = kernel.functions.iter().find(|f| f.entry_point && f.name == entry.name).ok_or_else(|| format!("entry point {} was not read", entry.name))?;
+    let naga_fn: &Function = &entry.function;
     // Helper functions: pure ones (lets and one return) inlined as
     // expressions at their calls (k05), the kingdom's own `at_vecNx` read as
     // `shape.at`, any other inlined as statements at its call (seed04).
@@ -5265,9 +5353,10 @@ pub fn read_safe_literal(source: &str, kingdom: &WgslKingdom) -> Result<SafeRead
     // Main's text ends in `return;`: the renderer writes it after a body
     // that returns, with no epilogue after it (naga's own trailing return is
     // in every kernel's IR, so the text decides).
-    let main_returns = source.find(&format!("fn {}(", role.entry)).map(|i| &source[i..]).and_then(|m| m.rfind('}').map(|j| &m[..j])).is_some_and(|m| m.trim_end().ends_with("return;"));
+    let main_returns = source.find(&format!("fn {}(", entry.name)).map(|i| &source[i..]).and_then(|m| m.rfind('}').map(|j| &m[..j])).is_some_and(|m| m.trim_end().ends_with("return;"));
     let uniform_lanes = if role.uniform_struct.is_empty() { role.fields.iter().map(|f| f.name.clone()).collect() } else { Vec::new() };
-    let mut ctx = Ctx { kingdom, main_returns, per_kernel_rows: crate::wgsl::safe_karva::per_kernel_rows(kingdom, &role), uniform_var: role.uniform_var.clone(), uniform_lanes, duals: &duals, lets: &lets, roots: &roots, item_counter: None, tile_counter: None, tile_counter2: None, tile_counter3: None, tile_counter4: None, registers: BTreeMap::new(), counter_stores: Vec::new(), guard: None, tail: true, arrays: BTreeMap::new(), array_lens: BTreeMap::new(), parrs: BTreeMap::new(), grid, rows_x: grid_rows_x(source).then_some(true), notes: Vec::new(), helpers: &helpers, calls: &calls, arg_roots: &arg_roots, inline_args: None, row_arrays: BTreeMap::new(), used_counters: std::collections::BTreeSet::new(), local_lanes, axis_memo: BTreeMap::new(), loop_depth: 0, tile_bounds: BTreeMap::new(), naga_fn, module: &kernel.module, local_prefix: String::new(), inline_result: None, inline_values: None, bound_lets, stale_lets, let_regs: HashMap::new(), inlined: HashMap::new(), stored_seen: std::collections::BTreeSet::new(), counter_offsets: HashMap::new(), counter_exprs: HashMap::new(), pointer_args: HashMap::new(), mode_full: source.lines().any(|l| l.trim() == "// mode full") };
+    let (arrays, array_lens) = arrays;
+    let mut ctx = Ctx { kingdom, main_returns, per_kernel_rows: crate::wgsl::safe_karva::per_kernel_rows(kingdom, role), uniform_var: role.uniform_var.clone(), uniform_lanes, duals: &duals, lets: &lets, roots: &roots, item_counter: None, tile_counter: None, tile_counter2: None, tile_counter3: None, tile_counter4: None, registers: BTreeMap::new(), counter_stores: Vec::new(), guard: None, tail: true, arrays, array_lens, arrays_used: BTreeSet::new(), parrs: BTreeMap::new(), grid, rows_x: rows_x.then_some(true), notes: Vec::new(), helpers: &helpers, calls: &calls, arg_roots: &arg_roots, inline_args: None, row_arrays: BTreeMap::new(), used_counters: std::collections::BTreeSet::new(), local_lanes, axis_memo: BTreeMap::new(), loop_depth: 0, tile_bounds: BTreeMap::new(), naga_fn, module: &kernel.module, local_prefix: String::new(), inline_result: None, inline_values: None, bound_lets, stale_lets, let_regs: HashMap::new(), inlined: HashMap::new(), stored_seen: std::collections::BTreeSet::new(), counter_offsets: HashMap::new(), counter_exprs: HashMap::new(), pointer_args: HashMap::new(), mode_full: source.lines().any(|l| l.trim() == "// mode full") };
     // Register initialisations first, in root order. A local initialised to
     // its form's fallback (0.0, 0u, false, a zero vector) costs nothing: the
     // register's declaration already holds that value, and the register is
@@ -5320,8 +5409,9 @@ pub fn read_safe_literal(source: &str, kingdom: &WgslKingdom) -> Result<SafeRead
     let rows_x = ctx.rows_x == Some(true);
     let grid_tree = Tree::new(if rows_x { "grid.of_rows_x" } else { "grid.of" }, dual_ty(kingdom, "grid.grid")?, vec![g("literal.wgdim", grid.0), g("literal.wgdim", grid.1), g("literal.blk", grid.2), g("literal.blk", grid.3)]);
     // The kernel's workgroup arrays, each at its declared length (2026-10-12):
-    // the grid carries them as a list of declarations.
-    let grid_tree = if ctx.array_lens.is_empty() {
+    // the grid carries them as a list of declarations (of the arrays this
+    // entry point uses: a module's others are its other entry points').
+    let grid_tree = if ctx.arrays_used.is_empty() {
         grid_tree
     } else {
         let decl_ty = dual_ty(kingdom, "wg.decl")?;
@@ -5329,6 +5419,7 @@ pub fn read_safe_literal(source: &str, kingdom: &WgslKingdom) -> Result<SafeRead
         let decls: Vec<Tree> = ctx
             .array_lens
             .iter()
+            .filter(|(which, _)| ctx.arrays_used.contains(*which))
             .map(|(which, len)| -> Result<Tree, String> {
                 let (row, arr_dual) = if which.starts_with("wg.au") {
                     ("wg.decl_au", "wgmem<atomic<u32>>.index")
@@ -5362,7 +5453,7 @@ pub fn read_safe_literal(source: &str, kingdom: &WgslKingdom) -> Result<SafeRead
     let tree = by_axis(&tree, rows_x);
     // Row-consistent: every node under the dual its parent's row demands.
     let tree = crate::wgsl::safe_karva::conform(&tree, tree.ty, kingdom, &ctx.per_kernel_rows)?;
-    Ok(SafeRead { tree, notes: ctx.notes, registers: ctx.registers, role })
+    Ok((tree, ctx.notes, ctx.registers, (ctx.arrays, ctx.array_lens)))
 }
 
 #[cfg(test)]
@@ -6100,6 +6191,96 @@ fn ingest(@builtin(global_invocation_id) gid: vec3<u32>) {
         assert_ne!(cas, src);
         let Err(e) = read_safe(&cas, &k) else { panic!("a compare-exchange read") };
         assert!(e.contains("atomicCompareExchangeWeak has no safe spelling"), "{e}");
+    }
+
+    /// SEVERAL ENTRY POINTS IN ONE MODULE (B6 of PLAN_v24_ingest_evolution,
+    /// 2026-10-17): v24's `ingest` (64 threads, atomics on the index arena)
+    /// and `search` (32 threads, a store of each query's candidate) over the
+    /// shared bindings, a workgroup variable both use and one each uses
+    /// alone. The interface is both entry points' (`cands` an output though
+    /// only `search` writes it); the tree is `kernel.module_2`, one safe
+    /// kernel per entry point; the text renders both functions and every
+    /// shared declaration once, naga validates it, it reads back to the same
+    /// tree, and each entry point passes every layer of the checker.
+    #[test]
+    fn a_module_of_two_entry_points_reads_renders_and_reads_back_to_the_same_tree() {
+        let k = WgslKingdom::load_safe();
+        let src = format!(
+            "{V24_BINDINGS}var<workgroup> tile: array<u32, 64>;
+var<workgroup> best: array<f32, 128>;
+var<workgroup> spill: array<u32, 256>;
+@compute @workgroup_size(64, 1, 1)
+fn ingest(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>) {{
+    tile[lid.x] = gid.x;
+    spill[lid.x] = gid.x * 3u;
+    workgroupBarrier();
+    let row = cfg.arrived_begin + tile[(lid.x + 1u) & 63u] + spill[(lid.x + 2u) & 255u];
+    if (row >= cfg.arrived_end) {{ return; }}
+    let bucket = bitcast<u32>(keys[row * 2048u]) & 1023u;
+    let slot = atomicAdd(&index_u32[bucket], 1u);
+    atomicStore(&index_u32[1024u + row], bucket * 64u + slot);
+}}
+@compute @workgroup_size(32, 1, 1)
+fn search(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>) {{
+    tile[lid.x] = gid.x * 2u;
+    best[lid.x] = queries[gid.x * 2048u];
+    workgroupBarrier();
+    let q = gid.x;
+    if (q >= cfg.n_queries) {{ return; }}
+    let b = tile[(lid.x + 1u) & 63u] & 1023u;
+    cands[q] = atomicLoad(&index_u32[b]) + u32(best[lid.x & 127u] > 0.0);
+}}
+"
+        );
+        let r = read_safe(&src, &k).unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(r.role.entries, vec!["ingest".to_string(), "search".to_string()]);
+        assert!(r.role.per_kernel.iter().any(|p| p.name == "store.cands_O0"), "cands is an output of the module");
+        assert_eq!(r.tree.name, "kernel.module_2");
+        assert!(r.tree.kids.iter().all(|e| e.name == "kernel.entry_safe"), "{}", r.tree.to_sexpr());
+        // `tile` is one row in both entry points; `spill` and `best` each one entry point's.
+        let decls = |e: &Tree| -> Vec<String> {
+            fn walk(t: &Tree, out: &mut Vec<String>) {
+                if t.name.starts_with("wg.decl_") {
+                    out.push(format!("{} {}", t.kids[0].name, t.kids[1].konst));
+                }
+                t.kids.iter().for_each(|k| walk(k, out));
+            }
+            let mut out = Vec::new();
+            walk(&e.kids[0], &mut out);
+            out
+        };
+        let (di, ds) = (decls(&r.tree.kids[0]), decls(&r.tree.kids[1]));
+        assert_eq!(di.len(), 2, "{di:?}");
+        assert_eq!(ds.len(), 2, "{ds:?}");
+        assert_eq!(di.iter().filter(|d| ds.contains(d)).count(), 1, "one shared variable: {di:?} {ds:?}");
+        let out = crate::wgsl::safe_karva::render_tree_with(&r.tree, &k, &r.role).unwrap_or_else(|e| panic!("{e}"));
+        for want in ["// entry ingest grid 64 1 1 1", "// entry search grid 32 1 1 1", "@workgroup_size(64, 1, 1)\nfn ingest(", "@workgroup_size(32, 1, 1)\nfn search(", "atomicAdd(&index_u32[min(", "atomicLoad(&index_u32[min(", "cands["] {
+            assert!(out.text.contains(want), "{want}:\n{}", out.text);
+        }
+        for once in ["struct Cfg", "var<storage, read_write> index_u32", "var<workgroup> wg_ua: array<u32, 64>;"] {
+            assert_eq!(out.text.matches(once).count(), 1, "{once} once:\n{}", out.text);
+        }
+        assert_eq!(out.entries.iter().map(|(n, g)| (n.as_str(), g.x)).collect::<Vec<_>>(), vec![("ingest", 64), ("search", 32)]);
+        validate_text(&out.text).unwrap_or_else(|e| panic!("{e}\n{}", out.text));
+        let back = read_safe(&out.text, &k).unwrap_or_else(|e| panic!("read back: {e}\n{}", out.text));
+        assert!(back.tree == r.tree, "the rendered text reads back to the same tree: {:?}\n{}", crate::wgsl::render::first_difference(&r.tree, &back.tree), out.text);
+        assert_eq!(back.role.entries, r.role.entries);
+        // Under a one-dimensional dispatch (the v24 problem's: a workgroup per
+        // 64 rows or 32 queries along x), each entry point is proved.
+        let contract = crate::wgsl::safety::Contract::parse("workgroups x 1 1024\nworkgroups y 1 1\nworkgroups z 1 1\n").unwrap();
+        let checker = crate::wgsl::check::Checker::with_contract(&k, &r.role, &crate::wgsl::target::Target::recorded(), contract);
+        checker.check(&r.tree).unwrap_or_else(|e| panic!("{e}\n{}", out.text));
+        // The genome: encoded, decoded and projected under the module's root, the tree.
+        let h = 128usize;
+        let slots = crate::wgsl::safe_karva::split(&r.tree, h).unwrap().tail.len().div_ceil(8) * 8;
+        let c = crate::wgsl::safe_karva::encode(&r.tree, h, slots, 17).unwrap_or_else(|e| panic!("{e}"));
+        let pset = crate::homeotic::pset_with_hrefs(&c.pset, slots);
+        let decoded: Vec<String> = c.genes.iter().map(|(hd, tl)| crate::karva::karva_to_terms_generic(hd, tl, &pset)).collect::<Result<_, _>>().unwrap();
+        let rebuilt = crate::wgsl::safe_karva::build(&crate::wgsl::safe_karva::unfold_decoded(&decoded, c.folded.filled).unwrap(), &k, &r.role).unwrap();
+        assert!(rebuilt == r.tree, "through the genome: {:?}", crate::wgsl::render::first_difference(&r.tree, &rebuilt));
+        // The outline names each entry point's statements.
+        let outline = statement_outline(&src).unwrap();
+        assert!(outline.iter().any(|l| l.starts_with("ingest [")) && outline.iter().any(|l| l.starts_with("search [")), "{outline:?}");
     }
 
     /// HELPERS INLINED AS STATEMENTS, CALLED UNDER A CONDITION AND FROM EACH

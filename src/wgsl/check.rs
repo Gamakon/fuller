@@ -426,6 +426,25 @@ impl<'a> Checker<'a> {
 
     /// Every layer in order; the first failure.
     pub fn check(&self, tree: &Tree) -> Result<(), Illegal> {
+        // A module of several entry points (`kernel.module_N`): one entry
+        // point per name the interface gives, each proved as its own kernel
+        // (each is its own dispatch: its own grid, workgroup memory, write
+        // sets and barriers) under the same contract.
+        if self.kingdom.dual(tree.ty).is_some_and(|d| d.dual == "kernel.module") {
+            let fail = |reason: &'static str, detail: String| Err(illegal(Layer::Grammar, reason, detail));
+            if !tree.name.starts_with("kernel.module_") {
+                return fail("root_not_safe_kernel", format!("the root is {}, not a module of entry points", tree.name));
+            }
+            if tree.kids.len() != self.role.entries.len() {
+                return fail("module_entries_not_the_interfaces", format!("a module of {} entry points under an interface of {} ({:?})", tree.kids.len(), self.role.entries.len(), self.role.entries));
+            }
+            self.typed(&Tree { kids: tree.kids.iter().map(|k| Tree::fallback(k.ty)).collect(), ..tree.clone() })?;
+            for (kid, name) in tree.kids.iter().zip(&self.role.entries) {
+                let at = Checker::with_contract(self.kingdom, &self.role.at_entry(name), &self.target, self.contract.clone());
+                at.check(kid).map_err(|e| Illegal { detail: format!("entry point {name}: {}", e.detail), ..e })?;
+            }
+            return Ok(());
+        }
         self.typed(tree)?;
         self.grammar(tree)?;
         self.range(tree)?;
