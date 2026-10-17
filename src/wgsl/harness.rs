@@ -5694,4 +5694,99 @@ fn search() { cands[0] = cfg.stage; }
             assert!(x.pooled > 0 && x.broken == 0, "{x:?}");
         }
     }
+
+    /// v24_ingest5b: INGEST SEES ONLY ITS MICROBATCH'S KEYS, SEARCH NONE
+    /// (plans only, at the 128 MiB effective limit): no binding over
+    /// 128 MiB; the setup projects per seed its queries and, per stage k, the
+    /// keys of microbatch k only (rows (k - 1) * 5,000.., 5,000 of them,
+    /// cfg (seed, 0, first row, 5,000)); every ingest dispatch binds that
+    /// microbatch's 41 MB of keys, every search dispatch the 64 zero floats
+    /// (nokeys); the cfg words and entries are v24_ingest5's.
+    #[test]
+    fn v24_ingest5b_binds_only_the_microbatchs_keys_at_ingest_and_none_at_search() {
+        let p = Problem::load(&root().join("problems/v24_ingest5b")).expect("problems/v24_ingest5b");
+        assert_eq!(p.spec.binding_limit, LimitRule::Effective);
+        let five = Problem::load(&root().join("problems/v24_ingest5")).unwrap();
+        assert_eq!((p.spec.kernel.entry_names(), p.spec.binding.iter().map(|b| (b.binding, b.name.clone(), b.kind, b.fields.clone())).collect::<Vec<_>>()), (five.spec.kernel.entry_names(), five.spec.binding.iter().map(|b| (b.binding, b.name.clone(), b.kind, b.fields.clone())).collect::<Vec<_>>()));
+        let c = &p.suites[0].cases[0];
+        let info = kernel_info(&p.spec, &p.reference).unwrap();
+        let plan = p.plan(c, LIMIT, Some(&info)).unwrap();
+        assert!(plan.buffers.iter().all(|b| b.bytes <= LIMIT), "a buffer over the 128 MiB binding");
+        assert_eq!(plan.setup_dispatch.len(), 4 * 6);
+        for (n, d) in plan.setup_dispatch.iter().enumerate() {
+            let (s, k) = (n / 6, n % 6);
+            let buf = |b: u32| &plan.buffers[d.bind.iter().find(|x| x.0 == b).unwrap().1];
+            let Init::Words(w) = &buf(4).init else { panic!("pcfg") };
+            let (name, first, rows) = if k == 0 { (format!("queries{s}"), 25_000, 2_500) } else { (format!("mb{s}_{}", k - 1), 5_000 * (k as u32 - 1), 5_000) };
+            assert_eq!((buf(3).name.clone(), buf(3).bytes, d.workgroups), (name, u64::from(rows) * 2048 * 4, [rows, 1, 1]));
+            assert_eq!(u32s(w)[2..], [first, rows]);
+        }
+        let ds: Vec<&Cmd> = plan.run.iter().filter(|x| matches!(x, Cmd::Dispatch { .. })).collect();
+        assert_eq!(ds.len(), 5 * 4 * 2);
+        for (n, c) in ds.iter().enumerate() {
+            let Cmd::Dispatch { bind, entry, .. } = c else { unreachable!() };
+            let (stage, seed) = (n / 8, (n % 8) / 2);
+            let keys = &plan.buffers[bind.iter().find(|x| x.0 == 0).unwrap().1];
+            let Init::Words(w) = &plan.buffers[bind.iter().find(|x| x.0 == 5).unwrap().1].init else { panic!("cfg") };
+            assert_eq!(u32s(w)[1..4], [stage as u32 + 1, 5_000 * stage as u32, 5_000 * (stage as u32 + 1)]);
+            if *entry == 0 {
+                assert_eq!((keys.name.clone(), keys.bytes), (format!("mb{seed}_{stage}"), 5_000 * 2048 * 4));
+            } else {
+                assert_eq!((keys.name.as_str(), keys.bytes), ("nokeys", 256));
+            }
+        }
+    }
+
+    /// v24_ingest5b ON THE DEVICE (GPU; run by the session that owns the
+    /// GPU): its stream case staged at the effective limit (`for_problem`),
+    /// every seed's microbatch keys projected on the device; microbatch 5's
+    /// keys (stream rows 20,000..25,000) and the queries read back and
+    /// compared with qdrant's TRLKEYS1 keys of the same rows (bits exact and
+    /// the largest difference printed, within 1e-6); then the reference run
+    /// once: it completes, no broken entry (its search sees no keys, so it
+    /// returns pads: P 0 is expected and printed).
+    #[cfg(feature = "gpu")]
+    #[test]
+    fn v24_ingest5b_projects_microbatch_keys_on_the_device() {
+        let dev = crate::wgsl::oracle::device::Device::new().expect("device");
+        let p = Problem::load(&root().join("problems/v24_ingest5b")).unwrap();
+        let exec = DeviceExecutor::for_problem(&dev, &p);
+        let limit = exec.binding_limit();
+        let c = &p.suites[0].cases[0];
+        let t = Instant::now();
+        let (k, info) = exec.compile(&p, &p.reference).unwrap();
+        let data = p.case_data(c, limit).unwrap();
+        let plan = p.plan(c, limit, Some(&info)).unwrap();
+        let (staged, stage_ms) = exec.stage(&plan, &data).unwrap();
+        println!("v24_ingest5b at {limit} bytes a binding: staged, the microbatch keys projected, in {stage_ms:.0} ms");
+        let dir = Path::new("/Users/andrewmorgan/Data/arm/v24_test/db/udv23_keys/v24_main");
+        let (mut exact, mut total, mut worst) = (0u64, 0u64, 0.0f64);
+        for (s, seed) in [42u64, 137, 911, 4242].iter().enumerate() {
+            let bytes = std::fs::read(dir.join(format!("s{seed}.trlkeys"))).unwrap();
+            assert_eq!(&bytes[..8], b"TRLKEYS1");
+            let want: Vec<f32> = bytemuck_f32(&bytes[24..]);
+            for (name, first) in [(format!("mb{s}_4"), 20_000usize), (format!("queries{s}"), 25_000)] {
+                let id = plan.buffers.iter().position(|b| b.name == name).unwrap();
+                let n_bytes = plan.buffers[id].bytes;
+                let read = Plan { run: vec![Cmd::Read { src: id, src_offset: 0, output: 0, dst_offset: 0, bytes: n_bytes }], outputs: vec![n_bytes], ..plan.clone() };
+                let got = bytemuck_f32(&exec.run(&k, &read, &data, &staged, true).unwrap().outputs[0]);
+                for (g, x) in got.iter().zip(&want[first * 2048..first * 2048 + got.len()]) {
+                    total += 1;
+                    if g.to_bits() == x.to_bits() {
+                        exact += 1;
+                    }
+                    worst = worst.max((f64::from(*g) - f64::from(*x)).abs());
+                }
+            }
+        }
+        println!("microbatch keys against qdrant's TRLKEYS1: {exact} of {total} components bit-exact ({:.4} %), largest difference {worst:.3e}", 100.0 * exact as f64 / total as f64);
+        assert!(worst <= 1e-6, "a projected component differs from qdrant's by {worst:e}");
+        let r = exec.run(&k, &plan, &data, &staged, true).unwrap();
+        let env = p.env(c, limit).unwrap();
+        let out = p.pooled_output().unwrap().clone();
+        let w = pooled_windows(&p, &out, &env, &data, &r.outputs[0]).unwrap();
+        println!("the reference run: {:.0} ms GPU, {:.1} s in all; {w:?}", r.gpu_ms, t.elapsed().as_secs_f64());
+        assert_eq!(w.len(), 10);
+        assert!(w.iter().all(|x| x.broken == 0), "{w:?}");
+    }
 }

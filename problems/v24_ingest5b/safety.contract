@@ -1,0 +1,28 @@
+# The dispatch contract of v24_ingest5b (fuller safety::Contract, the format of
+# problems/kmeans_assign/safety.contract), from problem.toml's run program:
+# every dispatch is 1-D; ingest is per_section workgroups (5000), search
+# n_queries (2500). The cfg ranges are the program's words, the uniform
+# variable named cfg as contract.md gives it: seed_slot 0..3, stage
+# 1..stages, the arrived rows 0..stages * per_section, pass_index below
+# n_passes (at most 16), c_max always 64. The legality checker's layer 7
+# proves a kernel of this problem under it.
+workgroups x 1 5000
+workgroups y 1 1
+workgroups z 1 1
+param cfg.seed_slot 0 3
+param cfg.stage 1 5
+param cfg.arrived_begin 0 20000
+param cfg.arrived_end 5000 25000
+param cfg.n_queries 1 2500
+param cfg.pass_index 0 15
+param cfg.n_passes 1 16
+param cfg.c_max 64 64
+# The design's own state (fuller 9994fc8): index_u32 and index_f32 are arenas, read by
+# layer 7 in arena mode only (Contract::with_arena_mode; strict, the default, ignores
+# them). Their lengths are this problem's arena_u32 and arena_f32 (problem.toml), in words.
+arena index_u32 index_f32
+param arrayLength(index_u32) 8388608 8388608
+param arrayLength(index_f32) 8388608 8388608
+# Each query's candidate row (C_MAX = 64 cells) belongs to the query; read only
+# when layer 7's rows mode is on (fuller 712af96), inert otherwise.
+rows cands 64

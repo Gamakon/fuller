@@ -1,0 +1,485 @@
+# THE v24 BOTTOM-UP GPU INGESTION INDEX, full set, all five stages, MICROBATCH
+# KEYS ONLY (v24_ingest5b; the team lead's 22:2xZ task, the second arm of the
+# larger test beside v24_ingest5). The same problem as v24_ingest5 except:
+# during ingest binding 0 (keys) holds only the current microbatch's keys
+# (5,000 rows, 41 MB; row r of it is stream row arrived_begin + r), and the
+# search gets no keys at all (binding 0 is 64 zero floats). A design that
+# wants keys at search time keeps what it needs in its own arenas (32 MiB a
+# seed): a scan over every key is impossible, and no binding exceeds 128 MiB
+# (the effective limit). The keys are projected on the device from the raw
+# records (project.wgsl), per microbatch. contract.md's section "v24_ingest5b"
+# states it for the designs.
+#
+# Four seeds' 2,048-D keys
+# stream in five microbatches (sections) into four independent per-seed
+# indexes; after each microbatch the oracle queries search every seed's
+# index, the four candidate lists are pooled and re-ranked exactly against
+# the raw sparse records, and graded against exact truth (output kind
+# pooled_recall: src/wgsl/harness.rs, `PooledSpec`, `pooled_windows`).
+#
+# The case files are the exporter's (qdrant experiments/v24_ingest/
+# export_harness_case.py), read where it wrote them: the manifest's root.
+#
+# NO FUTURE KEY EXISTS ON THE DEVICE: at stage k each seed's `keys` binding
+# is its own resident buffer holding only the arrived rows 0..k*per_section
+# (sections 1..k). The index arenas are made and zeroed at the start of
+# every run, persist across its five stages, and are discarded after: every
+# timing run is a whole fresh run.
+
+name = "v24_ingest5b"
+description = "v24 streaming ingestion, full set (25,000 + 2,500), stages 1..5, ingest sees only its microbatch's keys and search none: four seeds' 2,048-D keys in five microbatches into four per-seed GPU indexes, searched after each, pooled and re-ranked exactly; HFF over per-window misses, pool size, broken entries and per-stage ingest and search GPU ms against today's index"
+work = "n_stream * n_queries"
+alias = "distinct"
+
+[params]
+# The stages judged: sections 1..stages arrive (every section by default;
+# the full set's run 1 judges three, its stage-3 keys 123 MB a seed under
+# the 128 MiB binding, stage 4's 164 MB over it).
+stages = "sections"
+# The queries judged (all the oracles; a test may judge fewer).
+n_queries = "n_oracle"
+# The contract constant: candidates per seed per query.
+c_max = "64"
+seeds = "4"
+# Each index arena: 8,388,608 words, 32 MiB, under the 128 MiB binding limit.
+arena_u32 = "8388608"
+arena_f32 = "8388608"
+
+[kernel]
+entry = "ingest"
+entries = ["search"]
+passes_header = true
+reference = "../v24_ingest_small/reference.wgsl"
+
+# The key projection: harness machinery, hand-written, run by the setup only.
+[[machine]]
+name = "project"
+source = "project.wgsl"
+entry = "project"
+
+[[machine.binding]]
+binding = 0
+name = "rec_offsets"
+kind = "storage_read"
+element = "u32"
+
+[[machine.binding]]
+binding = 1
+name = "rec_indices"
+kind = "storage_read"
+element = "u32"
+
+[[machine.binding]]
+binding = 2
+name = "rec_values"
+kind = "storage_read"
+element = "f32"
+
+[[machine.binding]]
+binding = 3
+name = "keys"
+kind = "storage_read_write"
+element = "f32"
+
+[[machine.binding]]
+binding = 4
+name = "pcfg"
+kind = "uniform"
+fields = ["u32", "u32", "u32", "u32"]
+
+[[binding]]
+binding = 0
+name = "keys"
+kind = "storage_read"
+element = "f32"
+
+[[binding]]
+binding = 1
+name = "queries"
+kind = "storage_read"
+element = "f32"
+
+[[binding]]
+binding = 2
+name = "index_u32"
+kind = "storage_read_write"
+element = "u32"
+
+[[binding]]
+binding = 3
+name = "index_f32"
+kind = "storage_read_write"
+element = "f32"
+
+[[binding]]
+binding = 4
+name = "cands"
+kind = "storage_read_write"
+element = "u32"
+
+[[binding]]
+binding = 5
+name = "cfg"
+kind = "uniform"
+fields = ["u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32"]
+
+# Every record's raw sparse unit vector, CSR, row id order (stream rows,
+# then the oracles: oracle q is row n_stream + q).
+[[input]]
+name = "rec_offsets"
+element = "u32"
+shape = ["n_total + 1"]
+
+[[input]]
+name = "rec_indices"
+element = "u32"
+shape = ["nnz"]
+
+[[input]]
+name = "rec_values"
+element = "f32"
+shape = ["nnz"]
+
+[[input]]
+name = "oracle_half"
+element = "u32"
+shape = ["n_oracle"]
+
+# Per stage: each oracle's accept set (every arrived stream row within 1e-6
+# of its 10th true cosine), and today's index's misses, candidates pooled and
+# search ms, per oracle.
+[[input]]
+name = "accept_s1_offsets"
+element = "u32"
+shape = ["n_oracle + 1"]
+
+[[input]]
+name = "accept_s1_rows"
+element = "u32"
+shape = ["accept_n1"]
+
+[[input]]
+name = "accept_s2_offsets"
+element = "u32"
+shape = ["n_oracle + 1"]
+
+[[input]]
+name = "accept_s2_rows"
+element = "u32"
+shape = ["accept_n2"]
+
+[[input]]
+name = "accept_s3_offsets"
+element = "u32"
+shape = ["n_oracle + 1"]
+
+[[input]]
+name = "accept_s3_rows"
+element = "u32"
+shape = ["accept_n3"]
+
+[[input]]
+name = "accept_s4_offsets"
+element = "u32"
+shape = ["n_oracle + 1"]
+
+[[input]]
+name = "accept_s4_rows"
+element = "u32"
+shape = ["accept_n4"]
+
+[[input]]
+name = "accept_s5_offsets"
+element = "u32"
+shape = ["n_oracle + 1"]
+
+[[input]]
+name = "accept_s5_rows"
+element = "u32"
+shape = ["accept_n5"]
+
+[[input]]
+name = "today_s1_misses"
+element = "u32"
+shape = ["n_oracle"]
+
+[[input]]
+name = "today_s1_pooled"
+element = "u32"
+shape = ["n_oracle"]
+
+[[input]]
+name = "today_s1_search_ms"
+element = "f32"
+shape = ["n_oracle"]
+
+[[input]]
+name = "today_s2_misses"
+element = "u32"
+shape = ["n_oracle"]
+
+[[input]]
+name = "today_s2_pooled"
+element = "u32"
+shape = ["n_oracle"]
+
+[[input]]
+name = "today_s2_search_ms"
+element = "f32"
+shape = ["n_oracle"]
+
+[[input]]
+name = "today_s3_misses"
+element = "u32"
+shape = ["n_oracle"]
+
+[[input]]
+name = "today_s3_pooled"
+element = "u32"
+shape = ["n_oracle"]
+
+[[input]]
+name = "today_s3_search_ms"
+element = "f32"
+shape = ["n_oracle"]
+
+[[input]]
+name = "today_s4_misses"
+element = "u32"
+shape = ["n_oracle"]
+
+[[input]]
+name = "today_s4_pooled"
+element = "u32"
+shape = ["n_oracle"]
+
+[[input]]
+name = "today_s4_search_ms"
+element = "f32"
+shape = ["n_oracle"]
+
+[[input]]
+name = "today_s5_misses"
+element = "u32"
+shape = ["n_oracle"]
+
+[[input]]
+name = "today_s5_pooled"
+element = "u32"
+shape = ["n_oracle"]
+
+[[input]]
+name = "today_s5_search_ms"
+element = "f32"
+shape = ["n_oracle"]
+
+# The candidates: per stage, seed and query, C_MAX stream-row ids (pads
+# 0xFFFFFFFF), stage-major. Judged per window (stage x oracle half): the
+# four seeds' lists pooled (pads dropped, deduplicated), broken entries
+# (not arrived stream rows) counted, the rest re-ranked by exact cosine of
+# the records, the top 10 counted against the accept set.
+[[output]]
+name = "cands"
+element = "u32"
+shape = ["stages * seeds * n_queries", "c_max"]
+kind = "pooled_recall"
+
+[output.pooled]
+seeds = "seeds"
+stages = "stages"
+queries = "n_queries"
+top = "10"
+arrived = "stage * per_section"
+query_row = "n_stream + q"
+rec_offsets = "rec_offsets"
+rec_indices = "rec_indices"
+rec_values = "rec_values"
+half = "oracle_half"
+accept_offsets = "accept_s{stage}_offsets"
+accept_rows = "accept_s{stage}_rows"
+today_misses = "today_s{stage}_misses"
+today_pooled = "today_s{stage}_pooled"
+
+# The ingest through stage k: every pass of every seed of stages 1..k, summed
+# (the measured cost of having indexed everything arrived), against today's
+# build of sections 1..k (index_builds.json build_ms: one whole build, not
+# incremental; the manifest's today_settle_ms_<k>).
+[[output.pooled.timing]]
+sample = "ingest{stage}"
+cumulative = true
+today = "today_settle_ms_{stage}"
+
+# A stage's search: every seed's search dispatch, against today's search of
+# the same queries (each oracle's total_ms, summed).
+[[output.pooled.timing]]
+sample = "search{stage}"
+today_input = "today_s{stage}_search_ms"
+
+# THE KEYS ARE PROJECTED ON THE DEVICE (the team lead's task, Andrew's design:
+# raw records in, the projection part of the GPU pipeline): the CSR records
+# are the only resident inputs; the machinery kernel project.wgsl ([[machine]]
+# project, qdrant's pinned Rademacher formula) fills each seed's queries (the
+# oracle records' keys) and, per stage k, a keys buffer of microbatch k's
+# rows only ((k - 1) * per_section..k * per_section). No key crosses from
+# the host.
+[[setup]]
+require = "per_section * d * 4 <= binding_limit"
+because = "a microbatch's keys are one binding"
+
+[[setup]]
+require = "4 * max(arena_u32, arena_f32) <= binding_limit"
+because = "an index arena is one binding"
+
+[[setup]]
+buffer = "rec_off"
+element = "u32"
+elements = "n_total + 1"
+from = "rec_offsets"
+
+[[setup]]
+buffer = "rec_idx"
+element = "u32"
+elements = "nnz"
+from = "rec_indices"
+
+[[setup]]
+buffer = "rec_val"
+element = "f32"
+elements = "nnz"
+from = "rec_values"
+
+# The search's keys binding: nothing to read (64 zero floats, the least a
+# vec4 array binds).
+[[setup]]
+buffer = "nokeys"
+element = "f32"
+elements = "64"
+fill = "zero"
+
+[[setup]]
+for = "s"
+count = "seeds"
+let = ["seed = select(s == 0, seed0, select(s == 1, seed1, select(s == 2, seed2, seed3)))"]
+
+[[setup.body]]
+buffer = "queries{s}"
+element = "f32"
+# The judged queries only (all the oracles unless a case judges fewer).
+elements = "n_queries * d"
+fill = "zero"
+
+[[setup.body]]
+uniform = "pq{s}"
+of = "project.pcfg"
+words = ["seed", "0", "n_stream", "n_queries"]
+
+[[setup.body]]
+machine = "project"
+dispatch = { rec_offsets = "rec_off", rec_indices = "rec_idx", rec_values = "rec_val", keys = "queries{s}", pcfg = "pq{s}" }
+workgroups = ["n_queries", "1", "1"]
+
+[[setup.body]]
+for = "k0"
+count = "stages"
+
+[[setup.body.body]]
+buffer = "mb{s}_{k0}"
+element = "f32"
+elements = "per_section * d"
+fill = "zero"
+
+[[setup.body.body]]
+uniform = "pk{s}_{k0}"
+of = "project.pcfg"
+words = ["seed", "0", "k0 * per_section", "per_section"]
+
+[[setup.body.body]]
+machine = "project"
+dispatch = { rec_offsets = "rec_off", rec_indices = "rec_idx", rec_values = "rec_val", keys = "mb{s}_{k0}", pcfg = "pk{s}_{k0}" }
+workgroups = ["per_section", "1", "1"]
+
+# A run: four zeroed arenas a kind, then the five stages.
+[[run]]
+for = "s"
+count = "seeds"
+
+[[run.body]]
+buffer = "iu{s}"
+element = "u32"
+elements = "arena_u32"
+fill = "zero"
+
+[[run.body]]
+buffer = "if{s}"
+element = "f32"
+elements = "arena_f32"
+fill = "zero"
+
+[[run]]
+for = "k0"
+count = "stages"
+let = ["stage = k0 + 1", "arrived_begin = k0 * per_section", "arrived_end = stage * per_section"]
+
+[[run.body]]
+for = "s"
+count = "seeds"
+
+[[run.body.body]]
+buffer = "cands{k0}_{s}"
+element = "u32"
+elements = "n_queries * c_max"
+fill = "pad"
+
+# ingest: `passes` dispatches, one workgroup per arriving row.
+[[run.body.body]]
+for = "p"
+count = "passes"
+
+[[run.body.body.body]]
+uniform = "cfg{k0}_{s}_{p}"
+of = "cfg"
+words = ["s", "stage", "arrived_begin", "arrived_end", "n_queries", "p", "passes", "c_max"]
+
+[[run.body.body.body]]
+dispatch = { entry = "ingest", keys = "mb{s}_{k0}", queries = "queries{s}", index_u32 = "iu{s}", index_f32 = "if{s}", cands = "cands{k0}_{s}", cfg = "cfg{k0}_{s}_{p}" }
+workgroups = ["per_section", "1", "1"]
+sample = "ingest{stage}"
+
+# search: one dispatch, one workgroup per query.
+[[run.body.body]]
+uniform = "cfgs{k0}_{s}"
+of = "cfg"
+words = ["s", "stage", "arrived_begin", "arrived_end", "n_queries", "0", "passes", "c_max"]
+
+[[run.body.body]]
+dispatch = { entry = "search", keys = "nokeys", queries = "queries{s}", index_u32 = "iu{s}", index_f32 = "if{s}", cands = "cands{k0}_{s}", cfg = "cfgs{k0}_{s}" }
+workgroups = ["n_queries", "1", "1"]
+sample = "search{stage}"
+
+[[run.body.body]]
+read = "cands{k0}_{s}"
+into = "cands"
+elements = "n_queries * c_max"
+offset = "(k0 * seeds + s) * n_queries * c_max"
+
+# One submission a stage (each bounded by gpu_wait_ms).
+[[run.body]]
+sync = true
+
+[[suite]]
+name = "stream"
+role = "constraint"
+cases = "cases/stream.toml"
+chunk = 1
+
+[budget]
+base_ms = 60000.0
+round_ms = 60000.0
+# Three fresh timing runs: each gives two samples a stage (the ingest
+# through it, its search), each its own HFF input.
+timing_rounds = 3
+# One stage's submission (the reference's search sees no keys here and
+# returns pads); 30 s bounds a runaway, as v24_ingest5's.
+gpu_wait_ms = 30000.0
+deadline_factor = 20.0
+deadline_floor_ms = 120000.0
