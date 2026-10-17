@@ -135,7 +135,7 @@ seeds' lists with pads dropped, that differs; candidates that differ only in ord
 arena state that differs with the outputs the same, are counted and are not failures).
 Records: `logs/V24/gate/strict/gate.md`, `gate.tsv`.
 
-| operator | children | made | role | render | naga | safety | read back | values | no race | of which order-only | of which state-only |
+| operator | children | made | role | render | naga | safety | read back | values | no race (3 runs) | of which order-only | of which state-only |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
 | (parents) | 26 | 26 | 26 | 26 | 26 | 3 | 3 | 3 | 3 | 0 | 1 |
 | section crossover | 200 | 200 | 197 | 197 | 197 | 18 | 18 | 18 | 18 | 0 | 5 |
@@ -143,6 +143,12 @@ Records: `logs/V24/gate/strict/gate.md`, `gate.tsv`.
 | rule | 200 | 200 | 200 | 200 | 200 | 18 | 18 | 18 | 18 | 0 | 7 |
 | generic rewrite | 200 | 157 | 157 | 157 | 156 | 15 | 15 | 15 | 14 | 0 | 2 |
 | point mutation | 200 | 200 | 194 | 194 | 193 | 26 | 26 | 26 | 26 | 1 | 9 |
+
+Every count above rests on fuller 69039be, committed, with no uncommitted edits (the
+lead's clean worktrees). The re-run at 12:11Z (phylu 1790a82e, the same fuller, layout
+152 slots from the seeds' need) gives the same table but section crossover: 17 with no
+race of 18 (one race seen in 3 runs that the 11:44Z runs did not show). A race shows in
+some runs only, so 3 runs under-count races; the arena measurement runs 10.
 
 Of the 99 parents and children that reached the race check, 86 express their text
 byte-equal and 12 were run against it on the device; none computed different values. The
@@ -173,6 +179,7 @@ access; reads across passes as ordered by the dispatch program), or designs rest
 affine ownership.
 
 **Seeds and layout.** Run 1's readable seeds are trees under their own roles (phylu
-3baeafa2): 18 when measured at 08:43Z, 25 at 09:43Z and 28 at 11:00Z with the kingdom's
-later fixes. The largest needs 179 tail slots, so run 2's 128-slot layout and the gate's
-160 cannot hold them all; a 184-slot reference dump can.
+3baeafa2). At fuller 69039be (committed), 26 of the 32 read; the gate's layout from their
+largest need, rounded up to eight, is 152 tail slots, and run 2's 128 cannot hold them
+all. The counts of 18 (08:43Z), 25 (09:43Z) and 28 seeds needing 179 slots (11:00Z) were
+measured with v24-b6-kingdom's uncommitted fuller edits in the tree, not at a commit.
