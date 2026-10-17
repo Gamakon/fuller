@@ -186,7 +186,7 @@ mod tests {
     /// fails exactly the probes that touch the last item.
     #[cfg(feature = "gpu")]
     #[test]
-    fn the_shipped_kernel_passes_every_probe_and_a_broken_one_fails_some() {
+    fn the_shipped_kernel_passes_every_probe_and_a_broken_one_fails_some_on_the_device() {
         use crate::wgsl::gram::{Gram, SHIPPED};
         use crate::wgsl::oracle::device::Device;
         let dev = Device::new().expect("device");

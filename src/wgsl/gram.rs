@@ -1793,7 +1793,7 @@ mod tests {
     /// run scatter of one round (15 %, 2026-10-11).
     #[cfg(feature = "gpu")]
     #[test]
-    fn the_shipped_kernel_predicts_its_own_time_at_the_timing_shapes() {
+    fn the_shipped_kernel_predicts_its_own_time_at_the_timing_shapes_on_the_device() {
         let dev = Device::new().expect("device");
         let ctx = FitnessContext::new(&dev, std::path::Path::new("logs/WGSL_GRAM/pairs")).expect("context");
         let f = ctx.fitness(&dev, SHIPPED);
@@ -1841,7 +1841,7 @@ mod tests {
     /// evaluation takes well under the watchdog's base budget.
     #[cfg(feature = "gpu")]
     #[test]
-    fn a_deliberately_slow_kernel_is_stopped_before_the_timing_shapes() {
+    fn a_deliberately_slow_kernel_is_stopped_before_the_timing_shapes_on_the_device() {
         let slow = slow_shipped();
         let dev = Device::new().expect("device");
         let ctx = FitnessContext::new(&dev, std::path::Path::new("logs/WGSL_GRAM/pairs")).expect("context");
@@ -1957,7 +1957,7 @@ mod tests {
     /// shipped kernel moves its times by less than that.
     #[cfg(feature = "gpu")]
     #[test]
-    fn the_generations_shipped_times_score_shipped_at_one() {
+    fn the_generations_shipped_times_score_shipped_at_one_on_the_device() {
         let dev = Device::new().expect("device");
         let ctx = FitnessContext::new(&dev, std::path::Path::new("logs/WGSL_GRAM/pairs")).expect("context");
         let first = ctx.shipped_gpu_ms.get();
@@ -1976,7 +1976,7 @@ mod tests {
     /// the shipped, tiled and blocked kernels.
     #[cfg(feature = "gpu")]
     #[test]
-    fn batched_cases_give_the_one_case_h_bit_for_bit() {
+    fn batched_cases_give_the_one_case_h_bit_for_bit_on_the_device() {
         let dev = Device::new().expect("device");
         let probes = crate::wgsl::probes::probes(1);
         let admission = crate::wgsl::probes::admission(&probes, 1);
@@ -2131,7 +2131,7 @@ mod tests {
     /// passes on Apple silicon, which is why the search uses compute_ms).
     #[cfg(feature = "gpu")]
     #[test]
-    fn every_build_in_a_sequence_has_a_compute_time() {
+    fn every_build_in_a_sequence_has_a_compute_time_on_the_device() {
         let dev = Device::new().expect("device");
         let gram = Gram::compile(&dev, SHIPPED).expect("compile");
         let limit = effective_buffer_limit(&dev.device);
@@ -2185,7 +2185,7 @@ mod tests {
 
     #[cfg(feature = "gpu")]
     #[test]
-    fn the_grid_header_is_read_and_checked_against_the_shader() {
+    fn the_grid_header_is_read_and_checked_against_the_shader_on_the_device() {
         assert_eq!(grid_header(TILED), Some((16, 16, 4, 4)));
         assert_eq!(grid_header(SHIPPED), None);
         let dev = Device::new().expect("device");
@@ -2220,7 +2220,7 @@ mod tests {
     /// with the failing case named.
     #[cfg(feature = "gpu")]
     #[test]
-    fn the_fast_fitness_ranks_blocked_above_shipped_and_refuses_a_broken_kernel() {
+    fn the_fast_fitness_ranks_blocked_above_shipped_and_refuses_a_broken_kernel_on_the_device() {
         let dev = Device::new().expect("device");
         let ctx = FitnessContext::new(&dev, std::path::Path::new("logs/WGSL_GRAM/pairs")).expect("context");
         let s = ctx.fitness(&dev, SHIPPED);

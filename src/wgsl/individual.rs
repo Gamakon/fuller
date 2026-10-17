@@ -170,7 +170,7 @@ mod tests {
     /// with the same speed as the draft's own text.
     #[cfg(feature = "gpu")]
     #[test]
-    fn a_drafted_individual_rebuilds_from_its_genes_and_evaluates_feasible() {
+    fn a_drafted_individual_rebuilds_from_its_genes_and_evaluates_feasible_on_the_device() {
         use crate::wgsl::gram::FitnessContext;
         use crate::wgsl::oracle::device::Device;
         let kingdom = WgslKingdom::load();
