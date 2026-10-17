@@ -2724,6 +2724,21 @@ impl<'a> Ctx<'a> {
         // (A call's arguments are roots of their own, by the call's statement.)
         let readers = self.roots.values().flatten().filter(|r| count(&r.tree, &leaf) > 0).count() + self.arg_roots.values().filter(|args| args.iter().any(|(_, n)| count(n, &leaf) > 0)).count();
         let in_let = self.lets.values().any(|t| count(t, &leaf) > 0);
+        // The emitter's lane on a 2-D workgroup, `let sg_lane: u32 =
+        // subgroupExclusiveAdd(1u);`, read by nothing but that let: its uses
+        // read as the builtin (tree_of), so the collective itself is no
+        // statement (2026-10-17: read as a register set at the kernel's top,
+        // the first AST difference of 1 in 10 random trees).
+        // (Named by the emitter's let: naga's named expression of the
+        // collective's result.)
+        let named_lane = self.naga_fn.named_expressions.iter().any(|(h, n)| h.index() as u32 == result && n == "sg_lane");
+        let one_lane = expr.name.starts_with("subgroup.exclusive_add") && expr.kids.first().is_some_and(|k| literal_value(k) == Some(1.0));
+        if named_lane && one_lane {
+            if let Some(row) = self.kingdom.rows.iter().find(|r| r.name == "builtin.subgroup_invocation_id") {
+                self.inlined.insert(leaf, Tree::new(&row.name, row.output, vec![]));
+                return Ok(None);
+            }
+        }
         if matches!(d.as_str(), "vec2<f32>.real" | "vec3<f32>.real" | "vec2<u32>.index" | "vec3<u32>.index" | "vec2<i32>.int" | "vec3<i32>.int") || (readers == 1 && !in_let) {
             self.inlined.insert(leaf, expr);
             return Ok(None);
@@ -8291,7 +8306,9 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     // not the rows; 1,000 of 1,000 read back.) (16:05Z, 43 and 917 with the
     // argmax and argmin reductions drawn: other draws; of the 83 that miss
     // the fixpoint none differs at a reduction, the earlier classes all.)
-    const AST_FLOOR: usize = 43;
+    // (17:40Z, 85: the emitter's sg_lane let read as the builtin, not a
+    // register set at the kernel's top, the largest class.)
+    const AST_FLOOR: usize = 85;
 
     /// The floors of [`random_module_trees_render_validate_and_read_back`]
     /// (1,000 v24 modules, depth 6; measured 2026-10-17 at its first run:
@@ -8326,7 +8343,8 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     /// length for all its entry points: one over 32 KB did not validate).
     /// 15:30Z, 8, 968 and 139 with the 64-element vec4 arrays (risen);
     /// 16:05Z, 1, 970 and 134 with the argmax reductions drawn (other draws).
-    const MODULE_AST_FLOOR: usize = 1;
+    /// 17:40Z, AST 4 with the emitter's sg_lane read as the builtin.
+    const MODULE_AST_FLOOR: usize = 4;
     const MODULE_FIXPOINT_FLOOR: usize = 970;
     const MODULE_LEGAL_FLOOR: usize = 134;
 
