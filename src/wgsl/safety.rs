@@ -485,6 +485,12 @@ struct Site {
     form: Result<Lin, (&'static str, String)>,
     facts: Vec<Lin>,
     what: String,
+    /// The access (its function's place, a key only, and its pointer
+    /// expression), for arena mode's bounds.
+    access: Option<(usize, Handle<Expression>)>,
+    /// Arena mode: the affine form's greatest value at the contract's ranges
+    /// is below the binding's least arrayLength.
+    form_in_bounds: bool,
 }
 
 // ------------------------------------------------------------------- frames
@@ -1450,6 +1456,15 @@ impl<'m> An<'m> {
         self.iface.outputs().any(|o| o.name != name && self.contract.buffer_of(&o.name).0 == buf)
     }
 
+    /// A load's pointer expression and its function, for arena mode.
+    fn load_access(&self, fr: usize, h: Handle<Expression>) -> Option<(usize, Handle<Expression>)> {
+        let f = self.frames[fr].func;
+        match &f.expressions[h] {
+            Expression::Load { pointer } => Some((f as *const Function as usize, *pointer)),
+            _ => None,
+        }
+    }
+
     fn load(&mut self, fr: usize, h: Handle<Expression>, p: Abs) -> Abs {
         let Abs::Ptr(p) = p else { return self.other(false, false, false) };
         match p.base.clone() {
@@ -1521,7 +1536,8 @@ impl<'m> An<'m> {
                         }
                         let key = format!("{}:{}", self.frames[fr].ctx, h.index());
                         let kind = if self.atomic_global(g) { Kind::Atomic } else { Kind::Read };
-                        self.site(key, &alloc, kind, idx, false);
+                        let access = self.load_access(fr, h);
+                        self.site(key, &alloc, kind, idx, false, access);
                         self.other(false, false, false)
                     }
                     AddressSpace::WorkGroup => {
@@ -1529,7 +1545,7 @@ impl<'m> An<'m> {
                         let kind = if self.atomic_global(g) { Kind::Atomic } else { Kind::Read };
                         let (alloc, idx) = self.flat_index(g, &p.path);
                         let key = format!("{}:{}", self.frames[fr].ctx, h.index());
-                        self.site(key, &alloc, kind, idx, true);
+                        self.site(key, &alloc, kind, idx, true, None);
                         self.other(false, false, false)
                     }
                     _ => self.other(false, false, false),
@@ -1554,10 +1570,15 @@ impl<'m> An<'m> {
         v
     }
 
-    fn site(&mut self, key: String, alloc: &str, kind: Kind, idx: Abs, workgroup: bool) {
+    fn site(&mut self, key: String, alloc: &str, kind: Kind, idx: Abs, workgroup: bool, access: Option<(usize, Handle<Expression>)>) {
         if !self.record || self.dead(&self.facts) {
             return;
         }
+        let least = self.contract.params.get(&format!("arrayLength({alloc})")).map(|(lo, _)| *lo);
+        let form_in_bounds = match (&idx, least) {
+            (Abs::Lin(l), Some(n)) if !workgroup && self.contract.is_arena(alloc) => self.range(l, &self.facts).1 < n,
+            _ => false,
+        };
         let (buf, off) = if workgroup { (alloc.to_string(), 0) } else { self.contract.buffer_of(alloc) };
         let form = match idx {
             Abs::Lin(l) => Ok(l.add(&Lin::konst(Poly::konst(off)))),
@@ -1568,7 +1589,7 @@ impl<'m> An<'m> {
             (Ok(l), _) => format!("{kind:?} {alloc}[{}]", self.show_lin(l)),
             (Err(_), _) => format!("{kind:?} {alloc}[?]"),
         };
-        let s = Site { alloc: buf, kind, form, facts: self.facts.clone(), what };
+        let s = Site { alloc: buf, kind, form, facts: self.facts.clone(), what, access, form_in_bounds };
         if workgroup {
             let id = match self.wg_ix.get(&key) {
                 Some(&i) => i,
@@ -1845,13 +1866,13 @@ impl<'m> An<'m> {
             Statement::Store { pointer, value } => {
                 let p = self.eval(fr, *pointer);
                 let v = self.eval(fr, *value);
-                self.store(fr, &ctx, p, v, Kind::Write);
+                self.store(fr, &ctx, p, v, Kind::Write, Some(*pointer));
                 true
             }
             Statement::Atomic { pointer, value, result, .. } => {
                 let p = self.eval(fr, *pointer);
                 let v = self.eval(fr, *value);
-                self.store(fr, &ctx, p, v, Kind::Atomic);
+                self.store(fr, &ctx, p, v, Kind::Atomic, Some(*pointer));
                 let r = self.other(false, false, false);
                 self.frames[fr].vals.insert(*result, r);
                 true
@@ -1963,7 +1984,7 @@ impl<'m> An<'m> {
         out
     }
 
-    fn store(&mut self, fr: usize, ctx: &str, p: Abs, v: Abs, kind: Kind) {
+    fn store(&mut self, fr: usize, ctx: &str, p: Abs, v: Abs, kind: Kind, ptr: Option<Handle<Expression>>) {
         let Abs::Ptr(p) = p else { return };
         match p.base.clone() {
             Base::Local(id, l) => self.store_local(id, l, &p.path, v),
@@ -1982,13 +2003,14 @@ impl<'m> An<'m> {
                     AddressSpace::Storage { .. } => {
                         let kind = if self.atomic_global(g) { Kind::Atomic } else { kind };
                         let (alloc, idx) = self.flat_index(g, &p.path);
-                        self.site(ctx.to_string(), &alloc, kind, idx, false);
+                        let access = ptr.map(|h| (self.frames[fr].func as *const Function as usize, h));
+                        self.site(ctx.to_string(), &alloc, kind, idx, false, access);
                     }
                     AddressSpace::WorkGroup => {
                         // (atomicStore is a Store to an atomic: an atomic access.)
                         let kind = if self.atomic_global(g) { Kind::Atomic } else { kind };
                         let (alloc, idx) = self.flat_index(g, &p.path);
-                        self.site(ctx.to_string(), &alloc, kind, idx, true);
+                        self.site(ctx.to_string(), &alloc, kind, idx, true, None);
                     }
                     _ => {}
                 }
@@ -3008,10 +3030,25 @@ fn check_entry(module: &Module, contract: &Contract, entry: &str) -> Result<Repo
     // mask or a clamp of its index, is under no ownership rule; one with an
     // access not so proved keeps the strict rules (arena mode proves all
     // strict proves), and a strict refusal on it names that access.
-    let unbounded = if contract.arena_mode { arena_bounds(module, contract, entry)? } else { BTreeMap::new() };
-    let arena = |s: &Site| contract.is_arena(&s.alloc) && !unbounded.contains_key(&s.alloc);
+    // An access whose index's form proves no bound is in bounds still when
+    // every site it makes has an affine form whose greatest value, at the
+    // contract's ranges and the loop counters' bounds, is below the least
+    // arrayLength (`index_f32[wid.x + cfg.arrived_begin]`).
+    let mut unproved: BTreeMap<String, String> = BTreeMap::new();
+    if contract.arena_mode {
+        for (binding, accesses) in arena_bounds(module, contract, entry)? {
+            for (key, why) in accesses {
+                let at: Vec<&Site> = an.sites.iter().filter(|s| s.access == Some(key)).collect();
+                if at.is_empty() || !at.iter().all(|s| s.form_in_bounds) {
+                    let form = at.iter().find(|s| !s.form_in_bounds).map(|s| format!("; the access {}", s.what)).unwrap_or_default();
+                    unproved.entry(binding.clone()).or_insert(format!("{why}{form}"));
+                }
+            }
+        }
+    }
+    let arena = |s: &Site| contract.is_arena(&s.alloc) && !unproved.contains_key(&s.alloc);
     let named = |e: Unsafe, sites: &[&Site]| -> Unsafe {
-        match sites.iter().find_map(|s| unbounded.get(&s.alloc)) {
+        match sites.iter().find_map(|s| unproved.get(&s.alloc)) {
             Some(why) => unsafe_("arena_index_not_in_bounds", format!("{why} (so it keeps the strict rules: {}: {})", e.rule, e.detail)),
             None => e,
         }
@@ -3176,10 +3213,14 @@ fn bound_of(module: &Module, f: &Function, e: Handle<Expression>, of: Handle<nag
 /// an arena binding, in any function the entry point reaches, at an index
 /// proved below the binding's length (the contract's least
 /// `arrayLength(<binding>)`, or the binding's own length by a clamp to it).
-/// The arena bindings with an access not so proved, each with its first
-/// such access named (those bindings keep the strict rules).
-fn arena_bounds(module: &Module, contract: &Contract, entry: &str) -> Result<BTreeMap<String, String>, Unsafe> {
-    let mut unbounded: BTreeMap<String, String> = BTreeMap::new();
+/// The accesses into arena bindings whose index's form proves no bound,
+/// by binding: each access (its function's place and pointer) and why.
+/// (The affine forms among them are proved from the contract's ranges at
+/// their sites, [`check_entry`].)
+type Unbounded = BTreeMap<String, Vec<((usize, Handle<Expression>), String)>>;
+
+fn arena_bounds(module: &Module, contract: &Contract, entry: &str) -> Result<Unbounded, Unsafe> {
+    let mut unbounded: Unbounded = BTreeMap::new();
     let ep = module.entry_points.iter().find(|e| e.name == entry).ok_or_else(|| unsafe_("interface", format!("no entry point {entry}")))?;
     // The functions the entry point reaches, through its calls.
     fn calls(b: &Block, out: &mut Vec<Handle<Function>>) {
@@ -3212,7 +3253,7 @@ fn arena_bounds(module: &Module, contract: &Contract, entry: &str) -> Result<BTr
     let mut fns: Vec<&Function> = vec![&ep.function];
     fns.extend(reached.iter().map(|h| &module.functions[*h]));
     for f in fns {
-        for (_, e) in f.expressions.iter() {
+        for (eh, e) in f.expressions.iter() {
             let (base, index) = match e {
                 Expression::Access { base, index } => (*base, Some(*index)),
                 Expression::AccessIndex { base, .. } => (*base, None),
@@ -3237,7 +3278,7 @@ fn arena_bounds(module: &Module, contract: &Contract, entry: &str) -> Result<BTr
                 (None, _) => Some("its index is proved below no bound (mask it or clamp it)".to_string()),
             };
             if let Some(why) = why {
-                unbounded.entry(name.clone()).or_insert_with(|| format!("an access to the arena {name} in {}: {why}", f.name.clone().unwrap_or_else(|| entry.to_string())));
+                unbounded.entry(name.clone()).or_default().push(((f as *const Function as usize, eh), format!("an access to the arena {name} in {}: {why}", f.name.clone().unwrap_or_else(|| entry.to_string()))));
             }
         }
     }
@@ -3547,7 +3588,7 @@ mod tests {
 @group(0) @binding(4) var<storage, read_write> cands: array<u32>;
 @group(0) @binding(5) var<uniform> cfg: Cfg;
 ";
-        let k = |body: &str| format!("{pre}fn slot_of(h: u32, j: u32) -> u32 {{ return (h * 64u + j) & 1048575u; }}\n@compute @workgroup_size(64, 1, 1)\nfn ingest(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>) {{\n    let h = bitcast<u32>(keys[gid.x]) & 1023u;\n{body}\n}}\n");
+        let k = |body: &str| format!("{pre}fn slot_of(h: u32, j: u32) -> u32 {{ return (h * 64u + j) & 1048575u; }}\nfn wid_of(g: u32) -> u32 {{ return g / 64u; }}\n@compute @workgroup_size(64, 1, 1)\nfn ingest(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>) {{\n    let h = bitcast<u32>(keys[gid.x]) & 1023u;\n{body}\n}}\n");
         let strict = Contract::parse("workgroups x 1 5000\nworkgroups y 1 1\nworkgroups z 1 1\narena index_u32 index_f32\nparam arrayLength(index_u32) 1048576 1048576\nparam arrayLength(index_f32) 1048576 1048576\n").unwrap();
         let arena = strict.with_arena_mode(true);
         let state = "    let slot = atomicAdd(&index_u32[h], 1u);\n    index_f32[slot_of(h, slot & 63u)] = keys[gid.x];\n    let back = index_f32[min(h * 64u + slot, arrayLength(&index_f32) - 1u)];\n    atomicStore(&index_u32[(1024u + h) & 1048575u], bitcast<u32>(back));\n    cands[gid.x] = slot;";
@@ -3576,6 +3617,16 @@ mod tests {
         unsized_.params.retain(|k, _| !k.starts_with("arrayLength"));
         assert_eq!(rule(&k("    index_f32[slot_of(h, 0u)] = 1.0;"), &unsized_), "arena_index_not_in_bounds");
         proved(&k("    index_f32[min(h * 4096u, arrayLength(&index_f32) - 1u)] = 1.0;"), &unsized_);
+        // AN AFFINE INDEX WITHOUT A MASK (b5's forms from the 8M gate,
+        // seeds 05, 12, 20): in bounds from the contract's ranges and the
+        // loop counters' bounds, beside a masked hashed store; past them, the
+        // refusal names the access and its form.
+        let ranged = Contract::parse("workgroups x 1 1000\nworkgroups y 1 1\nworkgroups z 1 1\nparam cfg.n_queries 0 10000\narena index_u32 index_f32\nparam arrayLength(index_u32) 1048576 1048576\nparam arrayLength(index_f32) 1048576 1048576\n").unwrap().with_arena_mode(true);
+        proved(&k("    index_f32[wid_of(gid.x) + cfg.n_queries] = 1.0;\n    index_f32[slot_of(h, 3u)] = 2.0;"), &ranged);
+        proved(&k("    for (var j = 0u; j < 4u; j = j + 1u) { index_f32[(1024u * wid_of(gid.x)) + 4u * lid.x + j] = 1.0; }\n    index_f32[slot_of(h, 3u)] = 2.0;"), &ranged);
+        let e = check_text(&k("    index_f32[(1024u * wid_of(gid.x)) + 4u * lid.x + 1048576u] = 1.0;\n    index_f32[slot_of(h, 3u)] = 2.0;"), &ranged).expect_err("past the arena");
+        assert_eq!(e.rule, "arena_index_not_in_bounds", "{e}");
+        assert!(e.detail.contains("the access Write index_f32["), "the access named: {e}");
     }
 
     /// STRICT UNCHANGED ON THE EXISTING SEEDS (v24 run 1's 73 raw kernels
