@@ -5304,7 +5304,6 @@ fn search() { cands[0] = cfg.stage; }
     /// 64..256 a query, B 0) and miss no more than today's index on every
     /// window, and the two must give the same candidates.
     #[test]
-    #[ignore = "fails until the kingdom's rendering fix (B6): the rendering of the reference returns about 2 candidates a query"]
     fn the_full_v24_reference_and_its_rendering_return_candidates_at_stage_1() {
         let case_dir = Path::new("/Users/andrewmorgan/data/arm/v24_case");
         if !case_dir.join("case.json").exists() {
