@@ -3209,4 +3209,33 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 | F1726 | `reg.set_w_L5` | `composite` | `reg<vec2<f32>>.real vec2<f32>.real` | `stmt.L5` | 2 |  |
 | F1727 | `reg.set_w_C5` | `composite` | `reg<vec2<f32>>.real vec2<f32>.real` | `stmt.C5` | 2 |  |
 
-1727 function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Storage-buffer atomics are an interface's per-kernel rows, not rows of this table. Deliberately absent: atomic compare-exchange (naga 0.20's Metal backend lacks it), subgroupBallot, images, derivatives, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.
+## class `uflag`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F1728 | `uflag.of_flag` | `composite` | `bool.flag` | `bool.uflag` | 1 | the flag, workgroup-uniform when the checker's layer 4 proves it |
+
+## class `uniform`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F1729 | `uniform.of_checked` | `composite` | `u32.index` | `u32.uniform` | 1 | the index, workgroup-uniform when the checker's layer 4 proves it |
+
+## class `wg`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F1730 | `wg.uload_i_L0` | `composite` | `reg<u32>.index wgmem<u32>.index u32.wgindex` | `stmt.L0` | 3 | arity 3: r = workgroupUniformLoad(&a[i]) |
+| F1731 | `wg.uload_f_L0` | `composite` | `reg<f32>.real wgmem<f32>.real u32.wgindex` | `stmt.L0` | 3 | arity 3: r = workgroupUniformLoad(&a[i]) |
+| F1732 | `wg.uload_i_L1` | `composite` | `reg<u32>.index wgmem<u32>.index u32.wgindex` | `stmt.L1` | 3 | arity 3: r = workgroupUniformLoad(&a[i]) |
+| F1733 | `wg.uload_f_L1` | `composite` | `reg<f32>.real wgmem<f32>.real u32.wgindex` | `stmt.L1` | 3 | arity 3: r = workgroupUniformLoad(&a[i]) |
+| F1734 | `wg.uload_i_L2` | `composite` | `reg<u32>.index wgmem<u32>.index u32.wgindex` | `stmt.L2` | 3 | arity 3: r = workgroupUniformLoad(&a[i]) |
+| F1735 | `wg.uload_f_L2` | `composite` | `reg<f32>.real wgmem<f32>.real u32.wgindex` | `stmt.L2` | 3 | arity 3: r = workgroupUniformLoad(&a[i]) |
+| F1736 | `wg.uload_i_L3` | `composite` | `reg<u32>.index wgmem<u32>.index u32.wgindex` | `stmt.L3` | 3 | arity 3: r = workgroupUniformLoad(&a[i]) |
+| F1737 | `wg.uload_f_L3` | `composite` | `reg<f32>.real wgmem<f32>.real u32.wgindex` | `stmt.L3` | 3 | arity 3: r = workgroupUniformLoad(&a[i]) |
+| F1738 | `wg.uload_i_L4` | `composite` | `reg<u32>.index wgmem<u32>.index u32.wgindex` | `stmt.L4` | 3 | arity 3: r = workgroupUniformLoad(&a[i]) |
+| F1739 | `wg.uload_f_L4` | `composite` | `reg<f32>.real wgmem<f32>.real u32.wgindex` | `stmt.L4` | 3 | arity 3: r = workgroupUniformLoad(&a[i]) |
+| F1740 | `wg.uload_i_L5` | `composite` | `reg<u32>.index wgmem<u32>.index u32.wgindex` | `stmt.L5` | 3 | arity 3: r = workgroupUniformLoad(&a[i]) |
+| F1741 | `wg.uload_f_L5` | `composite` | `reg<f32>.real wgmem<f32>.real u32.wgindex` | `stmt.L5` | 3 | arity 3: r = workgroupUniformLoad(&a[i]) |
+
+1741 function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Storage-buffer atomics are an interface's per-kernel rows, not rows of this table. Deliberately absent: atomic compare-exchange (naga 0.20's Metal backend lacks it), subgroupBallot, images, derivatives, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.

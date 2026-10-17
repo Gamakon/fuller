@@ -1670,6 +1670,12 @@ impl<'a> Renderer<'a> {
                 scope.in_tile = false;
                 Ok(format!("    for (k = 0u; k < {count}u; k = k + 1u) {{\n{}    }}\n", body?))
             }
+            "wg.uload_i" | "wg.uload_f" => {
+                n(3)?;
+                let a = self.wgmem(&kids[1])?;
+                let len = self.wg_len(a, scope);
+                Ok(format!("    {} = workgroupUniformLoad(&{a}[{}]);\n", self.register(&kids[0])?, self.index_text(&kids[2], len, scope)?))
+            }
             "reg.set_f" | "reg.set_v" | "reg.set_i" | "reg.set_b" | "reg.set_n" | "reg.set_u" | "reg.set_w" | "reg.set_x" | "reg.set_y" | "reg.set_z" => {
                 n(2)?;
                 Ok(format!("    {} = {};\n", self.register(&kids[0])?, self.value(&kids[1], scope)?))
@@ -1961,7 +1967,7 @@ impl Renderer<'_> {
         // constant the reader reads back as the same splat or compose), and
         // a row written as its one child (`uniform.of_lit` is its literal).
         let constructor = v.name.starts_with("shape.splat") || v.name.starts_with("shape.compose");
-        let as_child = matches!(v.name.as_str(), "uniform.of_lit" | "index.of_uniform" | "uniform.of_counter" | "uniform.of_tcounter" | "uniform.of_tcounter2" | "uniform.of_tcounter3" | "uniform.of_tcounter4");
+        let as_child = matches!(v.name.as_str(), "uniform.of_lit" | "index.of_uniform" | "uniform.of_checked" | "uniform.of_counter" | "uniform.of_tcounter" | "uniform.of_tcounter2" | "uniform.of_tcounter3" | "uniform.of_tcounter4");
         if scope.const_depth == 0 && !v.kids.is_empty() && !constructor && !as_child && literal_only(v) {
             scope.const_depth = 1;
             let out = self.value_inner(v, scope);
@@ -2003,7 +2009,7 @@ impl Renderer<'_> {
             return self.value(&Tree { name: ix.into(), ty: index, konst: v.konst, kids: v.kids.clone() }, scope);
         }
         match name {
-            "uniform.of_lit" | "index.of_uniform" | "uniform.of_counter" | "uniform.of_tcounter" | "uniform.of_tcounter2" | "uniform.of_tcounter3" | "uniform.of_tcounter4" => return self.value(&v.kids[0], scope),
+            "uniform.of_lit" | "index.of_uniform" | "uniform.of_checked" | "uniform.of_counter" | "uniform.of_tcounter" | "uniform.of_tcounter2" | "uniform.of_tcounter3" | "uniform.of_tcounter4" => return self.value(&v.kids[0], scope),
             "uniform.wid_x" | "uniform.wid_y" | "uniform.wid_z" => return Ok(format!("wid.{}", &name[name.len() - 1..])),
             // A workgroup-uniform predicate: its comparison or logic.
             "uflag.eq" | "uflag.ne" | "uflag.lt" | "uflag.le" | "uflag.gt" | "uflag.ge" | "uflag.and" | "uflag.or" if v.kids.len() == 2 => {
@@ -2020,6 +2026,7 @@ impl Renderer<'_> {
                 return Ok(format!("(({}) {op} ({}))", self.value(&v.kids[0], scope)?, self.value(&v.kids[1], scope)?));
             }
             "uflag.not" if v.kids.len() == 1 => return Ok(format!("(!({}))", self.value(&v.kids[0], scope)?)),
+            "uflag.of_flag" if v.kids.len() == 1 => return self.value(&v.kids[0], scope),
             "uniform.nwg_x" | "uniform.nwg_y" | "uniform.nwg_z" => return Ok(format!("nwg.{}", &name[name.len() - 1..])),
             "uniform.subgroup_size" => return Ok("sg_size".into()),
             "uniform.num_subgroups" => return Ok("sg_count".into()),
@@ -2794,7 +2801,7 @@ fn bound_at(t: &Tree, m: f64) -> (f64, bool) {
             }
         };
         match uniform_as_index(&t.name).unwrap_or(safe_base(&t.name)) {
-            "index.of_uniform" | "uniform.of_lit" | "uniform.of_counter" | "uniform.of_tcounter" | "uniform.of_tcounter2" | "uniform.of_tcounter3" | "uniform.of_tcounter4" => k(0),
+            "index.of_uniform" | "uniform.of_lit" | "uniform.of_checked" | "uniform.of_counter" | "uniform.of_tcounter" | "uniform.of_tcounter2" | "uniform.of_tcounter3" | "uniform.of_tcounter4" => k(0),
             "bound.of_index" | "bound.of_uniform" | "bound.x_of_uniform" => k(0).min(f64::from(MAX_LOOP_TRIP)),
             "load.cfg_d" | "bound.d" => WORST_D,
             "load.cfg_r_rows" | "bound.rows" => WORST_ROWS,
@@ -3257,7 +3264,7 @@ fn sample_with(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, s
     // more lists: the draws stay those of the floors below.)
     // (Nor the 64-element u32 private arrays, read from kernels that keep one.)
     let long_u32 = |t: &Ty| kingdom.dual(*t).is_some_and(|d| d.dual == "parr64<u32>.index");
-    let not_drawn = |r: &WgslRow| uniform_test_op(safe_base(&r.name)).is_some() || long_u32(&r.output) || r.inputs.iter().any(long_u32) || matches!(safe_base(&r.name), "stmt.if_uflag" | "stmt.if_else_uflag") || matches!(r.name.as_str(), "convert.index_to_count" | "wg.ue" | "wg.uf" | "wg.ug" | "wg.uh" | "wg.ui" | "wg.uj" | "wg.uk" | "wg.ul" | "wg.e" | "wg.f" | "wg.g" | "wg.h") || (r.name == "wg.get_u_safe" && kingdom.dual(r.output).is_some_and(|d| d.form == "xbound"));
+    let not_drawn = |r: &WgslRow| uniform_test_op(safe_base(&r.name)).is_some() || long_u32(&r.output) || r.inputs.iter().any(long_u32) || matches!(safe_base(&r.name), "stmt.if_uflag" | "stmt.if_else_uflag") || matches!(r.name.as_str(), "uniform.of_checked" | "uflag.of_flag" | "convert.index_to_count" | "wg.ue" | "wg.uf" | "wg.ug" | "wg.uh" | "wg.ui" | "wg.uj" | "wg.uk" | "wg.ul" | "wg.e" | "wg.f" | "wg.g" | "wg.h") || (r.name == "wg.get_u_safe" && kingdom.dual(r.output).is_some_and(|d| d.form == "xbound"));
     let mut rows: Vec<WgslRow> = kingdom.rows.iter().filter(|r| !f16(&r.output) && !r.inputs.iter().any(f16) && !r.name.starts_with("stmt.return") && !r.name.starts_with("safe.mirror_of") && !r.name.starts_with("store.h_mirror") && !not_drawn(r) && !r.name.starts_with("wg.set")).cloned().collect();
     // The safe kingdom reads h only at the thread's own cell (load.h_safe):
     // the role's load.h, h at any index, is the plain kingdom's (the

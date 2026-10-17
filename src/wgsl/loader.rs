@@ -690,8 +690,9 @@ mod tests {
         // workgroup u32 as a loop bound's value; 1,687 with the stepped loops that break; 1,702 with
         // the 64-element u32 private arrays (parr.ua, parr.uc, their get and 12 sets); 1,706 with
         // four more u32 workgroup arrays (wg.ui..ul, seed20 of v24 run 1); 1,727 with the vec2<f32>
-        // registers (reg.w0..w7, reg.get_w and 12 reg.set_w, seed11).
-        assert_eq!(fs.rows.len(), 1727);
+        // registers (reg.w0..w7, reg.get_w and 12 reg.set_w, seed11); 1,728 with uflag.of_flag;
+        // 1,729 with uniform.of_checked; 1,741 with the uniform loads (wg.uload_i, wg.uload_f at L0..L5).
+        assert_eq!(fs.rows.len(), 1741);
         let dual = |t: Ty| k.dual(t).unwrap().dual.clone();
         let producers = |d: &str| -> Vec<String> { k.rows.iter().filter(|r| dual(r.output) == d).map(|r| r.name.clone()).collect() };
         assert_eq!(producers("kernel.safe"), vec!["kernel.entry_safe"]);

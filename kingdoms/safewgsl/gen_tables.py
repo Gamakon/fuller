@@ -1324,6 +1324,20 @@ for i in range(8):
 f("reg", "get_w", "composite", ["reg<vec2<f32>>.real"], "vec2<f32>.real", "the register's value")
 for r in RUNGS + RUNGS5:
     f("reg", "set_w_" + r, "composite", ["reg<vec2<f32>>.real", "vec2<f32>.real"], "stmt." + r, "")
+# ---- any flag as a workgroup-uniform predicate, proved so by the checker (2026-10-17, v24 run 1's seeds 06, 21,
+# 28, 29, 31: `if (n > 0u)` over `n = workgroupUniformLoad(&wu1)`, `if (dc)` over a flag set under a uniform test,
+# each over a barrier): the row writes the flag; layer 4 proves it uniform or names the barrier in non-uniform
+# control ----
+f("uflag", "of_flag", "composite", ["bool.flag"], "bool.uflag", "the flag, workgroup-uniform when the checker's layer 4 proves it")
+# (and an index as a uniform value, a loop's bound over a barrier: `for (b = 0u; b < c; b += 8u)` with c a helper's
+# argument from a workgroupUniformLoad, seeds 21 and 29)
+f("uniform", "of_checked", "composite", ["u32.index"], "u32.uniform", "the index, workgroup-uniform when the checker's layer 4 proves it")
+# ---- workgroupUniformLoad of a workgroup array's element into a register (2026-10-17, v24 run 1's seed21: a count
+# written by one thread, read by all as `workgroupUniformLoad(&wu1)` and tested over a barrier): one statement, a
+# barrier for the checker (uniform control only), its register uniform when the index is; L rungs only ----
+for r in ("L0", "L1", "L2", "L3", "L4", "L5"):
+    f("wg", "uload_i_" + r, "composite", ["reg<u32>.index", "wgmem<u32>.index", "u32.wgindex"], "stmt." + r, "arity 3: r = workgroupUniformLoad(&a[i])")
+    f("wg", "uload_f_" + r, "composite", ["reg<f32>.real", "wgmem<f32>.real", "u32.wgindex"], "stmt." + r, "arity 3: r = workgroupUniformLoad(&a[i])")
 
 def write_tsv(path, header, rows):
     with open(path, "w") as out:

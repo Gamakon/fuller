@@ -293,7 +293,7 @@ fn builtin_id(name: &str) -> Option<&'static str> {
 
 /// The rows that put a barrier in the text (a reduction writes them too).
 fn is_barrier(base: &str) -> bool {
-    matches!(base, "stmt.barrier" | "stmt.storage_barrier" | "stmt.subgroup_barrier" | "wg.reduce_add" | "wg.reduce_max" | "wg.reduce_min" | "wg.put")
+    matches!(base, "stmt.barrier" | "stmt.storage_barrier" | "stmt.subgroup_barrier" | "wg.reduce_add" | "wg.reduce_max" | "wg.reduce_min" | "wg.put" | "wg.uload_i" | "wg.uload_f")
 }
 
 /// The tile counter a leaf reads (1-based depth), or None.
@@ -851,6 +851,15 @@ impl<'a> Checker<'a> {
                     }
                     _ => {}
                 }
+                // A workgroupUniformLoad: its register holds one value in every
+                // thread when its index is uniform (and it runs in uniform control).
+                if cx.mode == Mode::Uniform && (b == "wg.uload_i" || b == "wg.uload_f") {
+                    if let (Some(r), Some(i)) = (k.first().and_then(|r| register_name(self.kingdom, r).ok()), k.get(2)) {
+                        if !(live && self.uniform(i, cx)) && cx.nonuniform_regs.insert(r) {
+                            cx.changed = true;
+                        }
+                    }
+                }
             }
             // A store of h at a cell (layer 7 proves its write set).
             "store.h_safe" | "store.h_mirror" => {
@@ -1254,7 +1263,7 @@ impl<'a> Checker<'a> {
                 Some(k(0).map_or(Iv { lo: 0, hi: cap }, |iv| Iv { lo: iv.lo.min(cap), hi: iv.hi.min(cap) }))
             }
             "safe.counter_index" | "safe.tile_index" | "safe.tile_index2" | "safe.tile_index3" | "safe.tile_index4" | "safe.row_as_index" | "safe.col_as_index" | "index.of_count" | "index.of_row" | "index.of_col" | "index.of_lidx" if d.slot == "u32" => k(0),
-            "index.of_uniform" | "uniform.of_lit" | "uniform.of_counter" | "uniform.of_tcounter" | "uniform.of_tcounter2" | "uniform.of_tcounter3" | "uniform.of_tcounter4" => k(0),
+            "index.of_uniform" | "uniform.of_lit" | "uniform.of_checked" | "uniform.of_counter" | "uniform.of_tcounter" | "uniform.of_tcounter2" | "uniform.of_tcounter3" | "uniform.of_tcounter4" => k(0),
             "uniform.wid_x" | "uniform.wid_y" | "uniform.wid_z" | "uniform.nwg_x" | "uniform.nwg_y" | "uniform.nwg_z" => {
                 let id = if base.starts_with("uniform.wid") { "wid" } else { "nwg" };
                 cx.comp(id, "xyz".find(base.chars().last()?)?)
