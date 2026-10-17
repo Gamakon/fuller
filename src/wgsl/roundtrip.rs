@@ -198,7 +198,7 @@ mod tests {
         let k = WgslKingdom::load_safe();
         let root = Path::new(env!("CARGO_MANIFEST_DIR"));
         let mut sources: Vec<(String, String)> = Vec::new();
-        for d in ["tests/corpus/safewgsl", "tests/corpus/interfaces", "tests/corpus/nluca", "logs/HGP/001/popA_g001/texts", "logs/HGP/001/popA2_g001b/texts", "logs/HGP/001/library_texts", "logs/HGP/001/popB_g080/texts", "logs/HGP/001/reserve2/texts", "logs/HGP/001/popC_rand20/texts", "logs/HGP/001/popR_rules/texts", "logs/HGP/001/nluca_s3/seeds"] {
+        for d in ["tests/corpus/safewgsl", "tests/corpus/interfaces", "tests/corpus/nluca", "logs/HGP/001/popA_g001/texts", "logs/HGP/001/popA2_g001b/texts", "logs/HGP/001/library_texts", "logs/HGP/001/popB_g080/texts", "logs/HGP/001/reserve2/texts", "logs/HGP/001/popC_rand20/texts", "logs/HGP/001/popR_rules/texts", "logs/HGP/001/nluca_s3/seeds", "logs/HGP/001/gen0", "logs/HGP/001/opus_cross", "logs/HGP/001/popA2_g006j/texts", "logs/HGP/001/library_ep_texts"] {
             for f in wgsl_in(&root.join(d), ".wgsl") {
                 sources.push((f.display().to_string(), std::fs::read_to_string(&f).expect("read")));
             }
