@@ -145,6 +145,8 @@ pub enum LayoutDefect {
     TailRanOut { ty: Ty, cursor: usize },
     /// A tail cell read for a slot of `ty` holds a symbol of another type.
     ForeignSymbol { ty: Ty, symbol: SymbolId, pos: usize },
+    /// A tail cell read holds a function; a tail holds terminals of its type only.
+    FunctionInTail { ty: Ty, symbol: SymbolId, pos: usize },
     /// A slot asks for a type with no frame.
     NoFrame { ty: Ty },
     /// More expressed placeholders of `ty` than its Dc holds.
@@ -162,6 +164,7 @@ impl fmt::Display for LayoutDefect {
             LayoutDefect::UnknownSymbol { pos, symbol } => write!(f, "cell {pos} holds symbol {symbol}, which is not in the kingdom"),
             LayoutDefect::TailRanOut { ty, cursor } => write!(f, "the frame of type {ty:?} ran out at cursor {cursor}"),
             LayoutDefect::ForeignSymbol { ty, symbol, pos } => write!(f, "cell {pos} read for a slot of type {ty:?} holds symbol {symbol} of another type"),
+            LayoutDefect::FunctionInTail { ty, pos, .. } => write!(f, "a function in tail {ty:?} at position {pos}"),
             LayoutDefect::NoFrame { ty } => write!(f, "a slot asks for type {ty:?}, which has no frame"),
             LayoutDefect::DcRanOut { ty, q } => write!(f, "the Dc of type {ty:?} ran out at placeholder {q}"),
             LayoutDefect::DcIndexPastConstants { ty, index, len } => write!(f, "a Dc word of type {ty:?} is {index}, C_T has {len} constants"),
@@ -253,6 +256,9 @@ pub fn express(k: &KingdomContract, layout: &GeneLayout, gene: &[u32], const_len
         }
         if k.output(symbol) != slot.ty {
             return Err(LayoutDefect::ForeignSymbol { ty: slot.ty, symbol, pos });
+        }
+        if pos >= frame.tail_off && !k.is_terminal(symbol) {
+            return Err(LayoutDefect::FunctionInTail { ty: slot.ty, symbol, pos });
         }
         let step = nodes.len() + 1;
         let const_index = if k.is_constant(symbol) {
@@ -434,6 +440,18 @@ mod tests {
         gene.extend([I; 3]);
         let err = express(&k, &layout, &gene, &no_constants()).expect_err("defect");
         assert_eq!(err, LayoutDefect::ForeignSymbol { ty: Ty::S, symbol: I, pos: 3 });
+    }
+
+    #[test]
+    fn a_function_in_a_tail_is_a_defect_even_when_its_type_matches() {
+        let k = two_type();
+        let layout = GeneLayout::new(&k, 3, Ty::S).expect("layout");
+        // left left left; the S tail starts with `left`, which outputs S but is a function.
+        let mut gene = vec![LEFT, LEFT, LEFT, LEFT, S, S, S];
+        gene.extend([I; 3]);
+        let err = express(&k, &layout, &gene, &no_constants()).expect_err("defect");
+        assert_eq!(err, LayoutDefect::FunctionInTail { ty: Ty::S, symbol: LEFT, pos: 3 });
+        assert_eq!(err.to_string(), "our software has a bug: a function in tail S at position 3");
     }
 
     #[test]
