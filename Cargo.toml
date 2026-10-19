@@ -167,6 +167,10 @@ name = "wgsl_safe_convert"
 required-features = ["wgsl"]
 
 [[example]]
+name = "wgsl_reading_snapshot"
+required-features = ["wgsl"]
+
+[[example]]
 name = "wgsl_safety"
 required-features = ["wgsl"]
 

@@ -33,6 +33,7 @@ pub mod legality;
 pub mod loader;
 pub mod mutate;
 pub mod naga_names;
+pub mod naga_snapshot;
 pub mod oracle;
 pub mod params;
 pub mod reader;
