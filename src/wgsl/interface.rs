@@ -54,6 +54,23 @@ pub struct BindingUse {
     /// `mat4x4<f32>`; a nested struct's fields as `inner.x`); empty for any
     /// other binding.
     pub leaves: Vec<(String, String)>,
+    /// A texture or sampler binding's description; None for a buffer.
+    pub image: Option<ImageInfo>,
+}
+
+/// A texture or a sampler as a binding.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImageInfo {
+    /// `1d`, `2d`, `3d`, `cube`; `sampler` for a sampler.
+    pub dim: String,
+    pub arrayed: bool,
+    pub multisampled: bool,
+    /// A depth texture (a load or sample is one `f32`), or a comparison sampler.
+    pub depth: bool,
+    /// A storage texture, with its access (`read`, `write`, `read_write`).
+    pub storage: Option<String>,
+    /// The texel's scalar type (`f32`, `i32`, `u32`).
+    pub texel: String,
 }
 
 /// A uniform block: its variable, its struct's name and its fields with
@@ -125,6 +142,58 @@ pub fn type_text(module: &Module, ty: Handle<naga::Type>) -> String {
             naga::ArraySize::Pending(o) => format!("array<{}, {}>", type_text(module, *base), module.overrides[*o].name.clone().unwrap_or_else(|| format!("override{}", o.index()))),
         },
         _ => t.name.clone().unwrap_or_else(|| format!("{:?}", t.inner)),
+    }
+}
+
+/// A texture or sampler type as WGSL writes it, with what the kingdom needs
+/// of it; None for any other type.
+fn image_of(module: &Module, ty: Handle<naga::Type>) -> Option<(String, ImageInfo)> {
+    use naga::{ImageClass, ImageDimension as D, ScalarKind as K};
+    match &module.types[ty].inner {
+        TypeInner::Sampler { comparison } => Some((if *comparison { "sampler_comparison" } else { "sampler" }.to_string(), ImageInfo { dim: "sampler".into(), arrayed: false, multisampled: false, depth: *comparison, storage: None, texel: "f32".into() })),
+        TypeInner::Image { dim, arrayed, class } => {
+            let d = match dim {
+                D::D1 => "1d",
+                D::D2 => "2d",
+                D::D3 => "3d",
+                D::Cube => "cube",
+            };
+            let arr = if *arrayed { "_array" } else { "" };
+            let scalar = |k: &K| match k {
+                K::Sint => "i32",
+                K::Uint => "u32",
+                _ => "f32",
+            };
+            Some(match class {
+                ImageClass::Sampled { kind, multi } => {
+                    let t = scalar(kind);
+                    let name = if *multi { format!("texture_multisampled_{d}<{t}>") } else { format!("texture_{d}{arr}<{t}>") };
+                    (name, ImageInfo { dim: d.into(), arrayed: *arrayed, multisampled: *multi, depth: false, storage: None, texel: t.into() })
+                }
+                ImageClass::Depth { multi } => {
+                    let name = if *multi { format!("texture_depth_multisampled_{d}") } else { format!("texture_depth_{d}{arr}") };
+                    (name, ImageInfo { dim: d.into(), arrayed: *arrayed, multisampled: *multi, depth: true, storage: None, texel: "f32".into() })
+                }
+                ImageClass::Storage { format, access } => {
+                    let fmt = format!("{format:?}").to_lowercase();
+                    let acc = match (access.contains(StorageAccess::LOAD), access.contains(StorageAccess::STORE)) {
+                        (true, true) => "read_write",
+                        (false, true) => "write",
+                        _ => "read",
+                    };
+                    let t = if fmt.ends_with("uint") {
+                        "u32"
+                    } else if fmt.ends_with("sint") {
+                        "i32"
+                    } else {
+                        "f32"
+                    };
+                    (format!("texture_storage_{d}{arr}<{fmt}, {acc}>"), ImageInfo { dim: d.into(), arrayed: *arrayed, multisampled: false, depth: false, storage: Some(acc.into()), texel: t.into() })
+                }
+                ImageClass::External => return None,
+            })
+        }
+        _ => None,
     }
 }
 
@@ -293,7 +362,8 @@ pub fn infer_entry(module: &Module, entry: &str) -> Result<ModuleInterface, Stri
     for (h, g) in module.global_variables.iter() {
         let Some(rb) = &g.binding else { continue };
         let name = g.name.clone().unwrap_or_else(|| format!("global{}", h.index()));
-        let ty = type_text(module, g.ty);
+        let mut ty = type_text(module, g.ty);
+        let mut image = None;
         let elem = match &module.types[g.ty].inner {
             TypeInner::Array { base, .. } => Some(type_text(module, *base)),
             _ => None,
@@ -324,7 +394,14 @@ pub fn infer_entry(module: &Module, entry: &str) -> Result<ModuleInterface, Stri
                 }
                 ("uniform".to_string(), Use::Parameter)
             }
-            AddressSpace::Handle => return Err(format!("binding {name}: images and samplers are not in the kingdom")),
+            AddressSpace::Handle => match image_of(module, g.ty) {
+                Some((text, info)) => {
+                    image = Some(info.clone());
+                    ty = text;
+                    (String::new(), if info.storage.as_deref().is_some_and(|a| a != "read") { Use::Output } else { Use::Input })
+                }
+                None => return Err(format!("binding {name}: a handle of a type the kingdom does not spell ({:?})", module.types[g.ty].inner)),
+            },
             other => return Err(format!("binding {name} in {other:?}: not a storage or uniform buffer")),
         };
         collect_structs(module, g.ty, &mut structs);
@@ -333,7 +410,7 @@ pub fn infer_entry(module: &Module, entry: &str) -> Result<ModuleInterface, Stri
             TypeInner::Struct { .. } if role != Use::Parameter => struct_leaves(module, g.ty),
             _ => Vec::new(),
         };
-        bindings.push(BindingUse { name, group: rb.group, binding: rb.binding, space, ty, elem, written: uses.written.contains(&h), read: uses.read.contains(&h), atomic: uses.atomic.contains(&h), role, leaves });
+        bindings.push(BindingUse { name, group: rb.group, binding: rb.binding, space, ty, elem, written: uses.written.contains(&h), read: uses.read.contains(&h), atomic: uses.atomic.contains(&h), role, leaves, image });
     }
     bindings.sort_by_key(|b| (b.group, b.binding));
     Ok(ModuleInterface { entry: ep.name.clone(), workgroup_size: ep.workgroup_size, bindings, uniform: uniforms.first().cloned(), uniforms, structs })

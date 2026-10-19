@@ -1400,6 +1400,19 @@ impl<'m> An<'m> {
                 let p = self.eval(fr, *pointer);
                 self.load(fr, h, p)
             }
+            // A texture read: a read site of the cell when the texture is a
+            // storage texture (the kernel may write it), else a value no thread
+            // computes alone.
+            Expression::ImageLoad { image, coordinate, array_index, .. } => {
+                let storage = crate::wgsl::interface::pointer_root(self.frames[fr].func, *image).is_some_and(|g| matches!(self.module.types[self.module.global_variables[g].ty].inner, TypeInner::Image { class: naga::ImageClass::Storage { .. }, .. }));
+                if storage {
+                    if let Some((alloc, idx)) = self.image_cell(fr, *image, *coordinate, *array_index) {
+                        let key = format!("{}:{}", self.frames[fr].ctx, h.index());
+                        self.site(key, &alloc, Kind::Read, idx, false, None);
+                    }
+                }
+                self.other(false, false, false)
+            }
             Expression::Unary { op, expr } => {
                 let v = self.eval(fr, *expr);
                 match (op, v) {
@@ -1483,6 +1496,49 @@ impl<'m> An<'m> {
             TypeInner::Array { base, .. } => matches!(self.module.types[*base].inner, TypeInner::Atomic(_)),
             _ => false,
         }
+    }
+
+    /// The cell a texture access names, as an allocation (`image.<name>`) and a
+    /// flat index: the coordinate's lanes and the array layer, each below
+    /// 2^20 (a texture is at most 16,384 along an axis and 2,048 layers),
+    /// packed as x + 2^20 y + 2^40 z + 2^60 layer. A coordinate outside the
+    /// texture writes nothing, so an index that is injective over the
+    /// coordinates in range keeps two invocations on two cells.
+    fn image_cell(&mut self, fr: usize, image: Handle<Expression>, coordinate: Handle<Expression>, array_index: Option<Handle<Expression>>) -> Option<(String, Abs)> {
+        let g = crate::wgsl::interface::pointer_root(self.frames[fr].func, image)?;
+        let name = self.module.global_variables[g].name.clone().unwrap_or_default();
+        // A coordinate converted between i32 and u32 names the same cell when
+        // it is in range, and writes nothing when it is not (a negative i32 is
+        // a u32 past 2^31): the conversion is looked through.
+        let peel = |f: &Function, mut e: Handle<Expression>| {
+            while let Expression::As { expr, kind: naga::ScalarKind::Sint | naga::ScalarKind::Uint, convert: Some(4) } = f.expressions[e] {
+                e = expr;
+            }
+            e
+        };
+        let (coordinate, array_index) = (peel(self.frames[fr].func, coordinate), array_index.map(|a| peel(self.frames[fr].func, a)));
+        let c = self.eval(fr, coordinate);
+        let lanes: Vec<Abs> = match c {
+            Abs::Vec(v) => v,
+            one => vec![one],
+        };
+        let mut parts: Vec<Abs> = lanes;
+        if let Some(a) = array_index {
+            let a = self.eval(fr, a);
+            while parts.len() < 3 {
+                parts.push(Abs::Lin(Lin::konst(Poly::konst(0))));
+            }
+            parts.push(a);
+        }
+        let mut total = Lin::konst(Poly::konst(0));
+        for (k, p) in parts.iter().enumerate() {
+            let Abs::Lin(l) = p else {
+                let (a, b) = self.info(p);
+                return Some((format!("image.{name}"), self.other(a, b, Self::wrapped(p))));
+            };
+            total = total.add(&l.scale(&Poly::konst(1i128 << (20 * k))));
+        }
+        Some((format!("image.{name}"), Abs::Lin(total)))
     }
 
     /// The paths a pointer path stands for: an element of an array of structs
@@ -2362,9 +2418,17 @@ impl<'m> An<'m> {
                 }
                 true
             }
-            Statement::ImageStore { .. } | Statement::RayQuery { .. } => {
+            Statement::ImageStore { image, coordinate, array_index, .. } => {
+                if let Some((alloc, idx)) = self.image_cell(fr, *image, *coordinate, *array_index) {
+                    self.site(ctx.to_string(), &alloc, Kind::Write, idx, false, None);
+                } else if self.record {
+                    self.errors.push(unsafe_("store_index_not_affine", "a texture store to a texture that is not a module binding".into()));
+                }
+                true
+            }
+            Statement::RayQuery { .. } => {
                 if self.record {
-                    self.errors.push(unsafe_("statement_not_in_kingdom", "an image store or a ray query".into()));
+                    self.errors.push(unsafe_("statement_not_in_kingdom", "a ray query".into()));
                 }
                 true
             }

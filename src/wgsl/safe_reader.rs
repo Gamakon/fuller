@@ -226,6 +226,11 @@ fn dual_of_type(module: &naga::Module, ty: Handle<naga::Type>) -> Option<String>
         TypeInner::Vector { size: VectorSize::Quad, scalar } if scalar.kind == ScalarKind::Float && scalar.width == 4 => Some("vec4<f32>.real".into()),
         // (Two sums returned together, `vec2<f32>(s, n)`: v24 run 1's seed11.)
         TypeInner::Vector { size: VectorSize::Bi, scalar } if scalar.kind == ScalarKind::Float && scalar.width == 4 => Some("vec2<f32>.real".into()),
+        // The other vectors a register holds (EXTRA_REGISTERS), and the square matrices.
+        TypeInner::Vector { .. } | TypeInner::Matrix { .. } => {
+            let d = crate::wgsl::render::elem_dual(&crate::wgsl::interface::type_text(module, ty))?;
+            (crate::wgsl::render::extra_register_of_value(&d).is_some() || matches!(d.as_str(), "mat2x2<f32>.real" | "mat3x3<f32>.real" | "mat4x4<f32>.real" | "vec4<u32>.index")).then_some(d)
+        }
         _ => None,
     }
 }
@@ -298,6 +303,7 @@ fn tree_of(ctx: &mut Ctx, n: &Node) -> Result<Tree, String> {
     }
     let text = n.to_sexpr();
     match n {
+        Node::Leaf { name, .. } if name.starts_with("tex.") => ctx.texture_row(name, &[]),
         Node::Leaf { name, .. } => {
             let name = &prefixed(&ctx.local_prefix, name);
             if let Some(def) = name.strip_prefix("let.").and_then(|k| ctx.lets.get(k)) {
@@ -439,6 +445,7 @@ fn tree_of(ctx: &mut Ctx, n: &Node) -> Result<Tree, String> {
             };
             Ok(Tree::literal(&format!("literal.{form}"), t, *value as f32))
         }
+        Node::App { name, kids, .. } if name.starts_with("tex.") => ctx.texture_row(name, kids),
         Node::App { name, kids, known, .. } => {
             // Two indices in a row (`sa[si][comp]`, seed08 of run A): the
             // element's index then the lane's; the store and load spell it.
@@ -1939,7 +1946,10 @@ impl<'a> Ctx<'a> {
             "mat2x2<f32>.real" => ('x', 2),
             "mat3x3<f32>.real" => ('y', 2),
             "mat4x4<f32>.real" => ('z', 2),
-            other => return Err(format!("local {local} has dual {other}, which has no register kind"),)
+            other => match crate::wgsl::render::extra_register_of_value(other) {
+                Some(x) => (x.letter, x.count as u32),
+                None => return Err(format!("local {local} has dual {other}, which has no register kind")),
+            },
         };
         // A kernel the kingdom wrote names its registers as the rows do
         // (`f17` is reg.f17; the renderer writes reg.f16, reg.f32 and
@@ -2365,7 +2375,7 @@ impl<'a> Ctx<'a> {
             'x' => "reg<mat2x2<f32>>.real",
             'y' => "reg<mat3x3<f32>>.real",
             'z' => "reg<mat4x4<f32>>.real",
-            _ => "reg<bool>.flag",
+            other => crate::wgsl::render::EXTRA_REGISTERS.iter().find(|x| x.letter == other).map_or("reg<bool>.flag", |x| x.dual),
         }
     }
 
@@ -2455,7 +2465,7 @@ impl<'a> Ctx<'a> {
                 // naga's name; the table's row is `builtin.num_workgroups`.
                 return Ok(Tree::new("builtin.num_workgroups", t.ty, vec![]));
             }
-            if t.name.starts_with("builtin.") || t.name.starts_with("literal.") || t.name == "load.phi_len" || t.name == "load.h_len" || t.name.starts_with("len.") {
+            if t.name.starts_with("builtin.") || t.name.starts_with("literal.") || t.name == "load.phi_len" || t.name == "load.h_len" || t.name.starts_with("len.") || t.name.starts_with("tex.") {
                 return Ok(t.clone());
             }
             // A workgroup scalar: element 0 of a workgroup array of one.
@@ -3164,6 +3174,20 @@ impl<'a> Ctx<'a> {
             }
         }
         Ok(out)
+    }
+
+    /// A texture or sampler operation (`tex.load.<b>.<sig>`, `tex.dim.<b>`,
+    /// `tex.sample.<b>.<s>.<mode>...`): the interface's row of the same name
+    /// over the operands.
+    fn texture_row(&mut self, name: &str, kids: &[Node]) -> Result<Tree, String> {
+        let Some((row, inputs, out)) = self.per_kernel_rows.iter().find(|p| p.0 == name).cloned() else {
+            return Err(format!("{name}: the interface has no such row (a texture operation of operand types the kingdom does not spell)"));
+        };
+        if inputs.len() != kids.len() {
+            return Err(format!("{name}: {} operands for a row of {}", kids.len(), inputs.len()));
+        }
+        let kids = kids.iter().map(|k| tree_of(self, k)).collect::<Result<Vec<_>, _>>()?;
+        Ok(Tree::new(&row, out, kids))
     }
 
     /// A field of a uniform block other than the first (or of any block, when
@@ -4389,13 +4413,8 @@ impl<'a> Ctx<'a> {
     /// element (WGSL's zero for a local declared without an initialiser).
     fn zero_array(&mut self, local: &str, elem: &str, n: usize, rung: &str) -> Result<Vec<Tree>, String> {
         let st = self.stmt_ty(rung)?;
-        let zero = match elem {
-            "f32.real" => Tree::literal("literal.real", ty(self, "f32.real")?, 0.0),
-            "u32.index" => Tree::literal("literal.index", ty(self, "u32.index")?, 0.0),
-            "bool.flag" => Tree::literal("literal.flag", ty(self, "bool.flag")?, 0.0),
-            "vec4<f32>.real" => Tree::new("shape.splat4", ty(self, "vec4<f32>.real")?, vec![Tree::literal("literal.real", ty(self, "f32.real")?, 0.0)]),
-            "vec2<f32>.real" => Tree::new("shape.splat2", ty(self, "vec2<f32>.real")?, vec![Tree::literal("literal.real", ty(self, "f32.real")?, 0.0)]),
-            other => return Err(format!("the local array {local} of {other} has no initialiser and no zero")),
+        let Some(zero) = self.zero_of_dual(elem)? else {
+            return Err(format!("the local array {local} of {elem} has no initialiser and no zero"));
         };
         let (arr, kind, mask) = self.private_array(local, elem)?;
         let mut stmts = Vec::new();
@@ -4407,6 +4426,29 @@ impl<'a> Ctx<'a> {
         Ok(stmts)
     }
 
+    /// The zero of a value dual: a literal of a scalar's form, a splat of one for
+    /// a vector's. None for a dual with no zero (a matrix, an opaque form).
+    fn zero_of_dual(&self, dual: &str) -> Result<Option<Tree>, String> {
+        let Some((slot, form)) = dual.split_once('.') else { return Ok(None) };
+        let (lanes, scalar) = match slot.strip_prefix("vec") {
+            Some(r) => (r[..1].parse::<usize>().ok(), r[2..r.len() - 1].to_string()),
+            None => (None, slot.to_string()),
+        };
+        let (lit, scalar_dual) = match scalar.as_str() {
+            "f32" => ("literal.real", "f32.real"),
+            "i32" => ("literal.int", "i32.int"),
+            "u32" => (if form == "count" { "literal.count" } else if form == "bits" { "literal.bits" } else { "literal.index" }, if form == "count" { "u32.count" } else if form == "bits" { "u32.bits" } else { "u32.index" }),
+            "bool" => ("literal.flag", "bool.flag"),
+            _ => return Ok(None),
+        };
+        let zero = Tree::literal(lit, ty(self, scalar_dual)?, 0.0);
+        Ok(Some(match lanes {
+            None => zero,
+            Some(n @ 2..=4) => Tree::new(&format!("shape.splat{n}"), ty(self, dual)?, vec![zero]),
+            Some(_) => return Ok(None),
+        }))
+    }
+
     fn inline_body(&mut self, helper: &'a Helper<'a>, rung: &str) -> Result<Vec<Tree>, String> {
         let st = self.stmt_ty(rung)?;
         let mut stmts = Vec::new();
@@ -4416,12 +4458,8 @@ impl<'a> Ctx<'a> {
                 stmts.extend(self.zero_array(local, elem, n, rung).map_err(|e| format!("{e} (not inlined)"))?);
                 continue;
             }
-            let zero = match dual.as_str() {
-                "f32.real" => Tree::literal("literal.real", ty(self, "f32.real")?, 0.0),
-                "u32.index" => Tree::literal("literal.index", ty(self, "u32.index")?, 0.0),
-                "bool.flag" => Tree::literal("literal.flag", ty(self, "bool.flag")?, 0.0),
-                "vec4<f32>.real" => Tree::new("shape.splat4", ty(self, "vec4<f32>.real")?, vec![Tree::literal("literal.real", ty(self, "f32.real")?, 0.0)]),
-                other => return Err(format!("the local {local} ({other}) has no initialiser and no register (not inlined)")),
+            let Some(zero) = self.zero_of_dual(dual)? else {
+                return Err(format!("the local {local} ({dual}) has no initialiser and no register (not inlined)"));
             };
             let row = self.register(local, dual)?;
             let kind = row.chars().nth(4).unwrap_or('f');
@@ -4538,7 +4576,7 @@ impl<'a> Ctx<'a> {
                         let inner = inner?;
                         Ok(Some(Tree::new(&format!("stmt.block_{rung}"), st, vec![self.block(inner, rung)?])))
                     }
-                    Statement::Store { .. } => {
+                    Statement::Store { .. } | Statement::ImageStore { .. } => {
                         let root = self.root_at(&here, |k| matches!(k, RootKind::Store { .. })).ok_or("no store root at this statement")?;
                         let node = root.tree.clone();
                         let mut stmts = self.store_root(&node, rung)?;
@@ -5094,6 +5132,26 @@ impl<'a> Ctx<'a> {
         // (`store.buffer.instances.#.transform`, `store.buffer.infos.even_pass`)
         // is the row `store.<binding>.<path>_<rung>`, over the index when the
         // binding is an array.
+        // A texture store: the row `store.image.<b>.<sig>_<rung>`.
+        if name.starts_with("store.image.") {
+            let row = format!("{name}_{rung}");
+            let Some((_, inputs, _)) = self.per_kernel_rows.iter().find(|p| p.0 == row).cloned() else {
+                return Err(format!("{name}: the interface has no row {row} (a texture the kernel cannot write, or operand types the kingdom does not spell)"));
+            };
+            if inputs.len() != tree.kids.len() {
+                return Err(format!("{name}: {} operands for a row of {}", tree.kids.len(), inputs.len()));
+            }
+            let kids = tree.kids.iter().map(|k| self.value(k)).collect::<Result<Vec<_>, _>>()?;
+            let store = |ctx: &Self, r: &str| -> Result<Tree, String> { Ok(Tree::new(&format!("{name}_{r}"), ctx.stmt_ty(r)?, kids.clone())) };
+            return match self.guard.clone() {
+                Some(g) => {
+                    let crung = format!("C{}", &rung[1..]);
+                    let inner = self.block(vec![store(self, &crung)?], &crung)?;
+                    Ok(Some(Tree::new(&format!("stmt.if_{rung}"), st, vec![g, inner])))
+                }
+                None => Ok(Some(store(self, rung)?)),
+            };
+        }
         if let Some(place) = name.strip_prefix("store.buffer.").and_then(|r| buffer_place(self.module, r)) {
             let row = if place.path.is_empty() { format!("store.{}", place.binding) } else { format!("store.{}.{}", place.binding, place.path) };
             if self.per_kernel_rows.iter().any(|(n, i, _)| *n == format!("{row}_{rung}") && i.len() == place.indexes + 1) {
@@ -8632,6 +8690,34 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
             assert!(back.tree == r.tree, "{what}: {:?}\n{}", crate::wgsl::render::first_difference(&r.tree, &back.tree), out.text);
             // (The first kernel is one thread writing one cell: dispatched once.)
             let c = if what.starts_with("a vector") { crate::wgsl::safety::Contract::parse("workgroups x 1 1\nworkgroups y 1 1\nworkgroups z 1 1\n").unwrap() } else { contract.clone() };
+            let checker = crate::wgsl::check::Checker::with_contract(&k, &r.role, &crate::wgsl::target::Target::recorded(), c);
+            checker.check(&r.tree).unwrap_or_else(|e| panic!("{what}: {e}\n{}", out.text));
+        }
+    }
+
+    /// TEXTURES AND SAMPLERS (2026-10-19; 3,802 of the harvested corpus's
+    /// failures and every cuneus image kernel): sampled, storage, arrayed and
+    /// depth textures, loads with i32 or u32 coordinates, the queries, a
+    /// sample at a level, a gradient and a comparison, and a store. Each reads,
+    /// renders, naga validates it, reads back to the same tree and passes
+    /// every layer.
+    #[test]
+    fn textures_and_samplers_read() {
+        let k = WgslKingdom::load_safe();
+        let contract = crate::wgsl::safety::Contract::parse("workgroups x 1 1024\nworkgroups y 1 1024\nworkgroups z 1 1\n").unwrap();
+        let sources = [
+            ("sample, load and store", "@group(0) @binding(0) var tex: texture_2d<f32>;\n@group(0) @binding(1) var smp: sampler;\n@group(0) @binding(2) var out: texture_storage_2d<rgba8unorm, write>;\n@compute @workgroup_size(8, 8)\nfn main(@builtin(global_invocation_id) gid: vec3<u32>) {\n    let d = textureDimensions(tex);\n    if (gid.x >= d.x || gid.y >= d.y) { return; }\n    let a = textureLoad(tex, vec2<i32>(gid.xy), 0);\n    let b = textureSampleLevel(tex, smp, (vec2<f32>(gid.xy) + 0.5) / vec2<f32>(d), 0.0);\n    textureStore(out, vec2<i32>(gid.xy), a + b);\n}\n"),
+            ("arrayed storage, u32 coordinates", "@group(0) @binding(0) var src: texture_storage_2d_array<rgba32uint, read>;\n@group(0) @binding(1) var dst: texture_storage_2d_array<rgba32uint, write>;\n@compute @workgroup_size(8, 8, 1)\nfn main(@builtin(global_invocation_id) gid: vec3<u32>) {\n    let n = textureNumLayers(src);\n    if (gid.z < n) { textureStore(dst, gid.xy, gid.z, textureLoad(src, gid.xy, gid.z) + vec4<u32>(1u)); }\n}\n"),
+            ("depth, gradient and comparison", "@group(0) @binding(0) var shadow: texture_depth_2d;\n@group(0) @binding(1) var cmp: sampler_comparison;\n@group(0) @binding(2) var color: texture_2d<f32>;\n@group(0) @binding(3) var lin: sampler;\n@group(0) @binding(4) var<storage, read_write> out: array<f32>;\n@compute @workgroup_size(64)\nfn main(@builtin(global_invocation_id) gid: vec3<u32>) {\n    let uv = vec2<f32>(f32(gid.x) / 64.0, 0.5);\n    let s = textureSampleCompareLevel(shadow, cmp, uv, 0.5);\n    let g = textureSampleGrad(color, lin, uv, vec2<f32>(0.01, 0.0), vec2<f32>(0.0, 0.01));\n    out[gid.x] = s + g.x + textureSampleLevel(shadow, lin, uv, 0);\n}\n"),
+        ];
+        for (what, src) in sources {
+            let r = read_safe(src, &k).unwrap_or_else(|e| panic!("{what}: {e}"));
+            let out = crate::wgsl::safe_karva::render_tree_with(&r.tree, &k, &r.role).unwrap_or_else(|e| panic!("{what}: {e}"));
+            validate_text(&out.text).unwrap_or_else(|e| panic!("{what}: {e}\n{}", out.text));
+            let back = read_safe(&out.text, &k).unwrap_or_else(|e| panic!("{what}: read back: {e}\n{}", out.text));
+            assert!(back.tree == r.tree, "{what}: {:?}\n{}", crate::wgsl::render::first_difference(&r.tree, &back.tree), out.text);
+            // (The third writes a row of cells: one workgroup row.)
+            let c = if what.starts_with("depth") { crate::wgsl::safety::Contract::parse("workgroups x 1 1024\nworkgroups y 1 1\nworkgroups z 1 1\n").unwrap() } else { contract.clone() };
             let checker = crate::wgsl::check::Checker::with_contract(&k, &r.role, &crate::wgsl::target::Target::recorded(), c);
             checker.check(&r.tree).unwrap_or_else(|e| panic!("{what}: {e}\n{}", out.text));
         }

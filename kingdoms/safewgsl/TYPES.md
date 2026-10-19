@@ -306,8 +306,17 @@ A type is a dual `slot.form`: the slot is what the hardware stores, the form is 
 | T193 | `wgmem<i32>.int` | `wgmem<i32>` | `int` | 0 | `0` | 0 | 0 | 0 | `-` |
 | T194 | `parr128<u32>.index` | `parr128<u32>` | `index` | 0 | `0u` | 0 | 0 | 0 | `-` |
 | T195 | `u32.pindex128` | `u32` | `pindex128` | 1 | `0u` | 0 | 0 | 0 | `-` |
+| T196 | `reg<vec3<f32>>.real` | `reg<vec3<f32>>` | `real` | 3 | `0.0` | 0 | 0 | 0 | `-` |
+| T197 | `reg<vec2<i32>>.int` | `reg<vec2<i32>>` | `int` | 2 | `0` | 0 | 0 | 0 | `-` |
+| T198 | `reg<vec3<i32>>.int` | `reg<vec3<i32>>` | `int` | 3 | `0` | 0 | 0 | 0 | `-` |
+| T199 | `reg<vec4<i32>>.int` | `reg<vec4<i32>>` | `int` | 4 | `0` | 0 | 0 | 0 | `-` |
+| T200 | `reg<vec2<u32>>.index` | `reg<vec2<u32>>` | `index` | 2 | `0u` | 0 | 0 | 0 | `-` |
+| T201 | `reg<vec3<u32>>.index` | `reg<vec3<u32>>` | `index` | 3 | `0u` | 0 | 0 | 0 | `-` |
+| T202 | `reg<vec2<bool>>.flag` | `reg<vec2<bool>>` | `flag` | 2 | `false` | 0 | 0 | 0 | `-` |
+| T203 | `reg<vec3<bool>>.flag` | `reg<vec3<bool>>` | `flag` | 3 | `false` | 0 | 0 | 0 | `-` |
+| T204 | `reg<vec4<bool>>.flag` | `reg<vec4<bool>>` | `flag` | 4 | `false` | 0 | 0 | 0 | `-` |
 
-195 duals. The fallback is what Design C's projection substitutes for a codon whose dual does not match the demand; the codon is counted as masked.
+204 duals. The fallback is what Design C's projection substitutes for a codon whose dual does not match the demand; the codon is counted as masked.
 
 The three machine columns (`fallback_bits`, `fallback_noop`, `fallback_elem` in `types.tsv`) are what the loader builds the fallback leaf from, never the prose: `bits` is the lane's 32-bit pattern as an unsigned integer, repeated across the lanes of a vector or matrix (only `bool.sign` is non-zero, true = +1); `noop` is 1 for `store.store`, which substitutes no value at all; `elem` is 1 for `array<T>`, whose fallback is its element's. The loader tests `noop` and `elem` before reading `bits`; for those two rows `bits` is a placeholder 0. Every substitution, whichever column decides it, counts the codon as masked.
 

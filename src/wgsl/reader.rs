@@ -729,6 +729,23 @@ fn walk_block(
                 }
                 ctx.apply_call(*function, arguments);
             }
+            Statement::ImageStore { image, coordinate, array_index, value } => {
+                let Some(b) = image_binding(ctx, *image) else {
+                    ctx.errors.push("a texture store to a texture that is not a module binding (an argument)".into());
+                    path.pop();
+                    continue;
+                };
+                let mut kids = vec![expand(ctx, *coordinate, true)];
+                let mut sig = sign_letter(ctx, *coordinate).to_string();
+                if let Some(a) = array_index {
+                    kids.push(expand(ctx, *a, true));
+                    sig.push(sign_letter(ctx, *a));
+                }
+                kids.push(expand(ctx, *value, true));
+                roots.push(Root { kind: RootKind::Store { target: format!("image.{b}") }, path: path.clone(), point: path.clone(), tree: Node::App { name: format!("store.image.{b}.{sig}"), slot: "store".into(), known: true, kids } });
+                let loc = ctx.location(*image);
+                ctx.bump(&loc);
+            }
             other => {
                 let name = format!("{other:?}");
                 let name = name.split(|c: char| !c.is_alphanumeric()).next().unwrap_or("?").to_string();
@@ -1035,6 +1052,67 @@ fn expand(ctx: &mut Ctx, h: Handle<Expression>, count: bool) -> Node {
             let name = ctx.module.functions[f].name.clone().unwrap_or_else(|| format!("fn{}", f.index()));
             Node::Leaf { name: format!("call.{name}@{}", h.index()), slot }
         }
+        Expression::ImageLoad { image, coordinate, array_index, sample, level } => {
+            let Some(b) = image_binding(ctx, image) else { return unspelled(ctx, "a texture load from a texture that is not a module binding", slot) };
+            let mut kids = vec![expand(ctx, coordinate, count)];
+            let mut sig = sign_letter(ctx, coordinate).to_string();
+            if let Some(a) = array_index {
+                kids.push(expand(ctx, a, count));
+                sig.push(sign_letter(ctx, a));
+            }
+            if let Some(e) = sample.or(level) {
+                kids.push(expand(ctx, e, count));
+                sig.push(sign_letter(ctx, e));
+            }
+            Node::App { name: format!("tex.load.{b}.{sig}"), slot, known: false, kids }
+        }
+        Expression::ImageQuery { image, query } => {
+            let Some(b) = image_binding(ctx, image) else { return unspelled(ctx, "a texture query of a texture that is not a module binding", slot) };
+            match query {
+                naga::ImageQuery::Size { level: Some(l) } => {
+                    let k = expand(ctx, l, count);
+                    Node::App { name: format!("tex.dim.{b}.l{}", sign_letter(ctx, l)), slot, known: false, kids: vec![k] }
+                }
+                naga::ImageQuery::Size { level: None } => Node::Leaf { name: format!("tex.dim.{b}"), slot },
+                naga::ImageQuery::NumLevels => Node::Leaf { name: format!("tex.levels.{b}"), slot },
+                naga::ImageQuery::NumLayers => Node::Leaf { name: format!("tex.layers.{b}"), slot },
+                naga::ImageQuery::NumSamples => Node::Leaf { name: format!("tex.samples.{b}"), slot },
+            }
+        }
+        Expression::ImageSample { image, sampler, gather, coordinate, array_index, offset, level, depth_ref, clamp_to_edge } => {
+            let (Some(img), Some(smp)) = (image_binding(ctx, image), image_binding(ctx, sampler)) else { return unspelled(ctx, "a texture sample of a texture or sampler that is not a module binding", slot) };
+            if gather.is_some() {
+                return unspelled(ctx, "textureGather", slot);
+            }
+            if offset.is_some() {
+                return unspelled(ctx, "a texture sample with a constant offset", slot);
+            }
+            if clamp_to_edge {
+                return unspelled(ctx, "textureSampleBaseClampToEdge", slot);
+            }
+            let mut kids = vec![expand(ctx, coordinate, count)];
+            let asig = array_index.map(|a| sign_letter(ctx, a).to_string()).unwrap_or_default();
+            if let Some(a) = array_index {
+                kids.push(expand(ctx, a, count));
+            }
+            if let Some(d) = depth_ref {
+                kids.push(expand(ctx, d, count));
+            }
+            let tail = match (level, depth_ref.is_some()) {
+                (naga::SampleLevel::Zero, true) => format!("zero.cmp.{asig}"),
+                (naga::SampleLevel::Exact(e), false) => {
+                    kids.push(expand(ctx, e, count));
+                    format!("lvl.{asig}{}", sign_letter(ctx, e))
+                }
+                (naga::SampleLevel::Gradient { x, y }, false) => {
+                    kids.push(expand(ctx, x, count));
+                    kids.push(expand(ctx, y, count));
+                    format!("grad.{asig}")
+                }
+                _ => return unspelled(ctx, "a texture sample whose level is implicit (textureSample, textureSampleBias, textureSampleCompare: derivatives need a fragment)", slot),
+            };
+            Node::App { name: format!("tex.sample.{img}.{smp}.{tail}"), slot, known: false, kids }
+        }
         Expression::Unary { op, expr } => {
             let kid = expand(ctx, expr, count);
             app(ctx, &format!("Unary::{op:?}"), kind, slot, vec![kid])
@@ -1097,6 +1175,14 @@ fn expand(ctx: &mut Ctx, h: Handle<Expression>, count: bool) -> Node {
             }
             let from = kind_of(ctx.info[expr].ty.inner_with(&ctx.module.types));
             let name = convert_name(from, to_kind, convert.is_some());
+            // A vector between floats and unsigned integers: the rows of its own.
+            let vector = matches!(inner, TypeInner::Vector { .. });
+            let name = match (name, vector) {
+                (Some("convert.index_to_f32"), true) => Some("convert.vindex_to_f32"),
+                (Some("convert.count_to_f32"), true) => Some("convert.vcount_to_f32"),
+                (Some("convert.f32_to_count"), true) => Some("convert.vf32_to_count"),
+                (n, _) => n,
+            };
             match name {
                 Some(n) => Node::App { name: n.into(), slot, known: true, kids: vec![kid] },
                 None => {
@@ -1158,6 +1244,30 @@ fn expand(ctx: &mut Ctx, h: Handle<Expression>, count: bool) -> Node {
 }
 
 /// An application named from the table, or `naga.<node>` when it has no row.
+/// The module binding an image or sampler expression names.
+fn image_binding(ctx: &Ctx, h: Handle<Expression>) -> Option<String> {
+    match &ctx.func.expressions[h] {
+        Expression::GlobalVariable(g) => ctx.module.global_variables[*g].name.clone().or_else(|| Some(format!("global{}", g.index()))),
+        _ => None,
+    }
+}
+
+/// `i`, `u` or `f` by the scalar kind of an operand (a vector's lanes').
+fn sign_letter(ctx: &Ctx, h: Handle<Expression>) -> char {
+    match kind_of(ctx.info[h].ty.inner_with(&ctx.module.types)) {
+        Some(ScalarKind::Sint) => 'i',
+        Some(ScalarKind::Uint) => 'u',
+        _ => 'f',
+    }
+}
+
+/// A construct the kingdom has no row for, named: an error the reader reports,
+/// and a leaf in its place.
+fn unspelled(ctx: &mut Ctx, what: &str, slot: String) -> Node {
+    ctx.errors.push(format!("{what}: the kingdom has no row for it"));
+    Node::Leaf { name: "naga.unspelled".into(), slot }
+}
+
 fn app(ctx: &Ctx, naga: &str, kind: Option<ScalarKind>, slot: String, kids: Vec<Node>) -> Node {
     let row = kind.and_then(|k| ctx.table.resolve(naga, k, kids.len()));
     match row {

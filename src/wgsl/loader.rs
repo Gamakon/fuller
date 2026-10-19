@@ -934,7 +934,8 @@ mod tests {
         // with the knob payload (u32.payload, a literal.p_* row's constant); 193 with the i32
         // workgroup arrays (wgmem<i32>.int, run 4's seeds, 2026-10-19); 195 with the 128-element u32
         // private array and its index (parr128<u32>.index, u32.pindex128, run 4's seed10).
-        assert_eq!(s.len(), 195);
+        // 204 with the registers of the other vector types (REG_KINDS, 2026-10-19).
+        assert_eq!(s.len(), 204);
         for (a, b) in w.iter().zip(&s) {
             assert_eq!((a.reference.as_str(), a.dual.as_str()), (b.reference.as_str(), b.dual.as_str()));
         }
@@ -985,7 +986,9 @@ mod tests {
         // two more atomic<u32> workgroup arrays (wg.au_c, wg.au_d, run 4's seeds, 2026-10-19); 1,792
         // with the i32 workgroup arrays (wg.na, wg.nb, wg.get_n_safe, 12 wg.set_n, wg.decl_n, 6 wg.put_n);
         // 1,808 with the 128-element u32 private arrays (safe.pidx128, parr.ux, parr.uy, get_i, 12 set_i).
-        assert_eq!(fs.rows.len(), 1808);
+        // 2,006 with the vector conversions of floats and unsigned integers (9) and the nine
+        // register kinds of REG_KINDS (8 registers, the read and a set at each of the 22 rungs each).
+        assert_eq!(fs.rows.len(), 2006);
         let dual = |t: Ty| k.dual(t).unwrap().dual.clone();
         let producers = |d: &str| -> Vec<String> { k.rows.iter().filter(|r| dual(r.output) == d).map(|r| r.name.clone()).collect() };
         assert_eq!(producers("kernel.safe"), vec!["kernel.entry_safe"]);

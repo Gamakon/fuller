@@ -275,6 +275,24 @@ def literal_domain(slot, form):
     return LITERAL_DOMAIN.get(form, "-")
 
 
+# The register kinds beyond the first eight (f v i b n u w and the square matrices x y z): a letter, the vector
+# type, the form of its dual, and how many the kernel may name. The letter is the register's name (C0..C7) and the
+# `reg.set_<letter>` / `reg.get_<letter>` rows' suffix. src/wgsl/render.rs holds the same list (EXTRA_REGISTERS);
+# a test there checks every entry against the rows this file writes.
+REG_KINDS = [
+    ("C", "vec3<f32>", "real"),
+    ("D", "vec2<i32>", "int"),
+    ("E", "vec3<i32>", "int"),
+    ("F", "vec4<i32>", "int"),
+    ("G", "vec2<u32>", "index"),
+    ("H", "vec3<u32>", "index"),
+    ("J", "vec2<bool>", "flag"),
+    ("K", "vec3<bool>", "flag"),
+    ("L", "vec4<bool>", "flag"),
+]
+REG_KIND_COUNT = 8
+
+
 def build_types():
     rows = []  # (ref, dual, slot, form, lanes, fallback, fallback_bits, fallback_noop, fallback_elem, meaning, literal)
 
@@ -413,6 +431,10 @@ def build_types():
     # 128-element u32 private arrays and their index (2026-10-19, run 4's seed10 caches 100 values a thread).
     add("parr128<u32>", "index", 0, "a private array of 128 u32: pux, puy")
     add("u32", "pindex128", 1, FORMS["pindex128"][0])
+    # Registers of the other vector types (2026-10-19, the harvested corpus: 2,700 of 4,100 reads that failed held a
+    # vec2/vec3/vec4 of i32, u32, f32 or bool in a local or returned one): see REG_KINDS.
+    for letter, slot, form in REG_KINDS:
+        add(f"reg<{slot}>", form, int(slot[3]), f"a named {slot} register: {letter}0..{letter}{REG_KIND_COUNT - 1}")
     return rows
 
 
@@ -1423,6 +1445,21 @@ for r in RUNGS + RUNGS5:
     f("parr", "set_i_" + r, "composite", ["parr128<u32>.index", "u32.pindex128", "u32.index"], "stmt." + r, "arity 3: pux[i] = v")
 for r in ("L0", "L1", "L2", "L3", "L4", "L5"):
     f("wg", "put_n_" + r, "composite", ["wgmem<i32>.int", "u32.wgown", "i32.int"], "stmt." + r, "arity 3: barrier; if (i < len) { na[i] = v; } barrier")
+
+# ---- vector conversions between floats and unsigned integers (2026-10-19, the harvested corpus: `vec2<f32>(gid.xy)`,
+# `vec2<u32>(uv * size)`): per lane, as the signed ones are ----
+for L in (2, 3, 4):
+    f("convert", "vindex_to_f32", "As", [f"vec{L}<u32>.index"], f"vec{L}<f32>.real", "per lane")
+    f("convert", "vcount_to_f32", "As", [f"vec{L}<u32>.count"], f"vec{L}<f32>.real", "per lane")
+    f("convert", "vf32_to_count", "As", [f"vec{L}<f32>.real"], f"vec{L}<u32>.count", "truncating, floor at 0, per lane")
+
+# ---- registers of the other vector types (2026-10-19): the registers, the read, a set at every rung ----
+for letter, slot, form in REG_KINDS:
+    for i in range(REG_KIND_COUNT):
+        f("reg", f"{letter}{i}", "composite", [], f"reg<{slot}>.{form}", f"a {slot} register")
+    f("reg", f"get_{letter}", "composite", [f"reg<{slot}>.{form}"], f"{slot}.{form}", "the register's value")
+    for r in RUNGS + RUNGS5:
+        f("reg", f"set_{letter}_" + r, "composite", [f"reg<{slot}>.{form}", f"{slot}.{form}"], "stmt." + r, "")
 
 def write_tsv(path, header, rows):
     with open(path, "w") as out:

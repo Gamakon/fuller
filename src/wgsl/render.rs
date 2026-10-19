@@ -187,7 +187,11 @@ impl Role {
             if !prologue.is_empty() {
                 prologue.push('\n');
             }
-            prologue.push_str(&format!("@group({}) @binding({}) var<{}> {}: {};", b.group, b.binding, b.space, b.name, b.ty));
+            if b.space.is_empty() {
+                prologue.push_str(&format!("@group({}) @binding({}) var {}: {};", b.group, b.binding, b.name, b.ty));
+            } else {
+                prologue.push_str(&format!("@group({}) @binding({}) var<{}> {}: {};", b.group, b.binding, b.space, b.name, b.ty));
+            }
         }
         let mut role = Role { name: name.into(), prologue, items: String::new(), per_kernel: Vec::new(), bindings, uniform_var: uniform_var.into(), uniform_struct: uniform_struct.into(), fields, input: input.into(), output: output.into(), guard: guard.into(), structs, more_uniforms, entry: "main".into(), entries: vec!["main".into()] };
         role.items = role.field("m");
@@ -240,6 +244,146 @@ impl Role {
         role.per_kernel.extend(extra);
         role
     }
+}
+
+/// The dual of an `i` (i32) or `u` (u32) signature letter's scalar.
+fn scalar_dual(sign: char) -> &'static str {
+    if sign == 'i' { "i32.int" } else { "u32.index" }
+}
+
+/// A vector of `n` lanes of scalar `t` over the form `f` (n of 1 the scalar).
+fn lanes_dual(n: usize, t: &str, f: &str) -> String {
+    if n == 1 { format!("{t}.{f}") } else { format!("vec{n}<{t}>.{f}") }
+}
+
+/// The texel's dual: `f32` real, `i32` int, `u32` index, as a 4-vector.
+fn texel_dual(texel: &str) -> String {
+    let f = match texel {
+        "i32" => "int",
+        "u32" => "index",
+        _ => "real",
+    };
+    format!("vec4<{texel}>.{f}")
+}
+
+/// Every combination of signs for `n` operands: `["i", "u"]` for one,
+/// `["ii", "iu", "ui", "uu"]` for two.
+fn sign_signatures(n: usize) -> Vec<String> {
+    (0..1usize << n).map(|m| (0..n).map(|k| if (m >> (n - 1 - k)) & 1 == 0 { 'i' } else { 'u' }).collect()).collect()
+}
+
+/// The rows of the texture and sampler bindings of an interface (the safe
+/// reader names them from the operands' types): `tex.load.<b>.<sig>`,
+/// `store.image.<b>.<sig>_<rung>`, `tex.dim.<b>`, `tex.layers.<b>`,
+/// `tex.levels.<b>`, `tex.samples.<b>` and `tex.sample.<b>.<s>.<mode>[.cmp].<sig>`.
+/// A signature is a letter for each integer operand in order (the coordinate,
+/// the array index, the level or sample index): `i` for an i32, `u` for a
+/// u32; a float level is `f`.
+fn image_rows(i: &crate::wgsl::interface::ModuleInterface) -> Vec<PerKernel> {
+    let pk = |name: String, inputs: Vec<String>, output: String, template: String| PerKernel { name, inputs, output, template };
+    let mut out = Vec::new();
+    let samplers: Vec<&crate::wgsl::interface::BindingUse> = i.bindings.iter().filter(|b| b.image.as_ref().is_some_and(|m| m.dim == "sampler")).collect();
+    for b in &i.bindings {
+        let Some(m) = b.image.as_ref().filter(|m| m.dim != "sampler") else { continue };
+        let name = &b.name;
+        let comps = match m.dim.as_str() {
+            "1d" => 1,
+            "2d" => 2,
+            _ => 3,
+        };
+        let texel = texel_dual(&m.texel);
+        let value = if m.depth { "f32.real".to_string() } else { texel.clone() };
+        let has_extra = m.storage.is_none();
+        let can_load = m.storage.as_deref().is_none_or(|a| a != "write") && m.dim != "cube";
+        // textureLoad(t, coords, [array_index], [level | sample_index])
+        if can_load {
+            let n_int = 1 + usize::from(m.arrayed) + usize::from(has_extra);
+            for sig in sign_signatures(n_int) {
+                let c: Vec<char> = sig.chars().collect();
+                let mut inputs = vec![lanes_dual(comps, if c[0] == 'i' { "i32" } else { "u32" }, if c[0] == 'i' { "int" } else { "index" })];
+                inputs.extend(c[1..].iter().map(|k| scalar_dual(*k).to_string()));
+                let args: Vec<String> = (0..inputs.len()).map(|k| format!("{{{k}}}")).collect();
+                out.push(pk(format!("tex.load.{name}.{sig}"), inputs, value.clone(), format!("textureLoad({name}, {})", args.join(", "))));
+            }
+        }
+        // textureStore(t, coords, [array_index], value)
+        if m.storage.as_deref().is_some_and(|a| a != "read") {
+            let n_int = 1 + usize::from(m.arrayed);
+            for sig in sign_signatures(n_int) {
+                let c: Vec<char> = sig.chars().collect();
+                let mut inputs = vec![lanes_dual(comps, if c[0] == 'i' { "i32" } else { "u32" }, if c[0] == 'i' { "int" } else { "index" })];
+                inputs.extend(c[1..].iter().map(|k| scalar_dual(*k).to_string()));
+                inputs.push(texel.clone());
+                let args: Vec<String> = (0..inputs.len()).map(|k| format!("{{{k}}}")).collect();
+                for r in STORE_RUNGS {
+                    out.push(pk(format!("store.image.{name}.{sig}_{r}"), inputs.clone(), format!("stmt.{r}"), format!("textureStore({name}, {});", args.join(", "))));
+                }
+            }
+        }
+        // Queries.
+        let dims = lanes_dual(match m.dim.as_str() { "1d" => 1, "3d" => 3, "cube" => 2, _ => 2 }, "u32", "index");
+        out.push(pk(format!("tex.dim.{name}"), Vec::new(), dims.clone(), format!("textureDimensions({name})")));
+        if m.storage.is_none() && !m.multisampled {
+            for sign in ['i', 'u'] {
+                out.push(pk(format!("tex.dim.{name}.l{sign}"), vec![scalar_dual(sign).to_string()], dims.clone(), format!("textureDimensions({name}, {{0}})")));
+            }
+            out.push(pk(format!("tex.levels.{name}"), Vec::new(), "u32.index".into(), format!("textureNumLevels({name})")));
+        }
+        if m.arrayed {
+            out.push(pk(format!("tex.layers.{name}"), Vec::new(), "u32.index".into(), format!("textureNumLayers({name})")));
+        }
+        if m.multisampled {
+            out.push(pk(format!("tex.samples.{name}"), Vec::new(), "u32.index".into(), format!("textureNumSamples({name})")));
+        }
+        // textureSampleLevel / textureSampleGrad / textureSampleCompareLevel
+        if m.storage.is_none() && !m.multisampled {
+            for s in &samplers {
+                let compare = s.image.as_ref().is_some_and(|x| x.depth);
+                if compare && !m.depth {
+                    continue;
+                }
+                let sname = &s.name;
+                let coord = lanes_dual(if m.dim == "cube" { 3 } else { comps }, "f32", "real");
+                let res = if m.depth { "f32.real".to_string() } else { "vec4<f32>.real".to_string() };
+                let arr_sigs: Vec<String> = if m.arrayed { vec!["i".into(), "u".into()] } else { vec![String::new()] };
+                for asig in &arr_sigs {
+                    let mut head = vec![coord.clone()];
+                    if let Some(a) = asig.chars().next() {
+                        head.push(scalar_dual(a).to_string());
+                    }
+                    let call = |tail: &str, ins: &[String], cmp: bool| {
+                        let mut inputs = head.clone();
+                        let mut args: Vec<String> = Vec::new();
+                        if cmp {
+                            inputs.push("f32.real".into());
+                        }
+                        inputs.extend(ins.iter().cloned());
+                        for k in 0..inputs.len() {
+                            args.push(format!("{{{k}}}"));
+                        }
+                        // The call's order: coords, [array_index], [depth_ref], level / gradients.
+                        let fun = if cmp { "textureSampleCompareLevel" } else if tail == "grad" { "textureSampleGrad" } else { "textureSampleLevel" };
+                        (inputs, format!("{fun}({name}, {sname}, {})", args.join(", ")))
+                    };
+                    // lvl: a float level, or for a depth texture an i32 or u32 one.
+                    let levels: Vec<(char, String)> = if m.depth && !compare { vec![('i', "i32.int".into()), ('u', "u32.index".into())] } else { vec![('f', "f32.real".into())] };
+                    if !compare {
+                        for (l, ld) in &levels {
+                            let (inputs, template) = call("lvl", std::slice::from_ref(ld), false);
+                            out.push(pk(format!("tex.sample.{name}.{sname}.lvl.{asig}{l}"), inputs, res.clone(), template));
+                        }
+                        let gradient = vec![coord.clone(), coord.clone()];
+                        let (inputs, template) = call("grad", &gradient, false);
+                        out.push(pk(format!("tex.sample.{name}.{sname}.grad.{asig}"), inputs, res.clone(), template));
+                    } else {
+                        let (inputs, template) = call("zero", &[], true);
+                        out.push(pk(format!("tex.sample.{name}.{sname}.zero.cmp.{asig}"), inputs, res.clone(), template));
+                    }
+                }
+            }
+        }
+    }
+    out
 }
 
 /// The atomic read-modify-writes the kingdom spells, by row suffix and
@@ -555,6 +699,7 @@ impl Role {
                 extra.push(pk(format!("load.{}_{f}", u.var), Vec::new(), dual, format!("{}.{f}", u.var)));
             }
         }
+        extra.extend(image_rows(i));
         let primary_struct = uniform_struct.clone();
         let structs: Vec<StructDecl> = i.structs.iter().filter(|(n, _)| *n != primary_struct).map(|(n, m)| StructDecl { name: n.clone(), members: m.clone() }).collect();
         let more_uniforms: Vec<UniformDecl> = i.uniforms.iter().skip(1).map(|u| UniformDecl { var: u.var.clone(), fields: u.fields.clone() }).collect();
@@ -1851,6 +1996,10 @@ impl<'a> Renderer<'a> {
                 n(2)?;
                 Ok(format!("    {} = {};\n", self.register(&kids[0])?, self.value(&kids[1], scope)?))
             }
+            base if is_extra_register_row(base) => {
+                n(2)?;
+                Ok(format!("    {} = {};\n", self.register(&kids[0])?, self.value(&kids[1], scope)?))
+            }
             "wg.set" => {
                 n(3)?;
                 let a = self.wgmem(&kids[0])?;
@@ -1945,6 +2094,53 @@ pub fn role_spells(kingdom: &WgslKingdom, role: &Role, r: &WgslRow) -> bool {
     !gram_name(&r.name) && !gram_dual(&r.output) && !r.inputs.iter().any(gram_dual)
 }
 
+/// A register kind beyond the first ten (f v i b n u w x y z): a vector of
+/// i32, u32, f32 or bool. `kingdoms/safewgsl/gen_tables.py` writes the same
+/// list as REG_KINDS (a test checks each entry against the rows).
+pub struct ExtraRegister {
+    /// The register's name and its rows' suffix: `C0`, `reg.get_C`, `reg.set_C_L0`.
+    pub letter: char,
+    /// The vector type the register holds.
+    pub slot: &'static str,
+    /// The register's dual.
+    pub dual: &'static str,
+    /// How many the kernel may name.
+    pub count: usize,
+}
+
+pub const EXTRA_REGISTERS: [ExtraRegister; 9] = [
+    ExtraRegister { letter: 'C', slot: "vec3<f32>", dual: "reg<vec3<f32>>.real", count: 8 },
+    ExtraRegister { letter: 'D', slot: "vec2<i32>", dual: "reg<vec2<i32>>.int", count: 8 },
+    ExtraRegister { letter: 'E', slot: "vec3<i32>", dual: "reg<vec3<i32>>.int", count: 8 },
+    ExtraRegister { letter: 'F', slot: "vec4<i32>", dual: "reg<vec4<i32>>.int", count: 8 },
+    ExtraRegister { letter: 'G', slot: "vec2<u32>", dual: "reg<vec2<u32>>.index", count: 8 },
+    ExtraRegister { letter: 'H', slot: "vec3<u32>", dual: "reg<vec3<u32>>.index", count: 8 },
+    ExtraRegister { letter: 'J', slot: "vec2<bool>", dual: "reg<vec2<bool>>.flag", count: 8 },
+    ExtraRegister { letter: 'K', slot: "vec3<bool>", dual: "reg<vec3<bool>>.flag", count: 8 },
+    ExtraRegister { letter: 'L', slot: "vec4<bool>", dual: "reg<vec4<bool>>.flag", count: 8 },
+];
+
+/// The extra register kind that holds a value dual (any form of its vector type).
+pub fn extra_register_of_value(dual: &str) -> Option<&'static ExtraRegister> {
+    let slot = dual.split('.').next()?;
+    EXTRA_REGISTERS.iter().find(|r| r.slot == slot)
+}
+
+/// The per-lane conversions between floats and unsigned integers that the
+/// reader writes for a `vec2<f32>(v)` (convert.vindex_to_f32, vcount_to_f32,
+/// vf32_to_count), added 2026-10-19. Conforming a tree never inserts one: a
+/// vector conversion where a demand differs by form would move the splat of
+/// a scalar's conversion (`splat4(convert(x))`) to the conversion of a splat,
+/// and the saved genomes read as they did.
+pub fn is_vector_conversion_read_only(r: &WgslRow) -> bool {
+    matches!(r.name.as_str(), "convert.vindex_to_f32" | "convert.vcount_to_f32" | "convert.vf32_to_count")
+}
+
+/// Whether a row's base name sets or reads an extra register (`reg.set_C`, `reg.get_C`).
+pub fn is_extra_register_row(base: &str) -> bool {
+    base.strip_prefix("reg.set_").or_else(|| base.strip_prefix("reg.get_")).is_some_and(|k| k.len() == 1 && EXTRA_REGISTERS.iter().any(|r| k.starts_with(r.letter)))
+}
+
 /// A register leaf's WGSL variable name (`f3`, `i32r`); a fallback leaf
 /// names the first register of ITS DUAL.
 pub fn register_name(kingdom: &WgslKingdom, r: &Tree) -> Result<String, String> {
@@ -1961,9 +2157,10 @@ pub fn register_name(kingdom: &WgslKingdom, r: &Tree) -> Result<String, String> 
         ("fallback", "reg<mat2x2<f32>>.real") => "x0".to_string(),
         ("fallback", "reg<mat3x3<f32>>.real") => "y0".to_string(),
         ("fallback", "reg<mat4x4<f32>>.real") => "z0".to_string(),
+        ("fallback", dual) if EXTRA_REGISTERS.iter().any(|x| x.dual == dual) => format!("{}0", EXTRA_REGISTERS.iter().find(|x| x.dual == dual).map_or('C', |x| x.letter)),
         (name, _) => {
             let n = name.strip_prefix("reg.").unwrap_or("");
-            if ok(n, 'f', 64) || ok(n, 'v', 32) || ok(n, 'i', 64) || ok(n, 'b', 16) || ok(n, 'n', 16) || ok(n, 'u', 8) || ok(n, 'w', 8) || ok(n, 'x', 2) || ok(n, 'y', 2) || ok(n, 'z', 2) {
+            if ok(n, 'f', 64) || ok(n, 'v', 32) || ok(n, 'i', 64) || ok(n, 'b', 16) || ok(n, 'n', 16) || ok(n, 'u', 8) || ok(n, 'w', 8) || ok(n, 'x', 2) || ok(n, 'y', 2) || ok(n, 'z', 2) || EXTRA_REGISTERS.iter().any(|x| ok(n, x.letter, x.count)) {
                 let k: usize = n[1..].parse().unwrap_or(0);
                 register_var(&n[..1], k)
             } else {
@@ -2263,6 +2460,7 @@ impl Renderer<'_> {
         }
         match name {
             "reg.get_f" | "reg.get_v" | "reg.get_i" | "reg.get_b" | "reg.get_n" | "reg.get_u" | "reg.get_w" | "reg.get_x" | "reg.get_y" | "reg.get_z" => return self.register(&v.kids[0]),
+            base if is_extra_register_row(base) => return self.register(&v.kids[0]),
             "reg.get_v_lane" => return Ok(format!("{}[({}) & 3u]", self.register(&v.kids[0])?, self.value(&v.kids[1], scope)?)),
             // A lane of a vec4 element of a workgroup or private array (seed08 of run A): the
             // element is a reference, so the lane index may be a run-time value.
@@ -3246,12 +3444,12 @@ pub fn register_var(prefix: &str, k: usize) -> String {
 /// to their form's fallback, the loop counters, the private arrays).
 pub fn register_declarations() -> String {
     let mut out = String::new();
-    for (prefix, n, ty, init) in [("f", 64, "f32", "0.0"), ("v", 32, "vec4<f32>", "vec4<f32>(0.0)"), ("i", 64, "u32", "0u"), ("b", 16, "bool", "false"), ("n", 16, "i32", "0"), ("u", 8, "vec4<u32>", "vec4<u32>(0u)"), ("w", 8, "vec2<f32>", "vec2<f32>(0.0)"), ("x", 2, "mat2x2<f32>", "mat2x2<f32>()"), ("y", 2, "mat3x3<f32>", "mat3x3<f32>()"), ("z", 2, "mat4x4<f32>", "mat4x4<f32>()")] {
+    for (prefix, n, ty, init) in [("f", 64, "f32", "0.0"), ("v", 32, "vec4<f32>", "vec4<f32>(0.0)"), ("i", 64, "u32", "0u"), ("b", 16, "bool", "false"), ("n", 16, "i32", "0"), ("u", 8, "vec4<u32>", "vec4<u32>(0u)"), ("w", 8, "vec2<f32>", "vec2<f32>(0.0)"), ("x", 2, "mat2x2<f32>", "mat2x2<f32>()"), ("y", 2, "mat3x3<f32>", "mat3x3<f32>()"), ("z", 2, "mat4x4<f32>", "mat4x4<f32>()")].into_iter().map(|(p, n, t, i)| (p.to_string(), n, t.to_string(), i.to_string())).chain(EXTRA_REGISTERS.iter().map(|x| (x.letter.to_string(), x.count, x.slot.to_string(), format!("{}()", x.slot)))) {
         for k in 0..n {
             if k % 8 == 0 {
                 out.push_str("    ");
             }
-            out.push_str(&format!("var {}: {ty} = {init}; ", register_var(prefix, k)));
+            out.push_str(&format!("var {}: {ty} = {init}; ", register_var(&prefix, k)));
             if k % 8 == 7 || k == n - 1 {
                 out.push('\n');
             }
@@ -3535,7 +3733,8 @@ fn sample_with(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, s
     let wg_i32 = |r: &WgslRow| kingdom.dual(r.output).is_some_and(|d| d.dual == "wgmem<i32>.int") || r.inputs.iter().any(|&t| kingdom.dual(t).is_some_and(|d| d.dual == "wgmem<i32>.int"));
     // (Nor the 128-element u32 private arrays, the same reason.)
     let parr128 = |r: &WgslRow| [r.output].iter().chain(r.inputs.iter()).any(|&t| kingdom.dual(t).is_some_and(|d| d.dual == "parr128<u32>.index" || d.dual == "u32.pindex128"));
-    let not_drawn = |r: &WgslRow| uniform_test_op(safe_base(&r.name)).is_some() || matches!(safe_base(&r.name), "stmt.if_uflag" | "stmt.if_else_uflag") || matches!(r.name.as_str(), "uflag.of_flag" | "uniform.of_checked" | "wg.au_c" | "wg.au_d" | "safe.pidx128") || wg_i32(r) || parr128(r);
+    let extra_reg = |r: &WgslRow| [r.output].iter().chain(r.inputs.iter()).any(|&t| kingdom.dual(t).is_some_and(|d| EXTRA_REGISTERS.iter().any(|x| x.dual == d.dual)));
+    let not_drawn = |r: &WgslRow| extra_reg(r) || is_vector_conversion_read_only(r) || uniform_test_op(safe_base(&r.name)).is_some() || matches!(safe_base(&r.name), "stmt.if_uflag" | "stmt.if_else_uflag") || matches!(r.name.as_str(), "uflag.of_flag" | "uniform.of_checked" | "wg.au_c" | "wg.au_d" | "safe.pidx128") || wg_i32(r) || parr128(r);
     // (Nor the third and fourth atomic<u32> workgroup arrays, wg.au_c and
     // wg.au_d, 2026-10-19: rows for the seeds that keep more counters; drawn,
     // they move the random floors by draws alone, so they wait for a floor
@@ -4218,6 +4417,24 @@ pub(crate) fn first_difference(a: &Tree, b: &Tree) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every extra register kind has its registers, its read and its sets in
+    /// the rows `gen_tables.py` wrote, at the dual and the count the table says.
+    #[test]
+    fn the_extra_registers_are_the_rows_the_generator_wrote() {
+        let k = WgslKingdom::load_safe();
+        let dual = |t: Ty| k.dual(t).map(|d| d.dual.clone()).unwrap_or_default();
+        for x in &EXTRA_REGISTERS {
+            let last = format!("reg.{}{}", x.letter, x.count - 1);
+            let reg = k.rows.iter().find(|r| r.name == last).unwrap_or_else(|| panic!("{last}: no such row"));
+            assert_eq!(dual(reg.output), x.dual, "{last}");
+            assert!(!k.rows.iter().any(|r| r.name == format!("reg.{}{}", x.letter, x.count)), "more registers than the table's count of {}", x.count);
+            let get = k.rows.iter().find(|r| r.name == format!("reg.get_{}", x.letter)).unwrap_or_else(|| panic!("reg.get_{}", x.letter));
+            assert_eq!((dual(get.inputs[0]), dual(get.output).split('.').next().unwrap_or("").to_string()), (x.dual.to_string(), x.slot.to_string()));
+            assert!(k.rows.iter().any(|r| r.name == format!("reg.set_{}_L0", x.letter) && dual(r.inputs[0]) == x.dual), "reg.set_{}_L0", x.letter);
+            assert_eq!(extra_register_of_value(&format!("{}.opaque", x.slot)).map(|r| r.letter), Some(x.letter));
+        }
+    }
 
     /// THE GUARDED INTEGER DIVISION AND REMAINDER (2026-10-13: naga 0.20
     /// writes `/` and `%` to Metal raw, where x / 0, x % 0 and i32::MIN / -1

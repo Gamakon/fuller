@@ -17,7 +17,11 @@ use fuller::wgsl::safe_reader::read_safe;
 
 /// A reason with its numbers and quoted names folded, so one cause counts once.
 fn kind(reason: &str) -> String {
+    // (The statement paths and the names of the helpers inlined on the way are
+    // where the failure was, not what it was: the last cause counts.)
     let first = reason.lines().next().unwrap_or("");
+    let first = first.rsplit("]: ").next().unwrap_or(first);
+    let first = first.rsplit("inlining ").next().unwrap_or(first);
     let mut out = String::new();
     let mut quoted = false;
     for c in first.chars() {

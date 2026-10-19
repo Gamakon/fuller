@@ -1807,3 +1807,201 @@ F1805	wg	put_n_L2	composite	wgmem<i32>.int u32.wgown i32.int	stmt.L2	3	arity 3: 
 F1806	wg	put_n_L3	composite	wgmem<i32>.int u32.wgown i32.int	stmt.L3	3	arity 3: barrier; if (i < len) { na[i] = v; } barrier
 F1807	wg	put_n_L4	composite	wgmem<i32>.int u32.wgown i32.int	stmt.L4	3	arity 3: barrier; if (i < len) { na[i] = v; } barrier
 F1808	wg	put_n_L5	composite	wgmem<i32>.int u32.wgown i32.int	stmt.L5	3	arity 3: barrier; if (i < len) { na[i] = v; } barrier
+F1809	convert	vindex_to_f32	As	vec2<u32>.index	vec2<f32>.real	1	per lane
+F1810	convert	vcount_to_f32	As	vec2<u32>.count	vec2<f32>.real	1	per lane
+F1811	convert	vf32_to_count	As	vec2<f32>.real	vec2<u32>.count	1	truncating, floor at 0, per lane
+F1812	convert	vindex_to_f32	As	vec3<u32>.index	vec3<f32>.real	1	per lane
+F1813	convert	vcount_to_f32	As	vec3<u32>.count	vec3<f32>.real	1	per lane
+F1814	convert	vf32_to_count	As	vec3<f32>.real	vec3<u32>.count	1	truncating, floor at 0, per lane
+F1815	convert	vindex_to_f32	As	vec4<u32>.index	vec4<f32>.real	1	per lane
+F1816	convert	vcount_to_f32	As	vec4<u32>.count	vec4<f32>.real	1	per lane
+F1817	convert	vf32_to_count	As	vec4<f32>.real	vec4<u32>.count	1	truncating, floor at 0, per lane
+F1818	reg	C0	composite	-	reg<vec3<f32>>.real	0	a vec3<f32> register
+F1819	reg	C1	composite	-	reg<vec3<f32>>.real	0	a vec3<f32> register
+F1820	reg	C2	composite	-	reg<vec3<f32>>.real	0	a vec3<f32> register
+F1821	reg	C3	composite	-	reg<vec3<f32>>.real	0	a vec3<f32> register
+F1822	reg	C4	composite	-	reg<vec3<f32>>.real	0	a vec3<f32> register
+F1823	reg	C5	composite	-	reg<vec3<f32>>.real	0	a vec3<f32> register
+F1824	reg	C6	composite	-	reg<vec3<f32>>.real	0	a vec3<f32> register
+F1825	reg	C7	composite	-	reg<vec3<f32>>.real	0	a vec3<f32> register
+F1826	reg	get_C	composite	reg<vec3<f32>>.real	vec3<f32>.real	1	the register's value
+F1827	reg	set_C_L0	composite	reg<vec3<f32>>.real vec3<f32>.real	stmt.L0	2	
+F1828	reg	set_C_L1	composite	reg<vec3<f32>>.real vec3<f32>.real	stmt.L1	2	
+F1829	reg	set_C_L2	composite	reg<vec3<f32>>.real vec3<f32>.real	stmt.L2	2	
+F1830	reg	set_C_L3	composite	reg<vec3<f32>>.real vec3<f32>.real	stmt.L3	2	
+F1831	reg	set_C_L4	composite	reg<vec3<f32>>.real vec3<f32>.real	stmt.L4	2	
+F1832	reg	set_C_C0	composite	reg<vec3<f32>>.real vec3<f32>.real	stmt.C0	2	
+F1833	reg	set_C_C1	composite	reg<vec3<f32>>.real vec3<f32>.real	stmt.C1	2	
+F1834	reg	set_C_C2	composite	reg<vec3<f32>>.real vec3<f32>.real	stmt.C2	2	
+F1835	reg	set_C_C3	composite	reg<vec3<f32>>.real vec3<f32>.real	stmt.C3	2	
+F1836	reg	set_C_C4	composite	reg<vec3<f32>>.real vec3<f32>.real	stmt.C4	2	
+F1837	reg	set_C_L5	composite	reg<vec3<f32>>.real vec3<f32>.real	stmt.L5	2	
+F1838	reg	set_C_C5	composite	reg<vec3<f32>>.real vec3<f32>.real	stmt.C5	2	
+F1839	reg	D0	composite	-	reg<vec2<i32>>.int	0	a vec2<i32> register
+F1840	reg	D1	composite	-	reg<vec2<i32>>.int	0	a vec2<i32> register
+F1841	reg	D2	composite	-	reg<vec2<i32>>.int	0	a vec2<i32> register
+F1842	reg	D3	composite	-	reg<vec2<i32>>.int	0	a vec2<i32> register
+F1843	reg	D4	composite	-	reg<vec2<i32>>.int	0	a vec2<i32> register
+F1844	reg	D5	composite	-	reg<vec2<i32>>.int	0	a vec2<i32> register
+F1845	reg	D6	composite	-	reg<vec2<i32>>.int	0	a vec2<i32> register
+F1846	reg	D7	composite	-	reg<vec2<i32>>.int	0	a vec2<i32> register
+F1847	reg	get_D	composite	reg<vec2<i32>>.int	vec2<i32>.int	1	the register's value
+F1848	reg	set_D_L0	composite	reg<vec2<i32>>.int vec2<i32>.int	stmt.L0	2	
+F1849	reg	set_D_L1	composite	reg<vec2<i32>>.int vec2<i32>.int	stmt.L1	2	
+F1850	reg	set_D_L2	composite	reg<vec2<i32>>.int vec2<i32>.int	stmt.L2	2	
+F1851	reg	set_D_L3	composite	reg<vec2<i32>>.int vec2<i32>.int	stmt.L3	2	
+F1852	reg	set_D_L4	composite	reg<vec2<i32>>.int vec2<i32>.int	stmt.L4	2	
+F1853	reg	set_D_C0	composite	reg<vec2<i32>>.int vec2<i32>.int	stmt.C0	2	
+F1854	reg	set_D_C1	composite	reg<vec2<i32>>.int vec2<i32>.int	stmt.C1	2	
+F1855	reg	set_D_C2	composite	reg<vec2<i32>>.int vec2<i32>.int	stmt.C2	2	
+F1856	reg	set_D_C3	composite	reg<vec2<i32>>.int vec2<i32>.int	stmt.C3	2	
+F1857	reg	set_D_C4	composite	reg<vec2<i32>>.int vec2<i32>.int	stmt.C4	2	
+F1858	reg	set_D_L5	composite	reg<vec2<i32>>.int vec2<i32>.int	stmt.L5	2	
+F1859	reg	set_D_C5	composite	reg<vec2<i32>>.int vec2<i32>.int	stmt.C5	2	
+F1860	reg	E0	composite	-	reg<vec3<i32>>.int	0	a vec3<i32> register
+F1861	reg	E1	composite	-	reg<vec3<i32>>.int	0	a vec3<i32> register
+F1862	reg	E2	composite	-	reg<vec3<i32>>.int	0	a vec3<i32> register
+F1863	reg	E3	composite	-	reg<vec3<i32>>.int	0	a vec3<i32> register
+F1864	reg	E4	composite	-	reg<vec3<i32>>.int	0	a vec3<i32> register
+F1865	reg	E5	composite	-	reg<vec3<i32>>.int	0	a vec3<i32> register
+F1866	reg	E6	composite	-	reg<vec3<i32>>.int	0	a vec3<i32> register
+F1867	reg	E7	composite	-	reg<vec3<i32>>.int	0	a vec3<i32> register
+F1868	reg	get_E	composite	reg<vec3<i32>>.int	vec3<i32>.int	1	the register's value
+F1869	reg	set_E_L0	composite	reg<vec3<i32>>.int vec3<i32>.int	stmt.L0	2	
+F1870	reg	set_E_L1	composite	reg<vec3<i32>>.int vec3<i32>.int	stmt.L1	2	
+F1871	reg	set_E_L2	composite	reg<vec3<i32>>.int vec3<i32>.int	stmt.L2	2	
+F1872	reg	set_E_L3	composite	reg<vec3<i32>>.int vec3<i32>.int	stmt.L3	2	
+F1873	reg	set_E_L4	composite	reg<vec3<i32>>.int vec3<i32>.int	stmt.L4	2	
+F1874	reg	set_E_C0	composite	reg<vec3<i32>>.int vec3<i32>.int	stmt.C0	2	
+F1875	reg	set_E_C1	composite	reg<vec3<i32>>.int vec3<i32>.int	stmt.C1	2	
+F1876	reg	set_E_C2	composite	reg<vec3<i32>>.int vec3<i32>.int	stmt.C2	2	
+F1877	reg	set_E_C3	composite	reg<vec3<i32>>.int vec3<i32>.int	stmt.C3	2	
+F1878	reg	set_E_C4	composite	reg<vec3<i32>>.int vec3<i32>.int	stmt.C4	2	
+F1879	reg	set_E_L5	composite	reg<vec3<i32>>.int vec3<i32>.int	stmt.L5	2	
+F1880	reg	set_E_C5	composite	reg<vec3<i32>>.int vec3<i32>.int	stmt.C5	2	
+F1881	reg	F0	composite	-	reg<vec4<i32>>.int	0	a vec4<i32> register
+F1882	reg	F1	composite	-	reg<vec4<i32>>.int	0	a vec4<i32> register
+F1883	reg	F2	composite	-	reg<vec4<i32>>.int	0	a vec4<i32> register
+F1884	reg	F3	composite	-	reg<vec4<i32>>.int	0	a vec4<i32> register
+F1885	reg	F4	composite	-	reg<vec4<i32>>.int	0	a vec4<i32> register
+F1886	reg	F5	composite	-	reg<vec4<i32>>.int	0	a vec4<i32> register
+F1887	reg	F6	composite	-	reg<vec4<i32>>.int	0	a vec4<i32> register
+F1888	reg	F7	composite	-	reg<vec4<i32>>.int	0	a vec4<i32> register
+F1889	reg	get_F	composite	reg<vec4<i32>>.int	vec4<i32>.int	1	the register's value
+F1890	reg	set_F_L0	composite	reg<vec4<i32>>.int vec4<i32>.int	stmt.L0	2	
+F1891	reg	set_F_L1	composite	reg<vec4<i32>>.int vec4<i32>.int	stmt.L1	2	
+F1892	reg	set_F_L2	composite	reg<vec4<i32>>.int vec4<i32>.int	stmt.L2	2	
+F1893	reg	set_F_L3	composite	reg<vec4<i32>>.int vec4<i32>.int	stmt.L3	2	
+F1894	reg	set_F_L4	composite	reg<vec4<i32>>.int vec4<i32>.int	stmt.L4	2	
+F1895	reg	set_F_C0	composite	reg<vec4<i32>>.int vec4<i32>.int	stmt.C0	2	
+F1896	reg	set_F_C1	composite	reg<vec4<i32>>.int vec4<i32>.int	stmt.C1	2	
+F1897	reg	set_F_C2	composite	reg<vec4<i32>>.int vec4<i32>.int	stmt.C2	2	
+F1898	reg	set_F_C3	composite	reg<vec4<i32>>.int vec4<i32>.int	stmt.C3	2	
+F1899	reg	set_F_C4	composite	reg<vec4<i32>>.int vec4<i32>.int	stmt.C4	2	
+F1900	reg	set_F_L5	composite	reg<vec4<i32>>.int vec4<i32>.int	stmt.L5	2	
+F1901	reg	set_F_C5	composite	reg<vec4<i32>>.int vec4<i32>.int	stmt.C5	2	
+F1902	reg	G0	composite	-	reg<vec2<u32>>.index	0	a vec2<u32> register
+F1903	reg	G1	composite	-	reg<vec2<u32>>.index	0	a vec2<u32> register
+F1904	reg	G2	composite	-	reg<vec2<u32>>.index	0	a vec2<u32> register
+F1905	reg	G3	composite	-	reg<vec2<u32>>.index	0	a vec2<u32> register
+F1906	reg	G4	composite	-	reg<vec2<u32>>.index	0	a vec2<u32> register
+F1907	reg	G5	composite	-	reg<vec2<u32>>.index	0	a vec2<u32> register
+F1908	reg	G6	composite	-	reg<vec2<u32>>.index	0	a vec2<u32> register
+F1909	reg	G7	composite	-	reg<vec2<u32>>.index	0	a vec2<u32> register
+F1910	reg	get_G	composite	reg<vec2<u32>>.index	vec2<u32>.index	1	the register's value
+F1911	reg	set_G_L0	composite	reg<vec2<u32>>.index vec2<u32>.index	stmt.L0	2	
+F1912	reg	set_G_L1	composite	reg<vec2<u32>>.index vec2<u32>.index	stmt.L1	2	
+F1913	reg	set_G_L2	composite	reg<vec2<u32>>.index vec2<u32>.index	stmt.L2	2	
+F1914	reg	set_G_L3	composite	reg<vec2<u32>>.index vec2<u32>.index	stmt.L3	2	
+F1915	reg	set_G_L4	composite	reg<vec2<u32>>.index vec2<u32>.index	stmt.L4	2	
+F1916	reg	set_G_C0	composite	reg<vec2<u32>>.index vec2<u32>.index	stmt.C0	2	
+F1917	reg	set_G_C1	composite	reg<vec2<u32>>.index vec2<u32>.index	stmt.C1	2	
+F1918	reg	set_G_C2	composite	reg<vec2<u32>>.index vec2<u32>.index	stmt.C2	2	
+F1919	reg	set_G_C3	composite	reg<vec2<u32>>.index vec2<u32>.index	stmt.C3	2	
+F1920	reg	set_G_C4	composite	reg<vec2<u32>>.index vec2<u32>.index	stmt.C4	2	
+F1921	reg	set_G_L5	composite	reg<vec2<u32>>.index vec2<u32>.index	stmt.L5	2	
+F1922	reg	set_G_C5	composite	reg<vec2<u32>>.index vec2<u32>.index	stmt.C5	2	
+F1923	reg	H0	composite	-	reg<vec3<u32>>.index	0	a vec3<u32> register
+F1924	reg	H1	composite	-	reg<vec3<u32>>.index	0	a vec3<u32> register
+F1925	reg	H2	composite	-	reg<vec3<u32>>.index	0	a vec3<u32> register
+F1926	reg	H3	composite	-	reg<vec3<u32>>.index	0	a vec3<u32> register
+F1927	reg	H4	composite	-	reg<vec3<u32>>.index	0	a vec3<u32> register
+F1928	reg	H5	composite	-	reg<vec3<u32>>.index	0	a vec3<u32> register
+F1929	reg	H6	composite	-	reg<vec3<u32>>.index	0	a vec3<u32> register
+F1930	reg	H7	composite	-	reg<vec3<u32>>.index	0	a vec3<u32> register
+F1931	reg	get_H	composite	reg<vec3<u32>>.index	vec3<u32>.index	1	the register's value
+F1932	reg	set_H_L0	composite	reg<vec3<u32>>.index vec3<u32>.index	stmt.L0	2	
+F1933	reg	set_H_L1	composite	reg<vec3<u32>>.index vec3<u32>.index	stmt.L1	2	
+F1934	reg	set_H_L2	composite	reg<vec3<u32>>.index vec3<u32>.index	stmt.L2	2	
+F1935	reg	set_H_L3	composite	reg<vec3<u32>>.index vec3<u32>.index	stmt.L3	2	
+F1936	reg	set_H_L4	composite	reg<vec3<u32>>.index vec3<u32>.index	stmt.L4	2	
+F1937	reg	set_H_C0	composite	reg<vec3<u32>>.index vec3<u32>.index	stmt.C0	2	
+F1938	reg	set_H_C1	composite	reg<vec3<u32>>.index vec3<u32>.index	stmt.C1	2	
+F1939	reg	set_H_C2	composite	reg<vec3<u32>>.index vec3<u32>.index	stmt.C2	2	
+F1940	reg	set_H_C3	composite	reg<vec3<u32>>.index vec3<u32>.index	stmt.C3	2	
+F1941	reg	set_H_C4	composite	reg<vec3<u32>>.index vec3<u32>.index	stmt.C4	2	
+F1942	reg	set_H_L5	composite	reg<vec3<u32>>.index vec3<u32>.index	stmt.L5	2	
+F1943	reg	set_H_C5	composite	reg<vec3<u32>>.index vec3<u32>.index	stmt.C5	2	
+F1944	reg	J0	composite	-	reg<vec2<bool>>.flag	0	a vec2<bool> register
+F1945	reg	J1	composite	-	reg<vec2<bool>>.flag	0	a vec2<bool> register
+F1946	reg	J2	composite	-	reg<vec2<bool>>.flag	0	a vec2<bool> register
+F1947	reg	J3	composite	-	reg<vec2<bool>>.flag	0	a vec2<bool> register
+F1948	reg	J4	composite	-	reg<vec2<bool>>.flag	0	a vec2<bool> register
+F1949	reg	J5	composite	-	reg<vec2<bool>>.flag	0	a vec2<bool> register
+F1950	reg	J6	composite	-	reg<vec2<bool>>.flag	0	a vec2<bool> register
+F1951	reg	J7	composite	-	reg<vec2<bool>>.flag	0	a vec2<bool> register
+F1952	reg	get_J	composite	reg<vec2<bool>>.flag	vec2<bool>.flag	1	the register's value
+F1953	reg	set_J_L0	composite	reg<vec2<bool>>.flag vec2<bool>.flag	stmt.L0	2	
+F1954	reg	set_J_L1	composite	reg<vec2<bool>>.flag vec2<bool>.flag	stmt.L1	2	
+F1955	reg	set_J_L2	composite	reg<vec2<bool>>.flag vec2<bool>.flag	stmt.L2	2	
+F1956	reg	set_J_L3	composite	reg<vec2<bool>>.flag vec2<bool>.flag	stmt.L3	2	
+F1957	reg	set_J_L4	composite	reg<vec2<bool>>.flag vec2<bool>.flag	stmt.L4	2	
+F1958	reg	set_J_C0	composite	reg<vec2<bool>>.flag vec2<bool>.flag	stmt.C0	2	
+F1959	reg	set_J_C1	composite	reg<vec2<bool>>.flag vec2<bool>.flag	stmt.C1	2	
+F1960	reg	set_J_C2	composite	reg<vec2<bool>>.flag vec2<bool>.flag	stmt.C2	2	
+F1961	reg	set_J_C3	composite	reg<vec2<bool>>.flag vec2<bool>.flag	stmt.C3	2	
+F1962	reg	set_J_C4	composite	reg<vec2<bool>>.flag vec2<bool>.flag	stmt.C4	2	
+F1963	reg	set_J_L5	composite	reg<vec2<bool>>.flag vec2<bool>.flag	stmt.L5	2	
+F1964	reg	set_J_C5	composite	reg<vec2<bool>>.flag vec2<bool>.flag	stmt.C5	2	
+F1965	reg	K0	composite	-	reg<vec3<bool>>.flag	0	a vec3<bool> register
+F1966	reg	K1	composite	-	reg<vec3<bool>>.flag	0	a vec3<bool> register
+F1967	reg	K2	composite	-	reg<vec3<bool>>.flag	0	a vec3<bool> register
+F1968	reg	K3	composite	-	reg<vec3<bool>>.flag	0	a vec3<bool> register
+F1969	reg	K4	composite	-	reg<vec3<bool>>.flag	0	a vec3<bool> register
+F1970	reg	K5	composite	-	reg<vec3<bool>>.flag	0	a vec3<bool> register
+F1971	reg	K6	composite	-	reg<vec3<bool>>.flag	0	a vec3<bool> register
+F1972	reg	K7	composite	-	reg<vec3<bool>>.flag	0	a vec3<bool> register
+F1973	reg	get_K	composite	reg<vec3<bool>>.flag	vec3<bool>.flag	1	the register's value
+F1974	reg	set_K_L0	composite	reg<vec3<bool>>.flag vec3<bool>.flag	stmt.L0	2	
+F1975	reg	set_K_L1	composite	reg<vec3<bool>>.flag vec3<bool>.flag	stmt.L1	2	
+F1976	reg	set_K_L2	composite	reg<vec3<bool>>.flag vec3<bool>.flag	stmt.L2	2	
+F1977	reg	set_K_L3	composite	reg<vec3<bool>>.flag vec3<bool>.flag	stmt.L3	2	
+F1978	reg	set_K_L4	composite	reg<vec3<bool>>.flag vec3<bool>.flag	stmt.L4	2	
+F1979	reg	set_K_C0	composite	reg<vec3<bool>>.flag vec3<bool>.flag	stmt.C0	2	
+F1980	reg	set_K_C1	composite	reg<vec3<bool>>.flag vec3<bool>.flag	stmt.C1	2	
+F1981	reg	set_K_C2	composite	reg<vec3<bool>>.flag vec3<bool>.flag	stmt.C2	2	
+F1982	reg	set_K_C3	composite	reg<vec3<bool>>.flag vec3<bool>.flag	stmt.C3	2	
+F1983	reg	set_K_C4	composite	reg<vec3<bool>>.flag vec3<bool>.flag	stmt.C4	2	
+F1984	reg	set_K_L5	composite	reg<vec3<bool>>.flag vec3<bool>.flag	stmt.L5	2	
+F1985	reg	set_K_C5	composite	reg<vec3<bool>>.flag vec3<bool>.flag	stmt.C5	2	
+F1986	reg	L0	composite	-	reg<vec4<bool>>.flag	0	a vec4<bool> register
+F1987	reg	L1	composite	-	reg<vec4<bool>>.flag	0	a vec4<bool> register
+F1988	reg	L2	composite	-	reg<vec4<bool>>.flag	0	a vec4<bool> register
+F1989	reg	L3	composite	-	reg<vec4<bool>>.flag	0	a vec4<bool> register
+F1990	reg	L4	composite	-	reg<vec4<bool>>.flag	0	a vec4<bool> register
+F1991	reg	L5	composite	-	reg<vec4<bool>>.flag	0	a vec4<bool> register
+F1992	reg	L6	composite	-	reg<vec4<bool>>.flag	0	a vec4<bool> register
+F1993	reg	L7	composite	-	reg<vec4<bool>>.flag	0	a vec4<bool> register
+F1994	reg	get_L	composite	reg<vec4<bool>>.flag	vec4<bool>.flag	1	the register's value
+F1995	reg	set_L_L0	composite	reg<vec4<bool>>.flag vec4<bool>.flag	stmt.L0	2	
+F1996	reg	set_L_L1	composite	reg<vec4<bool>>.flag vec4<bool>.flag	stmt.L1	2	
+F1997	reg	set_L_L2	composite	reg<vec4<bool>>.flag vec4<bool>.flag	stmt.L2	2	
+F1998	reg	set_L_L3	composite	reg<vec4<bool>>.flag vec4<bool>.flag	stmt.L3	2	
+F1999	reg	set_L_L4	composite	reg<vec4<bool>>.flag vec4<bool>.flag	stmt.L4	2	
+F2000	reg	set_L_C0	composite	reg<vec4<bool>>.flag vec4<bool>.flag	stmt.C0	2	
+F2001	reg	set_L_C1	composite	reg<vec4<bool>>.flag vec4<bool>.flag	stmt.C1	2	
+F2002	reg	set_L_C2	composite	reg<vec4<bool>>.flag vec4<bool>.flag	stmt.C2	2	
+F2003	reg	set_L_C3	composite	reg<vec4<bool>>.flag vec4<bool>.flag	stmt.C3	2	
+F2004	reg	set_L_C4	composite	reg<vec4<bool>>.flag vec4<bool>.flag	stmt.C4	2	
+F2005	reg	set_L_L5	composite	reg<vec4<bool>>.flag vec4<bool>.flag	stmt.L5	2	
+F2006	reg	set_L_C5	composite	reg<vec4<bool>>.flag vec4<bool>.flag	stmt.C5	2	

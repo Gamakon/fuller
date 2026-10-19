@@ -872,6 +872,17 @@ impl<'a> Checker<'a> {
                 }
                 k.iter().skip(1).filter(|v| !self.is_stmt_level(v)).for_each(|v| self.value(v, cx));
             }
+            base if crate::wgsl::render::is_extra_register_row(base) && base.starts_with("reg.set_") => {
+                self.values(s, cx);
+                if cx.mode == Mode::Uniform {
+                    if let Some(r) = k.first().and_then(|r| register_name(self.kingdom, r).ok()) {
+                        let uniform = live && k.get(1..).unwrap_or(&[]).iter().all(|v| self.uniform(v, cx));
+                        if !uniform && cx.nonuniform_regs.insert(r) {
+                            cx.changed = true;
+                        }
+                    }
+                }
+            }
             "reg.set_f" | "reg.set_v" | "reg.set_i" | "reg.set_b" | "reg.set_n" | "reg.set_u" | "reg.set_w" | "reg.set_x" | "reg.set_y" | "reg.set_z" | "reg.set_v_lane" => {
                 self.values(s, cx);
                 if cx.mode == Mode::Uniform {

@@ -907,7 +907,7 @@ fn conform_at(t: &Tree, demand: Ty, kingdom: &WgslKingdom, per_kernel: &[PerKern
     let mut inner_errors = Vec::new();
     for o in own.iter().filter(|_| convert) {
         // A conversion between forms, or a splat of a scalar where a vector is demanded (WGSL's scalar-vector arithmetic).
-        if let Some(conv) = kingdom.rows.iter().find(|r| r.inputs.len() == 1 && r.inputs[0] == *o && r.output == demand && (r.name.starts_with("index.of_") || r.name.starts_with("convert.") || r.name.starts_with("shape.splat"))) {
+        if let Some(conv) = kingdom.rows.iter().find(|r| r.inputs.len() == 1 && r.inputs[0] == *o && r.output == demand && (r.name.starts_with("index.of_") || r.name.starts_with("convert.") || r.name.starts_with("shape.splat")) && !crate::wgsl::render::is_vector_conversion_read_only(r)) {
             match conform_at(t, *o, kingdom, per_kernel, false, chains) {
                 Ok(inner) => return Ok(Tree::new(&conv.name, demand, vec![inner])),
                 Err(e) => inner_errors.push(e),
@@ -921,7 +921,7 @@ fn conform_at(t: &Tree, demand: Ty, kingdom: &WgslKingdom, per_kernel: &[PerKern
     // axis is such a node too (`lid.x` shifting or masked as bits, v24 run 1's
     // seed26 and seed30: `axis.x_lid` is a column index, `index.of_col` then
     // `convert.index_to_bits`): a node over leaves only.
-    let is_conv = |r: &&crate::wgsl::loader::WgslRow| r.inputs.len() == 1 && (r.name.starts_with("index.of_") || r.name.starts_with("convert.") || r.name.starts_with("shape.splat"));
+    let is_conv = |r: &&crate::wgsl::loader::WgslRow| r.inputs.len() == 1 && (r.name.starts_with("index.of_") || r.name.starts_with("convert.") || r.name.starts_with("shape.splat")) && !crate::wgsl::render::is_vector_conversion_read_only(r);
     for o in own.iter().filter(|_| convert && chains && t.kids.iter().all(|k| k.kids.is_empty())) {
         for first in kingdom.rows.iter().filter(is_conv).filter(|r| r.inputs[0] == *o && r.output != demand) {
             if let Some(second) = kingdom.rows.iter().filter(is_conv).find(|r| r.inputs[0] == first.output && r.output == demand) {
