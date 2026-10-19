@@ -37,6 +37,7 @@ pub mod homeotic;
 pub mod population_dag;
 pub mod geneframe;
 pub mod kingdom_contract;
+pub mod typed_chromosome;
 pub mod typed_gep;
 #[cfg(test)]
 mod typed_gep_tests;
