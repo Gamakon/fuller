@@ -320,7 +320,7 @@ fn single_typed_functions(table: &SymbolTable, kingdom: &str, ty: Ty) -> Vec<(St
 
 /// Build relations from `(name, ordered inputs, output)` rows plus the names
 /// of the constant placeholders among them.
-fn relations_from_rows(kingdom: &str, roots: Vec<Ty>, rows: &[(String, Vec<Ty>, Ty)], constants: &[&str]) -> KingdomRelations {
+pub fn relations_from_rows(kingdom: &str, roots: Vec<Ty>, rows: &[(String, Vec<Ty>, Ty)], constants: &[&str]) -> KingdomRelations {
     let mut r = KingdomRelations {
         kingdom: kingdom.to_string(),
         roots,
