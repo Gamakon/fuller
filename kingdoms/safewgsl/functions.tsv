@@ -1767,3 +1767,5 @@ F1765	wg	reduce_argmin_L2	composite	wgmem<f32>.real wgmem<u32>.index u32.lit4096
 F1766	wg	reduce_argmin_L3	composite	wgmem<f32>.real wgmem<u32>.index u32.lit4096	stmt.L3	3	v[0..n) and i[0..n) reduced into element 0 by argmin of v, i moving with v: stride halving, barriers in uniform control flow
 F1767	wg	reduce_argmin_L4	composite	wgmem<f32>.real wgmem<u32>.index u32.lit4096	stmt.L4	3	v[0..n) and i[0..n) reduced into element 0 by argmin of v, i moving with v: stride halving, barriers in uniform control flow
 F1768	wg	reduce_argmin_L5	composite	wgmem<f32>.real wgmem<u32>.index u32.lit4096	stmt.L5	3	v[0..n) and i[0..n) reduced into element 0 by argmin of v, i moving with v: stride halving, barriers in uniform control flow
+F1769	wg	au_c	composite	-	wgmem<atomic<u32>>.index	0	workgroup array wg_au_c of atomic<u32>
+F1770	wg	au_d	composite	-	wgmem<atomic<u32>>.index	0	workgroup array wg_au_d of atomic<u32>

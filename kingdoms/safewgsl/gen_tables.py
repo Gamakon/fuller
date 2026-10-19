@@ -364,7 +364,7 @@ def build_types():
     add("wg", "decl", 0, FORMS["decl"][0])
     add("wg", "decls", 0, FORMS["decls"][0])
     # ---- integer atomics (2026-10-12) ----
-    add("wgmem<atomic<u32>>", "index", 0, "a workgroup-memory array of atomic<u32>: au_a, au_b")
+    add("wgmem<atomic<u32>>", "index", 0, "a workgroup-memory array of atomic<u32>: au_a, au_b (au_c, au_d since 2026-10-19)")
     add("wgmem<atomic<i32>>", "int", 0, "a workgroup-memory array of atomic<i32>: ai_a, ai_b")
     add("u32", "wgaindex", 1, FORMS["wgaindex"][0])
     # ---- i32 registers (2026-10-12, WGSL_COVERAGE.md gap 6) ----
@@ -1395,6 +1395,10 @@ for r in RUNGS + RUNGS5:
 for op in ("argmax", "argmin"):
     for r in ("L0", "L1", "L2", "L3", "L4", "L5"):
         f("wg", f"reduce_{op}_{r}", "composite", ["wgmem<f32>.real", "wgmem<u32>.index", "u32.lit4096"], "stmt." + r, f"v[0..n) and i[0..n) reduced into element 0 by {op} of v, i moving with v: stride halving, barriers in uniform control flow")
+# ---- two more workgroup arrays of atomic<u32> (2026-10-19, 5 of run 4's 32 seeds keep three or four atomic
+# counters in workgroup memory: a search's candidate count, its ties, a slot) ----
+for n in ("au_c", "au_d"):
+    f("wg", n, "composite", [], "wgmem<atomic<u32>>.index", f"workgroup array wg_{n} of atomic<u32>")
 
 def write_tsv(path, header, rows):
     with open(path, "w") as out:

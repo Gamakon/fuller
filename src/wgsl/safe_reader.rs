@@ -2690,7 +2690,7 @@ impl<'a> Ctx<'a> {
             None => elem_dual,
         };
         let candidates: &[&'static str] = match elem_dual {
-            "atomic<u32>" => &["wg.au_a", "wg.au_b"],
+            "atomic<u32>" => &["wg.au_a", "wg.au_b", "wg.au_c", "wg.au_d"],
             "atomic<i32>" => &["wg.ai_a", "wg.ai_b"],
             "f32.real" => &["wg.a", "wg.b", "wg.c", "wg.d", "wg.e", "wg.f", "wg.g", "wg.h"],
             "vec2<f32>.real" => &["wg.v2a", "wg.v2b", "wg.v2c", "wg.v2d"],

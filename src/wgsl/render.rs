@@ -1906,6 +1906,8 @@ pub fn wgmem_var(kingdom: &WgslKingdom, w: &Tree) -> Result<&'static str, String
         "wg.ul" => "wg_ul",
         "wg.au_a" => "wg_au_a",
         "wg.au_b" => "wg_au_b",
+        "wg.au_c" => "wg_au_c",
+        "wg.au_d" => "wg_au_d",
         "wg.ai_a" => "wg_ai_a",
         "wg.ai_b" => "wg_ai_b",
         other => return Err(format!("{other} is not a workgroup array")),
@@ -3384,7 +3386,11 @@ fn sample_with(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, s
     // differences of spelling, not of reading. With canonical's rule 9 for
     // them (16:50Z), drawn: random trees AST 35, fixpoint 920; modules AST
     // 2, fixpoint 967, legal 125: below the current floors, so not drawn yet.)
-    let not_drawn = |r: &WgslRow| uniform_test_op(safe_base(&r.name)).is_some() || matches!(safe_base(&r.name), "stmt.if_uflag" | "stmt.if_else_uflag") || matches!(r.name.as_str(), "uflag.of_flag" | "uniform.of_checked");
+    let not_drawn = |r: &WgslRow| uniform_test_op(safe_base(&r.name)).is_some() || matches!(safe_base(&r.name), "stmt.if_uflag" | "stmt.if_else_uflag") || matches!(r.name.as_str(), "uflag.of_flag" | "uniform.of_checked" | "wg.au_c" | "wg.au_d");
+    // (Nor the third and fourth atomic<u32> workgroup arrays, wg.au_c and
+    // wg.au_d, 2026-10-19: rows for the seeds that keep more counters; drawn,
+    // they move the random floors by draws alone, so they wait for a floor
+    // run of their own.)
     let mut rows: Vec<WgslRow> = kingdom.rows.iter().filter(|r| !f16(&r.output) && !r.inputs.iter().any(f16) && !r.name.starts_with("stmt.return") && !r.name.starts_with("safe.mirror_of") && !r.name.starts_with("store.h_mirror") && !not_drawn(r) && !r.name.starts_with("wg.set")).cloned().collect();
     // The safe kingdom reads h only at the thread's own cell (load.h_safe):
     // the role's load.h, h at any index, is the plain kingdom's (the

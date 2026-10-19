@@ -979,8 +979,9 @@ mod tests {
         // registers (reg.w0..w7, reg.get_w and 12 reg.set_w, seed11); 1,728 with uflag.of_flag;
         // 1,729 with uniform.of_checked; 1,741 with the uniform loads (wg.uload_i, wg.uload_f at L0..L5);
         // 1,756 with the 64-element vec4 private arrays (parr.vq, parr.vr, their get and 12 sets);
-        // 1,768 with the argmax and argmin reductions (wg.reduce_argmax/argmin at L0..L5).
-        assert_eq!(fs.rows.len(), 1768);
+        // 1,768 with the argmax and argmin reductions (wg.reduce_argmax/argmin at L0..L5); 1,770 with
+        // two more atomic<u32> workgroup arrays (wg.au_c, wg.au_d, run 4's seeds, 2026-10-19).
+        assert_eq!(fs.rows.len(), 1770);
         let dual = |t: Ty| k.dual(t).unwrap().dual.clone();
         let producers = |d: &str| -> Vec<String> { k.rows.iter().filter(|r| dual(r.output) == d).map(|r| r.name.clone()).collect() };
         assert_eq!(producers("kernel.safe"), vec!["kernel.entry_safe"]);
