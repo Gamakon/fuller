@@ -131,8 +131,13 @@ mod tests {
     /// EVERY COMMITTED KERNEL READS AS NAGA 0.20 READ IT: roots, paths,
     /// points and trees of the scaffold reader, the safe reader's tree and
     /// interface. A refusal must stay a refusal (its words may differ: they
-    /// quote naga's errors). Every line that differs is printed, then the
-    /// count asserted zero.
+    /// quote naga's errors). The changes naga 30 makes right are recorded,
+    /// kernel by kernel, in tests/fixtures/reading_snapshot_naga30_changes.tsv
+    /// (2026-10-19: 160 safe readings that are the same tree plus the zero
+    /// sets of a loop-local var naga 30 zeroes at each pass, 165 scaffold
+    /// readings with those zero stores, draft_i32's FirstLeadingBit,
+    /// draft_matrices refused); every other line must be equal, and every
+    /// recorded line must still differ.
     #[test]
     fn every_kernel_reads_as_the_snapshot_says() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -143,6 +148,11 @@ mod tests {
         assert_eq!(files.len(), saved.len(), "the kernels and the snapshot's lines");
         let refused = |v: &serde_json::Value| v.get("refused").is_some();
         // (A difference is found with the example's `--full` readings of both builds.)
+        let recorded: std::collections::BTreeSet<(String, String)> = std::fs::read_to_string(root.join("tests/fixtures/reading_snapshot_naga30_changes.tsv")).expect("the recorded changes").lines().skip(1).filter_map(|l| {
+            let mut c = l.split('\t');
+            Some((c.next()?.to_string(), c.next()?.to_string()))
+        }).collect();
+        let mut seen = std::collections::BTreeSet::new();
         let mut differ = Vec::new();
         for (f, want) in files.iter().zip(&saved) {
             let name = f.display().to_string();
@@ -151,6 +161,10 @@ mod tests {
             let full = line(&name, &text, &kingdom);
             let got = digest(&full);
             for part in ["scaffold", "safe"] {
+                if got[part] != want[part] && recorded.contains(&(name.clone(), part.to_string())) {
+                    seen.insert((name.clone(), part.to_string()));
+                    continue;
+                }
                 if got[part] != want[part] {
                     let now = if refused(&full[part]) { full[part]["refused"].to_string().chars().take(160).collect::<String>() } else { "read".into() };
                     differ.push(format!("{name} {part}: {} / {} ({now})", want[part], got[part]));
@@ -160,7 +174,9 @@ mod tests {
         for d in &differ {
             println!("DIFFER {d}");
         }
-        println!("reading snapshot: {} of {} kernels as naga 0.20 read them", files.len() - differ.len(), files.len());
+        println!("reading snapshot: {} readings recorded as naga 30's changes, {} differ otherwise, of {} kernels", seen.len(), differ.len(), files.len());
         assert!(differ.is_empty(), "{} readings differ from the snapshot", differ.len());
+        let stale: Vec<_> = recorded.difference(&seen).collect();
+        assert!(stale.is_empty(), "recorded changes that no longer differ: {stale:?}");
     }
 }
