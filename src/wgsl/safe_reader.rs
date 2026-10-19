@@ -1974,7 +1974,7 @@ impl<'a> Ctx<'a> {
     /// literal, or a module `const` (its value: `r = r + THREADS`, the v24
     /// reference's, 2026-10-17).
     fn step_of(&self, v: &Tree, counter: &str) -> Option<f32> {
-        if v.name != "index.add" || v.kids.len() != 2 || !v.kids.iter().any(|k| local_name(&k.name).as_deref() == Some(counter)) {
+        if !matches!(v.name.as_str(), "index.add" | "int.add") || v.kids.len() != 2 || !v.kids.iter().any(|k| local_name(&k.name).as_deref() == Some(counter)) {
             return None;
         }
         v.kids.iter().find_map(|k| literal_value(k).or_else(|| if k.kids.is_empty() { self.module_constant(&k.name).ok().flatten().map(|x| x as f32) } else { None }))
@@ -2283,6 +2283,12 @@ impl<'a> Ctx<'a> {
             // A u32 read from an input binding (the interface's load row at
             // u32.xbound): its value, `for (j < n[0u])`.
             (name, [i]) if self.per_kernel_rows.iter().any(|p| p.0 == name && p.2 == xb) => at(name, vec![i.clone()]),
+            // A lane of a u32 vector read from memory (a struct's `morph.y`): the
+            // interface's lane row at u32.xbound.
+            (lane, [v]) if lane.starts_with("shape.access_") && self.per_kernel_rows.iter().any(|p| p.0 == format!("{}.lane{}", v.name, &lane["shape.access_".len()..]) && p.2 == xb) => {
+                let name = format!("{}.lane{}", v.name, &lane["shape.access_".len()..]);
+                at(&name, v.kids.clone())
+            }
             ("subgroup.min" | "subgroup.max" | "subgroup.broadcast_first", [x]) => at(&t.name, vec![self.xbound_of(x)?]),
             ("subgroup.broadcast" | "subgroup.shuffle" | "subgroup.shuffle_down" | "subgroup.shuffle_up" | "subgroup.shuffle_xor", [x, i]) => at(&t.name, vec![self.xbound_of(x)?, i.clone()]),
             _ => return Err(no_row()),
@@ -2351,6 +2357,15 @@ impl<'a> Ctx<'a> {
 
     /// A tile counter's read: its index, plus the loop's entry value when
     /// the loop did not start at zero.
+    /// A loop counter's value where the kernel reads it as an i32 (a loop
+    /// `for (var j = 0; j < 6; j++)`): the counter, a u32 here, converted.
+    fn counter_as(&self, read: &Tree, counter: Tree) -> Result<Tree, String> {
+        if self.kingdom.dual(read.ty).is_some_and(|d| d.slot == "i32") {
+            return Ok(Tree::new("convert.index_to_int", read.ty, vec![counter]));
+        }
+        Ok(counter)
+    }
+
     fn offset_counter(&self, local: &str, k: Tree) -> Result<Tree, String> {
         if let Some(e) = self.counter_exprs.get(local) {
             return Ok(Tree::new("index.add", ty(self, "u32.index")?, vec![e.clone(), k]));
@@ -2422,23 +2437,23 @@ impl<'a> Ctx<'a> {
             if let Some(local) = local_name(&t.name) {
                 if self.item_counter.as_deref() == Some(local.as_str()) {
                     let k = Tree::new("safe.counter_index", ty(self, "u32.index")?, vec![Tree::new("safe.counter", ty(self, "u32.counter")?, vec![])]);
-                    return self.offset_counter(&local, k);
+                    return self.counter_as(t, self.offset_counter(&local, k)?);
                 }
                 if self.tile_counter.as_deref() == Some(local.as_str()) {
                     let k = Tree::new("safe.tile_index", ty(self, "u32.index")?, vec![Tree::new("safe.tile_counter", ty(self, "u32.tcounter")?, vec![])]);
-                    return self.offset_counter(&local, k);
+                    return self.counter_as(t, self.offset_counter(&local, k)?);
                 }
                 if self.tile_counter2.as_deref() == Some(local.as_str()) {
                     let k = Tree::new("safe.tile_index2", ty(self, "u32.index")?, vec![Tree::new("safe.tile_counter2", ty(self, "u32.tcounter2")?, vec![])]);
-                    return self.offset_counter(&local, k);
+                    return self.counter_as(t, self.offset_counter(&local, k)?);
                 }
                 if self.tile_counter3.as_deref() == Some(local.as_str()) {
                     let k = Tree::new("safe.tile_index3", ty(self, "u32.index")?, vec![Tree::new("safe.tile_counter3", ty(self, "u32.tcounter3")?, vec![])]);
-                    return self.offset_counter(&local, k);
+                    return self.counter_as(t, self.offset_counter(&local, k)?);
                 }
                 if self.tile_counter4.as_deref() == Some(local.as_str()) {
                     let k = Tree::new("safe.tile_index4", ty(self, "u32.index")?, vec![Tree::new("safe.tile_counter4", ty(self, "u32.tcounter4")?, vec![])]);
-                    return self.offset_counter(&local, k);
+                    return self.counter_as(t, self.offset_counter(&local, k)?);
                 }
                 let row = self.register(&local, &d)?;
                 let kind = row.chars().nth(4).unwrap_or('f');
@@ -3103,6 +3118,28 @@ impl<'a> Ctx<'a> {
     fn buffer_field(&mut self, t: &Tree) -> Result<Option<Tree>, String> {
         let Some(place) = t.name.strip_prefix("load.buffer.").and_then(|r| buffer_place(self.module, r)) else { return Ok(None) };
         let row = if place.path.is_empty() { format!("load.{}", place.binding) } else { format!("load.{}.{}", place.binding, place.path) };
+        // A lane of a vector member (`morph[1]`): the member's row, then the lane.
+        if !self.per_kernel_rows.iter().any(|p| p.0 == row && p.1.len() == place.indexes) {
+            if let Some(base) = place.path.strip_suffix('#').map(|b| b.trim_end_matches('.')).filter(|_| place.indexes >= 1) {
+                let base_row = if base.is_empty() { format!("load.{}", place.binding) } else { format!("load.{}.{base}", place.binding) };
+                if let Some((name, inputs, out)) = self.per_kernel_rows.iter().find(|p| p.0 == base_row && p.1.len() + 1 == place.indexes && self.kingdom.dual(p.2).is_some_and(|d| d.lanes > 1)).cloned() {
+                    let mut idx = Vec::new();
+                    for k in &t.kids {
+                        flat_indexes(k, &mut idx);
+                    }
+                    if idx.len() == inputs.len() + 1 {
+                        let index = ty(self, "u32.index")?;
+                        let (lane, own) = idx.split_last().ok_or("a lane without an index")?;
+                        let kids = own.iter().map(|i| Ok(Tree { ty: index, ..self.value(i)? })).collect::<Result<Vec<_>, String>>()?;
+                        let whole = Tree::new(&name, out, kids);
+                        return Ok(Some(match literal_value(lane) {
+                            Some(l) if l >= 0.0 && l.fract() == 0.0 => Tree::new(&format!("shape.access_{}", l as u32), t.ty, vec![whole]),
+                            _ => Tree::new("shape.at", t.ty, vec![whole, self.value(lane)?]),
+                        }));
+                    }
+                }
+            }
+        }
         let Some((name, inputs, out)) = self.per_kernel_rows.iter().find(|p| p.0 == row && p.1.len() == place.indexes).cloned() else {
             return Err(format!("{} has no safe spelling: the interface has no row {row} over {} indexes (a place of a type the kingdom does not spell)", t.name, place.indexes));
         };
@@ -3197,7 +3234,17 @@ impl<'a> Ctx<'a> {
     /// lane `shape.access_N`, else `shape.at`) or the element of an array
     /// field (the row takes the index). None for any other name.
     fn other_uniform(&mut self, t: &Tree) -> Result<Option<Tree>, String> {
-        let Some(rest) = t.name.strip_prefix("load.uniform.").filter(|r| !r.starts_with("cfg.")) else { return Ok(None) };
+        let Some(rest) = t.name.strip_prefix("load.uniform.") else { return Ok(None) };
+        // The first block's fields without a kingdom role are named under its canonical `cfg`.
+        let renamed;
+        let rest = match rest.strip_prefix("cfg.") {
+            Some(f) if !["d", "m", "r_rows", "r_off", "#"].contains(&f.split(['.', '@']).next().unwrap_or(f)) && !self.uniform_var.is_empty() => {
+                renamed = format!("{}.{f}", self.uniform_var);
+                renamed.as_str()
+            }
+            Some(_) => return Ok(None),
+            None => rest,
+        };
         // A uniform that is no struct (`load.uniform.u`, `load.uniform.u.#`):
         // the variable's own row.
         let whole = rest.split(['.', '@']).next().unwrap_or(rest);
@@ -8751,6 +8798,29 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         checker.check(&r.tree).unwrap_or_else(|e| panic!("{e}\n{}", out.text));
         // A node of four children at most: the chain is a genome.
         crate::wgsl::safe_karva::encode(&r.tree, 32, 128, 7).unwrap_or_else(|e| panic!("encode: {e}"));
+    }
+
+    /// AN i32 LOOP COUNTER AND A LOOP BOUND FROM A STRUCT'S U32 LANE
+    /// (2026-10-19; cuneus's `instances` and `skin`): `for (var j = 0; j < 6;
+    /// j++)` over an array of a uniform, and `for (k < s.morph.y)` over a
+    /// vec4<u32> member of a storage struct, the second field of a non-first
+    /// uniform block read by a non-role name. Each reads, renders, naga
+    /// validates it, reads back to the same tree and passes every layer.
+    #[test]
+    fn an_i32_counter_and_a_u32_lane_bound_read() {
+        let k = WgslKingdom::load_safe();
+        let contract = crate::wgsl::safety::Contract::parse("workgroups x 1 1024\nworkgroups y 1 1\nworkgroups z 1 1\n").unwrap();
+        let src = "struct Params { count: u32, planes: array<vec4<f32>, 6> };\nstruct Vert { morph: vec4<u32>, w: vec4<f32> };\n@group(0) @binding(0) var<uniform> params: Params;\n@group(0) @binding(1) var<storage, read> verts: array<Vert>;\n@group(0) @binding(2) var<storage, read_write> out: array<f32>;\n@compute @workgroup_size(64)\nfn main(@builtin(global_invocation_id) gid: vec3<u32>) {\n    if gid.x >= params.count { return; }\n    let v = verts[gid.x];\n    var acc = 0.0;\n    for (var j = 0; j < 6; j++) { acc += params.planes[j].w * f32(j); }\n    for (var k = 0u; k < v.morph.y; k++) { acc += v.w.x; }\n    out[gid.x] = acc;\n}\n";
+        let r = read_safe(src, &k).unwrap_or_else(|e| panic!("{e}"));
+        let out = crate::wgsl::safe_karva::render_tree_with(&r.tree, &k, &r.role).unwrap_or_else(|e| panic!("{e}"));
+        validate_text(&out.text).unwrap_or_else(|e| panic!("{e}\n{}", out.text));
+        let back = read_safe(&out.text, &k).unwrap_or_else(|e| panic!("read back: {e}\n{}", out.text));
+        // (The index of an i32 counter reads back as the other spelling of the same
+        // conversion, u32(i) for index.of_int: the text then reads to a fixpoint.)
+        let again = read_safe(&crate::wgsl::safe_karva::render_tree_with(&back.tree, &k, &back.role).unwrap().text, &k).unwrap();
+        assert!(again.tree == back.tree, "a fixpoint: {:?}", crate::wgsl::render::first_difference(&back.tree, &again.tree));
+        let checker = crate::wgsl::check::Checker::with_contract(&k, &r.role, &crate::wgsl::target::Target::recorded(), contract);
+        checker.check(&r.tree).unwrap_or_else(|e| panic!("{e}\n{}", out.text));
     }
 
     /// TWO LOOPS OF THE V24 REFERENCE (2026-10-17, the harness agent's

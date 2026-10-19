@@ -642,6 +642,16 @@ impl Role {
                 }
                 let Some(dual) = elem_dual(lty) else { continue };
                 extra.push(pk(format!("load.{}.{path}", b.name), idx.clone(), dual.clone(), place.clone()));
+                // A u32 read from memory (or a lane of a u32 vector) is also a
+                // loop bound's value: a load cannot wrap, `for (k < s.count)`.
+                if lty == "u32" && b.role != Use::Output {
+                    extra.push(pk(format!("load.{}.{path}", b.name), idx.clone(), "u32.xbound".into(), place.clone()));
+                }
+                if let Some(n) = lty.strip_prefix("vec").and_then(|r| r[..1].parse::<usize>().ok()).filter(|_| lty.ends_with("<u32>") && b.role != Use::Output) {
+                    for (l, lane) in ["x", "y", "z", "w"].iter().enumerate().take(n) {
+                        extra.push(pk(format!("load.{}.{path}.lane{l}", b.name), idx.clone(), "u32.xbound".into(), format!("{place}.{lane}")));
+                    }
+                }
                 if b.role == Use::Output {
                     for r in STORE_RUNGS {
                         extra.push(pk(format!("store.{}.{path}_{r}", b.name), idx.iter().cloned().chain([dual.clone()]).collect(), format!("stmt.{r}"), format!("{place} = {{{k}}};")));
