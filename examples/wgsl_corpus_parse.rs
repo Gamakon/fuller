@@ -5,7 +5,7 @@
 //!
 //! `parse` is naga's WGSL front end alone, `validate` is `Target::validate`
 //! (the device's capabilities and limits), `kingdom` is the reader's scan
-//! (`naga_shape::supported`: does every construct have a row). Each is `ok`
+//! (does every construct have a row); a file the scan stops is not validated. Each is `ok`
 //! or `FAIL`, with the first error in `reason` for the first failing stage.
 //! A file that carries a preprocessor directive or a template placeholder
 //! (Bevy `#import`, compute-toy `#storage`, `{{name}}`) is `needs_substitution`
@@ -46,30 +46,30 @@ fn substitution(src: &str) -> Option<String> {
     None
 }
 
+/// What the kingdom's scan starts its errors with.
+const SCAN_PREFIX: &str = "our software has a bug:";
+
 fn check(src: &str) -> Row {
     let mut row = Row { parse: false, validate: false, kingdom: false, substitution: substitution(src), reason: String::new(), entries: 0, compute: 0 };
-    let module = match naga::front::wgsl::parse_str(src) {
+    // The one parse entry: naga's front end, then the kingdom's scan. A scan
+    // failure carries the "our software has a bug" prefix; it yields no module,
+    // so such a file is parsed but not validated here.
+    let module = match fuller::wgsl::naga_shape::parse(src) {
         Ok(m) => m,
         Err(e) => {
-            row.reason = e.emit_to_string(src).lines().next().unwrap_or("").to_string();
+            row.parse = e.starts_with(SCAN_PREFIX);
+            row.reason = e.lines().next().unwrap_or("").to_string();
             row.compute = src.matches("@compute").count();
             return row;
         }
     };
     row.parse = true;
+    row.kingdom = true;
     row.entries = module.entry_points.len();
     row.compute = module.entry_points.iter().filter(|ep| ep.stage == naga::ShaderStage::Compute).count();
     match fuller::wgsl::target::Target::current().validate(&module, src) {
         Ok(_) => row.validate = true,
         Err(e) => row.reason = e.lines().next().unwrap_or("").to_string(),
-    }
-    match fuller::wgsl::naga_shape::supported(&module) {
-        Ok(()) => row.kingdom = true,
-        Err(e) => {
-            if row.reason.is_empty() {
-                row.reason = e.lines().next().unwrap_or("").to_string();
-            }
-        }
     }
     row
 }
