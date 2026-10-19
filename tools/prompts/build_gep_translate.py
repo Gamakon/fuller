@@ -60,9 +60,81 @@ def pretty(sexpr):
         out.append("  " * depth + t); i += 1
     return "\n".join(out)
 
+def parse_sexpr(sexpr):
+    toks = re.findall(r'\(|\)|[^\s()]+', sexpr); i = 0
+    def node():
+        nonlocal i
+        if toks[i] == "(":
+            i += 1; name = toks[i]; i += 1; kids = []
+            while toks[i] != ")": kids.append(node())
+            i += 1; return [name, kids]
+        i += 1; return [toks[i - 1], []]
+    return node()
+
+def fold_literals(n):
+    """(literal.form VALUE) as one symbol literal.form=VALUE."""
+    name, kids = n
+    if name.startswith("literal.") and len(kids) == 1 and not kids[0][1]:
+        v = kids[0][0]
+        try:
+            f = float(v); v = repr(int(f)) if f == int(f) and abs(f) < 1e15 else ("%g" % f)
+        except ValueError: pass
+        return [f"{name}={v}", []]
+    return [name, [fold_literals(c) for c in kids]]
+
+def level_order(root):
+    out = []; level = [root]
+    while level:
+        out.extend(level); level = [c for n in level for c in n[1]]
+    return out
+
+def literal_ranges():
+    r = {}
+    for t in tsv(os.path.join(K, "types.tsv")):
+        lit = t.get("literal", "-")
+        if lit and lit != "-": r[t["form"]] = lit
+    return r
+
+def padding(n, rng, extra_terminals):
+    """n varied valid terminals: arity-0 rows of the table (not fallback), literals of many forms
+    with values in range, and the problem's own terminals; no symbol twice in a row."""
+    pool = [f"{r['class']}.{r['instance']}" for r in tsv(os.path.join(K, "functions.tsv"))
+            if r["arity"] == "0" and r["class"] != "literal" and "<" not in r["instance"] and r["instance"] not in ("buffer", "uniform", "local")]
+    pool = sorted(set(pool + extra_terminals) - {"fallback"})
+    ranges = literal_ranges(); forms = sorted(ranges)
+    def lit():
+        f = rng.choice(forms); spec = ranges[f]
+        m = re.match(r"^(-?[0-9.e+]+)\.\.=(-?[0-9.e+]+)$", spec)
+        if m:
+            lo, hi = float(m.group(1)), float(m.group(2))
+            if f in ("real",): v = "%g" % rng.uniform(max(lo, -1e3), min(hi, 1e3))
+            else: v = str(rng.randint(int(lo), int(min(hi, 1 << 20))))
+        else:
+            vals = re.findall(r"-?[0-9.]+", spec); v = rng.choice(vals) if vals else "1"
+        return f"literal.{f}={v}"
+    out = []
+    while len(out) < n:
+        sym = lit() if rng.random() < 0.4 else rng.choice(pool)
+        if out and (sym == out[-1] or sym.split("=")[0] == out[-1].split("=")[0]): continue
+        out.append(sym)
+    return out
+
+def karva_lines(sexpr, rng, extra_terminals, arity_of):
+    root = fold_literals(parse_sexpr(sexpr))
+    orf = level_order(root)
+    f = sum(1 for n in orf if n[1])
+    lines = [f"{i} {n[0]}" for i, n in enumerate(orf)] + ["ORF END"]
+    pad = padding(3 * f + 1, rng, extra_terminals)
+    lines += [f"{len(orf) + i} {sym}" for i, sym in enumerate(pad)]
+    return "\n".join(lines), len(orf), f
+
 def example(program, chromosome):
-    return ("Program (WGSL):\n\n```wgsl\n" + open(program).read().strip() + "\n```\n\nIts chromosome:\n\n```chromosome\n"
-            + pretty(open(chromosome).read().strip()) + "\n```")
+    import random
+    sx = open(chromosome).read().strip()
+    extra = sorted(set(re.findall(r"\b(?:load|uniform)\.[a-z0-9_]+(?=[\s)])", sx)) - {n for n in re.findall(r"\((load\.[a-z0-9_]+)", sx)})
+    gene, n_orf, f = karva_lines(sx, random.Random(20261019), extra, None)
+    return ("Program (WGSL):\n\n```wgsl\n" + open(program).read().strip() + "\n```\n\nIts tree (brackets only to show the shape):\n\n```\n"
+            + pretty(sx) + f"\n```\n\nIts gene in Karva, the form you return: {n_orf} symbols in the ORF, F = {f} of them of arity 1 or more, so 3 × {f} + 1 = {3*f+1} padding terminals:\n\n```karva\n" + gene + "\n```")
 
 def main():
     ap = argparse.ArgumentParser(); ap.add_argument("--problem", required=True); ap.add_argument("--out", required=True); ap.add_argument("--example-program", required=True); ap.add_argument("--example-chromosome", required=True); ap.add_argument("programs", nargs="+")

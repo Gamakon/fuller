@@ -30,9 +30,53 @@ def size(n): return 1 + sum(size(c) for c in n[1])
 reply, truth = open(sys.argv[1]).read(), open(sys.argv[2]).read()
 body = block(reply, "chromosome"); notes = block(reply, "notes")
 if body is None: print("no chromosome block"); sys.exit()
+def by_indent(text):
+    """The tree the indentation shows: a line is a node (its first symbol, any rest of the line its own
+    complete children), a more-indented following line a child of the nearest less-indented line."""
+    root = None; stack = []
+    for line in text.split("\n"):
+        if not line.strip(): continue
+        ind = len(line) - len(line.lstrip(" "))
+        body_l = line.strip()
+        opened = body_l.startswith("(")
+        inner = body_l.lstrip("(").rstrip(")")
+        toks = tokens("(" + inner + ")") if opened else [inner]
+        if opened:
+            n, _ = parse("(" + inner + ")" if inner.count("(") == inner.count(")") else "(" + inner.split()[0] + ")")
+            if inner.count("(") != inner.count(")"): n = (inner.split()[0], [])
+        else:
+            n = (inner, [])
+        while stack and stack[-1][0] >= ind: stack.pop()
+        if stack: stack[-1][1][1].append(n)
+        else: root = n
+        stack.append((ind, n))
+    return root
+short = body.count("(") - body.count(")")
+intended = by_indent(body) if short else None
+if short > 0:
+    print(f"unbalanced: {short} closing bracket(s) missing; scored with them added at the end")
+    body = body + ")" * short
 try: got, whole = parse(body)
 except Exception as e: print("parse failed:", e); sys.exit()
 want, _ = parse(truth)
+def norm(n):
+    name, kids = n
+    if re.match(r'^-?[0-9.]+(e[-+]?[0-9]+)?$', name):
+        name = repr(float(name))
+    return (name, [norm(c) for c in kids])
+got, want = norm(got), norm(want)
+if intended is not None:
+    it = norm(intended); im = dict(walk(it))
+    from collections import Counter as C2
+    def key2(n): return (n[0], tuple(key2(c) for c in n[1]))
+    def subs2(n):
+        yield key2(n)
+        for c in n[1]: yield from subs2(c)
+    gs2 = C2(subs2(it)); f2 = 0
+    for k in subs2(want):
+        if gs2[k] > 0: gs2[k] -= 1; f2 += 1
+    same2 = sum(1 for p, n in walk(want) if p in im and im[p][0] == n[0])
+    print(f"INTENDED (read by indentation): nodes {size(it)}; same symbol at the same place {same2}/{size(want)} = {100*same2/size(want):.1f} %; truth subtrees found intact {f2}/{size(want)} = {100*f2/size(want):.1f} %")
 lit = lambda n: n[0].startswith("literal.")
 unknown = wrong_arity = 0; examples = []
 def value(x): return re.match(r'^-?[0-9.]+(e[-+]?[0-9]+)?$', x[0]) is not None or x[0].startswith('"')

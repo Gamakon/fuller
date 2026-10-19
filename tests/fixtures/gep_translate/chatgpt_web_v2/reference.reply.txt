@@ -1,0 +1,235 @@
+```chromosome
+(kernel.module_2
+  (kernel.entry_safe
+    (grid.of
+      (literal.wgdim 1)
+      (literal.wgdim 1)
+      (literal.blk 1)
+      (literal.blk 1))
+    (block.one_L0 stmt.return_L0)
+    fallback)
+  (kernel.entry_safe
+    (grid.with_wg
+      (grid.of
+        (literal.wgdim 16)
+        (literal.wgdim 1)
+        (literal.blk 1)
+        (literal.blk 1))
+      (wg.decls_cons
+        (wg.decl_f wg.a (literal.wglen 1024))
+        (wg.decls_one
+          (wg.decl_u wg.ua (literal.wglen 1024)))))
+    (block.seq4_L0
+      (loop.items_boundx
+        (bound.of_uniform
+          (uniform.of_lit (literal.lit4096 64)))
+        (block.seq2_L1
+          (parr.set_f_L1
+            parr.a
+            (safe.pidx64
+              (safe.counter_index safe.counter))
+            (literal.real -3e38))
+          (parr.set_i_L1
+            parr.ua
+            (safe.pidx64
+              (safe.counter_index safe.counter))
+            (index.or
+              (convert.bits_to_index
+                (bits.shl
+                  (convert.index_to_bits (literal.index 65535))
+                  (convert.index_to_count (literal.index 16))))
+              (literal.index 65535)))))
+      (stmt.if_L0
+        (compare.lt
+          (index.of_col (axis.x_wid builtin.workgroup_id))
+          (index.of_count load.cfg_n_queries))
+        (block.seq2_C0
+          (loop.tilex_C0
+            (bound.x_of_uniform
+              (uniform.of_lit (literal.lit4096 512)))
+            (block.one_C1
+              (reg.set_f_C1
+                reg.f0
+                (arith.add
+                  (reg.get_f reg.f0)
+                  (geom.dot
+                    (load.queries
+                      (index.add
+                        (index.mul
+                          (index.of_col (axis.x_wid builtin.workgroup_id))
+                          (literal.index 512))
+                        (safe.tile_index safe.tile_counter)))
+                    (load.queries
+                      (index.add
+                        (index.mul
+                          (index.of_col (axis.x_wid builtin.workgroup_id))
+                          (literal.index 512))
+                        (safe.tile_index safe.tile_counter)))))))
+          (loop.tilex_strided_C0
+            (bound.x_of_uniform uniform.cfg_arrived_end)
+            (literal.lit4096 16)
+            (block.one_C1
+              (stmt.if_C1
+                (compare.lt
+                  (index.add
+                    (safe.tile_index safe.tile_counter)
+                    (index.of_col
+                      (axis.x_lid builtin.local_invocation_id)))
+                  (index.of_count load.cfg_arrived_end))
+                (block.seq4_C1
+                  (reg.set_f_C1 reg.f1 (literal.real 0))
+                  (reg.set_f_C1 reg.f2 (literal.real 0))
+                  (reg.set_i_C1 reg.i0 (literal.index 0))
+                  (stmt.block_C1
+                    (block.seq4_C1
+                      (loop.tilex_C1
+                        (bound.x_of_uniform
+                          (uniform.of_lit (literal.lit4096 512)))
+                        (block.seq3_C2
+                          (reg.set_v_C2
+                            reg.v0
+                            (load.keys
+                              (index.add
+                                (index.mul
+                                  (index.and
+                                    (index.add
+                                      (safe.tile_index safe.tile_counter)
+                                      (index.of_col
+                                        (axis.x_lid builtin.local_invocation_id)))
+                                    (literal.index 524287))
+                                  (literal.index 512))
+                                (safe.tile_index2 safe.tile_counter2))))
+                          (reg.set_f_C2
+                            reg.f1
+                            (arith.add
+                              (reg.get_f reg.f1)
+                              (geom.dot
+                                (reg.get_v reg.v0)
+                                (load.queries
+                                  (index.add
+                                    (index.mul
+                                      (index.of_col
+                                        (axis.x_wid builtin.workgroup_id))
+                                      (literal.index 512))
+                                    (safe.tile_index2 safe.tile_counter2))))))
+                          (reg.set_f_C2
+                            reg.f2
+                            (arith.add
+                              (reg.get_f reg.f2)
+                              (geom.dot
+                                (reg.get_v reg.v0)
+                                (reg.get_v reg.v0)))))
+                      (reg.set_f_C1 reg.f3 (literal.real -3e38))
+                      (stmt.if_C1
+                        (compare.gt
+                          (arith.sqrt
+                            (arith.mul
+                              (reg.get_f reg.f0)
+                              (reg.get_f reg.f2)))
+                          (literal.real 0))
+                        (block.one_C1
+                          (reg.set_f_C1
+                            reg.f3
+                            (arith.div
+                              (reg.get_f reg.f1)
+                              (arith.sqrt
+                                (arith.mul
+                                  (reg.get_f reg.f0)
+                                  (reg.get_f reg.f2)))))))
+                      (stmt.if_C1
+                        (compare.gt
+                          (reg.get_f reg.f3)
+                          (parr.get_f
+                            parr.a
+                            (safe.pidx64 (literal.index 63))))
+                        (block.seq4_C1
+                          (reg.set_f_C1 reg.f4 (reg.get_f reg.f3))
+                          (reg.set_i_C1
+                            reg.i1
+                            (index.add
+                              (safe.tile_index safe.tile_counter)
+                              (index.of_col
+                                (axis.x_lid builtin.local_invocation_id))))
+                          (reg.set_i_C1 reg.i2 (literal.index 0))
+                          (loop.tilex_C1
+                            (bound.x_of_uniform
+                              (uniform.of_lit (literal.lit4096 64)))
+                            (block.one_C2
+                              (stmt.if_C2
+                                (compare.gt
+                                  (reg.get_f reg.f4)
+                                  (parr.get_f
+                                    parr.a
+                                    (safe.pidx64
+                                      (safe.tile_index2 safe.tile_counter2))))
+                                (block.seq4_C2
+                                  (reg.set_f_C2
+                                    reg.f5
+                                    (parr.get_f
+                                      parr.a
+                                      (safe.pidx64
+                                        (safe.tile_index2 safe.tile_counter2))))
+                                  (reg.set_i_C2
+                                    reg.i3
+                                    (parr.get_i
+                                      parr.ua
+                                      (safe.pidx64
+                                        (safe.tile_index2 safe.tile_counter2))))
+                                  (parr.set_f_C2
+                                    parr.a
+                                    (safe.pidx64
+                                      (safe.tile_index2 safe.tile_counter2))
+                                    (reg.get_f reg.f4))
+                                  (stmt.block_C2
+                                    (block.seq3_C2
+                                      (parr.set_i_C2
+                                        parr.ua
+                                        (safe.pidx64
+                                          (safe.tile_index2 safe.tile_counter2))
+                                        (reg.get_i reg.i1))
+                                      (reg.set_f_C2
+                                        reg.f4
+                                        (reg.get_f reg.f5))
+                                      (reg.set_i_C2
+                                        reg.i1
+                                        (reg.get_i reg.i3)))))))))))))))))
+      (loop.items_boundx
+        (bound.of_uniform
+          (uniform.of_lit (literal.lit4096 64)))
+        (block.seq2_L1
+          (wg.set_L1
+            wg.a
+            (safe.wg_of
+              (index.add
+                (index.mul
+                  (index.of_col
+                    (axis.x_lid builtin.local_invocation_id))
+                  (literal.index 64))
+                (safe.counter_index safe.counter)))
+            (parr.get_f
+              parr.a
+              (safe.pidx64
+                (safe.counter_index safe.counter))))
+          (wg.set_u_L1
+            wg.ua
+            (safe.wg_of
+              (index.add
+                (index.mul
+                  (index.of_col
+                    (axis.x_lid builtin.local_invocation_id))
+                  (literal.index 64))
+                (safe.counter_index safe.counter)))
+            (parr.get_i
+              parr.ua
+              (safe.pidx64
+                (safe.counter_index safe.counter)))))
+      stmt.barrier_L0)
+    (block.one_O0
+      (untranslatable "final conditional top-64 workgroup merge and four cands stores"))))
+```
+
+```notes
+The search entry point's final conditional contains two preparatory tile loops, nested conditionals, a further tile loop and four output stores. It cannot be represented exactly using the supplied O0 epilogue rules: loop.tilex_O0 requires an epilogue-producing body, but the preparatory loops do not end in a store. The closest symbols considered were stmt.if_O0, loop.tilex_O0, loop.tilex_C0, block.seq4_O0 and store.cands_O0.
+
+The chromosome above is a partial translation, not a verified exact equivalent. In particular, the final merge and output writes remain untranslatable in this representation.
+```

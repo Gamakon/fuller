@@ -1,0 +1,618 @@
+Translate the program into a safeWGSL chromosome.
+Translate the program below into one safeWGSL gene in Karva (format A9), with its right padding. It is a kernel of
+`v24_ingest` with entry points `ingest`, `search`. Translate every entry point, in the order given.
+
+```wgsl
+// grid 1 1 1 1
+// entry ingest grid 1 1 1 1
+// entry search grid 16 1 1 1
+struct Cfg { seed_slot: u32, stage: u32, arrived_begin: u32, arrived_end: u32, n_queries: u32, pass_index: u32, n_passes: u32, c_max: u32, };
+@group(0) @binding(0) var<storage, read> keys: array<vec4<f32>>;
+@group(0) @binding(1) var<storage, read> queries: array<vec4<f32>>;
+@group(0) @binding(2) var<storage, read_write> index_u32: array<u32>;
+@group(0) @binding(3) var<storage, read_write> index_f32: array<f32>;
+@group(0) @binding(4) var<storage, read_write> cands: array<u32>;
+@group(0) @binding(5) var<uniform> cfg: Cfg;
+var<workgroup> wg_a: array<f32, 1024>;
+var<workgroup> wg_ua: array<u32, 1024>;
+fn lit_u32(x: u32) -> u32 { return x; }
+@compute @workgroup_size(1, 1, 1)
+fn ingest(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_index) lidx: u32, @builtin(num_workgroups) nwg: vec3<u32>) {
+    return;
+}
+@compute @workgroup_size(16, 1, 1)
+fn search(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_index) lidx: u32, @builtin(num_workgroups) nwg: vec3<u32>) {
+    var f0: f32 = 0.0;
+    var f1: f32 = 0.0;
+    var f2: f32 = 0.0;
+    var f3: f32 = 0.0;
+    var f4: f32 = 0.0;
+    var f5: f32 = 0.0;
+    var f6: f32 = 0.0;
+    var f7: f32 = 0.0;
+    var v0: vec4<f32> = vec4<f32>(0.0);
+    var i1: u32 = 0u;
+    var i2: u32 = 0u;
+    var i3: u32 = 0u;
+    var i4: u32 = 0u;
+    var i5: u32 = 0u;
+    var i6: u32 = 0u;
+    var i7: u32 = 0u;
+    var k: u32 = 0u;
+    var k2: u32 = 0u;
+    var pa: array<f32, 64>;
+    var pua: array<u32, 64>;
+    for (k = 0u; k < 64u; k = k + 1u) {
+    pa[((k) & 63u)] = -3e38f;
+    pua[((k) & 63u)] = ((u32((lit_u32(65535u) << ((lit_u32(16u)) & 31u)))) | (lit_u32(65535u)));
+    }
+    if ((wid.x < cfg.n_queries)) {
+    for (k = 0u; k < min((cfg.arrived_end), 16777216u); k = k + 16u) {
+    if (((k + lid.x) < cfg.arrived_end)) {
+    f0 = 0.0f;
+    f1 = 0.0f;
+    for (k2 = 0u; k2 < min((lit_u32(512u)), 16777216u); k2 = k2 + 1u) {
+    v0 = keys[((((((k + lid.x)) & (524287u)) * 512u) + k2))];
+    f0 = (f0 + dot(v0, queries[(((wid.x * 512u) + k2))]));
+    f1 = (f1 + dot(v0, v0));
+    }
+    f2 = -3e38f;
+    if ((f1 > 0.0f)) {
+    f2 = (f0 * inverseSqrt(f1));
+    }
+    if ((f2 > pa[63u])) {
+    f3 = f2;
+    i1 = (k + lid.x);
+    i2 = 0u;
+    for (k2 = 0u; k2 < 64u; k2 = k2 + 1u) {
+    if ((f3 > pa[((k2) & 63u)])) {
+    f4 = pa[((k2) & 63u)];
+    i3 = pua[((k2) & 63u)];
+    pa[((k2) & 63u)] = f3;
+    pua[((k2) & 63u)] = i1;
+    f3 = f4;
+    i1 = i3;
+    }
+    }
+    }
+    }
+    }
+    }
+    for (k = 0u; k < 64u; k = k + 1u) {
+    wg_a[((((lid.x * 64u) + k)) & 1023u)] = pa[((k) & 63u)];
+    wg_ua[((((lid.x * 64u) + k)) & 1023u)] = pua[((k) & 63u)];
+    }
+    workgroupBarrier();
+    if ((wid.x < cfg.n_queries)) {
+    for (k = 0u; k < 64u; k = k + 1u) {
+    pa[((k) & 63u)] = -3e38f;
+    pua[((k) & 63u)] = ((u32((lit_u32(65535u) << ((lit_u32(16u)) & 31u)))) | (lit_u32(65535u)));
+    }
+    for (k = 0u; k < min((lit_u32(1024u)), 16777216u); k = k + 1u) {
+    f5 = wg_a[((k) & 1023u)];
+    i4 = wg_ua[((k) & 1023u)];
+    if (((i4 != ((u32((lit_u32(65535u) << ((lit_u32(16u)) & 31u)))) | (lit_u32(65535u)))) && (f5 > pa[63u]))) {
+    f6 = f5;
+    i5 = i4;
+    i6 = 0u;
+    if ((f6 > pa[0u])) {
+    f7 = pa[0u];
+    i7 = pua[0u];
+    pa[0u] = f6;
+    pua[0u] = i5;
+    f6 = f7;
+    i5 = i7;
+    }
+    if ((f6 > pa[1u])) {
+    f7 = pa[1u];
+    i7 = pua[1u];
+    pa[1u] = f6;
+    pua[1u] = i5;
+    f6 = f7;
+    i5 = i7;
+    }
+    if ((f6 > pa[2u])) {
+    f7 = pa[2u];
+    i7 = pua[2u];
+    pa[2u] = f6;
+    pua[2u] = i5;
+    f6 = f7;
+    i5 = i7;
+    }
+    if ((f6 > pa[3u])) {
+    f7 = pa[3u];
+    i7 = pua[3u];
+    pa[3u] = f6;
+    pua[3u] = i5;
+    f6 = f7;
+    i5 = i7;
+    }
+    if ((f6 > pa[4u])) {
+    f7 = pa[4u];
+    i7 = pua[4u];
+    pa[4u] = f6;
+    pua[4u] = i5;
+    f6 = f7;
+    i5 = i7;
+    }
+    if ((f6 > pa[5u])) {
+    f7 = pa[5u];
+    i7 = pua[5u];
+    pa[5u] = f6;
+    pua[5u] = i5;
+    f6 = f7;
+    i5 = i7;
+    }
+    if ((f6 > pa[6u])) {
+    f7 = pa[6u];
+    i7 = pua[6u];
+    pa[6u] = f6;
+    pua[6u] = i5;
+    f6 = f7;
+    i5 = i7;
+    }
+    if ((f6 > pa[7u])) {
+    f7 = pa[7u];
+    i7 = pua[7u];
+    pa[7u] = f6;
+    pua[7u] = i5;
+    f6 = f7;
+    i5 = i7;
+    }
+    if ((f6 > pa[8u])) {
+    f7 = pa[8u];
+    i7 = pua[8u];
+    pa[8u] = f6;
+    pua[8u] = i5;
+    f6 = f7;
+    i5 = i7;
+    }
+    if ((f6 > pa[9u])) {
+    f7 = pa[9u];
+    i7 = pua[9u];
+    pa[9u] = f6;
+    pua[9u] = i5;
+    f6 = f7;
+    i5 = i7;
+    }
+    if ((f6 > pa[10u])) {
+    f7 = pa[10u];
+    i7 = pua[10u];
+    pa[10u] = f6;
+    pua[10u] = i5;
+    f6 = f7;
+    i5 = i7;
+    }
+    if ((f6 > pa[11u])) {
+    f7 = pa[11u];
+    i7 = pua[11u];
+    pa[11u] = f6;
+    pua[11u] = i5;
+    f6 = f7;
+    i5 = i7;
+    }
+    if ((f6 > pa[12u])) {
+    f7 = pa[12u];
+    i7 = pua[12u];
+    pa[12u] = f6;
+    pua[12u] = i5;
+    f6 = f7;
+    i5 = i7;
+    }
+    if ((f6 > pa[13u])) {
+    f7 = pa[13u];
+    i7 = pua[13u];
+    pa[13u] = f6;
+    pua[13u] = i5;
+    f6 = f7;
+    i5 = i7;
+    }
+    if ((f6 > pa[14u])) {
+    f7 = pa[14u];
+    i7 = pua[14u];
+    pa[14u] = f6;
+    pua[14u] = i5;
+    f6 = f7;
+    i5 = i7;
+    }
+    if ((f6 > pa[15u])) {
+    f7 = pa[15u];
+    i7 = pua[15u];
+    pa[15u] = f6;
+    pua[15u] = i5;
+    f6 = f7;
+    i5 = i7;
+    }
+    if ((f6 > pa[16u])) {
+    f7 = pa[16u];
+    i7 = pua[16u];
+    pa[16u] = f6;
+    pua[16u] = i5;
+    f6 = f7;
+    i5 = i7;
+    }
+    if ((f6 > pa[17u])) {
+    f7 = pa[17u];
+    i7 = pua[17u];
+    pa[17u] = f6;
+    pua[17u] = i5;
+    f6 = f7;
+    i5 = i7;
+    }
+    if ((f6 > pa[18u])) {
+    f7 = pa[18u];
+    i7 = pua[18u];
+    pa[18u] = f6;
+    pua[18u] = i5;
+    f6 = f7;
+    i5 = i7;
+    }
+    if ((f6 > pa[19u])) {
+    f7 = pa[19u];
+    i7 = pua[19u];
+    pa[19u] = f6;
+    pua[19u] = i5;
+    f6 = f7;
+    i5 = i7;
+    }
+    if ((f6 > pa[20u])) {
+    f7 = pa[20u];
+    i7 = pua[20u];
+    pa[20u] = f6;
+    pua[20u] = i5;
+    f6 = f7;
+    i5 = i7;
+    }
+    if ((f6 > pa[21u])) {
+    f7 = pa[21u];
+    i7 = pua[21u];
+    pa[21u] = f6;
+    pua[21u] = i5;
+    f6 = f7;
+    i5 = i7;
+    }
+    if ((f6 > pa[22u])) {
+    f7 = pa[22u];
+    i7 = pua[22u];
+    pa[22u] = f6;
+    pua[22u] = i5;
+    f6 = f7;
+    i5 = i7;
+    }
+    if ((f6 > pa[23u])) {
+    f7 = pa[23u];
+    i7 = pua[23u];
+    pa[23u] = f6;
+    pua[23u] = i5;
+    f6 = f7;
+    i5 = i7;
+    }
+    if ((f6 > pa[24u])) {
+    f7 = pa[24u];
+    i7 = pua[24u];
+    pa[24u] = f6;
+    pua[24u] = i5;
+    f6 = f7;
+    i5 = i7;
+    }
+    if ((f6 > pa[25u])) {
+    f7 = pa[25u];
+    i7 = pua[25u];
+    pa[25u] = f6;
+    pua[25u] = i5;
+    f6 = f7;
+    i5 = i7;
+    }
+    if ((f6 > pa[26u])) {
+    f7 = pa[26u];
+    i7 = pua[26u];
+    pa[26u] = f6;
+    pua[26u] = i5;
+    f6 = f7;
+    i5 = i7;
+    }
+    if ((f6 > pa[27u])) {
+    f7 = pa[27u];
+    i7 = pua[27u];
+    pa[27u] = f6;
+    pua[27u] = i5;
+    f6 = f7;
+    i5 = i7;
+    }
+    if ((f6 > pa[28u])) {
+    f7 = pa[0u];
+    i7 = pua[28u];
+    pa[28u] = f6;
+    pua[28u] = i5;
+    f6 = f7;
+    i5 = i7;
+    }
+    if ((f6 > pa[29u])) {
+    f7 = pa[29u];
+    i7 = pua[29u];
+    pa[29u] = f6;
+    pua[29u] = i5;
+    f6 = f7;
+    i5 = i7;
+    }
+    if ((f6 > pa[30u])) {
+    f7 = pa[30u];
+    i7 = pua[30u];
+    pa[30u] = f6;
+    pua[30u] = i5;
+    f6 = f7;
+    i5 = i7;
+    }
+    if ((f6 > pa[31u])) {
+    f7 = pa[31u];
+    i7 = pua[31u];
+    pa[31u] = f6;
+    pua[31u] = i5;
+    f6 = f7;
+    i5 = i7;
+    }
+    if ((f6 > pa[32u])) {
+    f7 = pa[32u];
+    i7 = pua[32u];
+    pa[32u] = f6;
+    pua[32u] = i5;
+    f6 = f7;
+    i5 = i7;
+    }
+    if ((f6 > pa[33u])) {
+    f7 = pa[33u];
+    i7 = pua[33u];
+    pa[33u] = f6;
+    pua[33u] = i5;
+    f6 = f7;
+    i5 = i7;
+    }
+    if ((f6 > pa[34u])) {
+    f7 = pa[34u];
+    i7 = pua[34u];
+    pa[34u] = f6;
+    pua[34u] = i5;
+    f6 = f7;
+    i5 = i7;
+    }
+    if ((f6 > pa[35u])) {
+    f7 = pa[35u];
+    i7 = pua[35u];
+    pa[35u] = f6;
+    pua[35u] = i5;
+    f6 = f7;
+    i5 = i7;
+    }
+    if ((f6 > pa[36u])) {
+    f7 = pa[36u];
+    i7 = pua[36u];
+    pa[36u] = f6;
+    pua[36u] = i5;
+    f6 = f7;
+    i5 = i7;
+    }
+    if ((f6 > pa[37u])) {
+    f7 = pa[37u];
+    i7 = pua[37u];
+    pa[37u] = f6;
+    pua[37u] = i5;
+    f6 = f7;
+    i5 = i7;
+    }
+    if ((f6 > pa[38u])) {
+    f7 = pa[38u];
+    i7 = pua[38u];
+    pa[38u] = f6;
+    pua[38u] = i5;
+    f6 = f7;
+    i5 = i7;
+    }
+    if ((f6 > pa[39u])) {
+    f7 = pa[39u];
+    i7 = pua[39u];
+    pa[39u] = f6;
+    pua[39u] = i5;
+    f6 = f7;
+    i5 = i7;
+    }
+    if ((f6 > pa[40u])) {
+    f7 = pa[40u];
+    i7 = pua[40u];
+    pa[40u] = f6;
+    pua[40u] = i5;
+    f6 = f7;
+    i5 = i7;
+    }
+    if ((f6 > pa[41u])) {
+    f7 = pa[41u];
+    i7 = pua[41u];
+    pa[41u] = f6;
+    pua[41u] = i5;
+    f6 = f7;
+    i5 = i7;
+    }
+    if ((f6 > pa[42u])) {
+    f7 = pa[42u];
+    i7 = pua[42u];
+    pa[42u] = f6;
+    pua[42u] = i5;
+    f6 = f7;
+    i5 = i7;
+    }
+    if ((f6 > pa[43u])) {
+    f7 = pa[43u];
+    i7 = pua[43u];
+    pa[43u] = f6;
+    pua[43u] = i5;
+    f6 = f7;
+    i5 = i7;
+    }
+    if ((f6 > pa[44u])) {
+    f7 = pa[44u];
+    i7 = pua[44u];
+    pa[44u] = f6;
+    pua[44u] = i5;
+    f6 = f7;
+    i5 = i7;
+    }
+    if ((f6 > pa[45u])) {
+    f7 = pa[45u];
+    i7 = pua[45u];
+    pa[45u] = f6;
+    pua[45u] = i5;
+    f6 = f7;
+    i5 = i7;
+    }
+    if ((f6 > pa[46u])) {
+    f7 = pa[46u];
+    i7 = pua[46u];
+    pa[46u] = f6;
+    pua[46u] = i5;
+    f6 = f7;
+    i5 = i7;
+    }
+    if ((f6 > pa[47u])) {
+    f7 = pa[47u];
+    i7 = pua[47u];
+    pa[47u] = f6;
+    pua[47u] = i5;
+    f6 = f7;
+    i5 = i7;
+    }
+    if ((f6 > pa[48u])) {
+    f7 = pa[48u];
+    i7 = pua[48u];
+    pa[48u] = f6;
+    pua[48u] = i5;
+    f6 = f7;
+    i5 = i7;
+    }
+    if ((f6 > pa[49u])) {
+    f7 = pa[49u];
+    i7 = pua[49u];
+    pa[49u] = f6;
+    pua[49u] = i5;
+    f6 = f7;
+    i5 = i7;
+    }
+    if ((f6 > pa[50u])) {
+    f7 = pa[50u];
+    i7 = pua[50u];
+    pa[50u] = f6;
+    pua[50u] = i5;
+    f6 = f7;
+    i5 = i7;
+    }
+    if ((f6 > pa[51u])) {
+    f7 = pa[51u];
+    i7 = pua[51u];
+    pa[51u] = f6;
+    pua[51u] = i5;
+    f6 = f7;
+    i5 = i7;
+    }
+    if ((f6 > pa[52u])) {
+    f7 = pa[52u];
+    i7 = pua[52u];
+    pa[52u] = f6;
+    pua[52u] = i5;
+    f6 = f7;
+    i5 = i7;
+    }
+    if ((f6 > pa[53u])) {
+    f7 = pa[53u];
+    i7 = pua[53u];
+    pa[53u] = f6;
+    pua[53u] = i5;
+    f6 = f7;
+    i5 = i7;
+    }
+    if ((f6 > pa[54u])) {
+    f7 = pa[54u];
+    i7 = pua[54u];
+    pa[54u] = f6;
+    pua[54u] = i5;
+    f6 = f7;
+    i5 = i7;
+    }
+    if ((f6 > pa[55u])) {
+    f7 = pa[55u];
+    i7 = pua[55u];
+    pa[55u] = f6;
+    pua[55u] = i5;
+    f6 = f7;
+    i5 = i7;
+    }
+    if ((f6 > pa[56u])) {
+    f7 = pa[56u];
+    i7 = pua[56u];
+    pa[56u] = f6;
+    pua[56u] = i5;
+    f6 = f7;
+    i5 = i7;
+    }
+    if ((f6 > pa[57u])) {
+    f7 = pa[57u];
+    i7 = pua[57u];
+    pa[57u] = f6;
+    pua[57u] = i5;
+    f6 = f7;
+    i5 = i7;
+    }
+    if ((f6 > pa[58u])) {
+    f7 = pa[58u];
+    i7 = pua[58u];
+    pa[58u] = f6;
+    pua[58u] = i5;
+    f6 = f7;
+    i5 = i7;
+    }
+    if ((f6 > pa[59u])) {
+    f7 = pa[59u];
+    i7 = pua[59u];
+    pa[59u] = f6;
+    pua[59u] = i5;
+    f6 = f7;
+    i5 = i7;
+    }
+    if ((f6 > pa[60u])) {
+    f7 = pa[60u];
+    i7 = pua[60u];
+    pa[60u] = f6;
+    pua[60u] = i5;
+    f6 = f7;
+    i5 = i7;
+    }
+    if ((f6 > pa[61u])) {
+    f7 = pa[61u];
+    i7 = pua[61u];
+    pa[61u] = f6;
+    pua[61u] = i5;
+    f6 = f7;
+    i5 = i7;
+    }
+    if ((f6 > pa[62u])) {
+    f7 = pa[62u];
+    i7 = pua[62u];
+    pa[62u] = f6;
+    pua[62u] = i5;
+    f6 = f7;
+    i5 = i7;
+    }
+    if ((f6 > pa[63u])) {
+    f7 = pa[63u];
+    i7 = pua[63u];
+    pa[63u] = f6;
+    pua[63u] = i5;
+    f6 = f7;
+    i5 = i7;
+    }
+    }
+    }
+    cands[(((wid.x * 64u) + lid.x))] = (pua[((lid.x) & 63u)]);
+    cands[((((wid.x * 64u) + 16u) + lid.x))] = (pua[(((16u + lid.x)) & 63u)]);
+    cands[((((wid.x * 64u) + 32u) + lid.x))] = (pua[(((32u + lid.x)) & 63u)]);
+    cands[((((wid.x * 64u) + 48u) + lid.x))] = (pua[(((48u + lid.x)) & 63u)]);
+    }
+}
+```

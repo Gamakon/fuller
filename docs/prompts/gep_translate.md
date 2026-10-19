@@ -1,7 +1,9 @@
 # Prompt: translate a WGSL kernel into a safeWGSL GEP chromosome
 
-Status: version 2, DRAFT for review (2026-10-19). Version 1 (fuller 46bccc7) was given to Haiku on three
-programs, stored byte for byte in tests/fixtures/gep_translate/; version 2 fixes what those replies showed. Part A is the fixed header (the same for every call on
+Status: version 3, DRAFT for review (2026-10-19). Version 1 (fuller 46bccc7) and version 2 (fuller a834d20)
+are stored byte for byte in tests/fixtures/gep_translate/ with the replies they drew. Version 3 asks for Karva,
+not an s-expression: a reply always decodes to a valid gene (no brackets to miscount), its open reading
+frame right-padded with random valid terminals. Part A is the fixed header (the same for every call on
 one kingdom and problem, so it is the cached prefix); Part B is the per-call challenge. Text
 between `{{` `}}` is filled by the prompt builder from the kingdom's own tables, never typed
 by hand. The design notes at the end are for us, not sent to the model.
@@ -13,9 +15,10 @@ by hand. The design notes at the end are for us, not sent to the model.
 ### A1. What you are doing
 
 You are a translator for a gene expression programming (GEP) system that evolves GPU compute
-kernels. You will be given a program and asked to write it as a GEP chromosome over a fixed,
-typed symbol table. You do not write WGSL. You do not improve the program. You write the
-genotype whose expression is this program, using only the symbols in the table below.
+kernels. You will be given a program and asked to write it as a GEP gene in Karva notation
+over a fixed, typed symbol table. You do not write WGSL. You do not improve the program. You
+write the genotype whose expression is this program, using only the symbols in the table
+below.
 
 ### A2. Gene expression programming, as this system uses it
 
@@ -33,9 +36,50 @@ genotype whose expression is this program, using only the symbols in the table b
 - **Shared subtrees.** You write the whole tree. Where the same subtree occurs many times,
   write it each time; the system finds repeats and folds them into homeotic tail genes itself.
 
+### A2b. Karva: how a gene is written and read
+
+A gene is a flat list of symbols, with no brackets. It is read **level by level, left to
+right**:
+1. The first symbol is the root.
+2. The next symbols are the root's children, as many as its arity, left to right.
+3. Then come the children of those children, level by level. Within a level the order is
+   left to right: first all children of the level's first symbol, then all of the second's,
+   and so on.
+
+A symbol of arity 0 has no children. The reading stops when every symbol read has all its
+children: that prefix is the **open reading frame (ORF)**. Nothing after it is expressed.
+
+Example: the tree `a(b(d, e), c(f))`, with arities a 2, b 2, c 1, d 0, e 0, f 0, is the
+Karva gene `a b c d e f`: level 0 is `a`; level 1 is `b c`; level 2 is `d e f` (the children
+of `b`, then of `c`).
+
+To write a gene from a tree: list the root; then, for each level in turn, list the children
+of every symbol of the previous level, in that symbol's order and in the level's order. This
+is a breadth-first walk of the tree.
+
+**Right padding.** After the ORF, append a tail of terminals (arity-0 symbols): exactly
+3 × F + 1 of them, where F is the number of symbols of arity 1 or more in your ORF. GEP's
+tail rule guarantees that the gene decodes even if you misjudged an arity: a reading that
+needs more children finds them in the tail. So the tail must be **varied, valid terminals
+drawn from across the table**:
+- literals of many forms, each with a value in its form's range;
+- registers of each kind, builtins, the problem's uniform fields, counters;
+- the statement terminals (`stmt.return_L0`, `stmt.barrier_L0`).
+
+Choose them as a random-looking mixture: never `fallback`, never the same symbol twice in a
+row, never a long run of one kind. A decoder that falls into the tail then expresses a
+well-formed program, not padding.
+
+**Typing while reading.** The decoder knows each position's demanded type from its parent's
+signature. A symbol whose output type is not the demanded type is a mistranslation (the
+decoder substitutes the type's fallback leaf and reports it), so write each symbol at a
+position whose type it produces.
+
 ### A3. The kingdom: safeWGSL
 
-The kingdom's symbols describe a whole compute kernel, statements and expressions alike:
+The kingdom's symbols describe a whole compute kernel, statements and expressions alike.
+Shapes in this section are written as trees with brackets, `(parent child …)`, only to show
+their structure. You return Karva (A2b, A9).
 
 - **The root** is `kernel.module_N` for a module of N entry points, each child a
   `kernel.entry_safe` (one entry point). An entry point is a grid (its workgroup size and the
@@ -50,10 +94,19 @@ The kingdom's symbols describe a whole compute kernel, statements and expression
   - EPILOGUE is a `block.*_O0`, or the terminal `fallback`.
 
   The epilogue rule:
-  - **The last top-level statement is a store to an output buffer** (possibly inside `if`s
-    and loops that hold no barrier, with nothing after it): that statement is the epilogue,
-    written with the `_O0` rows (`stmt.if_O0`, `store.<buffer>_O0`…), and the body is
-    everything before it.
+  - **The last top-level statement holds the entry point's last store** to an output
+    buffer, with nothing after that store. That store may sit inside `if`s and barrier-free
+    loops. Then that statement is the epilogue, and the body is everything before it.
+  - **An epilogue block** at depth d is `block.one_Od`, `block.seq2_Od`, `block.seq3_Od` or
+    `block.seq4_Od`. All its statements but the last are ordinary statements at rung Cd, and
+    may include loops, `if`s and other stores. The last is an Od statement on the way to the
+    final store:
+    - `stmt.if_Od` (its block an Od block);
+    - `loop.*_Od` (its body an O(d+1) block);
+    - `stmt.block_Od` (more than four);
+    - `store.<buffer>_Od`, the final store itself.
+
+    Read the signatures: `block.seq4_O0 : stmt.C0, stmt.C0, stmt.C0, stmt.O0 -> block.O0`.
   - **Otherwise:** the body ends with the terminal `stmt.return_L0`, and the epilogue is
     `fallback`.
   - **An entry point that stores nothing** (only `return;`): its body is
@@ -92,8 +145,8 @@ The kingdom's symbols describe a whole compute kernel, statements and expression
 
 Arity-0 symbols:
 
-- **Literals.** Write a literal as `(literal.<form> VALUE)`. The form fixes the type and the
-  allowed range (the `literal` column of A6); a value outside it is a mistranslation. Forms
+- **Literals.** A literal is `literal.<form>` with a value. The form fixes the type and the
+  allowed range (the `literal` column of A5); a value outside it is a mistranslation. Forms
   include `real` (f32), `index`, `count`, `bits`, `int`, `flag`, and the bound and size forms
   `wgdim`, `blk`, `wglen`, `lit64`, `lit4096`.
 - **Builtins:** `builtin.global_invocation_id`, `builtin.local_invocation_id`,
@@ -106,7 +159,10 @@ Arity-0 symbols:
   workgroup arrays are `wg.a`, `wg.ua`…, declared in the grid.
 - **Counters:** `safe.counter`, `safe.tile_counter`, `safe.tile_counter2`, read through
   `safe.counter_index`, `safe.tile_index` and `safe.tile_index2`.
-- **`fallback`:** the empty slot, used for an entry point's missing epilogue (A3).
+- **Literals in Karva** are one symbol with its value attached: `literal.index=512`,
+  `literal.real=-3e38`, `literal.wgdim=16`.
+- **`fallback`:** the empty slot, used for an entry point's missing epilogue (A3). Never in
+  the padding.
 
 ### A4b. Reading the program's text
 
@@ -161,73 +217,41 @@ that is not here.
 
 ### A8. Worked examples
 
-A whole kernel (from another problem, with its own bindings), its chromosome, and then a fragment of this problem's kind.
+A whole kernel from another problem, with its own bindings. First its tree, written with
+brackets only to show its shape; then its gene in Karva, the form you return.
 
 {{FULL_EXAMPLE}}
 
-A fragment:
-
-Program (WGSL):
-
-```wgsl
-if (wid.x < cfg.n_queries) {
-    for (k = 0u; k < 512u; k = k + 1u) {
-        f0 = f0 + dot(queries[wid.x * 512u + k], queries[wid.x * 512u + k]);
-    }
-}
-```
-
-Its chromosome:
-
-```chromosome
-(stmt.if_L0
-  (compare.lt (index.of_col (axis.x_wid builtin.workgroup_id)) (index.of_count load.cfg_n_queries))
-  (block.one_C0
-    (loop.tilex_C0 (bound.x_of_uniform (uniform.of_lit (literal.lit4096 512)))
-      (block.one_C1
-        (reg.set_f_C1 reg.f0
-          (arith.add (reg.get_f reg.f0)
-            (geom.dot
-              (load.queries (index.add (index.mul (index.of_col (axis.x_wid builtin.workgroup_id)) (literal.index 512)) (safe.tile_index safe.tile_counter)))
-              (load.queries (index.add (index.mul (index.of_col (axis.x_wid builtin.workgroup_id)) (literal.index 512)) (safe.tile_index safe.tile_counter))))))))))
-```
-
-Points to notice:
-- `wid.x` is a column position, `index.of_col (axis.x_wid builtin.workgroup_id)`.
-- `cfg.n_queries` is a count, so it is compared as an index through `index.of_count`.
-- The loop's counter is the tile loop's own, `safe.tile_counter`, and its body is at rung C1,
-  because the loop stands under the `if`.
-- The repeated `load.queries` subtree is written twice.
-
 ### A9. The format you hand back
 
-Reply with exactly two fenced blocks and nothing else: no explanation and no working, before or after them.
+Reply with exactly two fenced blocks and nothing else: no explanation and no working, before
+or after them.
 
-1. A block tagged `chromosome`, holding one s-expression, the whole kernel's tree:
-   - `(name child1 child2 …)` for a symbol of arity ≥ 1, with exactly as many children as its
-     arity;
-   - `name` alone for an arity-0 symbol;
-   - `(literal.<form> VALUE)` for a literal, with VALUE a decimal number (reals may use an
-     exponent);
-   - the root is `kernel.module_N` (or `kernel.entry_safe` for a single entry point).
-2. A block tagged `notes`, one line per place where you could not find a row for what the
-   program does. Each line gives the program construct, and the nearest symbols you
-   considered. Write `(untranslatable "<construct>")` at that place in the tree, so the rest
-   still checks. If everything translates, write `none`.
+1. **A block tagged `karva`:** the gene, one symbol a line, numbered from 0. The format is
+   `<n> <symbol>`, and a literal's value is attached with `=` (`17 literal.index=512`).
+   - After the last symbol of the ORF, write the line `ORF END`.
+   - Then the right padding of A2b, numbered on: exactly 3 × F + 1 varied terminals, where F
+     is the number of symbols of arity ≥ 1 in the ORF.
+   - The root is `kernel.module_N` (or `kernel.entry_safe` for a single entry point).
+   - Where nothing in the table expresses part of the program, write the symbol
+     `untranslatable` there (arity 0), and say what in the notes.
+2. **A block tagged `notes`:** one line per `untranslatable`, giving the program construct and
+   the nearest symbols you considered; or `none`.
 
-### A10. How your translation is checked
+### A10. How your gene is checked
 
-Every node is checked against the table:
-- the name exists;
-- the number of children is the row's arity;
-- each child's output type is the input type its parent demands at that position;
-- each literal's value is in its form's range;
-- every statement sits at the rung its block demands.
+1. **Decoding.** It is read by A2b with the table's arities and types. The decoder reports:
+   - every symbol that does not exist;
+   - every position whose symbol's output type is not the demanded type;
+   - every literal outside its range;
+   - where the ORF ends, and whether that is at your `ORF END`.
 
-Each failure is reported with its path in the tree (for example `root/1/2/0`). Then the tree
-is expressed, rendered to WGSL and run against the program on the same inputs; its outputs
-must equal the program's. Reproduce what the program computes exactly, including the order of
-operations, since a floating-point sum reordered is a different program.
+   Every reply decodes to a valid gene, because the tail supplies any missing children.
+2. **Running.** The expressed tree is rendered to WGSL and run against the program on the
+   same inputs. Its outputs must equal the program's.
+
+Reproduce what the program computes exactly, including the order of operations, since a
+floating-point sum reordered is a different program.
 
 ---
 
@@ -235,7 +259,7 @@ operations, since a floating-point sum reordered is a different program.
 
 ### B1. The challenge
 
-Translate the program below into a safeWGSL chromosome (format A9). It is a kernel of
+Translate the program below into one safeWGSL gene in Karva (format A9), with its right padding. It is a kernel of
 `{{PROBLEM}}` with entry points {{ENTRIES}}. Translate every entry point, in the order given.
 
 ```wgsl
@@ -244,10 +268,10 @@ Translate the program below into a safeWGSL chromosome (format A9). It is a kern
 
 ### B2. For a repair call (after a check failed)
 
-Your previous chromosome is below, with the checker's findings. Return the whole corrected
-chromosome in format A9, changing only what the findings name.
+Your previous gene is below, with the decoder's findings. Return the whole corrected gene in
+format A9, changing only what the findings name.
 
-```chromosome
+```karva
 {{PREVIOUS}}
 ```
 
@@ -259,27 +283,17 @@ chromosome in format A9, changing only what the findings name.
 
 ## Design notes for review (not sent to the model)
 
-1. **Output format.** I chose a typed s-expression (the phenotype tree in prefix form), not
-   Karva itself. Karva is breadth-first with head and tail lengths and homeotic hrefs, which is
-   hard for a model to write correctly. The s-expression is the same tree; fuller's encoder
-   (`safe_karva` and the homeotic fold) turns it into the Karva chromosome, with no loss.
-   Alternative to test: ask for Karva directly, as a second arm.
-2. **Table size.** The safe kingdom has 1,768 template rows and 192 duals. In the A6 format
-   that is about 35,000 tokens, and the same for every call, so it is cached. Alternative arm:
-   only the rows whose types occur in the program, about 300, which is cheaper but gives no
-   way to find a better row.
-3. **Ground truth.** fuller's reader already translates the v24 reference
-   (`problems/v24_ingest_small/reference.wgsl`) into this exact form (its `.safe.sexpr`, 7,570
-   characters), so each model's answer is scored node by node against the reader's, and then by
-   running both.
-4. **Scored per call:**
-   - the share of nodes correct against the reader's tree;
-   - the share of checks passed (A10);
-   - whether the chromosome runs and equals the program;
-   - seconds and tokens.
-
-   The comparison is Haiku against Sonnet, on the v24 reference first, then on 3 of run 1's
-   seeds.
-5. **Not in scope yet:** the model *mutating* a chromosome rather than translating one. Once
-   translation is accurate, the mutation call is the same header with "change this chromosome
-   so that <instruction>" as Part B.
+1. **The output is Karva** (Andrew, 2026-10-19). A brackets-based reply failed on bracket
+   counting even from a top model (ChatGPT, version 2: 4 missing). Karva has no brackets, and
+   with GEP's tail rule (3F + 1 terminals for K = 4) every reply decodes to a valid gene; a
+   mistake is a mistranslation, found by decoding and by running.
+2. **The padding is random valid terminals**, not `fallback` or no-ops (Andrew): if the
+   model misjudges an arity, the decoder reads into the tail and still expresses a
+   well-formed program.
+3. **Prefix order as a second arm** (depth-first and bracket-free, also always decodable by
+   arity) is still to measure against level order.
+4. **Table size:** 1,768 template rows and 192 duals, about 55,000 tokens, the same in every
+   call and so cached.
+5. **Ground truth:** fuller's reader's tree for each program (`truth/*.safe.sexpr`). A reply
+   is decoded and compared node by node by position in the tree, then run.
+6. **Not in scope yet:** the model mutating a gene rather than translating one.
