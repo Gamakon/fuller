@@ -7131,7 +7131,7 @@ mod tests {
         let sx = r.tree.to_sexpr();
         assert!(sx.contains("load.qry") && sx.contains("load.phi_safe") && sx.contains("store.h_O0"), "{sx}");
         let out = crate::wgsl::safe_karva::render_tree_with(&r.tree, &k, &r.role).unwrap_or_else(|e| panic!("{e}"));
-        for want in ["// interface cosine", "struct Params { nc: u32, dim: u32, nq: u32, q_off: u32, };", "var<storage, read> qry: array<f32>;", "t < p.dim", "< p.nq && ", "score[", "qry[", "cand["] {
+        for want in ["// interface cosine", "struct Params { nc: u32, dim: u32, nq: u32, q_off: u32, };", "var<storage, read> qry: array<f32>;", "t < p.dim", "< p.nq) & ", "score[", "qry[", "cand["] {
             assert!(out.text.contains(want), "{want}:\n{}", out.text);
         }
         for gram in ["phi[", "h[", "cfg."] {
@@ -8122,7 +8122,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
             let checker = crate::wgsl::check::Checker::with_contract(&k, &r.role, &crate::wgsl::target::Target::recorded(), contract.clone());
             checker.check(&r.tree).unwrap_or_else(|e| panic!("{what}: {e}\n{}", out.text));
             if what == "insertion" {
-                assert!(out.text.contains(") || ("), "{what}: one stop of both guards, in order:\n{}", out.text);
+                assert!(out.text.contains(") | ("), "{what}: one stop of both guards, in order (the eager `|`):\n{}", out.text);
             }
         }
     }
@@ -8405,19 +8405,42 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     /// Metal compilation, "invalid argument type 'metal::float4x4' to unary
     /// expression"): the renderer writes it as the matrix times -1.0, the
     /// same value, which reads back as that product; no later pass negates one.
+    /// (2026-10-19, naga 30: a unary minus on a matrix is not WGSL by the spec,
+    /// and naga 30 refuses it, so the draft that wrote `-m2` no longer reads,
+    /// its manifest entry a bug; the drawn trees that negate a matrix are the
+    /// ones rendered here.)
     #[test]
     fn a_negated_matrix_renders_as_a_product_metal_compiles() {
         let k = WgslKingdom::load_safe();
         let src = include_str!("../../tests/corpus/safewgsl/draft_matrices.wgsl");
-        assert!(negates_a_matrix(src), "the draft negates a matrix");
-        let tree = read_safe(src, &k).unwrap_or_else(|e| panic!("{e}")).tree;
-        assert!(tree.to_sexpr().contains("arith.neg_mat"), "the draft's -m2 reads as arith.neg_mat");
-        let text = crate::wgsl::safe_karva::render_tree(&tree, &k).unwrap_or_else(|e| panic!("{e}")).text;
-        assert!(!negates_a_matrix(&text), "{text}");
-        assert!(text.contains(" * -1.0)"), "{text}");
-        let again = crate::wgsl::safe_karva::render_tree(&read_safe(&text, &k).unwrap_or_else(|e| panic!("{e}")).tree, &k).unwrap_or_else(|e| panic!("{e}")).text;
-        let third = crate::wgsl::safe_karva::render_tree(&read_safe(&again, &k).unwrap_or_else(|e| panic!("{e}")).tree, &k).unwrap_or_else(|e| panic!("{e}")).text;
-        assert!(!negates_a_matrix(&again) && !negates_a_matrix(&third), "{again}\n{third}");
+        assert!(negates_a_matrix_text(src), "the draft negates a matrix");
+        let Err(e) = read_safe(src, &k) else { panic!("naga 30 refuses a unary minus on a matrix") };
+        assert!(e.contains("InvalidUnaryOperandType(Negate"), "{e}");
+        let role = gram_role();
+        let root = dual_ty(&k, "kernel.safe").unwrap();
+        let mut seen = 0usize;
+        for seed in 0..2000u64 {
+            let tree = crate::wgsl::render::sample(&k, &role, root, 7, seed).unwrap();
+            if !tree.to_sexpr().contains("(arith.neg_mat") {
+                continue;
+            }
+            seen += 1;
+            let text = crate::wgsl::safe_karva::render_tree(&tree, &k).unwrap_or_else(|e| panic!("{e}")).text;
+            assert!(!negates_a_matrix(&text), "{text}");
+            assert!(text.contains(" * -1.0)"), "{text}");
+            let again = crate::wgsl::safe_karva::render_tree(&read_safe(&text, &k).unwrap_or_else(|e| panic!("{e}")).tree, &k).unwrap_or_else(|e| panic!("{e}")).text;
+            assert!(!negates_a_matrix(&again), "{again}");
+            if seen == 5 {
+                break;
+            }
+        }
+        assert!(seen >= 1, "no drawn tree negates a matrix");
+    }
+
+    /// Whether `text` writes a unary minus on a matrix (by its spelling: naga 30
+    /// refuses to parse such text into a valid module, so the IR test cannot).
+    fn negates_a_matrix_text(text: &str) -> bool {
+        text.contains("(-m2)")
     }
 
     /// The counts of [`random_sampler_trees_read_back_to_their_own_text`]

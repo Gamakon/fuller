@@ -1237,7 +1237,8 @@ impl<'m> An<'m> {
     fn bounded_by(&mut self, fr: usize, cond: Handle<Expression>) -> Vec<((usize, Handle<naga::LocalVariable>), Abs)> {
         let f = self.frames[fr].func;
         match &f.expressions[cond] {
-            Expression::Binary { op: BinaryOperator::LogicalAnd, left, right } => {
+            // (`&` of two conditions is their `&&`, eager.)
+            Expression::Binary { op: BinaryOperator::LogicalAnd | BinaryOperator::And, left, right } => {
                 let (l, r) = (*left, *right);
                 let mut out = self.bounded_by(fr, l);
                 out.extend(self.bounded_by(fr, r));

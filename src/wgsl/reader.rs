@@ -1053,6 +1053,17 @@ fn expand(ctx: &mut Ctx, h: Handle<Expression>, count: bool) -> Node {
                 | naga::BinaryOperator::GreaterEqual => operand_kind,
                 _ => kind,
             };
+            // `&` and `|` of two bools are logic.and and logic.or, as `&&` and
+            // `||` are: the emitter writes the kingdom's logic rows eagerly
+            // (2026-10-19, the naga/wgpu 30 upgrade: naga 30 runs a `&&`'s right
+            // side inside an if, and a subgroup operation there would leave
+            // uniform control).
+            let scalar_bool = row_kind == Some(ScalarKind::Bool) && matches!(ctx.info[left].ty.inner_with(&ctx.module.types), TypeInner::Scalar(_));
+            let op = match op {
+                naga::BinaryOperator::And if scalar_bool => naga::BinaryOperator::LogicalAnd,
+                naga::BinaryOperator::InclusiveOr if scalar_bool => naga::BinaryOperator::LogicalOr,
+                other => other,
+            };
             app(ctx, &format!("Binary::{op:?}"), row_kind, slot, vec![l, r])
         }
         Expression::Select { condition, accept, reject } => {
