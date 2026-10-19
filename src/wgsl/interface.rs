@@ -49,6 +49,11 @@ pub struct BindingUse {
     /// Updated by an atomic (a read-modify-write).
     pub atomic: bool,
     pub role: Use,
+    /// The leaves of a struct-typed binding or of a struct-element array's
+    /// element, as (path, type) in declaration order (`transform`,
+    /// `mat4x4<f32>`; a nested struct's fields as `inner.x`); empty for any
+    /// other binding.
+    pub leaves: Vec<(String, String)>,
 }
 
 /// A uniform block: its variable, its struct's name and its fields with
@@ -67,7 +72,14 @@ pub struct ModuleInterface {
     pub entry: String,
     pub workgroup_size: [u32; 3],
     pub bindings: Vec<BindingUse>,
+    /// The first uniform block (the one whose fields may take the kingdom's
+    /// roles).
     pub uniform: Option<UniformBlock>,
+    /// Every uniform block of the module, the first among them, in binding order.
+    pub uniforms: Vec<UniformBlock>,
+    /// Every struct type a binding's type holds, as (name, members) with the
+    /// member types as WGSL writes them, a struct after the structs it holds.
+    pub structs: Vec<(String, Vec<(String, String)>)>,
 }
 
 impl ModuleInterface {
@@ -113,6 +125,45 @@ pub fn type_text(module: &Module, ty: Handle<naga::Type>) -> String {
             naga::ArraySize::Pending(o) => format!("array<{}, {}>", type_text(module, *base), module.overrides[*o].name.clone().unwrap_or_else(|| format!("override{}", o.index()))),
         },
         _ => t.name.clone().unwrap_or_else(|| format!("{:?}", t.inner)),
+    }
+}
+
+/// The leaves of a struct type as (path, type), nested structs by `a.b`;
+/// empty for a type that is not a struct.
+fn struct_leaves(module: &Module, ty: Handle<naga::Type>) -> Vec<(String, String)> {
+    fn walk(module: &Module, ty: Handle<naga::Type>, prefix: &str, out: &mut Vec<(String, String)>) {
+        if let TypeInner::Struct { members, .. } = &module.types[ty].inner {
+            for (i, m) in members.iter().enumerate() {
+                let name = m.name.clone().unwrap_or_else(|| format!("f{i}"));
+                let path = if prefix.is_empty() { name } else { format!("{prefix}.{name}") };
+                if matches!(module.types[m.ty].inner, TypeInner::Struct { .. }) {
+                    walk(module, m.ty, &path, out);
+                } else {
+                    out.push((path, type_text(module, m.ty)));
+                }
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(module, ty, "", &mut out);
+    out
+}
+
+/// The struct types a type holds (through arrays and members), each after
+/// the structs it holds, appended to `out` once.
+fn collect_structs(module: &Module, ty: Handle<naga::Type>, out: &mut Vec<(String, Vec<(String, String)>)>) {
+    match &module.types[ty].inner {
+        TypeInner::Array { base, .. } => collect_structs(module, *base, out),
+        TypeInner::Struct { members, .. } => {
+            for m in members {
+                collect_structs(module, m.ty, out);
+            }
+            let name = type_text(module, ty);
+            if !out.iter().any(|(n, _)| *n == name) {
+                out.push((name, members.iter().enumerate().map(|(i, m)| (m.name.clone().unwrap_or_else(|| format!("f{i}")), type_text(module, m.ty))).collect()));
+            }
+        }
+        _ => {}
     }
 }
 
@@ -234,7 +285,8 @@ pub fn infer_entry(module: &Module, entry: &str) -> Result<ModuleInterface, Stri
     let mut uses = Uses::default();
     uses_of(module, &ep.function, &mut uses, &mut BTreeSet::new());
     let mut bindings = Vec::new();
-    let mut uniform = None;
+    let mut uniforms: Vec<UniformBlock> = Vec::new();
+    let mut structs = Vec::new();
     for (h, g) in module.global_variables.iter() {
         let Some(rb) = &g.binding else { continue };
         let name = g.name.clone().unwrap_or_else(|| format!("global{}", h.index()));
@@ -249,32 +301,39 @@ pub fn infer_entry(module: &Module, entry: &str) -> Result<ModuleInterface, Stri
                 (space.to_string(), if uses.written.contains(&h) { Use::Output } else { Use::Input })
             }
             AddressSpace::Uniform => {
-                if uniform.is_none() {
-                    match &module.types[g.ty].inner {
-                        TypeInner::Struct { members, .. } => {
-                            let fields = members.iter().enumerate().map(|(i, m)| (m.name.clone().unwrap_or_else(|| format!("f{i}")), type_text(module, m.ty))).collect();
-                            uniform = Some(UniformBlock { var: name.clone(), struct_name: ty.clone(), fields });
-                        }
-                        // A vector block (`var<uniform> params: vec4<u32>`,
-                        // UltraDim's kernels): its lanes are its fields, read
-                        // `params.x` .. `params.w`; no struct is declared.
-                        TypeInner::Vector { size, scalar } => {
-                            let lane = scalar_text(scalar);
-                            let fields = ["x", "y", "z", "w"].iter().take(*size as usize).map(|l| (l.to_string(), lane.clone())).collect();
-                            uniform = Some(UniformBlock { var: name.clone(), struct_name: String::new(), fields });
-                        }
-                        _ => {}
+                let block = match &module.types[g.ty].inner {
+                    TypeInner::Struct { members, .. } => {
+                        let fields = members.iter().enumerate().map(|(i, m)| (m.name.clone().unwrap_or_else(|| format!("f{i}")), type_text(module, m.ty))).collect();
+                        Some(UniformBlock { var: name.clone(), struct_name: ty.clone(), fields })
                     }
+                    // A vector block (`var<uniform> params: vec4<u32>`,
+                    // UltraDim's kernels): its lanes are its fields, read
+                    // `params.x` .. `params.w`; no struct is declared.
+                    TypeInner::Vector { size, scalar } => {
+                        let lane = scalar_text(scalar);
+                        let fields = ["x", "y", "z", "w"].iter().take(*size as usize).map(|l| (l.to_string(), lane.clone())).collect();
+                        Some(UniformBlock { var: name.clone(), struct_name: String::new(), fields })
+                    }
+                    _ => None,
+                };
+                if let Some(b) = block {
+                    uniforms.push(b);
                 }
                 ("uniform".to_string(), Use::Parameter)
             }
             AddressSpace::Handle => return Err(format!("binding {name}: images and samplers are not in the kingdom")),
             other => return Err(format!("binding {name} in {other:?}: not a storage or uniform buffer")),
         };
-        bindings.push(BindingUse { name, group: rb.group, binding: rb.binding, space, ty, elem, written: uses.written.contains(&h), read: uses.read.contains(&h), atomic: uses.atomic.contains(&h), role });
+        collect_structs(module, g.ty, &mut structs);
+        let leaves = match &module.types[g.ty].inner {
+            TypeInner::Array { base, .. } => struct_leaves(module, *base),
+            TypeInner::Struct { .. } if role != Use::Parameter => struct_leaves(module, g.ty),
+            _ => Vec::new(),
+        };
+        bindings.push(BindingUse { name, group: rb.group, binding: rb.binding, space, ty, elem, written: uses.written.contains(&h), read: uses.read.contains(&h), atomic: uses.atomic.contains(&h), role, leaves });
     }
     bindings.sort_by_key(|b| (b.group, b.binding));
-    Ok(ModuleInterface { entry: ep.name.clone(), workgroup_size: ep.workgroup_size, bindings, uniform })
+    Ok(ModuleInterface { entry: ep.name.clone(), workgroup_size: ep.workgroup_size, bindings, uniform: uniforms.first().cloned(), uniforms, structs })
 }
 
 /// [`infer`] over WGSL text.

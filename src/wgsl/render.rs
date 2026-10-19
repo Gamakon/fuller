@@ -88,6 +88,26 @@ pub struct Binding {
 pub struct Field {
     pub name: String,
     pub role: String,
+    /// The field's type as WGSL writes it (`u32` for the Gram's).
+    pub ty: String,
+}
+
+/// A struct the interface declares beyond its first uniform block's (an
+/// element type of a storage array, another uniform block's type): its
+/// members as (name, type).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StructDecl {
+    pub name: String,
+    pub members: Vec<(String, String)>,
+}
+
+/// A uniform block beyond the first: its variable and fields as (name, type).
+/// The fields have no role in the kingdom; each is read by its row
+/// `load.<var>_<field>`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UniformDecl {
+    pub var: String,
+    pub fields: Vec<(String, String)>,
 }
 
 /// The fixed part of a kernel, its declared INTERFACE (docs/PLAN_constrained_mutation.md
@@ -117,6 +137,10 @@ pub struct Role {
     pub output: String,
     /// The bound check of a thread's own cell, over `{row}` and `{col}`.
     pub guard: String,
+    /// The structs declared beyond the first uniform block's, in order.
+    pub structs: Vec<StructDecl>,
+    /// The uniform blocks beyond the first.
+    pub more_uniforms: Vec<UniformDecl>,
     /// The entry point's name the renderer writes (`main`; an inferred
     /// interface keeps its module's, nluca's `generated_step`).
     pub entry: String,
@@ -140,6 +164,8 @@ pub struct Interface {
     pub guard: String,
     /// Per-kernel rows beyond the standard ones (a second input's load).
     pub extra: Vec<PerKernel>,
+    pub structs: Vec<StructDecl>,
+    pub more_uniforms: Vec<UniformDecl>,
 }
 
 impl Role {
@@ -147,17 +173,23 @@ impl Role {
     /// then the bindings), the item bound and the per-kernel rows over the
     /// input, the output and the fields, plus the declaration's extra rows.
     pub fn interface(decl: Interface) -> Role {
-        let Interface { name, bindings, uniform_var, uniform_struct, fields, input, output, guard, extra } = decl;
+        let Interface { name, bindings, uniform_var, uniform_struct, fields, input, output, guard, extra, structs, more_uniforms } = decl;
         let (name, uniform_var, uniform_struct, input, output, guard) = (name.as_str(), uniform_var.as_str(), uniform_struct.as_str(), input.as_str(), output.as_str(), guard.as_str());
         // (A module with no uniform block has no struct line.)
-        let mut prologue = if uniform_struct.is_empty() { String::new() } else { format!("struct {uniform_struct} {{ {} }};", fields.iter().map(|f| format!("{}: u32,", f.name)).collect::<Vec<_>>().join(" ")) };
+        let mut prologue = if uniform_struct.is_empty() { String::new() } else { format!("struct {uniform_struct} {{ {} }};", fields.iter().map(|f| format!("{}: {},", f.name, f.ty)).collect::<Vec<_>>().join(" ")) };
+        for d in &structs {
+            if !prologue.is_empty() {
+                prologue.push('\n');
+            }
+            prologue.push_str(&format!("struct {} {{ {} }};", d.name, d.members.iter().map(|(n, t)| format!("{n}: {t},")).collect::<Vec<_>>().join(" ")));
+        }
         for b in &bindings {
             if !prologue.is_empty() {
                 prologue.push('\n');
             }
             prologue.push_str(&format!("@group({}) @binding({}) var<{}> {}: {};", b.group, b.binding, b.space, b.name, b.ty));
         }
-        let mut role = Role { name: name.into(), prologue, items: String::new(), per_kernel: Vec::new(), bindings, uniform_var: uniform_var.into(), uniform_struct: uniform_struct.into(), fields, input: input.into(), output: output.into(), guard: guard.into(), entry: "main".into(), entries: vec!["main".into()] };
+        let mut role = Role { name: name.into(), prologue, items: String::new(), per_kernel: Vec::new(), bindings, uniform_var: uniform_var.into(), uniform_struct: uniform_struct.into(), fields, input: input.into(), output: output.into(), guard: guard.into(), structs, more_uniforms, entry: "main".into(), entries: vec!["main".into()] };
         role.items = role.field("m");
         let pk = |name: &str, inputs: &[&str], output: &str, template: String| PerKernel { name: name.into(), inputs: inputs.iter().map(|s| s.to_string()).collect(), output: output.into(), template };
         let (i, o) = (input, output);
@@ -285,7 +317,7 @@ pub fn gram_role() -> Role {
 /// The Gram's interface as declared.
 fn gram_interface() -> Interface {
     let b = |name: &str, binding: u32, space: &str, ty: &str| Binding { name: name.into(), group: 0, binding, space: space.into(), ty: ty.into() };
-    let f = |name: &str, role: &str| Field { name: name.into(), role: role.into() };
+    let f = |name: &str, role: &str| Field { name: name.into(), role: role.into(), ty: "u32".into() };
     Interface {
         name: "gram".into(),
         bindings: vec![b("phi", 0, "storage, read", "array<f32>"), b("h", 1, "storage, read_write", "array<f32>"), b("cfg", 2, "uniform", "Cfg")],
@@ -297,6 +329,8 @@ fn gram_interface() -> Interface {
         // The band's row, the column, and the global row (square output: d x d).
         guard: "(({row}) < cfg.r_rows) & (({col}) < cfg.d) & ((cfg.r_off + ({row})) < cfg.d)".into(),
         extra: Vec::new(),
+        structs: Vec::new(),
+        more_uniforms: Vec::new(),
     }
 }
 
@@ -324,7 +358,7 @@ fn gram_counter_interface() -> Interface {
 /// `nq` the band's rows (r_rows), `q_off` the band's first query (r_off).
 pub fn cosine_role() -> Role {
     let b = |name: &str, binding: u32, space: &str, ty: &str| Binding { name: name.into(), group: 0, binding, space: space.into(), ty: ty.into() };
-    let f = |name: &str, role: &str| Field { name: name.into(), role: role.into() };
+    let f = |name: &str, role: &str| Field { name: name.into(), role: role.into(), ty: "u32".into() };
     Role::interface(Interface {
         name: "cosine".into(),
         bindings: vec![b("cand", 0, "storage, read", "array<f32>"), b("score", 1, "storage, read_write", "array<f32>"), b("p", 2, "uniform", "Params"), b("qry", 3, "storage, read", "array<f32>")],
@@ -336,6 +370,8 @@ pub fn cosine_role() -> Role {
         // The band's query and the candidate (the output is nq x nc).
         guard: "(({row}) < p.nq) & (({col}) < p.nc)".into(),
         extra: vec![PerKernel { name: "load.qry".into(), inputs: vec!["u32.index".into()], output: "f32.real".into(), template: "qry[{0}]".into() }],
+        structs: Vec::new(),
+        more_uniforms: Vec::new(),
     })
 }
 
@@ -359,6 +395,10 @@ pub fn elem_dual(elem: &str) -> Option<String> {
     if let Some(f) = form(elem) {
         return Some(format!("{elem}.{f}"));
     }
+    // A float matrix (`mat4x4<f32>`).
+    if let Some(m) = elem.strip_prefix("mat").filter(|m| m.ends_with("<f32>") && m.len() == 8 && m.as_bytes()[1] == b'x') {
+        return (matches!(m.as_bytes()[0], b'2'..=b'4') && matches!(m.as_bytes()[2], b'2'..=b'4')).then(|| format!("{elem}.real"));
+    }
     let inner = elem.strip_prefix("vec")?;
     let (n, rest) = inner.split_at(1);
     let s = rest.strip_prefix('<')?.strip_suffix('>')?;
@@ -380,7 +420,7 @@ impl Role {
         use crate::wgsl::interface::Use;
         let bindings: Vec<Binding> = i.bindings.iter().map(|b| Binding { name: b.name.clone(), group: b.group, binding: b.binding, space: b.space.clone(), ty: b.ty.clone() }).collect();
         let (uniform_var, uniform_struct, fields) = match &i.uniform {
-            Some(u) => (u.var.clone(), u.struct_name.clone(), u.fields.iter().map(|(f, _)| Field { name: f.clone(), role: if FIELD_ROLES.contains(&f.as_str()) { f.clone() } else { String::new() } }).collect::<Vec<_>>()),
+            Some(u) => (u.var.clone(), u.struct_name.clone(), u.fields.iter().map(|(f, ty)| Field { name: f.clone(), role: if FIELD_ROLES.contains(&f.as_str()) { f.clone() } else { String::new() }, ty: ty.clone() }).collect::<Vec<_>>()),
             None => (String::new(), String::new(), Vec::new()),
         };
         let field = |r: &str| fields.iter().find(|f| f.role == r).map(|f| format!("{uniform_var}.{}", f.name));
@@ -405,6 +445,40 @@ impl Role {
             if b.ty.starts_with("array<") && !b.ty.contains(", ") {
                 extra.push(pk(format!("len.{}", b.name), Vec::new(), "u32.count".into(), format!("arrayLength(&{})", b.name)));
             }
+            // The leaves of a struct binding or of a struct-element array's
+            // element: a load row `load.<binding>.<path>`, a store row at each
+            // statement rung when the kernel writes the binding, and the
+            // atomic rows of an atomic leaf.
+            let array = b.ty.starts_with("array<");
+            for (path, lty) in &b.leaves {
+                let at = |t: &str| if array { format!("{}[{{0}}].{path}{t}", b.name) } else { format!("{}.{path}{t}", b.name) };
+                let idx: Vec<String> = if array { vec!["u32.index".into()] } else { Vec::new() };
+                let atomic = match lty.as_str() {
+                    "atomic<u32>" => Some("u32.index"),
+                    "atomic<i32>" => Some("i32.int"),
+                    _ => None,
+                };
+                if let Some(value) = atomic {
+                    let with = |v: &[&str]| idx.iter().cloned().chain(v.iter().map(|s| s.to_string())).collect::<Vec<_>>();
+                    let n = if array { 1 } else { 0 };
+                    extra.push(pk(format!("load.{}.{path}", b.name), idx.clone(), value.into(), format!("atomicLoad(&{})", at(""))));
+                    for r in STORE_RUNGS {
+                        extra.push(pk(format!("store.{}.{path}_{r}", b.name), with(&[value]), format!("stmt.{r}"), format!("atomicStore(&{}, {{{n}}});", at(""))));
+                    }
+                    for (fun, wgsl) in ATOMIC_FUNS {
+                        extra.push(pk(format!("atomic.{}.{path}_{fun}", b.name), with(&[value]), value.into(), format!("{wgsl}(&{}, {{{n}}})", at(""))));
+                    }
+                    continue;
+                }
+                let Some(dual) = elem_dual(lty) else { continue };
+                extra.push(pk(format!("load.{}.{path}", b.name), idx.clone(), dual.clone(), at("")));
+                if b.role == Use::Output {
+                    let n = if array { 1 } else { 0 };
+                    for r in STORE_RUNGS {
+                        extra.push(pk(format!("store.{}.{path}_{r}", b.name), idx.iter().cloned().chain([dual.clone()]).collect(), format!("stmt.{r}"), format!("{} = {{{n}}};", at(""))));
+                    }
+                }
+            }
             let Some(dual) = b.elem.as_deref().and_then(elem_dual) else { continue };
             extra.push(pk(format!("load.{}", b.name), vec!["u32.index".into()], dual.clone(), format!("{}[{{0}}]", b.name)));
             // A u32 read from an input is also a loop bound's value (a load
@@ -418,9 +492,20 @@ impl Role {
                 }
             }
         }
-        if let Some(u) = &i.uniform {
+        // Every uniform block's fields: a value row each (an array field read at
+        // an index). The first block's fields that take a kingdom role are the
+        // kingdom's own rows when the interface is the Gram's shape.
+        for (n, u) in i.uniforms.iter().enumerate() {
             for (f, ty) in &u.fields {
-                if FIELD_ROLES.contains(&f.as_str()) && gram_rows {
+                if n == 0 && FIELD_ROLES.contains(&f.as_str()) && gram_rows {
+                    continue;
+                }
+                if let Some(inner) = ty.strip_prefix("array<").and_then(|r| r.strip_suffix('>')) {
+                    // (`array<vec4<f32>, 6>`: the element type, then the length.)
+                    let elem = inner.split(", ").next().unwrap_or(inner);
+                    if let Some(dual) = elem_dual(elem) {
+                        extra.push(pk(format!("load.{}_{f}", u.var), vec!["u32.index".into()], dual, format!("{}.{f}[{{0}}]", u.var)));
+                    }
                     continue;
                 }
                 let Some(dual) = elem_dual(ty).map(|d| if d == "u32.index" { "u32.count".to_string() } else { d }) else { continue };
@@ -432,7 +517,10 @@ impl Role {
                 extra.push(pk(format!("load.{}_{f}", u.var), Vec::new(), dual, format!("{}.{f}", u.var)));
             }
         }
-        let decl = Interface { name: INFERRED.into(), bindings, uniform_var, uniform_struct, fields, input, output, guard, extra };
+        let primary_struct = uniform_struct.clone();
+        let structs: Vec<StructDecl> = i.structs.iter().filter(|(n, _)| *n != primary_struct).map(|(n, m)| StructDecl { name: n.clone(), members: m.clone() }).collect();
+        let more_uniforms: Vec<UniformDecl> = i.uniforms.iter().skip(1).map(|u| UniformDecl { var: u.var.clone(), fields: u.fields.clone() }).collect();
+        let decl = Interface { name: INFERRED.into(), bindings, uniform_var, uniform_struct, fields, input, output, guard, extra, structs, more_uniforms };
         let mut role = Role::interface(decl.clone());
         for known in [gram_interface(), gram_counter_interface()] {
             if (Interface { name: INFERRED.into(), ..known.clone() }) == decl {

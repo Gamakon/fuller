@@ -230,6 +230,48 @@ fn dual_of_type(module: &naga::Module, ty: Handle<naga::Type>) -> Option<String>
     }
 }
 
+/// The kingdom's dual of any naga type a binding's field may hold (scalars,
+/// vectors, float matrices, atomics), by its WGSL spelling.
+fn field_dual(module: &naga::Module, ty: Handle<naga::Type>) -> Option<String> {
+    let text = crate::wgsl::interface::type_text(module, ty);
+    match text.as_str() {
+        "atomic<u32>" => Some("u32.index".into()),
+        "atomic<i32>" => Some("i32.int".into()),
+        other => crate::wgsl::render::elem_dual(other),
+    }
+}
+
+/// The type a buffer place has: the binding `binding`'s type, then each
+/// segment of its path (`#` an array's element, else a struct member by name).
+fn place_type(module: &naga::Module, binding: &str, segs: &[&str]) -> Option<Handle<naga::Type>> {
+    let mut ty = module.global_variables.iter().find(|(_, g)| g.name.as_deref() == Some(binding))?.1.ty;
+    for seg in segs {
+        ty = match (&module.types[ty].inner, *seg) {
+            (naga::TypeInner::Array { base, .. }, "#") => *base,
+            (naga::TypeInner::Struct { members, .. }, name) => members.iter().find(|m| m.name.as_deref() == Some(name))?.ty,
+            _ => return None,
+        };
+    }
+    Some(ty)
+}
+
+/// A place's name with a member appended before the lineage mark (`load.buffer.args.#@v0`
+/// and `x` give `load.buffer.args.#.x@v0`).
+fn member_place(place: &str, member: &str) -> String {
+    match place.find('@') {
+        Some(i) => format!("{}.{member}{}", &place[..i], &place[i..]),
+        None => format!("{place}.{member}"),
+    }
+}
+
+/// What a struct written whole is made of.
+enum StructSource {
+    /// The operands of its constructor, in member order.
+    Compose(Vec<Node>),
+    /// The struct place it is loaded from: the load's name and index operands.
+    Place(String, Vec<Node>),
+}
+
 fn ty(ctx: &Ctx, name: &str) -> Result<Ty, String> {
     dual_ty(ctx.kingdom, name)
 }
@@ -403,6 +445,11 @@ fn tree_of(ctx: &mut Ctx, n: &Node) -> Result<Tree, String> {
             if name == "naga.NestedAccess" && kids.len() == 2 {
                 let kids = kids.iter().map(|k| tree_of(ctx, k)).collect::<Result<Vec<_>, _>>()?;
                 return Ok(Tree::new("naga.NestedAccess", ty(ctx, "u32.index")?, kids));
+            }
+            // A member of a struct read from a storage binding (`s.joints` for
+            // `let s = skin[i]`): the field's load.
+            if let Some(t) = ctx.struct_field_load(n, &text)? {
+                return Ok(t);
             }
             // An element of an array VALUE chosen at run time (`let accs =
             // array<vec4<f32>, 4>(...); accs[i]`, r3x_reinvent): a select
@@ -762,6 +809,21 @@ fn nested_index<'t>(rest: &str, kids: &'t [Tree]) -> Option<(&'t Tree, &'t Tree)
         [ix, ..] if ix.name == "naga.NestedAccess" && ix.kids.len() == 2 => Some((&ix.kids[0], &ix.kids[1])),
         _ => None,
     }
+}
+
+/// A buffer target that names a struct field: `<binding>.#.<path>` (an array
+/// of structs, at an index) or `<binding>.<path>` (a struct binding) as
+/// (binding, path, indexed). None for a target that names no field: the
+/// binding, an element, or a lane of an element (`<binding>.#.#`).
+fn struct_field_target(rest: &str) -> Option<(&str, String, bool)> {
+    let mut parts = rest.split('.');
+    let b = parts.next()?;
+    let tail: Vec<&str> = parts.collect();
+    let (indexed, path) = match tail.as_slice() {
+        ["#", path @ ..] => (true, path),
+        path => (false, path),
+    };
+    (!path.is_empty() && !path.contains(&"#") && !path.iter().any(|p| p.contains('@'))).then(|| (b, path.join("."), indexed))
 }
 
 fn literal_value(t: &Tree) -> Option<f32> {
@@ -1542,6 +1604,10 @@ fn lets_used_in_deeper_loops(roots: &[Root], body: &naga::Block, points: &BTreeM
     let (mut loads_memo, mut memory_memo) = (HashMap::new(), HashMap::new());
     for i in order {
         let (name, path, tree) = defs[i];
+        // A struct held whole has no register: each use reads its field.
+        if matches!(tree, Node::App { kids, .. } if kids.first().is_some_and(|k| slot_of(k) == "struct")) {
+            continue;
+        }
         let def_block = &path[..path.len().saturating_sub(1)];
         let mut loads = BTreeSet::new();
         local_loads(tree, &defs, &mut loads, 0, &mut loads_memo);
@@ -2338,6 +2404,12 @@ impl<'a> Ctx<'a> {
                 let kind = row.chars().nth(4).unwrap_or('f');
                 return Ok(Tree::new(&format!("reg.get_{kind}"), t.ty, vec![Tree::new(&row, ty(self, Self::reg_dual(kind))?, vec![])]));
             }
+            if let Some(x) = self.other_uniform(t)? {
+                return Ok(x);
+            }
+            if let Some(x) = self.buffer_field(t)? {
+                return Ok(x);
+            }
             if let Some(field) = t.name.strip_prefix("load.uniform.cfg.") {
                 return match field {
                     "d" | "m" | "r_rows" => Ok(Tree::new(&format!("load.cfg_{field}"), ty(self, "u32.count")?, vec![])),
@@ -2390,6 +2462,12 @@ impl<'a> Ctx<'a> {
             return Err(format!("leaf {} has no safe spelling", t.name));
         }
         // Loads with an index.
+        if let Some(x) = self.other_uniform(t)? {
+            return Ok(x);
+        }
+        if let Some(x) = self.buffer_field(t)? {
+            return Ok(x);
+        }
         if t.name.starts_with("load.buffer.phi.#") {
             // Any index: a read past the buffer is zero by WGSL's rule.
             let idx = self.value(&t.kids[0])?;
@@ -2920,6 +2998,178 @@ impl<'a> Ctx<'a> {
         let (dual, kind) = if unsigned { ("u32.index", 'i') } else { ("i32.int", 'n') };
         let row = self.register(&format!("local.atomic@{result}"), dual)?;
         Ok(Some(Tree::new(&format!("reg.set_{kind}_{rung}"), st, vec![Tree::new(&row, ty(self, Self::reg_dual(kind))?, vec![]), expr])))
+    }
+
+    /// A node followed through the lets that name it.
+    fn resolve_lets<'n>(&'n self, n: &'n Node) -> &'n Node {
+        let mut n = n;
+        while let Node::Leaf { name, .. } = n {
+            match name.strip_prefix("let.").and_then(|k| self.lets.get(k)) {
+                Some(def) => n = def,
+                None => break,
+            }
+        }
+        n
+    }
+
+    /// The struct a node holds in place, read from a storage binding: the load
+    /// `load.buffer.<binding>[.#][.<member>...]` (through lets) or a member of
+    /// one (`naga.AccessIndex.k` of it) whose type is a struct. As (the place's
+    /// load name, its index operands, the struct's type). None for any other node.
+    fn struct_place(&self, n: &Node) -> Option<(String, Vec<Node>, Handle<naga::Type>)> {
+        match self.resolve_lets(n) {
+            Node::App { name, kids, .. } if name.starts_with("load.buffer.") => {
+                let base = name.split('@').next().unwrap_or(name);
+                let mut segs = base.strip_prefix("load.buffer.")?.split('.');
+                let b = segs.next()?;
+                let segs: Vec<&str> = segs.collect();
+                let sty = place_type(self.module, b, &segs)?;
+                matches!(self.module.types[sty].inner, naga::TypeInner::Struct { .. }).then(|| (name.clone(), kids.clone(), sty))
+            }
+            Node::App { name, kids, .. } if name.starts_with("naga.AccessIndex.") && kids.len() == 1 => {
+                let k: usize = name.strip_prefix("naga.AccessIndex.")?.parse().ok()?;
+                let (pname, pkids, sty) = self.struct_place(&kids[0])?;
+                let naga::TypeInner::Struct { members, .. } = &self.module.types[sty].inner else { return None };
+                let m = members.get(k)?;
+                matches!(self.module.types[m.ty].inner, naga::TypeInner::Struct { .. }).then(|| (member_place(&pname, m.name.as_deref().unwrap_or("")), pkids, m.ty))
+            }
+            _ => None,
+        }
+    }
+
+    /// A member of a struct held in place: its field load, typed by the
+    /// inference of `at` or else by the member's type. None when `n` is not
+    /// the field of a struct place.
+    fn struct_field_load(&mut self, n: &Node, at: &str) -> Result<Option<Tree>, String> {
+        let Node::App { name, kids, .. } = n else { return Ok(None) };
+        let (Some(i), [base]) = (name.strip_prefix("naga.AccessIndex.").and_then(|i| i.parse::<usize>().ok()), kids.as_slice()) else { return Ok(None) };
+        let Some((pname, pkids, sty)) = self.struct_place(base) else { return Ok(None) };
+        let module = self.module;
+        let naga::TypeInner::Struct { members, .. } = &module.types[sty].inner else { return Ok(None) };
+        let m = members.get(i).ok_or_else(|| format!("{name}: the struct has {} members", members.len()))?;
+        if matches!(module.types[m.ty].inner, naga::TypeInner::Struct { .. }) {
+            return Ok(None);
+        }
+        let dual = self.duals.get(at).copied().flatten().or_else(|| field_dual(module, m.ty).and_then(|d| ty(self, &d).ok()));
+        let t = dual.ok_or_else(|| format!("{pname}.{}: a field of type {} the kingdom has no dual for", m.name.as_deref().unwrap_or(""), crate::wgsl::interface::type_text(module, m.ty)))?;
+        let kids = pkids.iter().map(|k| tree_of(self, k)).collect::<Result<Vec<_>, _>>()?;
+        Ok(Some(Tree::new(&member_place(&pname, m.name.as_deref().unwrap_or("")), t, kids)))
+    }
+
+    /// A load of a field of a struct binding (`load.buffer.infos.num_keys`) or
+    /// of a struct-element array's element (`load.buffer.instances.#.data`):
+    /// the interface's row `load.<binding>.<path>`, over the index when the
+    /// binding is an array. None for any other name.
+    fn buffer_field(&mut self, t: &Tree) -> Result<Option<Tree>, String> {
+        let Some((b, path, indexed)) = t.name.strip_prefix("load.buffer.").and_then(|r| struct_field_target(r.split('@').next().unwrap_or(r))) else { return Ok(None) };
+        let row = format!("load.{b}.{path}");
+        let Some((name, inputs, out)) = self.per_kernel_rows.iter().find(|p| p.0 == row).cloned() else {
+            return Err(format!("{} has no safe spelling: the interface has no row {row} (a field of a type the kingdom does not spell)", t.name));
+        };
+        match (indexed, inputs.len(), t.kids.as_slice()) {
+            (false, 0, []) => Ok(Some(Tree::new(&name, out, vec![]))),
+            (true, 1, [i]) => {
+                let i = Tree { ty: ty(self, "u32.index")?, ..self.value(i)? };
+                Ok(Some(Tree::new(&name, out, vec![i])))
+            }
+            _ => Err(format!("{} has no safe spelling: the row {row} takes {} inputs", t.name, inputs.len())),
+        }
+    }
+
+    /// What a struct value stored whole is made of: the members of a
+    /// constructor (through lets) or the struct place it is loaded from.
+    fn struct_source(&self, value: &Node, sty: Handle<naga::Type>) -> Result<StructSource, String> {
+        match self.resolve_lets(value) {
+            Node::App { name, kids, .. } if name.starts_with("naga.Compose.type") => {
+                let naga::TypeInner::Struct { members, .. } = &self.module.types[sty].inner else { return Err("not a struct".into()) };
+                if members.len() != kids.len() {
+                    return Err(format!("{name}: {} operands for a struct of {} members", kids.len(), members.len()));
+                }
+                Ok(StructSource::Compose(kids.clone()))
+            }
+            other => match self.struct_place(other) {
+                Some((pname, pkids, _)) => Ok(StructSource::Place(pname, pkids)),
+                None => Err(format!("a struct written whole from {}: the reader splits a constructor or a struct loaded from a storage binding", other.to_sexpr().chars().take(80).collect::<String>())),
+            },
+        }
+    }
+
+    /// The stores of a struct's members to the place `path` (`buffer.dst.#`) at
+    /// `idx`, a nested struct's members in turn.
+    fn store_struct(&mut self, path: &str, idx: Option<&Tree>, sty: Handle<naga::Type>, src: &StructSource, rung: &str) -> Result<Vec<Tree>, String> {
+        let module = self.module;
+        let naga::TypeInner::Struct { members, .. } = &module.types[sty].inner else { return Err("not a struct".into()) };
+        let mut out = Vec::new();
+        for (k, m) in members.iter().enumerate() {
+            let mn = m.name.clone().unwrap_or_else(|| format!("f{k}"));
+            let member_path = format!("{path}.{mn}");
+            let nested = matches!(module.types[m.ty].inner, naga::TypeInner::Struct { .. });
+            let (sub, value): (Option<StructSource>, Option<Tree>) = match src {
+                StructSource::Compose(kids) => {
+                    if nested {
+                        (Some(self.struct_source(&kids[k], m.ty)?), None)
+                    } else {
+                        (None, Some(tree_of(self, &kids[k])?))
+                    }
+                }
+                StructSource::Place(pname, pkids) => {
+                    let place = member_place(pname, &mn);
+                    if nested {
+                        (Some(StructSource::Place(place, pkids.clone())), None)
+                    } else {
+                        let dual = field_dual(module, m.ty).ok_or_else(|| format!("{member_path}: a member of type {} the kingdom has no dual for", crate::wgsl::interface::type_text(module, m.ty)))?;
+                        let kids = pkids.iter().map(|k| tree_of(self, k)).collect::<Result<Vec<_>, _>>()?;
+                        (None, Some(Tree::new(&place, ty(self, &dual)?, kids)))
+                    }
+                }
+            };
+            if let Some(sub) = sub {
+                out.extend(self.store_struct(&member_path, idx, m.ty, &sub, rung)?);
+            } else if let Some(v) = value {
+                let kids: Vec<Tree> = idx.into_iter().cloned().chain([v]).collect();
+                let t = Tree::new(&format!("store.{member_path}"), self.stmt_ty(rung)?, kids);
+                out.extend(self.store(&t, rung)?);
+            }
+        }
+        Ok(out)
+    }
+
+    /// A field of a uniform block other than the first (or of any block, when
+    /// the field has no kingdom role): the interface's row `load.<var>_<field>`.
+    /// A leaf `load.uniform.<var>.<field>` is the field's value; with an index
+    /// (`load.uniform.<var>.<field>.#`) a lane of a vector field (a literal
+    /// lane `shape.access_N`, else `shape.at`) or the element of an array
+    /// field (the row takes the index). None for any other name.
+    fn other_uniform(&mut self, t: &Tree) -> Result<Option<Tree>, String> {
+        let Some(rest) = t.name.strip_prefix("load.uniform.").filter(|r| !r.starts_with("cfg.")) else { return Ok(None) };
+        let Some((var, tail)) = rest.split_once('.') else { return Ok(None) };
+        let (field, indexes) = match tail.find(".#") {
+            Some(i) => (&tail[..i], tail[i..].matches('#').count()),
+            None => (tail, 0),
+        };
+        if field.contains(['.', '#', '@']) || tail[field.len()..] != ".#".repeat(indexes) {
+            return Err(format!("{} has no safe spelling: a uniform field read through a path the reader does not spell", t.name));
+        }
+        let row = format!("load.{var}_{field}");
+        let Some((name, inputs, out)) = self.per_kernel_rows.iter().find(|p| p.0 == row).cloned() else {
+            return Err(format!("uniform field {var}.{field}: the interface has no row {row}"));
+        };
+        let lane = |ctx: &mut Self, whole: Tree, j: &Tree| -> Result<Tree, String> {
+            Ok(match literal_value(j) {
+                Some(l) if l >= 0.0 && l.fract() == 0.0 => Tree::new(&format!("shape.access_{}", l as u32), t.ty, vec![whole]),
+                _ => Tree::new("shape.at", t.ty, vec![whole, ctx.value(j)?]),
+            })
+        };
+        match (inputs.len(), indexes, t.kids.as_slice()) {
+            (0, 0, []) => Ok(Some(Tree::new(&name, out, vec![]))),
+            (1, 1, [i]) => Ok(Some(Tree::new(&name, out, vec![Tree { ty: ty(self, "u32.index")?, ..self.value(i)? }]))),
+            (0, 1, [j]) => Ok(Some(lane(self, Tree::new(&name, out, vec![]), j)?)),
+            (1, 2, [n]) if n.name == "naga.NestedAccess" && n.kids.len() == 2 => {
+                let whole = Tree::new(&name, out, vec![Tree { ty: ty(self, "u32.index")?, ..self.value(&n.kids[0])? }]);
+                Ok(Some(lane(self, whole, &n.kids[1])?))
+            }
+            _ => Err(format!("{} has no safe spelling: the row {row} takes {} inputs", t.name, inputs.len())),
+        }
     }
 
     /// A uniform field without a kingdom role: the interface's row of its
@@ -4595,6 +4845,27 @@ impl<'a> Ctx<'a> {
     /// ordinary store.
     fn store_root(&mut self, node: &Node, rung: &str) -> Result<Vec<Tree>, String> {
         if let Node::App { name, kids, .. } = node {
+            // A struct written whole to a storage binding (`dst[i] = Out(..)`,
+            // `dst[i] = src[i]`): one store of each member.
+            if let Some(rest) = name.strip_prefix("store.buffer.").filter(|r| !r.contains('@')) {
+                let mut it = rest.split('.');
+                let b = it.next().unwrap_or("");
+                let segs: Vec<&str> = it.collect();
+                let module = self.module;
+                if let Some(sty) = place_type(module, b, &segs).filter(|t| matches!(module.types[*t].inner, naga::TypeInner::Struct { .. })) {
+                    let (idx, value) = match kids.as_slice() {
+                        [i, v] => (Some(i), v),
+                        [v] => (None, v),
+                        _ => return Err(format!("{name}: {} operands", kids.len())),
+                    };
+                    let idx = match idx {
+                        Some(i) => Some(Tree { ty: ty(self, "u32.index")?, ..tree_of(self, i)? }),
+                        None => None,
+                    };
+                    let src = self.struct_source(value, sty)?;
+                    return self.store_struct(&format!("buffer.{rest}"), idx.as_ref(), sty, &src, rung);
+                }
+            }
             // A local array zeroed whole (naga 30 zeroes `var a: array<T, N>;`
             // declared in a loop at every pass, as WGSL does; naga 0.20 left the
             // store out): each element set to its zero, as a helper's local
@@ -4720,6 +4991,35 @@ impl<'a> Ctx<'a> {
         // A store of an output at any index (an inferred interface's
         // `store.<binding>_<rung>`; layer 7 of the checker proves its write
         // set), under the thread guard of a leading return as h's is.
+        // A field of a struct-element array's element or of a struct binding
+        // (`store.buffer.instances.#.transform`, `store.buffer.infos.even_pass`)
+        // is the row `store.<binding>.<path>_<rung>`, over the index when the
+        // binding is an array.
+        if let Some((b, path, indexed)) = name.strip_prefix("store.buffer.").and_then(struct_field_target) {
+            let row = format!("store.{b}.{path}");
+            if self.per_kernel_rows.iter().any(|(n, _, _)| *n == format!("{row}_{rung}")) {
+                let (index, value) = match (indexed, tree.kids.as_slice()) {
+                    (true, [idx, value]) => (Some(idx), value),
+                    (false, [value]) => (None, value),
+                    _ => return Err(format!("a store to {b}.{path} with {} operands", tree.kids.len())),
+                };
+                let i = match index {
+                    Some(idx) => Some(Tree { ty: ty(self, "u32.index")?, ..self.value(idx)? }),
+                    None => None,
+                };
+                let v = self.value(value)?;
+                let store = |ctx: &Self, r: &str| -> Result<Tree, String> { Ok(Tree::new(&format!("{row}_{r}"), ctx.stmt_ty(r)?, i.iter().cloned().chain([v.clone()]).collect())) };
+                return match self.guard.clone() {
+                    Some(g) => {
+                        let crung = format!("C{}", &rung[1..]);
+                        let inner = self.block(vec![store(self, &crung)?], &crung)?;
+                        Ok(Some(Tree::new(&format!("stmt.if_{rung}"), st, vec![g, inner])))
+                    }
+                    None => Ok(Some(store(self, rung)?)),
+                };
+            }
+            return Err(format!("store {name} has no safe spelling: the interface has no row {row}_{rung} (a field of a type the kingdom does not spell, or a binding the kernel does not write)"));
+        }
         if let Some(b) = name.strip_prefix("store.buffer.").and_then(|r| r.split('.').next()) {
             if self.per_kernel_rows.iter().any(|(n, _, _)| *n == format!("store.{b}_{rung}")) {
                 let [idx, value] = tree.kids.as_slice() else { return Err(format!("a store to {b} without an index")) };
@@ -8123,6 +8423,47 @@ fn ingest(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) w
         let out = crate::wgsl::safe_karva::render_tree_with(&r.tree, &k, &r.role).unwrap_or_else(|e| panic!("{e}"));
         validate_text(&out.text).unwrap_or_else(|e| panic!("{e}\n{}", out.text));
         assert!(out.text.contains("arrayLength(&src)") && out.text.contains("arrayLength(&dst)"), "{}", out.text);
+        let back = read_safe(&out.text, &k).unwrap_or_else(|e| panic!("read back: {e}\n{}", out.text));
+        assert!(back.tree == r.tree, "{:?}\n{}", crate::wgsl::render::first_difference(&r.tree, &back.tree), out.text);
+        let checker = crate::wgsl::check::Checker::with_contract(&k, &r.role, &crate::wgsl::target::Target::recorded(), contract);
+        checker.check(&r.tree).unwrap_or_else(|e| panic!("{e}\n{}", out.text));
+    }
+
+    /// UNIFORM FIELDS OF ANY STRUCT, AND STRUCT-ELEMENT BINDINGS (2026-10-19;
+    /// cuneus's `meshlab_swarm`, `instances` and `skin`): two uniform blocks
+    /// of fields of any type (a `vec3<f32>` lane, an array element), a
+    /// struct-element storage array written a field at a time and as a whole
+    /// from a constructor or from another element, and read through a `let`
+    /// of the element. Reads, renders, naga validates it, reads back to the
+    /// same tree and passes every layer.
+    #[test]
+    fn uniform_blocks_and_struct_element_bindings_of_any_shape_read() {
+        let k = WgslKingdom::load_safe();
+        let contract = crate::wgsl::safety::Contract::parse("workgroups x 1 1024\nworkgroups y 1 1\nworkgroups z 1 1\n").unwrap();
+        let src = "struct Time { t: f32, n: u32 };
+@group(0) @binding(0) var<uniform> u_time: Time;
+struct Swarm { count: u32, spread: f32, center: vec3<f32>, planes: array<vec4<f32>, 6> };
+@group(1) @binding(1) var<uniform> swarm: Swarm;
+struct Item { m: mat4x4<f32>, d: vec4<f32>, id: u32 };
+@group(2) @binding(0) var<storage, read> src: array<Item>;
+@group(3) @binding(0) var<storage, read_write> dst: array<Item>;
+@compute @workgroup_size(64, 1, 1)
+fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let i = gid.x;
+    if i >= swarm.count || i >= arrayLength(&src) { return; }
+    let s = src[i];
+    let e = Item(s.m, s.d * u_time.t + vec4<f32>(swarm.center, swarm.planes[2u].w), s.id + u_time.n);
+    if i % 2u == 0u { dst[i] = e; } else { dst[i] = src[i]; }
+    dst[i].d = vec4<f32>(swarm.spread * swarm.center.y);
+}
+";
+        let r = read_safe(src, &k).unwrap_or_else(|e| panic!("{e}"));
+        let sx = r.tree.to_sexpr();
+        for want in ["load.swarm_count", "load.swarm_center", "load.swarm_planes", "load.u_time_t", "len.src", "load.src.m", "store.dst.d_", "store.dst.id_"] {
+            assert!(sx.contains(want), "{want} missing from {sx}");
+        }
+        let out = crate::wgsl::safe_karva::render_tree_with(&r.tree, &k, &r.role).unwrap_or_else(|e| panic!("{e}"));
+        validate_text(&out.text).unwrap_or_else(|e| panic!("{e}\n{}", out.text));
         let back = read_safe(&out.text, &k).unwrap_or_else(|e| panic!("read back: {e}\n{}", out.text));
         assert!(back.tree == r.tree, "{:?}\n{}", crate::wgsl::render::first_difference(&r.tree, &back.tree), out.text);
         let checker = crate::wgsl::check::Checker::with_contract(&k, &r.role, &crate::wgsl::target::Target::recorded(), contract);

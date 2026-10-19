@@ -106,6 +106,60 @@ fn renumbered(text: &str) -> String {
     renamed
 }
 
+/// A role as the snapshot recorded it (naga 0.20, 2026-10-19 morning): the
+/// fields without their types, and none of the interface's later growth: the
+/// structs and the other uniform blocks, the rows of a runtime-sized array's
+/// length (`len.<binding>`), of a struct binding's leaves, of another uniform
+/// block's fields and of an array or matrix field of the first. What naga
+/// read of a kernel is what the digest holds.
+fn legacy_role(role: &crate::wgsl::render::Role) -> String {
+    // (Written field by field, as the derived Debug of the earlier Role did.)
+    struct Legacy<'a> {
+        role: &'a crate::wgsl::render::Role,
+        prologue: String,
+        per_kernel: Vec<&'a crate::wgsl::render::PerKernel>,
+    }
+    struct LegacyField<'a>(&'a crate::wgsl::render::Field);
+    impl std::fmt::Debug for LegacyField<'_> {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("Field").field("name", &self.0.name).field("role", &self.0.role).finish()
+        }
+    }
+    impl std::fmt::Debug for Legacy<'_> {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            let r = self.role;
+            let fields: Vec<LegacyField> = r.fields.iter().map(LegacyField).collect();
+            f.debug_struct("Role")
+                .field("name", &r.name)
+                .field("prologue", &self.prologue)
+                .field("items", &r.items)
+                .field("per_kernel", &self.per_kernel)
+                .field("bindings", &r.bindings)
+                .field("uniform_var", &r.uniform_var)
+                .field("uniform_struct", &r.uniform_struct)
+                .field("fields", &fields)
+                .field("input", &r.input)
+                .field("output", &r.output)
+                .field("guard", &"")
+                .field("entry", &r.entry)
+                .field("entries", &r.entries)
+                .finish()
+        }
+    }
+    let later_var = |n: &str, prefix: &str| role.more_uniforms.iter().any(|u| n.strip_prefix(prefix).is_some_and(|r| r.starts_with(&format!("{}_", u.var))));
+    let later_field = |n: &str| {
+        role.fields.iter().filter(|f| f.ty.starts_with("array<") || f.ty.starts_with("mat")).any(|f| n == format!("load.{}_{}", role.uniform_var, f.name))
+    };
+    let per_kernel = role.per_kernel.iter().filter(|p| {
+        let n = p.name.as_str();
+        let leaf = ["load.", "store.", "atomic."].iter().any(|pre| n.strip_prefix(pre).is_some_and(|r| r.contains('.')));
+        !(n.starts_with("len.") || leaf || later_var(n, "load.") || later_var(n, "uniform.") || later_field(n))
+    });
+    // (The prologue's struct lines as the Gram's u32 fields wrote them.)
+    let prologue = role.prologue.lines().filter(|l| !l.starts_with("struct ") || role.fields.iter().all(|f| f.ty == "u32") && l.starts_with(&format!("struct {} ", role.uniform_struct))).collect::<Vec<_>>().join("\n");
+    format!("{:?}", Legacy { role, prologue, per_kernel: per_kernel.collect() })
+}
+
 /// One kernel's line.
 pub fn line(file: &str, text: &str, kingdom: &WgslKingdom) -> serde_json::Value {
     let scaffold = match crate::wgsl::reader::read(text) {
@@ -117,12 +171,7 @@ pub fn line(file: &str, text: &str, kingdom: &WgslKingdom) -> serde_json::Value 
         Err(e) => serde_json::json!({ "refused": e }),
     };
     let safe = match crate::wgsl::safe_reader::read_safe(text, kingdom) {
-        Ok(r) => {
-            // (The rows the kingdom added to an interface after the snapshot,
-            // `len.<binding>` of 2026-10-19, are not what naga read.)
-            let per_kernel = r.role.per_kernel.iter().filter(|p| !p.name.starts_with("len.")).cloned().collect();
-            serde_json::json!({ "tree": r.tree.to_sexpr(), "role": format!("{:?}", crate::wgsl::render::Role { guard: String::new(), per_kernel, ..r.role }) })
-        }
+        Ok(r) => serde_json::json!({ "tree": r.tree.to_sexpr(), "role": legacy_role(&r.role) }),
         Err(e) => serde_json::json!({ "refused": e }),
     };
     let scaffold: serde_json::Value = serde_json::from_str(&renumbered(&scaffold.to_string())).expect("the renumbered reading is JSON");

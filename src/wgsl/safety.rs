@@ -1485,6 +1485,23 @@ impl<'m> An<'m> {
         }
     }
 
+    /// The paths a pointer path stands for: an element of an array of structs
+    /// (or a struct global) accessed whole is each of its members at that
+    /// element (a whole-struct load or store touches every member); any other
+    /// path is itself.
+    fn member_paths(&self, g: Handle<naga::GlobalVariable>, path: &[Abs]) -> Vec<Vec<Abs>> {
+        let ty = self.module.global_variables[g].ty;
+        let at = match (&self.module.types[ty].inner, path.len()) {
+            (TypeInner::Array { base, .. }, 1) => Some(*base),
+            (TypeInner::Struct { .. }, 0) => Some(ty),
+            _ => None,
+        };
+        match at.map(|t| &self.module.types[t].inner) {
+            Some(TypeInner::Struct { members, .. }) => (0..members.len()).map(|f| path.iter().cloned().chain([Abs::Lin(Lin::konst(Poly::konst(f as i128)))]).collect()).collect(),
+            _ => vec![path.to_vec()],
+        }
+    }
+
     /// The flat element index of a pointer path into a global (scalar units):
     /// `[i]` on an array, `[i][lane]` on an array of vectors; a whole vector
     /// element is its lanes as a digit.
@@ -1505,7 +1522,7 @@ impl<'m> An<'m> {
                 }
             }
         }
-        let alloc = format!("{name}{member}");
+        let mut alloc = format!("{name}{member}");
         let lanes_of = |module: &Module, t: Handle<naga::Type>| -> u32 {
             match &module.types[t].inner {
                 TypeInner::Vector { size, .. } => *size as u32,
@@ -1514,8 +1531,21 @@ impl<'m> An<'m> {
         };
         match self.module.types[ty].inner.clone() {
             TypeInner::Array { base, .. } => {
-                let lanes = lanes_of(self.module, base);
                 let i = rest.next().cloned().unwrap_or(Abs::Lin(Lin::default()));
+                // An array of structs: each member is an allocation of its own
+                // (`dst.m1`), indexed by the element, and a member that is a
+                // vector has its lane after it.
+                let mut base = base;
+                if let TypeInner::Struct { members, .. } = &self.module.types[base].inner {
+                    if let Some(Abs::Lin(m)) = rest.next() {
+                        let f = m.k.as_const().unwrap_or(0) as usize;
+                        if let Some(mm) = members.get(f) {
+                            alloc = format!("{alloc}.m{f}");
+                            base = mm.ty;
+                        }
+                    }
+                }
+                let lanes = lanes_of(self.module, base);
                 let lane = rest.next().cloned();
                 let flat = match (i, lane, lanes) {
                     (i, None, 1) => i,
@@ -1890,6 +1920,20 @@ impl<'m> An<'m> {
                     }
                     AddressSpace::Storage { .. } => {
                         let role = self.binding_use(g);
+                        let paths = self.member_paths(g, &p.path);
+                        if paths.len() > 1 {
+                            // A struct loaded whole: a read of each member.
+                            let kind = if self.atomic_global(g) { Kind::Atomic } else { Kind::Read };
+                            let access = self.load_access(fr, h);
+                            for path in paths {
+                                let (alloc, idx) = self.flat_index(g, &path);
+                                let key = format!("{}:{}:{alloc}", self.frames[fr].ctx, h.index());
+                                if role != Some(Use::Input) || self.aliased_with_output(&name) {
+                                    self.site(key, &alloc, kind, idx, false, access);
+                                }
+                            }
+                            return self.other(false, false, false);
+                        }
                         let (alloc, idx) = self.flat_index(g, &p.path);
                         if role == Some(Use::Input) && !self.aliased_with_output(&name) {
                             let (iinv, iuni) = self.info(&idx);
@@ -2404,9 +2448,11 @@ impl<'m> An<'m> {
                     }
                     AddressSpace::Storage { .. } => {
                         let kind = if self.atomic_global(g) { Kind::Atomic } else { kind };
-                        let (alloc, idx) = self.flat_index(g, &p.path);
                         let access = ptr.map(|h| (self.frames[fr].func as *const Function as usize, h));
-                        self.site(ctx.to_string(), &alloc, kind, idx, false, access);
+                        for path in self.member_paths(g, &p.path) {
+                            let (alloc, idx) = self.flat_index(g, &path);
+                            self.site(ctx.to_string(), &alloc, kind, idx, false, access);
+                        }
                     }
                     AddressSpace::WorkGroup => {
                         // (atomicStore is a Store to an atomic: an atomic access.)
