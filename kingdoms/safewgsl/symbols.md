@@ -3356,194 +3356,345 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 | F1823 | `reg.C5` | `composite` | `-` | `reg<vec3<f32>>.real` | 0 | a vec3<f32> register |
 | F1824 | `reg.C6` | `composite` | `-` | `reg<vec3<f32>>.real` | 0 | a vec3<f32> register |
 | F1825 | `reg.C7` | `composite` | `-` | `reg<vec3<f32>>.real` | 0 | a vec3<f32> register |
-| F1826 | `reg.get_C` | `composite` | `reg<vec3<f32>>.real` | `vec3<f32>.real` | 1 | the register's value |
-| F1827 | `reg.set_C_L0` | `composite` | `reg<vec3<f32>>.real vec3<f32>.real` | `stmt.L0` | 2 |  |
-| F1828 | `reg.set_C_L1` | `composite` | `reg<vec3<f32>>.real vec3<f32>.real` | `stmt.L1` | 2 |  |
-| F1829 | `reg.set_C_L2` | `composite` | `reg<vec3<f32>>.real vec3<f32>.real` | `stmt.L2` | 2 |  |
-| F1830 | `reg.set_C_L3` | `composite` | `reg<vec3<f32>>.real vec3<f32>.real` | `stmt.L3` | 2 |  |
-| F1831 | `reg.set_C_L4` | `composite` | `reg<vec3<f32>>.real vec3<f32>.real` | `stmt.L4` | 2 |  |
-| F1832 | `reg.set_C_C0` | `composite` | `reg<vec3<f32>>.real vec3<f32>.real` | `stmt.C0` | 2 |  |
-| F1833 | `reg.set_C_C1` | `composite` | `reg<vec3<f32>>.real vec3<f32>.real` | `stmt.C1` | 2 |  |
-| F1834 | `reg.set_C_C2` | `composite` | `reg<vec3<f32>>.real vec3<f32>.real` | `stmt.C2` | 2 |  |
-| F1835 | `reg.set_C_C3` | `composite` | `reg<vec3<f32>>.real vec3<f32>.real` | `stmt.C3` | 2 |  |
-| F1836 | `reg.set_C_C4` | `composite` | `reg<vec3<f32>>.real vec3<f32>.real` | `stmt.C4` | 2 |  |
-| F1837 | `reg.set_C_L5` | `composite` | `reg<vec3<f32>>.real vec3<f32>.real` | `stmt.L5` | 2 |  |
-| F1838 | `reg.set_C_C5` | `composite` | `reg<vec3<f32>>.real vec3<f32>.real` | `stmt.C5` | 2 |  |
-| F1839 | `reg.D0` | `composite` | `-` | `reg<vec2<i32>>.int` | 0 | a vec2<i32> register |
-| F1840 | `reg.D1` | `composite` | `-` | `reg<vec2<i32>>.int` | 0 | a vec2<i32> register |
-| F1841 | `reg.D2` | `composite` | `-` | `reg<vec2<i32>>.int` | 0 | a vec2<i32> register |
-| F1842 | `reg.D3` | `composite` | `-` | `reg<vec2<i32>>.int` | 0 | a vec2<i32> register |
-| F1843 | `reg.D4` | `composite` | `-` | `reg<vec2<i32>>.int` | 0 | a vec2<i32> register |
-| F1844 | `reg.D5` | `composite` | `-` | `reg<vec2<i32>>.int` | 0 | a vec2<i32> register |
-| F1845 | `reg.D6` | `composite` | `-` | `reg<vec2<i32>>.int` | 0 | a vec2<i32> register |
-| F1846 | `reg.D7` | `composite` | `-` | `reg<vec2<i32>>.int` | 0 | a vec2<i32> register |
-| F1847 | `reg.get_D` | `composite` | `reg<vec2<i32>>.int` | `vec2<i32>.int` | 1 | the register's value |
-| F1848 | `reg.set_D_L0` | `composite` | `reg<vec2<i32>>.int vec2<i32>.int` | `stmt.L0` | 2 |  |
-| F1849 | `reg.set_D_L1` | `composite` | `reg<vec2<i32>>.int vec2<i32>.int` | `stmt.L1` | 2 |  |
-| F1850 | `reg.set_D_L2` | `composite` | `reg<vec2<i32>>.int vec2<i32>.int` | `stmt.L2` | 2 |  |
-| F1851 | `reg.set_D_L3` | `composite` | `reg<vec2<i32>>.int vec2<i32>.int` | `stmt.L3` | 2 |  |
-| F1852 | `reg.set_D_L4` | `composite` | `reg<vec2<i32>>.int vec2<i32>.int` | `stmt.L4` | 2 |  |
-| F1853 | `reg.set_D_C0` | `composite` | `reg<vec2<i32>>.int vec2<i32>.int` | `stmt.C0` | 2 |  |
-| F1854 | `reg.set_D_C1` | `composite` | `reg<vec2<i32>>.int vec2<i32>.int` | `stmt.C1` | 2 |  |
-| F1855 | `reg.set_D_C2` | `composite` | `reg<vec2<i32>>.int vec2<i32>.int` | `stmt.C2` | 2 |  |
-| F1856 | `reg.set_D_C3` | `composite` | `reg<vec2<i32>>.int vec2<i32>.int` | `stmt.C3` | 2 |  |
-| F1857 | `reg.set_D_C4` | `composite` | `reg<vec2<i32>>.int vec2<i32>.int` | `stmt.C4` | 2 |  |
-| F1858 | `reg.set_D_L5` | `composite` | `reg<vec2<i32>>.int vec2<i32>.int` | `stmt.L5` | 2 |  |
-| F1859 | `reg.set_D_C5` | `composite` | `reg<vec2<i32>>.int vec2<i32>.int` | `stmt.C5` | 2 |  |
-| F1860 | `reg.E0` | `composite` | `-` | `reg<vec3<i32>>.int` | 0 | a vec3<i32> register |
-| F1861 | `reg.E1` | `composite` | `-` | `reg<vec3<i32>>.int` | 0 | a vec3<i32> register |
-| F1862 | `reg.E2` | `composite` | `-` | `reg<vec3<i32>>.int` | 0 | a vec3<i32> register |
-| F1863 | `reg.E3` | `composite` | `-` | `reg<vec3<i32>>.int` | 0 | a vec3<i32> register |
-| F1864 | `reg.E4` | `composite` | `-` | `reg<vec3<i32>>.int` | 0 | a vec3<i32> register |
-| F1865 | `reg.E5` | `composite` | `-` | `reg<vec3<i32>>.int` | 0 | a vec3<i32> register |
-| F1866 | `reg.E6` | `composite` | `-` | `reg<vec3<i32>>.int` | 0 | a vec3<i32> register |
-| F1867 | `reg.E7` | `composite` | `-` | `reg<vec3<i32>>.int` | 0 | a vec3<i32> register |
-| F1868 | `reg.get_E` | `composite` | `reg<vec3<i32>>.int` | `vec3<i32>.int` | 1 | the register's value |
-| F1869 | `reg.set_E_L0` | `composite` | `reg<vec3<i32>>.int vec3<i32>.int` | `stmt.L0` | 2 |  |
-| F1870 | `reg.set_E_L1` | `composite` | `reg<vec3<i32>>.int vec3<i32>.int` | `stmt.L1` | 2 |  |
-| F1871 | `reg.set_E_L2` | `composite` | `reg<vec3<i32>>.int vec3<i32>.int` | `stmt.L2` | 2 |  |
-| F1872 | `reg.set_E_L3` | `composite` | `reg<vec3<i32>>.int vec3<i32>.int` | `stmt.L3` | 2 |  |
-| F1873 | `reg.set_E_L4` | `composite` | `reg<vec3<i32>>.int vec3<i32>.int` | `stmt.L4` | 2 |  |
-| F1874 | `reg.set_E_C0` | `composite` | `reg<vec3<i32>>.int vec3<i32>.int` | `stmt.C0` | 2 |  |
-| F1875 | `reg.set_E_C1` | `composite` | `reg<vec3<i32>>.int vec3<i32>.int` | `stmt.C1` | 2 |  |
-| F1876 | `reg.set_E_C2` | `composite` | `reg<vec3<i32>>.int vec3<i32>.int` | `stmt.C2` | 2 |  |
-| F1877 | `reg.set_E_C3` | `composite` | `reg<vec3<i32>>.int vec3<i32>.int` | `stmt.C3` | 2 |  |
-| F1878 | `reg.set_E_C4` | `composite` | `reg<vec3<i32>>.int vec3<i32>.int` | `stmt.C4` | 2 |  |
-| F1879 | `reg.set_E_L5` | `composite` | `reg<vec3<i32>>.int vec3<i32>.int` | `stmt.L5` | 2 |  |
-| F1880 | `reg.set_E_C5` | `composite` | `reg<vec3<i32>>.int vec3<i32>.int` | `stmt.C5` | 2 |  |
-| F1881 | `reg.F0` | `composite` | `-` | `reg<vec4<i32>>.int` | 0 | a vec4<i32> register |
-| F1882 | `reg.F1` | `composite` | `-` | `reg<vec4<i32>>.int` | 0 | a vec4<i32> register |
-| F1883 | `reg.F2` | `composite` | `-` | `reg<vec4<i32>>.int` | 0 | a vec4<i32> register |
-| F1884 | `reg.F3` | `composite` | `-` | `reg<vec4<i32>>.int` | 0 | a vec4<i32> register |
-| F1885 | `reg.F4` | `composite` | `-` | `reg<vec4<i32>>.int` | 0 | a vec4<i32> register |
-| F1886 | `reg.F5` | `composite` | `-` | `reg<vec4<i32>>.int` | 0 | a vec4<i32> register |
-| F1887 | `reg.F6` | `composite` | `-` | `reg<vec4<i32>>.int` | 0 | a vec4<i32> register |
-| F1888 | `reg.F7` | `composite` | `-` | `reg<vec4<i32>>.int` | 0 | a vec4<i32> register |
-| F1889 | `reg.get_F` | `composite` | `reg<vec4<i32>>.int` | `vec4<i32>.int` | 1 | the register's value |
-| F1890 | `reg.set_F_L0` | `composite` | `reg<vec4<i32>>.int vec4<i32>.int` | `stmt.L0` | 2 |  |
-| F1891 | `reg.set_F_L1` | `composite` | `reg<vec4<i32>>.int vec4<i32>.int` | `stmt.L1` | 2 |  |
-| F1892 | `reg.set_F_L2` | `composite` | `reg<vec4<i32>>.int vec4<i32>.int` | `stmt.L2` | 2 |  |
-| F1893 | `reg.set_F_L3` | `composite` | `reg<vec4<i32>>.int vec4<i32>.int` | `stmt.L3` | 2 |  |
-| F1894 | `reg.set_F_L4` | `composite` | `reg<vec4<i32>>.int vec4<i32>.int` | `stmt.L4` | 2 |  |
-| F1895 | `reg.set_F_C0` | `composite` | `reg<vec4<i32>>.int vec4<i32>.int` | `stmt.C0` | 2 |  |
-| F1896 | `reg.set_F_C1` | `composite` | `reg<vec4<i32>>.int vec4<i32>.int` | `stmt.C1` | 2 |  |
-| F1897 | `reg.set_F_C2` | `composite` | `reg<vec4<i32>>.int vec4<i32>.int` | `stmt.C2` | 2 |  |
-| F1898 | `reg.set_F_C3` | `composite` | `reg<vec4<i32>>.int vec4<i32>.int` | `stmt.C3` | 2 |  |
-| F1899 | `reg.set_F_C4` | `composite` | `reg<vec4<i32>>.int vec4<i32>.int` | `stmt.C4` | 2 |  |
-| F1900 | `reg.set_F_L5` | `composite` | `reg<vec4<i32>>.int vec4<i32>.int` | `stmt.L5` | 2 |  |
-| F1901 | `reg.set_F_C5` | `composite` | `reg<vec4<i32>>.int vec4<i32>.int` | `stmt.C5` | 2 |  |
-| F1902 | `reg.G0` | `composite` | `-` | `reg<vec2<u32>>.index` | 0 | a vec2<u32> register |
-| F1903 | `reg.G1` | `composite` | `-` | `reg<vec2<u32>>.index` | 0 | a vec2<u32> register |
-| F1904 | `reg.G2` | `composite` | `-` | `reg<vec2<u32>>.index` | 0 | a vec2<u32> register |
-| F1905 | `reg.G3` | `composite` | `-` | `reg<vec2<u32>>.index` | 0 | a vec2<u32> register |
-| F1906 | `reg.G4` | `composite` | `-` | `reg<vec2<u32>>.index` | 0 | a vec2<u32> register |
-| F1907 | `reg.G5` | `composite` | `-` | `reg<vec2<u32>>.index` | 0 | a vec2<u32> register |
-| F1908 | `reg.G6` | `composite` | `-` | `reg<vec2<u32>>.index` | 0 | a vec2<u32> register |
-| F1909 | `reg.G7` | `composite` | `-` | `reg<vec2<u32>>.index` | 0 | a vec2<u32> register |
-| F1910 | `reg.get_G` | `composite` | `reg<vec2<u32>>.index` | `vec2<u32>.index` | 1 | the register's value |
-| F1911 | `reg.set_G_L0` | `composite` | `reg<vec2<u32>>.index vec2<u32>.index` | `stmt.L0` | 2 |  |
-| F1912 | `reg.set_G_L1` | `composite` | `reg<vec2<u32>>.index vec2<u32>.index` | `stmt.L1` | 2 |  |
-| F1913 | `reg.set_G_L2` | `composite` | `reg<vec2<u32>>.index vec2<u32>.index` | `stmt.L2` | 2 |  |
-| F1914 | `reg.set_G_L3` | `composite` | `reg<vec2<u32>>.index vec2<u32>.index` | `stmt.L3` | 2 |  |
-| F1915 | `reg.set_G_L4` | `composite` | `reg<vec2<u32>>.index vec2<u32>.index` | `stmt.L4` | 2 |  |
-| F1916 | `reg.set_G_C0` | `composite` | `reg<vec2<u32>>.index vec2<u32>.index` | `stmt.C0` | 2 |  |
-| F1917 | `reg.set_G_C1` | `composite` | `reg<vec2<u32>>.index vec2<u32>.index` | `stmt.C1` | 2 |  |
-| F1918 | `reg.set_G_C2` | `composite` | `reg<vec2<u32>>.index vec2<u32>.index` | `stmt.C2` | 2 |  |
-| F1919 | `reg.set_G_C3` | `composite` | `reg<vec2<u32>>.index vec2<u32>.index` | `stmt.C3` | 2 |  |
-| F1920 | `reg.set_G_C4` | `composite` | `reg<vec2<u32>>.index vec2<u32>.index` | `stmt.C4` | 2 |  |
-| F1921 | `reg.set_G_L5` | `composite` | `reg<vec2<u32>>.index vec2<u32>.index` | `stmt.L5` | 2 |  |
-| F1922 | `reg.set_G_C5` | `composite` | `reg<vec2<u32>>.index vec2<u32>.index` | `stmt.C5` | 2 |  |
-| F1923 | `reg.H0` | `composite` | `-` | `reg<vec3<u32>>.index` | 0 | a vec3<u32> register |
-| F1924 | `reg.H1` | `composite` | `-` | `reg<vec3<u32>>.index` | 0 | a vec3<u32> register |
-| F1925 | `reg.H2` | `composite` | `-` | `reg<vec3<u32>>.index` | 0 | a vec3<u32> register |
-| F1926 | `reg.H3` | `composite` | `-` | `reg<vec3<u32>>.index` | 0 | a vec3<u32> register |
-| F1927 | `reg.H4` | `composite` | `-` | `reg<vec3<u32>>.index` | 0 | a vec3<u32> register |
-| F1928 | `reg.H5` | `composite` | `-` | `reg<vec3<u32>>.index` | 0 | a vec3<u32> register |
-| F1929 | `reg.H6` | `composite` | `-` | `reg<vec3<u32>>.index` | 0 | a vec3<u32> register |
-| F1930 | `reg.H7` | `composite` | `-` | `reg<vec3<u32>>.index` | 0 | a vec3<u32> register |
-| F1931 | `reg.get_H` | `composite` | `reg<vec3<u32>>.index` | `vec3<u32>.index` | 1 | the register's value |
-| F1932 | `reg.set_H_L0` | `composite` | `reg<vec3<u32>>.index vec3<u32>.index` | `stmt.L0` | 2 |  |
-| F1933 | `reg.set_H_L1` | `composite` | `reg<vec3<u32>>.index vec3<u32>.index` | `stmt.L1` | 2 |  |
-| F1934 | `reg.set_H_L2` | `composite` | `reg<vec3<u32>>.index vec3<u32>.index` | `stmt.L2` | 2 |  |
-| F1935 | `reg.set_H_L3` | `composite` | `reg<vec3<u32>>.index vec3<u32>.index` | `stmt.L3` | 2 |  |
-| F1936 | `reg.set_H_L4` | `composite` | `reg<vec3<u32>>.index vec3<u32>.index` | `stmt.L4` | 2 |  |
-| F1937 | `reg.set_H_C0` | `composite` | `reg<vec3<u32>>.index vec3<u32>.index` | `stmt.C0` | 2 |  |
-| F1938 | `reg.set_H_C1` | `composite` | `reg<vec3<u32>>.index vec3<u32>.index` | `stmt.C1` | 2 |  |
-| F1939 | `reg.set_H_C2` | `composite` | `reg<vec3<u32>>.index vec3<u32>.index` | `stmt.C2` | 2 |  |
-| F1940 | `reg.set_H_C3` | `composite` | `reg<vec3<u32>>.index vec3<u32>.index` | `stmt.C3` | 2 |  |
-| F1941 | `reg.set_H_C4` | `composite` | `reg<vec3<u32>>.index vec3<u32>.index` | `stmt.C4` | 2 |  |
-| F1942 | `reg.set_H_L5` | `composite` | `reg<vec3<u32>>.index vec3<u32>.index` | `stmt.L5` | 2 |  |
-| F1943 | `reg.set_H_C5` | `composite` | `reg<vec3<u32>>.index vec3<u32>.index` | `stmt.C5` | 2 |  |
-| F1944 | `reg.J0` | `composite` | `-` | `reg<vec2<bool>>.flag` | 0 | a vec2<bool> register |
-| F1945 | `reg.J1` | `composite` | `-` | `reg<vec2<bool>>.flag` | 0 | a vec2<bool> register |
-| F1946 | `reg.J2` | `composite` | `-` | `reg<vec2<bool>>.flag` | 0 | a vec2<bool> register |
-| F1947 | `reg.J3` | `composite` | `-` | `reg<vec2<bool>>.flag` | 0 | a vec2<bool> register |
-| F1948 | `reg.J4` | `composite` | `-` | `reg<vec2<bool>>.flag` | 0 | a vec2<bool> register |
-| F1949 | `reg.J5` | `composite` | `-` | `reg<vec2<bool>>.flag` | 0 | a vec2<bool> register |
-| F1950 | `reg.J6` | `composite` | `-` | `reg<vec2<bool>>.flag` | 0 | a vec2<bool> register |
-| F1951 | `reg.J7` | `composite` | `-` | `reg<vec2<bool>>.flag` | 0 | a vec2<bool> register |
-| F1952 | `reg.get_J` | `composite` | `reg<vec2<bool>>.flag` | `vec2<bool>.flag` | 1 | the register's value |
-| F1953 | `reg.set_J_L0` | `composite` | `reg<vec2<bool>>.flag vec2<bool>.flag` | `stmt.L0` | 2 |  |
-| F1954 | `reg.set_J_L1` | `composite` | `reg<vec2<bool>>.flag vec2<bool>.flag` | `stmt.L1` | 2 |  |
-| F1955 | `reg.set_J_L2` | `composite` | `reg<vec2<bool>>.flag vec2<bool>.flag` | `stmt.L2` | 2 |  |
-| F1956 | `reg.set_J_L3` | `composite` | `reg<vec2<bool>>.flag vec2<bool>.flag` | `stmt.L3` | 2 |  |
-| F1957 | `reg.set_J_L4` | `composite` | `reg<vec2<bool>>.flag vec2<bool>.flag` | `stmt.L4` | 2 |  |
-| F1958 | `reg.set_J_C0` | `composite` | `reg<vec2<bool>>.flag vec2<bool>.flag` | `stmt.C0` | 2 |  |
-| F1959 | `reg.set_J_C1` | `composite` | `reg<vec2<bool>>.flag vec2<bool>.flag` | `stmt.C1` | 2 |  |
-| F1960 | `reg.set_J_C2` | `composite` | `reg<vec2<bool>>.flag vec2<bool>.flag` | `stmt.C2` | 2 |  |
-| F1961 | `reg.set_J_C3` | `composite` | `reg<vec2<bool>>.flag vec2<bool>.flag` | `stmt.C3` | 2 |  |
-| F1962 | `reg.set_J_C4` | `composite` | `reg<vec2<bool>>.flag vec2<bool>.flag` | `stmt.C4` | 2 |  |
-| F1963 | `reg.set_J_L5` | `composite` | `reg<vec2<bool>>.flag vec2<bool>.flag` | `stmt.L5` | 2 |  |
-| F1964 | `reg.set_J_C5` | `composite` | `reg<vec2<bool>>.flag vec2<bool>.flag` | `stmt.C5` | 2 |  |
-| F1965 | `reg.K0` | `composite` | `-` | `reg<vec3<bool>>.flag` | 0 | a vec3<bool> register |
-| F1966 | `reg.K1` | `composite` | `-` | `reg<vec3<bool>>.flag` | 0 | a vec3<bool> register |
-| F1967 | `reg.K2` | `composite` | `-` | `reg<vec3<bool>>.flag` | 0 | a vec3<bool> register |
-| F1968 | `reg.K3` | `composite` | `-` | `reg<vec3<bool>>.flag` | 0 | a vec3<bool> register |
-| F1969 | `reg.K4` | `composite` | `-` | `reg<vec3<bool>>.flag` | 0 | a vec3<bool> register |
-| F1970 | `reg.K5` | `composite` | `-` | `reg<vec3<bool>>.flag` | 0 | a vec3<bool> register |
-| F1971 | `reg.K6` | `composite` | `-` | `reg<vec3<bool>>.flag` | 0 | a vec3<bool> register |
-| F1972 | `reg.K7` | `composite` | `-` | `reg<vec3<bool>>.flag` | 0 | a vec3<bool> register |
-| F1973 | `reg.get_K` | `composite` | `reg<vec3<bool>>.flag` | `vec3<bool>.flag` | 1 | the register's value |
-| F1974 | `reg.set_K_L0` | `composite` | `reg<vec3<bool>>.flag vec3<bool>.flag` | `stmt.L0` | 2 |  |
-| F1975 | `reg.set_K_L1` | `composite` | `reg<vec3<bool>>.flag vec3<bool>.flag` | `stmt.L1` | 2 |  |
-| F1976 | `reg.set_K_L2` | `composite` | `reg<vec3<bool>>.flag vec3<bool>.flag` | `stmt.L2` | 2 |  |
-| F1977 | `reg.set_K_L3` | `composite` | `reg<vec3<bool>>.flag vec3<bool>.flag` | `stmt.L3` | 2 |  |
-| F1978 | `reg.set_K_L4` | `composite` | `reg<vec3<bool>>.flag vec3<bool>.flag` | `stmt.L4` | 2 |  |
-| F1979 | `reg.set_K_C0` | `composite` | `reg<vec3<bool>>.flag vec3<bool>.flag` | `stmt.C0` | 2 |  |
-| F1980 | `reg.set_K_C1` | `composite` | `reg<vec3<bool>>.flag vec3<bool>.flag` | `stmt.C1` | 2 |  |
-| F1981 | `reg.set_K_C2` | `composite` | `reg<vec3<bool>>.flag vec3<bool>.flag` | `stmt.C2` | 2 |  |
-| F1982 | `reg.set_K_C3` | `composite` | `reg<vec3<bool>>.flag vec3<bool>.flag` | `stmt.C3` | 2 |  |
-| F1983 | `reg.set_K_C4` | `composite` | `reg<vec3<bool>>.flag vec3<bool>.flag` | `stmt.C4` | 2 |  |
-| F1984 | `reg.set_K_L5` | `composite` | `reg<vec3<bool>>.flag vec3<bool>.flag` | `stmt.L5` | 2 |  |
-| F1985 | `reg.set_K_C5` | `composite` | `reg<vec3<bool>>.flag vec3<bool>.flag` | `stmt.C5` | 2 |  |
-| F1986 | `reg.L0` | `composite` | `-` | `reg<vec4<bool>>.flag` | 0 | a vec4<bool> register |
-| F1987 | `reg.L1` | `composite` | `-` | `reg<vec4<bool>>.flag` | 0 | a vec4<bool> register |
-| F1988 | `reg.L2` | `composite` | `-` | `reg<vec4<bool>>.flag` | 0 | a vec4<bool> register |
-| F1989 | `reg.L3` | `composite` | `-` | `reg<vec4<bool>>.flag` | 0 | a vec4<bool> register |
-| F1990 | `reg.L4` | `composite` | `-` | `reg<vec4<bool>>.flag` | 0 | a vec4<bool> register |
-| F1991 | `reg.L5` | `composite` | `-` | `reg<vec4<bool>>.flag` | 0 | a vec4<bool> register |
-| F1992 | `reg.L6` | `composite` | `-` | `reg<vec4<bool>>.flag` | 0 | a vec4<bool> register |
-| F1993 | `reg.L7` | `composite` | `-` | `reg<vec4<bool>>.flag` | 0 | a vec4<bool> register |
-| F1994 | `reg.get_L` | `composite` | `reg<vec4<bool>>.flag` | `vec4<bool>.flag` | 1 | the register's value |
-| F1995 | `reg.set_L_L0` | `composite` | `reg<vec4<bool>>.flag vec4<bool>.flag` | `stmt.L0` | 2 |  |
-| F1996 | `reg.set_L_L1` | `composite` | `reg<vec4<bool>>.flag vec4<bool>.flag` | `stmt.L1` | 2 |  |
-| F1997 | `reg.set_L_L2` | `composite` | `reg<vec4<bool>>.flag vec4<bool>.flag` | `stmt.L2` | 2 |  |
-| F1998 | `reg.set_L_L3` | `composite` | `reg<vec4<bool>>.flag vec4<bool>.flag` | `stmt.L3` | 2 |  |
-| F1999 | `reg.set_L_L4` | `composite` | `reg<vec4<bool>>.flag vec4<bool>.flag` | `stmt.L4` | 2 |  |
-| F2000 | `reg.set_L_C0` | `composite` | `reg<vec4<bool>>.flag vec4<bool>.flag` | `stmt.C0` | 2 |  |
-| F2001 | `reg.set_L_C1` | `composite` | `reg<vec4<bool>>.flag vec4<bool>.flag` | `stmt.C1` | 2 |  |
-| F2002 | `reg.set_L_C2` | `composite` | `reg<vec4<bool>>.flag vec4<bool>.flag` | `stmt.C2` | 2 |  |
-| F2003 | `reg.set_L_C3` | `composite` | `reg<vec4<bool>>.flag vec4<bool>.flag` | `stmt.C3` | 2 |  |
-| F2004 | `reg.set_L_C4` | `composite` | `reg<vec4<bool>>.flag vec4<bool>.flag` | `stmt.C4` | 2 |  |
-| F2005 | `reg.set_L_L5` | `composite` | `reg<vec4<bool>>.flag vec4<bool>.flag` | `stmt.L5` | 2 |  |
-| F2006 | `reg.set_L_C5` | `composite` | `reg<vec4<bool>>.flag vec4<bool>.flag` | `stmt.C5` | 2 |  |
+| F1826 | `reg.C8` | `composite` | `-` | `reg<vec3<f32>>.real` | 0 | a vec3<f32> register |
+| F1827 | `reg.C9` | `composite` | `-` | `reg<vec3<f32>>.real` | 0 | a vec3<f32> register |
+| F1828 | `reg.C10` | `composite` | `-` | `reg<vec3<f32>>.real` | 0 | a vec3<f32> register |
+| F1829 | `reg.C11` | `composite` | `-` | `reg<vec3<f32>>.real` | 0 | a vec3<f32> register |
+| F1830 | `reg.C12` | `composite` | `-` | `reg<vec3<f32>>.real` | 0 | a vec3<f32> register |
+| F1831 | `reg.C13` | `composite` | `-` | `reg<vec3<f32>>.real` | 0 | a vec3<f32> register |
+| F1832 | `reg.C14` | `composite` | `-` | `reg<vec3<f32>>.real` | 0 | a vec3<f32> register |
+| F1833 | `reg.C15` | `composite` | `-` | `reg<vec3<f32>>.real` | 0 | a vec3<f32> register |
+| F1834 | `reg.get_C` | `composite` | `reg<vec3<f32>>.real` | `vec3<f32>.real` | 1 | the register's value |
+| F1835 | `reg.set_C_L0` | `composite` | `reg<vec3<f32>>.real vec3<f32>.real` | `stmt.L0` | 2 |  |
+| F1836 | `reg.set_C_L1` | `composite` | `reg<vec3<f32>>.real vec3<f32>.real` | `stmt.L1` | 2 |  |
+| F1837 | `reg.set_C_L2` | `composite` | `reg<vec3<f32>>.real vec3<f32>.real` | `stmt.L2` | 2 |  |
+| F1838 | `reg.set_C_L3` | `composite` | `reg<vec3<f32>>.real vec3<f32>.real` | `stmt.L3` | 2 |  |
+| F1839 | `reg.set_C_L4` | `composite` | `reg<vec3<f32>>.real vec3<f32>.real` | `stmt.L4` | 2 |  |
+| F1840 | `reg.set_C_C0` | `composite` | `reg<vec3<f32>>.real vec3<f32>.real` | `stmt.C0` | 2 |  |
+| F1841 | `reg.set_C_C1` | `composite` | `reg<vec3<f32>>.real vec3<f32>.real` | `stmt.C1` | 2 |  |
+| F1842 | `reg.set_C_C2` | `composite` | `reg<vec3<f32>>.real vec3<f32>.real` | `stmt.C2` | 2 |  |
+| F1843 | `reg.set_C_C3` | `composite` | `reg<vec3<f32>>.real vec3<f32>.real` | `stmt.C3` | 2 |  |
+| F1844 | `reg.set_C_C4` | `composite` | `reg<vec3<f32>>.real vec3<f32>.real` | `stmt.C4` | 2 |  |
+| F1845 | `reg.set_C_L5` | `composite` | `reg<vec3<f32>>.real vec3<f32>.real` | `stmt.L5` | 2 |  |
+| F1846 | `reg.set_C_C5` | `composite` | `reg<vec3<f32>>.real vec3<f32>.real` | `stmt.C5` | 2 |  |
+| F1847 | `reg.D0` | `composite` | `-` | `reg<vec2<i32>>.int` | 0 | a vec2<i32> register |
+| F1848 | `reg.D1` | `composite` | `-` | `reg<vec2<i32>>.int` | 0 | a vec2<i32> register |
+| F1849 | `reg.D2` | `composite` | `-` | `reg<vec2<i32>>.int` | 0 | a vec2<i32> register |
+| F1850 | `reg.D3` | `composite` | `-` | `reg<vec2<i32>>.int` | 0 | a vec2<i32> register |
+| F1851 | `reg.D4` | `composite` | `-` | `reg<vec2<i32>>.int` | 0 | a vec2<i32> register |
+| F1852 | `reg.D5` | `composite` | `-` | `reg<vec2<i32>>.int` | 0 | a vec2<i32> register |
+| F1853 | `reg.D6` | `composite` | `-` | `reg<vec2<i32>>.int` | 0 | a vec2<i32> register |
+| F1854 | `reg.D7` | `composite` | `-` | `reg<vec2<i32>>.int` | 0 | a vec2<i32> register |
+| F1855 | `reg.D8` | `composite` | `-` | `reg<vec2<i32>>.int` | 0 | a vec2<i32> register |
+| F1856 | `reg.D9` | `composite` | `-` | `reg<vec2<i32>>.int` | 0 | a vec2<i32> register |
+| F1857 | `reg.D10` | `composite` | `-` | `reg<vec2<i32>>.int` | 0 | a vec2<i32> register |
+| F1858 | `reg.D11` | `composite` | `-` | `reg<vec2<i32>>.int` | 0 | a vec2<i32> register |
+| F1859 | `reg.D12` | `composite` | `-` | `reg<vec2<i32>>.int` | 0 | a vec2<i32> register |
+| F1860 | `reg.D13` | `composite` | `-` | `reg<vec2<i32>>.int` | 0 | a vec2<i32> register |
+| F1861 | `reg.D14` | `composite` | `-` | `reg<vec2<i32>>.int` | 0 | a vec2<i32> register |
+| F1862 | `reg.D15` | `composite` | `-` | `reg<vec2<i32>>.int` | 0 | a vec2<i32> register |
+| F1863 | `reg.get_D` | `composite` | `reg<vec2<i32>>.int` | `vec2<i32>.int` | 1 | the register's value |
+| F1864 | `reg.set_D_L0` | `composite` | `reg<vec2<i32>>.int vec2<i32>.int` | `stmt.L0` | 2 |  |
+| F1865 | `reg.set_D_L1` | `composite` | `reg<vec2<i32>>.int vec2<i32>.int` | `stmt.L1` | 2 |  |
+| F1866 | `reg.set_D_L2` | `composite` | `reg<vec2<i32>>.int vec2<i32>.int` | `stmt.L2` | 2 |  |
+| F1867 | `reg.set_D_L3` | `composite` | `reg<vec2<i32>>.int vec2<i32>.int` | `stmt.L3` | 2 |  |
+| F1868 | `reg.set_D_L4` | `composite` | `reg<vec2<i32>>.int vec2<i32>.int` | `stmt.L4` | 2 |  |
+| F1869 | `reg.set_D_C0` | `composite` | `reg<vec2<i32>>.int vec2<i32>.int` | `stmt.C0` | 2 |  |
+| F1870 | `reg.set_D_C1` | `composite` | `reg<vec2<i32>>.int vec2<i32>.int` | `stmt.C1` | 2 |  |
+| F1871 | `reg.set_D_C2` | `composite` | `reg<vec2<i32>>.int vec2<i32>.int` | `stmt.C2` | 2 |  |
+| F1872 | `reg.set_D_C3` | `composite` | `reg<vec2<i32>>.int vec2<i32>.int` | `stmt.C3` | 2 |  |
+| F1873 | `reg.set_D_C4` | `composite` | `reg<vec2<i32>>.int vec2<i32>.int` | `stmt.C4` | 2 |  |
+| F1874 | `reg.set_D_L5` | `composite` | `reg<vec2<i32>>.int vec2<i32>.int` | `stmt.L5` | 2 |  |
+| F1875 | `reg.set_D_C5` | `composite` | `reg<vec2<i32>>.int vec2<i32>.int` | `stmt.C5` | 2 |  |
+| F1876 | `reg.E0` | `composite` | `-` | `reg<vec3<i32>>.int` | 0 | a vec3<i32> register |
+| F1877 | `reg.E1` | `composite` | `-` | `reg<vec3<i32>>.int` | 0 | a vec3<i32> register |
+| F1878 | `reg.E2` | `composite` | `-` | `reg<vec3<i32>>.int` | 0 | a vec3<i32> register |
+| F1879 | `reg.E3` | `composite` | `-` | `reg<vec3<i32>>.int` | 0 | a vec3<i32> register |
+| F1880 | `reg.E4` | `composite` | `-` | `reg<vec3<i32>>.int` | 0 | a vec3<i32> register |
+| F1881 | `reg.E5` | `composite` | `-` | `reg<vec3<i32>>.int` | 0 | a vec3<i32> register |
+| F1882 | `reg.E6` | `composite` | `-` | `reg<vec3<i32>>.int` | 0 | a vec3<i32> register |
+| F1883 | `reg.E7` | `composite` | `-` | `reg<vec3<i32>>.int` | 0 | a vec3<i32> register |
+| F1884 | `reg.E8` | `composite` | `-` | `reg<vec3<i32>>.int` | 0 | a vec3<i32> register |
+| F1885 | `reg.E9` | `composite` | `-` | `reg<vec3<i32>>.int` | 0 | a vec3<i32> register |
+| F1886 | `reg.E10` | `composite` | `-` | `reg<vec3<i32>>.int` | 0 | a vec3<i32> register |
+| F1887 | `reg.E11` | `composite` | `-` | `reg<vec3<i32>>.int` | 0 | a vec3<i32> register |
+| F1888 | `reg.E12` | `composite` | `-` | `reg<vec3<i32>>.int` | 0 | a vec3<i32> register |
+| F1889 | `reg.E13` | `composite` | `-` | `reg<vec3<i32>>.int` | 0 | a vec3<i32> register |
+| F1890 | `reg.E14` | `composite` | `-` | `reg<vec3<i32>>.int` | 0 | a vec3<i32> register |
+| F1891 | `reg.E15` | `composite` | `-` | `reg<vec3<i32>>.int` | 0 | a vec3<i32> register |
+| F1892 | `reg.get_E` | `composite` | `reg<vec3<i32>>.int` | `vec3<i32>.int` | 1 | the register's value |
+| F1893 | `reg.set_E_L0` | `composite` | `reg<vec3<i32>>.int vec3<i32>.int` | `stmt.L0` | 2 |  |
+| F1894 | `reg.set_E_L1` | `composite` | `reg<vec3<i32>>.int vec3<i32>.int` | `stmt.L1` | 2 |  |
+| F1895 | `reg.set_E_L2` | `composite` | `reg<vec3<i32>>.int vec3<i32>.int` | `stmt.L2` | 2 |  |
+| F1896 | `reg.set_E_L3` | `composite` | `reg<vec3<i32>>.int vec3<i32>.int` | `stmt.L3` | 2 |  |
+| F1897 | `reg.set_E_L4` | `composite` | `reg<vec3<i32>>.int vec3<i32>.int` | `stmt.L4` | 2 |  |
+| F1898 | `reg.set_E_C0` | `composite` | `reg<vec3<i32>>.int vec3<i32>.int` | `stmt.C0` | 2 |  |
+| F1899 | `reg.set_E_C1` | `composite` | `reg<vec3<i32>>.int vec3<i32>.int` | `stmt.C1` | 2 |  |
+| F1900 | `reg.set_E_C2` | `composite` | `reg<vec3<i32>>.int vec3<i32>.int` | `stmt.C2` | 2 |  |
+| F1901 | `reg.set_E_C3` | `composite` | `reg<vec3<i32>>.int vec3<i32>.int` | `stmt.C3` | 2 |  |
+| F1902 | `reg.set_E_C4` | `composite` | `reg<vec3<i32>>.int vec3<i32>.int` | `stmt.C4` | 2 |  |
+| F1903 | `reg.set_E_L5` | `composite` | `reg<vec3<i32>>.int vec3<i32>.int` | `stmt.L5` | 2 |  |
+| F1904 | `reg.set_E_C5` | `composite` | `reg<vec3<i32>>.int vec3<i32>.int` | `stmt.C5` | 2 |  |
+| F1905 | `reg.F0` | `composite` | `-` | `reg<vec4<i32>>.int` | 0 | a vec4<i32> register |
+| F1906 | `reg.F1` | `composite` | `-` | `reg<vec4<i32>>.int` | 0 | a vec4<i32> register |
+| F1907 | `reg.F2` | `composite` | `-` | `reg<vec4<i32>>.int` | 0 | a vec4<i32> register |
+| F1908 | `reg.F3` | `composite` | `-` | `reg<vec4<i32>>.int` | 0 | a vec4<i32> register |
+| F1909 | `reg.F4` | `composite` | `-` | `reg<vec4<i32>>.int` | 0 | a vec4<i32> register |
+| F1910 | `reg.F5` | `composite` | `-` | `reg<vec4<i32>>.int` | 0 | a vec4<i32> register |
+| F1911 | `reg.F6` | `composite` | `-` | `reg<vec4<i32>>.int` | 0 | a vec4<i32> register |
+| F1912 | `reg.F7` | `composite` | `-` | `reg<vec4<i32>>.int` | 0 | a vec4<i32> register |
+| F1913 | `reg.F8` | `composite` | `-` | `reg<vec4<i32>>.int` | 0 | a vec4<i32> register |
+| F1914 | `reg.F9` | `composite` | `-` | `reg<vec4<i32>>.int` | 0 | a vec4<i32> register |
+| F1915 | `reg.F10` | `composite` | `-` | `reg<vec4<i32>>.int` | 0 | a vec4<i32> register |
+| F1916 | `reg.F11` | `composite` | `-` | `reg<vec4<i32>>.int` | 0 | a vec4<i32> register |
+| F1917 | `reg.F12` | `composite` | `-` | `reg<vec4<i32>>.int` | 0 | a vec4<i32> register |
+| F1918 | `reg.F13` | `composite` | `-` | `reg<vec4<i32>>.int` | 0 | a vec4<i32> register |
+| F1919 | `reg.F14` | `composite` | `-` | `reg<vec4<i32>>.int` | 0 | a vec4<i32> register |
+| F1920 | `reg.F15` | `composite` | `-` | `reg<vec4<i32>>.int` | 0 | a vec4<i32> register |
+| F1921 | `reg.get_F` | `composite` | `reg<vec4<i32>>.int` | `vec4<i32>.int` | 1 | the register's value |
+| F1922 | `reg.set_F_L0` | `composite` | `reg<vec4<i32>>.int vec4<i32>.int` | `stmt.L0` | 2 |  |
+| F1923 | `reg.set_F_L1` | `composite` | `reg<vec4<i32>>.int vec4<i32>.int` | `stmt.L1` | 2 |  |
+| F1924 | `reg.set_F_L2` | `composite` | `reg<vec4<i32>>.int vec4<i32>.int` | `stmt.L2` | 2 |  |
+| F1925 | `reg.set_F_L3` | `composite` | `reg<vec4<i32>>.int vec4<i32>.int` | `stmt.L3` | 2 |  |
+| F1926 | `reg.set_F_L4` | `composite` | `reg<vec4<i32>>.int vec4<i32>.int` | `stmt.L4` | 2 |  |
+| F1927 | `reg.set_F_C0` | `composite` | `reg<vec4<i32>>.int vec4<i32>.int` | `stmt.C0` | 2 |  |
+| F1928 | `reg.set_F_C1` | `composite` | `reg<vec4<i32>>.int vec4<i32>.int` | `stmt.C1` | 2 |  |
+| F1929 | `reg.set_F_C2` | `composite` | `reg<vec4<i32>>.int vec4<i32>.int` | `stmt.C2` | 2 |  |
+| F1930 | `reg.set_F_C3` | `composite` | `reg<vec4<i32>>.int vec4<i32>.int` | `stmt.C3` | 2 |  |
+| F1931 | `reg.set_F_C4` | `composite` | `reg<vec4<i32>>.int vec4<i32>.int` | `stmt.C4` | 2 |  |
+| F1932 | `reg.set_F_L5` | `composite` | `reg<vec4<i32>>.int vec4<i32>.int` | `stmt.L5` | 2 |  |
+| F1933 | `reg.set_F_C5` | `composite` | `reg<vec4<i32>>.int vec4<i32>.int` | `stmt.C5` | 2 |  |
+| F1934 | `reg.G0` | `composite` | `-` | `reg<vec2<u32>>.index` | 0 | a vec2<u32> register |
+| F1935 | `reg.G1` | `composite` | `-` | `reg<vec2<u32>>.index` | 0 | a vec2<u32> register |
+| F1936 | `reg.G2` | `composite` | `-` | `reg<vec2<u32>>.index` | 0 | a vec2<u32> register |
+| F1937 | `reg.G3` | `composite` | `-` | `reg<vec2<u32>>.index` | 0 | a vec2<u32> register |
+| F1938 | `reg.G4` | `composite` | `-` | `reg<vec2<u32>>.index` | 0 | a vec2<u32> register |
+| F1939 | `reg.G5` | `composite` | `-` | `reg<vec2<u32>>.index` | 0 | a vec2<u32> register |
+| F1940 | `reg.G6` | `composite` | `-` | `reg<vec2<u32>>.index` | 0 | a vec2<u32> register |
+| F1941 | `reg.G7` | `composite` | `-` | `reg<vec2<u32>>.index` | 0 | a vec2<u32> register |
+| F1942 | `reg.G8` | `composite` | `-` | `reg<vec2<u32>>.index` | 0 | a vec2<u32> register |
+| F1943 | `reg.G9` | `composite` | `-` | `reg<vec2<u32>>.index` | 0 | a vec2<u32> register |
+| F1944 | `reg.G10` | `composite` | `-` | `reg<vec2<u32>>.index` | 0 | a vec2<u32> register |
+| F1945 | `reg.G11` | `composite` | `-` | `reg<vec2<u32>>.index` | 0 | a vec2<u32> register |
+| F1946 | `reg.G12` | `composite` | `-` | `reg<vec2<u32>>.index` | 0 | a vec2<u32> register |
+| F1947 | `reg.G13` | `composite` | `-` | `reg<vec2<u32>>.index` | 0 | a vec2<u32> register |
+| F1948 | `reg.G14` | `composite` | `-` | `reg<vec2<u32>>.index` | 0 | a vec2<u32> register |
+| F1949 | `reg.G15` | `composite` | `-` | `reg<vec2<u32>>.index` | 0 | a vec2<u32> register |
+| F1950 | `reg.get_G` | `composite` | `reg<vec2<u32>>.index` | `vec2<u32>.index` | 1 | the register's value |
+| F1951 | `reg.set_G_L0` | `composite` | `reg<vec2<u32>>.index vec2<u32>.index` | `stmt.L0` | 2 |  |
+| F1952 | `reg.set_G_L1` | `composite` | `reg<vec2<u32>>.index vec2<u32>.index` | `stmt.L1` | 2 |  |
+| F1953 | `reg.set_G_L2` | `composite` | `reg<vec2<u32>>.index vec2<u32>.index` | `stmt.L2` | 2 |  |
+| F1954 | `reg.set_G_L3` | `composite` | `reg<vec2<u32>>.index vec2<u32>.index` | `stmt.L3` | 2 |  |
+| F1955 | `reg.set_G_L4` | `composite` | `reg<vec2<u32>>.index vec2<u32>.index` | `stmt.L4` | 2 |  |
+| F1956 | `reg.set_G_C0` | `composite` | `reg<vec2<u32>>.index vec2<u32>.index` | `stmt.C0` | 2 |  |
+| F1957 | `reg.set_G_C1` | `composite` | `reg<vec2<u32>>.index vec2<u32>.index` | `stmt.C1` | 2 |  |
+| F1958 | `reg.set_G_C2` | `composite` | `reg<vec2<u32>>.index vec2<u32>.index` | `stmt.C2` | 2 |  |
+| F1959 | `reg.set_G_C3` | `composite` | `reg<vec2<u32>>.index vec2<u32>.index` | `stmt.C3` | 2 |  |
+| F1960 | `reg.set_G_C4` | `composite` | `reg<vec2<u32>>.index vec2<u32>.index` | `stmt.C4` | 2 |  |
+| F1961 | `reg.set_G_L5` | `composite` | `reg<vec2<u32>>.index vec2<u32>.index` | `stmt.L5` | 2 |  |
+| F1962 | `reg.set_G_C5` | `composite` | `reg<vec2<u32>>.index vec2<u32>.index` | `stmt.C5` | 2 |  |
+| F1963 | `reg.H0` | `composite` | `-` | `reg<vec3<u32>>.index` | 0 | a vec3<u32> register |
+| F1964 | `reg.H1` | `composite` | `-` | `reg<vec3<u32>>.index` | 0 | a vec3<u32> register |
+| F1965 | `reg.H2` | `composite` | `-` | `reg<vec3<u32>>.index` | 0 | a vec3<u32> register |
+| F1966 | `reg.H3` | `composite` | `-` | `reg<vec3<u32>>.index` | 0 | a vec3<u32> register |
+| F1967 | `reg.H4` | `composite` | `-` | `reg<vec3<u32>>.index` | 0 | a vec3<u32> register |
+| F1968 | `reg.H5` | `composite` | `-` | `reg<vec3<u32>>.index` | 0 | a vec3<u32> register |
+| F1969 | `reg.H6` | `composite` | `-` | `reg<vec3<u32>>.index` | 0 | a vec3<u32> register |
+| F1970 | `reg.H7` | `composite` | `-` | `reg<vec3<u32>>.index` | 0 | a vec3<u32> register |
+| F1971 | `reg.H8` | `composite` | `-` | `reg<vec3<u32>>.index` | 0 | a vec3<u32> register |
+| F1972 | `reg.H9` | `composite` | `-` | `reg<vec3<u32>>.index` | 0 | a vec3<u32> register |
+| F1973 | `reg.H10` | `composite` | `-` | `reg<vec3<u32>>.index` | 0 | a vec3<u32> register |
+| F1974 | `reg.H11` | `composite` | `-` | `reg<vec3<u32>>.index` | 0 | a vec3<u32> register |
+| F1975 | `reg.H12` | `composite` | `-` | `reg<vec3<u32>>.index` | 0 | a vec3<u32> register |
+| F1976 | `reg.H13` | `composite` | `-` | `reg<vec3<u32>>.index` | 0 | a vec3<u32> register |
+| F1977 | `reg.H14` | `composite` | `-` | `reg<vec3<u32>>.index` | 0 | a vec3<u32> register |
+| F1978 | `reg.H15` | `composite` | `-` | `reg<vec3<u32>>.index` | 0 | a vec3<u32> register |
+| F1979 | `reg.get_H` | `composite` | `reg<vec3<u32>>.index` | `vec3<u32>.index` | 1 | the register's value |
+| F1980 | `reg.set_H_L0` | `composite` | `reg<vec3<u32>>.index vec3<u32>.index` | `stmt.L0` | 2 |  |
+| F1981 | `reg.set_H_L1` | `composite` | `reg<vec3<u32>>.index vec3<u32>.index` | `stmt.L1` | 2 |  |
+| F1982 | `reg.set_H_L2` | `composite` | `reg<vec3<u32>>.index vec3<u32>.index` | `stmt.L2` | 2 |  |
+| F1983 | `reg.set_H_L3` | `composite` | `reg<vec3<u32>>.index vec3<u32>.index` | `stmt.L3` | 2 |  |
+| F1984 | `reg.set_H_L4` | `composite` | `reg<vec3<u32>>.index vec3<u32>.index` | `stmt.L4` | 2 |  |
+| F1985 | `reg.set_H_C0` | `composite` | `reg<vec3<u32>>.index vec3<u32>.index` | `stmt.C0` | 2 |  |
+| F1986 | `reg.set_H_C1` | `composite` | `reg<vec3<u32>>.index vec3<u32>.index` | `stmt.C1` | 2 |  |
+| F1987 | `reg.set_H_C2` | `composite` | `reg<vec3<u32>>.index vec3<u32>.index` | `stmt.C2` | 2 |  |
+| F1988 | `reg.set_H_C3` | `composite` | `reg<vec3<u32>>.index vec3<u32>.index` | `stmt.C3` | 2 |  |
+| F1989 | `reg.set_H_C4` | `composite` | `reg<vec3<u32>>.index vec3<u32>.index` | `stmt.C4` | 2 |  |
+| F1990 | `reg.set_H_L5` | `composite` | `reg<vec3<u32>>.index vec3<u32>.index` | `stmt.L5` | 2 |  |
+| F1991 | `reg.set_H_C5` | `composite` | `reg<vec3<u32>>.index vec3<u32>.index` | `stmt.C5` | 2 |  |
+| F1992 | `reg.J0` | `composite` | `-` | `reg<vec2<bool>>.flag` | 0 | a vec2<bool> register |
+| F1993 | `reg.J1` | `composite` | `-` | `reg<vec2<bool>>.flag` | 0 | a vec2<bool> register |
+| F1994 | `reg.J2` | `composite` | `-` | `reg<vec2<bool>>.flag` | 0 | a vec2<bool> register |
+| F1995 | `reg.J3` | `composite` | `-` | `reg<vec2<bool>>.flag` | 0 | a vec2<bool> register |
+| F1996 | `reg.J4` | `composite` | `-` | `reg<vec2<bool>>.flag` | 0 | a vec2<bool> register |
+| F1997 | `reg.J5` | `composite` | `-` | `reg<vec2<bool>>.flag` | 0 | a vec2<bool> register |
+| F1998 | `reg.J6` | `composite` | `-` | `reg<vec2<bool>>.flag` | 0 | a vec2<bool> register |
+| F1999 | `reg.J7` | `composite` | `-` | `reg<vec2<bool>>.flag` | 0 | a vec2<bool> register |
+| F2000 | `reg.J8` | `composite` | `-` | `reg<vec2<bool>>.flag` | 0 | a vec2<bool> register |
+| F2001 | `reg.J9` | `composite` | `-` | `reg<vec2<bool>>.flag` | 0 | a vec2<bool> register |
+| F2002 | `reg.J10` | `composite` | `-` | `reg<vec2<bool>>.flag` | 0 | a vec2<bool> register |
+| F2003 | `reg.J11` | `composite` | `-` | `reg<vec2<bool>>.flag` | 0 | a vec2<bool> register |
+| F2004 | `reg.J12` | `composite` | `-` | `reg<vec2<bool>>.flag` | 0 | a vec2<bool> register |
+| F2005 | `reg.J13` | `composite` | `-` | `reg<vec2<bool>>.flag` | 0 | a vec2<bool> register |
+| F2006 | `reg.J14` | `composite` | `-` | `reg<vec2<bool>>.flag` | 0 | a vec2<bool> register |
+| F2007 | `reg.J15` | `composite` | `-` | `reg<vec2<bool>>.flag` | 0 | a vec2<bool> register |
+| F2008 | `reg.get_J` | `composite` | `reg<vec2<bool>>.flag` | `vec2<bool>.flag` | 1 | the register's value |
+| F2009 | `reg.set_J_L0` | `composite` | `reg<vec2<bool>>.flag vec2<bool>.flag` | `stmt.L0` | 2 |  |
+| F2010 | `reg.set_J_L1` | `composite` | `reg<vec2<bool>>.flag vec2<bool>.flag` | `stmt.L1` | 2 |  |
+| F2011 | `reg.set_J_L2` | `composite` | `reg<vec2<bool>>.flag vec2<bool>.flag` | `stmt.L2` | 2 |  |
+| F2012 | `reg.set_J_L3` | `composite` | `reg<vec2<bool>>.flag vec2<bool>.flag` | `stmt.L3` | 2 |  |
+| F2013 | `reg.set_J_L4` | `composite` | `reg<vec2<bool>>.flag vec2<bool>.flag` | `stmt.L4` | 2 |  |
+| F2014 | `reg.set_J_C0` | `composite` | `reg<vec2<bool>>.flag vec2<bool>.flag` | `stmt.C0` | 2 |  |
+| F2015 | `reg.set_J_C1` | `composite` | `reg<vec2<bool>>.flag vec2<bool>.flag` | `stmt.C1` | 2 |  |
+| F2016 | `reg.set_J_C2` | `composite` | `reg<vec2<bool>>.flag vec2<bool>.flag` | `stmt.C2` | 2 |  |
+| F2017 | `reg.set_J_C3` | `composite` | `reg<vec2<bool>>.flag vec2<bool>.flag` | `stmt.C3` | 2 |  |
+| F2018 | `reg.set_J_C4` | `composite` | `reg<vec2<bool>>.flag vec2<bool>.flag` | `stmt.C4` | 2 |  |
+| F2019 | `reg.set_J_L5` | `composite` | `reg<vec2<bool>>.flag vec2<bool>.flag` | `stmt.L5` | 2 |  |
+| F2020 | `reg.set_J_C5` | `composite` | `reg<vec2<bool>>.flag vec2<bool>.flag` | `stmt.C5` | 2 |  |
+| F2021 | `reg.K0` | `composite` | `-` | `reg<vec3<bool>>.flag` | 0 | a vec3<bool> register |
+| F2022 | `reg.K1` | `composite` | `-` | `reg<vec3<bool>>.flag` | 0 | a vec3<bool> register |
+| F2023 | `reg.K2` | `composite` | `-` | `reg<vec3<bool>>.flag` | 0 | a vec3<bool> register |
+| F2024 | `reg.K3` | `composite` | `-` | `reg<vec3<bool>>.flag` | 0 | a vec3<bool> register |
+| F2025 | `reg.K4` | `composite` | `-` | `reg<vec3<bool>>.flag` | 0 | a vec3<bool> register |
+| F2026 | `reg.K5` | `composite` | `-` | `reg<vec3<bool>>.flag` | 0 | a vec3<bool> register |
+| F2027 | `reg.K6` | `composite` | `-` | `reg<vec3<bool>>.flag` | 0 | a vec3<bool> register |
+| F2028 | `reg.K7` | `composite` | `-` | `reg<vec3<bool>>.flag` | 0 | a vec3<bool> register |
+| F2029 | `reg.K8` | `composite` | `-` | `reg<vec3<bool>>.flag` | 0 | a vec3<bool> register |
+| F2030 | `reg.K9` | `composite` | `-` | `reg<vec3<bool>>.flag` | 0 | a vec3<bool> register |
+| F2031 | `reg.K10` | `composite` | `-` | `reg<vec3<bool>>.flag` | 0 | a vec3<bool> register |
+| F2032 | `reg.K11` | `composite` | `-` | `reg<vec3<bool>>.flag` | 0 | a vec3<bool> register |
+| F2033 | `reg.K12` | `composite` | `-` | `reg<vec3<bool>>.flag` | 0 | a vec3<bool> register |
+| F2034 | `reg.K13` | `composite` | `-` | `reg<vec3<bool>>.flag` | 0 | a vec3<bool> register |
+| F2035 | `reg.K14` | `composite` | `-` | `reg<vec3<bool>>.flag` | 0 | a vec3<bool> register |
+| F2036 | `reg.K15` | `composite` | `-` | `reg<vec3<bool>>.flag` | 0 | a vec3<bool> register |
+| F2037 | `reg.get_K` | `composite` | `reg<vec3<bool>>.flag` | `vec3<bool>.flag` | 1 | the register's value |
+| F2038 | `reg.set_K_L0` | `composite` | `reg<vec3<bool>>.flag vec3<bool>.flag` | `stmt.L0` | 2 |  |
+| F2039 | `reg.set_K_L1` | `composite` | `reg<vec3<bool>>.flag vec3<bool>.flag` | `stmt.L1` | 2 |  |
+| F2040 | `reg.set_K_L2` | `composite` | `reg<vec3<bool>>.flag vec3<bool>.flag` | `stmt.L2` | 2 |  |
+| F2041 | `reg.set_K_L3` | `composite` | `reg<vec3<bool>>.flag vec3<bool>.flag` | `stmt.L3` | 2 |  |
+| F2042 | `reg.set_K_L4` | `composite` | `reg<vec3<bool>>.flag vec3<bool>.flag` | `stmt.L4` | 2 |  |
+| F2043 | `reg.set_K_C0` | `composite` | `reg<vec3<bool>>.flag vec3<bool>.flag` | `stmt.C0` | 2 |  |
+| F2044 | `reg.set_K_C1` | `composite` | `reg<vec3<bool>>.flag vec3<bool>.flag` | `stmt.C1` | 2 |  |
+| F2045 | `reg.set_K_C2` | `composite` | `reg<vec3<bool>>.flag vec3<bool>.flag` | `stmt.C2` | 2 |  |
+| F2046 | `reg.set_K_C3` | `composite` | `reg<vec3<bool>>.flag vec3<bool>.flag` | `stmt.C3` | 2 |  |
+| F2047 | `reg.set_K_C4` | `composite` | `reg<vec3<bool>>.flag vec3<bool>.flag` | `stmt.C4` | 2 |  |
+| F2048 | `reg.set_K_L5` | `composite` | `reg<vec3<bool>>.flag vec3<bool>.flag` | `stmt.L5` | 2 |  |
+| F2049 | `reg.set_K_C5` | `composite` | `reg<vec3<bool>>.flag vec3<bool>.flag` | `stmt.C5` | 2 |  |
+| F2050 | `reg.L0` | `composite` | `-` | `reg<vec4<bool>>.flag` | 0 | a vec4<bool> register |
+| F2051 | `reg.L1` | `composite` | `-` | `reg<vec4<bool>>.flag` | 0 | a vec4<bool> register |
+| F2052 | `reg.L2` | `composite` | `-` | `reg<vec4<bool>>.flag` | 0 | a vec4<bool> register |
+| F2053 | `reg.L3` | `composite` | `-` | `reg<vec4<bool>>.flag` | 0 | a vec4<bool> register |
+| F2054 | `reg.L4` | `composite` | `-` | `reg<vec4<bool>>.flag` | 0 | a vec4<bool> register |
+| F2055 | `reg.L5` | `composite` | `-` | `reg<vec4<bool>>.flag` | 0 | a vec4<bool> register |
+| F2056 | `reg.L6` | `composite` | `-` | `reg<vec4<bool>>.flag` | 0 | a vec4<bool> register |
+| F2057 | `reg.L7` | `composite` | `-` | `reg<vec4<bool>>.flag` | 0 | a vec4<bool> register |
+| F2058 | `reg.L8` | `composite` | `-` | `reg<vec4<bool>>.flag` | 0 | a vec4<bool> register |
+| F2059 | `reg.L9` | `composite` | `-` | `reg<vec4<bool>>.flag` | 0 | a vec4<bool> register |
+| F2060 | `reg.L10` | `composite` | `-` | `reg<vec4<bool>>.flag` | 0 | a vec4<bool> register |
+| F2061 | `reg.L11` | `composite` | `-` | `reg<vec4<bool>>.flag` | 0 | a vec4<bool> register |
+| F2062 | `reg.L12` | `composite` | `-` | `reg<vec4<bool>>.flag` | 0 | a vec4<bool> register |
+| F2063 | `reg.L13` | `composite` | `-` | `reg<vec4<bool>>.flag` | 0 | a vec4<bool> register |
+| F2064 | `reg.L14` | `composite` | `-` | `reg<vec4<bool>>.flag` | 0 | a vec4<bool> register |
+| F2065 | `reg.L15` | `composite` | `-` | `reg<vec4<bool>>.flag` | 0 | a vec4<bool> register |
+| F2066 | `reg.get_L` | `composite` | `reg<vec4<bool>>.flag` | `vec4<bool>.flag` | 1 | the register's value |
+| F2067 | `reg.set_L_L0` | `composite` | `reg<vec4<bool>>.flag vec4<bool>.flag` | `stmt.L0` | 2 |  |
+| F2068 | `reg.set_L_L1` | `composite` | `reg<vec4<bool>>.flag vec4<bool>.flag` | `stmt.L1` | 2 |  |
+| F2069 | `reg.set_L_L2` | `composite` | `reg<vec4<bool>>.flag vec4<bool>.flag` | `stmt.L2` | 2 |  |
+| F2070 | `reg.set_L_L3` | `composite` | `reg<vec4<bool>>.flag vec4<bool>.flag` | `stmt.L3` | 2 |  |
+| F2071 | `reg.set_L_L4` | `composite` | `reg<vec4<bool>>.flag vec4<bool>.flag` | `stmt.L4` | 2 |  |
+| F2072 | `reg.set_L_C0` | `composite` | `reg<vec4<bool>>.flag vec4<bool>.flag` | `stmt.C0` | 2 |  |
+| F2073 | `reg.set_L_C1` | `composite` | `reg<vec4<bool>>.flag vec4<bool>.flag` | `stmt.C1` | 2 |  |
+| F2074 | `reg.set_L_C2` | `composite` | `reg<vec4<bool>>.flag vec4<bool>.flag` | `stmt.C2` | 2 |  |
+| F2075 | `reg.set_L_C3` | `composite` | `reg<vec4<bool>>.flag vec4<bool>.flag` | `stmt.C3` | 2 |  |
+| F2076 | `reg.set_L_C4` | `composite` | `reg<vec4<bool>>.flag vec4<bool>.flag` | `stmt.C4` | 2 |  |
+| F2077 | `reg.set_L_L5` | `composite` | `reg<vec4<bool>>.flag vec4<bool>.flag` | `stmt.L5` | 2 |  |
+| F2078 | `reg.set_L_C5` | `composite` | `reg<vec4<bool>>.flag vec4<bool>.flag` | `stmt.C5` | 2 |  |
 
 ## class `kernel`
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F2007 | `kernel.module_ext1` | `composite` | `kernel.module kernel.safe` | `kernel.module` | 2 | arity 2: the module and 1 more entry points, in order after it |
-| F2008 | `kernel.module_ext2` | `composite` | `kernel.module kernel.safe kernel.safe` | `kernel.module` | 3 | arity 3: the module and 2 more entry points, in order after it |
-| F2009 | `kernel.module_ext3` | `composite` | `kernel.module kernel.safe kernel.safe kernel.safe` | `kernel.module` | 4 | arity 4: the module and 3 more entry points, in order after it |
+| F2079 | `kernel.module_ext1` | `composite` | `kernel.module kernel.safe` | `kernel.module` | 2 | arity 2: the module and 1 more entry points, in order after it |
+| F2080 | `kernel.module_ext2` | `composite` | `kernel.module kernel.safe kernel.safe` | `kernel.module` | 3 | arity 3: the module and 2 more entry points, in order after it |
+| F2081 | `kernel.module_ext3` | `composite` | `kernel.module kernel.safe kernel.safe kernel.safe` | `kernel.module` | 4 | arity 4: the module and 3 more entry points, in order after it |
 
-2009 function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Storage-buffer atomics are an interface's per-kernel rows, not rows of this table. Deliberately absent: atomic compare-exchange (naga 0.20's Metal backend lacks it), subgroupBallot, images, derivatives, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.
+## class `reg`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F2082 | `reg.u8` | `composite` | `-` | `reg<vec4<u32>>.bits` | 0 | a register |
+| F2083 | `reg.u9` | `composite` | `-` | `reg<vec4<u32>>.bits` | 0 | a register |
+| F2084 | `reg.u10` | `composite` | `-` | `reg<vec4<u32>>.bits` | 0 | a register |
+| F2085 | `reg.u11` | `composite` | `-` | `reg<vec4<u32>>.bits` | 0 | a register |
+| F2086 | `reg.u12` | `composite` | `-` | `reg<vec4<u32>>.bits` | 0 | a register |
+| F2087 | `reg.u13` | `composite` | `-` | `reg<vec4<u32>>.bits` | 0 | a register |
+| F2088 | `reg.u14` | `composite` | `-` | `reg<vec4<u32>>.bits` | 0 | a register |
+| F2089 | `reg.u15` | `composite` | `-` | `reg<vec4<u32>>.bits` | 0 | a register |
+| F2090 | `reg.w8` | `composite` | `-` | `reg<vec2<f32>>.real` | 0 | a register |
+| F2091 | `reg.w9` | `composite` | `-` | `reg<vec2<f32>>.real` | 0 | a register |
+| F2092 | `reg.w10` | `composite` | `-` | `reg<vec2<f32>>.real` | 0 | a register |
+| F2093 | `reg.w11` | `composite` | `-` | `reg<vec2<f32>>.real` | 0 | a register |
+| F2094 | `reg.w12` | `composite` | `-` | `reg<vec2<f32>>.real` | 0 | a register |
+| F2095 | `reg.w13` | `composite` | `-` | `reg<vec2<f32>>.real` | 0 | a register |
+| F2096 | `reg.w14` | `composite` | `-` | `reg<vec2<f32>>.real` | 0 | a register |
+| F2097 | `reg.w15` | `composite` | `-` | `reg<vec2<f32>>.real` | 0 | a register |
+| F2098 | `reg.x2` | `composite` | `-` | `reg<mat2x2<f32>>.real` | 0 | a register |
+| F2099 | `reg.x3` | `composite` | `-` | `reg<mat2x2<f32>>.real` | 0 | a register |
+| F2100 | `reg.y2` | `composite` | `-` | `reg<mat3x3<f32>>.real` | 0 | a register |
+| F2101 | `reg.y3` | `composite` | `-` | `reg<mat3x3<f32>>.real` | 0 | a register |
+| F2102 | `reg.z2` | `composite` | `-` | `reg<mat4x4<f32>>.real` | 0 | a register |
+| F2103 | `reg.z3` | `composite` | `-` | `reg<mat4x4<f32>>.real` | 0 | a register |
+
+## class `wg`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F2104 | `wg.f8` | `composite` | `-` | `wgmem<f32>.real` | 0 | array f8 of wgmem<f32>.real |
+| F2105 | `wg.f9` | `composite` | `-` | `wgmem<f32>.real` | 0 | array f9 of wgmem<f32>.real |
+| F2106 | `wg.f10` | `composite` | `-` | `wgmem<f32>.real` | 0 | array f10 of wgmem<f32>.real |
+| F2107 | `wg.f11` | `composite` | `-` | `wgmem<f32>.real` | 0 | array f11 of wgmem<f32>.real |
+| F2108 | `wg.vq4` | `composite` | `-` | `wgmem<vec4<f32>>.real` | 0 | array vq4 of wgmem<vec4<f32>>.real |
+| F2109 | `wg.vq5` | `composite` | `-` | `wgmem<vec4<f32>>.real` | 0 | array vq5 of wgmem<vec4<f32>>.real |
+| F2110 | `wg.vq6` | `composite` | `-` | `wgmem<vec4<f32>>.real` | 0 | array vq6 of wgmem<vec4<f32>>.real |
+| F2111 | `wg.vq7` | `composite` | `-` | `wgmem<vec4<f32>>.real` | 0 | array vq7 of wgmem<vec4<f32>>.real |
+| F2112 | `wg.v2_4` | `composite` | `-` | `wgmem<vec2<f32>>.real` | 0 | array v2_4 of wgmem<vec2<f32>>.real |
+| F2113 | `wg.v2_5` | `composite` | `-` | `wgmem<vec2<f32>>.real` | 0 | array v2_5 of wgmem<vec2<f32>>.real |
+| F2114 | `wg.v2_6` | `composite` | `-` | `wgmem<vec2<f32>>.real` | 0 | array v2_6 of wgmem<vec2<f32>>.real |
+| F2115 | `wg.v2_7` | `composite` | `-` | `wgmem<vec2<f32>>.real` | 0 | array v2_7 of wgmem<vec2<f32>>.real |
+| F2116 | `wg.u_12` | `composite` | `-` | `wgmem<u32>.index` | 0 | array u_12 of wgmem<u32>.index |
+| F2117 | `wg.u_13` | `composite` | `-` | `wgmem<u32>.index` | 0 | array u_13 of wgmem<u32>.index |
+| F2118 | `wg.u_14` | `composite` | `-` | `wgmem<u32>.index` | 0 | array u_14 of wgmem<u32>.index |
+| F2119 | `wg.u_15` | `composite` | `-` | `wgmem<u32>.index` | 0 | array u_15 of wgmem<u32>.index |
+| F2120 | `wg.au_4` | `composite` | `-` | `wgmem<atomic<u32>>.index` | 0 | array au_4 of wgmem<atomic<u32>>.index |
+| F2121 | `wg.au_5` | `composite` | `-` | `wgmem<atomic<u32>>.index` | 0 | array au_5 of wgmem<atomic<u32>>.index |
+| F2122 | `wg.au_6` | `composite` | `-` | `wgmem<atomic<u32>>.index` | 0 | array au_6 of wgmem<atomic<u32>>.index |
+| F2123 | `wg.au_7` | `composite` | `-` | `wgmem<atomic<u32>>.index` | 0 | array au_7 of wgmem<atomic<u32>>.index |
+| F2124 | `wg.ai_2` | `composite` | `-` | `wgmem<atomic<i32>>.int` | 0 | array ai_2 of wgmem<atomic<i32>>.int |
+| F2125 | `wg.ai_3` | `composite` | `-` | `wgmem<atomic<i32>>.int` | 0 | array ai_3 of wgmem<atomic<i32>>.int |
+| F2126 | `wg.n_2` | `composite` | `-` | `wgmem<i32>.int` | 0 | array n_2 of wgmem<i32>.int |
+| F2127 | `wg.n_3` | `composite` | `-` | `wgmem<i32>.int` | 0 | array n_3 of wgmem<i32>.int |
+| F2128 | `wg.n_4` | `composite` | `-` | `wgmem<i32>.int` | 0 | array n_4 of wgmem<i32>.int |
+| F2129 | `wg.n_5` | `composite` | `-` | `wgmem<i32>.int` | 0 | array n_5 of wgmem<i32>.int |
+
+## class `parr`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F2130 | `parr.f6` | `composite` | `-` | `parr<f32>.real` | 0 | array f6 of parr<f32>.real |
+| F2131 | `parr.f7` | `composite` | `-` | `parr<f32>.real` | 0 | array f7 of parr<f32>.real |
+| F2132 | `parr.w4` | `composite` | `-` | `parr<vec4<f32>>.real` | 0 | array w4 of parr<vec4<f32>>.real |
+| F2133 | `parr.w5` | `composite` | `-` | `parr<vec4<f32>>.real` | 0 | array w5 of parr<vec4<f32>>.real |
+| F2134 | `parr.i3` | `composite` | `-` | `parr<u32>.index` | 0 | array i3 of parr<u32>.index |
+| F2135 | `parr.i4` | `composite` | `-` | `parr<u32>.index` | 0 | array i4 of parr<u32>.index |
+| F2136 | `parr.m2` | `composite` | `-` | `parr<bool>.flag` | 0 | array m2 of parr<bool>.flag |
+| F2137 | `parr.m3` | `composite` | `-` | `parr<bool>.flag` | 0 | array m3 of parr<bool>.flag |
+| F2138 | `parr.q2` | `composite` | `-` | `parr<vec2<f32>>.real` | 0 | array q2 of parr<vec2<f32>>.real |
+| F2139 | `parr.q3` | `composite` | `-` | `parr<vec2<f32>>.real` | 0 | array q3 of parr<vec2<f32>>.real |
+| F2140 | `parr.ua2` | `composite` | `-` | `parr64<u32>.index` | 0 | array ua2 of parr64<u32>.index |
+| F2141 | `parr.ua3` | `composite` | `-` | `parr64<u32>.index` | 0 | array ua3 of parr64<u32>.index |
+| F2142 | `parr.vq2` | `composite` | `-` | `parr64<vec4<f32>>.real` | 0 | array vq2 of parr64<vec4<f32>>.real |
+| F2143 | `parr.vq3` | `composite` | `-` | `parr64<vec4<f32>>.real` | 0 | array vq3 of parr64<vec4<f32>>.real |
+| F2144 | `parr.ux2` | `composite` | `-` | `parr128<u32>.index` | 0 | array ux2 of parr128<u32>.index |
+| F2145 | `parr.ux3` | `composite` | `-` | `parr128<u32>.index` | 0 | array ux3 of parr128<u32>.index |
+
+2145 function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Storage-buffer atomics are an interface's per-kernel rows, not rows of this table. Deliberately absent: atomic compare-exchange (naga 0.20's Metal backend lacks it), subgroupBallot, images, derivatives, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.

@@ -194,12 +194,12 @@ T192	u32.payload	u32	payload	1	256 (the knob itself)	256	0	0	a knob reference's 
 T193	wgmem<i32>.int	wgmem<i32>	int	0	0	0	0	0	a workgroup-memory array of i32: na, nb	-
 T194	parr128<u32>.index	parr128<u32>	index	0	0u	0	0	0	a private array of 128 u32: pux, puy	-
 T195	u32.pindex128	u32	pindex128	1	0u	0	0	0	an index into a private array of 128 elements (i & 127u)	-
-T196	reg<vec3<f32>>.real	reg<vec3<f32>>	real	3	0.0	0	0	0	a named vec3<f32> register: C0..C7	-
-T197	reg<vec2<i32>>.int	reg<vec2<i32>>	int	2	0	0	0	0	a named vec2<i32> register: D0..D7	-
-T198	reg<vec3<i32>>.int	reg<vec3<i32>>	int	3	0	0	0	0	a named vec3<i32> register: E0..E7	-
-T199	reg<vec4<i32>>.int	reg<vec4<i32>>	int	4	0	0	0	0	a named vec4<i32> register: F0..F7	-
-T200	reg<vec2<u32>>.index	reg<vec2<u32>>	index	2	0u	0	0	0	a named vec2<u32> register: G0..G7	-
-T201	reg<vec3<u32>>.index	reg<vec3<u32>>	index	3	0u	0	0	0	a named vec3<u32> register: H0..H7	-
-T202	reg<vec2<bool>>.flag	reg<vec2<bool>>	flag	2	false	0	0	0	a named vec2<bool> register: J0..J7	-
-T203	reg<vec3<bool>>.flag	reg<vec3<bool>>	flag	3	false	0	0	0	a named vec3<bool> register: K0..K7	-
-T204	reg<vec4<bool>>.flag	reg<vec4<bool>>	flag	4	false	0	0	0	a named vec4<bool> register: L0..L7	-
+T196	reg<vec3<f32>>.real	reg<vec3<f32>>	real	3	0.0	0	0	0	a named vec3<f32> register: C0..C15	-
+T197	reg<vec2<i32>>.int	reg<vec2<i32>>	int	2	0	0	0	0	a named vec2<i32> register: D0..D15	-
+T198	reg<vec3<i32>>.int	reg<vec3<i32>>	int	3	0	0	0	0	a named vec3<i32> register: E0..E15	-
+T199	reg<vec4<i32>>.int	reg<vec4<i32>>	int	4	0	0	0	0	a named vec4<i32> register: F0..F15	-
+T200	reg<vec2<u32>>.index	reg<vec2<u32>>	index	2	0u	0	0	0	a named vec2<u32> register: G0..G15	-
+T201	reg<vec3<u32>>.index	reg<vec3<u32>>	index	3	0u	0	0	0	a named vec3<u32> register: H0..H15	-
+T202	reg<vec2<bool>>.flag	reg<vec2<bool>>	flag	2	false	0	0	0	a named vec2<bool> register: J0..J15	-
+T203	reg<vec3<bool>>.flag	reg<vec3<bool>>	flag	3	false	0	0	0	a named vec3<bool> register: K0..K15	-
+T204	reg<vec4<bool>>.flag	reg<vec4<bool>>	flag	4	false	0	0	0	a named vec4<bool> register: L0..L15	-

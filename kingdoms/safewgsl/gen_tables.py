@@ -290,7 +290,37 @@ REG_KINDS = [
     ("K", "vec3<bool>", "flag"),
     ("L", "vec4<bool>", "flag"),
 ]
-REG_KIND_COUNT = 8
+REG_KIND_COUNT = 16
+
+# The registers of the earlier kinds beyond the counts they were written with: letter, dual, count written above, count now.
+REG_EXTEND = [
+    ("u", "reg<vec4<u32>>.bits", 8, 16),
+    ("w", "reg<vec2<f32>>.real", 8, 16),
+    ("x", "reg<mat2x2<f32>>.real", 2, 4),
+    ("y", "reg<mat3x3<f32>>.real", 2, 4),
+    ("z", "reg<mat4x4<f32>>.real", 2, 4),
+]
+
+# The arrays of one dual (the slot counts): class, dual, the number written above, the stem the further names are
+# built from (stem + number), the number now. src/wgsl/render.rs holds the same list (WORKGROUP_ARRAYS and
+# PRIVATE_ARRAYS); a test checks every name against the rows.
+ARRAY_FAMILIES = [
+    ("wg", "wgmem<f32>.real", 8, "f", 12),
+    ("wg", "wgmem<vec4<f32>>.real", 4, "vq", 8),
+    ("wg", "wgmem<vec2<f32>>.real", 4, "v2_", 8),
+    ("wg", "wgmem<u32>.index", 12, "u_", 16),
+    ("wg", "wgmem<atomic<u32>>.index", 4, "au_", 8),
+    ("wg", "wgmem<atomic<i32>>.int", 2, "ai_", 4),
+    ("wg", "wgmem<i32>.int", 2, "n_", 6),
+    ("parr", "parr<f32>.real", 6, "f", 8),
+    ("parr", "parr<vec4<f32>>.real", 4, "w", 6),
+    ("parr", "parr<u32>.index", 3, "i", 5),
+    ("parr", "parr<bool>.flag", 2, "m", 4),
+    ("parr", "parr<vec2<f32>>.real", 2, "q", 4),
+    ("parr", "parr64<u32>.index", 2, "ua", 4),
+    ("parr", "parr64<vec4<f32>>.real", 2, "vq", 4),
+    ("parr", "parr128<u32>.index", 2, "ux", 4),
+]
 
 
 def build_types():
@@ -1466,6 +1496,16 @@ for letter, slot, form in REG_KINDS:
 # two to four with entry points appended in threes: module_ext<k>(module, k kernels) is the module and k more ----
 for k in (1, 2, 3):
     f("kernel", f"module_ext{k}", "composite", ["kernel.module"] + ["kernel.safe"] * k, "kernel.module", f"arity {k + 1}: the module and {k} more entry points, in order after it")
+
+# ---- the slot counts (2026-10-19): registers of the earlier kinds past the counts they were written with, and the
+# arrays of every family past the names it grew with. Only terminal rows: the reads, writes and declarations are rows
+# of the array's dual ----
+for letter, dual, old, new in REG_EXTEND:
+    for i in range(old, new):
+        f("reg", f"{letter}{i}", "composite", [], dual, "a register")
+for cls, dual, old, stem, new in ARRAY_FAMILIES:
+    for i in range(old, new):
+        f(cls, f"{stem}{i}", "composite", [], dual, f"array {stem}{i} of {dual}")
 
 def write_tsv(path, header, rows):
     with open(path, "w") as out:

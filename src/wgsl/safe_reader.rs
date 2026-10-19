@@ -784,18 +784,10 @@ fn pindex_mask(mask: &str) -> f32 {
 
 /// The private array dual of a kind letter.
 fn parr_dual_of(arr: &str, kind: char) -> &'static str {
-    // (The 64-element u32 arrays pua, puc: a list of row ids beside its 64
-    // scores, the v24 reference's `rows`, 2026-10-17.)
-    if arr == "parr.ua" || arr == "parr.uc" {
-        return "parr64<u32>.index";
-    }
-    // (And the 128-element u32 arrays pux, puy: a thread's cache of 100 values, run 4's seed10.)
-    if arr == "parr.ux" || arr == "parr.uy" {
-        return "parr128<u32>.index";
-    }
-    // (And the 64-element vec4 arrays pvq, pvr: a query held in registers.)
-    if arr == "parr.vq" || arr == "parr.vr" {
-        return "parr64<vec4<f32>>.real";
+    // (The 64-element u32 arrays, the 128-element ones and the 64-element vec4
+    // arrays: their rows name their dual.)
+    if let Some(d) = crate::wgsl::render::array_dual_of_row(arr).filter(|d| d.starts_with("parr64<") || d.starts_with("parr128<")) {
+        return d;
     }
     match kind {
         'v' => "parr<vec4<f32>>.real",
@@ -1941,11 +1933,11 @@ impl<'a> Ctx<'a> {
             "i32.int" | "i32.opaque" => ('n', 16),
             // (Any form of vec4<u32>, opaque too: insertBits over a vector,
             // 2026-10-13, a random kernel.)
-            "vec4<u32>.bits" | "vec4<u32>.index" | "vec4<u32>.count" | "vec4<u32>.opaque" => ('u', 8),
-            "vec2<f32>.real" | "vec2<f32>.opaque" => ('w', 8),
-            "mat2x2<f32>.real" => ('x', 2),
-            "mat3x3<f32>.real" => ('y', 2),
-            "mat4x4<f32>.real" => ('z', 2),
+            "vec4<u32>.bits" | "vec4<u32>.index" | "vec4<u32>.count" | "vec4<u32>.opaque" => ('u', 16),
+            "vec2<f32>.real" | "vec2<f32>.opaque" => ('w', 16),
+            "mat2x2<f32>.real" => ('x', 4),
+            "mat3x3<f32>.real" => ('y', 4),
+            "mat4x4<f32>.real" => ('z', 4),
             other => match crate::wgsl::render::extra_register_of_value(other) {
                 Some(x) => (x.letter, x.count as u32),
                 None => return Err(format!("local {local} has dual {other}, which has no register kind")),
@@ -2787,30 +2779,22 @@ impl<'a> Ctx<'a> {
         if let Some(n) = declared.filter(|n| *n > capacity) {
             return Err(format!("a local array {local} of {n} elements is longer than the kingdom's private arrays of its kind ({capacity})"));
         }
-        let rows: &[&'static str] = match kind {
-            _ if huge_u32 => &["parr.ux", "parr.uy"],
-            _ if long_u32 => &["parr.ua", "parr.uc"],
-            _ if long_v4 => &["parr.vq", "parr.vr"],
-            'f' => &["parr.a", "parr.b", "parr.c", "parr.d", "parr.e", "parr.f"],
-            'v' => &["parr.v", "parr.w", "parr.x", "parr.y"],
-            'b' => &["parr.m", "parr.n"],
-            't' => &["parr.q", "parr.r"],
-            _ => &["parr.i", "parr.j", "parr.k"],
+        let family = match kind {
+            _ if huge_u32 => "parr128<u32>.index",
+            _ if long_u32 => "parr64<u32>.index",
+            _ if long_v4 => "parr64<vec4<f32>>.real",
+            'f' => "parr<f32>.real",
+            'v' => "parr<vec4<f32>>.real",
+            'b' => "parr<bool>.flag",
+            't' => "parr<vec2<f32>>.real",
+            _ => "parr<u32>.index",
         };
+        let rows: &[&'static str] = crate::wgsl::render::array_rows(family);
         if let Some(arr) = rows.iter().copied().find(|a| **a == own && !used.contains(a)) {
             self.parrs.insert(local.to_string(), (arr, kind, mask));
             return Ok((arr, kind, mask));
         }
-        let arr = match kind {
-            _ if huge_u32 => ["parr.ux", "parr.uy"].iter().copied().find(|a| !used.contains(a)).ok_or_else(|| format!("a third 128-element u32 local array {local}"))?,
-            _ if long_u32 => ["parr.ua", "parr.uc"].iter().copied().find(|a| !used.contains(a)).ok_or_else(|| format!("a third 64-element u32 local array {local}"))?,
-            _ if long_v4 => ["parr.vq", "parr.vr"].iter().copied().find(|a| !used.contains(a)).ok_or_else(|| format!("a third 64-element vec4 local array {local}"))?,
-            'f' => ["parr.a", "parr.b", "parr.c", "parr.d", "parr.e", "parr.f"].iter().copied().find(|a| !used.contains(a)).ok_or_else(|| format!("a seventh f32 local array {local}"))?,
-            'v' => ["parr.v", "parr.w", "parr.x", "parr.y"].iter().copied().find(|a| !used.contains(a)).ok_or_else(|| format!("a fifth vec4 local array {local}"))?,
-            'b' => ["parr.m", "parr.n"].iter().copied().find(|a| !used.contains(a)).ok_or_else(|| format!("a third bool local array {local}"))?,
-            't' => ["parr.q", "parr.r"].iter().copied().find(|a| !used.contains(a)).ok_or_else(|| format!("a third vec2 local array {local}"))?,
-            _ => ["parr.i", "parr.j", "parr.k"].iter().copied().find(|a| !used.contains(a)).ok_or_else(|| format!("a fourth u32 local array {local}"))?,
-        };
+        let arr = rows.iter().copied().find(|a| !used.contains(a)).ok_or_else(|| format!("one more local array {local} of {family} than the grammar's {}", rows.len()))?;
         self.parrs.insert(local.to_string(), (arr, kind, mask));
         Ok((arr, kind, mask))
     }
@@ -2852,16 +2836,17 @@ impl<'a> Ctx<'a> {
             None if declared_u32 => "u32.index",
             None => elem_dual,
         };
-        let candidates: &[&'static str] = match elem_dual {
-            "atomic<u32>" => &["wg.au_a", "wg.au_b", "wg.au_c", "wg.au_d"],
-            "atomic<i32>" => &["wg.ai_a", "wg.ai_b"],
-            "f32.real" => &["wg.a", "wg.b", "wg.c", "wg.d", "wg.e", "wg.f", "wg.g", "wg.h"],
-            "vec2<f32>.real" => &["wg.v2a", "wg.v2b", "wg.v2c", "wg.v2d"],
-            "i32.int" => &["wg.na", "wg.nb"],
-            "u32.index" => &["wg.ua", "wg.ub", "wg.uc", "wg.ud", "wg.ue", "wg.uf", "wg.ug", "wg.uh", "wg.ui", "wg.uj", "wg.uk", "wg.ul"],
-            "vec4<f32>.real" => &["wg.va", "wg.vb", "wg.vc", "wg.vd"],
+        let family = match elem_dual {
+            "atomic<u32>" => "wgmem<atomic<u32>>.index",
+            "atomic<i32>" => "wgmem<atomic<i32>>.int",
+            "f32.real" => "wgmem<f32>.real",
+            "vec2<f32>.real" => "wgmem<vec2<f32>>.real",
+            "i32.int" => "wgmem<i32>.int",
+            "u32.index" => "wgmem<u32>.index",
+            "vec4<f32>.real" => "wgmem<vec4<f32>>.real",
             other => return Err(format!("a workgroup array {name} of {other} has no safe spelling")),
         };
+        let candidates: &[&'static str] = crate::wgsl::render::array_rows(family);
         let used: Vec<&'static str> = self.arrays.values().copied().collect();
         // A kernel the kingdom wrote names its arrays as the rows do
         // (`wg_d` is wg.d): that row, when free; any other name, the first free.
@@ -8821,6 +8806,55 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         assert!(again.tree == back.tree, "a fixpoint: {:?}", crate::wgsl::render::first_difference(&back.tree, &again.tree));
         let checker = crate::wgsl::check::Checker::with_contract(&k, &r.role, &crate::wgsl::target::Target::recorded(), contract);
         checker.check(&r.tree).unwrap_or_else(|e| panic!("{e}\n{}", out.text));
+    }
+
+    /// MORE ARRAYS OF A KIND THAN THE KINGDOM GREW WITH (2026-10-19, the slot
+    /// counts): six atomic<u32> workgroup arrays (the first four are named
+    /// rows, the others generated), four i32 ones, three 128-element u32
+    /// private arrays, and five registers of a vec3. Each reads, renders,
+    /// naga validates it and reads back to the same tree.
+    #[test]
+    fn a_kernel_with_more_arrays_than_the_first_names_reads() {
+        let k = WgslKingdom::load_safe();
+        let mut src = String::from("@group(0) @binding(0) var<storage, read_write> out: array<u32>;\n");
+        for i in 0..6 {
+            src.push_str(&format!("var<workgroup> au{i}: array<atomic<u32>, 64>;\n"));
+        }
+        for i in 0..4 {
+            src.push_str(&format!("var<workgroup> ni{i}: array<i32, 64>;\n"));
+        }
+        src.push_str("@compute @workgroup_size(64)\nfn main(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(global_invocation_id) gid: vec3<u32>) {\n");
+        for i in 0..3 {
+            src.push_str(&format!("    var c{i}: array<u32, 100>;\n"));
+        }
+        src.push_str("    var acc = 0u;\n    for (var j = 0u; j < 100u; j++) { c0[j] = j; c1[j] = j * 2u; c2[j] = j * 3u; }\n");
+        for i in 0..6 {
+            src.push_str(&format!("    atomicStore(&au{i}[lid.x], lid.x + {i}u);\n"));
+        }
+        for i in 0..4 {
+            src.push_str(&format!("    ni{i}[lid.x] = i32(lid.x) - {i};\n"));
+        }
+        src.push_str("    workgroupBarrier();\n");
+        for i in 0..6 {
+            src.push_str(&format!("    acc += atomicLoad(&au{i}[(lid.x + 1u) & 63u]);\n"));
+        }
+        for i in 0..4 {
+            src.push_str(&format!("    acc += u32(ni{i}[(lid.x + 1u) & 63u]);\n"));
+        }
+        src.push_str("    acc += c0[lid.x] + c1[lid.x] + c2[lid.x];\n");
+        for i in 0..5 {
+            src.push_str(&format!("    var v{i} = vec3<f32>(f32(lid.x), {i}.0, 1.0); acc += u32(dot(v{i}, vec3<f32>(1.0)));\n"));
+        }
+        src.push_str("    out[gid.x] = acc;\n}\n");
+        let r = read_safe(&src, &k).unwrap_or_else(|e| panic!("{e}"));
+        let out = crate::wgsl::safe_karva::render_tree_with(&r.tree, &k, &r.role).unwrap_or_else(|e| panic!("{e}"));
+        validate_text(&out.text).unwrap_or_else(|e| panic!("{e}\n{}", out.text));
+        for want in ["wg_au_4", "wg_au_5", "wg_n_2", "wg_n_3", "pux2"] {
+            assert!(out.text.contains(want), "{want} missing\n{}", out.text);
+        }
+        let back = read_safe(&out.text, &k).unwrap_or_else(|e| panic!("read back: {e}\n{}", out.text));
+        let again = read_safe(&crate::wgsl::safe_karva::render_tree_with(&back.tree, &k, &back.role).unwrap().text, &k).unwrap();
+        assert!(again.tree == back.tree, "a fixpoint: {:?}", crate::wgsl::render::first_difference(&back.tree, &again.tree));
     }
 
     /// TWO LOOPS OF THE V24 REFERENCE (2026-10-17, the harness agent's

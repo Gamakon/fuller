@@ -2150,15 +2150,15 @@ pub struct ExtraRegister {
 }
 
 pub const EXTRA_REGISTERS: [ExtraRegister; 9] = [
-    ExtraRegister { letter: 'C', slot: "vec3<f32>", dual: "reg<vec3<f32>>.real", count: 8 },
-    ExtraRegister { letter: 'D', slot: "vec2<i32>", dual: "reg<vec2<i32>>.int", count: 8 },
-    ExtraRegister { letter: 'E', slot: "vec3<i32>", dual: "reg<vec3<i32>>.int", count: 8 },
-    ExtraRegister { letter: 'F', slot: "vec4<i32>", dual: "reg<vec4<i32>>.int", count: 8 },
-    ExtraRegister { letter: 'G', slot: "vec2<u32>", dual: "reg<vec2<u32>>.index", count: 8 },
-    ExtraRegister { letter: 'H', slot: "vec3<u32>", dual: "reg<vec3<u32>>.index", count: 8 },
-    ExtraRegister { letter: 'J', slot: "vec2<bool>", dual: "reg<vec2<bool>>.flag", count: 8 },
-    ExtraRegister { letter: 'K', slot: "vec3<bool>", dual: "reg<vec3<bool>>.flag", count: 8 },
-    ExtraRegister { letter: 'L', slot: "vec4<bool>", dual: "reg<vec4<bool>>.flag", count: 8 },
+    ExtraRegister { letter: 'C', slot: "vec3<f32>", dual: "reg<vec3<f32>>.real", count: 16 },
+    ExtraRegister { letter: 'D', slot: "vec2<i32>", dual: "reg<vec2<i32>>.int", count: 16 },
+    ExtraRegister { letter: 'E', slot: "vec3<i32>", dual: "reg<vec3<i32>>.int", count: 16 },
+    ExtraRegister { letter: 'F', slot: "vec4<i32>", dual: "reg<vec4<i32>>.int", count: 16 },
+    ExtraRegister { letter: 'G', slot: "vec2<u32>", dual: "reg<vec2<u32>>.index", count: 16 },
+    ExtraRegister { letter: 'H', slot: "vec3<u32>", dual: "reg<vec3<u32>>.index", count: 16 },
+    ExtraRegister { letter: 'J', slot: "vec2<bool>", dual: "reg<vec2<bool>>.flag", count: 16 },
+    ExtraRegister { letter: 'K', slot: "vec3<bool>", dual: "reg<vec3<bool>>.flag", count: 16 },
+    ExtraRegister { letter: 'L', slot: "vec4<bool>", dual: "reg<vec4<bool>>.flag", count: 16 },
 ];
 
 /// The extra register kind that holds a value dual (any form of its vector type).
@@ -2201,7 +2201,7 @@ pub fn register_name(kingdom: &WgslKingdom, r: &Tree) -> Result<String, String> 
         ("fallback", dual) if EXTRA_REGISTERS.iter().any(|x| x.dual == dual) => format!("{}0", EXTRA_REGISTERS.iter().find(|x| x.dual == dual).map_or('C', |x| x.letter)),
         (name, _) => {
             let n = name.strip_prefix("reg.").unwrap_or("");
-            if ok(n, 'f', 64) || ok(n, 'v', 32) || ok(n, 'i', 64) || ok(n, 'b', 16) || ok(n, 'n', 16) || ok(n, 'u', 8) || ok(n, 'w', 8) || ok(n, 'x', 2) || ok(n, 'y', 2) || ok(n, 'z', 2) || EXTRA_REGISTERS.iter().any(|x| ok(n, x.letter, x.count)) {
+            if ok(n, 'f', 64) || ok(n, 'v', 32) || ok(n, 'i', 64) || ok(n, 'b', 16) || ok(n, 'n', 16) || ok(n, 'u', 16) || ok(n, 'w', 16) || ok(n, 'x', 4) || ok(n, 'y', 4) || ok(n, 'z', 4) || EXTRA_REGISTERS.iter().any(|x| ok(n, x.letter, x.count)) {
                 let k: usize = n[1..].parse().unwrap_or(0);
                 register_var(&n[..1], k)
             } else {
@@ -2212,6 +2212,92 @@ pub fn register_name(kingdom: &WgslKingdom, r: &Tree) -> Result<String, String> 
 }
 
 
+/// A family of arrays of one dual: the terminal rows `wg.<name>` or
+/// `parr.<name>` that name them. The first are the names the kingdom grew
+/// with (`legacy`, in the order a reader takes them), the rest are generated
+/// from `stem` and their number up to `total`. `kingdoms/safewgsl/gen_tables.py`
+/// writes the same list (ARRAY_FAMILIES, the parameter of the slot counts); a
+/// test checks every name against the rows. Raising `total` here and there is
+/// the whole change a kernel with more arrays of a kind needs.
+pub struct ArrayFamily {
+    /// The array dual the rows output.
+    pub dual: &'static str,
+    pub legacy: &'static [&'static str],
+    pub stem: &'static str,
+    pub total: usize,
+    /// A private array's element type and length (a workgroup array's are the
+    /// plan's: [`wg_elem`], [`wg_default_len`]).
+    pub elem: &'static str,
+    pub len: u32,
+}
+
+impl ArrayFamily {
+    /// Every name of the family in the order a reader takes them.
+    pub fn names(&self) -> impl Iterator<Item = String> + '_ {
+        self.legacy.iter().map(|n| n.to_string()).chain((self.legacy.len()..self.total).map(|i| format!("{}{i}", self.stem)))
+    }
+}
+
+pub const WORKGROUP_ARRAYS: [ArrayFamily; 7] = [
+    ArrayFamily { dual: "wgmem<f32>.real", legacy: &["a", "b", "c", "d", "e", "f", "g", "h"], stem: "f", total: 12, elem: "", len: 0 },
+    ArrayFamily { dual: "wgmem<vec4<f32>>.real", legacy: &["va", "vb", "vc", "vd"], stem: "vq", total: 8, elem: "", len: 0 },
+    ArrayFamily { dual: "wgmem<vec2<f32>>.real", legacy: &["v2a", "v2b", "v2c", "v2d"], stem: "v2_", total: 8, elem: "", len: 0 },
+    ArrayFamily { dual: "wgmem<u32>.index", legacy: &["ua", "ub", "uc", "ud", "ue", "uf", "ug", "uh", "ui", "uj", "uk", "ul"], stem: "u_", total: 16, elem: "", len: 0 },
+    ArrayFamily { dual: "wgmem<atomic<u32>>.index", legacy: &["au_a", "au_b", "au_c", "au_d"], stem: "au_", total: 8, elem: "", len: 0 },
+    ArrayFamily { dual: "wgmem<atomic<i32>>.int", legacy: &["ai_a", "ai_b"], stem: "ai_", total: 4, elem: "", len: 0 },
+    ArrayFamily { dual: "wgmem<i32>.int", legacy: &["na", "nb"], stem: "n_", total: 6, elem: "", len: 0 },
+];
+
+pub const PRIVATE_ARRAYS: [ArrayFamily; 8] = [
+    ArrayFamily { dual: "parr<f32>.real", legacy: &["a", "b", "c", "d", "e", "f"], stem: "f", total: 8, elem: "f32", len: 64 },
+    ArrayFamily { dual: "parr<vec4<f32>>.real", legacy: &["v", "w", "x", "y"], stem: "w", total: 6, elem: "vec4<f32>", len: 16 },
+    ArrayFamily { dual: "parr<u32>.index", legacy: &["i", "j", "k"], stem: "i", total: 5, elem: "u32", len: 16 },
+    ArrayFamily { dual: "parr<bool>.flag", legacy: &["m", "n"], stem: "m", total: 4, elem: "bool", len: 16 },
+    ArrayFamily { dual: "parr<vec2<f32>>.real", legacy: &["q", "r"], stem: "q", total: 4, elem: "vec2<f32>", len: 16 },
+    ArrayFamily { dual: "parr64<u32>.index", legacy: &["ua", "uc"], stem: "ua", total: 4, elem: "u32", len: 64 },
+    ArrayFamily { dual: "parr64<vec4<f32>>.real", legacy: &["vq", "vr"], stem: "vq", total: 4, elem: "vec4<f32>", len: 64 },
+    ArrayFamily { dual: "parr128<u32>.index", legacy: &["ux", "uy"], stem: "ux", total: 4, elem: "u32", len: 128 },
+];
+
+/// The rows of a family as `wg.<name>` / `parr.<name>` and their variables
+/// (`wg_<name>`, `p<name>`), built once: the names are `'static` for the
+/// callers that hold them.
+struct ArrayNames {
+    /// Row name to variable.
+    var: BTreeMap<String, &'static str>,
+    /// Array dual to its row names in a reader's order.
+    rows: BTreeMap<&'static str, Vec<&'static str>>,
+}
+
+fn array_names() -> &'static ArrayNames {
+    static NAMES: std::sync::OnceLock<ArrayNames> = std::sync::OnceLock::new();
+    NAMES.get_or_init(|| {
+        let mut n = ArrayNames { var: BTreeMap::new(), rows: BTreeMap::new() };
+        for (class, var, families) in [("wg", "wg_", &WORKGROUP_ARRAYS[..]), ("parr", "p", &PRIVATE_ARRAYS[..])] {
+            for f in families {
+                for name in f.names() {
+                    let row: &'static str = Box::leak(format!("{class}.{name}").into_boxed_str());
+                    let v: &'static str = Box::leak(format!("{var}{name}").into_boxed_str());
+                    n.var.insert(row.to_string(), v);
+                    n.rows.entry(f.dual).or_default().push(row);
+                }
+            }
+        }
+        n
+    })
+}
+
+/// The rows of the arrays of one dual, in the order a reader takes them
+/// (`wgmem<u32>.index`: `wg.ua`, `wg.ub`, ..).
+pub fn array_rows(dual: &str) -> &'static [&'static str] {
+    array_names().rows.get(dual).map_or(&[], |v| v.as_slice())
+}
+
+/// The dual of the arrays a row (`wg.ua`, `parr.ux`) names.
+pub fn array_dual_of_row(row: &str) -> Option<&'static str> {
+    array_names().rows.iter().find(|(_, rows)| rows.contains(&row)).map(|(d, _)| *d)
+}
+
 /// A workgroup array leaf's variable name; a fallback leaf names the
 /// array of ITS DUAL (the vec4 array for a vec4 demand), never `wg_a`
 /// regardless — a vec4 value stored into the f32 array was a compile
@@ -2219,61 +2305,9 @@ pub fn register_name(kingdom: &WgslKingdom, r: &Tree) -> Result<String, String> 
 pub fn wgmem_var(kingdom: &WgslKingdom, w: &Tree) -> Result<&'static str, String> {
     if w.name == "fallback" {
         let d = kingdom.dual(w.ty).map(|d| d.dual.clone()).unwrap_or_default();
-        return Ok(if d.starts_with("wgmem<vec4") {
-            "wg_va"
-        } else if d.starts_with("wgmem<vec2") {
-            "wg_v2a"
-        } else if d.starts_with("wgmem<u32>") {
-            "wg_ua"
-        } else if d.starts_with("wgmem<i32>") {
-            "wg_na"
-        } else if d.starts_with("wgmem<atomic<u32>") {
-            "wg_au_a"
-        } else if d.starts_with("wgmem<atomic<i32>") {
-            "wg_ai_a"
-        } else {
-            "wg_a"
-        });
+        return Ok(array_names().rows.get(d.as_str()).and_then(|r| r.first()).and_then(|r| array_names().var.get(*r)).copied().unwrap_or("wg_a"));
     }
-    Ok(match w.name.as_str() {
-        "wg.a" => "wg_a",
-        "wg.b" => "wg_b",
-        "wg.c" => "wg_c",
-        "wg.d" => "wg_d",
-        "wg.e" => "wg_e",
-        "wg.f" => "wg_f",
-        "wg.g" => "wg_g",
-        "wg.h" => "wg_h",
-        "wg.va" => "wg_va",
-        "wg.vb" => "wg_vb",
-        "wg.vc" => "wg_vc",
-        "wg.vd" => "wg_vd",
-        "wg.v2a" => "wg_v2a",
-        "wg.v2b" => "wg_v2b",
-        "wg.v2c" => "wg_v2c",
-        "wg.v2d" => "wg_v2d",
-        "wg.ua" => "wg_ua",
-        "wg.ub" => "wg_ub",
-        "wg.uc" => "wg_uc",
-        "wg.ud" => "wg_ud",
-        "wg.ue" => "wg_ue",
-        "wg.uf" => "wg_uf",
-        "wg.ug" => "wg_ug",
-        "wg.uh" => "wg_uh",
-        "wg.ui" => "wg_ui",
-        "wg.uj" => "wg_uj",
-        "wg.uk" => "wg_uk",
-        "wg.ul" => "wg_ul",
-        "wg.au_a" => "wg_au_a",
-        "wg.au_b" => "wg_au_b",
-        "wg.na" => "wg_na",
-        "wg.nb" => "wg_nb",
-        "wg.au_c" => "wg_au_c",
-        "wg.au_d" => "wg_au_d",
-        "wg.ai_a" => "wg_ai_a",
-        "wg.ai_b" => "wg_ai_b",
-        other => return Err(format!("{other} is not a workgroup array")),
-    })
+    array_names().var.get(w.name.as_str()).copied().filter(|_| w.name.starts_with("wg.")).ok_or_else(|| format!("{} is not a workgroup array", w.name))
 }
 
 /// The kernel's workgroup arrays (2026-10-12): every array it declares on
@@ -2317,8 +2351,8 @@ pub fn workgroup_plan_requested(kingdom: &WgslKingdom, grid: &Tree, root: &Tree)
 
 /// [`workgroup_plan_requested`] over the arrays `only` names when given.
 fn workgroup_plan_requested_of(kingdom: &WgslKingdom, grid: &Tree, root: &Tree, only: Option<&BTreeSet<String>>) -> Result<BTreeMap<String, (String, u32)>, String> {
-    let elem_of = |var: &str| if var.starts_with("wg_au") { "atomic<u32>" } else if var.starts_with("wg_ai") { "atomic<i32>" } else if var.starts_with("wg_u") { "u32" } else if var.starts_with("wg_n") { "i32" } else if var.starts_with("wg_v2") { "vec2<f32>" } else if var.starts_with("wg_v") { "vec4<f32>" } else { "f32" };
-    let default_len = |var: &str| if var.starts_with("wg_au") || var.starts_with("wg_ai") || var.starts_with("wg_v2") { 1024 } else if var.starts_with("wg_v") { WGVEC_LEN } else { WGMEM_LEN };
+    let elem_of = wg_elem;
+    let default_len = wg_default_len;
     let mut declared: Vec<(String, u32)> = Vec::new();
     if grid.name == "grid.with_wg" && grid.kids.len() == 2 {
         let mut at = Some(&grid.kids[1]);
@@ -3456,7 +3490,7 @@ impl Renderer<'_> {
 pub fn parr_var(kingdom: &WgslKingdom, t: &Tree) -> Result<&'static str, String> {
     if t.name == "fallback" {
         let d = kingdom.dual(t.ty).map(|d| d.dual.clone()).unwrap_or_default();
-        return Ok(if d.starts_with("parr128<u32>") { "pux" } else if d.starts_with("parr64<u32>") { "pua" } else if d.starts_with("parr64<vec4") { "pvq" } else if d.starts_with("parr<vec2") { "pq" } else if d.starts_with("parr<vec") { "pv" } else if d.starts_with("parr<u32>") { "pi" } else if d.starts_with("parr<bool>") { "pm" } else { "pa" });
+        return Ok(array_names().rows.get(d.as_str()).and_then(|r| r.first()).and_then(|r| array_names().var.get(*r)).copied().unwrap_or("pa"));
     }
     parr_name(t)
 }
@@ -3485,7 +3519,7 @@ pub fn register_var(prefix: &str, k: usize) -> String {
 /// to their form's fallback, the loop counters, the private arrays).
 pub fn register_declarations() -> String {
     let mut out = String::new();
-    for (prefix, n, ty, init) in [("f", 64, "f32", "0.0"), ("v", 32, "vec4<f32>", "vec4<f32>(0.0)"), ("i", 64, "u32", "0u"), ("b", 16, "bool", "false"), ("n", 16, "i32", "0"), ("u", 8, "vec4<u32>", "vec4<u32>(0u)"), ("w", 8, "vec2<f32>", "vec2<f32>(0.0)"), ("x", 2, "mat2x2<f32>", "mat2x2<f32>()"), ("y", 2, "mat3x3<f32>", "mat3x3<f32>()"), ("z", 2, "mat4x4<f32>", "mat4x4<f32>()")].into_iter().map(|(p, n, t, i)| (p.to_string(), n, t.to_string(), i.to_string())).chain(EXTRA_REGISTERS.iter().map(|x| (x.letter.to_string(), x.count, x.slot.to_string(), format!("{}()", x.slot)))) {
+    for (prefix, n, ty, init) in [("f", 64, "f32", "0.0"), ("v", 32, "vec4<f32>", "vec4<f32>(0.0)"), ("i", 64, "u32", "0u"), ("b", 16, "bool", "false"), ("n", 16, "i32", "0"), ("u", 16, "vec4<u32>", "vec4<u32>(0u)"), ("w", 16, "vec2<f32>", "vec2<f32>(0.0)"), ("x", 4, "mat2x2<f32>", "mat2x2<f32>()"), ("y", 4, "mat3x3<f32>", "mat3x3<f32>()"), ("z", 4, "mat4x4<f32>", "mat4x4<f32>()")].into_iter().map(|(p, n, t, i)| (p.to_string(), n, t.to_string(), i.to_string())).chain(EXTRA_REGISTERS.iter().map(|x| (x.letter.to_string(), x.count, x.slot.to_string(), format!("{}()", x.slot)))) {
         for k in 0..n {
             if k % 8 == 0 {
                 out.push_str("    ");
@@ -3499,6 +3533,12 @@ pub fn register_declarations() -> String {
     out.push_str("    var t: u32 = 0u; var k: u32 = 0u; var k2: u32 = 0u; var k3: u32 = 0u; var k4: u32 = 0u;\n");
     out.push_str("    var pa: array<f32, 64>; var pb: array<f32, 64>; var pc: array<f32, 64>; var pd: array<f32, 64>; var pe: array<f32, 64>; var pf: array<f32, 64>;\n");
     out.push_str("    var pv: array<vec4<f32>, 16>; var pw: array<vec4<f32>, 16>; var px: array<vec4<f32>, 16>; var py: array<vec4<f32>, 16>; var pi: array<u32, 16>; var pj: array<u32, 16>; var pk: array<u32, 16>; var pm: array<bool, 16>; var pn: array<bool, 16>; var pq: array<vec2<f32>, 16>; var pr: array<vec2<f32>, 16>; var pua: array<u32, 64>; var puc: array<u32, 64>; var pvq: array<vec4<f32>, 64>; var pvr: array<vec4<f32>, 64>; var pux: array<u32, 128>; var puy: array<u32, 128>;\n");
+    // The private arrays past the ones above, from the families.
+    for f in &PRIVATE_ARRAYS {
+        for name in f.names().skip(f.legacy.len()) {
+            out.push_str(&format!("    var p{name}: array<{}, {}>;\n", f.elem, f.len));
+        }
+    }
     out
 }
 
@@ -3538,44 +3578,47 @@ pub fn register_declarations_for(body: &str) -> String {
 
 /// The length of a workgroup or private array by its variable name.
 pub fn array_len(name: &str) -> u32 {
-    match name {
-        "wg_a" | "wg_b" | "wg_c" | "wg_d" | "wg_e" | "wg_f" | "wg_g" | "wg_h" | "wg_ua" | "wg_ub" | "wg_uc" | "wg_ud" | "wg_ue" | "wg_uf" | "wg_ug" | "wg_uh" | "wg_ui" | "wg_uj" | "wg_uk" | "wg_ul" | "wg_na" | "wg_nb" => WGMEM_LEN,
-        n if n.starts_with("wg_v2") => 1024,
-        n if n.starts_with("wg_v") => WGVEC_LEN,
-        "pa" | "pb" | "pc" | "pd" | "pe" | "pf" | "pua" | "puc" | "pvq" | "pvr" => 64,
-        "pux" | "puy" => 128,
-        _ => 16,
+    if name.starts_with("wg_") {
+        return wg_default_len(name);
+    }
+    // A private array: the length its dual says (`parr64<u32>`, `parr128<u32>`; 16 for the rest).
+    let dual = PRIVATE_ARRAYS.iter().find(|f| f.names().any(|n| format!("p{n}") == name)).map(|f| f.dual);
+    dual.and_then(|d| d.strip_prefix("parr")).and_then(|r| r.split('<').next()).and_then(|n| n.parse().ok()).unwrap_or(if matches!(name, "pa" | "pb" | "pc" | "pd" | "pe" | "pf") || (name.starts_with("pf") && name.len() > 2) { 64 } else { 16 })
+}
+
+/// The element type of a workgroup array by its variable name.
+pub fn wg_elem(var: &str) -> &'static str {
+    if var.starts_with("wg_au") {
+        "atomic<u32>"
+    } else if var.starts_with("wg_ai") {
+        "atomic<i32>"
+    } else if var.starts_with("wg_u") {
+        "u32"
+    } else if var.starts_with("wg_n") {
+        "i32"
+    } else if var.starts_with("wg_v2") {
+        "vec2<f32>"
+    } else if var.starts_with("wg_v") {
+        "vec4<f32>"
+    } else {
+        "f32"
+    }
+}
+
+/// A workgroup array's length when the kernel does not declare one.
+pub fn wg_default_len(var: &str) -> u32 {
+    if var.starts_with("wg_au") || var.starts_with("wg_ai") || var.starts_with("wg_v2") {
+        1024
+    } else if var.starts_with("wg_v") {
+        WGVEC_LEN
+    } else {
+        WGMEM_LEN
     }
 }
 
 /// A private array leaf's variable name.
 fn parr_name(t: &Tree) -> Result<&'static str, String> {
-    Ok(match t.name.as_str() {
-        "parr.a" => "pa",
-        "parr.b" => "pb",
-        "parr.c" => "pc",
-        "parr.d" => "pd",
-        "parr.v" => "pv",
-        "parr.w" => "pw",
-        "parr.x" => "px",
-        "parr.y" => "py",
-        "parr.e" => "pe",
-        "parr.f" => "pf",
-        "parr.i" => "pi",
-        "parr.ua" => "pua",
-        "parr.ux" => "pux",
-        "parr.uy" => "puy",
-        "parr.vq" => "pvq",
-        "parr.vr" => "pvr",
-        "parr.uc" => "puc",
-        "parr.j" => "pj",
-        "parr.k" => "pk",
-        "parr.m" => "pm",
-        "parr.n" => "pn",
-        "parr.q" => "pq",
-        "parr.r" => "pr",
-        other => return Err(format!("{other} is not a private array")),
-    })
+    array_names().var.get(t.name.as_str()).copied().filter(|_| t.name.starts_with("parr.")).ok_or_else(|| format!("{} is not a private array", t.name))
 }
 
 /// The constructor spelling of a slot: `vec3<f32>`, `f32`, `mat2x3<f32>`.
@@ -4455,6 +4498,28 @@ pub(crate) fn first_difference(a: &Tree, b: &Tree) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every array name of the families is a terminal row of the family's dual,
+    /// and no row past `total` exists: the lists here and `ARRAY_FAMILIES` in
+    /// gen_tables.py are one list.
+    #[test]
+    fn the_array_families_are_the_rows_the_generator_wrote() {
+        let k = WgslKingdom::load_safe();
+        let dual = |t: Ty| k.dual(t).map(|d| d.dual.clone()).unwrap_or_default();
+        for (class, families) in [("wg", &WORKGROUP_ARRAYS[..]), ("parr", &PRIVATE_ARRAYS[..])] {
+            for f in families {
+                let names: Vec<String> = f.names().collect();
+                assert_eq!(names.len(), f.total, "{}", f.dual);
+                for n in &names {
+                    let row = format!("{class}.{n}");
+                    let r = k.rows.iter().find(|r| r.name == row).unwrap_or_else(|| panic!("{row}: no such row"));
+                    assert!(r.inputs.is_empty() && dual(r.output) == f.dual, "{row}");
+                }
+                let rows = k.rows.iter().filter(|r| r.inputs.is_empty() && dual(r.output) == f.dual).count();
+                assert_eq!(rows, f.total, "rows of {} beyond the family's {}", f.dual, f.total);
+            }
+        }
+    }
 
     /// Every extra register kind has its registers, its read and its sets in
     /// the rows `gen_tables.py` wrote, at the dual and the count the table says.

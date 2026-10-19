@@ -988,8 +988,10 @@ mod tests {
         // 1,808 with the 128-element u32 private arrays (safe.pidx128, parr.ux, parr.uy, get_i, 12 set_i).
         // 2,006 with the vector conversions of floats and unsigned integers (9) and the nine
         // register kinds of REG_KINDS (8 registers, the read and a set at each of the 22 rungs each);
-        // 2,009 with kernel.module_ext1..3 (a module of more than four entry points).
-        assert_eq!(fs.rows.len(), 2009);
+        // 2,009 with kernel.module_ext1..3 (a module of more than four entry points); 2,145 with the slot counts
+        // (ARRAY_FAMILIES and REG_EXTEND of gen_tables.py: the arrays and registers past the first names, and
+        // the sixteen of each extra register kind).
+        assert_eq!(fs.rows.len(), 2145);
         let dual = |t: Ty| k.dual(t).unwrap().dual.clone();
         let producers = |d: &str| -> Vec<String> { k.rows.iter().filter(|r| dual(r.output) == d).map(|r| r.name.clone()).collect() };
         assert_eq!(producers("kernel.safe"), vec!["kernel.entry_safe"]);
