@@ -7,7 +7,7 @@
 //!   cargo run --release --features gpu,wgsl --example wgsl_adapter
 fn main() -> Result<(), String> {
     let instance = wgpu::Instance::default();
-    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default())).ok_or("no adapter")?;
+    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default())).map_err(|e| format!("no adapter: {e}"))?;
     let info = adapter.get_info();
     let l = adapter.limits();
     let f = adapter.features();
@@ -17,7 +17,8 @@ fn main() -> Result<(), String> {
     println!("max_compute_workgroup_storage_size\t{} bytes", l.max_compute_workgroup_storage_size);
     println!("max_compute_workgroups_per_dimension\t{}", l.max_compute_workgroups_per_dimension);
     println!("max_storage_buffer_binding_size\t{} bytes", l.max_storage_buffer_binding_size);
-    println!("min/max subgroup size\t{} / {}", l.min_subgroup_size, l.max_subgroup_size);
+    // (wgpu 30 reports the subgroup sizes on the adapter's info, not its limits.)
+    println!("min/max subgroup size\t{} / {}", info.subgroup_min_size, info.subgroup_max_size);
     for (name, feature) in [("SUBGROUP", wgpu::Features::SUBGROUP), ("SUBGROUP_BARRIER", wgpu::Features::SUBGROUP_BARRIER), ("SHADER_F16", wgpu::Features::SHADER_F16), ("TIMESTAMP_QUERY", wgpu::Features::TIMESTAMP_QUERY), ("SHADER_INT64", wgpu::Features::SHADER_INT64)] {
         println!("feature {name}\t{}", f.contains(feature));
     }

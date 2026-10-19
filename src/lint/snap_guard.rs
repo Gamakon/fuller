@@ -494,15 +494,16 @@ mod gpu {
             let pipeline = |layout: &wgpu::BindGroupLayout, entry_point: &str| {
                 let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                     label: None,
-                    bind_group_layouts: &[layout],
-                    push_constant_ranges: &[],
+                    bind_group_layouts: &[Some(layout)],
+                    immediate_size: 0,
                 });
                 device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                     label: Some(entry_point),
                     layout: Some(&pipeline_layout),
                     module: &shader,
-                    entry_point,
+                    entry_point: Some(entry_point),
                     compilation_options: Default::default(),
+                    cache: None,
                 })
             };
             let y32: Vec<f32> = data.y.iter().map(|v| *v as f32).collect();
@@ -538,7 +539,7 @@ mod gpu {
             let (guarded, blocks) = self.run_resident(exprs, tables, rel_tol, MAX_GROUPS_PER_DIM)?;
             if let Some(blocks) = blocks {
                 blocks.destroy();
-                self.evaluator.device().poll(wgpu::Maintain::Poll);
+                crate::gpu_io::drain(self.evaluator.device())?;
             }
             Ok(guarded)
         }
@@ -726,11 +727,11 @@ mod gpu {
                 slice.map_async(wgpu::MapMode::Read, move |r| {
                     let _ = tx.send(r);
                 });
-                device.poll(wgpu::Maintain::Wait);
+                crate::gpu_io::wait(device)?;
                 rx.recv()
                     .map_err(|e| format!("map_async channel: {e}"))?
                     .map_err(|e| format!("map_async: {e}"))?;
-                let words = bytemuck::cast_slice::<u8, u32>(&slice.get_mapped_range()).to_vec();
+                let words = bytemuck::cast_slice::<u8, u32>(&crate::gpu_io::mapped(&slice)?).to_vec();
                 buf.unmap();
                 Ok(words)
             };
@@ -747,7 +748,7 @@ mod gpu {
             ] {
                 b.destroy();
             }
-            device.poll(wgpu::Maintain::Poll);
+            crate::gpu_io::drain(device)?;
 
             let device_time = start.elapsed();
             let start = std::time::Instant::now();

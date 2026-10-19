@@ -737,15 +737,16 @@ mod gpu {
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: None,
-            bind_group_layouts: &[&layout],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(&layout)],
+            immediate_size: 0,
         });
         let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("fuller-snap-pipeline"),
             layout: Some(&pipeline_layout),
             module: &shader,
-            entry_point: "snap_main",
+            entry_point: Some("snap_main"),
             compilation_options: Default::default(),
+            cache: None,
         });
         let block = |label: &str, words: &[u32]| {
             // wgpu rejects a zero-sized binding.
@@ -780,15 +781,15 @@ mod gpu {
             let adapter = instance
                 .request_adapter(&wgpu::RequestAdapterOptions::default())
                 .await
-                .ok_or("no GPU adapter")?;
+                .map_err(|e| format!("no GPU adapter: {e}"))?;
             let (device, queue) = adapter
                 .request_device(
                     &wgpu::DeviceDescriptor {
                         label: Some("fuller-snap-device"),
                         required_features: wgpu::Features::empty(),
                         required_limits: adapter.limits(),
+                        ..Default::default()
                     },
-                    None,
                 )
                 .await
                 .map_err(|e| format!("request_device: {e}"))?;
@@ -963,11 +964,11 @@ mod gpu {
             slice.map_async(wgpu::MapMode::Read, move |r| {
                 let _ = tx.send(r);
             });
-            device.poll(wgpu::Maintain::Wait);
+            crate::gpu_io::wait(device)?;
             rx.recv()
                 .map_err(|e| format!("map_async channel: {e}"))?
                 .map_err(|e| format!("map_async: {e}"))?;
-            let words = bytemuck::cast_slice::<u8, u32>(&slice.get_mapped_range()).to_vec();
+            let words = bytemuck::cast_slice::<u8, u32>(&crate::gpu_io::mapped(&slice)?).to_vec();
             read_buf.unmap();
 
             // Release per-dispatch buffers explicitly and drain wgpu's deferred
@@ -975,7 +976,7 @@ mod gpu {
             for b in [&lits_buf, &contexts_buf, &hits_buf, &read_buf, &cfg_buf] {
                 b.destroy();
             }
-            device.poll(wgpu::Maintain::Poll);
+            crate::gpu_io::drain(device)?;
             Ok(words.chunks_exact(2).map(found_of).collect())
         }
     }

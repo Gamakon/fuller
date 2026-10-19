@@ -7,7 +7,7 @@
 fn main() -> Result<(), String> {
     let path = std::env::args().nth(1).ok_or("usage: wgsl_msl <kernel.wgsl>")?;
     let text = std::fs::read_to_string(&path).map_err(|e| format!("{path}: {e}"))?;
-    let module = naga::front::wgsl::parse_str(&text).map_err(|e| e.emit_to_string(&text))?;
+    let module = fuller::wgsl::naga_shape::parse(&text)?;
     // (The recorded target's capabilities and subgroup operations: no device.)
     let info = fuller::wgsl::target::Target::recorded().validate(&module, &text)?;
     // (Metal 2.4, as wgpu asks on this machine, and bindings as written.)

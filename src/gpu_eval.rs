@@ -904,7 +904,7 @@ mod device {
             let adapter = instance
                 .request_adapter(&wgpu::RequestAdapterOptions::default())
                 .await
-                .ok_or("no GPU adapter")?;
+                .map_err(|e| format!("no GPU adapter: {e}"))?;
             let (device, queue) = adapter
                 .request_device(
                     &wgpu::DeviceDescriptor {
@@ -918,8 +918,8 @@ mod device {
                         // smaller than one generation's prediction buffer
                         // once e-class variants are in the batch.
                         required_limits: adapter.limits(),
+                        ..Default::default()
                     },
-                    None,
                 )
                 .await
                 .map_err(|e| format!("request_device: {e}"))?;
@@ -961,16 +961,17 @@ mod device {
             let pipeline_layout =
                 device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                     label: None,
-                    bind_group_layouts: &[&layout],
-                    push_constant_ranges: &[],
+                    bind_group_layouts: &[Some(&layout)],
+                    immediate_size: 0,
                 });
 
             let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                 label: Some("fuller-eval-pipeline"),
                 layout: Some(&pipeline_layout),
                 module: &shader,
-                entry_point: "eval_main",
+                entry_point: Some("eval_main"),
                 compilation_options: Default::default(),
+                cache: None,
             });
 
             // THE resident buffer. Uploaded once; every later dispatch reuses it.
@@ -1378,11 +1379,11 @@ mod device {
             slice.map_async(wgpu::MapMode::Read, move |r| {
                 let _ = tx.send(r);
             });
-            self.device.poll(wgpu::Maintain::Wait);
+            crate::gpu_io::wait(&self.device)?;
             rx.recv()
                 .map_err(|e| format!("map_async channel: {e}"))?
                 .map_err(|e| format!("map_async: {e}"))?;
-            let out = bytemuck::cast_slice::<u8, f32>(&slice.get_mapped_range()).to_vec();
+            let out = bytemuck::cast_slice::<u8, f32>(&crate::gpu_io::mapped(&slice)?).to_vec();
             read_buf.unmap();
 
             // Release every per-dispatch buffer explicitly. Dropping the Rust
@@ -1407,7 +1408,7 @@ mod device {
             // them. Without this the process grows ~23KB per dispatch —
             // measured 108MB -> 177MB over 300 dispatches, still climbing —
             // and Metal reports "Context leak detected" once per dispatch.
-            self.device.poll(wgpu::Maintain::Poll);
+            crate::gpu_io::drain(&self.device)?;
             Ok(out)
         }
 
@@ -1510,9 +1511,9 @@ mod device {
                 slice.map_async(wgpu::MapMode::Read, move |r| {
                     let _ = tx.send(r);
                 });
-                self.device.poll(wgpu::Maintain::Wait);
+                crate::gpu_io::wait(&self.device)?;
                 rx.recv().map_err(|e| format!("map_async channel: {e}"))?.map_err(|e| format!("map_async: {e}"))?;
-                let v = bytemuck::cast_slice::<u8, f32>(&slice.get_mapped_range()).to_vec();
+                let v = bytemuck::cast_slice::<u8, f32>(&crate::gpu_io::mapped(&slice)?).to_vec();
                 buf.unmap();
                 Ok(v)
             };
@@ -1527,7 +1528,7 @@ mod device {
             read_buf.destroy();
             part_buf.destroy();
             part_read.destroy();
-            self.device.poll(wgpu::Maintain::Poll);
+            crate::gpu_io::drain(&self.device)?;
             Ok((out, partials))
         }
 
@@ -1641,7 +1642,7 @@ fn stats_main(@builtin(global_invocation_id) gid: vec3<u32>) {
             let n_rows = evaluator.n_rows();
             let limits = device.limits();
             let per_expr = MAX_NODES as u64 * u64::from(n_rows) * 4;
-            let cap = PARTIALS_BYTES_CAP.min(u64::from(limits.max_storage_buffer_binding_size));
+            let cap = PARTIALS_BYTES_CAP.min(limits.max_storage_buffer_binding_size);
             // A workgroup of 64 threads reduces 64 nodes, so an expression takes
             // MAX_NODES / 64 workgroups, and the dispatch is one-dimensional: a
             // block is at most one dimension's worth of workgroups.
@@ -1668,13 +1669,14 @@ fn stats_main(@builtin(global_invocation_id) gid: vec3<u32>) {
                     })
                     .collect::<Vec<_>>(),
             });
-            let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: None, bind_group_layouts: &[&layout], push_constant_ranges: &[] });
+            let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: None, bind_group_layouts: &[Some(&layout)], immediate_size: 0 });
             let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                 label: Some("fuller-subtree-stats-pipeline"),
                 layout: Some(&pipeline_layout),
                 module: &shader,
-                entry_point: "stats_main",
+                entry_point: Some("stats_main"),
                 compilation_options: Default::default(),
+                cache: None,
             });
             let storage = |bytes: u64, label: &str| {
                 device.create_buffer(&wgpu::BufferDescriptor {
@@ -1768,17 +1770,17 @@ fn stats_main(@builtin(global_invocation_id) gid: vec3<u32>) {
                 slice.map_async(wgpu::MapMode::Read, move |r| {
                     let _ = tx.send(r);
                 });
-                device.poll(wgpu::Maintain::Wait);
+                crate::gpu_io::wait(device)?;
                 rx.recv().map_err(|e| format!("map_async channel: {e}"))?.map_err(|e| format!("map_async: {e}"))?;
                 {
-                    let words = slice.get_mapped_range();
+                    let words = crate::gpu_io::mapped(&slice)?;
                     let f: &[f32] = bytemuck::cast_slice(&words);
                     out.extend(f.chunks_exact(4).map(|c| SubtreeStat { min: c[0], max: c[1], sum: c[2], finite: c[3] == 1.0 }));
                 }
                 self.staging.unmap();
                 eval_meta.destroy();
                 meta.destroy();
-                device.poll(wgpu::Maintain::Poll);
+                crate::gpu_io::drain(device)?;
                 e0 += n;
             }
             Ok(out)
@@ -2142,9 +2144,9 @@ mod device_tests {
         slice.map_async(wgpu::MapMode::Read, move |r: Result<(), wgpu::BufferAsyncError>| {
             let _ = tx.send(r);
         });
-        device.poll(wgpu::Maintain::Wait);
+        crate::gpu_io::wait(device).expect("the device waits");
         rx.recv().unwrap().unwrap();
-        let got = bytemuck::cast_slice::<u8, f32>(&slice.get_mapped_range()).to_vec();
+        let got = bytemuck::cast_slice::<u8, f32>(&crate::gpu_io::mapped(&slice).expect("the mapped view")).to_vec();
         read_buf.unmap();
 
         assert_eq!(got, vec![200.0, 201.0, 202.0, 203.0], "GeneRef must read def 1 (via shared_base=1), not def 0");

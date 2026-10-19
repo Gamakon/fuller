@@ -465,10 +465,12 @@ impl<'a> Checker<'a> {
             Ok(r) => r,
             Err(e) => return fail("kernel_does_not_render", e),
         };
-        let module = match naga::front::wgsl::parse_str(&rendered.text) {
+        let mut module = match crate::wgsl::naga_shape::parse(&rendered.text) {
             Ok(m) => m,
-            Err(e) => return fail("kernel_does_not_parse", e.emit_to_string(&rendered.text)),
+            Err(e) => return fail("kernel_does_not_parse", e),
         };
+        // (The safety checker's view of the short circuits, as `safety::check_text`.)
+        crate::wgsl::naga_shape::fold_short_circuits(&mut module);
         let contract = if crate::wgsl::render::writes_mirror(tree) { self.contract.full() } else { self.contract.clone() };
         match crate::wgsl::safety::check_module(&module, &contract) {
             Ok(_) => Ok(()),

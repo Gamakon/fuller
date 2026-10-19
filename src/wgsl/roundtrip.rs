@@ -119,8 +119,8 @@ pub fn same_values(source: &str, kingdom: &WgslKingdom, t: &Trial) -> Result<Rou
         Err(e) => return Ok(RoundTrip::Refused(e)),
     };
     let rendered = crate::wgsl::safe_karva::render_tree_with(&read.tree, kingdom, &read.role)?.text;
-    let a = naga::front::wgsl::parse_str(source).map_err(|e| e.emit_to_string(source))?;
-    let b = naga::front::wgsl::parse_str(&rendered).map_err(|e| format!("the rendering does not parse: {}\n{rendered}", e.emit_to_string(&rendered)))?;
+    let a = crate::wgsl::naga_shape::parse(source)?;
+    let b = crate::wgsl::naga_shape::parse(&rendered).map_err(|e| format!("the rendering does not parse: {e}\n{rendered}"))?;
     let (ka, kb) = (bindings(&a), bindings(&b));
     let (na, nb): (Vec<_>, Vec<_>) = (ka.iter().map(|x| (x.0, x.2)).collect(), kb.iter().map(|x| (x.0, x.2)).collect());
     if na != nb {

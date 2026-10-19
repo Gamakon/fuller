@@ -110,13 +110,13 @@ fn main() -> Result<(), String> {
     let mut s = Summary { rung: 0, detail: String::new(), probes_passed: 0, pairs_passed: 0, pairs_total: 0, worst_pair_ratio: 0.0, worst_train: 0.0, worst_val: 0.0, worst_extrap: 0.0, speedups: Vec::new(), null: Vec::new() };
 
     // Rung 1: parse.
-    match naga::front::wgsl::parse_str(&source) {
+    match fuller::wgsl::naga_shape::parse(&source) {
         Ok(_) => {
             s.rung = 1;
             println!("[{}] rung 1 parse: ok", stamp());
         }
         Err(e) => {
-            s.detail = e.emit_to_string(&source).lines().find(|l| l.contains("error")).unwrap_or("parse error").to_string();
+            s.detail = e.lines().find(|l| l.contains("error")).unwrap_or("parse error").to_string();
             println!("[{}] rung 1 parse: FAILED {}", stamp(), s.detail);
             return finish(&ledger, &path, &s, t_all);
         }

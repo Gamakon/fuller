@@ -477,7 +477,7 @@ pub fn interface_of(source: &str) -> Result<Role, String> {
     match source.lines().map(str::trim).find_map(|l| l.strip_prefix("// interface ")) {
         Some(name) => role_named(name.trim()),
         None => {
-            let module = naga::front::wgsl::parse_str(source).map_err(|e| e.emit_to_string(source))?;
+            let module = crate::wgsl::naga_shape::parse(source)?;
             let (i, entries) = infer_entries(&module)?;
             if entries.len() > 4 {
                 return Err(format!("a module of {} entry points: the kingdom's module holds at most four (kernel.module_4)", entries.len()));
@@ -2169,7 +2169,13 @@ impl Renderer<'_> {
                     "ballot" => "subgroupBallot",
                     other => return Err(format!("subgroup.{other} is not a subgroup built-in")),
                 };
-                let args: Vec<String> = v.kids.iter().map(|k| self.value(k, scope)).collect::<Result<_, _>>()?;
+                let mut args: Vec<String> = v.kids.iter().map(|k| self.value(k, scope)).collect::<Result<_, _>>()?;
+                // A broadcast's lane is a const-expression for naga 30's
+                // validator: the literal itself, never through `lit_u32`
+                // (2026-10-19, the naga/wgpu 30 upgrade).
+                if f == "subgroupBroadcast" && v.kids.len() == 2 {
+                    args[1] = format!("{}u", self.lit(&v.kids[1], 64)?);
+                }
                 return Ok(format!("{f}({})", args.join(", ")));
             }
             // The atomic built-ins on a workgroup array (their old value).
@@ -3979,7 +3985,7 @@ fn sample_with(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, s
 /// Parse text with naga and validate it for the device in use
 /// ([`super::target::Target::current`]); the error names the line.
 pub fn validate_text(text: &str) -> Result<(), String> {
-    let module = naga::front::wgsl::parse_str(text).map_err(|e| e.emit_to_string(text))?;
+    let module = crate::wgsl::naga_shape::parse(text)?;
     super::target::Target::current().validate(&module, text).map(|_| ())
 }
 
@@ -4119,7 +4125,7 @@ mod tests {
         for seed in 0..1000 {
             let tree = sample(&k, &role, root, 7, seed).unwrap();
             let text = crate::wgsl::safe_karva::render_tree(&tree, &k).unwrap().text;
-            let module = naga::front::wgsl::parse_str(&text).unwrap_or_else(|e| panic!("{}", e.emit_to_string(&text)));
+            let module = crate::wgsl::naga_shape::parse(&text).unwrap_or_else(|e| panic!("{e}"));
             let info = crate::wgsl::target::Target::recorded().validate(&module, &text).unwrap_or_else(|e| panic!("{e}"));
             kernels += 1;
             let mut check = |name: &str, f: &naga::Function, fi: &naga::valid::FunctionInfo, entry: bool| {

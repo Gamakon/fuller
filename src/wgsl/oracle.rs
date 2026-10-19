@@ -306,7 +306,7 @@ pub mod device {
             #[cfg(test)]
             let gpu = crate::gpu_test_lock::acquire();
             let instance = wgpu::Instance::default();
-            let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default())).ok_or("no adapter")?;
+            let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default())).map_err(|e| format!("no adapter: {e}"))?;
             let name = format!("{} ({:?})", adapter.get_info().name, adapter.get_info().backend);
             // Subgroups when the adapter has them (the M3 Max does): a kernel
             // that uses a subgroup built-in compiles only on a device that
@@ -319,8 +319,7 @@ pub mod device {
             eprintln!("device {name}: max_storage_buffer_binding_size {} bytes, max_buffer_size {} bytes (the adapter's)", limits.max_storage_buffer_binding_size, limits.max_buffer_size);
             crate::wgsl::target::install(crate::wgsl::target::Target::of_device(&adapter, features, &limits));
             let (device, queue) = pollster::block_on(adapter.request_device(
-                &wgpu::DeviceDescriptor { label: Some("wgsl-oracle"), required_features: features, required_limits: limits },
-                None,
+                &wgpu::DeviceDescriptor { label: Some("wgsl-oracle"), required_features: features, required_limits: limits, ..Default::default() },
             ))
             .map_err(|e| format!("request_device: {e}"))?;
             Ok(Device {
@@ -353,13 +352,13 @@ pub mod device {
                 }
                 let t = std::time::Instant::now();
                 self.queue.submit(Some(enc.finish()));
-                self.device.poll(wgpu::Maintain::Wait);
+                crate::gpu_io::wait(&self.device)?;
                 times.push(t.elapsed().as_secs_f64() * 1e3);
             }
             for (_, buf, _) in &buffers {
                 buf.destroy();
             }
-            self.device.poll(wgpu::Maintain::Poll);
+            crate::gpu_io::drain(&self.device)?;
             times.sort_by(|a, b| a.partial_cmp(b).expect("finite"));
             Ok((times[times.len() / 2], times[0]))
         }
@@ -387,7 +386,7 @@ pub mod device {
                 }
                 let t = std::time::Instant::now();
                 self.queue.submit(Some(enc.finish()));
-                self.device.poll(wgpu::Maintain::Wait);
+                crate::gpu_io::wait(&self.device)?;
                 times.push(t.elapsed().as_secs_f64() * 1e3);
             }
             for (_, _, buffers) in &prepared {
@@ -395,7 +394,7 @@ pub mod device {
                     buf.destroy();
                 }
             }
-            self.device.poll(wgpu::Maintain::Poll);
+            crate::gpu_io::drain(&self.device)?;
             times.sort_by(|a, b| a.partial_cmp(b).expect("finite"));
             Ok((times[times.len() / 2], times[0]))
         }
@@ -403,7 +402,7 @@ pub mod device {
         /// Compile, bind and upload: the pipeline, its bind group and the
         /// buffers (binding, buffer, words).
         fn prepare(&self, source: &str, entry: &str, memory: &Memory, original: &[Binding]) -> Result<Prepared, String> {
-            let module = naga::front::wgsl::parse_str(source).map_err(|e| e.emit_to_string(source))?;
+            let module = crate::wgsl::naga_shape::parse(source)?;
             let info = crate::wgsl::target::Target::current().validate(&module, source).map_err(|e| format!("validation: {e}"))?;
             let own: Vec<Binding> = bindings(&module)?;
             if own.len() != original.len() {
@@ -428,14 +427,14 @@ pub mod device {
                     binds.push(b.clone());
                 }
             }
-            self.device.push_error_scope(wgpu::ErrorFilter::Validation);
+            let scope = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
             let shader = self.device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some(entry), source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(source)) });
-            if let Some(e) = pollster::block_on(self.device.pop_error_scope()) {
+            if let Some(e) = pollster::block_on(scope.pop()) {
                 return Err(format!("shader module: {e}"));
             }
-            self.device.push_error_scope(wgpu::ErrorFilter::Validation);
-            let pipeline = self.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor { label: Some(entry), layout: None, module: &shader, entry_point: entry, compilation_options: Default::default() });
-            if let Some(e) = pollster::block_on(self.device.pop_error_scope()) {
+            let scope = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
+            let pipeline = self.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor { label: Some(entry), layout: None, module: &shader, entry_point: Some(entry), compilation_options: Default::default(), cache: None });
+            if let Some(e) = pollster::block_on(scope.pop()) {
                 return Err(format!("pipeline {entry}: {e}"));
             }
             let mut buffers = Vec::new();
@@ -463,9 +462,9 @@ pub mod device {
                 entries.push(wgpu::BindGroupEntry { binding: b.binding, resource: buf.as_entire_binding() });
             }
             let layout = pipeline.get_bind_group_layout(0);
-            self.device.push_error_scope(wgpu::ErrorFilter::Validation);
+            let scope = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
             let bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor { label: Some(entry), layout: &layout, entries: &entries });
-            if let Some(e) = pollster::block_on(self.device.pop_error_scope()) {
+            if let Some(e) = pollster::block_on(scope.pop()) {
                 return Err(format!("bind group: {e}"));
             }
             Ok((pipeline, bind, buffers))
@@ -498,9 +497,9 @@ pub mod device {
             for (i, read) in &reads {
                 enc.copy_buffer_to_buffer(&buffers[*i].1, 0, read, 0, (buffers[*i].2 * 4) as u64);
             }
-            self.device.push_error_scope(wgpu::ErrorFilter::Validation);
+            let scope = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
             self.queue.submit(Some(enc.finish()));
-            if let Some(e) = pollster::block_on(self.device.pop_error_scope()) {
+            if let Some(e) = pollster::block_on(scope.pop()) {
                 return Err(format!("submit: {e}"));
             }
             let mut out = memory.clone();
@@ -510,9 +509,9 @@ pub mod device {
                 slice.map_async(wgpu::MapMode::Read, move |r| {
                     tx.send(r).expect("the receiver waits for the mapping");
                 });
-                self.device.poll(wgpu::Maintain::Wait);
+                crate::gpu_io::wait(&self.device)?;
                 rx.recv().map_err(|e| format!("map_async channel: {e}"))?.map_err(|e| format!("map_async: {e}"))?;
-                let words: Vec<u32> = bytemuck::cast_slice::<u8, u32>(&slice.get_mapped_range()).to_vec();
+                let words: Vec<u32> = bytemuck::cast_slice::<u8, u32>(&crate::gpu_io::mapped(&slice)?).to_vec();
                 read.unmap();
                 let b = &buffers[*i].0;
                 let v: Value = from_words(&words, b.elem, b.array)?;
@@ -524,7 +523,7 @@ pub mod device {
             for (_, read) in &reads {
                 read.destroy();
             }
-            self.device.poll(wgpu::Maintain::Poll);
+            crate::gpu_io::drain(&self.device)?;
             Ok(out)
         }
     }
@@ -579,7 +578,7 @@ mod tests {
 @group(0) @binding(2) var<storage, read_write> out: array<i32>;
 @compute @workgroup_size(1) fn main() { out[0] = i32(xs[0]) + i32(n); }
 "#;
-        let module = naga::front::wgsl::parse_str(src).unwrap();
+        let module = crate::wgsl::naga_shape::parse(src).unwrap();
         let b = bindings(&module).unwrap();
         assert_eq!(b.iter().map(|b| (b.location.as_str(), b.uniform, b.read_write, b.elem, b.array)).collect::<Vec<_>>(), vec![("buffer.xs", false, false, "f32", true), ("uniform.n", true, false, "u32", false), ("buffer.out", false, true, "i32", true)]);
         let v = Value::Vec(vec![Value::F32(-0.0), Value::F32(f32::NAN)]);

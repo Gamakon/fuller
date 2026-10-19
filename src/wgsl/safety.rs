@@ -2240,7 +2240,13 @@ impl<'m> An<'m> {
                 false
             }
             Statement::Kill => false,
-            Statement::Barrier(flags) => {
+            Statement::MemoryBarrier(flags) => {
+                if self.record {
+                    self.errors.push(unsafe_("memory_barrier_without_control", format!("{} ({flags:?})", "our software has a bug: naga's MemoryBarrier (a memory barrier without control; the WGSL front end never writes one)")));
+                }
+                true
+            }
+            Statement::ControlBarrier(flags) => {
                 if !self.ctrl_uni && self.record {
                     self.errors.push(unsafe_("barrier_in_nonuniform_control", format!("a barrier ({flags:?}) where the invocations of a workgroup may disagree on reaching it")));
                 }
@@ -2261,7 +2267,9 @@ impl<'m> An<'m> {
                 let v = self.eval(fr, *value);
                 self.store(fr, &ctx, p, v, Kind::Atomic, Some(*pointer));
                 let r = self.other(false, false, false);
-                self.frames[fr].vals.insert(*result, r);
+                if let Some(result) = result {
+                    self.frames[fr].vals.insert(*result, r);
+                }
                 true
             }
             Statement::WorkGroupUniformLoad { pointer, result } => {
@@ -2312,6 +2320,12 @@ impl<'m> An<'m> {
             Statement::ImageStore { .. } | Statement::RayQuery { .. } => {
                 if self.record {
                     self.errors.push(unsafe_("statement_not_in_kingdom", "an image store or a ray query".into()));
+                }
+                true
+            }
+            Statement::ImageAtomic { .. } | Statement::RayPipelineFunction(_) | Statement::CooperativeStore { .. } => {
+                if self.record {
+                    self.errors.push(unsafe_("statement_not_in_kingdom", "an image atomic, a ray pipeline function or a cooperative store (naga 30's; naga_shape refuses them)".into()));
                 }
                 true
             }
@@ -2454,7 +2468,7 @@ impl<'m> An<'m> {
     fn barrier_every_pass(body: &Block) -> bool {
         fn barrier(b: &Block) -> bool {
             b.iter().any(|s| match s {
-                Statement::Barrier(f) => f.contains(naga::Barrier::WORK_GROUP),
+                Statement::ControlBarrier(f) => f.contains(naga::Barrier::WORK_GROUP),
                 Statement::WorkGroupUniformLoad { .. } => true,
                 Statement::Block(x) => barrier(x),
                 _ => false,
@@ -3716,9 +3730,14 @@ fn arena_bounds(module: &Module, contract: &Contract, entry: &str) -> Result<Unb
     Ok(unbounded)
 }
 
-/// [`check_module`] over WGSL text.
+/// [`check_module`] over WGSL text. The module is checked in the readers'
+/// view of its short circuits (`naga_shape::fold_short_circuits`): naga 0.20's
+/// Binary, both sides judged, so every access the right side makes is proved
+/// as if it always ran (stricter than the device's short circuit, never
+/// weaker; the fold takes only right sides that call pure functions).
 pub fn check_text(source: &str, contract: &Contract) -> Result<Report, Unsafe> {
-    let module = naga::front::wgsl::parse_str(source).map_err(|e| unsafe_("parse", e.emit_to_string(source)))?;
+    let mut module = crate::wgsl::naga_shape::parse(source).map_err(|e| unsafe_("parse", e))?;
+    crate::wgsl::naga_shape::fold_short_circuits(&mut module);
     check_module(&module, contract)
 }
 

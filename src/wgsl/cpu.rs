@@ -267,7 +267,7 @@ fn run_on(module: &Module, ep: &naga::EntryPoint, buffers: HashMap<String, Val>,
 
 /// [`run`] over WGSL text.
 pub fn run_text(source: &str, buffers: HashMap<String, Val>, workgroups: [u32; 3], max_steps: u64) -> Result<Dispatch, String> {
-    let module = naga::front::wgsl::parse_str(source).map_err(|e| e.emit_to_string(source))?;
+    let module = crate::wgsl::naga_shape::parse(source)?;
     run(&module, buffers, workgroups, max_steps)
 }
 
@@ -297,7 +297,7 @@ fn operands(e: &Expression) -> Option<Vec<Handle<Expression>>> {
 fn statement_uses(block: &Block, out: &mut HashSet<Handle<Expression>>) -> bool {
     for st in block.iter() {
         let ok = match st {
-            Statement::Emit(_) | Statement::Break | Statement::Continue | Statement::Kill | Statement::Barrier(_) => true,
+            Statement::Emit(_) | Statement::Break | Statement::Continue | Statement::Kill | Statement::ControlBarrier(_) | Statement::MemoryBarrier(_) => true,
             Statement::Block(b) => statement_uses(b, out),
             Statement::If { condition, accept, reject } => {
                 out.insert(*condition);
@@ -320,7 +320,8 @@ fn statement_uses(block: &Block, out: &mut HashSet<Handle<Expression>>) -> bool 
                 true
             }
             Statement::Atomic { pointer, fun, value, result } => {
-                out.extend([*pointer, *value, *result]);
+                out.extend([*pointer, *value]);
+                out.extend(*result);
                 if let naga::AtomicFunction::Exchange { compare: Some(c) } = fun {
                     out.insert(*c);
                 }
@@ -630,9 +631,9 @@ fn math1(fun: MathFunction, a: &Val) -> Result<Val, String> {
         (M::CountLeadingZeros, Val::I(x)) => Val::I(x.leading_zeros() as i32),
         (M::CountTrailingZeros, Val::I(x)) => Val::I(x.trailing_zeros() as i32),
         (M::ReverseBits, Val::I(x)) => Val::I(x.reverse_bits()),
-        (M::FindLsb, Val::I(x)) => Val::I(if *x == 0 { -1 } else { x.trailing_zeros() as i32 }),
+        (M::FirstTrailingBit, Val::I(x)) => Val::I(if *x == 0 { -1 } else { x.trailing_zeros() as i32 }),
         // firstLeadingBit of an i32: the most significant bit that differs from the sign.
-        (M::FindMsb, Val::I(x)) => {
+        (M::FirstLeadingBit, Val::I(x)) => {
             let y = if *x < 0 { !*x } else { *x };
             Val::I(if y == 0 { -1 } else { 31 - y.leading_zeros() as i32 })
         }
@@ -640,11 +641,11 @@ fn math1(fun: MathFunction, a: &Val) -> Result<Val, String> {
         (M::CountLeadingZeros, x) => Val::U(x.u()?.leading_zeros()),
         (M::CountTrailingZeros, x) => Val::U(x.u()?.trailing_zeros()),
         (M::ReverseBits, Val::U(x)) => Val::U(x.reverse_bits()),
-        (M::FindLsb, x) => {
+        (M::FirstTrailingBit, x) => {
             let v = x.u()?;
             Val::U(if v == 0 { u32::MAX } else { v.trailing_zeros() })
         }
-        (M::FindMsb, Val::U(v)) => Val::U(if *v == 0 { u32::MAX } else { 31 - v.leading_zeros() }),
+        (M::FirstLeadingBit, Val::U(v)) => Val::U(if *v == 0 { u32::MAX } else { 31 - v.leading_zeros() }),
         (f, Val::F(x)) => Val::F(match f {
             M::Floor => x.floor(),
             M::Ceil => x.ceil(),
@@ -1425,11 +1426,12 @@ impl<'m> Machine<'m> {
                 return Ok(Flow::Return(v));
             }
             Statement::Kill => return Ok(Flow::Return(None)),
-            Statement::Barrier(flags) => {
+            Statement::ControlBarrier(flags) => {
                 if flags.contains(naga::Barrier::WORK_GROUP) {
                     return Ok(Flow::Barrier);
                 }
             }
+            Statement::MemoryBarrier(_) => return Err(format!("cpu: {}", "our software has a bug: naga's MemoryBarrier (a memory barrier without control; the WGSL front end never writes one)")),
             Statement::Store { pointer, value } => {
                 let Val::P(p) = self.eval(inv, fr, *pointer)? else { return Err("cpu: a store through a value".into()) };
                 let v = self.eval(inv, fr, *value)?;
@@ -1451,7 +1453,9 @@ impl<'m> Machine<'m> {
                     naga::AtomicFunction::Exchange { compare: Some(_) } => return Err("cpu: atomicCompareExchangeWeak".into()),
                 };
                 self.ptr_set(inv, &p, new)?;
-                fr.vals.insert(*result, old);
+                if let Some(r) = result {
+                    fr.vals.insert(*r, old);
+                }
             }
             Statement::WorkGroupUniformLoad { pointer, result } => {
                 let Val::P(p) = self.eval(inv, fr, *pointer)? else { return Err("cpu: a uniform load of a value".into()) };
@@ -1486,6 +1490,7 @@ impl<'m> Machine<'m> {
                     naga::GatherMode::Shuffle(e) => (Pend::Shuffle, Some(*e)),
                     naga::GatherMode::ShuffleDown(e) => (Pend::ShuffleDown, Some(*e)),
                     naga::GatherMode::ShuffleUp(e) => (Pend::ShuffleUp, Some(*e)),
+                    naga::GatherMode::QuadBroadcast(_) | naga::GatherMode::QuadSwap(_) => return Err("cpu: our software has a bug: a quad gather has no row in the kingdom (naga_shape refuses it)".into()),
                     naga::GatherMode::ShuffleXor(e) => (Pend::ShuffleXor, Some(*e)),
                 };
                 let lane = match i {
@@ -1496,6 +1501,7 @@ impl<'m> Machine<'m> {
                 return Ok(Flow::Collective);
             }
             Statement::ImageStore { .. } | Statement::RayQuery { .. } => return Err("cpu: an image store or a ray query".into()),
+            Statement::ImageAtomic { .. } | Statement::RayPipelineFunction(_) | Statement::CooperativeStore { .. } => return Err("cpu: an image atomic, a ray pipeline function or a cooperative store".into()),
         }
         Ok(Flow::Next)
     }
@@ -1587,12 +1593,12 @@ mod tests {
                 want[(r * d + c) as usize] = acc;
             }
         }
-        let module = naga::front::wgsl::parse_str(SHIPPED).unwrap();
+        let module = crate::wgsl::naga_shape::parse(SHIPPED).unwrap();
         let out = run(&module, gram_buffers(d, m, d, 0, &p), [d.div_ceil(16), d.div_ceil(16), 1], 100_000_000).unwrap();
         assert_eq!(h_of(&out), want);
         // Every cell written once, by the thread that owns it.
         assert_eq!(out.writes.len(), (d * d) as usize);
-        let tiled = naga::front::wgsl::parse_str(TILED).unwrap();
+        let tiled = crate::wgsl::naga_shape::parse(TILED).unwrap();
         let out = run(&tiled, gram_buffers(d, m, d, 0, &p), [d.div_ceil(64), d.div_ceil(64), 1], 100_000_000).unwrap();
         let got = h_of(&out);
         let worst = got.iter().zip(&want).map(|(a, b)| (a - b).abs() / b.abs().max(1.0)).fold(0.0f32, f32::max);

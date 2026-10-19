@@ -66,8 +66,9 @@ pub fn block_effects(module: &Module, f: &Function, callees: &[Effects], block: 
     for stmt in block.iter() {
         match stmt {
             Statement::Store { pointer, .. } | Statement::Atomic { pointer, .. } => out.add(location_of(module, f, *pointer)),
-            Statement::ImageStore { image, .. } => out.add(location_of(module, f, *image)),
-            Statement::Barrier(flags) => barrier_locations(module, *flags, &mut out.locations),
+            Statement::ImageStore { image, .. } | Statement::ImageAtomic { image, .. } => out.add(location_of(module, f, *image)),
+            Statement::CooperativeStore { target, .. } => out.add(location_of(module, f, *target)),
+            Statement::ControlBarrier(flags) | Statement::MemoryBarrier(flags) => barrier_locations(module, *flags, &mut out.locations),
             // `workgroupUniformLoad` has barrier semantics (naga's doc).
             Statement::WorkGroupUniformLoad { .. } => barrier_locations(module, naga::Barrier::WORK_GROUP, &mut out.locations),
             Statement::Call { function, arguments, .. } => {
@@ -103,6 +104,7 @@ pub fn block_effects(module: &Module, f: &Function, callees: &[Effects], block: 
             | Statement::Return { .. }
             | Statement::Kill
             | Statement::RayQuery { .. }
+            | Statement::RayPipelineFunction(_)
             | Statement::SubgroupBallot { .. }
             | Statement::SubgroupGather { .. }
             | Statement::SubgroupCollectiveOperation { .. } => {}
@@ -148,7 +150,10 @@ pub fn global_location(module: &Module, g: Handle<naga::GlobalVariable>) -> Stri
         naga::AddressSpace::Uniform => "uniform",
         naga::AddressSpace::WorkGroup => "workgroup",
         naga::AddressSpace::Private => "private",
-        naga::AddressSpace::PushConstant => "push",
+        naga::AddressSpace::Immediate => "immediate",
+        naga::AddressSpace::TaskPayload => "task_payload",
+        naga::AddressSpace::RayPayload => "ray_payload",
+        naga::AddressSpace::IncomingRayPayload => "incoming_ray_payload",
         naga::AddressSpace::Handle | naga::AddressSpace::Function => "global",
     };
     format!("{kind}.{name}")

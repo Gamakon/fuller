@@ -218,8 +218,8 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 | F140 | `bits.count_ones` | `Math::CountOneBits` | `u32.bits` | `u32.count` | 1 |  |
 | F141 | `bits.leading_zeros` | `Math::CountLeadingZeros` | `u32.bits` | `u32.count` | 1 |  |
 | F142 | `bits.trailing_zeros` | `Math::CountTrailingZeros` | `u32.bits` | `u32.count` | 1 |  |
-| F143 | `bits.find_lsb` | `Math::FindLsb` | `u32.bits` | `u32.count` | 1 |  |
-| F144 | `bits.find_msb` | `Math::FindMsb` | `u32.bits` | `u32.count` | 1 |  |
+| F143 | `bits.find_lsb` | `Math::FirstTrailingBit` | `u32.bits` | `u32.count` | 1 |  |
+| F144 | `bits.find_msb` | `Math::FirstLeadingBit` | `u32.bits` | `u32.count` | 1 |  |
 | F145 | `bits.reverse` | `Math::ReverseBits` | `u32.bits` | `u32.bits` | 1 |  |
 | F146 | `bits.extract` | `Math::ExtractBits` | `u32.bits u32.index u32.count` | `u32.bits` | 3 | arity 3 |
 | F147 | `bits.insert_lo` | `composite` | `u32.bits u32.bits u32.index` | `u32.bits` | 3 | arity 3; with insert_hi composes naga InsertBits (arity 4) |
@@ -2372,8 +2372,8 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 | F1149 | `bits.count_ones` | `Math::CountOneBits` | `vec2<u32>.bits` | `vec2<u32>.count` | 1 | per lane |
 | F1150 | `bits.leading_zeros` | `Math::CountLeadingZeros` | `vec2<u32>.bits` | `vec2<u32>.count` | 1 | per lane |
 | F1151 | `bits.trailing_zeros` | `Math::CountTrailingZeros` | `vec2<u32>.bits` | `vec2<u32>.count` | 1 | per lane |
-| F1152 | `bits.find_lsb` | `Math::FindLsb` | `vec2<u32>.bits` | `vec2<u32>.count` | 1 | per lane |
-| F1153 | `bits.find_msb` | `Math::FindMsb` | `vec2<u32>.bits` | `vec2<u32>.count` | 1 | per lane |
+| F1152 | `bits.find_lsb` | `Math::FirstTrailingBit` | `vec2<u32>.bits` | `vec2<u32>.count` | 1 | per lane |
+| F1153 | `bits.find_msb` | `Math::FirstLeadingBit` | `vec2<u32>.bits` | `vec2<u32>.count` | 1 | per lane |
 | F1154 | `bits.reverse` | `Math::ReverseBits` | `vec2<u32>.bits` | `vec2<u32>.bits` | 1 | per lane |
 | F1155 | `bits.extract` | `Math::ExtractBits` | `vec2<u32>.bits u32.index u32.count` | `vec2<u32>.bits` | 3 | arity 3, per lane |
 
@@ -2390,8 +2390,8 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 | F1157 | `bits.count_ones` | `Math::CountOneBits` | `vec3<u32>.bits` | `vec3<u32>.count` | 1 | per lane |
 | F1158 | `bits.leading_zeros` | `Math::CountLeadingZeros` | `vec3<u32>.bits` | `vec3<u32>.count` | 1 | per lane |
 | F1159 | `bits.trailing_zeros` | `Math::CountTrailingZeros` | `vec3<u32>.bits` | `vec3<u32>.count` | 1 | per lane |
-| F1160 | `bits.find_lsb` | `Math::FindLsb` | `vec3<u32>.bits` | `vec3<u32>.count` | 1 | per lane |
-| F1161 | `bits.find_msb` | `Math::FindMsb` | `vec3<u32>.bits` | `vec3<u32>.count` | 1 | per lane |
+| F1160 | `bits.find_lsb` | `Math::FirstTrailingBit` | `vec3<u32>.bits` | `vec3<u32>.count` | 1 | per lane |
+| F1161 | `bits.find_msb` | `Math::FirstLeadingBit` | `vec3<u32>.bits` | `vec3<u32>.count` | 1 | per lane |
 | F1162 | `bits.reverse` | `Math::ReverseBits` | `vec3<u32>.bits` | `vec3<u32>.bits` | 1 | per lane |
 | F1163 | `bits.extract` | `Math::ExtractBits` | `vec3<u32>.bits u32.index u32.count` | `vec3<u32>.bits` | 3 | arity 3, per lane |
 
@@ -2408,8 +2408,8 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 | F1165 | `bits.count_ones` | `Math::CountOneBits` | `vec4<u32>.bits` | `vec4<u32>.count` | 1 | per lane |
 | F1166 | `bits.leading_zeros` | `Math::CountLeadingZeros` | `vec4<u32>.bits` | `vec4<u32>.count` | 1 | per lane |
 | F1167 | `bits.trailing_zeros` | `Math::CountTrailingZeros` | `vec4<u32>.bits` | `vec4<u32>.count` | 1 | per lane |
-| F1168 | `bits.find_lsb` | `Math::FindLsb` | `vec4<u32>.bits` | `vec4<u32>.count` | 1 | per lane |
-| F1169 | `bits.find_msb` | `Math::FindMsb` | `vec4<u32>.bits` | `vec4<u32>.count` | 1 | per lane |
+| F1168 | `bits.find_lsb` | `Math::FirstTrailingBit` | `vec4<u32>.bits` | `vec4<u32>.count` | 1 | per lane |
+| F1169 | `bits.find_msb` | `Math::FirstLeadingBit` | `vec4<u32>.bits` | `vec4<u32>.count` | 1 | per lane |
 | F1170 | `bits.reverse` | `Math::ReverseBits` | `vec4<u32>.bits` | `vec4<u32>.bits` | 1 | per lane |
 | F1171 | `bits.extract` | `Math::ExtractBits` | `vec4<u32>.bits u32.index u32.count` | `vec4<u32>.bits` | 3 | arity 3, per lane |
 | F1172 | `bits.insert` | `Math::InsertBits` | `<u32.bits> <u32.bits> u32.index u32.count` | `<u32.bits>` | 4 | arity 4: insertBits(e, newbits, offset, count) |
@@ -2504,8 +2504,8 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 | F1231 | `int.count_ones` | `Math::CountOneBits` | `<i32.int>` | `<i32.int>` | 1 | WGSL returns i32 for i32 |
 | F1232 | `int.leading_zeros` | `Math::CountLeadingZeros` | `<i32.int>` | `<i32.int>` | 1 | WGSL returns i32 for i32 |
 | F1233 | `int.trailing_zeros` | `Math::CountTrailingZeros` | `<i32.int>` | `<i32.int>` | 1 | WGSL returns i32 for i32 |
-| F1234 | `int.find_lsb` | `Math::FindLsb` | `<i32.int>` | `<i32.int>` | 1 | WGSL returns i32 for i32 |
-| F1235 | `int.find_msb` | `Math::FindMsb` | `<i32.int>` | `<i32.int>` | 1 | WGSL returns i32 for i32 |
+| F1234 | `int.find_lsb` | `Math::FirstTrailingBit` | `<i32.int>` | `<i32.int>` | 1 | WGSL returns i32 for i32 |
+| F1235 | `int.find_msb` | `Math::FirstLeadingBit` | `<i32.int>` | `<i32.int>` | 1 | WGSL returns i32 for i32 |
 | F1236 | `int.reverse` | `Math::ReverseBits` | `<i32.int>` | `<i32.int>` | 1 |  |
 | F1237 | `int.extract` | `Math::ExtractBits` | `<i32.int> u32.index u32.count` | `<i32.int>` | 3 | arity 3, sign-extending |
 | F1238 | `int.insert` | `Math::InsertBits` | `<i32.int> <i32.int> u32.index u32.count` | `<i32.int>` | 4 | arity 4 |

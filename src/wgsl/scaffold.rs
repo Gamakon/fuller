@@ -441,6 +441,7 @@ impl<'a> Builder<'a> {
             expressions: Arena::new(),
             named_expressions: Default::default(),
             body: Block::new(),
+            diagnostic_filter_leaf: None,
         };
         // Local initialisers first, as the reader produced them: a
         // constant leaf, appended outside any Emit (naga needs it const).
@@ -533,7 +534,8 @@ impl<'a> Builder<'a> {
                 Statement::Break => out.push(Statement::Break, Span::UNDEFINED),
                 Statement::Continue => out.push(Statement::Continue, Span::UNDEFINED),
                 Statement::Kill => out.push(Statement::Kill, Span::UNDEFINED),
-                Statement::Barrier(b) => out.push(Statement::Barrier(*b), Span::UNDEFINED),
+                Statement::ControlBarrier(b) => out.push(Statement::ControlBarrier(*b), Span::UNDEFINED),
+                Statement::MemoryBarrier(b) => out.push(Statement::MemoryBarrier(*b), Span::UNDEFINED),
                 Statement::Block(b) => {
                     self.path.push(index);
                     let inner = self.block(b)?;

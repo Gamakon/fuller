@@ -109,6 +109,8 @@ pub fn type_text(module: &Module, ty: Handle<naga::Type>) -> String {
         TypeInner::Array { base, size, .. } => match size {
             naga::ArraySize::Constant(n) => format!("array<{}, {n}>", type_text(module, *base)),
             naga::ArraySize::Dynamic => format!("array<{}>", type_text(module, *base)),
+            // (An override-sized workgroup array: the override's name.)
+            naga::ArraySize::Pending(o) => format!("array<{}, {}>", type_text(module, *base), module.overrides[*o].name.clone().unwrap_or_else(|| format!("override{}", o.index()))),
         },
         _ => t.name.clone().unwrap_or_else(|| format!("{:?}", t.inner)),
     }
@@ -277,7 +279,7 @@ pub fn infer_entry(module: &Module, entry: &str) -> Result<ModuleInterface, Stri
 
 /// [`infer`] over WGSL text.
 pub fn infer_text(source: &str) -> Result<ModuleInterface, String> {
-    let module = naga::front::wgsl::parse_str(source).map_err(|e| e.emit_to_string(source))?;
+    let module = crate::wgsl::naga_shape::parse(source)?;
     infer(&module)
 }
 
@@ -351,7 +353,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) { if (gid.x < params.x) {
 fn ingest(@builtin(global_invocation_id) gid: vec3<u32>) { _ = atomicAdd(&idx[u32(keys[gid.x]) & 63u], 1u); }
 @compute @workgroup_size(32)
 fn search(@builtin(global_invocation_id) gid: vec3<u32>) { out[gid.x] = atomicLoad(&idx[gid.x & 63u]); }";
-        let module = naga::front::wgsl::parse_str(src).unwrap();
+        let module = crate::wgsl::naga_shape::parse(src).unwrap();
         assert_eq!(compute_entries(&module), ["ingest", "search"]);
         let roles = |i: &ModuleInterface| i.bindings.iter().map(|b| (b.name.clone(), b.role)).collect::<Vec<_>>();
         let both = infer(&module).unwrap();

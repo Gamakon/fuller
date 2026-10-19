@@ -546,7 +546,7 @@ for op, naga in [("and", "Binary::And"), ("or", "Binary::InclusiveOr"), ("xor", 
 f("bits", "not", "Unary::BitwiseNot", ["<u32.bits>"], "<u32.bits>", "")
 f("bits", "shl", "Binary::ShiftLeft", ["<u32.bits>", "u32.count"], "<u32.bits>", "")
 f("bits", "shr", "Binary::ShiftRight", ["<u32.bits>", "u32.count"], "<u32.bits>", "")
-for op, naga in [("count_ones", "Math::CountOneBits"), ("leading_zeros", "Math::CountLeadingZeros"), ("trailing_zeros", "Math::CountTrailingZeros"), ("find_lsb", "Math::FindLsb"), ("find_msb", "Math::FindMsb")]:
+for op, naga in [("count_ones", "Math::CountOneBits"), ("leading_zeros", "Math::CountLeadingZeros"), ("trailing_zeros", "Math::CountTrailingZeros"), ("find_lsb", "Math::FirstTrailingBit"), ("find_msb", "Math::FirstLeadingBit")]:
     f("bits", op, naga, ["u32.bits"], "u32.count", "")
 f("bits", "reverse", "Math::ReverseBits", ["u32.bits"], "u32.bits", "")
 f("bits", "extract", "Math::ExtractBits", ["u32.bits", "u32.index", "u32.count"], "u32.bits", "arity 3")
@@ -1059,7 +1059,7 @@ f("convert", "bits_to_index", "As", ["<u32.bits>"], "<u32.index>", "the same u32
 f("convert", "count_to_bits", "As", ["<u32.count>"], "<u32.bits>", "the same u32 lanes read as a bit field")
 for L in (2, 3, 4):
     f("index", "of_count", "composite", [f"vec{L}<u32>.count"], f"vec{L}<u32>.index", "per lane")
-    for op, naga in (("count_ones", "CountOneBits"), ("leading_zeros", "CountLeadingZeros"), ("trailing_zeros", "CountTrailingZeros"), ("find_lsb", "FindLsb"), ("find_msb", "FindMsb")):
+    for op, naga in (("count_ones", "CountOneBits"), ("leading_zeros", "CountLeadingZeros"), ("trailing_zeros", "CountTrailingZeros"), ("find_lsb", "FirstTrailingBit"), ("find_msb", "FirstLeadingBit")):
         f("bits", op, f"Math::{naga}", [f"vec{L}<u32>.bits"], f"vec{L}<u32>.count", "per lane")
     f("bits", "reverse", "Math::ReverseBits", [f"vec{L}<u32>.bits"], f"vec{L}<u32>.bits", "per lane")
     f("bits", "extract", "Math::ExtractBits", [f"vec{L}<u32>.bits", "u32.index", "u32.count"], f"vec{L}<u32>.bits", "arity 3, per lane")
@@ -1097,7 +1097,7 @@ for op, naga in (("and", "Binary::And"), ("or", "Binary::InclusiveOr"), ("xor", 
 f("int", "not", "Unary::BitwiseNot", ["<i32.int>"], "<i32.int>", "")
 f("int", "shl", "Binary::ShiftLeft", ["i32.int", "u32.count"], "i32.int", "")
 f("int", "shr", "Binary::ShiftRight", ["i32.int", "u32.count"], "i32.int", "arithmetic: the sign bit fills")
-for op, naga in (("count_ones", "CountOneBits"), ("leading_zeros", "CountLeadingZeros"), ("trailing_zeros", "CountTrailingZeros"), ("find_lsb", "FindLsb"), ("find_msb", "FindMsb")):
+for op, naga in (("count_ones", "CountOneBits"), ("leading_zeros", "CountLeadingZeros"), ("trailing_zeros", "CountTrailingZeros"), ("find_lsb", "FirstTrailingBit"), ("find_msb", "FirstLeadingBit")):
     f("int", op, f"Math::{naga}", ["<i32.int>"], "<i32.int>", "WGSL returns i32 for i32")
 f("int", "reverse", "Math::ReverseBits", ["<i32.int>"], "<i32.int>", "")
 f("int", "extract", "Math::ExtractBits", ["<i32.int>", "u32.index", "u32.count"], "<i32.int>", "arity 3, sign-extending")

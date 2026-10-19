@@ -396,6 +396,56 @@ the fuller API it calls. phylu's code belongs to v24-b5b-phylu. I send it
 this plan, the fuller commit and the error list, and it ports phylu on its
 own naga-30 branch. I do not edit phylu.
 
+### 2.7 As built (2026-10-19), where it departs from 2.1 to 2.6
+
+- **The short circuit.** A reading copy, not a per-reader view
+  (`naga_shape::fold_short_circuits`). `reader::read` folds the module it
+  holds (`Kernel.module`), after validation; the safe reader reads that
+  module. `safety::check_text` and `check::Checker::safety` fold their own
+  parse, so the checker judges naga 0.20's eager Binary: both sides are
+  judged, which is stricter than the device's short circuit and never
+  weaker. The CPU executor's module, the validator's and the device's are
+  never folded.
+  - A fold is taken when its right side holds only Emits, nested folds, and
+    Calls of pure functions: no store through a global or a pointer
+    argument, no atomic, no barrier, no image store. A loop is allowed: the
+    tree is a value, and the device runs the short circuit itself.
+  - A folded local is left in the arena (`naga_shape::is_dead_local`); the
+    safe reader zeroes no register for it.
+  - Fixtures: nested `&&`/`||`, a call in the right side, a loop's test,
+    `break if`; a right side that stores stays an if.
+- **N2.** `reader::is_bake` takes "phony".
+- **N3.** A loop-local `var` zeroed at each pass is read as naga 30 means
+  it: a scalar is a register set to its zero, and an array is zeroed
+  element by element (`zero_array`, the code that already zeroes a
+  helper's local arrays at each call). No new row.
+- **wgpu waits.** wgpu-core 0.21 gave up a wait after 5 s (`CLEANUP_WAIT_MS`).
+  wgpu 30 waits as long as it is told.
+  - `src/gpu_io.rs` holds `wait`, `drain`, `wait_for` and `mapped`, each a
+    Result with its error named.
+  - `gram::wait_gpu_within` waits with an explicit 4.9 s timeout
+    (`PollType::Wait { timeout }`), so a runaway is still named as before.
+- **target.rs.** The capabilities come from `wgpu_naga_bridge::
+  features_to_naga_capabilities`, wgpu 30's own mapping, and the validator
+  is `Validator::new` with them. `Target::recorded` gains
+  SHADER_FLOAT16_IN_FLOAT32: wgpu-hal 30's Metal adapter starts from
+  `DownlevelFlags::all()`, so `pack2x16float` validates on the device.
+- **subgroupBroadcast.** The lane is written as a plain literal, a
+  const-expression for naga 30.
+- **The reading snapshot** renumbers arena (`@N`) and type
+  (`Compose.typeN`) indices by first appearance, so names that only moved
+  with naga's arenas compare equal.
+- **A CPU suite with no adapter.** `--features wgsl` (no `gpu`): every
+  device test is compiled out. `gram::WAIT_GAVE_UP_MS` is no longer gated
+  on `gpu`; it was the one item that kept the plain wgsl test build from
+  compiling, at HEAD too. The CPU-executor tests are skipped by name (the
+  lead's rule).
+- **Cuneus.** tests/corpus/cuneus holds the four compute kernels with no
+  image or sampler (MIT, provenance in its README). naga 30 parses and
+  validates 4 of 4; 0 read, each with the kingdom gap named (two
+  `arrayLength`s outside the Gram role, a uniform field with no safe
+  spelling, a module of 5 entry points).
+
 ## 3. Measured, in order (CPU, then the lead's GPU)
 
 1. Baseline at HEAD (naga 0.20), recorded before any change, as a committed

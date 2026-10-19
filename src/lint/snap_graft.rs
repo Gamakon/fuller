@@ -467,15 +467,16 @@ mod gpu {
             });
             let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: None,
-                bind_group_layouts: &[&layout],
-                push_constant_ranges: &[],
+                bind_group_layouts: &[Some(&layout)],
+                immediate_size: 0,
             });
             let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                 label: Some("fuller-snap-graft-pipeline"),
                 layout: Some(&pipeline_layout),
                 module: &shader,
-                entry_point: "graft_main",
+                entry_point: Some("graft_main"),
                 compilation_options: Default::default(),
+                cache: None,
             });
             // wgpu rejects a zero-sized binding.
             let padded: Vec<u32> = if name_bits.is_empty() { vec![0] } else { name_bits };
@@ -620,11 +621,11 @@ mod gpu {
                 slice.map_async(wgpu::MapMode::Read, move |r| {
                     let _ = tx.send(r);
                 });
-                device.poll(wgpu::Maintain::Wait);
+                crate::gpu_io::wait(device)?;
                 rx.recv()
                     .map_err(|e| format!("map_async channel: {e}"))?
                     .map_err(|e| format!("map_async: {e}"))?;
-                let words = bytemuck::cast_slice::<u8, u32>(&slice.get_mapped_range()).to_vec();
+                let words = bytemuck::cast_slice::<u8, u32>(&crate::gpu_io::mapped(&slice)?).to_vec();
                 buf.unmap();
                 Ok(words)
             };
@@ -640,7 +641,7 @@ mod gpu {
             ] {
                 b.destroy();
             }
-            device.poll(wgpu::Maintain::Poll);
+            crate::gpu_io::drain(device)?;
             Ok(GraftWords { enc, hits, nodes, vinfo })
         }
     }

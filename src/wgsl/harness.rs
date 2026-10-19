@@ -1684,7 +1684,7 @@ fn storage_elem(module: &naga::Module, ty: naga::Handle<naga::Type>) -> Result<E
 /// writable), of the declared scalar (a uniform's scalars a prefix of its
 /// `fields`). A kernel may leave a schema binding undeclared.
 pub fn kernel_info(problem: &ProblemSpec, source: &str) -> Result<KernelInfo, String> {
-    let module = naga::front::wgsl::parse_str(source).map_err(|e| e.emit_to_string(source))?;
+    let module = crate::wgsl::naga_shape::parse(source)?;
     super::target::Target::current().validate(&module, source).map_err(|e| format!("validation: {e}"))?;
     let mut entry_workgroups = Vec::new();
     for entry in problem.kernel.entry_names() {
@@ -2677,7 +2677,7 @@ impl Executor for CpuExecutor {
 
     fn compile(&self, problem: &Problem, source: &str) -> Result<(CpuKernel, KernelInfo), String> {
         let info = kernel_info(&problem.spec, source)?;
-        let module = naga::front::wgsl::parse_str(source).map_err(|e| e.emit_to_string(source))?;
+        let module = crate::wgsl::naga_shape::parse(source)?;
         let mut bindings = BTreeMap::new();
         for (_, g) in module.global_variables.iter() {
             let Some(rb) = &g.binding else { continue };
@@ -2926,7 +2926,7 @@ mod device {
                 }
                 if let Some(st) = &staging {
                     {
-                        let mapped = st.slice(..).get_mapped_range();
+                        let mapped = crate::gpu_io::mapped(&st.slice(..))?;
                         let mut at = 0usize;
                         for (item, _, _, out, d_o, n) in &seg.reads {
                             live[*item].outputs[*out][*d_o as usize..(*d_o + *n) as usize].copy_from_slice(&mapped[at..at + *n as usize]);
@@ -2938,7 +2938,7 @@ mod device {
                 }
                 if nq > 0 {
                     {
-                        let mapped = stamps_read.slice(..8 * u64::from(nq)).get_mapped_range();
+                        let mapped = crate::gpu_io::mapped(&stamps_read.slice(..8 * u64::from(nq)))?;
                         let stamps: &[u64] = bytemuck::cast_slice(&mapped);
                         for (q, item) in seg.queries.iter().enumerate() {
                             let ms = stamps[2 * q + 1].wrapping_sub(stamps[2 * q]) as f64 * f64::from(k.period_ns) / 1e6;
@@ -3007,7 +3007,7 @@ mod device {
                     }
                 }
             }
-            device.poll(wgpu::Maintain::Poll);
+            crate::gpu_io::drain(device)?;
             Ok(compute_ms)
         }
     }
@@ -3021,7 +3021,7 @@ mod device {
             let device = &self.dev.device;
             let mut judge = self.judge.borrow_mut();
             if judge.is_none() {
-                device.push_error_scope(wgpu::ErrorFilter::Validation);
+                let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
                 let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("pooled judge"), source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(include_str!("pooled_judge.wgsl"))) });
                 let entries: Vec<wgpu::BindGroupLayoutEntry> = (0..10u32)
                     .map(|b| wgpu::BindGroupLayoutEntry {
@@ -3032,9 +3032,9 @@ mod device {
                     })
                     .collect();
                 let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some("pooled judge"), entries: &entries });
-                let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: Some("pooled judge"), bind_group_layouts: &[&bgl], push_constant_ranges: &[] });
-                let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor { label: Some("judge_main"), layout: Some(&layout), module: &shader, entry_point: "judge_main", compilation_options: Default::default() });
-                if let Some(e) = pollster::block_on(device.pop_error_scope()) {
+                let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: Some("pooled judge"), bind_group_layouts: &[Some(&bgl)], immediate_size: 0 });
+                let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor { label: Some("judge_main"), layout: Some(&layout), module: &shader, entry_point: Some("judge_main"), compilation_options: Default::default(), cache: None });
+                if let Some(e) = pollster::block_on(scope.pop()) {
                     return Err(format!("our software has a bug: the pooled judge does not compile: {e}"));
                 }
                 *judge = Some(Judge { bgl, pipeline, resident: Vec::new() });
@@ -3072,7 +3072,7 @@ mod device {
             });
             wait_gpu(device, &self.dev.queue)?;
             rx.recv().map_err(|e| format!("map: {e}"))?.map_err(|e| format!("map: {e}"))?;
-            let words: Vec<u32> = bytemuck::cast_slice(&staging.slice(..).get_mapped_range()).to_vec();
+            let words: Vec<u32> = bytemuck::cast_slice(&crate::gpu_io::mapped(&staging.slice(..))?).to_vec();
             staging.unmap();
             for b in [params, cands, judged, staging] {
                 b.destroy();
@@ -3103,7 +3103,7 @@ mod device {
             if !dev.device.features().contains(wgpu::Features::TIMESTAMP_QUERY) {
                 return Err("this device has no timestamp queries".into());
             }
-            dev.device.push_error_scope(wgpu::ErrorFilter::Validation);
+            let scope = dev.device.push_error_scope(wgpu::ErrorFilter::Validation);
             let shader = dev.device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some(&problem.spec.name), source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(source)) });
             // An explicit layout over the schema's bindings: a kernel that
             // reads none of them still binds them all (as `Gram::compile_with`).
@@ -3121,10 +3121,10 @@ mod device {
                 })
                 .collect();
             let bgl = dev.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some("harness"), entries: &entries });
-            let layout = dev.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: Some("harness"), bind_group_layouts: &[&bgl], push_constant_ranges: &[] });
+            let layout = dev.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: Some("harness"), bind_group_layouts: &[Some(&bgl)], immediate_size: 0 });
             // MULTI-ENTRY: one pipeline per entry point, every one over the layout.
-            let pipelines = problem.spec.kernel.entry_names().iter().map(|e| dev.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor { label: Some(e), layout: Some(&layout), module: &shader, entry_point: e, compilation_options: Default::default() })).collect();
-            if let Some(e) = pollster::block_on(dev.device.pop_error_scope()) {
+            let pipelines = problem.spec.kernel.entry_names().iter().map(|e| dev.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor { label: Some(e), layout: Some(&layout), module: &shader, entry_point: Some(e), compilation_options: Default::default(), cache: None })).collect();
+            if let Some(e) = pollster::block_on(scope.pop()) {
                 return Err(format!("pipeline: {e}"));
             }
             Ok((DeviceKernel { pipelines, bgl, period_ns: dev.queue.get_timestamp_period() }, info))
@@ -3142,7 +3142,7 @@ mod device {
                 let device = &self.dev.device;
                 let mut compiled = Vec::with_capacity(plan.machines.len());
                 for m in &plan.machines {
-                    device.push_error_scope(wgpu::ErrorFilter::Validation);
+                    let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
                     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some(&m.name), source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(&m.source)) });
                     let entries: Vec<wgpu::BindGroupLayoutEntry> = m
                         .bindings
@@ -3157,9 +3157,9 @@ mod device {
                         })
                         .collect();
                     let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some(&m.name), entries: &entries });
-                    let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: Some(&m.name), bind_group_layouts: &[&bgl], push_constant_ranges: &[] });
-                    let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor { label: Some(&m.name), layout: Some(&layout), module: &shader, entry_point: &m.entry, compilation_options: Default::default() });
-                    if let Some(e) = pollster::block_on(device.pop_error_scope()) {
+                    let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: Some(&m.name), bind_group_layouts: &[Some(&bgl)], immediate_size: 0 });
+                    let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor { label: Some(&m.name), layout: Some(&layout), module: &shader, entry_point: Some(&m.entry), compilation_options: Default::default(), cache: None });
+                    if let Some(e) = pollster::block_on(scope.pop()) {
                         return Err(format!("our software has a bug: the machinery kernel {} does not compile: {e}", m.name));
                     }
                     compiled.push((pipeline, bgl));
@@ -5926,7 +5926,7 @@ fn search() { cands[0] = cfg.stage; }
         assert!(plan.buffers.iter().filter(|b| b.resident).all(|b| match &b.init { Init::Input { tensor, .. } => tensor.starts_with("rec_"), _ => true }), "a resident input that is not a record");
         assert_eq!((plan.machines.len(), plan.setup_dispatch.len()), (1, 4 * 6));
         let m = &plan.machines[0];
-        let module = naga::front::wgsl::parse_str(&m.source).unwrap_or_else(|e| panic!("project.wgsl: {}", e.emit_to_string(&m.source)));
+        let module = crate::wgsl::naga_shape::parse(&m.source).unwrap_or_else(|e| panic!("project.wgsl: {e}"));
         crate::wgsl::target::Target::current().validate(&module, &m.source).unwrap_or_else(|e| panic!("project.wgsl: {e}"));
         assert!(module.entry_points.iter().any(|e| e.name == m.entry && e.workgroup_size == [256, 1, 1]));
         let seeds = [42u32, 137, 911, 4242];

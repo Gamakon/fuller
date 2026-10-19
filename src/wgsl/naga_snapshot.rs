@@ -45,6 +45,66 @@ pub fn digest(line: &serde_json::Value) -> serde_json::Value {
     serde_json::json!({ "file": line["file"], "scaffold": part(&line["scaffold"]), "safe": part(&line["safe"]) })
 }
 
+/// The scaffold reader's names carry naga's arena indices (`let.x@12`,
+/// `local.i@3`, `call.f@40`), which move whenever naga's lowering appends
+/// another expression or local (naga 30's short-circuit locals, its constant
+/// folding), and a compose names its type by the type arena's index
+/// (`naga.Compose.type7`, which moves when naga 30 adds a type): each
+/// `@<number>` and each `.type<number>` is renumbered by first appearance in
+/// the kernel's reading, so two readings that name the same things in the
+/// same order compare equal.
+fn renumbered(text: &str) -> String {
+    // (Keyed by the whole name, `local.i@3` and `let.i@3` apart.)
+    let mut seen: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let mut out = String::with_capacity(text.len());
+    let mut word = String::new();
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '@' {
+            if c.is_alphanumeric() || c == '.' || c == '_' || c == '#' {
+                word.push(c);
+            } else {
+                word.clear();
+            }
+            out.push(c);
+            continue;
+        }
+        let mut digits = String::new();
+        while let Some(d) = chars.peek().copied().filter(char::is_ascii_digit) {
+            digits.push(d);
+            chars.next();
+        }
+        out.push('@');
+        if digits.is_empty() {
+            word.push('@');
+            continue;
+        }
+        let key = format!("{word}@{digits}");
+        let n = seen.len();
+        let k = *seen.entry(key).or_insert(n);
+        out.push_str(&format!("#{k}"));
+        word.push_str(&format!("@#{k}"));
+    }
+    // The types, `Compose.type<number>`, apart from the arena names above.
+    let mut types: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let mut renamed = String::with_capacity(out.len());
+    let mut rest = out.as_str();
+    while let Some(i) = rest.find("Compose.type") {
+        let (head, tail) = rest.split_at(i + "Compose.type".len());
+        renamed.push_str(head);
+        let digits: String = tail.chars().take_while(char::is_ascii_digit).collect();
+        if digits.is_empty() {
+            rest = tail;
+            continue;
+        }
+        let n = types.len();
+        renamed.push_str(&format!("#{}", *types.entry(digits.clone()).or_insert(n)));
+        rest = &tail[digits.len()..];
+    }
+    renamed.push_str(rest);
+    renamed
+}
+
 /// One kernel's line.
 pub fn line(file: &str, text: &str, kingdom: &WgslKingdom) -> serde_json::Value {
     let scaffold = match crate::wgsl::reader::read(text) {
@@ -59,6 +119,7 @@ pub fn line(file: &str, text: &str, kingdom: &WgslKingdom) -> serde_json::Value 
         Ok(r) => serde_json::json!({ "tree": r.tree.to_sexpr(), "role": format!("{:?}", r.role) }),
         Err(e) => serde_json::json!({ "refused": e }),
     };
+    let scaffold: serde_json::Value = serde_json::from_str(&renumbered(&scaffold.to_string())).expect("the renumbered reading is JSON");
     serde_json::json!({ "file": file, "scaffold": scaffold, "safe": safe })
 }
 

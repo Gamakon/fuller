@@ -3851,7 +3851,7 @@ impl<'a> Ctx<'a> {
         let mut inside: Vec<usize> = Vec::new();
         for s in before {
             match s {
-                Statement::SubgroupCollectiveOperation { result, .. } | Statement::SubgroupGather { result, .. } | Statement::SubgroupBallot { result, .. } | Statement::Atomic { result, .. } => inside.push(result.index()),
+                Statement::SubgroupCollectiveOperation { result, .. } | Statement::SubgroupGather { result, .. } | Statement::SubgroupBallot { result, .. } | Statement::Atomic { result: Some(result), .. } => inside.push(result.index()),
                 Statement::Call { result: Some(r), arguments, .. } if arguments.iter().any(|a| inside.contains(&a.index())) => inside.push(r.index()),
                 _ => {}
             }
@@ -4001,26 +4001,35 @@ impl<'a> Ctx<'a> {
         })
     }
 
+    /// The local array `local` of `n` elements of `elem` zeroed element by
+    /// element (WGSL's zero for a local declared without an initialiser).
+    fn zero_array(&mut self, local: &str, elem: &str, n: usize, rung: &str) -> Result<Vec<Tree>, String> {
+        let st = self.stmt_ty(rung)?;
+        let zero = match elem {
+            "f32.real" => Tree::literal("literal.real", ty(self, "f32.real")?, 0.0),
+            "u32.index" => Tree::literal("literal.index", ty(self, "u32.index")?, 0.0),
+            "bool.flag" => Tree::literal("literal.flag", ty(self, "bool.flag")?, 0.0),
+            "vec4<f32>.real" => Tree::new("shape.splat4", ty(self, "vec4<f32>.real")?, vec![Tree::literal("literal.real", ty(self, "f32.real")?, 0.0)]),
+            "vec2<f32>.real" => Tree::new("shape.splat2", ty(self, "vec2<f32>.real")?, vec![Tree::literal("literal.real", ty(self, "f32.real")?, 0.0)]),
+            other => return Err(format!("the local array {local} of {other} has no initialiser and no zero")),
+        };
+        let (arr, kind, mask) = self.private_array(local, elem)?;
+        let mut stmts = Vec::new();
+        for i in 0..n {
+            let idx = Tree::literal("literal.index", ty(self, "u32.index")?, i as f32);
+            let pidx = Tree::new(mask, ty(self, pindex_dual(mask))?, vec![idx]);
+            stmts.push(Tree::new(&format!("parr.set_{kind}_{rung}"), st, vec![Tree::new(arr, ty(self, parr_dual_of(arr, kind))?, vec![]), pidx, zero.clone()]));
+        }
+        Ok(stmts)
+    }
+
     fn inline_body(&mut self, helper: &'a Helper<'a>, rung: &str) -> Result<Vec<Tree>, String> {
         let st = self.stmt_ty(rung)?;
         let mut stmts = Vec::new();
         for (local, dual) in &helper.uninit {
             if let Some((elem, n)) = dual.strip_prefix("array:").and_then(|r| r.rsplit_once(':')) {
                 let n: usize = n.parse().map_err(|e| format!("the local array {local}: {e}"))?;
-                let zero = match elem {
-                    "f32.real" => Tree::literal("literal.real", ty(self, "f32.real")?, 0.0),
-                    "u32.index" => Tree::literal("literal.index", ty(self, "u32.index")?, 0.0),
-                    "bool.flag" => Tree::literal("literal.flag", ty(self, "bool.flag")?, 0.0),
-                    "vec4<f32>.real" => Tree::new("shape.splat4", ty(self, "vec4<f32>.real")?, vec![Tree::literal("literal.real", ty(self, "f32.real")?, 0.0)]),
-                    "vec2<f32>.real" => Tree::new("shape.splat2", ty(self, "vec2<f32>.real")?, vec![Tree::literal("literal.real", ty(self, "f32.real")?, 0.0)]),
-                    other => return Err(format!("the local array {local} of {other} has no initialiser and no zero (not inlined)")),
-                };
-                let (arr, kind, mask) = self.private_array(local, elem)?;
-                for i in 0..n {
-                    let idx = Tree::literal("literal.index", ty(self, "u32.index")?, i as f32);
-                    let pidx = Tree::new(mask, ty(self, pindex_dual(mask))?, vec![idx]);
-                    stmts.push(Tree::new(&format!("parr.set_{kind}_{rung}"), st, vec![Tree::new(arr, ty(self, parr_dual_of(arr, kind))?, vec![]), pidx, zero.clone()]));
-                }
+                stmts.extend(self.zero_array(local, elem, n, rung).map_err(|e| format!("{e} (not inlined)"))?);
                 continue;
             }
             let zero = match dual.as_str() {
@@ -4226,10 +4235,11 @@ impl<'a> Ctx<'a> {
                         let set = Tree::new(&format!("reg.set_{kind}_{rung}"), st, vec![Tree::new(&row, ty(self, Self::reg_dual(kind))?, vec![]), v]);
                         Ok(Some(Tree::new(&format!("stmt.block_{rung}"), st, vec![self.block(vec![barrier(), set, barrier()], rung)?])))
                     }
-                    Statement::Atomic { result, .. } => {
+                    Statement::Atomic { result: Some(result), .. } => {
                         let root = self.root_at(&here, |k| matches!(k, RootKind::Atomic { .. })).ok_or("no atomic root at this statement")?;
                         self.atomic_statement(root, result.index() as u32, rung)
                     }
+                    Statement::Atomic { result: None, .. } => Err("an atomic without a result (a 64-bit min or max) has no row".into()),
                     Statement::Call { function, result, .. } => {
                         // A pure helper's call: its result is inlined where it
                         // is read, the call statement itself has no effect. A
@@ -4498,7 +4508,8 @@ impl<'a> Ctx<'a> {
                         self.tail = block_tail;
                         looped
                     }
-                    Statement::Barrier(flags) => {
+                    Statement::MemoryBarrier(_) => Err("our software has a bug: naga's MemoryBarrier (a memory barrier without control; the WGSL front end never writes one)".into()),
+                    Statement::ControlBarrier(flags) => {
                         if cond {
                             return Err("a barrier under a condition".into());
                         }
@@ -4549,6 +4560,21 @@ impl<'a> Ctx<'a> {
     /// ordinary store.
     fn store_root(&mut self, node: &Node, rung: &str) -> Result<Vec<Tree>, String> {
         if let Node::App { name, kids, .. } = node {
+            // A local array zeroed whole (naga 30 zeroes `var a: array<T, N>;`
+            // declared in a loop at every pass, as WGSL does; naga 0.20 left the
+            // store out): each element set to its zero, as a helper's local
+            // array is at each call (2026-10-19, the naga/wgpu 30 upgrade).
+            if let (Some(rest), [Node::Literal { form, value, .. }]) = (name.strip_prefix("store.local."), kids.as_slice()) {
+                let array = rest.split('@').nth(1).and_then(|h| h.parse::<usize>().ok()).and_then(|h| self.naga_fn.local_variables.iter().nth(h)).and_then(|(_, l)| match self.module.types[l.ty].inner {
+                    naga::TypeInner::Array { base, size: naga::ArraySize::Constant(n), .. } => Some((base, n.get())),
+                    _ => None,
+                });
+                if let (Some((base, n)), "opaque", 0.0) = (array, form.as_str(), *value) {
+                    let local = format!("local.{}", rest.split('@').take(2).collect::<Vec<_>>().join("@"));
+                    let elem = dual_of_type(self.module, base).ok_or_else(|| format!("the local array {local}: its element has no dual"))?;
+                    return self.zero_array(&local, &elem, n as usize, rung);
+                }
+            }
             if let (Some(rest), [Node::App { name: vname, kids: elems, .. }]) = (name.strip_prefix("store.local."), kids.as_slice()) {
                 // Of an array local only: a matrix written whole from its
                 // columns (`y1 = mat3x3<f32>(...)`) is the ordinary store.
@@ -4917,7 +4943,7 @@ impl<'a> Ctx<'a> {
             prefix.push(*at);
             rest = b.iter().filter(|s| !matches!(s, Statement::Emit(_))).enumerate().collect();
         }
-        let [(if_at, Statement::If { accept, reject, .. }), (_, Statement::Barrier(flags))] = rest.as_slice() else { return fail("its body is not one `if` and a barrier") };
+        let [(if_at, Statement::If { accept, reject, .. }), (_, Statement::ControlBarrier(flags))] = rest.as_slice() else { return fail("its body is not one `if` and a barrier") };
         if !flags.contains(naga::Barrier::WORK_GROUP) || !reject.iter().all(|s| matches!(s, Statement::Emit(_))) || accept.iter().filter(|s| !matches!(s, Statement::Emit(_))).count() != 1 {
             return fail("its body is not `if (lidx < s) { one store }` then workgroupBarrier()");
         }
@@ -5018,7 +5044,7 @@ impl<'a> Ctx<'a> {
         for (i, s) in body_stmts_all[..test_pos].iter().enumerate().filter(|_| !do_while) {
             // A subgroup operation or an atomic in the bound: naga runs it
             // ahead of the test; the bound holds its expression inline.
-            if let Statement::SubgroupCollectiveOperation { result, .. } | Statement::SubgroupGather { result, .. } | Statement::Atomic { result, .. } = s {
+            if let Statement::SubgroupCollectiveOperation { result, .. } | Statement::SubgroupGather { result, .. } | Statement::Atomic { result: Some(result), .. } = s {
                 let at = [&path[..], &[0, i]].concat();
                 let subgroup = !matches!(s, Statement::Atomic { .. });
                 let root = if subgroup { self.root_at(&at, |k| matches!(k, RootKind::Subgroup { .. })) } else { self.root_at(&at, |k| matches!(k, RootKind::Atomic { .. })) };
@@ -5913,7 +5939,7 @@ fn holds_item_loop(f: &naga::Function, b: &naga::Block) -> bool {
 
 fn holds_barrier(module: &naga::Module, b: &naga::Block) -> bool {
     b.iter().any(|s| match s {
-        Statement::Barrier(_) | Statement::WorkGroupUniformLoad { .. } => true,
+        Statement::ControlBarrier(_) | Statement::MemoryBarrier(_) | Statement::WorkGroupUniformLoad { .. } => true,
         Statement::Block(x) => holds_barrier(module, x),
         Statement::If { accept, reject, .. } => holds_barrier(module, accept) || holds_barrier(module, reject),
         Statement::Switch { cases, .. } => cases.iter().any(|c| holds_barrier(module, &c.body)),
@@ -5944,7 +5970,8 @@ fn stmt_name(s: &Statement) -> &'static str {
         Statement::Continue => "Continue",
         Statement::Return { .. } => "Return",
         Statement::Kill => "Kill",
-        Statement::Barrier(_) => "Barrier",
+        Statement::ControlBarrier(_) => "ControlBarrier",
+        Statement::MemoryBarrier(_) => "MemoryBarrier",
         Statement::Store { .. } => "Store",
         Statement::ImageStore { .. } => "ImageStore",
         Statement::Atomic { .. } => "Atomic",
@@ -5952,6 +5979,9 @@ fn stmt_name(s: &Statement) -> &'static str {
         Statement::Call { .. } => "Call",
         Statement::RayQuery { .. } => "RayQuery",
         Statement::SubgroupBallot { .. } | Statement::SubgroupGather { .. } | Statement::SubgroupCollectiveOperation { .. } => "Subgroup",
+        Statement::ImageAtomic { .. } => "ImageAtomic",
+        Statement::RayPipelineFunction(_) => "RayPipelineFunction",
+        Statement::CooperativeStore { .. } => "CooperativeStore",
     }
 }
 
@@ -6264,6 +6294,10 @@ fn read_entry_under(at: &Reading, ep: usize, grid: (u32, u32, u32, u32), preset:
         let mut local_lanes = HashMap::new();
         let mut uninit = Vec::new();
         for (h, lv) in nf.local_variables.iter() {
+            // (A folded short circuit's local holds nothing: no register, no zero.)
+            if lv.name.is_none() && crate::wgsl::naga_shape::is_dead_local(nf, h) {
+                continue;
+            }
             let local = format!("local.{name}/{}@{}", lv.name.clone().unwrap_or_else(|| "local".into()), h.index());
             if let naga::TypeInner::Vector { size, .. } = &kernel.module.types[lv.ty].inner {
                 local_lanes.insert(local.clone(), *size as u32);
@@ -6473,6 +6507,38 @@ mod tests {
     /// table is printed; one mismatch against `expected` (today's truth) fails
     /// the test; `target` is what completeness demands and the unmet count
     /// is printed until it is zero.
+    /// THE CUNEUS KERNELS (2026-10-19, the naga/wgpu 30 upgrade): the four
+    /// compute kernels of cuneus 0.6.4 (written for naga 30) that bind no
+    /// image or sampler, tests/corpus/cuneus. Each parses with naga 30
+    /// (naga 0.20 parsed none of the radix sort's function-local consts) and
+    /// is read; how many read is printed with each one's reason, no bar.
+    #[test]
+    fn the_cuneus_kernels_parse_and_are_read() {
+        let dir = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/corpus/cuneus"));
+        let k = WgslKingdom::load_safe();
+        let (mut parsed, mut validated, mut read_n) = (0usize, 0usize, 0usize);
+        let names = ["instances", "meshlab_swarm", "radix_sort", "skin"];
+        for name in names {
+            let src = std::fs::read_to_string(dir.join(format!("{name}.wgsl"))).unwrap_or_else(|e| panic!("{name}: {e}"));
+            let module = crate::wgsl::naga_shape::parse(&src).unwrap_or_else(|e| panic!("{name}: naga 30 parses it: {e}"));
+            parsed += 1;
+            if let Err(e) = crate::wgsl::target::Target::recorded().validate(&module, &src) {
+                println!("cuneus {name:<14} validates: no ({})", e.lines().find(|l| l.contains('=')).unwrap_or("").trim());
+                continue;
+            }
+            validated += 1;
+            match read_safe(&src, &k) {
+                Ok(r) => {
+                    read_n += 1;
+                    println!("cuneus {name:<14} reads: {} nodes", r.tree.size());
+                }
+                Err(e) => println!("cuneus {name:<14} reads: no ({})", e.chars().take(160).collect::<String>()),
+            }
+        }
+        println!("cuneus: {parsed} of {} parse with naga 30, {validated} validate, {read_n} read", names.len());
+        assert_eq!(parsed, names.len());
+    }
+
     #[test]
     fn the_corpus_reads_as_its_manifest_says() {
         let dir = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/corpus/safewgsl"));
@@ -7319,8 +7385,8 @@ fn search(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocati
     fn same_values_every_entry(src: &str, k: &WgslKingdom, workgroups: [u32; 3]) -> Result<bool, String> {
         let read = read_safe(src, k)?;
         let rendered = crate::wgsl::safe_karva::render_tree_with(&read.tree, k, &read.role)?.text;
-        let a = naga::front::wgsl::parse_str(src).map_err(|e| e.emit_to_string(src))?;
-        let b = naga::front::wgsl::parse_str(&rendered).map_err(|e| format!("{}\n{rendered}", e.emit_to_string(&rendered)))?;
+        let a = crate::wgsl::naga_shape::parse(src)?;
+        let b = crate::wgsl::naga_shape::parse(&rendered).map_err(|e| format!("{e}\n{rendered}"))?;
         let t = crate::wgsl::roundtrip::Trial::default();
         let inputs = crate::wgsl::roundtrip::inputs(&a, &t)?;
         let storage: Vec<String> = a.global_variables.iter().filter(|(_, g)| matches!(g.space, naga::AddressSpace::Storage { .. })).filter_map(|(_, g)| g.name.clone()).collect();
@@ -8151,7 +8217,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     #[test]
     fn nagas_metal_backend_writes_storage_atomics_and_not_compare_exchange() {
         let msl = |text: &str| -> Result<String, String> {
-            let module = naga::front::wgsl::parse_str(text).map_err(|e| e.emit_to_string(text))?;
+            let module = crate::wgsl::naga_shape::parse(text)?;
             let info = naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::all()).validate(&module).map_err(|e| format!("{e:?}"))?;
             let options = naga::back::msl::Options::default();
             let pipeline = naga::back::msl::PipelineOptions::default();
@@ -8327,7 +8393,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     /// (a helper or the entry point): naga 0.20 writes it to Metal as a unary
     /// minus on a `metal::floatCxR`, which Metal does not define.
     fn negates_a_matrix(text: &str) -> bool {
-        let m = naga::front::wgsl::parse_str(text).unwrap_or_else(|e| panic!("{}", e.emit_to_string(text)));
+        let m = crate::wgsl::naga_shape::parse(text).unwrap_or_else(|e| panic!("{e}"));
         let info = crate::wgsl::target::Target::recorded().validate(&m, text).unwrap_or_else(|e| panic!("{e}"));
         let hits = |f: &naga::Function, fi: &naga::valid::FunctionInfo| {
             f.expressions.iter().any(|(_, e)| matches!(e, naga::Expression::Unary { op: naga::UnaryOperator::Negate, expr } if matches!(fi[*expr].ty.inner_with(&m.types), naga::TypeInner::Matrix { .. })))
