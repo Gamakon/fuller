@@ -1,0 +1,47 @@
+{
+  "estimated_cost_usd": 0.0,
+  "cost_status": "unknown",
+  "cost_source": "none",
+  "input_tokens": 83168,
+  "output_tokens": 121851,
+  "cache_read_tokens": 371,
+  "cache_write_tokens": 0,
+  "reasoning_tokens": 0,
+  "total_tokens": 205390,
+  "api_calls": 1,
+  "model": "MiniMax-M3",
+  "provider": "minimax",
+  "session_id": "20261019_090328_733829",
+  "completed": true,
+  "partial": false,
+  "interrupted": false,
+  "turn_exit_reason": "text_response(finish_reason=stop)",
+  "failed": false,
+  "service_tier": null,
+  "auxiliary": {
+    "api_calls": 1,
+    "input_tokens": 240,
+    "output_tokens": 15,
+    "cache_read_tokens": 0,
+    "cache_write_tokens": 0,
+    "reasoning_tokens": 0,
+    "estimated_cost_usd": 0,
+    "total_tokens": 255,
+    "by_task": {
+      "title_generation": {
+        "api_calls": 1,
+        "input_tokens": 240,
+        "output_tokens": 15,
+        "cache_read_tokens": 0,
+        "cache_write_tokens": 0,
+        "reasoning_tokens": 0,
+        "estimated_cost_usd": 0
+      }
+    }
+  },
+  "total_including_auxiliary": {
+    "estimated_cost_usd": 0.0,
+    "total_tokens": 205645,
+    "api_calls": 2
+  }
+}

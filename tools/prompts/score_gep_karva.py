@@ -19,7 +19,8 @@ def arity(sym):
     if re.match(r"^load\.\w+$", base): return 1 if base[5:] in BUFFERS else 0
     return None
 def gene_of(reply):
-    m = re.search(r"```karva\s*\n(.*?)```", reply, re.S)
+    # Forgiving of format: text before the gene, the tag on the fence line or the next.
+    m = re.search(r"```\s*karva\s*\n(.*?)```", reply, re.S) or re.search(r"```\s*\n\s*karva\s*\n(.*?)```", reply, re.S)
     if not m: return None, None
     syms, orf_mark = [], None
     for line in m.group(1).split("\n"):

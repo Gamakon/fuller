@@ -1,6 +1,9 @@
 # Prompt: translate a WGSL kernel into a safeWGSL GEP chromosome
 
-Status: version 3, DRAFT for review (2026-10-19). Version 1 (fuller 46bccc7) and version 2 (fuller a834d20)
+Status: version 4, DRAFT for review (2026-10-19). Version 4 adds what MiniMax M3's and ChatGPT's
+version 2 replies showed: which loop row a `for` is, the epilogue's grouping from the front, literals in
+the form demanded, and a reply that begins with its gene.
+Version 3 (fuller 0c33257): Version 1 (fuller 46bccc7) and version 2 (fuller a834d20)
 are stored byte for byte in tests/fixtures/gep_translate/ with the replies they drew. Version 3 asks for Karva,
 not an s-expression: a reply always decodes to a valid gene (no brackets to miscount), its open reading
 frame right-padded with random valid terminals. Part A is the fixed header (the same for every call on
@@ -107,6 +110,12 @@ their structure. You return Karva (A2b, A9).
     - `store.<buffer>_Od`, the final store itself.
 
     Read the signatures: `block.seq4_O0 : stmt.C0, stmt.C0, stmt.C0, stmt.O0 -> block.O0`.
+  - **An epilogue block groups from the front,** unlike an ordinary block. It holds at most
+    three C statements before its last. With more than three, the leading ones go into
+    one `stmt.block_C<d>`, and the last two stay where they are. Statements c1 … c5, then the
+    final O statement o, at depth 0:
+    `(block.seq4_O0 (stmt.block_C0 (block.seq3_C0 c1 c2 c3)) c4 c5 o)`.
+    (An ordinary block nests its *end*; see the next bullet.)
   - **Otherwise:** the body ends with the terminal `stmt.return_L0`, and the epilogue is
     `fallback`.
   - **An entry point that stores nothing** (only `return;`): its body is
@@ -173,14 +182,22 @@ The renderer's habits:
 - **Declarations are not statements.** The `var` declarations at the top of an entry point
   (registers `f0…`, `i0…`, `v0…`, the counters `t`, `k`, `k2`, the private arrays) are not
   statements; omit them. Name a register by its row (`reg.f0`, `reg.i3`).
-- **Loops.**
-  - `for (t = 0u; t < min(B, 16777216u); t = t + 1u)` is the item loop, with counter `t`
-    (`safe.counter`).
-  - Loops over `k`, `k2`, `k3` are tile loops of depth 1, 2, 3 (`safe.tile_counter`,
-    `safe.tile_counter2`…).
-  - A step other than `+ 1u` is a `_strided` row.
-  - `min(B, 16777216u)` is the renderer's cap: translate B only.
+- **Loops.** The test of a `for` decides its row:
+  - **`t < min((X), 16777216u)`** is the item loop: `loop.items_*`, counter `t`
+    (`safe.counter`), bound `bound.of_uniform` around X.
+  - **`k < min((X), 16777216u)`** (or `k2`, `k3`) is a bounded tile loop of depth 1, 2, 3:
+    `loop.tilex_*` (`safe.tile_counter`, `safe.tile_counter2`…), bound `bound.x_of_uniform`
+    around X.
+  - **X is a uniform value.** `lit_u32(N)` is `uniform.of_lit` with `literal.lit4096=N`, and a
+    cfg field is `uniform.cfg_<field>`. The `min(…, 16777216u)` is what the bound row renders
+    to, so it is not translated separately.
+  - **Only a bare literal test, `k < 64u` (no `min`, no `lit_u32`),** is a `loop.tile_*` row,
+    with `literal.lit64=64`.
+  - A step other than `+ 1u` is a `_strided` row, its step a literal.
 - **`lit_u32(N)`** is a literal; its form is the one the parent demands at that position.
+- **Write a literal in the form demanded.** Where a `bits` value is demanded, write
+  `literal.bits=65535`, not a conversion around a literal of another form. A `convert.*` row
+  is only for a value the program converts.
 - **Masks are rows:** `(x) & 63u` on a private-array index is `safe.pidx64`, and a mask on a
   workgroup-array index is that array's index row. Translate the masked value inside.
 - **Order is meaning.** Keep each operation's operand order exactly as written.
@@ -224,8 +241,8 @@ brackets only to show its shape; then its gene in Karva, the form you return.
 
 ### A9. The format you hand back
 
-Reply with exactly two fenced blocks and nothing else: no explanation and no working, before
-or after them.
+Begin your reply with the line ```karva. Reply with exactly two fenced blocks and nothing
+else: no explanation and no working, before, between or after them.
 
 1. **A block tagged `karva`:** the gene, one symbol a line, numbered from 0. The format is
    `<n> <symbol>`, and a literal's value is attached with `=` (`17 literal.index=512`).
