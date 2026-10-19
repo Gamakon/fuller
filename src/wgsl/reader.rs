@@ -284,7 +284,17 @@ fn indexes_a_value_at_run_time(module: &Module, info: &naga::valid::ModuleInfo) 
 
 /// Parse, validate and read a kernel.
 pub fn read(source: &str) -> Result<Kernel, String> {
+    read_with(source, false)
+}
+
+/// [`read`], the module's returns inside loops lowered first when `lower`
+/// (`wgsl::lower`: the safe reader's, which spells a return only at the end of
+/// a block).
+pub fn read_with(source: &str, lower: bool) -> Result<Kernel, String> {
     let mut module = crate::wgsl::naga_shape::parse(source)?;
+    if lower {
+        crate::wgsl::lower::lower_returns_in_loops(&mut module);
+    }
     let info = super::target::Target::current().validator(naga::valid::ValidationFlags::all()).validate(&module).map_err(|e| format!("validation: {e:?}"))?;
     let lenient = indexes_a_value_at_run_time(&module, &info);
     // The reader's view of naga 30's short circuits (naga_shape): the kernel's

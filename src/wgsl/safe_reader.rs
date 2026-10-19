@@ -3103,24 +3103,27 @@ impl<'a> Ctx<'a> {
     fn buffer_field(&mut self, t: &Tree) -> Result<Option<Tree>, String> {
         let Some(place) = t.name.strip_prefix("load.buffer.").and_then(|r| buffer_place(self.module, r)) else { return Ok(None) };
         let row = if place.path.is_empty() { format!("load.{}", place.binding) } else { format!("load.{}.{}", place.binding, place.path) };
-        // A lane of a vector member (`morph[1]`): the member's row, then the lane.
+        // A column or a lane of a vector or matrix member (`morph[1]`, `transform[1][2]`):
+        // the member's row, then the indices into it.
         if !self.per_kernel_rows.iter().any(|p| p.0 == row && p.1.len() == place.indexes) {
-            if let Some(base) = place.path.strip_suffix('#').map(|b| b.trim_end_matches('.')).filter(|_| place.indexes >= 1) {
+            let mut base = place.path.as_str();
+            let mut extra = 0;
+            while extra < 2 && base.ends_with('#') {
+                base = base[..base.len() - 1].trim_end_matches('.');
+                extra += 1;
+            }
+            if extra > 0 {
                 let base_row = if base.is_empty() { format!("load.{}", place.binding) } else { format!("load.{}.{base}", place.binding) };
-                if let Some((name, inputs, out)) = self.per_kernel_rows.iter().find(|p| p.0 == base_row && p.1.len() + 1 == place.indexes && self.kingdom.dual(p.2).is_some_and(|d| d.lanes > 1)).cloned() {
+                if let Some((name, inputs, out)) = self.per_kernel_rows.iter().find(|p| p.0 == base_row && p.1.len() + extra == place.indexes && self.kingdom.dual(p.2).is_some_and(|d| d.lanes > 1)).cloned() {
                     let mut idx = Vec::new();
                     for k in &t.kids {
                         flat_indexes(k, &mut idx);
                     }
-                    if idx.len() == inputs.len() + 1 {
+                    if idx.len() == inputs.len() + extra {
                         let index = ty(self, "u32.index")?;
-                        let (lane, own) = idx.split_last().ok_or("a lane without an index")?;
-                        let kids = own.iter().map(|i| Ok(Tree { ty: index, ..self.value(i)? })).collect::<Result<Vec<_>, String>>()?;
+                        let kids = idx[..inputs.len()].iter().map(|i| Ok(Tree { ty: index, ..self.value(i)? })).collect::<Result<Vec<_>, String>>()?;
                         let whole = Tree::new(&name, out, kids);
-                        return Ok(Some(match literal_value(lane) {
-                            Some(l) if l >= 0.0 && l.fract() == 0.0 => Tree::new(&format!("shape.access_{}", l as u32), t.ty, vec![whole]),
-                            _ => Tree::new("shape.at", t.ty, vec![whole, self.value(lane)?]),
-                        }));
+                        return Ok(Some(self.index_into(whole, &idx[inputs.len()..], t.ty)?));
                     }
                 }
             }
@@ -3267,6 +3270,33 @@ impl<'a> Ctx<'a> {
         }
     }
 
+    /// A value indexed by the operands `ix` in turn (a matrix's column, then a
+    /// lane; a vector's lane), the last giving `result`'s type. A literal index
+    /// is the row of that column or lane, any other the dynamic one.
+    fn index_into(&mut self, whole: Tree, ix: &[Tree], result: Ty) -> Result<Tree, String> {
+        let mut whole = whole;
+        for (n, j) in ix.iter().enumerate() {
+            let last = n + 1 == ix.len();
+            let matrix_rows = self.kingdom.dual(whole.ty).and_then(|d| d.slot.strip_prefix("mat").map(|m| m[2..3].to_string()));
+            let to = |ctx: &Self, rows: Option<&str>| -> Result<Ty, String> {
+                if last {
+                    return Ok(result);
+                }
+                match rows {
+                    Some(r) => ty(ctx, &format!("vec{r}<f32>.real")),
+                    None => Ok(whole.ty),
+                }
+            };
+            whole = match (literal_value(j), matrix_rows) {
+                (Some(l), Some(rows)) if l >= 0.0 && l.fract() == 0.0 => Tree::new(&format!("shape.col_{}", l as u32), to(self, Some(&rows))?, vec![whole.clone()]),
+                (None, Some(rows)) => Tree::new("shape.col_at", to(self, Some(&rows))?, vec![whole.clone(), self.value(j)?]),
+                (Some(l), None) if l >= 0.0 && l.fract() == 0.0 => Tree::new(&format!("shape.access_{}", l as u32), to(self, None)?, vec![whole.clone()]),
+                _ => Tree::new("shape.at", to(self, None)?, vec![whole.clone(), self.value(j)?]),
+            };
+        }
+        Ok(whole)
+    }
+
     /// A uniform variable that is no struct, read whole or at an index (an
     /// array's element, a vector's or a matrix's lane or column): its row
     /// `load.<var>`.
@@ -3284,21 +3314,8 @@ impl<'a> Ctx<'a> {
         if idx.len() < inputs.len() || idx.len() != indexes {
             return Err(format!("{} has no safe spelling: {} index operands over the row {row}", t.name, idx.len()));
         }
-        let mut whole = Tree::new(&name, out, idx[..inputs.len()].iter().map(|i| Ok(Tree { ty: index, ..self.value(i)? })).collect::<Result<Vec<_>, String>>()?);
-        let mut ty_now = out;
-        for (n, j) in idx[inputs.len()..].iter().enumerate() {
-            let last = n + 1 == idx.len() - inputs.len();
-            let to = if last { t.ty } else { ty_now };
-            let matrix_rows = self.kingdom.dual(ty_now).and_then(|d| d.slot.strip_prefix("mat").map(|m| m[2..3].to_string()));
-            whole = match (literal_value(j), matrix_rows) {
-                // A matrix's column.
-                (Some(l), Some(rows)) if l >= 0.0 && l.fract() == 0.0 => Tree::new(&format!("shape.col_{}", l as u32), if last { t.ty } else { ty(self, &format!("vec{rows}<f32>.real"))? }, vec![whole]),
-                (None, Some(rows)) => Tree::new("shape.col_at", if last { t.ty } else { ty(self, &format!("vec{rows}<f32>.real"))? }, vec![whole, self.value(j)?]),
-                (Some(l), None) if l >= 0.0 && l.fract() == 0.0 => Tree::new(&format!("shape.access_{}", l as u32), to, vec![whole]),
-                _ => Tree::new("shape.at", to, vec![whole, self.value(j)?]),
-            };
-            ty_now = whole.ty;
-        }
+        let whole = Tree::new(&name, out, idx[..inputs.len()].iter().map(|i| Ok(Tree { ty: index, ..self.value(i)? })).collect::<Result<Vec<_>, String>>()?);
+        let whole = self.index_into(whole, &idx[inputs.len()..], t.ty)?;
         Ok(Some(whole))
     }
 
@@ -6690,8 +6707,24 @@ pub(crate) fn entry_grid_header(source: &str, entry: &str) -> Option<((u32, u32,
 /// left as the literal the kernel wrote.
 pub fn read_safe_literal(source: &str, kingdom: &WgslKingdom) -> Result<SafeRead, String> {
     let source = &with_overrides(source);
+    // A kernel is read as it is written; one that does not read, and has a
+    // return inside a loop (the kingdom spells a return at the end of a
+    // block), is read again with those returns lowered (`wgsl::lower`).
+    match read_safe_literal_of(source, kingdom, false) {
+        Ok(r) => Ok(r),
+        Err(first) => {
+            let changes = crate::wgsl::naga_shape::parse(source).map(|mut m| crate::wgsl::lower::lower_returns_in_loops(&mut m)).unwrap_or(0);
+            if changes == 0 {
+                return Err(first);
+            }
+            read_safe_literal_of(source, kingdom, true)
+        }
+    }
+}
+
+fn read_safe_literal_of(source: &str, kingdom: &WgslKingdom, lower: bool) -> Result<SafeRead, String> {
     let role = crate::wgsl::render::interface_of(source)?;
-    let mut kernel = read(source)?;
+    let mut kernel = crate::wgsl::reader::read_with(source, lower)?;
     // The interface's names as the kingdom's canonical roles (its input is
     // phi, its output h, its uniform cfg with the fields d, m, r_rows, r_off),
     // so the ownership proof and the safe rows read every interface alike.
@@ -7103,6 +7136,17 @@ mod tests {
         }
         println!("cuneus: {parsed} of {} parse with naga 30, {validated} validate, {read_n} read", names.len());
         assert_eq!(parsed, names.len());
+        // (2026-10-19: instances, meshlab_swarm and skin read; the radix sort's loops step by a
+        // dispatch-sized stride, no literal.)
+        for name in ["instances", "meshlab_swarm", "skin"] {
+            let src = std::fs::read_to_string(dir.join(format!("{name}.wgsl"))).unwrap();
+            let r = read_safe(&src, &k).unwrap_or_else(|e| panic!("{name}: {e}"));
+            let out = crate::wgsl::safe_karva::render_tree_with(&r.tree, &k, &r.role).unwrap_or_else(|e| panic!("{name}: {e}"));
+            validate_text(&out.text).unwrap_or_else(|e| panic!("{name}: {e}"));
+            let back = read_safe(&out.text, &k).unwrap_or_else(|e| panic!("{name}: read back: {e}"));
+            let again = read_safe(&crate::wgsl::safe_karva::render_tree_with(&back.tree, &k, &back.role).unwrap().text, &k).unwrap();
+            assert!(again.tree == back.tree, "{name}: a fixpoint: {:?}", crate::wgsl::render::first_difference(&back.tree, &again.tree));
+        }
     }
 
     #[test]
@@ -8990,11 +9034,12 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         assert_ne!(inner, src);
         let r2 = read_safe(&inner, &k).unwrap_or_else(|e| panic!("a guarded helper return: {e}"));
         validate_text(&crate::wgsl::safe_karva::render_tree_with(&r2.tree, &k, &r2.role).unwrap().text).unwrap();
-        // A return inside a loop of the helper is still not inlined, by name.
+        // A return inside a loop of the helper reads with the return lowered to a
+        // flag and a break (`wgsl::lower`, 2026-10-19), and the kernel validates.
         let looped = src.replace("    x = x ^ (x >> 13u);\n    return x;", "    for (var i = 0u; i < 4u; i++) { if (x > i) { return x; } }\n    return x + 1u;");
         assert_ne!(looped, src);
-        let Err(e) = read_safe(&looped, &k) else { panic!("a return inside a helper's loop inlined as statements") };
-        assert!(e.contains("of a helper (not inlined)"), "{e}");
+        let r3 = read_safe(&looped, &k).unwrap_or_else(|e| panic!("a return inside a helper's loop: {e}"));
+        validate_text(&crate::wgsl::safe_karva::render_tree_with(&r3.tree, &k, &r3.role).unwrap().text).unwrap();
     }
 
     /// What the kingdom's missing compare-exchange rested on, measured on the

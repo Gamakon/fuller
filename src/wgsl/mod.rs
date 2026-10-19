@@ -31,6 +31,7 @@ pub mod interp;
 pub mod knob;
 pub mod legality;
 pub mod loader;
+pub mod lower;
 pub mod mutate;
 pub mod naga_names;
 pub mod naga_shape;
