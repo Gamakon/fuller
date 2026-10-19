@@ -1,0 +1,131 @@
+struct Immediates {
+    frustumPlane0: vec4f,
+    frustumPlane1: vec4f,
+    frustumPlane2: vec4f,
+    frustumPlane3: vec4f,
+    frustumPlane4: vec4f,
+    frustumPlane5: vec4f,
+    apexPosition: vec3f,
+    mostInsideCorners01: vec2u,
+    mostInsideCorners23: vec2u,
+    mostInsideCorners45: vec2u,
+    chunkCount: u32,
+    instanceIdx: u32,
+}
+
+struct ChunkSubmesh {
+    chunkI: u32,
+    chunkJ: u32,
+    chunkK: u32,
+    indexOffset: u32,
+    indexCount: u32,
+    isObscuredFromDirection: array<array<array<u32, 2>, 2>, 2>,
+}
+
+#if (for_indexed_draw_calls)
+struct IndirectDrawArgs {
+    indexCount: u32,
+    instanceCount: u32,
+    firstIndex: u32,
+    baseVertex: i32,
+    firstInstance: u32,
+}
+#else
+struct IndirectDrawArgs {
+    indexCount: u32, // `vertex_count` on CPU side
+    instanceCount: u32,
+    firstIndex: u32, // `first_vertex` on CPU side
+    firstInstance: u32,
+}
+#endif
+
+var<immediate> imms: Immediates;
+
+@group({{chunk_submesh_group}}) @binding({{chunk_submesh_binding}})
+var<storage, read> chunkSubmeshes: array<ChunkSubmesh>;
+
+@group({{indirect_draw_group}}) @binding({{indirect_draw_binding}})
+var<storage, read_write> indirectDrawArgs: array<IndirectDrawArgs>;
+
+// We use a small non-zero threshold to make sure barely visible chunks are not
+// culled due to imprecision
+const CULLING_THRESHOLD: f32 = -0.05;
+
+fn chunkIsOutsideFrustum(lowerCorner: vec3f) -> bool {
+    // We expect the frustum planes to have been transformed to the normalized
+    // voxel object space where the chunks are axis-aligned boxes with extent
+    // one, and the lower corner of the chunk at chunk index [i, j, k] is at
+    // coordinate (i, j, k). This makes the culling check very simple: for each
+    // frustum plane, we compute the chunk corner with the largest signed
+    // distance by looking up the corner index in the `mostInsideCorners`
+    // array. If this is negative, the entire chunk must be in the negative
+    // half-space of the plane. If the chunk is in the negative half-space of
+    // any of the planes, it is outside the frustum.
+    var CORNERS_OFFSETS = array<vec3f, 8>(
+        vec3f(0.0, 0.0, 0.0),
+        vec3f(0.0, 0.0, 1.0),
+        vec3f(0.0, 1.0, 0.0),
+        vec3f(0.0, 1.0, 1.0),
+        vec3f(1.0, 0.0, 0.0),
+        vec3f(1.0, 0.0, 1.0),
+        vec3f(1.0, 1.0, 0.0),
+        vec3f(1.0, 1.0, 1.0),
+    );
+    return (
+        signedDistance(imms.frustumPlane0, lowerCorner + CORNERS_OFFSETS[imms.mostInsideCorners01.x]) < CULLING_THRESHOLD ||
+        signedDistance(imms.frustumPlane1, lowerCorner + CORNERS_OFFSETS[imms.mostInsideCorners01.y]) < CULLING_THRESHOLD ||
+        signedDistance(imms.frustumPlane2, lowerCorner + CORNERS_OFFSETS[imms.mostInsideCorners23.x]) < CULLING_THRESHOLD ||
+        signedDistance(imms.frustumPlane3, lowerCorner + CORNERS_OFFSETS[imms.mostInsideCorners23.y]) < CULLING_THRESHOLD ||
+        signedDistance(imms.frustumPlane4, lowerCorner + CORNERS_OFFSETS[imms.mostInsideCorners45.x]) < CULLING_THRESHOLD ||
+        signedDistance(imms.frustumPlane5, lowerCorner + CORNERS_OFFSETS[imms.mostInsideCorners45.y]) < CULLING_THRESHOLD
+    );
+}
+
+fn signedDistance(plane: vec4f, point: vec3f) -> f32 {
+    let unitNormal = plane.xyz;
+    let displacement = plane.w;
+    return dot(unitNormal, point) - displacement;
+}
+
+fn chunkIsObscured(chunkSubmesh: ChunkSubmesh, lowerCorner: vec3f) -> bool {
+    var isObscuredFromDirection = chunkSubmesh.isObscuredFromDirection;
+
+    // Compute the unnormalized direction from the frustum apex to the center
+    // of the chunk
+    let viewDirection = lowerCorner + vec3f(0.5) - imms.apexPosition;
+
+    // For each axis, the sign of the view direction determines the
+    // corresponding index into the table (positive -> 0, negative -> 1)
+    let indices = select(vec3u(0u), vec3u(1u), viewDirection < vec3f(0.0));
+
+    return isObscuredFromDirection[indices.x][indices.y][indices.z] > 0u;
+}
+
+const WORKGROUP_SIZE: u32 = {{workgroup_size}};
+
+@compute @workgroup_size(WORKGROUP_SIZE, 1, 1)
+fn main(
+    @builtin(global_invocation_id) globalID: vec3u,
+) {
+    let globalIdx = globalID.x;
+
+    let chunkCount = imms.chunkCount;
+    let instanceIdx = imms.instanceIdx;
+
+    if (globalIdx < chunkCount) {
+        let chunkSubmesh = chunkSubmeshes[globalIdx];
+
+        let chunkIndices = vec3f(f32(chunkSubmesh.chunkI), f32(chunkSubmesh.chunkJ), f32(chunkSubmesh.chunkK));
+
+        if (chunkIsOutsideFrustum(chunkIndices) || chunkIsObscured(chunkSubmesh, chunkIndices)) {
+            // Make sure the draw call is skipped
+            indirectDrawArgs[globalIdx].indexCount = 0u;
+            indirectDrawArgs[globalIdx].instanceCount = 0u;
+        } else {
+            indirectDrawArgs[globalIdx].indexCount = chunkSubmesh.indexCount;
+            indirectDrawArgs[globalIdx].instanceCount = 1u;
+            indirectDrawArgs[globalIdx].firstIndex = chunkSubmesh.indexOffset;
+            indirectDrawArgs[globalIdx].firstInstance = instanceIdx;
+        }
+    }
+}

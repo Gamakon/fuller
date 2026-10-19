@@ -1,0 +1,95 @@
+struct Immediates {
+    activeLightIdx: u32,
+    activeCascadeIdx: u32,
+}
+
+struct ModelToLightTransform {
+    @location({{model_light_transform_rotation_location}}) rotationQuaternion: vec4f,
+    @location({{model_light_transform_translation_location}}) translationAndScaling: vec4f,
+}
+
+struct UnidirectionalLight {
+    cameraToLightRotationQuaternion: vec4f,
+    cameraSpaceDirection: vec3f,
+    perpendicularIlluminanceAndTanAngularRadius: vec4f,
+    orthographicTransforms: array<OrthographicTransform, {{cascade_count}}>,
+    partitionDepths: vec4f,
+    padding: vec4f,
+}
+
+struct OrthographicTransform {
+    translation: vec3f,
+    scaling: vec3f,
+}
+
+struct VertexOutput {
+    @builtin(position) projectedPosition: vec4f,
+}
+
+struct FragmentOutput {
+    @location(0) fragmentDepth: f32,
+}
+
+var<immediate> immediates: Immediates;
+
+@group({{light_uniform_group}}) @binding({{light_uniform_binding}})
+var<uniform> unidirectionalLights: array<UnidirectionalLight, {{max_light_count}}>;
+
+fn transformPosition(
+    rotationQuaternion: vec4f,
+    translation: vec3f,
+    scaling: f32,
+    position: vec3f
+) -> vec3f {
+    return rotateVectorWithQuaternion(rotationQuaternion, scaling * position) + translation;
+}
+
+fn rotateVectorWithQuaternion(quaternion: vec4f, vector: vec3f) -> vec3f {
+    let tmp = 2.0 * cross(quaternion.xyz, vector);
+    return vector + quaternion.w * tmp + cross(quaternion.xyz, tmp);
+}
+
+fn applyOrthographicProjectionToPosition(
+    orthographicTranslation: vec3f,
+    orthographicScaling: vec3f,
+    position: vec3f
+    ) -> vec3f {
+    return (position + orthographicTranslation) * orthographicScaling;
+}
+
+@vertex
+fn mainVS(
+    @location({{position_location}}) modelSpacePosition: vec3f,
+    modelToLightTransform: ModelToLightTransform,
+) -> VertexOutput {
+    var output: VertexOutput;
+
+    let lightSpacePosition = transformPosition(
+        modelToLightTransform.rotationQuaternion,
+        modelToLightTransform.translationAndScaling.xyz,
+        modelToLightTransform.translationAndScaling.w,
+        modelSpacePosition,
+    );
+
+    // Note: `var` is required here instead of `let` to make the
+    // `orthographicTransforms` array indexable with a dynamic index
+    var unidirectionalLight = unidirectionalLights[immediates.activeLightIdx];
+    let lightOrthographicTransform = unidirectionalLight.orthographicTransforms[immediates.activeCascadeIdx];
+
+    let lightClipSpacePosition = applyOrthographicProjectionToPosition(
+        lightOrthographicTransform.translation,
+        lightOrthographicTransform.scaling,
+        lightSpacePosition,
+    );
+
+    output.projectedPosition = vec4f(lightClipSpacePosition, 1.0);
+
+    return output;
+}
+
+@fragment
+fn mainFS(input: VertexOutput) -> FragmentOutput {
+    var output: FragmentOutput;
+    output.fragmentDepth = input.projectedPosition.z;
+    return output;
+}
