@@ -704,7 +704,20 @@ fn local_name(name: &str) -> Option<String> {
 /// The index dual of a private array's mask row: a 16-element array's
 /// (safe.pidx16) is u32.pindex16, a 64-element array's u32.pindex.
 fn pindex_dual(mask: &str) -> &'static str {
-    if mask == "safe.pidx16" { "u32.pindex16" } else { "u32.pindex" }
+    match mask {
+        "safe.pidx16" => "u32.pindex16",
+        "safe.pidx128" => "u32.pindex128",
+        _ => "u32.pindex",
+    }
+}
+
+/// The largest index a private array's mask row writes (`i & mask`).
+fn pindex_mask(mask: &str) -> f32 {
+    match mask {
+        "safe.pidx16" => 15.0,
+        "safe.pidx128" => 127.0,
+        _ => 63.0,
+    }
 }
 
 /// The private array dual of a kind letter.
@@ -713,6 +726,10 @@ fn parr_dual_of(arr: &str, kind: char) -> &'static str {
     // scores, the v24 reference's `rows`, 2026-10-17.)
     if arr == "parr.ua" || arr == "parr.uc" {
         return "parr64<u32>.index";
+    }
+    // (And the 128-element u32 arrays pux, puy: a thread's cache of 100 values, run 4's seed10.)
+    if arr == "parr.ux" || arr == "parr.uy" {
+        return "parr128<u32>.index";
     }
     // (And the 64-element vec4 arrays pvq, pvr: a query held in registers.)
     if arr == "parr.vq" || arr == "parr.vr" {
@@ -2495,7 +2512,7 @@ impl<'a> Ctx<'a> {
                 }
                 // A private array: `load.local.acc@0.#@v3 (idx)`.
                 let (arr, kind, mask) = self.private_array(&local, &d)?;
-                let idx = self.value(unmasked(&t.kids[0], if mask == "safe.pidx64" { 63.0 } else { 15.0 }))?;
+                let idx = self.value(unmasked(&t.kids[0], pindex_mask(mask)))?;
                 let pidx = Tree::new(mask, ty(self, pindex_dual(mask))?, vec![idx]);
                 let arr_dual = parr_dual_of(arr, kind);
                 return Ok(Tree::new(&format!("parr.get_{kind}"), t.ty, vec![Tree::new(arr, ty(self, arr_dual)?, vec![]), pidx]));
@@ -2602,9 +2619,12 @@ impl<'a> Ctx<'a> {
             naga::TypeInner::Array { size: naga::ArraySize::Constant(n), .. } => Some(n.get()),
             _ => None,
         });
-        let long_u32 = matches!(elem_dual, "u32.index" | "u32.bits" | "u32.count" | "u32.opaque") && declared.is_some_and(|n| n > 16);
+        let any_u32 = matches!(elem_dual, "u32.index" | "u32.bits" | "u32.count" | "u32.opaque");
+        let huge_u32 = any_u32 && declared.is_some_and(|n| n > 64);
+        let long_u32 = any_u32 && !huge_u32 && declared.is_some_and(|n| n > 16);
         let long_v4 = elem_dual == "vec4<f32>.real" && declared.is_some_and(|n| n > 16);
         let (kind, mask) = match elem_dual {
+            _ if huge_u32 => ('i', "safe.pidx128"),
             _ if long_u32 => ('i', "safe.pidx64"),
             _ if long_v4 => ('v', "safe.pidx64"),
             "f32.real" => ('f', "safe.pidx64"),
@@ -2622,11 +2642,12 @@ impl<'a> Ctx<'a> {
         // A kernel the kingdom wrote names its private arrays as the rows do
         // (`pk` is parr.k): that row, when free and of the kind.
         let own = format!("parr.{}", local.strip_prefix("local.").and_then(|r| r.split('@').next()).and_then(|n| n.strip_prefix('p')).unwrap_or(""));
-        let capacity = if mask == "safe.pidx64" { 64 } else { 16 };
+        let capacity = pindex_mask(mask) as u32 + 1;
         if let Some(n) = declared.filter(|n| *n > capacity) {
             return Err(format!("a local array {local} of {n} elements is longer than the kingdom's private arrays of its kind ({capacity})"));
         }
         let rows: &[&'static str] = match kind {
+            _ if huge_u32 => &["parr.ux", "parr.uy"],
             _ if long_u32 => &["parr.ua", "parr.uc"],
             _ if long_v4 => &["parr.vq", "parr.vr"],
             'f' => &["parr.a", "parr.b", "parr.c", "parr.d", "parr.e", "parr.f"],
@@ -2640,6 +2661,7 @@ impl<'a> Ctx<'a> {
             return Ok((arr, kind, mask));
         }
         let arr = match kind {
+            _ if huge_u32 => ["parr.ux", "parr.uy"].iter().copied().find(|a| !used.contains(a)).ok_or_else(|| format!("a third 128-element u32 local array {local}"))?,
             _ if long_u32 => ["parr.ua", "parr.uc"].iter().copied().find(|a| !used.contains(a)).ok_or_else(|| format!("a third 64-element u32 local array {local}"))?,
             _ if long_v4 => ["parr.vq", "parr.vr"].iter().copied().find(|a| !used.contains(a)).ok_or_else(|| format!("a third 64-element vec4 local array {local}"))?,
             'f' => ["parr.a", "parr.b", "parr.c", "parr.d", "parr.e", "parr.f"].iter().copied().find(|a| !used.contains(a)).ok_or_else(|| format!("a seventh f32 local array {local}"))?,
@@ -4811,7 +4833,7 @@ impl<'a> Ctx<'a> {
                 }
                 let d = self.kingdom.dual(value.ty).map(|d| d.dual.clone()).unwrap_or_default();
                 let (arr, kind, mask) = self.private_array(&local, &d)?;
-                let i = self.value(unmasked(idx, if mask == "safe.pidx64" { 63.0 } else { 15.0 }))?;
+                let i = self.value(unmasked(idx, pindex_mask(mask)))?;
                 let v = self.value(value)?;
                 let pidx = Tree::new(mask, ty(self, pindex_dual(mask))?, vec![i]);
                 let arr_dual = parr_dual_of(arr, kind);

@@ -1390,6 +1390,7 @@ impl<'a> Checker<'a> {
             "safe.wgv_of" => Some(min_c(k(0), 511)),
             "safe.wgv2_of" => Some(min_c(k(0), 1023)),
             "safe.pidx64" => Some(min_c(k(0), 63)),
+            "safe.pidx128" => Some(min_c(k(0), 127)),
             "safe.pidx16" => Some(min_c(k(0), 15)),
             _ => None,
         }
@@ -1425,11 +1426,15 @@ impl<'a> Checker<'a> {
         if matches!(ibase, "safe.wg_of" | "safe.wgv_of" | "safe.wgv2_of" | "safe.wga_of") && idx.kids.len() == 1 {
             return; // masked into the array's own length by the renderer
         }
-        if matches!(ibase, "safe.pidx64" | "safe.pidx16") && idx.kids.len() == 1 {
+        if matches!(ibase, "safe.pidx64" | "safe.pidx16" | "safe.pidx128") && idx.kids.len() == 1 {
             if idx.kids[0].name.starts_with("literal.") {
                 return; // a literal is folded into the array on the host
             }
-            let mask: u128 = if ibase == "safe.pidx64" { 63 } else { 15 };
+            let mask: u128 = match ibase {
+                "safe.pidx64" => 63,
+                "safe.pidx128" => 127,
+                _ => 15,
+            };
             if mask >= len {
                 cx.fail(Layer::Range, "index_out_of_range", format!("{}: {ibase} masks its index to {mask} but {var} has {len} elements", brief(n)));
             }

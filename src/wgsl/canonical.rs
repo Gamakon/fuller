@@ -958,6 +958,7 @@ fn canonical_block(t: &Tree, kingdom: &WgslKingdom) -> Tree {
         if let ([k], Ok(var)) = (idx.kids.as_slice(), parr_var(kingdom, arr)) {
             let mask = match idx.name.as_str() {
                 "safe.pidx64" => Some(63u32),
+                "safe.pidx128" => Some(127u32),
                 "safe.pidx16" => Some(15u32),
                 _ => None,
             };

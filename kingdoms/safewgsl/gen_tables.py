@@ -85,6 +85,7 @@ FORMS = {
     "safe": ("the safeWGSL kernel: the root dual of this kingdom, produced only by kernel.entry_safe", []),
     "pindex": ("a private-array index, masked to the array by its row", ["u32"]),
     "pindex16": ("an index into a private array of 16 elements (i & 15u)", ["u32"]),
+    "pindex128": ("an index into a private array of 128 elements (i & 127u)", ["u32"]),
     "uniform": ("a u32 the same for every thread of the workgroup: a binding's field, a literal, the workgroup's id, the grid's size, the subgroup size, and arithmetic of them", ["u32"]),
     "boundu": ("a loop bound the same for every thread of the workgroup (a loop that may hold a barrier)", ["u32"]),
     "boundx": ("a loop bound that is any index expression (cfg.m & ~3u, (cfg.d + 63u) / 64u, a register): rendered as written, never capped; costed at the worst shape", ["u32"]),
@@ -162,7 +163,7 @@ FORMS = {
     "module": ("a module of two to four entry points over the interface's shared bindings, one safe kernel each, in the interface's order: a gene's root", []),
 }
 
-SAFE_FORMS = ["payload", "uflag", "module", "wgown", "mirror", "rowbase", "colbase", "rowbases", "colbases", "rowbaseg", "colbaseg", "indexw", "uniformw", "xbound", "uniform", "boundu", "pindex16", "wgaindex", "wgv2index", "wglen", "decl", "decls", "lidx", "threadrows", "threadcols", "threadrowg", "threadcolg", "gid", "lid", "wid", "rowid", "colid", "O0", "O1", "O2", "O3", "O4", "tcounter4", "L5", "C5", "safe", "pindex", "boundx", "boundm", "boundd", "boundrows", "lit64", "lit4096", "counter", "tcounter", "tcounter2", "L3", "C3", "tcounter3", "L4", "C4", "wgvindex", "bound", "threadrow", "threadcol", "cell", "phi", "wgindex", "L0", "L1", "L2", "C0", "C1", "C2"]
+SAFE_FORMS = ["pindex128", "payload", "uflag", "module", "wgown", "mirror", "rowbase", "colbase", "rowbases", "colbases", "rowbaseg", "colbaseg", "indexw", "uniformw", "xbound", "uniform", "boundu", "pindex16", "wgaindex", "wgv2index", "wglen", "decl", "decls", "lidx", "threadrows", "threadcols", "threadrowg", "threadcolg", "gid", "lid", "wid", "rowid", "colid", "O0", "O1", "O2", "O3", "O4", "tcounter4", "L5", "C5", "safe", "pindex", "boundx", "boundm", "boundd", "boundrows", "lit64", "lit4096", "counter", "tcounter", "tcounter2", "L3", "C3", "tcounter3", "L4", "C4", "wgvindex", "bound", "threadrow", "threadcol", "cell", "phi", "wgindex", "L0", "L1", "L2", "C0", "C1", "C2"]
 RUNGS = ["L0", "L1", "L2", "L3", "L4", "C0", "C1", "C2", "C3", "C4"]
 # The fifth rung came after every other row (run A, 2026-10-11); its rows are appended at the end so
 # every earlier ref stands, and it is kept out of RUNGS for that reason.
@@ -184,7 +185,7 @@ FALLBACK = {
     "boundm": "cfg.m", "boundd": "cfg.d", "boundrows": "cfg.r_rows", "lit64": "1u", "lit4096": "1u",
     "counter": "0u", "tcounter": "0u", "tcounter2": "0u", "bound": "false", "threadrow": "the thread's own first row", "threadcol": "the thread's own first column", "cell": "the thread's own first cell", "phi": "0u", "wgindex": "0u",
     "L0": "empty", "L1": "empty", "L2": "empty", "L3": "empty", "C0": "empty", "C1": "empty", "C2": "empty", "C3": "empty",
-    "safe": "an empty kernel", "pindex": "0u", "pindex16": "0u", "uniform": "0u", "boundu": "1u",
+    "safe": "an empty kernel", "pindex": "0u", "pindex16": "0u", "pindex128": "0u", "uniform": "0u", "boundu": "1u",
     "tcounter3": "0u", "L4": "empty", "C4": "empty", "wgvindex": "0u",
     "boundx": "1u",
     "tcounter4": "0u", "L5": "empty", "C5": "empty",
@@ -214,7 +215,7 @@ FALLBACK_BITS = {
     "kernel": 0, "grid": 0, "block": 0, "stmt": 0, "wgdim": 0, "blk": 0, "unroll": 0,
     "boundm": 0, "boundd": 0, "boundrows": 0, "lit64": 0, "lit4096": 0,
     "counter": 0, "tcounter": 0, "tcounter2": 0, "bound": 0, "threadrow": 0, "threadcol": 0, "cell": 0, "phi": 0, "wgindex": 0,
-    "L0": 0, "L1": 0, "L2": 0, "L3": 0, "C0": 0, "C1": 0, "C2": 0, "C3": 0, "safe": 0, "pindex": 0, "pindex16": 0, "uniform": 0, "boundu": 1,
+    "L0": 0, "L1": 0, "L2": 0, "L3": 0, "C0": 0, "C1": 0, "C2": 0, "C3": 0, "safe": 0, "pindex": 0, "pindex16": 0, "pindex128": 0, "uniform": 0, "boundu": 1,
     "tcounter3": 0, "L4": 0, "C4": 0, "wgvindex": 0,
     # A loop bound's fallback is one pass, as its text says (1u; 0 before, 2026-10-12: a loop that never
     # ran, and an epilogue whose store sat in it never stored).
@@ -409,6 +410,9 @@ def build_types():
     add("u32", "payload", 1, FORMS["payload"][0])
     # Workgroup arrays of i32 (2026-10-19, run 4's seeds 14 and 29: quantised int8 values staged in i32).
     add("wgmem<i32>", "int", 0, "a workgroup-memory array of i32: na, nb")
+    # 128-element u32 private arrays and their index (2026-10-19, run 4's seed10 caches 100 values a thread).
+    add("parr128<u32>", "index", 0, "a private array of 128 u32: pux, puy")
+    add("u32", "pindex128", 1, FORMS["pindex128"][0])
     return rows
 
 
@@ -1409,6 +1413,14 @@ f("wg", "get_n_safe", "composite", ["wgmem<i32>.int", "u32.wgindex"], "i32.int",
 for r in RUNGS + RUNGS5:
     f("wg", "set_n_" + r, "composite", ["wgmem<i32>.int", "u32.wgindex", "i32.int"], "stmt." + r, "arity 3: a[i] = v")
 f("wg", "decl_n", "composite", ["wgmem<i32>.int", "u32.wglen"], "wg.decl", "var<workgroup> a: array<i32, n>")
+# ---- 128-element u32 private arrays (2026-10-19, run 4's seed10 caches its 100 Hamming distances a thread in
+# `var cache: array<u32, 100>` between two barriers): pux, puy, indexed i & 127u (u32.pindex128) ----
+f("safe", "pidx128", "composite", ["u32.index"], "u32.pindex128", "i & 127u")
+for n in ("ux", "uy"):
+    f("parr", n, "composite", [], "parr128<u32>.index", f"private array p{n} of 128 u32")
+f("parr", "get_i", "composite", ["parr128<u32>.index", "u32.pindex128"], "u32.index", "pux[i]")
+for r in RUNGS + RUNGS5:
+    f("parr", "set_i_" + r, "composite", ["parr128<u32>.index", "u32.pindex128", "u32.index"], "stmt." + r, "arity 3: pux[i] = v")
 for r in ("L0", "L1", "L2", "L3", "L4", "L5"):
     f("wg", "put_n_" + r, "composite", ["wgmem<i32>.int", "u32.wgown", "i32.int"], "stmt." + r, "arity 3: barrier; if (i < len) { na[i] = v; } barrier")
 

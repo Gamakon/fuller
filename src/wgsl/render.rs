@@ -2335,6 +2335,7 @@ impl Renderer<'_> {
             "safe.wgv_of" => return Ok(format!("(({}) & {}u)", self.value(&v.kids[0], scope)?, WGVEC_LEN - 1)),
             "safe.wgv2_of" => return Ok(format!("(({}) & 1023u)", self.value(&v.kids[0], scope)?)),
             "safe.pidx64" => return Ok(format!("(({}) & 63u)", self.value(&v.kids[0], scope)?)),
+            "safe.pidx128" => return Ok(format!("(({}) & 127u)", self.value(&v.kids[0], scope)?)),
             "safe.pidx16" => return Ok(format!("(({}) & 15u)", self.value(&v.kids[0], scope)?)),
             "safe.row_as_index" | "safe.col_as_index" => return self.value(&v.kids[0], scope),
             // (The Gram's input and output: an interface naming neither has no
@@ -3039,10 +3040,14 @@ impl Renderer<'_> {
             let x = self.value(k, scope)?;
             return Ok(if len.is_power_of_two() { format!("(({x}) & {last}u)") } else { format!("min(({x}), {last}u)") });
         }
-        if let ["safe.pidx64" | "safe.pidx16"] = [safe_base(&idx.name)] {
+        if let ["safe.pidx64" | "safe.pidx16" | "safe.pidx128"] = [safe_base(&idx.name)] {
             if let [k] = idx.kids.as_slice() {
                 if k.name.starts_with("literal.") && k.konst.is_finite() {
-                    let mask = if safe_base(&idx.name) == "safe.pidx64" { 63 } else { 15 };
+                    let mask = match safe_base(&idx.name) {
+                        "safe.pidx64" => 63,
+                        "safe.pidx128" => 127,
+                        _ => 15,
+                    };
                     let v = (k.konst.max(0.0) as u32 & mask).min(len.saturating_sub(1));
                     return Ok(format!("{v}u"));
                 }
@@ -3080,7 +3085,7 @@ impl Renderer<'_> {
 pub fn parr_var(kingdom: &WgslKingdom, t: &Tree) -> Result<&'static str, String> {
     if t.name == "fallback" {
         let d = kingdom.dual(t.ty).map(|d| d.dual.clone()).unwrap_or_default();
-        return Ok(if d.starts_with("parr64<u32>") { "pua" } else if d.starts_with("parr64<vec4") { "pvq" } else if d.starts_with("parr<vec2") { "pq" } else if d.starts_with("parr<vec") { "pv" } else if d.starts_with("parr<u32>") { "pi" } else if d.starts_with("parr<bool>") { "pm" } else { "pa" });
+        return Ok(if d.starts_with("parr128<u32>") { "pux" } else if d.starts_with("parr64<u32>") { "pua" } else if d.starts_with("parr64<vec4") { "pvq" } else if d.starts_with("parr<vec2") { "pq" } else if d.starts_with("parr<vec") { "pv" } else if d.starts_with("parr<u32>") { "pi" } else if d.starts_with("parr<bool>") { "pm" } else { "pa" });
     }
     parr_name(t)
 }
@@ -3122,7 +3127,7 @@ pub fn register_declarations() -> String {
     }
     out.push_str("    var t: u32 = 0u; var k: u32 = 0u; var k2: u32 = 0u; var k3: u32 = 0u; var k4: u32 = 0u;\n");
     out.push_str("    var pa: array<f32, 64>; var pb: array<f32, 64>; var pc: array<f32, 64>; var pd: array<f32, 64>; var pe: array<f32, 64>; var pf: array<f32, 64>;\n");
-    out.push_str("    var pv: array<vec4<f32>, 16>; var pw: array<vec4<f32>, 16>; var px: array<vec4<f32>, 16>; var py: array<vec4<f32>, 16>; var pi: array<u32, 16>; var pj: array<u32, 16>; var pk: array<u32, 16>; var pm: array<bool, 16>; var pn: array<bool, 16>; var pq: array<vec2<f32>, 16>; var pr: array<vec2<f32>, 16>; var pua: array<u32, 64>; var puc: array<u32, 64>; var pvq: array<vec4<f32>, 64>; var pvr: array<vec4<f32>, 64>;\n");
+    out.push_str("    var pv: array<vec4<f32>, 16>; var pw: array<vec4<f32>, 16>; var px: array<vec4<f32>, 16>; var py: array<vec4<f32>, 16>; var pi: array<u32, 16>; var pj: array<u32, 16>; var pk: array<u32, 16>; var pm: array<bool, 16>; var pn: array<bool, 16>; var pq: array<vec2<f32>, 16>; var pr: array<vec2<f32>, 16>; var pua: array<u32, 64>; var puc: array<u32, 64>; var pvq: array<vec4<f32>, 64>; var pvr: array<vec4<f32>, 64>; var pux: array<u32, 128>; var puy: array<u32, 128>;\n");
     out
 }
 
@@ -3167,6 +3172,7 @@ pub fn array_len(name: &str) -> u32 {
         n if n.starts_with("wg_v2") => 1024,
         n if n.starts_with("wg_v") => WGVEC_LEN,
         "pa" | "pb" | "pc" | "pd" | "pe" | "pf" | "pua" | "puc" | "pvq" | "pvr" => 64,
+        "pux" | "puy" => 128,
         _ => 16,
     }
 }
@@ -3186,6 +3192,8 @@ fn parr_name(t: &Tree) -> Result<&'static str, String> {
         "parr.f" => "pf",
         "parr.i" => "pi",
         "parr.ua" => "pua",
+        "parr.ux" => "pux",
+        "parr.uy" => "puy",
         "parr.vq" => "pvq",
         "parr.vr" => "pvr",
         "parr.uc" => "puc",
@@ -3393,7 +3401,9 @@ fn sample_with(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, s
     // (Nor the i32 workgroup arrays and their rows, 2026-10-19, for the same
     // reason as wg.au_c and wg.au_d below.)
     let wg_i32 = |r: &WgslRow| kingdom.dual(r.output).is_some_and(|d| d.dual == "wgmem<i32>.int") || r.inputs.iter().any(|&t| kingdom.dual(t).is_some_and(|d| d.dual == "wgmem<i32>.int"));
-    let not_drawn = |r: &WgslRow| uniform_test_op(safe_base(&r.name)).is_some() || matches!(safe_base(&r.name), "stmt.if_uflag" | "stmt.if_else_uflag") || matches!(r.name.as_str(), "uflag.of_flag" | "uniform.of_checked" | "wg.au_c" | "wg.au_d") || wg_i32(r);
+    // (Nor the 128-element u32 private arrays, the same reason.)
+    let parr128 = |r: &WgslRow| [r.output].iter().chain(r.inputs.iter()).any(|&t| kingdom.dual(t).is_some_and(|d| d.dual == "parr128<u32>.index" || d.dual == "u32.pindex128"));
+    let not_drawn = |r: &WgslRow| uniform_test_op(safe_base(&r.name)).is_some() || matches!(safe_base(&r.name), "stmt.if_uflag" | "stmt.if_else_uflag") || matches!(r.name.as_str(), "uflag.of_flag" | "uniform.of_checked" | "wg.au_c" | "wg.au_d" | "safe.pidx128") || wg_i32(r) || parr128(r);
     // (Nor the third and fourth atomic<u32> workgroup arrays, wg.au_c and
     // wg.au_d, 2026-10-19: rows for the seeds that keep more counters; drawn,
     // they move the random floors by draws alone, so they wait for a floor

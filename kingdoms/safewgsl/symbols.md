@@ -3292,11 +3292,42 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 | F1784 | `wg.set_n_L5` | `composite` | `wgmem<i32>.int u32.wgindex i32.int` | `stmt.L5` | 3 | arity 3: a[i] = v |
 | F1785 | `wg.set_n_C5` | `composite` | `wgmem<i32>.int u32.wgindex i32.int` | `stmt.C5` | 3 | arity 3: a[i] = v |
 | F1786 | `wg.decl_n` | `composite` | `wgmem<i32>.int u32.wglen` | `wg.decl` | 2 | var<workgroup> a: array<i32, n> |
-| F1787 | `wg.put_n_L0` | `composite` | `wgmem<i32>.int u32.wgown i32.int` | `stmt.L0` | 3 | arity 3: barrier; if (i < len) { na[i] = v; } barrier |
-| F1788 | `wg.put_n_L1` | `composite` | `wgmem<i32>.int u32.wgown i32.int` | `stmt.L1` | 3 | arity 3: barrier; if (i < len) { na[i] = v; } barrier |
-| F1789 | `wg.put_n_L2` | `composite` | `wgmem<i32>.int u32.wgown i32.int` | `stmt.L2` | 3 | arity 3: barrier; if (i < len) { na[i] = v; } barrier |
-| F1790 | `wg.put_n_L3` | `composite` | `wgmem<i32>.int u32.wgown i32.int` | `stmt.L3` | 3 | arity 3: barrier; if (i < len) { na[i] = v; } barrier |
-| F1791 | `wg.put_n_L4` | `composite` | `wgmem<i32>.int u32.wgown i32.int` | `stmt.L4` | 3 | arity 3: barrier; if (i < len) { na[i] = v; } barrier |
-| F1792 | `wg.put_n_L5` | `composite` | `wgmem<i32>.int u32.wgown i32.int` | `stmt.L5` | 3 | arity 3: barrier; if (i < len) { na[i] = v; } barrier |
 
-1792 function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Storage-buffer atomics are an interface's per-kernel rows, not rows of this table. Deliberately absent: atomic compare-exchange (naga 0.20's Metal backend lacks it), subgroupBallot, images, derivatives, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.
+## class `safe`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F1787 | `safe.pidx128` | `composite` | `u32.index` | `u32.pindex128` | 1 | i & 127u |
+
+## class `parr`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F1788 | `parr.ux` | `composite` | `-` | `parr128<u32>.index` | 0 | private array pux of 128 u32 |
+| F1789 | `parr.uy` | `composite` | `-` | `parr128<u32>.index` | 0 | private array puy of 128 u32 |
+| F1790 | `parr.get_i` | `composite` | `parr128<u32>.index u32.pindex128` | `u32.index` | 2 | pux[i] |
+| F1791 | `parr.set_i_L0` | `composite` | `parr128<u32>.index u32.pindex128 u32.index` | `stmt.L0` | 3 | arity 3: pux[i] = v |
+| F1792 | `parr.set_i_L1` | `composite` | `parr128<u32>.index u32.pindex128 u32.index` | `stmt.L1` | 3 | arity 3: pux[i] = v |
+| F1793 | `parr.set_i_L2` | `composite` | `parr128<u32>.index u32.pindex128 u32.index` | `stmt.L2` | 3 | arity 3: pux[i] = v |
+| F1794 | `parr.set_i_L3` | `composite` | `parr128<u32>.index u32.pindex128 u32.index` | `stmt.L3` | 3 | arity 3: pux[i] = v |
+| F1795 | `parr.set_i_L4` | `composite` | `parr128<u32>.index u32.pindex128 u32.index` | `stmt.L4` | 3 | arity 3: pux[i] = v |
+| F1796 | `parr.set_i_C0` | `composite` | `parr128<u32>.index u32.pindex128 u32.index` | `stmt.C0` | 3 | arity 3: pux[i] = v |
+| F1797 | `parr.set_i_C1` | `composite` | `parr128<u32>.index u32.pindex128 u32.index` | `stmt.C1` | 3 | arity 3: pux[i] = v |
+| F1798 | `parr.set_i_C2` | `composite` | `parr128<u32>.index u32.pindex128 u32.index` | `stmt.C2` | 3 | arity 3: pux[i] = v |
+| F1799 | `parr.set_i_C3` | `composite` | `parr128<u32>.index u32.pindex128 u32.index` | `stmt.C3` | 3 | arity 3: pux[i] = v |
+| F1800 | `parr.set_i_C4` | `composite` | `parr128<u32>.index u32.pindex128 u32.index` | `stmt.C4` | 3 | arity 3: pux[i] = v |
+| F1801 | `parr.set_i_L5` | `composite` | `parr128<u32>.index u32.pindex128 u32.index` | `stmt.L5` | 3 | arity 3: pux[i] = v |
+| F1802 | `parr.set_i_C5` | `composite` | `parr128<u32>.index u32.pindex128 u32.index` | `stmt.C5` | 3 | arity 3: pux[i] = v |
+
+## class `wg`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F1803 | `wg.put_n_L0` | `composite` | `wgmem<i32>.int u32.wgown i32.int` | `stmt.L0` | 3 | arity 3: barrier; if (i < len) { na[i] = v; } barrier |
+| F1804 | `wg.put_n_L1` | `composite` | `wgmem<i32>.int u32.wgown i32.int` | `stmt.L1` | 3 | arity 3: barrier; if (i < len) { na[i] = v; } barrier |
+| F1805 | `wg.put_n_L2` | `composite` | `wgmem<i32>.int u32.wgown i32.int` | `stmt.L2` | 3 | arity 3: barrier; if (i < len) { na[i] = v; } barrier |
+| F1806 | `wg.put_n_L3` | `composite` | `wgmem<i32>.int u32.wgown i32.int` | `stmt.L3` | 3 | arity 3: barrier; if (i < len) { na[i] = v; } barrier |
+| F1807 | `wg.put_n_L4` | `composite` | `wgmem<i32>.int u32.wgown i32.int` | `stmt.L4` | 3 | arity 3: barrier; if (i < len) { na[i] = v; } barrier |
+| F1808 | `wg.put_n_L5` | `composite` | `wgmem<i32>.int u32.wgown i32.int` | `stmt.L5` | 3 | arity 3: barrier; if (i < len) { na[i] = v; } barrier |
+
+1808 function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Storage-buffer atomics are an interface's per-kernel rows, not rows of this table. Deliberately absent: atomic compare-exchange (naga 0.20's Metal backend lacks it), subgroupBallot, images, derivatives, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.
