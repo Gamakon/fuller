@@ -2005,3 +2005,6 @@ F2003	reg	set_L_C3	composite	reg<vec4<bool>>.flag vec4<bool>.flag	stmt.C3	2
 F2004	reg	set_L_C4	composite	reg<vec4<bool>>.flag vec4<bool>.flag	stmt.C4	2	
 F2005	reg	set_L_L5	composite	reg<vec4<bool>>.flag vec4<bool>.flag	stmt.L5	2	
 F2006	reg	set_L_C5	composite	reg<vec4<bool>>.flag vec4<bool>.flag	stmt.C5	2	
+F2007	kernel	module_ext1	composite	kernel.module kernel.safe	kernel.module	2	arity 2: the module and 1 more entry points, in order after it
+F2008	kernel	module_ext2	composite	kernel.module kernel.safe kernel.safe	kernel.module	3	arity 3: the module and 2 more entry points, in order after it
+F2009	kernel	module_ext3	composite	kernel.module kernel.safe kernel.safe kernel.safe	kernel.module	4	arity 4: the module and 3 more entry points, in order after it

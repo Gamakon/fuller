@@ -987,16 +987,18 @@ mod tests {
         // with the i32 workgroup arrays (wg.na, wg.nb, wg.get_n_safe, 12 wg.set_n, wg.decl_n, 6 wg.put_n);
         // 1,808 with the 128-element u32 private arrays (safe.pidx128, parr.ux, parr.uy, get_i, 12 set_i).
         // 2,006 with the vector conversions of floats and unsigned integers (9) and the nine
-        // register kinds of REG_KINDS (8 registers, the read and a set at each of the 22 rungs each).
-        assert_eq!(fs.rows.len(), 2006);
+        // register kinds of REG_KINDS (8 registers, the read and a set at each of the 22 rungs each);
+        // 2,009 with kernel.module_ext1..3 (a module of more than four entry points).
+        assert_eq!(fs.rows.len(), 2009);
         let dual = |t: Ty| k.dual(t).unwrap().dual.clone();
         let producers = |d: &str| -> Vec<String> { k.rows.iter().filter(|r| dual(r.output) == d).map(|r| r.name.clone()).collect() };
         assert_eq!(producers("kernel.safe"), vec!["kernel.entry_safe"]);
         // A module of entry points is a root only: its rows take safe kernels,
         // and no row takes a module (none nests, none is a single kernel's mutation).
-        assert_eq!(producers("kernel.module"), vec!["kernel.module_2", "kernel.module_3", "kernel.module_4"]);
-        assert!(k.rows.iter().filter(|r| r.name.starts_with("kernel.module_")).all(|r| r.inputs.iter().all(|&t| dual(t) == "kernel.safe")));
-        assert!(k.rows.iter().all(|r| r.inputs.iter().all(|&t| dual(t) != "kernel.module")));
+        assert_eq!(producers("kernel.module"), vec!["kernel.module_2", "kernel.module_3", "kernel.module_4", "kernel.module_ext1", "kernel.module_ext2", "kernel.module_ext3"]);
+        assert!(k.rows.iter().filter(|r| r.name.starts_with("kernel.module_") && !r.name.starts_with("kernel.module_ext")).all(|r| r.inputs.iter().all(|&t| dual(t) == "kernel.safe")));
+        // (Only the extension rows take a module, as their first input.)
+        assert!(k.rows.iter().filter(|r| !r.name.starts_with("kernel.module_ext")).all(|r| r.inputs.iter().all(|&t| dual(t) != "kernel.module")));
         // THE EPILOGUE: the root takes a body and an epilogue; every epilogue
         // block ends in an epilogue statement, and every epilogue statement is
         // the store of the thread's cell or holds an epilogue block (an if, an

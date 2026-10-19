@@ -735,6 +735,40 @@ pub fn infer_entries(module: &naga::Module) -> Result<(crate::wgsl::interface::M
     Ok((crate::wgsl::interface::infer(module)?, crate::wgsl::interface::compute_entries(module)))
 }
 
+/// The entry points of a module tree in order: the kernels of a `kernel.module_N`,
+/// or of its first kid (a module) followed by the kernels a `kernel.module_ext<k>`
+/// appends. A node holds at most four children, so a module of more than four
+/// entry points is written as a chain of these.
+pub fn module_entries(t: &Tree) -> Vec<Tree> {
+    if t.name.starts_with("kernel.module_ext") {
+        let mut out = t.kids.first().map(module_entries).unwrap_or_default();
+        out.extend(t.kids.iter().skip(1).cloned());
+        out
+    } else {
+        t.kids.clone()
+    }
+}
+
+/// A module of the kernels `entries` (two or more): `kernel.module_N` up to
+/// four, then `kernel.module_ext<k>` for each further three or fewer.
+pub fn module_tree(kingdom: &WgslKingdom, entries: Vec<Tree>) -> Result<Tree, String> {
+    if entries.len() < 2 {
+        return Err(format!("a module of {} entry points: two or more", entries.len()));
+    }
+    let ty = dual_ty(kingdom, "kernel.module")?;
+    let mut rest = entries.into_iter();
+    let first: Vec<Tree> = rest.by_ref().take(4).collect();
+    let mut tree = Tree::new(&format!("kernel.module_{}", first.len()), ty, first);
+    loop {
+        let more: Vec<Tree> = rest.by_ref().take(3).collect();
+        if more.is_empty() {
+            return Ok(tree);
+        }
+        let name = format!("kernel.module_ext{}", more.len());
+        tree = Tree::new(&name, ty, std::iter::once(tree).chain(more).collect());
+    }
+}
+
 /// The declared interfaces by name (a kernel names its own in a
 /// `// interface <name>` header line; none is the interface its module gives).
 pub fn role_named(name: &str) -> Result<Role, String> {
@@ -755,9 +789,6 @@ pub fn interface_of(source: &str) -> Result<Role, String> {
         None => {
             let module = crate::wgsl::naga_shape::parse(source)?;
             let (i, entries) = infer_entries(&module)?;
-            if entries.len() > 4 {
-                return Err(format!("a module of {} entry points: the kingdom's module holds at most four (kernel.module_4)", entries.len()));
-            }
             let mut role = Role::inferred(&i);
             role.entries = entries;
             Ok(role)
@@ -1250,7 +1281,7 @@ impl<'a> Renderer<'a> {
         if self.dual(root.ty)?.dual == "kernel.module" {
             let kids: Vec<Tree> = match root.name.as_str() {
                 "fallback" => vec![Tree::fallback(dual_ty(self.kingdom, "kernel.safe")?); self.role.entries.len()],
-                n if n.starts_with("kernel.module_") => root.kids.clone(),
+                n if n.starts_with("kernel.module_") => module_entries(root),
                 other => return Err(format!("{other} is not a module row")),
             };
             if kids.len() != self.role.entries.len() || kids.len() < 2 {
@@ -3699,12 +3730,9 @@ fn sample_with(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, s
     // interface's order; the module row of that many.
     if kingdom.dual(root).is_some_and(|d| d.dual == "kernel.module") {
         let n = role.entries.len();
-        if !(2..=4).contains(&n) {
-            return Err(format!("our software has a bug: a module drawn under an interface of {n} entry points ({:?}); a module holds two to four", role.entries));
-        }
         let safe = dual_ty(kingdom, "kernel.safe")?;
         let kids = (0..n).map(|i| sample_with(kingdom, &role.at_entry(&role.entries[i]), safe, max_depth, seed ^ ((i as u64) << 48), bound, shape)).collect::<Result<Vec<_>, _>>()?;
-        return Ok(Tree::new(&format!("kernel.module_{n}"), root, kids));
+        return module_tree(kingdom, kids);
     }
     let f16 =|t: &Ty| kingdom.dual(*t).is_some_and(|d| d.scalar() == Some("f16"));
     // (No return: a return before the epilogue ends the thread before it

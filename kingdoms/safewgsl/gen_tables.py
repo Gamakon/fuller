@@ -1461,6 +1461,12 @@ for letter, slot, form in REG_KINDS:
     for r in RUNGS + RUNGS5:
         f("reg", f"set_{letter}_" + r, "composite", [f"reg<{slot}>.{form}", f"{slot}.{form}"], "stmt." + r, "")
 
+# ---- a module of more than four entry points (2026-10-19, the harvested corpus: 59 of 344 non-dawn reads that failed;
+# cuneus's blackhole has eight): a node has at most four children (K), so a module of five or more is a module of
+# two to four with entry points appended in threes: module_ext<k>(module, k kernels) is the module and k more ----
+for k in (1, 2, 3):
+    f("kernel", f"module_ext{k}", "composite", ["kernel.module"] + ["kernel.safe"] * k, "kernel.module", f"arity {k + 1}: the module and {k} more entry points, in order after it")
+
 def write_tsv(path, header, rows):
     with open(path, "w") as out:
         out.write("\t".join(header) + "\n")

@@ -6583,7 +6583,8 @@ pub fn read_safe(source: &str, kingdom: &WgslKingdom) -> Result<SafeRead, String
     let r = read_safe_literal(source, kingdom)?;
     // (A module's entry points each by its own knobs.)
     let tree = if r.tree.name.starts_with("kernel.module_") {
-        Tree { kids: r.tree.kids.iter().map(|k| crate::wgsl::params::assign(k, kingdom)).collect::<Result<_, _>>()?, ..r.tree.clone() }
+        let entries = crate::wgsl::render::module_entries(&r.tree).iter().map(|k| crate::wgsl::params::assign(k, kingdom)).collect::<Result<Vec<_>, _>>()?;
+        crate::wgsl::render::module_tree(kingdom, entries)?
     } else {
         crate::wgsl::params::assign(&r.tree, kingdom)?
     };
@@ -6703,7 +6704,7 @@ pub fn read_safe_literal(source: &str, kingdom: &WgslKingdom) -> Result<SafeRead
         registers.extend(regs.into_iter().map(|(k, v)| (format!("{name}/{k}"), v)));
         kids.push(tree);
     }
-    let tree = Tree::new(&format!("kernel.module_{}", kids.len()), dual_ty(kingdom, "kernel.module")?, kids);
+    let tree = crate::wgsl::render::module_tree(kingdom, kids)?;
     Ok(SafeRead { tree, notes, registers, role })
 }
 
@@ -8721,6 +8722,35 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
             let checker = crate::wgsl::check::Checker::with_contract(&k, &r.role, &crate::wgsl::target::Target::recorded(), c);
             checker.check(&r.tree).unwrap_or_else(|e| panic!("{what}: {e}\n{}", out.text));
         }
+    }
+
+    /// A MODULE OF ANY NUMBER OF ENTRY POINTS (2026-10-19; cuneus's
+    /// `blackhole` has eight): a node holds four children at most, so five or
+    /// more entry points are a `kernel.module_ext<k>` chain over a module of
+    /// four. Six entry points read, render, read back to the same tree and
+    /// pass every layer under a contract of one workgroup each.
+    #[test]
+    fn a_module_of_six_entry_points_reads_as_a_chain() {
+        let k = WgslKingdom::load_safe();
+        let contract = crate::wgsl::safety::Contract::parse("workgroups x 1 1\nworkgroups y 1 1\nworkgroups z 1 1\n").unwrap();
+        let mut src = String::from("@group(0) @binding(0) var<storage, read_write> out: array<f32>;\n");
+        for e in 0..6 {
+            src.push_str(&format!("@compute @workgroup_size(32)\nfn e{e}(@builtin(local_invocation_id) lid: vec3<u32>) {{\n    out[{} + lid.x] = f32(lid.x + {e}u);\n}}\n", e * 32));
+        }
+        let r = read_safe(&src, &k).unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(r.tree.name, "kernel.module_ext2", "{}", r.tree.to_sexpr().chars().take(200).collect::<String>());
+        assert_eq!(crate::wgsl::render::module_entries(&r.tree).len(), 6);
+        let out = crate::wgsl::safe_karva::render_tree_with(&r.tree, &k, &r.role).unwrap_or_else(|e| panic!("{e}"));
+        validate_text(&out.text).unwrap_or_else(|e| panic!("{e}\n{}", out.text));
+        for e in 0..6 {
+            assert!(out.text.contains(&format!("fn e{e}(")), "{}", out.text);
+        }
+        let back = read_safe(&out.text, &k).unwrap_or_else(|e| panic!("read back: {e}\n{}", out.text));
+        assert!(back.tree == r.tree, "{:?}\n{}", crate::wgsl::render::first_difference(&r.tree, &back.tree), out.text);
+        let checker = crate::wgsl::check::Checker::with_contract(&k, &r.role, &crate::wgsl::target::Target::recorded(), contract);
+        checker.check(&r.tree).unwrap_or_else(|e| panic!("{e}\n{}", out.text));
+        // A node of four children at most: the chain is a genome.
+        crate::wgsl::safe_karva::encode(&r.tree, 32, 128, 7).unwrap_or_else(|e| panic!("encode: {e}"));
     }
 
     /// TWO LOOPS OF THE V24 REFERENCE (2026-10-17, the harness agent's

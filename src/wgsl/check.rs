@@ -435,11 +435,12 @@ impl<'a> Checker<'a> {
             if !tree.name.starts_with("kernel.module_") {
                 return fail("root_not_safe_kernel", format!("the root is {}, not a module of entry points", tree.name));
             }
-            if tree.kids.len() != self.role.entries.len() {
-                return fail("module_entries_not_the_interfaces", format!("a module of {} entry points under an interface of {} ({:?})", tree.kids.len(), self.role.entries.len(), self.role.entries));
+            let entries = crate::wgsl::render::module_entries(tree);
+            if entries.len() != self.role.entries.len() {
+                return fail("module_entries_not_the_interfaces", format!("a module of {} entry points under an interface of {} ({:?})", entries.len(), self.role.entries.len(), self.role.entries));
             }
             self.typed(&Tree { kids: tree.kids.iter().map(|k| Tree::fallback(k.ty)).collect(), ..tree.clone() })?;
-            for (kid, name) in tree.kids.iter().zip(&self.role.entries) {
+            for (kid, name) in entries.iter().zip(&self.role.entries) {
                 let at = Checker::with_contract(self.kingdom, &self.role.at_entry(name), &self.target, self.contract.clone());
                 at.check(kid).map_err(|e| Illegal { detail: format!("entry point {name}: {}", e.detail), ..e })?;
             }

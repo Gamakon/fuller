@@ -3538,4 +3538,12 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 | F2005 | `reg.set_L_L5` | `composite` | `reg<vec4<bool>>.flag vec4<bool>.flag` | `stmt.L5` | 2 |  |
 | F2006 | `reg.set_L_C5` | `composite` | `reg<vec4<bool>>.flag vec4<bool>.flag` | `stmt.C5` | 2 |  |
 
-2006 function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Storage-buffer atomics are an interface's per-kernel rows, not rows of this table. Deliberately absent: atomic compare-exchange (naga 0.20's Metal backend lacks it), subgroupBallot, images, derivatives, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.
+## class `kernel`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F2007 | `kernel.module_ext1` | `composite` | `kernel.module kernel.safe` | `kernel.module` | 2 | arity 2: the module and 1 more entry points, in order after it |
+| F2008 | `kernel.module_ext2` | `composite` | `kernel.module kernel.safe kernel.safe` | `kernel.module` | 3 | arity 3: the module and 2 more entry points, in order after it |
+| F2009 | `kernel.module_ext3` | `composite` | `kernel.module kernel.safe kernel.safe kernel.safe` | `kernel.module` | 4 | arity 4: the module and 3 more entry points, in order after it |
+
+2009 function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Storage-buffer atomics are an interface's per-kernel rows, not rows of this table. Deliberately absent: atomic compare-exchange (naga 0.20's Metal backend lacks it), subgroupBallot, images, derivatives, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.
