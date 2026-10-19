@@ -22,30 +22,31 @@ fn read_concat(spec: &str) -> Result<String, String> {
 }
 
 fn entry_points(src: &str) -> Result<Vec<String>, String> {
-    let module = naga::front::wgsl::parse_str(src).map_err(|e| e.emit_to_string(src))?;
+    let module = fuller::wgsl::naga_shape::parse(src)?;
     Ok(module.entry_points.iter().map(|e| e.name.clone()).collect())
 }
 
 /// Compile `src` for `entry` on `device`; `Ok(ms)` or the driver's message.
 fn compile(device: &wgpu::Device, label: &str, src: &str, entry: &str) -> Result<f64, String> {
     let t = Instant::now();
-    device.push_error_scope(wgpu::ErrorFilter::Validation);
+    let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some(label),
         source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(src)),
     });
-    if let Some(e) = pollster::block_on(device.pop_error_scope()) {
+    if let Some(e) = pollster::block_on(scope.pop()) {
         return Err(format!("shader module: {e}"));
     }
-    device.push_error_scope(wgpu::ErrorFilter::Validation);
+    let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
     let _pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
         label: Some(label),
         layout: None,
         module: &module,
-        entry_point: entry,
+        entry_point: Some(entry),
         compilation_options: Default::default(),
+        cache: None,
     });
-    if let Some(e) = pollster::block_on(device.pop_error_scope()) {
+    if let Some(e) = pollster::block_on(scope.pop()) {
         return Err(format!("pipeline {entry}: {e}"));
     }
     Ok(t.elapsed().as_secs_f64() * 1e3)
@@ -57,14 +58,13 @@ fn main() -> Result<(), String> {
         return Err("usage: wgsl_device_compile <original[+more]>=<rebuilt> ...".into());
     }
     let instance = wgpu::Instance::default();
-    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default())).ok_or("no adapter")?;
+    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default())).map_err(|e| format!("no adapter: {e}"))?;
     let info = adapter.get_info();
     println!("device: {} ({:?})", info.name, info.backend);
     // The adapter's own limits: these kernels bind up to 21 storage buffers,
     // past the default 8, and the engine requests the adapter's limits too.
     let (device, _queue) = pollster::block_on(adapter.request_device(
-        &wgpu::DeviceDescriptor { label: Some("wgsl-device-compile"), required_features: wgpu::Features::empty(), required_limits: adapter.limits() },
-        None,
+        &wgpu::DeviceDescriptor { label: Some("wgsl-device-compile"), required_features: wgpu::Features::empty(), required_limits: adapter.limits(), ..Default::default() },
     ))
     .map_err(|e| format!("request_device: {e}"))?;
     println!("{:<28} {:<20} {:>12} {:>12}  verdict", "kernel", "entry point", "original ms", "rebuilt ms");

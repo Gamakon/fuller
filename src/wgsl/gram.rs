@@ -51,13 +51,15 @@ pub const BLOCKED: &str = include_str!("../../kingdoms/wgsl/gram/blocked.wgsl");
 /// The shipped kernel, verbatim from `H_GRAM_ACCUM_WGSL`.
 pub const SHIPPED: &str = include_str!("../../kingdoms/wgsl/gram/shipped.wgsl");
 
-/// The longest a blocking wait of ours trusts wgpu: wgpu-core 0.21 waits
-/// at most 5 s (`CLEANUP_WAIT_MS`), then marks the submission done whether
-/// or not the GPU has finished it (run 6, 2026-10-13: a kernel still running
-/// after 10 s was read, the next kernel queued behind it read as slow, and
-/// the shipped kernel's timestamps after it read zero). A wait that returns
-/// at or past this gave up; its work is still on the GPU.
-#[cfg(feature = "gpu")]
+/// The longest one blocking wait of ours lasts before it names the work
+/// still running. wgpu-core 0.21 waited at most 5 s (`CLEANUP_WAIT_MS`),
+/// then marked the submission done whether or not the GPU had finished it
+/// (run 6, 2026-10-13: a kernel still running after 10 s was read, the next
+/// kernel queued behind it read as slow, and the shipped kernel's timestamps
+/// after it read zero). wgpu 30 waits as long as it is told; every wait of
+/// ours is told this, and a wait that times out is a kernel still on the GPU
+/// (`gpu_io::wait_for`). Not gated on `gpu`: a problem's plan names it as
+/// its default wait.
 pub const WAIT_GAVE_UP_MS: f64 = 4_900.0;
 
 /// The longest the host drains a runaway before naming it undrained.
@@ -84,16 +86,13 @@ pub fn wait_gpu(device: &wgpu::Device, queue: &wgpu::Queue) -> Result<(), String
 pub fn wait_gpu_within(device: &wgpu::Device, queue: &wgpu::Queue, limit_ms: f64) -> Result<(), String> {
     let ms_since = |t: Instant| t.elapsed().as_secs_f64() * 1e3;
     let t = Instant::now();
-    device.poll(wgpu::Maintain::Wait);
-    let first = ms_since(t);
-    if first < WAIT_GAVE_UP_MS {
+    if crate::gpu_io::wait_for(device, WAIT_GAVE_UP_MS)? {
         return Ok(());
     }
+    let first = ms_since(t);
     loop {
-        let tw = Instant::now();
         queue.submit(None);
-        device.poll(wgpu::Maintain::Wait);
-        if ms_since(tw) < WAIT_GAVE_UP_MS {
+        if crate::gpu_io::wait_for(device, WAIT_GAVE_UP_MS)? {
             if ms_since(t) <= limit_ms {
                 return Ok(());
             }
@@ -115,7 +114,7 @@ pub const ENTRY: &str = "main";
 #[cfg(feature = "gpu")]
 pub fn effective_buffer_limit(device: &wgpu::Device) -> u64 {
     const QUEUE_WRITE_BUFFER_LIMIT: u64 = 256 * 1024 * 1024;
-    u64::from(device.limits().max_storage_buffer_binding_size).min(QUEUE_WRITE_BUFFER_LIMIT) / 2
+    device.limits().max_storage_buffer_binding_size.min(QUEUE_WRITE_BUFFER_LIMIT) / 2
 }
 
 /// The device's own per-binding ceiling: its storage-binding limit and its
@@ -125,7 +124,7 @@ pub fn effective_buffer_limit(device: &wgpu::Device) -> u64 {
 #[cfg(feature = "gpu")]
 pub fn adapter_buffer_limit(device: &wgpu::Device) -> u64 {
     let l = device.limits();
-    u64::from(l.max_storage_buffer_binding_size).min(l.max_buffer_size)
+    l.max_storage_buffer_binding_size.min(l.max_buffer_size)
 }
 
 fn splitmix64(state: &mut u64) -> u64 {
@@ -648,7 +647,7 @@ pub fn driver_steps(d: usize, m: usize, limit: u64, grid: Grid) -> Vec<DriverSte
 /// with naga's workgroup size, the header is never trusted for them; bx and
 /// by, the cells per thread, come only from the header, in 1..=16).
 pub fn grid_of(source: &str) -> Result<Grid, String> {
-    let module = naga::front::wgsl::parse_str(source).map_err(|e| e.emit_to_string(source))?;
+    let module = crate::wgsl::naga_shape::parse(source)?;
     super::target::Target::current().validate(&module, source).map_err(|e| format!("validation: {e}"))?;
     let ep = module.entry_points.iter().find(|e| e.name == ENTRY).ok_or_else(|| format!("no entry point {ENTRY}"))?;
     let (x, y) = (ep.workgroup_size[0], ep.workgroup_size[1]);
@@ -692,7 +691,7 @@ impl<'a> Gram<'a> {
 
     /// A rendered kernel: its text and the grid it asked for.
     pub fn compile_rendered(dev: &'a Device, r: &Rendered) -> Result<Gram<'a>, String> {
-        naga::front::wgsl::parse_str(&r.text).map_err(|e| e.emit_to_string(&r.text)).and_then(|m| super::target::Target::current().validate(&m, &r.text).map(|_| ()).map_err(|e| format!("validation: {e}")))?;
+        crate::wgsl::naga_shape::parse(&r.text).and_then(|m| super::target::Target::current().validate(&m, &r.text).map(|_| ()).map_err(|e| format!("validation: {e}")))?;
         Self::compile_with(dev, &r.text, r.grid)
     }
 
@@ -700,15 +699,15 @@ impl<'a> Gram<'a> {
         if !dev.device.features().contains(wgpu::Features::TIMESTAMP_QUERY) {
             return Err("this device has no timestamp queries".into());
         }
-        dev.device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let scope = dev.device.push_error_scope(wgpu::ErrorFilter::Validation);
         let shader = dev.device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("gram"), source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(source)) });
         // An explicit layout over the role's three bindings: a kernel that
         // reads none of them (a random gene may) still binds them all.
         let entry = |binding: u32, ty: wgpu::BufferBindingType| wgpu::BindGroupLayoutEntry { binding, visibility: wgpu::ShaderStages::COMPUTE, ty: wgpu::BindingType::Buffer { ty, has_dynamic_offset: false, min_binding_size: None }, count: None };
         let bgl = dev.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some("gram"), entries: &[entry(0, wgpu::BufferBindingType::Storage { read_only: true }), entry(1, wgpu::BufferBindingType::Storage { read_only: false }), entry(2, wgpu::BufferBindingType::Uniform)] });
-        let layout = dev.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: Some("gram"), bind_group_layouts: &[&bgl], push_constant_ranges: &[] });
-        let pipeline = dev.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor { label: Some("gram"), layout: Some(&layout), module: &shader, entry_point: ENTRY, compilation_options: Default::default() });
-        if let Some(e) = pollster::block_on(dev.device.pop_error_scope()) {
+        let layout = dev.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: Some("gram"), bind_group_layouts: &[Some(&bgl)], immediate_size: 0 });
+        let pipeline = dev.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor { label: Some("gram"), layout: Some(&layout), module: &shader, entry_point: Some(ENTRY), compilation_options: Default::default(), cache: None });
+        if let Some(e) = pollster::block_on(scope.pop()) {
             return Err(format!("pipeline: {e}"));
         }
         Ok(Gram { dev, pipeline, grid, period_ns: dev.queue.get_timestamp_period() })
@@ -797,7 +796,7 @@ impl<'a> Gram<'a> {
             }
             if let Some(st) = &staging {
                 {
-                    let mapped = st.slice(..).get_mapped_range();
+                    let mapped = crate::gpu_io::mapped(&st.slice(..))?;
                     let band: &[f32] = bytemuck::cast_slice(&mapped);
                     h[r_off * d..(r_off + r_rows) * d].copy_from_slice(band);
                 }
@@ -805,7 +804,7 @@ impl<'a> Gram<'a> {
                 st.destroy();
             }
             {
-                let mapped = stamps_read.slice(..).get_mapped_range();
+                let mapped = crate::gpu_io::mapped(&stamps_read.slice(..))?;
                 let stamps: &[u64] = bytemuck::cast_slice(&mapped);
                 for pair in stamps.chunks(2) {
                     gpu_ns += pair[1].wrapping_sub(pair[0]) as f64 * f64::from(self.period_ns);
@@ -816,7 +815,7 @@ impl<'a> Gram<'a> {
             r_off += r_rows;
         }
         let wall_ms = t1.elapsed().as_secs_f64() * 1e3;
-        device.poll(wgpu::Maintain::Poll);
+        crate::gpu_io::drain(device)?;
         Ok(Build { h, gpu_ms: gpu_ns / 1e6, compute_ms, wall_ms, upload_ms: 0.0, passes: item_bands * row_bands, item_bands, row_bands })
     }
 }
@@ -911,9 +910,9 @@ impl Gram<'_> {
         let mut hs: Vec<Vec<f32>> = rs.iter().map(|r| vec![0.0f32; r.d * r.d]).collect();
         let mut gpu_ms = vec![0.0f64; rs.len()];
         {
-            let mapped = staging.slice(..).get_mapped_range();
+            let mapped = crate::gpu_io::mapped(&staging.slice(..))?;
             let all: &[f32] = bytemuck::cast_slice(&mapped);
-            let stamps_map = stamps_read.slice(..).get_mapped_range();
+            let stamps_map = crate::gpu_io::mapped(&stamps_read.slice(..))?;
             let stamps: &[u64] = bytemuck::cast_slice(&stamps_map);
             for b in &bands {
                 let d = rs[b.case].d;
@@ -932,7 +931,7 @@ impl Gram<'_> {
             b.h.destroy();
         }
         drop(keep_cfgs);
-        device.poll(wgpu::Maintain::Poll);
+        crate::gpu_io::drain(device)?;
         Ok(Batch { h: hs, gpu_ms, compute_ms })
     }
 }
@@ -1830,7 +1829,7 @@ mod tests {
     #[test]
     fn the_slow_test_kernel_is_valid_wgsl() {
         let slow = slow_shipped();
-        let module = naga::front::wgsl::parse_str(&slow).unwrap_or_else(|e| panic!("{}", e.emit_to_string(&slow)));
+        let module = crate::wgsl::naga_shape::parse(&slow).unwrap_or_else(|e| panic!("{e}"));
         crate::wgsl::target::Target::current().validate(&module, &slow).unwrap_or_else(|e| panic!("{e}"));
         assert!(slow.contains("k < 64u") && slow.contains("(k * cfg.d) / (64u * cfg.d)"));
     }

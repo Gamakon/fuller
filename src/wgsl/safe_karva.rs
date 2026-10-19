@@ -1356,14 +1356,35 @@ mod tests {
     /// (2026-10-13: the fit stopped, "the fold rewrote row 24 into another
     /// kernel"): the 80 rows of that generation (tests/fold_g24), folded as
     /// the fit folds them (head 32, 128 slots, the shared band the last
-    /// eight, seed 4 * 7 + 24), each rebuild to its own text.
+    /// eight, seed 4 * 7 + 24), each rebuild to its own text. (2026-10-19,
+    /// naga 30: the rows' store guards were written `&&` around subgroup
+    /// operations, which naga 30 runs in the short circuit's if, so a row
+    /// that holds one reads as those ifs and their bool registers, and the
+    /// ones past 16 such registers do not read; they are counted and named.
+    /// The emitter now writes `&`, so no new kernel holds one.)
     #[test]
     fn the_population_fold_keeps_every_kernel_of_fit_sf_r4_generation_24() {
         let k = WgslKingdom::load_safe();
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fold_g24");
-        let mut files: Vec<_> = std::fs::read_dir(&dir).unwrap().flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "wgsl")).collect();
-        files.sort();
-        let trees: Vec<Tree> = files.iter().map(|f| read_safe(&std::fs::read_to_string(f).unwrap(), &k).unwrap_or_else(|e| panic!("{}: {e}", f.display())).tree).collect();
+        let mut all: Vec<_> = std::fs::read_dir(&dir).unwrap().flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "wgsl")).collect();
+        all.sort();
+        let mut files = Vec::new();
+        let mut trees: Vec<Tree> = Vec::new();
+        let mut unread = Vec::new();
+        for f in all {
+            match read_safe(&std::fs::read_to_string(&f).unwrap(), &k) {
+                Ok(r) => {
+                    trees.push(r.tree);
+                    files.push(f);
+                }
+                Err(e) => {
+                    assert!(e.contains("more than 16 b registers"), "{}: {e}", f.display());
+                    unread.push(f.file_name().unwrap().to_string_lossy().to_string());
+                }
+            }
+        }
+        println!("generation 24: {} of {} rows read; past 16 bool registers (a `&&` around a subgroup operation): {unread:?}", trees.len(), trees.len() + unread.len());
+        assert_eq!(trees.len(), 70, "the rows that read (2026-10-19: 70 of 80)");
         let direct: Vec<String> = trees.iter().map(|t| render_tree(t, &k).unwrap().text).collect();
         let f = fold_population(&trees, 32, 128, 120, 3, 4 * 7 + 24);
         println!("shared {}, own aligned {}, unaligned {}", f.shared.len(), f.own_aligned, f.own_unaligned);

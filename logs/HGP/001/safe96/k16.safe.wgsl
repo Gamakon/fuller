@@ -23,7 +23,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation
     for (; t < cfg.m; t = t + 1u) {
     f0 = fma(phi[((t * cfg.d) + (cfg.r_off + gid.y))], phi[((t * cfg.d) + gid.x)], f0);
     }
-    if ((!(((gid.y >= cfg.r_rows) || (gid.x >= cfg.d)) || ((cfg.r_off + gid.y) >= cfg.d)))) {
-    if (((gid.y * 1u)) < cfg.r_rows && ((gid.x * 1u)) < cfg.d && (cfg.r_off + ((gid.y * 1u))) < cfg.d) { h[(((gid.y * 1u)) * cfg.d + ((gid.x * 1u)))] = h[(((gid.y * 1u)) * cfg.d + ((gid.x * 1u)))] + ((f0 + f1) + (f2 + f3)); }
+    if ((!(((gid.y >= cfg.r_rows) | (gid.x >= cfg.d)) | ((cfg.r_off + gid.y) >= cfg.d)))) {
+    if ((((gid.y * 1u)) < cfg.r_rows) & (((gid.x * 1u)) < cfg.d) & ((cfg.r_off + ((gid.y * 1u))) < cfg.d)) { h[(((gid.y * 1u)) * cfg.d + ((gid.x * 1u)))] = h[(((gid.y * 1u)) * cfg.d + ((gid.x * 1u)))] + ((f0 + f1) + (f2 + f3)); }
     }
 }

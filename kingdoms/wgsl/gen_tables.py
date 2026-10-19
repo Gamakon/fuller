@@ -259,7 +259,7 @@ for op, naga in [("and", "Binary::And"), ("or", "Binary::InclusiveOr"), ("xor", 
 f("bits", "not", "Unary::BitwiseNot", ["<u32.bits>"], "<u32.bits>", "")
 f("bits", "shl", "Binary::ShiftLeft", ["<u32.bits>", "u32.count"], "<u32.bits>", "")
 f("bits", "shr", "Binary::ShiftRight", ["<u32.bits>", "u32.count"], "<u32.bits>", "")
-for op, naga in [("count_ones", "Math::CountOneBits"), ("leading_zeros", "Math::CountLeadingZeros"), ("trailing_zeros", "Math::CountTrailingZeros"), ("find_lsb", "Math::FindLsb"), ("find_msb", "Math::FindMsb")]:
+for op, naga in [("count_ones", "Math::CountOneBits"), ("leading_zeros", "Math::CountLeadingZeros"), ("trailing_zeros", "Math::CountTrailingZeros"), ("find_lsb", "Math::FirstTrailingBit"), ("find_msb", "Math::FirstLeadingBit")]:
     f("bits", op, naga, ["u32.bits"], "u32.count", "")
 f("bits", "reverse", "Math::ReverseBits", ["u32.bits"], "u32.bits", "")
 f("bits", "extract", "Math::ExtractBits", ["u32.bits", "u32.index", "u32.count"], "u32.bits", "arity 3")

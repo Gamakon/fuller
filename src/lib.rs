@@ -40,6 +40,8 @@ pub mod geneframe;
 // compiles so its tests run on any machine; only the wgpu device code is
 // behind `feature = "gpu"`.
 pub mod gpu_eval;
+#[cfg(feature = "gpu")]
+pub mod gpu_io;
 #[cfg(test)]
 pub(crate) mod gpu_test_lock;
 pub mod karva;

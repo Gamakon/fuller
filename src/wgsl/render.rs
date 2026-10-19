@@ -295,7 +295,7 @@ fn gram_interface() -> Interface {
         input: "phi".into(),
         output: "h".into(),
         // The band's row, the column, and the global row (square output: d x d).
-        guard: "({row}) < cfg.r_rows && ({col}) < cfg.d && (cfg.r_off + ({row})) < cfg.d".into(),
+        guard: "(({row}) < cfg.r_rows) & (({col}) < cfg.d) & ((cfg.r_off + ({row})) < cfg.d)".into(),
         extra: Vec::new(),
     }
 }
@@ -334,7 +334,7 @@ pub fn cosine_role() -> Role {
         input: "cand".into(),
         output: "score".into(),
         // The band's query and the candidate (the output is nq x nc).
-        guard: "({row}) < p.nq && ({col}) < p.nc".into(),
+        guard: "(({row}) < p.nq) & (({col}) < p.nc)".into(),
         extra: vec![PerKernel { name: "load.qry".into(), inputs: vec!["u32.index".into()], output: "f32.real".into(), template: "qry[{0}]".into() }],
     })
 }
@@ -389,8 +389,8 @@ impl Role {
         let input = if gram_rows { i.inputs().find(f32_array).map(|b| b.name.clone()).unwrap_or_default() } else { String::new() };
         let output = if gram_rows { i.outputs().find(f32_array).map(|b| b.name.clone()).unwrap_or_default() } else { String::new() };
         let guard = match (field("r_rows"), field("d"), field("r_off")) {
-            (Some(r), Some(d), Some(o)) => format!("({{row}}) < {r} && ({{col}}) < {d} && ({o} + ({{row}})) < {d}"),
-            (Some(r), Some(d), None) => format!("({{row}}) < {r} && ({{col}}) < {d}"),
+            (Some(r), Some(d), Some(o)) => format!("(({{row}}) < {r}) & (({{col}}) < {d}) & (({o} + ({{row}})) < {d})"),
+            (Some(r), Some(d), None) => format!("(({{row}}) < {r}) & (({{col}}) < {d})"),
             (None, Some(d), _) => format!("({{col}}) < {d}"),
             _ => String::new(),
         };
@@ -477,7 +477,7 @@ pub fn interface_of(source: &str) -> Result<Role, String> {
     match source.lines().map(str::trim).find_map(|l| l.strip_prefix("// interface ")) {
         Some(name) => role_named(name.trim()),
         None => {
-            let module = naga::front::wgsl::parse_str(source).map_err(|e| e.emit_to_string(source))?;
+            let module = crate::wgsl::naga_shape::parse(source)?;
             let (i, entries) = infer_entries(&module)?;
             if entries.len() > 4 {
                 return Err(format!("a module of {} entry points: the kingdom's module holds at most four (kernel.module_4)", entries.len()));
@@ -2111,8 +2111,8 @@ impl Renderer<'_> {
                     "le" => "<=",
                     "gt" => ">",
                     "ge" => ">=",
-                    "and" => "&&",
-                    _ => "||",
+                    "and" => "&",
+                    _ => "|",
                 };
                 return Ok(format!("(({}) {op} ({}))", self.value(&v.kids[0], scope)?, self.value(&v.kids[1], scope)?));
             }
@@ -2169,7 +2169,13 @@ impl Renderer<'_> {
                     "ballot" => "subgroupBallot",
                     other => return Err(format!("subgroup.{other} is not a subgroup built-in")),
                 };
-                let args: Vec<String> = v.kids.iter().map(|k| self.value(k, scope)).collect::<Result<_, _>>()?;
+                let mut args: Vec<String> = v.kids.iter().map(|k| self.value(k, scope)).collect::<Result<_, _>>()?;
+                // A broadcast's lane is a const-expression for naga 30's
+                // validator: the literal itself, never through `lit_u32`
+                // (2026-10-19, the naga/wgpu 30 upgrade).
+                if f == "subgroupBroadcast" && v.kids.len() == 2 {
+                    args[1] = format!("{}u", self.lit(&v.kids[1], 64)?);
+                }
                 return Ok(format!("{f}({})", args.join(", ")));
             }
             // The atomic built-ins on a workgroup array (their old value).
@@ -2483,8 +2489,11 @@ impl Renderer<'_> {
                 "And" => "&",
                 "ExclusiveOr" => "^",
                 "InclusiveOr" => "|",
-                "LogicalAnd" => "&&",
-                "LogicalOr" => "||",
+                // The kingdom's logic rows are eager (WGSL's `&` and `|` on bool):
+                // naga 30 runs a `&&`'s right side inside an if, where a subgroup
+                // operation would leave uniform control (2026-10-19).
+                "LogicalAnd" => "&",
+                "LogicalOr" => "|",
                 "ShiftLeft" => "<<",
                 "ShiftRight" => ">>",
                 other => return Err(format!("{name}: binary operator {other} has no text")),
@@ -3979,7 +3988,7 @@ fn sample_with(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, s
 /// Parse text with naga and validate it for the device in use
 /// ([`super::target::Target::current`]); the error names the line.
 pub fn validate_text(text: &str) -> Result<(), String> {
-    let module = naga::front::wgsl::parse_str(text).map_err(|e| e.emit_to_string(text))?;
+    let module = crate::wgsl::naga_shape::parse(text)?;
     super::target::Target::current().validate(&module, text).map(|_| ())
 }
 
@@ -4119,7 +4128,7 @@ mod tests {
         for seed in 0..1000 {
             let tree = sample(&k, &role, root, 7, seed).unwrap();
             let text = crate::wgsl::safe_karva::render_tree(&tree, &k).unwrap().text;
-            let module = naga::front::wgsl::parse_str(&text).unwrap_or_else(|e| panic!("{}", e.emit_to_string(&text)));
+            let module = crate::wgsl::naga_shape::parse(&text).unwrap_or_else(|e| panic!("{e}"));
             let info = crate::wgsl::target::Target::recorded().validate(&module, &text).unwrap_or_else(|e| panic!("{e}"));
             kernels += 1;
             let mut check = |name: &str, f: &naga::Function, fi: &naga::valid::FunctionInfo, entry: bool| {
@@ -4340,7 +4349,7 @@ mod tests {
         let kernel = |e: Tree| Tree::new("kernel.entry_safe", ty("kernel.safe"), vec![Tree::fallback(ty("grid.grid")), Tree::fallback(ty("block.L0")), e]);
         let own = "h[(((gid.y * 1u)) * cfg.d + ((gid.x * 1u)))]";
         let whole = rr.kernel(&kernel(store(Tree::fallback(ty("u32.cell"))))).unwrap().text;
-        assert!(whole.contains(own) && whole.contains("if (((gid.y * 1u)) < cfg.r_rows"), "{whole}");
+        assert!(whole.contains(own) && whole.contains("if ((((gid.y * 1u)) < cfg.r_rows)"), "{whole}");
         let parts = rr.kernel(&kernel(store(Tree::new("safe.cell_of", ty("u32.cell"), vec![Tree::fallback(ty("u32.threadrow")), Tree::fallback(ty("u32.threadcol"))])))).unwrap().text;
         assert!(parts.contains(own), "{parts}");
         for text in [&whole, &parts] {

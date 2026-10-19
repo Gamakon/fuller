@@ -218,8 +218,8 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 | F140 | `bits.count_ones` | `Math::CountOneBits` | `u32.bits` | `u32.count` | 1 |  |
 | F141 | `bits.leading_zeros` | `Math::CountLeadingZeros` | `u32.bits` | `u32.count` | 1 |  |
 | F142 | `bits.trailing_zeros` | `Math::CountTrailingZeros` | `u32.bits` | `u32.count` | 1 |  |
-| F143 | `bits.find_lsb` | `Math::FindLsb` | `u32.bits` | `u32.count` | 1 |  |
-| F144 | `bits.find_msb` | `Math::FindMsb` | `u32.bits` | `u32.count` | 1 |  |
+| F143 | `bits.find_lsb` | `Math::FirstTrailingBit` | `u32.bits` | `u32.count` | 1 |  |
+| F144 | `bits.find_msb` | `Math::FirstLeadingBit` | `u32.bits` | `u32.count` | 1 |  |
 | F145 | `bits.reverse` | `Math::ReverseBits` | `u32.bits` | `u32.bits` | 1 |  |
 | F146 | `bits.extract` | `Math::ExtractBits` | `u32.bits u32.index u32.count` | `u32.bits` | 3 | arity 3 |
 | F147 | `bits.insert_lo` | `composite` | `u32.bits u32.bits u32.index` | `u32.bits` | 3 | arity 3; with insert_hi composes naga InsertBits (arity 4) |

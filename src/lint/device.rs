@@ -194,7 +194,7 @@ mod gpu {
             let adapter = instance
                 .request_adapter(&wgpu::RequestAdapterOptions::default())
                 .await
-                .ok_or("no GPU adapter")?;
+                .map_err(|e| format!("no GPU adapter: {e}"))?;
             let (device, queue) = adapter
                 .request_device(
                     &wgpu::DeviceDescriptor {
@@ -203,8 +203,8 @@ mod gpu {
                         // The kernel binds ten storage buffers; the portable
                         // default allows eight.
                         required_limits: adapter.limits(),
+                        ..Default::default()
                     },
-                    None,
                 )
                 .await
                 .map_err(|e| format!("request_device: {e}"))?;
@@ -233,15 +233,16 @@ mod gpu {
             });
             let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: None,
-                bind_group_layouts: &[&layout],
-                push_constant_ranges: &[],
+                bind_group_layouts: &[Some(&layout)],
+                immediate_size: 0,
             });
             let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                 label: Some("fuller-lint-pipeline"),
                 layout: Some(&pipeline_layout),
                 module: &shader,
-                entry_point: "lint_main",
+                entry_point: Some("lint_main"),
                 compilation_options: Default::default(),
+                cache: None,
             });
             let resident = |label: &str, words: &[u32]| {
                 // wgpu rejects a zero-sized binding.
@@ -363,11 +364,11 @@ mod gpu {
                 slice.map_async(wgpu::MapMode::Read, move |r| {
                     let _ = tx.send(r);
                 });
-                self.device.poll(wgpu::Maintain::Wait);
+                crate::gpu_io::wait(&self.device)?;
                 rx.recv()
                     .map_err(|e| format!("map_async channel: {e}"))?
                     .map_err(|e| format!("map_async: {e}"))?;
-                let words = bytemuck::cast_slice::<u8, u32>(&slice.get_mapped_range()).to_vec();
+                let words = bytemuck::cast_slice::<u8, u32>(&crate::gpu_io::mapped(&slice)?).to_vec();
                 buf.unmap();
                 Ok(words)
             };
@@ -382,7 +383,7 @@ mod gpu {
             ] {
                 b.destroy();
             }
-            self.device.poll(wgpu::Maintain::Poll);
+            crate::gpu_io::drain(&self.device)?;
             Ok(decode(&nodes_words, &info_words, &enc.literals, vars))
         }
     }

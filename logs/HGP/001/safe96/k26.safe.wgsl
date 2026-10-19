@@ -28,9 +28,9 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation
     var pm: array<bool, 16>;
     var pn: array<bool, 16>;
     for (k = 0u; k < 4u; k = k + 1u) {
-    pm[((k) & 15u)] = ((((wid.y * 32u + lid.y) + min(k, 3u) * 8u) < cfg.r_rows) && ((cfg.r_off + ((wid.y * 32u + lid.y) + min(k, 3u) * 8u)) < cfg.d));
+    pm[((k) & 15u)] = ((((wid.y * 32u + lid.y) + min(k, 3u) * 8u) < cfg.r_rows) & ((cfg.r_off + ((wid.y * 32u + lid.y) + min(k, 3u) * 8u)) < cfg.d));
     pi[((k) & 15u)] = ((wid.y * 32u + lid.y) + min(k, 3u) * 8u);
-    pj[((k) & 15u)] = select(0u, (cfg.r_off + ((wid.y * 32u + lid.y) + min(k, 3u) * 8u)), ((((wid.y * 32u + lid.y) + min(k, 3u) * 8u) < cfg.r_rows) && ((cfg.r_off + ((wid.y * 32u + lid.y) + min(k, 3u) * 8u)) < cfg.d)));
+    pj[((k) & 15u)] = select(0u, (cfg.r_off + ((wid.y * 32u + lid.y) + min(k, 3u) * 8u)), ((((wid.y * 32u + lid.y) + min(k, 3u) * 8u) < cfg.r_rows) & ((cfg.r_off + ((wid.y * 32u + lid.y) + min(k, 3u) * 8u)) < cfg.d)));
     pn[((k) & 15u)] = (((wid.x * 32u + lid.x) + min(k, 3u) * 8u) < cfg.d);
     pk[((k) & 15u)] = select(0u, ((wid.x * 32u + lid.x) + min(k, 3u) * 8u), (((wid.x * 32u + lid.x) + min(k, 3u) * 8u) < cfg.d));
     }
@@ -40,6 +40,14 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation
     for (t = 0u; t < min((((cfg.m) - ((cfg.m) % max(4u, 1u)))), 16777216u); t = t + 4u) {
     i0 = 0u;
     for (k = 0u; k < 4u; k = k + 1u) {
+    pb[0u] = 0.0f;
+    pb[1u] = 0.0f;
+    pb[2u] = 0.0f;
+    pb[3u] = 0.0f;
+    pc[0u] = 0.0f;
+    pc[1u] = 0.0f;
+    pc[2u] = 0.0f;
+    pc[3u] = 0.0f;
     i1 = 0u;
     for (k2 = 0u; k2 < 4u; k2 = k2 + 1u) {
     pb[((k2) & 63u)] = phi[(((t + k) * cfg.d) + pj[((k2) & 15u)])];
@@ -55,6 +63,14 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation
     }
     }
     for (; t < cfg.m; t = t + 1u) {
+    pd[0u] = 0.0f;
+    pd[1u] = 0.0f;
+    pd[2u] = 0.0f;
+    pd[3u] = 0.0f;
+    pe[0u] = 0.0f;
+    pe[1u] = 0.0f;
+    pe[2u] = 0.0f;
+    pe[3u] = 0.0f;
     i4 = 0u;
     for (k = 0u; k < 4u; k = k + 1u) {
     pd[((k) & 63u)] = phi[((t * cfg.d) + pj[((k) & 15u)])];
@@ -73,7 +89,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation
     i7 = 0u;
     for (k2 = 0u; k2 < 4u; k2 = k2 + 1u) {
     if (pn[((k2) & 15u)]) {
-    if ((((wid.y * 32u + lid.y) + min(k, 3u) * 8u)) < cfg.r_rows && (((wid.x * 32u + lid.x) + min(k2, 3u) * 8u)) < cfg.d && (cfg.r_off + (((wid.y * 32u + lid.y) + min(k, 3u) * 8u))) < cfg.d) { h[((((wid.y * 32u + lid.y) + min(k, 3u) * 8u)) * cfg.d + (((wid.x * 32u + lid.x) + min(k2, 3u) * 8u)))] = h[((((wid.y * 32u + lid.y) + min(k, 3u) * 8u)) * cfg.d + (((wid.x * 32u + lid.x) + min(k2, 3u) * 8u)))] + pa[((((k * 4u) + k2)) & 63u)]; }
+    if (((((wid.y * 32u + lid.y) + min(k, 3u) * 8u)) < cfg.r_rows) & ((((wid.x * 32u + lid.x) + min(k2, 3u) * 8u)) < cfg.d) & ((cfg.r_off + (((wid.y * 32u + lid.y) + min(k, 3u) * 8u))) < cfg.d)) { h[((((wid.y * 32u + lid.y) + min(k, 3u) * 8u)) * cfg.d + (((wid.x * 32u + lid.x) + min(k2, 3u) * 8u)))] = h[((((wid.y * 32u + lid.y) + min(k, 3u) * 8u)) * cfg.d + (((wid.x * 32u + lid.x) + min(k2, 3u) * 8u)))] + pa[((((k * 4u) + k2)) & 63u)]; }
     }
     }
     }

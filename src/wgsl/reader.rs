@@ -216,11 +216,9 @@ pub struct Kernel {
     pub module: Module,
     pub info: naga::valid::ModuleInfo,
     pub functions: Vec<KernelFunction>,
-    /// The module was validated without naga's expression checks: its only
-    /// fault was a vector value indexed by a run-time index
-    /// (`IndexMustBeConstant`), which the safe grammar spells as a masked
-    /// lane. A second expression fault in such a module is caught only when
-    /// the rendered text is validated.
+    /// The module indexes a vector or matrix value at run time (naga 0.20's
+    /// `IndexMustBeConstant`, which naga 30 accepts), which the safe grammar
+    /// spells as a masked lane.
     pub lenient: bool,
 }
 
@@ -263,36 +261,37 @@ impl Kernel {
     }
 }
 
-/// Whether a validation error is exactly a run-time index on a vector value.
-fn is_index_must_be_constant(e: &naga::valid::ValidationError) -> bool {
-    use naga::valid::{EntryPointError, ExpressionError, FunctionError, ValidationError};
-    let function = |f: &FunctionError| matches!(f, FunctionError::Expression { source: ExpressionError::IndexMustBeConstant(_), .. });
-    match e {
-        ValidationError::Function { source, .. } => function(source),
-        ValidationError::EntryPoint { source: EntryPointError::Function(f), .. } => function(f),
-        _ => false,
-    }
+/// A vector or matrix VALUE indexed at run time (`accs[i][j]` on a `let`
+/// array, r3x_reinvent of the smoke run). naga 0.20 refused it
+/// (`IndexMustBeConstant`) and the reader validated such a module without
+/// the expression checks; naga 30 accepts it, so the reader finds it itself
+/// (2026-10-19, docs/PLAN_naga_wgpu_30.md decision b): an `Access` whose base
+/// is a vector or matrix value (not a pointer) and whose index is not a
+/// literal or a constant.
+fn indexes_a_value_at_run_time(module: &Module, info: &naga::valid::ModuleInfo) -> bool {
+    let function = |f: &naga::Function, fi: &naga::valid::FunctionInfo| {
+        f.expressions.iter().any(|(_, e)| match e {
+            Expression::Access { base, index } => {
+                let value = matches!(fi[*base].ty.inner_with(&module.types), TypeInner::Vector { .. } | TypeInner::Matrix { .. });
+                let constant = matches!(f.expressions[*index], Expression::Literal(_) | Expression::Constant(_));
+                value && !constant
+            }
+            _ => false,
+        })
+    };
+    module.functions.iter().any(|(h, f)| function(f, &info[h])) || module.entry_points.iter().enumerate().any(|(i, ep)| function(&ep.function, info.get_entry_point(i)))
 }
 
 /// Parse, validate and read a kernel.
 pub fn read(source: &str) -> Result<Kernel, String> {
-    let module = naga::front::wgsl::parse_str(source).map_err(|e| e.emit_to_string(source))?;
-    let mut lenient = false;
-    let info = match super::target::Target::current().validator(naga::valid::ValidationFlags::all()).validate(&module) {
-        Ok(info) => info,
-        // A vector VALUE indexed at run time (`accs[i][j]` on a `let` array,
-        // r3x_reinvent of the smoke run): the one expression fault the
-        // kingdom has a spelling for. The typifier and the uniformity
-        // analysis run without the expression checks; the constness check
-        // is the only thing skipped.
-        Err(e) if is_index_must_be_constant(e.as_inner()) => {
-            lenient = true;
-            super::target::Target::current().validator(naga::valid::ValidationFlags::all() - naga::valid::ValidationFlags::EXPRESSIONS)
-                .validate(&module)
-                .map_err(|e| format!("validation: {e:?}"))?
-        }
-        Err(e) => return Err(format!("validation: {e:?}")),
-    };
+    let mut module = crate::wgsl::naga_shape::parse(source)?;
+    let info = super::target::Target::current().validator(naga::valid::ValidationFlags::all()).validate(&module).map_err(|e| format!("validation: {e:?}"))?;
+    let lenient = indexes_a_value_at_run_time(&module, &info);
+    // The reader's view of naga 30's short circuits (naga_shape): the kernel's
+    // `a && b` read as the Binary it was written as. Validated before the
+    // fold, so `info` is the kernel's own; the fold keeps every expression's
+    // handle and type.
+    crate::wgsl::naga_shape::fold_short_circuits(&mut module);
     super::target::Target::current().check_limits(&module).map_err(|e| format!("validation: {e}"))?;
     let table = FunctionTable::shipped();
     let effects = versions::module_effects(&module);
@@ -646,8 +645,11 @@ fn walk_block(
                 if let Some(c) = compare {
                     kids.push(expand(ctx, c, true));
                 }
-                // The result leaf names the statement: its path, as a call's.
-                ctx.calls.insert(result.index() as u32, path.clone());
+                // The result leaf names the statement: its path, as a call's
+                // (an atomic without a result, a 64-bit min or max, names none).
+                if let Some(result) = result {
+                    ctx.calls.insert(result.index() as u32, path.clone());
+                }
                 roots.push(Root {
                     kind: RootKind::Atomic { target: target.clone(), fun: name.to_string() },
                     path: path.clone(),
@@ -686,6 +688,9 @@ fn walk_block(
                     naga::GatherMode::ShuffleDown(l) => ("shuffle_down", Some(*l)),
                     naga::GatherMode::ShuffleUp(l) => ("shuffle_up", Some(*l)),
                     naga::GatherMode::ShuffleXor(l) => ("shuffle_xor", Some(*l)),
+                    // (Refused by naga_shape before any reading; named for completeness.)
+                    naga::GatherMode::QuadBroadcast(l) => ("quad_broadcast", Some(*l)),
+                    naga::GatherMode::QuadSwap(_) => ("quad_swap", None),
                 };
                 let mut kids = vec![expand(ctx, *argument, true)];
                 if let Some(l) = lane {
@@ -730,7 +735,7 @@ fn walk_block(
                 *unread.entry(name).or_default() += 1;
                 // Unread, but not without effect on what follows.
                 match other {
-                    Statement::Barrier(flags) => ctx.barrier(*flags),
+                    Statement::ControlBarrier(flags) | Statement::MemoryBarrier(flags) => ctx.barrier(*flags),
                     Statement::WorkGroupUniformLoad { .. } => ctx.barrier(naga::Barrier::WORK_GROUP),
                     Statement::ImageStore { image: pointer, .. } => {
                         let loc = ctx.location(*pointer);
@@ -813,7 +818,10 @@ fn pointer_steps(ctx: &mut Ctx, pointer: Handle<Expression>) -> (String, Option<
                 naga::AddressSpace::Uniform => "uniform",
                 naga::AddressSpace::WorkGroup => "workgroup",
                 naga::AddressSpace::Private => "private",
-                naga::AddressSpace::PushConstant => "push",
+                naga::AddressSpace::Immediate => "immediate",
+                naga::AddressSpace::TaskPayload => "task_payload",
+                naga::AddressSpace::RayPayload => "ray_payload",
+                naga::AddressSpace::IncomingRayPayload => "incoming_ray_payload",
                 naga::AddressSpace::Handle | naga::AddressSpace::Function => "global",
             };
             (format!("{kind}.{name}"), None)
@@ -929,8 +937,10 @@ fn default_form(kind: Option<ScalarKind>) -> &'static str {
 /// A name naga's writer invented for a multiply-used expression (`_e12`),
 /// not a source `let`: reading a written text back must not turn those
 /// into roots, or the original and its round trip would disagree.
+/// (And naga 30's "phony", the name its front end gives the value of `_ =
+/// e;`: a discard, never a `let`; 2026-10-19, the naga/wgpu 30 upgrade.)
 pub(crate) fn is_bake(name: &str) -> bool {
-    name.strip_prefix("_e").is_some_and(|rest| !rest.is_empty() && rest.chars().all(|c| c.is_ascii_digit()))
+    name == "phony" || name.strip_prefix("_e").is_some_and(|rest| !rest.is_empty() && rest.chars().all(|c| c.is_ascii_digit()))
 }
 
 /// Expand the tree of a `let` root itself: its own handle is not a leaf,
@@ -959,6 +969,9 @@ fn expand(ctx: &mut Ctx, h: Handle<Expression>, count: bool) -> Node {
             let (form, value) = match lit {
                 naga::Literal::F32(v) => ("real", f64::from(v)),
                 naga::Literal::F64(v) => ("real", v),
+                naga::Literal::F16(v) => ("real", f64::from(v)),
+                naga::Literal::U16(v) => ("index", f64::from(v)),
+                naga::Literal::I16(v) => ("int", f64::from(v)),
                 naga::Literal::U32(v) => ("index", f64::from(v)),
                 naga::Literal::I32(v) => ("int", f64::from(v)),
                 naga::Literal::U64(v) => ("index", v as f64),
@@ -1039,6 +1052,17 @@ fn expand(ctx: &mut Ctx, h: Handle<Expression>, count: bool) -> Node {
                 | naga::BinaryOperator::Greater
                 | naga::BinaryOperator::GreaterEqual => operand_kind,
                 _ => kind,
+            };
+            // `&` and `|` of two bools are logic.and and logic.or, as `&&` and
+            // `||` are: the emitter writes the kingdom's logic rows eagerly
+            // (2026-10-19, the naga/wgpu 30 upgrade: naga 30 runs a `&&`'s right
+            // side inside an if, and a subgroup operation there would leave
+            // uniform control).
+            let scalar_bool = row_kind == Some(ScalarKind::Bool) && matches!(ctx.info[left].ty.inner_with(&ctx.module.types), TypeInner::Scalar(_));
+            let op = match op {
+                naga::BinaryOperator::And if scalar_bool => naga::BinaryOperator::LogicalAnd,
+                naga::BinaryOperator::InclusiveOr if scalar_bool => naga::BinaryOperator::LogicalOr,
+                other => other,
             };
             app(ctx, &format!("Binary::{op:?}"), row_kind, slot, vec![l, r])
         }
@@ -1450,7 +1474,7 @@ fn main(@builtin(local_invocation_id) lid: vec3<u32>) {
         assert!(store(2).contains("cnt@v1"), "the atomic bumped cnt: {}", store(2));
         assert_eq!(f.versions.get("workgroup.w"), Some(&3));
         assert_eq!(f.versions.get("buffer.cnt"), Some(&1));
-        assert_eq!(f.unread_statements.get("Barrier"), Some(&2));
+        assert_eq!(f.unread_statements.get("ControlBarrier"), Some(&2), "naga 30 names a workgroupBarrier ControlBarrier");
         assert_eq!(f.unread_statements.get("Atomic"), None, "an atomic is a root (2026-10-12)");
         assert!(f.roots.iter().any(|r| matches!(&r.kind, RootKind::Atomic { target, fun } if target == "buffer.cnt" && fun == "add")));
     }

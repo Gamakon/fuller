@@ -212,15 +212,16 @@ mod gpu {
             });
             let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: None,
-                bind_group_layouts: &[&layout],
-                push_constant_ranges: &[],
+                bind_group_layouts: &[Some(&layout)],
+                immediate_size: 0,
             });
             let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                 label: Some("pattern-verify-pipeline"),
                 layout: Some(&pipeline_layout),
                 module: &shader,
-                entry_point: "verify_main",
+                entry_point: Some("verify_main"),
                 compilation_options: Default::default(),
+                cache: None,
             });
             PatternVerify { pipeline, layout }
         }
@@ -298,14 +299,14 @@ mod gpu {
             slice.map_async(wgpu::MapMode::Read, move |r| {
                 let _ = tx.send(r);
             });
-            device.poll(wgpu::Maintain::Wait);
+            crate::gpu_io::wait(device)?;
             rx.recv().map_err(|e| format!("map_async channel: {e}"))?.map_err(|e| format!("map_async: {e}"))?;
-            let out = bytemuck::cast_slice::<u8, f32>(&slice.get_mapped_range()).to_vec();
+            let out = bytemuck::cast_slice::<u8, f32>(&crate::gpu_io::mapped(&slice)?).to_vec();
             read_buf.unmap();
             out_buf.destroy();
             read_buf.destroy();
             cfg_buf.destroy();
-            device.poll(wgpu::Maintain::Poll);
+            crate::gpu_io::drain(device)?;
             Ok(out)
         }
     }

@@ -23,7 +23,10 @@ rayon = "1.10"
 hff = { path = "../hff", default-features = false }
 # GPU batch evaluator (feature = "gpu"). Versions match the hff crate so a
 # workspace build shares one wgpu.
-wgpu = { version = "0.20", optional = true }
+wgpu = { version = "30.0.1", optional = true }
+# wgpu's own mapping from a device's features to naga's capabilities
+# (src/wgsl/target.rs), so the host validates as the device does.
+wgpu-naga-bridge = { version = "30.0.1", optional = true }
 pollster = { version = "0.3", optional = true }
 bytemuck = { version = "1.14", features = ["derive"], optional = true }
 # Used to hand an objective vector to hff_core's TrueNorth (matches hff's 0.15).
@@ -45,11 +48,11 @@ optional = true
 # The WGSL kingdom (feature = "wgsl"): naga is the front end that reads a
 # kernel into its expression arena and the back end that writes a rebuilt
 # module out again (kingdoms/wgsl, docs/PLAN_wgsl_kernel_reader.md). The same
-# naga wgpu already pulls in; `wgsl-out` is the one feature wgpu does not
-# enable on this platform.
+# naga wgpu already pulls in (one naga, 30.0.1; docs/PLAN_naga_wgpu_30.md);
+# `wgsl-out` and `msl-out` are declared here, not left to wgpu's features.
 [dependencies.naga]
-version = "0.20"
-features = ["wgsl-in", "wgsl-out"]
+version = "30.0.1"
+features = ["wgsl-in", "wgsl-out", "msl-out"]
 optional = true
 
 # The generic dispatch-program harness (src/wgsl/harness.rs) reads a
@@ -70,7 +73,7 @@ default = []
 python = ["dep:pyo3"]
 # `gpu` adds the wgpu batch evaluator. Off by default: a plain build must never
 # need a GPU adapter, and the CPU evaluator stays the correctness reference.
-gpu = ["dep:wgpu", "dep:pollster", "dep:bytemuck"]
+gpu = ["dep:wgpu", "dep:wgpu-naga-bridge", "dep:pollster", "dep:bytemuck"]
 # `wgsl` adds the WGSL kingdom's reader and loader (naga in and out). Off by
 # default and independent of `gpu`: reading a kernel needs no adapter.
 wgsl = ["dep:naga", "dep:toml"]
@@ -164,6 +167,10 @@ required-features = ["gpu", "wgsl"]
 
 [[example]]
 name = "wgsl_safe_convert"
+required-features = ["wgsl"]
+
+[[example]]
+name = "wgsl_reading_snapshot"
 required-features = ["wgsl"]
 
 [[example]]

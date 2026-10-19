@@ -91,7 +91,7 @@ fn main() -> Result<(), String> {
     println!("{:<28} {:<22} {:>6} {:>8} {:>7} {:>7} {:>6} {:>5} {:>5} {:>6}", "file", "function", "exprs", "distinct", "repeat", "effect", "store", "if", "loop", "switch");
     for path in &paths {
         let src = std::fs::read_to_string(path).map_err(|e| format!("read {path}: {e}"))?;
-        let module = naga::front::wgsl::parse_str(&src).map_err(|e| format!("{path}: {}", e.emit_to_string(&src)))?;
+        let module = fuller::wgsl::naga_shape::parse(&src).map_err(|e| format!("{path}: {e}"))?;
         let file = std::path::Path::new(path).file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default();
         let report = |name: &str, f: &naga::Function| {
             let (n, distinct, effectful) = canonical_count(f);
