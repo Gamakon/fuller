@@ -1,0 +1,638 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="" xml:lang="">
+<head>
+  <meta charset="utf-8" />
+  <meta name="generator" content="pandoc" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+  <title>Multi-typed GEP</title>
+  <style>
+    code{white-space: pre-wrap;}
+    span.smallcaps{font-variant: small-caps;}
+    div.columns{display: flex; gap: min(4vw, 1.5em);}
+    div.column{flex: auto; overflow-x: auto;}
+    div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+    /* The extra [class] is a hack that increases specificity enough to
+       override a similar rule in reveal.js */
+    ul.task-list[class]{list-style: none;}
+    ul.task-list li input[type="checkbox"] {
+      font-size: inherit;
+      width: 0.8em;
+      margin: 0 0.8em 0.2em -1.6em;
+      vertical-align: middle;
+    }
+    .display.math{display: block; text-align: center; margin: 0.5rem auto;}
+    /* CSS for syntax highlighting */
+    pre > code.sourceCode { white-space: pre; position: relative; }
+    pre > code.sourceCode > span { line-height: 1.25; }
+    pre > code.sourceCode > span:empty { height: 1.2em; }
+    .sourceCode { overflow: visible; }
+    code.sourceCode > span { color: inherit; text-decoration: inherit; }
+    div.sourceCode { margin: 1em 0; }
+    pre.sourceCode { margin: 0; }
+    @media screen {
+    div.sourceCode { overflow: auto; }
+    }
+    @media print {
+    pre > code.sourceCode { white-space: pre-wrap; }
+    pre > code.sourceCode > span { display: inline-block; text-indent: -5em; padding-left: 5em; }
+    }
+    pre.numberSource code
+      { counter-reset: source-line 0; }
+    pre.numberSource code > span
+      { position: relative; left: -4em; counter-increment: source-line; }
+    pre.numberSource code > span > a:first-child::before
+      { content: counter(source-line);
+        position: relative; left: -1em; text-align: right; vertical-align: baseline;
+        border: none; display: inline-block;
+        -webkit-touch-callout: none; -webkit-user-select: none;
+        -khtml-user-select: none; -moz-user-select: none;
+        -ms-user-select: none; user-select: none;
+        padding: 0 4px; width: 4em;
+        color: #aaaaaa;
+      }
+    pre.numberSource { margin-left: 3em; border-left: 1px solid #aaaaaa;  padding-left: 4px; }
+    div.sourceCode
+      {   }
+    @media screen {
+    pre > code.sourceCode > span > a:first-child::before { text-decoration: underline; }
+    }
+    code span.al { color: #ff0000; font-weight: bold; } /* Alert */
+    code span.an { color: #60a0b0; font-weight: bold; font-style: italic; } /* Annotation */
+    code span.at { color: #7d9029; } /* Attribute */
+    code span.bn { color: #40a070; } /* BaseN */
+    code span.bu { color: #008000; } /* BuiltIn */
+    code span.cf { color: #007020; font-weight: bold; } /* ControlFlow */
+    code span.ch { color: #4070a0; } /* Char */
+    code span.cn { color: #880000; } /* Constant */
+    code span.co { color: #60a0b0; font-style: italic; } /* Comment */
+    code span.cv { color: #60a0b0; font-weight: bold; font-style: italic; } /* CommentVar */
+    code span.do { color: #ba2121; font-style: italic; } /* Documentation */
+    code span.dt { color: #902000; } /* DataType */
+    code span.dv { color: #40a070; } /* DecVal */
+    code span.er { color: #ff0000; font-weight: bold; } /* Error */
+    code span.ex { } /* Extension */
+    code span.fl { color: #40a070; } /* Float */
+    code span.fu { color: #06287e; } /* Function */
+    code span.im { color: #008000; font-weight: bold; } /* Import */
+    code span.in { color: #60a0b0; font-weight: bold; font-style: italic; } /* Information */
+    code span.kw { color: #007020; font-weight: bold; } /* Keyword */
+    code span.op { color: #666666; } /* Operator */
+    code span.ot { color: #007020; } /* Other */
+    code span.pp { color: #bc7a00; } /* Preprocessor */
+    code span.sc { color: #4070a0; } /* SpecialChar */
+    code span.ss { color: #bb6688; } /* SpecialString */
+    code span.st { color: #4070a0; } /* String */
+    code span.va { color: #19177c; } /* Variable */
+    code span.vs { color: #4070a0; } /* VerbatimString */
+    code span.wa { color: #60a0b0; font-weight: bold; font-style: italic; } /* Warning */
+  </style>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/water.css@2/out/water.css" />
+</head>
+<body>
+<header id="title-block-header">
+<h1 class="title">Multi-typed GEP</h1>
+</header>
+<h1
+id="multi-typed-gep-a-head-and-tail-for-every-output-type">Multi-typed
+GEP: a head and tail for every output type</h1>
+<h2 id="context">Context</h2>
+<p><strong>Objective.</strong> Multi-typed gene expression programming
+in which every expressed node has the type required by its parent’s
+argument slot, for every gene and every permitted variation. Validity is
+a property of the layout: there is no repair, rejection, substitution,
+or fallback symbol anywhere.</p>
+<p><strong>Approach.</strong> A gene has a separate <code>head_T</code>
+and <code>tail_T</code> for every output type <code>T</code>. A slot
+requiring <code>T</code> reads the next unused member of
+<code>T</code>’s frame: <code>head_T</code>, then <code>tail_T</code>.
+<code>head_T</code> contains only symbols whose output is
+<code>T</code>; <code>tail_T</code> contains only terminals whose output
+is <code>T</code>. This preserves type correctness <em>and</em> makes
+mutation and crossover local to the output-type domain. Chromosomes are
+multigenic: typed normal genes under a typed linker that is Ferreira’s
+homeotic gene; population-wide shared subgraphs are typed ADFs.</p>
+<p><strong>Unique feature.</strong> Every bound is derived from the
+kingdom’s ordered signatures and proved, never tuned to a buffer: the
+geneframe is built on the GPU and paged across buffers
+(CR_multityped_gep §10c) precisely to hold whatever the bounds say.
+Width is a consequence of the design, never an input to it.</p>
+<p><strong>Status.</strong> Design, revision 4. Revision 3 was built
+host-side in fuller (<code>74b03c73</code>..<code>a1eeaa75</code>) and
+device-side in phylu (<code>65a1cbc7</code>..<code>0b321a52</code>) with
+a shared head; the advisor review
+(<code>docs/reviews/2026-10-20_multityped_gep_fable.md</code>) found
+five defects, fixed here. The note
+<code>docs/reviews/2026-10-20_multityped_gep_fable_rev4.md</code> lists
+what each built commit must change.</p>
+<p><strong>Why.</strong> Fallback leaves hide bugs and flatten the
+search; a shared head loses Karva locality between types; a bound on the
+type count squared and a head budget guessed per type cap the programs a
+kingdom can express. The per-producer bound and the program-size head
+allocation below are exact, so nothing is capped that the design did not
+intend.</p>
+<h2 id="kingdom-contract">1. Kingdom contract</h2>
+<p><code>symbol_outputs(kingdom_id, symbol_id, spelling, output_type)</code>
+is a unified relation over functions, terminals and reference terminals
+(§6). Every <code>symbol_id</code> has exactly one output type; a
+polymorphic spelling has one <code>symbol_id</code> per output type.
+Every gene row stores a <code>symbol_id</code>, never a spelling.</p>
+<pre><code>argument_signature(kingdom_id, symbol_id, arg_index, required_type)
+PRIMARY KEY (kingdom_id, symbol_id, arg_index)</code></pre>
+<p><code>arg_index</code> is contiguous from zero for each function. A
+terminal has no signature rows. Thus <code>left:S(S,I)</code> has
+<code>(left,0,S)</code> and <code>(left,1,I)</code>: argument order is
+data, not an implication of type counts.</p>
+<p>The kingdom check establishes exactly one output row per symbol;
+ordered, contiguous signatures on functions only; and at least one
+terminal for every root or demanded type. It derives, from the same
+rows:</p>
+<ul>
+<li><code>a_{T,U}</code>: the most arguments of type <code>T</code> any
+one function outputting <code>U</code> takes (zero if no function
+outputting <code>U</code> asks for <code>T</code>);</li>
+<li><code>a_T = max_U a_{T,U}</code>, and <code>n_U</code>: the largest
+arity among functions outputting <code>U</code> (one if there are
+none);</li>
+<li><code>reachable(R)</code>: the types reachable from a root
+<code>R</code> through signatures.</li>
+</ul>
+<h2 id="gene-layout-heads-and-bounds">2. Gene layout, heads, and
+bounds</h2>
+<p>Each row has the domain-local key:</p>
+<pre><code>(chromosome_id, gene_id, domain, domain_type, domain_seq_id)</code></pre>
+<p><code>domain</code> is <code>head</code>, <code>tail</code>, or
+<code>dc</code>; <code>domain_type</code> is the output type for every
+head, tail, and Dc domain; and <code>domain_seq_id</code> starts at zero
+within that domain. A head row stores a symbol outputting
+<code>domain_type</code>; a tail row stores a terminal outputting it; a
+Dc row stores <code>dc_index</code>, never a symbol.
+<code>gene_id</code> is a fixed gene boundary, not a breadth-first
+position.</p>
+<h3 id="head-lengths-from-the-program-size">2.1 Head lengths from the
+program size</h3>
+<p>A layout declares, for every gene id, its root type <code>R</code>
+and either a <strong>program size</strong> <code>N</code> (the number of
+expressed functions the layout must hold) or explicit head lengths. From
+<code>N</code>:</p>
+<pre><code>h_T = [T = R] + (N - 1) * a_T        over T in reachable(R)</code></pre>
+<p>This is exact. In level order the last <code>T</code> function has
+before it at most the root and the <code>T</code> slots opened by the
+other <code>N - 1</code> functions, each at most
+<code>a_{T,U} &lt;= a_T</code> of them, so every program of at most
+<code>N</code> functions fits every <code>head_T</code> whatever its
+type mix, and the chain of <code>N</code> functions each giving its
+<code>T</code> child last attains the bound. It is the evolvability
+criterion: a correct program of size <code>N</code> is reachable by the
+write-back of §5 in every kingdom, and no type is capped by a guessed
+budget (in WGSL the statement types get <code>h &gt;= N</code>, so
+statement nesting is never the program-length cap). With explicit
+<code>h_T</code> the check reports the largest <code>N</code> the heads
+guarantee. Fixed domain lengths make homologous crossover meaningful;
+<code>h_T</code> is a layout parameter, never evolved.</p>
+<h3 id="the-per-producer-tail-bound">2.2 The per-producer tail
+bound</h3>
+<p>At most <code>h_U</code> functions are expressed from
+<code>head_U</code> (each row is read at most once; tail rows and
+reference terminals open no slots). The demand for <code>T</code> is
+therefore bounded by its producers and by the leaf count:</p>
+<pre><code>P_T = [T = R] + sum_U h_U * a_{T,U}
+L   = 1 + sum_U h_U * (n_U - 1)
+t_T = max(0, min(P_T, L + h_T) - h_T)     tail_T length
+d_T = min(P_T, L)                        Dc_T length (the most expressed T leaves)</code></pre>
+<p><code>P_T</code> counts every <code>T</code> slot any expressed
+function can open; <code>L</code> counts every leaf any expressed
+program can have, and the <code>T</code> demands are the <code>T</code>
+leaves plus at most <code>h_T</code> expressed <code>T</code> functions,
+so <code>D_T &lt;= min(P_T, L + h_T)</code>. The first <code>h_T</code>
+of those demands read <code>head_T</code>, hence <code>t_T</code>. The
+expressed <code>?_T</code> are <code>T</code> leaves, hence
+<code>d_T</code>. Both are exact: each term is attained by a program the
+layout can hold. Do not create a non-root <code>tail_T</code> when
+<code>P_T = 0</code>; a root tail exists even when its head is
+empty.</p>
+<p>With one type <code>R</code>, <code>a_{R,R} = n_max</code>,
+<code>P = 1 + h * n_max</code>, <code>L = 1 + h * (n_max - 1)</code>, so
+<code>t = d = h * (n_max - 1) + 1</code>: the layout is the physical
+Karva head and tail, and the decoder below is exactly classical Karva.
+With several types the bound is a sum over producers, so sparse
+signatures make it small, and it is never traded against width: the
+layout is allocated in full and paged.</p>
+<p>Compared with revision 3
+(<code>min(H * a_T + [T = R], H * (n_max - 1) + 1)</code> with
+<code>H = sum_T h_T</code>), this bound is not larger for any kingdom
+and is exact for every one, including
+<code>t_T &lt;= t_T^{rev3} - h_T</code>.</p>
+<h2 id="deterministic-expression">3. Deterministic expression</h2>
+<p>Start FIFO <code>pending</code> with <code>(R, depth 0)</code>. Keep
+<code>k_T = 0</code> for every type. On dequeue of a <code>T</code>
+slot, select row <code>T[k_T]</code> from <code>head_T</code> followed
+by <code>tail_T</code>, increment <code>k_T</code>, and append the
+selected symbol’s ordered-signature slots. Stop at an empty queue. The
+bound prevents tail exhaustion and frame membership proves the selected
+symbol has type <code>T</code>. Reference terminals (§6) have no
+signature rows and so are leaves; their meaning (a gene or an ADF) is
+resolved after the walk, by id.</p>
+<h3 id="executable-duckdb-bound-and-expression-queries">Executable
+DuckDB bound and expression queries</h3>
+<p>Relations: <code>functions</code>, <code>terminals</code>,
+<code>reference_terminals</code> (each
+<code>kingdom_id, symbol_id, spelling, output_type</code>; references
+add <code>kind, target_id</code>), <code>argument_signature</code> as in
+§1, <code>layouts(layout_id, kingdom_id, program_size)</code>,
+<code>layout_genes(layout_id, gene_id, root_type)</code>,
+<code>layout_heads(layout_id, gene_id, type, h)</code>,
+<code>genes(chromosome_id, gene_id, kingdom_id, layout_id)</code>, and
+<code>geneframe</code> keyed as in §2 with <code>symbol_id</code> and
+<code>dc_index</code>.</p>
+<p>The bound query derives <code>P_T</code>, <code>L</code>,
+<code>t_T</code> and <code>d_T</code> per gene of a layout from the same
+rows the decoder reads:</p>
+<div class="sourceCode" id="cb5"><pre
+class="sourceCode sql"><code class="sourceCode sql"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="kw">CREATE</span> <span class="kw">OR</span> <span class="kw">REPLACE</span> <span class="kw">VIEW</span> symbol_outputs <span class="kw">AS</span></span>
+<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a><span class="kw">SELECT</span> kingdom_id, symbol_id, spelling, output_type <span class="kw">FROM</span> <span class="kw">functions</span></span>
+<span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a><span class="kw">UNION</span> <span class="kw">ALL</span></span>
+<span id="cb5-4"><a href="#cb5-4" aria-hidden="true" tabindex="-1"></a><span class="kw">SELECT</span> kingdom_id, symbol_id, spelling, output_type <span class="kw">FROM</span> terminals</span>
+<span id="cb5-5"><a href="#cb5-5" aria-hidden="true" tabindex="-1"></a><span class="kw">UNION</span> <span class="kw">ALL</span></span>
+<span id="cb5-6"><a href="#cb5-6" aria-hidden="true" tabindex="-1"></a><span class="kw">SELECT</span> kingdom_id, symbol_id, spelling, output_type <span class="kw">FROM</span> reference_terminals;</span>
+<span id="cb5-7"><a href="#cb5-7" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb5-8"><a href="#cb5-8" aria-hidden="true" tabindex="-1"></a><span class="co">-- a_{T,U}: the most arguments of type T any one function outputting U takes.</span></span>
+<span id="cb5-9"><a href="#cb5-9" aria-hidden="true" tabindex="-1"></a><span class="kw">CREATE</span> <span class="kw">OR</span> <span class="kw">REPLACE</span> <span class="kw">VIEW</span> producer_demand <span class="kw">AS</span></span>
+<span id="cb5-10"><a href="#cb5-10" aria-hidden="true" tabindex="-1"></a><span class="kw">SELECT</span> f.kingdom_id, a.required_type <span class="kw">AS</span> t, f.output_type <span class="kw">AS</span> u, <span class="fu">max</span>(c.n) <span class="kw">AS</span> a_tu</span>
+<span id="cb5-11"><a href="#cb5-11" aria-hidden="true" tabindex="-1"></a><span class="kw">FROM</span> <span class="kw">functions</span> <span class="kw">AS</span> f</span>
+<span id="cb5-12"><a href="#cb5-12" aria-hidden="true" tabindex="-1"></a><span class="kw">JOIN</span> (<span class="kw">SELECT</span> kingdom_id, symbol_id, required_type, <span class="fu">count</span>(<span class="op">*</span>) <span class="kw">AS</span> n</span>
+<span id="cb5-13"><a href="#cb5-13" aria-hidden="true" tabindex="-1"></a>      <span class="kw">FROM</span> argument_signature <span class="kw">GROUP</span> <span class="kw">BY</span> kingdom_id, symbol_id, required_type) <span class="kw">AS</span> c</span>
+<span id="cb5-14"><a href="#cb5-14" aria-hidden="true" tabindex="-1"></a>  <span class="kw">ON</span> c.kingdom_id <span class="op">=</span> f.kingdom_id <span class="kw">AND</span> c.symbol_id <span class="op">=</span> f.symbol_id</span>
+<span id="cb5-15"><a href="#cb5-15" aria-hidden="true" tabindex="-1"></a><span class="kw">JOIN</span> argument_signature <span class="kw">AS</span> a</span>
+<span id="cb5-16"><a href="#cb5-16" aria-hidden="true" tabindex="-1"></a>  <span class="kw">ON</span> a.kingdom_id <span class="op">=</span> c.kingdom_id <span class="kw">AND</span> a.symbol_id <span class="op">=</span> c.symbol_id <span class="kw">AND</span> a.required_type <span class="op">=</span> c.required_type</span>
+<span id="cb5-17"><a href="#cb5-17" aria-hidden="true" tabindex="-1"></a><span class="kw">GROUP</span> <span class="kw">BY</span> f.kingdom_id, a.required_type, f.output_type;</span>
+<span id="cb5-18"><a href="#cb5-18" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb5-19"><a href="#cb5-19" aria-hidden="true" tabindex="-1"></a><span class="co">-- n_U: the largest arity of a function outputting U.</span></span>
+<span id="cb5-20"><a href="#cb5-20" aria-hidden="true" tabindex="-1"></a><span class="kw">CREATE</span> <span class="kw">OR</span> <span class="kw">REPLACE</span> <span class="kw">VIEW</span> producer_arity <span class="kw">AS</span></span>
+<span id="cb5-21"><a href="#cb5-21" aria-hidden="true" tabindex="-1"></a><span class="kw">SELECT</span> f.kingdom_id, f.output_type <span class="kw">AS</span> u, <span class="fu">max</span>(<span class="fu">coalesce</span>(s.n, <span class="dv">0</span>)) <span class="kw">AS</span> n_u</span>
+<span id="cb5-22"><a href="#cb5-22" aria-hidden="true" tabindex="-1"></a><span class="kw">FROM</span> <span class="kw">functions</span> <span class="kw">AS</span> f</span>
+<span id="cb5-23"><a href="#cb5-23" aria-hidden="true" tabindex="-1"></a><span class="kw">LEFT</span> <span class="kw">JOIN</span> (<span class="kw">SELECT</span> kingdom_id, symbol_id, <span class="fu">count</span>(<span class="op">*</span>) <span class="kw">AS</span> n <span class="kw">FROM</span> argument_signature <span class="kw">GROUP</span> <span class="kw">BY</span> kingdom_id, symbol_id) <span class="kw">AS</span> s</span>
+<span id="cb5-24"><a href="#cb5-24" aria-hidden="true" tabindex="-1"></a>  <span class="kw">ON</span> s.kingdom_id <span class="op">=</span> f.kingdom_id <span class="kw">AND</span> s.symbol_id <span class="op">=</span> f.symbol_id</span>
+<span id="cb5-25"><a href="#cb5-25" aria-hidden="true" tabindex="-1"></a><span class="kw">GROUP</span> <span class="kw">BY</span> f.kingdom_id, f.output_type;</span>
+<span id="cb5-26"><a href="#cb5-26" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb5-27"><a href="#cb5-27" aria-hidden="true" tabindex="-1"></a><span class="co">-- Per gene of a layout: P_T, L, t_T and d_T from its heads h_T.</span></span>
+<span id="cb5-28"><a href="#cb5-28" aria-hidden="true" tabindex="-1"></a><span class="kw">CREATE</span> <span class="kw">OR</span> <span class="kw">REPLACE</span> <span class="kw">VIEW</span> layout_bounds <span class="kw">AS</span></span>
+<span id="cb5-29"><a href="#cb5-29" aria-hidden="true" tabindex="-1"></a><span class="kw">WITH</span> heads <span class="kw">AS</span> (</span>
+<span id="cb5-30"><a href="#cb5-30" aria-hidden="true" tabindex="-1"></a>  <span class="kw">SELECT</span> lh.layout_id, lh.gene_id, l.kingdom_id, lg.root_type, lh.<span class="kw">type</span>, lh.h</span>
+<span id="cb5-31"><a href="#cb5-31" aria-hidden="true" tabindex="-1"></a>  <span class="kw">FROM</span> layout_heads <span class="kw">AS</span> lh</span>
+<span id="cb5-32"><a href="#cb5-32" aria-hidden="true" tabindex="-1"></a>  <span class="kw">JOIN</span> layout_genes <span class="kw">AS</span> lg <span class="kw">ON</span> lg.layout_id <span class="op">=</span> lh.layout_id <span class="kw">AND</span> lg.gene_id <span class="op">=</span> lh.gene_id</span>
+<span id="cb5-33"><a href="#cb5-33" aria-hidden="true" tabindex="-1"></a>  <span class="kw">JOIN</span> layouts <span class="kw">AS</span> l <span class="kw">ON</span> l.layout_id <span class="op">=</span> lh.layout_id</span>
+<span id="cb5-34"><a href="#cb5-34" aria-hidden="true" tabindex="-1"></a>),</span>
+<span id="cb5-35"><a href="#cb5-35" aria-hidden="true" tabindex="-1"></a>leaves <span class="kw">AS</span> (</span>
+<span id="cb5-36"><a href="#cb5-36" aria-hidden="true" tabindex="-1"></a>  <span class="kw">SELECT</span> hd.layout_id, hd.gene_id, <span class="dv">1</span> <span class="op">+</span> <span class="fu">sum</span>(hd.h <span class="op">*</span> <span class="fu">greatest</span>(<span class="fu">coalesce</span>(pa.n_u, <span class="dv">1</span>) <span class="op">-</span> <span class="dv">1</span>, <span class="dv">0</span>)) <span class="kw">AS</span> l</span>
+<span id="cb5-37"><a href="#cb5-37" aria-hidden="true" tabindex="-1"></a>  <span class="kw">FROM</span> heads <span class="kw">AS</span> hd</span>
+<span id="cb5-38"><a href="#cb5-38" aria-hidden="true" tabindex="-1"></a>  <span class="kw">LEFT</span> <span class="kw">JOIN</span> producer_arity <span class="kw">AS</span> pa <span class="kw">ON</span> pa.kingdom_id <span class="op">=</span> hd.kingdom_id <span class="kw">AND</span> pa.u <span class="op">=</span> hd.<span class="kw">type</span></span>
+<span id="cb5-39"><a href="#cb5-39" aria-hidden="true" tabindex="-1"></a>  <span class="kw">GROUP</span> <span class="kw">BY</span> hd.layout_id, hd.gene_id</span>
+<span id="cb5-40"><a href="#cb5-40" aria-hidden="true" tabindex="-1"></a>),</span>
+<span id="cb5-41"><a href="#cb5-41" aria-hidden="true" tabindex="-1"></a><span class="kw">demand</span> <span class="kw">AS</span> (</span>
+<span id="cb5-42"><a href="#cb5-42" aria-hidden="true" tabindex="-1"></a>  <span class="kw">SELECT</span> t.layout_id, t.gene_id, t.<span class="kw">type</span>,</span>
+<span id="cb5-43"><a href="#cb5-43" aria-hidden="true" tabindex="-1"></a>         (<span class="cf">CASE</span> <span class="cf">WHEN</span> t.<span class="kw">type</span> <span class="op">=</span> t.root_type <span class="cf">THEN</span> <span class="dv">1</span> <span class="cf">ELSE</span> <span class="dv">0</span> <span class="cf">END</span>)</span>
+<span id="cb5-44"><a href="#cb5-44" aria-hidden="true" tabindex="-1"></a>         <span class="op">+</span> <span class="fu">coalesce</span>(<span class="fu">sum</span>(u.h <span class="op">*</span> pd.a_tu), <span class="dv">0</span>) <span class="kw">AS</span> p</span>
+<span id="cb5-45"><a href="#cb5-45" aria-hidden="true" tabindex="-1"></a>  <span class="kw">FROM</span> heads <span class="kw">AS</span> t</span>
+<span id="cb5-46"><a href="#cb5-46" aria-hidden="true" tabindex="-1"></a>  <span class="kw">LEFT</span> <span class="kw">JOIN</span> heads <span class="kw">AS</span> u <span class="kw">ON</span> u.layout_id <span class="op">=</span> t.layout_id <span class="kw">AND</span> u.gene_id <span class="op">=</span> t.gene_id</span>
+<span id="cb5-47"><a href="#cb5-47" aria-hidden="true" tabindex="-1"></a>  <span class="kw">LEFT</span> <span class="kw">JOIN</span> producer_demand <span class="kw">AS</span> pd <span class="kw">ON</span> pd.kingdom_id <span class="op">=</span> t.kingdom_id <span class="kw">AND</span> pd.t <span class="op">=</span> t.<span class="kw">type</span> <span class="kw">AND</span> pd.u <span class="op">=</span> u.<span class="kw">type</span></span>
+<span id="cb5-48"><a href="#cb5-48" aria-hidden="true" tabindex="-1"></a>  <span class="kw">GROUP</span> <span class="kw">BY</span> t.layout_id, t.gene_id, t.<span class="kw">type</span>, t.root_type</span>
+<span id="cb5-49"><a href="#cb5-49" aria-hidden="true" tabindex="-1"></a>)</span>
+<span id="cb5-50"><a href="#cb5-50" aria-hidden="true" tabindex="-1"></a><span class="kw">SELECT</span> hd.layout_id, hd.gene_id, hd.<span class="kw">type</span>, hd.root_type, hd.h, d.p, lv.l,</span>
+<span id="cb5-51"><a href="#cb5-51" aria-hidden="true" tabindex="-1"></a>       <span class="fu">greatest</span>(<span class="dv">0</span>, <span class="fu">least</span>(d.p, lv.l <span class="op">+</span> hd.h) <span class="op">-</span> hd.h) <span class="kw">AS</span> t,</span>
+<span id="cb5-52"><a href="#cb5-52" aria-hidden="true" tabindex="-1"></a>       <span class="fu">least</span>(d.p, lv.l) <span class="kw">AS</span> d</span>
+<span id="cb5-53"><a href="#cb5-53" aria-hidden="true" tabindex="-1"></a><span class="kw">FROM</span> heads <span class="kw">AS</span> hd</span>
+<span id="cb5-54"><a href="#cb5-54" aria-hidden="true" tabindex="-1"></a><span class="kw">JOIN</span> <span class="kw">demand</span> <span class="kw">AS</span> d <span class="kw">ON</span> d.layout_id <span class="op">=</span> hd.layout_id <span class="kw">AND</span> d.gene_id <span class="op">=</span> hd.gene_id <span class="kw">AND</span> d.<span class="kw">type</span> <span class="op">=</span> hd.<span class="kw">type</span></span>
+<span id="cb5-55"><a href="#cb5-55" aria-hidden="true" tabindex="-1"></a><span class="kw">JOIN</span> leaves <span class="kw">AS</span> lv <span class="kw">ON</span> lv.layout_id <span class="op">=</span> hd.layout_id <span class="kw">AND</span> lv.gene_id <span class="op">=</span> hd.gene_id;</span></code></pre></div>
+<p>The expression query implements the complete FIFO walk.
+<code>used</code> supplies the per-type rank before the current slot is
+added; <code>parent_step</code> and <code>arg_index</code> retain
+ordered edges.</p>
+<div class="sourceCode" id="cb6"><pre
+class="sourceCode sql"><code class="sourceCode sql"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="kw">WITH</span> RECURSIVE</span>
+<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a>frame_source <span class="kw">AS</span> (</span>
+<span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a>  <span class="kw">SELECT</span> g.chromosome_id, g.gene_id, g.kingdom_id, g.domain_type <span class="kw">AS</span> output_type,</span>
+<span id="cb6-4"><a href="#cb6-4" aria-hidden="true" tabindex="-1"></a>         <span class="cf">CASE</span> g.<span class="kw">domain</span> <span class="cf">WHEN</span> <span class="st">&#39;head&#39;</span> <span class="cf">THEN</span> <span class="dv">0</span> <span class="cf">ELSE</span> <span class="dv">1</span> <span class="cf">END</span> <span class="kw">AS</span> tail_part, g.domain_seq_id, g.symbol_id</span>
+<span id="cb6-5"><a href="#cb6-5" aria-hidden="true" tabindex="-1"></a>  <span class="kw">FROM</span> geneframe <span class="kw">AS</span> g <span class="kw">JOIN</span> symbol_outputs <span class="kw">AS</span> o</span>
+<span id="cb6-6"><a href="#cb6-6" aria-hidden="true" tabindex="-1"></a>    <span class="kw">ON</span> o.kingdom_id <span class="op">=</span> g.kingdom_id <span class="kw">AND</span> o.symbol_id <span class="op">=</span> g.symbol_id</span>
+<span id="cb6-7"><a href="#cb6-7" aria-hidden="true" tabindex="-1"></a>   <span class="kw">AND</span> o.output_type <span class="op">=</span> g.domain_type</span>
+<span id="cb6-8"><a href="#cb6-8" aria-hidden="true" tabindex="-1"></a>  <span class="kw">WHERE</span> g.<span class="kw">domain</span> <span class="kw">IN</span> (<span class="st">&#39;head&#39;</span>, <span class="st">&#39;tail&#39;</span>)</span>
+<span id="cb6-9"><a href="#cb6-9" aria-hidden="true" tabindex="-1"></a>),</span>
+<span id="cb6-10"><a href="#cb6-10" aria-hidden="true" tabindex="-1"></a>frames <span class="kw">AS</span> (</span>
+<span id="cb6-11"><a href="#cb6-11" aria-hidden="true" tabindex="-1"></a>  <span class="kw">SELECT</span> <span class="op">*</span>, <span class="fu">row_number</span>() <span class="kw">OVER</span> (</span>
+<span id="cb6-12"><a href="#cb6-12" aria-hidden="true" tabindex="-1"></a>    <span class="kw">PARTITION</span> <span class="kw">BY</span> chromosome_id, gene_id, kingdom_id, output_type</span>
+<span id="cb6-13"><a href="#cb6-13" aria-hidden="true" tabindex="-1"></a>    <span class="kw">ORDER</span> <span class="kw">BY</span> tail_part, domain_seq_id</span>
+<span id="cb6-14"><a href="#cb6-14" aria-hidden="true" tabindex="-1"></a>  ) <span class="op">-</span> <span class="dv">1</span> <span class="kw">AS</span> frame_k <span class="kw">FROM</span> frame_source</span>
+<span id="cb6-15"><a href="#cb6-15" aria-hidden="true" tabindex="-1"></a>),</span>
+<span id="cb6-16"><a href="#cb6-16" aria-hidden="true" tabindex="-1"></a>walk(chromosome_id, gene_id, kingdom_id, step, pending, used,</span>
+<span id="cb6-17"><a href="#cb6-17" aria-hidden="true" tabindex="-1"></a>     node_type, frame_k, symbol_id, <span class="fu">depth</span>, parent_step, arg_index) <span class="kw">AS</span> (</span>
+<span id="cb6-18"><a href="#cb6-18" aria-hidden="true" tabindex="-1"></a>  <span class="kw">SELECT</span> ge.chromosome_id, ge.gene_id, ge.kingdom_id, <span class="dv">0</span>,</span>
+<span id="cb6-19"><a href="#cb6-19" aria-hidden="true" tabindex="-1"></a>         list_value(struct_pack(required_type <span class="op">:=</span> lg.root_type, <span class="fu">depth</span> <span class="op">:=</span> <span class="dv">0</span>:<span class="ch">:BIGINT</span>,</span>
+<span id="cb6-20"><a href="#cb6-20" aria-hidden="true" tabindex="-1"></a>                                parent_step <span class="op">:=</span> <span class="kw">NULL</span>:<span class="ch">:BIGINT</span>, arg_index <span class="op">:=</span> <span class="kw">NULL</span>:<span class="ch">:BIGINT</span>)),</span>
+<span id="cb6-21"><a href="#cb6-21" aria-hidden="true" tabindex="-1"></a>         []:<span class="ch">:VARCHAR</span>[], <span class="kw">NULL</span>:<span class="ch">:VARCHAR</span>, <span class="kw">NULL</span>:<span class="ch">:BIGINT</span>, <span class="kw">NULL</span>:<span class="ch">:BIGINT</span>,</span>
+<span id="cb6-22"><a href="#cb6-22" aria-hidden="true" tabindex="-1"></a>         <span class="kw">NULL</span>:<span class="ch">:BIGINT</span>, <span class="kw">NULL</span>:<span class="ch">:BIGINT</span>, <span class="kw">NULL</span>:<span class="ch">:BIGINT</span></span>
+<span id="cb6-23"><a href="#cb6-23" aria-hidden="true" tabindex="-1"></a>  <span class="kw">FROM</span> genes <span class="kw">AS</span> ge <span class="kw">JOIN</span> layout_genes <span class="kw">AS</span> lg <span class="kw">ON</span> lg.layout_id <span class="op">=</span> ge.layout_id <span class="kw">AND</span> lg.gene_id <span class="op">=</span> ge.gene_id</span>
+<span id="cb6-24"><a href="#cb6-24" aria-hidden="true" tabindex="-1"></a>  <span class="kw">WHERE</span> ge.chromosome_id <span class="op">=</span> ?</span>
+<span id="cb6-25"><a href="#cb6-25" aria-hidden="true" tabindex="-1"></a>  <span class="kw">UNION</span> <span class="kw">ALL</span></span>
+<span id="cb6-26"><a href="#cb6-26" aria-hidden="true" tabindex="-1"></a>  <span class="kw">SELECT</span> w.chromosome_id, w.gene_id, w.kingdom_id, w.step <span class="op">+</span> <span class="dv">1</span>,</span>
+<span id="cb6-27"><a href="#cb6-27" aria-hidden="true" tabindex="-1"></a>         list_concat(list_slice(w.pending, <span class="dv">2</span>, len(w.pending)), <span class="fu">coalesce</span>(kids.slots, list_value())),</span>
+<span id="cb6-28"><a href="#cb6-28" aria-hidden="true" tabindex="-1"></a>         list_append(w.used, q.slot.required_type), q.slot.required_type,</span>
+<span id="cb6-29"><a href="#cb6-29" aria-hidden="true" tabindex="-1"></a>         len(list_filter(w.used, x <span class="op">-&gt;</span> x <span class="op">=</span> q.slot.required_type)), f.symbol_id,</span>
+<span id="cb6-30"><a href="#cb6-30" aria-hidden="true" tabindex="-1"></a>         q.slot.<span class="fu">depth</span>, q.slot.parent_step, q.slot.arg_index</span>
+<span id="cb6-31"><a href="#cb6-31" aria-hidden="true" tabindex="-1"></a>  <span class="kw">FROM</span> walk <span class="kw">AS</span> w <span class="kw">CROSS</span> <span class="kw">JOIN</span> LATERAL (<span class="kw">SELECT</span> list_extract(w.pending, <span class="dv">1</span>) <span class="kw">AS</span> slot) <span class="kw">AS</span> q</span>
+<span id="cb6-32"><a href="#cb6-32" aria-hidden="true" tabindex="-1"></a>  <span class="kw">JOIN</span> frames <span class="kw">AS</span> f <span class="kw">ON</span> f.chromosome_id <span class="op">=</span> w.chromosome_id <span class="kw">AND</span> f.gene_id <span class="op">=</span> w.gene_id</span>
+<span id="cb6-33"><a href="#cb6-33" aria-hidden="true" tabindex="-1"></a>    <span class="kw">AND</span> f.kingdom_id <span class="op">=</span> w.kingdom_id <span class="kw">AND</span> f.output_type <span class="op">=</span> q.slot.required_type</span>
+<span id="cb6-34"><a href="#cb6-34" aria-hidden="true" tabindex="-1"></a>    <span class="kw">AND</span> f.frame_k <span class="op">=</span> len(list_filter(w.used, x <span class="op">-&gt;</span> x <span class="op">=</span> q.slot.required_type))</span>
+<span id="cb6-35"><a href="#cb6-35" aria-hidden="true" tabindex="-1"></a>  <span class="kw">LEFT</span> <span class="kw">JOIN</span> LATERAL (</span>
+<span id="cb6-36"><a href="#cb6-36" aria-hidden="true" tabindex="-1"></a>    <span class="kw">SELECT</span> <span class="kw">list</span>(struct_pack(required_type <span class="op">:=</span> a.required_type, <span class="fu">depth</span> <span class="op">:=</span> q.slot.<span class="fu">depth</span> <span class="op">+</span> <span class="dv">1</span>,</span>
+<span id="cb6-37"><a href="#cb6-37" aria-hidden="true" tabindex="-1"></a>                            parent_step <span class="op">:=</span> w.step <span class="op">+</span> <span class="dv">1</span>, arg_index <span class="op">:=</span> a.arg_index) <span class="kw">ORDER</span> <span class="kw">BY</span> a.arg_index) <span class="kw">AS</span> slots</span>
+<span id="cb6-38"><a href="#cb6-38" aria-hidden="true" tabindex="-1"></a>    <span class="kw">FROM</span> argument_signature <span class="kw">AS</span> a <span class="kw">WHERE</span> a.kingdom_id <span class="op">=</span> w.kingdom_id <span class="kw">AND</span> a.symbol_id <span class="op">=</span> f.symbol_id</span>
+<span id="cb6-39"><a href="#cb6-39" aria-hidden="true" tabindex="-1"></a>  ) <span class="kw">AS</span> kids <span class="kw">ON</span> <span class="kw">TRUE</span> <span class="kw">WHERE</span> len(w.pending) <span class="op">&gt;</span> <span class="dv">0</span></span>
+<span id="cb6-40"><a href="#cb6-40" aria-hidden="true" tabindex="-1"></a>)</span>
+<span id="cb6-41"><a href="#cb6-41" aria-hidden="true" tabindex="-1"></a><span class="kw">SELECT</span> w.gene_id, w.step, w.node_type, w.frame_k, o.spelling, w.<span class="fu">depth</span>, w.parent_step, w.arg_index</span>
+<span id="cb6-42"><a href="#cb6-42" aria-hidden="true" tabindex="-1"></a><span class="kw">FROM</span> walk <span class="kw">AS</span> w <span class="kw">JOIN</span> symbol_outputs <span class="kw">AS</span> o <span class="kw">ON</span> o.kingdom_id <span class="op">=</span> w.kingdom_id <span class="kw">AND</span> o.symbol_id <span class="op">=</span> w.symbol_id</span>
+<span id="cb6-43"><a href="#cb6-43" aria-hidden="true" tabindex="-1"></a><span class="kw">WHERE</span> w.step <span class="op">&gt;</span> <span class="dv">0</span> <span class="kw">ORDER</span> <span class="kw">BY</span> w.gene_id, w.step;</span></code></pre></div>
+<p>The decoder reports a kingdom/layout defect when a frame row is
+missing; it never repairs. The partition deliberately includes
+chromosome, gene, and type.</p>
+<p>Run on 2026-10-20 in DuckDB 1.5.6 on the two-type fixture
+<code>left:S(S,I)</code>, terminals <code>s:S</code>, <code>i:I</code>,
+and the polymorphic spelling <code>z</code> as <code>z:S</code> and
+<code>z:I</code>, with <code>h_S = 2</code>, <code>h_I = 1</code>, root
+<code>S</code>: the bound query gives
+<code>P_S = 3, P_I = 2, L = 3, t_S = t_I = 1, d_S = 3, d_I = 2</code>;
+the one-type SR layout <code>h = 7</code>, <code>n_max = 2</code> gives
+<code>t = d = 8</code>. The walk gives, for
+<code>head_S = (left, s)</code>, <code>head_I = (i)</code>:
+<code>left(s, i)</code> as steps <code>(S,0,left)</code>,
+<code>(S,1,s)</code>, <code>(I,0,i)</code>; for a second gene
+<code>head_S = (left, left)</code>, <code>tail_S = (s)</code>,
+<code>tail_I = (z)</code>: <code>left(left(s, z), i)</code>; for a
+second chromosome with the ADF reference <code>A7:I</code> in
+<code>head_I</code>: <code>left(s, A7)</code>. The physical rows read
+are in their own domains, not an inter-type shared stream.</p>
+<h2 id="constants-gep-rnc-per-type">4. Constants (GEP-RNC, per
+type)</h2>
+<p>A constant-capable type <code>T</code> (a kingdom property: it has a
+literal domain) has placeholder terminal <code>?_T</code> and
+<code>Dc_T</code> of length <code>d_T</code>. <code>?_T</code> may sit
+in <code>head_T</code> or <code>tail_T</code>; only an
+<strong>expressed</strong> placeholder consumes the next
+<code>Dc_T</code> entry and advances <code>q_T</code>, and
+<code>q_T &lt;= d_T</code> by §2.2. <code>C_T</code> is append-only for
+a population epoch; existing indices are immutable. Dc mutation,
+recombination, inversion, and transposition stay in their matching
+<code>(gene_id, T, dc)</code> domain and select valid <code>C_T</code>
+indices. Whether <code>T</code> has ADFs (§6) is independent of whether
+it has <code>?_T</code>: both are terminals of <code>T</code> and
+coexist in its alphabet.</p>
+<h2 id="variation-domains-are-invariant">5. Variation: domains are
+invariant</h2>
+<p>Every operator draws from a domain enumerated from the layout before
+the draw, so every child is valid by construction. An operator whose
+domain is empty for a layout is absent from that layout’s schedule, the
+way collapse is absent for a type without <code>?_T</code>; nothing is
+drawn and then replaced.</p>
+<p>Mutation selects any symbol of the epoch alphabet (§6) outputting
+<code>T</code> in <code>head_T</code>, a terminal outputting
+<code>T</code> in <code>tail_T</code>, or a valid index in
+<code>Dc_T</code>. Inversion and tail/Dc transposition stay within one
+exact <code>(gene, domain, type)</code> domain. IS and RIS may copy a
+head segment into the <em>same</em> <code>head_T</code> only (RIS starts
+at a function); no tail or Dc material enters a head. One-/two-point and
+gene recombination exchange homologous coordinates only: same kingdom,
+layout id, gene id, domain, output type, and local positions. All
+operations preserve domain lengths and alphabets. An edit in
+<code>head_T</code> changes only <code>T</code>’s bytes; as in Karva it
+may change which rows other frames express, never their validity.</p>
+<p><strong>Whole-gene moves.</strong> The root type and the domain
+lengths of a gene are properties of <code>(layout_id, gene_id)</code>,
+never of the record: no <code>gene_root</code> word travels with a gene.
+Two gene ids are homologous when the layout gives them the same root and
+the same <code>h_T</code>. Gene recombination exchanges the same gene id
+between parents of one layout (always homologous); gene transposition
+and the whole-gene parts of one-/two-point recombination move a record
+only between homologous gene ids, the ordered pairs of which the layout
+enumerates. A genic terminal (§6) therefore always names a gene of its
+own type.</p>
+<p><strong>Write-back (fold, cleanse, snap).</strong> A rewrite of an
+expressed tree is encoded by the walk of §3 in reverse: walk the new
+tree in level order, number the <code>T</code> nodes
+<code>0, 1, 2, ...</code>, and let <code>j_T</code> be one more than the
+rank among <code>T</code> nodes of the last <code>T</code> function
+(zero with none). <code>head_T</code> holds the first <code>j_T</code>
+<code>T</code> nodes, <code>tail_T</code> the rest in order;
+<code>Dc_T</code> is rebuilt in the order the expressed <code>?_T</code>
+appear; rows the walk does not read keep their previous contents
+(Karva’s non-coding region, deterministic). The rewrite is encodable
+exactly when <code>j_T &lt;= h_T</code> for every <code>T</code>.
+Removal-only rewrites (fold replaces a subtree by a reference, collapse
+by <code>?_T</code>, snap by a constant) delete nodes without changing
+any remaining depth, so no rank grows and they always fit. Promotion
+lifts a subtree one level and can grow a rank: with one type,
+<code>P(Q(Z(a,b,c)), W(F(u,v)))</code> has <code>j = 5</code>, and
+promoting <code>Q</code> to <code>Z</code> gives
+<code>P(Z(a,b,c), W(F(u,v)))</code> with <code>j = 7</code>. Promotion’s
+domain on a gene is therefore the set of same-type children whose
+promoted tree fits every <code>h_T</code>, enumerated before the draw
+(the CR’s rule, now per type rather than
+<code>sum_T j_T &lt;= vhead</code>).</p>
+<h2 id="typed-linkers-adfs-and-multicellular-programs">6. Typed linkers,
+ADFs, and multicellular programs</h2>
+<p><strong>Epoch alphabet.</strong> The symbols a gene may hold are the
+kingdom’s symbols plus two kinds of typed <strong>reference
+terminal</strong>, each a row of <code>symbol_outputs</code> with no
+signature:</p>
+<ul>
+<li>a <strong>genic terminal</strong> <code>G_g</code> for every normal
+gene id <code>g</code> of the layout, outputting
+<code>root(layout_id, g)</code>; <code>g_T</code> is the number of them
+of type <code>T</code>, a layout constant;</li>
+<li>an <strong>ADF reference</strong> <code>A_d</code> for every ADF
+<code>d</code> of the population epoch, outputting <code>d</code>’s
+declared root type.</li>
+</ul>
+<p>Genic terminals are valid only in a homeotic gene; ADF references are
+valid in any <code>head_T</code> or <code>tail_T</code> of their type,
+normal or homeotic, so a reference propagates by ordinary mutation and
+fold can rewrite a shared subtree wherever it occurs. The ADF set is
+append-only within an epoch, ids are never reused, and an ADF with zero
+referrers is retired only at an epoch boundary, so every reference in a
+population names an ADF that exists.</p>
+<p><strong>The homeotic gene.</strong> A chromosome’s normal genes are
+combined by a typed linker, which is Ferreira’s evolved homeotic gene: a
+typed gene with the <code>head_T</code>/<code>tail_T</code> layout of §2
+whose declared root is the chromosome phenotype type and whose alphabet
+is the epoch alphabet including the chromosome’s genic terminals (any
+symbol of <code>T</code> in <code>head_T</code>, any terminal of
+<code>T</code> in <code>tail_T</code>). Its head alphabet is the whole
+function set, not linking functions only, because fold rewrites the
+whole remainder of a program into it and the remainder holds ordinary
+functions and terminals; a linking function is simply a kingdom function
+whose signature consumes gene root types. Expression invokes each
+selected genic terminal’s gene. A <strong>fixed linker</strong> is a
+homeotic gene the layout marks immutable (<code>head_R = (link)</code>,
+tails the genic terminals in gene order): every operator’s domain on it
+is empty. Several homeotic genes mean several main programs (a
+multicellular system): each has a stable main-program id, declared
+phenotype type, and linked normal-gene set; evaluate each independently,
+retaining their ordered result tuple. Normal genes never hold genic
+terminals, so gene references cannot cycle.</p>
+<p><strong>ADFs.</strong> Population-wide definitions found by
+share-equivalence are Ferreira’s <strong>ADFs</strong>. An ADF is
+immutable, so it has no genotype to vary: it is stored as its expressed
+tree, <code>adf(epoch, adf_id, root_type, level)</code> with node rows
+<code>adf_node(adf_id, node_seq, symbol_id, parent_seq, arg_index, dc_index)</code>
+in level order, a <code>?_T</code> node carrying its <code>C_T</code>
+index. This is the population DAG’s node storage
+(<code>src/population_dag.rs</code>), so a folded subtree of any size
+has an encoding; a Karva gene with fixed <code>h_T</code> would not hold
+a subtree with more <code>T</code> functions than <code>h_T</code>, and
+the design forbids rejection. An ADF body holds kingdom symbols and ADF
+references of strictly lower level only: never a genic terminal (a genic
+terminal means a different tree in every chromosome; an ADF is one tree
+for the population). Fold turns each selected shared DAG node into an
+ADF with a stable <code>adf_id</code>, root type and level, and rewrites
+every chromosome holding that subtree by the write-back of §5 (a
+removal-only rewrite, so it always fits), replacing the subtree’s root
+with <code>A_d</code> in whichever gene holds it; a subtree that reaches
+a normal gene through <code>G_g</code> is replaced at its root in the
+homeotic gene. Unfold inlines <code>A_d</code> by its tree. Stable ids,
+root types, immutability, and strict level decrease give persistent
+references and acyclicity. (Were ADFs ever varied, the equally valid
+encoding is a Karva gene under its own layout id with <code>h_T</code>
+the subtree’s <code>T</code> function count; it is not built.)</p>
+<p>Required code/document rename (not performed by this document-only
+change): in <code>docs/PLAN_population_dag.md</code>, replace “homeotic
+chromosome/row/tail/definition” when it denotes a population-wide shared
+definition with “ADF gene/row/set/definition”; retain “homeotic gene”
+only for the rewritten chromosome linker. In
+<code>src/population_dag.rs</code>, rename <code>is_homeotic</code>,
+<code>homeotic</code>, <code>homeotic_new</code>, related
+fields/comments/tests, and memo-selection terminology to
+<code>is_adf</code>, <code>adfs</code>, <code>adf_new</code>, and ADF.
+In <code>src/homeotic.rs</code>, rename the share-finder fold product,
+<code>FoldedChromosome</code> head/tail documentation, href vocabulary,
+and tests from “homeotic tail/slot” to typed ADFs/<code>adf_id</code>;
+reserve <code>homeotic</code> for the new linker implementation. The
+equivalent phylu <code>GENEREF</code>, export, checkpoint, arena, and
+level-schedule names must make the same distinction.</p>
+<h2 id="implementation-and-tests">7. Implementation and tests</h2>
+<ol type="1">
+<li>Kingdom/layout checks: ordered signatures, terminal coverage,
+<code>a_{T,U}</code>, <code>n_U</code>, <code>h_T</code> from
+<code>N</code> (or <code>N</code> from explicit <code>h_T</code>),
+<code>P_T</code>, <code>L</code>, <code>t_T</code>, <code>d_T</code>,
+per-domain alphabets, homologous gene-id pairs, <code>g_T</code>. The
+check prints the bound table per kingdom (SR, regex, safewgsl) with
+<code>N</code> and the gene width; the WGSL figures are measured here,
+not estimated.</li>
+<li>Bound exactness: for every kingdom and <code>h_T</code>, construct
+the program attaining <code>P_T</code>, the one attaining
+<code>L + h_T</code>, and the chain attaining <code>h_T</code> from
+<code>N</code>; assert the walk reads the last frame row and no further.
+100,000 random genes per kingdom: record maximum <code>k_T</code> and
+<code>q_T</code>, below <code>h_T + t_T</code> and <code>d_T</code>;
+include expressed-only, interleaved placeholders. One type:
+<code>t = d = h * (n_max - 1) + 1</code> and
+<code>h = 1 + (N - 1) * n_max</code>.</li>
+<li>Host and GPU closure: 100,000 random genes and children per operator
+for SR, regex, and WGSL; every node matches its slot type and neither
+decoder substitutes; an operator with an empty domain is absent, never a
+no-op draw.</li>
+<li>SQL: run §3’s two queries in <code>duckdb :memory:</code> on the
+two-type fixture with the polymorphic spelling, two genes, two
+chromosomes and an ADF reference, asserting the bound rows and the
+stated trees; the host decoder equals the query row for row.</li>
+<li>Locality/Karva: edits in <code>head_T</code> do not alter another
+frame’s bytes; same-type crossover is homologous; one-type genes decode
+byte-for-byte as classical Karva.</li>
+<li>Gene moves: gene transposition and whole-gene recombination between
+non-homologous ids are not in the enumerated domain; after any sequence
+of moves every genic terminal expresses a tree of its own type; a layout
+with one gene per root has no transposition pairs and the schedule says
+so.</li>
+<li>Write-back: removal-only rewrites never grow any <code>j_T</code>;
+the promotion example above is excluded from the domain for
+<code>h &lt; 7</code> and included for <code>h &gt;= 7</code>; fold →
+write-back → unfold is value-preserving on 100,000 random
+chromosomes.</li>
+<li>ADFs: a folded subtree larger than every <code>h_T</code> is stored
+and referenced; an ADF body holding a genic terminal, a reference to a
+non-lower level, or a reference of the wrong type is a defect;
+<code>A_d</code> in a normal gene and in a homeotic gene both express; a
+retired ADF has zero referrers.</li>
+<li>Linkers: fixed and evolved homeotic genes, genic-terminal type/count
+checks, multiple homeotic main programs, the full function set in the
+homeotic head.</li>
+</ol>
+<h2 id="build-order">8. Build order</h2>
+<ol type="1">
+<li>Kingdom contract: <code>symbol_id</code>, <code>a_{T,U}</code>,
+<code>n_U</code>, reachability, the bound table printed per kingdom; the
+safewgsl terminal rows of <code>docs/PLAN_wgsl_terminals.md</code> so
+the check passes on the live kingdom.</li>
+<li>Layouts: per-type heads from <code>N</code> or explicit
+<code>h_T</code>, roots and lengths by
+<code>(layout_id, gene_id)</code>, homologous pairs; host decoder; the
+DuckDB fixture with both queries.</li>
+<li>Host operators, including whole-gene moves by homologous id and the
+per-type write-back; the locality, closure, bound-exactness, and
+one-type Karva tests.</li>
+<li>GPU per-type heads and cursors, paged layouts, parity; remove all
+fallback bindings and every <code>gene_root</code> word.</li>
+<li>Reference terminals, the homeotic gene over the epoch alphabet,
+fixed linkers, ADFs as trees in the population DAG with stable
+ids/levels, fold/unfold, and the ADF rename across fuller and
+phylu.</li>
+<li>Move SR and regex, then WGSL; re-encode saved genomes and run round
+trips.</li>
+</ol>
+<h2 id="revisions-2026-10-20">Revisions (2026-10-20)</h2>
+<ul>
+<li>Replaced the shared head with a typed head and tail for every output
+type; made it the chosen design because it restores per-domain locality
+and homologous crossover.</li>
+<li>Derived the multi-head tail bound using <code>H = sum_T h_T</code>,
+specified fixed head-length selection, and retained exact one-type Karva
+reduction.</li>
+<li>Adopted Ferreira terminology: shared population definitions are ADF
+normal genes; the rewritten linker remainder is the homeotic gene.</li>
+<li>Specified typed genic terminals, evolved/fixed linkers,
+multicellular multiple-homeotic-program systems, and the
+share-equivalence-to-ADF/homeotic transformation.</li>
+</ul>
+<h2 id="revisions-2026-10-20-advisor">Revisions (2026-10-20,
+advisor)</h2>
+<ul>
+<li>Finding 1 (bound on the type count squared): the tail bound is per
+producer, <code>P_T = [T = R] + sum_U h_U * a_{T,U}</code>, with the
+leaf bound <code>L</code>;
+<code>t_T = max(0, min(P_T, L + h_T) - h_T)</code> and <code>Dc_T</code>
+length <code>d_T = min(P_T, L)</code>. Both exact, both attained, one
+type is Karva unchanged. The bound SQL is executable and was run.</li>
+<li>Finding 2 (genic terminals escape their type): root and domain
+lengths belong to <code>(layout_id, gene_id)</code>; whole-gene moves
+only between homologous gene ids, enumerated by the layout;
+<code>gene_root</code> words removed; <code>g_T</code> is a layout
+constant.</li>
+<li>Finding 3 (an ADF cannot hold an arbitrary subtree): ADFs are
+immutable expressed trees in the population DAG’s node storage, never
+Karva genes; only genes that vary have a layout.</li>
+<li>Finding 4 (underspecified): the homeotic head holds the whole
+function set plus reference terminals; ADF references are valid in
+normal genes; an ADF never references a genic terminal; the write-back
+rule is per type (<code>j_T &lt;= h_T</code>), removal-only rewrites
+always fit and promotion’s domain is enumerated; <code>?_T</code> is
+independent of ADFs.</li>
+<li>Finding 5 (valid, not good):
+<code>h_T = [T = R] + (N - 1) * a_T</code> from the layout’s program
+size <code>N</code>, exact and attained, so every program of
+<code>N</code> functions fits whatever its type mix; explicit
+<code>h_T</code> remains for the classical SR layout. Width is allocated
+in full and paged, never an input.</li>
+<li><code>symbol_id</code> replaces spellings in every gene row and in
+the SQL; the kingdom check prints the WGSL bound table rather than this
+document estimating it.</li>
+</ul>
+</body>
+</html>
