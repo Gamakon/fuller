@@ -362,12 +362,10 @@ pub fn regex_relations() -> KingdomRelations {
     relations_from_rows(REGEX, vec![Ty::Pattern], &rows, &["?_Char", "?_I"])
 }
 
-/// The WGSL kingdom: every instantiated row of `WgslKingdom::load()` with its
-/// ordered inputs, every dual a possible root. A `literal.*` terminal is the
-/// constant placeholder of its dual.
+/// The WGSL kingdoms' rows with their ordered inputs, every dual a possible
+/// root. A `literal.*` terminal is the constant placeholder of its dual.
 #[cfg(feature = "wgsl")]
-pub fn wgsl_relations() -> KingdomRelations {
-    let k = crate::wgsl::loader::WgslKingdom::load();
+fn wgsl_family_relations(k: &crate::wgsl::loader::WgslKingdom, kingdom: &str) -> KingdomRelations {
     let rows: Vec<(String, Vec<Ty>, Ty)> = {
         let mut per_name: BTreeMap<&str, usize> = BTreeMap::new();
         for r in &k.rows {
@@ -377,7 +375,19 @@ pub fn wgsl_relations() -> KingdomRelations {
     };
     let roots: Vec<Ty> = k.duals.iter().map(crate::wgsl::loader::WgslDual::ty).collect();
     let constants: Vec<&str> = rows.iter().filter(|(n, ins, _)| ins.is_empty() && n.starts_with("literal.")).map(|(n, _, _)| n.as_str()).collect();
-    relations_from_rows(crate::wgsl::loader::WGSL, roots, &rows, &constants)
+    relations_from_rows(kingdom, roots, &rows, &constants)
+}
+
+/// The older WGSL kingdom (`kingdoms/wgsl`, 83 duals).
+#[cfg(feature = "wgsl")]
+pub fn wgsl_relations() -> KingdomRelations {
+    wgsl_family_relations(&crate::wgsl::loader::WgslKingdom::load(), crate::wgsl::loader::WGSL)
+}
+
+/// The live kingdom the v24 runs and the reader use (`kingdoms/safewgsl`).
+#[cfg(feature = "wgsl")]
+pub fn safewgsl_relations() -> KingdomRelations {
+    wgsl_family_relations(&crate::wgsl::loader::WgslKingdom::load_safe(), crate::wgsl::loader::SAFEWGSL)
 }
 
 /// What a kingdom check reports, for the log: counts, `n_max`, the tail
@@ -561,11 +571,23 @@ mod tests {
         assert!(d.iter().all(|m| m.contains("has no terminal")), "{d:?}");
     }
 
+    /// The live kingdom (`kingdoms/safewgsl`): the check finds only duals with no
+    /// terminal, as the older kingdom does (`docs/PLAN_wgsl_terminals.md`).
+    #[cfg(feature = "wgsl")]
+    #[test]
+    fn safewgsl_defects_are_only_missing_terminals() {
+        let d = safewgsl_relations().check().expect_err("129 duals have no terminal yet");
+        assert!(d.iter().all(|m| m.contains("has no terminal")), "{d:?}");
+        assert_eq!(d.len(), 129, "the plan lists 129 duals; a change here changes the plan");
+    }
+
     #[test]
     fn the_kingdom_reports_print() {
         let mut out = vec![report(&sr_relations(), 32), report(&regex_relations(), 32)];
         #[cfg(feature = "wgsl")]
         out.push(report(&wgsl_relations(), 32));
+        #[cfg(feature = "wgsl")]
+        out.push(report(&safewgsl_relations(), 32));
         for o in out {
             println!("{o}");
         }
