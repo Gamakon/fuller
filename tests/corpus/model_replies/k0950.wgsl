@@ -1,0 +1,77 @@
+// grid 16 16 2 2
+struct Cfg { d: u32, m: u32, r_rows: u32, r_off: u32, };
+@group(0) @binding(0) var<storage, read> phi: array<f32>;
+@group(0) @binding(1) var<storage, read_write> h: array<f32>;
+@group(0) @binding(2) var<uniform> cfg: Cfg;
+
+var<workgroup> sa: array<f32, 512>;
+var<workgroup> sb: array<f32, 512>;
+
+@compute @workgroup_size(16, 16, 1)
+fn main(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>) {
+    let d = cfg.d;
+    let m = cfg.m;
+    let c0 = wg.x * 32u;
+    let r0 = wg.y * 32u;
+    let lx = lid.x;
+    let ly = lid.y;
+    let li = ly * 16u + lx;
+
+    var a00 = 0.0;
+    var a01 = 0.0;
+    var a10 = 0.0;
+    var a11 = 0.0;
+
+    var t0: u32 = 0u;
+    loop {
+        if (t0 >= m) { break; }
+        for (var k: u32 = 0u; k < 2u; k = k + 1u) {
+            let e = li + k * 256u;
+            let t = e >> 5u;
+            let j = e & 31u;
+            let tt = t0 + t;
+            let col = c0 + j;
+            let lrow = r0 + j;
+            let grow = cfg.r_off + lrow;
+            var va = 0.0;
+            var vb = 0.0;
+            if (tt < m) {
+                if (lrow < cfg.r_rows && grow < d) {
+                    va = phi[tt * d + grow];
+                }
+                if (col < d) {
+                    vb = phi[tt * d + col];
+                }
+            }
+            sa[e & 511u] = va;
+            sb[e & 511u] = vb;
+        }
+        workgroupBarrier();
+        for (var t: u32 = 0u; t < 16u; t = t + 1u) {
+            let o = t * 32u;
+            let x0 = sa[(o + ly) & 511u];
+            let x1 = sa[(o + ly + 16u) & 511u];
+            let y0 = sb[(o + lx) & 511u];
+            let y1 = sb[(o + lx + 16u) & 511u];
+            a00 = a00 + x0 * y0;
+            a01 = a01 + x0 * y1;
+            a10 = a10 + x1 * y0;
+            a11 = a11 + x1 * y1;
+        }
+        workgroupBarrier();
+        t0 = t0 + 16u;
+    }
+
+    let ra = r0 + ly;
+    let rb = ra + 16u;
+    let ca = c0 + lx;
+    let cb = ca + 16u;
+    if (ra < cfg.r_rows) {
+        if (ca < d) { h[ra * d + ca] = h[ra * d + ca] + a00; }
+        if (cb < d) { h[ra * d + cb] = h[ra * d + cb] + a01; }
+    }
+    if (rb < cfg.r_rows) {
+        if (ca < d) { h[rb * d + ca] = h[rb * d + ca] + a10; }
+        if (cb < d) { h[rb * d + cb] = h[rb * d + cb] + a11; }
+    }
+}

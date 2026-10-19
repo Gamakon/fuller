@@ -1,0 +1,88 @@
+@group(0) @binding(0) var<storage, read_write> buffer_0_global: array<u32>;
+@group(0) @binding(1) var<storage, read_write> buffer_1_global: array<f32>;
+@group(0) @binding(2) var<storage, read_write> buffer_2_global: array<f32>;
+@group(0) @binding(3) var<storage, read_write> buffer_3_global: array<f32>;
+@group(0) @binding(4) var<storage, read_write> buffer_4_global: array<f32>;
+@group(0) @binding(5) var<storage, read_write> buffer_5_global: array<u32>;
+@group(0) @binding(6) var<storage, read_write> buffer_6_global: array<u32>;
+@group(0) @binding(7) var<storage, read_write> buffer_7_global: array<f32>;
+@group(0) @binding(8) var<storage, read_write> info: array<u32>;
+
+var<workgroup> cb: array<f32, 1024>;
+
+fn fmix32(h0: u32) -> u32 {
+    var h = h0;
+    h = h ^ (h >> 16u);
+    h = h * 2246822507u;
+    h = h ^ (h >> 13u);
+    h = h * 3266489909u;
+    h = h ^ (h >> 16u);
+    return h;
+}
+
+fn safe_tanh(x: f32) -> f32 {
+    if x > 43.0 {
+        return 1.0;
+    }
+    return tanh(x);
+}
+
+@compute @workgroup_size(256, 1, 1)
+fn generated_step(
+    @builtin(global_invocation_id) gid: vec3<u32>,
+    @builtin(local_invocation_index) lidx: u32,
+) {
+    // stage codebook (uniform control flow)
+    for (var j: u32 = 0u; j < 4u; j++) {
+        let k = lidx + j * 256u;
+        cb[k] = buffer_2_global[k];
+    }
+    workgroupBarrier();
+
+    let r = gid.x + buffer_6_global[0u];
+    let width = buffer_5_global[0u];
+    if r >= width {
+        return;
+    }
+    let key_lo = buffer_5_global[1u];
+    let key_hi = buffer_5_global[2u];
+    let base = r * 10u;
+
+    var src: array<u32, 10>;
+    var xs: array<f32, 10>;
+    for (var s: u32 = 0u; s < 10u; s++) {
+        src[s] = buffer_0_global[base + s];
+    }
+    for (var s: u32 = 0u; s < 10u; s++) {
+        xs[s] = buffer_1_global[src[s]];
+    }
+
+    let h1 = fmix32(key_lo ^ r);
+    var sum: f32 = 0.0;
+    var comp: f32 = 0.0;
+    var acc_x: f32 = 0.0;
+    for (var s: u32 = 0u; s < 10u; s++) {
+        let idx = fmix32(h1 ^ (key_hi ^ s)) >> 22u;
+        let x = xs[s];
+        let term = cb[idx] * x;
+        let y = term - comp;
+        let t = sum + y;
+        comp = (t - sum) - y;
+        sum = t;
+        acc_x = acc_x + x;
+    }
+
+    let n_lo = buffer_6_global[1u];
+    let n_hi = buffer_6_global[2u];
+    let n_t = buffer_6_global[3u];
+    let z = cb[fmix32(fmix32(n_lo ^ r) ^ (n_hi ^ n_t)) >> 22u];
+
+    let loc = buffer_7_global[0u];
+    let scale = buffer_7_global[1u];
+    let leak = buffer_7_global[2u];
+    let sigma = buffer_7_global[4u];
+
+    let pre = scale * sum + loc * acc_x + buffer_3_global[r] + sigma * z;
+    let xr = buffer_1_global[r];
+    buffer_4_global[r] = (1.0 - leak) * xr + leak * safe_tanh(pre);
+}

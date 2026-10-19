@@ -1,0 +1,65 @@
+// grid 8 8 8 8
+struct Cfg { d: u32, m: u32, r_rows: u32, r_off: u32, };
+@group(0) @binding(0) var<storage, read> phi: array<f32>;
+@group(0) @binding(1) var<storage, read_write> h: array<f32>;
+@group(0) @binding(2) var<uniform> cfg: Cfg;
+@compute @workgroup_size(8, 8, 1)
+fn main(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) wid: vec3<u32>) {
+    var pa: array<f32, 64>;
+    var pb: array<f32, 64>;
+    var pc: array<vec4<f32>, 16>;
+    var pi: array<u32, 16>;
+    var pj: array<u32, 16>;
+    var pq: array<u32, 16>;
+    var pm: array<bool, 16>;
+    var pn: array<bool, 16>;
+    var t: u32 = 0u;
+    var k: u32 = 0u;
+    var k2: u32 = 0u;
+    let d = cfg.d;
+    for (k = 0u; k < 16u; k = k + 1u) {
+        pc[k] = vec4<f32>(0.0, 0.0, 0.0, 0.0);
+    }
+    for (k = 0u; k < 8u; k = k + 1u) {
+        let lr = wid.y * 64u + k * 8u + lid.y;
+        pi[k] = lr;
+        pm[k] = (lr < cfg.r_rows) && ((cfg.r_off + lr) < d);
+        pj[k] = cfg.r_off + lr;
+        let c = wid.x * 64u + k * 8u + lid.x;
+        pn[k] = c < d;
+        pq[k] = c;
+    }
+    for (t = 0u; t < cfg.m; t = t + 1u) {
+        let base = t * d;
+        for (k = 0u; k < 8u; k = k + 1u) {
+            var a: f32 = 0.0;
+            if (pm[k]) {
+                a = phi[base + pj[k]];
+            }
+            pa[k] = a;
+            var b: f32 = 0.0;
+            if (pn[k]) {
+                b = phi[base + pq[k]];
+            }
+            pb[k] = b;
+        }
+        let b0 = vec4<f32>(pb[0], pb[1], pb[2], pb[3]);
+        let b1 = vec4<f32>(pb[4], pb[5], pb[6], pb[7]);
+        for (k = 0u; k < 8u; k = k + 1u) {
+            let av = pa[k];
+            pc[k * 2u] = pc[k * 2u] + av * b0;
+            pc[k * 2u + 1u] = pc[k * 2u + 1u] + av * b1;
+        }
+    }
+    for (k = 0u; k < 8u; k = k + 1u) {
+        for (k2 = 0u; k2 < 8u; k2 = k2 + 1u) {
+            if (pm[k]) {
+                if (pn[k2]) {
+                    let idx = pi[k] * d + pq[k2];
+                    let v = pc[k * 2u + (k2 >> 2u)];
+                    h[idx] = h[idx] + v[k2 & 3u];
+                }
+            }
+        }
+    }
+}
