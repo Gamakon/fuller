@@ -454,6 +454,51 @@ pub fn typed_depth_table() -> SymbolTable {
     t
 }
 
+/// One row of [`regex_rows`]: `(semantic_id, alias, ordered inputs, output)`.
+pub type RegexRow = (&'static str, &'static str, &'static [Ty], Ty);
+
+/// The regex kingdom's rows with their argument types IN ORDER: `(semantic_id,
+/// alias, ordered inputs, output)`. [`Arity`] is many-hot and loses the order
+/// (`regex_rep_n` takes `(Pattern, I)`, which a type-keyed map reads back as
+/// `(I, Pattern)`), so the ordered signature relation of the typed-GEP kingdom
+/// contract ([`crate::kingdom_contract`]) is built from this, not from the
+/// table.
+pub fn regex_rows() -> &'static [RegexRow] {
+    const PAT: Ty = Ty::Pattern;
+    const CC: Ty = Ty::CharClass;
+    const CH: Ty = Ty::Char;
+    const INT: Ty = Ty::I;
+    const ROWS: &[RegexRow] = &[
+        // ---- Pattern terminals (arity 0) ----
+        ("regex_dot", ".", &[], PAT),
+        ("regex_anchor_start", "^", &[], PAT),
+        ("regex_anchor_end", "$", &[], PAT),
+        ("regex_empty", "", &[], PAT),
+        // ---- CharClass terminals (arity 0) — the built-in classes ----
+        ("regex_cc_digit", r"\d", &[], CC),
+        ("regex_cc_word", r"\w", &[], CC),
+        ("regex_cc_space", r"\s", &[], CC),
+        // ---- Pattern ops ----
+        ("regex_star", "*", &[PAT], PAT),
+        ("regex_plus", "+", &[PAT], PAT),
+        ("regex_opt", "?", &[PAT], PAT),
+        ("regex_concat", "concat", &[PAT, PAT], PAT),
+        ("regex_alt", "|", &[PAT, PAT], PAT),
+        // counted repetition — the Integer-typed slot that makes the kingdom
+        // genuinely multi-typed (`docs/PLAN_multityped_gep.md`).
+        ("regex_rep_n", "{n}", &[PAT, INT], PAT),
+        ("regex_rep_upto", "{0,k}", &[PAT, INT], PAT),
+        // ---- coercions / class algebra ----
+        // a CharClass or a Char used as a Pattern (match one byte of it).
+        ("regex_class_of", "class_of", &[CC], PAT),
+        ("regex_lit", "lit", &[CH], PAT),
+        ("regex_cc_range", "a-z", &[CH, CH], CC),
+        ("regex_cc_union", "cc_union", &[CC, CC], CC),
+        ("regex_cc_negate", "^CC", &[CC], CC),
+    ];
+    ROWS
+}
+
 /// THE REGEX KINGDOM — the regex AST operators as typed symbols. A gene decodes
 /// to a regex AST (every operator arity ≤ 2, the decoder's limit), which the GPU
 /// compile kernel lowers to the Thompson VM. The types make an ill-typed regex
@@ -470,7 +515,6 @@ pub fn typed_depth_table() -> SymbolTable {
 /// it is not a row here — it enters via the RNC mechanism, like SR's constants.
 pub fn regex_table() -> SymbolTable {
     let mut t = SymbolTable::new();
-    let pat = Ty::Pattern;
     // (semantic_id, alias, inputs, output). Inputs are the typed child slots in
     // order; an empty input list is a terminal.
     //
@@ -482,37 +526,7 @@ pub fn regex_table() -> SymbolTable {
     // in a Pattern slot IS a one-byte pattern, so a separate `lit(Char)->Pattern`
     // would be the one symbol whose child slot the all-`?` tail cannot always
     // fill, breaking GEP's "all offspring are valid programs" guarantee.
-    let cc = Ty::CharClass;
-    let ch = Ty::Char;
-    let int = Ty::I;
-    let rows: &[(&str, &str, &[Ty], Ty)] = &[
-        // ---- Pattern terminals (arity 0) ----
-        ("regex_dot", ".", &[], pat),
-        ("regex_anchor_start", "^", &[], pat),
-        ("regex_anchor_end", "$", &[], pat),
-        ("regex_empty", "", &[], pat),
-        // ---- CharClass terminals (arity 0) — the built-in classes ----
-        ("regex_cc_digit", r"\d", &[], cc),
-        ("regex_cc_word", r"\w", &[], cc),
-        ("regex_cc_space", r"\s", &[], cc),
-        // ---- Pattern ops ----
-        ("regex_star", "*", &[pat], pat),
-        ("regex_plus", "+", &[pat], pat),
-        ("regex_opt", "?", &[pat], pat),
-        ("regex_concat", "concat", &[pat, pat], pat),
-        ("regex_alt", "|", &[pat, pat], pat),
-        // counted repetition — the Integer-typed slot that makes the kingdom
-        // genuinely multi-typed (`docs/PLAN_multityped_gep.md`).
-        ("regex_rep_n", "{n}", &[pat, int], pat),
-        ("regex_rep_upto", "{0,k}", &[pat, int], pat),
-        // ---- coercions / class algebra ----
-        // a CharClass or a Char used as a Pattern (match one byte of it).
-        ("regex_class_of", "class_of", &[cc], pat),
-        ("regex_lit", "lit", &[ch], pat),
-        ("regex_cc_range", "a-z", &[ch, ch], cc),
-        ("regex_cc_union", "cc_union", &[cc, cc], cc),
-        ("regex_cc_negate", "^cc", &[cc], cc),
-    ];
+    let rows = regex_rows();
     for (i, (sem, alias, ins, out)) in rows.iter().enumerate() {
         let mut arity = Arity::default();
         for &inp in *ins {
