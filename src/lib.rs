@@ -38,6 +38,8 @@ pub mod population_dag;
 pub mod geneframe;
 pub mod kingdom_contract;
 pub mod typed_gep;
+#[cfg(test)]
+mod typed_gep_tests;
 // GPU batch evaluator. The module (opcodes, batch layout, WGSL source) always
 // compiles so its tests run on any machine; only the wgpu device code is
 // behind `feature = "gpu"`.
