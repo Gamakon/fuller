@@ -19,7 +19,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation
     if ((((wid.x * 16u) + lid.x) < cfg.d)) {
     f0 = phi[(((t + lid.y) * cfg.d) + ((wid.x * 16u) + lid.x))];
     }
-    if (((((wid.y * 16u) + lid.x) < cfg.r_rows) && ((cfg.r_off + ((wid.y * 16u) + lid.x)) < cfg.d))) {
+    if (((((wid.y * 16u) + lid.x) < cfg.r_rows) & ((cfg.r_off + ((wid.y * 16u) + lid.x)) < cfg.d))) {
     f1 = phi[(((t + lid.y) * cfg.d) + (cfg.r_off + ((wid.y * 16u) + lid.x)))];
     }
     }
@@ -31,5 +31,5 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation
     }
     workgroupBarrier();
     }
-    if (((gid.y * 1u)) < cfg.r_rows && ((gid.x * 1u)) < cfg.d && (cfg.r_off + ((gid.y * 1u))) < cfg.d) { h[(((gid.y * 1u)) * cfg.d + ((gid.x * 1u)))] = h[(((gid.y * 1u)) * cfg.d + ((gid.x * 1u)))] + f2; }
+    if ((((gid.y * 1u)) < cfg.r_rows) & (((gid.x * 1u)) < cfg.d) & ((cfg.r_off + ((gid.y * 1u))) < cfg.d)) { h[(((gid.y * 1u)) * cfg.d + ((gid.x * 1u)))] = h[(((gid.y * 1u)) * cfg.d + ((gid.x * 1u)))] + f2; }
 }

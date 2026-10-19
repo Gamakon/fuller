@@ -26,7 +26,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation
     var pm: array<bool, 16>;
     var pn: array<bool, 16>;
     for (k = 0u; k < 4u; k = k + 1u) {
-    pm[((k) & 15u)] = ((((gid.y * 4u) + min(k, 3u)) < cfg.r_rows) && ((cfg.r_off + ((gid.y * 4u) + min(k, 3u))) < cfg.d));
+    pm[((k) & 15u)] = ((((gid.y * 4u) + min(k, 3u)) < cfg.r_rows) & ((cfg.r_off + ((gid.y * 4u) + min(k, 3u))) < cfg.d));
     pi[((k) & 15u)] = (cfg.r_off + ((gid.y * 4u) + min(k, 3u)));
     pn[((k) & 15u)] = (((gid.x * 4u) + min(k, 3u)) < cfg.d);
     }
@@ -36,6 +36,14 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation
     for (t = 0u; t < min((select(((cfg.m + 1u)) - (4u), 0u, (4u) > ((cfg.m + 1u)))), 16777216u); t = t + 4u) {
     i0 = 0u;
     for (k = 0u; k < 4u; k = k + 1u) {
+    pb[0u] = 0.0f;
+    pb[1u] = 0.0f;
+    pb[2u] = 0.0f;
+    pb[3u] = 0.0f;
+    pc[0u] = 0.0f;
+    pc[1u] = 0.0f;
+    pc[2u] = 0.0f;
+    pc[3u] = 0.0f;
     i1 = 0u;
     for (k2 = 0u; k2 < 4u; k2 = k2 + 1u) {
     pb[((k2) & 63u)] = select(0.0f, phi[(((t + k) * cfg.d) + pi[((k2) & 15u)])], pm[((k2) & 15u)]);
@@ -51,6 +59,14 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation
     }
     }
     for (; t < cfg.m; t = t + 1u) {
+    pd[0u] = 0.0f;
+    pd[1u] = 0.0f;
+    pd[2u] = 0.0f;
+    pd[3u] = 0.0f;
+    pe[0u] = 0.0f;
+    pe[1u] = 0.0f;
+    pe[2u] = 0.0f;
+    pe[3u] = 0.0f;
     i4 = 0u;
     for (k = 0u; k < 4u; k = k + 1u) {
     pd[((k) & 63u)] = select(0.0f, phi[((t * cfg.d) + pi[((k) & 15u)])], pm[((k) & 15u)]);
@@ -69,7 +85,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation
     i7 = 0u;
     for (k2 = 0u; k2 < 4u; k2 = k2 + 1u) {
     if ((((gid.x * 4u) + min(k2, 3u)) < cfg.d)) {
-    if ((((gid.y * 4u) + min(k, 3u))) < cfg.r_rows && (((gid.x * 4u) + min(k2, 3u))) < cfg.d && (cfg.r_off + (((gid.y * 4u) + min(k, 3u)))) < cfg.d) { h[((((gid.y * 4u) + min(k, 3u))) * cfg.d + (((gid.x * 4u) + min(k2, 3u))))] = h[((((gid.y * 4u) + min(k, 3u))) * cfg.d + (((gid.x * 4u) + min(k2, 3u))))] + pa[((((k * 4u) + k2)) & 63u)]; }
+    if (((((gid.y * 4u) + min(k, 3u))) < cfg.r_rows) & ((((gid.x * 4u) + min(k2, 3u))) < cfg.d) & ((cfg.r_off + (((gid.y * 4u) + min(k, 3u)))) < cfg.d)) { h[((((gid.y * 4u) + min(k, 3u))) * cfg.d + (((gid.x * 4u) + min(k2, 3u))))] = h[((((gid.y * 4u) + min(k, 3u))) * cfg.d + (((gid.x * 4u) + min(k2, 3u))))] + pa[((((k * 4u) + k2)) & 63u)]; }
     }
     }
     }

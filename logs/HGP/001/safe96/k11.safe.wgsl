@@ -26,7 +26,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation
     f0 = 0.0f;
     f1 = 0.0f;
     if (((t + ((((lid.y * 16u) + lid.x)) >> ((5u) & 31u))) < cfg.m)) {
-    if (((((wid.y * 32u) + ((((lid.y * 16u) + lid.x)) & (31u))) < cfg.r_rows) && ((cfg.r_off + ((wid.y * 32u) + ((((lid.y * 16u) + lid.x)) & (31u)))) < cfg.d))) {
+    if (((((wid.y * 32u) + ((((lid.y * 16u) + lid.x)) & (31u))) < cfg.r_rows) & ((cfg.r_off + ((wid.y * 32u) + ((((lid.y * 16u) + lid.x)) & (31u)))) < cfg.d))) {
     f0 = phi[(((t + ((((lid.y * 16u) + lid.x)) >> ((5u) & 31u))) * cfg.d) + (cfg.r_off + ((wid.y * 32u) + ((((lid.y * 16u) + lid.x)) & (31u)))))];
     }
     if ((((wid.x * 32u) + ((((lid.y * 16u) + lid.x)) & (31u))) < cfg.d)) {
@@ -49,10 +49,11 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation
     workgroupBarrier();
     }
     for (k = 0u; k < 2u; k = k + 1u) {
-    if (((((wid.y * 32u + lid.y) + min(k, 1u) * 16u) < cfg.r_rows) && ((cfg.r_off + ((wid.y * 32u + lid.y) + min(k, 1u) * 16u)) < cfg.d))) {
+    if (((((wid.y * 32u + lid.y) + min(k, 1u) * 16u) < cfg.r_rows) & ((cfg.r_off + ((wid.y * 32u + lid.y) + min(k, 1u) * 16u)) < cfg.d))) {
     i0 = 0u;
     for (k2 = 0u; k2 < 2u; k2 = k2 + 1u) {
     if ((((wid.x * 32u + lid.x) + min(k2, 1u) * 16u) < cfg.d)) {
+    f10 = 0.0f;
     if ((k == 0u)) {
     if ((k2 == 0u)) {
     f10 = f6;
@@ -66,7 +67,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation
     f10 = f9;
     }
     }
-    if ((((wid.y * 32u + lid.y) + min(k, 1u) * 16u)) < cfg.r_rows && (((wid.x * 32u + lid.x) + min(k2, 1u) * 16u)) < cfg.d && (cfg.r_off + (((wid.y * 32u + lid.y) + min(k, 1u) * 16u))) < cfg.d) { h[((((wid.y * 32u + lid.y) + min(k, 1u) * 16u)) * cfg.d + (((wid.x * 32u + lid.x) + min(k2, 1u) * 16u)))] = h[((((wid.y * 32u + lid.y) + min(k, 1u) * 16u)) * cfg.d + (((wid.x * 32u + lid.x) + min(k2, 1u) * 16u)))] + f10; }
+    if (((((wid.y * 32u + lid.y) + min(k, 1u) * 16u)) < cfg.r_rows) & ((((wid.x * 32u + lid.x) + min(k2, 1u) * 16u)) < cfg.d) & ((cfg.r_off + (((wid.y * 32u + lid.y) + min(k, 1u) * 16u))) < cfg.d)) { h[((((wid.y * 32u + lid.y) + min(k, 1u) * 16u)) * cfg.d + (((wid.x * 32u + lid.x) + min(k2, 1u) * 16u)))] = h[((((wid.y * 32u + lid.y) + min(k, 1u) * 16u)) * cfg.d + (((wid.x * 32u + lid.x) + min(k2, 1u) * 16u)))] + f10; }
     }
     }
     }

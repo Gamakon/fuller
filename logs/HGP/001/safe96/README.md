@@ -12,3 +12,9 @@ reader reads them.
   payload token typed by u32.payload), the same way:
   `wgsl_safe_convert gen0 --out safe96 --karva safe96/karva --head 32 --slots 96`.
   The dumps before it are in safe96/karva_2026-10-17_pre_5a966f3.
+- 2026-10-19 14:02Z: re-encoded at fuller d833f0a on branch naga-wgpu-30
+  (naga and wgpu 30.0.1: a loop-local var zeroed at each pass reads as its
+  zero sets; logic rows written `&`/`|`), in the naga-30 worktree (its own
+  copy of this set; main's is unchanged):
+  `wgsl_safe_convert gen0 --out safe96 --karva safe96/karva --head 32 --slots 96`.
+  The dumps before it are in safe96/karva_2026-10-19_pre_d833f0a.

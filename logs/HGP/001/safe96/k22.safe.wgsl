@@ -27,7 +27,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation
     if ((((wid.x * 32u) + (((((lid.y * 8u) + lid.x) + (k * 64u))) & (31u))) < cfg.d)) {
     f0 = phi[(((t + (((((lid.y * 8u) + lid.x) + (k * 64u))) >> ((5u) & 31u))) * cfg.d) + ((wid.x * 32u) + (((((lid.y * 8u) + lid.x) + (k * 64u))) & (31u))))];
     }
-    if (((((wid.y * 32u) + (((((lid.y * 8u) + lid.x) + (k * 64u))) & (31u))) < cfg.r_rows) && ((cfg.r_off + ((wid.y * 32u) + (((((lid.y * 8u) + lid.x) + (k * 64u))) & (31u)))) < cfg.d))) {
+    if (((((wid.y * 32u) + (((((lid.y * 8u) + lid.x) + (k * 64u))) & (31u))) < cfg.r_rows) & ((cfg.r_off + ((wid.y * 32u) + (((((lid.y * 8u) + lid.x) + (k * 64u))) & (31u)))) < cfg.d))) {
     f1 = phi[(((t + (((((lid.y * 8u) + lid.x) + (k * 64u))) >> ((5u) & 31u))) * cfg.d) + (cfg.r_off + ((wid.y * 32u) + (((((lid.y * 8u) + lid.x) + (k * 64u))) & (31u)))))];
     }
     }
@@ -48,16 +48,16 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation
     if ((((gid.y * 4u) + min(k, 3u)) < cfg.r_rows)) {
     v1 = pv[((k) & 15u)];
     if (((gid.x * 4u) < cfg.d)) {
-    if ((((gid.y * 4u) + min(k, 3u))) < cfg.r_rows && ((gid.x * 4u)) < cfg.d && (cfg.r_off + (((gid.y * 4u) + min(k, 3u)))) < cfg.d) { h[((((gid.y * 4u) + min(k, 3u))) * cfg.d + ((gid.x * 4u)))] = h[((((gid.y * 4u) + min(k, 3u))) * cfg.d + ((gid.x * 4u)))] + v1.x; }
+    if (((((gid.y * 4u) + min(k, 3u))) < cfg.r_rows) & (((gid.x * 4u)) < cfg.d) & ((cfg.r_off + (((gid.y * 4u) + min(k, 3u)))) < cfg.d)) { h[((((gid.y * 4u) + min(k, 3u))) * cfg.d + ((gid.x * 4u)))] = h[((((gid.y * 4u) + min(k, 3u))) * cfg.d + ((gid.x * 4u)))] + v1.x; }
     }
     if ((((gid.x * 4u) + 1u) < cfg.d)) {
-    if ((((gid.y * 4u) + min(k, 3u))) < cfg.r_rows && (((gid.x * 4u) + 1u)) < cfg.d && (cfg.r_off + (((gid.y * 4u) + min(k, 3u)))) < cfg.d) { h[((((gid.y * 4u) + min(k, 3u))) * cfg.d + (((gid.x * 4u) + 1u)))] = h[((((gid.y * 4u) + min(k, 3u))) * cfg.d + (((gid.x * 4u) + 1u)))] + v1.y; }
+    if (((((gid.y * 4u) + min(k, 3u))) < cfg.r_rows) & ((((gid.x * 4u) + 1u)) < cfg.d) & ((cfg.r_off + (((gid.y * 4u) + min(k, 3u)))) < cfg.d)) { h[((((gid.y * 4u) + min(k, 3u))) * cfg.d + (((gid.x * 4u) + 1u)))] = h[((((gid.y * 4u) + min(k, 3u))) * cfg.d + (((gid.x * 4u) + 1u)))] + v1.y; }
     }
     if ((((gid.x * 4u) + 2u) < cfg.d)) {
-    if ((((gid.y * 4u) + min(k, 3u))) < cfg.r_rows && (((gid.x * 4u) + 2u)) < cfg.d && (cfg.r_off + (((gid.y * 4u) + min(k, 3u)))) < cfg.d) { h[((((gid.y * 4u) + min(k, 3u))) * cfg.d + (((gid.x * 4u) + 2u)))] = h[((((gid.y * 4u) + min(k, 3u))) * cfg.d + (((gid.x * 4u) + 2u)))] + v1.z; }
+    if (((((gid.y * 4u) + min(k, 3u))) < cfg.r_rows) & ((((gid.x * 4u) + 2u)) < cfg.d) & ((cfg.r_off + (((gid.y * 4u) + min(k, 3u)))) < cfg.d)) { h[((((gid.y * 4u) + min(k, 3u))) * cfg.d + (((gid.x * 4u) + 2u)))] = h[((((gid.y * 4u) + min(k, 3u))) * cfg.d + (((gid.x * 4u) + 2u)))] + v1.z; }
     }
     if ((((gid.x * 4u) + 3u) < cfg.d)) {
-    if ((((gid.y * 4u) + min(k, 3u))) < cfg.r_rows && (((gid.x * 4u) + 3u)) < cfg.d && (cfg.r_off + (((gid.y * 4u) + min(k, 3u)))) < cfg.d) { h[((((gid.y * 4u) + min(k, 3u))) * cfg.d + (((gid.x * 4u) + 3u)))] = h[((((gid.y * 4u) + min(k, 3u))) * cfg.d + (((gid.x * 4u) + 3u)))] + v1.w; }
+    if (((((gid.y * 4u) + min(k, 3u))) < cfg.r_rows) & ((((gid.x * 4u) + 3u)) < cfg.d) & ((cfg.r_off + (((gid.y * 4u) + min(k, 3u)))) < cfg.d)) { h[((((gid.y * 4u) + min(k, 3u))) * cfg.d + (((gid.x * 4u) + 3u)))] = h[((((gid.y * 4u) + min(k, 3u))) * cfg.d + (((gid.x * 4u) + 3u)))] + v1.w; }
     }
     }
     }
