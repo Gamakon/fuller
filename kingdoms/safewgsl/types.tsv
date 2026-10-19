@@ -191,3 +191,4 @@ T189	parr64<u32>.index	parr64<u32>	index	0	0u	0	0	0	a private array of 64 u32: p
 T190	reg<vec2<f32>>.real	reg<vec2<f32>>	real	2	0.0	0	0	0	a named vec2<f32> register: w0..w7 (a helper's two sums returned together)	-
 T191	parr64<vec4<f32>>.real	parr64<vec4<f32>>	real	0	0.0	0	0	0	a private array of 64 vec4<f32>: pvq, pvr (a query's 32 vec4 lanes held in registers)	-
 T192	u32.payload	u32	payload	1	256 (the knob itself)	256	0	0	a knob reference's payload (fuller params.rs): the constant of a literal.p_* row, the knob times payload / 256; its own dual so a point mutation cannot swap a knob reference for an index literal (seed01's mutant 616, 2026-10-17); no row outputs it	1..=1048576
+T193	wgmem<i32>.int	wgmem<i32>	int	0	0	0	0	0	a workgroup-memory array of i32: na, nb	-

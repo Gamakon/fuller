@@ -407,6 +407,8 @@ def build_types():
     add("parr64<vec4<f32>>", "real", 0, "a private array of 64 vec4<f32>: pvq, pvr (a query's 32 vec4 lanes held in registers)")
     # A knob reference's payload (2026-10-17): the dual of a literal.p_* row's constant.
     add("u32", "payload", 1, FORMS["payload"][0])
+    # Workgroup arrays of i32 (2026-10-19, run 4's seeds 14 and 29: quantised int8 values staged in i32).
+    add("wgmem<i32>", "int", 0, "a workgroup-memory array of i32: na, nb")
     return rows
 
 
@@ -1399,6 +1401,16 @@ for op in ("argmax", "argmin"):
 # counters in workgroup memory: a search's candidate count, its ties, a slot) ----
 for n in ("au_c", "au_d"):
     f("wg", n, "composite", [], "wgmem<atomic<u32>>.index", f"workgroup array wg_{n} of atomic<u32>")
+# ---- workgroup arrays of i32 (2026-10-19, run 4's seeds 14 and 29 stage int8-quantised values in i32 arrays
+# in workgroup memory): two arrays na, nb of 2,048 by default, indexed as the f32 and u32 arrays are ----
+for n in ("na", "nb"):
+    f("wg", n, "composite", [], "wgmem<i32>.int", f"workgroup array wg_{n} of i32")
+f("wg", "get_n_safe", "composite", ["wgmem<i32>.int", "u32.wgindex"], "i32.int", "a[i], in range by its type")
+for r in RUNGS + RUNGS5:
+    f("wg", "set_n_" + r, "composite", ["wgmem<i32>.int", "u32.wgindex", "i32.int"], "stmt." + r, "arity 3: a[i] = v")
+f("wg", "decl_n", "composite", ["wgmem<i32>.int", "u32.wglen"], "wg.decl", "var<workgroup> a: array<i32, n>")
+for r in ("L0", "L1", "L2", "L3", "L4", "L5"):
+    f("wg", "put_n_" + r, "composite", ["wgmem<i32>.int", "u32.wgown", "i32.int"], "stmt." + r, "arity 3: barrier; if (i < len) { na[i] = v; } barrier")
 
 def write_tsv(path, header, rows):
     with open(path, "w") as out:

@@ -2694,6 +2694,7 @@ impl<'a> Ctx<'a> {
             "atomic<i32>" => &["wg.ai_a", "wg.ai_b"],
             "f32.real" => &["wg.a", "wg.b", "wg.c", "wg.d", "wg.e", "wg.f", "wg.g", "wg.h"],
             "vec2<f32>.real" => &["wg.v2a", "wg.v2b", "wg.v2c", "wg.v2d"],
+            "i32.int" => &["wg.na", "wg.nb"],
             "u32.index" => &["wg.ua", "wg.ub", "wg.uc", "wg.ud", "wg.ue", "wg.uf", "wg.ug", "wg.uh", "wg.ui", "wg.uj", "wg.uk", "wg.ul"],
             "vec4<f32>.real" => &["wg.va", "wg.vb", "wg.vc", "wg.vd"],
             other => return Err(format!("a workgroup array {name} of {other} has no safe spelling")),
@@ -2990,6 +2991,9 @@ impl<'a> Ctx<'a> {
         }
         if which.starts_with("wg.u") {
             return ("safe.wg_of", "u32.wgindex", "wgmem<u32>.index", "wg.get_u_safe", "wg.set_u");
+        }
+        if which.starts_with("wg.n") {
+            return ("safe.wg_of", "u32.wgindex", "wgmem<i32>.int", "wg.get_n_safe", "wg.set_n");
         }
         if which.starts_with("wg.v") {
             ("safe.wgv_of", "u32.wgvindex", "wgmem<vec4<f32>>.real", "wg.get_v_safe", "wg.set_v")
@@ -3678,6 +3682,7 @@ impl<'a> Ctx<'a> {
                 "wg.set_v" => "wg.put_v",
                 "wg.set_v2" => "wg.put_v2",
                 "wg.set_u" => "wg.put_u",
+                "wg.set_n" => "wg.put_n",
                 _ => return None,
             };
             let [arr, idx, v] = set.kids.as_slice() else { return None };
@@ -6434,6 +6439,8 @@ fn read_entry_under(at: &Reading, ep: usize, grid: (u32, u32, u32, u32), preset:
                     ("wg.decl_v2", "wgmem<vec2<f32>>.real")
                 } else if which.starts_with("wg.u") {
                     ("wg.decl_u", "wgmem<u32>.index")
+                } else if which.starts_with("wg.n") {
+                    ("wg.decl_n", "wgmem<i32>.int")
                 } else if which.starts_with("wg.v") {
                     ("wg.decl_v4", "wgmem<vec4<f32>>.real")
                 } else {

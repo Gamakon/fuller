@@ -1404,7 +1404,7 @@ impl<'a> Checker<'a> {
         }
         let base = safe_base(&n.name);
         let (Some(array), Some(idx)) = (n.kids.first(), n.kids.get(1)) else { return };
-        let wg = matches!(base, "wg.get_safe" | "wg.get_v_safe" | "wg.get_v2_safe" | "wg.get_u_safe" | "wg.get_v_lane" | "wg.set_safe" | "wg.set_v_lane" | "wg.get" | "wg.set") || base.starts_with("atomic.");
+        let wg = matches!(base, "wg.get_safe" | "wg.get_v_safe" | "wg.get_v2_safe" | "wg.get_u_safe" | "wg.get_n_safe" | "wg.get_v_lane" | "wg.set_safe" | "wg.set_v_lane" | "wg.get" | "wg.set") || base.starts_with("atomic.");
         let parr = matches!(base, "parr.get_f" | "parr.get_v" | "parr.get_i" | "parr.get_b" | "parr.get_t" | "parr.get_v_lane" | "parr.set_safe" | "parr.set_v_lane");
         let (var, len) = if wg {
             let Ok(var) = wgmem_var(self.kingdom, array) else { return };

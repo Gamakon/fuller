@@ -931,8 +931,9 @@ mod tests {
         // 187 with the module of several entry points (kernel.module, 2026-10-17); 188 with bool.uflag;
         // 189 with the 64-element u32 private array (parr64<u32>.index); 190 with the vec2<f32>
         // register (reg<vec2<f32>>.real); 191 with the 64-element vec4 private array; 192
-        // with the knob payload (u32.payload, a literal.p_* row's constant).
-        assert_eq!(s.len(), 192);
+        // with the knob payload (u32.payload, a literal.p_* row's constant); 193 with the i32
+        // workgroup arrays (wgmem<i32>.int, run 4's seeds, 2026-10-19).
+        assert_eq!(s.len(), 193);
         for (a, b) in w.iter().zip(&s) {
             assert_eq!((a.reference.as_str(), a.dual.as_str()), (b.reference.as_str(), b.dual.as_str()));
         }
@@ -980,8 +981,9 @@ mod tests {
         // 1,729 with uniform.of_checked; 1,741 with the uniform loads (wg.uload_i, wg.uload_f at L0..L5);
         // 1,756 with the 64-element vec4 private arrays (parr.vq, parr.vr, their get and 12 sets);
         // 1,768 with the argmax and argmin reductions (wg.reduce_argmax/argmin at L0..L5); 1,770 with
-        // two more atomic<u32> workgroup arrays (wg.au_c, wg.au_d, run 4's seeds, 2026-10-19).
-        assert_eq!(fs.rows.len(), 1770);
+        // two more atomic<u32> workgroup arrays (wg.au_c, wg.au_d, run 4's seeds, 2026-10-19); 1,792
+        // with the i32 workgroup arrays (wg.na, wg.nb, wg.get_n_safe, 12 wg.set_n, wg.decl_n, 6 wg.put_n).
+        assert_eq!(fs.rows.len(), 1792);
         let dual = |t: Ty| k.dual(t).unwrap().dual.clone();
         let producers = |d: &str| -> Vec<String> { k.rows.iter().filter(|r| dual(r.output) == d).map(|r| r.name.clone()).collect() };
         assert_eq!(producers("kernel.safe"), vec!["kernel.entry_safe"]);

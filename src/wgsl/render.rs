@@ -1867,6 +1867,8 @@ pub fn wgmem_var(kingdom: &WgslKingdom, w: &Tree) -> Result<&'static str, String
             "wg_v2a"
         } else if d.starts_with("wgmem<u32>") {
             "wg_ua"
+        } else if d.starts_with("wgmem<i32>") {
+            "wg_na"
         } else if d.starts_with("wgmem<atomic<u32>") {
             "wg_au_a"
         } else if d.starts_with("wgmem<atomic<i32>") {
@@ -1906,6 +1908,8 @@ pub fn wgmem_var(kingdom: &WgslKingdom, w: &Tree) -> Result<&'static str, String
         "wg.ul" => "wg_ul",
         "wg.au_a" => "wg_au_a",
         "wg.au_b" => "wg_au_b",
+        "wg.na" => "wg_na",
+        "wg.nb" => "wg_nb",
         "wg.au_c" => "wg_au_c",
         "wg.au_d" => "wg_au_d",
         "wg.ai_a" => "wg_ai_a",
@@ -1943,7 +1947,7 @@ pub fn workgroup_plan_requested(kingdom: &WgslKingdom, grid: &Tree, root: &Tree)
 
 /// [`workgroup_plan_requested`] over the arrays `only` names when given.
 fn workgroup_plan_requested_of(kingdom: &WgslKingdom, grid: &Tree, root: &Tree, only: Option<&BTreeSet<String>>) -> Result<BTreeMap<String, (String, u32)>, String> {
-    let elem_of = |var: &str| if var.starts_with("wg_au") { "atomic<u32>" } else if var.starts_with("wg_ai") { "atomic<i32>" } else if var.starts_with("wg_u") { "u32" } else if var.starts_with("wg_v2") { "vec2<f32>" } else if var.starts_with("wg_v") { "vec4<f32>" } else { "f32" };
+    let elem_of = |var: &str| if var.starts_with("wg_au") { "atomic<u32>" } else if var.starts_with("wg_ai") { "atomic<i32>" } else if var.starts_with("wg_u") { "u32" } else if var.starts_with("wg_n") { "i32" } else if var.starts_with("wg_v2") { "vec2<f32>" } else if var.starts_with("wg_v") { "vec4<f32>" } else { "f32" };
     let default_len = |var: &str| if var.starts_with("wg_au") || var.starts_with("wg_ai") || var.starts_with("wg_v2") { 1024 } else if var.starts_with("wg_v") { WGVEC_LEN } else { WGMEM_LEN };
     let mut declared: Vec<(String, u32)> = Vec::new();
     if grid.name == "grid.with_wg" && grid.kids.len() == 2 {
@@ -2205,7 +2209,7 @@ impl Renderer<'_> {
                     (other, k) => return Err(format!("atomic.{other} with {k} children")),
                 });
             }
-            "wg.get_safe" | "wg.get_v_safe" | "wg.get_v2_safe" | "wg.get_u_safe" => {
+            "wg.get_safe" | "wg.get_v_safe" | "wg.get_v2_safe" | "wg.get_u_safe" | "wg.get_n_safe" => {
                 let a = self.wgmem(&v.kids[0])?;
                 let len = self.wg_len(a, scope);
                 return Ok(format!("{a}[{}]", self.index_text(&v.kids[1], len, scope)?));
@@ -2980,8 +2984,8 @@ pub fn safe_base(name: &str) -> &str {
         if let Some(stem) = name.strip_suffix(rung) {
             return match stem {
                 "store.h" => "store.h_safe",
-                "wg.set" | "wg.set_v" | "wg.set_v2" | "wg.set_u" => "wg.set_safe",
-                "wg.put" | "wg.put_v" | "wg.put_v2" | "wg.put_u" => "wg.put",
+                "wg.set" | "wg.set_v" | "wg.set_v2" | "wg.set_u" | "wg.set_n" => "wg.set_safe",
+                "wg.put" | "wg.put_v" | "wg.put_v2" | "wg.put_u" | "wg.put_n" => "wg.put",
                 "parr.set_f" | "parr.set_v" | "parr.set_i" | "parr.set_b" | "parr.set_t" => "parr.set_safe",
                 "reg.set_v_lane" => "reg.set_v_lane",
                 "wg.set_v_lane" => "wg.set_v_lane",
@@ -3159,7 +3163,7 @@ pub fn register_declarations_for(body: &str) -> String {
 /// The length of a workgroup or private array by its variable name.
 pub fn array_len(name: &str) -> u32 {
     match name {
-        "wg_a" | "wg_b" | "wg_c" | "wg_d" | "wg_e" | "wg_f" | "wg_g" | "wg_h" | "wg_ua" | "wg_ub" | "wg_uc" | "wg_ud" | "wg_ue" | "wg_uf" | "wg_ug" | "wg_uh" | "wg_ui" | "wg_uj" | "wg_uk" | "wg_ul" => WGMEM_LEN,
+        "wg_a" | "wg_b" | "wg_c" | "wg_d" | "wg_e" | "wg_f" | "wg_g" | "wg_h" | "wg_ua" | "wg_ub" | "wg_uc" | "wg_ud" | "wg_ue" | "wg_uf" | "wg_ug" | "wg_uh" | "wg_ui" | "wg_uj" | "wg_uk" | "wg_ul" | "wg_na" | "wg_nb" => WGMEM_LEN,
         n if n.starts_with("wg_v2") => 1024,
         n if n.starts_with("wg_v") => WGVEC_LEN,
         "pa" | "pb" | "pc" | "pd" | "pe" | "pf" | "pua" | "puc" | "pvq" | "pvr" => 64,
@@ -3386,7 +3390,10 @@ fn sample_with(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, s
     // differences of spelling, not of reading. With canonical's rule 9 for
     // them (16:50Z), drawn: random trees AST 35, fixpoint 920; modules AST
     // 2, fixpoint 967, legal 125: below the current floors, so not drawn yet.)
-    let not_drawn = |r: &WgslRow| uniform_test_op(safe_base(&r.name)).is_some() || matches!(safe_base(&r.name), "stmt.if_uflag" | "stmt.if_else_uflag") || matches!(r.name.as_str(), "uflag.of_flag" | "uniform.of_checked" | "wg.au_c" | "wg.au_d");
+    // (Nor the i32 workgroup arrays and their rows, 2026-10-19, for the same
+    // reason as wg.au_c and wg.au_d below.)
+    let wg_i32 = |r: &WgslRow| kingdom.dual(r.output).is_some_and(|d| d.dual == "wgmem<i32>.int") || r.inputs.iter().any(|&t| kingdom.dual(t).is_some_and(|d| d.dual == "wgmem<i32>.int"));
+    let not_drawn = |r: &WgslRow| uniform_test_op(safe_base(&r.name)).is_some() || matches!(safe_base(&r.name), "stmt.if_uflag" | "stmt.if_else_uflag") || matches!(r.name.as_str(), "uflag.of_flag" | "uniform.of_checked" | "wg.au_c" | "wg.au_d") || wg_i32(r);
     // (Nor the third and fourth atomic<u32> workgroup arrays, wg.au_c and
     // wg.au_d, 2026-10-19: rows for the seeds that keep more counters; drawn,
     // they move the random floors by draws alone, so they wait for a floor

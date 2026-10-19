@@ -1769,3 +1769,25 @@ F1767	wg	reduce_argmin_L4	composite	wgmem<f32>.real wgmem<u32>.index u32.lit4096
 F1768	wg	reduce_argmin_L5	composite	wgmem<f32>.real wgmem<u32>.index u32.lit4096	stmt.L5	3	v[0..n) and i[0..n) reduced into element 0 by argmin of v, i moving with v: stride halving, barriers in uniform control flow
 F1769	wg	au_c	composite	-	wgmem<atomic<u32>>.index	0	workgroup array wg_au_c of atomic<u32>
 F1770	wg	au_d	composite	-	wgmem<atomic<u32>>.index	0	workgroup array wg_au_d of atomic<u32>
+F1771	wg	na	composite	-	wgmem<i32>.int	0	workgroup array wg_na of i32
+F1772	wg	nb	composite	-	wgmem<i32>.int	0	workgroup array wg_nb of i32
+F1773	wg	get_n_safe	composite	wgmem<i32>.int u32.wgindex	i32.int	2	a[i], in range by its type
+F1774	wg	set_n_L0	composite	wgmem<i32>.int u32.wgindex i32.int	stmt.L0	3	arity 3: a[i] = v
+F1775	wg	set_n_L1	composite	wgmem<i32>.int u32.wgindex i32.int	stmt.L1	3	arity 3: a[i] = v
+F1776	wg	set_n_L2	composite	wgmem<i32>.int u32.wgindex i32.int	stmt.L2	3	arity 3: a[i] = v
+F1777	wg	set_n_L3	composite	wgmem<i32>.int u32.wgindex i32.int	stmt.L3	3	arity 3: a[i] = v
+F1778	wg	set_n_L4	composite	wgmem<i32>.int u32.wgindex i32.int	stmt.L4	3	arity 3: a[i] = v
+F1779	wg	set_n_C0	composite	wgmem<i32>.int u32.wgindex i32.int	stmt.C0	3	arity 3: a[i] = v
+F1780	wg	set_n_C1	composite	wgmem<i32>.int u32.wgindex i32.int	stmt.C1	3	arity 3: a[i] = v
+F1781	wg	set_n_C2	composite	wgmem<i32>.int u32.wgindex i32.int	stmt.C2	3	arity 3: a[i] = v
+F1782	wg	set_n_C3	composite	wgmem<i32>.int u32.wgindex i32.int	stmt.C3	3	arity 3: a[i] = v
+F1783	wg	set_n_C4	composite	wgmem<i32>.int u32.wgindex i32.int	stmt.C4	3	arity 3: a[i] = v
+F1784	wg	set_n_L5	composite	wgmem<i32>.int u32.wgindex i32.int	stmt.L5	3	arity 3: a[i] = v
+F1785	wg	set_n_C5	composite	wgmem<i32>.int u32.wgindex i32.int	stmt.C5	3	arity 3: a[i] = v
+F1786	wg	decl_n	composite	wgmem<i32>.int u32.wglen	wg.decl	2	var<workgroup> a: array<i32, n>
+F1787	wg	put_n_L0	composite	wgmem<i32>.int u32.wgown i32.int	stmt.L0	3	arity 3: barrier; if (i < len) { na[i] = v; } barrier
+F1788	wg	put_n_L1	composite	wgmem<i32>.int u32.wgown i32.int	stmt.L1	3	arity 3: barrier; if (i < len) { na[i] = v; } barrier
+F1789	wg	put_n_L2	composite	wgmem<i32>.int u32.wgown i32.int	stmt.L2	3	arity 3: barrier; if (i < len) { na[i] = v; } barrier
+F1790	wg	put_n_L3	composite	wgmem<i32>.int u32.wgown i32.int	stmt.L3	3	arity 3: barrier; if (i < len) { na[i] = v; } barrier
+F1791	wg	put_n_L4	composite	wgmem<i32>.int u32.wgown i32.int	stmt.L4	3	arity 3: barrier; if (i < len) { na[i] = v; } barrier
+F1792	wg	put_n_L5	composite	wgmem<i32>.int u32.wgown i32.int	stmt.L5	3	arity 3: barrier; if (i < len) { na[i] = v; } barrier

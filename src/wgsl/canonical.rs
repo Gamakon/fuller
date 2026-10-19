@@ -324,6 +324,8 @@ fn canonical_grid(grid: &Tree, root: &Tree, kingdom: &WgslKingdom) -> Option<Tre
             ("wg.decl_v2", "wgmem<vec2<f32>>.real")
         } else if which.starts_with("wg.u") {
             ("wg.decl_u", "wgmem<u32>.index")
+        } else if which.starts_with("wg.n") {
+            ("wg.decl_n", "wgmem<i32>.int")
         } else if which.starts_with("wg.v") {
             ("wg.decl_v4", "wgmem<vec4<f32>>.real")
         } else {
