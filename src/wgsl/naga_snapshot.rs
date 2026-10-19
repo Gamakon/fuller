@@ -2,7 +2,8 @@
 //! docs/PLAN_naga_wgpu_30.md section 3; Codex's review: a count of kernels
 //! read cannot show that roots, holes or trees stayed the same). For every
 //! committed kernel, one JSON line: the scaffold reader's roots per function
-//! (kind, path, point, tree) and the safe reader's tree and interface, or
+//! (kind, path, point, tree) and the safe reader's tree and interface (its
+//! store guard, the emitter's text, left out), or
 //! each one's refusal. `tests/fixtures/reading_snapshot_naga020.jsonl` holds
 //! each line naga 0.20.0 read as its digest ([`digest`]: 1,942 kernels, 55 MB
 //! of readings in full); `examples/wgsl_reading_snapshot` writes either form
@@ -116,7 +117,7 @@ pub fn line(file: &str, text: &str, kingdom: &WgslKingdom) -> serde_json::Value 
         Err(e) => serde_json::json!({ "refused": e }),
     };
     let safe = match crate::wgsl::safe_reader::read_safe(text, kingdom) {
-        Ok(r) => serde_json::json!({ "tree": r.tree.to_sexpr(), "role": format!("{:?}", r.role) }),
+        Ok(r) => serde_json::json!({ "tree": r.tree.to_sexpr(), "role": format!("{:?}", crate::wgsl::render::Role { guard: String::new(), ..r.role }) }),
         Err(e) => serde_json::json!({ "refused": e }),
     };
     let scaffold: serde_json::Value = serde_json::from_str(&renumbered(&scaffold.to_string())).expect("the renumbered reading is JSON");
