@@ -1,6 +1,7 @@
 # Prompt: translate a WGSL kernel into a safeWGSL GEP chromosome
 
-Status: DRAFT for review (2026-10-19). Part A is the fixed header (the same for every call on
+Status: version 2, DRAFT for review (2026-10-19). Version 1 (fuller 46bccc7) was given to Haiku on three
+programs, stored byte for byte in tests/fixtures/gep_translate/; version 2 fixes what those replies showed. Part A is the fixed header (the same for every call on
 one kingdom and problem, so it is the cached prefix); Part B is the per-call challenge. Text
 between `{{` `}}` is filled by the prompt builder from the kingdom's own tables, never typed
 by hand. The design notes at the end are for us, not sent to the model.
@@ -43,6 +44,29 @@ The kingdom's symbols describe a whole compute kernel, statements and expression
   (`parr.set_*`), workgroup arrays (`wg.put_*`), stores to output buffers (`store.*`), atomics,
   `if`, loops, barriers, return. Blocks (`block.seqN_*`, `block.one_*`) sequence 1–4
   statements; longer sequences nest.
+- **An entry point has exactly three children:** `(kernel.entry_safe GRID BODY EPILOGUE)`.
+  - GRID is the workgroup size and the workgroup arrays.
+  - BODY is a `block.*_L0`.
+  - EPILOGUE is a `block.*_O0`, or the terminal `fallback`.
+
+  The epilogue rule:
+  - **The last top-level statement is a store to an output buffer** (possibly inside `if`s
+    and loops that hold no barrier, with nothing after it): that statement is the epilogue,
+    written with the `_O0` rows (`stmt.if_O0`, `store.<buffer>_O0`…), and the body is
+    everything before it.
+  - **Otherwise:** the body ends with the terminal `stmt.return_L0`, and the epilogue is
+    `fallback`.
+  - **An entry point that stores nothing** (only `return;`): its body is
+    `(block.one_L0 stmt.return_L0)` and its epilogue `fallback`.
+- **Blocks hold exactly 1, 2, 3 or 4 statements:** `block.one_<rung>`, `block.seq2_<rung>`,
+  `block.seq3_<rung>`, `block.seq4_<rung>`, with exactly that many children. A sequence of
+  more than four statements is written as its first three statements, then
+  `(stmt.block_<rung> BLOCK)`, where BLOCK holds the rest by the same rule. Seven statements
+  s1 … s7 at rung L1:
+  `(block.seq4_L1 s1 s2 s3 (stmt.block_L1 (block.seq4_L1 s4 s5 s6 s7)))`; eight would be
+  `(block.seq4_L1 s1 s2 s3 (stmt.block_L1 (block.seq4_L1 s4 s5 s6 (stmt.block_L1 (block.seq2_L1 s7 s8)))))`.
+  A `{ … }` block inside the program is opened in place: its statements join the enclosing
+  sequence.
 - **Rungs.** A statement's type says where it stands, so loops and barriers stay legal by
   construction:
   - `L0`: top level. `L1`: inside the item loop. `L2`, `L3`, `L4`: inside one, two or three
@@ -50,8 +74,11 @@ The kingdom's symbols describe a whole compute kernel, statements and expression
   - `C0` … `C4`: the same depths under a condition. No barrier is allowed there.
   - `O0` …: the epilogue.
 
-  A row's name ends with the rung it produces (for example `reg.set_f_C1`). A block's rung
-  must be the rung its parent demands.
+  A row's name ends with the rung it produces (for example `reg.set_f_C1`). Never work a rung
+  out yourself; read it from the table. Every row's signature gives the type of each child,
+  including the rung of a loop's or `if`'s block (`loop.tilex_L1 : u32.boundu, block.L2 ->
+  stmt.L1`: the loop stands at L1 and its body is a block at L2). Write each child at the
+  type its parent's signature demands.
 - **Loops** are rows whose counter is the loop's own (`safe.counter`, `safe.tile_counter`,
   `safe.tile_counter2`…). You never write a counter's increment; the loop row steps it. Loop
   bounds are typed bounds (`bound.*`, `uniform.*`, literal bounds), so every loop terminates.
@@ -79,8 +106,30 @@ Arity-0 symbols:
   workgroup arrays are `wg.a`, `wg.ua`…, declared in the grid.
 - **Counters:** `safe.counter`, `safe.tile_counter`, `safe.tile_counter2`, read through
   `safe.counter_index`, `safe.tile_index` and `safe.tile_index2`.
-- **`fallback`:** the empty slot. Use it only where a parent demands a child you have nothing
-  for (for example the third entry of a two-entry module).
+- **`fallback`:** the empty slot, used for an entry point's missing epilogue (A3).
+
+### A4b. Reading the program's text
+
+The programs you translate were written by this system's renderer from chromosomes, so
+every construct in them is the rendering of one row. **The note column of the symbol table
+(A6) shows the WGSL each row renders to:** match the program's text against those notes.
+The renderer's habits:
+- **Declarations are not statements.** The `var` declarations at the top of an entry point
+  (registers `f0…`, `i0…`, `v0…`, the counters `t`, `k`, `k2`, the private arrays) are not
+  statements; omit them. Name a register by its row (`reg.f0`, `reg.i3`).
+- **Loops.**
+  - `for (t = 0u; t < min(B, 16777216u); t = t + 1u)` is the item loop, with counter `t`
+    (`safe.counter`).
+  - Loops over `k`, `k2`, `k3` are tile loops of depth 1, 2, 3 (`safe.tile_counter`,
+    `safe.tile_counter2`…).
+  - A step other than `+ 1u` is a `_strided` row.
+  - `min(B, 16777216u)` is the renderer's cap: translate B only.
+- **`lit_u32(N)`** is a literal; its form is the one the parent demands at that position.
+- **Masks are rows:** `(x) & 63u` on a private-array index is `safe.pidx64`, and a mask on a
+  workgroup-array index is that array's index row. Translate the masked value inside.
+- **Order is meaning.** Keep each operation's operand order exactly as written.
+
+Write the whole tree, however long. Never shorten, summarise or stop early.
 
 ### A5. The types (duals)
 
@@ -110,7 +159,13 @@ that is not here.
      type, read/write), the cfg fields, the entry-point names, and the rows each one gives
      (`load.keys : index -> vec4<f32>.real`, `load.cfg_n_queries : -> u32.count`, ...) -->
 
-### A8. A worked example
+### A8. Worked examples
+
+A whole kernel (from another problem, with its own bindings), its chromosome, and then a fragment of this problem's kind.
+
+{{FULL_EXAMPLE}}
+
+A fragment:
 
 Program (WGSL):
 
@@ -146,7 +201,7 @@ Points to notice:
 
 ### A9. The format you hand back
 
-Reply with exactly two fenced blocks and nothing else.
+Reply with exactly two fenced blocks and nothing else: no explanation and no working, before or after them.
 
 1. A block tagged `chromosome`, holding one s-expression, the whole kernel's tree:
    - `(name child1 child2 …)` for a symbol of arity ≥ 1, with exactly as many children as its

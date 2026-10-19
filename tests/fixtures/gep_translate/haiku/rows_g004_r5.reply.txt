@@ -1,0 +1,157 @@
+```chromosome
+(kernel.module_2
+  (kernel.entry_safe
+    (grid.of (literal.wgdim 1) (literal.wgdim 1) (literal.blk 1) (literal.blk 1))
+    (block.one_L0 stmt.return_L0)
+    (untranslatable "ingest epilogue: must end in a store of this thread's cell; the program stores nothing"))
+  (kernel.entry_safe
+    (grid.with_wg
+      (grid.of (literal.wgdim 16) (literal.wgdim 1) (literal.blk 1) (literal.blk 1))
+      (wg.decls_cons
+        (wg.decl_f wg.a (literal.wglen 1024))
+        (wg.decls_one (wg.decl_u wg.ua (literal.wglen 1024)))))
+    (block.seq4_L0
+      (loop.tile_L0 (literal.lit64 64)
+        (block.seq2_L2
+          (parr.set_f_L2 parr.a (safe.pidx64 (safe.tile_index safe.tile_counter)) (literal.real -3e38))
+          (parr.set_i_L2 parr.ua (safe.pidx64 (safe.tile_index safe.tile_counter))
+            (index.or (index.mul (literal.index 65535) (literal.index 65536)) (subgroup.inclusive_mul (literal.index 65535))))))
+      (stmt.if_ult_L0 (uniform.wid_x builtin.workgroup_id) uniform.cfg_n_queries
+        (block.seq2_L0
+          (loop.tilex_L0 (bound.of_uniform (uniform.of_lit (literal.lit4096 512)))
+            (block.one_L2
+              (reg.set_f_L2 reg.f0
+                (arith.add (reg.get_f reg.f0)
+                  (geom.dot
+                    (load.queries (index.add (index.mul (index.of_col (axis.x_wid builtin.workgroup_id)) (literal.index 512)) (safe.tile_index safe.tile_counter)))
+                    (load.queries (index.add (index.mul (index.of_col (axis.x_wid builtin.workgroup_id)) (literal.index 512)) (safe.tile_index safe.tile_counter)))))))
+          (loop.tilex_strided_L0 (bound.of_uniform uniform.cfg_arrived_end) (literal.lit4096 16)
+            (block.one_L2
+              (stmt.if_L2
+                (compare.lt (index.add (safe.tile_index safe.tile_counter) (index.of_col (axis.x_lid builtin.local_invocation_id))) (index.of_count load.cfg_arrived_end))
+                (block.seq4_C2
+                  (reg.set_f_C2 reg.f1 (literal.real 0))
+                  (reg.set_f_C2 reg.f2 (literal.real 0))
+                  (loop.tilex_C2 (bound.x_of_uniform (uniform.of_lit (literal.lit4096 512)))
+                    (block.seq3_C3
+                      (reg.set_v_C3 reg.v0
+                        (load.keys (index.add (index.mul (index.and (index.add (safe.tile_index safe.tile_counter) (index.of_col (axis.x_lid builtin.local_invocation_id))) (literal.index 524287)) (literal.index 512)) (safe.tile_index2 safe.tile_counter2))))
+                      (reg.set_f_C3 reg.f1
+                        (arith.add (reg.get_f reg.f1)
+                          (geom.dot (reg.get_v reg.v0) (load.queries (index.add (index.mul (index.of_col (axis.x_wid builtin.workgroup_id)) (literal.index 512)) (safe.tile_index2 safe.tile_counter2))))))
+                      (reg.set_f_C3 reg.f2
+                        (arith.add (reg.get_f reg.f2)
+                          (geom.dot (reg.get_v reg.v0) (reg.get_v reg.v0))))))
+                  (stmt.block_C2
+                    (block.seq3_C2
+                      (reg.set_f_C2 reg.f3 (literal.real -3e38))
+                      (stmt.if_C2
+                        (compare.gt (arith.sqrt (arith.mul (reg.get_f reg.f0) (reg.get_f reg.f2))) (literal.real 0))
+                        (block.one_C2
+                          (reg.set_f_C2 reg.f3
+                            (arith.div (reg.get_f reg.f1) (arith.sqrt (arith.mul (reg.get_f reg.f0) (reg.get_f reg.f2)))))))
+                      (stmt.if_C2
+                        (compare.gt (reg.get_f reg.f3) (parr.get_f parr.a (safe.pidx64 (literal.index 63))))
+                        (block.seq3_C2
+                          (reg.set_f_C2 reg.f4 (reg.get_f reg.f3))
+                          (reg.set_i_C2 reg.i1 (index.add (safe.tile_index safe.tile_counter) (index.of_col (axis.x_lid builtin.local_invocation_id))))
+                          (loop.tile_C2 (literal.lit64 64)
+                            (block.one_C3
+                              (stmt.if_C3
+                                (compare.gt (reg.get_f reg.f4) (parr.get_f parr.a (safe.pidx64 (safe.tile_index2 safe.tile_counter2))))
+                                (block.seq4_C3
+                                  (reg.set_f_C3 reg.f5 (parr.get_f parr.a (safe.pidx64 (safe.tile_index2 safe.tile_counter2))))
+                                  (reg.set_i_C3 reg.i3 (parr.get_i parr.ua (safe.pidx64 (safe.tile_index2 safe.tile_counter2))))
+                                  (parr.set_f_C3 parr.a (safe.pidx64 (safe.tile_index2 safe.tile_counter2)) (reg.get_f reg.f4))
+                                  (stmt.block_C3
+                                    (block.seq3_C3
+                                      (parr.set_i_C3 parr.ua (safe.pidx64 (safe.tile_index2 safe.tile_counter2)) (reg.get_i reg.i1))
+                                      (reg.set_i_C3 reg.i1 (reg.get_i reg.i3))
+                                      (reg.set_f_C3 reg.f4 (reg.get_f reg.f5)))))))))))))))))
+          (loop.tile_L0 (literal.lit64 64)
+            (block.seq2_L2
+              (wg.set_L2 wg.a
+                (safe.wg_of (index.add (index.mul (index.of_col (axis.x_lid builtin.local_invocation_id)) (literal.index 64)) (safe.tile_index safe.tile_counter)))
+                (parr.get_f parr.a (safe.pidx64 (safe.tile_index safe.tile_counter))))
+              (wg.set_u_L2 wg.ua
+                (safe.wg_of (index.add (index.mul (index.of_col (axis.x_lid builtin.local_invocation_id)) (literal.index 64)) (safe.tile_index safe.tile_counter)))
+                (parr.get_i parr.ua (safe.pidx64 (safe.tile_index safe.tile_counter))))))
+      (stmt.block_L0
+        (block.seq2_L0
+          stmt.barrier_L0
+          (stmt.if_ult_L0 (uniform.wid_x builtin.workgroup_id) uniform.cfg_n_queries
+            (block.seq3_L0
+              (loop.tile_L0 (literal.lit64 64)
+                (block.seq2_L2
+                  (parr.set_f_L2 parr.a (safe.pidx64 (safe.tile_index safe.tile_counter)) (literal.real -3e38))
+                  (parr.set_i_L2 parr.ua (safe.pidx64 (safe.tile_index safe.tile_counter))
+                    (index.or (index.mul (literal.index 65535) (literal.index 65536)) (subgroup.inclusive_mul (literal.index 65535))))))
+              (loop.tilex_L0 (bound.of_uniform (uniform.of_lit (literal.lit4096 1024)))
+                (block.seq3_L2
+                  (reg.set_f_L2 reg.f6 (wg.get_safe wg.a (safe.wg_of (safe.tile_index safe.tile_counter))))
+                  (reg.set_i_L2 reg.i4 (wg.get_u_safe wg.ua (safe.wg_of (safe.tile_index safe.tile_counter))))
+                  (stmt.if_L2
+                    (logic.and
+                      (compare.ne (reg.get_i reg.i4) (index.or (index.mul (literal.index 65535) (literal.index 65536)) (subgroup.inclusive_mul (literal.index 65535))))
+                      (compare.gt (reg.get_f reg.f6) (parr.get_f parr.a (safe.pidx64 (literal.index 63)))))
+                    (block.seq3_C2
+                      (reg.set_f_C2 reg.f7 (reg.get_f reg.f6))
+                      (reg.set_i_C2 reg.i5 (reg.get_i reg.i4))
+                      (loop.tile_C2 (literal.lit64 64)
+                        (block.one_C3
+                          (stmt.if_C3
+                            (compare.gt (reg.get_f reg.f7) (parr.get_f parr.a (safe.pidx64 (safe.tile_index2 safe.tile_counter2))))
+                            (block.seq4_C3
+                              (reg.set_f_C3 reg.f8 (parr.get_f parr.a (safe.pidx64 (safe.tile_index2 safe.tile_counter2))))
+                              (reg.set_i_C3 reg.i7 (parr.get_i parr.ua (safe.pidx64 (safe.tile_index2 safe.tile_counter2))))
+                              (parr.set_f_C3 parr.a (safe.pidx64 (safe.tile_index2 safe.tile_counter2)) (reg.get_f reg.f7))
+                              (stmt.block_C3
+                                (block.seq3_C3
+                                  (parr.set_i_C3 parr.ua (safe.pidx64 (safe.tile_index2 safe.tile_counter2)) (reg.get_i reg.i5))
+                                  (reg.set_f_C3 reg.f7 (reg.get_f reg.f8))
+                                  (reg.set_i_C3 reg.i5 (reg.get_i reg.i7))))))))))))
+              (loop.tilex_L0 (bound.of_uniform (uniform.of_lit (literal.lit4096 1024)))
+                (block.seq3_L2
+                  (reg.set_f_L2 reg.f6 (wg.get_safe wg.a (safe.wg_of (safe.tile_index safe.tile_counter))))
+                  (reg.set_i_L2 reg.i4 (wg.get_u_safe wg.ua (safe.wg_of (safe.tile_index safe.tile_counter))))
+                  (stmt.if_L2
+                    (logic.and
+                      (compare.ne (reg.get_i reg.i4) (index.or (index.mul (literal.index 65535) (literal.index 65536)) (subgroup.inclusive_mul (literal.index 65535))))
+                      (compare.gt (reg.get_f reg.f6) (parr.get_f parr.a (safe.pidx64 (literal.index 63)))))
+                    (block.seq3_C2
+                      (reg.set_f_C2 reg.f7 (reg.get_f reg.f6))
+                      (reg.set_i_C2 reg.i5 (reg.get_i reg.i4))
+                      (loop.tile_C2 (literal.lit64 64)
+                        (block.one_C3
+                          (stmt.if_C3
+                            (compare.gt (reg.get_f reg.f7) (parr.get_f parr.a (safe.pidx64 (safe.tile_index2 safe.tile_counter2))))
+                            (block.seq4_C3
+                              (reg.set_f_C3 reg.f8 (parr.get_f parr.a (safe.pidx64 (safe.tile_index2 safe.tile_counter2))))
+                              (reg.set_i_C3 reg.i7 (parr.get_i parr.ua (safe.pidx64 (safe.tile_index2 safe.tile_counter2))))
+                              (parr.set_f_C3 parr.a (safe.pidx64 (safe.tile_index2 safe.tile_counter2)) (reg.get_f reg.f7))
+                              (stmt.block_C3
+                                (block.seq3_C3
+                                  (parr.set_i_C3 parr.ua (safe.pidx64 (safe.tile_index2 safe.tile_counter2)) (reg.get_i reg.i5))
+                                  (reg.set_f_C3 reg.f7 (reg.get_f reg.f8))
+                                  (reg.set_i_C3 reg.i5 (reg.get_i reg.i7))))))))))))))))))
+    (block.one_O0
+      (stmt.if_O0
+        (compare.lt (index.of_col (axis.x_wid builtin.workgroup_id)) (index.of_count load.cfg_n_queries))
+        (block.seq4_O0
+          (store.cands_C0
+            (index.add (index.mul (index.of_col (axis.x_wid builtin.workgroup_id)) (literal.index 64)) (index.of_col (axis.x_lid builtin.local_invocation_id)))
+            (parr.get_i parr.ua (safe.pidx64 (index.of_col (axis.x_lid builtin.local_invocation_id)))))
+          (store.cands_C0
+            (index.add (index.add (index.mul (index.of_col (axis.x_wid builtin.workgroup_id)) (literal.index 64)) (literal.index 16)) (index.of_col (axis.x_lid builtin.local_invocation_id)))
+            (parr.get_i parr.ua (safe.pidx64 (index.add (literal.index 16) (index.of_col (axis.x_lid builtin.local_invocation_id))))))
+          (store.cands_C0
+            (index.add (index.add (index.mul (index.of_col (axis.x_wid builtin.workgroup_id)) (literal.index 64)) (literal.index 32)) (index.of_col (axis.x_lid builtin.local_invocation_id)))
+            (parr.get_i parr.ua (safe.pidx64 (index.add (literal.index 32) (index.of_col (axis.x_lid builtin.local_invocation_id))))))
+          (store.cands_O0
+            (index.add (index.add (index.mul (index.of_col (axis.x_wid builtin.workgroup_id)) (literal.index 64)) (literal.index 48)) (index.of_col (axis.x_lid builtin.local_invocation_id)))
+            (parr.get_i parr.ua (safe.pidx64 (index.add (literal.index 48) (index.of_col (axis.x_lid builtin.local_invocation_id))))))))))))
+```
+
+```notes
+ingest: the epilogue (block.O0) must end in a store of this thread's cell, but the program stores nothing. Nearest: store.h_O0 (needs a u32.cell and an h buffer, neither bound here), store.cands_O0 (the program writes no cands in ingest).
+```
