@@ -2924,7 +2924,7 @@ impl<'a> Ctx<'a> {
         // over the index (the row clamps it to the binding) and the operand.
         if let Some(name) = target.strip_prefix("buffer.").and_then(|r| r.strip_suffix(".#")).filter(|n| !n.contains('.')) {
             if fun == "cas" {
-                return Err("atomicCompareExchangeWeak has no safe spelling: naga 0.20's Metal backend does not implement it (MSL: FeatureNotImplemented)".into());
+                return Err("atomicCompareExchangeWeak has no safe spelling: the kingdom has no compare-exchange row (naga 0.20's Metal backend did not implement it; naga 30's does, and the kingdom has not added the row)".into());
             }
             let row = format!("atomic.{name}_{fun}");
             let Some((_, _, out)) = self.per_kernel_rows.iter().find(|p| p.0 == row && p.1.len() == 2).cloned() else {
@@ -2953,7 +2953,7 @@ impl<'a> Ctx<'a> {
         let array = Tree::new(which, ty(self, arr_dual)?, vec![]);
         let out_ty = ty(self, if unsigned { "u32.index" } else { "i32.int" })?;
         if fun == "cas" {
-            return Err("atomicCompareExchangeWeak has no safe spelling: naga 0.20's Metal backend does not implement it (MSL: FeatureNotImplemented)".into());
+            return Err("atomicCompareExchangeWeak has no safe spelling: the kingdom has no compare-exchange row (naga 0.20's Metal backend did not implement it; naga 30's does, and the kingdom has not added the row)".into());
         }
         let value = self.value(&trees[1])?;
         Ok((Tree::new(&format!("atomic.{fun}_{suffix}"), out_ty, vec![array, at, value]), unsigned))
@@ -7014,8 +7014,9 @@ mod tests {
     /// INTEGER ATOMICS IN WORKGROUP MEMORY (2026-10-12): the draft's every
     /// form reads, renders (atomicStore, an atomicAdd whose old value is read
     /// into a register, `_ = atomicOr(..)`, the i32 add, atomicLoad),
-    /// validates and reads back. A compare-exchange is refused by name: naga
-    /// 0.20's Metal backend does not implement it, so no gene could compile it.
+    /// validates and reads back. A compare-exchange is refused by name: the
+    /// kingdom has no row for it (naga 0.20's Metal backend did not implement
+    /// it; naga 30's does).
     #[test]
     fn workgroup_atomics_render_validate_and_read_back() {
         let k = WgslKingdom::load_safe();
@@ -7223,7 +7224,7 @@ fn ingest(@builtin(global_invocation_id) gid: vec3<u32>) {
         let back = read_safe(&out.text, &k).unwrap_or_else(|e| panic!("read back: {e}\n{}", out.text));
         assert!(back.tree == r.tree, "the rendered text reads back to the same tree: {:?}\n{}", crate::wgsl::render::first_difference(&r.tree, &back.tree), out.text);
         crate::wgsl::check::check(&r.tree, &k, &r.role, &crate::wgsl::target::Target::recorded()).unwrap_or_else(|e| panic!("{e}\n{}", out.text));
-        // naga 0.20's Metal backend has no compare-exchange: no spelling.
+        // The kingdom has no compare-exchange row: no spelling.
         let cas = src.replace("let slot = atomicAdd(&index_u32[bucket], 1u);", "let slot = atomicCompareExchangeWeak(&index_u32[bucket], 0u, 1u).old_value;");
         assert_ne!(cas, src);
         let Err(e) = read_safe(&cas, &k) else { panic!("a compare-exchange read") };
@@ -8210,9 +8211,12 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         assert!(e.contains("of a helper (not inlined)"), "{e}");
     }
 
-    /// The claim the kingdom's missing compare-exchange rests on, measured
-    /// on the naga the kingdom builds with (0.20): its Metal backend writes
-    /// an atomicAdd on a storage array and refuses atomicCompareExchangeWeak.
+    /// What the kingdom's missing compare-exchange rested on, measured on the
+    /// naga it builds with. naga 0.20's Metal backend wrote an atomicAdd on a
+    /// storage array and refused atomicCompareExchangeWeak; naga 30's writes
+    /// both (2026-10-19, the naga/wgpu 30 upgrade). The kingdom still has no
+    /// compare-exchange row, so the reader still refuses one by name: our
+    /// device policy now, not a backend gap (the refusal's words say so).
     #[cfg(all(feature = "gpu", target_os = "macos"))]
     #[test]
     fn nagas_metal_backend_writes_storage_atomics_and_not_compare_exchange() {
@@ -8226,8 +8230,12 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         let kernel = |body: &str| format!("@group(0) @binding(0) var<storage, read_write> a: array<atomic<u32>>;\n@compute @workgroup_size(64)\nfn main(@builtin(global_invocation_id) gid: vec3<u32>) {{ {body} }}\n");
         let add = msl(&kernel("_ = atomicAdd(&a[min(gid.x, arrayLength(&a) - 1u)], 1u);")).unwrap_or_else(|e| panic!("{e}"));
         assert!(add.contains("atomic_fetch_add_explicit"), "{add}");
-        let e = msl(&kernel("_ = atomicCompareExchangeWeak(&a[gid.x], 0u, 1u);")).expect_err("naga 0.20 writes no compare-exchange to Metal");
-        assert!(e.contains("atomic CompareExchange"), "{e}");
+        let cas = msl(&kernel("_ = atomicCompareExchangeWeak(&a[gid.x], 0u, 1u);")).unwrap_or_else(|e| panic!("naga 30 writes a compare-exchange to Metal: {e}"));
+        assert!(cas.contains("atomic_compare_exchange_weak_explicit"), "{cas}");
+        let k = WgslKingdom::load_safe();
+        let src = "// grid 64 1 1 1\nstruct Cfg { d: u32, m: u32, r_rows: u32, r_off: u32, };\n@group(0) @binding(0) var<storage, read> phi: array<f32>;\n@group(0) @binding(1) var<storage, read_write> h: array<f32>;\n@group(0) @binding(2) var<uniform> cfg: Cfg;\nvar<workgroup> wg_au_a: array<atomic<u32>, 1024>;\n@compute @workgroup_size(64, 1, 1)\nfn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation_index) lidx: u32) {\n    let o = atomicCompareExchangeWeak(&wg_au_a[lidx], 0u, 1u).old_value;\n    if (gid.x < cfg.r_rows) { h[gid.x * cfg.d] = h[gid.x * cfg.d] + f32(o); }\n}\n";
+        let Err(e) = read_safe(src, &k) else { panic!("a compare-exchange read") };
+        assert!(e.contains("atomicCompareExchangeWeak has no safe spelling"), "{e}");
     }
 
     /// A LET STALE AT ITS USE (2026-10-12, found reading the cosine
