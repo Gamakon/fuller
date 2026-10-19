@@ -146,7 +146,7 @@ mod tests {
             let acc = outline_register(&tree).unwrap_or_else(|| panic!("seed {seed}: no outline: {}", tree.to_sexpr()));
             let c = cost(&tree);
             assert!(c.per_item <= bound.per_item && c.base <= bound.base, "seed {seed}: over the bound: {c:?}");
-            let text = safe_karva::render_tree(&tree, &k).unwrap_or_else(|e| panic!("seed {seed}: does not render: {e}")).text;
+            let text = safe_karva::render_tree_with(&tree, &k, &crate::wgsl::render::gram_role()).unwrap_or_else(|e| panic!("seed {seed}: does not render: {e}")).text;
             crate::wgsl::render::validate_text(&text).unwrap_or_else(|e| panic!("seed {seed}: naga: {e}\n{text}"));
             if seed == 0 {
                 println!("sketch seed 0:\n{text}");

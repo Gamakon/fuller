@@ -6,7 +6,7 @@
 //! by knob and form.
 //!
 //! `--mutate N --out <dir>`: N knob mutations of every kernel
-//! (`knob::mutate`), each child through the layered check (render, validate
+//! (`knob::mutate`, under the kernel's own interface), each child through the layered check (render, validate
 //! for the adapter, read back by the reader's ownership proof); every
 //! child that passes is written as `<out>/children/<parent>__<i>.wgsl`, every
 //! parent as `<out>/parents/<parent>.wgsl`, one line a child in
@@ -24,7 +24,7 @@ use fuller::wgsl::{knob, rules};
 use fuller::wgsl::loader::WgslKingdom;
 use fuller::wgsl::params::parse_ref;
 use fuller::wgsl::render::Tree;
-use fuller::wgsl::safe_karva::render_tree;
+use fuller::wgsl::safe_karva::render_tree_with;
 use fuller::wgsl::safe_reader::{read_safe, read_safe_literal};
 use fuller::wgsl::target::Target;
 
@@ -64,7 +64,7 @@ fn survey(files: &[PathBuf], kingdom: &WgslKingdom) -> Result<(), String> {
             (l, p) => return Err(format!("{}: our software has a bug: the literal read {} and the parameterised read {}", f.display(), if l.is_ok() { "succeeded" } else { "failed" }, if p.is_ok() { "succeeded" } else { "failed" })),
         };
         read += 1;
-        let (a, b) = (render_tree(&lit.tree, kingdom)?.text, render_tree(&par.tree, kingdom)?.text);
+        let (a, b) = (render_tree_with(&lit.tree, kingdom, &lit.role)?.text, render_tree_with(&par.tree, kingdom, &par.role)?.text);
         if a == b {
             same += 1;
         } else {
@@ -124,11 +124,11 @@ fn mutate_all(files: &[PathBuf], n: usize, seed: u64, out: &Path, kingdom: &Wgsl
         };
         parents += 1;
         let id = format!("p{pi:03}");
-        let parent_text = render_tree(&r.tree, kingdom)?.text;
+        let parent_text = render_tree_with(&r.tree, kingdom, &r.role)?.text;
         std::fs::write(out.join("parents").join(format!("{id}.wgsl")), &parent_text).map_err(|e| e.to_string())?;
         let mut rng = seed ^ (pi as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
         for i in 0..n {
-            let c = match knob::mutate(&r.tree, kingdom, &target, &mut rng) {
+            let c = match knob::mutate(&r.tree, kingdom, &target, &knob::Under::of(&r.role), &mut rng) {
                 Ok(c) => c,
                 Err(e) => {
                     no_knob += 1;
@@ -139,7 +139,7 @@ fn mutate_all(files: &[PathBuf], n: usize, seed: u64, out: &Path, kingdom: &Wgsl
             let entry = by_knob.entry(knob_class(&c.site)).or_default();
             entry.0 += 1;
             let child = format!("{id}__{i:02}");
-            match knob::check_read_back(&c.tree, kingdom) {
+            match knob::check_read_back(&c.tree, kingdom, &knob::Under::of(&r.role)) {
                 Ok(t) => {
                     entry.1 += 1;
                     if seen.insert(t.clone()) {
@@ -193,7 +193,7 @@ fn rule_all(files: &[PathBuf], rule: rules::Rule, n: usize, seed: u64, out: &Pat
         };
         parents += 1;
         let id = format!("p{pi:03}");
-        std::fs::write(out.join("parents").join(format!("{id}.wgsl")), render_tree(&r.tree, kingdom)?.text).map_err(|e| e.to_string())?;
+        std::fs::write(out.join("parents").join(format!("{id}.wgsl")), render_tree_with(&r.tree, kingdom, &r.role)?.text).map_err(|e| e.to_string())?;
         let mut sites = rule.sites(&r.tree, kingdom);
         if sites.is_empty() {
             let why = rule.why_not(&r.tree, kingdom).unwrap_or_default();
@@ -209,7 +209,7 @@ fn rule_all(files: &[PathBuf], rule: rules::Rule, n: usize, seed: u64, out: &Pat
         for (i, site) in sites.iter().enumerate() {
             made += 1;
             let child = format!("{id}__{i:02}");
-            let outcome = rule.apply(&r.tree, site, kingdom).map_err(|e| (knob::Stage::Render, e)).and_then(|t| knob::check_text(&t, kingdom));
+            let outcome = rule.apply(&r.tree, site, kingdom).map_err(|e| (knob::Stage::Render, e)).and_then(|t| knob::check_text_under(&t, kingdom, &knob::Under::of(&r.role)));
             match outcome {
                 Ok((t, _)) => {
                     passed += 1;
@@ -239,7 +239,7 @@ fn rule_all(files: &[PathBuf], rule: rules::Rule, n: usize, seed: u64, out: &Pat
 
 /// THE RULES THAT FIRE on every kernel given: whether it reads, renders
 /// the same text with its parameters, and passes the layered check
-/// (`knob::check_text`, the legality checker first); the sites of every rule;
+/// (`knob::check_text_under`, the legality checker first); the sites of every rule;
 /// and, after one step of each climbing rule (vec4-tile, grow-rows; its
 /// first site), the rules that fire on that child.
 fn fires(files: &[PathBuf], kingdom: &WgslKingdom) -> Result<(), String> {
@@ -263,8 +263,8 @@ fn fires(files: &[PathBuf], kingdom: &WgslKingdom) -> Result<(), String> {
             continue;
         };
         read += 1;
-        let same = render_tree(&lit.tree, kingdom)?.text == render_tree(&r.tree, kingdom)?.text;
-        let check = knob::check_text(&r.tree, kingdom);
+        let same = render_tree_with(&lit.tree, kingdom, &lit.role)?.text == render_tree_with(&r.tree, kingdom, &r.role)?.text;
+        let check = knob::check_text_under(&r.tree, kingdom, &knob::Under::of(&r.role));
         if same && check.is_ok() {
             checked += 1;
         }
@@ -287,7 +287,7 @@ fn fires(files: &[PathBuf], kingdom: &WgslKingdom) -> Result<(), String> {
             let after: Vec<String> = match sites.first().map(|site| c.apply(&r.tree, site, kingdom)) {
                 Some(Ok(child)) => {
                     climbed = true;
-                    let back = knob::check_text(&child, kingdom).map(|(_, b)| b.tree);
+                    let back = knob::check_text_under(&child, kingdom, &knob::Under::of(&r.role)).map(|(_, b)| b.tree);
                     match back {
                         Ok(t) => {
                             let fire: Vec<String> = rules::Rule::ALL.iter().filter(|r| !r.sites(&t, kingdom).is_empty()).map(|r| r.name().to_string()).collect();
@@ -306,7 +306,7 @@ fn fires(files: &[PathBuf], kingdom: &WgslKingdom) -> Result<(), String> {
         }
         climbs += usize::from(climbed);
         climbs_again += usize::from(again);
-        let depth = chain_depth(&r.tree, kingdom, 3);
+        let depth = chain_depth(&r.tree, kingdom, &knob::Under::of(&r.role), 3);
         *depths.entry(depth).or_default() += 1;
         println!("\tchain {depth}");
     }
@@ -321,7 +321,7 @@ fn fires(files: &[PathBuf], kingdom: &WgslKingdom) -> Result<(), String> {
 /// The longest chain of climbing steps (vec4-tile, grow-rows; every site
 /// tried) from a kernel, up to `limit`, each child passing the layered
 /// check and read back before the next step.
-fn chain_depth(t: &fuller::wgsl::render::Tree, kingdom: &WgslKingdom, limit: usize) -> usize {
+fn chain_depth(t: &fuller::wgsl::render::Tree, kingdom: &WgslKingdom, under: &knob::Under, limit: usize) -> usize {
     if limit == 0 {
         return 0;
     }
@@ -329,8 +329,8 @@ fn chain_depth(t: &fuller::wgsl::render::Tree, kingdom: &WgslKingdom, limit: usi
     for rule in [rules::Rule::VecTile, rules::Rule::GrowRows] {
         for site in rule.sites(t, kingdom) {
             let Ok(child) = rule.apply(t, &site, kingdom) else { continue };
-            let Ok((_, back)) = knob::check_text(&child, kingdom) else { continue };
-            best = best.max(1 + chain_depth(&back.tree, kingdom, limit - 1));
+            let Ok((_, back)) = knob::check_text_under(&child, kingdom, under) else { continue };
+            best = best.max(1 + chain_depth(&back.tree, kingdom, under, limit - 1));
             if best == limit {
                 return best;
             }

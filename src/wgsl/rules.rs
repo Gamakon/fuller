@@ -1959,7 +1959,7 @@ pub fn mutate(root: &Tree, rules: &[Rule], kingdom: &WgslKingdom, rng: &mut u64)
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::wgsl::safe_karva::render_tree;
+    use crate::wgsl::safe_karva::render_tree_with;
     use crate::wgsl::safe_reader::read_safe;
 
     fn corpus(k: &WgslKingdom) -> Vec<(String, Tree)> {
@@ -1984,10 +1984,10 @@ mod tests {
             let stmts = kernel_statements(&t);
             assert!(!stmts.is_empty(), "{name}");
             let same = replace_statement(&t, 0, vec![stmts[0].tree.clone()], &k).unwrap();
-            assert_eq!(render_tree(&t, &k).unwrap().text, render_tree(&same, &k).unwrap().text, "{name}");
+            assert_eq!(render_tree_with(&t, &k, &crate::wgsl::render::gram_role()).unwrap().text, render_tree_with(&same, &k, &crate::wgsl::render::gram_role()).unwrap().text, "{name}");
             let last = stmts.len() - 1;
             let same = replace_statement(&t, last, vec![stmts[last].tree.clone()], &k).unwrap();
-            assert_eq!(render_tree(&t, &k).unwrap().text, render_tree(&same, &k).unwrap().text, "{name}");
+            assert_eq!(render_tree_with(&t, &k, &crate::wgsl::render::gram_role()).unwrap().text, render_tree_with(&same, &k, &crate::wgsl::render::gram_role()).unwrap().text, "{name}");
         }
     }
 
@@ -2002,17 +2002,17 @@ mod tests {
         let (mut fired, mut refused) = (0usize, Vec::new());
         for (name, t) in corpus(&k) {
             let sites = drop_zero_fill_sites(&t);
-            if !sites.is_empty() && crate::wgsl::knob::check(&t, &k).is_err() {
+            if !sites.is_empty() && crate::wgsl::knob::check_legal_under(&t, &k, &crate::wgsl::knob::Under::gram()).is_err() {
                 refused.push(name);
                 continue;
             }
             for site in sites {
                 let child = drop_zero_fill(&t, &site, &k).unwrap();
-                let (a, b) = (render_tree(&t, &k).unwrap().text, render_tree(&child, &k).unwrap().text);
+                let (a, b) = (render_tree_with(&t, &k, &crate::wgsl::render::gram_role()).unwrap().text, render_tree_with(&child, &k, &crate::wgsl::render::gram_role()).unwrap().text);
                 assert!(b.lines().count() < a.lines().count(), "{name} {}: nothing dropped", site.what);
                 let kept: Vec<&str> = a.lines().collect();
                 assert!(b.lines().all(|l| kept.contains(&l)), "{name} {}: a line changed", site.what);
-                crate::wgsl::knob::check_text(&child, &k).map(|_| ()).unwrap_or_else(|(s, e)| panic!("{name} {}: {}: {e}", site.what, s.name()));
+                crate::wgsl::knob::check_text_under(&child, &k, &crate::wgsl::knob::Under::gram()).map(|_| ()).unwrap_or_else(|(s, e)| panic!("{name} {}: {}: {e}", site.what, s.name()));
                 fired += 1;
             }
         }
@@ -2035,7 +2035,7 @@ mod tests {
         let plan = grow_rows_plan(&four, &k).unwrap();
         assert_eq!(plan.tile, "wg.vb");
         let child = grow_rows(&four, &k).unwrap();
-        let (text, _) = crate::wgsl::knob::check_text(&child, &k).unwrap_or_else(|(s, e)| panic!("{}: {e}", s.name()));
+        let (text, _) = crate::wgsl::knob::check_text_under(&child, &k, &crate::wgsl::knob::Under::gram()).unwrap_or_else(|(s, e)| panic!("{}: {e}", s.name()));
         assert!(text.starts_with("// grid 16 8 4 8"), "{}", &text[..40]);
         assert!(text.contains("(lid.y * 2u)") && text.contains("((lid.y * 2u) + 1u)") && text.contains("pv[7u]") && text.contains("128u * k"), "{text}");
         let eight = read("0.1066_fit_A2_stopped_1702Z_g001_r12_d93a44.wgsl").unwrap();
@@ -2058,7 +2058,7 @@ mod tests {
         let sites = vec_tile_sites(&t, &k);
         assert_eq!(sites.len(), 1, "{sites:?}");
         let child = vec_tile(&t, sites[0].index, &k).unwrap();
-        let (text, _) = crate::wgsl::knob::check_text(&child, &k).unwrap_or_else(|(s, e)| panic!("{}: {e}", s.name()));
+        let (text, _) = crate::wgsl::knob::check_text_under(&child, &k, &crate::wgsl::knob::Under::gram()).unwrap_or_else(|(s, e)| panic!("{}: {e}", s.name()));
         assert!(!text.contains("wg_a[") && !text.contains("wg_b["), "{text}");
         assert!(text.contains("var<workgroup> wg_va: array<vec4<f32>, 512>;") && text.contains("for (k = 0u; k < 1u; k = k + 1u)"), "{text}");
         assert!(text.contains("wg_va[((((k * 16u) + lid.x)) & 511u)].w"), "{text}");
@@ -2081,7 +2081,7 @@ mod tests {
         assert_eq!(tile, "wg.vb");
         assert!(family.values().any(|&r| r >= 4));
         let child = shrink_rows(&t, &k).unwrap();
-        let (text, _) = crate::wgsl::knob::check_text(&child, &k).unwrap_or_else(|(s, e)| panic!("{}: {e}", s.name()));
+        let (text, _) = crate::wgsl::knob::check_text_under(&child, &k, &crate::wgsl::knob::Under::gram()).unwrap_or_else(|(s, e)| panic!("{}: {e}", s.name()));
         assert!(text.starts_with("// grid 16 16 4 4"), "{}", &text[..40]);
         assert!(text.contains("256u * k2") && !text.contains("128u * k2") && !text.contains("lid.y * 2u") && !text.contains("gid.y * 8u"), "{text}");
         assert!(grow_rows_plan(&t, &k).is_err() && shrink_rows_plan(&grow_rows(&read_safe(&text, &k).unwrap().tree, &k).unwrap(), &k).is_ok());
@@ -2101,11 +2101,11 @@ mod tests {
         let step = |t: &Tree, rule: Rule| -> Tree {
             let site = rule.sites(t, &k).into_iter().next().unwrap_or_else(|| panic!("{} does not fire: {:?}", rule.name(), rule.why_not(t, &k)));
             let child = rule.apply(t, &site, &k).unwrap();
-            crate::wgsl::knob::check_text(&child, &k).unwrap_or_else(|(s, e)| panic!("{}: {}: {e}", rule.name(), s.name())).1.tree
+            crate::wgsl::knob::check_text_under(&child, &k, &crate::wgsl::knob::Under::gram()).unwrap_or_else(|(s, e)| panic!("{}: {}: {e}", rule.name(), s.name())).1.tree
         };
         for (first, second) in [(Rule::GrowRows, Rule::VecTile), (Rule::VecTile, Rule::GrowRows)] {
             let two = step(&step(&t, first), second);
-            let text = crate::wgsl::safe_karva::render_tree(&two, &k).unwrap().text;
+            let text = crate::wgsl::safe_karva::render_tree_with(&two, &k, &crate::wgsl::render::gram_role()).unwrap().text;
             assert!(text.starts_with("// grid 16 8 4 8"), "{} then {}: {}", first.name(), second.name(), &text[..40]);
             assert!(text.contains("var<workgroup> wg_va: array<vec4<f32>,") && !text.contains("wg_a["), "{text}");
             assert!(text.contains("lidx + (128u * k)"), "{text}");
@@ -2124,14 +2124,14 @@ mod tests {
         let read = |name: &str| std::fs::read_to_string(dir.join(name)).ok().map(|src| read_safe(&src, &k).unwrap().tree);
         let Some(unrolled) = read("0.1209_fit_A2_stopped_1729Z_g001_r16_c65da8.wgsl") else { return };
         let site = Rule::UnunrollK.sites(&unrolled, &k).into_iter().next().unwrap_or_else(|| panic!("{:?}", Rule::UnunrollK.why_not(&unrolled, &k)));
-        let child = crate::wgsl::knob::check_text(&Rule::UnunrollK.apply(&unrolled, &site, &k).unwrap(), &k).unwrap_or_else(|(s, e)| panic!("{}: {e}", s.name())).1.tree;
-        let text = crate::wgsl::safe_karva::render_tree(&child, &k).unwrap().text;
+        let child = crate::wgsl::knob::check_text_under(&Rule::UnunrollK.apply(&unrolled, &site, &k).unwrap(), &k, &crate::wgsl::knob::Under::gram()).unwrap_or_else(|(s, e)| panic!("{}: {e}", s.name())).1.tree;
+        let text = crate::wgsl::safe_karva::render_tree_with(&child, &k, &crate::wgsl::render::gram_role()).unwrap().text;
         assert!(text.contains("for (k = 0u; k < 32u; k = k + 1u)") && text.contains("(k * 16u) + lid.y") && !text.contains("(2u * k)"), "{text}");
         assert!(!Rule::GrowRows.sites(&child, &k).is_empty(), "grow-rows fires after un-unroll-K");
         let one = read("0.1208_fit_A2_stopped_1702Z_g000_r19_6d34a7.wgsl").unwrap();
         let site = Rule::UnrollK.sites(&one, &k).into_iter().next().unwrap_or_else(|| panic!("{:?}", Rule::UnrollK.why_not(&one, &k)));
-        let child = crate::wgsl::knob::check_text(&Rule::UnrollK.apply(&one, &site, &k).unwrap(), &k).unwrap_or_else(|(s, e)| panic!("{}: {e}", s.name())).1.tree;
-        let text = crate::wgsl::safe_karva::render_tree(&child, &k).unwrap().text;
+        let child = crate::wgsl::knob::check_text_under(&Rule::UnrollK.apply(&one, &site, &k).unwrap(), &k, &crate::wgsl::knob::Under::gram()).unwrap_or_else(|(s, e)| panic!("{}: {e}", s.name())).1.tree;
+        let text = crate::wgsl::safe_karva::render_tree_with(&child, &k, &crate::wgsl::render::gram_role()).unwrap().text;
         assert!(text.contains("for (k = 0u; k < 16u; k = k + 1u)") && text.contains("((2u * k) * 16u) + 16u)"), "{text}");
     }
 

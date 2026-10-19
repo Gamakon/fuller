@@ -527,34 +527,35 @@ fn origins(t: &Tree, g: &crate::wgsl::render::Grid, kingdom: &WgslKingdom) -> Tr
     Tree { kids, ..t.clone() }
 }
 
-/// The canonical spelling of `t` (see the module header for the rules).
-pub fn canonical(t: &Tree, kingdom: &WgslKingdom) -> Tree {
+/// The canonical spelling of `t` under the interface `role` (see the module
+/// header for the rules; the interface's own rows conform as the parser's).
+pub fn canonical(t: &Tree, kingdom: &WgslKingdom, role: &crate::wgsl::render::Role) -> Tree {
     // A module of entry points: each entry point's own spelling (each is
     // written and read as a kernel of its own; the module adds none).
     if t.name.starts_with("kernel.module_") {
-        return Tree { kids: t.kids.iter().map(|k| canonical(k, kingdom)).collect(), ..t.clone() };
+        return Tree { kids: t.kids.iter().map(|k| canonical(k, kingdom, role)).collect(), ..t.clone() };
     }
+    let per_kernel = crate::wgsl::safe_karva::per_kernel_rows(kingdom, role);
     // Knob references first, at the drawn grid's knobs (rule 4).
     let t = params::to_literals(t, kingdom).unwrap_or_else(|_| t.clone());
-    let c = degrees(&structural(&t, kingdom), kingdom);
+    let c = degrees(&structural(&t, kingdom, &per_kernel), kingdom);
     // Every node under the dual its parent's row demands, the rows chosen as
     // the parser chooses them (it conforms the tree it reads, last).
-    let per_kernel = crate::wgsl::safe_karva::per_kernel_rows(kingdom, &crate::wgsl::render::gram_role());
     let c = crate::wgsl::safe_karva::conform(&c, c.ty, kingdom, &per_kernel).unwrap_or(c);
     params::assign(&c, kingdom).unwrap_or(c)
 }
 
 /// Rules 1 to 4.
-fn structural(t: &Tree, kingdom: &WgslKingdom) -> Tree {
+fn structural(t: &Tree, kingdom: &WgslKingdom, per_kernel: &[crate::wgsl::safe_karva::PerKernelRow]) -> Tree {
     if t.kids.is_empty() && t.name.starts_with("literal.") {
         return canonical_literal(t, kingdom);
     }
     if t.name == "fallback" {
-        if let Some(z) = canonical_fallback(t, kingdom) {
+        if let Some(z) = canonical_fallback(t, kingdom, per_kernel) {
             return z;
         }
     }
-    let kids: Vec<Tree> = t.kids.iter().map(|k| structural(k, kingdom)).collect();
+    let kids: Vec<Tree> = t.kids.iter().map(|k| structural(k, kingdom, per_kernel)).collect();
     let t = Tree { kids, ..t.clone() };
     if t.name == "kernel.entry_safe" {
         if let [grid, body, epilogue] = t.kids.as_slice() {
@@ -569,7 +570,7 @@ fn structural(t: &Tree, kingdom: &WgslKingdom) -> Tree {
                 // epilogue that is the fallback after a body that returns
                 // is not written, and stays so.)
                 if k.name != "fallback" {
-                    *k = structural(&loops(k, 0, 1, &[], false, kingdom), kingdom);
+                    *k = structural(&loops(k, 0, 1, &[], false, kingdom), kingdom, per_kernel);
                 }
             }
             if let Ok(g) = grid_of(&grid) {
@@ -585,7 +586,7 @@ fn structural(t: &Tree, kingdom: &WgslKingdom) -> Tree {
 }
 
 /// Rule 5: a fallback value leaf as the parser reads the zero written for it.
-fn canonical_fallback(t: &Tree, kingdom: &WgslKingdom) -> Option<Tree> {
+fn canonical_fallback(t: &Tree, kingdom: &WgslKingdom, per_kernel: &[crate::wgsl::safe_karva::PerKernelRow]) -> Option<Tree> {
     let d = kingdom.dual(t.ty)?;
     let ty = |n: &str| dual_ty(kingdom, n).ok();
     let gid = || -> Option<Tree> { Some(Tree::new("builtin.global_invocation_id", ty("vec3<u32>.gid")?, vec![])) };
@@ -655,8 +656,7 @@ fn canonical_fallback(t: &Tree, kingdom: &WgslKingdom) -> Option<Tree> {
     } else {
         return None;
     };
-    let per_kernel = crate::wgsl::safe_karva::per_kernel_rows(kingdom, &crate::wgsl::render::gram_role());
-    crate::wgsl::safe_karva::conform(&zero, t.ty, kingdom, &per_kernel).ok().filter(|z| z.name != "fallback").or_else(|| {
+    crate::wgsl::safe_karva::conform(&zero, t.ty, kingdom, per_kernel).ok().filter(|z| z.name != "fallback").or_else(|| {
         // A safe index (a workgroup or private array's): the zero through
         // the safe row the parser reads it with (`safe.wga_of(0u)`).
         match kingdom.rows.iter().find(|r| r.name.starts_with("safe.") && r.output == t.ty && r.inputs.as_slice() == [zero.ty]) {

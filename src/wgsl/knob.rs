@@ -20,9 +20,8 @@
 
 use crate::wgsl::loader::WgslKingdom;
 use crate::wgsl::params::{exact_value, ktile_of, parse_ref, Knobs};
-use crate::wgsl::render::{grid_of, gram_role, validate_text, Renderer, Tree, BLK, MAX_THREADS};
+use crate::wgsl::render::{grid_of, gram_role, validate_text, Tree, BLK, MAX_THREADS};
 use crate::wgsl::safe_reader::read_safe;
-use crate::wgsl::table::FunctionTable;
 use crate::wgsl::target::Target;
 
 /// The register budget of a thread's block: the private accumulator arrays
@@ -165,7 +164,8 @@ fn slot_max(kingdom: &WgslKingdom, t: &Tree) -> u32 {
 }
 
 /// THE JOINS of a knob child: every constraint that relates the knob to
-/// the rest of the kernel and to the adapter. Ok, or the first that fails.
+/// the rest of the kernel and to the adapter (the workgroup memory is the
+/// kernel's own arrays: no interface plays a part). Ok, or the first that fails.
 pub fn joins(child: &Tree, kingdom: &WgslKingdom, target: &Target) -> Result<(), String> {
     let knobs = Knobs::of_root(child)?;
     let g = knobs.grid;
@@ -192,8 +192,7 @@ pub fn joins(child: &Tree, kingdom: &WgslKingdom, target: &Target) -> Result<(),
         t.kids.iter().try_for_each(|k| refs(k, knobs, kingdom))
     }
     refs(child, &knobs, kingdom)?;
-    let (table, role) = (FunctionTable::safe(), gram_role());
-    let bytes = Renderer::new(kingdom, &table, &role).workgroup_request(child)?;
+    let bytes = crate::wgsl::render::workgroup_request(kingdom, child)?;
     if bytes > u64::from(target.max_workgroup_storage) {
         return Err(format!("workgroup memory {bytes} bytes beyond the adapter's {}", target.max_workgroup_storage));
     }
@@ -208,7 +207,7 @@ pub fn joins(child: &Tree, kingdom: &WgslKingdom, target: &Target) -> Result<(),
 /// 3, not built) the length the kernel declares is the only bound known to
 /// cover them (48 of 50 shortened arrays of the saved populations computed
 /// wrong values on the device).
-pub fn legal_values(root: &Tree, site: &Site, current: u32, kingdom: &WgslKingdom, target: &Target) -> Vec<u32> {
+pub fn legal_values(root: &Tree, site: &Site, current: u32, kingdom: &WgslKingdom, target: &Target, under: &Under) -> Vec<u32> {
     let covers = |v: u32| !matches!(site, Site::Len(_)) || v >= current;
     site.values(target)
         .into_iter()
@@ -217,7 +216,7 @@ pub fn legal_values(root: &Tree, site: &Site, current: u32, kingdom: &WgslKingdo
                 return false;
             }
             let child = set(root, site, v);
-            joins(&child, kingdom, target).is_ok() && check(&child, kingdom).is_ok()
+            joins(&child, kingdom, target).is_ok() && check_legal_under(&child, kingdom, under).is_ok()
         })
         .collect()
 }
@@ -239,11 +238,11 @@ fn next(state: &mut u64) -> u64 {
     z ^ (z >> 31)
 }
 
-/// One knob mutation: a knob with a legal new value chosen uniformly, then
-/// its value uniformly among the legal ones. An error when no knob of the
-/// kernel has a legal new value.
-pub fn mutate(root: &Tree, kingdom: &WgslKingdom, target: &Target, rng: &mut u64) -> Result<KnobChild, String> {
-    let options: Vec<(Site, u32, Vec<u32>)> = sites(root).into_iter().map(|(s, cur)| { let vs = legal_values(root, &s, cur, kingdom, target); (s, cur, vs) }).filter(|(_, _, vs)| !vs.is_empty()).collect();
+/// One knob mutation under the kernel's interface: a knob with a legal new
+/// value chosen uniformly, then its value uniformly among the legal ones. An
+/// error when no knob of the kernel has a legal new value.
+pub fn mutate(root: &Tree, kingdom: &WgslKingdom, target: &Target, under: &Under, rng: &mut u64) -> Result<KnobChild, String> {
+    let options: Vec<(Site, u32, Vec<u32>)> = sites(root).into_iter().map(|(s, cur)| { let vs = legal_values(root, &s, cur, kingdom, target, under); (s, cur, vs) }).filter(|(_, _, vs)| !vs.is_empty()).collect();
     if options.is_empty() {
         return Err("no knob of this kernel has a legal new value".into());
     }
@@ -274,15 +273,6 @@ impl Stage {
     }
 }
 
-/// THE LAYERED CHECK on the run path (2026-10-13: the evolution path is
-/// genes, tree, text, run; nothing is parsed back): the legality checker's
-/// six layers (`check.rs`, the ownership proof among them), then the text
-/// rendered (with its `// grid` header, from the child's own grid) and
-/// validated by naga for the adapter. The text, or the stage and what failed.
-pub fn check_legal(child: &Tree, kingdom: &WgslKingdom) -> Result<String, (Stage, String)> {
-    check_legal_under(child, kingdom, &Under::gram())
-}
-
 /// THE INTERFACE A KERNEL IS CHECKED AND RENDERED UNDER: the kingdom's role
 /// for it (the Gram's, a declared one, or the one inferred from a problem's
 /// kernel, `render::Role::inferred`) and the dispatch contract the legality
@@ -295,14 +285,26 @@ pub struct Under {
 }
 
 impl Under {
-    /// The Gram's interface under its default contract: every check as before interfaces.
+    /// The Gram's interface under its default contract: the Gram problem's
+    /// own, for its tests and tools (no check defaults to it).
     pub fn gram() -> Under {
         Under { role: gram_role(), contract: None }
     }
+
+    /// The interface a kernel was read under (`SafeRead::role`), the
+    /// contract the checker derives from it.
+    pub fn of(role: &crate::wgsl::render::Role) -> Under {
+        Under { role: role.clone(), contract: None }
+    }
 }
 
-/// [`check_legal`] under an interface: the checker under its role and
-/// contract, the text rendered under its role.
+/// THE LAYERED CHECK on the run path (2026-10-13: the evolution path is
+/// genes, tree, text, run; nothing is parsed back), under the kernel's
+/// interface: the legality checker's six layers (`check.rs`, the ownership
+/// proof among them) under its role and contract, then the text rendered
+/// under its role (with its `// grid` header, from the child's own grid) and
+/// validated by naga for the adapter. The text, or the stage and what failed.
+/// (No role-less form since 2026-10-19: the Gram's was the default.)
 pub fn check_legal_under(child: &Tree, kingdom: &WgslKingdom, under: &Under) -> Result<String, (Stage, String)> {
     // The legality checker reads values: the references written as their literals.
     let plain = crate::wgsl::params::to_literals(child, kingdom).map_err(|e| (Stage::Legal, e))?;
@@ -316,18 +318,11 @@ pub fn check_legal_under(child: &Tree, kingdom: &WgslKingdom, under: &Under) -> 
     Ok(text)
 }
 
-/// [`check_legal`], then the text read back by the safe reader: a second,
-/// independent ownership proof, kept for the tests and the tools (it once
-/// found a race the checker passed, 2698df7), off the run path. The text
-/// and the tree read back, or the stage and what failed.
-pub fn check_text(child: &Tree, kingdom: &WgslKingdom) -> Result<(String, crate::wgsl::safe_reader::SafeRead), (Stage, String)> {
-    let text = check_legal(child, kingdom)?;
-    let back = read_safe(&text, kingdom).map_err(|e| (Stage::ReadBack, e))?;
-    Ok((text, back))
-}
-
-/// [`check_text`] under an interface: the text read back must read under
-/// the same role.
+/// [`check_legal_under`], then the text read back by the safe reader: a
+/// second, independent ownership proof, kept for the tests and the tools (it
+/// once found a race the checker passed, 2698df7), off the run path; the
+/// text read back must read under the same interface. The text and the tree
+/// read back, or the stage and what failed.
 pub fn check_text_under(child: &Tree, kingdom: &WgslKingdom, under: &Under) -> Result<(String, crate::wgsl::safe_reader::SafeRead), (Stage, String)> {
     let text = check_legal_under(child, kingdom, under)?;
     let back = read_safe(&text, kingdom).map_err(|e| (Stage::ReadBack, e))?;
@@ -337,17 +332,12 @@ pub fn check_text_under(child: &Tree, kingdom: &WgslKingdom, under: &Under) -> R
     Ok((text, back))
 }
 
-/// THE CHECK of a knob child on the run path: [`check_legal`]. Its grid and
-/// tile depth are the child's own (the text is rendered from them), so no
-/// read-back compares them.
-pub fn check(child: &Tree, kingdom: &WgslKingdom) -> Result<String, (Stage, String)> {
-    check_legal(child, kingdom)
-}
-
-/// [`check`] with the read-back: the text read back declares the grid and
-/// tile depth the child does. For the tests and the tools.
-pub fn check_read_back(child: &Tree, kingdom: &WgslKingdom) -> Result<String, (Stage, String)> {
-    let (text, back) = check_text(child, kingdom)?;
+/// [`check_legal_under`] with the read-back: the text read back declares the
+/// grid and tile depth the child does. For the tests and the tools. (A knob
+/// child's check on the run path is [`check_legal_under`]: its grid and tile
+/// depth are the child's own, the text rendered from them.)
+pub fn check_read_back(child: &Tree, kingdom: &WgslKingdom, under: &Under) -> Result<String, (Stage, String)> {
+    let (text, back) = check_text_under(child, kingdom, under)?;
     let (want, got) = (Knobs::of_root(child).map_err(|e| (Stage::ReadBack, e))?, Knobs::of_root(&back.tree).map_err(|e| (Stage::ReadBack, e))?);
     // A tile depth of 1 is the items stepped one at a time: read back, it is
     // a kernel that declares none, whose tile depth is 1.
@@ -391,7 +381,7 @@ mod tests {
         let small = Target { max_invocations: 64, ..target };
         assert!(joins(&set(&t, &Site::Wx, 128), &k, &small).is_err());
         // A tile depth of 1 leaves a load loop of a fraction of a pass.
-        assert!(legal_values(&t, &Site::Ktile, ktile_of(&t.kids[0]).unwrap(), &k, &target).iter().all(|&v| joins(&set(&t, &Site::Ktile, v), &k, &target).is_ok()));
+        assert!(legal_values(&t, &Site::Ktile, ktile_of(&t.kids[0]).unwrap(), &k, &target, &Under::gram()).iter().all(|&v| joins(&set(&t, &Site::Ktile, v), &k, &target).is_ok()));
     }
 
     #[test]
@@ -403,7 +393,7 @@ mod tests {
         for f in std::fs::read_dir(dir).unwrap().flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "wgsl")) {
             let Ok(r) = read_safe(&std::fs::read_to_string(&f).unwrap(), &k) else { continue };
             for (site, cur) in sites(&r.tree).into_iter().filter(|(s, _)| matches!(s, Site::Len(_))) {
-                let legal = legal_values(&r.tree, &site, cur, &k, &target);
+                let legal = legal_values(&r.tree, &site, cur, &k, &target, &Under::gram());
                 assert!(legal.iter().all(|&v| v > cur), "{}: {} {cur} -> {legal:?}", f.display(), site.name());
                 checked += 1;
             }
@@ -417,11 +407,11 @@ mod tests {
         let target = Target::recorded();
         let t = kernel(&k);
         let old = ktile_of(&t.kids[0]).unwrap();
-        let legal = legal_values(&t, &Site::Ktile, old, &k, &target);
+        let legal = legal_values(&t, &Site::Ktile, old, &k, &target, &Under::gram());
         assert!(!legal.is_empty(), "no legal tile depth beside {old}");
         let new = legal[0];
         let child = set(&t, &Site::Ktile, new);
-        let text = check_read_back(&child, &k).unwrap_or_else(|(s, e)| panic!("{}: {e}", s.name()));
+        let text = check_read_back(&child, &k, &Under::gram()).unwrap_or_else(|(s, e)| panic!("{}: {e}", s.name()));
         assert!(text.contains(&format!("t = t + {new}u")), "{text}");
     }
 
@@ -432,9 +422,9 @@ mod tests {
         let t = kernel(&k);
         let (mut a, mut b) = (7u64, 7u64);
         for _ in 0..8 {
-            let (x, y) = (mutate(&t, &k, &target, &mut a).unwrap(), mutate(&t, &k, &target, &mut b).unwrap());
+            let (x, y) = (mutate(&t, &k, &target, &Under::gram(), &mut a).unwrap(), mutate(&t, &k, &target, &Under::gram(), &mut b).unwrap());
             assert_eq!((x.site.clone(), x.old, x.new), (y.site, y.old, y.new));
-            check_read_back(&x.tree, &k).unwrap_or_else(|(s, e)| panic!("{} {} -> {}: {}: {e}", x.site.name(), x.old, x.new, s.name()));
+            check_read_back(&x.tree, &k, &Under::gram()).unwrap_or_else(|(s, e)| panic!("{} {} -> {}: {}: {e}", x.site.name(), x.old, x.new, s.name()));
         }
     }
 }

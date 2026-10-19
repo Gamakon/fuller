@@ -1,7 +1,7 @@
 //! MORE STRUCTURAL REWRITE RULES (2026-10-13, Andrew's list for the beam):
 //! small changes that keep a kernel's values, each with its preconditions,
 //! its inverse where one makes sense, and every child through the layered
-//! checker (`knob::check_text`) before it is used. The rule catalogue and
+//! checker (`knob::check_text_under`) before it is used. The rule catalogue and
 //! the statement editor are `rules.rs`; this module holds the rules added
 //! to it:
 //!
@@ -1688,7 +1688,7 @@ pub fn why_not(rule: crate::wgsl::rules::Rule, root: &Tree, kingdom: &WgslKingdo
 mod tests {
     use super::*;
     use crate::wgsl::rules::Rule;
-    use crate::wgsl::safe_karva::render_tree;
+    use crate::wgsl::safe_karva::render_tree_with;
     use crate::wgsl::safe_reader::read_safe;
 
     /// The corpus kernels and the rule population popR_rules (when this
@@ -1725,19 +1725,19 @@ mod tests {
                 continue;
             }
             // A parent the checker refuses (a race of its own, k08) gives a child that inherits it.
-            if knob::check(&t, &k).is_err() {
+            if knob::check_legal_under(&t, &k, &knob::Under::gram()).is_err() {
                 parents_refused.push(name.clone());
                 continue;
             }
             fired += 1;
             let child = symmetric_half(&t, &k).unwrap_or_else(|e| panic!("{name}: {e}"));
             if let Ok(dir) = std::env::var("SYMMETRIC_DUMP") {
-                let _ = std::fs::write(format!("{dir}/{name}"), render_tree(&child, &k).map(|r| r.text).unwrap_or_default());
+                let _ = std::fs::write(format!("{dir}/{name}"), render_tree_with(&child, &k, &crate::wgsl::render::gram_role()).map(|r| r.text).unwrap_or_default());
             }
-            let (text, back) = knob::check_text(&child, &k).unwrap_or_else(|(s, e)| panic!("{name}: {}: {e}", s.name()));
+            let (text, back) = knob::check_text_under(&child, &k, &knob::Under::gram()).unwrap_or_else(|(s, e)| panic!("{name}: {}: {e}", s.name()));
             assert!(text.contains("// mode full"), "{name}: the child does not say mode full");
             assert!(crate::wgsl::render::writes_mirror(&back.tree), "{name}: read back without its mirror");
-            let parent = render_tree(&t, &k).unwrap().text;
+            let parent = render_tree_with(&t, &k, &crate::wgsl::render::gram_role()).unwrap().text;
             let grid = crate::wgsl::render::grid_of(&to_literals(&t, &k).unwrap().kids[0]).unwrap();
             let mut all_run = true;
             for d in [37u32, 70] {
@@ -1808,7 +1808,7 @@ mod tests {
         let mut fired: BTreeMap<&str, (usize, usize)> = BTreeMap::new();
         let mut refused: BTreeMap<String, usize> = BTreeMap::new();
         for (name, t) in &all {
-            if let Err((_, e)) = knob::check(t, &k) {
+            if let Err((_, e)) = knob::check_legal_under(t, &k, &knob::Under::gram()) {
                 let rule: String = e.split(": ").nth(1).unwrap_or(&e).chars().take(60).collect();
                 *refused.entry(rule).or_default() += 1;
                 continue;
@@ -1817,7 +1817,7 @@ mod tests {
                 for site in rule.sites(t, &k) {
                     let e = fired.entry(rule.name()).or_default();
                     e.0 += 1;
-                    match rule.apply(t, &site, &k).map_err(|e| ("apply", e)).and_then(|c| knob::check_text(&c, &k).map_err(|(s, e)| (s.name(), e))) {
+                    match rule.apply(t, &site, &k).map_err(|e| ("apply", e)).and_then(|c| knob::check_text_under(&c, &k, &knob::Under::gram()).map_err(|(s, e)| (s.name(), e))) {
                         Ok(_) => e.1 += 1,
                         Err((stage, err)) => failures.push(format!("{name} {} {}: {stage}: {}", rule.name(), site.what, err.chars().take(240).collect::<String>())),
                     }
@@ -1877,7 +1877,7 @@ mod tests {
     #[test]
     fn the_inverses_give_back_the_kernel() {
         let k = WgslKingdom::load_safe();
-        let text = |t: &Tree| render_tree(t, &k).unwrap().text;
+        let text = |t: &Tree| render_tree_with(t, &k, &crate::wgsl::render::gram_role()).unwrap().text;
         let (mut rolled, mut shrunk) = (0usize, 0usize);
         for (name, t) in kernels(&k) {
             let plain = to_literals(&t, &k).unwrap();
@@ -1912,7 +1912,7 @@ mod tests {
                 let reg = site.what.split(':').next().unwrap().to_string();
                 let child = drop_dead_store(&t, &site, &k).unwrap();
                 assert!(!any_node(&child, &|x| x.name.starts_with("reg.set_") && x.kids.first().is_some_and(|l| l.name == reg)), "{name}: {reg} still written");
-                let (a, b) = (render_tree(&t, &k).unwrap().text, render_tree(&child, &k).unwrap().text);
+                let (a, b) = (render_tree_with(&t, &k, &crate::wgsl::render::gram_role()).unwrap().text, render_tree_with(&child, &k, &crate::wgsl::render::gram_role()).unwrap().text);
                 let kept: Vec<&str> = a.lines().collect();
                 assert!(b.lines().all(|l| kept.contains(&l)), "{name} {}: a line changed", site.what);
                 n += 1;
@@ -1930,7 +1930,7 @@ mod tests {
         for (name, t) in kernels(&k) {
             for site in split_accumulator_sites(&t, &k) {
                 let child = split_accumulator(&t, &site, &k).unwrap();
-                let text = render_tree(&child, &k).unwrap().text;
+                let text = render_tree_with(&child, &k, &crate::wgsl::render::gram_role()).unwrap().text;
                 let plain = to_literals(&t, &k).unwrap();
                 let (_, depth, lp) = k_loops(&plain).into_iter().find(|(x, _, _)| *x == site.index).unwrap();
                 let plan = split_plan(&plain, site.index, depth, &lp, &k).unwrap();

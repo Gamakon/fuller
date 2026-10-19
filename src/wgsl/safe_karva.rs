@@ -26,7 +26,7 @@ use crate::geneframe::Ty;
 use crate::homeotic::{self, href_name, href_slot, FoldedChromosome, KarvaGene, EMPTY_SLOT};
 use crate::karva::{parse_math, FunctionSpec, MathNode, PsetSpec, Token};
 use crate::wgsl::loader::WgslKingdom;
-use crate::wgsl::render::{cost, dual_ty, gram_role, gram_shipped_safe_tree, Cost, Rendered, Renderer, Role, Tree};
+use crate::wgsl::render::{cost, dual_ty, gram_shipped_safe_tree, Cost, Rendered, Renderer, Role, Tree};
 use crate::wgsl::table::FunctionTable;
 
 /// The kingdom's K: every node has at most four children.
@@ -1033,17 +1033,13 @@ fn project_scored(n: &MathNode, demand: Ty, kingdom: &WgslKingdom, per_kernel: &
     }
 }
 
-/// The kernel text of a safe tree, headed by its `// grid x y bx by` line:
-/// the fitness evaluation dispatches from that header (ceil(d / (x·bx)) by
-/// ceil(rows / (y·by)) workgroups); without it a register-blocked kernel is
-/// dispatched at 1 × 1 blocks, sixteen times the workgroups for a 4 × 4
-/// block, and runs at a fraction of its speed.
-pub fn render_tree(tree: &Tree, kingdom: &WgslKingdom) -> Result<Rendered, String> {
-    render_tree_with(tree, kingdom, &gram_role())
-}
-
-/// [`render_tree`] under an interface: the grid header, the interface's
-/// header (none for the Gram's), the kernel.
+/// The kernel text of a safe tree under its interface, headed by its
+/// `// grid x y bx by` line: the fitness evaluation dispatches from that
+/// header (ceil(d / (x·bx)) by ceil(rows / (y·by)) workgroups; without it a
+/// register-blocked kernel is dispatched at 1 × 1 blocks); then the
+/// interface's header (none for the Gram's), the kernel. Every kernel is
+/// written under the interface it was read or drawn under: there is no
+/// default (2026-10-19, Andrew: the Gram problem is only a unit test).
 pub fn render_tree_with(tree: &Tree, kingdom: &WgslKingdom, role: &crate::wgsl::render::Role) -> Result<Rendered, String> {
     let t = FunctionTable::safe();
     let mut r = Renderer::new(kingdom, &t, role).kernel(tree)?;
@@ -1058,13 +1054,8 @@ pub fn render_tree_with(tree: &Tree, kingdom: &WgslKingdom, role: &crate::wgsl::
     Ok(r)
 }
 
-/// Decoded genes to kernel text: unfold, project, render; with the number of
-/// fallback leaves the projection made.
-pub fn rebuild(decoded: &[String], filled: usize, kingdom: &WgslKingdom) -> Result<(Rendered, usize), String> {
-    rebuild_bounded(decoded, filled, kingdom, None).map(|(r, f, _)| (r, f))
-}
-
-/// [`rebuild`] under a role (an inferred interface's, nluca's).
+/// Decoded genes to kernel text under the interface `role`: unfold,
+/// project, render; with the number of fallback leaves the projection made.
 pub fn rebuild_with(decoded: &[String], filled: usize, kingdom: &WgslKingdom, role: &crate::wgsl::render::Role) -> Result<(Rendered, usize), String> {
     rebuild_bounded_with(decoded, filled, kingdom, None, role).map(|(r, f, _)| (r, f))
 }
@@ -1095,14 +1086,9 @@ pub fn default_bound(kingdom: &WgslKingdom) -> Result<Cost, String> {
     Ok(Cost { per_item: SHIPPED_COST_FACTOR * shipped.per_item, base: 20_000.0 })
 }
 
-/// [`rebuild`] refusing, by name, a kernel whose static cost exceeds
-/// `bound` (the per-item or the base figure); the kernel's cost is
-/// returned with the text.
-pub fn rebuild_bounded(decoded: &[String], filled: usize, kingdom: &WgslKingdom, bound: Option<&Cost>) -> Result<(Rendered, usize, Cost), String> {
-    rebuild_bounded_with(decoded, filled, kingdom, bound, &gram_role())
-}
-
-/// [`rebuild_bounded`] under a role (an inferred interface's, nluca's).
+/// Decoded genes to kernel text under the interface `role`, refusing by name a
+/// kernel whose static cost exceeds `bound` (the per-item or the base
+/// figure); the kernel's cost is returned with the text.
 pub fn rebuild_bounded_with(decoded: &[String], filled: usize, kingdom: &WgslKingdom, bound: Option<&Cost>, role: &crate::wgsl::render::Role) -> Result<(Rendered, usize, Cost), String> {
     let text = unfold_decoded(decoded, filled)?;
     let tree = build(&text, kingdom, role)?;
@@ -1147,6 +1133,7 @@ mod tests {
     }
 
     use super::*;
+    use crate::wgsl::render::gram_role;
     use crate::karva::karva_to_terms_generic;
     use crate::wgsl::render::{gram_shipped_safe_tree, validate_text};
     use crate::wgsl::safe_reader::read_safe;
@@ -1156,12 +1143,12 @@ mod tests {
     /// Encode at `h`, decode every gene, unfold, project, render: the text
     /// must be the tree's own rendering, with no fallback.
     fn round_trip(tree: &Tree, kingdom: &WgslKingdom, h: usize, slots: usize) -> SafeChromosome {
-        let direct = render_tree(tree, kingdom).unwrap().text;
+        let direct = render_tree_with(tree, kingdom, &crate::wgsl::render::gram_role()).unwrap().text;
         let c = encode(tree, h, slots, 7).unwrap_or_else(|e| panic!("{e}"));
         let pset = homeotic::pset_with_hrefs(&c.pset, slots);
         let decoded: Vec<String> = c.genes.iter().map(|(hd, tl)| karva_to_terms_generic(hd, tl, &pset).unwrap()).collect();
         let bound = default_bound(kingdom).unwrap();
-        let (r, f, _) = rebuild_bounded(&decoded, c.folded.filled, kingdom, Some(&bound)).unwrap_or_else(|e| panic!("{e}"));
+        let (r, f, _) = rebuild_bounded_with(&decoded, c.folded.filled, kingdom, Some(&bound), &crate::wgsl::render::gram_role()).unwrap_or_else(|e| panic!("{e}"));
         let text = unfold_decoded(&decoded, c.folded.filled).unwrap();
         assert_eq!(f, 0, "fallbacks in {}\nfrom {text}", build(&text, kingdom, &gram_role()).unwrap().to_sexpr());
         assert_eq!(r.text, direct);
@@ -1265,7 +1252,7 @@ mod tests {
         let src = format!("// grid 16 16 1 1\n{SHIPPED}");
         let r = read_safe(&src, &k).unwrap();
         let shipped_genes = vec![karva_text(&r.tree)];
-        assert!(rebuild_bounded(&shipped_genes, 0, &k, Some(&bound)).is_ok());
+        assert!(rebuild_bounded_with(&shipped_genes, 0, &k, Some(&bound), &crate::wgsl::render::gram_role()).is_ok());
         // The item loop's body wrapped in three tile loops of 64.
         let mut t = r.tree.clone();
         fn wrap(t: &mut Tree, k: &WgslKingdom) -> bool {
@@ -1282,7 +1269,7 @@ mod tests {
         }
         assert!(wrap(&mut t, &k));
         let heavy = vec![karva_text(&t)];
-        let e = rebuild_bounded(&heavy, 0, &k, Some(&bound)).expect_err("refused");
+        let e = rebuild_bounded_with(&heavy, 0, &k, Some(&bound), &crate::wgsl::render::gram_role()).expect_err("refused");
         assert!(e.starts_with("cost:"), "{e}");
         assert!(cost(&t).per_item > bound.per_item);
     }
@@ -1295,7 +1282,7 @@ mod tests {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("logs/HGP/001/gen0/k07.wgsl");
         let Ok(src) = std::fs::read_to_string(&dir) else { return };
         let r = read_safe(&src, &k).unwrap();
-        let out = render_tree(&r.tree, &k).unwrap();
+        let out = render_tree_with(&r.tree, &k, &crate::wgsl::render::gram_role()).unwrap();
         assert!(out.text.starts_with("// grid 16 16 4 4\n"), "{}", out.text.lines().next().unwrap_or(""));
         assert_eq!(crate::wgsl::safe_reader::grid_header(&out.text), Some((16, 16, 4, 4)));
     }
@@ -1309,7 +1296,7 @@ mod tests {
         let text = r#"(kernel.entry_safe (grid.of (literal.wgdim (Num 16.0)) (literal.wgdim (Num 16.0)) (literal.blk (Num 1.0)) (literal.blk (Num 1.0))) (block.seq2_L0 (parr.set_v_L0 (Var "parr.a") (safe.pidx16 (literal.index (Num 0.0))) (reg.get_v (Var "reg.v0"))) (wg.set_v_L0 (Var "wg.a") (safe.wgv_of (literal.index (Num 0.0))) (reg.get_v (Var "reg.v0")))) (block.one_O0 (store.h_O0 (safe.cell_of (safe.thread_row (Var "builtin.global_invocation_id") (literal.blk (Num 1.0))) (safe.thread_col (Var "builtin.global_invocation_id") (literal.blk (Num 1.0)))) (reg.get_f (Var "reg.f0")))))"#;
         let t = build(text, &k, &gram_role()).unwrap();
         assert_eq!(fallbacks(&t), 2, "{}", t.to_sexpr());
-        let r = render_tree(&t, &k).unwrap();
+        let r = render_tree_with(&t, &k, &crate::wgsl::render::gram_role()).unwrap();
         assert!(r.text.contains("pv[") && r.text.contains("wg_va["), "{}", r.text);
         validate_text(&r.text).unwrap();
     }
@@ -1326,7 +1313,7 @@ mod tests {
         files.sort();
         let trees: Vec<Tree> = files.iter().filter_map(|f| read_safe(&std::fs::read_to_string(f).ok()?, &k).ok()).map(|r| r.tree).take(12).collect();
         assert!(trees.len() >= 8);
-        let direct: Vec<String> = trees.iter().map(|t| render_tree(t, &k).unwrap().text).collect();
+        let direct: Vec<String> = trees.iter().map(|t| render_tree_with(t, &k, &crate::wgsl::render::gram_role()).unwrap().text).collect();
         // The population's layout: 96 tail slots (k05, inlined, needs 43 own
         // definitions at head 32), the shared band the last eight.
         let f = fold_population(&trees, 32, 96, 88, 3, 7);
@@ -1338,7 +1325,7 @@ mod tests {
             let c = c.as_ref().unwrap_or_else(|e| panic!("{e}"));
             let pset = homeotic::pset_with_hrefs(&c.pset, pset_slots);
             let decoded: Vec<String> = c.genes.iter().map(|(hd, tl)| karva_to_terms_generic(hd, tl, &pset).unwrap()).collect();
-            let (r, fb) = rebuild(&decoded, c.folded.filled, &k).unwrap_or_else(|e| panic!("individual {i}: {e}"));
+            let (r, fb) = rebuild_with(&decoded, c.folded.filled, &k, &crate::wgsl::render::gram_role()).unwrap_or_else(|e| panic!("individual {i}: {e}"));
             assert_eq!(fb, 0);
             assert_eq!(r.text, direct[i], "individual {i} rebuilds to its own text after the fold");
         }
@@ -1385,7 +1372,7 @@ mod tests {
         }
         println!("generation 24: {} of {} rows read; past 16 bool registers (a `&&` around a subgroup operation): {unread:?}", trees.len(), trees.len() + unread.len());
         assert_eq!(trees.len(), 70, "the rows that read (2026-10-19: 70 of 80)");
-        let direct: Vec<String> = trees.iter().map(|t| render_tree(t, &k).unwrap().text).collect();
+        let direct: Vec<String> = trees.iter().map(|t| render_tree_with(t, &k, &crate::wgsl::render::gram_role()).unwrap().text).collect();
         let f = fold_population(&trees, 32, 128, 120, 3, 4 * 7 + 24);
         println!("shared {}, own aligned {}, unaligned {}", f.shared.len(), f.own_aligned, f.own_unaligned);
         let mut wrong = Vec::new();
@@ -1393,7 +1380,7 @@ mod tests {
             let Ok(c) = c else { continue };
             let pset = homeotic::pset_with_hrefs(&c.pset, 128);
             let decoded: Vec<String> = c.genes.iter().map(|(hd, tl)| karva_to_terms_generic(hd, tl, &pset).unwrap()).collect();
-            let (r, _) = rebuild(&decoded, c.folded.filled, &k).unwrap_or_else(|e| panic!("{}: {e}", files[i].display()));
+            let (r, _) = rebuild_with(&decoded, c.folded.filled, &k, &crate::wgsl::render::gram_role()).unwrap_or_else(|e| panic!("{}: {e}", files[i].display()));
             if r.text != direct[i] {
                 let first = r.text.lines().zip(direct[i].lines()).find(|(a, b)| a != b).map(|(a, b)| format!("\n  folded: {a}\n  kernel: {b}")).unwrap_or_default();
                 wrong.push(format!("{}{first}", files[i].file_name().unwrap().to_string_lossy()));
@@ -1411,7 +1398,7 @@ mod tests {
         let t = build(text, &k, &gram_role()).unwrap();
         assert_eq!(fallbacks(&t), 1, "{}", t.to_sexpr());
         assert_eq!(t.kids[1].name, "block.one_L0");
-        render_tree(&t, &k).unwrap();
+        render_tree_with(&t, &k, &crate::wgsl::render::gram_role()).unwrap();
     }
 
     /// EVERY RANDOM GENE IS A KERNEL THAT STORES (Andrew's rule: a gene the
@@ -1529,7 +1516,7 @@ mod tests {
                     demand.map_or_else(|| EMPTY_SLOT.to_string(), |d| text(&mask(n, d, &slot_duals, &k, &per_kernel)))
                 })
                 .collect();
-            let text = match unfold_decoded(&genes, SLOTS).and_then(|u| build(&u, &k, &role)).and_then(|t| render_tree(&t, &k)) {
+            let text = match unfold_decoded(&genes, SLOTS).and_then(|u| build(&u, &k, &role)).and_then(|t| render_tree_with(&t, &k, &crate::wgsl::render::gram_role())) {
                 Ok(r) => r.text,
                 Err(e) => {
                     failed.push(format!("chromosome {i}: {}", &e[..e.len().min(160)]));
@@ -1635,7 +1622,7 @@ mod tests {
                 axis_swaps += 1;
             }
             made += 1;
-            let text = match render_tree(&mutant, &k) {
+            let text = match render_tree_with(&mutant, &k, &crate::wgsl::render::gram_role()) {
                 Ok(r) => r.text,
                 Err(e) => {
                     unrendered += 1;

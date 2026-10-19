@@ -9,7 +9,7 @@
 
 use fuller::wgsl::loader::WgslKingdom;
 use fuller::wgsl::render::{dual_ty, gram_role, sample};
-use fuller::wgsl::safe_karva::render_tree;
+use fuller::wgsl::safe_karva::render_tree_with;
 use fuller::wgsl::safe_reader::read_safe;
 
 fn main() -> Result<(), String> {
@@ -21,7 +21,7 @@ fn main() -> Result<(), String> {
     if args.iter().any(|a| a == "--tree") {
         println!("{}\n", tree.to_sexpr());
     }
-    let text = render_tree(&tree, &k)?.text;
+    let text = render_tree_with(&tree, &k, &role)?.text;
     println!("{text}");
     if let Some(dir) = args.iter().position(|a| a == "--write").and_then(|i| args.get(i + 1)) {
         std::fs::write(format!("{dir}/{seed}.drawn.wgsl"), &text).map_err(|e| e.to_string())?;
@@ -35,7 +35,7 @@ fn main() -> Result<(), String> {
             if let Some(dir) = args.iter().position(|a| a == "--write").and_then(|i| args.get(i + 1)) {
                 std::fs::write(format!("{dir}/{seed}.back.sexpr"), back.tree.to_sexpr()).map_err(|e| e.to_string())?;
             }
-            let again = render_tree(&back.tree, &k)?.text;
+            let again = render_tree_with(&back.tree, &k, &back.role)?.text;
             if let Some(dir) = args.iter().position(|a| a == "--write").and_then(|i| args.get(i + 1)) {
                 std::fs::write(format!("{dir}/{seed}.again.wgsl"), &again).map_err(|e| e.to_string())?;
             }

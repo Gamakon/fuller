@@ -400,6 +400,11 @@ impl Role {
             if b.role == Use::Parameter || b.name == input || b.name == output {
                 continue;
             }
+            // The length of a runtime-sized array (`arrayLength(&name)`), of any
+            // element type: the row `len.<name>`.
+            if b.ty.starts_with("array<") && !b.ty.contains(", ") {
+                extra.push(pk(format!("len.{}", b.name), Vec::new(), "u32.count".into(), format!("arrayLength(&{})", b.name)));
+            }
             let Some(dual) = b.elem.as_deref().and_then(elem_dual) else { continue };
             extra.push(pk(format!("load.{}", b.name), vec!["u32.index".into()], dual.clone(), format!("{}[{{0}}]", b.name)));
             // A u32 read from an input is also a loop bound's value (a load
@@ -460,7 +465,7 @@ pub fn infer_entries(module: &naga::Module) -> Result<(crate::wgsl::interface::M
 }
 
 /// The declared interfaces by name (a kernel names its own in a
-/// `// interface <name>` header line; none is the Gram's).
+/// `// interface <name>` header line; none is the interface its module gives).
 pub fn role_named(name: &str) -> Result<Role, String> {
     match name {
         "gram" => Ok(gram_role()),
@@ -1754,13 +1759,7 @@ impl<'a> Renderer<'a> {
     /// mutation's join keeps it within the device's limit, so a child is
     /// never silently given shorter arrays than its references assume.
     pub fn workgroup_request(&self, root: &Tree) -> Result<u64, String> {
-        // A module: its most demanding entry point (each runs as its own pipeline).
-        if root.name.starts_with("kernel.module_") {
-            return root.kids.iter().map(|k| self.workgroup_request(k)).try_fold(0, |m, r| r.map(|r| m.max(r)));
-        }
-        let root = crate::wgsl::params::resolve(root)?;
-        let Some(grid) = root.kids.first().filter(|_| root.name == "kernel.entry_safe") else { return Ok(0) };
-        Ok(plan_bytes(&self.workgroup_plan_requested(grid, &root)?))
+        workgroup_request(self.kingdom, root)
     }
 
     /// The kernel's workgroup arrays ([`workgroup_plan`]).
@@ -1801,11 +1800,6 @@ impl<'a> Renderer<'a> {
             at.1 = (at.1 / 2).max(1);
         }
         Ok(joint)
-    }
-
-    /// [`workgroup_plan_requested`].
-    fn workgroup_plan_requested(&self, grid: &Tree, root: &Tree) -> Result<BTreeMap<String, (String, u32)>, String> {
-        workgroup_plan_requested(self.kingdom, grid, root)
     }
 }
 
@@ -1938,6 +1932,18 @@ pub fn workgroup_plan_of(kingdom: &WgslKingdom, grid: &Tree, root: &Tree, only: 
         entry.1 = (entry.1 / 2).max(1);
     }
     Ok(plan)
+}
+
+/// The bytes of workgroup memory a kernel requests (knob references resolved;
+/// the interface plays no part: the arrays are the kernel's own). A module:
+/// its most demanding entry point (each runs as its own pipeline).
+pub fn workgroup_request(kingdom: &WgslKingdom, root: &Tree) -> Result<u64, String> {
+    if root.name.starts_with("kernel.module_") {
+        return root.kids.iter().map(|k| workgroup_request(kingdom, k)).try_fold(0, |m, r| r.map(|r| m.max(r)));
+    }
+    let root = crate::wgsl::params::resolve(root)?;
+    let Some(grid) = root.kids.first().filter(|_| root.name == "kernel.entry_safe") else { return Ok(0) };
+    Ok(plan_bytes(&workgroup_plan_requested(kingdom, grid, &root)?))
 }
 
 /// [`workgroup_plan`] before any array is halved.
@@ -4150,7 +4156,7 @@ mod tests {
         let (mut divisions, mut kernels) = (0usize, 0usize);
         for seed in 0..1000 {
             let tree = sample(&k, &role, root, 7, seed).unwrap();
-            let text = crate::wgsl::safe_karva::render_tree(&tree, &k).unwrap().text;
+            let text = crate::wgsl::safe_karva::render_tree_with(&tree, &k, &crate::wgsl::render::gram_role()).unwrap().text;
             let module = crate::wgsl::naga_shape::parse(&text).unwrap_or_else(|e| panic!("{e}"));
             let info = crate::wgsl::target::Target::recorded().validate(&module, &text).unwrap_or_else(|e| panic!("{e}"));
             kernels += 1;

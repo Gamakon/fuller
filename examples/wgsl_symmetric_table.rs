@@ -38,7 +38,7 @@ use fuller::wgsl::knob;
 use fuller::wgsl::loader::WgslKingdom;
 use fuller::wgsl::oracle::device::Device;
 use fuller::wgsl::rules_more::{symmetric_half, symmetric_half_sites};
-use fuller::wgsl::safe_karva::render_tree;
+use fuller::wgsl::safe_karva::render_tree_with;
 use fuller::wgsl::safe_reader::read_safe;
 
 static DEADLINE: AtomicU64 = AtomicU64::new(0);
@@ -140,15 +140,15 @@ fn main() -> Result<(), String> {
         let name = f.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
         let Ok(src) = std::fs::read_to_string(f) else { continue };
         let Ok(r) = read_safe(&src, &kingdom) else { continue };
-        if symmetric_half_sites(&r.tree, &kingdom).is_empty() || knob::check(&r.tree, &kingdom).is_err() {
+        if symmetric_half_sites(&r.tree, &kingdom).is_empty() || knob::check_legal_under(&r.tree, &kingdom, &knob::Under::of(&r.role)).is_err() {
             continue;
         }
-        let parent = render_tree(&r.tree, &kingdom)?.text;
+        let parent = render_tree_with(&r.tree, &kingdom, &r.role)?.text;
         if !seen.insert(parent.clone()) {
             continue;
         }
         let child_tree = symmetric_half(&r.tree, &kingdom)?;
-        let child = knob::check(&child_tree, &kingdom).map_err(|(s, e)| format!("{name}: the child: {}: {e}", s.name()))?;
+        let child = knob::check_legal_under(&child_tree, &kingdom, &knob::Under::of(&r.role)).map_err(|(s, e)| format!("{name}: the child: {}: {e}", s.name()))?;
         std::fs::write(out.join(format!("{name}.parent.wgsl")), &parent).map_err(|e| e.to_string())?;
         std::fs::write(out.join(format!("{name}.child.wgsl")), &child).map_err(|e| e.to_string())?;
         pairs.push((name, parent, child));

@@ -117,7 +117,12 @@ pub fn line(file: &str, text: &str, kingdom: &WgslKingdom) -> serde_json::Value 
         Err(e) => serde_json::json!({ "refused": e }),
     };
     let safe = match crate::wgsl::safe_reader::read_safe(text, kingdom) {
-        Ok(r) => serde_json::json!({ "tree": r.tree.to_sexpr(), "role": format!("{:?}", crate::wgsl::render::Role { guard: String::new(), ..r.role }) }),
+        Ok(r) => {
+            // (The rows the kingdom added to an interface after the snapshot,
+            // `len.<binding>` of 2026-10-19, are not what naga read.)
+            let per_kernel = r.role.per_kernel.iter().filter(|p| !p.name.starts_with("len.")).cloned().collect();
+            serde_json::json!({ "tree": r.tree.to_sexpr(), "role": format!("{:?}", crate::wgsl::render::Role { guard: String::new(), per_kernel, ..r.role }) })
+        }
         Err(e) => serde_json::json!({ "refused": e }),
     };
     let scaffold: serde_json::Value = serde_json::from_str(&renumbered(&scaffold.to_string())).expect("the renumbered reading is JSON");

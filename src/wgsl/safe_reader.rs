@@ -24,7 +24,7 @@ pub struct SafeRead {
     pub tree: Tree,
     pub notes: Vec<String>,
     pub registers: BTreeMap<String, String>,
-    /// The interface the kernel declared (`// interface <name>`; the Gram's by default).
+    /// The interface the kernel declared (`// interface <name>`), else the one its module gives (`Role::inferred`).
     pub role: crate::wgsl::render::Role,
 }
 
@@ -464,12 +464,20 @@ fn tree_of(ctx: &mut Ctx, n: &Node) -> Result<Tree, String> {
                     }
                 }
                 if let (true, [Node::Leaf { name: g, .. }]) = (name == "naga.ArrayLength", kids.as_slice()) {
+                    // The input and the output the kingdom's rows name (phi, h); any
+                    // other runtime-sized array by the interface's row `len.<name>`.
                     let row = match g.as_str() {
-                        "global.phi" => "load.phi_len",
-                        "global.h" => "load.h_len",
-                        other => return Err(format!("arrayLength of {other}: the Gram role's runtime-sized bindings are phi and h")),
+                        "global.phi" => "load.phi_len".to_string(),
+                        "global.h" => "load.h_len".to_string(),
+                        other => {
+                            let row = format!("len.{}", other.strip_prefix("global.").unwrap_or(other));
+                            if !ctx.per_kernel_rows.iter().any(|p| p.0 == row) {
+                                return Err(format!("arrayLength of {other}: the interface has no runtime-sized array of that name (row {row})"));
+                            }
+                            row
+                        }
                     };
-                    return Ok(Tree::new(row, ty(ctx, "u32.count")?, vec![]));
+                    return Ok(Tree::new(&row, ty(ctx, "u32.count")?, vec![]));
                 }
                 if let Some(row) = safe_row_for(name, kids) {
                     return tree_of(ctx, &Node::App { name: row, slot: slot_of(n).to_string(), known: true, kids: kids.clone() });
@@ -2345,7 +2353,7 @@ impl<'a> Ctx<'a> {
                 // naga's name; the table's row is `builtin.num_workgroups`.
                 return Ok(Tree::new("builtin.num_workgroups", t.ty, vec![]));
             }
-            if t.name.starts_with("builtin.") || t.name.starts_with("literal.") || t.name == "load.phi_len" || t.name == "load.h_len" {
+            if t.name.starts_with("builtin.") || t.name.starts_with("literal.") || t.name == "load.phi_len" || t.name == "load.h_len" || t.name.starts_with("len.") {
                 return Ok(t.clone());
             }
             // A workgroup scalar: element 0 of a workgroup array of one.
@@ -7390,7 +7398,7 @@ fn search(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocati
             match verdict {
                 Ok((back, fix)) => {
                     read_back += 1;
-                    same += usize::from(back == crate::wgsl::canonical::canonical(&tree, &k));
+                    same += usize::from(back == crate::wgsl::canonical::canonical(&tree, &k, &role));
                     fixpoint += usize::from(fix);
                     match checker.check(&tree) {
                         Ok(()) => legal += 1,
@@ -7936,7 +7944,7 @@ fn search(@builtin(global_invocation_id) gid: vec3<u32>) {{
         assert!(!out.text.contains("fn sgn"), "inlined:\n{}", out.text);
         validate_text(&out.text).unwrap_or_else(|e| panic!("{e}\n{}", out.text));
         let back = read_safe(&out.text, &k).unwrap_or_else(|e| panic!("read back: {e}\n{}", out.text));
-        let canon = crate::wgsl::canonical::canonical(&r.tree, &k);
+        let canon = crate::wgsl::canonical::canonical(&r.tree, &k, &r.role);
         assert!(canon == back.tree || back.tree == r.tree, "the rendered text reads back to the tree read: {:?}\n{}", crate::wgsl::render::first_difference(&canon, &back.tree), out.text);
         let again = read_safe(&crate::wgsl::safe_karva::render_tree_with(&back.tree, &k, &back.role).unwrap().text, &k).unwrap();
         assert!(again.tree == back.tree, "a fixpoint: {:?}", crate::wgsl::render::first_difference(&back.tree, &again.tree));
@@ -8061,7 +8069,7 @@ fn ingest(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) w
         let back = read_safe(&out.text, &k).unwrap_or_else(|e| panic!("read back: {e}\n{}", out.text));
         // (The inlined helpers' statements are one block statement as read,
         // written in place: the same tree in its canonical spelling, then a fixpoint.)
-        let canon = crate::wgsl::canonical::canonical(&r.tree, &k);
+        let canon = crate::wgsl::canonical::canonical(&r.tree, &k, &r.role);
         assert!(canon == back.tree, "the rendered text reads back to the tree read, canonical: {:?}\n{}", crate::wgsl::render::first_difference(&canon, &back.tree), out.text);
         let again = read_safe(&crate::wgsl::safe_karva::render_tree_with(&back.tree, &k, &back.role).unwrap().text, &k).unwrap();
         assert!(again.tree == back.tree, "a fixpoint: {:?}", crate::wgsl::render::first_difference(&back.tree, &again.tree));
@@ -8098,6 +8106,27 @@ fn ingest(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) w
             let checker = crate::wgsl::check::Checker::with_contract(&k, &r.role, &crate::wgsl::target::Target::recorded(), contract.clone());
             checker.check(&r.tree).unwrap_or_else(|e| panic!("{what}: {e}\n{}", out.text));
         }
+    }
+
+    /// THE LENGTH OF ANY RUNTIME-SIZED BINDING (2026-10-19; cuneus's
+    /// `instances` and `skin` kernels read `arrayLength(&src)`): the interface
+    /// has the row `len.<binding>` for each, so none of them is the Gram's
+    /// phi or h. Reads, renders, naga validates it, reads back to the same
+    /// tree and passes every layer.
+    #[test]
+    fn the_length_of_any_runtime_sized_binding_reads() {
+        let k = WgslKingdom::load_safe();
+        let contract = crate::wgsl::safety::Contract::parse("workgroups x 1 1024\nworkgroups y 1 1\nworkgroups z 1 1\n").unwrap();
+        let src = "@group(0) @binding(0) var<storage, read> src: array<f32>;\n@group(0) @binding(1) var<storage, read_write> dst: array<f32>;\n@compute @workgroup_size(64, 1, 1)\nfn main(@builtin(global_invocation_id) gid: vec3<u32>) {\n    if (gid.x >= arrayLength(&src) || gid.x >= arrayLength(&dst)) { return; }\n    dst[gid.x] = src[gid.x] * 2.0;\n}\n";
+        let r = read_safe(src, &k).unwrap_or_else(|e| panic!("{e}"));
+        assert!(r.tree.to_sexpr().contains("len.src") && r.tree.to_sexpr().contains("len.dst"), "{}", r.tree.to_sexpr());
+        let out = crate::wgsl::safe_karva::render_tree_with(&r.tree, &k, &r.role).unwrap_or_else(|e| panic!("{e}"));
+        validate_text(&out.text).unwrap_or_else(|e| panic!("{e}\n{}", out.text));
+        assert!(out.text.contains("arrayLength(&src)") && out.text.contains("arrayLength(&dst)"), "{}", out.text);
+        let back = read_safe(&out.text, &k).unwrap_or_else(|e| panic!("read back: {e}\n{}", out.text));
+        assert!(back.tree == r.tree, "{:?}\n{}", crate::wgsl::render::first_difference(&r.tree, &back.tree), out.text);
+        let checker = crate::wgsl::check::Checker::with_contract(&k, &r.role, &crate::wgsl::target::Target::recorded(), contract);
+        checker.check(&r.tree).unwrap_or_else(|e| panic!("{e}\n{}", out.text));
     }
 
     /// TWO LOOPS OF THE V24 REFERENCE (2026-10-17, the harness agent's
@@ -8222,7 +8251,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         // statements are one block statement as read, written in place, and
         // read back as the statements of the block around them (rule 1 of
         // wgsl::canonical, a block's grouping); read again, the same tree.
-        let canon = crate::wgsl::canonical::canonical(&r.tree, &k);
+        let canon = crate::wgsl::canonical::canonical(&r.tree, &k, &r.role);
         assert!(canon == back.tree, "the rendered text reads back to the tree read, canonical: {:?}\n{}", crate::wgsl::render::first_difference(&canon, &back.tree), out.text);
         let again = read_safe(&crate::wgsl::safe_karva::render_tree_with(&back.tree, &k, &back.role).unwrap().text, &k).unwrap();
         assert!(again.tree == back.tree, "a fixpoint: {:?}", crate::wgsl::render::first_difference(&back.tree, &again.tree));
@@ -8462,10 +8491,10 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
                 continue;
             }
             seen += 1;
-            let text = crate::wgsl::safe_karva::render_tree(&tree, &k).unwrap_or_else(|e| panic!("{e}")).text;
+            let text = crate::wgsl::safe_karva::render_tree_with(&tree, &k, &crate::wgsl::render::gram_role()).unwrap_or_else(|e| panic!("{e}")).text;
             assert!(!negates_a_matrix(&text), "{text}");
             assert!(text.contains(" * -1.0)"), "{text}");
-            let again = crate::wgsl::safe_karva::render_tree(&read_safe(&text, &k).unwrap_or_else(|e| panic!("{e}")).tree, &k).unwrap_or_else(|e| panic!("{e}")).text;
+            let again = crate::wgsl::safe_karva::render_tree_with(&read_safe(&text, &k).unwrap_or_else(|e| panic!("{e}")).tree, &k, &role).unwrap_or_else(|e| panic!("{e}")).text;
             assert!(!negates_a_matrix(&again), "{again}");
             if seen == 5 {
                 break;
@@ -8626,7 +8655,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         for seed in 0..n {
             let tree = crate::wgsl::render::sample(&k, &role, root, 7, seed).unwrap();
             let verdict: Result<(), String> = (|| {
-                let text = crate::wgsl::safe_karva::render_tree(&tree, &k).map_err(|e| format!("render: {e}"))?.text;
+                let text = crate::wgsl::safe_karva::render_tree_with(&tree, &k, &crate::wgsl::render::gram_role()).map_err(|e| format!("render: {e}"))?.text;
                 checker.check(&tree).map_err(|e| format!("check: {} {}", e.layer.number(), e.reason))?;
                 if negates_a_matrix(&text) {
                     return Err("render: a unary minus on a matrix (Metal does not compile it)".to_string());
@@ -8641,9 +8670,9 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
                     println!("SHOW drawn: {}\nSHOW text:\n{text}", tree.to_sexpr());
                 }
                 let back = read_safe(&text, &k).map_err(|e| format!("read: {e}"))?;
-                let again = crate::wgsl::safe_karva::render_tree(&back.tree, &k).map_err(|e| format!("re-render: {e}"))?.text;
+                let again = crate::wgsl::safe_karva::render_tree_with(&back.tree, &k, &crate::wgsl::render::gram_role()).map_err(|e| format!("re-render: {e}"))?.text;
                 read_back += 1;
-                let canon = crate::wgsl::canonical::canonical(&tree, &k);
+                let canon = crate::wgsl::canonical::canonical(&tree, &k, &role);
                 // ROUNDTRIP_SHOW=<seed>[,<seed>...]: those trees' canonical and parsed ASTs.
                 if std::env::var("ROUNDTRIP_SHOW").ok().is_some_and(|v| v.split(',').any(|x| x.parse::<u64>().ok() == Some(seed))) {
                     println!("SHOW canonical: {}\nSHOW parsed:    {}", canon.to_sexpr(), back.tree.to_sexpr());
@@ -8658,9 +8687,9 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
                     // spelling too, so a difference of grouping early in a
                     // block does not hide the first difference of substance.)
                     Some(d) => {
-                        let d = crate::wgsl::render::first_difference(&canon, &crate::wgsl::canonical::canonical(&back.tree, &k)).unwrap_or(d);
+                        let d = crate::wgsl::render::first_difference(&canon, &crate::wgsl::canonical::canonical(&back.tree, &k, &role)).unwrap_or(d);
                         if std::env::var_os("ROUNDTRIP_ALL").is_some() {
-                            let mut keys: Vec<String> = crate::wgsl::render::all_differences(&canon, &crate::wgsl::canonical::canonical(&back.tree, &k)).into_iter().map(|k| k.chars().map(|c| if c.is_ascii_digit() { 'N' } else { c }).collect()).collect();
+                            let mut keys: Vec<String> = crate::wgsl::render::all_differences(&canon, &crate::wgsl::canonical::canonical(&back.tree, &k, &role)).into_iter().map(|k| k.chars().map(|c| if c.is_ascii_digit() { 'N' } else { c }).collect()).collect();
                             keys.sort();
                             keys.dedup();
                             for key in keys {
@@ -8671,7 +8700,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
                         by_ast.entry(key).or_insert((0, seed)).0 += 1;
                     }
                 }
-                let third = read_safe(&again, &k).map_err(|e| e.chars().take(200).collect::<String>()).and_then(|b| crate::wgsl::safe_karva::render_tree(&b.tree, &k).map(|r| r.text));
+                let third = read_safe(&again, &k).map_err(|e| e.chars().take(200).collect::<String>()).and_then(|b| crate::wgsl::safe_karva::render_tree_with(&b.tree, &k, &crate::wgsl::render::gram_role()).map(|r| r.text));
                 if third.as_ref().is_ok_and(|r| *r == again) {
                     fixpoint += 1;
                 } else if std::env::var_os("ROUNDTRIP_FIXPOINT").is_some() {

@@ -246,24 +246,14 @@ pub struct Child {
     pub what: String,
 }
 
-/// ONE MUTATION from the pool: the structural rules `rules` and every
-/// generic rewrite. An operator is drawn among those whose pattern matches
-/// the individual, its site with the RNG; the child through the layered
-/// check; another draw when it is illegal, up to `tries`. None when no
-/// draw gives a legal child.
-pub fn mutate(root: &Tree, rules: &[Rule], kingdom: &WgslKingdom, rng: &mut u64, tries: usize) -> Result<Option<Child>, String> {
-    mutate_in(root, rules, kingdom, None, rng, tries)
-}
-
-/// [`mutate`] under an interface (`knob::Under`: a problem's role and
-/// dispatch contract): every child checked and rendered under it.
+/// ONE MUTATION from the pool, under the kernel's interface (`knob::Under`:
+/// a problem's role and dispatch contract): the structural rules `rules` and
+/// every generic rewrite. An operator is drawn among those whose pattern
+/// matches the individual, its site with the RNG; the child through the
+/// layered check and rendered under that interface; another draw when it is
+/// illegal, up to `tries`. None when no draw gives a legal child. (No
+/// interface-less form since 2026-10-19: the Gram's was the default.)
 pub fn mutate_under(root: &Tree, rules: &[Rule], kingdom: &WgslKingdom, under: &knob::Under, rng: &mut u64, tries: usize) -> Result<Option<Child>, String> {
-    mutate_in(root, rules, kingdom, Some(under), rng, tries)
-}
-
-/// The pool's draw: checked by `knob::check_text` (None, the Gram's, as before
-/// interfaces) or `knob::check_text_under`.
-fn mutate_in(root: &Tree, rules: &[Rule], kingdom: &WgslKingdom, under: Option<&knob::Under>, rng: &mut u64, tries: usize) -> Result<Option<Child>, String> {
     let lit: Vec<Rule> = rules.iter().copied().filter(|r| !r.sites(root, kingdom).is_empty()).collect();
     let n = lit.len() + Rewrite::ALL.len();
     for _ in 0..tries {
@@ -278,11 +268,7 @@ fn mutate_in(root: &Tree, rules: &[Rule], kingdom: &WgslKingdom, under: Option<&
             apply(rw, root, kingdom, rng)?.map(|(what, t)| (rw.name(), what, t))
         };
         let Some((operator, what, tree)) = made else { continue };
-        let checked = match under {
-            Some(u) => knob::check_text_under(&tree, kingdom, u),
-            None => knob::check_text(&tree, kingdom),
-        };
-        if let Ok((text, _)) = checked {
+        if let Ok((text, _)) = knob::check_text_under(&tree, kingdom, under) {
             return Ok(Some(Child { tree, text, operator, what }));
         }
     }
@@ -311,9 +297,9 @@ mod tests {
                 for _ in 0..4 {
                     let Some((what, child)) = apply(rw, t, &k, &mut rng).unwrap() else { continue };
                     made += 1;
-                    if let Ok((text, _)) = knob::check_text(&child, &k) {
+                    if let Ok((text, _)) = knob::check_text_under(&child, &k, &knob::Under::gram()) {
                         legal += 1;
-                        let parent = crate::wgsl::safe_karva::render_tree(t, &k).unwrap().text;
+                        let parent = crate::wgsl::safe_karva::render_tree_with(t, &k, &crate::wgsl::render::gram_role()).unwrap().text;
                         // A swap of equal-rendering parts, or the epilogue's only store
                         // deleted (its fallback is that store), renders the parent.
                         assert!(text != parent || matches!(rw, Rewrite::SwapOperands | Rewrite::SwapAdjacent | Rewrite::SwapLeaves | Rewrite::DeleteStatement), "{} {what}: the child is its parent", rw.name());
@@ -325,7 +311,7 @@ mod tests {
         }
         let mut pool = 0usize;
         for t in &trees {
-            if let Some(c) = mutate(t, &Rule::ALL, &k, &mut rng, 16).unwrap() {
+            if let Some(c) = mutate_under(t, &Rule::ALL, &k, &knob::Under::gram(), &mut rng, 16).unwrap() {
                 pool += 1;
                 println!("pool: {} {}", c.operator, c.what.chars().take(80).collect::<String>());
             }

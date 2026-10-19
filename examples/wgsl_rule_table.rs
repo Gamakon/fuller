@@ -1,6 +1,6 @@
 //! THE DEVICE TABLE OF THE STRUCTURAL RULES: for each rule and each kernel
 //! of a population it fires on, its child (one site a kernel, drawn with a
-//! fixed seed) checked (`knob::check_text`), scored by the fitness the fit
+//! fixed seed) checked (`knob::check_text_under`), scored by the fitness the fit
 //! runs (`FitnessContext::fitness`: correct on its 128 cases and the pair
 //! sets), compared with the parent's output on the same Φ (the largest cell
 //! difference over the parent's largest cell), and timed against the parent
@@ -20,7 +20,7 @@ use fuller::wgsl::knob;
 use fuller::wgsl::loader::WgslKingdom;
 use fuller::wgsl::oracle::device::Device;
 use fuller::wgsl::rules::Rule;
-use fuller::wgsl::safe_karva::render_tree;
+use fuller::wgsl::safe_karva::render_tree_with;
 use fuller::wgsl::safe_reader::read_safe;
 
 /// The kernels of the arguments: `.wgsl` files, or every one in a directory.
@@ -110,7 +110,7 @@ fn main() -> Result<(), String> {
             println!("{}\tnot read", f.display());
             continue;
         };
-        let parent_text = render_tree(&r.tree, &kingdom)?.text;
+        let parent_text = render_tree_with(&r.tree, &kingdom, &r.role)?.text;
         let parent = ctx.fitness(&dev, &parent_text);
         if !parent.feasible {
             println!("{}\tthe parent is not correct ({}); left out", f.display(), parent.detail);
@@ -125,7 +125,7 @@ fn main() -> Result<(), String> {
             }
             row.fires += 1;
             let site = &sites[(pi * 7 + rule.name().len()) % sites.len()];
-            let checked = rule.apply(&r.tree, site, &kingdom).map_err(|e| (knob::Stage::Render, e)).and_then(|t| knob::check_text(&t, &kingdom));
+            let checked = rule.apply(&r.tree, site, &kingdom).map_err(|e| (knob::Stage::Render, e)).and_then(|t| knob::check_text_under(&t, &kingdom, &knob::Under::of(&r.role)));
             let (child_text, _) = match checked {
                 Ok(x) => x,
                 Err((stage, e)) => {

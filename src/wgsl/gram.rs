@@ -2112,7 +2112,7 @@ mod tests {
     #[test]
     fn random_safe_kernels_compile_on_the_device() {
         use crate::wgsl::render::{dual_ty, gram_role, sample};
-        use crate::wgsl::{check::Checker, loader::WgslKingdom, safe_karva::render_tree, target::Target};
+        use crate::wgsl::{check::Checker, loader::WgslKingdom, safe_karva::render_tree_with, target::Target};
         let (k, r) = (WgslKingdom::load_safe(), gram_role());
         let checker = Checker::new(&k, &r, &Target::recorded());
         let root = dual_ty(&k, "kernel.safe").unwrap();
@@ -2122,7 +2122,7 @@ mod tests {
         let mut failed: Vec<String> = Vec::new();
         for seed in 0..n {
             let tree = sample(&k, &r, root, 7, seed).unwrap();
-            let verdict = render_tree(&tree, &k).and_then(|out| {
+            let verdict = render_tree_with(&tree, &k, &crate::wgsl::render::gram_role()).and_then(|out| {
                 checker.check(&tree).map_err(|e| format!("check: {} {}", e.layer.number(), e.reason))?;
                 Gram::compile_rendered(&dev, &out).map(|_| ()).map_err(|e| format!("compile: {}", e.lines().next().unwrap_or("")))
             });
