@@ -184,10 +184,11 @@ The renderer's habits:
   statements; omit them. Name a register by its row (`reg.f0`, `reg.i3`).
 - **Loops.** The test of a `for` decides its row:
   - **`t < min((X), 16777216u)`** is the item loop: `loop.items_*`, counter `t`
-    (`safe.counter`), bound `bound.of_uniform` around X.
+    (`safe.counter`).
   - **`k < min((X), 16777216u)`** (or `k2`, `k3`) is a bounded tile loop of depth 1, 2, 3:
-    `loop.tilex_*` (`safe.tile_counter`, `safe.tile_counter2`…), bound `bound.x_of_uniform`
-    around X.
+    `loop.tilex_*` (`safe.tile_counter`, `safe.tile_counter2`…).
+  - **The bound row** around X is the one the loop row's signature demands:
+    `bound.of_uniform` for a `u32.boundu`, `bound.x_of_uniform` for a `u32.boundx`.
   - **X is a uniform value.** `lit_u32(N)` is `uniform.of_lit` with `literal.lit4096=N`, and a
     cfg field is `uniform.cfg_<field>`. The `min(…, 16777216u)` is what the bound row renders
     to, so it is not translated separately.
