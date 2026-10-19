@@ -1,177 +1,206 @@
 # Multi-typed GEP: one head, one tail per type
 
-Design, 2026-10-19. Finishes `EvolutionSQL.md` §8 ("the typed tail", left open there) and
-`DataModel.md` §2 (many-hot typed arities). Source: Andrew's design. Not built.
-
 ## Context
 
-**Objective.** Multi-typed gene expression programming in which it is impossible to express an
-invalid tree: every expressed node has the type its parent's slot demands, for every gene, every
-mutation, every crossover. This is GEP's promise (Ferreira: "their expression always results in
-syntactically correct programs") carried to many types.
+**Objective.** Multi-typed gene expression programming in which every expressed node has the type required by its parent's argument slot, for every gene and every permitted variation. There is no repair, rejection, substitution, or fallback symbol: validity is a property of the layout.
 
-**Approach.** One head, plus one tail per type. A slot demanding type T is filled from T's own
-reading frame: the next unused head row that outputs T, else the next row of T's tail. Tails hold
-only terminals of their own type, so no slot can ever be filled by a symbol of the wrong type.
+**Approach.** A gene has one shared head plus one tail for each output type. A slot requiring `T` reads the next unused member of `T`'s reading frame: head rows whose symbol outputs `T`, in head order, followed by the `T` tail. A `T` tail contains terminals outputting `T` only. Thus a `T` slot cannot select a symbol of another type.
 
-**Unique feature.** No repair, no rejection, no substitution and no stand-in (fallback) symbol
-anywhere. Validity comes from the layout, as in classical GEP and as GEP-RNC's Dc domain fills
-its `?` placeholders. A literature search (2026-10-19: arXiv, Semantic Scholar, Crossref,
-OpenAlex, GECCO/EuroGP) found no published GEP with a tail per type; published multi-type
-methods restrict operators (Montana's STGP), reject and retry (Zhou et al. 2003), filter
-(DHC-GEP 2024), or use typed graph wiring (typed CGP).
+This is a **typed extension of Karva**, not classical Karva when a kingdom has more than one type. Classical Karva consumes one ordered head prefix globally. Here head rows are consumed in per-type frames, so a level-order walk can visit head positions out of physical head order. With head `[left:S(S,I), i:I, s:S]` and root `S`, the walk reads positions `0, 2, 1` and produces `left(s, i)`. It retains neutral material, but loses Karva's global head-prefix property and some positional locality: changing a head row's output type moves it between frames and can shift later selections in both frames. This is an accepted cost of Andrew's one-head, one-tail-per-type design; do not replace it with a single globally consumed head stream.
 
-**Status.** Design only. The built system (fuller `safe_karva.rs` projection, phylu
-`decode.wgsl`) does the opposite: one shared tail, and a symbol of the wrong type is replaced by
-a fallback leaf. That is wrong and is removed by this plan (§9).
+**Status.** Design only. The current shared-tail/fallback projections are incompatible with this design and are to be removed during implementation.
 
-**Why.** Every stand-in is a hidden defect: it changes the program the gene encodes, makes
-crossover and mutation produce children with holes, and broke the WGSL runs of 2026-10-19
-(14 % of mutants gained stand-ins; genes expressed with no statements).
+## 1. Kingdom contract
 
-## 1. The symbol table (unchanged from DataModel.md)
+`symbol_outputs(kingdom_id, symbol, output_type)` is a unified relation over functions and terminals. Every symbol has exactly one output type. A polymorphic spelling is represented by one distinct symbol row per output type.
 
-Each function row carries typed input counts `in_T` and **exactly one** output type `out`.
-Each terminal row carries one output type and no inputs.
-
-- A polymorphic function (one name, several output types, e.g. `match` giving a string or an
-  integer) is one row per output type. A row never has two outputs: one row, one type, so the
-  reading frame of every type is well defined.
-- Kingdom check (run when a kingdom is loaded, a failure is a kingdom bug): every type that is
-  the root type or appears in any `in_T` has at least one terminal.
-
-Notation: types T; head length h; `a_T` = the largest `in_T` of any function; `n_max` = the
-largest total arity; R = the root type of the gene.
-
-## 2. The chromosome
-
-| domain | length | may hold |
-|---|---|---|
-| head | h | any function or terminal of the kingdom, any type |
-| tail of T, one per type | t_T | terminals of type T only |
-| Dc of T (only for types with random constants) | t_T | indices into T's constant array |
-
-Tail length per type, from a count of demands, not guessed:
-
-- Functions are drawn only from the head, so at most h functions are expressed.
-- Each expressed function opens at most `a_T` slots of type T; the root opens one slot of R.
-- So at most `h·a_T + [T = R]` slots of type T are ever demanded, and also at most
-  `h(n_max − 1) + 1` leaves in all (Ferreira's bound).
+Argument order is data, not an implication of type counts:
 
 ```
-t_T = min( h·a_T + [T = R],  h(n_max − 1) + 1 )
+argument_signature(kingdom_id, symbol, arg_index, required_type)
+PRIMARY KEY (kingdom_id, symbol, arg_index)
 ```
 
-A type never demanded (`a_T = 0` and not the root) has no tail. Single type: `a_T = n_max`, and
-`t = h(n_max − 1) + 1` exactly, so this is classical GEP when there is one type.
+`arg_index` is contiguous from zero for each function. A terminal has no signature rows. The derived count `in_T` is the number of signature rows requiring `T`; it is not used to order a call. Thus `left:S(S,I)` has `(left,0,S)` then `(left,1,I)`.
 
-## 3. Expression (deterministic, level order)
+The kingdom-load check must establish all of the following.
 
-Expression reads the tree in level order (Karva: top to bottom, left to right), as Ferreira does.
+- Exactly one `symbol_outputs` row exists per symbol; zero-output and multi-output rows are forbidden.
+- Each signature belongs to a function, has one contiguous ordered index sequence, and names a kingdom type. A terminal has zero arguments.
+- Each root type and each type occurring in `required_type` has at least one terminal.
+- `a_T = max_s count(arguments of s whose required_type = T)`, with zero if none; and `n_max = max_s count(arguments of s)` over the same function rows (zero if the kingdom has no functions).
 
-1. Keep a cursor per type: `k_T` = how many slots of type T have been filled so far.
-2. The root is a slot of type R.
-3. For each slot of type T, in level order:
-   - let `H_T` = the head rows whose output is T, in head order;
-   - if `k_T < |H_T|`: the slot takes head row `H_T[k_T]` (a function or a terminal of T);
-   - else it takes tail-T row `k_T − |H_T|`;
-   - `k_T += 1`; if the symbol is a function, append its typed input slots in argument order.
-4. Stop when no slot is open.
+The ordered signature relation, one output per row, and these definitions are all part of the kingdom check.
 
-The tail is never exhausted (§2), and every node has its slot's type by construction. Head rows
-of type T that are never reached are non-coding, exactly as an unexpressed head suffix is in
-classical GEP.
+## 2. Gene layout and bound
 
-As SQL, the k-th demand of type T is a rank within the type:
+Each row has an unambiguous domain-local key:
+
+```
+(chromosome_id, gene_id, domain, domain_type, domain_seq_id)
+```
+
+`domain` is `head`, `tail`, or `dc`; `domain_type` is NULL for a head and is the type of a tail or Dc domain; `domain_seq_id` starts at zero within that domain. `gene_id` identifies a fixed gene boundary, not a breadth-first position. Head rows store `symbol`; tail rows store a terminal `symbol`; Dc rows store `dc_index`, never a symbol.
+
+For head length `h`, root type `R`, and type `T`, use:
+
+```
+t_T = min(h * a_T + [T = R], h * (n_max - 1) + 1)
+```
+
+Do not create a tail for a non-root type with `a_T = 0`. At most `h` expressed head functions open slots, hence `D_T <= h*a_T + [T=R]`; and there are at most `h*(n_max-1)+1` leaves. A tail entry is a leaf used only for a same-type demand, so the minimum is safe.
+
+With one type, every head row is in its one frame, `a_T = n_max`, and the frame is the physical head followed by its tail. Therefore `t_T = h*(n_max-1)+1`, and the deterministic walk below is exactly classical Karva decoding: by induction each next open slot consumes the next physical head row until the head ends, then the next tail row, and appends the same ordered arguments.
+
+## 3. Deterministic expression
+
+Start a FIFO queue with one slot `(R, depth 0)`. Keep `k_T`, initially zero, for each type. On each dequeue of a `T` slot, select frame row `T[k_T]`, increment `k_T`, and append that symbol's ordered argument-signature slots to the queue. Stop at an empty queue. A tail cannot be exhausted by §2, and selected output type equals the slot type by the frame construction.
+
+Unused rows are neutral. Unlike classical Karva, these need not be one final physical suffix of the head, because each type has its own head frame.
+
+### Executable DuckDB expression query
+
+The following names the required relations and implements the complete FIFO level-order walk. It uses `LIST` state so that `used` supplies the per-type rank before the current slot is added. `step` is the level-order node number; `parent_step` and `arg_index` retain the ordered tree edges.
 
 ```sql
--- the reading frame of each type: its head rows first, then its tail, in gene order
-SELECT type, gene_seq_id, symbol,
-       ROW_NUMBER() OVER (PARTITION BY type ORDER BY is_tail, gene_seq_id) - 1 AS k
-FROM geneframe g
-JOIN symbol_types s USING (kingdom_id, symbol)   -- s.type = the row's one output type
-WHERE g.chromosome_id = :chrom;
--- the level-order walk joins slot (type, k) to this frame: no slot can join a row of another type
+CREATE OR REPLACE VIEW symbol_outputs AS
+SELECT kingdom_id, symbol, output_type FROM functions
+UNION ALL
+SELECT kingdom_id, symbol, output_type FROM terminals;
+
+WITH RECURSIVE
+frame_source AS (
+  SELECT g.chromosome_id, g.gene_id, g.kingdom_id, o.output_type, 0 AS tail_part,
+         g.domain_seq_id, g.symbol
+  FROM geneframe AS g
+  JOIN symbol_outputs AS o
+    ON o.kingdom_id = g.kingdom_id AND o.symbol = g.symbol
+  WHERE g.domain = 'head'
+  UNION ALL
+  SELECT g.chromosome_id, g.gene_id, g.kingdom_id, g.domain_type AS output_type, 1 AS tail_part,
+         g.domain_seq_id, g.symbol
+  FROM geneframe AS g
+  JOIN symbol_outputs AS o
+    ON o.kingdom_id = g.kingdom_id AND o.symbol = g.symbol
+   AND o.output_type = g.domain_type
+  WHERE g.domain = 'tail'
+),
+frames AS (
+  SELECT *, row_number() OVER (
+    PARTITION BY chromosome_id, gene_id, kingdom_id, output_type
+    ORDER BY tail_part, domain_seq_id
+  ) - 1 AS frame_k
+  FROM frame_source
+),
+walk(chromosome_id, gene_id, kingdom_id, step, pending, used,
+     node_type, frame_k, symbol, depth, parent_step, arg_index) AS (
+  SELECT ge.chromosome_id, ge.gene_id, ge.kingdom_id, 0,
+         list_value(struct_pack(required_type := ge.root_type,
+                                depth := 0::BIGINT,
+                                parent_step := NULL::BIGINT,
+                                arg_index := NULL::BIGINT)),
+         []::VARCHAR[],
+         NULL::VARCHAR, NULL::BIGINT, NULL::VARCHAR,
+         NULL::BIGINT, NULL::BIGINT, NULL::BIGINT
+  FROM genes AS ge
+  WHERE ge.chromosome_id = ?  -- bind the selected chromosome_id
+
+  UNION ALL
+
+  SELECT w.chromosome_id, w.gene_id, w.kingdom_id, w.step + 1,
+         list_concat(list_slice(w.pending, 2, len(w.pending)), coalesce(kids.slots, list_value())),
+         list_append(w.used, q.slot.required_type),
+         q.slot.required_type,
+         len(list_filter(w.used, x -> x = q.slot.required_type)),
+         f.symbol, q.slot.depth, q.slot.parent_step, q.slot.arg_index
+  FROM walk AS w
+  CROSS JOIN LATERAL (SELECT list_extract(w.pending, 1) AS slot) AS q
+  JOIN frames AS f
+   ON f.chromosome_id = w.chromosome_id
+   AND f.gene_id = w.gene_id
+   AND f.kingdom_id = w.kingdom_id
+   AND f.output_type = q.slot.required_type
+   AND f.frame_k = len(list_filter(w.used, x -> x = q.slot.required_type))
+  LEFT JOIN LATERAL (
+    SELECT list(struct_pack(required_type := a.required_type,
+                            depth := q.slot.depth + 1,
+                            parent_step := w.step + 1,
+                            arg_index := a.arg_index)
+                ORDER BY a.arg_index) AS slots
+    FROM argument_signature AS a
+    WHERE a.kingdom_id = w.kingdom_id AND a.symbol = f.symbol
+  ) AS kids ON TRUE
+  WHERE len(w.pending) > 0
+)
+SELECT step, node_type, frame_k, symbol, depth, parent_step, arg_index
+FROM walk
+WHERE step > 0
+ORDER BY gene_id, step;
 ```
+
+The `frames` partition is deliberately `(chromosome_id, gene_id, output_type)`, and ordering is by `domain_seq_id` inside head or the matching typed tail. It cannot merge two genes or two same-type tails. The decoder must report a kingdom/layout defect if the join finds no frame row; it must not repair it.
+
+### Two-type example (`left:S(S,I)`)
+
+For one gene with root `S`, load head rows `(0,left)`, `(1,i)`, `(2,s)` and enough typed tails (`S` tail symbols `s`, `I` tail symbols `i`). The function signature is `(left,0,S)` and `(left,1,I)`; `s` and `i` are terminals. The query above produces:
+
+| step | node_type | frame_k | symbol | depth | parent_step | arg_index |
+|---:|---|---:|---|---:|---:|---:|
+| 1 | S | 0 | left | 0 | NULL | NULL |
+| 2 | S | 1 | s | 1 | 1 | 0 |
+| 3 | I | 0 | i | 1 | 1 | 1 |
+
+The expressed tree is `left(s,i)`, with physical head positions `0,2,1`. This example is also a regression test for the non-Karva multi-type ordering.
 
 ## 4. Constants (GEP-RNC, per type)
 
-A type with random constants has a placeholder terminal `?_T` in its alphabet and a Dc domain of
-length t_T. The j-th expressed `?_T` (level order) takes the value `C_T[Dc_T[j]]`. This is
-Ferreira's Dc unchanged, one per type. A literal is never a symbol of the table.
+A constant-capable type `T` has placeholder terminal `?_T` and one `Dc_T` domain of length `t_T`. Keep a separate `q_T`, initially zero, for every type. Only when an **expressed** `?_T` is visited does it read `C_T[Dc_T[q_T]]` and increment `q_T`; unexpressed placeholders and placeholders of other types do nothing. Thus a sole expressed root `?_I` uses `Dc_I[0]`, even if later head placeholders exist.
 
-## 5. Variation, valid by construction
+`C_T` is a kingdom/type constant array, append-only for the life of a population epoch: a new constant appends a value; existing indices are immutable and never renumbered. Dc mutation, recombination, inversion, and transposition are local to the matching `(gene_id, T, dc)` domain and choose only valid indices of that `C_T`. This preserves every existing reference while the array evolves.
 
-Every operator keeps each domain's alphabet: the head holds any kingdom symbol, the tail of T
-holds terminals of T, Dc_T holds indices of C_T. Nothing more is needed, because expression
-chooses by type.
+## 5. Variation: domain alphabets are invariant
 
-| operator | rule |
+Every operation preserves fixed domain lengths and its target domain's alphabet.
+
+| operator | permitted source and target |
 |---|---|
-| mutation | head position: any symbol of the kingdom (unconstrained, as Ferreira); tail-T position: any terminal of T; Dc_T: any index of C_T |
-| inversion | inside one domain |
-| IS / RIS transposition | a sequence from any domain, inserted only into the head (tail and Dc lengths unchanged) |
-| one-point, two-point, gene recombination | homologous: the same positions of two aligned chromosomes of one kingdom and layout |
-| constant mutation | a new value in C_T |
+| mutation | head: any kingdom symbol; tail-T: a terminal outputting T; Dc-T: a valid index into `C_T` |
+| inversion | within one exact `(gene, domain, domain_type)` domain |
+| IS transposition | copy a sequence from a head or tail-T domain into the head only; head admits all symbols; source Dc is forbidden |
+| RIS transposition | copy a head sequence beginning with a function into the head only; Dc and tail sources are forbidden |
+| tail transposition | copy/reorder only within the same tail-T domain |
+| Dc transposition | copy/reorder only within the same Dc-T domain; Dc never enters head or tail |
+| one-/two-point and gene recombination | homologous coordinates only: same kingdom, layout id, gene id, domain, domain type, and local positions |
 
-A change in the head can change which head rows are used (a function's type decides which frame
-it is in). It never changes validity.
+IS/RIS keep the fixed head length by truncating the copied-in head result at `h`; no non-symbol can enter it. Homologous gene recombination exchanges whole matching genes or matching domain segments, never an unaligned global position. A changed head output type may redistribute future frame use and is therefore less local than classical Karva, but remains type-correct.
 
 ## 6. Multigenic chromosomes and homeotic genes
 
-Each gene has its own head, its own tails and its own root type R_g. A homeotic gene's genic
-terminals are terminals of their gene's root type, so a reference is type-checked like any other
-terminal. A homeotic row's href names its stable row id (`PLAN_population_dag.md`).
+A chromosome has an ordered `genes` relation with explicit `gene_id`, `kingdom_id`, root type, and layout id; each gene owns precisely its head, tails, and Dc domains. Its phenotype is defined by a typed linker symbol with an ordered signature over the gene roots (for two `R` genes, for example, `link:R(R,R)`). A chromosome is not merely a bag of evaluated genes.
 
-## 7. The geneframe rows
+A homeotic definition stores a stable immutable definition id and its declared root type. A homeotic-reference terminal outputs that root type and names the stable id, never `gene_seq_id`. Definitions visible to a chromosome are immutable during its mutation and recombination. They are assigned levels, and a definition at level `L` may reference only definitions at lower levels. The strict decrease proves acyclicity; references that are missing, out of scope, or do not match the declared root type are kingdom/layout errors, not fallback opportunities.
 
-`geneframe` gains two columns: `domain` (`head`, `tail`, `dc`) and `type` (the tail's or Dc's
-type; NULL for head rows, whose type is their symbol's output). `ishead` stays for
-compatibility (`domain = 'head'`). Initial population, mutation and recombination stay the SQL
-of `EvolutionSQL.md`, with the tail draw being `random_terminal(:kingdom, :type)`.
+## 7. Implementation and tests
 
-## 8. The WGSL kingdom under this design
+Remove all fallback/substitution paths from the host and GPU decoders; an unread or unavailable required value is a reported kingdom/layout defect. Implement per-type frames and cursors in both decoders, and use the same ordered-signature table.
 
-- Its duals are the types. Statement nesting levels (L0–L4, C0–C4, O) stay as types.
-- Bindings, registers and array names of a kernel's interface are terminals of their duals.
-- Literal duals use §4 (Dc per literal dual), not table rows.
-- Language defaults (no epilogue, the default grid) are named terminals with their own text
-  (`epilogue.none`, `grid.default`), never a generic fallback.
-- Size: tails exist only for duals some function demands; `t_T = h·a_T + [T = R]` keeps rarely
-  demanded duals short.
+1. **Kingdom check.** Assert the contract in §1, including ordered signatures and terminal coverage.
+2. **Closure.** For SR, regex, and WGSL interfaces: 100,000 random genes and 100,000 children per operator. Every expressed node equals its slot type; no decoder substitutes.
+3. **Bounds and Dc.** Record maximum tail and `q_T` indices; each is below `t_T`. Exercise unexpressed and interleaved placeholders and verify only expressed `?_T` advances `q_T`.
+4. **SQL.** Run the query in §3 in `duckdb :memory:` with the two-type fixture and assert the table shown there, including frame partitions across two genes and two chromosomes.
+5. **Karva equality.** For each one-type SR gene, typed decoding equals classical Karva exactly.
+6. **Determinism and round trip.** Host and GPU produce identical trees; WGSL seeds re-encode and express to the same tree. Include multigenic linker and lower-level-only homeotic cases.
 
-## 9. What is removed
+## 8. Build order
 
-Every substitution, in both crates:
+1. Add the kingdom contract, domain-local keys, layout, host decoder, and SQL fixture.
+2. Add GPU per-type cursors and remove fallback bindings; establish host/GPU parity.
+3. Implement domain-preserving operators and closure tests.
+4. Move SR and regex, then WGSL; re-encode saved genomes and run round-trip tests.
 
-- fuller `src/wgsl/safe_karva.rs`: `project_scored` (:988, :994, :998, :1008, :1031),
-  `conform_at` (:748, :755, :851), the policy at :20;
-- fuller `src/geneframe.rs` `fallback_leaf` / `fallback_table` (:179, :195), `loader.rs`
-  fallback tables (:230, :242, :251);
-- phylu `src/evolve/decode.wgsl` (:283–296, bindings 20 and 21), and its host callers;
-- the reader's stand-ins for unread values (safe_reader :2177, :4197): a construct that does not
-  read is a kingdom gap, reported, never a fallback.
+## Revisions (2026-10-19, after review)
 
-The SR and regex kingdoms move to the same layout. SR is single typed, so for SR this design is
-classical GEP and its results must not change.
-
-## 10. Tests that certify it
-
-1. **Closure.** For each kingdom (SR, regex, WGSL v24 interfaces): 100,000 random genes, plus
-   100,000 children of each operator; every expressed node's type equals its slot's type,
-   checked node by node; zero exceptions. Expression asserts and never substitutes.
-2. **Bound.** The largest tail index used never reaches t_T; the measured maximum is reported
-   beside the bound.
-3. **Classical equality.** SR with one type: the expressed trees are identical to classical
-   Karva decoding for the same genes.
-4. **Determinism.** The same gene gives the same tree, on the host and on the GPU, bit for bit.
-5. **Round trip.** Seeds read from WGSL text encode into this layout and express back to the
-   same tree.
-
-## 11. Build order
-
-1. The layout, tail lengths and expression in fuller (host), with tests 1–4.
-2. The GPU expression in phylu: per-type cursors, no fallback bindings; test 4.
-3. Operators in phylu (§5), test 1 over the children.
-4. The SR and regex kingdoms moved; their goldens re-checked.
-5. The WGSL kingdom moved, the saved genomes re-encoded, test 5; then evolution runs.
+- Made the representation's non-classical multi-type head order and locality cost explicit.
+- Added ordered argument signatures, full kingdom checks, domain-local keys, and executable frame/walk SQL with a two-type result.
+- Restricted transposition and recombination to alphabet-preserving domains; Dc never enters head.
+- Specified gene boundaries, typed linking, homeotic identity/levels, and expressed-only per-type Dc counters with append-only constant arrays.
