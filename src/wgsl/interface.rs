@@ -128,24 +128,27 @@ pub fn type_text(module: &Module, ty: Handle<naga::Type>) -> String {
     }
 }
 
-/// The leaves of a struct type as (path, type), nested structs by `a.b`;
-/// empty for a type that is not a struct.
+/// The leaves of a struct type as (path, type), nested structs by `a.b`, an
+/// array member's element by `a.#` (and its fields after it); empty for a
+/// type that is not a struct. A leaf is a scalar, vector, matrix or atomic.
 fn struct_leaves(module: &Module, ty: Handle<naga::Type>) -> Vec<(String, String)> {
-    fn walk(module: &Module, ty: Handle<naga::Type>, prefix: &str, out: &mut Vec<(String, String)>) {
-        if let TypeInner::Struct { members, .. } = &module.types[ty].inner {
-            for (i, m) in members.iter().enumerate() {
-                let name = m.name.clone().unwrap_or_else(|| format!("f{i}"));
-                let path = if prefix.is_empty() { name } else { format!("{prefix}.{name}") };
-                if matches!(module.types[m.ty].inner, TypeInner::Struct { .. }) {
-                    walk(module, m.ty, &path, out);
-                } else {
-                    out.push((path, type_text(module, m.ty)));
+    fn walk(module: &Module, ty: Handle<naga::Type>, path: &str, out: &mut Vec<(String, String)>) {
+        match &module.types[ty].inner {
+            TypeInner::Struct { members, .. } => {
+                for (i, m) in members.iter().enumerate() {
+                    let name = m.name.clone().unwrap_or_else(|| format!("f{i}"));
+                    walk(module, m.ty, &if path.is_empty() { name } else { format!("{path}.{name}") }, out);
                 }
             }
+            TypeInner::Array { base, .. } if !path.is_empty() => walk(module, *base, &format!("{path}.#"), out),
+            _ if !path.is_empty() => out.push((path.to_string(), type_text(module, ty))),
+            _ => {}
         }
     }
     let mut out = Vec::new();
-    walk(module, ty, "", &mut out);
+    if matches!(module.types[ty].inner, TypeInner::Struct { .. }) {
+        walk(module, ty, "", &mut out);
+    }
     out
 }
 

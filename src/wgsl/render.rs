@@ -437,6 +437,22 @@ impl Role {
         let pk = |name: String, inputs: Vec<String>, output: String, template: String| PerKernel { name, inputs, output, template };
         let mut extra = Vec::new();
         for b in &i.bindings {
+            // A uniform that is no struct and no vector of lanes (a matrix, a
+            // scalar, an array): its value `load.<var>`, an array's element
+            // over an index.
+            if b.role == Use::Parameter && !i.uniforms.iter().any(|u| u.var == b.name) {
+                if let Some(inner) = b.ty.strip_prefix("array<").and_then(|r| r.strip_suffix('>')) {
+                    if let Some(dual) = elem_dual(inner.split(", ").next().unwrap_or(inner)) {
+                        extra.push(pk(format!("load.{}", b.name), vec!["u32.index".into()], dual, format!("{}[{{0}}]", b.name)));
+                    }
+                } else if let Some(dual) = elem_dual(&b.ty) {
+                    let dual = if dual == "u32.index" { "u32.count".to_string() } else { dual };
+                    if dual == "u32.count" {
+                        extra.push(pk(format!("uniform.{}", b.name), Vec::new(), "u32.uniform".into(), b.name.clone()));
+                    }
+                    extra.push(pk(format!("load.{}", b.name), Vec::new(), dual, b.name.clone()));
+                }
+            }
             if b.role == Use::Parameter || b.name == input || b.name == output {
                 continue;
             }
@@ -451,8 +467,19 @@ impl Role {
             // atomic rows of an atomic leaf.
             let array = b.ty.starts_with("array<");
             for (path, lty) in &b.leaves {
-                let at = |t: &str| if array { format!("{}[{{0}}].{path}{t}", b.name) } else { format!("{}.{path}{t}", b.name) };
-                let idx: Vec<String> = if array { vec!["u32.index".into()] } else { Vec::new() };
+                // The place as WGSL writes it: the binding, its element index
+                // when it is an array, then the path (`#` an index, else a member).
+                let mut k = usize::from(array);
+                let mut place = if array { format!("{}[{{0}}]", b.name) } else { b.name.clone() };
+                for seg in path.split('.') {
+                    if seg == "#" {
+                        place.push_str(&format!("[{{{k}}}]"));
+                        k += 1;
+                    } else {
+                        place.push_str(&format!(".{seg}"));
+                    }
+                }
+                let idx: Vec<String> = vec!["u32.index".to_string(); k];
                 let atomic = match lty.as_str() {
                     "atomic<u32>" => Some("u32.index"),
                     "atomic<i32>" => Some("i32.int"),
@@ -460,24 +487,35 @@ impl Role {
                 };
                 if let Some(value) = atomic {
                     let with = |v: &[&str]| idx.iter().cloned().chain(v.iter().map(|s| s.to_string())).collect::<Vec<_>>();
-                    let n = if array { 1 } else { 0 };
-                    extra.push(pk(format!("load.{}.{path}", b.name), idx.clone(), value.into(), format!("atomicLoad(&{})", at(""))));
+                    extra.push(pk(format!("load.{}.{path}", b.name), idx.clone(), value.into(), format!("atomicLoad(&{place})")));
                     for r in STORE_RUNGS {
-                        extra.push(pk(format!("store.{}.{path}_{r}", b.name), with(&[value]), format!("stmt.{r}"), format!("atomicStore(&{}, {{{n}}});", at(""))));
+                        extra.push(pk(format!("store.{}.{path}_{r}", b.name), with(&[value]), format!("stmt.{r}"), format!("atomicStore(&{place}, {{{k}}});")));
                     }
                     for (fun, wgsl) in ATOMIC_FUNS {
-                        extra.push(pk(format!("atomic.{}.{path}_{fun}", b.name), with(&[value]), value.into(), format!("{wgsl}(&{}, {{{n}}})", at(""))));
+                        extra.push(pk(format!("atomic.{}.{path}_{fun}", b.name), with(&[value]), value.into(), format!("{wgsl}(&{place}, {{{k}}})")));
                     }
                     continue;
                 }
                 let Some(dual) = elem_dual(lty) else { continue };
-                extra.push(pk(format!("load.{}.{path}", b.name), idx.clone(), dual.clone(), at("")));
+                extra.push(pk(format!("load.{}.{path}", b.name), idx.clone(), dual.clone(), place.clone()));
                 if b.role == Use::Output {
-                    let n = if array { 1 } else { 0 };
                     for r in STORE_RUNGS {
-                        extra.push(pk(format!("store.{}.{path}_{r}", b.name), idx.iter().cloned().chain([dual.clone()]).collect(), format!("stmt.{r}"), format!("{} = {{{n}}};", at(""))));
+                        extra.push(pk(format!("store.{}.{path}_{r}", b.name), idx.iter().cloned().chain([dual.clone()]).collect(), format!("stmt.{r}"), format!("{place} = {{{k}}};")));
                     }
                 }
+            }
+            // A binding that is one scalar, vector or matrix: its value, read
+            // and (when the kernel writes it) written whole.
+            if !array && b.leaves.is_empty() {
+                if let Some(dual) = elem_dual(&b.ty) {
+                    extra.push(pk(format!("load.{}", b.name), Vec::new(), dual.clone(), b.name.clone()));
+                    if b.role == Use::Output {
+                        for r in STORE_RUNGS {
+                            extra.push(pk(format!("store.{}_{r}", b.name), vec![dual.clone()], format!("stmt.{r}"), format!("{} = {{0}};", b.name)));
+                        }
+                    }
+                }
+                continue;
             }
             let Some(dual) = b.elem.as_deref().and_then(elem_dual) else { continue };
             extra.push(pk(format!("load.{}", b.name), vec!["u32.index".into()], dual.clone(), format!("{}[{{0}}]", b.name)));

@@ -811,19 +811,49 @@ fn nested_index<'t>(rest: &str, kids: &'t [Tree]) -> Option<(&'t Tree, &'t Tree)
     }
 }
 
-/// A buffer target that names a struct field: `<binding>.#.<path>` (an array
-/// of structs, at an index) or `<binding>.<path>` (a struct binding) as
-/// (binding, path, indexed). None for a target that names no field: the
-/// binding, an element, or a lane of an element (`<binding>.#.#`).
-fn struct_field_target(rest: &str) -> Option<(&str, String, bool)> {
-    let mut parts = rest.split('.');
-    let b = parts.next()?;
-    let tail: Vec<&str> = parts.collect();
-    let (indexed, path) = match tail.as_slice() {
-        ["#", path @ ..] => (true, path),
-        path => (false, path),
-    };
-    (!path.is_empty() && !path.contains(&"#") && !path.iter().any(|p| p.contains('@'))).then(|| (b, path.join("."), indexed))
+/// A place in a storage binding that the interface's rows spell by name: the
+/// binding, the path after its element index (members by name, `#` an index)
+/// and the number of indexes the place takes. `<binding>.#.<path>` over an
+/// array of structs, `<binding>.<path>` over a struct, and the whole of a
+/// binding that is one scalar, vector or matrix (an empty path). None for a
+/// place the older rows spell: an array's element or lane.
+struct BufferPlace {
+    binding: String,
+    path: String,
+    indexes: usize,
+}
+
+fn buffer_place(module: &naga::Module, rest: &str) -> Option<BufferPlace> {
+    // (A load carries its version after the path: `.value.#@v0`.)
+    let rest = rest.split('@').next().unwrap_or(rest);
+    let mut it = rest.split('.');
+    let binding = it.next()?;
+    let mut segs: Vec<&str> = it.collect();
+    let array = matches!(module.types[place_type(module, binding, &[])?].inner, naga::TypeInner::Array { .. });
+    let mut indexes = 0;
+    if array {
+        if segs.first() != Some(&"#") {
+            return None;
+        }
+        segs.remove(0);
+        indexes = 1;
+    }
+    indexes += segs.iter().filter(|s| **s == "#").count();
+    if segs.iter().all(|s| *s == "#") && (array || !segs.is_empty()) {
+        return None;
+    }
+    Some(BufferPlace { binding: binding.to_string(), path: segs.join("."), indexes })
+}
+
+/// The index operands of a place: one operand, or the nest of several
+/// (`naga.NestedAccess`, outer first).
+fn flat_indexes(t: &Tree, out: &mut Vec<Tree>) {
+    if t.name == "naga.NestedAccess" && t.kids.len() == 2 {
+        flat_indexes(&t.kids[0], out);
+        flat_indexes(&t.kids[1], out);
+    } else {
+        out.push(t.clone());
+    }
 }
 
 fn literal_value(t: &Tree) -> Option<f32> {
@@ -3061,19 +3091,21 @@ impl<'a> Ctx<'a> {
     /// the interface's row `load.<binding>.<path>`, over the index when the
     /// binding is an array. None for any other name.
     fn buffer_field(&mut self, t: &Tree) -> Result<Option<Tree>, String> {
-        let Some((b, path, indexed)) = t.name.strip_prefix("load.buffer.").and_then(|r| struct_field_target(r.split('@').next().unwrap_or(r))) else { return Ok(None) };
-        let row = format!("load.{b}.{path}");
-        let Some((name, inputs, out)) = self.per_kernel_rows.iter().find(|p| p.0 == row).cloned() else {
-            return Err(format!("{} has no safe spelling: the interface has no row {row} (a field of a type the kingdom does not spell)", t.name));
+        let Some(place) = t.name.strip_prefix("load.buffer.").and_then(|r| buffer_place(self.module, r)) else { return Ok(None) };
+        let row = if place.path.is_empty() { format!("load.{}", place.binding) } else { format!("load.{}.{}", place.binding, place.path) };
+        let Some((name, inputs, out)) = self.per_kernel_rows.iter().find(|p| p.0 == row && p.1.len() == place.indexes).cloned() else {
+            return Err(format!("{} has no safe spelling: the interface has no row {row} over {} indexes (a place of a type the kingdom does not spell)", t.name, place.indexes));
         };
-        match (indexed, inputs.len(), t.kids.as_slice()) {
-            (false, 0, []) => Ok(Some(Tree::new(&name, out, vec![]))),
-            (true, 1, [i]) => {
-                let i = Tree { ty: ty(self, "u32.index")?, ..self.value(i)? };
-                Ok(Some(Tree::new(&name, out, vec![i])))
-            }
-            _ => Err(format!("{} has no safe spelling: the row {row} takes {} inputs", t.name, inputs.len())),
+        let mut idx = Vec::new();
+        for k in &t.kids {
+            flat_indexes(k, &mut idx);
         }
+        if idx.len() != inputs.len() {
+            return Err(format!("{}: {} index operands for the row {row}, which takes {}", t.name, idx.len(), inputs.len()));
+        }
+        let index = ty(self, "u32.index")?;
+        let kids = idx.iter().map(|i| Ok(Tree { ty: index, ..self.value(i)? })).collect::<Result<Vec<_>, String>>()?;
+        Ok(Some(Tree::new(&name, out, kids)))
     }
 
     /// What a struct value stored whole is made of: the members of a
@@ -3142,6 +3174,13 @@ impl<'a> Ctx<'a> {
     /// field (the row takes the index). None for any other name.
     fn other_uniform(&mut self, t: &Tree) -> Result<Option<Tree>, String> {
         let Some(rest) = t.name.strip_prefix("load.uniform.").filter(|r| !r.starts_with("cfg.")) else { return Ok(None) };
+        // A uniform that is no struct (`load.uniform.u`, `load.uniform.u.#`):
+        // the variable's own row.
+        let whole = rest.split(['.', '@']).next().unwrap_or(rest);
+        if self.module.global_variables.iter().any(|(_, g)| g.name.as_deref() == Some(whole) && g.space == naga::AddressSpace::Uniform) && self.per_kernel_rows.iter().any(|p| p.0 == format!("load.{whole}")) {
+            let indexes = rest[whole.len()..].matches("#").count();
+            return self.uniform_value(t, whole, indexes);
+        }
         let Some((var, tail)) = rest.split_once('.') else { return Ok(None) };
         let (field, indexes) = match tail.find(".#") {
             Some(i) => (&tail[..i], tail[i..].matches('#').count()),
@@ -3172,6 +3211,41 @@ impl<'a> Ctx<'a> {
         }
     }
 
+    /// A uniform variable that is no struct, read whole or at an index (an
+    /// array's element, a vector's or a matrix's lane or column): its row
+    /// `load.<var>`.
+    fn uniform_value(&mut self, t: &Tree, var: &str, indexes: usize) -> Result<Option<Tree>, String> {
+        let row = format!("load.{var}");
+        let Some((name, inputs, out)) = self.per_kernel_rows.iter().find(|p| p.0 == row).cloned() else {
+            return Ok(None);
+        };
+        let mut idx = Vec::new();
+        for k in &t.kids {
+            flat_indexes(k, &mut idx);
+        }
+        let index = ty(self, "u32.index")?;
+        // The row's own inputs first (an array's element), the rest are lanes.
+        if idx.len() < inputs.len() || idx.len() != indexes {
+            return Err(format!("{} has no safe spelling: {} index operands over the row {row}", t.name, idx.len()));
+        }
+        let mut whole = Tree::new(&name, out, idx[..inputs.len()].iter().map(|i| Ok(Tree { ty: index, ..self.value(i)? })).collect::<Result<Vec<_>, String>>()?);
+        let mut ty_now = out;
+        for (n, j) in idx[inputs.len()..].iter().enumerate() {
+            let last = n + 1 == idx.len() - inputs.len();
+            let to = if last { t.ty } else { ty_now };
+            let matrix_rows = self.kingdom.dual(ty_now).and_then(|d| d.slot.strip_prefix("mat").map(|m| m[2..3].to_string()));
+            whole = match (literal_value(j), matrix_rows) {
+                // A matrix's column.
+                (Some(l), Some(rows)) if l >= 0.0 && l.fract() == 0.0 => Tree::new(&format!("shape.col_{}", l as u32), if last { t.ty } else { ty(self, &format!("vec{rows}<f32>.real"))? }, vec![whole]),
+                (None, Some(rows)) => Tree::new("shape.col_at", if last { t.ty } else { ty(self, &format!("vec{rows}<f32>.real"))? }, vec![whole, self.value(j)?]),
+                (Some(l), None) if l >= 0.0 && l.fract() == 0.0 => Tree::new(&format!("shape.access_{}", l as u32), to, vec![whole]),
+                _ => Tree::new("shape.at", to, vec![whole, self.value(j)?]),
+            };
+            ty_now = whole.ty;
+        }
+        Ok(Some(whole))
+    }
+
     /// A uniform field without a kingdom role: the interface's row of its
     /// value, `load.<var>_<field>` (`Role::inferred`).
     fn uniform_field(&self, field: &str) -> Result<Tree, String> {
@@ -3188,6 +3262,31 @@ impl<'a> Ctx<'a> {
         let RootKind::Atomic { target, fun } = &root.kind else { return Err("not an atomic root".into()) };
         let Node::App { kids, .. } = &root.tree else { return Err("an atomic root without operands".into()) };
         let trees = kids.iter().map(|k| tree_of(self, k)).collect::<Result<Vec<_>, _>>()?;
+        // An atomic leaf of a struct binding or of a struct-element array's
+        // element, or of an array in one: the row `atomic.<b>.<path>_<fun>`
+        // over the place's indexes and the operand.
+        if let Some(place) = target.strip_prefix("buffer.").and_then(|r| buffer_place(self.module, r)).filter(|p| !p.path.is_empty()) {
+            if fun == "cas" {
+                return Err("atomicCompareExchangeWeak has no safe spelling: the kingdom has no compare-exchange row".into());
+            }
+            let row = format!("atomic.{}.{}_{fun}", place.binding, place.path);
+            let Some((_, _, out)) = self.per_kernel_rows.iter().find(|p| p.0 == row && p.1.len() == place.indexes + 1).cloned() else {
+                return Err(format!("an atomic {fun} on {target}: the interface has no row {row} over {} indexes", place.indexes));
+            };
+            let Some((value, index_kids)) = trees.split_last() else { return Err(format!("an atomic {fun} on {target} without an operand")) };
+            let mut idx = Vec::new();
+            for k in index_kids {
+                flat_indexes(k, &mut idx);
+            }
+            if idx.len() != place.indexes {
+                return Err(format!("an atomic {fun} on {target} with {} index operands, {} expected", idx.len(), place.indexes));
+            }
+            let index = ty(self, "u32.index")?;
+            let mut kids = idx.iter().map(|i| Ok(Tree { ty: index, ..self.value(i)? })).collect::<Result<Vec<_>, String>>()?;
+            kids.push(self.value(value)?);
+            let unsigned = self.kingdom.dual(out).is_some_and(|d| d.slot == "u32");
+            return Ok((Tree::new(&row, out, kids), unsigned));
+        }
         // A storage atomic the interface declares: its per-kernel row
         // `atomic.<name>_<fun>` over the operand.
         if let Some(name) = target.strip_prefix("buffer.").filter(|n| !n.contains('.')) {
@@ -4995,20 +5094,21 @@ impl<'a> Ctx<'a> {
         // (`store.buffer.instances.#.transform`, `store.buffer.infos.even_pass`)
         // is the row `store.<binding>.<path>_<rung>`, over the index when the
         // binding is an array.
-        if let Some((b, path, indexed)) = name.strip_prefix("store.buffer.").and_then(struct_field_target) {
-            let row = format!("store.{b}.{path}");
-            if self.per_kernel_rows.iter().any(|(n, _, _)| *n == format!("{row}_{rung}")) {
-                let (index, value) = match (indexed, tree.kids.as_slice()) {
-                    (true, [idx, value]) => (Some(idx), value),
-                    (false, [value]) => (None, value),
-                    _ => return Err(format!("a store to {b}.{path} with {} operands", tree.kids.len())),
-                };
-                let i = match index {
-                    Some(idx) => Some(Tree { ty: ty(self, "u32.index")?, ..self.value(idx)? }),
-                    None => None,
-                };
-                let v = self.value(value)?;
-                let store = |ctx: &Self, r: &str| -> Result<Tree, String> { Ok(Tree::new(&format!("{row}_{r}"), ctx.stmt_ty(r)?, i.iter().cloned().chain([v.clone()]).collect())) };
+        if let Some(place) = name.strip_prefix("store.buffer.").and_then(|r| buffer_place(self.module, r)) {
+            let row = if place.path.is_empty() { format!("store.{}", place.binding) } else { format!("store.{}.{}", place.binding, place.path) };
+            if self.per_kernel_rows.iter().any(|(n, i, _)| *n == format!("{row}_{rung}") && i.len() == place.indexes + 1) {
+                let Some((value, index_kids)) = tree.kids.split_last() else { return Err(format!("a store to {name} without a value")) };
+                let mut idx = Vec::new();
+                for k in index_kids {
+                    flat_indexes(k, &mut idx);
+                }
+                if idx.len() != place.indexes {
+                    return Err(format!("a store to {name} with {} index operands, {} expected", idx.len(), place.indexes));
+                }
+                let index = ty(self, "u32.index")?;
+                let mut kids = idx.iter().map(|i| Ok(Tree { ty: index, ..self.value(i)? })).collect::<Result<Vec<_>, String>>()?;
+                kids.push(self.value(value)?);
+                let store = |ctx: &Self, r: &str| -> Result<Tree, String> { Ok(Tree::new(&format!("{row}_{r}"), ctx.stmt_ty(r)?, kids.clone())) };
                 return match self.guard.clone() {
                     Some(g) => {
                         let crung = format!("C{}", &rung[1..]);
@@ -5018,7 +5118,7 @@ impl<'a> Ctx<'a> {
                     None => Ok(Some(store(self, rung)?)),
                 };
             }
-            return Err(format!("store {name} has no safe spelling: the interface has no row {row}_{rung} (a field of a type the kingdom does not spell, or a binding the kernel does not write)"));
+            return Err(format!("store {name} has no safe spelling: the interface has no row {row}_{rung} over {} indexes (a place of a type the kingdom does not spell, or a binding the kernel does not write)", place.indexes));
         }
         if let Some(b) = name.strip_prefix("store.buffer.").and_then(|r| r.split('.').next()) {
             if self.per_kernel_rows.iter().any(|(n, _, _)| *n == format!("store.{b}_{rung}")) {
@@ -6432,6 +6532,43 @@ pub fn read_safe(source: &str, kingdom: &WgslKingdom) -> Result<SafeRead, String
     Ok(SafeRead { tree, ..r })
 }
 
+/// A kernel's pipeline-overridable constants given their values by header
+/// lines, `// override <name> <value>`: each `override <name>: <type>;` with no
+/// default is declared with that value (`override <name>: <type> = <value>;`).
+/// The kingdom has no pipeline to set one, so a kernel reads at the values
+/// its text names.
+pub fn with_overrides(source: &str) -> String {
+    let given: Vec<(&str, &str)> = source.lines().filter_map(|l| l.trim().strip_prefix("// override ")).filter_map(|r| r.split_once(' ')).map(|(n, v)| (n.trim(), v.trim())).collect();
+    if given.is_empty() {
+        return source.to_string();
+    }
+    let mut out = String::with_capacity(source.len() + 32);
+    let mut rest = source;
+    while let Some(i) = rest.find("override ") {
+        let (head, tail) = rest.split_at(i);
+        let line = head.rsplit('\n').next().unwrap_or(head);
+        let word_start = head.chars().next_back().is_none_or(|c| !(c.is_alphanumeric() || c == '_')) && !line.contains("//");
+        out.push_str(head);
+        let after = &tail["override ".len()..];
+        let name: String = after.trim_start().chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect();
+        let end = after.find(';').unwrap_or(after.len());
+        match given.iter().find(|(n, _)| *n == name) {
+            Some((_, v)) if word_start && !after[..end].contains('=') && end < after.len() => {
+                out.push_str("override ");
+                out.push_str(&after[..end]);
+                out.push_str(&format!(" = {v}"));
+                rest = &after[end..];
+            }
+            _ => {
+                out.push_str("override ");
+                rest = after;
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
 /// The workgroup arrays read so far: a module variable's row (`wg_x` is
 /// `wg.ua`) and each row's declared length. A module's entry points share
 /// its variables, so each is read with the arrays of those before it: one
@@ -6461,6 +6598,7 @@ pub(crate) fn entry_grid_header(source: &str, entry: &str) -> Option<((u32, u32,
 /// Read `source` into the safe grammar with every knob-dependent position
 /// left as the literal the kernel wrote.
 pub fn read_safe_literal(source: &str, kingdom: &WgslKingdom) -> Result<SafeRead, String> {
+    let source = &with_overrides(source);
     let role = crate::wgsl::render::interface_of(source)?;
     let mut kernel = read(source)?;
     // The interface's names as the kingdom's canonical roles (its input is
@@ -8468,6 +8606,35 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         assert!(back.tree == r.tree, "{:?}\n{}", crate::wgsl::render::first_difference(&r.tree, &back.tree), out.text);
         let checker = crate::wgsl::check::Checker::with_contract(&k, &r.role, &crate::wgsl::target::Target::recorded(), contract);
         checker.check(&r.tree).unwrap_or_else(|e| panic!("{e}\n{}", out.text));
+    }
+
+    /// PLACES OF ANY DEPTH (2026-10-19; the harvested corpus's litmus tests
+    /// and dawn's buffer tests): a binding that is one vector, written whole; a
+    /// struct binding with an array member, an array of structs inside a
+    /// struct, and atomic leaves at both; a uniform matrix; a pipeline
+    /// constant given its value by a `// override` header. Each reads,
+    /// renders, naga validates it, reads back to the same tree and passes
+    /// every layer.
+    #[test]
+    fn places_of_any_depth_read() {
+        let k = WgslKingdom::load_safe();
+        let contract = crate::wgsl::safety::Contract::parse("workgroups x 1 1024\nworkgroups y 1 1\nworkgroups z 1 1\n").unwrap();
+        let sources = [
+            ("a vector binding written whole", "@group(0) @binding(0) var<uniform> u: mat2x2<f32>;\n@group(0) @binding(1) var<storage, read_write> out: vec4<f32>;\n@compute @workgroup_size(1)\nfn main() {\n    out = vec4<f32>(u[1], u[0].x, u[1][1]);\n}\n"),
+            ("a struct with an array member and atomics", "struct Cell { r0: u32, r1: atomic<u32> };\nstruct Results { seq: atomic<u32>, value: array<Cell, 8> };\nstruct Locs { value: array<atomic<u32>> };\n@group(0) @binding(0) var<storage, read_write> results: Results;\n@group(0) @binding(1) var<storage, read_write> locs: Locs;\n@compute @workgroup_size(32)\nfn main(@builtin(global_invocation_id) gid: vec3<u32>) {\n    if (gid.x < 8u) {\n        let old = atomicAdd(&locs.value[gid.x], 2u);\n        results.value[gid.x].r0 = old + 1u;\n        atomicStore(&results.value[gid.x].r1, old);\n    }\n    atomicMax(&results.seq, gid.x);\n}\n"),
+            ("a pipeline constant", "// override size 64\noverride size: u32;\n@group(0) @binding(0) var<storage, read_write> out: array<u32>;\n@compute @workgroup_size(64)\nfn main(@builtin(global_invocation_id) gid: vec3<u32>) {\n    if (gid.x < size) { out[gid.x] = size; }\n}\n"),
+        ];
+        for (what, src) in sources {
+            let r = read_safe(src, &k).unwrap_or_else(|e| panic!("{what}: {e}"));
+            let out = crate::wgsl::safe_karva::render_tree_with(&r.tree, &k, &r.role).unwrap_or_else(|e| panic!("{what}: {e}"));
+            validate_text(&out.text).unwrap_or_else(|e| panic!("{what}: {e}\n{}", out.text));
+            let back = read_safe(&out.text, &k).unwrap_or_else(|e| panic!("{what}: read back: {e}\n{}", out.text));
+            assert!(back.tree == r.tree, "{what}: {:?}\n{}", crate::wgsl::render::first_difference(&r.tree, &back.tree), out.text);
+            // (The first kernel is one thread writing one cell: dispatched once.)
+            let c = if what.starts_with("a vector") { crate::wgsl::safety::Contract::parse("workgroups x 1 1\nworkgroups y 1 1\nworkgroups z 1 1\n").unwrap() } else { contract.clone() };
+            let checker = crate::wgsl::check::Checker::with_contract(&k, &r.role, &crate::wgsl::target::Target::recorded(), c);
+            checker.check(&r.tree).unwrap_or_else(|e| panic!("{what}: {e}\n{}", out.text));
+        }
     }
 
     /// TWO LOOPS OF THE V24 REFERENCE (2026-10-17, the harness agent's
