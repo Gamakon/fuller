@@ -11,7 +11,16 @@
 //! goes out at once (one thread a call; `claude -p` for sonnet, opus and
 //! fable, `codex exec` for codex: `llm::call`); a seed whose call fails or
 //! whose reply does not compile is asked again of the same model, up to three
-//! calls a seed in all.
+//! calls a seed in all; a retry after a reply that did not compile quotes the
+//! compile error ("Your previous reply did not compile: ...").
+//!
+//! `--only seed21,seed23,seed28` redoes only those seeds into an existing
+//! `--out`: the seeds and calls already there are kept, each named seed's first
+//! call quotes its last compile error from checks.tsv, its attempts are
+//! numbered on from the ones recorded (no call file is overwritten),
+//! checks.tsv is appended to, and models.tsv is rewritten with every seed that
+//! compiles (the old and the new). The same --models and --seed as the first
+//! run give each seed its model and variation key.
 //!
 //! Out, in `--out`: `seedNN.wgsl` for every seed whose reply compiles
 //! (`harness::kernel_info`: naga parses and validates it and its bindings meet
@@ -21,7 +30,7 @@
 //! call: seed, attempt, model, seconds, the check's verdict).
 //!
 //! Run: cargo run --release --example v24_seed -- --problem <dir> --out <dir>
-//!      --models sonnet:16,opus:8,codex:4,fable:4 --seed <n>
+//!      --models sonnet:16,opus:8,codex:4,fable:4 --seed <n> [--only seedNN,...]
 
 use std::path::PathBuf;
 
@@ -51,36 +60,93 @@ fn main() -> Result<(), String> {
         let n: usize = n.parse().map_err(|e| format!("--models: {part}: {e}"))?;
         plan.extend(std::iter::repeat_n(name.to_string(), n));
     }
-    if out.exists() {
-        return Err(format!("{} exists: a seed population is written to a new directory only", out.display()));
-    }
+    let only: Option<Vec<usize>> = match args.iter().position(|a| a == "--only") {
+        None => None,
+        Some(_) => Some(
+            value("--only")?
+                .split(',')
+                .map(|s| s.trim().strip_prefix("seed").and_then(|n| n.parse::<usize>().ok()).filter(|n| *n < plan.len()).ok_or_else(|| format!("--only: {s} is not seedNN of the {} seeds", plan.len())))
+                .collect::<Result<_, _>>()?,
+        ),
+    };
+    // Each seed: its model when accepted; the calls made of it so far; the
+    // compile error of its last reply that did not compile.
+    let mut accepted: Vec<Option<String>> = vec![None; plan.len()];
+    let mut made: Vec<usize> = vec![0; plan.len()];
+    let mut last_error: Vec<Option<String>> = vec![None; plan.len()];
+    let mut checks = String::from("seed\tattempt\tmodel\tseconds\tcheck\n");
+    let wanted_at_start: Vec<usize> = match &only {
+        None => {
+            if out.exists() {
+                return Err(format!("{} exists: a seed population is written to a new directory only (or name the seeds to redo with --only)", out.display()));
+            }
+            (0..plan.len()).collect()
+        }
+        Some(redo) => {
+            // The run so far: its models.tsv, its checks.tsv.
+            let read = |f: &str| std::fs::read_to_string(out.join(f)).map_err(|e| format!("--only: {}: {e}", out.join(f).display()));
+            for l in read("models.tsv")?.lines().skip(1) {
+                let mut c = l.split('\t');
+                let (Some(stem), Some(model)) = (c.next(), c.next()) else { continue };
+                let i: usize = stem.strip_prefix("seed").and_then(|n| n.parse().ok()).ok_or_else(|| format!("--only: models.tsv line {l:?}"))?;
+                if i >= plan.len() || plan[i] != model {
+                    return Err(format!("--only: models.tsv says {stem} is {model}; --models gives {}", plan.get(i).map_or("no seed", |s| s.as_str())));
+                }
+                accepted[i] = Some(model.to_string());
+            }
+            checks = read("checks.tsv")?;
+            for l in checks.lines().skip(1) {
+                let c: Vec<&str> = l.split('\t').collect();
+                let Some(i) = c.first().and_then(|s| s.strip_prefix("seed")).and_then(|n| n.parse::<usize>().ok()).filter(|i| *i < plan.len()) else { continue };
+                if let Some(a) = c.get(1).and_then(|a| a.parse::<usize>().ok()) {
+                    made[i] = made[i].max(a);
+                }
+                if let Some(e) = c.get(4).and_then(|v| v.strip_prefix("does not compile: ")) {
+                    last_error[i] = Some(e.to_string());
+                }
+            }
+            if !checks.ends_with('\n') {
+                checks.push('\n');
+            }
+            for i in redo {
+                if accepted[*i].is_some() {
+                    return Err(format!("--only: seed{i:02} already compiles (models.tsv): it is not redone"));
+                }
+            }
+            redo.clone()
+        }
+    };
     std::fs::create_dir_all(out.join("calls")).map_err(|e| format!("{}: {e}", out.display()))?;
     let problem = Problem::load(&problem_dir)?;
     let contract = llm::contract(Some(&problem))?;
-    println!("[{}] {} seeds for {} from {} strategies; models {}", stamp(), plan.len(), problem.spec.name, contract.strategies.len(), value("--models")?);
-    let mut checks = String::from("seed\tattempt\tmodel\tseconds\tcheck\n");
-    // Each seed: (model, accepted).
-    let mut wanted: Vec<usize> = (0..plan.len()).collect();
-    let mut accepted: Vec<Option<String>> = vec![None; plan.len()];
-    for attempt in 1..=3 {
+    println!("[{}] {} seeds for {} from {} strategies; models {}{}", stamp(), wanted_at_start.len(), problem.spec.name, contract.strategies.len(), value("--models")?, if only.is_some() { format!("; redoing {:?}", wanted_at_start.iter().map(|i| format!("seed{i:02}")).collect::<Vec<_>>()) } else { String::new() });
+    let mut wanted = wanted_at_start;
+    for _ in 1..=3 {
         if wanted.is_empty() {
             break;
         }
-        let handles: Vec<(usize, Call)> = wanted
+        let handles: Vec<(usize, String, Call)> = wanted
             .iter()
             .map(|&i| {
                 let (c, name) = (contract.clone(), plan[i].clone());
                 let strategy = c.strategy(i).to_string();
                 let phrase = format!("population seed {seed}, launch kernel {i}, be unlike the obvious kernel");
-                (i, std::thread::spawn(move || llm::call(&name, &c.system, &c.task(&strategy, &phrase)).map(|(r, _, secs)| (llm::strip(&r), secs))))
+                let mut task = c.task(&strategy, &phrase);
+                if let Some(e) = &last_error[i] {
+                    task.push_str(&format!("\n\nYour previous reply did not compile: {e}. Write the whole kernel again with that fixed."));
+                }
+                let sent = task.clone();
+                (i, sent, std::thread::spawn(move || llm::call(&name, &c.system, &task).map(|(r, _, secs)| (llm::strip(&r), secs))))
             })
             .collect();
         let mut still = Vec::new();
-        for (i, h) in handles {
+        for (i, sent, h) in handles {
             let name = &plan[i];
+            made[i] += 1;
+            let attempt = made[i];
             let verdict = match h.join() {
                 Ok(Ok((text, secs))) => {
-                    llm::save_call(&out.join("calls"), &format!("seed{i:02}_try{attempt}"), name, &contract.system, &contract.task(contract.strategy(i), "launch seed"), &text)?;
+                    llm::save_call(&out.join("calls"), &format!("seed{i:02}_try{attempt}"), name, &contract.system, &sent, &text)?;
                     match kernel_info(&problem.spec, &text) {
                         Ok(_) => {
                             std::fs::write(out.join(format!("seed{i:02}.wgsl")), &text).map_err(|e| e.to_string())?;
@@ -89,7 +155,9 @@ fn main() -> Result<(), String> {
                         }
                         Err(e) => {
                             still.push(i);
-                            format!("{secs:.0}\tdoes not compile: {}", e.lines().next().unwrap_or("").chars().take(160).collect::<String>())
+                            let first = e.lines().next().unwrap_or("").chars().take(160).collect::<String>();
+                            last_error[i] = Some(first.clone());
+                            format!("{secs:.0}\tdoes not compile: {first}")
                         }
                     }
                 }
@@ -111,6 +179,6 @@ fn main() -> Result<(), String> {
     std::fs::write(out.join("models.tsv"), format!("seed\tmodel\tform\n{models}")).map_err(|e| e.to_string())?;
     std::fs::write(out.join("checks.tsv"), checks).map_err(|e| e.to_string())?;
     let n = accepted.iter().filter(|m| m.is_some()).count();
-    println!("[{}] {n} of {} seeds compile; {} without one after three calls: {:?}", stamp(), plan.len(), wanted.len(), wanted.iter().map(|i| format!("seed{i:02} {}", plan[*i])).collect::<Vec<_>>());
+    println!("[{}] {n} of {} seeds compile; {} without one after this run's calls: {:?}", stamp(), plan.len(), wanted.len(), wanted.iter().map(|i| format!("seed{i:02} {}", plan[*i])).collect::<Vec<_>>());
     Ok(())
 }
