@@ -1972,12 +1972,10 @@ mod tests {
     #[test]
     fn sized_shaders_carry_the_limit_and_parse() {
         for limit in [MAX_NODES, 448, 1024] {
-            for (name, src) in [("eval", EVAL_WGSL)] {
-                let sized = with_limits_n(src, limit);
-                assert!(sized.contains(&format!("const MAX_NODES: u32 = {limit}u;")), "{name}");
-                assert!(!sized.contains("const MAX_NODES: u32 = 64u;"), "{name}");
-                crate::wgsl::naga_shape::parse_unscanned(&sized).unwrap_or_else(|e| panic!("{name} at {limit}: {e}"));
-            }
+            let sized = with_limits_n(EVAL_WGSL, limit);
+            assert!(sized.contains(&format!("const MAX_NODES: u32 = {limit}u;")), "eval at {limit}");
+            assert!(!sized.contains("const MAX_NODES: u32 = 64u;"), "eval at {limit}");
+            crate::wgsl::naga_shape::parse_unscanned(&sized).unwrap_or_else(|e| panic!("eval at {limit}: {e}"));
         }
         assert_eq!(with_limits(EVAL_WGSL), with_limits_n(EVAL_WGSL, MAX_NODES));
     }
