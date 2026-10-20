@@ -98,17 +98,33 @@ LITERAL_DOMAIN = {
     "lit4096": "1..=4096",
     "wglen": "1..=8192",
     "xbound": "0..=4294967295",
+    # The forms that had no literal (2026-10-19, docs/PLAN_wgsl_terminals.md): a constant of the dual is a real value,
+    # and a tail of the dual needs a terminal. Each is its form's whole range.
+    "q15_16": "-2147483648..=2147483647",
+    "q15_16w": "-2147483648..=2147483647",
+    "code4": "0..=3",
+    "code8": "0..=7",
+    "code16": "0..=15",
+    "code1024": "0..=1023",
+    "sign": "0,1",
+    "hash32": "0..=4294967295",
+    "hash64": "0..=4294967295",
 }
 
 
 def literal_domain(slot, form):
     """A value slot's literal domain, a vector's or matrix's its scalar's (the renderer
-    splats a literal over the lanes); f16 has none: the renderer writes no f16 literal."""
+    splats a literal over the lanes); f16's is its finite range."""
     scalar = slot
     if slot.startswith("vec") or slot.startswith("mat"):
         scalar = slot[slot.index("<") + 1:-1]
+    # f16: its finite range (the module enables f16 when its text uses it).
+    if scalar == "f16":
+        return "-65504.0..=65504.0" if form in ("real", "opaque") else "-"
     if scalar not in ("f32", "i32", "u32", "bool"):
         return "-"
+    if form == "opaque":
+        return {"f32": LITERAL_DOMAIN["real"], "i32": LITERAL_DOMAIN["int"], "u32": LITERAL_DOMAIN["index"], "bool": LITERAL_DOMAIN["flag"]}[scalar]
     return LITERAL_DOMAIN.get(form, "-")
 
 
@@ -336,6 +352,36 @@ f("wg", "a", "composite", [], "wgmem<f32>.real", "workgroup array a")
 f("wg", "b", "composite", [], "wgmem<f32>.real", "workgroup array b")
 f("wg", "get", "composite", ["wgmem<f32>.real", "u32.index"], "f32.real", "a[i & 2047u]")
 f("wg", "set", "composite", ["wgmem<f32>.real", "u32.index", "f32.real"], "stmt.stmt", "arity 3: a[i & 2047u] = v;")
+
+# ---- a real terminal for every demanded dual (2026-10-19, docs/PLAN_wgsl_terminals.md): multi-typed gene
+# expression programming fills a tail of type T with a terminal of T, so a dual with no terminal is an unfillable
+# tail. A constant of a value dual is a `const` row over its domain (class const, not literal: the reader reads a
+# kernel's text into `literal` rows and never into these, and the sampler does not draw them); a dual with provenance (a thread's own row,
+# cell, an empty block, a kernel that stores) takes an `own` row, whose text the renderer writes as the thread's own
+# first row, column or cell, an empty block, a store of the thread's own cell, a kernel of the default grid. ----
+for form, out, note in [
+    ("vint", "<vecL.int>", "a constant vector of whole numbers, one value on every lane"),
+    ("vindex", "<vecL.index>", "a constant vector of indices, one value on every lane"),
+    ("vcount", "<vecL.count>", "a constant vector of counts, one value on every lane"),
+    ("vbits", "<vecL.bits>", "a constant vector of bit fields, one value on every lane"),
+    ("vflag", "<vecL.flag>", "a constant vector of predicates, one value on every lane"),
+    ("q15_16", "<i32.q15_16>", "a fixed-point constant"),
+    ("q15_16w", "vec2<i32>.q15_16w", "a wide fixed-point constant, one limb value on both lanes"),
+    ("code4", "u32.code4", "a codebook entry"),
+    ("code8", "u32.code8", "a codebook entry"),
+    ("code16", "u32.code16", "a codebook entry"),
+    ("code1024", "u32.code1024", "a codebook entry"),
+    ("hash32", "u32.hash32", "a hash state constant"),
+    ("hash64", "vec2<u32>.hash64", "a 64-bit hash state constant, one limb value on both lanes"),
+    ("sign", "bool.sign", "+1 or -1 as a bit"),
+    ("opaque", "<S.opaque>", "a constant of an opaque dual: any value of its scalar"),
+    ("mat", "<matCxR<f32>.real>", "a matrix constant, one number on every element"),
+]:
+    f("const", form, "Literal", [], out, note)
+OWN_NOTE = "the real terminal of the dual: "
+f("own", "block_block", "composite", [], "block.block", OWN_NOTE + "an empty block {}")
+f("own", "grid_grid", "composite", [], "grid.grid", OWN_NOTE + "the default grid: 16 x 16 threads, one cell each")
+f("own", "kernel_kernel", "composite", [], "kernel.kernel", OWN_NOTE + "a kernel of the default grid and an empty body")
 
 
 def write_tsv(path, header, rows):

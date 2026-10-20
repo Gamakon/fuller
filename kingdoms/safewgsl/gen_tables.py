@@ -259,17 +259,36 @@ LITERAL_DOMAIN = {
     "wglen": "1..=8192",
     "xbound": "0..=4294967295",
     "payload": "1..=1048576",
+    # The forms that had no literal (2026-10-19, the typed-GEP terminal plan): a constant of the dual is a real
+    # value, and a tail of the dual needs a terminal. Each is its form's full range, to what the f32 konst of a
+    # tree represents exactly (a u32 or i32 beyond 2^24 is carried as the nearest f32 here; the gene's C_T holds the
+    # exact bit pattern).
+    "q15_16": "-2147483648..=2147483647",
+    "code4": "0..=3",
+    "code8": "0..=7",
+    "code16": "0..=15",
+    "code1024": "0..=1023",
+    "sign": "0,1",
+    "hash32": "0..=4294967295",
+    # A hash64 or wide fixed-point value is two lanes of its limb's range.
+    "hash64": "0..=4294967295",
+    "q15_16w": "-2147483648..=2147483647",
 }
 
 
 def literal_domain(slot, form):
     """A value slot's literal domain, a vector's or matrix's its scalar's (the renderer
-    splats a literal over the lanes); f16 has none: the renderer writes no f16 literal."""
+    splats a literal over the lanes); f16's is its finite range."""
     scalar = slot
     if slot.startswith("vec") or slot.startswith("mat"):
         scalar = slot[slot.index("<") + 1:-1]
+    # f16: its finite range (the module enables f16 when its text uses it).
+    if scalar == "f16":
+        return "-65504.0..=65504.0" if form in ("real", "opaque") else "-"
     if scalar not in ("f32", "i32", "u32", "bool"):
         return "-"
+    if form == "opaque":
+        return {"f32": LITERAL_DOMAIN["real"], "i32": "-2147483648..=2147483647", "u32": "0..=4294967295", "bool": "0,1"}[scalar]
     return LITERAL_DOMAIN.get(form, "-")
 
 
@@ -1504,6 +1523,61 @@ for letter, dual, old, new in REG_EXTEND:
 for cls, dual, old, stem, new in ARRAY_FAMILIES:
     for i in range(old, new):
         f(cls, f"{stem}{i}", "composite", [], dual, f"array {stem}{i} of {dual}")
+
+
+# ---- a real terminal for every demanded dual (2026-10-19, docs/PLAN_wgsl_terminals.md): multi-typed gene
+# expression programming fills a tail of type T with a terminal of T, so a dual with no terminal is an unfillable
+# tail. A constant of a value dual is a `const` row over its domain (class const, not literal: the reader reads a
+# kernel's text into `literal` rows and never into these, and the sampler does not draw them); a dual with provenance (a thread's own row,
+# cell, an empty block, a kernel that stores) takes an `own` row, whose text the renderer writes as the thread's own
+# first row, column or cell, an empty block, a store of the thread's own cell, a kernel of the default grid. ----
+for form, out, note in [
+    ("vint", "<vecL.int>", "a constant vector of whole numbers, one value on every lane"),
+    ("vindex", "<vecL.index>", "a constant vector of indices, one value on every lane"),
+    ("vcount", "<vecL.count>", "a constant vector of counts, one value on every lane"),
+    ("vbits", "<vecL.bits>", "a constant vector of bit fields, one value on every lane"),
+    ("vflag", "<vecL.flag>", "a constant vector of predicates, one value on every lane"),
+    ("q15_16", "<i32.q15_16>", "a fixed-point constant"),
+    ("q15_16w", "vec2<i32>.q15_16w", "a wide fixed-point constant, one limb value on both lanes"),
+    ("code4", "u32.code4", "a codebook entry"),
+    ("code8", "u32.code8", "a codebook entry"),
+    ("code16", "u32.code16", "a codebook entry"),
+    ("code1024", "u32.code1024", "a codebook entry"),
+    ("hash32", "u32.hash32", "a hash state constant"),
+    ("hash64", "vec2<u32>.hash64", "a 64-bit hash state constant, one limb value on both lanes"),
+    ("sign", "bool.sign", "+1 or -1 as a bit"),
+    ("opaque", "<S.opaque>", "a constant of an opaque dual: any value of its scalar"),
+    ("mat", "<matCxR<f32>.real>", "a matrix constant, one number on every element"),
+]:
+    f("const", form, "Literal", [], out, note)
+OWN_NOTE = "the real terminal of the dual: "
+for dual, text in [
+    ("u32.threadrow", "the thread's own first row"), ("u32.threadcol", "the thread's own first column"),
+    ("u32.threadrows", "the thread's own first row of a strided block"), ("u32.threadcols", "the thread's own first column of a strided block"),
+    ("u32.threadrowg", "the thread's own first row of a grouped block"), ("u32.threadcolg", "the thread's own first column of a grouped block"),
+    ("u32.rowbase", "the origin of the thread's row"), ("u32.colbase", "the origin of the thread's column"),
+    ("u32.rowbases", "the origin of the thread's strided row"), ("u32.colbases", "the origin of the thread's strided column"),
+    ("u32.rowbaseg", "the origin of the thread's grouped row"), ("u32.colbaseg", "the origin of the thread's grouped column"),
+    ("u32.cell", "the thread's own first output cell"), ("u32.mirror", "the mirror of the thread's own first cell"),
+    ("u32.wgown", "the thread's own workgroup element, lidx"), ("u32.rowid", "the y of the thread's global id"), ("u32.colid", "the x of the thread's global id"),
+    ("u32.wgindex", "workgroup-array index 0"), ("u32.wgvindex", "vec4 workgroup-array index 0"), ("u32.wgv2index", "vec2 workgroup-array index 0"),
+    ("u32.wgaindex", "atomic workgroup-array index 0"), ("u32.pindex", "private-array index 0"), ("u32.pindex16", "16-element private-array index 0"),
+    ("u32.pindex128", "128-element private-array index 0"), ("u32.boundx", "a loop bound of one pass, 1u"), ("u32.boundu", "a workgroup-uniform loop bound of one pass, 1u"),
+    ("u32.uniformw", "a workgroup-uniform value, 0u"), ("bool.uflag", "a workgroup-uniform predicate, false"),
+    ("block.block", "an empty block {}"),
+    ("kernel.safe", "the default-grid kernel whose epilogue stores the thread's own cell"),
+    ("kernel.module", "a module of one such kernel at each of the interface's entry points"),
+    ("grid.grid", "the default grid: 16 x 16 threads, one cell each"),
+    ("wg.decl", "no workgroup array declaration"), ("wg.decls", "the arrays the kernel uses, at their default lengths"),
+]:
+    slot, form = dual.split(".")
+    f("own", f"{slot}_{form}", "composite", [], dual, OWN_NOTE + text)
+for r in ("L0", "L1", "L2", "L3", "L4", "L5", "C0", "C1", "C2", "C3", "C4", "C5", "O0", "O1", "O2", "O3", "O4", "B1", "B2", "B3", "B4", "B5"):
+    store = r.startswith("O")
+    if r[0] != "L" and r[0] != "B":
+        f("own", f"stmt_{r}", "composite", [], f"stmt.{r}", OWN_NOTE + ("a store to the thread's own cell" if store else "an empty statement {}"))
+    f("own", f"block_{r}", "composite", [], f"block.{r}", OWN_NOTE + ("a block ending in a store to the thread's own cell" if store else "an empty block {}"))
+
 
 def write_tsv(path, header, rows):
     with open(path, "w") as out:

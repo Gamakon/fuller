@@ -97,7 +97,7 @@ fn mutate(a: &Tree, kingdom: &WgslKingdom, role: &fuller::wgsl::render::Role, st
         let mut n = node.clone();
         let form = kingdom.dual(ty).map(|d| d.form.clone()).unwrap_or_default();
         n.konst = match form.as_str() {
-            "real" => n.konst * (0.5 + unit(state) as f32),
+            "real" => n.konst * (0.5 + unit(state)),
             "flag" | "sign" => 1.0 - n.konst,
             _ => (n.konst + if next(state).is_multiple_of(2) { 1.0 } else { -1.0 }).max(0.0),
         };

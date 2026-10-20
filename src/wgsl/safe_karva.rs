@@ -107,7 +107,7 @@ fn token(t: &Tree) -> String {
 pub fn karva_text(t: &Tree) -> String {
     if t.kids.is_empty() {
         if t.name.starts_with("literal.") {
-            return format!("({} (Num {:?}))", token(t), f64::from(t.konst));
+            return format!("({} (Num {:?}))", token(t), t.konst);
         }
         return format!("(Var {:?})", token(t));
     }
@@ -751,7 +751,7 @@ fn conform_at(t: &Tree, demand: Ty, kingdom: &WgslKingdom, per_kernel: &[PerKern
     // (a 64-bit hash state, a wide fixed-point value): its fallback, which
     // the renderer writes as that splat of zero (2026-10-12).
     if let (true, [x]) = (t.name.starts_with("shape.splat"), t.kids.as_slice()) {
-        if x.name.starts_with("literal.") && !kingdom.rows.iter().any(|r| r.output == demand && (r.name.starts_with("shape.splat") || r.name.starts_with("literal."))) && kingdom.dual(demand).is_some_and(|d| f64::from(d.fallback_bits) == f64::from(x.konst)) {
+        if x.name.starts_with("literal.") && !kingdom.rows.iter().any(|r| r.output == demand && (r.name.starts_with("shape.splat") || r.name.starts_with("literal."))) && kingdom.dual(demand).is_some_and(|d| f64::from(d.fallback_bits) == x.konst) {
             return Ok(Tree::fallback(demand));
         }
     }
@@ -847,7 +847,7 @@ fn conform_at(t: &Tree, demand: Ty, kingdom: &WgslKingdom, per_kernel: &[PerKern
         // A dual with no literal row (a hash state, a fixed-point value): its
         // fallback, the zero the renderer writes for it, when the literal is it
         // (2026-10-12: 48 of 1,000 random trees).
-        if !kingdom.rows.iter().any(|r| r.name.starts_with("literal.") && r.output == demand) && kingdom.dual(demand).is_some_and(|d| d.lanes <= 1 && f64::from(d.fallback_bits) == f64::from(t.konst)) {
+        if !kingdom.rows.iter().any(|r| r.name.starts_with("literal.") && r.output == demand) && kingdom.dual(demand).is_some_and(|d| d.lanes <= 1 && f64::from(d.fallback_bits) == t.konst) {
             return Ok(Tree::fallback(demand));
         }
     } else {

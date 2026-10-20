@@ -47,7 +47,9 @@ impl Target {
                 .union(Capabilities::SUBGROUP_BARRIER)
                 .union(Capabilities::MULTISAMPLED_SHADING)
                 .union(Capabilities::CUBE_ARRAY_TEXTURES)
-                .union(Capabilities::SHADER_FLOAT16_IN_FLOAT32),
+                .union(Capabilities::SHADER_FLOAT16_IN_FLOAT32)
+                // f16 values and the `enable f16;` directive: the device is opened with wgpu's SHADER_F16, which Metal on the M3 Max has.
+                .union(Capabilities::SHADER_FLOAT16),
             max_invocations: 1024,
             max_size: [1024, 1024, 1024],
             max_workgroup_storage: 32768,

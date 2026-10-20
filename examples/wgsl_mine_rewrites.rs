@@ -211,7 +211,7 @@ type RunGen = (String, u32);
 type Measured = (Tree, f64, String);
 
 /// The literal values of a tree in preorder.
-fn literals(t: &Tree, out: &mut Vec<f32>) {
+fn literals(t: &Tree, out: &mut Vec<f64>) {
     if t.name.starts_with("literal.") {
         out.push(t.konst);
     }

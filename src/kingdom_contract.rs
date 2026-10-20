@@ -469,7 +469,7 @@ pub fn regex_relations() -> KingdomRelations {
 /// The WGSL kingdoms' rows with their ordered inputs, every dual a possible
 /// root. A `literal.*` terminal is the constant placeholder of its dual.
 #[cfg(feature = "wgsl")]
-fn wgsl_family_relations(k: &crate::wgsl::loader::WgslKingdom, kingdom: &str) -> KingdomRelations {
+fn wgsl_family_relations(k: &crate::wgsl::loader::WgslKingdom, kingdom: &str, roots: Option<&[&str]>) -> KingdomRelations {
     let rows: Vec<(String, Vec<Ty>, Ty)> = {
         let mut per_name: BTreeMap<&str, usize> = BTreeMap::new();
         for r in &k.rows {
@@ -477,21 +477,27 @@ fn wgsl_family_relations(k: &crate::wgsl::loader::WgslKingdom, kingdom: &str) ->
         }
         k.rows.iter().map(|r| (r.semantic_id(&k.duals, per_name[r.name.as_str()]), r.inputs.clone(), r.output)).collect()
     };
-    let roots: Vec<Ty> = k.duals.iter().map(crate::wgsl::loader::WgslDual::ty).collect();
-    let constants: Vec<&str> = rows.iter().filter(|(n, ins, _)| ins.is_empty() && n.starts_with("literal.")).map(|(n, _, _)| n.as_str()).collect();
+    let roots: Vec<Ty> = match roots {
+        Some(names) => k.duals.iter().filter(|d| names.contains(&d.dual.as_str())).map(crate::wgsl::loader::WgslDual::ty).collect(),
+        None => k.duals.iter().map(crate::wgsl::loader::WgslDual::ty).collect(),
+    };
+    let constants: Vec<&str> = rows.iter().filter(|(n, ins, _)| ins.is_empty() && (n.starts_with("literal.") || n.starts_with("const."))).map(|(n, _, _)| n.as_str()).collect();
     relations_from_rows(kingdom, roots, &rows, &constants)
 }
 
-/// The older WGSL kingdom (`kingdoms/wgsl`, 83 duals).
+/// The older WGSL kingdom (`kingdoms/wgsl`, 83 duals): a program's root is `kernel.kernel`.
 #[cfg(feature = "wgsl")]
 pub fn wgsl_relations() -> KingdomRelations {
-    wgsl_family_relations(&crate::wgsl::loader::WgslKingdom::load(), crate::wgsl::loader::WGSL)
+    wgsl_family_relations(&crate::wgsl::loader::WgslKingdom::load(), crate::wgsl::loader::WGSL, Some(&["kernel.kernel"]))
 }
 
-/// The live kingdom the v24 runs and the reader use (`kingdoms/safewgsl`).
+/// The live kingdom the v24 runs and the reader use (`kingdoms/safewgsl`). A
+/// program's root is `kernel.safe`, or `kernel.module` for several entry
+/// points; the other genes of a chromosome are homeotic definitions, referenced
+/// through a terminal of their own dual.
 #[cfg(feature = "wgsl")]
 pub fn safewgsl_relations() -> KingdomRelations {
-    wgsl_family_relations(&crate::wgsl::loader::WgslKingdom::load_safe(), crate::wgsl::loader::SAFEWGSL)
+    wgsl_family_relations(&crate::wgsl::loader::WgslKingdom::load_safe(), crate::wgsl::loader::SAFEWGSL, Some(&["kernel.safe", "kernel.module"]))
 }
 
 /// What a kingdom check reports, for the log: counts, `n_max`, and for each
@@ -729,25 +735,22 @@ mod tests {
         assert!(!c.constant_capable(Ty::Pattern));
     }
 
-    /// The WGSL rows hold one output per symbol and contiguous ordered
-    /// signatures; what the check finds today is only duals with no terminal
-    /// (the store and `array<T>` duals, CR section 9 item 3), which is fuller
-    /// data work and is not hidden here.
+    /// The older WGSL kingdom (`kingdoms/wgsl`) passes the check, rooted at `kernel.kernel`: every demanded
+    /// dual has a terminal (`docs/PLAN_wgsl_terminals.md`).
     #[cfg(feature = "wgsl")]
     #[test]
-    fn wgsl_defects_are_only_missing_terminals() {
-        let d = wgsl_relations().check().expect_err("store and array duals have no terminal yet");
-        assert!(d.iter().all(|m| m.contains("has no terminal")), "{d:?}");
+    fn wgsl_passes_the_kingdom_check() {
+        let c = wgsl_relations().check().unwrap_or_else(|d| panic!("{} defects, first: {:?}", d.len(), d.first()));
+        assert_eq!(c.roots().len(), 1);
     }
 
-    /// The live kingdom (`kingdoms/safewgsl`): the check finds only duals with no
-    /// terminal, as the older kingdom does (`docs/PLAN_wgsl_terminals.md`).
+    /// The live kingdom (`kingdoms/safewgsl`) passes the check: every demanded
+    /// dual has a terminal (`docs/PLAN_wgsl_terminals.md`).
     #[cfg(feature = "wgsl")]
     #[test]
-    fn safewgsl_defects_are_only_missing_terminals() {
-        let d = safewgsl_relations().check().expect_err("129 duals have no terminal yet");
-        assert!(d.iter().all(|m| m.contains("has no terminal")), "{d:?}");
-        assert_eq!(d.len(), 129, "the plan lists 129 duals; a change here changes the plan");
+    fn safewgsl_passes_the_kingdom_check() {
+        let c = safewgsl_relations().check().unwrap_or_else(|d| panic!("{} defects, first: {:?}", d.len(), d.first()));
+        assert_eq!(c.roots().len(), 2);
     }
 
     /// Prints the bound tables the design asks for (SR, regex, both WGSL

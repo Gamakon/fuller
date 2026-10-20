@@ -31,6 +31,12 @@ pub fn parse(source: &str) -> Result<Module, String> {
     Ok(module)
 }
 
+/// Parse `source` without the scan: to validate text the RENDERER wrote that the readers have no row for (a module that
+/// uses f16, whose constants the typed-GEP terminals write, docs/PLAN_wgsl_terminals.md). Never a way to read a kernel.
+pub fn parse_unscanned(source: &str) -> Result<Module, String> {
+    naga::front::wgsl::parse_str(source).map_err(|e| e.emit_to_string(source))
+}
+
 fn refuse(what: &str) -> Result<(), String> {
     Err(format!("our software has a bug: {what} has no row in the kingdom"))
 }

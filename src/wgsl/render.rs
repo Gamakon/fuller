@@ -1035,7 +1035,7 @@ pub fn grid_of(g: &Tree) -> Result<Grid, String> {
             let (gx, gy) = workgroup_shape(dim(x)?, dim(y)?);
             Ok(Grid { x: gx, y: gy, bx: code(bx)?, by: code(by)?, rows_x: g.name == "grid.of_rows_x" })
         }
-        "fallback" => Ok(Grid { x: 16, y: 16, bx: 1, by: 1, rows_x: false }),
+        "fallback" | "own.grid_grid" => Ok(Grid { x: 16, y: 16, bx: 1, by: 1, rows_x: false }),
         // A grid and the kernel's workgroup arrays: the arrays are the plan's;
         // a grid and its tile depth: the depth is the references' (params.rs).
         "grid.with_wg" | "grid.with_ktile" if g.kids.len() == 2 => grid_of(&g.kids[0]),
@@ -1298,6 +1298,7 @@ impl<'a> Renderer<'a> {
         if self.dual(root.ty)?.dual == "kernel.module" {
             let kids: Vec<Tree> = match root.name.as_str() {
                 "fallback" => vec![Tree::fallback(dual_ty(self.kingdom, "kernel.safe")?); self.role.entries.len()],
+                "own.kernel_module" => vec![Tree::new("own.kernel_safe", dual_ty(self.kingdom, "kernel.safe")?, Vec::new()); self.role.entries.len()],
                 n if n.starts_with("kernel.module_") => module_entries(root),
                 other => return Err(format!("{other} is not a module row")),
             };
@@ -1356,6 +1357,11 @@ impl<'a> Renderer<'a> {
         for p in &parts {
             text.push_str(&p.function);
         }
+        // A module that uses f16 enables it (`enable f16;`, ahead of every declaration); the device must then be opened
+        // with SHADER_F16, which the recorded target names.
+        if uses_f16(&text) && !text.contains("enable f16;") {
+            text.insert_str(0, "enable f16;\n");
+        }
         let entries: Vec<(String, Grid)> = parts.iter().map(|p| (p.name.clone(), p.grid)).collect();
         let grid = parts.first().map_or(Grid { x: 16, y: 16, bx: 1, by: 1, rows_x: false }, |p| p.grid);
         Rendered { text, grid, helpers, masked: parts.into_iter().flat_map(|p| p.masked).collect(), entries }
@@ -1413,7 +1419,9 @@ impl<'a> Renderer<'a> {
             }
             // An empty kernel of the safe root still ends in its thread's store.
             "fallback" if d.dual == "kernel.safe" => (Grid { x: 16, y: 16, bx: 1, by: 1, rows_x: false }, self.epilogue_fallback(&mut scope)?),
-            "fallback" => (Grid { x: 16, y: 16, bx: 1, by: 1, rows_x: false }, String::new()),
+            "fallback" | "own.kernel_kernel" => (Grid { x: 16, y: 16, bx: 1, by: 1, rows_x: false }, String::new()),
+            // The terminal of kernel.safe: the default grid, an empty body, the epilogue's store of the thread's own cell.
+            "own.kernel_safe" => (Grid { x: 16, y: 16, bx: 1, by: 1, rows_x: false }, self.epilogue_own(&mut scope, root.konst)?),
             other => return Err(format!("{other} is not a kernel row")),
         };
         if grid.x * grid.y > MAX_THREADS {
@@ -1513,6 +1521,25 @@ impl<'a> Renderer<'a> {
         self.stmt(&Tree::new("store.h_O0", t("stmt.O0")?, vec![cell, f0]), scope)
     }
 
+    /// THE EPILOGUE'S OWN TERMINAL (docs/PLAN_wgsl_terminals.md): the store of the
+    /// thread's own cell to the output binding the kernel's interface declares,
+    /// the value a constant (`konst`) of that binding's dual. An interface with no
+    /// output binding has no store to end in, and its epilogue is empty.
+    fn epilogue_own(&self, scope: &mut Scope, konst: f64) -> Result<String, String> {
+        let Some(store) = self.per_kernel.get("store.h") else { return Ok(String::new()) };
+        let value_dual = store.inputs.get(1).ok_or("the output store takes no value")?;
+        let value_ty = dual_ty(self.kingdom, value_dual)?;
+        let d = self.dual(value_ty)?;
+        let name = if matches!(d.form.as_str(), "real" | "int" | "index" | "count" | "bits" | "flag") && (d.lanes == 1 || d.form == "real") { format!("literal.{}", d.form) } else { format!("const.{}", d.form) };
+        let t = |n: &str| dual_ty(self.kingdom, n);
+        let gid = || -> Result<Tree, String> { Ok(Tree::new("builtin.global_invocation_id", t("vec3<u32>.gid")?, vec![])) };
+        let blk = |v: u32| -> Result<Tree, String> { Ok(Tree::literal("literal.blk", t("u32.blk")?, v as f32)) };
+        let row = Tree::new("safe.thread_row", t("u32.threadrow")?, vec![gid()?, blk(scope.grid.by)?]);
+        let col = Tree::new("safe.thread_col", t("u32.threadcol")?, vec![gid()?, blk(scope.grid.bx)?]);
+        let cell = Tree::new("safe.cell_of", t("u32.cell")?, vec![row, col]);
+        self.stmt(&Tree::new("store.h_O0", t("stmt.O0")?, vec![cell, Tree::literal(&name, value_ty, konst)]), scope)
+    }
+
     /// A block's text and whether it ends in a return on every path: naga
     /// refuses instructions after a `return`, so a block stops at one and
     /// what follows in the gene is unreachable and dropped.
@@ -1520,6 +1547,9 @@ impl<'a> Renderer<'a> {
         match safe_base(&b.name) {
             "fallback" if self.is_epilogue(b.ty) => Ok((self.epilogue_fallback(scope)?, false)),
             "fallback" => Ok((String::new(), false)),
+            // The terminals of a block dual: the epilogue's store of the thread's own cell, or an empty block.
+            "own.block" | "own.block_block" if self.is_epilogue(b.ty) => Ok((self.epilogue_own(scope, b.konst)?, false)),
+            "own.block" | "own.block_block" => Ok((String::new(), false)),
             // A loop body that breaks: before, `if (c) { break; }`, after.
             "block.brk" if b.kids.len() == 3 => {
                 let (before, terminated) = self.block_t(&b.kids[0], scope)?;
@@ -1642,6 +1672,8 @@ impl<'a> Renderer<'a> {
         match safe_base(&s.name) {
             "fallback" if self.is_epilogue(s.ty) => self.epilogue_fallback(scope),
             "fallback" => Ok(String::new()),
+            "own.stmt" if self.is_epilogue(s.ty) => self.epilogue_own(scope, s.konst),
+            "own.stmt" => Ok(String::new()),
             // ---- safeWGSL statements ----
             "loop.items_bounded" => {
                 // (bound, block): for (t = 0u; t < bound; t = t + 1u), the counter the loop's own.
@@ -2502,6 +2534,26 @@ impl Renderer<'_> {
         if name == "fallback" {
             return self.fallback_value(d, wrap);
         }
+        // An `own.*` row: the real terminal of a dual that has no value to write, in its own text: the thread's own
+        // row, column or cell, a thread id's axis, or the dual's zero.
+        if name.starts_with("own.") {
+            let t = |n: &str| dual_ty(self.kingdom, n);
+            let gid = || -> Result<Tree, String> { Ok(Tree::new("builtin.global_invocation_id", t("vec3<u32>.gid")?, vec![])) };
+            match d.dual.as_str() {
+                "u32.rowid" => return self.value(&Tree::new("axis.y_gid", v.ty, vec![gid()?]), scope),
+                "u32.colid" => return self.value(&Tree::new("axis.x_gid", v.ty, vec![gid()?]), scope),
+                _ => {}
+            }
+            if let Some(own) = self.own_fallback(&d.dual, scope)? {
+                return Ok(own);
+            }
+            return self.fallback_value(d, wrap);
+        }
+        // A `const.*` row (the typed-GEP plan's constants of the duals no literal reaches): the literal text of its dual's form.
+        if name.starts_with("const.") {
+            let form = if d.is_matrix() { "mat" } else { d.form.as_str() };
+            return self.literal(form, v.konst, d, wrap);
+        }
         if let Some(form) = name.strip_prefix("literal.") {
             // A knob reference (resolved before rendering) is written as a
             // literal of its dual's form.
@@ -3081,17 +3133,38 @@ impl Renderer<'_> {
                     return Err(format!("literal.real {v} is not finite"));
                 }
                 if d.scalar() == Some("f16") {
-                    return Err("literal.real over f16: the prologue does not enable f16".into());
+                    // An f16 constant: the value converted from its f32 text (the module enables f16 when its text uses it).
+                    return Ok(if d.lanes > 1 && d.slot.starts_with("vec") { format!("{}(f16({v:?}f))", slot_ctor(&d.slot)?) } else { format!("f16({v:?}f)") });
                 }
                 if wrap { format!("lit_f32({v:?}f)") } else { format!("{v:?}f") }
             }
-            "index" | "count" | "bits" | "hash32" | "code4" | "code8" | "code16" | "code1024" => u(if v.is_finite() { v.clamp(0.0, 4_294_967_295.0) as u32 } else { 0 }),
+            "index" | "count" | "bits" | "hash32" | "hash64" | "code4" | "code8" | "code16" | "code1024" | "wgindex" | "wgvindex" | "wgv2index" | "wgaindex" | "pindex" | "pindex16" | "pindex128" | "boundx" | "boundu" | "uniformw" | "payload" => {
+                u(if v.is_finite() { v.clamp(0.0, 4_294_967_295.0) as u32 } else { 0 })
+            }
             "wgdim" => u(workgroup_dim(v)),
             "lit64" => u(if v.is_finite() { (v.round() as i64).clamp(1, 64) as u32 } else { 1 }),
             "lit4096" => u(if v.is_finite() { (v.round() as i64).clamp(1, 4096) as u32 } else { 1 }),
             "blk" => u(snap(&BLK, v)),
             "unroll" => u(snap(&UNROLL, v)),
-            "int" | "q15_16" => {
+            // A constant of an opaque dual is a value of its scalar, written as that scalar's literal.
+            "opaque" => match d.scalar() {
+                Some("f32" | "f16") => return self.literal("real", v, d, wrap),
+                Some("i32") => return self.literal("int", v, d, wrap),
+                Some("u32") => return self.literal("index", v, d, wrap),
+                Some("bool") => return self.literal("flag", v, d, wrap),
+                _ => return Err(format!("literal.opaque over {}: no literal text", d.dual)),
+            },
+            // A matrix constant: every element the one number.
+            "mat" => {
+                let (c, r) = d.matrix_shape().ok_or_else(|| format!("literal.mat over {}: not a matrix", d.dual))?;
+                if !v.is_finite() {
+                    return Err(format!("literal.mat {v} is not finite"));
+                }
+                let lane = if wrap { format!("lit_f32({v:?}f)") } else { format!("{v:?}f") };
+                let col = format!("vec{r}<f32>({lane})");
+                return Ok(format!("{}({})", slot_ctor(&d.slot)?, vec![col; c as usize].join(", ")));
+            }
+            "int" | "q15_16" | "q15_16w" => {
                 // Concrete i32 (`-49i`): an abstract integer literal shifted or
                 // multiplied by a runtime u32 or i32 is refused by naga 0.20
                 // ("Cannot cast scalar components ... to type i32", random
@@ -3177,6 +3250,7 @@ pub fn cost(t: &Tree) -> Cost {
             "stmt.barrier" => 50.0,
             n if n.starts_with("stmt.storage_barrier") => 50.0,
             "fallback" => 0.0,
+            n if n.starts_with("own.") => 1.0,
             _ => 1.0,
         }
     }
@@ -3186,7 +3260,7 @@ pub fn cost(t: &Tree) -> Cost {
         let own = node_cost(&t.name) * tile;
         let (mut base, mut per_item) = if in_items { (0.0, own) } else { (own, 0.0) };
         // A bounded literal as the renderer snaps it (1..=max), 1 for a fallback.
-        let lit = |k: Option<&Tree>, max: f64| k.map_or(1.0, |k| if k.name.starts_with("literal.") && k.konst.is_finite() { f64::from(k.konst).round().clamp(1.0, max) } else { 1.0 });
+        let lit = |k: Option<&Tree>, max: f64| k.map_or(1.0, |k| if k.name.starts_with("literal.") && k.konst.is_finite() { k.konst.round().clamp(1.0, max) } else { 1.0 });
         match safe_base(&t.name) {
             "loop.items" | "loop.items_unrolled" | "loop.items_bounded" | "loop.items_unrolled_bounded" | "loop.items_cont_bounded" => {
                 // The body runs once per item, times the passes an expression
@@ -3320,7 +3394,7 @@ fn bound_at_worst(t: &Tree) -> (f64, bool) {
 fn bound_at(t: &Tree, m: f64) -> (f64, bool) {
     fn eval(t: &Tree, seen: &mut bool, m: f64) -> f64 {
         if t.name.starts_with("literal.") {
-            return if t.konst.is_finite() { f64::from(t.konst).max(0.0) } else { 0.0 };
+            return if t.konst.is_finite() { t.konst.max(0.0) } else { 0.0 };
         }
         let mut k = |i: usize| match t.kids.get(i) {
             Some(x) => eval(x, seen, m),
@@ -3505,9 +3579,16 @@ pub fn parr_var(kingdom: &WgslKingdom, t: &Tree) -> Result<&'static str, String>
 /// Whether every leaf of `t` is a literal or a fallback (a constant expression to naga).
 fn literal_only(t: &Tree) -> bool {
     if t.kids.is_empty() {
-        return t.name.starts_with("literal.") || t.name == "fallback";
+        return t.name.starts_with("literal.") || t.name.starts_with("const.") || t.name == "fallback";
     }
     t.kids.iter().all(literal_only)
+}
+
+/// Whether WGSL text uses the type `f16` (the word, not a register named `f16r` or `f16x`).
+pub fn uses_f16(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    let word = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
+    text.match_indices("f16").any(|(i, _)| (i == 0 || !word(bytes[i - 1])) && bytes.get(i + 3).is_none_or(|b| !word(*b)))
 }
 
 /// A register's WGSL variable name: `f3`, `v0`, `i12`, `b1`; `f16`, `f32`
@@ -3822,7 +3903,11 @@ fn sample_with(kingdom: &WgslKingdom, role: &Role, root: Ty, max_depth: usize, s
     // (Nor the 128-element u32 private arrays, the same reason.)
     let parr128 = |r: &WgslRow| [r.output].iter().chain(r.inputs.iter()).any(|&t| kingdom.dual(t).is_some_and(|d| d.dual == "parr128<u32>.index" || d.dual == "u32.pindex128"));
     let extra_reg = |r: &WgslRow| [r.output].iter().chain(r.inputs.iter()).any(|&t| kingdom.dual(t).is_some_and(|d| EXTRA_REGISTERS.iter().any(|x| x.dual == d.dual)));
-    let not_drawn = |r: &WgslRow| extra_reg(r) || is_vector_conversion_read_only(r) || uniform_test_op(safe_base(&r.name)).is_some() || matches!(safe_base(&r.name), "stmt.if_uflag" | "stmt.if_else_uflag") || matches!(r.name.as_str(), "uflag.of_flag" | "uniform.of_checked" | "wg.au_c" | "wg.au_d" | "safe.pidx128") || wg_i32(r) || parr128(r);
+    // (Nor the terminals of the typed-GEP plan, 2026-10-19, docs/PLAN_wgsl_terminals.md: an `own` row is the leaf this
+    // sampler already writes as a fallback, and a literal of a vector, a matrix, a codebook entry, a hash, a fixed-point
+    // value or an opaque one is a row for a gene's tail; drawn, they move the random floors by draws alone.)
+    let new_terminal = |r: &WgslRow| r.name.starts_with("own.") || r.name.starts_with("const.");
+    let not_drawn = |r: &WgslRow| extra_reg(r) || new_terminal(r) || is_vector_conversion_read_only(r) || uniform_test_op(safe_base(&r.name)).is_some() || matches!(safe_base(&r.name), "stmt.if_uflag" | "stmt.if_else_uflag") || matches!(r.name.as_str(), "uflag.of_flag" | "uniform.of_checked" | "wg.au_c" | "wg.au_d" | "safe.pidx128") || wg_i32(r) || parr128(r);
     // (Nor the third and fourth atomic<u32> workgroup arrays, wg.au_c and
     // wg.au_d, 2026-10-19: rows for the seeds that keep more counters; drawn,
     // they move the random floors by draws alone, so they wait for a floor
@@ -4672,6 +4757,7 @@ mod tests {
                     let ok = guarded_helper
                         || nonzero(f, d, &literal_ok)
                         || lit_call(*right)
+                        || matches!(d, Expression::Splat { value, .. } if lit_call(*value))
                         || matches!(d, Expression::Math { fun: MathFunction::Max, arg1: Some(a), .. } if one(*a))
                         // (The subgroup size, a builtin argument of the entry point: at least 1.)
                         || (entry && matches!(d, Expression::FunctionArgument(_)));
@@ -4790,7 +4876,8 @@ mod tests {
         for r in k.rows.iter().filter(|r| r.inputs.first().is_some_and(|&t| sixteen.contains(&dual(t).as_str()))) {
             assert_eq!(r.inputs.get(1).map(|&t| dual(t)).as_deref(), Some("u32.pindex16"), "{}", r.name);
         }
-        let makers: Vec<&str> = k.rows.iter().filter(|r| dual(r.output) == "u32.pindex16").map(|r| r.name.as_str()).collect();
+        // (Its one function; its terminal is the typed-GEP plan's own row, the index 0.)
+        let makers: Vec<&str> = k.rows.iter().filter(|r| dual(r.output) == "u32.pindex16" && !r.terminal).map(|r| r.name.as_str()).collect();
         assert_eq!(makers, vec!["safe.pidx16"]);
         fn wide(t: &Tree, k: &WgslKingdom, sixteen: &[&str]) -> bool {
             let on_sixteen = t.kids.first().and_then(|a| k.dual(a.ty)).is_some_and(|d| sixteen.contains(&d.dual.as_str()));
@@ -5058,7 +5145,7 @@ mod tests {
         let (k, t, r) = setup();
         let ty = |n: &str| dual_ty(&k, n).unwrap();
         let rr = Renderer::new(&k, &t, &r);
-        let composites: Vec<&WgslRow> = k.rows.iter().filter(|row| t.named(&row.name).is_some_and(|tp| tp.naga == "composite") && !row.name.starts_with("kernel.") && !row.name.starts_with("grid.") && !row.name.starts_with("block.") && !row.name.starts_with("stmt.") && !row.name.starts_with("loop.") && !row.name.starts_with("reg.") && !row.name.starts_with("wg.") && !row.name.starts_with("builtin.")).collect();
+        let composites: Vec<&WgslRow> = k.rows.iter().filter(|row| t.named(&row.name).is_some_and(|tp| tp.naga == "composite") && !row.name.starts_with("kernel.") && !row.name.starts_with("grid.") && !row.name.starts_with("block.") && !row.name.starts_with("stmt.") && !row.name.starts_with("loop.") && !row.name.starts_with("reg.") && !row.name.starts_with("wg.") && !row.name.starts_with("builtin.") && !row.name.starts_with("own.")).collect();
         assert!(composites.len() >= 40, "{}", composites.len());
         let mut failed = Vec::new();
         for row in composites {
@@ -5154,6 +5241,37 @@ mod tests {
         assert!(e.starts_with("our software has a bug: load.h_len"), "{e}");
     }
 
+    /// THE OWN TERMINALS RENDER AS THEIR OWN TEXT (docs/PLAN_wgsl_terminals.md): a kernel made only of terminals, the
+    /// default grid, an empty body and the epilogue's store of the thread's own cell, to the output binding the
+    /// interface declares, the value a constant; validates, passes every layer of the checker, and writes the constant.
+    #[test]
+    fn a_kernel_of_own_terminals_stores_its_constant_to_the_threads_own_cell() {
+        let (k, t, r) = (WgslKingdom::load_safe(), FunctionTable::safe(), gram_role());
+        let rr = Renderer::new(&k, &t, &r);
+        let ty = |n: &str| dual_ty(&k, n).unwrap();
+        let own = |name: &str, dual: &str, konst: f64| Tree { konst, ..Tree::new(name, ty(dual), Vec::new()) };
+        let kernel = Tree::new("kernel.entry_safe", ty("kernel.safe"), vec![own("own.grid_grid", "grid.grid", 0.0), own("own.block_L0", "block.L0", 0.0), own("own.block_O0", "block.O0", 2.5)]);
+        let out = rr.kernel(&kernel).unwrap_or_else(|e| panic!("{e}"));
+        // (The kingdom's store of h is the thread's own cell plus the value.)
+        assert!(out.text.contains("+ 2.5f; }"), "{}", out.text);
+        assert!(out.text.contains("h[(((gid.y * 1u)) * cfg.d + ((gid.x * 1u)))]"), "{}", out.text);
+        validate_text(&out.text).unwrap_or_else(|e| panic!("{e}\n{}", out.text));
+        crate::wgsl::check::Checker::new(&k, &r, &crate::wgsl::target::Target::recorded()).check(&kernel).unwrap_or_else(|e| panic!("{e}"));
+        // The kernel terminal is the same kernel.
+        let whole = own("own.kernel_safe", "kernel.safe", 2.5);
+        let again = rr.kernel(&whole).unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(again.text, out.text);
+        crate::wgsl::check::Checker::new(&k, &r, &crate::wgsl::target::Target::recorded()).check(&whole).unwrap_or_else(|e| panic!("{e}"));
+        // A thread's own cell and row are the text the fallback leaf writes, and a thread id's axis is its builtin.
+        let store = |cell: Tree| Tree::new("store.h_O0", ty("stmt.O0"), vec![cell, Tree::literal("literal.real", ty("f32.real"), 1.0)]);
+        let epilogue = |cell: Tree| Tree::new("block.one_O0", ty("block.O0"), vec![store(cell)]);
+        let with = |cell: Tree| Tree::new("kernel.entry_safe", ty("kernel.safe"), vec![own("own.grid_grid", "grid.grid", 0.0), own("own.block_L0", "block.L0", 0.0), epilogue(cell)]);
+        let cell = rr.kernel(&with(own("own.u32_cell", "u32.cell", 0.0))).unwrap_or_else(|e| panic!("{e}"));
+        let spelled = rr.kernel(&with(Tree::new("safe.cell_of", ty("u32.cell"), vec![Tree::new("safe.thread_row", ty("u32.threadrow"), vec![]), Tree::new("safe.thread_col", ty("u32.threadcol"), vec![])]))).unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(cell.text, spelled.text);
+        validate_text(&cell.text).unwrap_or_else(|e| panic!("{e}\n{}", cell.text));
+    }
+
     /// AN INTEGER LITERAL OF ANY u32 OR i32 ROUND-TRIPS EXACTLY: u32::MAX and i32::MIN are written and read as the values
     /// they are, not as the nearest f32 or as halves of dual bits.
     #[test]
@@ -5183,5 +5301,21 @@ mod tests {
             values(&back.tree, lit, &mut got);
             assert!(got.contains(&want), "{want} read back as {got:?}\n{text}");
         }
+    }
+
+    /// f16 CONSTANTS RENDER AND VALIDATE: a constant of an f16 dual is `f16(...)`, and a module that uses f16 enables it.
+    #[test]
+    fn an_f16_constant_renders_enables_f16_and_validates() {
+        let (k, t, r) = (WgslKingdom::load_safe(), FunctionTable::safe(), gram_role());
+        let rr = Renderer::new(&k, &t, &r);
+        let f16 = k.duals.iter().find(|d| d.dual == "vec4<f16>.opaque").expect("the dual");
+        let mut scope = Scope { unrolled: BTreeMap::new(), unroll_copies: 1, in_unrolled_copy: false, wg: BTreeMap::new(), unwritten: BTreeSet::new(), in_items: false, in_tile: false, tile_depth: 0, grid: Grid { x: 16, y: 16, bx: 1, by: 1, rows_x: false }, in_cond: 0, returned: false, helpers: Vec::new(), masked: Vec::new(), const_depth: 0 };
+        let value = rr.value(&Tree::literal("const.vector_opaque", dual_ty(&k, &f16.dual).unwrap(), 1.5), &mut scope).unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(value, "vec4<f16>(f16(1.5f))");
+        let text = format!("enable f16;\n@compute @workgroup_size(1) fn main() {{ var x: vec4<f16> = {value}; _ = x; }}\n");
+        // (naga's front end and the device target, not the reader's shape pass, which has no row for a 16-bit type.)
+        let module = crate::wgsl::naga_shape::parse_unscanned(&text).unwrap_or_else(|e| panic!("{e}"));
+        crate::wgsl::target::Target::recorded().validate(&module, &text).unwrap_or_else(|e| panic!("{e}\n{text}"));
+        assert!(uses_f16("var x: f16; fn g(v: vec2<f16>) {}") && !uses_f16("var f16r: f32; var xf16: u32;"));
     }
 }

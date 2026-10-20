@@ -59,14 +59,14 @@ pub enum LiteralDomain {
 
 impl LiteralDomain {
     /// A `literal` cell: `-` (none), `lo..=hi` (real for an f32 slot or a
-    /// vector or matrix of f32), or `a,b,c`.
+    /// vector or matrix of f32 or f16), or `a,b,c`.
     pub fn parse(cell: &str, slot: &str) -> Result<Option<LiteralDomain>, String> {
         if cell == "-" {
             return Ok(None);
         }
         let int = |t: &str| t.trim().parse::<i64>().map_err(|e| format!("literal domain {cell:?}: {t:?}: {e}"));
         if let Some((lo, hi)) = cell.split_once("..=") {
-            if slot == "f32" || slot.ends_with("<f32>") {
+            if slot == "f32" || slot.ends_with("<f32>") || slot == "f16" || slot.ends_with("<f16>") {
                 let real = |t: &str| t.trim().parse::<f64>().map_err(|e| format!("literal domain {cell:?}: {t:?}: {e}"));
                 let (lo, hi) = (real(lo)?, real(hi)?);
                 if !(lo.is_finite() && hi.is_finite() && lo <= hi) {
@@ -369,7 +369,7 @@ impl WgslKingdom {
     /// for a row that is not a literal, or a knob reference in a kingdom
     /// without the payload dual.
     pub fn payload_dual(&self, row: &str, out: Ty) -> Option<Ty> {
-        if !row.starts_with("literal.") {
+        if !row.starts_with("literal.") && !row.starts_with("const.") {
             return None;
         }
         if super::params::parse_ref(row).is_some() {
@@ -645,7 +645,7 @@ fn instantiate_matrix(t: &Template, ins: &[Pat], out: &Pat, duals: &[WgslDual], 
                 // `NxN` is square by construction: both dims read the one
                 // variable `N` from the same binding.
                 if let (Some(inputs), Some(output)) = (inputs, output) {
-                    rows.push(WgslRow { name: t.name(), template: t.reference.clone(), inputs, output, terminal: false });
+                    rows.push(WgslRow { name: t.name(), template: t.reference.clone(), inputs, output, terminal: t.arity == 0 });
                 }
             }
         }
@@ -943,7 +943,9 @@ mod tests {
         }
         let k = WgslKingdom::load_safe();
         let (fw, fs) = (FunctionTable::shipped(), FunctionTable::safe());
-        for (a, b) in fw.rows.iter().zip(&fs.rows) {
+        // (The 239 templates the safe kingdom copied; the plain kingdom's terminals of 2026-10-19 (docs/PLAN_wgsl_terminals.md)
+        // come after them in each table, and are not the same rows.)
+        for (a, b) in fw.rows.iter().zip(&fs.rows).take(239) {
             assert_eq!((a.reference.as_str(), a.name()), (b.reference.as_str(), b.name()));
         }
         // 561 rows until 2026-10-11; 606 with the complete kingdom's registers and arrays (step 6);
@@ -992,10 +994,12 @@ mod tests {
         // register kinds of REG_KINDS (8 registers, the read and a set at each of the 22 rungs each);
         // 2,009 with kernel.module_ext1..3 (a module of more than four entry points); 2,145 with the slot counts
         // (ARRAY_FAMILIES and REG_EXTEND of gen_tables.py: the arrays and registers past the first names, and
-        // the sixteen of each extra register kind).
-        assert_eq!(fs.rows.len(), 2145);
+        // the sixteen of each extra register kind); 2,228 with the terminals of the typed-GEP plan (the `const`
+        // rows of the dual forms no literal reaches and the `own` rows, docs/PLAN_wgsl_terminals.md).
+        assert_eq!(fs.rows.len(), 2228);
         let dual = |t: Ty| k.dual(t).unwrap().dual.clone();
-        let producers = |d: &str| -> Vec<String> { k.rows.iter().filter(|r| dual(r.output) == d).map(|r| r.name.clone()).collect() };
+        // (The functions that make a dual; the plan's `own` terminals make it too.)
+        let producers = |d: &str| -> Vec<String> { k.rows.iter().filter(|r| dual(r.output) == d && !r.name.starts_with("own.") && !r.name.starts_with("const.")).map(|r| r.name.clone()).collect() };
         assert_eq!(producers("kernel.safe"), vec!["kernel.entry_safe"]);
         // A module of entry points is a root only: its rows take safe kernels,
         // and no row takes a module (none nests, none is a single kernel's mutation).
@@ -1026,7 +1030,7 @@ mod tests {
         assert_eq!(entry.inputs.iter().map(|&t| dual(t)).collect::<Vec<_>>(), vec!["grid.grid", "block.L0", "block.O0"]);
         for d in 0..5 {
             let (st, bl) = (format!("stmt.O{d}"), format!("block.O{d}"));
-            for r in k.rows.iter().filter(|r| dual(r.output) == bl) {
+            for r in k.rows.iter().filter(|r| dual(r.output) == bl && !r.terminal) {
                 if r.name.starts_with("block.cont_") {
                     // `if (c) { continue; }` then an epilogue block: inside an epilogue tile loop only.
                     assert!(d >= 1, "{}", r.name);
@@ -1036,7 +1040,7 @@ mod tests {
                 assert_eq!(dual(*r.inputs.last().unwrap()), st, "{}", r.name);
                 assert!(r.inputs[..r.inputs.len() - 1].iter().all(|&t| dual(t) == format!("stmt.C{d}")), "{}", r.name);
             }
-            for r in k.rows.iter().filter(|r| dual(r.output) == st) {
+            for r in k.rows.iter().filter(|r| dual(r.output) == st && !r.name.starts_with("own.")) {
                 let ins: Vec<String> = r.inputs.iter().map(|&t| dual(t)).collect();
                 let stores = r.name.starts_with("store.h_") && ins == ["u32.cell", "f32.real"];
                 let holds = ins.iter().any(|i| i == &bl || i == &format!("block.O{}", d + 1));
@@ -1086,7 +1090,7 @@ mod tests {
         // takes the uniform bound only `bound.of_uniform` produces; every other expression-bounded
         // loop (C and O rungs, loops that break) takes `u32.boundx` (legality item 5).
         assert_eq!(producers("u32.boundu"), vec!["bound.of_uniform"]);
-        for r in k.rows.iter().filter(|r| r.name.starts_with("loop.tilex_") || r.name.ends_with("_boundx")) {
+        for r in k.rows.iter().filter(|r| (r.name.starts_with("loop.tilex_") || r.name.ends_with("_boundx")) && !r.name.starts_with("own.")) {
             let barrier_capable = dual(r.output).starts_with("stmt.L") && !r.name.contains("_brk_");
             let want = if barrier_capable { "u32.boundu" } else { "u32.boundx" };
             assert!(r.inputs.iter().any(|i| dual(*i) == want), "{} takes {want}", r.name);

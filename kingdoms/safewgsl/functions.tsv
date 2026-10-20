@@ -2144,3 +2144,86 @@ F2142	parr	vq2	composite	-	parr64<vec4<f32>>.real	0	array vq2 of parr64<vec4<f32
 F2143	parr	vq3	composite	-	parr64<vec4<f32>>.real	0	array vq3 of parr64<vec4<f32>>.real
 F2144	parr	ux2	composite	-	parr128<u32>.index	0	array ux2 of parr128<u32>.index
 F2145	parr	ux3	composite	-	parr128<u32>.index	0	array ux3 of parr128<u32>.index
+F2146	const	vint	Literal	-	<vecL.int>	0	a constant vector of whole numbers, one value on every lane
+F2147	const	vindex	Literal	-	<vecL.index>	0	a constant vector of indices, one value on every lane
+F2148	const	vcount	Literal	-	<vecL.count>	0	a constant vector of counts, one value on every lane
+F2149	const	vbits	Literal	-	<vecL.bits>	0	a constant vector of bit fields, one value on every lane
+F2150	const	vflag	Literal	-	<vecL.flag>	0	a constant vector of predicates, one value on every lane
+F2151	const	q15_16	Literal	-	<i32.q15_16>	0	a fixed-point constant
+F2152	const	q15_16w	Literal	-	vec2<i32>.q15_16w	0	a wide fixed-point constant, one limb value on both lanes
+F2153	const	code4	Literal	-	u32.code4	0	a codebook entry
+F2154	const	code8	Literal	-	u32.code8	0	a codebook entry
+F2155	const	code16	Literal	-	u32.code16	0	a codebook entry
+F2156	const	code1024	Literal	-	u32.code1024	0	a codebook entry
+F2157	const	hash32	Literal	-	u32.hash32	0	a hash state constant
+F2158	const	hash64	Literal	-	vec2<u32>.hash64	0	a 64-bit hash state constant, one limb value on both lanes
+F2159	const	sign	Literal	-	bool.sign	0	+1 or -1 as a bit
+F2160	const	opaque	Literal	-	<S.opaque>	0	a constant of an opaque dual: any value of its scalar
+F2161	const	mat	Literal	-	<matCxR<f32>.real>	0	a matrix constant, one number on every element
+F2162	own	u32_threadrow	composite	-	u32.threadrow	0	the real terminal of the dual: the thread's own first row
+F2163	own	u32_threadcol	composite	-	u32.threadcol	0	the real terminal of the dual: the thread's own first column
+F2164	own	u32_threadrows	composite	-	u32.threadrows	0	the real terminal of the dual: the thread's own first row of a strided block
+F2165	own	u32_threadcols	composite	-	u32.threadcols	0	the real terminal of the dual: the thread's own first column of a strided block
+F2166	own	u32_threadrowg	composite	-	u32.threadrowg	0	the real terminal of the dual: the thread's own first row of a grouped block
+F2167	own	u32_threadcolg	composite	-	u32.threadcolg	0	the real terminal of the dual: the thread's own first column of a grouped block
+F2168	own	u32_rowbase	composite	-	u32.rowbase	0	the real terminal of the dual: the origin of the thread's row
+F2169	own	u32_colbase	composite	-	u32.colbase	0	the real terminal of the dual: the origin of the thread's column
+F2170	own	u32_rowbases	composite	-	u32.rowbases	0	the real terminal of the dual: the origin of the thread's strided row
+F2171	own	u32_colbases	composite	-	u32.colbases	0	the real terminal of the dual: the origin of the thread's strided column
+F2172	own	u32_rowbaseg	composite	-	u32.rowbaseg	0	the real terminal of the dual: the origin of the thread's grouped row
+F2173	own	u32_colbaseg	composite	-	u32.colbaseg	0	the real terminal of the dual: the origin of the thread's grouped column
+F2174	own	u32_cell	composite	-	u32.cell	0	the real terminal of the dual: the thread's own first output cell
+F2175	own	u32_mirror	composite	-	u32.mirror	0	the real terminal of the dual: the mirror of the thread's own first cell
+F2176	own	u32_wgown	composite	-	u32.wgown	0	the real terminal of the dual: the thread's own workgroup element, lidx
+F2177	own	u32_rowid	composite	-	u32.rowid	0	the real terminal of the dual: the y of the thread's global id
+F2178	own	u32_colid	composite	-	u32.colid	0	the real terminal of the dual: the x of the thread's global id
+F2179	own	u32_wgindex	composite	-	u32.wgindex	0	the real terminal of the dual: workgroup-array index 0
+F2180	own	u32_wgvindex	composite	-	u32.wgvindex	0	the real terminal of the dual: vec4 workgroup-array index 0
+F2181	own	u32_wgv2index	composite	-	u32.wgv2index	0	the real terminal of the dual: vec2 workgroup-array index 0
+F2182	own	u32_wgaindex	composite	-	u32.wgaindex	0	the real terminal of the dual: atomic workgroup-array index 0
+F2183	own	u32_pindex	composite	-	u32.pindex	0	the real terminal of the dual: private-array index 0
+F2184	own	u32_pindex16	composite	-	u32.pindex16	0	the real terminal of the dual: 16-element private-array index 0
+F2185	own	u32_pindex128	composite	-	u32.pindex128	0	the real terminal of the dual: 128-element private-array index 0
+F2186	own	u32_boundx	composite	-	u32.boundx	0	the real terminal of the dual: a loop bound of one pass, 1u
+F2187	own	u32_boundu	composite	-	u32.boundu	0	the real terminal of the dual: a workgroup-uniform loop bound of one pass, 1u
+F2188	own	u32_uniformw	composite	-	u32.uniformw	0	the real terminal of the dual: a workgroup-uniform value, 0u
+F2189	own	bool_uflag	composite	-	bool.uflag	0	the real terminal of the dual: a workgroup-uniform predicate, false
+F2190	own	block_block	composite	-	block.block	0	the real terminal of the dual: an empty block {}
+F2191	own	kernel_safe	composite	-	kernel.safe	0	the real terminal of the dual: the default-grid kernel whose epilogue stores the thread's own cell
+F2192	own	kernel_module	composite	-	kernel.module	0	the real terminal of the dual: a module of one such kernel at each of the interface's entry points
+F2193	own	grid_grid	composite	-	grid.grid	0	the real terminal of the dual: the default grid: 16 x 16 threads, one cell each
+F2194	own	wg_decl	composite	-	wg.decl	0	the real terminal of the dual: no workgroup array declaration
+F2195	own	wg_decls	composite	-	wg.decls	0	the real terminal of the dual: the arrays the kernel uses, at their default lengths
+F2196	own	block_L0	composite	-	block.L0	0	the real terminal of the dual: an empty block {}
+F2197	own	block_L1	composite	-	block.L1	0	the real terminal of the dual: an empty block {}
+F2198	own	block_L2	composite	-	block.L2	0	the real terminal of the dual: an empty block {}
+F2199	own	block_L3	composite	-	block.L3	0	the real terminal of the dual: an empty block {}
+F2200	own	block_L4	composite	-	block.L4	0	the real terminal of the dual: an empty block {}
+F2201	own	block_L5	composite	-	block.L5	0	the real terminal of the dual: an empty block {}
+F2202	own	stmt_C0	composite	-	stmt.C0	0	the real terminal of the dual: an empty statement {}
+F2203	own	block_C0	composite	-	block.C0	0	the real terminal of the dual: an empty block {}
+F2204	own	stmt_C1	composite	-	stmt.C1	0	the real terminal of the dual: an empty statement {}
+F2205	own	block_C1	composite	-	block.C1	0	the real terminal of the dual: an empty block {}
+F2206	own	stmt_C2	composite	-	stmt.C2	0	the real terminal of the dual: an empty statement {}
+F2207	own	block_C2	composite	-	block.C2	0	the real terminal of the dual: an empty block {}
+F2208	own	stmt_C3	composite	-	stmt.C3	0	the real terminal of the dual: an empty statement {}
+F2209	own	block_C3	composite	-	block.C3	0	the real terminal of the dual: an empty block {}
+F2210	own	stmt_C4	composite	-	stmt.C4	0	the real terminal of the dual: an empty statement {}
+F2211	own	block_C4	composite	-	block.C4	0	the real terminal of the dual: an empty block {}
+F2212	own	stmt_C5	composite	-	stmt.C5	0	the real terminal of the dual: an empty statement {}
+F2213	own	block_C5	composite	-	block.C5	0	the real terminal of the dual: an empty block {}
+F2214	own	stmt_O0	composite	-	stmt.O0	0	the real terminal of the dual: a store to the thread's own cell
+F2215	own	block_O0	composite	-	block.O0	0	the real terminal of the dual: a block ending in a store to the thread's own cell
+F2216	own	stmt_O1	composite	-	stmt.O1	0	the real terminal of the dual: a store to the thread's own cell
+F2217	own	block_O1	composite	-	block.O1	0	the real terminal of the dual: a block ending in a store to the thread's own cell
+F2218	own	stmt_O2	composite	-	stmt.O2	0	the real terminal of the dual: a store to the thread's own cell
+F2219	own	block_O2	composite	-	block.O2	0	the real terminal of the dual: a block ending in a store to the thread's own cell
+F2220	own	stmt_O3	composite	-	stmt.O3	0	the real terminal of the dual: a store to the thread's own cell
+F2221	own	block_O3	composite	-	block.O3	0	the real terminal of the dual: a block ending in a store to the thread's own cell
+F2222	own	stmt_O4	composite	-	stmt.O4	0	the real terminal of the dual: a store to the thread's own cell
+F2223	own	block_O4	composite	-	block.O4	0	the real terminal of the dual: a block ending in a store to the thread's own cell
+F2224	own	block_B1	composite	-	block.B1	0	the real terminal of the dual: an empty block {}
+F2225	own	block_B2	composite	-	block.B2	0	the real terminal of the dual: an empty block {}
+F2226	own	block_B3	composite	-	block.B3	0	the real terminal of the dual: an empty block {}
+F2227	own	block_B4	composite	-	block.B4	0	the real terminal of the dual: an empty block {}
+F2228	own	block_B5	composite	-	block.B5	0	the real terminal of the dual: an empty block {}

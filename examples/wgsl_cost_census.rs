@@ -16,7 +16,7 @@ use std::collections::BTreeMap;
 /// The largest loop trip count in `t` (its own, times the loops around it),
 /// and the row of the loop that contributes the largest single factor.
 fn largest_loop(t: &Tree, outer: f64, best: &mut (f64, String, f64)) {
-    let lit = |k: Option<&Tree>, max: f64| k.map_or(1.0, |k| if k.name.starts_with("literal.") && k.konst.is_finite() { f64::from(k.konst).round().clamp(1.0, max) } else { 1.0 });
+    let lit = |k: Option<&Tree>, max: f64| k.map_or(1.0, |k| if k.name.starts_with("literal.") && k.konst.is_finite() { k.konst.round().clamp(1.0, max) } else { 1.0 });
     let base = t.name.trim_end_matches(|c: char| c.is_ascii_digit()).trim_end_matches(['L', 'C', 'O', 'B']).trim_end_matches('_').to_string();
     let factor = if base.starts_with("loop.tilex") {
         t.kids.first().map_or(8192.0, worst_bound) / if base.contains("strided") { lit(t.kids.get(1), 64.0) } else { 1.0 }

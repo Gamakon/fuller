@@ -391,4 +391,33 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 | F238 | `wg.get` | `composite` | `wgmem<f32>.real u32.index` | `f32.real` | 2 | a[i & 2047u] |
 | F239 | `wg.set` | `composite` | `wgmem<f32>.real u32.index f32.real` | `stmt.stmt` | 3 | arity 3: a[i & 2047u] = v; |
 
-239 function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Deliberately absent: atomics, images, derivatives, subgroup operations, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.
+## class `const`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F240 | `const.vint` | `Literal` | `-` | `<vecL.int>` | 0 | a constant vector of whole numbers, one value on every lane |
+| F241 | `const.vindex` | `Literal` | `-` | `<vecL.index>` | 0 | a constant vector of indices, one value on every lane |
+| F242 | `const.vcount` | `Literal` | `-` | `<vecL.count>` | 0 | a constant vector of counts, one value on every lane |
+| F243 | `const.vbits` | `Literal` | `-` | `<vecL.bits>` | 0 | a constant vector of bit fields, one value on every lane |
+| F244 | `const.vflag` | `Literal` | `-` | `<vecL.flag>` | 0 | a constant vector of predicates, one value on every lane |
+| F245 | `const.q15_16` | `Literal` | `-` | `<i32.q15_16>` | 0 | a fixed-point constant |
+| F246 | `const.q15_16w` | `Literal` | `-` | `vec2<i32>.q15_16w` | 0 | a wide fixed-point constant, one limb value on both lanes |
+| F247 | `const.code4` | `Literal` | `-` | `u32.code4` | 0 | a codebook entry |
+| F248 | `const.code8` | `Literal` | `-` | `u32.code8` | 0 | a codebook entry |
+| F249 | `const.code16` | `Literal` | `-` | `u32.code16` | 0 | a codebook entry |
+| F250 | `const.code1024` | `Literal` | `-` | `u32.code1024` | 0 | a codebook entry |
+| F251 | `const.hash32` | `Literal` | `-` | `u32.hash32` | 0 | a hash state constant |
+| F252 | `const.hash64` | `Literal` | `-` | `vec2<u32>.hash64` | 0 | a 64-bit hash state constant, one limb value on both lanes |
+| F253 | `const.sign` | `Literal` | `-` | `bool.sign` | 0 | +1 or -1 as a bit |
+| F254 | `const.opaque` | `Literal` | `-` | `<S.opaque>` | 0 | a constant of an opaque dual: any value of its scalar |
+| F255 | `const.mat` | `Literal` | `-` | `<matCxR<f32>.real>` | 0 | a matrix constant, one number on every element |
+
+## class `own`
+
+| ref | instance | naga | in | out | n | note |
+|---|---|---|---|---|---|---|
+| F256 | `own.block_block` | `composite` | `-` | `block.block` | 0 | the real terminal of the dual: an empty block {} |
+| F257 | `own.grid_grid` | `composite` | `-` | `grid.grid` | 0 | the real terminal of the dual: the default grid: 16 x 16 threads, one cell each |
+| F258 | `own.kernel_kernel` | `composite` | `-` | `kernel.kernel` | 0 | the real terminal of the dual: a kernel of the default grid and an empty body |
+
+258 function templates. Statement rows (kernel, grid, block, stmt, loop, reg, wg, the three literal codes and builtin.item/tile) make the kingdom multityped over whole kernels (`docs/PLAN_wgsl_gram_superopt.md` §2); `src/wgsl/render.rs` writes their text. Deliberately absent: atomics, images, derivatives, subgroup operations, pointers as values, implicit conversions, raw multiply on `q15_16`, modulo on a hash, arithmetic on `bits`.

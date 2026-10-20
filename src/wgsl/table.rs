@@ -189,15 +189,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_shipped_table_has_239_templates_with_consistent_arities() {
+    fn the_shipped_table_has_258_templates_with_consistent_arities() {
         let t = FunctionTable::shipped();
-        assert_eq!(t.rows.len(), 239);
+        // 239 until 2026-10-19; 258 with the terminals of docs/PLAN_wgsl_terminals.md (F240 on).
+        assert_eq!(t.rows.len(), 258);
         assert_eq!(t.rows[0].reference, "F001");
         assert_eq!(t.rows[196].reference, "F197");
         assert_eq!(t.rows[238].reference, "F239");
         assert_eq!(t.rows.iter().map(|r| r.arity).max(), Some(4), "the widest template is grid.of, 4-ary (K_MAX)");
         let names: std::collections::BTreeSet<String> = t.rows.iter().map(Template::name).collect();
-        assert_eq!(names.len(), 239, "class.instance names are unique");
+        assert_eq!(names.len(), 258, "class.instance names are unique");
     }
 
     #[test]
