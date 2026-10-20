@@ -26,6 +26,7 @@ use naga::{AddressSpace, ArraySize, BinaryOperator, Binding, BuiltIn, Expression
 
 /// Parse `source` and scan it ([`supported`]).
 pub fn parse(source: &str) -> Result<Module, String> {
+    let source = &standard_directives(source);
     let module = naga::front::wgsl::parse_str(source).map_err(|e| e.emit_to_string(source))?;
     supported(&module)?;
     Ok(module)
@@ -34,7 +35,28 @@ pub fn parse(source: &str) -> Result<Module, String> {
 /// Parse `source` without the scan: to validate text the RENDERER wrote that the readers have no row for (a module that
 /// uses f16, whose constants the typed-GEP terminals write, docs/PLAN_wgsl_terminals.md). Never a way to read a kernel.
 pub fn parse_unscanned(source: &str) -> Result<Module, String> {
+    let source = &standard_directives(source);
     naga::front::wgsl::parse_str(source).map_err(|e| e.emit_to_string(source))
+}
+
+/// The standard WGSL directives naga 30 has no use for. Its subgroup operations are enabled by the device's
+/// capability, not by `enable subgroups;` (which it reports as "not yet supported"): a kernel that writes the
+/// directive reads as the same kernel without it. The directive's line is blanked, not removed, so every
+/// span (a refusal's line number) is unchanged.
+fn standard_directives(source: &str) -> String {
+    let mut out = String::with_capacity(source.len());
+    for line in source.split_inclusive('\n') {
+        let t = line.trim();
+        if t == "enable subgroups;" {
+            out.push_str(&" ".repeat(line.trim_end_matches('\n').len()));
+            if line.ends_with('\n') {
+                out.push('\n');
+            }
+        } else {
+            out.push_str(line);
+        }
+    }
+    out
 }
 
 fn refuse(what: &str) -> Result<(), String> {
@@ -421,5 +443,18 @@ mod tests {
             }
         }
         assert!(others.is_empty(), "naga's WGSL front end called outside naga_shape: {others:?}");
+    }
+
+    /// `enable subgroups;` is a directive naga 30 reports as not yet supported while it validates the subgroup operations the
+    /// directive enables: the kernel reads as the one without the directive, the same lines.
+    #[test]
+    fn the_subgroups_directive_is_standard_wgsl_naga_has_no_use_for() {
+        let body = "@group(0) @binding(0) var<storage, read_write> out: array<u32>;\n@compute @workgroup_size(64)\nfn main(@builtin(global_invocation_id) gid: vec3<u32>) { out[gid.x] = subgroupAdd(gid.x); }\n";
+        let with = format!("enable subgroups;\n{body}");
+        assert!(naga::front::wgsl::parse_str(&with).is_err(), "naga 30 reads the directive");
+        let m = parse(&with).expect("the kernel with the directive");
+        assert_eq!(m.entry_points.len(), 1);
+        assert_eq!(standard_directives(&with).lines().count(), with.lines().count());
+        crate::wgsl::target::Target::recorded().validate(&m, &with).expect("valid with the subgroup capability");
     }
 }
