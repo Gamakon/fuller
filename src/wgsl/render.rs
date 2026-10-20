@@ -540,16 +540,17 @@ pub const STORE_RUNGS: [&str; 17] = ["L0", "L1", "L2", "L3", "L4", "L5", "C0", "
 /// The kingdom's value dual of an element type (`f32` → `f32.real`).
 pub fn elem_dual(elem: &str) -> Option<String> {
     let form = |s: &str| match s {
-        "f32" => Some("real"),
+        "f32" | "f16" => Some("real"),
         "u32" => Some("index"),
         "i32" => Some("int"),
+        "bool" => Some("flag"),
         _ => None,
     };
     if let Some(f) = form(elem) {
         return Some(format!("{elem}.{f}"));
     }
-    // A float matrix (`mat4x4<f32>`).
-    if let Some(m) = elem.strip_prefix("mat").filter(|m| m.ends_with("<f32>") && m.len() == 8 && m.as_bytes()[1] == b'x') {
+    // A float matrix (`mat4x4<f32>`, `mat2x3<f16>`).
+    if let Some(m) = elem.strip_prefix("mat").filter(|m| (m.ends_with("<f32>") || m.ends_with("<f16>")) && m.len() == 8 && m.as_bytes()[1] == b'x') {
         return (matches!(m.as_bytes()[0], b'2'..=b'4') && matches!(m.as_bytes()[2], b'2'..=b'4')).then(|| format!("{elem}.real"));
     }
     let inner = elem.strip_prefix("vec")?;
@@ -1338,6 +1339,7 @@ impl<'a> Renderer<'a> {
         let mut text = String::new();
         text.push_str(&self.role.prologue);
         text.push('\n');
+        text.push_str(&register_struct_declarations(self.kingdom, &text, parts.iter().map(|p| p.function.as_str())));
         let mut wg: BTreeMap<String, (String, u32)> = BTreeMap::new();
         for p in &parts {
             for (var, (elem, len)) in &p.wg {
@@ -1355,6 +1357,7 @@ impl<'a> Renderer<'a> {
                 text.push_str(&format!("fn {name}(x: {ty}) -> {ty} {{ return x; }}\n"));
             }
         }
+        text.push_str(&with_helper_declarations(self.kingdom, parts.iter().map(|p| p.body.as_str())));
         let mut helpers: Vec<String> = parts.iter().flat_map(|p| p.helpers.iter().cloned()).collect();
         helpers.sort();
         helpers.dedup();
@@ -1476,6 +1479,7 @@ impl<'a> Renderer<'a> {
         // u32 and two bool private arrays.
         text.push_str(&lets);
         text.push_str(&register_declarations_for(&body));
+        text.push_str(&module_register_declarations(self.kingdom, &body));
         text.push_str(&body);
         text.push_str("}\n");
         Ok(EntryText { name: name.to_string(), grid, wg, helpers: scope.helpers, masked: scope.masked, body, function: text })
@@ -2227,9 +2231,15 @@ pub fn is_vector_conversion_read_only(r: &WgslRow) -> bool {
     matches!(r.name.as_str(), "convert.vindex_to_f32" | "convert.vcount_to_f32" | "convert.vf32_to_count")
 }
 
-/// Whether a row's base name sets or reads an extra register (`reg.set_C`, `reg.get_C`).
+/// Whether a row's base name sets or reads an extra register (`reg.set_C`, `reg.get_C`), or a register of a type the module
+/// declares ([`WgslKingdom::extended`](crate::wgsl::loader::WgslKingdom::extended): any other capital letter).
 pub fn is_extra_register_row(base: &str) -> bool {
-    base.strip_prefix("reg.set_").or_else(|| base.strip_prefix("reg.get_")).is_some_and(|k| k.len() == 1 && EXTRA_REGISTERS.iter().any(|r| k.starts_with(r.letter)))
+    base.strip_prefix("reg.set_").or_else(|| base.strip_prefix("reg.get_")).is_some_and(|k| k.len() == 1 && k.starts_with(|c: char| c.is_ascii_uppercase()))
+}
+
+/// Whether the shipped register kinds hold a value of this slot (a type text): the ten of the table and the nine extras.
+pub fn has_register_kind(slot: &str) -> bool {
+    matches!(slot, "f32" | "vec4<f32>" | "u32" | "bool" | "i32" | "vec4<u32>" | "vec2<f32>" | "mat2x2<f32>" | "mat3x3<f32>" | "mat4x4<f32>") || EXTRA_REGISTERS.iter().any(|r| r.slot == slot)
 }
 
 /// A register leaf's WGSL variable name (`f3`, `i32r`); a fallback leaf
@@ -2251,7 +2261,7 @@ pub fn register_name(kingdom: &WgslKingdom, r: &Tree) -> Result<String, String> 
         ("fallback", dual) if EXTRA_REGISTERS.iter().any(|x| x.dual == dual) => format!("{}0", EXTRA_REGISTERS.iter().find(|x| x.dual == dual).map_or('C', |x| x.letter)),
         (name, _) => {
             let n = name.strip_prefix("reg.").unwrap_or("");
-            if ok(n, 'f', 64) || ok(n, 'v', 32) || ok(n, 'i', 64) || ok(n, 'b', 16) || ok(n, 'n', 16) || ok(n, 'u', 16) || ok(n, 'w', 16) || ok(n, 'x', 4) || ok(n, 'y', 4) || ok(n, 'z', 4) || EXTRA_REGISTERS.iter().any(|x| ok(n, x.letter, x.count)) {
+            if ok(n, 'f', 64) || ok(n, 'v', 32) || ok(n, 'i', 64) || ok(n, 'b', 16) || ok(n, 'n', 16) || ok(n, 'u', 16) || ok(n, 'w', 16) || ok(n, 'x', 4) || ok(n, 'y', 4) || ok(n, 'z', 4) || EXTRA_REGISTERS.iter().any(|x| ok(n, x.letter, x.count)) || n.chars().next().is_some_and(|c| c.is_ascii_uppercase() && ok(n, c, crate::wgsl::aggregate::REGISTER_COUNT)) {
                 let k: usize = n[1..].parse().unwrap_or(0);
                 register_var(&n[..1], k)
             } else {
@@ -2555,6 +2565,12 @@ impl Renderer<'_> {
         }
         if let (Some(member), 1) = (name.strip_prefix("agg.member_"), v.kids.len()) {
             return Ok(format!("{}.{member}", self.value(&v.kids[0], scope)?));
+        }
+        if name == "agg.with_at" && v.kids.len() == 3 {
+            return Ok(format!("{}({}, {}, {})", with_helper(&d.slot, "at"), self.value(&v.kids[0], scope)?, self.value(&v.kids[1], scope)?, self.value(&v.kids[2], scope)?));
+        }
+        if let (Some(member), 2) = (name.strip_prefix("agg.with_"), v.kids.len()) {
+            return Ok(format!("{}({}, {})", with_helper(&d.slot, member), self.value(&v.kids[0], scope)?, self.value(&v.kids[1], scope)?));
         }
         // An `own.*` row: the real terminal of a dual that has no value to write, in its own text: the thread's own
         // row, column or cell, a thread id's axis, or the dual's zero.
@@ -3685,6 +3701,86 @@ pub fn register_declarations_for(body: &str) -> String {
         let Some(name) = decl.strip_prefix("var ").and_then(|r| r.split(':').next()).map(str::trim) else { continue };
         if names_word(body, name) {
             out.push_str(&format!("    {decl};\n"));
+        }
+    }
+    out
+}
+
+/// The declarations of the structs a module's registers hold that no binding declares (`var p: S;`), the ones a body
+/// names or a struct it declares holds, each after the structs it holds.
+fn register_struct_declarations<'a>(kingdom: &WgslKingdom, declared: &str, bodies: impl Iterator<Item = &'a str> + Clone) -> String {
+    let all: Vec<(&str, &Vec<(String, String)>)> = kingdom.duals.iter().filter_map(|d| match kingdom.shapes.get(&d.index) {
+        Some(crate::wgsl::loader::Shape::Struct { members }) => Some((d.slot.as_str(), members)),
+        _ => None,
+    }).collect();
+    let mut used: BTreeSet<&str> = all.iter().filter(|(name, _)| bodies.clone().any(|b| names_word(b, name))).map(|(name, _)| *name).collect();
+    loop {
+        let more: Vec<&str> = all.iter().filter(|(name, members)| !used.contains(name) && used.iter().any(|u| all.iter().any(|(n, ms)| n == u && ms.iter().any(|(_, t)| names_word(t, name)))) && !members.is_empty()).map(|(name, _)| *name).collect();
+        if more.is_empty() {
+            break;
+        }
+        used.extend(more);
+    }
+    let mut text = declared.to_string();
+    let mut out = String::new();
+    let mut waiting: Vec<(&str, &Vec<(String, String)>)> = all.into_iter().filter(|(name, _)| used.contains(name) && !declared.contains(&format!("struct {name} "))).collect();
+    while !waiting.is_empty() {
+        let before = waiting.len();
+        let mut rest = Vec::new();
+        for (name, members) in waiting {
+            let holds_undeclared = members.iter().any(|(_, t)| kingdom.duals.iter().any(|d| matches!(kingdom.shapes.get(&d.index), Some(crate::wgsl::loader::Shape::Struct { .. })) && names_word(t, &d.slot) && !text.contains(&format!("struct {} ", d.slot))));
+            if holds_undeclared {
+                rest.push((name, members));
+                continue;
+            }
+            let decl = format!("struct {name} {{ {} }};\n", members.iter().map(|(n, t)| format!("{n}: {t},")).collect::<Vec<_>>().join(" "));
+            text.push_str(&decl);
+            out.push_str(&decl);
+        }
+        waiting = rest;
+        if waiting.len() == before {
+            break;
+        }
+    }
+    out
+}
+
+/// The name of the helper that writes a part of an aggregate value (`agg.with_at`, `agg.with_<member>`): the value with that
+/// part replaced, over the type's text with its punctuation as underscores.
+fn with_helper(slot: &str, part: &str) -> String {
+    let mangled: String = slot.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '_' }).collect();
+    format!("with_{mangled}_{part}")
+}
+
+/// The declarations of the `agg.with_*` helpers some body calls, in the order of the kingdom's rows.
+fn with_helper_declarations<'a>(kingdom: &WgslKingdom, bodies: impl Iterator<Item = &'a str> + Clone) -> String {
+    let mut out = String::new();
+    let mut seen = BTreeSet::new();
+    for r in kingdom.rows.iter().filter(|r| r.name.starts_with("agg.with_")) {
+        let (Some(whole), part) = (kingdom.dual(r.output), r.name.strip_prefix("agg.with_").unwrap_or("")) else { continue };
+        let name = with_helper(&whole.slot, part);
+        if !seen.insert(name.clone()) || !bodies.clone().any(|b| b.contains(&format!("{name}("))) {
+            continue;
+        }
+        let Some(value) = r.inputs.last().and_then(|t| kingdom.dual(*t)) else { continue };
+        if part == "at" {
+            out.push_str(&format!("fn {name}(a: {0}, i: u32, v: {1}) -> {0} {{ var r = a; r[i] = v; return r; }}\n", whole.slot, value.slot));
+        } else {
+            out.push_str(&format!("fn {name}(a: {0}, v: {1}) -> {0} {{ var r = a; r.{part} = v; return r; }}\n", whole.slot, value.slot));
+        }
+    }
+    out
+}
+
+/// The registers of the types a module declares ([`WgslKingdom::extended`](crate::wgsl::loader::WgslKingdom::extended)),
+/// each variable `body` names, zero-initialised.
+pub fn module_register_declarations(kingdom: &WgslKingdom, body: &str) -> String {
+    let mut out = String::new();
+    for r in kingdom.rows.iter().filter(|r| r.terminal) {
+        let Some(letter) = r.name.strip_prefix("reg.").filter(|n| n.starts_with(|c: char| c.is_ascii_uppercase()) && !EXTRA_REGISTERS.iter().any(|x| n.starts_with(x.letter))) else { continue };
+        let Some(slot) = kingdom.dual(r.output).and_then(|d| d.slot.strip_prefix("reg<")).and_then(|s| s.strip_suffix('>')) else { continue };
+        if names_word(body, letter) {
+            out.push_str(&format!("    var {letter}: {slot};\n"));
         }
     }
     out

@@ -224,6 +224,7 @@ fn dual_of_type(module: &naga::Module, ty: Handle<naga::Type>) -> Option<String>
             (ScalarKind::Uint, 4) => Some("u32.index".into()),
             (ScalarKind::Bool, _) => Some("bool.flag".into()),
             (ScalarKind::Sint, 4) => Some("i32.int".into()),
+            (ScalarKind::Float, 2) => Some("f16.real".into()),
             _ => None,
         },
         TypeInner::Vector { size: VectorSize::Quad, scalar } if scalar.kind == ScalarKind::Float && scalar.width == 4 => Some("vec4<f32>.real".into()),
@@ -231,9 +232,11 @@ fn dual_of_type(module: &naga::Module, ty: Handle<naga::Type>) -> Option<String>
         TypeInner::Vector { size: VectorSize::Bi, scalar } if scalar.kind == ScalarKind::Float && scalar.width == 4 => Some("vec2<f32>.real".into()),
         // The other vectors a register holds (EXTRA_REGISTERS), and the square matrices.
         TypeInner::Vector { .. } | TypeInner::Matrix { .. } => {
-            let d = crate::wgsl::render::elem_dual(&crate::wgsl::interface::type_text(module, ty))?;
-            (crate::wgsl::render::extra_register_of_value(&d).is_some() || matches!(d.as_str(), "mat2x2<f32>.real" | "mat3x3<f32>.real" | "mat4x4<f32>.real" | "vec4<u32>.index")).then_some(d)
+            // (A register of any other type is a kind the module's extended kingdom adds: `register` finds it.)
+            crate::wgsl::render::elem_dual(&crate::wgsl::interface::type_text(module, ty))
         }
+        // An array of a known size or a struct the module declares is a value ([`WgslKingdom::extended`]).
+        TypeInner::Array { size: naga::ArraySize::Constant(_), .. } | TypeInner::Struct { .. } if crate::wgsl::aggregate::is_value(module, ty, 0) && !crate::wgsl::interface::type_text(module, ty).is_empty() => Some(format!("{}.value", crate::wgsl::interface::type_text(module, ty))),
         _ => None,
     }
 }
@@ -283,6 +286,17 @@ enum StructSource {
 fn ty(ctx: &Ctx, name: &str) -> Result<Ty, String> {
     dual_ty(ctx.kingdom, name)
 }
+
+/// The dual of a register leaf of this kind letter: the shipped kinds', or the input of the module's own `reg.get_<kind>`.
+fn reg_ty(ctx: &Ctx, kind: char) -> Result<Ty, String> {
+    if kind.is_ascii_uppercase() && !crate::wgsl::render::EXTRA_REGISTERS.iter().any(|x| x.letter == kind) {
+        let get = format!("reg.get_{kind}");
+        return ctx.kingdom.rows.iter().find(|r| r.name == get).and_then(|r| r.inputs.first().copied()).ok_or_else(|| format!("no register kind {kind} in the module's kingdom"));
+    }
+    ty(ctx, Ctx::reg_dual(kind))
+}
+
+use crate::wgsl::aggregate::module_register_of_value;
 
 /// The reader's node as a typed tree, duals by the inference's text, lets inlined.
 /// A local's name under the helper being inlined: `load.local.v@0@v2` →
@@ -422,7 +436,7 @@ fn tree_of(ctx: &mut Ctx, n: &Node) -> Result<Tree, String> {
             let t = ctx.duals.get(&text).copied().flatten().ok_or_else(|| format!("untyped leaf {name}"))?;
             Ok(Tree::new(name, t, vec![]))
         }
-        Node::Literal { form, value, .. } => {
+        Node::Literal { form, value, slot } => {
             // A literal's value is carried as an f64: exact for every u32 and i32 (and every f32), so a hash's
             // multiplier or key (CubeCL's 2246822507u), a mask (0xFFFFFFFFu) or i32::MIN reads as the value it is.
             let t = match ctx.duals.get(&text).copied().flatten() {
@@ -433,6 +447,12 @@ fn tree_of(ctx: &mut Ctx, n: &Node) -> Result<Tree, String> {
                     ty(ctx, dual)?
                 }
             };
+            // (The zero of an aggregate type, `S()`, is the dual's terminal `agg.zero`.)
+            if *value == 0.0 {
+                if let Some(d) = ctx.kingdom.duals.iter().find(|d| d.slot == *slot && ctx.kingdom.shapes.contains_key(&d.index)) {
+                    return Ok(Tree::new("agg.zero", d.ty(), vec![]));
+                }
+            }
             // (A real literal is an f32's value; an integer one is exact as an f64.)
             Ok(Tree::literal(&format!("literal.{form}"), t, if form == "real" { f64::from(*value as f32) } else { *value }))
         }
@@ -1949,7 +1969,10 @@ impl<'a> Ctx<'a> {
             "mat4x4<f32>.real" => ('z', 4),
             other => match crate::wgsl::render::extra_register_of_value(other) {
                 Some(x) => (x.letter, x.count as u32),
-                None => return Err(format!("local {local} has dual {other}, which has no register kind")),
+                None => match module_register_of_value(self.kingdom, other) {
+                    Some((letter, count)) => (letter, count as u32),
+                    None => return Err(format!("local {local} has dual {other}, which has no register kind")),
+                },
             },
         };
         // A kernel the kingdom wrote names its registers as the rows do
@@ -2321,7 +2344,7 @@ impl<'a> Ctx<'a> {
         let kind = Self::mat_kind(cols, rows)?;
         let dual = format!("mat{cols}x{rows}<f32>.real");
         let row = self.register(base, &dual)?;
-        Ok(Tree::new(&format!("reg.get_{kind}"), ty(self, &dual)?, vec![Tree::new(&row, ty(self, Self::reg_dual(kind))?, vec![])]))
+        Ok(Tree::new(&format!("reg.get_{kind}"), ty(self, &dual)?, vec![Tree::new(&row, reg_ty(self, kind)?, vec![])]))
     }
 
     /// Whether a local (`local.<name>@<h>`) is a vector of u32.
@@ -2334,7 +2357,7 @@ impl<'a> Ctx<'a> {
     /// A vec2<f32> local's register value, `reg.get_w(w<n>)`.
     fn vec2_register_value(&mut self, local: &str) -> Result<Tree, String> {
         let row = self.register(local, "vec2<f32>.real")?;
-        Ok(Tree::new("reg.get_w", ty(self, "vec2<f32>.real")?, vec![Tree::new(&row, ty(self, Self::reg_dual('w'))?, vec![])]))
+        Ok(Tree::new("reg.get_w", ty(self, "vec2<f32>.real")?, vec![Tree::new(&row, reg_ty(self, 'w')?, vec![])]))
     }
 
     fn local_vec_uint(&self, local: &str) -> bool {
@@ -2409,12 +2432,15 @@ impl<'a> Ctx<'a> {
         if let Some(local) = private_as_local(t) {
             return self.value(&local);
         }
+        if let Some(x) = t.name.strip_prefix("load.local.").map(|rest| self.aggregate_load(t, rest)).transpose()?.flatten() {
+            return Ok(x);
+        }
         if let Some(own) = self.through_array_arg(t) {
             return self.value(&own);
         }
         // `*p` for a pointer parameter: the caller's register.
         if let Some((row, kind)) = t.name.strip_prefix("load.").and_then(|r| r.split('@').next()).and_then(|a| self.pointer_args.get(a)).cloned() {
-            return Ok(Tree::new(&format!("reg.get_{kind}"), t.ty, vec![Tree::new(&row, ty(self, Self::reg_dual(kind))?, vec![])]));
+            return Ok(Tree::new(&format!("reg.get_{kind}"), t.ty, vec![Tree::new(&row, reg_ty(self, kind)?, vec![])]));
         }
         // An expression already in the safe grammar (a subgroup or atomic
         // result inlined into a loop's bound): as it is.
@@ -2458,7 +2484,7 @@ impl<'a> Ctx<'a> {
                 }
                 let row = self.register(&local, &d)?;
                 let kind = row.chars().nth(4).unwrap_or('f');
-                return Ok(Tree::new(&format!("reg.get_{kind}"), t.ty, vec![Tree::new(&row, ty(self, Self::reg_dual(kind))?, vec![])]));
+                return Ok(Tree::new(&format!("reg.get_{kind}"), t.ty, vec![Tree::new(&row, reg_ty(self, kind)?, vec![])]));
             }
             if let Some(x) = self.other_uniform(t)? {
                 return Ok(x);
@@ -2481,7 +2507,7 @@ impl<'a> Ctx<'a> {
                 // naga's name; the table's row is `builtin.num_workgroups`.
                 return Ok(Tree::new("builtin.num_workgroups", t.ty, vec![]));
             }
-            if t.name.starts_with("builtin.") || t.name.starts_with("literal.") || t.name == "load.phi_len" || t.name == "load.h_len" || t.name.starts_with("len.") || t.name.starts_with("tex.") {
+            if t.name.starts_with("builtin.") || t.name.starts_with("literal.") || t.name == "agg.zero" || t.name == "load.phi_len" || t.name == "load.h_len" || t.name.starts_with("len.") || t.name.starts_with("tex.") {
                 return Ok(t.clone());
             }
             // A workgroup scalar: element 0 of a workgroup array of one.
@@ -2615,7 +2641,7 @@ impl<'a> Ctx<'a> {
                     // A lane of a vec4<u32> register (subgroupBallot's): the
                     // register's value, then its lane.
                     let row = self.register(&base, "vec4<u32>.bits")?;
-                    let whole = Tree::new("reg.get_u", ty(self, "vec4<u32>.bits")?, vec![Tree::new(&row, ty(self, Self::reg_dual('u'))?, vec![])]);
+                    let whole = Tree::new("reg.get_u", ty(self, "vec4<u32>.bits")?, vec![Tree::new(&row, reg_ty(self, 'u')?, vec![])]);
                     if let Some(lane) = literal_value(unmasked(&t.kids[0], 3.0)).filter(|l| (0.0..=3.0).contains(l)) {
                         return Ok(Tree::new(&format!("shape.access_{}", lane as u32), t.ty, vec![whole]));
                     }
@@ -2625,7 +2651,7 @@ impl<'a> Ctx<'a> {
                 if self.local_lanes.get(&base) == Some(&4) {
                     let row = self.register(&base, "vec4<f32>.real")?;
                     let idx = self.value(unmasked(&t.kids[0], 3.0))?;
-                    return Ok(Tree::new("reg.get_v_lane", t.ty, vec![Tree::new(&row, ty(self, Self::reg_dual('v'))?, vec![]), idx]));
+                    return Ok(Tree::new("reg.get_v_lane", t.ty, vec![Tree::new(&row, reg_ty(self, 'v')?, vec![]), idx]));
                 }
                 // A lane of a vec2<f32> local: its register (reg.w*, the one its
                 // whole value is written to), then the lane.
@@ -2941,7 +2967,7 @@ impl<'a> Ctx<'a> {
             self.axis_memo.insert(format!("local.subgroup@{result}"), (held, self.loop_depth));
         }
         let st = self.stmt_ty(rung)?;
-        Ok(Some(Tree::new(&format!("reg.set_{kind}_{rung}"), st, vec![Tree::new(&row, ty(self, Self::reg_dual(kind))?, vec![]), expr])))
+        Ok(Some(Tree::new(&format!("reg.set_{kind}_{rung}"), st, vec![Tree::new(&row, reg_ty(self, kind)?, vec![]), expr])))
     }
 
     /// A subgroup operation's expression `subgroup.<fun>(x[, lane])` and its
@@ -3031,7 +3057,7 @@ impl<'a> Ctx<'a> {
         // The old value read later: to a u32 register, or for an atomic<i32> an i32 one.
         let (dual, kind) = if unsigned { ("u32.index", 'i') } else { ("i32.int", 'n') };
         let row = self.register(&format!("local.atomic@{result}"), dual)?;
-        Ok(Some(Tree::new(&format!("reg.set_{kind}_{rung}"), st, vec![Tree::new(&row, ty(self, Self::reg_dual(kind))?, vec![]), expr])))
+        Ok(Some(Tree::new(&format!("reg.set_{kind}_{rung}"), st, vec![Tree::new(&row, reg_ty(self, kind)?, vec![]), expr])))
     }
 
     /// A node followed through the lets that name it.
@@ -3240,6 +3266,10 @@ impl<'a> Ctx<'a> {
             None => (tail, 0),
         };
         if field.contains(['.', '#', '@']) || tail[field.len()..] != ".#".repeat(indexes) {
+            // (A place inside a uniform that is an aggregate value: its whole value, then each step.)
+            if let Some(x) = self.aggregate_binding_load(t, rest)? {
+                return Ok(Some(x));
+            }
             return Err(format!("{} has no safe spelling: a uniform field read through a path the reader does not spell", t.name));
         }
         let row = format!("load.{var}_{field}");
@@ -3296,6 +3326,9 @@ impl<'a> Ctx<'a> {
     /// `load.<var>`.
     fn uniform_value(&mut self, t: &Tree, var: &str, indexes: usize) -> Result<Option<Tree>, String> {
         let row = format!("load.{var}");
+        if let Some(x) = self.aggregate_binding_load(t, &t.name["load.uniform.".len()..])? {
+            return Ok(Some(x));
+        }
         // (The row of the most inputs the indexes give: an array's element over its index, else the whole value.)
         let Some((name, inputs, out)) = self.per_kernel_rows.iter().filter(|p| p.0 == row && p.1.len() <= indexes).max_by_key(|p| p.1.len()).cloned() else {
             return Ok(None);
@@ -3674,7 +3707,7 @@ impl<'a> Ctx<'a> {
     fn lower_breaks(&mut self, flat: Vec<Tree>, rung: &str, path: &[usize]) -> Result<(Vec<Tree>, Tree), String> {
         let local = format!("local.break_stop@{}", path.iter().map(|p| p.to_string()).collect::<Vec<_>>().join("_"));
         let row = self.register(&local, "bool.flag")?;
-        let reg = Tree::new(&row, ty(self, Self::reg_dual('b'))?, vec![]);
+        let reg = Tree::new(&row, reg_ty(self, 'b')?, vec![]);
         let flag = ty(self, "bool.flag")?;
         let set_false = Tree::new(&format!("reg.set_b_{rung}"), self.stmt_ty(rung)?, vec![reg.clone(), Tree::literal("literal.flag", flag, 0.0)]);
         let mut pre = vec![set_false];
@@ -4507,7 +4540,7 @@ impl<'a> Ctx<'a> {
             };
             let row = self.register(local, dual)?;
             let kind = row.chars().nth(4).unwrap_or('f');
-            stmts.push(Tree::new(&format!("reg.set_{kind}_{rung}"), st, vec![Tree::new(&row, ty(self, Self::reg_dual(kind))?, vec![]), zero]));
+            stmts.push(Tree::new(&format!("reg.set_{kind}_{rung}"), st, vec![Tree::new(&row, reg_ty(self, kind)?, vec![]), zero]));
         }
         for r in &helper.inits {
             let node = r.tree.clone();
@@ -4586,7 +4619,7 @@ impl<'a> Ctx<'a> {
                     let v = self.value(&t)?;
                     let row = self.register(&format!("local.{}let.{n}", self.local_prefix), &d).map_err(|e| format!("let {n}, used in a deeper loop, bound to a register: {e}"))?;
                     let kind = row.chars().nth(4).unwrap_or('f');
-                    out.push(Tree::new(&format!("reg.set_{kind}_{rung}"), st, vec![Tree::new(&row, ty(self, Self::reg_dual(kind))?, vec![]), v]));
+                    out.push(Tree::new(&format!("reg.set_{kind}_{rung}"), st, vec![Tree::new(&row, reg_ty(self, kind)?, vec![]), v]));
                     // The ownership proof sees through the register to what it
                     // holds, as for a local (a let never changes in its scope).
                     let held = self.expand_memo(&t);
@@ -4694,11 +4727,11 @@ impl<'a> Ctx<'a> {
                         // when the index is, as the checker proves).
                         if let ("wg.get_u_safe" | "wg.get_safe", [arr, at], 'i' | 'f') = (v.name.as_str(), v.kids.as_slice(), kind) {
                             if v.ty == ty(self, if kind == 'i' { "u32.index" } else { "f32.real" })? {
-                                return Ok(Some(Tree::new(&format!("wg.uload_{kind}_{rung}"), st, vec![Tree::new(&row, ty(self, Self::reg_dual(kind))?, vec![]), arr.clone(), at.clone()])));
+                                return Ok(Some(Tree::new(&format!("wg.uload_{kind}_{rung}"), st, vec![Tree::new(&row, reg_ty(self, kind)?, vec![]), arr.clone(), at.clone()])));
                             }
                         }
                         let barrier = || Tree::new(&format!("stmt.barrier_{rung}"), st, vec![]);
-                        let set = Tree::new(&format!("reg.set_{kind}_{rung}"), st, vec![Tree::new(&row, ty(self, Self::reg_dual(kind))?, vec![]), v]);
+                        let set = Tree::new(&format!("reg.set_{kind}_{rung}"), st, vec![Tree::new(&row, reg_ty(self, kind)?, vec![]), v]);
                         Ok(Some(Tree::new(&format!("stmt.block_{rung}"), st, vec![self.block(vec![barrier(), set, barrier()], rung)?])))
                     }
                     Statement::Atomic { result: Some(result), .. } => {
@@ -4733,7 +4766,7 @@ impl<'a> Ctx<'a> {
                         let Node::App { kids, .. } = &root.tree else { return Err("a return root without a value".into()) };
                         let t = tree_of(self, &kids[0])?;
                         let v = self.value(&t)?;
-                        Ok(Some(Tree::new(&format!("reg.set_{kind}_{rung}"), st, vec![Tree::new(&row, ty(self, Self::reg_dual(kind))?, vec![]), v])))
+                        Ok(Some(Tree::new(&format!("reg.set_{kind}_{rung}"), st, vec![Tree::new(&row, reg_ty(self, kind)?, vec![]), v])))
                     }
                     Statement::If { accept, reject, .. } => {
                         let root = self.root_at(&here, |k| matches!(k, RootKind::Condition { .. })).ok_or("no condition root at this if")?;
@@ -5092,6 +5125,9 @@ impl<'a> Ctx<'a> {
         if let Some(local) = private_as_local(tree) {
             return self.store(&local, rung);
         }
+        if let Some(x) = self.aggregate_store(tree, rung)? {
+            return Ok(Some(x));
+        }
         if let Some(own) = self.through_array_arg(tree) {
             return self.store(&own, rung);
         }
@@ -5099,7 +5135,7 @@ impl<'a> Ctx<'a> {
         if let (Some((row, kind)), [v]) = (tree.name.strip_prefix("store.").and_then(|a| self.pointer_args.get(a)).cloned(), tree.kids.as_slice()) {
             let v = self.value(v)?;
             let st = self.stmt_ty(rung)?;
-            return Ok(Some(Tree::new(&format!("reg.set_{kind}_{rung}"), st, vec![Tree::new(&row, ty(self, Self::reg_dual(kind))?, vec![]), v])));
+            return Ok(Some(Tree::new(&format!("reg.set_{kind}_{rung}"), st, vec![Tree::new(&row, reg_ty(self, kind)?, vec![]), v])));
         }
         let st = self.stmt_ty(rung)?;
         let name = tree.name.as_str();
@@ -5288,7 +5324,7 @@ impl<'a> Ctx<'a> {
                     let compose = if cols == 2 { "shape.compose_mat".to_string() } else { format!("shape.compose_mat{cols}") };
                     let kind = Self::mat_kind(cols, rows)?;
                     let row = self.register(&base, &format!("mat{cols}x{rows}<f32>.real"))?;
-                    return Ok(Some(Tree::new(&format!("reg.set_{kind}_{rung}"), st, vec![Tree::new(&row, ty(self, Self::reg_dual(kind))?, vec![]), Tree::new(&compose, mty, columns)])));
+                    return Ok(Some(Tree::new(&format!("reg.set_{kind}_{rung}"), st, vec![Tree::new(&row, reg_ty(self, kind)?, vec![]), Tree::new(&compose, mty, columns)])));
                 }
                 if let Some((i, j)) = nested_index(rest, &tree.kids[..1]) {
                     // A lane of a vec4 element of a private array: `accs[i][j] = x`.
@@ -5309,7 +5345,7 @@ impl<'a> Ctx<'a> {
                     let row = self.register(&base, "vec4<f32>.real")?;
                     let i = self.value(unmasked(idx, 3.0))?;
                     let v = self.value(value)?;
-                    return Ok(Some(Tree::new(&format!("reg.set_v_lane_{rung}"), st, vec![Tree::new(&row, ty(self, Self::reg_dual('v'))?, vec![]), i, v])));
+                    return Ok(Some(Tree::new(&format!("reg.set_v_lane_{rung}"), st, vec![Tree::new(&row, reg_ty(self, 'v')?, vec![]), i, v])));
                 }
                 // One lane of a vec2<f32> local (`v.x = a`): its register set
                 // whole, the new lane composed with the other's value.
@@ -5320,7 +5356,7 @@ impl<'a> Ctx<'a> {
                     let f = ty(self, "f32.real")?;
                     let lanes: Vec<Tree> = (0..2).map(|i| if i == lane { v.clone() } else { Tree::new(&format!("shape.access_{i}"), f, vec![whole.clone()]) }).collect();
                     let row = self.register(&base, "vec2<f32>.real")?;
-                    return Ok(Some(Tree::new(&format!("reg.set_w_{rung}"), st, vec![Tree::new(&row, ty(self, Self::reg_dual('w'))?, vec![]), Tree::new("shape.compose2", ty(self, "vec2<f32>.real")?, lanes)])));
+                    return Ok(Some(Tree::new(&format!("reg.set_w_{rung}"), st, vec![Tree::new(&row, reg_ty(self, 'w')?, vec![]), Tree::new("shape.compose2", ty(self, "vec2<f32>.real")?, lanes)])));
                 }
                 // `lrs[i] = <this thread's i-th block row>` with i a tile counter:
                 // the array holds the thread's rows; a later `lrs[k]` is a row.
@@ -5398,7 +5434,7 @@ impl<'a> Ctx<'a> {
             } else {
                 self.axis_memo.remove(&local);
             }
-            return Ok(Some(Tree::new(&format!("reg.set_{kind}_{rung}"), st, vec![Tree::new(&row, ty(self, Self::reg_dual(kind))?, vec![]), v])));
+            return Ok(Some(Tree::new(&format!("reg.set_{kind}_{rung}"), st, vec![Tree::new(&row, reg_ty(self, kind)?, vec![]), v])));
         }
         Err(format!("store {name} has no safe spelling"))
     }
@@ -6997,11 +7033,21 @@ fn read_entry_under(at: &Reading, ep: usize, grid: (u32, u32, u32, u32), preset:
         let Some(init) = gv.init else { continue };
         let name = gv.name.clone().unwrap_or_default();
         let (form, dual) = match kernel.module.types[gv.ty].inner {
-            naga::TypeInner::Scalar(naga::Scalar { kind: naga::ScalarKind::Float, .. }) => ("real", "f32.real"),
+            naga::TypeInner::Scalar(naga::Scalar { kind: naga::ScalarKind::Float, width: 4 }) => ("real", "f32.real"),
             naga::TypeInner::Scalar(naga::Scalar { kind: naga::ScalarKind::Uint, .. }) => ("index", "u32.index"),
             naga::TypeInner::Scalar(naga::Scalar { kind: naga::ScalarKind::Sint, .. }) => ("int", "i32.int"),
             naga::TypeInner::Scalar(naga::Scalar { kind: naga::ScalarKind::Bool, .. }) => ("flag", "bool.flag"),
-            ref other => return Err(format!("the private variable {name} of {other:?} with an initializer (a scalar's has a spelling)")),
+            // Any other type (an f16, a vector, a matrix, an array, a struct): its constant value, built from literals.
+            _ => {
+                let value = ConstValue::of(&kernel.module, init, gv.ty).map_err(|e| format!("the private variable {name}'s initializer: {e}"))?;
+                if value.is_zero() {
+                    continue;
+                }
+                let tree = ctx.const_tree(&value, gv.ty).map_err(|e| format!("the private variable {name}'s initializer: {e}"))?;
+                let dual = dual_of_type(&kernel.module, gv.ty).ok_or_else(|| format!("the private variable {name} has no dual"))?;
+                stmts.extend(ctx.store(&Tree::new(&format!("store.private.{name}"), dual_ty(kingdom, &dual)?, vec![tree]), "L0")?);
+                continue;
+            }
         };
         let v = match kernel.module.global_expressions[init] {
             Expression::Literal(naga::Literal::F32(x)) => f64::from(x),
@@ -7075,6 +7121,351 @@ fn read_entry_under(at: &Reading, ep: usize, grid: (u32, u32, u32, u32), preset:
     // Row-consistent: every node under the dual its parent's row demands.
     let tree = crate::wgsl::safe_karva::conform(&tree, tree.ty, kingdom, &ctx.per_kernel_rows)?;
     Ok(((tree, ctx.notes, ctx.registers, (ctx.arrays, ctx.array_lens)), ctx.open_thread_index && preset.is_none(), rows_x))
+}
+
+/// One step of a place inside an aggregate local: a field by name, or an element, column or lane by an index tree.
+enum Step {
+    Field(String),
+    Index(Tree),
+}
+
+/// A place inside an aggregate local: the local's key (`local.private_p@g`), its naga type and the steps.
+type AggregatePlace = (String, Handle<naga::Type>, Vec<Step>);
+
+impl<'a> Ctx<'a> {
+    /// The aggregate local a load or store of `rest` (`private_p@g.#.m.#@v2`, the name after `load.local.` or
+    /// `store.local.`) is on, when its type is a value a register of the module's kingdom holds and the place goes
+    /// into it (or is all of it): the local's key (`local.private_p@g`), its naga type and the steps.
+    fn aggregate_place(&self, rest: &str, kids: &[Tree]) -> Result<Option<AggregatePlace>, String> {
+        let Some((name, after)) = rest.split_once('@') else { return Ok(None) };
+        let end = after.find(['.', '@']).unwrap_or(after.len());
+        let (idx, tail) = after.split_at(end);
+        let ty_handle = if idx == "g" {
+            let Some(var) = name.strip_prefix("private_") else { return Ok(None) };
+            let Some((_, gv)) = self.module.global_variables.iter().find(|(_, g)| g.space == naga::AddressSpace::Private && g.name.as_deref() == Some(var)) else { return Ok(None) };
+            gv.ty
+        } else {
+            let Some(lv) = idx.parse::<usize>().ok().and_then(|h| self.naga_fn.local_variables.iter().nth(h)).map(|(_, l)| l) else { return Ok(None) };
+            lv.ty
+        };
+        let Some(dual) = dual_of_type(self.module, ty_handle) else { return Ok(None) };
+        if module_register_of_value(self.kingdom, &dual).is_none() {
+            return Ok(None);
+        }
+        // (An array of an element the private arrays hold is one of them.)
+        if matches!(&self.module.types[ty_handle].inner, naga::TypeInner::Array { base, .. } if crate::wgsl::aggregate::has_private_array(&crate::wgsl::interface::type_text(self.module, *base))) {
+            return Ok(None);
+        }
+        let mut indexes = Vec::new();
+        for k in kids {
+            flat_indexes(k, &mut indexes);
+        }
+        let mut indexes = indexes.into_iter();
+        let mut steps = Vec::new();
+        for seg in tail.split('@').next().unwrap_or("").split('.').filter(|s| !s.is_empty()) {
+            steps.push(if seg == "#" { Step::Index(indexes.next().ok_or_else(|| format!("{rest}: a place with fewer indexes than steps"))?) } else { Step::Field(seg.to_string()) });
+        }
+        Ok(Some((format!("local.{name}@{idx}"), ty_handle, steps)))
+    }
+
+    /// The type reached by a step, and the row that reads it from a value of the type before.
+    fn step_into(&mut self, here: &naga::TypeInner, step: &Step, whole: Tree) -> Result<(naga::TypeInner, Tree), String> {
+        use naga::TypeInner;
+        let text = |sc: &naga::Scalar| match (sc.kind, sc.width) {
+            (naga::ScalarKind::Float, 2) => "f16",
+            (naga::ScalarKind::Float, _) => "f32",
+            (naga::ScalarKind::Sint, _) => "i32",
+            (naga::ScalarKind::Uint, _) => "u32",
+            _ => "bool",
+        };
+        match (here, step) {
+            (TypeInner::Array { base, .. }, Step::Index(i)) => {
+                let d = dual_of_type(self.module, *base).ok_or_else(|| "an element of an aggregate with no dual".to_string())?;
+                let i = self.value(i)?;
+                Ok((self.module.types[*base].inner.clone(), Tree::new("agg.at", ty(self, &d)?, vec![whole, i])))
+            }
+            (TypeInner::Struct { members, .. }, Step::Field(f)) => {
+                let m = members.iter().find(|m| m.name.as_deref() == Some(f.as_str())).ok_or_else(|| format!("no member {f}"))?;
+                let d = dual_of_type(self.module, m.ty).ok_or_else(|| format!("the member {f} has no dual"))?;
+                Ok((self.module.types[m.ty].inner.clone(), Tree::new(&format!("agg.member_{f}"), ty(self, &d)?, vec![whole])))
+            }
+            (TypeInner::Matrix { rows, scalar, .. }, Step::Index(i)) => {
+                let d = crate::wgsl::render::elem_dual(&format!("vec{}<{}>", *rows as u32, text(scalar))).ok_or_else(|| "a column with no dual".to_string())?;
+                Ok((TypeInner::Vector { size: *rows, scalar: *scalar }, match literal_value(i) {
+                    Some(c) => Tree::new(&format!("shape.col_{}", c as u32), ty(self, &d)?, vec![whole]),
+                    None => Tree::new("shape.col_at", ty(self, &d)?, vec![whole, self.value(i)?]),
+                }))
+            }
+            (TypeInner::Vector { scalar, .. }, Step::Index(i)) => {
+                let d = crate::wgsl::render::elem_dual(text(scalar)).ok_or_else(|| "a lane with no dual".to_string())?;
+                Ok((TypeInner::Scalar(*scalar), match literal_value(i) {
+                    Some(l) => Tree::new(&format!("shape.access_{}", l as u32), ty(self, &d)?, vec![whole]),
+                    None => Tree::new("shape.at", ty(self, &d)?, vec![whole, self.value(i)?]),
+                }))
+            }
+            (other, _) => Err(format!("a step into {other:?} of an aggregate local is not a place the kingdom reads")),
+        }
+    }
+
+    /// A load of an aggregate local or of a place inside one: the register read, then each step's row.
+    fn aggregate_load(&mut self, t: &Tree, rest: &str) -> Result<Option<Tree>, String> {
+        let Some((local, top, steps)) = self.aggregate_place(rest, &t.kids)? else { return Ok(None) };
+        let dual = dual_of_type(self.module, top).ok_or("an aggregate local with no dual")?;
+        let row = self.register(&local, &dual)?;
+        let kind = row.chars().nth(4).unwrap_or('f');
+        let mut cur = Tree::new(&format!("reg.get_{kind}"), ty(self, &dual)?, vec![Tree::new(&row, reg_ty(self, kind)?, vec![])]);
+        let mut here = self.module.types[top].inner.clone();
+        for step in &steps {
+            let (next, tree) = self.step_into(&here, step, cur)?;
+            (here, cur) = (next, tree);
+        }
+        cur.ty = t.ty;
+        Ok(Some(cur))
+    }
+
+    /// A store to an aggregate local or to a place inside one: the register set to the value with that place replaced,
+    /// the replacement a chain of `agg.with_*` rows over the reads of the parts on the way.
+    fn aggregate_store(&mut self, tree: &Tree, rung: &str) -> Result<Option<Tree>, String> {
+        let Some(rest) = tree.name.strip_prefix("store.local.") else { return Ok(None) };
+        let Some((value, index_kids)) = tree.kids.split_last() else { return Ok(None) };
+        let Some((local, top, steps)) = self.aggregate_place(rest, index_kids)? else { return Ok(None) };
+        let dual = dual_of_type(self.module, top).ok_or("an aggregate local with no dual")?;
+        let row = self.register(&local, &dual)?;
+        let kind = row.chars().nth(4).unwrap_or('f');
+        let reg = Tree::new(&row, reg_ty(self, kind)?, vec![]);
+        let whole = Tree::new(&format!("reg.get_{kind}"), ty(self, &dual)?, vec![reg.clone()]);
+        let v = self.value(value)?;
+        let here = self.module.types[top].inner.clone();
+        let new = self.update_place(&here, whole, &steps, v)?;
+        let st = self.stmt_ty(rung)?;
+        Ok(Some(Tree::new(&format!("reg.set_{kind}_{rung}"), st, vec![reg, new])))
+    }
+
+    /// `whole` of type `here` with the part `steps` reach replaced by `v`.
+    fn update_place(&mut self, here: &naga::TypeInner, whole: Tree, steps: &[Step], v: Tree) -> Result<Tree, String> {
+        use naga::TypeInner;
+        let Some((step, more)) = steps.split_first() else { return Ok(v) };
+        let (part_ty, part) = self.step_into(here, step, whole.clone())?;
+        let inner = self.update_place(&part_ty, part, more, v)?;
+        let out = whole.ty;
+        match (here, step) {
+            (TypeInner::Array { .. } | TypeInner::Matrix { .. } | TypeInner::Vector { .. }, Step::Index(i)) => {
+                let i = self.value(i)?;
+                Ok(Tree::new("agg.with_at", out, vec![whole, i, inner]))
+            }
+            (TypeInner::Struct { .. }, Step::Field(f)) => Ok(Tree::new(&format!("agg.with_{f}"), out, vec![whole, inner])),
+            (other, _) => Err(format!("a write into {other:?} inside an aggregate local has no row")),
+        }
+    }
+
+    /// A place inside a uniform binding that is an aggregate value (`u[2].m` over `u : array<S, 4>`): the binding's whole
+    /// value (its row `load.<var>`), then each step's row.
+    fn aggregate_binding_load(&mut self, t: &Tree, rest: &str) -> Result<Option<Tree>, String> {
+        let var = rest.split(['.', '@']).next().unwrap_or(rest);
+        let tail = &rest[var.len()..];
+        let tail = tail.split('@').next().unwrap_or("");
+        if tail.is_empty() {
+            return Ok(None);
+        }
+        let Some(top) = self.module.global_variables.iter().find(|(_, g)| g.name.as_deref() == Some(var) && g.space == naga::AddressSpace::Uniform).map(|(_, g)| g.ty) else { return Ok(None) };
+        let mut here = self.module.types[top].inner.clone();
+        let Some(dual) = dual_of_type(self.module, top) else { return Ok(None) };
+        let row = format!("load.{var}");
+        // (An element the interface has a row for is that row's: `load.u` over an index.)
+        if self.per_kernel_rows.iter().any(|p| p.0 == row && !p.1.is_empty()) {
+            return Ok(None);
+        }
+        let Some((name, out)) = self.per_kernel_rows.iter().find(|p| p.0 == row && p.1.is_empty()).map(|p| (p.0.clone(), p.2)) else { return Ok(None) };
+        if self.kingdom.dual(out).map(|d| d.dual.as_str()) != Some(dual.as_str()) {
+            return Ok(None);
+        }
+        let mut indexes = Vec::new();
+        for k in &t.kids {
+            flat_indexes(k, &mut indexes);
+        }
+        let mut indexes = indexes.into_iter();
+        let mut cur = Tree::new(&name, out, vec![]);
+        for seg in tail.split('.').filter(|s| !s.is_empty()) {
+            let step = if seg == "#" { Step::Index(indexes.next().ok_or_else(|| format!("{rest}: a place with fewer indexes than steps"))?) } else { Step::Field(seg.to_string()) };
+            let (next, tree) = self.step_into(&here, &step, cur)?;
+            (here, cur) = (next, tree);
+        }
+        cur.ty = t.ty;
+        Ok(Some(cur))
+    }
+}
+
+
+/// A constant value of a type, evaluated from a module's global expressions (a `var<private>` initializer): scalars as
+/// numbers, aggregates as their parts.
+enum ConstValue {
+    Scalar(f64),
+    Parts(Vec<ConstValue>),
+}
+
+impl ConstValue {
+    fn of(module: &naga::Module, expr: Handle<naga::Expression>, ty: Handle<naga::Type>) -> Result<ConstValue, String> {
+        use naga::{Expression as E, Literal as L, TypeInner as T};
+        Ok(match &module.global_expressions[expr] {
+            E::Literal(l) => ConstValue::Scalar(match *l {
+                L::F32(x) => f64::from(x),
+                L::F16(x) => f64::from(f32::from(x)),
+                L::F64(x) => x,
+                L::U32(x) => f64::from(x),
+                L::I32(x) => f64::from(x),
+                L::U64(x) => x as f64,
+                L::I64(x) => x as f64,
+                L::Bool(b) => f64::from(u8::from(b)),
+                L::AbstractInt(x) => x as f64,
+                L::AbstractFloat(x) => x,
+                L::U16(x) => f64::from(x),
+                L::I16(x) => f64::from(x),
+            }),
+            E::ZeroValue(zt) => Self::zero(module, *zt)?,
+            E::Constant(c) => Self::of(module, module.constants[*c].init, module.constants[*c].ty)?,
+            E::Splat { size, value } => {
+                let v = Self::of(module, *value, ty)?;
+                ConstValue::Parts((0..*size as usize).map(|_| v.clone()).collect())
+            }
+            E::Compose { components, .. } => {
+                // (A vector composed of vectors and scalars is its lanes in order.)
+                let mut parts = Vec::new();
+                for c in components {
+                    match Self::of(module, *c, ty)? {
+                        ConstValue::Parts(p) if matches!(module.types[ty].inner, T::Vector { .. }) => parts.extend(p),
+                        v => parts.push(v),
+                    }
+                }
+                ConstValue::Parts(parts)
+            }
+            other => return Err(format!("the expression {other:?} is not a constant the reader evaluates")),
+        })
+    }
+
+    fn zero(module: &naga::Module, ty: Handle<naga::Type>) -> Result<ConstValue, String> {
+        use naga::TypeInner as T;
+        Ok(match &module.types[ty].inner {
+            T::Scalar(_) => ConstValue::Scalar(0.0),
+            T::Vector { size, .. } => ConstValue::Parts((0..*size as usize).map(|_| ConstValue::Scalar(0.0)).collect()),
+            T::Matrix { columns, rows, .. } => ConstValue::Parts((0..*columns as usize).map(|_| ConstValue::Parts((0..*rows as usize).map(|_| ConstValue::Scalar(0.0)).collect())).collect()),
+            T::Array { base, size: naga::ArraySize::Constant(n), .. } => ConstValue::Parts((0..n.get() as usize).map(|_| Self::zero(module, *base)).collect::<Result<_, _>>()?),
+            T::Struct { members, .. } => ConstValue::Parts(members.iter().map(|m| Self::zero(module, m.ty)).collect::<Result<_, _>>()?),
+            other => return Err(format!("the type {other:?} has no zero value")),
+        })
+    }
+
+    fn is_zero(&self) -> bool {
+        match self {
+            ConstValue::Scalar(v) => *v == 0.0 && v.is_sign_positive(),
+            ConstValue::Parts(p) => p.iter().all(ConstValue::is_zero),
+        }
+    }
+}
+
+impl Clone for ConstValue {
+    fn clone(&self) -> Self {
+        match self {
+            ConstValue::Scalar(v) => ConstValue::Scalar(*v),
+            ConstValue::Parts(p) => ConstValue::Parts(p.clone()),
+        }
+    }
+}
+
+impl<'a> Ctx<'a> {
+    /// The tree of a constant value of type `ty`: literals composed into a vector or a matrix, an aggregate's nonzero
+    /// parts written into its zero.
+    fn const_tree(&mut self, value: &ConstValue, ty_handle: Handle<naga::Type>) -> Result<Tree, String> {
+        use naga::TypeInner as T;
+        let inner = self.module.types[ty_handle].inner.clone();
+        let dual = dual_of_type(self.module, ty_handle).ok_or("a constant of a type with no dual")?;
+        match (&inner, value) {
+            (T::Scalar(sc), ConstValue::Scalar(v)) => {
+                let form = match sc.kind {
+                    naga::ScalarKind::Float => "real",
+                    naga::ScalarKind::Sint => "int",
+                    naga::ScalarKind::Uint => "index",
+                    _ => "flag",
+                };
+                let v = if form == "real" { f64::from(*v as f32) } else { *v };
+                Ok(Tree::literal(&format!("literal.{form}"), ty(self, &dual)?, v))
+            }
+            (T::Vector { .. }, ConstValue::Parts(_)) => self.const_vector(value, &inner),
+            (T::Matrix { columns, rows, scalar }, ConstValue::Parts(cols)) => {
+                let col_ty = T::Vector { size: *rows, scalar: *scalar };
+                // (A column's vector type may not be declared by the module: build it from its parts.)
+                let mut columns_tree = Vec::new();
+                for c in cols {
+                    columns_tree.push(self.const_vector(c, &col_ty)?);
+                }
+                if scalar.width == 4 {
+                    let name = match *columns as u32 {
+                        2 => "shape.compose_mat",
+                        3 => "shape.compose_mat3",
+                        _ => "shape.compose_mat4",
+                    };
+                    return Ok(Tree::new(name, ty(self, &dual)?, columns_tree));
+                }
+                let mut acc = Tree::new("agg.zero", ty(self, &dual)?, vec![]);
+                for (i, c) in columns_tree.into_iter().enumerate() {
+                    let index = Tree::literal("literal.index", ty(self, "u32.index")?, i as f64);
+                    acc = Tree::new("agg.with_at", ty(self, &dual)?, vec![acc, index, c]);
+                }
+                Ok(acc)
+            }
+            (T::Array { base, .. }, ConstValue::Parts(parts)) => {
+                let mut acc = Tree::new("agg.zero", ty(self, &dual)?, vec![]);
+                for (i, p) in parts.iter().enumerate() {
+                    if p.is_zero() {
+                        continue;
+                    }
+                    let element = self.const_tree(p, *base)?;
+                    let index = Tree::literal("literal.index", ty(self, "u32.index")?, i as f64);
+                    acc = Tree::new("agg.with_at", ty(self, &dual)?, vec![acc, index, element]);
+                }
+                Ok(acc)
+            }
+            (T::Struct { members, .. }, ConstValue::Parts(parts)) => {
+                let mut acc = Tree::new("agg.zero", ty(self, &dual)?, vec![]);
+                for (m, p) in members.iter().zip(parts) {
+                    if p.is_zero() {
+                        continue;
+                    }
+                    let name = m.name.clone().ok_or("a member with no name")?;
+                    let part = self.const_tree(p, m.ty)?;
+                    acc = Tree::new(&format!("agg.with_{name}"), ty(self, &dual)?, vec![acc, part]);
+                }
+                Ok(acc)
+            }
+            (other, _) => Err(format!("a constant of {other:?} has no tree")),
+        }
+    }
+
+    /// A constant vector of the type `vector` (which the module may not declare as a type of its own).
+    fn const_vector(&mut self, value: &ConstValue, vector: &naga::TypeInner) -> Result<Tree, String> {
+        use naga::TypeInner as T;
+        let (T::Vector { size, scalar }, ConstValue::Parts(lanes)) = (vector, value) else { return Err("a column that is not a vector of numbers".into()) };
+        let lane_name = match (scalar.kind, scalar.width) {
+            (naga::ScalarKind::Float, 2) => "f16",
+            (naga::ScalarKind::Float, _) => "f32",
+            (naga::ScalarKind::Sint, _) => "i32",
+            (naga::ScalarKind::Uint, _) => "u32",
+            _ => "bool",
+        };
+        let lane_dual = crate::wgsl::render::elem_dual(lane_name).ok_or("a lane with no dual")?;
+        let lit = |ctx: &mut Self, v: &ConstValue| -> Result<Tree, String> {
+            let ConstValue::Scalar(x) = v else { return Err("a lane that is not a number".into()) };
+            let x = if lane_name.starts_with('f') { f64::from(*x as f32) } else { *x };
+            let form = lane_dual.split('.').nth(1).unwrap_or("real");
+            Ok(Tree::literal(&format!("literal.{form}"), ty(ctx, &lane_dual)?, x))
+        };
+        let slot = |k: usize| crate::wgsl::render::elem_dual(&format!("vec{k}<{lane_name}>"));
+        let n = *size as usize;
+        let mut acc = Tree::new("shape.compose2", ty(self, &slot(2).ok_or("no vec2 dual")?)?, vec![lit(self, &lanes[0])?, lit(self, &lanes[1])?]);
+        for k in 3..=n {
+            acc = Tree::new(&format!("shape.compose{k}"), ty(self, &slot(k).ok_or("no vector dual")?)?, vec![acc, lit(self, &lanes[k - 1])?]);
+        }
+        Ok(acc)
+    }
 }
 
 #[cfg(test)]
@@ -7158,10 +7549,13 @@ mod tests {
         for name in ["instances", "meshlab_swarm", "skin"] {
             let src = std::fs::read_to_string(dir.join(format!("{name}.wgsl"))).unwrap();
             let r = read_safe(&src, &k).unwrap_or_else(|e| panic!("{name}: {e}"));
-            let out = crate::wgsl::safe_karva::render_tree_with(&r.tree, &k, &r.role).unwrap_or_else(|e| panic!("{name}: {e}"));
+            // (A module that declares aggregate types reads in the kingdom extended by them.)
+            let kr = r.kingdom.as_ref().unwrap_or(&k);
+            let out = crate::wgsl::safe_karva::render_tree_with(&r.tree, kr, &r.role).unwrap_or_else(|e| panic!("{name}: {e}"));
             validate_text(&out.text).unwrap_or_else(|e| panic!("{name}: {e}"));
             let back = read_safe(&out.text, &k).unwrap_or_else(|e| panic!("{name}: read back: {e}"));
-            let again = read_safe(&crate::wgsl::safe_karva::render_tree_with(&back.tree, &k, &back.role).unwrap().text, &k).unwrap();
+            let kb = back.kingdom.as_ref().unwrap_or(&k);
+            let again = read_safe(&crate::wgsl::safe_karva::render_tree_with(&back.tree, kb, &back.role).unwrap().text, &k).unwrap();
             assert!(again.tree == back.tree, "{name}: a fixpoint: {:?}", crate::wgsl::render::first_difference(&back.tree, &again.tree));
         }
     }

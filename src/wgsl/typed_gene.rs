@@ -352,7 +352,10 @@ pub struct Alphabets {
 impl Alphabets {
     pub fn of(&mut self, kingdom: &WgslKingdom, role: &Role) -> &Result<Alphabet, Gap> {
         // (The aggregate duals a module declared are part of the alphabet.)
-        let key = format!("{}|{}|{}", role.name, role.per_kernel.iter().map(|p| format!("{}:{}:{}", p.name, p.inputs.join("+"), p.output)).collect::<Vec<_>>().join(","), kingdom.duals.iter().filter(|d| d.form == "value").map(|d| d.dual.as_str()).collect::<Vec<_>>().join(","));
+        // (The rows over them too: two modules may declare a struct of one name with other members.)
+        let added = kingdom.duals.iter().filter(|d| d.reference.starts_with(['A', 'R'])).map(|d| d.dual.as_str()).collect::<Vec<_>>().join(",");
+        let rows = kingdom.rows.iter().filter(|r| r.name.starts_with("agg.") || r.name.starts_with("reg.") && r.name[4..].starts_with(|c: char| c.is_ascii_uppercase()) || r.name.starts_with("shape.col_")).map(|r| format!("{}:{:?}:{:?}", r.name, r.inputs, r.output)).collect::<Vec<_>>().join(",");
+        let key = format!("{}|{}|{added}|{rows}|{}", role.name, role.per_kernel.iter().map(|p| format!("{}:{}:{}", p.name, p.inputs.join("+"), p.output)).collect::<Vec<_>>().join(","), role.entries.len());
         self.by_interface.entry(key).or_insert_with(|| Alphabet::new(kingdom, role))
     }
 }
@@ -605,6 +608,42 @@ mod tests {
         let ext = read.kingdom.as_ref().expect("the module declares a matrix of f16");
         assert!(ext.duals.iter().any(|d| d.dual == "mat2x2<f16>.real" && d.lanes == 4), "{:?}", ext.duals.iter().skip(204).map(|d| &d.dual).collect::<Vec<_>>());
         assert!(ext.rows.iter().any(|r| r.name == "shape.col_1" && r.template == "A-col"));
+        match round_trip(&mut Alphabets::default(), &kingdom, text) {
+            Outcome::Expressed { tree_equal: true, text_equal: true, valid: Ok(()), .. } => {}
+            other => panic!("{other:?}"),
+        }
+    }
+
+    /// A private array of structs is an aggregate register: written whole (`p = u`), at an element (`p[1] = u[2]`), at a member
+    /// (`p[3].m = ..`) and at a column inside both (`p[1].m[0] = ..`), each a chain of `agg.with_*` rows over the register; read
+    /// back at any depth. The kernel round trips through a typed gene and the text it renders is the kernel naga accepts.
+    #[test]
+    fn a_private_array_of_structs_is_an_aggregate_register() {
+        let kingdom = WgslKingdom::load_safe();
+        let text = "struct S { before : i32, m : mat2x2<f32>, after : i32, }\n@group(0) @binding(0) var<uniform> u : array<S, 4>;\n@group(0) @binding(1) var<storage, read_write> s: f32;\nvar<private> p : array<S, 4>;\n@compute @workgroup_size(1)\nfn f() { p = u; p[1] = u[2]; p[3].m = u[2].m; p[1].m[0] = u[0].m[1].yx; s = p[1].m[0].x + f32(p[2].before); }\n";
+        let read = crate::wgsl::safe_reader::read_safe(text, &kingdom).unwrap_or_else(|e| panic!("{e}"));
+        let ext = read.kingdom.as_ref().expect("the module declares aggregate types");
+        assert!(ext.rows.iter().any(|r| r.name == "agg.with_at") && ext.rows.iter().any(|r| r.name == "agg.with_m" && r.inputs.len() == 2), "the with rows");
+        assert!(ext.rows.iter().any(|r| r.name.starts_with("reg.set_") && r.name.len() > 8 && r.name[8..].starts_with(|c: char| c.is_ascii_uppercase())) || ext.rows.iter().any(|r| r.name.starts_with("reg.set_A_") || r.name.starts_with("reg.set_B_")), "a register kind of the array");
+        let rendered = crate::wgsl::safe_karva::render_tree_with(&read.tree, ext, &read.role).expect("renders").text;
+        assert!(rendered.contains("with_array_S__4__at(") && rendered.contains("with_S_m("), "{rendered}");
+        match round_trip(&mut Alphabets::default(), &kingdom, text) {
+            Outcome::Expressed { tree_equal: true, text_equal: true, valid: Ok(()), .. } => {}
+            other => panic!("{other:?}"),
+        }
+    }
+
+    /// A `var<private>` with a constant initializer of a vector, a matrix of f16, an array or a struct: its value built from
+    /// literals (a vector composed, a matrix of f16 and an aggregate a zero with its nonzero parts written) and stored at the
+    /// start; the kernel round trips through a typed gene.
+    #[test]
+    fn a_private_variable_with_a_constant_initializer_round_trips() {
+        let kingdom = WgslKingdom::load_safe();
+        let text = "enable f16;\nstruct P { a : f32, b : vec2<f32>, }\nvar<private> v : vec3<f32> = vec3<f32>(1.0, 2.0, 3.0);\nvar<private> h : mat2x2<f16> = mat2x2<f16>(1.0h, 2.0h, 3.0h, 4.0h);\nvar<private> a : array<i32, 3> = array<i32, 3>(1, 0, 2);\nvar<private> p : P = P(5.0, vec2<f32>(6.0, 7.0));\n@group(0) @binding(0) var<storage, read_write> s: f32;\n@compute @workgroup_size(1)\nfn f() { s = v.y + f32(h[1][0]) + f32(a[2]) + p.b.y + p.a; }\n";
+        let read = crate::wgsl::safe_reader::read_safe(text, &kingdom).unwrap_or_else(|e| panic!("{e}"));
+        let ext = read.kingdom.as_ref().expect("the module declares aggregate types");
+        let rendered = crate::wgsl::safe_karva::render_tree_with(&read.tree, ext, &read.role).expect("renders").text;
+        assert!(rendered.contains("vec3<f32>(") && rendered.contains("with_P_a(") && rendered.contains("with_mat2x2_f16__at("), "{rendered}");
         match round_trip(&mut Alphabets::default(), &kingdom, text) {
             Outcome::Expressed { tree_equal: true, text_equal: true, valid: Ok(()), .. } => {}
             other => panic!("{other:?}"),

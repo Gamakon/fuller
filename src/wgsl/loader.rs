@@ -289,6 +289,8 @@ pub enum Shape {
     Struct { members: Vec<(String, String)> },
     /// A matrix of a scalar the shipped duals have no matrix of (`mat2x2<f16>`).
     Matrix { cols: u32, rows: u32, scalar: String },
+    /// A vector (`vec3<f32>`), for the rows that write one of its lanes inside an aggregate.
+    Vector { lanes: u32, scalar: String },
 }
 
 impl WgslKingdom {
