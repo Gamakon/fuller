@@ -251,3 +251,30 @@ Required code/document rename (not performed by this document-only change): in `
 - Finding 4 (underspecified): the homeotic head holds the whole function set plus reference terminals; ADF references are valid in normal genes; an ADF never references a genic terminal; the write-back rule is per type (`j_T <= h_T`), removal-only rewrites always fit and promotion's domain is enumerated; `?_T` is independent of ADFs.
 - Finding 5 (valid, not good): `h_T = [T = R] + (N - 1) * a_T` from the layout's program size `N`, exact and attained, so every program of `N` functions fits whatever its type mix; explicit `h_T` remains for the classical SR layout. Width is allocated in full and paged, never an input.
 - `symbol_id` replaces spellings in every gene row and in the SQL; the kingdom check prints the WGSL bound table rather than this document estimating it.
+
+## Implementation notes
+
+Host reference, fuller `ca816f1e`..`ff7fccc8` and the defect tests that follow. Where the design left a choice, this is what was built and why.
+
+1. **`a_T` for head allocation is taken over the producers reachable from the root.** `h_T = [T = R] + (N - 1) * a_T` uses `a_T = max_U a_{T,U}` over `U` in `reachable(R)`, not over every `U` in the kingdom. A producer no slot can reach is never expressed, so counting it would only widen the head (a 4-argument function outputting an unreachable `B` would otherwise cost `3 * (N - 1)` head rows of `I` in every `S` gene). The bound stays exact; `KingdomContract::guaranteed_program_size` is the inverse and is asserted for every `N` in the tests. `P_T` and `L` already sum over the heads actually present, so they were exact.
+2. **`d_T` is `min(P_T, L)` for every type; a `Dc_T` exists only for a constant-capable type.** The bound query and `KingdomContract::bounds` agree row for row (the DuckDB test compares 25 rows). `GeneBounds::width` counts `d_T` only where the type has `?_T`.
+3. **Physical order of a gene** is every head, then every tail, then every Dc, each in frame order (the root's type first, then ascending type code). A one-type gene is therefore exactly Karva's head, tail and Dc, which the tests compare with an independent classical decoder (`h = 1 + (N - 1) * n_max`, `t = d = h * (n_max - 1) + 1`, width `h + 2t`).
+4. **Write-back places the k-th `T` node of the level order at row `k` of `T`'s frame** (`head_T` for `k < h_T`, then `tail_T`), not "the first `j_T` nodes in the head and the rest in the tail". The two agree when the tree has no more than `j_T` nodes of `T`; when it has more, the nodes between `j_T` and `h_T` are terminals and must sit in `head_T` rows `j_T .. h_T - 1`, because the decoder reads `head_T` to its end before `tail_T`. A tree is encodable exactly when `j_T <= h_T` for every `T` and its nodes and placeholders fit the tails and Dcs; otherwise the reported defect names the type and the missing rows.
+5. **Validation is of the whole gene, read or not.** A head cell whose output is not its domain's type (`ForeignSymbol`), a tail cell that is a function (`FunctionInTail`), a symbol outside the kingdom and a Dc word at or past `C_T` are defects wherever they sit, because the domain alphabets define a valid gene; the planted-defect tests put one in 100,000 genes per kingdom.
+6. **Reference terminals are a re-checked contract.** `Epoch::new` builds the epoch alphabet as the kingdom's rows plus `G_g` for every normal gene id (typed by the layout's root) and `A_d` for every declared ADF, and runs the kingdom check again, so a reference is an ordinary terminal with no signature and every bound is the kingdom's. Genic terminals are valid only in a homeotic gene that links their gene; an unlinked genic terminal is a defect even in a cell the walk never reads.
+7. **A fixed linker's unread rows are canonical**: `head_R = (link)`, the genic terminals of the linked genes in gene order in `tail_R` / `tail_T`, every other tail row the lowest terminal of its type, every Dc word 0. Any other word is `FixedLinkerAltered`.
+8. **Fold is by structural equality of expressed trees** (symbols and `C_T` indices), top-down, replacing each match by `A_d` through the write-back; a removal-only rewrite always fits, and a write-back that fails would be reported, not skipped. Unfold at the phenotype level is `Phenotype::inlined`; unfolding back into a gene is encodable exactly when `typed_gep::fits` says so.
+9. **Not done in this series:** the §6 rename of "homeotic chromosome/row/tail" to "ADF" in `docs/PLAN_population_dag.md`, `src/population_dag.rs` and `src/homeotic.rs`, and the `docs/PLAN_wgsl_terminals.md` rows (owned by the WGSL terminals work). The population DAG still stores shared definitions under the old name.
+
+Kingdom check figures (`cargo test --release --features wgsl --lib the_kingdom_reports_print -- --nocapture`, program size `N`, heads from `h_T = [T = R] + (N - 1) * a_T`), measured on 2026-10-20:
+
+| kingdom | N | roots | types reachable | L | gene width (words) | widest type (h, P, t, d) |
+|---|---|---|---|---|---|---|
+| SR | 8 | F | 1 | 16 | 47 | F: 15, 31, 16, 16 |
+| SR | 32 | F | 1 | 64 | 191 | F: 63, 127, 64, 64 |
+| regex | 8 | Pattern | 4 | 30 | 177 | Char: 14, 43, 29, 30 |
+| regex | 32 | Pattern | 4 | 126 | 753 | Char: 62, 187, 125, 126 |
+| safewgsl | 8 | `Wgsl(107)` / `Wgsl(186)` | 173 / 174 | 3958 / 4036 | 58,090 / 58,211 | `Wgsl(33)`: 21, 1379, 1358, 1379 |
+| safewgsl | 32 | `Wgsl(107)` / `Wgsl(186)` | 173 / 174 | 17,518 / 17,860 | 257,242 / 257,771 | `Wgsl(33)`: 93, 6107, 6014, 6107 |
+
+The safewgsl width is a consequence of `N` and of 202 types with up to 4-argument functions, not a tuned buffer: it is what the paged geneframe (CR_multityped_gep §10c) has to hold. The older `kingdoms/wgsl` kingdom reads 15,038 words at `N = 8` and 66,590 at `N = 32`.

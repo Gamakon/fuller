@@ -634,5 +634,169 @@ in full and paged, never an input.</li>
 the SQL; the kingdom check prints the WGSL bound table rather than this
 document estimating it.</li>
 </ul>
+<h2 id="implementation-notes">Implementation notes</h2>
+<p>Host reference, fuller <code>ca816f1e</code>..<code>ff7fccc8</code>
+and the defect tests that follow. Where the design left a choice, this
+is what was built and why.</p>
+<ol type="1">
+<li><strong><code>a_T</code> for head allocation is taken over the
+producers reachable from the root.</strong>
+<code>h_T = [T = R] + (N - 1) * a_T</code> uses
+<code>a_T = max_U a_{T,U}</code> over <code>U</code> in
+<code>reachable(R)</code>, not over every <code>U</code> in the kingdom.
+A producer no slot can reach is never expressed, so counting it would
+only widen the head (a 4-argument function outputting an unreachable
+<code>B</code> would otherwise cost <code>3 * (N - 1)</code> head rows
+of <code>I</code> in every <code>S</code> gene). The bound stays exact;
+<code>KingdomContract::guaranteed_program_size</code> is the inverse and
+is asserted for every <code>N</code> in the tests. <code>P_T</code> and
+<code>L</code> already sum over the heads actually present, so they were
+exact.</li>
+<li><strong><code>d_T</code> is <code>min(P_T, L)</code> for every type;
+a <code>Dc_T</code> exists only for a constant-capable type.</strong>
+The bound query and <code>KingdomContract::bounds</code> agree row for
+row (the DuckDB test compares 25 rows). <code>GeneBounds::width</code>
+counts <code>d_T</code> only where the type has <code>?_T</code>.</li>
+<li><strong>Physical order of a gene</strong> is every head, then every
+tail, then every Dc, each in frame order (the root’s type first, then
+ascending type code). A one-type gene is therefore exactly Karva’s head,
+tail and Dc, which the tests compare with an independent classical
+decoder (<code>h = 1 + (N - 1) * n_max</code>,
+<code>t = d = h * (n_max - 1) + 1</code>, width
+<code>h + 2t</code>).</li>
+<li><strong>Write-back places the k-th <code>T</code> node of the level
+order at row <code>k</code> of <code>T</code>’s frame</strong>
+(<code>head_T</code> for <code>k &lt; h_T</code>, then
+<code>tail_T</code>), not “the first <code>j_T</code> nodes in the head
+and the rest in the tail”. The two agree when the tree has no more than
+<code>j_T</code> nodes of <code>T</code>; when it has more, the nodes
+between <code>j_T</code> and <code>h_T</code> are terminals and must sit
+in <code>head_T</code> rows <code>j_T .. h_T - 1</code>, because the
+decoder reads <code>head_T</code> to its end before <code>tail_T</code>.
+A tree is encodable exactly when <code>j_T &lt;= h_T</code> for every
+<code>T</code> and its nodes and placeholders fit the tails and Dcs;
+otherwise the reported defect names the type and the missing rows.</li>
+<li><strong>Validation is of the whole gene, read or not.</strong> A
+head cell whose output is not its domain’s type
+(<code>ForeignSymbol</code>), a tail cell that is a function
+(<code>FunctionInTail</code>), a symbol outside the kingdom and a Dc
+word at or past <code>C_T</code> are defects wherever they sit, because
+the domain alphabets define a valid gene; the planted-defect tests put
+one in 100,000 genes per kingdom.</li>
+<li><strong>Reference terminals are a re-checked contract.</strong>
+<code>Epoch::new</code> builds the epoch alphabet as the kingdom’s rows
+plus <code>G_g</code> for every normal gene id (typed by the layout’s
+root) and <code>A_d</code> for every declared ADF, and runs the kingdom
+check again, so a reference is an ordinary terminal with no signature
+and every bound is the kingdom’s. Genic terminals are valid only in a
+homeotic gene that links their gene; an unlinked genic terminal is a
+defect even in a cell the walk never reads.</li>
+<li><strong>A fixed linker’s unread rows are canonical</strong>:
+<code>head_R = (link)</code>, the genic terminals of the linked genes in
+gene order in <code>tail_R</code> / <code>tail_T</code>, every other
+tail row the lowest terminal of its type, every Dc word 0. Any other
+word is <code>FixedLinkerAltered</code>.</li>
+<li><strong>Fold is by structural equality of expressed trees</strong>
+(symbols and <code>C_T</code> indices), top-down, replacing each match
+by <code>A_d</code> through the write-back; a removal-only rewrite
+always fits, and a write-back that fails would be reported, not skipped.
+Unfold at the phenotype level is <code>Phenotype::inlined</code>;
+unfolding back into a gene is encodable exactly when
+<code>typed_gep::fits</code> says so.</li>
+<li><strong>Not done in this series:</strong> the §6 rename of “homeotic
+chromosome/row/tail” to “ADF” in
+<code>docs/PLAN_population_dag.md</code>,
+<code>src/population_dag.rs</code> and <code>src/homeotic.rs</code>, and
+the <code>docs/PLAN_wgsl_terminals.md</code> rows (owned by the WGSL
+terminals work). The population DAG still stores shared definitions
+under the old name.</li>
+</ol>
+<p>Kingdom check figures
+(<code>cargo test --release --features wgsl --lib the_kingdom_reports_print -- --nocapture</code>,
+program size <code>N</code>, heads from
+<code>h_T = [T = R] + (N - 1) * a_T</code>), measured on 2026-10-20:</p>
+<table style="width:100%;">
+<colgroup>
+<col style="width: 14%" />
+<col style="width: 14%" />
+<col style="width: 14%" />
+<col style="width: 14%" />
+<col style="width: 14%" />
+<col style="width: 14%" />
+<col style="width: 14%" />
+</colgroup>
+<thead>
+<tr>
+<th>kingdom</th>
+<th>N</th>
+<th>roots</th>
+<th>types reachable</th>
+<th>L</th>
+<th>gene width (words)</th>
+<th>widest type (h, P, t, d)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>SR</td>
+<td>8</td>
+<td>F</td>
+<td>1</td>
+<td>16</td>
+<td>47</td>
+<td>F: 15, 31, 16, 16</td>
+</tr>
+<tr>
+<td>SR</td>
+<td>32</td>
+<td>F</td>
+<td>1</td>
+<td>64</td>
+<td>191</td>
+<td>F: 63, 127, 64, 64</td>
+</tr>
+<tr>
+<td>regex</td>
+<td>8</td>
+<td>Pattern</td>
+<td>4</td>
+<td>30</td>
+<td>177</td>
+<td>Char: 14, 43, 29, 30</td>
+</tr>
+<tr>
+<td>regex</td>
+<td>32</td>
+<td>Pattern</td>
+<td>4</td>
+<td>126</td>
+<td>753</td>
+<td>Char: 62, 187, 125, 126</td>
+</tr>
+<tr>
+<td>safewgsl</td>
+<td>8</td>
+<td><code>Wgsl(107)</code> / <code>Wgsl(186)</code></td>
+<td>173 / 174</td>
+<td>3958 / 4036</td>
+<td>58,090 / 58,211</td>
+<td><code>Wgsl(33)</code>: 21, 1379, 1358, 1379</td>
+</tr>
+<tr>
+<td>safewgsl</td>
+<td>32</td>
+<td><code>Wgsl(107)</code> / <code>Wgsl(186)</code></td>
+<td>173 / 174</td>
+<td>17,518 / 17,860</td>
+<td>257,242 / 257,771</td>
+<td><code>Wgsl(33)</code>: 93, 6107, 6014, 6107</td>
+</tr>
+</tbody>
+</table>
+<p>The safewgsl width is a consequence of <code>N</code> and of 202
+types with up to 4-argument functions, not a tuned buffer: it is what
+the paged geneframe (CR_multityped_gep §10c) has to hold. The older
+<code>kingdoms/wgsl</code> kingdom reads 15,038 words at
+<code>N = 8</code> and 66,590 at <code>N = 32</code>.</p>
 </body>
 </html>
