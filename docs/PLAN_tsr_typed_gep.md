@@ -136,9 +136,9 @@ A dual is a shape with a depth level: `shape.level`, for example `A21.T1`. With 
 
 Rows per operator: order only, 11 per unary and 105 per binary (574 rows); order and depth, 22 per raising unary, 33 per level-keeping unary and 945 per binary (4,132 rows, of which 352 unary and 3,780 binary). The depth-only kingdom (arm E) is the old `typed_depth_table` with ordered pairs: 3 duals, 68 rows.
 
-**The root dual.** The root slot of a gene needs one type that any legal expression can fill. It is a dual of its own, `ROOT`, with a twin of every function row (same operator, same argument duals, output `ROOT`). Nothing takes `ROOT` as an argument, so its head is exactly one cell and its tail is empty (Section 3). A twin decodes to the same evaluator operator as the row it copies, so the decoder is unchanged.
+**The root dual.** The root slot of a gene needs one type that any legal expression can fill. It is a dual of its own, `ROOT`, with a twin of every function row (same operator, same argument duals, output `ROOT`). Nothing takes `ROOT` as an argument, so `h = 1`, `P = 1`, there is no tail, and `d = 1`: one Dc word. `ROOT` also has a variable terminal for every input and a `?` constant placeholder (otherwise a gene that is a bare variable or constant could not be written, and the rev-4 check "a terminal for every root" would fail). The generator emits them and the check asserts them. A twin decodes to the same evaluator operator as the row it copies, so the decoder is unchanged.
 
-**Terminals are polymorphic.** A slot of type `T` is filled by a function row outputting `T`, or by a terminal outputting `T`. Every variable and every constant placeholder is given one terminal row for every dual, so a leaf fits every slot. This is the "polymorphic spelling has one symbol per output type" of MultiTypedGEP.md section 1, and it is the only way to satisfy the check "a terminal for every demanded type" (kingdom_contract.rs:184-190), because a bare leaf has order 1 and a type such as A21 cannot otherwise have a terminal.
+**Terminals are polymorphic.** A slot of type `T` is filled by a function row outputting `T`, or by a terminal outputting `T`. Every variable and every constant placeholder `?_T` is given one terminal row for every dual including `ROOT` (34 duals in arm C, not 33), so a leaf fits every slot. This is the "polymorphic spelling has one symbol per output type" of MultiTypedGEP.md section 1, and it is the only way to satisfy the check "a terminal for every demanded type" (kingdom_contract.rs:184-190), because a bare leaf has order 1 and a type such as A21 cannot otherwise have a terminal.
 
 Because a leaf fits any slot, a dual is an **upper bound** on the subtree under the slot, not its exact profile. A function row's output is computed from the argument duals it asks for, so it is never below the true profile of what fills it. Two consequences:
 
@@ -175,7 +175,7 @@ Notation `shape.level`. Constants and variables are `P1.F`.
 | `x²`, `x³` | pow2(P1.F), pow3(P1.F) | P1.F (whole powers do not raise) |
 | `(a + b)²` | pow2(A12.F) | P2.F |
 
-Raw `pow` is not in the engine's SR alphabet (`SymbolTable::wide`, `engine.rs:160-171`); if added it would take a base dual and a literal exponent that is not an arm, which differs from `stream_order`, where a leaf exponent ties a leaf base (order 2). That mismatch must be settled by the sympy convention before `pow` is added.
+Raw `pow` and the other spellings are in 2.8.
 
 ### 2.6 What was checked
 
@@ -206,7 +206,21 @@ Ceiling 2 is used for the exhaustive runs because an order-3 tree needs 7 nodes 
 | gene width (one type 101 words at N = 17) | 101 | 3,656 (order) or 20,980 (order and depth) |
 | equal spellings of one tree | 1 | 105 (order) or 945 (order and depth) for `x + y` alone, because the leaves can be read from any row |
 
-### 2.8 One type is classical GEP
+### 2.8 Alphabet inventory: which spellings can occur (`pow` and aliases)
+
+| spelling | can a raw gene contain it? | evidence | rule in the TSR kingdom |
+|---|---|---|---|
+| the 18 operators of `SymbolTable::wide` (`engine.rs:160-171`) | yes | the table | a row set each (2.3) |
+| `Pow(x, c)`, binary | **no**. `wide()` has no `Pow`; `with_compounds()` adds only the six compounds (`engine.rs:9439-9442`). 138,065 hall-of-fame rows of the 702 solved TF_DEV1 seeds contain 0 `Pow` nodes | `logs/TF_DEV1/p/*/seed*/hof.tsv`, raw column | not in the alphabet; listed by name in the kingdom check as an absent row |
+| `Pow(x, 2)`, `Pow(x, 3)` arriving from outside (a sympy import, an external seed, a rewrite) | only through a rewrite or import | | canonicalised before typing to `pow2(x)`, `pow3(x)` (unary, order preserved). The same step runs in `row_for` (P2) |
+| `Pow(x, c)`, any other literal c | only through a rewrite or import | | not in the alphabet: the rewrite is not offered, the import is reported as a named defect. It is never typed with the binary merge rule, which would count the exponent as an arm and give two leaves order 2 |
+| raw `Sqrt`, `Log`, `Exp`, `Asin`, `Acos` | yes, from rewrite paths: the last hall-of-fame row of 702 solved seeds has `Sqrt` over `ProtectedExp` in 5 seeds, `Sqrt` over `ProtectedInv` in 1, `Sqrt` over `Pow2` in 1, `Log` over `ProtectedExp` in 1 | same files | not in the alphabet (their domain differs from the protected forms; protected is never mapped to raw). The check lists them as absent rows; a rewrite that produces one is not offered |
+| `1/sqrt(z)` | yes, as `pinv(psqrt(z))` (and `psqrt(pinv(z))`) | 15 of 702 final models contain `ProtectedInv` over `ProtectedSqrt` | two unary rows, typed through depth and order like any pair |
+| compounds (`SqrtSum`, `InvSqrtDiff`, ...) | only in `with_compounds()` tables | | the composition of the member rows; none in the primary arms |
+
+The generator test requires one row set per symbol of `wide()` and an explicit absent entry for every other `Op` name that `math_to_nodes` can read, so a spelling that is neither is a failing test, not prose.
+
+### 2.9 One type is classical GEP
 
 With the order limit and the depth limit both off, the generator emits one dual F and the 18 operators with all arguments and the result F. Then `a_{F,F} = 2` and `n_F = 2`, the layout is the physical Karva head and tail (`t = d = h + 1` at `h = 33`), and the contract at N = 17 gives width 101, the same as arm A. The root dual is not needed with one type (the root is F).
 
@@ -225,6 +239,19 @@ Formulas (MultiTypedGEP.md §2): `h_T = [T = R] + (N − 1)·a_T`, `P_T = [T = R
 | order and depth, windows (F) | 33 + root | 4,047 (8,094) | 9,244 | 20,980 | 40,540 | 207.7 × |
 
 Widths are in 32-bit words per gene, Dc included. A classical gene of head 34 is 104 words (34 + 35 + 35).
+
+**Pinned values.** Generated rows were written to TSV files (functions with their root twins, and terminals: a variable and a `?` for every dual including `ROOT`) and the bounds were recomputed from the files by separate code (`frompin.py` in the review folder of this session's scratchpad; to be committed as a test over the real generated TSVs in step F1):
+
+| arm, N | rows with twins | duals + ROOT | sum of heads | L | sum of tails | sum of Dc | width | unary-only producers (heads) | ROOT (h, P, t, d) |
+|---|---|---|---|---|---|---|---|---|---|
+| B, 8 | 1,148 | 12 | 134 | 100 | 719 | 769 | 1,622 | 3 (35) | 1, 1, 0, 1 |
+| B, 17 | 1,148 | 12 | 305 | 226 | 1,619 | 1,732 | 3,656 | 3 (80) | 1, 1, 0, 1 |
+| C, 8 | 8,264 | 34 | 400 | 296 | 4,243 | 4,601 | 9,244 | 9 (105) | 1, 1, 0, 1 |
+| C, 17 | 8,264 | 34 | 913 | 674 | 9,625 | 10,442 | 20,980 | 9 (240) | 1, 1, 0, 1 |
+| E, 17 | 136 | 4 | 97 | 98 | 198 | 263 | 558 | 0 | 1, 1, 0, 1 |
+| F, 17 | 8,094 | 34 | 913 | 674 | 9,625 | 10,442 | 20,980 | 9 (240) | 1, 1, 0, 1 |
+
+Every demanded dual has both terminals in all six. For C, L = 1 + 913 − 1 − 240 + ... equals 674 because the nine plain-shape duals (P1, P2, P3 at three levels) are unary-only producers with 240 head cells, which add nothing to the leaf count.
 
 **Per-type budgets for arm C at N = 17.**
 
@@ -310,9 +337,9 @@ Each step ends with its tests green and its own commit. Cargo is never run while
 | P2 | `src/evolve/constants.rs` | one pool `C_T` per dual (`ConstantPools::from_range`, `:55`), `n_rnc` constants each; `?_T` at every dual |
 | P3 | `scripts/law_runner.py` | pass an arm's extra environment to the child (the child environment is built from a whitelist, `:239-275`); `FIT_ENV` stops hard-coding `EVOLVE_TYPED_DEPTH` (`:66`) |
 | P3 | `scripts/sr_old_new.py` | generalise from two fixed arms (`ARMS = ("old", "new")`) to named arms read from `experiments/tsr_arms.json`; the table shows all arms side by side; the dev-seed guard stays |
-| P3 | `experiments/tsr_arms.json` (new) | the eight arms of Section 7 |
+| P3 | `experiments/tsr_arms.json` (new) | the nine arms (and G) of Section 7 |
 
-### Removals (after the experiment, only if the rule of Section 7.5 selects types)
+### Removals (after the experiment, only if the rule of Section 7.6 selects types)
 
 The old options stay until the experiment has finished, because arms A, B and D use them. When types are adopted, remove, keeping `stream_order` and `t_depth` as the test oracle and as sensors:
 
@@ -350,11 +377,12 @@ Init and mutation need no depth budget and no change: the typed initialiser and 
 | 5 | Host and device parity on the TSR layouts: `decode_reference` against the kernel, and typed init and vary against their host twins, in the style of `typed_decode.rs:703-713` and `typed_device.rs:785-960`; run one GPU process at a time | arms B and C |
 | 6 | Contract: bound exactness (the program that attains `P_T`, the one that attains `L + h_T`, the chain that attains `h_T` from N) for B and C; the widths 3,656, 20,980, 1,622, 9,244 pinned; the check fails by name on the exact-leaf variant (33 defects) | MultiTypedGEP.md §7 items 1-2 |
 | 7 | The golden: after test 5 first passes, pin one line per TSR arm in `tests/fixtures/` with `PHYLU_PIN_GOLDEN=1` at that commit (the pattern at `typed_device.rs:930-1000`); later commits compare | 2 new lines |
+| 9 | Alphabet: one row set per symbol of `wide()`; every other `Op` name `math_to_nodes` reads is an explicit absent entry (2.8); `Pow(x,2)` and `Pow(x,3)` canonicalise to `pow2`, `pow3`; ROOT has both terminals; every demanded dual has a variable and a `?` | generated, exhaustive |
 | 8 | Redundancy: for `x + y` the count of distinct row choices that decode to it equals 105 (B) and 945 (C); written as a test so a change to the leaf rule is noticed | 105, 945 |
 
 ## 7. Experiments
 
-Andrew's rule: build every arm and measure; nothing is guessed and nothing is left to a choice. Dev seeds 7001 to 7010 only; SRBench's official seeds are rejected by the harness (`sr_old_new.py`, the `OFFICIAL_SEEDS` guard). Stop: 1,000,000 counted candidate evaluations, with the fixed law bar as early stop (log10 p at most −19 and 1 − R² at most 1e-6).
+Andrew's rule: build every arm and measure; nothing is guessed and nothing is left to a choice. Development seeds 7001 to 7010 for everything up to arm selection; SRBench's official seeds are rejected by the harness (`sr_old_new.py`, the `OFFICIAL_SEEDS` guard) and are used only in the final step of 7.6. Stop: 1,000,000 counted candidate evaluations, with the fixed law bar as early stop (log10 p at most −19 and 1 − R² at most 1e-6).
 
 ### 7.1 Arms
 
@@ -363,15 +391,22 @@ Andrew's rule: build every arm and measure; nothing is guessed and nothing is le
 | A | one type (today) | depth check (`EVOLVE_TYPED_DEPTH=2`) | the baseline |
 | B | order duals, N = 17 | depth check | order carried in types |
 | C | order and depth duals, N = 17 | none | the whole design |
-| D | one type | depth check and `EVOLVE_TYPED_ORDER=3` | the old hard rule, the reference |
+| D-old | one type | depth check and `EVOLVE_TYPED_ORDER=3` with the tidied-spelling pair table as shipped (`order.rs:93-134`) | the old hard rule, as it lost |
+| D-raw | one type | depth check and the order rule with the pair table rebuilt from RAW decoded gene spellings | the old rule without its known artefact |
 | E | depth duals only, N = 17 | none | depth carried in types, never run before |
 | F | C plus the argument windows | none | how much of D's rule types can carry |
 | B8 | B at N = 8 | depth check | the cost of width |
 | C8 | C at N = 8 | none | the cost of width |
 
-Together A, B, C, E form a 2 × 2 (order: none or types; depth: decode check or types), and D, F bracket the old rule.
+Together A, B, C, E form a 2 × 2 (order: none or types; depth: decode check or types), and D-old, D-raw, F bracket the old rule.
 
-`experiments/tsr_arms.json` (to be created in step P3) maps each arm name to environment variables, for example `"C": {"EVOLVE_SR_KINGDOM": "order_depth", "EVOLVE_PROGRAM_SIZE": "17"}` and `"D": {"EVOLVE_SR_KINGDOM": "single", "EVOLVE_TYPED_DEPTH": "2", "EVOLVE_TYPED_ORDER": "3"}`.
+**D-raw table.** Built from the final hall-of-fame row's raw S-expression (`hof.tsv`, last column, protected names kept, Neg and Abs transparent) of every seed that SRBench judged solved in TF_DEV1 and TF_DEV2, not from tidied sympy or `model_plain` text. Both `ProtectedInv` over `ProtectedSqrt` and `ProtectedSqrt` over `ProtectedInv` go in when observed. Measured now on TF_DEV1 alone: 702 solved seeds, 85 distinct pairs in the final rows; `ProtectedInv` over `ProtectedSqrt` occurs in 15 seeds and is absent from `STACKS`; `Pow2` over `ProtectedInv` in 21 seeds. (Using every hall-of-fame row instead would accept nearly every pair, because the hall holds the towers; the final row is the closest stand-in for the submitted model. It is not proven to be the submitted row; the harvest script records which row it took.) The harvest runs on development logs only and its output table is committed before the run.
+
+**What C tests.** Arm C changes four things at once against A: gene width, neutral multiplicity (many rows spell one tree), the operator sampling mix, and where the constraint sits (in the representation, not after decoding). It tests the TSR kingdom as a whole. A gain or loss cannot be assigned to one mechanism by this experiment; B8 and C8 separate width only partly.
+
+`experiments/tsr_arms.json` (to be created in step P3) maps each arm name to environment variables, for example `"C": {"EVOLVE_SR_KINGDOM": "order_depth", "EVOLVE_PROGRAM_SIZE": "17"}` `"D-old": {"EVOLVE_SR_KINGDOM": "single", "EVOLVE_TYPED_DEPTH": "2", "EVOLVE_TYPED_ORDER": "3"}`, and `"D-raw"` the same with `EVOLVE_ORDER_STACKS=<path of the harvested table>`.
+
+**Arm G (pre-registered, separate).** C plus scaled-variable terminals (`k·x`, order 2, expanded to a multiplication at decode) and a restricted exp input type that only those terminals and order-2-or-more functions can fill. This changes the hypothesis language (a new atom), so it is not part of the primary TSR design; it is run only as its own pre-registered second step, with its own expectations written beforehand, and never simulated by decoding `exp(x)` and rejecting it.
 
 ### 7.2 Metrics
 
@@ -385,8 +420,9 @@ These are predictions, each with its basis. None is a measurement of the new arm
 |---|---|---|
 | seeds passing the strict test, A | 380 (95.0 %) | measured, `2026-10-20_sr_typed_gep.md`; re-measured in the same session |
 | seeds passing, B, C, E | A minus 6 to A plus 6 | one standard deviation of the difference between two arms at 95 % over 400 runs is sqrt(2 · 400 · 0.95 · 0.05) = 6.2; types change which shapes are built, and on easy laws a ceiling changed shape and not outcome (0/60 against 0/60) |
-| seeds passing, D | A minus 7 | the hard rule lost 14 of 810 solved on 81 laws in `AB_ORDER_EASY` against `TF_DEV1` (1.7 %, which is 7 of 400); older engine, so a weak basis |
-| seeds passing, F | between C and D | carries the upper bounds, not the exp minimum or the pair table |
+| seeds passing, D-old | A minus 7 | the hard rule lost 14 of 810 solved on 81 laws in `AB_ORDER_EASY` against `TF_DEV1` (1.7 %, which is 7 of 400); older engine, so a weak basis |
+| seeds passing, D-raw | between D-old and A | the table now accepts the observed `pinv(psqrt)` spelling; the ceiling, windows and exp minimum remain |
+| seeds passing, F | between C and D-old | carries the upper bounds, not the exp minimum or the pair table |
 | seeds passing, B8, C8 | no more than B, C | a smaller guarantee (8 functions in any shape) can only lose programs |
 | median evaluations to stop, passing seeds | A 179,820; B, C, E within 10 % of A | most of these 40 laws are found in 2 to 3 generations, little room to gain |
 | median model length (characters), passing seeds | A 31; B, C, E 28 to 34 | types do not penalise length |
@@ -399,12 +435,12 @@ All 133 laws (after the first 40): the six laws D lost, with the old-engine coun
 
 | law (position in order133) | D then | A then | expected now: D | expected now: B, C |
 |---|---|---|---|---|
-| feynman_II_13_23 (52) | 1 | 8 | at most A minus 3 | within 2 of A |
-| feynman_I_10_7 (64) | 3 | 7 | at most A minus 3 | within 2 of A |
-| feynman_II_13_34 (71) | 1 | 5 | at most A minus 3 | within 2 of A |
-| feynman_I_12_11 (77) | 5 | 9 | at most A minus 3 | within 2 of A |
-| feynman_I_15_10 (79) | 1 | 6 | at most A minus 3 | within 2 of A |
-| feynman_I_6_2a (39) | 3 | 8 | at most A minus 3 | within 2 of A |
+| feynman_II_13_23 (52) | 1 | 8 | D-old at most A minus 3; D-raw between | within 2 of A |
+| feynman_I_10_7 (64) | 3 | 7 | D-old at most A minus 3; D-raw between | within 2 of A |
+| feynman_II_13_34 (71) | 1 | 5 | D-old at most A minus 3; D-raw between | within 2 of A |
+| feynman_I_12_11 (77) | 5 | 9 | D-old at most A minus 3; D-raw between | within 2 of A |
+| feynman_I_15_10 (79) | 1 | 6 | D-old at most A minus 3; D-raw between | within 2 of A |
+| feynman_I_6_2a (39) | 3 | 8 | D-old at most A minus 3; D-raw between | within 2 of A |
 
 ### 7.4 Commands
 
@@ -427,7 +463,7 @@ Calibration (3 laws, to learn seconds per seed for each arm before the long run)
 
 ```
 nohup python3 scripts/sr_old_new.py --binary logs/TSR_TYPES/bin/evolve_fit_tsr_20261020 \
-  --arms-file experiments/tsr_arms.json --arms A,B,C,D,E,F,B8,C8 \
+  --arms-file experiments/tsr_arms.json --arms A,B,C,D-old,D-raw,E,F,B8,C8 \
   --laws experiments/order133.txt --limit 3 --seeds 7001,7002,7003,7004,7005,7006,7007,7008,7009,7010 \
   --evaluations 1000000 --seconds 600 --out logs/TSR_TYPES/calib > logs/TSR_TYPES/calib.out 2>&1 &
 tail -f logs/TSR_TYPES/calib/sweep.log
@@ -437,14 +473,14 @@ Run 1, the first 40 laws (the likelihood order), arms alternate per law so any d
 
 ```
 nohup python3 scripts/sr_old_new.py --binary logs/TSR_TYPES/bin/evolve_fit_tsr_20261020 \
-  --arms-file experiments/tsr_arms.json --arms A,D,E,B,C,F,B8,C8 \
+  --arms-file experiments/tsr_arms.json --arms A,D-old,D-raw,E,B,C,F,B8,C8 \
   --laws experiments/order133.txt --limit 40 --seeds 7001,7002,7003,7004,7005,7006,7007,7008,7009,7010 \
   --evaluations 1000000 --seconds 600 --out logs/TSR_TYPES/run1 > logs/TSR_TYPES/run1.out 2>&1 &
 tail -f logs/TSR_TYPES/run1/sweep.log
 ./target/release/phylu-sr-watch --follow logs/TSR_TYPES/run1/stream.jsonl
 ```
 
-Run 2, all 133 laws, with the arms that pass the rule of 7.5 plus A and D: the same command with `--limit 0` and `--out logs/TSR_TYPES/run2`.
+Run 2, all 133 laws, with the arms that pass the rule of 7.6 plus A, D-old and D-raw: the same command with `--limit 0` and `--out logs/TSR_TYPES/run2`.
 
 `--seconds 600` is only the safety kill (the stop is the evaluation count); a seed killed by the clock is listed and counts as not passed.
 
@@ -453,24 +489,43 @@ Run 2, all 133 laws, with the arms that pass the rule of 7.5 plus A and D: the s
 | step | estimate | basis |
 |---|---|---|
 | cold build of fuller and phylu | over 15 minutes | `Rules.md` |
-| arms A and D, 40 laws | 8 minutes each | measured: 16.3 minutes (04:54:56Z to 05:11:15Z) for 800 seed-runs of the old and new arms |
+| arms A, D-old and D-raw, 40 laws | 8 minutes each | measured: 16.3 minutes (04:54:56Z to 05:11:15Z) for 800 seed-runs of the old and new arms |
 | the other six arms, 40 laws | between 8 minutes (no width cost) and 8 minutes × the width ratio (all of the cost scales with width): E 44 minutes, B 4.8 hours, B8 2.1 hours, C and F 27.7 hours, C8 12.2 hours | computed bounds; the true value is in between and the calibration run measures it before the long run |
-| all arms, 40 laws | 64 minutes best case, 75.6 hours worst case | sum of the above |
+| all arms, 40 laws | 72 minutes best case, 75.7 hours worst case (D-raw adds 8 minutes) | sum of the above |
 | all 133 laws, per arm | about 3.3 times the 40-law figure | 133 / 40; later laws are harder, so a lower bound |
 
 The long runs go overnight under `nohup` with the log, one at a time.
 
-### 7.6 Pass and fail rule
+### 7.6 Analysis, pass and fail rule, and seeds
 
-Fixed before the run. Let `sd` be sqrt(2 · n · p · (1 − p)) with n the seed-runs and p arm A's pass rate (6.2 for the first 40 laws).
+**Seeds, three stages.**
+
+| stage | seeds | use | sign-off |
+|---|---|---|---|
+| development | 7001 to 7010 | implementation, calibration, runs 1 and 2, arm selection | none needed |
+| held-out | 7201 to 7210 (checked unused: no script, experiment or log in phylu names them; re-grep before use) | the single final comparison of the pre-registered arm against A and D-raw | none needed |
+| official | SRBench's own seeds (`OFFICIAL_SEEDS`) | one final reported run, after the held-out stage | **needs Andrew's go**; nothing before this step does |
+
+The selected arm and its rule are written to `docs/` (a dated pre-registration file with the arm, the table of D-raw, the commit hashes) before the held-out run starts, and the held-out run is made once.
+
+**Analysis (replaces a binomial heuristic).** The same laws and seeds run in every arm, so outcomes are paired by (law, seed):
+
+| statistic | definition |
+|---|---|
+| paired counts | for arm X against A, over (law, seed) pairs: n10 = X passed and A did not; n01 = A passed and X did not (McNemar counts); exact two-sided McNemar p |
+| paired difference | per law, d_law = passes of X − passes of A (of 10); total = sum over laws |
+| clustered bootstrap | resample LAWS with replacement 10,000 times (seeds stay attached to their law), recompute the total difference; report the 95 % interval |
+| evaluations to find | per law, ratio of median evaluations to stop (X / A) over seeds that pass in both arms; report the median ratio over laws with the same law bootstrap |
+
+**Rule, fixed before the run.**
 
 | rule | condition |
 |---|---|
-| 1. no harm | arm total passes at least A's total minus `sd`, on the 40 laws and on the 133 laws |
-| 2. the lost laws | on the six laws D lost, the arm's combined passes at least A's combined passes minus `sd` |
-| 3. benefit (any one) | total passes at least A plus `sd`; or median evaluations to stop at least 10 % lower over the laws both arms solve; or wall time per generation within 25 % of A together with the structural benefit (no individual rejected at decode) |
+| 1. no harm | the 95 % law-bootstrap interval of the total pass difference X − A has its lower end above −2 passes per 10 laws (a loss of 0.2 per law is the allowed margin), on the 40 laws and on the 133 laws |
+| 2. the lost laws | on the six laws D-old lost, X − A summed over them has a lower interval end above −6 passes (one per law) |
+| 3. benefit (any one) | the interval of the total difference lies above 0; or the median evaluations ratio over laws is at most 0.9 with an interval below 1; or wall time per generation within 25 % of A, together with the structural benefit (no individual rejected at decode) |
 
-An arm passes when rules 1 and 2 hold and rule 3 holds. If B or C passes, the TSR kingdom replaces SR and the removal list is executed; the better of B and C by total passes is kept. If neither passes, types are not adopted, the decode options stay, and the result is recorded as a null: "types did not improve the search". Arm D is never adopted; it is the reference for how much of the old rule types recovered. Arms B8 and C8 are reported either way, for the width cost.
+An arm passes when rules 1, 2 and 3 hold. If B or C passes, the better of the two by point estimate of the total difference is pre-registered as the TSR kingdom and goes to the held-out stage; if it again satisfies the rule against A, the removal list is executed. If neither passes, types are not adopted, the decode options stay, and the result is recorded: "types did not improve the search". D-old and D-raw are never adopted; they show how much of the old rule types recovered. B8 and C8 are reported either way, for the width cost.
 
 ## 8. Risks and open questions
 
@@ -480,7 +535,7 @@ An arm passes when rules 1 and 2 hold and rule 3 holds. If B or C passes, the TS
 | 2 | Many equal spellings of one tree: 105 (B) and 945 (C) rows can express `x + y`, because a leaf fits any slot. The genotype fragments: two individuals with the same tree can differ in every row, which may weaken crossover. | Record distinct genotype hashes against distinct phenotype hashes per generation (the engine keeps `gene_hash`); the experiment shows whether it costs search |
 | 3 | Crossover. Homologous positions are per type and per gene id (MultiTypedGEP.md §5). The root cell is always the one cell of `ROOT`, which holds a twin of a function row, so two parents' roots can disagree on the argument duals of their children. | Measured by the pass rate; if it hurts, the alternative root is an identity wrapper with one row per argument dual (33 rows instead of the 4,132 twins), at the cost of one extra evaluator node |
 | 4 | Operator mix. Rows per output dual run from 4 to 560 in arm C, so the draw is by row, not by operator: an operator with many argument combinations is over-represented against arm A. | The initial operator mix goes in the run card. A weighting that equalises operators is a change to the initialiser's draw (`typed_init.wgsl`), made only if the first run shows the mix matters |
-| 5 | The stack table must be built from raw spellings. The type design has no stack table at all; arm D's table stays as harvested (tidied spellings) and its misses are exactly what Section 1.3 describes. If a pair table is ever re-introduced as a type, it must be harvested from `hof.tsv` and `MODEL_PLAIN` of raw genes, not tidied ones. | Nothing to build now |
+| 5 | The stack table must be built from raw spellings (D-raw does this, 7.1). The type design has no stack table at all; arm D's table stays as harvested (tidied spellings) and its misses are exactly what Section 1.3 describes. If a pair table is ever re-introduced as a type, it must be harvested from `hof.tsv` and `MODEL_PLAIN` of raw genes, not tidied ones. | Nothing to build now |
 | 6 | Engine spellings. Neg, Abs, the `1/sqrt` route, Compound operators (`SqrtSum`, `InvSqrtDiff`, ... which expand to Add plus Sqrt plus Inv; none is in `wide()`). The type design treats Neg and Abs like any unary (order of the argument), as `stream_order` does; compound rows, if a table ever has them, are the composition of the member rows. Raw `Pow` is not in the alphabet; see 2.5. | Test 3 includes all 18 operators |
 | 7 | Rewrites. Cleanse, snap, fold, beam and subexpression regression make trees. Each must pick rows by type and drop a rewrite that has no row (a snap to a constant never raises order, fold never does, a beam graft can). The count of call sites in P2 (21 + 1 + 4 + 42 + 19) is the size of this work. | Test 2 covers every rewriting operator; this is the largest engineering item |
 | 8 | The exp minimum is not carried. If it matters, arm G adds scaled-variable terminals so the exp slot has a terminal of order 2 or more. | Built as a second run if the first run shows D beating C on the exp laws |
@@ -489,6 +544,22 @@ An arm passes when rules 1 and 2 hold and rule 3 holds. If B or C passes, the TS
 | 11 | Sampling of constants: one pool per dual (34 pools of 10 constants in arm C) instead of one pool. Constants are a leaf at every dual. | Same range `rnc_lo`, `rnc_hi`; recorded in the card |
 
 No question is left for Andrew. Each binary choice here (order only or order and depth, windows or not, N = 17 or 8, twin root rows or an identity wrapper, exp minimum dropped or kept) is an arm or a follow-up arm of Section 7.
+
+## Revisions after review
+
+Review: `docs/reviews/2026-10-20_tsr_plan_codex.md`. It confirmed the 11 shapes, the signatures for the 18-symbol alphabet, the closure argument and the widths 3,656 and 20,980. Changes made:
+
+| finding | change |
+|---|---|
+| generic `pow` undefined | 2.8: inventory of spellings from the table and from 138,065 raw hall-of-fame rows (no `Pow` occurs); `Pow(x,2/3)` canonicalised to `pow2`/`pow3`; other exponents and raw `Sqrt`/`Log`/`Exp`/`Asin`/`Acos` listed as absent rows; a generator test (test 9) |
+| ROOT terminals | 2.3: ROOT has a variable and `?` per input, `h = 1, P = 1`, no tail, one Dc word; the check asserts it |
+| pinned intermediates | Section 3: values recomputed from generated TSVs, B and C at N = 8, 17 plus E and F |
+| arm D confounded | 7.1: D-old and D-raw, with the raw table's harvest rule and first measurements |
+| development seeds only | 7.6: development, held-out (7201 to 7210) and official stages, selected arm pre-registered, official step needs Andrew's go |
+| independent-Bernoulli heuristic | 7.6: paired counts, McNemar, law-clustered bootstrap |
+| what C tests | 7.1: C changes width, neutral multiplicity, operator sampling and constraint location together |
+| exp lower bound | dropped from the type arms; arm G is separate and pre-registered (7.1) |
+| crossover homology | already in the design (MultiTypedGEP.md §5); test 2 now states that only homologous frames, Dc included, are crossed and that the ROOT frame is shared by the twins and the ROOT terminals |
 
 ## Appendix A. Reference model used for the numbers
 
