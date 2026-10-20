@@ -111,3 +111,8 @@ All 78 distinct hashes in the report resolve (fuller hashes in fuller, phylu has
 ## Totals
 
 Figures checked: about 265 (78 hashes, about 75 in 2.1, about 65 in 2.2, about 15 in 2.3, about 25 in 2.4, about 8 in the conclusion and caveats; counted by table cell, so the total is approximate). Errors found: 7, all corrected (4774cfc0). Unsourced: 1 figure (load 100) and 1 provenance gap (B, C, D env settings), left for the author.
+
+## Follow-up (team-lead)
+
+- "Load reached 100": source is team-lead's `uptime` at 04:45 local (03:45Z): load averages 51.53, 71.71, 100.99 (1, 5, 15 minute), several cargo builds running. Not in any repo log. Report line now reads "the 15-minute load average reached 101 at about 03:45Z, with several builds running".
+- B, C, D settings added to the speed section from `gpu_queue9.sh` (scratchpad): `EVOLVE_FUNCTION_SHARE`, `EVOLVE_SYNC_STAGES=1`, `EVOLVE_PROGRAM_SIZE=28`, `EVOLVE_SEED=7013`, `EVOLVE_SECONDS=60`, binary `regex_fit_prof3`. The script's per-run argument mapping (which name gets which share and sync) is as stated by team-lead; the script takes them as arguments and I did not see the call lines.

@@ -111,7 +111,7 @@ The rules are longer (54 characters against 17). The throughput expectation in t
 | C, half, waits restored | 4,283 | 14.3 |
 | D, waits restored | 3,722 | 16.5 |
 
-The old build takes 7.3 ms a generation; the typed arm is at 28 to 30 % of the old generation rate at equal budget. Next targets: selection (the elite kernel is `a076dcaa`), cleanse and crossover, and matching each distinct program once.
+All runs are one seed (7013), N = 28, 60 s, binary `552c6c96` except v1 and v2. Settings of A to D: A default head draw (proportional); B `EVOLVE_FUNCTION_SHARE=half`; C half with `EVOLVE_SYNC_STAGES=1`; D proportional with `EVOLVE_SYNC_STAGES=1` (queue script `gpu_queue9.sh`). The old build takes 7.3 ms a generation; the typed arm is at 28 to 30 % of the old generation rate at equal budget. Next targets: selection (the elite kernel is `a076dcaa`), cleanse and crossover, and matching each distinct program once.
 
 ### 2.4 WGSL run 6c, as it stands
 
@@ -134,7 +134,7 @@ Logs: `logs/V24/run6c_halfroot.log`, `logs/V24/run6c_proproot.log`; halfroot sta
 ## 3. Caveats
 
 - Stray GPU runs: my own GPU tests ran around 03:00Z to 03:10Z during the regex A/B, together with mtgep-regex's device tests in the same window. Throughput in that window is lower than it would be alone.
-- Machine-load drift: the load reached 100 at one point; some speed-table runs read 15 to 40 % higher host times than others.
+- Machine-load drift: the 15-minute load average reached 101 at about 03:45Z, with several builds running; some speed-table runs read 15 to 40 % higher host times than others.
 - The old regex arm (phylu `dfcbb1e2`) trained on all 661 rows; the typed arms held out 132. Train FN and FP above are over all rows for both.
 - SR is single-typed, so the 481 against 481 result tests non-regression only.
 - The arms draw different random numbers; per-law differences in 2.1 are within what seeds alone would give, but I have not run a paired test.

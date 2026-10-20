@@ -576,10 +576,16 @@ generation)</h3>
 </tr>
 </tbody>
 </table>
-<p>The old build takes 7.3 ms a generation; the typed arm is at 28 to 30
-% of the old generation rate at equal budget. Next targets: selection
-(the elite kernel is <code>a076dcaa</code>), cleanse and crossover, and
-matching each distinct program once.</p>
+<p>All runs are one seed (7013), N = 28, 60 s, binary
+<code>552c6c96</code> except v1 and v2. Settings of A to D: A default
+head draw (proportional); B <code>EVOLVE_FUNCTION_SHARE=half</code>; C
+half with <code>EVOLVE_SYNC_STAGES=1</code>; D proportional with
+<code>EVOLVE_SYNC_STAGES=1</code> (queue script
+<code>gpu_queue9.sh</code>). The old build takes 7.3 ms a generation;
+the typed arm is at 28 to 30 % of the old generation rate at equal
+budget. Next targets: selection (the elite kernel is
+<code>a076dcaa</code>), cleanse and crossover, and matching each
+distinct program once.</p>
 <h3 id="wgsl-run-6c-as-it-stands">2.4 WGSL run 6c, as it stands</h3>
 <p>Logs: <code>logs/V24/run6c_halfroot.log</code>,
 <code>logs/V24/run6c_proproot.log</code>; halfroot started 06:29:30Z,
@@ -660,8 +666,9 @@ interfaces</td>
 <li>Stray GPU runs: my own GPU tests ran around 03:00Z to 03:10Z during
 the regex A/B, together with mtgep-regex’s device tests in the same
 window. Throughput in that window is lower than it would be alone.</li>
-<li>Machine-load drift: the load reached 100 at one point; some
-speed-table runs read 15 to 40 % higher host times than others.</li>
+<li>Machine-load drift: the 15-minute load average reached 101 at about
+03:45Z, with several builds running; some speed-table runs read 15 to 40
+% higher host times than others.</li>
 <li>The old regex arm (phylu <code>dfcbb1e2</code>) trained on all 661
 rows; the typed arms held out 132. Train FN and FP above are over all
 rows for both.</li>
