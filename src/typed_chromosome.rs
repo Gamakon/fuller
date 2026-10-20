@@ -130,30 +130,7 @@ pub struct Phenotype {
     pub ty: Ty,
 }
 
-/// An expression as a tree of symbols.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Tree {
-    pub symbol: SymbolId,
-    pub const_index: Option<u32>,
-    pub kids: Vec<Tree>,
-}
-
-impl Expressed {
-    pub fn tree(&self) -> Tree {
-        let mut kids: Vec<Vec<(u32, usize)>> = vec![Vec::new(); self.nodes.len()];
-        for (i, n) in self.nodes.iter().enumerate() {
-            if let (Some(p), Some(a)) = (n.parent_step, n.arg_index) {
-                kids[p - 1].push((a, i));
-            }
-        }
-        fn build(e: &Expressed, kids: &[Vec<(u32, usize)>], i: usize) -> Tree {
-            let mut ks = kids[i].clone();
-            ks.sort_unstable();
-            Tree { symbol: e.nodes[i].symbol, const_index: e.nodes[i].const_index, kids: ks.into_iter().map(|(_, c)| build(e, kids, c)).collect() }
-        }
-        build(self, &kids, 0)
-    }
-}
+pub use crate::typed_gep::Tree;
 
 impl Definitions {
     /// Check the set: each reference terminal is a terminal of the declared root
@@ -303,14 +280,14 @@ mod tests {
     }
 
     fn record(k: &KingdomContract, gene_id: u64, root: Ty, h: usize, cells: &[u32]) -> GeneRecord {
-        let layout = GeneLayout::new(k, h, root).expect("layout");
+        let layout = GeneLayout::from_program_size(k, root, h).expect("layout");
         assert_eq!(cells.len(), layout.width, "fixture width");
         GeneRecord { gene_id, root, layout, words: cells.to_vec() }
     }
 
     /// d0 (level 0, root I) = i; d1 (level 1, root S) = pair(s, href_d0).
     fn defs(k: &KingdomContract) -> Definitions {
-        let d0 = Definition { id: 10, level: 0, body: record(k, 0, Ty::I, 1, &[I, I, I, S, S]) };
+        let d0 = Definition { id: 10, level: 0, body: record(k, 0, Ty::I, 1, &[I]) };
         let d1 = Definition { id: 11, level: 1, body: record(k, 0, Ty::S, 1, &[PAIR, S, S, HREF_D0]) };
         Definitions::new(k, vec![d1, d0], BTreeMap::from([(HREF_D0, 10), (HREF_D1, 11)])).expect("definitions")
     }
@@ -351,7 +328,7 @@ mod tests {
         assert_eq!(express_chromosome(&k, &d, &none, &BTreeMap::new()).expect_err("no linker"), ChromosomeDefect::NoLinker { genes: 2 });
         let three = Chromosome { chromosome_id: 0, genes: vec![g(0), g(1), g(2)], linker: Some(LINK) };
         assert!(matches!(express_chromosome(&k, &d, &three, &BTreeMap::new()), Err(ChromosomeDefect::LinkerSignature { .. })));
-        let mixed = Chromosome { chromosome_id: 0, genes: vec![g(0), record(&k, 1, Ty::I, 1, &[I, I, I, S, S])], linker: Some(LINK) };
+        let mixed = Chromosome { chromosome_id: 0, genes: vec![g(0), record(&k, 1, Ty::I, 1, &[I])], linker: Some(LINK) };
         assert_eq!(
             express_chromosome(&k, &d, &mixed, &BTreeMap::new()).expect_err("wrong root"),
             ChromosomeDefect::LinkerSignature { want: vec![Ty::S, Ty::I], got: vec![Ty::S, Ty::S] }
@@ -377,7 +354,7 @@ mod tests {
             ]
         );
         // The same expression written directly: pair(pair(s, i), i).
-        let direct = record(&k, 0, Ty::S, 2, &[PAIR, PAIR, S, S, S, I, I]);
+        let direct = record(&k, 0, Ty::S, 2, &[PAIR, PAIR, S, I, S, S, S, S, I, I]);
         let direct = Chromosome { chromosome_id: 1, genes: vec![direct], linker: None };
         let dp = express_chromosome(&k, &Definitions::new(&k, vec![], BTreeMap::new()).expect("none"), &direct, &BTreeMap::new()).expect("direct");
         let want = node(PAIR, vec![node(PAIR, vec![leaf(S), leaf(I)]), leaf(I)]);
@@ -394,7 +371,7 @@ mod tests {
         let c = Chromosome { chromosome_id: 0, genes: vec![record(&k, 0, Ty::S, 1, &[S, S, S, I])], linker: None };
         assert!(matches!(express_chromosome(&k, &d, &c, &BTreeMap::new()), Err(ChromosomeDefect::RefNotLower { from_level: Some(1), to_level: 1, .. })));
         // d0 at level 0 referencing d1 at level 1: a reference upward.
-        let d0 = Definition { id: 10, level: 0, body: record(&k, 0, Ty::I, 1, &[I, I, I, S, S]) };
+        let d0 = Definition { id: 10, level: 0, body: record(&k, 0, Ty::I, 1, &[I]) };
         let up = Definition { id: 11, level: 1, body: record(&k, 0, Ty::S, 1, &[S, S, S, I]) };
         let low = Definition { id: 12, level: 0, body: record(&k, 0, Ty::S, 1, &[PAIR, HREF_D1, S, I]) };
         let d = Definitions::new(&k, vec![d0, up, low], BTreeMap::from([(HREF_D1, 11)])).expect("set");
@@ -406,7 +383,7 @@ mod tests {
     #[test]
     fn missing_mistyped_and_duplicate_references_are_defects() {
         let k = kingdom();
-        let d0 = || Definition { id: 10, level: 0, body: record(&k, 0, Ty::I, 1, &[I, I, I, S, S]) };
+        let d0 = || Definition { id: 10, level: 0, body: record(&k, 0, Ty::I, 1, &[I]) };
         assert_eq!(
             Definitions::new(&k, vec![d0()], BTreeMap::from([(HREF_BAD, 99)])).expect_err("missing"),
             ChromosomeDefect::RefMissing { symbol: HREF_BAD, def: 99 }

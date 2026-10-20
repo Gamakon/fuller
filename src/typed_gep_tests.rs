@@ -1,21 +1,24 @@
-//! The design's host tests of multi-typed GEP (`MultiTypedGEP.md` section 7):
-//! closure over 100,000 random genes per kingdom, the tail bound with its
-//! measured maximum, one-type equality with classical Karva, and determinism.
+//! The design's host tests of multi-typed GEP (`MultiTypedGEP.md` section 7,
+//! revision 4): closure over 100,000 random genes per kingdom, the per-producer
+//! tail bound with its measured maximum and the constructions that attain it,
+//! locality and homologous crossover, one-type equality with classical Karva,
+//! and determinism.
 //!
-//! The genes are drawn valid by layout: a head cell is any kingdom symbol, a
-//! tail cell of type `T` a terminal of `T`, a Dc cell an index into `C_T`.
-//! Nothing here repairs a gene; a defect fails the test with its text.
+//! The genes are drawn valid by layout: a head cell is any symbol outputting
+//! its domain's type, a tail cell a terminal of that type, a Dc cell an index
+//! into `C_T`. Nothing here repairs a gene; a defect fails the test with its text.
 
 use std::collections::BTreeMap;
 
 use crate::geneframe::Ty;
-use crate::kingdom_contract::{regex_relations, relations_from_rows, sr_relations, KingdomContract, KingdomRelations, SymbolId};
-use crate::typed_gep::{express, Domain, Expressed, GeneLayout};
+use crate::kingdom_contract::{regex_relations, sr_relations, KingdomContract, KingdomRelations, SymbolId};
+use crate::typed_gep::{express, Domain, Expressed, GeneLayout, Span};
 
 const GENES: usize = 100_000;
 /// Length of every `C_T` in these tests.
 const CONSTS: u32 = 5;
-const HEADS: [usize; 4] = [1, 3, 8, 32];
+/// Program sizes `N` the layouts are built for.
+const SIZES: [usize; 4] = [1, 3, 8, 32];
 
 struct Rng(u64);
 
@@ -36,22 +39,33 @@ fn const_lens(k: &KingdomContract) -> BTreeMap<Ty, u32> {
     k.types().iter().filter(|t| k.constant_capable(**t)).map(|t| (*t, CONSTS)).collect()
 }
 
-/// A gene valid by layout, head cells drawn by `head`.
-fn random_gene(k: &KingdomContract, layout: &GeneLayout, rng: &mut Rng, head: &mut dyn FnMut(&mut Rng) -> SymbolId) -> Vec<u32> {
-    (0..layout.width)
-        .map(|pos| {
-            let key = layout.key(pos);
-            match (key.domain, key.domain_type) {
-                (Domain::Head, _) => head(rng),
-                (Domain::Tail, Some(t)) => {
-                    let ts = k.terminals_of(t);
-                    ts[rng.below(ts.len())]
-                }
-                (Domain::Dc, _) => rng.below(CONSTS as usize) as u32,
-                (Domain::Tail, None) => unreachable!("a tail has a type"),
+/// Every symbol outputting `ty`: the alphabet of `head_ty`.
+fn head_symbols(k: &KingdomContract, ty: Ty) -> Vec<SymbolId> {
+    (0..k.n_symbols() as SymbolId).filter(|s| k.output(*s) == ty).collect()
+}
+
+/// A gene valid by layout: each head cell drawn from the symbols of its
+/// domain's type, each tail cell a terminal of its type, each Dc cell an index.
+fn random_gene(k: &KingdomContract, layout: &GeneLayout, rng: &mut Rng) -> Vec<u32> {
+    let mut gene = vec![0u32; layout.width];
+    for s in layout.spans() {
+        draw_span(k, &s, &mut gene, rng);
+    }
+    gene
+}
+
+fn draw_span(k: &KingdomContract, s: &Span, gene: &mut [u32], rng: &mut Rng) {
+    let alpha = if s.domain == Domain::Head { head_symbols(k, s.ty) } else { Vec::new() };
+    for cell in &mut gene[s.off..s.off + s.len] {
+        *cell = match s.domain {
+            Domain::Head => alpha[rng.below(alpha.len())],
+            Domain::Tail => {
+                let ts = k.terminals_of(s.ty);
+                ts[rng.below(ts.len())]
             }
-        })
-        .collect()
+            Domain::Dc => rng.below(CONSTS as usize) as u32,
+        };
+    }
 }
 
 /// The tree check, written without reading the decoder's own bookkeeping:
@@ -81,139 +95,144 @@ fn assert_well_typed(k: &KingdomContract, root: Ty, e: &Expressed, what: &str) {
     }
 }
 
-/// Largest tail and Dc cursor seen per type.
+/// Largest frame, tail and Dc cursor seen per type.
 #[derive(Default)]
 struct Maxima {
+    frame: BTreeMap<Ty, usize>,
     tail: BTreeMap<Ty, usize>,
     q: BTreeMap<Ty, usize>,
 }
 
 impl Maxima {
     fn take(&mut self, e: &Expressed) {
-        for (t, v) in &e.reach.tail_used {
-            let m = self.tail.entry(*t).or_default();
-            *m = (*m).max(*v);
-        }
-        for (t, v) in &e.reach.q_used {
-            let m = self.q.entry(*t).or_default();
-            *m = (*m).max(*v);
+        for (src, dst) in [(&e.reach.frame_used, &mut self.frame), (&e.reach.tail_used, &mut self.tail), (&e.reach.q_used, &mut self.q)] {
+            for (t, v) in src {
+                let m = dst.entry(*t).or_default();
+                *m = (*m).max(*v);
+            }
         }
     }
-    /// Every maximum is within its tail, and the worst ratio is returned.
-    fn assert_below(&self, k: &KingdomContract, h: usize, root: Ty) {
+    /// Every maximum is within its frame, tail and Dc.
+    fn assert_below(&self, layout: &GeneLayout) {
+        for (t, v) in &self.frame {
+            let f = layout.frame(*t).expect("frame");
+            assert!(*v <= f.head_len + f.tail_len, "frame of {t:?} reached {v}, h + t = {}", f.head_len + f.tail_len);
+        }
         for (t, v) in &self.tail {
-            assert!(*v <= k.tail_len(h, *t, root), "tail of {t:?} reached {v}, t_T = {}", k.tail_len(h, *t, root));
+            let f = layout.frame(*t).expect("frame");
+            assert!(*v <= f.tail_len, "tail of {t:?} reached {v}, t_T = {}", f.tail_len);
         }
         for (t, v) in &self.q {
-            assert!(*v <= k.tail_len(h, *t, root), "q of {t:?} reached {v}, t_T = {}", k.tail_len(h, *t, root));
+            let f = layout.frame(*t).expect("frame");
+            assert!(*v <= f.dc_len, "q of {t:?} reached {v}, d_T = {}", f.dc_len);
         }
     }
 }
 
-/// 100,000 random genes through the decoder; returns the per-(h, root) maxima.
-fn closure(rel: &KingdomRelations, label: &str) -> usize {
+/// 100,000 random genes through the decoder over every program size and root.
+fn closure_n(rel: &KingdomRelations, label: &str, sizes: &[usize], genes: usize) -> usize {
     let k = rel.check().unwrap_or_else(|d| panic!("{label} fails its kingdom check: {d:?}"));
     let consts = const_lens(&k);
     let mut rng = Rng(0x5eed ^ label.len() as u64);
-    let n_sym = k.n_symbols();
     let mut worst = 0usize;
     let mut layouts: BTreeMap<(usize, Ty), (GeneLayout, Maxima)> = BTreeMap::new();
-    for g in 0..GENES {
-        let h = HEADS[g % HEADS.len()];
+    for g in 0..genes {
+        let n = sizes[g % sizes.len()];
         let root = k.roots()[rng.below(k.roots().len())];
-        let (layout, maxima) = layouts.entry((h, root)).or_insert_with(|| (GeneLayout::new(&k, h, root).expect("layout"), Maxima::default()));
-        let gene = random_gene(&k, layout, &mut rng, &mut |r| r.below(n_sym) as u32);
+        let (layout, maxima) = layouts.entry((n, root)).or_insert_with(|| (GeneLayout::from_program_size(&k, root, n).expect("layout"), Maxima::default()));
+        let gene = random_gene(&k, layout, &mut rng);
         let e = express(&k, layout, &gene, &consts).unwrap_or_else(|d| panic!("{label} gene {g}: {d}"));
         assert_well_typed(&k, root, &e, &format!("{label} gene {g}"));
         worst = worst.max(e.nodes.len());
         maxima.take(&e);
     }
-    for ((h, root), (_, m)) in &layouts {
-        m.assert_below(&k, *h, *root);
+    for (layout, m) in layouts.values() {
+        m.assert_below(layout);
     }
-    println!("{label}: {GENES} random genes closed, largest tree {worst} nodes, {} (h, root) layouts", layouts.len());
+    println!("{label}: {genes} random genes closed, largest tree {worst} nodes, {} (N, root) layouts", layouts.len());
     worst
 }
 
-/// A head built to demand the most of `target`'s tail. The head is chosen in
-/// the order the slots are met: for each slot of type `U` the function of
-/// output `U` with the most arguments of type `target` (most arguments when
-/// `target` is None), ties drawn. The walk then reads exactly these rows, since
-/// the n-th slot of a type reads that type's n-th head row.
-fn greedy_head(k: &KingdomContract, h: usize, root: Ty, target: Option<Ty>, rng: &mut Rng) -> Vec<SymbolId> {
-    let mut head: Vec<SymbolId> = Vec::new();
-    let mut queue = std::collections::VecDeque::from([root]);
+/// A gene whose head is built to demand the most of `target`'s tail (most
+/// arguments of any type when `target` is None). Slots are met in the walk's
+/// order; the k-th slot of a type reads that type's k-th head row, which gets
+/// the function of that output with the most arguments of `target`, ties drawn.
+/// A head row with no function to put there gets a terminal.
+fn greedy_gene(k: &KingdomContract, layout: &GeneLayout, target: Option<Ty>, rng: &mut Rng) -> Vec<u32> {
+    let mut gene = random_gene(k, layout, rng);
+    let mut cursor: BTreeMap<Ty, usize> = BTreeMap::new();
+    let mut queue = std::collections::VecDeque::from([layout.root]);
     while let Some(u) = queue.pop_front() {
-        if head.len() == h {
-            break;
+        let frame = layout.frame(u).expect("frame");
+        let c = cursor.entry(u).or_default();
+        let row = *c;
+        *c += 1;
+        if row >= frame.head_len {
+            continue;
         }
         let score = |f: &SymbolId| match target {
             Some(t) => k.signature(*f).iter().filter(|a| **a == t).count(),
             None => k.signature(*f).len(),
         };
-        let best = k.functions_of(u).iter().map(score).max();
-        let Some(best) = best else { continue };
+        let Some(best) = k.functions_of(u).iter().map(score).max() else {
+            gene[frame.head_off + row] = k.terminals_of(u)[rng.below(k.terminals_of(u).len())];
+            continue;
+        };
         let tied: Vec<SymbolId> = k.functions_of(u).iter().copied().filter(|f| score(f) == best).collect();
         let f = tied[rng.below(tied.len())];
-        head.push(f);
+        gene[frame.head_off + row] = f;
         queue.extend(k.signature(f).iter().copied());
     }
-    let n_fn: Vec<SymbolId> = (0..k.n_symbols() as SymbolId).filter(|s| !k.is_terminal(*s)).collect();
-    while head.len() < h {
-        head.push(n_fn[rng.below(n_fn.len())]);
-    }
-    head
+    gene
 }
 
-/// Heads built to demand the most of each type, from every root. Records the
-/// largest tail and Dc cursor and asserts the design bound holds.
-fn adversarial(rel: &KingdomRelations, label: &str) -> Attained {
-    let k = rel.check().expect("kingdom check");
-    let consts = const_lens(&k);
-    let mut rng = Rng(0xad7e);
-    let mut out = Attained::default();
-    for h in [3usize, 32] {
-        for root in k.roots() {
-            let layout = GeneLayout::new(&k, h, *root).expect("layout");
-            let mut m = Maxima::default();
-            let targets: Vec<Option<Ty>> = std::iter::once(None).chain(k.types().iter().filter(|t| k.a_t(**t) > 0).map(|t| Some(*t))).collect();
-            for target in targets {
-                let head = greedy_head(&k, h, *root, target, &mut rng);
-                let mut it = head.into_iter();
-                let gene = random_gene(&k, &layout, &mut rng, &mut |_| it.next().expect("h head cells"));
-                let e = express(&k, &layout, &gene, &consts).unwrap_or_else(|d| panic!("{label} greedy head for {target:?}: {d}"));
-                assert_well_typed(&k, *root, &e, label);
-                m.take(&e);
-            }
-            m.assert_below(&k, h, *root);
-            for t in k.frame_types(*root) {
-                let (reached, bound) = (m.tail.get(&t).copied().unwrap_or(0), k.tail_len(h, t, *root));
-                out.frames += 1;
-                out.attained += usize::from(reached == bound);
-                out.largest_ratio = out.largest_ratio.max(reached as f64 / bound as f64);
-            }
-        }
-    }
-    out
-}
-
-/// How close the greedy heads came to each tail's bound.
+/// How close the greedy genes came to each tail's bound.
 #[derive(Default)]
 struct Attained {
-    /// (h, root, frame type) combinations tried.
+    /// (N, root, frame type) combinations tried with a non-empty tail.
     frames: usize,
     /// Of those, the tails read to exactly `t_T`.
     attained: usize,
     largest_ratio: f64,
 }
 
+/// Genes built to demand the most of each type, from every root. Records the
+/// largest tail and Dc cursor and asserts the design bound holds.
+fn adversarial(rel: &KingdomRelations, label: &str, sizes: &[usize]) -> Attained {
+    let k = rel.check().expect("kingdom check");
+    let consts = const_lens(&k);
+    let mut rng = Rng(0xad7e);
+    let mut out = Attained::default();
+    for n in sizes {
+        for root in k.roots() {
+            let layout = GeneLayout::from_program_size(&k, *root, *n).expect("layout");
+            let mut m = Maxima::default();
+            let targets: Vec<Option<Ty>> = std::iter::once(None).chain(k.types().iter().filter(|t| k.a_t(**t) > 0).map(|t| Some(*t))).collect();
+            for target in targets {
+                let gene = greedy_gene(&k, &layout, target, &mut rng);
+                let e = express(&k, &layout, &gene, &consts).unwrap_or_else(|d| panic!("{label} greedy gene for {target:?}: {d}"));
+                assert_well_typed(&k, *root, &e, label);
+                m.take(&e);
+            }
+            m.assert_below(&layout);
+            for f in layout.frames.iter().filter(|f| f.tail_len > 0) {
+                let reached = m.tail.get(&f.ty).copied().unwrap_or(0);
+                out.frames += 1;
+                out.attained += usize::from(reached == f.tail_len);
+                out.largest_ratio = out.largest_ratio.max(reached as f64 / f.tail_len as f64);
+            }
+        }
+    }
+    out
+}
+
 /// Drop what a kingdom cannot host today: functions with an input type that has
-/// no terminal, and roots with none. This is a test-only view of the WGSL
-/// kingdom until fuller supplies terminals for the store and `array<T>`
-/// duals (CR section 9 item 3); the full kingdom fails its check and is
-/// reported as failing.
+/// no terminal, and roots with none. This is a test-only view of the older WGSL
+/// kingdom (`kingdoms/wgsl`), which fails its own check on the store and
+/// `array<T>` duals and is reported as failing.
 #[cfg(feature = "wgsl")]
 fn covered(rel: &KingdomRelations) -> KingdomRelations {
+    use crate::kingdom_contract::relations_from_rows;
     let n = rel.names.len();
     let mut out = vec![None; n];
     for (s, t) in &rel.symbol_outputs {
@@ -243,12 +262,12 @@ fn covered(rel: &KingdomRelations) -> KingdomRelations {
 
 #[test]
 fn closure_sr() {
-    closure(&sr_relations(), "SR");
+    closure_n(&sr_relations(), "SR", &SIZES, GENES);
 }
 
 #[test]
 fn closure_regex() {
-    closure(&regex_relations(), "regex");
+    closure_n(&regex_relations(), "regex", &SIZES, GENES);
 }
 
 #[cfg(feature = "wgsl")]
@@ -258,7 +277,7 @@ fn closure_wgsl_covered_duals() {
     let sub = covered(&full);
     let k = sub.check().expect("the covered subset passes the check");
     println!("WGSL covered subset: {} of {} symbols, {} of {} roots, {} types", sub.names.len(), full.names.len(), sub.roots.len(), full.roots.len(), k.types().len());
-    closure(&sub, "WGSL (covered)");
+    closure_n(&sub, "WGSL (covered)", &SIZES[..3], 20_000);
 }
 
 /// The bound, measured. For SR it is attained exactly (a head of binary
@@ -266,14 +285,14 @@ fn closure_wgsl_covered_duals() {
 /// most passes it (`Maxima::assert_below`).
 #[test]
 fn tail_bound_measured_maximum() {
-    let sr = adversarial(&sr_relations(), "SR");
+    let sr = adversarial(&sr_relations(), "SR", &SIZES);
     assert_eq!(sr.attained, sr.frames, "SR: t_F is attained by an all-binary head");
     println!("SR: {}/{} tails read to exactly t_T", sr.attained, sr.frames);
-    let re = adversarial(&regex_relations(), "regex");
+    let re = adversarial(&regex_relations(), "regex", &SIZES);
     println!("regex: {}/{} tails read to exactly t_T, largest ratio {:.2}", re.attained, re.frames, re.largest_ratio);
     #[cfg(feature = "wgsl")]
     {
-        let w = adversarial(&covered(&crate::kingdom_contract::wgsl_relations()), "WGSL (covered)");
+        let w = adversarial(&covered(&crate::kingdom_contract::wgsl_relations()), "WGSL (covered)", &SIZES[..3]);
         println!("WGSL (covered): {}/{} tails read to exactly t_T, largest ratio {:.2}", w.attained, w.frames, w.largest_ratio);
         assert!(w.largest_ratio <= 1.0);
     }
@@ -310,21 +329,24 @@ fn classical_karva(k: &KingdomContract, gene: &[u32], dc_off: usize) -> Vec<Karv
 }
 
 /// One type: typed decoding equals classical Karva, gene for gene, constants
-/// included.
+/// included, on the physical layout head `h = 1 + (N - 1) n_max`, tail and Dc of
+/// `h (n_max - 1) + 1` each.
 #[test]
 fn sr_one_type_output_equals_classical_karva() {
     let k = sr_relations().check().expect("SR");
     let consts = const_lens(&k);
     let mut rng = Rng(0x4a12);
-    let n_sym = k.n_symbols();
     let mut hist = 0usize;
     for g in 0..GENES {
-        let h = HEADS[g % HEADS.len()];
-        let layout = GeneLayout::new(&k, h, Ty::F).expect("layout");
-        let gene = random_gene(&k, &layout, &mut rng, &mut |r| r.below(n_sym) as u32);
+        let n = [1usize, 2, 3, 5, 8, 21, 32, 40][g % 8];
+        let layout = GeneLayout::from_program_size(&k, Ty::F, n).expect("layout");
+        let f = layout.frame(Ty::F).expect("F").clone();
+        let h = 1 + (n - 1) * k.n_max() as usize;
+        let t = h * (k.n_max() as usize - 1) + 1;
+        assert_eq!((f.head_off, f.head_len, f.tail_off, f.tail_len, f.dc_off, f.dc_len, layout.width), (0, h, h, t, Some(h + t), t, h + 2 * t));
+        let gene = random_gene(&k, &layout, &mut rng);
         let typed = express(&k, &layout, &gene, &consts).unwrap_or_else(|d| panic!("gene {g}: {d}"));
-        let dc_off = layout.frame(Ty::F).and_then(|f| f.dc_off).expect("F has a Dc");
-        let want = classical_karva(&k, &gene, dc_off);
+        let want = classical_karva(&k, &gene, h + t);
         let got: Vec<_> = typed.nodes.iter().map(|n| (n.symbol, n.parent_step, n.arg_index, n.const_index)).collect();
         assert_eq!(got, want, "gene {g} differs from classical Karva");
         for (i, n) in typed.nodes.iter().enumerate() {
@@ -343,7 +365,7 @@ fn fingerprint(e: &Expressed, h: &mut u64) {
     }
 }
 
-/// Same seed, same genes, same trees, run twice over the three kingdoms.
+/// Same seed, same genes, same trees, run twice over the kingdoms.
 #[test]
 fn expression_is_deterministic() {
     let rels = [sr_relations(), regex_relations()];
@@ -355,9 +377,8 @@ fn expression_is_deterministic() {
                 let mut rng = Rng(77);
                 let mut h = 0xcbf2_9ce4_8422_2325u64;
                 for g in 0..10_000 {
-                    let layout = GeneLayout::new(&k, HEADS[g % HEADS.len()], k.roots()[0]).expect("layout");
-                    let n_sym = k.n_symbols();
-                    let gene = random_gene(&k, &layout, &mut rng, &mut |r| r.below(n_sym) as u32);
+                    let layout = GeneLayout::from_program_size(&k, k.roots()[0], SIZES[g % SIZES.len()]).expect("layout");
+                    let gene = random_gene(&k, &layout, &mut rng);
                     fingerprint(&express(&k, &layout, &gene, &consts).expect("expresses"), &mut h);
                 }
                 h
@@ -367,181 +388,4 @@ fn expression_is_deterministic() {
     let (a, b) = (run(), run());
     assert_eq!(a, b);
     assert_ne!(a[0], a[1], "the fingerprints are not constant");
-}
-
-// ---------------------------------------------------------------------------
-// The DuckDB expression query of the design (section 3), run on the fixture
-// ---------------------------------------------------------------------------
-
-/// The design's query, verbatim from `MultiTypedGEP.md` section 3: a view and a
-/// recursive query that binds the chromosome id.
-const WALK_SQL: &str = include_str!("../nucleotable/sql/typed_gep_expression.sql");
-
-/// Runs the setup script, the view and the query for each chromosome and prints
-/// `{chromosome_id: rows}` as JSON. Reads argv: setup path, then chromosome ids.
-const DRIVER: &str = r#"
-import duckdb, json, sys
-view, query = open(sys.argv[1]).read().split("\n\nWITH RECURSIVE", 1)
-query = "WITH RECURSIVE" + query
-con = duckdb.connect(":memory:")
-con.execute(open(sys.argv[2]).read())
-con.execute(view)
-print(json.dumps({c: con.execute(query, [int(c)]).fetchall() for c in sys.argv[3:]}))
-"#;
-
-fn sql_str(s: &str) -> String {
-    format!("'{}'", s.replace('\'', "''"))
-}
-
-/// One gene to load: where it lives, its kingdom and its words.
-struct Loaded<'a> {
-    chromosome: u64,
-    gene: u64,
-    kingdom: &'a str,
-    k: &'a KingdomContract,
-    layout: GeneLayout,
-    words: Vec<u32>,
-}
-
-fn setup_sql(kingdoms: &[(&str, &KingdomContract)], genes: &[Loaded]) -> String {
-    let mut s = String::from(
-        "CREATE TABLE functions(kingdom_id VARCHAR, symbol VARCHAR, output_type VARCHAR);\n\
-         CREATE TABLE terminals(kingdom_id VARCHAR, symbol VARCHAR, output_type VARCHAR);\n\
-         CREATE TABLE argument_signature(kingdom_id VARCHAR, symbol VARCHAR, arg_index BIGINT, required_type VARCHAR);\n\
-         CREATE TABLE genes(chromosome_id BIGINT, gene_id BIGINT, kingdom_id VARCHAR, root_type VARCHAR);\n\
-         CREATE TABLE geneframe(chromosome_id BIGINT, gene_id BIGINT, kingdom_id VARCHAR, domain VARCHAR, domain_type VARCHAR, domain_seq_id BIGINT, symbol VARCHAR, dc_index BIGINT);\n",
-    );
-    for (name, k) in kingdoms {
-        for sym in 0..k.n_symbols() as SymbolId {
-            let table = if k.is_terminal(sym) { "terminals" } else { "functions" };
-            s.push_str(&format!("INSERT INTO {table} VALUES ({}, {}, {});\n", sql_str(name), sql_str(k.name(sym)), sql_str(&format!("{:?}", k.output(sym)))));
-            for (i, t) in k.signature(sym).iter().enumerate() {
-                s.push_str(&format!("INSERT INTO argument_signature VALUES ({}, {}, {i}, {});\n", sql_str(name), sql_str(k.name(sym)), sql_str(&format!("{t:?}"))));
-            }
-        }
-    }
-    for g in genes {
-        s.push_str(&format!("INSERT INTO genes VALUES ({}, {}, {}, {});\n", g.chromosome, g.gene, sql_str(g.kingdom), sql_str(&format!("{:?}", g.layout.root))));
-        let rows: Vec<String> = g
-            .layout
-            .rows(g.chromosome, g.gene, &g.words)
-            .iter()
-            .map(|r| {
-                format!(
-                    "({}, {}, {}, {}, {}, {}, {}, {})",
-                    r.chromosome_id,
-                    r.gene_id,
-                    sql_str(g.kingdom),
-                    sql_str(r.key.domain.name()),
-                    r.key.domain_type.map_or("NULL".to_string(), |t| sql_str(&format!("{t:?}"))),
-                    r.key.domain_seq_id,
-                    r.symbol.map_or("NULL".to_string(), |x| sql_str(g.k.name(x))),
-                    r.dc_index.map_or("NULL".to_string(), |x| x.to_string())
-                )
-            })
-            .collect();
-        s.push_str(&format!("INSERT INTO geneframe VALUES {};\n", rows.join(", ")));
-    }
-    s
-}
-
-/// A node as the query reports it: step, type, frame_k, symbol, depth, parent_step, arg_index.
-fn host_row(k: &KingdomContract, n: &crate::typed_gep::Node) -> String {
-    format!("{} {:?} {} {} {} {:?} {:?}", n.step, n.ty, n.frame_k, k.name(n.symbol), n.depth, n.parent_step, n.arg_index)
-}
-
-fn sql_row(r: &serde_json::Value) -> String {
-    let opt = |v: &serde_json::Value| if v.is_null() { "None".to_string() } else { format!("Some({v})") };
-    format!("{} {} {} {} {} {} {}", r[0], r[1].as_str().unwrap_or("?"), r[2], r[3].as_str().unwrap_or("?"), r[4], opt(&r[5]), opt(&r[6]))
-}
-
-/// The design's query, run in DuckDB on the two-type fixture (two genes of one
-/// chromosome and a gene of another, the same gene id in both, so a frame that
-/// leaked across a gene or chromosome would show) and on 100 random regex genes
-/// over 20 chromosomes: every row equals the host decoder's node. Skipped, with
-/// the reason printed, when no interpreter has the `duckdb` module
-/// (`FULLER_DUCKDB_PYTHON` names one).
-#[test]
-fn duckdb_expression_query_equals_the_host_decoder() {
-    use std::process::Command;
-    let python = std::env::var("FULLER_DUCKDB_PYTHON").unwrap_or_else(|_| "python3".to_string());
-    let probe = Command::new(&python).args(["-I", "-c", "import duckdb"]).output();
-    if !probe.is_ok_and(|o| o.status.success()) {
-        eprintln!("SKIPPED duckdb_expression_query_equals_the_host_decoder: `{python} -I -c 'import duckdb'` fails; set FULLER_DUCKDB_PYTHON");
-        return;
-    }
-    let (left, s, i) = (0u32, 1u32, 2u32);
-    let two = relations_from_rows(
-        "two-type",
-        vec![Ty::S],
-        &[("left".to_string(), vec![Ty::S, Ty::I], Ty::S), ("s".to_string(), vec![], Ty::S), ("i".to_string(), vec![], Ty::I)],
-        &[],
-    )
-    .check()
-    .expect("fixture");
-    let re = regex_relations().check().expect("regex");
-    let mut genes: Vec<Loaded> = Vec::new();
-    let mut fixture = |chromosome: u64, gene: u64, head: [u32; 3]| {
-        let layout = GeneLayout::new(&two, 3, Ty::S).expect("layout");
-        let mut words = head.to_vec();
-        words.extend([s; 4]);
-        words.extend([i; 3]);
-        genes.push(Loaded { chromosome, gene, kingdom: "two-type", k: &two, layout, words });
-    };
-    fixture(1, 0, [left, i, s]); // the design's table
-    fixture(1, 1, [left, left, s]);
-    fixture(2, 0, [left, s, i]);
-    let mut rng = Rng(0xd0c);
-    let consts = const_lens(&re);
-    for chromosome in 3..23u64 {
-        for gene in 0..5u64 {
-            let layout = GeneLayout::new(&re, 8, Ty::Pattern).expect("layout");
-            let n_sym = re.n_symbols();
-            let words = random_gene(&re, &layout, &mut rng, &mut |r| r.below(n_sym) as u32);
-            genes.push(Loaded { chromosome, gene, kingdom: "regex", k: &re, layout, words });
-        }
-    }
-    let dir = std::env::temp_dir().join(format!("fuller_typed_gep_sql_{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("temp dir");
-    let (driver, walk, setup) = (dir.join("driver.py"), dir.join("walk.sql"), dir.join("setup.sql"));
-    std::fs::write(&driver, DRIVER).expect("write driver");
-    std::fs::write(&walk, WALK_SQL).expect("write walk");
-    std::fs::write(&setup, setup_sql(&[("two-type", &two), ("regex", &re)], &genes)).expect("write setup");
-    let mut chroms: Vec<u64> = genes.iter().map(|g| g.chromosome).collect();
-    chroms.dedup();
-    let out = Command::new(&python)
-        .arg("-I")
-        .arg(&driver)
-        .arg(&walk)
-        .arg(&setup)
-        .args(chroms.iter().map(u64::to_string))
-        .output()
-        .expect("run the driver");
-    assert!(out.status.success(), "duckdb driver failed: {}", String::from_utf8_lossy(&out.stderr));
-    let result: serde_json::Value = serde_json::from_slice(&out.stdout).expect("driver prints JSON");
-    let mut compared = 0usize;
-    for c in &chroms {
-        let rows = result[c.to_string()].as_array().unwrap_or_else(|| panic!("chromosome {c} has no result")).clone();
-        // The query orders by gene_id then step and does not name the gene, so
-        // compare chromosome by chromosome: the host's nodes in the same order.
-        let mut want: Vec<(u64, String)> = Vec::new();
-        for g in genes.iter().filter(|g| g.chromosome == *c) {
-            let e = express(g.k, &g.layout, &g.words, &consts).unwrap_or_else(|d| panic!("chromosome {c} gene {}: {d}", g.gene));
-            want.extend(e.nodes.iter().map(|n| (g.gene, host_row(g.k, n))));
-        }
-        want.sort_by_key(|(gene, row)| (*gene, row.split(' ').next().and_then(|x| x.parse::<usize>().ok()).unwrap_or(0)));
-        let got: Vec<String> = rows.iter().map(sql_row).collect();
-        let want: Vec<String> = want.into_iter().map(|(_, r)| r).collect();
-        assert_eq!(got, want, "chromosome {c}: SQL and host decoder differ");
-        compared += got.len();
-    }
-    // The design's table, as the SQL returned it.
-    let first = result["1"].as_array().expect("chromosome 1");
-    let table: Vec<String> = first.iter().take(3).map(sql_row).collect();
-    assert_eq!(table, vec!["1 S 0 left 0 None None", "2 S 1 s 1 Some(1) Some(0)", "3 I 0 i 1 Some(1) Some(1)"]);
-    println!("DuckDB query equals the host decoder on {} genes in {} chromosomes, {compared} nodes", genes.len(), chroms.len());
-    std::fs::remove_file(&driver).expect("clean");
-    std::fs::remove_file(&walk).expect("clean");
-    std::fs::remove_file(&setup).expect("clean");
-    std::fs::remove_dir(&dir).expect("clean");
 }
