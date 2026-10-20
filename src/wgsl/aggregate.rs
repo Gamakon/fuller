@@ -45,11 +45,12 @@ fn is_value(module: &naga::Module, ty: naga::Handle<naga::Type>, depth: usize) -
 impl WgslKingdom {
     /// This kingdom with the aggregate value duals of `module`'s types appended, and their rows.
     pub fn extended(&self, module: &naga::Module) -> WgslKingdom {
-        let mut found: BTreeMap<String, Shape> = BTreeMap::new();
+        let mut found: BTreeMap<String, (Shape, &'static str)> = BTreeMap::new();
         for (h, t) in module.types.iter() {
             let shape = match &t.inner {
-                naga::TypeInner::Array { base, size: naga::ArraySize::Constant(n), .. } if is_value(module, h, 0) => Shape::Array { elem: type_text(module, *base), len: n.get() },
-                naga::TypeInner::Struct { members, .. } if is_value(module, h, 0) && t.name.is_some() => Shape::Struct { members: members.iter().map(|m| (m.name.clone().unwrap_or_default(), type_text(module, m.ty))).collect() },
+                naga::TypeInner::Array { base, size: naga::ArraySize::Constant(n), .. } if is_value(module, h, 0) => (Shape::Array { elem: type_text(module, *base), len: n.get() }, "value"),
+                naga::TypeInner::Struct { members, .. } if is_value(module, h, 0) && t.name.is_some() => (Shape::Struct { members: members.iter().map(|m| (m.name.clone().unwrap_or_default(), type_text(module, m.ty))).collect() }, "value"),
+                naga::TypeInner::Matrix { columns, rows, scalar } if scalar.kind == naga::ScalarKind::Float && scalar.width == 2 => (Shape::Matrix { cols: *columns as u32, rows: *rows as u32, scalar: "f16".into() }, "real"),
                 _ => continue,
             };
             found.insert(type_text(module, h), shape);
@@ -61,22 +62,30 @@ impl WgslKingdom {
         }
         let mut k = self.clone();
         let base = k.duals.len();
-        for (i, (slot, shape)) in found.iter().enumerate() {
+        for (i, (slot, (shape, form))) in found.iter().enumerate() {
             let index = u16::try_from(base + i).expect("fewer than 65,536 duals");
-            k.duals.push(WgslDual { index, reference: format!("A{:03}", i + 1), dual: format!("{slot}.value"), slot: slot.clone(), form: "value".into(), lanes: 0, fallback_bits: 0, fallback_noop: false, fallback_elem: false, literal: None });
+            let lanes = if let Shape::Matrix { cols, rows, .. } = shape { cols * rows } else { 0 };
+            k.duals.push(WgslDual { index, reference: format!("A{:03}", i + 1), dual: format!("{slot}.{form}"), slot: slot.clone(), form: (*form).into(), lanes, fallback_bits: 0, fallback_noop: false, fallback_elem: false, literal: None });
             k.shapes.insert(index, shape.clone());
         }
         let by_dual: BTreeMap<String, Ty> = k.duals.iter().map(|d| (d.dual.clone(), d.ty())).collect();
         let dual_of = |slot: &str| by_dual.get(&format!("{slot}.{}", default_form(slot))).copied();
         let index_ty = by_dual.get("u32.index").copied();
         let mut rows: Vec<WgslRow> = Vec::new();
-        for (i, shape) in found.values().enumerate() {
+        for (i, (shape, _)) in found.values().enumerate() {
             let a = Ty::Wgsl((base + i) as u16);
             rows.push(WgslRow { name: "agg.zero".into(), template: "A-zero".into(), inputs: Vec::new(), output: a, terminal: true });
             match shape {
                 Shape::Array { elem, .. } => {
                     if let (Some(e), Some(ix)) = (dual_of(elem), index_ty) {
                         rows.push(WgslRow { name: "agg.at".into(), template: "A-at".into(), inputs: vec![a, ix], output: e, terminal: false });
+                    }
+                }
+                Shape::Matrix { cols, rows: nrows, scalar } => {
+                    if let Some(col) = by_dual.get(&format!("vec{nrows}<{scalar}>.real")) {
+                        for c in 0..*cols {
+                            rows.push(WgslRow { name: format!("shape.col_{c}"), template: "A-col".into(), inputs: vec![a], output: *col, terminal: false });
+                        }
                     }
                 }
                 Shape::Struct { members } => {

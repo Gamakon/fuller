@@ -6901,7 +6901,7 @@ fn read_entry_under(at: &Reading, ep: usize, grid: (u32, u32, u32, u32), preset:
         }
         let pure = inits.is_empty() && arg_roots.is_empty() && roots.values().all(|rs| rs.iter().all(|r| matches!(r.kind, RootKind::Return)));
         let composite = (name.starts_with("at_vec") || name.starts_with("col_mat")) && nf.arguments.len() == 2 && COMPOSITES.iter().any(|(n, text)| *n == name && source.contains(text));
-        if body.is_none() && (pure || composite) && row.is_none() {
+        if body.is_none() && (pure || composite) && row.is_none() && nf.result.is_some() {
             return Err(format!("helper {name} returns nothing"));
         }
         let args = nf.arguments.iter().enumerate().map(|(i, a)| format!("arg.{}", a.name.clone().unwrap_or_else(|| i.to_string()))).collect();

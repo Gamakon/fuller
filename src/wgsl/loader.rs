@@ -287,6 +287,8 @@ pub enum Shape {
     Array { elem: String, len: u32 },
     /// A struct: its members' names and slots, in order.
     Struct { members: Vec<(String, String)> },
+    /// A matrix of a scalar the shipped duals have no matrix of (`mat2x2<f16>`).
+    Matrix { cols: u32, rows: u32, scalar: String },
 }
 
 impl WgslKingdom {
