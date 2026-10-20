@@ -31,10 +31,10 @@ Also `1ef6490d`, `5e815c9b`, `8dad48ec`.
 
 | part | commits |
 |---|---|
-| init, vary, decode, walk, select | `65a1cbc7`, `f279b306`, `34bae3a2`, `809949ba`, `bb11e3e2`, `8e994549`, `036dd9e4`, `fb6c91fd`, `038ec20e`, `f752a9af`, `2b7cc0e9` |
+| init, vary, decode, walk, select, evaluator node limit | `65a1cbc7`, `f279b306`, `34bae3a2`, `809949ba`, `bb11e3e2`, `8e994549`, `036dd9e4`, `fb6c91fd`, `038ec20e`, `f752a9af`, `2b7cc0e9`, `5ba2ff53` |
 | SR on the typed core | `c77c9328` |
 | SR golden (keyed by share and root_function) | `168b2aba`, `6fc6c717`, `20f65a23` |
-| write-back and cleanse | `5ba2ff53`, `b844940e`, `039f20a1` |
+| write-back and cleanse | `b844940e`, `039f20a1` |
 | snap, fold, beam through the codec | `96a7a91d`, `1241acf0`, `3fd78355` |
 | resume fixes (checkpoint format 3 carries per-row scores) | `f78e5884`, `9de90042` |
 | layout-free kernels (shader text independent of layout; scratch in chunked storage buffers) | `7e798bf2`, `ed8521e9` |
@@ -84,7 +84,7 @@ Arms: old is phylu `7d5e4e96` with fuller `946e5a59`; new is phylu `093aae96` wi
 | 2 | III_17_37 | 1 | 2 | 2 | I_27_6 | 1 | 0 |
 | 2 | glider1 | 1 | 2 | | | | |
 
-### 2.2 Regex, old against new (UK postcodes, 180 s, seeds 7013 to 7016, means over four seeds)
+### 2.2 Regex, old against new (UK postcodes, seeds 7013 to 7016, means over four seeds; old, oldnosimp, newA28eq and newB28eq ran 180 s, the other four typed columns stopped at a perfect device score, after the seconds shown)
 
 Source: phylu `logs/REGEX_TYPED_AB/table.txt`; held-out set 198 unseen UK postcodes, 60 US ZIP, 30 ZIP+4, 60 Canadian, 50 corrupted UK.
 
@@ -105,7 +105,7 @@ The rules are longer (54 characters against 17). The throughput expectation in t
 | build | generations | sum, ms |
 |---|---|---|
 | v1 `0e69b7d4` | 2,758 | 22.4 |
-| v2 `942fc267` (after match kernel `19859915`) | 5,174 | 11.8 |
+| v2 `942fc267` (after match kernel `19859915`) | 5,174 | 11.9 |
 | A, `552c6c96` default draw | 3,962 | 15.5 |
 | B, half | 4,161 | 14.7 |
 | C, half, waits restored | 4,283 | 14.3 |
@@ -115,13 +115,13 @@ The old build takes 7.3 ms a generation; the typed arm is at 28 to 30 % of the o
 
 ### 2.4 WGSL run 6c, as it stands
 
-Logs: `logs/V24/run6c_halfroot.log`, `logs/V24/run6c_proproot.log`; started 06:29:30Z, problem `v24_ingest5b`, 20 generations, about 210 to 220 s a run.
+Logs: `logs/V24/run6c_halfroot.log`, `logs/V24/run6c_proproot.log`; halfroot started 06:29:30Z, proproot 06:33:22Z, problem `v24_ingest5b`, 20 generations, about 210 to 220 s a run.
 
 | measurement | halfroot | proproot |
 |---|---|---|
 | seeds read | 29 under 11 interfaces; 3 not read by the safe reader (seed21, seed30, seed31) | same |
 | seeds admitted per interface | 5, 4, 4, 2, 3, 1, 1, 6, 1, 1, 1 | same |
-| initial population | no single-node genes; median 15 to 20 nodes | no single-node genes; 5 to 93 nodes |
+| initial population | no single-node genes; median 5 to 21 nodes across the 11 interfaces | no single-node genes; median 5 to 93 nodes across the 11 interfaces |
 | best fitness, interface 0 | 0.33877 | 0.33969 |
 | other interfaces | 0.58569 | interface 8 has no feasible row (2.57080) |
 | result | runs end to end | runs end to end |
@@ -138,7 +138,7 @@ Logs: `logs/V24/run6c_halfroot.log`, `logs/V24/run6c_proproot.log`; started 06:2
 - The old regex arm (phylu `dfcbb1e2`) trained on all 661 rows; the typed arms held out 132. Train FN and FP above are over all rows for both.
 - SR is single-typed, so the 481 against 481 result tests non-regression only.
 - The arms draw different random numbers; per-law differences in 2.1 are within what seeds alone would give, but I have not run a paired test.
-- The SR runs used the fair coin head draw on both arms, and the new SR arm predates the layout-free kernels (`7e798bf2`).
+- The SR runs used the fair coin head draw on both arms, and the new SR arm predates the layout-free init, vary and decode kernels (`ed8521e9`); the layout-free walk kernel (`7e798bf2`) is in it.
 - The 40-law SR report is superseded by 2.1.
 
 ## 4. Open

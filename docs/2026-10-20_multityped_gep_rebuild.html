@@ -121,11 +121,11 @@ duals): <code>1e0c4667</code>, <code>2c06047d</code>,
 </thead>
 <tbody>
 <tr>
-<td>init, vary, decode, walk, select</td>
+<td>init, vary, decode, walk, select, evaluator node limit</td>
 <td><code>65a1cbc7</code>, <code>f279b306</code>, <code>34bae3a2</code>,
 <code>809949ba</code>, <code>bb11e3e2</code>, <code>8e994549</code>,
 <code>036dd9e4</code>, <code>fb6c91fd</code>, <code>038ec20e</code>,
-<code>f752a9af</code>, <code>2b7cc0e9</code></td>
+<code>f752a9af</code>, <code>2b7cc0e9</code>, <code>5ba2ff53</code></td>
 </tr>
 <tr>
 <td>SR on the typed core</td>
@@ -138,8 +138,7 @@ duals): <code>1e0c4667</code>, <code>2c06047d</code>,
 </tr>
 <tr>
 <td>write-back and cleanse</td>
-<td><code>5ba2ff53</code>, <code>b844940e</code>,
-<code>039f20a1</code></td>
+<td><code>b844940e</code>, <code>039f20a1</code></td>
 </tr>
 <tr>
 <td>snap, fold, beam through the codec</td>
@@ -416,9 +415,11 @@ differ (old to new, of 10):</p>
 </tbody>
 </table>
 <h3
-id="regex-old-against-new-uk-postcodes-180-s-seeds-7013-to-7016-means-over-four-seeds">2.2
-Regex, old against new (UK postcodes, 180 s, seeds 7013 to 7016, means
-over four seeds)</h3>
+id="regex-old-against-new-uk-postcodes-seeds-7013-to-7016-means-over-four-seeds-old-oldnosimp-newa28eq-and-newb28eq-ran-180-s-the-other-four-typed-columns-stopped-at-a-perfect-device-score-after-the-seconds-shown">2.2
+Regex, old against new (UK postcodes, seeds 7013 to 7016, means over
+four seeds; old, oldnosimp, newA28eq and newB28eq ran 180 s, the other
+four typed columns stopped at a perfect device score, after the seconds
+shown)</h3>
 <p>Source: phylu <code>logs/REGEX_TYPED_AB/table.txt</code>; held-out
 set 198 unseen UK postcodes, 60 US ZIP, 30 ZIP+4, 60 Canadian, 50
 corrupted UK.</p>
@@ -551,7 +552,7 @@ generation)</h3>
 <td>v2 <code>942fc267</code> (after match kernel
 <code>19859915</code>)</td>
 <td>5,174</td>
-<td>11.8</td>
+<td>11.9</td>
 </tr>
 <tr>
 <td>A, <code>552c6c96</code> default draw</td>
@@ -581,8 +582,9 @@ generation)</h3>
 matching each distinct program once.</p>
 <h3 id="wgsl-run-6c-as-it-stands">2.4 WGSL run 6c, as it stands</h3>
 <p>Logs: <code>logs/V24/run6c_halfroot.log</code>,
-<code>logs/V24/run6c_proproot.log</code>; started 06:29:30Z, problem
-<code>v24_ingest5b</code>, 20 generations, about 210 to 220 s a run.</p>
+<code>logs/V24/run6c_proproot.log</code>; halfroot started 06:29:30Z,
+proproot 06:33:22Z, problem <code>v24_ingest5b</code>, 20 generations,
+about 210 to 220 s a run.</p>
 <table>
 <colgroup>
 <col style="width: 33%" />
@@ -610,8 +612,10 @@ seed30, seed31)</td>
 </tr>
 <tr>
 <td>initial population</td>
-<td>no single-node genes; median 15 to 20 nodes</td>
-<td>no single-node genes; 5 to 93 nodes</td>
+<td>no single-node genes; median 5 to 21 nodes across the 11
+interfaces</td>
+<td>no single-node genes; median 5 to 93 nodes across the 11
+interfaces</td>
 </tr>
 <tr>
 <td>best fitness, interface 0</td>
@@ -667,7 +671,9 @@ non-regression only.</li>
 are within what seeds alone would give, but I have not run a paired
 test.</li>
 <li>The SR runs used the fair coin head draw on both arms, and the new
-SR arm predates the layout-free kernels (<code>7e798bf2</code>).</li>
+SR arm predates the layout-free init, vary and decode kernels
+(<code>ed8521e9</code>); the layout-free walk kernel
+(<code>7e798bf2</code>) is in it.</li>
 <li>The 40-law SR report is superseded by 2.1.</li>
 </ul>
 <h2 id="open">4. Open</h2>
