@@ -768,7 +768,7 @@ mod tests {
     /// kingdoms, TSR single, order and order_depth) at program sizes 8, 17 and 32: `cargo test ... the_kingdom_reports_print -- --nocapture`.
     #[test]
     fn the_kingdom_reports_print() {
-        for n in [8usize, 17, 32] {
+        for n in [8usize, 17, 28, 32] {
             let mut out = vec![report(&sr_relations(), n), report(&regex_relations(), n)];
             for v in [crate::tsr_kingdom::TsrVariant::Single, crate::tsr_kingdom::TsrVariant::Order, crate::tsr_kingdom::TsrVariant::OrderDepth] {
                 out.push(report(&tsr_relations(v, 8).expect("TSR tables load"), n));
