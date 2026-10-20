@@ -29,7 +29,6 @@
 
 use std::collections::BTreeMap;
 
-use crate::gpu_eval::{GpuNode, Op};
 
 /// The value types a symbol's slots can carry — the `in_*`/`out_*` columns of
 /// `docs/design/DataModel.md`, as enum variants so `Arity`'s many-hot maps are
@@ -142,8 +141,7 @@ impl Ty {
     ];
 
     /// The type's code on the device: THE ONE SPELLING of a `Ty` as a `u32`
-    /// (the node's `ty_code` word, the `out_ty`/`in_ty` tables, the fallback
-    /// table's index). A base variant's code is its declaration index from 0
+    /// (the node's `ty_code` word, the `out_ty`/`in_ty` tables). A base variant's code is its declaration index from 0
     /// (what `ty as u32` was before the payload variant made the cast
     /// uncompilable); a WGSL dual's code is [`Ty::TABLE_CODE_BASE`] + its row.
     pub fn code(self) -> u32 {
@@ -169,31 +167,6 @@ impl Ty {
         }
         Ty::ALL.get(code as usize).copied()
     }
-}
-
-/// THE PER-TYPE FALLBACK LEAF (Design C's projection): the zero-arity node a
-/// decoder emits when a codon's type does not match the demanded type, so
-/// every gene expresses. One per type; the device's table must equal this
-/// (host↔device parity). The regex kingdom's four demanded types have their
-/// own leaves; every other base type falls back to `Num 0`.
-pub fn fallback_leaf(ty: Ty) -> GpuNode {
-    let leaf = |op: Op, konst: f32| GpuNode { op: op as u32, arg0: 0, ty_code: ty.code(), konst };
-    match ty {
-        Ty::Pattern => leaf(Op::RegexEmpty, 0.0),
-        Ty::CharClass => leaf(Op::RegexCcDigit, 0.0),
-        // Char falls back to a printable byte (a `Num` the compiler reads as a
-        // literal byte); Integer to the count 1 (a `{1}` is a no-op repeat).
-        Ty::Char => leaf(Op::Num, f32::from(b'0')),
-        Ty::I => leaf(Op::Num, 1.0),
-        _ => leaf(Op::Num, 0.0),
-    }
-}
-
-/// The fallback table indexed by [`Ty::code`]: `fallback_table()[ty.code()]`
-/// is [`fallback_leaf`]`(ty)`. What a decoder uploads; sized by the base
-/// variants today, extended by the table-defined duals when they land.
-pub fn fallback_table() -> Vec<GpuNode> {
-    Ty::ALL.iter().map(|t| fallback_leaf(*t)).collect()
 }
 
 /// A typed many-hot arity signature: how many inputs / outputs of each type.
@@ -791,25 +764,5 @@ mod tests {
         assert_eq!(Ty::from_code(Ty::ALL.len() as u32), None);
         // The depth ladder is unmoved by the numbering.
         assert_eq!((Ty::F.code(), Ty::T1.code(), Ty::T2.code()), (2, 6, 7));
-    }
-
-    #[test]
-    fn fallback_table_is_total_over_the_base_codes_and_matches_the_decoders_leaves() {
-        let table = fallback_table();
-        assert_eq!(table.len(), Ty::ALL.len());
-        for t in Ty::ALL {
-            let leaf = table[t.code() as usize];
-            let want = fallback_leaf(t);
-            assert_eq!((leaf.op, leaf.arg0, leaf.ty_code, leaf.konst.to_bits()), (want.op, want.arg0, want.ty_code, want.konst.to_bits()), "{t:?}");
-            assert_eq!(leaf.ty_code, t.code(), "{t:?}: a fallback leaf carries its own type");
-            assert_eq!(Op::from_u32(leaf.op).unwrap().arity(), 0, "{t:?}: a fallback is a leaf");
-        }
-        // The regex kingdom's demanded types, as the host and device decoders
-        // have always emitted them (phylu engine.rs fallback_node, decode.wgsl).
-        assert_eq!(table[Ty::Pattern.code() as usize].op, Op::RegexEmpty as u32);
-        assert_eq!(table[Ty::CharClass.code() as usize].op, Op::RegexCcDigit as u32);
-        assert_eq!((table[Ty::Char.code() as usize].op, table[Ty::Char.code() as usize].konst), (Op::Num as u32, 48.0));
-        assert_eq!((table[Ty::I.code() as usize].op, table[Ty::I.code() as usize].konst), (Op::Num as u32, 1.0));
-        assert_eq!((table[Ty::F.code() as usize].op, table[Ty::F.code() as usize].konst), (Op::Num as u32, 0.0));
     }
 }
