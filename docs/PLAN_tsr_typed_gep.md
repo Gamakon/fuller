@@ -251,7 +251,7 @@ Widths are in 32-bit words per gene, Dc included. A classical gene of head 34 is
 | E, 17 | 136 | 4 | 97 | 98 | 198 | 263 | 558 | 0 | 1, 1, 0, 1 |
 | F, 17 | 8,094 | 34 | 913 | 674 | 9,625 | 10,442 | 20,980 | 9 (240) | 1, 1, 0, 1 |
 
-Every demanded dual has both terminals in all six. For C, L = 1 + 913 − 1 − 240 + ... equals 674 because the nine plain-shape duals (P1, P2, P3 at three levels) are unary-only producers with 240 head cells, which add nothing to the leaf count.
+Every demanded dual has both terminals in all six. For C, L = 1 + (913 − 240) = 674: only binary producers add leaves, and the nine plain-shape duals (P1, P2, P3 at three levels) are unary-only producers holding 240 of the 913 head cells.
 
 **Per-type budgets for arm C at N = 17.**
 
