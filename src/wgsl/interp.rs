@@ -30,7 +30,7 @@
 //! range, is the value of the integer type closest to truncate(X) that the float
 //! type also represents exactly (WGSL 15.7.6 Floating Point Conversion,
 //! https://www.w3.org/TR/WGSL/#floating-point-conversion: 2147483520 for an f32
-//! past i32, 4294967040 past u32, as naga's MSL helper clamps; NaN gives 0, as the
+//! past i32, 4294967040 past u32, as naga's MSL helper clamps; NaN is indeterminate in WGSL and gives 0 here, as the
 //! device test measures); `round` is to nearest even; `min`/`max` return
 //! the non-NaN operand; float division and the transcendentals are IEEE.
 //! Indexing follows the bounds-check policy wgpu applies on this platform,

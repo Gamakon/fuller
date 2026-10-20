@@ -1,5 +1,5 @@
 {
- "what": "shift amounts masked (e2 & 31), wrapping u32 arithmetic, float to integer conversion toward zero, out of range the closest value also exactly an f32 (WGSL 15.7.6: 2147483520 for i32, 4294967040 for u32), NaN to 0",
+ "what": "shift amounts masked (e2 & 31), wrapping u32 arithmetic, float to integer conversion toward zero, out of range the closest value also exactly an f32 (WGSL 15.7.6: 2147483520 for i32, 4294967040 for u32), NaN is indeterminate (WGSL 15.7), so lane 2 of each result accepts any value",
  "interpreter": true,
  "inputs": {
   "buffer.x": {
@@ -116,7 +116,7 @@
    "i32": [
     -7,
     2147483520,
-    0,
+    "any",
     0,
     -1,
     2147483520,
@@ -128,7 +128,7 @@
    "u32": [
     0,
     3000000000,
-    0,
+    "any",
     0,
     0,
     2147483648,

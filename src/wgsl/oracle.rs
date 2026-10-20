@@ -103,18 +103,23 @@ pub fn from_words(words: &[u32], elem: &str, array: bool) -> Result<Value, Strin
     }
 }
 
-/// One lane of an expectation: a number, `"nan"`, `"inf"`, `"-inf"`, or a
-/// hexadecimal bit pattern `"0x…"`.
+/// One lane of an expectation: a number, `"nan"` (any NaN), `"inf"`, `"-inf"`, a
+/// hexadecimal bit pattern `"0x…"`, or `"any"` (any value at all: a lane whose
+/// value WGSL leaves indeterminate, such as a NaN converted to an integer,
+/// which the device and the references may each give differently).
 #[derive(Debug, Clone, PartialEq)]
 pub enum Lane {
     Exact(u32),
     AnyNan,
+    /// Any value: the spec leaves the lane indeterminate.
+    Any,
 }
 
 fn lane(elem: &str, v: &serde_json::Value) -> Result<Lane, String> {
     match v {
         serde_json::Value::String(s) => match s.as_str() {
             "nan" => Ok(Lane::AnyNan),
+            "any" => Ok(Lane::Any),
             "inf" => Ok(Lane::Exact(f32::INFINITY.to_bits())),
             "-inf" => Ok(Lane::Exact(f32::NEG_INFINITY.to_bits())),
             hex if hex.starts_with("0x") => u32::from_str_radix(&hex[2..], 16).map(Lane::Exact).map_err(|e| format!("oracle: {hex}: {e}")),
@@ -164,6 +169,7 @@ pub fn read_expectation(path: &Path) -> Result<Expectation, String> {
         let words: Vec<u32> = lanes.iter().map(|l| lane(&elem, l)).collect::<Result<Vec<_>, _>>()?.into_iter().map(|l| match l {
             Lane::Exact(w) => w,
             Lane::AnyNan => f32::NAN.to_bits(),
+            Lane::Any => 0,
         }).collect();
         let array = !loc.starts_with("uniform.") || words.len() > 1;
         inputs.insert(loc, from_words(&words, &elem, array)?);
@@ -191,6 +197,7 @@ pub fn differences(got: &Value, want: &[Lane]) -> Vec<(usize, u32, Lane)> {
         let ok = match (g, w) {
             (Some(g), Lane::Exact(x)) => g == *x,
             (Some(g), Lane::AnyNan) => f32::from_bits(g).is_nan(),
+            (Some(_), Lane::Any) => true,
             (None, _) => false,
         };
         if !ok {
@@ -587,6 +594,9 @@ mod tests {
         assert!(from_words(&w, "f32", true).unwrap().bits_eq(&v));
         assert_eq!(differences(&Value::Vec(vec![Value::F32(1.0), Value::F32(f32::NAN)]), &[Lane::Exact(1.0f32.to_bits()), Lane::AnyNan]), vec![]);
         assert_eq!(differences(&Value::Vec(vec![Value::F32(-0.0)]), &[Lane::Exact(0)]).len(), 1, "-0.0 is not 0.0 in bits");
+        // An `"any"` lane (WGSL leaves it indeterminate) accepts any value, and is read from the expectation file.
+        assert_eq!(differences(&Value::Vec(vec![Value::I32(i32::MIN), Value::I32(0)]), &[Lane::Any, Lane::Any]), vec![]);
+        assert_eq!(lane("i32", &serde_json::json!("any")), Ok(Lane::Any));
     }
 
     /// AN OUT-OF-RANGE INDEX GIVES THE SAME OUTPUT ON THE DEVICE AND IN BOTH CPU
