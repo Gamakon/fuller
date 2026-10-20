@@ -86,6 +86,7 @@ pub fn max_nodes_for_rows(frame_rows: usize) -> usize {
 pub fn with_limits_n(src: &str, max_nodes: usize) -> String {
     let work = max_nodes + 16;
     src.replace("const MAX_NODES: u32 = 64u;", &format!("const MAX_NODES: u32 = {max_nodes}u;"))
+        .replace("const OVERFLOW_AT: u32 = 64u;", &format!("const OVERFLOW_AT: u32 = {max_nodes}u;"))
         .replace("const SLOT: u32 = 64u;", &format!("const SLOT: u32 = {max_nodes}u;"))
         .replace("const WORK: u32 = 80u;", &format!("const WORK: u32 = {work}u;"))
         .replace("array<f32, 64>", &format!("array<f32, {max_nodes}>"))
@@ -94,6 +95,29 @@ pub fn with_limits_n(src: &str, max_nodes: usize) -> String {
         .replace("array<Node, 64>", &format!("array<Node, {max_nodes}>"))
         .replace("array<Node, 80>", &format!("array<Node, {work}>"))
         .replace("array<u32, 128>", &format!("array<u32, {}>", 2 * max_nodes))
+}
+
+/// The expression-length classes of an evaluator whose layout bound is
+/// `max_nodes`: `(lo, hi)` meaning lengths in `(lo, hi]`, the last ending at the
+/// bound. One class (the plain kernel) up to [`MAX_NODES`]; above it the scratch
+/// of a thread is sized to its class, not to the bound.
+pub fn eval_classes(max_nodes: usize) -> Vec<(usize, usize)> {
+    if max_nodes <= MAX_NODES {
+        return vec![(0, max_nodes)];
+    }
+    let mut cuts: Vec<usize> = [64usize, 512].into_iter().filter(|&c| c < max_nodes).collect();
+    cuts.push(max_nodes);
+    let mut lo = 0;
+    cuts.into_iter().map(|hi| (std::mem::replace(&mut lo, hi), hi)).collect()
+}
+
+/// The evaluator's source for one length class: scratch sized to the class,
+/// the empty and oversized answered (NaN) by the lowest class only.
+pub fn eval_class_source(max_nodes: usize, lo: usize, hi: usize) -> String {
+    with_limits_n(EVAL_WGSL, hi)
+        .replace(&format!("const OVERFLOW_AT: u32 = {hi}u;"), &format!("const OVERFLOW_AT: u32 = {max_nodes}u;"))
+        .replace("const CLASS_LO: u32 = 0u;", &format!("const CLASS_LO: u32 = {lo}u;"))
+        .replace("const CLASS_HI: u32 = 4294967295u;", &format!("const CLASS_HI: u32 = {hi}u;"))
 }
 
 /// wgpu's per-dimension workgroup cap (`max_compute_workgroups_per_dimension`).
@@ -449,6 +473,9 @@ struct Meta {
 @group(0) @binding(8) var<storage, read>       shared_base: array<u32>;
 
 const MAX_NODES: u32 = 64u;
+const OVERFLOW_AT: u32 = 64u;
+const CLASS_LO: u32 = 0u;
+const CLASS_HI: u32 = 4294967295u;
 fn nan() -> f32 { return bitcast<f32>(0x7fc00000u); }
 fn pos_inf() -> f32 { return bitcast<f32>(0x7f800000u); }
 // NaN fails every comparison, so this is false for NaN and for +-inf.
@@ -472,11 +499,25 @@ fn eval_main(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     let base = offsets[expr];
     let n    = lengths[expr];
-    if (n == 0u || n > MAX_NODES) {
-        out[idx] = bitcast<f32>(0x7fc00000u);   // NaN: caller falls back to CPU
+    // SIZE CLASSES: a layout whose bound is in the thousands would give every
+    // thread a scratch of that size, zero-filled before its first node, for
+    // expressions of a few dozen nodes. The evaluator therefore builds one
+    // pipeline a class (n in (CLASS_LO, CLASS_HI]); each leaves the other
+    // classes' expressions alone, and the lowest class answers for the empty
+    // and the oversized. With one class the bounds are open and this is the
+    // plain kernel.
+    if (n == 0u || n > OVERFLOW_AT) {
+        if (CLASS_LO == 0u) {
+            out[idx] = bitcast<f32>(0x7fc00000u);   // NaN: caller falls back to CPU
+        }
         return;
     }
+    if (n <= CLASS_LO || n > CLASS_HI) { return; }
+    eval_body(idx, expr, row, base, n);
+}
 
+// The scratch lives in this function, so a thread of another class never pays for it.
+fn eval_body(idx: u32, expr: u32, row: u32, base: u32, n: u32) {
     var scratch: array<f32, 64>;
     // Set when the ENGINE would raise rather than return: Python's math.sin /
     // math.cos raise ValueError on +-inf, and the engine rejects the whole
@@ -891,6 +932,8 @@ mod device {
         device: std::sync::Arc<wgpu::Device>,
         queue: std::sync::Arc<wgpu::Queue>,
         pipeline: wgpu::ComputePipeline,
+        /// One pipeline a length class (see [`eval_classes`]); empty with a single class.
+        class_pipelines: Vec<wgpu::ComputePipeline>,
         layout: wgpu::BindGroupLayout,
         data_buf: wgpu::Buffer,
         // A persistent 1-element storage buffer bound at binding 6 when
@@ -1015,6 +1058,29 @@ mod device {
                 cache: None,
             });
 
+            let classes = eval_classes(max_nodes);
+            let class_pipelines = if classes.len() > 1 {
+                classes
+                    .iter()
+                    .map(|&(lo, hi)| {
+                        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                            label: Some("fuller-eval-class"),
+                            source: wgpu::ShaderSource::Wgsl(Cow::Owned(eval_class_source(max_nodes, lo, hi))),
+                        });
+                        device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                            label: Some("fuller-eval-class-pipeline"),
+                            layout: Some(&pipeline_layout),
+                            module: &module,
+                            entry_point: Some("eval_main"),
+                            compilation_options: Default::default(),
+                            cache: None,
+                        })
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
+
             // THE resident buffer. Uploaded once; every later dispatch reuses it.
             let data_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("fuller-data-resident"),
@@ -1049,6 +1115,7 @@ mod device {
                 device,
                 queue,
                 pipeline,
+                class_pipelines,
                 layout,
                 data_buf,
                 dummy_partials,
@@ -1062,6 +1129,20 @@ mod device {
 
         pub fn n_rows(&self) -> u32 {
             self.n_rows
+        }
+
+        /// One dispatch of the values-only kernel: a pass a length class when the
+        /// layout has several (see [`eval_classes`]), else the one plain kernel.
+        fn dispatch_values(&self, pass: &mut wgpu::ComputePass<'_>, groups_x: u32, groups_y: u32) {
+            if self.class_pipelines.is_empty() {
+                pass.set_pipeline(&self.pipeline);
+                pass.dispatch_workgroups(groups_x, groups_y, 1);
+            } else {
+                for pipeline in &self.class_pipelines {
+                    pass.set_pipeline(pipeline);
+                    pass.dispatch_workgroups(groups_x, groups_y, 1);
+                }
+            }
         }
 
         /// The device and queue, for a kernel that consumes this evaluator's
@@ -1163,9 +1244,8 @@ mod device {
                     label: None,
                     timestamp_writes: None,
                 });
-                pass.set_pipeline(&self.pipeline);
                 pass.set_bind_group(0, &bind, &[]);
-                pass.dispatch_workgroups(groups_x, groups_y, 1);
+                self.dispatch_values(&mut pass, groups_x, groups_y);
             }
             Ok(meta_buf)
         }
@@ -1257,9 +1337,13 @@ mod device {
                     label: None,
                     timestamp_writes: None,
                 });
-                pass.set_pipeline(&self.pipeline);
                 pass.set_bind_group(0, &bind, &[]);
-                pass.dispatch_workgroups(groups_x, groups_y, 1);
+                if partials.is_none() {
+                    self.dispatch_values(&mut pass, groups_x, groups_y);
+                } else {
+                    pass.set_pipeline(&self.pipeline);
+                    pass.dispatch_workgroups(groups_x, groups_y, 1);
+                }
             }
             Ok(meta_buf)
         }
@@ -1409,9 +1493,8 @@ mod device {
                     label: None,
                     timestamp_writes: None,
                 });
-                pass.set_pipeline(&self.pipeline);
                 pass.set_bind_group(0, &bind, &[]);
-                pass.dispatch_workgroups(groups_x, groups_y, 1);
+                self.dispatch_values(&mut pass, groups_x, groups_y);
             }
             enc.copy_buffer_to_buffer(&out_buf, 0, &read_buf, 0, total * 4);
             self.queue.submit(Some(enc.finish()));
@@ -3042,6 +3125,43 @@ mod undecodable_batch_tests {
         let vars: Vec<String> = vec!["a".to_string(), "b".to_string()];
         let r = math_to_nodes(r#"(Var "?")"#, &vars);
         assert!(r.is_err(), "unresolved '?' must fail, got {r:?}");
+    }
+
+    /// A LAYOUT WITH A LARGE BOUND evaluates the same as the plain kernel: an
+    /// evaluator sized to 1024 nodes runs three length classes, and expressions
+    /// of 3, 100 and 700 nodes (a chain `x + x + ...`), the empty one and one past
+    /// the bound each come back as the sum, or NaN, the single-class kernel gives.
+    #[cfg(feature = "gpu")]
+    #[test]
+    fn length_classes_agree_with_the_plain_kernel() {
+        assert_eq!(eval_classes(1024), vec![(0, 64), (64, 512), (512, 1024)]);
+        assert_eq!(eval_classes(300), vec![(0, 64), (64, 300)]);
+        assert_eq!(eval_classes(128), vec![(0, 128)]);
+        let xs: Vec<f32> = (0..50).map(|r| r as f32).collect();
+        let Ok(big) = GpuEvaluator::with_max_nodes(&xs, 1, 1024) else { return };
+        let chain = |terms: usize| -> Vec<GpuNode> {
+            // level order: Add(arg0 = 1) has children 1, 2; node 2 is Add again ...
+            let mut v = Vec::new();
+            for i in 0..terms - 1 {
+                v.push(GpuNode { op: Op::Add as u32, arg0: (2 * i + 1) as u32, ty_code: 2, konst: 0.0 });
+                v.push(GpuNode { op: Op::Var as u32, arg0: 0, ty_code: 0, konst: 0.0 });
+            }
+            v.push(GpuNode { op: Op::Var as u32, arg0: 0, ty_code: 0, konst: 0.0 });
+            v
+        };
+        let mut b = ExprBatch::new();
+        let lens = [2usize, 50, 350];
+        for t in lens {
+            b.push(&chain(t));
+        }
+        b.push(&[]);
+        let got = big.eval(&b).expect("eval");
+        for (e, t) in lens.iter().enumerate() {
+            for (r, x) in xs.iter().enumerate() {
+                assert_eq!(got[e * 50 + r], x * *t as f32, "chain of {t} terms, row {r}");
+            }
+        }
+        assert!(got[3 * 50..].iter().all(|v| v.is_nan()), "the empty expression is NaN");
     }
 
     /// A batch past one dispatch dimension (65535 groups x 64 = 4.19M
