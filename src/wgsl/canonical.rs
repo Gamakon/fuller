@@ -237,23 +237,23 @@ fn split_epilogue(grid: Tree, body: &Tree, epilogue: &Tree, kingdom: &WgslKingdo
 }
 
 /// A literal's value as the emitter writes it for its form (rule 4).
-fn literal_value(form: &str, v: f32) -> f32 {
-    let whole = |lo: f64, hi: f64| if v.is_finite() { (f64::from(v).round()).clamp(lo, hi) as f32 } else { lo as f32 };
+fn literal_value(form: &str, v: f64) -> f64 {
+    let whole = |lo: f64, hi: f64| if v.is_finite() { v.round().clamp(lo, hi) } else { lo };
     match form {
         "index" | "count" | "bits" | "hash32" | "code4" | "code8" | "code16" | "code1024" => {
             if v.is_finite() {
-                v.clamp(0.0, 4_294_967_040.0) as u32 as f32
+                v.clamp(0.0, 4_294_967_295.0) as u32 as f64
             } else {
                 0.0
             }
         }
-        "wgdim" => workgroup_dim(v) as f32,
+        "wgdim" => f64::from(workgroup_dim(v)),
         "lit64" => whole(1.0, 64.0),
         "lit4096" => whole(1.0, 4096.0),
-        "blk" => snap(&BLK, v) as f32,
-        "unroll" => snap(&UNROLL, v) as f32,
-        "int" | "q15_16" => v.clamp(-2_147_483_648.0, 2_147_483_520.0) as i32 as f32,
-        "flag" | "sign" => f32::from(u8::from(v != 0.0)),
+        "blk" => f64::from(snap(&BLK, v)),
+        "unroll" => f64::from(snap(&UNROLL, v)),
+        "int" | "q15_16" => v.clamp(-2_147_483_648.0, 2_147_483_647.0) as i32 as f64,
+        "flag" | "sign" => f64::from(u8::from(v != 0.0)),
         _ => v,
     }
 }

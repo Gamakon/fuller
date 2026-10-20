@@ -125,7 +125,7 @@ pub fn sites(root: &Tree) -> Vec<(Site, u32)> {
 fn rewrite(t: &Tree, pick: &dyn Fn(&Tree) -> Option<usize>, v: u32) -> Tree {
     let mut kids: Vec<Tree> = t.kids.iter().map(|k| rewrite(k, pick, v)).collect();
     if let Some(i) = pick(t) {
-        kids[i].konst = v as f32;
+        kids[i].konst = f64::from(v);
     }
     Tree { name: t.name.clone(), ty: t.ty, konst: t.konst, kids }
 }

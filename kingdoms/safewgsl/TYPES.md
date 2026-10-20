@@ -119,30 +119,30 @@ A type is a dual `slot.form`: the slot is what the hardware stores, the form is 
 | T006 | `vec2<f16>.real` | `vec2<f16>` | `real` | 2 | `0.0` | 0 | 0 | 0 | `-` |
 | T007 | `vec3<f16>.real` | `vec3<f16>` | `real` | 3 | `0.0` | 0 | 0 | 0 | `-` |
 | T008 | `vec4<f16>.real` | `vec4<f16>` | `real` | 4 | `0.0` | 0 | 0 | 0 | `-` |
-| T009 | `i32.int` | `i32` | `int` | 1 | `0` | 0 | 0 | 0 | `-16777216..=16777216` |
-| T010 | `vec2<i32>.int` | `vec2<i32>` | `int` | 2 | `0` | 0 | 0 | 0 | `-16777216..=16777216` |
-| T011 | `vec3<i32>.int` | `vec3<i32>` | `int` | 3 | `0` | 0 | 0 | 0 | `-16777216..=16777216` |
-| T012 | `vec4<i32>.int` | `vec4<i32>` | `int` | 4 | `0` | 0 | 0 | 0 | `-16777216..=16777216` |
+| T009 | `i32.int` | `i32` | `int` | 1 | `0` | 0 | 0 | 0 | `-2147483648..=2147483647` |
+| T010 | `vec2<i32>.int` | `vec2<i32>` | `int` | 2 | `0` | 0 | 0 | 0 | `-2147483648..=2147483647` |
+| T011 | `vec3<i32>.int` | `vec3<i32>` | `int` | 3 | `0` | 0 | 0 | 0 | `-2147483648..=2147483647` |
+| T012 | `vec4<i32>.int` | `vec4<i32>` | `int` | 4 | `0` | 0 | 0 | 0 | `-2147483648..=2147483647` |
 | T013 | `i32.q15_16` | `i32` | `q15_16` | 1 | `0` | 0 | 0 | 0 | `-` |
 | T014 | `vec2<i32>.q15_16` | `vec2<i32>` | `q15_16` | 2 | `0` | 0 | 0 | 0 | `-` |
 | T015 | `vec3<i32>.q15_16` | `vec3<i32>` | `q15_16` | 3 | `0` | 0 | 0 | 0 | `-` |
 | T016 | `vec4<i32>.q15_16` | `vec4<i32>` | `q15_16` | 4 | `0` | 0 | 0 | 0 | `-` |
-| T017 | `u32.index` | `u32` | `index` | 1 | `0u` | 0 | 0 | 0 | `0..=16777216` |
-| T018 | `vec2<u32>.index` | `vec2<u32>` | `index` | 2 | `0u` | 0 | 0 | 0 | `0..=16777216` |
-| T019 | `vec3<u32>.index` | `vec3<u32>` | `index` | 3 | `0u` | 0 | 0 | 0 | `0..=16777216` |
-| T020 | `vec4<u32>.index` | `vec4<u32>` | `index` | 4 | `0u` | 0 | 0 | 0 | `0..=16777216` |
-| T021 | `u32.count` | `u32` | `count` | 1 | `0u` | 0 | 0 | 0 | `0..=16777216` |
-| T022 | `vec2<u32>.count` | `vec2<u32>` | `count` | 2 | `0u` | 0 | 0 | 0 | `0..=16777216` |
-| T023 | `vec3<u32>.count` | `vec3<u32>` | `count` | 3 | `0u` | 0 | 0 | 0 | `0..=16777216` |
-| T024 | `vec4<u32>.count` | `vec4<u32>` | `count` | 4 | `0u` | 0 | 0 | 0 | `0..=16777216` |
+| T017 | `u32.index` | `u32` | `index` | 1 | `0u` | 0 | 0 | 0 | `0..=4294967295` |
+| T018 | `vec2<u32>.index` | `vec2<u32>` | `index` | 2 | `0u` | 0 | 0 | 0 | `0..=4294967295` |
+| T019 | `vec3<u32>.index` | `vec3<u32>` | `index` | 3 | `0u` | 0 | 0 | 0 | `0..=4294967295` |
+| T020 | `vec4<u32>.index` | `vec4<u32>` | `index` | 4 | `0u` | 0 | 0 | 0 | `0..=4294967295` |
+| T021 | `u32.count` | `u32` | `count` | 1 | `0u` | 0 | 0 | 0 | `0..=4294967295` |
+| T022 | `vec2<u32>.count` | `vec2<u32>` | `count` | 2 | `0u` | 0 | 0 | 0 | `0..=4294967295` |
+| T023 | `vec3<u32>.count` | `vec3<u32>` | `count` | 3 | `0u` | 0 | 0 | 0 | `0..=4294967295` |
+| T024 | `vec4<u32>.count` | `vec4<u32>` | `count` | 4 | `0u` | 0 | 0 | 0 | `0..=4294967295` |
 | T025 | `u32.code4` | `u32` | `code4` | 1 | `0u` | 0 | 0 | 0 | `-` |
 | T026 | `u32.code8` | `u32` | `code8` | 1 | `0u` | 0 | 0 | 0 | `-` |
 | T027 | `u32.code16` | `u32` | `code16` | 1 | `0u` | 0 | 0 | 0 | `-` |
 | T028 | `u32.code1024` | `u32` | `code1024` | 1 | `0u` | 0 | 0 | 0 | `-` |
-| T029 | `u32.bits` | `u32` | `bits` | 1 | `0u` | 0 | 0 | 0 | `0..=16777216` |
-| T030 | `vec2<u32>.bits` | `vec2<u32>` | `bits` | 2 | `0u` | 0 | 0 | 0 | `0..=16777216` |
-| T031 | `vec3<u32>.bits` | `vec3<u32>` | `bits` | 3 | `0u` | 0 | 0 | 0 | `0..=16777216` |
-| T032 | `vec4<u32>.bits` | `vec4<u32>` | `bits` | 4 | `0u` | 0 | 0 | 0 | `0..=16777216` |
+| T029 | `u32.bits` | `u32` | `bits` | 1 | `0u` | 0 | 0 | 0 | `0..=4294967295` |
+| T030 | `vec2<u32>.bits` | `vec2<u32>` | `bits` | 2 | `0u` | 0 | 0 | 0 | `0..=4294967295` |
+| T031 | `vec3<u32>.bits` | `vec3<u32>` | `bits` | 3 | `0u` | 0 | 0 | 0 | `0..=4294967295` |
+| T032 | `vec4<u32>.bits` | `vec4<u32>` | `bits` | 4 | `0u` | 0 | 0 | 0 | `0..=4294967295` |
 | T033 | `u32.hash32` | `u32` | `hash32` | 1 | `0u` | 0 | 0 | 0 | `-` |
 | T034 | `bool.flag` | `bool` | `flag` | 1 | `false` | 0 | 0 | 0 | `0,1` |
 | T035 | `vec2<bool>.flag` | `vec2<bool>` | `flag` | 2 | `false` | 0 | 0 | 0 | `0,1` |
@@ -287,7 +287,7 @@ A type is a dual `slot.form`: the slot is what the hardware stores, the form is 
 | T174 | `u32.uniform` | `u32` | `uniform` | 1 | `0u` | 0 | 0 | 0 | `-` |
 | T175 | `u32.boundu` | `u32` | `boundu` | 1 | `1u` | 1 | 0 | 0 | `-` |
 | T176 | `u32.uniformw` | `u32` | `uniformw` | 1 | `0u` | 0 | 0 | 0 | `-` |
-| T177 | `u32.xbound` | `u32` | `xbound` | 1 | `1u` | 1 | 0 | 0 | `0..=16777216` |
+| T177 | `u32.xbound` | `u32` | `xbound` | 1 | `1u` | 1 | 0 | 0 | `0..=4294967295` |
 | T178 | `u32.indexw` | `u32` | `indexw` | 1 | `0u` | 0 | 0 | 0 | `-` |
 | T179 | `u32.rowbase` | `u32` | `rowbase` | 1 | `the thread's own first row` | 0 | 0 | 0 | `-` |
 | T180 | `u32.colbase` | `u32` | `colbase` | 1 | `the thread's own first column` | 0 | 0 | 0 | `-` |
@@ -320,7 +320,7 @@ A type is a dual `slot.form`: the slot is what the hardware stores, the form is 
 
 The three machine columns (`fallback_bits`, `fallback_noop`, `fallback_elem` in `types.tsv`) are what the loader builds the fallback leaf from, never the prose: `bits` is the lane's 32-bit pattern as an unsigned integer, repeated across the lanes of a vector or matrix (only `bool.sign` is non-zero, true = +1); `noop` is 1 for `store.store`, which substitutes no value at all; `elem` is 1 for `array<T>`, whose fallback is its element's. The loader tests `noop` and `elem` before reading `bits`; for those two rows `bits` is a placeholder 0. Every substitution, whichever column decides it, counts the codon as masked.
 
-The `literal` column is a scalar dual's literal domain (`LITERAL_DOMAIN` in this script): the values a literal of the dual takes, a range `lo..=hi` (real for an f32 slot) or a set `a,b,c`; `-` where no literal is. A gene holds a literal's value in its Dc tail, never as a symbol (phylu `docs/PLAN_wgsl_literals_as_constants.md`); mutation draws inside the domain and every value is read into it before it becomes a tree. Integers stop at 2^24, the exact range of a literal's f32 konst: past it the reader's halves are of another dual.
+The `literal` column is a scalar dual's literal domain (`LITERAL_DOMAIN` in this script): the values a literal of the dual takes, a range `lo..=hi` (real for an f32 slot) or a set `a,b,c`; `-` where no literal is. A gene holds a literal's value in its Dc tail, never as a symbol (phylu `docs/PLAN_wgsl_literals_as_constants.md`); mutation draws inside the domain and every value is read into it before it becomes a tree. An integer form takes its scalar's whole range: a tree's constant is exact for every u32 and i32.
 
 ## Loop trip counts
 

@@ -159,21 +159,21 @@ pub fn ktile_of(g: &Tree) -> Option<u32> {
 /// The value a reference writes when its knob is `knob` and its payload `q`:
 /// v = knob * q / Q rounded, then its form. Used to render; a payload a
 /// point mutation drew is written as the nearest value.
-pub fn value_of(knob: u32, q: f32, form: Form) -> f32 {
-    let q = if q.is_finite() { f64::from(q).max(0.0) } else { 0.0 };
+pub fn value_of(knob: u32, q: f64, form: Form) -> f64 {
+    let q = if q.is_finite() { q.max(0.0) } else { 0.0 };
     let v = (f64::from(knob) * q / f64::from(Q)).round();
-    (match form {
+    match form {
         Form::Plain => v,
         Form::Log2 => v.max(1.0).log2().round(),
         Form::Minus1 => v.max(1.0) - 1.0,
-    }) as f32
+    }
 }
 
 /// The value a reference writes, only when it is exact: knob * q a whole
 /// multiple of Q, at least one, and a power of two under `_log2`. The knob
 /// mutation's join: a new knob value every reference of the kernel writes
 /// exactly.
-pub fn exact_value(knob: u32, q: f32, form: Form) -> Option<u32> {
+pub fn exact_value(knob: u32, q: f64, form: Form) -> Option<u32> {
     if !q.is_finite() || q < 1.0 || q.fract() != 0.0 {
         return None;
     }
@@ -353,7 +353,7 @@ impl Assigner<'_> {
     fn try_ref(&mut self, t: &Tree, knob: Knob, form: Form, q: u32) -> Option<Tree> {
         let v = lit(t)?;
         let k = self.knobs.value(knob);
-        if exact_value(k, q as f32, form) != Some(v) {
+        if exact_value(k, q as f64, form) != Some(v) {
             return None;
         }
         let name = ref_name(knob, form);

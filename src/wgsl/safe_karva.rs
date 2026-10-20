@@ -1002,7 +1002,7 @@ fn project_scored(n: &MathNode, demand: Ty, kingdom: &WgslKingdom, per_kernel: &
             let (ctor, t) = split_token(token);
             if ctor.starts_with("literal.") {
                 let v = match kids.as_slice() {
-                    [MathNode::Num(v)] => *v as f32,
+                    [MathNode::Num(v)] => *v,
                     _ => 0.0,
                 };
                 return if kingdom.rows.iter().any(|r| r.name == ctor && r.output == demand) { (Tree::literal(ctor, demand, v), off(t)) } else { (Tree::fallback(demand), 1) };

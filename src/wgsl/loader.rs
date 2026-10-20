@@ -758,7 +758,7 @@ mod tests {
                 at.pop();
             }
         }
-        fn set_at(t: &Tree, at: &[usize], v: f32) -> Tree {
+        fn set_at(t: &Tree, at: &[usize], v: f64) -> Tree {
             match at.split_first() {
                 None => Tree { konst: v, ..t.clone() },
                 Some((&i, rest)) => {
@@ -768,7 +768,7 @@ mod tests {
                 }
             }
         }
-        fn values_of(t: &Tree, name: &str, ty: Ty, out: &mut Vec<f32>) {
+        fn values_of(t: &Tree, name: &str, ty: Ty, out: &mut Vec<f64>) {
             if t.kids.is_empty() && t.name == name && t.ty == ty {
                 out.push(t.konst);
             }
@@ -818,7 +818,9 @@ mod tests {
                     LiteralDomain::Set(set) => raw.extend(set.iter().map(|&m| m as f64)),
                 }
                 for v in raw {
-                    let c = dom.canonical(v, fallback) as f32;
+                    let c = dom.canonical(v, fallback);
+                    // (A real is an f32's value.)
+                    let c = if matches!(dom, LiteralDomain::Real { .. }) { f64::from(c as f32) } else { c };
                     let child = set_at(&read.tree, &at, c);
                     let back = crate::wgsl::safe_karva::render_tree_with(&child, &kingdom, &read.role).and_then(|r| crate::wgsl::safe_reader::read_safe(&r.text, &kingdom).map_err(|e| format!("does not read back: {e}")));
                     match back {

@@ -806,7 +806,7 @@ fn pad_walk(t: &Tree, plan: &PadPlan, index: crate::geneframe::Ty) -> Tree {
     }
     if t.name.starts_with("wg.decl_") && t.kids.len() == 2 && t.kids[0].name == plan.array {
         let mut kids = kids;
-        kids[1] = Tree { konst: (plan.len + plan.len / plan.width) as f32, ..t.kids[1].clone() };
+        kids[1] = Tree { konst: f64::from(plan.len + plan.len / plan.width), ..t.kids[1].clone() };
         return Tree { name: t.name.clone(), ty: t.ty, konst: t.konst, kids };
     }
     Tree { name: t.name.clone(), ty: t.ty, konst: t.konst, kids }
@@ -1547,7 +1547,7 @@ fn pad_len(t: &Tree, array: &str, len: u32) -> Tree {
     let kids: Vec<Tree> = t.kids.iter().map(|k| pad_len(k, array, len)).collect();
     if t.name.starts_with("wg.decl_") && t.kids.len() == 2 && t.kids[0].name == array {
         let mut kids = kids;
-        kids[1] = Tree { konst: len as f32, ..t.kids[1].clone() };
+        kids[1] = Tree { konst: f64::from(len), ..t.kids[1].clone() };
         return Tree { name: t.name.clone(), ty: t.ty, konst: t.konst, kids };
     }
     Tree { name: t.name.clone(), ty: t.ty, konst: t.konst, kids }

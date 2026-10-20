@@ -21,7 +21,7 @@ use crate::wgsl::table::FunctionTable;
 pub struct Tree {
     pub name: String,
     pub ty: Ty,
-    pub konst: f32,
+    pub konst: f64,
     pub kids: Vec<Tree>,
 }
 
@@ -30,8 +30,8 @@ impl Tree {
         Tree { name: name.to_string(), ty, konst: 0.0, kids }
     }
 
-    pub fn literal(name: &str, ty: Ty, konst: f32) -> Tree {
-        Tree { name: name.to_string(), ty, konst, kids: Vec::new() }
+    pub fn literal(name: &str, ty: Ty, konst: impl Into<f64>) -> Tree {
+        Tree { name: name.to_string(), ty, konst: konst.into(), kids: Vec::new() }
     }
 
     pub fn fallback(ty: Ty) -> Tree {
@@ -46,11 +46,18 @@ impl Tree {
         1 + self.kids.iter().map(Tree::depth).max().unwrap_or(0)
     }
 
+    /// The constant as text: an f32's shortest form where the value is one (`0.1`, not
+    /// `0.10000000149011612`), else the f64's (an integer literal of any u32 or i32).
+    pub fn konst_text(&self) -> String {
+        let f = self.konst as f32;
+        if f64::from(f) == self.konst { format!("{f}") } else { format!("{}", self.konst) }
+    }
+
     /// `(name kids…)` with literals as `(literal.real 1.5)`.
     pub fn to_sexpr(&self) -> String {
         if self.kids.is_empty() {
             if self.name.starts_with("literal.") {
-                return format!("({} {})", self.name, self.konst);
+                return format!("({} {})", self.name, self.konst_text());
             }
             return self.name.clone();
         }
@@ -991,7 +998,7 @@ pub const MAX_THREADS: u32 = 1024;
 /// A workgroup dimension as a grid row writes it (2026-10-12: the full legal
 /// range, not {4, 8, 16, 32}): any integer from 1 to [`MAX_THREADS`] (the
 /// M3 Max's per-axis and per-workgroup limit is 1,024), rounded.
-pub fn workgroup_dim(v: f32) -> u32 {
+pub fn workgroup_dim(v: f64) -> u32 {
     if v.is_finite() { (v.round() as i64).clamp(1, i64::from(MAX_THREADS)) as u32 } else { 1 }
 }
 
@@ -1053,9 +1060,9 @@ fn plan_bytes(plan: &BTreeMap<String, (String, u32)>) -> u64 {
 }
 
 /// The member of `set` nearest `v` (the first on a tie; a non-finite `v` is taken as 0).
-pub fn snap(set: &[u32], v: f32) -> u32 {
+pub fn snap(set: &[u32], v: f64) -> u32 {
     let v = if v.is_finite() { v } else { 0.0 };
-    *set.iter().min_by(|a, b| (f64::from(**a) - f64::from(v)).abs().partial_cmp(&(f64::from(**b) - f64::from(v)).abs()).expect("finite")).expect("a non-empty set")
+    *set.iter().min_by(|a, b| (f64::from(**a) - v).abs().partial_cmp(&(f64::from(**b) - v).abs()).expect("finite")).expect("a non-empty set")
 }
 
 pub struct Renderer<'a> {
@@ -2826,7 +2833,7 @@ impl Renderer<'_> {
         // a fallback leaf writes:
         // `wid.y / max(1u, 1u)` read back from naga's folded `max(0u, 1u)`
         // was not a fixpoint, 5 of 1,000 random modules, 2026-10-17.)
-        fn literal_through(t: &Tree) -> Option<f32> {
+        fn literal_through(t: &Tree) -> Option<f64> {
             match (t.name.as_str(), t.kids.as_slice()) {
                 (n, []) if n.starts_with("literal.") => Some(t.konst),
                 ("fallback", []) => Some(0.0),
@@ -3066,7 +3073,7 @@ impl Renderer<'_> {
         Ok(format!("{helper}({})", a.join(", ")))
     }
 
-    fn literal(&self, form: &str, v: f32, d: &WgslDual, wrap: bool) -> Result<String, String> {
+    fn literal(&self, form: &str, v: f64, d: &WgslDual, wrap: bool) -> Result<String, String> {
         let u = |x: u32| if wrap { format!("lit_u32({x}u)") } else { format!("{x}u") };
         let scalar = match form {
             "real" => {
@@ -3078,7 +3085,7 @@ impl Renderer<'_> {
                 }
                 if wrap { format!("lit_f32({v:?}f)") } else { format!("{v:?}f") }
             }
-            "index" | "count" | "bits" | "hash32" | "code4" | "code8" | "code16" | "code1024" => u(if v.is_finite() { v.clamp(0.0, 4_294_967_040.0) as u32 } else { 0 }),
+            "index" | "count" | "bits" | "hash32" | "code4" | "code8" | "code16" | "code1024" => u(if v.is_finite() { v.clamp(0.0, 4_294_967_295.0) as u32 } else { 0 }),
             "wgdim" => u(workgroup_dim(v)),
             "lit64" => u(if v.is_finite() { (v.round() as i64).clamp(1, 64) as u32 } else { 1 }),
             "lit4096" => u(if v.is_finite() { (v.round() as i64).clamp(1, 4096) as u32 } else { 1 }),
@@ -3090,7 +3097,7 @@ impl Renderer<'_> {
                 // ("Cannot cast scalar components ... to type i32", random
                 // kernels with the i32 rows, 2026-10-12). i32::MIN has no
                 // literal (2147483648i is out of range).
-                let x = v.clamp(-2_147_483_648.0, 2_147_483_520.0) as i32;
+                let x = v.clamp(-2_147_483_648.0, 2_147_483_647.0) as i32;
                 let text = if x == i32::MIN { "(-2147483647i - 1i)".to_string() } else { format!("{x}i") };
                 if wrap { format!("lit_i32({text})") } else { text }
             }
@@ -5145,5 +5152,36 @@ mod tests {
         let len = t("load.h_len", "u32.count");
         let e = r.value(&len, &mut scope).expect_err("load.h_len rendered under v24's role");
         assert!(e.starts_with("our software has a bug: load.h_len"), "{e}");
+    }
+
+    /// AN INTEGER LITERAL OF ANY u32 OR i32 ROUND-TRIPS EXACTLY: u32::MAX and i32::MIN are written and read as the values
+    /// they are, not as the nearest f32 or as halves of dual bits.
+    #[test]
+    fn an_integer_literal_of_any_u32_or_i32_round_trips() {
+        let (k, t, r) = (WgslKingdom::load_safe(), FunctionTable::safe(), gram_role());
+        let rr = Renderer::new(&k, &t, &r);
+        let ty = |n: &str| dual_ty(&k, n).unwrap();
+        for (set, reg, lit, dual, want) in [
+            ("reg.set_i_L0", ("reg.i0", "reg<u32>.index"), "literal.index", "u32.index", f64::from(u32::MAX)),
+            ("reg.set_i_L0", ("reg.i0", "reg<u32>.index"), "literal.index", "u32.index", 2_246_822_507.0),
+            ("reg.set_i_L0", ("reg.i0", "reg<u32>.index"), "literal.index", "u32.index", 16_777_217.0),
+            ("reg.set_n_L0", ("reg.n0", "reg<i32>.int"), "literal.int", "i32.int", f64::from(i32::MIN)),
+            ("reg.set_n_L0", ("reg.n0", "reg<i32>.int"), "literal.int", "i32.int", f64::from(i32::MAX)),
+        ] {
+            let stmt = Tree::new(set, ty("stmt.L0"), vec![Tree::new(reg.0, ty(reg.1), vec![]), Tree::literal(lit, ty(dual), want)]);
+            let kernel = Tree::new("kernel.entry_safe", ty("kernel.safe"), vec![Tree::fallback(ty("grid.grid")), Tree::new("block.one_L0", ty("block.L0"), vec![stmt]), Tree::fallback(ty("block.O0"))]);
+            let text = rr.kernel(&kernel).unwrap_or_else(|e| panic!("{e}")).text;
+            validate_text(&text).unwrap_or_else(|e| panic!("{e}\n{text}"));
+            let back = crate::wgsl::safe_reader::read_safe(&text, &k).unwrap_or_else(|e| panic!("{want}: does not read back: {e}\n{text}"));
+            fn values(t: &Tree, name: &str, out: &mut Vec<f64>) {
+                if t.name == name && t.kids.is_empty() {
+                    out.push(t.konst);
+                }
+                t.kids.iter().for_each(|c| values(c, name, out));
+            }
+            let mut got = Vec::new();
+            values(&back.tree, lit, &mut got);
+            assert!(got.contains(&want), "{want} read back as {got:?}\n{text}");
+        }
     }
 }

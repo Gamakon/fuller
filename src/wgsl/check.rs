@@ -1133,7 +1133,7 @@ impl<'a> Checker<'a> {
             "unroll" => u128::from(snap(&UNROLL, v)),
             _ => {
                 if v.is_finite() {
-                    v.clamp(0.0, 4_294_967_040.0) as u128
+                    v.clamp(0.0, 4_294_967_295.0) as u128
                 } else {
                     0
                 }

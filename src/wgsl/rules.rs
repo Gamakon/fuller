@@ -627,7 +627,7 @@ pub(crate) fn any_node(t: &Tree, p: &dyn Fn(&Tree) -> bool) -> bool {
 
 /// The threads as a value: a reference to them or the literal.
 pub(crate) fn is_threads(t: &Tree, threads: u32) -> bool {
-    t.name == "literal.p_threads" || (t.kids.is_empty() && t.name.starts_with("literal.") && !t.name.starts_with("literal.p_") && t.konst == threads as f32)
+    t.name == "literal.p_threads" || (t.kids.is_empty() && t.name.starts_with("literal.") && !t.name.starts_with("literal.p_") && t.konst == threads as f64)
 }
 
 /// Whether a counted loop at tile depth `d` strides its body by the threads
@@ -709,7 +709,7 @@ pub(crate) fn rename(t: &Tree, map: &BTreeMap<String, String>) -> Tree {
     if parr {
         if let Some(i) = t.kids[1].kids.first().filter(|l| l.name.starts_with("literal.") && l.kids.is_empty()) {
             if let Some(new) = map.get(&format!("{}[{}]", t.kids[0].name, i.konst)) {
-                let v: f32 = new.rsplit_once('[').and_then(|(_, x)| x.trim_end_matches(']').parse().ok()).unwrap_or(i.konst);
+                let v: f64 = new.rsplit_once('[').and_then(|(_, x)| x.trim_end_matches(']').parse().ok()).unwrap_or(i.konst);
                 kids[1].kids[0].konst = v;
             }
         }
@@ -1034,7 +1034,7 @@ fn restride(t: &Tree, plan: &StridedPlan, to: &dyn Fn(u32) -> u32, regs: &BTreeM
         if let Some(&e) = plan.per_row.get(&t.kids[0].name) {
             if let Some(i) = kids[1].kids.first_mut().filter(|l| l.name.starts_with("literal.") && l.kids.is_empty()) {
                 let old = i.konst as u32;
-                i.konst = (to(old / e) * e + old % e) as f32;
+                i.konst = f64::from(to(old / e) * e + old % e);
             }
         }
     }

@@ -145,7 +145,7 @@ pub fn apply(rw: Rewrite, root: &Tree, kingdom: &WgslKingdom, rng: &mut u64) -> 
             let index = crate::wgsl::render::dual_ty(kingdom, "u32.index")?;
             pick(&matches(root, &|n| n.kids.is_empty() && n.name.starts_with("literal.") && n.ty == index), rng).and_then(|p| {
                 let n = at(root, &p);
-                let d = [-2.0f32, -1.0, 1.0, 2.0][(next(rng) % 4) as usize];
+                let d = [-2.0f64, -1.0, 1.0, 2.0][(next(rng) % 4) as usize];
                 let v = n.konst + d;
                 (v >= 0.0).then(|| (format!("{} {} -> {v}", n.name, n.konst), replace_at(root, &p, Tree { konst: v, ..n.clone() })))
             })

@@ -420,21 +420,8 @@ fn tree_of(ctx: &mut Ctx, n: &Node) -> Result<Tree, String> {
             Ok(Tree::new(name, t, vec![]))
         }
         Node::Literal { form, value, .. } => {
-            // An integer literal is carried as an f32 value: exact only below 2^24.
-            // A u32 literal past 2^24 (a hash's multiplier or key, CubeCL's
-            // 2246822507u) as its halves, (hi << 16u) | lo, both exact: the
-            // same 32 bits.
-            if form != "real" && form != "int" && *value > 16_777_216.0 && *value <= 4_294_967_295.0 && value.fract() == 0.0 {
-                let v = *value as u64;
-                let (bits, count) = (ty(ctx, "u32.bits")?, ty(ctx, "u32.count")?);
-                let hi = Tree::literal("literal.bits", bits, (v >> 16) as f32);
-                let lo = Tree::literal("literal.bits", bits, (v & 0xffff) as f32);
-                let shl = Tree::new("bits.shl", bits, vec![hi, Tree::literal("literal.count", count, 16.0)]);
-                return Ok(Tree::new("bits.or", bits, vec![shl, lo]));
-            }
-            if form != "real" && value.abs() > 16_777_216.0 {
-                return Err(format!("the literal {value} exceeds the exact range of an integer literal (2^24); spell the mask as a rounding or a shift"));
-            }
+            // A literal's value is carried as an f64: exact for every u32 and i32 (and every f32), so a hash's
+            // multiplier or key (CubeCL's 2246822507u), a mask (0xFFFFFFFFu) or i32::MIN reads as the value it is.
             let t = match ctx.duals.get(&text).copied().flatten() {
                 Some(t) => t,
                 None => {
@@ -443,7 +430,8 @@ fn tree_of(ctx: &mut Ctx, n: &Node) -> Result<Tree, String> {
                     ty(ctx, dual)?
                 }
             };
-            Ok(Tree::literal(&format!("literal.{form}"), t, *value as f32))
+            // (A real literal is an f32's value; an integer one is exact as an f64.)
+            Ok(Tree::literal(&format!("literal.{form}"), t, if form == "real" { f64::from(*value as f32) } else { *value }))
         }
         Node::App { name, kids, .. } if name.starts_with("tex.") => ctx.texture_row(name, kids),
         Node::App { name, kids, known, .. } => {
@@ -856,7 +844,7 @@ fn flat_indexes(t: &Tree, out: &mut Vec<Tree>) {
 }
 
 fn literal_value(t: &Tree) -> Option<f32> {
-    t.name.starts_with("literal.").then_some(t.konst)
+    t.name.starts_with("literal.").then_some(t.konst as f32)
 }
 
 /// The safe table's row for an unresolved `naga.<Node>.<Variant>` node, by
@@ -1435,14 +1423,14 @@ fn scale_by(x: &Tree, lit: &Tree, ty: Ty) -> Tree {
     }
     if let Some(v) = literal_value(x) {
         let mut folded = x.clone();
-        folded.konst = v * lit.konst;
+        folded.konst = f64::from(v) * lit.konst;
         return folded;
     }
     if x.name == "index.mul" && x.kids.len() == 2 {
         for (p, q) in [(&x.kids[0], &x.kids[1]), (&x.kids[1], &x.kids[0])] {
             if let Some(v) = literal_value(p) {
                 let mut folded = p.clone();
-                folded.konst = v * lit.konst;
+                folded.konst = f64::from(v) * lit.konst;
                 return Tree::new("index.mul", x.ty, vec![q.clone(), folded]);
             }
         }
@@ -2485,26 +2473,11 @@ impl<'a> Ctx<'a> {
             // of the kingdom sets one): its literal value.
             if let Some(v) = self.module_constant(&t.name)? {
                 let form = self.kingdom.dual(t.ty).map(|d| d.form.clone()).unwrap_or_default();
-                // A u32 past 2^24 (`const PAD: u32 = 0xFFFFFFFFu`, the v24
-                // reference's pad) is not exact in a literal's f32: its halves,
-                // (hi << 16u) | lo, as a literal in the text is (it rendered 0u
-                // until 2026-10-17); past the exact range otherwise, named.
-                if form != "real" && form != "int" && v > 16_777_216.0 && v <= 4_294_967_295.0 && v.fract() == 0.0 {
-                    let x = v as u64;
-                    let (bits, count) = (ty(self, "u32.bits")?, ty(self, "u32.count")?);
-                    let hi = Tree::literal("literal.bits", bits, (x >> 16) as f32);
-                    let lo = Tree::literal("literal.bits", bits, (x & 0xffff) as f32);
-                    let shl = Tree::new("bits.shl", bits, vec![hi, Tree::literal("literal.count", count, 16.0)]);
-                    return Ok(Tree::new("bits.or", bits, vec![shl, lo]));
-                }
-                if form != "real" && v.abs() > 16_777_216.0 {
-                    return Err(format!("{} = {v} exceeds the exact range of an integer literal (2^24)", t.name));
-                }
                 let row = format!("literal.{form}");
                 if !self.kingdom.rows.iter().any(|r| r.name == row) {
                     return Err(format!("{} = {v}: a literal of form {form} has no row", t.name));
                 }
-                return Ok(Tree::literal(&row, t.ty, v as f32));
+                return Ok(Tree::literal(&row, t.ty, if form == "real" { f64::from(v as f32) } else { v }));
             }
             return Err(format!("leaf {} has no safe spelling", t.name));
         }
@@ -7518,7 +7491,7 @@ mod tests {
         assert!(back.contains("var<workgroup> wg_v2a: array<vec2<f32>, 1056>;") && back.contains("var<workgroup> wg_a: array<f32, 256>;"), "{back}");
         validate_text(&back).unwrap_or_else(|e| panic!("{e}\n{back}"));
         // 8,192 vec2 (64 KB) beside 256 f32: the vec2 array halves to 2,048 (16 KB + 1 KB).
-        fn set_len(t: &mut Tree, to: f32) {
+        fn set_len(t: &mut Tree, to: f64) {
             if t.name == "wg.decl_v2" {
                 t.kids[1].konst = to;
             }
