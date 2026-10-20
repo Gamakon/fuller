@@ -389,3 +389,189 @@ fn expression_is_deterministic() {
     assert_eq!(a, b);
     assert_ne!(a[0], a[1], "the fingerprints are not constant");
 }
+
+use crate::kingdom_contract::relations_from_rows;
+use crate::typed_gep::{fits, required_heads, write_back, LayoutDefect, Tree};
+
+/// The design's two-type kingdom with the polymorphic spelling.
+fn two_type() -> KingdomContract {
+    relations_from_rows(
+        "two-type",
+        vec![Ty::S],
+        &[
+            ("left".to_string(), vec![Ty::S, Ty::I], Ty::S),
+            ("s".to_string(), vec![], Ty::S),
+            ("i".to_string(), vec![], Ty::I),
+            ("z".to_string(), vec![], Ty::S),
+            ("z".to_string(), vec![], Ty::I),
+        ],
+        &[],
+    )
+    .check()
+    .expect("fixture")
+}
+
+fn leaf(symbol: SymbolId) -> Tree {
+    Tree { symbol, const_index: None, kids: vec![] }
+}
+
+/// The program size is attained: the layout built for `N` holds the chain of
+/// `N` functions that gives each function its last argument of the type, the
+/// chain needing exactly `h_T` head rows; and the layout built for `N` and
+/// then expressed reads exactly `t_T` tail rows of that chain's type.
+/// Two-type: `left^N`, S demand `N + 1 = h_S + t_S`, I demand `N = h_I + t_I`.
+#[test]
+fn bound_attained_by_the_chain_of_n_functions_two_type() {
+    let k = two_type();
+    let (left, s, i) = (0u32, 1u32, 2u32);
+    for n in 1..=24usize {
+        let layout = GeneLayout::from_program_size(&k, Ty::S, n).expect("layout");
+        let mut tree = Tree { symbol: left, const_index: None, kids: vec![leaf(s), leaf(i)] };
+        for _ in 1..n {
+            tree = Tree { symbol: left, const_index: None, kids: vec![tree, leaf(i)] };
+        }
+        let j = required_heads(&k, &tree);
+        assert_eq!(j.get(&Ty::S), Some(&n), "N = {n}: the chain needs h_S = N head rows");
+        fits(&k, &layout, &tree).unwrap_or_else(|d| panic!("N = {n}: {d}"));
+        let gene = write_back(&k, &layout, &vec![s; layout.width], &tree).expect("encodes");
+        let e = express(&k, &layout, &gene, &BTreeMap::new()).expect("expresses");
+        assert_eq!(e.tree(), tree, "N = {n}");
+        let (fs, fi) = (layout.frame(Ty::S).expect("S"), layout.frame(Ty::I).expect("I"));
+        assert_eq!((fs.head_len, fs.tail_len, fi.head_len, fi.tail_len), (n, 1, n - 1, 1));
+        assert_eq!(e.reach.frame_used.get(&Ty::S), Some(&(fs.head_len + fs.tail_len)), "N = {n}: the last S row of the frame is read");
+        assert_eq!(e.reach.frame_used.get(&Ty::I), Some(&(fi.head_len + fi.tail_len)), "N = {n}: the last I row of the frame is read");
+        assert!(j.get(&Ty::S).copied().unwrap_or(0) <= fs.head_len);
+    }
+}
+
+/// One type, any arity: the chain of `N` n-ary functions, each giving the
+/// chain to its last argument, needs exactly `h = 1 + (N - 1) n_max` head rows,
+/// so a layout of one row fewer cannot hold it.
+#[test]
+fn bound_attained_by_the_chain_of_n_functions_one_type() {
+    let k = sr_relations().check().expect("SR");
+    let binary = (0..k.n_symbols() as SymbolId).find(|s| k.signature(*s).len() == 2).expect("a binary function");
+    let x = k.terminals_of(Ty::F).iter().copied().find(|s| !k.is_constant(*s)).expect("x");
+    for n in 1..=40usize {
+        let mut tree = Tree { symbol: binary, const_index: None, kids: vec![leaf(x), leaf(x)] };
+        for _ in 1..n {
+            tree = Tree { symbol: binary, const_index: None, kids: vec![leaf(x), tree] };
+        }
+        let h = 1 + (n - 1) * 2;
+        assert_eq!(required_heads(&k, &tree).get(&Ty::F), Some(&h), "N = {n}");
+        let layout = GeneLayout::from_program_size(&k, Ty::F, n).expect("layout");
+        assert!(fits(&k, &layout, &tree).is_ok());
+        let one_short = GeneLayout::from_heads(&k, Ty::F, &BTreeMap::from([(Ty::F, h - 1)])).expect("layout");
+        assert_eq!(fits(&k, &one_short, &tree), Err(LayoutDefect::HeadTooShort { ty: Ty::F, need: h, h: h - 1 }), "N = {n}: one head row fewer does not hold it");
+    }
+}
+
+/// The `P_T` and `L + h_T` bounds of the two-type kingdom are attained: a head
+/// of `left` in `head_S` expresses every one (`h_S + 1 = h_S + t_S` S slots),
+/// and for the root-only I slots `P_I = h_S`.
+#[test]
+fn tail_bound_attained_two_type() {
+    let k = two_type();
+    let mut rng = Rng(5);
+    for n in 1..=24usize {
+        let layout = GeneLayout::from_program_size(&k, Ty::S, n).expect("layout");
+        let gene = greedy_gene(&k, &layout, None, &mut rng);
+        let e = express(&k, &layout, &gene, &BTreeMap::new()).expect("expresses");
+        for f in layout.frames.iter().filter(|f| f.tail_len > 0) {
+            assert_eq!(e.reach.tail_used.get(&f.ty), Some(&f.tail_len), "N = {n}: tail {:?} read to exactly t_T", f.ty);
+        }
+    }
+}
+
+/// Locality: an edit in `head_T` changes only cells of `head_T`, draws only
+/// symbols outputting `T`, and the child expresses (it may change which rows
+/// of another frame are read, never their validity). 100,000 edits per kingdom.
+fn locality(rel: &KingdomRelations, label: &str) {
+    let k = rel.check().expect("check");
+    let consts = const_lens(&k);
+    let mut rng = Rng(0x10ca ^ label.len() as u64);
+    let mut edits = 0usize;
+    for g in 0..GENES {
+        let n = SIZES[g % SIZES.len()];
+        let root = k.roots()[rng.below(k.roots().len())];
+        let layout = GeneLayout::from_program_size(&k, root, n).expect("layout");
+        let gene = random_gene(&k, &layout, &mut rng);
+        let heads: Vec<Span> = layout.spans().into_iter().filter(|s| s.domain == Domain::Head).collect();
+        if heads.is_empty() {
+            continue;
+        }
+        let span = heads[rng.below(heads.len())];
+        let pos = span.off + rng.below(span.len);
+        let alphabet = layout.alphabet(&k, pos, &consts);
+        let value = alphabet[rng.below(alphabet.len())];
+        let mut child = gene.clone();
+        layout.mutate(&k, &mut child, pos, value, &consts).expect("a drawn value is in the alphabet");
+        assert_eq!(k.output(value), span.ty, "{label}: head_T draws symbols of T");
+        for p in 0..layout.width {
+            assert!(p == pos || child[p] == gene[p], "{label}: cell {p} changed by an edit at {pos}");
+        }
+        let e = express(&k, &layout, &child, &consts).unwrap_or_else(|d| panic!("{label} edit {g}: {d}"));
+        assert_well_typed(&k, root, &e, label);
+        edits += 1;
+    }
+    println!("{label}: {edits} head edits stayed in their domain and expressed");
+}
+
+#[test]
+fn locality_sr() {
+    locality(&sr_relations(), "SR");
+}
+
+#[test]
+fn locality_regex() {
+    locality(&regex_relations(), "regex");
+}
+
+/// Homologous crossover: two genes of one layout exchange a range inside one
+/// domain of one type; the cells outside the range are untouched, the range
+/// in each child is the other parent's, and both children express. 100,000 per kingdom.
+fn crossover(rel: &KingdomRelations, label: &str) {
+    let k = rel.check().expect("check");
+    let consts = const_lens(&k);
+    let mut rng = Rng(0xc0de ^ label.len() as u64);
+    let mut swaps = 0usize;
+    for g in 0..GENES {
+        let n = SIZES[g % SIZES.len()];
+        let root = k.roots()[rng.below(k.roots().len())];
+        let layout = GeneLayout::from_program_size(&k, root, n).expect("layout");
+        let (a, b) = (random_gene(&k, &layout, &mut rng), random_gene(&k, &layout, &mut rng));
+        let spans = layout.spans();
+        let span = spans[rng.below(spans.len())];
+        let lo = span.off + rng.below(span.len);
+        let hi = lo + 1 + rng.below(span.off + span.len - lo);
+        let (mut ca, mut cb) = (a.clone(), b.clone());
+        layout.swap_range(&layout, &mut ca, &mut cb, lo, hi).expect("same layout, one domain");
+        for p in 0..layout.width {
+            let inside = (lo..hi).contains(&p);
+            assert_eq!((ca[p], cb[p]), if inside { (b[p], a[p]) } else { (a[p], b[p]) }, "{label}: cell {p}, range [{lo}, {hi})");
+        }
+        for (child, what) in [(&ca, "first"), (&cb, "second")] {
+            let e = express(&k, &layout, child, &consts).unwrap_or_else(|d| panic!("{label} {what} child {g}: {d}"));
+            assert_well_typed(&k, root, &e, label);
+        }
+        swaps += 1;
+    }
+    // A layout of another program size is not homologous: nothing is exchanged.
+    let (l1, l2) = (GeneLayout::from_program_size(&k, k.roots()[0], 3).expect("layout"), GeneLayout::from_program_size(&k, k.roots()[0], 4).expect("layout"));
+    let (mut a, mut b) = (random_gene(&k, &l1, &mut rng), random_gene(&k, &l2, &mut rng));
+    let (a0, b0) = (a.clone(), b.clone());
+    assert_eq!(l1.swap_range(&l2, &mut a, &mut b, 0, 1), Err(LayoutDefect::NotHomologous));
+    assert_eq!((a, b), (a0, b0));
+    println!("{label}: {swaps} homologous exchanges closed");
+}
+
+#[test]
+fn crossover_sr() {
+    crossover(&sr_relations(), "SR");
+}
+
+#[test]
+fn crossover_regex() {
+    crossover(&regex_relations(), "regex");
+}
+
