@@ -10,9 +10,15 @@
 //!   many-hot [`crate::geneframe::Arity`] cannot hold it (it is keyed by type).
 //!
 //! [`KingdomRelations::check`] returns a [`KingdomContract`], the relations
-//! plus the derived `a_T`, `n_max` and tail lengths, or every defect found, each
-//! spelled "our software has a bug: ...". There is no repair here: a kingdom
-//! that fails does not load.
+//! plus the derived `a_{T,U}`, `a_T`, `n_U` and `n_max`, or every defect found,
+//! each spelled "our software has a bug: ...". There is no repair here: a
+//! kingdom that fails does not load.
+//!
+//! The lengths of a gene are not kingdom data: they belong to a layout
+//! (`(layout_id, gene_id)`). [`KingdomContract::heads_from_program_size`] and
+//! [`KingdomContract::bounds`] derive them from a root type and either a
+//! declared program size `N` or explicit head lengths `h_T`, with the exact
+//! per-producer tail bound of the design (section 2).
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -48,8 +54,14 @@ pub struct KingdomContract {
     constant: Vec<bool>,
     /// Every type that occurs, ascending [`Ty::code`].
     types: Vec<Ty>,
-    /// `a_T`: the most arguments of type `T` any one function takes.
+    /// `a_{T,U}`, keyed `(T, U)`: the most arguments of type `T` any one
+    /// function outputting `U` takes. Absent means zero.
+    a_tu: BTreeMap<(Ty, Ty), u32>,
+    /// `a_T = max_U a_{T,U}`.
     a: BTreeMap<Ty, u32>,
+    /// `n_U`: the largest arity among functions outputting `U`. Absent means
+    /// there are none, and counts as one.
+    n_u: BTreeMap<Ty, u32>,
     n_max: u32,
     terminals: BTreeMap<Ty, Vec<SymbolId>>,
     functions: BTreeMap<Ty, Vec<SymbolId>>,
@@ -141,16 +153,26 @@ impl KingdomRelations {
             let book = if signature[s].is_empty() { &mut terminals } else { &mut functions };
             book.entry(output[s]).or_default().push(s as SymbolId);
         }
+        let mut a_tu: BTreeMap<(Ty, Ty), u32> = BTreeMap::new();
         let mut a: BTreeMap<Ty, u32> = BTreeMap::new();
+        let mut n_u: BTreeMap<Ty, u32> = BTreeMap::new();
         let mut n_max = 0u32;
-        for sig in &signature {
+        for (s, sig) in signature.iter().enumerate() {
             n_max = n_max.max(sig.len() as u32);
             let mut count: BTreeMap<Ty, u32> = BTreeMap::new();
             for t in sig {
                 *count.entry(*t).or_default() += 1;
                 types.insert(*t);
             }
+            if sig.is_empty() || outputs[s].len() != 1 {
+                continue;
+            }
+            let u = output[s];
+            let e = n_u.entry(u).or_default();
+            *e = (*e).max(sig.len() as u32);
             for (t, c) in count {
+                let e = a_tu.entry((t, u)).or_default();
+                *e = (*e).max(c);
                 let e = a.entry(t).or_default();
                 *e = (*e).max(c);
             }
@@ -176,7 +198,9 @@ impl KingdomRelations {
                 signature,
                 constant,
                 types: types.into_iter().collect(),
+                a_tu,
                 a,
+                n_u,
                 n_max,
                 terminals,
                 functions,
@@ -240,6 +264,7 @@ impl KingdomContract {
         self.terminals_of(ty).iter().any(|s| self.constant[*s as usize])
     }
 
+    /// Rev-3 length, removed with the layout rewrite of the next commit.
     /// `t_T = min(h*a_T + [T = R], h*(n_max - 1) + 1)`, the tail length of a
     /// gene rooted at `root` with head length `h`; zero for a type with no
     /// frame (`a_T = 0` and not the root).
@@ -301,6 +326,149 @@ impl KingdomContract {
             }
         }
         w
+    }
+
+    /// `a_{T,U}`: the most arguments of type `ty` any one function outputting
+    /// `producer` takes; zero if none asks for it.
+    pub fn a_tu(&self, ty: Ty, producer: Ty) -> u32 {
+        self.a_tu.get(&(ty, producer)).copied().unwrap_or(0)
+    }
+    /// `n_U`: the largest arity among functions outputting `ty`; one if there
+    /// are none (such a type contributes no leaves beyond its slot).
+    pub fn n_u(&self, ty: Ty) -> u32 {
+        self.n_u.get(&ty).copied().unwrap_or(1)
+    }
+
+    /// `reachable(R)`: `root` first, then every type reachable from it through
+    /// the signatures of functions whose output is reachable, ascending code.
+    pub fn reachable(&self, root: Ty) -> Vec<Ty> {
+        let mut seen: BTreeSet<Ty> = BTreeSet::from([root]);
+        let mut queue = vec![root];
+        while let Some(u) = queue.pop() {
+            for f in self.functions_of(u) {
+                for t in self.signature(*f) {
+                    if seen.insert(*t) {
+                        queue.push(*t);
+                    }
+                }
+            }
+        }
+        let mut v = vec![root];
+        v.extend(seen.into_iter().filter(|t| *t != root));
+        v
+    }
+
+    /// `a_T` over the producers reachable from `root`: what a gene rooted at
+    /// `root` can actually be asked for. Producers no slot can reach are never
+    /// expressed, so they do not widen the head.
+    fn a_reachable(&self, ty: Ty, reach: &[Ty]) -> u32 {
+        reach.iter().map(|u| self.a_tu(ty, *u)).max().unwrap_or(0)
+    }
+
+    /// The head lengths of a layout that holds every program of at most `n`
+    /// functions rooted at `root`: `h_T = [T = R] + (N - 1) * a_T` over the
+    /// types reachable from `root` (design section 2.1; `a_T` is taken over the
+    /// reachable producers).
+    pub fn heads_from_program_size(&self, root: Ty, n: usize) -> Result<BTreeMap<Ty, usize>, String> {
+        self.check_root(root)?;
+        if n == 0 {
+            return Err(bug(format!("{}: a layout needs a program size of at least one function", self.kingdom)));
+        }
+        let reach = self.reachable(root);
+        Ok(reach.iter().map(|t| (*t, usize::from(*t == root) + (n - 1) * self.a_reachable(*t, &reach) as usize)).collect())
+    }
+
+    /// The largest program size `N` the heads guarantee: the greatest `N` with
+    /// `heads_from_program_size(root, N) <= heads` type by type; zero when the
+    /// root head is empty.
+    pub fn guaranteed_program_size(&self, root: Ty, heads: &BTreeMap<Ty, usize>) -> usize {
+        let reach = self.reachable(root);
+        let head = |t: Ty| heads.get(&t).copied().unwrap_or(0);
+        if head(root) == 0 {
+            return 0;
+        }
+        let mut n_minus_1 = usize::MAX;
+        for t in &reach {
+            let a = self.a_reachable(*t, &reach) as usize;
+            if a > 0 {
+                n_minus_1 = n_minus_1.min(head(*t).saturating_sub(usize::from(*t == root)) / a);
+            }
+        }
+        if n_minus_1 == usize::MAX {
+            1
+        } else {
+            n_minus_1 + 1
+        }
+    }
+
+    fn check_root(&self, root: Ty) -> Result<(), String> {
+        if self.roots.contains(&root) {
+            Ok(())
+        } else {
+            Err(bug(format!("{}: type {root:?} is not a root of this kingdom", self.kingdom)))
+        }
+    }
+
+    /// The bound table of a gene rooted at `root` with head lengths `heads`
+    /// (design section 2.2): per reachable type `P_T = [T = R] + sum_U h_U *
+    /// a_{T,U}`, `L = 1 + sum_U h_U * (n_U - 1)`, tail `t_T = max(0, min(P_T,
+    /// L + h_T) - h_T)` and Dc `d_T = min(P_T, L)`. A head for a type the root
+    /// cannot reach is a defect.
+    pub fn bounds(&self, root: Ty, heads: &BTreeMap<Ty, usize>) -> Result<GeneBounds, String> {
+        self.check_root(root)?;
+        let reach = self.reachable(root);
+        if let Some((t, h)) = heads.iter().find(|(t, h)| **h > 0 && !reach.contains(t)) {
+            return Err(bug(format!("{}: a head of {h} for type {t:?}, which root {root:?} cannot reach", self.kingdom)));
+        }
+        let head = |t: Ty| heads.get(&t).copied().unwrap_or(0);
+        let l = 1 + reach.iter().map(|u| head(*u) * (self.n_u(*u) as usize - 1)).sum::<usize>();
+        let types = reach
+            .iter()
+            .map(|t| {
+                let p = usize::from(*t == root) + reach.iter().map(|u| head(*u) * self.a_tu(*t, *u) as usize).sum::<usize>();
+                let h = head(*t);
+                TypeBound { ty: *t, h, p, t: p.min(l + h).saturating_sub(h), d: p.min(l), constant: self.constant_capable(*t) }
+            })
+            .collect();
+        Ok(GeneBounds { root, l, types })
+    }
+}
+
+/// One type's lengths in a gene.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TypeBound {
+    pub ty: Ty,
+    /// `h_T`, the head length.
+    pub h: usize,
+    /// `P_T`, every `T` slot any expressed function can open (plus the root).
+    pub p: usize,
+    /// `t_T`, the tail length.
+    pub t: usize,
+    /// `d_T = min(P_T, L)`, the most `T` leaves, hence the length of `Dc_T`
+    /// when `T` is constant-capable.
+    pub d: usize,
+    /// `T` has a constant placeholder `?_T`, so the gene holds a `Dc_T` of `d_T`.
+    pub constant: bool,
+}
+
+/// The bound table of one gene: `L` and a [`TypeBound`] per reachable type,
+/// the root first.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GeneBounds {
+    pub root: Ty,
+    /// `L`, the most leaves any expressed program can have.
+    pub l: usize,
+    pub types: Vec<TypeBound>,
+}
+
+impl GeneBounds {
+    pub fn get(&self, ty: Ty) -> Option<&TypeBound> {
+        self.types.iter().find(|b| b.ty == ty)
+    }
+    /// The words of the gene: every head, tail and the Dc of each
+    /// constant-capable type.
+    pub fn width(&self) -> usize {
+        self.types.iter().map(|b| b.h + b.t + if b.constant { b.d } else { 0 }).sum()
     }
 }
 
@@ -390,9 +558,10 @@ pub fn safewgsl_relations() -> KingdomRelations {
     wgsl_family_relations(&crate::wgsl::loader::WgslKingdom::load_safe(), crate::wgsl::loader::SAFEWGSL)
 }
 
-/// What a kingdom check reports, for the log: counts, `n_max`, the tail
-/// lengths and the gene width at head length `h`.
-pub fn report(r: &KingdomRelations, h: usize) -> String {
+/// What a kingdom check reports, for the log: counts, `n_max`, and for each
+/// root the bound table at program size `n` (heads from the design's
+/// `h_T = [T = R] + (N - 1) * a_T`): `L`, the gene width and the widest types.
+pub fn report(r: &KingdomRelations, n: usize) -> String {
     let functions = r.argument_signature.iter().map(|(s, _, _)| *s).collect::<BTreeSet<_>>().len();
     let head = format!("{}: {} symbols ({} functions, {} terminals), {} roots", r.kingdom, r.names.len(), functions, r.names.len() - functions, r.roots.len());
     match r.check() {
@@ -409,18 +578,26 @@ pub fn report(r: &KingdomRelations, h: usize) -> String {
             s
         }
         Ok(c) => {
-            let mut tails: BTreeMap<usize, usize> = BTreeMap::new();
-            for t in c.types() {
-                *tails.entry(c.envelope_tail_len(h, *t)).or_default() += 1;
+            let mut s = format!("{head}\n  check passed; {} types, n_max {}, program size N = {n}", c.types().len(), c.n_max());
+            for root in c.roots() {
+                let table = c.heads_from_program_size(*root, n).and_then(|h| c.bounds(*root, &h).map(|b| (h, b)));
+                match table {
+                    Err(e) => s.push_str(&format!("\n  root {root:?}: {e}")),
+                    Ok((heads, b)) => {
+                        let n_back = c.guaranteed_program_size(*root, &heads);
+                        s.push_str(&format!("\n  root {root:?}: {} types reachable, L = {}, gene width {} words, heads guarantee N = {n_back}", b.types.len(), b.l, b.width()));
+                        let mut widest: Vec<&TypeBound> = b.types.iter().collect();
+                        widest.sort_by_key(|t| std::cmp::Reverse((t.h + t.t + if t.constant { t.d } else { 0 }, t.ty.code())));
+                        for t in widest.iter().take(6) {
+                            s.push_str(&format!("\n    {:?}: h {} P {} t {} d {}{}", t.ty, t.h, t.p, t.t, t.d, if t.constant { "" } else { " (no Dc)" }));
+                        }
+                        if widest.len() > 6 {
+                            s.push_str(&format!("\n    ... {} more types", widest.len() - 6));
+                        }
+                    }
+                }
             }
-            let widths: BTreeSet<usize> = c.roots().iter().map(|rt| c.gene_width(h, *rt)).collect();
-            format!(
-                "{head}\n  check passed; {} types, n_max {}\n  envelope t_T at h={h} (length: types) {tails:?}\n  gene width at h={h}: {} per root, envelope {}",
-                c.types().len(),
-                c.n_max(),
-                widths.iter().map(usize::to_string).collect::<Vec<_>>().join("/"),
-                c.envelope_gene_width(h)
-            )
+            s
         }
     }
 }
@@ -443,37 +620,96 @@ mod tests {
         )
     }
 
+    fn heads(pairs: &[(Ty, usize)]) -> BTreeMap<Ty, usize> {
+        pairs.iter().copied().collect()
+    }
+
+    /// The design's worked figures (section 3): h_S = 2, h_I = 1, root S gives
+    /// P_S = 3, P_I = 2, L = 3, t_S = t_I = 1, d_S = 3, d_I = 2.
     #[test]
-    fn two_type_fixture_derives_a_t_n_max_and_t_t() {
+    fn two_type_fixture_derives_the_designs_bound_table() {
         let c = fixture().check().expect("a valid kingdom");
         assert_eq!(c.n_max(), 2);
         assert_eq!((c.a_t(Ty::S), c.a_t(Ty::I)), (1, 1));
-        // h = 3, R = S: t_S = min(3*1+1, 3*1+1) = 4, t_I = min(3, 4) = 3.
-        assert_eq!(c.tail_len(3, Ty::S, Ty::S), 4);
-        assert_eq!(c.tail_len(3, Ty::I, Ty::S), 3);
+        assert_eq!((c.a_tu(Ty::S, Ty::S), c.a_tu(Ty::I, Ty::S), c.a_tu(Ty::S, Ty::I), c.n_u(Ty::S), c.n_u(Ty::I)), (1, 1, 0, 2, 1));
         assert_eq!(c.signature(0), [Ty::S, Ty::I], "the order is data");
-        assert_eq!(c.frame_types(Ty::S), vec![Ty::S, Ty::I]);
-        assert_eq!(c.gene_width(3, Ty::S), 3 + 4 + 3);
+        assert_eq!(c.reachable(Ty::S), vec![Ty::S, Ty::I]);
+        assert_eq!(c.reachable(Ty::I), vec![Ty::I], "an I gene reaches only I");
+        let h = c.heads_from_program_size(Ty::S, 2).expect("heads");
+        assert_eq!(h, heads(&[(Ty::S, 2), (Ty::I, 1)]));
+        let b = c.bounds(Ty::S, &h).expect("bounds");
+        let row = |t: Ty| b.get(t).map(|x| (x.h, x.p, x.t, x.d)).expect("type");
+        assert_eq!((b.l, row(Ty::S), row(Ty::I)), (3, (2, 3, 1, 3), (1, 2, 1, 2)));
+        assert_eq!(b.width(), 2 + 1 + 1 + 1, "no constants, so no Dc");
+        assert_eq!(c.guaranteed_program_size(Ty::S, &h), 2);
     }
 
+    /// One type: t = d = h (n_max - 1) + 1, the physical Karva tail, and
+    /// h = 1 + (N - 1) n_max.
     #[test]
-    fn single_type_tail_is_the_karva_tail() {
+    fn single_type_bound_is_the_karva_tail() {
         let c = sr_relations().check().expect("SR passes");
         for h in [1usize, 7, 32] {
-            assert_eq!(c.tail_len(h, Ty::F, Ty::F), h * (c.n_max() as usize - 1) + 1);
+            let b = c.bounds(Ty::F, &heads(&[(Ty::F, h)])).expect("bounds");
+            let f = b.get(Ty::F).expect("F");
+            assert_eq!((f.t, f.d, f.p, b.l), (h * (c.n_max() as usize - 1) + 1, h * (c.n_max() as usize - 1) + 1, h * c.n_max() as usize + 1, h * (c.n_max() as usize - 1) + 1));
+            assert_eq!(b.width(), h + 2 * f.t);
         }
-        assert_eq!(c.frame_types(Ty::F), vec![Ty::F]);
+        for n in 1..40usize {
+            let h = c.heads_from_program_size(Ty::F, n).expect("heads");
+            assert_eq!(h[&Ty::F], 1 + (n - 1) * c.n_max() as usize);
+            assert_eq!(c.guaranteed_program_size(Ty::F, &h), n);
+        }
+    }
+
+    /// The explicit heads report the largest N they guarantee.
+    #[test]
+    fn explicit_heads_report_the_program_size_they_guarantee() {
+        let c = fixture().check().expect("valid");
+        let n = |s, i| c.guaranteed_program_size(Ty::S, &heads(&[(Ty::S, s), (Ty::I, i)]));
+        assert_eq!((n(0, 9), n(1, 0), n(2, 1), n(2, 0), n(5, 4), n(5, 3), n(9, 9)), (0, 1, 2, 1, 5, 4, 9));
     }
 
     #[test]
-    fn a_type_with_no_demand_has_no_frame() {
+    fn a_head_for_an_unreachable_type_or_a_root_outside_the_kingdom_is_a_defect() {
+        let c = fixture().check().expect("valid");
+        assert!(c.bounds(Ty::S, &heads(&[(Ty::S, 2), (Ty::B, 1)])).expect_err("unreachable").contains("cannot reach"));
+        assert!(c.heads_from_program_size(Ty::I, 3).expect_err("I is not a root").starts_with("our software has a bug: "));
+        assert!(c.heads_from_program_size(Ty::S, 0).is_err());
+    }
+
+    /// A type no function asks for has no frame in the table.
+    #[test]
+    fn a_type_with_no_demand_is_not_reachable() {
         let mut r = fixture();
         r.names.push("j".to_string());
         r.symbol_outputs.push((3, Ty::B));
         let c = r.check().expect("still valid");
         assert_eq!(c.a_t(Ty::B), 0);
-        assert_eq!(c.tail_len(5, Ty::B, Ty::S), 0);
-        assert_eq!(c.frame_types(Ty::S), vec![Ty::S, Ty::I]);
+        assert_eq!(c.reachable(Ty::S), vec![Ty::S, Ty::I]);
+    }
+
+    /// a_T is taken over the producers a root can reach: a producer no slot
+    /// reaches never widens the head.
+    #[test]
+    fn an_unreachable_producer_does_not_widen_the_head() {
+        // wide:B(I,I,I,I) is never reached from S; left:S(S,I) is.
+        let r = relations_from_rows(
+            "r",
+            vec![Ty::S, Ty::B],
+            &[
+                ("left".to_string(), vec![Ty::S, Ty::I], Ty::S),
+                ("wide".to_string(), vec![Ty::I, Ty::I, Ty::I, Ty::I], Ty::B),
+                ("s".to_string(), vec![], Ty::S),
+                ("i".to_string(), vec![], Ty::I),
+                ("b".to_string(), vec![], Ty::B),
+            ],
+            &[],
+        );
+        let c = r.check().expect("valid");
+        assert_eq!(c.a_t(Ty::I), 4);
+        assert_eq!(c.heads_from_program_size(Ty::S, 3).expect("heads"), heads(&[(Ty::S, 3), (Ty::I, 2)]));
+        assert_eq!(c.heads_from_program_size(Ty::B, 3).expect("heads")[&Ty::I], 8);
     }
 
     fn expect_defect(r: &KingdomRelations, needle: &str) {
@@ -553,9 +789,6 @@ mod tests {
         assert_eq!(c.a_t(Ty::Char), 2);
         assert_eq!(c.a_t(Ty::I), 1);
         assert_eq!(c.n_max(), 2);
-        // Pattern root, h = 32: 3 tails of 33 + 32 for I, Dc for Char and I.
-        assert_eq!(c.tail_len(32, Ty::Pattern, Ty::Pattern), 33);
-        assert_eq!(c.tail_len(32, Ty::I, Ty::Pattern), 32);
         assert!(c.constant_capable(Ty::Char) && c.constant_capable(Ty::I));
         assert!(!c.constant_capable(Ty::Pattern));
     }
@@ -581,15 +814,19 @@ mod tests {
         assert_eq!(d.len(), 129, "the plan lists 129 duals; a change here changes the plan");
     }
 
+    /// Prints the bound tables the design asks for (SR, regex, both WGSL
+    /// kingdoms) at program sizes 8 and 32: `cargo test ... the_kingdom_reports_print -- --nocapture`.
     #[test]
     fn the_kingdom_reports_print() {
-        let mut out = vec![report(&sr_relations(), 32), report(&regex_relations(), 32)];
-        #[cfg(feature = "wgsl")]
-        out.push(report(&wgsl_relations(), 32));
-        #[cfg(feature = "wgsl")]
-        out.push(report(&safewgsl_relations(), 32));
-        for o in out {
-            println!("{o}");
+        for n in [8usize, 32] {
+            let mut out = vec![report(&sr_relations(), n), report(&regex_relations(), n)];
+            #[cfg(feature = "wgsl")]
+            out.push(report(&wgsl_relations(), n));
+            #[cfg(feature = "wgsl")]
+            out.push(report(&safewgsl_relations(), n));
+            for o in out {
+                println!("{o}");
+            }
         }
     }
 }
