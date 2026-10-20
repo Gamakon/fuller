@@ -506,9 +506,13 @@ struct Site {
     /// The access (its function's place, a key only, and its pointer
     /// expression), for arena mode's bounds.
     access: Option<(usize, Handle<Expression>)>,
-    /// Arena mode: the affine form's greatest value at the contract's ranges
-    /// is below the binding's least arrayLength.
+    /// The affine form's greatest value at the contract's ranges is below the
+    /// binding's least arrayLength (arena mode's bounds proof; also the check
+    /// that no access reaches the device's clamp, see `index_not_in_bounds`).
     form_in_bounds: bool,
+    /// The contract gives the binding's arrayLength, so `form_in_bounds` is a
+    /// proof and not an unknown.
+    length_known: bool,
     /// A workgroup access of a pair exchange: at the thread's own element or
     /// its partner's, t ^ m, under a test that only the lower thread of each
     /// pair passes; the value m by its identity.
@@ -2045,9 +2049,10 @@ impl<'m> An<'m> {
         }
         let least = self.contract.params.get(&format!("arrayLength({alloc})")).map(|(lo, _)| *lo);
         let form_in_bounds = match (&idx, least) {
-            (Abs::Lin(l), Some(n)) if !workgroup && self.contract.is_arena(alloc) => self.range(l, &self.facts).1 < n,
+            (Abs::Lin(l), Some(n)) if !workgroup => self.range(l, &self.facts).1 < n,
             _ => false,
         };
+        let length_known = !workgroup && least.is_some();
         let (buf, off) = if workgroup { (alloc.to_string(), 0) } else { self.contract.buffer_of(alloc) };
         let form = match idx {
             Abs::Lin(l) => Ok(l.add(&Lin::konst(Poly::konst(off)))),
@@ -2059,7 +2064,7 @@ impl<'m> An<'m> {
             (Err(_), _) => format!("{kind:?} {alloc}[?]"),
         };
         let partner = if workgroup { access.and_then(|(_, ptr)| self.partner_of(ptr)) } else { None };
-        let s = Site { alloc: buf, kind, form, facts: self.facts.clone(), what, access, form_in_bounds, partner };
+        let s = Site { alloc: buf, kind, form, facts: self.facts.clone(), what, access, form_in_bounds, length_known, partner };
         if workgroup {
             let id = match self.wg_ix.get(&key) {
                 Some(&i) => i,
@@ -3612,6 +3617,18 @@ fn check_entry(module: &Module, contract: &Contract, entry: &str) -> Result<Repo
             }
         }
     }
+    // THE DEVICE CLAMPS (wgpu 30 on Metal, naga Restrict: `tests/runtime_bounds_checks.rs`): an index past a
+    // binding is its LAST element, for a load and for a store. Two invocations whose raw indices differ and are
+    // both past the end therefore write ONE cell, and a read past the end reads whatever another invocation is
+    // writing there; the write-set proofs below reason over raw indices. So on a written binding whose
+    // arrayLength the contract gives, every affine access must be proved below it (at the contract's ranges and
+    // under the guards on its path), or the proofs below say nothing about it. A binding whose length the contract
+    // does not give has no length to prove against: its stores rest on the guards the renderer writes (the role's
+    // `guard`), which this check does not read.
+    let written: BTreeSet<&str> = an.sites.iter().filter(|s| s.kind != Kind::Read).map(|s| s.alloc.as_str()).collect();
+    if let Some(s) = an.sites.iter().find(|s| s.length_known && !s.form_in_bounds && s.form.is_ok() && written.contains(s.alloc.as_str()) && !arena(s)) {
+        return Err(named(unsafe_("index_not_in_bounds", format!("{}: not proved below the binding's arrayLength at the contract's ranges, and the device clamps an index past the end onto the last element, where two invocations would meet", s.what)), &[s]));
+    }
     // ROWS MODE: a `rows` binding whose every write is in one row per
     // workgroup, no row shared by two workgroups.
     let owned_rows: BTreeSet<String> = if contract.rows_mode { contract.rows.iter().filter(|(b, w)| an.rows_owned(b, **w)).map(|(b, _)| b.clone()).collect() } else { BTreeSet::new() };
@@ -4129,6 +4146,29 @@ mod tests {
         open.params.remove("buffer_6_global[0]");
         let src = std::fs::read_to_string(dir.join("k01.wgsl")).unwrap();
         assert_eq!(rule(&src, &open), "store_index_may_wrap");
+    }
+
+    /// THE DEVICE CLAMPS (wgpu 30 on Metal, naga Restrict): an index past a
+    /// binding is its last element, so two invocations whose raw indices are
+    /// distinct and both past the end write ONE cell. On a written binding whose
+    /// arrayLength the contract gives, an affine access not proved below it is
+    /// refused (`index_not_in_bounds`); one proved below it, or under a guard
+    /// that bounds it, passes; with no arrayLength nothing is claimed.
+    #[test]
+    fn an_access_past_the_binding_is_refused_where_the_length_is_known() {
+        let kernel = |store: &str| format!("@group(0) @binding(0) var<storage, read_write> out: array<u32>;\n@compute @workgroup_size(64, 1, 1)\nfn main(@builtin(global_invocation_id) gid: vec3<u32>) {{\n{store}\n}}\n");
+        let known = Contract::parse("workgroups x 1 1\nworkgroups y 1 1\nworkgroups z 1 1\nparam arrayLength(out) 128 128\n").unwrap();
+        // Cells 64..=127 of 128: in bounds.
+        proved(&kernel("    out[gid.x + 64u] = gid.x;"), &known);
+        // Cells 65..=128: the last invocation is past the end, onto cell 127 where invocation 62 writes.
+        assert_eq!(rule(&kernel("    out[gid.x + 65u] = gid.x;"), &known), "index_not_in_bounds");
+        // A guard that bounds the index proves it again.
+        proved(&kernel("    if (gid.x + 65u < 128u) {\n        out[gid.x + 65u] = gid.x;\n    }"), &known);
+        // A read past the end of a written binding meets the writes at the last cell.
+        assert_eq!(rule(&kernel("    out[gid.x] = out[gid.x + 100u];"), &known), "index_not_in_bounds");
+        // The contract gives no length: no claim is made (the renderer's guards are what hold).
+        let unknown = Contract::parse("workgroups x 1 1\nworkgroups y 1 1\nworkgroups z 1 1\n").unwrap();
+        proved(&kernel("    out[gid.x + 65u] = gid.x;"), &unknown);
     }
 
     /// LAYER 7 IN ARENA MODE (2026-10-17, v24's index arenas): a kernel that

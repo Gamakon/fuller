@@ -2489,12 +2489,12 @@ impl<'a> Ctx<'a> {
             return Ok(x);
         }
         if t.name.starts_with("load.buffer.phi.#") {
-            // Any index: a read past the buffer is zero by WGSL's rule.
+            // Any index: a read past the buffer is the buffer's last element (the device's bounds policy, naga Restrict).
             let idx = self.value(&t.kids[0])?;
             return Ok(Tree::new("load.phi_safe", ty(self, "f32.real")?, vec![idx]));
         }
         // A read of the interface's other inputs: its per-kernel row
-        // (`load.<buffer>`), at any index (a read past it is zero).
+        // (`load.<buffer>`), at any index (a read past it is the buffer's last element).
         if let Some(buf) = t.name.strip_prefix("load.buffer.").and_then(|r| r.split(['.', '@']).next()).filter(|b| *b != "phi" && *b != "h") {
             if let (Some(p), [i]) = (self.per_kernel_rows.iter().find(|p| p.0 == format!("load.{buf}")), t.kids.as_slice()) {
                 let (name, out) = (p.0.clone(), p.2);

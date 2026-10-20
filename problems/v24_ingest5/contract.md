@@ -76,7 +76,7 @@ does not list.
 
 1. **Only arrived rows exist.** At stage k the `keys` buffer holds rows
    `0 .. k * per_section` and nothing else. No future key is on the device, and
-   reading past `arrived_end` reads zero.
+   reading past the end of `keys` reads the binding's LAST float, not zero (the device restricts an out-of-range index to the last element, for loads and stores alike); at search `keys` is 64 zero floats, so every read there is zero.
 2. **The arenas live for one run.** `index_u32` and `index_f32` are created
    and zeroed when a run starts. They persist across the run's stages
    and are discarded after it. They are never cleared between stages. Every

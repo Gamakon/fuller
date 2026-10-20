@@ -417,11 +417,13 @@ pub fn atomic_array_access(b: &Binding) -> Option<(&'static str, String)> {
         "atomic<i32>" => "i32.int",
         _ => return None,
     };
-    // The index as written: an access past the binding is the bounds policy's
-    // (wgpu drops the write, reads zero), as for every other storage access.
-    // Clamped to the last element (2026-10-17, until the CPU round trip by
-    // value showed it moved 20 of run 1's seeds' dropped writes onto that
-    // element) it computed something else.
+    // The index as written: an access past the binding is the bounds policy's, as
+    // for every other storage access. Under wgpu 30 on Metal that policy is naga's
+    // Restrict (tests/runtime_bounds_checks.rs): the access lands on the LAST
+    // element. (Until 2026-10-21 this read "wgpu drops the write, reads zero": the
+    // wgpu 0.20 policy; a seed whose writes were dropped then writes the last
+    // element now, and the safety proofs must keep such an access out of the
+    // kernel or in bounds.)
     len.map_or(Some(()), |n| (n >= 1).then_some(()))?;
     Some((value, "{0}".to_string()))
 }
@@ -870,7 +872,7 @@ pub fn gram_shipped_safe_tree(kingdom: &WgslKingdom) -> Result<Tree, String> {
     let gr = Tree::new("reg.set_i_L0", l0, vec![Tree::new("reg.i3", ri, vec![]), Tree::new("index.add", index, vec![Tree::new("load.cfg_r_off", index, vec![]), Tree::new("safe.row_as_index", index, vec![row()])])]);
     // The guard: the safe grammar has no return under a condition (a later
     // barrier would be non-uniform), so an out-of-range thread computes
-    // (its loads read zero past the buffer) and the STORE is guarded.
+    // (its loads past the buffer read the buffer's last element) and the STORE is guarded.
     let lt = |a: Tree, b: Tree| Tree::new("compare.lt", flag, vec![a, b]);
     let in_range = Tree::new("logic.and", flag, vec![lt(Tree::new("safe.row_as_index", index, vec![row()]), cnt("load.cfg_r_rows")), lt(Tree::new("safe.col_as_index", index, vec![col()]), cnt("load.cfg_d"))]);
     // for t < m: f0 = f0 + phi[t*d + gr] * phi[t*d + col]
