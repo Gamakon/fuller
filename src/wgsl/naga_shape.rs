@@ -71,7 +71,7 @@ pub fn supported(module: &Module) -> Result<(), String> {
         match &t.inner {
             TypeInner::CooperativeMatrix { .. } => refuse("a cooperative matrix type")?,
             TypeInner::Array { size: ArraySize::Pending(_), .. } => refuse("an override-sized array")?,
-            TypeInner::Scalar(sc) | TypeInner::Vector { scalar: sc, .. } | TypeInner::Matrix { scalar: sc, .. } if sc.width == 2 => refuse("a 16-bit type")?,
+            TypeInner::Scalar(sc) | TypeInner::Vector { scalar: sc, .. } | TypeInner::Matrix { scalar: sc, .. } if sc.width == 2 && sc.kind != naga::ScalarKind::Float => refuse("a 16-bit integer type")?,
             _ => {}
         }
         if let TypeInner::Struct { members, .. } = &t.inner {
@@ -116,7 +116,7 @@ fn function(f: &naga::Function) -> Result<(), String> {
     }
     for (_, e) in f.expressions.iter() {
         match e {
-            Expression::Literal(Literal::F16(_) | Literal::U16(_) | Literal::I16(_)) => refuse("a 16-bit literal")?,
+            Expression::Literal(Literal::U16(_) | Literal::I16(_)) => refuse("a 16-bit integer literal")?,
             Expression::CooperativeLoad { .. } | Expression::CooperativeMultiplyAdd { .. } => refuse("a cooperative matrix operation")?,
             Expression::RayQueryVertexPositions { .. } => refuse("a ray query's vertex positions")?,
             _ => {}
@@ -349,15 +349,17 @@ pub fn is_dead_local(f: &Function, v: Handle<LocalVariable>) -> bool {
 mod tests {
     use super::*;
 
-    /// WHAT NAGA 30 ADDED IS REFUSED BY NAME: a 16-bit type (behind `enable
-    /// f16`), a quad gather; an ordinary kernel parses.
+    /// WHAT NAGA 30 ADDED IS REFUSED BY NAME: a 16-bit integer type (behind `enable wgpu_int16`), a quad gather; an
+    /// ordinary kernel parses, and so does an f16 one (the kingdom has the f16 duals; the module enables f16).
     #[test]
     fn what_naga_30_added_is_refused_by_name() {
         let ok = "@group(0) @binding(0) var<storage, read_write> out: array<u32>;\n@compute @workgroup_size(64)\nfn main(@builtin(global_invocation_id) gid: vec3<u32>) { out[gid.x] = gid.x; }\n";
         parse(ok).expect("an ordinary kernel");
         let f16 = "enable f16;\n@group(0) @binding(0) var<storage, read_write> out: array<f32>;\n@compute @workgroup_size(64)\nfn main(@builtin(global_invocation_id) gid: vec3<u32>) { var h: f16 = f16(gid.x); out[gid.x] = f32(h); }\n";
-        let e = parse(f16).expect_err("a 16-bit type");
-        assert!(e.contains("a 16-bit type has no row"), "{e}");
+        parse(f16).expect("an f16 kernel");
+        let i16 = "enable wgpu_int16;\n@group(0) @binding(0) var<storage, read_write> out: array<u32>;\n@compute @workgroup_size(64)\nfn main(@builtin(global_invocation_id) gid: vec3<u32>) { var h: i16 = i16(gid.x); out[gid.x] = u32(h); }\n";
+        let e = parse(i16).expect_err("a 16-bit integer type");
+        assert!(e.contains("a 16-bit integer type has no row"), "{e}");
         let quad = "@group(0) @binding(0) var<storage, read_write> out: array<u32>;\n@compute @workgroup_size(64)\nfn main(@builtin(global_invocation_id) gid: vec3<u32>) { out[gid.x] = quadSwapX(gid.x); }\n";
         let e = parse(quad).expect_err("a quad gather");
         assert!(e.contains("a quad gather has no row"), "{e}");

@@ -965,10 +965,9 @@ pub fn fallbacks(t: &Tree) -> usize {
 /// The candidate signatures of a name under a demand: the kingdom's rows
 /// and the per-kernel rows, each as its input duals.
 fn signatures<'a>(name: &'a str, demand: Ty, arity: usize, kingdom: &'a WgslKingdom, per_kernel: &'a [(String, Vec<Ty>, Ty)]) -> impl Iterator<Item = &'a [Ty]> + 'a {
-    // (No f16 input: naga 0.20 has no f16, so no such row renders; a
-    // conversion to f16 chosen here failed to render, 2026-10-12.)
-    let f16 = move |t: &Ty| kingdom.dual(*t).is_some_and(|d| d.scalar() == Some("f16"));
-    let rows = kingdom.rows.iter().filter(move |r| r.name == name && r.output == demand && r.inputs.len() == arity && !r.inputs.iter().any(f16)).map(|r| r.inputs.as_slice());
+    // (An f16 input is a row like any other since naga 30 and `enable f16;`, 2026-10-20; the module enables f16 when it
+    // uses it.)
+    let rows = kingdom.rows.iter().filter(move |r| r.name == name && r.output == demand && r.inputs.len() == arity).map(|r| r.inputs.as_slice());
     let pk = per_kernel.iter().filter(move |(n, i, o)| n == name && *o == demand && i.len() == arity).map(|(_, i, _)| i.as_slice());
     rows.chain(pk)
 }

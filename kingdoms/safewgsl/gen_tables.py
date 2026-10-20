@@ -593,8 +593,8 @@ f("fixed", "wide_mul", "composite", ["i32.q15_16", "i32.q15_16"], "vec2<i32>.q15
 f("fixed", "wide_add_sat", "composite", ["vec2<i32>.q15_16w", "vec2<i32>.q15_16w"], "vec2<i32>.q15_16w", "")
 f("fixed", "narrow", "composite", ["vec2<i32>.q15_16w"], "i32.q15_16", "")
 # convert: the only slot and form crossings
-f("convert", "f32_to_f16", "As", ["f32.real"], "f16.real", "")
-f("convert", "f16_to_f32", "As", ["f16.real"], "f32.real", "")
+f("convert", "f32_to_f16", "As", ["<f32.real>"], "<f16.real>", "per lane")
+f("convert", "f16_to_f32", "As", ["<f16.real>"], "<f32.real>", "per lane")
 f("convert", "f32_to_q15_16", "composite", ["f32.real"], "i32.q15_16", "round to nearest, saturate")
 f("convert", "q15_16_to_f32", "composite", ["i32.q15_16"], "f32.real", "")
 f("convert", "int_to_f32", "As", ["i32.int"], "f32.real", "")

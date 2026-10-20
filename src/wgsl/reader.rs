@@ -1184,7 +1184,13 @@ fn expand(ctx: &mut Ctx, h: Handle<Expression>, count: bool) -> Node {
                 return kid;
             }
             let from = kind_of(ctx.info[expr].ty.inner_with(&ctx.module.types));
-            let name = convert_name(from, to_kind, convert.is_some());
+            // Between the float widths: f32 to f16 and back (`f16(x)`, `f32(h)`), per lane.
+            let widths = ctx.info[expr].ty.inner_with(&ctx.module.types).scalar().map(|s| s.width).zip(convert);
+            let name = convert_name(from, to_kind, convert.is_some()).or(match (from, to_kind, widths) {
+                (Some(ScalarKind::Float), NagaKind::Float, Some((4, 2))) => Some("convert.f32_to_f16"),
+                (Some(ScalarKind::Float), NagaKind::Float, Some((2, 4))) => Some("convert.f16_to_f32"),
+                _ => None,
+            });
             // A vector between floats and unsigned integers: the rows of its own.
             let vector = matches!(inner, TypeInner::Vector { .. });
             let name = match (name, vector) {

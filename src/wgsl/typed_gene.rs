@@ -445,4 +445,16 @@ mod tests {
         println!("saved genomes: {} of {total} round trip through a typed gene", total - failures.len());
         assert!(failures.is_empty(), "{} of {total}:\n{}", failures.len(), failures.iter().take(10).cloned().collect::<Vec<_>>().join("\n"));
     }
+
+    /// A kernel that computes in f16 reads, encodes into a typed gene (f16 duals, constants as f16 bit patterns), expresses and
+    /// renders to the same text, which enables f16 and validates.
+    #[test]
+    fn an_f16_kernel_round_trips_through_a_typed_gene() {
+        let kingdom = WgslKingdom::load_safe();
+        let text = "enable f16;\n@group(0) @binding(0) var<storage, read> src: array<f32>;\n@group(0) @binding(1) var<storage, read_write> dst: array<f32>;\n@compute @workgroup_size(64)\nfn main(@builtin(global_invocation_id) gid: vec3<u32>) {\n    let h = f16(src[gid.x]) * f16(2.5) + f16(1.0);\n    dst[gid.x] = f32(h);\n}\n";
+        match round_trip(&mut Alphabets::default(), &kingdom, text) {
+            Outcome::Expressed { tree_equal: true, text_equal: true, valid: Ok(()), .. } => {}
+            other => panic!("{other:?}"),
+        }
+    }
 }

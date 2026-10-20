@@ -173,8 +173,8 @@ A function is `class.instance` with a signature over duals. `<S.real>` stands fo
 
 | ref | instance | naga | in | out | n | note |
 |---|---|---|---|---|---|---|
-| F108 | `convert.f32_to_f16` | `As` | `f32.real` | `f16.real` | 1 |  |
-| F109 | `convert.f16_to_f32` | `As` | `f16.real` | `f32.real` | 1 |  |
+| F108 | `convert.f32_to_f16` | `As` | `<f32.real>` | `<f16.real>` | 1 | per lane |
+| F109 | `convert.f16_to_f32` | `As` | `<f16.real>` | `<f32.real>` | 1 | per lane |
 | F110 | `convert.f32_to_q15_16` | `composite` | `f32.real` | `i32.q15_16` | 1 | round to nearest, saturate |
 | F111 | `convert.q15_16_to_f32` | `composite` | `i32.q15_16` | `f32.real` | 1 |  |
 | F112 | `convert.int_to_f32` | `As` | `i32.int` | `f32.real` | 1 |  |

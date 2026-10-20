@@ -3711,7 +3711,7 @@ fn parr_name(t: &Tree) -> Result<&'static str, String> {
 
 /// The constructor spelling of a slot: `vec3<f32>`, `f32`, `mat2x3<f32>`.
 fn slot_ctor(slot: &str) -> Result<String, String> {
-    if slot.starts_with("vec") || slot.starts_with("mat") || ["f32", "i32", "u32", "bool"].contains(&slot) {
+    if slot.starts_with("vec") || slot.starts_with("mat") || ["f32", "f16", "i32", "u32", "bool"].contains(&slot) {
         return Ok(slot.to_string());
     }
     Err(format!("slot {slot} has no constructor"))
